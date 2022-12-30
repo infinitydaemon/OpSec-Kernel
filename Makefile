@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 6
 PATCHLEVEL = 1
-SUBLEVEL = 1
+SUBLEVEL = 2
 EXTRAVERSION =
-NAME = Hurr durr I'ma ninja sloth
+NAME = infinitydaemon
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
