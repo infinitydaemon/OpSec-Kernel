@@ -14,7 +14,7 @@
 	compatible = "brcm,bcm2835";
 
 	fragment@0 {
-		target = <&act_led>;
+		target = <&led_act>;
 		frag0: __overlay__ {
 			gpios = <&gpio 0 0>;
 		};

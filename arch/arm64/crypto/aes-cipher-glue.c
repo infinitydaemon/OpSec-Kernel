@@ -6,7 +6,7 @@
  */
 
 #include <crypto/aes.h>
-#include <linux/crypto.h>
+#include <crypto/algapi.h>
 #include <linux/module.h>
 
 MODULE_ALIAS_CRYPTO("ecb(aes)");
