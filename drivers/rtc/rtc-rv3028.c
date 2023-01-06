@@ -85,7 +85,6 @@
 
 #define RV3028_BACKUP_BSM_DSM		0x1
 #define RV3028_BACKUP_BSM_LSM		0x3
-#define RV3028_BACKUP_BSM_MASK		0x0C
 
 #define OFFSET_STEP_PPT			953674
 
@@ -861,7 +860,8 @@ static int rv3028_probe(struct i2c_client *client)
 	struct rv3028_data *rv3028;
 	int ret, status;
 	u32 ohms;
-	u8 bsm;
+	u32 bsm;
+	u8 backup, backup_bits, backup_mask;
 	struct nvmem_config nvmem_cfg = {
 		.name = "rv3028_nvram",
 		.word_size = 1,
@@ -904,9 +904,20 @@ static int rv3028_probe(struct i2c_client *client)
 		return PTR_ERR(rv3028->rtc);
 
 	if (client->irq > 0) {
+		unsigned long flags;
+
+		/*
+		 * If flags = 0, devm_request_threaded_irq() will use IRQ flags
+		 * obtained from device tree.
+		 */
+		if (dev_fwnode(&client->dev))
+			flags = 0;
+		else
+			flags = IRQF_TRIGGER_LOW;
+
 		ret = devm_request_threaded_irq(&client->dev, client->irq,
 						NULL, rv3028_handle_irq,
-						IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+						flags | IRQF_ONESHOT,
 						"rv3028", rv3028);
 		if (ret) {
 			dev_warn(&client->dev, "unable to request IRQ, alarms disabled\n");
@@ -928,16 +939,16 @@ static int rv3028_probe(struct i2c_client *client)
 	if (ret)
 		return ret;
 
-	/* setup backup switchover mode */
-	if (!device_property_read_u8(&client->dev, "backup-switchover-mode",
-				     &bsm))  {
-		if (bsm <= 3) {
-			ret = regmap_update_bits(rv3028->regmap, RV3028_BACKUP,
-				RV3028_BACKUP_BSM_MASK,
-				(bsm & 0x03) << 2);
+	backup_bits = 0;
+	backup_mask = 0;
 
-			if (ret)
-				return ret;
+	/* setup backup switchover mode */
+	if (!device_property_read_u32(&client->dev,
+				      "backup-switchover-mode",
+				      &bsm)) {
+		if (bsm <= 3) {
+			backup_bits |= (u8)(bsm << 2);
+			backup_mask |= RV3028_BACKUP_BSM;
 		} else {
 			dev_warn(&client->dev, "invalid backup switchover mode value\n");
 		}
@@ -953,13 +964,32 @@ static int rv3028_probe(struct i2c_client *client)
 				break;
 
 		if (i < ARRAY_SIZE(rv3028_trickle_resistors)) {
-			ret = rv3028_update_cfg(rv3028, RV3028_BACKUP, RV3028_BACKUP_TCE |
-						 RV3028_BACKUP_TCR_MASK, RV3028_BACKUP_TCE | i);
-			if (ret)
-				return ret;
+			backup_bits |= RV3028_BACKUP_TCE | i;
+			backup_mask |= RV3028_BACKUP_TCE |
+				RV3028_BACKUP_TCR_MASK;
 		} else {
-			dev_warn(&client->dev, "invalid trickle resistor value\n");
+			dev_warn(&client->dev,
+				 "invalid trickle resistor value\n");
 		}
+	}
+
+	if (backup_mask) {
+		ret = rv3028_eeprom_read((void *)(rv3028->regmap),
+					 RV3028_BACKUP,
+					 (void *)&backup, 1);
+		/* Write register and EEPROM if needed */
+		if (!ret && (backup & backup_mask) != backup_bits) {
+			backup = (backup & ~backup_mask) | backup_bits;
+			ret = rv3028_update_cfg(rv3028, RV3028_BACKUP,
+						backup_mask, backup_bits);
+		}
+
+		/* In the event of an EEPROM failure, just update the register */
+		if (ret)
+			ret = regmap_update_bits(rv3028->regmap, RV3028_BACKUP,
+						 backup_mask, backup_bits);
+		if (ret)
+			return ret;
 	}
 
 	ret = rtc_add_group(rv3028->rtc, &rv3028_attr_group);

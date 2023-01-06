@@ -183,22 +183,12 @@ static int emc2305_get_max_state(struct thermal_cooling_device *cdev, unsigned l
 	return 0;
 }
 
-static int emc2305_set_cur_state(struct thermal_cooling_device *cdev, unsigned long state)
+static int __emc2305_set_cur_state(struct emc2305_data *data, int cdev_idx, unsigned long state)
 {
-	int cdev_idx, ret;
-	struct emc2305_data *data = cdev->devdata;
+	int ret;
 	struct i2c_client *client = data->client;
 	u8 val, i;
 
-	if (state > data->max_state)
-		return -EINVAL;
-
-	cdev_idx =  emc2305_get_cdev_idx(cdev);
-	if (cdev_idx < 0)
-		return cdev_idx;
-
-	/* Save thermal state. */
-	data->cdev_data[cdev_idx].last_thermal_state = state;
 	state = max_t(unsigned long, state, data->cdev_data[cdev_idx].last_hwmon_state);
 
 	val = EMC2305_PWM_STATE2DUTY(state, data->max_state, EMC2305_FAN_MAX);
@@ -219,6 +209,27 @@ static int emc2305_set_cur_state(struct thermal_cooling_device *cdev, unsigned l
 				return ret;
 		}
 	}
+
+	return 0;
+}
+
+static int emc2305_set_cur_state(struct thermal_cooling_device *cdev, unsigned long state)
+{
+	int cdev_idx, ret;
+	struct emc2305_data *data = cdev->devdata;
+
+	if (state > data->max_state)
+		return -EINVAL;
+
+	cdev_idx =  emc2305_get_cdev_idx(cdev);
+	if (cdev_idx < 0)
+		return cdev_idx;
+
+	/* Save thermal state. */
+	data->cdev_data[cdev_idx].last_thermal_state = state;
+	ret = __emc2305_set_cur_state(data, cdev_idx, state);
+	if (ret < 0)
+		return ret;
 
 	return 0;
 }
@@ -456,7 +467,7 @@ emc2305_write(struct device *dev, enum hwmon_sensor_types type, u32 attr, int ch
 				 */
 				if (data->cdev_data[cdev_idx].last_hwmon_state >=
 				    data->cdev_data[cdev_idx].last_thermal_state)
-					return emc2305_set_cur_state(data->cdev_data[cdev_idx].cdev,
+					return __emc2305_set_cur_state(data, cdev_idx,
 							data->cdev_data[cdev_idx].last_hwmon_state);
 				return 0;
 			}
@@ -572,7 +583,7 @@ static int emc2305_identify(struct device *dev)
 	return 0;
 }
 
-static int emc2305_probe(struct i2c_client *client, const struct i2c_device_id *id)
+static int emc2305_probe(struct i2c_client *client)
 {
 	struct i2c_adapter *adapter = client->adapter;
 	struct device *dev = &client->dev;
@@ -671,7 +682,7 @@ static struct i2c_driver emc2305_driver = {
 		.name = "emc2305",
 		.of_match_table = emc2305_dt_ids,
 	},
-	.probe    = emc2305_probe,
+	.probe_new = emc2305_probe,
 	.remove	  = emc2305_remove,
 	.id_table = emc2305_ids,
 	.address_list = emc2305_normal_i2c,
