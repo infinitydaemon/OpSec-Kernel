@@ -11,6 +11,7 @@
 #include <linux/sched/signal.h>
 #include <linux/uaccess.h>
 
+#include <drm/drm_managed.h>
 #include <drm/drm_syncobj.h>
 #include <uapi/drm/v3d_drm.h>
 
@@ -1121,10 +1122,18 @@ v3d_gem_init(struct drm_device *dev)
 
 	spin_lock_init(&v3d->mm_lock);
 	spin_lock_init(&v3d->job_lock);
-	mutex_init(&v3d->bo_lock);
-	mutex_init(&v3d->reset_lock);
-	mutex_init(&v3d->sched_lock);
-	mutex_init(&v3d->cache_clean_lock);
+	ret = drmm_mutex_init(dev, &v3d->bo_lock);
+	if (ret)
+		return ret;
+	ret = drmm_mutex_init(dev, &v3d->reset_lock);
+	if (ret)
+		return ret;
+	ret = drmm_mutex_init(dev, &v3d->sched_lock);
+	if (ret)
+		return ret;
+	ret = drmm_mutex_init(dev, &v3d->cache_clean_lock);
+	if (ret)
+		return ret;
 
 	mutex_init(&v3d->clk_lock);
 	INIT_DELAYED_WORK(&v3d->clk_down_work, v3d_clock_down_work);
