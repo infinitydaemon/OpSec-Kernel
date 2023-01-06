@@ -18,6 +18,7 @@
 #include <linux/gpio.h>
 #include <linux/gpio/driver.h>
 #include <linux/interrupt.h>
+#include <linux/kdev_t.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/sysfs.h>
