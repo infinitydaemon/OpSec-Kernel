@@ -8,14 +8,14 @@
 #include <drm/drm_connector.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_drv.h>
+#include <drm/drm_kunit_helpers.h>
 #include <drm/drm_modes.h>
 #include <drm/drm_modeset_helper_vtables.h>
 #include <drm/drm_probe_helper.h>
 
-#include "drm_kunit_helpers.h"
-
 struct drm_client_modeset_test_priv {
 	struct drm_device *drm;
+	struct device *dev;
 	struct drm_connector connector;
 };
 
@@ -41,7 +41,12 @@ static int drm_client_modeset_test_init(struct kunit *test)
 
 	test->priv = priv;
 
-	priv->drm = drm_kunit_device_init(test, DRIVER_MODESET, "drm-client-modeset-test");
+	priv->dev = drm_kunit_helper_alloc_device(test);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, priv->dev);
+
+	priv->drm = __drm_kunit_helper_alloc_drm_device(test, priv->dev,
+							sizeof(*priv->drm), 0,
+							DRIVER_MODESET);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, priv->drm);
 
 	ret = drmm_connector_init(priv->drm, &priv->connector,
@@ -53,6 +58,13 @@ static int drm_client_modeset_test_init(struct kunit *test)
 	drm_connector_helper_add(&priv->connector, &drm_client_modeset_connector_helper_funcs);
 
 	return 0;
+}
+
+static void drm_client_modeset_test_exit(struct kunit *test)
+{
+	struct drm_client_modeset_test_priv *priv = test->priv;
+
+	drm_kunit_helper_free_device(test, priv->dev);
 }
 
 static void drm_test_pick_cmdline_res_1920_1080_60(struct kunit *test)
@@ -92,6 +104,7 @@ static struct kunit_case drm_test_pick_cmdline_tests[] = {
 static struct kunit_suite drm_test_pick_cmdline_test_suite = {
 	.name = "drm_test_pick_cmdline",
 	.init = drm_client_modeset_test_init,
+	.exit = drm_client_modeset_test_exit,
 	.test_cases = drm_test_pick_cmdline_tests
 };
 
