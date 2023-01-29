@@ -452,6 +452,8 @@ vc4_hvs_alloc_dlist_entry(struct vc4_hvs *hvs,
 	if (!alloc)
 		return ERR_PTR(-ENOMEM);
 
+	INIT_LIST_HEAD(&alloc->node);
+
 	spin_lock_irqsave(&hvs->mm_lock, flags);
 	ret = drm_mm_insert_node(&hvs->dlist_mm, &alloc->mm_node,
 				 dlist_count);
@@ -462,6 +464,18 @@ vc4_hvs_alloc_dlist_entry(struct vc4_hvs *hvs,
 	alloc->channel = channel;
 
 	return alloc;
+}
+
+static void vc4_hvs_free_dlist_entry_locked(struct vc4_hvs *hvs,
+					    struct vc4_hvs_dlist_allocation *alloc)
+{
+	lockdep_assert_held(&hvs->mm_lock);
+
+	if (!list_empty(&alloc->node))
+		list_del(&alloc->node);
+
+	drm_mm_remove_node(&alloc->mm_node);
+	kfree(alloc);
 }
 
 void vc4_hvs_mark_dlist_entry_stale(struct vc4_hvs *hvs,
@@ -475,6 +489,18 @@ void vc4_hvs_mark_dlist_entry_stale(struct vc4_hvs *hvs,
 
 	if (!drm_mm_node_allocated(&alloc->mm_node))
 		return;
+
+	/*
+	 * Kunit tests run with a mock device and we consider any hardware
+	 * access a test failure. Let's free the dlist allocation right away if
+	 * we're running under kunit, we won't risk a dlist corruption anyway.
+	 */
+	if (kunit_get_current_test()) {
+		spin_lock_irqsave(&hvs->mm_lock, flags);
+		vc4_hvs_free_dlist_entry_locked(hvs, alloc);
+		spin_unlock_irqrestore(&hvs->mm_lock, flags);
+		return;
+	}
 
 	frcnt = vc4_hvs_get_fifo_frame_count(hvs, alloc->channel);
 	alloc->target_frame_count = (frcnt + 1) & ((1 << 6) - 1);
@@ -551,9 +577,7 @@ static void vc4_hvs_dlist_free_work(struct work_struct *work)
 		if (!vc4_hvs_frcnt_lte(cur->target_frame_count, frcnt))
 			continue;
 
-		list_del(&cur->node);
-		drm_mm_remove_node(&cur->mm_node);
-		kfree(cur);
+		vc4_hvs_free_dlist_entry_locked(hvs, cur);
 	}
 	spin_unlock_irqrestore(&hvs->mm_lock, flags);
 }
