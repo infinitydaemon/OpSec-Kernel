@@ -1,3 +1,23 @@
+![Github Banner](https://cwd.systems/img/banner.png)
+
+```python
+class CWD_OpSec():
+    
+  def __init__(self):
+    self.name = "cwd";
+    self.username = "cwdsystems";
+    self.location = "USA, Canada, Pakistan, KyrgzRepublic, Indonesia";
+    self.protonmail = "@cwdsystems";
+    self.web = "https://cwd.systems";
+    self.languages ="Objective C, Python";
+  
+  def __str__(self):
+    return self.name
+
+if __name__ == '__main__':
+    me = CWD_OpSec()
+```
+
 CWD SYSTEMS Linux kernel
 ========================
 
