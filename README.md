@@ -21,7 +21,7 @@ if __name__ == '__main__':
 CWD SYSTEMS Linux kernel
 ========================
 
-Linux Kernel that was tuned and built as Brooklyn Supreme is now OpSec Kernel.
+Linux Kernel that was tuned and built as Brooklyn Supreme is now OpSec Kernel. Numerous optimizations and tweaks have been applied for high availability and network wide security.
 Follow build instructions from kernel.org official documentation.
 There are several guides for kernel developers and users. These guides can
 be rendered in a number of formats, like HTML and PDF. Please read
