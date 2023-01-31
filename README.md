@@ -47,7 +47,7 @@ After the built kernel is installed, edit the boot config
 sudo nano /boot/config.txt
 ```
 
-In the first line, put kernel=NAME. Where NAME is the name of the kernel you specified from CONFIG_LOCALVERSION.
+In the first line, put kernel=NAME. Where NAME is the name of the kernel you specified from CONFIG_LOCALVERSION. The easiest way to find out the full name of kernel is by doing a "ls -l" under /boot directory.
 
 In order to build the documentation, use ``make htmldocs`` or
 ``make pdfdocs``.  The formatted documentation can also be read online at:
