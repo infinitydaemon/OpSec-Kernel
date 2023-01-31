@@ -18,10 +18,10 @@ if __name__ == '__main__':
     me = CWD_OpSec()
 ```
 
-CWD SYSTEMS Linux kernel
-========================
+CWD SYSTEMS Linux
+=================
 
-Linux Kernel that was tuned and built as Brooklyn Supreme is now OpSec Kernel. Numerous optimizations and tweaks have been applied for high availability and network wide security.
+Linux Kernel that was tuned and built as Brooklyn Supreme is now OpSec Kernel used in CWD Appliances. Numerous optimizations and tweaks have been applied for high availability and network wide security.
 The build instructions for SBC vary when compared to official kernel.org build instructions. Follow the steps to build the OpSec Kernel for your SBC on Debian based distros.
 
 ```
