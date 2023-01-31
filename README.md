@@ -22,10 +22,32 @@ CWD SYSTEMS Linux kernel
 ========================
 
 Linux Kernel that was tuned and built as Brooklyn Supreme is now OpSec Kernel. Numerous optimizations and tweaks have been applied for high availability and network wide security.
-Follow build instructions from kernel.org official documentation.
-There are several guides for kernel developers and users. These guides can
-be rendered in a number of formats, like HTML and PDF. Please read
-Documentation/admin-guide/README.rst first.
+The build instructions for SBC vary when compared to official kernel.org build instructions. Follow the steps to build the OpSec Kernel for your SBC on Debian based distros.
+
+```
+sudo apt install git bc bison flex libssl-dev make
+git clone https://github.com/infinitydaemon/OpSec-Kernel.git
+cd OpSec-Kernel
+KERNEL=kernel8
+make bcm2711_defconfig
+edit the .config file and put a different name and build version for your kernel as :
+CONFIG_LOCALVERSION="-OpSec-6x"
+make -j4 zImage modules dtbs
+sudo make modules_install
+sudo cp arch/arm/boot/dts/*.dtb /boot/
+sudo cp arch/arm/boot/dts/overlays/*.dtb* /boot/overlays/
+sudo cp arch/arm/boot/dts/overlays/README /boot/overlays/
+sudo cp arch/arm/boot/zImage /boot/$KERNEL.img
+sudo make install
+```
+
+After the built kernel is installed, edit the boot config
+
+```
+sudo nano /boot/config.txt
+```
+
+In the first line, put kernel=NAME. Where NAME is the name of the kernel you specified from CONFIG_LOCALVERSION.
 
 In order to build the documentation, use ``make htmldocs`` or
 ``make pdfdocs``.  The formatted documentation can also be read online at:
