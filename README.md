@@ -49,13 +49,13 @@ sudo nano /boot/config.txt
 
 In the first line, put kernel=NAME.img. Where NAME is the name of the kernel you specified from CONFIG_LOCALVERSION. The easiest way to find out the full name of kernel is by doing a "ls -l" under /boot directory.
 
-Cross-Compiling the Kernel
+*Cross-Compiling the Kernel*
 
 To build the sources for cross-compilation, make sure you have the dependencies needed on your machine by executing:
 
 ``` sudo apt install git bc bison flex libssl-dev make libc6-dev libncurses5-dev ```
 
-nstall the 64-bit Toolchain for a 64-bit Kernel
+Install the 64-bit Toolchain for a 64-bit Kernel
 
 ``` sudo apt install crossbuild-essential-arm64 ```
 
@@ -79,7 +79,7 @@ sudo umount mnt/ext4
 Now edit your boot/config.txt and specify the built kernel as:
 
 ```
-kernel=NAme.img
+kernel=Name.img
 ```
 
 In case your SBC fails to boot, mount the microSD on your computer via a card reader and edit the config.txt file under boot folder. Simply remove the first line kernel=Name.img and check for any typos or line errors made.
