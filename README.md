@@ -89,4 +89,4 @@ In order to build the documentation, use ``make htmldocs`` or
 
     https://www.kernel.org/doc/html/latest/
 
-Good luck!
+Open an issue request on Github if you encounter platform build errors. Good luck!
