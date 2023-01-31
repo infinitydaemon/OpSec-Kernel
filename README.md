@@ -9,7 +9,7 @@ class CWD_OpSec():
     self.location = "USA, Canada, Pakistan, KyrgzRepublic, Indonesia";
     self.protonmail = "@cwdsystems";
     self.web = "https://cwd.systems";
-    self.languages ="Objective C, Python";
+    self.languages ="Objective C, Python,Bash,Perl";
   
   def __str__(self):
     return self.name
