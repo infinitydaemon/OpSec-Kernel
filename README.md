@@ -51,7 +51,7 @@ In the first line, put kernel=NAME.img. Where NAME is the name of the kernel you
 
 *Cross-Compiling the Kernel*
 
-To build the sources for cross-compilation, make sure you have the dependencies needed on your machine by executing:
+This method is only required if you are not building the OpSec Kernel natively on your SBC. To build the sources for cross-compilation, make sure you have the dependencies needed on your machine by executing:
 
 ``` sudo apt install git bc bison flex libssl-dev make libc6-dev libncurses5-dev ```
 
