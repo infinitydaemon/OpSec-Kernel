@@ -82,11 +82,11 @@ Now edit your boot/config.txt and specify the built kernel as:
 kernel=Name.img
 ```
 
-In case your SBC fails to boot, mount the microSD on your computer via a card reader and edit the config.txt file under boot folder. Simply remove the first line kernel=Name.img and check for any typos or line errors made.
+Where Name.img is the specification from your .config file. In case your SBC fails to boot, mount the microSD on your computer via a card reader and edit the config.txt file under boot folder. Simply remove the first line kernel=Name.img and check for any typos or line errors made.
 
 In order to build the documentation, use ``make htmldocs`` or
 ``make pdfdocs``.  The formatted documentation can also be read online at:
 
     https://www.kernel.org/doc/html/latest/
 
-
+Good luck!
