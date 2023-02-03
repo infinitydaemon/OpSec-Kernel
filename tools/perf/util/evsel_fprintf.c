@@ -2,6 +2,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <traceevent/event-parse.h>
 #include "evsel.h"
 #include "util/evsel_fprintf.h"
 #include "util/event.h"
@@ -10,11 +11,6 @@
 #include "strlist.h"
 #include "symbol.h"
 #include "srcline.h"
-#include "dso.h"
-
-#ifdef HAVE_LIBTRACEEVENT
-#include <traceevent/event-parse.h>
-#endif
 
 static int comma_fprintf(FILE *fp, bool *first, const char *fmt, ...)
 {
@@ -77,7 +73,6 @@ int evsel__fprintf(struct evsel *evsel, struct perf_attr_details *details, FILE 
 					 term, (u64)evsel->core.attr.sample_freq);
 	}
 
-#ifdef HAVE_LIBTRACEEVENT
 	if (details->trace_fields) {
 		struct tep_format_field *field;
 
@@ -100,7 +95,6 @@ int evsel__fprintf(struct evsel *evsel, struct perf_attr_details *details, FILE 
 			field = field->next;
 		}
 	}
-#endif
 out:
 	fputc('\n', fp);
 	return ++printed;
@@ -150,16 +144,11 @@ int sample__fprintf_callchain(struct perf_sample *sample, int left_alignment,
 			if (print_arrow && !first)
 				printed += fprintf(fp, " <-");
 
+			if (print_ip)
+				printed += fprintf(fp, "%c%16" PRIx64, s, node->ip);
+
 			if (map)
 				addr = map->map_ip(map, node->ip);
-
-			if (print_ip) {
-				/* Show binary offset for userspace addr */
-				if (map && !map->dso->kernel)
-					printed += fprintf(fp, "%c%16" PRIx64, s, addr);
-				else
-					printed += fprintf(fp, "%c%16" PRIx64, s, node->ip);
-			}
 
 			if (print_sym) {
 				printed += fprintf(fp, " ");

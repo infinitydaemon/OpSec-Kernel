@@ -33,13 +33,23 @@ create_errno_lookup_func()
 	local arch=$(arch_string "$1")
 	local nr name
 
-	printf "static const char *errno_to_name__%s(int err)\n{\n\tswitch (err) {\n" $arch
+	cat <<EoFuncBegin
+static const char *errno_to_name__$arch(int err)
+{
+	switch (err) {
+EoFuncBegin
 
 	while read name nr; do
 		printf '\tcase %d: return "%s";\n' $nr $name
 	done
 
-	printf '\tdefault: return "(unknown)";\n\t}\n}\n'
+	cat <<EoFuncEnd
+	default:
+		return "(unknown)";
+	}
+}
+
+EoFuncEnd
 }
 
 process_arch()

@@ -19,6 +19,7 @@
 #include <babeltrace/ctf-writer/event-fields.h>
 #include <babeltrace/ctf-ir/utils.h>
 #include <babeltrace/ctf/events.h>
+#include <traceevent/event-parse.h>
 #include "asm/bug.h"
 #include "data-convert.h"
 #include "session.h"
@@ -33,11 +34,6 @@
 #include <linux/time64.h>
 #include "util.h"
 #include "clockid.h"
-#include "util/sample.h"
-
-#ifdef HAVE_LIBTRACEEVENT
-#include <traceevent/event-parse.h>
-#endif
 
 #define pr_N(n, fmt, ...) \
 	eprintf(n, debug_data_convert, fmt, ##__VA_ARGS__)
@@ -322,10 +318,6 @@ static int add_tracepoint_field_value(struct ctf_writer *cw,
 		offset = tmp_val;
 		len = offset >> 16;
 		offset &= 0xffff;
-#ifdef HAVE_LIBTRACEEVENT_TEP_FIELD_IS_RELATIVE
-		if (flags & TEP_FIELD_IS_RELATIVE)
-			offset += fmtf->offset + fmtf->size;
-#endif
 	}
 
 	if (flags & TEP_FIELD_IS_ARRAY) {
@@ -1445,7 +1437,7 @@ static struct bt_ctf_field_type *create_int_type(int size, bool sign, bool hex)
 	    bt_ctf_field_type_integer_set_base(type, BT_CTF_INTEGER_BASE_HEXADECIMAL))
 		goto err;
 
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#if __BYTE_ORDER == __BIG_ENDIAN
 	bt_ctf_field_type_set_byte_order(type, BT_CTF_BYTE_ORDER_BIG_ENDIAN);
 #else
 	bt_ctf_field_type_set_byte_order(type, BT_CTF_BYTE_ORDER_LITTLE_ENDIAN);

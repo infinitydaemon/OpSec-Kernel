@@ -87,8 +87,8 @@
 #include <linux/ctype.h>
 #include <perf/mmap.h>
 
-static volatile sig_atomic_t done;
-static volatile sig_atomic_t resize;
+static volatile int done;
+static volatile int resize;
 
 #define HEADER_LINE_NR  5
 
@@ -136,10 +136,10 @@ static int perf_top__parse_source(struct perf_top *top, struct hist_entry *he)
 	}
 
 	notes = symbol__annotation(sym);
-	mutex_lock(&notes->lock);
+	pthread_mutex_lock(&notes->lock);
 
 	if (!symbol__hists(sym, top->evlist->core.nr_entries)) {
-		mutex_unlock(&notes->lock);
+		pthread_mutex_unlock(&notes->lock);
 		pr_err("Not enough memory for annotating '%s' symbol!\n",
 		       sym->name);
 		sleep(1);
@@ -155,7 +155,7 @@ static int perf_top__parse_source(struct perf_top *top, struct hist_entry *he)
 		pr_err("Couldn't annotate %s: %s\n", sym->name, msg);
 	}
 
-	mutex_unlock(&notes->lock);
+	pthread_mutex_unlock(&notes->lock);
 	return err;
 }
 
@@ -196,7 +196,6 @@ static void perf_top__record_precise_ip(struct perf_top *top,
 					struct hist_entry *he,
 					struct perf_sample *sample,
 					struct evsel *evsel, u64 ip)
-	EXCLUSIVE_LOCKS_REQUIRED(he->hists->lock)
 {
 	struct annotation *notes;
 	struct symbol *sym = he->ms.sym;
@@ -209,19 +208,19 @@ static void perf_top__record_precise_ip(struct perf_top *top,
 
 	notes = symbol__annotation(sym);
 
-	if (!mutex_trylock(&notes->lock))
+	if (pthread_mutex_trylock(&notes->lock))
 		return;
 
 	err = hist_entry__inc_addr_samples(he, sample, evsel, ip);
 
-	mutex_unlock(&notes->lock);
+	pthread_mutex_unlock(&notes->lock);
 
 	if (unlikely(err)) {
 		/*
 		 * This function is now called with he->hists->lock held.
 		 * Release it before going to sleep.
 		 */
-		mutex_unlock(&he->hists->lock);
+		pthread_mutex_unlock(&he->hists->lock);
 
 		if (err == -ERANGE && !he->ms.map->erange_warned)
 			ui__warn_map_erange(he->ms.map, sym, ip);
@@ -231,7 +230,7 @@ static void perf_top__record_precise_ip(struct perf_top *top,
 			sleep(1);
 		}
 
-		mutex_lock(&he->hists->lock);
+		pthread_mutex_lock(&he->hists->lock);
 	}
 }
 
@@ -251,7 +250,7 @@ static void perf_top__show_details(struct perf_top *top)
 	symbol = he->ms.sym;
 	notes = symbol__annotation(symbol);
 
-	mutex_lock(&notes->lock);
+	pthread_mutex_lock(&notes->lock);
 
 	symbol__calc_percent(symbol, evsel);
 
@@ -272,7 +271,7 @@ static void perf_top__show_details(struct perf_top *top)
 	if (more != 0)
 		printf("%d lines not displayed, maybe increase display entries [e]\n", more);
 out_unlock:
-	mutex_unlock(&notes->lock);
+	pthread_mutex_unlock(&notes->lock);
 }
 
 static void perf_top__resort_hists(struct perf_top *t)
@@ -725,13 +724,13 @@ repeat:
 static int hist_iter__top_callback(struct hist_entry_iter *iter,
 				   struct addr_location *al, bool single,
 				   void *arg)
-	EXCLUSIVE_LOCKS_REQUIRED(iter->he->hists->lock)
 {
 	struct perf_top *top = arg;
+	struct hist_entry *he = iter->he;
 	struct evsel *evsel = iter->evsel;
 
 	if (perf_hpp_list.sym && single)
-		perf_top__record_precise_ip(top, iter->he, iter->sample, evsel, al->addr);
+		perf_top__record_precise_ip(top, he, iter->sample, evsel, al->addr);
 
 	hist__account_cycles(iter->sample->branch_stack, al, iter->sample,
 		     !(top->record_opts.branch_stack & PERF_SAMPLE_BRANCH_ANY),
@@ -747,6 +746,7 @@ static void perf_event__process_sample(struct perf_tool *tool,
 {
 	struct perf_top *top = container_of(tool, struct perf_top, tool);
 	struct addr_location al;
+	int err;
 
 	if (!machine && perf_guest) {
 		static struct intlist *seen;
@@ -837,12 +837,13 @@ static void perf_event__process_sample(struct perf_tool *tool,
 		else
 			iter.ops = &hist_iter_normal;
 
-		mutex_lock(&hists->lock);
+		pthread_mutex_lock(&hists->lock);
 
-		if (hist_entry_iter__add(&iter, &al, top->max_stack, top) < 0)
+		err = hist_entry_iter__add(&iter, &al, top->max_stack, top);
+		if (err < 0)
 			pr_err("Problem incrementing symbol period, skipping event\n");
 
-		mutex_unlock(&hists->lock);
+		pthread_mutex_unlock(&hists->lock);
 	}
 
 	addr_location__put(&al);
@@ -887,17 +888,17 @@ static void perf_top__mmap_read_idx(struct perf_top *top, int idx)
 		if (ret && ret != -1)
 			break;
 
-		ret = ordered_events__queue(top->qe.in, event, last_timestamp, 0, NULL);
+		ret = ordered_events__queue(top->qe.in, event, last_timestamp, 0);
 		if (ret)
 			break;
 
 		perf_mmap__consume(&md->core);
 
 		if (top->qe.rotate) {
-			mutex_lock(&top->qe.mutex);
+			pthread_mutex_lock(&top->qe.mutex);
 			top->qe.rotate = false;
-			cond_signal(&top->qe.cond);
-			mutex_unlock(&top->qe.mutex);
+			pthread_cond_signal(&top->qe.cond);
+			pthread_mutex_unlock(&top->qe.mutex);
 		}
 	}
 
@@ -1022,7 +1023,7 @@ static int perf_top__start_counters(struct perf_top *top)
 
 	evlist__for_each_entry(evlist, counter) {
 try_again:
-		if (evsel__open(counter, top->evlist->core.user_requested_cpus,
+		if (evsel__open(counter, top->evlist->core.cpus,
 				     top->evlist->core.threads) < 0) {
 
 			/*
@@ -1101,10 +1102,10 @@ static void *process_thread(void *arg)
 
 		out = rotate_queues(top);
 
-		mutex_lock(&top->qe.mutex);
+		pthread_mutex_lock(&top->qe.mutex);
 		top->qe.rotate = true;
-		cond_wait(&top->qe.cond, &top->qe.mutex);
-		mutex_unlock(&top->qe.mutex);
+		pthread_cond_wait(&top->qe.cond, &top->qe.mutex);
+		pthread_mutex_unlock(&top->qe.mutex);
 
 		if (ordered_events__flush(out, OE_FLUSH__TOP))
 			pr_err("failed to process events\n");
@@ -1218,8 +1219,8 @@ static void init_process_thread(struct perf_top *top)
 	ordered_events__set_copy_on_queue(&top->qe.data[0], true);
 	ordered_events__set_copy_on_queue(&top->qe.data[1], true);
 	top->qe.in = &top->qe.data[0];
-	mutex_init(&top->qe.mutex);
-	cond_init(&top->qe.cond);
+	pthread_mutex_init(&top->qe.mutex, NULL);
+	pthread_cond_init(&top->qe.cond, NULL);
 }
 
 static int __cmd_top(struct perf_top *top)
@@ -1270,7 +1271,7 @@ static int __cmd_top(struct perf_top *top)
 		pr_debug("Couldn't synthesize cgroup events.\n");
 
 	machine__synthesize_threads(&top->session->machines.host, &opts->target,
-				    top->evlist->core.threads, true, false,
+				    top->evlist->core.threads, false,
 				    top->nr_threads_synthesize);
 
 	if (top->nr_threads_synthesize > 1)
@@ -1350,7 +1351,7 @@ static int __cmd_top(struct perf_top *top)
 out_join:
 	pthread_join(thread, NULL);
 out_join_thread:
-	cond_signal(&top->qe.cond);
+	pthread_cond_signal(&top->qe.cond);
 	pthread_join(thread_process, NULL);
 	return ret;
 }
@@ -1471,6 +1472,8 @@ int cmd_top(int argc, const char **argv)
 			    "dump the symbol table used for profiling"),
 	OPT_INTEGER('f', "count-filter", &top.count_filter,
 		    "only display functions with more events than this"),
+	OPT_BOOLEAN(0, "group", &opts->group,
+			    "put the counters into a counter group"),
 	OPT_BOOLEAN('i', "no-inherit", &opts->no_inherit,
 		    "child tasks do not inherit counters"),
 	OPT_STRING(0, "sym-annotate", &top.sym_filter, "symbol name",
@@ -1483,9 +1486,7 @@ int cmd_top(int argc, const char **argv)
 		    "display this many functions"),
 	OPT_BOOLEAN('U', "hide_user_symbols", &top.hide_user_symbols,
 		    "hide user symbols"),
-#ifdef HAVE_SLANG_SUPPORT
 	OPT_BOOLEAN(0, "tui", &top.use_tui, "Use the TUI interface"),
-#endif
 	OPT_BOOLEAN(0, "stdio", &top.use_stdio, "Use the stdio interface"),
 	OPT_INCR('v', "verbose", &verbose,
 		    "be more verbose (show counter open errors, etc)"),
@@ -1617,10 +1618,6 @@ int cmd_top(int argc, const char **argv)
 	if (argc)
 		usage_with_options(top_usage, options);
 
-	status = symbol__validate_sym_arguments();
-	if (status)
-		goto out_delete_evlist;
-
 	if (annotate_check_args(&top.annotation_opts) < 0)
 		goto out_delete_evlist;
 
@@ -1666,10 +1663,8 @@ int cmd_top(int argc, const char **argv)
 
 	if (top.use_stdio)
 		use_browser = 0;
-#ifdef HAVE_SLANG_SUPPORT
 	else if (top.use_tui)
 		use_browser = 1;
-#endif
 
 	setup_browser(false);
 
@@ -1705,7 +1700,6 @@ int cmd_top(int argc, const char **argv)
 	if (evlist__create_maps(top.evlist, target) < 0) {
 		ui__error("Couldn't create thread/CPU maps: %s\n",
 			  errno == ENOENT ? "No such process" : str_error_r(errno, errbuf, sizeof(errbuf)));
-		status = -errno;
 		goto out_delete_evlist;
 	}
 
@@ -1758,13 +1752,11 @@ int cmd_top(int argc, const char **argv)
 
 		if (top.sb_evlist == NULL) {
 			pr_err("Couldn't create side band evlist.\n.");
-			status = -EINVAL;
 			goto out_delete_evlist;
 		}
 
 		if (evlist__add_bpf_sb_event(top.sb_evlist, &perf_env)) {
 			pr_err("Couldn't ask for PERF_RECORD_BPF_EVENT side band events.\n.");
-			status = -EINVAL;
 			goto out_delete_evlist;
 		}
 	}

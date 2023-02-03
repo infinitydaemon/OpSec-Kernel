@@ -4,10 +4,10 @@
 
 #include <linux/rbtree.h>
 #include <linux/types.h>
+#include <pthread.h>
 #include "evsel.h"
 #include "color.h"
 #include "events_stats.h"
-#include "mutex.h"
 
 struct hist_entry;
 struct hist_entry_ops;
@@ -75,11 +75,7 @@ enum hist_column {
 	HISTC_MEM_BLOCKED,
 	HISTC_LOCAL_INS_LAT,
 	HISTC_GLOBAL_INS_LAT,
-	HISTC_LOCAL_P_STAGE_CYC,
-	HISTC_GLOBAL_P_STAGE_CYC,
-	HISTC_ADDR_FROM,
-	HISTC_ADDR_TO,
-	HISTC_ADDR,
+	HISTC_P_STAGE_CYC,
 	HISTC_NR_COLS, /* Last entry */
 };
 
@@ -99,7 +95,7 @@ struct hists {
 	const struct dso	*dso_filter;
 	const char		*uid_filter_str;
 	const char		*symbol_filter_str;
-	struct mutex		lock;
+	pthread_mutex_t		lock;
 	struct hists_stats	stats;
 	u64			event_stream;
 	u16			col_len[HISTC_NR_COLS];
@@ -202,7 +198,6 @@ void hists__reset_stats(struct hists *hists);
 void hists__inc_stats(struct hists *hists, struct hist_entry *h);
 void hists__inc_nr_events(struct hists *hists);
 void hists__inc_nr_samples(struct hists *hists, bool filtered);
-void hists__inc_nr_lost_samples(struct hists *hists, u32 lost);
 
 size_t hists__fprintf(struct hists *hists, bool show_header, int max_rows,
 		      int max_cols, float min_pcnt, FILE *fp,
@@ -272,7 +267,6 @@ struct perf_hpp_fmt {
 		      struct hists *hists, int line, int *span);
 	int (*width)(struct perf_hpp_fmt *fmt, struct perf_hpp *hpp,
 		     struct hists *hists);
-	void (*init)(struct perf_hpp_fmt *fmt, struct hist_entry *he);
 	int (*color)(struct perf_hpp_fmt *fmt, struct perf_hpp *hpp,
 		     struct hist_entry *he);
 	int (*entry)(struct perf_hpp_fmt *fmt, struct perf_hpp *hpp,

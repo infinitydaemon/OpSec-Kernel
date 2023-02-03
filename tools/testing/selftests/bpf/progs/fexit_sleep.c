@@ -3,7 +3,6 @@
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
-#include "bpf_misc.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -11,20 +10,20 @@ int pid = 0;
 int fentry_cnt = 0;
 int fexit_cnt = 0;
 
-SEC("fentry/" SYS_PREFIX "sys_nanosleep")
-int nanosleep_fentry(void *ctx)
+SEC("fentry/__x64_sys_nanosleep")
+int BPF_PROG(nanosleep_fentry, const struct pt_regs *regs)
 {
-	if (bpf_get_current_pid_tgid() >> 32 != pid)
+	if ((int)bpf_get_current_pid_tgid() != pid)
 		return 0;
 
 	fentry_cnt++;
 	return 0;
 }
 
-SEC("fexit/" SYS_PREFIX "sys_nanosleep")
-int nanosleep_fexit(void *ctx)
+SEC("fexit/__x64_sys_nanosleep")
+int BPF_PROG(nanosleep_fexit, const struct pt_regs *regs, int ret)
 {
-	if (bpf_get_current_pid_tgid() >> 32 != pid)
+	if ((int)bpf_get_current_pid_tgid() != pid)
 		return 0;
 
 	fexit_cnt++;

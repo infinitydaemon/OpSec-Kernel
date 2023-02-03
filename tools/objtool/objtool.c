@@ -3,6 +3,16 @@
  * Copyright (C) 2015 Josh Poimboeuf <jpoimboe@redhat.com>
  */
 
+/*
+ * objtool:
+ *
+ * The 'check' subcmd analyzes every .o file and ensures the validity of its
+ * stack trace metadata.  It enforces a set of rules on asm code and C inline
+ * assembly code so that stack traces can be reliable.
+ *
+ * For more information, see tools/objtool/Documentation/stack-validation.txt.
+ */
+
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
@@ -15,6 +25,20 @@
 #include <objtool/builtin.h>
 #include <objtool/objtool.h>
 #include <objtool/warn.h>
+
+struct cmd_struct {
+	const char *name;
+	int (*fn)(int, const char **);
+	const char *help;
+};
+
+static const char objtool_usage_string[] =
+	"objtool COMMAND [ARGS]";
+
+static struct cmd_struct objtool_cmds[] = {
+	{"check",	cmd_check,	"Perform stack metadata validation on an object file" },
+	{"orc",		cmd_orc,	"Generate in-place ORC unwind tables for an object file" },
+};
 
 bool help;
 
@@ -94,7 +118,7 @@ struct objtool_file *objtool_open_read(const char *_objname)
 	if (!file.elf)
 		return NULL;
 
-	if (opts.backup && !objtool_create_backup(objname)) {
+	if (backup && !objtool_create_backup(objname)) {
 		WARN("can't create backup file");
 		return NULL;
 	}
@@ -105,38 +129,75 @@ struct objtool_file *objtool_open_read(const char *_objname)
 	INIT_LIST_HEAD(&file.return_thunk_list);
 	INIT_LIST_HEAD(&file.static_call_list);
 	INIT_LIST_HEAD(&file.mcount_loc_list);
-	INIT_LIST_HEAD(&file.endbr_list);
-	INIT_LIST_HEAD(&file.call_list);
-	file.ignore_unreachables = opts.no_unreachable;
+	file.c_file = !vmlinux && find_section_by_name(file.elf, ".comment");
+	file.ignore_unreachables = no_unreachable;
 	file.hints = false;
 
 	return &file;
 }
 
-void objtool_pv_add(struct objtool_file *f, int idx, struct symbol *func)
+static void cmd_usage(void)
 {
-	if (!opts.noinstr)
-		return;
+	unsigned int i, longest = 0;
 
-	if (!f->pv_ops) {
-		WARN("paravirt confusion");
-		return;
+	printf("\n usage: %s\n\n", objtool_usage_string);
+
+	for (i = 0; i < ARRAY_SIZE(objtool_cmds); i++) {
+		if (longest < strlen(objtool_cmds[i].name))
+			longest = strlen(objtool_cmds[i].name);
 	}
 
-	/*
-	 * These functions will be patched into native code,
-	 * see paravirt_patch().
-	 */
-	if (!strcmp(func->name, "_paravirt_nop") ||
-	    !strcmp(func->name, "_paravirt_ident_64"))
-		return;
+	puts(" Commands:");
+	for (i = 0; i < ARRAY_SIZE(objtool_cmds); i++) {
+		printf("   %-*s   ", longest, objtool_cmds[i].name);
+		puts(objtool_cmds[i].help);
+	}
 
-	/* already added this function */
-	if (!list_empty(&func->pv_target))
-		return;
+	printf("\n");
 
-	list_add(&func->pv_target, &f->pv_ops[idx].targets);
-	f->pv_ops[idx].clean = false;
+	if (!help)
+		exit(129);
+	exit(0);
+}
+
+static void handle_options(int *argc, const char ***argv)
+{
+	while (*argc > 0) {
+		const char *cmd = (*argv)[0];
+
+		if (cmd[0] != '-')
+			break;
+
+		if (!strcmp(cmd, "--help") || !strcmp(cmd, "-h")) {
+			help = true;
+			break;
+		} else {
+			fprintf(stderr, "Unknown option: %s\n", cmd);
+			cmd_usage();
+		}
+
+		(*argv)++;
+		(*argc)--;
+	}
+}
+
+static void handle_internal_command(int argc, const char **argv)
+{
+	const char *cmd = argv[0];
+	unsigned int i, ret;
+
+	for (i = 0; i < ARRAY_SIZE(objtool_cmds); i++) {
+		struct cmd_struct *p = objtool_cmds+i;
+
+		if (strcmp(p->name, cmd))
+			continue;
+
+		ret = p->fn(argc, argv);
+
+		exit(ret);
+	}
+
+	cmd_usage();
 }
 
 int main(int argc, const char **argv)
@@ -147,7 +208,14 @@ int main(int argc, const char **argv)
 	exec_cmd_init("objtool", UNUSED, UNUSED, UNUSED);
 	pager_init(UNUSED);
 
-	objtool_run(argc, argv);
+	argv++;
+	argc--;
+	handle_options(&argc, &argv);
+
+	if (!argc || help)
+		cmd_usage();
+
+	handle_internal_command(argc, argv);
 
 	return 0;
 }

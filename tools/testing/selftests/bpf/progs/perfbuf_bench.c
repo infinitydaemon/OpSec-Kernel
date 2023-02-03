@@ -4,7 +4,6 @@
 #include <linux/bpf.h>
 #include <stdint.h>
 #include <bpf/bpf_helpers.h>
-#include "bpf_misc.h"
 
 char _license[] SEC("license") = "GPL";
 
@@ -19,7 +18,7 @@ const volatile int batch_cnt = 0;
 long sample_val = 42;
 long dropped __attribute__((aligned(128))) = 0;
 
-SEC("fentry/" SYS_PREFIX "sys_getpgid")
+SEC("fentry/__x64_sys_getpgid")
 int bench_perfbuf(void *ctx)
 {
 	__u64 *sample;

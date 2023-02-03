@@ -62,6 +62,7 @@ static int llseek_loop(void)
 
 static struct {
 	enum test_llvm__testcase prog_id;
+	const char *desc;
 	const char *name;
 	const char *msg_compile_fail;
 	const char *msg_load_fail;
@@ -71,6 +72,7 @@ static struct {
 } bpf_testcase_table[] = {
 	{
 		.prog_id	  = LLVM_TESTCASE_BASE,
+		.desc		  = "Basic BPF filtering",
 		.name		  = "[basic_bpf_test]",
 		.msg_compile_fail = "fix 'perf test LLVM' first",
 		.msg_load_fail	  = "load bpf object failed",
@@ -79,6 +81,7 @@ static struct {
 	},
 	{
 		.prog_id	  = LLVM_TESTCASE_BASE,
+		.desc		  = "BPF pinning",
 		.name		  = "[bpf_pinning]",
 		.msg_compile_fail = "fix kbuild first",
 		.msg_load_fail	  = "check your vmlinux setting?",
@@ -89,6 +92,7 @@ static struct {
 #ifdef HAVE_BPF_PROLOGUE
 	{
 		.prog_id	  = LLVM_TESTCASE_BPF_PROLOGUE,
+		.desc		  = "BPF prologue generation",
 		.name		  = "[bpf_prologue_test]",
 		.msg_compile_fail = "fix kbuild first",
 		.msg_load_fail	  = "check your vmlinux setting?",
@@ -119,13 +123,12 @@ static int do_test(struct bpf_object *obj, int (*func)(void),
 	struct parse_events_state parse_state;
 	struct parse_events_error parse_error;
 
-	parse_events_error__init(&parse_error);
+	bzero(&parse_error, sizeof(parse_error));
 	bzero(&parse_state, sizeof(parse_state));
 	parse_state.error = &parse_error;
 	INIT_LIST_HEAD(&parse_state.list);
 
 	err = parse_events_load_bpf_obj(&parse_state, &parse_state.list, obj, NULL);
-	parse_events_error__exit(&parse_error);
 	if (err || list_empty(&parse_state.list)) {
 		pr_debug("Failed to add events selected by BPF\n");
 		return TEST_FAIL;
@@ -222,11 +225,11 @@ static int __test__bpf(int idx)
 
 	ret = test_llvm__fetch_bpf_obj(&obj_buf, &obj_buf_sz,
 				       bpf_testcase_table[idx].prog_id,
-				       false, NULL);
+				       true, NULL);
 	if (ret != TEST_OK || !obj_buf || !obj_buf_sz) {
 		pr_debug("Unable to get BPF object, %s\n",
 			 bpf_testcase_table[idx].msg_compile_fail);
-		if ((idx == 0) || (ret == TEST_SKIP))
+		if (idx == 0)
 			return TEST_SKIP;
 		else
 			return TEST_FAIL;
@@ -279,10 +282,22 @@ out:
 	return ret;
 }
 
+int test__bpf_subtest_get_nr(void)
+{
+	return (int)ARRAY_SIZE(bpf_testcase_table);
+}
+
+const char *test__bpf_subtest_get_desc(int i)
+{
+	if (i < 0 || i >= (int)ARRAY_SIZE(bpf_testcase_table))
+		return NULL;
+	return bpf_testcase_table[i].desc;
+}
+
 static int check_env(void)
 {
-	LIBBPF_OPTS(bpf_prog_load_opts, opts);
 	int err;
+	unsigned int kver_int;
 	char license[] = "GPL";
 
 	struct bpf_insn insns[] = {
@@ -290,13 +305,15 @@ static int check_env(void)
 		BPF_EXIT_INSN(),
 	};
 
-	err = fetch_kernel_version(&opts.kern_version, NULL, 0);
+	err = fetch_kernel_version(&kver_int, NULL, 0);
 	if (err) {
 		pr_debug("Unable to get kernel version\n");
 		return err;
 	}
-	err = bpf_prog_load(BPF_PROG_TYPE_KPROBE, NULL, license, insns,
-			    ARRAY_SIZE(insns), &opts);
+
+	err = bpf_load_program(BPF_PROG_TYPE_KPROBE, insns,
+			       sizeof(insns) / sizeof(insns[0]),
+			       license, kver_int, NULL, 0);
 	if (err < 0) {
 		pr_err("Missing basic BPF support, skip this test: %s\n",
 		       strerror(errno));
@@ -307,7 +324,7 @@ static int check_env(void)
 	return 0;
 }
 
-static int test__bpf(int i)
+int test__bpf(struct test *test __maybe_unused, int i)
 {
 	int err;
 
@@ -325,62 +342,21 @@ static int test__bpf(int i)
 	err = __test__bpf(i);
 	return err;
 }
-#endif
 
-static int test__basic_bpf_test(struct test_suite *test __maybe_unused,
-				int subtest __maybe_unused)
-{
-#ifdef HAVE_LIBBPF_SUPPORT
-	return test__bpf(0);
 #else
-	pr_debug("Skip BPF test because BPF support is not compiled\n");
-	return TEST_SKIP;
-#endif
+int test__bpf_subtest_get_nr(void)
+{
+	return 0;
 }
 
-static int test__bpf_pinning(struct test_suite *test __maybe_unused,
-			     int subtest __maybe_unused)
+const char *test__bpf_subtest_get_desc(int i __maybe_unused)
 {
-#ifdef HAVE_LIBBPF_SUPPORT
-	return test__bpf(1);
-#else
-	pr_debug("Skip BPF test because BPF support is not compiled\n");
-	return TEST_SKIP;
-#endif
+	return NULL;
 }
 
-static int test__bpf_prologue_test(struct test_suite *test __maybe_unused,
-				   int subtest __maybe_unused)
+int test__bpf(struct test *test __maybe_unused, int i __maybe_unused)
 {
-#if defined(HAVE_LIBBPF_SUPPORT) && defined(HAVE_BPF_PROLOGUE)
-	return test__bpf(2);
-#else
 	pr_debug("Skip BPF test because BPF support is not compiled\n");
 	return TEST_SKIP;
-#endif
 }
-
-
-static struct test_case bpf_tests[] = {
-#ifdef HAVE_LIBBPF_SUPPORT
-	TEST_CASE("Basic BPF filtering", basic_bpf_test),
-	TEST_CASE_REASON("BPF pinning", bpf_pinning,
-			"clang isn't installed or environment missing BPF support"),
-#ifdef HAVE_BPF_PROLOGUE
-	TEST_CASE_REASON("BPF prologue generation", bpf_prologue_test,
-			"clang isn't installed or environment missing BPF support"),
-#else
-	TEST_CASE_REASON("BPF prologue generation", bpf_prologue_test, "not compiled in"),
 #endif
-#else
-	TEST_CASE_REASON("Basic BPF filtering", basic_bpf_test, "not compiled in"),
-	TEST_CASE_REASON("BPF pinning", bpf_pinning, "not compiled in"),
-	TEST_CASE_REASON("BPF prologue generation", bpf_prologue_test, "not compiled in"),
-#endif
-	{ .name = NULL, }
-};
-
-struct test_suite suite__bpf = {
-	.desc = "BPF filter",
-	.test_cases = bpf_tests,
-};

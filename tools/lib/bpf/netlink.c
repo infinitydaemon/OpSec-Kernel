@@ -27,14 +27,6 @@ typedef int (*libbpf_dump_nlmsg_t)(void *cookie, void *msg, struct nlattr **tb);
 typedef int (*__dump_nlmsg_t)(struct nlmsghdr *nlmsg, libbpf_dump_nlmsg_t,
 			      void *cookie);
 
-struct xdp_link_info {
-	__u32 prog_id;
-	__u32 drv_prog_id;
-	__u32 hw_prog_id;
-	__u32 skb_prog_id;
-	__u8 attach_mode;
-};
-
 struct xdp_id_md {
 	int ifindex;
 	__u32 flags;
@@ -274,26 +266,29 @@ static int __bpf_set_link_xdp_fd_replace(int ifindex, int fd, int old_fd,
 	return libbpf_netlink_send_recv(&req, NULL, NULL, NULL);
 }
 
-int bpf_xdp_attach(int ifindex, int prog_fd, __u32 flags, const struct bpf_xdp_attach_opts *opts)
+int bpf_set_link_xdp_fd_opts(int ifindex, int fd, __u32 flags,
+			     const struct bpf_xdp_set_link_opts *opts)
 {
-	int old_prog_fd, err;
+	int old_fd = -1, ret;
 
-	if (!OPTS_VALID(opts, bpf_xdp_attach_opts))
+	if (!OPTS_VALID(opts, bpf_xdp_set_link_opts))
 		return libbpf_err(-EINVAL);
 
-	old_prog_fd = OPTS_GET(opts, old_prog_fd, 0);
-	if (old_prog_fd)
+	if (OPTS_HAS(opts, old_fd)) {
+		old_fd = OPTS_GET(opts, old_fd, -1);
 		flags |= XDP_FLAGS_REPLACE;
-	else
-		old_prog_fd = -1;
+	}
 
-	err = __bpf_set_link_xdp_fd_replace(ifindex, prog_fd, old_prog_fd, flags);
-	return libbpf_err(err);
+	ret = __bpf_set_link_xdp_fd_replace(ifindex, fd, old_fd, flags);
+	return libbpf_err(ret);
 }
 
-int bpf_xdp_detach(int ifindex, __u32 flags, const struct bpf_xdp_attach_opts *opts)
+int bpf_set_link_xdp_fd(int ifindex, int fd, __u32 flags)
 {
-	return bpf_xdp_attach(ifindex, -1, flags, opts);
+	int ret;
+
+	ret = __bpf_set_link_xdp_fd_replace(ifindex, fd, 0, flags);
+	return libbpf_err(ret);
 }
 
 static int __dump_link_nlmsg(struct nlmsghdr *nlh,
@@ -357,70 +352,70 @@ static int get_xdp_info(void *cookie, void *msg, struct nlattr **tb)
 	return 0;
 }
 
-int bpf_xdp_query(int ifindex, int xdp_flags, struct bpf_xdp_query_opts *opts)
+int bpf_get_link_xdp_info(int ifindex, struct xdp_link_info *info,
+			  size_t info_size, __u32 flags)
 {
+	struct xdp_id_md xdp_id = {};
+	__u32 mask;
+	int ret;
 	struct libbpf_nla_req req = {
 		.nh.nlmsg_len      = NLMSG_LENGTH(sizeof(struct ifinfomsg)),
 		.nh.nlmsg_type     = RTM_GETLINK,
 		.nh.nlmsg_flags    = NLM_F_DUMP | NLM_F_REQUEST,
 		.ifinfo.ifi_family = AF_PACKET,
 	};
-	struct xdp_id_md xdp_id = {};
-	int err;
 
-	if (!OPTS_VALID(opts, bpf_xdp_query_opts))
-		return libbpf_err(-EINVAL);
-
-	if (xdp_flags & ~XDP_FLAGS_MASK)
+	if (flags & ~XDP_FLAGS_MASK || !info_size)
 		return libbpf_err(-EINVAL);
 
 	/* Check whether the single {HW,DRV,SKB} mode is set */
-	xdp_flags &= XDP_FLAGS_SKB_MODE | XDP_FLAGS_DRV_MODE | XDP_FLAGS_HW_MODE;
-	if (xdp_flags & (xdp_flags - 1))
+	flags &= (XDP_FLAGS_SKB_MODE | XDP_FLAGS_DRV_MODE | XDP_FLAGS_HW_MODE);
+	mask = flags - 1;
+	if (flags && flags & mask)
 		return libbpf_err(-EINVAL);
 
 	xdp_id.ifindex = ifindex;
-	xdp_id.flags = xdp_flags;
+	xdp_id.flags = flags;
 
-	err = libbpf_netlink_send_recv(&req, __dump_link_nlmsg,
+	ret = libbpf_netlink_send_recv(&req, __dump_link_nlmsg,
 				       get_xdp_info, &xdp_id);
-	if (err)
-		return libbpf_err(err);
+	if (!ret) {
+		size_t sz = min(info_size, sizeof(xdp_id.info));
 
-	OPTS_SET(opts, prog_id, xdp_id.info.prog_id);
-	OPTS_SET(opts, drv_prog_id, xdp_id.info.drv_prog_id);
-	OPTS_SET(opts, hw_prog_id, xdp_id.info.hw_prog_id);
-	OPTS_SET(opts, skb_prog_id, xdp_id.info.skb_prog_id);
-	OPTS_SET(opts, attach_mode, xdp_id.info.attach_mode);
+		memcpy(info, &xdp_id.info, sz);
+		memset((void *) info + sz, 0, info_size - sz);
+	}
 
-	return 0;
+	return libbpf_err(ret);
 }
 
-int bpf_xdp_query_id(int ifindex, int flags, __u32 *prog_id)
+static __u32 get_xdp_id(struct xdp_link_info *info, __u32 flags)
 {
-	LIBBPF_OPTS(bpf_xdp_query_opts, opts);
-	int ret;
-
-	ret = bpf_xdp_query(ifindex, flags, &opts);
-	if (ret)
-		return libbpf_err(ret);
-
 	flags &= XDP_FLAGS_MODES;
 
-	if (opts.attach_mode != XDP_ATTACHED_MULTI && !flags)
-		*prog_id = opts.prog_id;
-	else if (flags & XDP_FLAGS_DRV_MODE)
-		*prog_id = opts.drv_prog_id;
-	else if (flags & XDP_FLAGS_HW_MODE)
-		*prog_id = opts.hw_prog_id;
-	else if (flags & XDP_FLAGS_SKB_MODE)
-		*prog_id = opts.skb_prog_id;
-	else
-		*prog_id = 0;
+	if (info->attach_mode != XDP_ATTACHED_MULTI && !flags)
+		return info->prog_id;
+	if (flags & XDP_FLAGS_DRV_MODE)
+		return info->drv_prog_id;
+	if (flags & XDP_FLAGS_HW_MODE)
+		return info->hw_prog_id;
+	if (flags & XDP_FLAGS_SKB_MODE)
+		return info->skb_prog_id;
 
 	return 0;
 }
 
+int bpf_get_link_xdp_id(int ifindex, __u32 *prog_id, __u32 flags)
+{
+	struct xdp_link_info info;
+	int ret;
+
+	ret = bpf_get_link_xdp_info(ifindex, &info, sizeof(info), flags);
+	if (!ret)
+		*prog_id = get_xdp_id(&info, flags);
+
+	return libbpf_err(ret);
+}
 
 typedef int (*qdisc_config_t)(struct libbpf_nla_req *req);
 
@@ -587,12 +582,11 @@ static int get_tc_info(struct nlmsghdr *nh, libbpf_dump_nlmsg_t fn,
 
 static int tc_add_fd_and_name(struct libbpf_nla_req *req, int fd)
 {
-	struct bpf_prog_info info;
+	struct bpf_prog_info info = {};
 	__u32 info_len = sizeof(info);
 	char name[256];
 	int len, ret;
 
-	memset(&info, 0, info_len);
 	ret = bpf_obj_get_info_by_fd(fd, &info, &info_len);
 	if (ret < 0)
 		return ret;

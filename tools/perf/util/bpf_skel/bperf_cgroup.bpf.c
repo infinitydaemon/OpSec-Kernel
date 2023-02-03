@@ -43,39 +43,11 @@ struct {
 	__uint(value_size, sizeof(struct bpf_perf_event_value));
 } cgrp_readings SEC(".maps");
 
-/* new kernel cgroup definition */
-struct cgroup___new {
-	int level;
-	struct cgroup *ancestors[];
-} __attribute__((preserve_access_index));
-
-/* old kernel cgroup definition */
-struct cgroup___old {
-	int level;
-	u64 ancestor_ids[];
-} __attribute__((preserve_access_index));
-
 const volatile __u32 num_events = 1;
 const volatile __u32 num_cpus = 1;
 
 int enabled = 0;
 int use_cgroup_v2 = 0;
-int perf_subsys_id = -1;
-
-static inline __u64 get_cgroup_v1_ancestor_id(struct cgroup *cgrp, int level)
-{
-	/* recast pointer to capture new type for compiler */
-	struct cgroup___new *cgrp_new = (void *)cgrp;
-
-	if (bpf_core_field_exists(cgrp_new->ancestors)) {
-		return BPF_CORE_READ(cgrp_new, ancestors[level], kn, id);
-	} else {
-		/* recast pointer to capture old type for compiler */
-		struct cgroup___old *cgrp_old = (void *)cgrp;
-
-		return BPF_CORE_READ(cgrp_old, ancestor_ids[level]);
-	}
-}
 
 static inline int get_cgroup_v1_idx(__u32 *cgrps, int size)
 {
@@ -86,15 +58,7 @@ static inline int get_cgroup_v1_idx(__u32 *cgrps, int size)
 	int level;
 	int cnt;
 
-	if (perf_subsys_id == -1) {
-#if __has_builtin(__builtin_preserve_enum_value)
-		perf_subsys_id = bpf_core_enum_value(enum cgroup_subsys_id,
-						     perf_event_cgrp_id);
-#else
-		perf_subsys_id = perf_event_cgrp_id;
-#endif
-	}
-	cgrp = BPF_CORE_READ(p, cgroups, subsys[perf_subsys_id], cgroup);
+	cgrp = BPF_CORE_READ(p, cgroups, subsys[perf_event_cgrp_id], cgroup);
 	level = BPF_CORE_READ(cgrp, level);
 
 	for (cnt = 0; i < MAX_LEVELS; i++) {
@@ -104,7 +68,7 @@ static inline int get_cgroup_v1_idx(__u32 *cgrps, int size)
 			break;
 
 		// convert cgroup-id to a map index
-		cgrp_id = get_cgroup_v1_ancestor_id(cgrp, i);
+		cgrp_id = BPF_CORE_READ(cgrp, ancestor_ids[i]);
 		elem = bpf_map_lookup_elem(&cgrp_idx, &cgrp_id);
 		if (!elem)
 			continue;

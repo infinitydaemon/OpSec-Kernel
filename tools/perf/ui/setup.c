@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
+#include <pthread.h>
 #include <dlfcn.h>
 #include <unistd.h>
 
@@ -7,7 +8,7 @@
 #include "../util/hist.h"
 #include "ui.h"
 
-struct mutex ui__lock;
+pthread_mutex_t ui__lock = PTHREAD_MUTEX_INITIALIZER;
 void *perf_gtk_handle;
 int use_browser = -1;
 
@@ -75,7 +76,6 @@ int stdio__config_color(const struct option *opt __maybe_unused,
 
 void setup_browser(bool fallback_to_pager)
 {
-	mutex_init(&ui__lock);
 	if (use_browser < 2 && (!isatty(1) || dump_trace))
 		use_browser = 0;
 
@@ -118,5 +118,4 @@ void exit_browser(bool wait_for_ok)
 	default:
 		break;
 	}
-	mutex_destroy(&ui__lock);
 }

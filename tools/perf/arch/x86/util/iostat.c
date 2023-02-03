@@ -316,7 +316,7 @@ static int iostat_event_group(struct evlist *evl,
 		sprintf(iostat_cmd, iostat_cmd_template,
 			list->rps[idx]->pmu_idx, list->rps[idx]->pmu_idx,
 			list->rps[idx]->pmu_idx, list->rps[idx]->pmu_idx);
-		ret = parse_event(evl, iostat_cmd);
+		ret = parse_events(evl, iostat_cmd, NULL);
 		if (ret)
 			goto err;
 	}
@@ -449,7 +449,7 @@ void iostat_print_metric(struct perf_stat_config *config, struct evsel *evsel,
 
 void iostat_print_counters(struct evlist *evlist,
 			   struct perf_stat_config *config, struct timespec *ts,
-			   char *prefix, iostat_print_counter_t print_cnt_cb, void *arg)
+			   char *prefix, iostat_print_counter_t print_cnt_cb)
 {
 	void *perf_device = NULL;
 	struct evsel *counter = evlist__first(evlist);
@@ -464,7 +464,7 @@ void iostat_print_counters(struct evlist *evlist,
 			iostat_prefix(evlist, config, prefix, ts);
 			fprintf(config->output, "\n%s", prefix);
 		}
-		print_cnt_cb(config, counter, arg);
+		print_cnt_cb(config, counter, prefix);
 	}
 	fputc('\n', config->output);
 }

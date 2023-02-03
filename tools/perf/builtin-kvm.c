@@ -24,7 +24,6 @@
 #include "util/ordered-events.h"
 #include "util/kvm-stat.h"
 #include "ui/ui.h"
-#include "util/string2.h"
 
 #include <sys/prctl.h>
 #ifdef HAVE_TIMERFD_SUPPORT
@@ -63,7 +62,7 @@ static const char *get_filename_for_perf_kvm(void)
 	return filename;
 }
 
-#if defined(HAVE_KVM_STAT_SUPPORT) && defined(HAVE_LIBTRACEEVENT)
+#ifdef HAVE_KVM_STAT_SUPPORT
 
 void exit_event_get_key(struct evsel *evsel,
 			struct perf_sample *sample,
@@ -654,7 +653,7 @@ static void print_result(struct perf_kvm_stat *kvm)
 		pr_info("\nLost events: %" PRIu64 "\n\n", kvm->lost_events);
 }
 
-#if defined(HAVE_TIMERFD_SUPPORT) && defined(HAVE_LIBTRACEEVENT)
+#ifdef HAVE_TIMERFD_SUPPORT
 static int process_lost_event(struct perf_tool *tool,
 			      union perf_event *event __maybe_unused,
 			      struct perf_sample *sample __maybe_unused,
@@ -742,7 +741,7 @@ static bool verify_vcpu(int vcpu)
 	return true;
 }
 
-#if defined(HAVE_TIMERFD_SUPPORT) && defined(HAVE_LIBTRACEEVENT)
+#ifdef HAVE_TIMERFD_SUPPORT
 /* keeping the max events to a modest level to keep
  * the processing of samples per mmap smooth.
  */
@@ -772,7 +771,7 @@ static s64 perf_kvm__mmap_read_idx(struct perf_kvm_stat *kvm, int idx,
 			return -1;
 		}
 
-		err = perf_session__queue_event(kvm->session, event, timestamp, 0, NULL);
+		err = perf_session__queue_event(kvm->session, event, timestamp, 0);
 		/*
 		 * FIXME: Here we can't consume the event, as perf_session__queue_event will
 		 *        point to it, and it'll get possibly overwritten by the kernel.
@@ -1290,7 +1289,7 @@ kvm_events_report(struct perf_kvm_stat *kvm, int argc, const char **argv)
 	return kvm_events_report_vcpu(kvm);
 }
 
-#if defined(HAVE_TIMERFD_SUPPORT) && defined(HAVE_LIBTRACEEVENT)
+#ifdef HAVE_TIMERFD_SUPPORT
 static struct evlist *kvm_live_event_list(void)
 {
 	struct evlist *evlist;
@@ -1457,7 +1456,7 @@ static int kvm_events_live(struct perf_kvm_stat *kvm,
 	perf_session__set_id_hdr_size(kvm->session);
 	ordered_events__set_copy_on_queue(&kvm->session->ordered_events, true);
 	machine__synthesize_threads(&kvm->session->machines.host, &kvm->opts.target,
-				    kvm->evlist->core.threads, true, false, 1);
+				    kvm->evlist->core.threads, false, 1);
 	err = kvm_live_open_events(kvm);
 	if (err)
 		goto out;
@@ -1501,13 +1500,13 @@ static int kvm_cmd_stat(const char *file_name, int argc, const char **argv)
 		goto perf_stat;
 	}
 
-	if (strlen(argv[1]) > 2 && strstarts("record", argv[1]))
+	if (!strncmp(argv[1], "rec", 3))
 		return kvm_events_record(&kvm, argc - 1, argv + 1);
 
-	if (strlen(argv[1]) > 2 && strstarts("report", argv[1]))
+	if (!strncmp(argv[1], "rep", 3))
 		return kvm_events_report(&kvm, argc - 1 , argv + 1);
 
-#if defined(HAVE_TIMERFD_SUPPORT) && defined(HAVE_LIBTRACEEVENT)
+#ifdef HAVE_TIMERFD_SUPPORT
 	if (!strncmp(argv[1], "live", 4))
 		return kvm_events_live(&kvm, argc - 1 , argv + 1);
 #endif
@@ -1603,8 +1602,6 @@ int cmd_kvm(int argc, const char **argv)
 			   "file", "file saving guest os /proc/kallsyms"),
 		OPT_STRING(0, "guestmodules", &symbol_conf.default_guest_modules,
 			   "file", "file saving guest os /proc/modules"),
-		OPT_BOOLEAN(0, "guest-code", &symbol_conf.guest_code,
-			    "Guest code can be found in hypervisor process"),
 		OPT_INCR('v', "verbose", &verbose,
 			    "be more verbose (show counter open errors, etc)"),
 		OPT_END()
@@ -1634,18 +1631,18 @@ int cmd_kvm(int argc, const char **argv)
 		}
 	}
 
-	if (strlen(argv[0]) > 2 && strstarts("record", argv[0]))
+	if (!strncmp(argv[0], "rec", 3))
 		return __cmd_record(file_name, argc, argv);
-	else if (strlen(argv[0]) > 2 && strstarts("report", argv[0]))
+	else if (!strncmp(argv[0], "rep", 3))
 		return __cmd_report(file_name, argc, argv);
-	else if (strlen(argv[0]) > 2 && strstarts("diff", argv[0]))
+	else if (!strncmp(argv[0], "diff", 4))
 		return cmd_diff(argc, argv);
-	else if (!strcmp(argv[0], "top"))
+	else if (!strncmp(argv[0], "top", 3))
 		return cmd_top(argc, argv);
-	else if (strlen(argv[0]) > 2 && strstarts("buildid-list", argv[0]))
+	else if (!strncmp(argv[0], "buildid-list", 12))
 		return __cmd_buildid_list(file_name, argc, argv);
-#if defined(HAVE_KVM_STAT_SUPPORT) && defined(HAVE_LIBTRACEEVENT)
-	else if (strlen(argv[0]) > 2 && strstarts("stat", argv[0]))
+#ifdef HAVE_KVM_STAT_SUPPORT
+	else if (!strncmp(argv[0], "stat", 4))
 		return kvm_cmd_stat(file_name, argc, argv);
 #endif
 	else

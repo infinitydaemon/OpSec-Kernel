@@ -46,9 +46,9 @@ static int bperf_load_program(struct evlist *evlist)
 	struct bpf_link *link;
 	struct evsel *evsel;
 	struct cgroup *cgrp, *leader_cgrp;
-	int i, j;
-	struct perf_cpu cpu;
-	int total_cpus = cpu__max_cpu().cpu;
+	__u32 i, cpu;
+	__u32 nr_cpus = evlist->core.all_cpus->nr;
+	int total_cpus = cpu__max_cpu();
 	int map_size, map_fd;
 	int prog_fd, err;
 
@@ -65,14 +65,14 @@ static int bperf_load_program(struct evlist *evlist)
 
 	/* we need one copy of events per cpu for reading */
 	map_size = total_cpus * evlist->core.nr_entries / nr_cgroups;
-	bpf_map__set_max_entries(skel->maps.events, map_size);
-	bpf_map__set_max_entries(skel->maps.cgrp_idx, nr_cgroups);
+	bpf_map__resize(skel->maps.events, map_size);
+	bpf_map__resize(skel->maps.cgrp_idx, nr_cgroups);
 	/* previous result is saved in a per-cpu array */
 	map_size = evlist->core.nr_entries / nr_cgroups;
-	bpf_map__set_max_entries(skel->maps.prev_readings, map_size);
+	bpf_map__resize(skel->maps.prev_readings, map_size);
 	/* cgroup result needs all events (per-cpu) */
 	map_size = evlist->core.nr_entries;
-	bpf_map__set_max_entries(skel->maps.cgrp_readings, map_size);
+	bpf_map__resize(skel->maps.cgrp_readings, map_size);
 
 	set_max_rlimit();
 
@@ -93,7 +93,7 @@ static int bperf_load_program(struct evlist *evlist)
 		goto out;
 	}
 
-	perf_cpu_map__for_each_cpu(cpu, i, evlist->core.all_cpus) {
+	for (i = 0; i < nr_cpus; i++) {
 		link = bpf_program__attach_perf_event(skel->progs.on_cgrp_switch,
 						      FD(cgrp_switch, i));
 		if (IS_ERR(link)) {
@@ -115,20 +115,29 @@ static int bperf_load_program(struct evlist *evlist)
 			evsel->cgrp = NULL;
 
 			/* open single copy of the events w/o cgroup */
-			err = evsel__open_per_cpu(evsel, evsel->core.cpus, -1);
-			if (err == 0)
-				evsel->supported = true;
+			err = evsel__open_per_cpu(evsel, evlist->core.all_cpus, -1);
+			if (err) {
+				pr_err("Failed to open first cgroup events\n");
+				goto out;
+			}
 
 			map_fd = bpf_map__fd(skel->maps.events);
-			perf_cpu_map__for_each_cpu(cpu, j, evsel->core.cpus) {
-				int fd = FD(evsel, j);
-				__u32 idx = evsel->core.idx * total_cpus + cpu.cpu;
+			for (cpu = 0; cpu < nr_cpus; cpu++) {
+				int fd = FD(evsel, cpu);
+				__u32 idx = evsel->core.idx * total_cpus +
+					evlist->core.all_cpus->map[cpu];
 
-				bpf_map_update_elem(map_fd, &idx, &fd, BPF_ANY);
+				err = bpf_map_update_elem(map_fd, &idx, &fd,
+							  BPF_ANY);
+				if (err < 0) {
+					pr_err("Failed to update perf_event fd\n");
+					goto out;
+				}
 			}
 
 			evsel->cgrp = leader_cgrp;
 		}
+		evsel->supported = true;
 
 		if (evsel->cgrp == cgrp)
 			continue;
@@ -198,12 +207,14 @@ static int bperf_cgrp__install_pe(struct evsel *evsel __maybe_unused,
  */
 static int bperf_cgrp__sync_counters(struct evlist *evlist)
 {
-	struct perf_cpu cpu;
-	int idx;
+	int i, cpu;
+	int nr_cpus = evlist->core.all_cpus->nr;
 	int prog_fd = bpf_program__fd(skel->progs.trigger_read);
 
-	perf_cpu_map__for_each_cpu(cpu, idx, evlist->core.all_cpus)
-		bperf_trigger_reading(prog_fd, cpu.cpu);
+	for (i = 0; i < nr_cpus; i++) {
+		cpu = evlist->core.all_cpus->map[i];
+		bperf_trigger_reading(prog_fd, cpu);
+	}
 
 	return 0;
 }
@@ -233,10 +244,12 @@ static int bperf_cgrp__disable(struct evsel *evsel)
 static int bperf_cgrp__read(struct evsel *evsel)
 {
 	struct evlist *evlist = evsel->evlist;
-	int total_cpus = cpu__max_cpu().cpu;
+	int i, cpu, nr_cpus = evlist->core.all_cpus->nr;
+	int total_cpus = cpu__max_cpu();
 	struct perf_counts_values *counts;
 	struct bpf_perf_event_value *values;
 	int reading_map_fd, err = 0;
+	__u32 idx;
 
 	if (evsel->core.idx)
 		return 0;
@@ -250,22 +263,21 @@ static int bperf_cgrp__read(struct evsel *evsel)
 	reading_map_fd = bpf_map__fd(skel->maps.cgrp_readings);
 
 	evlist__for_each_entry(evlist, evsel) {
-		__u32 idx = evsel->core.idx;
-		int i;
-		struct perf_cpu cpu;
-
+		idx = evsel->core.idx;
 		err = bpf_map_lookup_elem(reading_map_fd, &idx, values);
 		if (err) {
-			pr_err("bpf map lookup failed: idx=%u, event=%s, cgrp=%s\n",
+			pr_err("bpf map lookup falied: idx=%u, event=%s, cgrp=%s\n",
 			       idx, evsel__name(evsel), evsel->cgrp->name);
 			goto out;
 		}
 
-		perf_cpu_map__for_each_cpu(cpu, i, evsel->core.cpus) {
+		for (i = 0; i < nr_cpus; i++) {
+			cpu = evlist->core.all_cpus->map[i];
+
 			counts = perf_counts(evsel->counts, i, 0);
-			counts->val = values[cpu.cpu].counter;
-			counts->ena = values[cpu.cpu].enabled;
-			counts->run = values[cpu.cpu].running;
+			counts->val = values[cpu].counter;
+			counts->ena = values[cpu].enabled;
+			counts->run = values[cpu].running;
 		}
 	}
 

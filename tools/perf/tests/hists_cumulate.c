@@ -689,7 +689,7 @@ out:
 	return err;
 }
 
-static int test__hists_cumulate(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+int test__hists_cumulate(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	int err = TEST_FAIL;
 	struct machines machines;
@@ -706,7 +706,7 @@ static int test__hists_cumulate(struct test_suite *test __maybe_unused, int subt
 
 	TEST_ASSERT_VAL("No memory", evlist);
 
-	err = parse_event(evlist, "cpu-clock");
+	err = parse_events(evlist, "cpu-clock", NULL);
 	if (err)
 		goto out;
 	err = TEST_FAIL;
@@ -736,5 +736,3 @@ out:
 
 	return err;
 }
-
-DEFINE_SUITE("Cumulate child hist entries", hists_cumulate);

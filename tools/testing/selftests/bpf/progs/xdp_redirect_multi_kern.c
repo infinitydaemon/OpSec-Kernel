@@ -70,7 +70,7 @@ int xdp_redirect_map_all_prog(struct xdp_md *ctx)
 				BPF_F_BROADCAST | BPF_F_EXCLUDE_INGRESS);
 }
 
-SEC("xdp/devmap")
+SEC("xdp_devmap/map_prog")
 int xdp_devmap_prog(struct xdp_md *ctx)
 {
 	void *data_end = (void *)(long)ctx->data_end;

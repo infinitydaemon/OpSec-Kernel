@@ -99,7 +99,14 @@ void evlist__config(struct evlist *evlist, struct record_opts *opts, struct call
 	bool use_comm_exec;
 	bool sample_id = opts->sample_id;
 
-	if (perf_cpu_map__cpu(evlist->core.user_requested_cpus, 0).cpu < 0)
+	/*
+	 * Set the evsel leader links before we configure attributes,
+	 * since some might depend on this info.
+	 */
+	if (opts->group)
+		evlist__set_leader(evlist);
+
+	if (evlist->core.cpus->map[0] < 0)
 		opts->no_inherit = true;
 
 	use_comm_exec = perf_can_comm_exec();
@@ -114,7 +121,7 @@ void evlist__config(struct evlist *evlist, struct record_opts *opts, struct call
 	evlist__for_each_entry(evlist, evsel)
 		evsel__config_leader_sampling(evsel, evlist);
 
-	if (opts->full_auxtrace || opts->sample_identifier) {
+	if (opts->full_auxtrace) {
 		/*
 		 * Need to be able to synthesize and parse selected events with
 		 * arbitrary sample types, which requires always being able to
@@ -222,8 +229,7 @@ bool evlist__can_select_event(struct evlist *evlist, const char *str)
 {
 	struct evlist *temp_evlist;
 	struct evsel *evsel;
-	int err, fd;
-	struct perf_cpu cpu = { .cpu = 0 };
+	int err, fd, cpu;
 	bool ret = false;
 	pid_t pid = -1;
 
@@ -231,25 +237,23 @@ bool evlist__can_select_event(struct evlist *evlist, const char *str)
 	if (!temp_evlist)
 		return false;
 
-	err = parse_event(temp_evlist, str);
+	err = parse_events(temp_evlist, str, NULL);
 	if (err)
 		goto out_delete;
 
 	evsel = evlist__last(temp_evlist);
 
-	if (!evlist || perf_cpu_map__empty(evlist->core.user_requested_cpus)) {
+	if (!evlist || perf_cpu_map__empty(evlist->core.cpus)) {
 		struct perf_cpu_map *cpus = perf_cpu_map__new(NULL);
 
-		if (cpus)
-			cpu =  perf_cpu_map__cpu(cpus, 0);
-
+		cpu =  cpus ? cpus->map[0] : 0;
 		perf_cpu_map__put(cpus);
 	} else {
-		cpu = perf_cpu_map__cpu(evlist->core.user_requested_cpus, 0);
+		cpu = evlist->core.cpus->map[0];
 	}
 
 	while (1) {
-		fd = sys_perf_event_open(&evsel->core.attr, pid, cpu.cpu, -1,
+		fd = sys_perf_event_open(&evsel->core.attr, pid, cpu, -1,
 					 perf_event_open_cloexec_flag());
 		if (fd < 0) {
 			if (pid == -1 && errno == EACCES) {

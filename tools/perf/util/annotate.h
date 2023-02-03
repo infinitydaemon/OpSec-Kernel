@@ -8,9 +8,9 @@
 #include <linux/types.h>
 #include <linux/list.h>
 #include <linux/rbtree.h>
+#include <pthread.h>
 #include <asm/bug.h>
 #include "symbol_conf.h"
-#include "mutex.h"
 #include "spark.h"
 
 struct hist_browser_timer;
@@ -88,8 +88,7 @@ struct annotation_options {
 	     show_nr_jumps,
 	     show_minmax_cycle,
 	     show_asm_raw,
-	     annotate_src,
-	     full_addr;
+	     annotate_src;
 	u8   offset_level;
 	int  min_pcnt;
 	int  max_lines;
@@ -274,7 +273,7 @@ struct annotated_source {
 };
 
 struct annotation {
-	struct mutex lock;
+	pthread_mutex_t		lock;
 	u64			max_coverage;
 	u64			start;
 	u64			hit_cycles;
@@ -300,9 +299,6 @@ struct annotation {
 	struct annotated_source *src;
 };
 
-void annotation__init(struct annotation *notes);
-void annotation__exit(struct annotation *notes);
-
 static inline int annotation__cycles_width(struct annotation *notes)
 {
 	if (notes->have_cycles && notes->options->show_minmax_cycle)
@@ -326,7 +322,6 @@ void annotation__compute_ipc(struct annotation *notes, size_t size);
 void annotation__mark_jump_targets(struct annotation *notes, struct symbol *sym);
 void annotation__update_column_widths(struct annotation *notes);
 void annotation__init_column_widths(struct annotation *notes, struct symbol *sym);
-void annotation__toggle_full_addr(struct annotation *notes, struct map_symbol *ms);
 
 static inline struct sym_hist *annotated_source__histogram(struct annotated_source *src, int idx)
 {

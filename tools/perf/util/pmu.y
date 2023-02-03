@@ -10,6 +10,8 @@
 #include <string.h>
 #include "pmu.h"
 
+extern int perf_pmu_lex (void);
+
 #define ABORT_ON(val) \
 do { \
         if (val) \

@@ -7,10 +7,11 @@ int _xdp_adjust_tail_grow(struct xdp_md *xdp)
 {
 	void *data_end = (void *)(long)xdp->data_end;
 	void *data = (void *)(long)xdp->data;
-	int data_len = bpf_xdp_get_buff_len(xdp);
+	unsigned int data_len;
 	int offset = 0;
 
 	/* Data length determine test case */
+	data_len = data_end - data;
 
 	if (data_len == 54) { /* sizeof(pkt_v4) */
 		offset = 4096; /* test too large offset */
@@ -19,12 +20,7 @@ int _xdp_adjust_tail_grow(struct xdp_md *xdp)
 	} else if (data_len == 64) {
 		offset = 128;
 	} else if (data_len == 128) {
-		/* Max tail grow 3520 */
-		offset = 4096 - 256 - 320 - data_len;
-	} else if (data_len == 9000) {
-		offset = 10;
-	} else if (data_len == 9001) {
-		offset = 4096;
+		offset = 4096 - 256 - 320 - data_len; /* Max tail grow 3520 */
 	} else {
 		return XDP_ABORTED; /* No matching test */
 	}

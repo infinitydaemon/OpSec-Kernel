@@ -1,5 +1,3 @@
-.. SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
-
 ================
 BPFTOOL
 ================
@@ -8,8 +6,6 @@ tool for inspection and simple manipulation of eBPF programs and maps
 -------------------------------------------------------------------------------
 
 :Manual section: 8
-
-.. include:: substitutions.rst
 
 SYNOPSIS
 ========
@@ -20,10 +16,10 @@ SYNOPSIS
 
 	**bpftool** **version**
 
-	*OBJECT* := { **map** | **program** | **link** | **cgroup** | **perf** | **net** | **feature** |
-	**btf** | **gen** | **struct_ops** | **iter** }
+	*OBJECT* := { **map** | **program** | **cgroup** | **perf** | **net** | **feature** }
 
-	*OPTIONS* := { { **-V** | **--version** } | |COMMON_OPTIONS| }
+	*OPTIONS* := { { **-V** | **--version** } |
+	{ **-j** | **--json** } [{ **-p** | **--pretty** }] | { **-d** | **--debug** } }
 
 	*MAP-COMMANDS* :=
 	{ **show** | **list** | **create** | **dump** | **update** | **lookup** | **getnext** |
@@ -32,8 +28,6 @@ SYNOPSIS
 	*PROG-COMMANDS* := { **show** | **list** | **dump jited** | **dump xlated** | **pin** |
 	**load** | **attach** | **detach** | **help** }
 
-	*LINK-COMMANDS* := { **show** | **list** | **pin** | **detach** | **help** }
-
 	*CGROUP-COMMANDS* := { **show** | **list** | **attach** | **detach** | **help** }
 
 	*PERF-COMMANDS* := { **show** | **list** | **help** }
@@ -41,14 +35,6 @@ SYNOPSIS
 	*NET-COMMANDS* := { **show** | **list** | **help** }
 
 	*FEATURE-COMMANDS* := { **probe** | **help** }
-
-	*BTF-COMMANDS* := { **show** | **list** | **dump** | **help** }
-
-	*GEN-COMMANDS* := { **object** | **skeleton** | **min_core_btf** | **help** }
-
-	*STRUCT-OPS-COMMANDS* := { **show** | **list** | **dump** | **register** | **unregister** | **help** }
-
-	*ITER-COMMANDS* := { **pin** | **help** }
 
 DESCRIPTION
 ===========

@@ -27,7 +27,6 @@ enum insn_type {
 	INSN_STD,
 	INSN_CLD,
 	INSN_TRAP,
-	INSN_ENDBR,
 	INSN_OTHER,
 };
 
@@ -69,11 +68,9 @@ struct stack_op {
 
 struct instruction;
 
-int arch_ftrace_match(char *name);
-
 void arch_initial_func_cfi_state(struct cfi_init_state *state);
 
-int arch_decode_instruction(struct objtool_file *file, const struct section *sec,
+int arch_decode_instruction(const struct elf *elf, const struct section *sec,
 			    unsigned long offset, unsigned int maxlen,
 			    unsigned int *len, enum insn_type *type,
 			    unsigned long *immediate,
@@ -94,7 +91,5 @@ bool arch_is_retpoline(struct symbol *sym);
 bool arch_is_rethunk(struct symbol *sym);
 
 int arch_rewrite_retpolines(struct objtool_file *file);
-
-bool arch_pc_relative_reloc(struct reloc *reloc);
 
 #endif /* _ARCH_H */

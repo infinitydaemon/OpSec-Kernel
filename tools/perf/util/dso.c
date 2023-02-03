@@ -14,7 +14,6 @@
 #ifdef HAVE_LIBBPF_SUPPORT
 #include <bpf/libbpf.h>
 #include "bpf-event.h"
-#include "bpf-utils.h"
 #endif
 #include "compress.h"
 #include "env.h"
@@ -501,7 +500,6 @@ static int __open_dso(struct dso *dso, struct machine *machine)
 	if (!name)
 		return -ENOMEM;
 
-	mutex_lock(&dso->lock);
 	if (machine)
 		root_dir = machine->root_dir;
 
@@ -509,19 +507,8 @@ static int __open_dso(struct dso *dso, struct machine *machine)
 					    root_dir, name, PATH_MAX))
 		goto out;
 
-	if (!is_regular_file(name)) {
-		char *new_name;
-
-		if (errno != ENOENT || dso->nsinfo == NULL)
-			goto out;
-
-		new_name = filename_with_chroot(dso->nsinfo->pid, name);
-		if (!new_name)
-			goto out;
-
-		free(name);
-		name = new_name;
-	}
+	if (!is_regular_file(name))
+		goto out;
 
 	if (dso__needs_decompress(dso)) {
 		char newpath[KMOD_DECOMP_LEN];
@@ -542,7 +529,6 @@ static int __open_dso(struct dso *dso, struct machine *machine)
 		unlink(name);
 
 out:
-	mutex_unlock(&dso->lock);
 	free(name);
 	return fd;
 }
@@ -561,11 +547,8 @@ static int open_dso(struct dso *dso, struct machine *machine)
 	int fd;
 	struct nscookie nsc;
 
-	if (dso->binary_type != DSO_BINARY_TYPE__BUILD_ID_CACHE) {
-		mutex_lock(&dso->lock);
+	if (dso->binary_type != DSO_BINARY_TYPE__BUILD_ID_CACHE)
 		nsinfo__mountns_enter(dso->nsinfo, &nsc);
-		mutex_unlock(&dso->lock);
-	}
 	fd = __open_dso(dso, machine);
 	if (dso->binary_type != DSO_BINARY_TYPE__BUILD_ID_CACHE)
 		nsinfo__mountns_exit(&nsc);
@@ -800,7 +783,7 @@ dso_cache__free(struct dso *dso)
 	struct rb_root *root = &dso->data.cache;
 	struct rb_node *next = rb_first(root);
 
-	mutex_lock(&dso->lock);
+	pthread_mutex_lock(&dso->lock);
 	while (next) {
 		struct dso_cache *cache;
 
@@ -809,7 +792,7 @@ dso_cache__free(struct dso *dso)
 		rb_erase(&cache->rb_node, root);
 		free(cache);
 	}
-	mutex_unlock(&dso->lock);
+	pthread_mutex_unlock(&dso->lock);
 }
 
 static struct dso_cache *__dso_cache__find(struct dso *dso, u64 offset)
@@ -846,7 +829,7 @@ dso_cache__insert(struct dso *dso, struct dso_cache *new)
 	struct dso_cache *cache;
 	u64 offset = new->offset;
 
-	mutex_lock(&dso->lock);
+	pthread_mutex_lock(&dso->lock);
 	while (*p != NULL) {
 		u64 end;
 
@@ -867,7 +850,7 @@ dso_cache__insert(struct dso *dso, struct dso_cache *new)
 
 	cache = NULL;
 out:
-	mutex_unlock(&dso->lock);
+	pthread_mutex_unlock(&dso->lock);
 	return cache;
 }
 
@@ -1302,7 +1285,7 @@ struct dso *dso__new_id(const char *name, struct dso_id *id)
 		dso->root = NULL;
 		INIT_LIST_HEAD(&dso->node);
 		INIT_LIST_HEAD(&dso->data.open_entry);
-		mutex_init(&dso->lock);
+		pthread_mutex_init(&dso->lock, NULL);
 		refcount_set(&dso->refcnt, 1);
 	}
 
@@ -1341,7 +1324,7 @@ void dso__delete(struct dso *dso)
 	dso__free_a2l(dso);
 	zfree(&dso->symsrc_filename);
 	nsinfo__zput(dso->nsinfo);
-	mutex_destroy(&dso->lock);
+	pthread_mutex_destroy(&dso->lock);
 	free(dso);
 }
 

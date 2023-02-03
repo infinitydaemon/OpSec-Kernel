@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 
-#include <internal/cpumap.h>
 #include "../../../util/cpumap.h"
 #include "../../../util/pmu.h"
 
-const struct pmu_events_table *pmu_events_table__find(void)
+struct pmu_events_map *pmu_events_map__find(void)
 {
 	struct perf_pmu *pmu = NULL;
 
@@ -16,10 +15,10 @@ const struct pmu_events_table *pmu_events_table__find(void)
 		 * The cpumap should cover all CPUs. Otherwise, some CPUs may
 		 * not support some events or have different event IDs.
 		 */
-		if (pmu->cpus->nr != cpu__max_cpu().cpu)
+		if (pmu->cpus->nr != cpu__max_cpu())
 			return NULL;
 
-		return perf_pmu__find_table(pmu);
+		return perf_pmu__find_map(pmu);
 	}
 
 	return NULL;

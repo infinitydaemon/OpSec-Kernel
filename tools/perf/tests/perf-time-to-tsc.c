@@ -20,17 +20,6 @@
 #include "tsc.h"
 #include "mmap.h"
 #include "tests.h"
-#include "util/sample.h"
-
-/*
- * Except x86_64/i386 and Arm64, other archs don't support TSC in perf.  Just
- * enable the test for x86_64/i386 and Arm64 archs.
- */
-#if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
-#define TSC_IS_SUPPORTED 1
-#else
-#define TSC_IS_SUPPORTED 0
-#endif
 
 #define CHECK__(x) {				\
 	while ((x) < 0) {			\
@@ -46,26 +35,15 @@
 	}					\
 }
 
-static int test__tsc_is_supported(struct test_suite *test __maybe_unused,
-				  int subtest __maybe_unused)
-{
-	if (!TSC_IS_SUPPORTED) {
-		pr_debug("Test not supported on this architecture\n");
-		return TEST_SKIP;
-	}
-
-	return TEST_OK;
-}
-
 /**
  * test__perf_time_to_tsc - test converting perf time to TSC.
  *
  * This function implements a test that checks that the conversion of perf time
  * to and from TSC is consistent with the order of events.  If the test passes
  * %0 is returned, otherwise %-1 is returned.  If TSC conversion is not
- * supported then the test passes but " (not supported)" is printed.
+ * supported then then the test passes but " (not supported)" is printed.
  */
-static int test__perf_time_to_tsc(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+int test__perf_time_to_tsc(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	struct record_opts opts = {
 		.mmap_pages	     = UINT_MAX,
@@ -80,7 +58,7 @@ static int test__perf_time_to_tsc(struct test_suite *test __maybe_unused, int su
 	struct perf_cpu_map *cpus = NULL;
 	struct evlist *evlist = NULL;
 	struct evsel *evsel = NULL;
-	int err = TEST_FAIL, ret, i;
+	int err = -1, ret, i;
 	const char *comm1, *comm2;
 	struct perf_tsc_conversion tc;
 	struct perf_event_mmap_page *pc;
@@ -88,7 +66,6 @@ static int test__perf_time_to_tsc(struct test_suite *test __maybe_unused, int su
 	u64 test_tsc, comm1_tsc, comm2_tsc;
 	u64 test_time, comm1_time = 0, comm2_time = 0;
 	struct mmap *md;
-
 
 	threads = thread_map__new(-1, getpid(), UINT_MAX);
 	CHECK_NOT_NULL__(threads);
@@ -101,7 +78,7 @@ static int test__perf_time_to_tsc(struct test_suite *test __maybe_unused, int su
 
 	perf_evlist__set_maps(&evlist->core, cpus, threads);
 
-	CHECK__(parse_event(evlist, "cycles:u"));
+	CHECK__(parse_events(evlist, "cycles:u", NULL));
 
 	evlist__config(evlist, &opts, NULL);
 
@@ -112,14 +89,7 @@ static int test__perf_time_to_tsc(struct test_suite *test __maybe_unused, int su
 		evsel->core.attr.enable_on_exec = 0;
 	}
 
-	ret = evlist__open(evlist);
-	if (ret < 0) {
-		if (ret == -ENOENT)
-			err = TEST_SKIP;
-		else
-			pr_debug("evlist__open() failed\n");
-		goto out_err;
-	}
+	CHECK__(evlist__open(evlist));
 
 	CHECK__(evlist__mmap(evlist, UINT_MAX));
 
@@ -127,8 +97,8 @@ static int test__perf_time_to_tsc(struct test_suite *test __maybe_unused, int su
 	ret = perf_read_tsc_conversion(pc, &tc);
 	if (ret) {
 		if (ret == -EOPNOTSUPP) {
-			pr_debug("perf_read_tsc_conversion is not supported in current kernel\n");
-			err = TEST_SKIP;
+			fprintf(stderr, " (not supported)");
+			return 0;
 		}
 		goto out_err;
 	}
@@ -196,7 +166,7 @@ next_event:
 	    test_tsc >= comm2_tsc)
 		goto out_err;
 
-	err = TEST_OK;
+	err = 0;
 
 out_err:
 	evlist__delete(evlist);
@@ -205,15 +175,15 @@ out_err:
 	return err;
 }
 
-static struct test_case time_to_tsc_tests[] = {
-	TEST_CASE_REASON("TSC support", tsc_is_supported,
-			 "This architecture does not support"),
-	TEST_CASE_REASON("Perf time to TSC", perf_time_to_tsc,
-			 "perf_read_tsc_conversion is not supported"),
-	{ .name = NULL, }
-};
-
-struct test_suite suite__perf_time_to_tsc = {
-	.desc = "Convert perf time to TSC",
-	.test_cases = time_to_tsc_tests,
-};
+bool test__tsc_is_supported(void)
+{
+	/*
+	 * Except x86_64/i386 and Arm64, other archs don't support TSC in perf.
+	 * Just enable the test for x86_64/i386 and Arm64 archs.
+	 */
+#if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
+	return true;
+#else
+	return false;
+#endif
+}
