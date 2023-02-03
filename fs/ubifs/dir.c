@@ -68,14 +68,13 @@ static int inherit_flags(const struct inode *dir, umode_t mode)
  * @c: UBIFS file-system description object
  * @dir: parent directory inode
  * @mode: inode mode flags
- * @is_xattr: whether the inode is xattr inode
  *
  * This function finds an unused inode number, allocates new inode and
  * initializes it. Returns new inode in case of success and an error code in
  * case of failure.
  */
 struct inode *ubifs_new_inode(struct ubifs_info *c, struct inode *dir,
-			      umode_t mode, bool is_xattr)
+			      umode_t mode)
 {
 	int err;
 	struct inode *inode;
@@ -100,12 +99,10 @@ struct inode *ubifs_new_inode(struct ubifs_info *c, struct inode *dir,
 			 current_time(inode);
 	inode->i_mapping->nrpages = 0;
 
-	if (!is_xattr) {
-		err = fscrypt_prepare_new_inode(dir, inode, &encrypted);
-		if (err) {
-			ubifs_err(c, "fscrypt_prepare_new_inode failed: %i", err);
-			goto out_iput;
-		}
+	err = fscrypt_prepare_new_inode(dir, inode, &encrypted);
+	if (err) {
+		ubifs_err(c, "fscrypt_prepare_new_inode failed: %i", err);
+		goto out_iput;
 	}
 
 	switch (mode & S_IFMT) {
@@ -312,7 +309,7 @@ static int ubifs_create(struct user_namespace *mnt_userns, struct inode *dir,
 
 	sz_change = CALC_DENT_SIZE(fname_len(&nm));
 
-	inode = ubifs_new_inode(c, dir, mode, false);
+	inode = ubifs_new_inode(c, dir, mode);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
 		goto out_fname;
@@ -373,7 +370,7 @@ static struct inode *create_whiteout(struct inode *dir, struct dentry *dentry)
 	if (err)
 		return ERR_PTR(err);
 
-	inode = ubifs_new_inode(c, dir, mode, false);
+	inode = ubifs_new_inode(c, dir, mode);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
 		goto out_free;
@@ -427,9 +424,8 @@ static void unlock_2_inodes(struct inode *inode1, struct inode *inode2)
 }
 
 static int ubifs_tmpfile(struct user_namespace *mnt_userns, struct inode *dir,
-			 struct file *file, umode_t mode)
+			 struct dentry *dentry, umode_t mode)
 {
-	struct dentry *dentry = file->f_path.dentry;
 	struct inode *inode;
 	struct ubifs_info *c = dir->i_sb->s_fs_info;
 	struct ubifs_budget_req req = { .new_ino = 1, .new_dent = 1,
@@ -466,7 +462,7 @@ static int ubifs_tmpfile(struct user_namespace *mnt_userns, struct inode *dir,
 		return err;
 	}
 
-	inode = ubifs_new_inode(c, dir, mode, false);
+	inode = ubifs_new_inode(c, dir, mode);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
 		goto out_budg;
@@ -479,7 +475,7 @@ static int ubifs_tmpfile(struct user_namespace *mnt_userns, struct inode *dir,
 
 	mutex_lock(&ui->ui_mutex);
 	insert_inode_hash(inode);
-	d_tmpfile(file, inode);
+	d_tmpfile(dentry, inode);
 	ubifs_assert(c, ui->dirty);
 
 	instantiated = 1;
@@ -493,7 +489,7 @@ static int ubifs_tmpfile(struct user_namespace *mnt_userns, struct inode *dir,
 
 	ubifs_release_budget(c, &req);
 
-	return finish_open_simple(file, 0);
+	return 0;
 
 out_cancel:
 	unlock_2_inodes(dir, inode);
@@ -876,7 +872,7 @@ out_fname:
 }
 
 /**
- * ubifs_check_dir_empty - check if a directory is empty or not.
+ * check_dir_empty - check if a directory is empty or not.
  * @dir: VFS inode object of the directory to check
  *
  * This function checks if directory @dir is empty. Returns zero if the
@@ -1008,7 +1004,7 @@ static int ubifs_mkdir(struct user_namespace *mnt_userns, struct inode *dir,
 
 	sz_change = CALC_DENT_SIZE(fname_len(&nm));
 
-	inode = ubifs_new_inode(c, dir, S_IFDIR | mode, false);
+	inode = ubifs_new_inode(c, dir, S_IFDIR | mode);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
 		goto out_fname;
@@ -1095,7 +1091,7 @@ static int ubifs_mknod(struct user_namespace *mnt_userns, struct inode *dir,
 
 	sz_change = CALC_DENT_SIZE(fname_len(&nm));
 
-	inode = ubifs_new_inode(c, dir, mode, false);
+	inode = ubifs_new_inode(c, dir, mode);
 	if (IS_ERR(inode)) {
 		kfree(dev);
 		err = PTR_ERR(inode);
@@ -1177,7 +1173,7 @@ static int ubifs_symlink(struct user_namespace *mnt_userns, struct inode *dir,
 
 	sz_change = CALC_DENT_SIZE(fname_len(&nm));
 
-	inode = ubifs_new_inode(c, dir, S_IFLNK | S_IRWXUGO, false);
+	inode = ubifs_new_inode(c, dir, S_IFLNK | S_IRWXUGO);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
 		goto out_fname;
@@ -1245,7 +1241,7 @@ out_budg:
  * @inode1: first inode
  * @inode2: second inode
  * @inode3: third inode
- * @inode4: fourth inode
+ * @inode4: fouth inode
  *
  * This function is used for 'ubifs_rename()' and @inode1 may be the same as
  * @inode2 whereas @inode3 and @inode4 may be %NULL.
@@ -1271,7 +1267,7 @@ static void lock_4_inodes(struct inode *inode1, struct inode *inode2,
  * @inode1: first inode
  * @inode2: second inode
  * @inode3: third inode
- * @inode4: fourth inode
+ * @inode4: fouth inode
  */
 static void unlock_4_inodes(struct inode *inode1, struct inode *inode2,
 			    struct inode *inode3, struct inode *inode4)

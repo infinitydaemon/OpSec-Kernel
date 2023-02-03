@@ -199,7 +199,7 @@ nfs4_xattr_alloc_entry(const char *name, const void *value,
 		flags = NFS4_XATTR_ENTRY_EXTVAL;
 	}
 
-	buf = kmalloc(alloclen, GFP_KERNEL);
+	buf = kmalloc(alloclen, GFP_KERNEL_ACCOUNT | GFP_NOFS);
 	if (buf == NULL)
 		return NULL;
 	entry = (struct nfs4_xattr_entry *)buf;
@@ -213,7 +213,7 @@ nfs4_xattr_alloc_entry(const char *name, const void *value,
 
 
 	if (flags & NFS4_XATTR_ENTRY_EXTVAL) {
-		valp = kvmalloc(len, GFP_KERNEL);
+		valp = kvmalloc(len, GFP_KERNEL_ACCOUNT | GFP_NOFS);
 		if (valp == NULL) {
 			kfree(buf);
 			return NULL;
@@ -289,7 +289,8 @@ nfs4_xattr_alloc_cache(void)
 {
 	struct nfs4_xattr_cache *cache;
 
-	cache = kmem_cache_alloc(nfs4_xattr_cache_cachep, GFP_KERNEL);
+	cache = kmem_cache_alloc(nfs4_xattr_cache_cachep,
+	    GFP_KERNEL_ACCOUNT | GFP_NOFS);
 	if (cache == NULL)
 		return NULL;
 
@@ -981,7 +982,7 @@ nfs4_xattr_entry_count(struct shrinker *shrink, struct shrink_control *sc)
 
 static void nfs4_xattr_cache_init_once(void *p)
 {
-	struct nfs4_xattr_cache *cache = p;
+	struct nfs4_xattr_cache *cache = (struct nfs4_xattr_cache *)p;
 
 	spin_lock_init(&cache->listxattr_lock);
 	atomic_long_set(&cache->nent, 0);
@@ -997,7 +998,7 @@ int __init nfs4_xattr_cache_init(void)
 
 	nfs4_xattr_cache_cachep = kmem_cache_create("nfs4_xattr_cache_cache",
 	    sizeof(struct nfs4_xattr_cache), 0,
-	    (SLAB_RECLAIM_ACCOUNT|SLAB_MEM_SPREAD),
+	    (SLAB_RECLAIM_ACCOUNT|SLAB_MEM_SPREAD|SLAB_ACCOUNT),
 	    nfs4_xattr_cache_init_once);
 	if (nfs4_xattr_cache_cachep == NULL)
 		return -ENOMEM;
@@ -1017,16 +1018,15 @@ int __init nfs4_xattr_cache_init(void)
 	if (ret)
 		goto out2;
 
-	ret = register_shrinker(&nfs4_xattr_cache_shrinker, "nfs-xattr_cache");
+	ret = register_shrinker(&nfs4_xattr_cache_shrinker);
 	if (ret)
 		goto out1;
 
-	ret = register_shrinker(&nfs4_xattr_entry_shrinker, "nfs-xattr_entry");
+	ret = register_shrinker(&nfs4_xattr_entry_shrinker);
 	if (ret)
 		goto out;
 
-	ret = register_shrinker(&nfs4_xattr_large_entry_shrinker,
-				"nfs-xattr_large_entry");
+	ret = register_shrinker(&nfs4_xattr_large_entry_shrinker);
 	if (!ret)
 		return 0;
 

@@ -222,7 +222,7 @@ static int bnxt_vf_rep_get_phys_port_name(struct net_device *dev, char *buf,
 static void bnxt_vf_rep_get_drvinfo(struct net_device *dev,
 				    struct ethtool_drvinfo *info)
 {
-	strscpy(info->driver, DRV_MODULE_NAME, sizeof(info->driver));
+	strlcpy(info->driver, DRV_MODULE_NAME, sizeof(info->driver));
 }
 
 static int bnxt_vf_rep_get_port_parent_id(struct net_device *dev,
@@ -475,7 +475,7 @@ static void bnxt_vf_rep_netdev_init(struct bnxt *bp, struct bnxt_vf_rep *vf_rep,
 	dev->features |= pf_dev->features;
 	bnxt_vf_rep_eth_addr_gen(bp->pf.mac_addr, vf_rep->vf_idx,
 				 dev->perm_addr);
-	eth_hw_addr_set(dev, dev->perm_addr);
+	ether_addr_copy(dev->dev_addr, dev->perm_addr);
 	/* Set VF-Rep's max-mtu to the corresponding VF's max-mtu */
 	if (!bnxt_hwrm_vfr_qcfg(bp, vf_rep, &max_mtu))
 		dev->max_mtu = max_mtu;
@@ -559,34 +559,44 @@ int bnxt_dl_eswitch_mode_set(struct devlink *devlink, u16 mode,
 			     struct netlink_ext_ack *extack)
 {
 	struct bnxt *bp = bnxt_get_bp_from_dl(devlink);
+	int rc = 0;
 
+	mutex_lock(&bp->sriov_lock);
 	if (bp->eswitch_mode == mode) {
 		netdev_info(bp->dev, "already in %s eswitch mode\n",
 			    mode == DEVLINK_ESWITCH_MODE_LEGACY ?
 			    "legacy" : "switchdev");
-		return -EINVAL;
+		rc = -EINVAL;
+		goto done;
 	}
 
 	switch (mode) {
 	case DEVLINK_ESWITCH_MODE_LEGACY:
 		bnxt_vf_reps_destroy(bp);
-		return 0;
+		break;
 
 	case DEVLINK_ESWITCH_MODE_SWITCHDEV:
 		if (bp->hwrm_spec_code < 0x10803) {
 			netdev_warn(bp->dev, "FW does not support SRIOV E-Switch SWITCHDEV mode\n");
-			return -ENOTSUPP;
+			rc = -ENOTSUPP;
+			goto done;
 		}
 
 		if (pci_num_vf(bp->pdev) == 0) {
 			netdev_info(bp->dev, "Enable VFs before setting switchdev mode\n");
-			return -EPERM;
+			rc = -EPERM;
+			goto done;
 		}
-		return bnxt_vf_reps_create(bp);
+		rc = bnxt_vf_reps_create(bp);
+		break;
 
 	default:
-		return -EINVAL;
+		rc = -EINVAL;
+		goto done;
 	}
+done:
+	mutex_unlock(&bp->sriov_lock);
+	return rc;
 }
 
 #endif

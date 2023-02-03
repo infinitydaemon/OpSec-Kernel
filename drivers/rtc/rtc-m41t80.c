@@ -557,7 +557,7 @@ static struct clk *m41t80_sqw_register_clk(struct m41t80_data *m41t80)
 		 * registered automatically when being referenced.
 		 */
 		of_node_put(fixed_clock);
-		return NULL;
+		return 0;
 	}
 
 	/* First disable the clock */
@@ -692,7 +692,7 @@ static void wdt_disable(void)
  *	@ppos: pointer to the position to write. No seeks allowed
  *
  *	A write to a watchdog device is defined as a keepalive signal. Any
- *	write of data will do, as we don't define content meaning.
+ *	write of data will do, as we we don't define content meaning.
  */
 static ssize_t wdt_write(struct file *file, const char __user *buf,
 			 size_t count, loff_t *ppos)
@@ -876,7 +876,8 @@ static struct notifier_block wdt_notifier = {
  *****************************************************************************
  */
 
-static int m41t80_probe(struct i2c_client *client)
+static int m41t80_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct i2c_adapter *adapter = client->adapter;
 	int rc = 0;
@@ -896,13 +897,11 @@ static int m41t80_probe(struct i2c_client *client)
 		return -ENOMEM;
 
 	m41t80_data->client = client;
-	if (client->dev.of_node) {
+	if (client->dev.of_node)
 		m41t80_data->features = (unsigned long)
 			of_device_get_match_data(&client->dev);
-	} else {
-		const struct i2c_device_id *id = i2c_match_id(m41t80_id, client);
+	else
 		m41t80_data->features = id->driver_data;
-	}
 	i2c_set_clientdata(client, m41t80_data);
 
 	m41t80_data->rtc =  devm_rtc_allocate_device(&client->dev);
@@ -933,8 +932,10 @@ static int m41t80_probe(struct i2c_client *client)
 	m41t80_data->rtc->range_min = RTC_TIMESTAMP_BEGIN_2000;
 	m41t80_data->rtc->range_max = RTC_TIMESTAMP_END_2099;
 
-	if (client->irq <= 0)
-		clear_bit(RTC_FEATURE_UPDATE_INTERRUPT, m41t80_data->rtc->features);
+	if (client->irq <= 0) {
+		/* We cannot support UIE mode if we do not have an IRQ line */
+		m41t80_data->rtc->uie_unsupported = 1;
+	}
 
 	/* Make sure HT (Halt Update) bit is cleared */
 	rc = i2c_smbus_read_byte_data(client, M41T80_REG_ALARM_HOUR);
@@ -990,7 +991,7 @@ static int m41t80_probe(struct i2c_client *client)
 	return 0;
 }
 
-static void m41t80_remove(struct i2c_client *client)
+static int m41t80_remove(struct i2c_client *client)
 {
 #ifdef CONFIG_RTC_DRV_M41T80_WDT
 	struct m41t80_data *clientdata = i2c_get_clientdata(client);
@@ -1000,6 +1001,8 @@ static void m41t80_remove(struct i2c_client *client)
 		unregister_reboot_notifier(&wdt_notifier);
 	}
 #endif
+
+	return 0;
 }
 
 static struct i2c_driver m41t80_driver = {
@@ -1008,7 +1011,7 @@ static struct i2c_driver m41t80_driver = {
 		.of_match_table = of_match_ptr(m41t80_of_match),
 		.pm = &m41t80_pm,
 	},
-	.probe_new = m41t80_probe,
+	.probe = m41t80_probe,
 	.remove = m41t80_remove,
 	.id_table = m41t80_id,
 };

@@ -480,9 +480,7 @@ static int lpddr2_nvm_probe(struct platform_device *pdev)
  */
 static int lpddr2_nvm_remove(struct platform_device *pdev)
 {
-	WARN_ON(mtd_device_unregister(dev_get_drvdata(&pdev->dev)));
-
-	return 0;
+	return mtd_device_unregister(dev_get_drvdata(&pdev->dev));
 }
 
 /* Initialize platform_driver data structure for lpddr2_nvm */

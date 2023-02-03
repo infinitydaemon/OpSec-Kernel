@@ -9,7 +9,6 @@
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/pci_hotplug.h>
-#include <linux/of_fdt.h>
 
 #include <asm/opal.h>
 #include <asm/pnv-pci.h>

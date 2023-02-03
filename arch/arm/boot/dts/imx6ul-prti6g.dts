@@ -78,6 +78,12 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_ecspi2>;
 	status = "okay";
+
+	spi@0 {
+		compatible = "spidev";
+		reg = <0>;
+		spi-max-frequency = <1000000>;
+	};
 };
 
 &fec1 {

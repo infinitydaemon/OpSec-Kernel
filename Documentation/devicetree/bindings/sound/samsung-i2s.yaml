@@ -10,9 +10,6 @@ maintainers:
   - Krzysztof Kozlowski <krzk@kernel.org>
   - Sylwester Nawrocki <s.nawrocki@samsung.com>
 
-allOf:
-  - $ref: dai-common.yaml#
-
 properties:
   compatible:
     description: |
@@ -113,6 +110,12 @@ properties:
       Internal DMA register base address of the audio
       subsystem (used in secondary sound source).
 
+  pinctrl-0:
+    description: Should specify pin control groups used for this controller.
+
+  pinctrl-names:
+    const: default
+
   power-domains:
     maxItems: 1
 
@@ -127,7 +130,7 @@ required:
   - clocks
   - clock-names
 
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

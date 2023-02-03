@@ -111,10 +111,14 @@ static inline void unmap_cpu_from_node(unsigned long cpu) {}
 #endif /* CONFIG_NUMA */
 
 #if defined(CONFIG_NUMA) && defined(CONFIG_PPC_SPLPAR)
-void find_and_update_cpu_nid(int cpu);
+extern int find_and_online_cpu_nid(int cpu);
 extern int cpu_to_coregroup_id(int cpu);
 #else
-static inline void find_and_update_cpu_nid(int cpu) {}
+static inline int find_and_online_cpu_nid(int cpu)
+{
+	return 0;
+}
+
 static inline int cpu_to_coregroup_id(int cpu)
 {
 #ifdef CONFIG_SMP

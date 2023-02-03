@@ -65,7 +65,7 @@ static void shrink_liability(struct ubifs_info *c, int nr_to_write)
  */
 static int run_gc(struct ubifs_info *c)
 {
-	int lnum;
+	int err, lnum;
 
 	/* Make some free space by garbage-collecting dirty space */
 	down_read(&c->commit_sem);
@@ -76,7 +76,10 @@ static int run_gc(struct ubifs_info *c)
 
 	/* GC freed one LEB, return it to lprops */
 	dbg_budg("GC freed LEB %d", lnum);
-	return ubifs_return_leb(c, lnum);
+	err = ubifs_return_leb(c, lnum);
+	if (err)
+		return err;
+	return 0;
 }
 
 /**

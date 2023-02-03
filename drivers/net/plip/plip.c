@@ -284,16 +284,12 @@ static const struct net_device_ops plip_netdev_ops = {
 static void
 plip_init_netdev(struct net_device *dev)
 {
-	static const u8 addr_init[ETH_ALEN] = {
-		0xfc, 0xfc, 0xfc,
-		0xfc, 0xfc, 0xfc,
-	};
 	struct net_local *nl = netdev_priv(dev);
 
 	/* Then, override parts of it */
 	dev->tx_queue_len 	 = 10;
 	dev->flags	         = IFF_POINTOPOINT|IFF_NOARP;
-	eth_hw_addr_set(dev, addr_init);
+	memset(dev->dev_addr, 0xfc, ETH_ALEN);
 
 	dev->netdev_ops		 = &plip_netdev_ops;
 	dev->header_ops          = &plip_header_ops;
@@ -676,7 +672,7 @@ plip_receive_packet(struct net_device *dev, struct net_local *nl,
 	case PLIP_PK_DONE:
 		/* Inform the upper layer for the arrival of a packet. */
 		rcv->skb->protocol=plip_type_trans(rcv->skb, dev);
-		netif_rx(rcv->skb);
+		netif_rx_ni(rcv->skb);
 		dev->stats.rx_bytes += rcv->length.h;
 		dev->stats.rx_packets++;
 		rcv->skb = NULL;
@@ -1113,7 +1109,7 @@ plip_open(struct net_device *dev)
 		   plip_init_dev(). */
 		const struct in_ifaddr *ifa = rtnl_dereference(in_dev->ifa_list);
 		if (ifa != NULL) {
-			dev_addr_mod(dev, 2, &ifa->ifa_local, 4);
+			memcpy(dev->dev_addr+2, &ifa->ifa_local, 4);
 		}
 	}
 

@@ -9,6 +9,9 @@ title: Renesas R-Car CAN FD Controller
 maintainers:
   - Fabrizio Castro <fabrizio.castro.jz@renesas.com>
 
+allOf:
+  - $ref: can-controller.yaml#
+
 properties:
   compatible:
     oneOf:
@@ -20,7 +23,6 @@ properties:
               - renesas,r8a774e1-canfd     # RZ/G2H
               - renesas,r8a7795-canfd      # R-Car H3
               - renesas,r8a7796-canfd      # R-Car M3-W
-              - renesas,r8a77961-canfd     # R-Car M3-W+
               - renesas,r8a77965-canfd     # R-Car M3-N
               - renesas,r8a77970-canfd     # R-Car V3M
               - renesas,r8a77980-canfd     # R-Car V3H
@@ -30,12 +32,8 @@ properties:
 
       - items:
           - enum:
-              - renesas,r9a07g043-canfd    # RZ/G2UL and RZ/Five
               - renesas,r9a07g044-canfd    # RZ/G2{L,LC}
-              - renesas,r9a07g054-canfd    # RZ/V2L
           - const: renesas,rzg2l-canfd     # RZ/G2L family
-
-      - const: renesas,r8a779a0-canfd      # R-Car V3U
 
   reg:
     maxItems: 1
@@ -74,19 +72,17 @@ properties:
     description: Maximum frequency of the CANFD clock.
 
 patternProperties:
-  "^channel[0-7]$":
+  "^channel[01]$":
     type: object
     description:
-      The controller supports multiple channels and each is represented as a
-      child node.  Each channel can be enabled/disabled individually.
-
-    additionalProperties: false
+      The controller supports two channels and each is represented as a child
+      node.  Each child node supports the "status" property only, which
+      is used to enable/disable the respective channel.
 
 required:
   - compatible
   - reg
   - interrupts
-  - interrupt-names
   - clocks
   - clock-names
   - power-domains
@@ -96,73 +92,61 @@ required:
   - channel0
   - channel1
 
-allOf:
-  - $ref: can-controller.yaml#
+if:
+  properties:
+    compatible:
+      contains:
+        enum:
+          - renesas,rzg2l-canfd
+then:
+  properties:
+    interrupts:
+      items:
+        - description: CAN global error interrupt
+        - description: CAN receive FIFO interrupt
+        - description: CAN0 error interrupt
+        - description: CAN0 transmit interrupt
+        - description: CAN0 transmit/receive FIFO receive completion interrupt
+        - description: CAN1 error interrupt
+        - description: CAN1 transmit interrupt
+        - description: CAN1 transmit/receive FIFO receive completion interrupt
 
-  - if:
-      properties:
-        compatible:
-          contains:
-            enum:
-              - renesas,rzg2l-canfd
-    then:
-      properties:
-        interrupts:
-          items:
-            - description: CAN global error interrupt
-            - description: CAN receive FIFO interrupt
-            - description: CAN0 error interrupt
-            - description: CAN0 transmit interrupt
-            - description: CAN0 transmit/receive FIFO receive completion interrupt
-            - description: CAN1 error interrupt
-            - description: CAN1 transmit interrupt
-            - description: CAN1 transmit/receive FIFO receive completion interrupt
+    interrupt-names:
+      items:
+        - const: g_err
+        - const: g_recc
+        - const: ch0_err
+        - const: ch0_rec
+        - const: ch0_trx
+        - const: ch1_err
+        - const: ch1_rec
+        - const: ch1_trx
 
-        interrupt-names:
-          items:
-            - const: g_err
-            - const: g_recc
-            - const: ch0_err
-            - const: ch0_rec
-            - const: ch0_trx
-            - const: ch1_err
-            - const: ch1_rec
-            - const: ch1_trx
+    resets:
+      maxItems: 2
 
-        resets:
-          maxItems: 2
+    reset-names:
+      items:
+        - const: rstp_n
+        - const: rstc_n
 
-        reset-names:
-          items:
-            - const: rstp_n
-            - const: rstc_n
+  required:
+    - interrupt-names
+    - reset-names
+else:
+  properties:
+    interrupts:
+      items:
+        - description: Channel interrupt
+        - description: Global interrupt
 
-      required:
-        - reset-names
-    else:
-      properties:
-        interrupts:
-          items:
-            - description: Channel interrupt
-            - description: Global interrupt
+    interrupt-names:
+      items:
+        - const: ch_int
+        - const: g_int
 
-        interrupt-names:
-          items:
-            - const: ch_int
-            - const: g_int
-
-        resets:
-          maxItems: 1
-
-  - if:
-      not:
-        properties:
-          compatible:
-            contains:
-              const: renesas,r8a779a0-canfd
-    then:
-      patternProperties:
-        "^channel[2-7]$": false
+    resets:
+      maxItems: 1
 
 unevaluatedProperties: false
 
@@ -178,7 +162,6 @@ examples:
             reg = <0xe66c0000 0x8000>;
             interrupts = <GIC_SPI 29 IRQ_TYPE_LEVEL_HIGH>,
                          <GIC_SPI 30 IRQ_TYPE_LEVEL_HIGH>;
-            interrupt-names = "ch_int", "g_int";
             clocks = <&cpg CPG_MOD 914>,
                      <&cpg CPG_CORE R8A7795_CLK_CANFD>,
                      <&can_clk>;

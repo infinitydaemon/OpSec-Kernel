@@ -3403,12 +3403,10 @@ void ocfs2_dlm_shutdown(struct ocfs2_super *osb,
 	ocfs2_lock_res_free(&osb->osb_nfs_sync_lockres);
 	ocfs2_lock_res_free(&osb->osb_orphan_scan.os_lockres);
 
-	if (osb->cconn) {
-		ocfs2_cluster_disconnect(osb->cconn, hangup_pending);
-		osb->cconn = NULL;
+	ocfs2_cluster_disconnect(osb->cconn, hangup_pending);
+	osb->cconn = NULL;
 
-		ocfs2_dlm_shutdown_debug(osb);
-	}
+	ocfs2_dlm_shutdown_debug(osb);
 }
 
 static int ocfs2_drop_lock(struct ocfs2_super *osb,

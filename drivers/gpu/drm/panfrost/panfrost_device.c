@@ -11,7 +11,6 @@
 #include "panfrost_device.h"
 #include "panfrost_devfreq.h"
 #include "panfrost_features.h"
-#include "panfrost_issues.h"
 #include "panfrost_gpu.h"
 #include "panfrost_job.h"
 #include "panfrost_mmu.h"
@@ -199,6 +198,7 @@ err:
 int panfrost_device_init(struct panfrost_device *pfdev)
 {
 	int err;
+	struct resource *res;
 
 	mutex_init(&pfdev->sched_lock);
 	INIT_LIST_HEAD(&pfdev->scheduled_jobs);
@@ -236,7 +236,8 @@ int panfrost_device_init(struct panfrost_device *pfdev)
 	if (err)
 		goto out_reset;
 
-	pfdev->iomem = devm_platform_ioremap_resource(pfdev->pdev, 0);
+	res = platform_get_resource(pfdev->pdev, IORESOURCE_MEM, 0);
+	pfdev->iomem = devm_ioremap_resource(pfdev->dev, res);
 	if (IS_ERR(pfdev->iomem)) {
 		err = PTR_ERR(pfdev->iomem);
 		goto out_pm_domain;
@@ -381,13 +382,9 @@ const char *panfrost_exception_name(u32 exception_code)
 bool panfrost_exception_needs_reset(const struct panfrost_device *pfdev,
 				    u32 exception_code)
 {
-	/* If an occlusion query write causes a bus fault on affected GPUs,
-	 * future fragment jobs may hang. Reset to workaround.
+	/* Right now, none of the GPU we support need a reset, but this
+	 * might change.
 	 */
-	if (exception_code == DRM_PANFROST_EXCEPTION_JOB_BUS_FAULT)
-		return panfrost_has_hw_issue(pfdev, HW_ISSUE_TTRX_3076);
-
-	/* No other GPUs we support need a reset */
 	return false;
 }
 
@@ -403,7 +400,8 @@ void panfrost_device_reset(struct panfrost_device *pfdev)
 #ifdef CONFIG_PM
 int panfrost_device_resume(struct device *dev)
 {
-	struct panfrost_device *pfdev = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct panfrost_device *pfdev = platform_get_drvdata(pdev);
 
 	panfrost_device_reset(pfdev);
 	panfrost_devfreq_resume(pfdev);
@@ -413,7 +411,8 @@ int panfrost_device_resume(struct device *dev)
 
 int panfrost_device_suspend(struct device *dev)
 {
-	struct panfrost_device *pfdev = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct panfrost_device *pfdev = platform_get_drvdata(pdev);
 
 	if (!panfrost_job_is_idle(pfdev))
 		return -EBUSY;

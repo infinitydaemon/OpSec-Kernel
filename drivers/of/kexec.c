@@ -9,7 +9,6 @@
  *  Copyright (C) 2016  IBM Corporation
  */
 
-#include <linux/ima.h>
 #include <linux/kernel.h>
 #include <linux/kexec.h>
 #include <linux/memblock.h>
@@ -17,7 +16,6 @@
 #include <linux/of.h>
 #include <linux/of_fdt.h>
 #include <linux/random.h>
-#include <linux/slab.h>
 #include <linux/types.h>
 
 #define RNG_SEED_SIZE		128
@@ -116,7 +114,6 @@ static int do_get_kexec_buffer(const void *prop, int len, unsigned long *addr,
 	return 0;
 }
 
-#ifdef CONFIG_HAVE_IMA_KEXEC
 /**
  * ima_get_kexec_buffer - get IMA buffer from the previous kernel
  * @addr:	On successful return, set to point to the buffer contents.
@@ -124,13 +121,16 @@ static int do_get_kexec_buffer(const void *prop, int len, unsigned long *addr,
  *
  * Return: 0 on success, negative errno on error.
  */
-int __init ima_get_kexec_buffer(void **addr, size_t *size)
+int ima_get_kexec_buffer(void **addr, size_t *size)
 {
 	int ret, len;
 	unsigned long tmp_addr;
 	unsigned long start_pfn, end_pfn;
 	size_t tmp_size;
 	const void *prop;
+
+	if (!IS_ENABLED(CONFIG_HAVE_IMA_KEXEC))
+		return -ENOTSUPP;
 
 	prop = of_get_property(of_chosen, "linux,ima-kexec-buffer", &len);
 	if (!prop)
@@ -165,12 +165,15 @@ int __init ima_get_kexec_buffer(void **addr, size_t *size)
 /**
  * ima_free_kexec_buffer - free memory used by the IMA buffer
  */
-int __init ima_free_kexec_buffer(void)
+int ima_free_kexec_buffer(void)
 {
 	int ret;
 	unsigned long addr;
 	size_t size;
 	struct property *prop;
+
+	if (!IS_ENABLED(CONFIG_HAVE_IMA_KEXEC))
+		return -ENOTSUPP;
 
 	prop = of_find_property(of_chosen, "linux,ima-kexec-buffer", NULL);
 	if (!prop)
@@ -184,9 +187,9 @@ int __init ima_free_kexec_buffer(void)
 	if (ret)
 		return ret;
 
-	return memblock_phys_free(addr, size);
+	return memblock_free(addr, size);
+
 }
-#endif
 
 /**
  * remove_ima_buffer - remove the IMA buffer property and reservation from @fdt

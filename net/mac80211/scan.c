@@ -177,7 +177,7 @@ ieee80211_bss_info_update(struct ieee80211_local *local,
 	rcu_read_lock();
 	scan_sdata = rcu_dereference(local->scan_sdata);
 	if (scan_sdata && scan_sdata->vif.type == NL80211_IFTYPE_STATION &&
-	    scan_sdata->vif.cfg.assoc &&
+	    scan_sdata->vif.bss_conf.assoc &&
 	    ieee80211_have_rx_timestamp(rx_status)) {
 		bss_meta.parent_tsf =
 			ieee80211_calculate_rx_timestamp(local, rx_status,
@@ -209,7 +209,8 @@ ieee80211_bss_info_update(struct ieee80211_local *local,
 	if (baselen > len)
 		return NULL;
 
-	elems = ieee802_11_parse_elems(elements, len - baselen, false, cbss);
+	elems = ieee802_11_parse_elems(elements, len - baselen, false,
+				       mgmt->bssid, cbss->bssid);
 	if (!elems)
 		return NULL;
 
@@ -220,20 +221,15 @@ ieee80211_bss_info_update(struct ieee80211_local *local,
 
 	bss = (void *)cbss->priv;
 	ieee80211_update_bss_from_elems(local, bss, elems, rx_status, beacon);
-	kfree(elems);
 
 	list_for_each_entry(non_tx_cbss, &cbss->nontrans_list, nontrans_list) {
 		non_tx_bss = (void *)non_tx_cbss->priv;
 
-		elems = ieee802_11_parse_elems(elements, len - baselen, false,
-					       non_tx_cbss);
-		if (!elems)
-			continue;
-
 		ieee80211_update_bss_from_elems(local, non_tx_bss, elems,
 						rx_status, beacon);
-		kfree(elems);
 	}
+
+	kfree(elems);
 
 	return bss;
 }
@@ -485,7 +481,7 @@ static void __ieee80211_scan_completed(struct ieee80211_hw *hw, bool aborted)
 	/* Set power back to normal operating levels. */
 	ieee80211_hw_config(local, 0);
 
-	if (!hw_scan && was_scanning) {
+	if (!hw_scan) {
 		ieee80211_configure_filter(local);
 		drv_sw_scan_complete(local, scan_sdata);
 		ieee80211_offchannel_return(local);
@@ -641,7 +637,7 @@ static void ieee80211_send_scan_probe_req(struct ieee80211_sub_if_data *sdata,
 		if (flags & IEEE80211_PROBE_FLAG_RANDOM_SN) {
 			struct ieee80211_hdr *hdr = (void *)skb->data;
 			struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
-			u16 sn = get_random_u16();
+			u16 sn = get_random_u32();
 
 			info->control.flags |= IEEE80211_TX_CTRL_NO_SEQNO;
 			hdr->seq_ctrl =

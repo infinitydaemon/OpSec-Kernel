@@ -216,13 +216,8 @@
 			compatible = "syscon", "simple-mfd";
 			reg = <0x8000 0x10>;
 
-			ranges = <0x0 0x8000 0x10>;
-			#address-cells = <1>;
-			#size-cells = <1>;
-
-			led@0,0 {
+			led0 {
 				compatible = "register-bit-led";
-				reg = <0x00 0x04>;
 				offset = <0x0>;
 				mask = <0x01>;
 				label = "userled:0";
@@ -230,9 +225,8 @@
 				default-state = "on";
 			};
 
-			led@0,1 {
+			led1 {
 				compatible = "register-bit-led";
-				reg = <0x00 0x04>;
 				offset = <0x0>;
 				mask = <0x02>;
 				label = "userled:1";

@@ -9,15 +9,18 @@
  * battery charging and regulator control, firmware update.
  */
 
-#include <linux/interrupt.h>
-#include <linux/module.h>
 #include <linux/of_platform.h>
+#include <linux/interrupt.h>
+#include <linux/slab.h>
+#include <linux/module.h>
 #include <linux/platform_data/cros_ec_commands.h>
 #include <linux/platform_data/cros_ec_proto.h>
-#include <linux/slab.h>
 #include <linux/suspend.h>
 
 #include "cros_ec.h"
+
+#define CROS_EC_DEV_EC_INDEX 0
+#define CROS_EC_DEV_PD_INDEX 1
 
 static struct cros_ec_platform ec_p = {
 	.ec_name = CROS_EC_DEV_NAME,
@@ -115,7 +118,7 @@ static int cros_ec_sleep_event(struct cros_ec_device *ec_dev, u8 sleep_event)
 	if (ec_dev->host_sleep_v1) {
 		buf.u.req1.sleep_event = sleep_event;
 		buf.u.req1.suspend_params.sleep_timeout_ms =
-				ec_dev->suspend_timeout_ms;
+				EC_HOST_SLEEP_TIMEOUT_DEFAULT;
 
 		buf.msg.outsize = sizeof(buf.u.req1);
 		if ((sleep_event == HOST_SLEEP_EVENT_S3_RESUME) ||
@@ -188,7 +191,6 @@ int cros_ec_register(struct cros_ec_device *ec_dev)
 	ec_dev->max_passthru = 0;
 	ec_dev->ec = NULL;
 	ec_dev->pd = NULL;
-	ec_dev->suspend_timeout_ms = EC_HOST_SLEEP_TIMEOUT_DEFAULT;
 
 	ec_dev->din = devm_kzalloc(dev, ec_dev->din_size, GFP_KERNEL);
 	if (!ec_dev->din)
@@ -213,7 +215,7 @@ int cros_ec_register(struct cros_ec_device *ec_dev)
 						IRQF_TRIGGER_LOW | IRQF_ONESHOT,
 						"chromeos-ec", ec_dev);
 		if (err) {
-			dev_err(dev, "Failed to request IRQ %d: %d\n",
+			dev_err(dev, "Failed to request IRQ %d: %d",
 				ec_dev->irq, err);
 			return err;
 		}
@@ -264,7 +266,7 @@ int cros_ec_register(struct cros_ec_device *ec_dev)
 	 */
 	err = cros_ec_sleep_event(ec_dev, 0);
 	if (err < 0)
-		dev_dbg(ec_dev->dev, "Error %d clearing sleep event to ec\n",
+		dev_dbg(ec_dev->dev, "Error %d clearing sleep event to ec",
 			err);
 
 	if (ec_dev->mkbp_event_supported) {
@@ -304,11 +306,13 @@ EXPORT_SYMBOL(cros_ec_register);
  *
  * Return: 0 on success or negative error code.
  */
-void cros_ec_unregister(struct cros_ec_device *ec_dev)
+int cros_ec_unregister(struct cros_ec_device *ec_dev)
 {
 	if (ec_dev->pd)
 		platform_device_unregister(ec_dev->pd);
 	platform_device_unregister(ec_dev->ec);
+
+	return 0;
 }
 EXPORT_SYMBOL(cros_ec_unregister);
 
@@ -333,15 +337,14 @@ int cros_ec_suspend(struct cros_ec_device *ec_dev)
 
 	ret = cros_ec_sleep_event(ec_dev, sleep_event);
 	if (ret < 0)
-		dev_dbg(ec_dev->dev, "Error %d sending suspend event to ec\n",
+		dev_dbg(ec_dev->dev, "Error %d sending suspend event to ec",
 			ret);
 
 	if (device_may_wakeup(dev))
 		ec_dev->wake_enabled = !enable_irq_wake(ec_dev->irq);
-	else
-		ec_dev->wake_enabled = false;
 
 	disable_irq(ec_dev->irq);
+	ec_dev->was_wake_device = ec_dev->wake_enabled;
 	ec_dev->suspended = true;
 
 	return 0;
@@ -384,12 +387,13 @@ int cros_ec_resume(struct cros_ec_device *ec_dev)
 
 	ret = cros_ec_sleep_event(ec_dev, sleep_event);
 	if (ret < 0)
-		dev_dbg(ec_dev->dev, "Error %d sending resume event to ec\n",
+		dev_dbg(ec_dev->dev, "Error %d sending resume event to ec",
 			ret);
 
-	if (ec_dev->wake_enabled)
+	if (ec_dev->wake_enabled) {
 		disable_irq_wake(ec_dev->irq);
-
+		ec_dev->wake_enabled = 0;
+	}
 	/*
 	 * Let the mfd devices know about events that occur during
 	 * suspend. This way the clients know what to do with them.

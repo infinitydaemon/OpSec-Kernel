@@ -52,12 +52,15 @@ DECLARE_EVENT_CLASS(ath10k_log_event,
 	TP_STRUCT__entry(
 		__string(device, dev_name(ar->dev))
 		__string(driver, dev_driver_string(ar->dev))
-		__vstring(msg, vaf->fmt, vaf->va)
+		__dynamic_array(char, msg, ATH10K_MSG_MAX)
 	),
 	TP_fast_assign(
 		__assign_str(device, dev_name(ar->dev));
 		__assign_str(driver, dev_driver_string(ar->dev));
-		__assign_vstr(msg, vaf->fmt, vaf->va);
+		WARN_ON_ONCE(vsnprintf(__get_dynamic_array(msg),
+				       ATH10K_MSG_MAX,
+				       vaf->fmt,
+				       *vaf->va) >= ATH10K_MSG_MAX);
 	),
 	TP_printk(
 		"%s %s %s",
@@ -89,13 +92,16 @@ TRACE_EVENT(ath10k_log_dbg,
 		__string(device, dev_name(ar->dev))
 		__string(driver, dev_driver_string(ar->dev))
 		__field(unsigned int, level)
-		__vstring(msg, vaf->fmt, vaf->va)
+		__dynamic_array(char, msg, ATH10K_MSG_MAX)
 	),
 	TP_fast_assign(
 		__assign_str(device, dev_name(ar->dev));
 		__assign_str(driver, dev_driver_string(ar->dev));
 		__entry->level = level;
-		__assign_vstr(msg, vaf->fmt, vaf->va);
+		WARN_ON_ONCE(vsnprintf(__get_dynamic_array(msg),
+				       ATH10K_MSG_MAX,
+				       vaf->fmt,
+				       *vaf->va) >= ATH10K_MSG_MAX);
 	),
 	TP_printk(
 		"%s %s %s",

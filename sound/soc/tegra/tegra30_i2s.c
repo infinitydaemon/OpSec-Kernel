@@ -87,11 +87,11 @@ static int tegra30_i2s_set_fmt(struct snd_soc_dai *dai,
 	}
 
 	mask |= TEGRA30_I2S_CTRL_MASTER_ENABLE;
-	switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-	case SND_SOC_DAIFMT_BP_FP:
+	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
+	case SND_SOC_DAIFMT_CBS_CFS:
 		val |= TEGRA30_I2S_CTRL_MASTER_ENABLE;
 		break;
-	case SND_SOC_DAIFMT_BC_FC:
+	case SND_SOC_DAIFMT_CBM_CFM:
 		break;
 	default:
 		return -EINVAL;
@@ -331,8 +331,7 @@ static const struct snd_soc_dai_driver tegra30_i2s_dai_template = {
 };
 
 static const struct snd_soc_component_driver tegra30_i2s_component = {
-	.name			= DRV_NAME,
-	.legacy_dai_naming	= 1,
+	.name		= DRV_NAME,
 };
 
 static bool tegra30_i2s_wr_rd_reg(struct device *dev, unsigned int reg)

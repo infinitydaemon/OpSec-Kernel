@@ -1,5 +1,4 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#include <linux/linkage.h>
 #include <asm/processor.h>
 #include <asm/ppc_asm.h>
 #include <asm/reg.h>
@@ -48,10 +47,6 @@ EXPORT_SYMBOL(store_vr_state)
  */
 _GLOBAL(load_up_altivec)
 	mfmsr	r5			/* grab the current MSR */
-#ifdef CONFIG_PPC_BOOK3S_64
-	/* interrupt doesn't set MSR[RI] and HPT can fault on current access */
-	ori	r5,r5,MSR_RI
-#endif
 	oris	r5,r5,MSR_VEC@h
 	MTMSRD(r5)			/* enable use of AltiVec now */
 	isync
@@ -131,12 +126,6 @@ _GLOBAL(load_up_vsx)
 	andis.	r5,r12,MSR_VEC@h
 	beql+	load_up_altivec		/* skip if already loaded */
 
-#ifdef CONFIG_PPC_BOOK3S_64
-	/* interrupt doesn't set MSR[RI] and HPT can fault on current access */
-	li	r5,MSR_RI
-	mtmsrd	r5,1
-#endif
-
 	ld	r4,PACACURRENT(r13)
 	addi	r4,r4,THREAD		/* Get THREAD */
 	li	r6,1
@@ -156,8 +145,8 @@ _GLOBAL(load_up_vsx)
  * usage of floating-point registers.  These routines must be called
  * with preempt disabled.
  */
-	.data
 #ifdef CONFIG_PPC32
+	.data
 fpzero:
 	.long	0
 fpone:
@@ -170,23 +159,24 @@ fphalf:
 	lfs	fr,name@l(r11)
 #else
 
+	.section ".toc","aw"
 fpzero:
-	.quad	0
+	.tc	FD_0_0[TC],0
 fpone:
-	.quad	0x3ff0000000000000	/* 1.0 */
+	.tc	FD_3ff00000_0[TC],0x3ff0000000000000	/* 1.0 */
 fphalf:
-	.quad	0x3fe0000000000000	/* 0.5 */
+	.tc	FD_3fe00000_0[TC],0x3fe0000000000000	/* 0.5 */
 
-#define LDCONST(fr, name)		\
-	addis	r11,r2,name@toc@ha;	\
-	lfd	fr,name@toc@l(r11)
+#define LDCONST(fr, name)	\
+	lfd	fr,name@toc(r2)
 #endif
+
 	.text
 /*
  * Internal routine to enable floating point and set FPSCR to 0.
  * Don't call it from C; it doesn't use the normal calling convention.
  */
-SYM_FUNC_START_LOCAL(fpenable)
+fpenable:
 #ifdef CONFIG_PPC32
 	stwu	r1,-64(r1)
 #else
@@ -203,7 +193,6 @@ SYM_FUNC_START_LOCAL(fpenable)
 	mffs	fr31
 	MTFSF_L(fr1)
 	blr
-SYM_FUNC_END(fpenable)
 
 fpdisable:
 	mtlr	r12

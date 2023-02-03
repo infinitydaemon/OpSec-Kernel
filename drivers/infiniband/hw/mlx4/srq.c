@@ -320,6 +320,7 @@ int mlx4_ib_post_srq_recv(struct ib_srq *ibsrq, const struct ib_recv_wr *wr,
 	if (mdev->dev->persist->state & MLX4_DEVICE_STATE_INTERNAL_ERROR) {
 		err = -EIO;
 		*bad_wr = wr;
+		nreq = 0;
 		goto out;
 	}
 

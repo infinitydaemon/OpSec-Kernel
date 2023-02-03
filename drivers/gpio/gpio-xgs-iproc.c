@@ -281,7 +281,11 @@ static int iproc_gpio_probe(struct platform_device *pdev)
 
 static int iproc_gpio_remove(struct platform_device *pdev)
 {
-	struct iproc_gpio_chip *chip = platform_get_drvdata(pdev);
+	struct iproc_gpio_chip *chip;
+
+	chip = platform_get_drvdata(pdev);
+	if (!chip)
+		return -ENODEV;
 
 	if (chip->intr) {
 		u32 val;

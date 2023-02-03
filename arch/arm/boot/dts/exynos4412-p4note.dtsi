@@ -15,8 +15,7 @@
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/linux-event-codes.h>
 #include <dt-bindings/interrupt-controller/irq.h>
-#include <dt-bindings/power/summit,smb347-charger.h>
-#include "exynos-pinctrl.h"
+#include <dt-bindings/pinctrl/samsung.h>
 
 / {
 	compatible = "samsung,p4note", "samsung,exynos4412", "samsung,exynos4";
@@ -106,16 +105,6 @@
 		regulator-always-on;
 	};
 
-	panel_vdd: voltage-regulator-4 {
-		compatible = "regulator-fixed";
-		regulator-name = "LCD_ENABLE";
-		pinctrl-names = "default";
-		pinctrl-0 = <&lcd_enable>;
-		gpios = <&gpc0 1 GPIO_ACTIVE_HIGH>;
-		enable-active-high;
-		regulator-boot-on;
-	};
-
 	wlan_pwrseq: sdhci3-pwrseq {
 		compatible = "mmc-pwrseq-simple";
 		reset-gpios = <&gpm3 5 GPIO_ACTIVE_LOW>;
@@ -123,17 +112,6 @@
 		pinctrl-names = "default";
 		clocks = <&max77686 MAX77686_CLK_PMIC>;
 		clock-names = "ext_clock";
-	};
-
-	battery_cell: battery-cell {
-		compatible = "simple-battery";
-		device-chemistry = "lithium-ion";
-		constant-charge-current-max-microamp = <2200000>;
-		precharge-current-microamp = <250000>;
-		charge-term-current-microamp = <250000>;
-		constant-charge-voltage-max-microvolt = <4200000>;
-
-		power-supplies = <&power_supply>;
 	};
 
 	i2c-gpio-1 {
@@ -203,54 +181,6 @@
 				st,norequest-mask = <0x2F>;
 			};
 		};
-	};
-
-	i2c-gpio-4 {
-		compatible = "i2c-gpio";
-		sda-gpios = <&gpm2 0 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
-		scl-gpios = <&gpm2 1 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
-
-		i2c-gpio,delay-us = <2>;
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		power_supply: charger@6 {
-			compatible = "summit,smb347";
-			reg = <0x6>;
-			summit,enable-usb-charging;
-			summit,enable-charge-control = <SMB3XX_CHG_ENABLE_SW>;
-			summit,fast-voltage-threshold-microvolt = <2600000>;
-			summit,chip-temperature-threshold-celsius = <130>;
-			summit,usb-current-limit-microamp = <1800000>;
-
-			monitored-battery = <&battery_cell>;
-		};
-	};
-
-	panel {
-		compatible = "samsung,ltl101al01";
-		pinctrl-0 = <&lvds_nshdn>;
-		pinctrl-names = "default";
-		power-supply = <&panel_vdd>;
-		enable-gpios = <&gpm0 5 GPIO_ACTIVE_HIGH>;
-		backlight = <&backlight>;
-
-		port {
-			lcd_ep: endpoint {
-				remote-endpoint = <&fimd_ep>;
-			};
-		};
-	};
-
-	backlight: backlight {
-		compatible = "pwm-backlight";
-		pinctrl-0 = <&led_bl_reset>;
-		pinctrl-names = "default";
-		enable-gpios = <&gpm0 1 GPIO_ACTIVE_HIGH>;
-		pwms = <&pwm 1 78770 0>;
-		brightness-levels = <0 48 128 255>;
-		num-interpolated-steps = <8>;
-		default-brightness-level = <12>;
 	};
 };
 
@@ -331,19 +261,22 @@
 };
 
 &fimd {
-	pinctrl-0 = <&lcd_clk &lcd_data24>;
+	pinctrl-0 = <&lcd_clk &lcd_data24 &pwm1_out>;
 	pinctrl-names = "default";
-	#address-cells = <1>;
-	#size-cells = <0>;
 	status = "okay";
 
-	samsung,invert-vclk;
-
-	port@3 {
-		reg = <3>;
-
-		fimd_ep: endpoint {
-			remote-endpoint = <&lcd_ep>;
+	display-timings {
+		timing0 {
+			clock-frequency = <66666666>;
+			hactive = <1280>;
+			vactive = <800>;
+			hfront-porch = <18>;
+			hback-porch = <36>;
+			hsync-len = <16>;
+			vback-porch = <16>;
+			vfront-porch = <4>;
+			vsync-len = <3>;
+			hsync-active = <1>;
 		};
 	};
 };
@@ -708,25 +641,19 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&sleep0>;
 
-	tsp_reg_gpio_2: tsp-reg-gpio-2-pins {
+	tsp_reg_gpio_2: tsp-reg-gpio-2 {
 		samsung,pins = "gpb-5";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};
 
-	tsp_reg_gpio_3: tsp-reg-gpio-3-pins {
+	tsp_reg_gpio_3: tsp-reg-gpio-3 {
 		samsung,pins = "gpb-7";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};
 
-	lcd_enable: lcd-enable-pins {
-		samsung,pins = "gpc0-1";
-		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
-		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
-	};
-
-	sleep0: sleep-state {
+	sleep0: sleep-states {
 		PIN_SLP(gpa0-0, INPUT, NONE);
 		PIN_SLP(gpa0-1, OUT0, NONE);
 		PIN_SLP(gpa0-2, INPUT, NONE);
@@ -828,19 +755,19 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&sleep1>;
 
-	sd3_wifi: sd3-wifi-pins {
+	sd3_wifi: sd3-wifi {
 		samsung,pins = "gpk3-3", "gpk3-4", "gpk3-5", "gpk3-6";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};
 
-	bt_shutdown: bt-shutdown-pins {
+	bt_shutdown: bt-shutdown {
 		samsung,pins = "gpl0-6";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};
 
-	uart_sel: uart-sel-pins {
+	uart_sel: uart-sel {
 		samsung,pins = "gpl2-7";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
@@ -848,94 +775,82 @@
 		/* 0 = CP, 1 = AP (serial output) */
 	};
 
-	led_bl_reset: led-bl-reset-pins {
-		samsung,pins = "gpm0-1";
-		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
-		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
-	};
-
-	tsp_rst: tsp-rst-pins {
+	tsp_rst: tsp-rst {
 		samsung,pins = "gpm0-4";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};
 
-	lvds_nshdn: lvds-nshdn-pins {
-		samsung,pins = "gpm0-5";
-		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
-		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
-	};
-
-	tsp_irq: tsp-irq-pins {
+	tsp_irq: tsp-irq {
 		samsung,pins = "gpm2-3";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_F>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};
 
-	wifi_reset: wifi-reset-pins {
+	wifi_reset: wifi-reset {
 		samsung,pins = "gpm3-5";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};
 
-	tsp_reg_gpio_1: tsp-reg-gpio-1-pins {
+	tsp_reg_gpio_1: tsp-reg-gpio-1 {
 		samsung,pins = "gpm4-5";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};
 
-	ak8975_irq: ak8975-irq-pins {
+	ak8975_irq: ak8975-irq {
 		samsung,pins = "gpm4-7";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_F>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_DOWN>;
 	};
 
-	stmpe_adc_irq: stmpe-adc-irq-pins {
+	stmpe_adc_irq: stmpe-adc-irq {
 		samsung,pins = "gpx0-1";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_INPUT>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};
 
-	max77686_irq: max77686-irq-pins {
+	max77686_irq: max77686-irq {
 		samsung,pins = "gpx0-7";
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};
 
-	gpio_keys: gpio-keys-pins {
+	gpio_keys: gpio-keys {
 		samsung,pins = "gpx2-2", "gpx2-7", "gpx3-3";
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};
 
-	fuel_alert_irq: fuel-alert-irq-pins {
+	fuel_alert_irq: fuel-alert-irq {
 		samsung,pins = "gpx2-3";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_INPUT>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};
 
-	wifi_host_wake: wifi-host-wake-pins {
+	wifi_host_wake: wifi-host-wake {
 		samsung,pins = "gpx2-5";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_F>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_DOWN>;
 	};
 
-	bt_host_wakeup: bt-host-wakeup-pins {
+	bt_host_wakeup: bt-host-wakeup {
 		samsung,pins = "gpx2-6";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_INPUT>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};
 
-	bt_device_wakeup: bt-device-wakeup-pins {
+	bt_device_wakeup: bt-device-wakeup {
 		samsung,pins = "gpx3-1";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};
 
-	sdhci2_cd: sdhci2-cd-pins {
+	sdhci2_cd: sdhci2-cd {
 		samsung,pins = "gpx3-4";
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};
 
-	sleep1: sleep-state {
+	sleep1: sleep-states {
 		PIN_SLP(gpk0-0, PREV, NONE);
 		PIN_SLP(gpk0-1, PREV, NONE);
 		PIN_SLP(gpk0-2, PREV, NONE);
@@ -1089,7 +1004,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&sleep2>;
 
-	sleep2: sleep-state {
+	sleep2: sleep-states {
 		PIN_SLP(gpz-0, INPUT, DOWN);
 		PIN_SLP(gpz-1, INPUT, DOWN);
 		PIN_SLP(gpz-2, INPUT, DOWN);
@@ -1104,7 +1019,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&sleep3>;
 
-	sleep3: sleep-state {
+	sleep3: sleep-states {
 		PIN_SLP(gpv0-0, INPUT, DOWN);
 		PIN_SLP(gpv0-1, INPUT, DOWN);
 		PIN_SLP(gpv0-2, INPUT, DOWN);
@@ -1149,13 +1064,6 @@
 &pmu_system_controller {
 	assigned-clocks = <&pmu_system_controller 0>;
 	assigned-clock-parents = <&clock CLK_XUSBXTI>;
-};
-
-&pwm {
-	pinctrl-0 = <&pwm1_out>;
-	pinctrl-names = "default";
-	samsung,pwm-outputs = <1>;
-	status = "okay";
 };
 
 &rtc {

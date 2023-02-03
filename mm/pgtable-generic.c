@@ -10,7 +10,6 @@
 #include <linux/pagemap.h>
 #include <linux/hugetlb.h>
 #include <linux/pgtable.h>
-#include <linux/mm_inline.h>
 #include <asm/tlb.h>
 
 /*
@@ -198,14 +197,6 @@ pmd_t pmdp_invalidate(struct vm_area_struct *vma, unsigned long address,
 	pmd_t old = pmdp_establish(vma, address, pmdp, pmd_mkinvalid(*pmdp));
 	flush_pmd_tlb_range(vma, address, address + HPAGE_PMD_SIZE);
 	return old;
-}
-#endif
-
-#ifndef __HAVE_ARCH_PMDP_INVALIDATE_AD
-pmd_t pmdp_invalidate_ad(struct vm_area_struct *vma, unsigned long address,
-			 pmd_t *pmdp)
-{
-	return pmdp_invalidate(vma, address, pmdp);
 }
 #endif
 

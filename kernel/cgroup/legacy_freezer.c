@@ -113,7 +113,7 @@ static int freezer_css_online(struct cgroup_subsys_state *css)
 
 	if (parent && (parent->state & CGROUP_FREEZING)) {
 		freezer->state |= CGROUP_FREEZING_PARENT | CGROUP_FROZEN;
-		static_branch_inc(&freezer_active);
+		atomic_inc(&system_freezing_cnt);
 	}
 
 	mutex_unlock(&freezer_mutex);
@@ -134,7 +134,7 @@ static void freezer_css_offline(struct cgroup_subsys_state *css)
 	mutex_lock(&freezer_mutex);
 
 	if (freezer->state & CGROUP_FREEZING)
-		static_branch_dec(&freezer_active);
+		atomic_dec(&system_freezing_cnt);
 
 	freezer->state = 0;
 
@@ -179,7 +179,6 @@ static void freezer_attach(struct cgroup_taskset *tset)
 			__thaw_task(task);
 		} else {
 			freeze_task(task);
-
 			/* clear FROZEN and propagate upwards */
 			while (freezer && (freezer->state & CGROUP_FROZEN)) {
 				freezer->state &= ~CGROUP_FROZEN;
@@ -272,8 +271,16 @@ static void update_if_frozen(struct cgroup_subsys_state *css)
 	css_task_iter_start(css, 0, &it);
 
 	while ((task = css_task_iter_next(&it))) {
-		if (freezing(task) && !frozen(task))
-			goto out_iter_end;
+		if (freezing(task)) {
+			/*
+			 * freezer_should_skip() indicates that the task
+			 * should be skipped when determining freezing
+			 * completion.  Consider it frozen in addition to
+			 * the usual frozen condition.
+			 */
+			if (!frozen(task) && !freezer_should_skip(task))
+				goto out_iter_end;
+		}
 	}
 
 	freezer->state |= CGROUP_FROZEN;
@@ -350,7 +357,7 @@ static void freezer_apply_state(struct freezer *freezer, bool freeze,
 
 	if (freeze) {
 		if (!(freezer->state & CGROUP_FREEZING))
-			static_branch_inc(&freezer_active);
+			atomic_inc(&system_freezing_cnt);
 		freezer->state |= state;
 		freeze_cgroup(freezer);
 	} else {
@@ -359,9 +366,9 @@ static void freezer_apply_state(struct freezer *freezer, bool freeze,
 		freezer->state &= ~state;
 
 		if (!(freezer->state & CGROUP_FREEZING)) {
-			freezer->state &= ~CGROUP_FROZEN;
 			if (was_freezing)
-				static_branch_dec(&freezer_active);
+				atomic_dec(&system_freezing_cnt);
+			freezer->state &= ~CGROUP_FROZEN;
 			unfreeze_cgroup(freezer);
 		}
 	}

@@ -15,6 +15,9 @@
 #include <asm/cputable.h>
 #include <asm/disassemble.h>
 
+extern char system_call_common[];
+extern char system_call_vectored_emulate[];
+
 #ifdef CONFIG_PPC64
 /* Bits in SRR1 that are copied from MSR */
 #define MSR_MASK	0xffffffff87c0ffffUL
@@ -72,8 +75,10 @@ extern int do_stqcx(unsigned long ea, unsigned long val0, unsigned long val1,
 static nokprobe_inline unsigned long truncate_if_32bit(unsigned long msr,
 							unsigned long val)
 {
+#ifdef __powerpc64__
 	if ((msr & MSR_64BIT) == 0)
 		val &= 0xffffffffUL;
+#endif
 	return val;
 }
 
@@ -297,51 +302,33 @@ static nokprobe_inline void do_byte_reverse(void *ptr, int nb)
 	}
 }
 
-static __always_inline int
-__read_mem_aligned(unsigned long *dest, unsigned long ea, int nb, struct pt_regs *regs)
+static nokprobe_inline int read_mem_aligned(unsigned long *dest,
+					    unsigned long ea, int nb,
+					    struct pt_regs *regs)
 {
+	int err = 0;
 	unsigned long x = 0;
 
 	switch (nb) {
 	case 1:
-		unsafe_get_user(x, (unsigned char __user *)ea, Efault);
+		err = __get_user(x, (unsigned char __user *) ea);
 		break;
 	case 2:
-		unsafe_get_user(x, (unsigned short __user *)ea, Efault);
+		err = __get_user(x, (unsigned short __user *) ea);
 		break;
 	case 4:
-		unsafe_get_user(x, (unsigned int __user *)ea, Efault);
+		err = __get_user(x, (unsigned int __user *) ea);
 		break;
 #ifdef __powerpc64__
 	case 8:
-		unsafe_get_user(x, (unsigned long __user *)ea, Efault);
+		err = __get_user(x, (unsigned long __user *) ea);
 		break;
 #endif
 	}
-	*dest = x;
-	return 0;
-
-Efault:
-	regs->dar = ea;
-	return -EFAULT;
-}
-
-static nokprobe_inline int
-read_mem_aligned(unsigned long *dest, unsigned long ea, int nb, struct pt_regs *regs)
-{
-	int err;
-
-	if (is_kernel_addr(ea))
-		return __read_mem_aligned(dest, ea, nb, regs);
-
-	if (user_read_access_begin((void __user *)ea, nb)) {
-		err = __read_mem_aligned(dest, ea, nb, regs);
-		user_read_access_end();
-	} else {
-		err = -EFAULT;
+	if (!err)
+		*dest = x;
+	else
 		regs->dar = ea;
-	}
-
 	return err;
 }
 
@@ -349,8 +336,10 @@ read_mem_aligned(unsigned long *dest, unsigned long ea, int nb, struct pt_regs *
  * Copy from userspace to a buffer, using the largest possible
  * aligned accesses, up to sizeof(long).
  */
-static __always_inline int __copy_mem_in(u8 *dest, unsigned long ea, int nb, struct pt_regs *regs)
+static nokprobe_inline int copy_mem_in(u8 *dest, unsigned long ea, int nb,
+				       struct pt_regs *regs)
 {
+	int err = 0;
 	int c;
 
 	for (; nb > 0; nb -= c) {
@@ -359,46 +348,31 @@ static __always_inline int __copy_mem_in(u8 *dest, unsigned long ea, int nb, str
 			c = max_align(nb);
 		switch (c) {
 		case 1:
-			unsafe_get_user(*dest, (u8 __user *)ea, Efault);
+			err = __get_user(*dest, (unsigned char __user *) ea);
 			break;
 		case 2:
-			unsafe_get_user(*(u16 *)dest, (u16 __user *)ea, Efault);
+			err = __get_user(*(u16 *)dest,
+					 (unsigned short __user *) ea);
 			break;
 		case 4:
-			unsafe_get_user(*(u32 *)dest, (u32 __user *)ea, Efault);
+			err = __get_user(*(u32 *)dest,
+					 (unsigned int __user *) ea);
 			break;
 #ifdef __powerpc64__
 		case 8:
-			unsafe_get_user(*(u64 *)dest, (u64 __user *)ea, Efault);
+			err = __get_user(*(unsigned long *)dest,
+					 (unsigned long __user *) ea);
 			break;
 #endif
+		}
+		if (err) {
+			regs->dar = ea;
+			return err;
 		}
 		dest += c;
 		ea += c;
 	}
 	return 0;
-
-Efault:
-	regs->dar = ea;
-	return -EFAULT;
-}
-
-static nokprobe_inline int copy_mem_in(u8 *dest, unsigned long ea, int nb, struct pt_regs *regs)
-{
-	int err;
-
-	if (is_kernel_addr(ea))
-		return __copy_mem_in(dest, ea, nb, regs);
-
-	if (user_read_access_begin((void __user *)ea, nb)) {
-		err = __copy_mem_in(dest, ea, nb, regs);
-		user_read_access_end();
-	} else {
-		err = -EFAULT;
-		regs->dar = ea;
-	}
-
-	return err;
 }
 
 static nokprobe_inline int read_mem_unaligned(unsigned long *dest,
@@ -436,48 +410,30 @@ static int read_mem(unsigned long *dest, unsigned long ea, int nb,
 }
 NOKPROBE_SYMBOL(read_mem);
 
-static __always_inline int
-__write_mem_aligned(unsigned long val, unsigned long ea, int nb, struct pt_regs *regs)
+static nokprobe_inline int write_mem_aligned(unsigned long val,
+					     unsigned long ea, int nb,
+					     struct pt_regs *regs)
 {
+	int err = 0;
+
 	switch (nb) {
 	case 1:
-		unsafe_put_user(val, (unsigned char __user *)ea, Efault);
+		err = __put_user(val, (unsigned char __user *) ea);
 		break;
 	case 2:
-		unsafe_put_user(val, (unsigned short __user *)ea, Efault);
+		err = __put_user(val, (unsigned short __user *) ea);
 		break;
 	case 4:
-		unsafe_put_user(val, (unsigned int __user *)ea, Efault);
+		err = __put_user(val, (unsigned int __user *) ea);
 		break;
 #ifdef __powerpc64__
 	case 8:
-		unsafe_put_user(val, (unsigned long __user *)ea, Efault);
+		err = __put_user(val, (unsigned long __user *) ea);
 		break;
 #endif
 	}
-	return 0;
-
-Efault:
-	regs->dar = ea;
-	return -EFAULT;
-}
-
-static nokprobe_inline int
-write_mem_aligned(unsigned long val, unsigned long ea, int nb, struct pt_regs *regs)
-{
-	int err;
-
-	if (is_kernel_addr(ea))
-		return __write_mem_aligned(val, ea, nb, regs);
-
-	if (user_write_access_begin((void __user *)ea, nb)) {
-		err = __write_mem_aligned(val, ea, nb, regs);
-		user_write_access_end();
-	} else {
-		err = -EFAULT;
+	if (err)
 		regs->dar = ea;
-	}
-
 	return err;
 }
 
@@ -485,8 +441,10 @@ write_mem_aligned(unsigned long val, unsigned long ea, int nb, struct pt_regs *r
  * Copy from a buffer to userspace, using the largest possible
  * aligned accesses, up to sizeof(long).
  */
-static nokprobe_inline int __copy_mem_out(u8 *dest, unsigned long ea, int nb, struct pt_regs *regs)
+static nokprobe_inline int copy_mem_out(u8 *dest, unsigned long ea, int nb,
+					struct pt_regs *regs)
 {
+	int err = 0;
 	int c;
 
 	for (; nb > 0; nb -= c) {
@@ -495,46 +453,31 @@ static nokprobe_inline int __copy_mem_out(u8 *dest, unsigned long ea, int nb, st
 			c = max_align(nb);
 		switch (c) {
 		case 1:
-			unsafe_put_user(*dest, (u8 __user *)ea, Efault);
+			err = __put_user(*dest, (unsigned char __user *) ea);
 			break;
 		case 2:
-			unsafe_put_user(*(u16 *)dest, (u16 __user *)ea, Efault);
+			err = __put_user(*(u16 *)dest,
+					 (unsigned short __user *) ea);
 			break;
 		case 4:
-			unsafe_put_user(*(u32 *)dest, (u32 __user *)ea, Efault);
+			err = __put_user(*(u32 *)dest,
+					 (unsigned int __user *) ea);
 			break;
 #ifdef __powerpc64__
 		case 8:
-			unsafe_put_user(*(u64 *)dest, (u64 __user *)ea, Efault);
+			err = __put_user(*(unsigned long *)dest,
+					 (unsigned long __user *) ea);
 			break;
 #endif
+		}
+		if (err) {
+			regs->dar = ea;
+			return err;
 		}
 		dest += c;
 		ea += c;
 	}
 	return 0;
-
-Efault:
-	regs->dar = ea;
-	return -EFAULT;
-}
-
-static nokprobe_inline int copy_mem_out(u8 *dest, unsigned long ea, int nb, struct pt_regs *regs)
-{
-	int err;
-
-	if (is_kernel_addr(ea))
-		return __copy_mem_out(dest, ea, nb, regs);
-
-	if (user_write_access_begin((void __user *)ea, nb)) {
-		err = __copy_mem_out(dest, ea, nb, regs);
-		user_write_access_end();
-	} else {
-		err = -EFAULT;
-		regs->dar = ea;
-	}
-
-	return err;
 }
 
 static nokprobe_inline int write_mem_unaligned(unsigned long val,
@@ -1043,44 +986,29 @@ static nokprobe_inline int do_vsx_store(struct instruction_op *op,
 }
 #endif /* CONFIG_VSX */
 
-static int __emulate_dcbz(unsigned long ea)
-{
-	unsigned long i;
-	unsigned long size = l1_dcache_bytes();
-
-	for (i = 0; i < size; i += sizeof(long))
-		unsafe_put_user(0, (unsigned long __user *)(ea + i), Efault);
-
-	return 0;
-
-Efault:
-	return -EFAULT;
-}
-
 int emulate_dcbz(unsigned long ea, struct pt_regs *regs)
 {
 	int err;
-	unsigned long size = l1_dcache_bytes();
+	unsigned long i, size;
 
-	ea = truncate_if_32bit(regs->msr, ea);
+#ifdef __powerpc64__
+	size = ppc64_caches.l1d.block_size;
+	if (!(regs->msr & MSR_64BIT))
+		ea &= 0xffffffffUL;
+#else
+	size = L1_CACHE_BYTES;
+#endif
 	ea &= ~(size - 1);
 	if (!address_ok(regs, ea, size))
 		return -EFAULT;
-
-	if (is_kernel_addr(ea)) {
-		err = __emulate_dcbz(ea);
-	} else if (user_write_access_begin((void __user *)ea, size)) {
-		err = __emulate_dcbz(ea);
-		user_write_access_end();
-	} else {
-		err = -EFAULT;
+	for (i = 0; i < size; i += sizeof(long)) {
+		err = __put_user(0, (unsigned long __user *) (ea + i));
+		if (err) {
+			regs->dar = ea;
+			return err;
+		}
 	}
-
-	if (err)
-		regs->dar = ea;
-
-
-	return err;
+	return 0;
 }
 NOKPROBE_SYMBOL(emulate_dcbz);
 
@@ -1134,8 +1062,10 @@ static nokprobe_inline void set_cr0(const struct pt_regs *regs,
 
 	op->type |= SETCC;
 	op->ccval = (regs->ccr & 0x0fffffff) | ((regs->xer >> 3) & 0x10000000);
+#ifdef __powerpc64__
 	if (!(regs->msr & MSR_64BIT))
 		val = (int) val;
+#endif
 	if (val < 0)
 		op->ccval |= 0x80000000;
 	else if (val > 0)
@@ -1163,11 +1093,15 @@ static nokprobe_inline void add_with_carry(const struct pt_regs *regs,
 
 	if (carry_in)
 		++val;
-	op->type = COMPUTE | SETREG | SETXER;
+	op->type = COMPUTE + SETREG + SETXER;
 	op->reg = rd;
 	op->val = val;
-	val = truncate_if_32bit(regs->msr, val);
-	val1 = truncate_if_32bit(regs->msr, val1);
+#ifdef __powerpc64__
+	if (!(regs->msr & MSR_64BIT)) {
+		val = (unsigned int) val;
+		val1 = (unsigned int) val1;
+	}
+#endif
 	op->xerval = regs->xer;
 	if (val < val1 || (carry_in && val == val1))
 		op->xerval |= XER_CA;
@@ -1184,7 +1118,7 @@ static nokprobe_inline void do_cmp_signed(const struct pt_regs *regs,
 {
 	unsigned int crval, shift;
 
-	op->type = COMPUTE | SETCC;
+	op->type = COMPUTE + SETCC;
 	crval = (regs->xer >> 31) & 1;		/* get SO bit */
 	if (v1 < v2)
 		crval |= 8;
@@ -1203,7 +1137,7 @@ static nokprobe_inline void do_cmp_unsigned(const struct pt_regs *regs,
 {
 	unsigned int crval, shift;
 
-	op->type = COMPUTE | SETCC;
+	op->type = COMPUTE + SETCC;
 	crval = (regs->xer >> 31) & 1;		/* get SO bit */
 	if (v1 < v2)
 		crval |= 8;
@@ -1343,7 +1277,7 @@ static nokprobe_inline int trap_compare(long v1, long v2)
  * otherwise.
  */
 int analyse_instr(struct instruction_op *op, const struct pt_regs *regs,
-		  ppc_inst_t instr)
+		  struct ppc_inst instr)
 {
 #ifdef CONFIG_PPC64
 	unsigned int suffixopcode, prefixtype, prefix_r;
@@ -1373,6 +1307,7 @@ int analyse_instr(struct instruction_op *op, const struct pt_regs *regs,
 		if (branch_taken(word, regs, op))
 			op->type |= BRTAKEN;
 		return 1;
+#ifdef CONFIG_PPC64
 	case 17:	/* sc */
 		if ((word & 0xfe2) == 2)
 			op->type = SYSCALL;
@@ -1384,6 +1319,7 @@ int analyse_instr(struct instruction_op *op, const struct pt_regs *regs,
 		} else
 			op->type = UNKNOWN;
 		return 0;
+#endif
 	case 18:	/* b */
 		op->type = BRANCH | BRTAKEN;
 		imm = word & 0x03fffffc;
@@ -2284,7 +2220,15 @@ int analyse_instr(struct instruction_op *op, const struct pt_regs *regs,
 			op->type = MKOP(STCX, 0, 4);
 			break;
 
-#ifdef CONFIG_PPC_HAS_LBARX_LHARX
+#ifdef __powerpc64__
+		case 84:	/* ldarx */
+			op->type = MKOP(LARX, 0, 8);
+			break;
+
+		case 214:	/* stdcx. */
+			op->type = MKOP(STCX, 0, 8);
+			break;
+
 		case 52:	/* lbarx */
 			op->type = MKOP(LARX, 0, 1);
 			break;
@@ -2299,15 +2243,6 @@ int analyse_instr(struct instruction_op *op, const struct pt_regs *regs,
 
 		case 726:	/* sthcx. */
 			op->type = MKOP(STCX, 0, 2);
-			break;
-#endif
-#ifdef __powerpc64__
-		case 84:	/* ldarx */
-			op->type = MKOP(LARX, 0, 8);
-			break;
-
-		case 214:	/* stdcx. */
-			op->type = MKOP(STCX, 0, 8);
 			break;
 
 		case 276:	/* lqarx */
@@ -3335,7 +3270,7 @@ int emulate_loadstore(struct pt_regs *regs, struct instruction_op *op)
 		err = 0;
 		val = 0;
 		switch (size) {
-#ifdef CONFIG_PPC_HAS_LBARX_LHARX
+#ifdef __powerpc64__
 		case 1:
 			__get_user_asmx(val, ea, err, "lbarx");
 			break;
@@ -3568,7 +3503,7 @@ NOKPROBE_SYMBOL(emulate_loadstore);
  * or -1 if the instruction is one that should not be stepped,
  * such as an rfid, or a mtmsrd that would clear MSR_RI.
  */
-int emulate_step(struct pt_regs *regs, ppc_inst_t instr)
+int emulate_step(struct pt_regs *regs, struct ppc_inst instr)
 {
 	struct instruction_op op;
 	int r, err, type;
@@ -3639,22 +3574,43 @@ int emulate_step(struct pt_regs *regs, ppc_inst_t instr)
 		regs_set_return_msr(regs, (regs->msr & ~op.val) | (val & op.val));
 		goto instr_done;
 
+#ifdef CONFIG_PPC64
 	case SYSCALL:	/* sc */
 		/*
-		 * Per ISA v3.1, section 7.5.15 'Trace Interrupt', we can't
-		 * single step a system call instruction:
-		 *
-		 *   Successful completion for an instruction means that the
-		 *   instruction caused no other interrupt. Thus a Trace
-		 *   interrupt never occurs for a System Call or System Call
-		 *   Vectored instruction, or for a Trap instruction that
-		 *   traps.
+		 * N.B. this uses knowledge about how the syscall
+		 * entry code works.  If that is changed, this will
+		 * need to be changed also.
 		 */
-		return -1;
+		if (IS_ENABLED(CONFIG_PPC_FAST_ENDIAN_SWITCH) &&
+				cpu_has_feature(CPU_FTR_REAL_LE) &&
+				regs->gpr[0] == 0x1ebe) {
+			regs_set_return_msr(regs, regs->msr ^ MSR_LE);
+			goto instr_done;
+		}
+		regs->gpr[9] = regs->gpr[13];
+		regs->gpr[10] = MSR_KERNEL;
+		regs->gpr[11] = regs->nip + 4;
+		regs->gpr[12] = regs->msr & MSR_MASK;
+		regs->gpr[13] = (unsigned long) get_paca();
+		regs_set_return_ip(regs, (unsigned long) &system_call_common);
+		regs_set_return_msr(regs, MSR_KERNEL);
+		return 1;
+
+#ifdef CONFIG_PPC_BOOK3S_64
 	case SYSCALL_VECTORED_0:	/* scv 0 */
-		return -1;
+		regs->gpr[9] = regs->gpr[13];
+		regs->gpr[10] = MSR_KERNEL;
+		regs->gpr[11] = regs->nip + 4;
+		regs->gpr[12] = regs->msr & MSR_MASK;
+		regs->gpr[13] = (unsigned long) get_paca();
+		regs_set_return_ip(regs, (unsigned long) &system_call_vectored_emulate);
+		regs_set_return_msr(regs, MSR_KERNEL);
+		return 1;
+#endif
+
 	case RFI:
 		return -1;
+#endif
 	}
 	return 0;
 

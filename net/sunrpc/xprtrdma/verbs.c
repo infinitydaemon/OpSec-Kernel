@@ -63,6 +63,17 @@
 #include "xprt_rdma.h"
 #include <trace/events/rpcrdma.h>
 
+/*
+ * Globals/Macros
+ */
+
+#if IS_ENABLED(CONFIG_SUNRPC_DEBUG)
+# define RPCDBG_FACILITY	RPCDBG_TRANS
+#endif
+
+/*
+ * internal functions
+ */
 static int rpcrdma_sendctxs_create(struct rpcrdma_xprt *r_xprt);
 static void rpcrdma_sendctxs_destroy(struct rpcrdma_xprt *r_xprt);
 static void rpcrdma_sendctx_put_locked(struct rpcrdma_xprt *r_xprt,
@@ -76,7 +87,8 @@ static void rpcrdma_mrs_destroy(struct rpcrdma_xprt *r_xprt);
 static void rpcrdma_ep_get(struct rpcrdma_ep *ep);
 static int rpcrdma_ep_put(struct rpcrdma_ep *ep);
 static struct rpcrdma_regbuf *
-rpcrdma_regbuf_alloc(size_t size, enum dma_data_direction direction);
+rpcrdma_regbuf_alloc(size_t size, enum dma_data_direction direction,
+		     gfp_t flags);
 static void rpcrdma_regbuf_dma_unmap(struct rpcrdma_regbuf *rb);
 static void rpcrdma_regbuf_free(struct rpcrdma_regbuf *rb);
 
@@ -193,12 +205,14 @@ static void rpcrdma_update_cm_private(struct rpcrdma_ep *ep,
 	unsigned int rsize, wsize;
 
 	/* Default settings for RPC-over-RDMA Version One */
+	ep->re_implicit_roundup = xprt_rdma_pad_optimize;
 	rsize = RPCRDMA_V1_DEF_INLINE_SIZE;
 	wsize = RPCRDMA_V1_DEF_INLINE_SIZE;
 
 	if (pmsg &&
 	    pmsg->cp_magic == rpcrdma_cmp_magic &&
 	    pmsg->cp_version == RPCRDMA_CMP_VERSION) {
+		ep->re_implicit_roundup = true;
 		rsize = rpcrdma_decode_buffer_size(pmsg->cp_send_size);
 		wsize = rpcrdma_decode_buffer_size(pmsg->cp_recv_size);
 	}
@@ -262,6 +276,8 @@ rpcrdma_cm_event_handler(struct rdma_cm_id *id, struct rdma_cm_event *event)
 		ep->re_connect_status = -ENETUNREACH;
 		goto wake_connect_worker;
 	case RDMA_CM_EVENT_REJECTED:
+		dprintk("rpcrdma: connection to %pISpc rejected: %s\n",
+			sap, rdma_reject_msg(id, event->status));
 		ep->re_connect_status = -ECONNREFUSED;
 		if (event->status == IB_CM_REJ_STALE_CONN)
 			ep->re_connect_status = -ENOTCONN;
@@ -277,6 +293,8 @@ disconnected:
 		break;
 	}
 
+	dprintk("RPC:       %s: %pISpc on %s/frwr: %s\n", __func__, sap,
+		ep->re_id->device->name, rdma_event_msg(event->event));
 	return 0;
 }
 
@@ -372,7 +390,7 @@ static int rpcrdma_ep_create(struct rpcrdma_xprt *r_xprt)
 	struct rpcrdma_ep *ep;
 	int rc;
 
-	ep = kzalloc(sizeof(*ep), XPRTRDMA_GFP_FLAGS);
+	ep = kzalloc(sizeof(*ep), GFP_NOFS);
 	if (!ep)
 		return -ENOTCONN;
 	ep->re_xprt = &r_xprt->rx_xprt;
@@ -402,6 +420,14 @@ static int rpcrdma_ep_create(struct rpcrdma_xprt *r_xprt)
 	ep->re_attr.sq_sig_type = IB_SIGNAL_REQ_WR;
 	ep->re_attr.qp_type = IB_QPT_RC;
 	ep->re_attr.port_num = ~0;
+
+	dprintk("RPC:       %s: requested max: dtos: send %d recv %d; "
+		"iovs: send %d recv %d\n",
+		__func__,
+		ep->re_attr.cap.max_send_wr,
+		ep->re_attr.cap.max_recv_wr,
+		ep->re_attr.cap.max_send_sge,
+		ep->re_attr.cap.max_recv_sge);
 
 	ep->re_send_batch = ep->re_max_requests >> 3;
 	ep->re_send_count = ep->re_send_batch;
@@ -528,7 +554,6 @@ int rpcrdma_xprt_connect(struct rpcrdma_xprt *r_xprt)
 		goto out;
 	}
 	rpcrdma_mrs_create(r_xprt);
-	frwr_wp_create(r_xprt);
 
 out:
 	trace_xprtrdma_connect(r_xprt, rc);
@@ -605,7 +630,7 @@ static struct rpcrdma_sendctx *rpcrdma_sendctx_create(struct rpcrdma_ep *ep)
 	struct rpcrdma_sendctx *sc;
 
 	sc = kzalloc(struct_size(sc, sc_sges, ep->re_attr.cap.max_send_sge),
-		     XPRTRDMA_GFP_FLAGS);
+		     GFP_KERNEL);
 	if (!sc)
 		return NULL;
 
@@ -628,7 +653,7 @@ static int rpcrdma_sendctxs_create(struct rpcrdma_xprt *r_xprt)
 	 * Sends are posted.
 	 */
 	i = r_xprt->rx_ep->re_max_requests + RPCRDMA_MAX_BC_REQUESTS;
-	buf->rb_sc_ctxs = kcalloc(i, sizeof(sc), XPRTRDMA_GFP_FLAGS);
+	buf->rb_sc_ctxs = kcalloc(i, sizeof(sc), GFP_KERNEL);
 	if (!buf->rb_sc_ctxs)
 		return -ENOMEM;
 
@@ -739,16 +764,13 @@ rpcrdma_mrs_create(struct rpcrdma_xprt *r_xprt)
 {
 	struct rpcrdma_buffer *buf = &r_xprt->rx_buf;
 	struct rpcrdma_ep *ep = r_xprt->rx_ep;
-	struct ib_device *device = ep->re_id->device;
 	unsigned int count;
 
-	/* Try to allocate enough to perform one full-sized I/O */
 	for (count = 0; count < ep->re_max_rdma_segs; count++) {
 		struct rpcrdma_mr *mr;
 		int rc;
 
-		mr = kzalloc_node(sizeof(*mr), XPRTRDMA_GFP_FLAGS,
-				  ibdev_to_node(device));
+		mr = kzalloc(sizeof(*mr), GFP_NOFS);
 		if (!mr)
 			break;
 
@@ -793,33 +815,38 @@ void rpcrdma_mrs_refresh(struct rpcrdma_xprt *r_xprt)
 	/* If there is no underlying connection, it's no use
 	 * to wake the refresh worker.
 	 */
-	if (ep->re_connect_status != 1)
-		return;
-	queue_work(system_highpri_wq, &buf->rb_refresh_worker);
+	if (ep->re_connect_status == 1) {
+		/* The work is scheduled on a WQ_MEM_RECLAIM
+		 * workqueue in order to prevent MR allocation
+		 * from recursing into NFS during direct reclaim.
+		 */
+		queue_work(xprtiod_workqueue, &buf->rb_refresh_worker);
+	}
 }
 
 /**
  * rpcrdma_req_create - Allocate an rpcrdma_req object
  * @r_xprt: controlling r_xprt
  * @size: initial size, in bytes, of send and receive buffers
+ * @flags: GFP flags passed to memory allocators
  *
  * Returns an allocated and fully initialized rpcrdma_req or NULL.
  */
-struct rpcrdma_req *rpcrdma_req_create(struct rpcrdma_xprt *r_xprt,
-				       size_t size)
+struct rpcrdma_req *rpcrdma_req_create(struct rpcrdma_xprt *r_xprt, size_t size,
+				       gfp_t flags)
 {
 	struct rpcrdma_buffer *buffer = &r_xprt->rx_buf;
 	struct rpcrdma_req *req;
 
-	req = kzalloc(sizeof(*req), XPRTRDMA_GFP_FLAGS);
+	req = kzalloc(sizeof(*req), flags);
 	if (req == NULL)
 		goto out1;
 
-	req->rl_sendbuf = rpcrdma_regbuf_alloc(size, DMA_TO_DEVICE);
+	req->rl_sendbuf = rpcrdma_regbuf_alloc(size, DMA_TO_DEVICE, flags);
 	if (!req->rl_sendbuf)
 		goto out2;
 
-	req->rl_recvbuf = rpcrdma_regbuf_alloc(size, DMA_NONE);
+	req->rl_recvbuf = rpcrdma_regbuf_alloc(size, DMA_NONE, flags);
 	if (!req->rl_recvbuf)
 		goto out3;
 
@@ -855,7 +882,7 @@ int rpcrdma_req_setup(struct rpcrdma_xprt *r_xprt, struct rpcrdma_req *req)
 		     r_xprt->rx_ep->re_max_rdma_segs * rpcrdma_readchunk_maxsz;
 	maxhdrsize *= sizeof(__be32);
 	rb = rpcrdma_regbuf_alloc(__roundup_pow_of_two(maxhdrsize),
-				  DMA_TO_DEVICE);
+				  DMA_TO_DEVICE, GFP_KERNEL);
 	if (!rb)
 		goto out;
 
@@ -926,12 +953,12 @@ struct rpcrdma_rep *rpcrdma_rep_create(struct rpcrdma_xprt *r_xprt,
 	struct rpcrdma_buffer *buf = &r_xprt->rx_buf;
 	struct rpcrdma_rep *rep;
 
-	rep = kzalloc(sizeof(*rep), XPRTRDMA_GFP_FLAGS);
+	rep = kzalloc(sizeof(*rep), GFP_KERNEL);
 	if (rep == NULL)
 		goto out;
 
 	rep->rr_rdmabuf = rpcrdma_regbuf_alloc(r_xprt->rx_ep->re_inline_recv,
-					       DMA_FROM_DEVICE);
+					       DMA_FROM_DEVICE, GFP_KERNEL);
 	if (!rep->rr_rdmabuf)
 		goto out_free;
 
@@ -1061,8 +1088,8 @@ int rpcrdma_buffer_create(struct rpcrdma_xprt *r_xprt)
 	for (i = 0; i < r_xprt->rx_xprt.max_reqs; i++) {
 		struct rpcrdma_req *req;
 
-		req = rpcrdma_req_create(r_xprt,
-					 RPCRDMA_V1_DEF_INLINE_SIZE * 2);
+		req = rpcrdma_req_create(r_xprt, RPCRDMA_V1_DEF_INLINE_SIZE * 2,
+					 GFP_KERNEL);
 		if (!req)
 			goto out;
 		list_add(&req->rl_list, &buf->rb_send_bufs);
@@ -1232,14 +1259,15 @@ void rpcrdma_buffer_put(struct rpcrdma_buffer *buffers, struct rpcrdma_req *req)
  * or Replies they may be registered externally via frwr_map.
  */
 static struct rpcrdma_regbuf *
-rpcrdma_regbuf_alloc(size_t size, enum dma_data_direction direction)
+rpcrdma_regbuf_alloc(size_t size, enum dma_data_direction direction,
+		     gfp_t flags)
 {
 	struct rpcrdma_regbuf *rb;
 
-	rb = kmalloc(sizeof(*rb), XPRTRDMA_GFP_FLAGS);
+	rb = kmalloc(sizeof(*rb), flags);
 	if (!rb)
 		return NULL;
-	rb->rg_data = kmalloc(size, XPRTRDMA_GFP_FLAGS);
+	rb->rg_data = kmalloc(size, flags);
 	if (!rb->rg_data) {
 		kfree(rb);
 		return NULL;

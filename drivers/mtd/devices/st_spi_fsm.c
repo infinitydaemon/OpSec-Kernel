@@ -2084,12 +2084,15 @@ static int stfsm_probe(struct platform_device *pdev)
 	 * Configure READ/WRITE/ERASE sequences according to platform and
 	 * device flags.
 	 */
-	if (info->config)
+	if (info->config) {
 		ret = info->config(fsm);
-	else
+		if (ret)
+			goto err_clk_unprepare;
+	} else {
 		ret = stfsm_prepare_rwe_seqs_default(fsm);
-	if (ret)
-		goto err_clk_unprepare;
+		if (ret)
+			goto err_clk_unprepare;
+	}
 
 	fsm->mtd.name		= info->name;
 	fsm->mtd.dev.parent	= &pdev->dev;
@@ -2125,11 +2128,7 @@ static int stfsm_remove(struct platform_device *pdev)
 {
 	struct stfsm *fsm = platform_get_drvdata(pdev);
 
-	WARN_ON(mtd_device_unregister(&fsm->mtd));
-
-	clk_disable_unprepare(fsm->clk);
-
-	return 0;
+	return mtd_device_unregister(&fsm->mtd);
 }
 
 #ifdef CONFIG_PM_SLEEP

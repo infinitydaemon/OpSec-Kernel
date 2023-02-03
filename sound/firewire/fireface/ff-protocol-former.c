@@ -2,6 +2,8 @@
 // ff-protocol-former.c - a part of driver for RME Fireface series
 //
 // Copyright (c) 2019 Takashi Sakamoto
+//
+// Licensed under the terms of the GNU General Public License, version 2.
 
 #include <linux/delay.h>
 

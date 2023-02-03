@@ -23,9 +23,7 @@ tegra-drm-y := \
 	gr2d.o \
 	gr3d.o \
 	falcon.o \
-	vic.o \
-	nvdec.o \
-	riscv.o
+	vic.o
 
 tegra-drm-y += trace.o
 

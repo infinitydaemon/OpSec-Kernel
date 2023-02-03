@@ -50,13 +50,13 @@
 	gpio-keys {
 		compatible = "gpio-keys";
 
-		event-ps0-presence {
+		ps0-presence {
 			label = "ps0-presence";
 			gpios = <&gpio0 ASPEED_GPIO(H, 3) GPIO_ACTIVE_LOW>;
 			linux,code = <ASPEED_GPIO(H, 3)>;
 		};
 
-		event-ps1-presence {
+		ps1-presence {
 			label = "ps1-presence";
 			gpios = <&gpio0 ASPEED_GPIO(E, 5) GPIO_ACTIVE_LOW>;
 			linux,code = <ASPEED_GPIO(E, 5)>;
@@ -65,27 +65,29 @@
 
 	gpio-keys-polled {
 		compatible = "gpio-keys-polled";
+		#address-cells = <1>;
+		#size-cells = <0>;
 		poll-interval = <1000>;
 
-		event-fan0-presence {
+		fan0-presence {
 			label = "fan0-presence";
 			gpios = <&pca0 4 GPIO_ACTIVE_LOW>;
 			linux,code = <4>;
 		};
 
-		event-fan1-presence {
+		fan1-presence {
 			label = "fan1-presence";
 			gpios = <&pca0 5 GPIO_ACTIVE_LOW>;
 			linux,code = <5>;
 		};
 
-		event-fan2-presence {
+		fan2-presence {
 			label = "fan2-presence";
 			gpios = <&pca0 6 GPIO_ACTIVE_LOW>;
 			linux,code = <6>;
 		};
 
-		event-fan3-presence {
+		fan3-presence {
 			label = "fan3-presence";
 			gpios = <&pca0 7 GPIO_ACTIVE_LOW>;
 			linux,code = <7>;
@@ -195,6 +197,7 @@
 
 	fsi-routing-gpios = <&gpio0 ASPEED_GPIO(Q, 7) GPIO_ACTIVE_HIGH>;
 	fsi-mux-gpios = <&gpio0 ASPEED_GPIO(B, 0) GPIO_ACTIVE_HIGH>;
+	cfam-reset-gpios = <&gpio0 ASPEED_GPIO(Q, 0) GPIO_ACTIVE_LOW>;
 
 	cfam@0,0 {
 		reg = <0 0>;
@@ -873,15 +876,4 @@
 &xdma {
 	status = "okay";
 	memory-region = <&vga_memory>;
-};
-
-&kcs2 {
-	status = "okay";
-	aspeed,lpc-io-reg = <0xca8 0xcac>;
-};
-
-&kcs3 {
-	status = "okay";
-	aspeed,lpc-io-reg = <0xca2>;
-	aspeed,lpc-interrupts = <11 IRQ_TYPE_LEVEL_LOW>;
 };

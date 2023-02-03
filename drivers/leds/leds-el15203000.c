@@ -315,11 +315,13 @@ static int el15203000_probe(struct spi_device *spi)
 	return el15203000_probe_dt(priv);
 }
 
-static void el15203000_remove(struct spi_device *spi)
+static int el15203000_remove(struct spi_device *spi)
 {
 	struct el15203000 *priv = spi_get_drvdata(spi);
 
 	mutex_destroy(&priv->lock);
+
+	return 0;
 }
 
 static const struct of_device_id el15203000_dt_ids[] = {

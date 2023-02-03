@@ -831,7 +831,6 @@ struct __packed atto_hba_trace {
 	u32 total_length;
 	u32 trace_mask;
 	u8 reserved2[48];
-	u8 contents[];
 };
 
 #define ATTO_FUNC_SCSI_PASS_THRU     0x04

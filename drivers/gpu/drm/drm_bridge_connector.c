@@ -216,20 +216,6 @@ static void drm_bridge_connector_destroy(struct drm_connector *connector)
 	kfree(bridge_connector);
 }
 
-static void drm_bridge_connector_debugfs_init(struct drm_connector *connector,
-					      struct dentry *root)
-{
-	struct drm_bridge_connector *bridge_connector =
-		to_drm_bridge_connector(connector);
-	struct drm_encoder *encoder = bridge_connector->encoder;
-	struct drm_bridge *bridge;
-
-	list_for_each_entry(bridge, &encoder->bridge_chain, chain_node) {
-		if (bridge->funcs->debugfs_init)
-			bridge->funcs->debugfs_init(bridge, root);
-	}
-}
-
 static const struct drm_connector_funcs drm_bridge_connector_funcs = {
 	.reset = drm_atomic_helper_connector_reset,
 	.detect = drm_bridge_connector_detect,
@@ -237,7 +223,6 @@ static const struct drm_connector_funcs drm_bridge_connector_funcs = {
 	.destroy = drm_bridge_connector_destroy,
 	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
-	.debugfs_init = drm_bridge_connector_debugfs_init,
 };
 
 /* -----------------------------------------------------------------------------
@@ -331,7 +316,7 @@ struct drm_connector *drm_bridge_connector_init(struct drm_device *drm,
 	struct drm_bridge_connector *bridge_connector;
 	struct drm_connector *connector;
 	struct i2c_adapter *ddc = NULL;
-	struct drm_bridge *bridge, *panel_bridge = NULL;
+	struct drm_bridge *bridge;
 	int connector_type;
 
 	bridge_connector = kzalloc(sizeof(*bridge_connector), GFP_KERNEL);
@@ -373,9 +358,6 @@ struct drm_connector *drm_bridge_connector_init(struct drm_device *drm,
 
 		if (bridge->ddc)
 			ddc = bridge->ddc;
-
-		if (drm_bridge_is_panel(bridge))
-			panel_bridge = bridge;
 	}
 
 	if (connector_type == DRM_MODE_CONNECTOR_Unknown) {
@@ -394,9 +376,6 @@ struct drm_connector *drm_bridge_connector_init(struct drm_device *drm,
 	else if (bridge_connector->bridge_detect)
 		connector->polled = DRM_CONNECTOR_POLL_CONNECT
 				  | DRM_CONNECTOR_POLL_DISCONNECT;
-
-	if (panel_bridge)
-		drm_panel_bridge_set_orientation(connector, panel_bridge);
 
 	return connector;
 }

@@ -7,7 +7,6 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/jiffies.h>
@@ -57,7 +56,7 @@ struct sch5636_data {
 	struct device *hwmon_dev;
 
 	struct mutex update_lock;
-	bool valid;			/* true if following fields are valid */
+	char valid;			/* !=0 if following fields are valid */
 	unsigned long last_updated;	/* In jiffies */
 	u8 in[SCH5636_NO_INS];
 	u8 temp_val[SCH5636_NO_TEMPS];
@@ -141,7 +140,7 @@ static struct sch5636_data *sch5636_update_device(struct device *dev)
 	}
 
 	data->last_updated = jiffies;
-	data->valid = true;
+	data->valid = 1;
 abort:
 	mutex_unlock(&data->update_lock);
 	return ret;
@@ -502,21 +501,12 @@ error:
 	return err;
 }
 
-static const struct platform_device_id sch5636_device_id[] = {
-	{
-		.name = "sch5636",
-	},
-	{ }
-};
-MODULE_DEVICE_TABLE(platform, sch5636_device_id);
-
 static struct platform_driver sch5636_driver = {
 	.driver = {
 		.name	= DRVNAME,
 	},
 	.probe		= sch5636_probe,
 	.remove		= sch5636_remove,
-	.id_table	= sch5636_device_id,
 };
 
 module_platform_driver(sch5636_driver);

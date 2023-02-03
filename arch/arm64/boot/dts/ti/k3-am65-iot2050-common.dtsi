@@ -4,10 +4,12 @@
  *
  * Authors:
  *   Le Jin <le.jin@siemens.com>
- *   Jan Kiszka <jan.kiszka@siemens.com>
+ *   Jan Kiszka <jan.kiszk@siemens.com>
  *
- * Common bits of the IOT2050 Basic and Advanced variants, PG1 and PG2
+ * Common bits of the IOT2050 Basic and Advanced variants
  */
+
+/dts-v1/;
 
 #include "k3-am654.dtsi"
 #include <dt-bindings/phy/phy.h>
@@ -15,8 +17,6 @@
 / {
 	aliases {
 		spi0 = &mcu_spi0;
-		mmc0 = &sdhci1;
-		mmc1 = &sdhci0;
 	};
 
 	chosen {
@@ -360,13 +360,15 @@
 };
 
 &main_uart1 {
-	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_uart1_pins_default>;
 };
 
+&main_uart2 {
+	status = "disabled";
+};
+
 &mcu_uart0 {
-	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&arduino_uart_pins_default>;
 };
@@ -411,21 +413,19 @@
 };
 
 &wkup_i2c0 {
-	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&wkup_i2c0_pins_default>;
 	clock-frequency = <400000>;
 };
 
 &mcu_i2c0 {
-	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&mcu_i2c0_pins_default>;
 	clock-frequency = <400000>;
 
 	psu: regulator@60 {
 		compatible = "ti,tps62363";
-		reg = <0x60>;
+		reg =  <0x60>;
 		regulator-name = "tps62363-vout";
 		regulator-min-microvolt = <500000>;
 		regulator-max-microvolt = <1500000>;
@@ -478,7 +478,6 @@
 };
 
 &main_i2c0 {
-	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_i2c0_pins_default>;
 	clock-frequency = <400000>;
@@ -496,21 +495,18 @@
 };
 
 &main_i2c1 {
-	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_i2c1_pins_default>;
 	clock-frequency = <400000>;
 };
 
 &main_i2c2 {
-	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_i2c2_pins_default>;
 	clock-frequency = <400000>;
 };
 
 &main_i2c3 {
-	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_i2c3_pins_default>;
 	clock-frequency = <400000>;
@@ -550,7 +546,6 @@
 };
 
 &ecap0 {
-	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&ecap0_pins_default>;
 };
@@ -560,6 +555,7 @@
 	pinctrl-0 = <&main_mmc1_pins_default>;
 	ti,driver-strength-ohm = <50>;
 	disable-wp;
+	no-1-8-v;
 };
 
 &usb0 {
@@ -575,12 +571,11 @@
 };
 
 &mcu_spi0 {
-	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&mcu_spi0_pins_default>;
 
 	#address-cells = <1>;
-	#size-cells = <0>;
+	#size-cells= <0>;
 	ti,pindir-d0-out-d1-in;
 };
 
@@ -609,6 +604,8 @@
 		cdns,tchsh-ns = <60>;
 		cdns,tslch-ns = <60>;
 		cdns,read-delay = <2>;
+		#address-cells = <1>;
+		#size-cells = <1>;
 	};
 };
 
@@ -632,8 +629,19 @@
 	};
 };
 
+&serdes0 {
+	status = "disabled";
+};
+
+&pcie0_rc {
+	status = "disabled";
+};
+
+&pcie0_ep {
+	status = "disabled";
+};
+
 &pcie1_rc {
-	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&minipcie_pins_default>;
 
@@ -643,34 +651,66 @@
 	reset-gpios = <&wkup_gpio0 27 GPIO_ACTIVE_HIGH>;
 };
 
-&mailbox0_cluster0 {
-	status = "okay";
-	interrupts = <436>;
+&pcie1_ep {
+	status = "disabled";
+};
 
-	mbox_mcu_r5fss0_core0: mbox-mcu-r5fss0-core0 {
-		ti,mbox-tx = <1 0 0>;
-		ti,mbox-rx = <0 0 0>;
-	};
+&mailbox0_cluster0 {
+	status = "disabled";
 };
 
 &mailbox0_cluster1 {
-	status = "okay";
-	interrupts = <432>;
-
-	mbox_mcu_r5fss0_core1: mbox-mcu-r5fss0-core1 {
-		ti,mbox-tx = <1 0 0>;
-		ti,mbox-rx = <0 0 0>;
-	};
+	status = "disabled";
 };
 
-&mcu_r5fss0_core0 {
-	memory-region = <&mcu_r5fss0_core0_dma_memory_region>,
-			<&mcu_r5fss0_core0_memory_region>;
-	mboxes = <&mailbox0_cluster0 &mbox_mcu_r5fss0_core0>;
+&mailbox0_cluster2 {
+	status = "disabled";
 };
 
-&mcu_r5fss0_core1 {
-	memory-region = <&mcu_r5fss0_core1_dma_memory_region>,
-			<&mcu_r5fss0_core1_memory_region>;
-	mboxes = <&mailbox0_cluster1 &mbox_mcu_r5fss0_core1>;
+&mailbox0_cluster3 {
+	status = "disabled";
+};
+
+&mailbox0_cluster4 {
+	status = "disabled";
+};
+
+&mailbox0_cluster5 {
+	status = "disabled";
+};
+
+&mailbox0_cluster6 {
+	status = "disabled";
+};
+
+&mailbox0_cluster7 {
+	status = "disabled";
+};
+
+&mailbox0_cluster8 {
+	status = "disabled";
+};
+
+&mailbox0_cluster9 {
+	status = "disabled";
+};
+
+&mailbox0_cluster10 {
+	status = "disabled";
+};
+
+&mailbox0_cluster11 {
+	status = "disabled";
+};
+
+&icssg0_mdio {
+	status = "disabled";
+};
+
+&icssg1_mdio {
+	status = "disabled";
+};
+
+&icssg2_mdio {
+	status = "disabled";
 };

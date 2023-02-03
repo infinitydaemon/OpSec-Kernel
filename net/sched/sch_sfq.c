@@ -888,12 +888,16 @@ static void sfq_walk(struct Qdisc *sch, struct qdisc_walker *arg)
 		return;
 
 	for (i = 0; i < q->divisor; i++) {
-		if (q->ht[i] == SFQ_EMPTY_SLOT) {
+		if (q->ht[i] == SFQ_EMPTY_SLOT ||
+		    arg->count < arg->skip) {
 			arg->count++;
 			continue;
 		}
-		if (!tc_qdisc_stats_dump(sch, i + 1, arg))
+		if (arg->fn(sch, i + 1, arg) < 0) {
+			arg->stop = 1;
 			break;
+		}
+		arg->count++;
 	}
 }
 

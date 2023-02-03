@@ -268,7 +268,8 @@ static const struct rmi_transport_ops rmi_smb_ops = {
 	.reset		= rmi_smb_reset,
 };
 
-static int rmi_smb_probe(struct i2c_client *client)
+static int rmi_smb_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct rmi_device_platform_data *pdata = dev_get_platdata(&client->dev);
 	struct rmi_smb_xport *rmi_smb;
@@ -337,11 +338,13 @@ static int rmi_smb_probe(struct i2c_client *client)
 	return 0;
 }
 
-static void rmi_smb_remove(struct i2c_client *client)
+static int rmi_smb_remove(struct i2c_client *client)
 {
 	struct rmi_smb_xport *rmi_smb = i2c_get_clientdata(client);
 
 	rmi_unregister_transport_device(&rmi_smb->xport);
+
+	return 0;
 }
 
 static int __maybe_unused rmi_smb_suspend(struct device *dev)
@@ -419,7 +422,7 @@ static struct i2c_driver rmi_smb_driver = {
 		.pm	= &rmi_smb_pm,
 	},
 	.id_table	= rmi_id,
-	.probe_new	= rmi_smb_probe,
+	.probe		= rmi_smb_probe,
 	.remove		= rmi_smb_remove,
 };
 

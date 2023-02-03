@@ -155,10 +155,6 @@ retry:
 	if (fault_signal_pending(fault, regs))
 		return;
 
-	/* The fault is fully completed (including releasing mmap lock) */
-	if (fault & VM_FAULT_COMPLETED)
-		return;
-
 	if (unlikely(fault & VM_FAULT_ERROR)) {
 		if (fault & VM_FAULT_OOM)
 			goto out_of_memory;
@@ -169,15 +165,17 @@ retry:
 		BUG();
 	}
 
-	if (fault & VM_FAULT_RETRY) {
-		flags |= FAULT_FLAG_TRIED;
+	if (flags & FAULT_FLAG_ALLOW_RETRY) {
+		if (fault & VM_FAULT_RETRY) {
+			flags |= FAULT_FLAG_TRIED;
 
-		/* No need to mmap_read_unlock(mm) as we would
-		 * have already released it in __lock_page_or_retry
-		 * in mm/filemap.c.
-		 */
+			 /* No need to mmap_read_unlock(mm) as we would
+			 * have already released it in __lock_page_or_retry
+			 * in mm/filemap.c.
+			 */
 
-		goto retry;
+			goto retry;
+		}
 	}
 
 	mmap_read_unlock(mm);

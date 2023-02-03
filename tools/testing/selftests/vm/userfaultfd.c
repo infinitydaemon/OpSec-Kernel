@@ -58,14 +58,12 @@
 #include <assert.h>
 #include <inttypes.h>
 #include <stdint.h>
-#include <sys/random.h>
 
 #include "../kselftest.h"
-#include "vm_util.h"
 
 #ifdef __NR_userfaultfd
 
-static unsigned long nr_cpus, nr_pages, nr_pages_per_cpu, page_size, hpage_size;
+static unsigned long nr_cpus, nr_pages, nr_pages_per_cpu, page_size;
 
 #define BOUNCE_RANDOM		(1<<0)
 #define BOUNCE_RACINGFAULTS	(1<<1)
@@ -78,30 +76,25 @@ static int bounces;
 #define TEST_SHMEM	3
 static int test_type;
 
-#define UFFD_FLAGS	(O_CLOEXEC | O_NONBLOCK | UFFD_USER_MODE_ONLY)
-
-#define BASE_PMD_ADDR ((void *)(1UL << 30))
-
-/* test using /dev/userfaultfd, instead of userfaultfd(2) */
-static bool test_dev_userfaultfd;
-
 /* exercise the test_uffdio_*_eexist every ALARM_INTERVAL_SECS */
 #define ALARM_INTERVAL_SECS 10
 static volatile bool test_uffdio_copy_eexist = true;
 static volatile bool test_uffdio_zeropage_eexist = true;
 /* Whether to test uffd write-protection */
-static bool test_uffdio_wp = true;
+static bool test_uffdio_wp = false;
 /* Whether to test uffd minor faults */
 static bool test_uffdio_minor = false;
+
 static bool map_shared;
-static int mem_fd;
+static int shm_fd;
+static int huge_fd = -1;	/* only used for hugetlb_shared test */
+static char *huge_fd_off0;
 static unsigned long long *count_verify;
 static int uffd = -1;
 static int uffd_flags, finished, *pipefd;
-static char *area_src, *area_src_alias, *area_dst, *area_dst_alias, *area_remap;
+static char *area_src, *area_src_alias, *area_dst, *area_dst_alias;
 static char *zeropage;
 pthread_attr_t attr;
-static bool test_collapse;
 
 /* Userfaultfd test statistics */
 struct uffd_stats {
@@ -126,22 +119,15 @@ struct uffd_stats {
 				 ~(unsigned long)(sizeof(unsigned long long) \
 						  -  1)))
 
-#define swap(a, b) \
-	do { typeof(a) __tmp = (a); (a) = (b); (b) = __tmp; } while (0)
-
-#define factor_of_2(x) ((x) ^ ((x) & ((x) - 1)))
-
 const char *examples =
     "# Run anonymous memory test on 100MiB region with 99999 bounces:\n"
     "./userfaultfd anon 100 99999\n\n"
-    "# Run the same anonymous memory test, but using /dev/userfaultfd:\n"
-    "./userfaultfd anon:dev 100 99999\n\n"
     "# Run share memory test on 1GiB region with 99 bounces:\n"
     "./userfaultfd shmem 1000 99\n\n"
-    "# Run hugetlb memory test on 256MiB region with 50 bounces:\n"
-    "./userfaultfd hugetlb 256 50\n\n"
-    "# Run the same hugetlb test but using shared file:\n"
-    "./userfaultfd hugetlb_shared 256 50\n\n"
+    "# Run hugetlb memory test on 256MiB region with 50 bounces (using /dev/hugepages/hugefile):\n"
+    "./userfaultfd hugetlb 256 50 /dev/hugepages/hugefile\n\n"
+    "# Run the same hugetlb test but using shmem:\n"
+    "./userfaultfd hugetlb_shared 256 50 /dev/hugepages/hugefile\n\n"
     "# 10MiB-~6GiB 999 bounces anonymous test, "
     "continue forever unless an error triggers\n"
     "while ./userfaultfd anon $[RANDOM % 6000 + 10] 999; do true; done\n\n";
@@ -152,16 +138,6 @@ static void usage(void)
 		"[hugetlbfs_file]\n\n");
 	fprintf(stderr, "Supported <test type>: anon, hugetlb, "
 		"hugetlb_shared, shmem\n\n");
-	fprintf(stderr, "'Test mods' can be joined to the test type string with a ':'. "
-		"Supported mods:\n");
-	fprintf(stderr, "\tsyscall - Use userfaultfd(2) (default)\n");
-	fprintf(stderr, "\tdev - Use /dev/userfaultfd instead of userfaultfd(2)\n");
-	fprintf(stderr, "\tcollapse - Test MADV_COLLAPSE of UFFDIO_REGISTER_MODE_MINOR\n"
-		"memory\n");
-	fprintf(stderr, "\nExample test mod usage:\n");
-	fprintf(stderr, "# Run anonymous memory test with /dev/userfaultfd:\n");
-	fprintf(stderr, "./userfaultfd anon:dev 100 99999\n\n");
-
 	fprintf(stderr, "Examples:\n\n");
 	fprintf(stderr, "%s", examples);
 	exit(1);
@@ -175,13 +151,11 @@ static void usage(void)
 			ret, __LINE__);				\
 	} while (0)
 
-#define errexit(exitcode, fmt, ...)		\
+#define err(fmt, ...)				\
 	do {					\
 		_err(fmt, ##__VA_ARGS__);	\
-		exit(exitcode);			\
+		exit(1);			\
 	} while (0)
-
-#define err(fmt, ...) errexit(1, fmt, ##__VA_ARGS__)
 
 static void uffd_stats_reset(struct uffd_stats *uffd_stats,
 			     unsigned long n_cpus)
@@ -235,10 +209,12 @@ static void anon_release_pages(char *rel_area)
 		err("madvise(MADV_DONTNEED) failed");
 }
 
-static void anon_allocate_area(void **alloc_area, bool is_src)
+static void anon_allocate_area(void **alloc_area)
 {
 	*alloc_area = mmap(NULL, nr_pages * page_size, PROT_READ | PROT_WRITE,
 			   MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+	if (*alloc_area == MAP_FAILED)
+		err("mmap of anonymous memory failed");
 }
 
 static void noop_alias_mapping(__u64 *start, size_t len, unsigned long offset)
@@ -247,37 +223,40 @@ static void noop_alias_mapping(__u64 *start, size_t len, unsigned long offset)
 
 static void hugetlb_release_pages(char *rel_area)
 {
-	if (!map_shared) {
-		if (madvise(rel_area, nr_pages * page_size, MADV_DONTNEED))
-			err("madvise(MADV_DONTNEED) failed");
-	} else {
-		if (madvise(rel_area, nr_pages * page_size, MADV_REMOVE))
-			err("madvise(MADV_REMOVE) failed");
-	}
+	if (huge_fd == -1)
+		return;
+
+	if (fallocate(huge_fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+		      rel_area == huge_fd_off0 ? 0 : nr_pages * page_size,
+		      nr_pages * page_size))
+		err("fallocate() failed");
 }
 
-static void hugetlb_allocate_area(void **alloc_area, bool is_src)
+static void hugetlb_allocate_area(void **alloc_area)
 {
-	off_t size = nr_pages * page_size;
-	off_t offset = is_src ? 0 : size;
 	void *area_alias = NULL;
 	char **alloc_area_alias;
 
-	*alloc_area = mmap(NULL, size, PROT_READ | PROT_WRITE,
-			   (map_shared ? MAP_SHARED : MAP_PRIVATE) |
-			   (is_src ? 0 : MAP_NORESERVE),
-			   mem_fd, offset);
+	*alloc_area = mmap(NULL, nr_pages * page_size, PROT_READ | PROT_WRITE,
+			   map_shared ? MAP_SHARED :
+			   MAP_PRIVATE | MAP_HUGETLB |
+			   (*alloc_area == area_src ? 0 : MAP_NORESERVE),
+			   huge_fd,
+			   *alloc_area == area_src ? 0 : nr_pages * page_size);
 	if (*alloc_area == MAP_FAILED)
 		err("mmap of hugetlbfs file failed");
 
 	if (map_shared) {
-		area_alias = mmap(NULL, size, PROT_READ | PROT_WRITE,
-				  MAP_SHARED, mem_fd, offset);
+		area_alias = mmap(NULL, nr_pages * page_size, PROT_READ | PROT_WRITE,
+				  MAP_SHARED,
+				  huge_fd, *alloc_area == area_src ? 0 :
+				  nr_pages * page_size);
 		if (area_alias == MAP_FAILED)
 			err("mmap of hugetlb file alias failed");
 	}
 
-	if (is_src) {
+	if (*alloc_area == area_src) {
+		huge_fd_off0 = *alloc_area;
 		alloc_area_alias = &area_src_alias;
 	} else {
 		alloc_area_alias = &area_dst_alias;
@@ -290,7 +269,12 @@ static void hugetlb_alias_mapping(__u64 *start, size_t len, unsigned long offset
 {
 	if (!map_shared)
 		return;
-
+	/*
+	 * We can't zap just the pagetable with hugetlbfs because
+	 * MADV_DONTEED won't work. So exercise -EEXIST on a alias
+	 * mapping where the pagetables are not established initially,
+	 * this way we'll exercise the -EEXEC at the fs level.
+	 */
 	*start = (unsigned long) area_dst_alias + offset;
 }
 
@@ -300,36 +284,21 @@ static void shmem_release_pages(char *rel_area)
 		err("madvise(MADV_REMOVE) failed");
 }
 
-static void shmem_allocate_area(void **alloc_area, bool is_src)
+static void shmem_allocate_area(void **alloc_area)
 {
 	void *area_alias = NULL;
-	size_t bytes = nr_pages * page_size;
-	unsigned long offset = is_src ? 0 : bytes;
-	char *p = NULL, *p_alias = NULL;
+	bool is_src = alloc_area == (void **)&area_src;
+	unsigned long offset = is_src ? 0 : nr_pages * page_size;
 
-	if (test_collapse) {
-		p = BASE_PMD_ADDR;
-		if (!is_src)
-			/* src map + alias + interleaved hpages */
-			p += 2 * (bytes + hpage_size);
-		p_alias = p;
-		p_alias += bytes;
-		p_alias += hpage_size;  /* Prevent src/dst VMA merge */
-	}
-
-	*alloc_area = mmap(p, bytes, PROT_READ | PROT_WRITE, MAP_SHARED,
-			   mem_fd, offset);
+	*alloc_area = mmap(NULL, nr_pages * page_size, PROT_READ | PROT_WRITE,
+			   MAP_SHARED, shm_fd, offset);
 	if (*alloc_area == MAP_FAILED)
 		err("mmap of memfd failed");
-	if (test_collapse && *alloc_area != p)
-		err("mmap of memfd failed at %p", p);
 
-	area_alias = mmap(p_alias, bytes, PROT_READ | PROT_WRITE, MAP_SHARED,
-			  mem_fd, offset);
+	area_alias = mmap(NULL, nr_pages * page_size, PROT_READ | PROT_WRITE,
+			  MAP_SHARED, shm_fd, offset);
 	if (area_alias == MAP_FAILED)
 		err("mmap of memfd alias failed");
-	if (test_collapse && area_alias != p_alias)
-		err("mmap of anonymous memory failed at %p", p_alias);
 
 	if (is_src)
 		area_src_alias = area_alias;
@@ -342,108 +311,52 @@ static void shmem_alias_mapping(__u64 *start, size_t len, unsigned long offset)
 	*start = (unsigned long)area_dst_alias + offset;
 }
 
-static void shmem_check_pmd_mapping(void *p, int expect_nr_hpages)
-{
-	if (!check_huge_shmem(area_dst_alias, expect_nr_hpages, hpage_size))
-		err("Did not find expected %d number of hugepages",
-		    expect_nr_hpages);
-}
-
 struct uffd_test_ops {
-	void (*allocate_area)(void **alloc_area, bool is_src);
+	unsigned long expected_ioctls;
+	void (*allocate_area)(void **alloc_area);
 	void (*release_pages)(char *rel_area);
 	void (*alias_mapping)(__u64 *start, size_t len, unsigned long offset);
-	void (*check_pmd_mapping)(void *p, int expect_nr_hpages);
 };
 
+#define SHMEM_EXPECTED_IOCTLS		((1 << _UFFDIO_WAKE) | \
+					 (1 << _UFFDIO_COPY) | \
+					 (1 << _UFFDIO_ZEROPAGE))
+
+#define ANON_EXPECTED_IOCTLS		((1 << _UFFDIO_WAKE) | \
+					 (1 << _UFFDIO_COPY) | \
+					 (1 << _UFFDIO_ZEROPAGE) | \
+					 (1 << _UFFDIO_WRITEPROTECT))
+
 static struct uffd_test_ops anon_uffd_test_ops = {
+	.expected_ioctls = ANON_EXPECTED_IOCTLS,
 	.allocate_area	= anon_allocate_area,
 	.release_pages	= anon_release_pages,
 	.alias_mapping = noop_alias_mapping,
-	.check_pmd_mapping = NULL,
 };
 
 static struct uffd_test_ops shmem_uffd_test_ops = {
+	.expected_ioctls = SHMEM_EXPECTED_IOCTLS,
 	.allocate_area	= shmem_allocate_area,
 	.release_pages	= shmem_release_pages,
 	.alias_mapping = shmem_alias_mapping,
-	.check_pmd_mapping = shmem_check_pmd_mapping,
 };
 
 static struct uffd_test_ops hugetlb_uffd_test_ops = {
+	.expected_ioctls = UFFD_API_RANGE_IOCTLS_BASIC & ~(1 << _UFFDIO_CONTINUE),
 	.allocate_area	= hugetlb_allocate_area,
 	.release_pages	= hugetlb_release_pages,
 	.alias_mapping = hugetlb_alias_mapping,
-	.check_pmd_mapping = NULL,
 };
 
 static struct uffd_test_ops *uffd_test_ops;
-
-static inline uint64_t uffd_minor_feature(void)
-{
-	if (test_type == TEST_HUGETLB && map_shared)
-		return UFFD_FEATURE_MINOR_HUGETLBFS;
-	else if (test_type == TEST_SHMEM)
-		return UFFD_FEATURE_MINOR_SHMEM;
-	else
-		return 0;
-}
-
-static uint64_t get_expected_ioctls(uint64_t mode)
-{
-	uint64_t ioctls = UFFD_API_RANGE_IOCTLS;
-
-	if (test_type == TEST_HUGETLB)
-		ioctls &= ~(1 << _UFFDIO_ZEROPAGE);
-
-	if (!((mode & UFFDIO_REGISTER_MODE_WP) && test_uffdio_wp))
-		ioctls &= ~(1 << _UFFDIO_WRITEPROTECT);
-
-	if (!((mode & UFFDIO_REGISTER_MODE_MINOR) && test_uffdio_minor))
-		ioctls &= ~(1 << _UFFDIO_CONTINUE);
-
-	return ioctls;
-}
-
-static void assert_expected_ioctls_present(uint64_t mode, uint64_t ioctls)
-{
-	uint64_t expected = get_expected_ioctls(mode);
-	uint64_t actual = ioctls & expected;
-
-	if (actual != expected) {
-		err("missing ioctl(s): expected %"PRIx64" actual: %"PRIx64,
-		    expected, actual);
-	}
-}
-
-static int __userfaultfd_open_dev(void)
-{
-	int fd, _uffd;
-
-	fd = open("/dev/userfaultfd", O_RDWR | O_CLOEXEC);
-	if (fd < 0)
-		errexit(KSFT_SKIP, "opening /dev/userfaultfd failed");
-
-	_uffd = ioctl(fd, USERFAULTFD_IOC_NEW, UFFD_FLAGS);
-	if (_uffd < 0)
-		errexit(errno == ENOTTY ? KSFT_SKIP : 1,
-			"creating userfaultfd failed");
-	close(fd);
-	return _uffd;
-}
 
 static void userfaultfd_open(uint64_t *features)
 {
 	struct uffdio_api uffdio_api;
 
-	if (test_dev_userfaultfd)
-		uffd = __userfaultfd_open_dev();
-	else {
-		uffd = syscall(__NR_userfaultfd, UFFD_FLAGS);
-		if (uffd < 0)
-			errexit(errno == ENOSYS ? KSFT_SKIP : 1,
-				"creating userfaultfd failed");
-	}
+	uffd = syscall(__NR_userfaultfd, O_CLOEXEC | O_NONBLOCK | UFFD_USER_MODE_ONLY);
+	if (uffd < 0)
+		err("userfaultfd syscall not available in this kernel");
 	uffd_flags = fcntl(uffd, F_GETFD, NULL);
 
 	uffdio_api.api = UFFD_API;
@@ -490,23 +403,23 @@ static void uffd_test_ctx_clear(void)
 		uffd = -1;
 	}
 
+	huge_fd_off0 = NULL;
 	munmap_area((void **)&area_src);
 	munmap_area((void **)&area_src_alias);
 	munmap_area((void **)&area_dst);
 	munmap_area((void **)&area_dst_alias);
-	munmap_area((void **)&area_remap);
 }
 
-static void uffd_test_ctx_init(uint64_t features)
+static void uffd_test_ctx_init_ext(uint64_t *features)
 {
 	unsigned long nr, cpu;
 
 	uffd_test_ctx_clear();
 
-	uffd_test_ops->allocate_area((void **)&area_src, true);
-	uffd_test_ops->allocate_area((void **)&area_dst, false);
+	uffd_test_ops->allocate_area((void **)&area_src);
+	uffd_test_ops->allocate_area((void **)&area_dst);
 
-	userfaultfd_open(&features);
+	userfaultfd_open(features);
 
 	count_verify = malloc(nr_pages * sizeof(unsigned long long));
 	if (!count_verify)
@@ -552,6 +465,11 @@ static void uffd_test_ctx_init(uint64_t features)
 	for (cpu = 0; cpu < nr_cpus; cpu++)
 		if (pipe2(&pipefd[cpu * 2], O_CLOEXEC | O_NONBLOCK))
 			err("pipe");
+}
+
+static inline void uffd_test_ctx_init(uint64_t features)
+{
+	uffd_test_ctx_init_ext(&features);
 }
 
 static int my_bcmp(char *str1, char *str2, size_t n)
@@ -605,10 +523,22 @@ static void continue_range(int ufd, __u64 start, __u64 len)
 static void *locking_thread(void *arg)
 {
 	unsigned long cpu = (unsigned long) arg;
-	unsigned long page_nr;
+	struct random_data rand;
+	unsigned long page_nr = *(&(page_nr)); /* uninitialized warning */
+	int32_t rand_nr;
 	unsigned long long count;
+	char randstate[64];
+	unsigned int seed;
 
-	if (!(bounces & BOUNCE_RANDOM)) {
+	if (bounces & BOUNCE_RANDOM) {
+		seed = (unsigned int) time(NULL) - bounces;
+		if (!(bounces & BOUNCE_RACINGFAULTS))
+			seed += cpu;
+		bzero(&rand, sizeof(rand));
+		bzero(&randstate, sizeof(randstate));
+		if (initstate_r(seed, randstate, sizeof(randstate), &rand))
+			err("initstate_r failed");
+	} else {
 		page_nr = -bounces;
 		if (!(bounces & BOUNCE_RACINGFAULTS))
 			page_nr += cpu * nr_pages_per_cpu;
@@ -616,8 +546,15 @@ static void *locking_thread(void *arg)
 
 	while (!finished) {
 		if (bounces & BOUNCE_RANDOM) {
-			if (getrandom(&page_nr, sizeof(page_nr), 0) != sizeof(page_nr))
-				err("getrandom failed");
+			if (random_r(&rand, &rand_nr))
+				err("random_r failed");
+			page_nr = rand_nr;
+			if (sizeof(page_nr) > sizeof(rand_nr)) {
+				if (random_r(&rand, &rand_nr))
+					err("random_r failed");
+				page_nr |= (((unsigned long) rand_nr) << 16) <<
+					   16;
+			}
 		} else
 			page_nr += 1;
 		page_nr %= nr_pages;
@@ -711,7 +648,7 @@ static int uffd_read_msg(int ufd, struct uffd_msg *msg)
 
 	if (ret != sizeof(*msg)) {
 		if (ret < 0) {
-			if (errno == EAGAIN || errno == EINTR)
+			if (errno == EAGAIN)
 				return 1;
 			err("blocking read error");
 		} else {
@@ -758,27 +695,7 @@ static void uffd_handle_page_fault(struct uffd_msg *msg,
 		continue_range(uffd, msg->arg.pagefault.address, page_size);
 		stats->minor_faults++;
 	} else {
-		/*
-		 * Missing page faults.
-		 *
-		 * Here we force a write check for each of the missing mode
-		 * faults.  It's guaranteed because the only threads that
-		 * will trigger uffd faults are the locking threads, and
-		 * their first instruction to touch the missing page will
-		 * always be pthread_mutex_lock().
-		 *
-		 * Note that here we relied on an NPTL glibc impl detail to
-		 * always read the lock type at the entry of the lock op
-		 * (pthread_mutex_t.__data.__type, offset 0x10) before
-		 * doing any locking operations to guarantee that.  It's
-		 * actually not good to rely on this impl detail because
-		 * logically a pthread-compatible lib can implement the
-		 * locks without types and we can fail when linking with
-		 * them.  However since we used to find bugs with this
-		 * strict check we still keep it around.  Hopefully this
-		 * could be a good hint when it fails again.  If one day
-		 * it'll break on some other impl of glibc we'll revisit.
-		 */
+		/* Missing page faults */
 		if (msg->arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WRITE)
 			err("unexpected write fault");
 
@@ -807,11 +724,8 @@ static void *uffd_poll_thread(void *arg)
 
 	for (;;) {
 		ret = poll(pollfd, 2, -1);
-		if (ret <= 0) {
-			if (errno == EINTR || errno == EAGAIN)
-				continue;
+		if (ret <= 0)
 			err("poll error: %d", ret);
-		}
 		if (pollfd[1].revents & POLLIN) {
 			if (read(pollfd[1].fd, &tmp_chr, 1) != 1)
 				err("read pipefd error");
@@ -841,7 +755,6 @@ static void *uffd_poll_thread(void *arg)
 				err("remove failure");
 			break;
 		case UFFD_EVENT_REMAP:
-			area_remap = area_dst;  /* save for later unmap */
 			area_dst = (char *)(unsigned long)msg.arg.remap.to;
 			break;
 		}
@@ -936,7 +849,7 @@ static int stress(struct uffd_stats *uffd_stats)
 	/*
 	 * Be strict and immediately zap area_src, the whole area has
 	 * been transferred already by the background treads. The
-	 * area_src could then be faulted in a racy way by still
+	 * area_src could then be faulted in in a racy way by still
 	 * running uffdio_threads reading zeropages after we zapped
 	 * area_src (but they're guaranteed to get -EEXIST from
 	 * UFFDIO_COPY without writing zero pages into area_dst
@@ -1007,9 +920,12 @@ static int faulting_process(int signal_test)
 	unsigned long split_nr_pages;
 	unsigned long lastnr;
 	struct sigaction act;
-	volatile unsigned long signalled = 0;
+	unsigned long signalled = 0;
 
-	split_nr_pages = (nr_pages + 1) / 2;
+	if (test_type != TEST_HUGETLB)
+		split_nr_pages = (nr_pages + 1) / 2;
+	else
+		split_nr_pages = nr_pages;
 
 	if (signal_test) {
 		sigbuf = &jbuf;
@@ -1022,7 +938,7 @@ static int faulting_process(int signal_test)
 	}
 
 	for (nr = 0; nr < split_nr_pages; nr++) {
-		volatile int steps = 1;
+		int steps = 1;
 		unsigned long offset = nr * page_size;
 
 		if (signal_test) {
@@ -1065,6 +981,9 @@ static int faulting_process(int signal_test)
 
 	if (signal_test)
 		return signalled != split_nr_pages;
+
+	if (test_type == TEST_HUGETLB)
+		return 0;
 
 	area_dst = mremap(area_dst, nr_pages * page_size,  nr_pages * page_size,
 			  MREMAP_MAYMOVE | MREMAP_FIXED, area_src);
@@ -1116,8 +1035,10 @@ static int __uffdio_zeropage(int ufd, unsigned long offset, bool retry)
 {
 	struct uffdio_zeropage uffdio_zeropage;
 	int ret;
-	bool has_zeropage = get_expected_ioctls(0) & (1 << _UFFDIO_ZEROPAGE);
+	unsigned long has_zeropage;
 	__s64 res;
+
+	has_zeropage = uffd_test_ops->expected_ioctls & (1 << _UFFDIO_ZEROPAGE);
 
 	if (offset >= nr_pages * page_size)
 		err("unexpected offset %lu", offset);
@@ -1158,6 +1079,7 @@ static int uffdio_zeropage(int ufd, unsigned long offset)
 static int userfaultfd_zeropage_test(void)
 {
 	struct uffdio_register uffdio_register;
+	unsigned long expected_ioctls;
 
 	printf("testing UFFDIO_ZEROPAGE: ");
 	fflush(stdout);
@@ -1172,8 +1094,9 @@ static int userfaultfd_zeropage_test(void)
 	if (ioctl(uffd, UFFDIO_REGISTER, &uffdio_register))
 		err("register failure");
 
-	assert_expected_ioctls_present(
-		uffdio_register.mode, uffdio_register.ioctls);
+	expected_ioctls = uffd_test_ops->expected_ioctls;
+	if ((uffdio_register.ioctls & expected_ioctls) != expected_ioctls)
+		err("unexpected missing ioctl for anon memory");
 
 	if (uffdio_zeropage(uffd, 0))
 		if (my_bcmp(area_dst, zeropage, page_size))
@@ -1186,6 +1109,7 @@ static int userfaultfd_zeropage_test(void)
 static int userfaultfd_events_test(void)
 {
 	struct uffdio_register uffdio_register;
+	unsigned long expected_ioctls;
 	pthread_t uffd_mon;
 	int err, features;
 	pid_t pid;
@@ -1209,8 +1133,9 @@ static int userfaultfd_events_test(void)
 	if (ioctl(uffd, UFFDIO_REGISTER, &uffdio_register))
 		err("register failure");
 
-	assert_expected_ioctls_present(
-		uffdio_register.mode, uffdio_register.ioctls);
+	expected_ioctls = uffd_test_ops->expected_ioctls;
+	if ((uffdio_register.ioctls & expected_ioctls) != expected_ioctls)
+		err("unexpected missing ioctl for anon memory");
 
 	if (pthread_create(&uffd_mon, &attr, uffd_poll_thread, &stats))
 		err("uffd_poll_thread create");
@@ -1238,6 +1163,7 @@ static int userfaultfd_events_test(void)
 static int userfaultfd_sig_test(void)
 {
 	struct uffdio_register uffdio_register;
+	unsigned long expected_ioctls;
 	unsigned long userfaults;
 	pthread_t uffd_mon;
 	int err, features;
@@ -1261,8 +1187,9 @@ static int userfaultfd_sig_test(void)
 	if (ioctl(uffd, UFFDIO_REGISTER, &uffdio_register))
 		err("register failure");
 
-	assert_expected_ioctls_present(
-		uffdio_register.mode, uffdio_register.ioctls);
+	expected_ioctls = uffd_test_ops->expected_ioctls;
+	if ((uffdio_register.ioctls & expected_ioctls) != expected_ioctls)
+		err("unexpected missing ioctl for anon memory");
 
 	if (faulting_process(1))
 		err("faulting process failed");
@@ -1294,32 +1221,17 @@ static int userfaultfd_sig_test(void)
 	return userfaults != 0;
 }
 
-void check_memory_contents(char *p)
-{
-	unsigned long i;
-	uint8_t expected_byte;
-	void *expected_page;
-
-	if (posix_memalign(&expected_page, page_size, page_size))
-		err("out of memory");
-
-	for (i = 0; i < nr_pages; ++i) {
-		expected_byte = ~((uint8_t)(i % ((uint8_t)-1)));
-		memset(expected_page, expected_byte, page_size);
-		if (my_bcmp(expected_page, p + (i * page_size), page_size))
-			err("unexpected page contents after minor fault");
-	}
-
-	free(expected_page);
-}
-
 static int userfaultfd_minor_test(void)
 {
-	unsigned long p;
 	struct uffdio_register uffdio_register;
+	unsigned long expected_ioctls;
+	unsigned long p;
 	pthread_t uffd_mon;
+	uint8_t expected_byte;
+	void *expected_page;
 	char c;
 	struct uffd_stats stats = { 0 };
+	uint64_t req_features, features_out;
 
 	if (!test_uffdio_minor)
 		return 0;
@@ -1327,7 +1239,21 @@ static int userfaultfd_minor_test(void)
 	printf("testing minor faults: ");
 	fflush(stdout);
 
-	uffd_test_ctx_init(uffd_minor_feature());
+	if (test_type == TEST_HUGETLB)
+		req_features = UFFD_FEATURE_MINOR_HUGETLBFS;
+	else if (test_type == TEST_SHMEM)
+		req_features = UFFD_FEATURE_MINOR_SHMEM;
+	else
+		return 1;
+
+	features_out = req_features;
+	uffd_test_ctx_init_ext(&features_out);
+	/* If kernel reports required features aren't supported, skip test. */
+	if ((features_out & req_features) != req_features) {
+		printf("skipping test due to lack of feature support\n");
+		fflush(stdout);
+		return 0;
+	}
 
 	uffdio_register.range.start = (unsigned long)area_dst_alias;
 	uffdio_register.range.len = nr_pages * page_size;
@@ -1335,8 +1261,10 @@ static int userfaultfd_minor_test(void)
 	if (ioctl(uffd, UFFDIO_REGISTER, &uffdio_register))
 		err("register failure");
 
-	assert_expected_ioctls_present(
-		uffdio_register.mode, uffdio_register.ioctls);
+	expected_ioctls = uffd_test_ops->expected_ioctls;
+	expected_ioctls |= 1 << _UFFDIO_CONTINUE;
+	if ((uffdio_register.ioctls & expected_ioctls) != expected_ioctls)
+		err("unexpected missing ioctl(s)");
 
 	/*
 	 * After registering with UFFD, populate the non-UFFD-registered side of
@@ -1356,7 +1284,17 @@ static int userfaultfd_minor_test(void)
 	 * fault. uffd_poll_thread will resolve the fault by bit-flipping the
 	 * page's contents, and then issuing a CONTINUE ioctl.
 	 */
-	check_memory_contents(area_dst_alias);
+
+	if (posix_memalign(&expected_page, page_size, page_size))
+		err("out of memory");
+
+	for (p = 0; p < nr_pages; ++p) {
+		expected_byte = ~((uint8_t)(p % ((uint8_t)-1)));
+		memset(expected_page, expected_byte, page_size);
+		if (my_bcmp(expected_page, area_dst_alias + (p * page_size),
+			    page_size))
+			err("unexpected page contents after minor fault");
+	}
 
 	if (write(pipefd[1], &c, sizeof(c)) != sizeof(c))
 		err("pipe write");
@@ -1364,23 +1302,6 @@ static int userfaultfd_minor_test(void)
 		return 1;
 
 	uffd_stats_report(&stats, 1);
-
-	if (test_collapse) {
-		printf("testing collapse of uffd memory into PMD-mapped THPs:");
-		if (madvise(area_dst_alias, nr_pages * page_size,
-			    MADV_COLLAPSE))
-			err("madvise(MADV_COLLAPSE)");
-
-		uffd_test_ops->check_pmd_mapping(area_dst,
-						 nr_pages * page_size /
-						 hpage_size);
-		/*
-		 * This won't cause uffd-fault - it purely just makes sure there
-		 * was no corruption.
-		 */
-		check_memory_contents(area_dst_alias);
-		printf(" done.\n");
-	}
 
 	return stats.missing_faults != 0 || stats.minor_faults != nr_pages;
 }
@@ -1522,6 +1443,7 @@ static void userfaultfd_pagemap_test(unsigned int test_pgsize)
 static int userfaultfd_stress(void)
 {
 	void *area;
+	char *tmp_area;
 	unsigned long nr;
 	struct uffdio_register uffdio_register;
 	struct uffd_stats uffd_stats[nr_cpus];
@@ -1539,6 +1461,8 @@ static int userfaultfd_stress(void)
 	pthread_attr_setstacksize(&attr, 16*1024*1024);
 
 	while (bounces--) {
+		unsigned long expected_ioctls;
+
 		printf("bounces: %d, mode:", bounces);
 		if (bounces & BOUNCE_RANDOM)
 			printf(" rnd");
@@ -1566,8 +1490,10 @@ static int userfaultfd_stress(void)
 			uffdio_register.mode |= UFFDIO_REGISTER_MODE_WP;
 		if (ioctl(uffd, UFFDIO_REGISTER, &uffdio_register))
 			err("register failure");
-		assert_expected_ioctls_present(
-			uffdio_register.mode, uffdio_register.ioctls);
+		expected_ioctls = uffd_test_ops->expected_ioctls;
+		if ((uffdio_register.ioctls & expected_ioctls) !=
+		    expected_ioctls)
+			err("unexpected missing ioctl for anon memory");
 
 		if (area_dst_alias) {
 			uffdio_register.range.start = (unsigned long)
@@ -1632,9 +1558,13 @@ static int userfaultfd_stress(void)
 					    count_verify[nr], nr);
 
 		/* prepare next bounce */
-		swap(area_src, area_dst);
+		tmp_area = area_src;
+		area_src = area_dst;
+		area_dst = tmp_area;
 
-		swap(area_src_alias, area_dst_alias);
+		tmp_area = area_src_alias;
+		area_src_alias = area_dst_alias;
+		area_dst_alias = tmp_area;
 
 		uffd_stats_report(uffd_stats, nr_cpus);
 	}
@@ -1687,6 +1617,8 @@ static void set_test_type(const char *type)
 	if (!strcmp(type, "anon")) {
 		test_type = TEST_ANON;
 		uffd_test_ops = &anon_uffd_test_ops;
+		/* Only enable write-protect test for anonymous test */
+		test_uffdio_wp = true;
 	} else if (!strcmp(type, "hugetlb")) {
 		test_type = TEST_HUGETLB;
 		uffd_test_ops = &hugetlb_uffd_test_ops;
@@ -1701,37 +1633,12 @@ static void set_test_type(const char *type)
 		test_type = TEST_SHMEM;
 		uffd_test_ops = &shmem_uffd_test_ops;
 		test_uffdio_minor = true;
+	} else {
+		err("Unknown test type: %s", type);
 	}
-}
-
-static void parse_test_type_arg(const char *raw_type)
-{
-	char *buf = strdup(raw_type);
-	uint64_t features = UFFD_API_FEATURES;
-
-	while (buf) {
-		const char *token = strsep(&buf, ":");
-
-		if (!test_type)
-			set_test_type(token);
-		else if (!strcmp(token, "dev"))
-			test_dev_userfaultfd = true;
-		else if (!strcmp(token, "syscall"))
-			test_dev_userfaultfd = false;
-		else if (!strcmp(token, "collapse"))
-			test_collapse = true;
-		else
-			err("unrecognized test mod '%s'", token);
-	}
-
-	if (!test_type)
-		err("failed to parse test type argument: '%s'", raw_type);
-
-	if (test_collapse && test_type != TEST_SHMEM)
-		err("Unsupported test: %s", raw_type);
 
 	if (test_type == TEST_HUGETLB)
-		page_size = hpage_size;
+		page_size = default_huge_page_size();
 	else
 		page_size = sysconf(_SC_PAGE_SIZE);
 
@@ -1740,22 +1647,6 @@ static void parse_test_type_arg(const char *raw_type)
 	if ((unsigned long) area_count(NULL, 0) + sizeof(unsigned long long) * 2
 	    > page_size)
 		err("Impossible to run this test");
-
-	/*
-	 * Whether we can test certain features depends not just on test type,
-	 * but also on whether or not this particular kernel supports the
-	 * feature.
-	 */
-
-	userfaultfd_open(&features);
-
-	test_uffdio_wp = test_uffdio_wp &&
-		(features & UFFD_FEATURE_PAGEFAULT_FLAG_WP);
-	test_uffdio_minor = test_uffdio_minor &&
-		(features & uffd_minor_feature());
-
-	close(uffd);
-	uffd = -1;
 }
 
 static void sigalrm(int sig)
@@ -1769,8 +1660,6 @@ static void sigalrm(int sig)
 
 int main(int argc, char **argv)
 {
-	size_t bytes;
-
 	if (argc < 4)
 		usage();
 
@@ -1778,41 +1667,11 @@ int main(int argc, char **argv)
 		err("failed to arm SIGALRM");
 	alarm(ALARM_INTERVAL_SECS);
 
-	hpage_size = default_huge_page_size();
-	parse_test_type_arg(argv[1]);
-	bytes = atol(argv[2]) * 1024 * 1024;
-
-	if (test_collapse && bytes & (hpage_size - 1))
-		err("MiB must be multiple of %lu if :collapse mod set",
-		    hpage_size >> 20);
+	set_test_type(argv[1]);
 
 	nr_cpus = sysconf(_SC_NPROCESSORS_ONLN);
-
-	if (test_collapse) {
-		/* nr_cpus must divide (bytes / page_size), otherwise,
-		 * area allocations of (nr_pages * paze_size) won't be a
-		 * multiple of hpage_size, even if bytes is a multiple of
-		 * hpage_size.
-		 *
-		 * This means that nr_cpus must divide (N * (2 << (H-P))
-		 * where:
-		 *	bytes = hpage_size * N
-		 *	hpage_size = 2 << H
-		 *	page_size = 2 << P
-		 *
-		 * And we want to chose nr_cpus to be the largest value
-		 * satisfying this constraint, not larger than the number
-		 * of online CPUs. Unfortunately, prime factorization of
-		 * N and nr_cpus may be arbitrary, so have to search for it.
-		 * Instead, just use the highest power of 2 dividing both
-		 * nr_cpus and (bytes / page_size).
-		 */
-		int x = factor_of_2(nr_cpus);
-		int y = factor_of_2(bytes / page_size);
-
-		nr_cpus = x < y ? x : y;
-	}
-	nr_pages_per_cpu = bytes / page_size / nr_cpus;
+	nr_pages_per_cpu = atol(argv[2]) * 1024*1024 / page_size /
+		nr_cpus;
 	if (!nr_pages_per_cpu) {
 		_err("invalid MiB");
 		usage();
@@ -1825,17 +1684,21 @@ int main(int argc, char **argv)
 	}
 	nr_pages = nr_pages_per_cpu * nr_cpus;
 
-	if (test_type == TEST_SHMEM || test_type == TEST_HUGETLB) {
-		unsigned int memfd_flags = 0;
-
-		if (test_type == TEST_HUGETLB)
-			memfd_flags = MFD_HUGETLB;
-		mem_fd = memfd_create(argv[0], memfd_flags);
-		if (mem_fd < 0)
+	if (test_type == TEST_HUGETLB) {
+		if (argc < 5)
+			usage();
+		huge_fd = open(argv[4], O_CREAT | O_RDWR, 0755);
+		if (huge_fd < 0)
+			err("Open of %s failed", argv[4]);
+		if (ftruncate(huge_fd, 0))
+			err("ftruncate %s to size 0 failed", argv[4]);
+	} else if (test_type == TEST_SHMEM) {
+		shm_fd = memfd_create(argv[0], 0);
+		if (shm_fd < 0)
 			err("memfd_create");
-		if (ftruncate(mem_fd, nr_pages * page_size * 2))
+		if (ftruncate(shm_fd, nr_pages * page_size * 2))
 			err("ftruncate");
-		if (fallocate(mem_fd,
+		if (fallocate(shm_fd,
 			      FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, 0,
 			      nr_pages * page_size * 2))
 			err("fallocate");

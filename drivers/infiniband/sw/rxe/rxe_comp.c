@@ -104,8 +104,6 @@ static enum ib_wc_opcode wr_to_wc_opcode(enum ib_wr_opcode opcode)
 	case IB_WR_LOCAL_INV:			return IB_WC_LOCAL_INV;
 	case IB_WR_REG_MR:			return IB_WC_REG_MR;
 	case IB_WR_BIND_MW:			return IB_WC_BIND_MW;
-	case IB_WR_ATOMIC_WRITE:		return IB_WC_ATOMIC_WRITE;
-	case IB_WR_FLUSH:			return IB_WC_FLUSH;
 
 	default:
 		return 0xff;
@@ -116,11 +114,9 @@ void retransmit_timer(struct timer_list *t)
 {
 	struct rxe_qp *qp = from_timer(qp, t, retrans_timer);
 
-	rxe_dbg_qp(qp, "retransmit timer fired\n");
-
 	if (qp->valid) {
 		qp->comp.timeout = 1;
-		rxe_sched_task(&qp->comp.task);
+		rxe_run_task(&qp->comp.task, 1);
 	}
 }
 
@@ -134,10 +130,7 @@ void rxe_comp_queue_pkt(struct rxe_qp *qp, struct sk_buff *skb)
 	if (must_sched != 0)
 		rxe_counter_inc(SKB_TO_PKT(skb)->rxe, RXE_CNT_COMPLETER_SCHED);
 
-	if (must_sched)
-		rxe_sched_task(&qp->comp.task);
-	else
-		rxe_run_task(&qp->comp.task);
+	rxe_run_task(&qp->comp.task, must_sched);
 }
 
 static inline enum comp_state get_wqe(struct rxe_qp *qp,
@@ -205,10 +198,6 @@ static inline enum comp_state check_psn(struct rxe_qp *qp,
 		 */
 		if (pkt->psn == wqe->last_psn)
 			return COMPST_COMP_ACK;
-		else if (pkt->opcode == IB_OPCODE_RC_ACKNOWLEDGE &&
-			 (qp->comp.opcode == IB_OPCODE_RC_RDMA_READ_RESPONSE_FIRST ||
-			  qp->comp.opcode == IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE))
-			return COMPST_CHECK_ACK;
 		else
 			return COMPST_DONE;
 	} else if ((diff > 0) && (wqe->mask & WR_ATOMIC_OR_READ_MASK)) {
@@ -237,10 +226,6 @@ static inline enum comp_state check_ack(struct rxe_qp *qp,
 
 	case IB_OPCODE_RC_RDMA_READ_RESPONSE_FIRST:
 	case IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE:
-		/* Check NAK code to handle a remote error */
-		if (pkt->opcode == IB_OPCODE_RC_ACKNOWLEDGE)
-			break;
-
 		if (pkt->opcode != IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE &&
 		    pkt->opcode != IB_OPCODE_RC_RDMA_READ_RESPONSE_LAST) {
 			/* read retries of partial data may restart from
@@ -271,16 +256,12 @@ static inline enum comp_state check_ack(struct rxe_qp *qp,
 		if ((syn & AETH_TYPE_MASK) != AETH_ACK)
 			return COMPST_ERROR;
 
-		if (wqe->wr.opcode == IB_WR_ATOMIC_WRITE)
-			return COMPST_WRITE_SEND;
-
 		fallthrough;
 		/* (IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE doesn't have an AETH)
 		 */
 	case IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE:
 		if (wqe->wr.opcode != IB_WR_RDMA_READ &&
-		    wqe->wr.opcode != IB_WR_RDMA_READ_WITH_INV &&
-		    wqe->wr.opcode != IB_WR_FLUSH) {
+		    wqe->wr.opcode != IB_WR_RDMA_READ_WITH_INV) {
 			wqe->status = IB_WC_FATAL_ERR;
 			return COMPST_ERROR;
 		}
@@ -322,7 +303,7 @@ static inline enum comp_state check_ack(struct rxe_qp *qp,
 					qp->comp.psn = pkt->psn;
 					if (qp->req.wait_psn) {
 						qp->req.wait_psn = 0;
-						rxe_run_task(&qp->req.task);
+						rxe_run_task(&qp->req.task, 0);
 					}
 				}
 				return COMPST_ERROR_RETRY;
@@ -340,7 +321,7 @@ static inline enum comp_state check_ack(struct rxe_qp *qp,
 				return COMPST_ERROR;
 
 			default:
-				rxe_dbg_qp(qp, "unexpected nak %x\n", syn);
+				pr_warn("unexpected nak %x\n", syn);
 				wqe->status = IB_WC_REM_OP_ERR;
 				return COMPST_ERROR;
 			}
@@ -351,7 +332,7 @@ static inline enum comp_state check_ack(struct rxe_qp *qp,
 		break;
 
 	default:
-		rxe_dbg_qp(qp, "unexpected opcode\n");
+		pr_warn("unexpected opcode\n");
 	}
 
 	return COMPST_ERROR;
@@ -399,35 +380,30 @@ static inline enum comp_state do_atomic(struct rxe_qp *qp,
 static void make_send_cqe(struct rxe_qp *qp, struct rxe_send_wqe *wqe,
 			  struct rxe_cqe *cqe)
 {
-	struct ib_wc *wc = &cqe->ibwc;
-	struct ib_uverbs_wc *uwc = &cqe->uibwc;
-
 	memset(cqe, 0, sizeof(*cqe));
 
 	if (!qp->is_user) {
-		wc->wr_id = wqe->wr.wr_id;
-		wc->status = wqe->status;
-		wc->qp = &qp->ibqp;
-	} else {
-		uwc->wr_id = wqe->wr.wr_id;
-		uwc->status = wqe->status;
-		uwc->qp_num = qp->ibqp.qp_num;
-	}
+		struct ib_wc		*wc	= &cqe->ibwc;
 
-	if (wqe->status == IB_WC_SUCCESS) {
-		if (!qp->is_user) {
-			wc->opcode = wr_to_wc_opcode(wqe->wr.opcode);
-			if (wqe->wr.opcode == IB_WR_RDMA_WRITE_WITH_IMM ||
-			    wqe->wr.opcode == IB_WR_SEND_WITH_IMM)
-				wc->wc_flags = IB_WC_WITH_IMM;
-			wc->byte_len = wqe->dma.length;
-		} else {
-			uwc->opcode = wr_to_wc_opcode(wqe->wr.opcode);
-			if (wqe->wr.opcode == IB_WR_RDMA_WRITE_WITH_IMM ||
-			    wqe->wr.opcode == IB_WR_SEND_WITH_IMM)
-				uwc->wc_flags = IB_WC_WITH_IMM;
-			uwc->byte_len = wqe->dma.length;
-		}
+		wc->wr_id		= wqe->wr.wr_id;
+		wc->status		= wqe->status;
+		wc->opcode		= wr_to_wc_opcode(wqe->wr.opcode);
+		if (wqe->wr.opcode == IB_WR_RDMA_WRITE_WITH_IMM ||
+		    wqe->wr.opcode == IB_WR_SEND_WITH_IMM)
+			wc->wc_flags = IB_WC_WITH_IMM;
+		wc->byte_len		= wqe->dma.length;
+		wc->qp			= &qp->ibqp;
+	} else {
+		struct ib_uverbs_wc	*uwc	= &cqe->uibwc;
+
+		uwc->wr_id		= wqe->wr.wr_id;
+		uwc->status		= wqe->status;
+		uwc->opcode		= wr_to_wc_opcode(wqe->wr.opcode);
+		if (wqe->wr.opcode == IB_WR_RDMA_WRITE_WITH_IMM ||
+		    wqe->wr.opcode == IB_WR_SEND_WITH_IMM)
+			uwc->wc_flags = IB_WC_WITH_IMM;
+		uwc->byte_len		= wqe->dma.length;
+		uwc->qp_num		= qp->ibqp.qp_num;
 	}
 }
 
@@ -469,7 +445,7 @@ static void do_complete(struct rxe_qp *qp, struct rxe_send_wqe *wqe)
 	 */
 	if (qp->req.wait_fence) {
 		qp->req.wait_fence = 0;
-		rxe_run_task(&qp->req.task);
+		rxe_run_task(&qp->req.task, 0);
 	}
 }
 
@@ -477,23 +453,25 @@ static inline enum comp_state complete_ack(struct rxe_qp *qp,
 					   struct rxe_pkt_info *pkt,
 					   struct rxe_send_wqe *wqe)
 {
+	unsigned long flags;
+
 	if (wqe->has_rd_atomic) {
 		wqe->has_rd_atomic = 0;
 		atomic_inc(&qp->req.rd_atomic);
 		if (qp->req.need_rd_atomic) {
 			qp->comp.timeout_retry = 0;
 			qp->req.need_rd_atomic = 0;
-			rxe_run_task(&qp->req.task);
+			rxe_run_task(&qp->req.task, 0);
 		}
 	}
 
 	if (unlikely(qp->req.state == QP_STATE_DRAIN)) {
 		/* state_lock used by requester & completer */
-		spin_lock_bh(&qp->state_lock);
+		spin_lock_irqsave(&qp->state_lock, flags);
 		if ((qp->req.state == QP_STATE_DRAIN) &&
 		    (qp->comp.psn == qp->req.psn)) {
 			qp->req.state = QP_STATE_DRAINED;
-			spin_unlock_bh(&qp->state_lock);
+			spin_unlock_irqrestore(&qp->state_lock, flags);
 
 			if (qp->ibqp.event_handler) {
 				struct ib_event ev;
@@ -505,7 +483,7 @@ static inline enum comp_state complete_ack(struct rxe_qp *qp,
 					qp->ibqp.qp_context);
 			}
 		} else {
-			spin_unlock_bh(&qp->state_lock);
+			spin_unlock_irqrestore(&qp->state_lock, flags);
 		}
 	}
 
@@ -529,7 +507,7 @@ static inline enum comp_state complete_wqe(struct rxe_qp *qp,
 
 		if (qp->req.wait_psn) {
 			qp->req.wait_psn = 0;
-			rxe_sched_task(&qp->req.task);
+			rxe_run_task(&qp->req.task, 1);
 		}
 	}
 
@@ -545,7 +523,7 @@ static void rxe_drain_resp_pkts(struct rxe_qp *qp, bool notify)
 	struct rxe_queue *q = qp->sq.queue;
 
 	while ((skb = skb_dequeue(&qp->resp_pkts))) {
-		rxe_put(qp);
+		rxe_drop_ref(qp);
 		kfree_skb(skb);
 		ib_device_put(qp->ibqp.device);
 	}
@@ -567,7 +545,7 @@ static void free_pkt(struct rxe_pkt_info *pkt)
 	struct ib_device *dev = qp->ibqp.device;
 
 	kfree_skb(skb);
-	rxe_put(qp);
+	rxe_drop_ref(qp);
 	ib_device_put(dev);
 }
 
@@ -579,16 +557,16 @@ int rxe_completer(void *arg)
 	struct sk_buff *skb = NULL;
 	struct rxe_pkt_info *pkt = NULL;
 	enum comp_state state;
-	int ret;
+	int ret = 0;
 
-	if (!rxe_get(qp))
-		return -EAGAIN;
+	rxe_add_ref(qp);
 
-	if (!qp->valid || qp->comp.state == QP_STATE_ERROR ||
-	    qp->comp.state == QP_STATE_RESET) {
+	if (!qp->valid || qp->req.state == QP_STATE_ERROR ||
+	    qp->req.state == QP_STATE_RESET) {
 		rxe_drain_resp_pkts(qp, qp->valid &&
-				    qp->comp.state == QP_STATE_ERROR);
-		goto exit;
+				    qp->req.state == QP_STATE_ERROR);
+		ret = -EAGAIN;
+		goto done;
 	}
 
 	if (qp->comp.timeout) {
@@ -598,13 +576,16 @@ int rxe_completer(void *arg)
 		qp->comp.timeout_retry = 0;
 	}
 
-	if (qp->req.need_retry)
-		goto exit;
+	if (qp->req.need_retry) {
+		ret = -EAGAIN;
+		goto done;
+	}
 
 	state = COMPST_GET_ACK;
 
 	while (1) {
-		rxe_dbg_qp(qp, "state = %s\n", comp_state_name[state]);
+		pr_debug("qp#%d state = %s\n", qp_num(qp),
+			 comp_state_name[state]);
 		switch (state) {
 		case COMPST_GET_ACK:
 			skb = skb_dequeue(&qp->resp_pkts);
@@ -662,7 +643,7 @@ int rxe_completer(void *arg)
 
 			if (qp->req.wait_psn) {
 				qp->req.wait_psn = 0;
-				rxe_sched_task(&qp->req.task);
+				rxe_run_task(&qp->req.task, 1);
 			}
 
 			state = COMPST_DONE;
@@ -691,7 +672,8 @@ int rxe_completer(void *arg)
 			    qp->qp_timeout_jiffies)
 				mod_timer(&qp->retrans_timer,
 					  jiffies + qp->qp_timeout_jiffies);
-			goto exit;
+			ret = -EAGAIN;
+			goto done;
 
 		case COMPST_ERROR_RETRY:
 			/* we come here if the retry timer fired and we did
@@ -703,8 +685,10 @@ int rxe_completer(void *arg)
 			 */
 
 			/* there is nothing to retry in this case */
-			if (!wqe || (wqe->state == wqe_state_posted))
-				goto exit;
+			if (!wqe || (wqe->state == wqe_state_posted)) {
+				ret = -EAGAIN;
+				goto done;
+			}
 
 			/* if we've started a retry, don't start another
 			 * retry sequence, unless this is a timeout.
@@ -730,7 +714,7 @@ int rxe_completer(void *arg)
 							RXE_CNT_COMP_RETRY);
 					qp->req.need_retry = 1;
 					qp->comp.started_retry = 1;
-					rxe_run_task(&qp->req.task);
+					rxe_run_task(&qp->req.task, 0);
 				}
 				goto done;
 
@@ -742,20 +726,18 @@ int rxe_completer(void *arg)
 			break;
 
 		case COMPST_RNR_RETRY:
-			/* we come here if we received an RNR NAK */
 			if (qp->comp.rnr_retry > 0) {
 				if (qp->comp.rnr_retry != 7)
 					qp->comp.rnr_retry--;
 
-				/* don't start a retry flow until the
-				 * rnr timer has fired
-				 */
-				qp->req.wait_for_rnr_timer = 1;
-				rxe_dbg_qp(qp, "set rnr nak timer\n");
+				qp->req.need_retry = 1;
+				pr_debug("qp#%d set rnr nak timer\n",
+					 qp_num(qp));
 				mod_timer(&qp->rnr_nak_timer,
 					  jiffies + rnrnak_jiffies(aeth_syn(pkt)
 						& ~AETH_TYPE_MASK));
-				goto exit;
+				ret = -EAGAIN;
+				goto done;
 			} else {
 				rxe_counter_inc(rxe,
 						RXE_CNT_RNR_RETRY_EXCEEDED);
@@ -768,23 +750,15 @@ int rxe_completer(void *arg)
 			WARN_ON_ONCE(wqe->status == IB_WC_SUCCESS);
 			do_complete(qp, wqe);
 			rxe_qp_error(qp);
-			goto exit;
+			ret = -EAGAIN;
+			goto done;
 		}
 	}
 
-	/* A non-zero return value will cause rxe_do_task to
-	 * exit its loop and end the tasklet. A zero return
-	 * will continue looping and return to rxe_completer
-	 */
 done:
-	ret = 0;
-	goto out;
-exit:
-	ret = -EAGAIN;
-out:
 	if (pkt)
 		free_pkt(pkt);
-	rxe_put(qp);
+	rxe_drop_ref(qp);
 
 	return ret;
 }

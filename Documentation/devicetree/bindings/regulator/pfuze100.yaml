@@ -70,11 +70,7 @@ properties:
         $ref: "regulator.yaml#"
         type: object
 
-      "^vldo[1-4]$":
-        $ref: "regulator.yaml#"
-        type: object
-
-      "^(vsnvs|vref|vrefddr|swbst|coin|v33|vccsd)$":
+      "^(vsnvs|vref|vrefddr|swbst|coin)$":
         $ref: "regulator.yaml#"
         type: object
 

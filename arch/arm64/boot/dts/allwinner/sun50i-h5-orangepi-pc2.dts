@@ -54,10 +54,10 @@
 		};
 	};
 
-	gpio-keys {
+	r-gpio-keys {
 		compatible = "gpio-keys";
 
-		key-sw4 {
+		sw4 {
 			label = "sw4";
 			linux,code = <BTN_0>;
 			gpios = <&r_pio 0 3 GPIO_ACTIVE_LOW>;

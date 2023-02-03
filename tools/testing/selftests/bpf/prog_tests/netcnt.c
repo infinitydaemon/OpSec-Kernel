@@ -8,7 +8,7 @@
 
 #define CG_NAME "/netcnt"
 
-void serial_test_netcnt(void)
+void test_netcnt(void)
 {
 	union percpu_net_cnt *percpu_netcnt = NULL;
 	struct bpf_cgroup_storage_key key;
@@ -25,7 +25,7 @@ void serial_test_netcnt(void)
 	if (!ASSERT_OK_PTR(skel, "netcnt_prog__open_and_load"))
 		return;
 
-	nproc = bpf_num_possible_cpus();
+	nproc = get_nprocs_conf();
 	percpu_netcnt = malloc(sizeof(*percpu_netcnt) * nproc);
 	if (!ASSERT_OK_PTR(percpu_netcnt, "malloc(percpu_netcnt)"))
 		goto err;

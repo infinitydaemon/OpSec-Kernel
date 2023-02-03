@@ -358,8 +358,6 @@ static SIMPLE_DEV_PM_OPS(proc_thermal_pci_pm, proc_thermal_pci_suspend,
 
 static const struct pci_device_id proc_thermal_pci_ids[] = {
 	{ PCI_DEVICE_DATA(INTEL, ADL_THERMAL, PROC_THERMAL_FEATURE_RAPL | PROC_THERMAL_FEATURE_FIVR | PROC_THERMAL_FEATURE_DVFS | PROC_THERMAL_FEATURE_MBOX) },
-	{ PCI_DEVICE_DATA(INTEL, MTLP_THERMAL, PROC_THERMAL_FEATURE_RAPL | PROC_THERMAL_FEATURE_FIVR | PROC_THERMAL_FEATURE_DVFS | PROC_THERMAL_FEATURE_MBOX) },
-	{ PCI_DEVICE_DATA(INTEL, RPL_THERMAL, PROC_THERMAL_FEATURE_RAPL | PROC_THERMAL_FEATURE_FIVR | PROC_THERMAL_FEATURE_DVFS | PROC_THERMAL_FEATURE_MBOX) },
 	{ },
 };
 
@@ -373,7 +371,18 @@ static struct pci_driver proc_thermal_pci_driver = {
 	.driver.pm	= &proc_thermal_pci_pm,
 };
 
-module_pci_driver(proc_thermal_pci_driver);
+static int __init proc_thermal_init(void)
+{
+	return pci_register_driver(&proc_thermal_pci_driver);
+}
+
+static void __exit proc_thermal_exit(void)
+{
+	pci_unregister_driver(&proc_thermal_pci_driver);
+}
+
+module_init(proc_thermal_init);
+module_exit(proc_thermal_exit);
 
 MODULE_AUTHOR("Srinivas Pandruvada <srinivas.pandruvada@linux.intel.com>");
 MODULE_DESCRIPTION("Processor Thermal Reporting Device Driver");

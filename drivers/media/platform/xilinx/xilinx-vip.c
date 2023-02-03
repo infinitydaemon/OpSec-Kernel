@@ -40,8 +40,6 @@ static const struct xvip_video_format xvip_video_formats[] = {
 	  1, V4L2_PIX_FMT_SGBRG8 },
 	{ XVIP_VF_MONO_SENSOR, 8, "bggr", MEDIA_BUS_FMT_SBGGR8_1X8,
 	  1, V4L2_PIX_FMT_SBGGR8 },
-	{ XVIP_VF_MONO_SENSOR, 12, "mono", MEDIA_BUS_FMT_Y12_1X12,
-	  2, V4L2_PIX_FMT_Y12 },
 };
 
 /**
@@ -207,8 +205,10 @@ EXPORT_SYMBOL_GPL(xvip_clr_and_set);
 int xvip_init_resources(struct xvip_device *xvip)
 {
 	struct platform_device *pdev = to_platform_device(xvip->dev);
+	struct resource *res;
 
-	xvip->iomem = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	xvip->iomem = devm_ioremap_resource(xvip->dev, res);
 	if (IS_ERR(xvip->iomem))
 		return PTR_ERR(xvip->iomem);
 

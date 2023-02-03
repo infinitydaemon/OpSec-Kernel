@@ -69,7 +69,6 @@
 #include <linux/blkdev.h>
 #include <linux/gfp.h>
 #include <linux/blk-mq.h>
-#include <linux/part_stat.h>
 
 #include "blk.h"
 #include "blk-mq.h"
@@ -94,13 +93,7 @@ enum {
 };
 
 static void blk_kick_flush(struct request_queue *q,
-			   struct blk_flush_queue *fq, blk_opf_t flags);
-
-static inline struct blk_flush_queue *
-blk_get_flush_queue(struct request_queue *q, struct blk_mq_ctx *ctx)
-{
-	return blk_mq_map_queue(q, REQ_OP_FLUSH, ctx)->fq;
-}
+			   struct blk_flush_queue *fq, unsigned int flags);
 
 static unsigned int blk_flush_policy(unsigned long fflags, struct request *rq)
 {
@@ -145,7 +138,7 @@ static void blk_flush_queue_rq(struct request *rq, bool add_front)
 
 static void blk_account_io_flush(struct request *rq)
 {
-	struct block_device *part = rq->q->disk->part0;
+	struct block_device *part = rq->rq_disk->part0;
 
 	part_stat_lock();
 	part_stat_inc(part, ios[STAT_FLUSH]);
@@ -173,7 +166,7 @@ static void blk_flush_complete_seq(struct request *rq,
 {
 	struct request_queue *q = rq->q;
 	struct list_head *pending = &fq->flush_queue[fq->flush_pending_idx];
-	blk_opf_t cmd_flags;
+	unsigned int cmd_flags;
 
 	BUG_ON(rq->flush.seq & seq);
 	rq->flush.seq |= seq;
@@ -205,6 +198,7 @@ static void blk_flush_complete_seq(struct request *rq,
 		 * flush data request completion path.  Restore @rq for
 		 * normal completion and end it.
 		 */
+		BUG_ON(!list_empty(&rq->queuelist));
 		list_del_init(&rq->flush.list);
 		blk_flush_restore_request(rq);
 		blk_mq_end_request(rq, error);
@@ -217,8 +211,7 @@ static void blk_flush_complete_seq(struct request *rq,
 	blk_kick_flush(q, fq, cmd_flags);
 }
 
-static enum rq_end_io_ret flush_end_io(struct request *flush_rq,
-				       blk_status_t error)
+static void flush_end_io(struct request *flush_rq, blk_status_t error)
 {
 	struct request_queue *q = flush_rq->q;
 	struct list_head *running;
@@ -229,10 +222,10 @@ static enum rq_end_io_ret flush_end_io(struct request *flush_rq,
 	/* release the tag's ownership to the req cloned from */
 	spin_lock_irqsave(&fq->mq_flush_lock, flags);
 
-	if (!req_ref_put_and_test(flush_rq)) {
+	if (!refcount_dec_and_test(&flush_rq->ref)) {
 		fq->rq_status = error;
 		spin_unlock_irqrestore(&fq->mq_flush_lock, flags);
-		return RQ_END_IO_NONE;
+		return;
 	}
 
 	blk_account_io_flush(flush_rq);
@@ -269,7 +262,6 @@ static enum rq_end_io_ret flush_end_io(struct request *flush_rq,
 	}
 
 	spin_unlock_irqrestore(&fq->mq_flush_lock, flags);
-	return RQ_END_IO_NONE;
 }
 
 bool is_flush_rq(struct request *rq)
@@ -291,7 +283,7 @@ bool is_flush_rq(struct request *rq)
  *
  */
 static void blk_kick_flush(struct request_queue *q, struct blk_flush_queue *fq,
-			   blk_opf_t flags)
+			   unsigned int flags)
 {
 	struct list_head *pending = &fq->flush_queue[fq->flush_pending_idx];
 	struct request *first_rq =
@@ -342,6 +334,7 @@ static void blk_kick_flush(struct request_queue *q, struct blk_flush_queue *fq,
 	flush_rq->cmd_flags = REQ_OP_FLUSH | REQ_PREFLUSH;
 	flush_rq->cmd_flags |= (flags & REQ_DRV) | (flags & REQ_FAILFAST_MASK);
 	flush_rq->rq_flags |= RQF_FLUSH_SEQ;
+	flush_rq->rq_disk = first_rq->rq_disk;
 	flush_rq->end_io = flush_end_io;
 	/*
 	 * Order WRITE ->end_io and WRITE rq->ref, and its pair is the one
@@ -350,13 +343,12 @@ static void blk_kick_flush(struct request_queue *q, struct blk_flush_queue *fq,
 	 * and READ flush_rq->end_io
 	 */
 	smp_wmb();
-	req_ref_set(flush_rq, 1);
+	refcount_set(&flush_rq->ref, 1);
 
 	blk_flush_queue_rq(flush_rq, false);
 }
 
-static enum rq_end_io_ret mq_flush_data_end_io(struct request *rq,
-					       blk_status_t error)
+static void mq_flush_data_end_io(struct request *rq, blk_status_t error)
 {
 	struct request_queue *q = rq->q;
 	struct blk_mq_hw_ctx *hctx = rq->mq_hctx;
@@ -378,7 +370,6 @@ static enum rq_end_io_ret mq_flush_data_end_io(struct request *rq,
 	spin_unlock_irqrestore(&fq->mq_flush_lock, flags);
 
 	blk_mq_sched_restart(hctx);
-	return RQ_END_IO_NONE;
 }
 
 /**
@@ -432,7 +423,7 @@ void blk_insert_flush(struct request *rq)
 	 */
 	if ((policy & REQ_FSEQ_DATA) &&
 	    !(policy & (REQ_FSEQ_PREFLUSH | REQ_FSEQ_POSTFLUSH))) {
-		blk_mq_request_bypass_insert(rq, false, true);
+		blk_mq_request_bypass_insert(rq, false, false);
 		return;
 	}
 
@@ -463,7 +454,9 @@ int blkdev_issue_flush(struct block_device *bdev)
 {
 	struct bio bio;
 
-	bio_init(&bio, bdev, NULL, 0, REQ_OP_WRITE | REQ_PREFLUSH);
+	bio_init(&bio, NULL, 0);
+	bio_set_dev(&bio, bdev);
+	bio.bi_opf = REQ_OP_WRITE | REQ_PREFLUSH;
 	return submit_bio_wait(&bio);
 }
 EXPORT_SYMBOL(blkdev_issue_flush);

@@ -10,8 +10,6 @@
 #include <net/dsa.h>
 #include <net/wext.h>
 
-#include "dev.h"
-
 /*
  *	Map an interface index to its name (SIOCGIFNAME)
  */
@@ -194,7 +192,7 @@ static int net_hwtstamp_validate(struct ifreq *ifr)
 	if (copy_from_user(&cfg, ifr->ifr_data, sizeof(cfg)))
 		return -EFAULT;
 
-	if (cfg.flags & ~HWTSTAMP_FLAG_MASK)
+	if (cfg.flags) /* reserved for future extensions */
 		return -EINVAL;
 
 	tx_type = cfg.tx_type;
@@ -315,7 +313,6 @@ static int dev_ifsioc(struct net *net, struct ifreq *ifr, void __user *data,
 	int err;
 	struct net_device *dev = __dev_get_by_name(net, ifr->ifr_name);
 	const struct net_device_ops *ops;
-	netdevice_tracker dev_tracker;
 
 	if (!dev)
 		return -ENODEV;
@@ -342,7 +339,7 @@ static int dev_ifsioc(struct net *net, struct ifreq *ifr, void __user *data,
 		if (ifr->ifr_hwaddr.sa_family != dev->type)
 			return -EINVAL;
 		memcpy(dev->broadcast, ifr->ifr_hwaddr.sa_data,
-		       min(sizeof(ifr->ifr_hwaddr.sa_data_min),
+		       min(sizeof(ifr->ifr_hwaddr.sa_data),
 			   (size_t)dev->addr_len));
 		call_netdevice_notifiers(NETDEV_CHANGEADDR, dev);
 		return 0;
@@ -384,10 +381,10 @@ static int dev_ifsioc(struct net *net, struct ifreq *ifr, void __user *data,
 			return -ENODEV;
 		if (!netif_is_bridge_master(dev))
 			return -EOPNOTSUPP;
-		netdev_hold(dev, &dev_tracker, GFP_KERNEL);
+		dev_hold(dev);
 		rtnl_unlock();
 		err = br_ioctl_call(net, netdev_priv(dev), cmd, ifr, NULL);
-		netdev_put(dev, &dev_tracker);
+		dev_put(dev);
 		rtnl_lock();
 		return err;
 
@@ -521,7 +518,9 @@ int dev_ioctl(struct net *net, unsigned int cmd, struct ifreq *ifr,
 
 	case SIOCETHTOOL:
 		dev_load(net, ifr->ifr_name);
+		rtnl_lock();
 		ret = dev_ethtool(net, ifr, data);
+		rtnl_unlock();
 		if (colon)
 			*colon = ':';
 		return ret;

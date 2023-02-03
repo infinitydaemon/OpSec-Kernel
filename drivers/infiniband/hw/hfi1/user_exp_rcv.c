@@ -746,7 +746,8 @@ static int set_rcvarray_entry(struct hfi1_filedata *fd,
 	 * Allocate the node first so we can handle a potential
 	 * failure before we've programmed anything.
 	 */
-	node = kzalloc(struct_size(node, pages, npages), GFP_KERNEL);
+	node = kzalloc(sizeof(*node) + (sizeof(struct page *) * npages),
+		       GFP_KERNEL);
 	if (!node)
 		return -ENOMEM;
 
@@ -767,7 +768,7 @@ static int set_rcvarray_entry(struct hfi1_filedata *fd,
 	node->dma_addr = phys;
 	node->grp = grp;
 	node->freed = false;
-	memcpy(node->pages, pages, flex_array_size(node, pages, npages));
+	memcpy(node->pages, pages, sizeof(struct page *) * npages);
 
 	if (fd->use_mn) {
 		ret = mmu_interval_notifier_insert(

@@ -116,7 +116,8 @@ static void migor_ts_close(struct input_dev *dev)
 	enable_irq(priv->irq);
 }
 
-static int migor_ts_probe(struct i2c_client *client)
+static int migor_ts_probe(struct i2c_client *client,
+			  const struct i2c_device_id *idp)
 {
 	struct migor_ts_priv *priv;
 	struct input_dev *input;
@@ -175,7 +176,7 @@ static int migor_ts_probe(struct i2c_client *client)
 	return error;
 }
 
-static void migor_ts_remove(struct i2c_client *client)
+static int migor_ts_remove(struct i2c_client *client)
 {
 	struct migor_ts_priv *priv = i2c_get_clientdata(client);
 
@@ -184,6 +185,8 @@ static void migor_ts_remove(struct i2c_client *client)
 	kfree(priv);
 
 	dev_set_drvdata(&client->dev, NULL);
+
+	return 0;
 }
 
 static int __maybe_unused migor_ts_suspend(struct device *dev)
@@ -221,7 +224,7 @@ static struct i2c_driver migor_ts_driver = {
 		.name = "migor_ts",
 		.pm = &migor_ts_pm,
 	},
-	.probe_new = migor_ts_probe,
+	.probe = migor_ts_probe,
 	.remove = migor_ts_remove,
 	.id_table = migor_ts_id,
 };

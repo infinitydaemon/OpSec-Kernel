@@ -49,7 +49,7 @@
 #define N_OUTBUF	16
 #define N_INBUF		16
 
-#define __ALIGNED__ __attribute__((__aligned__(L1_CACHE_BYTES)))
+#define __ALIGNED__ __attribute__((__aligned__(sizeof(long))))
 
 static struct tty_driver *hvc_driver;
 static struct task_struct *hvc_task;
@@ -264,8 +264,8 @@ static void hvc_port_destruct(struct tty_port *port)
 
 static void hvc_check_console(int index)
 {
-	/* Already registered, bail out */
-	if (console_is_registered(&hvc_console))
+	/* Already enabled, bail out */
+	if (hvc_console.flags & CON_ENABLED)
 		return;
 
  	/* If this index is what the user requested, then register

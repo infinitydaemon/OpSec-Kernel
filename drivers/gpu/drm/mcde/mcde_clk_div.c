@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/clk-provider.h>
-#include <linux/io.h>
 #include <linux/regulator/consumer.h>
 
 #include "mcde_drm.h"

@@ -15,11 +15,9 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/moduleloader.h>
-#include <linux/scs.h>
 #include <linux/vmalloc.h>
 #include <asm/alternative.h>
 #include <asm/insn.h>
-#include <asm/scs.h>
 #include <asm/sections.h>
 
 void *module_alloc(unsigned long size)
@@ -60,13 +58,12 @@ void *module_alloc(unsigned long size)
 				PAGE_KERNEL, 0, NUMA_NO_NODE,
 				__builtin_return_address(0));
 
-	if (p && (kasan_alloc_module_shadow(p, size, gfp_mask) < 0)) {
+	if (p && (kasan_module_alloc(p, size, gfp_mask) < 0)) {
 		vfree(p);
 		return NULL;
 	}
 
-	/* Memory is intended to be executable, reset the pointer tag. */
-	return kasan_reset_tag(p);
+	return p;
 }
 
 enum aarch64_reloc_op {
@@ -478,6 +475,21 @@ overflow:
 	return -ENOEXEC;
 }
 
+static const Elf_Shdr *find_section(const Elf_Ehdr *hdr,
+				    const Elf_Shdr *sechdrs,
+				    const char *name)
+{
+	const Elf_Shdr *s, *se;
+	const char *secstrs = (void *)hdr + sechdrs[hdr->e_shstrndx].sh_offset;
+
+	for (s = sechdrs, se = sechdrs + hdr->e_shnum; s < se; s++) {
+		if (strcmp(name, secstrs + s->sh_name) == 0)
+			return s;
+	}
+
+	return NULL;
+}
+
 static inline void __init_plt(struct plt_entry *plt, unsigned long addr)
 {
 	*plt = get_plt_entry(addr, plt);
@@ -499,6 +511,9 @@ static int module_init_ftrace_plt(const Elf_Ehdr *hdr,
 
 	__init_plt(&plts[FTRACE_PLT_IDX], FTRACE_ADDR);
 
+	if (IS_ENABLED(CONFIG_DYNAMIC_FTRACE_WITH_REGS))
+		__init_plt(&plts[FTRACE_REGS_PLT_IDX], FTRACE_REGS_ADDR);
+
 	mod->arch.ftrace_trampolines = plts;
 #endif
 	return 0;
@@ -512,12 +527,6 @@ int module_finalize(const Elf_Ehdr *hdr,
 	s = find_section(hdr, sechdrs, ".altinstructions");
 	if (s)
 		apply_alternatives_module((void *)s->sh_addr, s->sh_size);
-
-	if (scs_is_dynamic()) {
-		s = find_section(hdr, sechdrs, ".init.eh_frame");
-		if (s)
-			scs_patch((void *)s->sh_addr, s->sh_size);
-	}
 
 	return module_init_ftrace_plt(hdr, sechdrs, me);
 }

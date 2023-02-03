@@ -77,7 +77,22 @@ static const struct devlink_param otx2_dl_params[] = {
 			     otx2_dl_mcam_count_validate),
 };
 
+/* Devlink OPs */
+static int otx2_devlink_info_get(struct devlink *devlink,
+				 struct devlink_info_req *req,
+				 struct netlink_ext_ack *extack)
+{
+	struct otx2_devlink *otx2_dl = devlink_priv(devlink);
+	struct otx2_nic *pfvf = otx2_dl->pfvf;
+
+	if (is_otx2_vf(pfvf->pcifunc))
+		return devlink_info_driver_name_put(req, "rvu_nicvf");
+
+	return devlink_info_driver_name_put(req, "rvu_nicpf");
+}
+
 static const struct devlink_ops otx2_devlink_ops = {
+	.info_get = otx2_devlink_info_get,
 };
 
 int otx2_register_dl(struct otx2_nic *pfvf)
@@ -93,6 +108,13 @@ int otx2_register_dl(struct otx2_nic *pfvf)
 		return -ENOMEM;
 	}
 
+	err = devlink_register(dl);
+	if (err) {
+		dev_err(pfvf->dev, "devlink register failed with error %d\n", err);
+		devlink_free(dl);
+		return err;
+	}
+
 	otx2_dl = devlink_priv(dl);
 	otx2_dl->dl = dl;
 	otx2_dl->pfvf = pfvf;
@@ -106,10 +128,12 @@ int otx2_register_dl(struct otx2_nic *pfvf)
 		goto err_dl;
 	}
 
-	devlink_register(dl);
+	devlink_params_publish(dl);
+
 	return 0;
 
 err_dl:
+	devlink_unregister(dl);
 	devlink_free(dl);
 	return err;
 }
@@ -117,10 +141,16 @@ err_dl:
 void otx2_unregister_dl(struct otx2_nic *pfvf)
 {
 	struct otx2_devlink *otx2_dl = pfvf->dl;
-	struct devlink *dl = otx2_dl->dl;
+	struct devlink *dl;
 
-	devlink_unregister(dl);
+	if (!otx2_dl || !otx2_dl->dl)
+		return;
+
+	dl = otx2_dl->dl;
+
 	devlink_params_unregister(dl, otx2_dl_params,
 				  ARRAY_SIZE(otx2_dl_params));
+
+	devlink_unregister(dl);
 	devlink_free(dl);
 }

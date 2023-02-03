@@ -7,7 +7,7 @@ $schema: http://devicetree.org/meta-schemas/core.yaml#
 title: Samsung Exynos SoC True Random Number Generator
 
 maintainers:
-  - Krzysztof Kozlowski <krzk@kernel.org>
+  - Krzysztof Kozlowski <krzysztof.kozlowski@canonical.com>
   - Łukasz Stelmach <l.stelmach@samsung.com>
 
 properties:

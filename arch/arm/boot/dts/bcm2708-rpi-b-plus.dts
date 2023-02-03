@@ -5,7 +5,6 @@
 #include "bcm283x-rpi-smsc9514.dtsi"
 #include "bcm283x-rpi-csi1-2lane.dtsi"
 #include "bcm283x-rpi-i2c0mux_0_28.dtsi"
-#include "bcm283x-rpi-led-deprecated.dtsi"
 
 / {
 	compatible = "raspberrypi,model-b-plus", "brcm,bcm2835";
@@ -107,7 +106,6 @@
 	audio_pins: audio_pins {
 		brcm,pins = <40 45>;
 		brcm,function = <4>;
-		brcm,pull = <0>;
 	};
 };
 
@@ -156,19 +154,17 @@
 	pinctrl-0 = <&i2s_pins>;
 };
 
-&led_act {
-	label = "led0";
-	gpios = <&gpio 47 GPIO_ACTIVE_HIGH>;
-	default-state = "off";
-	linux,default-trigger = "mmc0";
-};
-
 &leds {
-	led_pwr: led-pwr {
+	act_led: led-act {
+		label = "led0";
+		linux,default-trigger = "mmc0";
+		gpios = <&gpio 47 0>;
+	};
+
+	pwr_led: led-pwr {
 		label = "led1";
-		gpios = <&gpio 35 GPIO_ACTIVE_HIGH>;
-		default-state = "off";
 		linux,default-trigger = "input";
+		gpios = <&gpio 35 0>;
 	};
 };
 
@@ -176,7 +172,7 @@
 	hpd-gpios = <&gpio 46 GPIO_ACTIVE_LOW>;
 };
 
-&vchiq {
+&audio {
 	pinctrl-names = "default";
 	pinctrl-0 = <&audio_pins>;
 };
@@ -190,14 +186,12 @@ cam0_reg: &cam_dummy_reg {
 
 / {
 	__overrides__ {
-		audio = <&chosen>,"bootargs{on='snd_bcm2835.enable_headphones=1 snd_bcm2835.enable_hdmi=1',off='snd_bcm2835.enable_headphones=0 snd_bcm2835.enable_hdmi=0'}";
+		act_led_gpio = <&act_led>,"gpios:4";
+		act_led_activelow = <&act_led>,"gpios:8";
+		act_led_trigger = <&act_led>,"linux,default-trigger";
 
-		act_led_gpio = <&led_act>,"gpios:4";
-		act_led_activelow = <&led_act>,"gpios:8";
-		act_led_trigger = <&led_act>,"linux,default-trigger";
-
-		pwr_led_gpio = <&led_pwr>,"gpios:4";
-		pwr_led_activelow = <&led_pwr>,"gpios:8";
-		pwr_led_trigger = <&led_pwr>,"linux,default-trigger";
+		pwr_led_gpio = <&pwr_led>,"gpios:4";
+		pwr_led_activelow = <&pwr_led>,"gpios:8";
+		pwr_led_trigger = <&pwr_led>,"linux,default-trigger";
 	};
 };

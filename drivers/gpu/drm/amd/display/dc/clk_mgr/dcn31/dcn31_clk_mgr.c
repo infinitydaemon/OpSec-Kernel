@@ -48,11 +48,6 @@
 
 #include "dc_dmub_srv.h"
 
-#include "logger_types.h"
-#undef DC_LOGGER
-#define DC_LOGGER \
-	clk_mgr->base.base.ctx->logger
-
 #include "yellow_carp_offset.h"
 
 #define regCLK1_CLK_PLL_REQ			0x0237
@@ -71,7 +66,7 @@
 #define TO_CLK_MGR_DCN31(clk_mgr)\
 	container_of(clk_mgr, struct clk_mgr_dcn31, base)
 
-static int dcn31_get_active_display_cnt_wa(
+int dcn31_get_active_display_cnt_wa(
 		struct dc *dc,
 		struct dc_state *context)
 {
@@ -92,7 +87,7 @@ static int dcn31_get_active_display_cnt_wa(
 		const struct dc_link *link = dc->links[i];
 
 		/* abusing the fact that the dig and phy are coupled to see if the phy is enabled */
-		if (link->link_enc && link->link_enc->funcs->is_dig_enabled &&
+		if (link->link_enc->funcs->is_dig_enabled &&
 				link->link_enc->funcs->is_dig_enabled(link->link_enc))
 			display_count++;
 	}
@@ -104,7 +99,7 @@ static int dcn31_get_active_display_cnt_wa(
 	return display_count;
 }
 
-static void dcn31_disable_otg_wa(struct clk_mgr *clk_mgr_base, struct dc_state *context, bool disable)
+static void dcn31_disable_otg_wa(struct clk_mgr *clk_mgr_base, bool disable)
 {
 	struct dc *dc = clk_mgr_base->ctx->dc;
 	int i;
@@ -115,16 +110,15 @@ static void dcn31_disable_otg_wa(struct clk_mgr *clk_mgr_base, struct dc_state *
 		if (pipe->top_pipe || pipe->prev_odm_pipe)
 			continue;
 		if (pipe->stream && (pipe->stream->dpms_off || dc_is_virtual_signal(pipe->stream->signal))) {
-			if (disable) {
+			if (disable)
 				pipe->stream_res.tg->funcs->immediate_disable_crtc(pipe->stream_res.tg);
-				reset_sync_context_for_pipe(dc, context, i);
-			} else
+			else
 				pipe->stream_res.tg->funcs->enable_crtc(pipe->stream_res.tg);
 		}
 	}
 }
 
-void dcn31_update_clocks(struct clk_mgr *clk_mgr_base,
+static void dcn31_update_clocks(struct clk_mgr *clk_mgr_base,
 			struct dc_state *context,
 			bool safe_to_lower)
 {
@@ -145,10 +139,9 @@ void dcn31_update_clocks(struct clk_mgr *clk_mgr_base,
 	 * also if safe to lower is false, we just go in the higher state
 	 */
 	if (safe_to_lower) {
-		if (new_clocks->zstate_support != DCN_ZSTATE_SUPPORT_DISALLOW &&
+		if (new_clocks->zstate_support == DCN_ZSTATE_SUPPORT_ALLOW &&
 				new_clocks->zstate_support != clk_mgr_base->clks.zstate_support) {
-			dcn31_smu_set_zstate_support(clk_mgr, new_clocks->zstate_support);
-			dm_helpers_enable_periodic_detection(clk_mgr_base->ctx, true);
+			dcn31_smu_set_Z9_support(clk_mgr, true);
 			clk_mgr_base->clks.zstate_support = new_clocks->zstate_support;
 		}
 
@@ -173,8 +166,7 @@ void dcn31_update_clocks(struct clk_mgr *clk_mgr_base,
 	} else {
 		if (new_clocks->zstate_support == DCN_ZSTATE_SUPPORT_DISALLOW &&
 				new_clocks->zstate_support != clk_mgr_base->clks.zstate_support) {
-			dcn31_smu_set_zstate_support(clk_mgr, DCN_ZSTATE_SUPPORT_DISALLOW);
-			dm_helpers_enable_periodic_detection(clk_mgr_base->ctx, false);
+			dcn31_smu_set_Z9_support(clk_mgr, false);
 			clk_mgr_base->clks.zstate_support = new_clocks->zstate_support;
 		}
 
@@ -217,26 +209,23 @@ void dcn31_update_clocks(struct clk_mgr *clk_mgr_base,
 	}
 
 	if (should_set_clock(safe_to_lower, new_clocks->dispclk_khz, clk_mgr_base->clks.dispclk_khz)) {
-		dcn31_disable_otg_wa(clk_mgr_base, context, true);
+		dcn31_disable_otg_wa(clk_mgr_base, true);
 
 		clk_mgr_base->clks.dispclk_khz = new_clocks->dispclk_khz;
 		dcn31_smu_set_dispclk(clk_mgr, clk_mgr_base->clks.dispclk_khz);
-		dcn31_disable_otg_wa(clk_mgr_base, context, false);
+		dcn31_disable_otg_wa(clk_mgr_base, false);
 
 		update_dispclk = true;
 	}
 
+	/* TODO: add back DTO programming when DPPCLK restore is fixed in FSDL*/
 	if (dpp_clock_lowered) {
 		// increase per DPP DTO before lowering global dppclk
-		dcn20_update_clocks_update_dpp_dto(clk_mgr, context, safe_to_lower);
 		dcn31_smu_set_dppclk(clk_mgr, clk_mgr_base->clks.dppclk_khz);
 	} else {
 		// increase global DPPCLK before lowering per DPP DTO
 		if (update_dppclk || update_dispclk)
 			dcn31_smu_set_dppclk(clk_mgr, clk_mgr_base->clks.dppclk_khz);
-		// always update dtos unless clock is lowered and not safe to lower
-		if (new_clocks->dppclk_khz >= dc->current_state->bw_ctx.bw.dcn.clk.dppclk_khz)
-			dcn20_update_clocks_update_dpp_dto(clk_mgr, context, safe_to_lower);
 	}
 
 	// notify DMCUB of latest clocks
@@ -291,20 +280,17 @@ static void dcn31_enable_pme_wa(struct clk_mgr *clk_mgr_base)
 	dcn31_smu_enable_pme_wa(clk_mgr);
 }
 
-void dcn31_init_clocks(struct clk_mgr *clk_mgr)
+static void dcn31_init_clocks(struct clk_mgr *clk_mgr)
 {
-	uint32_t ref_dtbclk = clk_mgr->clks.ref_dtbclk_khz;
-
 	memset(&(clk_mgr->clks), 0, sizeof(struct dc_clocks));
 	// Assumption is that boot state always supports pstate
-	clk_mgr->clks.ref_dtbclk_khz = ref_dtbclk;	// restore ref_dtbclk
 	clk_mgr->clks.p_state_change_support = true;
 	clk_mgr->clks.prev_p_state_change_support = true;
 	clk_mgr->clks.pwr_state = DCN_PWR_STATE_UNKNOWN;
 	clk_mgr->clks.zstate_support = DCN_ZSTATE_SUPPORT_UNKNOWN;
 }
 
-bool dcn31_are_clock_states_equal(struct dc_clocks *a,
+static bool dcn31_are_clock_states_equal(struct dc_clocks *a,
 		struct dc_clocks *b)
 {
 	if (a->dispclk_khz != b->dispclk_khz)
@@ -550,9 +536,10 @@ static unsigned int find_clk_for_voltage(
 	return clock;
 }
 
-static void dcn31_clk_mgr_helper_populate_bw_params(struct clk_mgr_internal *clk_mgr,
-						    struct integrated_info *bios_info,
-						    const DpmClocks_t *clock_table)
+void dcn31_clk_mgr_helper_populate_bw_params(
+		struct clk_mgr_internal *clk_mgr,
+		struct integrated_info *bios_info,
+		const DpmClocks_t *clock_table)
 {
 	int i, j;
 	struct clk_bw_params *bw_params = clk_mgr->base.bw_params;
@@ -609,10 +596,8 @@ static void dcn31_clk_mgr_helper_populate_bw_params(struct clk_mgr_internal *clk
 	}
 
 	bw_params->vram_type = bios_info->memory_type;
+	bw_params->num_channels = bios_info->ma_channel_number;
 
-	bw_params->dram_channel_width_bytes = bios_info->memory_type == 0x22 ? 8 : 4;
-	//bw_params->dram_channel_width_bytes = dc->ctx->asic_id.vram_width;
-	bw_params->num_channels = bios_info->ma_channel_number ? bios_info->ma_channel_number : 4;
 	for (i = 0; i < WM_SET_COUNT; i++) {
 		bw_params->wm_table.entries[i].wm_inst = i;
 
@@ -626,43 +611,13 @@ static void dcn31_clk_mgr_helper_populate_bw_params(struct clk_mgr_internal *clk
 	}
 }
 
-static void dcn31_set_low_power_state(struct clk_mgr *clk_mgr_base)
-{
-	int display_count;
-	struct clk_mgr_internal *clk_mgr = TO_CLK_MGR_INTERNAL(clk_mgr_base);
-	struct dc *dc = clk_mgr_base->ctx->dc;
-	struct dc_state *context = dc->current_state;
-
-	if (clk_mgr_base->clks.pwr_state != DCN_PWR_STATE_LOW_POWER) {
-		display_count = dcn31_get_active_display_cnt_wa(dc, context);
-		/* if we can go lower, go lower */
-		if (display_count == 0) {
-			union display_idle_optimization_u idle_info = { 0 };
-
-			idle_info.idle_info.df_request_disabled = 1;
-			idle_info.idle_info.phy_ref_clk_off = 1;
-			idle_info.idle_info.s0i2_rdy = 1;
-			dcn31_smu_set_display_idle_optimization(clk_mgr, idle_info.data);
-			/* update power state */
-			clk_mgr_base->clks.pwr_state = DCN_PWR_STATE_LOW_POWER;
-		}
-	}
-}
-
-int dcn31_get_dtb_ref_freq_khz(struct clk_mgr *clk_mgr_base)
-{
-	return clk_mgr_base->clks.ref_dtbclk_khz;
-}
-
 static struct clk_mgr_funcs dcn31_funcs = {
 	.get_dp_ref_clk_frequency = dce12_get_dp_ref_freq_khz,
-	.get_dtb_ref_clk_frequency = dcn31_get_dtb_ref_freq_khz,
 	.update_clocks = dcn31_update_clocks,
 	.init_clocks = dcn31_init_clocks,
 	.enable_pme_wa = dcn31_enable_pme_wa,
 	.are_clock_states_equal = dcn31_are_clock_states_equal,
-	.notify_wm_ranges = dcn31_notify_wm_ranges,
-	.set_low_power_state = dcn31_set_low_power_state
+	.notify_wm_ranges = dcn31_notify_wm_ranges
 };
 extern struct clk_mgr_funcs dcn3_fpga_funcs;
 
@@ -693,7 +648,7 @@ void dcn31_clk_mgr_construct(
 				sizeof(struct dcn31_watermarks),
 				&clk_mgr->smu_wm_set.mc_address.quad_part);
 
-	if (!clk_mgr->smu_wm_set.wm_set) {
+	if (clk_mgr->smu_wm_set.wm_set == 0) {
 		clk_mgr->smu_wm_set.wm_set = &dummy_wms;
 		clk_mgr->smu_wm_set.mc_address.quad_part = 0;
 	}
@@ -731,63 +686,19 @@ void dcn31_clk_mgr_construct(
 			dcn31_bw_params.wm_table = ddr5_wm_table;
 		}
 		/* Saved clocks configured at boot for debug purposes */
-		dcn31_dump_clk_registers(&clk_mgr->base.base.boot_snapshot,
-					 &clk_mgr->base.base, &log_info);
+		 dcn31_dump_clk_registers(&clk_mgr->base.base.boot_snapshot, &clk_mgr->base.base, &log_info);
 
 	}
 
 	clk_mgr->base.base.dprefclk_khz = 600000;
-	clk_mgr->base.base.clks.ref_dtbclk_khz = 600000;
+	clk_mgr->base.dccg->ref_dtbclk_khz = 600000;
 	dce_clock_read_ss_info(&clk_mgr->base);
-	/*if bios enabled SS, driver needs to adjust dtb clock, only enable with correct bios*/
-	//clk_mgr->base.dccg->ref_dtbclk_khz = dce_adjust_dp_ref_freq_for_ss(clk_mgr_internal, clk_mgr->base.base.dprefclk_khz);
 
 	clk_mgr->base.base.bw_params = &dcn31_bw_params;
 
 	if (clk_mgr->base.base.ctx->dc->debug.pstate_enabled) {
-		int i;
-
 		dcn31_get_dpm_table_from_smu(&clk_mgr->base, &smu_dpm_clks);
 
-		DC_LOG_SMU("NumDcfClkLevelsEnabled: %d\n"
-				   "NumDispClkLevelsEnabled: %d\n"
-				   "NumSocClkLevelsEnabled: %d\n"
-				   "VcnClkLevelsEnabled: %d\n"
-				   "NumDfPst atesEnabled: %d\n"
-				   "MinGfxClk: %d\n"
-				   "MaxGfxClk: %d\n",
-				   smu_dpm_clks.dpm_clks->NumDcfClkLevelsEnabled,
-				   smu_dpm_clks.dpm_clks->NumDispClkLevelsEnabled,
-				   smu_dpm_clks.dpm_clks->NumSocClkLevelsEnabled,
-				   smu_dpm_clks.dpm_clks->VcnClkLevelsEnabled,
-				   smu_dpm_clks.dpm_clks->NumDfPstatesEnabled,
-				   smu_dpm_clks.dpm_clks->MinGfxClk,
-				   smu_dpm_clks.dpm_clks->MaxGfxClk);
-		for (i = 0; i < smu_dpm_clks.dpm_clks->NumDcfClkLevelsEnabled; i++) {
-			DC_LOG_SMU("smu_dpm_clks.dpm_clks->DcfClocks[%d] = %d\n",
-					   i,
-					   smu_dpm_clks.dpm_clks->DcfClocks[i]);
-		}
-		for (i = 0; i < smu_dpm_clks.dpm_clks->NumDispClkLevelsEnabled; i++) {
-			DC_LOG_SMU("smu_dpm_clks.dpm_clks->DispClocks[%d] = %d\n",
-					   i, smu_dpm_clks.dpm_clks->DispClocks[i]);
-		}
-		for (i = 0; i < smu_dpm_clks.dpm_clks->NumSocClkLevelsEnabled; i++) {
-			DC_LOG_SMU("smu_dpm_clks.dpm_clks->SocClocks[%d] = %d\n",
-					   i, smu_dpm_clks.dpm_clks->SocClocks[i]);
-		}
-		for (i = 0; i < NUM_SOC_VOLTAGE_LEVELS; i++)
-			DC_LOG_SMU("smu_dpm_clks.dpm_clks->SocVoltage[%d] = %d\n",
-					   i, smu_dpm_clks.dpm_clks->SocVoltage[i]);
-
-		for (i = 0; i < NUM_DF_PSTATE_LEVELS; i++) {
-			DC_LOG_SMU("smu_dpm_clks.dpm_clks.DfPstateTable[%d].FClk = %d\n"
-					   "smu_dpm_clks.dpm_clks->DfPstateTable[%d].MemClk= %d\n"
-					   "smu_dpm_clks.dpm_clks->DfPstateTable[%d].Voltage = %d\n",
-					   i, smu_dpm_clks.dpm_clks->DfPstateTable[i].FClk,
-					   i, smu_dpm_clks.dpm_clks->DfPstateTable[i].MemClk,
-					   i, smu_dpm_clks.dpm_clks->DfPstateTable[i].Voltage);
-		}
 		if (ctx->dc_bios && ctx->dc_bios->integrated_info) {
 			dcn31_clk_mgr_helper_populate_bw_params(
 					&clk_mgr->base,

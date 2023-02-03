@@ -29,7 +29,7 @@
 #include "pxa25x.h"
 #include "h5000.h"
 #include "udc.h"
-#include "smemc.h"
+#include <mach/smemc.h>
 
 #include "generic.h"
 

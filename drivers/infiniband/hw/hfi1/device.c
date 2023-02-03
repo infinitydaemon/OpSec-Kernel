@@ -4,6 +4,7 @@
  */
 
 #include <linux/cdev.h>
+#include <linux/module.h>
 #include <linux/device.h>
 #include <linux/fs.h>
 
@@ -72,7 +73,7 @@ const char *class_name(void)
 	return hfi1_class_name;
 }
 
-static char *hfi1_devnode(const struct device *dev, umode_t *mode)
+static char *hfi1_devnode(struct device *dev, umode_t *mode)
 {
 	if (mode)
 		*mode = 0600;
@@ -85,7 +86,7 @@ static const char *class_name_user(void)
 	return hfi1_class_name_user;
 }
 
-static char *hfi1_user_devnode(const struct device *dev, umode_t *mode)
+static char *hfi1_user_devnode(struct device *dev, umode_t *mode)
 {
 	if (mode)
 		*mode = 0666;

@@ -26,7 +26,6 @@
 #include <linux/platform_data/video-pxafb.h>
 #include <linux/platform_data/mmc-pxamci.h>
 #include <linux/platform_data/usb-ohci-pxa27x.h>
-#include <linux/platform_data/asoc-pxa.h>
 #include "pxa320.h"
 
 #include "mxm8x10.h"
@@ -357,9 +356,14 @@ void __init mxm_8x10_usb_host_init(void)
 	pxa_set_ohci_info(&mxm_8x10_ohci_platform_data);
 }
 
+/* AC97 Sound Support */
+static struct platform_device mxm_8x10_ac97_device = {
+	.name = "pxa2xx-ac97"
+};
+
 void __init mxm_8x10_ac97_init(void)
 {
-	pxa_set_ac97_info(NULL);
+	platform_device_register(&mxm_8x10_ac97_device);
 }
 
 /* NAND flash Support */

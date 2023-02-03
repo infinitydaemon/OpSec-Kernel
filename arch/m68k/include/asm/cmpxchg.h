@@ -4,7 +4,8 @@
 
 #include <linux/irqflags.h>
 
-#define __xg(type, x) ((volatile type *)(x))
+struct __xchg_dummy { unsigned long a[100]; };
+#define __xg(x) ((volatile struct __xchg_dummy *)(x))
 
 extern unsigned long __invalid_xchg_size(unsigned long, volatile void *, int);
 
@@ -49,7 +50,7 @@ static inline unsigned long __xchg(unsigned long x, volatile void * ptr, int siz
 			 "1:\n\t"
 			 "casb %0,%1,%2\n\t"
 			 "jne 1b"
-			 : "=&d" (x) : "d" (x), "m" (*__xg(u8, ptr)) : "memory");
+			 : "=&d" (x) : "d" (x), "m" (*__xg(ptr)) : "memory");
 		break;
 	case 2:
 		__asm__ __volatile__
@@ -57,7 +58,7 @@ static inline unsigned long __xchg(unsigned long x, volatile void * ptr, int siz
 			 "1:\n\t"
 			 "casw %0,%1,%2\n\t"
 			 "jne 1b"
-			 : "=&d" (x) : "d" (x), "m" (*__xg(u16, ptr)) : "memory");
+			 : "=&d" (x) : "d" (x), "m" (*__xg(ptr)) : "memory");
 		break;
 	case 4:
 		__asm__ __volatile__
@@ -65,7 +66,7 @@ static inline unsigned long __xchg(unsigned long x, volatile void * ptr, int siz
 			 "1:\n\t"
 			 "casl %0,%1,%2\n\t"
 			 "jne 1b"
-			 : "=&d" (x) : "d" (x), "m" (*__xg(u32, ptr)) : "memory");
+			 : "=&d" (x) : "d" (x), "m" (*__xg(ptr)) : "memory");
 		break;
 	default:
 		x = __invalid_xchg_size(x, ptr, size);

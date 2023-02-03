@@ -243,8 +243,7 @@ static int ism_alloc_dmb(struct ism_dev *ism, struct smcd_dmb *dmb)
 
 	dmb->cpu_addr = dma_alloc_coherent(&ism->pdev->dev, dmb->dmb_len,
 					   &dmb->dma_addr,
-					   GFP_KERNEL | __GFP_NOWARN |
-					   __GFP_NOMEMALLOC | __GFP_NORETRY);
+					   GFP_KERNEL | __GFP_NOWARN | __GFP_NOMEMALLOC | __GFP_COMP | __GFP_NORETRY);
 	if (!dmb->cpu_addr)
 		clear_bit(dmb->sba_idx, ism->sba_bitmap);
 
@@ -410,19 +409,20 @@ static void ism_create_system_eid(void)
 	memcpy(&SYSTEM_EID.type, tmp, 4);
 }
 
-static u8 *ism_get_system_eid(void)
+static void ism_get_system_eid(struct smcd_dev *smcd, u8 **eid)
 {
-	return SYSTEM_EID.seid_string;
+	*eid = &SYSTEM_EID.seid_string[0];
 }
 
 static u16 ism_get_chid(struct smcd_dev *smcd)
 {
-	struct ism_dev *ism = (struct ism_dev *)smcd->priv;
+	struct ism_dev *ismdev;
 
-	if (!ism || !ism->pdev)
+	ismdev = (struct ism_dev *)smcd->priv;
+	if (!ismdev || !ismdev->pdev)
 		return 0;
 
-	return to_zpci(ism->pdev)->pchid;
+	return to_zpci(ismdev->pdev)->pchid;
 }
 
 static void ism_handle_event(struct ism_dev *ism)
@@ -444,7 +444,6 @@ static irqreturn_t ism_handle_irq(int irq, void *data)
 	struct ism_dev *ism = data;
 	unsigned long bit, end;
 	unsigned long *bv;
-	u16 dmbemask;
 
 	bv = (void *) &ism->sba->dmb_bits[ISM_DMB_WORD_OFFSET];
 	end = sizeof(ism->sba->dmb_bits) * BITS_PER_BYTE - ISM_DMB_BIT_OFFSET;
@@ -458,10 +457,9 @@ static irqreturn_t ism_handle_irq(int irq, void *data)
 			break;
 
 		clear_bit_inv(bit, bv);
-		dmbemask = ism->sba->dmbe_mask[bit + ISM_DMB_BIT_OFFSET];
 		ism->sba->dmbe_mask[bit + ISM_DMB_BIT_OFFSET] = 0;
 		barrier();
-		smcd_handle_irq(ism->smcd, bit + ISM_DMB_BIT_OFFSET, dmbemask);
+		smcd_handle_irq(ism->smcd, bit + ISM_DMB_BIT_OFFSET);
 	}
 
 	if (ism->sba->e) {
@@ -557,7 +555,7 @@ static int ism_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (ret)
 		goto err_disable;
 
-	ret = dma_set_mask(&pdev->dev, DMA_BIT_MASK(64));
+	ret = pci_set_dma_mask(pdev, DMA_BIT_MASK(64));
 	if (ret)
 		goto err_resource;
 

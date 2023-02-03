@@ -103,12 +103,15 @@ static int visconti_gpio_child_to_parent_hwirq(struct gpio_chip *gc,
 	return -EINVAL;
 }
 
-static int visconti_gpio_populate_parent_fwspec(struct gpio_chip *chip,
-						union gpio_irq_fwspec *gfwspec,
-						unsigned int parent_hwirq,
-						unsigned int parent_type)
+static void *visconti_gpio_populate_parent_fwspec(struct gpio_chip *chip,
+						  unsigned int parent_hwirq,
+						  unsigned int parent_type)
 {
-	struct irq_fwspec *fwspec = &gfwspec->fwspec;
+	struct irq_fwspec *fwspec;
+
+	fwspec = kmalloc(sizeof(*fwspec), GFP_KERNEL);
+	if (!fwspec)
+		return NULL;
 
 	fwspec->fwnode = chip->irq.parent_domain->fwnode;
 	fwspec->param_count = 3;
@@ -116,7 +119,7 @@ static int visconti_gpio_populate_parent_fwspec(struct gpio_chip *chip,
 	fwspec->param[1] = parent_hwirq;
 	fwspec->param[2] = parent_type;
 
-	return 0;
+	return fwspec;
 }
 
 static int visconti_gpio_probe(struct platform_device *pdev)

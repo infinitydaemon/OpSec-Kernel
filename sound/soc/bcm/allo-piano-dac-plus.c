@@ -153,7 +153,7 @@ static int __snd_allo_piano_dsp_program(struct snd_soc_pcm_runtime *rtd,
 				PCM512x_MUTE, P_DAC_UNMUTE);
 	}
 
-	for (dac = 0; dac < rtd->dai_link->num_codecs; dac++) {
+	for (dac = 0; dac < rtd->num_codecs; dac++) {
 		struct dsp_code *dsp_code_read;
 		int i = 1;
 
@@ -1036,8 +1036,7 @@ static int snd_allo_piano_dac_remove(struct platform_device *pdev)
 
 	kfree(&card->drvdata);
 	snd_allo_piano_gpio_mute(&snd_allo_piano_dac);
-	snd_soc_unregister_card(&snd_allo_piano_dac);
-	return 0;
+	return snd_soc_unregister_card(&snd_allo_piano_dac);
 }
 
 static const struct of_device_id snd_allo_piano_dac_of_match[] = {

@@ -461,7 +461,7 @@ static int lm95245_detect(struct i2c_client *new_client,
 		return -ENODEV;
 	}
 
-	strscpy(info->type, name, I2C_NAME_SIZE);
+	strlcpy(info->type, name, I2C_NAME_SIZE);
 	return 0;
 }
 

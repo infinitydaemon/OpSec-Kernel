@@ -13,7 +13,7 @@
 struct iio_dev;
 struct iio_chan_spec;
 struct device;
-struct fwnode_handle;
+struct device_node;
 
 /**
  * struct iio_channel - everything needed for a consumer to use a channel
@@ -99,20 +99,26 @@ void iio_channel_release_all(struct iio_channel *chan);
 struct iio_channel *devm_iio_channel_get_all(struct device *dev);
 
 /**
- * fwnode_iio_channel_get_by_name() - get description of all that is needed to access channel.
- * @fwnode:		Pointer to consumer Firmware node
+ * of_iio_channel_get_by_name() - get description of all that is needed to access channel.
+ * @np:			Pointer to consumer device tree node
  * @consumer_channel:	Unique name to identify the channel on the consumer
  *			side. This typically describes the channels use within
  *			the consumer. E.g. 'battery_voltage'
  */
-struct iio_channel *fwnode_iio_channel_get_by_name(struct fwnode_handle *fwnode,
-						   const char *name);
+#ifdef CONFIG_OF
+struct iio_channel *of_iio_channel_get_by_name(struct device_node *np, const char *name);
+#else
+static inline struct iio_channel *
+of_iio_channel_get_by_name(struct device_node *np, const char *name)
+{
+	return NULL;
+}
+#endif
 
 /**
- * devm_fwnode_iio_channel_get_by_name() - Resource managed version of
- *					   fwnode_iio_channel_get_by_name().
+ * devm_of_iio_channel_get_by_name() - Resource managed version of of_iio_channel_get_by_name().
  * @dev:		Pointer to consumer device.
- * @fwnode:		Pointer to consumer Firmware node
+ * @np:			Pointer to consumer device tree node
  * @consumer_channel:	Unique name to identify the channel on the consumer
  *			side. This typically describes the channels use within
  *			the consumer. E.g. 'battery_voltage'
@@ -123,9 +129,9 @@ struct iio_channel *fwnode_iio_channel_get_by_name(struct fwnode_handle *fwnode,
  * The allocated iio channel is automatically released when the device is
  * unbound.
  */
-struct iio_channel *devm_fwnode_iio_channel_get_by_name(struct device *dev,
-							struct fwnode_handle *fwnode,
-							const char *consumer_channel);
+struct iio_channel *devm_of_iio_channel_get_by_name(struct device *dev,
+						    struct device_node *np,
+						    const char *consumer_channel);
 
 struct iio_cb_buffer;
 /**

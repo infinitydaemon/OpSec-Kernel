@@ -14,10 +14,9 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/mmiotrace.h>
-#include <linux/cc_platform.h>
+#include <linux/mem_encrypt.h>
 #include <linux/efi.h>
 #include <linux/pgtable.h>
-#include <linux/kmsan.h>
 
 #include <asm/set_memory.h>
 #include <asm/e820/api.h>
@@ -93,7 +92,7 @@ static unsigned int __ioremap_check_ram(struct resource *res)
  */
 static unsigned int __ioremap_check_encrypted(struct resource *res)
 {
-	if (!cc_platform_has(CC_ATTR_GUEST_MEM_ENCRYPT))
+	if (!sev_active())
 		return 0;
 
 	switch (res->desc) {
@@ -113,7 +112,7 @@ static unsigned int __ioremap_check_encrypted(struct resource *res)
  */
 static void __ioremap_check_other(resource_size_t addr, struct ioremap_desc *desc)
 {
-	if (!cc_platform_has(CC_ATTR_GUEST_MEM_ENCRYPT))
+	if (!sev_active())
 		return;
 
 	if (!IS_ENABLED(CONFIG_EFI))
@@ -249,15 +248,10 @@ __ioremap_caller(resource_size_t phys_addr, unsigned long size,
 	 * If the page being mapped is in memory and SEV is active then
 	 * make sure the memory encryption attribute is enabled in the
 	 * resulting mapping.
-	 * In TDX guests, memory is marked private by default. If encryption
-	 * is not requested (using encrypted), explicitly set decrypt
-	 * attribute in all IOREMAPPED memory.
 	 */
 	prot = PAGE_KERNEL_IO;
 	if ((io_desc.flags & IORES_MAP_ENCRYPTED) || encrypted)
 		prot = pgprot_encrypted(prot);
-	else
-		prot = pgprot_decrypted(prot);
 
 	switch (pcm) {
 	case _PAGE_CACHE_MODE_UC:
@@ -486,8 +480,6 @@ void iounmap(volatile void __iomem *addr)
 		return;
 	}
 
-	kmsan_iounmap_page_range((unsigned long)addr,
-		(unsigned long)addr + get_vm_area_size(p));
 	memtype_free(p->phys_addr, p->phys_addr + get_vm_area_size(p));
 
 	/* Finally remove it */
@@ -522,7 +514,6 @@ void unxlate_dev_mem_ptr(phys_addr_t phys, void *addr)
 	memunmap((void *)((unsigned long)addr & PAGE_MASK));
 }
 
-#ifdef CONFIG_AMD_MEM_ENCRYPT
 /*
  * Examine the physical address to determine if it is an area of memory
  * that should be mapped decrypted.  If the memory is not part of the
@@ -570,7 +561,7 @@ static bool memremap_should_map_decrypted(resource_size_t phys_addr,
 	case E820_TYPE_NVS:
 	case E820_TYPE_UNUSABLE:
 		/* For SEV, these areas are encrypted */
-		if (cc_platform_has(CC_ATTR_GUEST_MEM_ENCRYPT))
+		if (sev_active())
 			break;
 		fallthrough;
 
@@ -753,7 +744,7 @@ static bool __init early_memremap_is_setup_data(resource_size_t phys_addr,
 bool arch_memremap_can_ram_remap(resource_size_t phys_addr, unsigned long size,
 				 unsigned long flags)
 {
-	if (!cc_platform_has(CC_ATTR_MEM_ENCRYPT))
+	if (!mem_encrypt_active())
 		return true;
 
 	if (flags & MEMREMAP_ENC)
@@ -762,7 +753,7 @@ bool arch_memremap_can_ram_remap(resource_size_t phys_addr, unsigned long size,
 	if (flags & MEMREMAP_DEC)
 		return false;
 
-	if (cc_platform_has(CC_ATTR_HOST_MEM_ENCRYPT)) {
+	if (sme_active()) {
 		if (memremap_is_setup_data(phys_addr, size) ||
 		    memremap_is_efi_data(phys_addr, size))
 			return false;
@@ -783,12 +774,12 @@ pgprot_t __init early_memremap_pgprot_adjust(resource_size_t phys_addr,
 {
 	bool encrypted_prot;
 
-	if (!cc_platform_has(CC_ATTR_MEM_ENCRYPT))
+	if (!mem_encrypt_active())
 		return prot;
 
 	encrypted_prot = true;
 
-	if (cc_platform_has(CC_ATTR_HOST_MEM_ENCRYPT)) {
+	if (sme_active()) {
 		if (early_memremap_is_setup_data(phys_addr, size) ||
 		    memremap_is_efi_data(phys_addr, size))
 			encrypted_prot = false;
@@ -806,6 +797,7 @@ bool phys_mem_access_encrypted(unsigned long phys_addr, unsigned long size)
 	return arch_memremap_can_ram_remap(phys_addr, size, 0);
 }
 
+#ifdef CONFIG_AMD_MEM_ENCRYPT
 /* Remap memory with encryption */
 void __init *early_memremap_encrypted(resource_size_t phys_addr,
 				      unsigned long size)

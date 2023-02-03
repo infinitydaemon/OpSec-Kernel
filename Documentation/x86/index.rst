@@ -21,12 +21,9 @@ x86-specific Documentation
    tlb
    mtrr
    pat
-   intel-hfi
-   iommu
+   intel-iommu
    intel_txt
    amd-memory-encryption
-   amd_hsmp
-   tdx
    pti
    mds
    microcode
@@ -36,9 +33,7 @@ x86-specific Documentation
    usb-legacy-support
    i386/index
    x86_64/index
-   ifs
    sva
    sgx
    features
    elf_auxvec
-   xstate

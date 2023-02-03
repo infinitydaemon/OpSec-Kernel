@@ -140,8 +140,9 @@ static int stm32_pwm_lp_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 
 	if (reenable) {
 		/* Start LP timer in continuous mode */
-		ret = regmap_set_bits(priv->regmap, STM32_LPTIM_CR,
-				      STM32_LPTIM_CNTSTRT);
+		ret = regmap_update_bits(priv->regmap, STM32_LPTIM_CR,
+					 STM32_LPTIM_CNTSTRT,
+					 STM32_LPTIM_CNTSTRT);
 		if (ret) {
 			regmap_write(priv->regmap, STM32_LPTIM_CR, 0);
 			goto err;
@@ -156,9 +157,9 @@ err:
 	return ret;
 }
 
-static int stm32_pwm_lp_get_state(struct pwm_chip *chip,
-				  struct pwm_device *pwm,
-				  struct pwm_state *state)
+static void stm32_pwm_lp_get_state(struct pwm_chip *chip,
+				   struct pwm_device *pwm,
+				   struct pwm_state *state)
 {
 	struct stm32_pwm_lp *priv = to_stm32_pwm_lp(chip);
 	unsigned long rate = clk_get_rate(priv->clk);
@@ -184,8 +185,6 @@ static int stm32_pwm_lp_get_state(struct pwm_chip *chip,
 	tmp = prd - val;
 	tmp = (tmp << presc) * NSEC_PER_SEC;
 	state->duty_cycle = DIV_ROUND_CLOSEST_ULL(tmp, rate);
-
-	return 0;
 }
 
 static const struct pwm_ops stm32_pwm_lp_ops = {

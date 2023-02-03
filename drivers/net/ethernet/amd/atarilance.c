@@ -471,7 +471,6 @@ static unsigned long __init lance_probe1( struct net_device *dev,
 	int 					i;
 	static int 				did_version;
 	unsigned short			save1, save2;
-	u8 addr[ETH_ALEN];
 
 	PROBE_PRINT(( "Probing for Lance card at mem %#lx io %#lx\n",
 				  (long)memaddr, (long)ioaddr ));
@@ -581,21 +580,19 @@ static unsigned long __init lance_probe1( struct net_device *dev,
 
 	/* Get the ethernet address */
 	switch( lp->cardtype ) {
-	case OLD_RIEBL:
+	  case OLD_RIEBL:
 		/* No ethernet address! (Set some default address) */
-		eth_hw_addr_set(dev, OldRieblDefHwaddr);
+		memcpy(dev->dev_addr, OldRieblDefHwaddr, ETH_ALEN);
 		break;
-	case NEW_RIEBL:
-		lp->memcpy_f(addr, RIEBL_HWADDR_ADDR, ETH_ALEN);
-		eth_hw_addr_set(dev, addr);
+	  case NEW_RIEBL:
+		lp->memcpy_f(dev->dev_addr, RIEBL_HWADDR_ADDR, ETH_ALEN);
 		break;
-	case PAM_CARD:
+	  case PAM_CARD:
 		i = IO->eeprom;
 		for( i = 0; i < 6; ++i )
-			addr[i] =
+			dev->dev_addr[i] =
 				((((unsigned short *)MEM)[i*2] & 0x0f) << 4) |
 				((((unsigned short *)MEM)[i*2+1] & 0x0f));
-		eth_hw_addr_set(dev, addr);
 		i = IO->mem;
 		break;
 	}
@@ -854,7 +851,7 @@ static irqreturn_t lance_interrupt( int irq, void *dev_id )
 	int csr0, boguscnt = 10;
 	int handled = 0;
 
-	if (!dev) {
+	if (dev == NULL) {
 		DPRINTK( 1, ( "lance_interrupt(): interrupt for unknown device.\n" ));
 		return IRQ_NONE;
 	}
@@ -995,7 +992,7 @@ static int lance_rx( struct net_device *dev )
 			}
 			else {
 				skb = netdev_alloc_skb(dev, pkt_len + 2);
-				if (!skb) {
+				if (skb == NULL) {
 					for( i = 0; i < RX_RING_SIZE; i++ )
 						if (MEM->rx_head[(entry+i) & RX_RING_MOD_MASK].flag &
 							RMD1_OWN_CHIP)
@@ -1126,7 +1123,7 @@ static int lance_set_mac_address( struct net_device *dev, void *addr )
 		return -EIO;
 	}
 
-	eth_hw_addr_set(dev, saddr->sa_data);
+	memcpy( dev->dev_addr, saddr->sa_data, dev->addr_len );
 	for( i = 0; i < 6; i++ )
 		MEM->init.hwaddr[i] = dev->dev_addr[i^1]; /* <- 16 bit swap! */
 	lp->memcpy_f( RIEBL_HWADDR_ADDR, dev->dev_addr, 6 );

@@ -30,7 +30,6 @@
 #include <linux/efi.h>
 #include <linux/psci.h>
 #include <linux/sched/task.h>
-#include <linux/scs.h>
 #include <linux/mm.h>
 
 #include <asm/acpi.h>
@@ -43,7 +42,6 @@
 #include <asm/cpu_ops.h>
 #include <asm/kasan.h>
 #include <asm/numa.h>
-#include <asm/scs.h>
 #include <asm/sections.h>
 #include <asm/setup.h>
 #include <asm/smp_plat.h>
@@ -191,16 +189,11 @@ static void __init setup_machine_fdt(phys_addr_t dt_phys)
 
 	if (!dt_virt || !early_init_dt_scan(dt_virt)) {
 		pr_crit("\n"
-			"Error: invalid device tree blob at physical address %pa (virtual address 0x%px)\n"
+			"Error: invalid device tree blob at physical address %pa (virtual address 0x%p)\n"
 			"The dtb must be 8-byte aligned and must not exceed 2 MB in size\n"
 			"\nPlease check your bootloader.",
 			&dt_phys, dt_virt);
 
-		/*
-		 * Note that in this _really_ early stage we cannot even BUG()
-		 * or oops, so the least terrible thing to do is cpu_relax(),
-		 * or else we could end-up printing non-initialized data, etc.
-		 */
 		while (true)
 			cpu_relax();
 	}
@@ -224,11 +217,9 @@ static void __init request_standard_resources(void)
 	size_t res_size;
 
 	kernel_code.start   = __pa_symbol(_stext);
-	kernel_code.end     = __pa_symbol(__init_begin) - 1;
+	kernel_code.end     = __pa_symbol(__init_begin - 1);
 	kernel_data.start   = __pa_symbol(_sdata);
-	kernel_data.end     = __pa_symbol(_end) - 1;
-	insert_resource(&iomem_resource, &kernel_code);
-	insert_resource(&iomem_resource, &kernel_data);
+	kernel_data.end     = __pa_symbol(_end - 1);
 
 	num_standard_resources = memblock.memory.cnt;
 	res_size = num_standard_resources * sizeof(*standard_resources);
@@ -241,16 +232,27 @@ static void __init request_standard_resources(void)
 		if (memblock_is_nomap(region)) {
 			res->name  = "reserved";
 			res->flags = IORESOURCE_MEM;
-			res->start = __pfn_to_phys(memblock_region_reserved_base_pfn(region));
-			res->end = __pfn_to_phys(memblock_region_reserved_end_pfn(region)) - 1;
 		} else {
 			res->name  = "System RAM";
 			res->flags = IORESOURCE_SYSTEM_RAM | IORESOURCE_BUSY;
-			res->start = __pfn_to_phys(memblock_region_memory_base_pfn(region));
-			res->end = __pfn_to_phys(memblock_region_memory_end_pfn(region)) - 1;
 		}
+		res->start = __pfn_to_phys(memblock_region_memory_base_pfn(region));
+		res->end = __pfn_to_phys(memblock_region_memory_end_pfn(region)) - 1;
 
-		insert_resource(&iomem_resource, res);
+		request_resource(&iomem_resource, res);
+
+		if (kernel_code.start >= res->start &&
+		    kernel_code.end <= res->end)
+			request_resource(res, &kernel_code);
+		if (kernel_data.start >= res->start &&
+		    kernel_data.end <= res->end)
+			request_resource(res, &kernel_data);
+#ifdef CONFIG_KEXEC_CORE
+		/* Userspace will find "Crash kernel" region in /proc/iomem. */
+		if (crashk_res.end && crashk_res.start >= res->start &&
+		    crashk_res.end <= res->end)
+			request_resource(res, &crashk_res);
+#endif
 	}
 }
 
@@ -305,16 +307,15 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
 	early_fixmap_init();
 	early_ioremap_init();
 
-	setup_machine_fdt(__fdt_pointer);
-
 	/*
 	 * Initialise the static keys early as they may be enabled by the
-	 * cpufeature code and early parameters.
+	 * cpufeature code, early parameters, and DT setup.
 	 */
 	jump_label_init();
-	parse_early_param();
 
-	dynamic_scs_init();
+	setup_machine_fdt(__fdt_pointer);
+
+	parse_early_param();
 
 	/*
 	 * Unmask asynchronous aborts and fiq after bringing up possible
@@ -398,6 +399,9 @@ static inline bool cpu_can_disable(unsigned int cpu)
 static int __init topology_init(void)
 {
 	int i;
+
+	for_each_online_node(i)
+		register_one_node(i);
 
 	for_each_possible_cpu(i) {
 		struct cpu *cpu = &per_cpu(cpu_data.cpu, i);

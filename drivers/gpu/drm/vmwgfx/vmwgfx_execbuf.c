@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 /**************************************************************************
  *
- * Copyright 2009 - 2022 VMware, Inc., Palo Alto, CA., USA
+ * Copyright 2009 - 2015 VMware, Inc., Palo Alto, CA., USA
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the
@@ -25,7 +25,6 @@
  *
  **************************************************************************/
 #include <linux/sync_file.h>
-#include <linux/hashtable.h>
 
 #include "vmwgfx_drv.h"
 #include "vmwgfx_reg.h"
@@ -35,6 +34,7 @@
 #include "vmwgfx_binding.h"
 #include "vmwgfx_mksstat.h"
 
+#define VMW_RES_HT_ORDER 12
 
 /*
  * Helper macro to get dx_ctx_node if available otherwise print an error
@@ -290,26 +290,20 @@ static void vmw_execbuf_rcache_update(struct vmw_res_cache_entry *rcache,
 	rcache->valid_handle = 0;
 }
 
-enum vmw_val_add_flags {
-	vmw_val_add_flag_none  =      0,
-	vmw_val_add_flag_noctx = 1 << 0,
-};
-
 /**
- * vmw_execbuf_res_val_add - Add a resource to the validation list.
+ * vmw_execbuf_res_noref_val_add - Add a resource described by an unreferenced
+ * rcu-protected pointer to the validation list.
  *
  * @sw_context: Pointer to the software context.
  * @res: Unreferenced rcu-protected pointer to the resource.
  * @dirty: Whether to change dirty status.
- * @flags: specifies whether to use the context or not
  *
  * Returns: 0 on success. Negative error code on failure. Typical error codes
  * are %-EINVAL on inconsistency and %-ESRCH if the resource was doomed.
  */
-static int vmw_execbuf_res_val_add(struct vmw_sw_context *sw_context,
-				   struct vmw_resource *res,
-				   u32 dirty,
-				   u32 flags)
+static int vmw_execbuf_res_noref_val_add(struct vmw_sw_context *sw_context,
+					 struct vmw_resource *res,
+					 u32 dirty)
 {
 	struct vmw_private *dev_priv = res->dev_priv;
 	int ret;
@@ -324,34 +318,65 @@ static int vmw_execbuf_res_val_add(struct vmw_sw_context *sw_context,
 		if (dirty)
 			vmw_validation_res_set_dirty(sw_context->ctx,
 						     rcache->private, dirty);
+		vmw_user_resource_noref_release();
 		return 0;
 	}
 
-	if ((flags & vmw_val_add_flag_noctx) != 0) {
-		ret = vmw_validation_add_resource(sw_context->ctx, res, 0, dirty,
-						  (void **)&ctx_info, NULL);
-		if (ret)
-			return ret;
+	priv_size = vmw_execbuf_res_size(dev_priv, res_type);
+	ret = vmw_validation_add_resource(sw_context->ctx, res, priv_size,
+					  dirty, (void **)&ctx_info,
+					  &first_usage);
+	vmw_user_resource_noref_release();
+	if (ret)
+		return ret;
 
-	} else {
-		priv_size = vmw_execbuf_res_size(dev_priv, res_type);
-		ret = vmw_validation_add_resource(sw_context->ctx, res, priv_size,
-						  dirty, (void **)&ctx_info,
-						  &first_usage);
-		if (ret)
+	if (priv_size && first_usage) {
+		ret = vmw_cmd_ctx_first_setup(dev_priv, sw_context, res,
+					      ctx_info);
+		if (ret) {
+			VMW_DEBUG_USER("Failed first usage context setup.\n");
 			return ret;
-
-		if (priv_size && first_usage) {
-			ret = vmw_cmd_ctx_first_setup(dev_priv, sw_context, res,
-						      ctx_info);
-			if (ret) {
-				VMW_DEBUG_USER("Failed first usage context setup.\n");
-				return ret;
-			}
 		}
 	}
 
 	vmw_execbuf_rcache_update(rcache, res, ctx_info);
+	return 0;
+}
+
+/**
+ * vmw_execbuf_res_noctx_val_add - Add a non-context resource to the resource
+ * validation list if it's not already on it
+ *
+ * @sw_context: Pointer to the software context.
+ * @res: Pointer to the resource.
+ * @dirty: Whether to change dirty status.
+ *
+ * Returns: Zero on success. Negative error code on failure.
+ */
+static int vmw_execbuf_res_noctx_val_add(struct vmw_sw_context *sw_context,
+					 struct vmw_resource *res,
+					 u32 dirty)
+{
+	struct vmw_res_cache_entry *rcache;
+	enum vmw_res_type res_type = vmw_res_type(res);
+	void *ptr;
+	int ret;
+
+	rcache = &sw_context->res_cache[res_type];
+	if (likely(rcache->valid && rcache->res == res)) {
+		if (dirty)
+			vmw_validation_res_set_dirty(sw_context->ctx,
+						     rcache->private, dirty);
+		return 0;
+	}
+
+	ret = vmw_validation_add_resource(sw_context->ctx, res, 0, dirty,
+					  &ptr, NULL);
+	if (ret)
+		return ret;
+
+	vmw_execbuf_rcache_update(rcache, res, ptr);
+
 	return 0;
 }
 
@@ -373,13 +398,13 @@ static int vmw_view_res_val_add(struct vmw_sw_context *sw_context,
 	 * First add the resource the view is pointing to, otherwise it may be
 	 * swapped out when the view is validated.
 	 */
-	ret = vmw_execbuf_res_val_add(sw_context, vmw_view_srf(view),
-				      vmw_view_dirtying(view), vmw_val_add_flag_noctx);
+	ret = vmw_execbuf_res_noctx_val_add(sw_context, vmw_view_srf(view),
+					    vmw_view_dirtying(view));
 	if (ret)
 		return ret;
 
-	return vmw_execbuf_res_val_add(sw_context, view, VMW_RES_DIRTY_NONE,
-				       vmw_val_add_flag_noctx);
+	return vmw_execbuf_res_noctx_val_add(sw_context, view,
+					     VMW_RES_DIRTY_NONE);
 }
 
 /**
@@ -450,9 +475,8 @@ static int vmw_resource_context_res_add(struct vmw_private *dev_priv,
 			if (IS_ERR(res))
 				continue;
 
-			ret = vmw_execbuf_res_val_add(sw_context, res,
-						      VMW_RES_DIRTY_SET,
-						      vmw_val_add_flag_noctx);
+			ret = vmw_execbuf_res_noctx_val_add(sw_context, res,
+							    VMW_RES_DIRTY_SET);
 			if (unlikely(ret != 0))
 				return ret;
 		}
@@ -466,9 +490,9 @@ static int vmw_resource_context_res_add(struct vmw_private *dev_priv,
 		if (vmw_res_type(entry->res) == vmw_res_view)
 			ret = vmw_view_res_val_add(sw_context, entry->res);
 		else
-			ret = vmw_execbuf_res_val_add(sw_context, entry->res,
-						      vmw_binding_dirtying(entry->bt),
-						      vmw_val_add_flag_noctx);
+			ret = vmw_execbuf_res_noctx_val_add
+				(sw_context, entry->res,
+				 vmw_binding_dirtying(entry->bt));
 		if (unlikely(ret != 0))
 			break;
 	}
@@ -634,8 +658,7 @@ vmw_cmd_res_check(struct vmw_private *dev_priv,
 {
 	struct vmw_res_cache_entry *rcache = &sw_context->res_cache[res_type];
 	struct vmw_resource *res;
-	int ret = 0;
-	bool needs_unref = false;
+	int ret;
 
 	if (p_res)
 		*p_res = NULL;
@@ -660,18 +683,17 @@ vmw_cmd_res_check(struct vmw_private *dev_priv,
 		if (ret)
 			return ret;
 
-		ret = vmw_user_resource_lookup_handle
-			(dev_priv, sw_context->fp->tfile, *id_loc, converter, &res);
-		if (ret != 0) {
+		res = vmw_user_resource_noref_lookup_handle
+			(dev_priv, sw_context->fp->tfile, *id_loc, converter);
+		if (IS_ERR(res)) {
 			VMW_DEBUG_USER("Could not find/use resource 0x%08x.\n",
 				       (unsigned int) *id_loc);
-			return ret;
+			return PTR_ERR(res);
 		}
-		needs_unref = true;
 
-		ret = vmw_execbuf_res_val_add(sw_context, res, dirty, vmw_val_add_flag_none);
+		ret = vmw_execbuf_res_noref_val_add(sw_context, res, dirty);
 		if (unlikely(ret != 0))
-			goto res_check_done;
+			return ret;
 
 		if (rcache->valid && rcache->res == res) {
 			rcache->valid_handle = true;
@@ -686,11 +708,7 @@ vmw_cmd_res_check(struct vmw_private *dev_priv,
 	if (p_res)
 		*p_res = res;
 
-res_check_done:
-	if (needs_unref)
-		vmw_resource_unreference(&res);
-
-	return ret;
+	return 0;
 }
 
 /**
@@ -1029,7 +1047,7 @@ static int vmw_query_bo_switch_prepare(struct vmw_private *dev_priv,
 
 	if (unlikely(new_query_bo != sw_context->cur_query_bo)) {
 
-		if (unlikely(PFN_UP(new_query_bo->base.resource->size) > 4)) {
+		if (unlikely(new_query_bo->base.resource->num_pages > 4)) {
 			VMW_DEBUG_USER("Query buffer too large.\n");
 			return -EINVAL;
 		}
@@ -1153,13 +1171,14 @@ static int vmw_translate_mob_ptr(struct vmw_private *dev_priv,
 	int ret;
 
 	vmw_validation_preload_bo(sw_context->ctx);
-	ret = vmw_user_bo_lookup(sw_context->filp, handle, &vmw_bo);
-	if (ret != 0) {
-		drm_dbg(&dev_priv->drm, "Could not find or use MOB buffer.\n");
+	vmw_bo = vmw_user_bo_noref_lookup(sw_context->fp->tfile, handle);
+	if (IS_ERR(vmw_bo)) {
+		VMW_DEBUG_USER("Could not find or use MOB buffer.\n");
 		return PTR_ERR(vmw_bo);
 	}
+
 	ret = vmw_validation_add_bo(sw_context->ctx, vmw_bo, true, false);
-	ttm_bo_put(&vmw_bo->base);
+	vmw_user_bo_noref_release();
 	if (unlikely(ret != 0))
 		return ret;
 
@@ -1207,13 +1226,14 @@ static int vmw_translate_guest_ptr(struct vmw_private *dev_priv,
 	int ret;
 
 	vmw_validation_preload_bo(sw_context->ctx);
-	ret = vmw_user_bo_lookup(sw_context->filp, handle, &vmw_bo);
-	if (ret != 0) {
-		drm_dbg(&dev_priv->drm, "Could not find or use GMR region.\n");
+	vmw_bo = vmw_user_bo_noref_lookup(sw_context->fp->tfile, handle);
+	if (IS_ERR(vmw_bo)) {
+		VMW_DEBUG_USER("Could not find or use GMR region.\n");
 		return PTR_ERR(vmw_bo);
 	}
+
 	ret = vmw_validation_add_bo(sw_context->ctx, vmw_bo, false, false);
-	ttm_bo_put(&vmw_bo->base);
+	vmw_user_bo_noref_release();
 	if (unlikely(ret != 0))
 		return ret;
 
@@ -2007,9 +2027,8 @@ static int vmw_cmd_set_shader(struct vmw_private *dev_priv,
 		res = vmw_shader_lookup(vmw_context_res_man(ctx),
 					cmd->body.shid, cmd->body.type);
 		if (!IS_ERR(res)) {
-			ret = vmw_execbuf_res_val_add(sw_context, res,
-						      VMW_RES_DIRTY_NONE,
-						      vmw_val_add_flag_noctx);
+			ret = vmw_execbuf_res_noctx_val_add(sw_context, res,
+							    VMW_RES_DIRTY_NONE);
 			if (unlikely(ret != 0))
 				return ret;
 
@@ -2147,44 +2166,6 @@ vmw_cmd_dx_set_single_constant_buffer(struct vmw_private *dev_priv,
 }
 
 /**
- * vmw_cmd_dx_set_constant_buffer_offset - Validate
- * SVGA_3D_CMD_DX_SET_VS/PS/GS/HS/DS/CS_CONSTANT_BUFFER_OFFSET command.
- *
- * @dev_priv: Pointer to a device private struct.
- * @sw_context: The software context being used for this batch.
- * @header: Pointer to the command header in the command stream.
- */
-static int
-vmw_cmd_dx_set_constant_buffer_offset(struct vmw_private *dev_priv,
-				      struct vmw_sw_context *sw_context,
-				      SVGA3dCmdHeader *header)
-{
-	VMW_DECLARE_CMD_VAR(*cmd, SVGA3dCmdDXSetConstantBufferOffset);
-
-	struct vmw_ctx_validation_info *ctx_node = VMW_GET_CTX_NODE(sw_context);
-	u32 shader_slot;
-
-	if (!has_sm5_context(dev_priv))
-		return -EINVAL;
-
-	if (!ctx_node)
-		return -EINVAL;
-
-	cmd = container_of(header, typeof(*cmd), header);
-	if (cmd->body.slot >= SVGA3D_DX_MAX_CONSTBUFFERS) {
-		VMW_DEBUG_USER("Illegal const buffer slot %u.\n",
-			       (unsigned int) cmd->body.slot);
-		return -EINVAL;
-	}
-
-	shader_slot = cmd->header.id - SVGA_3D_CMD_DX_SET_VS_CONSTANT_BUFFER_OFFSET;
-	vmw_binding_cb_offset_update(ctx_node->staged, shader_slot,
-				     cmd->body.slot, cmd->body.offsetInBytes);
-
-	return 0;
-}
-
-/**
  * vmw_cmd_dx_set_shader_res - Validate SVGA_3D_CMD_DX_SET_SHADER_RESOURCES
  * command
  *
@@ -2256,9 +2237,8 @@ static int vmw_cmd_dx_set_shader(struct vmw_private *dev_priv,
 			return PTR_ERR(res);
 		}
 
-		ret = vmw_execbuf_res_val_add(sw_context, res,
-					      VMW_RES_DIRTY_NONE,
-					      vmw_val_add_flag_noctx);
+		ret = vmw_execbuf_res_noctx_val_add(sw_context, res,
+						    VMW_RES_DIRTY_NONE);
 		if (ret)
 			return ret;
 	}
@@ -2761,8 +2741,8 @@ static int vmw_cmd_dx_bind_shader(struct vmw_private *dev_priv,
 		return PTR_ERR(res);
 	}
 
-	ret = vmw_execbuf_res_val_add(sw_context, res, VMW_RES_DIRTY_NONE,
-				      vmw_val_add_flag_noctx);
+	ret = vmw_execbuf_res_noctx_val_add(sw_context, res,
+					    VMW_RES_DIRTY_NONE);
 	if (ret) {
 		VMW_DEBUG_USER("Error creating resource validation node.\n");
 		return ret;
@@ -2938,7 +2918,7 @@ static int vmw_cmd_set_uav(struct vmw_private *dev_priv,
 	if (!has_sm5_context(dev_priv))
 		return -EINVAL;
 
-	if (num_uav > vmw_max_num_uavs(dev_priv)) {
+	if (num_uav > SVGA3D_MAX_UAVIEWS) {
 		VMW_DEBUG_USER("Invalid UAV binding.\n");
 		return -EINVAL;
 	}
@@ -2970,7 +2950,7 @@ static int vmw_cmd_set_cs_uav(struct vmw_private *dev_priv,
 	if (!has_sm5_context(dev_priv))
 		return -EINVAL;
 
-	if (num_uav > vmw_max_num_uavs(dev_priv)) {
+	if (num_uav > SVGA3D_MAX_UAVIEWS) {
 		VMW_DEBUG_USER("Invalid UAV binding.\n");
 		return -EINVAL;
 	}
@@ -3082,8 +3062,8 @@ static int vmw_cmd_dx_bind_streamoutput(struct vmw_private *dev_priv,
 
 	vmw_dx_streamoutput_set_size(res, cmd->body.sizeInBytes);
 
-	ret = vmw_execbuf_res_val_add(sw_context, res, VMW_RES_DIRTY_NONE,
-				      vmw_val_add_flag_noctx);
+	ret = vmw_execbuf_res_noctx_val_add(sw_context, res,
+					    VMW_RES_DIRTY_NONE);
 	if (ret) {
 		DRM_ERROR("Error creating resource validation node.\n");
 		return ret;
@@ -3132,8 +3112,8 @@ static int vmw_cmd_dx_set_streamoutput(struct vmw_private *dev_priv,
 		return 0;
 	}
 
-	ret = vmw_execbuf_res_val_add(sw_context, res, VMW_RES_DIRTY_NONE,
-				      vmw_val_add_flag_noctx);
+	ret = vmw_execbuf_res_noctx_val_add(sw_context, res,
+					    VMW_RES_DIRTY_NONE);
 	if (ret) {
 		DRM_ERROR("Error creating resource validation node.\n");
 		return ret;
@@ -3548,24 +3528,6 @@ static const struct vmw_cmd_entry vmw_cmd_entries[SVGA_3D_CMD_MAX] = {
 	VMW_CMD_DEF(SVGA_3D_CMD_DX_TRANSFER_FROM_BUFFER,
 		    &vmw_cmd_dx_transfer_from_buffer,
 		    true, false, true),
-	VMW_CMD_DEF(SVGA_3D_CMD_DX_SET_VS_CONSTANT_BUFFER_OFFSET,
-		    &vmw_cmd_dx_set_constant_buffer_offset,
-		    true, false, true),
-	VMW_CMD_DEF(SVGA_3D_CMD_DX_SET_PS_CONSTANT_BUFFER_OFFSET,
-		    &vmw_cmd_dx_set_constant_buffer_offset,
-		    true, false, true),
-	VMW_CMD_DEF(SVGA_3D_CMD_DX_SET_GS_CONSTANT_BUFFER_OFFSET,
-		    &vmw_cmd_dx_set_constant_buffer_offset,
-		    true, false, true),
-	VMW_CMD_DEF(SVGA_3D_CMD_DX_SET_HS_CONSTANT_BUFFER_OFFSET,
-		    &vmw_cmd_dx_set_constant_buffer_offset,
-		    true, false, true),
-	VMW_CMD_DEF(SVGA_3D_CMD_DX_SET_DS_CONSTANT_BUFFER_OFFSET,
-		    &vmw_cmd_dx_set_constant_buffer_offset,
-		    true, false, true),
-	VMW_CMD_DEF(SVGA_3D_CMD_DX_SET_CS_CONSTANT_BUFFER_OFFSET,
-		    &vmw_cmd_dx_set_constant_buffer_offset,
-		    true, false, true),
 	VMW_CMD_DEF(SVGA_3D_CMD_INTRA_SURFACE_COPY, &vmw_cmd_intra_surface_copy,
 		    true, false, true),
 
@@ -3599,8 +3561,6 @@ static const struct vmw_cmd_entry vmw_cmd_entries[SVGA_3D_CMD_MAX] = {
 		    &vmw_cmd_dx_define_streamoutput, true, false, true),
 	VMW_CMD_DEF(SVGA_3D_CMD_DX_BIND_STREAMOUTPUT,
 		    &vmw_cmd_dx_bind_streamoutput, true, false, true),
-	VMW_CMD_DEF(SVGA_3D_CMD_DX_DEFINE_RASTERIZER_STATE_V2,
-		    &vmw_cmd_dx_so_define, true, false, true),
 };
 
 bool vmw_cmd_describe(const void *buf, u32 *size, char const **cmd)
@@ -3853,6 +3813,7 @@ int vmw_execbuf_fence_commands(struct drm_file *file_priv,
  * @fence: Pointer to the fenc object.
  * @fence_handle: User-space fence handle.
  * @out_fence_fd: exported file descriptor for the fence.  -1 if not used
+ * @sync_file:  Only used to clean up in case of an error in this function.
  *
  * This function copies fence information to user-space. If copying fails, the
  * user-space struct drm_vmw_fence_rep::error member is hopefully left
@@ -3900,7 +3861,8 @@ vmw_execbuf_copy_fence_user(struct vmw_private *dev_priv,
 	 * handle.
 	 */
 	if (unlikely(ret != 0) && (fence_rep.error == 0)) {
-		ttm_ref_object_base_unref(vmw_fp->tfile, fence_handle);
+		ttm_ref_object_base_unref(vmw_fp->tfile, fence_handle,
+					  TTM_REF_USAGE);
 		VMW_DEBUG_USER("Fence copy error. Syncing.\n");
 		(void) vmw_fence_obj_wait(fence, false, false,
 					  VMW_FENCE_WAIT_TIMEOUT);
@@ -4050,26 +4012,22 @@ static int vmw_execbuf_tie_context(struct vmw_private *dev_priv,
 	if (ret)
 		return ret;
 
-	ret = vmw_user_resource_lookup_handle
+	res = vmw_user_resource_noref_lookup_handle
 		(dev_priv, sw_context->fp->tfile, handle,
-		 user_context_converter, &res);
-	if (ret != 0) {
+		 user_context_converter);
+	if (IS_ERR(res)) {
 		VMW_DEBUG_USER("Could not find or user DX context 0x%08x.\n",
 			       (unsigned int) handle);
-		return ret;
+		return PTR_ERR(res);
 	}
 
-	ret = vmw_execbuf_res_val_add(sw_context, res, VMW_RES_DIRTY_SET,
-				      vmw_val_add_flag_none);
-	if (unlikely(ret != 0)) {
-		vmw_resource_unreference(&res);
+	ret = vmw_execbuf_res_noref_val_add(sw_context, res, VMW_RES_DIRTY_SET);
+	if (unlikely(ret != 0))
 		return ret;
-	}
 
 	sw_context->dx_ctx_node = vmw_execbuf_info_from_res(sw_context, res);
 	sw_context->man = vmw_context_res_man(res);
 
-	vmw_resource_unreference(&res);
 	return 0;
 }
 
@@ -4088,7 +4046,9 @@ int vmw_execbuf_process(struct drm_file *file_priv,
 	int ret;
 	int32_t out_fence_fd = -1;
 	struct sync_file *sync_file = NULL;
-	DECLARE_VAL_CONTEXT(val_ctx, sw_context, 1);
+	DECLARE_VAL_CONTEXT(val_ctx, &sw_context->res_ht, 1);
+
+	vmw_validation_set_val_mem(&val_ctx, &dev_priv->vvm);
 
 	if (flags & DRM_VMW_EXECBUF_FLAG_EXPORT_FENCE_FD) {
 		out_fence_fd = get_unused_fd_flags(O_CLOEXEC);
@@ -4135,7 +4095,6 @@ int vmw_execbuf_process(struct drm_file *file_priv,
 		sw_context->kernel = true;
 	}
 
-	sw_context->filp = file_priv;
 	sw_context->fp = vmw_fpriv(file_priv);
 	INIT_LIST_HEAD(&sw_context->ctx_list);
 	sw_context->cur_query_bo = dev_priv->pinned_bo;
@@ -4150,6 +4109,14 @@ int vmw_execbuf_process(struct drm_file *file_priv,
 
 	if (sw_context->staged_bindings)
 		vmw_binding_state_reset(sw_context->staged_bindings);
+
+	if (!sw_context->res_ht_initialized) {
+		ret = drm_ht_create(&sw_context->res_ht, VMW_RES_HT_ORDER);
+		if (unlikely(ret != 0))
+			goto out_unlock;
+
+		sw_context->res_ht_initialized = true;
+	}
 
 	INIT_LIST_HEAD(&sw_context->staged_cmd_res);
 	sw_context->ctx = &val_ctx;
@@ -4480,7 +4447,7 @@ int vmw_execbuf_ioctl(struct drm_device *dev, void *data,
 			goto mksstats_out;
 		}
 
-		ret = dma_fence_wait(in_fence, true);
+		ret = vmw_wait_dma_fence(dev_priv->fman, in_fence);
 		if (ret)
 			goto out;
 	}

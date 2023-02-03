@@ -31,6 +31,7 @@
  * SOFTWARE.
  */
 
+#include <linux/platform_device.h>
 #include <linux/vmalloc.h>
 #include <rdma/ib_umem.h>
 #include "hns_roce_device.h"
@@ -45,6 +46,24 @@ static u32 hw_index_to_key(int ind)
 unsigned long key_to_hw_index(u32 key)
 {
 	return (key << 24) | (key >> 8);
+}
+
+static int hns_roce_hw_create_mpt(struct hns_roce_dev *hr_dev,
+				  struct hns_roce_cmd_mailbox *mailbox,
+				  unsigned long mpt_index)
+{
+	return hns_roce_cmd_mbox(hr_dev, mailbox->dma, 0, mpt_index, 0,
+				 HNS_ROCE_CMD_CREATE_MPT,
+				 HNS_ROCE_CMD_TIMEOUT_MSECS);
+}
+
+int hns_roce_hw_destroy_mpt(struct hns_roce_dev *hr_dev,
+			    struct hns_roce_cmd_mailbox *mailbox,
+			    unsigned long mpt_index)
+{
+	return hns_roce_cmd_mbox(hr_dev, 0, mailbox ? mailbox->dma : 0,
+				 mpt_index, !mailbox, HNS_ROCE_CMD_DESTROY_MPT,
+				 HNS_ROCE_CMD_TIMEOUT_MSECS);
 }
 
 static int alloc_mr_key(struct hns_roce_dev *hr_dev, struct hns_roce_mr *mr)
@@ -62,7 +81,7 @@ static int alloc_mr_key(struct hns_roce_dev *hr_dev, struct hns_roce_mr *mr)
 		return -ENOMEM;
 	}
 
-	mr->key = hw_index_to_key(id); /* MR key */
+	mr->key = hw_index_to_key(id);		/* MR key */
 
 	err = hns_roce_table_get(hr_dev, &hr_dev->mr_table.mtpt_table,
 				 (unsigned long)id);
@@ -119,13 +138,14 @@ static void free_mr_pbl(struct hns_roce_dev *hr_dev, struct hns_roce_mr *mr)
 	hns_roce_mtr_destroy(hr_dev, &mr->pbl_mtr);
 }
 
-static void hns_roce_mr_free(struct hns_roce_dev *hr_dev, struct hns_roce_mr *mr)
+static void hns_roce_mr_free(struct hns_roce_dev *hr_dev,
+			     struct hns_roce_mr *mr)
 {
 	struct ib_device *ibdev = &hr_dev->ib_dev;
 	int ret;
 
 	if (mr->enabled) {
-		ret = hns_roce_destroy_hw_ctx(hr_dev, HNS_ROCE_CMD_DESTROY_MPT,
+		ret = hns_roce_hw_destroy_mpt(hr_dev, NULL,
 					      key_to_hw_index(mr->key) &
 					      (hr_dev->caps.num_mtpts - 1));
 		if (ret)
@@ -147,11 +167,14 @@ static int hns_roce_mr_enable(struct hns_roce_dev *hr_dev,
 
 	/* Allocate mailbox memory */
 	mailbox = hns_roce_alloc_cmd_mailbox(hr_dev);
-	if (IS_ERR(mailbox))
-		return PTR_ERR(mailbox);
+	if (IS_ERR(mailbox)) {
+		ret = PTR_ERR(mailbox);
+		return ret;
+	}
 
 	if (mr->type != MR_TYPE_FRMR)
-		ret = hr_dev->hw->write_mtpt(hr_dev, mailbox->buf, mr);
+		ret = hr_dev->hw->write_mtpt(hr_dev, mailbox->buf, mr,
+					     mtpt_idx);
 	else
 		ret = hr_dev->hw->frmr_write_mtpt(hr_dev, mailbox->buf, mr);
 	if (ret) {
@@ -159,7 +182,7 @@ static int hns_roce_mr_enable(struct hns_roce_dev *hr_dev,
 		goto err_page;
 	}
 
-	ret = hns_roce_create_hw_ctx(hr_dev, mailbox, HNS_ROCE_CMD_CREATE_MPT,
+	ret = hns_roce_hw_create_mpt(hr_dev, mailbox,
 				     mtpt_idx & (hr_dev->caps.num_mtpts - 1));
 	if (ret) {
 		dev_err(dev, "failed to create mpt, ret = %d.\n", ret);
@@ -190,7 +213,7 @@ struct ib_mr *hns_roce_get_dma_mr(struct ib_pd *pd, int acc)
 	int ret;
 
 	mr = kzalloc(sizeof(*mr), GFP_KERNEL);
-	if (!mr)
+	if (mr == NULL)
 		return  ERR_PTR(-ENOMEM);
 
 	mr->type = MR_TYPE_DMA;
@@ -281,14 +304,13 @@ struct ib_mr *hns_roce_rereg_user_mr(struct ib_mr *ibmr, int flags, u64 start,
 		return ERR_CAST(mailbox);
 
 	mtpt_idx = key_to_hw_index(mr->key) & (hr_dev->caps.num_mtpts - 1);
-
-	ret = hns_roce_cmd_mbox(hr_dev, 0, mailbox->dma, HNS_ROCE_CMD_QUERY_MPT,
-				mtpt_idx);
+	ret = hns_roce_cmd_mbox(hr_dev, 0, mailbox->dma, mtpt_idx, 0,
+				HNS_ROCE_CMD_QUERY_MPT,
+				HNS_ROCE_CMD_TIMEOUT_MSECS);
 	if (ret)
 		goto free_cmd_mbox;
 
-	ret = hns_roce_destroy_hw_ctx(hr_dev, HNS_ROCE_CMD_DESTROY_MPT,
-				      mtpt_idx);
+	ret = hns_roce_hw_destroy_mpt(hr_dev, NULL, mtpt_idx);
 	if (ret)
 		ibdev_warn(ib_dev, "failed to destroy MPT, ret = %d.\n", ret);
 
@@ -318,8 +340,7 @@ struct ib_mr *hns_roce_rereg_user_mr(struct ib_mr *ibmr, int flags, u64 start,
 		goto free_cmd_mbox;
 	}
 
-	ret = hns_roce_create_hw_ctx(hr_dev, mailbox, HNS_ROCE_CMD_CREATE_MPT,
-				     mtpt_idx);
+	ret = hns_roce_hw_create_mpt(hr_dev, mailbox, mtpt_idx);
 	if (ret) {
 		ibdev_err(ib_dev, "failed to create MPT, ret = %d.\n", ret);
 		goto free_cmd_mbox;
@@ -339,14 +360,16 @@ int hns_roce_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata)
 {
 	struct hns_roce_dev *hr_dev = to_hr_dev(ibmr->device);
 	struct hns_roce_mr *mr = to_hr_mr(ibmr);
+	int ret = 0;
 
-	if (hr_dev->hw->dereg_mr)
-		hr_dev->hw->dereg_mr(hr_dev);
+	if (hr_dev->hw->dereg_mr) {
+		ret = hr_dev->hw->dereg_mr(hr_dev, mr, udata);
+	} else {
+		hns_roce_mr_free(hr_dev, mr);
+		kfree(mr);
+	}
 
-	hns_roce_mr_free(hr_dev, mr);
-	kfree(mr);
-
-	return 0;
+	return ret;
 }
 
 struct ib_mr *hns_roce_alloc_mr(struct ib_pd *pd, enum ib_mr_type mr_type,
@@ -462,7 +485,7 @@ static void hns_roce_mw_free(struct hns_roce_dev *hr_dev,
 	int ret;
 
 	if (mw->enabled) {
-		ret = hns_roce_destroy_hw_ctx(hr_dev, HNS_ROCE_CMD_DESTROY_MPT,
+		ret = hns_roce_hw_destroy_mpt(hr_dev, NULL,
 					      key_to_hw_index(mw->rkey) &
 					      (hr_dev->caps.num_mtpts - 1));
 		if (ret)
@@ -502,7 +525,7 @@ static int hns_roce_mw_enable(struct hns_roce_dev *hr_dev,
 		goto err_page;
 	}
 
-	ret = hns_roce_create_hw_ctx(hr_dev, mailbox, HNS_ROCE_CMD_CREATE_MPT,
+	ret = hns_roce_hw_create_mpt(hr_dev, mailbox,
 				     mtpt_idx & (hr_dev->caps.num_mtpts - 1));
 	if (ret) {
 		dev_err(dev, "MW CREATE_MPT failed (%d)\n", ret);
@@ -585,12 +608,15 @@ static int mtr_map_region(struct hns_roce_dev *hr_dev, struct hns_roce_mtr *mtr,
 	while (offset < end && npage < max_count) {
 		count = 0;
 		mtts = hns_roce_hem_list_find_mtt(hr_dev, &mtr->hem_list,
-						  offset, &count);
+						  offset, &count, NULL);
 		if (!mtts)
 			return -ENOBUFS;
 
 		for (i = 0; i < count && npage < max_count; i++) {
-			addr = pages[npage];
+			if (hr_dev->hw_rev == HNS_ROCE_HW_VER1)
+				addr = to_hr_hw_page_addr(pages[npage]);
+			else
+				addr = pages[npage];
 
 			mtts[i] = cpu_to_le64(addr);
 			npage++;
@@ -797,11 +823,11 @@ int hns_roce_mtr_map(struct hns_roce_dev *hr_dev, struct hns_roce_mtr *mtr,
 }
 
 int hns_roce_mtr_find(struct hns_roce_dev *hr_dev, struct hns_roce_mtr *mtr,
-		      u32 offset, u64 *mtt_buf, int mtt_max, u64 *base_addr)
+		      int offset, u64 *mtt_buf, int mtt_max, u64 *base_addr)
 {
 	struct hns_roce_hem_cfg *cfg = &mtr->hem_cfg;
 	int mtt_count, left;
-	u32 start_index;
+	int start_index;
 	int total = 0;
 	__le64 *mtts;
 	u32 npage;
@@ -820,7 +846,10 @@ int hns_roce_mtr_find(struct hns_roce_dev *hr_dev, struct hns_roce_mtr *mtr,
 				continue;
 
 			addr = cfg->root_ba + (npage << HNS_HW_PAGE_SHIFT);
-			mtt_buf[total] = addr;
+			if (hr_dev->hw_rev == HNS_ROCE_HW_VER1)
+				mtt_buf[total] = to_hr_hw_page_addr(addr);
+			else
+				mtt_buf[total] = addr;
 
 			total++;
 		}
@@ -834,7 +863,7 @@ int hns_roce_mtr_find(struct hns_roce_dev *hr_dev, struct hns_roce_mtr *mtr,
 		mtt_count = 0;
 		mtts = hns_roce_hem_list_find_mtt(hr_dev, &mtr->hem_list,
 						  start_index + total,
-						  &mtt_count);
+						  &mtt_count, NULL);
 		if (!mtts || !mtt_count)
 			goto done;
 
@@ -854,10 +883,10 @@ done:
 static int mtr_init_buf_cfg(struct hns_roce_dev *hr_dev,
 			    struct hns_roce_buf_attr *attr,
 			    struct hns_roce_hem_cfg *cfg,
-			    unsigned int *buf_page_shift, u64 unalinged_size)
+			    unsigned int *buf_page_shift, int unalinged_size)
 {
 	struct hns_roce_buf_region *r;
-	u64 first_region_padding;
+	int first_region_padding;
 	int page_cnt, region_cnt;
 	unsigned int page_shift;
 	size_t buf_size;

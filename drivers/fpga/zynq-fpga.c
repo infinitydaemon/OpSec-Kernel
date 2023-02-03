@@ -582,9 +582,11 @@ static int zynq_fpga_probe(struct platform_device *pdev)
 		return priv->irq;
 
 	priv->clk = devm_clk_get(dev, "ref_clk");
-	if (IS_ERR(priv->clk))
-		return dev_err_probe(dev, PTR_ERR(priv->clk),
-				     "input clock not found\n");
+	if (IS_ERR(priv->clk)) {
+		if (PTR_ERR(priv->clk) != -EPROBE_DEFER)
+			dev_err(dev, "input clock not found\n");
+		return PTR_ERR(priv->clk);
+	}
 
 	err = clk_prepare_enable(priv->clk);
 	if (err) {
@@ -607,15 +609,19 @@ static int zynq_fpga_probe(struct platform_device *pdev)
 
 	clk_disable(priv->clk);
 
-	mgr = fpga_mgr_register(dev, "Xilinx Zynq FPGA Manager",
-				&zynq_fpga_ops, priv);
-	if (IS_ERR(mgr)) {
-		dev_err(dev, "unable to register FPGA manager\n");
-		clk_unprepare(priv->clk);
-		return PTR_ERR(mgr);
-	}
+	mgr = devm_fpga_mgr_create(dev, "Xilinx Zynq FPGA Manager",
+				   &zynq_fpga_ops, priv);
+	if (!mgr)
+		return -ENOMEM;
 
 	platform_set_drvdata(pdev, mgr);
+
+	err = fpga_mgr_register(mgr);
+	if (err) {
+		dev_err(dev, "unable to register FPGA manager\n");
+		clk_unprepare(priv->clk);
+		return err;
+	}
 
 	return 0;
 }

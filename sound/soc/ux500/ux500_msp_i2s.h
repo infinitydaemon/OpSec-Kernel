@@ -4,6 +4,8 @@
  *
  * Author: Ola Lilja <ola.o.lilja@stericsson.com>,
  *         for ST-Ericsson.
+ *
+ * License terms:
  */
 
 

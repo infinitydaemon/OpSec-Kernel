@@ -19,7 +19,8 @@
 struct iwl_calib_result {
 	struct list_head list;
 	size_t cmd_len;
-	struct iwl_calib_cmd cmd;
+	struct iwl_calib_hdr hdr;
+	/* data follows */
 };
 
 struct statistics_general_data {
@@ -42,12 +43,12 @@ int iwl_send_calib_results(struct iwl_priv *priv)
 		int ret;
 
 		hcmd.len[0] = res->cmd_len;
-		hcmd.data[0] = &res->cmd;
+		hcmd.data[0] = &res->hdr;
 		hcmd.dataflags[0] = IWL_HCMD_DFL_NOCOPY;
 		ret = iwl_dvm_send_cmd(priv, &hcmd);
 		if (ret) {
 			IWL_ERR(priv, "Error %d on calib cmd %d\n",
-				ret, res->cmd.hdr.op_code);
+				ret, res->hdr.op_code);
 			return ret;
 		}
 	}
@@ -56,22 +57,19 @@ int iwl_send_calib_results(struct iwl_priv *priv)
 }
 
 int iwl_calib_set(struct iwl_priv *priv,
-		  const struct iwl_calib_cmd *cmd, size_t len)
+		  const struct iwl_calib_hdr *cmd, int len)
 {
 	struct iwl_calib_result *res, *tmp;
 
-	if (check_sub_overflow(len, sizeof(*cmd), &len))
-		return -ENOMEM;
-
-	res = kmalloc(struct_size(res, cmd.data, len), GFP_ATOMIC);
+	res = kmalloc(sizeof(*res) + len - sizeof(struct iwl_calib_hdr),
+		      GFP_ATOMIC);
 	if (!res)
 		return -ENOMEM;
-	res->cmd = *cmd;
-	memcpy(res->cmd.data, cmd->data, len);
-	res->cmd_len = struct_size(cmd, data, len);
+	memcpy(&res->hdr, cmd, len);
+	res->cmd_len = len;
 
 	list_for_each_entry(tmp, &priv->calib_results, list) {
-		if (tmp->cmd.hdr.op_code == res->cmd.hdr.op_code) {
+		if (tmp->hdr.op_code == res->hdr.op_code) {
 			list_replace(&tmp->list, &res->list);
 			kfree(tmp);
 			return 0;

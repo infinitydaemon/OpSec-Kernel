@@ -111,7 +111,7 @@
  * busy signal.
  *
  * As devices can have deep queues and be unfair in how the queued commands
- * are executed, solely depending on rq wait may not result in satisfactory
+ * are executed, soley depending on rq wait may not result in satisfactory
  * control quality.  For a better control quality, completion latency QoS
  * parameters can be configured so that the device is considered saturated
  * if N'th percentile completion latency rises above the set point.
@@ -178,12 +178,12 @@
 #include <linux/time64.h>
 #include <linux/parser.h>
 #include <linux/sched/signal.h>
+#include <linux/blk-cgroup.h>
 #include <asm/local.h>
 #include <asm/local64.h>
 #include "blk-rq-qos.h"
 #include "blk-stat.h"
 #include "blk-wbt.h"
-#include "blk-cgroup.h"
 
 #ifdef CONFIG_TRACEPOINTS
 
@@ -232,9 +232,7 @@ enum {
 
 	/* 1/64k is granular enough and can easily be handled w/ u32 */
 	WEIGHT_ONE		= 1 << 16,
-};
 
-enum {
 	/*
 	 * As vtime is used to calculate the cost of each IO, it needs to
 	 * be fairly high precision.  For example, it should be able to
@@ -535,7 +533,8 @@ struct ioc_gq {
 
 	/* statistics */
 	struct iocg_pcpu_stat __percpu	*pcpu_stat;
-	struct iocg_stat		stat;
+	struct iocg_stat		local_stat;
+	struct iocg_stat		desc_stat;
 	struct iocg_stat		last_stat;
 	u64				last_stat_abs_vusage;
 	u64				usage_delta_us;
@@ -558,6 +557,7 @@ struct ioc_now {
 	u64				now_ns;
 	u64				now;
 	u64				vnow;
+	u64				vrate;
 };
 
 struct iocg_wait {
@@ -665,13 +665,17 @@ static struct ioc *q_to_ioc(struct request_queue *q)
 	return rqos_to_ioc(rq_qos_id(q, RQ_QOS_COST));
 }
 
+static const char *q_name(struct request_queue *q)
+{
+	if (blk_queue_registered(q))
+		return kobject_name(q->kobj.parent);
+	else
+		return "<unknown>";
+}
+
 static const char __maybe_unused *ioc_name(struct ioc *ioc)
 {
-	struct gendisk *disk = ioc->rqos.q->disk;
-
-	if (!disk)
-		return "<unknown>";
-	return disk->disk_name;
+	return q_name(ioc->rqos.q);
 }
 
 static struct ioc_gq *pd_to_iocg(struct blkg_policy_data *pd)
@@ -907,10 +911,8 @@ static bool ioc_refresh_params(struct ioc *ioc, bool force)
 	if (idx == ioc->autop_idx && !force)
 		return false;
 
-	if (idx != ioc->autop_idx) {
+	if (idx != ioc->autop_idx)
 		atomic64_set(&ioc->vtime_rate, VTIME_PER_USEC);
-		ioc->vtime_base_rate = VTIME_PER_USEC;
-	}
 
 	ioc->autop_idx = idx;
 	ioc->autop_too_fast_at = 0;
@@ -978,7 +980,7 @@ static void ioc_adjust_base_vrate(struct ioc *ioc, u32 rq_wait_pct,
 
 	if (!ioc->busy_level || (ioc->busy_level < 0 && nr_lagging)) {
 		if (ioc->busy_level != prev_busy_level || nr_lagging)
-			trace_iocost_ioc_vrate_adj(ioc, vrate,
+			trace_iocost_ioc_vrate_adj(ioc, atomic64_read(&ioc->vtime_rate),
 						   missed_ppm, rq_wait_pct,
 						   nr_lagging, nr_shortages);
 
@@ -1021,11 +1023,10 @@ static void ioc_adjust_base_vrate(struct ioc *ioc, u32 rq_wait_pct,
 static void ioc_now(struct ioc *ioc, struct ioc_now *now)
 {
 	unsigned seq;
-	u64 vrate;
 
 	now->now_ns = ktime_get();
 	now->now = ktime_to_us(now->now_ns);
-	vrate = atomic64_read(&ioc->vtime_rate);
+	now->vrate = atomic64_read(&ioc->vtime_rate);
 
 	/*
 	 * The current vtime is
@@ -1038,7 +1039,7 @@ static void ioc_now(struct ioc *ioc, struct ioc_now *now)
 	do {
 		seq = read_seqcount_begin(&ioc->period_seqcount);
 		now->vnow = ioc->period_at_vtime +
-			(now->now - ioc->period_at) * vrate;
+			(now->now - ioc->period_at) * now->vrate;
 	} while (read_seqcount_retry(&ioc->period_seqcount, seq));
 }
 
@@ -1370,7 +1371,7 @@ static bool iocg_kick_delay(struct ioc_gq *iocg, struct ioc_now *now)
 		return true;
 	} else {
 		if (iocg->indelay_since) {
-			iocg->stat.indelay_us += now->now - iocg->indelay_since;
+			iocg->local_stat.indelay_us += now->now - iocg->indelay_since;
 			iocg->indelay_since = 0;
 		}
 		iocg->delay = 0;
@@ -1418,7 +1419,7 @@ static void iocg_pay_debt(struct ioc_gq *iocg, u64 abs_vpay,
 
 	/* if debt is paid in full, restore inuse */
 	if (!iocg->abs_vdebt) {
-		iocg->stat.indebt_us += now->now - iocg->indebt_since;
+		iocg->local_stat.indebt_us += now->now - iocg->indebt_since;
 		iocg->indebt_since = 0;
 
 		propagate_weights(iocg, iocg->active, iocg->last_inuse,
@@ -1430,7 +1431,7 @@ static int iocg_wake_fn(struct wait_queue_entry *wq_entry, unsigned mode,
 			int flags, void *key)
 {
 	struct iocg_wait *wait = container_of(wq_entry, struct iocg_wait, wait);
-	struct iocg_wake_ctx *ctx = key;
+	struct iocg_wake_ctx *ctx = (struct iocg_wake_ctx *)key;
 	u64 cost = abs_cost_to_cost(wait->abs_cost, ctx->hw_inuse);
 
 	ctx->vbudget -= cost;
@@ -1512,7 +1513,7 @@ static void iocg_kick_waitq(struct ioc_gq *iocg, bool pay_debt,
 
 	if (!waitqueue_active(&iocg->waitq)) {
 		if (iocg->wait_since) {
-			iocg->stat.wait_us += now->now - iocg->wait_since;
+			iocg->local_stat.wait_us += now->now - iocg->wait_since;
 			iocg->wait_since = 0;
 		}
 		return;
@@ -1640,30 +1641,11 @@ static void iocg_build_inner_walk(struct ioc_gq *iocg,
 	}
 }
 
-/* propagate the deltas to the parent */
-static void iocg_flush_stat_upward(struct ioc_gq *iocg)
-{
-	if (iocg->level > 0) {
-		struct iocg_stat *parent_stat =
-			&iocg->ancestors[iocg->level - 1]->stat;
-
-		parent_stat->usage_us +=
-			iocg->stat.usage_us - iocg->last_stat.usage_us;
-		parent_stat->wait_us +=
-			iocg->stat.wait_us - iocg->last_stat.wait_us;
-		parent_stat->indebt_us +=
-			iocg->stat.indebt_us - iocg->last_stat.indebt_us;
-		parent_stat->indelay_us +=
-			iocg->stat.indelay_us - iocg->last_stat.indelay_us;
-	}
-
-	iocg->last_stat = iocg->stat;
-}
-
 /* collect per-cpu counters and propagate the deltas to the parent */
-static void iocg_flush_stat_leaf(struct ioc_gq *iocg, struct ioc_now *now)
+static void iocg_flush_stat_one(struct ioc_gq *iocg, struct ioc_now *now)
 {
 	struct ioc *ioc = iocg->ioc;
+	struct iocg_stat new_stat;
 	u64 abs_vusage = 0;
 	u64 vusage_delta;
 	int cpu;
@@ -1679,9 +1661,34 @@ static void iocg_flush_stat_leaf(struct ioc_gq *iocg, struct ioc_now *now)
 	iocg->last_stat_abs_vusage = abs_vusage;
 
 	iocg->usage_delta_us = div64_u64(vusage_delta, ioc->vtime_base_rate);
-	iocg->stat.usage_us += iocg->usage_delta_us;
+	iocg->local_stat.usage_us += iocg->usage_delta_us;
 
-	iocg_flush_stat_upward(iocg);
+	/* propagate upwards */
+	new_stat.usage_us =
+		iocg->local_stat.usage_us + iocg->desc_stat.usage_us;
+	new_stat.wait_us =
+		iocg->local_stat.wait_us + iocg->desc_stat.wait_us;
+	new_stat.indebt_us =
+		iocg->local_stat.indebt_us + iocg->desc_stat.indebt_us;
+	new_stat.indelay_us =
+		iocg->local_stat.indelay_us + iocg->desc_stat.indelay_us;
+
+	/* propagate the deltas to the parent */
+	if (iocg->level > 0) {
+		struct iocg_stat *parent_stat =
+			&iocg->ancestors[iocg->level - 1]->desc_stat;
+
+		parent_stat->usage_us +=
+			new_stat.usage_us - iocg->last_stat.usage_us;
+		parent_stat->wait_us +=
+			new_stat.wait_us - iocg->last_stat.wait_us;
+		parent_stat->indebt_us +=
+			new_stat.indebt_us - iocg->last_stat.indebt_us;
+		parent_stat->indelay_us +=
+			new_stat.indelay_us - iocg->last_stat.indelay_us;
+	}
+
+	iocg->last_stat = new_stat;
 }
 
 /* get stat counters ready for reading on all active iocgs */
@@ -1692,13 +1699,13 @@ static void iocg_flush_stat(struct list_head *target_iocgs, struct ioc_now *now)
 
 	/* flush leaves and build inner node walk list */
 	list_for_each_entry(iocg, target_iocgs, active_list) {
-		iocg_flush_stat_leaf(iocg, now);
+		iocg_flush_stat_one(iocg, now);
 		iocg_build_inner_walk(iocg, &inner_walk);
 	}
 
 	/* keep flushing upwards by walking the inner list backwards */
 	list_for_each_entry_safe_reverse(iocg, tiocg, &inner_walk, walk_list) {
-		iocg_flush_stat_upward(iocg);
+		iocg_flush_stat_one(iocg, now);
 		list_del_init(&iocg->walk_list);
 	}
 }
@@ -2145,16 +2152,16 @@ static int ioc_check_iocgs(struct ioc *ioc, struct ioc_now *now)
 
 		/* flush wait and indebt stat deltas */
 		if (iocg->wait_since) {
-			iocg->stat.wait_us += now->now - iocg->wait_since;
+			iocg->local_stat.wait_us += now->now - iocg->wait_since;
 			iocg->wait_since = now->now;
 		}
 		if (iocg->indebt_since) {
-			iocg->stat.indebt_us +=
+			iocg->local_stat.indebt_us +=
 				now->now - iocg->indebt_since;
 			iocg->indebt_since = now->now;
 		}
 		if (iocg->indelay_since) {
-			iocg->stat.indelay_us +=
+			iocg->local_stat.indelay_us +=
 				now->now - iocg->indelay_since;
 			iocg->indelay_since = now->now;
 		}
@@ -2207,8 +2214,8 @@ static void ioc_timer_fn(struct timer_list *timer)
 	LIST_HEAD(surpluses);
 	int nr_debtors, nr_shortages = 0, nr_lagging = 0;
 	u64 usage_us_sum = 0;
-	u32 ppm_rthr;
-	u32 ppm_wthr;
+	u32 ppm_rthr = MILLION - ioc->params.qos[QOS_RPPM];
+	u32 ppm_wthr = MILLION - ioc->params.qos[QOS_WPPM];
 	u32 missed_ppm[2], rq_wait_pct;
 	u64 period_vtime;
 	int prev_busy_level;
@@ -2219,8 +2226,6 @@ static void ioc_timer_fn(struct timer_list *timer)
 	/* take care of active iocgs */
 	spin_lock_irq(&ioc->lock);
 
-	ppm_rthr = MILLION - ioc->params.qos[QOS_RPPM];
-	ppm_wthr = MILLION - ioc->params.qos[QOS_WPPM];
 	ioc_now(ioc, &now);
 
 	period_vtime = now.vnow - ioc->period_at_vtime;
@@ -2642,7 +2647,7 @@ retry_lock:
 	if (use_debt) {
 		iocg_incur_debt(iocg, abs_cost, &now);
 		if (iocg_kick_delay(iocg, &now))
-			blkcg_schedule_throttle(rqos->q->disk,
+			blkcg_schedule_throttle(rqos->q,
 					(bio->bi_opf & REQ_SWAP) == REQ_SWAP);
 		iocg_unlock(iocg, ioc_locked, &flags);
 		return;
@@ -2743,7 +2748,7 @@ static void ioc_rqos_merge(struct rq_qos *rqos, struct request *rq,
 	if (likely(!list_empty(&iocg->active_list))) {
 		iocg_incur_debt(iocg, abs_cost, &now);
 		if (iocg_kick_delay(iocg, &now))
-			blkcg_schedule_throttle(rqos->q->disk,
+			blkcg_schedule_throttle(rqos->q,
 					(bio->bi_opf & REQ_SWAP) == REQ_SWAP);
 	} else {
 		iocg_commit_bio(iocg, bio, abs_cost, cost);
@@ -2771,7 +2776,7 @@ static void ioc_rqos_done(struct rq_qos *rqos, struct request *rq)
 	if (!ioc->enabled || !rq->alloc_time_ns || !rq->start_time_ns)
 		return;
 
-	switch (req_op(rq)) {
+	switch (req_op(rq) & REQ_OP_MASK) {
 	case REQ_OP_READ:
 		pidx = QOS_RLAT;
 		rw = READ;
@@ -2820,7 +2825,7 @@ static void ioc_rqos_exit(struct rq_qos *rqos)
 	ioc->running = IOC_STOP;
 	spin_unlock_irq(&ioc->lock);
 
-	timer_shutdown_sync(&ioc->timer);
+	del_timer_sync(&ioc->timer);
 	free_percpu(ioc->pcpu_stat);
 	kfree(ioc);
 }
@@ -2834,9 +2839,8 @@ static struct rq_qos_ops ioc_rqos_ops = {
 	.exit = ioc_rqos_exit,
 };
 
-static int blk_iocost_init(struct gendisk *disk)
+static int blk_iocost_init(struct request_queue *q)
 {
-	struct request_queue *q = disk->queue;
 	struct ioc *ioc;
 	struct rq_qos *rqos;
 	int i, cpu, ret;
@@ -2884,7 +2888,7 @@ static int blk_iocost_init(struct gendisk *disk)
 	spin_unlock_irq(&ioc->lock);
 
 	/*
-	 * rqos must be added before activation to allow ioc_pd_init() to
+	 * rqos must be added before activation to allow iocg_pd_init() to
 	 * lookup the ioc from q. This means that the rqos methods may get
 	 * called before policy activation completion, can't assume that the
 	 * target bio has an iocg associated and need to test for NULL iocg.
@@ -3007,13 +3011,13 @@ static void ioc_pd_free(struct blkg_policy_data *pd)
 	kfree(iocg);
 }
 
-static void ioc_pd_stat(struct blkg_policy_data *pd, struct seq_file *s)
+static bool ioc_pd_stat(struct blkg_policy_data *pd, struct seq_file *s)
 {
 	struct ioc_gq *iocg = pd_to_iocg(pd);
 	struct ioc *ioc = iocg->ioc;
 
 	if (!ioc->enabled)
-		return;
+		return false;
 
 	if (iocg->level == 0) {
 		unsigned vp10k = DIV64_U64_ROUND_CLOSEST(
@@ -3029,6 +3033,7 @@ static void ioc_pd_stat(struct blkg_policy_data *pd, struct seq_file *s)
 			iocg->last_stat.wait_us,
 			iocg->last_stat.indebt_us,
 			iocg->last_stat.indelay_us);
+	return true;
 }
 
 static u64 ioc_weight_prfill(struct seq_file *sf, struct blkg_policy_data *pd,
@@ -3173,7 +3178,6 @@ static ssize_t ioc_qos_write(struct kernfs_open_file *of, char *input,
 			     size_t nbytes, loff_t off)
 {
 	struct block_device *bdev;
-	struct gendisk *disk;
 	struct ioc *ioc;
 	u32 qos[NR_QOS_PARAMS];
 	bool enable, user;
@@ -3184,22 +3188,19 @@ static ssize_t ioc_qos_write(struct kernfs_open_file *of, char *input,
 	if (IS_ERR(bdev))
 		return PTR_ERR(bdev);
 
-	disk = bdev->bd_disk;
-	ioc = q_to_ioc(disk->queue);
+	ioc = q_to_ioc(bdev->bd_disk->queue);
 	if (!ioc) {
-		ret = blk_iocost_init(disk);
+		ret = blk_iocost_init(bdev->bd_disk->queue);
 		if (ret)
 			goto err;
-		ioc = q_to_ioc(disk->queue);
+		ioc = q_to_ioc(bdev->bd_disk->queue);
 	}
-
-	blk_mq_freeze_queue(disk->queue);
-	blk_mq_quiesce_queue(disk->queue);
 
 	spin_lock_irq(&ioc->lock);
 	memcpy(qos, ioc->params.qos, sizeof(qos));
 	enable = ioc->enabled;
 	user = ioc->user_qos_params;
+	spin_unlock_irq(&ioc->lock);
 
 	while ((p = strsep(&input, " \t\n"))) {
 		substring_t args[MAX_OPT_ARGS];
@@ -3266,15 +3267,15 @@ static ssize_t ioc_qos_write(struct kernfs_open_file *of, char *input,
 	if (qos[QOS_MIN] > qos[QOS_MAX])
 		goto einval;
 
+	spin_lock_irq(&ioc->lock);
+
 	if (enable) {
-		blk_stat_enable_accounting(disk->queue);
-		blk_queue_flag_set(QUEUE_FLAG_RQ_ALLOC_TIME, disk->queue);
+		blk_stat_enable_accounting(ioc->rqos.q);
+		blk_queue_flag_set(QUEUE_FLAG_RQ_ALLOC_TIME, ioc->rqos.q);
 		ioc->enabled = true;
-		wbt_disable_default(disk->queue);
 	} else {
-		blk_queue_flag_clear(QUEUE_FLAG_RQ_ALLOC_TIME, disk->queue);
+		blk_queue_flag_clear(QUEUE_FLAG_RQ_ALLOC_TIME, ioc->rqos.q);
 		ioc->enabled = false;
-		wbt_enable_default(disk->queue);
 	}
 
 	if (user) {
@@ -3287,17 +3288,9 @@ static ssize_t ioc_qos_write(struct kernfs_open_file *of, char *input,
 	ioc_refresh_params(ioc, true);
 	spin_unlock_irq(&ioc->lock);
 
-	blk_mq_unquiesce_queue(disk->queue);
-	blk_mq_unfreeze_queue(disk->queue);
-
 	blkdev_put_no_open(bdev);
 	return nbytes;
 einval:
-	spin_unlock_irq(&ioc->lock);
-
-	blk_mq_unquiesce_queue(disk->queue);
-	blk_mq_unfreeze_queue(disk->queue);
-
 	ret = -EINVAL;
 err:
 	blkdev_put_no_open(bdev);
@@ -3352,7 +3345,6 @@ static ssize_t ioc_cost_model_write(struct kernfs_open_file *of, char *input,
 				    size_t nbytes, loff_t off)
 {
 	struct block_device *bdev;
-	struct request_queue *q;
 	struct ioc *ioc;
 	u64 u[NR_I_LCOEFS];
 	bool user;
@@ -3363,21 +3355,18 @@ static ssize_t ioc_cost_model_write(struct kernfs_open_file *of, char *input,
 	if (IS_ERR(bdev))
 		return PTR_ERR(bdev);
 
-	q = bdev_get_queue(bdev);
-	ioc = q_to_ioc(q);
+	ioc = q_to_ioc(bdev->bd_disk->queue);
 	if (!ioc) {
-		ret = blk_iocost_init(bdev->bd_disk);
+		ret = blk_iocost_init(bdev->bd_disk->queue);
 		if (ret)
 			goto err;
-		ioc = q_to_ioc(q);
+		ioc = q_to_ioc(bdev->bd_disk->queue);
 	}
-
-	blk_mq_freeze_queue(q);
-	blk_mq_quiesce_queue(q);
 
 	spin_lock_irq(&ioc->lock);
 	memcpy(u, ioc->params.i_lcoefs, sizeof(u));
 	user = ioc->user_cost_model;
+	spin_unlock_irq(&ioc->lock);
 
 	while ((p = strsep(&input, " \t\n"))) {
 		substring_t args[MAX_OPT_ARGS];
@@ -3414,6 +3403,7 @@ static ssize_t ioc_cost_model_write(struct kernfs_open_file *of, char *input,
 		user = true;
 	}
 
+	spin_lock_irq(&ioc->lock);
 	if (user) {
 		memcpy(ioc->params.i_lcoefs, u, sizeof(u));
 		ioc->user_cost_model = true;
@@ -3423,18 +3413,10 @@ static ssize_t ioc_cost_model_write(struct kernfs_open_file *of, char *input,
 	ioc_refresh_params(ioc, true);
 	spin_unlock_irq(&ioc->lock);
 
-	blk_mq_unquiesce_queue(q);
-	blk_mq_unfreeze_queue(q);
-
 	blkdev_put_no_open(bdev);
 	return nbytes;
 
 einval:
-	spin_unlock_irq(&ioc->lock);
-
-	blk_mq_unquiesce_queue(q);
-	blk_mq_unfreeze_queue(q);
-
 	ret = -EINVAL;
 err:
 	blkdev_put_no_open(bdev);

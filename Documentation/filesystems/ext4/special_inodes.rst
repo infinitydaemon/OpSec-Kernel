@@ -34,7 +34,7 @@ ext4 reserves some inode for special features, as follows:
    * - 10
      - Replica inode, used for some non-upstream feature?
    * - 11
-     - Traditional first non-reserved inode. Usually this is the lost+found directory. See s_first_ino in the superblock.
+     - Traditional first non-reserved inode. Usually this is the lost+found directory. See s\_first\_ino in the superblock.
 
 Note that there are also some inodes allocated from non-reserved inode numbers
 for other filesystem features which are not referenced from standard directory
@@ -47,9 +47,9 @@ hierarchy. These are generally reference from the superblock. They are:
    * - Superblock field
      - Description
 
-   * - s_lpf_ino
+   * - s\_lpf\_ino
      - Inode number of lost+found directory.
-   * - s_prj_quota_inum
+   * - s\_prj\_quota\_inum
      - Inode number of quota file tracking project quotas
-   * - s_orphan_file_inum
+   * - s\_orphan\_file\_inum
      - Inode number of file tracking orphan inodes.

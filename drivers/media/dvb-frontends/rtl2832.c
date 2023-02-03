@@ -1021,7 +1021,8 @@ err:
 	return ret;
 }
 
-static int rtl2832_probe(struct i2c_client *client)
+static int rtl2832_probe(struct i2c_client *client,
+		const struct i2c_device_id *id)
 {
 	struct rtl2832_platform_data *pdata = client->dev.platform_data;
 	struct i2c_adapter *i2c = client->adapter;
@@ -1109,7 +1110,7 @@ err:
 	return ret;
 }
 
-static void rtl2832_remove(struct i2c_client *client)
+static int rtl2832_remove(struct i2c_client *client)
 {
 	struct rtl2832_dev *dev = i2c_get_clientdata(client);
 
@@ -1122,6 +1123,8 @@ static void rtl2832_remove(struct i2c_client *client)
 	regmap_exit(dev->regmap);
 
 	kfree(dev);
+
+	return 0;
 }
 
 static const struct i2c_device_id rtl2832_id_table[] = {
@@ -1135,7 +1138,7 @@ static struct i2c_driver rtl2832_driver = {
 		.name	= "rtl2832",
 		.suppress_bind_attrs	= true,
 	},
-	.probe_new	= rtl2832_probe,
+	.probe		= rtl2832_probe,
 	.remove		= rtl2832_remove,
 	.id_table	= rtl2832_id_table,
 };

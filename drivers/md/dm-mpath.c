@@ -105,7 +105,6 @@ struct multipath {
 struct dm_mpath_io {
 	struct pgpath *pgpath;
 	size_t nr_bytes;
-	u64 start_time_ns;
 };
 
 typedef int (*action_fn) (struct pgpath *pgpath);
@@ -296,7 +295,6 @@ static void multipath_init_per_bio_data(struct bio *bio, struct dm_mpath_io **mp
 
 	mpio->nr_bytes = bio->bi_iter.bi_size;
 	mpio->pgpath = NULL;
-	mpio->start_time_ns = 0;
 	*mpio_p = mpio;
 
 	dm_bio_record(bio_details, bio);
@@ -532,7 +530,7 @@ static int multipath_clone_and_map(struct dm_target *ti, struct request *rq,
 
 	bdev = pgpath->path.dev->bdev;
 	q = bdev_get_queue(bdev);
-	clone = blk_mq_alloc_request(q, rq->cmd_flags | REQ_NOMERGE,
+	clone = blk_get_request(q, rq->cmd_flags | REQ_NOMERGE,
 			BLK_MQ_REQ_NOWAIT);
 	if (IS_ERR(clone)) {
 		/* EBUSY, ENODEV or EWOULDBLOCK: requeue */
@@ -552,6 +550,7 @@ static int multipath_clone_and_map(struct dm_target *ti, struct request *rq,
 		return DM_MAPIO_REQUEUE;
 	}
 	clone->bio = clone->biotail = NULL;
+	clone->rq_disk = bdev->bd_disk;
 	clone->cmd_flags |= REQ_FAILFAST_TRANSPORT;
 	*__clone = clone;
 
@@ -580,7 +579,7 @@ static void multipath_release_clone(struct request *clone,
 						    clone->io_start_time_ns);
 	}
 
-	blk_mq_free_request(clone);
+	blk_put_request(clone);
 }
 
 /*
@@ -648,9 +647,6 @@ static int __multipath_map_bio(struct multipath *m, struct bio *bio,
 	}
 
 	mpio->pgpath = pgpath;
-
-	if (dm_ps_use_hr_timer(pgpath->pg->ps.type))
-		mpio->start_time_ns = ktime_get_ns();
 
 	bio->bi_status = 0;
 	bio_set_dev(bio, pgpath->path.dev->bdev);
@@ -904,7 +900,10 @@ retain:
 	if (m->hw_handler_name) {
 		r = scsi_dh_attach(q, m->hw_handler_name);
 		if (r == -EBUSY) {
-			DMINFO("retaining handler on device %pg", bdev);
+			char b[BDEVNAME_SIZE];
+
+			printk(KERN_INFO "dm-mpath: retaining handler on device %s\n",
+			       bdevname(bdev, b));
 			goto retain;
 		}
 		if (r < 0) {
@@ -1254,6 +1253,7 @@ static int multipath_ctr(struct dm_target *ti, unsigned argc, char **argv)
 
 	ti->num_flush_bios = 1;
 	ti->num_discard_bios = 1;
+	ti->num_write_same_bios = 1;
 	ti->num_write_zeroes_bios = 1;
 	if (m->queue_mode == DM_TYPE_BIO_BASED)
 		ti->per_io_data_size = multipath_per_bio_data_size();
@@ -1718,8 +1718,7 @@ done:
 
 		if (ps->type->end_io)
 			ps->type->end_io(ps, &pgpath->path, mpio->nr_bytes,
-					 (mpio->start_time_ns ?:
-					  dm_start_time_ns_from_clone(clone)));
+					 dm_start_time_ns_from_clone(clone));
 	}
 
 	return r;
@@ -2062,7 +2061,7 @@ static int multipath_prepare_ioctl(struct dm_target *ti,
 	/*
 	 * Only pass ioctls through if the device sizes match exactly.
 	 */
-	if (!r && ti->len != bdev_nr_sectors((*bdev)))
+	if (!r && ti->len != i_size_read((*bdev)->bd_inode) >> SECTOR_SHIFT)
 		return 1;
 	return r;
 }

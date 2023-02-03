@@ -34,7 +34,7 @@ static int hidraw_major;
 static struct cdev hidraw_cdev;
 static struct class *hidraw_class;
 static struct hidraw *hidraw_table[HIDRAW_MAX_DEVICES];
-static DECLARE_RWSEM(minors_rwsem);
+static DEFINE_MUTEX(minors_lock);
 
 static ssize_t hidraw_read(struct file *file, char __user *buffer, size_t count, loff_t *ppos)
 {
@@ -107,7 +107,7 @@ static ssize_t hidraw_send_report(struct file *file, const char __user *buffer, 
 	__u8 *buf;
 	int ret = 0;
 
-	lockdep_assert_held(&minors_rwsem);
+	lockdep_assert_held(&minors_lock);
 
 	if (!hidraw_table[minor] || !hidraw_table[minor]->exist) {
 		ret = -ENODEV;
@@ -160,9 +160,9 @@ out:
 static ssize_t hidraw_write(struct file *file, const char __user *buffer, size_t count, loff_t *ppos)
 {
 	ssize_t ret;
-	down_read(&minors_rwsem);
+	mutex_lock(&minors_lock);
 	ret = hidraw_send_report(file, buffer, count, HID_OUTPUT_REPORT);
-	up_read(&minors_rwsem);
+	mutex_unlock(&minors_lock);
 	return ret;
 }
 
@@ -182,7 +182,7 @@ static ssize_t hidraw_get_report(struct file *file, char __user *buffer, size_t 
 	int ret = 0, len;
 	unsigned char report_number;
 
-	lockdep_assert_held(&minors_rwsem);
+	lockdep_assert_held(&minors_lock);
 
 	if (!hidraw_table[minor] || !hidraw_table[minor]->exist) {
 		ret = -ENODEV;
@@ -272,7 +272,7 @@ static int hidraw_open(struct inode *inode, struct file *file)
 		goto out;
 	}
 
-	down_read(&minors_rwsem);
+	mutex_lock(&minors_lock);
 	if (!hidraw_table[minor] || !hidraw_table[minor]->exist) {
 		err = -ENODEV;
 		goto out_unlock;
@@ -301,7 +301,7 @@ static int hidraw_open(struct inode *inode, struct file *file)
 	spin_unlock_irqrestore(&hidraw_table[minor]->list_lock, flags);
 	file->private_data = list;
 out_unlock:
-	up_read(&minors_rwsem);
+	mutex_unlock(&minors_lock);
 out:
 	if (err < 0)
 		kfree(list);
@@ -346,11 +346,12 @@ static int hidraw_release(struct inode * inode, struct file * file)
 	unsigned int minor = iminor(inode);
 	struct hidraw_list *list = file->private_data;
 	unsigned long flags;
+	int i;
 
-	down_write(&minors_rwsem);
+	mutex_lock(&minors_lock);
 
 	spin_lock_irqsave(&hidraw_table[minor]->list_lock, flags);
-	for (int i = list->tail; i < list->head; i++)
+	for (i = list->tail; i < list->head; i++)
 		kfree(list->buffer[i].value);
 	list_del(&list->node);
 	spin_unlock_irqrestore(&hidraw_table[minor]->list_lock, flags);
@@ -358,7 +359,7 @@ static int hidraw_release(struct inode * inode, struct file * file)
 
 	drop_ref(hidraw_table[minor], 0);
 
-	up_write(&minors_rwsem);
+	mutex_unlock(&minors_lock);
 	return 0;
 }
 
@@ -371,7 +372,7 @@ static long hidraw_ioctl(struct file *file, unsigned int cmd,
 	struct hidraw *dev;
 	void __user *user_arg = (void __user*) arg;
 
-	down_read(&minors_rwsem);
+	mutex_lock(&minors_lock);
 	dev = hidraw_table[minor];
 	if (!dev || !dev->exist) {
 		ret = -ENODEV;
@@ -489,7 +490,7 @@ static long hidraw_ioctl(struct file *file, unsigned int cmd,
 		ret = -ENOTTY;
 	}
 out:
-	up_read(&minors_rwsem);
+	mutex_unlock(&minors_lock);
 	return ret;
 }
 
@@ -548,7 +549,7 @@ int hidraw_connect(struct hid_device *hid)
 
 	result = -EINVAL;
 
-	down_write(&minors_rwsem);
+	mutex_lock(&minors_lock);
 
 	for (minor = 0; minor < HIDRAW_MAX_DEVICES; minor++) {
 		if (hidraw_table[minor])
@@ -559,7 +560,7 @@ int hidraw_connect(struct hid_device *hid)
 	}
 
 	if (result) {
-		up_write(&minors_rwsem);
+		mutex_unlock(&minors_lock);
 		kfree(dev);
 		goto out;
 	}
@@ -569,7 +570,7 @@ int hidraw_connect(struct hid_device *hid)
 
 	if (IS_ERR(dev->dev)) {
 		hidraw_table[minor] = NULL;
-		up_write(&minors_rwsem);
+		mutex_unlock(&minors_lock);
 		result = PTR_ERR(dev->dev);
 		kfree(dev);
 		goto out;
@@ -585,7 +586,7 @@ int hidraw_connect(struct hid_device *hid)
 	dev->exist = 1;
 	hid->hidraw = dev;
 
-	up_write(&minors_rwsem);
+	mutex_unlock(&minors_lock);
 out:
 	return result;
 
@@ -596,11 +597,11 @@ void hidraw_disconnect(struct hid_device *hid)
 {
 	struct hidraw *hidraw = hid->hidraw;
 
-	down_write(&minors_rwsem);
+	mutex_lock(&minors_lock);
 
 	drop_ref(hidraw, 1);
 
-	up_write(&minors_rwsem);
+	mutex_unlock(&minors_lock);
 }
 EXPORT_SYMBOL_GPL(hidraw_disconnect);
 

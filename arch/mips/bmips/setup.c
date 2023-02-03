@@ -28,7 +28,6 @@
 #include <asm/smp-ops.h>
 #include <asm/time.h>
 #include <asm/traps.h>
-#include <asm/fw/cfe/cfe_api.h>
 
 #define RELO_NORMAL_VEC		BIT(18)
 
@@ -124,19 +123,8 @@ static const struct bmips_quirk bmips_quirk_list[] = {
 	{ },
 };
 
-static void __init bmips_init_cfe(void)
-{
-	cfe_seal = fw_arg3;
-
-	if (cfe_seal != CFE_EPTSEAL)
-		return;
-
-	cfe_init(fw_arg0, fw_arg2);
-}
-
 void __init prom_init(void)
 {
-	bmips_init_cfe();
 	bmips_cpu_setup();
 	register_bmips_smp_ops();
 }
@@ -177,7 +165,7 @@ void __init plat_mem_setup(void)
 		dtb = get_fdt();
 
 	if (!dtb)
-		cfe_die("no dtb found");
+		panic("no dtb found");
 
 	__dt_setup_arch(dtb);
 

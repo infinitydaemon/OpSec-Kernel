@@ -50,7 +50,7 @@ static void pic_unlock(struct kvm_pic *s)
 {
 	bool wakeup = s->wakeup_needed;
 	struct kvm_vcpu *vcpu;
-	unsigned long i;
+	int i;
 
 	s->wakeup_needed = false;
 
@@ -252,6 +252,7 @@ int kvm_pic_read_irq(struct kvm *kvm)
 				 */
 				irq2 = 7;
 			intno = s->pics[1].irq_base + irq2;
+			irq = irq2 + 8;
 		} else
 			intno = s->pics[0].irq_base + irq;
 	} else {
@@ -269,8 +270,7 @@ int kvm_pic_read_irq(struct kvm *kvm)
 
 static void kvm_pic_reset(struct kvm_kpic_state *s)
 {
-	int irq;
-	unsigned long i;
+	int irq, i;
 	struct kvm_vcpu *vcpu;
 	u8 edge_irr = s->irr & ~s->elcr;
 	bool found = false;
@@ -436,13 +436,13 @@ static u32 pic_ioport_read(void *opaque, u32 addr)
 	return ret;
 }
 
-static void elcr_ioport_write(void *opaque, u32 val)
+static void elcr_ioport_write(void *opaque, u32 addr, u32 val)
 {
 	struct kvm_kpic_state *s = opaque;
 	s->elcr = val & s->elcr_mask;
 }
 
-static u32 elcr_ioport_read(void *opaque)
+static u32 elcr_ioport_read(void *opaque, u32 addr1)
 {
 	struct kvm_kpic_state *s = opaque;
 	return s->elcr;
@@ -473,7 +473,7 @@ static int picdev_write(struct kvm_pic *s,
 	case 0x4d0:
 	case 0x4d1:
 		pic_lock(s);
-		elcr_ioport_write(&s->pics[addr & 1], data);
+		elcr_ioport_write(&s->pics[addr & 1], addr, data);
 		pic_unlock(s);
 		break;
 	default:
@@ -504,7 +504,7 @@ static int picdev_read(struct kvm_pic *s,
 	case 0x4d0:
 	case 0x4d1:
 		pic_lock(s);
-		*data = elcr_ioport_read(&s->pics[addr & 1]);
+		*data = elcr_ioport_read(&s->pics[addr & 1], addr);
 		pic_unlock(s);
 		break;
 	default:

@@ -16,6 +16,7 @@
 #include <linux/vmalloc.h>
 #include <linux/stddef.h>
 #include <linux/err.h>
+#include <linux/percpu.h>
 #include <linux/kernel.h>
 #include <linux/netdevice.h>
 #include <linux/slab.h>
@@ -28,9 +29,8 @@
 
 static DEFINE_MUTEX(nf_ct_ecache_mutex);
 
-#define DYING_NULLS_VAL			((1 << 30) + 1)
-#define ECACHE_MAX_JIFFIES		msecs_to_jiffies(10)
-#define ECACHE_RETRY_JIFFIES		msecs_to_jiffies(10)
+#define ECACHE_RETRY_WAIT (HZ/10)
+#define ECACHE_STACK_ALLOC (256 / sizeof(void *))
 
 enum retry_state {
 	STATE_CONGESTED,
@@ -38,100 +38,106 @@ enum retry_state {
 	STATE_DONE,
 };
 
-struct nf_conntrack_net_ecache *nf_conn_pernet_ecache(const struct net *net)
+static enum retry_state ecache_work_evict_list(struct ct_pcpu *pcpu)
 {
-	struct nf_conntrack_net *cnet = nf_ct_pernet(net);
-
-	return &cnet->ecache;
-}
-#if IS_MODULE(CONFIG_NF_CT_NETLINK)
-EXPORT_SYMBOL_GPL(nf_conn_pernet_ecache);
-#endif
-
-static enum retry_state ecache_work_evict_list(struct nf_conntrack_net *cnet)
-{
-	unsigned long stop = jiffies + ECACHE_MAX_JIFFIES;
-	struct hlist_nulls_head evicted_list;
+	struct nf_conn *refs[ECACHE_STACK_ALLOC];
 	enum retry_state ret = STATE_DONE;
 	struct nf_conntrack_tuple_hash *h;
 	struct hlist_nulls_node *n;
-	unsigned int sent;
+	unsigned int evicted = 0;
 
-	INIT_HLIST_NULLS_HEAD(&evicted_list, DYING_NULLS_VAL);
+	spin_lock(&pcpu->lock);
 
-next:
-	sent = 0;
-	spin_lock_bh(&cnet->ecache.dying_lock);
-
-	hlist_nulls_for_each_entry_safe(h, n, &cnet->ecache.dying_list, hnnode) {
+	hlist_nulls_for_each_entry(h, n, &pcpu->dying, hnnode) {
 		struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
+		struct nf_conntrack_ecache *e;
 
-		/* The worker owns all entries, ct remains valid until nf_ct_put
-		 * in the loop below.
+		if (!nf_ct_is_confirmed(ct))
+			continue;
+
+		/* This ecache access is safe because the ct is on the
+		 * pcpu dying list and we hold the spinlock -- the entry
+		 * cannot be free'd until after the lock is released.
+		 *
+		 * This is true even if ct has a refcount of 0: the
+		 * cpu that is about to free the entry must remove it
+		 * from the dying list and needs the lock to do so.
+		 */
+		e = nf_ct_ecache_find(ct);
+		if (!e || e->state != NFCT_ECACHE_DESTROY_FAIL)
+			continue;
+
+		/* ct is in NFCT_ECACHE_DESTROY_FAIL state, this means
+		 * the worker owns this entry: the ct will remain valid
+		 * until the worker puts its ct reference.
 		 */
 		if (nf_conntrack_event(IPCT_DESTROY, ct)) {
 			ret = STATE_CONGESTED;
 			break;
 		}
 
-		hlist_nulls_del_rcu(&ct->tuplehash[IP_CT_DIR_ORIGINAL].hnnode);
-		hlist_nulls_add_head(&ct->tuplehash[IP_CT_DIR_REPLY].hnnode, &evicted_list);
+		e->state = NFCT_ECACHE_DESTROY_SENT;
+		refs[evicted] = ct;
 
-		if (time_after(stop, jiffies)) {
+		if (++evicted >= ARRAY_SIZE(refs)) {
 			ret = STATE_RESTART;
 			break;
 		}
-
-		if (sent++ > 16) {
-			spin_unlock_bh(&cnet->ecache.dying_lock);
-			cond_resched();
-			goto next;
-		}
 	}
 
-	spin_unlock_bh(&cnet->ecache.dying_lock);
+	spin_unlock(&pcpu->lock);
 
-	hlist_nulls_for_each_entry_safe(h, n, &evicted_list, hnnode) {
-		struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
-
-		hlist_nulls_del_rcu(&ct->tuplehash[IP_CT_DIR_REPLY].hnnode);
-		nf_ct_put(ct);
-
-		cond_resched();
-	}
+	/* can't _put while holding lock */
+	while (evicted)
+		nf_ct_put(refs[--evicted]);
 
 	return ret;
 }
 
 static void ecache_work(struct work_struct *work)
 {
-	struct nf_conntrack_net *cnet = container_of(work, struct nf_conntrack_net, ecache.dwork.work);
-	int ret, delay = -1;
+	struct nf_conntrack_net *cnet = container_of(work, struct nf_conntrack_net, ecache_dwork.work);
+	struct netns_ct *ctnet = cnet->ct_net;
+	int cpu, delay = -1;
+	struct ct_pcpu *pcpu;
 
-	ret = ecache_work_evict_list(cnet);
-	switch (ret) {
-	case STATE_CONGESTED:
-		delay = ECACHE_RETRY_JIFFIES;
-		break;
-	case STATE_RESTART:
-		delay = 0;
-		break;
-	case STATE_DONE:
-		break;
+	local_bh_disable();
+
+	for_each_possible_cpu(cpu) {
+		enum retry_state ret;
+
+		pcpu = per_cpu_ptr(ctnet->pcpu_lists, cpu);
+
+		ret = ecache_work_evict_list(pcpu);
+
+		switch (ret) {
+		case STATE_CONGESTED:
+			delay = ECACHE_RETRY_WAIT;
+			goto out;
+		case STATE_RESTART:
+			delay = 0;
+			break;
+		case STATE_DONE:
+			break;
+		}
 	}
 
+ out:
+	local_bh_enable();
+
+	ctnet->ecache_dwork_pending = delay > 0;
 	if (delay >= 0)
-		schedule_delayed_work(&cnet->ecache.dwork, delay);
+		schedule_delayed_work(&cnet->ecache_dwork, delay);
 }
 
 static int __nf_conntrack_eventmask_report(struct nf_conntrack_ecache *e,
-					   const u32 events,
-					   const u32 missed,
+					   const unsigned int events,
+					   const unsigned long missed,
 					   const struct nf_ct_event *item)
 {
+	struct nf_conn *ct = item->ct;
 	struct net *net = nf_ct_net(item->ct);
 	struct nf_ct_event_notifier *notify;
-	u32 old, want;
 	int ret;
 
 	if (!((events | missed) & e->ctmask))
@@ -151,13 +157,12 @@ static int __nf_conntrack_eventmask_report(struct nf_conntrack_ecache *e,
 	if (likely(ret >= 0 && missed == 0))
 		return 0;
 
-	do {
-		old = READ_ONCE(e->missed);
-		if (ret < 0)
-			want = old | events;
-		else
-			want = old & ~missed;
-	} while (cmpxchg(&e->missed, old, want) != old);
+	spin_lock_bh(&ct->lock);
+	if (ret < 0)
+		e->missed |= events;
+	else
+		e->missed &= ~missed;
+	spin_unlock_bh(&ct->lock);
 
 	return ret;
 }
@@ -167,7 +172,7 @@ int nf_conntrack_eventmask_report(unsigned int events, struct nf_conn *ct,
 {
 	struct nf_conntrack_ecache *e;
 	struct nf_ct_event item;
-	unsigned int missed;
+	unsigned long missed;
 	int ret;
 
 	if (!nf_ct_is_confirmed(ct))
@@ -193,6 +198,7 @@ int nf_conntrack_eventmask_report(unsigned int events, struct nf_conn *ct,
 		 */
 		if (e->portid == 0 && portid != 0)
 			e->portid = portid;
+		e->state = NFCT_ECACHE_DESTROY_FAIL;
 	}
 
 	return ret;
@@ -205,7 +211,7 @@ void nf_ct_deliver_cached_events(struct nf_conn *ct)
 {
 	struct nf_conntrack_ecache *e;
 	struct nf_ct_event item;
-	unsigned int events;
+	unsigned long events;
 
 	if (!nf_ct_is_confirmed(ct) || nf_ct_is_dying(ct))
 		return;
@@ -286,73 +292,52 @@ void nf_conntrack_ecache_work(struct net *net, enum nf_ct_ecache_state state)
 	struct nf_conntrack_net *cnet = nf_ct_pernet(net);
 
 	if (state == NFCT_ECACHE_DESTROY_FAIL &&
-	    !delayed_work_pending(&cnet->ecache.dwork)) {
-		schedule_delayed_work(&cnet->ecache.dwork, HZ);
+	    !delayed_work_pending(&cnet->ecache_dwork)) {
+		schedule_delayed_work(&cnet->ecache_dwork, HZ);
 		net->ct.ecache_dwork_pending = true;
 	} else if (state == NFCT_ECACHE_DESTROY_SENT) {
-		if (!hlist_nulls_empty(&cnet->ecache.dying_list))
-			mod_delayed_work(system_wq, &cnet->ecache.dwork, 0);
-		else
-			net->ct.ecache_dwork_pending = false;
+		net->ct.ecache_dwork_pending = false;
+		mod_delayed_work(system_wq, &cnet->ecache_dwork, 0);
 	}
 }
 
-bool nf_ct_ecache_ext_add(struct nf_conn *ct, u16 ctmask, u16 expmask, gfp_t gfp)
-{
-	struct net *net = nf_ct_net(ct);
-	struct nf_conntrack_ecache *e;
-
-	switch (net->ct.sysctl_events) {
-	case 0:
-		 /* assignment via template / ruleset? ignore sysctl. */
-		if (ctmask || expmask)
-			break;
-		return true;
-	case 2: /* autodetect: no event listener, don't allocate extension. */
-		if (!READ_ONCE(net->ct.ctnetlink_has_listener))
-			return true;
-		fallthrough;
-	case 1:
-		/* always allocate an extension. */
-		if (!ctmask && !expmask) {
-			ctmask = ~0;
-			expmask = ~0;
-		}
-		break;
-	default:
-		WARN_ON_ONCE(1);
-		return true;
-	}
-
-	e = nf_ct_ext_add(ct, NF_CT_EXT_ECACHE, gfp);
-	if (e) {
-		e->ctmask  = ctmask;
-		e->expmask = expmask;
-	}
-
-	return e != NULL;
-}
-EXPORT_SYMBOL_GPL(nf_ct_ecache_ext_add);
-
-#define NF_CT_EVENTS_DEFAULT 2
+#define NF_CT_EVENTS_DEFAULT 1
 static int nf_ct_events __read_mostly = NF_CT_EVENTS_DEFAULT;
+
+static const struct nf_ct_ext_type event_extend = {
+	.len	= sizeof(struct nf_conntrack_ecache),
+	.align	= __alignof__(struct nf_conntrack_ecache),
+	.id	= NF_CT_EXT_ECACHE,
+};
 
 void nf_conntrack_ecache_pernet_init(struct net *net)
 {
 	struct nf_conntrack_net *cnet = nf_ct_pernet(net);
 
 	net->ct.sysctl_events = nf_ct_events;
-
-	INIT_DELAYED_WORK(&cnet->ecache.dwork, ecache_work);
-	INIT_HLIST_NULLS_HEAD(&cnet->ecache.dying_list, DYING_NULLS_VAL);
-	spin_lock_init(&cnet->ecache.dying_lock);
-
-	BUILD_BUG_ON(__IPCT_MAX >= 16);	/* e->ctmask is u16 */
+	cnet->ct_net = &net->ct;
+	INIT_DELAYED_WORK(&cnet->ecache_dwork, ecache_work);
 }
 
 void nf_conntrack_ecache_pernet_fini(struct net *net)
 {
 	struct nf_conntrack_net *cnet = nf_ct_pernet(net);
 
-	cancel_delayed_work_sync(&cnet->ecache.dwork);
+	cancel_delayed_work_sync(&cnet->ecache_dwork);
+}
+
+int nf_conntrack_ecache_init(void)
+{
+	int ret = nf_ct_extend_register(&event_extend);
+	if (ret < 0)
+		pr_err("Unable to register event extension\n");
+
+	BUILD_BUG_ON(__IPCT_MAX >= 16);	/* ctmask, missed use u16 */
+
+	return ret;
+}
+
+void nf_conntrack_ecache_fini(void)
+{
+	nf_ct_extend_unregister(&event_extend);
 }

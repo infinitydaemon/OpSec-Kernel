@@ -37,6 +37,7 @@ static void dump_zones(struct mddev *mddev)
 	int j, k;
 	sector_t zone_size = 0;
 	sector_t zone_start = 0;
+	char b[BDEVNAME_SIZE];
 	struct r0conf *conf = mddev->private;
 	int raid_disks = conf->strip_zone[0].nb_dev;
 	pr_debug("md: RAID0 configuration for %s - %d zone%s\n",
@@ -47,8 +48,9 @@ static void dump_zones(struct mddev *mddev)
 		int len = 0;
 
 		for (k = 0; k < conf->strip_zone[j].nb_dev; k++)
-			len += scnprintf(line+len, 200-len, "%s%pg", k?"/":"",
-				conf->devlist[j * raid_disks + k]->bdev);
+			len += scnprintf(line+len, 200-len, "%s%s", k?"/":"",
+					bdevname(conf->devlist[j*raid_disks
+							       + k]->bdev, b));
 		pr_debug("md: zone%d=[%s]\n", j, line);
 
 		zone_size  = conf->strip_zone[j].zone_end - zone_start;
@@ -67,6 +69,8 @@ static int create_strip_zones(struct mddev *mddev, struct r0conf **private_conf)
 	struct md_rdev *smallest, *rdev1, *rdev2, *rdev, **dev;
 	struct strip_zone *zone;
 	int cnt;
+	char b[BDEVNAME_SIZE];
+	char b2[BDEVNAME_SIZE];
 	struct r0conf *conf = kzalloc(sizeof(*conf), GFP_KERNEL);
 	unsigned blksize = 512;
 
@@ -74,9 +78,9 @@ static int create_strip_zones(struct mddev *mddev, struct r0conf **private_conf)
 	if (!conf)
 		return -ENOMEM;
 	rdev_for_each(rdev1, mddev) {
-		pr_debug("md/raid0:%s: looking at %pg\n",
+		pr_debug("md/raid0:%s: looking at %s\n",
 			 mdname(mddev),
-			 rdev1->bdev);
+			 bdevname(rdev1->bdev, b));
 		c = 0;
 
 		/* round size to chunk_size */
@@ -88,12 +92,12 @@ static int create_strip_zones(struct mddev *mddev, struct r0conf **private_conf)
 				      rdev1->bdev->bd_disk->queue));
 
 		rdev_for_each(rdev2, mddev) {
-			pr_debug("md/raid0:%s:   comparing %pg(%llu)"
-				 " with %pg(%llu)\n",
+			pr_debug("md/raid0:%s:   comparing %s(%llu)"
+				 " with %s(%llu)\n",
 				 mdname(mddev),
-				 rdev1->bdev,
+				 bdevname(rdev1->bdev,b),
 				 (unsigned long long)rdev1->sectors,
-				 rdev2->bdev,
+				 bdevname(rdev2->bdev,b2),
 				 (unsigned long long)rdev2->sectors);
 			if (rdev2 == rdev1) {
 				pr_debug("md/raid0:%s:   END\n",
@@ -221,15 +225,15 @@ static int create_strip_zones(struct mddev *mddev, struct r0conf **private_conf)
 		for (j=0; j<cnt; j++) {
 			rdev = conf->devlist[j];
 			if (rdev->sectors <= zone->dev_start) {
-				pr_debug("md/raid0:%s: checking %pg ... nope\n",
+				pr_debug("md/raid0:%s: checking %s ... nope\n",
 					 mdname(mddev),
-					 rdev->bdev);
+					 bdevname(rdev->bdev, b));
 				continue;
 			}
-			pr_debug("md/raid0:%s: checking %pg ..."
+			pr_debug("md/raid0:%s: checking %s ..."
 				 " contained as device %d\n",
 				 mdname(mddev),
-				 rdev->bdev, c);
+				 bdevname(rdev->bdev, b), c);
 			dev[c] = rdev;
 			c++;
 			if (!smallest || rdev->sectors < smallest->sectors) {
@@ -395,9 +399,12 @@ static int raid0_run(struct mddev *mddev)
 	conf = mddev->private;
 	if (mddev->queue) {
 		struct md_rdev *rdev;
+		bool discard_supported = false;
 
 		blk_queue_max_hw_sectors(mddev->queue, mddev->chunk_sectors);
+		blk_queue_max_write_same_sectors(mddev->queue, mddev->chunk_sectors);
 		blk_queue_max_write_zeroes_sectors(mddev->queue, mddev->chunk_sectors);
+		blk_queue_max_discard_sectors(mddev->queue, UINT_MAX);
 
 		blk_queue_io_min(mddev->queue, mddev->chunk_sectors << 9);
 		blk_queue_io_opt(mddev->queue,
@@ -406,7 +413,13 @@ static int raid0_run(struct mddev *mddev)
 		rdev_for_each(rdev, mddev) {
 			disk_stack_limits(mddev->gendisk, rdev->bdev,
 					  rdev->data_offset << 9);
+			if (blk_queue_discard(bdev_get_queue(rdev->bdev)))
+				discard_supported = true;
 		}
+		if (!discard_supported)
+			blk_queue_flag_clear(QUEUE_FLAG_DISCARD, mddev->queue);
+		else
+			blk_queue_flag_set(QUEUE_FLAG_DISCARD, mddev->queue);
 	}
 
 	/* calculate array device size */
@@ -581,6 +594,7 @@ static bool raid0_make_request(struct mddev *mddev, struct bio *bio)
 	if (mddev->gendisk)
 		trace_block_bio_remap(bio, disk_devt(mddev->gendisk),
 				      bio_sector);
+	mddev_check_writesame(mddev, bio);
 	mddev_check_write_zeroes(mddev, bio);
 	submit_bio_noacct(bio);
 	return true;

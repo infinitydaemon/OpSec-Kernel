@@ -106,7 +106,8 @@ static const struct rtc_class_ops ds1672_rtc_ops = {
 	.set_time = ds1672_set_time,
 };
 
-static int ds1672_probe(struct i2c_client *client)
+static int ds1672_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	int err = 0;
 	struct rtc_device *rtc;
@@ -149,7 +150,7 @@ static struct i2c_driver ds1672_driver = {
 		   .name = "rtc-ds1672",
 		   .of_match_table = of_match_ptr(ds1672_of_match),
 	},
-	.probe_new = ds1672_probe,
+	.probe = &ds1672_probe,
 	.id_table = ds1672_id,
 };
 

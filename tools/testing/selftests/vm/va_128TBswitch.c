@@ -9,7 +9,7 @@
 #include <sys/mman.h>
 #include <string.h>
 
-#include "../kselftest.h"
+#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
 #ifdef __powerpc64__
 #define PAGE_SIZE	(64 << 10)
@@ -231,7 +231,7 @@ static struct testcase hugetlb_testcases[] = {
 static int run_test(struct testcase *test, int count)
 {
 	void *p;
-	int i, ret = KSFT_PASS;
+	int i, ret = 0;
 
 	for (i = 0; i < count; i++) {
 		struct testcase *t = test + i;
@@ -242,13 +242,13 @@ static int run_test(struct testcase *test, int count)
 
 		if (p == MAP_FAILED) {
 			printf("FAILED\n");
-			ret = KSFT_FAIL;
+			ret = 1;
 			continue;
 		}
 
 		if (t->low_addr_required && p >= (void *)(ADDR_SWITCH_HINT)) {
 			printf("FAILED\n");
-			ret = KSFT_FAIL;
+			ret = 1;
 		} else {
 			/*
 			 * Do a dereference of the address returned so that we catch
@@ -280,7 +280,7 @@ int main(int argc, char **argv)
 	int ret;
 
 	if (!supported_arch())
-		return KSFT_SKIP;
+		return 0;
 
 	ret = run_test(testcases, ARRAY_SIZE(testcases));
 	if (argc == 2 && !strcmp(argv[1], "--run-hugetlb"))

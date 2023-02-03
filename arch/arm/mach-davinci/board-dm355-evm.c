@@ -1,10 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * TI DaVinci EVM board support
  *
  * Author: Kevin Hilman, Deep Root Systems, LLC
  *
- * 2007 (c) MontaVista Software, Inc.
+ * 2007 (c) MontaVista Software, Inc. This file is licensed under
+ * the terms of the GNU General Public License version 2. This program
+ * is licensed "as is" without any warranty of any kind, whether express
+ * or implied.
  */
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -31,8 +33,9 @@
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 
-#include "serial.h"
-#include "common.h"
+#include <mach/serial.h>
+#include <mach/common.h>
+
 #include "davinci.h"
 
 /* NOTE:  this is geared for the standard config, with a socketed

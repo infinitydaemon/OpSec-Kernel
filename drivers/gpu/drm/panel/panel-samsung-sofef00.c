@@ -270,14 +270,18 @@ static int sofef00_panel_probe(struct mipi_dsi_device *dsi)
 	}
 
 	ctx->supply = devm_regulator_get(dev, "vddio");
-	if (IS_ERR(ctx->supply))
-		return dev_err_probe(dev, PTR_ERR(ctx->supply),
-				     "Failed to get vddio regulator\n");
+	if (IS_ERR(ctx->supply)) {
+		ret = PTR_ERR(ctx->supply);
+		dev_err(dev, "Failed to get vddio regulator: %d\n", ret);
+		return ret;
+	}
 
 	ctx->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
-	if (IS_ERR(ctx->reset_gpio))
-		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
-				     "Failed to get reset-gpios\n");
+	if (IS_ERR(ctx->reset_gpio)) {
+		ret = PTR_ERR(ctx->reset_gpio);
+		dev_warn(dev, "Failed to get reset-gpios: %d\n", ret);
+		return ret;
+	}
 
 	ctx->dsi = dsi;
 	mipi_dsi_set_drvdata(dsi, ctx);
@@ -305,7 +309,7 @@ static int sofef00_panel_probe(struct mipi_dsi_device *dsi)
 	return 0;
 }
 
-static void sofef00_panel_remove(struct mipi_dsi_device *dsi)
+static int sofef00_panel_remove(struct mipi_dsi_device *dsi)
 {
 	struct sofef00_panel *ctx = mipi_dsi_get_drvdata(dsi);
 	int ret;
@@ -315,6 +319,8 @@ static void sofef00_panel_remove(struct mipi_dsi_device *dsi)
 		dev_err(&dsi->dev, "Failed to detach from DSI host: %d\n", ret);
 
 	drm_panel_remove(&ctx->panel);
+
+	return 0;
 }
 
 static const struct of_device_id sofef00_panel_of_match[] = {

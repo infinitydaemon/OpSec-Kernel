@@ -207,7 +207,7 @@ static ssize_t flash_fault_show(struct device *dev,
 		mask <<= 1;
 	}
 
-	return strlen(strcat(buf, "\n"));
+	return sprintf(buf, "%s\n", buf);
 }
 static DEVICE_ATTR_RO(flash_fault);
 

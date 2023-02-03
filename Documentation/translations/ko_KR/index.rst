@@ -3,7 +3,7 @@
 	\renewcommand\thesection*
 	\renewcommand\thesubsection*
 	\kerneldocCJKon
-	\kerneldocBeginKR{
+	\kerneldocBeginKR
 
 한국어 번역
 ===========
@@ -26,4 +26,5 @@
 
 .. raw:: latex
 
-    }\kerneldocEndKR
+    \normalsize
+    \kerneldocEndKR

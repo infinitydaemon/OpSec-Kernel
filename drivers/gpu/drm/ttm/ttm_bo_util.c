@@ -33,7 +33,7 @@
 #include <drm/ttm/ttm_placement.h>
 #include <drm/drm_cache.h>
 #include <drm/drm_vma_manager.h>
-#include <linux/iosys-map.h>
+#include <linux/dma-buf-map.h>
 #include <linux/io.h>
 #include <linux/highmem.h>
 #include <linux/wait.h>
@@ -78,22 +78,23 @@ void ttm_mem_io_free(struct ttm_device *bdev,
 
 /**
  * ttm_move_memcpy - Helper to perform a memcpy ttm move operation.
- * @clear: Whether to clear rather than copy.
- * @num_pages: Number of pages of the operation.
- * @dst_iter: A struct ttm_kmap_iter representing the destination resource.
+ * @bo: The struct ttm_buffer_object.
+ * @new_mem: The struct ttm_resource we're moving to (copy destination).
+ * @new_iter: A struct ttm_kmap_iter representing the destination resource.
  * @src_iter: A struct ttm_kmap_iter representing the source resource.
  *
  * This function is intended to be able to move out async under a
  * dma-fence if desired.
  */
-void ttm_move_memcpy(bool clear,
+void ttm_move_memcpy(struct ttm_buffer_object *bo,
 		     u32 num_pages,
 		     struct ttm_kmap_iter *dst_iter,
 		     struct ttm_kmap_iter *src_iter)
 {
 	const struct ttm_kmap_iter_ops *dst_ops = dst_iter->ops;
 	const struct ttm_kmap_iter_ops *src_ops = src_iter->ops;
-	struct iosys_map src_map, dst_map;
+	struct ttm_tt *ttm = bo->ttm;
+	struct dma_buf_map src_map, dst_map;
 	pgoff_t i;
 
 	/* Single TTM move. NOP */
@@ -101,7 +102,10 @@ void ttm_move_memcpy(bool clear,
 		return;
 
 	/* Don't move nonexistent data. Clear destination instead. */
-	if (clear) {
+	if (src_ops->maps_tt && (!ttm || !ttm_tt_is_populated(ttm))) {
+		if (ttm && !(ttm->page_flags & TTM_PAGE_FLAG_ZERO_ALLOC))
+			return;
+
 		for (i = 0; i < num_pages; ++i) {
 			dst_ops->map_local(dst_iter, &dst_map, i);
 			if (dst_map.is_iomem)
@@ -137,20 +141,16 @@ int ttm_bo_move_memcpy(struct ttm_buffer_object *bo,
 		ttm_manager_type(bo->bdev, dst_mem->mem_type);
 	struct ttm_tt *ttm = bo->ttm;
 	struct ttm_resource *src_mem = bo->resource;
-	struct ttm_resource_manager *src_man;
+	struct ttm_resource_manager *src_man =
+		ttm_manager_type(bdev, src_mem->mem_type);
 	union {
 		struct ttm_kmap_iter_tt tt;
 		struct ttm_kmap_iter_linear_io io;
 	} _dst_iter, _src_iter;
 	struct ttm_kmap_iter *dst_iter, *src_iter;
-	bool clear;
 	int ret = 0;
 
-	if (!src_mem)
-		return 0;
-
-	src_man = ttm_manager_type(bdev, src_mem->mem_type);
-	if (ttm && ((ttm->page_flags & TTM_TT_FLAG_SWAPPED) ||
+	if (ttm && ((ttm->page_flags & TTM_PAGE_FLAG_SWAPPED) ||
 		    dst_man->use_tt)) {
 		ret = ttm_tt_populate(bdev, ttm, ctx);
 		if (ret)
@@ -171,9 +171,7 @@ int ttm_bo_move_memcpy(struct ttm_buffer_object *bo,
 		goto out_src_iter;
 	}
 
-	clear = src_iter->ops->maps_tt && (!ttm || !ttm_tt_is_populated(ttm));
-	if (!(clear && ttm && !(ttm->page_flags & TTM_TT_FLAG_ZERO_ALLOC)))
-		ttm_move_memcpy(clear, PFN_UP(dst_mem->size), dst_iter, src_iter);
+	ttm_move_memcpy(bo, dst_mem->num_pages, dst_iter, src_iter);
 
 	if (!src_iter->ops->maps_tt)
 		ttm_kmap_iter_linear_io_fini(&_src_iter.io, bdev, src_mem);
@@ -224,6 +222,9 @@ static int ttm_buffer_object_transfer(struct ttm_buffer_object *bo,
 
 	fbo->base = *bo;
 
+	ttm_bo_get(bo);
+	fbo->bo = bo;
+
 	/**
 	 * Fix up members that we shouldn't copy directly:
 	 * TODO: Explicit member copy would probably be better here.
@@ -231,6 +232,8 @@ static int ttm_buffer_object_transfer(struct ttm_buffer_object *bo,
 
 	atomic_inc(&ttm_glob.bo_count);
 	INIT_LIST_HEAD(&fbo->base.ddestroy);
+	INIT_LIST_HEAD(&fbo->base.lru);
+	fbo->base.moving = NULL;
 	drm_vma_node_reset(&fbo->base.base.vma_node);
 
 	kref_init(&fbo->base.kref);
@@ -243,23 +246,6 @@ static int ttm_buffer_object_transfer(struct ttm_buffer_object *bo,
 	fbo->base.base.dev = NULL;
 	ret = dma_resv_trylock(&fbo->base.base._resv);
 	WARN_ON(!ret);
-
-	if (fbo->base.resource) {
-		ttm_resource_set_bo(fbo->base.resource, &fbo->base);
-		bo->resource = NULL;
-		ttm_bo_set_bulk_move(&fbo->base, NULL);
-	} else {
-		fbo->base.bulk_move = NULL;
-	}
-
-	ret = dma_resv_reserve_fences(&fbo->base.base._resv, 1);
-	if (ret) {
-		kfree(fbo);
-		return ret;
-	}
-
-	ttm_bo_get(bo);
-	fbo->bo = bo;
 
 	ttm_bo_move_to_lru_tail_unlocked(&fbo->base);
 
@@ -357,9 +343,9 @@ int ttm_bo_kmap(struct ttm_buffer_object *bo,
 
 	map->virtual = NULL;
 	map->bo = bo;
-	if (num_pages > PFN_UP(bo->resource->size))
+	if (num_pages > bo->resource->num_pages)
 		return -EINVAL;
-	if ((start_page + num_pages) > PFN_UP(bo->resource->size))
+	if ((start_page + num_pages) > bo->resource->num_pages)
 		return -EINVAL;
 
 	ret = ttm_mem_io_reserve(bo->bdev, bo->resource);
@@ -400,12 +386,10 @@ void ttm_bo_kunmap(struct ttm_bo_kmap_obj *map)
 }
 EXPORT_SYMBOL(ttm_bo_kunmap);
 
-int ttm_bo_vmap(struct ttm_buffer_object *bo, struct iosys_map *map)
+int ttm_bo_vmap(struct ttm_buffer_object *bo, struct dma_buf_map *map)
 {
 	struct ttm_resource *mem = bo->resource;
 	int ret;
-
-	dma_resv_assert_held(bo->base.resv);
 
 	ret = ttm_mem_io_reserve(bo->bdev, mem);
 	if (ret)
@@ -430,7 +414,7 @@ int ttm_bo_vmap(struct ttm_buffer_object *bo, struct iosys_map *map)
 		if (!vaddr_iomem)
 			return -ENOMEM;
 
-		iosys_map_set_vaddr_iomem(map, vaddr_iomem);
+		dma_buf_map_set_vaddr_iomem(map, vaddr_iomem);
 
 	} else {
 		struct ttm_operation_ctx ctx = {
@@ -454,27 +438,25 @@ int ttm_bo_vmap(struct ttm_buffer_object *bo, struct iosys_map *map)
 		if (!vaddr)
 			return -ENOMEM;
 
-		iosys_map_set_vaddr(map, vaddr);
+		dma_buf_map_set_vaddr(map, vaddr);
 	}
 
 	return 0;
 }
 EXPORT_SYMBOL(ttm_bo_vmap);
 
-void ttm_bo_vunmap(struct ttm_buffer_object *bo, struct iosys_map *map)
+void ttm_bo_vunmap(struct ttm_buffer_object *bo, struct dma_buf_map *map)
 {
 	struct ttm_resource *mem = bo->resource;
 
-	dma_resv_assert_held(bo->base.resv);
-
-	if (iosys_map_is_null(map))
+	if (dma_buf_map_is_null(map))
 		return;
 
 	if (!map->is_iomem)
 		vunmap(map->vaddr);
 	else if (!mem->bus.addr)
 		iounmap(map->vaddr_iomem);
-	iosys_map_clear(map);
+	dma_buf_map_clear(map);
 
 	ttm_mem_io_free(bo->bdev, bo->resource);
 }
@@ -509,12 +491,14 @@ static int ttm_bo_move_to_ghost(struct ttm_buffer_object *bo,
 	 * operation has completed.
 	 */
 
+	dma_fence_put(bo->moving);
+	bo->moving = dma_fence_get(fence);
+
 	ret = ttm_buffer_object_transfer(bo, &ghost_obj);
 	if (ret)
 		return ret;
 
-	dma_resv_add_fence(&ghost_obj->base._resv, fence,
-			   DMA_RESV_USAGE_KERNEL);
+	dma_resv_add_excl_fence(&ghost_obj->base._resv, fence);
 
 	/**
 	 * If we're not moving to fixed memory, the TTM object
@@ -526,6 +510,7 @@ static int ttm_bo_move_to_ghost(struct ttm_buffer_object *bo,
 		ghost_obj->ttm = NULL;
 	else
 		bo->ttm = NULL;
+	bo->resource = NULL;
 
 	dma_resv_unlock(&ghost_obj->base._resv);
 	ttm_bo_put(ghost_obj);
@@ -552,6 +537,9 @@ static void ttm_bo_move_pipeline_evict(struct ttm_buffer_object *bo,
 	spin_unlock(&from->move_lock);
 
 	ttm_resource_free(bo, &bo->resource);
+
+	dma_fence_put(bo->moving);
+	bo->moving = dma_fence_get(fence);
 }
 
 int ttm_bo_move_accel_cleanup(struct ttm_buffer_object *bo,
@@ -565,7 +553,7 @@ int ttm_bo_move_accel_cleanup(struct ttm_buffer_object *bo,
 	struct ttm_resource_manager *man = ttm_manager_type(bdev, new_mem->mem_type);
 	int ret = 0;
 
-	dma_resv_add_fence(bo->base.resv, fence, DMA_RESV_USAGE_KERNEL);
+	dma_resv_add_excl_fence(bo->base.resv, fence);
 	if (!evict)
 		ret = ttm_bo_move_to_ghost(bo, fence, man->use_tt);
 	else if (!from->use_tt && pipeline)
@@ -581,21 +569,6 @@ int ttm_bo_move_accel_cleanup(struct ttm_buffer_object *bo,
 	return 0;
 }
 EXPORT_SYMBOL(ttm_bo_move_accel_cleanup);
-
-void ttm_bo_move_sync_cleanup(struct ttm_buffer_object *bo,
-			      struct ttm_resource *new_mem)
-{
-	struct ttm_device *bdev = bo->bdev;
-	struct ttm_resource_manager *man = ttm_manager_type(bdev, new_mem->mem_type);
-	int ret;
-
-	ret = ttm_bo_wait_free_node(bo, man->use_tt);
-	if (WARN_ON(ret))
-		return;
-
-	ttm_bo_assign_mem(bo, new_mem);
-}
-EXPORT_SYMBOL(ttm_bo_move_sync_cleanup);
 
 /**
  * ttm_bo_pipeline_gutting - purge the contents of a bo
@@ -665,6 +638,7 @@ int ttm_bo_pipeline_gutting(struct ttm_buffer_object *bo)
 	dma_resv_unlock(&ghost->base._resv);
 	ttm_bo_put(ghost);
 	bo->ttm = ttm;
+	bo->resource = NULL;
 	ttm_bo_assign_mem(bo, sys_res);
 	return 0;
 

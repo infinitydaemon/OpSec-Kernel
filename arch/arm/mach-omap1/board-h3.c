@@ -29,8 +29,6 @@
 #include <linux/smc91x.h>
 #include <linux/omapfb.h>
 #include <linux/platform_data/gpio-omap.h>
-#include <linux/platform_data/keypad-omap.h>
-#include <linux/omap-dma.h>
 #include <linux/leds.h>
 
 #include <asm/setup.h>
@@ -39,12 +37,16 @@
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 
-#include "tc.h"
-#include "mux.h"
+#include <mach/mux.h>
+#include <mach/tc.h>
+#include <linux/platform_data/keypad-omap.h>
+#include <linux/omap-dma.h>
 #include "flash.h"
-#include "hardware.h"
-#include "irqs.h"
-#include "usb.h"
+
+#include <mach/hardware.h>
+#include <mach/irqs.h>
+#include <mach/usb.h>
+
 #include "common.h"
 #include "board-h3.h"
 

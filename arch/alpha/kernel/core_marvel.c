@@ -803,7 +803,7 @@ void __iomem *marvel_ioportmap (unsigned long addr)
 	return (void __iomem *)addr;
 }
 
-u8
+unsigned int
 marvel_ioread8(const void __iomem *xaddr)
 {
 	unsigned long addr = (unsigned long) xaddr;

@@ -174,6 +174,11 @@ void smp_call_function_interrupt(void)
 	irq_exit();
 }
 
+int setup_profiling_timer(unsigned int multiplier)
+{
+	return -EINVAL;
+}
+
 void __init smp_prepare_cpus(unsigned int max_cpus)
 {
 	int i, cpuid, extra;

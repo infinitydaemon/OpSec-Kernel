@@ -26,10 +26,14 @@ DECLARE_EVENT_CLASS(hfi1_trace_template,
 		    TP_PROTO(const char *function, struct va_format *vaf),
 		    TP_ARGS(function, vaf),
 		    TP_STRUCT__entry(__string(function, function)
-				     __vstring(msg, vaf->fmt, vaf->va)
+				     __dynamic_array(char, msg, MAX_MSG_LEN)
 				     ),
 		    TP_fast_assign(__assign_str(function, function);
-				   __assign_vstr(msg, vaf->fmt, vaf->va);
+				   WARN_ON_ONCE(vsnprintf
+						(__get_dynamic_array(msg),
+						 MAX_MSG_LEN, vaf->fmt,
+						 *vaf->va) >=
+						MAX_MSG_LEN);
 				   ),
 		    TP_printk("(%s) %s",
 			      __get_str(function),

@@ -151,7 +151,7 @@ struct skl_dfw_algo_data {
 	__u32 rsvd:30;
 	__u32 param_id;
 	__u32 max;
-	char params[];
+	char params[0];
 } __packed;
 
 enum skl_tkn_dir {

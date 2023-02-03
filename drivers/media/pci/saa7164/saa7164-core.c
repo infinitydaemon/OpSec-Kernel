@@ -352,7 +352,7 @@ static void saa7164_work_enchandler(struct work_struct *w)
 		container_of(w, struct saa7164_port, workenc);
 	struct saa7164_dev *dev = port->dev;
 
-	u32 wp, mcb, rp;
+	u32 wp, mcb, rp, cnt = 0;
 
 	port->last_svc_msecs_diff = port->last_svc_msecs;
 	port->last_svc_msecs = jiffies_to_msecs(jiffies);
@@ -405,6 +405,7 @@ static void saa7164_work_enchandler(struct work_struct *w)
 
 		saa7164_work_enchandler_helper(port, rp);
 		port->last_svc_rp = rp;
+		cnt++;
 
 		if (rp == mcb)
 			break;
@@ -428,7 +429,7 @@ static void saa7164_work_vbihandler(struct work_struct *w)
 		container_of(w, struct saa7164_port, workenc);
 	struct saa7164_dev *dev = port->dev;
 
-	u32 wp, mcb, rp;
+	u32 wp, mcb, rp, cnt = 0;
 
 	port->last_svc_msecs_diff = port->last_svc_msecs;
 	port->last_svc_msecs = jiffies_to_msecs(jiffies);
@@ -480,6 +481,7 @@ static void saa7164_work_vbihandler(struct work_struct *w)
 
 		saa7164_work_enchandler_helper(port, rp);
 		port->last_svc_rp = rp;
+		cnt++;
 
 		if (rp == mcb)
 			break;
@@ -624,7 +626,7 @@ static irqreturn_t saa7164_irq(int irq, void *dev_id)
 	portf = &dev->ports[SAA7164_PORT_VBI2];
 
 	/* Check that the hardware is accessible. If the status bytes are
-	 * 0xFF then the device is not accessible, the IRQ belongs
+	 * 0xFF then the device is not accessible, the the IRQ belongs
 	 * to another driver.
 	 * 4 x u32 interrupt registers.
 	 */

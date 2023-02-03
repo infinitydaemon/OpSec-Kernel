@@ -6,9 +6,9 @@
  */
 
 #include <linux/slab.h>
-#include <linux/module.h>
 
 #include <drm/drm_damage_helper.h>
+#include <drm/drm_fb_helper.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem.h>
@@ -16,8 +16,6 @@
 #include <drm/drm_modeset_helper.h>
 
 #include "drm_internal.h"
-
-MODULE_IMPORT_NS(DMA_BUF);
 
 #define AFBC_HEADER_SIZE		16
 #define AFBC_TH_LAYOUT_ALIGNMENT	8
@@ -52,11 +50,7 @@ MODULE_IMPORT_NS(DMA_BUF);
 struct drm_gem_object *drm_gem_fb_get_obj(struct drm_framebuffer *fb,
 					  unsigned int plane)
 {
-	struct drm_device *dev = fb->dev;
-
-	if (drm_WARN_ON_ONCE(dev, plane >= ARRAY_SIZE(fb->obj)))
-		return NULL;
-	else if (drm_WARN_ON_ONCE(dev, !fb->obj[plane]))
+	if (plane >= ARRAY_SIZE(fb->obj))
 		return NULL;
 
 	return fb->obj[plane];
@@ -95,9 +89,9 @@ drm_gem_fb_init(struct drm_device *dev,
  */
 void drm_gem_fb_destroy(struct drm_framebuffer *fb)
 {
-	unsigned int i;
+	size_t i;
 
-	for (i = 0; i < fb->format->num_planes; i++)
+	for (i = 0; i < ARRAY_SIZE(fb->obj); i++)
 		drm_gem_object_put(fb->obj[i]);
 
 	drm_framebuffer_cleanup(fb);
@@ -324,7 +318,7 @@ EXPORT_SYMBOL_GPL(drm_gem_fb_create_with_dirty);
  * @data: returns the data address for each BO, can be NULL
  *
  * This function maps all buffer objects of the given framebuffer into
- * kernel address space and stores them in struct iosys_map. If the
+ * kernel address space and stores them in struct dma_buf_map. If the
  * mapping operation fails for one of the BOs, the function unmaps the
  * already established mappings automatically.
  *
@@ -332,38 +326,36 @@ EXPORT_SYMBOL_GPL(drm_gem_fb_create_with_dirty);
  * The argument returns the addresses of the data stored in each BO. This
  * is different from @map if the framebuffer's offsets field is non-zero.
  *
- * Both, @map and @data, must each refer to arrays with at least
- * fb->format->num_planes elements.
- *
  * See drm_gem_fb_vunmap() for unmapping.
  *
  * Returns:
  * 0 on success, or a negative errno code otherwise.
  */
-int drm_gem_fb_vmap(struct drm_framebuffer *fb, struct iosys_map *map,
-		    struct iosys_map *data)
+int drm_gem_fb_vmap(struct drm_framebuffer *fb,
+		    struct dma_buf_map map[static DRM_FORMAT_MAX_PLANES],
+		    struct dma_buf_map data[DRM_FORMAT_MAX_PLANES])
 {
 	struct drm_gem_object *obj;
 	unsigned int i;
 	int ret;
 
-	for (i = 0; i < fb->format->num_planes; ++i) {
+	for (i = 0; i < DRM_FORMAT_MAX_PLANES; ++i) {
 		obj = drm_gem_fb_get_obj(fb, i);
 		if (!obj) {
-			ret = -EINVAL;
-			goto err_drm_gem_vunmap;
+			dma_buf_map_clear(&map[i]);
+			continue;
 		}
-		ret = drm_gem_vmap_unlocked(obj, &map[i]);
+		ret = drm_gem_vmap(obj, &map[i]);
 		if (ret)
 			goto err_drm_gem_vunmap;
 	}
 
 	if (data) {
-		for (i = 0; i < fb->format->num_planes; ++i) {
+		for (i = 0; i < DRM_FORMAT_MAX_PLANES; ++i) {
 			memcpy(&data[i], &map[i], sizeof(data[i]));
-			if (iosys_map_is_null(&data[i]))
+			if (dma_buf_map_is_null(&data[i]))
 				continue;
-			iosys_map_incr(&data[i], fb->offsets[i]);
+			dma_buf_map_incr(&data[i], fb->offsets[i]);
 		}
 	}
 
@@ -375,7 +367,7 @@ err_drm_gem_vunmap:
 		obj = drm_gem_fb_get_obj(fb, i);
 		if (!obj)
 			continue;
-		drm_gem_vunmap_unlocked(obj, &map[i]);
+		drm_gem_vunmap(obj, &map[i]);
 	}
 	return ret;
 }
@@ -390,9 +382,10 @@ EXPORT_SYMBOL(drm_gem_fb_vmap);
  *
  * See drm_gem_fb_vmap() for more information.
  */
-void drm_gem_fb_vunmap(struct drm_framebuffer *fb, struct iosys_map *map)
+void drm_gem_fb_vunmap(struct drm_framebuffer *fb,
+		       struct dma_buf_map map[static DRM_FORMAT_MAX_PLANES])
 {
-	unsigned int i = fb->format->num_planes;
+	unsigned int i = DRM_FORMAT_MAX_PLANES;
 	struct drm_gem_object *obj;
 
 	while (i) {
@@ -400,34 +393,12 @@ void drm_gem_fb_vunmap(struct drm_framebuffer *fb, struct iosys_map *map)
 		obj = drm_gem_fb_get_obj(fb, i);
 		if (!obj)
 			continue;
-		if (iosys_map_is_null(&map[i]))
+		if (dma_buf_map_is_null(&map[i]))
 			continue;
-		drm_gem_vunmap_unlocked(obj, &map[i]);
+		drm_gem_vunmap(obj, &map[i]);
 	}
 }
 EXPORT_SYMBOL(drm_gem_fb_vunmap);
-
-static void __drm_gem_fb_end_cpu_access(struct drm_framebuffer *fb, enum dma_data_direction dir,
-					unsigned int num_planes)
-{
-	struct dma_buf_attachment *import_attach;
-	struct drm_gem_object *obj;
-	int ret;
-
-	while (num_planes) {
-		--num_planes;
-		obj = drm_gem_fb_get_obj(fb, num_planes);
-		if (!obj)
-			continue;
-		import_attach = obj->import_attach;
-		if (!import_attach)
-			continue;
-		ret = dma_buf_end_cpu_access(import_attach->dmabuf, dir);
-		if (ret)
-			drm_err(fb->dev, "dma_buf_end_cpu_access(%u, %d) failed: %d\n",
-				ret, num_planes, dir);
-	}
-}
 
 /**
  * drm_gem_fb_begin_cpu_access - prepares GEM buffer objects for CPU access
@@ -447,27 +418,40 @@ int drm_gem_fb_begin_cpu_access(struct drm_framebuffer *fb, enum dma_data_direct
 {
 	struct dma_buf_attachment *import_attach;
 	struct drm_gem_object *obj;
-	unsigned int i;
-	int ret;
+	size_t i;
+	int ret, ret2;
 
-	for (i = 0; i < fb->format->num_planes; ++i) {
+	for (i = 0; i < ARRAY_SIZE(fb->obj); ++i) {
 		obj = drm_gem_fb_get_obj(fb, i);
-		if (!obj) {
-			ret = -EINVAL;
-			goto err___drm_gem_fb_end_cpu_access;
-		}
+		if (!obj)
+			continue;
 		import_attach = obj->import_attach;
 		if (!import_attach)
 			continue;
 		ret = dma_buf_begin_cpu_access(import_attach->dmabuf, dir);
 		if (ret)
-			goto err___drm_gem_fb_end_cpu_access;
+			goto err_dma_buf_end_cpu_access;
 	}
 
 	return 0;
 
-err___drm_gem_fb_end_cpu_access:
-	__drm_gem_fb_end_cpu_access(fb, dir, i);
+err_dma_buf_end_cpu_access:
+	while (i) {
+		--i;
+		obj = drm_gem_fb_get_obj(fb, i);
+		if (!obj)
+			continue;
+		import_attach = obj->import_attach;
+		if (!import_attach)
+			continue;
+		ret2 = dma_buf_end_cpu_access(import_attach->dmabuf, dir);
+		if (ret2) {
+			drm_err(fb->dev,
+				"dma_buf_end_cpu_access() failed during error handling: %d\n",
+				ret2);
+		}
+	}
+
 	return ret;
 }
 EXPORT_SYMBOL(drm_gem_fb_begin_cpu_access);
@@ -485,12 +469,26 @@ EXPORT_SYMBOL(drm_gem_fb_begin_cpu_access);
  */
 void drm_gem_fb_end_cpu_access(struct drm_framebuffer *fb, enum dma_data_direction dir)
 {
-	__drm_gem_fb_end_cpu_access(fb, dir, fb->format->num_planes);
+	size_t i = ARRAY_SIZE(fb->obj);
+	struct dma_buf_attachment *import_attach;
+	struct drm_gem_object *obj;
+	int ret;
+
+	while (i) {
+		--i;
+		obj = drm_gem_fb_get_obj(fb, i);
+		if (!obj)
+			continue;
+		import_attach = obj->import_attach;
+		if (!import_attach)
+			continue;
+		ret = dma_buf_end_cpu_access(import_attach->dmabuf, dir);
+		if (ret)
+			drm_err(fb->dev, "dma_buf_end_cpu_access() failed: %d\n", ret);
+	}
 }
 EXPORT_SYMBOL(drm_gem_fb_end_cpu_access);
 
-// TODO Drop this function and replace by drm_format_info_bpp() once all
-// DRM_FORMAT_* provide proper block info in drivers/gpu/drm/drm_fourcc.c
 static __u32 drm_gem_afbc_get_bpp(struct drm_device *dev,
 				  const struct drm_mode_fb_cmd2 *mode_cmd)
 {
@@ -498,6 +496,11 @@ static __u32 drm_gem_afbc_get_bpp(struct drm_device *dev,
 
 	info = drm_get_format_info(dev, mode_cmd);
 
+	/* use whatever a driver has set */
+	if (info->cpp[0])
+		return info->cpp[0] * 8;
+
+	/* guess otherwise */
 	switch (info->format) {
 	case DRM_FORMAT_YUV420_8BIT:
 		return 12;
@@ -506,8 +509,11 @@ static __u32 drm_gem_afbc_get_bpp(struct drm_device *dev,
 	case DRM_FORMAT_VUY101010:
 		return 30;
 	default:
-		return drm_format_info_bpp(info, 0);
+		break;
 	}
+
+	/* all attempts failed */
+	return 0;
 }
 
 static int drm_gem_afbc_min_size(struct drm_device *dev,

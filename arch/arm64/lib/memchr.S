@@ -38,7 +38,7 @@
 
 	.p2align 4
 	nop
-SYM_FUNC_START(__pi_memchr)
+SYM_FUNC_START_WEAK_PI(memchr)
 	and	chrin, chrin, #0xff
 	lsr	wordcnt, cntin, #3
 	cbz	wordcnt, L(byte_loop)
@@ -71,6 +71,5 @@ CPU_LE(	rev	tmp, tmp)
 L(not_found):
 	mov	result, #0
 	ret
-SYM_FUNC_END(__pi_memchr)
-SYM_FUNC_ALIAS_WEAK(memchr, __pi_memchr)
+SYM_FUNC_END_PI(memchr)
 EXPORT_SYMBOL_NOKASAN(memchr)

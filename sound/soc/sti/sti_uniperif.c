@@ -376,8 +376,7 @@ static const struct snd_soc_dai_driver sti_uniperiph_dai_template = {
 static const struct snd_soc_component_driver sti_uniperiph_dai_component = {
 	.name = "sti_cpu_dai",
 	.suspend = sti_uniperiph_suspend,
-	.resume = sti_uniperiph_resume,
-	.legacy_dai_naming = 1,
+	.resume = sti_uniperiph_resume
 };
 
 static int sti_uniperiph_cpu_dai_of(struct device_node *node,

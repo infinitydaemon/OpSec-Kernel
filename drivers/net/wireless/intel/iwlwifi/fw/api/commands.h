@@ -2,7 +2,7 @@
 /*
  * Copyright (C) 2013-2015 Intel Mobile Communications GmbH
  * Copyright (C) 2016-2017 Intel Deutschland GmbH
- * Copyright (C) 2018-2022 Intel Corporation
+ * Copyright (C) 2018-2020 Intel Corporation
  */
 #ifndef __iwl_fw_api_commands_h__
 #define __iwl_fw_api_commands_h__
@@ -20,8 +20,6 @@
  *	&enum iwl_phy_ops_subcmd_ids
  * @DATA_PATH_GROUP: data path group, uses command IDs from
  *	&enum iwl_data_path_subcmd_ids
- * @SCAN_GROUP: scan group, uses command IDs from
- *	&enum iwl_scan_subcmd_ids
  * @NAN_GROUP: NAN group, uses command IDs from &enum iwl_nan_subcmd_ids
  * @LOCATION_GROUP: location group, uses command IDs from
  *	&enum iwl_location_subcmd_ids
@@ -38,7 +36,6 @@ enum iwl_mvm_command_groups {
 	MAC_CONF_GROUP = 0x3,
 	PHY_OPS_GROUP = 0x4,
 	DATA_PATH_GROUP = 0x5,
-	SCAN_GROUP = 0x6,
 	NAN_GROUP = 0x7,
 	LOCATION_GROUP = 0x8,
 	PROT_OFFLOAD_GROUP = 0xb,
@@ -54,7 +51,7 @@ enum iwl_legacy_cmds {
 	 * @UCODE_ALIVE_NTFY:
 	 * Alive data from the firmware, as described in
 	 * &struct iwl_alive_ntf_v3 or &struct iwl_alive_ntf_v4 or
-	 * &struct iwl_alive_ntf_v5 or &struct iwl_alive_ntf_v6.
+	 * &struct iwl_alive_ntf_v5.
 	 */
 	UCODE_ALIVE_NTFY = 0x1,
 
@@ -75,8 +72,7 @@ enum iwl_legacy_cmds {
 
 	/**
 	 * @PHY_CONTEXT_CMD:
-	 * Add/modify/remove a PHY context, using &struct iwl_phy_context_cmd
-	 *	or &struct iwl_phy_context_cmd_v1.
+	 * Add/modify/remove a PHY context, using &struct iwl_phy_context_cmd.
 	 */
 	PHY_CONTEXT_CMD = 0x8,
 
@@ -94,8 +90,7 @@ enum iwl_legacy_cmds {
 
 	/**
 	 * @SCAN_CFG_CMD:
-	 * uses &struct iwl_scan_config_v1, &struct iwl_scan_config_v2
-	 * or &struct iwl_scan_config
+	 * uses &struct iwl_scan_config_v1 or &struct iwl_scan_config
 	 */
 	SCAN_CFG_CMD = 0xc,
 
@@ -326,6 +321,14 @@ enum iwl_legacy_cmds {
 	REPLY_THERMAL_MNG_BACKOFF = 0x7e,
 
 	/**
+	 * @DC2DC_CONFIG_CMD:
+	 * Set/Get DC2DC frequency tune
+	 * Command is &struct iwl_dc2dc_config_cmd,
+	 * response is &struct iwl_dc2dc_config_resp
+	 */
+	DC2DC_CONFIG_CMD = 0x83,
+
+	/**
 	 * @NVM_ACCESS_CMD: using &struct iwl_nvm_access_cmd
 	 */
 	NVM_ACCESS_CMD = 0x88,
@@ -353,7 +356,7 @@ enum iwl_legacy_cmds {
 	 * &struct iwl_notif_statistics_v11,
 	 * &struct iwl_notif_statistics_v10,
 	 * &struct iwl_notif_statistics,
-	 * &struct iwl_statistics_operational_ntfy_ver_14
+	 * &struct iwl_statistics_operational_ntfy
 	 */
 	STATISTICS_CMD = 0x9c,
 
@@ -362,7 +365,6 @@ enum iwl_legacy_cmds {
 	 * one of &struct iwl_notif_statistics_v10,
 	 * &struct iwl_notif_statistics_v11,
 	 * &struct iwl_notif_statistic,
-	 * &struct iwl_statistics_operational_ntfy_ver_14
 	 * &struct iwl_statistics_operational_ntfy
 	 */
 	STATISTICS_NOTIFICATION = 0x9d,
@@ -379,6 +381,13 @@ enum iwl_legacy_cmds {
 	 * &struct iwl_dev_tx_power_cmd
 	 */
 	REDUCE_TX_POWER_CMD = 0x9f,
+
+	/**
+	 * @CARD_STATE_NOTIFICATION:
+	 * Card state (RF/CT kill) notification,
+	 * uses &struct iwl_card_state_notif
+	 */
+	CARD_STATE_NOTIFICATION = 0xa1,
 
 	/**
 	 * @MISSED_BEACONS_NOTIFICATION: &struct iwl_missed_beacons_notif
@@ -497,6 +506,11 @@ enum iwl_legacy_cmds {
 	DEBUG_LOG_MSG = 0xf7,
 
 	/**
+	 * @BCAST_FILTER_CMD: &struct iwl_bcast_filter_cmd
+	 */
+	BCAST_FILTER_CMD = 0xcf,
+
+	/**
 	 * @MCAST_FILTER_CMD: &struct iwl_mcast_filter_cmd
 	 */
 	MCAST_FILTER_CMD = 0xd0,
@@ -598,16 +612,6 @@ enum iwl_system_subcmd_ids {
 	 * @RFI_GET_FREQ_TABLE_CMD: &struct iwl_rfi_config_cmd
 	 */
 	RFI_GET_FREQ_TABLE_CMD = 0xc,
-
-	/**
-	 * @SYSTEM_FEATURES_CONTROL_CMD: &struct iwl_system_features_control_cmd
-	 */
-	SYSTEM_FEATURES_CONTROL_CMD = 0xd,
-
-	/**
-	 * @RFI_DEACTIVATE_NOTIF: &struct iwl_rfi_deactivate_notif
-	 */
-	RFI_DEACTIVATE_NOTIF = 0xff,
 };
 
 #endif /* __iwl_fw_api_commands_h__ */

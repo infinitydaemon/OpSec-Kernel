@@ -329,22 +329,22 @@ static int emc1403_detect(struct i2c_client *client,
 	id = i2c_smbus_read_byte_data(client, THERMAL_PID_REG);
 	switch (id) {
 	case 0x20:
-		strscpy(info->type, "emc1402", I2C_NAME_SIZE);
+		strlcpy(info->type, "emc1402", I2C_NAME_SIZE);
 		break;
 	case 0x21:
-		strscpy(info->type, "emc1403", I2C_NAME_SIZE);
+		strlcpy(info->type, "emc1403", I2C_NAME_SIZE);
 		break;
 	case 0x22:
-		strscpy(info->type, "emc1422", I2C_NAME_SIZE);
+		strlcpy(info->type, "emc1422", I2C_NAME_SIZE);
 		break;
 	case 0x23:
-		strscpy(info->type, "emc1423", I2C_NAME_SIZE);
+		strlcpy(info->type, "emc1423", I2C_NAME_SIZE);
 		break;
 	case 0x25:
-		strscpy(info->type, "emc1404", I2C_NAME_SIZE);
+		strlcpy(info->type, "emc1404", I2C_NAME_SIZE);
 		break;
 	case 0x27:
-		strscpy(info->type, "emc1424", I2C_NAME_SIZE);
+		strlcpy(info->type, "emc1424", I2C_NAME_SIZE);
 		break;
 	default:
 		return -ENODEV;

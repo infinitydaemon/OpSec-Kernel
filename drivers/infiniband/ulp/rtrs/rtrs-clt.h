@@ -126,7 +126,7 @@ struct rtrs_rbuf {
 
 struct rtrs_clt_path {
 	struct rtrs_path	s;
-	struct rtrs_clt_sess	*clt;
+	struct rtrs_clt	*clt;
 	wait_queue_head_t	state_wq;
 	enum rtrs_clt_state	state;
 	atomic_t		connected_cnt;
@@ -134,7 +134,6 @@ struct rtrs_clt_path {
 	struct rtrs_clt_io_req	*reqs;
 	struct delayed_work	reconnect_dwork;
 	struct work_struct	close_work;
-	struct work_struct	err_recovery_work;
 	unsigned int		reconnect_attempts;
 	bool			established;
 	struct rtrs_rbuf	*rbufs;
@@ -154,7 +153,7 @@ struct rtrs_clt_path {
 				*mp_skip_entry;
 };
 
-struct rtrs_clt_sess {
+struct rtrs_clt {
 	struct list_head	paths_list; /* rcu protected list */
 	size_t			paths_num;
 	struct rtrs_clt_path
@@ -192,26 +191,25 @@ static inline struct rtrs_clt_path *to_clt_path(struct rtrs_path *s)
 	return container_of(s, struct rtrs_clt_path, s);
 }
 
-static inline int permit_size(struct rtrs_clt_sess *clt)
+static inline int permit_size(struct rtrs_clt *clt)
 {
 	return sizeof(struct rtrs_permit) + clt->pdu_sz;
 }
 
-static inline struct rtrs_permit *get_permit(struct rtrs_clt_sess *clt,
-					     int idx)
+static inline struct rtrs_permit *get_permit(struct rtrs_clt *clt, int idx)
 {
 	return (struct rtrs_permit *)(clt->permits + permit_size(clt) * idx);
 }
 
 int rtrs_clt_reconnect_from_sysfs(struct rtrs_clt_path *path);
 void rtrs_clt_close_conns(struct rtrs_clt_path *clt_path, bool wait);
-int rtrs_clt_create_path_from_sysfs(struct rtrs_clt_sess *clt,
+int rtrs_clt_create_path_from_sysfs(struct rtrs_clt *clt,
 				     struct rtrs_addr *addr);
 int rtrs_clt_remove_path_from_sysfs(struct rtrs_clt_path *path,
 				     const struct attribute *sysfs_self);
 
-void rtrs_clt_set_max_reconnect_attempts(struct rtrs_clt_sess *clt, int value);
-int rtrs_clt_get_max_reconnect_attempts(const struct rtrs_clt_sess *clt);
+void rtrs_clt_set_max_reconnect_attempts(struct rtrs_clt *clt, int value);
+int rtrs_clt_get_max_reconnect_attempts(const struct rtrs_clt *clt);
 void free_path(struct rtrs_clt_path *clt_path);
 
 /* rtrs-clt-stats.c */
@@ -226,23 +224,24 @@ void rtrs_clt_update_all_stats(struct rtrs_clt_io_req *req, int dir);
 int rtrs_clt_reset_rdma_lat_distr_stats(struct rtrs_clt_stats *stats,
 					 bool enable);
 ssize_t rtrs_clt_stats_rdma_lat_distr_to_str(struct rtrs_clt_stats *stats,
-					      char *page);
+					      char *page, size_t len);
 int rtrs_clt_reset_cpu_migr_stats(struct rtrs_clt_stats *stats, bool enable);
-int rtrs_clt_stats_migration_from_cnt_to_str(struct rtrs_clt_stats *stats, char *buf);
-int rtrs_clt_stats_migration_to_cnt_to_str(struct rtrs_clt_stats *stats, char *buf);
+int rtrs_clt_stats_migration_cnt_to_str(struct rtrs_clt_stats *stats, char *buf,
+					 size_t len);
 int rtrs_clt_reset_reconnects_stat(struct rtrs_clt_stats *stats, bool enable);
-int rtrs_clt_stats_reconnects_to_str(struct rtrs_clt_stats *stats, char *buf);
+int rtrs_clt_stats_reconnects_to_str(struct rtrs_clt_stats *stats, char *buf,
+				     size_t len);
 int rtrs_clt_reset_rdma_stats(struct rtrs_clt_stats *stats, bool enable);
 ssize_t rtrs_clt_stats_rdma_to_str(struct rtrs_clt_stats *stats,
-				    char *page);
+				    char *page, size_t len);
 int rtrs_clt_reset_all_stats(struct rtrs_clt_stats *stats, bool enable);
 ssize_t rtrs_clt_reset_all_help(struct rtrs_clt_stats *stats,
-				 char *page);
+				 char *page, size_t len);
 
 /* rtrs-clt-sysfs.c */
 
-int rtrs_clt_create_sysfs_root_files(struct rtrs_clt_sess *clt);
-void rtrs_clt_destroy_sysfs_root(struct rtrs_clt_sess *clt);
+int rtrs_clt_create_sysfs_root_files(struct rtrs_clt *clt);
+void rtrs_clt_destroy_sysfs_root(struct rtrs_clt *clt);
 
 int rtrs_clt_create_path_files(struct rtrs_clt_path *clt_path);
 void rtrs_clt_destroy_path_files(struct rtrs_clt_path *clt_path,

@@ -82,7 +82,7 @@ static const struct ena_stats ena_stats_rx_strings[] = {
 	ENA_STAT_RX_ENTRY(rx_copybreak_pkt),
 	ENA_STAT_RX_ENTRY(csum_good),
 	ENA_STAT_RX_ENTRY(refil_partial),
-	ENA_STAT_RX_ENTRY(csum_bad),
+	ENA_STAT_RX_ENTRY(bad_csum),
 	ENA_STAT_RX_ENTRY(page_alloc_fail),
 	ENA_STAT_RX_ENTRY(skb_alloc_fail),
 	ENA_STAT_RX_ENTRY(dma_mapping_err),
@@ -110,7 +110,8 @@ static const struct ena_stats ena_stats_ena_com_strings[] = {
 #define ENA_STATS_ARRAY_TX		ARRAY_SIZE(ena_stats_tx_strings)
 #define ENA_STATS_ARRAY_RX		ARRAY_SIZE(ena_stats_rx_strings)
 #define ENA_STATS_ARRAY_ENA_COM		ARRAY_SIZE(ena_stats_ena_com_strings)
-#define ENA_STATS_ARRAY_ENI(adapter)	ARRAY_SIZE(ena_stats_eni_strings)
+#define ENA_STATS_ARRAY_ENI(adapter)	\
+	(ARRAY_SIZE(ena_stats_eni_strings) * (adapter)->eni_stats_supported)
 
 static void ena_safe_update_stat(u64 *src, u64 *dst,
 				 struct u64_stats_sync *syncp)
@@ -118,9 +119,9 @@ static void ena_safe_update_stat(u64 *src, u64 *dst,
 	unsigned int start;
 
 	do {
-		start = u64_stats_fetch_begin(syncp);
+		start = u64_stats_fetch_begin_irq(syncp);
 		*(dst) = *src;
-	} while (u64_stats_fetch_retry(syncp, start));
+	} while (u64_stats_fetch_retry_irq(syncp, start));
 }
 
 static void ena_queue_stats(struct ena_adapter *adapter, u64 **data)
@@ -212,9 +213,8 @@ static void ena_get_ethtool_stats(struct net_device *netdev,
 				  u64 *data)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
-	struct ena_com_dev *dev = adapter->ena_dev;
 
-	ena_get_stats(adapter, data, ena_com_get_cap(dev, ENA_ADMIN_ENI_STATS));
+	ena_get_stats(adapter, data, adapter->eni_stats_supported);
 }
 
 static int ena_get_sw_stats_count(struct ena_adapter *adapter)
@@ -226,9 +226,7 @@ static int ena_get_sw_stats_count(struct ena_adapter *adapter)
 
 static int ena_get_hw_stats_count(struct ena_adapter *adapter)
 {
-	bool supported = ena_com_get_cap(adapter->ena_dev, ENA_ADMIN_ENI_STATS);
-
-	return ENA_STATS_ARRAY_ENI(adapter) * supported;
+	return ENA_STATS_ARRAY_ENI(adapter);
 }
 
 int ena_get_sset_count(struct net_device *netdev, int sset)
@@ -318,11 +316,10 @@ static void ena_get_ethtool_strings(struct net_device *netdev,
 				    u8 *data)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
-	struct ena_com_dev *dev = adapter->ena_dev;
 
 	switch (sset) {
 	case ETH_SS_STATS:
-		ena_get_strings(adapter, data, ena_com_get_cap(dev, ENA_ADMIN_ENI_STATS));
+		ena_get_strings(adapter, data, adapter->eni_stats_supported);
 		break;
 	}
 }
@@ -462,15 +459,13 @@ static void ena_get_drvinfo(struct net_device *dev,
 {
 	struct ena_adapter *adapter = netdev_priv(dev);
 
-	strscpy(info->driver, DRV_MODULE_NAME, sizeof(info->driver));
-	strscpy(info->bus_info, pci_name(adapter->pdev),
+	strlcpy(info->driver, DRV_MODULE_NAME, sizeof(info->driver));
+	strlcpy(info->bus_info, pci_name(adapter->pdev),
 		sizeof(info->bus_info));
 }
 
 static void ena_get_ringparam(struct net_device *netdev,
-			      struct ethtool_ringparam *ring,
-			      struct kernel_ethtool_ringparam *kernel_ring,
-			      struct netlink_ext_ack *extack)
+			      struct ethtool_ringparam *ring)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 
@@ -481,9 +476,7 @@ static void ena_get_ringparam(struct net_device *netdev,
 }
 
 static int ena_set_ringparam(struct net_device *netdev,
-			     struct ethtool_ringparam *ring,
-			     struct kernel_ethtool_ringparam *kernel_ring,
-			     struct netlink_ext_ack *extack)
+			     struct ethtool_ringparam *ring)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 	u32 new_tx_size, new_rx_size;

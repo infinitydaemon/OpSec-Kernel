@@ -31,7 +31,8 @@
 
 #include <asm/exception.h>
 
-#include "irqs.h"
+#include <mach/irqs.h>
+
 #include "soc.h"
 #include "i2c.h"
 

@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2022 Broadcom. All Rights Reserved. The term *
+ * Copyright (C) 2017-2021 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.  *
  * Copyright (C) 2004-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -36,6 +36,7 @@
 #include <linux/firmware.h>
 #include <linux/miscdevice.h>
 #include <linux/percpu.h>
+#include <linux/msi.h>
 #include <linux/irq.h>
 #include <linux/bitops.h>
 #include <linux/crash_dump.h>
@@ -67,7 +68,6 @@
 static enum cpuhp_state lpfc_cpuhp_state;
 /* Used when mapping IRQ vectors in a driver centric manner */
 static uint32_t lpfc_present_cpu;
-static bool lpfc_pldv_detect;
 
 static void __lpfc_cpuhp_remove(struct lpfc_hba *phba);
 static void lpfc_cpuhp_remove(struct lpfc_hba *phba);
@@ -94,7 +94,6 @@ static void lpfc_sli4_oas_verify(struct lpfc_hba *phba);
 static uint16_t lpfc_find_cpu_handle(struct lpfc_hba *, uint16_t, int);
 static void lpfc_setup_bg(struct lpfc_hba *, struct Scsi_Host *);
 static int lpfc_sli4_cgn_parm_chg_evt(struct lpfc_hba *);
-static void lpfc_sli4_prep_dev_for_reset(struct lpfc_hba *phba);
 
 static struct scsi_transport_template *lpfc_transport_template = NULL;
 static struct scsi_transport_template *lpfc_vport_transport_template = NULL;
@@ -324,7 +323,8 @@ lpfc_dump_wakeup_param_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmboxq)
 	prog_id_word = pmboxq->u.mb.un.varWords[7];
 
 	/* Decode the Option rom version word to a readable string */
-	dist = dist_char[prg->dist];
+	if (prg->dist < 4)
+		dist = dist_char[prg->dist];
 
 	if ((prg->dist == 3) && (prg->num == 0))
 		snprintf(phba->OptionROMVersion, 32, "%d.%d%d",
@@ -339,6 +339,7 @@ lpfc_dump_wakeup_param_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmboxq)
 
 /**
  * lpfc_update_vport_wwn - Updates the fc_nodename, fc_portname,
+ *	cfg_soft_wwnn, cfg_soft_wwpn
  * @vport: pointer to lpfc vport data structure.
  *
  *
@@ -348,13 +349,22 @@ lpfc_dump_wakeup_param_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmboxq)
 void
 lpfc_update_vport_wwn(struct lpfc_vport *vport)
 {
-	struct lpfc_hba *phba = vport->phba;
+	uint8_t vvvl = vport->fc_sparam.cmn.valid_vendor_ver_level;
+	u32 *fawwpn_key = (u32 *)&vport->fc_sparam.un.vendorVersion[0];
+
+	/* If the soft name exists then update it using the service params */
+	if (vport->phba->cfg_soft_wwnn)
+		u64_to_wwn(vport->phba->cfg_soft_wwnn,
+			   vport->fc_sparam.nodeName.u.wwn);
+	if (vport->phba->cfg_soft_wwpn)
+		u64_to_wwn(vport->phba->cfg_soft_wwpn,
+			   vport->fc_sparam.portName.u.wwn);
 
 	/*
 	 * If the name is empty or there exists a soft name
 	 * then copy the service params name, otherwise use the fc name
 	 */
-	if (vport->fc_nodename.u.wwn[0] == 0)
+	if (vport->fc_nodename.u.wwn[0] == 0 || vport->phba->cfg_soft_wwnn)
 		memcpy(&vport->fc_nodename, &vport->fc_sparam.nodeName,
 			sizeof(struct lpfc_name));
 	else
@@ -367,35 +377,22 @@ lpfc_update_vport_wwn(struct lpfc_vport *vport)
 	 */
 	if (vport->fc_portname.u.wwn[0] != 0 &&
 		memcmp(&vport->fc_portname, &vport->fc_sparam.portName,
-		       sizeof(struct lpfc_name))) {
+			sizeof(struct lpfc_name)))
 		vport->vport_flag |= FAWWPN_PARAM_CHG;
 
-		if (phba->sli_rev == LPFC_SLI_REV4 &&
-		    vport->port_type == LPFC_PHYSICAL_PORT &&
-		    phba->sli4_hba.fawwpn_flag & LPFC_FAWWPN_FABRIC) {
-			if (!(phba->sli4_hba.fawwpn_flag & LPFC_FAWWPN_CONFIG))
-				phba->sli4_hba.fawwpn_flag &=
-						~LPFC_FAWWPN_FABRIC;
-			lpfc_printf_log(phba, KERN_INFO,
-					LOG_SLI | LOG_DISCOVERY | LOG_ELS,
-					"2701 FA-PWWN change WWPN from %llx to "
-					"%llx: vflag x%x fawwpn_flag x%x\n",
-					wwn_to_u64(vport->fc_portname.u.wwn),
-					wwn_to_u64
-					   (vport->fc_sparam.portName.u.wwn),
-					vport->vport_flag,
-					phba->sli4_hba.fawwpn_flag);
-			memcpy(&vport->fc_portname, &vport->fc_sparam.portName,
-			       sizeof(struct lpfc_name));
-		}
-	}
-
-	if (vport->fc_portname.u.wwn[0] == 0)
+	if (vport->fc_portname.u.wwn[0] == 0 ||
+	    vport->phba->cfg_soft_wwpn ||
+	    (vvvl == 1 && cpu_to_be32(*fawwpn_key) == FAPWWN_KEY_VENDOR) ||
+	    vport->vport_flag & FAWWPN_SET) {
 		memcpy(&vport->fc_portname, &vport->fc_sparam.portName,
-		       sizeof(struct lpfc_name));
+			sizeof(struct lpfc_name));
+		vport->vport_flag &= ~FAWWPN_SET;
+		if (vvvl == 1 && cpu_to_be32(*fawwpn_key) == FAPWWN_KEY_VENDOR)
+			vport->vport_flag |= FAWWPN_SET;
+	}
 	else
 		memcpy(&vport->fc_sparam.portName, &vport->fc_portname,
-		       sizeof(struct lpfc_name));
+			sizeof(struct lpfc_name));
 }
 
 /**
@@ -454,16 +451,15 @@ lpfc_config_port_post(struct lpfc_hba *phba)
 				"READ_SPARM mbxStatus x%x\n",
 				mb->mbxCommand, mb->mbxStatus);
 		phba->link_state = LPFC_HBA_ERROR;
-		lpfc_mbox_rsrc_cleanup(phba, pmb, MBOX_THD_UNLOCKED);
+		mp = (struct lpfc_dmabuf *)pmb->ctx_buf;
+		mempool_free(pmb, phba->mbox_mem_pool);
+		lpfc_mbuf_free(phba, mp->virt, mp->phys);
+		kfree(mp);
 		return -EIO;
 	}
 
 	mp = (struct lpfc_dmabuf *)pmb->ctx_buf;
 
-	/* This dmabuf was allocated by lpfc_read_sparam. The dmabuf is no
-	 * longer needed.  Prevent unintended ctx_buf access as the mbox is
-	 * reused.
-	 */
 	memcpy(&vport->fc_sparam, mp->virt, sizeof (struct serv_parm));
 	lpfc_mbuf_free(phba, mp->virt, mp->phys);
 	kfree(mp);
@@ -663,58 +659,6 @@ lpfc_config_port_post(struct lpfc_hba *phba)
 	}
 
 	return 0;
-}
-
-/**
- * lpfc_sli4_refresh_params - update driver copy of params.
- * @phba: Pointer to HBA context object.
- *
- * This is called to refresh driver copy of dynamic fields from the
- * common_get_sli4_parameters descriptor.
- **/
-int
-lpfc_sli4_refresh_params(struct lpfc_hba *phba)
-{
-	LPFC_MBOXQ_t *mboxq;
-	struct lpfc_mqe *mqe;
-	struct lpfc_sli4_parameters *mbx_sli4_parameters;
-	int length, rc;
-
-	mboxq = (LPFC_MBOXQ_t *)mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
-	if (!mboxq)
-		return -ENOMEM;
-
-	mqe = &mboxq->u.mqe;
-	/* Read the port's SLI4 Config Parameters */
-	length = (sizeof(struct lpfc_mbx_get_sli4_parameters) -
-		  sizeof(struct lpfc_sli4_cfg_mhdr));
-	lpfc_sli4_config(phba, mboxq, LPFC_MBOX_SUBSYSTEM_COMMON,
-			 LPFC_MBOX_OPCODE_GET_SLI4_PARAMETERS,
-			 length, LPFC_SLI4_MBX_EMBED);
-
-	rc = lpfc_sli_issue_mbox(phba, mboxq, MBX_POLL);
-	if (unlikely(rc)) {
-		mempool_free(mboxq, phba->mbox_mem_pool);
-		return rc;
-	}
-	mbx_sli4_parameters = &mqe->un.get_sli4_parameters.sli4_parameters;
-	phba->sli4_hba.pc_sli4_params.mi_cap =
-		bf_get(cfg_mi_ver, mbx_sli4_parameters);
-
-	/* Are we forcing MI off via module parameter? */
-	if (phba->cfg_enable_mi)
-		phba->sli4_hba.pc_sli4_params.mi_ver =
-			bf_get(cfg_mi_ver, mbx_sli4_parameters);
-	else
-		phba->sli4_hba.pc_sli4_params.mi_ver = 0;
-
-	phba->sli4_hba.pc_sli4_params.cmf =
-			bf_get(cfg_cmf, mbx_sli4_parameters);
-	phba->sli4_hba.pc_sli4_params.pls =
-			bf_get(cfg_pvl, mbx_sli4_parameters);
-
-	mempool_free(mboxq, phba->mbox_mem_pool);
-	return rc;
 }
 
 /**
@@ -1038,7 +982,7 @@ lpfc_hba_clean_txcmplq(struct lpfc_hba *phba)
 		spin_lock_irq(&pring->ring_lock);
 		list_for_each_entry_safe(piocb, next_iocb,
 					 &pring->txcmplq, list)
-			piocb->cmd_flag &= ~LPFC_IO_ON_TXCMPLQ;
+			piocb->iocb_flag &= ~LPFC_IO_ON_TXCMPLQ;
 		list_splice_init(&pring->txcmplq, &completions);
 		pring->txcmplq_cnt = 0;
 		spin_unlock_irq(&pring->ring_lock);
@@ -1663,7 +1607,7 @@ lpfc_sli4_offline_eratt(struct lpfc_hba *phba)
 {
 	spin_lock_irq(&phba->hbalock);
 	if (phba->link_state == LPFC_HBA_ERROR &&
-		test_bit(HBA_PCI_ERR, &phba->bit_flags)) {
+	    phba->hba_flag & HBA_PCI_ERR) {
 		spin_unlock_irq(&phba->hbalock);
 		return;
 	}
@@ -2006,7 +1950,6 @@ lpfc_handle_eratt_s4(struct lpfc_hba *phba)
 	if (pci_channel_offline(phba->pcidev)) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
 				"3166 pci channel is offline\n");
-		lpfc_sli_flush_io_rings(phba);
 		return;
 	}
 
@@ -2196,6 +2139,7 @@ lpfc_handle_latt(struct lpfc_hba *phba)
 	struct lpfc_sli   *psli = &phba->sli;
 	LPFC_MBOXQ_t *pmb;
 	volatile uint32_t control;
+	struct lpfc_dmabuf *mp;
 	int rc = 0;
 
 	pmb = (LPFC_MBOXQ_t *)mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
@@ -2204,17 +2148,23 @@ lpfc_handle_latt(struct lpfc_hba *phba)
 		goto lpfc_handle_latt_err_exit;
 	}
 
-	rc = lpfc_mbox_rsrc_prep(phba, pmb);
-	if (rc) {
+	mp = kmalloc(sizeof(struct lpfc_dmabuf), GFP_KERNEL);
+	if (!mp) {
 		rc = 2;
-		mempool_free(pmb, phba->mbox_mem_pool);
-		goto lpfc_handle_latt_err_exit;
+		goto lpfc_handle_latt_free_pmb;
+	}
+
+	mp->virt = lpfc_mbuf_alloc(phba, 0, &mp->phys);
+	if (!mp->virt) {
+		rc = 3;
+		goto lpfc_handle_latt_free_mp;
 	}
 
 	/* Cleanup any outstanding ELS commands */
 	lpfc_els_flush_all_cmd(phba);
+
 	psli->slistat.link_event++;
-	lpfc_read_topology(phba, pmb, (struct lpfc_dmabuf *)pmb->ctx_buf);
+	lpfc_read_topology(phba, pmb, mp);
 	pmb->mbox_cmpl = lpfc_mbx_cmpl_read_topology;
 	pmb->vport = vport;
 	/* Block ELS IOCBs until we have processed this mbox command */
@@ -2235,7 +2185,11 @@ lpfc_handle_latt(struct lpfc_hba *phba)
 
 lpfc_handle_latt_free_mbuf:
 	phba->sli.sli3_ring[LPFC_ELS_RING].flag &= ~LPFC_STOP_IOCB_EVENT;
-	lpfc_mbox_rsrc_cleanup(phba, pmb, MBOX_THD_UNLOCKED);
+	lpfc_mbuf_free(phba, mp->virt, mp->phys);
+lpfc_handle_latt_free_mp:
+	kfree(mp);
+lpfc_handle_latt_free_pmb:
+	mempool_free(pmb, phba->mbox_mem_pool);
 lpfc_handle_latt_err_exit:
 	/* Enable Link attention interrupts */
 	spin_lock_irq(&phba->hbalock);
@@ -2258,101 +2212,6 @@ lpfc_handle_latt_err_exit:
 	return;
 }
 
-static void
-lpfc_fill_vpd(struct lpfc_hba *phba, uint8_t *vpd, int length, int *pindex)
-{
-	int i, j;
-
-	while (length > 0) {
-		/* Look for Serial Number */
-		if ((vpd[*pindex] == 'S') && (vpd[*pindex + 1] == 'N')) {
-			*pindex += 2;
-			i = vpd[*pindex];
-			*pindex += 1;
-			j = 0;
-			length -= (3+i);
-			while (i--) {
-				phba->SerialNumber[j++] = vpd[(*pindex)++];
-				if (j == 31)
-					break;
-			}
-			phba->SerialNumber[j] = 0;
-			continue;
-		} else if ((vpd[*pindex] == 'V') && (vpd[*pindex + 1] == '1')) {
-			phba->vpd_flag |= VPD_MODEL_DESC;
-			*pindex += 2;
-			i = vpd[*pindex];
-			*pindex += 1;
-			j = 0;
-			length -= (3+i);
-			while (i--) {
-				phba->ModelDesc[j++] = vpd[(*pindex)++];
-				if (j == 255)
-					break;
-			}
-			phba->ModelDesc[j] = 0;
-			continue;
-		} else if ((vpd[*pindex] == 'V') && (vpd[*pindex + 1] == '2')) {
-			phba->vpd_flag |= VPD_MODEL_NAME;
-			*pindex += 2;
-			i = vpd[*pindex];
-			*pindex += 1;
-			j = 0;
-			length -= (3+i);
-			while (i--) {
-				phba->ModelName[j++] = vpd[(*pindex)++];
-				if (j == 79)
-					break;
-			}
-			phba->ModelName[j] = 0;
-			continue;
-		} else if ((vpd[*pindex] == 'V') && (vpd[*pindex + 1] == '3')) {
-			phba->vpd_flag |= VPD_PROGRAM_TYPE;
-			*pindex += 2;
-			i = vpd[*pindex];
-			*pindex += 1;
-			j = 0;
-			length -= (3+i);
-			while (i--) {
-				phba->ProgramType[j++] = vpd[(*pindex)++];
-				if (j == 255)
-					break;
-			}
-			phba->ProgramType[j] = 0;
-			continue;
-		} else if ((vpd[*pindex] == 'V') && (vpd[*pindex + 1] == '4')) {
-			phba->vpd_flag |= VPD_PORT;
-			*pindex += 2;
-			i = vpd[*pindex];
-			*pindex += 1;
-			j = 0;
-			length -= (3 + i);
-			while (i--) {
-				if ((phba->sli_rev == LPFC_SLI_REV4) &&
-				    (phba->sli4_hba.pport_name_sta ==
-				     LPFC_SLI4_PPNAME_GET)) {
-					j++;
-					(*pindex)++;
-				} else
-					phba->Port[j++] = vpd[(*pindex)++];
-				if (j == 19)
-					break;
-			}
-			if ((phba->sli_rev != LPFC_SLI_REV4) ||
-			    (phba->sli4_hba.pport_name_sta ==
-			     LPFC_SLI4_PPNAME_NON))
-				phba->Port[j] = 0;
-			continue;
-		} else {
-			*pindex += 2;
-			i = vpd[*pindex];
-			*pindex += 1;
-			*pindex += i;
-			length -= (3 + i);
-		}
-	}
-}
-
 /**
  * lpfc_parse_vpd - Parse VPD (Vital Product Data)
  * @phba: pointer to lpfc hba data structure.
@@ -2372,7 +2231,7 @@ lpfc_parse_vpd(struct lpfc_hba *phba, uint8_t *vpd, int len)
 {
 	uint8_t lenlo, lenhi;
 	int Length;
-	int i;
+	int i, j;
 	int finished = 0;
 	int index = 0;
 
@@ -2405,10 +2264,101 @@ lpfc_parse_vpd(struct lpfc_hba *phba, uint8_t *vpd, int len)
 			Length = ((((unsigned short)lenhi) << 8) + lenlo);
 			if (Length > len - index)
 				Length = len - index;
-
-			lpfc_fill_vpd(phba, vpd, Length, &index);
-			finished = 0;
-			break;
+			while (Length > 0) {
+			/* Look for Serial Number */
+			if ((vpd[index] == 'S') && (vpd[index+1] == 'N')) {
+				index += 2;
+				i = vpd[index];
+				index += 1;
+				j = 0;
+				Length -= (3+i);
+				while(i--) {
+					phba->SerialNumber[j++] = vpd[index++];
+					if (j == 31)
+						break;
+				}
+				phba->SerialNumber[j] = 0;
+				continue;
+			}
+			else if ((vpd[index] == 'V') && (vpd[index+1] == '1')) {
+				phba->vpd_flag |= VPD_MODEL_DESC;
+				index += 2;
+				i = vpd[index];
+				index += 1;
+				j = 0;
+				Length -= (3+i);
+				while(i--) {
+					phba->ModelDesc[j++] = vpd[index++];
+					if (j == 255)
+						break;
+				}
+				phba->ModelDesc[j] = 0;
+				continue;
+			}
+			else if ((vpd[index] == 'V') && (vpd[index+1] == '2')) {
+				phba->vpd_flag |= VPD_MODEL_NAME;
+				index += 2;
+				i = vpd[index];
+				index += 1;
+				j = 0;
+				Length -= (3+i);
+				while(i--) {
+					phba->ModelName[j++] = vpd[index++];
+					if (j == 79)
+						break;
+				}
+				phba->ModelName[j] = 0;
+				continue;
+			}
+			else if ((vpd[index] == 'V') && (vpd[index+1] == '3')) {
+				phba->vpd_flag |= VPD_PROGRAM_TYPE;
+				index += 2;
+				i = vpd[index];
+				index += 1;
+				j = 0;
+				Length -= (3+i);
+				while(i--) {
+					phba->ProgramType[j++] = vpd[index++];
+					if (j == 255)
+						break;
+				}
+				phba->ProgramType[j] = 0;
+				continue;
+			}
+			else if ((vpd[index] == 'V') && (vpd[index+1] == '4')) {
+				phba->vpd_flag |= VPD_PORT;
+				index += 2;
+				i = vpd[index];
+				index += 1;
+				j = 0;
+				Length -= (3+i);
+				while(i--) {
+					if ((phba->sli_rev == LPFC_SLI_REV4) &&
+					    (phba->sli4_hba.pport_name_sta ==
+					     LPFC_SLI4_PPNAME_GET)) {
+						j++;
+						index++;
+					} else
+						phba->Port[j++] = vpd[index++];
+					if (j == 19)
+						break;
+				}
+				if ((phba->sli_rev != LPFC_SLI_REV4) ||
+				    (phba->sli4_hba.pport_name_sta ==
+				     LPFC_SLI4_PPNAME_NON))
+					phba->Port[j] = 0;
+				continue;
+			}
+			else {
+				index += 2;
+				i = vpd[index];
+				index += 1;
+				index += i;
+				Length -= (3 + i);
+			}
+		}
+		finished = 0;
+		break;
 		case 0x78:
 			finished = 1;
 			break;
@@ -2419,90 +2369,6 @@ lpfc_parse_vpd(struct lpfc_hba *phba, uint8_t *vpd, int len)
 	}
 
 	return(1);
-}
-
-/**
- * lpfc_get_atto_model_desc - Retrieve ATTO HBA device model name and description
- * @phba: pointer to lpfc hba data structure.
- * @mdp: pointer to the data structure to hold the derived model name.
- * @descp: pointer to the data structure to hold the derived description.
- *
- * This routine retrieves HBA's description based on its registered PCI device
- * ID. The @descp passed into this function points to an array of 256 chars. It
- * shall be returned with the model name, maximum speed, and the host bus type.
- * The @mdp passed into this function points to an array of 80 chars. When the
- * function returns, the @mdp will be filled with the model name.
- **/
-static void
-lpfc_get_atto_model_desc(struct lpfc_hba *phba, uint8_t *mdp, uint8_t *descp)
-{
-	uint16_t sub_dev_id = phba->pcidev->subsystem_device;
-	char *model = "<Unknown>";
-	int tbolt = 0;
-
-	switch (sub_dev_id) {
-	case PCI_DEVICE_ID_CLRY_161E:
-		model = "161E";
-		break;
-	case PCI_DEVICE_ID_CLRY_162E:
-		model = "162E";
-		break;
-	case PCI_DEVICE_ID_CLRY_164E:
-		model = "164E";
-		break;
-	case PCI_DEVICE_ID_CLRY_161P:
-		model = "161P";
-		break;
-	case PCI_DEVICE_ID_CLRY_162P:
-		model = "162P";
-		break;
-	case PCI_DEVICE_ID_CLRY_164P:
-		model = "164P";
-		break;
-	case PCI_DEVICE_ID_CLRY_321E:
-		model = "321E";
-		break;
-	case PCI_DEVICE_ID_CLRY_322E:
-		model = "322E";
-		break;
-	case PCI_DEVICE_ID_CLRY_324E:
-		model = "324E";
-		break;
-	case PCI_DEVICE_ID_CLRY_321P:
-		model = "321P";
-		break;
-	case PCI_DEVICE_ID_CLRY_322P:
-		model = "322P";
-		break;
-	case PCI_DEVICE_ID_CLRY_324P:
-		model = "324P";
-		break;
-	case PCI_DEVICE_ID_TLFC_2XX2:
-		model = "2XX2";
-		tbolt = 1;
-		break;
-	case PCI_DEVICE_ID_TLFC_3162:
-		model = "3162";
-		tbolt = 1;
-		break;
-	case PCI_DEVICE_ID_TLFC_3322:
-		model = "3322";
-		tbolt = 1;
-		break;
-	default:
-		model = "Unknown";
-		break;
-	}
-
-	if (mdp && mdp[0] == '\0')
-		snprintf(mdp, 79, "%s", model);
-
-	if (descp && descp[0] == '\0')
-		snprintf(descp, 255,
-			 "ATTO %s%s, Fibre Channel Adapter Initiator, Port %s",
-			 (tbolt) ? "ThunderLink FC " : "Celerity FC-",
-			 model,
-			 phba->Port);
 }
 
 /**
@@ -2534,11 +2400,6 @@ lpfc_get_hba_model_desc(struct lpfc_hba *phba, uint8_t *mdp, uint8_t *descp)
 	if (mdp && mdp[0] != '\0'
 		&& descp && descp[0] != '\0')
 		return;
-
-	if (phba->pcidev->vendor == PCI_VENDOR_ID_ATTO) {
-		lpfc_get_atto_model_desc(phba, mdp, descp);
-		return;
-	}
 
 	if (phba->lmt & LMT_64Gb)
 		max_speed = 64;
@@ -2689,6 +2550,11 @@ lpfc_get_hba_model_desc(struct lpfc_hba *phba, uint8_t *mdp, uint8_t *descp)
 	case PCI_DEVICE_ID_SAT_S:
 		m = (typeof(m)){"LPe12000-S", "PCIe", "Fibre Channel Adapter"};
 		break;
+	case PCI_DEVICE_ID_HORNET:
+		m = (typeof(m)){"LP21000", "PCIe",
+				"Obsolete, Unsupported FCoE Adapter"};
+		GE = 1;
+		break;
 	case PCI_DEVICE_ID_PROTEUS_VF:
 		m = (typeof(m)){"LPev12000", "PCIe IOV",
 				"Obsolete, Unsupported Fibre Channel Adapter"};
@@ -2777,7 +2643,7 @@ lpfc_get_hba_model_desc(struct lpfc_hba *phba, uint8_t *mdp, uint8_t *descp)
 }
 
 /**
- * lpfc_sli3_post_buffer - Post IOCB(s) with DMA buffer descriptor(s) to a IOCB ring
+ * lpfc_post_buffer - Post IOCB(s) with DMA buffer descriptor(s) to a IOCB ring
  * @phba: pointer to lpfc hba data structure.
  * @pring: pointer to a IOCB ring.
  * @cnt: the number of IOCBs to be posted to the IOCB ring.
@@ -2789,7 +2655,7 @@ lpfc_get_hba_model_desc(struct lpfc_hba *phba, uint8_t *mdp, uint8_t *descp)
  *   The number of IOCBs NOT able to be posted to the IOCB ring.
  **/
 int
-lpfc_sli3_post_buffer(struct lpfc_hba *phba, struct lpfc_sli_ring *pring, int cnt)
+lpfc_post_buffer(struct lpfc_hba *phba, struct lpfc_sli_ring *pring, int cnt)
 {
 	IOCB_t *icmd;
 	struct lpfc_iocbq *iocb;
@@ -2895,7 +2761,7 @@ lpfc_post_rcv_buf(struct lpfc_hba *phba)
 	struct lpfc_sli *psli = &phba->sli;
 
 	/* Ring 0, ELS / CT buffers */
-	lpfc_sli3_post_buffer(phba, &psli->sli3_ring[LPFC_ELS_RING], LPFC_BUF_RING0);
+	lpfc_post_buffer(phba, &psli->sli3_ring[LPFC_ELS_RING], LPFC_BUF_RING0);
 	/* Ring 2 - FCP no buffers needed */
 
 	return 0;
@@ -3072,22 +2938,6 @@ lpfc_cleanup(struct lpfc_vport *vport)
 					NLP_EVT_DEVICE_RM);
 	}
 
-	/* This is a special case flush to return all
-	 * IOs before entering this loop. There are
-	 * two points in the code where a flush is
-	 * avoided if the FC_UNLOADING flag is set.
-	 * one is in the multipool destroy,
-	 * (this prevents a crash) and the other is
-	 * in the nvme abort handler, ( also prevents
-	 * a crash). Both of these exceptions are
-	 * cases where the slot is still accessible.
-	 * The flush here is only when the pci slot
-	 * is offline.
-	 */
-	if (vport->load_flag & FC_UNLOADING &&
-	    pci_channel_offline(phba->pcidev))
-		lpfc_sli_flush_io_rings(vport->phba);
-
 	/* At this point, ALL ndlp's should be gone
 	 * because of the previous NLP_EVT_DEVICE_RM.
 	 * Lets wait for this to happen, if needed.
@@ -3100,7 +2950,7 @@ lpfc_cleanup(struct lpfc_vport *vport)
 			list_for_each_entry_safe(ndlp, next_ndlp,
 						&vport->fc_nodes, nlp_listp) {
 				lpfc_printf_vlog(ndlp->vport, KERN_ERR,
-						 LOG_DISCOVERY,
+						 LOG_TRACE_EVENT,
 						 "0282 did:x%x ndlp:x%px "
 						 "refcnt:%d xflags x%x nflag x%x\n",
 						 ndlp->nlp_DID, (void *)ndlp,
@@ -3797,8 +3647,7 @@ lpfc_offline_prep(struct lpfc_hba *phba, int mbx_action)
 	struct lpfc_vport **vports;
 	struct Scsi_Host *shost;
 	int i;
-	int offline;
-	bool hba_pci_err;
+	int offline = 0;
 
 	if (vport->fc_flag & FC_OFFLINE_MODE)
 		return;
@@ -3808,7 +3657,6 @@ lpfc_offline_prep(struct lpfc_hba *phba, int mbx_action)
 	lpfc_linkdown(phba);
 
 	offline =  pci_channel_offline(phba->pcidev);
-	hba_pci_err = test_bit(HBA_PCI_ERR, &phba->bit_flags);
 
 	/* Issue an unreg_login to all nodes on all vports */
 	vports = lpfc_create_vport_work_array(phba);
@@ -3832,14 +3680,11 @@ lpfc_offline_prep(struct lpfc_hba *phba, int mbx_action)
 				ndlp->nlp_flag &= ~NLP_NPR_ADISC;
 				spin_unlock_irq(&ndlp->lock);
 
-				if (offline || hba_pci_err) {
+				if (offline) {
 					spin_lock_irq(&ndlp->lock);
 					ndlp->nlp_flag &= ~(NLP_UNREG_INP |
 							    NLP_RPI_REGISTERED);
 					spin_unlock_irq(&ndlp->lock);
-					if (phba->sli_rev == LPFC_SLI_REV4)
-						lpfc_sli_rpi_release(vports[i],
-								     ndlp);
 				} else {
 					lpfc_unreg_rpi(vports[i], ndlp);
 				}
@@ -4370,7 +4215,8 @@ lpfc_io_buf_replenish(struct lpfc_hba *phba, struct list_head *cbuf)
 			qp = &phba->sli4_hba.hdwq[idx];
 			lpfc_cmd->hdwq_no = idx;
 			lpfc_cmd->hdwq = qp;
-			lpfc_cmd->cur_iocbq.cmd_cmpl = NULL;
+			lpfc_cmd->cur_iocbq.wqe_cmpl = NULL;
+			lpfc_cmd->cur_iocbq.iocb_cmpl = NULL;
 			spin_lock(&qp->io_buf_list_put_lock);
 			list_add_tail(&lpfc_cmd->list,
 				      &qp->lpfc_io_buf_list_put);
@@ -4414,10 +4260,9 @@ lpfc_sli4_io_sgl_update(struct lpfc_hba *phba)
 
 	lpfc_printf_log(phba, KERN_INFO, LOG_SLI,
 			"6074 Current allocated XRI sgl count:%d, "
-			"maximum XRI count:%d els_xri_cnt:%d\n\n",
+			"maximum XRI count:%d\n",
 			phba->sli4_hba.io_xri_cnt,
-			phba->sli4_hba.io_xri_max,
-			els_xri_cnt);
+			phba->sli4_hba.io_xri_max);
 
 	cnt = lpfc_io_buf_flush(phba, &io_sgl_list);
 
@@ -4556,11 +4401,12 @@ lpfc_new_io_buf(struct lpfc_hba *phba, int num_to_alloc)
 		}
 		pwqeq->sli4_lxritag = lxri;
 		pwqeq->sli4_xritag = phba->sli4_hba.xri_ids[lxri];
+		pwqeq->context1 = lpfc_ncmd;
 
 		/* Initialize local short-hand pointers. */
 		lpfc_ncmd->dma_sgl = lpfc_ncmd->data;
 		lpfc_ncmd->dma_phys_sgl = lpfc_ncmd->dma_handle;
-		lpfc_ncmd->cur_iocbq.io_buf = lpfc_ncmd;
+		lpfc_ncmd->cur_iocbq.context1 = lpfc_ncmd;
 		spin_lock_init(&lpfc_ncmd->buf_lock);
 
 		/* add the nvme buffer to a post list */
@@ -4569,9 +4415,7 @@ lpfc_new_io_buf(struct lpfc_hba *phba, int num_to_alloc)
 	}
 	lpfc_printf_log(phba, KERN_INFO, LOG_NVME,
 			"6114 Allocate %d out of %d requested new NVME "
-			"buffers of size x%zu bytes\n", bcnt, num_to_alloc,
-			sizeof(*lpfc_ncmd));
-
+			"buffers\n", bcnt, num_to_alloc);
 
 	/* post the list of nvme buffer sgls to port if available */
 	if (!list_empty(&post_nblist))
@@ -4616,17 +4460,6 @@ lpfc_get_wwpn(struct lpfc_hba *phba)
 		return be64_to_cpu(wwn);
 	else
 		return rol64(wwn, 32);
-}
-
-static unsigned short lpfc_get_sg_tablesize(struct lpfc_hba *phba)
-{
-	if (phba->sli_rev == LPFC_SLI_REV4)
-		if (phba->cfg_xpsgl && !phba->nvmet_support)
-			return LPFC_MAX_SG_TABLESIZE;
-		else
-			return phba->cfg_scsi_seg_cnt;
-	else
-		return phba->cfg_sg_seg_cnt;
 }
 
 /**
@@ -4731,26 +4564,42 @@ lpfc_create_port(struct lpfc_hba *phba, int instance, struct device *dev)
 
 	/* Seed template for SCSI host registration */
 	if (dev == &phba->pcidev->dev) {
+		template = &phba->port_template;
+
 		if (phba->cfg_enable_fc4_type & LPFC_ENABLE_FCP) {
 			/* Seed physical port template */
-			template = &lpfc_template;
+			memcpy(template, &lpfc_template, sizeof(*template));
 
 			if (use_no_reset_hba)
 				/* template is for a no reset SCSI Host */
 				template->eh_host_reset_handler = NULL;
 
-			/* Seed updated value of sg_tablesize */
-			template->sg_tablesize = lpfc_get_sg_tablesize(phba);
+			/* Template for all vports this physical port creates */
+			memcpy(&phba->vport_template, &lpfc_template,
+			       sizeof(*template));
+			phba->vport_template.shost_attrs = lpfc_vport_attrs;
+			phba->vport_template.eh_bus_reset_handler = NULL;
+			phba->vport_template.eh_host_reset_handler = NULL;
+			phba->vport_template.vendor_id = 0;
+
+			/* Initialize the host templates with updated value */
+			if (phba->sli_rev == LPFC_SLI_REV4) {
+				template->sg_tablesize = phba->cfg_scsi_seg_cnt;
+				phba->vport_template.sg_tablesize =
+					phba->cfg_scsi_seg_cnt;
+			} else {
+				template->sg_tablesize = phba->cfg_sg_seg_cnt;
+				phba->vport_template.sg_tablesize =
+					phba->cfg_sg_seg_cnt;
+			}
+
 		} else {
 			/* NVMET is for physical port only */
-			template = &lpfc_template_nvme;
+			memcpy(template, &lpfc_template_nvme,
+			       sizeof(*template));
 		}
 	} else {
-		/* Seed vport template */
-		template = &lpfc_vport_template;
-
-		/* Seed updated value of sg_tablesize */
-		template->sg_tablesize = lpfc_get_sg_tablesize(phba);
+		template = &phba->vport_template;
 	}
 
 	shost = scsi_host_alloc(template, sizeof(struct lpfc_vport));
@@ -4783,6 +4632,11 @@ lpfc_create_port(struct lpfc_hba *phba, int instance, struct device *dev)
 
 		shost->dma_boundary =
 			phba->sli4_hba.pc_sli4_params.sge_supp_len-1;
+
+		if (phba->cfg_xpsgl && !phba->nvmet_support)
+			shost->sg_tablesize = LPFC_MAX_SG_TABLESIZE;
+		else
+			shost->sg_tablesize = phba->cfg_scsi_seg_cnt;
 	} else
 		/* SLI-3 has a limited number of hardware queues (3),
 		 * thus there is only one for FCP processing.
@@ -5397,6 +5251,7 @@ static void
 lpfc_sli4_async_link_evt(struct lpfc_hba *phba,
 			 struct lpfc_acqe_link *acqe_link)
 {
+	struct lpfc_dmabuf *mp;
 	LPFC_MBOXQ_t *pmb;
 	MAILBOX_t *mb;
 	struct lpfc_mbx_read_top *la;
@@ -5413,12 +5268,17 @@ lpfc_sli4_async_link_evt(struct lpfc_hba *phba,
 				"0395 The mboxq allocation failed\n");
 		return;
 	}
-
-	rc = lpfc_mbox_rsrc_prep(phba, pmb);
-	if (rc) {
+	mp = kmalloc(sizeof(struct lpfc_dmabuf), GFP_KERNEL);
+	if (!mp) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
-				"0396 mailbox allocation failed\n");
+				"0396 The lpfc_dmabuf allocation failed\n");
 		goto out_free_pmb;
+	}
+	mp->virt = lpfc_mbuf_alloc(phba, 0, &mp->phys);
+	if (!mp->virt) {
+		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
+				"0397 The mbuf allocation failed\n");
+		goto out_free_dmabuf;
 	}
 
 	/* Cleanup any outstanding ELS commands */
@@ -5431,7 +5291,7 @@ lpfc_sli4_async_link_evt(struct lpfc_hba *phba,
 	phba->sli.slistat.link_event++;
 
 	/* Create lpfc_handle_latt mailbox command from link ACQE */
-	lpfc_read_topology(phba, pmb, (struct lpfc_dmabuf *)pmb->ctx_buf);
+	lpfc_read_topology(phba, pmb, mp);
 	pmb->mbox_cmpl = lpfc_mbx_cmpl_read_topology;
 	pmb->vport = phba->pport;
 
@@ -5469,8 +5329,10 @@ lpfc_sli4_async_link_evt(struct lpfc_hba *phba,
 	 */
 	if (!(phba->hba_flag & HBA_FCOE_MODE)) {
 		rc = lpfc_sli_issue_mbox(phba, pmb, MBX_NOWAIT);
-		if (rc == MBX_NOT_FINISHED)
-			goto out_free_pmb;
+		if (rc == MBX_NOT_FINISHED) {
+			lpfc_mbuf_free(phba, mp->virt, mp->phys);
+			goto out_free_dmabuf;
+		}
 		return;
 	}
 	/*
@@ -5505,8 +5367,10 @@ lpfc_sli4_async_link_evt(struct lpfc_hba *phba,
 
 	return;
 
+out_free_dmabuf:
+	kfree(mp);
 out_free_pmb:
-	lpfc_mbox_rsrc_cleanup(phba, pmb, MBOX_THD_UNLOCKED);
+	mempool_free(pmb, phba->mbox_mem_pool);
 }
 
 /**
@@ -5587,7 +5451,7 @@ lpfc_cgn_update_stat(struct lpfc_hba *phba, uint32_t dtag)
 	struct tm broken;
 	struct timespec64 cur_time;
 	u32 cnt;
-	u32 value;
+	u16 value;
 
 	/* Make sure we have a congestion info buffer */
 	if (!phba->cgn_i)
@@ -6056,13 +5920,8 @@ lpfc_cmf_timer(struct hrtimer *timer)
 		if (ms && ms < LPFC_CMF_INTERVAL) {
 			cnt = div_u64(total, ms); /* bytes per ms */
 			cnt *= LPFC_CMF_INTERVAL; /* what total should be */
-
-			/* If the timeout is scheduled to be shorter,
-			 * this value may skew the data, so cap it at mbpi.
-			 */
-			if ((phba->hba_flag & HBA_SHORT_CMF) && cnt > mbpi)
+			if (cnt > mbpi)
 				cnt = mbpi;
-
 			extra = cnt - total;
 		}
 		lpfc_issue_cmf_sync_wqe(phba, LPFC_CMF_INTERVAL, total + extra);
@@ -6135,8 +5994,6 @@ lpfc_cmf_timer(struct hrtimer *timer)
 	/* Each minute save Fabric and Driver congestion information */
 	lpfc_cgn_save_evt_cnt(phba);
 
-	phba->hba_flag &= ~HBA_SHORT_CMF;
-
 	/* Since we need to call lpfc_cgn_save_evt_cnt every minute, on the
 	 * minute, adjust our next timer interval, if needed, to ensure a
 	 * 1 minute granularity when we get the next timer interrupt.
@@ -6147,8 +6004,6 @@ lpfc_cmf_timer(struct hrtimer *timer)
 						  jiffies);
 		if (timer_interval <= 0)
 			timer_interval = LPFC_CMF_INTERVAL;
-		else
-			phba->hba_flag |= HBA_SHORT_CMF;
 
 		/* If we adjust timer_interval, max_bytes_per_interval
 		 * needs to be adjusted as well.
@@ -6190,7 +6045,6 @@ lpfc_update_trunk_link_status(struct lpfc_hba *phba,
 {
 	uint8_t port_fault = bf_get(lpfc_acqe_fc_la_trunk_linkmask, acqe_fc);
 	uint8_t err = bf_get(lpfc_acqe_fc_la_trunk_fault, acqe_fc);
-	u8 cnt = 0;
 
 	phba->sli4_hba.link_state.speed =
 		lpfc_sli4_port_speed_parse(phba, LPFC_TRAILER_CODE_FC,
@@ -6209,35 +6063,25 @@ lpfc_update_trunk_link_status(struct lpfc_hba *phba,
 			bf_get(lpfc_acqe_fc_la_trunk_link_status_port0, acqe_fc)
 			? LPFC_LINK_UP : LPFC_LINK_DOWN;
 		phba->trunk_link.link0.fault = port_fault & 0x1 ? err : 0;
-		cnt++;
 	}
 	if (bf_get(lpfc_acqe_fc_la_trunk_config_port1, acqe_fc)) {
 		phba->trunk_link.link1.state =
 			bf_get(lpfc_acqe_fc_la_trunk_link_status_port1, acqe_fc)
 			? LPFC_LINK_UP : LPFC_LINK_DOWN;
 		phba->trunk_link.link1.fault = port_fault & 0x2 ? err : 0;
-		cnt++;
 	}
 	if (bf_get(lpfc_acqe_fc_la_trunk_config_port2, acqe_fc)) {
 		phba->trunk_link.link2.state =
 			bf_get(lpfc_acqe_fc_la_trunk_link_status_port2, acqe_fc)
 			? LPFC_LINK_UP : LPFC_LINK_DOWN;
 		phba->trunk_link.link2.fault = port_fault & 0x4 ? err : 0;
-		cnt++;
 	}
 	if (bf_get(lpfc_acqe_fc_la_trunk_config_port3, acqe_fc)) {
 		phba->trunk_link.link3.state =
 			bf_get(lpfc_acqe_fc_la_trunk_link_status_port3, acqe_fc)
 			? LPFC_LINK_UP : LPFC_LINK_DOWN;
 		phba->trunk_link.link3.fault = port_fault & 0x8 ? err : 0;
-		cnt++;
 	}
-
-	if (cnt)
-		phba->trunk_link.phy_lnk_speed =
-			phba->sli4_hba.link_state.logical_speed / (cnt * 1000);
-	else
-		phba->trunk_link.phy_lnk_speed = LPFC_LINK_SPEED_UNKNOWN;
 
 	lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
 			"2910 Async FC Trunking Event - Speed:%d\n"
@@ -6278,6 +6122,7 @@ lpfc_update_trunk_link_status(struct lpfc_hba *phba,
 static void
 lpfc_sli4_async_fc_evt(struct lpfc_hba *phba, struct lpfc_acqe_fc_la *acqe_fc)
 {
+	struct lpfc_dmabuf *mp;
 	LPFC_MBOXQ_t *pmb;
 	MAILBOX_t *mb;
 	struct lpfc_mbx_read_top *la;
@@ -6316,7 +6161,7 @@ lpfc_sli4_async_fc_evt(struct lpfc_hba *phba, struct lpfc_acqe_fc_la *acqe_fc)
 	if (bf_get(lpfc_acqe_fc_la_att_type, acqe_fc) ==
 	    LPFC_FC_LA_TYPE_LINK_DOWN)
 		phba->sli4_hba.link_state.logical_speed = 0;
-	else if (!phba->sli4_hba.conf_trunk)
+	else if	(!phba->sli4_hba.conf_trunk)
 		phba->sli4_hba.link_state.logical_speed =
 				bf_get(lpfc_acqe_fc_la_llink_spd, acqe_fc) * 10;
 
@@ -6337,11 +6182,17 @@ lpfc_sli4_async_fc_evt(struct lpfc_hba *phba, struct lpfc_acqe_fc_la *acqe_fc)
 				"2897 The mboxq allocation failed\n");
 		return;
 	}
-	rc = lpfc_mbox_rsrc_prep(phba, pmb);
-	if (rc) {
+	mp = kmalloc(sizeof(struct lpfc_dmabuf), GFP_KERNEL);
+	if (!mp) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
-				"2898 The mboxq prep failed\n");
+				"2898 The lpfc_dmabuf allocation failed\n");
 		goto out_free_pmb;
+	}
+	mp->virt = lpfc_mbuf_alloc(phba, 0, &mp->phys);
+	if (!mp->virt) {
+		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
+				"2899 The mbuf allocation failed\n");
+		goto out_free_dmabuf;
 	}
 
 	/* Cleanup any outstanding ELS commands */
@@ -6354,7 +6205,7 @@ lpfc_sli4_async_fc_evt(struct lpfc_hba *phba, struct lpfc_acqe_fc_la *acqe_fc)
 	phba->sli.slistat.link_event++;
 
 	/* Create lpfc_handle_latt mailbox command from link ACQE */
-	lpfc_read_topology(phba, pmb, (struct lpfc_dmabuf *)pmb->ctx_buf);
+	lpfc_read_topology(phba, pmb, mp);
 	pmb->mbox_cmpl = lpfc_mbx_cmpl_read_topology;
 	pmb->vport = phba->pport;
 
@@ -6398,12 +6249,16 @@ lpfc_sli4_async_fc_evt(struct lpfc_hba *phba, struct lpfc_acqe_fc_la *acqe_fc)
 	}
 
 	rc = lpfc_sli_issue_mbox(phba, pmb, MBX_NOWAIT);
-	if (rc == MBX_NOT_FINISHED)
-		goto out_free_pmb;
+	if (rc == MBX_NOT_FINISHED) {
+		lpfc_mbuf_free(phba, mp->virt, mp->phys);
+		goto out_free_dmabuf;
+	}
 	return;
 
+out_free_dmabuf:
+	kfree(mp);
 out_free_pmb:
-	lpfc_mbox_rsrc_cleanup(phba, pmb, MBOX_THD_UNLOCKED);
+	mempool_free(pmb, phba->mbox_mem_pool);
 }
 
 /**
@@ -6434,7 +6289,7 @@ lpfc_sli4_async_sli_evt(struct lpfc_hba *phba, struct lpfc_acqe_sli *acqe_sli)
 			"2901 Async SLI event - Type:%d, Event Data: x%08x "
 			"x%08x x%08x x%08x\n", evt_type,
 			acqe_sli->event_data1, acqe_sli->event_data2,
-			acqe_sli->event_data3, acqe_sli->trailer);
+			acqe_sli->reserved, acqe_sli->trailer);
 
 	port_name = phba->Port[0];
 	if (port_name == 0x00)
@@ -6463,7 +6318,7 @@ lpfc_sli4_async_sli_evt(struct lpfc_hba *phba, struct lpfc_acqe_sli *acqe_sli)
 		temp_event_data.event_code = LPFC_NORMAL_TEMP;
 		temp_event_data.data = (uint32_t)acqe_sli->event_data1;
 
-		lpfc_printf_log(phba, KERN_INFO, LOG_SLI | LOG_LDS_EVENT,
+		lpfc_printf_log(phba, KERN_INFO, LOG_SLI,
 				"3191 Normal Temperature:%d Celsius - Port Name %c\n",
 				acqe_sli->event_data1, port_name);
 
@@ -6562,12 +6417,6 @@ lpfc_sli4_async_sli_evt(struct lpfc_hba *phba, struct lpfc_acqe_sli *acqe_sli)
 					"3194 Unable to retrieve supported "
 					"speeds, rc = 0x%x\n", rc);
 		}
-		rc = lpfc_sli4_refresh_params(phba);
-		if (rc) {
-			lpfc_printf_log(phba, KERN_ERR, LOG_SLI,
-					"3174 Unable to update pls support, "
-					"rc x%x\n", rc);
-		}
 		vports = lpfc_create_vport_work_array(phba);
 		if (vports != NULL) {
 			for (i = 0; i <= phba->max_vports && vports[i] != NULL;
@@ -6595,15 +6444,12 @@ lpfc_sli4_async_sli_evt(struct lpfc_hba *phba, struct lpfc_acqe_sli *acqe_sli)
 	case LPFC_SLI_EVENT_TYPE_MISCONF_FAWWN:
 		/* Misconfigured WWN. Reports that the SLI Port is configured
 		 * to use FA-WWN, but the attached device doesn’t support it.
+		 * No driver action is required.
 		 * Event Data1 - N.A, Event Data2 - N.A
-		 * This event only happens on the physical port.
 		 */
-		lpfc_log_msg(phba, KERN_WARNING, LOG_SLI | LOG_DISCOVERY,
-			     "2699 Misconfigured FA-PWWN - Attached device "
-			     "does not support FA-PWWN\n");
-		phba->sli4_hba.fawwpn_flag &= ~LPFC_FAWWPN_FABRIC;
-		memset(phba->pport->fc_portname.u.wwn, 0,
-		       sizeof(struct lpfc_name));
+		lpfc_log_msg(phba, KERN_WARNING, LOG_SLI,
+			     "2699 Misconfigured FA-WWN - Attached device does "
+			     "not support FA-WWN\n");
 		break;
 	case LPFC_SLI_EVENT_TYPE_EEPROM_FAILURE:
 		/* EEPROM failure. No driver action is required */
@@ -6641,15 +6487,6 @@ lpfc_sli4_async_sli_evt(struct lpfc_hba *phba, struct lpfc_acqe_sli *acqe_sli)
 			}
 		}
 		break;
-	case LPFC_SLI_EVENT_TYPE_RD_SIGNAL:
-		/* May be accompanied by a temperature event */
-		lpfc_printf_log(phba, KERN_INFO,
-				LOG_SLI | LOG_LINK_EVENT | LOG_LDS_EVENT,
-				"2902 Remote Degrade Signaling: x%08x x%08x "
-				"x%08x\n",
-				acqe_sli->event_data1, acqe_sli->event_data2,
-				acqe_sli->event_data3);
-		break;
 	default:
 		lpfc_printf_log(phba, KERN_INFO, LOG_SLI,
 				"3193 Unrecognized SLI event, type: 0x%x",
@@ -6685,7 +6522,7 @@ lpfc_sli4_perform_vport_cvl(struct lpfc_vport *vport)
 		/* Cannot find existing Fabric ndlp, so allocate a new one */
 		ndlp = lpfc_nlp_init(vport, Fabric_DID);
 		if (!ndlp)
-			return NULL;
+			return 0;
 		/* Set the node type */
 		ndlp->nlp_type |= NLP_FABRIC;
 		/* Put ndlp onto node list */
@@ -7063,12 +6900,6 @@ lpfc_cgn_params_val(struct lpfc_hba *phba, struct lpfc_cgn_param *p_cfg_param)
 	spin_unlock_irq(&phba->hbalock);
 }
 
-static const char * const lpfc_cmf_mode_to_str[] = {
-	"OFF",
-	"MANAGED",
-	"MONITOR",
-};
-
 /**
  * lpfc_cgn_params_parse - Process a FW cong parm change event
  * @phba: pointer to lpfc hba data structure.
@@ -7088,7 +6919,6 @@ lpfc_cgn_params_parse(struct lpfc_hba *phba,
 {
 	struct lpfc_cgn_info *cp;
 	uint32_t crc, oldmode;
-	char acr_string[4] = {0};
 
 	/* Make sure the FW has encoded the correct magic number to
 	 * validate the congestion parameter in FW memory.
@@ -7165,6 +6995,9 @@ lpfc_cgn_params_parse(struct lpfc_hba *phba,
 					lpfc_issue_els_edc(phba->pport, 0);
 				break;
 			case LPFC_CFG_MONITOR:
+				lpfc_printf_log(phba, KERN_INFO, LOG_CGN_MGMT,
+						"4661 Switch from MANAGED to "
+						"`MONITOR mode\n");
 				phba->cmf_max_bytes_per_interval =
 					phba->cmf_link_byte_count;
 
@@ -7183,25 +7016,13 @@ lpfc_cgn_params_parse(struct lpfc_hba *phba,
 					lpfc_issue_els_edc(phba->pport, 0);
 				break;
 			case LPFC_CFG_MANAGED:
+				lpfc_printf_log(phba, KERN_INFO, LOG_CGN_MGMT,
+						"4662 Switch from MONITOR to "
+						"MANAGED mode\n");
 				lpfc_cmf_signal_init(phba);
 				break;
 			}
 			break;
-		}
-		if (oldmode != LPFC_CFG_OFF ||
-		    oldmode != phba->cgn_p.cgn_param_mode) {
-			if (phba->cgn_p.cgn_param_mode == LPFC_CFG_MANAGED)
-				scnprintf(acr_string, sizeof(acr_string), "%u",
-					  phba->cgn_p.cgn_param_level0);
-			else
-				scnprintf(acr_string, sizeof(acr_string), "NA");
-
-			dev_info(&phba->pcidev->dev, "%d: "
-				 "4663 CMF: Mode %s acr %s\n",
-				 phba->brd_no,
-				 lpfc_cmf_mode_to_str
-				 [phba->cgn_p.cgn_param_mode],
-				 acr_string);
 		}
 	} else {
 		lpfc_printf_log(phba, KERN_ERR, LOG_CGN_MGMT | LOG_INIT,
@@ -7521,7 +7342,7 @@ lpfc_enable_pci_dev(struct lpfc_hba *phba)
 out_disable_device:
 	pci_disable_device(pdev);
 out_error:
-	lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+	lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
 			"1401 Failed to enable pci device\n");
 	return -ENODEV;
 }
@@ -7684,6 +7505,7 @@ lpfc_setup_driver_resource_phase1(struct lpfc_hba *phba)
 	INIT_LIST_HEAD(&phba->port_list);
 
 	INIT_LIST_HEAD(&phba->work_list);
+	init_waitqueue_head(&phba->wait_4_mlo_m_q);
 
 	/* Initialize the wait queue head for the kernel thread */
 	init_waitqueue_head(&phba->work_waitq);
@@ -7766,6 +7588,13 @@ lpfc_sli_driver_resource_setup(struct lpfc_hba *phba)
 	rc = lpfc_setup_driver_resource_phase1(phba);
 	if (rc)
 		return -ENODEV;
+
+	if (phba->pcidev->device == PCI_DEVICE_ID_HORNET) {
+		phba->menlo_flag |= HBA_MENLO_SUPPORT;
+		/* check for menlo minimum sg count */
+		if (phba->cfg_sg_seg_cnt < LPFC_DEFAULT_MENLO_SG_SEG_CNT)
+			phba->cfg_sg_seg_cnt = LPFC_DEFAULT_MENLO_SG_SEG_CNT;
+	}
 
 	if (!phba->sli.sli3_ring)
 		phba->sli.sli3_ring = kcalloc(LPFC_SLI3_MAX_RING,
@@ -7942,8 +7771,6 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
 
 	/* The lpfc_wq workqueue for deferred irq use */
 	phba->wq = alloc_workqueue("lpfc_wq", WQ_MEM_RECLAIM, 0);
-	if (!phba->wq)
-		return -ENOMEM;
 
 	/*
 	 * Initialize timers used by driver
@@ -8074,18 +7901,6 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
 	rc = lpfc_sli4_read_config(phba);
 	if (unlikely(rc))
 		goto out_free_bsmbx;
-
-	if (phba->sli4_hba.fawwpn_flag & LPFC_FAWWPN_CONFIG) {
-		/* Right now the link is down, if FA-PWWN is configured the
-		 * firmware will try FLOGI before the driver gets a link up.
-		 * If it fails, the driver should get a MISCONFIGURED async
-		 * event which will clear this flag. The only notification
-		 * the driver gets is if it fails, if it succeeds there is no
-		 * notification given. Assume success.
-		 */
-		phba->sli4_hba.fawwpn_flag |= LPFC_FAWWPN_FABRIC;
-	}
-
 	rc = lpfc_mem_alloc_active_rrq_pool_s4(phba);
 	if (unlikely(rc))
 		goto out_free_bsmbx;
@@ -8309,10 +8124,8 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
 					&phba->pcidev->dev,
 					phba->cfg_sg_dma_buf_size,
 					i, 0);
-	if (!phba->lpfc_sg_dma_buf_pool) {
-		rc = -ENOMEM;
+	if (!phba->lpfc_sg_dma_buf_pool)
 		goto out_free_bsmbx;
-	}
 
 	phba->lpfc_cmd_rsp_buf_pool =
 			dma_pool_create("lpfc_cmd_rsp_buf_pool",
@@ -8320,10 +8133,8 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
 					sizeof(struct fcp_cmnd) +
 					sizeof(struct fcp_rsp),
 					i, 0);
-	if (!phba->lpfc_cmd_rsp_buf_pool) {
-		rc = -ENOMEM;
+	if (!phba->lpfc_cmd_rsp_buf_pool)
 		goto out_free_sg_dma_buf;
-	}
 
 	mempool_free(mboxq, phba->mbox_mem_pool);
 
@@ -8577,7 +8388,7 @@ lpfc_init_api_table_setup(struct lpfc_hba *phba, uint8_t dev_grp)
 		phba->lpfc_stop_port = lpfc_stop_port_s4;
 		break;
 	default:
-		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
 				"1431 Invalid HBA PCI-device group: 0x%x\n",
 				dev_grp);
 		return -ENODEV;
@@ -8624,6 +8435,7 @@ static void
 lpfc_unset_driver_resource_phase2(struct lpfc_hba *phba)
 {
 	if (phba->wq) {
+		flush_workqueue(phba->wq);
 		destroy_workqueue(phba->wq);
 		phba->wq = NULL;
 	}
@@ -9067,36 +8879,6 @@ lpfc_hba_free(struct lpfc_hba *phba)
 }
 
 /**
- * lpfc_setup_fdmi_mask - Setup initial FDMI mask for HBA and Port attributes
- * @vport: pointer to lpfc vport data structure.
- *
- * This routine is will setup initial FDMI attribute masks for
- * FDMI2 or SmartSAN depending on module parameters. The driver will attempt
- * to get these attributes first before falling back, the attribute
- * fallback hierarchy is SmartSAN -> FDMI2 -> FMDI1
- **/
-void
-lpfc_setup_fdmi_mask(struct lpfc_vport *vport)
-{
-	struct lpfc_hba *phba = vport->phba;
-
-	vport->load_flag |= FC_ALLOW_FDMI;
-	if (phba->cfg_enable_SmartSAN ||
-	    phba->cfg_fdmi_on == LPFC_FDMI_SUPPORT) {
-		/* Setup appropriate attribute masks */
-		vport->fdmi_hba_mask = LPFC_FDMI2_HBA_ATTR;
-		if (phba->cfg_enable_SmartSAN)
-			vport->fdmi_port_mask = LPFC_FDMI2_SMART_ATTR;
-		else
-			vport->fdmi_port_mask = LPFC_FDMI2_PORT_ATTR;
-	}
-
-	lpfc_printf_log(phba, KERN_INFO, LOG_DISCOVERY,
-			"6077 Setup FDMI mask: hba x%x port x%x\n",
-			vport->fdmi_hba_mask, vport->fdmi_port_mask);
-}
-
-/**
  * lpfc_create_shost - Create hba physical port with associated scsi host.
  * @phba: pointer to lpfc hba data structure.
  *
@@ -9139,12 +8921,21 @@ lpfc_create_shost(struct lpfc_hba *phba)
 	/* Put reference to SCSI host to driver's device private data */
 	pci_set_drvdata(phba->pcidev, shost);
 
-	lpfc_setup_fdmi_mask(vport);
-
 	/*
 	 * At this point we are fully registered with PSA. In addition,
 	 * any initial discovery should be completed.
 	 */
+	vport->load_flag |= FC_ALLOW_FDMI;
+	if (phba->cfg_enable_SmartSAN ||
+	    (phba->cfg_fdmi_on == LPFC_FDMI_SUPPORT)) {
+
+		/* Setup appropriate attribute masks */
+		vport->fdmi_hba_mask = LPFC_FDMI2_HBA_ATTR;
+		if (phba->cfg_enable_SmartSAN)
+			vport->fdmi_port_mask = LPFC_FDMI2_SMART_ATTR;
+		else
+			vport->fdmi_port_mask = LPFC_FDMI2_PORT_ATTR;
+	}
 	return 0;
 }
 
@@ -9529,15 +9320,7 @@ lpfc_sli4_post_status_check(struct lpfc_hba *phba)
 					phba->work_status[0],
 					phba->work_status[1]);
 				port_error = -ENODEV;
-				break;
 			}
-
-			if (lpfc_pldv_detect &&
-			    bf_get(lpfc_sli_intf_sli_family,
-				   &phba->sli4_hba.sli_intf) ==
-					LPFC_SLI_INTF_FAMILY_G6)
-				pci_write_config_byte(phba->pcidev,
-						      LPFC_SLI_INTF, CFG_PLD);
 			break;
 		case LPFC_SLI_INTF_IF_TYPE_1:
 		default:
@@ -9917,7 +9700,7 @@ lpfc_sli4_read_config(struct lpfc_hba *phba)
 	struct lpfc_rsrc_desc_fcfcoe *desc;
 	char *pdesc_0;
 	uint16_t forced_link_speed;
-	uint32_t if_type, qmin, fawwpn;
+	uint32_t if_type, qmin;
 	int length, i, rc = 0, rc2;
 
 	pmb = (LPFC_MBOXQ_t *) mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
@@ -9959,24 +9742,10 @@ lpfc_sli4_read_config(struct lpfc_hba *phba)
 			phba->sli4_hba.bbscn_params.word0 = rd_config->word8;
 		}
 
-		fawwpn = bf_get(lpfc_mbx_rd_conf_fawwpn, rd_config);
-
-		if (fawwpn) {
-			lpfc_printf_log(phba, KERN_INFO,
-					LOG_INIT | LOG_DISCOVERY,
-					"2702 READ_CONFIG: FA-PWWN is "
-					"configured on\n");
-			phba->sli4_hba.fawwpn_flag |= LPFC_FAWWPN_CONFIG;
-		} else {
-			/* Clear FW configured flag, preserve driver flag */
-			phba->sli4_hba.fawwpn_flag &= ~LPFC_FAWWPN_CONFIG;
-		}
-
 		phba->sli4_hba.conf_trunk =
 			bf_get(lpfc_mbx_rd_conf_trunk, rd_config);
 		phba->sli4_hba.extents_in_use =
 			bf_get(lpfc_mbx_rd_conf_extnts_inuse, rd_config);
-
 		phba->sli4_hba.max_cfg_param.max_xri =
 			bf_get(lpfc_mbx_rd_conf_xri_count, rd_config);
 		/* Reduce resource usage in kdump environment */
@@ -10094,15 +9863,17 @@ lpfc_sli4_read_config(struct lpfc_hba *phba)
 		qmin = phba->sli4_hba.max_cfg_param.max_wq;
 		if (phba->sli4_hba.max_cfg_param.max_cq < qmin)
 			qmin = phba->sli4_hba.max_cfg_param.max_cq;
-		/*
-		 * Reserve 4 (ELS, NVME LS, MBOX, plus one extra) and
-		 * the remainder can be used for NVME / FCP.
-		 */
-		qmin -= 4;
 		if (phba->sli4_hba.max_cfg_param.max_eq < qmin)
 			qmin = phba->sli4_hba.max_cfg_param.max_eq;
+		/*
+		 * Whats left after this can go toward NVME / FCP.
+		 * The minus 4 accounts for ELS, NVME LS, MBOX
+		 * plus one extra. When configured for
+		 * NVMET, FCP io channel WQs are not created.
+		 */
+		qmin -= 4;
 
-		/* Check to see if there is enough for default cfg */
+		/* Check to see if there is enough for NVME */
 		if ((phba->cfg_irq_chann > qmin) ||
 		    (phba->cfg_hdw_queue > qmin)) {
 			lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
@@ -11757,9 +11528,6 @@ wait:
 			goto out;
 		}
 
-		if (bf_get(lpfc_sliport_status_pldv, &reg_data))
-			lpfc_pldv_detect = true;
-
 		if (!port_reset) {
 			/*
 			 * Reset the port now
@@ -11842,7 +11610,7 @@ lpfc_sli4_pci_mem_setup(struct lpfc_hba *phba)
 	/* There is no SLI3 failback for SLI4 devices. */
 	if (bf_get(lpfc_sli_intf_valid, &phba->sli4_hba.sli_intf) !=
 	    LPFC_SLI_INTF_VALID) {
-		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
 				"2894 SLI_INTF reg contents invalid "
 				"sli_intf reg 0x%x\n",
 				phba->sli4_hba.sli_intf.word0);
@@ -12180,7 +11948,7 @@ lpfc_sli_enable_msi(struct lpfc_hba *phba)
 	rc = pci_enable_msi(phba->pcidev);
 	if (!rc)
 		lpfc_printf_log(phba, KERN_INFO, LOG_INIT,
-				"0012 PCI enable MSI mode success.\n");
+				"0462 PCI enable MSI mode success.\n");
 	else {
 		lpfc_printf_log(phba, KERN_INFO, LOG_INIT,
 				"0471 PCI enable MSI mode failed (%d)\n", rc);
@@ -12412,7 +12180,7 @@ lpfc_hba_eq_hdl_array_init(struct lpfc_hba *phba)
 
 	for (i = 0; i < phba->cfg_irq_chann; i++) {
 		eqhdl = lpfc_get_eq_hdl(i);
-		eqhdl->irq = LPFC_IRQ_EMPTY;
+		eqhdl->irq = LPFC_VECTOR_MAP_EMPTY;
 		eqhdl->phba = phba;
 	}
 }
@@ -12785,7 +12553,7 @@ static void __lpfc_cpuhp_remove(struct lpfc_hba *phba)
 
 static void lpfc_cpuhp_remove(struct lpfc_hba *phba)
 {
-	if (phba->pport && (phba->pport->fc_flag & FC_OFFLINE_MODE))
+	if (phba->pport->fc_flag & FC_OFFLINE_MODE)
 		return;
 
 	__lpfc_cpuhp_remove(phba);
@@ -12836,7 +12604,7 @@ lpfc_irq_set_aff(struct lpfc_hba_eq_hdl *eqhdl, unsigned int cpu)
 	cpumask_clear(&eqhdl->aff_mask);
 	cpumask_set_cpu(cpu, &eqhdl->aff_mask);
 	irq_set_status_flags(eqhdl->irq, IRQ_NO_BALANCING);
-	irq_set_affinity(eqhdl->irq, &eqhdl->aff_mask);
+	irq_set_affinity_hint(eqhdl->irq, &eqhdl->aff_mask);
 }
 
 /**
@@ -13049,23 +12817,17 @@ lpfc_sli4_enable_msix(struct lpfc_hba *phba)
 			 LPFC_DRIVER_HANDLER_NAME"%d", index);
 
 		eqhdl->idx = index;
-		rc = pci_irq_vector(phba->pcidev, index);
-		if (rc < 0) {
-			lpfc_printf_log(phba, KERN_WARNING, LOG_INIT,
-					"0489 MSI-X fast-path (%d) "
-					"pci_irq_vec failed (%d)\n", index, rc);
-			goto cfg_fail_out;
-		}
-		eqhdl->irq = rc;
-
-		rc = request_irq(eqhdl->irq, &lpfc_sli4_hba_intr_handler, 0,
-				 name, eqhdl);
+		rc = request_irq(pci_irq_vector(phba->pcidev, index),
+			 &lpfc_sli4_hba_intr_handler, 0,
+			 name, eqhdl);
 		if (rc) {
 			lpfc_printf_log(phba, KERN_WARNING, LOG_INIT,
 					"0486 MSI-X fast-path (%d) "
 					"request_irq failed (%d)\n", index, rc);
 			goto cfg_fail_out;
 		}
+
+		eqhdl->irq = pci_irq_vector(phba->pcidev, index);
 
 		if (aff_mask) {
 			/* If found a neighboring online cpu, set affinity */
@@ -13131,6 +12893,7 @@ cfg_fail_out:
 	for (--index; index >= 0; index--) {
 		eqhdl = lpfc_get_eq_hdl(index);
 		lpfc_irq_clear_aff(eqhdl);
+		irq_set_affinity_hint(eqhdl->irq, NULL);
 		free_irq(eqhdl->irq, eqhdl);
 	}
 
@@ -13183,14 +12946,7 @@ lpfc_sli4_enable_msi(struct lpfc_hba *phba)
 	}
 
 	eqhdl = lpfc_get_eq_hdl(0);
-	rc = pci_irq_vector(phba->pcidev, 0);
-	if (rc < 0) {
-		pci_free_irq_vectors(phba->pcidev);
-		lpfc_printf_log(phba, KERN_WARNING, LOG_INIT,
-				"0496 MSI pci_irq_vec failed (%d)\n", rc);
-		return rc;
-	}
-	eqhdl->irq = rc;
+	eqhdl->irq = pci_irq_vector(phba->pcidev, 0);
 
 	cpu = cpumask_first(cpu_present_mask);
 	lpfc_assign_eq_map_info(phba, 0, LPFC_CPU_FIRST_IRQ, cpu);
@@ -13217,8 +12973,8 @@ lpfc_sli4_enable_msi(struct lpfc_hba *phba)
  * MSI-X -> MSI -> IRQ.
  *
  * Return codes
- *	Interrupt mode (2, 1, 0) - successful
- *	LPFC_INTR_ERROR - error
+ * 	0 - successful
+ * 	other values - error
  **/
 static uint32_t
 lpfc_sli4_enable_intr(struct lpfc_hba *phba, uint32_t cfg_mode)
@@ -13263,14 +13019,7 @@ lpfc_sli4_enable_intr(struct lpfc_hba *phba, uint32_t cfg_mode)
 			intr_mode = 0;
 
 			eqhdl = lpfc_get_eq_hdl(0);
-			retval = pci_irq_vector(phba->pcidev, 0);
-			if (retval < 0) {
-				lpfc_printf_log(phba, KERN_WARNING, LOG_INIT,
-					"0502 INTR pci_irq_vec failed (%d)\n",
-					 retval);
-				return LPFC_INTR_ERROR;
-			}
-			eqhdl->irq = retval;
+			eqhdl->irq = pci_irq_vector(phba->pcidev, 0);
 
 			cpu = cpumask_first(cpu_present_mask);
 			lpfc_assign_eq_map_info(phba, 0, LPFC_CPU_FIRST_IRQ,
@@ -13305,6 +13054,7 @@ lpfc_sli4_disable_intr(struct lpfc_hba *phba)
 		for (index = 0; index < phba->cfg_irq_chann; index++) {
 			eqhdl = lpfc_get_eq_hdl(index);
 			lpfc_irq_clear_aff(eqhdl);
+			irq_set_affinity_hint(eqhdl->irq, NULL);
 			free_irq(eqhdl->irq, eqhdl);
 		}
 	} else {
@@ -13496,9 +13246,8 @@ lpfc_sli4_hba_unset(struct lpfc_hba *phba)
 	/* Abort all iocbs associated with the hba */
 	lpfc_sli_hba_iocb_abort(phba);
 
-	if (!pci_channel_offline(phba->pcidev))
-		/* Wait for completion of device XRI exchange busy */
-		lpfc_sli4_xri_exchange_busy_wait(phba);
+	/* Wait for completion of device XRI exchange busy */
+	lpfc_sli4_xri_exchange_busy_wait(phba);
 
 	/* per-phba callback de-registration for hotplug event */
 	if (phba->pport)
@@ -13517,11 +13266,14 @@ lpfc_sli4_hba_unset(struct lpfc_hba *phba)
 	/* Disable FW logging to host memory */
 	lpfc_ras_stop_fwlog(phba);
 
+	/* Unset the queues shared with the hardware then release all
+	 * allocated resources.
+	 */
+	lpfc_sli4_queue_unset(phba);
+	lpfc_sli4_queue_destroy(phba);
+
 	/* Reset SLI4 HBA FCoE function */
 	lpfc_pci_function_reset(phba);
-
-	/* release all queue allocated resources. */
-	lpfc_sli4_queue_destroy(phba);
 
 	/* Free RAS DMA memory */
 	if (phba->ras_fwlog.ras_enabled)
@@ -13603,13 +13355,15 @@ lpfc_init_congestion_buf(struct lpfc_hba *phba)
 	atomic_set(&phba->cgn_sync_alarm_cnt, 0);
 	atomic_set(&phba->cgn_sync_warn_cnt, 0);
 
+	atomic64_set(&phba->cgn_acqe_stat.alarm, 0);
+	atomic64_set(&phba->cgn_acqe_stat.warn, 0);
 	atomic_set(&phba->cgn_driver_evt_cnt, 0);
 	atomic_set(&phba->cgn_latency_evt_cnt, 0);
 	atomic64_set(&phba->cgn_latency_evt, 0);
 	phba->cgn_evt_minute = 0;
 	phba->hba_flag &= ~HBA_CGN_DAY_WRAP;
 
-	memset(cp, 0xff, offsetof(struct lpfc_cgn_info, cgn_stat));
+	memset(cp, 0xff, LPFC_CGN_DATA_SIZE);
 	cp->cgn_info_size = cpu_to_le16(LPFC_CGN_INFO_SZ);
 	cp->cgn_info_version = LPFC_CGN_INFO_V3;
 
@@ -13668,7 +13422,7 @@ lpfc_init_congestion_stat(struct lpfc_hba *phba)
 		return;
 
 	cp = (struct lpfc_cgn_info *)phba->cgn_i->virt;
-	memset(&cp->cgn_stat, 0, sizeof(cp->cgn_stat));
+	memset(&cp->cgn_stat_npm, 0, LPFC_CGN_STAT_SIZE);
 
 	ktime_get_real_ts64(&cmpl_time);
 	time64_to_tm(cmpl_time.tv_sec, 0, &broken);
@@ -13841,7 +13595,6 @@ lpfc_get_sli4_parameters(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 					   mbx_sli4_parameters);
 	phba->sli4_hba.extents_in_use = bf_get(cfg_ext, mbx_sli4_parameters);
 	phba->sli4_hba.rpi_hdrs_in_use = bf_get(cfg_hdrr, mbx_sli4_parameters);
-	sli4_params->mi_cap = bf_get(cfg_mi_ver, mbx_sli4_parameters);
 
 	/* Check for Extended Pre-Registered SGL support */
 	phba->cfg_xpsgl = bf_get(cfg_xpsgl, mbx_sli4_parameters);
@@ -14403,7 +14156,6 @@ lpfc_sli_prep_dev_for_perm_failure(struct lpfc_hba *phba)
 			"2711 PCI channel permanent disable for failure\n");
 	/* Block all SCSI devices' I/Os on the host */
 	lpfc_scsi_dev_block(phba);
-	lpfc_sli4_prep_dev_for_reset(phba);
 
 	/* stop all timers */
 	lpfc_stop_hba_timers(phba);
@@ -14952,6 +14704,9 @@ lpfc_pci_probe_one_s4(struct pci_dev *pdev, const struct pci_device_id *pid)
 	/* Check if there are static vports to be created. */
 	lpfc_create_static_vport(phba);
 
+	/* Enable RAS FW log support */
+	lpfc_sli4_ras_setup(phba);
+
 	timer_setup(&phba->cpuhp_poll_timer, lpfc_sli4_poll_hbtimer, 0);
 	cpuhp_state_add_instance_nocalls(lpfc_cpuhp_state, &phba->cpuhp);
 
@@ -15196,28 +14951,24 @@ lpfc_sli4_prep_dev_for_recover(struct lpfc_hba *phba)
 static void
 lpfc_sli4_prep_dev_for_reset(struct lpfc_hba *phba)
 {
-	int offline =  pci_channel_offline(phba->pcidev);
-
-	lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
-			"2826 PCI channel disable preparing for reset offline"
-			" %d\n", offline);
+	lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
+			"2826 PCI channel disable preparing for reset\n");
 
 	/* Block any management I/Os to the device */
 	lpfc_block_mgmt_io(phba, LPFC_MBX_NO_WAIT);
 
+	/* Block all SCSI devices' I/Os on the host */
+	lpfc_scsi_dev_block(phba);
 
-	/* HBA_PCI_ERR was set in io_error_detect */
-	lpfc_offline_prep(phba, LPFC_MBX_NO_WAIT);
 	/* Flush all driver's outstanding I/Os as we are to reset */
 	lpfc_sli_flush_io_rings(phba);
-	lpfc_offline(phba);
 
 	/* stop all timers */
 	lpfc_stop_hba_timers(phba);
 
-	lpfc_sli4_queue_destroy(phba);
 	/* Disable interrupt and pci device */
 	lpfc_sli4_disable_intr(phba);
+	lpfc_sli4_queue_destroy(phba);
 	pci_disable_device(phba->pcidev);
 }
 
@@ -15266,7 +15017,6 @@ lpfc_io_error_detected_s4(struct pci_dev *pdev, pci_channel_state_t state)
 {
 	struct Scsi_Host *shost = pci_get_drvdata(pdev);
 	struct lpfc_hba *phba = ((struct lpfc_vport *)shost->hostdata)->phba;
-	bool hba_pci_err;
 
 	switch (state) {
 	case pci_channel_io_normal:
@@ -15274,24 +15024,17 @@ lpfc_io_error_detected_s4(struct pci_dev *pdev, pci_channel_state_t state)
 		lpfc_sli4_prep_dev_for_recover(phba);
 		return PCI_ERS_RESULT_CAN_RECOVER;
 	case pci_channel_io_frozen:
-		hba_pci_err = test_and_set_bit(HBA_PCI_ERR, &phba->bit_flags);
+		phba->hba_flag |= HBA_PCI_ERR;
 		/* Fatal error, prepare for slot reset */
-		if (!hba_pci_err)
-			lpfc_sli4_prep_dev_for_reset(phba);
-		else
-			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
-					"2832  Already handling PCI error "
-					"state: x%x\n", state);
+		lpfc_sli4_prep_dev_for_reset(phba);
 		return PCI_ERS_RESULT_NEED_RESET;
 	case pci_channel_io_perm_failure:
-		set_bit(HBA_PCI_ERR, &phba->bit_flags);
+		phba->hba_flag |= HBA_PCI_ERR;
 		/* Permanent failure, prepare for device down */
 		lpfc_sli4_prep_dev_for_perm_failure(phba);
 		return PCI_ERS_RESULT_DISCONNECT;
 	default:
-		hba_pci_err = test_and_set_bit(HBA_PCI_ERR, &phba->bit_flags);
-		if (!hba_pci_err)
-			lpfc_sli4_prep_dev_for_reset(phba);
+		phba->hba_flag |= HBA_PCI_ERR;
 		/* Unknown state, prepare and request slot reset */
 		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
 				"2825 Unknown PCI error state: x%x\n", state);
@@ -15325,21 +15068,17 @@ lpfc_io_slot_reset_s4(struct pci_dev *pdev)
 	struct lpfc_hba *phba = ((struct lpfc_vport *)shost->hostdata)->phba;
 	struct lpfc_sli *psli = &phba->sli;
 	uint32_t intr_mode;
-	bool hba_pci_err;
 
 	dev_printk(KERN_INFO, &pdev->dev, "recovering from a slot reset.\n");
 	if (pci_enable_device_mem(pdev)) {
 		printk(KERN_ERR "lpfc: Cannot re-enable "
-		       "PCI device after reset.\n");
+			"PCI device after reset.\n");
 		return PCI_ERS_RESULT_DISCONNECT;
 	}
 
 	pci_restore_state(pdev);
 
-	hba_pci_err = test_and_clear_bit(HBA_PCI_ERR, &phba->bit_flags);
-	if (!hba_pci_err)
-		dev_info(&pdev->dev,
-			 "hba_pci_err was not set, recovering slot reset.\n");
+	phba->hba_flag &= ~HBA_PCI_ERR;
 	/*
 	 * As the new kernel behavior of pci_restore_state() API call clears
 	 * device saved_state flag, need to save the restored state again.
@@ -15396,6 +15135,8 @@ lpfc_io_resume_s4(struct pci_dev *pdev)
 	 */
 	if (!(phba->sli.sli_flag & LPFC_SLI_ACTIVE)) {
 		/* Perform device reset */
+		lpfc_offline_prep(phba, LPFC_MBX_WAIT);
+		lpfc_offline(phba);
 		lpfc_sli_brdrestart(phba);
 		/* Bring the device back online */
 		lpfc_online(phba);
@@ -15783,8 +15524,6 @@ lpfc_init(void)
 
 	/* Initialize in case vector mapping is needed */
 	lpfc_present_cpu = num_present_cpus();
-
-	lpfc_pldv_detect = false;
 
 	error = cpuhp_setup_state_multi(CPUHP_AP_ONLINE_DYN,
 					"lpfc/sli4:online",

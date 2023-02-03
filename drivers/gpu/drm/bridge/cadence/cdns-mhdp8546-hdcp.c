@@ -11,7 +11,7 @@
 
 #include <asm/unaligned.h>
 
-#include <drm/display/drm_hdcp_helper.h>
+#include <drm/drm_hdcp.h>
 
 #include "cdns-mhdp8546-hdcp.h"
 

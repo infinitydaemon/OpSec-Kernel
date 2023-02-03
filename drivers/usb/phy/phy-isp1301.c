@@ -92,7 +92,8 @@ static int isp1301_phy_set_vbus(struct usb_phy *phy, int on)
 	return 0;
 }
 
-static int isp1301_probe(struct i2c_client *client)
+static int isp1301_probe(struct i2c_client *client,
+			 const struct i2c_device_id *i2c_id)
 {
 	struct isp1301 *isp;
 	struct usb_phy *phy;
@@ -119,12 +120,14 @@ static int isp1301_probe(struct i2c_client *client)
 	return 0;
 }
 
-static void isp1301_remove(struct i2c_client *client)
+static int isp1301_remove(struct i2c_client *client)
 {
 	struct isp1301 *isp = i2c_get_clientdata(client);
 
 	usb_remove_phy(&isp->phy);
 	isp1301_i2c_client = NULL;
+
+	return 0;
 }
 
 static struct i2c_driver isp1301_driver = {
@@ -132,7 +135,7 @@ static struct i2c_driver isp1301_driver = {
 		.name = DRV_NAME,
 		.of_match_table = isp1301_of_match,
 	},
-	.probe_new = isp1301_probe,
+	.probe = isp1301_probe,
 	.remove = isp1301_remove,
 	.id_table = isp1301_id,
 };

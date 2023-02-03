@@ -253,7 +253,8 @@ static const struct iio_info lidar_info = {
 	.read_raw = lidar_read_raw,
 };
 
-static int lidar_probe(struct i2c_client *client)
+static int lidar_probe(struct i2c_client *client,
+		       const struct i2c_device_id *id)
 {
 	struct lidar_data *data;
 	struct iio_dev *indio_dev;
@@ -310,7 +311,7 @@ error_unreg_buffer:
 	return ret;
 }
 
-static void lidar_remove(struct i2c_client *client)
+static int lidar_remove(struct i2c_client *client)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 
@@ -319,6 +320,8 @@ static void lidar_remove(struct i2c_client *client)
 
 	pm_runtime_disable(&client->dev);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 static const struct i2c_device_id lidar_id[] = {
@@ -335,6 +338,7 @@ static const struct of_device_id lidar_dt_ids[] = {
 };
 MODULE_DEVICE_TABLE(of, lidar_dt_ids);
 
+#ifdef CONFIG_PM
 static int lidar_pm_runtime_suspend(struct device *dev)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(to_i2c_client(dev));
@@ -354,18 +358,20 @@ static int lidar_pm_runtime_resume(struct device *dev)
 
 	return ret;
 }
+#endif
 
 static const struct dev_pm_ops lidar_pm_ops = {
-	RUNTIME_PM_OPS(lidar_pm_runtime_suspend, lidar_pm_runtime_resume, NULL)
+	SET_RUNTIME_PM_OPS(lidar_pm_runtime_suspend,
+			   lidar_pm_runtime_resume, NULL)
 };
 
 static struct i2c_driver lidar_driver = {
 	.driver = {
 		.name	= LIDAR_DRV_NAME,
 		.of_match_table	= lidar_dt_ids,
-		.pm	= pm_ptr(&lidar_pm_ops),
+		.pm	= &lidar_pm_ops,
 	},
-	.probe_new	= lidar_probe,
+	.probe		= lidar_probe,
 	.remove		= lidar_remove,
 	.id_table	= lidar_id,
 };

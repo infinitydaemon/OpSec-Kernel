@@ -15,14 +15,11 @@ void sas_ssp_task_response(struct device *dev, struct sas_task *task,
 
 	tstat->resp = SAS_TASK_COMPLETE;
 
-	switch (iu->datapres) {
-	case SAS_DATAPRES_NO_DATA:
+	if (iu->datapres == 0)
 		tstat->stat = iu->status;
-		break;
-	case SAS_DATAPRES_RESPONSE_DATA:
+	else if (iu->datapres == 1)
 		tstat->stat = iu->resp_data[3];
-		break;
-	case SAS_DATAPRES_SENSE_DATA:
+	else if (iu->datapres == 2) {
 		tstat->stat = SAS_SAM_STAT_CHECK_CONDITION;
 		tstat->buf_valid_size =
 			min_t(int, SAS_STATUS_BUF_SIZE,
@@ -32,11 +29,10 @@ void sas_ssp_task_response(struct device *dev, struct sas_task *task,
 		if (iu->status != SAM_STAT_CHECK_CONDITION)
 			dev_warn(dev, "dev %016llx sent sense data, but stat(0x%x) is not CHECK CONDITION\n",
 				 SAS_ADDR(task->dev->sas_addr), iu->status);
-		break;
-	default:
+	}
+	else
 		/* when datapres contains corrupt/unknown value... */
 		tstat->stat = SAS_SAM_STAT_CHECK_CONDITION;
-	}
 }
 EXPORT_SYMBOL_GPL(sas_ssp_task_response);
 

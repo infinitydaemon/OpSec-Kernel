@@ -28,8 +28,6 @@
 #include "reg_helper.h"
 #include <linux/delay.h>
 
-#include "rv1_clk_mgr_vbios_smu.h"
-
 #define MAX_INSTANCE	5
 #define MAX_SEGMENT		5
 
@@ -101,8 +99,7 @@ static uint32_t rv1_smu_wait_for_response(struct clk_mgr_internal *clk_mgr, unsi
 	return res_val;
 }
 
-static int rv1_vbios_smu_send_msg_with_param(struct clk_mgr_internal *clk_mgr,
-		unsigned int msg_id, unsigned int param)
+int rv1_vbios_smu_send_msg_with_param(struct clk_mgr_internal *clk_mgr, unsigned int msg_id, unsigned int param)
 {
 	uint32_t result;
 

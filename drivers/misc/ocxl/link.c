@@ -6,7 +6,6 @@
 #include <linux/mm_types.h>
 #include <linux/mmu_context.h>
 #include <linux/mmu_notifier.h>
-#include <linux/irqdomain.h>
 #include <asm/copro.h>
 #include <asm/pnv-ocxl.h>
 #include <asm/xive.h>
@@ -95,7 +94,7 @@ struct ocxl_link {
 	struct spa *spa;
 	void *platform_data;
 };
-static LIST_HEAD(links_list);
+static struct list_head links_list = LIST_HEAD_INIT(links_list);
 static DEFINE_MUTEX(links_list_lock);
 
 enum xsl_response {

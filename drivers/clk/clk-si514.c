@@ -327,7 +327,8 @@ static const struct regmap_config si514_regmap_config = {
 	.volatile_reg = si514_regmap_is_volatile,
 };
 
-static int si514_probe(struct i2c_client *client)
+static int si514_probe(struct i2c_client *client,
+		const struct i2c_device_id *id)
 {
 	struct clk_si514 *data;
 	struct clk_init_data init;
@@ -370,9 +371,10 @@ static int si514_probe(struct i2c_client *client)
 	return 0;
 }
 
-static void si514_remove(struct i2c_client *client)
+static int si514_remove(struct i2c_client *client)
 {
 	of_clk_del_provider(client->dev.of_node);
+	return 0;
 }
 
 static const struct i2c_device_id si514_id[] = {
@@ -392,7 +394,7 @@ static struct i2c_driver si514_driver = {
 		.name = "si514",
 		.of_match_table = clk_si514_of_match,
 	},
-	.probe_new	= si514_probe,
+	.probe		= si514_probe,
 	.remove		= si514_remove,
 	.id_table	= si514_id,
 };

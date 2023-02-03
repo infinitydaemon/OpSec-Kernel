@@ -75,11 +75,9 @@ EXPORT_SYMBOL_GPL(pm_suspend_default_s2idle);
 
 void s2idle_set_ops(const struct platform_s2idle_ops *ops)
 {
-	unsigned int sleep_flags;
-
-	sleep_flags = lock_system_sleep();
+	lock_system_sleep();
 	s2idle_ops = ops;
-	unlock_system_sleep(sleep_flags);
+	unlock_system_sleep();
 }
 
 static void s2idle_begin(void)
@@ -99,6 +97,7 @@ static void s2idle_enter(void)
 	raw_spin_unlock_irq(&s2idle_lock);
 
 	cpus_read_lock();
+	cpuidle_resume();
 
 	/* Push all the CPUs into the idle loop. */
 	wake_up_all_idle_cpus();
@@ -106,6 +105,7 @@ static void s2idle_enter(void)
 	swait_event_exclusive(s2idle_wait_head,
 		    s2idle_state == S2IDLE_STATE_WAKE);
 
+	cpuidle_pause();
 	cpus_read_unlock();
 
 	raw_spin_lock_irq(&s2idle_lock);
@@ -138,9 +138,6 @@ static void s2idle_loop(void)
 			break;
 		}
 
-		if (s2idle_ops && s2idle_ops->check)
-			s2idle_ops->check();
-
 		s2idle_enter();
 	}
 
@@ -163,13 +160,11 @@ EXPORT_SYMBOL_GPL(s2idle_wake);
 static bool valid_state(suspend_state_t state)
 {
 	/*
-	 * The PM_SUSPEND_STANDBY and PM_SUSPEND_MEM states require low-level
-	 * support and need to be valid to the low-level implementation.
-	 *
-	 * No ->valid() or ->enter() callback implies that none are valid.
+	 * PM_SUSPEND_STANDBY and PM_SUSPEND_MEM states need low level
+	 * support and need to be valid to the low level
+	 * implementation, no valid callback implies that none are valid.
 	 */
-	return suspend_ops && suspend_ops->valid && suspend_ops->valid(state) &&
-		suspend_ops->enter;
+	return suspend_ops && suspend_ops->valid && suspend_ops->valid(state);
 }
 
 void __init pm_states_init(void)
@@ -205,9 +200,7 @@ __setup("mem_sleep_default=", mem_sleep_default_setup);
  */
 void suspend_set_ops(const struct platform_suspend_ops *ops)
 {
-	unsigned int sleep_flags;
-
-	sleep_flags = lock_system_sleep();
+	lock_system_sleep();
 
 	suspend_ops = ops;
 
@@ -223,7 +216,7 @@ void suspend_set_ops(const struct platform_suspend_ops *ops)
 			mem_sleep_current = PM_SUSPEND_MEM;
 	}
 
-	unlock_system_sleep(sleep_flags);
+	unlock_system_sleep();
 }
 EXPORT_SYMBOL_GPL(suspend_set_ops);
 
@@ -243,8 +236,7 @@ EXPORT_SYMBOL_GPL(suspend_valid_only_mem);
 
 static bool sleep_state_supported(suspend_state_t state)
 {
-	return state == PM_SUSPEND_TO_IDLE ||
-	       (valid_state(state) && !cxl_mem_active());
+	return state == PM_SUSPEND_TO_IDLE || (suspend_ops && suspend_ops->enter);
 }
 
 static int platform_suspend_prepare(suspend_state_t state)
@@ -428,7 +420,7 @@ static int suspend_enter(suspend_state_t state, bool *wakeup)
 		goto Platform_wake;
 	}
 
-	error = pm_sleep_disable_secondary_cpus();
+	error = suspend_disable_secondary_cpus();
 	if (error || suspend_test(TEST_CPUS))
 		goto Enable_cpus;
 
@@ -458,7 +450,7 @@ static int suspend_enter(suspend_state_t state, bool *wakeup)
 	BUG_ON(irqs_disabled());
 
  Enable_cpus:
-	pm_sleep_enable_secondary_cpus();
+	suspend_enable_secondary_cpus();
 
  Platform_wake:
 	platform_resume_noirq(state);

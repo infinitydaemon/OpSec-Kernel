@@ -4,39 +4,83 @@
 #ifndef _WIFI_H_
 #define _WIFI_H_
 
-#include <linux/bits.h>
 #include <linux/ieee80211.h>
 
+#ifdef BIT
+/* error	"BIT define occurred earlier elsewhere!\n" */
+#undef BIT
+#endif
+#define BIT(x)	(1 << (x))
+
 #define WLAN_ETHHDR_LEN		14
+#define WLAN_ETHADDR_LEN	6
+#define WLAN_IEEE_OUI_LEN	3
+#define WLAN_ADDR_LEN		6
+#define WLAN_CRC_LEN		4
+#define WLAN_BSSID_LEN		6
+#define WLAN_BSS_TS_LEN		8
 #define WLAN_HDR_A3_LEN		24
+#define WLAN_HDR_A4_LEN		30
 #define WLAN_HDR_A3_QOS_LEN	26
+#define WLAN_HDR_A4_QOS_LEN	32
 #define WLAN_SSID_MAXLEN	32
+#define WLAN_DATA_MAXLEN	2312
+
+#define WLAN_A3_PN_OFFSET	24
+#define WLAN_A4_PN_OFFSET	30
+
+#define WLAN_MIN_ETHFRM_LEN	60
+#define WLAN_MAX_ETHFRM_LEN	1514
+#define WLAN_ETHHDR_LEN		14
+
+#define P80211CAPTURE_VERSION	0x80211001
+
+/*  This value is tested by WiFi 11n Test Plan 5.2.3. */
+/*  This test verifies the WLAN NIC can update the NAV through sending
+ *  the CTS with large duration. */
+#define	WiFiNavUpperUs				30000	/*  30 ms */
+
+enum WIFI_FRAME_TYPE {
+	WIFI_MGT_TYPE  =	(0),
+	WIFI_CTRL_TYPE =	(BIT(2)),
+	WIFI_DATA_TYPE =	(BIT(3)),
+	WIFI_QOS_DATA_TYPE	= (BIT(7)|BIT(3)),	/*  QoS Data */
+};
 
 enum WIFI_FRAME_SUBTYPE {
 	/*  below is for mgt frame */
-	WIFI_ASSOCREQ       = (0 | IEEE80211_FTYPE_MGMT),
-	WIFI_ASSOCRSP       = (BIT(4) | IEEE80211_FTYPE_MGMT),
-	WIFI_REASSOCREQ     = (BIT(5) | IEEE80211_FTYPE_MGMT),
-	WIFI_REASSOCRSP     = (BIT(5) | BIT(4) | IEEE80211_FTYPE_MGMT),
-	WIFI_PROBEREQ       = (BIT(6) | IEEE80211_FTYPE_MGMT),
-	WIFI_PROBERSP       = (BIT(6) | BIT(4) | IEEE80211_FTYPE_MGMT),
-	WIFI_BEACON         = (BIT(7) | IEEE80211_FTYPE_MGMT),
-	WIFI_ATIM           = (BIT(7) | BIT(4) | IEEE80211_FTYPE_MGMT),
-	WIFI_DISASSOC       = (BIT(7) | BIT(5) | IEEE80211_FTYPE_MGMT),
-	WIFI_AUTH           = (BIT(7) | BIT(5) | BIT(4) | IEEE80211_FTYPE_MGMT),
-	WIFI_DEAUTH         = (BIT(7) | BIT(6) | IEEE80211_FTYPE_MGMT),
-	WIFI_ACTION         = (BIT(7) | BIT(6) | BIT(4) | IEEE80211_FTYPE_MGMT),
+	WIFI_ASSOCREQ       = (0 | WIFI_MGT_TYPE),
+	WIFI_ASSOCRSP       = (BIT(4) | WIFI_MGT_TYPE),
+	WIFI_REASSOCREQ     = (BIT(5) | WIFI_MGT_TYPE),
+	WIFI_REASSOCRSP     = (BIT(5) | BIT(4) | WIFI_MGT_TYPE),
+	WIFI_PROBEREQ       = (BIT(6) | WIFI_MGT_TYPE),
+	WIFI_PROBERSP       = (BIT(6) | BIT(4) | WIFI_MGT_TYPE),
+	WIFI_BEACON         = (BIT(7) | WIFI_MGT_TYPE),
+	WIFI_ATIM           = (BIT(7) | BIT(4) | WIFI_MGT_TYPE),
+	WIFI_DISASSOC       = (BIT(7) | BIT(5) | WIFI_MGT_TYPE),
+	WIFI_AUTH           = (BIT(7) | BIT(5) | BIT(4) | WIFI_MGT_TYPE),
+	WIFI_DEAUTH         = (BIT(7) | BIT(6) | WIFI_MGT_TYPE),
+	WIFI_ACTION         = (BIT(7) | BIT(6) | BIT(4) | WIFI_MGT_TYPE),
 
 	/*  below is for control frame */
-	WIFI_PSPOLL         = (BIT(7) | BIT(5) | IEEE80211_FTYPE_CTL),
+	WIFI_PSPOLL         = (BIT(7) | BIT(5) | WIFI_CTRL_TYPE),
+	WIFI_RTS            = (BIT(7) | BIT(5) | BIT(4) | WIFI_CTRL_TYPE),
+	WIFI_CTS            = (BIT(7) | BIT(6) | WIFI_CTRL_TYPE),
+	WIFI_ACK            = (BIT(7) | BIT(6) | BIT(4) | WIFI_CTRL_TYPE),
+	WIFI_CFEND          = (BIT(7) | BIT(6) | BIT(5) | WIFI_CTRL_TYPE),
+	WIFI_CFEND_CFACK    = (BIT(7) | BIT(6) | BIT(5) | BIT(4) |
+	WIFI_CTRL_TYPE),
 
 	/*  below is for data frame */
-	WIFI_DATA           = (0 | IEEE80211_FTYPE_DATA),
-	WIFI_DATA_CFACK     = (BIT(4) | IEEE80211_FTYPE_DATA),
-	WIFI_DATA_CFPOLL    = (BIT(5) | IEEE80211_FTYPE_DATA),
-	WIFI_DATA_CFACKPOLL = (BIT(5) | BIT(4) | IEEE80211_FTYPE_DATA),
-	WIFI_DATA_NULL      = (BIT(6) | IEEE80211_FTYPE_DATA),
-	WIFI_QOS_DATA_NULL	= (BIT(6) | IEEE80211_STYPE_QOS_DATA | IEEE80211_FTYPE_DATA),
+	WIFI_DATA           = (0 | WIFI_DATA_TYPE),
+	WIFI_DATA_CFACK     = (BIT(4) | WIFI_DATA_TYPE),
+	WIFI_DATA_CFPOLL    = (BIT(5) | WIFI_DATA_TYPE),
+	WIFI_DATA_CFACKPOLL = (BIT(5) | BIT(4) | WIFI_DATA_TYPE),
+	WIFI_DATA_NULL      = (BIT(6) | WIFI_DATA_TYPE),
+	WIFI_CF_ACK         = (BIT(6) | BIT(4) | WIFI_DATA_TYPE),
+	WIFI_CF_POLL        = (BIT(6) | BIT(5) | WIFI_DATA_TYPE),
+	WIFI_CF_ACKPOLL     = (BIT(6) | BIT(5) | BIT(4) | WIFI_DATA_TYPE),
+	WIFI_QOS_DATA_NULL	= (BIT(6) | WIFI_QOS_DATA_TYPE),
 };
 
 enum WIFI_REASON_CODE	{
@@ -70,6 +114,35 @@ enum WIFI_REASON_CODE	{
 	_RSON_TDLS_TEAR_UN_RSN_		= 26,
 };
 
+/* Reason codes (IEEE 802.11-2007, 7.3.1.7, Table 7-22)
+
+#define WLAN_REASON_UNSPECIFIED 1
+#define WLAN_REASON_PREV_AUTH_NOT_VALID 2
+#define WLAN_REASON_DEAUTH_LEAVING 3
+#define WLAN_REASON_DISASSOC_DUE_TO_INACTIVITY 4
+#define WLAN_REASON_DISASSOC_AP_BUSY 5
+#define WLAN_REASON_CLASS2_FRAME_FROM_NONAUTH_STA 6
+#define WLAN_REASON_CLASS3_FRAME_FROM_NONASSOC_STA 7
+#define WLAN_REASON_DISASSOC_STA_HAS_LEFT 8
+#define WLAN_REASON_STA_REQ_ASSOC_WITHOUT_AUTH 9 */
+/* IEEE 802.11h */
+#define WLAN_REASON_PWR_CAPABILITY_NOT_VALID 10
+#define WLAN_REASON_SUPPORTED_CHANNEL_NOT_VALID 11
+
+/* IEEE 802.11i
+#define WLAN_REASON_INVALID_IE 13
+#define WLAN_REASON_MICHAEL_MIC_FAILURE 14
+#define WLAN_REASON_4WAY_HANDSHAKE_TIMEOUT 15
+#define WLAN_REASON_GROUP_KEY_UPDATE_TIMEOUT 16
+#define WLAN_REASON_IE_IN_4WAY_DIFFERS 17
+#define WLAN_REASON_GROUP_CIPHER_NOT_VALID 18
+#define WLAN_REASON_PAIRWISE_CIPHER_NOT_VALID 19
+#define WLAN_REASON_AKMP_NOT_VALID 20
+#define WLAN_REASON_UNSUPPORTED_RSN_IE_VERSION 21
+#define WLAN_REASON_INVALID_RSN_IE_CAPAB 22
+#define WLAN_REASON_IEEE_802_1X_AUTH_FAILED 23
+#define WLAN_REASON_CIPHER_SUITE_REJECTED 24 */
+
 enum WIFI_STATUS_CODE {
 	_STATS_SUCCESSFUL_		= 0,
 	_STATS_FAILURE_			= 1,
@@ -83,6 +156,19 @@ enum WIFI_STATUS_CODE {
 	_STATS_UNABLE_HANDLE_STA_	= 17,
 	_STATS_RATE_FAIL_		= 18,
 };
+
+/* Status codes (IEEE 802.11-2007, 7.3.1.9, Table 7-23)
+#define WLAN_STATUS_SUCCESS 0
+#define WLAN_STATUS_UNSPECIFIED_FAILURE 1
+#define WLAN_STATUS_CAPS_UNSUPPORTED 10
+#define WLAN_STATUS_REASSOC_NO_ASSOC 11
+#define WLAN_STATUS_ASSOC_DENIED_UNSPEC 12
+#define WLAN_STATUS_NOT_SUPPORTED_AUTH_ALG 13
+#define WLAN_STATUS_UNKNOWN_AUTH_TRANSACTION 14
+#define WLAN_STATUS_CHALLENGE_FAIL 15
+#define WLAN_STATUS_AUTH_TIMEOUT 16
+#define WLAN_STATUS_AP_UNABLE_TO_HANDLE_NEW_STA 17
+#define WLAN_STATUS_ASSOC_DENIED_RATES 18 */
 
 /* entended */
 /* IEEE 802.11b */
@@ -140,38 +226,78 @@ enum WIFI_REG_DOMAIN {
 #define _PWRMGT_	BIT(12)
 #define _MORE_DATA_	BIT(13)
 #define _PRIVACY_	BIT(14)
+#define _ORDER_		BIT(15)
 
 #define SetToDs(pbuf)	\
 	*(__le16 *)(pbuf) |= cpu_to_le16(_TO_DS_)
 
 #define GetToDs(pbuf)	(((*(__le16 *)(pbuf)) & cpu_to_le16(_TO_DS_)) != 0)
 
+#define ClearToDs(pbuf)	\
+	*(__le16 *)(pbuf) &= (~cpu_to_le16(_TO_DS_))
+
 #define SetFrDs(pbuf)	\
 	*(__le16 *)(pbuf) |= cpu_to_le16(_FROM_DS_)
 
 #define GetFrDs(pbuf)	(((*(__le16 *)(pbuf)) & cpu_to_le16(_FROM_DS_)) != 0)
 
+#define ClearFrDs(pbuf)	\
+	*(__le16 *)(pbuf) &= (~cpu_to_le16(_FROM_DS_))
+
+#define get_tofr_ds(pframe)	((GetToDs(pframe) << 1) | GetFrDs(pframe))
+
 #define SetMFrag(pbuf)	\
 	*(__le16 *)(pbuf) |= cpu_to_le16(_MORE_FRAG_)
+
+#define GetMFrag(pbuf)	(((*(__le16 *)(pbuf)) & cpu_to_le16(_MORE_FRAG_)) != 0)
 
 #define ClearMFrag(pbuf)	\
 	*(__le16 *)(pbuf) &= (~cpu_to_le16(_MORE_FRAG_))
 
+#define SetRetry(pbuf)	\
+	*(__le16 *)(pbuf) |= cpu_to_le16(_RETRY_)
+
 #define GetRetry(pbuf)	(((*(__le16 *)(pbuf)) & cpu_to_le16(_RETRY_)) != 0)
+
+#define ClearRetry(pbuf)	\
+	*(__le16 *)(pbuf) &= (~cpu_to_le16(_RETRY_))
 
 #define SetPwrMgt(pbuf)	\
 	*(__le16 *)(pbuf) |= cpu_to_le16(_PWRMGT_)
 
 #define GetPwrMgt(pbuf)	(((*(__le16 *)(pbuf)) & cpu_to_le16(_PWRMGT_)) != 0)
 
+#define ClearPwrMgt(pbuf)	\
+	*(__le16 *)(pbuf) &= (~cpu_to_le16(_PWRMGT_))
+
 #define SetMData(pbuf)	\
 	*(__le16 *)(pbuf) |= cpu_to_le16(_MORE_DATA_)
+
+#define GetMData(pbuf)	(((*(__le16 *)(pbuf)) & cpu_to_le16(_MORE_DATA_)) != 0)
+
+#define ClearMData(pbuf)	\
+	*(__le16 *)(pbuf) &= (~cpu_to_le16(_MORE_DATA_))
 
 #define SetPrivacy(pbuf)	\
 	*(__le16 *)(pbuf) |= cpu_to_le16(_PRIVACY_)
 
+#define GetPrivacy(pbuf)					\
+	(((*(__le16 *)(pbuf)) & cpu_to_le16(_PRIVACY_)) != 0)
+
+#define ClearPrivacy(pbuf)	\
+	*(__le16 *)(pbuf) &= (~cpu_to_le16(_PRIVACY_))
+
+#define GetOrder(pbuf)					\
+	(((*(__le16 *)(pbuf)) & cpu_to_le16(_ORDER_)) != 0)
+
 #define GetFrameType(pbuf)				\
 	(le16_to_cpu(*(__le16 *)(pbuf)) & (BIT(3) | BIT(2)))
+
+#define SetFrameType(pbuf, type)	\
+	do {	\
+		*(unsigned short *)(pbuf) &= __constant_cpu_to_le16(~(BIT(3) | BIT(2))); \
+		*(unsigned short *)(pbuf) |= __constant_cpu_to_le16(type); \
+	} while (0)
 
 #define GetFrameSubType(pbuf)	(le16_to_cpu(*(__le16 *)(pbuf)) & (BIT(7) |\
 	 BIT(6) | BIT(5) | BIT(4) | BIT(3) | BIT(2)))
@@ -181,6 +307,23 @@ enum WIFI_REG_DOMAIN {
 		*(__le16 *)(pbuf) &= cpu_to_le16(~(BIT(7) | BIT(6) |	\
 		 BIT(5) | BIT(4) | BIT(3) | BIT(2))); \
 		*(__le16 *)(pbuf) |= cpu_to_le16(type); \
+	} while (0)
+
+#define GetSequence(pbuf)			\
+	(le16_to_cpu(*(__le16 *)((size_t)(pbuf) + 22)) >> 4)
+
+#define GetFragNum(pbuf)			\
+	(le16_to_cpu(*(__le16 *)((size_t)(pbuf) + 22)) & 0x0f)
+
+#define GetTupleCache(pbuf)			\
+	(cpu_to_le16(*(unsigned short *)((size_t)(pbuf) + 22)))
+
+#define SetFragNum(pbuf, num) \
+	do {    \
+		*(unsigned short *)((size_t)(pbuf) + 22) = \
+			((*(unsigned short *)((size_t)(pbuf) + 22)) &	\
+			le16_to_cpu(~(0x000f))) | \
+			cpu_to_le16(0x0f & (num));     \
 	} while (0)
 
 #define SetSeqNum(pbuf, num) \
@@ -196,6 +339,8 @@ enum WIFI_REG_DOMAIN {
 #define SetPriority(pbuf, tid)	\
 	*(__le16 *)(pbuf) |= cpu_to_le16(tid & 0xf)
 
+#define GetPriority(pbuf)	((le16_to_cpu(*(__le16 *)(pbuf))) & 0xf)
+
 #define SetEOSP(pbuf, eosp)	\
 		*(__le16 *)(pbuf) |= cpu_to_le16((eosp & 1) << 4)
 
@@ -206,6 +351,15 @@ enum WIFI_REG_DOMAIN {
 
 #define GetAMsdu(pbuf) (((le16_to_cpu(*(__le16 *)pbuf)) >> 7) & 0x1)
 
+#define SetAMsdu(pbuf, amsdu)	\
+	*(__le16 *)(pbuf) |= cpu_to_le16((amsdu & 1) << 7)
+
+#define GetAid(pbuf)	(le16_to_cpu(*(__le16 *)((size_t)(pbuf) + 2)) & 0x3fff)
+
+#define GetTid(pbuf)	(le16_to_cpu(*(__le16 *)((size_t)(pbuf) +	\
+			(((GetToDs(pbuf)<<1) | GetFrDs(pbuf)) == 3 ?	\
+			30 : 24))) & 0x000f)
+
 #define GetAddr1Ptr(pbuf)	((unsigned char *)((size_t)(pbuf) + 4))
 
 #define GetAddr2Ptr(pbuf)	((unsigned char *)((size_t)(pbuf) + 10))
@@ -213,6 +367,36 @@ enum WIFI_REG_DOMAIN {
 #define GetAddr3Ptr(pbuf)	((unsigned char *)((size_t)(pbuf) + 16))
 
 #define GetAddr4Ptr(pbuf)	((unsigned char *)((size_t)(pbuf) + 24))
+
+static inline int IS_MCAST(unsigned char *da)
+{
+	if ((*da) & 0x01)
+		return true;
+	else
+		return false;
+}
+
+static inline unsigned char *get_da(unsigned char *pframe)
+{
+	unsigned char	*da;
+	unsigned int to_fr_ds = (GetToDs(pframe) << 1) | GetFrDs(pframe);
+
+	switch (to_fr_ds) {
+	case 0x00:	/*  ToDs=0, FromDs=0 */
+		da = GetAddr1Ptr(pframe);
+		break;
+	case 0x01:	/*  ToDs=0, FromDs=1 */
+		da = GetAddr1Ptr(pframe);
+		break;
+	case 0x02:	/*  ToDs=1, FromDs=0 */
+		da = GetAddr3Ptr(pframe);
+		break;
+	default:	/*  ToDs=1, FromDs=1 */
+		da = GetAddr3Ptr(pframe);
+		break;
+	}
+	return da;
+}
 
 static inline unsigned char *get_sa(unsigned char *pframe)
 {
@@ -261,6 +445,13 @@ static inline unsigned char *get_hdr_bssid(unsigned char *pframe)
 	return sa;
 }
 
+static inline int IsFrameTypeCtrl(unsigned char *pframe)
+{
+	if (WIFI_CTRL_TYPE == GetFrameType(pframe))
+		return true;
+	else
+		return false;
+}
 /*-----------------------------------------------------------------------------
 			Below is for the security related definition
 ------------------------------------------------------------------------------*/
@@ -338,6 +529,13 @@ static inline unsigned char *get_hdr_bssid(unsigned char *pframe)
 #define _STATUS_CODE_		2
 #define _TIMESTAMP_		8
 
+#define AUTH_ODD_TO		0
+#define AUTH_EVEN_TO		1
+
+#define WLAN_ETHCONV_ENCAP	1
+#define WLAN_ETHCONV_RFC1042	2
+#define WLAN_ETHCONV_8021h	3
+
 #define cap_ESS		BIT(0)
 #define cap_IBSS	BIT(1)
 #define cap_CFPollable	BIT(2)
@@ -356,6 +554,16 @@ static inline unsigned char *get_hdr_bssid(unsigned char *pframe)
 #define _IEEE8021X_MGT_			1	/*  WPA */
 #define _IEEE8021X_PSK_			2	/*  WPA with pre-shared key */
 
+/*
+#define _NO_PRIVACY_			0
+#define _WEP_40_PRIVACY_		1
+#define _TKIP_PRIVACY_			2
+#define _WRAP_PRIVACY_			3
+#define _CCMP_PRIVACY_			4
+#define _WEP_104_PRIVACY_		5
+#define _WEP_WPA_MIXED_PRIVACY_ 6	WEP + WPA
+*/
+
 /*-----------------------------------------------------------------------------
 				Below is the definition for WMM
 ------------------------------------------------------------------------------*/
@@ -365,6 +573,14 @@ static inline unsigned char *get_hdr_bssid(unsigned char *pframe)
 /*-----------------------------------------------------------------------------
 				Below is the definition for 802.11n
 ------------------------------------------------------------------------------*/
+
+#define SetOrderBit(pbuf)	\
+	do	{	\
+		*(unsigned short *)(pbuf) |= cpu_to_le16(_ORDER_); \
+	} while (0)
+
+#define GetOrderBit(pbuf)			\
+	(((*(unsigned short *)(pbuf)) & le16_to_cpu(_ORDER_)) != 0)
 
 /**
  * struct rtw_ieee80211_bar - HT Block Ack Request
@@ -427,7 +643,20 @@ struct WMM_para_element {
 	struct AC_param	ac_param[4];
 } __packed;
 
-#define MAX_AMPDU_FACTOR_64K	3
+struct ADDBA_request {
+	unsigned char	action_code;
+	unsigned char	dialog_token;
+	__le16	BA_para_set;
+	__le16	BA_timeout_value;
+	__le16	BA_starting_seqctrl;
+} __packed;
+
+enum ht_cap_ampdu_factor {
+	MAX_AMPDU_FACTOR_8K	= 0,
+	MAX_AMPDU_FACTOR_16K	= 1,
+	MAX_AMPDU_FACTOR_32K	= 2,
+	MAX_AMPDU_FACTOR_64K	= 3,
+};
 
 /* Spatial Multiplexing Power Save Modes */
 #define WLAN_HT_CAP_SM_PS_STATIC	0
@@ -454,6 +683,13 @@ struct WMM_para_element {
 #define HT_INFO_OPERATION_MODE_NON_GF_DEVS_PRESENT	((u8) BIT(2))
 #define HT_INFO_OPERATION_MODE_TRANSMIT_BURST_LIMIT	((u8) BIT(3))
 #define HT_INFO_OPERATION_MODE_NON_HT_STA_PRESENT	((u8) BIT(4))
+
+#define HT_INFO_STBC_PARAM_DUAL_BEACON		((u16) BIT(6))
+#define HT_INFO_STBC_PARAM_DUAL_STBC_PROTECT	((u16) BIT(7))
+#define HT_INFO_STBC_PARAM_SECONDARY_BC		((u16) BIT(8))
+#define HT_INFO_STBC_PARAM_LSIG_TXOP_PROTECT_ALLOWED	((u16) BIT(9))
+#define HT_INFO_STBC_PARAM_PCO_ACTIVE		((u16) BIT(10))
+#define HT_INFO_STBC_PARAM_PCO_PHASE		((u16) BIT(11))
 
 /*	===============WPS Section=============== */
 /*	For WPSv1.0 */
@@ -636,7 +872,7 @@ struct WMM_para_element {
 
 #define	P2P_WILDCARD_SSID_LEN			7
 
-/* default value, used when: (1)p2p disabled or (2)p2p enabled
+/* default value, used when: (1)p2p disabed or (2)p2p enabled
  * but only do 1 scan phase */
 #define	P2P_FINDPHASE_EX_NONE		0
 /*  used when p2p enabled and want to do 1 scan phase and
@@ -701,11 +937,11 @@ enum P2P_STATE {
 	P2P_STATE_TX_PROVISION_DIS_REQ = 6,
 	P2P_STATE_RX_PROVISION_DIS_RSP = 7,
 	P2P_STATE_RX_PROVISION_DIS_REQ = 8,
-	/* Doing the group owner negotiation handshake */
+	/* Doing the group owner negoitation handshake */
 	P2P_STATE_GONEGO_ING = 9,
-	/* finish the group negotiation handshake with success */
+	/* finish the group negoitation handshake with success */
 	P2P_STATE_GONEGO_OK = 10,
-	/* finish the group negotiation handshake with failure */
+	/* finish the group negoitation handshake with failure */
 	P2P_STATE_GONEGO_FAIL = 11,
 	/* receiving the P2P Inviation request and match with the profile. */
 	P2P_STATE_RECV_INVITE_REQ_MATCH = 12,
@@ -725,9 +961,9 @@ enum P2P_STATE {
 	P2P_STATE_RECV_INVITE_REQ_JOIN = 19,
 	/* recveing the P2P Inviation response with failure */
 	P2P_STATE_RX_INVITE_RESP_FAIL = 20,
-	/* receiving p2p negotiation response with information is not available */
+	/* receiving p2p negoitation response with information is not available */
 	P2P_STATE_RX_INFOR_NOREADY = 21,
-	/* sending p2p negotiation response with information is not available */
+	/* sending p2p negoitation response with information is not available */
 	P2P_STATE_TX_INFOR_NOREADY = 22,
 };
 
@@ -746,7 +982,7 @@ enum P2P_PROTO_WK_ID {
 	P2P_PRE_TX_PROVDISC_PROCESS_WK = 2,
 	P2P_PRE_TX_NEGOREQ_PROCESS_WK = 3,
 	P2P_PRE_TX_INVITEREQ_PROCESS_WK = 4,
-	P2P_AP_P2P_CH_SWITCH_PROCESS_WK = 5,
+	P2P_AP_P2P_CH_SWITCH_PROCESS_WK =5,
 	P2P_RO_CH_WK = 6,
 };
 
@@ -764,6 +1000,26 @@ enum P2P_PS_MODE {
 	P2P_PS_NOA	 = 2,
 	P2P_PS_MIX = 3, /*  CTWindow and NoA */
 };
+
+/*	=====================WFD Section===================== */
+/*	For Wi-Fi Display */
+#define	WFD_ATTR_DEVICE_INFO		0x00
+#define	WFD_ATTR_ASSOC_BSSID		0x01
+#define	WFD_ATTR_COUPLED_SINK_INFO	0x06
+#define	WFD_ATTR_LOCAL_IP_ADDR		0x08
+#define	WFD_ATTR_SESSION_INFO		0x09
+#define	WFD_ATTR_ALTER_MAC		0x0a
+
+/*	For WFD Device Information Attribute */
+#define	WFD_DEVINFO_SOURCE			0x0000
+#define	WFD_DEVINFO_PSINK			0x0001
+#define	WFD_DEVINFO_SSINK			0x0002
+#define	WFD_DEVINFO_DUAL			0x0003
+
+#define	WFD_DEVINFO_SESSION_AVAIL		0x0010
+#define	WFD_DEVINFO_WSD				0x0040
+#define	WFD_DEVINFO_PC_TDLS			0x0080
+#define	WFD_DEVINFO_HDCP_SUPPORT		0x0100
 
 #define IP_MCAST_MAC(mac)				\
 	((mac[0] == 0x01) && (mac[1] == 0x00) && (mac[2] == 0x5e))

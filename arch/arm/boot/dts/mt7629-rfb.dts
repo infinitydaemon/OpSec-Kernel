@@ -23,13 +23,13 @@
 	gpio-keys {
 		compatible = "gpio-keys";
 
-		button-reset {
+		reset {
 			label = "factory";
 			linux,code = <KEY_RESTART>;
 			gpios = <&pio 60 GPIO_ACTIVE_LOW>;
 		};
 
-		button-wps {
+		wps {
 			label = "wps";
 			linux,code = <KEY_WPS_BUTTON>;
 			gpios = <&pio 58 GPIO_ACTIVE_LOW>;
@@ -140,10 +140,9 @@
 	};
 };
 
-&pcie1 {
+&pcie {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pcie_pins>;
-	status = "okay";
 };
 
 &pciephy1 {

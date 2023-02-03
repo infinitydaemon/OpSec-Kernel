@@ -73,10 +73,15 @@ void ocfs2_resv_discard(struct ocfs2_reservation_map *resmap,
 
 /**
  * ocfs2_resmap_init() - Initialize fields of a reservations bitmap
- * @osb: struct ocfs2_super to be saved in resmap
  * @resmap: struct ocfs2_reservation_map to initialize
+ * @obj: unused for now
+ * @ops: unused for now
+ * @max_bitmap_bytes: Maximum size of the bitmap (typically blocksize)
+ *
+ * Only possible return value other than '0' is -ENOMEM for failure to
+ * allocation mirror bitmap.
  */
-void ocfs2_resmap_init(struct ocfs2_super *osb,
+int ocfs2_resmap_init(struct ocfs2_super *osb,
 		      struct ocfs2_reservation_map *resmap);
 
 /**

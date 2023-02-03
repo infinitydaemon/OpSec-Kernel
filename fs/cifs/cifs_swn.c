@@ -256,23 +256,23 @@ static struct cifs_swn_reg *cifs_find_swn_reg(struct cifs_tcon *tcon)
 	const char *share_name;
 	const char *net_name;
 
-	net_name = extract_hostname(tcon->tree_name);
+	net_name = extract_hostname(tcon->treeName);
 	if (IS_ERR(net_name)) {
 		int ret;
 
 		ret = PTR_ERR(net_name);
 		cifs_dbg(VFS, "%s: failed to extract host name from target '%s': %d\n",
-				__func__, tcon->tree_name, ret);
+				__func__, tcon->treeName, ret);
 		return ERR_PTR(-EINVAL);
 	}
 
-	share_name = extract_sharename(tcon->tree_name);
+	share_name = extract_sharename(tcon->treeName);
 	if (IS_ERR(share_name)) {
 		int ret;
 
 		ret = PTR_ERR(share_name);
 		cifs_dbg(VFS, "%s: failed to extract share name from target '%s': %d\n",
-				__func__, tcon->tree_name, ret);
+				__func__, tcon->treeName, ret);
 		kfree(net_name);
 		return ERR_PTR(-EINVAL);
 	}
@@ -335,14 +335,14 @@ static struct cifs_swn_reg *cifs_get_swn_reg(struct cifs_tcon *tcon)
 		goto fail;
 	}
 
-	reg->net_name = extract_hostname(tcon->tree_name);
+	reg->net_name = extract_hostname(tcon->treeName);
 	if (IS_ERR(reg->net_name)) {
 		ret = PTR_ERR(reg->net_name);
 		cifs_dbg(VFS, "%s: failed to extract host name from target: %d\n", __func__, ret);
 		goto fail_idr;
 	}
 
-	reg->share_name = extract_sharename(tcon->tree_name);
+	reg->share_name = extract_sharename(tcon->treeName);
 	if (IS_ERR(reg->share_name)) {
 		ret = PTR_ERR(reg->share_name);
 		cifs_dbg(VFS, "%s: failed to extract share name from target: %d\n", __func__, ret);
@@ -393,14 +393,26 @@ static void cifs_put_swn_reg(struct cifs_swn_reg *swnreg)
 
 static int cifs_swn_resource_state_changed(struct cifs_swn_reg *swnreg, const char *name, int state)
 {
+	int i;
+
 	switch (state) {
 	case CIFS_SWN_RESOURCE_STATE_UNAVAILABLE:
 		cifs_dbg(FYI, "%s: resource name '%s' become unavailable\n", __func__, name);
-		cifs_signal_cifsd_for_reconnect(swnreg->tcon->ses->server, true);
+		for (i = 0; i < swnreg->tcon->ses->chan_count; i++) {
+			spin_lock(&GlobalMid_Lock);
+			if (swnreg->tcon->ses->chans[i].server->tcpStatus != CifsExiting)
+				swnreg->tcon->ses->chans[i].server->tcpStatus = CifsNeedReconnect;
+			spin_unlock(&GlobalMid_Lock);
+		}
 		break;
 	case CIFS_SWN_RESOURCE_STATE_AVAILABLE:
 		cifs_dbg(FYI, "%s: resource name '%s' become available\n", __func__, name);
-		cifs_signal_cifsd_for_reconnect(swnreg->tcon->ses->server, true);
+		for (i = 0; i < swnreg->tcon->ses->chan_count; i++) {
+			spin_lock(&GlobalMid_Lock);
+			if (swnreg->tcon->ses->chans[i].server->tcpStatus != CifsExiting)
+				swnreg->tcon->ses->chans[i].server->tcpStatus = CifsNeedReconnect;
+			spin_unlock(&GlobalMid_Lock);
+		}
 		break;
 	case CIFS_SWN_RESOURCE_STATE_UNKNOWN:
 		cifs_dbg(FYI, "%s: resource name '%s' changed to unknown state\n", __func__, name);
@@ -465,7 +477,7 @@ static int cifs_swn_reconnect(struct cifs_tcon *tcon, struct sockaddr_storage *a
 	int ret = 0;
 
 	/* Store the reconnect address */
-	cifs_server_lock(tcon->ses->server);
+	mutex_lock(&tcon->ses->server->srv_mutex);
 	if (cifs_sockaddr_equal(&tcon->ses->server->dstaddr, addr))
 		goto unlock;
 
@@ -498,10 +510,13 @@ static int cifs_swn_reconnect(struct cifs_tcon *tcon, struct sockaddr_storage *a
 		goto unlock;
 	}
 
-	cifs_signal_cifsd_for_reconnect(tcon->ses->server, false);
+	spin_lock(&GlobalMid_Lock);
+	if (tcon->ses->server->tcpStatus != CifsExiting)
+		tcon->ses->server->tcpStatus = CifsNeedReconnect;
+	spin_unlock(&GlobalMid_Lock);
 
 unlock:
-	cifs_server_unlock(tcon->ses->server);
+	mutex_unlock(&tcon->ses->server->srv_mutex);
 
 	return ret;
 }

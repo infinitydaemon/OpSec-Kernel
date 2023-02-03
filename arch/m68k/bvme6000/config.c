@@ -23,6 +23,7 @@
 #include <linux/linkage.h>
 #include <linux/init.h>
 #include <linux/major.h>
+#include <linux/genhd.h>
 #include <linux/rtc.h>
 #include <linux/interrupt.h>
 #include <linux/bcd.h>
@@ -35,7 +36,6 @@
 #include <asm/traps.h>
 #include <asm/machdep.h>
 #include <asm/bvme6000hw.h>
-#include <asm/config.h>
 
 static void bvme6000_get_model(char *model);
 extern void bvme6000_sched_init(void);

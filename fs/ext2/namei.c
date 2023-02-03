@@ -120,7 +120,7 @@ static int ext2_create (struct user_namespace * mnt_userns,
 }
 
 static int ext2_tmpfile(struct user_namespace *mnt_userns, struct inode *dir,
-			struct file *file, umode_t mode)
+			struct dentry *dentry, umode_t mode)
 {
 	struct inode *inode = ext2_new_inode(dir, mode, NULL);
 	if (IS_ERR(inode))
@@ -128,9 +128,9 @@ static int ext2_tmpfile(struct user_namespace *mnt_userns, struct inode *dir,
 
 	ext2_set_file_ops(inode);
 	mark_inode_dirty(inode);
-	d_tmpfile(file, inode);
+	d_tmpfile(dentry, inode);
 	unlock_new_inode(inode);
-	return finish_open_simple(file, 0);
+	return 0;
 }
 
 static int ext2_mknod (struct user_namespace * mnt_userns, struct inode * dir,
@@ -178,7 +178,10 @@ static int ext2_symlink (struct user_namespace * mnt_userns, struct inode * dir,
 		/* slow symlink */
 		inode->i_op = &ext2_symlink_inode_operations;
 		inode_nohighmem(inode);
-		inode->i_mapping->a_ops = &ext2_aops;
+		if (test_opt(inode->i_sb, NOBH))
+			inode->i_mapping->a_ops = &ext2_nobh_aops;
+		else
+			inode->i_mapping->a_ops = &ext2_aops;
 		err = page_symlink(inode, symname, l);
 		if (err)
 			goto out_fail;
@@ -244,7 +247,10 @@ static int ext2_mkdir(struct user_namespace * mnt_userns,
 
 	inode->i_op = &ext2_dir_inode_operations;
 	inode->i_fop = &ext2_dir_operations;
-	inode->i_mapping->a_ops = &ext2_aops;
+	if (test_opt(inode->i_sb, NOBH))
+		inode->i_mapping->a_ops = &ext2_nobh_aops;
+	else
+		inode->i_mapping->a_ops = &ext2_aops;
 
 	inode_inc_link_count(inode);
 
@@ -427,7 +433,7 @@ const struct inode_operations ext2_dir_inode_operations = {
 	.listxattr	= ext2_listxattr,
 	.getattr	= ext2_getattr,
 	.setattr	= ext2_setattr,
-	.get_inode_acl	= ext2_get_acl,
+	.get_acl	= ext2_get_acl,
 	.set_acl	= ext2_set_acl,
 	.tmpfile	= ext2_tmpfile,
 	.fileattr_get	= ext2_fileattr_get,
@@ -438,6 +444,6 @@ const struct inode_operations ext2_special_inode_operations = {
 	.listxattr	= ext2_listxattr,
 	.getattr	= ext2_getattr,
 	.setattr	= ext2_setattr,
-	.get_inode_acl	= ext2_get_acl,
+	.get_acl	= ext2_get_acl,
 	.set_acl	= ext2_set_acl,
 };

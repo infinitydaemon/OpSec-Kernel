@@ -165,7 +165,7 @@ static int hw_wait_vbus_lower_bsv(struct ci_hdrc *ci)
 	return 0;
 }
 
-void ci_handle_id_switch(struct ci_hdrc *ci)
+static void ci_handle_id_switch(struct ci_hdrc *ci)
 {
 	enum ci_role role = ci_otg_role(ci);
 
@@ -255,9 +255,10 @@ int ci_hdrc_otg_init(struct ci_hdrc *ci)
  */
 void ci_hdrc_otg_destroy(struct ci_hdrc *ci)
 {
-	if (ci->wq)
+	if (ci->wq) {
+		flush_workqueue(ci->wq);
 		destroy_workqueue(ci->wq);
-
+	}
 	/* Disable all OTG irq and clear status */
 	hw_write_otgsc(ci, OTGSC_INT_EN_BITS | OTGSC_INT_STATUS_BITS,
 						OTGSC_INT_STATUS_BITS);

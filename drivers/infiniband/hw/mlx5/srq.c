@@ -3,6 +3,7 @@
  * Copyright (c) 2013-2018, Mellanox Technologies inc.  All rights reserved.
  */
 
+#include <linux/module.h>
 #include <linux/mlx5/qp.h>
 #include <linux/slab.h>
 #include <rdma/ib_umem.h>

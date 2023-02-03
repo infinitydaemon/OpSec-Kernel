@@ -51,7 +51,7 @@ static DEFINE_IDR(acm_minors);
 static DEFINE_MUTEX(acm_minors_lock);
 
 static void acm_tty_set_termios(struct tty_struct *tty,
-				const struct ktermios *termios_old);
+				struct ktermios *termios_old);
 
 /*
  * acm_minors accessors
@@ -119,7 +119,7 @@ static int acm_ctrl_msg(struct acm *acm, int request, int value,
 	retval = usb_control_msg(acm->dev, usb_sndctrlpipe(acm->dev, 0),
 		request, USB_RT_ACM, value,
 		acm->control->altsetting[0].desc.bInterfaceNumber,
-		buf, len, USB_CTRL_SET_TIMEOUT);
+		buf, len, 5000);
 
 	dev_dbg(&acm->control->dev,
 		"%s - rq 0x%02x, val %#x, len %#x, result %d\n",
@@ -311,7 +311,7 @@ static void acm_process_notification(struct acm *acm, unsigned char *buf)
 		dev_dbg(&acm->control->dev,
 			"%s - serial state: 0x%x\n", __func__, newctrl);
 
-		if (!acm->clocal && (acm->ctrlin & ~newctrl & USB_CDC_SERIAL_STATE_DCD)) {
+		if (!acm->clocal && (acm->ctrlin & ~newctrl & ACM_CTRL_DCD)) {
 			dev_dbg(&acm->control->dev,
 				"%s - calling hangup\n", __func__);
 			tty_port_tty_hangup(&acm->port, false);
@@ -322,25 +322,25 @@ static void acm_process_notification(struct acm *acm, unsigned char *buf)
 		acm->ctrlin = newctrl;
 		acm->oldcount = acm->iocount;
 
-		if (difference & USB_CDC_SERIAL_STATE_DSR)
+		if (difference & ACM_CTRL_DSR)
 			acm->iocount.dsr++;
-		if (difference & USB_CDC_SERIAL_STATE_DCD)
+		if (difference & ACM_CTRL_DCD)
 			acm->iocount.dcd++;
-		if (newctrl & USB_CDC_SERIAL_STATE_BREAK) {
+		if (newctrl & ACM_CTRL_BRK) {
 			acm->iocount.brk++;
 			tty_insert_flip_char(&acm->port, 0, TTY_BREAK);
 		}
-		if (newctrl & USB_CDC_SERIAL_STATE_RING_SIGNAL)
+		if (newctrl & ACM_CTRL_RI)
 			acm->iocount.rng++;
-		if (newctrl & USB_CDC_SERIAL_STATE_FRAMING)
+		if (newctrl & ACM_CTRL_FRAMING)
 			acm->iocount.frame++;
-		if (newctrl & USB_CDC_SERIAL_STATE_PARITY)
+		if (newctrl & ACM_CTRL_PARITY)
 			acm->iocount.parity++;
-		if (newctrl & USB_CDC_SERIAL_STATE_OVERRUN)
+		if (newctrl & ACM_CTRL_OVERRUN)
 			acm->iocount.overrun++;
 		spin_unlock_irqrestore(&acm->read_lock, flags);
 
-		if (newctrl & USB_CDC_SERIAL_STATE_BREAK)
+		if (newctrl & ACM_CTRL_BRK)
 			tty_flip_buffer_push(&acm->port);
 
 		if (difference)
@@ -658,7 +658,7 @@ static void acm_port_dtr_rts(struct tty_port *port, int raise)
 	int res;
 
 	if (raise)
-		val = USB_CDC_CTRL_DTR | USB_CDC_CTRL_RTS;
+		val = ACM_CTRL_DTR | ACM_CTRL_RTS;
 	else
 		val = 0;
 
@@ -685,6 +685,10 @@ static int acm_port_activate(struct tty_port *port, struct tty_struct *tty)
 	if (retval)
 		goto error_get_interface;
 
+	/*
+	 * FIXME: Why do we need this? Allocating 64K of physically contiguous
+	 * memory is really nasty...
+	 */
 	set_bit(TTY_NO_WRITE_SPLIT, &tty->flags);
 	acm->control->needs_remote_wakeup = 1;
 
@@ -903,11 +907,11 @@ static int acm_tty_tiocmget(struct tty_struct *tty)
 {
 	struct acm *acm = tty->driver_data;
 
-	return (acm->ctrlout & USB_CDC_CTRL_DTR ? TIOCM_DTR : 0) |
-	       (acm->ctrlout & USB_CDC_CTRL_RTS ? TIOCM_RTS : 0) |
-	       (acm->ctrlin  & USB_CDC_SERIAL_STATE_DSR ? TIOCM_DSR : 0) |
-	       (acm->ctrlin  & USB_CDC_SERIAL_STATE_RING_SIGNAL ? TIOCM_RI : 0) |
-	       (acm->ctrlin  & USB_CDC_SERIAL_STATE_DCD ? TIOCM_CD : 0) |
+	return (acm->ctrlout & ACM_CTRL_DTR ? TIOCM_DTR : 0) |
+	       (acm->ctrlout & ACM_CTRL_RTS ? TIOCM_RTS : 0) |
+	       (acm->ctrlin  & ACM_CTRL_DSR ? TIOCM_DSR : 0) |
+	       (acm->ctrlin  & ACM_CTRL_RI  ? TIOCM_RI  : 0) |
+	       (acm->ctrlin  & ACM_CTRL_DCD ? TIOCM_CD  : 0) |
 	       TIOCM_CTS;
 }
 
@@ -918,10 +922,10 @@ static int acm_tty_tiocmset(struct tty_struct *tty,
 	unsigned int newctrl;
 
 	newctrl = acm->ctrlout;
-	set = (set & TIOCM_DTR ? USB_CDC_CTRL_DTR : 0) |
-	      (set & TIOCM_RTS ? USB_CDC_CTRL_RTS : 0);
-	clear = (clear & TIOCM_DTR ? USB_CDC_CTRL_DTR : 0) |
-		(clear & TIOCM_RTS ? USB_CDC_CTRL_RTS : 0);
+	set = (set & TIOCM_DTR ? ACM_CTRL_DTR : 0) |
+					(set & TIOCM_RTS ? ACM_CTRL_RTS : 0);
+	clear = (clear & TIOCM_DTR ? ACM_CTRL_DTR : 0) |
+					(clear & TIOCM_RTS ? ACM_CTRL_RTS : 0);
 
 	newctrl = (newctrl & ~clear) | set;
 
@@ -1049,7 +1053,7 @@ static int acm_tty_ioctl(struct tty_struct *tty,
 }
 
 static void acm_tty_set_termios(struct tty_struct *tty,
-				const struct ktermios *termios_old)
+						struct ktermios *termios_old)
 {
 	struct acm *acm = tty->driver_data;
 	struct ktermios *termios = &tty->termios;
@@ -1068,9 +1072,9 @@ static void acm_tty_set_termios(struct tty_struct *tty,
 
 	if (C_BAUD(tty) == B0) {
 		newline.dwDTERate = acm->line.dwDTERate;
-		newctrl &= ~USB_CDC_CTRL_DTR;
+		newctrl &= ~ACM_CTRL_DTR;
 	} else if (termios_old && (termios_old->c_cflag & CBAUD) == B0) {
-		newctrl |=  USB_CDC_CTRL_DTR;
+		newctrl |=  ACM_CTRL_DTR;
 	}
 
 	if (newctrl != acm->ctrlout)
@@ -1858,6 +1862,7 @@ static const struct usb_device_id acm_ids[] = {
 	{ NOKIA_PCSUITE_ACM_INFO(0x0071), }, /* Nokia N82 */
 	{ NOKIA_PCSUITE_ACM_INFO(0x04F0), }, /* Nokia N95 & N95-3 NAM */
 	{ NOKIA_PCSUITE_ACM_INFO(0x0070), }, /* Nokia N95 8GB  */
+	{ NOKIA_PCSUITE_ACM_INFO(0x00e9), }, /* Nokia 5320 XpressMusic */
 	{ NOKIA_PCSUITE_ACM_INFO(0x0099), }, /* Nokia 6210 Navigator, RM-367 */
 	{ NOKIA_PCSUITE_ACM_INFO(0x0128), }, /* Nokia 6210 Navigator, RM-419 */
 	{ NOKIA_PCSUITE_ACM_INFO(0x008f), }, /* Nokia 6220 Classic */

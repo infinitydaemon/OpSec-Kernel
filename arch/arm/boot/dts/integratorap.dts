@@ -88,9 +88,8 @@
 		};
 
 		/* Oscillator on the core module, clocks the CPU core */
-		cmosc: clock-controller@8 {
+		cmosc: cmosc@24M {
 			compatible = "arm,syscon-icst525-integratorap-cm";
-			reg = <0x08 0x04>;
 			#clock-cells = <0>;
 			lock-offset = <0x14>;
 			vco-offset = <0x08>;
@@ -98,9 +97,8 @@
 		};
 
 		/* Auxilary oscillator on the core module, 32.369MHz at boot */
-		auxosc: clock-controller@1c {
+		auxosc: auxosc@24M {
 			compatible = "arm,syscon-icst525";
-			reg = <0x1c 0x04>;
 			#clock-cells = <0>;
 			lock-offset = <0x14>;
 			vco-offset = <0x1c>;
@@ -111,17 +109,13 @@
 	syscon {
 		compatible = "arm,integrator-ap-syscon", "syscon";
 		reg = <0x11000000 0x100>;
-		ranges = <0x0 0x11000000 0x100>;
-		#size-cells = <1>;
-		#address-cells = <1>;
 
 		/*
 		 * SYSCLK clocks PCIv3 bridge, system controller and the
 		 * logic modules.
 		 */
-		sysclk: clock-controller@4 {
+		sysclk: apsys@24M {
 			compatible = "arm,syscon-icst525-integratorap-sys";
-			reg = <0x04 0x04>;
 			#clock-cells = <0>;
 			lock-offset = <0x1c>;
 			vco-offset = <0x04>;
@@ -129,9 +123,8 @@
 		};
 
 		/* One-bit control for the PCI bus clock (33 or 25 MHz) */
-		pciclk: clock-controller@4,8 {
+		pciclk: pciclk@24M {
 			compatible = "arm,syscon-icst525-integratorap-pci";
-			reg = <0x04 0x04>;
 			#clock-cells = <0>;
 			lock-offset = <0x1c>;
 			vco-offset = <0x04>;
@@ -262,7 +255,7 @@
 		lm0: bus@c0000000 {
 			compatible = "simple-bus";
 			ranges = <0x00000000 0xc0000000 0x10000000>;
-			dma-ranges = <0x00000000 0xc0000000 0x10000000>;
+			dma-ranges = <0x00000000 0x80000000 0x10000000>;
 			reg = <0xc0000000 0x10000000>;
 			#address-cells = <1>;
 			#size-cells = <1>;
@@ -270,7 +263,7 @@
 		lm1: bus@d0000000 {
 			compatible = "simple-bus";
 			ranges = <0x00000000 0xd0000000 0x10000000>;
-			dma-ranges = <0x00000000 0xd0000000 0x10000000>;
+			dma-ranges = <0x00000000 0x80000000 0x10000000>;
 			reg = <0xd0000000 0x10000000>;
 			#address-cells = <1>;
 			#size-cells = <1>;
@@ -278,7 +271,7 @@
 		lm2: bus@e0000000 {
 			compatible = "simple-bus";
 			ranges = <0x00000000 0xe0000000 0x10000000>;
-			dma-ranges = <0x00000000 0xe0000000 0x10000000>;
+			dma-ranges = <0x00000000 0x80000000 0x10000000>;
 			reg = <0xe0000000 0x10000000>;
 			#address-cells = <1>;
 			#size-cells = <1>;
@@ -286,7 +279,7 @@
 		lm3: bus@f0000000 {
 			compatible = "simple-bus";
 			ranges = <0x00000000 0xf0000000 0x10000000>;
-			dma-ranges = <0x00000000 0xf0000000 0x10000000>;
+			dma-ranges = <0x00000000 0x80000000 0x10000000>;
 			reg = <0xf0000000 0x10000000>;
 			#address-cells = <1>;
 			#size-cells = <1>;

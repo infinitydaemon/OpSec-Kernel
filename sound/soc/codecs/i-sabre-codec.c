@@ -354,9 +354,11 @@ static int i_sabre_codec_i2c_probe(
 	return i_sabre_codec_probe(&i2c->dev, regmap);
 }
 
-static void i_sabre_codec_i2c_remove(struct i2c_client *i2c)
+static int i_sabre_codec_i2c_remove(struct i2c_client *i2c)
 {
 	i_sabre_codec_remove(&i2c->dev);
+
+	return 0;
 }
 
 

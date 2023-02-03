@@ -19,10 +19,10 @@ void ipvlan_count_rx(const struct ipvl_dev *ipvlan,
 
 		pcptr = this_cpu_ptr(ipvlan->pcpu_stats);
 		u64_stats_update_begin(&pcptr->syncp);
-		u64_stats_inc(&pcptr->rx_pkts);
-		u64_stats_add(&pcptr->rx_bytes, len);
+		pcptr->rx_pkts++;
+		pcptr->rx_bytes += len;
 		if (mcast)
-			u64_stats_inc(&pcptr->rx_mcast);
+			pcptr->rx_mcast++;
 		u64_stats_update_end(&pcptr->syncp);
 	} else {
 		this_cpu_inc(ipvlan->pcpu_stats->rx_errs);
@@ -291,7 +291,8 @@ void ipvlan_process_multicast(struct work_struct *work)
 			else
 				kfree_skb(skb);
 		}
-		dev_put(dev);
+		if (dev)
+			dev_put(dev);
 		cond_resched();
 	}
 }
@@ -556,7 +557,7 @@ static void ipvlan_multicast_enqueue(struct ipvl_port *port,
 		schedule_work(&port->wq);
 	} else {
 		spin_unlock(&port->backlog.lock);
-		dev_core_stats_rx_dropped_inc(skb->dev);
+		atomic_long_inc(&skb->dev->rx_dropped);
 		kfree_skb(skb);
 	}
 }

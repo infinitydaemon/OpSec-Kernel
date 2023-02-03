@@ -946,6 +946,7 @@ static void build_srb(struct scsi_cmnd *cmd, struct DeviceCtlBlk *dcb,
  * layer, invoke 'done' on completion
  *
  * @cmd: pointer to scsi command object
+ * @done: function pointer to be invoked on completion
  *
  * Returns 1 if the adapter (host) is busy, else returns 0. One
  * reason for an adapter to be busy is that the number
@@ -958,10 +959,9 @@ static void build_srb(struct scsi_cmnd *cmd, struct DeviceCtlBlk *dcb,
  * Locks: struct Scsi_Host::host_lock held on entry (with "irqsave")
  *        and is expected to be held on return.
  *
- */
-static int dc395x_queue_command_lck(struct scsi_cmnd *cmd)
+ **/
+static int dc395x_queue_command_lck(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
 {
-	void (*done)(struct scsi_cmnd *) = scsi_done;
 	struct DeviceCtlBlk *dcb;
 	struct ScsiReqBlk *srb;
 	struct AdapterCtlBlk *acb =
@@ -995,6 +995,8 @@ static int dc395x_queue_command_lck(struct scsi_cmnd *cmd)
 		goto complete;
 	}
 
+	/* set callback and clear result in the command */
+	cmd->scsi_done = done;
 	set_host_byte(cmd, DID_OK);
 	set_status_byte(cmd, SAM_STAT_GOOD);
 
@@ -3314,6 +3316,9 @@ static void srb_done(struct AdapterCtlBlk *acb, struct DeviceCtlBlk *dcb,
 
 	/* Here is the info for Doug Gilbert's sg3 ... */
 	scsi_set_resid(cmd, srb->total_xfer_length);
+	/* This may be interpreted by sb. or not ... */
+	cmd->SCp.this_residual = srb->total_xfer_length;
+	cmd->SCp.buffers_residual = 0;
 	if (debug_enabled(DBG_KG)) {
 		if (srb->total_xfer_length)
 			dprintkdbg(DBG_KG, "srb_done: (0x%p) <%02i-%i> "
@@ -3331,7 +3336,7 @@ static void srb_done(struct AdapterCtlBlk *acb, struct DeviceCtlBlk *dcb,
 		dprintkl(KERN_ERR, "srb_done: ERROR! Completed cmd with tmp_srb\n");
 	}
 
-	scsi_done(cmd);
+	cmd->scsi_done(cmd);
 	waiting_process_next(acb);
 }
 
@@ -3362,7 +3367,7 @@ static void doing_srb_done(struct AdapterCtlBlk *acb, u8 did_flag,
 			if (force) {
 				/* For new EH, we normally don't need to give commands back,
 				 * as they all complete or all time out */
-				scsi_done(p);
+				p->scsi_done(p);
 			}
 		}
 		if (!list_empty(&dcb->srb_going_list))
@@ -3389,7 +3394,7 @@ static void doing_srb_done(struct AdapterCtlBlk *acb, u8 did_flag,
 			if (force) {
 				/* For new EH, we normally don't need to give commands back,
 				 * as they all complete or all time out */
-				scsi_done(cmd);
+				cmd->scsi_done(cmd);
 			}
 		}
 		if (!list_empty(&dcb->srb_waiting_list))

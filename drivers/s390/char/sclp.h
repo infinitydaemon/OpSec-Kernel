@@ -11,7 +11,6 @@
 
 #include <linux/types.h>
 #include <linux/list.h>
-#include <asm/asm-extable.h>
 #include <asm/sclp.h>
 #include <asm/ebcdic.h>
 
@@ -307,7 +306,7 @@ enum {
 
 extern int sclp_init_state;
 extern int sclp_console_pages;
-extern bool sclp_console_drop;
+extern int sclp_console_drop;
 extern unsigned long sclp_console_full;
 extern bool sclp_mask_compat_mode;
 
@@ -334,7 +333,7 @@ static inline int sclp_service_call(sclp_cmdw_t command, void *sccb)
 		"2:\n"
 		EX_TABLE(0b, 2b)
 		EX_TABLE(1b, 2b)
-		: "+&d" (cc) : "d" (command), "a" (__pa(sccb))
+		: "+&d" (cc) : "d" (command), "a" ((unsigned long)sccb)
 		: "cc", "memory");
 	if (cc == 4)
 		return -EINVAL;

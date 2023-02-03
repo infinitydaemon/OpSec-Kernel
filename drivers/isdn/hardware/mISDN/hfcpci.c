@@ -2350,7 +2350,8 @@ HFC_init(void)
 static void __exit
 HFC_cleanup(void)
 {
-	del_timer_sync(&hfc_tl);
+	if (timer_pending(&hfc_tl))
+		del_timer_sync(&hfc_tl);
 
 	pci_unregister_driver(&hfc_driver);
 }

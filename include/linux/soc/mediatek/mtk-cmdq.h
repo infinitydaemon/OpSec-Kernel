@@ -268,6 +268,8 @@ int cmdq_pkt_finalize(struct cmdq_pkt *pkt);
  * cmdq_pkt_flush_async() - trigger CMDQ to asynchronously execute the CMDQ
  *                          packet and call back at the end of done packet
  * @pkt:	the CMDQ packet
+ * @cb:		called at the end of done packet
+ * @data:	this data will pass back to cb
  *
  * Return: 0 for success; else the error code is returned
  *
@@ -275,6 +277,7 @@ int cmdq_pkt_finalize(struct cmdq_pkt *pkt);
  * at the end of done packet. Note that this is an ASYNC function. When the
  * function returned, it may or may not be finished.
  */
-int cmdq_pkt_flush_async(struct cmdq_pkt *pkt);
+int cmdq_pkt_flush_async(struct cmdq_pkt *pkt, cmdq_async_flush_cb cb,
+			 void *data);
 
 #endif	/* __MTK_CMDQ_H__ */

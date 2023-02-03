@@ -36,8 +36,6 @@ enum {
 struct mtk_cpufreq_data {
 	struct cpufreq_frequency_table *table;
 	void __iomem *reg_bases[REG_ARRAY_SIZE];
-	struct resource *res;
-	void __iomem *base;
 	int nr_opp;
 };
 
@@ -51,8 +49,8 @@ static const u16 cpufreq_mtk_offsets[REG_ARRAY_SIZE] = {
 };
 
 static int __maybe_unused
-mtk_cpufreq_get_cpu_power(struct device *cpu_dev, unsigned long *uW,
-			  unsigned long *KHz)
+mtk_cpufreq_get_cpu_power(unsigned long *mW,
+			  unsigned long *KHz, struct device *cpu_dev)
 {
 	struct mtk_cpufreq_data *data;
 	struct cpufreq_policy *policy;
@@ -71,9 +69,8 @@ mtk_cpufreq_get_cpu_power(struct device *cpu_dev, unsigned long *uW,
 	i--;
 
 	*KHz = data->table[i].frequency;
-	/* Provide micro-Watts value to the Energy Model */
-	*uW = readl_relaxed(data->reg_bases[REG_EM_POWER_TBL] +
-			    i * LUT_ROW_SIZE);
+	*mW = readl_relaxed(data->reg_bases[REG_EM_POWER_TBL] +
+			    i * LUT_ROW_SIZE) / 1000;
 
 	return 0;
 }
@@ -112,7 +109,7 @@ static unsigned int mtk_cpufreq_hw_fast_switch(struct cpufreq_policy *policy,
 	struct mtk_cpufreq_data *data = policy->driver_data;
 	unsigned int index;
 
-	index = cpufreq_table_find_index_dl(policy, target_freq, false);
+	index = cpufreq_table_find_index_dl(policy, target_freq);
 
 	writel_relaxed(index, data->reg_bases[REG_FREQ_PERF_STATE]);
 
@@ -159,8 +156,6 @@ static int mtk_cpu_resources_init(struct platform_device *pdev,
 {
 	struct mtk_cpufreq_data *data;
 	struct device *dev = &pdev->dev;
-	struct resource *res;
-	struct of_phandle_args args;
 	void __iomem *base;
 	int ret, i;
 	int index;
@@ -169,35 +164,15 @@ static int mtk_cpu_resources_init(struct platform_device *pdev,
 	if (!data)
 		return -ENOMEM;
 
-	ret = of_perf_domain_get_sharing_cpumask(policy->cpu, "performance-domains",
-						 "#performance-domain-cells",
-						 policy->cpus, &args);
-	if (ret < 0)
-		return ret;
+	index = of_perf_domain_get_sharing_cpumask(policy->cpu, "performance-domains",
+						   "#performance-domain-cells",
+						   policy->cpus);
+	if (index < 0)
+		return index;
 
-	index = args.args[0];
-	of_node_put(args.np);
-
-	res = platform_get_resource(pdev, IORESOURCE_MEM, index);
-	if (!res) {
-		dev_err(dev, "failed to get mem resource %d\n", index);
-		return -ENODEV;
-	}
-
-	if (!request_mem_region(res->start, resource_size(res), res->name)) {
-		dev_err(dev, "failed to request resource %pR\n", res);
-		return -EBUSY;
-	}
-
-	base = ioremap(res->start, resource_size(res));
-	if (!base) {
-		dev_err(dev, "failed to map resource %pR\n", res);
-		ret = -ENOMEM;
-		goto release_region;
-	}
-
-	data->base = base;
-	data->res = res;
+	base = devm_platform_ioremap_resource(pdev, index);
+	if (IS_ERR(base))
+		return PTR_ERR(base);
 
 	for (i = REG_FREQ_LUT_TABLE; i < REG_ARRAY_SIZE; i++)
 		data->reg_bases[i] = base + offsets[i];
@@ -212,9 +187,6 @@ static int mtk_cpu_resources_init(struct platform_device *pdev,
 	policy->driver_data = data;
 
 	return 0;
-release_region:
-	release_mem_region(res->start, resource_size(res));
-	return ret;
 }
 
 static int mtk_cpufreq_hw_cpu_init(struct cpufreq_policy *policy)
@@ -261,13 +233,9 @@ static int mtk_cpufreq_hw_cpu_init(struct cpufreq_policy *policy)
 static int mtk_cpufreq_hw_cpu_exit(struct cpufreq_policy *policy)
 {
 	struct mtk_cpufreq_data *data = policy->driver_data;
-	struct resource *res = data->res;
-	void __iomem *base = data->base;
 
 	/* HW should be in paused state now */
 	writel_relaxed(0x0, data->reg_bases[REG_FREQ_ENABLE]);
-	iounmap(base);
-	release_mem_region(res->start, resource_size(res));
 
 	return 0;
 }

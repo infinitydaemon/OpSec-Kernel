@@ -7,7 +7,6 @@
 
 #include <linux/init.h>
 #include <linux/sched.h>
-#include <linux/kstrtox.h>
 #include <linux/mm.h>
 #include <linux/pm.h>
 #include <linux/memblock.h>
@@ -86,7 +85,7 @@ static void __init xen_parse_512gb(void)
 	arg = strstr(xen_start_info->cmd_line, "xen_512gb_limit=");
 	if (!arg)
 		val = true;
-	else if (kstrtobool(arg + strlen("xen_512gb_limit="), &val))
+	else if (strtobool(arg + strlen("xen_512gb_limit="), &val))
 		return;
 
 	xen_512gb_limit = val;
@@ -154,7 +153,7 @@ static void __init xen_del_extra_mem(unsigned long start_pfn,
 			break;
 		}
 	}
-	memblock_phys_free(PFN_PHYS(start_pfn), PFN_PHYS(n_pfns));
+	memblock_free(PFN_PHYS(start_pfn), PFN_PHYS(n_pfns));
 }
 
 /*
@@ -307,6 +306,10 @@ static void __init xen_update_mem_tables(unsigned long pfn, unsigned long mfn)
 		BUG();
 	}
 
+	/* Update kernel mapping, but not for highmem. */
+	if (pfn >= PFN_UP(__pa(high_memory - 1)))
+		return;
+
 	if (HYPERVISOR_update_va_mapping((unsigned long)__va(pfn << PAGE_SHIFT),
 					 mfn_pte(mfn, PAGE_KERNEL), 0)) {
 		WARN(1, "Failed to update kernel mapping for mfn=%ld pfn=%ld\n",
@@ -426,13 +429,13 @@ static unsigned long __init xen_set_identity_and_remap_chunk(
 	}
 
 	/*
-	 * If the PFNs are currently mapped, their VA mappings need to be
-	 * zapped.
+	 * If the PFNs are currently mapped, the VA mapping also needs
+	 * to be updated to be 1:1.
 	 */
 	for (pfn = start_pfn; pfn <= max_pfn_mapped && pfn < end_pfn; pfn++)
 		(void)HYPERVISOR_update_va_mapping(
 			(unsigned long)__va(pfn << PAGE_SHIFT),
-			native_make_pte(0), 0);
+			mfn_pte(pfn, PAGE_KERNEL_IO), 0);
 
 	return remap_pfn;
 }
@@ -716,11 +719,11 @@ static void __init xen_reserve_xen_mfnlist(void)
 		return;
 
 	xen_relocate_p2m();
-	memblock_phys_free(start, size);
+	memblock_free(start, size);
 }
 
 /**
- * xen_memory_setup - Hook for machine specific memory setup.
+ * machine_specific_memory_setup - Hook for machine specific memory setup.
  **/
 char * __init xen_memory_setup(void)
 {
@@ -882,7 +885,7 @@ char * __init xen_memory_setup(void)
 		xen_phys_memcpy(new_area, start, size);
 		pr_info("initrd moved from [mem %#010llx-%#010llx] to [mem %#010llx-%#010llx]\n",
 			start, start + size, new_area, new_area + size);
-		memblock_phys_free(start, size);
+		memblock_free(start, size);
 		boot_params.hdr.ramdisk_image = new_area;
 		boot_params.ext_ramdisk_image = new_area >> 32;
 	}
@@ -911,9 +914,17 @@ static int register_callback(unsigned type, const void *func)
 
 void xen_enable_sysenter(void)
 {
-	if (cpu_feature_enabled(X86_FEATURE_SYSENTER32) &&
-	    register_callback(CALLBACKTYPE_sysenter, xen_entry_SYSENTER_compat))
-		setup_clear_cpu_cap(X86_FEATURE_SYSENTER32);
+	int ret;
+	unsigned sysenter_feature;
+
+	sysenter_feature = X86_FEATURE_SYSENTER32;
+
+	if (!boot_cpu_has(sysenter_feature))
+		return;
+
+	ret = register_callback(CALLBACKTYPE_sysenter, xen_entry_SYSENTER_compat);
+	if(ret != 0)
+		setup_clear_cpu_cap(sysenter_feature);
 }
 
 void xen_enable_syscall(void)
@@ -927,9 +938,12 @@ void xen_enable_syscall(void)
 		   mechanism for syscalls. */
 	}
 
-	if (cpu_feature_enabled(X86_FEATURE_SYSCALL32) &&
-	    register_callback(CALLBACKTYPE_syscall32, xen_entry_SYSCALL_compat))
-		setup_clear_cpu_cap(X86_FEATURE_SYSCALL32);
+	if (boot_cpu_has(X86_FEATURE_SYSCALL32)) {
+		ret = register_callback(CALLBACKTYPE_syscall32,
+					xen_entry_SYSCALL_compat);
+		if (ret != 0)
+			setup_clear_cpu_cap(X86_FEATURE_SYSCALL32);
+	}
 }
 
 static void __init xen_pvmmu_arch_setup(void)

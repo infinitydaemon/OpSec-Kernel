@@ -14,12 +14,10 @@
 
 #include "adau1977.h"
 
-static const struct i2c_device_id adau1977_i2c_ids[];
-
-static int adau1977_i2c_probe(struct i2c_client *client)
+static int adau1977_i2c_probe(struct i2c_client *client,
+	const struct i2c_device_id *id)
 {
 	struct regmap_config config;
-	const struct i2c_device_id *id = i2c_match_id(adau1977_i2c_ids, client);
 
 	config = adau1977_regmap_config;
 	config.val_bits = 8;
@@ -42,7 +40,7 @@ static struct i2c_driver adau1977_i2c_driver = {
 	.driver = {
 		.name = "adau1977",
 	},
-	.probe_new = adau1977_i2c_probe,
+	.probe = adau1977_i2c_probe,
 	.id_table = adau1977_i2c_ids,
 };
 module_i2c_driver(adau1977_i2c_driver);

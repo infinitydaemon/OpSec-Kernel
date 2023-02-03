@@ -738,7 +738,8 @@ static const struct v4l2_subdev_ops vs6624_ops = {
 	.pad = &vs6624_pad_ops,
 };
 
-static int vs6624_probe(struct i2c_client *client)
+static int vs6624_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct vs6624 *sensor;
 	struct v4l2_subdev *sd;
@@ -823,12 +824,13 @@ static int vs6624_probe(struct i2c_client *client)
 	return ret;
 }
 
-static void vs6624_remove(struct i2c_client *client)
+static int vs6624_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 
 	v4l2_device_unregister_subdev(sd);
 	v4l2_ctrl_handler_free(sd->ctrl_handler);
+	return 0;
 }
 
 static const struct i2c_device_id vs6624_id[] = {
@@ -842,7 +844,7 @@ static struct i2c_driver vs6624_driver = {
 	.driver = {
 		.name   = "vs6624",
 	},
-	.probe_new      = vs6624_probe,
+	.probe          = vs6624_probe,
 	.remove         = vs6624_remove,
 	.id_table       = vs6624_id,
 };

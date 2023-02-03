@@ -724,7 +724,7 @@ out_put_nodes:
 	return rval;
 }
 
-static void as3645a_remove(struct i2c_client *client)
+static int as3645a_remove(struct i2c_client *client)
 {
 	struct as3645a *flash = i2c_get_clientdata(client);
 
@@ -740,6 +740,8 @@ static void as3645a_remove(struct i2c_client *client)
 
 	fwnode_handle_put(flash->flash_node);
 	fwnode_handle_put(flash->indicator_node);
+
+	return 0;
 }
 
 static const struct i2c_device_id as3645a_id_table[] = {

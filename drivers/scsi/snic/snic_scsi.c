@@ -1,5 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-only
-// Copyright 2014 Cisco Systems, Inc.  All rights reserved.
+/*
+ * Copyright 2014 Cisco Systems, Inc.  All rights reserved.
+ *
+ * This program is free software; you may redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 
 #include <linux/mempool.h>
 #include <linux/errno.h>
@@ -328,7 +342,7 @@ snic_queuecommand(struct Scsi_Host *shost, struct scsi_cmnd *sc)
 		SNIC_HOST_ERR(shost, "Tgt %p id %d Not Ready.\n", tgt, tgt->id);
 		atomic64_inc(&snic->s_stats.misc.tgt_not_rdy);
 		sc->result = ret;
-		scsi_done(sc);
+		sc->scsi_done(sc);
 
 		return 0;
 	}
@@ -662,7 +676,8 @@ snic_icmnd_cmpl_handler(struct snic *snic, struct snic_fw_req *fwreq)
 		 SNIC_TRC_CMD(sc), SNIC_TRC_CMD_STATE_FLAGS(sc));
 
 
-	scsi_done(sc);
+	if (sc->scsi_done)
+		sc->scsi_done(sc);
 
 	snic_stats_update_io_cmpl(&snic->s_stats);
 } /* end of snic_icmnd_cmpl_handler */
@@ -840,12 +855,14 @@ snic_process_itmf_cmpl(struct snic *snic,
 
 		snic_release_req_buf(snic, rqi, sc);
 
-		SNIC_TRC(snic->shost->host_no, cmnd_id, (ulong) sc,
-			 jiffies_to_msecs(jiffies - start_time),
-			 (ulong) fwreq, SNIC_TRC_CMD(sc),
-			 SNIC_TRC_CMD_STATE_FLAGS(sc));
+		if (sc->scsi_done) {
+			SNIC_TRC(snic->shost->host_no, cmnd_id, (ulong) sc,
+				 jiffies_to_msecs(jiffies - start_time),
+				 (ulong) fwreq, SNIC_TRC_CMD(sc),
+				 SNIC_TRC_CMD_STATE_FLAGS(sc));
 
-		scsi_done(sc);
+			sc->scsi_done(sc);
+		}
 
 		break;
 
@@ -1458,7 +1475,7 @@ snic_abort_finish(struct snic *snic, struct scsi_cmnd *sc)
 		 * Call scsi_done to complete the IO.
 		 */
 		sc->result = (DID_ERROR << 16);
-		scsi_done(sc);
+		sc->scsi_done(sc);
 		break;
 
 	default:
@@ -1838,7 +1855,7 @@ snic_dr_clean_single_req(struct snic *snic,
 	snic_release_req_buf(snic, rqi, sc);
 
 	sc->result = (DID_ERROR << 16);
-	scsi_done(sc);
+	sc->scsi_done(sc);
 
 	ret = 0;
 
@@ -2483,12 +2500,14 @@ cleanup:
 		/* Update IO stats */
 		snic_stats_update_io_cmpl(&snic->s_stats);
 
-		SNIC_TRC(snic->shost->host_no, tag, (ulong) sc,
-			 jiffies_to_msecs(jiffies - st_time), 0,
-			 SNIC_TRC_CMD(sc),
-			 SNIC_TRC_CMD_STATE_FLAGS(sc));
+		if (sc->scsi_done) {
+			SNIC_TRC(snic->shost->host_no, tag, (ulong) sc,
+				 jiffies_to_msecs(jiffies - st_time), 0,
+				 SNIC_TRC_CMD(sc),
+				 SNIC_TRC_CMD_STATE_FLAGS(sc));
 
-		scsi_done(sc);
+			sc->scsi_done(sc);
+		}
 	}
 } /* end of snic_scsi_cleanup */
 

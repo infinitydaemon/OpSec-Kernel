@@ -11,7 +11,7 @@
 
 struct device_node;
 
-void __init request_event_sources_irqs(struct device_node *np,
+extern void request_event_sources_irqs(struct device_node *np,
 				       irq_handler_t handler, const char *name);
 
 #include <linux/of.h>
@@ -21,7 +21,6 @@ struct pt_regs;
 extern int pSeries_system_reset_exception(struct pt_regs *regs);
 extern int pSeries_machine_check_exception(struct pt_regs *regs);
 extern long pseries_machine_check_realmode(struct pt_regs *regs);
-void pSeries_machine_check_log_err(void);
 
 #ifdef CONFIG_SMP
 extern void smp_init_pseries(void);
@@ -38,7 +37,6 @@ static inline void smp_init_pseries(void) { }
 #endif
 
 extern void pseries_kexec_cpu_down(int crash_shutdown, int secondary);
-void pseries_machine_kexec(struct kimage *image);
 
 extern void pSeries_final_fixup(void);
 
@@ -115,12 +113,7 @@ int dlpar_workqueue_init(void);
 
 extern u32 pseries_security_flavor;
 void pseries_setup_security_mitigations(void);
-
-#ifdef CONFIG_PPC_64S_HASH_MMU
 void pseries_lpar_read_hblkrm_characteristics(void);
-#else
-static inline void pseries_lpar_read_hblkrm_characteristics(void) { }
-#endif
 
 void pseries_rng_init(void);
 

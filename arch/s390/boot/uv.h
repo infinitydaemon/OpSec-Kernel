@@ -3,13 +3,10 @@
 #define BOOT_UV_H
 
 #if IS_ENABLED(CONFIG_KVM)
-unsigned long adjust_to_uv_max(unsigned long limit);
+void adjust_to_uv_max(unsigned long *vmax);
 void sanitize_prot_virt_host(void);
 #else
-static inline unsigned long adjust_to_uv_max(unsigned long limit)
-{
-	return limit;
-}
+static inline void adjust_to_uv_max(unsigned long *vmax) {}
 static inline void sanitize_prot_virt_host(void) {}
 #endif
 

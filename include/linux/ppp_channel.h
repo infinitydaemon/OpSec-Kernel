@@ -20,8 +20,6 @@
 #include <linux/poll.h>
 #include <net/net_namespace.h>
 
-struct net_device_path;
-struct net_device_path_ctx;
 struct ppp_channel;
 
 struct ppp_channel_ops {

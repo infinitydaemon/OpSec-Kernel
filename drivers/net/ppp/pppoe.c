@@ -1012,7 +1012,8 @@ static int pppoe_recvmsg(struct socket *sock, struct msghdr *m,
 		goto end;
 	}
 
-	skb = skb_recv_datagram(sk, flags, &error);
+	skb = skb_recv_datagram(sk, flags & ~MSG_DONTWAIT,
+				flags & MSG_DONTWAIT, &error);
 	if (error < 0)
 		goto end;
 

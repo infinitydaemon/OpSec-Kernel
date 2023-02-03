@@ -44,7 +44,7 @@ struct arm_mhu {
 };
 
 /**
- * struct mhu_db_channel - ARM MHU Mailbox allocated channel information
+ * ARM MHU Mailbox allocated channel information
  *
  * @mhu: Pointer to parent mailbox device
  * @pchan: Physical channel within which this doorbell resides in

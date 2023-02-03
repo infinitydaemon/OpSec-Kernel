@@ -22,6 +22,7 @@
 #include <asm/setup.h>
 #include <asm/memory.h>
 #include <asm/mach-types.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
 
 #include <asm/mach/arch.h>
@@ -30,6 +31,7 @@
 #include "pxa25x.h"
 #include "idp.h"
 #include <linux/platform_data/video-pxafb.h>
+#include <mach/bitfield.h>
 #include <linux/platform_data/mmc-pxamci.h>
 #include <linux/smc91x.h>
 

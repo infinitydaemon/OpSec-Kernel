@@ -19,6 +19,7 @@
 #define pr_fmt(fmt) "ACPI: VIOT: " fmt
 
 #include <linux/acpi_viot.h>
+#include <linux/dma-iommu.h>
 #include <linux/fwnode.h>
 #include <linux/iommu.h>
 #include <linux/list.h>
@@ -87,7 +88,7 @@ static int __init viot_get_pci_iommu_fwnode(struct viot_iommu *viommu,
 		return -ENODEV;
 	}
 
-	fwnode = dev_fwnode(&pdev->dev);
+	fwnode = pdev->dev.fwnode;
 	if (!fwnode) {
 		/*
 		 * PCI devices aren't necessarily described by ACPI. Create a
@@ -100,7 +101,7 @@ static int __init viot_get_pci_iommu_fwnode(struct viot_iommu *viommu,
 		}
 		set_primary_fwnode(&pdev->dev, fwnode);
 	}
-	viommu->fwnode = dev_fwnode(&pdev->dev);
+	viommu->fwnode = pdev->dev.fwnode;
 	pci_dev_put(pdev);
 	return 0;
 }
@@ -313,7 +314,7 @@ static int viot_dev_iommu_init(struct device *dev, struct viot_iommu *viommu,
 		return -ENODEV;
 
 	/* We're not translating ourself */
-	if (device_match_fwnode(dev, viommu->fwnode))
+	if (viommu->fwnode == dev->fwnode)
 		return -EINVAL;
 
 	ops = iommu_ops_from_fwnode(viommu->fwnode);

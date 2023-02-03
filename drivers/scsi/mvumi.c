@@ -1302,7 +1302,7 @@ static void mvumi_complete_cmd(struct mvumi_hba *mhba, struct mvumi_cmd *cmd,
 {
 	struct scsi_cmnd *scmd = cmd->scmd;
 
-	mvumi_priv(cmd->scmd)->cmd_priv = NULL;
+	cmd->scmd->SCp.ptr = NULL;
 	scmd->result = ob_frame->req_status;
 
 	switch (ob_frame->req_status) {
@@ -1328,7 +1328,7 @@ static void mvumi_complete_cmd(struct mvumi_hba *mhba, struct mvumi_cmd *cmd,
 		dma_unmap_sg(&mhba->pdev->dev, scsi_sglist(scmd),
 			     scsi_sg_count(scmd),
 			     scmd->sc_data_direction);
-	scsi_done(scmd);
+	cmd->scmd->scsi_done(scmd);
 	mvumi_return_cmd(mhba, cmd);
 }
 
@@ -2097,21 +2097,21 @@ static int mvumi_queue_command(struct Scsi_Host *shost,
 		goto out_return_cmd;
 
 	cmd->scmd = scmd;
-	mvumi_priv(scmd)->cmd_priv = cmd;
+	scmd->SCp.ptr = (char *) cmd;
 	mhba->instancet->fire_cmd(mhba, cmd);
 	spin_unlock_irqrestore(shost->host_lock, irq_flags);
 	return 0;
 
 out_return_cmd:
 	mvumi_return_cmd(mhba, cmd);
-	scsi_done(scmd);
+	scmd->scsi_done(scmd);
 	spin_unlock_irqrestore(shost->host_lock, irq_flags);
 	return 0;
 }
 
-static enum scsi_timeout_action mvumi_timed_out(struct scsi_cmnd *scmd)
+static enum blk_eh_timer_return mvumi_timed_out(struct scsi_cmnd *scmd)
 {
-	struct mvumi_cmd *cmd = mvumi_priv(scmd)->cmd_priv;
+	struct mvumi_cmd *cmd = (struct mvumi_cmd *) scmd->SCp.ptr;
 	struct Scsi_Host *host = scmd->device->host;
 	struct mvumi_hba *mhba = shost_priv(host);
 	unsigned long flags;
@@ -2128,7 +2128,7 @@ static enum scsi_timeout_action mvumi_timed_out(struct scsi_cmnd *scmd)
 		atomic_dec(&mhba->fw_outstanding);
 
 	scmd->result = (DID_ABORT << 16);
-	mvumi_priv(scmd)->cmd_priv = NULL;
+	scmd->SCp.ptr = NULL;
 	if (scsi_bufflen(scmd)) {
 		dma_unmap_sg(&mhba->pdev->dev, scsi_sglist(scmd),
 			     scsi_sg_count(scmd),
@@ -2137,7 +2137,7 @@ static enum scsi_timeout_action mvumi_timed_out(struct scsi_cmnd *scmd)
 	mvumi_return_cmd(mhba, cmd);
 	spin_unlock_irqrestore(mhba->shost->host_lock, flags);
 
-	return SCSI_EH_NOT_HANDLED;
+	return BLK_EH_DONE;
 }
 
 static int
@@ -2179,7 +2179,6 @@ static struct scsi_host_template mvumi_template = {
 	.bios_param = mvumi_bios_param,
 	.dma_boundary = PAGE_SIZE - 1,
 	.this_id = -1,
-	.cmd_size = sizeof(struct mvumi_cmd_priv),
 };
 
 static int mvumi_cfg_hw_reg(struct mvumi_hba *mhba)

@@ -10,7 +10,19 @@
 int hv_remote_flush_tlb_with_range(struct kvm *kvm,
 		struct kvm_tlb_range *range);
 int hv_remote_flush_tlb(struct kvm *kvm);
-void hv_track_root_tdp(struct kvm_vcpu *vcpu, hpa_t root_tdp);
+
+static inline void hv_track_root_tdp(struct kvm_vcpu *vcpu, hpa_t root_tdp)
+{
+	struct kvm_arch *kvm_arch = &vcpu->kvm->arch;
+
+	if (kvm_x86_ops.tlb_remote_flush == hv_remote_flush_tlb) {
+		spin_lock(&kvm_arch->hv_root_tdp_lock);
+		vcpu->arch.hv_root_tdp = root_tdp;
+		if (root_tdp != kvm_arch->hv_root_tdp)
+			kvm_arch->hv_root_tdp = INVALID_PAGE;
+		spin_unlock(&kvm_arch->hv_root_tdp_lock);
+	}
+}
 #else /* !CONFIG_HYPERV */
 static inline void hv_track_root_tdp(struct kvm_vcpu *vcpu, hpa_t root_tdp)
 {

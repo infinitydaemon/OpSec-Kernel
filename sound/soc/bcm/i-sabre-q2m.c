@@ -133,8 +133,7 @@ static int snd_rpi_i_sabre_q2m_probe(struct platform_device *pdev)
 
 static int snd_rpi_i_sabre_q2m_remove(struct platform_device *pdev)
 {
-	snd_soc_unregister_card(&snd_rpi_i_sabre_q2m);
-	return 0;
+	return snd_soc_unregister_card(&snd_rpi_i_sabre_q2m);
 }
 
 static const struct of_device_id snd_rpi_i_sabre_q2m_of_match[] = {

@@ -26,7 +26,6 @@
 #include <asm/tlbflush.h>
 #include <asm/paravirt.h>
 #include <asm/fixmap.h>
-#include <asm/pgtable_areas.h>
 
 /* declarations for highmem.c */
 extern unsigned long highstart_pfn, highend_pfn;

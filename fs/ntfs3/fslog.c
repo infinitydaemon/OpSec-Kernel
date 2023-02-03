@@ -3029,7 +3029,7 @@ static int do_action(struct ntfs_log *log, struct OPEN_ATTR_ENRTY *oe,
 	struct NEW_ATTRIBUTE_SIZES *new_sz;
 	struct ATTR_FILE_NAME *fname;
 	struct OpenAttr *oa, *oa2;
-	u32 nsize, t32, asize, used, esize, off, bits;
+	u32 nsize, t32, asize, used, esize, bmp_off, bmp_bits;
 	u16 id, id2;
 	u32 record_size = sbi->record_size;
 	u64 t64;
@@ -3616,28 +3616,30 @@ move_data:
 		break;
 
 	case SetBitsInNonresidentBitMap:
-		off = le32_to_cpu(((struct BITMAP_RANGE *)data)->bitmap_off);
-		bits = le32_to_cpu(((struct BITMAP_RANGE *)data)->bits);
+		bmp_off =
+			le32_to_cpu(((struct BITMAP_RANGE *)data)->bitmap_off);
+		bmp_bits = le32_to_cpu(((struct BITMAP_RANGE *)data)->bits);
 
-		if (cbo + (off + 7) / 8 > lco ||
-		    cbo + ((off + bits + 7) / 8) > lco) {
+		if (cbo + (bmp_off + 7) / 8 > lco ||
+		    cbo + ((bmp_off + bmp_bits + 7) / 8) > lco) {
 			goto dirty_vol;
 		}
 
-		ntfs_bitmap_set_le(Add2Ptr(buffer_le, roff), off, bits);
+		__bitmap_set(Add2Ptr(buffer_le, roff), bmp_off, bmp_bits);
 		a_dirty = true;
 		break;
 
 	case ClearBitsInNonresidentBitMap:
-		off = le32_to_cpu(((struct BITMAP_RANGE *)data)->bitmap_off);
-		bits = le32_to_cpu(((struct BITMAP_RANGE *)data)->bits);
+		bmp_off =
+			le32_to_cpu(((struct BITMAP_RANGE *)data)->bitmap_off);
+		bmp_bits = le32_to_cpu(((struct BITMAP_RANGE *)data)->bits);
 
-		if (cbo + (off + 7) / 8 > lco ||
-		    cbo + ((off + bits + 7) / 8) > lco) {
+		if (cbo + (bmp_off + 7) / 8 > lco ||
+		    cbo + ((bmp_off + bmp_bits + 7) / 8) > lco) {
 			goto dirty_vol;
 		}
 
-		ntfs_bitmap_clear_le(Add2Ptr(buffer_le, roff), off, bits);
+		__bitmap_clear(Add2Ptr(buffer_le, roff), bmp_off, bmp_bits);
 		a_dirty = true;
 		break;
 
@@ -3798,7 +3800,7 @@ int log_replay(struct ntfs_inode *ni, bool *initialized)
 		}
 
 		log_init_pg_hdr(log, page_size, page_size, 1, 1);
-		log_create(log, l_size, 0, get_random_u32(), false, false);
+		log_create(log, l_size, 0, get_random_int(), false, false);
 
 		log->ra = ra;
 
@@ -3822,8 +3824,6 @@ int log_replay(struct ntfs_inode *ni, bool *initialized)
 
 	memset(&rst_info2, 0, sizeof(struct restart_info));
 	err = log_read_rst(log, l_size, false, &rst_info2);
-	if (err)
-		goto out;
 
 	/* Determine which restart area to use. */
 	if (!rst_info2.restart || rst_info2.last_lsn <= rst_info.last_lsn)
@@ -3872,7 +3872,7 @@ check_restart_area:
 
 		/* Do some checks based on whether we have a valid log page. */
 		if (!rst_info.valid_page) {
-			open_log_count = get_random_u32();
+			open_log_count = get_random_int();
 			goto init_log_instance;
 		}
 		open_log_count = le32_to_cpu(ra2->open_log_count);
@@ -4023,7 +4023,7 @@ find_oldest:
 		memcpy(ra->clients, Add2Ptr(ra2, t16),
 		       le16_to_cpu(ra2->ra_len) - t16);
 
-		log->current_openlog_count = get_random_u32();
+		log->current_openlog_count = get_random_int();
 		ra->open_log_count = cpu_to_le32(log->current_openlog_count);
 		log->ra_size = offsetof(struct RESTART_AREA, clients) +
 			       sizeof(struct CLIENT_REC);
@@ -4824,7 +4824,8 @@ next_dirty_page_vcn:
 		goto out;
 	}
 	attr = oa->attr;
-	if (size > le64_to_cpu(attr->nres.alloc_size)) {
+	t64 = le64_to_cpu(attr->nres.alloc_size);
+	if (size > t64) {
 		attr->nres.valid_size = attr->nres.data_size =
 			attr->nres.alloc_size = cpu_to_le64(size);
 	}

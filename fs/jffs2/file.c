@@ -25,9 +25,9 @@ static int jffs2_write_end(struct file *filp, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned copied,
 			struct page *pg, void *fsdata);
 static int jffs2_write_begin(struct file *filp, struct address_space *mapping,
-			loff_t pos, unsigned len,
+			loff_t pos, unsigned len, unsigned flags,
 			struct page **pagep, void **fsdata);
-static int jffs2_read_folio(struct file *filp, struct folio *folio);
+static int jffs2_readpage (struct file *filp, struct page *pg);
 
 int jffs2_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 {
@@ -64,7 +64,7 @@ const struct file_operations jffs2_file_operations =
 
 const struct inode_operations jffs2_file_inode_operations =
 {
-	.get_inode_acl =	jffs2_get_acl,
+	.get_acl =	jffs2_get_acl,
 	.set_acl =	jffs2_set_acl,
 	.setattr =	jffs2_setattr,
 	.listxattr =	jffs2_listxattr,
@@ -72,7 +72,7 @@ const struct inode_operations jffs2_file_inode_operations =
 
 const struct address_space_operations jffs2_file_address_operations =
 {
-	.read_folio =	jffs2_read_folio,
+	.readpage =	jffs2_readpage,
 	.write_begin =	jffs2_write_begin,
 	.write_end =	jffs2_write_end,
 };
@@ -110,26 +110,27 @@ static int jffs2_do_readpage_nolock (struct inode *inode, struct page *pg)
 	return ret;
 }
 
-int __jffs2_read_folio(struct file *file, struct folio *folio)
+int jffs2_do_readpage_unlock(void *data, struct page *pg)
 {
-	int ret = jffs2_do_readpage_nolock(folio->mapping->host, &folio->page);
-	folio_unlock(folio);
+	int ret = jffs2_do_readpage_nolock(data, pg);
+	unlock_page(pg);
 	return ret;
 }
 
-static int jffs2_read_folio(struct file *file, struct folio *folio)
+
+static int jffs2_readpage (struct file *filp, struct page *pg)
 {
-	struct jffs2_inode_info *f = JFFS2_INODE_INFO(folio->mapping->host);
+	struct jffs2_inode_info *f = JFFS2_INODE_INFO(pg->mapping->host);
 	int ret;
 
 	mutex_lock(&f->sem);
-	ret = __jffs2_read_folio(file, folio);
+	ret = jffs2_do_readpage_unlock(pg->mapping->host, pg);
 	mutex_unlock(&f->sem);
 	return ret;
 }
 
 static int jffs2_write_begin(struct file *filp, struct address_space *mapping,
-			loff_t pos, unsigned len,
+			loff_t pos, unsigned len, unsigned flags,
 			struct page **pagep, void **fsdata)
 {
 	struct page *pg;
@@ -212,7 +213,7 @@ static int jffs2_write_begin(struct file *filp, struct address_space *mapping,
 	 * page in read_cache_page(), which causes a deadlock.
 	 */
 	mutex_lock(&c->alloc_sem);
-	pg = grab_cache_page_write_begin(mapping, index);
+	pg = grab_cache_page_write_begin(mapping, index, flags);
 	if (!pg) {
 		ret = -ENOMEM;
 		goto release_sem;

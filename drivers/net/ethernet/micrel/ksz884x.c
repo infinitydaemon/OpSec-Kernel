@@ -4033,7 +4033,7 @@ static void hw_set_add_addr(struct ksz_hw *hw)
 	}
 }
 
-static int hw_add_addr(struct ksz_hw *hw, const u8 *mac_addr)
+static int hw_add_addr(struct ksz_hw *hw, u8 *mac_addr)
 {
 	int i;
 	int j = ADDITIONAL_ENTRIES;
@@ -4054,7 +4054,7 @@ static int hw_add_addr(struct ksz_hw *hw, const u8 *mac_addr)
 	return -1;
 }
 
-static int hw_del_addr(struct ksz_hw *hw, const u8 *mac_addr)
+static int hw_del_addr(struct ksz_hw *hw, u8 *mac_addr)
 {
 	int i;
 
@@ -5225,6 +5225,7 @@ static irqreturn_t netdev_intr(int irq, void *dev_id)
  * Linux network device functions
  */
 
+static unsigned long next_jiffies;
 
 #ifdef CONFIG_NET_POLL_CONTROLLER
 static void netdev_netpoll(struct net_device *dev)
@@ -5410,12 +5411,10 @@ static int netdev_open(struct net_device *dev)
 	struct dev_info *hw_priv = priv->adapter;
 	struct ksz_hw *hw = &hw_priv->hw;
 	struct ksz_port *port = &priv->port;
-	unsigned long next_jiffies;
 	int i;
 	int p;
 	int rc = 0;
 
-	next_jiffies = jiffies + HZ * 2;
 	priv->multicast = 0;
 	priv->promiscuous = 0;
 
@@ -5429,7 +5428,10 @@ static int netdev_open(struct net_device *dev)
 		if (rc)
 			return rc;
 		for (i = 0; i < hw->mib_port_cnt; i++) {
-			next_jiffies += HZ * 1;
+			if (next_jiffies < jiffies)
+				next_jiffies = jiffies + HZ * 2;
+			else
+				next_jiffies += HZ * 1;
 			hw_priv->counter[i].time = next_jiffies;
 			hw->port_mib[i].state = media_disconnected;
 			port_init_cnt(hw, i);
@@ -5579,7 +5581,7 @@ static int netdev_set_mac_address(struct net_device *dev, void *addr)
 		memcpy(hw->override_addr, mac->sa_data, ETH_ALEN);
 	}
 
-	eth_hw_addr_set(dev, mac->sa_data);
+	memcpy(dev->dev_addr, mac->sa_data, ETH_ALEN);
 
 	interrupt = hw_block_intr(hw);
 
@@ -5998,9 +6000,9 @@ static void netdev_get_drvinfo(struct net_device *dev,
 	struct dev_priv *priv = netdev_priv(dev);
 	struct dev_info *hw_priv = priv->adapter;
 
-	strscpy(info->driver, DRV_NAME, sizeof(info->driver));
-	strscpy(info->version, DRV_VERSION, sizeof(info->version));
-	strscpy(info->bus_info, pci_name(hw_priv->pdev),
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, pci_name(hw_priv->pdev),
 		sizeof(info->bus_info));
 }
 
@@ -6315,15 +6317,11 @@ static int netdev_set_pauseparam(struct net_device *dev,
  * netdev_get_ringparam - get tx/rx ring parameters
  * @dev:	Network device.
  * @ring:	Ethtool RING settings data structure.
- * @kernel_ring:	Ethtool external RING settings data structure.
- * @extack:	Netlink handle.
  *
  * This procedure returns the TX/RX ring settings.
  */
 static void netdev_get_ringparam(struct net_device *dev,
-				 struct ethtool_ringparam *ring,
-				 struct kernel_ethtool_ringparam *kernel_ring,
-				 struct netlink_ext_ack *extack)
+	struct ethtool_ringparam *ring)
 {
 	struct dev_priv *priv = netdev_priv(dev);
 	struct dev_info *hw_priv = priv->adapter;
@@ -6561,7 +6559,6 @@ static void mib_read_work(struct work_struct *work)
 	struct dev_info *hw_priv =
 		container_of(work, struct dev_info, mib_read);
 	struct ksz_hw *hw = &hw_priv->hw;
-	unsigned long next_jiffies;
 	struct ksz_port_mib *mib;
 	int i;
 
@@ -7008,14 +7005,12 @@ static int pcidev_init(struct pci_dev *pdev, const struct pci_device_id *id)
 		dev->mem_end = dev->mem_start + reg_len - 1;
 		dev->irq = pdev->irq;
 		if (MAIN_PORT == i)
-			eth_hw_addr_set(dev, hw_priv->hw.override_addr);
+			memcpy(dev->dev_addr, hw_priv->hw.override_addr,
+			       ETH_ALEN);
 		else {
-			u8 addr[ETH_ALEN];
-
-			ether_addr_copy(addr, sw->other_addr);
+			memcpy(dev->dev_addr, sw->other_addr, ETH_ALEN);
 			if (ether_addr_equal(sw->other_addr, hw->override_addr))
-				addr[5] += port->first_port;
-			eth_hw_addr_set(dev, addr);
+				dev->dev_addr[5] += port->first_port;
 		}
 
 		dev->netdev_ops = &netdev_ops;

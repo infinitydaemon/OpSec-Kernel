@@ -26,8 +26,8 @@
 #ifndef _DMUB_OUTBOX_H_
 #define _DMUB_OUTBOX_H_
 
-struct dc_dmub_srv;
+#include "dc.h"
 
-void dmub_enable_outbox_notification(struct dc_dmub_srv *dmub_srv);
+void dmub_enable_outbox_notification(struct dc *dc);
 
 #endif /* _DMUB_OUTBOX_H_ */

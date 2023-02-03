@@ -593,8 +593,8 @@ static void pxa168fb_init_mode(struct fb_info *info,
 static int pxa168fb_probe(struct platform_device *pdev)
 {
 	struct pxa168fb_mach_info *mi;
-	struct fb_info *info = NULL;
-	struct pxa168fb_info *fbi = NULL;
+	struct fb_info *info = 0;
+	struct pxa168fb_info *fbi = 0;
 	struct resource *res;
 	struct clk *clk;
 	int irq, ret;
@@ -606,9 +606,10 @@ static int pxa168fb_probe(struct platform_device *pdev)
 	}
 
 	clk = devm_clk_get(&pdev->dev, "LCDCLK");
-	if (IS_ERR(clk))
-		return dev_err_probe(&pdev->dev, PTR_ERR(clk),
-				     "unable to get LCDCLK");
+	if (IS_ERR(clk)) {
+		dev_err(&pdev->dev, "unable to get LCDCLK");
+		return PTR_ERR(clk);
+	}
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (res == NULL) {
@@ -617,8 +618,10 @@ static int pxa168fb_probe(struct platform_device *pdev)
 	}
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
+	if (irq < 0) {
+		dev_err(&pdev->dev, "no IRQ defined\n");
 		return -ENOENT;
+	}
 
 	info = framebuffer_alloc(sizeof(struct pxa168fb_info), &pdev->dev);
 	if (info == NULL) {
@@ -640,7 +643,7 @@ static int pxa168fb_probe(struct platform_device *pdev)
 	info->flags = FBINFO_DEFAULT | FBINFO_PARTIAL_PAN_OK |
 		      FBINFO_HWACCEL_XPAN | FBINFO_HWACCEL_YPAN;
 	info->node = -1;
-	strscpy(info->fix.id, mi->id, 16);
+	strlcpy(info->fix.id, mi->id, 16);
 	info->fix.type = FB_TYPE_PACKED_PIXELS;
 	info->fix.type_aux = 0;
 	info->fix.xpanstep = 0;

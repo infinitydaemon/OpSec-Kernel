@@ -470,12 +470,13 @@ static int lm3530_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void lm3530_remove(struct i2c_client *client)
+static int lm3530_remove(struct i2c_client *client)
 {
 	struct lm3530_data *drvdata = i2c_get_clientdata(client);
 
 	lm3530_led_disable(drvdata);
 	led_classdev_unregister(&drvdata->led_dev);
+	return 0;
 }
 
 static const struct i2c_device_id lm3530_id[] = {

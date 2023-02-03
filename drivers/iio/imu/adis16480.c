@@ -7,16 +7,14 @@
 
 #include <linux/clk.h>
 #include <linux/bitfield.h>
+#include <linux/of_irq.h>
 #include <linux/interrupt.h>
-#include <linux/irq.h>
 #include <linux/math.h>
 #include <linux/device.h>
 #include <linux/kernel.h>
 #include <linux/spi/spi.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/lcm.h>
-#include <linux/property.h>
 #include <linux/swab.h>
 #include <linux/crc32.h>
 
@@ -1121,7 +1119,6 @@ static irqreturn_t adis16480_trigger_handler(int irq, void *p)
 	struct iio_dev *indio_dev = pf->indio_dev;
 	struct adis16480 *st = iio_priv(indio_dev);
 	struct adis *adis = &st->adis;
-	struct device *dev = &adis->spi->dev;
 	int ret, bit, offset, i = 0;
 	__be16 *buffer;
 	u32 crc;
@@ -1133,7 +1130,7 @@ static irqreturn_t adis16480_trigger_handler(int irq, void *p)
 		adis->tx[1] = 0;
 		ret = spi_write(adis->spi, adis->tx, 2);
 		if (ret) {
-			dev_err(dev, "Failed to change device page: %d\n", ret);
+			dev_err(&adis->spi->dev, "Failed to change device page: %d\n", ret);
 			adis_dev_unlock(adis);
 			goto irq_done;
 		}
@@ -1143,7 +1140,7 @@ static irqreturn_t adis16480_trigger_handler(int irq, void *p)
 
 	ret = spi_sync(adis->spi, &adis->msg);
 	if (ret) {
-		dev_err(dev, "Failed to read data: %d\n", ret);
+		dev_err(&adis->spi->dev, "Failed to read data: %d\n", ret);
 		adis_dev_unlock(adis);
 		goto irq_done;
 	}
@@ -1171,14 +1168,14 @@ static irqreturn_t adis16480_trigger_handler(int irq, void *p)
 	}
 
 	if (offset == 4) {
-		dev_err(dev, "Invalid burst data\n");
+		dev_err(&adis->spi->dev, "Invalid burst data\n");
 		goto irq_done;
 	}
 
 	crc = be16_to_cpu(buffer[offset + 16]) << 16 | be16_to_cpu(buffer[offset + 15]);
 	valid = adis16480_validate_crc((u16 *)&buffer[offset], 15, crc);
 	if (!valid) {
-		dev_err(dev, "Invalid crc\n");
+		dev_err(&adis->spi->dev, "Invalid crc\n");
 		goto irq_done;
 	}
 
@@ -1217,12 +1214,12 @@ static const struct iio_info adis16480_info = {
 static int adis16480_stop_device(struct iio_dev *indio_dev)
 {
 	struct adis16480 *st = iio_priv(indio_dev);
-	struct device *dev = &st->adis.spi->dev;
 	int ret;
 
 	ret = adis_write_reg_16(&st->adis, ADIS16480_REG_SLP_CNT, BIT(9));
 	if (ret)
-		dev_err(dev, "Could not power down device: %d\n", ret);
+		dev_err(&indio_dev->dev,
+			"Could not power down device: %d\n", ret);
 
 	return ret;
 }
@@ -1242,10 +1239,9 @@ static int adis16480_enable_irq(struct adis *adis, bool enable)
 	return __adis_write_reg_16(adis, ADIS16480_REG_FNCTIO_CTRL, val);
 }
 
-static int adis16480_config_irq_pin(struct adis16480 *st)
+static int adis16480_config_irq_pin(struct device_node *of_node,
+				    struct adis16480 *st)
 {
-	struct device *dev = &st->adis.spi->dev;
-	struct fwnode_handle *fwnode = dev_fwnode(dev);
 	struct irq_data *desc;
 	enum adis16480_int_pin pin;
 	unsigned int irq_type;
@@ -1254,7 +1250,7 @@ static int adis16480_config_irq_pin(struct adis16480 *st)
 
 	desc = irq_get_irq_data(st->adis.spi->irq);
 	if (!desc) {
-		dev_err(dev, "Could not find IRQ %d\n", irq);
+		dev_err(&st->adis.spi->dev, "Could not find IRQ %d\n", irq);
 		return -EINVAL;
 	}
 
@@ -1271,7 +1267,7 @@ static int adis16480_config_irq_pin(struct adis16480 *st)
 	 */
 	pin = ADIS16480_PIN_DIO1;
 	for (i = 0; i < ARRAY_SIZE(adis16480_int_pin_names); i++) {
-		irq = fwnode_irq_get_byname(fwnode, adis16480_int_pin_names[i]);
+		irq = of_irq_get_byname(of_node, adis16480_int_pin_names[i]);
 		if (irq > 0) {
 			pin = i;
 			break;
@@ -1291,22 +1287,23 @@ static int adis16480_config_irq_pin(struct adis16480 *st)
 	} else if (irq_type == IRQ_TYPE_EDGE_FALLING) {
 		val |= ADIS16480_DRDY_POL(0);
 	} else {
-		dev_err(dev, "Invalid interrupt type 0x%x specified\n", irq_type);
+		dev_err(&st->adis.spi->dev,
+			"Invalid interrupt type 0x%x specified\n", irq_type);
 		return -EINVAL;
 	}
 	/* Write the data ready configuration to the FNCTIO_CTRL register */
 	return adis_write_reg_16(&st->adis, ADIS16480_REG_FNCTIO_CTRL, val);
 }
 
-static int adis16480_fw_get_ext_clk_pin(struct adis16480 *st)
+static int adis16480_of_get_ext_clk_pin(struct adis16480 *st,
+					struct device_node *of_node)
 {
-	struct device *dev = &st->adis.spi->dev;
 	const char *ext_clk_pin;
 	enum adis16480_int_pin pin;
 	int i;
 
 	pin = ADIS16480_PIN_DIO2;
-	if (device_property_read_string(dev, "adi,ext-clk-pin", &ext_clk_pin))
+	if (of_property_read_string(of_node, "adi,ext-clk-pin", &ext_clk_pin))
 		goto clk_input_not_found;
 
 	for (i = 0; i < ARRAY_SIZE(adis16480_int_pin_names); i++) {
@@ -1315,13 +1312,15 @@ static int adis16480_fw_get_ext_clk_pin(struct adis16480 *st)
 	}
 
 clk_input_not_found:
-	dev_info(dev, "clk input line not specified, using DIO2\n");
+	dev_info(&st->adis.spi->dev,
+		"clk input line not specified, using DIO2\n");
 	return pin;
 }
 
-static int adis16480_ext_clk_config(struct adis16480 *st, bool enable)
+static int adis16480_ext_clk_config(struct adis16480 *st,
+				    struct device_node *of_node,
+				    bool enable)
 {
-	struct device *dev = &st->adis.spi->dev;
 	unsigned int mode, mask;
 	enum adis16480_int_pin pin;
 	uint16_t val;
@@ -1331,14 +1330,16 @@ static int adis16480_ext_clk_config(struct adis16480 *st, bool enable)
 	if (ret)
 		return ret;
 
-	pin = adis16480_fw_get_ext_clk_pin(st);
+	pin = adis16480_of_get_ext_clk_pin(st, of_node);
 	/*
 	 * Each DIOx pin supports only one function at a time. When a single pin
 	 * has two assignments, the enable bit for a lower priority function
 	 * automatically resets to zero (disabling the lower priority function).
 	 */
 	if (pin == ADIS16480_DRDY_SEL(val))
-		dev_warn(dev, "DIO%x pin supports only one function at a time\n", pin + 1);
+		dev_warn(&st->adis.spi->dev,
+			"DIO%x pin supports only one function at a time\n",
+			pin + 1);
 
 	mode = ADIS16480_SYNC_EN(enable) | ADIS16480_SYNC_SEL(pin);
 	mask = ADIS16480_SYNC_EN_MSK | ADIS16480_SYNC_SEL_MSK;
@@ -1360,27 +1361,31 @@ static int adis16480_ext_clk_config(struct adis16480 *st, bool enable)
 
 static int adis16480_get_ext_clocks(struct adis16480 *st)
 {
-	struct device *dev = &st->adis.spi->dev;
-
-	st->ext_clk = devm_clk_get_optional(dev, "sync");
-	if (IS_ERR(st->ext_clk))
-		return dev_err_probe(dev, PTR_ERR(st->ext_clk), "failed to get ext clk\n");
-	if (st->ext_clk) {
+	st->clk_mode = ADIS16480_CLK_INT;
+	st->ext_clk = devm_clk_get(&st->adis.spi->dev, "sync");
+	if (!IS_ERR_OR_NULL(st->ext_clk)) {
 		st->clk_mode = ADIS16480_CLK_SYNC;
 		return 0;
 	}
 
+	if (PTR_ERR(st->ext_clk) != -ENOENT) {
+		dev_err(&st->adis.spi->dev, "failed to get ext clk\n");
+		return PTR_ERR(st->ext_clk);
+	}
+
 	if (st->chip_info->has_pps_clk_mode) {
-		st->ext_clk = devm_clk_get_optional(dev, "pps");
-		if (IS_ERR(st->ext_clk))
-			return dev_err_probe(dev, PTR_ERR(st->ext_clk), "failed to get ext clk\n");
-		if (st->ext_clk) {
+		st->ext_clk = devm_clk_get(&st->adis.spi->dev, "pps");
+		if (!IS_ERR_OR_NULL(st->ext_clk)) {
 			st->clk_mode = ADIS16480_CLK_PPS;
 			return 0;
 		}
+
+		if (PTR_ERR(st->ext_clk) != -ENOENT) {
+			dev_err(&st->adis.spi->dev, "failed to get ext clk\n");
+			return PTR_ERR(st->ext_clk);
+		}
 	}
 
-	st->clk_mode = ADIS16480_CLK_INT;
 	return 0;
 }
 
@@ -1399,12 +1404,11 @@ static int adis16480_probe(struct spi_device *spi)
 	const struct spi_device_id *id = spi_get_device_id(spi);
 	const struct adis_data *adis16480_data;
 	irq_handler_t trigger_handler = NULL;
-	struct device *dev = &spi->dev;
 	struct iio_dev *indio_dev;
 	struct adis16480 *st;
 	int ret;
 
-	indio_dev = devm_iio_device_alloc(dev, sizeof(*st));
+	indio_dev = devm_iio_device_alloc(&spi->dev, sizeof(*st));
 	if (indio_dev == NULL)
 		return -ENOMEM;
 
@@ -1428,12 +1432,13 @@ static int adis16480_probe(struct spi_device *spi)
 		return ret;
 
 	if (st->chip_info->has_sleep_cnt) {
-		ret = devm_add_action_or_reset(dev, adis16480_stop, indio_dev);
+		ret = devm_add_action_or_reset(&spi->dev, adis16480_stop,
+					       indio_dev);
 		if (ret)
 			return ret;
 	}
 
-	ret = adis16480_config_irq_pin(st);
+	ret = adis16480_config_irq_pin(spi->dev.of_node, st);
 	if (ret)
 		return ret;
 
@@ -1441,12 +1446,12 @@ static int adis16480_probe(struct spi_device *spi)
 	if (ret)
 		return ret;
 
-	if (st->ext_clk) {
-		ret = adis16480_ext_clk_config(st, true);
+	if (!IS_ERR_OR_NULL(st->ext_clk)) {
+		ret = adis16480_ext_clk_config(st, spi->dev.of_node, true);
 		if (ret)
 			return ret;
 
-		ret = devm_add_action_or_reset(dev, adis16480_clk_disable, st->ext_clk);
+		ret = devm_add_action_or_reset(&spi->dev, adis16480_clk_disable, st->ext_clk);
 		if (ret)
 			return ret;
 
@@ -1479,7 +1484,7 @@ static int adis16480_probe(struct spi_device *spi)
 	if (ret)
 		return ret;
 
-	ret = devm_iio_device_register(dev, indio_dev);
+	ret = devm_iio_device_register(&spi->dev, indio_dev);
 	if (ret)
 		return ret;
 

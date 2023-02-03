@@ -10,20 +10,17 @@
  * Copyright (C) 2012 ARM Ltd.
  */
 
+#include <linux/irq.h>
+#include <linux/memory.h>
+#include <linux/smp.h>
 #include <linux/hardirq.h>
 #include <linux/init.h>
-#include <linux/irq.h>
 #include <linux/irqchip.h>
 #include <linux/kprobes.h>
-#include <linux/memory.h>
 #include <linux/scs.h>
 #include <linux/seq_file.h>
-#include <linux/smp.h>
 #include <linux/vmalloc.h>
 #include <asm/daifflags.h>
-#include <asm/exception.h>
-#include <asm/softirq_stack.h>
-#include <asm/stacktrace.h>
 #include <asm/vmap_stack.h>
 
 /* Only access this in an NMI enter/exit */
@@ -42,7 +39,7 @@ static void init_irq_scs(void)
 {
 	int cpu;
 
-	if (!scs_is_enabled())
+	if (!IS_ENABLED(CONFIG_SHADOW_CALL_STACK))
 		return;
 
 	for_each_possible_cpu(cpu)
@@ -71,18 +68,6 @@ static void init_irq_stacks(void)
 
 	for_each_possible_cpu(cpu)
 		per_cpu(irq_stack_ptr, cpu) = per_cpu(irq_stack, cpu);
-}
-#endif
-
-#ifndef CONFIG_PREEMPT_RT
-static void ____do_softirq(struct pt_regs *regs)
-{
-	__do_softirq();
-}
-
-void do_softirq_own_stack(void)
-{
-	call_on_irq_stack(NULL, ____do_softirq);
 }
 #endif
 

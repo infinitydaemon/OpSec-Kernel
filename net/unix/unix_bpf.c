@@ -48,7 +48,8 @@ static int __unix_recvmsg(struct sock *sk, struct msghdr *msg,
 }
 
 static int unix_bpf_recvmsg(struct sock *sk, struct msghdr *msg,
-			    size_t len, int flags, int *addr_len)
+			    size_t len, int nonblock, int flags,
+			    int *addr_len)
 {
 	struct unix_sock *u = unix_sk(sk);
 	struct sk_psock *psock;
@@ -72,7 +73,7 @@ msg_bytes_ready:
 		long timeo;
 		int data;
 
-		timeo = sock_rcvtimeo(sk, flags & MSG_DONTWAIT);
+		timeo = sock_rcvtimeo(sk, nonblock);
 		data = unix_msg_wait_data(sk, psock, timeo);
 		if (data) {
 			if (!sk_psock_queue_empty(psock))
@@ -145,12 +146,12 @@ int unix_dgram_bpf_update_proto(struct sock *sk, struct sk_psock *psock, bool re
 
 	if (restore) {
 		sk->sk_write_space = psock->saved_write_space;
-		sock_replace_proto(sk, psock->sk_proto);
+		WRITE_ONCE(sk->sk_prot, psock->sk_proto);
 		return 0;
 	}
 
 	unix_dgram_bpf_check_needs_rebuild(psock->sk_proto);
-	sock_replace_proto(sk, &unix_dgram_bpf_prot);
+	WRITE_ONCE(sk->sk_prot, &unix_dgram_bpf_prot);
 	return 0;
 }
 
@@ -158,12 +159,12 @@ int unix_stream_bpf_update_proto(struct sock *sk, struct sk_psock *psock, bool r
 {
 	if (restore) {
 		sk->sk_write_space = psock->saved_write_space;
-		sock_replace_proto(sk, psock->sk_proto);
+		WRITE_ONCE(sk->sk_prot, psock->sk_proto);
 		return 0;
 	}
 
 	unix_stream_bpf_check_needs_rebuild(psock->sk_proto);
-	sock_replace_proto(sk, &unix_stream_bpf_prot);
+	WRITE_ONCE(sk->sk_prot, &unix_stream_bpf_prot);
 	return 0;
 }
 

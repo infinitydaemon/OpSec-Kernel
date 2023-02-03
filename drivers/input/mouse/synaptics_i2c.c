@@ -521,7 +521,8 @@ static struct synaptics_i2c *synaptics_i2c_touch_create(struct i2c_client *clien
 	return touch;
 }
 
-static int synaptics_i2c_probe(struct i2c_client *client)
+static int synaptics_i2c_probe(struct i2c_client *client,
+			       const struct i2c_device_id *dev_id)
 {
 	int ret;
 	struct synaptics_i2c *touch;
@@ -586,7 +587,7 @@ err_mem_free:
 	return ret;
 }
 
-static void synaptics_i2c_remove(struct i2c_client *client)
+static int synaptics_i2c_remove(struct i2c_client *client)
 {
 	struct synaptics_i2c *touch = i2c_get_clientdata(client);
 
@@ -595,6 +596,8 @@ static void synaptics_i2c_remove(struct i2c_client *client)
 
 	input_unregister_device(touch->input);
 	kfree(touch);
+
+	return 0;
 }
 
 static int __maybe_unused synaptics_i2c_suspend(struct device *dev)
@@ -650,7 +653,7 @@ static struct i2c_driver synaptics_i2c_driver = {
 		.pm	= &synaptics_i2c_pm,
 	},
 
-	.probe_new	= synaptics_i2c_probe,
+	.probe		= synaptics_i2c_probe,
 	.remove		= synaptics_i2c_remove,
 
 	.id_table	= synaptics_i2c_id_table,

@@ -66,7 +66,7 @@ The wiki documentation always refers to the linux-next version of the script.
 
 For Semantic Patch Language(SmPL) grammar documentation refer to:
 
-https://coccinelle.gitlabpages.inria.fr/website/docs/main_grammar.html
+http://coccinelle.lip6.fr/documentation.php
 
 Using Coccinelle on the Linux kernel
 ------------------------------------

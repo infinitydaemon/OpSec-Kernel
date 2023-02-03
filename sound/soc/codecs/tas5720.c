@@ -89,8 +89,8 @@ static int tas5720_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	u8 serial_format;
 	int ret;
 
-	if ((fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) != SND_SOC_DAIFMT_CBC_CFC) {
-		dev_vdbg(component->dev, "DAI clocking invalid\n");
+	if ((fmt & SND_SOC_DAIFMT_MASTER_MASK) != SND_SOC_DAIFMT_CBS_CFS) {
+		dev_vdbg(component->dev, "DAI Format master is not found\n");
 		return -EINVAL;
 	}
 
@@ -572,6 +572,7 @@ static const struct snd_soc_component_driver soc_component_dev_tas5720 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static const struct snd_soc_component_driver soc_component_dev_tas5722 = {
@@ -588,6 +589,7 @@ static const struct snd_soc_component_driver soc_component_dev_tas5722 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 /* PCM rates supported by the TAS5720 driver */
@@ -631,19 +633,12 @@ static struct snd_soc_dai_driver tas5720_dai[] = {
 	},
 };
 
-static const struct i2c_device_id tas5720_id[] = {
-	{ "tas5720", TAS5720 },
-	{ "tas5722", TAS5722 },
-	{ }
-};
-MODULE_DEVICE_TABLE(i2c, tas5720_id);
-
-static int tas5720_probe(struct i2c_client *client)
+static int tas5720_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
 	struct tas5720_data *data;
 	const struct regmap_config *regmap_config;
-	const struct i2c_device_id *id;
 	int ret;
 	int i;
 
@@ -651,7 +646,6 @@ static int tas5720_probe(struct i2c_client *client)
 	if (!data)
 		return -ENOMEM;
 
-	id = i2c_match_id(tas5720_id, client);
 	data->tas5720_client = client;
 	data->devtype = id->driver_data;
 
@@ -710,6 +704,13 @@ static int tas5720_probe(struct i2c_client *client)
 	return 0;
 }
 
+static const struct i2c_device_id tas5720_id[] = {
+	{ "tas5720", TAS5720 },
+	{ "tas5722", TAS5722 },
+	{ }
+};
+MODULE_DEVICE_TABLE(i2c, tas5720_id);
+
 #if IS_ENABLED(CONFIG_OF)
 static const struct of_device_id tas5720_of_match[] = {
 	{ .compatible = "ti,tas5720", },
@@ -724,7 +725,7 @@ static struct i2c_driver tas5720_i2c_driver = {
 		.name = "tas5720",
 		.of_match_table = of_match_ptr(tas5720_of_match),
 	},
-	.probe_new = tas5720_probe,
+	.probe = tas5720_probe,
 	.id_table = tas5720_id,
 };
 

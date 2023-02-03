@@ -1,10 +1,20 @@
-// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  * dvbdev.c
  *
  * Copyright (C) 2000 Ralph  Metzler <ralph@convergence.de>
  *                  & Marcus Metzler <marcus@convergence.de>
  *                    for convergence integrated media GmbH
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public License
+ * as published by the Free Software Foundation; either version 2.1
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  */
 
 #define pr_fmt(fmt) "dvbdev: " fmt
@@ -246,7 +256,7 @@ static void dvb_media_device_free(struct dvb_device *dvbdev)
 static int dvb_create_tsout_entity(struct dvb_device *dvbdev,
 				    const char *name, int npads)
 {
-	int i;
+	int i, ret = 0;
 
 	dvbdev->tsout_pads = kcalloc(npads, sizeof(*dvbdev->tsout_pads),
 				     GFP_KERNEL);
@@ -263,7 +273,6 @@ static int dvb_create_tsout_entity(struct dvb_device *dvbdev,
 	for (i = 0; i < npads; i++) {
 		struct media_pad *pads = &dvbdev->tsout_pads[i];
 		struct media_entity *entity = &dvbdev->tsout_entity[i];
-		int ret;
 
 		entity->name = kasprintf(GFP_KERNEL, "%s #%d", name, i);
 		if (!entity->name)
@@ -1028,9 +1037,9 @@ void dvb_module_release(struct i2c_client *client)
 EXPORT_SYMBOL_GPL(dvb_module_release);
 #endif
 
-static int dvb_uevent(const struct device *dev, struct kobj_uevent_env *env)
+static int dvb_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
-	const struct dvb_device *dvbdev = dev_get_drvdata(dev);
+	struct dvb_device *dvbdev = dev_get_drvdata(dev);
 
 	add_uevent_var(env, "DVB_ADAPTER_NUM=%d", dvbdev->adapter->num);
 	add_uevent_var(env, "DVB_DEVICE_TYPE=%s", dnames[dvbdev->type]);
@@ -1038,9 +1047,9 @@ static int dvb_uevent(const struct device *dev, struct kobj_uevent_env *env)
 	return 0;
 }
 
-static char *dvb_devnode(const struct device *dev, umode_t *mode)
+static char *dvb_devnode(struct device *dev, umode_t *mode)
 {
-	const struct dvb_device *dvbdev = dev_get_drvdata(dev);
+	struct dvb_device *dvbdev = dev_get_drvdata(dev);
 
 	return kasprintf(GFP_KERNEL, "dvb/adapter%d/%s%d",
 		dvbdev->adapter->num, dnames[dvbdev->type], dvbdev->id);

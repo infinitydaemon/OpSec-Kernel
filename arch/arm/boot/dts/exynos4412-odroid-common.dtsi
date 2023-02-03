@@ -172,24 +172,24 @@
 };
 
 &pinctrl_1 {
-	gpio_power_key: power-key-pins {
+	gpio_power_key: power-key {
 		samsung,pins = "gpx1-3";
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};
 
-	max77686_irq: max77686-irq-pins {
+	max77686_irq: max77686-irq {
 		samsung,pins = "gpx3-2";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_INPUT>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 		samsung,pin-drv = <EXYNOS4_PIN_DRV_LV1>;
 	};
 
-	hdmi_hpd: hdmi-hpd-pins {
+	hdmi_hpd: hdmi-hpd {
 		samsung,pins = "gpx3-7";
 		samsung,pin-pud = <EXYNOS_PIN_PULL_DOWN>;
 	};
 
-	emmc_rstn: emmc-rstn-pins {
+	emmc_rstn: emmc-rstn {
 		samsung,pins = "gpk1-2";
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 	};

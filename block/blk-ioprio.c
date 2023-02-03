@@ -12,11 +12,11 @@
  *   Documentation/admin-guide/cgroup-v2.rst.
  */
 
+#include <linux/blk-cgroup.h>
 #include <linux/blk-mq.h>
 #include <linux/blk_types.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include "blk-cgroup.h"
 #include "blk-ioprio.h"
 #include "blk-rq-qos.h"
 
@@ -112,6 +112,7 @@ static ssize_t ioprio_set_prio_policy(struct kernfs_open_file *of, char *buf,
 	if (ret < 0)
 		return ret;
 	blkcg->prio_policy = ret;
+
 	return nbytes;
 }
 
@@ -181,35 +182,70 @@ static struct blkcg_policy ioprio_policy = {
 	.pd_free_fn	= ioprio_free_pd,
 };
 
-void blkcg_set_ioprio(struct bio *bio)
+struct blk_ioprio {
+	struct rq_qos rqos;
+};
+
+static void blkcg_ioprio_track(struct rq_qos *rqos, struct request *rq,
+			       struct bio *bio)
 {
 	struct ioprio_blkcg *blkcg = ioprio_blkcg_from_bio(bio);
-	u16 prio;
-
-	if (!blkcg || blkcg->prio_policy == POLICY_NO_CHANGE)
-		return;
 
 	/*
 	 * Except for IOPRIO_CLASS_NONE, higher I/O priority numbers
 	 * correspond to a lower priority. Hence, the max_t() below selects
 	 * the lower priority of bi_ioprio and the cgroup I/O priority class.
-	 * If the bio I/O priority equals IOPRIO_CLASS_NONE, the cgroup I/O
-	 * priority is assigned to the bio.
+	 * If the cgroup policy has been set to POLICY_NO_CHANGE == 0, the
+	 * bio I/O priority is not modified. If the bio I/O priority equals
+	 * IOPRIO_CLASS_NONE, the cgroup I/O priority is assigned to the bio.
 	 */
-	prio = max_t(u16, bio->bi_ioprio,
-			IOPRIO_PRIO_VALUE(blkcg->prio_policy, 0));
-	if (prio > bio->bi_ioprio)
-		bio->bi_ioprio = prio;
+	bio->bi_ioprio = max_t(u16, bio->bi_ioprio,
+			       IOPRIO_PRIO_VALUE(blkcg->prio_policy, 0));
 }
 
-void blk_ioprio_exit(struct gendisk *disk)
+static void blkcg_ioprio_exit(struct rq_qos *rqos)
 {
-	blkcg_deactivate_policy(disk->queue, &ioprio_policy);
+	struct blk_ioprio *blkioprio_blkg =
+		container_of(rqos, typeof(*blkioprio_blkg), rqos);
+
+	blkcg_deactivate_policy(rqos->q, &ioprio_policy);
+	kfree(blkioprio_blkg);
 }
 
-int blk_ioprio_init(struct gendisk *disk)
+static struct rq_qos_ops blkcg_ioprio_ops = {
+	.track	= blkcg_ioprio_track,
+	.exit	= blkcg_ioprio_exit,
+};
+
+int blk_ioprio_init(struct request_queue *q)
 {
-	return blkcg_activate_policy(disk->queue, &ioprio_policy);
+	struct blk_ioprio *blkioprio_blkg;
+	struct rq_qos *rqos;
+	int ret;
+
+	blkioprio_blkg = kzalloc(sizeof(*blkioprio_blkg), GFP_KERNEL);
+	if (!blkioprio_blkg)
+		return -ENOMEM;
+
+	ret = blkcg_activate_policy(q, &ioprio_policy);
+	if (ret) {
+		kfree(blkioprio_blkg);
+		return ret;
+	}
+
+	rqos = &blkioprio_blkg->rqos;
+	rqos->id = RQ_QOS_IOPRIO;
+	rqos->ops = &blkcg_ioprio_ops;
+	rqos->q = q;
+
+	/*
+	 * Registering the rq-qos policy after activating the blk-cgroup
+	 * policy guarantees that ioprio_blkcg_from_bio(bio) != NULL in the
+	 * rq-qos callbacks.
+	 */
+	rq_qos_add(q, rqos);
+
+	return 0;
 }
 
 static int __init ioprio_init(void)

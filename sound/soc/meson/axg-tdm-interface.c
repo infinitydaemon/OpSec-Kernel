@@ -119,19 +119,19 @@ static int axg_tdm_iface_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 {
 	struct axg_tdm_iface *iface = snd_soc_dai_get_drvdata(dai);
 
-	switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-	case SND_SOC_DAIFMT_BP_FP:
+	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
+	case SND_SOC_DAIFMT_CBS_CFS:
 		if (!iface->mclk) {
 			dev_err(dai->dev, "cpu clock master: mclk missing\n");
 			return -ENODEV;
 		}
 		break;
 
-	case SND_SOC_DAIFMT_BC_FC:
+	case SND_SOC_DAIFMT_CBM_CFM:
 		break;
 
-	case SND_SOC_DAIFMT_BP_FC:
-	case SND_SOC_DAIFMT_BC_FP:
+	case SND_SOC_DAIFMT_CBS_CFM:
+	case SND_SOC_DAIFMT_CBM_CFS:
 		dev_err(dai->dev, "only CBS_CFS and CBM_CFM are supported\n");
 		fallthrough;
 	default:
@@ -326,8 +326,8 @@ static int axg_tdm_iface_hw_params(struct snd_pcm_substream *substream,
 	if (ret)
 		return ret;
 
-	if ((iface->fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) ==
-	    SND_SOC_DAIFMT_BP_FP) {
+	if ((iface->fmt & SND_SOC_DAIFMT_MASTER_MASK) ==
+	    SND_SOC_DAIFMT_CBS_CFS) {
 		ret = axg_tdm_iface_set_sclk(dai, params);
 		if (ret)
 			return ret;
@@ -517,13 +517,21 @@ static int axg_tdm_iface_probe(struct platform_device *pdev)
 
 	/* Bit clock provided on the pad */
 	iface->sclk = devm_clk_get(dev, "sclk");
-	if (IS_ERR(iface->sclk))
-		return dev_err_probe(dev, PTR_ERR(iface->sclk), "failed to get sclk\n");
+	if (IS_ERR(iface->sclk)) {
+		ret = PTR_ERR(iface->sclk);
+		if (ret != -EPROBE_DEFER)
+			dev_err(dev, "failed to get sclk: %d\n", ret);
+		return ret;
+	}
 
 	/* Sample clock provided on the pad */
 	iface->lrclk = devm_clk_get(dev, "lrclk");
-	if (IS_ERR(iface->lrclk))
-		return dev_err_probe(dev, PTR_ERR(iface->lrclk), "failed to get lrclk\n");
+	if (IS_ERR(iface->lrclk)) {
+		ret = PTR_ERR(iface->lrclk);
+		if (ret != -EPROBE_DEFER)
+			dev_err(dev, "failed to get lrclk: %d\n", ret);
+		return ret;
+	}
 
 	/*
 	 * mclk maybe be missing when the cpu dai is in slave mode and
@@ -534,10 +542,13 @@ static int axg_tdm_iface_probe(struct platform_device *pdev)
 	iface->mclk = devm_clk_get(dev, "mclk");
 	if (IS_ERR(iface->mclk)) {
 		ret = PTR_ERR(iface->mclk);
-		if (ret == -ENOENT)
+		if (ret == -ENOENT) {
 			iface->mclk = NULL;
-		else
-			return dev_err_probe(dev, ret, "failed to get mclk\n");
+		} else {
+			if (ret != -EPROBE_DEFER)
+				dev_err(dev, "failed to get mclk: %d\n", ret);
+			return ret;
+		}
 	}
 
 	return devm_snd_soc_register_component(dev,

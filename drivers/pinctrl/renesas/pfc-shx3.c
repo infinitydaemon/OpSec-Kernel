@@ -4,6 +4,7 @@
  *
  * Copyright (C) 2010  Paul Mundt
  */
+#include <linux/init.h>
 #include <linux/kernel.h>
 #include <cpu/shx3.h>
 

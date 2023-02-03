@@ -76,11 +76,9 @@ const char PRINT_TYPE_FMT_NAME(string)[] = "\\\"%s\\\"";
 /* Fetch type information table */
 static const struct fetch_type probe_fetch_types[] = {
 	/* Special types */
-	__ASSIGN_FETCH_TYPE("string", string, string, sizeof(u32), 1, 1,
+	__ASSIGN_FETCH_TYPE("string", string, string, sizeof(u32), 1,
 			    "__data_loc char[]"),
-	__ASSIGN_FETCH_TYPE("ustring", string, string, sizeof(u32), 1, 1,
-			    "__data_loc char[]"),
-	__ASSIGN_FETCH_TYPE("symstr", string, string, sizeof(u32), 1, 1,
+	__ASSIGN_FETCH_TYPE("ustring", string, string, sizeof(u32), 1,
 			    "__data_loc char[]"),
 	/* Basic types */
 	ASSIGN_FETCH_TYPE(u8,  u8,  0),
@@ -100,14 +98,9 @@ static const struct fetch_type probe_fetch_types[] = {
 	ASSIGN_FETCH_TYPE_END
 };
 
-static const struct fetch_type *find_fetch_type(const char *type, unsigned long flags)
+static const struct fetch_type *find_fetch_type(const char *type)
 {
 	int i;
-
-	/* Reject the symbol/symstr for uprobes */
-	if (type && (flags & TPARG_FL_USER) &&
-	    (!strcmp(type, "symbol") || !strcmp(type, "symstr")))
-		return NULL;
 
 	if (!type)
 		type = DEFAULT_FETCH_TYPE_STR;
@@ -126,13 +119,13 @@ static const struct fetch_type *find_fetch_type(const char *type, unsigned long 
 
 		switch (bs) {
 		case 8:
-			return find_fetch_type("u8", flags);
+			return find_fetch_type("u8");
 		case 16:
-			return find_fetch_type("u16", flags);
+			return find_fetch_type("u16");
 		case 32:
-			return find_fetch_type("u32", flags);
+			return find_fetch_type("u32");
 		case 64:
-			return find_fetch_type("u64", flags);
+			return find_fetch_type("u64");
 		default:
 			goto fail;
 		}
@@ -264,10 +257,6 @@ int traceprobe_parse_event_name(const char **pevent, const char **pgroup,
 	}
 	len = strlen(event);
 	if (len == 0) {
-		if (slash) {
-			*pevent = NULL;
-			return 0;
-		}
 		trace_probe_log_err(offset, NO_EVENT_NAME);
 		return -EINVAL;
 	} else if (len > MAX_EVENT_NAME_LEN) {
@@ -485,7 +474,7 @@ parse_probe_arg(char *arg, const struct fetch_type *type,
 					    DEREF_OPEN_BRACE);
 			return -EINVAL;
 		} else {
-			const struct fetch_type *t2 = find_fetch_type(NULL, flags);
+			const struct fetch_type *t2 = find_fetch_type(NULL);
 
 			*tmp = '\0';
 			ret = parse_probe_arg(arg, t2, &code, end, flags, offs);
@@ -637,9 +626,9 @@ static int traceprobe_parse_probe_arg_body(const char *argv, ssize_t *size,
 		/* The type of $comm must be "string", and not an array. */
 		if (parg->count || (t && strcmp(t, "string")))
 			goto out;
-		parg->type = find_fetch_type("string", flags);
+		parg->type = find_fetch_type("string");
 	} else
-		parg->type = find_fetch_type(t, flags);
+		parg->type = find_fetch_type(t);
 	if (!parg->type) {
 		trace_probe_log_err(offset + (t ? (t - arg) : 0), BAD_TYPE);
 		goto out;
@@ -669,26 +658,16 @@ static int traceprobe_parse_probe_arg_body(const char *argv, ssize_t *size,
 
 	ret = -EINVAL;
 	/* Store operation */
-	if (parg->type->is_string) {
-		if (!strcmp(parg->type->name, "symstr")) {
-			if (code->op != FETCH_OP_REG && code->op != FETCH_OP_STACK &&
-			    code->op != FETCH_OP_RETVAL && code->op != FETCH_OP_ARG &&
-			    code->op != FETCH_OP_DEREF && code->op != FETCH_OP_TP_ARG) {
-				trace_probe_log_err(offset + (t ? (t - arg) : 0),
-						    BAD_SYMSTRING);
-				goto fail;
-			}
-		} else {
-			if (code->op != FETCH_OP_DEREF && code->op != FETCH_OP_UDEREF &&
-			    code->op != FETCH_OP_IMM && code->op != FETCH_OP_COMM &&
-			    code->op != FETCH_OP_DATA && code->op != FETCH_OP_TP_ARG) {
-				trace_probe_log_err(offset + (t ? (t - arg) : 0),
-						    BAD_STRING);
-				goto fail;
-			}
+	if (!strcmp(parg->type->name, "string") ||
+	    !strcmp(parg->type->name, "ustring")) {
+		if (code->op != FETCH_OP_DEREF && code->op != FETCH_OP_UDEREF &&
+		    code->op != FETCH_OP_IMM && code->op != FETCH_OP_COMM &&
+		    code->op != FETCH_OP_DATA && code->op != FETCH_OP_TP_ARG) {
+			trace_probe_log_err(offset + (t ? (t - arg) : 0),
+					    BAD_STRING);
+			goto fail;
 		}
-		if (!strcmp(parg->type->name, "symstr") ||
-		    (code->op == FETCH_OP_IMM || code->op == FETCH_OP_COMM ||
+		if ((code->op == FETCH_OP_IMM || code->op == FETCH_OP_COMM ||
 		     code->op == FETCH_OP_DATA) || code->op == FETCH_OP_TP_ARG ||
 		     parg->count) {
 			/*
@@ -696,8 +675,6 @@ static int traceprobe_parse_probe_arg_body(const char *argv, ssize_t *size,
 			 * must be kept, and if parg->count != 0, this is an
 			 * array of string pointers instead of string address
 			 * itself.
-			 * For the symstr, it doesn't need to dereference, thus
-			 * it just get the value.
 			 */
 			code++;
 			if (code->op != FETCH_OP_NOP) {
@@ -709,8 +686,6 @@ static int traceprobe_parse_probe_arg_body(const char *argv, ssize_t *size,
 		if (!strcmp(parg->type->name, "ustring") ||
 		    code->op == FETCH_OP_UDEREF)
 			code->op = FETCH_OP_ST_USTRING;
-		else if (!strcmp(parg->type->name, "symstr"))
-			code->op = FETCH_OP_ST_SYMSTR;
 		else
 			code->op = FETCH_OP_ST_STRING;
 		code->size = parg->type->size;
@@ -903,15 +878,15 @@ static int __set_print_fmt(struct trace_probe *tp, char *buf, int len,
 	switch (ptype) {
 	case PROBE_PRINT_NORMAL:
 		fmt = "(%lx)";
-		arg = ", REC->" FIELD_STRING_IP;
+		arg = "REC->" FIELD_STRING_IP;
 		break;
 	case PROBE_PRINT_RETURN:
 		fmt = "(%lx <- %lx)";
-		arg = ", REC->" FIELD_STRING_FUNC ", REC->" FIELD_STRING_RETIP;
+		arg = "REC->" FIELD_STRING_FUNC ", REC->" FIELD_STRING_RETIP;
 		break;
 	case PROBE_PRINT_EVENT:
-		fmt = "";
-		arg = "";
+		fmt = "(%u)";
+		arg = "REC->" FIELD_STRING_TYPE;
 		break;
 	default:
 		WARN_ON_ONCE(1);
@@ -935,12 +910,13 @@ static int __set_print_fmt(struct trace_probe *tp, char *buf, int len,
 					parg->type->fmt);
 	}
 
-	pos += snprintf(buf + pos, LEN_OR_ZERO, "\"%s", arg);
+	pos += snprintf(buf + pos, LEN_OR_ZERO, "\", %s", arg);
 
 	for (i = 0; i < tp->nr_args; i++) {
 		parg = tp->args + i;
 		if (parg->count) {
-			if (parg->type->is_string)
+			if ((strcmp(parg->type->name, "string") == 0) ||
+			    (strcmp(parg->type->name, "ustring") == 0))
 				fmt = ", __get_str(%s[%d])";
 			else
 				fmt = ", REC->%s[%d]";
@@ -948,7 +924,8 @@ static int __set_print_fmt(struct trace_probe *tp, char *buf, int len,
 				pos += snprintf(buf + pos, LEN_OR_ZERO,
 						fmt, parg->name, j);
 		} else {
-			if (parg->type->is_string)
+			if ((strcmp(parg->type->name, "string") == 0) ||
+			    (strcmp(parg->type->name, "ustring") == 0))
 				fmt = ", __get_str(%s)";
 			else
 				fmt = ", REC->%s";
@@ -1170,7 +1147,8 @@ int trace_probe_remove_file(struct trace_probe *tp,
 		return -ENOENT;
 
 	list_del_rcu(&link->list);
-	kvfree_rcu(link);
+	synchronize_rcu();
+	kfree(link);
 
 	if (list_empty(&tp->event->files))
 		trace_probe_clear_flag(tp, TP_FLAG_TRACE);

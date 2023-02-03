@@ -12,7 +12,6 @@ s390 Architecture
     qeth
     s390dbf
     vfio-ap
-    vfio-ap-locking
     vfio-ccw
     zfcpdump
     common_io

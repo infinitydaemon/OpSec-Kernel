@@ -31,12 +31,9 @@
 #include "dcn301/dcn301_hwseq.h"
 #include "dcn31/dcn31_hwseq.h"
 
-#include "dcn31_init.h"
-
 static const struct hw_sequencer_funcs dcn31_funcs = {
 	.program_gamut_remap = dcn10_program_gamut_remap,
 	.init_hw = dcn31_init_hw,
-	.power_down_on_boot = dcn10_power_down_on_boot,
 	.apply_ctx_to_hw = dce110_apply_ctx_to_hw,
 	.apply_ctx_for_surface = NULL,
 	.program_front_end_for_ctx = dcn20_program_front_end_for_ctx,
@@ -64,9 +61,9 @@ static const struct hw_sequencer_funcs dcn31_funcs = {
 	.prepare_bandwidth = dcn20_prepare_bandwidth,
 	.optimize_bandwidth = dcn20_optimize_bandwidth,
 	.update_bandwidth = dcn20_update_bandwidth,
-	.set_drr = dcn31_set_drr,
+	.set_drr = dcn10_set_drr,
 	.get_position = dcn10_get_position,
-	.set_static_screen_control = dcn31_set_static_screen_control,
+	.set_static_screen_control = dcn10_set_static_screen_control,
 	.setup_stereo = dcn10_setup_stereo,
 	.set_avmute = dcn30_set_avmute,
 	.log_hw_state = dcn10_log_hw_state,
@@ -96,16 +93,12 @@ static const struct hw_sequencer_funcs dcn31_funcs = {
 	.set_flip_control_gsl = dcn20_set_flip_control_gsl,
 	.get_vupdate_offset_from_vsync = dcn10_get_vupdate_offset_from_vsync,
 	.calc_vupdate_position = dcn10_calc_vupdate_position,
-	.power_down = dce110_power_down,
 	.set_backlight_level = dcn21_set_backlight_level,
 	.set_abm_immediate_disable = dcn21_set_abm_immediate_disable,
 	.set_pipe = dcn21_set_pipe,
-	.enable_lvds_link_output = dce110_enable_lvds_link_output,
-	.enable_tmds_link_output = dce110_enable_tmds_link_output,
-	.enable_dp_link_output = dce110_enable_dp_link_output,
-	.disable_link_output = dce110_disable_link_output,
 	.z10_restore = dcn31_z10_restore,
 	.z10_save_init = dcn31_z10_save_init,
+	.is_abm_supported = dcn31_is_abm_supported,
 	.set_disp_pattern_generator = dcn30_set_disp_pattern_generator,
 	.optimize_pwr_state = dcn21_optimize_pwr_state,
 	.exit_optimized_pwr_state = dcn21_exit_optimized_pwr_state,
@@ -145,7 +138,6 @@ static const struct hwseq_private_funcs dcn31_private_funcs = {
 	.dccg_init = dcn20_dccg_init,
 	.set_blend_lut = dcn30_set_blend_lut,
 	.set_shaper_3dlut = dcn20_set_shaper_3dlut,
-	.setup_hpo_hw_control = dcn31_setup_hpo_hw_control,
 };
 
 void dcn31_hw_sequencer_construct(struct dc *dc)

@@ -17,6 +17,8 @@
 #include "processor.h"
 #include "vmx.h"
 
+#define VCPU_ID				1
+
 /* The memory slot index to track dirty pages */
 #define TEST_MEM_SLOT_INDEX		1
 #define TEST_MEM_PAGES			3
@@ -71,20 +73,18 @@ int main(int argc, char *argv[])
 	unsigned long *bmap;
 	uint64_t *host_test_mem;
 
-	struct kvm_vcpu *vcpu;
 	struct kvm_vm *vm;
 	struct kvm_run *run;
 	struct ucall uc;
 	bool done = false;
 
-	TEST_REQUIRE(kvm_cpu_has(X86_FEATURE_VMX));
-	TEST_REQUIRE(kvm_cpu_has_ept());
+	nested_vmx_check_supported();
 
 	/* Create VM */
-	vm = vm_create_with_one_vcpu(&vcpu, l1_guest_code);
+	vm = vm_create_default(VCPU_ID, 0, l1_guest_code);
 	vmx = vcpu_alloc_vmx(vm, &vmx_pages_gva);
-	vcpu_args_set(vcpu, 1, vmx_pages_gva);
-	run = vcpu->run;
+	vcpu_args_set(vm, VCPU_ID, 1, vmx_pages_gva);
+	run = vcpu_state(vm, VCPU_ID);
 
 	/* Add an extra memory slot for testing dirty logging */
 	vm_userspace_mem_region_add(vm, VM_MEM_SRC_ANONYMOUS,
@@ -116,15 +116,16 @@ int main(int argc, char *argv[])
 
 	while (!done) {
 		memset(host_test_mem, 0xaa, TEST_MEM_PAGES * 4096);
-		vcpu_run(vcpu);
+		_vcpu_run(vm, VCPU_ID);
 		TEST_ASSERT(run->exit_reason == KVM_EXIT_IO,
 			    "Unexpected exit reason: %u (%s),\n",
 			    run->exit_reason,
 			    exit_reason_str(run->exit_reason));
 
-		switch (get_ucall(vcpu, &uc)) {
+		switch (get_ucall(vm, VCPU_ID, &uc)) {
 		case UCALL_ABORT:
-			REPORT_GUEST_ASSERT(uc);
+			TEST_FAIL("%s at %s:%ld", (const char *)uc.args[0],
+			       	  __FILE__, uc.args[1]);
 			/* NOT REACHED */
 		case UCALL_SYNC:
 			/*

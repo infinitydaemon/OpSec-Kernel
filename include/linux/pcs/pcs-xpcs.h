@@ -17,7 +17,6 @@
 #define DW_AN_C73			1
 #define DW_AN_C37_SGMII			2
 #define DW_2500BASEX			3
-#define DW_AN_C37_1000BASEX		4
 
 struct xpcs_id;
 
@@ -31,8 +30,9 @@ int xpcs_get_an_mode(struct dw_xpcs *xpcs, phy_interface_t interface);
 void xpcs_link_up(struct phylink_pcs *pcs, unsigned int mode,
 		  phy_interface_t interface, int speed, int duplex);
 int xpcs_do_config(struct dw_xpcs *xpcs, phy_interface_t interface,
-		   unsigned int mode, const unsigned long *advertising);
-void xpcs_get_interfaces(struct dw_xpcs *xpcs, unsigned long *interfaces);
+		   unsigned int mode);
+void xpcs_validate(struct dw_xpcs *xpcs, unsigned long *supported,
+		   struct phylink_link_state *state);
 int xpcs_config_eee(struct dw_xpcs *xpcs, int mult_fact_100ns,
 		    int enable);
 struct dw_xpcs *xpcs_create(struct mdio_device *mdiodev,

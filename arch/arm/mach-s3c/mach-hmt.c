@@ -26,7 +26,7 @@
 
 #include <video/samsung_fimd.h>
 #include "map.h"
-#include "irqs.h"
+#include <mach/irqs.h>
 
 #include <asm/irq.h>
 #include <asm/mach-types.h>

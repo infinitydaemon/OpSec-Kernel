@@ -8,7 +8,7 @@
 
 #include <linux/kernel.h>
 #include <linux/export.h>
-#include <linux/of_address.h>
+#include <asm/prom.h>
 #include <asm/dcr.h>
 
 #ifdef CONFIG_PPC_DCR_MMIO

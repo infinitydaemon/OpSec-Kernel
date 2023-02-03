@@ -30,12 +30,6 @@
 #define PAD_SIZE 16
 #define FILL_CHAR '$'
 
-#define NOWARN(option, comment, block) \
-	__diag_push(); \
-	__diag_ignore_all(#option, comment); \
-	block \
-	__diag_pop();
-
 KSTM_MODULE_GLOBALS();
 
 static char *test_buffer __initdata;
@@ -84,14 +78,9 @@ do_test(int bufsize, const char *expect, int elen,
 		return 1;
 	}
 
-	if (memchr_inv(test_buffer + written + 1, FILL_CHAR, bufsize - (written + 1))) {
+	if (memchr_inv(test_buffer + written + 1, FILL_CHAR, BUF_SIZE + PAD_SIZE - (written + 1))) {
 		pr_warn("vsnprintf(buf, %d, \"%s\", ...) wrote beyond the nul-terminator\n",
 			bufsize, fmt);
-		return 1;
-	}
-
-	if (memchr_inv(test_buffer + bufsize, FILL_CHAR, BUF_SIZE + PAD_SIZE - bufsize)) {
-		pr_warn("vsnprintf(buf, %d, \"%s\", ...) wrote beyond buffer\n", bufsize, fmt);
 		return 1;
 	}
 
@@ -126,7 +115,7 @@ __test(const char *expect, int elen, const char *fmt, ...)
 	 * be able to print it as expected.
 	 */
 	failed_tests += do_test(BUF_SIZE, expect, elen, fmt, ap);
-	rand = get_random_u32_inclusive(1, elen + 1);
+	rand = 1 + prandom_u32_max(elen+1);
 	/* Since elen < BUF_SIZE, we have 1 <= rand <= BUF_SIZE. */
 	failed_tests += do_test(rand, expect, elen, fmt, ap);
 	failed_tests += do_test(0, expect, elen, fmt, ap);
@@ -165,11 +154,9 @@ test_number(void)
 	test("0x1234abcd  ", "%#-12x", 0x1234abcd);
 	test("  0x1234abcd", "%#12x", 0x1234abcd);
 	test("0|001| 12|+123| 1234|-123|-1234", "%d|%03d|%3d|%+d|% d|%+d|% d", 0, 1, 12, 123, 1234, -123, -1234);
-	NOWARN(-Wformat, "Intentionally test narrowing conversion specifiers.", {
-		test("0|1|1|128|255", "%hhu|%hhu|%hhu|%hhu|%hhu", 0, 1, 257, 128, -1);
-		test("0|1|1|-128|-1", "%hhd|%hhd|%hhd|%hhd|%hhd", 0, 1, 257, 128, -1);
-		test("2015122420151225", "%ho%ho%#ho", 1037, 5282, -11627);
-	})
+	test("0|1|1|128|255", "%hhu|%hhu|%hhu|%hhu|%hhu", 0, 1, 257, 128, -1);
+	test("0|1|1|-128|-1", "%hhd|%hhd|%hhd|%hhd|%hhd", 0, 1, 257, 128, -1);
+	test("2015122420151225", "%ho%ho%#ho", 1037, 5282, -11627);
 	/*
 	 * POSIX/C99: »The result of converting zero with an explicit
 	 * precision of zero shall be no characters.« Hence the output
@@ -179,6 +166,18 @@ test_number(void)
 	 * behaviour.
 	 */
 	test("00|0|0|0|0", "%.2d|%.1d|%.0d|%.*d|%1.0d", 0, 0, 0, 0, 0, 0);
+#ifndef __CHAR_UNSIGNED__
+	{
+		/*
+		 * Passing a 'char' to a %02x specifier doesn't do
+		 * what was presumably the intention when char is
+		 * signed and the value is negative. One must either &
+		 * with 0xff or cast to u8.
+		 */
+		char val = -16;
+		test("0xfffffff0|0xf0|0xf0", "%#02x|%#02x|%#02x", val, val & 0xff, (u8)val);
+	}
+#endif
 }
 
 static void __init
@@ -587,59 +586,70 @@ struct page_flags_test {
 	int width;
 	int shift;
 	int mask;
+	unsigned long value;
 	const char *fmt;
 	const char *name;
 };
 
-static const struct page_flags_test pft[] = {
+static struct page_flags_test pft[] = {
 	{SECTIONS_WIDTH, SECTIONS_PGSHIFT, SECTIONS_MASK,
-	 "%d", "section"},
+	 0, "%d", "section"},
 	{NODES_WIDTH, NODES_PGSHIFT, NODES_MASK,
-	 "%d", "node"},
+	 0, "%d", "node"},
 	{ZONES_WIDTH, ZONES_PGSHIFT, ZONES_MASK,
-	 "%d", "zone"},
+	 0, "%d", "zone"},
 	{LAST_CPUPID_WIDTH, LAST_CPUPID_PGSHIFT, LAST_CPUPID_MASK,
-	 "%#x", "lastcpupid"},
+	 0, "%#x", "lastcpupid"},
 	{KASAN_TAG_WIDTH, KASAN_TAG_PGSHIFT, KASAN_TAG_MASK,
-	 "%#x", "kasantag"},
+	 0, "%#x", "kasantag"},
 };
 
 static void __init
 page_flags_test(int section, int node, int zone, int last_cpupid,
-		int kasan_tag, unsigned long flags, const char *name,
-		char *cmp_buf)
+		int kasan_tag, int flags, const char *name, char *cmp_buf)
 {
 	unsigned long values[] = {section, node, zone, last_cpupid, kasan_tag};
-	unsigned long size;
+	unsigned long page_flags = 0;
+	unsigned long size = 0;
 	bool append = false;
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(values); i++)
-		flags |= (values[i] & pft[i].mask) << pft[i].shift;
-
-	size = scnprintf(cmp_buf, BUF_SIZE, "%#lx(", flags);
-	if (flags & PAGEFLAGS_MASK) {
-		size += scnprintf(cmp_buf + size, BUF_SIZE - size, "%s", name);
-		append = true;
+	flags &= PAGEFLAGS_MASK;
+	if (flags) {
+		page_flags |= flags;
+		snprintf(cmp_buf + size, BUF_SIZE - size, "%s", name);
+		size = strlen(cmp_buf);
+#if SECTIONS_WIDTH || NODES_WIDTH || ZONES_WIDTH || \
+	LAST_CPUPID_WIDTH || KASAN_TAG_WIDTH
+		/* Other information also included in page flags */
+		snprintf(cmp_buf + size, BUF_SIZE - size, "|");
+		size = strlen(cmp_buf);
+#endif
 	}
+
+	/* Set the test value */
+	for (i = 0; i < ARRAY_SIZE(pft); i++)
+		pft[i].value = values[i];
 
 	for (i = 0; i < ARRAY_SIZE(pft); i++) {
 		if (!pft[i].width)
 			continue;
 
-		if (append)
-			size += scnprintf(cmp_buf + size, BUF_SIZE - size, "|");
+		if (append) {
+			snprintf(cmp_buf + size, BUF_SIZE - size, "|");
+			size = strlen(cmp_buf);
+		}
 
-		size += scnprintf(cmp_buf + size, BUF_SIZE - size, "%s=",
-				pft[i].name);
-		size += scnprintf(cmp_buf + size, BUF_SIZE - size, pft[i].fmt,
-				values[i] & pft[i].mask);
+		page_flags |= (pft[i].value & pft[i].mask) << pft[i].shift;
+		snprintf(cmp_buf + size, BUF_SIZE - size, "%s=", pft[i].name);
+		size = strlen(cmp_buf);
+		snprintf(cmp_buf + size, BUF_SIZE - size, pft[i].fmt,
+			 pft[i].value & pft[i].mask);
+		size = strlen(cmp_buf);
 		append = true;
 	}
 
-	snprintf(cmp_buf + size, BUF_SIZE - size, ")");
-
-	test(cmp_buf, "%pGp", &flags);
+	test(cmp_buf, "%pGp", &page_flags);
 }
 
 static void __init
@@ -692,29 +702,31 @@ flags(void)
 
 static void __init fwnode_pointer(void)
 {
-	const struct software_node first = { .name = "first" };
-	const struct software_node second = { .name = "second", .parent = &first };
-	const struct software_node third = { .name = "third", .parent = &second };
-	const struct software_node *group[] = { &first, &second, &third, NULL };
+	const struct software_node softnodes[] = {
+		{ .name = "first", },
+		{ .name = "second", .parent = &softnodes[0], },
+		{ .name = "third", .parent = &softnodes[1], },
+		{ NULL /* Guardian */ }
+	};
+	const char * const full_name = "first/second/third";
 	const char * const full_name_second = "first/second";
-	const char * const full_name_third = "first/second/third";
 	const char * const second_name = "second";
 	const char * const third_name = "third";
 	int rval;
 
-	rval = software_node_register_node_group(group);
+	rval = software_node_register_nodes(softnodes);
 	if (rval) {
 		pr_warn("cannot register softnodes; rval %d\n", rval);
 		return;
 	}
 
-	test(full_name_second, "%pfw", software_node_fwnode(&second));
-	test(full_name_third, "%pfw", software_node_fwnode(&third));
-	test(full_name_third, "%pfwf", software_node_fwnode(&third));
-	test(second_name, "%pfwP", software_node_fwnode(&second));
-	test(third_name, "%pfwP", software_node_fwnode(&third));
+	test(full_name_second, "%pfw", software_node_fwnode(&softnodes[1]));
+	test(full_name, "%pfw", software_node_fwnode(&softnodes[2]));
+	test(full_name, "%pfwf", software_node_fwnode(&softnodes[2]));
+	test(second_name, "%pfwP", software_node_fwnode(&softnodes[1]));
+	test(third_name, "%pfwP", software_node_fwnode(&softnodes[2]));
 
-	software_node_unregister_node_group(group);
+	software_node_unregister_nodes(softnodes);
 }
 
 static void __init fourcc_pointer(void)

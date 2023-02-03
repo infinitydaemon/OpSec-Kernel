@@ -26,7 +26,7 @@ __visible int plugin_is_GPL_compatible;
 tree sancov_fndecl;
 
 static struct plugin_info sancov_plugin_info = {
-	.version	= PLUGIN_VERSION,
+	.version	= "20160402",
 	.help		= "sancov plugin\n",
 };
 

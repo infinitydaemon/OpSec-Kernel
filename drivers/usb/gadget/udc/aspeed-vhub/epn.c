@@ -84,7 +84,6 @@ static void ast_vhub_epn_handle_ack(struct ast_vhub_ep *ep)
 {
 	struct ast_vhub_req *req;
 	unsigned int len;
-	int status = 0;
 	u32 stat;
 
 	/* Read EP status */
@@ -120,15 +119,9 @@ static void ast_vhub_epn_handle_ack(struct ast_vhub_ep *ep)
 	len = VHUB_EP_DMA_TX_SIZE(stat);
 
 	/* If not using DMA, copy data out if needed */
-	if (!req->req.dma && !ep->epn.is_in && len) {
-		if (req->req.actual + len > req->req.length) {
-			req->last_desc = 1;
-			status = -EOVERFLOW;
-			goto done;
-		} else {
-			memcpy(req->req.buf + req->req.actual, ep->buf, len);
-		}
-	}
+	if (!req->req.dma && !ep->epn.is_in && len)
+		memcpy(req->req.buf + req->req.actual, ep->buf, len);
+
 	/* Adjust size */
 	req->req.actual += len;
 
@@ -136,10 +129,9 @@ static void ast_vhub_epn_handle_ack(struct ast_vhub_ep *ep)
 	if (len < ep->ep.maxpacket)
 		req->last_desc = 1;
 
-done:
 	/* That's it ? complete the request and pick a new one */
 	if (req->last_desc >= 0) {
-		ast_vhub_done(ep, req, status);
+		ast_vhub_done(ep, req, 0);
 		req = list_first_entry_or_null(&ep->queue, struct ast_vhub_req,
 					       queue);
 
@@ -474,21 +466,19 @@ static int ast_vhub_epn_dequeue(struct usb_ep* u_ep, struct usb_request *u_req)
 {
 	struct ast_vhub_ep *ep = to_ast_ep(u_ep);
 	struct ast_vhub *vhub = ep->vhub;
-	struct ast_vhub_req *req = NULL, *iter;
+	struct ast_vhub_req *req;
 	unsigned long flags;
 	int rc = -EINVAL;
 
 	spin_lock_irqsave(&vhub->lock, flags);
 
 	/* Make sure it's actually queued on this endpoint */
-	list_for_each_entry(iter, &ep->queue, queue) {
-		if (&iter->req != u_req)
-			continue;
-		req = iter;
-		break;
+	list_for_each_entry (req, &ep->queue, queue) {
+		if (&req->req == u_req)
+			break;
 	}
 
-	if (req) {
+	if (&req->req == u_req) {
 		EPVDBG(ep, "dequeue req @%p active=%d\n",
 		       req, req->active);
 		if (req->active)

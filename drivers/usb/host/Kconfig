@@ -47,7 +47,7 @@ config USB_XHCI_PCI_RENESAS
 	tristate "Support for additional Renesas xHCI controller with firmware"
 	help
 	  Say 'Y' to enable the support for the Renesas xHCI controller with
-	  firmware. Make sure you have the firmware for the device and
+	  firmware. Make sure you have the firwmare for the device and
 	  installed on your system for this device to work.
 	  If unsure, say 'N'.
 
@@ -205,16 +205,16 @@ config USB_EHCI_FSL
 	  Variation of ARC USB block used in some Freescale chips.
 
 config USB_EHCI_HCD_NPCM7XX
-	tristate "Support for Nuvoton NPCM on-chip EHCI USB controller"
-	depends on (USB_EHCI_HCD && ARCH_NPCM) || COMPILE_TEST
-	default y if (USB_EHCI_HCD && ARCH_NPCM)
+	tristate "Support for Nuvoton NPCM7XX on-chip EHCI USB controller"
+	depends on (USB_EHCI_HCD && ARCH_NPCM7XX) || COMPILE_TEST
+	default y if (USB_EHCI_HCD && ARCH_NPCM7XX)
 	help
 	  Enables support for the on-chip EHCI controller on
-	  Nuvoton NPCM chips.
+	  Nuvoton NPCM7XX chips.
 
 config USB_EHCI_HCD_OMAP
 	tristate "EHCI support for OMAP3 and later chips"
-	depends on ARCH_OMAP || COMPILE_TEST
+	depends on ARCH_OMAP
 	depends on NOP_USB_XCEIV
 	default y
 	help
@@ -290,8 +290,7 @@ config USB_EHCI_EXYNOS
 	tristate "EHCI support for Samsung S5P/Exynos SoC Series"
 	depends on ARCH_S5PV210 || ARCH_EXYNOS || COMPILE_TEST
 	help
-	  Enable support for the Samsung S5Pv210 and Exynos SOC's on-chip EHCI
-	  controller.
+	  Enable support for the Samsung Exynos SOC's on-chip EHCI controller.
 
 config USB_EHCI_MV
 	tristate "EHCI support for Marvell PXA/MMP USB controller"
@@ -305,16 +304,6 @@ config USB_EHCI_MV
 	  controller used by the EBU-type SoCs including Orion, Kirkwood,
 	  Dova, Armada 370 and Armada XP. See "Support for Marvell EBU
 	  on-chip EHCI USB controller" for those.
-
-config USB_OCTEON_HCD
-	tristate "Cavium Networks Octeon USB support"
-	depends on CAVIUM_OCTEON_SOC && USB
-	help
-	  This driver supports USB host controller on some Cavium
-	  Networks' products in the Octeon family.
-
-	  To compile this driver as a module, choose M here. The module
-	  will be called octeon-hcd.
 
 config USB_CNS3XXX_EHCI
 	bool "Cavium CNS3XXX EHCI Module (DEPRECATED)"
@@ -388,6 +377,17 @@ config USB_ISP1362_HCD
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called isp1362-hcd.
+
+config USB_FOTG210_HCD
+	tristate "FOTG210 HCD support"
+	depends on USB && HAS_DMA && HAS_IOMEM
+	help
+	  Faraday FOTG210 is an OTG controller which can be configured as
+	  an USB2.0 host. It is designed to meet USB2.0 EHCI specification
+	  with minor modification.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called fotg210-hcd.
 
 config USB_MAX3421_HCD
 	tristate "MAX3421 HCD (USB-over-SPI) support"
@@ -563,8 +563,7 @@ config USB_OHCI_EXYNOS
 	tristate "OHCI support for Samsung S5P/Exynos SoC Series"
 	depends on ARCH_S5PV210 || ARCH_EXYNOS || COMPILE_TEST
 	help
-	  Enable support for the Samsung S5Pv210 and Exynos SOC's on-chip OHCI
-	  controller.
+	  Enable support for the Samsung Exynos SOC's on-chip OHCI controller.
 
 config USB_CNS3XXX_OHCI
 	bool "Cavium CNS3XXX OHCI Module (DEPRECATED)"
@@ -781,14 +780,3 @@ config USB_HCD_TEST_MODE
 	  This option is of interest only to developers who need to validate
 	  their USB hardware designs.  It is not needed for normal use.  If
 	  unsure, say N.
-
-config USB_XEN_HCD
-	tristate "Xen usb virtual host driver"
-	depends on XEN
-	select XEN_XENBUS_FRONTEND
-	help
-	  The Xen usb virtual host driver serves as a frontend driver enabling
-	  a Xen guest system to access USB Devices passed through to the guest
-	  by the Xen host (usually Dom0).
-	  Only needed if the kernel is running in a Xen guest and generic
-	  access to a USB device is needed.

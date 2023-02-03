@@ -42,12 +42,6 @@ static const struct esdhc_clk_fixup ls1021a_esdhc_clk = {
 	.max_clk[MMC_TIMING_SD_HS] = 46500000,
 };
 
-static const struct esdhc_clk_fixup ls1043a_esdhc_clk = {
-	.sd_dflt_max_clk = 25000000,
-	.max_clk[MMC_TIMING_UHS_SDR104] = 116700000,
-	.max_clk[MMC_TIMING_MMC_HS200] = 116700000,
-};
-
 static const struct esdhc_clk_fixup ls1046a_esdhc_clk = {
 	.sd_dflt_max_clk = 25000000,
 	.max_clk[MMC_TIMING_UHS_SDR104] = 167000000,
@@ -69,7 +63,6 @@ static const struct esdhc_clk_fixup p1010_esdhc_clk = {
 
 static const struct of_device_id sdhci_esdhc_of_match[] = {
 	{ .compatible = "fsl,ls1021a-esdhc", .data = &ls1021a_esdhc_clk},
-	{ .compatible = "fsl,ls1043a-esdhc", .data = &ls1043a_esdhc_clk},
 	{ .compatible = "fsl,ls1046a-esdhc", .data = &ls1046a_esdhc_clk},
 	{ .compatible = "fsl,ls1012a-esdhc", .data = &ls1012a_esdhc_clk},
 	{ .compatible = "fsl,p1010-esdhc",   .data = &p1010_esdhc_clk},
@@ -98,7 +91,7 @@ struct sdhci_esdhc {
 };
 
 /**
- * esdhc_readl_fixup - Fixup the value read from incompatible eSDHC register
+ * esdhc_read*_fixup - Fixup the value read from incompatible eSDHC register
  *		       to make it compatible with SD spec.
  *
  * @host: pointer to sdhci_host
@@ -223,7 +216,7 @@ static u8 esdhc_readb_fixup(struct sdhci_host *host,
 }
 
 /**
- * esdhc_writel_fixup - Fixup the SD spec register value so that it could be
+ * esdhc_write*_fixup - Fixup the SD spec register value so that it could be
  *			written into eSDHC register.
  *
  * @host: pointer to sdhci_host
@@ -942,7 +935,7 @@ static struct soc_device_attribute soc_tuning_erratum_type1[] = {
 	{ .family = "QorIQ T1040", },
 	{ .family = "QorIQ T2080", },
 	{ .family = "QorIQ LS1021A", },
-	{ /* sentinel */ }
+	{ },
 };
 
 static struct soc_device_attribute soc_tuning_erratum_type2[] = {
@@ -952,7 +945,7 @@ static struct soc_device_attribute soc_tuning_erratum_type2[] = {
 	{ .family = "QorIQ LS1080A", },
 	{ .family = "QorIQ LS2080A", },
 	{ .family = "QorIQ LA1575A", },
-	{ /* sentinel */ }
+	{ },
 };
 
 static void esdhc_tuning_block_enable(struct sdhci_host *host, bool enable)
@@ -1324,21 +1317,21 @@ static const struct sdhci_pltfm_data sdhci_esdhc_le_pdata = {
 static struct soc_device_attribute soc_incorrect_hostver[] = {
 	{ .family = "QorIQ T4240", .revision = "1.0", },
 	{ .family = "QorIQ T4240", .revision = "2.0", },
-	{ /* sentinel */ }
+	{ },
 };
 
 static struct soc_device_attribute soc_fixup_sdhc_clkdivs[] = {
 	{ .family = "QorIQ LX2160A", .revision = "1.0", },
 	{ .family = "QorIQ LX2160A", .revision = "2.0", },
 	{ .family = "QorIQ LS1028A", .revision = "1.0", },
-	{ /* sentinel */ }
+	{ },
 };
 
 static struct soc_device_attribute soc_unreliable_pulse_detection[] = {
 	{ .family = "QorIQ LX2160A", .revision = "1.0", },
 	{ .family = "QorIQ LX2160A", .revision = "2.0", },
 	{ .family = "QorIQ LS1028A", .revision = "1.0", },
-	{ /* sentinel */ }
+	{ },
 };
 
 static void esdhc_init(struct platform_device *pdev, struct sdhci_host *host)
@@ -1426,7 +1419,7 @@ static int esdhc_hs400_prepare_ddr(struct mmc_host *mmc)
 static int sdhci_esdhc_probe(struct platform_device *pdev)
 {
 	struct sdhci_host *host;
-	struct device_node *np, *tp;
+	struct device_node *np;
 	struct sdhci_pltfm_host *pltfm_host;
 	struct sdhci_esdhc *esdhc;
 	int ret;
@@ -1471,9 +1464,7 @@ static int sdhci_esdhc_probe(struct platform_device *pdev)
 	if (esdhc->vendor_ver > VENDOR_V_22)
 		host->quirks &= ~SDHCI_QUIRK_NO_BUSY_IRQ;
 
-	tp = of_find_compatible_node(NULL, NULL, "fsl,p2020-esdhc");
-	if (tp) {
-		of_node_put(tp);
+	if (of_find_compatible_node(NULL, NULL, "fsl,p2020-esdhc")) {
 		host->quirks |= SDHCI_QUIRK_RESET_AFTER_REQUEST;
 		host->quirks |= SDHCI_QUIRK_BROKEN_TIMEOUT_VAL;
 	}

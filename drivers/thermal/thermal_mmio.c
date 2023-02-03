@@ -20,10 +20,11 @@ static u32 thermal_mmio_readb(void __iomem *mmio_base)
 	return readb(mmio_base);
 }
 
-static int thermal_mmio_get_temperature(struct thermal_zone_device *tz, int *temp)
+static int thermal_mmio_get_temperature(void *private, int *temp)
 {
 	int t;
-	struct thermal_mmio *sensor = tz->devdata;
+	struct thermal_mmio *sensor =
+		(struct thermal_mmio *)private;
 
 	t = sensor->read_mmio(sensor->mmio_base) & sensor->mask;
 	t *= sensor->factor;
@@ -33,7 +34,7 @@ static int thermal_mmio_get_temperature(struct thermal_zone_device *tz, int *tem
 	return 0;
 }
 
-static const struct thermal_zone_device_ops thermal_mmio_ops = {
+static struct thermal_zone_of_device_ops thermal_mmio_ops = {
 	.get_temp = thermal_mmio_get_temperature,
 };
 
@@ -67,10 +68,10 @@ static int thermal_mmio_probe(struct platform_device *pdev)
 		}
 	}
 
-	thermal_zone = devm_thermal_of_zone_register(&pdev->dev,
-						     0,
-						     sensor,
-						     &thermal_mmio_ops);
+	thermal_zone = devm_thermal_zone_of_sensor_register(&pdev->dev,
+							    0,
+							    sensor,
+							    &thermal_mmio_ops);
 	if (IS_ERR(thermal_zone)) {
 		dev_err(&pdev->dev,
 			"failed to register sensor (%ld)\n",
@@ -78,7 +79,7 @@ static int thermal_mmio_probe(struct platform_device *pdev)
 		return PTR_ERR(thermal_zone);
 	}
 
-	thermal_mmio_get_temperature(thermal_zone, &temperature);
+	thermal_mmio_get_temperature(sensor, &temperature);
 	dev_info(&pdev->dev,
 		 "thermal mmio sensor %s registered, current temperature: %d\n",
 		 pdev->name, temperature);
@@ -106,7 +107,7 @@ static struct platform_driver thermal_mmio_driver = {
 	.probe = thermal_mmio_probe,
 	.driver = {
 		.name = "thermal-mmio",
-		.of_match_table = thermal_mmio_id_table,
+		.of_match_table = of_match_ptr(thermal_mmio_id_table),
 	},
 };
 

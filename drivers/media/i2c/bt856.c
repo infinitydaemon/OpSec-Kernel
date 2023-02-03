@@ -181,7 +181,8 @@ static const struct v4l2_subdev_ops bt856_ops = {
 
 /* ----------------------------------------------------------------------- */
 
-static int bt856_probe(struct i2c_client *client)
+static int bt856_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct bt856 *encoder;
 	struct v4l2_subdev *sd;
@@ -222,11 +223,12 @@ static int bt856_probe(struct i2c_client *client)
 	return 0;
 }
 
-static void bt856_remove(struct i2c_client *client)
+static int bt856_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 
 	v4l2_device_unregister_subdev(sd);
+	return 0;
 }
 
 static const struct i2c_device_id bt856_id[] = {
@@ -239,7 +241,7 @@ static struct i2c_driver bt856_driver = {
 	.driver = {
 		.name	= "bt856",
 	},
-	.probe_new	= bt856_probe,
+	.probe		= bt856_probe,
 	.remove		= bt856_remove,
 	.id_table	= bt856_id,
 };

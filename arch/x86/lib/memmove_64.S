@@ -24,6 +24,7 @@
  * Output:
  * rax: dest
  */
+SYM_FUNC_START_WEAK(memmove)
 SYM_FUNC_START(__memmove)
 
 	mov %rdi, %rax
@@ -211,7 +212,6 @@ SYM_FUNC_START(__memmove)
 	rep movsb
 	RET
 SYM_FUNC_END(__memmove)
+SYM_FUNC_END_ALIAS(memmove)
 EXPORT_SYMBOL(__memmove)
-
-SYM_FUNC_ALIAS_WEAK(memmove, __memmove)
 EXPORT_SYMBOL(memmove)

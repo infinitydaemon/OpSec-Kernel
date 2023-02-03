@@ -100,7 +100,7 @@
 
 	gpio-keys {
 		compatible = "gpio-keys";
-		event-burn-in-signal {
+		burn-in-signal {
 			label = "burn-in";
 			gpios = <&gpio ASPEED_GPIO(R, 5) GPIO_ACTIVE_LOW>;
 			linux,code = <ASPEED_GPIO(R, 5)>;
@@ -111,139 +111,139 @@
 		compatible = "gpio-keys-polled";
 		poll-interval = <1000>;
 
-		event-rear-riser1-presence {
+		rear-riser1-presence {
 			label = "rear-riser1-presence";
 			gpios = <&pca0 1 GPIO_ACTIVE_LOW>;
 			linux,code = <1>;
 		};
 
-		event-alrt-pvddq-cpu0 {
+		alrt-pvddq-cpu0 {
 			label = "alrt-pvddq-cpu0";
 			gpios = <&pca0 8 GPIO_ACTIVE_LOW>;
 			linux,code = <2>;
 		};
 
-		event-rear-riser0-presence {
+		rear-riser0-presence {
 			label = "rear-riser0-presence";
 			gpios = <&pca0 9 GPIO_ACTIVE_LOW>;
 			linux,code = <3>;
 		};
 
-		event-fault-pvddq-cpu0 {
+		fault-pvddq-cpu0 {
 			label = "fault-pvddq-cpu0";
 			gpios = <&pca0 10 GPIO_ACTIVE_LOW>;
 			linux,code = <4>;
 		};
 
-		event-alrt-pvddq-cpu1 {
+		alrt-pvddq-cpu1 {
 			label = "alrt-pvddq-cpu1";
 			gpios = <&pca0 11 GPIO_ACTIVE_LOW>;
 			linux,code = <5>;
 		};
 
-		event-fault-pvddq-cpu1 {
+		fault-pvddq-cpu1 {
 			label = "alrt-pvddq-cpu1";
 			gpios = <&pca0 12 GPIO_ACTIVE_LOW>;
 			linux,code = <6>;
 		};
 
-		event-fault-pvccin-cpu1 {
+		fault-pvccin-cpu1 {
 			label = "fault-pvccin-cpuq";
 			gpios = <&pca0 13 GPIO_ACTIVE_LOW>;
 			linux,code = <7>;
 		};
 
-		event-bmc-rom0-wp {
+		bmc-rom0-wp {
 			label = "bmc-rom0-wp";
 			gpios = <&pca1 0 GPIO_ACTIVE_LOW>;
 			linux,code = <8>;
 		};
 
-		event-bmc-rom1-wp {
+		bmc-rom1-wp {
 			label = "bmc-rom1-wp";
 			gpios = <&pca1 1 GPIO_ACTIVE_LOW>;
 			linux,code = <9>;
 		};
 
-		event-fan0-presence {
+		fan0-presence {
 			label = "fan0-presence";
 			gpios = <&pca1 2 GPIO_ACTIVE_LOW>;
 			linux,code = <10>;
 		};
 
-		event-fan1-presence {
+		fan1-presence {
 			label = "fan1-presence";
 			gpios = <&pca1 3 GPIO_ACTIVE_LOW>;
 			linux,code = <11>;
 		};
 
-		event-fan2-presence {
+		fan2-presence {
 			label = "fan2-presence";
 			gpios = <&pca1 4 GPIO_ACTIVE_LOW>;
 			linux,code = <12>;
 		};
 
-		event-fan3-presence {
+		fan3-presence {
 			label = "fan3-presence";
 			gpios = <&pca1 5 GPIO_ACTIVE_LOW>;
 			linux,code = <13>;
 		};
 
-		event-fan4-presence {
+		fan4-presence {
 			label = "fan4-presence";
 			gpios = <&pca1 6 GPIO_ACTIVE_LOW>;
 			linux,code = <14>;
 		};
 
-		event-fan5-presence {
+		fan5-presence {
 			label = "fan5-presence";
 			gpios = <&pca1 7 GPIO_ACTIVE_LOW>;
 			linux,code = <15>;
 		};
 
-		event-front-bp1-presence {
+		front-bp1-presence {
 			label = "front-bp1-presence";
 			gpios = <&pca1 8 GPIO_ACTIVE_LOW>;
 			linux,code = <16>;
 		};
 
-		event-rear-bp-presence {
+		rear-bp-presence {
 			label = "rear-bp-presence";
 			gpios = <&pca1 9 GPIO_ACTIVE_LOW>;
 			linux,code = <17>;
 		};
 
-		event-fault-pvccin-cpu0 {
+		fault-pvccin-cpu0 {
 			label = "fault-pvccin-cpu0";
 			gpios = <&pca1 10 GPIO_ACTIVE_LOW>;
 			linux,code = <18>;
 		};
 
-		event-alrt-p1v05-pvcc {
+		alrt-p1v05-pvcc {
 			label = "alrt-p1v05-pvcc1";
 			gpios = <&pca1 11 GPIO_ACTIVE_LOW>;
 			linux,code = <19>;
 		};
 
-		event-fault-p1v05-pvccio {
+		fault-p1v05-pvccio {
 			label = "alrt-p1v05-pvcc1";
 			gpios = <&pca1 12 GPIO_ACTIVE_LOW>;
 			linux,code = <20>;
 		};
 
-		event-alrt-p1v8-pvccio {
+		alrt-p1v8-pvccio {
 			label = "alrt-p1v8-pvccio";
 			gpios = <&pca1 13 GPIO_ACTIVE_LOW>;
 			linux,code = <21>;
 		};
 
-		event-fault-p1v8-pvccio {
+		fault-p1v8-pvccio {
 			label = "fault-p1v8-pvccio";
 			gpios = <&pca1 14 GPIO_ACTIVE_LOW>;
 			linux,code = <22>;
 		};
 
-		event-front-bp0-presence {
+		front-bp0-presence {
 			label = "front-bp0-presence";
 			gpios = <&pca1 15 GPIO_ACTIVE_LOW>;
 			linux,code = <23>;
@@ -259,13 +259,6 @@
 		m25p,fast-read;
 		spi-max-frequency = <50000000>;
 #include "openbmc-flash-layout-64.dtsi"
-	};
-	flash@1 {
-		status = "okay";
-		label = "alt-bmc";
-		m25p,fast-read;
-		spi-max-frequency = <50000000>;
-#include "openbmc-flash-layout-64-alt.dtsi"
 	};
 };
 
@@ -283,11 +276,6 @@
 
 &adc {
 	status = "okay";
-};
-
-&wdt2 {
-	status = "okay";
-	aspeed,alt-boot;
 };
 
 &gpio {

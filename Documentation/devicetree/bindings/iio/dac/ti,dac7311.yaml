@@ -24,15 +24,14 @@ properties:
       Reference voltage must be supplied to establish the scaling of the
       output voltage.
 
+  spi-max-frequency: true
+
 required:
   - compatible
   - reg
   - vref-supply
 
-allOf:
-  - $ref: /schemas/spi/spi-peripheral-props.yaml#
-
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

@@ -30,9 +30,10 @@ struct thread_info {
 	__u32			status;		/* thread synchronous flags */
 	__u32			cpu;
 	int			preempt_count; /* 0 => preemptable, <0 => BUG */
+	mm_segment_t		addr_limit;	/* thread address space */
 	unsigned long		previous_sp;	/* sp of previous stack in case
 						   of nested IRQ stacks */
-	__u8			supervisor_stack[];
+	__u8			supervisor_stack[0];
 };
 
 #endif
@@ -57,6 +58,7 @@ struct thread_info {
 	.status		= 0,			\
 	.cpu		= 0,			\
 	.preempt_count	= INIT_PREEMPT_COUNT,	\
+	.addr_limit	= KERNEL_DS,		\
 }
 
 /* how to get the current stack pointer from C */

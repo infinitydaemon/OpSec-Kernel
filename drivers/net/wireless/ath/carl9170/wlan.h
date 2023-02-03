@@ -271,7 +271,7 @@ struct ar9170_tx_frame {
 
 	union {
 		struct ieee80211_hdr i3e;
-		DECLARE_FLEX_ARRAY(u8, payload);
+		u8 payload[0];
 	} data;
 } __packed;
 
@@ -327,7 +327,7 @@ struct _carl9170_tx_superdesc {
 struct _carl9170_tx_superframe {
 	struct _carl9170_tx_superdesc s;
 	struct _ar9170_tx_hwdesc f;
-	u8 frame_data[];
+	u8 frame_data[0];
 } __packed __aligned(4);
 
 #define	CARL9170_TX_SUPERDESC_LEN		24

@@ -76,8 +76,9 @@ properties:
 
   adi,input-depth:
     description: Number of bits per color component at the input.
-    $ref: /schemas/types.yaml#/definitions/uint32
-    enum: [ 8, 10, 12 ]
+    allOf:
+      - $ref: /schemas/types.yaml#/definitions/uint32
+      - enum: [ 8, 10, 12 ]
 
   adi,input-colorspace:
     description: Input color space.
@@ -117,21 +118,23 @@ properties:
 
   ports:
     description:
-      The ADV7511(W)/13 has two video ports and one audio port.
-    $ref: /schemas/graph.yaml#/properties/ports
-
+      The ADV7511(W)/13 has two video ports and one audio port. This node
+      models their connections as documented in
+      Documentation/devicetree/bindings/media/video-interfaces.txt
+      Documentation/devicetree/bindings/graph.txt
+    type: object
     properties:
       port@0:
         description: Video port for the RGB or YUV input.
-        $ref: /schemas/graph.yaml#/properties/port
+        type: object
 
       port@1:
         description: Video port for the HDMI output.
-        $ref: /schemas/graph.yaml#/properties/port
+        type: object
 
       port@2:
         description: Audio port for the HDMI output.
-        $ref: /schemas/graph.yaml#/properties/port
+        type: object
 
 # adi,input-colorspace and adi,input-clock are required except in
 # "rgb 1x" and "yuv444 1x" modes, in which case they must not be

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * OMAP7xx specific gpio init
  *
@@ -6,12 +5,22 @@
  *
  * Author:
  *	Charulatha V <charu@ti.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/gpio.h>
 #include <linux/platform_data/gpio-omap.h>
 
-#include "irqs.h"
+#include <mach/irqs.h>
+
 #include "soc.h"
 
 #define OMAP7XX_GPIO1_BASE		0xfffbc000

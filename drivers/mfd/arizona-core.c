@@ -480,6 +480,7 @@ static int wm5102_clear_write_sequencer(struct arizona *arizona)
 	return 0;
 }
 
+#ifdef CONFIG_PM
 static int arizona_isolate_dcvdd(struct arizona *arizona)
 {
 	int ret;
@@ -741,7 +742,9 @@ static int arizona_runtime_suspend(struct device *dev)
 
 	return 0;
 }
+#endif
 
+#ifdef CONFIG_PM_SLEEP
 static int arizona_suspend(struct device *dev)
 {
 	struct arizona *arizona = dev_get_drvdata(dev);
@@ -781,15 +784,17 @@ static int arizona_resume(struct device *dev)
 
 	return 0;
 }
+#endif
 
-EXPORT_GPL_DEV_PM_OPS(arizona_pm_ops) = {
-	RUNTIME_PM_OPS(arizona_runtime_suspend,
-		       arizona_runtime_resume,
-		       NULL)
-	SYSTEM_SLEEP_PM_OPS(arizona_suspend, arizona_resume)
-	NOIRQ_SYSTEM_SLEEP_PM_OPS(arizona_suspend_noirq,
-				  arizona_resume_noirq)
+const struct dev_pm_ops arizona_pm_ops = {
+	SET_RUNTIME_PM_OPS(arizona_runtime_suspend,
+			   arizona_runtime_resume,
+			   NULL)
+	SET_SYSTEM_SLEEP_PM_OPS(arizona_suspend, arizona_resume)
+	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(arizona_suspend_noirq,
+				      arizona_resume_noirq)
 };
+EXPORT_SYMBOL_GPL(arizona_pm_ops);
 
 #ifdef CONFIG_OF
 static int arizona_of_get_core_pdata(struct arizona *arizona)
@@ -840,6 +845,19 @@ static int arizona_of_get_core_pdata(struct arizona *arizona)
 
 	return 0;
 }
+
+const struct of_device_id arizona_of_match[] = {
+	{ .compatible = "wlf,wm5102", .data = (void *)WM5102 },
+	{ .compatible = "wlf,wm5110", .data = (void *)WM5110 },
+	{ .compatible = "wlf,wm8280", .data = (void *)WM8280 },
+	{ .compatible = "wlf,wm8997", .data = (void *)WM8997 },
+	{ .compatible = "wlf,wm8998", .data = (void *)WM8998 },
+	{ .compatible = "wlf,wm1814", .data = (void *)WM1814 },
+	{ .compatible = "wlf,wm1831", .data = (void *)WM1831 },
+	{ .compatible = "cirrus,cs47l24", .data = (void *)CS47L24 },
+	{},
+};
+EXPORT_SYMBOL_GPL(arizona_of_match);
 #else
 static inline int arizona_of_get_core_pdata(struct arizona *arizona)
 {

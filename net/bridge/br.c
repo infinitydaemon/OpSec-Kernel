@@ -36,7 +36,7 @@ static int br_device_event(struct notifier_block *unused, unsigned long event, v
 	bool changed_addr;
 	int err;
 
-	if (netif_is_bridge_master(dev)) {
+	if (dev->priv_flags & IFF_EBRIDGE) {
 		err = br_vlan_bridge_event(dev, event, ptr);
 		if (err)
 			return notifier_from_errno(err);
@@ -166,14 +166,13 @@ static int br_switchdev_event(struct notifier_block *unused,
 	case SWITCHDEV_FDB_ADD_TO_BRIDGE:
 		fdb_info = ptr;
 		err = br_fdb_external_learn_add(br, p, fdb_info->addr,
-						fdb_info->vid,
-						fdb_info->locked, false);
+						fdb_info->vid, false);
 		if (err) {
 			err = notifier_from_errno(err);
 			break;
 		}
 		br_fdb_offloaded_set(br, p, fdb_info->addr,
-				     fdb_info->vid, fdb_info->offloaded);
+				     fdb_info->vid, true);
 		break;
 	case SWITCHDEV_FDB_DEL_TO_BRIDGE:
 		fdb_info = ptr;
@@ -266,9 +265,6 @@ int br_boolopt_toggle(struct net_bridge *br, enum br_boolopt_id opt, bool on,
 	case BR_BOOLOPT_MCAST_VLAN_SNOOPING:
 		err = br_multicast_toggle_vlan_snooping(br, on, extack);
 		break;
-	case BR_BOOLOPT_MST_ENABLE:
-		err = br_mst_set_enabled(br, on, extack);
-		break;
 	default:
 		/* shouldn't be called with unsupported options */
 		WARN_ON(1);
@@ -285,8 +281,6 @@ int br_boolopt_get(const struct net_bridge *br, enum br_boolopt_id opt)
 		return br_opt_get(br, BROPT_NO_LL_LEARN);
 	case BR_BOOLOPT_MCAST_VLAN_SNOOPING:
 		return br_opt_get(br, BROPT_MCAST_VLAN_SNOOPING_ENABLED);
-	case BR_BOOLOPT_MST_ENABLE:
-		return br_opt_get(br, BROPT_MST_ENABLED);
 	default:
 		/* shouldn't be called with unsupported options */
 		WARN_ON(1);
@@ -348,26 +342,23 @@ void br_opt_toggle(struct net_bridge *br, enum net_bridge_opts opt, bool on)
 		clear_bit(opt, &br->options);
 }
 
-static void __net_exit br_net_exit_batch(struct list_head *net_list)
+static void __net_exit br_net_exit(struct net *net)
 {
 	struct net_device *dev;
-	struct net *net;
 	LIST_HEAD(list);
 
 	rtnl_lock();
-
-	list_for_each_entry(net, net_list, exit_list)
-		for_each_netdev(net, dev)
-			if (netif_is_bridge_master(dev))
-				br_dev_delete(dev, &list);
+	for_each_netdev(net, dev)
+		if (dev->priv_flags & IFF_EBRIDGE)
+			br_dev_delete(dev, &list);
 
 	unregister_netdevice_many(&list);
-
 	rtnl_unlock();
+
 }
 
 static struct pernet_operations br_net_ops = {
-	.exit_batch	= br_net_exit_batch,
+	.exit	= br_net_exit,
 };
 
 static const struct stp_proto br_stp_proto = {

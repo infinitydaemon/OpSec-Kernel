@@ -26,7 +26,7 @@
 
 struct cg_flag_name
 {
-	u64 flag;
+	u32 flag;
 	const char *name;
 };
 

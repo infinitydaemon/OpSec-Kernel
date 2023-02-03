@@ -62,9 +62,10 @@
 
 	gpio-keys {
 		compatible = "gpio-keys";
+		input-name = "gpio-keys";
 		autorepeat;
 
-		volup-key {
+		volupkey {
 			label = "Volume Up";
 			gpios = <&pm8994_gpios 3 GPIO_ACTIVE_LOW>;
 			linux,input-type = <1>;
@@ -73,7 +74,7 @@
 			debounce-interval = <15>;
 		};
 
-		camsnap-key {
+		camsnapkey {
 			label = "Camera Snapshot";
 			gpios = <&pm8994_gpios 4 GPIO_ACTIVE_LOW>;
 			linux,input-type = <1>;
@@ -82,7 +83,7 @@
 			debounce-interval = <15>;
 		};
 
-		camfocus-key {
+		camfocuskey {
 			label = "Camera Focus";
 			gpios = <&pm8994_gpios 5 GPIO_ACTIVE_LOW>;
 			linux,input-type = <1>;
@@ -100,7 +101,7 @@
 
 		label = "GPIO Hall Effect Sensor";
 
-		event-hall-front-sensor {
+		hall-front-sensor {
 			label = "Hall Effect Front Sensor";
 			gpios = <&tlmm 42 GPIO_ACTIVE_HIGH>;
 			linux,input-type = <EV_SW>;
@@ -108,7 +109,7 @@
 			linux,can-disable;
 		};
 
-		event-hall-back-sensor {
+		hall-back-sensor {
 			label = "Hall Effect Back Sensor";
 			gpios = <&tlmm 75 GPIO_ACTIVE_HIGH>;
 			linux,input-type = <EV_SW>;
@@ -470,7 +471,7 @@
 };
 
 &pm8994_gpios {
-	bt_en_gpios: bt-en-gpios-state {
+	bt_en_gpios: bt_en_gpios {
 		pinconf {
 			pins = "gpio19";
 			function = PMIC_GPIO_FUNC_NORMAL;
@@ -481,7 +482,7 @@
 		};
 	};
 
-	divclk4_pin_a: divclk4-state {
+	divclk4_pin_a: divclk4 {
 		pinconf {
 			pins = "gpio18";
 			function = PMIC_GPIO_FUNC_FUNC2;
@@ -499,7 +500,7 @@
 		linux,code = <KEY_POWER>;
 	};
 
-	resin {
+	volwnkey {
 		compatible = "qcom,pm8941-resin";
 		interrupts = <0 8 1 IRQ_TYPE_EDGE_BOTH>;
 		debounce = <15625>;
@@ -519,24 +520,21 @@
 	 * TODO: remove once a driver is available
 	 * TODO: add VBUS GPIO 5
 	 */
-	hd3ss460_pol: pol-low-state {
+	hd3ss460_pol: pol_low {
 		pins = "gpio8";
-		function = PMIC_GPIO_FUNC_NORMAL;
-		qcom,drive-strength = <3>;
+		drive-strength = <3>;
 		bias-pull-down;
 	};
 
-	hd3ss460_amsel: amsel-high-state {
+	hd3ss460_amsel: amsel_high {
 		pins = "gpio9";
-		function = PMIC_GPIO_FUNC_NORMAL;
-		qcom,drive-strength = <1>;
+		drive-strength = <1>;
 		bias-pull-up;
 	};
 
-	hd3ss460_en: en-high-state {
+	hd3ss460_en: en_high {
 		pins = "gpio10";
-		function = PMIC_GPIO_FUNC_NORMAL;
-		qcom,drive-strength = <1>;
+		drive-strength = <1>;
 		bias-pull-up;
 	};
 };
@@ -551,7 +549,7 @@
 
 &rpm_requests {
 	/* These values were taken from the original firmware ACPI tables */
-	pm8994_regulators: regulators-0 {
+	pm8994_regulators: pm8994-regulators {
 		compatible = "qcom,rpm-pm8994-regulators";
 
 		vdd_s1-supply = <&vph_pwr>;
@@ -835,7 +833,7 @@
 		vreg_lvs2a_1p8: lvs2 { };
 	};
 
-	pmi8994_regulators: regulators-1 {
+	pmi8994_regulators: pmi8994-regulators {
 		compatible = "qcom,rpm-pmi8994-regulators";
 
 		vdd_s1-supply = <&vph_pwr>;
@@ -881,28 +879,28 @@
 };
 
 &tlmm {
-	grip_default: grip-default-state {
+	grip_default: grip-default {
 		pins = "gpio39";
 		function = "gpio";
 		drive-strength = <6>;
 		bias-pull-down;
 	};
 
-	grip_sleep: grip-sleep-state {
+	grip_sleep: grip-sleep {
 		pins = "gpio39";
 		function = "gpio";
 		drive-strength = <2>;
 		bias-pull-down;
 	};
 
-	hall_front_default: hall-front-default-state {
+	hall_front_default: hall-front-default {
 		pins = "gpio42";
 		function = "gpio";
 		drive-strength = <2>;
 		bias-disable;
 	};
 
-	hall_back_default: hall-back-default-state {
+	hall_back_default: hall-back-default {
 		pins = "gpio75";
 		function = "gpio";
 		drive-strength = <2>;

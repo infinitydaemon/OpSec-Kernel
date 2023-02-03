@@ -334,7 +334,7 @@ int pci_epc_set_msi(struct pci_epc *epc, u8 func_no, u8 vfunc_no, u8 interrupts)
 	u8 encode_int;
 
 	if (IS_ERR_OR_NULL(epc) || func_no >= epc->max_functions ||
-	    interrupts < 1 || interrupts > 32)
+	    interrupts > 32)
 		return -EINVAL;
 
 	if (vfunc_no > 0 && (!epc->max_vfs || vfunc_no > epc->max_vfs[func_no]))
@@ -700,7 +700,7 @@ EXPORT_SYMBOL_GPL(pci_epc_linkup);
 /**
  * pci_epc_init_notify() - Notify the EPF device that EPC device's core
  *			   initialization is completed.
- * @epc: the EPC device whose core initialization is completed
+ * @epc: the EPC device whose core initialization is completeds
  *
  * Invoke to Notify the EPF device that the EPC device's initialization
  * is completed.
@@ -724,6 +724,7 @@ void pci_epc_destroy(struct pci_epc *epc)
 {
 	pci_ep_cfs_remove_epc_group(epc->group);
 	device_unregister(&epc->dev);
+	kfree(epc);
 }
 EXPORT_SYMBOL_GPL(pci_epc_destroy);
 
@@ -744,11 +745,6 @@ void devm_pci_epc_destroy(struct device *dev, struct pci_epc *epc)
 	dev_WARN_ONCE(dev, r, "couldn't find PCI EPC resource\n");
 }
 EXPORT_SYMBOL_GPL(devm_pci_epc_destroy);
-
-static void pci_epc_release(struct device *dev)
-{
-	kfree(to_pci_epc(dev));
-}
 
 /**
  * __pci_epc_create() - create a new endpoint controller (EPC) device
@@ -783,7 +779,6 @@ __pci_epc_create(struct device *dev, const struct pci_epc_ops *ops,
 	device_initialize(&epc->dev);
 	epc->dev.class = pci_epc_class;
 	epc->dev.parent = dev;
-	epc->dev.release = pci_epc_release;
 	epc->ops = ops;
 
 	ret = dev_set_name(&epc->dev, "%s", dev_name(dev));

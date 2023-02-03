@@ -2,10 +2,7 @@
 
 #include <linux/context_tracking.h>
 #include <linux/entry-common.h>
-#include <linux/resume_user_mode.h>
 #include <linux/highmem.h>
-#include <linux/jump_label.h>
-#include <linux/kmsan.h>
 #include <linux/livepatch.h>
 #include <linux/audit.h>
 #include <linux/tick.h>
@@ -18,14 +15,13 @@
 /* See comment for enter_from_user_mode() in entry-common.h */
 static __always_inline void __enter_from_user_mode(struct pt_regs *regs)
 {
-	arch_enter_from_user_mode(regs);
+	arch_check_user_regs(regs);
 	lockdep_hardirqs_off(CALLER_ADDR0);
 
 	CT_WARN_ON(ct_state() != CONTEXT_USER);
 	user_exit_irqoff();
 
 	instrumentation_begin();
-	kmsan_unpoison_entry_regs(regs);
 	trace_hardirqs_off_finish();
 	instrumentation_end();
 }
@@ -62,7 +58,7 @@ static long syscall_trace_enter(struct pt_regs *regs, long syscall,
 
 	/* Handle ptrace */
 	if (work & (SYSCALL_WORK_SYSCALL_TRACE | SYSCALL_WORK_SYSCALL_EMU)) {
-		ret = ptrace_report_syscall_entry(regs);
+		ret = arch_syscall_enter_tracehook(regs);
 		if (ret || (work & SYSCALL_WORK_SYSCALL_EMU))
 			return -1L;
 	}
@@ -142,7 +138,15 @@ void noinstr exit_to_user_mode(void)
 }
 
 /* Workaround to allow gradual conversion of architecture code */
-void __weak arch_do_signal_or_restart(struct pt_regs *regs) { }
+void __weak arch_do_signal_or_restart(struct pt_regs *regs, bool has_signal) { }
+
+static void handle_signal_work(struct pt_regs *regs, unsigned long ti_work)
+{
+	if (ti_work & _TIF_NOTIFY_SIGNAL)
+		tracehook_notify_signal();
+
+	arch_do_signal_or_restart(regs, ti_work & _TIF_SIGPENDING);
+}
 
 static unsigned long exit_to_user_mode_loop(struct pt_regs *regs,
 					    unsigned long ti_work)
@@ -165,10 +169,10 @@ static unsigned long exit_to_user_mode_loop(struct pt_regs *regs,
 			klp_update_patch_state(current);
 
 		if (ti_work & (_TIF_SIGPENDING | _TIF_NOTIFY_SIGNAL))
-			arch_do_signal_or_restart(regs);
+			handle_signal_work(regs, ti_work);
 
 		if (ti_work & _TIF_NOTIFY_RESUME)
-			resume_user_mode_work(regs);
+			tracehook_notify_resume(regs);
 
 		/* Architecture specific TIF work */
 		arch_exit_to_user_mode_work(regs, ti_work);
@@ -183,7 +187,7 @@ static unsigned long exit_to_user_mode_loop(struct pt_regs *regs,
 		/* Check if any of the above work has queued a deferred wakeup */
 		tick_nohz_user_enter_prepare();
 
-		ti_work = read_thread_flags();
+		ti_work = READ_ONCE(current_thread_info()->flags);
 	}
 
 	/* Return the latest work state for arch_exit_to_user_mode() */
@@ -192,7 +196,7 @@ static unsigned long exit_to_user_mode_loop(struct pt_regs *regs,
 
 static void exit_to_user_mode_prepare(struct pt_regs *regs)
 {
-	unsigned long ti_work = read_thread_flags();
+	unsigned long ti_work = READ_ONCE(current_thread_info()->flags);
 
 	lockdep_assert_irqs_disabled();
 
@@ -248,7 +252,7 @@ static void syscall_exit_work(struct pt_regs *regs, unsigned long work)
 
 	step = report_single_step(work);
 	if (step || work & SYSCALL_WORK_SYSCALL_TRACE)
-		ptrace_report_syscall_exit(regs, step);
+		arch_syscall_exit_tracehook(regs, step);
 }
 
 /*
@@ -323,7 +327,7 @@ noinstr irqentry_state_t irqentry_enter(struct pt_regs *regs)
 	}
 
 	/*
-	 * If this entry hit the idle task invoke ct_irq_enter() whether
+	 * If this entry hit the idle task invoke rcu_irq_enter() whether
 	 * RCU is watching or not.
 	 *
 	 * Interrupts can nest when the first interrupt invokes softirq
@@ -334,12 +338,12 @@ noinstr irqentry_state_t irqentry_enter(struct pt_regs *regs)
 	 * not nested into another interrupt.
 	 *
 	 * Checking for rcu_is_watching() here would prevent the nesting
-	 * interrupt to invoke ct_irq_enter(). If that nested interrupt is
+	 * interrupt to invoke rcu_irq_enter(). If that nested interrupt is
 	 * the tick then rcu_flavor_sched_clock_irq() would wrongfully
 	 * assume that it is the first interrupt and eventually claim
 	 * quiescent state and end grace periods prematurely.
 	 *
-	 * Unconditionally invoke ct_irq_enter() so RCU state stays
+	 * Unconditionally invoke rcu_irq_enter() so RCU state stays
 	 * consistent.
 	 *
 	 * TINY_RCU does not support EQS, so let the compiler eliminate
@@ -352,9 +356,8 @@ noinstr irqentry_state_t irqentry_enter(struct pt_regs *regs)
 		 * as in irqentry_enter_from_user_mode().
 		 */
 		lockdep_hardirqs_off(CALLER_ADDR0);
-		ct_irq_enter();
+		rcu_irq_enter();
 		instrumentation_begin();
-		kmsan_unpoison_entry_regs(regs);
 		trace_hardirqs_off_finish();
 		instrumentation_end();
 
@@ -370,7 +373,6 @@ noinstr irqentry_state_t irqentry_enter(struct pt_regs *regs)
 	 */
 	lockdep_hardirqs_off(CALLER_ADDR0);
 	instrumentation_begin();
-	kmsan_unpoison_entry_regs(regs);
 	rcu_irq_enter_check_tick();
 	trace_hardirqs_off_finish();
 	instrumentation_end();
@@ -378,7 +380,7 @@ noinstr irqentry_state_t irqentry_enter(struct pt_regs *regs)
 	return ret;
 }
 
-void raw_irqentry_exit_cond_resched(void)
+void irqentry_exit_cond_resched(void)
 {
 	if (!preempt_count()) {
 		/* Sanity check RCU and thread stack */
@@ -390,17 +392,7 @@ void raw_irqentry_exit_cond_resched(void)
 	}
 }
 #ifdef CONFIG_PREEMPT_DYNAMIC
-#if defined(CONFIG_HAVE_PREEMPT_DYNAMIC_CALL)
-DEFINE_STATIC_CALL(irqentry_exit_cond_resched, raw_irqentry_exit_cond_resched);
-#elif defined(CONFIG_HAVE_PREEMPT_DYNAMIC_KEY)
-DEFINE_STATIC_KEY_TRUE(sk_dynamic_irqentry_exit_cond_resched);
-void dynamic_irqentry_exit_cond_resched(void)
-{
-	if (!static_branch_unlikely(&sk_dynamic_irqentry_exit_cond_resched))
-		return;
-	raw_irqentry_exit_cond_resched();
-}
-#endif
+DEFINE_STATIC_CALL(irqentry_exit_cond_resched, irqentry_exit_cond_resched);
 #endif
 
 noinstr void irqentry_exit(struct pt_regs *regs, irqentry_state_t state)
@@ -422,15 +414,19 @@ noinstr void irqentry_exit(struct pt_regs *regs, irqentry_state_t state)
 			trace_hardirqs_on_prepare();
 			lockdep_hardirqs_on_prepare();
 			instrumentation_end();
-			ct_irq_exit();
+			rcu_irq_exit();
 			lockdep_hardirqs_on(CALLER_ADDR0);
 			return;
 		}
 
 		instrumentation_begin();
-		if (IS_ENABLED(CONFIG_PREEMPTION))
+		if (IS_ENABLED(CONFIG_PREEMPTION)) {
+#ifdef CONFIG_PREEMPT_DYNAMIC
+			static_call(irqentry_exit_cond_resched)();
+#else
 			irqentry_exit_cond_resched();
-
+#endif
+		}
 		/* Covers both tracing and lockdep */
 		trace_hardirqs_on();
 		instrumentation_end();
@@ -440,7 +436,7 @@ noinstr void irqentry_exit(struct pt_regs *regs, irqentry_state_t state)
 		 * was not watching on entry.
 		 */
 		if (state.exit_rcu)
-			ct_irq_exit();
+			rcu_irq_exit();
 	}
 }
 
@@ -453,10 +449,9 @@ irqentry_state_t noinstr irqentry_nmi_enter(struct pt_regs *regs)
 	__nmi_enter();
 	lockdep_hardirqs_off(CALLER_ADDR0);
 	lockdep_hardirq_enter();
-	ct_nmi_enter();
+	rcu_nmi_enter();
 
 	instrumentation_begin();
-	kmsan_unpoison_entry_regs(regs);
 	trace_hardirqs_off_finish();
 	ftrace_nmi_enter();
 	instrumentation_end();
@@ -474,7 +469,7 @@ void noinstr irqentry_nmi_exit(struct pt_regs *regs, irqentry_state_t irq_state)
 	}
 	instrumentation_end();
 
-	ct_nmi_exit();
+	rcu_nmi_exit();
 	lockdep_hardirq_exit();
 	if (irq_state.lockdep)
 		lockdep_hardirqs_on(CALLER_ADDR0);

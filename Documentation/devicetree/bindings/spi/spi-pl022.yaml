@@ -38,7 +38,9 @@ properties:
 
   clock-names:
     items:
-      - const: sspclk
+      - enum:
+          - SSPCLK
+          - sspclk
       - const: apb_pclk
 
   pl022,autosuspend-delay:
@@ -69,9 +71,6 @@ properties:
     items:
       - const: rx
       - const: tx
-
-  resets:
-    maxItems: 1
 
 patternProperties:
   "^[a-zA-Z][a-zA-Z0-9,+\\-._]{0,63}@[0-9a-f]+$":
@@ -143,7 +142,7 @@ examples:
         <&dma_controller 24 0>;
       dma-names = "rx", "tx";
 
-      flash@1 {
+      m25p80@1 {
         compatible = "st,m25p80";
         reg = <1>;
         spi-max-frequency = <12000000>;

@@ -10,7 +10,6 @@
 #include <linux/pci.h>
 #include <linux/interrupt.h>
 #include <linux/mc146818rtc.h>
-#include <linux/of_irq.h>
 
 #include <asm/pci-bridge.h>
 

@@ -236,12 +236,6 @@
 	status = "ok";
 };
 
-&ipa {
-	status = "okay";
-
-	memory-region = <&ipa_fw_mem>;
-};
-
 &qpic_bam {
 	status = "ok";
 };

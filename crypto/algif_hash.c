@@ -102,12 +102,11 @@ static int hash_sendmsg(struct socket *sock, struct msghdr *msg,
 		err = crypto_wait_req(crypto_ahash_update(&ctx->req),
 				      &ctx->wait);
 		af_alg_free_sg(&ctx->sgl);
-		if (err) {
-			iov_iter_revert(&msg->msg_iter, len);
+		if (err)
 			goto unlock;
-		}
 
 		copied += len;
+		iov_iter_advance(&msg->msg_iter, len);
 	}
 
 	err = 0;

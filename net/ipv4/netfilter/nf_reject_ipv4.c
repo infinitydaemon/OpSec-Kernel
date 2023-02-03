@@ -80,7 +80,6 @@ struct sk_buff *nf_reject_skb_v4_unreach(struct net *net,
 	struct iphdr *niph;
 	struct icmphdr *icmph;
 	unsigned int len;
-	int dataoff;
 	__wsum csum;
 	u8 proto;
 
@@ -100,11 +99,10 @@ struct sk_buff *nf_reject_skb_v4_unreach(struct net *net,
 	if (pskb_trim_rcsum(oldskb, ntohs(ip_hdr(oldskb)->tot_len)))
 		return NULL;
 
-	dataoff = ip_hdrlen(oldskb);
 	proto = ip_hdr(oldskb)->protocol;
 
 	if (!skb_csum_unnecessary(oldskb) &&
-	    nf_reject_verify_csum(oldskb, dataoff, proto) &&
+	    nf_reject_verify_csum(proto) &&
 	    nf_ip_checksum(oldskb, hook, ip_hdrlen(oldskb), proto))
 		return NULL;
 
@@ -313,7 +311,6 @@ EXPORT_SYMBOL_GPL(nf_send_reset);
 void nf_send_unreach(struct sk_buff *skb_in, int code, int hook)
 {
 	struct iphdr *iph = ip_hdr(skb_in);
-	int dataoff = ip_hdrlen(skb_in);
 	u8 proto = iph->protocol;
 
 	if (iph->frag_off & htons(IP_OFFSET))
@@ -323,13 +320,12 @@ void nf_send_unreach(struct sk_buff *skb_in, int code, int hook)
 	    nf_reject_fill_skb_dst(skb_in) < 0)
 		return;
 
-	if (skb_csum_unnecessary(skb_in) ||
-	    !nf_reject_verify_csum(skb_in, dataoff, proto)) {
+	if (skb_csum_unnecessary(skb_in) || !nf_reject_verify_csum(proto)) {
 		icmp_send(skb_in, ICMP_DEST_UNREACH, code, 0);
 		return;
 	}
 
-	if (nf_ip_checksum(skb_in, hook, dataoff, proto) == 0)
+	if (nf_ip_checksum(skb_in, hook, ip_hdrlen(skb_in), proto) == 0)
 		icmp_send(skb_in, ICMP_DEST_UNREACH, code, 0);
 }
 EXPORT_SYMBOL_GPL(nf_send_unreach);

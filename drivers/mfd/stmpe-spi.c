@@ -102,11 +102,11 @@ stmpe_spi_probe(struct spi_device *spi)
 	return stmpe_probe(&spi_ci, id->driver_data);
 }
 
-static void stmpe_spi_remove(struct spi_device *spi)
+static int stmpe_spi_remove(struct spi_device *spi)
 {
 	struct stmpe *stmpe = spi_get_drvdata(spi);
 
-	stmpe_remove(stmpe);
+	return stmpe_remove(stmpe);
 }
 
 static const struct of_device_id stmpe_spi_of_match[] = {
@@ -135,7 +135,9 @@ static struct spi_driver stmpe_spi_driver = {
 	.driver = {
 		.name	= "stmpe-spi",
 		.of_match_table = of_match_ptr(stmpe_spi_of_match),
-		.pm	= pm_sleep_ptr(&stmpe_dev_pm_ops),
+#ifdef CONFIG_PM
+		.pm	= &stmpe_dev_pm_ops,
+#endif
 	},
 	.probe		= stmpe_spi_probe,
 	.remove		= stmpe_spi_remove,

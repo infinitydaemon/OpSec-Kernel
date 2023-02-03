@@ -323,13 +323,14 @@ static bool rtl_pci_check_buddy_priv(struct ieee80211_hw *hw,
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	struct rtl_pci_priv *pcipriv = rtl_pcipriv(hw);
-	struct rtl_priv *tpriv = NULL, *iter;
+	bool find_buddy_priv = false;
+	struct rtl_priv *tpriv;
 	struct rtl_pci_priv *tpcipriv = NULL;
 
 	if (!list_empty(&rtlpriv->glb_var->glb_priv_list)) {
-		list_for_each_entry(iter, &rtlpriv->glb_var->glb_priv_list,
+		list_for_each_entry(tpriv, &rtlpriv->glb_var->glb_priv_list,
 				    list) {
-			tpcipriv = (struct rtl_pci_priv *)iter->priv;
+			tpcipriv = (struct rtl_pci_priv *)tpriv->priv;
 			rtl_dbg(rtlpriv, COMP_INIT, DBG_LOUD,
 				"pcipriv->ndis_adapter.funcnumber %x\n",
 				pcipriv->ndis_adapter.funcnumber);
@@ -343,19 +344,19 @@ static bool rtl_pci_check_buddy_priv(struct ieee80211_hw *hw,
 			    tpcipriv->ndis_adapter.devnumber &&
 			    pcipriv->ndis_adapter.funcnumber !=
 			    tpcipriv->ndis_adapter.funcnumber) {
-				tpriv = iter;
+				find_buddy_priv = true;
 				break;
 			}
 		}
 	}
 
 	rtl_dbg(rtlpriv, COMP_INIT, DBG_LOUD,
-		"find_buddy_priv %d\n", tpriv != NULL);
+		"find_buddy_priv %d\n", find_buddy_priv);
 
-	if (tpriv)
+	if (find_buddy_priv)
 		*buddy_priv = tpriv;
 
-	return tpriv != NULL;
+	return find_buddy_priv;
 }
 
 static void rtl_pci_get_linkcontrol_field(struct ieee80211_hw *hw)
@@ -1100,7 +1101,7 @@ static void _rtl_pci_prepare_bcn_tasklet(struct tasklet_struct *t)
 	}
 
 	/*NB: the beacon data buffer must be 32-bit aligned. */
-	pskb = ieee80211_beacon_get(hw, mac->vif, 0);
+	pskb = ieee80211_beacon_get(hw, mac->vif);
 	if (!pskb)
 		return;
 	hdr = rtl_get_hdr(pskb);
@@ -1742,6 +1743,7 @@ static void rtl_pci_deinit(struct ieee80211_hw *hw)
 	tasklet_kill(&rtlpriv->works.irq_tasklet);
 	cancel_work_sync(&rtlpriv->works.lps_change_work);
 
+	flush_workqueue(rtlpriv->works.rtl_wq);
 	destroy_workqueue(rtlpriv->works.rtl_wq);
 }
 

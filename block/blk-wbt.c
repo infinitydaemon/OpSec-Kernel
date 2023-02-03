@@ -27,7 +27,6 @@
 
 #include "blk-wbt.h"
 #include "blk-rq-qos.h"
-#include "elevator.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/wbt.h>
@@ -423,14 +422,6 @@ static void wbt_update_limits(struct rq_wb *rwb)
 	rwb_wake_all(rwb);
 }
 
-bool wbt_disabled(struct request_queue *q)
-{
-	struct rq_qos *rqos = wbt_rq_qos(q);
-
-	return !rqos || RQWB(rqos)->enable_state == WBT_STATE_OFF_DEFAULT ||
-	       RQWB(rqos)->enable_state == WBT_STATE_OFF_MANUAL;
-}
-
 u64 wbt_get_min_lat(struct request_queue *q)
 {
 	struct rq_qos *rqos = wbt_rq_qos(q);
@@ -444,13 +435,8 @@ void wbt_set_min_lat(struct request_queue *q, u64 val)
 	struct rq_qos *rqos = wbt_rq_qos(q);
 	if (!rqos)
 		return;
-
 	RQWB(rqos)->min_lat_nsec = val;
-	if (val)
-		RQWB(rqos)->enable_state = WBT_STATE_ON_MANUAL;
-	else
-		RQWB(rqos)->enable_state = WBT_STATE_OFF_MANUAL;
-
+	RQWB(rqos)->enable_state = WBT_STATE_ON_MANUAL;
 	wbt_update_limits(RQWB(rqos));
 }
 
@@ -465,7 +451,7 @@ static bool close_io(struct rq_wb *rwb)
 
 #define REQ_HIPRIO	(REQ_SYNC | REQ_META | REQ_PRIO)
 
-static inline unsigned int get_limit(struct rq_wb *rwb, blk_opf_t opf)
+static inline unsigned int get_limit(struct rq_wb *rwb, unsigned long rw)
 {
 	unsigned int limit;
 
@@ -476,7 +462,7 @@ static inline unsigned int get_limit(struct rq_wb *rwb, blk_opf_t opf)
 	if (!rwb_enabled(rwb))
 		return UINT_MAX;
 
-	if ((opf & REQ_OP_MASK) == REQ_OP_DISCARD)
+	if ((rw & REQ_OP_MASK) == REQ_OP_DISCARD)
 		return rwb->wb_background;
 
 	/*
@@ -487,9 +473,9 @@ static inline unsigned int get_limit(struct rq_wb *rwb, blk_opf_t opf)
 	 * the idle limit, or go to normal if we haven't had competing
 	 * IO for a bit.
 	 */
-	if ((opf & REQ_HIPRIO) || wb_recent_wait(rwb) || current_is_kswapd())
+	if ((rw & REQ_HIPRIO) || wb_recent_wait(rwb) || current_is_kswapd())
 		limit = rwb->rq_depth.max_depth;
-	else if ((opf & REQ_BACKGROUND) || close_io(rwb)) {
+	else if ((rw & REQ_BACKGROUND) || close_io(rwb)) {
 		/*
 		 * If less than 100ms since we completed unrelated IO,
 		 * limit us to half the depth for background writeback.
@@ -504,13 +490,13 @@ static inline unsigned int get_limit(struct rq_wb *rwb, blk_opf_t opf)
 struct wbt_wait_data {
 	struct rq_wb *rwb;
 	enum wbt_flags wb_acct;
-	blk_opf_t opf;
+	unsigned long rw;
 };
 
 static bool wbt_inflight_cb(struct rq_wait *rqw, void *private_data)
 {
 	struct wbt_wait_data *data = private_data;
-	return rq_wait_inc_below(rqw, get_limit(data->rwb, data->opf));
+	return rq_wait_inc_below(rqw, get_limit(data->rwb, data->rw));
 }
 
 static void wbt_cleanup_cb(struct rq_wait *rqw, void *private_data)
@@ -524,13 +510,13 @@ static void wbt_cleanup_cb(struct rq_wait *rqw, void *private_data)
  * the timer to kick off queuing again.
  */
 static void __wbt_wait(struct rq_wb *rwb, enum wbt_flags wb_acct,
-		       blk_opf_t opf)
+		       unsigned long rw)
 {
 	struct rq_wait *rqw = get_rq_wait(rwb, wb_acct);
 	struct wbt_wait_data data = {
 		.rwb = rwb,
 		.wb_acct = wb_acct,
-		.opf = opf,
+		.rw = rw,
 	};
 
 	rq_qos_wait(rqw, &data, wbt_inflight_cb, wbt_cleanup_cb);
@@ -652,15 +638,11 @@ void wbt_set_write_cache(struct request_queue *q, bool write_cache_on)
  */
 void wbt_enable_default(struct request_queue *q)
 {
-	struct rq_qos *rqos;
-	bool disable_flag = q->elevator &&
-		    test_bit(ELEVATOR_FLAG_DISABLE_WBT, &q->elevator->flags);
+	struct rq_qos *rqos = wbt_rq_qos(q);
 
 	/* Throttling already enabled? */
-	rqos = wbt_rq_qos(q);
 	if (rqos) {
-		if (!disable_flag &&
-		    RQWB(rqos)->enable_state == WBT_STATE_OFF_DEFAULT)
+		if (RQWB(rqos)->enable_state == WBT_STATE_OFF_DEFAULT)
 			RQWB(rqos)->enable_state = WBT_STATE_ON_DEFAULT;
 		return;
 	}
@@ -669,7 +651,7 @@ void wbt_enable_default(struct request_queue *q)
 	if (!blk_queue_registered(q))
 		return;
 
-	if (queue_is_mq(q) && !disable_flag)
+	if (queue_is_mq(q) && IS_ENABLED(CONFIG_BLK_WBT_MQ))
 		wbt_init(q);
 }
 EXPORT_SYMBOL_GPL(wbt_enable_default);
@@ -688,7 +670,7 @@ u64 wbt_default_latency_nsec(struct request_queue *q)
 
 static int wbt_data_dir(const struct request *rq)
 {
-	const enum req_op op = req_op(rq);
+	const int op = req_op(rq);
 
 	if (op == REQ_OP_READ)
 		return READ;

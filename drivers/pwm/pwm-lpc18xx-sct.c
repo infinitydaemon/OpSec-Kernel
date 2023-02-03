@@ -175,7 +175,7 @@ static void lpc18xx_pwm_config_duty(struct pwm_chip *chip,
 	u32 val;
 
 	/*
-	 * With clk_rate <= NSEC_PER_SEC this cannot overflow.
+	 * With clk_rate < NSEC_PER_SEC this cannot overflow.
 	 * With duty_ns <= period_ns < max_period_ns this also fits into an u32.
 	 */
 	val = mul_u64_u64_div_u64(duty_ns, lpc18xx_pwm->clk_rate, NSEC_PER_SEC);
@@ -234,7 +234,14 @@ static int lpc18xx_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
 	return 0;
 }
 
-static int lpc18xx_pwm_enable(struct pwm_chip *chip, struct pwm_device *pwm, enum pwm_polarity polarity)
+static int lpc18xx_pwm_set_polarity(struct pwm_chip *chip,
+				    struct pwm_device *pwm,
+				    enum pwm_polarity polarity)
+{
+	return 0;
+}
+
+static int lpc18xx_pwm_enable(struct pwm_chip *chip, struct pwm_device *pwm)
 {
 	struct lpc18xx_pwm_chip *lpc18xx_pwm = to_lpc18xx_pwm_chip(chip);
 	struct lpc18xx_pwm_data *lpc18xx_data = &lpc18xx_pwm->channeldata[pwm->hwpwm];
@@ -250,7 +257,7 @@ static int lpc18xx_pwm_enable(struct pwm_chip *chip, struct pwm_device *pwm, enu
 			   LPC18XX_PWM_EVSTATEMSK(lpc18xx_data->duty_event),
 			   LPC18XX_PWM_EVSTATEMSK_ALL);
 
-	if (polarity == PWM_POLARITY_NORMAL) {
+	if (pwm_get_polarity(pwm) == PWM_POLARITY_NORMAL) {
 		set_event = lpc18xx_pwm->period_event;
 		clear_event = lpc18xx_data->duty_event;
 		res_action = LPC18XX_PWM_RES_SET;
@@ -309,35 +316,11 @@ static void lpc18xx_pwm_free(struct pwm_chip *chip, struct pwm_device *pwm)
 	clear_bit(lpc18xx_data->duty_event, &lpc18xx_pwm->event_map);
 }
 
-static int lpc18xx_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
-			     const struct pwm_state *state)
-{
-	int err;
-	bool enabled = pwm->state.enabled;
-
-	if (state->polarity != pwm->state.polarity && pwm->state.enabled) {
-		lpc18xx_pwm_disable(chip, pwm);
-		enabled = false;
-	}
-
-	if (!state->enabled) {
-		if (enabled)
-			lpc18xx_pwm_disable(chip, pwm);
-
-		return 0;
-	}
-
-	err = lpc18xx_pwm_config(pwm->chip, pwm, state->duty_cycle, state->period);
-	if (err)
-		return err;
-
-	if (!enabled)
-		err = lpc18xx_pwm_enable(chip, pwm, state->polarity);
-
-	return err;
-}
 static const struct pwm_ops lpc18xx_pwm_ops = {
-	.apply = lpc18xx_pwm_apply,
+	.config = lpc18xx_pwm_config,
+	.set_polarity = lpc18xx_pwm_set_polarity,
+	.enable = lpc18xx_pwm_enable,
+	.disable = lpc18xx_pwm_disable,
 	.request = lpc18xx_pwm_request,
 	.free = lpc18xx_pwm_free,
 	.owner = THIS_MODULE,
@@ -367,19 +350,29 @@ static int lpc18xx_pwm_probe(struct platform_device *pdev)
 		return PTR_ERR(lpc18xx_pwm->base);
 
 	lpc18xx_pwm->pwm_clk = devm_clk_get(&pdev->dev, "pwm");
-	if (IS_ERR(lpc18xx_pwm->pwm_clk))
-		return dev_err_probe(&pdev->dev, PTR_ERR(lpc18xx_pwm->pwm_clk),
-				     "failed to get pwm clock\n");
+	if (IS_ERR(lpc18xx_pwm->pwm_clk)) {
+		dev_err(&pdev->dev, "failed to get pwm clock\n");
+		return PTR_ERR(lpc18xx_pwm->pwm_clk);
+	}
 
 	ret = clk_prepare_enable(lpc18xx_pwm->pwm_clk);
-	if (ret < 0)
-		return dev_err_probe(&pdev->dev, ret,
-				     "could not prepare or enable pwm clock\n");
+	if (ret < 0) {
+		dev_err(&pdev->dev, "could not prepare or enable pwm clock\n");
+		return ret;
+	}
 
 	lpc18xx_pwm->clk_rate = clk_get_rate(lpc18xx_pwm->pwm_clk);
 	if (!lpc18xx_pwm->clk_rate) {
-		ret = dev_err_probe(&pdev->dev,
-				    -EINVAL, "pwm clock has no frequency\n");
+		dev_err(&pdev->dev, "pwm clock has no frequency\n");
+		ret = -EINVAL;
+		goto disable_pwmclk;
+	}
+
+	/*
+	 * If clkrate is too fast, the calculations in .apply() might overflow.
+	 */
+	if (lpc18xx_pwm->clk_rate > NSEC_PER_SEC) {
+		ret = dev_err_probe(&pdev->dev, -EINVAL, "pwm clock to fast\n");
 		goto disable_pwmclk;
 	}
 
@@ -436,7 +429,7 @@ static int lpc18xx_pwm_probe(struct platform_device *pdev)
 
 	ret = pwmchip_add(&lpc18xx_pwm->chip);
 	if (ret < 0) {
-		dev_err_probe(&pdev->dev, ret, "pwmchip_add failed\n");
+		dev_err(&pdev->dev, "pwmchip_add failed: %d\n", ret);
 		goto disable_pwmclk;
 	}
 

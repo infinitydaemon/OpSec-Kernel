@@ -10,7 +10,6 @@
 #include <asm/alternative.h>
 #include <asm/cmpxchg.h>
 #include <asm/stack_pointer.h>
-#include <asm/sysreg.h>
 
 static inline void set_my_cpu_offset(unsigned long off)
 {

@@ -3,6 +3,36 @@
  * platform.c - DesignWare HS OTG Controller platform driver
  *
  * Copyright (C) Matthijs Kooijman <matthijs@stdin.nl>
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions, and the following disclaimer,
+ *    without modification.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. The names of the above-listed copyright holders may not be used
+ *    to endorse or promote products derived from this software without
+ *    specific prior written permission.
+ *
+ * ALTERNATIVELY, this software may be distributed under the terms of the
+ * GNU General Public License ("GPL") as published by the Free Software
+ * Foundation; either version 2 of the License, or (at your option) any
+ * later version.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+ * IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include <linux/kernel.h>
@@ -192,16 +222,20 @@ static int dwc2_lowlevel_hw_init(struct dwc2_hsotg *hsotg)
 	int i, ret;
 
 	hsotg->reset = devm_reset_control_get_optional(hsotg->dev, "dwc2");
-	if (IS_ERR(hsotg->reset))
-		return dev_err_probe(hsotg->dev, PTR_ERR(hsotg->reset),
-				     "error getting reset control\n");
+	if (IS_ERR(hsotg->reset)) {
+		ret = PTR_ERR(hsotg->reset);
+		dev_err(hsotg->dev, "error getting reset control %d\n", ret);
+		return ret;
+	}
 
 	reset_control_deassert(hsotg->reset);
 
 	hsotg->reset_ecc = devm_reset_control_get_optional(hsotg->dev, "dwc2-ecc");
-	if (IS_ERR(hsotg->reset_ecc))
-		return dev_err_probe(hsotg->dev, PTR_ERR(hsotg->reset_ecc),
-				     "error getting reset control for ecc\n");
+	if (IS_ERR(hsotg->reset_ecc)) {
+		ret = PTR_ERR(hsotg->reset_ecc);
+		dev_err(hsotg->dev, "error getting reset control for ecc %d\n", ret);
+		return ret;
+	}
 
 	reset_control_deassert(hsotg->reset_ecc);
 
@@ -217,8 +251,11 @@ static int dwc2_lowlevel_hw_init(struct dwc2_hsotg *hsotg)
 		case -ENOSYS:
 			hsotg->phy = NULL;
 			break;
+		case -EPROBE_DEFER:
+			return ret;
 		default:
-			return dev_err_probe(hsotg->dev, ret, "error getting phy\n");
+			dev_err(hsotg->dev, "error getting phy %d\n", ret);
+			return ret;
 		}
 	}
 
@@ -231,8 +268,12 @@ static int dwc2_lowlevel_hw_init(struct dwc2_hsotg *hsotg)
 			case -ENXIO:
 				hsotg->uphy = NULL;
 				break;
+			case -EPROBE_DEFER:
+				return ret;
 			default:
-				return dev_err_probe(hsotg->dev, ret, "error getting usb phy\n");
+				dev_err(hsotg->dev, "error getting usb phy %d\n",
+					ret);
+				return ret;
 			}
 		}
 	}
@@ -241,8 +282,10 @@ static int dwc2_lowlevel_hw_init(struct dwc2_hsotg *hsotg)
 
 	/* Clock */
 	hsotg->clk = devm_clk_get_optional(hsotg->dev, "otg");
-	if (IS_ERR(hsotg->clk))
-		return dev_err_probe(hsotg->dev, PTR_ERR(hsotg->clk), "cannot get otg clock\n");
+	if (IS_ERR(hsotg->clk)) {
+		dev_err(hsotg->dev, "cannot get otg clock\n");
+		return PTR_ERR(hsotg->clk);
+	}
 
 	/* Regulators */
 	for (i = 0; i < ARRAY_SIZE(hsotg->supplies); i++)
@@ -250,9 +293,12 @@ static int dwc2_lowlevel_hw_init(struct dwc2_hsotg *hsotg)
 
 	ret = devm_regulator_bulk_get(hsotg->dev, ARRAY_SIZE(hsotg->supplies),
 				      hsotg->supplies);
-	if (ret)
-		return dev_err_probe(hsotg->dev, ret, "failed to request supplies\n");
-
+	if (ret) {
+		if (ret != -EPROBE_DEFER)
+			dev_err(hsotg->dev, "failed to request supplies: %d\n",
+				ret);
+		return ret;
+	}
 	return 0;
 }
 
@@ -321,7 +367,7 @@ static int dwc2_driver_remove(struct platform_device *dev)
 	reset_control_assert(hsotg->reset);
 	reset_control_assert(hsotg->reset_ecc);
 
-	return 0;
+	return ret;
 }
 
 /**
@@ -512,12 +558,16 @@ static int dwc2_driver_probe(struct platform_device *dev)
 		hsotg->usb33d = devm_regulator_get(hsotg->dev, "usb33d");
 		if (IS_ERR(hsotg->usb33d)) {
 			retval = PTR_ERR(hsotg->usb33d);
-			dev_err_probe(hsotg->dev, retval, "failed to request usb33d supply\n");
+			if (retval != -EPROBE_DEFER)
+				dev_err(hsotg->dev,
+					"failed to request usb33d supply: %d\n",
+					retval);
 			goto error;
 		}
 		retval = regulator_enable(hsotg->usb33d);
 		if (retval) {
-			dev_err_probe(hsotg->dev, retval, "failed to enable usb33d supply\n");
+			dev_err(hsotg->dev,
+				"failed to enable usb33d supply: %d\n", retval);
 			goto error;
 		}
 
@@ -532,7 +582,8 @@ static int dwc2_driver_probe(struct platform_device *dev)
 
 	retval = dwc2_drd_init(hsotg);
 	if (retval) {
-		dev_err_probe(hsotg->dev, retval, "failed to initialize dual-role\n");
+		if (retval != -EPROBE_DEFER)
+			dev_err(hsotg->dev, "failed to initialize dual-role\n");
 		goto error_init;
 	}
 
@@ -576,8 +627,7 @@ static int dwc2_driver_probe(struct platform_device *dev)
 	dwc2_debugfs_init(hsotg);
 
 	/* Gadget code manages lowlevel hw on its own */
-	if (hsotg->dr_mode == USB_DR_MODE_PERIPHERAL ||
-	    (hsotg->dr_mode == USB_DR_MODE_OTG && dwc2_is_device_mode(hsotg)))
+	if (hsotg->dr_mode == USB_DR_MODE_PERIPHERAL)
 		dwc2_lowlevel_hw_disable(hsotg);
 
 #if IS_ENABLED(CONFIG_USB_DWC2_PERIPHERAL) || \
@@ -701,12 +751,10 @@ static int __maybe_unused dwc2_resume(struct device *dev)
 		spin_unlock_irqrestore(&dwc2->lock, flags);
 	}
 
-	if (!dwc2->role_sw) {
-		/* Need to restore FORCEDEVMODE/FORCEHOSTMODE */
-		dwc2_force_dr_mode(dwc2);
-	} else {
-		dwc2_drd_resume(dwc2);
-	}
+	/* Need to restore FORCEDEVMODE/FORCEHOSTMODE */
+	dwc2_force_dr_mode(dwc2);
+
+	dwc2_drd_resume(dwc2);
 
 	if (dwc2_is_device_mode(dwc2))
 		ret = dwc2_hsotg_resume(dwc2);

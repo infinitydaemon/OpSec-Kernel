@@ -18,7 +18,6 @@
 #include <linux/pm_wakeirq.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
-#include <linux/reset.h>
 
 #include "xhci.h"
 #include "xhci-mtk.h"
@@ -96,19 +95,6 @@
 #define WC0_SSUSB0_CDEN		BIT(6)
 #define WC0_IS_SPM_EN		BIT(1)
 
-/* mt8195 */
-#define PERI_WK_CTRL0_8195	0x04
-#define WC0_IS_P_95		BIT(30)	/* polarity */
-#define WC0_IS_C_95(x)		((u32)(((x) & 0x7) << 27))
-#define WC0_IS_EN_P3_95		BIT(26)
-#define WC0_IS_EN_P2_95		BIT(25)
-#define WC0_IS_EN_P1_95		BIT(24)
-
-#define PERI_WK_CTRL1_8195	0x20
-#define WC1_IS_C_95(x)		((u32)(((x) & 0xf) << 28))
-#define WC1_IS_P_95		BIT(12)
-#define WC1_IS_EN_P0_95		BIT(6)
-
 /* mt2712 etc */
 #define PERI_SSUSB_SPM_CTRL	0x0
 #define SSC_IP_SLEEP_EN	BIT(4)
@@ -119,10 +105,6 @@ enum ssusb_uwk_vers {
 	SSUSB_UWK_V2,
 	SSUSB_UWK_V1_1 = 101,	/* specific revision 1.01 */
 	SSUSB_UWK_V1_2,		/* specific revision 1.2 */
-	SSUSB_UWK_V1_3,		/* mt8195 IP0 */
-	SSUSB_UWK_V1_4,		/* mt8195 IP1 */
-	SSUSB_UWK_V1_5,		/* mt8195 IP2 */
-	SSUSB_UWK_V1_6,		/* mt8195 IP3 */
 };
 
 /*
@@ -263,12 +245,11 @@ static int xhci_mtk_host_disable(struct xhci_hcd_mtk *mtk)
 	/* wait for host ip to sleep */
 	ret = readl_poll_timeout(&ippc->ip_pw_sts1, value,
 			  (value & STS1_IP_SLEEP_STS), 100, 100000);
-	if (ret)
+	if (ret) {
 		dev_err(mtk->dev, "ip sleep failed!!!\n");
-	else /* workaound for platforms using low level latch */
-		usleep_range(100, 200);
-
-	return ret;
+		return ret;
+	}
+	return 0;
 }
 
 static int xhci_mtk_ssusb_config(struct xhci_hcd_mtk *mtk)
@@ -319,32 +300,12 @@ static void usb_wakeup_ip_sleep_set(struct xhci_hcd_mtk *mtk, bool enable)
 	case SSUSB_UWK_V1_1:
 		reg = mtk->uwk_reg_base + PERI_WK_CTRL0;
 		msk = WC0_IS_EN | WC0_IS_C(0xf) | WC0_IS_P;
-		val = enable ? (WC0_IS_EN | WC0_IS_C(0x1)) : 0;
+		val = enable ? (WC0_IS_EN | WC0_IS_C(0x8)) : 0;
 		break;
 	case SSUSB_UWK_V1_2:
 		reg = mtk->uwk_reg_base + PERI_WK_CTRL0;
 		msk = WC0_SSUSB0_CDEN | WC0_IS_SPM_EN;
 		val = enable ? msk : 0;
-		break;
-	case SSUSB_UWK_V1_3:
-		reg = mtk->uwk_reg_base + PERI_WK_CTRL1_8195;
-		msk = WC1_IS_EN_P0_95 | WC1_IS_C_95(0xf) | WC1_IS_P_95;
-		val = enable ? (WC1_IS_EN_P0_95 | WC1_IS_C_95(0x1)) : 0;
-		break;
-	case SSUSB_UWK_V1_4:
-		reg = mtk->uwk_reg_base + PERI_WK_CTRL0_8195;
-		msk = WC0_IS_EN_P1_95 | WC0_IS_C_95(0x7) | WC0_IS_P_95;
-		val = enable ? (WC0_IS_EN_P1_95 | WC0_IS_C_95(0x1)) : 0;
-		break;
-	case SSUSB_UWK_V1_5:
-		reg = mtk->uwk_reg_base + PERI_WK_CTRL0_8195;
-		msk = WC0_IS_EN_P2_95 | WC0_IS_C_95(0x7) | WC0_IS_P_95;
-		val = enable ? (WC0_IS_EN_P2_95 | WC0_IS_C_95(0x1)) : 0;
-		break;
-	case SSUSB_UWK_V1_6:
-		reg = mtk->uwk_reg_base + PERI_WK_CTRL0_8195;
-		msk = WC0_IS_EN_P3_95 | WC0_IS_C_95(0x7) | WC0_IS_P_95;
-		val = enable ? (WC0_IS_EN_P3_95 | WC0_IS_C_95(0x1)) : 0;
 		break;
 	case SSUSB_UWK_V2:
 		reg = mtk->uwk_reg_base + PERI_SSUSB_SPM_CTRL;
@@ -402,14 +363,29 @@ static int xhci_mtk_clks_get(struct xhci_hcd_mtk *mtk)
 	return devm_clk_bulk_get_optional(mtk->dev, BULK_CLKS_NUM, clks);
 }
 
-static int xhci_mtk_vregs_get(struct xhci_hcd_mtk *mtk)
+static int xhci_mtk_ldos_enable(struct xhci_hcd_mtk *mtk)
 {
-	struct regulator_bulk_data *supplies = mtk->supplies;
+	int ret;
 
-	supplies[0].supply = "vbus";
-	supplies[1].supply = "vusb33";
+	ret = regulator_enable(mtk->vbus);
+	if (ret) {
+		dev_err(mtk->dev, "failed to enable vbus\n");
+		return ret;
+	}
 
-	return devm_regulator_bulk_get(mtk->dev, BULK_VREGS_NUM, supplies);
+	ret = regulator_enable(mtk->vusb33);
+	if (ret) {
+		dev_err(mtk->dev, "failed to enable vusb33\n");
+		regulator_disable(mtk->vbus);
+		return ret;
+	}
+	return 0;
+}
+
+static void xhci_mtk_ldos_disable(struct xhci_hcd_mtk *mtk)
+{
+	regulator_disable(mtk->vbus);
+	regulator_disable(mtk->vusb33);
 }
 
 static void xhci_mtk_quirks(struct device *dev, struct xhci_hcd *xhci)
@@ -461,8 +437,11 @@ static int xhci_mtk_setup(struct usb_hcd *hcd)
 	if (ret)
 		return ret;
 
-	if (usb_hcd_is_primary_hcd(hcd))
+	if (usb_hcd_is_primary_hcd(hcd)) {
 		ret = xhci_mtk_sch_init(mtk);
+		if (ret)
+			return ret;
+	}
 
 	return ret;
 }
@@ -485,7 +464,6 @@ static int xhci_mtk_probe(struct platform_device *pdev)
 	const struct hc_driver *driver;
 	struct xhci_hcd *xhci;
 	struct resource *res;
-	struct usb_hcd *usb3_hcd;
 	struct usb_hcd *hcd;
 	int ret = -ENODEV;
 	int wakeup_irq;
@@ -500,10 +478,17 @@ static int xhci_mtk_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	mtk->dev = dev;
+	mtk->vbus = devm_regulator_get(dev, "vbus");
+	if (IS_ERR(mtk->vbus)) {
+		dev_err(dev, "fail to get vbus\n");
+		return PTR_ERR(mtk->vbus);
+	}
 
-	ret = xhci_mtk_vregs_get(mtk);
-	if (ret)
-		return dev_err_probe(dev, ret, "Failed to get regulators\n");
+	mtk->vusb33 = devm_regulator_get(dev, "vusb33");
+	if (IS_ERR(mtk->vusb33)) {
+		dev_err(dev, "fail to get vusb33\n");
+		return PTR_ERR(mtk->vusb33);
+	}
 
 	ret = xhci_mtk_clks_get(mtk);
 	if (ret)
@@ -544,19 +529,13 @@ static int xhci_mtk_probe(struct platform_device *pdev)
 	pm_runtime_enable(dev);
 	pm_runtime_get_sync(dev);
 
-	ret = regulator_bulk_enable(BULK_VREGS_NUM, mtk->supplies);
+	ret = xhci_mtk_ldos_enable(mtk);
 	if (ret)
 		goto disable_pm;
 
 	ret = clk_bulk_prepare_enable(BULK_CLKS_NUM, mtk->clks);
 	if (ret)
 		goto disable_ldos;
-
-	ret = device_reset_optional(dev);
-	if (ret) {
-		dev_err_probe(dev, ret, "failed to reset controller\n");
-		goto disable_clk;
-	}
 
 	hcd = usb_create_hcd(driver, dev, dev_name(dev));
 	if (!hcd) {
@@ -594,7 +573,6 @@ static int xhci_mtk_probe(struct platform_device *pdev)
 
 	xhci = hcd_to_xhci(hcd);
 	xhci->main_hcd = hcd;
-	xhci->allow_single_roothub = 1;
 
 	/*
 	 * imod_interval is the interrupt moderation value in nanoseconds.
@@ -604,32 +582,27 @@ static int xhci_mtk_probe(struct platform_device *pdev)
 	xhci->imod_interval = 5000;
 	device_property_read_u32(dev, "imod-interval-ns", &xhci->imod_interval);
 
+	xhci->shared_hcd = usb_create_shared_hcd(driver, dev,
+			dev_name(dev), hcd);
+	if (!xhci->shared_hcd) {
+		ret = -ENOMEM;
+		goto disable_device_wakeup;
+	}
+
 	ret = usb_add_hcd(hcd, irq, IRQF_SHARED);
 	if (ret)
-		goto disable_device_wakeup;
+		goto put_usb3_hcd;
 
-	if (!xhci_has_one_roothub(xhci)) {
-		xhci->shared_hcd = usb_create_shared_hcd(driver, dev,
-							 dev_name(dev), hcd);
-		if (!xhci->shared_hcd) {
-			ret = -ENOMEM;
-			goto dealloc_usb2_hcd;
-		}
-	}
-
-	usb3_hcd = xhci_get_usb3_hcd(xhci);
-	if (usb3_hcd && HCC_MAX_PSA(xhci->hcc_params) >= 4 &&
+	if (HCC_MAX_PSA(xhci->hcc_params) >= 4 &&
 	    !(xhci->quirks & XHCI_BROKEN_STREAMS))
-		usb3_hcd->can_do_streams = 1;
+		xhci->shared_hcd->can_do_streams = 1;
 
-	if (xhci->shared_hcd) {
-		ret = usb_add_hcd(xhci->shared_hcd, irq, IRQF_SHARED);
-		if (ret)
-			goto put_usb3_hcd;
-	}
+	ret = usb_add_hcd(xhci->shared_hcd, irq, IRQF_SHARED);
+	if (ret)
+		goto dealloc_usb2_hcd;
 
 	if (wakeup_irq > 0) {
-		ret = dev_pm_set_dedicated_wake_irq_reverse(dev, wakeup_irq);
+		ret = dev_pm_set_dedicated_wake_irq(dev, wakeup_irq);
 		if (ret) {
 			dev_err(dev, "set wakeup irq %d failed\n", wakeup_irq);
 			goto dealloc_usb3_hcd;
@@ -647,12 +620,12 @@ static int xhci_mtk_probe(struct platform_device *pdev)
 dealloc_usb3_hcd:
 	usb_remove_hcd(xhci->shared_hcd);
 
-put_usb3_hcd:
-	usb_put_hcd(xhci->shared_hcd);
-
 dealloc_usb2_hcd:
-	xhci_mtk_sch_exit(mtk);
 	usb_remove_hcd(hcd);
+
+put_usb3_hcd:
+	xhci_mtk_sch_exit(mtk);
+	usb_put_hcd(xhci->shared_hcd);
 
 disable_device_wakeup:
 	device_init_wakeup(dev, false);
@@ -664,7 +637,7 @@ disable_clk:
 	clk_bulk_disable_unprepare(BULK_CLKS_NUM, mtk->clks);
 
 disable_ldos:
-	regulator_bulk_disable(BULK_VREGS_NUM, mtk->supplies);
+	xhci_mtk_ldos_disable(mtk);
 
 disable_pm:
 	pm_runtime_put_noidle(dev);
@@ -685,19 +658,14 @@ static int xhci_mtk_remove(struct platform_device *pdev)
 	dev_pm_clear_wake_irq(dev);
 	device_init_wakeup(dev, false);
 
-	if (shared_hcd) {
-		usb_remove_hcd(shared_hcd);
-		xhci->shared_hcd = NULL;
-	}
+	usb_remove_hcd(shared_hcd);
+	xhci->shared_hcd = NULL;
 	usb_remove_hcd(hcd);
-
-	if (shared_hcd)
-		usb_put_hcd(shared_hcd);
-
+	usb_put_hcd(shared_hcd);
 	usb_put_hcd(hcd);
 	xhci_mtk_sch_exit(mtk);
 	clk_bulk_disable_unprepare(BULK_CLKS_NUM, mtk->clks);
-	regulator_bulk_disable(BULK_VREGS_NUM, mtk->supplies);
+	xhci_mtk_ldos_disable(mtk);
 
 	pm_runtime_disable(dev);
 	pm_runtime_put_noidle(dev);
@@ -711,16 +679,13 @@ static int __maybe_unused xhci_mtk_suspend(struct device *dev)
 	struct xhci_hcd_mtk *mtk = dev_get_drvdata(dev);
 	struct usb_hcd *hcd = mtk->hcd;
 	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
-	struct usb_hcd *shared_hcd = xhci->shared_hcd;
 	int ret;
 
 	xhci_dbg(xhci, "%s: stop port polling\n", __func__);
 	clear_bit(HCD_FLAG_POLL_RH, &hcd->flags);
 	del_timer_sync(&hcd->rh_timer);
-	if (shared_hcd) {
-		clear_bit(HCD_FLAG_POLL_RH, &shared_hcd->flags);
-		del_timer_sync(&shared_hcd->rh_timer);
-	}
+	clear_bit(HCD_FLAG_POLL_RH, &xhci->shared_hcd->flags);
+	del_timer_sync(&xhci->shared_hcd->rh_timer);
 
 	ret = xhci_mtk_host_disable(mtk);
 	if (ret)
@@ -732,10 +697,8 @@ static int __maybe_unused xhci_mtk_suspend(struct device *dev)
 
 restart_poll_rh:
 	xhci_dbg(xhci, "%s: restart port polling\n", __func__);
-	if (shared_hcd) {
-		set_bit(HCD_FLAG_POLL_RH, &shared_hcd->flags);
-		usb_hcd_poll_rh_status(shared_hcd);
-	}
+	set_bit(HCD_FLAG_POLL_RH, &xhci->shared_hcd->flags);
+	usb_hcd_poll_rh_status(xhci->shared_hcd);
 	set_bit(HCD_FLAG_POLL_RH, &hcd->flags);
 	usb_hcd_poll_rh_status(hcd);
 	return ret;
@@ -746,7 +709,6 @@ static int __maybe_unused xhci_mtk_resume(struct device *dev)
 	struct xhci_hcd_mtk *mtk = dev_get_drvdata(dev);
 	struct usb_hcd *hcd = mtk->hcd;
 	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
-	struct usb_hcd *shared_hcd = xhci->shared_hcd;
 	int ret;
 
 	usb_wakeup_set(mtk, false);
@@ -759,10 +721,8 @@ static int __maybe_unused xhci_mtk_resume(struct device *dev)
 		goto disable_clks;
 
 	xhci_dbg(xhci, "%s: restart port polling\n", __func__);
-	if (shared_hcd) {
-		set_bit(HCD_FLAG_POLL_RH, &shared_hcd->flags);
-		usb_hcd_poll_rh_status(shared_hcd);
-	}
+	set_bit(HCD_FLAG_POLL_RH, &xhci->shared_hcd->flags);
+	usb_hcd_poll_rh_status(xhci->shared_hcd);
 	set_bit(HCD_FLAG_POLL_RH, &hcd->flags);
 	usb_hcd_poll_rh_status(hcd);
 	return 0;

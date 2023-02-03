@@ -501,7 +501,7 @@ static int tps65010_gpio_get(struct gpio_chip *chip, unsigned offset)
 
 static struct tps65010 *the_tps;
 
-static void tps65010_remove(struct i2c_client *client)
+static int tps65010_remove(struct i2c_client *client)
 {
 	struct tps65010		*tps = i2c_get_clientdata(client);
 	struct tps65010_board	*board = dev_get_platdata(&client->dev);
@@ -517,11 +517,12 @@ static void tps65010_remove(struct i2c_client *client)
 	cancel_delayed_work_sync(&tps->work);
 	debugfs_remove(tps->file);
 	the_tps = NULL;
+	return 0;
 }
 
-static int tps65010_probe(struct i2c_client *client)
+static int tps65010_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
-	const struct i2c_device_id *id = i2c_client_get_device_id(client);
 	struct tps65010		*tps;
 	int			status;
 	struct tps65010_board	*board = dev_get_platdata(&client->dev);
@@ -668,7 +669,7 @@ static struct i2c_driver tps65010_driver = {
 	.driver = {
 		.name	= "tps65010",
 	},
-	.probe_new = tps65010_probe,
+	.probe	= tps65010_probe,
 	.remove	= tps65010_remove,
 	.id_table = tps65010_id,
 };

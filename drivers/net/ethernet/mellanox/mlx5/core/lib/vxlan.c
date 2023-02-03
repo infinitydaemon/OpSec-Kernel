@@ -31,6 +31,7 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/refcount.h>
 #include <linux/mlx5/driver.h>
 #include <net/vxlan.h>

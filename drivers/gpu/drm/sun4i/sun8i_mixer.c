@@ -16,8 +16,9 @@
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc.h>
-#include <drm/drm_framebuffer.h>
-#include <drm/drm_gem_dma_helper.h>
+#include <drm/drm_fb_cma_helper.h>
+#include <drm/drm_gem_cma_helper.h>
+#include <drm/drm_plane_helper.h>
 #include <drm/drm_probe_helper.h>
 
 #include "sun4i_drv.h"
@@ -297,39 +298,9 @@ static struct drm_plane **sun8i_layers_init(struct drm_device *drm,
 	return planes;
 }
 
-static void sun8i_mixer_mode_set(struct sunxi_engine *engine,
-				 const struct drm_display_mode *mode)
-{
-	struct sun8i_mixer *mixer = engine_to_sun8i_mixer(engine);
-	u32 bld_base, size, val;
-	bool interlaced;
-
-	bld_base = sun8i_blender_base(mixer);
-	interlaced = !!(mode->flags & DRM_MODE_FLAG_INTERLACE);
-	size = SUN8I_MIXER_SIZE(mode->hdisplay, mode->vdisplay);
-
-	DRM_DEBUG_DRIVER("Updating global size W: %u H: %u\n",
-			 mode->hdisplay, mode->vdisplay);
-
-	regmap_write(engine->regs, SUN8I_MIXER_GLOBAL_SIZE, size);
-	regmap_write(engine->regs, SUN8I_MIXER_BLEND_OUTSIZE(bld_base), size);
-
-	if (interlaced)
-		val = SUN8I_MIXER_BLEND_OUTCTL_INTERLACED;
-	else
-		val = 0;
-
-	regmap_update_bits(engine->regs, SUN8I_MIXER_BLEND_OUTCTL(bld_base),
-			   SUN8I_MIXER_BLEND_OUTCTL_INTERLACED, val);
-
-	DRM_DEBUG_DRIVER("Switching display mixer interlaced mode %s\n",
-			 interlaced ? "on" : "off");
-}
-
 static const struct sunxi_engine_ops sun8i_engine_ops = {
 	.commit		= sun8i_mixer_commit,
 	.layers_init	= sun8i_layers_init,
-	.mode_set	= sun8i_mixer_mode_set,
 };
 
 static const struct regmap_config sun8i_mixer_regmap_config = {
@@ -366,6 +337,7 @@ static int sun8i_mixer_bind(struct device *dev, struct device *master,
 	struct drm_device *drm = data;
 	struct sun4i_drv *drv = drm->dev_private;
 	struct sun8i_mixer *mixer;
+	struct resource *res;
 	void __iomem *regs;
 	unsigned int base;
 	int plane_cnt;
@@ -418,7 +390,8 @@ static int sun8i_mixer_bind(struct device *dev, struct device *master,
 	if (!mixer->cfg)
 		return -EINVAL;
 
-	regs = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	regs = devm_ioremap_resource(dev, res);
 	if (IS_ERR(regs))
 		return PTR_ERR(regs);
 
@@ -563,7 +536,7 @@ static int sun8i_mixer_remove(struct platform_device *pdev)
 }
 
 static const struct sun8i_mixer_cfg sun8i_a83t_mixer0_cfg = {
-	.ccsc		= CCSC_MIXER0_LAYOUT,
+	.ccsc		= 0,
 	.scaler_mask	= 0xf,
 	.scanline_yuv	= 2048,
 	.ui_num		= 3,
@@ -571,7 +544,7 @@ static const struct sun8i_mixer_cfg sun8i_a83t_mixer0_cfg = {
 };
 
 static const struct sun8i_mixer_cfg sun8i_a83t_mixer1_cfg = {
-	.ccsc		= CCSC_MIXER1_LAYOUT,
+	.ccsc		= 1,
 	.scaler_mask	= 0x3,
 	.scanline_yuv	= 2048,
 	.ui_num		= 1,
@@ -579,7 +552,7 @@ static const struct sun8i_mixer_cfg sun8i_a83t_mixer1_cfg = {
 };
 
 static const struct sun8i_mixer_cfg sun8i_h3_mixer0_cfg = {
-	.ccsc		= CCSC_MIXER0_LAYOUT,
+	.ccsc		= 0,
 	.mod_rate	= 432000000,
 	.scaler_mask	= 0xf,
 	.scanline_yuv	= 2048,
@@ -588,7 +561,7 @@ static const struct sun8i_mixer_cfg sun8i_h3_mixer0_cfg = {
 };
 
 static const struct sun8i_mixer_cfg sun8i_r40_mixer0_cfg = {
-	.ccsc		= CCSC_MIXER0_LAYOUT,
+	.ccsc		= 0,
 	.mod_rate	= 297000000,
 	.scaler_mask	= 0xf,
 	.scanline_yuv	= 2048,
@@ -597,7 +570,7 @@ static const struct sun8i_mixer_cfg sun8i_r40_mixer0_cfg = {
 };
 
 static const struct sun8i_mixer_cfg sun8i_r40_mixer1_cfg = {
-	.ccsc		= CCSC_MIXER1_LAYOUT,
+	.ccsc		= 1,
 	.mod_rate	= 297000000,
 	.scaler_mask	= 0x3,
 	.scanline_yuv	= 2048,
@@ -610,30 +583,12 @@ static const struct sun8i_mixer_cfg sun8i_v3s_mixer_cfg = {
 	.ui_num = 1,
 	.scaler_mask = 0x3,
 	.scanline_yuv = 2048,
-	.ccsc = CCSC_MIXER0_LAYOUT,
+	.ccsc = 0,
 	.mod_rate = 150000000,
 };
 
-static const struct sun8i_mixer_cfg sun20i_d1_mixer0_cfg = {
-	.ccsc		= CCSC_D1_MIXER0_LAYOUT,
-	.mod_rate	= 297000000,
-	.scaler_mask	= 0x3,
-	.scanline_yuv	= 2048,
-	.ui_num		= 1,
-	.vi_num		= 1,
-};
-
-static const struct sun8i_mixer_cfg sun20i_d1_mixer1_cfg = {
-	.ccsc		= CCSC_MIXER1_LAYOUT,
-	.mod_rate	= 297000000,
-	.scaler_mask	= 0x1,
-	.scanline_yuv	= 1024,
-	.ui_num		= 0,
-	.vi_num		= 1,
-};
-
 static const struct sun8i_mixer_cfg sun50i_a64_mixer0_cfg = {
-	.ccsc		= CCSC_MIXER0_LAYOUT,
+	.ccsc		= 0,
 	.mod_rate	= 297000000,
 	.scaler_mask	= 0xf,
 	.scanline_yuv	= 4096,
@@ -642,7 +597,7 @@ static const struct sun8i_mixer_cfg sun50i_a64_mixer0_cfg = {
 };
 
 static const struct sun8i_mixer_cfg sun50i_a64_mixer1_cfg = {
-	.ccsc		= CCSC_MIXER1_LAYOUT,
+	.ccsc		= 1,
 	.mod_rate	= 297000000,
 	.scaler_mask	= 0x3,
 	.scanline_yuv	= 2048,
@@ -651,7 +606,7 @@ static const struct sun8i_mixer_cfg sun50i_a64_mixer1_cfg = {
 };
 
 static const struct sun8i_mixer_cfg sun50i_h6_mixer0_cfg = {
-	.ccsc		= CCSC_MIXER0_LAYOUT,
+	.ccsc		= 0,
 	.is_de3		= true,
 	.mod_rate	= 600000000,
 	.scaler_mask	= 0xf,
@@ -684,14 +639,6 @@ static const struct of_device_id sun8i_mixer_of_table[] = {
 	{
 		.compatible = "allwinner,sun8i-v3s-de2-mixer",
 		.data = &sun8i_v3s_mixer_cfg,
-	},
-	{
-		.compatible = "allwinner,sun20i-d1-de2-mixer-0",
-		.data = &sun20i_d1_mixer0_cfg,
-	},
-	{
-		.compatible = "allwinner,sun20i-d1-de2-mixer-1",
-		.data = &sun20i_d1_mixer1_cfg,
 	},
 	{
 		.compatible = "allwinner,sun50i-a64-de2-mixer-0",

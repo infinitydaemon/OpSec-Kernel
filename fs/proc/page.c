@@ -10,7 +10,6 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/hugetlb.h>
-#include <linux/memremap.h>
 #include <linux/memcontrol.h>
 #include <linux/mmu_notifier.h>
 #include <linux/page_idle.h>
@@ -91,7 +90,6 @@ static ssize_t kpagecount_read(struct file *file, char __user *buf,
 }
 
 static const struct proc_ops kpagecount_proc_ops = {
-	.proc_flags	= PROC_ENTRY_PERMANENT,
 	.proc_lseek	= mem_lseek,
 	.proc_read	= kpagecount_read,
 };
@@ -219,9 +217,8 @@ u64 stable_page_flags(struct page *page)
 	u |= kpf_copy_bit(k, KPF_PRIVATE_2,	PG_private_2);
 	u |= kpf_copy_bit(k, KPF_OWNER_PRIVATE,	PG_owner_priv_1);
 	u |= kpf_copy_bit(k, KPF_ARCH,		PG_arch_1);
-#ifdef CONFIG_ARCH_USES_PG_ARCH_X
+#ifdef CONFIG_64BIT
 	u |= kpf_copy_bit(k, KPF_ARCH_2,	PG_arch_2);
-	u |= kpf_copy_bit(k, KPF_ARCH_3,	PG_arch_3);
 #endif
 
 	return u;
@@ -270,7 +267,6 @@ static ssize_t kpageflags_read(struct file *file, char __user *buf,
 }
 
 static const struct proc_ops kpageflags_proc_ops = {
-	.proc_flags	= PROC_ENTRY_PERMANENT,
 	.proc_lseek	= mem_lseek,
 	.proc_read	= kpageflags_read,
 };
@@ -325,7 +321,6 @@ static ssize_t kpagecgroup_read(struct file *file, char __user *buf,
 }
 
 static const struct proc_ops kpagecgroup_proc_ops = {
-	.proc_flags	= PROC_ENTRY_PERMANENT,
 	.proc_lseek	= mem_lseek,
 	.proc_read	= kpagecgroup_read,
 };

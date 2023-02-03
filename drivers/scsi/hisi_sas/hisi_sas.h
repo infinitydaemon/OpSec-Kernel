@@ -8,6 +8,7 @@
 #define _HISI_SAS_H_
 
 #include <linux/acpi.h>
+#include <linux/async.h>
 #include <linux/blk-mq.h>
 #include <linux/blk-mq-pci.h>
 #include <linux/clk.h>
@@ -34,7 +35,7 @@
 #define HISI_SAS_QUEUE_SLOTS	4096
 #define HISI_SAS_MAX_ITCT_ENTRIES 1024
 #define HISI_SAS_MAX_DEVICES HISI_SAS_MAX_ITCT_ENTRIES
-#define HISI_SAS_RESETTING_BIT	0
+#define HISI_SAS_RESET_BIT	0
 #define HISI_SAS_REJECT_CMD_BIT	1
 #define HISI_SAS_PM_BIT		2
 #define HISI_SAS_HW_FAULT_BIT	3
@@ -91,7 +92,7 @@
 
 #define HISI_SAS_PROT_MASK (HISI_SAS_DIF_PROT_MASK | HISI_SAS_DIX_PROT_MASK)
 
-#define HISI_SAS_WAIT_PHYUP_TIMEOUT	(30 * HZ)
+#define HISI_SAS_WAIT_PHYUP_TIMEOUT	(20 * HZ)
 #define HISI_SAS_CLEAR_ITCT_TIMEOUT	(20 * HZ)
 
 struct hisi_hba;
@@ -104,7 +105,6 @@ enum {
 enum dev_status {
 	HISI_SAS_DEV_INIT,
 	HISI_SAS_DEV_NORMAL,
-	HISI_SAS_DEV_NCQ_ERR,
 };
 
 enum {
@@ -154,7 +154,6 @@ enum hisi_sas_bit_err_type {
 enum hisi_sas_phy_event {
 	HISI_PHYE_PHY_UP   = 0U,
 	HISI_PHYE_LINK_RESET,
-	HISI_PHYE_PHY_UP_PM,
 	HISI_PHYES_NUM,
 };
 
@@ -230,6 +229,13 @@ struct hisi_sas_device {
 	spinlock_t lock; /* For protecting slots */
 };
 
+struct hisi_sas_tmf_task {
+	int force_phy;
+	int phy_id;
+	u8 tmf;
+	u16 tag_of_task_to_be_managed;
+};
+
 struct hisi_sas_slot {
 	struct list_head entry;
 	struct list_head delivery;
@@ -248,7 +254,7 @@ struct hisi_sas_slot {
 	dma_addr_t cmd_hdr_dma;
 	struct timer_list internal_abort_timer;
 	bool is_internal;
-	struct sas_tmf_task *tmf;
+	struct hisi_sas_tmf_task *tmf;
 	/* Do not reorder/change members after here */
 	void	*buf;
 	dma_addr_t buf_dma;
@@ -321,7 +327,8 @@ struct hisi_sas_hw {
 	void (*prep_stp)(struct hisi_hba *hisi_hba,
 			struct hisi_sas_slot *slot);
 	void (*prep_abort)(struct hisi_hba *hisi_hba,
-			  struct hisi_sas_slot *slot);
+			  struct hisi_sas_slot *slot,
+			  int device_id, int abort_flag, int tag_to_abort);
 	void (*phys_init)(struct hisi_hba *hisi_hba);
 	void (*phy_start)(struct hisi_hba *hisi_hba, int phy_no);
 	void (*phy_disable)(struct hisi_hba *hisi_hba, int phy_no);
@@ -642,7 +649,6 @@ extern int hisi_sas_probe(struct platform_device *pdev,
 extern int hisi_sas_remove(struct platform_device *pdev);
 
 extern int hisi_sas_slave_configure(struct scsi_device *sdev);
-extern int hisi_sas_slave_alloc(struct scsi_device *sdev);
 extern int hisi_sas_scan_finished(struct Scsi_Host *shost, unsigned long time);
 extern void hisi_sas_scan_start(struct Scsi_Host *shost);
 extern int hisi_sas_host_reset(struct Scsi_Host *shost, int reset_type);
@@ -650,7 +656,6 @@ extern void hisi_sas_phy_enable(struct hisi_hba *hisi_hba, int phy_no,
 				int enable);
 extern void hisi_sas_phy_down(struct hisi_hba *hisi_hba, int phy_no, int rdy,
 			      gfp_t gfp_flags);
-extern void hisi_sas_phy_bcast(struct hisi_sas_phy *phy);
 extern void hisi_sas_slot_task_free(struct hisi_hba *hisi_hba,
 				    struct sas_task *task,
 				    struct hisi_sas_slot *slot);

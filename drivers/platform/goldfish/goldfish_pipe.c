@@ -896,9 +896,11 @@ static int goldfish_pipe_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	dev->irq = platform_get_irq(pdev, 0);
-	if (dev->irq < 0)
-		return dev->irq;
+	r = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
+	if (!r)
+		return -EINVAL;
+
+	dev->irq = r->start;
 
 	/*
 	 * Exchange the versions with the host device

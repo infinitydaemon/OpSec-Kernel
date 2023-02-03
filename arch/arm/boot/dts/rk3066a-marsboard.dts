@@ -150,21 +150,18 @@
 #include "tps65910.dtsi"
 
 &emac {
-	phy = <&phy0>;
-	phy-supply = <&vcc_rmii>;
-	pinctrl-names = "default";
-	pinctrl-0 = <&emac_xfer>, <&emac_mdio>, <&phy_int>;
 	status = "okay";
 
-	mdio {
-		#address-cells = <1>;
-		#size-cells = <0>;
+	phy = <&phy0>;
+	phy-supply = <&vcc_rmii>;
 
-		phy0: ethernet-phy@0 {
-			reg = <0>;
-			interrupt-parent = <&gpio1>;
-			interrupts = <RK_PD2 IRQ_TYPE_LEVEL_LOW>;
-		};
+	pinctrl-names = "default";
+	pinctrl-0 = <&emac_xfer>, <&emac_mdio>, <&phy_int>;
+
+	phy0: ethernet-phy@0 {
+		reg = <0>;
+		interrupt-parent = <&gpio1>;
+		interrupts = <RK_PD2 IRQ_TYPE_LEVEL_LOW>;
 	};
 };
 

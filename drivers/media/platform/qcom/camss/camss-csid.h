@@ -152,8 +152,7 @@ struct csid_device {
 	char irq_name[30];
 	struct camss_clock *clock;
 	int nclocks;
-	struct regulator_bulk_data *supplies;
-	int num_supplies;
+	struct regulator *vdda;
 	struct completion reset_complete;
 	struct csid_testgen_config testgen;
 	struct csid_phy_config phy;
@@ -206,7 +205,7 @@ extern const char * const csid_testgen_modes[];
 
 extern const struct csid_hw_ops csid_ops_4_1;
 extern const struct csid_hw_ops csid_ops_4_7;
-extern const struct csid_hw_ops csid_ops_gen2;
+extern const struct csid_hw_ops csid_ops_170;
 
 
 #endif /* QC_MSM_CAMSS_CSID_H */

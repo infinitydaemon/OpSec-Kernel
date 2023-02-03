@@ -83,8 +83,6 @@ properties:
 required:
   - compatible
   - reg
-  - width-mm
-  - height-mm
   - panel-timing
 
 unevaluatedProperties: false

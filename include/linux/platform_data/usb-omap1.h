@@ -50,8 +50,6 @@ struct omap_usb_config {
 	int (*ocpi_enable)(void);
 
 	void (*lb_reset)(void);
-
-	int (*transceiver_power)(int on);
 };
 
 #endif /* __LINUX_USB_OMAP1_H */

@@ -11,7 +11,6 @@
 #include <linux/mm.h>
 #include <linux/errno.h>
 #include <linux/pci.h>
-#include <asm/asm-extable.h>
 #include <asm/pci_io.h>
 #include <asm/pci_debug.h>
 

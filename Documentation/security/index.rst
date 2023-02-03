@@ -17,4 +17,3 @@ Security Documentation
    tpm/index
    digsig
    landlock
-   secrets/index

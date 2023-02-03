@@ -72,7 +72,7 @@ static struct gmap *gmap_alloc(unsigned long limit)
 		goto out_free;
 	page->index = 0;
 	list_add(&page->lru, &gmap->crst_list);
-	table = page_to_virt(page);
+	table = (unsigned long *) page_to_phys(page);
 	crst_table_init(table, etype);
 	gmap->table = table;
 	gmap->asce = atype | _ASCE_TABLE_LENGTH |
@@ -311,12 +311,12 @@ static int gmap_alloc_table(struct gmap *gmap, unsigned long *table,
 	page = alloc_pages(GFP_KERNEL_ACCOUNT, CRST_ALLOC_ORDER);
 	if (!page)
 		return -ENOMEM;
-	new = page_to_virt(page);
+	new = (unsigned long *) page_to_phys(page);
 	crst_table_init(new, init);
 	spin_lock(&gmap->guest_table_lock);
 	if (*table & _REGION_ENTRY_INVALID) {
 		list_add(&page->lru, &gmap->crst_list);
-		*table = __pa(new) | _REGION_ENTRY_LENGTH |
+		*table = (unsigned long) new | _REGION_ENTRY_LENGTH |
 			(*table & _REGION_ENTRY_TYPE_MASK);
 		page->index = gaddr;
 		page = NULL;
@@ -336,11 +336,12 @@ static int gmap_alloc_table(struct gmap *gmap, unsigned long *table,
 static unsigned long __gmap_segment_gaddr(unsigned long *entry)
 {
 	struct page *page;
-	unsigned long offset;
+	unsigned long offset, mask;
 
 	offset = (unsigned long) entry / sizeof(unsigned long);
 	offset = (offset & (PTRS_PER_PMD - 1)) * PMD_SIZE;
-	page = pmd_pgtable_page((pmd_t *) entry);
+	mask = ~(PTRS_PER_PMD * sizeof(pmd_t) - 1);
+	page = virt_to_page((void *)((unsigned long) entry & mask));
 	return page->index + offset;
 }
 
@@ -556,7 +557,7 @@ int __gmap_link(struct gmap *gmap, unsigned long gaddr, unsigned long vmaddr)
 		    gmap_alloc_table(gmap, table, _REGION2_ENTRY_EMPTY,
 				     gaddr & _REGION1_MASK))
 			return -ENOMEM;
-		table = __va(*table & _REGION_ENTRY_ORIGIN);
+		table = (unsigned long *)(*table & _REGION_ENTRY_ORIGIN);
 	}
 	if ((gmap->asce & _ASCE_TYPE_MASK) >= _ASCE_TYPE_REGION2) {
 		table += (gaddr & _REGION2_INDEX) >> _REGION2_SHIFT;
@@ -564,7 +565,7 @@ int __gmap_link(struct gmap *gmap, unsigned long gaddr, unsigned long vmaddr)
 		    gmap_alloc_table(gmap, table, _REGION3_ENTRY_EMPTY,
 				     gaddr & _REGION2_MASK))
 			return -ENOMEM;
-		table = __va(*table & _REGION_ENTRY_ORIGIN);
+		table = (unsigned long *)(*table & _REGION_ENTRY_ORIGIN);
 	}
 	if ((gmap->asce & _ASCE_TYPE_MASK) >= _ASCE_TYPE_REGION3) {
 		table += (gaddr & _REGION3_INDEX) >> _REGION3_SHIFT;
@@ -572,7 +573,7 @@ int __gmap_link(struct gmap *gmap, unsigned long gaddr, unsigned long vmaddr)
 		    gmap_alloc_table(gmap, table, _SEGMENT_ENTRY_EMPTY,
 				     gaddr & _REGION3_MASK))
 			return -ENOMEM;
-		table = __va(*table & _REGION_ENTRY_ORIGIN);
+		table = (unsigned long *)(*table & _REGION_ENTRY_ORIGIN);
 	}
 	table += (gaddr & _SEGMENT_INDEX) >> _SEGMENT_SHIFT;
 	/* Walk the parent mm page table */
@@ -812,7 +813,7 @@ static inline unsigned long *gmap_table_walk(struct gmap *gmap,
 			break;
 		if (*table & _REGION_ENTRY_INVALID)
 			return NULL;
-		table = __va(*table & _REGION_ENTRY_ORIGIN);
+		table = (unsigned long *)(*table & _REGION_ENTRY_ORIGIN);
 		fallthrough;
 	case _ASCE_TYPE_REGION2:
 		table += (gaddr & _REGION2_INDEX) >> _REGION2_SHIFT;
@@ -820,7 +821,7 @@ static inline unsigned long *gmap_table_walk(struct gmap *gmap,
 			break;
 		if (*table & _REGION_ENTRY_INVALID)
 			return NULL;
-		table = __va(*table & _REGION_ENTRY_ORIGIN);
+		table = (unsigned long *)(*table & _REGION_ENTRY_ORIGIN);
 		fallthrough;
 	case _ASCE_TYPE_REGION3:
 		table += (gaddr & _REGION3_INDEX) >> _REGION3_SHIFT;
@@ -828,7 +829,7 @@ static inline unsigned long *gmap_table_walk(struct gmap *gmap,
 			break;
 		if (*table & _REGION_ENTRY_INVALID)
 			return NULL;
-		table = __va(*table & _REGION_ENTRY_ORIGIN);
+		table = (unsigned long *)(*table & _REGION_ENTRY_ORIGIN);
 		fallthrough;
 	case _ASCE_TYPE_SEGMENT:
 		table += (gaddr & _SEGMENT_INDEX) >> _SEGMENT_SHIFT;
@@ -836,7 +837,7 @@ static inline unsigned long *gmap_table_walk(struct gmap *gmap,
 			break;
 		if (*table & _REGION_ENTRY_INVALID)
 			return NULL;
-		table = __va(*table & _SEGMENT_ENTRY_ORIGIN);
+		table = (unsigned long *)(*table & _SEGMENT_ENTRY_ORIGIN);
 		table += (gaddr & _PAGE_INDEX) >> _PAGE_SHIFT;
 	}
 	return table;
@@ -973,18 +974,18 @@ static int gmap_protect_pmd(struct gmap *gmap, unsigned long gaddr,
 		return -EAGAIN;
 
 	if (prot == PROT_NONE && !pmd_i) {
-		new = set_pmd_bit(new, __pgprot(_SEGMENT_ENTRY_INVALID));
+		pmd_val(new) |= _SEGMENT_ENTRY_INVALID;
 		gmap_pmdp_xchg(gmap, pmdp, new, gaddr);
 	}
 
 	if (prot == PROT_READ && !pmd_p) {
-		new = clear_pmd_bit(new, __pgprot(_SEGMENT_ENTRY_INVALID));
-		new = set_pmd_bit(new, __pgprot(_SEGMENT_ENTRY_PROTECT));
+		pmd_val(new) &= ~_SEGMENT_ENTRY_INVALID;
+		pmd_val(new) |= _SEGMENT_ENTRY_PROTECT;
 		gmap_pmdp_xchg(gmap, pmdp, new, gaddr);
 	}
 
 	if (bits & GMAP_NOTIFY_MPROT)
-		set_pmd(pmdp, set_pmd_bit(*pmdp, __pgprot(_SEGMENT_ENTRY_GMAP_IN)));
+		pmd_val(*pmdp) |= _SEGMENT_ENTRY_GMAP_IN;
 
 	/* Shadow GMAP protection needs split PMDs */
 	if (bits & GMAP_NOTIFY_SHADOW)
@@ -1149,8 +1150,8 @@ int gmap_read_table(struct gmap *gmap, unsigned long gaddr, unsigned long *val)
 			if (pte_present(pte) && (pte_val(pte) & _PAGE_READ)) {
 				address = pte_val(pte) & PAGE_MASK;
 				address += gaddr & ~PAGE_MASK;
-				*val = *(unsigned long *)__va(address);
-				set_pte(ptep, set_pte_bit(*ptep, __pgprot(_PAGE_YOUNG)));
+				*val = *(unsigned long *) address;
+				pte_val(*ptep) |= _PAGE_YOUNG;
 				/* Do *NOT* clear the _PAGE_INVALID bit! */
 				rc = 0;
 			}
@@ -1182,7 +1183,6 @@ EXPORT_SYMBOL_GPL(gmap_read_table);
 static inline void gmap_insert_rmap(struct gmap *sg, unsigned long vmaddr,
 				    struct gmap_rmap *rmap)
 {
-	struct gmap_rmap *temp;
 	void __rcu **slot;
 
 	BUG_ON(!gmap_is_shadow(sg));
@@ -1190,12 +1190,6 @@ static inline void gmap_insert_rmap(struct gmap *sg, unsigned long vmaddr,
 	if (slot) {
 		rmap->next = radix_tree_deref_slot_protected(slot,
 							&sg->guest_table_lock);
-		for (temp = rmap->next; temp; temp = temp->next) {
-			if (temp->raddr == rmap->raddr) {
-				kfree(rmap);
-				return;
-			}
-		}
 		radix_tree_replace_slot(&sg->host_to_rmap, slot, rmap);
 	} else {
 		rmap->next = NULL;
@@ -1284,7 +1278,7 @@ static int gmap_protect_rmap(struct gmap *sg, unsigned long raddr,
 static inline void gmap_idte_one(unsigned long asce, unsigned long vaddr)
 {
 	asm volatile(
-		"	idte	%0,0,%1"
+		"	.insn	rrf,0xb98e0000,%0,%1,0,0"
 		: : "a" (asce), "a" (vaddr) : "cc", "memory");
 }
 
@@ -1334,8 +1328,7 @@ static void __gmap_unshadow_pgt(struct gmap *sg, unsigned long raddr,
  */
 static void gmap_unshadow_pgt(struct gmap *sg, unsigned long raddr)
 {
-	unsigned long *ste;
-	phys_addr_t sto, pgt;
+	unsigned long sto, *ste, *pgt;
 	struct page *page;
 
 	BUG_ON(!gmap_is_shadow(sg));
@@ -1343,13 +1336,13 @@ static void gmap_unshadow_pgt(struct gmap *sg, unsigned long raddr)
 	if (!ste || !(*ste & _SEGMENT_ENTRY_ORIGIN))
 		return;
 	gmap_call_notifier(sg, raddr, raddr + _SEGMENT_SIZE - 1);
-	sto = __pa(ste - ((raddr & _SEGMENT_INDEX) >> _SEGMENT_SHIFT));
+	sto = (unsigned long) (ste - ((raddr & _SEGMENT_INDEX) >> _SEGMENT_SHIFT));
 	gmap_idte_one(sto | _ASCE_TYPE_SEGMENT, raddr);
-	pgt = *ste & _SEGMENT_ENTRY_ORIGIN;
+	pgt = (unsigned long *)(*ste & _SEGMENT_ENTRY_ORIGIN);
 	*ste = _SEGMENT_ENTRY_EMPTY;
-	__gmap_unshadow_pgt(sg, raddr, __va(pgt));
+	__gmap_unshadow_pgt(sg, raddr, pgt);
 	/* Free page table */
-	page = phys_to_page(pgt);
+	page = pfn_to_page(__pa(pgt) >> PAGE_SHIFT);
 	list_del(&page->lru);
 	page_table_free_pgste(page);
 }
@@ -1365,19 +1358,19 @@ static void gmap_unshadow_pgt(struct gmap *sg, unsigned long raddr)
 static void __gmap_unshadow_sgt(struct gmap *sg, unsigned long raddr,
 				unsigned long *sgt)
 {
+	unsigned long *pgt;
 	struct page *page;
-	phys_addr_t pgt;
 	int i;
 
 	BUG_ON(!gmap_is_shadow(sg));
 	for (i = 0; i < _CRST_ENTRIES; i++, raddr += _SEGMENT_SIZE) {
 		if (!(sgt[i] & _SEGMENT_ENTRY_ORIGIN))
 			continue;
-		pgt = sgt[i] & _REGION_ENTRY_ORIGIN;
+		pgt = (unsigned long *)(sgt[i] & _REGION_ENTRY_ORIGIN);
 		sgt[i] = _SEGMENT_ENTRY_EMPTY;
-		__gmap_unshadow_pgt(sg, raddr, __va(pgt));
+		__gmap_unshadow_pgt(sg, raddr, pgt);
 		/* Free page table */
-		page = phys_to_page(pgt);
+		page = pfn_to_page(__pa(pgt) >> PAGE_SHIFT);
 		list_del(&page->lru);
 		page_table_free_pgste(page);
 	}
@@ -1392,8 +1385,7 @@ static void __gmap_unshadow_sgt(struct gmap *sg, unsigned long raddr,
  */
 static void gmap_unshadow_sgt(struct gmap *sg, unsigned long raddr)
 {
-	unsigned long r3o, *r3e;
-	phys_addr_t sgt;
+	unsigned long r3o, *r3e, *sgt;
 	struct page *page;
 
 	BUG_ON(!gmap_is_shadow(sg));
@@ -1402,12 +1394,12 @@ static void gmap_unshadow_sgt(struct gmap *sg, unsigned long raddr)
 		return;
 	gmap_call_notifier(sg, raddr, raddr + _REGION3_SIZE - 1);
 	r3o = (unsigned long) (r3e - ((raddr & _REGION3_INDEX) >> _REGION3_SHIFT));
-	gmap_idte_one(__pa(r3o) | _ASCE_TYPE_REGION3, raddr);
-	sgt = *r3e & _REGION_ENTRY_ORIGIN;
+	gmap_idte_one(r3o | _ASCE_TYPE_REGION3, raddr);
+	sgt = (unsigned long *)(*r3e & _REGION_ENTRY_ORIGIN);
 	*r3e = _REGION3_ENTRY_EMPTY;
-	__gmap_unshadow_sgt(sg, raddr, __va(sgt));
+	__gmap_unshadow_sgt(sg, raddr, sgt);
 	/* Free segment table */
-	page = phys_to_page(sgt);
+	page = pfn_to_page(__pa(sgt) >> PAGE_SHIFT);
 	list_del(&page->lru);
 	__free_pages(page, CRST_ALLOC_ORDER);
 }
@@ -1423,19 +1415,19 @@ static void gmap_unshadow_sgt(struct gmap *sg, unsigned long raddr)
 static void __gmap_unshadow_r3t(struct gmap *sg, unsigned long raddr,
 				unsigned long *r3t)
 {
+	unsigned long *sgt;
 	struct page *page;
-	phys_addr_t sgt;
 	int i;
 
 	BUG_ON(!gmap_is_shadow(sg));
 	for (i = 0; i < _CRST_ENTRIES; i++, raddr += _REGION3_SIZE) {
 		if (!(r3t[i] & _REGION_ENTRY_ORIGIN))
 			continue;
-		sgt = r3t[i] & _REGION_ENTRY_ORIGIN;
+		sgt = (unsigned long *)(r3t[i] & _REGION_ENTRY_ORIGIN);
 		r3t[i] = _REGION3_ENTRY_EMPTY;
-		__gmap_unshadow_sgt(sg, raddr, __va(sgt));
+		__gmap_unshadow_sgt(sg, raddr, sgt);
 		/* Free segment table */
-		page = phys_to_page(sgt);
+		page = pfn_to_page(__pa(sgt) >> PAGE_SHIFT);
 		list_del(&page->lru);
 		__free_pages(page, CRST_ALLOC_ORDER);
 	}
@@ -1450,8 +1442,7 @@ static void __gmap_unshadow_r3t(struct gmap *sg, unsigned long raddr,
  */
 static void gmap_unshadow_r3t(struct gmap *sg, unsigned long raddr)
 {
-	unsigned long r2o, *r2e;
-	phys_addr_t r3t;
+	unsigned long r2o, *r2e, *r3t;
 	struct page *page;
 
 	BUG_ON(!gmap_is_shadow(sg));
@@ -1460,12 +1451,12 @@ static void gmap_unshadow_r3t(struct gmap *sg, unsigned long raddr)
 		return;
 	gmap_call_notifier(sg, raddr, raddr + _REGION2_SIZE - 1);
 	r2o = (unsigned long) (r2e - ((raddr & _REGION2_INDEX) >> _REGION2_SHIFT));
-	gmap_idte_one(__pa(r2o) | _ASCE_TYPE_REGION2, raddr);
-	r3t = *r2e & _REGION_ENTRY_ORIGIN;
+	gmap_idte_one(r2o | _ASCE_TYPE_REGION2, raddr);
+	r3t = (unsigned long *)(*r2e & _REGION_ENTRY_ORIGIN);
 	*r2e = _REGION2_ENTRY_EMPTY;
-	__gmap_unshadow_r3t(sg, raddr, __va(r3t));
+	__gmap_unshadow_r3t(sg, raddr, r3t);
 	/* Free region 3 table */
-	page = phys_to_page(r3t);
+	page = pfn_to_page(__pa(r3t) >> PAGE_SHIFT);
 	list_del(&page->lru);
 	__free_pages(page, CRST_ALLOC_ORDER);
 }
@@ -1481,7 +1472,7 @@ static void gmap_unshadow_r3t(struct gmap *sg, unsigned long raddr)
 static void __gmap_unshadow_r2t(struct gmap *sg, unsigned long raddr,
 				unsigned long *r2t)
 {
-	phys_addr_t r3t;
+	unsigned long *r3t;
 	struct page *page;
 	int i;
 
@@ -1489,11 +1480,11 @@ static void __gmap_unshadow_r2t(struct gmap *sg, unsigned long raddr,
 	for (i = 0; i < _CRST_ENTRIES; i++, raddr += _REGION2_SIZE) {
 		if (!(r2t[i] & _REGION_ENTRY_ORIGIN))
 			continue;
-		r3t = r2t[i] & _REGION_ENTRY_ORIGIN;
+		r3t = (unsigned long *)(r2t[i] & _REGION_ENTRY_ORIGIN);
 		r2t[i] = _REGION2_ENTRY_EMPTY;
-		__gmap_unshadow_r3t(sg, raddr, __va(r3t));
+		__gmap_unshadow_r3t(sg, raddr, r3t);
 		/* Free region 3 table */
-		page = phys_to_page(r3t);
+		page = pfn_to_page(__pa(r3t) >> PAGE_SHIFT);
 		list_del(&page->lru);
 		__free_pages(page, CRST_ALLOC_ORDER);
 	}
@@ -1508,9 +1499,8 @@ static void __gmap_unshadow_r2t(struct gmap *sg, unsigned long raddr,
  */
 static void gmap_unshadow_r2t(struct gmap *sg, unsigned long raddr)
 {
-	unsigned long r1o, *r1e;
+	unsigned long r1o, *r1e, *r2t;
 	struct page *page;
-	phys_addr_t r2t;
 
 	BUG_ON(!gmap_is_shadow(sg));
 	r1e = gmap_table_walk(sg, raddr, 4); /* get region-1 pointer */
@@ -1518,12 +1508,12 @@ static void gmap_unshadow_r2t(struct gmap *sg, unsigned long raddr)
 		return;
 	gmap_call_notifier(sg, raddr, raddr + _REGION1_SIZE - 1);
 	r1o = (unsigned long) (r1e - ((raddr & _REGION1_INDEX) >> _REGION1_SHIFT));
-	gmap_idte_one(__pa(r1o) | _ASCE_TYPE_REGION1, raddr);
-	r2t = *r1e & _REGION_ENTRY_ORIGIN;
+	gmap_idte_one(r1o | _ASCE_TYPE_REGION1, raddr);
+	r2t = (unsigned long *)(*r1e & _REGION_ENTRY_ORIGIN);
 	*r1e = _REGION1_ENTRY_EMPTY;
-	__gmap_unshadow_r2t(sg, raddr, __va(r2t));
+	__gmap_unshadow_r2t(sg, raddr, r2t);
 	/* Free region 2 table */
-	page = phys_to_page(r2t);
+	page = pfn_to_page(__pa(r2t) >> PAGE_SHIFT);
 	list_del(&page->lru);
 	__free_pages(page, CRST_ALLOC_ORDER);
 }
@@ -1539,23 +1529,22 @@ static void gmap_unshadow_r2t(struct gmap *sg, unsigned long raddr)
 static void __gmap_unshadow_r1t(struct gmap *sg, unsigned long raddr,
 				unsigned long *r1t)
 {
-	unsigned long asce;
+	unsigned long asce, *r2t;
 	struct page *page;
-	phys_addr_t r2t;
 	int i;
 
 	BUG_ON(!gmap_is_shadow(sg));
-	asce = __pa(r1t) | _ASCE_TYPE_REGION1;
+	asce = (unsigned long) r1t | _ASCE_TYPE_REGION1;
 	for (i = 0; i < _CRST_ENTRIES; i++, raddr += _REGION1_SIZE) {
 		if (!(r1t[i] & _REGION_ENTRY_ORIGIN))
 			continue;
-		r2t = r1t[i] & _REGION_ENTRY_ORIGIN;
-		__gmap_unshadow_r2t(sg, raddr, __va(r2t));
+		r2t = (unsigned long *)(r1t[i] & _REGION_ENTRY_ORIGIN);
+		__gmap_unshadow_r2t(sg, raddr, r2t);
 		/* Clear entry and flush translation r1t -> r2t */
 		gmap_idte_one(asce, raddr);
 		r1t[i] = _REGION1_ENTRY_EMPTY;
 		/* Free region 2 table */
-		page = phys_to_page(r2t);
+		page = pfn_to_page(__pa(r2t) >> PAGE_SHIFT);
 		list_del(&page->lru);
 		__free_pages(page, CRST_ALLOC_ORDER);
 	}
@@ -1577,7 +1566,7 @@ static void gmap_unshadow(struct gmap *sg)
 	sg->removed = 1;
 	gmap_call_notifier(sg, 0, -1UL);
 	gmap_flush_tlb(sg);
-	table = __va(sg->asce & _ASCE_ORIGIN);
+	table = (unsigned long *)(sg->asce & _ASCE_ORIGIN);
 	switch (sg->asce & _ASCE_TYPE_MASK) {
 	case _ASCE_TYPE_REGION1:
 		__gmap_unshadow_r1t(sg, 0, table);
@@ -1752,8 +1741,7 @@ int gmap_shadow_r2t(struct gmap *sg, unsigned long saddr, unsigned long r2t,
 		    int fake)
 {
 	unsigned long raddr, origin, offset, len;
-	unsigned long *table;
-	phys_addr_t s_r2t;
+	unsigned long *s_r2t, *table;
 	struct page *page;
 	int rc;
 
@@ -1765,7 +1753,7 @@ int gmap_shadow_r2t(struct gmap *sg, unsigned long saddr, unsigned long r2t,
 	page->index = r2t & _REGION_ENTRY_ORIGIN;
 	if (fake)
 		page->index |= GMAP_SHADOW_FAKE_TABLE;
-	s_r2t = page_to_phys(page);
+	s_r2t = (unsigned long *) page_to_phys(page);
 	/* Install shadow region second table */
 	spin_lock(&sg->guest_table_lock);
 	table = gmap_table_walk(sg, saddr, 4); /* get region-1 pointer */
@@ -1780,9 +1768,9 @@ int gmap_shadow_r2t(struct gmap *sg, unsigned long saddr, unsigned long r2t,
 		rc = -EAGAIN;		/* Race with shadow */
 		goto out_free;
 	}
-	crst_table_init(__va(s_r2t), _REGION2_ENTRY_EMPTY);
+	crst_table_init(s_r2t, _REGION2_ENTRY_EMPTY);
 	/* mark as invalid as long as the parent table is not protected */
-	*table = s_r2t | _REGION_ENTRY_LENGTH |
+	*table = (unsigned long) s_r2t | _REGION_ENTRY_LENGTH |
 		 _REGION_ENTRY_TYPE_R1 | _REGION_ENTRY_INVALID;
 	if (sg->edat_level >= 1)
 		*table |= (r2t & _REGION_ENTRY_PROTECT);
@@ -1803,7 +1791,8 @@ int gmap_shadow_r2t(struct gmap *sg, unsigned long saddr, unsigned long r2t,
 	spin_lock(&sg->guest_table_lock);
 	if (!rc) {
 		table = gmap_table_walk(sg, saddr, 4);
-		if (!table || (*table & _REGION_ENTRY_ORIGIN) != s_r2t)
+		if (!table || (*table & _REGION_ENTRY_ORIGIN) !=
+			      (unsigned long) s_r2t)
 			rc = -EAGAIN;		/* Race with unshadow */
 		else
 			*table &= ~_REGION_ENTRY_INVALID;
@@ -1836,8 +1825,7 @@ int gmap_shadow_r3t(struct gmap *sg, unsigned long saddr, unsigned long r3t,
 		    int fake)
 {
 	unsigned long raddr, origin, offset, len;
-	unsigned long *table;
-	phys_addr_t s_r3t;
+	unsigned long *s_r3t, *table;
 	struct page *page;
 	int rc;
 
@@ -1849,7 +1837,7 @@ int gmap_shadow_r3t(struct gmap *sg, unsigned long saddr, unsigned long r3t,
 	page->index = r3t & _REGION_ENTRY_ORIGIN;
 	if (fake)
 		page->index |= GMAP_SHADOW_FAKE_TABLE;
-	s_r3t = page_to_phys(page);
+	s_r3t = (unsigned long *) page_to_phys(page);
 	/* Install shadow region second table */
 	spin_lock(&sg->guest_table_lock);
 	table = gmap_table_walk(sg, saddr, 3); /* get region-2 pointer */
@@ -1864,9 +1852,9 @@ int gmap_shadow_r3t(struct gmap *sg, unsigned long saddr, unsigned long r3t,
 		rc = -EAGAIN;		/* Race with shadow */
 		goto out_free;
 	}
-	crst_table_init(__va(s_r3t), _REGION3_ENTRY_EMPTY);
+	crst_table_init(s_r3t, _REGION3_ENTRY_EMPTY);
 	/* mark as invalid as long as the parent table is not protected */
-	*table = s_r3t | _REGION_ENTRY_LENGTH |
+	*table = (unsigned long) s_r3t | _REGION_ENTRY_LENGTH |
 		 _REGION_ENTRY_TYPE_R2 | _REGION_ENTRY_INVALID;
 	if (sg->edat_level >= 1)
 		*table |= (r3t & _REGION_ENTRY_PROTECT);
@@ -1887,7 +1875,8 @@ int gmap_shadow_r3t(struct gmap *sg, unsigned long saddr, unsigned long r3t,
 	spin_lock(&sg->guest_table_lock);
 	if (!rc) {
 		table = gmap_table_walk(sg, saddr, 3);
-		if (!table || (*table & _REGION_ENTRY_ORIGIN) != s_r3t)
+		if (!table || (*table & _REGION_ENTRY_ORIGIN) !=
+			      (unsigned long) s_r3t)
 			rc = -EAGAIN;		/* Race with unshadow */
 		else
 			*table &= ~_REGION_ENTRY_INVALID;
@@ -1920,8 +1909,7 @@ int gmap_shadow_sgt(struct gmap *sg, unsigned long saddr, unsigned long sgt,
 		    int fake)
 {
 	unsigned long raddr, origin, offset, len;
-	unsigned long *table;
-	phys_addr_t s_sgt;
+	unsigned long *s_sgt, *table;
 	struct page *page;
 	int rc;
 
@@ -1933,7 +1921,7 @@ int gmap_shadow_sgt(struct gmap *sg, unsigned long saddr, unsigned long sgt,
 	page->index = sgt & _REGION_ENTRY_ORIGIN;
 	if (fake)
 		page->index |= GMAP_SHADOW_FAKE_TABLE;
-	s_sgt = page_to_phys(page);
+	s_sgt = (unsigned long *) page_to_phys(page);
 	/* Install shadow region second table */
 	spin_lock(&sg->guest_table_lock);
 	table = gmap_table_walk(sg, saddr, 2); /* get region-3 pointer */
@@ -1948,9 +1936,9 @@ int gmap_shadow_sgt(struct gmap *sg, unsigned long saddr, unsigned long sgt,
 		rc = -EAGAIN;		/* Race with shadow */
 		goto out_free;
 	}
-	crst_table_init(__va(s_sgt), _SEGMENT_ENTRY_EMPTY);
+	crst_table_init(s_sgt, _SEGMENT_ENTRY_EMPTY);
 	/* mark as invalid as long as the parent table is not protected */
-	*table = s_sgt | _REGION_ENTRY_LENGTH |
+	*table = (unsigned long) s_sgt | _REGION_ENTRY_LENGTH |
 		 _REGION_ENTRY_TYPE_R3 | _REGION_ENTRY_INVALID;
 	if (sg->edat_level >= 1)
 		*table |= sgt & _REGION_ENTRY_PROTECT;
@@ -1971,7 +1959,8 @@ int gmap_shadow_sgt(struct gmap *sg, unsigned long saddr, unsigned long sgt,
 	spin_lock(&sg->guest_table_lock);
 	if (!rc) {
 		table = gmap_table_walk(sg, saddr, 2);
-		if (!table || (*table & _REGION_ENTRY_ORIGIN) != s_sgt)
+		if (!table || (*table & _REGION_ENTRY_ORIGIN) !=
+			      (unsigned long) s_sgt)
 			rc = -EAGAIN;		/* Race with unshadow */
 		else
 			*table &= ~_REGION_ENTRY_INVALID;
@@ -2044,9 +2033,8 @@ int gmap_shadow_pgt(struct gmap *sg, unsigned long saddr, unsigned long pgt,
 		    int fake)
 {
 	unsigned long raddr, origin;
-	unsigned long *table;
+	unsigned long *s_pgt, *table;
 	struct page *page;
-	phys_addr_t s_pgt;
 	int rc;
 
 	BUG_ON(!gmap_is_shadow(sg) || (pgt & _SEGMENT_ENTRY_LARGE));
@@ -2057,7 +2045,7 @@ int gmap_shadow_pgt(struct gmap *sg, unsigned long saddr, unsigned long pgt,
 	page->index = pgt & _SEGMENT_ENTRY_ORIGIN;
 	if (fake)
 		page->index |= GMAP_SHADOW_FAKE_TABLE;
-	s_pgt = page_to_phys(page);
+	s_pgt = (unsigned long *) page_to_phys(page);
 	/* Install shadow page table */
 	spin_lock(&sg->guest_table_lock);
 	table = gmap_table_walk(sg, saddr, 1); /* get segment pointer */
@@ -2090,7 +2078,8 @@ int gmap_shadow_pgt(struct gmap *sg, unsigned long saddr, unsigned long pgt,
 	spin_lock(&sg->guest_table_lock);
 	if (!rc) {
 		table = gmap_table_walk(sg, saddr, 1);
-		if (!table || (*table & _SEGMENT_ENTRY_ORIGIN) != s_pgt)
+		if (!table || (*table & _SEGMENT_ENTRY_ORIGIN) !=
+			      (unsigned long) s_pgt)
 			rc = -EAGAIN;		/* Race with unshadow */
 		else
 			*table &= ~_SEGMENT_ENTRY_INVALID;
@@ -2286,7 +2275,7 @@ EXPORT_SYMBOL_GPL(ptep_notify);
 static void pmdp_notify_gmap(struct gmap *gmap, pmd_t *pmdp,
 			     unsigned long gaddr)
 {
-	set_pmd(pmdp, clear_pmd_bit(*pmdp, __pgprot(_SEGMENT_ENTRY_GMAP_IN)));
+	pmd_val(*pmdp) &= ~_SEGMENT_ENTRY_GMAP_IN;
 	gmap_call_notifier(gmap, gaddr, gaddr + HPAGE_SIZE - 1);
 }
 
@@ -2305,7 +2294,7 @@ static void gmap_pmdp_xchg(struct gmap *gmap, pmd_t *pmdp, pmd_t new,
 {
 	gaddr &= HPAGE_MASK;
 	pmdp_notify_gmap(gmap, pmdp, gaddr);
-	new = clear_pmd_bit(new, __pgprot(_SEGMENT_ENTRY_GMAP_IN));
+	pmd_val(new) &= ~_SEGMENT_ENTRY_GMAP_IN;
 	if (MACHINE_HAS_TLB_GUEST)
 		__pmdp_idte(gaddr, (pmd_t *)pmdp, IDTE_GUEST_ASCE, gmap->asce,
 			    IDTE_GLOBAL);
@@ -2313,7 +2302,7 @@ static void gmap_pmdp_xchg(struct gmap *gmap, pmd_t *pmdp, pmd_t new,
 		__pmdp_idte(gaddr, (pmd_t *)pmdp, 0, 0, IDTE_GLOBAL);
 	else
 		__pmdp_csp(pmdp);
-	set_pmd(pmdp, new);
+	*pmdp = new;
 }
 
 static void gmap_pmdp_clear(struct mm_struct *mm, unsigned long vmaddr,
@@ -2335,7 +2324,7 @@ static void gmap_pmdp_clear(struct mm_struct *mm, unsigned long vmaddr,
 						   _SEGMENT_ENTRY_GMAP_UC));
 			if (purge)
 				__pmdp_csp(pmdp);
-			set_pmd(pmdp, __pmd(_SEGMENT_ENTRY_EMPTY));
+			pmd_val(*pmdp) = _SEGMENT_ENTRY_EMPTY;
 		}
 		spin_unlock(&gmap->guest_table_lock);
 	}
@@ -2458,7 +2447,7 @@ static bool gmap_test_and_clear_dirty_pmd(struct gmap *gmap, pmd_t *pmdp,
 		return false;
 
 	/* Clear UC indication and reset protection */
-	set_pmd(pmdp, clear_pmd_bit(*pmdp, __pgprot(_SEGMENT_ENTRY_GMAP_UC)));
+	pmd_val(*pmdp) &= ~_SEGMENT_ENTRY_GMAP_UC;
 	gmap_protect_pmd(gmap, gaddr, pmdp, PROT_READ, 0);
 	return true;
 }
@@ -2519,9 +2508,8 @@ static const struct mm_walk_ops thp_split_walk_ops = {
 static inline void thp_split_mm(struct mm_struct *mm)
 {
 	struct vm_area_struct *vma;
-	VMA_ITERATOR(vmi, mm, 0);
 
-	for_each_vma(vmi, vma) {
+	for (vma = mm->mmap; vma != NULL; vma = vma->vm_next) {
 		vma->vm_flags &= ~VM_HUGEPAGE;
 		vma->vm_flags |= VM_NOHUGEPAGE;
 		walk_page_vma(vma, &thp_split_walk_ops, NULL);
@@ -2589,9 +2577,8 @@ int gmap_mark_unmergeable(void)
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma;
 	int ret;
-	VMA_ITERATOR(vmi, mm, 0);
 
-	for_each_vma(vmi, vma) {
+	for (vma = mm->mmap; vma; vma = vma->vm_next) {
 		ret = ksm_madvise(vma, vma->vm_start, vma->vm_end,
 				  MADV_UNMERGEABLE, &vma->vm_flags);
 		if (ret)
@@ -2703,85 +2690,42 @@ void s390_reset_cmma(struct mm_struct *mm)
 }
 EXPORT_SYMBOL_GPL(s390_reset_cmma);
 
-#define GATHER_GET_PAGES 32
-
-struct reset_walk_state {
-	unsigned long next;
-	unsigned long count;
-	unsigned long pfns[GATHER_GET_PAGES];
-};
-
-static int s390_gather_pages(pte_t *ptep, unsigned long addr,
-			     unsigned long next, struct mm_walk *walk)
+/*
+ * make inaccessible pages accessible again
+ */
+static int __s390_reset_acc(pte_t *ptep, unsigned long addr,
+			    unsigned long next, struct mm_walk *walk)
 {
-	struct reset_walk_state *p = walk->private;
 	pte_t pte = READ_ONCE(*ptep);
 
-	if (pte_present(pte)) {
-		/* we have a reference from the mapping, take an extra one */
-		get_page(phys_to_page(pte_val(pte)));
-		p->pfns[p->count] = phys_to_pfn(pte_val(pte));
-		p->next = next;
-		p->count++;
-	}
-	return p->count >= GATHER_GET_PAGES;
-}
-
-static const struct mm_walk_ops gather_pages_ops = {
-	.pte_entry = s390_gather_pages,
-};
-
-/*
- * Call the Destroy secure page UVC on each page in the given array of PFNs.
- * Each page needs to have an extra reference, which will be released here.
- */
-void s390_uv_destroy_pfns(unsigned long count, unsigned long *pfns)
-{
-	unsigned long i;
-
-	for (i = 0; i < count; i++) {
-		/* we always have an extra reference */
-		uv_destroy_owned_page(pfn_to_phys(pfns[i]));
-		/* get rid of the extra reference */
-		put_page(pfn_to_page(pfns[i]));
-		cond_resched();
-	}
-}
-EXPORT_SYMBOL_GPL(s390_uv_destroy_pfns);
-
-/**
- * __s390_uv_destroy_range - Call the destroy secure page UVC on each page
- * in the given range of the given address space.
- * @mm: the mm to operate on
- * @start: the start of the range
- * @end: the end of the range
- * @interruptible: if not 0, stop when a fatal signal is received
- *
- * Walk the given range of the given address space and call the destroy
- * secure page UVC on each page. Optionally exit early if a fatal signal is
- * pending.
- *
- * Return: 0 on success, -EINTR if the function stopped before completing
- */
-int __s390_uv_destroy_range(struct mm_struct *mm, unsigned long start,
-			    unsigned long end, bool interruptible)
-{
-	struct reset_walk_state state = { .next = start };
-	int r = 1;
-
-	while (r > 0) {
-		state.count = 0;
-		mmap_read_lock(mm);
-		r = walk_page_range(mm, state.next, end, &gather_pages_ops, &state);
-		mmap_read_unlock(mm);
-		cond_resched();
-		s390_uv_destroy_pfns(state.count, state.pfns);
-		if (interruptible && fatal_signal_pending(current))
-			return -EINTR;
-	}
+	if (pte_present(pte))
+		WARN_ON_ONCE(uv_destroy_page(pte_val(pte) & PAGE_MASK));
 	return 0;
 }
-EXPORT_SYMBOL_GPL(__s390_uv_destroy_range);
+
+static const struct mm_walk_ops reset_acc_walk_ops = {
+	.pte_entry		= __s390_reset_acc,
+};
+
+#include <linux/sched/mm.h>
+void s390_reset_acc(struct mm_struct *mm)
+{
+	if (!mm_is_protected(mm))
+		return;
+	/*
+	 * we might be called during
+	 * reset:                             we walk the pages and clear
+	 * close of all kvm file descriptors: we walk the pages and clear
+	 * exit of process on fd closure:     vma already gone, do nothing
+	 */
+	if (!mmget_not_zero(mm))
+		return;
+	mmap_read_lock(mm);
+	walk_page_range(mm, 0, TASK_SIZE, &reset_acc_walk_ops, NULL);
+	mmap_read_unlock(mm);
+	mmput(mm);
+}
+EXPORT_SYMBOL_GPL(s390_reset_acc);
 
 /**
  * s390_unlist_old_asce - Remove the topmost level of page tables from the

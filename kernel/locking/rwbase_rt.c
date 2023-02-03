@@ -59,7 +59,8 @@ static __always_inline int rwbase_read_trylock(struct rwbase_rt *rwb)
 	 * set.
 	 */
 	for (r = atomic_read(&rwb->readers); r < 0;) {
-		if (likely(atomic_try_cmpxchg_acquire(&rwb->readers, &r, r + 1)))
+		/* Fully-ordered if cmpxchg() succeeds, provides ACQUIRE */
+		if (likely(atomic_try_cmpxchg(&rwb->readers, &r, r + 1)))
 			return 1;
 	}
 	return 0;
@@ -112,8 +113,6 @@ static int __sched __rwbase_read_lock(struct rwbase_rt *rwb,
 	 * Reader2 to call up_read(), which might be unbound.
 	 */
 
-	trace_contention_begin(rwb, LCB_F_RT | LCB_F_READ);
-
 	/*
 	 * For rwlocks this returns 0 unconditionally, so the below
 	 * !ret conditionals are optimized out.
@@ -132,8 +131,6 @@ static int __sched __rwbase_read_lock(struct rwbase_rt *rwb,
 	raw_spin_unlock_irq(&rtm->wait_lock);
 	if (!ret)
 		rwbase_rtmutex_unlock(rtm);
-
-	trace_contention_end(rwb, ret);
 	return ret;
 }
 
@@ -151,7 +148,6 @@ static void __sched __rwbase_read_unlock(struct rwbase_rt *rwb,
 {
 	struct rt_mutex_base *rtm = &rwb->rtmutex;
 	struct task_struct *owner;
-	DEFINE_RT_WAKE_Q(wqh);
 
 	raw_spin_lock_irq(&rtm->wait_lock);
 	/*
@@ -162,12 +158,9 @@ static void __sched __rwbase_read_unlock(struct rwbase_rt *rwb,
 	 */
 	owner = rt_mutex_owner(rtm);
 	if (owner)
-		rt_mutex_wake_q_add_task(&wqh, owner, state);
+		wake_up_state(owner, state);
 
-	/* Pairs with the preempt_enable in rt_mutex_wake_up_q() */
-	preempt_disable();
 	raw_spin_unlock_irq(&rtm->wait_lock);
-	rt_mutex_wake_up_q(&wqh);
 }
 
 static __always_inline void rwbase_read_unlock(struct rwbase_rt *rwb,
@@ -190,7 +183,7 @@ static inline void __rwbase_write_unlock(struct rwbase_rt *rwb, int bias,
 
 	/*
 	 * _release() is needed in case that reader is in fast path, pairing
-	 * with atomic_try_cmpxchg_acquire() in rwbase_read_trylock().
+	 * with atomic_try_cmpxchg() in rwbase_read_trylock(), provides RELEASE
 	 */
 	(void)atomic_add_return_release(READER_BIAS - bias, &rwb->readers);
 	raw_spin_unlock_irqrestore(&rtm->wait_lock, flags);
@@ -251,13 +244,11 @@ static int __sched rwbase_write_lock(struct rwbase_rt *rwb,
 		goto out_unlock;
 
 	rwbase_set_and_save_current_state(state);
-	trace_contention_begin(rwb, LCB_F_RT | LCB_F_WRITE);
 	for (;;) {
 		/* Optimized out for rwlocks */
 		if (rwbase_signal_pending_state(state, current)) {
 			rwbase_restore_current_state();
 			__rwbase_write_unlock(rwb, 0, flags);
-			trace_contention_end(rwb, -EINTR);
 			return -EINTR;
 		}
 
@@ -271,7 +262,6 @@ static int __sched rwbase_write_lock(struct rwbase_rt *rwb,
 		set_current_state(state);
 	}
 	rwbase_restore_current_state();
-	trace_contention_end(rwb, 0);
 
 out_unlock:
 	raw_spin_unlock_irqrestore(&rtm->wait_lock, flags);

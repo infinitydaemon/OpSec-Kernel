@@ -26,7 +26,7 @@
 static unsigned char evmkey[MAX_KEY_SIZE];
 static const int evmkey_len = MAX_KEY_SIZE;
 
-static struct crypto_shash *hmac_tfm;
+struct crypto_shash *hmac_tfm;
 static struct crypto_shash *evm_tfm[HASH_ALGO__LAST];
 
 static DEFINE_MUTEX(mutex);
@@ -335,15 +335,14 @@ static int evm_is_immutable(struct dentry *dentry, struct inode *inode)
 				(char **)&xattr_data, 0, GFP_NOFS);
 	if (rc <= 0) {
 		if (rc == -ENODATA)
-			rc = 0;
-		goto out;
+			return 0;
+		return rc;
 	}
 	if (xattr_data->type == EVM_XATTR_PORTABLE_DIGSIG)
 		rc = 1;
 	else
 		rc = 0;
 
-out:
 	kfree(xattr_data);
 	return rc;
 }

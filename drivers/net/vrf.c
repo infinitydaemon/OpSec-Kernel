@@ -34,7 +34,6 @@
 #include <net/addrconf.h>
 #include <net/l3mdev.h>
 #include <net/fib_rules.h>
-#include <net/sch_generic.h>
 #include <net/netns/generic.h>
 #include <net/netfilter/nf_conntrack.h>
 
@@ -159,13 +158,13 @@ static void vrf_get_stats64(struct net_device *dev,
 
 		dstats = per_cpu_ptr(dev->dstats, i);
 		do {
-			start = u64_stats_fetch_begin(&dstats->syncp);
+			start = u64_stats_fetch_begin_irq(&dstats->syncp);
 			tbytes = dstats->tx_bytes;
 			tpkts = dstats->tx_pkts;
 			tdrops = dstats->tx_drps;
 			rbytes = dstats->rx_bytes;
 			rpkts = dstats->rx_pkts;
-		} while (u64_stats_fetch_retry(&dstats->syncp, start));
+		} while (u64_stats_fetch_retry_irq(&dstats->syncp, start));
 		stats->tx_bytes += tbytes;
 		stats->tx_packets += tpkts;
 		stats->tx_dropped += tdrops;
@@ -418,7 +417,7 @@ static int vrf_local_xmit(struct sk_buff *skb, struct net_device *dev,
 
 	skb->protocol = eth_type_trans(skb, dev);
 
-	if (likely(__netif_rx(skb) == NET_RX_SUCCESS))
+	if (likely(netif_rx(skb) == NET_RX_SUCCESS))
 		vrf_rx_stats(dev, len);
 	else
 		this_cpu_inc(dev->dstats->rx_drps);
@@ -472,13 +471,14 @@ static netdev_tx_t vrf_process_v6_outbound(struct sk_buff *skb,
 
 	memset(&fl6, 0, sizeof(fl6));
 	/* needed to match OIF rule */
-	fl6.flowi6_l3mdev = dev->ifindex;
+	fl6.flowi6_oif = dev->ifindex;
 	fl6.flowi6_iif = LOOPBACK_IFINDEX;
 	fl6.daddr = iph->daddr;
 	fl6.saddr = iph->saddr;
 	fl6.flowlabel = ip6_flowinfo(iph);
 	fl6.flowi6_mark = skb->mark;
 	fl6.flowi6_proto = iph->nexthdr;
+	fl6.flowi6_flags = FLOWI_FLAG_SKIP_NH_OIF;
 
 	dst = ip6_dst_lookup_flow(net, NULL, &fl6, NULL);
 	if (IS_ERR(dst) || dst == dst_null)
@@ -550,10 +550,10 @@ static netdev_tx_t vrf_process_v4_outbound(struct sk_buff *skb,
 
 	memset(&fl4, 0, sizeof(fl4));
 	/* needed to match OIF rule */
-	fl4.flowi4_l3mdev = vrf_dev->ifindex;
+	fl4.flowi4_oif = vrf_dev->ifindex;
 	fl4.flowi4_iif = LOOPBACK_IFINDEX;
 	fl4.flowi4_tos = RT_TOS(ip4h->tos);
-	fl4.flowi4_flags = FLOWI_FLAG_ANYSRC;
+	fl4.flowi4_flags = FLOWI_FLAG_ANYSRC | FLOWI_FLAG_SKIP_NH_OIF;
 	fl4.flowi4_proto = ip4h->protocol;
 	fl4.daddr = ip4h->daddr;
 	fl4.saddr = ip4h->saddr;
@@ -814,9 +814,9 @@ static void vrf_rt6_release(struct net_device *dev, struct net_vrf *vrf)
 	 */
 	if (rt6) {
 		dst = &rt6->dst;
-		netdev_ref_replace(dst->dev, net->loopback_dev,
-				   &dst->dev_tracker, GFP_KERNEL);
+		dev_put(dst->dev);
 		dst->dev = net->loopback_dev;
+		dev_hold(dst->dev);
 		dst_release(dst);
 	}
 }
@@ -1061,9 +1061,9 @@ static void vrf_rtable_release(struct net_device *dev, struct net_vrf *vrf)
 	 */
 	if (rth) {
 		dst = &rth->dst;
-		netdev_ref_replace(dst->dev, net->loopback_dev,
-				   &dst->dev_tracker, GFP_KERNEL);
+		dev_put(dst->dev);
 		dst->dev = net->loopback_dev;
+		dev_hold(dst->dev);
 		dst_release(dst);
 	}
 }
@@ -1077,7 +1077,7 @@ static int vrf_rtable_create(struct net_device *dev)
 		return -ENOMEM;
 
 	/* create a dst for routing packets out through a VRF device */
-	rth = rt_dst_alloc(dev, 0, RTN_UNICAST, 1);
+	rth = rt_dst_alloc(dev, 0, RTN_UNICAST, 1, 1);
 	if (!rth)
 		return -ENOMEM;
 
@@ -1385,8 +1385,8 @@ static struct sk_buff *vrf_ip6_rcv(struct net_device *vrf_dev,
 
 	/* loopback, multicast & non-ND link-local traffic; do not push through
 	 * packet taps again. Reset pkt_type for upper layers to process skb.
-	 * For non-loopback strict packets, determine the dst using the original
-	 * ifindex.
+	 * For strict packets with a source LLA, determine the dst using the
+	 * original ifindex.
 	 */
 	if (skb->pkt_type == PACKET_LOOPBACK || (need_strict && !is_ndisc)) {
 		skb->dev = vrf_dev;
@@ -1395,7 +1395,7 @@ static struct sk_buff *vrf_ip6_rcv(struct net_device *vrf_dev,
 
 		if (skb->pkt_type == PACKET_LOOPBACK)
 			skb->pkt_type = PACKET_HOST;
-		else
+		else if (ipv6_addr_type(&ipv6_hdr(skb)->saddr) & IPV6_ADDR_LINKLOCAL)
 			vrf_ip6_input_dst(skb, vrf_dev, orig_iif);
 
 		goto out;
@@ -1541,8 +1541,8 @@ static const struct l3mdev_ops vrf_l3mdev_ops = {
 static void vrf_get_drvinfo(struct net_device *dev,
 			    struct ethtool_drvinfo *info)
 {
-	strscpy(info->driver, DRV_NAME, sizeof(info->driver));
-	strscpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
 }
 
 static const struct ethtool_ops vrf_ethtool_ops = {

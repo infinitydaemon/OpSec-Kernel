@@ -906,11 +906,17 @@ static int lantiq_ssc_probe(struct platform_device *pdev)
 	struct spi_master *master;
 	struct lantiq_ssc_spi *spi;
 	const struct lantiq_ssc_hwcfg *hwcfg;
+	const struct of_device_id *match;
 	u32 id, supports_dma, revision;
 	unsigned int num_cs;
 	int err;
 
-	hwcfg = of_device_get_match_data(dev);
+	match = of_match_device(lantiq_ssc_match, dev);
+	if (!match) {
+		dev_err(dev, "no device match\n");
+		return -EINVAL;
+	}
+	hwcfg = match->data;
 
 	master = spi_alloc_master(dev, sizeof(struct lantiq_ssc_spi));
 	if (!master)

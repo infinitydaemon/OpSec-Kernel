@@ -8,7 +8,6 @@
 #include <linux/uaccess.h>
 #include <linux/vmalloc.h>
 #include <linux/xarray.h>
-#include <net/addrconf.h>
 
 #include <rdma/iw_cm.h>
 #include <rdma/ib_verbs.h>
@@ -132,8 +131,8 @@ int siw_query_device(struct ib_device *base_dev, struct ib_device_attr *attr,
 
 	/* Revisit atomic caps if RFC 7306 gets supported */
 	attr->atomic_cap = 0;
-	attr->device_cap_flags = IB_DEVICE_MEM_MGT_EXTENSIONS;
-	attr->kernel_cap_flags = IBK_ALLOW_USER_UNREG;
+	attr->device_cap_flags =
+		IB_DEVICE_MEM_MGT_EXTENSIONS | IB_DEVICE_ALLOW_USER_UNREG;
 	attr->max_cq = sdev->attrs.max_cq;
 	attr->max_cqe = sdev->attrs.max_cqe;
 	attr->max_fast_reg_page_list_len = SIW_MAX_SGE_PBL;
@@ -156,8 +155,7 @@ int siw_query_device(struct ib_device *base_dev, struct ib_device_attr *attr,
 	attr->vendor_id = SIW_VENDOR_ID;
 	attr->vendor_part_id = sdev->vendor_part_id;
 
-	addrconf_addr_eui48((u8 *)&attr->sys_image_guid,
-			    sdev->netdev->dev_addr);
+	memcpy(&attr->sys_image_guid, sdev->netdev->dev_addr, 6);
 
 	return 0;
 }
@@ -666,7 +664,7 @@ static int siw_copy_inline_sgl(const struct ib_send_wr *core_wr,
 		kbuf += core_sge->length;
 		core_sge++;
 	}
-	sqe->sge[0].length = max(bytes, 0);
+	sqe->sge[0].length = bytes > 0 ? bytes : 0;
 	sqe->num_sge = bytes > 0 ? 1 : 0;
 
 	return bytes;
@@ -1202,7 +1200,7 @@ int siw_create_cq(struct ib_cq *base_cq, const struct ib_cq_init_attr *attr,
 err_out:
 	siw_dbg(base_cq->device, "CQ creation failed: %d", rv);
 
-	if (cq->queue) {
+	if (cq && cq->queue) {
 		struct siw_ucontext *ctx =
 			rdma_udata_to_drv_context(udata, struct siw_ucontext,
 						  base_ucontext);

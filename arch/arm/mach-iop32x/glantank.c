@@ -205,7 +205,6 @@ static void __init glantank_init_machine(void)
 MACHINE_START(GLANTANK, "GLAN Tank")
 	/* Maintainer: Lennert Buytenhek <buytenh@wantstofly.org> */
 	.atag_offset	= 0x100,
-	.nr_irqs	= IOP32X_NR_IRQS,
 	.map_io		= glantank_map_io,
 	.init_irq	= iop32x_init_irq,
 	.init_time	= glantank_timer_init,

@@ -26,20 +26,23 @@ static void __dma_tx_complete(void *param)
 
 	dma->tx_running = 0;
 
-	uart_xmit_advance(&p->port, dma->tx_size);
+	xmit->tail += dma->tx_size;
+	xmit->tail &= UART_XMIT_SIZE - 1;
+	p->port.icount.tx += dma->tx_size;
 
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&p->port);
 
 	ret = serial8250_tx_dma(p);
-	if (ret || !dma->tx_running)
+	if (ret)
 		serial8250_set_THRI(p);
 
 	spin_unlock_irqrestore(&p->port.lock, flags);
 }
 
-static void __dma_rx_complete(struct uart_8250_port *p)
+static void __dma_rx_complete(void *param)
 {
+	struct uart_8250_port	*p = param;
 	struct uart_8250_dma	*dma = p->dma;
 	struct tty_port		*tty_port = &p->port.state->port;
 	struct dma_tx_state	state;
@@ -54,20 +57,6 @@ static void __dma_rx_complete(struct uart_8250_port *p)
 	p->port.icount.rx += count;
 
 	tty_flip_buffer_push(tty_port);
-}
-
-static void dma_rx_complete(void *param)
-{
-	struct uart_8250_port *p = param;
-	struct uart_8250_dma *dma = p->dma;
-	unsigned long flags;
-
-	__dma_rx_complete(p);
-
-	spin_lock_irqsave(&p->port.lock, flags);
-	if (!dma->rx_running && (serial_lsr_in(p) & UART_LSR_DR))
-		p->dma->rx_dma(p);
-	spin_unlock_irqrestore(&p->port.lock, flags);
 }
 
 int serial8250_tx_dma(struct uart_8250_port *p)
@@ -91,6 +80,7 @@ int serial8250_tx_dma(struct uart_8250_port *p)
 
 	if (uart_tx_stopped(&p->port) || uart_circ_empty(xmit)) {
 		/* We have been called from __dma_tx_complete() */
+		serial8250_rpm_put_tx(p);
 		return 0;
 	}
 
@@ -117,9 +107,10 @@ int serial8250_tx_dma(struct uart_8250_port *p)
 				   UART_XMIT_SIZE, DMA_TO_DEVICE);
 
 	dma_async_issue_pending(dma->txchan);
-	serial8250_clear_THRI(p);
-	dma->tx_err = 0;
-
+	if (dma->tx_err) {
+		dma->tx_err = 0;
+		serial8250_clear_THRI(p);
+	}
 	return 0;
 err:
 	dma->tx_err = 1;
@@ -143,7 +134,7 @@ int serial8250_rx_dma(struct uart_8250_port *p)
 		return -EBUSY;
 
 	dma->rx_running = 1;
-	desc->callback = dma_rx_complete;
+	desc->callback = __dma_rx_complete;
 	desc->callback_param = p;
 
 	dma->rx_cookie = dmaengine_submit(desc);

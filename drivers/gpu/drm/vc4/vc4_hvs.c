@@ -73,10 +73,10 @@ void vc4_hvs_dump_state(struct vc4_hvs *hvs)
 	struct drm_printer p = drm_info_printer(&hvs->pdev->dev);
 	int idx, i;
 
+	drm_print_regset32(&p, &hvs->regset);
+
 	if (!drm_dev_enter(drm, &idx))
 		return;
-
-	drm_print_regset32(&p, &hvs->regset);
 
 	DRM_INFO("HVS ctx:\n");
 	for (i = 0; i < 64; i += 4) {
@@ -322,8 +322,7 @@ static void vc4_hvs_lut_load(struct vc4_hvs *hvs,
 static void vc4_hvs_update_gamma_lut(struct vc4_hvs *hvs,
 				     struct vc4_crtc *vc4_crtc)
 {
-	struct drm_crtc *crtc = &vc4_crtc->base;
-	struct drm_crtc_state *crtc_state = crtc->state;
+	struct drm_crtc_state *crtc_state = vc4_crtc->base.state;
 	struct drm_color_lut *lut = crtc_state->gamma_lut->data;
 	u32 length = drm_color_lut_size(crtc_state->gamma_lut);
 	u32 i;
@@ -348,8 +347,7 @@ static void vc5_hvs_write_gamma_entry(struct vc4_hvs *hvs,
 static void vc5_hvs_lut_load(struct vc4_hvs *hvs,
 			     struct vc4_crtc *vc4_crtc)
 {
-	struct drm_crtc *crtc = &vc4_crtc->base;
-	struct drm_crtc_state *crtc_state = crtc->state;
+	struct drm_crtc_state *crtc_state = vc4_crtc->base.state;
 	struct vc4_crtc_state *vc4_state = to_vc4_crtc_state(crtc_state);
 	u32 i;
 	u32 offset = SCALER5_DSPGAMMA_START +
@@ -452,8 +450,6 @@ vc4_hvs_alloc_dlist_entry(struct vc4_hvs *hvs,
 	if (!alloc)
 		return ERR_PTR(-ENOMEM);
 
-	INIT_LIST_HEAD(&alloc->node);
-
 	spin_lock_irqsave(&hvs->mm_lock, flags);
 	ret = drm_mm_insert_node(&hvs->dlist_mm, &alloc->mm_node,
 				 dlist_count);
@@ -464,18 +460,6 @@ vc4_hvs_alloc_dlist_entry(struct vc4_hvs *hvs,
 	alloc->channel = channel;
 
 	return alloc;
-}
-
-static void vc4_hvs_free_dlist_entry_locked(struct vc4_hvs *hvs,
-					    struct vc4_hvs_dlist_allocation *alloc)
-{
-	lockdep_assert_held(&hvs->mm_lock);
-
-	if (!list_empty(&alloc->node))
-		list_del(&alloc->node);
-
-	drm_mm_remove_node(&alloc->mm_node);
-	kfree(alloc);
 }
 
 void vc4_hvs_mark_dlist_entry_stale(struct vc4_hvs *hvs,
@@ -489,18 +473,6 @@ void vc4_hvs_mark_dlist_entry_stale(struct vc4_hvs *hvs,
 
 	if (!drm_mm_node_allocated(&alloc->mm_node))
 		return;
-
-	/*
-	 * Kunit tests run with a mock device and we consider any hardware
-	 * access a test failure. Let's free the dlist allocation right away if
-	 * we're running under kunit, we won't risk a dlist corruption anyway.
-	 */
-	if (kunit_get_current_test()) {
-		spin_lock_irqsave(&hvs->mm_lock, flags);
-		vc4_hvs_free_dlist_entry_locked(hvs, alloc);
-		spin_unlock_irqrestore(&hvs->mm_lock, flags);
-		return;
-	}
 
 	frcnt = vc4_hvs_get_fifo_frame_count(hvs, alloc->channel);
 	alloc->target_frame_count = (frcnt + 1) & ((1 << 6) - 1);
@@ -577,7 +549,9 @@ static void vc4_hvs_dlist_free_work(struct work_struct *work)
 		if (!vc4_hvs_frcnt_lte(cur->target_frame_count, frcnt))
 			continue;
 
-		vc4_hvs_free_dlist_entry_locked(hvs, cur);
+		list_del(&cur->node);
+		drm_mm_remove_node(&cur->mm_node);
+		kfree(cur);
 	}
 	spin_unlock_irqrestore(&hvs->mm_lock, flags);
 }
@@ -950,8 +924,10 @@ void vc4_hvs_atomic_flush(struct drm_crtc *crtc,
 		return;
 	}
 
-	if (vc4_state->assigned_channel == VC4_HVS_CHANNEL_DISABLED)
+	if (vc4_state->assigned_channel == VC4_HVS_CHANNEL_DISABLED) {
+		drm_dev_exit(idx);
 		return;
+	}
 
 	if (debug_dump_regs) {
 		DRM_INFO("CRTC %d HVS before:\n", drm_crtc_index(crtc));
@@ -1162,19 +1138,14 @@ int vc4_hvs_debugfs_init(struct drm_minor *minor)
 	if (!vc4->hvs)
 		return -ENODEV;
 
-	if (!vc4->is_vc5) {
+	if (!vc4->is_vc5)
 		debugfs_create_bool("hvs_load_tracker", S_IRUGO | S_IWUSR,
 				    minor->debugfs_root,
 				    &vc4->load_tracker_enabled);
 
-		vc4_debugfs_add_file(minor, "hvs_gamma", vc5_hvs_debugfs_gamma,
-				     NULL);
-	}
-
-	ret = vc4_debugfs_add_file(minor, "hvs_dlists",
-				   vc4_hvs_debugfs_dlist, NULL);
-	if (ret)
-		return ret;
+	if (vc4->is_vc5)
+		vc4_debugfs_add_file(minor, "hvs_gamma",
+				     vc5_hvs_debugfs_gamma, NULL);
 
 	ret = vc4_debugfs_add_file(minor, "hvs_underrun",
 				   vc4_hvs_debugfs_underrun, NULL);
@@ -1186,50 +1157,12 @@ int vc4_hvs_debugfs_init(struct drm_minor *minor)
 	if (ret)
 		return ret;
 
+	ret = vc4_debugfs_add_file(minor, "hvs_dlists",
+				   vc4_hvs_debugfs_dlist, NULL);
+	if (ret)
+		return ret;
+
 	return 0;
-}
-
-struct vc4_hvs *__vc4_hvs_alloc(struct vc4_dev *vc4, struct platform_device *pdev)
-{
-	struct drm_device *drm = &vc4->base;
-	struct vc4_hvs *hvs;
-
-	hvs = drmm_kzalloc(drm, sizeof(*hvs), GFP_KERNEL);
-	if (!hvs)
-		return ERR_PTR(-ENOMEM);
-
-	hvs->vc4 = vc4;
-	hvs->pdev = pdev;
-
-	spin_lock_init(&hvs->mm_lock);
-
-	INIT_LIST_HEAD(&hvs->stale_dlist_entries);
-	INIT_WORK(&hvs->free_dlist_work, vc4_hvs_dlist_free_work);
-
-	/* Set up the HVS display list memory manager.  We never
-	 * overwrite the setup from the bootloader (just 128b out of
-	 * our 16K), since we don't want to scramble the screen when
-	 * transitioning from the firmware's boot setup to runtime.
-	 */
-	drm_mm_init(&hvs->dlist_mm,
-		    HVS_BOOTLOADER_DLIST_END,
-		    (SCALER_DLIST_SIZE >> 2) - HVS_BOOTLOADER_DLIST_END);
-
-	/* Set up the HVS LBM memory manager.  We could have some more
-	 * complicated data structure that allowed reuse of LBM areas
-	 * between planes when they don't overlap on the screen, but
-	 * for now we just allocate globally.
-	 */
-	if (!vc4->is_vc5)
-		/* 48k words of 2x12-bit pixels */
-		drm_mm_init(&hvs->lbm_mm, 0, 48 * 1024);
-	else
-		/* 60k words of 4x12-bit pixels */
-		drm_mm_init(&hvs->lbm_mm, 0, 60 * 1024);
-
-	vc4->hvs = hvs;
-
-	return hvs;
 }
 
 static int vc4_hvs_bind(struct device *dev, struct device *master, void *data)
@@ -1242,9 +1175,11 @@ static int vc4_hvs_bind(struct device *dev, struct device *master, void *data)
 	u32 dispctrl;
 	u32 reg, top;
 
-	hvs = __vc4_hvs_alloc(vc4, NULL);
-	if (IS_ERR(hvs))
-		return PTR_ERR(hvs);
+	hvs = drmm_kzalloc(drm, sizeof(*hvs), GFP_KERNEL);
+	if (!hvs)
+		return -ENOMEM;
+	hvs->vc4 = vc4;
+	hvs->pdev = pdev;
 
 	hvs->regs = vc4_ioremap_regs(pdev, 0);
 	if (IS_ERR(hvs->regs))
@@ -1297,6 +1232,31 @@ static int vc4_hvs_bind(struct device *dev, struct device *master, void *data)
 	else
 		hvs->dlist = hvs->regs + SCALER5_DLIST_START;
 
+	spin_lock_init(&hvs->mm_lock);
+	INIT_LIST_HEAD(&hvs->stale_dlist_entries);
+	INIT_WORK(&hvs->free_dlist_work, vc4_hvs_dlist_free_work);
+
+	/* Set up the HVS display list memory manager.  We never
+	 * overwrite the setup from the bootloader (just 128b out of
+	 * our 16K), since we don't want to scramble the screen when
+	 * transitioning from the firmware's boot setup to runtime.
+	 */
+	drm_mm_init(&hvs->dlist_mm,
+		    HVS_BOOTLOADER_DLIST_END,
+		    (SCALER_DLIST_SIZE >> 2) - HVS_BOOTLOADER_DLIST_END);
+
+	/* Set up the HVS LBM memory manager.  We could have some more
+	 * complicated data structure that allowed reuse of LBM areas
+	 * between planes when they don't overlap on the screen, but
+	 * for now we just allocate globally.
+	 */
+	if (!vc4->is_vc5)
+		/* 48k words of 2x12-bit pixels */
+		drm_mm_init(&hvs->lbm_mm, 0, 48 * 1024);
+	else
+		/* 60k words of 4x12-bit pixels */
+		drm_mm_init(&hvs->lbm_mm, 0, 60 * 1024);
+
 	/* Upload filter kernels.  We only have the one for now, so we
 	 * keep it around for the lifetime of the driver.
 	 */
@@ -1305,6 +1265,8 @@ static int vc4_hvs_bind(struct device *dev, struct device *master, void *data)
 					   mitchell_netravali_1_3_1_3_kernel);
 	if (ret)
 		return ret;
+
+	vc4->hvs = hvs;
 
 	reg = HVS_READ(SCALER_DISPECTRL);
 	reg &= ~SCALER_DISPECTRL_DSP2_MUX_MASK;

@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: MIT */
 #ifndef __NVKM_DISP_CONN_H__
 #define __NVKM_DISP_CONN_H__
-#include "priv.h"
+#include <engine/disp.h>
 
+#include <core/notify.h>
 #include <subdev/bios.h>
 #include <subdev/bios/conn.h>
 
@@ -11,9 +12,9 @@ struct nvkm_conn {
 	int index;
 	struct nvbios_connE info;
 
-	struct list_head head;
+	struct nvkm_notify hpd;
 
-	struct nvkm_object object;
+	struct list_head head;
 };
 
 int nvkm_conn_new(struct nvkm_disp *, int index, struct nvbios_connE *,

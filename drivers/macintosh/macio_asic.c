@@ -20,14 +20,13 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/slab.h>
-#include <linux/of.h>
 #include <linux/of_address.h>
-#include <linux/of_device.h>
 #include <linux/of_irq.h>
 
 #include <asm/machdep.h>
 #include <asm/macio.h>
 #include <asm/pmac_feature.h>
+#include <asm/prom.h>
 
 #undef DEBUG
 
@@ -473,7 +472,7 @@ static void macio_pci_add_devices(struct macio_chip *chip)
 	root_res = &rdev->resource[0];
 
 	/* First scan 1st level */
-	for_each_child_of_node(pnode, np) {
+	for (np = NULL; (np = of_get_next_child(pnode, np)) != NULL;) {
 		if (macio_skip_device(np))
 			continue;
 		of_node_get(np);
@@ -490,7 +489,7 @@ static void macio_pci_add_devices(struct macio_chip *chip)
 	/* Add media bay devices if any */
 	if (mbdev) {
 		pnode = mbdev->ofdev.dev.of_node;
-		for_each_child_of_node(pnode, np) {
+		for (np = NULL; (np = of_get_next_child(pnode, np)) != NULL;) {
 			if (macio_skip_device(np))
 				continue;
 			of_node_get(np);
@@ -503,7 +502,7 @@ static void macio_pci_add_devices(struct macio_chip *chip)
 	/* Add serial ports if any */
 	if (sdev) {
 		pnode = sdev->ofdev.dev.of_node;
-		for_each_child_of_node(pnode, np) {
+		for (np = NULL; (np = of_get_next_child(pnode, np)) != NULL;) {
 			if (macio_skip_device(np))
 				continue;
 			of_node_get(np);
@@ -757,7 +756,7 @@ MODULE_DEVICE_TABLE (pci, pci_ids);
 
 /* pci driver glue; this is a "new style" PCI driver module */
 static struct pci_driver macio_pci_driver = {
-	.name		= "macio",
+	.name		= (char *) "macio",
 	.id_table	= pci_ids,
 
 	.probe		= macio_pci_probe,

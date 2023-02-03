@@ -105,11 +105,15 @@ properties:
             unevaluatedProperties: false
 
             properties:
+              clock-lanes:
+                maxItems: 1
+
               data-lanes:
                 minItems: 1
                 maxItems: 4
 
             required:
+              - clock-lanes
               - data-lanes
 
       port@1:
@@ -124,11 +128,16 @@ properties:
             unevaluatedProperties: false
 
             properties:
+              clock-lanes:
+                items:
+                  - const: 7
+
               data-lanes:
                 minItems: 1
                 maxItems: 4
 
             required:
+              - clock-lanes
               - data-lanes
 
       port@2:
@@ -143,11 +152,15 @@ properties:
             unevaluatedProperties: false
 
             properties:
+              clock-lanes:
+                maxItems: 1
+
               data-lanes:
                 minItems: 1
                 maxItems: 4
 
             required:
+              - clock-lanes
               - data-lanes
 
       port@3:
@@ -162,11 +175,15 @@ properties:
             unevaluatedProperties: false
 
             properties:
+              clock-lanes:
+                maxItems: 1
+
               data-lanes:
                 minItems: 1
                 maxItems: 4
 
             required:
+              - clock-lanes
               - data-lanes
 
   reg:
@@ -186,13 +203,9 @@ properties:
       - const: vfe1
       - const: vfe_lite
 
-  vdda-phy-supply:
+  vdda-supply:
     description:
-      Phandle to a regulator supply to PHY core block.
-
-  vdda-pll-supply:
-    description:
-      Phandle to 1.8V regulator supply to PHY refclk pll block.
+      Definition of the regulator used as analog power supply.
 
 required:
   - clock-names
@@ -204,8 +217,7 @@ required:
   - power-domains
   - reg
   - reg-names
-  - vdda-phy-supply
-  - vdda-pll-supply
+  - vdda-supply
 
 additionalProperties: false
 
@@ -349,8 +361,7 @@ examples:
           "vfe1",
           "vfe_lite";
 
-        vdda-phy-supply = <&vreg_l1a_0p875>;
-        vdda-pll-supply = <&vreg_l26a_1p2>;
+        vdda-supply = <&reg_2v8>;
 
         ports {
           #address-cells = <1>;

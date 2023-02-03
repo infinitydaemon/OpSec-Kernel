@@ -42,10 +42,7 @@ int noinline pci_bus_read_config_##size \
 	if (PCI_##size##_BAD) return PCIBIOS_BAD_REGISTER_NUMBER;	\
 	pci_lock_config(flags);						\
 	res = bus->ops->read(bus, devfn, pos, len, &data);		\
-	if (res)							\
-		PCI_SET_ERROR_RESPONSE(value);				\
-	else								\
-		*value = (type)data;					\
+	*value = (type)data;						\
 	pci_unlock_config(flags);					\
 	return res;							\
 }
@@ -83,8 +80,10 @@ int pci_generic_config_read(struct pci_bus *bus, unsigned int devfn,
 	void __iomem *addr;
 
 	addr = bus->ops->map_bus(bus, devfn, where);
-	if (!addr)
+	if (!addr) {
+		*val = ~0;
 		return PCIBIOS_DEVICE_NOT_FOUND;
+	}
 
 	if (size == 1)
 		*val = readb(addr);
@@ -123,8 +122,10 @@ int pci_generic_config_read32(struct pci_bus *bus, unsigned int devfn,
 	void __iomem *addr;
 
 	addr = bus->ops->map_bus(bus, devfn, where & ~0x3);
-	if (!addr)
+	if (!addr) {
+		*val = ~0;
 		return PCIBIOS_DEVICE_NOT_FOUND;
+	}
 
 	*val = readl(addr);
 
@@ -230,10 +231,7 @@ int pci_user_read_config_##size						\
 	ret = dev->bus->ops->read(dev->bus, dev->devfn,			\
 					pos, sizeof(type), &data);	\
 	raw_spin_unlock_irq(&pci_lock);				\
-	if (ret)							\
-		PCI_SET_ERROR_RESPONSE(val);				\
-	else								\
-		*val = (type)data;					\
+	*val = (type)data;						\
 	return pcibios_err_to_errno(ret);				\
 }									\
 EXPORT_SYMBOL_GPL(pci_user_read_config_##size);
@@ -350,11 +348,6 @@ bool pcie_cap_has_lnkctl(const struct pci_dev *dev)
 	       type == PCI_EXP_TYPE_PCIE_BRIDGE;
 }
 
-bool pcie_cap_has_lnkctl2(const struct pci_dev *dev)
-{
-	return pcie_cap_has_lnkctl(dev) && pcie_cap_version(dev) > 1;
-}
-
 static inline bool pcie_cap_has_sltctl(const struct pci_dev *dev)
 {
 	return pcie_downstream_port(dev) &&
@@ -395,11 +388,10 @@ static bool pcie_capability_reg_implemented(struct pci_dev *dev, int pos)
 		return pcie_cap_has_rtctl(dev);
 	case PCI_EXP_DEVCAP2:
 	case PCI_EXP_DEVCTL2:
-		return pcie_cap_version(dev) > 1;
 	case PCI_EXP_LNKCAP2:
 	case PCI_EXP_LNKCTL2:
 	case PCI_EXP_LNKSTA2:
-		return pcie_cap_has_lnkctl2(dev);
+		return pcie_cap_version(dev) > 1;
 	default:
 		return false;
 	}
@@ -421,9 +413,9 @@ int pcie_capability_read_word(struct pci_dev *dev, int pos, u16 *val)
 	if (pcie_capability_reg_implemented(dev, pos)) {
 		ret = pci_read_config_word(dev, pci_pcie_cap(dev) + pos, val);
 		/*
-		 * Reset *val to 0 if pci_read_config_word() fails; it may
-		 * have been written as 0xFFFF (PCI_ERROR_RESPONSE) if the
-		 * config read failed on PCI.
+		 * Reset *val to 0 if pci_read_config_word() fails, it may
+		 * have been written as 0xFFFF if hardware error happens
+		 * during pci_read_config_word().
 		 */
 		if (ret)
 			*val = 0;
@@ -456,9 +448,9 @@ int pcie_capability_read_dword(struct pci_dev *dev, int pos, u32 *val)
 	if (pcie_capability_reg_implemented(dev, pos)) {
 		ret = pci_read_config_dword(dev, pci_pcie_cap(dev) + pos, val);
 		/*
-		 * Reset *val to 0 if pci_read_config_dword() fails; it may
-		 * have been written as 0xFFFFFFFF (PCI_ERROR_RESPONSE) if
-		 * the config read failed on PCI.
+		 * Reset *val to 0 if pci_read_config_dword() fails, it may
+		 * have been written as 0xFFFFFFFF if hardware error happens
+		 * during pci_read_config_dword().
 		 */
 		if (ret)
 			*val = 0;
@@ -534,7 +526,7 @@ EXPORT_SYMBOL(pcie_capability_clear_and_set_dword);
 int pci_read_config_byte(const struct pci_dev *dev, int where, u8 *val)
 {
 	if (pci_dev_is_disconnected(dev)) {
-		PCI_SET_ERROR_RESPONSE(val);
+		*val = ~0;
 		return PCIBIOS_DEVICE_NOT_FOUND;
 	}
 	return pci_bus_read_config_byte(dev->bus, dev->devfn, where, val);
@@ -544,7 +536,7 @@ EXPORT_SYMBOL(pci_read_config_byte);
 int pci_read_config_word(const struct pci_dev *dev, int where, u16 *val)
 {
 	if (pci_dev_is_disconnected(dev)) {
-		PCI_SET_ERROR_RESPONSE(val);
+		*val = ~0;
 		return PCIBIOS_DEVICE_NOT_FOUND;
 	}
 	return pci_bus_read_config_word(dev->bus, dev->devfn, where, val);
@@ -555,7 +547,7 @@ int pci_read_config_dword(const struct pci_dev *dev, int where,
 					u32 *val)
 {
 	if (pci_dev_is_disconnected(dev)) {
-		PCI_SET_ERROR_RESPONSE(val);
+		*val = ~0;
 		return PCIBIOS_DEVICE_NOT_FOUND;
 	}
 	return pci_bus_read_config_dword(dev->bus, dev->devfn, where, val);

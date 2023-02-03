@@ -8,7 +8,6 @@
  * This code is licenced under the GPL.
  */
 
-#include "linux/percpu-defs.h"
 #include <linux/clockchips.h>
 #include <linux/kernel.h>
 #include <linux/mutex.h>
@@ -24,7 +23,6 @@
 #include <linux/suspend.h>
 #include <linux/tick.h>
 #include <linux/mmu_context.h>
-#include <linux/context_tracking.h>
 #include <trace/events/power.h>
 
 #include "cpuidle.h"
@@ -152,12 +150,12 @@ static void enter_s2idle_proper(struct cpuidle_driver *drv,
 	 */
 	stop_critical_timings();
 	if (!(target_state->flags & CPUIDLE_FLAG_RCU_IDLE))
-		ct_idle_enter();
+		rcu_idle_enter();
 	target_state->enter_s2idle(dev, drv, index);
 	if (WARN_ON_ONCE(!irqs_disabled()))
 		local_irq_disable();
 	if (!(target_state->flags & CPUIDLE_FLAG_RCU_IDLE))
-		ct_idle_exit();
+		rcu_idle_exit();
 	tick_unfreeze();
 	start_critical_timings();
 
@@ -235,10 +233,10 @@ int cpuidle_enter_state(struct cpuidle_device *dev, struct cpuidle_driver *drv,
 
 	stop_critical_timings();
 	if (!(target_state->flags & CPUIDLE_FLAG_RCU_IDLE))
-		ct_idle_enter();
+		rcu_idle_enter();
 	entered_state = target_state->enter(dev, drv, index);
 	if (!(target_state->flags & CPUIDLE_FLAG_RCU_IDLE))
-		ct_idle_exit();
+		rcu_idle_exit();
 	start_critical_timings();
 
 	sched_clock_idle_wakeup_event();
@@ -280,7 +278,6 @@ int cpuidle_enter_state(struct cpuidle_device *dev, struct cpuidle_driver *drv,
 
 				/* Shallower states are enabled, so update. */
 				dev->states_usage[entered_state].above++;
-				trace_cpu_idle_miss(dev->cpu, entered_state, false);
 				break;
 			}
 		} else if (diff > delay) {
@@ -292,10 +289,8 @@ int cpuidle_enter_state(struct cpuidle_device *dev, struct cpuidle_driver *drv,
 				 * Update if a deeper state would have been a
 				 * better match for the observed idle duration.
 				 */
-				if (diff - delay >= drv->states[i].target_residency_ns) {
+				if (diff - delay >= drv->states[i].target_residency_ns)
 					dev->states_usage[entered_state].below++;
-					trace_cpu_idle_miss(dev->cpu, entered_state, true);
-				}
 
 				break;
 			}

@@ -68,6 +68,12 @@
 #include "policycap_names.h"
 #include "ima.h"
 
+struct convert_context_args {
+	struct selinux_state *state;
+	struct policydb *oldp;
+	struct policydb *newp;
+};
+
 struct selinux_policy_convert_data {
 	struct convert_context_args args;
 	struct sidtab_convert_params sidtab_params;
@@ -93,7 +99,7 @@ static void context_struct_compute_av(struct policydb *policydb,
 				      struct extended_perms *xperms);
 
 static int selinux_set_mapping(struct policydb *pol,
-			       const struct security_class_mapping *map,
+			       struct security_class_mapping *map,
 			       struct selinux_map *out_map)
 {
 	u16 i, j;
@@ -115,7 +121,7 @@ static int selinux_set_mapping(struct policydb *pol,
 	/* Store the raw class and permission values */
 	j = 0;
 	while (map[j].name) {
-		const struct security_class_mapping *p_in = map + (j++);
+		struct security_class_mapping *p_in = map + (j++);
 		struct selinux_mapping *p_out = out_map->mapping + j;
 
 		/* An empty class string skips ahead */
@@ -352,27 +358,27 @@ static int constraint_expr_eval(struct policydb *policydb,
 				l2 = &(tcontext->range.level[1]);
 				goto mls_ops;
 mls_ops:
-				switch (e->op) {
-				case CEXPR_EQ:
-					s[++sp] = mls_level_eq(l1, l2);
-					continue;
-				case CEXPR_NEQ:
-					s[++sp] = !mls_level_eq(l1, l2);
-					continue;
-				case CEXPR_DOM:
-					s[++sp] = mls_level_dom(l1, l2);
-					continue;
-				case CEXPR_DOMBY:
-					s[++sp] = mls_level_dom(l2, l1);
-					continue;
-				case CEXPR_INCOMP:
-					s[++sp] = mls_level_incomp(l2, l1);
-					continue;
-				default:
-					BUG();
-					return 0;
-				}
-				break;
+			switch (e->op) {
+			case CEXPR_EQ:
+				s[++sp] = mls_level_eq(l1, l2);
+				continue;
+			case CEXPR_NEQ:
+				s[++sp] = !mls_level_eq(l1, l2);
+				continue;
+			case CEXPR_DOM:
+				s[++sp] = mls_level_dom(l1, l2);
+				continue;
+			case CEXPR_DOMBY:
+				s[++sp] = mls_level_dom(l2, l1);
+				continue;
+			case CEXPR_INCOMP:
+				s[++sp] = mls_level_incomp(l2, l1);
+				continue;
+			default:
+				BUG();
+				return 0;
+			}
+			break;
 			default:
 				BUG();
 				return 0;
@@ -523,6 +529,8 @@ out:
 	/* release scontext/tcontext */
 	kfree(tcontext_name);
 	kfree(scontext_name);
+
+	return;
 }
 
 /*
@@ -1094,7 +1102,7 @@ allow:
  * @state: SELinux state
  * @ssid: source security identifier
  * @tsid: target security identifier
- * @orig_tclass: target security class
+ * @tclass: target security class
  * @avd: access vector decisions
  * @xperms: extended permissions
  *
@@ -1444,7 +1452,7 @@ static int string_to_context_struct(struct policydb *pol,
 	/* Parse the security context. */
 
 	rc = -EINVAL;
-	scontextp = scontext;
+	scontextp = (char *) scontext;
 
 	/* Extract the user. */
 	p = scontextp;
@@ -1618,7 +1626,6 @@ int security_context_str_to_sid(struct selinux_state *state,
  * @scontext_len: length in bytes
  * @sid: security identifier, SID
  * @def_sid: default SID to assign on error
- * @gfp_flags: the allocator get-free-page (GFP) flags
  *
  * Obtains a SID associated with the security context that
  * has the string representation specified by @scontext.
@@ -1912,7 +1919,6 @@ out:
  * @ssid: source security identifier
  * @tsid: target security identifier
  * @tclass: target security class
- * @qstr: object name
  * @out_sid: security identifier for new subject/object
  *
  * Compute a SID to use for labeling a new subject or object in the
@@ -1941,7 +1947,6 @@ int security_transition_sid_user(struct selinux_state *state,
 
 /**
  * security_member_sid - Compute the SID for member selection.
- * @state: SELinux state
  * @ssid: source security identifier
  * @tsid: target security identifier
  * @tclass: target security class
@@ -2008,22 +2013,18 @@ static inline int convert_context_handle_invalid_context(
 	return 0;
 }
 
-/**
- * services_convert_context - Convert a security context across policies.
- * @args: populated convert_context_args struct
- * @oldc: original context
- * @newc: converted context
- * @gfp_flags: allocation flags
- *
- * Convert the values in the security context structure @oldc from the values
- * specified in the policy @args->oldp to the values specified in the policy
- * @args->newp, storing the new context in @newc, and verifying that the
- * context is valid under the new policy.
+/*
+ * Convert the values in the security context
+ * structure `oldc' from the values specified
+ * in the policy `p->oldp' to the values specified
+ * in the policy `p->newp', storing the new context
+ * in `newc'.  Verify that the context is valid
+ * under the new policy.
  */
-int services_convert_context(struct convert_context_args *args,
-			     struct context *oldc, struct context *newc,
-			     gfp_t gfp_flags)
+static int convert_context(struct context *oldc, struct context *newc, void *p,
+			   gfp_t gfp_flags)
 {
+	struct convert_context_args *args;
 	struct ocontext *oc;
 	struct role_datum *role;
 	struct type_datum *typdatum;
@@ -2032,12 +2033,15 @@ int services_convert_context(struct convert_context_args *args,
 	u32 len;
 	int rc;
 
+	args = p;
+
 	if (oldc->str) {
 		s = kstrdup(oldc->str, gfp_flags);
 		if (!s)
 			return -ENOMEM;
 
-		rc = string_to_context_struct(args->newp, NULL, s, newc, SECSID_NULL);
+		rc = string_to_context_struct(args->newp, NULL, s,
+					      newc, SECSID_NULL);
 		if (rc == -EINVAL) {
 			/*
 			 * Retain string representation for later mapping.
@@ -2068,7 +2072,8 @@ int services_convert_context(struct convert_context_args *args,
 
 	/* Convert the user. */
 	usrdatum = symtab_search(&args->newp->p_users,
-				 sym_name(args->oldp, SYM_USERS, oldc->user - 1));
+				 sym_name(args->oldp,
+					  SYM_USERS, oldc->user - 1));
 	if (!usrdatum)
 		goto bad;
 	newc->user = usrdatum->value;
@@ -2082,7 +2087,8 @@ int services_convert_context(struct convert_context_args *args,
 
 	/* Convert the type. */
 	typdatum = symtab_search(&args->newp->p_types,
-				 sym_name(args->oldp, SYM_TYPES, oldc->type - 1));
+				 sym_name(args->oldp,
+					  SYM_TYPES, oldc->type - 1));
 	if (!typdatum)
 		goto bad;
 	newc->type = typdatum->value;
@@ -2116,7 +2122,8 @@ int services_convert_context(struct convert_context_args *args,
 	/* Check the validity of the new context. */
 	if (!policydb_context_isvalid(args->newp, newc)) {
 		rc = convert_context_handle_invalid_context(args->state,
-							    args->oldp, oldc);
+							args->oldp,
+							oldc);
 		if (rc)
 			goto bad;
 	}
@@ -2267,7 +2274,6 @@ void selinux_policy_commit(struct selinux_state *state,
  * @state: SELinux state
  * @data: binary policy data
  * @len: length of data in bytes
- * @load_state: policy load state
  *
  * Load a new set of security policy configuration data,
  * validate it and convert the SID table as necessary.
@@ -2325,21 +2331,21 @@ int security_load_policy(struct selinux_state *state, void *data, size_t len,
 		goto err_free_isids;
 	}
 
-	/*
-	 * Convert the internal representations of contexts
-	 * in the new SID table.
-	 */
-
 	convert_data = kmalloc(sizeof(*convert_data), GFP_KERNEL);
 	if (!convert_data) {
 		rc = -ENOMEM;
 		goto err_free_isids;
 	}
 
+	/*
+	 * Convert the internal representations of contexts
+	 * in the new SID table.
+	 */
 	convert_data->args.state = state;
 	convert_data->args.oldp = &oldpolicy->policydb;
 	convert_data->args.newp = &newpolicy->policydb;
 
+	convert_data->sidtab_params.func = convert_context;
 	convert_data->sidtab_params.args = &convert_data->args;
 	convert_data->sidtab_params.target = newpolicy->sidtab;
 
@@ -2520,7 +2526,7 @@ out:
  * security_ib_endport_sid - Obtain the SID for a subnet management interface.
  * @state: SELinux state
  * @dev_name: device name
- * @port_num: port number
+ * @port: port number
  * @out_sid: security identifier
  */
 int security_ib_endport_sid(struct selinux_state *state,
@@ -2851,10 +2857,9 @@ out_unlock:
 
 /**
  * __security_genfs_sid - Helper to obtain a SID for a file in a filesystem
- * @policy: policy
  * @fstype: filesystem type
  * @path: path from root of mount
- * @orig_sclass: file security class
+ * @sclass: file security class
  * @sid: SID for path
  *
  * Obtain a SID to use for a file in a filesystem that
@@ -2866,7 +2871,7 @@ out_unlock:
  */
 static inline int __security_genfs_sid(struct selinux_policy *policy,
 				       const char *fstype,
-				       const char *path,
+				       char *path,
 				       u16 orig_sclass,
 				       u32 *sid)
 {
@@ -2911,7 +2916,7 @@ static inline int __security_genfs_sid(struct selinux_policy *policy,
  * @state: SELinux state
  * @fstype: filesystem type
  * @path: path from root of mount
- * @orig_sclass: file security class
+ * @sclass: file security class
  * @sid: SID for path
  *
  * Acquire policy_rwlock before calling __security_genfs_sid() and release
@@ -2919,7 +2924,7 @@ static inline int __security_genfs_sid(struct selinux_policy *policy,
  */
 int security_genfs_sid(struct selinux_state *state,
 		       const char *fstype,
-		       const char *path,
+		       char *path,
 		       u16 orig_sclass,
 		       u32 *sid)
 {
@@ -2943,7 +2948,7 @@ int security_genfs_sid(struct selinux_state *state,
 
 int selinux_policy_genfs_sid(struct selinux_policy *policy,
 			const char *fstype,
-			const char *path,
+			char *path,
 			u16 orig_sclass,
 			u32 *sid)
 {
@@ -2973,6 +2978,7 @@ int security_fs_use(struct selinux_state *state, struct super_block *sb)
 	}
 
 retry:
+	rc = 0;
 	rcu_read_lock();
 	policy = rcu_dereference(state->policy);
 	policydb = &policy->policydb;
@@ -3292,7 +3298,6 @@ out_unlock:
  * @nlbl_sid: NetLabel SID
  * @nlbl_type: NetLabel labeling protocol type
  * @xfrm_sid: XFRM SID
- * @peer_sid: network peer sid
  *
  * Description:
  * Compare the @nlbl_sid and @xfrm_sid values and if the two SIDs can be

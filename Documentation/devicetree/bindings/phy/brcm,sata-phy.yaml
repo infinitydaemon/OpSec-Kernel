@@ -102,17 +102,19 @@ if:
 then:
   properties:
     reg:
-      minItems: 2
-
+      maxItems: 2
     reg-names:
-      minItems: 2
+      items:
+        - const: "phy"
+        - const: "phy-ctrl"
 else:
   properties:
     reg:
       maxItems: 1
-
     reg-names:
       maxItems: 1
+      items:
+        - const: "phy"
 
 required:
   - compatible

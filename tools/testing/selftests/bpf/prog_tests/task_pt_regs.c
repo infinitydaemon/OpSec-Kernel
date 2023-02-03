@@ -3,22 +3,18 @@
 #include <test_progs.h>
 #include "test_task_pt_regs.skel.h"
 
-/* uprobe attach point */
-static noinline void trigger_func(void)
-{
-	asm volatile ("");
-}
-
 void test_task_pt_regs(void)
 {
 	struct test_task_pt_regs *skel;
 	struct bpf_link *uprobe_link;
-	ssize_t uprobe_offset;
+	size_t uprobe_offset;
+	ssize_t base_addr;
 	bool match;
 
-	uprobe_offset = get_uprobe_offset(&trigger_func);
-	if (!ASSERT_GE(uprobe_offset, 0, "uprobe_offset"))
+	base_addr = get_base_addr();
+	if (!ASSERT_GT(base_addr, 0, "get_base_addr"))
 		return;
+	uprobe_offset = get_uprobe_offset(&get_base_addr, base_addr);
 
 	skel = test_task_pt_regs__open_and_load();
 	if (!ASSERT_OK_PTR(skel, "skel_open"))
@@ -36,7 +32,7 @@ void test_task_pt_regs(void)
 	skel->links.handle_uprobe = uprobe_link;
 
 	/* trigger & validate uprobe */
-	trigger_func();
+	get_base_addr();
 
 	if (!ASSERT_EQ(skel->bss->uprobe_res, 1, "check_uprobe_res"))
 		goto cleanup;

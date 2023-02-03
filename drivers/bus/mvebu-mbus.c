@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Address map functions for Marvell EBU SoCs (Kirkwood, Armada
  * 370/XP, Dove, Orion5x and MV78xx0)
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2.  This program is licensed "as is" without any
+ * warranty of any kind, whether express or implied.
  *
  * The Marvell EBU SoCs have a configurable physical address space:
  * the physical address at which certain devices (PCIe, NOR, NAND,
@@ -22,8 +25,8 @@
  *
  * - Reads out the SDRAM address decoding windows at initialization
  *   time, and fills the mvebu_mbus_dram_info structure with these
- *   information. The exported function mv_mbus_dram_info() allow
- *   device drivers to get those information related to the SDRAM
+ *   informations. The exported function mv_mbus_dram_info() allow
+ *   device drivers to get those informations related to the SDRAM
  *   address decoding windows. This is because devices also have their
  *   own windows (configured through registers that are part of each
  *   device register space), and therefore the drivers for Marvell
@@ -120,7 +123,7 @@ struct mvebu_mbus_soc_data {
 };
 
 /*
- * Used to store the state of one MBus window across suspend/resume.
+ * Used to store the state of one MBus window accross suspend/resume.
  */
 struct mvebu_mbus_win_data {
 	u32 ctrl;
@@ -466,7 +469,18 @@ static int mvebu_sdram_debug_show(struct seq_file *seq, void *v)
 	struct mvebu_mbus_state *mbus = &mbus_state;
 	return mbus->soc->show_cpu_target(mbus, seq, v);
 }
-DEFINE_SHOW_ATTRIBUTE(mvebu_sdram_debug);
+
+static int mvebu_sdram_debug_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, mvebu_sdram_debug_show, inode->i_private);
+}
+
+static const struct file_operations mvebu_sdram_debug_fops = {
+	.open = mvebu_sdram_debug_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
 
 static int mvebu_devs_debug_show(struct seq_file *seq, void *v)
 {
@@ -505,7 +519,18 @@ static int mvebu_devs_debug_show(struct seq_file *seq, void *v)
 
 	return 0;
 }
-DEFINE_SHOW_ATTRIBUTE(mvebu_devs_debug);
+
+static int mvebu_devs_debug_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, mvebu_devs_debug_show, inode->i_private);
+}
+
+static const struct file_operations mvebu_devs_debug_fops = {
+	.open = mvebu_devs_debug_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
 
 /*
  * SoC-specific functions and definitions
@@ -889,7 +914,6 @@ int mvebu_mbus_add_window_remap_by_id(unsigned int target,
 
 	return mvebu_mbus_alloc_window(s, base, size, remap, target, attribute);
 }
-EXPORT_SYMBOL_GPL(mvebu_mbus_add_window_remap_by_id);
 
 int mvebu_mbus_add_window_by_id(unsigned int target, unsigned int attribute,
 				phys_addr_t base, size_t size)
@@ -897,7 +921,6 @@ int mvebu_mbus_add_window_by_id(unsigned int target, unsigned int attribute,
 	return mvebu_mbus_add_window_remap_by_id(target, attribute, base,
 						 size, MVEBU_MBUS_NO_REMAP);
 }
-EXPORT_SYMBOL_GPL(mvebu_mbus_add_window_by_id);
 
 int mvebu_mbus_del_window(phys_addr_t base, size_t size)
 {
@@ -910,7 +933,6 @@ int mvebu_mbus_del_window(phys_addr_t base, size_t size)
 	mvebu_mbus_disable_window(&mbus_state, win);
 	return 0;
 }
-EXPORT_SYMBOL_GPL(mvebu_mbus_del_window);
 
 void mvebu_mbus_get_pcie_mem_aperture(struct resource *res)
 {
@@ -918,7 +940,6 @@ void mvebu_mbus_get_pcie_mem_aperture(struct resource *res)
 		return;
 	*res = mbus_state.pcie_mem_aperture;
 }
-EXPORT_SYMBOL_GPL(mvebu_mbus_get_pcie_mem_aperture);
 
 void mvebu_mbus_get_pcie_io_aperture(struct resource *res)
 {
@@ -926,7 +947,6 @@ void mvebu_mbus_get_pcie_io_aperture(struct resource *res)
 		return;
 	*res = mbus_state.pcie_io_aperture;
 }
-EXPORT_SYMBOL_GPL(mvebu_mbus_get_pcie_io_aperture);
 
 int mvebu_mbus_get_dram_win_info(phys_addr_t phyaddr, u8 *target, u8 *attr)
 {

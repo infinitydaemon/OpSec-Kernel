@@ -261,6 +261,4 @@ struct cgx_lnk_sts {
 #define CMDMODECHANGE_PORT		GENMASK_ULL(21, 14)
 #define CMDMODECHANGE_FLAGS		GENMASK_ULL(63, 22)
 
-/* LINK_BRING_UP command timeout */
-#define LINKCFG_TIMEOUT		GENMASK_ULL(21, 8)
 #endif /* __CGX_FW_INTF_H__ */

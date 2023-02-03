@@ -11,9 +11,15 @@
 
 #include <asm/isc.h>
 #include <asm/airq.h>
-#include <asm/tpi.h>
 
 static enum {FLOATING, DIRECTED} irq_delivery;
+
+#define	SIC_IRQ_MODE_ALL		0
+#define	SIC_IRQ_MODE_SINGLE		1
+#define	SIC_IRQ_MODE_DIRECT		4
+#define	SIC_IRQ_MODE_D_ALL		16
+#define	SIC_IRQ_MODE_D_SINGLE		17
+#define	SIC_IRQ_MODE_SET_CPU		18
 
 /*
  * summary bit vector
@@ -39,11 +45,10 @@ static int zpci_set_airq(struct zpci_dev *zdev)
 	fib.fmt0.isc = PCI_ISC;
 	fib.fmt0.sum = 1;	/* enable summary notifications */
 	fib.fmt0.noi = airq_iv_end(zdev->aibv);
-	fib.fmt0.aibv = virt_to_phys(zdev->aibv->vector);
+	fib.fmt0.aibv = (unsigned long) zdev->aibv->vector;
 	fib.fmt0.aibvo = 0;	/* each zdev has its own interrupt vector */
-	fib.fmt0.aisb = virt_to_phys(zpci_sbv->vector) + (zdev->aisb / 64) * 8;
+	fib.fmt0.aisb = (unsigned long) zpci_sbv->vector + (zdev->aisb/64)*8;
 	fib.fmt0.aisbo = zdev->aisb & 63;
-	fib.gd = zdev->gisa;
 
 	return zpci_mod_fc(req, &fib, &status) ? -EIO : 0;
 }
@@ -54,8 +59,6 @@ static int zpci_clear_airq(struct zpci_dev *zdev)
 	u64 req = ZPCI_CREATE_REQ(zdev->fh, 0, ZPCI_MOD_FC_DEREG_INT);
 	struct zpci_fib fib = {0};
 	u8 cc, status;
-
-	fib.gd = zdev->gisa;
 
 	cc = zpci_mod_fc(req, &fib, &status);
 	if (cc == 3 || (cc == 1 && status == 24))
@@ -75,7 +78,6 @@ static int zpci_set_directed_irq(struct zpci_dev *zdev)
 	fib.fmt = 1;
 	fib.fmt1.noi = zdev->msi_nr_irqs;
 	fib.fmt1.dibvo = zdev->msi_first_bit;
-	fib.gd = zdev->gisa;
 
 	return zpci_mod_fc(req, &fib, &status) ? -EIO : 0;
 }
@@ -88,7 +90,6 @@ static int zpci_clear_directed_irq(struct zpci_dev *zdev)
 	u8 cc, status;
 
 	fib.fmt = 1;
-	fib.gd = zdev->gisa;
 	cc = zpci_mod_fc(req, &fib, &status);
 	if (cc == 3 || (cc == 1 && status == 24))
 		/* Function already gone or IRQs already deregistered. */
@@ -98,7 +99,7 @@ static int zpci_clear_directed_irq(struct zpci_dev *zdev)
 }
 
 /* Register adapter interruptions */
-static int zpci_set_irq(struct zpci_dev *zdev)
+int zpci_set_irq(struct zpci_dev *zdev)
 {
 	int rc;
 
@@ -114,7 +115,7 @@ static int zpci_set_irq(struct zpci_dev *zdev)
 }
 
 /* Clear adapter interruptions */
-static int zpci_clear_irq(struct zpci_dev *zdev)
+int zpci_clear_irq(struct zpci_dev *zdev)
 {
 	int rc;
 
@@ -132,7 +133,7 @@ static int zpci_clear_irq(struct zpci_dev *zdev)
 static int zpci_set_irq_affinity(struct irq_data *data, const struct cpumask *dest,
 				 bool force)
 {
-	struct msi_desc *entry = irq_data_get_msi_desc(data);
+	struct msi_desc *entry = irq_get_msi_desc(data->irq);
 	struct msi_msg msg = entry->msg;
 	int cpu_addr = smp_cpu_get_cpu_address(cpumask_first(dest));
 
@@ -152,7 +153,6 @@ static struct irq_chip zpci_irq_chip = {
 static void zpci_handle_cpu_local_irq(bool rescan)
 {
 	struct airq_iv *dibv = zpci_ibv[smp_processor_id()];
-	union zpci_sic_iib iib = {{0}};
 	unsigned long bit;
 	int irqs_on = 0;
 
@@ -164,7 +164,7 @@ static void zpci_handle_cpu_local_irq(bool rescan)
 				/* End of second scan with interrupts on. */
 				break;
 			/* First scan complete, reenable interrupts. */
-			if (zpci_set_irq_ctrl(SIC_IRQ_MODE_D_SINGLE, PCI_ISC, &iib))
+			if (zpci_set_irq_ctrl(SIC_IRQ_MODE_D_SINGLE, PCI_ISC))
 				break;
 			bit = 0;
 			continue;
@@ -192,7 +192,6 @@ static void zpci_handle_remote_irq(void *data)
 static void zpci_handle_fallback_irq(void)
 {
 	struct cpu_irq_data *cpu_data;
-	union zpci_sic_iib iib = {{0}};
 	unsigned long cpu;
 	int irqs_on = 0;
 
@@ -203,7 +202,7 @@ static void zpci_handle_fallback_irq(void)
 				/* End of second scan with interrupts on. */
 				break;
 			/* First scan complete, reenable interrupts. */
-			if (zpci_set_irq_ctrl(SIC_IRQ_MODE_SINGLE, PCI_ISC, &iib))
+			if (zpci_set_irq_ctrl(SIC_IRQ_MODE_SINGLE, PCI_ISC))
 				break;
 			cpu = 0;
 			continue;
@@ -217,11 +216,8 @@ static void zpci_handle_fallback_irq(void)
 	}
 }
 
-static void zpci_directed_irq_handler(struct airq_struct *airq,
-				      struct tpi_info *tpi_info)
+static void zpci_directed_irq_handler(struct airq_struct *airq, bool floating)
 {
-	bool floating = !tpi_info->directed_irq;
-
 	if (floating) {
 		inc_irq_stat(IRQIO_PCF);
 		zpci_handle_fallback_irq();
@@ -231,10 +227,8 @@ static void zpci_directed_irq_handler(struct airq_struct *airq,
 	}
 }
 
-static void zpci_floating_irq_handler(struct airq_struct *airq,
-				      struct tpi_info *tpi_info)
+static void zpci_floating_irq_handler(struct airq_struct *airq, bool floating)
 {
-	union zpci_sic_iib iib = {{0}};
 	unsigned long si, ai;
 	struct airq_iv *aibv;
 	int irqs_on = 0;
@@ -248,7 +242,7 @@ static void zpci_floating_irq_handler(struct airq_struct *airq,
 				/* End of second scan with interrupts on. */
 				break;
 			/* First scan complete, reenable interrupts. */
-			if (zpci_set_irq_ctrl(SIC_IRQ_MODE_SINGLE, PCI_ISC, &iib))
+			if (zpci_set_irq_ctrl(SIC_IRQ_MODE_SINGLE, PCI_ISC))
 				break;
 			si = 0;
 			continue;
@@ -297,7 +291,7 @@ int arch_setup_msi_irqs(struct pci_dev *pdev, int nvec, int type)
 		zdev->aisb = bit;
 
 		/* Create adapter interrupt vector */
-		zdev->aibv = airq_iv_create(msi_vecs, AIRQ_IV_DATA | AIRQ_IV_BITLOCK, NULL);
+		zdev->aibv = airq_iv_create(msi_vecs, AIRQ_IV_DATA | AIRQ_IV_BITLOCK);
 		if (!zdev->aibv)
 			return -ENOMEM;
 
@@ -309,7 +303,7 @@ int arch_setup_msi_irqs(struct pci_dev *pdev, int nvec, int type)
 
 	/* Request MSI interrupts */
 	hwirq = bit;
-	msi_for_each_desc(msi, &pdev->dev, MSI_DESC_NOTASSOCIATED) {
+	for_each_pci_msi_entry(msi, pdev) {
 		rc = -EIO;
 		if (hwirq - bit >= msi_vecs)
 			break;
@@ -368,7 +362,9 @@ void arch_teardown_msi_irqs(struct pci_dev *pdev)
 		return;
 
 	/* Release MSI interrupts */
-	msi_for_each_desc(msi, &pdev->dev, MSI_DESC_ASSOCIATED) {
+	for_each_pci_msi_entry(msi, pdev) {
+		if (!msi->irq)
+			continue;
 		irq_set_msi_desc(msi->irq, NULL);
 		irq_free_desc(msi->irq);
 		msi->msg.address_lo = 0;
@@ -391,15 +387,6 @@ void arch_teardown_msi_irqs(struct pci_dev *pdev)
 		airq_iv_free(zpci_ibv[0], zdev->msi_first_bit, zdev->msi_nr_irqs);
 }
 
-bool arch_restore_msi_irqs(struct pci_dev *pdev)
-{
-	struct zpci_dev *zdev = to_zpci(pdev);
-
-	if (!zdev->irqs_registered)
-		zpci_set_irq(zdev);
-	return true;
-}
-
 static struct airq_struct zpci_airq = {
 	.handler = zpci_floating_irq_handler,
 	.isc = PCI_ISC,
@@ -408,12 +395,11 @@ static struct airq_struct zpci_airq = {
 static void __init cpu_enable_directed_irq(void *unused)
 {
 	union zpci_sic_iib iib = {{0}};
-	union zpci_sic_iib ziib = {{0}};
 
 	iib.cdiib.dibv_addr = (u64) zpci_ibv[smp_processor_id()]->vector;
 
-	zpci_set_irq_ctrl(SIC_IRQ_MODE_SET_CPU, 0, &iib);
-	zpci_set_irq_ctrl(SIC_IRQ_MODE_D_SINGLE, PCI_ISC, &ziib);
+	__zpci_set_irq_ctrl(SIC_IRQ_MODE_SET_CPU, 0, &iib);
+	zpci_set_irq_ctrl(SIC_IRQ_MODE_D_SINGLE, PCI_ISC);
 }
 
 static int __init zpci_directed_irq_init(void)
@@ -421,14 +407,14 @@ static int __init zpci_directed_irq_init(void)
 	union zpci_sic_iib iib = {{0}};
 	unsigned int cpu;
 
-	zpci_sbv = airq_iv_create(num_possible_cpus(), 0, NULL);
+	zpci_sbv = airq_iv_create(num_possible_cpus(), 0);
 	if (!zpci_sbv)
 		return -ENOMEM;
 
 	iib.diib.isc = PCI_ISC;
 	iib.diib.nr_cpus = num_possible_cpus();
-	iib.diib.disb_addr = virt_to_phys(zpci_sbv->vector);
-	zpci_set_irq_ctrl(SIC_IRQ_MODE_DIRECT, 0, &iib);
+	iib.diib.disb_addr = (u64) zpci_sbv->vector;
+	__zpci_set_irq_ctrl(SIC_IRQ_MODE_DIRECT, 0, &iib);
 
 	zpci_ibv = kcalloc(num_possible_cpus(), sizeof(*zpci_ibv),
 			   GFP_KERNEL);
@@ -443,7 +429,7 @@ static int __init zpci_directed_irq_init(void)
 		zpci_ibv[cpu] = airq_iv_create(cache_line_size() * BITS_PER_BYTE,
 					       AIRQ_IV_DATA |
 					       AIRQ_IV_CACHELINE |
-					       (!cpu ? AIRQ_IV_ALLOC : 0), NULL);
+					       (!cpu ? AIRQ_IV_ALLOC : 0));
 		if (!zpci_ibv[cpu])
 			return -ENOMEM;
 	}
@@ -460,7 +446,7 @@ static int __init zpci_floating_irq_init(void)
 	if (!zpci_ibv)
 		return -ENOMEM;
 
-	zpci_sbv = airq_iv_create(ZPCI_NR_DEVICES, AIRQ_IV_ALLOC, NULL);
+	zpci_sbv = airq_iv_create(ZPCI_NR_DEVICES, AIRQ_IV_ALLOC);
 	if (!zpci_sbv)
 		goto out_free;
 
@@ -473,7 +459,6 @@ out_free:
 
 int __init zpci_irq_init(void)
 {
-	union zpci_sic_iib iib = {{0}};
 	int rc;
 
 	irq_delivery = sclp.has_dirq ? DIRECTED : FLOATING;
@@ -505,7 +490,7 @@ int __init zpci_irq_init(void)
 	 * Enable floating IRQs (with suppression after one IRQ). When using
 	 * directed IRQs this enables the fallback path.
 	 */
-	zpci_set_irq_ctrl(SIC_IRQ_MODE_SINGLE, PCI_ISC, &iib);
+	zpci_set_irq_ctrl(SIC_IRQ_MODE_SINGLE, PCI_ISC);
 
 	return 0;
 out_airq:

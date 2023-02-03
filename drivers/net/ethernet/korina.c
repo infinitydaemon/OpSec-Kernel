@@ -416,8 +416,7 @@ static void korina_abort_rx(struct net_device *dev)
 }
 
 /* transmit packet */
-static netdev_tx_t korina_send_packet(struct sk_buff *skb,
-				      struct net_device *dev)
+static int korina_send_packet(struct sk_buff *skb, struct net_device *dev)
 {
 	struct korina_private *lp = netdev_priv(dev);
 	u32 chain_prev, chain_next;
@@ -939,9 +938,9 @@ static void netdev_get_drvinfo(struct net_device *dev,
 {
 	struct korina_private *lp = netdev_priv(dev);
 
-	strscpy(info->driver, DRV_NAME, sizeof(info->driver));
-	strscpy(info->version, DRV_VERSION, sizeof(info->version));
-	strscpy(info->bus_info, lp->dev->name, sizeof(info->bus_info));
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, lp->dev->name, sizeof(info->bus_info));
 }
 
 static int netdev_get_link_ksettings(struct net_device *dev,
@@ -1298,8 +1297,8 @@ static int korina_probe(struct platform_device *pdev)
 	lp = netdev_priv(dev);
 
 	if (mac_addr)
-		eth_hw_addr_set(dev, mac_addr);
-	else if (of_get_ethdev_address(pdev->dev.of_node, dev) < 0)
+		ether_addr_copy(dev->dev_addr, mac_addr);
+	else if (of_get_mac_address(pdev->dev.of_node, dev->dev_addr) < 0)
 		eth_hw_addr_random(dev);
 
 	clk = devm_clk_get_optional(&pdev->dev, "mdioclk");
@@ -1355,7 +1354,7 @@ static int korina_probe(struct platform_device *pdev)
 	dev->netdev_ops = &korina_netdev_ops;
 	dev->ethtool_ops = &netdev_ethtool_ops;
 	dev->watchdog_timeo = TX_TIMEOUT;
-	netif_napi_add(dev, &lp->napi, korina_poll);
+	netif_napi_add(dev, &lp->napi, korina_poll, NAPI_POLL_WEIGHT);
 
 	lp->mii_if.dev = dev;
 	lp->mii_if.mdio_read = korina_mdio_read;

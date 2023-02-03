@@ -219,13 +219,14 @@ static void asus_report_tool_width(struct asus_drvdata *drvdat)
 {
 	struct input_mt *mt = drvdat->input->mt;
 	struct input_mt_slot *oldest;
-	int oldid, i;
+	int oldid, count, i;
 
 	if (drvdat->tp->contact_size < 5)
 		return;
 
 	oldest = NULL;
 	oldid = mt->trkid;
+	count = 0;
 
 	for (i = 0; i < mt->num_slots; ++i) {
 		struct input_mt_slot *ps = &mt->slots[i];
@@ -237,6 +238,7 @@ static void asus_report_tool_width(struct asus_drvdata *drvdat)
 			oldest = ps;
 			oldid = id;
 		}
+		count++;
 	}
 
 	if (oldest) {

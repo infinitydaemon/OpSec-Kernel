@@ -23,9 +23,7 @@ properties:
           - nvidia,tegra210-adma
           - nvidia,tegra186-adma
       - items:
-          - enum:
-              - nvidia,tegra234-adma
-              - nvidia,tegra194-adma
+          - const: nvidia,tegra194-adma
           - const: nvidia,tegra186-adma
 
   reg:

@@ -618,11 +618,10 @@ static struct power_pmu power5_pmu = {
 	.flags			= PPMU_HAS_SSLOT,
 };
 
-int __init init_power5_pmu(void)
+int init_power5_pmu(void)
 {
-	unsigned int pvr = mfspr(SPRN_PVR);
-
-	if (PVR_VER(pvr) != PVR_POWER5)
+	if (!cur_cpu_spec->oprofile_cpu_type ||
+	    strcmp(cur_cpu_spec->oprofile_cpu_type, "ppc64/power5"))
 		return -ENODEV;
 
 	return register_power_pmu(&power5_pmu);

@@ -50,6 +50,7 @@
 #define PHY_RETRIES	        1000
 #define ETH_JUMBO_MTU		9000
 #define TX_WATCHDOG		(5 * HZ)
+#define NAPI_WEIGHT		64
 #define BLINK_MS		250
 #define LINK_HZ			HZ
 
@@ -394,9 +395,9 @@ static void skge_get_drvinfo(struct net_device *dev,
 {
 	struct skge_port *skge = netdev_priv(dev);
 
-	strscpy(info->driver, DRV_NAME, sizeof(info->driver));
-	strscpy(info->version, DRV_VERSION, sizeof(info->version));
-	strscpy(info->bus_info, pci_name(skge->hw->pdev),
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, pci_name(skge->hw->pdev),
 		sizeof(info->bus_info));
 }
 
@@ -491,9 +492,7 @@ static void skge_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 }
 
 static void skge_get_ring_param(struct net_device *dev,
-				struct ethtool_ringparam *p,
-				struct kernel_ethtool_ringparam *kernel_p,
-				struct netlink_ext_ack *extack)
+				struct ethtool_ringparam *p)
 {
 	struct skge_port *skge = netdev_priv(dev);
 
@@ -505,9 +504,7 @@ static void skge_get_ring_param(struct net_device *dev,
 }
 
 static int skge_set_ring_param(struct net_device *dev,
-			       struct ethtool_ringparam *p,
-			       struct kernel_ethtool_ringparam *kernel_p,
-			       struct netlink_ext_ack *extack)
+			       struct ethtool_ringparam *p)
 {
 	struct skge_port *skge = netdev_priv(dev);
 	int err = 0;
@@ -3462,7 +3459,7 @@ static int skge_set_mac_address(struct net_device *dev, void *p)
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(dev, addr->sa_data);
+	memcpy(dev->dev_addr, addr->sa_data, ETH_ALEN);
 
 	if (!netif_running(dev)) {
 		memcpy_toio(hw->regs + B2_MAC_1 + port*8, dev->dev_addr, ETH_ALEN);
@@ -3813,7 +3810,6 @@ static struct net_device *skge_devinit(struct skge_hw *hw, int port,
 {
 	struct skge_port *skge;
 	struct net_device *dev = alloc_etherdev(sizeof(*skge));
-	u8 addr[ETH_ALEN];
 
 	if (!dev)
 		return NULL;
@@ -3832,7 +3828,7 @@ static struct net_device *skge_devinit(struct skge_hw *hw, int port,
 		dev->features |= NETIF_F_HIGHDMA;
 
 	skge = netdev_priv(dev);
-	netif_napi_add(dev, &skge->napi, skge_poll);
+	netif_napi_add(dev, &skge->napi, skge_poll, NAPI_WEIGHT);
 	skge->netdev = dev;
 	skge->hw = hw;
 	skge->msg_enable = netif_msg_init(debug, default_msg);
@@ -3866,8 +3862,7 @@ static struct net_device *skge_devinit(struct skge_hw *hw, int port,
 	}
 
 	/* read the mac address */
-	memcpy_fromio(addr, hw->regs + B2_MAC_1 + port*8, ETH_ALEN);
-	eth_hw_addr_set(dev, addr);
+	memcpy_fromio(dev->dev_addr, hw->regs + B2_MAC_1 + port*8, ETH_ALEN);
 
 	return dev;
 }

@@ -910,7 +910,7 @@ free_flash:
 	return err;
 }
 
-static void lm3554_remove(struct i2c_client *client)
+static int lm3554_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct lm3554 *flash = to_lm3554(sd);
@@ -921,11 +921,13 @@ static void lm3554_remove(struct i2c_client *client)
 
 	atomisp_gmin_remove_subdev(sd);
 
-	timer_shutdown_sync(&flash->flash_off_delay);
+	del_timer_sync(&flash->flash_off_delay);
 
 	lm3554_gpio_uninit(client);
 
 	kfree(flash);
+
+	return 0;
 }
 
 static const struct dev_pm_ops lm3554_pm_ops = {

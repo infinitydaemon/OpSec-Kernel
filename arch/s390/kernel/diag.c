@@ -11,7 +11,6 @@
 #include <linux/cpu.h>
 #include <linux/seq_file.h>
 #include <linux/debugfs.h>
-#include <asm/asm-extable.h>
 #include <asm/diag.h>
 #include <asm/trace/diag.h>
 #include <asm/sections.h>

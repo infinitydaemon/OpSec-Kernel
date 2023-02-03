@@ -10,9 +10,6 @@ config RTLLIB
 
 	  If unsure, say N.
 
-	  This driver adds support for rtllib wireless cards.
-	  Only the rtl8192e is supported as of now.
-
 if RTLLIB
 
 config RTLLIB_CRYPTO_CCMP
@@ -26,8 +23,6 @@ config RTLLIB_CRYPTO_CCMP
 	  CCMP crypto driver for rtllib.
 
 	  If you enabled RTLLIB, you want this.
-	  Adds support for the CCM mode Protocol crypto driver for
-	  use in wireless cards (including rtllib cards).
 
 config RTLLIB_CRYPTO_TKIP
 	tristate "Support for rtllib TKIP crypto"
@@ -40,8 +35,6 @@ config RTLLIB_CRYPTO_TKIP
 	  TKIP crypto driver for rtllib.
 
 	  If you enabled RTLLIB, you want this.
-	  Adds support for the Temporal Key Integrity Protocol for
-	  the IEEE 802.11i standard for use on wireless cards.
 
 config RTLLIB_CRYPTO_WEP
 	tristate "Support for rtllib WEP crypto"
@@ -49,12 +42,9 @@ config RTLLIB_CRYPTO_WEP
 	depends on RTLLIB
 	default y
 	help
-	  WEP crypto driver for rtllib.
+	  TKIP crypto driver for rtllib.
 
 	  If you enabled RTLLIB, you want this.
-	  Adds support for the (now weak) Wired Equivalent Privacy
-	  (WEP) crypto protocol for wireless cards.
-	  NOTE: This protocol is now considered insecure.
 
 source "drivers/staging/rtl8192e/rtl8192e/Kconfig"
 

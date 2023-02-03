@@ -281,7 +281,7 @@ xchk_superblock(
 	features_mask = cpu_to_be32(XFS_SB_VERSION2_ATTR2BIT);
 	if ((sb->sb_features2 & features_mask) !=
 	    (cpu_to_be32(mp->m_sb.sb_features2) & features_mask))
-		xchk_block_set_preen(sc, bp);
+		xchk_block_set_corrupt(sc, bp);
 
 	if (!xfs_has_crc(mp)) {
 		/* all v5 fields must be zero */
@@ -290,37 +290,38 @@ xchk_superblock(
 				offsetof(struct xfs_dsb, sb_features_compat)))
 			xchk_block_set_corrupt(sc, bp);
 	} else {
-		/* compat features must match */
-		if (sb->sb_features_compat !=
-				cpu_to_be32(mp->m_sb.sb_features_compat))
+		/* Check compat flags; all are set at mkfs time. */
+		features_mask = cpu_to_be32(XFS_SB_FEAT_COMPAT_UNKNOWN);
+		if ((sb->sb_features_compat & features_mask) !=
+		    (cpu_to_be32(mp->m_sb.sb_features_compat) & features_mask))
 			xchk_block_set_corrupt(sc, bp);
 
-		/* ro compat features must match */
-		if (sb->sb_features_ro_compat !=
-				cpu_to_be32(mp->m_sb.sb_features_ro_compat))
+		/* Check ro compat flags; all are set at mkfs time. */
+		features_mask = cpu_to_be32(XFS_SB_FEAT_RO_COMPAT_UNKNOWN |
+					    XFS_SB_FEAT_RO_COMPAT_FINOBT |
+					    XFS_SB_FEAT_RO_COMPAT_RMAPBT |
+					    XFS_SB_FEAT_RO_COMPAT_REFLINK);
+		if ((sb->sb_features_ro_compat & features_mask) !=
+		    (cpu_to_be32(mp->m_sb.sb_features_ro_compat) &
+		     features_mask))
 			xchk_block_set_corrupt(sc, bp);
 
-		/*
-		 * NEEDSREPAIR is ignored on a secondary super, so we should
-		 * clear it when we find it, though it's not a corruption.
-		 */
-		features_mask = cpu_to_be32(XFS_SB_FEAT_INCOMPAT_NEEDSREPAIR);
-		if ((cpu_to_be32(mp->m_sb.sb_features_incompat) ^
-				sb->sb_features_incompat) & features_mask)
-			xchk_block_set_preen(sc, bp);
-
-		/* all other incompat features must match */
-		if ((cpu_to_be32(mp->m_sb.sb_features_incompat) ^
-				sb->sb_features_incompat) & ~features_mask)
+		/* Check incompat flags; all are set at mkfs time. */
+		features_mask = cpu_to_be32(XFS_SB_FEAT_INCOMPAT_UNKNOWN |
+					    XFS_SB_FEAT_INCOMPAT_FTYPE |
+					    XFS_SB_FEAT_INCOMPAT_SPINODES |
+					    XFS_SB_FEAT_INCOMPAT_META_UUID);
+		if ((sb->sb_features_incompat & features_mask) !=
+		    (cpu_to_be32(mp->m_sb.sb_features_incompat) &
+		     features_mask))
 			xchk_block_set_corrupt(sc, bp);
 
-		/*
-		 * log incompat features protect newer log record types from
-		 * older log recovery code.  Log recovery doesn't check the
-		 * secondary supers, so we can clear these if needed.
-		 */
-		if (sb->sb_features_log_incompat)
-			xchk_block_set_preen(sc, bp);
+		/* Check log incompat flags; all are set at mkfs time. */
+		features_mask = cpu_to_be32(XFS_SB_FEAT_INCOMPAT_LOG_UNKNOWN);
+		if ((sb->sb_features_log_incompat & features_mask) !=
+		    (cpu_to_be32(mp->m_sb.sb_features_log_incompat) &
+		     features_mask))
+			xchk_block_set_corrupt(sc, bp);
 
 		/* Don't care about sb_crc */
 
@@ -541,43 +542,43 @@ xchk_agf(
 
 	/* Check the AG length */
 	eoag = be32_to_cpu(agf->agf_length);
-	if (eoag != pag->block_count)
+	if (eoag != xfs_ag_block_count(mp, agno))
 		xchk_block_set_corrupt(sc, sc->sa.agf_bp);
 
 	/* Check the AGF btree roots and levels */
 	agbno = be32_to_cpu(agf->agf_roots[XFS_BTNUM_BNO]);
-	if (!xfs_verify_agbno(pag, agbno))
+	if (!xfs_verify_agbno(mp, agno, agbno))
 		xchk_block_set_corrupt(sc, sc->sa.agf_bp);
 
 	agbno = be32_to_cpu(agf->agf_roots[XFS_BTNUM_CNT]);
-	if (!xfs_verify_agbno(pag, agbno))
+	if (!xfs_verify_agbno(mp, agno, agbno))
 		xchk_block_set_corrupt(sc, sc->sa.agf_bp);
 
 	level = be32_to_cpu(agf->agf_levels[XFS_BTNUM_BNO]);
-	if (level <= 0 || level > mp->m_alloc_maxlevels)
+	if (level <= 0 || level > XFS_BTREE_MAXLEVELS)
 		xchk_block_set_corrupt(sc, sc->sa.agf_bp);
 
 	level = be32_to_cpu(agf->agf_levels[XFS_BTNUM_CNT]);
-	if (level <= 0 || level > mp->m_alloc_maxlevels)
+	if (level <= 0 || level > XFS_BTREE_MAXLEVELS)
 		xchk_block_set_corrupt(sc, sc->sa.agf_bp);
 
 	if (xfs_has_rmapbt(mp)) {
 		agbno = be32_to_cpu(agf->agf_roots[XFS_BTNUM_RMAP]);
-		if (!xfs_verify_agbno(pag, agbno))
+		if (!xfs_verify_agbno(mp, agno, agbno))
 			xchk_block_set_corrupt(sc, sc->sa.agf_bp);
 
 		level = be32_to_cpu(agf->agf_levels[XFS_BTNUM_RMAP]);
-		if (level <= 0 || level > mp->m_rmap_maxlevels)
+		if (level <= 0 || level > XFS_BTREE_MAXLEVELS)
 			xchk_block_set_corrupt(sc, sc->sa.agf_bp);
 	}
 
 	if (xfs_has_reflink(mp)) {
 		agbno = be32_to_cpu(agf->agf_refcount_root);
-		if (!xfs_verify_agbno(pag, agbno))
+		if (!xfs_verify_agbno(mp, agno, agbno))
 			xchk_block_set_corrupt(sc, sc->sa.agf_bp);
 
 		level = be32_to_cpu(agf->agf_refcount_level);
-		if (level <= 0 || level > mp->m_refc_maxlevels)
+		if (level <= 0 || level > XFS_BTREE_MAXLEVELS)
 			xchk_block_set_corrupt(sc, sc->sa.agf_bp);
 	}
 
@@ -609,16 +610,9 @@ out:
 /* AGFL */
 
 struct xchk_agfl_info {
-	/* Number of AGFL entries that the AGF claims are in use. */
-	unsigned int		agflcount;
-
-	/* Number of AGFL entries that we found. */
+	unsigned int		sz_entries;
 	unsigned int		nr_entries;
-
-	/* Buffer to hold AGFL entries for extent checking. */
 	xfs_agblock_t		*entries;
-
-	struct xfs_buf		*agfl_bp;
 	struct xfs_scrub	*sc;
 };
 
@@ -646,12 +640,13 @@ xchk_agfl_block(
 {
 	struct xchk_agfl_info	*sai = priv;
 	struct xfs_scrub	*sc = sai->sc;
+	xfs_agnumber_t		agno = sc->sa.pag->pag_agno;
 
-	if (xfs_verify_agbno(sc->sa.pag, agbno) &&
-	    sai->nr_entries < sai->agflcount)
+	if (xfs_verify_agbno(mp, agno, agbno) &&
+	    sai->nr_entries < sai->sz_entries)
 		sai->entries[sai->nr_entries++] = agbno;
 	else
-		xchk_block_set_corrupt(sc, sai->agfl_bp);
+		xchk_block_set_corrupt(sc, sc->sa.agfl_bp);
 
 	xchk_agfl_block_xref(sc, agbno);
 
@@ -703,26 +698,19 @@ int
 xchk_agfl(
 	struct xfs_scrub	*sc)
 {
-	struct xchk_agfl_info	sai = {
-		.sc		= sc,
-	};
+	struct xchk_agfl_info	sai;
 	struct xfs_agf		*agf;
 	xfs_agnumber_t		agno = sc->sm->sm_agno;
+	unsigned int		agflcount;
 	unsigned int		i;
 	int			error;
 
-	/* Lock the AGF and AGI so that nobody can touch this AG. */
 	error = xchk_ag_read_headers(sc, agno, &sc->sa);
 	if (!xchk_process_error(sc, agno, XFS_AGFL_BLOCK(sc->mp), &error))
-		return error;
+		goto out;
 	if (!sc->sa.agf_bp)
 		return -EFSCORRUPTED;
-
-	/* Try to read the AGFL, and verify its structure if we get it. */
-	error = xfs_alloc_read_agfl(sc->sa.pag, sc->tp, &sai.agfl_bp);
-	if (!xchk_process_error(sc, agno, XFS_AGFL_BLOCK(sc->mp), &error))
-		return error;
-	xchk_buffer_recheck(sc, sai.agfl_bp);
+	xchk_buffer_recheck(sc, sc->sa.agfl_bp);
 
 	xchk_agfl_xref(sc);
 
@@ -731,21 +719,24 @@ xchk_agfl(
 
 	/* Allocate buffer to ensure uniqueness of AGFL entries. */
 	agf = sc->sa.agf_bp->b_addr;
-	sai.agflcount = be32_to_cpu(agf->agf_flcount);
-	if (sai.agflcount > xfs_agfl_size(sc->mp)) {
+	agflcount = be32_to_cpu(agf->agf_flcount);
+	if (agflcount > xfs_agfl_size(sc->mp)) {
 		xchk_block_set_corrupt(sc, sc->sa.agf_bp);
 		goto out;
 	}
-	sai.entries = kvcalloc(sai.agflcount, sizeof(xfs_agblock_t),
-			       XCHK_GFP_FLAGS);
+	memset(&sai, 0, sizeof(sai));
+	sai.sc = sc;
+	sai.sz_entries = agflcount;
+	sai.entries = kmem_zalloc(sizeof(xfs_agblock_t) * agflcount,
+			KM_MAYFAIL);
 	if (!sai.entries) {
 		error = -ENOMEM;
 		goto out;
 	}
 
 	/* Check the blocks in the AGFL. */
-	error = xfs_agfl_walk(sc->mp, sc->sa.agf_bp->b_addr, sai.agfl_bp,
-			xchk_agfl_block, &sai);
+	error = xfs_agfl_walk(sc->mp, sc->sa.agf_bp->b_addr,
+			sc->sa.agfl_bp, xchk_agfl_block, &sai);
 	if (error == -ECANCELED) {
 		error = 0;
 		goto out_free;
@@ -753,7 +744,7 @@ xchk_agfl(
 	if (error)
 		goto out_free;
 
-	if (sai.agflcount != sai.nr_entries) {
+	if (agflcount != sai.nr_entries) {
 		xchk_block_set_corrupt(sc, sc->sa.agf_bp);
 		goto out_free;
 	}
@@ -769,7 +760,7 @@ xchk_agfl(
 	}
 
 out_free:
-	kvfree(sai.entries);
+	kmem_free(sai.entries);
 out:
 	return error;
 }
@@ -859,7 +850,6 @@ xchk_agi(
 	struct xfs_mount	*mp = sc->mp;
 	struct xfs_agi		*agi;
 	struct xfs_perag	*pag;
-	struct xfs_ino_geometry	*igeo = M_IGEO(sc->mp);
 	xfs_agnumber_t		agno = sc->sm->sm_agno;
 	xfs_agblock_t		agbno;
 	xfs_agblock_t		eoag;
@@ -881,25 +871,25 @@ xchk_agi(
 
 	/* Check the AG length */
 	eoag = be32_to_cpu(agi->agi_length);
-	if (eoag != pag->block_count)
+	if (eoag != xfs_ag_block_count(mp, agno))
 		xchk_block_set_corrupt(sc, sc->sa.agi_bp);
 
 	/* Check btree roots and levels */
 	agbno = be32_to_cpu(agi->agi_root);
-	if (!xfs_verify_agbno(pag, agbno))
+	if (!xfs_verify_agbno(mp, agno, agbno))
 		xchk_block_set_corrupt(sc, sc->sa.agi_bp);
 
 	level = be32_to_cpu(agi->agi_level);
-	if (level <= 0 || level > igeo->inobt_maxlevels)
+	if (level <= 0 || level > XFS_BTREE_MAXLEVELS)
 		xchk_block_set_corrupt(sc, sc->sa.agi_bp);
 
 	if (xfs_has_finobt(mp)) {
 		agbno = be32_to_cpu(agi->agi_free_root);
-		if (!xfs_verify_agbno(pag, agbno))
+		if (!xfs_verify_agbno(mp, agno, agbno))
 			xchk_block_set_corrupt(sc, sc->sa.agi_bp);
 
 		level = be32_to_cpu(agi->agi_free_level);
-		if (level <= 0 || level > igeo->inobt_maxlevels)
+		if (level <= 0 || level > XFS_BTREE_MAXLEVELS)
 			xchk_block_set_corrupt(sc, sc->sa.agi_bp);
 	}
 
@@ -912,17 +902,17 @@ xchk_agi(
 
 	/* Check inode pointers */
 	agino = be32_to_cpu(agi->agi_newino);
-	if (!xfs_verify_agino_or_null(pag, agino))
+	if (!xfs_verify_agino_or_null(mp, agno, agino))
 		xchk_block_set_corrupt(sc, sc->sa.agi_bp);
 
 	agino = be32_to_cpu(agi->agi_dirino);
-	if (!xfs_verify_agino_or_null(pag, agino))
+	if (!xfs_verify_agino_or_null(mp, agno, agino))
 		xchk_block_set_corrupt(sc, sc->sa.agi_bp);
 
 	/* Check unlinked inode buckets */
 	for (i = 0; i < XFS_AGI_UNLINKED_BUCKETS; i++) {
 		agino = be32_to_cpu(agi->agi_unlinked[i]);
-		if (!xfs_verify_agino_or_null(pag, agino))
+		if (!xfs_verify_agino_or_null(mp, agno, agino))
 			xchk_block_set_corrupt(sc, sc->sa.agi_bp);
 	}
 

@@ -3033,7 +3033,7 @@ static int mlx4_init_port_info(struct mlx4_dev *dev, int port)
 	struct mlx4_port_info *info = &mlx4_priv(dev)->port[port];
 	int err;
 
-	err = devl_port_register(devlink, &info->devlink_port, port);
+	err = devlink_port_register(devlink, &info->devlink_port, port);
 	if (err)
 		return err;
 
@@ -3043,7 +3043,7 @@ static int mlx4_init_port_info(struct mlx4_dev *dev, int port)
 	 */
 	if (!IS_ENABLED(CONFIG_MLX4_EN) &&
 	    dev->caps.port_type[port] == MLX4_PORT_TYPE_ETH)
-		devlink_port_type_eth_set(&info->devlink_port);
+		devlink_port_type_eth_set(&info->devlink_port, NULL);
 	else if (!IS_ENABLED(CONFIG_MLX4_INFINIBAND) &&
 		 dev->caps.port_type[port] == MLX4_PORT_TYPE_IB)
 		devlink_port_type_ib_set(&info->devlink_port, NULL);
@@ -3071,8 +3071,7 @@ static int mlx4_init_port_info(struct mlx4_dev *dev, int port)
 	err = device_create_file(&dev->persist->pdev->dev, &info->port_attr);
 	if (err) {
 		mlx4_err(dev, "Failed to create file for port %d\n", port);
-		devlink_port_type_clear(&info->devlink_port);
-		devl_port_unregister(&info->devlink_port);
+		devlink_port_unregister(&info->devlink_port);
 		info->port = -1;
 		return err;
 	}
@@ -3094,8 +3093,7 @@ static int mlx4_init_port_info(struct mlx4_dev *dev, int port)
 		mlx4_err(dev, "Failed to create mtu file for port %d\n", port);
 		device_remove_file(&info->dev->persist->pdev->dev,
 				   &info->port_attr);
-		devlink_port_type_clear(&info->devlink_port);
-		devl_port_unregister(&info->devlink_port);
+		devlink_port_unregister(&info->devlink_port);
 		info->port = -1;
 		return err;
 	}
@@ -3111,8 +3109,7 @@ static void mlx4_cleanup_port_info(struct mlx4_port_info *info)
 	device_remove_file(&info->dev->persist->pdev->dev, &info->port_attr);
 	device_remove_file(&info->dev->persist->pdev->dev,
 			   &info->port_mtu_attr);
-	devlink_port_type_clear(&info->devlink_port);
-	devl_port_unregister(&info->devlink_port);
+	devlink_port_unregister(&info->devlink_port);
 
 #ifdef CONFIG_RFS_ACCEL
 	free_irq_cpu_rmap(info->rmap);
@@ -3336,7 +3333,6 @@ static int mlx4_load_one(struct pci_dev *pdev, int pci_dev_data,
 			 int total_vfs, int *nvfs, struct mlx4_priv *priv,
 			 int reset_flow)
 {
-	struct devlink *devlink = priv_to_devlink(priv);
 	struct mlx4_dev *dev;
 	unsigned sum = 0;
 	int err;
@@ -3345,7 +3341,6 @@ static int mlx4_load_one(struct pci_dev *pdev, int pci_dev_data,
 	struct mlx4_dev_cap *dev_cap = NULL;
 	int existing_vfs = 0;
 
-	devl_assert_locked(devlink);
 	dev = &priv->dev;
 
 	INIT_LIST_HEAD(&priv->ctx_list);
@@ -4004,7 +3999,6 @@ static int mlx4_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	devlink = devlink_alloc(&mlx4_devlink_ops, sizeof(*priv), &pdev->dev);
 	if (!devlink)
 		return -ENOMEM;
-	devl_lock(devlink);
 	priv = devlink_priv(devlink);
 
 	dev       = &priv->dev;
@@ -4021,6 +4015,9 @@ static int mlx4_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	mutex_init(&dev->persist->interface_state_mutex);
 	mutex_init(&dev->persist->pci_status_mutex);
 
+	ret = devlink_register(devlink);
+	if (ret)
+		goto err_persist_free;
 	ret = devlink_params_register(devlink, mlx4_devlink_params,
 				      ARRAY_SIZE(mlx4_devlink_params));
 	if (ret)
@@ -4030,19 +4027,19 @@ static int mlx4_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (ret)
 		goto err_params_unregister;
 
+	devlink_params_publish(devlink);
+	devlink_reload_enable(devlink);
 	pci_save_state(pdev);
-	devlink_set_features(devlink, DEVLINK_F_RELOAD);
-	devl_unlock(devlink);
-	devlink_register(devlink);
 	return 0;
 
 err_params_unregister:
 	devlink_params_unregister(devlink, mlx4_devlink_params,
 				  ARRAY_SIZE(mlx4_devlink_params));
 err_devlink_unregister:
+	devlink_unregister(devlink);
+err_persist_free:
 	kfree(dev->persist);
 err_devlink_free:
-	devl_unlock(devlink);
 	devlink_free(devlink);
 	return ret;
 }
@@ -4064,11 +4061,8 @@ static void mlx4_unload_one(struct pci_dev *pdev)
 	struct mlx4_dev  *dev  = persist->dev;
 	struct mlx4_priv *priv = mlx4_priv(dev);
 	int               pci_dev_data;
-	struct devlink *devlink;
 	int p, i;
 
-	devlink = priv_to_devlink(priv);
-	devl_assert_locked(devlink);
 	if (priv->removed)
 		return;
 
@@ -4146,9 +4140,8 @@ static void mlx4_remove_one(struct pci_dev *pdev)
 	struct devlink *devlink = priv_to_devlink(priv);
 	int active_vfs = 0;
 
-	devlink_unregister(devlink);
+	devlink_reload_disable(devlink);
 
-	devl_lock(devlink);
 	if (mlx4_is_slave(dev))
 		persist->interface_state |= MLX4_INTERFACE_STATE_NOWAIT;
 
@@ -4183,8 +4176,8 @@ static void mlx4_remove_one(struct pci_dev *pdev)
 	mlx4_pci_disable_device(dev);
 	devlink_params_unregister(devlink, mlx4_devlink_params,
 				  ARRAY_SIZE(mlx4_devlink_params));
+	devlink_unregister(devlink);
 	kfree(dev->persist);
-	devl_unlock(devlink);
 	devlink_free(devlink);
 }
 
@@ -4305,20 +4298,15 @@ static pci_ers_result_t mlx4_pci_err_detected(struct pci_dev *pdev,
 					      pci_channel_state_t state)
 {
 	struct mlx4_dev_persistent *persist = pci_get_drvdata(pdev);
-	struct mlx4_dev *dev = persist->dev;
-	struct devlink *devlink;
 
 	mlx4_err(persist->dev, "mlx4_pci_err_detected was called\n");
 	mlx4_enter_error_state(persist);
 
-	devlink = priv_to_devlink(mlx4_priv(dev));
-	devl_lock(devlink);
 	mutex_lock(&persist->interface_state_mutex);
 	if (persist->interface_state & MLX4_INTERFACE_STATE_UP)
 		mlx4_unload_one(pdev);
 
 	mutex_unlock(&persist->interface_state_mutex);
-	devl_unlock(devlink);
 	if (state == pci_channel_io_perm_failure)
 		return PCI_ERS_RESULT_DISCONNECT;
 
@@ -4351,7 +4339,6 @@ static void mlx4_pci_resume(struct pci_dev *pdev)
 	struct mlx4_dev	 *dev  = persist->dev;
 	struct mlx4_priv *priv = mlx4_priv(dev);
 	int nvfs[MLX4_MAX_PORTS + 1] = {0, 0, 0};
-	struct devlink *devlink;
 	int total_vfs;
 	int err;
 
@@ -4359,8 +4346,6 @@ static void mlx4_pci_resume(struct pci_dev *pdev)
 	total_vfs = dev->persist->num_vfs;
 	memcpy(nvfs, dev->persist->nvfs, sizeof(dev->persist->nvfs));
 
-	devlink = priv_to_devlink(priv);
-	devl_lock(devlink);
 	mutex_lock(&persist->interface_state_mutex);
 	if (!(persist->interface_state & MLX4_INTERFACE_STATE_UP)) {
 		err = mlx4_load_one(pdev, priv->pci_dev_data, total_vfs, nvfs,
@@ -4379,23 +4364,19 @@ static void mlx4_pci_resume(struct pci_dev *pdev)
 	}
 end:
 	mutex_unlock(&persist->interface_state_mutex);
-	devl_unlock(devlink);
+
 }
 
 static void mlx4_shutdown(struct pci_dev *pdev)
 {
 	struct mlx4_dev_persistent *persist = pci_get_drvdata(pdev);
 	struct mlx4_dev *dev = persist->dev;
-	struct devlink *devlink;
 
 	mlx4_info(persist->dev, "mlx4_shutdown was called\n");
-	devlink = priv_to_devlink(mlx4_priv(dev));
-	devl_lock(devlink);
 	mutex_lock(&persist->interface_state_mutex);
 	if (persist->interface_state & MLX4_INTERFACE_STATE_UP)
 		mlx4_unload_one(pdev);
 	mutex_unlock(&persist->interface_state_mutex);
-	devl_unlock(devlink);
 	mlx4_pci_disable_device(dev);
 }
 
@@ -4410,16 +4391,12 @@ static int __maybe_unused mlx4_suspend(struct device *dev_d)
 	struct pci_dev *pdev = to_pci_dev(dev_d);
 	struct mlx4_dev_persistent *persist = pci_get_drvdata(pdev);
 	struct mlx4_dev	*dev = persist->dev;
-	struct devlink *devlink;
 
 	mlx4_err(dev, "suspend was called\n");
-	devlink = priv_to_devlink(mlx4_priv(dev));
-	devl_lock(devlink);
 	mutex_lock(&persist->interface_state_mutex);
 	if (persist->interface_state & MLX4_INTERFACE_STATE_UP)
 		mlx4_unload_one(pdev);
 	mutex_unlock(&persist->interface_state_mutex);
-	devl_unlock(devlink);
 
 	return 0;
 }
@@ -4431,7 +4408,6 @@ static int __maybe_unused mlx4_resume(struct device *dev_d)
 	struct mlx4_dev	*dev = persist->dev;
 	struct mlx4_priv *priv = mlx4_priv(dev);
 	int nvfs[MLX4_MAX_PORTS + 1] = {0, 0, 0};
-	struct devlink *devlink;
 	int total_vfs;
 	int ret = 0;
 
@@ -4439,8 +4415,6 @@ static int __maybe_unused mlx4_resume(struct device *dev_d)
 	total_vfs = dev->persist->num_vfs;
 	memcpy(nvfs, dev->persist->nvfs, sizeof(dev->persist->nvfs));
 
-	devlink = priv_to_devlink(priv);
-	devl_lock(devlink);
 	mutex_lock(&persist->interface_state_mutex);
 	if (!(persist->interface_state & MLX4_INTERFACE_STATE_UP)) {
 		ret = mlx4_load_one(pdev, priv->pci_dev_data, total_vfs,
@@ -4454,7 +4428,6 @@ static int __maybe_unused mlx4_resume(struct device *dev_d)
 		}
 	}
 	mutex_unlock(&persist->interface_state_mutex);
-	devl_unlock(devlink);
 
 	return ret;
 }

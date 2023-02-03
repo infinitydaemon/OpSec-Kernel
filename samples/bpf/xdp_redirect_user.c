@@ -18,6 +18,7 @@ static const char *__doc__ =
 #include <unistd.h>
 #include <libgen.h>
 #include <getopt.h>
+#include <sys/resource.h>
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include "bpf_util.h"

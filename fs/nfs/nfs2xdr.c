@@ -955,6 +955,7 @@ int nfs2_decode_dirent(struct xdr_stream *xdr, struct nfs_entry *entry,
 	 * The type (size and byte order) of nfscookie isn't defined in
 	 * RFC 1094.  This implementation assumes that it's an XDR uint32.
 	 */
+	entry->prev_cookie = entry->cookie;
 	p = xdr_inline_decode(xdr, 4);
 	if (unlikely(!p))
 		return -EAGAIN;

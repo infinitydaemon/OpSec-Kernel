@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
+ * drivers/input/tablet/wacom_sys.c
+ *
  *  USB Wacom tablet support - system specific code
+ */
+
+/*
  */
 
 #include "wacom_wac.h"
@@ -879,8 +884,8 @@ static int wacom_add_shared_data(struct hid_device *hdev)
 	if (!data) {
 		data = kzalloc(sizeof(struct wacom_hdev_data), GFP_KERNEL);
 		if (!data) {
-			mutex_unlock(&wacom_udev_list_lock);
-			return -ENOMEM;
+			retval = -ENOMEM;
+			goto out;
 		}
 
 		kref_init(&data->kref);
@@ -888,19 +893,22 @@ static int wacom_add_shared_data(struct hid_device *hdev)
 		list_add_tail(&data->list, &wacom_udev_list);
 	}
 
-	mutex_unlock(&wacom_udev_list_lock);
-
 	wacom_wac->shared = &data->shared;
 
-	retval = devm_add_action_or_reset(&hdev->dev, wacom_remove_shared_data, wacom);
-	if (retval)
+	retval = devm_add_action(&hdev->dev, wacom_remove_shared_data, wacom);
+	if (retval) {
+		mutex_unlock(&wacom_udev_list_lock);
+		wacom_remove_shared_data(wacom);
 		return retval;
+	}
 
 	if (wacom_wac->features.device_type & WACOM_DEVICETYPE_TOUCH)
 		wacom_wac->shared->touch = hdev;
 	else if (wacom_wac->features.device_type & WACOM_DEVICETYPE_PEN)
 		wacom_wac->shared->pen = hdev;
 
+out:
+	mutex_unlock(&wacom_udev_list_lock);
 	return retval;
 }
 
@@ -1775,7 +1783,7 @@ static int __wacom_initialize_battery(struct wacom *wacom,
 	bat_desc->get_property = wacom_battery_get_property;
 	sprintf(battery->bat_name, "wacom_battery_%ld", n);
 	bat_desc->name = battery->bat_name;
-	bat_desc->type = POWER_SUPPLY_TYPE_BATTERY;
+	bat_desc->type = POWER_SUPPLY_TYPE_USB;
 	bat_desc->use_for_apm = 0;
 
 	ps_bat = devm_power_supply_register(dev, bat_desc, &psy_cfg);
@@ -2224,7 +2232,7 @@ static void wacom_update_name(struct wacom *wacom, const char *suffix)
 		} else if (strstr(product_name, "Wacom") ||
 			   strstr(product_name, "wacom") ||
 			   strstr(product_name, "WACOM")) {
-			strscpy(name, product_name, sizeof(name));
+			strlcpy(name, product_name, sizeof(name));
 		} else {
 			snprintf(name, sizeof(name), "Wacom %s", product_name);
 		}
@@ -2242,7 +2250,7 @@ static void wacom_update_name(struct wacom *wacom, const char *suffix)
 		if (name[strlen(name)-1] == ' ')
 			name[strlen(name)-1] = '\0';
 	} else {
-		strscpy(name, features->name, sizeof(name));
+		strlcpy(name, features->name, sizeof(name));
 	}
 
 	snprintf(wacom_wac->name, sizeof(wacom_wac->name), "%s%s",
@@ -2507,7 +2515,7 @@ static void wacom_wireless_work(struct work_struct *work)
 				goto fail;
 		}
 
-		strscpy(wacom_wac->name, wacom_wac1->name,
+		strlcpy(wacom_wac->name, wacom_wac1->name,
 			sizeof(wacom_wac->name));
 		error = wacom_initialize_battery(wacom);
 		if (error)
@@ -2779,7 +2787,6 @@ static int wacom_probe(struct hid_device *hdev,
 	INIT_WORK(&wacom->battery_work, wacom_battery_work);
 	INIT_WORK(&wacom->remote_work, wacom_remote_work);
 	INIT_WORK(&wacom->mode_change_work, wacom_mode_change_work);
-	timer_setup(&wacom->idleprox_timer, &wacom_idleprox_timeout, TIMER_DEFERRABLE);
 
 	/* ask for the report descriptor to be loaded by HID */
 	error = hid_parse(hdev);
@@ -2825,7 +2832,6 @@ static void wacom_remove(struct hid_device *hdev)
 	cancel_work_sync(&wacom->battery_work);
 	cancel_work_sync(&wacom->remote_work);
 	cancel_work_sync(&wacom->mode_change_work);
-	del_timer_sync(&wacom->idleprox_timer);
 	if (hdev->bus == BUS_BLUETOOTH)
 		device_remove_file(&hdev->dev, &dev_attr_speed);
 

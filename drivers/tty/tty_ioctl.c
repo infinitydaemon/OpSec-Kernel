@@ -21,7 +21,6 @@
 #include <linux/bitops.h>
 #include <linux/mutex.h>
 #include <linux/compat.h>
-#include <linux/termios_internal.h>
 #include "tty.h"
 
 #include <asm/io.h>
@@ -220,7 +219,7 @@ EXPORT_SYMBOL(tty_wait_until_sent);
  *		Termios Helper Methods
  */
 
-static void unset_locked_termios(struct tty_struct *tty, const struct ktermios *old)
+static void unset_locked_termios(struct tty_struct *tty, struct ktermios *old)
 {
 	struct ktermios *termios = &tty->termios;
 	struct ktermios *locked  = &tty->termios_locked;
@@ -250,7 +249,7 @@ static void unset_locked_termios(struct tty_struct *tty, const struct ktermios *
  *	in some cases where only minimal reconfiguration is supported
  */
 
-void tty_termios_copy_hw(struct ktermios *new, const struct ktermios *old)
+void tty_termios_copy_hw(struct ktermios *new, struct ktermios *old)
 {
 	/* The bits a dumb device handles in software. Smart devices need
 	   to always provide a set_termios method */
@@ -320,8 +319,6 @@ unsigned char tty_get_frame_size(unsigned int cflag)
 		bits++;
 	if (cflag & PARENB)
 		bits++;
-	if (cflag & ADDRB)
-		bits++;
 
 	return bits;
 }
@@ -356,8 +353,6 @@ int tty_set_termios(struct tty_struct *tty, struct ktermios *new_termios)
 	old_termios = tty->termios;
 	tty->termios = *new_termios;
 	unset_locked_termios(tty, &old_termios);
-	/* Reset any ADDRB changes, ADDRB is changed through ->rs485_config() */
-	tty->termios.c_cflag ^= (tty->termios.c_cflag ^ old_termios.c_cflag) & ADDRB;
 
 	if (tty->ops->set_termios)
 		tty->ops->set_termios(tty, &old_termios);
@@ -374,80 +369,6 @@ int tty_set_termios(struct tty_struct *tty, struct ktermios *new_termios)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(tty_set_termios);
-
-
-/*
- * Translate a "termio" structure into a "termios". Ugh.
- */
-__weak int user_termio_to_kernel_termios(struct ktermios *termios,
-						struct termio __user *termio)
-{
-	struct termio v;
-
-	if (copy_from_user(&v, termio, sizeof(struct termio)))
-		return -EFAULT;
-
-	termios->c_iflag = (0xffff0000 & termios->c_iflag) | v.c_iflag;
-	termios->c_oflag = (0xffff0000 & termios->c_oflag) | v.c_oflag;
-	termios->c_cflag = (0xffff0000 & termios->c_cflag) | v.c_cflag;
-	termios->c_lflag = (0xffff0000 & termios->c_lflag) | v.c_lflag;
-	termios->c_line = (0xffff0000 & termios->c_lflag) | v.c_line;
-	memcpy(termios->c_cc, v.c_cc, NCC);
-	return 0;
-}
-
-/*
- * Translate a "termios" structure into a "termio". Ugh.
- */
-__weak int kernel_termios_to_user_termio(struct termio __user *termio,
-						struct ktermios *termios)
-{
-	struct termio v;
-	memset(&v, 0, sizeof(struct termio));
-	v.c_iflag = termios->c_iflag;
-	v.c_oflag = termios->c_oflag;
-	v.c_cflag = termios->c_cflag;
-	v.c_lflag = termios->c_lflag;
-	v.c_line = termios->c_line;
-	memcpy(v.c_cc, termios->c_cc, NCC);
-	return copy_to_user(termio, &v, sizeof(struct termio));
-}
-
-#ifdef TCGETS2
-__weak int user_termios_to_kernel_termios(struct ktermios *k,
-						 struct termios2 __user *u)
-{
-	return copy_from_user(k, u, sizeof(struct termios2));
-}
-__weak int kernel_termios_to_user_termios(struct termios2 __user *u,
-						 struct ktermios *k)
-{
-	return copy_to_user(u, k, sizeof(struct termios2));
-}
-__weak int user_termios_to_kernel_termios_1(struct ktermios *k,
-						   struct termios __user *u)
-{
-	return copy_from_user(k, u, sizeof(struct termios));
-}
-__weak int kernel_termios_to_user_termios_1(struct termios __user *u,
-						   struct ktermios *k)
-{
-	return copy_to_user(u, k, sizeof(struct termios));
-}
-
-#else
-
-__weak int user_termios_to_kernel_termios(struct ktermios *k,
-						 struct termios __user *u)
-{
-	return copy_from_user(k, u, sizeof(struct termios));
-}
-__weak int kernel_termios_to_user_termios(struct termios __user *u,
-						 struct ktermios *k)
-{
-	return copy_to_user(u, k, sizeof(struct termios));
-}
-#endif /* TCGETS2 */
 
 /**
  *	set_termios		-	set termios values for a tty
@@ -641,8 +562,10 @@ static int set_sgttyb(struct tty_struct *tty, struct sgttyb __user *sgttyb)
 	termios.c_cc[VKILL] = tmp.sg_kill;
 	set_sgflags(&termios, tmp.sg_flags);
 	/* Try and encode into Bfoo format */
+#ifdef BOTHER
 	tty_termios_encode_baud_rate(&termios, termios.c_ispeed,
 						termios.c_ospeed);
+#endif
 	up_write(&tty->termios_rwsem);
 	tty_set_termios(tty, &termios);
 	return 0;
@@ -752,6 +675,7 @@ static int tty_change_softcar(struct tty_struct *tty, int arg)
 /**
  *	tty_mode_ioctl		-	mode related ioctls
  *	@tty: tty for the ioctl
+ *	@file: file pointer for the tty
  *	@cmd: command
  *	@arg: ioctl argument
  *
@@ -760,12 +684,15 @@ static int tty_change_softcar(struct tty_struct *tty, int arg)
  *	consistent mode setting.
  */
 
-int tty_mode_ioctl(struct tty_struct *tty, unsigned int cmd, unsigned long arg)
+int tty_mode_ioctl(struct tty_struct *tty, struct file *file,
+			unsigned int cmd, unsigned long arg)
 {
 	struct tty_struct *real_tty;
 	void __user *p = (void __user *)arg;
 	int ret = 0;
 	struct ktermios kterm;
+
+	BUG_ON(file == NULL);
 
 	if (tty->driver->type == TTY_DRIVER_TYPE_PTY &&
 	    tty->driver->subtype == PTY_TYPE_MASTER)
@@ -931,8 +858,8 @@ int tty_perform_flush(struct tty_struct *tty, unsigned long arg)
 }
 EXPORT_SYMBOL_GPL(tty_perform_flush);
 
-int n_tty_ioctl_helper(struct tty_struct *tty, unsigned int cmd,
-		unsigned long arg)
+int n_tty_ioctl_helper(struct tty_struct *tty, struct file *file,
+		       unsigned int cmd, unsigned long arg)
 {
 	int retval;
 
@@ -977,7 +904,7 @@ int n_tty_ioctl_helper(struct tty_struct *tty, unsigned int cmd,
 		return __tty_perform_flush(tty, arg);
 	default:
 		/* Try the mode commands */
-		return tty_mode_ioctl(tty, cmd, arg);
+		return tty_mode_ioctl(tty, file, cmd, arg);
 	}
 }
 EXPORT_SYMBOL(n_tty_ioctl_helper);

@@ -136,11 +136,11 @@ static inline bool handle_irq_perbit(struct pt_regs *regs, u32 hwirq,
 				     u32 irq_base)
 {
 	if (hwirq == 0)
-		return false;
+		return 0;
 
-	generic_handle_domain_irq(root_domain, irq_base + __fls(hwirq));
+	handle_domain_irq(root_domain, irq_base + __fls(hwirq), regs);
 
-	return true;
+	return 1;
 }
 
 /* gx6605s 64 irqs interrupt controller */

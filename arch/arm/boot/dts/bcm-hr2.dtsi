@@ -318,7 +318,7 @@
 		status = "disabled";
 
 		msi-parent = <&msi0>;
-		msi0: msi {
+		msi0: msi-controller {
 			compatible = "brcm,iproc-msi";
 			msi-controller;
 			interrupt-parent = <&gic>;
@@ -354,7 +354,7 @@
 		status = "disabled";
 
 		msi-parent = <&msi1>;
-		msi1: msi {
+		msi1: msi-controller {
 			compatible = "brcm,iproc-msi";
 			msi-controller;
 			interrupt-parent = <&gic>;

@@ -1019,7 +1019,7 @@ static struct parport_driver lp_driver = {
 
 static int __init lp_init(void)
 {
-	int i, err;
+	int i, err = 0;
 
 	if (parport_nr[0] == LP_PARPORT_OFF)
 		return 0;

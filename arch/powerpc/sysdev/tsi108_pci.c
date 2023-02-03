@@ -12,9 +12,7 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/irq.h>
-#include <linux/irqdomain.h>
 #include <linux/interrupt.h>
-#include <linux/of_address.h>
 
 #include <asm/byteorder.h>
 #include <asm/io.h>
@@ -25,6 +23,7 @@
 #include <asm/tsi108.h>
 #include <asm/tsi108_pci.h>
 #include <asm/tsi108_irq.h>
+#include <asm/prom.h>
 
 #undef DEBUG
 #ifdef DEBUG
@@ -258,7 +257,7 @@ static void tsi108_pci_int_unmask(u_int irq)
 	mb();
 }
 
-static void __init init_pci_source(void)
+static void init_pci_source(void)
 {
 	tsi108_write_reg(TSI108_PCI_OFFSET + TSI108_PCI_IRP_CFG_CTL,
 			0x0000ff00);

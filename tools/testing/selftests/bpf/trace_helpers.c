@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0
-#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,17 +22,14 @@ static int ksym_cmp(const void *p1, const void *p2)
 	return ((struct ksym *)p1)->addr - ((struct ksym *)p2)->addr;
 }
 
-int load_kallsyms_refresh(void)
+int load_kallsyms(void)
 {
-	FILE *f;
+	FILE *f = fopen("/proc/kallsyms", "r");
 	char func[256], buf[256];
 	char symbol;
 	void *addr;
 	int i = 0;
 
-	sym_cnt = 0;
-
-	f = fopen("/proc/kallsyms", "r");
 	if (!f)
 		return -ENOENT;
 
@@ -50,17 +46,6 @@ int load_kallsyms_refresh(void)
 	sym_cnt = i;
 	qsort(syms, sym_cnt, sizeof(struct ksym), ksym_cmp);
 	return 0;
-}
-
-int load_kallsyms(void)
-{
-	/*
-	 * This is called/used from multiplace places,
-	 * load symbols just once.
-	 */
-	if (sym_cnt)
-		return 0;
-	return load_kallsyms_refresh();
 }
 
 struct ksym *ksym_search(long key)
@@ -152,35 +137,16 @@ void read_trace_pipe(void)
 	}
 }
 
-ssize_t get_uprobe_offset(const void *addr)
-{
-	size_t start, end, base;
-	char buf[256];
-	bool found = false;
-	FILE *f;
-
-	f = fopen("/proc/self/maps", "r");
-	if (!f)
-		return -errno;
-
-	while (fscanf(f, "%zx-%zx %s %zx %*[^\n]\n", &start, &end, buf, &base) == 4) {
-		if (buf[2] == 'x' && (uintptr_t)addr >= start && (uintptr_t)addr < end) {
-			found = true;
-			break;
-		}
-	}
-
-	fclose(f);
-
-	if (!found)
-		return -ESRCH;
-
 #if defined(__powerpc64__) && defined(_CALL_ELF) && _CALL_ELF == 2
 
 #define OP_RT_RA_MASK   0xffff0000UL
 #define LIS_R2          0x3c400000UL
 #define ADDIS_R2_R12    0x3c4c0000UL
 #define ADDI_R2_R2      0x38420000UL
+
+ssize_t get_uprobe_offset(const void *addr, ssize_t base)
+{
+	u32 *insn = (u32 *)(uintptr_t)addr;
 
 	/*
 	 * A PPC64 ABIv2 function may have a local and a global entry
@@ -198,16 +164,43 @@ ssize_t get_uprobe_offset(const void *addr)
 	 * lis   r2,XXXX
 	 * addi  r2,r2,XXXX
 	 */
-	{
-		const u32 *insn = (const u32 *)(uintptr_t)addr;
+	if ((((*insn & OP_RT_RA_MASK) == ADDIS_R2_R12) ||
+	     ((*insn & OP_RT_RA_MASK) == LIS_R2)) &&
+	    ((*(insn + 1) & OP_RT_RA_MASK) == ADDI_R2_R2))
+		return (ssize_t)(insn + 2) - base;
+	else
+		return (uintptr_t)addr - base;
+}
 
-		if ((((*insn & OP_RT_RA_MASK) == ADDIS_R2_R12) ||
-		     ((*insn & OP_RT_RA_MASK) == LIS_R2)) &&
-		    ((*(insn + 1) & OP_RT_RA_MASK) == ADDI_R2_R2))
-			return (uintptr_t)(insn + 2) - start + base;
-	}
+#else
+
+ssize_t get_uprobe_offset(const void *addr, ssize_t base)
+{
+	return (uintptr_t)addr - base;
+}
+
 #endif
-	return (uintptr_t)addr - start + base;
+
+ssize_t get_base_addr(void)
+{
+	size_t start, offset;
+	char buf[256];
+	FILE *f;
+
+	f = fopen("/proc/self/maps", "r");
+	if (!f)
+		return -errno;
+
+	while (fscanf(f, "%zx-%*x %s %zx %*[^\n]\n",
+		      &start, buf, &offset) == 3) {
+		if (strcmp(buf, "r-xp") == 0) {
+			fclose(f);
+			return start - offset;
+		}
+	}
+
+	fclose(f);
+	return -EINVAL;
 }
 
 ssize_t get_rel_offset(uintptr_t addr)

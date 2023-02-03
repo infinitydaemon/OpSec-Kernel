@@ -893,7 +893,7 @@ static int lm75_detect(struct i2c_client *new_client,
 			return -ENODEV;
 	}
 
-	strscpy(info->type, is_lm75a ? "lm75a" : "lm75", I2C_NAME_SIZE);
+	strlcpy(info->type, is_lm75a ? "lm75a" : "lm75", I2C_NAME_SIZE);
 
 	return 0;
 }

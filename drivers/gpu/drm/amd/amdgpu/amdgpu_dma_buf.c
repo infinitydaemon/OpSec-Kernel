@@ -58,8 +58,11 @@ static int amdgpu_dma_buf_attach(struct dma_buf *dmabuf,
 	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->tbo.bdev);
 	int r;
 
-	if (pci_p2pdma_distance(adev->pdev, attach->dev, false) < 0)
+	if (pci_p2pdma_distance_many(adev->pdev, &attach->dev, 1, true) < 0)
 		attach->peer2peer = false;
+
+	if (attach->dev->driver == adev->dev->driver)
+		return 0;
 
 	r = pm_runtime_get_sync(adev_to_drm(adev)->dev);
 	if (r < 0)
@@ -102,9 +105,21 @@ static int amdgpu_dma_buf_pin(struct dma_buf_attachment *attach)
 {
 	struct drm_gem_object *obj = attach->dmabuf->priv;
 	struct amdgpu_bo *bo = gem_to_amdgpu_bo(obj);
+	int r;
 
 	/* pin buffer into GTT */
-	return amdgpu_bo_pin(bo, AMDGPU_GEM_DOMAIN_GTT);
+	r = amdgpu_bo_pin(bo, AMDGPU_GEM_DOMAIN_GTT);
+	if (r)
+		return r;
+
+	if (bo->tbo.moving) {
+		r = dma_fence_wait(bo->tbo.moving, true);
+		if (r) {
+			amdgpu_bo_unpin(bo);
+			return r;
+		}
+	}
+	return 0;
 }
 
 /**
@@ -328,9 +343,7 @@ amdgpu_dma_buf_create_obj(struct drm_device *dev, struct dma_buf *dma_buf)
 	if (dma_buf->ops == &amdgpu_dmabuf_ops) {
 		struct amdgpu_bo *other = gem_to_amdgpu_bo(dma_buf->priv);
 
-		flags |= other->flags & (AMDGPU_GEM_CREATE_CPU_GTT_USWC |
-					 AMDGPU_GEM_CREATE_COHERENT |
-					 AMDGPU_GEM_CREATE_UNCACHED);
+		flags |= other->flags & AMDGPU_GEM_CREATE_CPU_GTT_USWC;
 	}
 
 	ret = amdgpu_gem_object_create(adev, dma_buf->size, PAGE_SIZE,

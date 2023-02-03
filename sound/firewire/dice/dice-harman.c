@@ -2,6 +2,8 @@
 // dice-harman.c - a part of driver for DICE based devices
 //
 // Copyright (c) 2021 Takashi Sakamoto
+//
+// Licensed under the terms of the GNU General Public License, version 2.
 
 #include "dice.h"
 

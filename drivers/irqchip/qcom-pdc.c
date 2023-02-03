@@ -21,18 +21,22 @@
 #include <linux/slab.h>
 #include <linux/types.h>
 
+#define PDC_MAX_IRQS		168
 #define PDC_MAX_GPIO_IRQS	256
+
+#define CLEAR_INTR(reg, intr)	(reg & ~(1 << intr))
+#define ENABLE_INTR(reg, intr)	(reg | (1 << intr))
 
 #define IRQ_ENABLE_BANK		0x10
 #define IRQ_i_CFG		0x110
+
+#define PDC_NO_PARENT_IRQ	~0UL
 
 struct pdc_pin_region {
 	u32 pin_base;
 	u32 parent_base;
 	u32 cnt;
 };
-
-#define pin_to_hwirq(r, p)	((r)->parent_base + (p) - (r)->pin_base)
 
 static DEFINE_RAW_SPINLOCK(pdc_lock);
 static void __iomem *pdc_base;
@@ -52,16 +56,16 @@ static u32 pdc_reg_read(int reg, u32 i)
 static void pdc_enable_intr(struct irq_data *d, bool on)
 {
 	int pin_out = d->hwirq;
-	unsigned long enable;
 	unsigned long flags;
 	u32 index, mask;
+	u32 enable;
 
 	index = pin_out / 32;
 	mask = pin_out % 32;
 
 	raw_spin_lock_irqsave(&pdc_lock, flags);
 	enable = pdc_reg_read(IRQ_ENABLE_BANK, index);
-	__assign_bit(mask, &enable, on);
+	enable = on ? ENABLE_INTR(enable, mask) : CLEAR_INTR(enable, mask);
 	pdc_reg_write(IRQ_ENABLE_BANK, index, enable);
 	raw_spin_unlock_irqrestore(&pdc_lock, flags);
 }
@@ -183,17 +187,34 @@ static struct irq_chip qcom_pdc_gic_chip = {
 	.irq_set_affinity	= irq_chip_set_affinity_parent,
 };
 
-static struct pdc_pin_region *get_pin_region(int pin)
+static irq_hw_number_t get_parent_hwirq(int pin)
 {
 	int i;
+	struct pdc_pin_region *region;
 
 	for (i = 0; i < pdc_region_cnt; i++) {
-		if (pin >= pdc_region[i].pin_base &&
-		    pin < pdc_region[i].pin_base + pdc_region[i].cnt)
-			return &pdc_region[i];
+		region = &pdc_region[i];
+		if (pin >= region->pin_base &&
+		    pin < region->pin_base + region->cnt)
+			return (region->parent_base + pin - region->pin_base);
 	}
 
-	return NULL;
+	return PDC_NO_PARENT_IRQ;
+}
+
+static int qcom_pdc_translate(struct irq_domain *d, struct irq_fwspec *fwspec,
+			      unsigned long *hwirq, unsigned int *type)
+{
+	if (is_of_node(fwspec->fwnode)) {
+		if (fwspec->param_count != 2)
+			return -EINVAL;
+
+		*hwirq = fwspec->param[0];
+		*type = fwspec->param[1] & IRQ_TYPE_SENSE_MASK;
+		return 0;
+	}
+
+	return -EINVAL;
 }
 
 static int qcom_pdc_alloc(struct irq_domain *domain, unsigned int virq,
@@ -201,25 +222,21 @@ static int qcom_pdc_alloc(struct irq_domain *domain, unsigned int virq,
 {
 	struct irq_fwspec *fwspec = data;
 	struct irq_fwspec parent_fwspec;
-	struct pdc_pin_region *region;
-	irq_hw_number_t hwirq;
+	irq_hw_number_t hwirq, parent_hwirq;
 	unsigned int type;
 	int ret;
 
-	ret = irq_domain_translate_twocell(domain, fwspec, &hwirq, &type);
+	ret = qcom_pdc_translate(domain, fwspec, &hwirq, &type);
 	if (ret)
 		return ret;
 
-	if (hwirq == GPIO_NO_WAKE_IRQ)
-		return irq_domain_disconnect_hierarchy(domain, virq);
-
-	ret = irq_domain_set_hwirq_and_chip(domain, virq, hwirq,
-					    &qcom_pdc_gic_chip, NULL);
+	ret  = irq_domain_set_hwirq_and_chip(domain, virq, hwirq,
+					     &qcom_pdc_gic_chip, NULL);
 	if (ret)
 		return ret;
 
-	region = get_pin_region(hwirq);
-	if (!region)
+	parent_hwirq = get_parent_hwirq(hwirq);
+	if (parent_hwirq == PDC_NO_PARENT_IRQ)
 		return irq_domain_disconnect_hierarchy(domain->parent, virq);
 
 	if (type & IRQ_TYPE_EDGE_BOTH)
@@ -231,7 +248,7 @@ static int qcom_pdc_alloc(struct irq_domain *domain, unsigned int virq,
 	parent_fwspec.fwnode      = domain->parent->fwnode;
 	parent_fwspec.param_count = 3;
 	parent_fwspec.param[0]    = 0;
-	parent_fwspec.param[1]    = pin_to_hwirq(region, hwirq);
+	parent_fwspec.param[1]    = parent_hwirq;
 	parent_fwspec.param[2]    = type;
 
 	return irq_domain_alloc_irqs_parent(domain, virq, nr_irqs,
@@ -239,8 +256,62 @@ static int qcom_pdc_alloc(struct irq_domain *domain, unsigned int virq,
 }
 
 static const struct irq_domain_ops qcom_pdc_ops = {
-	.translate	= irq_domain_translate_twocell,
+	.translate	= qcom_pdc_translate,
 	.alloc		= qcom_pdc_alloc,
+	.free		= irq_domain_free_irqs_common,
+};
+
+static int qcom_pdc_gpio_alloc(struct irq_domain *domain, unsigned int virq,
+			       unsigned int nr_irqs, void *data)
+{
+	struct irq_fwspec *fwspec = data;
+	struct irq_fwspec parent_fwspec;
+	irq_hw_number_t hwirq, parent_hwirq;
+	unsigned int type;
+	int ret;
+
+	ret = qcom_pdc_translate(domain, fwspec, &hwirq, &type);
+	if (ret)
+		return ret;
+
+	if (hwirq == GPIO_NO_WAKE_IRQ)
+		return irq_domain_disconnect_hierarchy(domain, virq);
+
+	ret = irq_domain_set_hwirq_and_chip(domain, virq, hwirq,
+					    &qcom_pdc_gic_chip, NULL);
+	if (ret)
+		return ret;
+
+	parent_hwirq = get_parent_hwirq(hwirq);
+	if (parent_hwirq == PDC_NO_PARENT_IRQ)
+		return irq_domain_disconnect_hierarchy(domain->parent, virq);
+
+	if (type & IRQ_TYPE_EDGE_BOTH)
+		type = IRQ_TYPE_EDGE_RISING;
+
+	if (type & IRQ_TYPE_LEVEL_MASK)
+		type = IRQ_TYPE_LEVEL_HIGH;
+
+	parent_fwspec.fwnode      = domain->parent->fwnode;
+	parent_fwspec.param_count = 3;
+	parent_fwspec.param[0]    = 0;
+	parent_fwspec.param[1]    = parent_hwirq;
+	parent_fwspec.param[2]    = type;
+
+	return irq_domain_alloc_irqs_parent(domain, virq, nr_irqs,
+					    &parent_fwspec);
+}
+
+static int qcom_pdc_gpio_domain_select(struct irq_domain *d,
+				       struct irq_fwspec *fwspec,
+				       enum irq_domain_bus_token bus_token)
+{
+	return bus_token == DOMAIN_BUS_WAKEUP;
+}
+
+static const struct irq_domain_ops qcom_pdc_gpio_ops = {
+	.select		= qcom_pdc_gpio_domain_select,
+	.alloc		= qcom_pdc_gpio_alloc,
 	.free		= irq_domain_free_irqs_common,
 };
 
@@ -291,7 +362,7 @@ static int pdc_setup_pin_mapping(struct device_node *np)
 
 static int qcom_pdc_init(struct device_node *node, struct device_node *parent)
 {
-	struct irq_domain *parent_domain, *pdc_domain;
+	struct irq_domain *parent_domain, *pdc_domain, *pdc_gpio_domain;
 	int ret;
 
 	pdc_base = of_iomap(node, 0);
@@ -313,21 +384,32 @@ static int qcom_pdc_init(struct device_node *node, struct device_node *parent)
 		goto fail;
 	}
 
-	pdc_domain = irq_domain_create_hierarchy(parent_domain,
-					IRQ_DOMAIN_FLAG_QCOM_PDC_WAKEUP,
-					PDC_MAX_GPIO_IRQS,
-					of_fwnode_handle(node),
-					&qcom_pdc_ops, NULL);
+	pdc_domain = irq_domain_create_hierarchy(parent_domain, 0, PDC_MAX_IRQS,
+						 of_fwnode_handle(node),
+						 &qcom_pdc_ops, NULL);
 	if (!pdc_domain) {
-		pr_err("%pOF: PDC domain add failed\n", node);
+		pr_err("%pOF: GIC domain add failed\n", node);
 		ret = -ENOMEM;
 		goto fail;
 	}
 
-	irq_domain_update_bus_token(pdc_domain, DOMAIN_BUS_WAKEUP);
+	pdc_gpio_domain = irq_domain_create_hierarchy(parent_domain,
+					IRQ_DOMAIN_FLAG_QCOM_PDC_WAKEUP,
+					PDC_MAX_GPIO_IRQS,
+					of_fwnode_handle(node),
+					&qcom_pdc_gpio_ops, NULL);
+	if (!pdc_gpio_domain) {
+		pr_err("%pOF: PDC domain add failed for GPIO domain\n", node);
+		ret = -ENOMEM;
+		goto remove;
+	}
+
+	irq_domain_update_bus_token(pdc_gpio_domain, DOMAIN_BUS_WAKEUP);
 
 	return 0;
 
+remove:
+	irq_domain_remove(pdc_domain);
 fail:
 	kfree(pdc_region);
 	iounmap(pdc_base);

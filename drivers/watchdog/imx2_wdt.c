@@ -66,7 +66,6 @@ struct imx2_wdt_device {
 	struct watchdog_device wdog;
 	bool ext_reset;
 	bool clk_is_on;
-	bool no_ping;
 };
 
 static bool nowayout = WATCHDOG_NOWAYOUT;
@@ -313,18 +312,12 @@ static int __init imx2_wdt_probe(struct platform_device *pdev)
 
 	wdev->ext_reset = of_property_read_bool(dev->of_node,
 						"fsl,ext-reset-output");
-	/*
-	 * The i.MX7D doesn't support low power mode, so we need to ping the watchdog
-	 * during suspend.
-	 */
-	wdev->no_ping = !of_device_is_compatible(dev->of_node, "fsl,imx7d-wdt");
 	platform_set_drvdata(pdev, wdog);
 	watchdog_set_drvdata(wdog, wdev);
 	watchdog_set_nowayout(wdog, nowayout);
 	watchdog_set_restart_priority(wdog, 128);
 	watchdog_init_timeout(wdog, timeout, dev);
-	if (wdev->no_ping)
-		watchdog_stop_ping_on_suspend(wdog);
+	watchdog_stop_ping_on_suspend(wdog);
 
 	if (imx2_wdt_is_running(wdev)) {
 		imx2_wdt_set_timeout(wdog, wdog->timeout);
@@ -373,11 +366,9 @@ static int __maybe_unused imx2_wdt_suspend(struct device *dev)
 		imx2_wdt_ping(wdog);
 	}
 
-	if (wdev->no_ping) {
-		clk_disable_unprepare(wdev->clk);
+	clk_disable_unprepare(wdev->clk);
 
-		wdev->clk_is_on = false;
-	}
+	wdev->clk_is_on = false;
 
 	return 0;
 }
@@ -389,14 +380,11 @@ static int __maybe_unused imx2_wdt_resume(struct device *dev)
 	struct imx2_wdt_device *wdev = watchdog_get_drvdata(wdog);
 	int ret;
 
-	if (wdev->no_ping) {
-		ret = clk_prepare_enable(wdev->clk);
+	ret = clk_prepare_enable(wdev->clk);
+	if (ret)
+		return ret;
 
-		if (ret)
-			return ret;
-
-		wdev->clk_is_on = true;
-	}
+	wdev->clk_is_on = true;
 
 	if (watchdog_active(wdog) && !imx2_wdt_is_running(wdev)) {
 		/*
@@ -419,7 +407,6 @@ static SIMPLE_DEV_PM_OPS(imx2_wdt_pm_ops, imx2_wdt_suspend,
 
 static const struct of_device_id imx2_wdt_dt_ids[] = {
 	{ .compatible = "fsl,imx21-wdt", },
-	{ .compatible = "fsl,imx7d-wdt", },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, imx2_wdt_dt_ids);

@@ -88,8 +88,6 @@ struct tsc200x {
 	int                     in_z1;
 	int			in_z2;
 
-	struct touchscreen_properties prop;
-
 	spinlock_t		lock;
 	struct timer_list	penup_timer;
 
@@ -115,7 +113,8 @@ static void tsc200x_update_pen_state(struct tsc200x *ts,
 				     int x, int y, int pressure)
 {
 	if (pressure) {
-		touchscreen_report_pos(ts->idev, &ts->prop, x, y, false);
+		input_report_abs(ts->idev, ABS_X, x);
+		input_report_abs(ts->idev, ABS_Y, y);
 		input_report_abs(ts->idev, ABS_PRESSURE, pressure);
 		if (!ts->pen_down) {
 			input_report_key(ts->idev, BTN_TOUCH, !!pressure);
@@ -534,7 +533,7 @@ int tsc200x_probe(struct device *dev, int irq, const struct input_id *tsc_id,
 	input_set_abs_params(input_dev, ABS_PRESSURE,
 			     0, MAX_12BIT, TSC200X_DEF_P_FUZZ, 0);
 
-	touchscreen_parse_properties(input_dev, false, &ts->prop);
+	touchscreen_parse_properties(input_dev, false, NULL);
 
 	/* Ensure the touchscreen is off */
 	tsc200x_stop_scan(ts);
@@ -578,13 +577,15 @@ disable_regulator:
 }
 EXPORT_SYMBOL_GPL(tsc200x_probe);
 
-void tsc200x_remove(struct device *dev)
+int tsc200x_remove(struct device *dev)
 {
 	struct tsc200x *ts = dev_get_drvdata(dev);
 
 	sysfs_remove_group(&dev->kobj, &tsc200x_attr_group);
 
 	regulator_disable(ts->vio);
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(tsc200x_remove);
 

@@ -16,11 +16,8 @@ description:
 
 properties:
   compatible:
-    oneOf:
+    items:
       - const: goodix,gt7375p
-      - items:
-          - const: goodix,gt7986u
-          - const: goodix,gt7375p
 
   reg:
     enum:

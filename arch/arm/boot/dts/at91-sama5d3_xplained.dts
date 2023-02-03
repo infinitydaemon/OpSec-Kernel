@@ -372,13 +372,13 @@
 		regulator-always-on;
 	};
 
-	gpio-keys {
+	gpio_keys {
 		compatible = "gpio-keys";
 
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_key_gpio>;
 
-		button {
+		bp3 {
 			label = "PB_USER";
 			gpios = <&pioE 29 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_PROG1>;

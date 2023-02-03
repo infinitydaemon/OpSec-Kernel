@@ -347,17 +347,17 @@ static int tas2552_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	struct tas2552_data *tas2552 = dev_get_drvdata(component->dev);
 	u8 serial_format;
 
-	switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-	case SND_SOC_DAIFMT_CBC_CFC:
+	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
+	case SND_SOC_DAIFMT_CBS_CFS:
 		serial_format = 0x00;
 		break;
-	case SND_SOC_DAIFMT_CBC_CFP:
+	case SND_SOC_DAIFMT_CBS_CFM:
 		serial_format = TAS2552_WCLKDIR;
 		break;
-	case SND_SOC_DAIFMT_CBP_CFC:
+	case SND_SOC_DAIFMT_CBM_CFS:
 		serial_format = TAS2552_BCLKDIR;
 		break;
-	case SND_SOC_DAIFMT_CBP_CFP:
+	case SND_SOC_DAIFMT_CBM_CFM:
 		serial_format = (TAS2552_BCLKDIR | TAS2552_WCLKDIR);
 		break;
 	default:
@@ -581,7 +581,7 @@ static int tas2552_component_probe(struct snd_soc_component *component)
 
 	gpiod_set_value(tas2552->enable_gpio, 1);
 
-	ret = pm_runtime_resume_and_get(component->dev);
+	ret = pm_runtime_get_sync(component->dev);
 	if (ret < 0) {
 		dev_err(component->dev, "Enabling device failed: %d\n",
 			ret);
@@ -668,6 +668,7 @@ static const struct snd_soc_component_driver soc_component_dev_tas2552 = {
 	.num_dapm_routes	= ARRAY_SIZE(tas2552_audio_map),
 	.idle_bias_on		= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config tas2552_regmap_config = {
@@ -680,7 +681,8 @@ static const struct regmap_config tas2552_regmap_config = {
 	.cache_type = REGCACHE_RBTREE,
 };
 
-static int tas2552_probe(struct i2c_client *client)
+static int tas2552_probe(struct i2c_client *client,
+			   const struct i2c_device_id *id)
 {
 	struct device *dev;
 	struct tas2552_data *data;
@@ -736,9 +738,10 @@ static int tas2552_probe(struct i2c_client *client)
 	return ret;
 }
 
-static void tas2552_i2c_remove(struct i2c_client *client)
+static int tas2552_i2c_remove(struct i2c_client *client)
 {
 	pm_runtime_disable(&client->dev);
+	return 0;
 }
 
 static const struct i2c_device_id tas2552_id[] = {
@@ -761,7 +764,7 @@ static struct i2c_driver tas2552_i2c_driver = {
 		.of_match_table = of_match_ptr(tas2552_of_match),
 		.pm = &tas2552_pm,
 	},
-	.probe_new = tas2552_probe,
+	.probe = tas2552_probe,
 	.remove = tas2552_i2c_remove,
 	.id_table = tas2552_id,
 };

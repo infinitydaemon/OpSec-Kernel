@@ -27,7 +27,6 @@ available subsections can be seen below.
    component
    message-based
    infiniband
-   aperture
    frame-buffer
    regulator
    reset
@@ -102,14 +101,11 @@ available subsections can be seen below.
    surface_aggregator/index
    switchtec
    sync_file
-   tty/index
    vfio-mediated-device
    vfio
-   vfio-pci-device-specific-driver-acceptance
    xilinx/index
    xillybus
    zorro
-   hte/index
 
 .. only::  subproject and html
 

@@ -280,13 +280,17 @@ static int device_process(struct vicodec_ctx *ctx,
 		 */
 		if (!(ntohl(ctx->state.header.flags) & V4L2_FWHT_FL_I_FRAME)) {
 			struct vb2_buffer *ref_vb2_buf;
+			int ref_buf_idx;
 			struct vb2_queue *vq_cap =
 				v4l2_m2m_get_vq(ctx->fh.m2m_ctx,
 						V4L2_BUF_TYPE_VIDEO_CAPTURE);
 
-			ref_vb2_buf = vb2_find_buffer(vq_cap, ctx->state.ref_frame_ts);
-			if (!ref_vb2_buf)
+			ref_buf_idx = vb2_find_timestamp(vq_cap,
+							 ctx->state.ref_frame_ts, 0);
+			if (ref_buf_idx < 0)
 				return -EINVAL;
+
+			ref_vb2_buf = vq_cap->bufs[ref_buf_idx];
 			if (ref_vb2_buf->state == VB2_BUF_STATE_ERROR)
 				ret = -EINVAL;
 			ctx->state.ref_frame.buf =
@@ -1439,7 +1443,7 @@ static void vicodec_buf_queue(struct vb2_buffer *vb)
 		unsigned int i;
 
 		for (i = 0; i < vb->num_planes; i++)
-			vb2_set_plane_payload(vb, i, 0);
+			vb->planes[i].bytesused = 0;
 
 		vbuf->field = V4L2_FIELD_NONE;
 		vbuf->sequence =

@@ -137,15 +137,12 @@ static void kvmppc_core_vcpu_load_pr(struct kvm_vcpu *vcpu, int cpu)
 	svcpu->slb_max = to_book3s(vcpu)->slb_shadow_max;
 	svcpu->in_use = 0;
 	svcpu_put(svcpu);
+#endif
 
 	/* Disable AIL if supported */
-	if (cpu_has_feature(CPU_FTR_HVMODE)) {
-		if (cpu_has_feature(CPU_FTR_ARCH_207S))
-			mtspr(SPRN_LPCR, mfspr(SPRN_LPCR) & ~LPCR_AIL);
-		if (cpu_has_feature(CPU_FTR_ARCH_300) && (current->thread.fscr & FSCR_SCV))
-			mtspr(SPRN_FSCR, mfspr(SPRN_FSCR) & ~FSCR_SCV);
-	}
-#endif
+	if (cpu_has_feature(CPU_FTR_HVMODE) &&
+	    cpu_has_feature(CPU_FTR_ARCH_207S))
+		mtspr(SPRN_LPCR, mfspr(SPRN_LPCR) & ~LPCR_AIL);
 
 	vcpu->cpu = smp_processor_id();
 #ifdef CONFIG_PPC_BOOK3S_32
@@ -168,14 +165,6 @@ static void kvmppc_core_vcpu_put_pr(struct kvm_vcpu *vcpu)
 	memcpy(to_book3s(vcpu)->slb_shadow, svcpu->slb, sizeof(svcpu->slb));
 	to_book3s(vcpu)->slb_shadow_max = svcpu->slb_max;
 	svcpu_put(svcpu);
-
-	/* Enable AIL if supported */
-	if (cpu_has_feature(CPU_FTR_HVMODE)) {
-		if (cpu_has_feature(CPU_FTR_ARCH_207S))
-			mtspr(SPRN_LPCR, mfspr(SPRN_LPCR) | LPCR_AIL_3);
-		if (cpu_has_feature(CPU_FTR_ARCH_300) && (current->thread.fscr & FSCR_SCV))
-			mtspr(SPRN_FSCR, mfspr(SPRN_FSCR) | FSCR_SCV);
-	}
 #endif
 
 	if (kvmppc_is_split_real(vcpu))
@@ -184,6 +173,11 @@ static void kvmppc_core_vcpu_put_pr(struct kvm_vcpu *vcpu)
 	kvmppc_giveup_ext(vcpu, MSR_FP | MSR_VEC | MSR_VSX);
 	kvmppc_giveup_fac(vcpu, FSCR_TAR_LG);
 	kvmppc_save_tm_pr(vcpu);
+
+	/* Enable AIL if supported */
+	if (cpu_has_feature(CPU_FTR_HVMODE) &&
+	    cpu_has_feature(CPU_FTR_ARCH_207S))
+		mtspr(SPRN_LPCR, mfspr(SPRN_LPCR) | LPCR_AIL_3);
 
 	vcpu->cpu = -1;
 }
@@ -434,7 +428,7 @@ static int kvmppc_core_check_requests_pr(struct kvm_vcpu *vcpu)
 /************* MMU Notifiers *************/
 static bool do_kvm_unmap_gfn(struct kvm *kvm, struct kvm_gfn_range *range)
 {
-	unsigned long i;
+	long i;
 	struct kvm_vcpu *vcpu;
 
 	kvm_for_each_vcpu(i, vcpu, kvm)
@@ -498,7 +492,8 @@ static void kvmppc_set_msr_pr(struct kvm_vcpu *vcpu, u64 msr)
 
 	if (msr & MSR_POW) {
 		if (!vcpu->arch.pending_exceptions) {
-			kvm_vcpu_halt(vcpu);
+			kvm_vcpu_block(vcpu);
+			kvm_clear_request(KVM_REQ_UNHALT, vcpu);
 			vcpu->stat.generic.halt_wakeup++;
 
 			/* Unset POW bit after we woke up */
@@ -1042,8 +1037,6 @@ static int kvmppc_handle_fac(struct kvm_vcpu *vcpu, ulong fac)
 
 void kvmppc_set_fscr(struct kvm_vcpu *vcpu, u64 fscr)
 {
-	if (fscr & FSCR_SCV)
-		fscr &= ~FSCR_SCV; /* SCV must not be enabled */
 	if ((vcpu->arch.fscr & FSCR_TAR) && !(fscr & FSCR_TAR)) {
 		/* TAR got dropped, drop it in shadow too */
 		kvmppc_giveup_fac(vcpu, FSCR_TAR_LG);
@@ -1286,7 +1279,7 @@ int kvmppc_handle_exit_pr(struct kvm_vcpu *vcpu, unsigned int exit_nr)
 
 		/* Get last sc for papr */
 		if (vcpu->arch.papr_enabled) {
-			/* The sc instruction points SRR0 to the next inst */
+			/* The sc instuction points SRR0 to the next inst */
 			emul = kvmppc_get_last_inst(vcpu, INST_SC, &last_sc);
 			if (emul != EMULATE_DONE) {
 				kvmppc_set_pc(vcpu, kvmppc_get_pc(vcpu) - 4);
@@ -1906,15 +1899,16 @@ static void kvmppc_core_flush_memslot_pr(struct kvm *kvm,
 }
 
 static int kvmppc_core_prepare_memory_region_pr(struct kvm *kvm,
-				const struct kvm_memory_slot *old,
-				struct kvm_memory_slot *new,
-				enum kvm_mr_change change)
+					struct kvm_memory_slot *memslot,
+					const struct kvm_userspace_memory_region *mem,
+					enum kvm_mr_change change)
 {
 	return 0;
 }
 
 static void kvmppc_core_commit_memory_region_pr(struct kvm *kvm,
-				struct kvm_memory_slot *old,
+				const struct kvm_userspace_memory_region *mem,
+				const struct kvm_memory_slot *old,
 				const struct kvm_memory_slot *new,
 				enum kvm_mr_change change)
 {

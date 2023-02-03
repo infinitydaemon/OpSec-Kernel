@@ -467,7 +467,6 @@ static int i2c_device_probe(struct device *dev)
 {
 	struct i2c_client	*client = i2c_verify_client(dev);
 	struct i2c_driver	*driver;
-	bool do_power_on;
 	int status;
 
 	if (!client)
@@ -488,11 +487,7 @@ static int i2c_device_probe(struct device *dev)
 			if (irq == -EINVAL || irq == -ENODATA)
 				irq = of_irq_get(dev->of_node, 0);
 		} else if (ACPI_COMPANION(dev)) {
-			bool wake_capable;
-
-			irq = i2c_acpi_get_irq(client, &wake_capable);
-			if (irq > 0 && wake_capable)
-				client->flags |= I2C_CLIENT_WAKE;
+			irq = i2c_acpi_get_irq(client);
 		}
 		if (irq == -EPROBE_DEFER) {
 			status = irq;
@@ -546,8 +541,7 @@ static int i2c_device_probe(struct device *dev)
 	if (status < 0)
 		goto err_clear_wakeup_irq;
 
-	do_power_on = !i2c_acpi_waive_d0_probe(dev);
-	status = dev_pm_domain_attach(&client->dev, do_power_on);
+	status = dev_pm_domain_attach(&client->dev, true);
 	if (status)
 		goto err_clear_wakeup_irq;
 
@@ -586,7 +580,7 @@ static int i2c_device_probe(struct device *dev)
 err_release_driver_resources:
 	devres_release_group(&client->dev, client->devres_group_id);
 err_detach_pm_domain:
-	dev_pm_domain_detach(&client->dev, do_power_on);
+	dev_pm_domain_detach(&client->dev, true);
 err_clear_wakeup_irq:
 	dev_pm_clear_wake_irq(&client->dev);
 	device_init_wakeup(&client->dev, false);
@@ -604,9 +598,13 @@ static void i2c_device_remove(struct device *dev)
 
 	driver = to_i2c_driver(dev->driver);
 	if (driver->remove) {
+		int status;
+
 		dev_dbg(dev, "remove\n");
 
-		driver->remove(client);
+		status = driver->remove(client);
+		if (status)
+			dev_warn(dev, "remove failed (%pe), will be ignored\n", ERR_PTR(status));
 	}
 
 	devres_release_group(&client->dev, client->devres_group_id);
@@ -934,7 +932,7 @@ i2c_new_client_device(struct i2c_adapter *adap, struct i2c_board_info const *inf
 		client->init_irq = i2c_dev_irq_from_resources(info->resources,
 							 info->num_resources);
 
-	strscpy(client->name, info->type, sizeof(client->name));
+	strlcpy(client->name, info->type, sizeof(client->name));
 
 	status = i2c_check_addr_validity(client->addr, client->flags);
 	if (status) {
@@ -954,7 +952,6 @@ i2c_new_client_device(struct i2c_adapter *adap, struct i2c_board_info const *inf
 	client->dev.of_node = of_node_get(info->of_node);
 	client->dev.fwnode = info->fwnode;
 
-	device_enable_async_suspend(&client->dev);
 	i2c_dev_set_name(adap, client, info);
 
 	if (info->swnode) {
@@ -1018,14 +1015,21 @@ static const struct i2c_device_id dummy_id[] = {
 	{ },
 };
 
-static int dummy_probe(struct i2c_client *client)
+static int dummy_probe(struct i2c_client *client,
+		       const struct i2c_device_id *id)
+{
+	return 0;
+}
+
+static int dummy_remove(struct i2c_client *client)
 {
 	return 0;
 }
 
 static struct i2c_driver dummy_driver = {
 	.driver.name	= "dummy",
-	.probe_new	= dummy_probe,
+	.probe		= dummy_probe,
+	.remove		= dummy_remove,
 	.id_table	= dummy_id,
 };
 
@@ -1418,7 +1422,7 @@ int i2c_handle_smbus_host_notify(struct i2c_adapter *adap, unsigned short addr)
 	if (irq <= 0)
 		return -ENXIO;
 
-	generic_handle_irq_safe(irq);
+	generic_handle_irq(irq);
 
 	return 0;
 }
@@ -1473,11 +1477,10 @@ static int i2c_register_adapter(struct i2c_adapter *adap)
 		goto out_list;
 	}
 
-	res = i2c_setup_smbus_alert(adap);
+	res = of_i2c_setup_smbus_alert(adap);
 	if (res)
 		goto out_reg;
 
-	device_enable_async_suspend(&adap->dev);
 	pm_runtime_no_callbacks(&adap->dev);
 	pm_suspend_ignore_children(&adap->dev, true);
 	pm_runtime_enable(&adap->dev);
@@ -2235,20 +2238,6 @@ int i2c_get_device_id(const struct i2c_client *client,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(i2c_get_device_id);
-
-/**
- * i2c_client_get_device_id - get the driver match table entry of a device
- * @client: the device to query. The device must be bound to a driver
- *
- * Returns a pointer to the matching entry if found, NULL otherwise.
- */
-const struct i2c_device_id *i2c_client_get_device_id(const struct i2c_client *client)
-{
-	const struct i2c_driver *drv = to_i2c_driver(client->dev.driver);
-
-	return i2c_match_id(drv->id_table, client);
-}
-EXPORT_SYMBOL_GPL(i2c_client_get_device_id);
 
 /* ----------------------------------------------------
  * the i2c address scanning function

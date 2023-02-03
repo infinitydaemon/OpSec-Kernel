@@ -84,7 +84,9 @@ static void serial8250_early_out(struct uart_port *port, int offset, int value)
 	}
 }
 
-static void serial_putc(struct uart_port *port, unsigned char c)
+#define BOTH_EMPTY (UART_LSR_TEMT | UART_LSR_THRE)
+
+static void serial_putc(struct uart_port *port, int c)
 {
 	unsigned int status;
 
@@ -92,7 +94,7 @@ static void serial_putc(struct uart_port *port, unsigned char c)
 
 	for (;;) {
 		status = serial8250_early_in(port, UART_LSR);
-		if (uart_lsr_tx_empty(status))
+		if ((status & BOTH_EMPTY) == BOTH_EMPTY)
 			break;
 		cpu_relax();
 	}

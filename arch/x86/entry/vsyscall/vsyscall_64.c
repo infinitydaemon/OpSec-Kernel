@@ -48,7 +48,7 @@ static enum { EMULATE, XONLY, NONE } vsyscall_mode __ro_after_init =
 #elif defined(CONFIG_LEGACY_VSYSCALL_XONLY)
 	XONLY;
 #else
-	#error VSYSCALL config is broken
+	EMULATE;
 #endif
 
 static int __init vsyscall_setup(char *str)

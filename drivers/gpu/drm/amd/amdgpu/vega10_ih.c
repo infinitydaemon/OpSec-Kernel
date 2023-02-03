@@ -338,11 +338,9 @@ static u32 vega10_ih_get_wptr(struct amdgpu_device *adev,
 	u32 wptr, tmp;
 	struct amdgpu_ih_regs *ih_regs;
 
-	if (ih == &adev->irq.ih || ih == &adev->irq.ih_soft) {
+	if (ih == &adev->irq.ih) {
 		/* Only ring0 supports writeback. On other rings fall back
 		 * to register-based code with overflow checking below.
-		 * ih_soft ring doesn't have any backing hardware registers,
-		 * update wptr and return.
 		 */
 		wptr = le32_to_cpu(*ih->wptr_cpu);
 
@@ -414,9 +412,6 @@ static void vega10_ih_set_rptr(struct amdgpu_device *adev,
 			       struct amdgpu_ih_ring *ih)
 {
 	struct amdgpu_ih_regs *ih_regs;
-
-	if (ih == &adev->irq.ih_soft)
-		return;
 
 	if (ih->use_doorbell) {
 		/* XXX check if swapping is necessary on BE */
@@ -530,9 +525,14 @@ static int vega10_ih_sw_fini(void *handle)
 
 static int vega10_ih_hw_init(void *handle)
 {
+	int r;
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
-	return vega10_ih_irq_init(adev);
+	r = vega10_ih_irq_init(adev);
+	if (r)
+		return r;
+
+	return 0;
 }
 
 static int vega10_ih_hw_fini(void *handle)
@@ -644,7 +644,6 @@ const struct amd_ip_funcs vega10_ih_ip_funcs = {
 static const struct amdgpu_ih_funcs vega10_ih_funcs = {
 	.get_wptr = vega10_ih_get_wptr,
 	.decode_iv = amdgpu_ih_decode_iv_helper,
-	.decode_iv_ts = amdgpu_ih_decode_iv_ts_helper,
 	.set_rptr = vega10_ih_set_rptr
 };
 

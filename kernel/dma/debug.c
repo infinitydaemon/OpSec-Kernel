@@ -350,10 +350,11 @@ static struct dma_debug_entry *bucket_find_contain(struct hash_bucket **bucket,
 						   unsigned long *flags)
 {
 
+	unsigned int max_range = dma_get_max_seg_size(ref->dev);
 	struct dma_debug_entry *entry, index = *ref;
-	int limit = min(HASH_SIZE, (index.dev_addr >> HASH_FN_SHIFT) + 1);
+	unsigned int range = 0;
 
-	for (int i = 0; i < limit; i++) {
+	while (range <= max_range) {
 		entry = __hash_bucket_find(*bucket, ref, containing_match);
 
 		if (entry)
@@ -363,6 +364,7 @@ static struct dma_debug_entry *bucket_find_contain(struct hash_bucket **bucket,
 		 * Nothing found, go back a hash bucket
 		 */
 		put_hash_bucket(*bucket, *flags);
+		range          += (1 << HASH_FN_SHIFT);
 		index.dev_addr -= (1 << HASH_FN_SHIFT);
 		*bucket = get_hash_bucket(&index, flags);
 	}

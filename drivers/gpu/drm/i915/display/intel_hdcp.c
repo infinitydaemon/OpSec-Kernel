@@ -12,49 +12,40 @@
 #include <linux/i2c.h>
 #include <linux/random.h>
 
-#include <drm/display/drm_hdcp_helper.h>
+#include <drm/drm_hdcp.h>
 #include <drm/i915_component.h>
 
 #include "i915_drv.h"
 #include "i915_reg.h"
-#include "intel_connector.h"
-#include "intel_de.h"
 #include "intel_display_power.h"
-#include "intel_display_power_well.h"
+#include "intel_de.h"
 #include "intel_display_types.h"
 #include "intel_hdcp.h"
-#include "intel_hdcp_regs.h"
-#include "intel_pcode.h"
+#include "intel_sideband.h"
+#include "intel_connector.h"
 
 #define KEY_LOAD_TRIES	5
 #define HDCP2_LC_RETRY_CNT			3
 
 static int intel_conn_to_vcpi(struct intel_connector *connector)
 {
-	struct drm_dp_mst_topology_mgr *mgr;
-	struct drm_dp_mst_atomic_payload *payload;
-	struct drm_dp_mst_topology_state *mst_state;
-	int vcpi = 0;
-
 	/* For HDMI this is forced to be 0x0. For DP SST also this is 0x0. */
-	if (!connector->port)
-		return 0;
-	mgr = connector->port->mgr;
+	return connector->port	? connector->port->vcpi.vcpi : 0;
+}
 
-	drm_modeset_lock(&mgr->base.lock, NULL);
-	mst_state = to_drm_dp_mst_topology_state(mgr->base.state);
-	payload = drm_atomic_get_mst_payload_state(mst_state, connector->port);
-	if (drm_WARN_ON(mgr->dev, !payload))
-		goto out;
+static bool
+intel_streams_type1_capable(struct intel_connector *connector)
+{
+	const struct intel_hdcp_shim *shim = connector->hdcp.shim;
+	bool capable = false;
 
-	vcpi = payload->vcpi;
-	if (drm_WARN_ON(mgr->dev, vcpi < 0)) {
-		vcpi = 0;
-		goto out;
-	}
-out:
-	drm_modeset_unlock(&mgr->base.lock);
-	return vcpi;
+	if (!shim)
+		return capable;
+
+	if (shim->streams_type1_capable)
+		shim->streams_type1_capable(connector, &capable);
+
+	return capable;
 }
 
 /*
@@ -95,7 +86,7 @@ intel_hdcp_required_content_stream(struct intel_digital_port *dig_port)
 		if (conn_dig_port != dig_port)
 			continue;
 
-		if (!enforce_type0 && !dig_port->hdcp_mst_type1_capable)
+		if (!enforce_type0 && !intel_streams_type1_capable(connector))
 			enforce_type0 = true;
 
 		data->streams[data->k].stream_id = intel_conn_to_vcpi(connector);
@@ -117,25 +108,6 @@ intel_hdcp_required_content_stream(struct intel_digital_port *dig_port)
 	for (k = 0; k < data->k; k++)
 		data->streams[k].stream_type =
 			enforce_type0 ? DRM_MODE_HDCP_CONTENT_TYPE0 : DRM_MODE_HDCP_CONTENT_TYPE1;
-
-	return 0;
-}
-
-static int intel_hdcp_prepare_streams(struct intel_connector *connector)
-{
-	struct intel_digital_port *dig_port = intel_attached_dig_port(connector);
-	struct hdcp_port_data *data = &dig_port->hdcp_port_data;
-	struct intel_hdcp *hdcp = &connector->hdcp;
-	int ret;
-
-	if (!intel_encoder_is_mst(intel_attached_encoder(connector))) {
-		data->k = 1;
-		data->streams[0].stream_type = hdcp->content_type;
-	} else {
-		ret = intel_hdcp_required_content_stream(dig_port);
-		if (ret)
-			return ret;
-	}
 
 	return 0;
 }
@@ -210,12 +182,12 @@ bool intel_hdcp2_capable(struct intel_connector *connector)
 		return false;
 
 	/* MEI interface is solid */
-	mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-	if (!dev_priv->display.hdcp.comp_added ||  !dev_priv->display.hdcp.master) {
-		mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	mutex_lock(&dev_priv->hdcp_comp_mutex);
+	if (!dev_priv->hdcp_comp_added ||  !dev_priv->hdcp_master) {
+		mutex_unlock(&dev_priv->hdcp_comp_mutex);
 		return false;
 	}
-	mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 
 	/* Sink's capability for HDCP2.2 */
 	hdcp->shim->hdcp_2_2_capable(dig_port, &capable);
@@ -321,7 +293,8 @@ static int intel_hdcp_load_keys(struct drm_i915_private *dev_priv)
 	 * Mailbox interface.
 	 */
 	if (DISPLAY_VER(dev_priv) == 9 && !IS_BROXTON(dev_priv)) {
-		ret = snb_pcode_write(&dev_priv->uncore, SKL_PCODE_LOAD_HDCP_KEYS, 1);
+		ret = sandybridge_pcode_write(dev_priv,
+					      SKL_PCODE_LOAD_HDCP_KEYS, 1);
 		if (ret) {
 			drm_err(&dev_priv->drm,
 				"Failed to initiate HDCP key load (%d)\n",
@@ -1132,8 +1105,8 @@ static void intel_hdcp_prop_work(struct work_struct *work)
 
 bool is_hdcp_supported(struct drm_i915_private *dev_priv, enum port port)
 {
-	return RUNTIME_INFO(dev_priv)->has_hdcp &&
-		(DISPLAY_VER(dev_priv) >= 12 || port < PORT_E);
+	return INTEL_INFO(dev_priv)->display.has_hdcp &&
+			(DISPLAY_VER(dev_priv) >= 12 || port < PORT_E);
 }
 
 static int
@@ -1146,11 +1119,11 @@ hdcp2_prepare_ake_init(struct intel_connector *connector,
 	struct i915_hdcp_comp_master *comp;
 	int ret;
 
-	mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-	comp = dev_priv->display.hdcp.master;
+	mutex_lock(&dev_priv->hdcp_comp_mutex);
+	comp = dev_priv->hdcp_master;
 
 	if (!comp || !comp->ops) {
-		mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+		mutex_unlock(&dev_priv->hdcp_comp_mutex);
 		return -EINVAL;
 	}
 
@@ -1158,7 +1131,7 @@ hdcp2_prepare_ake_init(struct intel_connector *connector,
 	if (ret)
 		drm_dbg_kms(&dev_priv->drm, "Prepare_ake_init failed. %d\n",
 			    ret);
-	mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 
 	return ret;
 }
@@ -1176,11 +1149,11 @@ hdcp2_verify_rx_cert_prepare_km(struct intel_connector *connector,
 	struct i915_hdcp_comp_master *comp;
 	int ret;
 
-	mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-	comp = dev_priv->display.hdcp.master;
+	mutex_lock(&dev_priv->hdcp_comp_mutex);
+	comp = dev_priv->hdcp_master;
 
 	if (!comp || !comp->ops) {
-		mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+		mutex_unlock(&dev_priv->hdcp_comp_mutex);
 		return -EINVAL;
 	}
 
@@ -1190,7 +1163,7 @@ hdcp2_verify_rx_cert_prepare_km(struct intel_connector *connector,
 	if (ret < 0)
 		drm_dbg_kms(&dev_priv->drm, "Verify rx_cert failed. %d\n",
 			    ret);
-	mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 
 	return ret;
 }
@@ -1204,18 +1177,18 @@ static int hdcp2_verify_hprime(struct intel_connector *connector,
 	struct i915_hdcp_comp_master *comp;
 	int ret;
 
-	mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-	comp = dev_priv->display.hdcp.master;
+	mutex_lock(&dev_priv->hdcp_comp_mutex);
+	comp = dev_priv->hdcp_master;
 
 	if (!comp || !comp->ops) {
-		mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+		mutex_unlock(&dev_priv->hdcp_comp_mutex);
 		return -EINVAL;
 	}
 
 	ret = comp->ops->verify_hprime(comp->mei_dev, data, rx_hprime);
 	if (ret < 0)
 		drm_dbg_kms(&dev_priv->drm, "Verify hprime failed. %d\n", ret);
-	mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 
 	return ret;
 }
@@ -1230,11 +1203,11 @@ hdcp2_store_pairing_info(struct intel_connector *connector,
 	struct i915_hdcp_comp_master *comp;
 	int ret;
 
-	mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-	comp = dev_priv->display.hdcp.master;
+	mutex_lock(&dev_priv->hdcp_comp_mutex);
+	comp = dev_priv->hdcp_master;
 
 	if (!comp || !comp->ops) {
-		mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+		mutex_unlock(&dev_priv->hdcp_comp_mutex);
 		return -EINVAL;
 	}
 
@@ -1242,7 +1215,7 @@ hdcp2_store_pairing_info(struct intel_connector *connector,
 	if (ret < 0)
 		drm_dbg_kms(&dev_priv->drm, "Store pairing info failed. %d\n",
 			    ret);
-	mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 
 	return ret;
 }
@@ -1257,11 +1230,11 @@ hdcp2_prepare_lc_init(struct intel_connector *connector,
 	struct i915_hdcp_comp_master *comp;
 	int ret;
 
-	mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-	comp = dev_priv->display.hdcp.master;
+	mutex_lock(&dev_priv->hdcp_comp_mutex);
+	comp = dev_priv->hdcp_master;
 
 	if (!comp || !comp->ops) {
-		mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+		mutex_unlock(&dev_priv->hdcp_comp_mutex);
 		return -EINVAL;
 	}
 
@@ -1269,7 +1242,7 @@ hdcp2_prepare_lc_init(struct intel_connector *connector,
 	if (ret < 0)
 		drm_dbg_kms(&dev_priv->drm, "Prepare lc_init failed. %d\n",
 			    ret);
-	mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 
 	return ret;
 }
@@ -1284,11 +1257,11 @@ hdcp2_verify_lprime(struct intel_connector *connector,
 	struct i915_hdcp_comp_master *comp;
 	int ret;
 
-	mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-	comp = dev_priv->display.hdcp.master;
+	mutex_lock(&dev_priv->hdcp_comp_mutex);
+	comp = dev_priv->hdcp_master;
 
 	if (!comp || !comp->ops) {
-		mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+		mutex_unlock(&dev_priv->hdcp_comp_mutex);
 		return -EINVAL;
 	}
 
@@ -1296,7 +1269,7 @@ hdcp2_verify_lprime(struct intel_connector *connector,
 	if (ret < 0)
 		drm_dbg_kms(&dev_priv->drm, "Verify L_Prime failed. %d\n",
 			    ret);
-	mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 
 	return ret;
 }
@@ -1310,11 +1283,11 @@ static int hdcp2_prepare_skey(struct intel_connector *connector,
 	struct i915_hdcp_comp_master *comp;
 	int ret;
 
-	mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-	comp = dev_priv->display.hdcp.master;
+	mutex_lock(&dev_priv->hdcp_comp_mutex);
+	comp = dev_priv->hdcp_master;
 
 	if (!comp || !comp->ops) {
-		mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+		mutex_unlock(&dev_priv->hdcp_comp_mutex);
 		return -EINVAL;
 	}
 
@@ -1322,7 +1295,7 @@ static int hdcp2_prepare_skey(struct intel_connector *connector,
 	if (ret < 0)
 		drm_dbg_kms(&dev_priv->drm, "Get session key failed. %d\n",
 			    ret);
-	mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 
 	return ret;
 }
@@ -1339,11 +1312,11 @@ hdcp2_verify_rep_topology_prepare_ack(struct intel_connector *connector,
 	struct i915_hdcp_comp_master *comp;
 	int ret;
 
-	mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-	comp = dev_priv->display.hdcp.master;
+	mutex_lock(&dev_priv->hdcp_comp_mutex);
+	comp = dev_priv->hdcp_master;
 
 	if (!comp || !comp->ops) {
-		mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+		mutex_unlock(&dev_priv->hdcp_comp_mutex);
 		return -EINVAL;
 	}
 
@@ -1353,7 +1326,7 @@ hdcp2_verify_rep_topology_prepare_ack(struct intel_connector *connector,
 	if (ret < 0)
 		drm_dbg_kms(&dev_priv->drm,
 			    "Verify rep topology failed. %d\n", ret);
-	mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 
 	return ret;
 }
@@ -1368,18 +1341,18 @@ hdcp2_verify_mprime(struct intel_connector *connector,
 	struct i915_hdcp_comp_master *comp;
 	int ret;
 
-	mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-	comp = dev_priv->display.hdcp.master;
+	mutex_lock(&dev_priv->hdcp_comp_mutex);
+	comp = dev_priv->hdcp_master;
 
 	if (!comp || !comp->ops) {
-		mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+		mutex_unlock(&dev_priv->hdcp_comp_mutex);
 		return -EINVAL;
 	}
 
 	ret = comp->ops->verify_mprime(comp->mei_dev, data, stream_ready);
 	if (ret < 0)
 		drm_dbg_kms(&dev_priv->drm, "Verify mprime failed. %d\n", ret);
-	mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 
 	return ret;
 }
@@ -1392,11 +1365,11 @@ static int hdcp2_authenticate_port(struct intel_connector *connector)
 	struct i915_hdcp_comp_master *comp;
 	int ret;
 
-	mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-	comp = dev_priv->display.hdcp.master;
+	mutex_lock(&dev_priv->hdcp_comp_mutex);
+	comp = dev_priv->hdcp_master;
 
 	if (!comp || !comp->ops) {
-		mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+		mutex_unlock(&dev_priv->hdcp_comp_mutex);
 		return -EINVAL;
 	}
 
@@ -1404,7 +1377,7 @@ static int hdcp2_authenticate_port(struct intel_connector *connector)
 	if (ret < 0)
 		drm_dbg_kms(&dev_priv->drm, "Enable hdcp auth failed. %d\n",
 			    ret);
-	mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 
 	return ret;
 }
@@ -1416,17 +1389,17 @@ static int hdcp2_close_mei_session(struct intel_connector *connector)
 	struct i915_hdcp_comp_master *comp;
 	int ret;
 
-	mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-	comp = dev_priv->display.hdcp.master;
+	mutex_lock(&dev_priv->hdcp_comp_mutex);
+	comp = dev_priv->hdcp_master;
 
 	if (!comp || !comp->ops) {
-		mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+		mutex_unlock(&dev_priv->hdcp_comp_mutex);
 		return -EINVAL;
 	}
 
 	ret = comp->ops->close_hdcp_session(comp->mei_dev,
 					     &dig_port->hdcp_port_data);
-	mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 
 	return ret;
 }
@@ -1658,14 +1631,6 @@ int hdcp2_authenticate_repeater_topology(struct intel_connector *connector)
 		drm_dbg_kms(&dev_priv->drm, "Topology Max Size Exceeded\n");
 		return -EINVAL;
 	}
-
-	/*
-	 * MST topology is not Type 1 capable if it contains a downstream
-	 * device that is only HDCP 1.x or Legacy HDCP 2.0/2.1 compliant.
-	 */
-	dig_port->hdcp_mst_type1_capable =
-		!HDCP_2_2_HDCP1_DEVICE_CONNECTED(rx_info[1]) &&
-		!HDCP_2_2_HDCP_2_0_REP_CONNECTED(rx_info[1]);
 
 	/* Converting and Storing the seq_num_v to local variable as DWORD */
 	seq_num_v =
@@ -1911,14 +1876,6 @@ static int hdcp2_authenticate_and_encrypt(struct intel_connector *connector)
 	for (i = 0; i < tries && !dig_port->hdcp_auth_status; i++) {
 		ret = hdcp2_authenticate_sink(connector);
 		if (!ret) {
-			ret = intel_hdcp_prepare_streams(connector);
-			if (ret) {
-				drm_dbg_kms(&i915->drm,
-					    "Prepare streams failed.(%d)\n",
-					    ret);
-				break;
-			}
-
 			ret = hdcp2_propagate_stream_management_info(connector);
 			if (ret) {
 				drm_dbg_kms(&i915->drm,
@@ -1964,13 +1921,25 @@ static int hdcp2_authenticate_and_encrypt(struct intel_connector *connector)
 
 static int _intel_hdcp2_enable(struct intel_connector *connector)
 {
+	struct intel_digital_port *dig_port = intel_attached_dig_port(connector);
 	struct drm_i915_private *i915 = to_i915(connector->base.dev);
+	struct hdcp_port_data *data = &dig_port->hdcp_port_data;
 	struct intel_hdcp *hdcp = &connector->hdcp;
 	int ret;
 
 	drm_dbg_kms(&i915->drm, "[%s:%d] HDCP2.2 is being enabled. Type: %d\n",
 		    connector->base.name, connector->base.base.id,
 		    hdcp->content_type);
+
+	/* Stream which requires encryption */
+	if (!intel_encoder_is_mst(intel_attached_encoder(connector))) {
+		data->k = 1;
+		data->streams[0].stream_type = hdcp->content_type;
+	} else {
+		ret = intel_hdcp_required_content_stream(dig_port);
+		if (ret)
+			return ret;
+	}
 
 	ret = hdcp2_authenticate_and_encrypt(connector);
 	if (ret) {
@@ -2144,10 +2113,10 @@ static int i915_hdcp_component_bind(struct device *i915_kdev,
 	struct drm_i915_private *dev_priv = kdev_to_i915(i915_kdev);
 
 	drm_dbg(&dev_priv->drm, "I915 HDCP comp bind\n");
-	mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-	dev_priv->display.hdcp.master = (struct i915_hdcp_comp_master *)data;
-	dev_priv->display.hdcp.master->mei_dev = mei_kdev;
-	mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	mutex_lock(&dev_priv->hdcp_comp_mutex);
+	dev_priv->hdcp_master = (struct i915_hdcp_comp_master *)data;
+	dev_priv->hdcp_master->mei_dev = mei_kdev;
+	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 
 	return 0;
 }
@@ -2158,9 +2127,9 @@ static void i915_hdcp_component_unbind(struct device *i915_kdev,
 	struct drm_i915_private *dev_priv = kdev_to_i915(i915_kdev);
 
 	drm_dbg(&dev_priv->drm, "I915 HDCP comp unbind\n");
-	mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-	dev_priv->display.hdcp.master = NULL;
-	mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	mutex_lock(&dev_priv->hdcp_comp_mutex);
+	dev_priv->hdcp_master = NULL;
+	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 }
 
 static const struct component_ops i915_hdcp_component_ops = {
@@ -2251,19 +2220,19 @@ void intel_hdcp_component_init(struct drm_i915_private *dev_priv)
 	if (!is_hdcp2_supported(dev_priv))
 		return;
 
-	mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-	drm_WARN_ON(&dev_priv->drm, dev_priv->display.hdcp.comp_added);
+	mutex_lock(&dev_priv->hdcp_comp_mutex);
+	drm_WARN_ON(&dev_priv->drm, dev_priv->hdcp_comp_added);
 
-	dev_priv->display.hdcp.comp_added = true;
-	mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	dev_priv->hdcp_comp_added = true;
+	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 	ret = component_add_typed(dev_priv->drm.dev, &i915_hdcp_component_ops,
 				  I915_COMPONENT_HDCP);
 	if (ret < 0) {
 		drm_dbg_kms(&dev_priv->drm, "Failed at component add(%d)\n",
 			    ret);
-		mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-		dev_priv->display.hdcp.comp_added = false;
-		mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+		mutex_lock(&dev_priv->hdcp_comp_mutex);
+		dev_priv->hdcp_comp_added = false;
+		mutex_unlock(&dev_priv->hdcp_comp_mutex);
 		return;
 	}
 }
@@ -2476,14 +2445,14 @@ void intel_hdcp_update_pipe(struct intel_atomic_state *state,
 
 void intel_hdcp_component_fini(struct drm_i915_private *dev_priv)
 {
-	mutex_lock(&dev_priv->display.hdcp.comp_mutex);
-	if (!dev_priv->display.hdcp.comp_added) {
-		mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	mutex_lock(&dev_priv->hdcp_comp_mutex);
+	if (!dev_priv->hdcp_comp_added) {
+		mutex_unlock(&dev_priv->hdcp_comp_mutex);
 		return;
 	}
 
-	dev_priv->display.hdcp.comp_added = false;
-	mutex_unlock(&dev_priv->display.hdcp.comp_mutex);
+	dev_priv->hdcp_comp_added = false;
+	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 
 	component_del(dev_priv->drm.dev, &i915_hdcp_component_ops);
 }

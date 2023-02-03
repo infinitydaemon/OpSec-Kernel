@@ -185,8 +185,7 @@ static struct snd_soc_dai_driver davinci_vcif_dai = {
 };
 
 static const struct snd_soc_component_driver davinci_vcif_component = {
-	.name			= "davinci-vcif",
-	.legacy_dai_naming	= 1,
+	.name		= "davinci-vcif",
 };
 
 static int davinci_vcif_probe(struct platform_device *pdev)

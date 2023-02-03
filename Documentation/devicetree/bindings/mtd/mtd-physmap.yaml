@@ -13,9 +13,6 @@ description: |
   Flash chips (Memory Technology Devices) are often used for solid state
   file systems on embedded devices.
 
-allOf:
-  - $ref: "mtd.yaml#"
-
 properties:
   compatible:
     oneOf:
@@ -47,9 +44,7 @@ properties:
               - numonyx,js28f128
               - sst,sst39vf320
               - xlnx,xps-mch-emc-2.00.a
-          - enum:
-              - cfi-flash
-              - jedec-flash
+          - const: cfi-flash
       - items:
           - enum:
               - cypress,cy7c1019dv33-10zsxi
@@ -124,23 +119,13 @@ properties:
   big-endian: true
   little-endian: true
 
+patternProperties:
+  '@[0-9a-f]+$':
+    $ref: partitions/partition.yaml
+
 required:
   - compatible
   - reg
-
-if:
-  properties:
-    compatible:
-      contains:
-        const: cortina,gemini-flash
-then:
-  properties:
-    syscon:
-      $ref: /schemas/types.yaml#/definitions/phandle
-      description:
-        Phandle to the syscon controller
-  required:
-    - syscon
 
 # FIXME: A parent bus may define timing properties
 additionalProperties: true

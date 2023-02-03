@@ -2,7 +2,9 @@
 # m68k/Makefile
 #
 # This file is included by the global makefile so that you can add your own
-# architecture-specific flags and dependencies.
+# architecture-specific flags and dependencies. Remember to do have actions
+# for "archclean" and "archdep" for cleaning up and making dependencies for
+# this architecture
 #
 # This file is subject to the terms and conditions of the GNU General Public
 # License.  See the file "COPYING" in the main directory of this archive
@@ -86,6 +88,15 @@ ifdef CONFIG_KGDB
 KBUILD_CFLAGS := $(subst -fomit-frame-pointer,,$(KBUILD_CFLAGS)) -g
 endif
 
+#
+# Select the assembler head startup code. Order is important. The default
+# head code is first, processor specific selections can override it after.
+#
+head-y				:= arch/m68k/kernel/head.o
+head-$(CONFIG_SUN3)		:= arch/m68k/kernel/sun3-head.o
+head-$(CONFIG_M68000)		:= arch/m68k/68000/head.o
+head-$(CONFIG_COLDFIRE)		:= arch/m68k/coldfire/head.o
+
 libs-y				+= arch/m68k/lib/
 
 
@@ -129,6 +140,5 @@ CLEAN_FILES += vmlinux.gz vmlinux.bz2
 archheaders:
 	$(Q)$(MAKE) $(build)=arch/m68k/kernel/syscalls all
 
-install: KBUILD_IMAGE := vmlinux.gz
 install:
-	$(call cmd,install)
+	sh $(srctree)/arch/m68k/install.sh $(KERNELRELEASE) vmlinux.gz System.map "$(INSTALL_PATH)"

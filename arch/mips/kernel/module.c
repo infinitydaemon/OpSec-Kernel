@@ -21,7 +21,6 @@
 #include <linux/spinlock.h>
 #include <linux/jump_label.h>
 
-extern void jump_label_apply_nops(struct module *mod);
 
 struct mips_hi16 {
 	struct mips_hi16 *next;
@@ -429,8 +428,8 @@ int module_finalize(const Elf_Ehdr *hdr,
 	const Elf_Shdr *s;
 	char *secstrings = (void *)hdr + sechdrs[hdr->e_shstrndx].sh_offset;
 
-	if (IS_ENABLED(CONFIG_JUMP_LABEL))
-		jump_label_apply_nops(me);
+	/* Make jump label nops. */
+	jump_label_apply_nops(me);
 
 	INIT_LIST_HEAD(&me->arch.dbe_list);
 	for (s = sechdrs; s < sechdrs + hdr->e_shnum; s++) {

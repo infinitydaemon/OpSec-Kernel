@@ -1,5 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
-// Copyright (C) 2016 Broadcom
+/*
+ * Copyright (C) 2016 Broadcom
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 
 #include <linux/acpi.h>
 #include <linux/delay.h>
@@ -234,7 +244,7 @@ static const struct of_device_id bcm_otpc_dt_ids[] = {
 };
 MODULE_DEVICE_TABLE(of, bcm_otpc_dt_ids);
 
-static const struct acpi_device_id bcm_otpc_acpi_ids[] __maybe_unused = {
+static const struct acpi_device_id bcm_otpc_acpi_ids[] = {
 	{ .id = "BRCM0700", .driver_data = (kernel_ulong_t)&otp_map },
 	{ .id = "BRCM0701", .driver_data = (kernel_ulong_t)&otp_map_v2 },
 	{ /* sentinel */ }

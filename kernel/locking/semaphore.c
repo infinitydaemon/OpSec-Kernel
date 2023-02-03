@@ -32,7 +32,6 @@
 #include <linux/semaphore.h>
 #include <linux/spinlock.h>
 #include <linux/ftrace.h>
-#include <trace/events/lock.h>
 
 static noinline void __down(struct semaphore *sem);
 static noinline int __down_interruptible(struct semaphore *sem);
@@ -51,7 +50,7 @@ static noinline void __up(struct semaphore *sem);
  * Use of this function is deprecated, please use down_interruptible() or
  * down_killable() instead.
  */
-void __sched down(struct semaphore *sem)
+void down(struct semaphore *sem)
 {
 	unsigned long flags;
 
@@ -74,7 +73,7 @@ EXPORT_SYMBOL(down);
  * If the sleep is interrupted by a signal, this function will return -EINTR.
  * If the semaphore is successfully acquired, this function returns 0.
  */
-int __sched down_interruptible(struct semaphore *sem)
+int down_interruptible(struct semaphore *sem)
 {
 	unsigned long flags;
 	int result = 0;
@@ -101,7 +100,7 @@ EXPORT_SYMBOL(down_interruptible);
  * -EINTR.  If the semaphore is successfully acquired, this function returns
  * 0.
  */
-int __sched down_killable(struct semaphore *sem)
+int down_killable(struct semaphore *sem)
 {
 	unsigned long flags;
 	int result = 0;
@@ -131,7 +130,7 @@ EXPORT_SYMBOL(down_killable);
  * Unlike mutex_trylock, this function can be used from interrupt context,
  * and the semaphore can be released by any task or interrupt.
  */
-int __sched down_trylock(struct semaphore *sem)
+int down_trylock(struct semaphore *sem)
 {
 	unsigned long flags;
 	int count;
@@ -156,7 +155,7 @@ EXPORT_SYMBOL(down_trylock);
  * If the semaphore is not released within the specified number of jiffies,
  * this function returns -ETIME.  It returns 0 if the semaphore was acquired.
  */
-int __sched down_timeout(struct semaphore *sem, long timeout)
+int down_timeout(struct semaphore *sem, long timeout)
 {
 	unsigned long flags;
 	int result = 0;
@@ -180,7 +179,7 @@ EXPORT_SYMBOL(down_timeout);
  * Release the semaphore.  Unlike mutexes, up() may be called from any
  * context and even by tasks which have never called down().
  */
-void __sched up(struct semaphore *sem)
+void up(struct semaphore *sem)
 {
 	unsigned long flags;
 
@@ -206,7 +205,7 @@ struct semaphore_waiter {
  * constant, and thus optimised away by the compiler.  Likewise the
  * 'timeout' parameter for the cases without timeouts.
  */
-static inline int __sched ___down_common(struct semaphore *sem, long state,
+static inline int __sched __down_common(struct semaphore *sem, long state,
 								long timeout)
 {
 	struct semaphore_waiter waiter;
@@ -235,18 +234,6 @@ static inline int __sched ___down_common(struct semaphore *sem, long state,
  interrupted:
 	list_del(&waiter.list);
 	return -EINTR;
-}
-
-static inline int __sched __down_common(struct semaphore *sem, long state,
-					long timeout)
-{
-	int ret;
-
-	trace_contention_begin(sem, 0);
-	ret = ___down_common(sem, state, timeout);
-	trace_contention_end(sem, ret);
-
-	return ret;
 }
 
 static noinline void __sched __down(struct semaphore *sem)

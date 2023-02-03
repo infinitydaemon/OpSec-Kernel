@@ -34,6 +34,7 @@
 #include "sh_css_legacy.h"
 
 #include "atomisp_csi2.h"
+#include "atomisp_file.h"
 #include "atomisp_subdev.h"
 #include "atomisp_tpg.h"
 #include "atomisp_compat.h"
@@ -85,12 +86,13 @@
 #define ATOM_ISP_POWER_DOWN	0
 #define ATOM_ISP_POWER_UP	1
 
-#define ATOM_ISP_MAX_INPUTS	3
+#define ATOM_ISP_MAX_INPUTS	4
 
 #define ATOMISP_SC_TYPE_SIZE	2
 
 #define ATOMISP_ISP_TIMEOUT_DURATION		(2 * HZ)
 #define ATOMISP_EXT_ISP_TIMEOUT_DURATION        (6 * HZ)
+#define ATOMISP_ISP_FILE_TIMEOUT_DURATION	(60 * HZ)
 #define ATOMISP_WDT_KEEP_CURRENT_DELAY          0
 #define ATOMISP_ISP_MAX_TIMEOUT_COUNT	2
 #define ATOMISP_CSS_STOP_TIMEOUT_US	200000
@@ -104,6 +106,9 @@
 #define ATOMISP_DELAYED_INIT_NOT_QUEUED	0
 #define ATOMISP_DELAYED_INIT_QUEUED	1
 #define ATOMISP_DELAYED_INIT_DONE	2
+
+#define ATOMISP_CALC_CSS_PREV_OVERLAP(lines) \
+	((lines) * 38 / 100 & 0xfffffe)
 
 /*
  * Define how fast CPU should be able to serve ISP interrupts.
@@ -127,7 +132,9 @@
  * Moorefield/Baytrail platform.
  */
 #define ATOMISP_SOC_CAMERA(asd)  \
-	(asd->isp->inputs[asd->input_curr].type == SOC_CAMERA)
+	(asd->isp->inputs[asd->input_curr].type == SOC_CAMERA \
+	&& asd->isp->inputs[asd->input_curr].camera_caps-> \
+	   sensor[asd->sensor_curr].stream_num == 1)
 
 #define ATOMISP_USE_YUVPP(asd)  \
 	(ATOMISP_SOC_CAMERA(asd) && ATOMISP_CSS_SUPPORT_YUVPP && \
@@ -160,6 +167,7 @@ struct atomisp_input_subdev {
 	 */
 	struct atomisp_sub_device *asd;
 
+	const struct atomisp_camera_caps *camera_caps;
 	int sensor_index;
 };
 
@@ -195,6 +203,8 @@ struct atomisp_regs {
 };
 
 struct atomisp_sw_contex {
+	bool file_input;
+	int power_state;
 	int running_freq;
 };
 
@@ -231,10 +241,17 @@ struct atomisp_device {
 
 	struct atomisp_mipi_csi2_device csi2_port[ATOMISP_CAMERA_NR_PORTS];
 	struct atomisp_tpg_device tpg;
+	struct atomisp_file_device file_dev;
 
 	/* Purpose of mutex is to protect and serialize use of isp data
 	 * structures and css API calls. */
-	struct mutex mutex;
+	struct rt_mutex mutex;
+	/*
+	 * Serialise streamoff: mutex is dropped during streamoff to
+	 * cancel the watchdog queue. MUST be acquired BEFORE
+	 * "mutex".
+	 */
+	struct mutex streamoff_mutex;
 
 	unsigned int input_cnt;
 	struct atomisp_input_subdev inputs[ATOM_ISP_MAX_INPUTS];
@@ -248,9 +265,15 @@ struct atomisp_device {
 	/* isp timeout status flag */
 	bool isp_timeout;
 	bool isp_fatal_error;
-	struct work_struct assert_recovery_work;
+	struct workqueue_struct *wdt_work_queue;
+	struct work_struct wdt_work;
 
-	spinlock_t lock; /* Protects asd[i].streaming */
+	/* ISP2400 */
+	atomic_t wdt_count;
+
+	atomic_t wdt_work_queued;
+
+	spinlock_t lock; /* Just for streaming below */
 
 	bool need_gfx_throttle;
 
@@ -265,5 +288,21 @@ struct atomisp_device {
 	container_of(dev, struct atomisp_device, v4l2_dev)
 
 extern struct device *atomisp_dev;
+
+#define atomisp_is_wdt_running(a) timer_pending(&(a)->wdt)
+
+/* ISP2401 */
+void atomisp_wdt_refresh_pipe(struct atomisp_video_pipe *pipe,
+			      unsigned int delay);
+void atomisp_wdt_refresh(struct atomisp_sub_device *asd, unsigned int delay);
+
+/* ISP2400 */
+void atomisp_wdt_start(struct atomisp_sub_device *asd);
+
+/* ISP2401 */
+void atomisp_wdt_start_pipe(struct atomisp_video_pipe *pipe);
+void atomisp_wdt_stop_pipe(struct atomisp_video_pipe *pipe, bool sync);
+
+void atomisp_wdt_stop(struct atomisp_sub_device *asd, bool sync);
 
 #endif /* __ATOMISP_INTERNAL_H__ */

@@ -179,9 +179,11 @@ static irqreturn_t omap4_keypad_irq_thread_fn(int irq, void *dev_id)
 	int error;
 	u64 keys;
 
-	error = pm_runtime_resume_and_get(dev);
-	if (error)
+	error = pm_runtime_get_sync(dev);
+	if (error < 0) {
+		pm_runtime_put_noidle(dev);
 		return IRQ_NONE;
+	}
 
 	low = kbd_readl(keypad_data, OMAP4_KBD_FULLCODE31_0);
 	high = kbd_readl(keypad_data, OMAP4_KBD_FULLCODE63_32);
@@ -205,9 +207,11 @@ static int omap4_keypad_open(struct input_dev *input)
 	struct device *dev = input->dev.parent;
 	int error;
 
-	error = pm_runtime_resume_and_get(dev);
-	if (error)
+	error = pm_runtime_get_sync(dev);
+	if (error < 0) {
+		pm_runtime_put_noidle(dev);
 		return error;
+	}
 
 	disable_irq(keypad_data->irq);
 
@@ -250,10 +254,9 @@ static void omap4_keypad_close(struct input_dev *input)
 	struct device *dev = input->dev.parent;
 	int error;
 
-	error = pm_runtime_resume_and_get(dev);
-	if (error)
-		dev_err(dev, "%s: pm_runtime_resume_and_get() failed: %d\n",
-			__func__, error);
+	error = pm_runtime_get_sync(dev);
+	if (error < 0)
+		pm_runtime_put_noidle(dev);
 
 	disable_irq(keypad_data->irq);
 	omap4_keypad_stop(keypad_data);
@@ -389,9 +392,10 @@ static int omap4_keypad_probe(struct platform_device *pdev)
 	 * Enable clocks for the keypad module so that we can read
 	 * revision register.
 	 */
-	error = pm_runtime_resume_and_get(dev);
-	if (error) {
-		dev_err(dev, "pm_runtime_resume_and_get() failed\n");
+	error = pm_runtime_get_sync(dev);
+	if (error < 0) {
+		dev_err(dev, "pm_runtime_get_sync() failed\n");
+		pm_runtime_put_noidle(dev);
 		return error;
 	}
 

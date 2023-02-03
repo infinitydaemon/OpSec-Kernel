@@ -13,9 +13,6 @@ description:
 maintainers:
   - Heiko Stuebner <heiko@sntech.de>
 
-allOf:
-  - $ref: dai-common.yaml#
-
 properties:
   compatible:
     oneOf:
@@ -64,13 +61,6 @@ properties:
           - const: tx
           - const: rx
 
-  pinctrl-names:
-    oneOf:
-      - const: default
-      - items:
-          - const: bclk_on
-          - const: bclk_off
-
   power-domains:
     maxItems: 1
 
@@ -114,7 +104,7 @@ required:
   - dma-names
   - "#sound-dai-cells"
 
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

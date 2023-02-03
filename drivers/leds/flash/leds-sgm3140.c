@@ -290,7 +290,6 @@ static int sgm3140_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id sgm3140_dt_match[] = {
-	{ .compatible = "ocs,ocp8110" },
 	{ .compatible = "sgmicro,sgm3140" },
 	{ /* sentinel */ }
 };

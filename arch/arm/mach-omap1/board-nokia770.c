@@ -28,9 +28,11 @@
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 
-#include "mux.h"
-#include "hardware.h"
-#include "usb.h"
+#include <mach/mux.h>
+
+#include <mach/hardware.h>
+#include <mach/usb.h>
+
 #include "common.h"
 #include "clock.h"
 #include "mmc.h"

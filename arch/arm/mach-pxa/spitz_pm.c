@@ -18,8 +18,9 @@
 
 #include <asm/irq.h>
 #include <asm/mach-types.h>
+#include <mach/hardware.h>
 
-#include "spitz.h"
+#include <mach/spitz.h>
 #include "pxa27x.h"
 #include "sharpsl_pm.h"
 

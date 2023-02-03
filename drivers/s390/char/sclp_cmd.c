@@ -2,7 +2,8 @@
 /*
  * Copyright IBM Corp. 2007,2012
  *
- * Author(s): Peter Oberparleiter <peter.oberparleiter@de.ibm.com>
+ * Author(s): Heiko Carstens <heiko.carstens@de.ibm.com>,
+ *	      Peter Oberparleiter <peter.oberparleiter@de.ibm.com>
  */
 
 #define KMSG_COMPONENT "sclp_cmd"

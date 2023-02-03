@@ -5,6 +5,9 @@
 
 #include "../include/osdep_service.h"
 #include "../include/drv_types.h"
+#include "../include/recv_osdep.h"
+#include "../include/xmit_osdep.h"
+#include "../include/mlme_osdep.h"
 #include "../include/sta_info.h"
 
 static void _rtw_init_stainfo(struct sta_info *psta)
@@ -15,11 +18,13 @@ static void _rtw_init_stainfo(struct sta_info *psta)
 	spin_lock_init(&psta->lock);
 	INIT_LIST_HEAD(&psta->list);
 	INIT_LIST_HEAD(&psta->hash_list);
-	rtw_init_queue(&psta->sleep_q);
+	_rtw_init_queue(&psta->sleep_q);
 	psta->sleepq_len = 0;
 
 	_rtw_init_sta_xmit_priv(&psta->sta_xmitpriv);
 	_rtw_init_sta_recv_priv(&psta->sta_recvpriv);
+
+#ifdef CONFIG_88EU_AP_MODE
 
 	INIT_LIST_HEAD(&psta->asoc_list);
 
@@ -33,19 +38,24 @@ static void _rtw_init_stainfo(struct sta_info *psta)
 
 	psta->bpairwise_key_installed = false;
 
+#ifdef CONFIG_88EU_AP_MODE
 	psta->nonerp_set = 0;
 	psta->no_short_slot_time_set = 0;
 	psta->no_short_preamble_set = 0;
 	psta->no_ht_gf_set = 0;
 	psta->no_ht_set = 0;
 	psta->ht_20mhz_set = 0;
+#endif
 
 	psta->under_exist_checking = 0;
 
 	psta->keep_alive_trycnt = 0;
+
+#endif	/*  CONFIG_88EU_AP_MODE */
+
 }
 
-int _rtw_init_sta_priv(struct sta_priv *pstapriv)
+u32	_rtw_init_sta_priv(struct	sta_priv *pstapriv)
 {
 	struct sta_info *psta;
 	s32 i;
@@ -53,18 +63,18 @@ int _rtw_init_sta_priv(struct sta_priv *pstapriv)
 	pstapriv->pallocated_stainfo_buf = vzalloc(sizeof(struct sta_info) * NUM_STA + 4);
 
 	if (!pstapriv->pallocated_stainfo_buf)
-		return -ENOMEM;
+		return _FAIL;
 
 	pstapriv->pstainfo_buf = pstapriv->pallocated_stainfo_buf + 4 -
 		((size_t)(pstapriv->pallocated_stainfo_buf) & 3);
 
-	rtw_init_queue(&pstapriv->free_sta_queue);
+	_rtw_init_queue(&pstapriv->free_sta_queue);
 
 	spin_lock_init(&pstapriv->sta_hash_lock);
 
 	pstapriv->asoc_sta_count = 0;
-	rtw_init_queue(&pstapriv->sleep_q);
-	rtw_init_queue(&pstapriv->wakeup_q);
+	_rtw_init_queue(&pstapriv->sleep_q);
+	_rtw_init_queue(&pstapriv->wakeup_q);
 
 	psta = (struct sta_info *)(pstapriv->pstainfo_buf);
 
@@ -77,6 +87,8 @@ int _rtw_init_sta_priv(struct sta_priv *pstapriv)
 
 		psta++;
 	}
+
+#ifdef CONFIG_88EU_AP_MODE
 
 	pstapriv->sta_dz_bitmap = 0;
 	pstapriv->tim_bitmap = 0;
@@ -92,21 +104,30 @@ int _rtw_init_sta_priv(struct sta_priv *pstapriv)
 	pstapriv->assoc_to = 3;
 	pstapriv->expire_to = 3; /*  3*2 = 6 sec */
 	pstapriv->max_num_sta = NUM_STA;
+#endif
 
-	return 0;
+	return _SUCCESS;
 }
 
 inline int rtw_stainfo_offset(struct sta_priv *stapriv, struct sta_info *sta)
 {
-	return (((u8 *)sta) - stapriv->pstainfo_buf) / sizeof(struct sta_info);
+	int offset = (((u8 *)sta) - stapriv->pstainfo_buf) / sizeof(struct sta_info);
+
+	if (!stainfo_offset_valid(offset))
+		DBG_88E("%s invalid offset(%d), out of range!!!", __func__, offset);
+
+	return offset;
 }
 
 inline struct sta_info *rtw_get_stainfo_by_offset(struct sta_priv *stapriv, int offset)
 {
+	if (!stainfo_offset_valid(offset))
+		DBG_88E("%s invalid offset(%d), out of range!!!", __func__, offset);
+
 	return (struct sta_info *)(stapriv->pstainfo_buf + offset * sizeof(struct sta_info));
 }
 
-void _rtw_free_sta_priv(struct	sta_priv *pstapriv)
+u32	_rtw_free_sta_priv(struct	sta_priv *pstapriv)
 {
 	struct list_head *phead, *plist;
 	struct sta_info *psta = NULL;
@@ -134,33 +155,11 @@ void _rtw_free_sta_priv(struct	sta_priv *pstapriv)
 		spin_unlock_bh(&pstapriv->sta_hash_lock);
 		/*===============================*/
 
-		vfree(pstapriv->pallocated_stainfo_buf);
-	}
-}
+		if (pstapriv->pallocated_stainfo_buf)
+			vfree(pstapriv->pallocated_stainfo_buf);
+		}
 
-static void _rtw_reordering_ctrl_timeout_handler(struct timer_list *t)
-{
-	struct recv_reorder_ctrl *preorder_ctrl;
-
-	preorder_ctrl = from_timer(preorder_ctrl, t, reordering_ctrl_timer);
-	rtw_reordering_ctrl_timeout_handler(preorder_ctrl);
-}
-
-static void rtw_init_recv_timer(struct recv_reorder_ctrl *preorder_ctrl)
-{
-	timer_setup(&preorder_ctrl->reordering_ctrl_timer, _rtw_reordering_ctrl_timeout_handler, 0);
-}
-
-static void _addba_timer_hdl(struct timer_list *t)
-{
-	struct sta_info *psta = from_timer(psta, t, addba_retry_timer);
-
-	addba_timer_hdl(psta);
-}
-
-static void init_addba_retry_timer(struct adapter *padapter, struct sta_info *psta)
-{
-	timer_setup(&psta->addba_retry_timer, _addba_timer_hdl, 0);
+	return _SUCCESS;
 }
 
 struct	sta_info *rtw_alloc_stainfo(struct sta_priv *pstapriv, u8 *hwaddr)
@@ -223,7 +222,7 @@ struct	sta_info *rtw_alloc_stainfo(struct sta_priv *pstapriv, u8 *hwaddr)
 			preorder_ctrl->wend_b = 0xffff;
 			preorder_ctrl->wsize_b = 64;/* 64; */
 
-			rtw_init_queue(&preorder_ctrl->pending_recvframe_queue);
+			_rtw_init_queue(&preorder_ctrl->pending_recvframe_queue);
 
 			rtw_init_recv_timer(preorder_ctrl);
 		}
@@ -242,7 +241,7 @@ exit:
 }
 
 /*  using pstapriv->sta_hash_lock to protect */
-void rtw_free_stainfo(struct adapter *padapter, struct sta_info *psta)
+u32	rtw_free_stainfo(struct adapter *padapter, struct sta_info *psta)
 {
 	int i;
 	struct __queue *pfree_sta_queue;
@@ -252,7 +251,7 @@ void rtw_free_stainfo(struct adapter *padapter, struct sta_info *psta)
 	struct	sta_priv *pstapriv = &padapter->stapriv;
 
 	if (!psta)
-		return;
+		goto exit;
 
 	pfree_sta_queue = &pstapriv->free_sta_queue;
 
@@ -322,7 +321,9 @@ void rtw_free_stainfo(struct adapter *padapter, struct sta_info *psta)
 	}
 
 	if (!(psta->state & WIFI_AP_STATE))
-		rtl8188e_SetHalODMVar(padapter, psta, false);
+		rtw_hal_set_odm_var(padapter, HAL_ODM_STA_INFO, psta, false);
+
+#ifdef CONFIG_88EU_AP_MODE
 
 	spin_lock_bh(&pstapriv->auth_list_lock);
 	if (!list_empty(&psta->auth_list)) {
@@ -353,9 +354,15 @@ void rtw_free_stainfo(struct adapter *padapter, struct sta_info *psta)
 
 	psta->under_exist_checking = 0;
 
+#endif	/*  CONFIG_88EU_AP_MODE */
+
 	spin_lock_bh(&pfree_sta_queue->lock);
 	list_add_tail(&psta->list, get_list_head(pfree_sta_queue));
 	spin_unlock_bh(&pfree_sta_queue->lock);
+
+exit:
+
+	return _SUCCESS;
 }
 
 /*  free all stainfo which in sta_hash[all] */
@@ -400,7 +407,7 @@ struct sta_info *rtw_get_stainfo(struct sta_priv *pstapriv, u8 *hwaddr)
 	if (!hwaddr)
 		return NULL;
 
-	if (is_multicast_ether_addr(hwaddr))
+	if (IS_MCAST(hwaddr))
 		addr = bc_addr;
 	else
 		addr = hwaddr;
@@ -464,6 +471,7 @@ struct sta_info *rtw_get_bcmc_stainfo(struct adapter *padapter)
 u8 rtw_access_ctrl(struct adapter *padapter, u8 *mac_addr)
 {
 	u8 res = true;
+#ifdef CONFIG_88EU_AP_MODE
 	struct list_head *plist, *phead;
 	struct rtw_wlan_acl_node *paclnode;
 	u8 match = false;
@@ -488,11 +496,13 @@ u8 rtw_access_ctrl(struct adapter *padapter, u8 *mac_addr)
 	spin_unlock_bh(&pacl_node_q->lock);
 
 	if (pacl_list->mode == 1)/* accept unless in deny list */
-		res = !match;
+		res = (match) ? false : true;
 	else if (pacl_list->mode == 2)/* deny unless in accept list */
-		res = match;
+		res = (match) ? true : false;
 	else
 		res = true;
+
+#endif
 
 	return res;
 }

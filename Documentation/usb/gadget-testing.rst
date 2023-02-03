@@ -333,12 +333,6 @@ In each lun directory there are the following attribute files:
 			being a CD-ROM.
 	nofua		Flag specifying that FUA flag
 			in SCSI WRITE(10,12)
-	forced_eject	This write-only file is useful only when
-			the function is active. It causes the backing
-			file to be forcibly detached from the LUN,
-			regardless of whether the host has allowed it.
-			Any non-zero number of bytes written will
-			result in ejection.
 	=============== ==============================================
 
 Testing the MASS STORAGE function
@@ -732,7 +726,7 @@ The uac2 function provides these attributes in its function directory:
 
 	================ ====================================================
 	c_chmask         capture channel mask
-	c_srate          list of capture sampling rates (comma-separated)
+	c_srate          capture sampling rate
 	c_ssize          capture sample size (bytes)
 	c_sync           capture synchronization type (async/adaptive)
 	c_mute_present   capture mute control enable
@@ -740,20 +734,17 @@ The uac2 function provides these attributes in its function directory:
 	c_volume_min     capture volume control min value (in 1/256 dB)
 	c_volume_max     capture volume control max value (in 1/256 dB)
 	c_volume_res     capture volume control resolution (in 1/256 dB)
-	c_hs_bint        capture bInterval for HS/SS (1-4: fixed, 0: auto)
 	fb_max           maximum extra bandwidth in async mode
 	p_chmask         playback channel mask
-	p_srate          list of playback sampling rates (comma-separated)
+	p_srate          playback sampling rate
 	p_ssize          playback sample size (bytes)
 	p_mute_present   playback mute control enable
 	p_volume_present playback volume control enable
 	p_volume_min     playback volume control min value (in 1/256 dB)
 	p_volume_max     playback volume control max value (in 1/256 dB)
 	p_volume_res     playback volume control resolution (in 1/256 dB)
-	p_hs_bint        playback bInterval for HS/SS (1-4: fixed, 0: auto)
 	req_number       the number of pre-allocated request for both capture
 	                 and playback
-	function_name    name of the interface
 	================ ====================================================
 
 The attributes have sane default values.
@@ -793,7 +784,6 @@ The uvc function provides these attributes in its function directory:
 	streaming_maxpacket maximum packet size this endpoint is capable of
 			    sending or receiving when this configuration is
 			    selected
-	function_name       name of the interface
 	=================== ================================================
 
 There are also "control" and "streaming" subdirectories, each of which contain
@@ -926,7 +916,7 @@ The uac1 function provides these attributes in its function directory:
 
 	================ ====================================================
 	c_chmask         capture channel mask
-	c_srate          list of capture sampling rates (comma-separated)
+	c_srate          capture sampling rate
 	c_ssize          capture sample size (bytes)
 	c_mute_present   capture mute control enable
 	c_volume_present capture volume control enable
@@ -934,16 +924,15 @@ The uac1 function provides these attributes in its function directory:
 	c_volume_max     capture volume control max value (in 1/256 dB)
 	c_volume_res     capture volume control resolution (in 1/256 dB)
 	p_chmask         playback channel mask
-	p_srate          list of playback sampling rates (comma-separated)
+	p_srate          playback sampling rate
 	p_ssize          playback sample size (bytes)
 	p_mute_present   playback mute control enable
 	p_volume_present playback volume control enable
 	p_volume_min     playback volume control min value (in 1/256 dB)
 	p_volume_max     playback volume control max value (in 1/256 dB)
 	p_volume_res     playback volume control resolution (in 1/256 dB)
-	req_number       the number of pre-allocated requests for both capture
+	req_number       the number of pre-allocated request for both capture
 	                 and playback
-	function_name    name of the interface
 	================ ====================================================
 
 The attributes have sane default values.

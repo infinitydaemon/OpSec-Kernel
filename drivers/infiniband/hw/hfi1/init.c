@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 or BSD-3-Clause
 /*
  * Copyright(c) 2015 - 2020 Intel Corporation.
- * Copyright(c) 2021 Cornelis Networks.
  */
 
 #include <linux/pci.h>
@@ -1344,7 +1343,7 @@ static void remove_one(struct pci_dev *);
 static int init_one(struct pci_dev *, const struct pci_device_id *);
 static void shutdown_one(struct pci_dev *);
 
-#define DRIVER_LOAD_MSG "Cornelis " DRIVER_NAME " loaded: "
+#define DRIVER_LOAD_MSG "Intel " DRIVER_NAME " loaded: "
 #define PFX DRIVER_NAME ": "
 
 const struct pci_device_id hfi1_pci_tbl[] = {
@@ -1761,11 +1760,17 @@ int hfi1_create_rcvhdrq(struct hfi1_devdata *dd, struct hfi1_ctxtdata *rcd)
 	unsigned amt;
 
 	if (!rcd->rcvhdrq) {
+		gfp_t gfp_flags;
+
 		amt = rcvhdrq_size(rcd);
 
+		if (rcd->ctxt < dd->first_dyn_alloc_ctxt || rcd->is_vnic)
+			gfp_flags = GFP_KERNEL;
+		else
+			gfp_flags = GFP_USER;
 		rcd->rcvhdrq = dma_alloc_coherent(&dd->pcidev->dev, amt,
 						  &rcd->rcvhdrq_dma,
-						  GFP_KERNEL);
+						  gfp_flags | __GFP_COMP);
 
 		if (!rcd->rcvhdrq) {
 			dd_dev_err(dd,
@@ -1779,7 +1784,7 @@ int hfi1_create_rcvhdrq(struct hfi1_devdata *dd, struct hfi1_ctxtdata *rcd)
 			rcd->rcvhdrtail_kvaddr = dma_alloc_coherent(&dd->pcidev->dev,
 								    PAGE_SIZE,
 								    &rcd->rcvhdrqtailaddr_dma,
-								    GFP_KERNEL);
+								    gfp_flags);
 			if (!rcd->rcvhdrtail_kvaddr)
 				goto bail_free;
 		}
@@ -1815,9 +1820,18 @@ int hfi1_setup_eagerbufs(struct hfi1_ctxtdata *rcd)
 {
 	struct hfi1_devdata *dd = rcd->dd;
 	u32 max_entries, egrtop, alloced_bytes = 0;
+	gfp_t gfp_flags;
 	u16 order, idx = 0;
 	int ret = 0;
 	u16 round_mtu = roundup_pow_of_two(hfi1_max_mtu);
+
+	/*
+	 * GFP_USER, but without GFP_FS, so buffer cache can be
+	 * coalesced (we hope); otherwise, even at order 4,
+	 * heavy filesystem activity makes these fail, and we can
+	 * use compound pages.
+	 */
+	gfp_flags = __GFP_RECLAIM | __GFP_IO | __GFP_COMP;
 
 	/*
 	 * The minimum size of the eager buffers is a groups of MTU-sized
@@ -1849,7 +1863,7 @@ int hfi1_setup_eagerbufs(struct hfi1_ctxtdata *rcd)
 			dma_alloc_coherent(&dd->pcidev->dev,
 					   rcd->egrbufs.rcvtid_size,
 					   &rcd->egrbufs.buffers[idx].dma,
-					   GFP_KERNEL);
+					   gfp_flags);
 		if (rcd->egrbufs.buffers[idx].addr) {
 			rcd->egrbufs.buffers[idx].len =
 				rcd->egrbufs.rcvtid_size;

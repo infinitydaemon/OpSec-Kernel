@@ -49,7 +49,7 @@
 				cs-gpios = <&pioC 3 0>, <0>, <0>, <0>;
 				status = "okay";
 
-				flash@0 {
+				m25p80@0 {
 					compatible = "atmel,at25df321a";
 					spi-max-frequency = <50000000>;
 					reg = <0>;

@@ -133,7 +133,7 @@ static struct platform_device q40fb_device = {
 	.name	= "q40fb",
 };
 
-static int __init q40fb_init(void)
+int __init q40fb_init(void)
 {
 	int ret = 0;
 

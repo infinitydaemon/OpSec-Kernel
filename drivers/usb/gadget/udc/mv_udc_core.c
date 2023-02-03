@@ -771,7 +771,7 @@ static void mv_prime_ep(struct mv_ep *ep, struct mv_req *req)
 static int mv_ep_dequeue(struct usb_ep *_ep, struct usb_request *_req)
 {
 	struct mv_ep *ep = container_of(_ep, struct mv_ep, ep);
-	struct mv_req *req = NULL, *iter;
+	struct mv_req *req;
 	struct mv_udc *udc = ep->udc;
 	unsigned long flags;
 	int stopped, ret = 0;
@@ -793,13 +793,11 @@ static int mv_ep_dequeue(struct usb_ep *_ep, struct usb_request *_req)
 	writel(epctrlx, &udc->op_regs->epctrlx[ep->ep_num]);
 
 	/* make sure it's actually queued on this endpoint */
-	list_for_each_entry(iter, &ep->queue, queue) {
-		if (&iter->req != _req)
-			continue;
-		req = iter;
-		break;
+	list_for_each_entry(req, &ep->queue, queue) {
+		if (&req->req == _req)
+			break;
 	}
-	if (!req) {
+	if (&req->req != _req) {
 		ret = -EINVAL;
 		goto out;
 	}
@@ -2086,8 +2084,10 @@ static int mv_udc_remove(struct platform_device *pdev)
 
 	usb_del_gadget_udc(&udc->gadget);
 
-	if (udc->qwork)
+	if (udc->qwork) {
+		flush_workqueue(udc->qwork);
 		destroy_workqueue(udc->qwork);
+	}
 
 	/* free memory allocated in probe */
 	dma_pool_destroy(udc->dtd_pool);

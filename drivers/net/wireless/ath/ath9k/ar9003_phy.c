@@ -523,10 +523,21 @@ static void ar9003_hw_spur_mitigate_ofdm(struct ath_hw *ah,
 	int synth_freq;
 	int range = 10;
 	int freq_offset = 0;
-	u8 *spur_fbin_ptr = ar9003_get_spur_chan_ptr(ah, IS_CHAN_2GHZ(chan));
+	int mode;
+	u8* spurChansPtr;
 	unsigned int i;
+	struct ar9300_eeprom *eep = &ah->eeprom.ar9300_eep;
 
-	if (spur_fbin_ptr[0] == 0)
+	if (IS_CHAN_5GHZ(chan)) {
+		spurChansPtr = &(eep->modalHeader5G.spurChans[0]);
+		mode = 0;
+	}
+	else {
+		spurChansPtr = &(eep->modalHeader2G.spurChans[0]);
+		mode = 1;
+	}
+
+	if (spurChansPtr[0] == 0)
 		return; /* No spur in the mode */
 
 	if (IS_CHAN_HT40(chan)) {
@@ -543,18 +554,16 @@ static void ar9003_hw_spur_mitigate_ofdm(struct ath_hw *ah,
 
 	ar9003_hw_spur_ofdm_clear(ah);
 
-	for (i = 0; i < AR_EEPROM_MODAL_SPURS && spur_fbin_ptr[i]; i++) {
-		freq_offset = ath9k_hw_fbin2freq(spur_fbin_ptr[i],
-						 IS_CHAN_2GHZ(chan));
+	for (i = 0; i < AR_EEPROM_MODAL_SPURS && spurChansPtr[i]; i++) {
+		freq_offset = ath9k_hw_fbin2freq(spurChansPtr[i], mode);
 		freq_offset -= synth_freq;
 		if (abs(freq_offset) < range) {
 			ar9003_hw_spur_ofdm_work(ah, chan, freq_offset,
 						 range, synth_freq);
 
 			if (AR_SREV_9565(ah) && (i < 4)) {
-				freq_offset =
-					ath9k_hw_fbin2freq(spur_fbin_ptr[i + 1],
-							   IS_CHAN_2GHZ(chan));
+				freq_offset = ath9k_hw_fbin2freq(spurChansPtr[i + 1],
+								 mode);
 				freq_offset -= synth_freq;
 				if (abs(freq_offset) < range)
 					ar9003_hw_spur_ofdm_9565(ah, freq_offset);
@@ -1744,7 +1753,7 @@ static void ar9003_hw_spectral_scan_config(struct ath_hw *ah,
 	REG_SET_BIT(ah, AR_PHY_RADAR_0, AR_PHY_RADAR_0_FFT_ENA);
 	REG_SET_BIT(ah, AR_PHY_SPECTRAL_SCAN, AR_PHY_SPECTRAL_SCAN_ENABLE);
 
-	/* on AR93xx and newer, count = 0 will make the chip send
+	/* on AR93xx and newer, count = 0 will make the the chip send
 	 * spectral samples endlessly. Check if this really was intended,
 	 * and fix otherwise.
 	 */

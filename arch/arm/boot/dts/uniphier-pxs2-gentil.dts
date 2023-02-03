@@ -99,7 +99,3 @@
 &usb1 {
 	status = "okay";
 };
-
-&ahci {
-	status = "okay";
-};

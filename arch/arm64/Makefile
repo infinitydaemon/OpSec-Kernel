@@ -45,13 +45,8 @@ KBUILD_CFLAGS	+= $(call cc-option,-mabi=lp64)
 KBUILD_AFLAGS	+= $(call cc-option,-mabi=lp64)
 
 # Avoid generating .eh_frame* sections.
-ifneq ($(CONFIG_UNWIND_TABLES),y)
 KBUILD_CFLAGS	+= -fno-asynchronous-unwind-tables -fno-unwind-tables
 KBUILD_AFLAGS	+= -fno-asynchronous-unwind-tables -fno-unwind-tables
-else
-KBUILD_CFLAGS	+= -fasynchronous-unwind-tables
-KBUILD_AFLAGS	+= -fasynchronous-unwind-tables
-endif
 
 ifeq ($(CONFIG_STACKPROTECTOR_PER_TASK),y)
 prepare: stack_protector_prepare
@@ -63,11 +58,6 @@ stack_protector_prepare: prepare0
 					include/generated/asm-offsets.h))
 endif
 
-ifeq ($(CONFIG_AS_HAS_ARMV8_2), y)
-# make sure to pass the newest target architecture to -march.
-asm-arch := armv8.2-a
-endif
-
 # Ensure that if the compiler supports branch protection we default it
 # off, this will be overridden if we are using branch protection.
 branch-prot-flags-y += $(call cc-option,-mbranch-protection=none)
@@ -77,16 +67,10 @@ branch-prot-flags-$(CONFIG_CC_HAS_SIGN_RETURN_ADDRESS) := -msign-return-address=
 # We enable additional protection for leaf functions as there is some
 # narrow potential for ROP protection benefits and no substantial
 # performance impact has been observed.
-PACRET-y := pac-ret+leaf
-
-# Using a shadow call stack in leaf functions is too costly, so avoid PAC there
-# as well when we may be patching PAC into SCS
-PACRET-$(CONFIG_UNWIND_PATCH_PAC_INTO_SCS) := pac-ret
-
 ifeq ($(CONFIG_ARM64_BTI_KERNEL),y)
-branch-prot-flags-$(CONFIG_CC_HAS_BRANCH_PROT_PAC_RET_BTI) := -mbranch-protection=$(PACRET-y)+bti
+branch-prot-flags-$(CONFIG_CC_HAS_BRANCH_PROT_PAC_RET_BTI) := -mbranch-protection=pac-ret+leaf+bti
 else
-branch-prot-flags-$(CONFIG_CC_HAS_BRANCH_PROT_PAC_RET) := -mbranch-protection=$(PACRET-y)
+branch-prot-flags-$(CONFIG_CC_HAS_BRANCH_PROT_PAC_RET) := -mbranch-protection=pac-ret+leaf
 endif
 # -march=armv8.3-a enables the non-nops instructions for PAC, to avoid the
 # compiler to generate them and consequently to break the single image contract
@@ -139,10 +123,13 @@ endif
 
 CHECKFLAGS	+= -D__aarch64__
 
-ifeq ($(CONFIG_DYNAMIC_FTRACE_WITH_ARGS),y)
+ifeq ($(CONFIG_DYNAMIC_FTRACE_WITH_REGS),y)
   KBUILD_CPPFLAGS += -DCC_USING_PATCHABLE_FUNCTION_ENTRY
   CC_FLAGS_FTRACE := -fpatchable-function-entry=2
 endif
+
+# Default value
+head-y		:= arch/arm64/kernel/head.o
 
 ifeq ($(CONFIG_KASAN_SW_TAGS), y)
 KASAN_SHADOW_SCALE_SHIFT := 4
@@ -159,25 +146,22 @@ libs-$(CONFIG_EFI_STUB) += $(objtree)/drivers/firmware/efi/libstub/lib.a
 
 # Default target when executing plain make
 boot		:= arch/arm64/boot
-
-ifeq ($(CONFIG_EFI_ZBOOT),)
 KBUILD_IMAGE	:= $(boot)/Image.gz
-else
-KBUILD_IMAGE	:= $(boot)/vmlinuz.efi
-endif
 
-all:	$(notdir $(KBUILD_IMAGE))
+all:	Image.gz
 
 
-Image vmlinuz.efi: vmlinux
+Image: vmlinux
 	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
 
 Image.%: Image
 	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
 
-install: KBUILD_IMAGE := $(boot)/Image
+install: install-image := Image
+zinstall: install-image := Image.gz
 install zinstall:
-	$(call cmd,install)
+	$(CONFIG_SHELL) $(srctree)/$(boot)/install.sh $(KERNELRELEASE) \
+	$(boot)/$(install-image) System.map "$(INSTALL_PATH)"
 
 PHONY += vdso_install
 vdso_install:
@@ -197,6 +181,13 @@ ifeq ($(CONFIG_ARM64_USE_LSE_ATOMICS),y)
 	@echo "warning: LSE atomics not supported by binutils" >&2
   endif
 endif
+
+
+# We use MRPROPER_FILES and CLEAN_FILES now
+archclean:
+	$(Q)$(MAKE) $(clean)=$(boot)
+	$(Q)$(MAKE) $(clean)=arch/arm64/kernel/vdso
+	$(Q)$(MAKE) $(clean)=arch/arm64/kernel/vdso32
 
 ifeq ($(KBUILD_EXTMOD),)
 # We need to generate vdso-offsets.h before compiling certain files in kernel/.

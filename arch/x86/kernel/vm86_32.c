@@ -106,8 +106,10 @@ void save_v86_state(struct kernel_vm86_regs *regs, int retval)
 	 */
 	local_irq_enable();
 
-	BUG_ON(!vm86);
-
+	if (!vm86 || !vm86->user_vm86) {
+		pr_alert("no user_vm86: BAD\n");
+		do_exit(SIGSEGV);
+	}
 	set_flags(regs->pt.flags, VEFLAGS, X86_EFLAGS_VIF | vm86->veflags_mask);
 	user = vm86->user_vm86;
 
@@ -151,7 +153,7 @@ exit_vm86:
 
 	memcpy(&regs->pt, &vm86->regs32, sizeof(struct pt_regs));
 
-	loadsegment(gs, vm86->regs32.gs);
+	lazy_load_gs(vm86->regs32.gs);
 
 	regs->pt.ax = retval;
 	return;
@@ -325,7 +327,7 @@ static long do_sys_vm86(struct vm86plus_struct __user *user_vm86, bool plus)
  * Save old state
  */
 	vm86->saved_sp0 = tsk->thread.sp0;
-	savesegment(gs, vm86->regs32.gs);
+	lazy_save_gs(vm86->regs32.gs);
 
 	/* make room for real-mode segments */
 	preempt_disable();

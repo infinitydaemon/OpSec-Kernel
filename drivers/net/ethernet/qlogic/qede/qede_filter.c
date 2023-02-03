@@ -557,7 +557,7 @@ void qede_force_mac(void *dev, u8 *mac, bool forced)
 		return;
 	}
 
-	eth_hw_addr_set(edev->ndev, mac);
+	ether_addr_copy(edev->ndev->dev_addr, mac);
 	__qede_unlock(edev);
 }
 
@@ -617,7 +617,7 @@ void qede_fill_rss_params(struct qede_dev *edev,
 
 static int qede_set_ucast_rx_mac(struct qede_dev *edev,
 				 enum qed_filter_xcast_params_type opcode,
-				 const unsigned char mac[ETH_ALEN])
+				 unsigned char mac[ETH_ALEN])
 {
 	struct qed_filter_ucast_params ucast;
 
@@ -1101,7 +1101,7 @@ int qede_set_mac_addr(struct net_device *ndev, void *p)
 			goto out;
 	}
 
-	eth_hw_addr_set(ndev, addr->sa_data);
+	ether_addr_copy(ndev->dev_addr, addr->sa_data);
 	DP_INFO(edev, "Setting device MAC to %pM\n", addr->sa_data);
 
 	if (edev->state != QEDE_STATE_OPEN) {

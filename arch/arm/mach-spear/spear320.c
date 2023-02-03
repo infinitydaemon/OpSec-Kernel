@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * arch/arm/mach-spear3xx/spear320.c
  *
@@ -6,6 +5,10 @@
  *
  * Copyright (C) 2009-2012 ST Microelectronics
  * Viresh Kumar <vireshk@kernel.org>
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2. This program is licensed "as is" without any
+ * warranty of any kind, whether express or implied.
  */
 
 #define pr_fmt(fmt) "SPEAr320: " fmt
@@ -17,7 +20,7 @@
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 #include "generic.h"
-#include "spear.h"
+#include <mach/spear.h>
 
 #define SPEAR320_UART1_BASE		UL(0xA3000000)
 #define SPEAR320_UART2_BASE		UL(0xA4000000)

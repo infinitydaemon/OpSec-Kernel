@@ -20,10 +20,9 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include <linux/iosys-map.h>
+#include <linux/dma-buf-map.h>
 
 #include <drm/drm_fourcc.h>
-#include <drm/drm_framebuffer.h>
 
 #include "qxl_drv.h"
 #include "qxl_object.h"
@@ -45,7 +44,7 @@ static struct qxl_rect *drawable_set_clipping(struct qxl_device *qdev,
 					      unsigned int num_clips,
 					      struct qxl_bo *clips_bo)
 {
-	struct iosys_map map;
+	struct dma_buf_map map;
 	struct qxl_clip_rects *dev_clips;
 	int ret;
 
@@ -147,7 +146,7 @@ void qxl_draw_dirty_fb(struct qxl_device *qdev,
 	int stride = fb->pitches[0];
 	/* depth is not actually interesting, we don't mask with it */
 	int depth = fb->format->cpp[0] * 8;
-	struct iosys_map surface_map;
+	struct dma_buf_map surface_map;
 	uint8_t *surface_base;
 	struct qxl_release *release;
 	struct qxl_bo *clips_bo;

@@ -24,7 +24,7 @@
 
 #include <asm/mach-types.h>
 #include "pm.h"
-#include "pxa2xx-regs.h"
+#include <mach/pxa2xx-regs.h>
 #include "regs-rtc.h"
 #include "sharpsl_pm.h"
 

@@ -342,7 +342,7 @@
 			};
 		};
 
-		state_i2cmux_ddc: pinmux-i2cmux-ddc {
+		state_i2cmux_ddc: pinmux_i2cmux_ddc {
 			ddc {
 				nvidia,pins = "ddc";
 				nvidia,function = "i2c2";
@@ -353,7 +353,7 @@
 			};
 		};
 
-		state_i2cmux_pta: pinmux-i2cmux-pta {
+		state_i2cmux_pta: pinmux_i2cmux_pta {
 			ddc {
 				nvidia,pins = "ddc";
 				nvidia,function = "rsvd4";
@@ -364,7 +364,7 @@
 			};
 		};
 
-		state_i2cmux_idle: pinmux-i2cmux-idle {
+		state_i2cmux_idle: pinmux_i2cmux_idle {
 			ddc {
 				nvidia,pins = "ddc";
 				nvidia,function = "rsvd4";
@@ -374,38 +374,24 @@
 				nvidia,function = "rsvd4";
 			};
 		};
-	};
-
-	tegra_spdif: spdif@70002400 {
-		status = "okay";
-
-		nvidia,fixed-parent-rate;
 	};
 
 	tegra_i2s1: i2s@70002800 {
 		status = "okay";
-
-		nvidia,fixed-parent-rate;
 	};
 
 	uartb: serial@70006040 {
 		compatible = "nvidia,tegra20-hsuart";
-		/delete-property/ reg-shift;
 		/* GPS BCM4751 */
 	};
 
 	uartc: serial@70006200 {
 		compatible = "nvidia,tegra20-hsuart";
-		/delete-property/ reg-shift;
 		status = "okay";
 
 		/* Azurewave AW-NH665 BCM4329B1 */
 		bluetooth {
 			compatible = "brcm,bcm4329-bt";
-
-			interrupt-parent = <&gpio>;
-			interrupts = <TEGRA_GPIO(U, 6) IRQ_TYPE_EDGE_RISING>;
-			interrupt-names = "host-wakeup";
 
 			/* PLLP 216MHz / 16 / 4 */
 			max-speed = <3375000>;
@@ -417,7 +403,8 @@
 			vddio-supply = <&vdd_1v8_sys>;
 
 			device-wakeup-gpios = <&gpio TEGRA_GPIO(U, 1) GPIO_ACTIVE_HIGH>;
-			shutdown-gpios = <&gpio TEGRA_GPIO(U, 0) GPIO_ACTIVE_HIGH>;
+			host-wakeup-gpios =   <&gpio TEGRA_GPIO(U, 6) GPIO_ACTIVE_HIGH>;
+			shutdown-gpios =      <&gpio TEGRA_GPIO(U, 0) GPIO_ACTIVE_HIGH>;
 		};
 	};
 
@@ -556,7 +543,7 @@
 		status = "okay";
 
 		magnetometer@c {
-			compatible = "asahi-kasei,ak8975";
+			compatible = "ak,ak8975";
 			reg = <0x0c>;
 
 			interrupt-parent = <&gpio>;
@@ -726,7 +713,6 @@
 		nvidia,core-pwr-good-time = <3845 3845>;
 		nvidia,core-pwr-off-time = <458>;
 		nvidia,sys-clock-req-active-high;
-		core-supply = <&vdd_core>;
 	};
 
 	usb@c5000000 {
@@ -838,7 +824,7 @@
 	};
 
 	/* PMIC has a built-in 32KHz oscillator which is used by PMC */
-	clk32k_in: clock-32k-in {
+	clk32k_in: clock@0 {
 		compatible = "fixed-clock";
 		#clock-cells = <0>;
 		clock-frequency = <32768>;
@@ -850,7 +836,7 @@
 	 * oscillator is used as a reference clock-source by the
 	 * Azurewave WiFi/BT module.
 	 */
-	rtc_32k_wifi: clock-32k-wifi {
+	rtc_32k_wifi: clock@1 {
 		compatible = "fixed-clock";
 		#clock-cells = <0>;
 		clock-frequency = <32768>;
@@ -905,7 +891,7 @@
 	gpio-keys {
 		compatible = "gpio-keys";
 
-		key-power {
+		power {
 			label = "Power";
 			gpios = <&gpio TEGRA_GPIO(I, 3) GPIO_ACTIVE_HIGH>;
 			linux,code = <KEY_POWER>;
@@ -914,7 +900,7 @@
 			wakeup-source;
 		};
 
-		key-rotation-lock {
+		rotation-lock {
 			label = "Rotate-lock";
 			gpios = <&gpio TEGRA_GPIO(Q, 2) GPIO_ACTIVE_HIGH>;
 			linux,code = <SW_ROTATE_LOCK>;
@@ -922,7 +908,7 @@
 			debounce-interval = <10>;
 		};
 
-		key-volume-up {
+		volume-up {
 			label = "Volume Up";
 			gpios = <&gpio TEGRA_GPIO(Q, 4) GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_VOLUMEUP>;
@@ -931,7 +917,7 @@
 			wakeup-source;
 		};
 
-		key-volume-down {
+		volume-down {
 			label = "Volume Down";
 			gpios = <&gpio TEGRA_GPIO(Q, 5) GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_VOLUMEDOWN>;
@@ -975,7 +961,7 @@
 		};
 	};
 
-	vdd_5v0_sys: regulator-5v0 {
+	vdd_5v0_sys: regulator@0 {
 		compatible = "regulator-fixed";
 		regulator-name = "vdd_5v0";
 		regulator-min-microvolt = <5000000>;
@@ -983,7 +969,7 @@
 		regulator-always-on;
 	};
 
-	vdd_3v3_sys: regulator-3v3 {
+	vdd_3v3_sys: regulator@1 {
 		compatible = "regulator-fixed";
 		regulator-name = "vdd_3v3_vs";
 		regulator-min-microvolt = <3300000>;
@@ -992,7 +978,7 @@
 		vin-supply = <&vdd_5v0_sys>;
 	};
 
-	vdd_1v8_sys: regulator-1v8 {
+	vdd_1v8_sys: regulator@2 {
 		compatible = "regulator-fixed";
 		regulator-name = "vdd_1v8_vs";
 		regulator-min-microvolt = <1800000>;
@@ -1001,7 +987,7 @@
 		vin-supply = <&vdd_5v0_sys>;
 	};
 
-	vdd_pnl: regulator-panel {
+	vdd_pnl: regulator@3 {
 		compatible = "regulator-fixed";
 		regulator-name = "vdd_panel";
 		regulator-min-microvolt = <3300000>;
@@ -1517,6 +1503,6 @@
 };
 
 &emc_icc_dvfs_opp_table {
-	/delete-node/ opp-666000000;
-	/delete-node/ opp-760000000;
+	/delete-node/ opp@666000000;
+	/delete-node/ opp@760000000;
 };

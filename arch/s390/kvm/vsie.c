@@ -503,14 +503,6 @@ static int shadow_scb(struct kvm_vcpu *vcpu, struct vsie_page *vsie_page)
 	/* Host-protection-interruption introduced with ESOP */
 	if (test_kvm_cpu_feat(vcpu->kvm, KVM_S390_VM_CPU_FEAT_ESOP))
 		scb_s->ecb |= scb_o->ecb & ECB_HOSTPROTINT;
-	/*
-	 * CPU Topology
-	 * This facility only uses the utility field of the SCA and none of
-	 * the cpu entries that are problematic with the other interpretation
-	 * facilities so we can pass it through
-	 */
-	if (test_kvm_facility(vcpu->kvm, 11))
-		scb_s->ecb |= scb_o->ecb & ECB_PTF;
 	/* transactional execution */
 	if (test_kvm_facility(vcpu->kvm, 73) && wants_tx) {
 		/* remap the prefix is tx is toggled on */
@@ -656,7 +648,7 @@ static int pin_guest_page(struct kvm *kvm, gpa_t gpa, hpa_t *hpa)
 	page = gfn_to_page(kvm, gpa_to_gfn(gpa));
 	if (is_error_page(page))
 		return -EINVAL;
-	*hpa = (hpa_t)page_to_phys(page) + (gpa & ~PAGE_MASK);
+	*hpa = (hpa_t) page_to_virt(page) + (gpa & ~PAGE_MASK);
 	return 0;
 }
 
@@ -871,7 +863,7 @@ static int pin_scb(struct kvm_vcpu *vcpu, struct vsie_page *vsie_page,
 		WARN_ON_ONCE(rc);
 		return 1;
 	}
-	vsie_page->scb_o = phys_to_virt(hpa);
+	vsie_page->scb_o = (struct kvm_s390_sie_block *) hpa;
 	return 0;
 }
 
@@ -1101,7 +1093,7 @@ static int do_vsie_run(struct kvm_vcpu *vcpu, struct vsie_page *vsie_page)
 
 	handle_last_fault(vcpu, vsie_page);
 
-	kvm_vcpu_srcu_read_unlock(vcpu);
+	srcu_read_unlock(&vcpu->kvm->srcu, vcpu->srcu_idx);
 
 	/* save current guest state of bp isolation override */
 	guest_bp_isolation = test_thread_flag(TIF_ISOLATE_BP_GUEST);
@@ -1143,7 +1135,7 @@ static int do_vsie_run(struct kvm_vcpu *vcpu, struct vsie_page *vsie_page)
 	if (!guest_bp_isolation)
 		clear_thread_flag(TIF_ISOLATE_BP_GUEST);
 
-	kvm_vcpu_srcu_read_lock(vcpu);
+	vcpu->srcu_idx = srcu_read_lock(&vcpu->kvm->srcu);
 
 	if (rc == -EINTR) {
 		VCPU_EVENT(vcpu, 3, "%s", "machine check");

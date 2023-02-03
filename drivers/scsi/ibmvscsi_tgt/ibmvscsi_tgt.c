@@ -444,7 +444,7 @@ static void ibmvscsis_disconnect(struct work_struct *work)
 		break;
 
 	/*
-	 * Can transition from this state to unconfiguring
+	 * Can transition from this state to to unconfiguring
 	 * or err disconnect.
 	 */
 	case ERR_DISCONNECT_RECONNECT:
@@ -1872,8 +1872,11 @@ static void srp_snd_msg_failed(struct scsi_info *vscsi, long rc)
  */
 static void ibmvscsis_send_messages(struct scsi_info *vscsi)
 {
-	struct viosrp_crq empty_crq = { };
-	struct viosrp_crq *crq = &empty_crq;
+	u64 msg_hi = 0;
+	/* note do not attempt to access the IU_data_ptr with this pointer
+	 * it is not valid
+	 */
+	struct viosrp_crq *crq = (struct viosrp_crq *)&msg_hi;
 	struct ibmvscsis_cmd *cmd, *nxt;
 	long rc = ADAPT_SUCCESS;
 	bool retry = false;
@@ -1937,7 +1940,7 @@ static void ibmvscsis_send_messages(struct scsi_info *vscsi)
 					crq->IU_length = cpu_to_be16(cmd->rsp.len);
 
 					rc = h_send_crq(vscsi->dma_dev->unit_address,
-							be64_to_cpu(crq->high),
+							be64_to_cpu(msg_hi),
 							be64_to_cpu(cmd->rsp.tag));
 
 					dev_dbg(&vscsi->dev, "send_messages: cmd %p, tag 0x%llx, rc %ld\n",
@@ -3945,16 +3948,41 @@ static struct configfs_attribute *ibmvscsis_wwn_attrs[] = {
 	NULL,
 };
 
-
-static int ibmvscsis_enable_tpg(struct se_portal_group *se_tpg, bool enable)
+static ssize_t ibmvscsis_tpg_enable_show(struct config_item *item,
+					 char *page)
 {
+	struct se_portal_group *se_tpg = to_tpg(item);
+	struct ibmvscsis_tport *tport = container_of(se_tpg,
+						     struct ibmvscsis_tport,
+						     se_tpg);
+
+	return snprintf(page, PAGE_SIZE, "%d\n", (tport->enabled) ? 1 : 0);
+}
+
+static ssize_t ibmvscsis_tpg_enable_store(struct config_item *item,
+					  const char *page, size_t count)
+{
+	struct se_portal_group *se_tpg = to_tpg(item);
 	struct ibmvscsis_tport *tport = container_of(se_tpg,
 						     struct ibmvscsis_tport,
 						     se_tpg);
 	struct scsi_info *vscsi = container_of(tport, struct scsi_info, tport);
+	unsigned long tmp;
+	int rc;
 	long lrc;
 
-	if (enable) {
+	rc = kstrtoul(page, 0, &tmp);
+	if (rc < 0) {
+		dev_err(&vscsi->dev, "Unable to extract srpt_tpg_store_enable\n");
+		return -EINVAL;
+	}
+
+	if ((tmp != 0) && (tmp != 1)) {
+		dev_err(&vscsi->dev, "Illegal value for srpt_tpg_store_enable\n");
+		return -EINVAL;
+	}
+
+	if (tmp) {
 		spin_lock_bh(&vscsi->intr_lock);
 		tport->enabled = true;
 		lrc = ibmvscsis_enable_change_state(vscsi);
@@ -3970,8 +3998,17 @@ static int ibmvscsis_enable_tpg(struct se_portal_group *se_tpg, bool enable)
 		spin_unlock_bh(&vscsi->intr_lock);
 	}
 
-	return 0;
+	dev_dbg(&vscsi->dev, "tpg_enable_store, tmp %ld, state %d\n", tmp,
+		vscsi->state);
+
+	return count;
 }
+CONFIGFS_ATTR(ibmvscsis_tpg_, enable);
+
+static struct configfs_attribute *ibmvscsis_tpg_attrs[] = {
+	&ibmvscsis_tpg_attr_enable,
+	NULL,
+};
 
 static const struct target_core_fabric_ops ibmvscsis_ops = {
 	.module				= THIS_MODULE,
@@ -4001,10 +4038,10 @@ static const struct target_core_fabric_ops ibmvscsis_ops = {
 	.fabric_make_wwn		= ibmvscsis_make_tport,
 	.fabric_drop_wwn		= ibmvscsis_drop_tport,
 	.fabric_make_tpg		= ibmvscsis_make_tpg,
-	.fabric_enable_tpg		= ibmvscsis_enable_tpg,
 	.fabric_drop_tpg		= ibmvscsis_drop_tpg,
 
 	.tfc_wwn_attrs			= ibmvscsis_wwn_attrs,
+	.tfc_tpg_base_attrs		= ibmvscsis_tpg_attrs,
 };
 
 static void ibmvscsis_dev_release(struct device *dev) {};

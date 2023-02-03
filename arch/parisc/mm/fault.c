@@ -22,8 +22,6 @@
 
 #include <asm/traps.h>
 
-#define DEBUG_NATLB 0
-
 /* Various important other fields */
 #define bit22set(x)		(x & 0x00000200)
 #define bits23_25set(x)		(x & 0x000001c0)
@@ -38,7 +36,7 @@ int show_unhandled_signals = 1;
 /*
  * parisc_acctyp(unsigned int inst) --
  *    Given a PA-RISC memory access instruction, determine if the
- *    instruction would perform a memory read or memory write
+ *    the instruction would perform a memory read or memory write
  *    operation.
  *
  *    This function assumes that the given instruction is a memory access
@@ -50,7 +48,7 @@ int show_unhandled_signals = 1;
  *   VM_WRITE if write operation
  *   VM_EXEC  if execute operation
  */
-unsigned long
+static unsigned long
 parisc_acctyp(unsigned long code, unsigned int inst)
 {
 	if (code == 6 || code == 16)
@@ -150,11 +148,11 @@ int fixup_exception(struct pt_regs *regs)
 		 * Fix up get_user() and put_user().
 		 * ASM_EXCEPTIONTABLE_ENTRY_EFAULT() sets the least-significant
 		 * bit in the relative address of the fixup routine to indicate
-		 * that gr[ASM_EXCEPTIONTABLE_REG] should be loaded with
-		 * -EFAULT to report a userspace access error.
+		 * that %r8 should be loaded with -EFAULT to report a userspace
+		 * access error.
 		 */
 		if (fix->fixup & 1) {
-			regs->gr[ASM_EXCEPTIONTABLE_REG] = -EFAULT;
+			regs->gr[8] = -EFAULT;
 
 			/* zero target register for get_user() */
 			if (parisc_acctyp(0, regs->iir) == VM_READ) {
@@ -268,14 +266,14 @@ void do_page_fault(struct pt_regs *regs, unsigned long code,
 	unsigned long acc_type;
 	vm_fault_t fault = 0;
 	unsigned int flags;
-	char *msg;
+
+	if (faulthandler_disabled())
+		goto no_context;
 
 	tsk = current;
 	mm = tsk->mm;
-	if (!mm) {
-		msg = "Page fault: no context";
+	if (!mm)
 		goto no_context;
-	}
 
 	flags = FAULT_FLAG_DEFAULT;
 	if (user_mode(regs))
@@ -311,10 +309,6 @@ good_area:
 	if (fault_signal_pending(fault, regs))
 		return;
 
-	/* The fault is fully completed (including releasing mmap lock) */
-	if (fault & VM_FAULT_COMPLETED)
-		return;
-
 	if (unlikely(fault & VM_FAULT_ERROR)) {
 		/*
 		 * We hit a shared mapping outside of the file, or some
@@ -330,14 +324,16 @@ good_area:
 			goto bad_area;
 		BUG();
 	}
-	if (fault & VM_FAULT_RETRY) {
-		/*
-		 * No need to mmap_read_unlock(mm) as we would
-		 * have already released it in __lock_page_or_retry
-		 * in mm/filemap.c.
-		 */
-		flags |= FAULT_FLAG_TRIED;
-		goto retry;
+	if (flags & FAULT_FLAG_ALLOW_RETRY) {
+		if (fault & VM_FAULT_RETRY) {
+			/*
+			 * No need to mmap_read_unlock(mm) as we would
+			 * have already released it in __lock_page_or_retry
+			 * in mm/filemap.c.
+			 */
+			flags |= FAULT_FLAG_TRIED;
+			goto retry;
+		}
 	}
 	mmap_read_unlock(mm);
 	return;
@@ -413,7 +409,6 @@ bad_area:
 		force_sig_fault(signo, si_code, (void __user *) address);
 		return;
 	}
-	msg = "Page fault: bad address";
 
 no_context:
 
@@ -421,14 +416,12 @@ no_context:
 		return;
 	}
 
-	parisc_terminate(msg, regs, code, address);
+	parisc_terminate("Bad Address (null pointer deref?)", regs, code, address);
 
-out_of_memory:
+  out_of_memory:
 	mmap_read_unlock(mm);
-	if (!user_mode(regs)) {
-		msg = "Page fault: out of memory";
+	if (!user_mode(regs))
 		goto no_context;
-	}
 	pagefault_out_of_memory();
 }
 
@@ -456,8 +449,8 @@ handle_nadtlb_fault(struct pt_regs *regs)
 		fallthrough;
 	case 0x380:
 		/* PDC and FIC instructions */
-		if (DEBUG_NATLB && printk_ratelimit()) {
-			pr_warn("WARNING: nullifying cache flush/purge instruction\n");
+		if (printk_ratelimit()) {
+			pr_warn("BUG: nullifying cache flush/purge instruction\n");
 			show_regs(regs);
 		}
 		if (insn & 0x20) {

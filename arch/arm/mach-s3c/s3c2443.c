@@ -25,7 +25,7 @@
 
 #include "map.h"
 #include "gpio-samsung.h"
-#include "irqs.h"
+#include <mach/irqs.h>
 #include <asm/irq.h>
 #include <asm/system_misc.h>
 

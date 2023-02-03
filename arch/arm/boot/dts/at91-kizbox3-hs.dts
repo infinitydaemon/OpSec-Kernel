@@ -55,7 +55,7 @@
 		};
 	};
 
-	gpio-keys {
+	gpio_keys {
 		compatible = "gpio-keys";
 		pinctrl-names = "default" , "default", "default",
 				"default", "default" ;
@@ -68,35 +68,35 @@
 			     &pinctrl_pio_zbe_rst>;
 		pinctrl-4 = <&pinctrl_pio_input>;
 
-		switch-1 {
+		SW1 {
 			label = "SW1";
 			gpios = <&pioA PIN_PA29 GPIO_ACTIVE_LOW>;
 			linux,code = <0x101>;
 			wakeup-source;
 		};
 
-		switch-2 {
+		SW2 {
 			label = "SW2";
 			gpios = <&pioA PIN_PA18 GPIO_ACTIVE_LOW>;
 			linux,code = <0x102>;
 			wakeup-source;
 		};
 
-		switch-3 {
+		SW3 {
 			label = "SW3";
 			gpios = <&pioA PIN_PA22 GPIO_ACTIVE_LOW>;
 			linux,code = <0x103>;
 			wakeup-source;
 		};
 
-		switch-7 {
+		SW7 {
 			label = "SW7";
 			gpios = <&pioA PIN_PA26 GPIO_ACTIVE_LOW>;
 			linux,code = <0x107>;
 			wakeup-source;
 		};
 
-		switch-8 {
+		SW8 {
 			label = "SW8";
 			gpios = <&pioA PIN_PA24 GPIO_ACTIVE_LOW>;
 			linux,code = <0x108>;
@@ -186,7 +186,7 @@
 
 &pioA {
 	pinctrl_key_gpio_default: key_gpio_default {
-		pinmux = <PIN_PA22__GPIO>,
+		pinmux=  <PIN_PA22__GPIO>,
 		<PIN_PA24__GPIO>,
 		<PIN_PA26__GPIO>,
 		<PIN_PA29__GPIO>,

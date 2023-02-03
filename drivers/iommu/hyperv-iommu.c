@@ -68,6 +68,7 @@ static int hyperv_irq_remapping_alloc(struct irq_domain *domain,
 {
 	struct irq_alloc_info *info = arg;
 	struct irq_data *irq_data;
+	struct irq_desc *desc;
 	int ret = 0;
 
 	if (!info || info->type != X86_IRQ_ALLOC_TYPE_IOAPIC || nr_irqs > 1)
@@ -89,7 +90,8 @@ static int hyperv_irq_remapping_alloc(struct irq_domain *domain,
 	 * Hypver-V IO APIC irq affinity should be in the scope of
 	 * ioapic_max_cpumask because no irq remapping support.
 	 */
-	irq_data_update_affinity(irq_data, &ioapic_max_cpumask);
+	desc = irq_data_to_desc(irq_data);
+	cpumask_copy(desc->irq_common_data.affinity, &ioapic_max_cpumask);
 
 	return 0;
 }
@@ -122,12 +124,9 @@ static int __init hyperv_prepare_irq_remapping(void)
 	const char *name;
 	const struct irq_domain_ops *ops;
 
-	/*
-	 * For a Hyper-V root partition, ms_hyperv_msi_ext_dest_id()
-	 * will always return false.
-	 */
 	if (!hypervisor_is_type(X86_HYPER_MS_HYPERV) ||
-	    x86_init.hyper.msi_ext_dest_id())
+	    x86_init.hyper.msi_ext_dest_id() ||
+	    !x2apic_supported())
 		return -ENODEV;
 
 	if (hv_root_partition) {
@@ -173,9 +172,7 @@ static int __init hyperv_prepare_irq_remapping(void)
 
 static int __init hyperv_enable_irq_remapping(void)
 {
-	if (x2apic_supported())
-		return IRQ_REMAP_X2APIC_MODE;
-	return IRQ_REMAP_XAPIC_MODE;
+	return IRQ_REMAP_X2APIC_MODE;
 }
 
 struct irq_remap_ops hyperv_irq_remap_ops = {
@@ -197,7 +194,7 @@ hyperv_root_ir_compose_msi_msg(struct irq_data *irq_data, struct msi_msg *msg)
 	u32 vector;
 	struct irq_cfg *cfg;
 	int ioapic_id;
-	const struct cpumask *affinity;
+	struct cpumask *affinity;
 	int cpu;
 	struct hv_interrupt_entry entry;
 	struct hyperv_root_ir_data *data = irq_data->chip_data;

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 #
-# Xilinx device configuration
+# Xilink device configuration
 #
 
 config NET_VENDOR_XILINX

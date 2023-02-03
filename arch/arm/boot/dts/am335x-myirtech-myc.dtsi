@@ -27,13 +27,6 @@
 		reg = <0x80000000 0x10000000>;
 	};
 
-	clk32k: clk32k {
-		compatible = "fixed-clock";
-		clock-frequency = <32768>;
-
-		#clock-cells = <0>;
-	};
-
 	vdd_mod: vdd_mod_reg {
 		compatible = "regulator-fixed";
 		regulator-name = "vdd-mod";
@@ -131,6 +124,9 @@
 		gpmc,wr-data-mux-bus-ns = <0>;
 		ti,elm-id = <&elm>;
 		ti,nand-ecc-opt = "bch8";
+
+		#address-cells = <1>;
+		#size-cells = <1>;
 	};
 };
 
@@ -153,8 +149,6 @@
 };
 
 &rtc {
-	clocks = <&clk32k>;
-	clock-names = "ext-clk";
 	system-power-controller;
 };
 

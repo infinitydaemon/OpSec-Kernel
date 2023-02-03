@@ -7,7 +7,6 @@
 #include <linux/rtc.h>
 #include <linux/platform_device.h>
 #include <linux/pm.h>
-#include <linux/pm_wakeirq.h>
 #include <linux/regmap.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
@@ -84,7 +83,7 @@ static int pm8xxx_rtc_set_time(struct device *dev, struct rtc_time *tm)
 	const struct pm8xxx_rtc_regs *regs = rtc_dd->regs;
 
 	if (!rtc_dd->allow_set_time)
-		return -ENODEV;
+		return -EACCES;
 
 	secs = rtc_tm_to_time64(tm);
 
@@ -461,6 +460,7 @@ static const struct pm8xxx_rtc_regs pmk8350_regs = {
  */
 static const struct of_device_id pm8xxx_id_table[] = {
 	{ .compatible = "qcom,pm8921-rtc", .data = &pm8921_regs },
+	{ .compatible = "qcom,pm8018-rtc", .data = &pm8921_regs },
 	{ .compatible = "qcom,pm8058-rtc", .data = &pm8058_regs },
 	{ .compatible = "qcom,pm8941-rtc", .data = &pm8941_regs },
 	{ .compatible = "qcom,pmk8350-rtc", .data = &pmk8350_regs },
@@ -527,28 +527,40 @@ static int pm8xxx_rtc_probe(struct platform_device *pdev)
 		return rc;
 	}
 
-	rc = devm_rtc_register_device(rtc_dd->rtc);
-	if (rc)
-		return rc;
-
-	rc = dev_pm_set_wake_irq(&pdev->dev, rtc_dd->rtc_alarm_irq);
-	if (rc)
-		return rc;
-
-	return 0;
+	return devm_rtc_register_device(rtc_dd->rtc);
 }
 
-static int pm8xxx_remove(struct platform_device *pdev)
+#ifdef CONFIG_PM_SLEEP
+static int pm8xxx_rtc_resume(struct device *dev)
 {
-	dev_pm_clear_wake_irq(&pdev->dev);
+	struct pm8xxx_rtc *rtc_dd = dev_get_drvdata(dev);
+
+	if (device_may_wakeup(dev))
+		disable_irq_wake(rtc_dd->rtc_alarm_irq);
+
 	return 0;
 }
+
+static int pm8xxx_rtc_suspend(struct device *dev)
+{
+	struct pm8xxx_rtc *rtc_dd = dev_get_drvdata(dev);
+
+	if (device_may_wakeup(dev))
+		enable_irq_wake(rtc_dd->rtc_alarm_irq);
+
+	return 0;
+}
+#endif
+
+static SIMPLE_DEV_PM_OPS(pm8xxx_rtc_pm_ops,
+			 pm8xxx_rtc_suspend,
+			 pm8xxx_rtc_resume);
 
 static struct platform_driver pm8xxx_rtc_driver = {
 	.probe		= pm8xxx_rtc_probe,
-	.remove		= pm8xxx_remove,
 	.driver	= {
 		.name		= "rtc-pm8xxx",
+		.pm		= &pm8xxx_rtc_pm_ops,
 		.of_match_table	= pm8xxx_id_table,
 	},
 };

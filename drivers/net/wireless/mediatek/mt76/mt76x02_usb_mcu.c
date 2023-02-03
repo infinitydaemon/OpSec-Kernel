@@ -21,16 +21,29 @@ static void
 mt76x02u_multiple_mcu_reads(struct mt76_dev *dev, u8 *data, int len)
 {
 	struct mt76_usb *usb = &dev->usb;
+	u32 reg, val;
 	int i;
 
-	WARN_ON_ONCE(len / 8 != usb->mcu.rp_len);
+	if (usb->mcu.burst) {
+		WARN_ON_ONCE(len / 4 != usb->mcu.rp_len);
 
-	for (i = 0; i < usb->mcu.rp_len; i++) {
-		u32 reg = get_unaligned_le32(data + 8 * i) - usb->mcu.base;
-		u32 val = get_unaligned_le32(data + 8 * i + 4);
+		reg = usb->mcu.rp[0].reg - usb->mcu.base;
+		for (i = 0; i < usb->mcu.rp_len; i++) {
+			val = get_unaligned_le32(data + 4 * i);
+			usb->mcu.rp[i].reg = reg++;
+			usb->mcu.rp[i].value = val;
+		}
+	} else {
+		WARN_ON_ONCE(len / 8 != usb->mcu.rp_len);
 
-		WARN_ON_ONCE(usb->mcu.rp[i].reg != reg);
-		usb->mcu.rp[i].value = val;
+		for (i = 0; i < usb->mcu.rp_len; i++) {
+			reg = get_unaligned_le32(data + 8 * i) -
+			      usb->mcu.base;
+			val = get_unaligned_le32(data + 8 * i + 4);
+
+			WARN_ON_ONCE(usb->mcu.rp[i].reg != reg);
+			usb->mcu.rp[i].value = val;
+		}
 	}
 }
 
@@ -194,6 +207,7 @@ mt76x02u_mcu_rd_rp(struct mt76_dev *dev, u32 base,
 	usb->mcu.rp = data;
 	usb->mcu.rp_len = n;
 	usb->mcu.base = base;
+	usb->mcu.burst = false;
 
 	ret = __mt76x02u_mcu_send_msg(dev, skb, CMD_RANDOM_READ, true);
 

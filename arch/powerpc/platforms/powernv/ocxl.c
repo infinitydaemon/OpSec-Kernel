@@ -107,8 +107,7 @@ static int get_max_afu_index(struct pci_dev *dev, int *afu_idx)
 	int pos;
 	u32 val;
 
-	pos = pci_find_dvsec_capability(dev, PCI_VENDOR_ID_IBM,
-					OCXL_DVSEC_FUNC_ID);
+	pos = find_dvsec_from_pos(dev, OCXL_DVSEC_FUNC_ID, 0);
 	if (!pos)
 		return -ESRCH;
 
@@ -289,7 +288,7 @@ int pnv_ocxl_get_pasid_count(struct pci_dev *dev, int *count)
 	 * be used by a function depends on how many functions exist
 	 * on the device. The NPU needs to be configured to know how
 	 * many bits are available to PASIDs and how many are to be
-	 * used by the function BDF identifier.
+	 * used by the function BDF indentifier.
 	 *
 	 * We only support one AFU-carrying function for now.
 	 */
@@ -478,8 +477,10 @@ EXPORT_SYMBOL_GPL(pnv_ocxl_spa_release);
 int pnv_ocxl_spa_remove_pe_from_cache(void *platform_data, int pe_handle)
 {
 	struct spa_data *data = (struct spa_data *) platform_data;
+	int rc;
 
-	return opal_npu_spa_clear_cache(data->phb_opal_id, data->bdfn, pe_handle);
+	rc = opal_npu_spa_clear_cache(data->phb_opal_id, data->bdfn, pe_handle);
+	return rc;
 }
 EXPORT_SYMBOL_GPL(pnv_ocxl_spa_remove_pe_from_cache);
 

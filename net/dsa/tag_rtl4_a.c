@@ -18,9 +18,7 @@
 #include <linux/etherdevice.h>
 #include <linux/bits.h>
 
-#include "tag.h"
-
-#define RTL4_A_NAME		"rtl4a"
+#include "dsa_priv.h"
 
 #define RTL4_A_HDR_LEN		4
 #define RTL4_A_ETHERTYPE	0x8899
@@ -56,7 +54,7 @@ static struct sk_buff *rtl4a_tag_xmit(struct sk_buff *skb,
 	p = (__be16 *)tag;
 	*p = htons(RTL4_A_ETHERTYPE);
 
-	out = (RTL4_A_PROTOCOL_RTL8366RB << RTL4_A_PROTOCOL_SHIFT);
+	out = (RTL4_A_PROTOCOL_RTL8366RB << RTL4_A_PROTOCOL_SHIFT) | (2 << 8);
 	/* The lower bits indicate the port number */
 	out |= BIT(dp->index);
 
@@ -114,7 +112,7 @@ static struct sk_buff *rtl4a_tag_rcv(struct sk_buff *skb,
 }
 
 static const struct dsa_device_ops rtl4a_netdev_ops = {
-	.name	= RTL4_A_NAME,
+	.name	= "rtl4a",
 	.proto	= DSA_TAG_PROTO_RTL4_A,
 	.xmit	= rtl4a_tag_xmit,
 	.rcv	= rtl4a_tag_rcv,
@@ -123,4 +121,4 @@ static const struct dsa_device_ops rtl4a_netdev_ops = {
 module_dsa_tag_driver(rtl4a_netdev_ops);
 
 MODULE_LICENSE("GPL");
-MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_RTL4_A, RTL4_A_NAME);
+MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_RTL4_A);

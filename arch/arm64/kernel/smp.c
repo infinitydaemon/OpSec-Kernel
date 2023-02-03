@@ -466,6 +466,33 @@ void __init smp_prepare_boot_cpu(void)
 	kasan_init_hw_tags();
 }
 
+static u64 __init of_get_cpu_mpidr(struct device_node *dn)
+{
+	const __be32 *cell;
+	u64 hwid;
+
+	/*
+	 * A cpu node with missing "reg" property is
+	 * considered invalid to build a cpu_logical_map
+	 * entry.
+	 */
+	cell = of_get_property(dn, "reg", NULL);
+	if (!cell) {
+		pr_err("%pOF: missing reg property\n", dn);
+		return INVALID_HWID;
+	}
+
+	hwid = of_read_number(cell, of_n_addr_cells(dn));
+	/*
+	 * Non affinity bits must be set to 0 in the DT
+	 */
+	if (hwid & ~MPIDR_HWID_BITMASK) {
+		pr_err("%pOF: invalid reg property\n", dn);
+		return INVALID_HWID;
+	}
+	return hwid;
+}
+
 /*
  * Duplicate MPIDRs are a recipe for disaster. Scan all initialized
  * entries and check for duplicates. If any is found just ignore the
@@ -512,7 +539,6 @@ struct acpi_madt_generic_interrupt *acpi_cpu_get_madt_gicc(int cpu)
 {
 	return &cpu_madt_gicc[cpu];
 }
-EXPORT_SYMBOL_GPL(acpi_cpu_get_madt_gicc);
 
 /*
  * acpi_map_gic_cpu_interface - parse processor MADT entry
@@ -630,9 +656,9 @@ static void __init of_parse_and_init_cpus(void)
 	struct device_node *dn;
 
 	for_each_of_cpu_node(dn) {
-		u64 hwid = of_get_cpu_hwid(dn, 0);
+		u64 hwid = of_get_cpu_mpidr(dn);
 
-		if (hwid & ~MPIDR_HWID_BITMASK)
+		if (hwid == INVALID_HWID)
 			goto next;
 
 		if (is_mpidr_duplicate(cpu_count, hwid)) {
@@ -1078,6 +1104,14 @@ bool smp_crash_stop_failed(void)
 }
 #endif
 
+/*
+ * not supported here
+ */
+int setup_profiling_timer(unsigned int multiplier)
+{
+	return -EINVAL;
+}
+
 static bool have_cpu_die(void)
 {
 #ifdef CONFIG_HOTPLUG_CPU
@@ -1094,6 +1128,5 @@ bool cpus_are_stuck_in_kernel(void)
 {
 	bool smp_spin_tables = (num_possible_cpus() > 1 && !have_cpu_die());
 
-	return !!cpus_stuck_in_kernel || smp_spin_tables ||
-		is_protected_kvm_enabled();
+	return !!cpus_stuck_in_kernel || smp_spin_tables;
 }

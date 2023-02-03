@@ -24,11 +24,8 @@
 /*
  * ARM PMU hw_event flags
  */
-#define ARMPMU_EVT_64BIT		0x00001 /* Event uses a 64bit counter */
-#define ARMPMU_EVT_47BIT		0x00002 /* Event uses a 47bit counter */
-
-static_assert((PERF_EVENT_FLAG_ARCH & ARMPMU_EVT_64BIT) == ARMPMU_EVT_64BIT);
-static_assert((PERF_EVENT_FLAG_ARCH & ARMPMU_EVT_47BIT) == ARMPMU_EVT_47BIT);
+/* Event uses a 64bit counter */
+#define ARMPMU_EVT_64BIT		1
 
 #define HW_OP_UNSUPPORTED		0xFFFF
 #define C(_x)				PERF_COUNT_HW_CACHE_##_x
@@ -100,7 +97,7 @@ struct arm_pmu {
 	void		(*stop)(struct arm_pmu *);
 	void		(*reset)(void *);
 	int		(*map_event)(struct perf_event *event);
-	bool		(*filter)(struct pmu *pmu, int cpu);
+	int		(*filter_match)(struct perf_event *event);
 	int		num_events;
 	bool		secure_access; /* 32-bit ARM only */
 #define ARMV8_PMUV3_MAX_COMMON_EVENTS		0x40
@@ -174,6 +171,7 @@ void kvm_host_pmu_init(struct arm_pmu *pmu);
 
 /* Internal functions only for core arm_pmu code */
 struct arm_pmu *armpmu_alloc(void);
+struct arm_pmu *armpmu_alloc_atomic(void);
 void armpmu_free(struct arm_pmu *pmu);
 int armpmu_register(struct arm_pmu *pmu);
 int armpmu_request_irq(int irq, int cpu);

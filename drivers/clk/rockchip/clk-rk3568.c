@@ -71,17 +71,11 @@ static struct rockchip_pll_rate_table rk3568_pll_rates[] = {
 	RK3036_PLL_RATE(500000000, 1, 125, 6, 1, 1, 0),
 	RK3036_PLL_RATE(408000000, 1, 68, 2, 2, 1, 0),
 	RK3036_PLL_RATE(312000000, 1, 78, 6, 1, 1, 0),
-	RK3036_PLL_RATE(297000000, 2, 99, 4, 1, 1, 0),
-	RK3036_PLL_RATE(241500000, 2, 161, 4, 2, 1, 0),
 	RK3036_PLL_RATE(216000000, 1, 72, 4, 2, 1, 0),
 	RK3036_PLL_RATE(200000000, 1, 100, 3, 4, 1, 0),
 	RK3036_PLL_RATE(148500000, 1, 99, 4, 4, 1, 0),
-	RK3036_PLL_RATE(135000000, 2, 45, 4, 1, 1, 0),
-	RK3036_PLL_RATE(119000000, 3, 119, 4, 2, 1, 0),
-	RK3036_PLL_RATE(108000000, 2, 45, 5, 1, 1, 0),
 	RK3036_PLL_RATE(100000000, 1, 150, 6, 6, 1, 0),
 	RK3036_PLL_RATE(96000000, 1, 96, 6, 4, 1, 0),
-	RK3036_PLL_RATE(78750000, 1, 96, 6, 4, 1, 0),
 	RK3036_PLL_RATE(74250000, 2, 99, 4, 4, 1, 0),
 	{ /* sentinel */ },
 };
@@ -1568,7 +1562,7 @@ static struct rockchip_clk_branch rk3568_clk_pmu_branches[] __initdata = {
 			RK3568_PMU_CLKGATE_CON(2), 14, GFLAGS),
 	GATE(XIN_OSC0_EDPPHY_G, "xin_osc0_edpphy_g", "xin24m", 0,
 			RK3568_PMU_CLKGATE_CON(2), 15, GFLAGS),
-	MUX(CLK_HDMI_REF, "clk_hdmi_ref", clk_hdmi_ref_p, CLK_SET_RATE_PARENT,
+	MUX(CLK_HDMI_REF, "clk_hdmi_ref", clk_hdmi_ref_p, 0,
 			RK3568_PMU_CLKSEL_CON(8), 7, 1, MFLAGS),
 };
 
@@ -1591,7 +1585,6 @@ static const char *const rk3568_cru_critical_clocks[] __initconst = {
 	"hclk_php",
 	"pclk_php",
 	"hclk_usb",
-	"hclk_vo",
 };
 
 static const char *const rk3568_pmucru_critical_clocks[] __initconst = {
@@ -1700,16 +1693,19 @@ static const struct of_device_id clk_rk3568_match_table[] = {
 	},
 	{ }
 };
+MODULE_DEVICE_TABLE(of, clk_rk3568_match_table);
 
 static int __init clk_rk3568_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
+	const struct of_device_id *match;
 	const struct clk_rk3568_inits *init_data;
 
-	init_data = (struct clk_rk3568_inits *)of_device_get_match_data(&pdev->dev);
-	if (!init_data)
+	match = of_match_device(clk_rk3568_match_table, &pdev->dev);
+	if (!match || !match->data)
 		return -EINVAL;
 
+	init_data = match->data;
 	if (init_data->inits)
 		init_data->inits(np);
 
@@ -1724,3 +1720,6 @@ static struct platform_driver clk_rk3568_driver = {
 	},
 };
 builtin_platform_driver_probe(clk_rk3568_driver, clk_rk3568_probe);
+
+MODULE_DESCRIPTION("Rockchip RK3568 Clock Driver");
+MODULE_LICENSE("GPL");

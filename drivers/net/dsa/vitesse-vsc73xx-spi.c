@@ -159,14 +159,18 @@ static int vsc73xx_spi_probe(struct spi_device *spi)
 	return vsc73xx_probe(&vsc_spi->vsc);
 }
 
-static void vsc73xx_spi_remove(struct spi_device *spi)
+static int vsc73xx_spi_remove(struct spi_device *spi)
 {
 	struct vsc73xx_spi *vsc_spi = spi_get_drvdata(spi);
 
 	if (!vsc_spi)
-		return;
+		return 0;
 
 	vsc73xx_remove(&vsc_spi->vsc);
+
+	spi_set_drvdata(spi, NULL);
+
+	return 0;
 }
 
 static void vsc73xx_spi_shutdown(struct spi_device *spi)

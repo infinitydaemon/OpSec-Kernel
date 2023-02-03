@@ -9,12 +9,7 @@
 #include <sound/soc-acpi.h>
 #include <sound/soc-acpi-intel-match.h>
 
-static const struct snd_soc_acpi_codecs essx_83x6 = {
-	.num_codecs = 3,
-	.codecs = { "ESSX8316", "ESSX8326", "ESSX8336"},
-};
-
-static const struct snd_soc_acpi_codecs glk_codecs = {
+static struct snd_soc_acpi_codecs glk_codecs = {
 	.num_codecs = 1,
 	.codecs = {"MX98357A"}
 };
@@ -24,6 +19,7 @@ struct snd_soc_acpi_mach snd_soc_acpi_intel_glk_machines[] = {
 		.id = "INT343A",
 		.drv_name = "glk_alc298s_i2s",
 		.fw_filename = "intel/dsp_fw_glk.bin",
+		.sof_fw_filename = "sof-glk.ri",
 		.sof_tplg_filename = "sof-glk-alc298.tplg",
 	},
 	{
@@ -32,6 +28,7 @@ struct snd_soc_acpi_mach snd_soc_acpi_intel_glk_machines[] = {
 		.fw_filename = "intel/dsp_fw_glk.bin",
 		.machine_quirk = snd_soc_acpi_codec_list,
 		.quirk_data = &glk_codecs,
+		.sof_fw_filename = "sof-glk.ri",
 		.sof_tplg_filename = "sof-glk-da7219.tplg",
 	},
 	{
@@ -40,13 +37,7 @@ struct snd_soc_acpi_mach snd_soc_acpi_intel_glk_machines[] = {
 		.fw_filename = "intel/dsp_fw_glk.bin",
 		.machine_quirk = snd_soc_acpi_codec_list,
 		.quirk_data = &glk_codecs,
-		.sof_tplg_filename = "sof-glk-rt5682.tplg",
-	},
-	{
-		.id = "RTL5682",
-		.drv_name = "glk_rt5682_max98357a",
-		.machine_quirk = snd_soc_acpi_codec_list,
-		.quirk_data = &glk_codecs,
+		.sof_fw_filename = "sof-glk.ri",
 		.sof_tplg_filename = "sof-glk-rt5682.tplg",
 	},
 	{
@@ -55,16 +46,10 @@ struct snd_soc_acpi_mach snd_soc_acpi_intel_glk_machines[] = {
 		.fw_filename = "intel/dsp_fw_glk.bin",
 		.machine_quirk = snd_soc_acpi_codec_list,
 		.quirk_data = &glk_codecs,
+		.sof_fw_filename = "sof-glk.ri",
 		.sof_tplg_filename = "sof-glk-cs42l42.tplg",
 	},
-	{
-		.comp_ids = &essx_83x6,
-		.drv_name = "sof-essx8336",
-		.sof_tplg_filename = "sof-glk-es8336", /* the tplg suffix is added at run time */
-		.tplg_quirk_mask = SND_SOC_ACPI_TPLG_INTEL_SSP_NUMBER |
-					SND_SOC_ACPI_TPLG_INTEL_SSP_MSB |
-					SND_SOC_ACPI_TPLG_INTEL_DMIC_NUMBER,
-	},
+
 	{},
 };
 EXPORT_SYMBOL_GPL(snd_soc_acpi_intel_glk_machines);

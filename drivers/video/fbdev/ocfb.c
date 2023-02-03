@@ -387,7 +387,7 @@ static int ocfb_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct of_device_id ocfb_match[] = {
+static struct of_device_id ocfb_match[] = {
 	{ .compatible = "opencores,ocfb", },
 	{},
 };

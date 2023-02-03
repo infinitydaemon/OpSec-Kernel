@@ -12,7 +12,6 @@
  *
  ****************************************************************************/
 
-#include <linux/kstrtox.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <generated/utsrelease.h>
@@ -73,9 +72,6 @@ static struct config_group target_core_hbagroup;
 static struct config_group alua_group;
 static struct config_group alua_lu_gps_group;
 
-static unsigned int target_devices;
-static DEFINE_MUTEX(target_devices_lock);
-
 static inline struct se_hba *
 item_to_hba(struct config_item *item)
 {
@@ -109,48 +105,51 @@ static ssize_t target_core_item_dbroot_store(struct config_item *item,
 {
 	ssize_t read_bytes;
 	struct file *fp;
-	ssize_t r = -EINVAL;
 
-	mutex_lock(&target_devices_lock);
-	if (target_devices) {
-		pr_err("db_root: cannot be changed because it's in use\n");
-		goto unlock;
+	mutex_lock(&g_tf_lock);
+	if (!list_empty(&g_tf_list)) {
+		mutex_unlock(&g_tf_lock);
+		pr_err("db_root: cannot be changed: target drivers registered");
+		return -EINVAL;
 	}
 
 	if (count > (DB_ROOT_LEN - 1)) {
+		mutex_unlock(&g_tf_lock);
 		pr_err("db_root: count %d exceeds DB_ROOT_LEN-1: %u\n",
 		       (int)count, DB_ROOT_LEN - 1);
-		goto unlock;
+		return -EINVAL;
 	}
 
 	read_bytes = snprintf(db_root_stage, DB_ROOT_LEN, "%s", page);
-	if (!read_bytes)
-		goto unlock;
-
+	if (!read_bytes) {
+		mutex_unlock(&g_tf_lock);
+		return -EINVAL;
+	}
 	if (db_root_stage[read_bytes - 1] == '\n')
 		db_root_stage[read_bytes - 1] = '\0';
 
 	/* validate new db root before accepting it */
 	fp = filp_open(db_root_stage, O_RDONLY, 0);
 	if (IS_ERR(fp)) {
+		mutex_unlock(&g_tf_lock);
 		pr_err("db_root: cannot open: %s\n", db_root_stage);
-		goto unlock;
+		return -EINVAL;
 	}
 	if (!S_ISDIR(file_inode(fp)->i_mode)) {
 		filp_close(fp, NULL);
+		mutex_unlock(&g_tf_lock);
 		pr_err("db_root: not a directory: %s\n", db_root_stage);
-		goto unlock;
+		return -EINVAL;
 	}
 	filp_close(fp, NULL);
 
 	strncpy(db_root, db_root_stage, read_bytes);
+
+	mutex_unlock(&g_tf_lock);
+
 	pr_debug("Target_Core_ConfigFS: db_root set to %s\n", db_root);
 
-	r = read_bytes;
-
-unlock:
-	mutex_unlock(&target_devices_lock);
-	return r;
+	return read_bytes;
 }
 
 CONFIGFS_ATTR(target_core_item_, dbroot);
@@ -491,7 +490,6 @@ void target_unregister_template(const struct target_core_fabric_ops *fo)
 			 * fabric driver unload of TFO->module to proceed.
 			 */
 			rcu_barrier();
-			kfree(t->tf_tpg_base_cit.ct_attrs);
 			kfree(t);
 			return;
 		}
@@ -548,7 +546,6 @@ DEF_CONFIGFS_ATTRIB_SHOW(unmap_granularity);
 DEF_CONFIGFS_ATTRIB_SHOW(unmap_granularity_alignment);
 DEF_CONFIGFS_ATTRIB_SHOW(unmap_zeroes_data);
 DEF_CONFIGFS_ATTRIB_SHOW(max_write_same_len);
-DEF_CONFIGFS_ATTRIB_SHOW(emulate_rsoc);
 
 #define DEF_CONFIGFS_ATTRIB_STORE_U32(_name)				\
 static ssize_t _name##_store(struct config_item *item, const char *page,\
@@ -579,7 +576,7 @@ static ssize_t _name##_store(struct config_item *item, const char *page,	\
 	bool flag;							\
 	int ret;							\
 									\
-	ret = kstrtobool(page, &flag);					\
+	ret = strtobool(page, &flag);					\
 	if (ret < 0)							\
 		return ret;						\
 	da->_name = flag;						\
@@ -639,7 +636,7 @@ static ssize_t emulate_model_alias_store(struct config_item *item,
 		return -EINVAL;
 	}
 
-	ret = kstrtobool(page, &flag);
+	ret = strtobool(page, &flag);
 	if (ret < 0)
 		return ret;
 
@@ -661,7 +658,7 @@ static ssize_t emulate_write_cache_store(struct config_item *item,
 	bool flag;
 	int ret;
 
-	ret = kstrtobool(page, &flag);
+	ret = strtobool(page, &flag);
 	if (ret < 0)
 		return ret;
 
@@ -713,7 +710,7 @@ static ssize_t emulate_tas_store(struct config_item *item,
 	bool flag;
 	int ret;
 
-	ret = kstrtobool(page, &flag);
+	ret = strtobool(page, &flag);
 	if (ret < 0)
 		return ret;
 
@@ -734,11 +731,10 @@ static ssize_t emulate_tpu_store(struct config_item *item,
 		const char *page, size_t count)
 {
 	struct se_dev_attrib *da = to_attrib(item);
-	struct se_device *dev = da->da_dev;
 	bool flag;
 	int ret;
 
-	ret = kstrtobool(page, &flag);
+	ret = strtobool(page, &flag);
 	if (ret < 0)
 		return ret;
 
@@ -747,11 +743,8 @@ static ssize_t emulate_tpu_store(struct config_item *item,
 	 * Discard supported is detected iblock_create_virtdevice().
 	 */
 	if (flag && !da->max_unmap_block_desc_count) {
-		if (!dev->transport->configure_unmap ||
-		    !dev->transport->configure_unmap(dev)) {
-			pr_err("Generic Block Discard not supported\n");
-			return -ENOSYS;
-		}
+		pr_err("Generic Block Discard not supported\n");
+		return -ENOSYS;
 	}
 
 	da->emulate_tpu = flag;
@@ -764,11 +757,10 @@ static ssize_t emulate_tpws_store(struct config_item *item,
 		const char *page, size_t count)
 {
 	struct se_dev_attrib *da = to_attrib(item);
-	struct se_device *dev = da->da_dev;
 	bool flag;
 	int ret;
 
-	ret = kstrtobool(page, &flag);
+	ret = strtobool(page, &flag);
 	if (ret < 0)
 		return ret;
 
@@ -777,11 +769,8 @@ static ssize_t emulate_tpws_store(struct config_item *item,
 	 * Discard supported is detected iblock_create_virtdevice().
 	 */
 	if (flag && !da->max_unmap_block_desc_count) {
-		if (!dev->transport->configure_unmap ||
-		    !dev->transport->configure_unmap(dev)) {
-			pr_err("Generic Block Discard not supported\n");
-			return -ENOSYS;
-		}
+		pr_err("Generic Block Discard not supported\n");
+		return -ENOSYS;
 	}
 
 	da->emulate_tpws = flag;
@@ -867,7 +856,7 @@ static ssize_t pi_prot_format_store(struct config_item *item,
 	bool flag;
 	int ret;
 
-	ret = kstrtobool(page, &flag);
+	ret = strtobool(page, &flag);
 	if (ret < 0)
 		return ret;
 
@@ -904,7 +893,7 @@ static ssize_t pi_prot_verify_store(struct config_item *item,
 	bool flag;
 	int ret;
 
-	ret = kstrtobool(page, &flag);
+	ret = strtobool(page, &flag);
 	if (ret < 0)
 		return ret;
 
@@ -933,7 +922,7 @@ static ssize_t force_pr_aptpl_store(struct config_item *item,
 	bool flag;
 	int ret;
 
-	ret = kstrtobool(page, &flag);
+	ret = strtobool(page, &flag);
 	if (ret < 0)
 		return ret;
 	if (da->da_dev->export_count) {
@@ -955,7 +944,7 @@ static ssize_t emulate_rest_reord_store(struct config_item *item,
 	bool flag;
 	int ret;
 
-	ret = kstrtobool(page, &flag);
+	ret = strtobool(page, &flag);
 	if (ret < 0)
 		return ret;
 
@@ -974,11 +963,10 @@ static ssize_t unmap_zeroes_data_store(struct config_item *item,
 		const char *page, size_t count)
 {
 	struct se_dev_attrib *da = to_attrib(item);
-	struct se_device *dev = da->da_dev;
 	bool flag;
 	int ret;
 
-	ret = kstrtobool(page, &flag);
+	ret = strtobool(page, &flag);
 	if (ret < 0)
 		return ret;
 
@@ -993,12 +981,10 @@ static ssize_t unmap_zeroes_data_store(struct config_item *item,
 	 * Discard supported is detected iblock_configure_device().
 	 */
 	if (flag && !da->max_unmap_block_desc_count) {
-		if (!dev->transport->configure_unmap ||
-		    !dev->transport->configure_unmap(dev)) {
-			pr_err("dev[%p]: Thin Provisioning LBPRZ will not be set because max_unmap_block_desc_count is zero\n",
-			       da->da_dev);
-			return -ENOSYS;
-		}
+		pr_err("dev[%p]: Thin Provisioning LBPRZ will not be set"
+		       " because max_unmap_block_desc_count is zero\n",
+		       da->da_dev);
+		return -ENOSYS;
 	}
 	da->unmap_zeroes_data = flag;
 	pr_debug("dev[%p]: SE Device Thin Provisioning LBPRZ bit: %d\n",
@@ -1102,6 +1088,8 @@ static ssize_t block_size_store(struct config_item *item,
 	}
 
 	da->block_size = val;
+	if (da->max_bytes_per_io)
+		da->hw_max_sectors = da->max_bytes_per_io / val;
 
 	pr_debug("dev[%p]: SE Device block_size changed to %u\n",
 			da->da_dev, val);
@@ -1125,7 +1113,7 @@ static ssize_t alua_support_store(struct config_item *item,
 	bool flag, oldflag;
 	int ret;
 
-	ret = kstrtobool(page, &flag);
+	ret = strtobool(page, &flag);
 	if (ret < 0)
 		return ret;
 
@@ -1164,7 +1152,7 @@ static ssize_t pgr_support_store(struct config_item *item,
 	bool flag, oldflag;
 	int ret;
 
-	ret = kstrtobool(page, &flag);
+	ret = strtobool(page, &flag);
 	if (ret < 0)
 		return ret;
 
@@ -1186,23 +1174,6 @@ static ssize_t pgr_support_store(struct config_item *item,
 	return count;
 }
 
-static ssize_t emulate_rsoc_store(struct config_item *item,
-		const char *page, size_t count)
-{
-	struct se_dev_attrib *da = to_attrib(item);
-	bool flag;
-	int ret;
-
-	ret = kstrtobool(page, &flag);
-	if (ret < 0)
-		return ret;
-
-	da->emulate_rsoc = flag;
-	pr_debug("dev[%p]: SE Device REPORT_SUPPORTED_OPERATION_CODES_EMULATION flag: %d\n",
-			da->da_dev, flag);
-	return count;
-}
-
 CONFIGFS_ATTR(, emulate_model_alias);
 CONFIGFS_ATTR(, emulate_dpo);
 CONFIGFS_ATTR(, emulate_fua_write);
@@ -1215,7 +1186,6 @@ CONFIGFS_ATTR(, emulate_tpws);
 CONFIGFS_ATTR(, emulate_caw);
 CONFIGFS_ATTR(, emulate_3pc);
 CONFIGFS_ATTR(, emulate_pr);
-CONFIGFS_ATTR(, emulate_rsoc);
 CONFIGFS_ATTR(, pi_prot_type);
 CONFIGFS_ATTR_RO(, hw_pi_prot_type);
 CONFIGFS_ATTR(, pi_prot_format);
@@ -1279,7 +1249,6 @@ struct configfs_attribute *sbc_attrib_attrs[] = {
 	&attr_max_write_same_len,
 	&attr_alua_support,
 	&attr_pgr_support,
-	&attr_emulate_rsoc,
 	NULL,
 };
 EXPORT_SYMBOL(sbc_attrib_attrs);
@@ -3346,10 +3315,6 @@ static struct config_group *target_core_make_subdev(
 	 */
 	target_stat_setup_dev_default_groups(dev);
 
-	mutex_lock(&target_devices_lock);
-	target_devices++;
-	mutex_unlock(&target_devices_lock);
-
 	mutex_unlock(&hba->hba_access_mutex);
 	return &dev->dev_group;
 
@@ -3388,11 +3353,6 @@ static void target_core_drop_subdev(
 	 * se_dev is released from target_core_dev_item_ops->release()
 	 */
 	config_item_put(item);
-
-	mutex_lock(&target_devices_lock);
-	target_devices--;
-	mutex_unlock(&target_devices_lock);
-
 	mutex_unlock(&hba->hba_access_mutex);
 }
 

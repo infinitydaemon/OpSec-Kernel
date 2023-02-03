@@ -192,8 +192,10 @@ venc_try_fmt_common(struct venus_inst *inst, struct v4l2_format *f)
 	pixmp->height = clamp(pixmp->height, frame_height_min(inst),
 			      frame_height_max(inst));
 
-	pixmp->width = ALIGN(pixmp->width, 128);
-	pixmp->height = ALIGN(pixmp->height, 32);
+	if (f->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+		pixmp->width = ALIGN(pixmp->width, 128);
+		pixmp->height = ALIGN(pixmp->height, 32);
+	}
 
 	pixmp->width = ALIGN(pixmp->width, 2);
 	pixmp->height = ALIGN(pixmp->height, 2);
@@ -390,7 +392,7 @@ static int venc_s_parm(struct file *file, void *fh, struct v4l2_streamparm *a)
 	struct v4l2_fract *timeperframe = &out->timeperframe;
 	u64 us_per_frame, fps;
 
-	if (a->type != V4L2_BUF_TYPE_VIDEO_OUTPUT &&
+	if (a->type != V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
 	    a->type != V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE)
 		return -EINVAL;
 
@@ -422,7 +424,7 @@ static int venc_g_parm(struct file *file, void *fh, struct v4l2_streamparm *a)
 {
 	struct venus_inst *inst = to_inst(file);
 
-	if (a->type != V4L2_BUF_TYPE_VIDEO_OUTPUT &&
+	if (a->type != V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
 	    a->type != V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE)
 		return -EINVAL;
 
@@ -507,19 +509,6 @@ static int venc_enum_frameintervals(struct file *file, void *fh,
 	return 0;
 }
 
-static int venc_subscribe_event(struct v4l2_fh *fh,
-				const struct v4l2_event_subscription *sub)
-{
-	switch (sub->type) {
-	case V4L2_EVENT_EOS:
-		return v4l2_event_subscribe(fh, sub, 2, NULL);
-	case V4L2_EVENT_CTRL:
-		return v4l2_ctrl_subscribe_event(fh, sub);
-	default:
-		return -EINVAL;
-	}
-}
-
 static const struct v4l2_ioctl_ops venc_ioctl_ops = {
 	.vidioc_querycap = venc_querycap,
 	.vidioc_enum_fmt_vid_cap = venc_enum_fmt,
@@ -545,68 +534,9 @@ static const struct v4l2_ioctl_ops venc_ioctl_ops = {
 	.vidioc_g_parm = venc_g_parm,
 	.vidioc_enum_framesizes = venc_enum_framesizes,
 	.vidioc_enum_frameintervals = venc_enum_frameintervals,
-	.vidioc_subscribe_event = venc_subscribe_event,
+	.vidioc_subscribe_event = v4l2_ctrl_subscribe_event,
 	.vidioc_unsubscribe_event = v4l2_event_unsubscribe,
-	.vidioc_try_encoder_cmd = v4l2_m2m_ioctl_try_encoder_cmd,
 };
-
-static int venc_pm_get(struct venus_inst *inst)
-{
-	struct venus_core *core = inst->core;
-	struct device *dev = core->dev_enc;
-	int ret;
-
-	mutex_lock(&core->pm_lock);
-	ret = pm_runtime_resume_and_get(dev);
-	mutex_unlock(&core->pm_lock);
-
-	return ret < 0 ? ret : 0;
-}
-
-static int venc_pm_put(struct venus_inst *inst, bool autosuspend)
-{
-	struct venus_core *core = inst->core;
-	struct device *dev = core->dev_enc;
-	int ret;
-
-	mutex_lock(&core->pm_lock);
-
-	if (autosuspend)
-		ret = pm_runtime_put_autosuspend(dev);
-	else
-		ret = pm_runtime_put_sync(dev);
-
-	mutex_unlock(&core->pm_lock);
-
-	return ret < 0 ? ret : 0;
-}
-
-static int venc_pm_get_put(struct venus_inst *inst)
-{
-	struct venus_core *core = inst->core;
-	struct device *dev = core->dev_enc;
-	int ret = 0;
-
-	mutex_lock(&core->pm_lock);
-
-	if (pm_runtime_suspended(dev)) {
-		ret = pm_runtime_resume_and_get(dev);
-		if (ret < 0)
-			goto error;
-
-		ret = pm_runtime_put_autosuspend(dev);
-	}
-
-error:
-	mutex_unlock(&core->pm_lock);
-
-	return ret < 0 ? ret : 0;
-}
-
-static void venc_pm_touch(struct venus_inst *inst)
-{
-	pm_runtime_mark_last_busy(inst->core->dev_enc);
-}
 
 static int venc_set_properties(struct venus_inst *inst)
 {
@@ -698,8 +628,7 @@ static int venc_set_properties(struct venus_inst *inst)
 			return ret;
 	}
 
-	if (inst->fmt_cap->pixfmt == V4L2_PIX_FMT_HEVC &&
-	    ctr->profile.hevc == V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10) {
+	if (inst->fmt_cap->pixfmt == V4L2_PIX_FMT_HEVC) {
 		struct hfi_hdr10_pq_sei hdr10;
 		unsigned int c;
 
@@ -906,12 +835,8 @@ static int venc_set_properties(struct venus_inst *inst)
 				mbs++;
 			mbs /= ctr->intra_refresh_period;
 
+			intra_refresh.mode = HFI_INTRA_REFRESH_RANDOM;
 			intra_refresh.cir_mbs = mbs;
-			if (ctr->intra_refresh_type ==
-			    V4L2_CID_MPEG_VIDEO_INTRA_REFRESH_PERIOD_TYPE_CYCLIC)
-				intra_refresh.mode = HFI_INTRA_REFRESH_CYCLIC;
-			else
-				intra_refresh.mode = HFI_INTRA_REFRESH_RANDOM;
 		}
 
 		ptype = HFI_PROPERTY_PARAM_VENC_INTRA_REFRESH;
@@ -983,7 +908,6 @@ static int venc_queue_setup(struct vb2_queue *q,
 			    unsigned int sizes[], struct device *alloc_devs[])
 {
 	struct venus_inst *inst = vb2_get_drv_priv(q);
-	struct venus_core *core = inst->core;
 	unsigned int num, min = 4;
 	int ret;
 
@@ -1007,28 +931,10 @@ static int venc_queue_setup(struct vb2_queue *q,
 		return 0;
 	}
 
-	if (test_bit(0, &core->sys_error)) {
-		if (inst->nonblock)
-			return -EAGAIN;
-
-		ret = wait_event_interruptible(core->sys_err_done,
-					       !test_bit(0, &core->sys_error));
-		if (ret)
-			return ret;
-	}
-
-	ret = venc_pm_get(inst);
-	if (ret)
-		return ret;
-
 	mutex_lock(&inst->lock);
 	ret = venc_init_session(inst);
 	mutex_unlock(&inst->lock);
 
-	if (ret)
-		goto put_power;
-
-	ret = venc_pm_put(inst, false);
 	if (ret)
 		return ret;
 
@@ -1065,9 +971,6 @@ static int venc_queue_setup(struct vb2_queue *q,
 	}
 
 	return ret;
-put_power:
-	venc_pm_put(inst, false);
-	return ret;
 }
 
 static int venc_buf_init(struct vb2_buffer *vb)
@@ -1083,8 +986,6 @@ static void venc_release_session(struct venus_inst *inst)
 {
 	int ret;
 
-	venc_pm_get(inst);
-
 	mutex_lock(&inst->lock);
 
 	ret = hfi_session_deinit(inst);
@@ -1096,8 +997,6 @@ static void venc_release_session(struct venus_inst *inst)
 	venus_pm_load_scale(inst);
 	INIT_LIST_HEAD(&inst->registeredbufs);
 	venus_pm_release_core(inst);
-
-	venc_pm_put(inst, false);
 }
 
 static void venc_buf_cleanup(struct vb2_buffer *vb)
@@ -1167,15 +1066,7 @@ static int venc_start_streaming(struct vb2_queue *q, unsigned int count)
 	inst->sequence_cap = 0;
 	inst->sequence_out = 0;
 
-	ret = venc_pm_get(inst);
-	if (ret)
-		goto error;
-
 	ret = venus_pm_acquire_core(inst);
-	if (ret)
-		goto put_power;
-
-	ret = venc_pm_put(inst, true);
 	if (ret)
 		goto error;
 
@@ -1200,8 +1091,6 @@ static int venc_start_streaming(struct vb2_queue *q, unsigned int count)
 
 	return 0;
 
-put_power:
-	venc_pm_put(inst, false);
 error:
 	venus_helper_buffers_done(inst, q->type, VB2_BUF_STATE_QUEUED);
 	if (q->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE)
@@ -1215,8 +1104,6 @@ error:
 static void venc_vb2_buf_queue(struct vb2_buffer *vb)
 {
 	struct venus_inst *inst = vb2_get_drv_priv(vb->vb2_queue);
-
-	venc_pm_get_put(inst);
 
 	mutex_lock(&inst->lock);
 	venus_helper_vb2_buf_queue(vb);
@@ -1240,8 +1127,6 @@ static void venc_buf_done(struct venus_inst *inst, unsigned int buf_type,
 	struct vb2_v4l2_buffer *vbuf;
 	struct vb2_buffer *vb;
 	unsigned int type;
-
-	venc_pm_touch(inst);
 
 	if (buf_type == HFI_BUFFER_INPUT)
 		type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
@@ -1272,11 +1157,8 @@ static void venc_event_notify(struct venus_inst *inst, u32 event,
 {
 	struct device *dev = inst->core->dev_enc;
 
-	venc_pm_touch(inst);
-
 	if (event == EVT_SESSION_ERROR) {
 		inst->session_error = true;
-		venus_helper_vb2_queue_error(inst);
 		dev_err(dev, "enc: event session error %x\n", inst->error);
 	}
 }
@@ -1360,13 +1242,16 @@ static int venc_open(struct file *file)
 	inst->session_type = VIDC_SESSION_TYPE_ENC;
 	inst->clk_data.core_id = VIDC_CORE_ID_DEFAULT;
 	inst->core_acquired = false;
-	inst->nonblock = file->f_flags & O_NONBLOCK;
 
 	venus_helper_init_instance(inst);
 
+	ret = pm_runtime_resume_and_get(core->dev_enc);
+	if (ret < 0)
+		goto err_free;
+
 	ret = venc_ctrl_init(inst);
 	if (ret)
-		goto err_free;
+		goto err_put_sync;
 
 	ret = hfi_session_create(inst, &venc_hfi_ops);
 	if (ret)
@@ -1405,6 +1290,8 @@ err_session_destroy:
 	hfi_session_destroy(inst);
 err_ctrl_deinit:
 	venc_ctrl_deinit(inst);
+err_put_sync:
+	pm_runtime_put_sync(core->dev_enc);
 err_free:
 	kfree(inst);
 	return ret;
@@ -1414,8 +1301,6 @@ static int venc_close(struct file *file)
 {
 	struct venus_inst *inst = to_inst(file);
 
-	venc_pm_get(inst);
-
 	v4l2_m2m_ctx_release(inst->m2m_ctx);
 	v4l2_m2m_release(inst->m2m_dev);
 	venc_ctrl_deinit(inst);
@@ -1424,7 +1309,7 @@ static int venc_close(struct file *file)
 	v4l2_fh_del(&inst->fh);
 	v4l2_fh_exit(&inst->fh);
 
-	venc_pm_put(inst, false);
+	pm_runtime_put_sync(inst->core->dev_enc);
 
 	kfree(inst);
 	return 0;
@@ -1481,8 +1366,6 @@ static int venc_probe(struct platform_device *pdev)
 	core->dev_enc = dev;
 
 	video_set_drvdata(vdev, core);
-	pm_runtime_set_autosuspend_delay(dev, 2000);
-	pm_runtime_use_autosuspend(dev);
 	pm_runtime_enable(dev);
 
 	return 0;

@@ -20,7 +20,6 @@
 #include "panfrost_regs.h"
 #include "panfrost_gpu.h"
 #include "panfrost_mmu.h"
-#include "panfrost_dump.h"
 
 #define JOB_TIMEOUT_MS 500
 
@@ -103,7 +102,7 @@ static struct dma_fence *panfrost_fence_create(struct panfrost_device *pfdev, in
 	return &fence->base;
 }
 
-int panfrost_job_get_slot(struct panfrost_job *job)
+static int panfrost_job_get_slot(struct panfrost_job *job)
 {
 	/* JS0: fragment jobs.
 	 * JS1: vertex/tiler jobs
@@ -138,8 +137,8 @@ static void panfrost_job_write_affinity(struct panfrost_device *pfdev,
 	 */
 	affinity = pfdev->features.shader_present;
 
-	job_write(pfdev, JS_AFFINITY_NEXT_LO(js), lower_32_bits(affinity));
-	job_write(pfdev, JS_AFFINITY_NEXT_HI(js), upper_32_bits(affinity));
+	job_write(pfdev, JS_AFFINITY_NEXT_LO(js), affinity & 0xFFFFFFFF);
+	job_write(pfdev, JS_AFFINITY_NEXT_HI(js), affinity >> 32);
 }
 
 static u32
@@ -202,10 +201,10 @@ static void panfrost_job_hw_submit(struct panfrost_job *job, int js)
 		return;
 	}
 
-	cfg = panfrost_mmu_as_get(pfdev, job->mmu);
+	cfg = panfrost_mmu_as_get(pfdev, job->file_priv->mmu);
 
-	job_write(pfdev, JS_HEAD_NEXT_LO(js), lower_32_bits(jc_head));
-	job_write(pfdev, JS_HEAD_NEXT_HI(js), upper_32_bits(jc_head));
+	job_write(pfdev, JS_HEAD_NEXT_LO(js), jc_head & 0xFFFFFFFF);
+	job_write(pfdev, JS_HEAD_NEXT_HI(js), jc_head >> 32);
 
 	panfrost_job_write_affinity(pfdev, job->requirements, js);
 
@@ -243,18 +242,13 @@ static void panfrost_job_hw_submit(struct panfrost_job *job, int js)
 
 static int panfrost_acquire_object_fences(struct drm_gem_object **bos,
 					  int bo_count,
-					  struct drm_sched_job *job)
+					  struct xarray *deps)
 {
 	int i, ret;
 
 	for (i = 0; i < bo_count; i++) {
-		ret = dma_resv_reserve_fences(bos[i]->resv, 1);
-		if (ret)
-			return ret;
-
 		/* panfrost always uses write mode in its current uapi */
-		ret = drm_sched_job_add_implicit_dependencies(job, bos[i],
-							      true);
+		ret = drm_gem_fence_array_add_implicit(deps, bos[i], true);
 		if (ret)
 			return ret;
 	}
@@ -269,14 +263,17 @@ static void panfrost_attach_object_fences(struct drm_gem_object **bos,
 	int i;
 
 	for (i = 0; i < bo_count; i++)
-		dma_resv_add_fence(bos[i]->resv, fence, DMA_RESV_USAGE_WRITE);
+		dma_resv_add_excl_fence(bos[i]->resv, fence);
 }
 
 int panfrost_job_push(struct panfrost_job *job)
 {
 	struct panfrost_device *pfdev = job->pfdev;
+	int slot = panfrost_job_get_slot(job);
+	struct drm_sched_entity *entity = &job->file_priv->sched_entity[slot];
 	struct ww_acquire_ctx acquire_ctx;
 	int ret = 0;
+
 
 	ret = drm_gem_lock_reservations(job->bos, job->bo_count,
 					    &acquire_ctx);
@@ -284,12 +281,17 @@ int panfrost_job_push(struct panfrost_job *job)
 		return ret;
 
 	mutex_lock(&pfdev->sched_lock);
-	drm_sched_job_arm(&job->base);
+
+	ret = drm_sched_job_init(&job->base, entity, NULL);
+	if (ret) {
+		mutex_unlock(&pfdev->sched_lock);
+		goto unlock;
+	}
 
 	job->render_done_fence = dma_fence_get(&job->base.s_fence->finished);
 
 	ret = panfrost_acquire_object_fences(job->bos, job->bo_count,
-					     &job->base);
+					     &job->deps);
 	if (ret) {
 		mutex_unlock(&pfdev->sched_lock);
 		goto unlock;
@@ -297,7 +299,7 @@ int panfrost_job_push(struct panfrost_job *job)
 
 	kref_get(&job->refcount); /* put by scheduler job completion */
 
-	drm_sched_entity_push_job(&job->base);
+	drm_sched_entity_push_job(&job->base, entity);
 
 	mutex_unlock(&pfdev->sched_lock);
 
@@ -314,7 +316,14 @@ static void panfrost_job_cleanup(struct kref *ref)
 {
 	struct panfrost_job *job = container_of(ref, struct panfrost_job,
 						refcount);
+	struct dma_fence *fence;
+	unsigned long index;
 	unsigned int i;
+
+	xa_for_each(&job->deps, index, fence) {
+		dma_fence_put(fence);
+	}
+	xa_destroy(&job->deps);
 
 	dma_fence_put(job->done_fence);
 	dma_fence_put(job->render_done_fence);
@@ -352,6 +361,17 @@ static void panfrost_job_free(struct drm_sched_job *sched_job)
 	drm_sched_job_cleanup(sched_job);
 
 	panfrost_job_put(job);
+}
+
+static struct dma_fence *panfrost_job_dependency(struct drm_sched_job *sched_job,
+						 struct drm_sched_entity *s_entity)
+{
+	struct panfrost_job *job = to_panfrost_job(sched_job);
+
+	if (!xa_empty(&job->deps))
+		return xa_erase(&job->deps, job->last_dep++);
+
+	return NULL;
 }
 
 static struct dma_fence *panfrost_job_run(struct drm_sched_job *sched_job)
@@ -436,7 +456,7 @@ static void panfrost_job_handle_err(struct panfrost_device *pfdev,
 		job->jc = 0;
 	}
 
-	panfrost_mmu_as_put(pfdev, job->mmu);
+	panfrost_mmu_as_put(pfdev, job->file_priv->mmu);
 	panfrost_devfreq_record_idle(&pfdev->pfdevfreq);
 
 	if (signal_fence)
@@ -457,7 +477,7 @@ static void panfrost_job_handle_done(struct panfrost_device *pfdev,
 	 * happen when we receive the DONE interrupt while doing a GPU reset).
 	 */
 	job->jc = 0;
-	panfrost_mmu_as_put(pfdev, job->mmu);
+	panfrost_mmu_as_put(pfdev, job->file_priv->mmu);
 	panfrost_devfreq_record_idle(&pfdev->pfdevfreq);
 
 	dma_fence_signal_locked(job->done_fence);
@@ -728,8 +748,6 @@ static enum drm_gpu_sched_stat panfrost_job_timedout(struct drm_sched_job
 		job_read(pfdev, JS_TAIL_LO(js)),
 		sched_job);
 
-	panfrost_core_dump(job);
-
 	atomic_set(&pfdev->reset.pending, 1);
 	panfrost_reset(pfdev, sched_job);
 
@@ -745,6 +763,7 @@ static void panfrost_reset_work(struct work_struct *work)
 }
 
 static const struct drm_sched_backend_ops panfrost_sched_ops = {
+	.dependency = panfrost_job_dependency,
 	.run_job = panfrost_job_run,
 	.timedout_job = panfrost_job_timedout,
 	.free_job = panfrost_job_free
@@ -819,7 +838,7 @@ int panfrost_job_init(struct panfrost_device *pfdev)
 				     nentries, 0,
 				     msecs_to_jiffies(JOB_TIMEOUT_MS),
 				     pfdev->reset.wq,
-				     NULL, "pan_js", pfdev->dev);
+				     NULL, "pan_js");
 		if (ret) {
 			dev_err(pfdev->dev, "Failed to create scheduler: %d.", ret);
 			goto err_sched;

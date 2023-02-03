@@ -675,7 +675,8 @@ static int sr030pc30_detect(struct i2c_client *client)
 }
 
 
-static int sr030pc30_probe(struct i2c_client *client)
+static int sr030pc30_probe(struct i2c_client *client,
+			   const struct i2c_device_id *id)
 {
 	struct sr030pc30_info *info;
 	struct v4l2_subdev *sd;
@@ -731,12 +732,13 @@ static int sr030pc30_probe(struct i2c_client *client)
 	return 0;
 }
 
-static void sr030pc30_remove(struct i2c_client *client)
+static int sr030pc30_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 
 	v4l2_device_unregister_subdev(sd);
 	v4l2_ctrl_handler_free(sd->ctrl_handler);
+	return 0;
 }
 
 static const struct i2c_device_id sr030pc30_id[] = {
@@ -750,7 +752,7 @@ static struct i2c_driver sr030pc30_i2c_driver = {
 	.driver = {
 		.name = MODULE_NAME
 	},
-	.probe_new	= sr030pc30_probe,
+	.probe		= sr030pc30_probe,
 	.remove		= sr030pc30_remove,
 	.id_table	= sr030pc30_id,
 };

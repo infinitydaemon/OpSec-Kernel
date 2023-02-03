@@ -11,7 +11,5 @@
 #define AIC_TMR_HV_VIRT		1
 #define AIC_TMR_GUEST_PHYS	2
 #define AIC_TMR_GUEST_VIRT	3
-#define AIC_CPU_PMU_E		4
-#define AIC_CPU_PMU_P		5
 
 #endif

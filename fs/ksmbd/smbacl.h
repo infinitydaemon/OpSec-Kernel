@@ -201,12 +201,12 @@ void posix_state_to_acl(struct posix_acl_state *state,
 			struct posix_acl_entry *pace);
 int compare_sids(const struct smb_sid *ctsid, const struct smb_sid *cwsid);
 bool smb_inherit_flags(int flags, bool is_dir);
-int smb_inherit_dacl(struct ksmbd_conn *conn, const struct path *path,
+int smb_inherit_dacl(struct ksmbd_conn *conn, struct path *path,
 		     unsigned int uid, unsigned int gid);
-int smb_check_perm_dacl(struct ksmbd_conn *conn, const struct path *path,
+int smb_check_perm_dacl(struct ksmbd_conn *conn, struct path *path,
 			__le32 *pdaccess, int uid);
 int set_info_sec(struct ksmbd_conn *conn, struct ksmbd_tree_connect *tcon,
-		 const struct path *path, struct smb_ntsd *pntsd, int ntsd_len,
+		 struct path *path, struct smb_ntsd *pntsd, int ntsd_len,
 		 bool type_check);
 void id_to_sid(unsigned int cid, uint sidtype, struct smb_sid *ssid);
 void ksmbd_init_domain(u32 *sub_auth);
@@ -214,25 +214,25 @@ void ksmbd_init_domain(u32 *sub_auth);
 static inline uid_t posix_acl_uid_translate(struct user_namespace *mnt_userns,
 					    struct posix_acl_entry *pace)
 {
-	vfsuid_t vfsuid;
+	kuid_t kuid;
 
 	/* If this is an idmapped mount, apply the idmapping. */
-	vfsuid = make_vfsuid(mnt_userns, &init_user_ns, pace->e_uid);
+	kuid = mapped_kuid_fs(mnt_userns, &init_user_ns, pace->e_uid);
 
 	/* Translate the kuid into a userspace id ksmbd would see. */
-	return from_kuid(&init_user_ns, vfsuid_into_kuid(vfsuid));
+	return from_kuid(&init_user_ns, kuid);
 }
 
 static inline gid_t posix_acl_gid_translate(struct user_namespace *mnt_userns,
 					    struct posix_acl_entry *pace)
 {
-	vfsgid_t vfsgid;
+	kgid_t kgid;
 
 	/* If this is an idmapped mount, apply the idmapping. */
-	vfsgid = make_vfsgid(mnt_userns, &init_user_ns, pace->e_gid);
+	kgid = mapped_kgid_fs(mnt_userns, &init_user_ns, pace->e_gid);
 
 	/* Translate the kgid into a userspace id ksmbd would see. */
-	return from_kgid(&init_user_ns, vfsgid_into_kgid(vfsgid));
+	return from_kgid(&init_user_ns, kgid);
 }
 
 #endif /* _SMBACL_H */

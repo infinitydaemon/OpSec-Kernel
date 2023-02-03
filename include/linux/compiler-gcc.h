@@ -41,6 +41,8 @@
 
 #define __UNIQUE_ID(prefix) __PASTE(__PASTE(__UNIQUE_ID_, prefix), __COUNTER__)
 
+#define __compiletime_object_size(obj) __builtin_object_size(obj, 0)
+
 #if defined(LATENT_ENTROPY_PLUGIN) && !defined(__CHECKER__)
 #define __latent_entropy __attribute__((latent_entropy))
 #endif
@@ -66,6 +68,25 @@
 		__builtin_unreachable();	\
 	} while (0)
 
+#if defined(RANDSTRUCT_PLUGIN) && !defined(__CHECKER__)
+#define __randomize_layout __attribute__((randomize_layout))
+#define __no_randomize_layout __attribute__((no_randomize_layout))
+/* This anon struct can add padding, so only enable it under randstruct. */
+#define randomized_struct_fields_start	struct {
+#define randomized_struct_fields_end	} __randomize_layout;
+#endif
+
+/*
+ * GCC 'asm goto' miscompiles certain code sequences:
+ *
+ *   http://gcc.gnu.org/bugzilla/show_bug.cgi?id=58670
+ *
+ * Work it around via a compiler barrier quirk suggested by Jakub Jelinek.
+ *
+ * (asm goto is automatically volatile - the naming reflects this.)
+ */
+#define asm_volatile_goto(x...)	do { asm goto(x); asm (""); } while (0)
+
 #if defined(CONFIG_ARCH_USE_BUILTIN_BSWAP)
 #define __HAVE_BUILTIN_BSWAP32__
 #define __HAVE_BUILTIN_BSWAP64__
@@ -78,42 +99,29 @@
 #define KASAN_ABI_VERSION 4
 #endif
 
-#ifdef CONFIG_SHADOW_CALL_STACK
-#define __noscs __attribute__((__no_sanitize__("shadow-call-stack")))
+#if __has_attribute(__no_sanitize_address__)
+#define __no_sanitize_address __attribute__((no_sanitize_address))
+#else
+#define __no_sanitize_address
 #endif
 
-#define __no_sanitize_address __attribute__((__no_sanitize_address__))
-
-#if defined(__SANITIZE_THREAD__)
-#define __no_sanitize_thread __attribute__((__no_sanitize_thread__))
+#if defined(__SANITIZE_THREAD__) && __has_attribute(__no_sanitize_thread__)
+#define __no_sanitize_thread __attribute__((no_sanitize_thread))
 #else
 #define __no_sanitize_thread
 #endif
 
-#define __no_sanitize_undefined __attribute__((__no_sanitize_undefined__))
+#if __has_attribute(__no_sanitize_undefined__)
+#define __no_sanitize_undefined __attribute__((no_sanitize_undefined))
+#else
+#define __no_sanitize_undefined
+#endif
 
-/*
- * Only supported since gcc >= 12
- */
 #if defined(CONFIG_KCOV) && __has_attribute(__no_sanitize_coverage__)
-#define __no_sanitize_coverage __attribute__((__no_sanitize_coverage__))
+#define __no_sanitize_coverage __attribute__((no_sanitize_coverage))
 #else
 #define __no_sanitize_coverage
 #endif
-
-/*
- * Treat __SANITIZE_HWADDRESS__ the same as __SANITIZE_ADDRESS__ in the kernel,
- * matching the defines used by Clang.
- */
-#ifdef __SANITIZE_HWADDRESS__
-#define __SANITIZE_ADDRESS__
-#endif
-
-/*
- * GCC does not support KMSAN.
- */
-#define __no_sanitize_memory
-#define __no_kmsan_checks
 
 /*
  * Turn individual warnings and errors on and off locally, depending
@@ -136,9 +144,6 @@
 #else
 #define __diag_GCC_8(s)
 #endif
-
-#define __diag_ignore_all(option, comment) \
-	__diag_GCC(8, ignore, option)
 
 /*
  * Prior to 9.1, -Wno-alloc-size-larger-than (and therefore the "alloc_size"

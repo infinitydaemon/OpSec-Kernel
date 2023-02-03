@@ -486,9 +486,10 @@ static int tegra_sflash_probe(struct platform_device *pdev)
 			goto exit_pm_disable;
 	}
 
-	ret = pm_runtime_resume_and_get(&pdev->dev);
+	ret = pm_runtime_get_sync(&pdev->dev);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "pm runtime get failed, e = %d\n", ret);
+		pm_runtime_put_noidle(&pdev->dev);
 		goto exit_pm_disable;
 	}
 
@@ -548,8 +549,9 @@ static int tegra_sflash_resume(struct device *dev)
 	struct tegra_sflash_data *tsd = spi_master_get_devdata(master);
 	int ret;
 
-	ret = pm_runtime_resume_and_get(dev);
+	ret = pm_runtime_get_sync(dev);
 	if (ret < 0) {
+		pm_runtime_put_noidle(dev);
 		dev_err(dev, "pm runtime failed, e = %d\n", ret);
 		return ret;
 	}

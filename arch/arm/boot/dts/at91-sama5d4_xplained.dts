@@ -242,13 +242,13 @@
 		};
 	};
 
-	gpio-keys {
+	gpio_keys {
 		compatible = "gpio-keys";
 
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_key_gpio>;
 
-		button {
+		pb_user1 {
 			label = "pb_user1";
 			gpios = <&pioE 8 GPIO_ACTIVE_HIGH>;
 			linux,code = <KEY_PROG1>;

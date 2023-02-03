@@ -1,13 +1,15 @@
 #include <linux/linkage.h>
 #include <asm-generic/export.h>
 #include <asm/asm.h>
-#include <asm/asm-extable.h>
 #include <asm/csr.h>
 
 	.macro fixup op reg addr lbl
 100:
 	\op \reg, \addr
-	_asm_extable	100b, \lbl
+	.section __ex_table,"a"
+	.balign RISCV_SZPTR
+	RISCV_PTR 100b, \lbl
+	.previous
 	.endm
 
 ENTRY(__asm_copy_to_user)

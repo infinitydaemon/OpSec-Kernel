@@ -249,7 +249,7 @@ static const struct rkisp1_capture_fmt_cfg rkisp1_sp_fmts[] = {
 		.fourcc = V4L2_PIX_FMT_GREY,
 		.uv_swap = 0,
 		.write_format = RKISP1_MI_CTRL_SP_WRITE_PLA,
-		.output_format = RKISP1_MI_CTRL_SP_OUTPUT_YUV422,
+		.output_format = RKISP1_MI_CTRL_SP_OUTPUT_YUV400,
 		.mbus = MEDIA_BUS_FMT_YUYV8_2X8,
 	},
 	/* rgb */
@@ -383,7 +383,7 @@ static void rkisp1_mi_config_ctrl(struct rkisp1_capture *cap)
 	mi_ctrl |= RKISP1_CIF_MI_CTRL_INIT_BASE_EN |
 		   RKISP1_CIF_MI_CTRL_INIT_OFFSET_EN;
 
-	rkisp1_write(cap->rkisp1, RKISP1_CIF_MI_CTRL, mi_ctrl);
+	rkisp1_write(cap->rkisp1, mi_ctrl, RKISP1_CIF_MI_CTRL);
 }
 
 static u32 rkisp1_pixfmt_comp_size(const struct v4l2_pix_format_mplane *pixm,
@@ -404,7 +404,7 @@ static void rkisp1_irq_frame_end_enable(struct rkisp1_capture *cap)
 	u32 mi_imsc = rkisp1_read(cap->rkisp1, RKISP1_CIF_MI_IMSC);
 
 	mi_imsc |= RKISP1_CIF_MI_FRAME(cap);
-	rkisp1_write(cap->rkisp1, RKISP1_CIF_MI_IMSC, mi_imsc);
+	rkisp1_write(cap->rkisp1, mi_imsc, RKISP1_CIF_MI_IMSC);
 }
 
 static void rkisp1_mp_config(struct rkisp1_capture *cap)
@@ -413,12 +413,12 @@ static void rkisp1_mp_config(struct rkisp1_capture *cap)
 	struct rkisp1_device *rkisp1 = cap->rkisp1;
 	u32 reg;
 
-	rkisp1_write(rkisp1, cap->config->mi.y_size_init,
-		     rkisp1_pixfmt_comp_size(pixm, RKISP1_PLANE_Y));
-	rkisp1_write(rkisp1, cap->config->mi.cb_size_init,
-		     rkisp1_pixfmt_comp_size(pixm, RKISP1_PLANE_CB));
-	rkisp1_write(rkisp1, cap->config->mi.cr_size_init,
-		     rkisp1_pixfmt_comp_size(pixm, RKISP1_PLANE_CR));
+	rkisp1_write(rkisp1, rkisp1_pixfmt_comp_size(pixm, RKISP1_PLANE_Y),
+		     cap->config->mi.y_size_init);
+	rkisp1_write(rkisp1, rkisp1_pixfmt_comp_size(pixm, RKISP1_PLANE_CB),
+		     cap->config->mi.cb_size_init);
+	rkisp1_write(rkisp1, rkisp1_pixfmt_comp_size(pixm, RKISP1_PLANE_CR),
+		     cap->config->mi.cr_size_init);
 
 	rkisp1_irq_frame_end_enable(cap);
 
@@ -429,7 +429,7 @@ static void rkisp1_mp_config(struct rkisp1_capture *cap)
 			reg |= RKISP1_CIF_MI_XTD_FMT_CTRL_MP_CB_CR_SWAP;
 		else
 			reg &= ~RKISP1_CIF_MI_XTD_FMT_CTRL_MP_CB_CR_SWAP;
-		rkisp1_write(rkisp1, RKISP1_CIF_MI_XTD_FORMAT_CTRL, reg);
+		rkisp1_write(rkisp1, reg, RKISP1_CIF_MI_XTD_FORMAT_CTRL);
 	}
 
 	rkisp1_mi_config_ctrl(cap);
@@ -437,11 +437,11 @@ static void rkisp1_mp_config(struct rkisp1_capture *cap)
 	reg = rkisp1_read(rkisp1, RKISP1_CIF_MI_CTRL);
 	reg &= ~RKISP1_MI_CTRL_MP_FMT_MASK;
 	reg |= cap->pix.cfg->write_format;
-	rkisp1_write(rkisp1, RKISP1_CIF_MI_CTRL, reg);
+	rkisp1_write(rkisp1, reg, RKISP1_CIF_MI_CTRL);
 
 	reg = rkisp1_read(rkisp1, RKISP1_CIF_MI_CTRL);
 	reg |= RKISP1_CIF_MI_MP_AUTOUPDATE_ENABLE;
-	rkisp1_write(rkisp1, RKISP1_CIF_MI_CTRL, reg);
+	rkisp1_write(rkisp1, reg, RKISP1_CIF_MI_CTRL);
 }
 
 static void rkisp1_sp_config(struct rkisp1_capture *cap)
@@ -450,16 +450,16 @@ static void rkisp1_sp_config(struct rkisp1_capture *cap)
 	struct rkisp1_device *rkisp1 = cap->rkisp1;
 	u32 mi_ctrl, reg;
 
-	rkisp1_write(rkisp1, cap->config->mi.y_size_init,
-		     rkisp1_pixfmt_comp_size(pixm, RKISP1_PLANE_Y));
-	rkisp1_write(rkisp1, cap->config->mi.cb_size_init,
-		     rkisp1_pixfmt_comp_size(pixm, RKISP1_PLANE_CB));
-	rkisp1_write(rkisp1, cap->config->mi.cr_size_init,
-		     rkisp1_pixfmt_comp_size(pixm, RKISP1_PLANE_CR));
+	rkisp1_write(rkisp1, rkisp1_pixfmt_comp_size(pixm, RKISP1_PLANE_Y),
+		     cap->config->mi.y_size_init);
+	rkisp1_write(rkisp1, rkisp1_pixfmt_comp_size(pixm, RKISP1_PLANE_CB),
+		     cap->config->mi.cb_size_init);
+	rkisp1_write(rkisp1, rkisp1_pixfmt_comp_size(pixm, RKISP1_PLANE_CR),
+		     cap->config->mi.cr_size_init);
 
-	rkisp1_write(rkisp1, RKISP1_CIF_MI_SP_Y_PIC_WIDTH, pixm->width);
-	rkisp1_write(rkisp1, RKISP1_CIF_MI_SP_Y_PIC_HEIGHT, pixm->height);
-	rkisp1_write(rkisp1, RKISP1_CIF_MI_SP_Y_LLENGTH, cap->sp_y_stride);
+	rkisp1_write(rkisp1, pixm->width, RKISP1_CIF_MI_SP_Y_PIC_WIDTH);
+	rkisp1_write(rkisp1, pixm->height, RKISP1_CIF_MI_SP_Y_PIC_HEIGHT);
+	rkisp1_write(rkisp1, cap->sp_y_stride, RKISP1_CIF_MI_SP_Y_LLENGTH);
 
 	rkisp1_irq_frame_end_enable(cap);
 
@@ -470,7 +470,7 @@ static void rkisp1_sp_config(struct rkisp1_capture *cap)
 			reg |= RKISP1_CIF_MI_XTD_FMT_CTRL_SP_CB_CR_SWAP;
 		else
 			reg &= ~RKISP1_CIF_MI_XTD_FMT_CTRL_SP_CB_CR_SWAP;
-		rkisp1_write(rkisp1, RKISP1_CIF_MI_XTD_FORMAT_CTRL, reg);
+		rkisp1_write(rkisp1, reg, RKISP1_CIF_MI_XTD_FORMAT_CTRL);
 	}
 
 	rkisp1_mi_config_ctrl(cap);
@@ -481,7 +481,7 @@ static void rkisp1_sp_config(struct rkisp1_capture *cap)
 		   RKISP1_MI_CTRL_SP_INPUT_YUV422 |
 		   cap->pix.cfg->output_format |
 		   RKISP1_CIF_MI_SP_AUTOUPDATE_ENABLE;
-	rkisp1_write(rkisp1, RKISP1_CIF_MI_CTRL, mi_ctrl);
+	rkisp1_write(rkisp1, mi_ctrl, RKISP1_CIF_MI_CTRL);
 }
 
 static void rkisp1_mp_disable(struct rkisp1_capture *cap)
@@ -490,7 +490,7 @@ static void rkisp1_mp_disable(struct rkisp1_capture *cap)
 
 	mi_ctrl &= ~(RKISP1_CIF_MI_CTRL_MP_ENABLE |
 		     RKISP1_CIF_MI_CTRL_RAW_ENABLE);
-	rkisp1_write(cap->rkisp1, RKISP1_CIF_MI_CTRL, mi_ctrl);
+	rkisp1_write(cap->rkisp1, mi_ctrl, RKISP1_CIF_MI_CTRL);
 }
 
 static void rkisp1_sp_disable(struct rkisp1_capture *cap)
@@ -498,7 +498,7 @@ static void rkisp1_sp_disable(struct rkisp1_capture *cap)
 	u32 mi_ctrl = rkisp1_read(cap->rkisp1, RKISP1_CIF_MI_CTRL);
 
 	mi_ctrl &= ~RKISP1_CIF_MI_CTRL_SP_ENABLE;
-	rkisp1_write(cap->rkisp1, RKISP1_CIF_MI_CTRL, mi_ctrl);
+	rkisp1_write(cap->rkisp1, mi_ctrl, RKISP1_CIF_MI_CTRL);
 }
 
 static void rkisp1_mp_enable(struct rkisp1_capture *cap)
@@ -514,7 +514,7 @@ static void rkisp1_mp_enable(struct rkisp1_capture *cap)
 	else
 		mi_ctrl |= RKISP1_CIF_MI_CTRL_MP_ENABLE;
 
-	rkisp1_write(cap->rkisp1, RKISP1_CIF_MI_CTRL, mi_ctrl);
+	rkisp1_write(cap->rkisp1, mi_ctrl, RKISP1_CIF_MI_CTRL);
 }
 
 static void rkisp1_sp_enable(struct rkisp1_capture *cap)
@@ -522,14 +522,15 @@ static void rkisp1_sp_enable(struct rkisp1_capture *cap)
 	u32 mi_ctrl = rkisp1_read(cap->rkisp1, RKISP1_CIF_MI_CTRL);
 
 	mi_ctrl |= RKISP1_CIF_MI_CTRL_SP_ENABLE;
-	rkisp1_write(cap->rkisp1, RKISP1_CIF_MI_CTRL, mi_ctrl);
+	rkisp1_write(cap->rkisp1, mi_ctrl, RKISP1_CIF_MI_CTRL);
 }
 
 static void rkisp1_mp_sp_stop(struct rkisp1_capture *cap)
 {
 	if (!cap->is_streaming)
 		return;
-	rkisp1_write(cap->rkisp1, RKISP1_CIF_MI_ICR, RKISP1_CIF_MI_FRAME(cap));
+	rkisp1_write(cap->rkisp1,
+		     RKISP1_CIF_MI_FRAME(cap), RKISP1_CIF_MI_ICR);
 	cap->ops->disable(cap);
 }
 
@@ -553,7 +554,7 @@ static void rkisp1_mp_set_data_path(struct rkisp1_capture *cap)
 
 	dpcl = dpcl | RKISP1_CIF_VI_DPCL_CHAN_MODE_MP |
 	       RKISP1_CIF_VI_DPCL_MP_MUX_MRSZ_MI;
-	rkisp1_write(cap->rkisp1, RKISP1_CIF_VI_DPCL, dpcl);
+	rkisp1_write(cap->rkisp1, dpcl, RKISP1_CIF_VI_DPCL);
 }
 
 static void rkisp1_sp_set_data_path(struct rkisp1_capture *cap)
@@ -561,7 +562,7 @@ static void rkisp1_sp_set_data_path(struct rkisp1_capture *cap)
 	u32 dpcl = rkisp1_read(cap->rkisp1, RKISP1_CIF_VI_DPCL);
 
 	dpcl |= RKISP1_CIF_VI_DPCL_CHAN_MODE_SP;
-	rkisp1_write(cap->rkisp1, RKISP1_CIF_VI_DPCL, dpcl);
+	rkisp1_write(cap->rkisp1, dpcl, RKISP1_CIF_VI_DPCL);
 }
 
 static const struct rkisp1_capture_ops rkisp1_capture_ops_mp = {
@@ -627,45 +628,35 @@ static void rkisp1_set_next_buf(struct rkisp1_capture *cap)
 
 		buff_addr = cap->buf.next->buff_addr;
 
-		rkisp1_write(cap->rkisp1, cap->config->mi.y_base_ad_init,
-			     buff_addr[RKISP1_PLANE_Y]);
-		/*
-		 * In order to support grey format we capture
-		 * YUV422 planar format from the camera and
-		 * set the U and V planes to the dummy buffer
-		 */
-		if (cap->pix.cfg->fourcc == V4L2_PIX_FMT_GREY) {
-			rkisp1_write(cap->rkisp1,
-				     cap->config->mi.cb_base_ad_init,
-				     cap->buf.dummy.dma_addr);
-			rkisp1_write(cap->rkisp1,
-				     cap->config->mi.cr_base_ad_init,
-				     cap->buf.dummy.dma_addr);
-		} else {
-			rkisp1_write(cap->rkisp1,
-				     cap->config->mi.cb_base_ad_init,
-				     buff_addr[RKISP1_PLANE_CB]);
-			rkisp1_write(cap->rkisp1,
-				     cap->config->mi.cr_base_ad_init,
-				     buff_addr[RKISP1_PLANE_CR]);
-		}
+		rkisp1_write(cap->rkisp1,
+			     buff_addr[RKISP1_PLANE_Y],
+			     cap->config->mi.y_base_ad_init);
+		rkisp1_write(cap->rkisp1,
+			     buff_addr[RKISP1_PLANE_CB],
+			     cap->config->mi.cb_base_ad_init);
+		rkisp1_write(cap->rkisp1,
+			     buff_addr[RKISP1_PLANE_CR],
+			     cap->config->mi.cr_base_ad_init);
 	} else {
 		/*
 		 * Use the dummy space allocated by dma_alloc_coherent to
 		 * throw data if there is no available buffer.
 		 */
-		rkisp1_write(cap->rkisp1, cap->config->mi.y_base_ad_init,
-			     cap->buf.dummy.dma_addr);
-		rkisp1_write(cap->rkisp1, cap->config->mi.cb_base_ad_init,
-			     cap->buf.dummy.dma_addr);
-		rkisp1_write(cap->rkisp1, cap->config->mi.cr_base_ad_init,
-			     cap->buf.dummy.dma_addr);
+		rkisp1_write(cap->rkisp1,
+			     cap->buf.dummy.dma_addr,
+			     cap->config->mi.y_base_ad_init);
+		rkisp1_write(cap->rkisp1,
+			     cap->buf.dummy.dma_addr,
+			     cap->config->mi.cb_base_ad_init);
+		rkisp1_write(cap->rkisp1,
+			     cap->buf.dummy.dma_addr,
+			     cap->config->mi.cr_base_ad_init);
 	}
 
 	/* Set plane offsets */
-	rkisp1_write(cap->rkisp1, cap->config->mi.y_offs_cnt_init, 0);
-	rkisp1_write(cap->rkisp1, cap->config->mi.cb_offs_cnt_init, 0);
-	rkisp1_write(cap->rkisp1, cap->config->mi.cr_offs_cnt_init, 0);
+	rkisp1_write(cap->rkisp1, 0, cap->config->mi.y_offs_cnt_init);
+	rkisp1_write(cap->rkisp1, 0, cap->config->mi.cb_offs_cnt_init);
+	rkisp1_write(cap->rkisp1, 0, cap->config->mi.cr_offs_cnt_init);
 }
 
 /*
@@ -694,18 +685,13 @@ static void rkisp1_handle_buffer(struct rkisp1_capture *cap)
 	spin_unlock(&cap->buf.lock);
 }
 
-irqreturn_t rkisp1_capture_isr(int irq, void *ctx)
+void rkisp1_capture_isr(struct rkisp1_device *rkisp1)
 {
-	struct device *dev = ctx;
-	struct rkisp1_device *rkisp1 = dev_get_drvdata(dev);
 	unsigned int i;
 	u32 status;
 
 	status = rkisp1_read(rkisp1, RKISP1_CIF_MI_MIS);
-	if (!status)
-		return IRQ_NONE;
-
-	rkisp1_write(rkisp1, RKISP1_CIF_MI_ICR, status);
+	rkisp1_write(rkisp1, status, RKISP1_CIF_MI_ICR);
 
 	for (i = 0; i < ARRAY_SIZE(rkisp1->capture_devs); ++i) {
 		struct rkisp1_capture *cap = &rkisp1->capture_devs[i];
@@ -732,8 +718,6 @@ irqreturn_t rkisp1_capture_isr(int irq, void *ctx)
 		cap->is_streaming = false;
 		wake_up(&cap->done);
 	}
-
-	return IRQ_HANDLED;
 }
 
 /* ----------------------------------------------------------------------------
@@ -883,8 +867,8 @@ static void rkisp1_cap_stream_enable(struct rkisp1_capture *cap)
 	 */
 	if (!other->is_streaming) {
 		/* force cfg update */
-		rkisp1_write(rkisp1, RKISP1_CIF_MI_INIT,
-			     RKISP1_CIF_MI_INIT_SOFT_UPD);
+		rkisp1_write(rkisp1,
+			     RKISP1_CIF_MI_INIT_SOFT_UPD, RKISP1_CIF_MI_INIT);
 		rkisp1_set_next_buf(cap);
 	}
 	spin_unlock_irq(&cap->buf.lock);
@@ -913,7 +897,7 @@ static void rkisp1_cap_stream_disable(struct rkisp1_capture *cap)
  *
  * Call s_stream(false) in the reverse order from
  * rkisp1_pipeline_stream_enable() and disable the DMA engine.
- * Should be called before video_device_pipeline_stop()
+ * Should be called before media_pipeline_stop()
  */
 static void rkisp1_pipeline_stream_disable(struct rkisp1_capture *cap)
 	__must_hold(&cap->rkisp1->stream_lock)
@@ -926,8 +910,11 @@ static void rkisp1_pipeline_stream_disable(struct rkisp1_capture *cap)
 	 * If the other capture is streaming, isp and sensor nodes shouldn't
 	 * be disabled, skip them.
 	 */
-	if (rkisp1->pipe.start_count < 2)
+	if (rkisp1->pipe.streaming_count < 2) {
+		v4l2_subdev_call(rkisp1->active_sensor->sd, video, s_stream,
+				 false);
 		v4l2_subdev_call(&rkisp1->isp.sd, video, s_stream, false);
+	}
 
 	v4l2_subdev_call(&rkisp1->resizer_devs[cap->id].sd, video, s_stream,
 			 false);
@@ -937,7 +924,7 @@ static void rkisp1_pipeline_stream_disable(struct rkisp1_capture *cap)
  * rkisp1_pipeline_stream_enable - enable nodes in the pipeline
  *
  * Enable the DMA Engine and call s_stream(true) through the pipeline.
- * Should be called after video_device_pipeline_start()
+ * Should be called after media_pipeline_start()
  */
 static int rkisp1_pipeline_stream_enable(struct rkisp1_capture *cap)
 	__must_hold(&cap->rkisp1->stream_lock)
@@ -956,15 +943,22 @@ static int rkisp1_pipeline_stream_enable(struct rkisp1_capture *cap)
 	 * If the other capture is streaming, isp and sensor nodes are already
 	 * enabled, skip them.
 	 */
-	if (rkisp1->pipe.start_count > 1)
+	if (rkisp1->pipe.streaming_count > 1)
 		return 0;
 
 	ret = v4l2_subdev_call(&rkisp1->isp.sd, video, s_stream, true);
 	if (ret)
 		goto err_disable_rsz;
 
+	ret = v4l2_subdev_call(rkisp1->active_sensor->sd, video, s_stream,
+			       true);
+	if (ret)
+		goto err_disable_isp;
+
 	return 0;
 
+err_disable_isp:
+	v4l2_subdev_call(&rkisp1->isp.sd, video, s_stream, false);
 err_disable_rsz:
 	v4l2_subdev_call(&rkisp1->resizer_devs[cap->id].sd, video, s_stream,
 			 false);
@@ -994,7 +988,7 @@ static void rkisp1_vb2_stop_streaming(struct vb2_queue *queue)
 
 	rkisp1_dummy_buf_destroy(cap);
 
-	video_device_pipeline_stop(&node->vdev);
+	media_pipeline_stop(&node->vdev.entity);
 
 	mutex_unlock(&cap->rkisp1->stream_lock);
 }
@@ -1008,7 +1002,7 @@ rkisp1_vb2_start_streaming(struct vb2_queue *queue, unsigned int count)
 
 	mutex_lock(&cap->rkisp1->stream_lock);
 
-	ret = video_device_pipeline_start(&cap->vnode.vdev, &cap->rkisp1->pipe);
+	ret = media_pipeline_start(entity, &cap->rkisp1->pipe);
 	if (ret) {
 		dev_err(cap->rkisp1->dev, "start pipeline failed %d\n", ret);
 		goto err_ret_buffers;
@@ -1044,7 +1038,7 @@ err_pipe_pm_put:
 err_destroy_dummy:
 	rkisp1_dummy_buf_destroy(cap);
 err_pipeline_stop:
-	video_device_pipeline_stop(&cap->vnode.vdev);
+	media_pipeline_stop(entity);
 err_ret_buffers:
 	rkisp1_return_all_buffers(cap, VB2_BUF_STATE_QUEUED);
 	mutex_unlock(&cap->rkisp1->stream_lock);
@@ -1238,8 +1232,11 @@ static int rkisp1_g_fmt_vid_cap_mplane(struct file *file, void *fh,
 static int
 rkisp1_querycap(struct file *file, void *priv, struct v4l2_capability *cap)
 {
-	strscpy(cap->driver, RKISP1_DRIVER_NAME, sizeof(cap->driver));
-	strscpy(cap->card, RKISP1_DRIVER_NAME, sizeof(cap->card));
+	struct rkisp1_capture *cap_dev = video_drvdata(file);
+	struct rkisp1_device *rkisp1 = cap_dev->rkisp1;
+
+	strscpy(cap->driver, rkisp1->dev->driver->name, sizeof(cap->driver));
+	strscpy(cap->card, rkisp1->dev->driver->name, sizeof(cap->card));
 	strscpy(cap->bus_info, RKISP1_BUS_INFO, sizeof(cap->bus_info));
 
 	return 0;
@@ -1285,16 +1282,8 @@ static int rkisp1_capture_link_validate(struct media_link *link)
 
 	if (sd_fmt.format.height != cap->pix.fmt.height ||
 	    sd_fmt.format.width != cap->pix.fmt.width ||
-	    sd_fmt.format.code != fmt->mbus) {
-		dev_dbg(cap->rkisp1->dev,
-			"link '%s':%u -> '%s':%u not valid: 0x%04x/%ux%u != 0x%04x/%ux%u\n",
-			link->source->entity->name, link->source->index,
-			link->sink->entity->name, link->sink->index,
-			sd_fmt.format.code, sd_fmt.format.width,
-			sd_fmt.format.height, fmt->mbus, cap->pix.fmt.width,
-			cap->pix.fmt.height);
+	    sd_fmt.format.code != fmt->mbus)
 		return -EPIPE;
-	}
 
 	return 0;
 }
@@ -1317,12 +1306,8 @@ static const struct v4l2_file_operations rkisp1_fops = {
 
 static void rkisp1_unregister_capture(struct rkisp1_capture *cap)
 {
-	if (!video_is_registered(&cap->vnode.vdev))
-		return;
-
 	media_entity_cleanup(&cap->vnode.vdev.entity);
 	vb2_video_unregister_device(&cap->vnode.vdev);
-	mutex_destroy(&cap->vnode.vlock);
 }
 
 void rkisp1_capture_devs_unregister(struct rkisp1_device *rkisp1)
@@ -1376,31 +1361,27 @@ static int rkisp1_register_capture(struct rkisp1_capture *cap)
 	if (ret) {
 		dev_err(cap->rkisp1->dev,
 			"vb2 queue init failed (err=%d)\n", ret);
-		goto error;
+		return ret;
 	}
 
 	vdev->queue = q;
-
-	ret = media_entity_pads_init(&vdev->entity, 1, &node->pad);
-	if (ret)
-		goto error;
 
 	ret = video_register_device(vdev, VFL_TYPE_VIDEO, -1);
 	if (ret) {
 		dev_err(cap->rkisp1->dev,
 			"failed to register %s, ret=%d\n", vdev->name, ret);
-		goto error;
+		return ret;
 	}
-
 	v4l2_info(v4l2_dev, "registered %s as /dev/video%d\n", vdev->name,
 		  vdev->num);
 
-	return 0;
+	ret = media_entity_pads_init(&vdev->entity, 1, &node->pad);
+	if (ret) {
+		video_unregister_device(vdev);
+		return ret;
+	}
 
-error:
-	media_entity_cleanup(&vdev->entity);
-	mutex_destroy(&node->vlock);
-	return ret;
+	return 0;
 }
 
 static void
@@ -1435,21 +1416,26 @@ rkisp1_capture_init(struct rkisp1_device *rkisp1, enum rkisp1_stream_id id)
 
 int rkisp1_capture_devs_register(struct rkisp1_device *rkisp1)
 {
-	unsigned int i;
+	struct rkisp1_capture *cap;
+	unsigned int i, j;
 	int ret;
 
 	for (i = 0; i < ARRAY_SIZE(rkisp1->capture_devs); i++) {
-		struct rkisp1_capture *cap = &rkisp1->capture_devs[i];
-
 		rkisp1_capture_init(rkisp1, i);
-
+		cap = &rkisp1->capture_devs[i];
+		cap->rkisp1 = rkisp1;
 		ret = rkisp1_register_capture(cap);
-		if (ret) {
-			rkisp1_capture_devs_unregister(rkisp1);
-			return ret;
-		}
+		if (ret)
+			goto err_unreg_capture_devs;
 	}
 
 	return 0;
 
+err_unreg_capture_devs:
+	for (j = 0; j < i; j++) {
+		cap = &rkisp1->capture_devs[j];
+		rkisp1_unregister_capture(cap);
+	}
+
+	return ret;
 }

@@ -32,11 +32,9 @@
 #include <linux/root_dev.h>
 #include <linux/initrd.h>
 #include <linux/timer.h>
-#include <linux/of_address.h>
-#include <linux/of_fdt.h>
-#include <linux/of_irq.h>
 
 #include <asm/io.h>
+#include <asm/prom.h>
 #include <asm/pci-bridge.h>
 #include <asm/dma.h>
 #include <asm/machdep.h>
@@ -253,7 +251,7 @@ static void __noreturn briq_restart(char *cmd)
  * Per default, input/output-device points to the keyboard/screen
  * If no card is installed, the built-in serial port is used as a fallback.
  * But unfortunately, the firmware does not connect /chosen/{stdin,stdout}
- * to the built-in serial node. Instead, a /failsafe node is created.
+ * the the built-in serial node. Instead, a /failsafe node is created.
  */
 static __init void chrp_init(void)
 {

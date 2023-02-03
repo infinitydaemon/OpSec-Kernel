@@ -16,24 +16,15 @@ struct core_vma_metadata {
 	struct file   *file;
 };
 
-struct coredump_params {
-	const kernel_siginfo_t *siginfo;
-	struct file *file;
-	unsigned long limit;
-	unsigned long mm_flags;
-	int cpu;
-	loff_t written;
-	loff_t pos;
-	loff_t to_skip;
-	int vma_count;
-	size_t vma_data_size;
-	struct core_vma_metadata *vma_meta;
-};
+extern int core_uses_pid;
+extern char core_pattern[];
+extern unsigned int core_pipe_limit;
 
 /*
  * These are the only things you should do on a core-file: use only these
  * functions to write out all the necessary info.
  */
+struct coredump_params;
 extern void dump_skip_to(struct coredump_params *cprm, unsigned long to);
 extern void dump_skip(struct coredump_params *cprm, size_t nr);
 extern int dump_emit(struct coredump_params *cprm, const void *addr, int nr);
@@ -43,12 +34,6 @@ int dump_user_range(struct coredump_params *cprm, unsigned long start,
 extern void do_coredump(const kernel_siginfo_t *siginfo);
 #else
 static inline void do_coredump(const kernel_siginfo_t *siginfo) {}
-#endif
-
-#if defined(CONFIG_COREDUMP) && defined(CONFIG_SYSCTL)
-extern void validate_coredump_safety(void);
-#else
-static inline void validate_coredump_safety(void) {}
 #endif
 
 #endif /* _LINUX_COREDUMP_H */

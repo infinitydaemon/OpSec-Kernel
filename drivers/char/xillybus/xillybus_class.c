@@ -174,17 +174,18 @@ void xillybus_cleanup_chrdev(void *private_data,
 			     struct device *dev)
 {
 	int minor;
-	struct xilly_unit *unit = NULL, *iter;
+	struct xilly_unit *unit;
+	bool found = false;
 
 	mutex_lock(&unit_mutex);
 
-	list_for_each_entry(iter, &unit_list, list_entry)
-		if (iter->private_data == private_data) {
-			unit = iter;
+	list_for_each_entry(unit, &unit_list, list_entry)
+		if (unit->private_data == private_data) {
+			found = true;
 			break;
 		}
 
-	if (!unit) {
+	if (!found) {
 		dev_err(dev, "Weird bug: Failed to find unit\n");
 		mutex_unlock(&unit_mutex);
 		return;
@@ -215,27 +216,27 @@ int xillybus_find_inode(struct inode *inode,
 {
 	int minor = iminor(inode);
 	int major = imajor(inode);
-	struct xilly_unit *unit = NULL, *iter;
+	struct xilly_unit *unit;
+	bool found = false;
 
 	mutex_lock(&unit_mutex);
 
-	list_for_each_entry(iter, &unit_list, list_entry)
-		if (iter->major == major &&
-		    minor >= iter->lowest_minor &&
-		    minor < (iter->lowest_minor + iter->num_nodes)) {
-			unit = iter;
+	list_for_each_entry(unit, &unit_list, list_entry)
+		if (unit->major == major &&
+		    minor >= unit->lowest_minor &&
+		    minor < (unit->lowest_minor + unit->num_nodes)) {
+			found = true;
 			break;
 		}
 
-	if (!unit) {
-		mutex_unlock(&unit_mutex);
+	mutex_unlock(&unit_mutex);
+
+	if (!found)
 		return -ENODEV;
-	}
 
 	*private_data = unit->private_data;
 	*index = minor - unit->lowest_minor;
 
-	mutex_unlock(&unit_mutex);
 	return 0;
 }
 EXPORT_SYMBOL(xillybus_find_inode);

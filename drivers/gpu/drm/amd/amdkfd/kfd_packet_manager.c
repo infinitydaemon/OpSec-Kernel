@@ -1,6 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0 OR MIT
 /*
- * Copyright 2014-2022 Advanced Micro Devices, Inc.
+ * Copyright 2014 Advanced Micro Devices, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -224,7 +223,7 @@ static int pm_create_runlist_ib(struct packet_manager *pm,
 
 int pm_init(struct packet_manager *pm, struct device_queue_manager *dqm)
 {
-	switch (dqm->dev->adev->asic_type) {
+	switch (dqm->dev->device_info->asic_family) {
 	case CHIP_KAVERI:
 	case CHIP_HAWAII:
 		/* PM4 packet structures on CIK are the same as on VI */
@@ -237,16 +236,31 @@ int pm_init(struct packet_manager *pm, struct device_queue_manager *dqm)
 	case CHIP_VEGAM:
 		pm->pmf = &kfd_vi_pm_funcs;
 		break;
+	case CHIP_VEGA10:
+	case CHIP_VEGA12:
+	case CHIP_VEGA20:
+	case CHIP_RAVEN:
+	case CHIP_RENOIR:
+	case CHIP_ARCTURUS:
+	case CHIP_NAVI10:
+	case CHIP_NAVI12:
+	case CHIP_NAVI14:
+	case CHIP_SIENNA_CICHLID:
+	case CHIP_NAVY_FLOUNDER:
+	case CHIP_VANGOGH:
+	case CHIP_DIMGREY_CAVEFISH:
+	case CHIP_BEIGE_GOBY:
+	case CHIP_YELLOW_CARP:
+	case CHIP_CYAN_SKILLFISH:
+		pm->pmf = &kfd_v9_pm_funcs;
+		break;
+	case CHIP_ALDEBARAN:
+		pm->pmf = &kfd_aldebaran_pm_funcs;
+		break;
 	default:
-		if (KFD_GC_VERSION(dqm->dev) == IP_VERSION(9, 4, 2))
-			pm->pmf = &kfd_aldebaran_pm_funcs;
-		else if (KFD_GC_VERSION(dqm->dev) >= IP_VERSION(9, 0, 1))
-			pm->pmf = &kfd_v9_pm_funcs;
-		else {
-			WARN(1, "Unexpected ASIC family %u",
-			     dqm->dev->adev->asic_type);
-			return -EINVAL;
-		}
+		WARN(1, "Unexpected ASIC family %u",
+		     dqm->dev->device_info->asic_family);
+		return -EINVAL;
 	}
 
 	pm->dqm = dqm;
@@ -369,9 +383,10 @@ out:
 	return retval;
 }
 
-int pm_send_unmap_queue(struct packet_manager *pm,
+int pm_send_unmap_queue(struct packet_manager *pm, enum kfd_queue_type type,
 			enum kfd_unmap_queues_filter filter,
-			uint32_t filter_param, bool reset)
+			uint32_t filter_param, bool reset,
+			unsigned int sdma_engine)
 {
 	uint32_t *buffer, size;
 	int retval = 0;
@@ -386,7 +401,8 @@ int pm_send_unmap_queue(struct packet_manager *pm,
 		goto out;
 	}
 
-	retval = pm->pmf->unmap_queues(pm, buffer, filter, filter_param, reset);
+	retval = pm->pmf->unmap_queues(pm, buffer, type, filter, filter_param,
+				       reset, sdma_engine);
 	if (!retval)
 		kq_submit_packet(pm->priv_queue);
 	else

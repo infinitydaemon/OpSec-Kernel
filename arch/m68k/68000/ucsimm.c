@@ -16,18 +16,19 @@
 
 #include "m68328.h"
 
+unsigned char *cs8900a_hwaddr;
 static int errno;
 
-static _bsc0(char *, getserialnum)
-static _bsc1(unsigned char *, gethwaddr, int, a)
-static _bsc1(char *, getbenv, char *, a)
+_bsc0(char *, getserialnum)
+_bsc1(unsigned char *, gethwaddr, int, a)
+_bsc1(char *, getbenv, char *, a)
 
 void __init init_ucsimm(char *command, int size)
 {
 	char *p;
 
 	pr_info("uCsimm/uCdimm serial string [%s]\n", getserialnum());
-	p = gethwaddr(0);
+	p = cs8900a_hwaddr = gethwaddr(0);
 	pr_info("uCsimm/uCdimm hwaddr %pM\n", p);
 	p = getbenv("APPEND");
 	if (p)

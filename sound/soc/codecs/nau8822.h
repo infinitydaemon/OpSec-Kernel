@@ -198,8 +198,6 @@ struct nau8822_pll {
 	int mclk_scaler;
 	int pll_frac;
 	int pll_int;
-	int freq_in;
-	int freq_out;
 };
 
 /* Codec Private Data */

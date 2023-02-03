@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0+
 
-#define pr_fmt(fmt) "kprobes: " fmt
-
 #include <linux/kprobes.h>
 #include <linux/extable.h>
 #include <linux/slab.h>
@@ -52,8 +50,11 @@ int __kprobes arch_prepare_kprobe(struct kprobe *p)
 {
 	unsigned long probe_addr = (unsigned long)p->addr;
 
-	if (probe_addr & 0x1)
-		return -EILSEQ;
+	if (probe_addr & 0x1) {
+		pr_warn("Address not aligned.\n");
+
+		return -EINVAL;
+	}
 
 	/* copy instruction */
 	p->opcode = *p->addr;
@@ -190,7 +191,7 @@ static int __kprobes reenter_kprobe(struct kprobe *p,
 		break;
 	case KPROBE_HIT_SS:
 	case KPROBE_REENTER:
-		pr_warn("Failed to recover from reentered kprobes.\n");
+		pr_warn("Unrecoverable kprobe detected.\n");
 		dump_kprobe(p);
 		BUG();
 		break;
@@ -343,6 +344,19 @@ int __init arch_populate_kprobe_blacklist(void)
 	ret = kprobe_add_area_blacklist((unsigned long)__irqentry_text_start,
 					(unsigned long)__irqentry_text_end);
 	return ret;
+}
+
+void __kprobes __used *trampoline_probe_handler(struct pt_regs *regs)
+{
+	return (void *)kretprobe_trampoline_handler(regs, &kretprobe_trampoline, NULL);
+}
+
+void __kprobes arch_prepare_kretprobe(struct kretprobe_instance *ri,
+				      struct pt_regs *regs)
+{
+	ri->ret_addr = (kprobe_opcode_t *)regs->ra;
+	ri->fp = NULL;
+	regs->ra = (unsigned long) &kretprobe_trampoline;
 }
 
 int __kprobes arch_trampoline_kprobe(struct kprobe *p)

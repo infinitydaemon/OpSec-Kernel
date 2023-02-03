@@ -271,7 +271,7 @@ SHOW(__bch_cached_dev)
 	}
 
 	if (attr == &sysfs_backing_dev_name) {
-		snprintf(buf, BDEVNAME_SIZE + 1, "%pg", dc->bdev);
+		snprintf(buf, BDEVNAME_SIZE + 1, "%s", dc->backing_dev_name);
 		strcat(buf, "\n");
 		return strlen(buf);
 	}
@@ -500,7 +500,7 @@ STORE(bch_cached_dev)
 	return size;
 }
 
-static struct attribute *bch_cached_dev_attrs[] = {
+static struct attribute *bch_cached_dev_files[] = {
 	&sysfs_attach,
 	&sysfs_detach,
 	&sysfs_stop,
@@ -543,7 +543,6 @@ static struct attribute *bch_cached_dev_attrs[] = {
 	&sysfs_backing_dev_uuid,
 	NULL
 };
-ATTRIBUTE_GROUPS(bch_cached_dev);
 KTYPE(bch_cached_dev);
 
 SHOW(bch_flash_dev)
@@ -601,7 +600,7 @@ STORE(__bch_flash_dev)
 }
 STORE_LOCKED(bch_flash_dev)
 
-static struct attribute *bch_flash_dev_attrs[] = {
+static struct attribute *bch_flash_dev_files[] = {
 	&sysfs_unregister,
 #if 0
 	&sysfs_data_csum,
@@ -610,7 +609,6 @@ static struct attribute *bch_flash_dev_attrs[] = {
 	&sysfs_size,
 	NULL
 };
-ATTRIBUTE_GROUPS(bch_flash_dev);
 KTYPE(bch_flash_dev);
 
 struct bset_stats_op {
@@ -957,7 +955,7 @@ static void bch_cache_set_internal_release(struct kobject *k)
 {
 }
 
-static struct attribute *bch_cache_set_attrs[] = {
+static struct attribute *bch_cache_set_files[] = {
 	&sysfs_unregister,
 	&sysfs_stop,
 	&sysfs_synchronous,
@@ -982,10 +980,9 @@ static struct attribute *bch_cache_set_attrs[] = {
 	&sysfs_clear_stats,
 	NULL
 };
-ATTRIBUTE_GROUPS(bch_cache_set);
 KTYPE(bch_cache_set);
 
-static struct attribute *bch_cache_set_internal_attrs[] = {
+static struct attribute *bch_cache_set_internal_files[] = {
 	&sysfs_active_journal_entries,
 
 	sysfs_time_stats_attribute_list(btree_gc, sec, ms)
@@ -1025,7 +1022,6 @@ static struct attribute *bch_cache_set_internal_attrs[] = {
 	&sysfs_feature_incompat,
 	NULL
 };
-ATTRIBUTE_GROUPS(bch_cache_set_internal);
 KTYPE(bch_cache_set_internal);
 
 static int __bch_cache_cmp(const void *l, const void *r)
@@ -1151,7 +1147,7 @@ STORE(__bch_cache)
 	if (attr == &sysfs_discard) {
 		bool v = strtoul_or_return(buf);
 
-		if (bdev_max_discard_sectors(ca->bdev))
+		if (blk_queue_discard(bdev_get_queue(ca->bdev)))
 			ca->discard = v;
 
 		if (v != CACHE_DISCARD(&ca->sb)) {
@@ -1186,7 +1182,7 @@ STORE(__bch_cache)
 }
 STORE_LOCKED(bch_cache)
 
-static struct attribute *bch_cache_attrs[] = {
+static struct attribute *bch_cache_files[] = {
 	&sysfs_bucket_size,
 	&sysfs_block_size,
 	&sysfs_nbuckets,
@@ -1200,5 +1196,4 @@ static struct attribute *bch_cache_attrs[] = {
 	&sysfs_cache_replacement_policy,
 	NULL
 };
-ATTRIBUTE_GROUPS(bch_cache);
 KTYPE(bch_cache);

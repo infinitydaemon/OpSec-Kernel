@@ -852,21 +852,22 @@ static struct sockopt_test {
 static int load_prog(const struct bpf_insn *insns,
 		     enum bpf_attach_type expected_attach_type)
 {
-	LIBBPF_OPTS(bpf_prog_load_opts, opts,
+	struct bpf_load_program_attr attr = {
+		.prog_type = BPF_PROG_TYPE_CGROUP_SOCKOPT,
 		.expected_attach_type = expected_attach_type,
+		.insns = insns,
+		.license = "GPL",
 		.log_level = 2,
-		.log_buf = bpf_log_buf,
-		.log_size = sizeof(bpf_log_buf),
-	);
-	int fd, insns_cnt = 0;
+	};
+	int fd;
 
 	for (;
-	     insns[insns_cnt].code != (BPF_JMP | BPF_EXIT);
-	     insns_cnt++) {
+	     insns[attr.insns_cnt].code != (BPF_JMP | BPF_EXIT);
+	     attr.insns_cnt++) {
 	}
-	insns_cnt++;
+	attr.insns_cnt++;
 
-	fd = bpf_prog_load(BPF_PROG_TYPE_CGROUP_SOCKOPT, NULL, "GPL", insns, insns_cnt, &opts);
+	fd = bpf_load_program_xattr(&attr, bpf_log_buf, sizeof(bpf_log_buf));
 	if (verbose && fd < 0)
 		fprintf(stderr, "%s\n", bpf_log_buf);
 
@@ -972,12 +973,12 @@ void test_sockopt(void)
 	int cgroup_fd, i;
 
 	cgroup_fd = test__join_cgroup("/sockopt");
-	if (!ASSERT_GE(cgroup_fd, 0, "join_cgroup"))
+	if (CHECK_FAIL(cgroup_fd < 0))
 		return;
 
 	for (i = 0; i < ARRAY_SIZE(tests); i++) {
 		test__start_subtest(tests[i].descr);
-		ASSERT_OK(run_test(cgroup_fd, &tests[i]), tests[i].descr);
+		CHECK_FAIL(run_test(cgroup_fd, &tests[i]));
 	}
 
 	close(cgroup_fd);

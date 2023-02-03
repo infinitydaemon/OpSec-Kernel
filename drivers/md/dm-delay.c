@@ -72,7 +72,7 @@ static void flush_bios(struct bio *bio)
 	while (bio) {
 		n = bio->bi_next;
 		bio->bi_next = NULL;
-		dm_submit_bio_remap(bio, NULL);
+		submit_bio_noacct(bio);
 		bio = n;
 	}
 }
@@ -232,7 +232,6 @@ out:
 
 	ti->num_flush_bios = 1;
 	ti->num_discard_bios = 1;
-	ti->accounts_remapped_io = true;
 	ti->per_io_data_size = sizeof(struct dm_delay_info);
 	return 0;
 
@@ -296,7 +295,8 @@ static int delay_map(struct dm_target *ti, struct bio *bio)
 	}
 	delayed->class = c;
 	bio_set_dev(bio, c->dev->bdev);
-	bio->bi_iter.bi_sector = c->start + dm_target_offset(ti, bio->bi_iter.bi_sector);
+	if (bio_sectors(bio))
+		bio->bi_iter.bi_sector = c->start + dm_target_offset(ti, bio->bi_iter.bi_sector);
 
 	return delay_bio(dc, c, bio);
 }
@@ -355,7 +355,7 @@ out:
 
 static struct target_type delay_target = {
 	.name	     = "delay",
-	.version     = {1, 3, 0},
+	.version     = {1, 2, 1},
 	.features    = DM_TARGET_PASSES_INTEGRITY,
 	.module      = THIS_MODULE,
 	.ctr	     = delay_ctr,

@@ -17,23 +17,24 @@ static void propagate_protected_usage(struct page_counter *c,
 				      unsigned long usage)
 {
 	unsigned long protected, old_protected;
+	unsigned long low, min;
 	long delta;
 
 	if (!c->parent)
 		return;
 
-	protected = min(usage, READ_ONCE(c->min));
-	old_protected = atomic_long_read(&c->min_usage);
-	if (protected != old_protected) {
+	min = READ_ONCE(c->min);
+	if (min || atomic_long_read(&c->min_usage)) {
+		protected = min(usage, min);
 		old_protected = atomic_long_xchg(&c->min_usage, protected);
 		delta = protected - old_protected;
 		if (delta)
 			atomic_long_add(delta, &c->parent->children_min_usage);
 	}
 
-	protected = min(usage, READ_ONCE(c->low));
-	old_protected = atomic_long_read(&c->low_usage);
-	if (protected != old_protected) {
+	low = READ_ONCE(c->low);
+	if (low || atomic_long_read(&c->low_usage)) {
+		protected = min(usage, low);
 		old_protected = atomic_long_xchg(&c->low_usage, protected);
 		delta = protected - old_protected;
 		if (delta)
@@ -119,6 +120,7 @@ bool page_counter_try_charge(struct page_counter *counter,
 		new = atomic_long_add_return(nr_pages, &c->usage);
 		if (new > c->max) {
 			atomic_long_sub(nr_pages, &c->usage);
+			propagate_protected_usage(c, new);
 			/*
 			 * This is racy, but we can live with some
 			 * inaccuracy in the failcnt which is only used
@@ -192,7 +194,7 @@ int page_counter_set_max(struct page_counter *counter, unsigned long nr_pages)
 
 		old = xchg(&counter->max, nr_pages);
 
-		if (page_counter_read(counter) <= usage || nr_pages >= old)
+		if (page_counter_read(counter) <= usage)
 			return 0;
 
 		counter->max = old;

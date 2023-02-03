@@ -510,7 +510,7 @@ static void gre_fb_xmit(struct sk_buff *skb, struct net_device *dev,
 
 err_free_skb:
 	kfree_skb(skb);
-	DEV_STATS_INC(dev, tx_dropped);
+	dev->stats.tx_dropped++;
 }
 
 static void erspan_fb_xmit(struct sk_buff *skb, struct net_device *dev)
@@ -592,7 +592,7 @@ static void erspan_fb_xmit(struct sk_buff *skb, struct net_device *dev)
 
 err_free_skb:
 	kfree_skb(skb);
-	DEV_STATS_INC(dev, tx_dropped);
+	dev->stats.tx_dropped++;
 }
 
 static int gre_fill_metadata_dst(struct net_device *dev, struct sk_buff *skb)
@@ -608,8 +608,8 @@ static int gre_fill_metadata_dst(struct net_device *dev, struct sk_buff *skb)
 	key = &info->key;
 	ip_tunnel_init_flow(&fl4, IPPROTO_GRE, key->u.ipv4.dst, key->u.ipv4.src,
 			    tunnel_id_to_key32(key->tun_id),
-			    key->tos & ~INET_ECN_MASK, dev_net(dev), 0,
-			    skb->mark, skb_get_hash(skb), key->flow_flags);
+			    key->tos & ~INET_ECN_MASK, 0, skb->mark,
+			    skb_get_hash(skb));
 	rt = ip_route_output_key(dev_net(dev), &fl4);
 	if (IS_ERR(rt))
 		return PTR_ERR(rt);
@@ -663,7 +663,7 @@ static netdev_tx_t ipgre_xmit(struct sk_buff *skb,
 
 free_skb:
 	kfree_skb(skb);
-	DEV_STATS_INC(dev, tx_dropped);
+	dev->stats.tx_dropped++;
 	return NETDEV_TX_OK;
 }
 
@@ -717,7 +717,7 @@ static netdev_tx_t erspan_xmit(struct sk_buff *skb,
 
 free_skb:
 	kfree_skb(skb);
-	DEV_STATS_INC(dev, tx_dropped);
+	dev->stats.tx_dropped++;
 	return NETDEV_TX_OK;
 }
 
@@ -745,14 +745,13 @@ static netdev_tx_t gre_tap_xmit(struct sk_buff *skb,
 
 free_skb:
 	kfree_skb(skb);
-	DEV_STATS_INC(dev, tx_dropped);
+	dev->stats.tx_dropped++;
 	return NETDEV_TX_OK;
 }
 
 static void ipgre_link_update(struct net_device *dev, bool set_mtu)
 {
 	struct ip_tunnel *tunnel = netdev_priv(dev);
-	__be16 flags;
 	int len;
 
 	len = tunnel->tun_hlen;
@@ -768,15 +767,19 @@ static void ipgre_link_update(struct net_device *dev, bool set_mtu)
 	if (set_mtu)
 		dev->mtu = max_t(int, dev->mtu - len, 68);
 
-	flags = tunnel->parms.o_flags;
-
-	if (flags & TUNNEL_SEQ ||
-	    (flags & TUNNEL_CSUM && tunnel->encap.type != TUNNEL_ENCAP_NONE)) {
-		dev->features &= ~NETIF_F_GSO_SOFTWARE;
-		dev->hw_features &= ~NETIF_F_GSO_SOFTWARE;
+	if (!(tunnel->parms.o_flags & TUNNEL_SEQ)) {
+		if (!(tunnel->parms.o_flags & TUNNEL_CSUM) ||
+		    tunnel->encap.type == TUNNEL_ENCAP_NONE) {
+			dev->features |= NETIF_F_GSO_SOFTWARE;
+			dev->hw_features |= NETIF_F_GSO_SOFTWARE;
+		} else {
+			dev->features &= ~NETIF_F_GSO_SOFTWARE;
+			dev->hw_features &= ~NETIF_F_GSO_SOFTWARE;
+		}
+		dev->features |= NETIF_F_LLTX;
 	} else {
-		dev->features |= NETIF_F_GSO_SOFTWARE;
-		dev->hw_features |= NETIF_F_GSO_SOFTWARE;
+		dev->hw_features &= ~NETIF_F_GSO_SOFTWARE;
+		dev->features &= ~(NETIF_F_LLTX | NETIF_F_GSO_SOFTWARE);
 	}
 }
 
@@ -950,7 +953,6 @@ static void ipgre_tunnel_setup(struct net_device *dev)
 static void __gre_tunnel_init(struct net_device *dev)
 {
 	struct ip_tunnel *tunnel;
-	__be16 flags;
 
 	tunnel = netdev_priv(dev);
 	tunnel->tun_hlen = gre_calc_hlen(tunnel->parms.o_flags);
@@ -959,21 +961,25 @@ static void __gre_tunnel_init(struct net_device *dev)
 	tunnel->hlen = tunnel->tun_hlen + tunnel->encap_hlen;
 	dev->needed_headroom = tunnel->hlen + sizeof(tunnel->parms.iph);
 
-	dev->features		|= GRE_FEATURES | NETIF_F_LLTX;
+	dev->features		|= GRE_FEATURES;
 	dev->hw_features	|= GRE_FEATURES;
 
-	flags = tunnel->parms.o_flags;
+	if (!(tunnel->parms.o_flags & TUNNEL_SEQ)) {
+		/* TCP offload with GRE SEQ is not supported, nor
+		 * can we support 2 levels of outer headers requiring
+		 * an update.
+		 */
+		if (!(tunnel->parms.o_flags & TUNNEL_CSUM) ||
+		    (tunnel->encap.type == TUNNEL_ENCAP_NONE)) {
+			dev->features    |= NETIF_F_GSO_SOFTWARE;
+			dev->hw_features |= NETIF_F_GSO_SOFTWARE;
+		}
 
-	/* TCP offload with GRE SEQ is not supported, nor can we support 2
-	 * levels of outer headers requiring an update.
-	 */
-	if (flags & TUNNEL_SEQ)
-		return;
-	if (flags & TUNNEL_CSUM && tunnel->encap.type != TUNNEL_ENCAP_NONE)
-		return;
-
-	dev->features |= NETIF_F_GSO_SOFTWARE;
-	dev->hw_features |= NETIF_F_GSO_SOFTWARE;
+		/* Can use a lockless transmit, unless we generate
+		 * output sequences
+		 */
+		dev->features |= NETIF_F_LLTX;
+	}
 }
 
 static int ipgre_tunnel_init(struct net_device *dev)
@@ -983,7 +989,7 @@ static int ipgre_tunnel_init(struct net_device *dev)
 
 	__gre_tunnel_init(dev);
 
-	__dev_addr_set(dev, &iph->saddr, 4);
+	memcpy(dev->dev_addr, &iph->saddr, 4);
 	memcpy(dev->broadcast, &iph->daddr, 4);
 
 	dev->flags		= IFF_NOARP;
@@ -1675,7 +1681,7 @@ struct net_device *gretap_fb_dev_create(struct net *net, const char *name,
 	if (err)
 		goto out;
 
-	err = rtnl_configure_link(dev, NULL, 0, NULL);
+	err = rtnl_configure_link(dev, NULL);
 	if (err < 0)
 		goto out;
 

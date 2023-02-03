@@ -91,15 +91,6 @@ properties:
       3000ms.
     default: 3000
 
-  resets:
-    maxItems: 1
-
-  reg-io-width:
-    description:
-      The size (in bytes) of the IO accesses that should be performed
-      on the device.
-    enum: [1, 4]
-
   cts-event-workaround:
     description:
       Enables the (otherwise vendor-specific) workaround for the

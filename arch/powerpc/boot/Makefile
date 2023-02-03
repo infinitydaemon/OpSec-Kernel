@@ -39,13 +39,9 @@ BOOTCFLAGS    := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		 $(LINUXINCLUDE)
 
 ifdef CONFIG_PPC64_BOOT_WRAPPER
-ifdef CONFIG_CPU_LITTLE_ENDIAN
-BOOTCFLAGS	+= -m64 -mcpu=powerpc64le
+BOOTCFLAGS	+= -m64
 else
-BOOTCFLAGS	+= -m64 -mcpu=powerpc64
-endif
-else
-BOOTCFLAGS	+= -m32 -mcpu=powerpc
+BOOTCFLAGS	+= -m32
 endif
 
 BOOTCFLAGS	+= -isystem $(shell $(BOOTCC) -print-file-name=include)
@@ -54,8 +50,6 @@ ifdef CONFIG_CPU_BIG_ENDIAN
 BOOTCFLAGS	+= -mbig-endian
 else
 BOOTCFLAGS	+= -mlittle-endian
-endif
-ifdef CONFIG_PPC64_ELF_ABI_V2
 BOOTCFLAGS	+= $(call cc-option,-mabi=elfv2)
 endif
 
@@ -130,7 +124,7 @@ src-wlib-y := string.S crt0.S stdio.c decompress.c main.c \
 		oflib.c ofconsole.c cuboot.c
 
 src-wlib-$(CONFIG_PPC_MPC52xx) += mpc52xx-psc.c
-src-wlib-$(CONFIG_PPC_POWERNV) += opal-calls.S opal.c
+src-wlib-$(CONFIG_PPC64_BOOT_WRAPPER) += opal-calls.S opal.c
 ifndef CONFIG_PPC64_BOOT_WRAPPER
 src-wlib-y += crtsavres.S
 endif
@@ -372,7 +366,7 @@ image-$(CONFIG_PPC_PMAC)	+= zImage.coff zImage.miboot
 endif
 
 # Allow extra targets to be added to the defconfig
-image-y	+= $(CONFIG_EXTRA_TARGETS)
+image-y	+= $(subst ",,$(CONFIG_EXTRA_TARGETS))
 
 initrd-  := $(patsubst zImage%, zImage.initrd%, $(image-))
 initrd-y := $(patsubst zImage%, zImage.initrd%, \
@@ -460,8 +454,8 @@ clean-files += $(image-) $(initrd-) cuImage.* dtbImage.* treeImage.* \
 clean-kernel-base := vmlinux.strip vmlinux.bin
 clean-kernel := $(addsuffix .gz,$(clean-kernel-base))
 clean-kernel += $(addsuffix .xz,$(clean-kernel-base))
-# clean-files are relative to $(obj).
-clean-files += $(addprefix ../../../, $(clean-kernel))
+# If not absolute clean-files are relative to $(obj).
+clean-files += $(addprefix $(objtree)/, $(clean-kernel))
 
 WRAPPER_OBJDIR := /usr/lib/kernel-wrapper
 WRAPPER_DTSDIR := /usr/lib/kernel-wrapper/dts

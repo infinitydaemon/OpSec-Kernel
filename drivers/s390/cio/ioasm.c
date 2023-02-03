@@ -5,7 +5,6 @@
 
 #include <linux/export.h>
 
-#include <asm/asm-extable.h>
 #include <asm/chpid.h>
 #include <asm/schid.h>
 #include <asm/crw.h>

@@ -100,7 +100,6 @@ static int ixgbe_run_xdp_zc(struct ixgbe_adapter *adapter,
 {
 	int err, result = IXGBE_XDP_PASS;
 	struct bpf_prog *xdp_prog;
-	struct ixgbe_ring *ring;
 	struct xdp_frame *xdpf;
 	u32 act;
 
@@ -109,13 +108,9 @@ static int ixgbe_run_xdp_zc(struct ixgbe_adapter *adapter,
 
 	if (likely(act == XDP_REDIRECT)) {
 		err = xdp_do_redirect(rx_ring->netdev, xdp, xdp_prog);
-		if (!err)
-			return IXGBE_XDP_REDIR;
-		if (xsk_uses_need_wakeup(rx_ring->xsk_pool) && err == -ENOBUFS)
-			result = IXGBE_XDP_EXIT;
-		else
-			result = IXGBE_XDP_CONSUMED;
-		goto out_failure;
+		if (err)
+			goto out_failure;
+		return IXGBE_XDP_REDIR;
 	}
 
 	switch (act) {
@@ -125,25 +120,20 @@ static int ixgbe_run_xdp_zc(struct ixgbe_adapter *adapter,
 		xdpf = xdp_convert_buff_to_frame(xdp);
 		if (unlikely(!xdpf))
 			goto out_failure;
-		ring = ixgbe_determine_xdp_ring(adapter);
-		if (static_branch_unlikely(&ixgbe_xdp_locking_key))
-			spin_lock(&ring->tx_lock);
-		result = ixgbe_xmit_xdp_ring(ring, xdpf);
-		if (static_branch_unlikely(&ixgbe_xdp_locking_key))
-			spin_unlock(&ring->tx_lock);
+		result = ixgbe_xmit_xdp_ring(adapter, xdpf);
 		if (result == IXGBE_XDP_CONSUMED)
 			goto out_failure;
 		break;
+	default:
+		bpf_warn_invalid_xdp_action(act);
+		fallthrough;
+	case XDP_ABORTED:
+out_failure:
+		trace_xdp_exception(rx_ring->netdev, xdp_prog, act);
+		fallthrough; /* handle aborts by dropping packet */
 	case XDP_DROP:
 		result = IXGBE_XDP_CONSUMED;
 		break;
-	default:
-		bpf_warn_invalid_xdp_action(rx_ring->netdev, xdp_prog, act);
-		fallthrough;
-	case XDP_ABORTED:
-		result = IXGBE_XDP_CONSUMED;
-out_failure:
-		trace_xdp_exception(rx_ring->netdev, xdp_prog, act);
 	}
 	return result;
 }
@@ -307,26 +297,21 @@ int ixgbe_clean_rx_irq_zc(struct ixgbe_q_vector *q_vector,
 		xsk_buff_dma_sync_for_cpu(bi->xdp, rx_ring->xsk_pool);
 		xdp_res = ixgbe_run_xdp_zc(adapter, rx_ring, bi->xdp);
 
-		if (likely(xdp_res & (IXGBE_XDP_TX | IXGBE_XDP_REDIR))) {
-			xdp_xmit |= xdp_res;
-		} else if (xdp_res == IXGBE_XDP_EXIT) {
-			failure = true;
-			break;
-		} else if (xdp_res == IXGBE_XDP_CONSUMED) {
-			xsk_buff_free(bi->xdp);
-		} else if (xdp_res == IXGBE_XDP_PASS) {
-			goto construct_skb;
+		if (xdp_res) {
+			if (xdp_res & (IXGBE_XDP_TX | IXGBE_XDP_REDIR))
+				xdp_xmit |= xdp_res;
+			else
+				xsk_buff_free(bi->xdp);
+
+			bi->xdp = NULL;
+			total_rx_packets++;
+			total_rx_bytes += size;
+
+			cleaned_count++;
+			ixgbe_inc_ntc(rx_ring);
+			continue;
 		}
 
-		bi->xdp = NULL;
-		total_rx_packets++;
-		total_rx_bytes += size;
-
-		cleaned_count++;
-		ixgbe_inc_ntc(rx_ring);
-		continue;
-
-construct_skb:
 		/* XDP_PASS path */
 		skb = ixgbe_construct_skb_zc(rx_ring, bi->xdp);
 		if (!skb) {
@@ -354,9 +339,13 @@ construct_skb:
 		xdp_do_flush_map();
 
 	if (xdp_xmit & IXGBE_XDP_TX) {
-		struct ixgbe_ring *ring = ixgbe_determine_xdp_ring(adapter);
+		struct ixgbe_ring *ring = adapter->xdp_ring[smp_processor_id()];
 
-		ixgbe_xdp_ring_update_tail_locked(ring);
+		/* Force memory writes to complete before letting h/w
+		 * know there are new descriptors to fetch.
+		 */
+		wmb();
+		writel(ring->next_to_use, ring->tail);
 	}
 
 	u64_stats_update_begin(&rx_ring->syncp);
@@ -525,10 +514,10 @@ int ixgbe_xsk_wakeup(struct net_device *dev, u32 qid, u32 flags)
 		return -ENETDOWN;
 
 	if (!READ_ONCE(adapter->xdp_prog))
-		return -EINVAL;
+		return -ENXIO;
 
 	if (qid >= adapter->num_xdp_queues)
-		return -EINVAL;
+		return -ENXIO;
 
 	ring = adapter->xdp_ring[qid];
 
@@ -536,7 +525,7 @@ int ixgbe_xsk_wakeup(struct net_device *dev, u32 qid, u32 flags)
 		return -ENETDOWN;
 
 	if (!ring->xsk_pool)
-		return -EINVAL;
+		return -ENXIO;
 
 	if (!napi_if_scheduled_mark_missed(&ring->q_vector->napi)) {
 		u64 eics = BIT_ULL(ring->q_vector->v_idx);

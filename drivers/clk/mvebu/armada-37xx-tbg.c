@@ -87,7 +87,7 @@ static int armada_3700_tbg_clock_probe(struct platform_device *pdev)
 	struct resource *res;
 	struct clk *parent;
 	void __iomem *reg;
-	int i;
+	int i, ret;
 
 	hw_tbg_data = devm_kzalloc(&pdev->dev,
 				   struct_size(hw_tbg_data, hws, NUM_TBG),
@@ -123,7 +123,9 @@ static int armada_3700_tbg_clock_probe(struct platform_device *pdev)
 			dev_err(dev, "Can't register TBG clock %s\n", name);
 	}
 
-	return of_clk_add_hw_provider(np, of_clk_hw_onecell_get, hw_tbg_data);
+	ret = of_clk_add_hw_provider(np, of_clk_hw_onecell_get, hw_tbg_data);
+
+	return ret;
 }
 
 static int armada_3700_tbg_clock_remove(struct platform_device *pdev)

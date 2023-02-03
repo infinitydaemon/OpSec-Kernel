@@ -25,7 +25,7 @@ Documentation written by Tom Zanussi
 
         hist:keys=<field1[,field2,...]>[:values=<field1[,field2,...]>]
           [:sort=<field1[,field2,...]>][:size=#entries][:pause][:continue]
-          [:clear][:name=histname1][:nohitcount][:<handler>.<action>] [if <filter>]
+          [:clear][:name=histname1][:<handler>.<action>] [if <filter>]
 
   When a matching event is hit, an entry is added to a hash table
   using the key(s) and value(s) named.  Keys and values correspond to
@@ -79,8 +79,6 @@ Documentation written by Tom Zanussi
 	.log2          display log2 value rather than raw number
 	.buckets=size  display grouping of values rather than raw number
 	.usecs         display a common_timestamp in microseconds
-        .percent       display a number of percentage value
-        .graph         display a bar-graph of a value
 	=============  =================================================
 
   Note that in general the semantics of a given field aren't
@@ -138,12 +136,6 @@ Documentation written by Tom Zanussi
   applied using 'append' shell operator ('>>') if applied to an
   existing trigger, rather than via the '>' operator, which will cause
   the trigger to be removed through truncation.
-
-  The 'nohitcount' (or NOHC) parameter will suppress display of
-  raw hitcount in the histogram. This option requires at least one
-  value field which is not a 'raw hitcount'. For example,
-  'hist:...:vals=hitcount:nohitcount' is rejected, but
-  'hist:...:vals=hitcount.percent:nohitcount' is OK.
 
 - enable_hist/disable_hist
 
@@ -420,7 +412,7 @@ Extended error information
   Because the default sort key above is 'hitcount', the above shows a
   the list of call_sites by increasing hitcount, so that at the bottom
   we see the functions that made the most kmalloc calls during the
-  run.  If instead we wanted to see the top kmalloc callers in
+  run.  If instead we we wanted to see the top kmalloc callers in
   terms of the number of bytes requested rather than the number of
   calls, and we wanted the top caller to appear at the top, we can use
   the 'sort' parameter, along with the 'descending' modifier::
@@ -1770,21 +1762,6 @@ makes use of the wakeup_lat variable to compute a combined latency
 using the same key and variable from yet another event::
 
   # echo 'hist:key=pid:wakeupswitch_lat=$wakeup_lat+$switchtime_lat ...' >> event3/trigger
-
-Expressions support the use of addition, subtraction, multiplication and
-division operators (+-\*/).
-
-Note if division by zero cannot be detected at parse time (i.e. the
-divisor is not a constant), the result will be -1.
-
-Numeric constants can also be used directly in an expression::
-
-  # echo 'hist:keys=next_pid:timestamp_secs=common_timestamp/1000000 ...' >> event/trigger
-
-or assigned to a variable and referenced in a subsequent expression::
-
-  # echo 'hist:keys=next_pid:us_per_sec=1000000 ...' >> event/trigger
-  # echo 'hist:keys=next_pid:timestamp_secs=common_timestamp/$us_per_sec ...' >> event/trigger
 
 2.2.2 Synthetic Events
 ----------------------

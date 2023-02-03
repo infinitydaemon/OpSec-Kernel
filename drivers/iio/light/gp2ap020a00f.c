@@ -1467,9 +1467,12 @@ static const struct iio_buffer_setup_ops gp2ap020a00f_buffer_setup_ops = {
 	.predisable = &gp2ap020a00f_buffer_predisable,
 };
 
-static int gp2ap020a00f_probe(struct i2c_client *client)
+static const struct iio_trigger_ops gp2ap020a00f_trigger_ops = {
+};
+
+static int gp2ap020a00f_probe(struct i2c_client *client,
+				const struct i2c_device_id *id)
 {
-	const struct i2c_device_id *id = i2c_client_get_device_id(client);
 	struct gp2ap020a00f_data *data;
 	struct iio_dev *indio_dev;
 	struct regmap *regmap;
@@ -1547,6 +1550,8 @@ static int gp2ap020a00f_probe(struct i2c_client *client)
 		goto error_uninit_buffer;
 	}
 
+	data->trig->ops = &gp2ap020a00f_trigger_ops;
+
 	init_irq_work(&data->work, gp2ap020a00f_iio_trigger_work);
 
 	err = iio_trigger_register(data->trig);
@@ -1573,7 +1578,7 @@ error_regulator_disable:
 	return err;
 }
 
-static void gp2ap020a00f_remove(struct i2c_client *client)
+static int gp2ap020a00f_remove(struct i2c_client *client)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 	struct gp2ap020a00f_data *data = iio_priv(indio_dev);
@@ -1589,6 +1594,8 @@ static void gp2ap020a00f_remove(struct i2c_client *client)
 	free_irq(client->irq, indio_dev);
 	iio_triggered_buffer_cleanup(indio_dev);
 	regulator_disable(data->vled_reg);
+
+	return 0;
 }
 
 static const struct i2c_device_id gp2ap020a00f_id[] = {
@@ -1609,7 +1616,7 @@ static struct i2c_driver gp2ap020a00f_driver = {
 		.name	= GP2A_I2C_NAME,
 		.of_match_table = gp2ap020a00f_of_match,
 	},
-	.probe_new	= gp2ap020a00f_probe,
+	.probe		= gp2ap020a00f_probe,
 	.remove		= gp2ap020a00f_remove,
 	.id_table	= gp2ap020a00f_id,
 };

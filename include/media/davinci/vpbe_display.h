@@ -69,13 +69,13 @@ struct vpbe_layer {
 	struct vpbe_disp_buffer *cur_frm;
 	/* Pointer pointing to next v4l2_buffer */
 	struct vpbe_disp_buffer *next_frm;
-	/* vb2 specific parameters
-	 * Buffer queue used in vb2
+	/* videobuf specific parameters
+	 * Buffer queue used in video-buf
 	 */
 	struct vb2_queue buffer_queue;
 	/* Queue of filled frames */
 	struct list_head dma_queue;
-	/* Used for video buffer handling */
+	/* Used in video-buf */
 	spinlock_t irqlock;
 	/* V4l2 specific parameters */
 	/* Identifies video device for this layer */

@@ -4,6 +4,7 @@
  * Copyright (C) 2008-2009 Wolfgang Grandegger <wg@grandegger.com>
  */
 
+#include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/netdevice.h>
@@ -13,8 +14,15 @@
 #include <linux/can/can-ml.h>
 #include <linux/can/dev.h>
 #include <linux/can/skb.h>
+#include <linux/can/led.h>
 #include <linux/gpio/consumer.h>
 #include <linux/of.h>
+
+#define MOD_DESC "CAN device driver interface"
+
+MODULE_DESCRIPTION(MOD_DESC);
+MODULE_LICENSE("GPL v2");
+MODULE_AUTHOR("Wolfgang Grandegger <wg@grandegger.com>");
 
 static void can_update_state_error_stats(struct net_device *dev,
 					 enum can_state new_state)
@@ -128,6 +136,7 @@ EXPORT_SYMBOL_GPL(can_change_state);
 static void can_restart(struct net_device *dev)
 {
 	struct can_priv *priv = netdev_priv(dev);
+	struct net_device_stats *stats = &dev->stats;
 	struct sk_buff *skb;
 	struct can_frame *cf;
 	int err;
@@ -146,7 +155,10 @@ static void can_restart(struct net_device *dev)
 
 	cf->can_id |= CAN_ERR_RESTARTED;
 
-	netif_rx(skb);
+	stats->rx_packets++;
+	stats->rx_bytes += cf->len;
+
+	netif_rx_ni(skb);
 
 restart:
 	netdev_dbg(dev, "restarted\n");
@@ -288,7 +300,6 @@ EXPORT_SYMBOL_GPL(free_candev);
 int can_change_mtu(struct net_device *dev, int new_mtu)
 {
 	struct can_priv *priv = netdev_priv(dev);
-	u32 ctrlmode_static = can_get_static_ctrlmode(priv);
 
 	/* Do not allow changing the MTU while running */
 	if (dev->flags & IFF_UP)
@@ -298,7 +309,7 @@ int can_change_mtu(struct net_device *dev, int new_mtu)
 	switch (new_mtu) {
 	case CAN_MTU:
 		/* 'CANFD-only' controllers can not switch to CAN_MTU */
-		if (ctrlmode_static & CAN_CTRLMODE_FD)
+		if (priv->ctrlmode_static & CAN_CTRLMODE_FD)
 			return -EINVAL;
 
 		priv->ctrlmode &= ~CAN_CTRLMODE_FD;
@@ -307,7 +318,7 @@ int can_change_mtu(struct net_device *dev, int new_mtu)
 	case CANFD_MTU:
 		/* check for potential CANFD ability */
 		if (!(priv->ctrlmode_supported & CAN_CTRLMODE_FD) &&
-		    !(ctrlmode_static & CAN_CTRLMODE_FD))
+		    !(priv->ctrlmode_static & CAN_CTRLMODE_FD))
 			return -EINVAL;
 
 		priv->ctrlmode |= CAN_CTRLMODE_FD;
@@ -321,56 +332,6 @@ int can_change_mtu(struct net_device *dev, int new_mtu)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(can_change_mtu);
-
-/* generic implementation of netdev_ops::ndo_eth_ioctl for CAN devices
- * supporting hardware timestamps
- */
-int can_eth_ioctl_hwts(struct net_device *netdev, struct ifreq *ifr, int cmd)
-{
-	struct hwtstamp_config hwts_cfg = { 0 };
-
-	switch (cmd) {
-	case SIOCSHWTSTAMP: /* set */
-		if (copy_from_user(&hwts_cfg, ifr->ifr_data, sizeof(hwts_cfg)))
-			return -EFAULT;
-		if (hwts_cfg.tx_type == HWTSTAMP_TX_ON &&
-		    hwts_cfg.rx_filter == HWTSTAMP_FILTER_ALL)
-			return 0;
-		return -ERANGE;
-
-	case SIOCGHWTSTAMP: /* get */
-		hwts_cfg.tx_type = HWTSTAMP_TX_ON;
-		hwts_cfg.rx_filter = HWTSTAMP_FILTER_ALL;
-		if (copy_to_user(ifr->ifr_data, &hwts_cfg, sizeof(hwts_cfg)))
-			return -EFAULT;
-		return 0;
-
-	default:
-		return -EOPNOTSUPP;
-	}
-}
-EXPORT_SYMBOL(can_eth_ioctl_hwts);
-
-/* generic implementation of ethtool_ops::get_ts_info for CAN devices
- * supporting hardware timestamps
- */
-int can_ethtool_op_get_ts_info_hwts(struct net_device *dev,
-				    struct ethtool_ts_info *info)
-{
-	info->so_timestamping =
-		SOF_TIMESTAMPING_TX_SOFTWARE |
-		SOF_TIMESTAMPING_RX_SOFTWARE |
-		SOF_TIMESTAMPING_SOFTWARE |
-		SOF_TIMESTAMPING_TX_HARDWARE |
-		SOF_TIMESTAMPING_RX_HARDWARE |
-		SOF_TIMESTAMPING_RAW_HARDWARE;
-	info->phc_index = -1;
-	info->tx_types = BIT(HWTSTAMP_TX_ON);
-	info->rx_filters = BIT(HWTSTAMP_FILTER_ALL);
-
-	return 0;
-}
-EXPORT_SYMBOL(can_ethtool_op_get_ts_info_hwts);
 
 /* Common open function when the device gets opened.
  *
@@ -554,9 +515,11 @@ static __init int can_dev_init(void)
 {
 	int err;
 
+	can_led_notifier_init();
+
 	err = can_netlink_register();
 	if (!err)
-		pr_info("CAN device driver interface\n");
+		pr_info(MOD_DESC "\n");
 
 	return err;
 }
@@ -565,6 +528,8 @@ module_init(can_dev_init);
 static __exit void can_dev_exit(void)
 {
 	can_netlink_unregister();
+
+	can_led_notifier_exit();
 }
 module_exit(can_dev_exit);
 

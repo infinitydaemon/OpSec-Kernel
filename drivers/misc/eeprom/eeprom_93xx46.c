@@ -555,12 +555,14 @@ static int eeprom_93xx46_probe(struct spi_device *spi)
 	return 0;
 }
 
-static void eeprom_93xx46_remove(struct spi_device *spi)
+static int eeprom_93xx46_remove(struct spi_device *spi)
 {
 	struct eeprom_93xx46_dev *edev = spi_get_drvdata(spi);
 
 	if (!(edev->pdata->flags & EE_READONLY))
 		device_remove_file(&spi->dev, &dev_attr_erase);
+
+	return 0;
 }
 
 static struct spi_driver eeprom_93xx46_driver = {

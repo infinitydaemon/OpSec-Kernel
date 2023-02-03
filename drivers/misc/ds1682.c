@@ -200,7 +200,8 @@ static const struct bin_attribute ds1682_eeprom_attr = {
 /*
  * Called when a ds1682 device is matched with this driver
  */
-static int ds1682_probe(struct i2c_client *client)
+static int ds1682_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	int rc;
 
@@ -227,10 +228,11 @@ static int ds1682_probe(struct i2c_client *client)
 	return rc;
 }
 
-static void ds1682_remove(struct i2c_client *client)
+static int ds1682_remove(struct i2c_client *client)
 {
 	sysfs_remove_bin_file(&client->dev.kobj, &ds1682_eeprom_attr);
 	sysfs_remove_group(&client->dev.kobj, &ds1682_group);
+	return 0;
 }
 
 static const struct i2c_device_id ds1682_id[] = {
@@ -250,7 +252,7 @@ static struct i2c_driver ds1682_driver = {
 		.name = "ds1682",
 		.of_match_table = ds1682_of_match,
 	},
-	.probe_new = ds1682_probe,
+	.probe = ds1682_probe,
 	.remove = ds1682_remove,
 	.id_table = ds1682_id,
 };

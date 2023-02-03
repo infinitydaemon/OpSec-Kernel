@@ -7,12 +7,14 @@
 # Copyright (C) 2014 Cadence Design Systems Inc.
 #
 # This file is included by the global makefile so that you can add your own
-# architecture-specific flags and dependencies.
+# architecture-specific flags and dependencies. Remember to do have actions
+# for "archclean" and "archdep" for cleaning up and making dependencies for
+# this architecture
 
 # Core configuration.
 # (Use VAR=<xtensa_config> to use another default compiler.)
 
-variant-y := $(CONFIG_XTENSA_VARIANT_NAME)
+variant-y := $(patsubst "%",%,$(CONFIG_XTENSA_VARIANT_NAME))
 
 VARIANT = $(variant-y)
 
@@ -35,10 +37,6 @@ KBUILD_CFLAGS += -ffreestanding -D__linux__
 KBUILD_CFLAGS += -pipe -mlongcalls -mtext-section-literals
 KBUILD_CFLAGS += $(call cc-option,-mforce-no-pic,)
 KBUILD_CFLAGS += $(call cc-option,-mno-serialize-volatile,)
-ifneq ($(CONFIG_KERNEL_ABI_CALL0),)
-KBUILD_CFLAGS += -mabi=call0
-KBUILD_AFLAGS += -mabi=call0
-endif
 
 KBUILD_AFLAGS += -mlongcalls -mtext-section-literals
 
@@ -55,7 +53,13 @@ KBUILD_CPPFLAGS += $(patsubst %,-I$(srctree)/%include,$(vardirs) $(plfdirs))
 
 KBUILD_DEFCONFIG := iss_defconfig
 
-libs-y		+= arch/xtensa/lib/
+# Find libgcc.a
+
+LIBGCC := $(shell $(CC) $(KBUILD_CFLAGS) -print-libgcc-file-name)
+
+head-y		:= arch/xtensa/kernel/head.o
+
+libs-y		+= arch/xtensa/lib/ $(LIBGCC)
 
 boot		:= arch/xtensa/boot
 

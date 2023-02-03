@@ -22,7 +22,6 @@
 #include "xfs_trace.h"
 #include "xfs_trans.h"
 #include "xfs_ialloc.h"
-#include "xfs_error.h"
 
 /* ----- Kernel only functions below ----- */
 int
@@ -97,14 +96,16 @@ xfs_readlink_bmap_ilocked(
 
 int
 xfs_readlink(
-	struct xfs_inode	*ip,
-	char			*link)
+	struct xfs_inode *ip,
+	char		*link)
 {
-	struct xfs_mount	*mp = ip->i_mount;
-	xfs_fsize_t		pathlen;
-	int			error = -EFSCORRUPTED;
+	struct xfs_mount *mp = ip->i_mount;
+	xfs_fsize_t	pathlen;
+	int		error = 0;
 
 	trace_xfs_readlink(ip);
+
+	ASSERT(ip->i_df.if_format != XFS_DINODE_FMT_LOCAL);
 
 	if (xfs_is_shutdown(mp))
 		return -EIO;
@@ -120,22 +121,12 @@ xfs_readlink(
 			 __func__, (unsigned long long) ip->i_ino,
 			 (long long) pathlen);
 		ASSERT(0);
+		error = -EFSCORRUPTED;
 		goto out;
 	}
 
-	if (ip->i_df.if_format == XFS_DINODE_FMT_LOCAL) {
-		/*
-		 * The VFS crashes on a NULL pointer, so return -EFSCORRUPTED
-		 * if if_data is junk.
-		 */
-		if (XFS_IS_CORRUPT(ip->i_mount, !ip->i_df.if_u1.if_data))
-			goto out;
 
-		memcpy(link, ip->i_df.if_u1.if_data, pathlen + 1);
-		error = 0;
-	} else {
-		error = xfs_readlink_bmap_ilocked(ip, link);
-	}
+	error = xfs_readlink_bmap_ilocked(ip, link);
 
  out:
 	xfs_iunlock(ip, XFS_ILOCK_SHARED);
@@ -226,6 +217,11 @@ xfs_symlink(
 		goto out_trans_cancel;
 	}
 
+	error = xfs_iext_count_may_overflow(dp, XFS_DATA_FORK,
+			XFS_IEXT_DIR_MANIP_CNT(mp));
+	if (error)
+		goto out_trans_cancel;
+
 	/*
 	 * Allocate an inode for the symlink.
 	 */
@@ -256,7 +252,7 @@ xfs_symlink(
 	/*
 	 * If the symlink will fit into the inode, write it inline.
 	 */
-	if (pathlen <= xfs_inode_data_fork_size(ip)) {
+	if (pathlen <= XFS_IFORK_DSIZE(ip)) {
 		xfs_init_local_fork(ip, XFS_DATA_FORK, target_path, pathlen);
 
 		ip->i_disk_size = pathlen;

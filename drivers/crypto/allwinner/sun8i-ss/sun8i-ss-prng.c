@@ -112,9 +112,11 @@ int sun8i_ss_prng_generate(struct crypto_rng *tfm, const u8 *src,
 		goto err_iv;
 	}
 
-	err = pm_runtime_resume_and_get(ss->dev);
-	if (err < 0)
+	err = pm_runtime_get_sync(ss->dev);
+	if (err < 0) {
+		pm_runtime_put_noidle(ss->dev);
 		goto err_pm;
+	}
 	err = 0;
 
 	mutex_lock(&ss->mlock);

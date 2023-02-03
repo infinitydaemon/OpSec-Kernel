@@ -41,6 +41,5 @@ struct xfs_globals xfs_globals = {
 #endif
 #ifdef DEBUG
 	.pwork_threads		=	-1,	/* automatic thread detection */
-	.larp			=	false,	/* log attribute replay */
 #endif
 };

@@ -17,7 +17,6 @@
 #include <linux/debugfs.h>
 #include <linux/panic_notifier.h>
 #include <linux/reboot.h>
-#include <linux/uio.h>
 
 #include <asm/asm-offsets.h>
 #include <asm/ipl.h>
@@ -30,7 +29,6 @@
 #include <asm/checksum.h>
 #include <asm/os_info.h>
 #include <asm/switch_to.h>
-#include <asm/maccess.h>
 #include "sclp.h"
 
 #define TRACE(x...) debug_sprintf_event(zcore_dbf, 1, x)
@@ -56,37 +54,38 @@ static DEFINE_MUTEX(hsa_buf_mutex);
 static char hsa_buf[PAGE_SIZE] __aligned(PAGE_SIZE);
 
 /*
- * Copy memory from HSA to iterator (not reentrant):
+ * Copy memory from HSA to user memory (not reentrant):
  *
- * @iter:  Iterator where memory should be copied to
+ * @dest:  User buffer where memory should be copied to
  * @src:   Start address within HSA where data should be copied
  * @count: Size of buffer, which should be copied
  */
-size_t memcpy_hsa_iter(struct iov_iter *iter, unsigned long src, size_t count)
+int memcpy_hsa_user(void __user *dest, unsigned long src, size_t count)
 {
-	size_t bytes, copied, res = 0;
-	unsigned long offset;
+	unsigned long offset, bytes;
 
 	if (!hsa_available)
-		return 0;
+		return -ENODATA;
 
 	mutex_lock(&hsa_buf_mutex);
 	while (count) {
 		if (sclp_sdias_copy(hsa_buf, src / PAGE_SIZE + 2, 1)) {
 			TRACE("sclp_sdias_copy() failed\n");
-			break;
+			mutex_unlock(&hsa_buf_mutex);
+			return -EIO;
 		}
 		offset = src % PAGE_SIZE;
 		bytes = min(PAGE_SIZE - offset, count);
-		copied = copy_to_iter(hsa_buf + offset, bytes, iter);
-		count -= copied;
-		src += copied;
-		res += copied;
-		if (copied < bytes)
-			break;
+		if (copy_to_user(dest, hsa_buf + offset, bytes)) {
+			mutex_unlock(&hsa_buf_mutex);
+			return -EFAULT;
+		}
+		src += bytes;
+		dest += bytes;
+		count -= bytes;
 	}
 	mutex_unlock(&hsa_buf_mutex);
-	return res;
+	return 0;
 }
 
 /*
@@ -96,16 +95,28 @@ size_t memcpy_hsa_iter(struct iov_iter *iter, unsigned long src, size_t count)
  * @src:   Start address within HSA where data should be copied
  * @count: Size of buffer, which should be copied
  */
-static inline int memcpy_hsa_kernel(void *dst, unsigned long src, size_t count)
+int memcpy_hsa_kernel(void *dest, unsigned long src, size_t count)
 {
-	struct iov_iter iter;
-	struct kvec kvec;
+	unsigned long offset, bytes;
 
-	kvec.iov_base = dst;
-	kvec.iov_len = count;
-	iov_iter_kvec(&iter, ITER_DEST, &kvec, 1, count);
-	if (memcpy_hsa_iter(&iter, src, count) < count)
-		return -EIO;
+	if (!hsa_available)
+		return -ENODATA;
+
+	mutex_lock(&hsa_buf_mutex);
+	while (count) {
+		if (sclp_sdias_copy(hsa_buf, src / PAGE_SIZE + 2, 1)) {
+			TRACE("sclp_sdias_copy() failed\n");
+			mutex_unlock(&hsa_buf_mutex);
+			return -EIO;
+		}
+		offset = src % PAGE_SIZE;
+		bytes = min(PAGE_SIZE - offset, count);
+		memcpy(dest, hsa_buf + offset, bytes);
+		src += bytes;
+		dest += bytes;
+		count -= bytes;
+	}
+	mutex_unlock(&hsa_buf_mutex);
 	return 0;
 }
 
@@ -282,10 +293,6 @@ static int __init zcore_init(void)
 		TRACE("type:   nvme\n");
 		TRACE("fid:    %x\n", ipl_info.data.nvme.fid);
 		TRACE("nsid:   %x\n", ipl_info.data.nvme.nsid);
-	} else if (ipl_info.type == IPL_TYPE_ECKD_DUMP) {
-		TRACE("type:   eckd\n");
-		TRACE("devno:  %x\n", ipl_info.data.eckd.dev_id.devno);
-		TRACE("ssid:   %x\n", ipl_info.data.eckd.dev_id.ssid);
 	}
 
 	rc = sclp_sdias_init();

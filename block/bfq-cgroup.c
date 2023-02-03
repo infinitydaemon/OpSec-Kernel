@@ -6,13 +6,13 @@
 #include <linux/slab.h>
 #include <linux/blkdev.h>
 #include <linux/cgroup.h>
+#include <linux/elevator.h>
 #include <linux/ktime.h>
 #include <linux/rbtree.h>
 #include <linux/ioprio.h>
 #include <linux/sbitmap.h>
 #include <linux/delay.h>
 
-#include "elevator.h"
 #include "bfq-iosched.h"
 
 #ifdef CONFIG_BFQ_CGROUP_DEBUG
@@ -220,46 +220,51 @@ void bfqg_stats_update_avg_queue_size(struct bfq_group *bfqg)
 }
 
 void bfqg_stats_update_io_add(struct bfq_group *bfqg, struct bfq_queue *bfqq,
-			      blk_opf_t opf)
+			      unsigned int op)
 {
-	blkg_rwstat_add(&bfqg->stats.queued, opf, 1);
+	blkg_rwstat_add(&bfqg->stats.queued, op, 1);
 	bfqg_stats_end_empty_time(&bfqg->stats);
-	if (!(bfqq == bfqg->bfqd->in_service_queue))
+	if (!(bfqq == ((struct bfq_data *)bfqg->bfqd)->in_service_queue))
 		bfqg_stats_set_start_group_wait_time(bfqg, bfqq_group(bfqq));
 }
 
-void bfqg_stats_update_io_remove(struct bfq_group *bfqg, blk_opf_t opf)
+void bfqg_stats_update_io_remove(struct bfq_group *bfqg, unsigned int op)
 {
-	blkg_rwstat_add(&bfqg->stats.queued, opf, -1);
+	blkg_rwstat_add(&bfqg->stats.queued, op, -1);
 }
 
-void bfqg_stats_update_io_merged(struct bfq_group *bfqg, blk_opf_t opf)
+void bfqg_stats_update_io_merged(struct bfq_group *bfqg, unsigned int op)
 {
-	blkg_rwstat_add(&bfqg->stats.merged, opf, 1);
+	blkg_rwstat_add(&bfqg->stats.merged, op, 1);
 }
 
 void bfqg_stats_update_completion(struct bfq_group *bfqg, u64 start_time_ns,
-				  u64 io_start_time_ns, blk_opf_t opf)
+				  u64 io_start_time_ns, unsigned int op)
 {
 	struct bfqg_stats *stats = &bfqg->stats;
 	u64 now = ktime_get_ns();
 
 	if (now > io_start_time_ns)
-		blkg_rwstat_add(&stats->service_time, opf,
+		blkg_rwstat_add(&stats->service_time, op,
 				now - io_start_time_ns);
 	if (io_start_time_ns > start_time_ns)
-		blkg_rwstat_add(&stats->wait_time, opf,
+		blkg_rwstat_add(&stats->wait_time, op,
 				io_start_time_ns - start_time_ns);
 }
 
 #else /* CONFIG_BFQ_CGROUP_DEBUG */
 
-void bfqg_stats_update_io_remove(struct bfq_group *bfqg, blk_opf_t opf) { }
-void bfqg_stats_update_io_merged(struct bfq_group *bfqg, blk_opf_t opf) { }
+void bfqg_stats_update_io_add(struct bfq_group *bfqg, struct bfq_queue *bfqq,
+			      unsigned int op) { }
+void bfqg_stats_update_io_remove(struct bfq_group *bfqg, unsigned int op) { }
+void bfqg_stats_update_io_merged(struct bfq_group *bfqg, unsigned int op) { }
 void bfqg_stats_update_completion(struct bfq_group *bfqg, u64 start_time_ns,
-				  u64 io_start_time_ns, blk_opf_t opf) { }
+				  u64 io_start_time_ns, unsigned int op) { }
 void bfqg_stats_update_dequeue(struct bfq_group *bfqg) { }
+void bfqg_stats_set_start_empty_time(struct bfq_group *bfqg) { }
+void bfqg_stats_update_idle_time(struct bfq_group *bfqg) { }
 void bfqg_stats_set_start_idle_time(struct bfq_group *bfqg) { }
+void bfqg_stats_update_avg_queue_size(struct bfq_group *bfqg) { }
 
 #endif /* CONFIG_BFQ_CGROUP_DEBUG */
 
@@ -316,12 +321,14 @@ struct bfq_group *bfqq_group(struct bfq_queue *bfqq)
 
 static void bfqg_get(struct bfq_group *bfqg)
 {
-	refcount_inc(&bfqg->ref);
+	bfqg->ref++;
 }
 
 static void bfqg_put(struct bfq_group *bfqg)
 {
-	if (refcount_dec_and_test(&bfqg->ref))
+	bfqg->ref--;
+
+	if (bfqg->ref == 0)
 		kfree(bfqg);
 }
 
@@ -456,7 +463,7 @@ static int bfqg_stats_init(struct bfqg_stats *stats, gfp_t gfp)
 {
 	if (blkg_rwstat_init(&stats->bytes, gfp) ||
 	    blkg_rwstat_init(&stats->ios, gfp))
-		goto error;
+		return -ENOMEM;
 
 #ifdef CONFIG_BFQ_CGROUP_DEBUG
 	if (blkg_rwstat_init(&stats->merged, gfp) ||
@@ -469,15 +476,13 @@ static int bfqg_stats_init(struct bfqg_stats *stats, gfp_t gfp)
 	    bfq_stat_init(&stats->dequeue, gfp) ||
 	    bfq_stat_init(&stats->group_wait_time, gfp) ||
 	    bfq_stat_init(&stats->idle_time, gfp) ||
-	    bfq_stat_init(&stats->empty_time, gfp))
-		goto error;
+	    bfq_stat_init(&stats->empty_time, gfp)) {
+		bfqg_stats_exit(stats);
+		return -ENOMEM;
+	}
 #endif
 
 	return 0;
-
-error:
-	bfqg_stats_exit(stats);
-	return -ENOMEM;
 }
 
 static struct bfq_group_data *cpd_to_bfqgd(struct blkcg_policy_data *cpd)
@@ -528,7 +533,7 @@ static struct blkg_policy_data *bfq_pd_alloc(gfp_t gfp, struct request_queue *q,
 	}
 
 	/* see comments in bfq_bic_update_cgroup for why refcounting */
-	refcount_set(&bfqg->ref, 1);
+	bfqg_get(bfqg);
 	return &bfqg->pd;
 }
 
@@ -550,7 +555,6 @@ static void bfq_pd_init(struct blkg_policy_data *pd)
 				   */
 	bfqg->bfqd = bfqd;
 	bfqg->active_entities = 0;
-	bfqg->num_queues_with_pending_reqs = 0;
 	bfqg->online = true;
 	bfqg->rq_pos_tree = RB_ROOT;
 }
@@ -643,15 +647,6 @@ void bfq_bfqq_move(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 		   struct bfq_group *bfqg)
 {
 	struct bfq_entity *entity = &bfqq->entity;
-	struct bfq_group *old_parent = bfqq_group(bfqq);
-	bool has_pending_reqs = false;
-
-	/*
-	 * No point to move bfqq to the same group, which can happen when
-	 * root group is offlined
-	 */
-	if (old_parent == bfqg)
-		return;
 
 	/*
 	 * oom_bfqq is not allowed to move, oom_bfqq will hold ref to root_group
@@ -664,11 +659,6 @@ void bfq_bfqq_move(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 	 * next possible expire or deactivate.
 	 */
 	bfqq->ref++;
-
-	if (entity->in_groups_with_pending_reqs) {
-		has_pending_reqs = true;
-		bfq_del_bfqq_in_groups_with_pending_reqs(bfqq);
-	}
 
 	/* If bfqq is empty, then bfq_bfqq_expire also invokes
 	 * bfq_del_bfqq_busy, thereby removing bfqq and its entity
@@ -684,7 +674,7 @@ void bfq_bfqq_move(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 		bfq_deactivate_bfqq(bfqd, bfqq, false, false);
 	else if (entity->on_st_or_in_serv)
 		bfq_put_idle_entity(bfq_entity_service_tree(entity), entity);
-	bfqg_and_blkg_put(old_parent);
+	bfqg_and_blkg_put(bfqq_group(bfqq));
 
 	if (entity->parent &&
 	    entity->parent->last_bfqq_created == bfqq)
@@ -696,9 +686,6 @@ void bfq_bfqq_move(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 	entity->sched_data = &bfqg->sched_data;
 	/* pin down bfqg and its associated blkg  */
 	bfqg_and_blkg_get(bfqg);
-
-	if (has_pending_reqs)
-		bfq_add_bfqq_in_groups_with_pending_reqs(bfqq);
 
 	if (bfq_bfqq_busy(bfqq)) {
 		if (unlikely(!bfqd->nonrot_with_queueing))
@@ -713,28 +700,28 @@ void bfq_bfqq_move(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 }
 
 /**
- * __bfq_bic_change_cgroup - move @bic to @bfqg.
+ * __bfq_bic_change_cgroup - move @bic to @cgroup.
  * @bfqd: the queue descriptor.
  * @bic: the bic to move.
- * @bfqg: the group to move to.
+ * @blkcg: the blk-cgroup to move to.
  *
  * Move bic to blkcg, assuming that bfqd->lock is held; which makes
  * sure that the reference to cgroup is valid across the call (see
  * comments in bfq_bic_update_cgroup on this issue)
  */
-static void __bfq_bic_change_cgroup(struct bfq_data *bfqd,
-				    struct bfq_io_cq *bic,
-				    struct bfq_group *bfqg)
+static void *__bfq_bic_change_cgroup(struct bfq_data *bfqd,
+				     struct bfq_io_cq *bic,
+				     struct bfq_group *bfqg)
 {
-	struct bfq_queue *async_bfqq = bic_to_bfqq(bic, false);
-	struct bfq_queue *sync_bfqq = bic_to_bfqq(bic, true);
+	struct bfq_queue *async_bfqq = bic_to_bfqq(bic, 0);
+	struct bfq_queue *sync_bfqq = bic_to_bfqq(bic, 1);
 	struct bfq_entity *entity;
 
 	if (async_bfqq) {
 		entity = &async_bfqq->entity;
 
 		if (entity->sched_data != &bfqg->sched_data) {
-			bic_set_bfqq(bic, NULL, false);
+			bic_set_bfqq(bic, NULL, 0);
 			bfq_release_process_ref(bfqd, async_bfqq);
 		}
 	}
@@ -770,10 +757,12 @@ static void __bfq_bic_change_cgroup(struct bfq_data *bfqd,
 				 */
 				bfq_put_cooperator(sync_bfqq);
 				bfq_release_process_ref(bfqd, sync_bfqq);
-				bic_set_bfqq(bic, NULL, true);
+				bic_set_bfqq(bic, NULL, 1);
 			}
 		}
 	}
+
+	return bfqg;
 }
 
 void bfq_bic_update_cgroup(struct bfq_io_cq *bic, struct bio *bio)
@@ -868,7 +857,6 @@ static void bfq_flush_idle_tree(struct bfq_service_tree *st)
  * @bfqd: the device data structure with the root group.
  * @entity: the entity to move, if entity is a leaf; or the parent entity
  *	    of an active leaf entity to move, if entity is not a leaf.
- * @ioprio_class: I/O priority class to reparent.
  */
 static void bfq_reparent_leaf_entity(struct bfq_data *bfqd,
 				     struct bfq_entity *entity,
@@ -898,7 +886,6 @@ static void bfq_reparent_leaf_entity(struct bfq_data *bfqd,
  * @bfqd: the device data structure with the root group.
  * @bfqg: the group to move from.
  * @st: the service tree to start the search from.
- * @ioprio_class: I/O priority class to reparent.
  */
 static void bfq_reparent_active_queues(struct bfq_data *bfqd,
 				       struct bfq_group *bfqg,
@@ -1477,6 +1464,8 @@ struct bfq_group *bfqq_group(struct bfq_queue *bfqq)
 {
 	return bfqq->bfqd->root_group;
 }
+
+void bfqg_and_blkg_get(struct bfq_group *bfqg) {}
 
 void bfqg_and_blkg_put(struct bfq_group *bfqg) {}
 

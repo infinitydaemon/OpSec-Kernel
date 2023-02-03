@@ -8,20 +8,22 @@ config PCIE_DW
 
 config PCIE_DW_HOST
 	bool
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW
 
 config PCIE_DW_EP
 	bool
+	depends on PCI_ENDPOINT
 	select PCIE_DW
 
 config PCI_DRA7XX
-	tristate
+	bool
 
 config PCI_DRA7XX_HOST
-	tristate "TI DRA7xx PCIe controller Host Mode"
+	bool "TI DRA7xx PCIe controller Host Mode"
 	depends on SOC_DRA7XX || COMPILE_TEST
+	depends on PCI_MSI_IRQ_DOMAIN
 	depends on OF && HAS_IOMEM && TI_PIPE3
-	depends on PCI_MSI
 	select PCIE_DW_HOST
 	select PCI_DRA7XX
 	default y if SOC_DRA7XX
@@ -34,10 +36,10 @@ config PCI_DRA7XX_HOST
 	  This uses the DesignWare core.
 
 config PCI_DRA7XX_EP
-	tristate "TI DRA7xx PCIe controller Endpoint Mode"
+	bool "TI DRA7xx PCIe controller Endpoint Mode"
 	depends on SOC_DRA7XX || COMPILE_TEST
-	depends on OF && HAS_IOMEM && TI_PIPE3
 	depends on PCI_ENDPOINT
+	depends on OF && HAS_IOMEM && TI_PIPE3
 	select PCIE_DW_EP
 	select PCI_DRA7XX
 	help
@@ -53,7 +55,7 @@ config PCIE_DW_PLAT
 
 config PCIE_DW_PLAT_HOST
 	bool "Platform bus based DesignWare PCIe Controller - Host mode"
-	depends on PCI_MSI
+	depends on PCI && PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 	select PCIE_DW_PLAT
 	help
@@ -67,7 +69,7 @@ config PCIE_DW_PLAT_HOST
 
 config PCIE_DW_PLAT_EP
 	bool "Platform bus based DesignWare PCIe Controller - Endpoint mode"
-	depends on PCI && PCI_MSI
+	depends on PCI && PCI_MSI_IRQ_DOMAIN
 	depends on PCI_ENDPOINT
 	select PCIE_DW_EP
 	select PCIE_DW_PLAT
@@ -83,7 +85,7 @@ config PCIE_DW_PLAT_EP
 config PCI_EXYNOS
 	tristate "Samsung Exynos PCIe controller"
 	depends on ARCH_EXYNOS || COMPILE_TEST
-	depends on PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 	help
 	  Enables support for the PCIe controller in the Samsung Exynos SoCs
@@ -94,13 +96,13 @@ config PCI_EXYNOS
 config PCI_IMX6
 	bool "Freescale i.MX6/7/8 PCIe controller"
 	depends on ARCH_MXC || COMPILE_TEST
-	depends on PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 
 config PCIE_SPEAR13XX
 	bool "STMicroelectronics SPEAr PCIe controller"
 	depends on ARCH_SPEAR13XX || COMPILE_TEST
-	depends on PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 	help
 	  Say Y here if you want PCIe support on SPEAr13XX SoCs.
@@ -111,7 +113,7 @@ config PCI_KEYSTONE
 config PCI_KEYSTONE_HOST
 	bool "PCI Keystone Host Mode"
 	depends on ARCH_KEYSTONE || ARCH_K3 || COMPILE_TEST
-	depends on PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 	select PCI_KEYSTONE
 	help
@@ -135,9 +137,9 @@ config PCI_KEYSTONE_EP
 config PCI_LAYERSCAPE
 	bool "Freescale Layerscape PCIe controller - Host mode"
 	depends on OF && (ARM || ARCH_LAYERSCAPE || COMPILE_TEST)
-	depends on PCI_MSI
-	select PCIE_DW_HOST
+	depends on PCI_MSI_IRQ_DOMAIN
 	select MFD_SYSCON
+	select PCIE_DW_HOST
 	help
 	  Say Y here if you want to enable PCIe controller support on Layerscape
 	  SoCs to work in Host mode.
@@ -160,7 +162,7 @@ config PCI_LAYERSCAPE_EP
 config PCI_HISI
 	depends on OF && (ARM64 || COMPILE_TEST)
 	bool "HiSilicon Hip05 and Hip06 SoCs PCIe controllers"
-	depends on PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 	select PCI_HOST_COMMON
 	help
@@ -170,7 +172,7 @@ config PCI_HISI
 config PCIE_QCOM
 	bool "Qualcomm PCIe controller"
 	depends on OF && (ARCH_QCOM || COMPILE_TEST)
-	depends on PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 	select CRC8
 	help
@@ -178,20 +180,10 @@ config PCIE_QCOM
 	  PCIe controller uses the DesignWare core plus Qualcomm-specific
 	  hardware wrappers.
 
-config PCIE_QCOM_EP
-	tristate "Qualcomm PCIe controller - Endpoint mode"
-	depends on OF && (ARCH_QCOM || COMPILE_TEST)
-	depends on PCI_ENDPOINT
-	select PCIE_DW_EP
-	help
-	  Say Y here to enable support for the PCIe controllers on Qualcomm SoCs
-	  to work in endpoint mode. The PCIe controller uses the DesignWare core
-	  plus Qualcomm-specific hardware wrappers.
-
 config PCIE_ARMADA_8K
 	bool "Marvell Armada-8K PCIe controller"
 	depends on ARCH_MVEBU || COMPILE_TEST
-	depends on PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 	help
 	  Say Y here if you want to enable PCIe controller support on
@@ -205,7 +197,7 @@ config PCIE_ARTPEC6
 config PCIE_ARTPEC6_HOST
 	bool "Axis ARTPEC-6 PCIe controller Host Mode"
 	depends on MACH_ARTPEC6 || COMPILE_TEST
-	depends on PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 	select PCIE_ARTPEC6
 	help
@@ -222,20 +214,11 @@ config PCIE_ARTPEC6_EP
 	  Enables support for the PCIe controller in the ARTPEC-6 SoC to work in
 	  endpoint mode. This uses the DesignWare core.
 
-config PCIE_BT1
-	tristate "Baikal-T1 PCIe controller"
-	depends on MIPS_BAIKAL_T1 || COMPILE_TEST
-	depends on PCI_MSI
-	select PCIE_DW_HOST
-	help
-	  Enables support for the PCIe controller in the Baikal-T1 SoC to work
-	  in host mode. It's based on the Synopsys DWC PCIe v4.60a IP-core.
-
 config PCIE_ROCKCHIP_DW_HOST
 	bool "Rockchip DesignWare PCIe controller"
 	select PCIE_DW
 	select PCIE_DW_HOST
-	depends on PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	depends on ARCH_ROCKCHIP || COMPILE_TEST
 	depends on OF
 	help
@@ -245,7 +228,7 @@ config PCIE_ROCKCHIP_DW_HOST
 config PCIE_INTEL_GW
 	bool "Intel Gateway PCIe host controller support"
 	depends on OF && (X86 || COMPILE_TEST)
-	depends on PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 	help
 	  Say 'Y' here to enable PCIe Host controller support on Intel
@@ -259,7 +242,7 @@ config PCIE_KEEMBAY
 config PCIE_KEEMBAY_HOST
 	bool "Intel Keem Bay PCIe controller - Host mode"
 	depends on ARCH_KEEMBAY || COMPILE_TEST
-	depends on PCI_MSI
+	depends on PCI && PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 	select PCIE_KEEMBAY
 	help
@@ -271,7 +254,7 @@ config PCIE_KEEMBAY_HOST
 config PCIE_KEEMBAY_EP
 	bool "Intel Keem Bay PCIe controller - Endpoint mode"
 	depends on ARCH_KEEMBAY || COMPILE_TEST
-	depends on PCI_MSI
+	depends on PCI && PCI_MSI_IRQ_DOMAIN
 	depends on PCI_ENDPOINT
 	select PCIE_DW_EP
 	select PCIE_KEEMBAY
@@ -283,8 +266,8 @@ config PCIE_KEEMBAY_EP
 
 config PCIE_KIRIN
 	depends on OF && (ARM64 || COMPILE_TEST)
-	tristate "HiSilicon Kirin series SoCs PCIe controllers"
-	depends on PCI_MSI
+	bool "HiSilicon Kirin series SoCs PCIe controllers"
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 	help
 	  Say Y here if you want PCIe controller support
@@ -293,15 +276,15 @@ config PCIE_KIRIN
 config PCIE_HISI_STB
 	bool "HiSilicon STB SoCs PCIe controllers"
 	depends on ARCH_HISI || COMPILE_TEST
-	depends on PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 	help
 	  Say Y here if you want PCIe controller support on HiSilicon STB SoCs
 
 config PCI_MESON
 	tristate "MESON PCIe controller"
+	depends on PCI_MSI_IRQ_DOMAIN
 	default m if ARCH_MESON
-	depends on PCI_MSI
 	select PCIE_DW_HOST
 	help
 	  Say Y here if you want to enable PCI controller support on Amlogic
@@ -315,7 +298,7 @@ config PCIE_TEGRA194
 config PCIE_TEGRA194_HOST
 	tristate "NVIDIA Tegra194 (and later) PCIe controller - Host Mode"
 	depends on ARCH_TEGRA_194_SOC || COMPILE_TEST
-	depends on PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 	select PHY_TEGRA194_P2U
 	select PCIE_TEGRA194
@@ -345,7 +328,7 @@ config PCIE_TEGRA194_EP
 config PCIE_VISCONTI_HOST
 	bool "Toshiba Visconti PCIe controllers"
 	depends on ARCH_VISCONTI || COMPILE_TEST
-	depends on PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 	help
 	  Say Y here if you want PCIe controller support on Toshiba Visconti SoC.
@@ -355,7 +338,7 @@ config PCIE_UNIPHIER
 	bool "Socionext UniPhier PCIe host controllers"
 	depends on ARCH_UNIPHIER || COMPILE_TEST
 	depends on OF && HAS_IOMEM
-	depends on PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 	help
 	  Say Y here if you want PCIe host controller support on UniPhier SoCs.
@@ -374,7 +357,7 @@ config PCIE_UNIPHIER_EP
 config PCIE_AL
 	bool "Amazon Annapurna Labs PCIe controller"
 	depends on OF && (ARM64 || COMPILE_TEST)
-	depends on PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	select PCIE_DW_HOST
 	select PCI_ECAM
 	help
@@ -386,7 +369,7 @@ config PCIE_AL
 
 config PCIE_FU740
 	bool "SiFive FU740 PCIe host controller"
-	depends on PCI_MSI
+	depends on PCI_MSI_IRQ_DOMAIN
 	depends on SOC_SIFIVE || COMPILE_TEST
 	select PCIE_DW_HOST
 	help

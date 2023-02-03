@@ -17,13 +17,12 @@
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
-
 #include "csb726.h"
 #include "pxa27x.h"
 #include <linux/platform_data/mmc-pxamci.h>
 #include <linux/platform_data/usb-ohci-pxa27x.h>
-#include <linux/platform_data/asoc-pxa.h>
-#include "smemc.h"
+#include <mach/audio.h>
+#include <mach/smemc.h>
 
 #include "generic.h"
 #include "devices.h"

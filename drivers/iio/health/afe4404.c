@@ -349,6 +349,9 @@ err:
 	return IRQ_HANDLED;
 }
 
+static const struct iio_trigger_ops afe4404_trigger_ops = {
+};
+
 /* Default timings from data-sheet */
 #define AFE4404_TIMING_PAIRS			\
 	{ AFE440X_PRPCOUNT,	39999	},	\
@@ -417,7 +420,7 @@ static const struct of_device_id afe4404_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, afe4404_of_match);
 
-static int afe4404_suspend(struct device *dev)
+static int __maybe_unused afe4404_suspend(struct device *dev)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(to_i2c_client(dev));
 	struct afe4404_data *afe = iio_priv(indio_dev);
@@ -438,7 +441,7 @@ static int afe4404_suspend(struct device *dev)
 	return 0;
 }
 
-static int afe4404_resume(struct device *dev)
+static int __maybe_unused afe4404_resume(struct device *dev)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(to_i2c_client(dev));
 	struct afe4404_data *afe = iio_priv(indio_dev);
@@ -458,10 +461,10 @@ static int afe4404_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(afe4404_pm_ops, afe4404_suspend,
-				afe4404_resume);
+static SIMPLE_DEV_PM_OPS(afe4404_pm_ops, afe4404_suspend, afe4404_resume);
 
-static int afe4404_probe(struct i2c_client *client)
+static int afe4404_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct iio_dev *indio_dev;
 	struct afe4404_data *afe;
@@ -493,10 +496,10 @@ static int afe4404_probe(struct i2c_client *client)
 	}
 
 	afe->regulator = devm_regulator_get(afe->dev, "tx_sup");
-	if (IS_ERR(afe->regulator))
-		return dev_err_probe(afe->dev, PTR_ERR(afe->regulator),
-				     "Unable to get regulator\n");
-
+	if (IS_ERR(afe->regulator)) {
+		dev_err(afe->dev, "Unable to get regulator\n");
+		return PTR_ERR(afe->regulator);
+	}
 	ret = regulator_enable(afe->regulator);
 	if (ret) {
 		dev_err(afe->dev, "Unable to enable regulator\n");
@@ -535,6 +538,8 @@ static int afe4404_probe(struct i2c_client *client)
 		}
 
 		iio_trigger_set_drvdata(afe->trig, indio_dev);
+
+		afe->trig->ops = &afe4404_trigger_ops;
 
 		ret = iio_trigger_register(afe->trig);
 		if (ret) {
@@ -579,7 +584,7 @@ disable_reg:
 	return ret;
 }
 
-static void afe4404_remove(struct i2c_client *client)
+static int afe4404_remove(struct i2c_client *client)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 	struct afe4404_data *afe = iio_priv(indio_dev);
@@ -593,8 +598,12 @@ static void afe4404_remove(struct i2c_client *client)
 		iio_trigger_unregister(afe->trig);
 
 	ret = regulator_disable(afe->regulator);
-	if (ret)
+	if (ret) {
 		dev_err(afe->dev, "Unable to disable regulator\n");
+		return ret;
+	}
+
+	return 0;
 }
 
 static const struct i2c_device_id afe4404_ids[] = {
@@ -607,9 +616,9 @@ static struct i2c_driver afe4404_i2c_driver = {
 	.driver = {
 		.name = AFE4404_DRIVER_NAME,
 		.of_match_table = afe4404_of_match,
-		.pm = pm_sleep_ptr(&afe4404_pm_ops),
+		.pm = &afe4404_pm_ops,
 	},
-	.probe_new = afe4404_probe,
+	.probe = afe4404_probe,
 	.remove = afe4404_remove,
 	.id_table = afe4404_ids,
 };

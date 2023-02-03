@@ -38,7 +38,6 @@
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_device.h>
 #include <drm/drm_file.h>
-#include <drm/drm_framebuffer.h>
 #include <drm/drm_probe_helper.h>
 #include <drm/radeon_drm.h>
 
@@ -1087,6 +1086,19 @@ static unsigned int radeon_vga_set_decode(struct pci_dev *pdev, bool state)
 }
 
 /**
+ * radeon_check_pot_argument - check that argument is a power of two
+ *
+ * @arg: value to check
+ *
+ * Validates that a certain argument is a power of two (all asics).
+ * Returns true if argument is valid.
+ */
+static bool radeon_check_pot_argument(int arg)
+{
+	return (arg & (arg - 1)) == 0;
+}
+
+/**
  * radeon_gart_size_auto - Determine a sensible default GART size
  *                         according to ASIC family.
  *
@@ -1114,7 +1126,7 @@ static int radeon_gart_size_auto(enum radeon_family family)
 static void radeon_check_arguments(struct radeon_device *rdev)
 {
 	/* vramlimit must be a power of two */
-	if (radeon_vram_limit != 0 && !is_power_of_2(radeon_vram_limit)) {
+	if (!radeon_check_pot_argument(radeon_vram_limit)) {
 		dev_warn(rdev->dev, "vram limit (%d) must be a power of 2\n",
 				radeon_vram_limit);
 		radeon_vram_limit = 0;
@@ -1128,7 +1140,7 @@ static void radeon_check_arguments(struct radeon_device *rdev)
 		dev_warn(rdev->dev, "gart size (%d) too small\n",
 				radeon_gart_size);
 		radeon_gart_size = radeon_gart_size_auto(rdev->family);
-	} else if (!is_power_of_2(radeon_gart_size)) {
+	} else if (!radeon_check_pot_argument(radeon_gart_size)) {
 		dev_warn(rdev->dev, "gart size (%d) must be a power of 2\n",
 				radeon_gart_size);
 		radeon_gart_size = radeon_gart_size_auto(rdev->family);
@@ -1151,7 +1163,7 @@ static void radeon_check_arguments(struct radeon_device *rdev)
 		break;
 	}
 
-	if (!is_power_of_2(radeon_vm_size)) {
+	if (!radeon_check_pot_argument(radeon_vm_size)) {
 		dev_warn(rdev->dev, "VM size (%d) must be a power of 2\n",
 			 radeon_vm_size);
 		radeon_vm_size = 4;
@@ -1207,7 +1219,7 @@ static void radeon_check_arguments(struct radeon_device *rdev)
  * @pdev: pci dev pointer
  * @state: vga_switcheroo state
  *
- * Callback for the switcheroo driver.  Suspends or resumes
+ * Callback for the switcheroo driver.  Suspends or resumes the
  * the asics before or after it is powered up using ACPI methods.
  */
 static void radeon_switcheroo_set_state(struct pci_dev *pdev, enum vga_switcheroo_state state)
@@ -1312,7 +1324,6 @@ int radeon_device_init(struct radeon_device *rdev,
 	mutex_init(&rdev->pm.mutex);
 	mutex_init(&rdev->gpu_clock_mutex);
 	mutex_init(&rdev->srbm_mutex);
-	mutex_init(&rdev->audio.component_mutex);
 	init_rwsem(&rdev->pm.mclk_lock);
 	init_rwsem(&rdev->exclusive_lock);
 	init_waitqueue_head(&rdev->irq.vblank_queue);
@@ -1439,6 +1450,7 @@ int radeon_device_init(struct radeon_device *rdev,
 		goto failed;
 
 	radeon_gem_debugfs_init(rdev);
+	radeon_mst_debugfs_init(rdev);
 
 	if (rdev->flags & RADEON_IS_AGP && !rdev->accel_working) {
 		/* Acceleration not working on AGP card try again
@@ -1451,8 +1463,6 @@ int radeon_device_init(struct radeon_device *rdev,
 		if (r)
 			goto failed;
 	}
-
-	radeon_audio_component_init(rdev);
 
 	r = radeon_ib_ring_tests(rdev);
 	if (r)
@@ -1516,7 +1526,6 @@ void radeon_device_fini(struct radeon_device *rdev)
 	rdev->shutdown = true;
 	/* evict vram memory */
 	radeon_bo_evict_vram(rdev);
-	radeon_audio_component_fini(rdev);
 	radeon_fini(rdev);
 	if (!pci_is_thunderbolt_attached(rdev->pdev))
 		vga_switcheroo_unregister_client(rdev->pdev);

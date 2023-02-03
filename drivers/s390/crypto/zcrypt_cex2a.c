@@ -34,11 +34,10 @@
 
 #define CEX3A_MAX_RESPONSE_SIZE	0x210	/* 512 bit modulus
 					 * (max outputdatalength) +
-					 * type80_hdr
-					 */
+					 * type80_hdr*/
 #define CEX3A_MAX_MESSAGE_SIZE	sizeof(struct type50_crb3_msg)
 
-#define CEX2A_CLEANUP_TIME	(15 * HZ)
+#define CEX2A_CLEANUP_TIME	(15*HZ)
 #define CEX3A_CLEANUP_TIME	CEX2A_CLEANUP_TIME
 
 MODULE_AUTHOR("IBM Corporation");
@@ -118,8 +117,9 @@ static int zcrypt_cex2a_card_probe(struct ap_device *ap_dev)
 	zc->online = 1;
 
 	rc = zcrypt_card_register(zc);
-	if (rc)
+	if (rc) {
 		zcrypt_card_free(zc);
+	}
 
 	return rc;
 }
@@ -176,8 +176,9 @@ static int zcrypt_cex2a_queue_probe(struct ap_device *ap_dev)
 	aq->request_timeout = CEX2A_CLEANUP_TIME;
 	dev_set_drvdata(&ap_dev->device, zq);
 	rc = zcrypt_queue_register(zq);
-	if (rc)
+	if (rc) {
 		zcrypt_queue_free(zq);
+	}
 
 	return rc;
 }

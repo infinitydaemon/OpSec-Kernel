@@ -36,13 +36,6 @@ properties:
     description: IRQ line of the ADC
     maxItems: 1
 
-  microchip,data-ready-hiz:
-    description:
-      Data Ready Pin Inactive State Control
-      true = The DR pin state is high-impedance
-      false = The DR pin state is logic high
-    type: boolean
-
   microchip,device-addr:
     description: Device address when multiple MCP3911 chips are present on the same SPI bus.
     $ref: /schemas/types.yaml#/definitions/uint32
@@ -58,10 +51,7 @@ required:
   - compatible
   - reg
 
-allOf:
-  - $ref: /schemas/spi/spi-peripheral-props.yaml#
-
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

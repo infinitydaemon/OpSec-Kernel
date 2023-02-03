@@ -170,7 +170,8 @@ void mt76_rx_aggr_reorder(struct sk_buff *skb, struct sk_buff_head *frames)
 
 	/* not part of a BA session */
 	ackp = status->qos_ctl & IEEE80211_QOS_CTL_ACK_POLICY_MASK;
-	if (ackp == IEEE80211_QOS_CTL_ACK_POLICY_NOACK)
+	if (ackp != IEEE80211_QOS_CTL_ACK_POLICY_BLOCKACK &&
+	    ackp != IEEE80211_QOS_CTL_ACK_POLICY_NORMAL)
 		return;
 
 	tid = rcu_dereference(wcid->aggr[tidno]);

@@ -263,7 +263,7 @@ static ssize_t process_vm_rw(pid_t pid,
 	struct iovec *iov_r;
 	struct iov_iter iter;
 	ssize_t rc;
-	int dir = vm_write ? ITER_SOURCE : ITER_DEST;
+	int dir = vm_write ? WRITE : READ;
 
 	if (flags != 0)
 		return -EINVAL;

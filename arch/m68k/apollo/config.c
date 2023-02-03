@@ -16,7 +16,6 @@
 #include <asm/apollohw.h>
 #include <asm/irq.h>
 #include <asm/machdep.h>
-#include <asm/config.h>
 
 u_long sio01_physaddr;
 u_long sio23_physaddr;

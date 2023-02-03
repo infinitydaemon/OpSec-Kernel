@@ -29,7 +29,6 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_state_helper.h>
-#include <drm/drm_edid.h>
 
 #include "omapdss.h"
 #include "hdmi4_core.h"

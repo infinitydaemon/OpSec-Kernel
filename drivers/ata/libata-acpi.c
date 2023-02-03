@@ -402,6 +402,7 @@ EXPORT_SYMBOL_GPL(ata_acpi_stm);
  */
 static int ata_dev_get_GTF(struct ata_device *dev, struct ata_acpi_gtf **gtf)
 {
+	struct ata_port *ap = dev->link->ap;
 	acpi_status status;
 	struct acpi_buffer output;
 	union acpi_object *out_obj;
@@ -416,6 +417,10 @@ static int ata_dev_get_GTF(struct ata_device *dev, struct ata_acpi_gtf **gtf)
 	/* set up output buffer */
 	output.length = ACPI_ALLOCATE_BUFFER;
 	output.pointer = NULL;	/* ACPI-CA sets this; save/free it later */
+
+	if (ata_msg_probe(ap))
+		ata_dev_dbg(dev, "%s: ENTER: port#: %d\n",
+			    __func__, ap->port_no);
 
 	/* _GTF has no input parameters */
 	status = acpi_evaluate_object(ata_dev_acpi_handle(dev), "_GTF", NULL,
@@ -432,9 +437,11 @@ static int ata_dev_get_GTF(struct ata_device *dev, struct ata_acpi_gtf **gtf)
 	}
 
 	if (!output.length || !output.pointer) {
-		ata_dev_dbg(dev, "Run _GTF: length or ptr is NULL (0x%llx, 0x%p)\n",
-			    (unsigned long long)output.length,
-			    output.pointer);
+		if (ata_msg_probe(ap))
+			ata_dev_dbg(dev, "%s: Run _GTF: length or ptr is NULL (0x%llx, 0x%p)\n",
+				    __func__,
+				    (unsigned long long)output.length,
+				    output.pointer);
 		rc = -EINVAL;
 		goto out_free;
 	}
@@ -457,8 +464,9 @@ static int ata_dev_get_GTF(struct ata_device *dev, struct ata_acpi_gtf **gtf)
 	rc = out_obj->buffer.length / REGS_PER_GTF;
 	if (gtf) {
 		*gtf = (void *)out_obj->buffer.pointer;
-		ata_dev_dbg(dev, "returning gtf=%p, gtf_count=%d\n",
-			    *gtf, rc);
+		if (ata_msg_probe(ap))
+			ata_dev_dbg(dev, "%s: returning gtf=%p, gtf_count=%d\n",
+				    __func__, *gtf, rc);
 	}
 	return rc;
 
@@ -480,10 +488,10 @@ static int ata_dev_get_GTF(struct ata_device *dev, struct ata_acpi_gtf **gtf)
  * RETURNS:
  * Determined xfermask.
  */
-unsigned int ata_acpi_gtm_xfermask(struct ata_device *dev,
-				   const struct ata_acpi_gtm *gtm)
+unsigned long ata_acpi_gtm_xfermask(struct ata_device *dev,
+				    const struct ata_acpi_gtm *gtm)
 {
-	unsigned int xfer_mask = 0;
+	unsigned long xfer_mask = 0;
 	unsigned int type;
 	int unit;
 	u8 mode;
@@ -525,7 +533,7 @@ int ata_acpi_cbl_80wire(struct ata_port *ap, const struct ata_acpi_gtm *gtm)
 	struct ata_device *dev;
 
 	ata_for_each_dev(dev, &ap->link, ENABLED) {
-		unsigned int xfer_mask, udma_mask;
+		unsigned long xfer_mask, udma_mask;
 
 		xfer_mask = ata_acpi_gtm_xfermask(dev, gtm);
 		ata_unpack_xfermask(xfer_mask, NULL, NULL, &udma_mask);
@@ -656,7 +664,9 @@ static int ata_acpi_run_tf(struct ata_device *dev,
 		pptf = &ptf;
 	}
 
-	descr = ata_get_cmd_name(tf.command);
+	descr = ata_get_cmd_descript(tf.command);
+	if (!descr)
+		descr = "unknown";
 
 	if (!ata_acpi_filter_tf(dev, &tf, pptf)) {
 		rtf = tf;
@@ -770,8 +780,9 @@ static int ata_acpi_push_id(struct ata_device *dev)
 	struct acpi_object_list input;
 	union acpi_object in_params[1];
 
-	ata_dev_dbg(dev, "%s: ix = %d, port#: %d\n",
-		    __func__, dev->devno, ap->port_no);
+	if (ata_msg_probe(ap))
+		ata_dev_dbg(dev, "%s: ix = %d, port#: %d\n",
+			    __func__, dev->devno, ap->port_no);
 
 	/* Give the drive Identify data to the drive via the _SDD method */
 	/* _SDD: set up input parameters */
@@ -796,6 +807,27 @@ static int ata_acpi_push_id(struct ata_device *dev)
 		return -EIO;
 	}
 
+	return 0;
+}
+
+/**
+ * ata_acpi_on_suspend - ATA ACPI hook called on suspend
+ * @ap: target ATA port
+ *
+ * This function is called when @ap is about to be suspended.  All
+ * devices are already put to sleep but the port_suspend() callback
+ * hasn't been executed yet.  Error return from this function aborts
+ * suspend.
+ *
+ * LOCKING:
+ * EH context.
+ *
+ * RETURNS:
+ * 0 on success, -errno on failure.
+ */
+int ata_acpi_on_suspend(struct ata_port *ap)
+{
+	/* nada */
 	return 0;
 }
 
@@ -992,7 +1024,7 @@ int ata_acpi_on_devcfg(struct ata_device *dev)
 
  acpi_err:
 	/* ignore evaluation failure if we can continue safely */
-	if (rc == -EINVAL && !nr_executed && !ata_port_is_frozen(ap))
+	if (rc == -EINVAL && !nr_executed && !(ap->pflags & ATA_PFLAG_FROZEN))
 		return 0;
 
 	/* fail and let EH retry once more for unknown IO errors */
@@ -1007,7 +1039,7 @@ int ata_acpi_on_devcfg(struct ata_device *dev)
 	/* We can safely continue if no _GTF command has been executed
 	 * and port is not frozen.
 	 */
-	if (!nr_executed && !ata_port_is_frozen(ap))
+	if (!nr_executed && !(ap->pflags & ATA_PFLAG_FROZEN))
 		return 0;
 
 	return rc;

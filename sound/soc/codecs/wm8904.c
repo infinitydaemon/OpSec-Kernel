@@ -2138,6 +2138,7 @@ static const struct snd_soc_component_driver soc_component_dev_wm8904 = {
 	.set_bias_level		= wm8904_set_bias_level,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config wm8904_regmap = {
@@ -2168,9 +2169,8 @@ static const struct of_device_id wm8904_of_match[] = {
 MODULE_DEVICE_TABLE(of, wm8904_of_match);
 #endif
 
-static const struct i2c_device_id wm8904_i2c_id[];
-
-static int wm8904_i2c_probe(struct i2c_client *i2c)
+static int wm8904_i2c_probe(struct i2c_client *i2c,
+			    const struct i2c_device_id *id)
 {
 	struct wm8904_priv *wm8904;
 	unsigned int val;
@@ -2204,8 +2204,6 @@ static int wm8904_i2c_probe(struct i2c_client *i2c)
 			return -EINVAL;
 		wm8904->devtype = (enum wm8904_type)match->data;
 	} else {
-		const struct i2c_device_id *id =
-			i2c_match_id(wm8904_i2c_id, i2c);
 		wm8904->devtype = id->driver_data;
 	}
 
@@ -2337,7 +2335,7 @@ static struct i2c_driver wm8904_i2c_driver = {
 		.name = "wm8904",
 		.of_match_table = of_match_ptr(wm8904_of_match),
 	},
-	.probe_new = wm8904_i2c_probe,
+	.probe =    wm8904_i2c_probe,
 	.id_table = wm8904_i2c_id,
 };
 

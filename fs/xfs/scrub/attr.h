@@ -24,7 +24,7 @@ struct xchk_xattr_buf {
 	 * space bitmap follows immediately after; and we have a third buffer
 	 * for storing intermediate bitmap results.
 	 */
-	uint8_t			buf[];
+	uint8_t			buf[0];
 };
 
 /* A place to store attribute values. */

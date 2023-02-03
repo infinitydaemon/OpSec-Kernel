@@ -15,7 +15,6 @@
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 
-#include <drm/drm_blend.h>
 #include <drm/drm_fourcc.h>
 #include <drm/exynos_drm.h>
 

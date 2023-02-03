@@ -545,10 +545,13 @@ static int emac_probe_resources(struct platform_device *pdev,
 				struct emac_adapter *adpt)
 {
 	struct net_device *netdev = adpt->netdev;
+	char maddr[ETH_ALEN];
 	int ret = 0;
 
 	/* get mac address */
-	if (device_get_ethdev_address(&pdev->dev, netdev))
+	if (device_get_mac_address(&pdev->dev, maddr, ETH_ALEN))
+		ether_addr_copy(netdev->dev_addr, maddr);
+	else
 		eth_hw_addr_random(netdev);
 
 	/* Core 0 interrupt */
@@ -684,7 +687,8 @@ static int emac_probe(struct platform_device *pdev)
 	/* Initialize queues */
 	emac_mac_rx_tx_ring_init_all(pdev, adpt);
 
-	netif_napi_add(netdev, &adpt->rx_q.napi, emac_napi_rtx);
+	netif_napi_add(netdev, &adpt->rx_q.napi, emac_napi_rtx,
+		       NAPI_POLL_WEIGHT);
 
 	ret = register_netdev(netdev);
 	if (ret) {

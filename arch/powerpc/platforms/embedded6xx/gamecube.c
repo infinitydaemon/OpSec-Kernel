@@ -16,6 +16,7 @@
 
 #include <asm/io.h>
 #include <asm/machdep.h>
+#include <asm/prom.h>
 #include <asm/time.h>
 #include <asm/udbg.h>
 

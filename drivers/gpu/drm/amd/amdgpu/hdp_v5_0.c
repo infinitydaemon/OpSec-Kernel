@@ -181,7 +181,7 @@ static void hdp_v5_0_update_clock_gating(struct amdgpu_device *adev,
 }
 
 static void hdp_v5_0_get_clockgating_state(struct amdgpu_device *adev,
-					    u64 *flags)
+					    u32 *flags)
 {
 	uint32_t tmp;
 

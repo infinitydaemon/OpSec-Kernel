@@ -287,17 +287,18 @@ static void stmmac_ethtool_getdrvinfo(struct net_device *dev,
 	struct stmmac_priv *priv = netdev_priv(dev);
 
 	if (priv->plat->has_gmac || priv->plat->has_gmac4)
-		strscpy(info->driver, GMAC_ETHTOOL_NAME, sizeof(info->driver));
+		strlcpy(info->driver, GMAC_ETHTOOL_NAME, sizeof(info->driver));
 	else if (priv->plat->has_xgmac)
-		strscpy(info->driver, XGMAC_ETHTOOL_NAME, sizeof(info->driver));
+		strlcpy(info->driver, XGMAC_ETHTOOL_NAME, sizeof(info->driver));
 	else
-		strscpy(info->driver, MAC100_ETHTOOL_NAME,
+		strlcpy(info->driver, MAC100_ETHTOOL_NAME,
 			sizeof(info->driver));
 
 	if (priv->plat->pdev) {
-		strscpy(info->bus_info, pci_name(priv->plat->pdev),
+		strlcpy(info->bus_info, pci_name(priv->plat->pdev),
 			sizeof(info->bus_info));
 	}
+	strlcpy(info->version, DRV_MODULE_VERSION, sizeof(info->version));
 }
 
 static int stmmac_ethtool_get_link_ksettings(struct net_device *dev,
@@ -477,22 +478,18 @@ static int stmmac_nway_reset(struct net_device *dev)
 }
 
 static void stmmac_get_ringparam(struct net_device *netdev,
-				 struct ethtool_ringparam *ring,
-				 struct kernel_ethtool_ringparam *kernel_ring,
-				 struct netlink_ext_ack *extack)
+				 struct ethtool_ringparam *ring)
 {
 	struct stmmac_priv *priv = netdev_priv(netdev);
 
 	ring->rx_max_pending = DMA_MAX_RX_SIZE;
 	ring->tx_max_pending = DMA_MAX_TX_SIZE;
-	ring->rx_pending = priv->dma_conf.dma_rx_size;
-	ring->tx_pending = priv->dma_conf.dma_tx_size;
+	ring->rx_pending = priv->dma_rx_size;
+	ring->tx_pending = priv->dma_tx_size;
 }
 
 static int stmmac_set_ringparam(struct net_device *netdev,
-				struct ethtool_ringparam *ring,
-				struct kernel_ethtool_ringparam *kernel_ring,
-				struct netlink_ext_ack *extack)
+				struct ethtool_ringparam *ring)
 {
 	if (ring->rx_mini_pending || ring->rx_jumbo_pending ||
 	    ring->rx_pending < DMA_MIN_RX_SIZE ||

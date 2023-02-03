@@ -16,7 +16,6 @@
 #include <linux/firmware.h>
 #include <linux/io.h>
 #include <linux/kernel.h>
-#include <linux/mfd/syscon.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
@@ -285,7 +284,6 @@ static int __must_check npe_logical_reg_write32(struct npe *npe, u32 addr,
 
 static int npe_reset(struct npe *npe)
 {
-	u32 reset_bit = (IXP4XX_FEATURE_RESET_NPEA << npe->id);
 	u32 val, ctl, exec_count, ctx_reg2;
 	int i;
 
@@ -382,19 +380,16 @@ static int npe_reset(struct npe *npe)
 	__raw_writel(0, &npe->regs->action_points[3]);
 	__raw_writel(0, &npe->regs->watch_count);
 
-	/*
-	 * We need to work on cached values here because the register
-	 * will read inverted but needs to be written non-inverted.
-	 */
-	val = cpu_ixp4xx_features(npe->rmap);
+	val = ixp4xx_read_feature_bits();
 	/* reset the NPE */
-	regmap_write(npe->rmap, IXP4XX_EXP_CNFG2, val & ~reset_bit);
+	ixp4xx_write_feature_bits(val &
+				  ~(IXP4XX_FEATURE_RESET_NPEA << npe->id));
 	/* deassert reset */
-	regmap_write(npe->rmap, IXP4XX_EXP_CNFG2, val | reset_bit);
-
+	ixp4xx_write_feature_bits(val |
+				  (IXP4XX_FEATURE_RESET_NPEA << npe->id));
 	for (i = 0; i < MAX_RETRIES; i++) {
-		val = cpu_ixp4xx_features(npe->rmap);
-		if (val & reset_bit)
+		if (ixp4xx_read_feature_bits() &
+		    (IXP4XX_FEATURE_RESET_NPEA << npe->id))
 			break;	/* NPE is back alive */
 		udelay(1);
 	}
@@ -688,14 +683,6 @@ static int ixp4xx_npe_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
 	struct resource *res;
-	struct regmap *rmap;
-	u32 val;
-
-	/* This system has only one syscon, so fetch it */
-	rmap = syscon_regmap_lookup_by_compatible("syscon");
-	if (IS_ERR(rmap))
-		return dev_err_probe(dev, PTR_ERR(rmap),
-				     "failed to look up syscon\n");
 
 	for (i = 0; i < NPE_COUNT; i++) {
 		struct npe *npe = &npe_tab[i];
@@ -704,9 +691,8 @@ static int ixp4xx_npe_probe(struct platform_device *pdev)
 		if (!res)
 			return -ENODEV;
 
-		val = cpu_ixp4xx_features(rmap);
-
-		if (!(val & (IXP4XX_FEATURE_RESET_NPEA << i))) {
+		if (!(ixp4xx_read_feature_bits() &
+		      (IXP4XX_FEATURE_RESET_NPEA << i))) {
 			dev_info(dev, "NPE%d at %pR not available\n",
 				 i, res);
 			continue; /* NPE already disabled or not present */
@@ -714,7 +700,6 @@ static int ixp4xx_npe_probe(struct platform_device *pdev)
 		npe->regs = devm_ioremap_resource(dev, res);
 		if (IS_ERR(npe->regs))
 			return PTR_ERR(npe->regs);
-		npe->rmap = rmap;
 
 		if (npe_reset(npe)) {
 			dev_info(dev, "NPE%d at %pR does not reset\n",

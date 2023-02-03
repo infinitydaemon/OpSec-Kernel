@@ -29,7 +29,7 @@
 		compatible = "gpio-keys";
 		autorepeat;
 
-		key-power {
+		power {
 			gpios = <&gpio0 RK_PA4 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_POWER>;
 			label = "GPIO Key Power";
@@ -212,7 +212,7 @@
 				regulator-name = "wl_18";
 			};
 
-			lcd_33: SWITCH_REG {
+			lcd_33: SWITCH_REG1 {
 				regulator-name = "lcd_33";
 			};
 		};

@@ -109,11 +109,12 @@ int st_sensors_spi_configure(struct iio_dev *indio_dev,
 
 	indio_dev->name = spi->modalias;
 
+	sdata->dev = &spi->dev;
 	sdata->irq = spi->irq;
 
 	return 0;
 }
-EXPORT_SYMBOL_NS(st_sensors_spi_configure, IIO_ST_SENSORS);
+EXPORT_SYMBOL(st_sensors_spi_configure);
 
 MODULE_AUTHOR("Denis Ciocca <denis.ciocca@st.com>");
 MODULE_DESCRIPTION("STMicroelectronics ST-sensors spi driver");

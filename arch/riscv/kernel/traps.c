@@ -33,7 +33,6 @@ void die(struct pt_regs *regs, const char *str)
 {
 	static int die_counter;
 	int ret;
-	long cause;
 
 	oops_enter();
 
@@ -43,13 +42,11 @@ void die(struct pt_regs *regs, const char *str)
 
 	pr_emerg("%s [#%d]\n", str, ++die_counter);
 	print_modules();
-	if (regs)
-		show_regs(regs);
+	show_regs(regs);
 
-	cause = regs ? regs->cause : -1;
-	ret = notify_die(DIE_OOPS, str, regs, 0, cause, SIGSEGV);
+	ret = notify_die(DIE_OOPS, str, regs, 0, regs->cause, SIGSEGV);
 
-	if (kexec_should_crash(current))
+	if (regs && kexec_should_crash(current))
 		crash_kexec(regs);
 
 	bust_spinlocks(0);
@@ -94,7 +91,7 @@ static void do_trap_error(struct pt_regs *regs, int signo, int code,
 	}
 }
 
-#if defined(CONFIG_XIP_KERNEL) && defined(CONFIG_RISCV_ALTERNATIVE)
+#if defined (CONFIG_XIP_KERNEL) && defined (CONFIG_RISCV_ERRATA_ALTERNATIVE)
 #define __trap_section		__section(".xip.traps")
 #else
 #define __trap_section
@@ -208,18 +205,18 @@ int is_valid_bugaddr(unsigned long pc)
 #endif /* CONFIG_GENERIC_BUG */
 
 #ifdef CONFIG_VMAP_STACK
-/*
- * Extra stack space that allows us to provide panic messages when the kernel
- * has overflowed its stack.
- */
 static DEFINE_PER_CPU(unsigned long [OVERFLOW_STACK_SIZE/sizeof(long)],
 		overflow_stack)__aligned(16);
 /*
- * A temporary stack for use by handle_kernel_stack_overflow.  This is used so
- * we can call into C code to get the per-hart overflow stack.  Usage of this
- * stack must be protected by spin_shadow_stack.
+ * shadow stack, handled_ kernel_ stack_ overflow(in kernel/entry.S) is used
+ * to get per-cpu overflow stack(get_overflow_stack).
  */
 long shadow_stack[SHADOW_OVERFLOW_STACK_SIZE/sizeof(long)] __aligned(16);
+asmlinkage unsigned long get_overflow_stack(void)
+{
+	return (unsigned long)this_cpu_ptr(overflow_stack) +
+		OVERFLOW_STACK_SIZE;
+}
 
 /*
  * A pseudo spinlock to protect the shadow stack from being used by multiple
@@ -229,12 +226,6 @@ long shadow_stack[SHADOW_OVERFLOW_STACK_SIZE/sizeof(long)] __aligned(16);
  * checking a proper spinlock gives us doesn't matter.
  */
 unsigned long spin_shadow_stack;
-
-asmlinkage unsigned long get_overflow_stack(void)
-{
-	return (unsigned long)this_cpu_ptr(overflow_stack) +
-		OVERFLOW_STACK_SIZE;
-}
 
 asmlinkage void handle_bad_stack(struct pt_regs *regs)
 {

@@ -213,7 +213,7 @@ static void igmp_stop_timer(struct ip_mc_list *im)
 /* It must be called with locked im->lock */
 static void igmp_start_timer(struct ip_mc_list *im, int max_delay)
 {
-	int tv = get_random_u32_below(max_delay);
+	int tv = prandom_u32() % max_delay;
 
 	im->tm_running = 1;
 	if (!mod_timer(&im->timer, jiffies+tv+2))
@@ -222,7 +222,7 @@ static void igmp_start_timer(struct ip_mc_list *im, int max_delay)
 
 static void igmp_gq_start_timer(struct in_device *in_dev)
 {
-	int tv = get_random_u32_below(in_dev->mr_maxdelay);
+	int tv = prandom_u32() % in_dev->mr_maxdelay;
 	unsigned long exp = jiffies + tv + 2;
 
 	if (in_dev->mr_gq_running &&
@@ -236,7 +236,7 @@ static void igmp_gq_start_timer(struct in_device *in_dev)
 
 static void igmp_ifc_start_timer(struct in_device *in_dev, int delay)
 {
-	int tv = get_random_u32_below(delay);
+	int tv = prandom_u32() % delay;
 
 	if (!mod_timer(&in_dev->mr_ifc_timer, jiffies+tv+2))
 		in_dev_hold(in_dev);
@@ -2529,10 +2529,11 @@ done:
 		err = ip_mc_leave_group(sk, &imr);
 	return err;
 }
+
 int ip_mc_msfget(struct sock *sk, struct ip_msfilter *msf,
-		 sockptr_t optval, sockptr_t optlen)
+	struct ip_msfilter __user *optval, int __user *optlen)
 {
-	int err, len, count, copycount, msf_size;
+	int err, len, count, copycount;
 	struct ip_mreqn	imr;
 	__be32 addr = msf->imsf_multiaddr;
 	struct ip_mc_socklist *pmc;
@@ -2567,6 +2568,7 @@ int ip_mc_msfget(struct sock *sk, struct ip_msfilter *msf,
 	msf->imsf_fmode = pmc->sfmode;
 	psl = rtnl_dereference(pmc->sflist);
 	if (!psl) {
+		len = 0;
 		count = 0;
 	} else {
 		count = psl->sl_count;
@@ -2574,15 +2576,12 @@ int ip_mc_msfget(struct sock *sk, struct ip_msfilter *msf,
 	copycount = count < msf->imsf_numsrc ? count : msf->imsf_numsrc;
 	len = flex_array_size(psl, sl_addr, copycount);
 	msf->imsf_numsrc = count;
-	msf_size = IP_MSFILTER_SIZE(copycount);
-	if (copy_to_sockptr(optlen, &msf_size, sizeof(int)) ||
-	    copy_to_sockptr(optval, msf, IP_MSFILTER_SIZE(0))) {
+	if (put_user(IP_MSFILTER_SIZE(copycount), optlen) ||
+	    copy_to_user(optval, msf, IP_MSFILTER_SIZE(0))) {
 		return -EFAULT;
 	}
 	if (len &&
-	    copy_to_sockptr_offset(optval,
-				   offsetof(struct ip_msfilter, imsf_slist_flex),
-				   psl->sl_addr, len))
+	    copy_to_user(&optval->imsf_slist_flex[0], psl->sl_addr, len))
 		return -EFAULT;
 	return 0;
 done:
@@ -2590,7 +2589,7 @@ done:
 }
 
 int ip_mc_gsfget(struct sock *sk, struct group_filter *gsf,
-		 sockptr_t optval, size_t ss_offset)
+	struct sockaddr_storage __user *p)
 {
 	int i, count, copycount;
 	struct sockaddr_in *psin;
@@ -2620,17 +2619,15 @@ int ip_mc_gsfget(struct sock *sk, struct group_filter *gsf,
 	count = psl ? psl->sl_count : 0;
 	copycount = count < gsf->gf_numsrc ? count : gsf->gf_numsrc;
 	gsf->gf_numsrc = count;
-	for (i = 0; i < copycount; i++) {
+	for (i = 0; i < copycount; i++, p++) {
 		struct sockaddr_storage ss;
 
 		psin = (struct sockaddr_in *)&ss;
 		memset(&ss, 0, sizeof(ss));
 		psin->sin_family = AF_INET;
 		psin->sin_addr.s_addr = psl->sl_addr[i];
-		if (copy_to_sockptr_offset(optval, ss_offset,
-					   &ss, sizeof(ss)))
+		if (copy_to_user(p, &ss, sizeof(ss)))
 			return -EFAULT;
-		ss_offset += sizeof(ss);
 	}
 	return 0;
 }
@@ -2850,7 +2847,7 @@ static int igmp_mc_seq_show(struct seq_file *seq, void *v)
 		seq_puts(seq,
 			 "Idx\tDevice    : Count Querier\tGroup    Users Timer\tReporter\n");
 	else {
-		struct ip_mc_list *im = v;
+		struct ip_mc_list *im = (struct ip_mc_list *)v;
 		struct igmp_mc_iter_state *state = igmp_mc_seq_private(seq);
 		char   *querier;
 		long delta;
@@ -2994,7 +2991,7 @@ static void igmp_mcf_seq_stop(struct seq_file *seq, void *v)
 
 static int igmp_mcf_seq_show(struct seq_file *seq, void *v)
 {
-	struct ip_sf_list *psf = v;
+	struct ip_sf_list *psf = (struct ip_sf_list *)v;
 	struct igmp_mcf_iter_state *state = igmp_mcf_seq_private(seq);
 
 	if (v == SEQ_START_TOKEN) {

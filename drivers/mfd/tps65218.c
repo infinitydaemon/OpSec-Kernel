@@ -1,8 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Driver for TPS65218 Integrated power management chipsets
  *
  * Copyright (C) 2014 Texas Instruments Incorporated - https://www.ti.com/
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether expressed or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License version 2 for more details.
  */
 
 #include <linux/kernel.h>
@@ -280,7 +288,8 @@ static int tps65218_voltage_set_uvlo(struct tps65218 *tps)
 	return 0;
 }
 
-static int tps65218_probe(struct i2c_client *client)
+static int tps65218_probe(struct i2c_client *client,
+				const struct i2c_device_id *ids)
 {
 	struct tps65218 *tps;
 	int ret;
@@ -347,7 +356,7 @@ static struct i2c_driver tps65218_driver = {
 		.name	= "tps65218",
 		.of_match_table = of_tps65218_match_table,
 	},
-	.probe_new	= tps65218_probe,
+	.probe		= tps65218_probe,
 	.id_table       = tps65218_id_table,
 };
 

@@ -4,7 +4,6 @@
 
 #include <linux/uaccess.h>
 #include <linux/futex.h>
-#include <asm/asm-extable.h>
 #include <asm/mmu_context.h>
 #include <asm/errno.h>
 

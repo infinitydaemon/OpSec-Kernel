@@ -761,7 +761,7 @@ static int encx24j600_set_mac_address(struct net_device *dev, void *addr)
 	if (!is_valid_ether_addr(address->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(dev, address->sa_data);
+	memcpy(dev->dev_addr, address->sa_data, dev->addr_len);
 	return encx24j600_set_hw_macaddr(dev);
 }
 
@@ -925,9 +925,9 @@ static void encx24j600_get_regs(struct net_device *dev,
 static void encx24j600_get_drvinfo(struct net_device *dev,
 				   struct ethtool_drvinfo *info)
 {
-	strscpy(info->driver, DRV_NAME, sizeof(info->driver));
-	strscpy(info->version, DRV_VERSION, sizeof(info->version));
-	strscpy(info->bus_info, dev_name(dev->dev.parent),
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, dev_name(dev->dev.parent),
 		sizeof(info->bus_info));
 }
 
@@ -1001,7 +1001,6 @@ static int encx24j600_spi_probe(struct spi_device *spi)
 	struct net_device *ndev;
 	struct encx24j600_priv *priv;
 	u16 eidled;
-	u8 addr[ETH_ALEN];
 
 	ndev = alloc_etherdev(sizeof(struct encx24j600_priv));
 
@@ -1057,8 +1056,7 @@ static int encx24j600_spi_probe(struct spi_device *spi)
 	}
 
 	/* Get the MAC address from the chip */
-	encx24j600_hw_get_macaddr(priv, addr);
-	eth_hw_addr_set(ndev, addr);
+	encx24j600_hw_get_macaddr(priv, ndev->dev_addr);
 
 	ndev->ethtool_ops = &encx24j600_ethtool_ops;
 
@@ -1093,7 +1091,7 @@ error_out:
 	return ret;
 }
 
-static void encx24j600_spi_remove(struct spi_device *spi)
+static int encx24j600_spi_remove(struct spi_device *spi)
 {
 	struct encx24j600_priv *priv = dev_get_drvdata(&spi->dev);
 
@@ -1101,6 +1099,8 @@ static void encx24j600_spi_remove(struct spi_device *spi)
 	kthread_stop(priv->kworker_task);
 
 	free_netdev(priv->ndev);
+
+	return 0;
 }
 
 static const struct spi_device_id encx24j600_spi_id_table[] = {
@@ -1125,3 +1125,4 @@ module_spi_driver(encx24j600_spi_net_driver);
 MODULE_DESCRIPTION(DRV_NAME " ethernet driver");
 MODULE_AUTHOR("Jon Ringle <jringle@gridpoint.com>");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("spi:" DRV_NAME);

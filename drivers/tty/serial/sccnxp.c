@@ -468,7 +468,8 @@ static void sccnxp_handle_tx(struct uart_port *port)
 			break;
 
 		sccnxp_port_write(port, SCCNXP_THR_REG, xmit->buf[xmit->tail]);
-		uart_xmit_advance(port, 1);
+		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+		port->icount.tx++;
 	}
 
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
@@ -635,8 +636,7 @@ static void sccnxp_break_ctl(struct uart_port *port, int break_state)
 }
 
 static void sccnxp_set_termios(struct uart_port *port,
-			       struct ktermios *termios,
-			       const struct ktermios *old)
+			       struct ktermios *termios, struct ktermios *old)
 {
 	struct sccnxp_port *s = dev_get_drvdata(port->dev);
 	unsigned long flags;
@@ -828,7 +828,7 @@ static const struct uart_ops sccnxp_ops = {
 };
 
 #ifdef CONFIG_SERIAL_SCCNXP_CONSOLE
-static void sccnxp_console_putchar(struct uart_port *port, unsigned char c)
+static void sccnxp_console_putchar(struct uart_port *port, int c)
 {
 	int tryes = 100000;
 

@@ -9,49 +9,57 @@
 #include <linux/tracepoint.h>
 #include <trace/events/mmflags.h>
 
-TRACE_EVENT(kmem_cache_alloc,
+DECLARE_EVENT_CLASS(kmem_alloc,
 
 	TP_PROTO(unsigned long call_site,
 		 const void *ptr,
-		 struct kmem_cache *s,
-		 gfp_t gfp_flags,
-		 int node),
+		 size_t bytes_req,
+		 size_t bytes_alloc,
+		 gfp_t gfp_flags),
 
-	TP_ARGS(call_site, ptr, s, gfp_flags, node),
+	TP_ARGS(call_site, ptr, bytes_req, bytes_alloc, gfp_flags),
 
 	TP_STRUCT__entry(
 		__field(	unsigned long,	call_site	)
 		__field(	const void *,	ptr		)
 		__field(	size_t,		bytes_req	)
 		__field(	size_t,		bytes_alloc	)
-		__field(	unsigned long,	gfp_flags	)
-		__field(	int,		node		)
-		__field(	bool,		accounted	)
+		__field(	gfp_t,		gfp_flags	)
 	),
 
 	TP_fast_assign(
 		__entry->call_site	= call_site;
 		__entry->ptr		= ptr;
-		__entry->bytes_req	= s->object_size;
-		__entry->bytes_alloc	= s->size;
-		__entry->gfp_flags	= (__force unsigned long)gfp_flags;
-		__entry->node		= node;
-		__entry->accounted	= IS_ENABLED(CONFIG_MEMCG_KMEM) ?
-					  ((gfp_flags & __GFP_ACCOUNT) ||
-					  (s->flags & SLAB_ACCOUNT)) : false;
+		__entry->bytes_req	= bytes_req;
+		__entry->bytes_alloc	= bytes_alloc;
+		__entry->gfp_flags	= gfp_flags;
 	),
 
-	TP_printk("call_site=%pS ptr=%p bytes_req=%zu bytes_alloc=%zu gfp_flags=%s node=%d accounted=%s",
+	TP_printk("call_site=%pS ptr=%p bytes_req=%zu bytes_alloc=%zu gfp_flags=%s",
 		(void *)__entry->call_site,
 		__entry->ptr,
 		__entry->bytes_req,
 		__entry->bytes_alloc,
-		show_gfp_flags(__entry->gfp_flags),
-		__entry->node,
-		__entry->accounted ? "true" : "false")
+		show_gfp_flags(__entry->gfp_flags))
 );
 
-TRACE_EVENT(kmalloc,
+DEFINE_EVENT(kmem_alloc, kmalloc,
+
+	TP_PROTO(unsigned long call_site, const void *ptr,
+		 size_t bytes_req, size_t bytes_alloc, gfp_t gfp_flags),
+
+	TP_ARGS(call_site, ptr, bytes_req, bytes_alloc, gfp_flags)
+);
+
+DEFINE_EVENT(kmem_alloc, kmem_cache_alloc,
+
+	TP_PROTO(unsigned long call_site, const void *ptr,
+		 size_t bytes_req, size_t bytes_alloc, gfp_t gfp_flags),
+
+	TP_ARGS(call_site, ptr, bytes_req, bytes_alloc, gfp_flags)
+);
+
+DECLARE_EVENT_CLASS(kmem_alloc_node,
 
 	TP_PROTO(unsigned long call_site,
 		 const void *ptr,
@@ -67,7 +75,7 @@ TRACE_EVENT(kmalloc,
 		__field(	const void *,	ptr		)
 		__field(	size_t,		bytes_req	)
 		__field(	size_t,		bytes_alloc	)
-		__field(	unsigned long,	gfp_flags	)
+		__field(	gfp_t,		gfp_flags	)
 		__field(	int,		node		)
 	),
 
@@ -76,19 +84,35 @@ TRACE_EVENT(kmalloc,
 		__entry->ptr		= ptr;
 		__entry->bytes_req	= bytes_req;
 		__entry->bytes_alloc	= bytes_alloc;
-		__entry->gfp_flags	= (__force unsigned long)gfp_flags;
+		__entry->gfp_flags	= gfp_flags;
 		__entry->node		= node;
 	),
 
-	TP_printk("call_site=%pS ptr=%p bytes_req=%zu bytes_alloc=%zu gfp_flags=%s node=%d accounted=%s",
+	TP_printk("call_site=%pS ptr=%p bytes_req=%zu bytes_alloc=%zu gfp_flags=%s node=%d",
 		(void *)__entry->call_site,
 		__entry->ptr,
 		__entry->bytes_req,
 		__entry->bytes_alloc,
 		show_gfp_flags(__entry->gfp_flags),
-		__entry->node,
-		(IS_ENABLED(CONFIG_MEMCG_KMEM) &&
-		 (__entry->gfp_flags & (__force unsigned long)__GFP_ACCOUNT)) ? "true" : "false")
+		__entry->node)
+);
+
+DEFINE_EVENT(kmem_alloc_node, kmalloc_node,
+
+	TP_PROTO(unsigned long call_site, const void *ptr,
+		 size_t bytes_req, size_t bytes_alloc,
+		 gfp_t gfp_flags, int node),
+
+	TP_ARGS(call_site, ptr, bytes_req, bytes_alloc, gfp_flags, node)
+);
+
+DEFINE_EVENT(kmem_alloc_node, kmem_cache_alloc_node,
+
+	TP_PROTO(unsigned long call_site, const void *ptr,
+		 size_t bytes_req, size_t bytes_alloc,
+		 gfp_t gfp_flags, int node),
+
+	TP_ARGS(call_site, ptr, bytes_req, bytes_alloc, gfp_flags, node)
 );
 
 TRACE_EVENT(kfree,
@@ -113,20 +137,20 @@ TRACE_EVENT(kfree,
 
 TRACE_EVENT(kmem_cache_free,
 
-	TP_PROTO(unsigned long call_site, const void *ptr, const struct kmem_cache *s),
+	TP_PROTO(unsigned long call_site, const void *ptr, const char *name),
 
-	TP_ARGS(call_site, ptr, s),
+	TP_ARGS(call_site, ptr, name),
 
 	TP_STRUCT__entry(
 		__field(	unsigned long,	call_site	)
 		__field(	const void *,	ptr		)
-		__string(	name,		s->name		)
+		__string(	name,	name	)
 	),
 
 	TP_fast_assign(
 		__entry->call_site	= call_site;
 		__entry->ptr		= ptr;
-		__assign_str(name, s->name);
+		__assign_str(name, name);
 	),
 
 	TP_printk("call_site=%pS ptr=%p name=%s",
@@ -184,14 +208,14 @@ TRACE_EVENT(mm_page_alloc,
 	TP_STRUCT__entry(
 		__field(	unsigned long,	pfn		)
 		__field(	unsigned int,	order		)
-		__field(	unsigned long,	gfp_flags	)
+		__field(	gfp_t,		gfp_flags	)
 		__field(	int,		migratetype	)
 	),
 
 	TP_fast_assign(
 		__entry->pfn		= page ? page_to_pfn(page) : -1UL;
 		__entry->order		= order;
-		__entry->gfp_flags	= (__force unsigned long)gfp_flags;
+		__entry->gfp_flags	= gfp_flags;
 		__entry->migratetype	= migratetype;
 	),
 
@@ -205,23 +229,20 @@ TRACE_EVENT(mm_page_alloc,
 
 DECLARE_EVENT_CLASS(mm_page,
 
-	TP_PROTO(struct page *page, unsigned int order, int migratetype,
-		 int percpu_refill),
+	TP_PROTO(struct page *page, unsigned int order, int migratetype),
 
-	TP_ARGS(page, order, migratetype, percpu_refill),
+	TP_ARGS(page, order, migratetype),
 
 	TP_STRUCT__entry(
 		__field(	unsigned long,	pfn		)
 		__field(	unsigned int,	order		)
 		__field(	int,		migratetype	)
-		__field(	int,		percpu_refill	)
 	),
 
 	TP_fast_assign(
 		__entry->pfn		= page ? page_to_pfn(page) : -1UL;
 		__entry->order		= order;
 		__entry->migratetype	= migratetype;
-		__entry->percpu_refill	= percpu_refill;
 	),
 
 	TP_printk("page=%p pfn=0x%lx order=%u migratetype=%d percpu_refill=%d",
@@ -229,15 +250,14 @@ DECLARE_EVENT_CLASS(mm_page,
 		__entry->pfn != -1UL ? __entry->pfn : 0,
 		__entry->order,
 		__entry->migratetype,
-		__entry->percpu_refill)
+		__entry->order == 0)
 );
 
 DEFINE_EVENT(mm_page, mm_page_alloc_zone_locked,
 
-	TP_PROTO(struct page *page, unsigned int order, int migratetype,
-		 int percpu_refill),
+	TP_PROTO(struct page *page, unsigned int order, int migratetype),
 
-	TP_ARGS(page, order, migratetype, percpu_refill)
+	TP_ARGS(page, order, migratetype)
 );
 
 TRACE_EVENT(mm_page_pcpu_drain,
@@ -346,9 +366,10 @@ TRACE_MM_PAGES
 TRACE_EVENT(rss_stat,
 
 	TP_PROTO(struct mm_struct *mm,
-		int member),
+		int member,
+		long count),
 
-	TP_ARGS(mm, member),
+	TP_ARGS(mm, member, count),
 
 	TP_STRUCT__entry(
 		__field(unsigned int, mm_id)
@@ -361,8 +382,7 @@ TRACE_EVENT(rss_stat,
 		__entry->mm_id = mm_ptr_to_hash(mm);
 		__entry->curr = !!(current->mm == mm);
 		__entry->member = member;
-		__entry->size = (percpu_counter_sum_positive(&mm->rss_stat[member])
-							    << PAGE_SHIFT);
+		__entry->size = (count << PAGE_SHIFT);
 	),
 
 	TP_printk("mm_id=%u curr=%d type=%s size=%ldB",

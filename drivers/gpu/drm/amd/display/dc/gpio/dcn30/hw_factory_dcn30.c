@@ -22,6 +22,7 @@
  * Authors: AMD
  *
  */
+#if defined(CONFIG_DRM_AMD_DC_DCN)
 #include "dm_services.h"
 #include "include/gpio_types.h"
 #include "../hw_factory.h"
@@ -41,8 +42,8 @@
 
 #include "nbio/nbio_7_4_offset.h"
 
-#include "dpcs/dpcs_3_0_0_offset.h"
-#include "dpcs/dpcs_3_0_0_sh_mask.h"
+#include "dcn/dpcs_3_0_0_offset.h"
+#include "dcn/dpcs_3_0_0_sh_mask.h"
 
 #include "mmhub/mmhub_2_0_0_offset.h"
 #include "mmhub/mmhub_2_0_0_sh_mask.h"
@@ -265,3 +266,4 @@ void dal_hw_factory_dcn30_init(struct hw_factory *factory)
 	factory->funcs = &funcs;
 }
 
+#endif

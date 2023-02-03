@@ -58,19 +58,14 @@ patternProperties:
       cpu:
         description: Holds subnode which indicates cpu dai.
         type: object
-        additionalProperties: false
         properties:
-          sound-dai:
-            maxItems: 1
+          sound-dai: true
 
       codec:
         description: Holds subnode which indicates codec dai.
         type: object
-        additionalProperties: false
         properties:
-          sound-dai:
-            minItems: 1
-            maxItems: 2
+          sound-dai: true
 
       fsl,mclk-equal-bclk:
         description: Indicates mclk can be equal to bclk, especially for sai interface

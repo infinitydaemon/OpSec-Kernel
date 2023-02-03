@@ -323,9 +323,9 @@ int st_uvis25_probe(struct device *dev, int irq, struct regmap *regmap)
 
 	return devm_iio_device_register(dev, iio_dev);
 }
-EXPORT_SYMBOL_NS(st_uvis25_probe, IIO_UVIS25);
+EXPORT_SYMBOL(st_uvis25_probe);
 
-static int st_uvis25_suspend(struct device *dev)
+static int __maybe_unused st_uvis25_suspend(struct device *dev)
 {
 	struct iio_dev *iio_dev = dev_get_drvdata(dev);
 	struct st_uvis25_hw *hw = iio_priv(iio_dev);
@@ -334,7 +334,7 @@ static int st_uvis25_suspend(struct device *dev)
 				  ST_UVIS25_REG_ODR_MASK, 0);
 }
 
-static int st_uvis25_resume(struct device *dev)
+static int __maybe_unused st_uvis25_resume(struct device *dev)
 {
 	struct iio_dev *iio_dev = dev_get_drvdata(dev);
 	struct st_uvis25_hw *hw = iio_priv(iio_dev);
@@ -346,7 +346,10 @@ static int st_uvis25_resume(struct device *dev)
 	return 0;
 }
 
-EXPORT_NS_SIMPLE_DEV_PM_OPS(st_uvis25_pm_ops, st_uvis25_suspend, st_uvis25_resume, IIO_UVIS25);
+const struct dev_pm_ops st_uvis25_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(st_uvis25_suspend, st_uvis25_resume)
+};
+EXPORT_SYMBOL(st_uvis25_pm_ops);
 
 MODULE_AUTHOR("Lorenzo Bianconi <lorenzo.bianconi83@gmail.com>");
 MODULE_DESCRIPTION("STMicroelectronics uvis25 sensor driver");

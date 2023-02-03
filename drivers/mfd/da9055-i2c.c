@@ -15,7 +15,8 @@
 
 #include <linux/mfd/da9055/core.h>
 
-static int da9055_i2c_probe(struct i2c_client *i2c)
+static int da9055_i2c_probe(struct i2c_client *i2c,
+				      const struct i2c_device_id *id)
 {
 	struct da9055 *da9055;
 	int ret;
@@ -40,11 +41,13 @@ static int da9055_i2c_probe(struct i2c_client *i2c)
 	return da9055_device_init(da9055);
 }
 
-static void da9055_i2c_remove(struct i2c_client *i2c)
+static int da9055_i2c_remove(struct i2c_client *i2c)
 {
 	struct da9055 *da9055 = i2c_get_clientdata(i2c);
 
 	da9055_device_exit(da9055);
+
+	return 0;
 }
 
 /*
@@ -66,7 +69,7 @@ static const struct of_device_id da9055_of_match[] = {
 };
 
 static struct i2c_driver da9055_i2c_driver = {
-	.probe_new = da9055_i2c_probe,
+	.probe = da9055_i2c_probe,
 	.remove = da9055_i2c_remove,
 	.id_table = da9055_i2c_id,
 	.driver = {

@@ -8,13 +8,21 @@
 #ifndef _ASM_RISCV_VDSO_H
 #define _ASM_RISCV_VDSO_H
 
+
 /*
  * All systems with an MMU have a VDSO, but systems without an MMU don't
- * support shared libraries and therefore don't have one.
+ * support shared libraries and therefor don't have one.
  */
 #ifdef CONFIG_MMU
 
-#define __VVAR_PAGES    2
+#include <linux/types.h>
+/*
+ * All systems with an MMU have a VDSO, but systems without an MMU don't
+ * support shared libraries and therefor don't have one.
+ */
+#ifdef CONFIG_MMU
+
+#define __VVAR_PAGES    1
 
 #ifndef __ASSEMBLY__
 #include <generated/vdso-offsets.h>
@@ -22,13 +30,7 @@
 #define VDSO_SYMBOL(base, name)							\
 	(void __user *)((unsigned long)(base) + __vdso_##name##_offset)
 
-#ifdef CONFIG_COMPAT
-#include <generated/compat_vdso-offsets.h>
-
-#define COMPAT_VDSO_SYMBOL(base, name)						\
-	(void __user *)((unsigned long)(base) + compat__vdso_##name##_offset)
-
-#endif /* CONFIG_COMPAT */
+#endif /* CONFIG_MMU */
 
 #endif /* !__ASSEMBLY__ */
 

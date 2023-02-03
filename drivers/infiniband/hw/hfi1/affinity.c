@@ -5,6 +5,7 @@
 
 #include <linux/topology.h>
 #include <linux/cpumask.h>
+#include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/numa.h>
 
@@ -668,7 +669,7 @@ int hfi1_dev_affinity_init(struct hfi1_devdata *dd)
 			 * engines, use the same CPU cores as general/control
 			 * context.
 			 */
-			if (cpumask_empty(&entry->def_intr.mask))
+			if (cpumask_weight(&entry->def_intr.mask) == 0)
 				cpumask_copy(&entry->def_intr.mask,
 					     &entry->general_intr_mask);
 		}
@@ -688,7 +689,7 @@ int hfi1_dev_affinity_init(struct hfi1_devdata *dd)
 		 * vectors, use the same CPU core as the general/control
 		 * context.
 		 */
-		if (cpumask_empty(&entry->comp_vect_mask))
+		if (cpumask_weight(&entry->comp_vect_mask) == 0)
 			cpumask_copy(&entry->comp_vect_mask,
 				     &entry->general_intr_mask);
 	}

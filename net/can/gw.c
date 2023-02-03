@@ -463,10 +463,10 @@ static void can_can_gw_rcv(struct sk_buff *skb, void *data)
 
 	/* process strictly Classic CAN or CAN FD frames */
 	if (gwj->flags & CGW_FLAGS_CAN_FD) {
-		if (!can_is_canfd_skb(skb))
+		if (skb->len != CANFD_MTU)
 			return;
 	} else {
-		if (!can_is_can_skb(skb))
+		if (skb->len != CAN_MTU)
 			return;
 	}
 
@@ -577,13 +577,6 @@ static inline void cgw_unregister_filter(struct net *net, struct cgw_job *gwj)
 			  gwj->ccgw.filter.can_mask, can_can_gw_rcv, gwj);
 }
 
-static void cgw_job_free_rcu(struct rcu_head *rcu_head)
-{
-	struct cgw_job *gwj = container_of(rcu_head, struct cgw_job, rcu);
-
-	kmem_cache_free(cgw_cache, gwj);
-}
-
 static int cgw_notifier(struct notifier_block *nb,
 			unsigned long msg, void *ptr)
 {
@@ -603,7 +596,8 @@ static int cgw_notifier(struct notifier_block *nb,
 			if (gwj->src.dev == dev || gwj->dst.dev == dev) {
 				hlist_del(&gwj->list);
 				cgw_unregister_filter(net, gwj);
-				call_rcu(&gwj->rcu, cgw_job_free_rcu);
+				synchronize_rcu();
+				kmem_cache_free(cgw_cache, gwj);
 			}
 		}
 	}
@@ -1161,7 +1155,8 @@ static void cgw_remove_all_jobs(struct net *net)
 	hlist_for_each_entry_safe(gwj, nx, &net->can.cgw_list, list) {
 		hlist_del(&gwj->list);
 		cgw_unregister_filter(net, gwj);
-		call_rcu(&gwj->rcu, cgw_job_free_rcu);
+		synchronize_rcu();
+		kmem_cache_free(cgw_cache, gwj);
 	}
 }
 
@@ -1229,7 +1224,8 @@ static int cgw_remove_job(struct sk_buff *skb, struct nlmsghdr *nlh,
 
 		hlist_del(&gwj->list);
 		cgw_unregister_filter(net, gwj);
-		call_rcu(&gwj->rcu, cgw_job_free_rcu);
+		synchronize_rcu();
+		kmem_cache_free(cgw_cache, gwj);
 		err = 0;
 		break;
 	}
@@ -1243,19 +1239,16 @@ static int __net_init cangw_pernet_init(struct net *net)
 	return 0;
 }
 
-static void __net_exit cangw_pernet_exit_batch(struct list_head *net_list)
+static void __net_exit cangw_pernet_exit(struct net *net)
 {
-	struct net *net;
-
 	rtnl_lock();
-	list_for_each_entry(net, net_list, exit_list)
-		cgw_remove_all_jobs(net);
+	cgw_remove_all_jobs(net);
 	rtnl_unlock();
 }
 
 static struct pernet_operations cangw_pernet_ops = {
 	.init = cangw_pernet_init,
-	.exit_batch = cangw_pernet_exit_batch,
+	.exit = cangw_pernet_exit,
 };
 
 static __init int cgw_module_init(void)

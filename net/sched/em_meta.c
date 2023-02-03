@@ -311,15 +311,12 @@ META_COLLECTOR(int_sk_bound_if)
 
 META_COLLECTOR(var_sk_bound_if)
 {
-	int bound_dev_if;
-
 	if (skip_nonlocal(skb)) {
 		*err = -1;
 		return;
 	}
 
-	bound_dev_if = READ_ONCE(skb->sk->sk_bound_dev_if);
-	if (bound_dev_if == 0) {
+	if (skb->sk->sk_bound_dev_if == 0) {
 		dst->value = (unsigned long) "any";
 		dst->len = 3;
 	} else {
@@ -327,7 +324,7 @@ META_COLLECTOR(var_sk_bound_if)
 
 		rcu_read_lock();
 		dev = dev_get_by_index_rcu(sock_net(skb->sk),
-					   bound_dev_if);
+					   skb->sk->sk_bound_dev_if);
 		*err = var_dev(dev, dst);
 		rcu_read_unlock();
 	}
@@ -460,7 +457,7 @@ META_COLLECTOR(int_sk_fwd_alloc)
 		*err = -1;
 		return;
 	}
-	dst->value = sk_forward_alloc_get(sk);
+	dst->value = sk->sk_forward_alloc;
 }
 
 META_COLLECTOR(int_sk_sndbuf)

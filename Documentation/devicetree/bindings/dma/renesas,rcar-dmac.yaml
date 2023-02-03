@@ -42,11 +42,7 @@ properties:
           - const: renesas,rcar-dmac
 
       - items:
-          - enum:
-              - renesas,dmac-r8a779a0     # R-Car V3U
-              - renesas,dmac-r8a779f0     # R-Car S4-8
-              - renesas,dmac-r8a779g0     # R-Car V4H
-          - const: renesas,rcar-gen4-dmac # R-Car Gen4
+          - const: renesas,dmac-r8a779a0 # R-Car V3U
 
   reg: true
 
@@ -121,7 +117,7 @@ if:
     compatible:
       contains:
         enum:
-          - renesas,rcar-gen4-dmac
+          - renesas,dmac-r8a779a0
 then:
   properties:
     reg:

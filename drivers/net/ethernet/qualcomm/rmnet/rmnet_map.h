@@ -19,7 +19,7 @@ struct rmnet_map_control_command {
 			__be16 flow_control_seq_num;
 			__be32 qos_id;
 		} flow_control;
-		DECLARE_FLEX_ARRAY(u8, data);
+		u8 data[0];
 	};
 }  __aligned(1);
 

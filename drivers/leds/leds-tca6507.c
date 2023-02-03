@@ -242,7 +242,9 @@ static int choose_times(int msec, int *c1p, int *c2p)
 	if (diff < 65536) {
 		int actual;
 		if (msec & 1) {
-			swap(*c2p, *c1p);
+			c1 = *c2p;
+			*c2p = *c1p;
+			*c1p = c1;
 		}
 		actual = time_codes[*c1p] + time_codes[*c2p];
 		if (*c1p < *c2p)
@@ -641,6 +643,9 @@ static int tca6507_probe_gpios(struct device *dev,
 	tca->gpio.direction_output = tca6507_gpio_direction_output;
 	tca->gpio.set = tca6507_gpio_set_value;
 	tca->gpio.parent = dev;
+#ifdef CONFIG_OF_GPIO
+	tca->gpio.of_node = of_node_get(dev_of_node(dev));
+#endif
 	err = gpiochip_add_data(&tca->gpio, tca);
 	if (err) {
 		tca->gpio.ngpio = 0;
@@ -790,7 +795,7 @@ exit:
 	return err;
 }
 
-static void tca6507_remove(struct i2c_client *client)
+static int tca6507_remove(struct i2c_client *client)
 {
 	int i;
 	struct tca6507_chip *tca = i2c_get_clientdata(client);
@@ -802,6 +807,8 @@ static void tca6507_remove(struct i2c_client *client)
 	}
 	tca6507_remove_gpio(tca);
 	cancel_work_sync(&tca->work);
+
+	return 0;
 }
 
 static struct i2c_driver tca6507_driver = {

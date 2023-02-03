@@ -26,7 +26,6 @@
 #include <linux/module.h>
 #include <linux/personality.h>
 #include <linux/ptrace.h>
-#include <linux/reboot.h>
 #include <linux/sched.h>
 #include <linux/sched/debug.h>
 #include <linux/sched/task.h>
@@ -39,7 +38,6 @@
 #include <linux/rcupdate.h>
 #include <linux/random.h>
 #include <linux/nmi.h>
-#include <linux/sched/hotplug.h>
 
 #include <asm/io.h>
 #include <asm/asm-offsets.h>
@@ -48,7 +46,6 @@
 #include <asm/pdc_chassis.h>
 #include <asm/unwind.h>
 #include <asm/sections.h>
-#include <asm/cacheflush.h>
 
 #define COMMAND_GLOBAL  F_EXTEND(0xfffe0030)
 #define CMD_RESET       5       /* reset any module */
@@ -117,7 +114,8 @@ void machine_power_off(void)
 	pdc_chassis_send_status(PDC_CHASSIS_DIRECT_SHUTDOWN);
 
 	/* ipmi_poweroff may have been installed. */
-	do_kernel_power_off();
+	if (pm_power_off)
+		pm_power_off();
 		
 	/* It seems we have no way to power the system off via
 	 * software. The user has to press the button himself. */
@@ -146,6 +144,10 @@ void flush_thread(void)
 	*/
 }
 
+void release_thread(struct task_struct *dead_task)
+{
+}
+
 /*
  * Idle thread support
  *
@@ -156,29 +158,10 @@ void flush_thread(void)
 int running_on_qemu __ro_after_init;
 EXPORT_SYMBOL(running_on_qemu);
 
-/*
- * Called from the idle thread for the CPU which has been shutdown.
- */
-void arch_cpu_idle_dead(void)
+void __cpuidle arch_cpu_idle_dead(void)
 {
-#ifdef CONFIG_HOTPLUG_CPU
-	idle_task_exit();
-
-	local_irq_disable();
-
-	/* Tell __cpu_die() that this CPU is now safe to dispose of. */
-	(void)cpu_report_death();
-
-	/* Ensure that the cache lines are written out. */
-	flush_cache_all_local();
-	flush_tlb_all_local(NULL);
-
-	/* Let PDC firmware put CPU into firmware idle loop. */
-	__pdc_cpu_rendezvous();
-
-	pr_warn("PDC does not provide rendezvous function.\n");
-#endif
-	while (1);
+	/* nop on real hardware, qemu will offline CPU. */
+	asm volatile("or %%r31,%%r31,%%r31\n":::);
 }
 
 void __cpuidle arch_cpu_idle(void)
@@ -202,11 +185,9 @@ arch_initcall(parisc_idle_init);
  * Copy architecture-specific thread state
  */
 int
-copy_thread(struct task_struct *p, const struct kernel_clone_args *args)
+copy_thread(unsigned long clone_flags, unsigned long usp,
+	    unsigned long kthread_arg, struct task_struct *p, unsigned long tls)
 {
-	unsigned long clone_flags = args->flags;
-	unsigned long usp = args->stack;
-	unsigned long tls = args->tls;
 	struct pt_regs *cregs = &(p->thread.regs);
 	void *stack = task_stack_page(p);
 	
@@ -216,27 +197,27 @@ copy_thread(struct task_struct *p, const struct kernel_clone_args *args)
 	extern void * const ret_from_kernel_thread;
 	extern void * const child_return;
 
-	if (unlikely(args->fn)) {
+	if (unlikely(p->flags & (PF_KTHREAD | PF_IO_WORKER))) {
 		/* kernel thread */
 		memset(cregs, 0, sizeof(struct pt_regs));
-		if (args->idle) /* idle thread */
+		if (!usp) /* idle thread */
 			return 0;
 		/* Must exit via ret_from_kernel_thread in order
 		 * to call schedule_tail()
 		 */
-		cregs->ksp = (unsigned long) stack + FRAME_SIZE + PT_SZ_ALGN;
+		cregs->ksp = (unsigned long)stack + THREAD_SZ_ALGN + FRAME_SIZE;
 		cregs->kpc = (unsigned long) &ret_from_kernel_thread;
 		/*
 		 * Copy function and argument to be called from
 		 * ret_from_kernel_thread.
 		 */
 #ifdef CONFIG_64BIT
-		cregs->gr[27] = ((unsigned long *)args->fn)[3];
-		cregs->gr[26] = ((unsigned long *)args->fn)[2];
+		cregs->gr[27] = ((unsigned long *)usp)[3];
+		cregs->gr[26] = ((unsigned long *)usp)[2];
 #else
-		cregs->gr[26] = (unsigned long) args->fn;
+		cregs->gr[26] = usp;
 #endif
-		cregs->gr[25] = (unsigned long) args->fn_arg;
+		cregs->gr[25] = kthread_arg;
 	} else {
 		/* user thread */
 		/* usp must be word aligned.  This also prevents users from
@@ -247,7 +228,7 @@ copy_thread(struct task_struct *p, const struct kernel_clone_args *args)
 			if (likely(usp))
 				cregs->gr[30] = usp;
 		}
-		cregs->ksp = (unsigned long) stack + FRAME_SIZE;
+		cregs->ksp = (unsigned long)stack + THREAD_SZ_ALGN + FRAME_SIZE;
 		cregs->kpc = (unsigned long) &child_return;
 
 		/* Setup thread TLS area */
@@ -259,11 +240,14 @@ copy_thread(struct task_struct *p, const struct kernel_clone_args *args)
 }
 
 unsigned long
-__get_wchan(struct task_struct *p)
+get_wchan(struct task_struct *p)
 {
 	struct unwind_frame_info info;
 	unsigned long ip;
 	int count = 0;
+
+	if (!p || p == current || task_is_running(p))
+		return 0;
 
 	/*
 	 * These bracket the sleeping functions..
@@ -282,9 +266,30 @@ __get_wchan(struct task_struct *p)
 	return 0;
 }
 
+#ifdef CONFIG_64BIT
+void *dereference_function_descriptor(void *ptr)
+{
+	Elf64_Fdesc *desc = ptr;
+	void *p;
+
+	if (!get_kernel_nofault(p, (void *)&desc->addr))
+		ptr = p;
+	return ptr;
+}
+
+void *dereference_kernel_function_descriptor(void *ptr)
+{
+	if (ptr < (void *)__start_opd ||
+			ptr >= (void *)__end_opd)
+		return ptr;
+
+	return dereference_function_descriptor(ptr);
+}
+#endif
+
 static inline unsigned long brk_rnd(void)
 {
-	return (get_random_u32() & BRK_RND_MASK) << PAGE_SHIFT;
+	return (get_random_int() & BRK_RND_MASK) << PAGE_SHIFT;
 }
 
 unsigned long arch_randomize_brk(struct mm_struct *mm)

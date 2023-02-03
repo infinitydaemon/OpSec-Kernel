@@ -32,7 +32,7 @@ struct flakey_c {
 	unsigned corrupt_bio_byte;
 	unsigned corrupt_bio_rw;
 	unsigned corrupt_bio_value;
-	blk_opf_t corrupt_bio_flags;
+	unsigned corrupt_bio_flags;
 };
 
 enum feature_flag_bits {
@@ -145,11 +145,7 @@ static int parse_features(struct dm_arg_set *as, struct flakey_c *fc,
 			/*
 			 * Only corrupt bios with these flags set.
 			 */
-			BUILD_BUG_ON(sizeof(fc->corrupt_bio_flags) !=
-				     sizeof(unsigned int));
-			r = dm_read_arg(_args + 3, as,
-				(__force unsigned *)&fc->corrupt_bio_flags,
-				&ti->error);
+			r = dm_read_arg(_args + 3, as, &fc->corrupt_bio_flags, &ti->error);
 			if (r)
 				return r;
 			argc--;
@@ -284,7 +280,9 @@ static void flakey_map_bio(struct dm_target *ti, struct bio *bio)
 	struct flakey_c *fc = ti->private;
 
 	bio_set_dev(bio, fc->dev->bdev);
-	bio->bi_iter.bi_sector = flakey_map_sector(ti, bio->bi_iter.bi_sector);
+	if (bio_sectors(bio) || op_is_zone_mgmt(bio_op(bio)))
+		bio->bi_iter.bi_sector =
+			flakey_map_sector(ti, bio->bi_iter.bi_sector);
 }
 
 static void corrupt_bio_data(struct bio *bio, struct flakey_c *fc)
@@ -458,7 +456,8 @@ static int flakey_prepare_ioctl(struct dm_target *ti, struct block_device **bdev
 	/*
 	 * Only pass ioctls through if the device sizes match exactly.
 	 */
-	if (fc->start || ti->len != bdev_nr_sectors((*bdev)))
+	if (fc->start ||
+	    ti->len != i_size_read((*bdev)->bd_inode) >> SECTOR_SHIFT)
 		return 1;
 	return 0;
 }

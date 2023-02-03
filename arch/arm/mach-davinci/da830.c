@@ -1,10 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * TI DA830/OMAP L137 chip specific setup
  *
  * Author: Mark A. Greer <mgreer@mvista.com>
  *
- * 2009 (c) MontaVista Software, Inc.
+ * 2009 (c) MontaVista Software, Inc. This file is licensed under
+ * the terms of the GNU General Public License version 2. This program
+ * is licensed "as is" without any warranty of any kind, whether express
+ * or implied.
  */
 #include <linux/clk-provider.h>
 #include <linux/clk/davinci.h>
@@ -14,13 +16,14 @@
 #include <linux/irqchip/irq-davinci-cp-intc.h>
 #include <linux/platform_data/gpio-davinci.h>
 
-#include <clocksource/timer-davinci.h>
-
 #include <asm/mach/map.h>
 
-#include "common.h"
-#include "cputype.h"
-#include "da8xx.h"
+#include <mach/common.h>
+#include <mach/cputype.h>
+#include <mach/da8xx.h>
+
+#include <clocksource/timer-davinci.h>
+
 #include "irqs.h"
 #include "mux.h"
 

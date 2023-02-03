@@ -100,7 +100,7 @@ struct uart_sunzilog_port {
 #endif
 };
 
-static void sunzilog_putchar(struct uart_port *port, unsigned char ch);
+static void sunzilog_putchar(struct uart_port *port, int ch);
 
 #define ZILOG_CHANNEL_FROM_PORT(PORT)	((struct zilog_channel __iomem *)((PORT)->membase))
 #define UART_ZILOG(PORT)		((struct uart_sunzilog_port *)(PORT))
@@ -508,7 +508,8 @@ static void sunzilog_transmit_chars(struct uart_sunzilog_port *up,
 	ZSDELAY();
 	ZS_WSYNC(channel);
 
-	uart_xmit_advance(&up->port, 1);
+	xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+	up->port.icount.tx++;
 
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&up->port);
@@ -708,7 +709,8 @@ static void sunzilog_start_tx(struct uart_port *port)
 		ZSDELAY();
 		ZS_WSYNC(channel);
 
-		uart_xmit_advance(port, 1);
+		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+		port->icount.tx++;
 
 		if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 			uart_write_wakeup(&up->port);
@@ -936,7 +938,7 @@ sunzilog_convert_to_zs(struct uart_sunzilog_port *up, unsigned int cflag,
 /* The port lock is not held.  */
 static void
 sunzilog_set_termios(struct uart_port *port, struct ktermios *termios,
-		     const struct ktermios *old)
+		     struct ktermios *old)
 {
 	struct uart_sunzilog_port *up =
 		container_of(port, struct uart_sunzilog_port, port);
@@ -1123,7 +1125,7 @@ static void sunzilog_free_tables(void)
 
 #define ZS_PUT_CHAR_MAX_DELAY	2000	/* 10 ms */
 
-static void __maybe_unused sunzilog_putchar(struct uart_port *port, unsigned char ch)
+static void sunzilog_putchar(struct uart_port *port, int ch)
 {
 	struct zilog_channel __iomem *channel = ZILOG_CHANNEL_FROM_PORT(port);
 	int loops = ZS_PUT_CHAR_MAX_DELAY;
@@ -1305,13 +1307,13 @@ static void sunzilog_register_serio(struct uart_sunzilog_port *up)
 	serio->id.type = SERIO_RS232;
 	if (up->flags & SUNZILOG_FLAG_CONS_KEYB) {
 		serio->id.proto = SERIO_SUNKBD;
-		strscpy(serio->name, "zskbd", sizeof(serio->name));
+		strlcpy(serio->name, "zskbd", sizeof(serio->name));
 	} else {
 		serio->id.proto = SERIO_SUN;
 		serio->id.extra = 1;
-		strscpy(serio->name, "zsms", sizeof(serio->name));
+		strlcpy(serio->name, "zsms", sizeof(serio->name));
 	}
-	strscpy(serio->phys,
+	strlcpy(serio->phys,
 		((up->flags & SUNZILOG_FLAG_CONS_KEYB) ?
 		 "zs/serio0" : "zs/serio1"),
 		sizeof(serio->phys));

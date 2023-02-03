@@ -39,7 +39,8 @@ unsigned int lbs_debug;
 EXPORT_SYMBOL_GPL(lbs_debug);
 module_param_named(libertas_debug, lbs_debug, int, 0644);
 
-static unsigned int lbs_disablemesh;
+unsigned int lbs_disablemesh;
+EXPORT_SYMBOL_GPL(lbs_disablemesh);
 module_param_named(libertas_disablemesh, lbs_disablemesh, int, 0644);
 
 
@@ -301,9 +302,9 @@ int lbs_set_mac_address(struct net_device *dev, void *addr)
 	dev = priv->dev;
 
 	memcpy(priv->current_addr, phwaddr->sa_data, ETH_ALEN);
-	eth_hw_addr_set(dev, phwaddr->sa_data);
+	memcpy(dev->dev_addr, phwaddr->sa_data, ETH_ALEN);
 	if (priv->mesh_dev)
-		eth_hw_addr_set(priv->mesh_dev, phwaddr->sa_data);
+		memcpy(priv->mesh_dev->dev_addr, phwaddr->sa_data, ETH_ALEN);
 
 	return ret;
 }

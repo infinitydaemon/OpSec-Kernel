@@ -73,13 +73,9 @@ static int vgic_mmio_uaccess_write_v2_misc(struct kvm_vcpu *vcpu,
 					   gpa_t addr, unsigned int len,
 					   unsigned long val)
 {
-	struct vgic_dist *dist = &vcpu->kvm->arch.vgic;
-	u32 reg;
-
 	switch (addr & 0x0c) {
 	case GIC_DIST_IIDR:
-		reg = vgic_mmio_read_v2_misc(vcpu, addr, len);
-		if ((reg ^ val) & ~GICD_IIDR_REVISION_MASK)
+		if (val != vgic_mmio_read_v2_misc(vcpu, addr, len))
 			return -EINVAL;
 
 		/*
@@ -91,16 +87,8 @@ static int vgic_mmio_uaccess_write_v2_misc(struct kvm_vcpu *vcpu,
 		 * migration from old kernels to new kernels with legacy
 		 * userspace.
 		 */
-		reg = FIELD_GET(GICD_IIDR_REVISION_MASK, reg);
-		switch (reg) {
-		case KVM_VGIC_IMP_REV_2:
-		case KVM_VGIC_IMP_REV_3:
-			vcpu->kvm->arch.vgic.v2_groups_user_writable = true;
-			dist->implementation_rev = reg;
-			return 0;
-		default:
-			return -EINVAL;
-		}
+		vcpu->kvm->arch.vgic.v2_groups_user_writable = true;
+		return 0;
 	}
 
 	vgic_mmio_write_v2_misc(vcpu, addr, len, val);
@@ -125,8 +113,9 @@ static void vgic_mmio_write_sgir(struct kvm_vcpu *source_vcpu,
 	int intid = val & 0xf;
 	int targets = (val >> 16) & 0xff;
 	int mode = (val >> 24) & 0x03;
+	int c;
 	struct kvm_vcpu *vcpu;
-	unsigned long flags, c;
+	unsigned long flags;
 
 	switch (mode) {
 	case 0x0:		/* as specified by targets */

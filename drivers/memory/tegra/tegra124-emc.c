@@ -1395,14 +1395,15 @@ err_msg:
 static int tegra_emc_opp_table_init(struct tegra_emc *emc)
 {
 	u32 hw_version = BIT(tegra_sku_info.soc_speedo_id);
-	int opp_token, err;
+	struct opp_table *hw_opp_table;
+	int err;
 
-	err = dev_pm_opp_set_supported_hw(emc->dev, &hw_version, 1);
-	if (err < 0) {
+	hw_opp_table = dev_pm_opp_set_supported_hw(emc->dev, &hw_version, 1);
+	err = PTR_ERR_OR_ZERO(hw_opp_table);
+	if (err) {
 		dev_err(emc->dev, "failed to set OPP supported HW: %d\n", err);
 		return err;
 	}
-	opp_token = err;
 
 	err = dev_pm_opp_of_add_table(emc->dev);
 	if (err) {
@@ -1429,7 +1430,7 @@ static int tegra_emc_opp_table_init(struct tegra_emc *emc)
 remove_table:
 	dev_pm_opp_of_remove_table(emc->dev);
 put_hw_table:
-	dev_pm_opp_put_supported_hw(opp_token);
+	dev_pm_opp_put_supported_hw(hw_opp_table);
 
 	return err;
 }

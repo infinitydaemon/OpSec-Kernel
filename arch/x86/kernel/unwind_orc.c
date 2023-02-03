@@ -136,21 +136,6 @@ static struct orc_entry null_orc_entry = {
 	.type = UNWIND_HINT_TYPE_CALL
 };
 
-#ifdef CONFIG_CALL_THUNKS
-static struct orc_entry *orc_callthunk_find(unsigned long ip)
-{
-	if (!is_callthunk((void *)ip))
-		return NULL;
-
-	return &null_orc_entry;
-}
-#else
-static struct orc_entry *orc_callthunk_find(unsigned long ip)
-{
-	return NULL;
-}
-#endif
-
 /* Fake frame pointer entry -- used as a fallback for generated code */
 static struct orc_entry orc_fp_entry = {
 	.type		= UNWIND_HINT_TYPE_CALL,
@@ -195,7 +180,7 @@ static struct orc_entry *orc_find(unsigned long ip)
 	}
 
 	/* vmlinux .init slow lookup: */
-	if (is_kernel_inittext(ip))
+	if (init_kernel_text(ip))
 		return __orc_find(__start_orc_unwind_ip, __start_orc_unwind,
 				  __stop_orc_unwind_ip - __start_orc_unwind_ip, ip);
 
@@ -204,11 +189,7 @@ static struct orc_entry *orc_find(unsigned long ip)
 	if (orc)
 		return orc;
 
-	orc =  orc_ftrace_find(ip);
-	if (orc)
-		return orc;
-
-	return orc_callthunk_find(ip);
+	return orc_ftrace_find(ip);
 }
 
 #ifdef CONFIG_MODULES
@@ -363,11 +344,11 @@ static bool stack_access_ok(struct unwind_state *state, unsigned long _addr,
 	struct stack_info *info = &state->stack_info;
 	void *addr = (void *)_addr;
 
-	if (on_stack(info, addr, len))
-		return true;
+	if (!on_stack(info, addr, len) &&
+	    (get_stack_info(addr, state->task, info, &state->stack_mask)))
+		return false;
 
-	return !get_stack_info(addr, state->task, info, &state->stack_mask) &&
-		on_stack(info, addr, len);
+	return true;
 }
 
 static bool deref_stack_reg(struct unwind_state *state, unsigned long addr,
@@ -558,8 +539,9 @@ bool unwind_next_frame(struct unwind_state *state)
 		if (!deref_stack_reg(state, ip_p, &state->ip))
 			goto err;
 
-		state->ip = unwind_recover_ret_addr(state, state->ip,
-						    (unsigned long *)ip_p);
+		state->ip = ftrace_graph_ret_addr(state->task, &state->graph_idx,
+						  state->ip, (void *)ip_p);
+
 		state->sp = sp;
 		state->regs = NULL;
 		state->prev_regs = NULL;
@@ -572,18 +554,7 @@ bool unwind_next_frame(struct unwind_state *state)
 					 (void *)orig_ip);
 			goto err;
 		}
-		/*
-		 * There is a small chance to interrupt at the entry of
-		 * arch_rethook_trampoline() where the ORC info doesn't exist.
-		 * That point is right after the RET to arch_rethook_trampoline()
-		 * which was modified return address.
-		 * At that point, the @addr_p of the unwind_recover_rethook()
-		 * (this has to point the address of the stack entry storing
-		 * the modified return address) must be "SP - (a stack entry)"
-		 * because SP is incremented by the RET.
-		 */
-		state->ip = unwind_recover_rethook(state, state->ip,
-				(unsigned long *)(state->sp - sizeof(long)));
+
 		state->regs = (struct pt_regs *)sp;
 		state->prev_regs = NULL;
 		state->full_regs = true;
@@ -596,9 +567,6 @@ bool unwind_next_frame(struct unwind_state *state)
 					 (void *)orig_ip);
 			goto err;
 		}
-		/* See UNWIND_HINT_TYPE_REGS case comment. */
-		state->ip = unwind_recover_rethook(state, state->ip,
-				(unsigned long *)(state->sp - sizeof(long)));
 
 		if (state->full_regs)
 			state->prev_regs = state->regs;

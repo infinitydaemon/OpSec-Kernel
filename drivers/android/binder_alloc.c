@@ -208,8 +208,8 @@ static int binder_update_page_range(struct binder_alloc *alloc, int allocate,
 		}
 	}
 
-	if (need_mm && mmget_not_zero(alloc->mm))
-		mm = alloc->mm;
+	if (need_mm && mmget_not_zero(alloc->vma_vm_mm))
+		mm = alloc->vma_vm_mm;
 
 	if (mm) {
 		mmap_read_lock(mm);
@@ -309,13 +309,27 @@ err_no_vma:
 	return vma ? -ENOMEM : -ESRCH;
 }
 
+
+static inline void binder_alloc_set_vma(struct binder_alloc *alloc,
+		struct vm_area_struct *vma)
+{
+	unsigned long vm_start = 0;
+
+	if (vma) {
+		vm_start = vma->vm_start;
+		mmap_assert_write_locked(alloc->vma_vm_mm);
+	}
+
+	alloc->vma_addr = vm_start;
+}
+
 static inline struct vm_area_struct *binder_alloc_get_vma(
 		struct binder_alloc *alloc)
 {
 	struct vm_area_struct *vma = NULL;
 
 	if (alloc->vma_addr)
-		vma = vma_lookup(alloc->mm, alloc->vma_addr);
+		vma = vma_lookup(alloc->vma_vm_mm, alloc->vma_addr);
 
 	return vma;
 }
@@ -380,15 +394,15 @@ static struct binder_buffer *binder_alloc_new_buf_locked(
 	size_t size, data_offsets_size;
 	int ret;
 
-	mmap_read_lock(alloc->mm);
+	mmap_read_lock(alloc->vma_vm_mm);
 	if (!binder_alloc_get_vma(alloc)) {
-		mmap_read_unlock(alloc->mm);
+		mmap_read_unlock(alloc->vma_vm_mm);
 		binder_alloc_debug(BINDER_DEBUG_USER_ERROR,
 				   "%d: binder_alloc_buf, no vma\n",
 				   alloc->pid);
 		return ERR_PTR(-ESRCH);
 	}
-	mmap_read_unlock(alloc->mm);
+	mmap_read_unlock(alloc->vma_vm_mm);
 
 	data_offsets_size = ALIGN(data_size, sizeof(void *)) +
 		ALIGN(offsets_size, sizeof(void *));
@@ -739,7 +753,7 @@ int binder_alloc_mmap_handler(struct binder_alloc *alloc,
 	const char *failure_string;
 	struct binder_buffer *buffer;
 
-	if (unlikely(vma->vm_mm != alloc->mm)) {
+	if (unlikely(vma->vm_mm != alloc->vma_vm_mm)) {
 		ret = -EINVAL;
 		failure_string = "invalid vma->vm_mm";
 		goto err_invalid_mm;
@@ -778,7 +792,7 @@ int binder_alloc_mmap_handler(struct binder_alloc *alloc,
 	buffer->free = 1;
 	binder_insert_free_buffer(alloc, buffer);
 	alloc->free_async_space = alloc->buffer_size / 2;
-	alloc->vma_addr = vma->vm_start;
+	binder_alloc_set_vma(alloc, vma);
 
 	return 0;
 
@@ -809,7 +823,7 @@ void binder_alloc_deferred_release(struct binder_alloc *alloc)
 	buffers = 0;
 	mutex_lock(&alloc->mutex);
 	BUG_ON(alloc->vma_addr &&
-	       vma_lookup(alloc->mm, alloc->vma_addr));
+	       vma_lookup(alloc->vma_vm_mm, alloc->vma_addr));
 
 	while ((n = rb_first(&alloc->allocated_buffers))) {
 		buffer = rb_entry(n, struct binder_buffer, rb_node);
@@ -859,8 +873,8 @@ void binder_alloc_deferred_release(struct binder_alloc *alloc)
 		kfree(alloc->pages);
 	}
 	mutex_unlock(&alloc->mutex);
-	if (alloc->mm)
-		mmdrop(alloc->mm);
+	if (alloc->vma_vm_mm)
+		mmdrop(alloc->vma_vm_mm);
 
 	binder_alloc_debug(BINDER_DEBUG_OPEN_CLOSE,
 		     "%s: %d buffers %d, pages %d\n",
@@ -917,13 +931,13 @@ void binder_alloc_print_pages(struct seq_file *m,
 	 * read inconsistent state.
 	 */
 
-	mmap_read_lock(alloc->mm);
+	mmap_read_lock(alloc->vma_vm_mm);
 	if (binder_alloc_get_vma(alloc) == NULL) {
-		mmap_read_unlock(alloc->mm);
+		mmap_read_unlock(alloc->vma_vm_mm);
 		goto uninitialized;
 	}
 
-	mmap_read_unlock(alloc->mm);
+	mmap_read_unlock(alloc->vma_vm_mm);
 	for (i = 0; i < alloc->buffer_size / PAGE_SIZE; i++) {
 		page = &alloc->pages[i];
 		if (!page->page_ptr)
@@ -969,7 +983,7 @@ int binder_alloc_get_allocated_count(struct binder_alloc *alloc)
  */
 void binder_alloc_vma_close(struct binder_alloc *alloc)
 {
-	alloc->vma_addr = 0;
+	binder_alloc_set_vma(alloc, NULL);
 }
 
 /**
@@ -1006,7 +1020,7 @@ enum lru_status binder_alloc_free_page(struct list_head *item,
 	index = page - alloc->pages;
 	page_addr = (uintptr_t)alloc->buffer + index * PAGE_SIZE;
 
-	mm = alloc->mm;
+	mm = alloc->vma_vm_mm;
 	if (!mmget_not_zero(mm))
 		goto err_mmget;
 	if (!mmap_read_trylock(mm))
@@ -1049,14 +1063,18 @@ err_get_alloc_mutex_failed:
 static unsigned long
 binder_shrink_count(struct shrinker *shrink, struct shrink_control *sc)
 {
-	return list_lru_count(&binder_alloc_lru);
+	unsigned long ret = list_lru_count(&binder_alloc_lru);
+	return ret;
 }
 
 static unsigned long
 binder_shrink_scan(struct shrinker *shrink, struct shrink_control *sc)
 {
-	return list_lru_walk(&binder_alloc_lru, binder_alloc_free_page,
+	unsigned long ret;
+
+	ret = list_lru_walk(&binder_alloc_lru, binder_alloc_free_page,
 			    NULL, sc->nr_to_scan);
+	return ret;
 }
 
 static struct shrinker binder_shrinker = {
@@ -1075,8 +1093,8 @@ static struct shrinker binder_shrinker = {
 void binder_alloc_init(struct binder_alloc *alloc)
 {
 	alloc->pid = current->group_leader->pid;
-	alloc->mm = current->mm;
-	mmgrab(alloc->mm);
+	alloc->vma_vm_mm = current->mm;
+	mmgrab(alloc->vma_vm_mm);
 	mutex_init(&alloc->mutex);
 	INIT_LIST_HEAD(&alloc->buffers);
 }
@@ -1086,7 +1104,7 @@ int binder_alloc_shrinker_init(void)
 	int ret = list_lru_init(&binder_alloc_lru);
 
 	if (ret == 0) {
-		ret = register_shrinker(&binder_shrinker, "android-binder");
+		ret = register_shrinker(&binder_shrinker);
 		if (ret)
 			list_lru_destroy(&binder_alloc_lru);
 	}
@@ -1177,11 +1195,14 @@ static void binder_alloc_clear_buf(struct binder_alloc *alloc,
 		unsigned long size;
 		struct page *page;
 		pgoff_t pgoff;
+		void *kptr;
 
 		page = binder_alloc_get_page(alloc, buffer,
 					     buffer_offset, &pgoff);
 		size = min_t(size_t, bytes, PAGE_SIZE - pgoff);
-		memset_page(page, pgoff, 0, size);
+		kptr = kmap(page) + pgoff;
+		memset(kptr, 0, size);
+		kunmap(page);
 		bytes -= size;
 		buffer_offset += size;
 	}
@@ -1219,9 +1240,9 @@ binder_alloc_copy_user_to_buffer(struct binder_alloc *alloc,
 		page = binder_alloc_get_page(alloc, buffer,
 					     buffer_offset, &pgoff);
 		size = min_t(size_t, bytes, PAGE_SIZE - pgoff);
-		kptr = kmap_local_page(page) + pgoff;
+		kptr = kmap(page) + pgoff;
 		ret = copy_from_user(kptr, from, size);
-		kunmap_local(kptr);
+		kunmap(page);
 		if (ret)
 			return bytes - size + ret;
 		bytes -= size;
@@ -1246,14 +1267,23 @@ static int binder_alloc_do_buffer_copy(struct binder_alloc *alloc,
 		unsigned long size;
 		struct page *page;
 		pgoff_t pgoff;
+		void *tmpptr;
+		void *base_ptr;
 
 		page = binder_alloc_get_page(alloc, buffer,
 					     buffer_offset, &pgoff);
 		size = min_t(size_t, bytes, PAGE_SIZE - pgoff);
+		base_ptr = kmap_atomic(page);
+		tmpptr = base_ptr + pgoff;
 		if (to_buffer)
-			memcpy_to_page(page, pgoff, ptr, size);
+			memcpy(tmpptr, ptr, size);
 		else
-			memcpy_from_page(ptr, page, pgoff, size);
+			memcpy(ptr, tmpptr, size);
+		/*
+		 * kunmap_atomic() takes care of flushing the cache
+		 * if this device has VIVT cache arch
+		 */
+		kunmap_atomic(base_ptr);
 		bytes -= size;
 		pgoff = 0;
 		ptr = ptr + size;

@@ -21,10 +21,9 @@
 #include <linux/namei.h>
 #include <linux/pagemap.h>
 #include <linux/poll.h>
-#include <linux/of.h>
-#include <linux/seq_file.h>
 #include <linux/slab.h>
 
+#include <asm/prom.h>
 #include <asm/spu.h>
 #include <asm/spu_priv1.h>
 #include <linux/uaccess.h>
@@ -275,7 +274,7 @@ spufs_mkdir(struct inode *dir, struct dentry *dentry, unsigned int flags,
 	return ret;
 }
 
-static int spufs_context_open(const struct path *path)
+static int spufs_context_open(struct path *path)
 {
 	int ret;
 	struct file *filp;
@@ -491,7 +490,7 @@ out:
 	return ret;
 }
 
-static int spufs_gang_open(const struct path *path)
+static int spufs_gang_open(struct path *path)
 {
 	int ret;
 	struct file *filp;
@@ -536,7 +535,7 @@ static int spufs_create_gang(struct inode *inode,
 
 static struct file_system_type spufs_type;
 
-long spufs_create(const struct path *path, struct dentry *dentry,
+long spufs_create(struct path *path, struct dentry *dentry,
 		unsigned int flags, umode_t mode, struct file *filp)
 {
 	struct inode *dir = d_inode(path->dentry);
@@ -648,7 +647,7 @@ static void spufs_exit_isolated_loader(void)
 			get_order(isolated_loader_size));
 }
 
-static void __init
+static void
 spufs_init_isolated_loader(void)
 {
 	struct device_node *dn;

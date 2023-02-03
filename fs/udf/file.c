@@ -57,11 +57,11 @@ static void __udf_adinicb_readpage(struct page *page)
 	kunmap_atomic(kaddr);
 }
 
-static int udf_adinicb_read_folio(struct file *file, struct folio *folio)
+static int udf_adinicb_readpage(struct file *file, struct page *page)
 {
-	BUG_ON(!folio_test_locked(folio));
-	__udf_adinicb_readpage(&folio->page);
-	folio_unlock(folio);
+	BUG_ON(!PageLocked(page));
+	__udf_adinicb_readpage(page);
+	unlock_page(page);
 
 	return 0;
 }
@@ -87,14 +87,14 @@ static int udf_adinicb_writepage(struct page *page,
 
 static int udf_adinicb_write_begin(struct file *file,
 			struct address_space *mapping, loff_t pos,
-			unsigned len, struct page **pagep,
+			unsigned len, unsigned flags, struct page **pagep,
 			void **fsdata)
 {
 	struct page *page;
 
 	if (WARN_ON_ONCE(pos >= PAGE_SIZE))
 		return -EIO;
-	page = grab_cache_page_write_begin(mapping, 0);
+	page = grab_cache_page_write_begin(mapping, 0, flags);
 	if (!page)
 		return -ENOMEM;
 	*pagep = page;
@@ -125,9 +125,8 @@ static int udf_adinicb_write_end(struct file *file, struct address_space *mappin
 }
 
 const struct address_space_operations udf_adinicb_aops = {
-	.dirty_folio	= block_dirty_folio,
-	.invalidate_folio = block_invalidate_folio,
-	.read_folio	= udf_adinicb_read_folio,
+	.set_page_dirty	= __set_page_dirty_buffers,
+	.readpage	= udf_adinicb_readpage,
 	.writepage	= udf_adinicb_writepage,
 	.write_begin	= udf_adinicb_write_begin,
 	.write_end	= udf_adinicb_write_end,
@@ -252,7 +251,6 @@ const struct file_operations udf_file_operations = {
 	.release		= udf_release_file,
 	.fsync			= generic_file_fsync,
 	.splice_read		= generic_file_splice_read,
-	.splice_write		= iter_file_splice_write,
 	.llseek			= generic_file_llseek,
 };
 

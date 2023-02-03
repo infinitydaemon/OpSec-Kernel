@@ -20,7 +20,6 @@
 #include <linux/pgtable.h>
 
 #include <linux/uaccess.h>
-#include "swap.h"
 
 static int mincore_hugetlb(pte_t *pte, unsigned long hmask, unsigned long addr,
 			unsigned long end, struct mm_walk *walk)
@@ -52,7 +51,7 @@ static int mincore_hugetlb(pte_t *pte, unsigned long hmask, unsigned long addr,
 static unsigned char mincore_page(struct address_space *mapping, pgoff_t index)
 {
 	unsigned char present = 0;
-	struct folio *folio;
+	struct page *page;
 
 	/*
 	 * When tmpfs swaps out a page from a file, any process mapping that
@@ -60,10 +59,10 @@ static unsigned char mincore_page(struct address_space *mapping, pgoff_t index)
 	 * any other file mapping (ie. marked !present and faulted in with
 	 * tmpfs's .fault). So swapped out tmpfs mappings are tested here.
 	 */
-	folio = filemap_get_incore_folio(mapping, index);
-	if (folio) {
-		present = folio_test_uptodate(folio);
-		folio_put(folio);
+	page = find_get_incore_page(mapping, index);
+	if (page) {
+		present = PageUptodate(page);
+		put_page(page);
 	}
 
 	return present;
@@ -122,8 +121,7 @@ static int mincore_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 	for (; addr != end; ptep++, addr += PAGE_SIZE) {
 		pte_t pte = *ptep;
 
-		/* We need to do cache lookup too for pte markers */
-		if (pte_none_mostly(pte))
+		if (pte_none(pte))
 			__mincore_unmapped_range(addr, addr + PAGE_SIZE,
 						 vma, vec);
 		else if (pte_present(pte))
@@ -190,8 +188,8 @@ static long do_mincore(unsigned long addr, unsigned long pages, unsigned char *v
 	unsigned long end;
 	int err;
 
-	vma = vma_lookup(current->mm, addr);
-	if (!vma)
+	vma = find_vma(current->mm, addr);
+	if (!vma || addr < vma->vm_start)
 		return -ENOMEM;
 	end = min(vma->vm_end, addr + (pages << PAGE_SHIFT));
 	if (!can_do_mincore(vma)) {

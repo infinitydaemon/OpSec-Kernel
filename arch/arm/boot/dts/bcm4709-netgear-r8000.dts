@@ -39,59 +39,59 @@
 	leds {
 		compatible = "gpio-leds";
 
-		led-power-white {
+		power-white {
 			label = "bcm53xx:white:power";
 			gpios = <&chipcommon 2 GPIO_ACTIVE_LOW>;
 			linux,default-trigger = "default-on";
 		};
 
-		led-power-amber {
+		power-amber {
 			label = "bcm53xx:amber:power";
 			gpios = <&chipcommon 3 GPIO_ACTIVE_LOW>;
 		};
 
-		led-wan-white {
+		wan-white {
 			label = "bcm53xx:white:wan";
 			gpios = <&chipcommon 8 GPIO_ACTIVE_LOW>;
 			linux,default-trigger = "default-on";
 		};
 
-		led-wan-amber {
+		wan-amber {
 			label = "bcm53xx:amber:wan";
 			gpios = <&chipcommon 9 GPIO_ACTIVE_HIGH>;
 		};
 
-		led-5ghz-1 {
+		5ghz-1 {
 			label = "bcm53xx:white:5ghz-1";
 			gpios = <&chipcommon 12 GPIO_ACTIVE_LOW>;
 		};
 
-		led-2ghz {
+		2ghz {
 			label = "bcm53xx:white:2ghz";
 			gpios = <&chipcommon 13 GPIO_ACTIVE_LOW>;
 		};
 
-		led-wireless {
+		wireless {
 			label = "bcm53xx:white:wireless";
 			gpios = <&chipcommon 14 GPIO_ACTIVE_HIGH>;
 		};
 
-		led-wps {
+		wps {
 			label = "bcm53xx:white:wps";
 			gpios = <&chipcommon 15 GPIO_ACTIVE_HIGH>;
 		};
 
-		led-5ghz-2 {
+		5ghz-2 {
 			label = "bcm53xx:white:5ghz-2";
 			gpios = <&chipcommon 16 GPIO_ACTIVE_LOW>;
 		};
 
-		led-usb3 {
+		usb3 {
 			label = "bcm53xx:white:usb3";
 			gpios = <&chipcommon 17 GPIO_ACTIVE_LOW>;
 		};
 
-		led-usb2 {
+		usb2 {
 			label = "bcm53xx:white:usb2";
 			gpios = <&chipcommon 18 GPIO_ACTIVE_LOW>;
 		};
@@ -99,26 +99,28 @@
 
 	gpio-keys {
 		compatible = "gpio-keys";
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-		button-rfkill {
+		rfkill {
 			label = "WiFi";
 			linux,code = <KEY_RFKILL>;
 			gpios = <&chipcommon 4 GPIO_ACTIVE_LOW>;
 		};
 
-		button-wps {
+		wps {
 			label = "WPS";
 			linux,code = <KEY_WPS_BUTTON>;
 			gpios = <&chipcommon 5 GPIO_ACTIVE_LOW>;
 		};
 
-		button-restart {
+		restart {
 			label = "Reset";
 			linux,code = <KEY_RESTART>;
 			gpios = <&chipcommon 6 GPIO_ACTIVE_LOW>;
 		};
 
-		button-brightness {
+		brightness {
 			label = "Backlight";
 			linux,code = <KEY_BRIGHTNESS_ZERO>;
 			gpios = <&chipcommon 19 GPIO_ACTIVE_LOW>;
@@ -184,46 +186,4 @@
 
 &usb3_phy {
 	status = "okay";
-};
-
-&srab {
-	status = "okay";
-
-	ports {
-		port@0 {
-			reg = <0>;
-			label = "lan1";
-		};
-
-		port@1 {
-			reg = <1>;
-			label = "lan2";
-		};
-
-		port@2 {
-			reg = <2>;
-			label = "lan3";
-		};
-
-		port@3 {
-			reg = <3>;
-			label = "lan4";
-		};
-
-		port@4 {
-			reg = <4>;
-			label = "wan";
-		};
-
-		port@8 {
-			reg = <8>;
-			label = "cpu";
-			ethernet = <&gmac2>;
-
-			fixed-link {
-				speed = <1000>;
-				full-duplex;
-			};
-		};
-	};
 };

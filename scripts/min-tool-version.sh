@@ -14,7 +14,7 @@ fi
 
 case "$1" in
 binutils)
-	echo 2.25.0
+	echo 2.23.0
 	;;
 gcc)
 	echo 5.1.0
@@ -24,17 +24,12 @@ icc)
 	echo 16.0.3
 	;;
 llvm)
+	# https://lore.kernel.org/r/YMtib5hKVyNknZt3@osiris/
 	if [ "$SRCARCH" = s390 ]; then
-		echo 15.0.0
+		echo 13.0.0
 	else
-		echo 11.0.0
+		echo 10.0.1
 	fi
-	;;
-rustc)
-	echo 1.62.0
-	;;
-bindgen)
-	echo 0.56.0
 	;;
 *)
 	echo "$1: unknown tool" >&2

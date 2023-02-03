@@ -11,8 +11,6 @@
 
 #define BRCMF_FW_DEFAULT_PATH		"brcm/"
 
-#define BRCMF_FW_MAX_BOARD_TYPES	8
-
 /**
  * struct brcmf_firmware_mapping - Used to map chipid/revmask to firmware
  *	filename and nvram filename. Each bus type implementation should create
@@ -68,7 +66,7 @@ struct brcmf_fw_request {
 	u16 domain_nr;
 	u16 bus_nr;
 	u32 n_items;
-	const char *board_types[BRCMF_FW_MAX_BOARD_TYPES];
+	const char *board_type;
 	struct brcmf_fw_item items[];
 };
 

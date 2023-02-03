@@ -736,6 +736,7 @@ static bool ldm_parse_cmp3 (const u8 *buffer, int buflen, struct vblk *vb)
 		len = r_cols;
 	} else {
 		r_stripe = 0;
+		r_cols   = 0;
 		len = r_parent;
 	}
 	if (len < 0)
@@ -782,8 +783,11 @@ static int ldm_parse_dgr3 (const u8 *buffer, int buflen, struct vblk *vb)
 		r_id1 = ldm_relative (buffer, buflen, 0x24, r_diskid);
 		r_id2 = ldm_relative (buffer, buflen, 0x24, r_id1);
 		len = r_id2;
-	} else
+	} else {
+		r_id1 = 0;
+		r_id2 = 0;
 		len = r_diskid;
+	}
 	if (len < 0)
 		return false;
 
@@ -822,8 +826,11 @@ static bool ldm_parse_dgr4 (const u8 *buffer, int buflen, struct vblk *vb)
 		r_id1 = ldm_relative (buffer, buflen, 0x44, r_name);
 		r_id2 = ldm_relative (buffer, buflen, 0x44, r_id1);
 		len = r_id2;
-	} else
+	} else {
+		r_id1 = 0;
+		r_id2 = 0;
 		len = r_name;
+	}
 	if (len < 0)
 		return false;
 
@@ -956,8 +963,10 @@ static bool ldm_parse_prt3(const u8 *buffer, int buflen, struct vblk *vb)
 			return false;
 		}
 		len = r_index;
-	} else
+	} else {
+		r_index = 0;
 		len = r_diskid;
+	}
 	if (len < 0) {
 		ldm_error("len %d < 0", len);
 		return false;

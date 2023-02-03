@@ -36,19 +36,10 @@
 
 #include "signal.h"
 
-#if defined(CONFIG_CURRENT_POINTER_IN_TPIDRURO) || defined(CONFIG_SMP)
-DEFINE_PER_CPU(struct task_struct *, __entry_task);
-#endif
-
 #if defined(CONFIG_STACKPROTECTOR) && !defined(CONFIG_STACKPROTECTOR_PER_TASK)
 #include <linux/stackprotector.h>
 unsigned long __stack_chk_guard __read_mostly;
 EXPORT_SYMBOL(__stack_chk_guard);
-#endif
-
-#ifndef CONFIG_CURRENT_POINTER_IN_TPIDRURO
-asmlinkage struct task_struct *__current;
-EXPORT_SYMBOL(__current);
 #endif
 
 static const char *processor_modes[] __maybe_unused = {
@@ -201,7 +192,7 @@ void __show_regs(struct pt_regs *regs)
 void show_regs(struct pt_regs * regs)
 {
 	__show_regs(regs);
-	dump_backtrace(regs, NULL, KERN_DEFAULT);
+	dump_stack();
 }
 
 ATOMIC_NOTIFIER_HEAD(thread_notify_head);
@@ -232,13 +223,15 @@ void flush_thread(void)
 	thread_notify(THREAD_NOTIFY_FLUSH, thread);
 }
 
+void release_thread(struct task_struct *dead_task)
+{
+}
+
 asmlinkage void ret_from_fork(void) __asm__("ret_from_fork");
 
-int copy_thread(struct task_struct *p, const struct kernel_clone_args *args)
+int copy_thread(unsigned long clone_flags, unsigned long stack_start,
+		unsigned long stk_sz, struct task_struct *p, unsigned long tls)
 {
-	unsigned long clone_flags = args->flags;
-	unsigned long stack_start = args->stack;
-	unsigned long tls = args->tls;
 	struct thread_info *thread = task_thread_info(p);
 	struct pt_regs *childregs = task_pt_regs(p);
 
@@ -254,15 +247,15 @@ int copy_thread(struct task_struct *p, const struct kernel_clone_args *args)
 	thread->cpu_domain = get_domain();
 #endif
 
-	if (likely(!args->fn)) {
+	if (likely(!(p->flags & (PF_KTHREAD | PF_IO_WORKER)))) {
 		*childregs = *current_pt_regs();
 		childregs->ARM_r0 = 0;
 		if (stack_start)
 			childregs->ARM_sp = stack_start;
 	} else {
 		memset(childregs, 0, sizeof(struct pt_regs));
-		thread->cpu_context.r4 = (unsigned long)args->fn_arg;
-		thread->cpu_context.r5 = (unsigned long)args->fn;
+		thread->cpu_context.r4 = stk_sz;
+		thread->cpu_context.r5 = stack_start;
 		childregs->ARM_cpsr = SVC_MODE;
 	}
 	thread->cpu_context.pc = (unsigned long)ret_from_fork;
@@ -276,14 +269,20 @@ int copy_thread(struct task_struct *p, const struct kernel_clone_args *args)
 
 	thread_notify(THREAD_NOTIFY_COPY, thread);
 
+#ifdef CONFIG_STACKPROTECTOR_PER_TASK
+	thread->stack_canary = p->stack_canary;
+#endif
+
 	return 0;
 }
 
-unsigned long __get_wchan(struct task_struct *p)
+unsigned long get_wchan(struct task_struct *p)
 {
 	struct stackframe frame;
 	unsigned long stack_page;
 	int count = 0;
+	if (!p || p == current || task_is_running(p))
+		return 0;
 
 	frame.fp = thread_saved_fp(p);
 	frame.sp = thread_saved_sp(p);
@@ -371,7 +370,7 @@ static unsigned long sigpage_addr(const struct mm_struct *mm,
 
 	slots = ((last - first) >> PAGE_SHIFT) + 1;
 
-	offset = get_random_u32_below(slots);
+	offset = get_random_int() % slots;
 
 	addr = first + (offset << PAGE_SHIFT);
 

@@ -21,8 +21,8 @@
 		serial0 = &uart1;	/* DBGU */
 		serial1 = &uart4;	/* mikro BUS 1 */
 		serial2 = &uart2;	/* mikro BUS 2 */
-		i2c1 = &i2c1;
-		i2c2 = &i2c3;
+		i2c1	= &i2c1;
+		i2c2	= &i2c3;
 	};
 
 	chosen {
@@ -130,11 +130,8 @@
 					i2c-analog-filter;
 					i2c-digital-filter;
 					i2c-digital-filter-width-ns = <35>;
-					pinctrl-names = "default", "gpio";
+					pinctrl-names = "default";
 					pinctrl-0 = <&pinctrl_mikrobus_i2c>;
-					pinctrl-1 = <&pinctrl_i2c3_gpio>;
-					sda-gpios = <&pioA PIN_PA24 GPIO_ACTIVE_HIGH>;
-					scl-gpios = <&pioA PIN_PA23 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
 					status = "okay";
 				};
 			};
@@ -218,11 +215,8 @@
 				i2c-analog-filter;
 				i2c-digital-filter;
 				i2c-digital-filter-width-ns = <35>;
-				pinctrl-names = "default", "gpio";
+				pinctrl-names = "default";
 				pinctrl-0 = <&pinctrl_i2c1_default>;
-				pinctrl-1 = <&pinctrl_i2c1_gpio>;
-				sda-gpios = <&pioA PIN_PD4 GPIO_ACTIVE_HIGH>;
-				scl-gpios = <&pioA PIN_PD5 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
 				status = "okay";
 			};
 
@@ -257,13 +251,6 @@
 						 <PIN_PD5__TWCK1>;
 					bias-disable;
 				};
-
-				pinctrl_i2c1_gpio: i2c1_gpio {
-                                        pinmux = <PIN_PD4__GPIO>,
-                                                 <PIN_PD5__GPIO>;
-                                        bias-disable;
-                                };
-
 
 				pinctrl_isc_base: isc_base {
 					pinmux = <PIN_PC21__ISC_PCK>,
@@ -454,12 +441,6 @@
 					bias-disable;
 				};
 
-				pinctrl_i2c3_gpio: i2c3_gpio {
-					pinmux = <PIN_PA24__GPIO>,
-						 <PIN_PA23__GPIO>;
-					bias-disable;
-				};
-
 				pinctrl_flx4_default: flx4_uart_default {
 					pinmux = <PIN_PC28__FLEXCOM4_IO0>,
 						 <PIN_PC29__FLEXCOM4_IO1>,
@@ -478,13 +459,13 @@
 		};
 	};
 
-	gpio-keys {
+	gpio_keys {
 		compatible = "gpio-keys";
 
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_key_gpio_default>;
 
-		button {
+		pb4 {
 			label = "USER";
 			gpios = <&pioA PIN_PA29 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_PROG1>;

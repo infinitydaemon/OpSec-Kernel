@@ -208,16 +208,18 @@ static irqreturn_t kvm_arch_timer_handler(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static u64 kvm_counter_compute_delta(struct arch_timer_context *timer_ctx,
-				     u64 val)
+static u64 kvm_timer_compute_delta(struct arch_timer_context *timer_ctx)
 {
-	u64 now = kvm_phys_timer_read() - timer_get_offset(timer_ctx);
+	u64 cval, now;
 
-	if (now < val) {
+	cval = timer_get_cval(timer_ctx);
+	now = kvm_phys_timer_read() - timer_get_offset(timer_ctx);
+
+	if (now < cval) {
 		u64 ns;
 
 		ns = cyclecounter_cyc2ns(timecounter->cc,
-					 val - now,
+					 cval - now,
 					 timecounter->mask,
 					 &timecounter->frac);
 		return ns;
@@ -226,31 +228,12 @@ static u64 kvm_counter_compute_delta(struct arch_timer_context *timer_ctx,
 	return 0;
 }
 
-static u64 kvm_timer_compute_delta(struct arch_timer_context *timer_ctx)
-{
-	return kvm_counter_compute_delta(timer_ctx, timer_get_cval(timer_ctx));
-}
-
 static bool kvm_timer_irq_can_fire(struct arch_timer_context *timer_ctx)
 {
 	WARN_ON(timer_ctx && timer_ctx->loaded);
 	return timer_ctx &&
 		((timer_get_ctl(timer_ctx) &
 		  (ARCH_TIMER_CTRL_IT_MASK | ARCH_TIMER_CTRL_ENABLE)) == ARCH_TIMER_CTRL_ENABLE);
-}
-
-static bool vcpu_has_wfit_active(struct kvm_vcpu *vcpu)
-{
-	return (cpus_have_final_cap(ARM64_HAS_WFXT) &&
-		vcpu_get_flag(vcpu, IN_WFIT));
-}
-
-static u64 wfit_delay_ns(struct kvm_vcpu *vcpu)
-{
-	struct arch_timer_context *ctx = vcpu_vtimer(vcpu);
-	u64 val = vcpu_get_reg(vcpu, kvm_vcpu_sys_get_rt(vcpu));
-
-	return kvm_counter_compute_delta(ctx, val);
 }
 
 /*
@@ -269,9 +252,6 @@ static u64 kvm_timer_earliest_exp(struct kvm_vcpu *vcpu)
 		if (kvm_timer_irq_can_fire(ctx))
 			min_delta = min(min_delta, kvm_timer_compute_delta(ctx));
 	}
-
-	if (vcpu_has_wfit_active(vcpu))
-		min_delta = min(min_delta, wfit_delay_ns(vcpu));
 
 	/* If none of timers can fire, then return 0 */
 	if (min_delta == ULLONG_MAX)
@@ -370,9 +350,15 @@ static bool kvm_timer_should_fire(struct arch_timer_context *timer_ctx)
 	return cval <= now;
 }
 
-int kvm_cpu_has_pending_timer(struct kvm_vcpu *vcpu)
+bool kvm_timer_is_pending(struct kvm_vcpu *vcpu)
 {
-	return vcpu_has_wfit_active(vcpu) && wfit_delay_ns(vcpu) == 0;
+	struct timer_map map;
+
+	get_timer_map(vcpu, &map);
+
+	return kvm_timer_should_fire(map.direct_vtimer) ||
+	       kvm_timer_should_fire(map.direct_ptimer) ||
+	       kvm_timer_should_fire(map.emul_ptimer);
 }
 
 /*
@@ -481,7 +467,7 @@ out:
 }
 
 /*
- * Schedule the background timer before calling kvm_vcpu_halt, so that this
+ * Schedule the background timer before calling kvm_vcpu_block, so that this
  * thread is removed from its waitqueue and made runnable when there's a timer
  * interrupt to handle.
  */
@@ -498,8 +484,7 @@ static void kvm_timer_blocking(struct kvm_vcpu *vcpu)
 	 */
 	if (!kvm_timer_irq_can_fire(map.direct_vtimer) &&
 	    !kvm_timer_irq_can_fire(map.direct_ptimer) &&
-	    !kvm_timer_irq_can_fire(map.emul_ptimer) &&
-	    !vcpu_has_wfit_active(vcpu))
+	    !kvm_timer_irq_can_fire(map.emul_ptimer))
 		return;
 
 	/*
@@ -664,6 +649,7 @@ void kvm_timer_vcpu_put(struct kvm_vcpu *vcpu)
 {
 	struct arch_timer_cpu *timer = vcpu_timer(vcpu);
 	struct timer_map map;
+	struct rcuwait *wait = kvm_arch_vcpu_get_wait(vcpu);
 
 	if (unlikely(!timer->enabled))
 		return;
@@ -686,7 +672,7 @@ void kvm_timer_vcpu_put(struct kvm_vcpu *vcpu)
 	if (map.emul_ptimer)
 		soft_timer_cancel(&map.emul_ptimer->hrtimer);
 
-	if (kvm_vcpu_is_blocking(vcpu))
+	if (rcuwait_active(wait))
 		kvm_timer_blocking(vcpu);
 
 	/*
@@ -764,7 +750,7 @@ int kvm_timer_vcpu_reset(struct kvm_vcpu *vcpu)
 /* Make the updates of cntvoff for all vtimer contexts atomic */
 static void update_vtimer_cntvoff(struct kvm_vcpu *vcpu, u64 cntvoff)
 {
-	unsigned long i;
+	int i;
 	struct kvm *kvm = vcpu->kvm;
 	struct kvm_vcpu *tmp;
 
@@ -1203,8 +1189,8 @@ void kvm_timer_vcpu_terminate(struct kvm_vcpu *vcpu)
 
 static bool timer_irqs_are_valid(struct kvm_vcpu *vcpu)
 {
-	int vtimer_irq, ptimer_irq, ret;
-	unsigned long i;
+	int vtimer_irq, ptimer_irq;
+	int i, ret;
 
 	vtimer_irq = vcpu_vtimer(vcpu)->irq.irq;
 	ret = kvm_vgic_set_owner(vcpu, vtimer_irq, vcpu_vtimer(vcpu));
@@ -1229,9 +1215,6 @@ bool kvm_arch_timer_get_input_level(int vintid)
 {
 	struct kvm_vcpu *vcpu = kvm_get_running_vcpu();
 	struct arch_timer_context *timer;
-
-	if (WARN(!vcpu, "No vcpu context!\n"))
-		return false;
 
 	if (vintid == vcpu_vtimer(vcpu)->irq.irq)
 		timer = vcpu_vtimer(vcpu);
@@ -1314,7 +1297,7 @@ void kvm_timer_init_vhe(void)
 static void set_timer_irqs(struct kvm *kvm, int vtimer_irq, int ptimer_irq)
 {
 	struct kvm_vcpu *vcpu;
-	unsigned long i;
+	int i;
 
 	kvm_for_each_vcpu(i, vcpu, kvm) {
 		vcpu_vtimer(vcpu)->irq.irq = vtimer_irq;

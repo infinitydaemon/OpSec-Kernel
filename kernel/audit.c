@@ -321,6 +321,7 @@ static inline int audit_rate_check(void)
 	static DEFINE_SPINLOCK(lock);
 	unsigned long		flags;
 	unsigned long		now;
+	unsigned long		elapsed;
 	int			retval	   = 0;
 
 	if (!audit_rate_limit) return 1;
@@ -329,8 +330,9 @@ static inline int audit_rate_check(void)
 	if (++messages < audit_rate_limit) {
 		retval = 1;
 	} else {
-		now = jiffies;
-		if (time_after(now, last_check + HZ)) {
+		now     = jiffies;
+		elapsed = now - last_check;
+		if (elapsed > HZ) {
 			last_check = now;
 			messages   = 0;
 			retval     = 1;
@@ -364,7 +366,7 @@ void audit_log_lost(const char *message)
 	if (!print) {
 		spin_lock_irqsave(&lock, flags);
 		now = jiffies;
-		if (time_after(now, last_msg + HZ)) {
+		if (now - last_msg > HZ) {
 			print = 1;
 			last_msg = now;
 		}
@@ -1098,7 +1100,7 @@ static inline void audit_log_user_recv_msg(struct audit_buffer **ab,
 	audit_log_common_recv_msg(NULL, ab, msg_type);
 }
 
-static int is_audit_feature_set(int i)
+int is_audit_feature_set(int i)
 {
 	return af.features & AUDIT_FEATURE_TO_MASK(i);
 }
@@ -1388,7 +1390,7 @@ static int audit_receive_msg(struct sk_buff *skb, struct nlmsghdr *nlh)
 						 str);
 			} else {
 				audit_log_format(ab, " data=");
-				if (str[data_len - 1] == '\0')
+				if (data_len > 0 && str[data_len - 1] == '\0')
 					data_len--;
 				audit_log_n_untrustedstring(ab, str, data_len);
 			}
@@ -1466,7 +1468,7 @@ static int audit_receive_msg(struct sk_buff *skb, struct nlmsghdr *nlh)
 			if (err)
 				return err;
 		}
-		sig_data = kmalloc(struct_size(sig_data, ctx, len), GFP_KERNEL);
+		sig_data = kmalloc(sizeof(*sig_data) + len, GFP_KERNEL);
 		if (!sig_data) {
 			if (audit_sig_sid)
 				security_release_secctx(ctx, len);
@@ -1479,7 +1481,7 @@ static int audit_receive_msg(struct sk_buff *skb, struct nlmsghdr *nlh)
 			security_release_secctx(ctx, len);
 		}
 		audit_send_reply(skb, seq, AUDIT_SIGNAL_INFO, 0, 0,
-				 sig_data, struct_size(sig_data, ctx, len));
+				 sig_data, sizeof(*sig_data) + len);
 		kfree(sig_data);
 		break;
 	case AUDIT_TTY_GET: {
@@ -2169,7 +2171,7 @@ int audit_log_task_context(struct audit_buffer *ab)
 	int error;
 	u32 sid;
 
-	security_current_getsecid_subj(&sid);
+	security_task_getsecid_subj(current, &sid);
 	if (!sid)
 		return 0;
 
@@ -2390,7 +2392,7 @@ int audit_signal_info(int sig, struct task_struct *t)
 			audit_sig_uid = auid;
 		else
 			audit_sig_uid = uid;
-		security_current_getsecid_subj(&audit_sig_sid);
+		security_task_getsecid_subj(current, &audit_sig_sid);
 	}
 
 	return audit_signal_info_syscall(t);

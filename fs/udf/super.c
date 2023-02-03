@@ -136,7 +136,7 @@ static struct kmem_cache *udf_inode_cachep;
 static struct inode *udf_alloc_inode(struct super_block *sb)
 {
 	struct udf_inode_info *ei;
-	ei = alloc_inode_sb(sb, udf_inode_cachep, GFP_KERNEL);
+	ei = kmem_cache_alloc(udf_inode_cachep, GFP_KERNEL);
 	if (!ei)
 		return NULL;
 
@@ -162,7 +162,7 @@ static void udf_free_in_core_inode(struct inode *inode)
 
 static void init_once(void *foo)
 {
-	struct udf_inode_info *ei = foo;
+	struct udf_inode_info *ei = (struct udf_inode_info *)foo;
 
 	ei->i_data = NULL;
 	inode_init_once(&ei->vfs_inode);
@@ -820,7 +820,7 @@ static int udf_find_fileset(struct super_block *sb,
 			    struct kernel_lb_addr *fileset,
 			    struct kernel_lb_addr *root)
 {
-	struct buffer_head *bh;
+	struct buffer_head *bh = NULL;
 	uint16_t ident;
 	int ret;
 
@@ -1177,7 +1177,8 @@ static int udf_load_vat(struct super_block *sb, int p_index, int type1_index)
 	struct udf_inode_info *vati;
 	uint32_t pos;
 	struct virtualAllocationTable20 *vat20;
-	sector_t blocks = sb_bdev_nr_blocks(sb);
+	sector_t blocks = i_size_read(sb->s_bdev->bd_inode) >>
+			  sb->s_blocksize_bits;
 
 	udf_find_vat_block(sb, p_index, type1_index, sbi->s_last_block);
 	if (!sbi->s_vat_inode &&
@@ -1839,7 +1840,8 @@ static int udf_check_anchor_block(struct super_block *sb, sector_t block,
 	int ret;
 
 	if (UDF_QUERY_FLAG(sb, UDF_FLAG_VARCONV) &&
-	    udf_fixed_to_variable(block) >= sb_bdev_nr_blocks(sb))
+	    udf_fixed_to_variable(block) >=
+	    i_size_read(sb->s_bdev->bd_inode) >> sb->s_blocksize_bits)
 		return -EAGAIN;
 
 	bh = udf_read_tagged(sb, block, block, &ident);
@@ -1901,7 +1903,8 @@ static int udf_scan_anchors(struct super_block *sb, sector_t *lastblock,
 		last[last_count++] = *lastblock - 152;
 
 	for (i = 0; i < last_count; i++) {
-		if (last[i] >= sb_bdev_nr_blocks(sb))
+		if (last[i] >= i_size_read(sb->s_bdev->bd_inode) >>
+				sb->s_blocksize_bits)
 			continue;
 		ret = udf_check_anchor_block(sb, last[i], fileset);
 		if (ret != -EAGAIN) {
@@ -2474,6 +2477,7 @@ static unsigned int udf_count_free_table(struct super_block *sb,
 	unsigned int accum = 0;
 	uint32_t elen;
 	struct kernel_lb_addr eloc;
+	int8_t etype;
 	struct extent_position epos;
 
 	mutex_lock(&UDF_SB(sb)->s_alloc_mutex);
@@ -2481,7 +2485,7 @@ static unsigned int udf_count_free_table(struct super_block *sb,
 	epos.offset = sizeof(struct unallocSpaceEntry);
 	epos.bh = NULL;
 
-	while (udf_next_aext(table, &epos, &eloc, &elen, 1) != -1)
+	while ((etype = udf_next_aext(table, &epos, &eloc, &elen, 1)) != -1)
 		accum += (elen >> table->i_sb->s_blocksize_bits);
 
 	brelse(epos.bh);

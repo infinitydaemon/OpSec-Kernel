@@ -282,7 +282,7 @@ int main(int argc, char *argv[])
 
 	close(fd);
 
-	ksft_finished();
+	ksft_exit(!ksft_get_fail_cnt());
 }
 
 #else /* __NR_memfd_secret */

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause */
 /*
- * Copyright (C) 2005-2014, 2021 Intel Corporation
+ * Copyright (C) 2005-2014 Intel Corporation
  */
 #ifndef __iwl_agn_h__
 #define __iwl_agn_h__
@@ -92,7 +92,7 @@ int iwlagn_mac_config(struct ieee80211_hw *hw, u32 changed);
 void iwlagn_bss_info_changed(struct ieee80211_hw *hw,
 			     struct ieee80211_vif *vif,
 			     struct ieee80211_bss_conf *bss_conf,
-			     u64 changes);
+			     u32 changes);
 void iwlagn_config_ht40(struct ieee80211_conf *conf,
 			struct iwl_rxon_context *ctx);
 void iwl_set_rxon_ht(struct iwl_priv *priv, struct iwl_ht_config *ht_conf);
@@ -112,7 +112,7 @@ int iwl_load_ucode_wait_alive(struct iwl_priv *priv,
 			      enum iwl_ucode_type ucode_type);
 int iwl_send_calib_results(struct iwl_priv *priv);
 int iwl_calib_set(struct iwl_priv *priv,
-		  const struct iwl_calib_cmd *cmd, size_t len);
+		  const struct iwl_calib_hdr *cmd, int len);
 void iwl_calib_free_results(struct iwl_priv *priv);
 int iwl_dump_nic_event_log(struct iwl_priv *priv, bool full_log,
 			    char **buf);
@@ -398,10 +398,8 @@ do {									\
 	if (!iwl_is_rfkill((m)))					\
 		IWL_ERR(m, fmt, ##args);				\
 	else								\
-		__iwl_err((m)->dev,					\
-			  iwl_have_debug_level(IWL_DL_RADIO) ?		\
-				IWL_ERR_MODE_RFKILL :			\
-				IWL_ERR_MODE_TRACE_ONLY,		\
+		__iwl_err((m)->dev, true,				\
+			  !iwl_have_debug_level(IWL_DL_RADIO),		\
 			  fmt, ##args);					\
 } while (0)
 #else
@@ -410,8 +408,7 @@ do {									\
 	if (!iwl_is_rfkill((m)))					\
 		IWL_ERR(m, fmt, ##args);				\
 	else								\
-		__iwl_err((m)->dev, IWL_ERR_MODE_TRACE_ONLY,		\
-			  fmt, ##args);					\
+		__iwl_err((m)->dev, true, true, fmt, ##args);	\
 } while (0)
 #endif				/* CONFIG_IWLWIFI_DEBUG */
 

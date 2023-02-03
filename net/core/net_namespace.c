@@ -302,7 +302,6 @@ struct net *get_net_ns_by_id(const struct net *net, int id)
 
 	return peer;
 }
-EXPORT_SYMBOL_GPL(get_net_ns_by_id);
 
 /*
  * setup_net runs the initializers for the network namespace object.
@@ -315,9 +314,6 @@ static __net_init int setup_net(struct net *net, struct user_namespace *user_ns)
 	LIST_HEAD(net_exit_list);
 
 	refcount_set(&net->ns.count, 1);
-	ref_tracker_dir_init(&net->refcnt_tracker, 128);
-	ref_tracker_dir_init(&net->notrefcnt_tracker, 128);
-
 	refcount_set(&net->passive, 1);
 	get_random_bytes(&net->hash_mix, sizeof(u32));
 	preempt_disable();
@@ -366,8 +362,6 @@ out_undo:
 static int __net_init net_defaults_init_net(struct net *net)
 {
 	net->core.sysctl_somaxconn = SOMAXCONN;
-	net->core.sysctl_txrehash = SOCK_TXREHASH_ENABLED;
-
 	return 0;
 }
 
@@ -437,10 +431,6 @@ static void net_free(struct net *net)
 {
 	if (refcount_dec_and_test(&net->passive)) {
 		kfree(rcu_access_pointer(net->gen));
-
-		/* There should not be any trackers left there. */
-		ref_tracker_dir_exit(&net->notrefcnt_tracker);
-
 		kmem_cache_free(net_cachep, net);
 	}
 }
@@ -648,7 +638,6 @@ static DECLARE_WORK(net_cleanup_work, cleanup_net);
 
 void __put_net(struct net *net)
 {
-	ref_tracker_dir_exit(&net->refcnt_tracker);
 	/* Cleanup the network namespace in process context */
 	if (llist_add(&net->cleanup_list, &cleanup_list))
 		queue_work(netns_wq, &net_cleanup_work);

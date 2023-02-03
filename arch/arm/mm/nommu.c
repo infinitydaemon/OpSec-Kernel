@@ -249,7 +249,14 @@ void *arch_memremap_wb(phys_addr_t phys_addr, size_t size)
 	return (void *)phys_addr;
 }
 
-void iounmap(volatile void __iomem *io_addr)
+void __iounmap(volatile void __iomem *addr)
+{
+}
+EXPORT_SYMBOL(__iounmap);
+
+void (*arch_iounmap)(volatile void __iomem *);
+
+void iounmap(volatile void __iomem *addr)
 {
 }
 EXPORT_SYMBOL(iounmap);

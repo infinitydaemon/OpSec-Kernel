@@ -126,25 +126,12 @@ struct xfrm_state_walk {
 	struct xfrm_address_filter *filter;
 };
 
-enum {
-	XFRM_DEV_OFFLOAD_IN = 1,
-	XFRM_DEV_OFFLOAD_OUT,
-	XFRM_DEV_OFFLOAD_FWD,
-};
-
-enum {
-	XFRM_DEV_OFFLOAD_UNSPECIFIED,
-	XFRM_DEV_OFFLOAD_CRYPTO,
-	XFRM_DEV_OFFLOAD_PACKET,
-};
-
-struct xfrm_dev_offload {
+struct xfrm_state_offload {
 	struct net_device	*dev;
-	netdevice_tracker	dev_tracker;
 	struct net_device	*real_dev;
 	unsigned long		offload_handle;
-	u8			dir : 2;
-	u8			type : 2;
+	unsigned int		num_exthdrs;
+	u8			flags;
 };
 
 struct xfrm_mode {
@@ -259,7 +246,7 @@ struct xfrm_state {
 	struct xfrm_lifetime_cur curlft;
 	struct hrtimer		mtimer;
 
-	struct xfrm_dev_offload xso;
+	struct xfrm_state_offload xso;
 
 	/* used to fix curlft->add_time when changing date */
 	long		saved_tmo;
@@ -320,15 +307,9 @@ struct km_event {
 	struct net *net;
 };
 
-struct xfrm_if_decode_session_result {
-	struct net *net;
-	u32 if_id;
-};
-
 struct xfrm_if_cb {
-	bool (*decode_session)(struct sk_buff *skb,
-			       unsigned short family,
-			       struct xfrm_if_decode_session_result *res);
+	struct xfrm_if	*(*decode_session)(struct sk_buff *skb,
+					   unsigned short family);
 };
 
 void xfrm_if_register_cb(const struct xfrm_if_cb *ifcb);
@@ -413,8 +394,7 @@ struct xfrm_type {
 #define XFRM_TYPE_LOCAL_COADDR	4
 #define XFRM_TYPE_REMOTE_COADDR	8
 
-	int			(*init_state)(struct xfrm_state *x,
-					      struct netlink_ext_ack *extack);
+	int			(*init_state)(struct xfrm_state *x);
 	void			(*destructor)(struct xfrm_state *);
 	int			(*input)(struct xfrm_state *, struct sk_buff *skb);
 	int			(*output)(struct xfrm_state *, struct sk_buff *pskb);
@@ -542,8 +522,6 @@ struct xfrm_policy {
 	struct xfrm_tmpl       	xfrm_vec[XFRM_MAX_DEPTH];
 	struct hlist_node	bydst_inexact_list;
 	struct rcu_head		rcu;
-
-	struct xfrm_dev_offload xdo;
 };
 
 static inline struct net *xp_net(const struct xfrm_policy *xp)
@@ -600,8 +578,8 @@ struct xfrm_mgr {
 	bool			(*is_alive)(const struct km_event *c);
 };
 
-void xfrm_register_km(struct xfrm_mgr *km);
-void xfrm_unregister_km(struct xfrm_mgr *km);
+int xfrm_register_km(struct xfrm_mgr *km);
+int xfrm_unregister_km(struct xfrm_mgr *km);
 
 struct xfrm_tunnel_skb_cb {
 	union {
@@ -1002,7 +980,6 @@ void xfrm_dst_ifdown(struct dst_entry *dst, struct net_device *dev);
 struct xfrm_if_parms {
 	int link;		/* ifindex of underlying L2 interface */
 	u32 if_id;		/* interface identifyer */
-	bool collect_md;
 };
 
 struct xfrm_if {
@@ -1028,7 +1005,7 @@ struct xfrm_offload {
 #define	CRYPTO_FALLBACK		8
 #define	XFRM_GSO_SEGMENT	16
 #define	XFRM_GRO		32
-/* 64 is free */
+#define	XFRM_ESP_NO_TRAILER	64
 #define	XFRM_DEV_RESUME		128
 #define	XFRM_XMIT		256
 
@@ -1103,29 +1080,6 @@ xfrm_state_addr_cmp(const struct xfrm_tmpl *tmpl, const struct xfrm_state *x, un
 }
 
 #ifdef CONFIG_XFRM
-static inline struct xfrm_state *xfrm_input_state(struct sk_buff *skb)
-{
-	struct sec_path *sp = skb_sec_path(skb);
-
-	return sp->xvec[sp->len - 1];
-}
-#endif
-
-static inline struct xfrm_offload *xfrm_offload(struct sk_buff *skb)
-{
-#ifdef CONFIG_XFRM
-	struct sec_path *sp = skb_sec_path(skb);
-
-	if (!sp || !sp->olen || sp->len != sp->olen)
-		return NULL;
-
-	return &sp->ovec[sp->olen - 1];
-#else
-	return NULL;
-#endif
-}
-
-#ifdef CONFIG_XFRM
 int __xfrm_policy_check(struct sock *, int dir, struct sk_buff *skb,
 			unsigned short family);
 
@@ -1156,18 +1110,9 @@ static inline int __xfrm_policy_check2(struct sock *sk, int dir,
 {
 	struct net *net = dev_net(skb->dev);
 	int ndir = dir | (reverse ? XFRM_POLICY_MASK + 1 : 0);
-	struct xfrm_offload *xo = xfrm_offload(skb);
-	struct xfrm_state *x;
 
 	if (sk && sk->sk_policy[XFRM_POLICY_IN])
 		return __xfrm_policy_check(sk, ndir, skb, family);
-
-	if (xo) {
-		x = xfrm_input_state(skb);
-		if (x->xso.type == XFRM_DEV_OFFLOAD_PACKET)
-			return (xo->flags & CRYPTO_DONE) &&
-			       (xo->status & CRYPTO_SUCCESS);
-	}
 
 	return __xfrm_check_nopolicy(net, skb, dir) ||
 	       __xfrm_check_dev_nopolicy(skb, dir, family) ||
@@ -1571,23 +1516,6 @@ struct xfrm_state *xfrm_stateonly_find(struct net *net, u32 mark, u32 if_id,
 struct xfrm_state *xfrm_state_lookup_byspi(struct net *net, __be32 spi,
 					      unsigned short family);
 int xfrm_state_check_expire(struct xfrm_state *x);
-#ifdef CONFIG_XFRM_OFFLOAD
-static inline void xfrm_dev_state_update_curlft(struct xfrm_state *x)
-{
-	struct xfrm_dev_offload *xdo = &x->xso;
-	struct net_device *dev = xdo->dev;
-
-	if (x->xso.type != XFRM_DEV_OFFLOAD_PACKET)
-		return;
-
-	if (dev && dev->xfrmdev_ops &&
-	    dev->xfrmdev_ops->xdo_dev_state_update_curlft)
-		dev->xfrmdev_ops->xdo_dev_state_update_curlft(x);
-
-}
-#else
-static inline void xfrm_dev_state_update_curlft(struct xfrm_state *x) {}
-#endif
 void xfrm_state_insert(struct xfrm_state *x);
 int xfrm_state_add(struct xfrm_state *x);
 int xfrm_state_update(struct xfrm_state *x);
@@ -1637,15 +1565,12 @@ struct xfrm_state *xfrm_find_acq_byseq(struct net *net, u32 mark, u32 seq);
 int xfrm_state_delete(struct xfrm_state *x);
 int xfrm_state_flush(struct net *net, u8 proto, bool task_valid, bool sync);
 int xfrm_dev_state_flush(struct net *net, struct net_device *dev, bool task_valid);
-int xfrm_dev_policy_flush(struct net *net, struct net_device *dev,
-			  bool task_valid);
 void xfrm_sad_getinfo(struct net *net, struct xfrmk_sadinfo *si);
 void xfrm_spd_getinfo(struct net *net, struct xfrmk_spdinfo *si);
 u32 xfrm_replay_seqhi(struct xfrm_state *x, __be32 net_seq);
-int xfrm_init_replay(struct xfrm_state *x, struct netlink_ext_ack *extack);
+int xfrm_init_replay(struct xfrm_state *x);
 u32 xfrm_state_mtu(struct xfrm_state *x, int mtu);
-int __xfrm_init_state(struct xfrm_state *x, bool init_replay, bool offload,
-		      struct netlink_ext_ack *extack);
+int __xfrm_init_state(struct xfrm_state *x, bool init_replay, bool offload);
 int xfrm_init_state(struct xfrm_state *x);
 int xfrm_input(struct sk_buff *skb, int nexthdr, __be32 spi, int encap_type);
 int xfrm_input_resume(struct sk_buff *skb, int nexthdr);
@@ -1742,9 +1667,8 @@ struct xfrm_policy *xfrm_policy_byid(struct net *net,
 int xfrm_policy_flush(struct net *net, u8 type, bool task_valid);
 void xfrm_policy_hash_rebuild(struct net *net);
 u32 xfrm_get_acqseq(void);
-int verify_spi_info(u8 proto, u32 min, u32 max, struct netlink_ext_ack *extack);
-int xfrm_alloc_spi(struct xfrm_state *x, u32 minspi, u32 maxspi,
-		   struct netlink_ext_ack *extack);
+int verify_spi_info(u8 proto, u32 min, u32 max);
+int xfrm_alloc_spi(struct xfrm_state *x, u32 minspi, u32 maxspi);
 struct xfrm_state *xfrm_find_acq(struct net *net, const struct xfrm_mark *mark,
 				 u8 mode, u32 reqid, u32 if_id, u8 proto,
 				 const xfrm_address_t *daddr,
@@ -1765,8 +1689,7 @@ struct xfrm_state *xfrm_state_migrate(struct xfrm_state *x,
 int xfrm_migrate(const struct xfrm_selector *sel, u8 dir, u8 type,
 		 struct xfrm_migrate *m, int num_bundles,
 		 struct xfrm_kmaddress *k, struct net *net,
-		 struct xfrm_encap_tmpl *encap, u32 if_id,
-		 struct netlink_ext_ack *extack);
+		 struct xfrm_encap_tmpl *encap, u32 if_id);
 #endif
 
 int km_new_mapping(struct xfrm_state *x, xfrm_address_t *ipaddr, __be16 sport);
@@ -1921,6 +1844,29 @@ static inline void xfrm_states_delete(struct xfrm_state **states, int n)
 }
 #endif
 
+#ifdef CONFIG_XFRM
+static inline struct xfrm_state *xfrm_input_state(struct sk_buff *skb)
+{
+	struct sec_path *sp = skb_sec_path(skb);
+
+	return sp->xvec[sp->len - 1];
+}
+#endif
+
+static inline struct xfrm_offload *xfrm_offload(struct sk_buff *skb)
+{
+#ifdef CONFIG_XFRM
+	struct sec_path *sp = skb_sec_path(skb);
+
+	if (!sp || !sp->olen || sp->len != sp->olen)
+		return NULL;
+
+	return &sp->ovec[sp->olen - 1];
+#else
+	return NULL;
+#endif
+}
+
 void __init xfrm_dev_init(void);
 
 #ifdef CONFIG_XFRM_OFFLOAD
@@ -1928,16 +1874,12 @@ void xfrm_dev_resume(struct sk_buff *skb);
 void xfrm_dev_backlog(struct softnet_data *sd);
 struct sk_buff *validate_xmit_xfrm(struct sk_buff *skb, netdev_features_t features, bool *again);
 int xfrm_dev_state_add(struct net *net, struct xfrm_state *x,
-		       struct xfrm_user_offload *xuo,
-		       struct netlink_ext_ack *extack);
-int xfrm_dev_policy_add(struct net *net, struct xfrm_policy *xp,
-			struct xfrm_user_offload *xuo, u8 dir,
-			struct netlink_ext_ack *extack);
+		       struct xfrm_user_offload *xuo);
 bool xfrm_dev_offload_ok(struct sk_buff *skb, struct xfrm_state *x);
 
 static inline void xfrm_dev_state_advance_esn(struct xfrm_state *x)
 {
-	struct xfrm_dev_offload *xso = &x->xso;
+	struct xfrm_state_offload *xso = &x->xso;
 
 	if (xso->dev && xso->dev->xfrmdev_ops->xdo_dev_state_advance_esn)
 		xso->dev->xfrmdev_ops->xdo_dev_state_advance_esn(x);
@@ -1963,7 +1905,7 @@ static inline bool xfrm_dst_offload_ok(struct dst_entry *dst)
 
 static inline void xfrm_dev_state_delete(struct xfrm_state *x)
 {
-	struct xfrm_dev_offload *xso = &x->xso;
+	struct xfrm_state_offload *xso = &x->xso;
 
 	if (xso->dev)
 		xso->dev->xfrmdev_ops->xdo_dev_state_delete(x);
@@ -1971,36 +1913,14 @@ static inline void xfrm_dev_state_delete(struct xfrm_state *x)
 
 static inline void xfrm_dev_state_free(struct xfrm_state *x)
 {
-	struct xfrm_dev_offload *xso = &x->xso;
+	struct xfrm_state_offload *xso = &x->xso;
 	struct net_device *dev = xso->dev;
 
 	if (dev && dev->xfrmdev_ops) {
 		if (dev->xfrmdev_ops->xdo_dev_state_free)
 			dev->xfrmdev_ops->xdo_dev_state_free(x);
 		xso->dev = NULL;
-		netdev_put(dev, &xso->dev_tracker);
-	}
-}
-
-static inline void xfrm_dev_policy_delete(struct xfrm_policy *x)
-{
-	struct xfrm_dev_offload *xdo = &x->xdo;
-	struct net_device *dev = xdo->dev;
-
-	if (dev && dev->xfrmdev_ops && dev->xfrmdev_ops->xdo_dev_policy_delete)
-		dev->xfrmdev_ops->xdo_dev_policy_delete(x);
-}
-
-static inline void xfrm_dev_policy_free(struct xfrm_policy *x)
-{
-	struct xfrm_dev_offload *xdo = &x->xdo;
-	struct net_device *dev = xdo->dev;
-
-	if (dev && dev->xfrmdev_ops) {
-		if (dev->xfrmdev_ops->xdo_dev_policy_free)
-			dev->xfrmdev_ops->xdo_dev_policy_free(x);
-		xdo->dev = NULL;
-		netdev_put(dev, &xdo->dev_tracker);
+		dev_put(dev);
 	}
 }
 #else
@@ -2017,7 +1937,7 @@ static inline struct sk_buff *validate_xmit_xfrm(struct sk_buff *skb, netdev_fea
 	return skb;
 }
 
-static inline int xfrm_dev_state_add(struct net *net, struct xfrm_state *x, struct xfrm_user_offload *xuo, struct netlink_ext_ack *extack)
+static inline int xfrm_dev_state_add(struct net *net, struct xfrm_state *x, struct xfrm_user_offload *xuo)
 {
 	return 0;
 }
@@ -2027,21 +1947,6 @@ static inline void xfrm_dev_state_delete(struct xfrm_state *x)
 }
 
 static inline void xfrm_dev_state_free(struct xfrm_state *x)
-{
-}
-
-static inline int xfrm_dev_policy_add(struct net *net, struct xfrm_policy *xp,
-				      struct xfrm_user_offload *xuo, u8 dir,
-				      struct netlink_ext_ack *extack)
-{
-	return 0;
-}
-
-static inline void xfrm_dev_policy_delete(struct xfrm_policy *x)
-{
-}
-
-static inline void xfrm_dev_policy_free(struct xfrm_policy *x)
 {
 }
 
@@ -2164,21 +2069,4 @@ static inline bool xfrm6_local_dontfrag(const struct sock *sk)
 	return false;
 }
 #endif
-
-#if (IS_BUILTIN(CONFIG_XFRM_INTERFACE) && IS_ENABLED(CONFIG_DEBUG_INFO_BTF)) || \
-    (IS_MODULE(CONFIG_XFRM_INTERFACE) && IS_ENABLED(CONFIG_DEBUG_INFO_BTF_MODULES))
-
-extern struct metadata_dst __percpu *xfrm_bpf_md_dst;
-
-int register_xfrm_interface_bpf(void);
-
-#else
-
-static inline int register_xfrm_interface_bpf(void)
-{
-	return 0;
-}
-
-#endif
-
 #endif	/* _NET_XFRM_H */

@@ -34,7 +34,7 @@ static bool prepend_char(struct prepend_buffer *p, unsigned char c)
 }
 
 /*
- * The source of the prepend data can be an optimistic load
+ * The source of the prepend data can be an optimistoc load
  * of a dentry name and length. And because we don't hold any
  * locks, the length and the pointer to the name may not be
  * in sync if a concurrent rename happens, and the kernel
@@ -77,8 +77,9 @@ static bool prepend(struct prepend_buffer *p, const char *str, int namelen)
 
 /**
  * prepend_name - prepend a pathname in front of current buffer pointer
- * @p: prepend buffer which contains buffer pointer and allocated length
- * @name: name string and length qstr structure
+ * @buffer: buffer pointer
+ * @buflen: allocated length of the buffer
+ * @name:   name string and length qstr structure
  *
  * With RCU path tracing, it may race with d_move(). Use READ_ONCE() to
  * make sure that either the old or the new name pointer and length are
@@ -140,7 +141,8 @@ static int __prepend_path(const struct dentry *dentry, const struct mount *mnt,
  * prepend_path - Prepend path string to a buffer
  * @path: the dentry/vfsmount to report
  * @root: root vfsmnt/dentry
- * @p: prepend buffer which contains buffer pointer and allocated length
+ * @buffer: pointer to the end of the buffer
+ * @buflen: pointer to buffer length
  *
  * The function will first try to write out the pathname without taking any
  * lock other than the RCU read lock to make sure that dentries won't go away.
@@ -297,7 +299,8 @@ EXPORT_SYMBOL(d_path);
 /*
  * Helper function for dentry_operations.d_dname() members
  */
-char *dynamic_dname(char *buffer, int buflen, const char *fmt, ...)
+char *dynamic_dname(struct dentry *dentry, char *buffer, int buflen,
+			const char *fmt, ...)
 {
 	va_list args;
 	char temp[64];

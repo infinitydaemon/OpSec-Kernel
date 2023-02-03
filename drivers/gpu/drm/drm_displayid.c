@@ -33,11 +33,11 @@ static int validate_displayid(const u8 *displayid, int length, int idx)
 	return 0;
 }
 
-static const u8 *drm_find_displayid_extension(const struct drm_edid *drm_edid,
+static const u8 *drm_find_displayid_extension(const struct edid *edid,
 					      int *length, int *idx,
 					      int *ext_index)
 {
-	const u8 *displayid = drm_find_edid_extension(drm_edid, DISPLAYID_EXT, ext_index);
+	const u8 *displayid = drm_find_edid_extension(edid, DISPLAYID_EXT, ext_index);
 	const struct displayid_header *base;
 	int ret;
 
@@ -58,12 +58,12 @@ static const u8 *drm_find_displayid_extension(const struct drm_edid *drm_edid,
 	return displayid;
 }
 
-void displayid_iter_edid_begin(const struct drm_edid *drm_edid,
+void displayid_iter_edid_begin(const struct edid *edid,
 			       struct displayid_iter *iter)
 {
 	memset(iter, 0, sizeof(*iter));
 
-	iter->drm_edid = drm_edid;
+	iter->edid = edid;
 }
 
 static const struct displayid_block *
@@ -88,7 +88,7 @@ __displayid_iter_next(struct displayid_iter *iter)
 {
 	const struct displayid_block *block;
 
-	if (!iter->drm_edid)
+	if (!iter->edid)
 		return NULL;
 
 	if (iter->section) {
@@ -96,7 +96,7 @@ __displayid_iter_next(struct displayid_iter *iter)
 		block = displayid_iter_block(iter);
 		if (WARN_ON(!block)) {
 			iter->section = NULL;
-			iter->drm_edid = NULL;
+			iter->edid = NULL;
 			return NULL;
 		}
 
@@ -109,12 +109,12 @@ __displayid_iter_next(struct displayid_iter *iter)
 	}
 
 	for (;;) {
-		iter->section = drm_find_displayid_extension(iter->drm_edid,
+		iter->section = drm_find_displayid_extension(iter->edid,
 							     &iter->length,
 							     &iter->idx,
 							     &iter->ext_index);
 		if (!iter->section) {
-			iter->drm_edid = NULL;
+			iter->edid = NULL;
 			return NULL;
 		}
 

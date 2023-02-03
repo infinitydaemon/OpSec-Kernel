@@ -1972,7 +1972,7 @@ error_power_off:
 	return ret;
 }
 
-static void imx708_remove(struct i2c_client *client)
+static int imx708_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct imx708 *imx708 = to_imx708(sd);
@@ -1985,6 +1985,8 @@ static void imx708_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		imx708_power_off(&client->dev);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 static const struct of_device_id imx708_dt_ids[] = {

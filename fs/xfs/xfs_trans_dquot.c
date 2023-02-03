@@ -597,7 +597,8 @@ xfs_dqresv_check(
 	if (softlimit && total_count > softlimit) {
 		time64_t	now = ktime_get_real_seconds();
 
-		if (res->timer != 0 && now > res->timer) {
+		if ((res->timer != 0 && now > res->timer) ||
+		    (res->warnings != 0 && res->warnings >= qlim->warn)) {
 			*fatal = true;
 			return QUOTA_NL_ISOFTLONGWARN;
 		}
@@ -844,7 +845,7 @@ STATIC void
 xfs_trans_alloc_dqinfo(
 	xfs_trans_t	*tp)
 {
-	tp->t_dqinfo = kmem_cache_zalloc(xfs_dqtrx_cache,
+	tp->t_dqinfo = kmem_cache_zalloc(xfs_qm_dqtrxzone,
 					 GFP_KERNEL | __GFP_NOFAIL);
 }
 
@@ -854,6 +855,6 @@ xfs_trans_free_dqinfo(
 {
 	if (!tp->t_dqinfo)
 		return;
-	kmem_cache_free(xfs_dqtrx_cache, tp->t_dqinfo);
+	kmem_cache_free(xfs_qm_dqtrxzone, tp->t_dqinfo);
 	tp->t_dqinfo = NULL;
 }

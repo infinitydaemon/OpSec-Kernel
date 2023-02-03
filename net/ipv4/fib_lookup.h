@@ -4,14 +4,13 @@
 
 #include <linux/types.h>
 #include <linux/list.h>
-#include <net/inet_dscp.h>
 #include <net/ip_fib.h>
 #include <net/nexthop.h>
 
 struct fib_alias {
 	struct hlist_node	fa_list;
 	struct fib_info		*fa_info;
-	dscp_t			fa_dscp;
+	u8			fa_tos;
 	u8			fa_type;
 	u8			fa_state;
 	u8			fa_slen;

@@ -15,13 +15,11 @@
 #include <linux/slab.h>
 #include <linux/memblock.h>
 #include <linux/elf.h>
-#include <linux/uio.h>
 #include <asm/asm-offsets.h>
 #include <asm/os_info.h>
 #include <asm/elf.h>
 #include <asm/ipl.h>
 #include <asm/sclp.h>
-#include <asm/maccess.h>
 
 #define PTR_ADD(x, y) (((char *) (x)) + ((unsigned long) (y)))
 #define PTR_SUB(x, y) (((char *) (x)) - ((unsigned long) (y)))
@@ -62,9 +60,9 @@ struct save_area * __init save_area_alloc(bool is_boot_cpu)
 {
 	struct save_area *sa;
 
-	sa = memblock_alloc(sizeof(*sa), 8);
+	sa = (void *) memblock_phys_alloc(sizeof(*sa), 8);
 	if (!sa)
-		return NULL;
+		panic("Failed to allocate save area\n");
 
 	if (is_boot_cpu)
 		list_add(&sa->list, &dump_save_areas);
@@ -115,15 +113,38 @@ void __init save_area_add_vxrs(struct save_area *sa, __vector128 *vxrs)
 	memcpy(sa->vxrs_high, vxrs + 16, 16 * sizeof(__vector128));
 }
 
-static size_t copy_oldmem_iter(struct iov_iter *iter, unsigned long src, size_t count)
+/*
+ * Return physical address for virtual address
+ */
+static inline void *load_real_addr(void *addr)
 {
-	size_t len, copied, res = 0;
+	unsigned long real_addr;
+
+	asm volatile(
+		   "	lra     %0,0(%1)\n"
+		   "	jz	0f\n"
+		   "	la	%0,0\n"
+		   "0:"
+		   : "=a" (real_addr) : "a" (addr) : "cc");
+	return (void *)real_addr;
+}
+
+/*
+ * Copy memory of the old, dumped system to a kernel space virtual address
+ */
+int copy_oldmem_kernel(void *dst, unsigned long src, size_t count)
+{
+	unsigned long len;
+	void *ra;
+	int rc;
 
 	while (count) {
 		if (!oldmem_data.start && src < sclp.hsa_size) {
 			/* Copy from zfcp/nvme dump HSA area */
 			len = min(count, sclp.hsa_size - src);
-			copied = memcpy_hsa_iter(iter, src, len);
+			rc = memcpy_hsa_kernel(dst, src, len);
+			if (rc)
+				return rc;
 		} else {
 			/* Check for swapped kdump oldmem areas */
 			if (oldmem_data.start && src - oldmem_data.start < oldmem_data.size) {
@@ -135,40 +156,76 @@ static size_t copy_oldmem_iter(struct iov_iter *iter, unsigned long src, size_t 
 			} else {
 				len = count;
 			}
-			copied = memcpy_real_iter(iter, src, len);
+			if (is_vmalloc_or_module_addr(dst)) {
+				ra = load_real_addr(dst);
+				len = min(PAGE_SIZE - offset_in_page(ra), len);
+			} else {
+				ra = dst;
+			}
+			if (memcpy_real(ra, src, len))
+				return -EFAULT;
 		}
-		count -= copied;
-		src += copied;
-		res += copied;
-		if (copied < len)
-			break;
+		dst += len;
+		src += len;
+		count -= len;
 	}
-	return res;
+	return 0;
 }
 
-int copy_oldmem_kernel(void *dst, unsigned long src, size_t count)
+/*
+ * Copy memory of the old, dumped system to a user space virtual address
+ */
+static int copy_oldmem_user(void __user *dst, unsigned long src, size_t count)
 {
-	struct iov_iter iter;
-	struct kvec kvec;
+	unsigned long len;
+	int rc;
 
-	kvec.iov_base = dst;
-	kvec.iov_len = count;
-	iov_iter_kvec(&iter, ITER_DEST, &kvec, 1, count);
-	if (copy_oldmem_iter(&iter, src, count) < count)
-		return -EFAULT;
+	while (count) {
+		if (!oldmem_data.start && src < sclp.hsa_size) {
+			/* Copy from zfcp/nvme dump HSA area */
+			len = min(count, sclp.hsa_size - src);
+			rc = memcpy_hsa_user(dst, src, len);
+			if (rc)
+				return rc;
+		} else {
+			/* Check for swapped kdump oldmem areas */
+			if (oldmem_data.start && src - oldmem_data.start < oldmem_data.size) {
+				src -= oldmem_data.start;
+				len = min(count, oldmem_data.size - src);
+			} else if (oldmem_data.start && src < oldmem_data.size) {
+				len = min(count, oldmem_data.size - src);
+				src += oldmem_data.start;
+			} else {
+				len = count;
+			}
+			rc = copy_to_user_real(dst, src, len);
+			if (rc)
+				return rc;
+		}
+		dst += len;
+		src += len;
+		count -= len;
+	}
 	return 0;
 }
 
 /*
  * Copy one page from "oldmem"
  */
-ssize_t copy_oldmem_page(struct iov_iter *iter, unsigned long pfn, size_t csize,
-			 unsigned long offset)
+ssize_t copy_oldmem_page(unsigned long pfn, char *buf, size_t csize,
+			 unsigned long offset, int userbuf)
 {
 	unsigned long src;
+	int rc;
 
+	if (!csize)
+		return 0;
 	src = pfn_to_phys(pfn) + offset;
-	return copy_oldmem_iter(iter, src, csize);
+	if (userbuf)
+		rc = copy_oldmem_user((void __force __user *) buf, src, csize);
+	else
+		rc = copy_oldmem_kernel((void *) buf, src, csize);
+	return rc;
 }
 
 /*

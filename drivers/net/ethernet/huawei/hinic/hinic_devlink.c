@@ -43,7 +43,9 @@ static bool check_image_valid(struct hinic_devlink_priv *priv, const u8 *buf,
 
 	for (i = 0; i < fw_image->fw_info.fw_section_cnt; i++) {
 		len += fw_image->fw_section_info[i].fw_section_len;
-		host_image->image_section_info[i] = fw_image->fw_section_info[i];
+		memcpy(&host_image->image_section_info[i],
+		       &fw_image->fw_section_info[i],
+		       sizeof(struct fw_section_info_st));
 	}
 
 	if (len != fw_image->fw_len ||
@@ -301,11 +303,11 @@ void hinic_devlink_free(struct devlink *devlink)
 	devlink_free(devlink);
 }
 
-void hinic_devlink_register(struct hinic_devlink_priv *priv)
+int hinic_devlink_register(struct hinic_devlink_priv *priv)
 {
 	struct devlink *devlink = priv_to_devlink(priv);
 
-	devlink_register(devlink);
+	return devlink_register(devlink);
 }
 
 void hinic_devlink_unregister(struct hinic_devlink_priv *priv)

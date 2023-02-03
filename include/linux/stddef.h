@@ -13,10 +13,14 @@ enum {
 };
 
 #undef offsetof
-#define offsetof(TYPE, MEMBER)	__builtin_offsetof(TYPE, MEMBER)
+#ifdef __compiler_offsetof
+#define offsetof(TYPE, MEMBER)	__compiler_offsetof(TYPE, MEMBER)
+#else
+#define offsetof(TYPE, MEMBER)	((size_t)&((TYPE *)0)->MEMBER)
+#endif
 
 /**
- * sizeof_field() - Report the size of a struct field in bytes
+ * sizeof_field(TYPE, MEMBER)
  *
  * @TYPE: The structure containing the field of interest
  * @MEMBER: The field to return the size of
@@ -24,7 +28,7 @@ enum {
 #define sizeof_field(TYPE, MEMBER) sizeof((((TYPE *)0)->MEMBER))
 
 /**
- * offsetofend() - Report the offset of a struct field within the struct
+ * offsetofend(TYPE, MEMBER)
  *
  * @TYPE: The type of the structure
  * @MEMBER: The member within the structure to get the end offset of

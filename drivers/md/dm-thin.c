@@ -161,7 +161,7 @@ static void throttle_work_start(struct throttle *t)
 
 static void throttle_work_update(struct throttle *t)
 {
-	if (!t->throttle_applied && time_is_before_jiffies(t->threshold)) {
+	if (!t->throttle_applied && jiffies > t->threshold) {
 		down_write(&t->lock);
 		t->throttle_applied = true;
 	}
@@ -282,6 +282,8 @@ struct pool {
 	struct dm_bio_prison_cell **cell_sort_array;
 
 	mempool_t mapping_pool;
+
+	struct bio flush_bio;
 };
 
 static void metadata_operation_failed(struct pool *pool, const char *op, int r);
@@ -398,8 +400,8 @@ static int issue_discard(struct discard_op *op, dm_block_t data_b, dm_block_t da
 	sector_t s = block_to_sectors(tc->pool, data_b);
 	sector_t len = block_to_sectors(tc->pool, data_e - data_b);
 
-	return __blkdev_issue_discard(tc->pool_dev->bdev, s, len, GFP_NOWAIT,
-				      &op->bio);
+	return __blkdev_issue_discard(tc->pool_dev->bdev, s, len,
+				      GFP_NOWAIT, 0, &op->bio);
 }
 
 static void end_discard(struct discard_op *op, int r)
@@ -410,7 +412,7 @@ static void end_discard(struct discard_op *op, int r)
 		 * need to wait for the chain to complete.
 		 */
 		bio_chain(op->bio, op->parent_bio);
-		op->bio->bi_opf = REQ_OP_DISCARD;
+		bio_set_op_attrs(op->bio, REQ_OP_DISCARD, 0);
 		submit_bio(op->bio);
 	}
 
@@ -755,7 +757,7 @@ static void issue(struct thin_c *tc, struct bio *bio)
 	struct pool *pool = tc->pool;
 
 	if (!bio_triggers_commit(tc, bio)) {
-		dm_submit_bio_remap(bio, NULL);
+		submit_bio_noacct(bio);
 		return;
 	}
 
@@ -1177,17 +1179,25 @@ static void process_prepared_discard_passdown_pt1(struct dm_thin_new_mapping *m)
 		return;
 	}
 
-	discard_parent = bio_alloc(NULL, 1, 0, GFP_NOIO);
-	discard_parent->bi_end_io = passdown_endio;
-	discard_parent->bi_private = m;
- 	if (m->maybe_shared)
- 		passdown_double_checking_shared_status(m, discard_parent);
- 	else {
-		struct discard_op op;
+	discard_parent = bio_alloc(GFP_NOIO, 1);
+	if (!discard_parent) {
+		DMWARN("%s: unable to allocate top level discard bio for passdown. Skipping passdown.",
+		       dm_device_name(tc->pool->pool_md));
+		queue_passdown_pt2(m);
 
-		begin_discard(&op, tc, discard_parent);
-		r = issue_discard(&op, m->data_block, data_end);
-		end_discard(&op, r);
+	} else {
+		discard_parent->bi_end_io = passdown_endio;
+		discard_parent->bi_private = m;
+
+		if (m->maybe_shared)
+			passdown_double_checking_shared_status(m, discard_parent);
+		else {
+			struct discard_op op;
+
+			begin_discard(&op, tc, discard_parent);
+			r = issue_discard(&op, m->data_block, data_end);
+			end_discard(&op, r);
+		}
 	}
 }
 
@@ -2383,7 +2393,7 @@ static void process_deferred_bios(struct pool *pool)
 		if (bio->bi_opf & REQ_PREFLUSH)
 			bio_endio(bio);
 		else
-			dm_submit_bio_remap(bio, NULL);
+			submit_bio_noacct(bio);
 	}
 }
 
@@ -2802,6 +2812,13 @@ static void requeue_bios(struct pool *pool)
 /*----------------------------------------------------------------
  * Binding of control targets to a pool object
  *--------------------------------------------------------------*/
+static bool data_dev_supports_discard(struct pool_c *pt)
+{
+	struct request_queue *q = bdev_get_queue(pt->data_dev->bdev);
+
+	return blk_queue_discard(q);
+}
+
 static bool is_factor(sector_t block_size, uint32_t n)
 {
 	return !sector_div(block_size, n);
@@ -2817,18 +2834,19 @@ static void disable_passdown_if_not_supported(struct pool_c *pt)
 	struct block_device *data_bdev = pt->data_dev->bdev;
 	struct queue_limits *data_limits = &bdev_get_queue(data_bdev)->limits;
 	const char *reason = NULL;
+	char buf[BDEVNAME_SIZE];
 
 	if (!pt->adjusted_pf.discard_passdown)
 		return;
 
-	if (!bdev_max_discard_sectors(pt->data_dev->bdev))
+	if (!data_dev_supports_discard(pt))
 		reason = "discard unsupported";
 
 	else if (data_limits->max_discard_sectors < pool->sectors_per_block)
 		reason = "max discard sectors smaller than a block";
 
 	if (reason) {
-		DMWARN("Data device (%pg) %s: Disabling discard passdown.", data_bdev, reason);
+		DMWARN("Data device (%s) %s: Disabling discard passdown.", bdevname(data_bdev, buf), reason);
 		pt->adjusted_pf.discard_passdown = false;
 	}
 }
@@ -2897,6 +2915,7 @@ static void __pool_destroy(struct pool *pool)
 	if (pool->next_mapping)
 		mempool_free(pool->next_mapping, &pool->mapping_pool);
 	mempool_exit(&pool->mapping_pool);
+	bio_uninit(&pool->flush_bio);
 	dm_deferred_set_destroy(pool->shared_read_ds);
 	dm_deferred_set_destroy(pool->all_io_ds);
 	kfree(pool);
@@ -2977,6 +2996,7 @@ static struct pool *pool_create(struct mapped_device *pool_md,
 	pool->low_water_triggered = false;
 	pool->suspended = true;
 	pool->out_of_data_space = false;
+	bio_init(&pool->flush_bio, NULL, 0);
 
 	pool->shared_read_ds = dm_deferred_set_create();
 	if (!pool->shared_read_ds) {
@@ -3183,22 +3203,28 @@ static void metadata_low_callback(void *context)
 static int metadata_pre_commit_callback(void *context)
 {
 	struct pool *pool = context;
+	struct bio *flush_bio = &pool->flush_bio;
 
-	return blkdev_issue_flush(pool->data_dev);
+	bio_reset(flush_bio);
+	bio_set_dev(flush_bio, pool->data_dev);
+	flush_bio->bi_opf = REQ_OP_WRITE | REQ_PREFLUSH;
+
+	return submit_bio_wait(flush_bio);
 }
 
 static sector_t get_dev_size(struct block_device *bdev)
 {
-	return bdev_nr_sectors(bdev);
+	return i_size_read(bdev->bd_inode) >> SECTOR_SHIFT;
 }
 
 static void warn_if_metadata_device_too_big(struct block_device *bdev)
 {
 	sector_t metadata_dev_size = get_dev_size(bdev);
+	char buffer[BDEVNAME_SIZE];
 
 	if (metadata_dev_size > THIN_METADATA_MAX_SECTORS_WARNING)
-		DMWARN("Metadata device %pg is larger than %u sectors: excess space will not be used.",
-		       bdev, THIN_METADATA_MAX_SECTORS);
+		DMWARN("Metadata device %s is larger than %u sectors: excess space will not be used.",
+		       bdevname(bdev, buffer), THIN_METADATA_MAX_SECTORS);
 }
 
 static sector_t get_metadata_dev_size(struct block_device *bdev)
@@ -4062,6 +4088,8 @@ static void pool_io_hints(struct dm_target *ti, struct queue_limits *limits)
 		/*
 		 * Must explicitly disallow stacking discard limits otherwise the
 		 * block layer will stack them if pool's data device has support.
+		 * QUEUE_FLAG_DISCARD wouldn't be set but there is no way for the
+		 * user to see that, so make sure to set all discard limits to 0.
 		 */
 		limits->discard_granularity = 0;
 		return;
@@ -4234,7 +4262,6 @@ static int thin_ctr(struct dm_target *ti, unsigned argc, char **argv)
 
 	ti->num_flush_bios = 1;
 	ti->flush_supported = true;
-	ti->accounts_remapped_io = true;
 	ti->per_io_data_size = sizeof(struct dm_thin_endio_hook);
 
 	/* In case the pool supports discards, pass them on. */

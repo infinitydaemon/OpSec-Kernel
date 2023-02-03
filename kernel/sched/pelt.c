@@ -24,6 +24,10 @@
  *  Author: Vincent Guittot <vincent.guittot@linaro.org>
  */
 
+#include <linux/sched.h>
+#include "sched.h"
+#include "pelt.h"
+
 /*
  * Approximate:
  *   val * y^n,    where y^32 ~= 0.5 (~1 scheduling period)

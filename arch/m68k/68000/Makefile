@@ -17,4 +17,4 @@ obj-$(CONFIG_DRAGEN2)	+= dragen2.o
 obj-$(CONFIG_UCSIMM)	+= ucsimm.o
 obj-$(CONFIG_UCDIMM)	+= ucsimm.o
 
-obj-y			+= head.o
+extra-y 		:= head.o

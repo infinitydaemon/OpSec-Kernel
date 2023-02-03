@@ -35,8 +35,6 @@ const char *rt5682_supply_names[RT5682_NUM_SUPPLIES] = {
 	"AVDD",
 	"MICVDD",
 	"VBAT",
-	"DBVDD",
-	"LDO1-IN",
 };
 EXPORT_SYMBOL_GPL(rt5682_supply_names);
 
@@ -1100,15 +1098,6 @@ void rt5682_jack_detect_handler(struct work_struct *work)
 		mod_delayed_work(system_power_efficient_wq,
 				 &rt5682->jack_detect_work, msecs_to_jiffies(15));
 		return;
-	}
-
-	if (rt5682->is_sdw) {
-		if (pm_runtime_status_suspended(rt5682->slave->dev.parent)) {
-			dev_dbg(&rt5682->slave->dev,
-				"%s: parent device is pm_runtime_status_suspended, skipping jack detection\n",
-				__func__);
-			return;
-		}
 	}
 
 	dapm = snd_soc_component_get_dapm(rt5682->component);
@@ -2390,7 +2379,7 @@ static int rt5682_set_component_pll(struct snd_soc_component *component,
 		pll2_fout1 = 3840000;
 		ret = rl6231_pll_calc(freq_in, pll2_fout1, &pll2f_code);
 		if (ret < 0) {
-			dev_err(component->dev, "Unsupported input clock %d\n",
+			dev_err(component->dev, "Unsupport input clock %d\n",
 				freq_in);
 			return ret;
 		}
@@ -2402,7 +2391,7 @@ static int rt5682_set_component_pll(struct snd_soc_component *component,
 
 		ret = rl6231_pll_calc(pll2_fout1, freq_out, &pll2b_code);
 		if (ret < 0) {
-			dev_err(component->dev, "Unsupported input clock %d\n",
+			dev_err(component->dev, "Unsupport input clock %d\n",
 				pll2_fout1);
 			return ret;
 		}
@@ -2453,7 +2442,7 @@ static int rt5682_set_component_pll(struct snd_soc_component *component,
 
 		ret = rl6231_pll_calc(freq_in, freq_out, &pll_code);
 		if (ret < 0) {
-			dev_err(component->dev, "Unsupported input clock %d\n",
+			dev_err(component->dev, "Unsupport input clock %d\n",
 				freq_in);
 			return ret;
 		}
@@ -2864,6 +2853,7 @@ int rt5682_register_dai_clks(struct rt5682_priv *rt5682)
 
 	for (i = 0; i < RT5682_DAI_NUM_CLKS; ++i) {
 		struct clk_init_data init = { };
+		struct clk_parent_data parent_data;
 		const struct clk_hw *parent;
 
 		dai_clk_hw = &rt5682->dai_clks_hw[i];
@@ -2872,8 +2862,10 @@ int rt5682_register_dai_clks(struct rt5682_priv *rt5682)
 		case RT5682_DAI_WCLK_IDX:
 			/* Make MCLK the parent of WCLK */
 			if (rt5682->mclk) {
-				parent = __clk_get_hw(rt5682->mclk);
-				init.parent_hws = &parent;
+				parent_data = (struct clk_parent_data){
+					.fw_name = "mclk",
+				};
+				init.parent_data = &parent_data;
 				init.num_parents = 1;
 			}
 			break;
@@ -3066,6 +3058,7 @@ const struct snd_soc_component_driver rt5682_soc_component_dev = {
 	.set_jack = rt5682_set_jack_detect,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 EXPORT_SYMBOL_GPL(rt5682_soc_component_dev);
 

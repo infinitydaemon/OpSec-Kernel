@@ -393,9 +393,9 @@ test_qos_pfc()
 	log_test "PFC"
 }
 
-bail_on_lldpad
-
 trap cleanup EXIT
+
+bail_on_lldpad
 setup_prepare
 setup_wait
 tests_run

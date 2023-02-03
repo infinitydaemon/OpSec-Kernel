@@ -14,7 +14,6 @@
 #include <linux/clk.h>
 #include <linux/component.h>
 #include <linux/delay.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 
@@ -82,7 +81,7 @@ struct dsi_hw_ctx {
 
 struct dw_dsi {
 	struct drm_encoder encoder;
-	struct device *dev;
+	struct drm_bridge *bridge;
 	struct mipi_dsi_host host;
 	struct drm_display_mode cur_mode;
 	struct dsi_hw_ctx *ctx;
@@ -658,7 +657,7 @@ static enum drm_mode_status dsi_encoder_mode_valid(struct drm_encoder *encoder,
 		 * reset adj_mode to the mode value each time,
 		 * so we don't adjust the mode twice
 		 */
-		drm_mode_init(&adj_mode, mode);
+		drm_mode_copy(&adj_mode, mode);
 
 		crtc_funcs = crtc->helper_private;
 		if (crtc_funcs && crtc_funcs->mode_fixup)
@@ -721,13 +720,10 @@ static int dw_drm_encoder_init(struct device *dev,
 	return 0;
 }
 
-static const struct component_ops dsi_ops;
 static int dsi_host_attach(struct mipi_dsi_host *host,
 			   struct mipi_dsi_device *mdsi)
 {
 	struct dw_dsi *dsi = host_to_dsi(host);
-	struct device *dev = host->dev;
-	int ret;
 
 	if (mdsi->lanes < 1 || mdsi->lanes > 4) {
 		DRM_ERROR("dsi device params invalid\n");
@@ -738,20 +734,13 @@ static int dsi_host_attach(struct mipi_dsi_host *host,
 	dsi->format = mdsi->format;
 	dsi->mode_flags = mdsi->mode_flags;
 
-	ret = component_add(dev, &dsi_ops);
-	if (ret)
-		return ret;
-
 	return 0;
 }
 
 static int dsi_host_detach(struct mipi_dsi_host *host,
 			   struct mipi_dsi_device *mdsi)
 {
-	struct device *dev = host->dev;
-
-	component_del(dev, &dsi_ops);
-
+	/* do nothing */
 	return 0;
 }
 
@@ -779,17 +768,7 @@ static int dsi_host_init(struct device *dev, struct dw_dsi *dsi)
 static int dsi_bridge_init(struct drm_device *dev, struct dw_dsi *dsi)
 {
 	struct drm_encoder *encoder = &dsi->encoder;
-	struct drm_bridge *bridge;
-	struct device_node *np = dsi->dev->of_node;
-	int ret;
-
-	/*
-	 * Get the endpoint node. In our case, dsi has one output port1
-	 * to which the external HDMI bridge is connected.
-	 */
-	ret = drm_of_find_panel_or_bridge(np, 1, 0, NULL, &bridge);
-	if (ret)
-		return ret;
+	struct drm_bridge *bridge = dsi->bridge;
 
 	/* associate the bridge to dsi encoder */
 	return drm_bridge_attach(encoder, bridge, NULL, 0);
@@ -803,6 +782,10 @@ static int dsi_bind(struct device *dev, struct device *master, void *data)
 	int ret;
 
 	ret = dw_drm_encoder_init(dev, drm_dev, &dsi->encoder);
+	if (ret)
+		return ret;
+
+	ret = dsi_host_init(dev, dsi);
 	if (ret)
 		return ret;
 
@@ -826,7 +809,17 @@ static const struct component_ops dsi_ops = {
 static int dsi_parse_dt(struct platform_device *pdev, struct dw_dsi *dsi)
 {
 	struct dsi_hw_ctx *ctx = dsi->ctx;
+	struct device_node *np = pdev->dev.of_node;
 	struct resource *res;
+	int ret;
+
+	/*
+	 * Get the endpoint node. In our case, dsi has one output port1
+	 * to which the external HDMI bridge is connected.
+	 */
+	ret = drm_of_find_panel_or_bridge(np, 1, 0, NULL, &dsi->bridge);
+	if (ret)
+		return ret;
 
 	ctx->pclk = devm_clk_get(&pdev->dev, "pclk");
 	if (IS_ERR(ctx->pclk)) {
@@ -859,7 +852,6 @@ static int dsi_probe(struct platform_device *pdev)
 	dsi = &data->dsi;
 	ctx = &data->ctx;
 	dsi->ctx = ctx;
-	dsi->dev = &pdev->dev;
 
 	ret = dsi_parse_dt(pdev, dsi);
 	if (ret)
@@ -867,19 +859,12 @@ static int dsi_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, data);
 
-	ret = dsi_host_init(&pdev->dev, dsi);
-	if (ret)
-		return ret;
-
-	return 0;
+	return component_add(&pdev->dev, &dsi_ops);
 }
 
 static int dsi_remove(struct platform_device *pdev)
 {
-	struct dsi_data *data = platform_get_drvdata(pdev);
-	struct dw_dsi *dsi = &data->dsi;
-
-	mipi_dsi_host_unregister(&dsi->host);
+	component_del(&pdev->dev, &dsi_ops);
 
 	return 0;
 }

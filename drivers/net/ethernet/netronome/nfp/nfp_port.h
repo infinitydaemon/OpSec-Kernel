@@ -46,7 +46,6 @@ enum nfp_port_flags {
  * @tc_offload_cnt:	number of active TC offloads, how offloads are counted
  *			is not defined, use as a boolean
  * @app:	backpointer to the app structure
- * @link_cb:	callback when link status changed
  * @dl_port:	devlink port structure
  * @eth_id:	for %NFP_PORT_PHYS_PORT port ID in NFP enumeration scheme
  * @eth_forced:	for %NFP_PORT_PHYS_PORT port is forced UP or DOWN, don't change
@@ -67,7 +66,6 @@ struct nfp_port {
 	unsigned long tc_offload_cnt;
 
 	struct nfp_app *app;
-	void (*link_cb)(struct nfp_port *port);
 
 	struct devlink_port dl_port;
 
@@ -108,6 +106,8 @@ nfp_port_set_features(struct net_device *netdev, netdev_features_t features);
 struct nfp_port *nfp_port_from_netdev(struct net_device *netdev);
 int nfp_port_get_port_parent_id(struct net_device *netdev,
 				struct netdev_phys_item_id *ppid);
+struct nfp_port *
+nfp_port_from_id(struct nfp_pf *pf, enum nfp_port_type type, unsigned int id);
 struct nfp_eth_table_port *__nfp_port_get_eth_port(struct nfp_port *port);
 struct nfp_eth_table_port *nfp_port_get_eth_port(struct nfp_port *port);
 
@@ -129,8 +129,11 @@ int nfp_net_refresh_port_table_sync(struct nfp_pf *pf);
 
 int nfp_devlink_port_register(struct nfp_app *app, struct nfp_port *port);
 void nfp_devlink_port_unregister(struct nfp_port *port);
+void nfp_devlink_port_type_eth_set(struct nfp_port *port);
+void nfp_devlink_port_type_clear(struct nfp_port *port);
 
-/* Mac stats (0x0000 - 0x0200)
+/**
+ * Mac stats (0x0000 - 0x0200)
  * all counters are 64bit.
  */
 #define NFP_MAC_STATS_BASE                0x0000

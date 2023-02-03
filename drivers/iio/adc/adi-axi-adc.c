@@ -84,10 +84,9 @@ void *adi_axi_adc_conv_priv(struct adi_axi_adc_conv *conv)
 {
 	struct adi_axi_adc_client *cl = conv_to_client(conv);
 
-	return (char *)cl + ALIGN(sizeof(struct adi_axi_adc_client),
-				  IIO_DMA_MINALIGN);
+	return (char *)cl + ALIGN(sizeof(struct adi_axi_adc_client), IIO_ALIGN);
 }
-EXPORT_SYMBOL_NS_GPL(adi_axi_adc_conv_priv, IIO_ADI_AXI);
+EXPORT_SYMBOL_GPL(adi_axi_adc_conv_priv);
 
 static void adi_axi_adc_write(struct adi_axi_adc_state *st,
 			      unsigned int reg,
@@ -170,9 +169,9 @@ static struct adi_axi_adc_conv *adi_axi_adc_conv_register(struct device *dev,
 	struct adi_axi_adc_client *cl;
 	size_t alloc_size;
 
-	alloc_size = ALIGN(sizeof(struct adi_axi_adc_client), IIO_DMA_MINALIGN);
+	alloc_size = ALIGN(sizeof(struct adi_axi_adc_client), IIO_ALIGN);
 	if (sizeof_priv)
-		alloc_size += ALIGN(sizeof_priv, IIO_DMA_MINALIGN);
+		alloc_size += ALIGN(sizeof_priv, IIO_ALIGN);
 
 	cl = kzalloc(alloc_size, GFP_KERNEL);
 	if (!cl)
@@ -225,7 +224,7 @@ struct adi_axi_adc_conv *devm_adi_axi_adc_conv_register(struct device *dev,
 
 	return conv;
 }
-EXPORT_SYMBOL_NS_GPL(devm_adi_axi_adc_conv_register, IIO_ADI_AXI);
+EXPORT_SYMBOL_GPL(devm_adi_axi_adc_conv_register);
 
 static ssize_t in_voltage_scale_available_show(struct device *dev,
 					       struct device_attribute *attr,

@@ -29,7 +29,8 @@ kapi:	$(kapi-hdrs-y) $(gen-y)
 uapi:	$(uapi-hdrs-y)
 
 # Create output directory if not already present
-$(shell mkdir -p $(kapi) $(uapi))
+_dummy := $(shell [ -d '$(kapi)' ] || mkdir -p '$(kapi)') \
+          $(shell [ -d '$(uapi)' ] || mkdir -p '$(uapi)')
 
 quiet_cmd_gen_mach = GEN     $@
       cmd_gen_mach = $(AWK) -f $(real-prereqs) > $@

@@ -19,6 +19,10 @@
 #include "vmx.h"
 #include "svm_util.h"
 
+#define VCPU_ID	      1
+
+#define PAGE_SIZE  4096
+
 #define SMRAM_SIZE 65536
 #define SMRAM_MEMSLOT ((1 << 16) | 1)
 #define SMRAM_PAGES (SMRAM_SIZE / PAGE_SIZE)
@@ -83,7 +87,7 @@ static void guest_code(void *arg)
 	sync_with_host(4);
 
 	if (arg) {
-		if (this_cpu_has(X86_FEATURE_SVM)) {
+		if (cpu_has_svm()) {
 			generic_svm_setup(svm, l2_guest_code,
 					  &l2_guest_stack[L2_GUEST_STACK_SIZE]);
 		} else {
@@ -99,7 +103,7 @@ static void guest_code(void *arg)
 
 		sync_with_host(7);
 
-		if (this_cpu_has(X86_FEATURE_SVM)) {
+		if (cpu_has_svm()) {
 			run_guest(svm->vmcb, svm->vmcb_gpa);
 			run_guest(svm->vmcb, svm->vmcb_gpa);
 		} else {
@@ -114,35 +118,32 @@ static void guest_code(void *arg)
 	sync_with_host(DONE);
 }
 
-void inject_smi(struct kvm_vcpu *vcpu)
+void inject_smi(struct kvm_vm *vm)
 {
 	struct kvm_vcpu_events events;
 
-	vcpu_events_get(vcpu, &events);
+	vcpu_events_get(vm, VCPU_ID, &events);
 
 	events.smi.pending = 1;
 	events.flags |= KVM_VCPUEVENT_VALID_SMM;
 
-	vcpu_events_set(vcpu, &events);
+	vcpu_events_set(vm, VCPU_ID, &events);
 }
 
 int main(int argc, char *argv[])
 {
 	vm_vaddr_t nested_gva = 0;
 
-	struct kvm_vcpu *vcpu;
 	struct kvm_regs regs;
 	struct kvm_vm *vm;
 	struct kvm_run *run;
 	struct kvm_x86_state *state;
 	int stage, stage_reported;
 
-	TEST_REQUIRE(kvm_has_cap(KVM_CAP_X86_SMM));
-
 	/* Create VM */
-	vm = vm_create_with_one_vcpu(&vcpu, guest_code);
+	vm = vm_create_default(VCPU_ID, 0, guest_code);
 
-	run = vcpu->run;
+	run = vcpu_state(vm, VCPU_ID);
 
 	vm_userspace_mem_region_add(vm, VM_MEM_SRC_ANONYMOUS, SMRAM_GPA,
 				    SMRAM_MEMSLOT, SMRAM_PAGES, 0);
@@ -153,29 +154,29 @@ int main(int argc, char *argv[])
 	memcpy(addr_gpa2hva(vm, SMRAM_GPA) + 0x8000, smi_handler,
 	       sizeof(smi_handler));
 
-	vcpu_set_msr(vcpu, MSR_IA32_SMBASE, SMRAM_GPA);
+	vcpu_set_msr(vm, VCPU_ID, MSR_IA32_SMBASE, SMRAM_GPA);
 
-	if (kvm_has_cap(KVM_CAP_NESTED_STATE)) {
-		if (kvm_cpu_has(X86_FEATURE_SVM))
+	if (kvm_check_cap(KVM_CAP_NESTED_STATE)) {
+		if (nested_svm_supported())
 			vcpu_alloc_svm(vm, &nested_gva);
-		else if (kvm_cpu_has(X86_FEATURE_VMX))
+		else if (nested_vmx_supported())
 			vcpu_alloc_vmx(vm, &nested_gva);
 	}
 
 	if (!nested_gva)
 		pr_info("will skip SMM test with VMX enabled\n");
 
-	vcpu_args_set(vcpu, 1, nested_gva);
+	vcpu_args_set(vm, VCPU_ID, 1, nested_gva);
 
 	for (stage = 1;; stage++) {
-		vcpu_run(vcpu);
+		_vcpu_run(vm, VCPU_ID);
 		TEST_ASSERT(run->exit_reason == KVM_EXIT_IO,
 			    "Stage %d: unexpected exit reason: %u (%s),\n",
 			    stage, run->exit_reason,
 			    exit_reason_str(run->exit_reason));
 
 		memset(&regs, 0, sizeof(regs));
-		vcpu_regs_get(vcpu, &regs);
+		vcpu_regs_get(vm, VCPU_ID, &regs);
 
 		stage_reported = regs.rax & 0xff;
 
@@ -192,7 +193,7 @@ int main(int argc, char *argv[])
 		 * return from it. Do not perform save/restore while in SMM yet.
 		 */
 		if (stage == 8) {
-			inject_smi(vcpu);
+			inject_smi(vm);
 			continue;
 		}
 
@@ -201,15 +202,16 @@ int main(int argc, char *argv[])
 		 * during L2 execution.
 		 */
 		if (stage == 10)
-			inject_smi(vcpu);
+			inject_smi(vm);
 
-		state = vcpu_save_state(vcpu);
+		state = vcpu_save_state(vm, VCPU_ID);
 		kvm_vm_release(vm);
-
-		vcpu = vm_recreate_with_one_vcpu(vm);
-		vcpu_load_state(vcpu, state);
-		run = vcpu->run;
-		kvm_x86_state_cleanup(state);
+		kvm_vm_restart(vm, O_RDWR);
+		vm_vcpu_add(vm, VCPU_ID);
+		vcpu_set_cpuid(vm, VCPU_ID, kvm_get_supported_cpuid());
+		vcpu_load_state(vm, VCPU_ID, state);
+		run = vcpu_state(vm, VCPU_ID);
+		free(state);
 	}
 
 done:

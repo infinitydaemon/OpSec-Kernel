@@ -67,7 +67,7 @@ properties:
           remote-endpoint: true
 
           bus-width:
-            enum: [8, 9, 10, 11, 12, 14]
+            enum: [8, 9, 10, 11, 12]
             default: 12
 
           hsync-active:
@@ -106,7 +106,6 @@ examples:
     #include <dt-bindings/interrupt-controller/arm-gic.h>
     #include <dt-bindings/clock/at91.h>
     #include <dt-bindings/interrupt-controller/irq.h>
-    #include <dt-bindings/media/video-interfaces.h>
 
     xisc: xisc@e1408000 {
         compatible = "microchip,sama7g5-isc";
@@ -119,7 +118,7 @@ examples:
 
         port {
                 xisc_in: endpoint {
-                       bus-type = <MEDIA_BUS_TYPE_PARALLEL>;
+                       bus-type = <5>; /* Parallel */
                        remote-endpoint = <&csi2dc_out>;
                        hsync-active = <1>;
                        vsync-active = <1>;
@@ -127,3 +126,4 @@ examples:
                 };
         };
     };
+

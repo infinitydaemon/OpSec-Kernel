@@ -43,8 +43,6 @@ static int ibm_get_config_addr_info;
 static int ibm_get_config_addr_info2;
 static int ibm_configure_pe;
 
-static void pseries_eeh_init_edev(struct pci_dn *pdn);
-
 static void pseries_pcibios_bus_add_device(struct pci_dev *pdev)
 {
 	struct pci_dn *pdn = pci_get_pdn(pdev);
@@ -71,7 +69,7 @@ static void pseries_pcibios_bus_add_device(struct pci_dev *pdev)
 	if (pdev->is_virtfn) {
 		/*
 		 * FIXME: This really should be handled by choosing the right
-		 *        parent PE in pseries_eeh_init_edev().
+		 *        parent PE in in pseries_eeh_init_edev().
 		 */
 		struct eeh_pe *physfn_pe = pci_dev_to_eeh_dev(pdev->physfn)->pe;
 		struct eeh_dev *edev = pdn_to_eeh_dev(pdn);
@@ -154,7 +152,7 @@ static int pseries_eeh_get_pe_config_addr(struct pci_dn *pdn)
 /**
  * pseries_eeh_phb_reset - Reset the specified PHB
  * @phb: PCI controller
- * @config_addr: the associated config address
+ * @config_adddr: the associated config address
  * @option: reset option
  *
  * Reset the specified PHB/PE
@@ -188,7 +186,7 @@ static int pseries_eeh_phb_reset(struct pci_controller *phb, int config_addr, in
 /**
  * pseries_eeh_phb_configure_bridge - Configure PCI bridges in the indicated PE
  * @phb: PCI controller
- * @config_addr: the associated config address
+ * @config_adddr: the associated config address
  *
  * The function will be called to reconfigure the bridges included
  * in the specified PE so that the mulfunctional PE would be recovered
@@ -361,7 +359,7 @@ static struct eeh_pe *pseries_eeh_pe_get_parent(struct eeh_dev *edev)
  * This function takes care of the initialisation and inserts the eeh_dev
  * into the correct eeh_pe. If no eeh_pe exists we'll allocate one.
  */
-static void pseries_eeh_init_edev(struct pci_dn *pdn)
+void pseries_eeh_init_edev(struct pci_dn *pdn)
 {
 	struct eeh_pe pe, *parent;
 	struct eeh_dev *edev;
@@ -512,7 +510,7 @@ static int pseries_eeh_set_option(struct eeh_pe *pe, int option)
 	int ret = 0;
 
 	/*
-	 * When we're enabling or disabling EEH functionality on
+	 * When we're enabling or disabling EEH functioality on
 	 * the particular PE, the PE config address is possibly
 	 * unavailable. Therefore, we have to figure it out from
 	 * the FDT node.

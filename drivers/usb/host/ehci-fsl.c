@@ -76,9 +76,14 @@ static int fsl_ehci_drv_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
-		return irq;
+	res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
+	if (!res) {
+		dev_err(&pdev->dev,
+			"Found HC with no IRQ. Check %s setup!\n",
+			dev_name(&pdev->dev));
+		return -ENODEV;
+	}
+	irq = res->start;
 
 	hcd = __usb_create_hcd(&fsl_ehci_hc_driver, pdev->dev.parent,
 			       &pdev->dev, dev_name(&pdev->dev), NULL);
@@ -721,6 +726,8 @@ static int __init ehci_fsl_init(void)
 {
 	if (usb_disabled())
 		return -ENODEV;
+
+	pr_info(DRV_NAME ": " DRIVER_DESC "\n");
 
 	ehci_init_driver(&fsl_ehci_hc_driver, &ehci_fsl_overrides);
 

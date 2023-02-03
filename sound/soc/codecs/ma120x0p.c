@@ -1179,6 +1179,7 @@ static const struct snd_soc_component_driver ma120x0p_component_driver = {
 	.num_controls = ARRAY_SIZE(ma120x0p_snd_controls),
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 //I2C Driver
@@ -1308,7 +1309,7 @@ static irqreturn_t ma120x0p_irq_handler(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static void ma120x0p_i2c_remove(struct i2c_client *i2c)
+static int ma120x0p_i2c_remove(struct i2c_client *i2c)
 {
 	snd_soc_unregister_component(&i2c->dev);
 	i2c_set_clientdata(i2c, NULL);
@@ -1321,6 +1322,8 @@ static void ma120x0p_i2c_remove(struct i2c_client *i2c)
 	msleep(200);
 
 	kfree(priv_data);
+
+	return 0;
 }
 
 static void ma120x0p_i2c_shutdown(struct i2c_client *i2c)

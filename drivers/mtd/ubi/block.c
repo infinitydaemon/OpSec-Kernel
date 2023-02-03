@@ -294,8 +294,6 @@ static void ubiblock_do_work(struct work_struct *work)
 	int ret;
 	struct ubiblock_pdu *pdu = container_of(work, struct ubiblock_pdu, work);
 	struct request *req = blk_mq_rq_from_pdu(pdu);
-	struct req_iterator iter;
-	struct bio_vec bvec;
 
 	blk_mq_start_request(req);
 
@@ -307,9 +305,7 @@ static void ubiblock_do_work(struct work_struct *work)
 	blk_rq_map_sg(req->q, req, pdu->usgl.sg);
 
 	ret = ubiblock_read(pdu);
-
-	rq_for_each_segment(bvec, req, iter)
-		flush_dcache_page(bvec.bv_page);
+	rq_flush_dcache_pages(req);
 
 	blk_mq_end_request(req, errno_to_blk_status(ret));
 }
@@ -409,7 +405,7 @@ int ubiblock_create(struct ubi_volume_info *vi)
 	ret = blk_mq_alloc_tag_set(&dev->tag_set);
 	if (ret) {
 		dev_err(disk_to_dev(dev->gd), "blk_mq_alloc_tag_set failed");
-		goto out_free_dev;
+		goto out_free_dev;;
 	}
 
 
@@ -430,7 +426,6 @@ int ubiblock_create(struct ubi_volume_info *vi)
 		ret = -ENODEV;
 		goto out_cleanup_disk;
 	}
-	gd->flags |= GENHD_FL_NO_PART;
 	gd->private_data = dev;
 	sprintf(gd->disk_name, "ubiblock%d_%d", dev->ubi_num, dev->vol_id);
 	set_capacity(gd, disk_capacity);
@@ -441,7 +436,7 @@ int ubiblock_create(struct ubi_volume_info *vi)
 
 	/*
 	 * Create one workqueue per volume (per registered block device).
-	 * Remember workqueues are cheap, they're not threads.
+	 * Rembember workqueues are cheap, they're not threads.
 	 */
 	dev->wq = alloc_workqueue("%s", 0, 0, gd->disk_name);
 	if (!dev->wq) {
@@ -452,22 +447,16 @@ int ubiblock_create(struct ubi_volume_info *vi)
 	list_add_tail(&dev->list, &ubiblock_devices);
 
 	/* Must be the last step: anyone can call file ops from now on */
-	ret = add_disk(dev->gd);
-	if (ret)
-		goto out_destroy_wq;
-
+	add_disk(dev->gd);
 	dev_info(disk_to_dev(dev->gd), "created from ubi%d:%d(%s)",
 		 dev->ubi_num, dev->vol_id, vi->name);
 	mutex_unlock(&devices_mutex);
 	return 0;
 
-out_destroy_wq:
-	list_del(&dev->list);
-	destroy_workqueue(dev->wq);
 out_remove_minor:
 	idr_remove(&ubiblock_minor_idr, gd->first_minor);
 out_cleanup_disk:
-	put_disk(dev->gd);
+	blk_cleanup_disk(dev->gd);
 out_free_tags:
 	blk_mq_free_tag_set(&dev->tag_set);
 out_free_dev:
@@ -486,7 +475,7 @@ static void ubiblock_cleanup(struct ubiblock *dev)
 	destroy_workqueue(dev->wq);
 	/* Finally destroy the blk queue */
 	dev_info(disk_to_dev(dev->gd), "released");
-	put_disk(dev->gd);
+	blk_cleanup_disk(dev->gd);
 	blk_mq_free_tag_set(&dev->tag_set);
 	idr_remove(&ubiblock_minor_idr, dev->gd->first_minor);
 }

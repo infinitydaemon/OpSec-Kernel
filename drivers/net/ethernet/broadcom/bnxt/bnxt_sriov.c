@@ -307,7 +307,7 @@ int bnxt_set_vf_bw(struct net_device *dev, int vf_id, int min_tx_rate,
 		return -EINVAL;
 	}
 
-	if (min_tx_rate > pf_link_speed) {
+	if (min_tx_rate > pf_link_speed || min_tx_rate > max_tx_rate) {
 		netdev_info(bp->dev, "min tx rate %d is invalid for VF %d\n",
 			    min_tx_rate, vf_id);
 		return -EINVAL;
@@ -823,19 +823,14 @@ static int bnxt_sriov_enable(struct bnxt *bp, int *num_vfs)
 		goto err_out2;
 
 	rc = pci_enable_sriov(bp->pdev, *num_vfs);
-	if (rc) {
-		bnxt_ulp_sriov_cfg(bp, 0);
+	if (rc)
 		goto err_out2;
-	}
 
 	return 0;
 
 err_out2:
 	/* Free the resources reserved for various VF's */
 	bnxt_hwrm_func_vf_resource_free(bp, *num_vfs);
-
-	/* Restore the max resources */
-	bnxt_hwrm_func_qcaps(bp);
 
 err_out1:
 	bnxt_free_vf_resources(bp);
@@ -851,7 +846,7 @@ void bnxt_sriov_disable(struct bnxt *bp)
 		return;
 
 	/* synchronize VF and VF-rep create and destroy */
-	devl_lock(bp->dl);
+	mutex_lock(&bp->sriov_lock);
 	bnxt_vf_reps_destroy(bp);
 
 	if (pci_vfs_assigned(bp->pdev)) {
@@ -864,7 +859,7 @@ void bnxt_sriov_disable(struct bnxt *bp)
 		/* Free the HW resources reserved for various VF's */
 		bnxt_hwrm_func_vf_resource_free(bp, num_vfs);
 	}
-	devl_unlock(bp->dl);
+	mutex_unlock(&bp->sriov_lock);
 
 	bnxt_free_vf_resources(bp);
 
@@ -1156,7 +1151,7 @@ void bnxt_hwrm_exec_fwd_req(struct bnxt *bp)
 	}
 }
 
-int bnxt_approve_mac(struct bnxt *bp, const u8 *mac, bool strict)
+int bnxt_approve_mac(struct bnxt *bp, u8 *mac, bool strict)
 {
 	struct hwrm_func_vf_cfg_input *req;
 	int rc = 0;
@@ -1222,7 +1217,7 @@ void bnxt_update_vf_mac(struct bnxt *bp)
 
 	/* overwrite netdev dev_addr with admin VF MAC */
 	if (is_valid_ether_addr(bp->vf.mac_addr))
-		eth_hw_addr_set(bp->dev, bp->vf.mac_addr);
+		memcpy(bp->dev->dev_addr, bp->vf.mac_addr, ETH_ALEN);
 update_vf_mac_exit:
 	hwrm_req_drop(bp, req);
 	if (inform_pf)
@@ -1251,7 +1246,7 @@ void bnxt_update_vf_mac(struct bnxt *bp)
 {
 }
 
-int bnxt_approve_mac(struct bnxt *bp, const u8 *mac, bool strict)
+int bnxt_approve_mac(struct bnxt *bp, u8 *mac, bool strict)
 {
 	return 0;
 }

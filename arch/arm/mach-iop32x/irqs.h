@@ -43,6 +43,4 @@
 #define IRQ_IOP32X_XINT3	IOP_IRQ(30)
 #define IRQ_IOP32X_HPI		IOP_IRQ(31)
 
-#define IOP32X_NR_IRQS		(IRQ_IOP32X_HPI + 1)
-
 #endif

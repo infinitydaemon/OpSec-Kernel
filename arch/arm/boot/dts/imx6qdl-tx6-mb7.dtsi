@@ -85,7 +85,7 @@
 };
 
 &i2c3 {
-	rtc: rtc@6f {
+	rtc: mcp7940x@6f {
 		compatible = "microchip,mcp7940x";
 		reg = <0x6f>;
 	};

@@ -200,18 +200,18 @@ static void disable_nest_pmu_counters(void)
 
 static void disable_core_pmu_counters(void)
 {
+	cpumask_t cores_map;
 	int cpu, rc;
 
 	cpus_read_lock();
 	/* Disable the IMC Core functions */
-	for_each_online_cpu(cpu) {
-		if (cpu_first_thread_sibling(cpu) != cpu)
-			continue;
+	cores_map = cpu_online_cores_map();
+	for_each_cpu(cpu, &cores_map) {
 		rc = opal_imc_counters_stop(OPAL_IMC_COUNTERS_CORE,
 					    get_hard_smp_processor_id(cpu));
 		if (rc)
 			pr_err("%s: Failed to stop Core (cpu = %d)\n",
-				__func__, cpu);
+				__FUNCTION__, cpu);
 	}
 	cpus_read_unlock();
 }

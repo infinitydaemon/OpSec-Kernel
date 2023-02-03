@@ -9,7 +9,6 @@
 
 #include "fsl_pamu_domain.h"
 
-#include <linux/platform_device.h>
 #include <sysdev/fsl_pci.h>
 
 /*
@@ -178,7 +177,7 @@ static phys_addr_t fsl_pamu_iova_to_phys(struct iommu_domain *domain,
 	return iova;
 }
 
-static bool fsl_pamu_capable(struct device *dev, enum iommu_cap cap)
+static bool fsl_pamu_capable(enum iommu_cap cap)
 {
 	return cap == IOMMU_CAP_CACHE_COHERENCY;
 }
@@ -258,7 +257,7 @@ static int fsl_pamu_attach_device(struct iommu_domain *domain,
 	liodn = of_get_property(dev->of_node, "fsl,liodn", &len);
 	if (!liodn) {
 		pr_debug("missing fsl,liodn property at %pOF\n", dev->of_node);
-		return -ENODEV;
+		return -EINVAL;
 	}
 
 	spin_lock_irqsave(&dma_domain->domain_lock, flags);
@@ -267,7 +266,7 @@ static int fsl_pamu_attach_device(struct iommu_domain *domain,
 		if (liodn[i] >= PAACE_NUMBER_ENTRIES) {
 			pr_debug("Invalid liodn %d, attach device failed for %pOF\n",
 				 liodn[i], dev->of_node);
-			ret = -ENODEV;
+			ret = -EINVAL;
 			break;
 		}
 
@@ -447,17 +446,20 @@ static struct iommu_device *fsl_pamu_probe_device(struct device *dev)
 	return &pamu_iommu;
 }
 
+static void fsl_pamu_release_device(struct device *dev)
+{
+}
+
 static const struct iommu_ops fsl_pamu_ops = {
 	.capable	= fsl_pamu_capable,
 	.domain_alloc	= fsl_pamu_domain_alloc,
+	.domain_free    = fsl_pamu_domain_free,
+	.attach_dev	= fsl_pamu_attach_device,
+	.detach_dev	= fsl_pamu_detach_device,
+	.iova_to_phys	= fsl_pamu_iova_to_phys,
 	.probe_device	= fsl_pamu_probe_device,
+	.release_device	= fsl_pamu_release_device,
 	.device_group   = fsl_pamu_device_group,
-	.default_domain_ops = &(const struct iommu_domain_ops) {
-		.attach_dev	= fsl_pamu_attach_device,
-		.detach_dev	= fsl_pamu_detach_device,
-		.iova_to_phys	= fsl_pamu_iova_to_phys,
-		.free		= fsl_pamu_domain_free,
-	}
 };
 
 int __init pamu_domain_init(void)
@@ -476,7 +478,11 @@ int __init pamu_domain_init(void)
 	if (ret) {
 		iommu_device_sysfs_remove(&pamu_iommu);
 		pr_err("Can't register iommu device\n");
+		return ret;
 	}
+
+	bus_set_iommu(&platform_bus_type, &fsl_pamu_ops);
+	bus_set_iommu(&pci_bus_type, &fsl_pamu_ops);
 
 	return ret;
 }

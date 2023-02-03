@@ -40,10 +40,13 @@
 
 static struct platform_device *dcdbas_pdev;
 
+static u8 *smi_data_buf;
+static dma_addr_t smi_data_buf_handle;
+static unsigned long smi_data_buf_size;
 static unsigned long max_smi_data_buf_size = MAX_SMI_DATA_BUF_SIZE;
+static u32 smi_data_buf_phys_addr;
 static DEFINE_MUTEX(smi_data_lock);
 static u8 *bios_buffer;
-static struct smi_buffer smi_buf;
 
 static unsigned int host_control_action;
 static unsigned int host_control_smi_type;
@@ -51,49 +54,23 @@ static unsigned int host_control_on_shutdown;
 
 static bool wsmt_enabled;
 
-int dcdbas_smi_alloc(struct smi_buffer *smi_buffer, unsigned long size)
-{
-	smi_buffer->virt = dma_alloc_coherent(&dcdbas_pdev->dev, size,
-					      &smi_buffer->dma, GFP_KERNEL);
-	if (!smi_buffer->virt) {
-		dev_dbg(&dcdbas_pdev->dev,
-			"%s: failed to allocate memory size %lu\n",
-			__func__, size);
-		return -ENOMEM;
-	}
-	smi_buffer->size = size;
-
-	dev_dbg(&dcdbas_pdev->dev, "%s: phys: %x size: %lu\n",
-		__func__, (u32)smi_buffer->dma, smi_buffer->size);
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(dcdbas_smi_alloc);
-
-void dcdbas_smi_free(struct smi_buffer *smi_buffer)
-{
-	if (!smi_buffer->virt)
-		return;
-
-	dev_dbg(&dcdbas_pdev->dev, "%s: phys: %x size: %lu\n",
-		__func__, (u32)smi_buffer->dma, smi_buffer->size);
-	dma_free_coherent(&dcdbas_pdev->dev, smi_buffer->size,
-			  smi_buffer->virt, smi_buffer->dma);
-	smi_buffer->virt = NULL;
-	smi_buffer->dma = 0;
-	smi_buffer->size = 0;
-}
-EXPORT_SYMBOL_GPL(dcdbas_smi_free);
-
 /**
  * smi_data_buf_free: free SMI data buffer
  */
 static void smi_data_buf_free(void)
 {
-	if (!smi_buf.virt || wsmt_enabled)
+	if (!smi_data_buf || wsmt_enabled)
 		return;
 
-	dcdbas_smi_free(&smi_buf);
+	dev_dbg(&dcdbas_pdev->dev, "%s: phys: %x size: %lu\n",
+		__func__, smi_data_buf_phys_addr, smi_data_buf_size);
+
+	dma_free_coherent(&dcdbas_pdev->dev, smi_data_buf_size, smi_data_buf,
+			  smi_data_buf_handle);
+	smi_data_buf = NULL;
+	smi_data_buf_handle = 0;
+	smi_data_buf_phys_addr = 0;
+	smi_data_buf_size = 0;
 }
 
 /**
@@ -101,29 +78,39 @@ static void smi_data_buf_free(void)
  */
 static int smi_data_buf_realloc(unsigned long size)
 {
-	struct smi_buffer tmp;
-	int ret;
+	void *buf;
+	dma_addr_t handle;
 
-	if (smi_buf.size >= size)
+	if (smi_data_buf_size >= size)
 		return 0;
 
 	if (size > max_smi_data_buf_size)
 		return -EINVAL;
 
 	/* new buffer is needed */
-	ret = dcdbas_smi_alloc(&tmp, size);
-	if (ret)
-		return ret;
-
+	buf = dma_alloc_coherent(&dcdbas_pdev->dev, size, &handle, GFP_KERNEL);
+	if (!buf) {
+		dev_dbg(&dcdbas_pdev->dev,
+			"%s: failed to allocate memory size %lu\n",
+			__func__, size);
+		return -ENOMEM;
+	}
 	/* memory zeroed by dma_alloc_coherent */
-	if (smi_buf.virt)
-		memcpy(tmp.virt, smi_buf.virt, smi_buf.size);
+
+	if (smi_data_buf)
+		memcpy(buf, smi_data_buf, smi_data_buf_size);
 
 	/* free any existing buffer */
 	smi_data_buf_free();
 
 	/* set up new buffer for use */
-	smi_buf = tmp;
+	smi_data_buf = buf;
+	smi_data_buf_handle = handle;
+	smi_data_buf_phys_addr = (u32) virt_to_phys(buf);
+	smi_data_buf_size = size;
+
+	dev_dbg(&dcdbas_pdev->dev, "%s: phys: %x size: %lu\n",
+		__func__, smi_data_buf_phys_addr, smi_data_buf_size);
 
 	return 0;
 }
@@ -132,14 +119,14 @@ static ssize_t smi_data_buf_phys_addr_show(struct device *dev,
 					   struct device_attribute *attr,
 					   char *buf)
 {
-	return sprintf(buf, "%x\n", (u32)smi_buf.dma);
+	return sprintf(buf, "%x\n", smi_data_buf_phys_addr);
 }
 
 static ssize_t smi_data_buf_size_show(struct device *dev,
 				      struct device_attribute *attr,
 				      char *buf)
 {
-	return sprintf(buf, "%lu\n", smi_buf.size);
+	return sprintf(buf, "%lu\n", smi_data_buf_size);
 }
 
 static ssize_t smi_data_buf_size_store(struct device *dev,
@@ -168,8 +155,8 @@ static ssize_t smi_data_read(struct file *filp, struct kobject *kobj,
 	ssize_t ret;
 
 	mutex_lock(&smi_data_lock);
-	ret = memory_read_from_buffer(buf, count, &pos, smi_buf.virt,
-					smi_buf.size);
+	ret = memory_read_from_buffer(buf, count, &pos, smi_data_buf,
+					smi_data_buf_size);
 	mutex_unlock(&smi_data_lock);
 	return ret;
 }
@@ -189,7 +176,7 @@ static ssize_t smi_data_write(struct file *filp, struct kobject *kobj,
 	if (ret)
 		goto out;
 
-	memcpy(smi_buf.virt + pos, buf, count);
+	memcpy(smi_data_buf + pos, buf, count);
 	ret = count;
 out:
 	mutex_unlock(&smi_data_lock);
@@ -297,7 +284,6 @@ int dcdbas_smi_request(struct smi_cmd *smi_cmd)
 
 	return ret;
 }
-EXPORT_SYMBOL(dcdbas_smi_request);
 
 /**
  * smi_request_store:
@@ -320,11 +306,11 @@ static ssize_t smi_request_store(struct device *dev,
 
 	mutex_lock(&smi_data_lock);
 
-	if (smi_buf.size < sizeof(struct smi_cmd)) {
+	if (smi_data_buf_size < sizeof(struct smi_cmd)) {
 		ret = -ENODEV;
 		goto out;
 	}
-	smi_cmd = (struct smi_cmd *)smi_buf.virt;
+	smi_cmd = (struct smi_cmd *)smi_data_buf;
 
 	switch (val) {
 	case 2:
@@ -340,20 +326,20 @@ static ssize_t smi_request_store(struct device *dev,
 		 * Provide physical address of command buffer field within
 		 * the struct smi_cmd to BIOS.
 		 *
-		 * Because the address that smi_cmd (smi_buf.virt) points to
+		 * Because the address that smi_cmd (smi_data_buf) points to
 		 * will be from memremap() of a non-memory address if WSMT
 		 * is present, we can't use virt_to_phys() on smi_cmd, so
 		 * we have to use the physical address that was saved when
 		 * the virtual address for smi_cmd was received.
 		 */
-		smi_cmd->ebx = (u32)smi_buf.dma +
+		smi_cmd->ebx = smi_data_buf_phys_addr +
 				offsetof(struct smi_cmd, command_buffer);
 		ret = dcdbas_smi_request(smi_cmd);
 		if (!ret)
 			ret = count;
 		break;
 	case 0:
-		memset(smi_buf.virt, 0, smi_buf.size);
+		memset(smi_data_buf, 0, smi_data_buf_size);
 		ret = count;
 		break;
 	default:
@@ -365,11 +351,12 @@ out:
 	mutex_unlock(&smi_data_lock);
 	return ret;
 }
+EXPORT_SYMBOL(dcdbas_smi_request);
 
 /**
  * host_control_smi: generate host control SMI
  *
- * Caller must set up the host control command in smi_buf.virt.
+ * Caller must set up the host control command in smi_data_buf.
  */
 static int host_control_smi(void)
 {
@@ -380,14 +367,14 @@ static int host_control_smi(void)
 	s8 cmd_status;
 	u8 index;
 
-	apm_cmd = (struct apm_cmd *)smi_buf.virt;
+	apm_cmd = (struct apm_cmd *)smi_data_buf;
 	apm_cmd->status = ESM_STATUS_CMD_UNSUCCESSFUL;
 
 	switch (host_control_smi_type) {
 	case HC_SMITYPE_TYPE1:
 		spin_lock_irqsave(&rtc_lock, flags);
 		/* write SMI data buffer physical address */
-		data = (u8 *)&smi_buf.dma;
+		data = (u8 *)&smi_data_buf_phys_addr;
 		for (index = PE1300_CMOS_CMD_STRUCT_PTR;
 		     index < (PE1300_CMOS_CMD_STRUCT_PTR + 4);
 		     index++, data++) {
@@ -418,7 +405,7 @@ static int host_control_smi(void)
 	case HC_SMITYPE_TYPE3:
 		spin_lock_irqsave(&rtc_lock, flags);
 		/* write SMI data buffer physical address */
-		data = (u8 *)&smi_buf.dma;
+		data = (u8 *)&smi_data_buf_phys_addr;
 		for (index = PE1400_CMOS_CMD_STRUCT_PTR;
 		     index < (PE1400_CMOS_CMD_STRUCT_PTR + 4);
 		     index++, data++) {
@@ -463,7 +450,7 @@ static int host_control_smi(void)
  * This function is called by the driver after the system has
  * finished shutting down if the user application specified a
  * host control action to perform on shutdown.  It is safe to
- * use smi_buf.virt at this point because the system has finished
+ * use smi_data_buf at this point because the system has finished
  * shutting down and no userspace apps are running.
  */
 static void dcdbas_host_control(void)
@@ -477,18 +464,18 @@ static void dcdbas_host_control(void)
 	action = host_control_action;
 	host_control_action = HC_ACTION_NONE;
 
-	if (!smi_buf.virt) {
+	if (!smi_data_buf) {
 		dev_dbg(&dcdbas_pdev->dev, "%s: no SMI buffer\n", __func__);
 		return;
 	}
 
-	if (smi_buf.size < sizeof(struct apm_cmd)) {
+	if (smi_data_buf_size < sizeof(struct apm_cmd)) {
 		dev_dbg(&dcdbas_pdev->dev, "%s: SMI buffer too small\n",
 			__func__);
 		return;
 	}
 
-	apm_cmd = (struct apm_cmd *)smi_buf.virt;
+	apm_cmd = (struct apm_cmd *)smi_data_buf;
 
 	/* power off takes precedence */
 	if (action & HC_ACTION_HOST_CONTROL_POWEROFF) {
@@ -596,11 +583,11 @@ remap:
 		return -ENOMEM;
 	}
 
-	/* First 8 bytes is for a semaphore, not part of the smi_buf.virt */
-	smi_buf.dma = bios_buf_paddr + 8;
-	smi_buf.virt = bios_buffer + 8;
-	smi_buf.size = remap_size - 8;
-	max_smi_data_buf_size = smi_buf.size;
+	/* First 8 bytes is for a semaphore, not part of the smi_data_buf */
+	smi_data_buf_phys_addr = bios_buf_paddr + 8;
+	smi_data_buf = bios_buffer + 8;
+	smi_data_buf_size = remap_size - 8;
+	max_smi_data_buf_size = smi_data_buf_size;
 	wsmt_enabled = true;
 	dev_info(&dcdbas_pdev->dev,
 		 "WSMT found, using firmware-provided SMI buffer.\n");
@@ -716,7 +703,7 @@ static struct platform_driver dcdbas_driver = {
 
 static const struct platform_device_info dcdbas_dev_info __initconst = {
 	.name		= DRIVER_NAME,
-	.id		= PLATFORM_DEVID_NONE,
+	.id		= -1,
 	.dma_mask	= DMA_BIT_MASK(32),
 };
 

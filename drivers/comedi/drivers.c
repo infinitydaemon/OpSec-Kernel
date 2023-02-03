@@ -17,7 +17,8 @@
 #include <linux/dma-direction.h>
 #include <linux/interrupt.h>
 #include <linux/firmware.h>
-#include <linux/comedi/comedidev.h>
+
+#include "comedidev.h"
 #include "comedi_internal.h"
 
 struct comedi_driver *comedi_drivers;
@@ -854,7 +855,7 @@ int comedi_load_firmware(struct comedi_device *dev,
 		release_firmware(fw);
 	}
 
-	return min(ret, 0);
+	return ret < 0 ? ret : 0;
 }
 EXPORT_SYMBOL_GPL(comedi_load_firmware);
 

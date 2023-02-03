@@ -17,7 +17,6 @@
 #include <linux/of.h>
 #include <linux/hwmon.h>
 #include <linux/hwmon-sysfs.h>
-#include <linux/kstrtox.h>
 #include <linux/regmap.h>
 
 /* Register map */
@@ -785,7 +784,8 @@ static const struct regmap_config config = {
 
 #if IS_ENABLED(CONFIG_I2C)
 
-static int rv3029_i2c_probe(struct i2c_client *client)
+static int rv3029_i2c_probe(struct i2c_client *client,
+			    const struct i2c_device_id *id)
 {
 	struct regmap *regmap;
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_I2C_BLOCK |
@@ -819,7 +819,7 @@ static struct i2c_driver rv3029_driver = {
 		.name = "rv3029",
 		.of_match_table = of_match_ptr(rv3029_of_match),
 	},
-	.probe_new	= rv3029_i2c_probe,
+	.probe		= rv3029_i2c_probe,
 	.id_table	= rv3029_id,
 };
 

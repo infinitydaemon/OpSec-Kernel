@@ -153,8 +153,7 @@ int rxe_queue_resize(struct rxe_queue *q, unsigned int *num_elem_p,
 	struct rxe_queue *new_q;
 	unsigned int num_elem = *num_elem_p;
 	int err;
-	unsigned long producer_flags;
-	unsigned long consumer_flags;
+	unsigned long flags = 0, flags1;
 
 	new_q = rxe_queue_init(q->rxe, &num_elem, elem_size, q->type);
 	if (!new_q)
@@ -168,17 +167,17 @@ int rxe_queue_resize(struct rxe_queue *q, unsigned int *num_elem_p,
 		goto err1;
 	}
 
-	spin_lock_irqsave(consumer_lock, consumer_flags);
+	spin_lock_irqsave(consumer_lock, flags1);
 
 	if (producer_lock) {
-		spin_lock_irqsave(producer_lock, producer_flags);
+		spin_lock_irqsave(producer_lock, flags);
 		err = resize_finish(q, new_q, num_elem);
-		spin_unlock_irqrestore(producer_lock, producer_flags);
+		spin_unlock_irqrestore(producer_lock, flags);
 	} else {
 		err = resize_finish(q, new_q, num_elem);
 	}
 
-	spin_unlock_irqrestore(consumer_lock, consumer_flags);
+	spin_unlock_irqrestore(consumer_lock, flags1);
 
 	rxe_queue_cleanup(new_q);	/* new/old dep on err */
 	if (err)

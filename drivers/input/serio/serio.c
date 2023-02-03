@@ -7,6 +7,9 @@
  *  Copyright (c) 2003 Daniele Bellucci
  */
 
+/*
+ */
+
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/stddef.h>

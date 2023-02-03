@@ -175,6 +175,7 @@ static void ipv6_rearrange_destopt(struct ipv6hdr *iph, struct ipv6_opt_hdr *des
 			 * See 11.3.2 of RFC 3775 for details.
 			 */
 			if (opt[off] == IPV6_TLV_HAO) {
+				struct in6_addr final_addr;
 				struct ipv6_destopt_hao *hao;
 
 				hao = (struct ipv6_destopt_hao *)&opt[off];
@@ -183,7 +184,9 @@ static void ipv6_rearrange_destopt(struct ipv6hdr *iph, struct ipv6_opt_hdr *des
 							     hao->length);
 					goto bad;
 				}
-				swap(hao->addr, iph->saddr);
+				final_addr = hao->addr;
+				hao->addr = iph->saddr;
+				iph->saddr = final_addr;
 			}
 			break;
 		}
@@ -666,38 +669,30 @@ static int ah6_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
 	return 0;
 }
 
-static int ah6_init_state(struct xfrm_state *x, struct netlink_ext_ack *extack)
+static int ah6_init_state(struct xfrm_state *x)
 {
 	struct ah_data *ahp = NULL;
 	struct xfrm_algo_desc *aalg_desc;
 	struct crypto_ahash *ahash;
 
-	if (!x->aalg) {
-		NL_SET_ERR_MSG(extack, "AH requires a state with an AUTH algorithm");
+	if (!x->aalg)
 		goto error;
-	}
 
-	if (x->encap) {
-		NL_SET_ERR_MSG(extack, "AH is not compatible with encapsulation");
+	if (x->encap)
 		goto error;
-	}
 
 	ahp = kzalloc(sizeof(*ahp), GFP_KERNEL);
 	if (!ahp)
 		return -ENOMEM;
 
 	ahash = crypto_alloc_ahash(x->aalg->alg_name, 0, 0);
-	if (IS_ERR(ahash)) {
-		NL_SET_ERR_MSG(extack, "Kernel was unable to initialize cryptographic operations");
+	if (IS_ERR(ahash))
 		goto error;
-	}
 
 	ahp->ahash = ahash;
 	if (crypto_ahash_setkey(ahash, x->aalg->alg_key,
-			       (x->aalg->alg_key_len + 7) / 8)) {
-		NL_SET_ERR_MSG(extack, "Kernel was unable to initialize cryptographic operations");
+			       (x->aalg->alg_key_len + 7) / 8))
 		goto error;
-	}
 
 	/*
 	 * Lookup the algorithm description maintained by xfrm_algo,
@@ -710,7 +705,9 @@ static int ah6_init_state(struct xfrm_state *x, struct netlink_ext_ack *extack)
 
 	if (aalg_desc->uinfo.auth.icv_fullbits/8 !=
 	    crypto_ahash_digestsize(ahash)) {
-		NL_SET_ERR_MSG(extack, "Kernel was unable to initialize cryptographic operations");
+		pr_info("AH: %s digestsize %u != %u\n",
+			x->aalg->alg_name, crypto_ahash_digestsize(ahash),
+			aalg_desc->uinfo.auth.icv_fullbits/8);
 		goto error;
 	}
 
@@ -727,7 +724,6 @@ static int ah6_init_state(struct xfrm_state *x, struct netlink_ext_ack *extack)
 		x->props.header_len += sizeof(struct ipv6hdr);
 		break;
 	default:
-		NL_SET_ERR_MSG(extack, "Invalid mode requested for AH, must be one of TRANSPORT, TUNNEL, BEET");
 		goto error;
 	}
 	x->data = ahp;

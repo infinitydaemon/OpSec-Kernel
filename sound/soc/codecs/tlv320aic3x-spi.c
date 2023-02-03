@@ -35,9 +35,9 @@ static int aic3x_spi_probe(struct spi_device *spi)
 	return aic3x_probe(&spi->dev, regmap, id->driver_data);
 }
 
-static void aic3x_spi_remove(struct spi_device *spi)
+static int aic3x_spi_remove(struct spi_device *spi)
 {
-	aic3x_remove(&spi->dev);
+	return aic3x_remove(&spi->dev);
 }
 
 static const struct spi_device_id aic3x_spi_id[] = {

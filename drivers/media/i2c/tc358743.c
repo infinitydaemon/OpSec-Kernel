@@ -69,7 +69,7 @@ static const struct v4l2_dv_timings_cap tc358743_timings_cap = {
 
 struct tc358743_state {
 	struct tc358743_platform_data pdata;
-	struct v4l2_mbus_config_mipi_csi2 bus;
+	struct v4l2_fwnode_bus_mipi_csi2 bus;
 	struct v4l2_subdev sd;
 	struct media_pad pad;
 	struct v4l2_ctrl_handler hdl;
@@ -734,7 +734,7 @@ static void tc358743_set_csi(struct v4l2_subdev *sd)
 			((lanes > 3) ? MASK_D3M_HSTXVREGEN : 0x0));
 
 	i2c_wr32(sd, TXOPTIONCNTRL, (state->bus.flags &
-		 V4L2_MBUS_CSI2_NONCONTINUOUS_CLOCK) ? 0 : MASK_CONTCLKMODE);
+		 V4L2_MBUS_CSI2_CONTINUOUS_CLOCK) ? MASK_CONTCLKMODE : 0);
 	i2c_wr32(sd, STARTCNTRL, MASK_START);
 	i2c_wr32(sd, CSI_START, MASK_STRT);
 
@@ -981,8 +981,6 @@ static void tc358743_cec_handler(struct v4l2_subdev *sd, u16 intstatus,
 
 		v = i2c_rd32(sd, CECRCTR);
 		msg.len = v & 0x1f;
-		if (msg.len > CEC_MAX_MSG_SIZE)
-			msg.len = CEC_MAX_MSG_SIZE;
 		for (i = 0; i < msg.len; i++) {
 			v = i2c_rd32(sd, CECRBUF1 + i * 4);
 			msg.msg[i] = v & 0xff;
@@ -1628,12 +1626,37 @@ static int tc358743_get_mbus_config(struct v4l2_subdev *sd,
 				    struct v4l2_mbus_config *cfg)
 {
 	struct tc358743_state *state = to_state(sd);
+	const u32 mask = V4L2_MBUS_CSI2_LANE_MASK;
+
+	if (state->csi_lanes_in_use > state->bus.num_data_lanes)
+		return -EINVAL;
 
 	cfg->type = V4L2_MBUS_CSI2_DPHY;
+	cfg->flags = (state->csi_lanes_in_use << __ffs(mask)) & mask;
 
-	/* Support for non-continuous CSI-2 clock is missing in the driver */
-	cfg->bus.mipi_csi2.flags = 0;
-	cfg->bus.mipi_csi2.num_data_lanes = state->csi_lanes_in_use;
+	/* In DT mode, only report the number of active lanes */
+	if (sd->dev->of_node)
+		return 0;
+
+	/* Support for non-continuous CSI-2 clock is missing in pdate mode */
+	cfg->flags |= V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
+
+	switch (state->csi_lanes_in_use) {
+	case 1:
+		cfg->flags |= V4L2_MBUS_CSI2_1_LANE;
+		break;
+	case 2:
+		cfg->flags |= V4L2_MBUS_CSI2_2_LANE;
+		break;
+	case 3:
+		cfg->flags |= V4L2_MBUS_CSI2_3_LANE;
+		break;
+	case 4:
+		cfg->flags |= V4L2_MBUS_CSI2_4_LANE;
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	return 0;
 }
@@ -1898,9 +1921,12 @@ static int tc358743_probe_of(struct tc358743_state *state)
 	int ret;
 
 	refclk = devm_clk_get(dev, "refclk");
-	if (IS_ERR(refclk))
-		return dev_err_probe(dev, PTR_ERR(refclk),
-				     "failed to get refclk\n");
+	if (IS_ERR(refclk)) {
+		if (PTR_ERR(refclk) != -EPROBE_DEFER)
+			dev_err(dev, "failed to get refclk: %ld\n",
+				PTR_ERR(refclk));
+		return PTR_ERR(refclk);
+	}
 
 	ep = of_graph_get_next_endpoint(dev->of_node, NULL);
 	if (!ep) {
@@ -2066,7 +2092,8 @@ static int tc358743_probe(struct i2c_client *client)
 	/* platform data */
 	if (pdata) {
 		state->pdata = *pdata;
-		state->bus.flags = 0;
+		state->bus.flags = V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
+		state->bus.num_data_lanes = 4;
 	} else {
 		err = tc358743_probe_of(state);
 		if (err == -ENODEV)
@@ -2197,7 +2224,7 @@ err_hdl:
 	return err;
 }
 
-static void tc358743_remove(struct i2c_client *client)
+static int tc358743_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct tc358743_state *state = to_state(sd);
@@ -2213,6 +2240,8 @@ static void tc358743_remove(struct i2c_client *client)
 	mutex_destroy(&state->confctl_mutex);
 	media_entity_cleanup(&sd->entity);
 	v4l2_ctrl_handler_free(&state->hdl);
+
+	return 0;
 }
 
 static const struct i2c_device_id tc358743_id[] = {

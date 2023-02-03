@@ -163,7 +163,8 @@ static const struct regmap_config regmap_config = {
 	.max_register = 0x11,
 };
 
-static int sd3078_probe(struct i2c_client *client)
+static int sd3078_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	int ret;
 	struct sd3078 *sd3078;
@@ -217,7 +218,7 @@ static struct i2c_driver sd3078_driver = {
 		.name   = "sd3078",
 		.of_match_table = of_match_ptr(rtc_dt_match),
 	},
-	.probe_new  = sd3078_probe,
+	.probe      = sd3078_probe,
 	.id_table   = sd3078_id,
 };
 

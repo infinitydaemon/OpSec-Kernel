@@ -103,13 +103,14 @@ struct drm_mode_config_funcs {
 	 * Callback used by helpers to inform the driver of output configuration
 	 * changes.
 	 *
-	 * Drivers implementing fbdev emulation use drm_kms_helper_hotplug_event()
-	 * to call this hook to inform the fbdev helper of output changes.
+	 * Drivers implementing fbdev emulation with the helpers can call
+	 * drm_fb_helper_hotplug_changed from this hook to inform the fbdev
+	 * helper of output changes.
 	 *
-	 * This hook is deprecated, drivers should instead use
-	 * drm_fbdev_generic_setup() which takes care of any necessary
-	 * hotplug event forwarding already without further involvement by
-	 * the driver.
+	 * FIXME:
+	 *
+	 * Except that there's no vtable for device-level helper callbacks
+	 * there's no reason this is a core function.
 	 */
 	void (*output_poll_changed)(struct drm_device *dev);
 
@@ -345,6 +346,7 @@ struct drm_mode_config_funcs {
  * @max_width: maximum fb pixel width on this device
  * @max_height: maximum fb pixel height on this device
  * @funcs: core driver provided mode setting functions
+ * @fb_base: base address of the framebuffer
  * @poll_enabled: track polling support for this device
  * @poll_running: track polling status for this device
  * @delayed_event: track delayed poll uevent deliver for this device
@@ -358,19 +360,6 @@ struct drm_mode_config_funcs {
  * Core mode resource tracking structure.  All CRTC, encoders, and connectors
  * enumerated by the driver are added here, as are global properties.  Some
  * global restrictions are also here, e.g. dimension restrictions.
- *
- * Framebuffer sizes refer to the virtual screen that can be displayed by
- * the CRTC. This can be different from the physical resolution programmed.
- * The minimum width and height, stored in @min_width and @min_height,
- * describe the smallest size of the framebuffer. It correlates to the
- * minimum programmable resolution.
- * The maximum width, stored in @max_width, is typically limited by the
- * maximum pitch between two adjacent scanlines. The maximum height, stored
- * in @max_height, is usually only limited by the amount of addressable video
- * memory. For hardware that has no real maximum, drivers should pick a
- * reasonable default.
- *
- * See also @DRM_SHADOW_PLANE_MAX_WIDTH and @DRM_SHADOW_PLANE_MAX_HEIGHT.
  */
 struct drm_mode_config {
 	/**
@@ -541,6 +530,7 @@ struct drm_mode_config {
 	int min_width, min_height;
 	int max_width, max_height;
 	const struct drm_mode_config_funcs *funcs;
+	resource_size_t fb_base;
 
 	/* output poll support */
 	bool poll_enabled;
@@ -916,14 +906,20 @@ struct drm_mode_config {
 	bool async_page_flip;
 
 	/**
-	 * @fb_modifiers_not_supported:
+	 * @allow_fb_modifiers:
 	 *
-	 * When this flag is set, the DRM device will not expose modifier
-	 * support to userspace. This is only used by legacy drivers that infer
-	 * the buffer layout through heuristics without using modifiers. New
-	 * drivers shall not set fhis flag.
+	 * Whether the driver supports fb modifiers in the ADDFB2.1 ioctl call.
+	 * Note that drivers should not set this directly, it is automatically
+	 * set in drm_universal_plane_init().
+	 *
+	 * IMPORTANT:
+	 *
+	 * If this is set the driver must fill out the full implicit modifier
+	 * information in their &drm_mode_config_funcs.fb_create hook for legacy
+	 * userspace which does not set modifiers. Otherwise the GETFB2 ioctl is
+	 * broken for modifier aware userspace.
 	 */
-	bool fb_modifiers_not_supported;
+	bool allow_fb_modifiers;
 
 	/**
 	 * @normalize_zpos:

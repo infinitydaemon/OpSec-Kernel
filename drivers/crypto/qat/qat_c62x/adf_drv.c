@@ -33,7 +33,6 @@ static struct pci_driver adf_driver = {
 	.probe = adf_probe,
 	.remove = adf_remove,
 	.sriov_configure = adf_sriov_configure,
-	.err_handler = &adf_err_handler,
 };
 
 static void adf_cleanup_pci_dev(struct adf_accel_dev *accel_dev)
@@ -193,7 +192,11 @@ static int adf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 	pci_set_master(pdev);
 
-	adf_enable_aer(accel_dev);
+	if (adf_enable_aer(accel_dev)) {
+		dev_err(&pdev->dev, "Failed to enable aer\n");
+		ret = -EFAULT;
+		goto out_err_free_reg;
+	}
 
 	if (pci_save_state(pdev)) {
 		dev_err(&pdev->dev, "Failed to save pci state\n");
@@ -201,7 +204,7 @@ static int adf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto out_err_disable_aer;
 	}
 
-	ret = hw_data->dev_config(accel_dev);
+	ret = qat_crypto_dev_config(accel_dev);
 	if (ret)
 		goto out_err_disable_aer;
 

@@ -27,19 +27,14 @@ struct kvm_dirty_ring {
 	int index;
 };
 
-#ifndef CONFIG_HAVE_KVM_DIRTY_RING
+#if (KVM_DIRTY_LOG_PAGE_OFFSET == 0)
 /*
- * If CONFIG_HAVE_HVM_DIRTY_RING not defined, kvm_dirty_ring.o should
+ * If KVM_DIRTY_LOG_PAGE_OFFSET not defined, kvm_dirty_ring.o should
  * not be included as well, so define these nop functions for the arch.
  */
 static inline u32 kvm_dirty_ring_get_rsvd_entries(void)
 {
 	return 0;
-}
-
-static inline bool kvm_use_dirty_bitmap(struct kvm *kvm)
-{
-	return true;
 }
 
 static inline int kvm_dirty_ring_alloc(struct kvm_dirty_ring *ring,
@@ -48,13 +43,18 @@ static inline int kvm_dirty_ring_alloc(struct kvm_dirty_ring *ring,
 	return 0;
 }
 
+static inline struct kvm_dirty_ring *kvm_dirty_ring_get(struct kvm *kvm)
+{
+	return NULL;
+}
+
 static inline int kvm_dirty_ring_reset(struct kvm *kvm,
 				       struct kvm_dirty_ring *ring)
 {
 	return 0;
 }
 
-static inline void kvm_dirty_ring_push(struct kvm_vcpu *vcpu,
+static inline void kvm_dirty_ring_push(struct kvm_dirty_ring *ring,
 				       u32 slot, u64 offset)
 {
 }
@@ -69,13 +69,16 @@ static inline void kvm_dirty_ring_free(struct kvm_dirty_ring *ring)
 {
 }
 
-#else /* CONFIG_HAVE_KVM_DIRTY_RING */
+static inline bool kvm_dirty_ring_soft_full(struct kvm_dirty_ring *ring)
+{
+	return true;
+}
 
-int kvm_cpu_dirty_log_size(void);
-bool kvm_use_dirty_bitmap(struct kvm *kvm);
-bool kvm_arch_allow_write_without_running_vcpu(struct kvm *kvm);
+#else /* KVM_DIRTY_LOG_PAGE_OFFSET == 0 */
+
 u32 kvm_dirty_ring_get_rsvd_entries(void);
 int kvm_dirty_ring_alloc(struct kvm_dirty_ring *ring, int index, u32 size);
+struct kvm_dirty_ring *kvm_dirty_ring_get(struct kvm *kvm);
 
 /*
  * called with kvm->slots_lock held, returns the number of
@@ -87,15 +90,14 @@ int kvm_dirty_ring_reset(struct kvm *kvm, struct kvm_dirty_ring *ring);
  * returns =0: successfully pushed
  *         <0: unable to push, need to wait
  */
-void kvm_dirty_ring_push(struct kvm_vcpu *vcpu, u32 slot, u64 offset);
-
-bool kvm_dirty_ring_check_request(struct kvm_vcpu *vcpu);
+void kvm_dirty_ring_push(struct kvm_dirty_ring *ring, u32 slot, u64 offset);
 
 /* for use in vm_operations_struct */
 struct page *kvm_dirty_ring_get_page(struct kvm_dirty_ring *ring, u32 offset);
 
 void kvm_dirty_ring_free(struct kvm_dirty_ring *ring);
+bool kvm_dirty_ring_soft_full(struct kvm_dirty_ring *ring);
 
-#endif /* CONFIG_HAVE_KVM_DIRTY_RING */
+#endif /* KVM_DIRTY_LOG_PAGE_OFFSET == 0 */
 
 #endif	/* KVM_DIRTY_RING_H */

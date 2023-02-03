@@ -29,6 +29,7 @@
 #include <asm/machdep.h>
 #include <asm/ipic.h>
 #include <asm/irq.h>
+#include <asm/prom.h>
 #include <asm/udbg.h>
 #include <sysdev/fsl_soc.h>
 #include <sysdev/fsl_pci.h>
@@ -38,7 +39,7 @@
 
 #define SVR_REV(svr)    (((svr) >>  0) & 0xFFFF) /* Revision field */
 
-static void __init quirk_mpc8360e_qe_enet10(void)
+static void quirk_mpc8360e_qe_enet10(void)
 {
 	/*
 	 * handle mpc8360E Erratum QE_ENET10:

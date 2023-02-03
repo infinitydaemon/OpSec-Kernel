@@ -185,12 +185,7 @@ static bool looks_like_a_spurious_pid(struct task_struct *task)
 	return true;
 }
 
-/*
- * Ensure that nothing can wake it up, even SIGKILL
- *
- * A task is switched to this state while a ptrace operation is in progress;
- * such that the ptrace operation is uninterruptible.
- */
+/* Ensure that nothing can wake it up, even SIGKILL */
 static bool ptrace_freeze_traced(struct task_struct *task)
 {
 	bool ret = false;
@@ -202,7 +197,7 @@ static bool ptrace_freeze_traced(struct task_struct *task)
 	spin_lock_irq(&task->sighand->siglock);
 	if (task_is_traced(task) && !looks_like_a_spurious_pid(task) &&
 	    !__fatal_signal_pending(task)) {
-		task->jobctl |= JOBCTL_PTRACE_FROZEN;
+		WRITE_ONCE(task->__state, __TASK_TRACED);
 		ret = true;
 	}
 	spin_unlock_irq(&task->sighand->siglock);
@@ -212,21 +207,23 @@ static bool ptrace_freeze_traced(struct task_struct *task)
 
 static void ptrace_unfreeze_traced(struct task_struct *task)
 {
-	unsigned long flags;
+	if (READ_ONCE(task->__state) != __TASK_TRACED)
+		return;
+
+	WARN_ON(!task->ptrace || task->parent != current);
 
 	/*
-	 * The child may be awake and may have cleared
-	 * JOBCTL_PTRACE_FROZEN (see ptrace_resume).  The child will
-	 * not set JOBCTL_PTRACE_FROZEN or enter __TASK_TRACED anew.
+	 * PTRACE_LISTEN can allow ptrace_trap_notify to wake us up remotely.
+	 * Recheck state under the lock to close this race.
 	 */
-	if (lock_task_sighand(task, &flags)) {
-		task->jobctl &= ~JOBCTL_PTRACE_FROZEN;
-		if (__fatal_signal_pending(task)) {
-			task->jobctl &= ~JOBCTL_TRACED;
+	spin_lock_irq(&task->sighand->siglock);
+	if (READ_ONCE(task->__state) == __TASK_TRACED) {
+		if (__fatal_signal_pending(task))
 			wake_up_state(task, __TASK_TRACED);
-		}
-		unlock_task_sighand(task, &flags);
+		else
+			WRITE_ONCE(task->__state, TASK_TRACED);
 	}
+	spin_unlock_irq(&task->sighand->siglock);
 }
 
 /**
@@ -259,6 +256,7 @@ static int ptrace_check_attach(struct task_struct *child, bool ignore_state)
 	 */
 	read_lock(&tasklist_lock);
 	if (child->ptrace && child->parent == current) {
+		WARN_ON(READ_ONCE(child->__state) == __TASK_TRACED);
 		/*
 		 * child->sighand can't be NULL, release_task()
 		 * does ptrace_unlink() before __exit_signal().
@@ -268,9 +266,17 @@ static int ptrace_check_attach(struct task_struct *child, bool ignore_state)
 	}
 	read_unlock(&tasklist_lock);
 
-	if (!ret && !ignore_state &&
-	    WARN_ON_ONCE(!wait_task_inactive(child, __TASK_TRACED|TASK_FROZEN)))
-		ret = -ESRCH;
+	if (!ret && !ignore_state) {
+		if (!wait_task_inactive(child, __TASK_TRACED)) {
+			/*
+			 * This can only happen if may_ptrace_stop() fails and
+			 * ptrace_stop() changes ->state back to TASK_RUNNING,
+			 * so we should not worry about leaking __TASK_TRACED.
+			 */
+			WARN_ON(READ_ONCE(child->__state) == __TASK_TRACED);
+			ret = -ESRCH;
+		}
+	}
 
 	return ret;
 }
@@ -441,6 +447,8 @@ static int ptrace_attach(struct task_struct *task, long request,
 	if (task->ptrace)
 		goto unlock_tasklist;
 
+	if (seize)
+		flags |= PT_SEIZED;
 	task->ptrace = flags;
 
 	ptrace_link(task, current);
@@ -469,10 +477,8 @@ static int ptrace_attach(struct task_struct *task, long request,
 	 * in and out of STOPPED are protected by siglock.
 	 */
 	if (task_is_stopped(task) &&
-	    task_set_jobctl_pending(task, JOBCTL_TRAP_STOP | JOBCTL_TRAPPING)) {
-		task->jobctl &= ~JOBCTL_STOPPED;
+	    task_set_jobctl_pending(task, JOBCTL_TRAP_STOP | JOBCTL_TRAPPING))
 		signal_wake_up_state(task, __TASK_STOPPED);
-	}
 
 	spin_unlock(&task->sighand->siglock);
 
@@ -825,7 +831,11 @@ static long ptrace_get_rseq_configuration(struct task_struct *task,
 }
 #endif
 
+#ifdef PTRACE_SINGLESTEP
 #define is_singlestep(request)		((request) == PTRACE_SINGLESTEP)
+#else
+#define is_singlestep(request)		0
+#endif
 
 #ifdef PTRACE_SINGLEBLOCK
 #define is_singleblock(request)		((request) == PTRACE_SINGLEBLOCK)
@@ -842,6 +852,8 @@ static long ptrace_get_rseq_configuration(struct task_struct *task,
 static int ptrace_resume(struct task_struct *child, long request,
 			 unsigned long data)
 {
+	bool need_siglock;
+
 	if (!valid_signal(data))
 		return -EIO;
 
@@ -877,12 +889,18 @@ static int ptrace_resume(struct task_struct *child, long request,
 	 * Note that we need siglock even if ->exit_code == data and/or this
 	 * status was not reported yet, the new status must not be cleared by
 	 * wait_task_stopped() after resume.
+	 *
+	 * If data == 0 we do not care if wait_task_stopped() reports the old
+	 * status and clears the code too; this can't race with the tracee, it
+	 * takes siglock after resume.
 	 */
-	spin_lock_irq(&child->sighand->siglock);
+	need_siglock = data && !thread_group_empty(current);
+	if (need_siglock)
+		spin_lock_irq(&child->sighand->siglock);
 	child->exit_code = data;
-	child->jobctl &= ~JOBCTL_TRACED;
 	wake_up_state(child, __TASK_TRACED);
-	spin_unlock_irq(&child->sighand->siglock);
+	if (need_siglock)
+		spin_unlock_irq(&child->sighand->siglock);
 
 	return 0;
 }
@@ -1205,7 +1223,9 @@ int ptrace_request(struct task_struct *child, long request,
 	}
 #endif
 
+#ifdef PTRACE_SINGLESTEP
 	case PTRACE_SINGLESTEP:
+#endif
 #ifdef PTRACE_SINGLEBLOCK
 	case PTRACE_SINGLEBLOCK:
 #endif
@@ -1266,6 +1286,10 @@ int ptrace_request(struct task_struct *child, long request,
 	return ret;
 }
 
+#ifndef arch_ptrace_attach
+#define arch_ptrace_attach(child)	do { } while (0)
+#endif
+
 SYSCALL_DEFINE4(ptrace, long, request, long, pid, unsigned long, addr,
 		unsigned long, data)
 {
@@ -1274,6 +1298,8 @@ SYSCALL_DEFINE4(ptrace, long, request, long, pid, unsigned long, addr,
 
 	if (request == PTRACE_TRACEME) {
 		ret = ptrace_traceme();
+		if (!ret)
+			arch_ptrace_attach(current);
 		goto out;
 	}
 
@@ -1285,6 +1311,12 @@ SYSCALL_DEFINE4(ptrace, long, request, long, pid, unsigned long, addr,
 
 	if (request == PTRACE_ATTACH || request == PTRACE_SEIZE) {
 		ret = ptrace_attach(child, request, addr, data);
+		/*
+		 * Some architectures need to do book-keeping after
+		 * a ptrace attach.
+		 */
+		if (!ret)
+			arch_ptrace_attach(child);
 		goto out_put_task_struct;
 	}
 
@@ -1424,6 +1456,12 @@ COMPAT_SYSCALL_DEFINE4(ptrace, compat_long_t, request, compat_long_t, pid,
 
 	if (request == PTRACE_ATTACH || request == PTRACE_SEIZE) {
 		ret = ptrace_attach(child, request, addr, data);
+		/*
+		 * Some architectures need to do book-keeping after
+		 * a ptrace attach.
+		 */
+		if (!ret)
+			arch_ptrace_attach(child);
 		goto out_put_task_struct;
 	}
 

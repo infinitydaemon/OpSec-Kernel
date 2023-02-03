@@ -2,6 +2,7 @@
 #ifndef _ARCH_POWERPC_UACCESS_H
 #define _ARCH_POWERPC_UACCESS_H
 
+#include <asm/ppc_asm.h>
 #include <asm/processor.h>
 #include <asm/page.h>
 #include <asm/extable.h>
@@ -10,9 +11,18 @@
 #ifdef __powerpc64__
 /* We use TASK_SIZE_USER64 as TASK_SIZE is not constant */
 #define TASK_SIZE_MAX		TASK_SIZE_USER64
+#else
+#define TASK_SIZE_MAX		TASK_SIZE
 #endif
 
-#include <asm-generic/access_ok.h>
+static inline bool __access_ok(unsigned long addr, unsigned long size)
+{
+	return addr < TASK_SIZE_MAX && size <= TASK_SIZE_MAX - addr;
+}
+
+#define access_ok(addr, size)		\
+	(__chk_user_ptr(addr),		\
+	 __access_ok((unsigned long)(addr), (size)))
 
 /*
  * These are the main single-value transfer routines.  They automatically
@@ -76,7 +86,7 @@ __pu_failed:							\
 		"1:	" op "%U1%X1 %0,%1	# put_user\n"	\
 		EX_TABLE(1b, %l2)				\
 		:						\
-		: "r" (x), "m<>" (*addr)		\
+		: "r" (x), "m"UPD_CONSTR (*addr)		\
 		:						\
 		: label)
 
@@ -136,7 +146,7 @@ do {								\
 		"1:	"op"%U1%X1 %0, %1	# get_user\n"	\
 		EX_TABLE(1b, %l2)				\
 		: "=r" (x)					\
-		: "m<>" (*addr)				\
+		: "m"UPD_CONSTR (*addr)				\
 		:						\
 		: label)
 
@@ -193,7 +203,7 @@ __gus_failed:								\
 		".previous\n"				\
 		EX_TABLE(1b, 3b)			\
 		: "=r" (err), "=r" (x)			\
-		: "m<>" (*addr), "i" (-EFAULT), "0" (err))
+		: "m"UPD_CONSTR (*addr), "i" (-EFAULT), "0" (err))
 
 #ifdef __powerpc64__
 #define __get_user_asm2(x, addr, err)			\
@@ -347,7 +357,7 @@ copy_mc_to_kernel(void *to, const void *from, unsigned long size)
 static inline unsigned long __must_check
 copy_mc_to_user(void __user *to, const void *from, unsigned long n)
 {
-	if (check_copy_size(from, n, true)) {
+	if (likely(check_copy_size(from, n, true))) {
 		if (access_ok(to, n)) {
 			allow_write_to_user(to, n);
 			n = copy_mc_generic((void *)to, from, n);
@@ -459,6 +469,8 @@ do {									\
 	if (_len & 1) \
 		unsafe_put_user(*(u8*)(_src + _i), (u8 __user *)(_dst + _i), e); \
 } while (0)
+
+#define HAVE_GET_KERNEL_NOFAULT
 
 #define __get_kernel_nofault(dst, src, type, err_label)			\
 	__get_user_size_goto(*((type *)(dst)),				\

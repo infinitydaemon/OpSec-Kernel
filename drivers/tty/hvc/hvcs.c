@@ -69,7 +69,6 @@
 #include <asm/hvconsole.h>
 #include <asm/hvcserver.h>
 #include <linux/uaccess.h>
-#include <linux/termios_internal.h>
 #include <asm/vio.h>
 
 /*
@@ -582,9 +581,10 @@ static int hvcs_io(struct hvcs_struct *hvcsd)
 
 	spin_unlock_irqrestore(&hvcsd->lock, flags);
 	/* This is synch -- FIXME :js: it is not! */
-	if (got)
+	if(got)
 		tty_flip_buffer_push(&hvcsd->port);
-	else {
+
+	if (!got) {
 		/* Do this _after_ the flip_buffer_push */
 		spin_lock_irqsave(&hvcsd->lock, flags);
 		vio_enable_interrupts(hvcsd->vdev);
@@ -840,7 +840,7 @@ static void hvcs_set_pi(struct hvcs_partner_info *pi, struct hvcs_struct *hvcsd)
 	hvcsd->p_partition_ID  = pi->partition_ID;
 
 	/* copy the null-term char too */
-	strscpy(hvcsd->p_location_code, pi->location_code,
+	strlcpy(hvcsd->p_location_code, pi->location_code,
 		sizeof(hvcsd->p_location_code));
 }
 

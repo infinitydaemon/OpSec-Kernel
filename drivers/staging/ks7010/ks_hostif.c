@@ -84,6 +84,10 @@ static void ks_wlan_hw_wakeup_task(struct work_struct *work)
 			return;
 		}
 	}
+
+	/* power save */
+	if (atomic_read(&priv->sme_task.count) > 0)
+		tasklet_enable(&priv->sme_task);
 }
 
 static void ks_wlan_do_power_save(struct ks_wlan_private *priv)
@@ -537,7 +541,7 @@ void hostif_mib_get_confirm(struct ks_wlan_private *priv)
 		hostif_sme_enqueue(priv, SME_GET_MAC_ADDRESS);
 		ether_addr_copy(priv->eth_addr, priv->rxp);
 		priv->mac_address_valid = true;
-		eth_hw_addr_set(dev, priv->eth_addr);
+		ether_addr_copy(dev->dev_addr, priv->eth_addr);
 		netdev_info(dev, "MAC ADDRESS = %pM\n", priv->eth_addr);
 		break;
 	case DOT11_PRODUCT_VERSION:
@@ -2196,11 +2200,10 @@ static void hostif_sme_execute(struct ks_wlan_private *priv, int event)
 	}
 }
 
-static void hostif_sme_work(struct work_struct *work)
+static
+void hostif_sme_task(struct tasklet_struct *t)
 {
-	struct ks_wlan_private *priv;
-
-	priv = container_of(work, struct ks_wlan_private, sme_work);
+	struct ks_wlan_private *priv = from_tasklet(priv, t, sme_task);
 
 	if (priv->dev_state < DEVICE_STATE_BOOT)
 		return;
@@ -2211,7 +2214,7 @@ static void hostif_sme_work(struct work_struct *work)
 	hostif_sme_execute(priv, priv->sme_i.event_buff[priv->sme_i.qhead]);
 	inc_smeqhead(priv);
 	if (cnt_smeqbody(priv) > 0)
-		schedule_work(&priv->sme_work);
+		tasklet_schedule(&priv->sme_task);
 }
 
 /* send to Station Management Entity module */
@@ -2226,7 +2229,7 @@ void hostif_sme_enqueue(struct ks_wlan_private *priv, u16 event)
 		netdev_err(priv->net_dev, "sme queue buffer overflow\n");
 	}
 
-	schedule_work(&priv->sme_work);
+	tasklet_schedule(&priv->sme_task);
 }
 
 static inline void hostif_aplist_init(struct ks_wlan_private *priv)
@@ -2251,7 +2254,7 @@ static inline void hostif_sme_init(struct ks_wlan_private *priv)
 	priv->sme_i.qtail = 0;
 	spin_lock_init(&priv->sme_i.sme_spin);
 	priv->sme_i.sme_flag = 0;
-	INIT_WORK(&priv->sme_work, hostif_sme_work);
+	tasklet_setup(&priv->sme_task, hostif_sme_task);
 }
 
 static inline void hostif_wpa_init(struct ks_wlan_private *priv)
@@ -2309,5 +2312,5 @@ int hostif_init(struct ks_wlan_private *priv)
 
 void hostif_exit(struct ks_wlan_private *priv)
 {
-	cancel_work_sync(&priv->sme_work);
+	tasklet_kill(&priv->sme_task);
 }

@@ -18,9 +18,10 @@
 #include <linux/reboot.h>
 #include <linux/serial_8250.h>
 
-#include "common.h"
-#include "cputype.h"
-#include "da8xx.h"
+#include <mach/common.h>
+#include <mach/cputype.h>
+#include <mach/da8xx.h>
+
 #include "asp.h"
 #include "cpuidle.h"
 #include "irqs.h"

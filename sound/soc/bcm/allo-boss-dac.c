@@ -430,8 +430,7 @@ static int snd_allo_boss_probe(struct platform_device *pdev)
 static int snd_allo_boss_remove(struct platform_device *pdev)
 {
 	snd_allo_boss_gpio_mute(&snd_allo_boss);
-	snd_soc_unregister_card(&snd_allo_boss);
-	return 0;
+	return snd_soc_unregister_card(&snd_allo_boss);
 }
 
 static const struct of_device_id snd_allo_boss_of_match[] = {

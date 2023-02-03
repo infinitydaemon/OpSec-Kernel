@@ -337,7 +337,7 @@ nouveau_gem_set_domain(struct drm_gem_object *gem, uint32_t read_domains,
 	struct ttm_buffer_object *bo = &nvbo->bo;
 	uint32_t domains = valid_domains & nvbo->valid_domains &
 		(write_domains ? write_domains : read_domains);
-	uint32_t pref_domains = 0;
+	uint32_t pref_domains = 0;;
 
 	if (!domains)
 		return -EINVAL;
@@ -679,7 +679,7 @@ nouveau_gem_pushbuf_reloc_apply(struct nouveau_cli *cli,
 		}
 
 		if (!nvbo->kmap.virtual) {
-			ret = ttm_bo_kmap(&nvbo->bo, 0, PFN_UP(nvbo->bo.base.size),
+			ret = ttm_bo_kmap(&nvbo->bo, 0, nvbo->bo.resource->num_pages,
 					  &nvbo->kmap);
 			if (ret) {
 				NV_PRINTK(err, cli, "failed kmap for reloc\n");
@@ -868,7 +868,8 @@ revalidate:
 			if (unlikely(cmd != req->suffix0)) {
 				if (!nvbo->kmap.virtual) {
 					ret = ttm_bo_kmap(&nvbo->bo, 0,
-							  PFN_UP(nvbo->bo.base.size),
+							  nvbo->bo.resource->
+							  num_pages,
 							  &nvbo->kmap);
 					if (ret) {
 						WIND_RING(chan);
@@ -961,8 +962,7 @@ nouveau_gem_ioctl_cpu_prep(struct drm_device *dev, void *data,
 		return -ENOENT;
 	nvbo = nouveau_gem_object(gem);
 
-	lret = dma_resv_wait_timeout(nvbo->bo.base.resv,
-				     dma_resv_usage_rw(write), true,
+	lret = dma_resv_wait_timeout(nvbo->bo.base.resv, write, true,
 				     no_wait ? 0 : 30 * HZ);
 	if (!lret)
 		ret = -EBUSY;

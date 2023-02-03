@@ -45,27 +45,8 @@
 
 #include "i915_drv.h"
 #include "intel_display_types.h"
-#include "intel_fb.h"
-#include "intel_fb_pin.h"
 #include "intel_fbdev.h"
 #include "intel_frontbuffer.h"
-
-struct intel_fbdev {
-	struct drm_fb_helper helper;
-	struct intel_framebuffer *fb;
-	struct i915_vma *vma;
-	unsigned long vma_flags;
-	async_cookie_t cookie;
-	int preferred_bpp;
-
-	/* Whether or not fbdev hpd processing is temporarily suspended */
-	bool hpd_suspended: 1;
-	/* Set when a hotplug was received while HPD processing was suspended */
-	bool hpd_waiting: 1;
-
-	/* Protects hpd_suspended */
-	struct mutex hpd_lock;
-};
 
 static struct intel_frontbuffer *to_frontbuffer(struct intel_fbdev *ifbdev)
 {
@@ -124,8 +105,6 @@ static const struct fb_ops intelfb_ops = {
 	.owner = THIS_MODULE,
 	DRM_FB_HELPER_DEFAULT_OPS,
 	.fb_set_par = intel_fbdev_set_par,
-	.fb_read = drm_fb_helper_cfb_read,
-	.fb_write = drm_fb_helper_cfb_write,
 	.fb_fillrect = drm_fb_helper_cfb_fillrect,
 	.fb_copyarea = drm_fb_helper_cfb_copyarea,
 	.fb_imageblit = drm_fb_helper_cfb_imageblit,
@@ -177,7 +156,7 @@ static int intelfb_alloc(struct drm_fb_helper *helper,
 	}
 
 	if (IS_ERR(obj)) {
-		drm_err(&dev_priv->drm, "failed to allocate framebuffer (%pe)\n", obj);
+		drm_err(&dev_priv->drm, "failed to allocate framebuffer\n");
 		return PTR_ERR(obj);
 	}
 
@@ -199,9 +178,9 @@ static int intelfb_create(struct drm_fb_helper *helper,
 	struct drm_device *dev = helper->dev;
 	struct drm_i915_private *dev_priv = to_i915(dev);
 	struct pci_dev *pdev = to_pci_dev(dev_priv->drm.dev);
-	struct i915_ggtt *ggtt = to_gt(dev_priv)->ggtt;
-	const struct i915_gtt_view view = {
-		.type = I915_GTT_VIEW_NORMAL,
+	struct i915_ggtt *ggtt = &dev_priv->ggtt;
+	const struct i915_ggtt_view view = {
+		.type = I915_GGTT_VIEW_NORMAL,
 	};
 	intel_wakeref_t wakeref;
 	struct fb_info *info;
@@ -211,12 +190,6 @@ static int intelfb_create(struct drm_fb_helper *helper,
 	void __iomem *vaddr;
 	struct drm_i915_gem_object *obj;
 	int ret;
-
-	mutex_lock(&ifbdev->hpd_lock);
-	ret = ifbdev->hpd_suspended ? -EAGAIN : 0;
-	mutex_unlock(&ifbdev->hpd_lock);
-	if (ret)
-		return ret;
 
 	if (intel_fb &&
 	    (sizes->fb_width > intel_fb->base.width ||
@@ -256,9 +229,11 @@ static int intelfb_create(struct drm_fb_helper *helper,
 		goto out_unlock;
 	}
 
-	info = drm_fb_helper_alloc_info(helper);
+	intel_frontbuffer_flush(to_frontbuffer(ifbdev), ORIGIN_DIRTYFB);
+
+	info = drm_fb_helper_alloc_fbi(helper);
 	if (IS_ERR(info)) {
-		drm_err(&dev_priv->drm, "Failed to allocate fb_info (%pe)\n", info);
+		drm_err(&dev_priv->drm, "Failed to allocate fb_info\n");
 		ret = PTR_ERR(info);
 		goto out_unpin;
 	}
@@ -273,7 +248,7 @@ static int intelfb_create(struct drm_fb_helper *helper,
 		struct intel_memory_region *mem = obj->mm.region;
 
 		info->apertures->ranges[0].base = mem->io_start;
-		info->apertures->ranges[0].size = mem->io_size;
+		info->apertures->ranges[0].size = mem->total;
 
 		/* Use fbdev's framebuffer from lmem for discrete */
 		info->fix.smem_start =
@@ -287,18 +262,18 @@ static int intelfb_create(struct drm_fb_helper *helper,
 		/* Our framebuffer is the entirety of fbdev's system memory */
 		info->fix.smem_start =
 			(unsigned long)(ggtt->gmadr.start + vma->node.start);
-		info->fix.smem_len = vma->size;
+		info->fix.smem_len = vma->node.size;
 	}
 
 	vaddr = i915_vma_pin_iomap(vma);
 	if (IS_ERR(vaddr)) {
 		drm_err(&dev_priv->drm,
-			"Failed to remap framebuffer into virtual memory (%pe)\n", vaddr);
+			"Failed to remap framebuffer into virtual memory\n");
 		ret = PTR_ERR(vaddr);
 		goto out_unpin;
 	}
 	info->screen_base = vaddr;
-	info->screen_size = vma->size;
+	info->screen_size = vma->node.size;
 
 	drm_fb_helper_fill_info(info, &ifbdev->helper, sizes);
 
@@ -508,7 +483,7 @@ static void intel_fbdev_suspend_worker(struct work_struct *work)
 {
 	intel_fbdev_set_suspend(&container_of(work,
 					      struct drm_i915_private,
-					      display.fbdev.suspend_work)->drm,
+					      fbdev_suspend_work)->drm,
 				FBINFO_STATE_RUNNING,
 				true);
 }
@@ -538,8 +513,8 @@ int intel_fbdev_init(struct drm_device *dev)
 		return ret;
 	}
 
-	dev_priv->display.fbdev.fbdev = ifbdev;
-	INIT_WORK(&dev_priv->display.fbdev.suspend_work, intel_fbdev_suspend_worker);
+	dev_priv->fbdev = ifbdev;
+	INIT_WORK(&dev_priv->fbdev_suspend_work, intel_fbdev_suspend_worker);
 
 	return 0;
 }
@@ -556,7 +531,7 @@ static void intel_fbdev_initial_config(void *data, async_cookie_t cookie)
 
 void intel_fbdev_initial_config_async(struct drm_device *dev)
 {
-	struct intel_fbdev *ifbdev = to_i915(dev)->display.fbdev.fbdev;
+	struct intel_fbdev *ifbdev = to_i915(dev)->fbdev;
 
 	if (!ifbdev)
 		return;
@@ -576,22 +551,21 @@ static void intel_fbdev_sync(struct intel_fbdev *ifbdev)
 
 void intel_fbdev_unregister(struct drm_i915_private *dev_priv)
 {
-	struct intel_fbdev *ifbdev = dev_priv->display.fbdev.fbdev;
+	struct intel_fbdev *ifbdev = dev_priv->fbdev;
 
 	if (!ifbdev)
 		return;
 
-	intel_fbdev_set_suspend(&dev_priv->drm, FBINFO_STATE_SUSPENDED, true);
-
+	cancel_work_sync(&dev_priv->fbdev_suspend_work);
 	if (!current_is_async())
 		intel_fbdev_sync(ifbdev);
 
-	drm_fb_helper_unregister_info(&ifbdev->helper);
+	drm_fb_helper_unregister_fbi(&ifbdev->helper);
 }
 
 void intel_fbdev_fini(struct drm_i915_private *dev_priv)
 {
-	struct intel_fbdev *ifbdev = fetch_and_zero(&dev_priv->display.fbdev.fbdev);
+	struct intel_fbdev *ifbdev = fetch_and_zero(&dev_priv->fbdev);
 
 	if (!ifbdev)
 		return;
@@ -605,7 +579,7 @@ void intel_fbdev_fini(struct drm_i915_private *dev_priv)
  */
 static void intel_fbdev_hpd_set_suspend(struct drm_i915_private *i915, int state)
 {
-	struct intel_fbdev *ifbdev = i915->display.fbdev.fbdev;
+	struct intel_fbdev *ifbdev = i915->fbdev;
 	bool send_hpd = false;
 
 	mutex_lock(&ifbdev->hpd_lock);
@@ -623,13 +597,13 @@ static void intel_fbdev_hpd_set_suspend(struct drm_i915_private *i915, int state
 void intel_fbdev_set_suspend(struct drm_device *dev, int state, bool synchronous)
 {
 	struct drm_i915_private *dev_priv = to_i915(dev);
-	struct intel_fbdev *ifbdev = dev_priv->display.fbdev.fbdev;
+	struct intel_fbdev *ifbdev = dev_priv->fbdev;
 	struct fb_info *info;
 
 	if (!ifbdev || !ifbdev->vma)
-		goto set_suspend;
+		return;
 
-	info = ifbdev->helper.info;
+	info = ifbdev->helper.fbdev;
 
 	if (synchronous) {
 		/* Flush any pending work to turn the console on, and then
@@ -640,7 +614,7 @@ void intel_fbdev_set_suspend(struct drm_device *dev, int state, bool synchronous
 		 * ourselves, so only flush outstanding work upon suspend!
 		 */
 		if (state != FBINFO_STATE_RUNNING)
-			flush_work(&dev_priv->display.fbdev.suspend_work);
+			flush_work(&dev_priv->fbdev_suspend_work);
 
 		console_lock();
 	} else {
@@ -654,7 +628,7 @@ void intel_fbdev_set_suspend(struct drm_device *dev, int state, bool synchronous
 			/* Don't block our own workqueue as this can
 			 * be run in parallel with other i915.ko tasks.
 			 */
-			schedule_work(&dev_priv->display.fbdev.suspend_work);
+			schedule_work(&dev_priv->fbdev_suspend_work);
 			return;
 		}
 	}
@@ -670,13 +644,12 @@ void intel_fbdev_set_suspend(struct drm_device *dev, int state, bool synchronous
 	drm_fb_helper_set_suspend(&ifbdev->helper, state);
 	console_unlock();
 
-set_suspend:
 	intel_fbdev_hpd_set_suspend(dev_priv, state);
 }
 
 void intel_fbdev_output_poll_changed(struct drm_device *dev)
 {
-	struct intel_fbdev *ifbdev = to_i915(dev)->display.fbdev.fbdev;
+	struct intel_fbdev *ifbdev = to_i915(dev)->fbdev;
 	bool send_hpd;
 
 	if (!ifbdev)
@@ -695,7 +668,7 @@ void intel_fbdev_output_poll_changed(struct drm_device *dev)
 
 void intel_fbdev_restore_mode(struct drm_device *dev)
 {
-	struct intel_fbdev *ifbdev = to_i915(dev)->display.fbdev.fbdev;
+	struct intel_fbdev *ifbdev = to_i915(dev)->fbdev;
 
 	if (!ifbdev)
 		return;
@@ -706,12 +679,4 @@ void intel_fbdev_restore_mode(struct drm_device *dev)
 
 	if (drm_fb_helper_restore_fbdev_mode_unlocked(&ifbdev->helper) == 0)
 		intel_fbdev_invalidate(ifbdev);
-}
-
-struct intel_framebuffer *intel_fbdev_framebuffer(struct intel_fbdev *fbdev)
-{
-	if (!fbdev || !fbdev->helper.fb)
-		return NULL;
-
-	return to_intel_framebuffer(fbdev->helper.fb);
 }

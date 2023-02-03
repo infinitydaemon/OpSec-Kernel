@@ -186,6 +186,7 @@ static inline unsigned char *get_hdr_bssid(unsigned char *pframe)
 #define _CAPABILITY_			2
 #define _TIMESTAMP_				8
 
+
 /*-----------------------------------------------------------------------------
  *			Below is the definition for WMM
  *------------------------------------------------------------------------------

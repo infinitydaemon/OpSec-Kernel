@@ -299,6 +299,9 @@ static void pgd_prepopulate_pmd(struct mm_struct *mm, pgd_t *pgd, pmd_t *pmds[])
 	pud_t *pud;
 	int i;
 
+	if (PREALLOCATED_PMDS == 0) /* Work around gcc-3.4.x bug */
+		return;
+
 	p4d = p4d_offset(pgd, 0);
 	pud = pud_offset(p4d, 0);
 
@@ -431,12 +434,10 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 
 	mm->pgd = pgd;
 
-	if (sizeof(pmds) != 0 &&
-			preallocate_pmds(mm, pmds, PREALLOCATED_PMDS) != 0)
+	if (preallocate_pmds(mm, pmds, PREALLOCATED_PMDS) != 0)
 		goto out_free_pgd;
 
-	if (sizeof(u_pmds) != 0 &&
-			preallocate_pmds(mm, u_pmds, PREALLOCATED_USER_PMDS) != 0)
+	if (preallocate_pmds(mm, u_pmds, PREALLOCATED_USER_PMDS) != 0)
 		goto out_free_pmds;
 
 	if (paravirt_pgd_alloc(mm) != 0)
@@ -450,22 +451,17 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 	spin_lock(&pgd_lock);
 
 	pgd_ctor(mm, pgd);
-	if (sizeof(pmds) != 0)
-		pgd_prepopulate_pmd(mm, pgd, pmds);
-
-	if (sizeof(u_pmds) != 0)
-		pgd_prepopulate_user_pmd(mm, pgd, u_pmds);
+	pgd_prepopulate_pmd(mm, pgd, pmds);
+	pgd_prepopulate_user_pmd(mm, pgd, u_pmds);
 
 	spin_unlock(&pgd_lock);
 
 	return pgd;
 
 out_free_user_pmds:
-	if (sizeof(u_pmds) != 0)
-		free_pmds(mm, u_pmds, PREALLOCATED_USER_PMDS);
+	free_pmds(mm, u_pmds, PREALLOCATED_USER_PMDS);
 out_free_pmds:
-	if (sizeof(pmds) != 0)
-		free_pmds(mm, pmds, PREALLOCATED_PMDS);
+	free_pmds(mm, pmds, PREALLOCATED_PMDS);
 out_free_pgd:
 	_pgd_free(pgd);
 out:
@@ -554,7 +550,7 @@ int ptep_test_and_clear_young(struct vm_area_struct *vma,
 	return ret;
 }
 
-#if defined(CONFIG_TRANSPARENT_HUGEPAGE) || defined(CONFIG_ARCH_HAS_NONLEAF_PMD_YOUNG)
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
 int pmdp_test_and_clear_young(struct vm_area_struct *vma,
 			      unsigned long addr, pmd_t *pmdp)
 {
@@ -566,9 +562,6 @@ int pmdp_test_and_clear_young(struct vm_area_struct *vma,
 
 	return ret;
 }
-#endif
-
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
 int pudp_test_and_clear_young(struct vm_area_struct *vma,
 			      unsigned long addr, pud_t *pudp)
 {
@@ -614,16 +607,6 @@ int pmdp_clear_flush_young(struct vm_area_struct *vma,
 		flush_tlb_range(vma, address, address + HPAGE_PMD_SIZE);
 
 	return young;
-}
-
-pmd_t pmdp_invalidate_ad(struct vm_area_struct *vma, unsigned long address,
-			 pmd_t *pmdp)
-{
-	/*
-	 * No flush is necessary. Once an invalid PTE is established, the PTE's
-	 * access and dirty bits cannot be updated.
-	 */
-	return pmdp_establish(vma, address, pmdp, pmd_mkinvalid(*pmdp));
 }
 #endif
 
@@ -693,8 +676,9 @@ int p4d_set_huge(p4d_t *p4d, phys_addr_t addr, pgprot_t prot)
  *
  * No 512GB pages yet -- always return 0
  */
-void p4d_clear_huge(p4d_t *p4d)
+int p4d_clear_huge(p4d_t *p4d)
 {
+	return 0;
 }
 #endif
 

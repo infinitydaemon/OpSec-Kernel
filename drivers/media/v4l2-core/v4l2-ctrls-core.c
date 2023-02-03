@@ -65,29 +65,33 @@ void send_event(struct v4l2_fh *fh, struct v4l2_ctrl *ctrl, u32 changes)
 			v4l2_event_queue_fh(sev->fh, &ev);
 }
 
-bool v4l2_ctrl_type_op_equal(const struct v4l2_ctrl *ctrl,
-			     union v4l2_ctrl_ptr ptr1, union v4l2_ctrl_ptr ptr2)
+static bool std_equal(const struct v4l2_ctrl *ctrl, u32 idx,
+		      union v4l2_ctrl_ptr ptr1,
+		      union v4l2_ctrl_ptr ptr2)
 {
-	unsigned int i;
-
 	switch (ctrl->type) {
 	case V4L2_CTRL_TYPE_BUTTON:
 		return false;
 	case V4L2_CTRL_TYPE_STRING:
-		for (i = 0; i < ctrl->elems; i++) {
-			unsigned int idx = i * ctrl->elem_size;
-
-			/* strings are always 0-terminated */
-			if (strcmp(ptr1.p_char + idx, ptr2.p_char + idx))
-				return false;
-		}
-		return true;
+		idx *= ctrl->elem_size;
+		/* strings are always 0-terminated */
+		return !strcmp(ptr1.p_char + idx, ptr2.p_char + idx);
+	case V4L2_CTRL_TYPE_INTEGER64:
+		return ptr1.p_s64[idx] == ptr2.p_s64[idx];
+	case V4L2_CTRL_TYPE_U8:
+		return ptr1.p_u8[idx] == ptr2.p_u8[idx];
+	case V4L2_CTRL_TYPE_U16:
+		return ptr1.p_u16[idx] == ptr2.p_u16[idx];
+	case V4L2_CTRL_TYPE_U32:
+		return ptr1.p_u32[idx] == ptr2.p_u32[idx];
 	default:
-		return !memcmp(ptr1.p_const, ptr2.p_const,
-			       ctrl->elems * ctrl->elem_size);
+		if (ctrl->is_int)
+			return ptr1.p_s32[idx] == ptr2.p_s32[idx];
+		idx *= ctrl->elem_size;
+		return !memcmp(ptr1.p_const + idx, ptr2.p_const + idx,
+			       ctrl->elem_size);
 	}
 }
-EXPORT_SYMBOL(v4l2_ctrl_type_op_equal);
 
 /* Default intra MPEG-2 quantisation coefficients, from the specification. */
 static const u8 mpeg2_intra_quant_matrix[64] = {
@@ -108,7 +112,6 @@ static void std_init_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 	struct v4l2_ctrl_mpeg2_picture *p_mpeg2_picture;
 	struct v4l2_ctrl_mpeg2_quantisation *p_mpeg2_quant;
 	struct v4l2_ctrl_vp8_frame *p_vp8_frame;
-	struct v4l2_ctrl_vp9_frame *p_vp9_frame;
 	struct v4l2_ctrl_fwht_params *p_fwht_params;
 	struct v4l2_ctrl_h264_scaling_matrix *p_h264_scaling_matrix;
 	void *p = ptr.p + idx * ctrl->elem_size;
@@ -150,13 +153,6 @@ static void std_init_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 		p_vp8_frame = p;
 		p_vp8_frame->num_dct_parts = 1;
 		break;
-	case V4L2_CTRL_TYPE_VP9_FRAME:
-		p_vp9_frame = p;
-		p_vp9_frame->profile = 0;
-		p_vp9_frame->bit_depth = 8;
-		p_vp9_frame->flags |= V4L2_VP9_FRAME_FLAG_X_SUBSAMPLING |
-			V4L2_VP9_FRAME_FLAG_Y_SUBSAMPLING;
-		break;
 	case V4L2_CTRL_TYPE_FWHT_PARAMS:
 		p_fwht_params = p;
 		p_fwht_params->version = V4L2_FWHT_VERSION;
@@ -177,77 +173,45 @@ static void std_init_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 	}
 }
 
-void v4l2_ctrl_type_op_init(const struct v4l2_ctrl *ctrl, u32 from_idx,
-			    union v4l2_ctrl_ptr ptr)
+static void std_init(const struct v4l2_ctrl *ctrl, u32 idx,
+		     union v4l2_ctrl_ptr ptr)
 {
-	unsigned int i;
-	u32 tot_elems = ctrl->elems;
-	u32 elems = tot_elems - from_idx;
-
-	if (from_idx >= tot_elems)
-		return;
-
 	switch (ctrl->type) {
 	case V4L2_CTRL_TYPE_STRING:
-		for (i = from_idx; i < tot_elems; i++) {
-			unsigned int offset = i * ctrl->elem_size;
-
-			memset(ptr.p_char + offset, ' ', ctrl->minimum);
-			ptr.p_char[offset + ctrl->minimum] = '\0';
-		}
+		idx *= ctrl->elem_size;
+		memset(ptr.p_char + idx, ' ', ctrl->minimum);
+		ptr.p_char[idx + ctrl->minimum] = '\0';
 		break;
 	case V4L2_CTRL_TYPE_INTEGER64:
-		if (ctrl->default_value) {
-			for (i = from_idx; i < tot_elems; i++)
-				ptr.p_s64[i] = ctrl->default_value;
-		} else {
-			memset(ptr.p_s64 + from_idx, 0, elems * sizeof(s64));
-		}
+		ptr.p_s64[idx] = ctrl->default_value;
 		break;
 	case V4L2_CTRL_TYPE_INTEGER:
 	case V4L2_CTRL_TYPE_INTEGER_MENU:
 	case V4L2_CTRL_TYPE_MENU:
 	case V4L2_CTRL_TYPE_BITMASK:
 	case V4L2_CTRL_TYPE_BOOLEAN:
-		if (ctrl->default_value) {
-			for (i = from_idx; i < tot_elems; i++)
-				ptr.p_s32[i] = ctrl->default_value;
-		} else {
-			memset(ptr.p_s32 + from_idx, 0, elems * sizeof(s32));
-		}
+		ptr.p_s32[idx] = ctrl->default_value;
 		break;
 	case V4L2_CTRL_TYPE_BUTTON:
 	case V4L2_CTRL_TYPE_CTRL_CLASS:
-		memset(ptr.p_s32 + from_idx, 0, elems * sizeof(s32));
+		ptr.p_s32[idx] = 0;
 		break;
 	case V4L2_CTRL_TYPE_U8:
-		memset(ptr.p_u8 + from_idx, ctrl->default_value, elems);
+		ptr.p_u8[idx] = ctrl->default_value;
 		break;
 	case V4L2_CTRL_TYPE_U16:
-		if (ctrl->default_value) {
-			for (i = from_idx; i < tot_elems; i++)
-				ptr.p_u16[i] = ctrl->default_value;
-		} else {
-			memset(ptr.p_u16 + from_idx, 0, elems * sizeof(u16));
-		}
+		ptr.p_u16[idx] = ctrl->default_value;
 		break;
 	case V4L2_CTRL_TYPE_U32:
-		if (ctrl->default_value) {
-			for (i = from_idx; i < tot_elems; i++)
-				ptr.p_u32[i] = ctrl->default_value;
-		} else {
-			memset(ptr.p_u32 + from_idx, 0, elems * sizeof(u32));
-		}
+		ptr.p_u32[idx] = ctrl->default_value;
 		break;
 	default:
-		for (i = from_idx; i < tot_elems; i++)
-			std_init_compound(ctrl, i, ptr);
+		std_init_compound(ctrl, idx, ptr);
 		break;
 	}
 }
-EXPORT_SYMBOL(v4l2_ctrl_type_op_init);
 
-void v4l2_ctrl_type_op_log(const struct v4l2_ctrl *ctrl)
+static void std_log(const struct v4l2_ctrl *ctrl)
 {
 	union v4l2_ctrl_ptr ptr = ctrl->p_cur;
 
@@ -329,33 +293,11 @@ void v4l2_ctrl_type_op_log(const struct v4l2_ctrl *ctrl)
 	case V4L2_CTRL_TYPE_MPEG2_PICTURE:
 		pr_cont("MPEG2_PICTURE");
 		break;
-	case V4L2_CTRL_TYPE_VP9_COMPRESSED_HDR:
-		pr_cont("VP9_COMPRESSED_HDR");
-		break;
-	case V4L2_CTRL_TYPE_VP9_FRAME:
-		pr_cont("VP9_FRAME");
-		break;
-	case V4L2_CTRL_TYPE_HEVC_SPS:
-		pr_cont("HEVC_SPS");
-		break;
-	case V4L2_CTRL_TYPE_HEVC_PPS:
-		pr_cont("HEVC_PPS");
-		break;
-	case V4L2_CTRL_TYPE_HEVC_SLICE_PARAMS:
-		pr_cont("HEVC_SLICE_PARAMS");
-		break;
-	case V4L2_CTRL_TYPE_HEVC_SCALING_MATRIX:
-		pr_cont("HEVC_SCALING_MATRIX");
-		break;
-	case V4L2_CTRL_TYPE_HEVC_DECODE_PARAMS:
-		pr_cont("HEVC_DECODE_PARAMS");
-		break;
 	default:
 		pr_cont("unknown type %d", ctrl->type);
 		break;
 	}
 }
-EXPORT_SYMBOL(v4l2_ctrl_type_op_log);
 
 /*
  * Round towards the closest legal value. Be careful when we are
@@ -385,172 +327,9 @@ EXPORT_SYMBOL(v4l2_ctrl_type_op_log);
 #define zero_reserved(s) \
 	memset(&(s).reserved, 0, sizeof((s).reserved))
 
-static int
-validate_vp9_lf_params(struct v4l2_vp9_loop_filter *lf)
-{
-	unsigned int i;
-
-	if (lf->flags & ~(V4L2_VP9_LOOP_FILTER_FLAG_DELTA_ENABLED |
-			  V4L2_VP9_LOOP_FILTER_FLAG_DELTA_UPDATE))
-		return -EINVAL;
-
-	/* That all values are in the accepted range. */
-	if (lf->level > GENMASK(5, 0))
-		return -EINVAL;
-
-	if (lf->sharpness > GENMASK(2, 0))
-		return -EINVAL;
-
-	for (i = 0; i < ARRAY_SIZE(lf->ref_deltas); i++)
-		if (lf->ref_deltas[i] < -63 || lf->ref_deltas[i] > 63)
-			return -EINVAL;
-
-	for (i = 0; i < ARRAY_SIZE(lf->mode_deltas); i++)
-		if (lf->mode_deltas[i] < -63 || lf->mode_deltas[i] > 63)
-			return -EINVAL;
-
-	zero_reserved(*lf);
-	return 0;
-}
-
-static int
-validate_vp9_quant_params(struct v4l2_vp9_quantization *quant)
-{
-	if (quant->delta_q_y_dc < -15 || quant->delta_q_y_dc > 15 ||
-	    quant->delta_q_uv_dc < -15 || quant->delta_q_uv_dc > 15 ||
-	    quant->delta_q_uv_ac < -15 || quant->delta_q_uv_ac > 15)
-		return -EINVAL;
-
-	zero_reserved(*quant);
-	return 0;
-}
-
-static int
-validate_vp9_seg_params(struct v4l2_vp9_segmentation *seg)
-{
-	unsigned int i, j;
-
-	if (seg->flags & ~(V4L2_VP9_SEGMENTATION_FLAG_ENABLED |
-			   V4L2_VP9_SEGMENTATION_FLAG_UPDATE_MAP |
-			   V4L2_VP9_SEGMENTATION_FLAG_TEMPORAL_UPDATE |
-			   V4L2_VP9_SEGMENTATION_FLAG_UPDATE_DATA |
-			   V4L2_VP9_SEGMENTATION_FLAG_ABS_OR_DELTA_UPDATE))
-		return -EINVAL;
-
-	for (i = 0; i < ARRAY_SIZE(seg->feature_enabled); i++) {
-		if (seg->feature_enabled[i] &
-		    ~V4L2_VP9_SEGMENT_FEATURE_ENABLED_MASK)
-			return -EINVAL;
-	}
-
-	for (i = 0; i < ARRAY_SIZE(seg->feature_data); i++) {
-		static const int range[] = { 255, 63, 3, 0 };
-
-		for (j = 0; j < ARRAY_SIZE(seg->feature_data[j]); j++) {
-			if (seg->feature_data[i][j] < -range[j] ||
-			    seg->feature_data[i][j] > range[j])
-				return -EINVAL;
-		}
-	}
-
-	zero_reserved(*seg);
-	return 0;
-}
-
-static int
-validate_vp9_compressed_hdr(struct v4l2_ctrl_vp9_compressed_hdr *hdr)
-{
-	if (hdr->tx_mode > V4L2_VP9_TX_MODE_SELECT)
-		return -EINVAL;
-
-	return 0;
-}
-
-static int
-validate_vp9_frame(struct v4l2_ctrl_vp9_frame *frame)
-{
-	int ret;
-
-	/* Make sure we're not passed invalid flags. */
-	if (frame->flags & ~(V4L2_VP9_FRAME_FLAG_KEY_FRAME |
-		  V4L2_VP9_FRAME_FLAG_SHOW_FRAME |
-		  V4L2_VP9_FRAME_FLAG_ERROR_RESILIENT |
-		  V4L2_VP9_FRAME_FLAG_INTRA_ONLY |
-		  V4L2_VP9_FRAME_FLAG_ALLOW_HIGH_PREC_MV |
-		  V4L2_VP9_FRAME_FLAG_REFRESH_FRAME_CTX |
-		  V4L2_VP9_FRAME_FLAG_PARALLEL_DEC_MODE |
-		  V4L2_VP9_FRAME_FLAG_X_SUBSAMPLING |
-		  V4L2_VP9_FRAME_FLAG_Y_SUBSAMPLING |
-		  V4L2_VP9_FRAME_FLAG_COLOR_RANGE_FULL_SWING))
-		return -EINVAL;
-
-	if (frame->flags & V4L2_VP9_FRAME_FLAG_ERROR_RESILIENT &&
-	    frame->flags & V4L2_VP9_FRAME_FLAG_REFRESH_FRAME_CTX)
-		return -EINVAL;
-
-	if (frame->profile > V4L2_VP9_PROFILE_MAX)
-		return -EINVAL;
-
-	if (frame->reset_frame_context > V4L2_VP9_RESET_FRAME_CTX_ALL)
-		return -EINVAL;
-
-	if (frame->frame_context_idx >= V4L2_VP9_NUM_FRAME_CTX)
-		return -EINVAL;
-
-	/*
-	 * Profiles 0 and 1 only support 8-bit depth, profiles 2 and 3 only 10
-	 * and 12 bit depths.
-	 */
-	if ((frame->profile < 2 && frame->bit_depth != 8) ||
-	    (frame->profile >= 2 &&
-	     (frame->bit_depth != 10 && frame->bit_depth != 12)))
-		return -EINVAL;
-
-	/* Profile 0 and 2 only accept YUV 4:2:0. */
-	if ((frame->profile == 0 || frame->profile == 2) &&
-	    (!(frame->flags & V4L2_VP9_FRAME_FLAG_X_SUBSAMPLING) ||
-	     !(frame->flags & V4L2_VP9_FRAME_FLAG_Y_SUBSAMPLING)))
-		return -EINVAL;
-
-	/* Profile 1 and 3 only accept YUV 4:2:2, 4:4:0 and 4:4:4. */
-	if ((frame->profile == 1 || frame->profile == 3) &&
-	    ((frame->flags & V4L2_VP9_FRAME_FLAG_X_SUBSAMPLING) &&
-	     (frame->flags & V4L2_VP9_FRAME_FLAG_Y_SUBSAMPLING)))
-		return -EINVAL;
-
-	if (frame->interpolation_filter > V4L2_VP9_INTERP_FILTER_SWITCHABLE)
-		return -EINVAL;
-
-	/*
-	 * According to the spec, tile_cols_log2 shall be less than or equal
-	 * to 6.
-	 */
-	if (frame->tile_cols_log2 > 6)
-		return -EINVAL;
-
-	if (frame->reference_mode > V4L2_VP9_REFERENCE_MODE_SELECT)
-		return -EINVAL;
-
-	ret = validate_vp9_lf_params(&frame->lf);
-	if (ret)
-		return ret;
-
-	ret = validate_vp9_quant_params(&frame->quant);
-	if (ret)
-		return ret;
-
-	ret = validate_vp9_seg_params(&frame->seg);
-	if (ret)
-		return ret;
-
-	zero_reserved(*frame);
-	return 0;
-}
-
 /*
  * Compound controls validation requires setting unused fields/flags to zero
- * in order to properly detect unchanged controls with v4l2_ctrl_type_op_equal's
- * memcmp.
+ * in order to properly detect unchanged controls with std_equal's memcmp.
  */
 static int std_validate_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 				 union v4l2_ctrl_ptr ptr)
@@ -566,6 +345,7 @@ static int std_validate_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 	struct v4l2_ctrl_h264_decode_params *p_h264_dec_params;
 	struct v4l2_ctrl_hevc_sps *p_hevc_sps;
 	struct v4l2_ctrl_hevc_pps *p_hevc_pps;
+	struct v4l2_ctrl_hevc_slice_params *p_hevc_slice_params;
 	struct v4l2_ctrl_hdr10_mastering_display *p_hdr10_mastering;
 	struct v4l2_ctrl_hevc_decode_params *p_hevc_decode_params;
 	struct v4l2_area *area;
@@ -843,6 +623,11 @@ static int std_validate_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 			p_hevc_pps->pps_beta_offset_div2 = 0;
 			p_hevc_pps->pps_tc_offset_div2 = 0;
 		}
+
+		zero_padding(*p_hevc_pps);
+		break;
+
+	case V4L2_CTRL_TYPE_HEVC_SCALING_MATRIX:
 		break;
 
 	case V4L2_CTRL_TYPE_HEVC_DECODE_PARAMS:
@@ -851,9 +636,21 @@ static int std_validate_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 		if (p_hevc_decode_params->num_active_dpb_entries >
 		    V4L2_HEVC_DPB_ENTRIES_NUM_MAX)
 			return -EINVAL;
+
+		for (i = 0; i < p_hevc_decode_params->num_active_dpb_entries;
+		     i++) {
+			struct v4l2_hevc_dpb_entry *dpb_entry =
+				&p_hevc_decode_params->dpb[i];
+
+			zero_padding(*dpb_entry);
+		}
 		break;
 
 	case V4L2_CTRL_TYPE_HEVC_SLICE_PARAMS:
+		p_hevc_slice_params = p;
+
+		zero_padding(p_hevc_slice_params->pred_weight_table);
+		zero_padding(*p_hevc_slice_params);
 		break;
 
 	case V4L2_CTRL_TYPE_HDR10_CLL_INFO:
@@ -903,15 +700,6 @@ static int std_validate_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 
 		break;
 
-	case V4L2_CTRL_TYPE_HEVC_SCALING_MATRIX:
-		break;
-
-	case V4L2_CTRL_TYPE_VP9_COMPRESSED_HDR:
-		return validate_vp9_compressed_hdr(p);
-
-	case V4L2_CTRL_TYPE_VP9_FRAME:
-		return validate_vp9_frame(p);
-
 	case V4L2_CTRL_TYPE_AREA:
 		area = p;
 		if (!area->width || !area->height)
@@ -925,8 +713,8 @@ static int std_validate_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 	return 0;
 }
 
-static int std_validate_elem(const struct v4l2_ctrl *ctrl, u32 idx,
-			     union v4l2_ctrl_ptr ptr)
+static int std_validate(const struct v4l2_ctrl *ctrl, u32 idx,
+			union v4l2_ctrl_ptr ptr)
 {
 	size_t len;
 	u64 offset;
@@ -996,43 +784,11 @@ static int std_validate_elem(const struct v4l2_ctrl *ctrl, u32 idx,
 	}
 }
 
-int v4l2_ctrl_type_op_validate(const struct v4l2_ctrl *ctrl,
-			       union v4l2_ctrl_ptr ptr)
-{
-	unsigned int i;
-	int ret = 0;
-
-	switch ((u32)ctrl->type) {
-	case V4L2_CTRL_TYPE_U8:
-		if (ctrl->maximum == 0xff && ctrl->minimum == 0 && ctrl->step == 1)
-			return 0;
-		break;
-	case V4L2_CTRL_TYPE_U16:
-		if (ctrl->maximum == 0xffff && ctrl->minimum == 0 && ctrl->step == 1)
-			return 0;
-		break;
-	case V4L2_CTRL_TYPE_U32:
-		if (ctrl->maximum == 0xffffffff && ctrl->minimum == 0 && ctrl->step == 1)
-			return 0;
-		break;
-
-	case V4L2_CTRL_TYPE_BUTTON:
-	case V4L2_CTRL_TYPE_CTRL_CLASS:
-		memset(ptr.p_s32, 0, ctrl->new_elems * sizeof(s32));
-		return 0;
-	}
-
-	for (i = 0; !ret && i < ctrl->new_elems; i++)
-		ret = std_validate_elem(ctrl, i, ptr);
-	return ret;
-}
-EXPORT_SYMBOL(v4l2_ctrl_type_op_validate);
-
 static const struct v4l2_ctrl_type_ops std_type_ops = {
-	.equal = v4l2_ctrl_type_op_equal,
-	.init = v4l2_ctrl_type_op_init,
-	.log = v4l2_ctrl_type_op_log,
-	.validate = v4l2_ctrl_type_op_validate,
+	.equal = std_equal,
+	.init = std_init,
+	.log = std_log,
+	.validate = std_validate,
 };
 
 void v4l2_ctrl_notify(struct v4l2_ctrl *ctrl, v4l2_ctrl_notify_fnc notify, void *priv)
@@ -1110,26 +866,23 @@ void cur_to_new(struct v4l2_ctrl *ctrl)
 	ptr_to_ptr(ctrl, ctrl->p_cur, ctrl->p_new, ctrl->new_elems);
 }
 
-static bool req_alloc_array(struct v4l2_ctrl_ref *ref, u32 elems)
+static bool req_alloc_dyn_array(struct v4l2_ctrl_ref *ref, u32 elems)
 {
 	void *tmp;
 
-	if (elems == ref->p_req_array_alloc_elems)
-		return true;
-	if (ref->ctrl->is_dyn_array &&
-	    elems < ref->p_req_array_alloc_elems)
+	if (elems < ref->p_req_dyn_alloc_elems)
 		return true;
 
 	tmp = kvmalloc(elems * ref->ctrl->elem_size, GFP_KERNEL);
 
 	if (!tmp) {
-		ref->p_req_array_enomem = true;
+		ref->p_req_dyn_enomem = true;
 		return false;
 	}
-	ref->p_req_array_enomem = false;
+	ref->p_req_dyn_enomem = false;
 	kvfree(ref->p_req.p);
 	ref->p_req.p = tmp;
-	ref->p_req_array_alloc_elems = elems;
+	ref->p_req_dyn_alloc_elems = elems;
 	return true;
 }
 
@@ -1142,7 +895,7 @@ void new_to_req(struct v4l2_ctrl_ref *ref)
 		return;
 
 	ctrl = ref->ctrl;
-	if (ctrl->is_array && !req_alloc_array(ref, ctrl->new_elems))
+	if (ctrl->is_dyn_array && !req_alloc_dyn_array(ref, ctrl->new_elems))
 		return;
 
 	ref->p_req_elems = ctrl->new_elems;
@@ -1159,7 +912,7 @@ void cur_to_req(struct v4l2_ctrl_ref *ref)
 		return;
 
 	ctrl = ref->ctrl;
-	if (ctrl->is_array && !req_alloc_array(ref, ctrl->elems))
+	if (ctrl->is_dyn_array && !req_alloc_dyn_array(ref, ctrl->elems))
 		return;
 
 	ref->p_req_elems = ctrl->elems;
@@ -1188,30 +941,26 @@ int req_to_new(struct v4l2_ctrl_ref *ref)
 		return 0;
 	}
 
-	/* Not an array, so just copy the request value */
-	if (!ctrl->is_array) {
+	/* Not a dynamic array, so just copy the request value */
+	if (!ctrl->is_dyn_array) {
 		ptr_to_ptr(ctrl, ref->p_req, ctrl->p_new, ctrl->new_elems);
 		return 0;
 	}
 
 	/* Sanity check, should never happen */
-	if (WARN_ON(!ref->p_req_array_alloc_elems))
-		return -ENOMEM;
-
-	if (!ctrl->is_dyn_array &&
-	    ref->p_req_elems != ctrl->p_array_alloc_elems)
+	if (WARN_ON(!ref->p_req_dyn_alloc_elems))
 		return -ENOMEM;
 
 	/*
 	 * Check if the number of elements in the request is more than the
-	 * elements in ctrl->p_array. If so, attempt to realloc ctrl->p_array.
-	 * Note that p_array is allocated with twice the number of elements
+	 * elements in ctrl->p_dyn. If so, attempt to realloc ctrl->p_dyn.
+	 * Note that p_dyn is allocated with twice the number of elements
 	 * in the dynamic array since it has to store both the current and
 	 * new value of such a control.
 	 */
-	if (ref->p_req_elems > ctrl->p_array_alloc_elems) {
+	if (ref->p_req_elems > ctrl->p_dyn_alloc_elems) {
 		unsigned int sz = ref->p_req_elems * ctrl->elem_size;
-		void *old = ctrl->p_array;
+		void *old = ctrl->p_dyn;
 		void *tmp = kvzalloc(2 * sz, GFP_KERNEL);
 
 		if (!tmp)
@@ -1220,8 +969,8 @@ int req_to_new(struct v4l2_ctrl_ref *ref)
 		memcpy(tmp + sz, ctrl->p_cur.p, ctrl->elems * ctrl->elem_size);
 		ctrl->p_new.p = tmp;
 		ctrl->p_cur.p = tmp + sz;
-		ctrl->p_array = tmp;
-		ctrl->p_array_alloc_elems = ref->p_req_elems;
+		ctrl->p_dyn = tmp;
+		ctrl->p_dyn_alloc_elems = ref->p_req_elems;
 		kvfree(old);
 	}
 
@@ -1288,8 +1037,9 @@ int v4l2_ctrl_handler_init_class(struct v4l2_ctrl_handler *hdl,
 	INIT_LIST_HEAD(&hdl->ctrls);
 	INIT_LIST_HEAD(&hdl->ctrl_refs);
 	hdl->nr_of_buckets = 1 + nr_of_controls_hint / 8;
-	hdl->buckets = kvcalloc(hdl->nr_of_buckets, sizeof(hdl->buckets[0]),
-				GFP_KERNEL);
+	hdl->buckets = kvmalloc_array(hdl->nr_of_buckets,
+				      sizeof(hdl->buckets[0]),
+				      GFP_KERNEL | __GFP_ZERO);
 	hdl->error = hdl->buckets ? 0 : -ENOMEM;
 	v4l2_ctrl_handler_init_request(hdl);
 	return hdl->error;
@@ -1312,7 +1062,7 @@ void v4l2_ctrl_handler_free(struct v4l2_ctrl_handler *hdl)
 	/* Free all nodes */
 	list_for_each_entry_safe(ref, next_ref, &hdl->ctrl_refs, node) {
 		list_del(&ref->node);
-		if (ref->p_req_array_alloc_elems)
+		if (ref->p_req_dyn_alloc_elems)
 			kvfree(ref->p_req.p);
 		kfree(ref);
 	}
@@ -1321,7 +1071,7 @@ void v4l2_ctrl_handler_free(struct v4l2_ctrl_handler *hdl)
 		list_del(&ctrl->node);
 		list_for_each_entry_safe(sev, next_sev, &ctrl->ev_subs, node)
 			list_del(&sev->node);
-		kvfree(ctrl->p_array);
+		kvfree(ctrl->p_dyn);
 		kvfree(ctrl);
 	}
 	kvfree(hdl->buckets);
@@ -1437,7 +1187,7 @@ int handler_new_ref(struct v4l2_ctrl_handler *hdl,
 	if (hdl->error)
 		return hdl->error;
 
-	if (allocate_req && !ctrl->is_array)
+	if (allocate_req && !ctrl->is_dyn_array)
 		size_extra_req = ctrl->elems * ctrl->elem_size;
 	new_ref = kzalloc(sizeof(*new_ref) + size_extra_req, GFP_KERNEL);
 	if (!new_ref)
@@ -1511,6 +1261,7 @@ static struct v4l2_ctrl *v4l2_ctrl_new(struct v4l2_ctrl_handler *hdl,
 	unsigned elems = 1;
 	bool is_array;
 	unsigned tot_ctrl_size;
+	unsigned idx;
 	void *data;
 	int err;
 
@@ -1596,12 +1347,6 @@ static struct v4l2_ctrl *v4l2_ctrl_new(struct v4l2_ctrl_handler *hdl,
 	case V4L2_CTRL_TYPE_HDR10_MASTERING_DISPLAY:
 		elem_size = sizeof(struct v4l2_ctrl_hdr10_mastering_display);
 		break;
-	case V4L2_CTRL_TYPE_VP9_COMPRESSED_HDR:
-		elem_size = sizeof(struct v4l2_ctrl_vp9_compressed_hdr);
-		break;
-	case V4L2_CTRL_TYPE_VP9_FRAME:
-		elem_size = sizeof(struct v4l2_ctrl_vp9_frame);
-		break;
 	case V4L2_CTRL_TYPE_AREA:
 		elem_size = sizeof(struct v4l2_area);
 		break;
@@ -1652,10 +1397,11 @@ static struct v4l2_ctrl *v4l2_ctrl_new(struct v4l2_ctrl_handler *hdl,
 			V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
 	else if (type == V4L2_CTRL_TYPE_CTRL_CLASS)
 		flags |= V4L2_CTRL_FLAG_READ_ONLY;
-	else if (!is_array &&
+	else if (!(flags & V4L2_CTRL_FLAG_DYNAMIC_ARRAY) &&
 		 (type == V4L2_CTRL_TYPE_INTEGER64 ||
 		  type == V4L2_CTRL_TYPE_STRING ||
-		  type >= V4L2_CTRL_COMPOUND_TYPES))
+		  type >= V4L2_CTRL_COMPOUND_TYPES ||
+		  is_array))
 		sz_extra += 2 * tot_ctrl_size;
 
 	if (type >= V4L2_CTRL_COMPOUND_TYPES && p_def.p_const)
@@ -1699,14 +1445,14 @@ static struct v4l2_ctrl *v4l2_ctrl_new(struct v4l2_ctrl_handler *hdl,
 	ctrl->cur.val = ctrl->val = def;
 	data = &ctrl[1];
 
-	if (ctrl->is_array) {
-		ctrl->p_array_alloc_elems = elems;
-		ctrl->p_array = kvzalloc(2 * elems * elem_size, GFP_KERNEL);
-		if (!ctrl->p_array) {
+	if (ctrl->is_dyn_array) {
+		ctrl->p_dyn_alloc_elems = elems;
+		ctrl->p_dyn = kvzalloc(2 * elems * elem_size, GFP_KERNEL);
+		if (!ctrl->p_dyn) {
 			kvfree(ctrl);
 			return NULL;
 		}
-		data = ctrl->p_array;
+		data = ctrl->p_dyn;
 	}
 
 	if (!ctrl->is_int) {
@@ -1718,18 +1464,20 @@ static struct v4l2_ctrl *v4l2_ctrl_new(struct v4l2_ctrl_handler *hdl,
 	}
 
 	if (type >= V4L2_CTRL_COMPOUND_TYPES && p_def.p_const) {
-		if (ctrl->is_array)
+		if (ctrl->is_dyn_array)
 			ctrl->p_def.p = &ctrl[1];
 		else
 			ctrl->p_def.p = ctrl->p_cur.p + tot_ctrl_size;
 		memcpy(ctrl->p_def.p, p_def.p_const, elem_size);
 	}
 
-	ctrl->type_ops->init(ctrl, 0, ctrl->p_cur);
-	cur_to_new(ctrl);
+	for (idx = 0; idx < elems; idx++) {
+		ctrl->type_ops->init(ctrl, idx, ctrl->p_cur);
+		ctrl->type_ops->init(ctrl, idx, ctrl->p_new);
+	}
 
 	if (handler_new_ref(hdl, ctrl, NULL, false, false)) {
-		kvfree(ctrl->p_array);
+		kvfree(ctrl->p_dyn);
 		kvfree(ctrl);
 		return NULL;
 	}
@@ -2043,6 +1791,7 @@ void update_from_auto_cluster(struct v4l2_ctrl *master)
 static int cluster_changed(struct v4l2_ctrl *master)
 {
 	bool changed = false;
+	unsigned int idx;
 	int i;
 
 	for (i = 0; i < master->ncontrols; i++) {
@@ -2068,8 +1817,9 @@ static int cluster_changed(struct v4l2_ctrl *master)
 
 		if (ctrl->elems != ctrl->new_elems)
 			ctrl_changed = true;
-		if (!ctrl_changed)
-			ctrl_changed = !ctrl->type_ops->equal(ctrl,
+
+		for (idx = 0; !ctrl_changed && idx < ctrl->elems; idx++)
+			ctrl_changed = !ctrl->type_ops->equal(ctrl, idx,
 				ctrl->p_cur, ctrl->p_new);
 		ctrl->has_changed = ctrl_changed;
 		changed |= ctrl->has_changed;

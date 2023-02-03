@@ -83,6 +83,10 @@ properties:
             unevaluatedProperties: false
 
             properties:
+              clock-lanes:
+                items:
+                  - const: 1
+
               data-lanes:
                 description:
                   An array of physical data lanes indexes.
@@ -95,6 +99,7 @@ properties:
                 maxItems: 4
 
             required:
+              - clock-lanes
               - data-lanes
 
       port@1:
@@ -109,11 +114,16 @@ properties:
             unevaluatedProperties: false
 
             properties:
+              clock-lanes:
+                items:
+                  - const: 1
+
               data-lanes:
                 minItems: 1
                 maxItems: 4
 
             required:
+              - clock-lanes
               - data-lanes
 
   reg:

@@ -60,6 +60,10 @@
 #include "xprt_rdma.h"
 #include <trace/events/rpcrdma.h>
 
+#if IS_ENABLED(CONFIG_SUNRPC_DEBUG)
+# define RPCDBG_FACILITY	RPCDBG_TRANS
+#endif
+
 /*
  * tunables
  */
@@ -235,11 +239,8 @@ xprt_rdma_connect_worker(struct work_struct *work)
 	struct rpcrdma_xprt *r_xprt = container_of(work, struct rpcrdma_xprt,
 						   rx_connect_worker.work);
 	struct rpc_xprt *xprt = &r_xprt->rx_xprt;
-	unsigned int pflags = current->flags;
 	int rc;
 
-	if (atomic_read(&xprt->swapper))
-		current->flags |= PF_MEMALLOC;
 	rc = rpcrdma_xprt_connect(r_xprt);
 	xprt_clear_connecting(xprt);
 	if (!rc) {
@@ -253,7 +254,6 @@ xprt_rdma_connect_worker(struct work_struct *work)
 		rpcrdma_xprt_disconnect(r_xprt);
 	xprt_unlock_connect(xprt, r_xprt);
 	xprt_wake_pending_tasks(xprt, rc);
-	current_restore_flags(pflags, PF_MEMALLOC);
 }
 
 /**
@@ -494,7 +494,8 @@ xprt_rdma_connect(struct rpc_xprt *xprt, struct rpc_task *task)
 		xprt_reconnect_backoff(xprt, RPCRDMA_INIT_REEST_TO);
 	}
 	trace_xprtrdma_op_connect(r_xprt, delay);
-	queue_delayed_work(system_long_wq, &r_xprt->rx_connect_worker, delay);
+	queue_delayed_work(xprtiod_workqueue, &r_xprt->rx_connect_worker,
+			   delay);
 }
 
 /**
@@ -570,7 +571,13 @@ xprt_rdma_allocate(struct rpc_task *task)
 	struct rpc_rqst *rqst = task->tk_rqstp;
 	struct rpcrdma_xprt *r_xprt = rpcx_to_rdmax(rqst->rq_xprt);
 	struct rpcrdma_req *req = rpcr_to_rdmar(rqst);
-	gfp_t flags = rpc_task_gfp_mask();
+	gfp_t flags;
+
+	flags = RPCRDMA_DEF_GFP;
+	if (RPC_IS_ASYNC(task))
+		flags = GFP_NOWAIT | __GFP_NOWARN;
+	if (RPC_IS_SWAPPER(task))
+		flags |= __GFP_MEMALLOC;
 
 	if (!rpcrdma_check_regbuf(r_xprt, req->rl_sendbuf, rqst->rq_callsize,
 				  flags))

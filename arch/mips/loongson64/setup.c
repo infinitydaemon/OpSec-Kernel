@@ -36,3 +36,11 @@ void __init plat_mem_setup(void)
 	if (loongson_fdt_blob)
 		__dt_setup_arch(loongson_fdt_blob);
 }
+
+void __init device_tree_init(void)
+{
+	if (!initial_boot_params)
+		return;
+
+	unflatten_and_copy_device_tree();
+}

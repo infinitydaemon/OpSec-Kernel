@@ -82,7 +82,7 @@
 			"AMIC", "MICB";
 	};
 
-	spi-4 {
+	spi4 {
 		compatible = "spi-gpio";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_spi4>;

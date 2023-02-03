@@ -5,16 +5,10 @@
 
 #include <linux/dma-buf.h>
 #include <linux/export.h>
-#include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/shmem_fs.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
-#include <linux/module.h>
-
-#ifdef CONFIG_X86
-#include <asm/set_memory.h>
-#endif
 
 #include <drm/drm.h>
 #include <drm/drm_device.h>
@@ -22,8 +16,6 @@
 #include <drm/drm_gem_shmem_helper.h>
 #include <drm/drm_prime.h>
 #include <drm/drm_print.h>
-
-MODULE_IMPORT_NS(DMA_BUF);
 
 /**
  * DOC: overview
@@ -46,7 +38,6 @@ static const struct drm_gem_object_funcs drm_gem_shmem_funcs = {
 	.vmap = drm_gem_shmem_object_vmap,
 	.vunmap = drm_gem_shmem_object_vunmap,
 	.mmap = drm_gem_shmem_object_mmap,
-	.vm_ops = &drm_gem_shmem_vm_ops,
 };
 
 static struct drm_gem_shmem_object *
@@ -58,17 +49,14 @@ __drm_gem_shmem_create(struct drm_device *dev, size_t size, bool private)
 
 	size = PAGE_ALIGN(size);
 
-	if (dev->driver->gem_create_object) {
+	if (dev->driver->gem_create_object)
 		obj = dev->driver->gem_create_object(dev, size);
-		if (IS_ERR(obj))
-			return ERR_CAST(obj);
-		shmem = to_drm_gem_shmem_obj(obj);
-	} else {
-		shmem = kzalloc(sizeof(*shmem), GFP_KERNEL);
-		if (!shmem)
-			return ERR_PTR(-ENOMEM);
-		obj = &shmem->base;
-	}
+	else
+		obj = kzalloc(sizeof(*shmem), GFP_KERNEL);
+	if (!obj)
+		return ERR_PTR(-ENOMEM);
+
+	shmem = to_drm_gem_shmem_obj(obj);
 
 	if (!obj->funcs)
 		obj->funcs = &drm_gem_shmem_funcs;
@@ -178,16 +166,6 @@ static int drm_gem_shmem_get_pages_locked(struct drm_gem_shmem_object *shmem)
 		return PTR_ERR(pages);
 	}
 
-	/*
-	 * TODO: Allocating WC pages which are correctly flushed is only
-	 * supported on x86. Ideal solution would be a GFP_WC flag, which also
-	 * ttm_pool.c could use.
-	 */
-#ifdef CONFIG_X86
-	if (shmem->map_wc)
-		set_pages_array_wc(pages, obj->size >> PAGE_SHIFT);
-#endif
-
 	shmem->pages = pages;
 
 	return 0;
@@ -228,11 +206,6 @@ static void drm_gem_shmem_put_pages_locked(struct drm_gem_shmem_object *shmem)
 
 	if (--shmem->pages_use_count > 0)
 		return;
-
-#ifdef CONFIG_X86
-	if (shmem->map_wc)
-		set_pages_array_wb(shmem->pages, obj->size >> PAGE_SHIFT);
-#endif
 
 	drm_gem_put_pages(obj, shmem->pages,
 			  shmem->pages_mark_dirty_on_put,
@@ -287,14 +260,13 @@ void drm_gem_shmem_unpin(struct drm_gem_shmem_object *shmem)
 }
 EXPORT_SYMBOL(drm_gem_shmem_unpin);
 
-static int drm_gem_shmem_vmap_locked(struct drm_gem_shmem_object *shmem,
-				     struct iosys_map *map)
+static int drm_gem_shmem_vmap_locked(struct drm_gem_shmem_object *shmem, struct dma_buf_map *map)
 {
 	struct drm_gem_object *obj = &shmem->base;
 	int ret = 0;
 
 	if (shmem->vmap_use_count++ > 0) {
-		iosys_map_set_vaddr(map, shmem->vaddr);
+		dma_buf_map_set_vaddr(map, shmem->vaddr);
 		return 0;
 	}
 
@@ -322,7 +294,7 @@ static int drm_gem_shmem_vmap_locked(struct drm_gem_shmem_object *shmem,
 		if (!shmem->vaddr)
 			ret = -ENOMEM;
 		else
-			iosys_map_set_vaddr(map, shmem->vaddr);
+			dma_buf_map_set_vaddr(map, shmem->vaddr);
 	}
 
 	if (ret) {
@@ -356,8 +328,7 @@ err_zero_use:
  * Returns:
  * 0 on success or a negative error code on failure.
  */
-int drm_gem_shmem_vmap(struct drm_gem_shmem_object *shmem,
-		       struct iosys_map *map)
+int drm_gem_shmem_vmap(struct drm_gem_shmem_object *shmem, struct dma_buf_map *map)
 {
 	int ret;
 
@@ -372,7 +343,7 @@ int drm_gem_shmem_vmap(struct drm_gem_shmem_object *shmem,
 EXPORT_SYMBOL(drm_gem_shmem_vmap);
 
 static void drm_gem_shmem_vunmap_locked(struct drm_gem_shmem_object *shmem,
-					struct iosys_map *map)
+					struct dma_buf_map *map)
 {
 	struct drm_gem_object *obj = &shmem->base;
 
@@ -404,8 +375,7 @@ static void drm_gem_shmem_vunmap_locked(struct drm_gem_shmem_object *shmem,
  * This function hides the differences between dma-buf imported and natively
  * allocated objects.
  */
-void drm_gem_shmem_vunmap(struct drm_gem_shmem_object *shmem,
-			  struct iosys_map *map)
+void drm_gem_shmem_vunmap(struct drm_gem_shmem_object *shmem, struct dma_buf_map *map)
 {
 	mutex_lock(&shmem->vmap_lock);
 	drm_gem_shmem_vunmap_locked(shmem, map);
@@ -559,7 +529,7 @@ static vm_fault_t drm_gem_shmem_fault(struct vm_fault *vmf)
 	} else {
 		page = shmem->pages[page_offset];
 
-		ret = vmf_insert_pfn(vma, vmf->address, page_to_pfn(page));
+		ret = vmf_insert_page(vma, vmf->address, page);
 	}
 
 	mutex_unlock(&shmem->pages_lock);
@@ -598,12 +568,11 @@ static void drm_gem_shmem_vm_close(struct vm_area_struct *vma)
 	drm_gem_vm_close(vma);
 }
 
-const struct vm_operations_struct drm_gem_shmem_vm_ops = {
+static const struct vm_operations_struct drm_gem_shmem_vm_ops = {
 	.fault = drm_gem_shmem_fault,
 	.open = drm_gem_shmem_vm_open,
 	.close = drm_gem_shmem_vm_close,
 };
-EXPORT_SYMBOL_GPL(drm_gem_shmem_vm_ops);
 
 /**
  * drm_gem_shmem_mmap - Memory-map a shmem GEM object
@@ -633,10 +602,11 @@ int drm_gem_shmem_mmap(struct drm_gem_shmem_object *shmem, struct vm_area_struct
 	if (ret)
 		return ret;
 
-	vma->vm_flags |= VM_PFNMAP | VM_DONTEXPAND | VM_DONTDUMP;
+	vma->vm_flags |= VM_MIXEDMAP | VM_DONTEXPAND;
 	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
 	if (shmem->map_wc)
 		vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
+	vma->vm_ops = &drm_gem_shmem_vm_ops;
 
 	return 0;
 }
@@ -669,7 +639,7 @@ EXPORT_SYMBOL(drm_gem_shmem_print_info);
  * drm_gem_shmem_get_pages_sgt() instead.
  *
  * Returns:
- * A pointer to the scatter/gather table of pinned pages or error pointer on failure.
+ * A pointer to the scatter/gather table of pinned pages or NULL on failure.
  */
 struct sg_table *drm_gem_shmem_get_sg_table(struct drm_gem_shmem_object *shmem)
 {
@@ -769,7 +739,3 @@ drm_gem_shmem_prime_import_sg_table(struct drm_device *dev,
 	return &shmem->base;
 }
 EXPORT_SYMBOL_GPL(drm_gem_shmem_prime_import_sg_table);
-
-MODULE_DESCRIPTION("DRM SHMEM memory-management helpers");
-MODULE_IMPORT_NS(DMA_BUF);
-MODULE_LICENSE("GPL v2");

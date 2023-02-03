@@ -119,9 +119,9 @@ static int au1xi2s_set_fmt(struct snd_soc_dai *cpu_dai, unsigned int fmt)
 		goto out;
 	}
 
-	/* I2S controller only supports provider */
-	switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-	case SND_SOC_DAIFMT_BP_FP:	/* CODEC consumer */
+	/* I2S controller only supports master */
+	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
+	case SND_SOC_DAIFMT_CBS_CFS:	/* CODEC slave */
 		break;
 	default:
 		goto out;
@@ -227,8 +227,7 @@ static struct snd_soc_dai_driver au1xi2s_dai_driver = {
 };
 
 static const struct snd_soc_component_driver au1xi2s_component = {
-	.name			= "au1xi2s",
-	.legacy_dai_naming	= 1,
+	.name		= "au1xi2s",
 };
 
 static int au1xi2s_drvprobe(struct platform_device *pdev)

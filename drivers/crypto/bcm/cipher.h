@@ -231,7 +231,7 @@ struct iproc_ctx_s {
 
 	/*
 	 * shash descriptor - needed to perform incremental hashing in
-	 * software, when hw doesn't support it.
+	 * in software, when hw doesn't support it.
 	 */
 	struct shash_desc *shash;
 

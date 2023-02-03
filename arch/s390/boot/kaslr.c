@@ -8,7 +8,7 @@
 #include <asm/timex.h>
 #include <asm/sclp.h>
 #include <asm/kasan.h>
-#include "decompressor.h"
+#include "compressed/decompressor.h"
 #include "boot.h"
 
 #define PRNG_MODE_TDES	 1

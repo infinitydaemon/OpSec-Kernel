@@ -1,4 +1,4 @@
-#!/usr/bin/env perl
+#!/usr/bin/perl
 # SPDX-License-Identifier: GPL-2.0
 
 use strict;
@@ -13,7 +13,6 @@ my $man;
 my $debug;
 my $arch;
 my $feat;
-my $enable_fname;
 
 my $basename = abs_path($0);
 $basename =~ s,/[^/]+$,/,;
@@ -32,7 +31,6 @@ GetOptions(
 	'arch=s' => \$arch,
 	'feat=s' => \$feat,
 	'feature=s' => \$feat,
-	"enable-fname" => \$enable_fname,
 	man => \$man
 ) or pod2usage(2);
 
@@ -96,10 +94,6 @@ sub parse_feat {
 	return if ($mode & S_IFDIR);
 	return if ($file =~ m,($prefix)/arch-support.txt,);
 	return if (!($file =~ m,arch-support.txt$,));
-
-	if ($enable_fname) {
-		printf ".. FILE %s\n", abs_path($file);
-	}
 
 	my $subsys = "";
 	$subsys = $2 if ( m,.*($prefix)/([^/]+).*,);
@@ -585,11 +579,6 @@ Output features for a single specific feature.
 
 Changes the location of the Feature files. By default, it uses
 the Documentation/features directory.
-
-=item B<--enable-fname>
-
-Prints the file name of the feature files. This can be used in order to
-track dependencies during documentation build.
 
 =item B<--debug>
 

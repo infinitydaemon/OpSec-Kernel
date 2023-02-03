@@ -6,7 +6,6 @@
 #ifndef __NETNS_MCTP_H__
 #define __NETNS_MCTP_H__
 
-#include <linux/mutex.h>
 #include <linux/types.h>
 
 struct netns_mctp {

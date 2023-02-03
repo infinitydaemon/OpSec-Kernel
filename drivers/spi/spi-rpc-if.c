@@ -156,20 +156,14 @@ static int rpcif_spi_probe(struct platform_device *pdev)
 	ctlr->mode_bits = SPI_CPOL | SPI_CPHA | SPI_TX_QUAD | SPI_RX_QUAD;
 	ctlr->flags = SPI_CONTROLLER_HALF_DUPLEX;
 
-	error = rpcif_hw_init(rpc, false);
-	if (error)
-		goto out_disable_rpm;
+	rpcif_hw_init(rpc, false);
 
 	error = spi_register_controller(ctlr);
 	if (error) {
 		dev_err(&pdev->dev, "spi_register_controller failed\n");
-		goto out_disable_rpm;
+		rpcif_disable_rpm(rpc);
 	}
 
-	return 0;
-
-out_disable_rpm:
-	rpcif_disable_rpm(rpc);
 	return error;
 }
 

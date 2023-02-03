@@ -18,9 +18,9 @@
 #include <asm/feature-fixups.h>
 
 /* Pickup Book E specific registers. */
-#ifdef CONFIG_BOOKE_OR_40x
+#if defined(CONFIG_BOOKE) || defined(CONFIG_40x)
 #include <asm/reg_booke.h>
-#endif
+#endif /* CONFIG_BOOKE || CONFIG_40x */
 
 #ifdef CONFIG_FSL_EMB_PERFMON
 #include <asm/reg_fsl_emb.h>
@@ -417,6 +417,7 @@
 #define   FSCR_DSCR	__MASK(FSCR_DSCR_LG)
 #define   FSCR_INTR_CAUSE (ASM_CONST(0xFF) << 56)	/* interrupt cause */
 #define SPRN_HFSCR	0xbe	/* HV=1 Facility Status & Control Register */
+#define   HFSCR_PREFIX	__MASK(FSCR_PREFIX_LG)
 #define   HFSCR_MSGP	__MASK(FSCR_MSGP_LG)
 #define   HFSCR_TAR	__MASK(FSCR_TAR_LG)
 #define   HFSCR_EBB	__MASK(FSCR_EBB_LG)
@@ -473,6 +474,8 @@
 #ifndef SPRN_LPID
 #define SPRN_LPID	0x13F	/* Logical Partition Identifier */
 #endif
+#define   LPID_RSVD_POWER7	0x3ff	/* Reserved LPID for partn switching */
+#define   LPID_RSVD		0xfff	/* Reserved LPID for partn switching */
 #define	SPRN_HMER	0x150	/* Hypervisor maintenance exception reg */
 #define   HMER_DEBUG_TRIG	(1ul << (63 - 17)) /* Debug trigger */
 #define	SPRN_HMEER	0x151	/* Hyp maintenance exception enable reg */
@@ -1363,18 +1366,6 @@
 
 /* Macros for setting and retrieving special purpose registers */
 #ifndef __ASSEMBLY__
-
-#if defined(CONFIG_PPC64) || defined(__CHECKER__)
-typedef struct {
-	u32 val;
-#ifdef CONFIG_PPC64
-	u32 suffix;
-#endif
-} __packed ppc_inst_t;
-#else
-typedef u32 ppc_inst_t;
-#endif
-
 #define mfmsr()		({unsigned long rval; \
 			asm volatile("mfmsr %0" : "=r" (rval) : \
 						: "memory"); rval;})

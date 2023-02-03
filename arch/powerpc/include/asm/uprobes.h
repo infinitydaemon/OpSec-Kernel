@@ -11,8 +11,9 @@
 
 #include <linux/notifier.h>
 #include <asm/probes.h>
+#include <asm/inst.h>
 
-typedef u32 uprobe_opcode_t;
+typedef ppc_opcode_t uprobe_opcode_t;
 
 #define MAX_UINSN_BYTES		8
 #define UPROBE_XOL_SLOT_BYTES	(MAX_UINSN_BYTES)

@@ -24,7 +24,6 @@
 #include <asm/byteorder.h>
 #include <linux/types.h>
 #include <linux/nls.h>
-#include <linux/unicode.h>
 
 #define  UNIUPR_NOLOWER		/* Example to not expand lower case tables */
 
@@ -70,7 +69,7 @@ char *smb_strndup_from_utf16(const char *src, const int maxlen,
 			     const struct nls_table *codepage);
 int smbConvertToUTF16(__le16 *target, const char *source, int srclen,
 		      const struct nls_table *cp, int mapchars);
-char *ksmbd_extract_sharename(struct unicode_map *um, const char *treename);
+char *ksmbd_extract_sharename(char *treename);
 #endif
 
 /*

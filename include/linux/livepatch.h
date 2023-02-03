@@ -16,6 +16,8 @@
 
 #if IS_ENABLED(CONFIG_LIVEPATCH)
 
+#include <asm/livepatch.h>
+
 /* task patch states */
 #define KLP_UNDEFINED	-1
 #define KLP_UNPATCHED	 0

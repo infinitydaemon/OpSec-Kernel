@@ -8,6 +8,7 @@ title: Synopsys DesignWare AXI DMA Controller
 
 maintainers:
   - Eugeniy Paltsev <Eugeniy.Paltsev@synopsys.com>
+  - Jee Heng Sia <jee.heng.sia@intel.com>
 
 description:
   Synopsys DesignWare AXI DMA Controller DT Binding
@@ -33,12 +34,7 @@ properties:
       - const: axidma_apb_regs
 
   interrupts:
-    description:
-      If the IP-core synthesis parameter DMAX_INTR_IO_TYPE is set to 1, this
-      will be per-channel interrupts. Otherwise, this is a single combined IRQ
-      for all channels.
-    minItems: 1
-    maxItems: 8
+    maxItems: 1
 
   clocks:
     items:
@@ -56,9 +52,6 @@ properties:
   dma-channels:
     minimum: 1
     maximum: 8
-
-  resets:
-    maxItems: 1
 
   snps,dma-masters:
     description: |

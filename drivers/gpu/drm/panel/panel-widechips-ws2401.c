@@ -407,11 +407,12 @@ static int ws2401_probe(struct spi_device *spi)
 	return 0;
 }
 
-static void ws2401_remove(struct spi_device *spi)
+static int ws2401_remove(struct spi_device *spi)
 {
 	struct ws2401 *ws = spi_get_drvdata(spi);
 
 	drm_panel_remove(&ws->panel);
+	return 0;
 }
 
 /*
@@ -425,16 +426,9 @@ static const struct of_device_id ws2401_match[] = {
 };
 MODULE_DEVICE_TABLE(of, ws2401_match);
 
-static const struct spi_device_id ws2401_ids[] = {
-	{ "lms380kf01" },
-	{ },
-};
-MODULE_DEVICE_TABLE(spi, ws2401_ids);
-
 static struct spi_driver ws2401_driver = {
 	.probe		= ws2401_probe,
 	.remove		= ws2401_remove,
-	.id_table	= ws2401_ids,
 	.driver		= {
 		.name	= "ws2401-panel",
 		.of_match_table = ws2401_match,

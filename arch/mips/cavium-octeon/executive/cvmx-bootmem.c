@@ -318,7 +318,7 @@ int64_t cvmx_bootmem_phy_alloc(uint64_t req_size, uint64_t address_min,
 		}
 
 		/*
-		 * Determine if this is an entry that can satisfy the
+		 * Determine if this is an entry that can satisify the
 		 * request Check to make sure entry is large enough to
 		 * satisfy request.
 		 */
@@ -780,8 +780,9 @@ int64_t cvmx_bootmem_phy_named_block_alloc(uint64_t size, uint64_t min_addr,
 	if (addr_allocated >= 0) {
 		named_block_desc_ptr->base_addr = addr_allocated;
 		named_block_desc_ptr->size = size;
-		strscpy(named_block_desc_ptr->name, name,
+		strncpy(named_block_desc_ptr->name, name,
 			cvmx_bootmem_desc->named_block_name_len);
+		named_block_desc_ptr->name[cvmx_bootmem_desc->named_block_name_len - 1] = 0;
 	}
 
 	if (!(flags & CVMX_BOOTMEM_FLAG_NO_LOCKING))

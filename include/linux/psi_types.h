@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_PSI_TYPES_H
 #define _LINUX_PSI_TYPES_H
 
@@ -16,6 +15,13 @@ enum psi_task_count {
 	NR_MEMSTALL,
 	NR_RUNNING,
 	/*
+	 * This can't have values other than 0 or 1 and could be
+	 * implemented as a bit flag. But for now we still have room
+	 * in the first cacheline of psi_group_cpu, and this way we
+	 * don't have to special case any state tracking for it.
+	 */
+	NR_ONCPU,
+	/*
 	 * For IO and CPU stalls the presence of running/oncpu tasks
 	 * in the domain means a partial rather than a full stall.
 	 * For memory it's not so simple because of page reclaimers:
@@ -25,27 +31,22 @@ enum psi_task_count {
 	 * threads and memstall ones.
 	 */
 	NR_MEMSTALL_RUNNING,
-	NR_PSI_TASK_COUNTS = 4,
+	NR_PSI_TASK_COUNTS = 5,
 };
 
 /* Task state bitmasks */
 #define TSK_IOWAIT	(1 << NR_IOWAIT)
 #define TSK_MEMSTALL	(1 << NR_MEMSTALL)
 #define TSK_RUNNING	(1 << NR_RUNNING)
+#define TSK_ONCPU	(1 << NR_ONCPU)
 #define TSK_MEMSTALL_RUNNING	(1 << NR_MEMSTALL_RUNNING)
-
-/* Only one task can be scheduled, no corresponding task count */
-#define TSK_ONCPU	(1 << NR_PSI_TASK_COUNTS)
 
 /* Resources that workloads could be stalled on */
 enum psi_res {
 	PSI_IO,
 	PSI_MEM,
 	PSI_CPU,
-#ifdef CONFIG_IRQ_TIME_ACCOUNTING
-	PSI_IRQ,
-#endif
-	NR_PSI_RESOURCES,
+	NR_PSI_RESOURCES = 3,
 };
 
 /*
@@ -61,19 +62,10 @@ enum psi_states {
 	PSI_MEM_FULL,
 	PSI_CPU_SOME,
 	PSI_CPU_FULL,
-#ifdef CONFIG_IRQ_TIME_ACCOUNTING
-	PSI_IRQ_FULL,
-#endif
 	/* Only per-CPU, to weigh the CPU in the global average: */
 	PSI_NONIDLE,
-	NR_PSI_STATES,
+	NR_PSI_STATES = 7,
 };
-
-/* Use one bit in the state mask to track TSK_ONCPU */
-#define PSI_ONCPU	(1 << NR_PSI_STATES)
-
-/* Flag whether to re-arm avgs_work, see details in get_recent_times() */
-#define PSI_STATE_RESCHEDULE	(1 << (NR_PSI_STATES + 1))
 
 enum psi_aggregators {
 	PSI_AVGS = 0,
@@ -148,15 +140,9 @@ struct psi_trigger {
 	 * events to one per window
 	 */
 	u64 last_event_time;
-
-	/* Deferred event(s) from previous ratelimit window */
-	bool pending_event;
 };
 
 struct psi_group {
-	struct psi_group *parent;
-	bool enabled;
-
 	/* Protects data used by the aggregator */
 	struct mutex avgs_lock;
 
@@ -180,7 +166,6 @@ struct psi_group {
 	struct timer_list poll_timer;
 	wait_queue_head_t poll_wait;
 	atomic_t poll_wakeup;
-	atomic_t poll_scheduled;
 
 	/* Protects data used by the monitor */
 	struct mutex trigger_lock;
@@ -198,8 +183,6 @@ struct psi_group {
 };
 
 #else /* CONFIG_PSI */
-
-#define NR_PSI_RESOURCES	0
 
 struct psi_group { };
 

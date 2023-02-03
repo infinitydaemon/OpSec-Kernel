@@ -294,11 +294,6 @@ static void print_reg(struct vcpu_config *c, __u64 id)
 			    "%s: Unexpected bits set in FW reg id: 0x%llx", config_name(c), id);
 		printf("\tKVM_REG_ARM_FW_REG(%lld),\n", id & 0xffff);
 		break;
-	case KVM_REG_ARM_FW_FEAT_BMAP:
-		TEST_ASSERT(id == KVM_REG_ARM_FW_FEAT_BMAP_REG(id & 0xffff),
-			    "%s: Unexpected bits set in the bitmap feature FW reg id: 0x%llx", config_name(c), id);
-		printf("\tKVM_REG_ARM_FW_FEAT_BMAP_REG(%lld),\n", id & 0xffff);
-		break;
 	case KVM_REG_ARM64_SVE:
 		if (has_cap(c, KVM_CAP_ARM_SVE))
 			printf("\t%s,\n", sve_id_to_str(c, id));
@@ -377,7 +372,7 @@ static void prepare_vcpu_init(struct vcpu_config *c, struct kvm_vcpu_init *init)
 			init->features[s->feature / 32] |= 1 << (s->feature % 32);
 }
 
-static void finalize_vcpu(struct kvm_vcpu *vcpu, struct vcpu_config *c)
+static void finalize_vcpu(struct kvm_vm *vm, uint32_t vcpuid, struct vcpu_config *c)
 {
 	struct reg_sublist *s;
 	int feature;
@@ -385,7 +380,7 @@ static void finalize_vcpu(struct kvm_vcpu *vcpu, struct vcpu_config *c)
 	for_each_sublist(c, s) {
 		if (s->finalize) {
 			feature = s->feature;
-			vcpu_ioctl(vcpu, KVM_ARM_VCPU_FINALIZE, &feature);
+			vcpu_ioctl(vm, vcpuid, KVM_ARM_VCPU_FINALIZE, &feature);
 		}
 	}
 }
@@ -395,12 +390,10 @@ static void check_supported(struct vcpu_config *c)
 	struct reg_sublist *s;
 
 	for_each_sublist(c, s) {
-		if (!s->capability)
-			continue;
-
-		__TEST_REQUIRE(kvm_has_cap(s->capability),
-			       "%s: %s not available, skipping tests\n",
-			       config_name(c), s->name);
+		if (s->capability && !kvm_check_cap(s->capability)) {
+			fprintf(stderr, "%s: %s not available, skipping tests\n", config_name(c), s->name);
+			exit(KSFT_SKIP);
+		}
 	}
 }
 
@@ -413,19 +406,17 @@ static void run_test(struct vcpu_config *c)
 	struct kvm_vcpu_init init = { .target = -1, };
 	int new_regs = 0, missing_regs = 0, i, n;
 	int failed_get = 0, failed_set = 0, failed_reject = 0;
-	struct kvm_vcpu *vcpu;
 	struct kvm_vm *vm;
 	struct reg_sublist *s;
 
 	check_supported(c);
 
-	vm = vm_create_barebones();
+	vm = vm_create(VM_MODE_DEFAULT, DEFAULT_GUEST_PHY_PAGES, O_RDWR);
 	prepare_vcpu_init(c, &init);
-	vcpu = __vm_vcpu_add(vm, 0);
-	aarch64_vcpu_setup(vcpu, &init);
-	finalize_vcpu(vcpu, c);
+	aarch64_vcpu_add_default(vm, 0, &init, NULL);
+	finalize_vcpu(vm, 0, c);
 
-	reg_list = vcpu_get_reg_list(vcpu);
+	reg_list = vcpu_get_reg_list(vm, 0);
 
 	if (fixup_core_regs)
 		core_reg_fixup();
@@ -461,7 +452,7 @@ static void run_test(struct vcpu_config *c)
 		bool reject_reg = false;
 		int ret;
 
-		ret = __vcpu_get_reg(vcpu, reg_list->reg[i], &addr);
+		ret = _vcpu_ioctl(vm, 0, KVM_GET_ONE_REG, &reg);
 		if (ret) {
 			printf("%s: Failed to get ", config_name(c));
 			print_reg(c, reg.id);
@@ -473,7 +464,7 @@ static void run_test(struct vcpu_config *c)
 		for_each_sublist(c, s) {
 			if (s->rejects_set && find_reg(s->rejects_set, s->rejects_set_n, reg.id)) {
 				reject_reg = true;
-				ret = __vcpu_ioctl(vcpu, KVM_SET_ONE_REG, &reg);
+				ret = _vcpu_ioctl(vm, 0, KVM_SET_ONE_REG, &reg);
 				if (ret != -1 || errno != EPERM) {
 					printf("%s: Failed to reject (ret=%d, errno=%d) ", config_name(c), ret, errno);
 					print_reg(c, reg.id);
@@ -485,7 +476,7 @@ static void run_test(struct vcpu_config *c)
 		}
 
 		if (!reject_reg) {
-			ret = __vcpu_ioctl(vcpu, KVM_SET_ONE_REG, &reg);
+			ret = _vcpu_ioctl(vm, 0, KVM_SET_ONE_REG, &reg);
 			if (ret) {
 				printf("%s: Failed to set ", config_name(c));
 				print_reg(c, reg.id);
@@ -512,13 +503,8 @@ static void run_test(struct vcpu_config *c)
 		++missing_regs;
 
 	if (new_regs || missing_regs) {
-		n = 0;
-		for_each_reg_filtered(i)
-			++n;
-
 		printf("%s: Number blessed registers: %5lld\n", config_name(c), blessed_n);
-		printf("%s: Number registers:         %5lld (includes %lld filtered registers)\n",
-		       config_name(c), reg_list->n, reg_list->n - n);
+		printf("%s: Number registers:         %5lld\n", config_name(c), reg_list->n);
 	}
 
 	if (new_regs) {
@@ -697,13 +683,9 @@ static __u64 base_regs[] = {
 	KVM_REG_ARM64 | KVM_REG_SIZE_U64 | KVM_REG_ARM_CORE | KVM_REG_ARM_CORE_REG(spsr[4]),
 	KVM_REG_ARM64 | KVM_REG_SIZE_U32 | KVM_REG_ARM_CORE | KVM_REG_ARM_CORE_REG(fp_regs.fpsr),
 	KVM_REG_ARM64 | KVM_REG_SIZE_U32 | KVM_REG_ARM_CORE | KVM_REG_ARM_CORE_REG(fp_regs.fpcr),
-	KVM_REG_ARM_FW_REG(0),		/* KVM_REG_ARM_PSCI_VERSION */
-	KVM_REG_ARM_FW_REG(1),		/* KVM_REG_ARM_SMCCC_ARCH_WORKAROUND_1 */
-	KVM_REG_ARM_FW_REG(2),		/* KVM_REG_ARM_SMCCC_ARCH_WORKAROUND_2 */
-	KVM_REG_ARM_FW_REG(3),		/* KVM_REG_ARM_SMCCC_ARCH_WORKAROUND_3 */
-	KVM_REG_ARM_FW_FEAT_BMAP_REG(0),	/* KVM_REG_ARM_STD_BMAP */
-	KVM_REG_ARM_FW_FEAT_BMAP_REG(1),	/* KVM_REG_ARM_STD_HYP_BMAP */
-	KVM_REG_ARM_FW_FEAT_BMAP_REG(2),	/* KVM_REG_ARM_VENDOR_HYP_BMAP */
+	KVM_REG_ARM_FW_REG(0),
+	KVM_REG_ARM_FW_REG(1),
+	KVM_REG_ARM_FW_REG(2),
 	ARM64_SYS_REG(3, 3, 14, 3, 1),	/* CNTV_CTL_EL0 */
 	ARM64_SYS_REG(3, 3, 14, 3, 2),	/* CNTV_CVAL_EL0 */
 	ARM64_SYS_REG(3, 3, 14, 0, 2),
@@ -778,7 +760,6 @@ static __u64 base_regs[] = {
 	ARM64_SYS_REG(2, 0, 0, 15, 5),
 	ARM64_SYS_REG(2, 0, 0, 15, 6),
 	ARM64_SYS_REG(2, 0, 0, 15, 7),
-	ARM64_SYS_REG(2, 0, 1, 1, 4),	/* OSLSR_EL1 */
 	ARM64_SYS_REG(2, 4, 0, 7, 0),	/* DBGVCR32_EL2 */
 	ARM64_SYS_REG(3, 0, 0, 0, 5),	/* MPIDR_EL1 */
 	ARM64_SYS_REG(3, 0, 0, 1, 0),	/* ID_PFR0_EL1 */
@@ -1033,22 +1014,6 @@ static __u64 sve_rejects_set[] = {
 	KVM_REG_ARM64_SVE_VLS,
 };
 
-static __u64 pauth_addr_regs[] = {
-	ARM64_SYS_REG(3, 0, 2, 1, 0),	/* APIAKEYLO_EL1 */
-	ARM64_SYS_REG(3, 0, 2, 1, 1),	/* APIAKEYHI_EL1 */
-	ARM64_SYS_REG(3, 0, 2, 1, 2),	/* APIBKEYLO_EL1 */
-	ARM64_SYS_REG(3, 0, 2, 1, 3),	/* APIBKEYHI_EL1 */
-	ARM64_SYS_REG(3, 0, 2, 2, 0),	/* APDAKEYLO_EL1 */
-	ARM64_SYS_REG(3, 0, 2, 2, 1),	/* APDAKEYHI_EL1 */
-	ARM64_SYS_REG(3, 0, 2, 2, 2),	/* APDBKEYLO_EL1 */
-	ARM64_SYS_REG(3, 0, 2, 2, 3)	/* APDBKEYHI_EL1 */
-};
-
-static __u64 pauth_generic_regs[] = {
-	ARM64_SYS_REG(3, 0, 2, 3, 0),	/* APGAKEYLO_EL1 */
-	ARM64_SYS_REG(3, 0, 2, 3, 1),	/* APGAKEYHI_EL1 */
-};
-
 #define BASE_SUBLIST \
 	{ "base", .regs = base_regs, .regs_n = ARRAY_SIZE(base_regs), }
 #define VREGS_SUBLIST \
@@ -1060,21 +1025,6 @@ static __u64 pauth_generic_regs[] = {
 	{ "sve", .capability = KVM_CAP_ARM_SVE, .feature = KVM_ARM_VCPU_SVE, .finalize = true, \
 	  .regs = sve_regs, .regs_n = ARRAY_SIZE(sve_regs), \
 	  .rejects_set = sve_rejects_set, .rejects_set_n = ARRAY_SIZE(sve_rejects_set), }
-#define PAUTH_SUBLIST							\
-	{								\
-		.name 		= "pauth_address",			\
-		.capability	= KVM_CAP_ARM_PTRAUTH_ADDRESS,		\
-		.feature	= KVM_ARM_VCPU_PTRAUTH_ADDRESS,		\
-		.regs		= pauth_addr_regs,			\
-		.regs_n		= ARRAY_SIZE(pauth_addr_regs),		\
-	},								\
-	{								\
-		.name 		= "pauth_generic",			\
-		.capability	= KVM_CAP_ARM_PTRAUTH_GENERIC,		\
-		.feature	= KVM_ARM_VCPU_PTRAUTH_GENERIC,		\
-		.regs		= pauth_generic_regs,			\
-		.regs_n		= ARRAY_SIZE(pauth_generic_regs),	\
-	}
 
 static struct vcpu_config vregs_config = {
 	.sublists = {
@@ -1106,30 +1056,11 @@ static struct vcpu_config sve_pmu_config = {
 	{0},
 	},
 };
-static struct vcpu_config pauth_config = {
-	.sublists = {
-	BASE_SUBLIST,
-	VREGS_SUBLIST,
-	PAUTH_SUBLIST,
-	{0},
-	},
-};
-static struct vcpu_config pauth_pmu_config = {
-	.sublists = {
-	BASE_SUBLIST,
-	VREGS_SUBLIST,
-	PAUTH_SUBLIST,
-	PMU_SUBLIST,
-	{0},
-	},
-};
 
 static struct vcpu_config *vcpu_configs[] = {
 	&vregs_config,
 	&vregs_pmu_config,
 	&sve_config,
 	&sve_pmu_config,
-	&pauth_config,
-	&pauth_pmu_config,
 };
 static int vcpu_configs_n = ARRAY_SIZE(vcpu_configs);

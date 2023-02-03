@@ -14,6 +14,7 @@
 #include "odm_DynamicBBPowerSaving.h"
 #include "odm_DynamicTxPower.h"
 #include "odm_CfoTracking.h"
+#include "odm_NoiseMonitor.h"
 
 #define	TP_MODE		0
 #define	RSSI_MODE		1
@@ -193,8 +194,8 @@ struct odm_rate_adaptive {
 #define HP_THERMAL_NUM		8
 
 #define AVG_THERMAL_NUM		8
-#define IQK_MATRIX_REG_NUM	8
-#define IQK_MATRIX_SETTINGS_NUM	14 /* Channels_2_4G_NUM */
+#define IQK_Matrix_REG_NUM	8
+#define IQK_Matrix_Settings_NUM	14 /* Channels_2_4G_NUM */
 
 #define		DM_Type_ByFW			0
 #define		DM_Type_ByDriver		1
@@ -479,6 +480,12 @@ enum odm_type_alna_e { /* tag_ODM_TYPE_ALNA_Definition */
 	TYPE_ALNA3 = BIT(3)|BIT(2)|BIT(1)|BIT(0)
 };
 
+struct iqk_matrix_regs_setting { /* _IQK_MATRIX_REGS_SETTING */
+	bool bIQKDone;
+	s32 Value[3][IQK_Matrix_REG_NUM];
+	bool bBWIqkResultSaved[3];
+};
+
 /* Remove PATHDIV_PARA struct to odm_PathDiv.h */
 
 struct odm_rf_cal_t { /* ODM_RF_Calibration_Structure */
@@ -524,7 +531,7 @@ struct odm_rf_cal_t { /* ODM_RF_Calibration_Structure */
 
 	u8 ThermalValue_HP[HP_THERMAL_NUM];
 	u8 ThermalValue_HP_index;
-	s32 iqk_matrix_regs_setting_value[IQK_MATRIX_SETTINGS_NUM][IQK_MATRIX_REG_NUM];
+	struct iqk_matrix_regs_setting IQKMatrixRegSetting[IQK_Matrix_Settings_NUM];
 	bool bNeedIQK;
 	bool bIQKInProgress;
 	u8 Delta_IQK;
@@ -856,6 +863,7 @@ struct dm_odm_t { /* DM_Out_Source_Dynamic_Mechanism_Structure */
 	u8 Adaptivity_IGI_upper;
 	u8 NHM_cnt_0;
 
+	struct odm_noise_monitor noise_level;/* ODM_MAX_CHANNEL_NUM]; */
 	/*  */
 	/* 2 Define STA info. */
 	/*  _ODM_STA_INFO */

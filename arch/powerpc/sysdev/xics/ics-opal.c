@@ -18,6 +18,7 @@
 #include <linux/spinlock.h>
 #include <linux/msi.h>
 
+#include <asm/prom.h>
 #include <asm/smp.h>
 #include <asm/machdep.h>
 #include <asm/irq.h>

@@ -204,10 +204,8 @@ static int spear_rtc_read_time(struct device *dev, struct rtc_time *tm)
 	/* we don't report wday/yday/isdst ... */
 	rtc_wait_not_busy(config);
 
-	do {
-		time = readl(config->ioaddr + TIME_REG);
-		date = readl(config->ioaddr + DATE_REG);
-	} while (time == readl(config->ioaddr + TIME_REG));
+	time = readl(config->ioaddr + TIME_REG);
+	date = readl(config->ioaddr + DATE_REG);
 	tm->tm_sec = (time >> SECOND_SHIFT) & SECOND_MASK;
 	tm->tm_min = (time >> MINUTE_SHIFT) & MIN_MASK;
 	tm->tm_hour = (time >> HOUR_SHIFT) & HOUR_MASK;
@@ -354,10 +352,6 @@ static int spear_rtc_probe(struct platform_device *pdev)
 	if (!config)
 		return -ENOMEM;
 
-	config->rtc = devm_rtc_allocate_device(&pdev->dev);
-	if (IS_ERR(config->rtc))
-		return PTR_ERR(config->rtc);
-
 	/* alarm irqs */
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
@@ -386,13 +380,16 @@ static int spear_rtc_probe(struct platform_device *pdev)
 	spin_lock_init(&config->lock);
 	platform_set_drvdata(pdev, config);
 
-	config->rtc->ops = &spear_rtc_ops;
-	config->rtc->range_min = RTC_TIMESTAMP_BEGIN_0000;
-	config->rtc->range_max = RTC_TIMESTAMP_END_9999;
-
-	status = devm_rtc_register_device(config->rtc);
-	if (status)
+	config->rtc = devm_rtc_device_register(&pdev->dev, pdev->name,
+					&spear_rtc_ops, THIS_MODULE);
+	if (IS_ERR(config->rtc)) {
+		dev_err(&pdev->dev, "can't register RTC device, err %ld\n",
+				PTR_ERR(config->rtc));
+		status = PTR_ERR(config->rtc);
 		goto err_disable_clock;
+	}
+
+	config->rtc->uie_unsupported = 1;
 
 	if (!device_can_wakeup(&pdev->dev))
 		device_init_wakeup(&pdev->dev, 1);

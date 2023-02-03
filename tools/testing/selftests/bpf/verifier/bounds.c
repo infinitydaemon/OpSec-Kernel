@@ -508,7 +508,7 @@
 	BPF_LDX_MEM(BPF_DW, BPF_REG_0, BPF_REG_0, -1),
 	BPF_EXIT_INSN(),
 	},
-	.errstr_unpriv = "R0 invalid mem access 'scalar'",
+	.errstr_unpriv = "R0 invalid mem access 'inv'",
 	.result_unpriv = REJECT,
 	.result = ACCEPT
 },
@@ -530,7 +530,7 @@
 	BPF_LDX_MEM(BPF_DW, BPF_REG_0, BPF_REG_0, -1),
 	BPF_EXIT_INSN(),
 	},
-	.errstr_unpriv = "R0 invalid mem access 'scalar'",
+	.errstr_unpriv = "R0 invalid mem access 'inv'",
 	.result_unpriv = REJECT,
 	.result = ACCEPT
 },

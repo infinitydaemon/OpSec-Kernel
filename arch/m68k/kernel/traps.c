@@ -36,7 +36,6 @@
 #include <linux/uaccess.h>
 #include <asm/traps.h>
 #include <asm/machdep.h>
-#include <asm/processor.h>
 #include <asm/siginfo.h>
 #include <asm/tlbflush.h>
 

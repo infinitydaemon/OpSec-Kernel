@@ -539,7 +539,8 @@ static int vcnl4035_probe_trigger(struct iio_dev *indio_dev)
 	return ret;
 }
 
-static int vcnl4035_probe(struct i2c_client *client)
+static int vcnl4035_probe(struct i2c_client *client,
+				const struct i2c_device_id *id)
 {
 	struct vcnl4035_data *data;
 	struct iio_dev *indio_dev;
@@ -600,24 +601,20 @@ fail_poweroff:
 	return ret;
 }
 
-static void vcnl4035_remove(struct i2c_client *client)
+static int vcnl4035_remove(struct i2c_client *client)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
-	int ret;
 
 	pm_runtime_dont_use_autosuspend(&client->dev);
 	pm_runtime_disable(&client->dev);
 	iio_device_unregister(indio_dev);
 	pm_runtime_set_suspended(&client->dev);
 
-	ret = vcnl4035_set_als_power_state(iio_priv(indio_dev),
-					   VCNL4035_MODE_ALS_DISABLE);
-	if (ret)
-		dev_warn(&client->dev, "Failed to put device into standby (%pe)\n",
-			 ERR_PTR(ret));
+	return vcnl4035_set_als_power_state(iio_priv(indio_dev),
+					VCNL4035_MODE_ALS_DISABLE);
 }
 
-static int vcnl4035_runtime_suspend(struct device *dev)
+static int __maybe_unused vcnl4035_runtime_suspend(struct device *dev)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(to_i2c_client(dev));
 	struct vcnl4035_data *data = iio_priv(indio_dev);
@@ -629,7 +626,7 @@ static int vcnl4035_runtime_suspend(struct device *dev)
 	return ret;
 }
 
-static int vcnl4035_runtime_resume(struct device *dev)
+static int __maybe_unused vcnl4035_runtime_resume(struct device *dev)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(to_i2c_client(dev));
 	struct vcnl4035_data *data = iio_priv(indio_dev);
@@ -646,11 +643,15 @@ static int vcnl4035_runtime_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_RUNTIME_DEV_PM_OPS(vcnl4035_pm_ops, vcnl4035_runtime_suspend,
-				 vcnl4035_runtime_resume, NULL);
+static const struct dev_pm_ops vcnl4035_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
+				pm_runtime_force_resume)
+	SET_RUNTIME_PM_OPS(vcnl4035_runtime_suspend,
+			   vcnl4035_runtime_resume, NULL)
+};
 
 static const struct i2c_device_id vcnl4035_id[] = {
-	{ "vcnl4035", 0 },
+	{ "vcnl4035", 0},
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, vcnl4035_id);
@@ -664,10 +665,10 @@ MODULE_DEVICE_TABLE(of, vcnl4035_of_match);
 static struct i2c_driver vcnl4035_driver = {
 	.driver = {
 		.name   = VCNL4035_DRV_NAME,
-		.pm	= pm_ptr(&vcnl4035_pm_ops),
+		.pm	= &vcnl4035_pm_ops,
 		.of_match_table = vcnl4035_of_match,
 	},
-	.probe_new = vcnl4035_probe,
+	.probe  = vcnl4035_probe,
 	.remove	= vcnl4035_remove,
 	.id_table = vcnl4035_id,
 };

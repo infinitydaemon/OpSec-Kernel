@@ -695,12 +695,10 @@ static int mt9m001_get_mbus_config(struct v4l2_subdev *sd,
 				   struct v4l2_mbus_config *cfg)
 {
 	/* MT9M001 has all capture_format parameters fixed */
+	cfg->flags = V4L2_MBUS_PCLK_SAMPLE_FALLING |
+		V4L2_MBUS_HSYNC_ACTIVE_HIGH | V4L2_MBUS_VSYNC_ACTIVE_HIGH |
+		V4L2_MBUS_DATA_ACTIVE_HIGH | V4L2_MBUS_MASTER;
 	cfg->type = V4L2_MBUS_PARALLEL;
-	cfg->bus.parallel.flags = V4L2_MBUS_PCLK_SAMPLE_FALLING |
-				  V4L2_MBUS_HSYNC_ACTIVE_HIGH |
-				  V4L2_MBUS_VSYNC_ACTIVE_HIGH |
-				  V4L2_MBUS_DATA_ACTIVE_HIGH |
-				  V4L2_MBUS_MASTER;
 
 	return 0;
 }
@@ -833,7 +831,7 @@ error_hdl_free:
 	return ret;
 }
 
-static void mt9m001_remove(struct i2c_client *client)
+static int mt9m001_remove(struct i2c_client *client)
 {
 	struct mt9m001 *mt9m001 = to_mt9m001(client);
 
@@ -853,6 +851,8 @@ static void mt9m001_remove(struct i2c_client *client)
 
 	v4l2_ctrl_handler_free(&mt9m001->hdl);
 	mutex_destroy(&mt9m001->mutex);
+
+	return 0;
 }
 
 static const struct i2c_device_id mt9m001_id[] = {

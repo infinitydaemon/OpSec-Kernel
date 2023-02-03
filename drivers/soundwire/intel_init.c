@@ -17,7 +17,6 @@
 #include <linux/soundwire/sdw_intel.h>
 #include "cadence_master.h"
 #include "intel.h"
-#include "intel_auxdevice.h"
 
 static void intel_link_dev_release(struct device *dev)
 {
@@ -61,7 +60,6 @@ static struct sdw_intel_link_dev *intel_link_dev_register(struct sdw_intel_res *
 
 	/* Add link information used in the driver probe */
 	link = &ldev->link_res;
-	link->hw_ops = res->hw_ops;
 	link->mmio_base = res->mmio_base;
 	link->registers = res->mmio_base + SDW_LINK_BASE
 		+ (SDW_LINK_SIZE * link_id);
@@ -127,6 +125,30 @@ static int sdw_intel_cleanup(struct sdw_intel_ctx *ctx)
 	return 0;
 }
 
+#define HDA_DSP_REG_ADSPIC2             (0x10)
+#define HDA_DSP_REG_ADSPIS2             (0x14)
+#define HDA_DSP_REG_ADSPIC2_SNDW        BIT(5)
+
+/**
+ * sdw_intel_enable_irq() - enable/disable Intel SoundWire IRQ
+ * @mmio_base: The mmio base of the control register
+ * @enable: true if enable
+ */
+void sdw_intel_enable_irq(void __iomem *mmio_base, bool enable)
+{
+	u32 val;
+
+	val = readl(mmio_base + HDA_DSP_REG_ADSPIC2);
+
+	if (enable)
+		val |= HDA_DSP_REG_ADSPIC2_SNDW;
+	else
+		val &= ~HDA_DSP_REG_ADSPIC2_SNDW;
+
+	writel(val, mmio_base + HDA_DSP_REG_ADSPIC2);
+}
+EXPORT_SYMBOL_NS(sdw_intel_enable_irq, SOUNDWIRE_INTEL_INIT);
+
 irqreturn_t sdw_intel_thread(int irq, void *dev_id)
 {
 	struct sdw_intel_ctx *ctx = dev_id;
@@ -135,6 +157,7 @@ irqreturn_t sdw_intel_thread(int irq, void *dev_id)
 	list_for_each_entry(link, &ctx->link_list, list)
 		sdw_cdns_irq(irq, link->cdns);
 
+	sdw_intel_enable_irq(ctx->mmio_base, true);
 	return IRQ_HANDLED;
 }
 EXPORT_SYMBOL_NS(sdw_intel_thread, SOUNDWIRE_INTEL_INIT);
@@ -157,8 +180,7 @@ static struct sdw_intel_ctx
 	if (!res)
 		return NULL;
 
-	adev = acpi_fetch_acpi_dev(res->handle);
-	if (!adev)
+	if (acpi_bus_get_device(res->handle, &adev))
 		return NULL;
 
 	if (!res->count)
@@ -222,7 +244,7 @@ static struct sdw_intel_ctx
 			goto err;
 
 		link = &ldev->link_res;
-		link->cdns = auxiliary_get_drvdata(&ldev->auxdev);
+		link->cdns = dev_get_drvdata(&ldev->auxdev.dev);
 
 		if (!link->cdns) {
 			dev_err(&adev->dev, "failed to get link->cdns\n");
@@ -272,13 +294,25 @@ err:
 static int
 sdw_intel_startup_controller(struct sdw_intel_ctx *ctx)
 {
-	struct acpi_device *adev = acpi_fetch_acpi_dev(ctx->handle);
+	struct acpi_device *adev;
 	struct sdw_intel_link_dev *ldev;
+	u32 caps;
 	u32 link_mask;
 	int i;
 
-	if (!adev)
+	if (acpi_bus_get_device(ctx->handle, &adev))
 		return -EINVAL;
+
+	/* Check SNDWLCAP.LCOUNT */
+	caps = ioread32(ctx->mmio_base + ctx->shim_base + SDW_SHIM_LCAP);
+	caps &= GENMASK(2, 0);
+
+	/* Check HW supported vs property value */
+	if (caps < ctx->count) {
+		dev_err(&adev->dev,
+			"BIOS master count is larger than hardware capabilities\n");
+		return -EINVAL;
+	}
 
 	if (!ctx->ldev)
 		return -EINVAL;

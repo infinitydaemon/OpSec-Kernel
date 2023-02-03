@@ -470,9 +470,6 @@ static int cros_ec_debugfs_probe(struct platform_device *pd)
 	debugfs_create_x32("last_resume_result", 0444, debug_info->dir,
 			   &ec->ec_dev->last_resume_result);
 
-	debugfs_create_u16("suspend_timeout_ms", 0664, debug_info->dir,
-			   &ec->ec_dev->suspend_timeout_ms);
-
 	ec->debug_info = debug_info;
 
 	dev_set_drvdata(&pd->dev, ec);
@@ -521,7 +518,6 @@ static struct platform_driver cros_ec_debugfs_driver = {
 	.driver = {
 		.name = DRV_NAME,
 		.pm = &cros_ec_debugfs_pm_ops,
-		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 	},
 	.probe = cros_ec_debugfs_probe,
 	.remove = cros_ec_debugfs_remove,

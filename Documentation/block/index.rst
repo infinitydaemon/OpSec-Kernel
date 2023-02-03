@@ -8,6 +8,7 @@ Block
    :maxdepth: 1
 
    bfq-iosched
+   biodoc
    biovecs
    blk-mq
    capability
@@ -19,8 +20,8 @@ Block
    kyber-iosched
    null_blk
    pr
+   queue-sysfs
    request
    stat
    switching-sched
    writeback_cache_control
-   ublk

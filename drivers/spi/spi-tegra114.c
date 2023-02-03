@@ -964,8 +964,9 @@ static int tegra_spi_setup(struct spi_device *spi)
 		spi->controller_data = cdata;
 	}
 
-	ret = pm_runtime_resume_and_get(tspi->dev);
+	ret = pm_runtime_get_sync(tspi->dev);
 	if (ret < 0) {
+		pm_runtime_put_noidle(tspi->dev);
 		dev_err(tspi->dev, "pm runtime failed, e = %d\n", ret);
 		if (cdata)
 			tegra_spi_cleanup(spi);
@@ -1393,9 +1394,10 @@ static int tegra_spi_probe(struct platform_device *pdev)
 			goto exit_pm_disable;
 	}
 
-	ret = pm_runtime_resume_and_get(&pdev->dev);
+	ret = pm_runtime_get_sync(&pdev->dev);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "pm runtime get failed, e = %d\n", ret);
+		pm_runtime_put_noidle(&pdev->dev);
 		goto exit_pm_disable;
 	}
 
@@ -1474,8 +1476,9 @@ static int tegra_spi_resume(struct device *dev)
 	struct tegra_spi_data *tspi = spi_master_get_devdata(master);
 	int ret;
 
-	ret = pm_runtime_resume_and_get(dev);
+	ret = pm_runtime_get_sync(dev);
 	if (ret < 0) {
+		pm_runtime_put_noidle(dev);
 		dev_err(dev, "pm runtime failed, e = %d\n", ret);
 		return ret;
 	}

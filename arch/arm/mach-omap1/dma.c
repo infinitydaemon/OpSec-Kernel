@@ -24,7 +24,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/dmaengine.h>
 #include <linux/omap-dma.h>
-#include "tc.h"
+#include <mach/tc.h>
 
 #include "soc.h"
 

@@ -17,7 +17,6 @@
 #include <linux/rcupdate.h>
 #include <net/fib_notifier.h>
 #include <net/fib_rules.h>
-#include <net/inet_dscp.h>
 #include <net/inetpeer.h>
 #include <linux/percpu.h>
 #include <linux/notifier.h>
@@ -25,7 +24,7 @@
 
 struct fib_config {
 	u8			fc_dst_len;
-	dscp_t			fc_dscp;
+	u8			fc_tos;
 	u8			fc_protocol;
 	u8			fc_scope;
 	u8			fc_type;
@@ -80,7 +79,6 @@ struct fnhe_hash_bucket {
 
 struct fib_nh_common {
 	struct net_device	*nhc_dev;
-	netdevice_tracker	nhc_dev_tracker;
 	int			nhc_oif;
 	unsigned char		nhc_scope;
 	u8			nhc_family;
@@ -113,7 +111,6 @@ struct fib_nh {
 	int			nh_saddr_genid;
 #define fib_nh_family		nh_common.nhc_family
 #define fib_nh_dev		nh_common.nhc_dev
-#define fib_nh_dev_tracker	nh_common.nhc_dev_tracker
 #define fib_nh_oif		nh_common.nhc_oif
 #define fib_nh_flags		nh_common.nhc_flags
 #define fib_nh_lws		nh_common.nhc_lwtstate
@@ -212,7 +209,7 @@ struct fib_rt_info {
 	u32			tb_id;
 	__be32			dst;
 	int			dst_len;
-	dscp_t			dscp;
+	u8			tos;
 	u8			type;
 	u8			offload:1,
 				trap:1,
@@ -225,7 +222,7 @@ struct fib_entry_notifier_info {
 	u32 dst;
 	int dst_len;
 	struct fib_info *fi;
-	dscp_t dscp;
+	u8 tos;
 	u8 type;
 	u32 tb_id;
 };

@@ -8,7 +8,8 @@
 #define		RF6052_MAX_REG			0x3F
 #define		RF6052_MAX_PATH			2
 
-int phy_RF6052_Config_ParaFile(struct adapter *Adapter);
+int	PHY_RF6052_Config8188E(struct adapter *Adapter);
+void rtl8188e_RF_ChangeTxPath(struct adapter *Adapter, u16 DataRate);
 void rtl8188e_PHY_RF6052SetBandwidth(struct adapter *Adapter,
 				     enum ht_channel_width Bandwidth);
 void	rtl8188e_PHY_RF6052SetCckTxPower(struct adapter *Adapter, u8 *level);

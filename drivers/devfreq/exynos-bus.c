@@ -33,7 +33,7 @@ struct exynos_bus {
 
 	unsigned long curr_freq;
 
-	int opp_token;
+	struct opp_table *opp_table;
 	struct clk *clk;
 	unsigned int ratio;
 };
@@ -161,7 +161,8 @@ static void exynos_bus_exit(struct device *dev)
 
 	dev_pm_opp_of_remove_table(dev);
 	clk_disable_unprepare(bus->clk);
-	dev_pm_opp_put_regulators(bus->opp_token);
+	dev_pm_opp_put_regulators(bus->opp_table);
+	bus->opp_table = NULL;
 }
 
 static void exynos_bus_passive_exit(struct device *dev)
@@ -178,16 +179,18 @@ static int exynos_bus_parent_parse_of(struct device_node *np,
 					struct exynos_bus *bus)
 {
 	struct device *dev = bus->dev;
-	const char *supplies[] = { "vdd", NULL };
+	struct opp_table *opp_table;
+	const char *vdd = "vdd";
 	int i, ret, count, size;
 
-	ret = dev_pm_opp_set_regulators(dev, supplies);
-	if (ret < 0) {
+	opp_table = dev_pm_opp_set_regulators(dev, &vdd, 1);
+	if (IS_ERR(opp_table)) {
+		ret = PTR_ERR(opp_table);
 		dev_err(dev, "failed to set regulators %d\n", ret);
 		return ret;
 	}
 
-	bus->opp_token = ret;
+	bus->opp_table = opp_table;
 
 	/*
 	 * Get the devfreq-event devices to get the current utilization of
@@ -233,7 +236,8 @@ static int exynos_bus_parent_parse_of(struct device_node *np,
 	return 0;
 
 err_regulator:
-	dev_pm_opp_put_regulators(bus->opp_token);
+	dev_pm_opp_put_regulators(bus->opp_table);
+	bus->opp_table = NULL;
 
 	return ret;
 }
@@ -443,9 +447,9 @@ static int exynos_bus_probe(struct platform_device *pdev)
 		}
 	}
 
-	max_state = bus->devfreq->max_state;
-	min_freq = (bus->devfreq->freq_table[0] / 1000);
-	max_freq = (bus->devfreq->freq_table[max_state - 1] / 1000);
+	max_state = bus->devfreq->profile->max_state;
+	min_freq = (bus->devfreq->profile->freq_table[0] / 1000);
+	max_freq = (bus->devfreq->profile->freq_table[max_state - 1] / 1000);
 	pr_info("exynos-bus: new bus device registered: %s (%6ld KHz ~ %6ld KHz)\n",
 			dev_name(dev), min_freq, max_freq);
 
@@ -455,7 +459,8 @@ err:
 	dev_pm_opp_of_remove_table(dev);
 	clk_disable_unprepare(bus->clk);
 err_reg:
-	dev_pm_opp_put_regulators(bus->opp_token);
+	dev_pm_opp_put_regulators(bus->opp_table);
+	bus->opp_table = NULL;
 
 	return ret;
 }

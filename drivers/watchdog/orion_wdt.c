@@ -238,10 +238,8 @@ static int armada370_start(struct watchdog_device *wdt_dev)
 	atomic_io_modify(dev->reg + TIMER_A370_STATUS, WDT_A370_EXPIRED, 0);
 
 	/* Enable watchdog timer */
-	reg = dev->data->wdt_enable_bit;
-	if (dev->wdt.info->options & WDIOF_PRETIMEOUT)
-		reg |= TIMER1_ENABLE_BIT;
-	atomic_io_modify(dev->reg + TIMER_CTRL, reg, reg);
+	atomic_io_modify(dev->reg + TIMER_CTRL, dev->data->wdt_enable_bit,
+						dev->data->wdt_enable_bit);
 
 	/* Enable reset on watchdog */
 	reg = readl(dev->rstout);
@@ -314,7 +312,7 @@ static int armada375_stop(struct watchdog_device *wdt_dev)
 static int armada370_stop(struct watchdog_device *wdt_dev)
 {
 	struct orion_watchdog *dev = watchdog_get_drvdata(wdt_dev);
-	u32 reg, mask;
+	u32 reg;
 
 	/* Disable reset on watchdog */
 	reg = readl(dev->rstout);
@@ -322,10 +320,7 @@ static int armada370_stop(struct watchdog_device *wdt_dev)
 	writel(reg, dev->rstout);
 
 	/* Disable watchdog timer */
-	mask = dev->data->wdt_enable_bit;
-	if (wdt_dev->info->options & WDIOF_PRETIMEOUT)
-		mask |= TIMER1_ENABLE_BIT;
-	atomic_io_modify(dev->reg + TIMER_CTRL, mask, 0);
+	atomic_io_modify(dev->reg + TIMER_CTRL, dev->data->wdt_enable_bit, 0);
 
 	return 0;
 }

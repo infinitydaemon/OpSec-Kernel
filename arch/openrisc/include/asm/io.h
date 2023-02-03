@@ -17,7 +17,7 @@
 #include <linux/types.h>
 
 /*
- * PCI: We do not use IO ports in OpenRISC
+ * PCI: can we really do 0 here if we have no port IO?
  */
 #define IO_SPACE_LIMIT		0
 

@@ -502,8 +502,8 @@ static void test_lookup_32_bit_value(int family, int sotype, int mapfd)
 	if (s < 0)
 		return;
 
-	mapfd = bpf_map_create(BPF_MAP_TYPE_SOCKMAP, NULL, sizeof(key),
-			       sizeof(value32), 1, NULL);
+	mapfd = bpf_create_map(BPF_MAP_TYPE_SOCKMAP, sizeof(key),
+			       sizeof(value32), 1, 0);
 	if (mapfd < 0) {
 		FAIL_ERRNO("map_create");
 		goto close;
@@ -1413,12 +1413,14 @@ close_srv1:
 
 static void test_ops_cleanup(const struct bpf_map *map)
 {
+	const struct bpf_map_def *def;
 	int err, mapfd;
 	u32 key;
 
+	def = bpf_map__def(map);
 	mapfd = bpf_map__fd(map);
 
-	for (key = 0; key < bpf_map__max_entries(map); key++) {
+	for (key = 0; key < def->max_entries; key++) {
 		err = bpf_map_delete_elem(mapfd, &key);
 		if (err && errno != EINVAL && errno != ENOENT)
 			FAIL_ERRNO("map_delete: expected EINVAL/ENOENT");
@@ -1441,13 +1443,13 @@ static const char *family_str(sa_family_t family)
 
 static const char *map_type_str(const struct bpf_map *map)
 {
-	int type;
+	const struct bpf_map_def *def;
 
-	if (!map)
+	def = bpf_map__def(map);
+	if (IS_ERR(def))
 		return "invalid";
-	type = bpf_map__type(map);
 
-	switch (type) {
+	switch (def->type) {
 	case BPF_MAP_TYPE_SOCKMAP:
 		return "sockmap";
 	case BPF_MAP_TYPE_SOCKHASH:
@@ -2000,7 +2002,7 @@ static void run_tests(struct test_sockmap_listen *skel, struct bpf_map *map,
 	test_udp_unix_redir(skel, map, family);
 }
 
-void serial_test_sockmap_listen(void)
+void test_sockmap_listen(void)
 {
 	struct test_sockmap_listen *skel;
 

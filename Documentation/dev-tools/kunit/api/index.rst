@@ -6,15 +6,11 @@ API Reference
 .. toctree::
 
 	test
-	resource
 
 This section documents the KUnit kernel testing API. It is divided into the
 following sections:
 
 Documentation/dev-tools/kunit/api/test.rst
 
- - documents all of the standard testing API
-
-Documentation/dev-tools/kunit/api/resource.rst
-
- - documents the KUnit resource API
+ - documents all of the standard testing API excluding mocking
+   or mocking related features.

@@ -25,7 +25,6 @@ struct nvmem_cell_info {
 	unsigned int		bytes;
 	unsigned int		bit_offset;
 	unsigned int		nbits;
-	struct device_node	*np;
 };
 
 /**

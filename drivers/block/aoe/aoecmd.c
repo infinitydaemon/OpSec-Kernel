@@ -10,6 +10,7 @@
 #include <linux/blk-mq.h>
 #include <linux/skbuff.h>
 #include <linux/netdevice.h>
+#include <linux/genhd.h>
 #include <linux/moduleparam.h>
 #include <linux/workqueue.h>
 #include <linux/kthread.h>
@@ -121,7 +122,7 @@ newtag(struct aoedev *d)
 	register ulong n;
 
 	n = jiffies & 0xffff;
-	return n | (++d->lasttag & 0x7fff) << 16;
+	return n |= (++d->lasttag & 0x7fff) << 16;
 }
 
 static u32
@@ -968,7 +969,7 @@ ataid_complete(struct aoedev *d, struct aoetgt *t, unsigned char *id)
 		d->flags |= DEVFL_NEWSIZE;
 	else
 		d->flags |= DEVFL_GDALLOC;
-	queue_work(aoe_wq, &d->work);
+	schedule_work(&d->work);
 }
 
 static void
@@ -1018,9 +1019,9 @@ bvcpy(struct sk_buff *skb, struct bio *bio, struct bvec_iter iter, long cnt)
 	iter.bi_size = cnt;
 
 	__bio_for_each_segment(bv, bio, iter, iter) {
-		char *p = bvec_kmap_local(&bv);
+		char *p = kmap_atomic(bv.bv_page) + bv.bv_offset;
 		skb_copy_bits(skb, soff, p, bv.bv_len);
-		kunmap_local(p);
+		kunmap_atomic(p);
 		soff += bv.bv_len;
 	}
 }

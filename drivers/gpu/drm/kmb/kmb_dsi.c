@@ -5,7 +5,6 @@
 
 #include <linux/clk.h>
 #include <linux/delay.h>
-#include <linux/of.h>
 #include <linux/of_graph.h>
 #include <linux/mfd/syscon.h>
 #include <linux/platform_device.h>

@@ -113,7 +113,8 @@ static const struct backlight_ops bd6107_backlight_ops = {
 	.check_fb	= bd6107_backlight_check_fb,
 };
 
-static int bd6107_probe(struct i2c_client *client)
+static int bd6107_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
 	struct bd6107_platform_data *pdata = dev_get_platdata(&client->dev);
 	struct backlight_device *backlight;
@@ -174,12 +175,14 @@ static int bd6107_probe(struct i2c_client *client)
 	return 0;
 }
 
-static void bd6107_remove(struct i2c_client *client)
+static int bd6107_remove(struct i2c_client *client)
 {
 	struct backlight_device *backlight = i2c_get_clientdata(client);
 
 	backlight->props.brightness = 0;
 	backlight_update_status(backlight);
+
+	return 0;
 }
 
 static const struct i2c_device_id bd6107_ids[] = {
@@ -192,7 +195,7 @@ static struct i2c_driver bd6107_driver = {
 	.driver = {
 		.name = "bd6107",
 	},
-	.probe_new = bd6107_probe,
+	.probe = bd6107_probe,
 	.remove = bd6107_remove,
 	.id_table = bd6107_ids,
 };

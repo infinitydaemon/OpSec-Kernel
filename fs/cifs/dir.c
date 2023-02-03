@@ -22,7 +22,6 @@
 #include "cifs_unicode.h"
 #include "fs_context.h"
 #include "cifs_ioctl.h"
-#include "fscache.h"
 
 static void
 renew_parental_timestamps(struct dentry *direntry)
@@ -50,7 +49,7 @@ cifs_build_path_to_root(struct smb3_fs_context *ctx, struct cifs_sb_info *cifs_s
 	}
 
 	if (add_treename)
-		dfsplen = strnlen(tcon->tree_name, MAX_TREE_SIZE + 1);
+		dfsplen = strnlen(tcon->treeName, MAX_TREE_SIZE + 1);
 	else
 		dfsplen = 0;
 
@@ -59,7 +58,7 @@ cifs_build_path_to_root(struct smb3_fs_context *ctx, struct cifs_sb_info *cifs_s
 		return full_path;
 
 	if (dfsplen)
-		memcpy(full_path, tcon->tree_name, dfsplen);
+		memcpy(full_path, tcon->treeName, dfsplen);
 	full_path[dfsplen] = CIFS_DIR_SEP(cifs_sb);
 	memcpy(full_path + dfsplen + 1, ctx->prepath, pplen);
 	convert_delimiter(full_path, CIFS_DIR_SEP(cifs_sb));
@@ -78,13 +77,14 @@ build_path_from_dentry(struct dentry *direntry, void *page)
 						      prefix);
 }
 
-char *__build_path_from_dentry_optional_prefix(struct dentry *direntry, void *page,
-					       const char *tree, int tree_len,
-					       bool prefix)
+char *
+build_path_from_dentry_optional_prefix(struct dentry *direntry, void *page,
+				       bool prefix)
 {
 	int dfsplen;
 	int pplen = 0;
 	struct cifs_sb_info *cifs_sb = CIFS_SB(direntry->d_sb);
+	struct cifs_tcon *tcon = cifs_sb_master_tcon(cifs_sb);
 	char dirsep = CIFS_DIR_SEP(cifs_sb);
 	char *s;
 
@@ -92,7 +92,7 @@ char *__build_path_from_dentry_optional_prefix(struct dentry *direntry, void *pa
 		return ERR_PTR(-ENOMEM);
 
 	if (prefix)
-		dfsplen = strnlen(tree, tree_len + 1);
+		dfsplen = strnlen(tcon->treeName, MAX_TREE_SIZE + 1);
 	else
 		dfsplen = 0;
 
@@ -122,7 +122,7 @@ char *__build_path_from_dentry_optional_prefix(struct dentry *direntry, void *pa
 	}
 	if (dfsplen) {
 		s -= dfsplen;
-		memcpy(s, tree, dfsplen);
+		memcpy(s, tcon->treeName, dfsplen);
 		if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_POSIX_PATHS) {
 			int i;
 			for (i = 0; i < dfsplen; i++) {
@@ -132,16 +132,6 @@ char *__build_path_from_dentry_optional_prefix(struct dentry *direntry, void *pa
 		}
 	}
 	return s;
-}
-
-char *build_path_from_dentry_optional_prefix(struct dentry *direntry, void *page,
-					     bool prefix)
-{
-	struct cifs_sb_info *cifs_sb = CIFS_SB(direntry->d_sb);
-	struct cifs_tcon *tcon = cifs_sb_master_tcon(cifs_sb);
-
-	return __build_path_from_dentry_optional_prefix(direntry, page, tcon->tree_name,
-							MAX_TREE_SIZE, prefix);
 }
 
 /*
@@ -174,9 +164,10 @@ check_name(struct dentry *direntry, struct cifs_tcon *tcon)
 
 /* Inode operations in similar order to how they appear in Linux file fs.h */
 
-static int cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned int xid,
-			  struct tcon_link *tlink, unsigned int oflags, umode_t mode, __u32 *oplock,
-			  struct cifs_fid *fid, struct cifs_open_info_data *buf)
+static int
+cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned int xid,
+	       struct tcon_link *tlink, unsigned oflags, umode_t mode,
+	       __u32 *oplock, struct cifs_fid *fid)
 {
 	int rc = -ENOENT;
 	int create_options = CREATE_NOT_DIR;
@@ -185,6 +176,7 @@ static int cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned
 	struct cifs_tcon *tcon = tlink_tcon(tlink);
 	const char *full_path;
 	void *page = alloc_dentry_path();
+	FILE_ALL_INFO *buf = NULL;
 	struct inode *newinode = NULL;
 	int disposition;
 	struct TCP_Server_Info *server = tcon->ses->server;
@@ -200,7 +192,6 @@ static int cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned
 		return PTR_ERR(full_path);
 	}
 
-#ifdef CONFIG_CIFS_ALLOW_INSECURE_LEGACY
 	if (tcon->unix_ext && cap_unix(tcon->ses) && !tcon->broken_posix_open &&
 	    (CIFS_UNIX_POSIX_PATH_OPS_CAP &
 			le64_to_cpu(tcon->fsUnixInfo.Capability))) {
@@ -269,7 +260,6 @@ static int cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned
 		 * rare for path not covered on files)
 		 */
 	}
-#endif /* CONFIG_CIFS_ALLOW_INSECURE_LEGACY */
 
 	desired_access = 0;
 	if (OPEN_FMODE(oflags) & FMODE_READ)
@@ -297,6 +287,12 @@ static int cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned
 		goto out;
 	}
 
+	buf = kmalloc(sizeof(FILE_ALL_INFO), GFP_KERNEL);
+	if (buf == NULL) {
+		rc = -ENOMEM;
+		goto out;
+	}
+
 	/*
 	 * if we're not using unix extensions, see if we need to set
 	 * ATTR_READONLY on the create call
@@ -319,7 +315,6 @@ static int cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned
 		goto out;
 	}
 
-#ifdef CONFIG_CIFS_ALLOW_INSECURE_LEGACY
 	/*
 	 * If Open reported that we actually created a file then we now have to
 	 * set the mode if possible.
@@ -361,11 +356,9 @@ cifs_create_get_file_info:
 		rc = cifs_get_inode_info_unix(&newinode, full_path, inode->i_sb,
 					      xid);
 	else {
-#else
-	{
-#endif /* CONFIG_CIFS_ALLOW_INSECURE_LEGACY */
 		/* TODO: Add support for calling POSIX query info here, but passing in fid */
-		rc = cifs_get_inode_info(&newinode, full_path, buf, inode->i_sb, xid, fid);
+		rc = cifs_get_inode_info(&newinode, full_path, buf, inode->i_sb,
+					 xid, fid);
 		if (newinode) {
 			if (server->ops->set_lease_key)
 				server->ops->set_lease_key(newinode, fid);
@@ -383,9 +376,7 @@ cifs_create_get_file_info:
 		}
 	}
 
-#ifdef CONFIG_CIFS_ALLOW_INSECURE_LEGACY
 cifs_create_set_dentry:
-#endif /* CONFIG_CIFS_ALLOW_INSECURE_LEGACY */
 	if (rc != 0) {
 		cifs_dbg(FYI, "Create worked, get_inode_info failed rc = %d\n",
 			 rc);
@@ -402,6 +393,7 @@ cifs_create_set_dentry:
 	d_add(direntry, newinode);
 
 out:
+	kfree(buf);
 	free_dentry_path(page);
 	return rc;
 
@@ -422,11 +414,10 @@ cifs_atomic_open(struct inode *inode, struct dentry *direntry,
 	struct tcon_link *tlink;
 	struct cifs_tcon *tcon;
 	struct TCP_Server_Info *server;
-	struct cifs_fid fid = {};
+	struct cifs_fid fid;
 	struct cifs_pending_open open;
 	__u32 oplock;
 	struct cifsFileInfo *file_info;
-	struct cifs_open_info_data buf = {};
 
 	if (unlikely(cifs_forced_shutdown(CIFS_SB(inode->i_sb))))
 		return -EIO;
@@ -484,7 +475,8 @@ cifs_atomic_open(struct inode *inode, struct dentry *direntry,
 	cifs_add_pending_open(&fid, tlink, &open);
 
 	rc = cifs_do_create(inode, direntry, xid, tlink, oflags, mode,
-			    &oplock, &fid, &buf);
+			    &oplock, &fid);
+
 	if (rc) {
 		cifs_del_pending_open(&open);
 		goto out;
@@ -509,23 +501,18 @@ cifs_atomic_open(struct inode *inode, struct dentry *direntry,
 			file->f_op = &cifs_file_direct_ops;
 		}
 
-	file_info = cifs_new_fileinfo(&fid, file, tlink, oplock, buf.symlink_target);
+	file_info = cifs_new_fileinfo(&fid, file, tlink, oplock);
 	if (file_info == NULL) {
 		if (server->ops->close)
 			server->ops->close(xid, tcon, &fid);
 		cifs_del_pending_open(&open);
 		rc = -ENOMEM;
-		goto out;
 	}
-
-	fscache_use_cookie(cifs_inode_cookie(file_inode(file)),
-			   file->f_mode & FMODE_WRITE);
 
 out:
 	cifs_put_tlink(tlink);
 out_free_xid:
 	free_xid(xid);
-	cifs_free_open_info(&buf);
 	return rc;
 }
 
@@ -547,7 +534,6 @@ int cifs_create(struct user_namespace *mnt_userns, struct inode *inode,
 	struct TCP_Server_Info *server;
 	struct cifs_fid fid;
 	__u32 oplock;
-	struct cifs_open_info_data buf = {};
 
 	cifs_dbg(FYI, "cifs_create parent inode = 0x%p name is: %pd and dentry = 0x%p\n",
 		 inode, direntry, direntry);
@@ -568,11 +554,11 @@ int cifs_create(struct user_namespace *mnt_userns, struct inode *inode,
 	if (server->ops->new_lease_key)
 		server->ops->new_lease_key(&fid);
 
-	rc = cifs_do_create(inode, direntry, xid, tlink, oflags, mode, &oplock, &fid, &buf);
+	rc = cifs_do_create(inode, direntry, xid, tlink, oflags, mode,
+			    &oplock, &fid);
 	if (!rc && server->ops->close)
 		server->ops->close(xid, tcon, &fid);
 
-	cifs_free_open_info(&buf);
 	cifs_put_tlink(tlink);
 out_free_xid:
 	free_xid(xid);

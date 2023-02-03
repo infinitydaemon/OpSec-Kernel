@@ -285,7 +285,7 @@ static int skl_tplg_update_be_blob(struct snd_soc_dapm_widget *w,
 {
 	struct skl_module_cfg *m_cfg = w->priv;
 	int link_type, dir;
-	u32 ch, s_freq, s_fmt, s_cont;
+	u32 ch, s_freq, s_fmt;
 	struct nhlt_specific_cfg *cfg;
 	u8 dev_type = skl_tplg_be_dev_type(m_cfg->dev_type);
 	int fmt_idx = m_cfg->fmt_idx;
@@ -301,8 +301,7 @@ static int skl_tplg_update_be_blob(struct snd_soc_dapm_widget *w,
 		link_type = NHLT_LINK_DMIC;
 		dir = SNDRV_PCM_STREAM_CAPTURE;
 		s_freq = m_iface->inputs[0].fmt.s_freq;
-		s_fmt = m_iface->inputs[0].fmt.valid_bit_depth;
-		s_cont = m_iface->inputs[0].fmt.bit_depth;
+		s_fmt = m_iface->inputs[0].fmt.bit_depth;
 		ch = m_iface->inputs[0].fmt.channels;
 		break;
 
@@ -311,14 +310,12 @@ static int skl_tplg_update_be_blob(struct snd_soc_dapm_widget *w,
 		if (m_cfg->hw_conn_type == SKL_CONN_SOURCE) {
 			dir = SNDRV_PCM_STREAM_PLAYBACK;
 			s_freq = m_iface->outputs[0].fmt.s_freq;
-			s_fmt = m_iface->outputs[0].fmt.valid_bit_depth;
-			s_cont = m_iface->outputs[0].fmt.bit_depth;
+			s_fmt = m_iface->outputs[0].fmt.bit_depth;
 			ch = m_iface->outputs[0].fmt.channels;
 		} else {
 			dir = SNDRV_PCM_STREAM_CAPTURE;
 			s_freq = m_iface->inputs[0].fmt.s_freq;
-			s_fmt = m_iface->inputs[0].fmt.valid_bit_depth;
-			s_cont = m_iface->inputs[0].fmt.bit_depth;
+			s_fmt = m_iface->inputs[0].fmt.bit_depth;
 			ch = m_iface->inputs[0].fmt.channels;
 		}
 		break;
@@ -328,17 +325,16 @@ static int skl_tplg_update_be_blob(struct snd_soc_dapm_widget *w,
 	}
 
 	/* update the blob based on virtual bus_id and default params */
-	cfg = intel_nhlt_get_endpoint_blob(skl->dev, skl->nhlt, m_cfg->vbus_id,
-					   link_type, s_fmt, s_cont, ch,
-					   s_freq, dir, dev_type);
+	cfg = skl_get_ep_blob(skl, m_cfg->vbus_id, link_type,
+					s_fmt, ch, s_freq, dir, dev_type);
 	if (cfg) {
 		m_cfg->formats_config[SKL_PARAM_INIT].caps_size = cfg->size;
 		m_cfg->formats_config[SKL_PARAM_INIT].caps = (u32 *)&cfg->caps;
 	} else {
 		dev_err(skl->dev, "Blob NULL for id %x type %d dirn %d\n",
 					m_cfg->vbus_id, link_type, dir);
-		dev_err(skl->dev, "PCM: ch %d, freq %d, fmt %d/%d\n",
-					ch, s_freq, s_fmt, s_cont);
+		dev_err(skl->dev, "PCM: ch %d, freq %d, fmt %d\n",
+					ch, s_freq, s_fmt);
 		return -EIO;
 	}
 
@@ -582,10 +578,36 @@ static int skl_tplg_unload_pipe_modules(struct skl_dev *skl,
 	return ret;
 }
 
-static void skl_tplg_set_pipe_config_idx(struct skl_pipe *pipe, int idx)
+static bool skl_tplg_is_multi_fmt(struct skl_dev *skl, struct skl_pipe *pipe)
 {
-	pipe->cur_config_idx = idx;
-	pipe->memory_pages = pipe->configs[idx].mem_pages;
+	struct skl_pipe_fmt *cur_fmt;
+	struct skl_pipe_fmt *next_fmt;
+	int i;
+
+	if (pipe->nr_cfgs <= 1)
+		return false;
+
+	if (pipe->conn_type != SKL_PIPE_CONN_TYPE_FE)
+		return true;
+
+	for (i = 0; i < pipe->nr_cfgs - 1; i++) {
+		if (pipe->direction == SNDRV_PCM_STREAM_PLAYBACK) {
+			cur_fmt = &pipe->configs[i].out_fmt;
+			next_fmt = &pipe->configs[i + 1].out_fmt;
+		} else {
+			cur_fmt = &pipe->configs[i].in_fmt;
+			next_fmt = &pipe->configs[i + 1].in_fmt;
+		}
+
+		if (!CHECK_HW_PARAMS(cur_fmt->channels, cur_fmt->freq,
+				     cur_fmt->bps,
+				     next_fmt->channels,
+				     next_fmt->freq,
+				     next_fmt->bps))
+			return true;
+	}
+
+	return false;
 }
 
 /*
@@ -606,14 +628,24 @@ skl_tplg_get_pipe_config(struct skl_dev *skl, struct skl_module_cfg *mconfig)
 	int i;
 
 	if (pipe->nr_cfgs == 0) {
-		skl_tplg_set_pipe_config_idx(pipe, 0);
+		pipe->cur_config_idx = 0;
+		return 0;
+	}
+
+	if (skl_tplg_is_multi_fmt(skl, pipe)) {
+		pipe->cur_config_idx = pipe->pipe_config_idx;
+		pipe->memory_pages = pconfig->mem_pages;
+		dev_dbg(skl->dev, "found pipe config idx:%d\n",
+			pipe->cur_config_idx);
 		return 0;
 	}
 
 	if (pipe->conn_type == SKL_PIPE_CONN_TYPE_NONE || pipe->nr_cfgs == 1) {
 		dev_dbg(skl->dev, "No conn_type or just 1 pathcfg, taking 0th for %d\n",
 			pipe->ppl_id);
-		skl_tplg_set_pipe_config_idx(pipe, 0);
+		pipe->cur_config_idx = 0;
+		pipe->memory_pages = pconfig->mem_pages;
+
 		return 0;
 	}
 
@@ -632,8 +664,10 @@ skl_tplg_get_pipe_config(struct skl_dev *skl, struct skl_module_cfg *mconfig)
 
 		if (CHECK_HW_PARAMS(params->ch, params->s_freq, params->s_fmt,
 				    fmt->channels, fmt->freq, fmt->bps)) {
-			skl_tplg_set_pipe_config_idx(pipe, i);
+			pipe->cur_config_idx = i;
+			pipe->memory_pages = pconfig->mem_pages;
 			dev_dbg(skl->dev, "Using pipe config: %d\n", i);
+
 			return 0;
 		}
 	}
@@ -1353,9 +1387,9 @@ static int skl_tplg_multi_config_set_get(struct snd_kcontrol *kcontrol,
 		return -EIO;
 
 	if (is_set)
-		skl_tplg_set_pipe_config_idx(pipe, ucontrol->value.enumerated.item[0]);
+		pipe->pipe_config_idx = ucontrol->value.enumerated.item[0];
 	else
-		ucontrol->value.enumerated.item[0] = pipe->cur_config_idx;
+		ucontrol->value.enumerated.item[0]  =  pipe->pipe_config_idx;
 
 	return 0;
 }
@@ -1799,35 +1833,26 @@ static int skl_tplg_be_fill_pipe_params(struct snd_soc_dai *dai,
 {
 	struct nhlt_specific_cfg *cfg;
 	struct skl_pipe *pipe = mconfig->pipe;
-	struct skl_pipe_params save = *pipe->p_params;
 	struct skl_pipe_fmt *pipe_fmt;
 	struct skl_dev *skl = get_skl_ctx(dai->dev);
 	int link_type = skl_tplg_be_link_type(mconfig->dev_type);
 	u8 dev_type = skl_tplg_be_dev_type(mconfig->dev_type);
-	int ret;
 
 	skl_tplg_fill_dma_id(mconfig, params);
 
 	if (link_type == NHLT_LINK_HDA)
 		return 0;
 
-	*pipe->p_params = *params;
-	ret = skl_tplg_get_pipe_config(skl, mconfig);
-	if (ret)
-		goto err;
-
-	dev_dbg(skl->dev, "%s using pipe config: %d\n", __func__, pipe->cur_config_idx);
 	if (pipe->direction == SNDRV_PCM_STREAM_PLAYBACK)
-		pipe_fmt = &pipe->configs[pipe->cur_config_idx].out_fmt;
+		pipe_fmt = &pipe->configs[pipe->pipe_config_idx].out_fmt;
 	else
-		pipe_fmt = &pipe->configs[pipe->cur_config_idx].in_fmt;
+		pipe_fmt = &pipe->configs[pipe->pipe_config_idx].in_fmt;
 
 	/* update the blob based on virtual bus_id*/
-	cfg = intel_nhlt_get_endpoint_blob(dai->dev, skl->nhlt,
-					mconfig->vbus_id, link_type,
-					pipe_fmt->bps, params->s_cont,
-					pipe_fmt->channels, pipe_fmt->freq,
-					pipe->direction, dev_type);
+	cfg = skl_get_ep_blob(skl, mconfig->vbus_id, link_type,
+					pipe_fmt->bps, pipe_fmt->channels,
+					pipe_fmt->freq, pipe->direction,
+					dev_type);
 	if (cfg) {
 		mconfig->formats_config[SKL_PARAM_INIT].caps_size = cfg->size;
 		mconfig->formats_config[SKL_PARAM_INIT].caps = (u32 *)&cfg->caps;
@@ -1835,15 +1860,10 @@ static int skl_tplg_be_fill_pipe_params(struct snd_soc_dai *dai,
 		dev_err(dai->dev, "Blob NULL for id:%d type:%d dirn:%d ch:%d, freq:%d, fmt:%d\n",
 			mconfig->vbus_id, link_type, params->stream,
 			params->ch, params->s_freq, params->s_fmt);
-		ret = -EINVAL;
-		goto err;
+		return -EINVAL;
 	}
 
 	return 0;
-
-err:
-	*pipe->p_params = save;
-	return ret;
 }
 
 static int skl_tplg_be_set_src_pipe_params(struct snd_soc_dai *dai,
@@ -2925,6 +2945,9 @@ static int skl_tplg_get_pvt_data(struct snd_soc_tplg_dapm_widget *tplg_w,
 		block_size = ret;
 		off += array->size;
 
+		array = (struct snd_soc_tplg_vendor_array *)
+			(tplg_w->priv.data + off);
+
 		data = (tplg_w->priv.data + off);
 
 		if (block_type == SKL_TYPE_TUPLE) {
@@ -3571,6 +3594,9 @@ static int skl_tplg_get_manifest_data(struct snd_soc_tplg_manifest *manifest,
 		block_size = ret;
 		off += array->size;
 
+		array = (struct snd_soc_tplg_vendor_array *)
+			(manifest->priv.data + off);
+
 		data = (manifest->priv.data + off);
 
 		if (block_type == SKL_TYPE_TUPLE) {
@@ -3611,7 +3637,7 @@ static int skl_manifest_load(struct snd_soc_component *cmpnt, int index,
 	return 0;
 }
 
-static int skl_tplg_complete(struct snd_soc_component *component)
+static void skl_tplg_complete(struct snd_soc_component *component)
 {
 	struct snd_soc_dobj *dobj;
 	struct snd_soc_acpi_mach *mach;
@@ -3620,7 +3646,7 @@ static int skl_tplg_complete(struct snd_soc_component *component)
 
 	val = kmalloc(sizeof(*val), GFP_KERNEL);
 	if (!val)
-		return -ENOMEM;
+		return;
 
 	mach = dev_get_platdata(component->card->dev);
 	list_for_each_entry(dobj, &component->dobj_list, list) {
@@ -3645,9 +3671,7 @@ static int skl_tplg_complete(struct snd_soc_component *component)
 			}
 		}
 	}
-
 	kfree(val);
-	return 0;
 }
 
 static struct snd_soc_tplg_ops skl_tplg_ops  = {

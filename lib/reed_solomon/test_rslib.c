@@ -164,7 +164,7 @@ static int get_rcw_we(struct rs_control *rs, struct wspace *ws,
 
 	/* Load c with random data and encode */
 	for (i = 0; i < dlen; i++)
-		c[i] = get_random_u32() & nn;
+		c[i] = prandom_u32() & nn;
 
 	memset(c + dlen, 0, nroots * sizeof(*c));
 	encode_rs16(rs, c, dlen, c + dlen, 0);
@@ -178,12 +178,12 @@ static int get_rcw_we(struct rs_control *rs, struct wspace *ws,
 	for (i = 0; i < errs; i++) {
 		do {
 			/* Error value must be nonzero */
-			errval = get_random_u32() & nn;
+			errval = prandom_u32() & nn;
 		} while (errval == 0);
 
 		do {
 			/* Must not choose the same location twice */
-			errloc = get_random_u32_below(len);
+			errloc = prandom_u32() % len;
 		} while (errlocs[errloc] != 0);
 
 		errlocs[errloc] = 1;
@@ -194,19 +194,19 @@ static int get_rcw_we(struct rs_control *rs, struct wspace *ws,
 	for (i = 0; i < eras; i++) {
 		do {
 			/* Must not choose the same location twice */
-			errloc = get_random_u32_below(len);
+			errloc = prandom_u32() % len;
 		} while (errlocs[errloc] != 0);
 
 		derrlocs[i] = errloc;
 
-		if (ewsc && get_random_u32_below(2)) {
+		if (ewsc && (prandom_u32() & 1)) {
 			/* Erasure with the symbol intact */
 			errlocs[errloc] = 2;
 		} else {
 			/* Erasure with corrupted symbol */
 			do {
 				/* Error value must be nonzero */
-				errval = get_random_u32() & nn;
+				errval = prandom_u32() & nn;
 			} while (errval == 0);
 
 			errlocs[errloc] = 1;

@@ -8,8 +8,9 @@
 #include <linux/platform_data/usb-davinci.h>
 #include <linux/usb/musb.h>
 
-#include "common.h"
-#include "cputype.h"
+#include <mach/common.h>
+#include <mach/cputype.h>
+
 #include "irqs.h"
 
 #define DAVINCI_USB_OTG_BASE	0x01c64000

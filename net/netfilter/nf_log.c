@@ -443,9 +443,9 @@ static int nf_log_proc_dostring(struct ctl_table *table, int write,
 		mutex_lock(&nf_log_mutex);
 		logger = nft_log_dereference(net->nf.nf_loggers[tindex]);
 		if (!logger)
-			strscpy(buf, "NONE", sizeof(buf));
+			strlcpy(buf, "NONE", sizeof(buf));
 		else
-			strscpy(buf, logger->name, sizeof(buf));
+			strlcpy(buf, logger->name, sizeof(buf));
 		mutex_unlock(&nf_log_mutex);
 		r = proc_dostring(&tmp, write, buffer, lenp, ppos);
 	}

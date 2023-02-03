@@ -18,7 +18,7 @@
 	gpio-keys {
 		compatible = "gpio-keys";
 
-		key-wakeup {
+		wakeup {
 			label = "Wakeup";
 			linux,code = <10>;
 			wakeup-source;

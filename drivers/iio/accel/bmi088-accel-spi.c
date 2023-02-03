@@ -52,27 +52,17 @@ static int bmi088_accel_probe(struct spi_device *spi)
 		return PTR_ERR(regmap);
 	}
 
-	return bmi088_accel_core_probe(&spi->dev, regmap, spi->irq,
-					id->driver_data);
+	return bmi088_accel_core_probe(&spi->dev, regmap, spi->irq, id->name,
+				       true);
 }
 
-static void bmi088_accel_remove(struct spi_device *spi)
+static int bmi088_accel_remove(struct spi_device *spi)
 {
-	bmi088_accel_core_remove(&spi->dev);
+	return bmi088_accel_core_remove(&spi->dev);
 }
-
-static const struct of_device_id bmi088_of_match[] = {
-	{ .compatible = "bosch,bmi085-accel" },
-	{ .compatible = "bosch,bmi088-accel" },
-	{ .compatible = "bosch,bmi090l-accel" },
-	{}
-};
-MODULE_DEVICE_TABLE(of, bmi088_of_match);
 
 static const struct spi_device_id bmi088_accel_id[] = {
-	{"bmi085-accel",  BOSCH_BMI085},
-	{"bmi088-accel",  BOSCH_BMI088},
-	{"bmi090l-accel", BOSCH_BMI090L},
+	{"bmi088-accel", },
 	{}
 };
 MODULE_DEVICE_TABLE(spi, bmi088_accel_id);
@@ -80,8 +70,7 @@ MODULE_DEVICE_TABLE(spi, bmi088_accel_id);
 static struct spi_driver bmi088_accel_driver = {
 	.driver = {
 		.name	= "bmi088_accel_spi",
-		.pm	= pm_ptr(&bmi088_accel_pm_ops),
-		.of_match_table = bmi088_of_match,
+		.pm	= &bmi088_accel_pm_ops,
 	},
 	.probe		= bmi088_accel_probe,
 	.remove		= bmi088_accel_remove,
@@ -92,4 +81,3 @@ module_spi_driver(bmi088_accel_driver);
 MODULE_AUTHOR("Niek van Agt <niek.van.agt@topicproducts.com>");
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("BMI088 accelerometer driver (SPI)");
-MODULE_IMPORT_NS(IIO_BMI088);

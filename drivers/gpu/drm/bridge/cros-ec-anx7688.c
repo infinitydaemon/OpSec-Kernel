@@ -159,11 +159,13 @@ static int cros_ec_anx7688_bridge_probe(struct i2c_client *client)
 	return 0;
 }
 
-static void cros_ec_anx7688_bridge_remove(struct i2c_client *client)
+static int cros_ec_anx7688_bridge_remove(struct i2c_client *client)
 {
 	struct cros_ec_anx7688 *anx7688 = i2c_get_clientdata(client);
 
 	drm_bridge_remove(&anx7688->bridge);
+
+	return 0;
 }
 
 static const struct of_device_id cros_ec_anx7688_bridge_match_table[] = {

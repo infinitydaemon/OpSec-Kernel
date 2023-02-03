@@ -2,7 +2,7 @@
 #ifndef _LINUX_PART_STAT_H
 #define _LINUX_PART_STAT_H
 
-#include <linux/blkdev.h>
+#include <linux/genhd.h>
 #include <asm/local.h>
 
 struct disk_stats {

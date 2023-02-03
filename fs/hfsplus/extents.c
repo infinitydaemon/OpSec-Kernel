@@ -557,12 +557,12 @@ void hfsplus_file_truncate(struct inode *inode)
 		void *fsdata;
 		loff_t size = inode->i_size;
 
-		res = hfsplus_write_begin(NULL, mapping, size, 0,
-					  &page, &fsdata);
+		res = pagecache_write_begin(NULL, mapping, size, 0, 0,
+					    &page, &fsdata);
 		if (res)
 			return;
-		res = generic_write_end(NULL, mapping, size, 0, 0,
-					page, fsdata);
+		res = pagecache_write_end(NULL, mapping, size,
+			0, 0, page, fsdata);
 		if (res < 0)
 			return;
 		mark_inode_dirty(inode);

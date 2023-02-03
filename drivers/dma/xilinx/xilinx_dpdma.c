@@ -12,7 +12,6 @@
 #include <linux/clk.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
-#include <linux/dma/xilinx_dpdma.h>
 #include <linux/dmaengine.h>
 #include <linux/dmapool.h>
 #include <linux/interrupt.h>
@@ -376,7 +375,7 @@ static ssize_t xilinx_dpdma_debugfs_read(struct file *f, char __user *buf,
 		if (ret < 0)
 			goto done;
 	} else {
-		strscpy(kern_buff, "No testcase executed",
+		strlcpy(kern_buff, "No testcase executed",
 			XILINX_DPDMA_DEBUGFS_READ_MAX_SIZE);
 	}
 
@@ -1274,7 +1273,6 @@ static int xilinx_dpdma_config(struct dma_chan *dchan,
 			       struct dma_slave_config *config)
 {
 	struct xilinx_dpdma_chan *chan = to_xilinx_chan(dchan);
-	struct xilinx_dpdma_peripheral_config *pconfig;
 	unsigned long flags;
 
 	/*
@@ -1284,18 +1282,15 @@ static int xilinx_dpdma_config(struct dma_chan *dchan,
 	 * fixed both on the DPDMA side and on the DP controller side.
 	 */
 
-	/*
-	 * Use the peripheral_config to indicate that the channel is part
-	 * of a video group. This requires matching use of the custom
-	 * structure in each driver.
-	 */
-	pconfig = config->peripheral_config;
-	if (WARN_ON(pconfig && config->peripheral_size != sizeof(*pconfig)))
-		return -EINVAL;
-
 	spin_lock_irqsave(&chan->lock, flags);
-	if (chan->id <= ZYNQMP_DPDMA_VIDEO2 && pconfig)
-		chan->video_group = pconfig->video_group;
+
+	/*
+	 * Abuse the slave_id to indicate that the channel is part of a video
+	 * group.
+	 */
+	if (chan->id <= ZYNQMP_DPDMA_VIDEO2)
+		chan->video_group = config->slave_id != 0;
+
 	spin_unlock_irqrestore(&chan->lock, flags);
 
 	return 0;
@@ -1652,8 +1647,10 @@ static int xilinx_dpdma_probe(struct platform_device *pdev)
 	dpdma_hw_init(xdev);
 
 	xdev->irq = platform_get_irq(pdev, 0);
-	if (xdev->irq < 0)
+	if (xdev->irq < 0) {
+		dev_err(xdev->dev, "failed to get platform irq\n");
 		return xdev->irq;
+	}
 
 	ret = request_irq(xdev->irq, xilinx_dpdma_irq_handler, IRQF_SHARED,
 			  dev_name(xdev->dev), xdev);

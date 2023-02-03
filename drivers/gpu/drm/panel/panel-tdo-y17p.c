@@ -245,11 +245,13 @@ static int tdo_y17p_probe(struct spi_device *spi)
 	return 0;
 }
 
-static void tdo_y17p_remove(struct spi_device *spi)
+static int tdo_y17p_remove(struct spi_device *spi)
 {
 	struct tdo_y17p *ctx = spi_get_drvdata(spi);
 
 	drm_panel_remove(&ctx->panel);
+
+	return 0;
 }
 
 static const struct spi_device_id tdo_y17p_ids[] = {

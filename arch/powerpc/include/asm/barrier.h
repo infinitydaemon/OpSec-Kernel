@@ -42,8 +42,6 @@
 /* The sub-arch has lwsync */
 #if defined(CONFIG_PPC64) || defined(CONFIG_PPC_E500MC)
 #    define SMPWMB      LWSYNC
-#elif defined(CONFIG_BOOKE)
-#    define SMPWMB      mbar
 #else
 #    define SMPWMB      eieio
 #endif
@@ -86,7 +84,7 @@ do {									\
 
 #ifdef CONFIG_PPC_BOOK3S_64
 #define NOSPEC_BARRIER_SLOT   nop
-#elif defined(CONFIG_PPC_E500)
+#elif defined(CONFIG_PPC_FSL_BOOK3E)
 #define NOSPEC_BARRIER_SLOT   nop; nop
 #endif
 

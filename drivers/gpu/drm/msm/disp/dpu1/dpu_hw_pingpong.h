@@ -8,6 +8,7 @@
 #include "dpu_hw_catalog.h"
 #include "dpu_hw_mdss.h"
 #include "dpu_hw_util.h"
+#include "dpu_hw_blk.h"
 
 #define DITHER_MATRIX_SZ 16
 
@@ -123,20 +124,6 @@ struct dpu_hw_pingpong_ops {
 	 */
 	void (*setup_dither)(struct dpu_hw_pingpong *pp,
 			struct dpu_hw_dither_cfg *cfg);
-	/**
-	 * Enable DSC
-	 */
-	int (*enable_dsc)(struct dpu_hw_pingpong *pp);
-
-	/**
-	 * Disable DSC
-	 */
-	void (*disable_dsc)(struct dpu_hw_pingpong *pp);
-
-	/**
-	 * Setup DSC
-	 */
-	int (*setup_dsc)(struct dpu_hw_pingpong *pp);
 };
 
 struct dpu_hw_merge_3d;

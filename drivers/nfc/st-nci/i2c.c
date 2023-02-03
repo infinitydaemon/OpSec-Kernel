@@ -157,6 +157,7 @@ static int st_nci_i2c_read(struct st_nci_i2c_phy *phy,
 static irqreturn_t st_nci_irq_thread_fn(int irq, void *phy_id)
 {
 	struct st_nci_i2c_phy *phy = phy_id;
+	struct i2c_client *client;
 	struct sk_buff *skb = NULL;
 	int r;
 
@@ -164,6 +165,9 @@ static irqreturn_t st_nci_irq_thread_fn(int irq, void *phy_id)
 		WARN_ON_ONCE(1);
 		return IRQ_NONE;
 	}
+
+	client = phy->i2c_dev;
+	dev_dbg(&client->dev, "IRQ\n");
 
 	if (phy->ndlc->hard_fault)
 		return IRQ_HANDLED;
@@ -195,7 +199,8 @@ static const struct acpi_gpio_mapping acpi_st_nci_gpios[] = {
 	{},
 };
 
-static int st_nci_i2c_probe(struct i2c_client *client)
+static int st_nci_i2c_probe(struct i2c_client *client,
+				  const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
 	struct st_nci_i2c_phy *phy;
@@ -249,11 +254,13 @@ static int st_nci_i2c_probe(struct i2c_client *client)
 	return r;
 }
 
-static void st_nci_i2c_remove(struct i2c_client *client)
+static int st_nci_i2c_remove(struct i2c_client *client)
 {
 	struct st_nci_i2c_phy *phy = i2c_get_clientdata(client);
 
 	ndlc_remove(phy->ndlc);
+
+	return 0;
 }
 
 static const struct i2c_device_id st_nci_i2c_id_table[] = {
@@ -283,7 +290,7 @@ static struct i2c_driver st_nci_i2c_driver = {
 		.of_match_table = of_match_ptr(of_st_nci_i2c_match),
 		.acpi_match_table = ACPI_PTR(st_nci_i2c_acpi_match),
 	},
-	.probe_new = st_nci_i2c_probe,
+	.probe = st_nci_i2c_probe,
 	.id_table = st_nci_i2c_id_table,
 	.remove = st_nci_i2c_remove,
 };

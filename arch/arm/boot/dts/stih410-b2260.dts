@@ -27,26 +27,26 @@
 
 	leds {
 		compatible = "gpio-leds";
-		led-user-green-1 {
+		user_green_1 {
 			label = "User_green_1";
 			gpios = <&pio1 3 GPIO_ACTIVE_LOW>;
 			linux,default-trigger = "heartbeat";
 			default-state = "off";
 		};
 
-		led-user-green-2 {
+		user_green_2 {
 			label = "User_green_2";
 			gpios = <&pio4 1 GPIO_ACTIVE_LOW>;
 			default-state = "off";
 		};
 
-		led-user-green-3 {
+		user_green_3 {
 			label = "User_green_3";
 			gpios = <&pio2 1 GPIO_ACTIVE_LOW>;
 			default-state = "off";
 		};
 
-		led-user-green-4 {
+		user_green_4 {
 			label = "User_green_4";
 			gpios = <&pio2 5 GPIO_ACTIVE_LOW>;
 			default-state = "off";
@@ -73,21 +73,6 @@
 				sound-dai = <&sti_hdmi>;
 			};
 		};
-	};
-
-	miphy28lp_phy: miphy28lp {
-
-		phy_port1: port@9b2a000 {
-			st,osc-force-ext;
-		};
-	};
-
-	usb2_picophy1: phy2 {
-		status = "okay";
-	};
-
-	usb2_picophy2: phy3 {
-		status = "okay";
 	};
 
 	soc {
@@ -160,6 +145,14 @@
 			status = "okay";
 		};
 
+		usb2_picophy1: phy2@0 {
+			status = "okay";
+		};
+
+		usb2_picophy2: phy3@0 {
+			status = "okay";
+		};
+
 		ohci0: usb@9a03c00 {
 			status = "okay";
 		};
@@ -201,6 +194,13 @@
 			st,i2c-min-scl-pulse-width-us = <0>;
 			st,i2c-min-sda-pulse-width-us = <5>;
 			status = "okay";
+		};
+
+		miphy28lp_phy: miphy28lp@0 {
+
+			phy_port1: port@9b2a000 {
+				st,osc-force-ext;
+			};
 		};
 
 		sata1: sata@9b28000 {

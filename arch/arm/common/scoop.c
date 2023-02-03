@@ -240,6 +240,9 @@ static int scoop_remove(struct platform_device *pdev)
 {
 	struct scoop_dev *sdev = platform_get_drvdata(pdev);
 
+	if (!sdev)
+		return -EINVAL;
+
 	if (sdev->gpio.base != -1)
 		gpiochip_remove(&sdev->gpio);
 

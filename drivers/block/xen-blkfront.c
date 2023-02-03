@@ -202,7 +202,6 @@ struct blkfront_info
 	struct gendisk *gd;
 	u16 sector_size;
 	unsigned int physical_sector_size;
-	unsigned long vdisk_info;
 	int vdevice;
 	blkif_vdev_t handle;
 	enum blkif_state connected;
@@ -236,6 +235,8 @@ struct blkfront_info
 static unsigned int nr_minors;
 static unsigned long *minors;
 static DEFINE_SPINLOCK(minor_lock);
+
+#define GRANT_INVALID_REF	0
 
 #define PARTS_PER_DISK		16
 #define PARTS_PER_EXT_DISK      256
@@ -327,7 +328,7 @@ static int fill_grant_buffer(struct blkfront_ring_info *rinfo, int num)
 			gnt_list_entry->page = granted_page;
 		}
 
-		gnt_list_entry->gref = INVALID_GRANT_REF;
+		gnt_list_entry->gref = GRANT_INVALID_REF;
 		list_add(&gnt_list_entry->node, &rinfo->grants);
 		i++;
 	}
@@ -356,7 +357,7 @@ static struct grant *get_free_grant(struct blkfront_ring_info *rinfo)
 					  node);
 	list_del(&gnt_list_entry->node);
 
-	if (gnt_list_entry->gref != INVALID_GRANT_REF)
+	if (gnt_list_entry->gref != GRANT_INVALID_REF)
 		rinfo->persistent_gnts_c--;
 
 	return gnt_list_entry;
@@ -378,7 +379,7 @@ static struct grant *get_grant(grant_ref_t *gref_head,
 	struct grant *gnt_list_entry = get_free_grant(rinfo);
 	struct blkfront_info *info = rinfo->dev_info;
 
-	if (gnt_list_entry->gref != INVALID_GRANT_REF)
+	if (gnt_list_entry->gref != GRANT_INVALID_REF)
 		return gnt_list_entry;
 
 	/* Assign a gref to this page */
@@ -402,7 +403,7 @@ static struct grant *get_indirect_grant(grant_ref_t *gref_head,
 	struct grant *gnt_list_entry = get_free_grant(rinfo);
 	struct blkfront_info *info = rinfo->dev_info;
 
-	if (gnt_list_entry->gref != INVALID_GRANT_REF)
+	if (gnt_list_entry->gref != GRANT_INVALID_REF)
 		return gnt_list_entry;
 
 	/* Assign a gref to this page */
@@ -512,7 +513,6 @@ static int blkif_getgeo(struct block_device *bd, struct hd_geometry *hg)
 static int blkif_ioctl(struct block_device *bdev, fmode_t mode,
 		       unsigned command, unsigned long argument)
 {
-	struct blkfront_info *info = bdev->bd_disk->private_data;
 	int i;
 
 	switch (command) {
@@ -522,9 +522,9 @@ static int blkif_ioctl(struct block_device *bdev, fmode_t mode,
 				return -EFAULT;
 		return 0;
 	case CDROM_GET_CAPABILITY:
-		if (!(info->vdisk_info & VDISK_CDROM))
-			return -EINVAL;
-		return 0;
+		if (bdev->bd_disk->flags & GENHD_FL_CD)
+			return 0;
+		return -EINVAL;
 	default:
 		return -EINVAL;
 	}
@@ -582,7 +582,7 @@ struct setup_rw_req {
 	struct blkif_request *ring_req;
 	grant_ref_t gref_head;
 	unsigned int id;
-	/* Only used when persistent grant is used and it's a write request */
+	/* Only used when persistent grant is used and it's a read request */
 	bool need_copy;
 	unsigned int bvec_off;
 	char *bvec_data;
@@ -950,13 +950,13 @@ static void blkif_set_queue_limits(struct blkfront_info *info)
 	blk_queue_flag_set(QUEUE_FLAG_VIRT, rq);
 
 	if (info->feature_discard) {
+		blk_queue_flag_set(QUEUE_FLAG_DISCARD, rq);
 		blk_queue_max_discard_sectors(rq, get_capacity(gd));
 		rq->limits.discard_granularity = info->discard_granularity ?:
 						 info->physical_sector_size;
 		rq->limits.discard_alignment = info->discard_alignment;
 		if (info->feature_secdiscard)
-			blk_queue_max_secure_erase_sectors(rq,
-							   get_capacity(gd));
+			blk_queue_flag_set(QUEUE_FLAG_SECERASE, rq);
 	}
 
 	/* Hard sector size and max sectors impersonate the equiv. hardware. */
@@ -1066,8 +1066,9 @@ static char *encode_disk_name(char *ptr, unsigned int n)
 }
 
 static int xlvbd_alloc_gendisk(blkif_sector_t capacity,
-		struct blkfront_info *info, u16 sector_size,
-		unsigned int physical_sector_size)
+			       struct blkfront_info *info,
+			       u16 vdisk_info, u16 sector_size,
+			       unsigned int physical_sector_size)
 {
 	struct gendisk *gd;
 	int nr_minors = 1;
@@ -1165,10 +1166,14 @@ static int xlvbd_alloc_gendisk(blkif_sector_t capacity,
 
 	xlvbd_flush(info);
 
-	if (info->vdisk_info & VDISK_READONLY)
+	if (vdisk_info & VDISK_READONLY)
 		set_disk_ro(gd, 1);
-	if (info->vdisk_info & VDISK_REMOVABLE)
+
+	if (vdisk_info & VDISK_REMOVABLE)
 		gd->flags |= GENHD_FL_REMOVABLE;
+
+	if (vdisk_info & VDISK_CDROM)
+		gd->flags |= GENHD_FL_CD;
 
 	return 0;
 
@@ -1228,9 +1233,9 @@ static void blkif_free_ring(struct blkfront_ring_info *rinfo)
 		list_for_each_entry_safe(persistent_gnt, n,
 					 &rinfo->grants, node) {
 			list_del(&persistent_gnt->node);
-			if (persistent_gnt->gref != INVALID_GRANT_REF) {
+			if (persistent_gnt->gref != GRANT_INVALID_REF) {
 				gnttab_end_foreign_access(persistent_gnt->gref,
-							  NULL);
+							  0, 0UL);
 				rinfo->persistent_gnts_c--;
 			}
 			if (info->bounce)
@@ -1253,7 +1258,7 @@ static void blkif_free_ring(struct blkfront_ring_info *rinfo)
 		       rinfo->shadow[i].req.u.rw.nr_segments;
 		for (j = 0; j < segs; j++) {
 			persistent_gnt = rinfo->shadow[i].grants_used[j];
-			gnttab_end_foreign_access(persistent_gnt->gref, NULL);
+			gnttab_end_foreign_access(persistent_gnt->gref, 0, 0UL);
 			if (info->bounce)
 				__free_page(persistent_gnt->page);
 			kfree(persistent_gnt);
@@ -1268,7 +1273,7 @@ static void blkif_free_ring(struct blkfront_ring_info *rinfo)
 
 		for (j = 0; j < INDIRECT_GREFS(segs); j++) {
 			persistent_gnt = rinfo->shadow[i].indirect_grants[j];
-			gnttab_end_foreign_access(persistent_gnt->gref, NULL);
+			gnttab_end_foreign_access(persistent_gnt->gref, 0, 0UL);
 			__free_page(persistent_gnt->page);
 			kfree(persistent_gnt);
 		}
@@ -1289,8 +1294,15 @@ free_shadow:
 	flush_work(&rinfo->work);
 
 	/* Free resources associated with old device channel. */
-	xenbus_teardown_ring((void **)&rinfo->ring.sring, info->nr_ring_pages,
-			     rinfo->ring_ref);
+	for (i = 0; i < info->nr_ring_pages; i++) {
+		if (rinfo->ring_ref[i] != GRANT_INVALID_REF) {
+			gnttab_end_foreign_access(rinfo->ring_ref[i], 0, 0);
+			rinfo->ring_ref[i] = GRANT_INVALID_REF;
+		}
+	}
+	free_pages_exact(rinfo->ring.sring,
+			 info->nr_ring_pages * XEN_PAGE_SIZE);
+	rinfo->ring.sring = NULL;
 
 	if (rinfo->irq)
 		unbind_from_irqhandler(rinfo->irq, rinfo);
@@ -1475,7 +1487,7 @@ static int blkif_completion(unsigned long *id,
 			 * to the tail of the list, so it will not be picked
 			 * again unless we run out of persistent grants.
 			 */
-			s->grants_used[i]->gref = INVALID_GRANT_REF;
+			s->grants_used[i]->gref = GRANT_INVALID_REF;
 			list_add_tail(&s->grants_used[i]->node, &rinfo->grants);
 		}
 	}
@@ -1500,7 +1512,7 @@ static int blkif_completion(unsigned long *id,
 					indirect_page = s->indirect_grants[i]->page;
 					list_add(&indirect_page->lru, &rinfo->indirect_pages);
 				}
-				s->indirect_grants[i]->gref = INVALID_GRANT_REF;
+				s->indirect_grants[i]->gref = GRANT_INVALID_REF;
 				list_add_tail(&s->indirect_grants[i]->node, &rinfo->grants);
 			}
 		}
@@ -1606,8 +1618,8 @@ static irqreturn_t blkif_interrupt(int irq, void *dev_id)
 				blkif_req(req)->error = BLK_STS_NOTSUPP;
 				info->feature_discard = 0;
 				info->feature_secdiscard = 0;
-				blk_queue_max_discard_sectors(rq, 0);
-				blk_queue_max_secure_erase_sectors(rq, 0);
+				blk_queue_flag_clear(QUEUE_FLAG_DISCARD, rq);
+				blk_queue_flag_clear(QUEUE_FLAG_SECERASE, rq);
 			}
 			break;
 		case BLKIF_OP_FLUSH_DISKCACHE:
@@ -1681,16 +1693,30 @@ static int setup_blkring(struct xenbus_device *dev,
 			 struct blkfront_ring_info *rinfo)
 {
 	struct blkif_sring *sring;
-	int err;
+	int err, i;
 	struct blkfront_info *info = rinfo->dev_info;
 	unsigned long ring_size = info->nr_ring_pages * XEN_PAGE_SIZE;
+	grant_ref_t gref[XENBUS_MAX_RING_GRANTS];
 
-	err = xenbus_setup_ring(dev, GFP_NOIO, (void **)&sring,
-				info->nr_ring_pages, rinfo->ring_ref);
-	if (err)
+	for (i = 0; i < info->nr_ring_pages; i++)
+		rinfo->ring_ref[i] = GRANT_INVALID_REF;
+
+	sring = alloc_pages_exact(ring_size, GFP_NOIO | __GFP_ZERO);
+	if (!sring) {
+		xenbus_dev_fatal(dev, -ENOMEM, "allocating shared ring");
+		return -ENOMEM;
+	}
+	SHARED_RING_INIT(sring);
+	FRONT_RING_INIT(&rinfo->ring, sring, ring_size);
+
+	err = xenbus_grant_ring(dev, rinfo->ring.sring, info->nr_ring_pages, gref);
+	if (err < 0) {
+		free_pages_exact(sring, ring_size);
+		rinfo->ring.sring = NULL;
 		goto fail;
-
-	XEN_FRONT_RING_INIT(&rinfo->ring, sring, ring_size);
+	}
+	for (i = 0; i < info->nr_ring_pages; i++)
+		rinfo->ring_ref[i] = gref[i];
 
 	err = xenbus_alloc_evtchn(dev, &rinfo->evtchn);
 	if (err)
@@ -2129,6 +2155,7 @@ static void blkfront_closing(struct blkfront_info *info)
 	if (info->rq && info->gd) {
 		blk_mq_stop_hw_queues(info->rq);
 		blk_mark_disk_dead(info->gd);
+		set_capacity(info->gd, 0);
 	}
 
 	for_each_rinfo(info, rinfo, i) {
@@ -2195,7 +2222,7 @@ static int blkfront_setup_indirect(struct blkfront_ring_info *rinfo)
 		BUG_ON(!list_empty(&rinfo->indirect_pages));
 		for (i = 0; i < num; i++) {
 			struct page *indirect_page = alloc_page(GFP_KERNEL |
-								__GFP_ZERO);
+			                                        __GFP_ZERO);
 			if (!indirect_page)
 				goto out_of_memory;
 			list_add(&indirect_page->lru, &rinfo->indirect_pages);
@@ -2315,6 +2342,7 @@ static void blkfront_connect(struct blkfront_info *info)
 	unsigned long long sectors;
 	unsigned long sector_size;
 	unsigned int physical_sector_size;
+	unsigned int binfo;
 	int err, i;
 	struct blkfront_ring_info *rinfo;
 
@@ -2352,7 +2380,7 @@ static void blkfront_connect(struct blkfront_info *info)
 
 	err = xenbus_gather(XBT_NIL, info->xbdev->otherend,
 			    "sectors", "%llu", &sectors,
-			    "info", "%u", &info->vdisk_info,
+			    "info", "%u", &binfo,
 			    "sector-size", "%lu", &sector_size,
 			    NULL);
 	if (err) {
@@ -2381,7 +2409,7 @@ static void blkfront_connect(struct blkfront_info *info)
 		}
 	}
 
-	err = xlvbd_alloc_gendisk(sectors, info, sector_size,
+	err = xlvbd_alloc_gendisk(sectors, info, binfo, sector_size,
 				  physical_sector_size);
 	if (err) {
 		xenbus_dev_fatal(info->xbdev, err, "xlvbd_add at %s",
@@ -2396,13 +2424,7 @@ static void blkfront_connect(struct blkfront_info *info)
 	for_each_rinfo(info, rinfo, i)
 		kick_pending_request_queues(rinfo);
 
-	err = device_add_disk(&info->xbdev->dev, info->gd, NULL);
-	if (err) {
-		put_disk(info->gd);
-		blk_mq_free_tag_set(&info->tag_set);
-		info->rq = NULL;
-		goto fail;
-	}
+	device_add_disk(&info->xbdev->dev, info->gd, NULL);
 
 	info->is_ready = 1;
 	return;
@@ -2467,7 +2489,7 @@ static void blkback_changed(struct xenbus_device *dev,
 	}
 }
 
-static void blkfront_remove(struct xenbus_device *xbdev)
+static int blkfront_remove(struct xenbus_device *xbdev)
 {
 	struct blkfront_info *info = dev_get_drvdata(&xbdev->dev);
 
@@ -2483,11 +2505,12 @@ static void blkfront_remove(struct xenbus_device *xbdev)
 	blkif_free(info, 0);
 	if (info->gd) {
 		xlbd_release_minors(info->gd->first_minor, info->gd->minors);
-		put_disk(info->gd);
+		blk_cleanup_disk(info->gd);
 		blk_mq_free_tag_set(&info->tag_set);
 	}
 
 	kfree(info);
+	return 0;
 }
 
 static int blkfront_is_ready(struct xenbus_device *dev)
@@ -2528,7 +2551,6 @@ static void purge_persistent_grants(struct blkfront_info *info)
 
 	for_each_rinfo(info, rinfo, i) {
 		struct grant *gnt_list_entry, *tmp;
-		LIST_HEAD(grants);
 
 		spin_lock_irqsave(&rinfo->ring_lock, flags);
 
@@ -2539,17 +2561,15 @@ static void purge_persistent_grants(struct blkfront_info *info)
 
 		list_for_each_entry_safe(gnt_list_entry, tmp, &rinfo->grants,
 					 node) {
-			if (gnt_list_entry->gref == INVALID_GRANT_REF ||
+			if (gnt_list_entry->gref == GRANT_INVALID_REF ||
 			    !gnttab_try_end_foreign_access(gnt_list_entry->gref))
 				continue;
 
 			list_del(&gnt_list_entry->node);
 			rinfo->persistent_gnts_c--;
-			gnt_list_entry->gref = INVALID_GRANT_REF;
-			list_add_tail(&gnt_list_entry->node, &grants);
+			gnt_list_entry->gref = GRANT_INVALID_REF;
+			list_add_tail(&gnt_list_entry->node, &rinfo->grants);
 		}
-
-		list_splice_tail(&grants, &rinfo->grants);
 
 		spin_unlock_irqrestore(&rinfo->ring_lock, flags);
 	}

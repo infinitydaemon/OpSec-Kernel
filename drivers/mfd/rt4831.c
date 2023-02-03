@@ -87,15 +87,12 @@ static int rt4831_probe(struct i2c_client *client)
 				    ARRAY_SIZE(rt4831_subdevs), NULL, 0, NULL);
 }
 
-static void rt4831_remove(struct i2c_client *client)
+static int rt4831_remove(struct i2c_client *client)
 {
 	struct regmap *regmap = dev_get_regmap(&client->dev, NULL);
-	int ret;
 
 	/* Disable WLED and DSV outputs */
-	ret = regmap_update_bits(regmap, RT4831_REG_ENABLE, RT4831_RESET_MASK, RT4831_RESET_MASK);
-	if (ret)
-		dev_warn(&client->dev, "Failed to disable outputs (%pe)\n", ERR_PTR(ret));
+	return regmap_update_bits(regmap, RT4831_REG_ENABLE, RT4831_RESET_MASK, RT4831_RESET_MASK);
 }
 
 static const struct of_device_id __maybe_unused rt4831_of_match[] = {

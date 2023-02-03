@@ -28,7 +28,6 @@ void cedrus_device_run(void *priv)
 	struct cedrus_dev *dev = ctx->dev;
 	struct cedrus_run run = {};
 	struct media_request *src_req;
-	int error;
 
 	run.src = v4l2_m2m_next_src_buf(ctx->fh.m2m_ctx);
 	run.dst = v4l2_m2m_next_dst_buf(ctx->fh.m2m_ctx);
@@ -66,19 +65,13 @@ void cedrus_device_run(void *priv)
 
 	case V4L2_PIX_FMT_HEVC_SLICE:
 		run.h265.sps = cedrus_find_control_data(ctx,
-			V4L2_CID_STATELESS_HEVC_SPS);
+			V4L2_CID_MPEG_VIDEO_HEVC_SPS);
 		run.h265.pps = cedrus_find_control_data(ctx,
-			V4L2_CID_STATELESS_HEVC_PPS);
+			V4L2_CID_MPEG_VIDEO_HEVC_PPS);
 		run.h265.slice_params = cedrus_find_control_data(ctx,
-			V4L2_CID_STATELESS_HEVC_SLICE_PARAMS);
+			V4L2_CID_MPEG_VIDEO_HEVC_SLICE_PARAMS);
 		run.h265.decode_params = cedrus_find_control_data(ctx,
-			V4L2_CID_STATELESS_HEVC_DECODE_PARAMS);
-		run.h265.scaling_matrix = cedrus_find_control_data(ctx,
-			V4L2_CID_STATELESS_HEVC_SCALING_MATRIX);
-		run.h265.entry_points = cedrus_find_control_data(ctx,
-			V4L2_CID_STATELESS_HEVC_ENTRY_POINT_OFFSETS);
-		run.h265.entry_points_count = cedrus_get_num_of_controls(ctx,
-			V4L2_CID_STATELESS_HEVC_ENTRY_POINT_OFFSETS);
+			V4L2_CID_MPEG_VIDEO_HEVC_DECODE_PARAMS);
 		break;
 
 	case V4L2_PIX_FMT_VP8_FRAME:
@@ -94,26 +87,12 @@ void cedrus_device_run(void *priv)
 
 	cedrus_dst_format_set(dev, &ctx->dst_fmt);
 
-	error = ctx->current_codec->setup(ctx, &run);
-	if (error)
-		v4l2_err(&ctx->dev->v4l2_dev,
-			 "Failed to setup decoding job: %d\n", error);
+	dev->dec_ops[ctx->current_codec]->setup(ctx, &run);
 
 	/* Complete request(s) controls if needed. */
 
 	if (src_req)
 		v4l2_ctrl_request_complete(src_req, &ctx->hdl);
 
-	/* Trigger decoding if setup went well, bail out otherwise. */
-	if (!error) {
-		/* Start the watchdog timer. */
-		schedule_delayed_work(&dev->watchdog_work,
-				      msecs_to_jiffies(2000));
-
-		ctx->current_codec->trigger(ctx);
-	} else {
-		v4l2_m2m_buf_done_and_job_finish(ctx->dev->m2m_dev,
-						 ctx->fh.m2m_ctx,
-						 VB2_BUF_STATE_ERROR);
-	}
+	dev->dec_ops[ctx->current_codec]->trigger(ctx);
 }

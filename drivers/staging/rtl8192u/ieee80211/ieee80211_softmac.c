@@ -1346,7 +1346,7 @@ inline void ieee80211_softmac_new_net(struct ieee80211_device *ieee, struct ieee
 
 	short apset, ssidset, ssidbroad, apmatch, ssidmatch;
 
-	/* we are interested in new only if we are not associated
+	/* we are interested in new new only if we are not associated
 	 * and we are not associating / authenticating
 	 */
 	if (ieee->state != IEEE80211_NOLINK)
@@ -1461,13 +1461,13 @@ void ieee80211_softmac_check_all_nets(struct ieee80211_device *ieee)
 	spin_unlock_irqrestore(&ieee->lock, flags);
 }
 
-static inline int auth_parse(struct sk_buff *skb, u8 **challenge, int *chlen)
+static inline u16 auth_parse(struct sk_buff *skb, u8 **challenge, int *chlen)
 {
 	struct ieee80211_authentication *a;
 	u8 *t;
 	if (skb->len < (sizeof(struct ieee80211_authentication) - sizeof(struct ieee80211_info_element))) {
 		IEEE80211_DEBUG_MGMT("invalid len in auth resp: %d\n", skb->len);
-		return -EINVAL;
+		return 0xcafe;
 	}
 	*challenge = NULL;
 	a = (struct ieee80211_authentication *)skb->data;
@@ -1482,12 +1482,7 @@ static inline int auth_parse(struct sk_buff *skb, u8 **challenge, int *chlen)
 		}
 	}
 
-	if (a->status) {
-		IEEE80211_DEBUG_MGMT("auth_parse() failed\n");
-		return -EINVAL;
-	}
-
-	return 0;
+	return le16_to_cpu(a->status);
 }
 
 static int auth_rq_parse(struct sk_buff *skb, u8 *dest)
@@ -1692,14 +1687,13 @@ static short ieee80211_sta_ps_sleep(struct ieee80211_device *ieee, u32 *time_h,
 	return 1;
 }
 
-static inline void ieee80211_sta_ps(struct work_struct *work)
+static inline void ieee80211_sta_ps(struct tasklet_struct *t)
 {
-	struct ieee80211_device *ieee;
+	struct ieee80211_device *ieee = from_tasklet(ieee, t, ps_task);
 	u32 th, tl;
 	short sleep;
-	unsigned long flags, flags2;
 
-	ieee = container_of(work, struct ieee80211_device, ps_task);
+	unsigned long flags, flags2;
 
 	spin_lock_irqsave(&ieee->lock, flags);
 
@@ -1832,7 +1826,7 @@ static void ieee80211_check_auth_response(struct ieee80211_device *ieee,
 {
 	/* default support N mode, disable halfNmode */
 	bool bSupportNmode = true, bHalfSupportNmode = false;
-	int errcode;
+	u16 errcode;
 	u8 *challenge;
 	int chlen = 0;
 	u32 iotAction;
@@ -1881,7 +1875,7 @@ static void ieee80211_check_auth_response(struct ieee80211_device *ieee,
 		}
 	} else {
 		ieee->softmac_stats.rx_auth_rs_err++;
-		IEEE80211_DEBUG_MGMT("Auth response status code %d\n", errcode);
+		IEEE80211_DEBUG_MGMT("Auth response status code 0x%x", errcode);
 		ieee80211_associate_abort(ieee);
 	}
 }
@@ -1903,7 +1897,7 @@ ieee80211_rx_frame_softmac(struct ieee80211_device *ieee, struct sk_buff *skb,
 	if (ieee->sta_sleep || (ieee->ps != IEEE80211_PS_DISABLED &&
 				ieee->iw_mode == IW_MODE_INFRA &&
 				ieee->state == IEEE80211_LINKED))
-		schedule_work(&ieee->ps_task);
+		tasklet_schedule(&ieee->ps_task);
 
 	if (WLAN_FC_GET_STYPE(header->frame_ctl) != IEEE80211_STYPE_PROBE_RESP &&
 	    WLAN_FC_GET_STYPE(header->frame_ctl) != IEEE80211_STYPE_BEACON)
@@ -2033,7 +2027,7 @@ ieee80211_rx_frame_softmac(struct ieee80211_device *ieee, struct sk_buff *skb,
  * N = MAX_PACKET_SIZE / MIN_FRAG_THRESHOLD.
  * In this way you need just one and the 802.11 stack
  * will take care of buffering fragments and pass them to
- * the driver later, when it wakes the queue.
+ * to the driver later, when it wakes the queue.
  */
 void ieee80211_softmac_xmit(struct ieee80211_txb *txb, struct ieee80211_device *ieee)
 {
@@ -2608,7 +2602,7 @@ void ieee80211_softmac_init(struct ieee80211_device *ieee)
 	spin_lock_init(&ieee->mgmt_tx_lock);
 	spin_lock_init(&ieee->beacon_lock);
 
-	INIT_WORK(&ieee->ps_task, ieee80211_sta_ps);
+	tasklet_setup(&ieee->ps_task, ieee80211_sta_ps);
 }
 
 void ieee80211_softmac_free(struct ieee80211_device *ieee)
@@ -2619,7 +2613,7 @@ void ieee80211_softmac_free(struct ieee80211_device *ieee)
 	del_timer_sync(&ieee->associate_timer);
 
 	cancel_delayed_work(&ieee->associate_retry_wq);
-	cancel_work_sync(&ieee->ps_task);
+
 	mutex_unlock(&ieee->wx_mutex);
 }
 

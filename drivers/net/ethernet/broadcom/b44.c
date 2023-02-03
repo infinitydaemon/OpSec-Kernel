@@ -218,8 +218,7 @@ static inline void __b44_cam_read(struct b44 *bp, unsigned char *data, int index
 	data[1] = (val >> 0) & 0xFF;
 }
 
-static inline void __b44_cam_write(struct b44 *bp,
-				   const unsigned char *data, int index)
+static inline void __b44_cam_write(struct b44 *bp, unsigned char *data, int index)
 {
 	u32 val;
 
@@ -1201,7 +1200,7 @@ static int b44_alloc_consistent(struct b44 *bp, gfp_t gfp)
 	bp->rx_ring = dma_alloc_coherent(bp->sdev->dma_dev, size,
 					 &bp->rx_ring_dma, gfp);
 	if (!bp->rx_ring) {
-		/* Allocation may have failed due to dma_alloc_coherent
+		/* Allocation may have failed due to pci_alloc_consistent
 		   insisting on use of GFP_DMA, which is more restrictive
 		   than necessary...  */
 		struct dma_desc *rx_ring;
@@ -1384,7 +1383,7 @@ static int b44_set_mac_addr(struct net_device *dev, void *p)
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EINVAL;
 
-	eth_hw_addr_set(dev, addr->sa_data);
+	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
 
 	spin_lock_irq(&bp->lock);
 
@@ -1508,8 +1507,7 @@ static void bwfilter_table(struct b44 *bp, u8 *pp, u32 bytes, u32 table_offset)
 	}
 }
 
-static int b44_magic_pattern(const u8 *macaddr, u8 *ppattern, u8 *pmask,
-			     int offset)
+static int b44_magic_pattern(u8 *macaddr, u8 *ppattern, u8 *pmask, int offset)
 {
 	int magicsync = 6;
 	int k, j, len = offset;
@@ -1680,7 +1678,7 @@ static void b44_get_stats64(struct net_device *dev,
 	unsigned int start;
 
 	do {
-		start = u64_stats_fetch_begin(&hwstat->syncp);
+		start = u64_stats_fetch_begin_irq(&hwstat->syncp);
 
 		/* Convert HW stats into rtnl_link_stats64 stats. */
 		nstat->rx_packets = hwstat->rx_pkts;
@@ -1714,7 +1712,7 @@ static void b44_get_stats64(struct net_device *dev,
 		/* Carrier lost counter seems to be broken for some devices */
 		nstat->tx_carrier_errors = hwstat->tx_carrier_lost;
 #endif
-	} while (u64_stats_fetch_retry(&hwstat->syncp, start));
+	} while (u64_stats_fetch_retry_irq(&hwstat->syncp, start));
 
 }
 
@@ -1790,13 +1788,13 @@ static void b44_get_drvinfo (struct net_device *dev, struct ethtool_drvinfo *inf
 	struct b44 *bp = netdev_priv(dev);
 	struct ssb_bus *bus = bp->sdev->bus;
 
-	strscpy(info->driver, DRV_MODULE_NAME, sizeof(info->driver));
+	strlcpy(info->driver, DRV_MODULE_NAME, sizeof(info->driver));
 	switch (bus->bustype) {
 	case SSB_BUSTYPE_PCI:
-		strscpy(info->bus_info, pci_name(bus->host_pci), sizeof(info->bus_info));
+		strlcpy(info->bus_info, pci_name(bus->host_pci), sizeof(info->bus_info));
 		break;
 	case SSB_BUSTYPE_SSB:
-		strscpy(info->bus_info, "SSB", sizeof(info->bus_info));
+		strlcpy(info->bus_info, "SSB", sizeof(info->bus_info));
 		break;
 	case SSB_BUSTYPE_PCMCIA:
 	case SSB_BUSTYPE_SDIO:
@@ -1961,9 +1959,7 @@ static int b44_set_link_ksettings(struct net_device *dev,
 }
 
 static void b44_get_ringparam(struct net_device *dev,
-			      struct ethtool_ringparam *ering,
-			      struct kernel_ethtool_ringparam *kernel_ering,
-			      struct netlink_ext_ack *extack)
+			      struct ethtool_ringparam *ering)
 {
 	struct b44 *bp = netdev_priv(dev);
 
@@ -1974,9 +1970,7 @@ static void b44_get_ringparam(struct net_device *dev,
 }
 
 static int b44_set_ringparam(struct net_device *dev,
-			     struct ethtool_ringparam *ering,
-			     struct kernel_ethtool_ringparam *kernel_ering,
-			     struct netlink_ext_ack *extack)
+			     struct ethtool_ringparam *ering)
 {
 	struct b44 *bp = netdev_priv(dev);
 
@@ -2082,12 +2076,12 @@ static void b44_get_ethtool_stats(struct net_device *dev,
 	do {
 		data_src = &hwstat->tx_good_octets;
 		data_dst = data;
-		start = u64_stats_fetch_begin(&hwstat->syncp);
+		start = u64_stats_fetch_begin_irq(&hwstat->syncp);
 
 		for (i = 0; i < ARRAY_SIZE(b44_gstrings); i++)
 			*data_dst++ = *data_src++;
 
-	} while (u64_stats_fetch_retry(&hwstat->syncp, start));
+	} while (u64_stats_fetch_retry_irq(&hwstat->syncp, start));
 }
 
 static void b44_get_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
@@ -2177,7 +2171,7 @@ static int b44_get_invariants(struct b44 *bp)
 	 * valid PHY address. */
 	bp->phy_addr &= 0x1F;
 
-	eth_hw_addr_set(bp->dev, addr);
+	memcpy(bp->dev->dev_addr, addr, ETH_ALEN);
 
 	if (!is_valid_ether_addr(&bp->dev->dev_addr[0])){
 		pr_err("Invalid MAC address found in EEPROM\n");
@@ -2375,7 +2369,7 @@ static int b44_init_one(struct ssb_device *sdev,
 	bp->tx_pending = B44_DEF_TX_RING_PENDING;
 
 	dev->netdev_ops = &b44_netdev_ops;
-	netif_napi_add(dev, &bp->napi, b44_poll);
+	netif_napi_add(dev, &bp->napi, b44_poll, 64);
 	dev->watchdog_timeo = B44_TX_TIMEOUT;
 	dev->min_mtu = B44_MIN_MTU;
 	dev->max_mtu = B44_MAX_MTU;

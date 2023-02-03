@@ -18,6 +18,8 @@
 #include "ixgbe_phy.h"
 
 
+#define IXGBE_ALL_RAR_ENTRIES 16
+
 enum {NETDEV_STATS, IXGBE_STATS};
 
 struct ixgbe_stats {
@@ -136,8 +138,6 @@ static const char ixgbe_priv_flags_strings[][ETH_GSTRING_LEN] = {
 	"legacy-rx",
 #define IXGBE_PRIV_FLAGS_VF_IPSEC_EN	BIT(1)
 	"vf-ipsec",
-#define IXGBE_PRIV_FLAGS_AUTO_DISABLE_VF	BIT(2)
-	"mdd-disable-vf",
 };
 
 #define IXGBE_PRIV_FLAGS_STR_LEN ARRAY_SIZE(ixgbe_priv_flags_strings)
@@ -467,8 +467,9 @@ static int ixgbe_set_link_ksettings(struct net_device *netdev,
 		 * this function does not support duplex forcing, but can
 		 * limit the advertising of the adapter to the specified speed
 		 */
-		if (!linkmode_subset(cmd->link_modes.advertising,
-				     cmd->link_modes.supported))
+		if (!bitmap_subset(cmd->link_modes.advertising,
+				   cmd->link_modes.supported,
+				   __ETHTOOL_LINK_MODE_MASK_NBITS))
 			return -EINVAL;
 
 		/* only allow one speed at a time if no autoneg */
@@ -1106,72 +1107,32 @@ static void ixgbe_get_drvinfo(struct net_device *netdev,
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 
-	strscpy(drvinfo->driver, ixgbe_driver_name, sizeof(drvinfo->driver));
+	strlcpy(drvinfo->driver, ixgbe_driver_name, sizeof(drvinfo->driver));
 
-	strscpy(drvinfo->fw_version, adapter->eeprom_id,
+	strlcpy(drvinfo->fw_version, adapter->eeprom_id,
 		sizeof(drvinfo->fw_version));
 
-	strscpy(drvinfo->bus_info, pci_name(adapter->pdev),
+	strlcpy(drvinfo->bus_info, pci_name(adapter->pdev),
 		sizeof(drvinfo->bus_info));
 
 	drvinfo->n_priv_flags = IXGBE_PRIV_FLAGS_STR_LEN;
 }
 
-static u32 ixgbe_get_max_rxd(struct ixgbe_adapter *adapter)
-{
-	switch (adapter->hw.mac.type) {
-	case ixgbe_mac_82598EB:
-		return IXGBE_MAX_RXD_82598;
-	case ixgbe_mac_82599EB:
-		return IXGBE_MAX_RXD_82599;
-	case ixgbe_mac_X540:
-		return IXGBE_MAX_RXD_X540;
-	case ixgbe_mac_X550:
-	case ixgbe_mac_X550EM_x:
-	case ixgbe_mac_x550em_a:
-		return IXGBE_MAX_RXD_X550;
-	default:
-		return IXGBE_MAX_RXD_82598;
-	}
-}
-
-static u32 ixgbe_get_max_txd(struct ixgbe_adapter *adapter)
-{
-	switch (adapter->hw.mac.type) {
-	case ixgbe_mac_82598EB:
-		return IXGBE_MAX_TXD_82598;
-	case ixgbe_mac_82599EB:
-		return IXGBE_MAX_TXD_82599;
-	case ixgbe_mac_X540:
-		return IXGBE_MAX_TXD_X540;
-	case ixgbe_mac_X550:
-	case ixgbe_mac_X550EM_x:
-	case ixgbe_mac_x550em_a:
-		return IXGBE_MAX_TXD_X550;
-	default:
-		return IXGBE_MAX_TXD_82598;
-	}
-}
-
 static void ixgbe_get_ringparam(struct net_device *netdev,
-				struct ethtool_ringparam *ring,
-				struct kernel_ethtool_ringparam *kernel_ring,
-				struct netlink_ext_ack *extack)
+				struct ethtool_ringparam *ring)
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 	struct ixgbe_ring *tx_ring = adapter->tx_ring[0];
 	struct ixgbe_ring *rx_ring = adapter->rx_ring[0];
 
-	ring->rx_max_pending = ixgbe_get_max_rxd(adapter);
-	ring->tx_max_pending = ixgbe_get_max_txd(adapter);
+	ring->rx_max_pending = IXGBE_MAX_RXD;
+	ring->tx_max_pending = IXGBE_MAX_TXD;
 	ring->rx_pending = rx_ring->count;
 	ring->tx_pending = tx_ring->count;
 }
 
 static int ixgbe_set_ringparam(struct net_device *netdev,
-			       struct ethtool_ringparam *ring,
-			       struct kernel_ethtool_ringparam *kernel_ring,
-			       struct netlink_ext_ack *extack)
+			       struct ethtool_ringparam *ring)
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 	struct ixgbe_ring *temp_ring;
@@ -1182,11 +1143,11 @@ static int ixgbe_set_ringparam(struct net_device *netdev,
 		return -EINVAL;
 
 	new_tx_count = clamp_t(u32, ring->tx_pending,
-			       IXGBE_MIN_TXD, ixgbe_get_max_txd(adapter));
+			       IXGBE_MIN_TXD, IXGBE_MAX_TXD);
 	new_tx_count = ALIGN(new_tx_count, IXGBE_REQ_TX_DESCRIPTOR_MULTIPLE);
 
 	new_rx_count = clamp_t(u32, ring->rx_pending,
-			       IXGBE_MIN_RXD, ixgbe_get_max_rxd(adapter));
+			       IXGBE_MIN_RXD, IXGBE_MAX_RXD);
 	new_rx_count = ALIGN(new_rx_count, IXGBE_REQ_RX_DESCRIPTOR_MULTIPLE);
 
 	if ((new_tx_count == adapter->tx_ring_count) &&
@@ -1371,10 +1332,10 @@ static void ixgbe_get_ethtool_stats(struct net_device *netdev,
 		}
 
 		do {
-			start = u64_stats_fetch_begin(&ring->syncp);
+			start = u64_stats_fetch_begin_irq(&ring->syncp);
 			data[i]   = ring->stats.packets;
 			data[i+1] = ring->stats.bytes;
-		} while (u64_stats_fetch_retry(&ring->syncp, start));
+		} while (u64_stats_fetch_retry_irq(&ring->syncp, start));
 		i += 2;
 	}
 	for (j = 0; j < IXGBE_NUM_RX_QUEUES; j++) {
@@ -1387,10 +1348,10 @@ static void ixgbe_get_ethtool_stats(struct net_device *netdev,
 		}
 
 		do {
-			start = u64_stats_fetch_begin(&ring->syncp);
+			start = u64_stats_fetch_begin_irq(&ring->syncp);
 			data[i]   = ring->stats.packets;
 			data[i+1] = ring->stats.bytes;
-		} while (u64_stats_fetch_retry(&ring->syncp, start));
+		} while (u64_stats_fetch_retry_irq(&ring->syncp, start));
 		i += 2;
 	}
 
@@ -1996,13 +1957,20 @@ static bool ixgbe_check_lbtest_frame(struct ixgbe_rx_buffer *rx_buffer,
 				     unsigned int frame_size)
 {
 	unsigned char *data;
+	bool match = true;
 
 	frame_size >>= 1;
 
-	data = page_address(rx_buffer->page) + rx_buffer->page_offset;
+	data = kmap(rx_buffer->page) + rx_buffer->page_offset;
 
-	return data[3] == 0xFF && data[frame_size + 10] == 0xBE &&
-		data[frame_size + 12] == 0xAF;
+	if (data[3] != 0xFF ||
+	    data[frame_size + 10] != 0xBE ||
+	    data[frame_size + 12] != 0xAF)
+		match = false;
+
+	kunmap(rx_buffer->page);
+
+	return match;
 }
 
 static u16 ixgbe_clean_test_rings(struct ixgbe_ring *rx_ring,
@@ -3539,9 +3507,6 @@ static u32 ixgbe_get_priv_flags(struct net_device *netdev)
 	if (adapter->flags2 & IXGBE_FLAG2_VF_IPSEC_ENABLED)
 		priv_flags |= IXGBE_PRIV_FLAGS_VF_IPSEC_EN;
 
-	if (adapter->flags2 & IXGBE_FLAG2_AUTO_DISABLE_VF)
-		priv_flags |= IXGBE_PRIV_FLAGS_AUTO_DISABLE_VF;
-
 	return priv_flags;
 }
 
@@ -3549,7 +3514,6 @@ static int ixgbe_set_priv_flags(struct net_device *netdev, u32 priv_flags)
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 	unsigned int flags2 = adapter->flags2;
-	unsigned int i;
 
 	flags2 &= ~IXGBE_FLAG2_RX_LEGACY;
 	if (priv_flags & IXGBE_PRIV_FLAGS_LEGACY_RX)
@@ -3558,21 +3522,6 @@ static int ixgbe_set_priv_flags(struct net_device *netdev, u32 priv_flags)
 	flags2 &= ~IXGBE_FLAG2_VF_IPSEC_ENABLED;
 	if (priv_flags & IXGBE_PRIV_FLAGS_VF_IPSEC_EN)
 		flags2 |= IXGBE_FLAG2_VF_IPSEC_ENABLED;
-
-	flags2 &= ~IXGBE_FLAG2_AUTO_DISABLE_VF;
-	if (priv_flags & IXGBE_PRIV_FLAGS_AUTO_DISABLE_VF) {
-		if (adapter->hw.mac.type == ixgbe_mac_82599EB) {
-			/* Reset primary abort counter */
-			for (i = 0; i < adapter->num_vfs; i++)
-				adapter->vfinfo[i].primary_abort_count = 0;
-
-			flags2 |= IXGBE_FLAG2_AUTO_DISABLE_VF;
-		} else {
-			e_info(probe,
-			       "Cannot set private flags: Operation not supported\n");
-			return -EOPNOTSUPP;
-		}
-	}
 
 	if (flags2 != adapter->flags2) {
 		adapter->flags2 = flags2;

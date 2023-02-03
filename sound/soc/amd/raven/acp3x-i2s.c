@@ -257,8 +257,7 @@ static const struct snd_soc_dai_ops acp3x_i2s_dai_ops = {
 };
 
 static const struct snd_soc_component_driver acp3x_dai_component = {
-	.name			= DRV_NAME,
-	.legacy_dai_naming	= 1,
+	.name           = DRV_NAME,
 };
 
 static struct snd_soc_dai_driver acp3x_i2s_dai = {

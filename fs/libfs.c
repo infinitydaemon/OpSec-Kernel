@@ -15,7 +15,6 @@
 #include <linux/mutex.h>
 #include <linux/namei.h>
 #include <linux/exportfs.h>
-#include <linux/iversion.h>
 #include <linux/writeback.h>
 #include <linux/buffer_head.h> /* sync_mapping_buffers */
 #include <linux/fs_context.h>
@@ -449,30 +448,6 @@ int simple_rmdir(struct inode *dir, struct dentry *dentry)
 }
 EXPORT_SYMBOL(simple_rmdir);
 
-int simple_rename_exchange(struct inode *old_dir, struct dentry *old_dentry,
-			   struct inode *new_dir, struct dentry *new_dentry)
-{
-	bool old_is_dir = d_is_dir(old_dentry);
-	bool new_is_dir = d_is_dir(new_dentry);
-
-	if (old_dir != new_dir && old_is_dir != new_is_dir) {
-		if (old_is_dir) {
-			drop_nlink(old_dir);
-			inc_nlink(new_dir);
-		} else {
-			drop_nlink(new_dir);
-			inc_nlink(old_dir);
-		}
-	}
-	old_dir->i_ctime = old_dir->i_mtime =
-	new_dir->i_ctime = new_dir->i_mtime =
-	d_inode(old_dentry)->i_ctime =
-	d_inode(new_dentry)->i_ctime = current_time(old_dir);
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(simple_rename_exchange);
-
 int simple_rename(struct user_namespace *mnt_userns, struct inode *old_dir,
 		  struct dentry *old_dentry, struct inode *new_dir,
 		  struct dentry *new_dentry, unsigned int flags)
@@ -480,11 +455,8 @@ int simple_rename(struct user_namespace *mnt_userns, struct inode *old_dir,
 	struct inode *inode = d_inode(old_dentry);
 	int they_are_dirs = d_is_dir(old_dentry);
 
-	if (flags & ~(RENAME_NOREPLACE | RENAME_EXCHANGE))
+	if (flags & ~RENAME_NOREPLACE)
 		return -EINVAL;
-
-	if (flags & RENAME_EXCHANGE)
-		return simple_rename_exchange(old_dir, old_dentry, new_dir, new_dentry);
 
 	if (!simple_empty(new_dentry))
 		return -ENOTEMPTY;
@@ -540,17 +512,17 @@ int simple_setattr(struct user_namespace *mnt_userns, struct dentry *dentry,
 }
 EXPORT_SYMBOL(simple_setattr);
 
-static int simple_read_folio(struct file *file, struct folio *folio)
+static int simple_readpage(struct file *file, struct page *page)
 {
-	folio_zero_range(folio, 0, folio_size(folio));
-	flush_dcache_folio(folio);
-	folio_mark_uptodate(folio);
-	folio_unlock(folio);
+	clear_highpage(page);
+	flush_dcache_page(page);
+	SetPageUptodate(page);
+	unlock_page(page);
 	return 0;
 }
 
 int simple_write_begin(struct file *file, struct address_space *mapping,
-			loff_t pos, unsigned len,
+			loff_t pos, unsigned len, unsigned flags,
 			struct page **pagep, void **fsdata)
 {
 	struct page *page;
@@ -558,7 +530,7 @@ int simple_write_begin(struct file *file, struct address_space *mapping,
 
 	index = pos >> PAGE_SHIFT;
 
-	page = grab_cache_page_write_begin(mapping, index);
+	page = grab_cache_page_write_begin(mapping, index, flags);
 	if (!page)
 		return -ENOMEM;
 
@@ -593,7 +565,7 @@ EXPORT_SYMBOL(simple_write_begin);
  * should extend on what's done here with a call to mark_inode_dirty() in the
  * case that i_size has changed.
  *
- * Use *ONLY* with simple_read_folio()
+ * Use *ONLY* with simple_readpage()
  */
 static int simple_write_end(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned copied,
@@ -629,10 +601,10 @@ static int simple_write_end(struct file *file, struct address_space *mapping,
  * Provides ramfs-style behavior: data in the pagecache, but no writeback.
  */
 const struct address_space_operations ram_aops = {
-	.read_folio	= simple_read_folio,
+	.readpage	= simple_readpage,
 	.write_begin	= simple_write_begin,
 	.write_end	= simple_write_end,
-	.dirty_folio	= noop_dirty_folio,
+	.set_page_dirty	= __set_page_dirty_no_writeback,
 };
 EXPORT_SYMBOL(ram_aops);
 
@@ -1215,6 +1187,17 @@ int noop_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 }
 EXPORT_SYMBOL(noop_fsync);
 
+void noop_invalidatepage(struct page *page, unsigned int offset,
+		unsigned int length)
+{
+	/*
+	 * There is no page cache to invalidate in the dax case, however
+	 * we need this callback defined to prevent falling back to
+	 * block_invalidatepage() in do_invalidatepage().
+	 */
+}
+EXPORT_SYMBOL_GPL(noop_invalidatepage);
+
 ssize_t noop_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 {
 	/*
@@ -1237,7 +1220,7 @@ EXPORT_SYMBOL(kfree_link);
 struct inode *alloc_anon_inode(struct super_block *s)
 {
 	static const struct address_space_operations anon_aops = {
-		.dirty_folio	= noop_dirty_folio,
+		.set_page_dirty = __set_page_dirty_no_writeback,
 	};
 	struct inode *inode = new_inode_pseudo(s);
 
@@ -1385,7 +1368,7 @@ bool is_empty_dir_inode(struct inode *inode)
 		(inode->i_op == &empty_dir_inode_operations);
 }
 
-#if IS_ENABLED(CONFIG_UNICODE)
+#ifdef CONFIG_UNICODE
 /*
  * Determine if the name of a dentry should be casefolded.
  *
@@ -1479,7 +1462,7 @@ static const struct dentry_operations generic_encrypted_dentry_ops = {
 };
 #endif
 
-#if defined(CONFIG_FS_ENCRYPTION) && IS_ENABLED(CONFIG_UNICODE)
+#if defined(CONFIG_FS_ENCRYPTION) && defined(CONFIG_UNICODE)
 static const struct dentry_operations generic_encrypted_ci_dentry_ops = {
 	.d_hash = generic_ci_d_hash,
 	.d_compare = generic_ci_d_compare,
@@ -1514,10 +1497,10 @@ void generic_set_encrypted_ci_d_ops(struct dentry *dentry)
 #ifdef CONFIG_FS_ENCRYPTION
 	bool needs_encrypt_ops = dentry->d_flags & DCACHE_NOKEY_NAME;
 #endif
-#if IS_ENABLED(CONFIG_UNICODE)
+#ifdef CONFIG_UNICODE
 	bool needs_ci_ops = dentry->d_sb->s_encoding;
 #endif
-#if defined(CONFIG_FS_ENCRYPTION) && IS_ENABLED(CONFIG_UNICODE)
+#if defined(CONFIG_FS_ENCRYPTION) && defined(CONFIG_UNICODE)
 	if (needs_encrypt_ops && needs_ci_ops) {
 		d_set_d_op(dentry, &generic_encrypted_ci_dentry_ops);
 		return;
@@ -1529,7 +1512,7 @@ void generic_set_encrypted_ci_d_ops(struct dentry *dentry)
 		return;
 	}
 #endif
-#if IS_ENABLED(CONFIG_UNICODE)
+#ifdef CONFIG_UNICODE
 	if (needs_ci_ops) {
 		d_set_d_op(dentry, &generic_ci_dentry_ops);
 		return;
@@ -1537,48 +1520,3 @@ void generic_set_encrypted_ci_d_ops(struct dentry *dentry)
 #endif
 }
 EXPORT_SYMBOL(generic_set_encrypted_ci_d_ops);
-
-/**
- * inode_maybe_inc_iversion - increments i_version
- * @inode: inode with the i_version that should be updated
- * @force: increment the counter even if it's not necessary?
- *
- * Every time the inode is modified, the i_version field must be seen to have
- * changed by any observer.
- *
- * If "force" is set or the QUERIED flag is set, then ensure that we increment
- * the value, and clear the queried flag.
- *
- * In the common case where neither is set, then we can return "false" without
- * updating i_version.
- *
- * If this function returns false, and no other metadata has changed, then we
- * can avoid logging the metadata.
- */
-bool inode_maybe_inc_iversion(struct inode *inode, bool force)
-{
-	u64 cur, new;
-
-	/*
-	 * The i_version field is not strictly ordered with any other inode
-	 * information, but the legacy inode_inc_iversion code used a spinlock
-	 * to serialize increments.
-	 *
-	 * Here, we add full memory barriers to ensure that any de-facto
-	 * ordering with other info is preserved.
-	 *
-	 * This barrier pairs with the barrier in inode_query_iversion()
-	 */
-	smp_mb();
-	cur = inode_peek_iversion_raw(inode);
-	do {
-		/* If flag is clear then we needn't do anything */
-		if (!force && !(cur & I_VERSION_QUERIED))
-			return false;
-
-		/* Since lowest bit is flag, add 2 to avoid it */
-		new = (cur & ~I_VERSION_QUERIED) + I_VERSION_INCREMENT;
-	} while (!atomic64_try_cmpxchg(&inode->i_version, &cur, new));
-	return true;
-}
-EXPORT_SYMBOL(inode_maybe_inc_iversion);

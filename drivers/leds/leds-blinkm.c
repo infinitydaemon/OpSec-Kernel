@@ -139,11 +139,11 @@ static ssize_t show_color_common(struct device *dev, char *buf, int color)
 		return ret;
 	switch (color) {
 	case RED:
-		return sysfs_emit(buf, "%02X\n", data->red);
+		return scnprintf(buf, PAGE_SIZE, "%02X\n", data->red);
 	case GREEN:
-		return sysfs_emit(buf, "%02X\n", data->green);
+		return scnprintf(buf, PAGE_SIZE, "%02X\n", data->green);
 	case BLUE:
-		return sysfs_emit(buf, "%02X\n", data->blue);
+		return scnprintf(buf, PAGE_SIZE, "%02X\n", data->blue);
 	default:
 		return -EINVAL;
 	}
@@ -253,7 +253,7 @@ static DEVICE_ATTR_RW(blue);
 static ssize_t test_show(struct device *dev, struct device_attribute *attr,
 			 char *buf)
 {
-	return sysfs_emit(buf,
+	return scnprintf(buf, PAGE_SIZE,
 			 "#Write into test to start test sequence!#\n");
 }
 
@@ -677,7 +677,7 @@ exit:
 	return err;
 }
 
-static void blinkm_remove(struct i2c_client *client)
+static int blinkm_remove(struct i2c_client *client)
 {
 	struct blinkm_data *data = i2c_get_clientdata(client);
 	int ret = 0;
@@ -716,6 +716,7 @@ static void blinkm_remove(struct i2c_client *client)
 		dev_err(&client->dev, "Failure in blinkm_remove ignored. Continuing.\n");
 
 	sysfs_remove_group(&client->dev.kobj, &blinkm_group);
+	return 0;
 }
 
 static const struct i2c_device_id blinkm_id[] = {

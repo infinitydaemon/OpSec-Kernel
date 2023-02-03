@@ -116,7 +116,7 @@ static int qla4xxx_iface_set_param(struct Scsi_Host *shost, void *data,
 static int qla4xxx_get_iface_param(struct iscsi_iface *iface,
 				   enum iscsi_param_type param_type,
 				   int param, char *buf);
-static enum scsi_timeout_action qla4xxx_eh_cmd_timed_out(struct scsi_cmnd *sc);
+static enum blk_eh_timer_return qla4xxx_eh_cmd_timed_out(struct scsi_cmnd *sc);
 static struct iscsi_endpoint *qla4xxx_ep_connect(struct Scsi_Host *shost,
 						 struct sockaddr *dst_addr,
 						 int non_blocking);
@@ -226,7 +226,6 @@ static struct scsi_host_template qla4xxx_driver_template = {
 	.name			= DRIVER_NAME,
 	.proc_name		= DRIVER_NAME,
 	.queuecommand		= qla4xxx_queuecommand,
-	.cmd_size		= sizeof(struct qla4xxx_cmd_priv),
 
 	.eh_abort_handler	= qla4xxx_eh_abort,
 	.eh_device_reset_handler = qla4xxx_eh_device_reset,
@@ -242,7 +241,7 @@ static struct scsi_host_template qla4xxx_driver_template = {
 	.sg_tablesize		= SG_ALL,
 
 	.max_sectors		= 0xFFFF,
-	.shost_groups		= qla4xxx_host_groups,
+	.shost_attrs		= qla4xxx_host_attrs,
 	.host_reset		= qla4xxx_host_reset,
 	.vendor_id		= SCSI_NL_VID_TYPE_PCI | PCI_VENDOR_ID_QLOGIC,
 };
@@ -671,6 +670,7 @@ static void qla4xxx_create_chap_list(struct scsi_qla_host *ha)
 		goto exit_chap_list;
 	}
 
+	memset(ha->chap_list, 0, chap_size);
 	memcpy(ha->chap_list, chap_flash_data, chap_size);
 
 exit_chap_list:
@@ -1871,17 +1871,17 @@ exit_get_stats:
 	return;
 }
 
-static enum scsi_timeout_action qla4xxx_eh_cmd_timed_out(struct scsi_cmnd *sc)
+static enum blk_eh_timer_return qla4xxx_eh_cmd_timed_out(struct scsi_cmnd *sc)
 {
 	struct iscsi_cls_session *session;
 	unsigned long flags;
-	enum scsi_timeout_action ret = SCSI_EH_NOT_HANDLED;
+	enum blk_eh_timer_return ret = BLK_EH_DONE;
 
 	session = starget_to_session(scsi_target(sc->device));
 
 	spin_lock_irqsave(&session->lock, flags);
 	if (session->state == ISCSI_SESSION_FAILED)
-		ret = SCSI_EH_RESET_TIMER;
+		ret = BLK_EH_RESET_TIMER;
 	spin_unlock_irqrestore(&session->lock, flags);
 
 	return ret;
@@ -3639,6 +3639,7 @@ static int qla4xxx_copy_to_fwddb_param(struct iscsi_bus_flash_session *sess,
 				       struct dev_db_entry *fw_ddb_entry)
 {
 	uint16_t options;
+	int rc = 0;
 
 	options = le16_to_cpu(fw_ddb_entry->options);
 	SET_BITVAL(conn->is_fw_assigned_ipv6,  options, BIT_11);
@@ -3737,7 +3738,7 @@ static int qla4xxx_copy_to_fwddb_param(struct iscsi_bus_flash_session *sess,
 
 	COPY_ISID(fw_ddb_entry->isid, sess->isid);
 
-	return 0;
+	return rc;
 }
 
 static void qla4xxx_copy_to_sess_conn_params(struct iscsi_conn *conn,
@@ -4053,7 +4054,7 @@ static struct srb* qla4xxx_get_new_srb(struct scsi_qla_host *ha,
 	srb->ddb = ddb_entry;
 	srb->cmd = cmd;
 	srb->flags = 0;
-	qla4xxx_cmd_priv(cmd)->srb = srb;
+	CMD_SP(cmd) = (void *)srb;
 
 	return srb;
 }
@@ -4066,7 +4067,7 @@ static void qla4xxx_srb_free_dma(struct scsi_qla_host *ha, struct srb *srb)
 		scsi_dma_unmap(cmd);
 		srb->flags &= ~SRB_DMA_VALID;
 	}
-	qla4xxx_cmd_priv(cmd)->srb = NULL;
+	CMD_SP(cmd) = NULL;
 }
 
 void qla4xxx_srb_compl(struct kref *ref)
@@ -4079,7 +4080,7 @@ void qla4xxx_srb_compl(struct kref *ref)
 
 	mempool_free(srb, ha->srb_mempool);
 
-	scsi_done(cmd);
+	cmd->scsi_done(cmd);
 }
 
 /**
@@ -4153,7 +4154,7 @@ qc_host_busy:
 	return SCSI_MLQUEUE_HOST_BUSY;
 
 qc_fail_command:
-	scsi_done(cmd);
+	cmd->scsi_done(cmd);
 
 	return 0;
 }
@@ -4639,7 +4640,7 @@ static int qla4xxx_cmd_wait(struct scsi_qla_host *ha)
 			 * the scsi/block layer is going to prevent
 			 * the tag from being released.
 			 */
-			if (cmd != NULL && qla4xxx_cmd_priv(cmd)->srb)
+			if (cmd != NULL && CMD_SP(cmd))
 				break;
 		}
 		spin_unlock_irqrestore(&ha->hardware_lock, flags);
@@ -5095,7 +5096,7 @@ int qla4xxx_unblock_flash_ddb(struct iscsi_cls_session *cls_session)
 		ql4_printk(KERN_INFO, ha, "scsi%ld: %s: ddb[%d]"
 			   " start scan\n", ha->host_no, __func__,
 			   ddb_entry->fw_ddb_index);
-		queue_work(ddb_entry->sess->workq, &ddb_entry->sess->scan_work);
+		scsi_queue_work(ha->host, &ddb_entry->sess->scan_work);
 	}
 	return QLA_SUCCESS;
 }
@@ -5733,7 +5734,7 @@ static ssize_t qla4xxx_show_boot_eth_info(void *data, int type, char *buf)
 
 	switch (type) {
 	case ISCSI_BOOT_ETH_FLAGS:
-		rc = sprintf(str, "%d\n", (char)SYSFS_FLAG_FW_SEL_BOOT);
+		rc = sprintf(str, "%d\n", SYSFS_FLAG_FW_SEL_BOOT);
 		break;
 	case ISCSI_BOOT_ETH_INDEX:
 		rc = sprintf(str, "0\n");
@@ -5842,7 +5843,7 @@ qla4xxx_show_boot_tgt_info(struct ql4_boot_session_info *boot_sess, int type,
 			     (char *)&boot_conn->chap.intr_secret);
 		break;
 	case ISCSI_BOOT_TGT_FLAGS:
-		rc = sprintf(str, "%d\n", (char)SYSFS_FLAG_FW_SEL_BOOT);
+		rc = sprintf(str, "%d\n", SYSFS_FLAG_FW_SEL_BOOT);
 		break;
 	case ISCSI_BOOT_TGT_NIC_ASSOC:
 		rc = sprintf(str, "0\n");
@@ -9078,7 +9079,7 @@ struct srb *qla4xxx_del_from_active_array(struct scsi_qla_host *ha,
 	if (!cmd)
 		return srb;
 
-	srb = qla4xxx_cmd_priv(cmd)->srb;
+	srb = (struct srb *)CMD_SP(cmd);
 	if (!srb)
 		return srb;
 
@@ -9120,7 +9121,7 @@ static int qla4xxx_eh_wait_on_command(struct scsi_qla_host *ha,
 
 	do {
 		/* Checking to see if its returned to OS */
-		rp = qla4xxx_cmd_priv(cmd)->srb;
+		rp = (struct srb *) CMD_SP(cmd);
 		if (rp == NULL) {
 			done++;
 			break;
@@ -9214,7 +9215,7 @@ static int qla4xxx_eh_abort(struct scsi_cmnd *cmd)
 	}
 
 	spin_lock_irqsave(&ha->hardware_lock, flags);
-	srb = qla4xxx_cmd_priv(cmd)->srb;
+	srb = (struct srb *) CMD_SP(cmd);
 	if (!srb) {
 		spin_unlock_irqrestore(&ha->hardware_lock, flags);
 		ql4_printk(KERN_INFO, ha, "scsi%ld:%d:%llu: Specified command has already completed.\n",

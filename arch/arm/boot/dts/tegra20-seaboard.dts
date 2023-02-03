@@ -285,7 +285,7 @@
 			};
 		};
 
-		state_i2cmux_ddc: pinmux-i2cmux-ddc {
+		state_i2cmux_ddc: pinmux_i2cmux_ddc {
 			ddc {
 				nvidia,pins = "ddc";
 				nvidia,function = "i2c2";
@@ -296,7 +296,7 @@
 			};
 		};
 
-		state_i2cmux_pta: pinmux-i2cmux-pta {
+		state_i2cmux_pta: pinmux_i2cmux_pta {
 			ddc {
 				nvidia,pins = "ddc";
 				nvidia,function = "rsvd4";
@@ -307,7 +307,7 @@
 			};
 		};
 
-		state_i2cmux_idle: pinmux-i2cmux-idle {
+		state_i2cmux_idle: pinmux_i2cmux_idle {
 			ddc {
 				nvidia,pins = "ddc";
 				nvidia,function = "rsvd4";
@@ -358,7 +358,7 @@
 		};
 
 		gyrometer@68 {
-			compatible = "invensense,mpu3050";
+			compatible = "invn,mpu3050";
 			reg = <0x68>;
 			interrupt-parent = <&gpio>;
 			interrupts = <TEGRA_GPIO(Z, 4) IRQ_TYPE_LEVEL_HIGH>;
@@ -444,7 +444,7 @@
 					regulator-always-on;
 				};
 
-				vdd_core: sm0 {
+				sm0 {
 					regulator-name = "vdd_sm0,vdd_core";
 					regulator-min-microvolt = <1300000>;
 					regulator-max-microvolt = <1300000>;
@@ -689,7 +689,6 @@
 		nvidia,core-pwr-good-time = <3845 3845>;
 		nvidia,core-pwr-off-time = <3875>;
 		nvidia,sys-clock-req-active-high;
-		core-supply = <&vdd_core>;
 	};
 
 	memory-controller@7000f400 {
@@ -743,6 +742,8 @@
 
 	usb@c5004000 {
 		status = "okay";
+		nvidia,phy-reset-gpio = <&gpio TEGRA_GPIO(V, 1)
+			GPIO_ACTIVE_LOW>;
 	};
 
 	usb-phy@c5004000 {
@@ -791,7 +792,7 @@
 		default-brightness-level = <6>;
 	};
 
-	clk32k_in: clock-32k {
+	clk32k_in: clock@0 {
 		compatible = "fixed-clock";
 		clock-frequency = <32768>;
 		#clock-cells = <0>;
@@ -800,14 +801,14 @@
 	gpio-keys {
 		compatible = "gpio-keys";
 
-		key-power {
+		power {
 			label = "Power";
 			gpios = <&gpio TEGRA_GPIO(V, 2) GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_POWER>;
 			wakeup-source;
 		};
 
-		switch-lid {
+		lid {
 			label = "Lid";
 			gpios = <&gpio TEGRA_GPIO(C, 7) GPIO_ACTIVE_HIGH>;
 			linux,input-type = <5>; /* EV_SW */
@@ -827,7 +828,7 @@
 		ddc-i2c-bus = <&lvds_ddc>;
 	};
 
-	vdd_5v0_reg: regulator-5v0 {
+	vdd_5v0_reg: regulator@0 {
 		compatible = "regulator-fixed";
 		regulator-name = "vdd_5v0";
 		regulator-min-microvolt = <5000000>;
@@ -835,7 +836,7 @@
 		regulator-always-on;
 	};
 
-	regulator-1v5 {
+	regulator@1 {
 		compatible = "regulator-fixed";
 		regulator-name = "vdd_1v5";
 		regulator-min-microvolt = <1500000>;
@@ -843,7 +844,7 @@
 		gpio = <&pmic 0 GPIO_ACTIVE_HIGH>;
 	};
 
-	regulator-1v2 {
+	regulator@2 {
 		compatible = "regulator-fixed";
 		regulator-name = "vdd_1v2";
 		regulator-min-microvolt = <1200000>;
@@ -852,7 +853,7 @@
 		enable-active-high;
 	};
 
-	vbus_reg: regulator-vbus {
+	vbus_reg: regulator@3 {
 		compatible = "regulator-fixed";
 		regulator-name = "vdd_vbus_wup1";
 		regulator-min-microvolt = <5000000>;
@@ -863,7 +864,7 @@
 		regulator-boot-on;
 	};
 
-	vdd_pnl_reg: regulator-pnl {
+	vdd_pnl_reg: regulator@4 {
 		compatible = "regulator-fixed";
 		regulator-name = "vdd_pnl";
 		regulator-min-microvolt = <2800000>;
@@ -872,7 +873,7 @@
 		enable-active-high;
 	};
 
-	vdd_bl_reg: regulator-bl {
+	vdd_bl_reg: regulator@5 {
 		compatible = "regulator-fixed";
 		regulator-name = "vdd_bl";
 		regulator-min-microvolt = <2800000>;
@@ -881,7 +882,7 @@
 		enable-active-high;
 	};
 
-	vdd_hdmi: regulator-hdmi {
+	vdd_hdmi: regulator@6 {
 		compatible = "regulator-fixed";
 		regulator-name = "VDDIO_HDMI";
 		regulator-min-microvolt = <5000000>;

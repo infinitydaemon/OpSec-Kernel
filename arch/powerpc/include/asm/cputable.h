@@ -70,6 +70,9 @@ struct cpu_spec {
 	/* Used to restore cpu setup on secondary processors and at resume */
 	cpu_restore_t	cpu_restore;
 
+	/* Used by oprofile userspace to select the right counters */
+	char		*oprofile_cpu_type;
+
 	/* Name of processor class, for the ELF AT_PLATFORM entry */
 	char		*platform;
 
@@ -437,10 +440,6 @@ static inline void cpu_feature_keys_init(void) { }
 #define CPU_FTRS_POWER9_DD2_2 (CPU_FTRS_POWER9 | CPU_FTR_POWER9_DD2_1 | \
 			       CPU_FTR_P9_TM_HV_ASSIST | \
 			       CPU_FTR_P9_TM_XER_SO_BUG)
-#define CPU_FTRS_POWER9_DD2_3 (CPU_FTRS_POWER9 | CPU_FTR_POWER9_DD2_1 | \
-			       CPU_FTR_P9_TM_HV_ASSIST | \
-			       CPU_FTR_P9_TM_XER_SO_BUG | \
-			       CPU_FTR_DAWR)
 #define CPU_FTRS_POWER10 (CPU_FTR_LWSYNC | \
 	    CPU_FTR_PPCAS_ARCH_V2 | CPU_FTR_CTRL | CPU_FTR_ARCH_206 |\
 	    CPU_FTR_MMCRA | CPU_FTR_SMT | \
@@ -463,23 +462,21 @@ static inline void cpu_feature_keys_init(void) { }
 #define CPU_FTRS_COMPATIBLE	(CPU_FTR_PPCAS_ARCH_V2)
 
 #ifdef CONFIG_PPC64
-#ifdef CONFIG_PPC_BOOK3E_64
+#ifdef CONFIG_PPC_BOOK3E
 #define CPU_FTRS_POSSIBLE	(CPU_FTRS_E6500 | CPU_FTRS_E5500)
 #else
 #ifdef CONFIG_CPU_LITTLE_ENDIAN
 #define CPU_FTRS_POSSIBLE	\
 	    (CPU_FTRS_POWER7 | CPU_FTRS_POWER8E | CPU_FTRS_POWER8 | \
 	     CPU_FTR_ALTIVEC_COMP | CPU_FTR_VSX_COMP | CPU_FTRS_POWER9 | \
-	     CPU_FTRS_POWER9_DD2_1 | CPU_FTRS_POWER9_DD2_2 | \
-	     CPU_FTRS_POWER9_DD2_3 | CPU_FTRS_POWER10)
+	     CPU_FTRS_POWER9_DD2_1 | CPU_FTRS_POWER9_DD2_2 | CPU_FTRS_POWER10)
 #else
 #define CPU_FTRS_POSSIBLE	\
 	    (CPU_FTRS_PPC970 | CPU_FTRS_POWER5 | \
 	     CPU_FTRS_POWER6 | CPU_FTRS_POWER7 | CPU_FTRS_POWER8E | \
 	     CPU_FTRS_POWER8 | CPU_FTRS_CELL | CPU_FTRS_PA6T | \
 	     CPU_FTR_VSX_COMP | CPU_FTR_ALTIVEC_COMP | CPU_FTRS_POWER9 | \
-	     CPU_FTRS_POWER9_DD2_1 | CPU_FTRS_POWER9_DD2_2 | \
-	     CPU_FTRS_POWER9_DD2_3 | CPU_FTRS_POWER10)
+	     CPU_FTRS_POWER9_DD2_1 | CPU_FTRS_POWER9_DD2_2 | CPU_FTRS_POWER10)
 #endif /* CONFIG_CPU_LITTLE_ENDIAN */
 #endif
 #else
@@ -510,7 +507,7 @@ enum {
 #elif defined(CONFIG_44x)
 	    CPU_FTRS_44X | CPU_FTRS_440x6 |
 #endif
-#ifdef CONFIG_PPC_E500
+#ifdef CONFIG_E500
 	    CPU_FTRS_E500 | CPU_FTRS_E500_2 |
 #endif
 #ifdef CONFIG_PPC_E500MC
@@ -521,7 +518,7 @@ enum {
 #endif /* __powerpc64__ */
 
 #ifdef CONFIG_PPC64
-#ifdef CONFIG_PPC_BOOK3E_64
+#ifdef CONFIG_PPC_BOOK3E
 #define CPU_FTRS_ALWAYS		(CPU_FTRS_E6500 & CPU_FTRS_E5500)
 #else
 
@@ -544,16 +541,14 @@ enum {
 #define CPU_FTRS_ALWAYS \
 	    (CPU_FTRS_POSSIBLE & ~CPU_FTR_HVMODE & CPU_FTRS_POWER7 & \
 	     CPU_FTRS_POWER8E & CPU_FTRS_POWER8 & CPU_FTRS_POWER9 & \
-	     CPU_FTRS_POWER9_DD2_1 & CPU_FTRS_POWER9_DD2_2 & \
-	     CPU_FTRS_POWER10 & CPU_FTRS_DT_CPU_BASE)
+	     CPU_FTRS_POWER9_DD2_1 & CPU_FTRS_DT_CPU_BASE)
 #else
 #define CPU_FTRS_ALWAYS		\
 	    (CPU_FTRS_PPC970 & CPU_FTRS_POWER5 & \
 	     CPU_FTRS_POWER6 & CPU_FTRS_POWER7 & CPU_FTRS_CELL & \
 	     CPU_FTRS_PA6T & CPU_FTRS_POWER8 & CPU_FTRS_POWER8E & \
 	     ~CPU_FTR_HVMODE & CPU_FTRS_POSSIBLE & CPU_FTRS_POWER9 & \
-	     CPU_FTRS_POWER9_DD2_1 & CPU_FTRS_POWER9_DD2_2 & \
-	     CPU_FTRS_POWER10 & CPU_FTRS_DT_CPU_BASE)
+	     CPU_FTRS_POWER9_DD2_1 & CPU_FTRS_DT_CPU_BASE)
 #endif /* CONFIG_CPU_LITTLE_ENDIAN */
 #endif
 #else
@@ -584,7 +579,7 @@ enum {
 #elif defined(CONFIG_44x)
 	    CPU_FTRS_44X & CPU_FTRS_440x6 &
 #endif
-#ifdef CONFIG_PPC_E500
+#ifdef CONFIG_E500
 	    CPU_FTRS_E500 & CPU_FTRS_E500_2 &
 #endif
 #ifdef CONFIG_PPC_E500MC

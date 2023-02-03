@@ -9,9 +9,6 @@ title: Toshiba Visconti PWM Controller
 maintainers:
   - Nobuhiro Iwamatsu <nobuhiro1.iwamatsu@toshiba.co.jp>
 
-allOf:
-  - $ref: pwm.yaml#
-
 properties:
   compatible:
     items:
@@ -26,6 +23,7 @@ properties:
 required:
   - compatible
   - reg
+  - '#pwm-cells'
 
 additionalProperties: false
 

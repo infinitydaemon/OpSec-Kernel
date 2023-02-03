@@ -624,8 +624,10 @@ static int rockchip_sfc_probe(struct platform_device *pdev)
 
 	/* Find the irq */
 	ret = platform_get_irq(pdev, 0);
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err(dev, "Failed to get the irq\n");
 		goto err_irq;
+	}
 
 	ret = devm_request_irq(dev, ret, rockchip_sfc_irq_handler,
 			       0, pdev->name, sfc);

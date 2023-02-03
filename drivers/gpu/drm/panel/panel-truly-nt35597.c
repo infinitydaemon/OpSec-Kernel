@@ -446,7 +446,7 @@ static int truly_nt35597_get_modes(struct drm_panel *panel,
 	const struct nt35597_config *config;
 
 	config = ctx->config;
-	mode = drm_mode_duplicate(connector->dev, config->dm);
+	mode = drm_mode_create(connector->dev);
 	if (!mode) {
 		dev_err(ctx->dev, "failed to create a new display mode\n");
 		return 0;
@@ -454,6 +454,7 @@ static int truly_nt35597_get_modes(struct drm_panel *panel,
 
 	connector->display_info.width_mm = config->width_mm;
 	connector->display_info.height_mm = config->height_mm;
+	drm_mode_copy(mode, config->dm);
 	mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
 	drm_mode_probed_add(connector, mode);
 
@@ -616,7 +617,7 @@ err_panel_add:
 	return ret;
 }
 
-static void truly_nt35597_remove(struct mipi_dsi_device *dsi)
+static int truly_nt35597_remove(struct mipi_dsi_device *dsi)
 {
 	struct truly_nt35597 *ctx = mipi_dsi_get_drvdata(dsi);
 
@@ -628,6 +629,7 @@ static void truly_nt35597_remove(struct mipi_dsi_device *dsi)
 	}
 
 	drm_panel_remove(&ctx->panel);
+	return 0;
 }
 
 static const struct of_device_id truly_nt35597_of_match[] = {

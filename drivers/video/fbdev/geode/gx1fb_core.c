@@ -6,7 +6,6 @@
  * Copyright (C) 2005 Arcom Control Systems Ltd.
  */
 
-#include <linux/aperture.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -321,10 +320,6 @@ static int gx1fb_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	struct fb_info *info;
 	int ret;
 
-	ret = aperture_remove_conflicting_pci_devices(pdev, "gx1fb");
-	if (ret)
-		return ret;
-
 	info = gx1fb_init_fbinfo(&pdev->dev);
 	if (!info)
 		return -ENOMEM;
@@ -415,13 +410,13 @@ static void __init gx1fb_setup(char *options)
 			continue;
 
 		if (!strncmp(this_opt, "mode:", 5))
-			strscpy(mode_option, this_opt + 5, sizeof(mode_option));
+			strlcpy(mode_option, this_opt + 5, sizeof(mode_option));
 		else if (!strncmp(this_opt, "crt:", 4))
 			crt_option = !!simple_strtoul(this_opt + 4, NULL, 0);
 		else if (!strncmp(this_opt, "panel:", 6))
-			strscpy(panel_option, this_opt + 6, sizeof(panel_option));
+			strlcpy(panel_option, this_opt + 6, sizeof(panel_option));
 		else
-			strscpy(mode_option, this_opt, sizeof(mode_option));
+			strlcpy(mode_option, this_opt, sizeof(mode_option));
 	}
 }
 #endif
@@ -446,12 +441,7 @@ static int __init gx1fb_init(void)
 {
 #ifndef MODULE
 	char *option = NULL;
-#endif
 
-	if (fb_modesetting_disabled("gx1fb"))
-		return -ENODEV;
-
-#ifndef MODULE
 	if (fb_get_options("gx1fb", &option))
 		return -ENODEV;
 	gx1fb_setup(option);

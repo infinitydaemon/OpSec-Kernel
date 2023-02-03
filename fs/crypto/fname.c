@@ -19,13 +19,6 @@
 #include "fscrypt_private.h"
 
 /*
- * The minimum message length (input and output length), in bytes, for all
- * filenames encryption modes.  Filenames shorter than this will be zero-padded
- * before being encrypted.
- */
-#define FSCRYPT_FNAME_MIN_MSG_LEN 16
-
-/*
  * struct fscrypt_nokey_name - identifier for directory entry when key is absent
  *
  * When userspace lists an encrypted directory without access to the key, the
@@ -86,8 +79,7 @@ static inline bool fscrypt_is_dot_dotdot(const struct qstr *str)
 /**
  * fscrypt_fname_encrypt() - encrypt a filename
  * @inode: inode of the parent directory (for regular filenames)
- *	   or of the symlink (for symlink targets). Key must already be
- *	   set up.
+ *	   or of the symlink (for symlink targets)
  * @iname: the filename to encrypt
  * @out: (output) the encrypted filename
  * @olen: size of the encrypted filename.  It must be at least @iname->len.
@@ -138,7 +130,6 @@ int fscrypt_fname_encrypt(const struct inode *inode, const struct qstr *iname,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(fscrypt_fname_encrypt);
 
 /**
  * fname_decrypt() - decrypt a filename
@@ -266,9 +257,9 @@ static int fscrypt_base64url_decode(const char *src, int srclen, u8 *dst)
 	return bp - dst;
 }
 
-bool __fscrypt_fname_encrypted_size(const union fscrypt_policy *policy,
-				    u32 orig_len, u32 max_len,
-				    u32 *encrypted_len_ret)
+bool fscrypt_fname_encrypted_size(const union fscrypt_policy *policy,
+				  u32 orig_len, u32 max_len,
+				  u32 *encrypted_len_ret)
 {
 	int padding = 4 << (fscrypt_policy_flags(policy) &
 			    FSCRYPT_POLICY_FLAGS_PAD_MASK);
@@ -276,34 +267,11 @@ bool __fscrypt_fname_encrypted_size(const union fscrypt_policy *policy,
 
 	if (orig_len > max_len)
 		return false;
-	encrypted_len = max_t(u32, orig_len, FSCRYPT_FNAME_MIN_MSG_LEN);
+	encrypted_len = max(orig_len, (u32)FS_CRYPTO_BLOCK_SIZE);
 	encrypted_len = round_up(encrypted_len, padding);
 	*encrypted_len_ret = min(encrypted_len, max_len);
 	return true;
 }
-
-/**
- * fscrypt_fname_encrypted_size() - calculate length of encrypted filename
- * @inode:		parent inode of dentry name being encrypted. Key must
- *			already be set up.
- * @orig_len:		length of the original filename
- * @max_len:		maximum length to return
- * @encrypted_len_ret:	where calculated length should be returned (on success)
- *
- * Filenames that are shorter than the maximum length may have their lengths
- * increased slightly by encryption, due to padding that is applied.
- *
- * Return: false if the orig_len is greater than max_len. Otherwise, true and
- *	   fill out encrypted_len_ret with the length (up to max_len).
- */
-bool fscrypt_fname_encrypted_size(const struct inode *inode, u32 orig_len,
-				  u32 max_len, u32 *encrypted_len_ret)
-{
-	return __fscrypt_fname_encrypted_size(&inode->i_crypt_info->ci_policy,
-					      orig_len, max_len,
-					      encrypted_len_ret);
-}
-EXPORT_SYMBOL_GPL(fscrypt_fname_encrypted_size);
 
 /**
  * fscrypt_fname_alloc_buffer() - allocate a buffer for presented filenames
@@ -382,7 +350,7 @@ int fscrypt_fname_disk_to_usr(const struct inode *inode,
 		return 0;
 	}
 
-	if (iname->len < FSCRYPT_FNAME_MIN_MSG_LEN)
+	if (iname->len < FS_CRYPTO_BLOCK_SIZE)
 		return -EUCLEAN;
 
 	if (fscrypt_has_encryption_key(inode))
@@ -460,7 +428,9 @@ int fscrypt_setup_filename(struct inode *dir, const struct qstr *iname,
 		return ret;
 
 	if (fscrypt_has_encryption_key(dir)) {
-		if (!fscrypt_fname_encrypted_size(dir, iname->len, NAME_MAX,
+		if (!fscrypt_fname_encrypted_size(&dir->i_crypt_info->ci_policy,
+						  iname->len,
+						  dir->i_sb->s_cop->max_namelen,
 						  &fname->crypto_buf.len))
 			return -ENAMETOOLONG;
 		fname->crypto_buf.name = kmalloc(fname->crypto_buf.len,

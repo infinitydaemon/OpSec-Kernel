@@ -84,28 +84,28 @@ static int psp_v10_0_init_microcode(struct psp_context *psp)
 
 		ta_hdr = (const struct ta_firmware_header_v1_0 *)
 				 adev->psp.ta_fw->data;
-		adev->psp.hdcp_context.context.bin_desc.fw_version =
+		adev->psp.hdcp.feature_version =
 			le32_to_cpu(ta_hdr->hdcp.fw_version);
-		adev->psp.hdcp_context.context.bin_desc.size_bytes =
+		adev->psp.hdcp.size_bytes =
 			le32_to_cpu(ta_hdr->hdcp.size_bytes);
-		adev->psp.hdcp_context.context.bin_desc.start_addr =
+		adev->psp.hdcp.start_addr =
 			(uint8_t *)ta_hdr +
 			le32_to_cpu(ta_hdr->header.ucode_array_offset_bytes);
 
-		adev->psp.dtm_context.context.bin_desc.fw_version =
+		adev->psp.dtm.feature_version =
 			le32_to_cpu(ta_hdr->dtm.fw_version);
-		adev->psp.dtm_context.context.bin_desc.size_bytes =
+		adev->psp.dtm.size_bytes =
 			le32_to_cpu(ta_hdr->dtm.size_bytes);
-		adev->psp.dtm_context.context.bin_desc.start_addr =
-			(uint8_t *)adev->psp.hdcp_context.context.bin_desc.start_addr +
+		adev->psp.dtm.start_addr =
+			(uint8_t *)adev->psp.hdcp.start_addr +
 			le32_to_cpu(ta_hdr->dtm.offset_bytes);
 
-		adev->psp.securedisplay_context.context.bin_desc.fw_version =
+		adev->psp.securedisplay.feature_version =
 			le32_to_cpu(ta_hdr->securedisplay.fw_version);
-		adev->psp.securedisplay_context.context.bin_desc.size_bytes =
+		adev->psp.securedisplay.size_bytes =
 			le32_to_cpu(ta_hdr->securedisplay.size_bytes);
-		adev->psp.securedisplay_context.context.bin_desc.start_addr =
-			(uint8_t *)adev->psp.hdcp_context.context.bin_desc.start_addr +
+		adev->psp.securedisplay.start_addr =
+			(uint8_t *)adev->psp.hdcp.start_addr +
 			le32_to_cpu(ta_hdr->securedisplay.offset_bytes);
 
 		adev->psp.ta_fw_version = le32_to_cpu(ta_hdr->header.ucode_version);
@@ -124,6 +124,32 @@ out:
 	}
 
 	return err;
+}
+
+static int psp_v10_0_ring_init(struct psp_context *psp,
+			       enum psp_ring_type ring_type)
+{
+	int ret = 0;
+	struct psp_ring *ring;
+	struct amdgpu_device *adev = psp->adev;
+
+	ring = &psp->km_ring;
+
+	ring->ring_type = ring_type;
+
+	/* allocate 4k Page of Local Frame Buffer memory for ring */
+	ring->ring_size = 0x1000;
+	ret = amdgpu_bo_create_kernel(adev, ring->ring_size, PAGE_SIZE,
+				      AMDGPU_GEM_DOMAIN_VRAM,
+				      &adev->firmware.rbuf,
+				      &ring->ring_mem_mc_addr,
+				      (void **)&ring->ring_mem);
+	if (ret) {
+		ring->ring_size = 0;
+		return ret;
+	}
+
+	return 0;
 }
 
 static int psp_v10_0_ring_create(struct psp_context *psp,
@@ -219,6 +245,7 @@ static void psp_v10_0_ring_set_wptr(struct psp_context *psp, uint32_t value)
 
 static const struct psp_funcs psp_v10_0_funcs = {
 	.init_microcode = psp_v10_0_init_microcode,
+	.ring_init = psp_v10_0_ring_init,
 	.ring_create = psp_v10_0_ring_create,
 	.ring_stop = psp_v10_0_ring_stop,
 	.ring_destroy = psp_v10_0_ring_destroy,

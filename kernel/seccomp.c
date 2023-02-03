@@ -42,6 +42,7 @@
 #include <linux/pid.h>
 #include <linux/ptrace.h>
 #include <linux/capability.h>
+#include <linux/tracehook.h>
 #include <linux/uaccess.h>
 #include <linux/anon_inodes.h>
 #include <linux/lockdep.h>
@@ -200,8 +201,6 @@ static inline void seccomp_cache_prepare(struct seccomp_filter *sfilter)
  *	   the filter can be freed.
  * @cache: cache of arch/syscall mappings to actions
  * @log: true if all actions except for SECCOMP_RET_ALLOW should be logged
- * @wait_killable_recv: Put notifying process in killable state once the
- *			notification is received by the userspace listener.
  * @prev: points to a previously installed, or inherited, filter
  * @prog: the BPF program to evaluate
  * @notif: the struct that holds all notification related information
@@ -222,7 +221,6 @@ struct seccomp_filter {
 	refcount_t refs;
 	refcount_t users;
 	bool log;
-	bool wait_killable_recv;
 	struct action_cache cache;
 	struct seccomp_filter *prev;
 	struct bpf_prog *prog;
@@ -896,10 +894,6 @@ static long seccomp_attach_filter(unsigned int flags,
 	if (flags & SECCOMP_FILTER_FLAG_LOG)
 		filter->log = true;
 
-	/* Set wait killable flag, if present. */
-	if (flags & SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV)
-		filter->wait_killable_recv = true;
-
 	/*
 	 * If there is an existing filter, make it the prev and don't drop its
 	 * task reference.
@@ -1087,12 +1081,6 @@ static void seccomp_handle_addfd(struct seccomp_kaddfd *addfd, struct seccomp_kn
 	complete(&addfd->completion);
 }
 
-static bool should_sleep_killable(struct seccomp_filter *match,
-				  struct seccomp_knotif *n)
-{
-	return match->wait_killable_recv && n->state == SECCOMP_NOTIFY_SENT;
-}
-
 static int seccomp_do_user_notification(int this_syscall,
 					struct seccomp_filter *match,
 					const struct seccomp_data *sd)
@@ -1113,7 +1101,7 @@ static int seccomp_do_user_notification(int this_syscall,
 	n.data = sd;
 	n.id = seccomp_next_notify_id(match);
 	init_completion(&n.ready);
-	list_add_tail(&n.list, &match->notif->notifications);
+	list_add(&n.list, &match->notif->notifications);
 	INIT_LIST_HEAD(&n.addfd);
 
 	up(&match->notif->request);
@@ -1123,25 +1111,11 @@ static int seccomp_do_user_notification(int this_syscall,
 	 * This is where we wait for a reply from userspace.
 	 */
 	do {
-		bool wait_killable = should_sleep_killable(match, &n);
-
 		mutex_unlock(&match->notify_lock);
-		if (wait_killable)
-			err = wait_for_completion_killable(&n.ready);
-		else
-			err = wait_for_completion_interruptible(&n.ready);
+		err = wait_for_completion_interruptible(&n.ready);
 		mutex_lock(&match->notify_lock);
-
-		if (err != 0) {
-			/*
-			 * Check to see if the notifcation got picked up and
-			 * whether we should switch to wait killable.
-			 */
-			if (!wait_killable && should_sleep_killable(match, &n))
-				continue;
-
+		if (err != 0)
 			goto interrupted;
-		}
 
 		addfd = list_first_entry_or_null(&n.addfd,
 						 struct seccomp_kaddfd, list);
@@ -1511,9 +1485,6 @@ out:
 		mutex_lock(&filter->notify_lock);
 		knotif = find_notification(filter, unotif.id);
 		if (knotif) {
-			/* Reset the process to make sure it's not stuck */
-			if (should_sleep_killable(filter, knotif))
-				complete(&knotif->ready);
 			knotif->state = SECCOMP_NOTIFY_INIT;
 			up(&filter->notif->request);
 		}
@@ -1857,14 +1828,6 @@ static long seccomp_set_mode_filter(unsigned int flags,
 	if ((flags & SECCOMP_FILTER_FLAG_TSYNC) &&
 	    (flags & SECCOMP_FILTER_FLAG_NEW_LISTENER) &&
 	    ((flags & SECCOMP_FILTER_FLAG_TSYNC_ESRCH) == 0))
-		return -EINVAL;
-
-	/*
-	 * The SECCOMP_FILTER_FLAG_WAIT_KILLABLE_SENT flag doesn't make sense
-	 * without the SECCOMP_FILTER_FLAG_NEW_LISTENER flag.
-	 */
-	if ((flags & SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV) &&
-	    ((flags & SECCOMP_FILTER_FLAG_NEW_LISTENER) == 0))
 		return -EINVAL;
 
 	/* Prepare the new filter before holding any locks. */

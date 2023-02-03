@@ -14,21 +14,21 @@ int rxe_cq_chk_attr(struct rxe_dev *rxe, struct rxe_cq *cq,
 	int count;
 
 	if (cqe <= 0) {
-		rxe_dbg(rxe, "cqe(%d) <= 0\n", cqe);
+		pr_warn("cqe(%d) <= 0\n", cqe);
 		goto err1;
 	}
 
 	if (cqe > rxe->attr.max_cqe) {
-		rxe_dbg(rxe, "cqe(%d) > max_cqe(%d)\n",
-				cqe, rxe->attr.max_cqe);
+		pr_warn("cqe(%d) > max_cqe(%d)\n",
+			cqe, rxe->attr.max_cqe);
 		goto err1;
 	}
 
 	if (cq) {
 		count = queue_count(cq->queue, QUEUE_TYPE_TO_CLIENT);
 		if (cqe < count) {
-			rxe_dbg_cq(cq, "cqe(%d) < current # elements in queue (%d)",
-					cqe, count);
+			pr_warn("cqe(%d) < current # elements in queue (%d)",
+				cqe, count);
 			goto err1;
 		}
 	}
@@ -65,7 +65,7 @@ int rxe_cq_from_init(struct rxe_dev *rxe, struct rxe_cq *cq, int cqe,
 	cq->queue = rxe_queue_init(rxe, &cqe,
 			sizeof(struct rxe_cqe), type);
 	if (!cq->queue) {
-		rxe_dbg(rxe, "unable to create cq\n");
+		pr_warn("unable to create cq\n");
 		return -ENOMEM;
 	}
 
@@ -77,7 +77,8 @@ int rxe_cq_from_init(struct rxe_dev *rxe, struct rxe_cq *cq, int cqe,
 		return err;
 	}
 
-	cq->is_user = uresp;
+	if (uresp)
+		cq->is_user = 1;
 
 	cq->is_dying = false;
 
@@ -106,9 +107,9 @@ int rxe_cq_resize_queue(struct rxe_cq *cq, int cqe,
 int rxe_cq_post(struct rxe_cq *cq, struct rxe_cqe *cqe, int solicited)
 {
 	struct ib_event ev;
+	unsigned long flags;
 	int full;
 	void *addr;
-	unsigned long flags;
 
 	spin_lock_irqsave(&cq->cq_lock, flags);
 
@@ -150,9 +151,9 @@ void rxe_cq_disable(struct rxe_cq *cq)
 	spin_unlock_irqrestore(&cq->cq_lock, flags);
 }
 
-void rxe_cq_cleanup(struct rxe_pool_elem *elem)
+void rxe_cq_cleanup(struct rxe_pool_entry *arg)
 {
-	struct rxe_cq *cq = container_of(elem, typeof(*cq), elem);
+	struct rxe_cq *cq = container_of(arg, typeof(*cq), pelem);
 
 	if (cq->queue)
 		rxe_queue_cleanup(cq->queue);

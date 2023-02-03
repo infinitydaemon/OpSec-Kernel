@@ -11,13 +11,12 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
-#include <drm/drm_blend.h>
 #include <drm/drm_drv.h>
-#include <drm/drm_fb_dma_helper.h>
+#include <drm/drm_fb_cma_helper.h>
 #include <drm/drm_fourcc.h>
-#include <drm/drm_framebuffer.h>
-#include <drm/drm_gem_dma_helper.h>
+#include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_gem_framebuffer_helper.h>
+#include <drm/drm_plane_helper.h>
 #include <drm/drm_print.h>
 
 #include "malidp_hw.h"
@@ -67,6 +66,14 @@
 
 /* readahead for partial-frame prefetch */
 #define MALIDP_MMU_PREFETCH_READAHEAD		8
+
+static void malidp_de_plane_destroy(struct drm_plane *plane)
+{
+	struct malidp_plane *mp = to_malidp_plane(plane);
+
+	drm_plane_cleanup(plane);
+	kfree(mp);
+}
 
 /*
  * Replicate what the default ->reset hook does: free the state pointer and
@@ -143,7 +150,7 @@ bool malidp_format_mod_supported(struct drm_device *drm,
 {
 	const struct drm_format_info *info;
 	const u64 *modifiers;
-	struct malidp_drm *malidp = drm_to_malidp(drm);
+	struct malidp_drm *malidp = drm->dev_private;
 	const struct malidp_hw_regmap *map = &malidp->dev->hw->map;
 
 	if (WARN_ON(modifier == DRM_FORMAT_MOD_INVALID))
@@ -158,7 +165,7 @@ bool malidp_format_mod_supported(struct drm_device *drm,
 		return !malidp_hw_format_is_afbc_only(format);
 	}
 
-	if (!fourcc_mod_is_vendor(modifier, ARM)) {
+	if ((modifier >> 56) != DRM_FORMAT_MOD_VENDOR_ARM) {
 		DRM_ERROR("Unknown modifier (not Arm)\n");
 		return false;
 	}
@@ -252,6 +259,7 @@ static bool malidp_format_mod_supported_per_plane(struct drm_plane *plane,
 static const struct drm_plane_funcs malidp_de_plane_funcs = {
 	.update_plane = drm_atomic_helper_update_plane,
 	.disable_plane = drm_atomic_helper_disable_plane,
+	.destroy = malidp_de_plane_destroy,
 	.reset = malidp_plane_reset,
 	.atomic_duplicate_state = malidp_duplicate_plane_state,
 	.atomic_destroy_state = malidp_destroy_plane_state,
@@ -302,13 +310,17 @@ static int malidp_se_check_scaling(struct malidp_plane *mp,
 
 static u32 malidp_get_pgsize_bitmap(struct malidp_plane *mp)
 {
-	struct iommu_domain *mmu_dom;
+	u32 pgsize_bitmap = 0;
 
-	mmu_dom = iommu_get_domain_for_dev(mp->base.dev->dev);
-	if (mmu_dom)
-		return mmu_dom->pgsize_bitmap;
+	if (iommu_present(&platform_bus_type)) {
+		struct iommu_domain *mmu_dom =
+			iommu_get_domain_for_dev(mp->base.dev->dev);
 
-	return 0;
+		if (mmu_dom)
+			pgsize_bitmap = mmu_dom->pgsize_bitmap;
+	}
+
+	return pgsize_bitmap;
 }
 
 /*
@@ -324,33 +336,33 @@ static bool malidp_check_pages_threshold(struct malidp_plane_state *ms,
 
 	for (i = 0; i < ms->n_planes; i++) {
 		struct drm_gem_object *obj;
-		struct drm_gem_dma_object *dma_obj;
+		struct drm_gem_cma_object *cma_obj;
 		struct sg_table *sgt;
 		struct scatterlist *sgl;
 
 		obj = drm_gem_fb_get_obj(ms->base.fb, i);
-		dma_obj = to_drm_gem_dma_obj(obj);
+		cma_obj = to_drm_gem_cma_obj(obj);
 
-		if (dma_obj->sgt)
-			sgt = dma_obj->sgt;
+		if (cma_obj->sgt)
+			sgt = cma_obj->sgt;
 		else
 			sgt = obj->funcs->get_sg_table(obj);
 
-		if (IS_ERR(sgt))
+		if (!sgt)
 			return false;
 
 		sgl = sgt->sgl;
 
 		while (sgl) {
 			if (sgl->length < pgsize) {
-				if (!dma_obj->sgt)
+				if (!cma_obj->sgt)
 					kfree(sgt);
 				return false;
 			}
 
 			sgl = sg_next(sgl);
 		}
-		if (!dma_obj->sgt)
+		if (!cma_obj->sgt)
 			kfree(sgt);
 	}
 
@@ -705,7 +717,7 @@ static void malidp_set_plane_base_addr(struct drm_framebuffer *fb,
 				       struct malidp_plane *mp,
 				       int plane_index)
 {
-	dma_addr_t dma_addr;
+	dma_addr_t paddr;
 	u16 ptr;
 	struct drm_plane *plane = &mp->base;
 	bool afbc = fb->modifier ? true : false;
@@ -713,27 +725,27 @@ static void malidp_set_plane_base_addr(struct drm_framebuffer *fb,
 	ptr = mp->layer->ptr + (plane_index << 4);
 
 	/*
-	 * drm_fb_dma_get_gem_addr() alters the physical base address of the
+	 * drm_fb_cma_get_gem_addr() alters the physical base address of the
 	 * framebuffer as per the plane's src_x, src_y co-ordinates (ie to
 	 * take care of source cropping).
 	 * For AFBC, this is not needed as the cropping is handled by _AD_CROP_H
 	 * and _AD_CROP_V registers.
 	 */
 	if (!afbc) {
-		dma_addr = drm_fb_dma_get_gem_addr(fb, plane->state,
-						   plane_index);
+		paddr = drm_fb_cma_get_gem_addr(fb, plane->state,
+						plane_index);
 	} else {
-		struct drm_gem_dma_object *obj;
+		struct drm_gem_cma_object *obj;
 
-		obj = drm_fb_dma_get_gem_obj(fb, plane_index);
+		obj = drm_fb_cma_get_gem_obj(fb, plane_index);
 
 		if (WARN_ON(!obj))
 			return;
-		dma_addr = obj->dma_addr;
+		paddr = obj->paddr;
 	}
 
-	malidp_hw_write(mp->hwdev, lower_32_bits(dma_addr), ptr);
-	malidp_hw_write(mp->hwdev, upper_32_bits(dma_addr), ptr + 4);
+	malidp_hw_write(mp->hwdev, lower_32_bits(paddr), ptr);
+	malidp_hw_write(mp->hwdev, upper_32_bits(paddr), ptr + 4);
 }
 
 static void malidp_de_set_plane_afbc(struct drm_plane *plane)
@@ -922,7 +934,7 @@ static const uint64_t linear_only_modifiers[] = {
 
 int malidp_de_planes_init(struct drm_device *drm)
 {
-	struct malidp_drm *malidp = drm_to_malidp(drm);
+	struct malidp_drm *malidp = drm->dev_private;
 	const struct malidp_hw_regmap *map = &malidp->dev->hw->map;
 	struct malidp_plane *plane = NULL;
 	enum drm_plane_type plane_type;
@@ -963,6 +975,12 @@ int malidp_de_planes_init(struct drm_device *drm)
 	for (i = 0; i < map->n_layers; i++) {
 		u8 id = map->layers[i].id;
 
+		plane = kzalloc(sizeof(*plane), GFP_KERNEL);
+		if (!plane) {
+			ret = -ENOMEM;
+			goto cleanup;
+		}
+
 		/* build the list of DRM supported formats based on the map */
 		for (n = 0, j = 0;  j < map->n_pixel_formats; j++) {
 			if ((map->pixel_formats[j].layer & id) == id)
@@ -975,14 +993,13 @@ int malidp_de_planes_init(struct drm_device *drm)
 		/*
 		 * All the layers except smart layer supports AFBC modifiers.
 		 */
-		plane = drmm_universal_plane_alloc(drm, struct malidp_plane, base,
-						   crtcs, &malidp_de_plane_funcs, formats, n,
-						   (id == DE_SMART) ? linear_only_modifiers :
-						   modifiers, plane_type, NULL);
-		if (IS_ERR(plane)) {
-			ret = PTR_ERR(plane);
+		ret = drm_universal_plane_init(drm, &plane->base, crtcs,
+				&malidp_de_plane_funcs, formats, n,
+				(id == DE_SMART) ? linear_only_modifiers : modifiers,
+				plane_type, NULL);
+
+		if (ret < 0)
 			goto cleanup;
-		}
 
 		drm_plane_helper_add(&plane->base,
 				     &malidp_de_plane_helper_funcs);

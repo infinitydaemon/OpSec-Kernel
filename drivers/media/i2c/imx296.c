@@ -1249,7 +1249,7 @@ err_mutex:
 	return ret;
 }
 
-static void imx296_remove(struct i2c_client *client)
+static int imx296_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
 	struct imx296 *sensor = to_imx296(subdev);
@@ -1268,6 +1268,8 @@ static void imx296_remove(struct i2c_client *client)
 	pm_runtime_set_suspended(sensor->dev);
 
 	mutex_destroy(&sensor->lock);
+
+	return 0;
 }
 
 static const struct of_device_id imx296_of_match[] = {

@@ -61,34 +61,34 @@
 	gpio-keys {
 		compatible = "gpio-keys";
 
-		key-home {
+		home {
 			label = "Home";
 			gpios = <&gpio5 10 0>;
 			linux,code = <KEY_HOME>;
 			wakeup-source;
 		};
 
-		key-back {
+		back {
 			label = "Back";
 			gpios = <&gpio5 11 0>;
 			linux,code = <KEY_BACK>;
 			wakeup-source;
 		};
 
-		key-program {
+		program {
 			label = "Program";
 			gpios = <&gpio5 12 0>;
 			linux,code = <KEY_PROGRAM >;
 			wakeup-source;
 		};
 
-		key-volume-up {
+		volume-up {
 			label = "Volume Up";
 			gpios = <&gpio5 13 0>;
 			linux,code = <KEY_VOLUMEUP>;
 		};
 
-		key-volume-down {
+		volume-down {
 			label = "Volume Down";
 			gpios = <&gpio4 0 0>;
 			linux,code = <KEY_VOLUMEDOWN>;

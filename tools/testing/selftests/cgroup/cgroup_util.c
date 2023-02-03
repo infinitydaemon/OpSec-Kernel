@@ -19,7 +19,6 @@
 #include "cgroup_util.h"
 #include "../clone3/clone3_selftests.h"
 
-/* Returns read len on success, or -errno on failure. */
 static ssize_t read_text(const char *path, char *buf, size_t max_len)
 {
 	ssize_t len;
@@ -27,29 +26,35 @@ static ssize_t read_text(const char *path, char *buf, size_t max_len)
 
 	fd = open(path, O_RDONLY);
 	if (fd < 0)
-		return -errno;
+		return fd;
 
 	len = read(fd, buf, max_len - 1);
+	if (len < 0)
+		goto out;
 
-	if (len >= 0)
-		buf[len] = 0;
-
+	buf[len] = 0;
+out:
 	close(fd);
-	return len < 0 ? -errno : len;
+	return len;
 }
 
-/* Returns written len on success, or -errno on failure. */
 static ssize_t write_text(const char *path, char *buf, ssize_t len)
 {
 	int fd;
 
 	fd = open(path, O_WRONLY | O_APPEND);
 	if (fd < 0)
-		return -errno;
+		return fd;
 
 	len = write(fd, buf, len);
+	if (len < 0) {
+		close(fd);
+		return len;
+	}
+
 	close(fd);
-	return len < 0 ? -errno : len;
+
+	return len;
 }
 
 char *cg_name(const char *root, const char *name)
@@ -82,16 +87,16 @@ char *cg_control(const char *cgroup, const char *control)
 	return ret;
 }
 
-/* Returns 0 on success, or -errno on failure. */
 int cg_read(const char *cgroup, const char *control, char *buf, size_t len)
 {
 	char path[PATH_MAX];
-	ssize_t ret;
 
 	snprintf(path, sizeof(path), "%s/%s", cgroup, control);
 
-	ret = read_text(path, buf, len);
-	return ret >= 0 ? 0 : ret;
+	if (read_text(path, buf, len) >= 0)
+		return 0;
+
+	return -1;
 }
 
 int cg_read_strcmp(const char *cgroup, const char *control,
@@ -172,27 +177,17 @@ long cg_read_lc(const char *cgroup, const char *control)
 	return cnt;
 }
 
-/* Returns 0 on success, or -errno on failure. */
 int cg_write(const char *cgroup, const char *control, char *buf)
 {
 	char path[PATH_MAX];
-	ssize_t len = strlen(buf), ret;
+	ssize_t len = strlen(buf);
 
 	snprintf(path, sizeof(path), "%s/%s", cgroup, control);
-	ret = write_text(path, buf, len);
-	return ret == len ? 0 : ret;
-}
 
-int cg_write_numeric(const char *cgroup, const char *control, long value)
-{
-	char buf[64];
-	int ret;
+	if (write_text(path, buf, len) == len)
+		return 0;
 
-	ret = sprintf(buf, "%lu", value);
-	if (ret < 0)
-		return ret;
-
-	return cg_write(cgroup, control, buf);
+	return -1;
 }
 
 int cg_find_unified_root(char *root, size_t len)
@@ -540,22 +535,9 @@ int set_oom_adj_score(int pid, int score)
 	return 0;
 }
 
-int proc_mount_contains(const char *option)
-{
-	char buf[4 * PAGE_SIZE];
-	ssize_t read;
-
-	read = read_text("/proc/mounts", buf, sizeof(buf));
-	if (read < 0)
-		return read;
-
-	return strstr(buf, option) != NULL;
-}
-
 ssize_t proc_read_text(int pid, bool thread, const char *item, char *buf, size_t size)
 {
 	char path[PATH_MAX];
-	ssize_t ret;
 
 	if (!pid)
 		snprintf(path, sizeof(path), "/proc/%s/%s",
@@ -563,8 +545,7 @@ ssize_t proc_read_text(int pid, bool thread, const char *item, char *buf, size_t
 	else
 		snprintf(path, sizeof(path), "/proc/%d/%s", pid, item);
 
-	ret = read_text(path, buf, size);
-	return ret < 0 ? -1 : ret;
+	return read_text(path, buf, size);
 }
 
 int proc_read_strstr(int pid, bool thread, const char *item, const char *needle)
@@ -602,7 +583,7 @@ int clone_into_cgroup_run_wait(const char *cgroup)
 	return 0;
 }
 
-static int __prepare_for_wait(const char *cgroup, const char *filename)
+int cg_prepare_for_wait(const char *cgroup)
 {
 	int fd, ret = -1;
 
@@ -610,23 +591,14 @@ static int __prepare_for_wait(const char *cgroup, const char *filename)
 	if (fd == -1)
 		return fd;
 
-	ret = inotify_add_watch(fd, cg_control(cgroup, filename), IN_MODIFY);
+	ret = inotify_add_watch(fd, cg_control(cgroup, "cgroup.events"),
+				IN_MODIFY);
 	if (ret == -1) {
 		close(fd);
 		fd = -1;
 	}
 
 	return fd;
-}
-
-int cg_prepare_for_wait(const char *cgroup)
-{
-	return __prepare_for_wait(cgroup, "cgroup.events");
-}
-
-int memcg_prepare_for_wait(const char *cgroup)
-{
-	return __prepare_for_wait(cgroup, "memory.events");
 }
 
 int cg_wait_for(int fd)

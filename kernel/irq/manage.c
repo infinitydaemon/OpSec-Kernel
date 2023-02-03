@@ -205,8 +205,16 @@ static void irq_validate_effective_affinity(struct irq_data *data)
 	pr_warn_once("irq_chip %s did not update eff. affinity mask of irq %u\n",
 		     chip->name, data->irq);
 }
+
+static inline void irq_init_effective_affinity(struct irq_data *data,
+					       const struct cpumask *mask)
+{
+	cpumask_copy(irq_data_get_effective_affinity_mask(data), mask);
+}
 #else
 static inline void irq_validate_effective_affinity(struct irq_data *data) { }
+static inline void irq_init_effective_affinity(struct irq_data *data,
+					       const struct cpumask *mask) { }
 #endif
 
 int irq_do_set_affinity(struct irq_data *data, const struct cpumask *mask,
@@ -244,10 +252,10 @@ int irq_do_set_affinity(struct irq_data *data, const struct cpumask *mask,
 	 * online.
 	 */
 	if (irqd_affinity_is_managed(data) &&
-	    housekeeping_enabled(HK_TYPE_MANAGED_IRQ)) {
+	    housekeeping_enabled(HK_FLAG_MANAGED_IRQ)) {
 		const struct cpumask *hk_mask;
 
-		hk_mask = housekeeping_cpumask(HK_TYPE_MANAGED_IRQ);
+		hk_mask = housekeeping_cpumask(HK_FLAG_MANAGED_IRQ);
 
 		cpumask_and(&tmp_mask, mask, hk_mask);
 		if (!cpumask_intersects(&tmp_mask, cpu_online_mask))
@@ -321,7 +329,7 @@ static int irq_try_set_affinity(struct irq_data *data,
 }
 
 static bool irq_set_affinity_deactivated(struct irq_data *data,
-					 const struct cpumask *mask)
+					 const struct cpumask *mask, bool force)
 {
 	struct irq_desc *desc = irq_data_to_desc(data);
 
@@ -339,7 +347,7 @@ static bool irq_set_affinity_deactivated(struct irq_data *data,
 		return false;
 
 	cpumask_copy(desc->irq_common_data.affinity, mask);
-	irq_data_update_effective_affinity(data, mask);
+	irq_init_effective_affinity(data, mask);
 	irqd_set(data, IRQD_AFFINITY_SET);
 	return true;
 }
@@ -354,7 +362,7 @@ int irq_set_affinity_locked(struct irq_data *data, const struct cpumask *mask,
 	if (!chip || !chip->irq_set_affinity)
 		return -EINVAL;
 
-	if (irq_set_affinity_deactivated(data, mask))
+	if (irq_set_affinity_deactivated(data, mask, force))
 		return 0;
 
 	if (irq_can_move_pcntxt(data) && !irqd_is_setaffinity_pending(data)) {
@@ -493,8 +501,7 @@ int irq_force_affinity(unsigned int irq, const struct cpumask *cpumask)
 }
 EXPORT_SYMBOL_GPL(irq_force_affinity);
 
-int __irq_apply_affinity_hint(unsigned int irq, const struct cpumask *m,
-			      bool setaffinity)
+int irq_set_affinity_hint(unsigned int irq, const struct cpumask *m)
 {
 	unsigned long flags;
 	struct irq_desc *desc = irq_get_desc_lock(irq, &flags, IRQ_GET_DESC_CHECK_GLOBAL);
@@ -503,11 +510,12 @@ int __irq_apply_affinity_hint(unsigned int irq, const struct cpumask *m,
 		return -EINVAL;
 	desc->affinity_hint = m;
 	irq_put_desc_unlock(desc, flags);
-	if (m && setaffinity)
+	/* set the initial affinity to prevent every interrupt being on CPU0 */
+	if (m)
 		__irq_set_affinity(irq, m, false);
 	return 0;
 }
-EXPORT_SYMBOL_GPL(__irq_apply_affinity_hint);
+EXPORT_SYMBOL_GPL(irq_set_affinity_hint);
 
 static void irq_affinity_notify(struct work_struct *work)
 {
@@ -1293,8 +1301,6 @@ static int irq_thread(void *data)
 
 	irq_thread_set_ready(desc, action);
 
-	sched_set_fifo(current);
-
 	if (force_irqthreads() && test_bit(IRQTF_FORCED_THREAD,
 					   &action->thread_flags))
 		handler_fn = irq_forced_thread_fn;
@@ -1459,6 +1465,8 @@ setup_irq_thread(struct irqaction *new, unsigned int irq, bool secondary)
 
 	if (IS_ERR(t))
 		return PTR_ERR(t);
+
+	sched_set_fifo(t);
 
 	/*
 	 * We keep the reference to the task struct even if
@@ -2853,7 +2861,7 @@ EXPORT_SYMBOL_GPL(irq_get_irqchip_state);
  *	This call sets the internal irqchip state of an interrupt,
  *	depending on the value of @which.
  *
- *	This function should be called with migration disabled if the
+ *	This function should be called with preemption disabled if the
  *	interrupt controller has per-cpu registers.
  */
 int irq_set_irqchip_state(unsigned int irq, enum irqchip_irq_state which,

@@ -175,7 +175,7 @@ static const struct of_device_id tegra_uart_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, tegra_uart_of_match);
 
-static const struct acpi_device_id tegra_uart_acpi_match[] __maybe_unused = {
+static const struct acpi_device_id tegra_uart_acpi_match[] = {
 	{ "NVDA0100", 0 },
 	{ },
 };

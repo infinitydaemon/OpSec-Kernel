@@ -121,7 +121,7 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
 	struct xhci_driver_data         *driver_data;
 	const struct pci_device_id      *id;
 
-	id = pci_match_id(to_pci_driver(pdev->dev.driver)->id_table, pdev);
+	id = pci_match_id(pdev->driver->id_table, pdev);
 
 	if (id && id->driver_data) {
 		driver_data = (struct xhci_driver_data *)id->driver_data;
@@ -136,7 +136,8 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
 				pdev->revision == 0x0) {
 			xhci->quirks |= XHCI_RESET_EP_QUIRK;
 			xhci_dbg_trace(xhci, trace_xhci_dbg_quirks,
-				"XHCI_RESET_EP_QUIRK for this evaluation HW is deprecated");
+				"QUIRK: Fresco Logic xHC needs configure"
+				" endpoint cmd after reset endpoint");
 		}
 		if (pdev->device == PCI_DEVICE_ID_FRESCO_LOGIC_PDK &&
 				pdev->revision == 0x4) {
@@ -479,7 +480,7 @@ static int xhci_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	 * to say USB 2.0, but I'm not sure what the implications would be in
 	 * the other parts of the HCD code.
 	 */
-	retval = usb_hcd_pci_probe(dev, &xhci_pci_hc_driver);
+	retval = usb_hcd_pci_probe(dev, id, &xhci_pci_hc_driver);
 
 	if (retval)
 		goto put_runtime_pm;
@@ -684,57 +685,6 @@ static int xhci_pci_resume(struct usb_hcd *hcd, bool hibernated)
 	return retval;
 }
 
-static int xhci_pci_poweroff_late(struct usb_hcd *hcd, bool do_wakeup)
-{
-	struct xhci_hcd		*xhci = hcd_to_xhci(hcd);
-	struct xhci_port	*port;
-	struct usb_device	*udev;
-	unsigned int		slot_id;
-	u32			portsc;
-	int			i;
-
-	/*
-	 * Systems with XHCI_RESET_TO_DEFAULT quirk have boot firmware that
-	 * cause significant boot delay if usb ports are in suspended U3 state
-	 * during boot. Some USB devices survive in U3 state over S4 hibernate
-	 *
-	 * Disable ports that are in U3 if remote wake is not enabled for either
-	 * host controller or connected device
-	 */
-
-	if (!(xhci->quirks & XHCI_RESET_TO_DEFAULT))
-		return 0;
-
-	for (i = 0; i < HCS_MAX_PORTS(xhci->hcs_params1); i++) {
-		port = &xhci->hw_ports[i];
-		portsc = readl(port->addr);
-
-		if ((portsc & PORT_PLS_MASK) != XDEV_U3)
-			continue;
-
-		slot_id = xhci_find_slot_id_by_port(port->rhub->hcd, xhci,
-						    port->hcd_portnum + 1);
-		if (!slot_id || !xhci->devs[slot_id]) {
-			xhci_err(xhci, "No dev for slot_id %d for port %d-%d in U3\n",
-				 slot_id, port->rhub->hcd->self.busnum, port->hcd_portnum + 1);
-			continue;
-		}
-
-		udev = xhci->devs[slot_id]->udev;
-
-		/* if wakeup is enabled then don't disable the port */
-		if (udev->do_remote_wakeup && do_wakeup)
-			continue;
-
-		xhci_dbg(xhci, "port %d-%d in U3 without wakeup, disable it\n",
-			 port->rhub->hcd->self.busnum, port->hcd_portnum + 1);
-		portsc = xhci_port_state_to_neutral(portsc);
-		writel(portsc | PORT_PE, port->addr);
-	}
-
-	return 0;
-}
-
 static void xhci_pci_shutdown(struct usb_hcd *hcd)
 {
 	struct xhci_hcd		*xhci = hcd_to_xhci(hcd);
@@ -788,12 +738,11 @@ static struct pci_driver xhci_pci_driver = {
 	/* suspend and resume implemented later */
 
 	.shutdown = 	usb_hcd_pci_shutdown,
-	.driver = {
 #ifdef CONFIG_PM
-		.pm = &usb_hcd_pci_pm_ops,
-#endif
-		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
+	.driver = {
+		.pm = &usb_hcd_pci_pm_ops
 	},
+#endif
 };
 
 static int __init xhci_pci_init(void)
@@ -802,7 +751,6 @@ static int __init xhci_pci_init(void)
 #ifdef CONFIG_PM
 	xhci_pci_hc_driver.pci_suspend = xhci_pci_suspend;
 	xhci_pci_hc_driver.pci_resume = xhci_pci_resume;
-	xhci_pci_hc_driver.pci_poweroff_late = xhci_pci_poweroff_late;
 	xhci_pci_hc_driver.shutdown = xhci_pci_shutdown;
 #endif
 	return pci_register_driver(&xhci_pci_driver);

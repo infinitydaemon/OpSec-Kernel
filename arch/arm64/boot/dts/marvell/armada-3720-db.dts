@@ -164,7 +164,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&spi_quad_pins>;
 
-	flash@0 {
+	m25p80@0 {
 		compatible = "jedec,spi-nor";
 		reg = <0>;
 		spi-max-frequency = <108000000>;

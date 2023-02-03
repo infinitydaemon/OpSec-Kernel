@@ -386,11 +386,11 @@ static struct snd_soc_codec_conf bells_codec_conf[] = {
 	},
 };
 
-static const struct snd_soc_dapm_widget bells_widgets[] = {
+static struct snd_soc_dapm_widget bells_widgets[] = {
 	SND_SOC_DAPM_MIC("DMIC", NULL),
 };
 
-static const struct snd_soc_dapm_route bells_routes[] = {
+static struct snd_soc_dapm_route bells_routes[] = {
 	{ "Sub CLK_SYS", NULL, "OPCLK" },
 	{ "CLKIN", NULL, "OPCLK" },
 

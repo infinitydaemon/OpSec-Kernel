@@ -7,6 +7,7 @@ $schema: http://devicetree.org/meta-schemas/core.yaml#
 title: AT91 SAMA5D2 Analog to Digital Converter (ADC)
 
 maintainers:
+  - Ludovic Desroches <ludovic.desroches@atmel.com>
   - Eugen Hristev <eugen.hristev@microchip.com>
 
 properties:
@@ -14,7 +15,6 @@ properties:
     enum:
       - atmel,sama5d2-adc
       - microchip,sam9x60-adc
-      - microchip,sama7g5-adc
 
   reg:
     maxItems: 1
@@ -71,6 +71,7 @@ required:
   - atmel,min-sample-rate-hz
   - atmel,max-sample-rate-hz
   - atmel,startup-time-ms
+  - atmel,trigger-edge-type
 
 examples:
   - |

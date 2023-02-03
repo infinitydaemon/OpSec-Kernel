@@ -124,10 +124,7 @@ int rds_tcp_conn_path_connect(struct rds_conn_path *cp)
 	if (ret < 0)
 		goto out;
 
-	if (!rds_tcp_tune(sock)) {
-		ret = -EINVAL;
-		goto out;
-	}
+	rds_tcp_tune(sock);
 
 	if (isv6) {
 		sin6.sin6_family = AF_INET6;

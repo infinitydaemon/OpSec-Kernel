@@ -5,7 +5,6 @@
 
 #include <linux/hugetlb.h>
 #include <linux/sched/mm.h>
-#include <asm/opal-api.h>
 #include <asm/pnv-pci.h>
 #include <misc/cxllib.h>
 

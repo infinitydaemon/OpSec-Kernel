@@ -22,7 +22,7 @@
 #include <linux/binfmts.h>
 #include <linux/bitops.h>
 #include <linux/syscalls.h>
-#include <linux/resume_user_mode.h>
+#include <linux/tracehook.h>
 
 #include <linux/uaccess.h>
 #include <asm/sigcontext.h>
@@ -531,10 +531,10 @@ do_work_pending(struct pt_regs *regs, unsigned long thread_flags,
 				do_signal(regs, r0, r19);
 				r0 = 0;
 			} else {
-				resume_user_mode_work(regs);
+				tracehook_notify_resume(regs);
 			}
 		}
 		local_irq_disable();
-		thread_flags = read_thread_flags();
+		thread_flags = current_thread_info()->flags;
 	} while (thread_flags & _TIF_WORK_MASK);
 }

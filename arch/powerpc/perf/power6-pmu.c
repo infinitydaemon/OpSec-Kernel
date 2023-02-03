@@ -539,11 +539,10 @@ static struct power_pmu power6_pmu = {
 	.cache_events		= &power6_cache_events,
 };
 
-int __init init_power6_pmu(void)
+int init_power6_pmu(void)
 {
-	unsigned int pvr = mfspr(SPRN_PVR);
-
-	if (PVR_VER(pvr) != PVR_POWER6)
+	if (!cur_cpu_spec->oprofile_cpu_type ||
+	    strcmp(cur_cpu_spec->oprofile_cpu_type, "ppc64/power6"))
 		return -ENODEV;
 
 	return register_power_pmu(&power6_pmu);

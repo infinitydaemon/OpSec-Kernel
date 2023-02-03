@@ -566,101 +566,18 @@ out:
 	mutex_unlock(&vsock->rx_lock);
 }
 
-static int virtio_vsock_vqs_init(struct virtio_vsock *vsock)
+static int virtio_vsock_probe(struct virtio_device *vdev)
 {
-	struct virtio_device *vdev = vsock->vdev;
-	static const char * const names[] = {
-		"rx",
-		"tx",
-		"event",
-	};
 	vq_callback_t *callbacks[] = {
 		virtio_vsock_rx_done,
 		virtio_vsock_tx_done,
 		virtio_vsock_event_done,
 	};
-	int ret;
-
-	ret = virtio_find_vqs(vdev, VSOCK_VQ_MAX, vsock->vqs, callbacks, names,
-			      NULL);
-	if (ret < 0)
-		return ret;
-
-	virtio_vsock_update_guest_cid(vsock);
-
-	virtio_device_ready(vdev);
-
-	mutex_lock(&vsock->tx_lock);
-	vsock->tx_run = true;
-	mutex_unlock(&vsock->tx_lock);
-
-	mutex_lock(&vsock->rx_lock);
-	virtio_vsock_rx_fill(vsock);
-	vsock->rx_run = true;
-	mutex_unlock(&vsock->rx_lock);
-
-	mutex_lock(&vsock->event_lock);
-	virtio_vsock_event_fill(vsock);
-	vsock->event_run = true;
-	mutex_unlock(&vsock->event_lock);
-
-	return 0;
-}
-
-static void virtio_vsock_vqs_del(struct virtio_vsock *vsock)
-{
-	struct virtio_device *vdev = vsock->vdev;
-	struct virtio_vsock_pkt *pkt;
-
-	/* Reset all connected sockets when the VQs disappear */
-	vsock_for_each_connected_socket(&virtio_transport.transport,
-					virtio_vsock_reset_sock);
-
-	/* Stop all work handlers to make sure no one is accessing the device,
-	 * so we can safely call virtio_reset_device().
-	 */
-	mutex_lock(&vsock->rx_lock);
-	vsock->rx_run = false;
-	mutex_unlock(&vsock->rx_lock);
-
-	mutex_lock(&vsock->tx_lock);
-	vsock->tx_run = false;
-	mutex_unlock(&vsock->tx_lock);
-
-	mutex_lock(&vsock->event_lock);
-	vsock->event_run = false;
-	mutex_unlock(&vsock->event_lock);
-
-	/* Flush all device writes and interrupts, device will not use any
-	 * more buffers.
-	 */
-	virtio_reset_device(vdev);
-
-	mutex_lock(&vsock->rx_lock);
-	while ((pkt = virtqueue_detach_unused_buf(vsock->vqs[VSOCK_VQ_RX])))
-		virtio_transport_free_pkt(pkt);
-	mutex_unlock(&vsock->rx_lock);
-
-	mutex_lock(&vsock->tx_lock);
-	while ((pkt = virtqueue_detach_unused_buf(vsock->vqs[VSOCK_VQ_TX])))
-		virtio_transport_free_pkt(pkt);
-	mutex_unlock(&vsock->tx_lock);
-
-	spin_lock_bh(&vsock->send_pkt_list_lock);
-	while (!list_empty(&vsock->send_pkt_list)) {
-		pkt = list_first_entry(&vsock->send_pkt_list,
-				       struct virtio_vsock_pkt, list);
-		list_del(&pkt->list);
-		virtio_transport_free_pkt(pkt);
-	}
-	spin_unlock_bh(&vsock->send_pkt_list_lock);
-
-	/* Delete virtqueues and flush outstanding callbacks if any */
-	vdev->config->del_vqs(vdev);
-}
-
-static int virtio_vsock_probe(struct virtio_device *vdev)
-{
+	static const char * const names[] = {
+		"rx",
+		"tx",
+		"event",
+	};
 	struct virtio_vsock *vsock = NULL;
 	int ret;
 
@@ -683,6 +600,14 @@ static int virtio_vsock_probe(struct virtio_device *vdev)
 
 	vsock->vdev = vdev;
 
+	ret = virtio_find_vqs(vsock->vdev, VSOCK_VQ_MAX,
+			      vsock->vqs, callbacks, names,
+			      NULL);
+	if (ret < 0)
+		goto out;
+
+	virtio_vsock_update_guest_cid(vsock);
+
 	vsock->rx_buf_nr = 0;
 	vsock->rx_buf_max_nr = 0;
 	atomic_set(&vsock->queued_replies, 0);
@@ -702,9 +627,21 @@ static int virtio_vsock_probe(struct virtio_device *vdev)
 
 	vdev->priv = vsock;
 
-	ret = virtio_vsock_vqs_init(vsock);
-	if (ret < 0)
-		goto out;
+	virtio_device_ready(vdev);
+
+	mutex_lock(&vsock->tx_lock);
+	vsock->tx_run = true;
+	mutex_unlock(&vsock->tx_lock);
+
+	mutex_lock(&vsock->rx_lock);
+	virtio_vsock_rx_fill(vsock);
+	vsock->rx_run = true;
+	mutex_unlock(&vsock->rx_lock);
+
+	mutex_lock(&vsock->event_lock);
+	virtio_vsock_event_fill(vsock);
+	vsock->event_run = true;
+	mutex_unlock(&vsock->event_lock);
 
 	rcu_assign_pointer(the_virtio_vsock, vsock);
 
@@ -721,6 +658,7 @@ out:
 static void virtio_vsock_remove(struct virtio_device *vdev)
 {
 	struct virtio_vsock *vsock = vdev->priv;
+	struct virtio_vsock_pkt *pkt;
 
 	mutex_lock(&the_virtio_vsock_mutex);
 
@@ -728,7 +666,51 @@ static void virtio_vsock_remove(struct virtio_device *vdev)
 	rcu_assign_pointer(the_virtio_vsock, NULL);
 	synchronize_rcu();
 
-	virtio_vsock_vqs_del(vsock);
+	/* Reset all connected sockets when the device disappear */
+	vsock_for_each_connected_socket(&virtio_transport.transport,
+					virtio_vsock_reset_sock);
+
+	/* Stop all work handlers to make sure no one is accessing the device,
+	 * so we can safely call vdev->config->reset().
+	 */
+	mutex_lock(&vsock->rx_lock);
+	vsock->rx_run = false;
+	mutex_unlock(&vsock->rx_lock);
+
+	mutex_lock(&vsock->tx_lock);
+	vsock->tx_run = false;
+	mutex_unlock(&vsock->tx_lock);
+
+	mutex_lock(&vsock->event_lock);
+	vsock->event_run = false;
+	mutex_unlock(&vsock->event_lock);
+
+	/* Flush all device writes and interrupts, device will not use any
+	 * more buffers.
+	 */
+	vdev->config->reset(vdev);
+
+	mutex_lock(&vsock->rx_lock);
+	while ((pkt = virtqueue_detach_unused_buf(vsock->vqs[VSOCK_VQ_RX])))
+		virtio_transport_free_pkt(pkt);
+	mutex_unlock(&vsock->rx_lock);
+
+	mutex_lock(&vsock->tx_lock);
+	while ((pkt = virtqueue_detach_unused_buf(vsock->vqs[VSOCK_VQ_TX])))
+		virtio_transport_free_pkt(pkt);
+	mutex_unlock(&vsock->tx_lock);
+
+	spin_lock_bh(&vsock->send_pkt_list_lock);
+	while (!list_empty(&vsock->send_pkt_list)) {
+		pkt = list_first_entry(&vsock->send_pkt_list,
+				       struct virtio_vsock_pkt, list);
+		list_del(&pkt->list);
+		virtio_transport_free_pkt(pkt);
+	}
+	spin_unlock_bh(&vsock->send_pkt_list_lock);
+
+	/* Delete virtqueues and flush outstanding callbacks if any */
+	vdev->config->del_vqs(vdev);
 
 	/* Other works can be queued before 'config->del_vqs()', so we flush
 	 * all works before to free the vsock object to avoid use after free.
@@ -742,49 +724,6 @@ static void virtio_vsock_remove(struct virtio_device *vdev)
 
 	kfree(vsock);
 }
-
-#ifdef CONFIG_PM_SLEEP
-static int virtio_vsock_freeze(struct virtio_device *vdev)
-{
-	struct virtio_vsock *vsock = vdev->priv;
-
-	mutex_lock(&the_virtio_vsock_mutex);
-
-	rcu_assign_pointer(the_virtio_vsock, NULL);
-	synchronize_rcu();
-
-	virtio_vsock_vqs_del(vsock);
-
-	mutex_unlock(&the_virtio_vsock_mutex);
-
-	return 0;
-}
-
-static int virtio_vsock_restore(struct virtio_device *vdev)
-{
-	struct virtio_vsock *vsock = vdev->priv;
-	int ret;
-
-	mutex_lock(&the_virtio_vsock_mutex);
-
-	/* Only one virtio-vsock device per guest is supported */
-	if (rcu_dereference_protected(the_virtio_vsock,
-				lockdep_is_held(&the_virtio_vsock_mutex))) {
-		ret = -EBUSY;
-		goto out;
-	}
-
-	ret = virtio_vsock_vqs_init(vsock);
-	if (ret < 0)
-		goto out;
-
-	rcu_assign_pointer(the_virtio_vsock, vsock);
-
-out:
-	mutex_unlock(&the_virtio_vsock_mutex);
-	return ret;
-}
-#endif /* CONFIG_PM_SLEEP */
 
 static struct virtio_device_id id_table[] = {
 	{ VIRTIO_ID_VSOCK, VIRTIO_DEV_ANY_ID },
@@ -803,10 +742,6 @@ static struct virtio_driver virtio_vsock_driver = {
 	.id_table = id_table,
 	.probe = virtio_vsock_probe,
 	.remove = virtio_vsock_remove,
-#ifdef CONFIG_PM_SLEEP
-	.freeze = virtio_vsock_freeze,
-	.restore = virtio_vsock_restore,
-#endif
 };
 
 static int __init virtio_vsock_init(void)

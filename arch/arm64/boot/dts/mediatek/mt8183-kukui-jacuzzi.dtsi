@@ -9,6 +9,7 @@
 	panel: panel {
 		compatible = "auo,b116xw03";
 		power-supply = <&pp3300_panel>;
+		ddc-i2c-bus = <&i2c4>;
 		backlight = <&backlight_lcd0>;
 
 		port {
@@ -73,7 +74,7 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&volume_button_pins>;
 
-		button-volume-down {
+		volume_down {
 			label = "Volume Down";
 			linux,code = <KEY_VOLUMEDOWN>;
 			debounce-interval = <100>;
@@ -81,7 +82,7 @@
 			gpios = <&pio 6 GPIO_ACTIVE_LOW>;
 		};
 
-		button-volume-up {
+		volume_up {
 			label = "Volume Up";
 			linux,code = <KEY_VOLUMEUP>;
 			debounce-interval = <100>;
@@ -92,7 +93,7 @@
 };
 
 &cros_ec {
-	cros_ec_pwm: pwm {
+	cros_ec_pwm: ec-pwm {
 		compatible = "google,cros-ec-pwm";
 		#pwm-cells = <1>;
 		status = "disabled";

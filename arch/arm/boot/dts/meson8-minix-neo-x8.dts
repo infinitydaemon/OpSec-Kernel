@@ -65,7 +65,7 @@
 	pinctrl-0 = <&spi_nor_pins>;
 	pinctrl-names = "default";
 
-	flash@0 {
+	spi-flash@0 {
 		compatible = "mxicy,mx25l1606e";
 		#address-cells = <1>;
 		#size-cells = <1>;

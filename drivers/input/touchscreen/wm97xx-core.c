@@ -285,12 +285,11 @@ void wm97xx_set_suspend_mode(struct wm97xx *wm, u16 mode)
 EXPORT_SYMBOL_GPL(wm97xx_set_suspend_mode);
 
 /*
- * Codec PENDOWN irq handler
- *
+ * Handle a pen down interrupt.
  */
-static irqreturn_t wm97xx_pen_interrupt(int irq, void *dev_id)
+static void wm97xx_pen_irq_worker(struct work_struct *work)
 {
-	struct wm97xx *wm = dev_id;
+	struct wm97xx *wm = container_of(work, struct wm97xx, pen_event_work);
 	int pen_was_down = wm->pen_is_down;
 
 	/* do we need to enable the touch panel reader */
@@ -344,6 +343,27 @@ static irqreturn_t wm97xx_pen_interrupt(int irq, void *dev_id)
 	if (!wm->pen_is_down && wm->mach_ops->acc_enabled)
 		wm->mach_ops->acc_pen_up(wm);
 
+	wm->mach_ops->irq_enable(wm, 1);
+}
+
+/*
+ * Codec PENDOWN irq handler
+ *
+ * We have to disable the codec interrupt in the handler because it
+ * can take up to 1ms to clear the interrupt source. We schedule a task
+ * in a work queue to do the actual interaction with the chip.  The
+ * interrupt is then enabled again in the slow handler when the source
+ * has been cleared.
+ */
+static irqreturn_t wm97xx_pen_interrupt(int irq, void *dev_id)
+{
+	struct wm97xx *wm = dev_id;
+
+	if (!work_pending(&wm->pen_event_work)) {
+		wm->mach_ops->irq_enable(wm, 0);
+		queue_work(wm->ts_workq, &wm->pen_event_work);
+	}
+
 	return IRQ_HANDLED;
 }
 
@@ -354,9 +374,12 @@ static int wm97xx_init_pen_irq(struct wm97xx *wm)
 {
 	u16 reg;
 
-	if (request_threaded_irq(wm->pen_irq, NULL, wm97xx_pen_interrupt,
-				 IRQF_SHARED | IRQF_ONESHOT,
-				 "wm97xx-pen", wm)) {
+	/* If an interrupt is supplied an IRQ enable operation must also be
+	 * provided. */
+	BUG_ON(!wm->mach_ops->irq_enable);
+
+	if (request_irq(wm->pen_irq, wm97xx_pen_interrupt, IRQF_SHARED,
+			"wm97xx-pen", wm)) {
 		dev_err(wm->dev,
 			"Failed to register pen down interrupt, polling");
 		wm->pen_irq = 0;
@@ -486,6 +509,7 @@ static int wm97xx_ts_input_open(struct input_dev *idev)
 	wm->codec->dig_enable(wm, 1);
 
 	INIT_DELAYED_WORK(&wm->ts_reader, wm97xx_ts_reader);
+	INIT_WORK(&wm->pen_event_work, wm97xx_pen_irq_worker);
 
 	wm->ts_reader_min_interval = HZ >= 100 ? HZ / 100 : 1;
 	if (wm->ts_reader_min_interval < 1)
@@ -535,6 +559,10 @@ static void wm97xx_ts_input_close(struct input_dev *idev)
 	}
 
 	wm->pen_is_down = 0;
+
+	/* Balance out interrupt disables/enables */
+	if (cancel_work_sync(&wm->pen_event_work))
+		wm->mach_ops->irq_enable(wm, 1);
 
 	/* ts_reader rearms itself so we need to explicitly stop it
 	 * before we destroy the workqueue.
@@ -587,9 +615,10 @@ static int wm97xx_register_touch(struct wm97xx *wm)
 	 * extensions)
 	 */
 	wm->touch_dev = platform_device_alloc("wm97xx-touch", -1);
-	if (!wm->touch_dev)
-		return -ENOMEM;
-
+	if (!wm->touch_dev) {
+		ret = -ENOMEM;
+		goto touch_err;
+	}
 	platform_set_drvdata(wm->touch_dev, wm);
 	wm->touch_dev->dev.parent = wm->dev;
 	wm->touch_dev->dev.platform_data = pdata;
@@ -600,6 +629,9 @@ static int wm97xx_register_touch(struct wm97xx *wm)
 	return 0;
 touch_reg_err:
 	platform_device_put(wm->touch_dev);
+touch_err:
+	input_unregister_device(wm->input_dev);
+	wm->input_dev = NULL;
 
 	return ret;
 }
@@ -607,6 +639,8 @@ touch_reg_err:
 static void wm97xx_unregister_touch(struct wm97xx *wm)
 {
 	platform_device_unregister(wm->touch_dev);
+	input_unregister_device(wm->input_dev);
+	wm->input_dev = NULL;
 }
 
 static int _wm97xx_probe(struct wm97xx *wm)
@@ -758,9 +792,7 @@ batt_err:
 
 static int wm97xx_mfd_remove(struct platform_device *pdev)
 {
-	wm97xx_remove(&pdev->dev);
-
-	return 0;
+	return wm97xx_remove(&pdev->dev);
 }
 
 static int __maybe_unused wm97xx_suspend(struct device *dev)

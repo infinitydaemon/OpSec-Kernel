@@ -52,7 +52,6 @@ unevaluatedProperties: false
 
 examples:
   - |
-    #include <dt-bindings/clock/toshiba,tmpv770x.h>
     #include <dt-bindings/interrupt-controller/arm-gic.h>
 
     soc {
@@ -64,7 +63,7 @@ examples:
             reg = <0 0x28000000 0 0x10000>;
             interrupts = <GIC_SPI 156 IRQ_TYPE_LEVEL_HIGH>;
             interrupt-names = "macirq";
-            clocks = <&pismu TMPV770X_CLK_PIETHER_BUS>, <&pismu TMPV770X_CLK_PIETHER_125M>;
+            clocks = <&clk300mhz>, <&clk125mhz>;
             clock-names = "stmmaceth", "phy_ref_clk";
             snps,txpbl = <4>;
             snps,rxpbl = <4>;
@@ -72,7 +71,7 @@ examples:
             phy-mode = "rgmii-id";
             phy-handle = <&phy0>;
 
-            mdio {
+            mdio0 {
                 #address-cells = <0x1>;
                 #size-cells = <0x0>;
                 compatible = "snps,dwmac-mdio";

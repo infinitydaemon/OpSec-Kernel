@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 or Linux-OpenIB
 /* Copyright (c) 2015 - 2021 Intel Corporation */
-#include <linux/etherdevice.h>
-
 #include "osdep.h"
+#include "status.h"
 #include "hmc.h"
 #include "defs.h"
 #include "type.h"
@@ -69,31 +68,6 @@ void irdma_sc_suspend_resume_qps(struct irdma_sc_vsi *vsi, u8 op)
 	}
 }
 
-static void irdma_set_qos_info(struct irdma_sc_vsi  *vsi,
-			       struct irdma_l2params *l2p)
-{
-	u8 i;
-
-	vsi->qos_rel_bw = l2p->vsi_rel_bw;
-	vsi->qos_prio_type = l2p->vsi_prio_type;
-	vsi->dscp_mode = l2p->dscp_mode;
-	if (l2p->dscp_mode) {
-		memcpy(vsi->dscp_map, l2p->dscp_map, sizeof(vsi->dscp_map));
-		for (i = 0; i < IRDMA_MAX_USER_PRIORITY; i++)
-			l2p->up2tc[i] = i;
-	}
-	for (i = 0; i < IRDMA_MAX_USER_PRIORITY; i++) {
-		if (vsi->dev->hw_attrs.uk_attrs.hw_rev == IRDMA_GEN_1)
-			vsi->qos[i].qs_handle = l2p->qs_handle_list[i];
-		vsi->qos[i].traffic_class = l2p->up2tc[i];
-		vsi->qos[i].rel_bw =
-			l2p->tc_info[vsi->qos[i].traffic_class].rel_bw;
-		vsi->qos[i].prio_type =
-			l2p->tc_info[vsi->qos[i].traffic_class].prio_type;
-		vsi->qos[i].valid = false;
-	}
-}
-
 /**
  * irdma_change_l2params - given the new l2 parameters, change all qp
  * @vsi: RDMA VSI pointer
@@ -112,7 +86,6 @@ void irdma_change_l2params(struct irdma_sc_vsi *vsi,
 		return;
 
 	vsi->tc_change_pending = false;
-	irdma_set_qos_info(vsi, l2params);
 	irdma_sc_suspend_resume_qps(vsi, IRDMA_OP_RESUME);
 }
 
@@ -179,16 +152,17 @@ void irdma_sc_pd_init(struct irdma_sc_dev *dev, struct irdma_sc_pd *pd, u32 pd_i
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_add_arp_cache_entry(struct irdma_sc_cqp *cqp,
-					struct irdma_add_arp_cache_entry_info *info,
-					u64 scratch, bool post_sq)
+static enum irdma_status_code
+irdma_sc_add_arp_cache_entry(struct irdma_sc_cqp *cqp,
+			     struct irdma_add_arp_cache_entry_info *info,
+			     u64 scratch, bool post_sq)
 {
 	__le64 *wqe;
 	u64 hdr;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 	set_64bit_val(wqe, 8, info->reach_max);
 	set_64bit_val(wqe, 16, ether_addr_to_u64(info->mac_addr));
 
@@ -216,15 +190,16 @@ static int irdma_sc_add_arp_cache_entry(struct irdma_sc_cqp *cqp,
  * @arp_index: arp index to delete arp entry
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_del_arp_cache_entry(struct irdma_sc_cqp *cqp, u64 scratch,
-					u16 arp_index, bool post_sq)
+static enum irdma_status_code
+irdma_sc_del_arp_cache_entry(struct irdma_sc_cqp *cqp, u64 scratch,
+			     u16 arp_index, bool post_sq)
 {
 	__le64 *wqe;
 	u64 hdr;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	hdr = arp_index |
 	      FIELD_PREP(IRDMA_CQPSQ_OPCODE, IRDMA_CQP_OP_MANAGE_ARP) |
@@ -249,16 +224,17 @@ static int irdma_sc_del_arp_cache_entry(struct irdma_sc_cqp *cqp, u64 scratch,
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_manage_apbvt_entry(struct irdma_sc_cqp *cqp,
-				       struct irdma_apbvt_info *info,
-				       u64 scratch, bool post_sq)
+static enum irdma_status_code
+irdma_sc_manage_apbvt_entry(struct irdma_sc_cqp *cqp,
+			    struct irdma_apbvt_info *info, u64 scratch,
+			    bool post_sq)
 {
 	__le64 *wqe;
 	u64 hdr;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 16, info->port);
 
@@ -296,7 +272,7 @@ static int irdma_sc_manage_apbvt_entry(struct irdma_sc_cqp *cqp,
  * quad hash entry in the hardware will point to iwarp's qp
  * number and requires no calls from the driver.
  */
-static int
+static enum irdma_status_code
 irdma_sc_manage_qhash_table_entry(struct irdma_sc_cqp *cqp,
 				  struct irdma_qhash_table_info *info,
 				  u64 scratch, bool post_sq)
@@ -309,7 +285,7 @@ irdma_sc_manage_qhash_table_entry(struct irdma_sc_cqp *cqp,
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 0, ether_addr_to_u64(info->mac_addr));
 
@@ -372,9 +348,10 @@ irdma_sc_manage_qhash_table_entry(struct irdma_sc_cqp *cqp,
  * @qp: sc qp
  * @info: initialization qp info
  */
-int irdma_sc_qp_init(struct irdma_sc_qp *qp, struct irdma_qp_init_info *info)
+enum irdma_status_code irdma_sc_qp_init(struct irdma_sc_qp *qp,
+					struct irdma_qp_init_info *info)
 {
-	int ret_code;
+	enum irdma_status_code ret_code;
 	u32 pble_obj_cnt;
 	u16 wqe_size;
 
@@ -382,7 +359,7 @@ int irdma_sc_qp_init(struct irdma_sc_qp *qp, struct irdma_qp_init_info *info)
 	    info->pd->dev->hw_attrs.uk_attrs.max_hw_wq_frags ||
 	    info->qp_uk_init_info.max_rq_frag_cnt >
 	    info->pd->dev->hw_attrs.uk_attrs.max_hw_wq_frags)
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_FRAG_COUNT;
 
 	qp->dev = info->pd->dev;
 	qp->vsi = info->vsi;
@@ -405,7 +382,7 @@ int irdma_sc_qp_init(struct irdma_sc_qp *qp, struct irdma_qp_init_info *info)
 
 	if ((info->virtual_map && info->sq_pa >= pble_obj_cnt) ||
 	    (info->virtual_map && info->rq_pa >= pble_obj_cnt))
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_PBLE_INDEX;
 
 	qp->llp_stream_handle = (void *)(-1);
 	qp->hw_sq_size = irdma_get_encoded_wqe_size(qp->qp_uk.sq_ring.size,
@@ -445,8 +422,8 @@ int irdma_sc_qp_init(struct irdma_sc_qp *qp, struct irdma_qp_init_info *info)
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-int irdma_sc_qp_create(struct irdma_sc_qp *qp, struct irdma_create_qp_info *info,
-		       u64 scratch, bool post_sq)
+enum irdma_status_code irdma_sc_qp_create(struct irdma_sc_qp *qp, struct irdma_create_qp_info *info,
+					  u64 scratch, bool post_sq)
 {
 	struct irdma_sc_cqp *cqp;
 	__le64 *wqe;
@@ -454,12 +431,12 @@ int irdma_sc_qp_create(struct irdma_sc_qp *qp, struct irdma_create_qp_info *info
 
 	cqp = qp->dev->cqp;
 	if (qp->qp_uk.qp_id < cqp->dev->hw_attrs.min_hw_qp_id ||
-	    qp->qp_uk.qp_id >= cqp->dev->hmc_info->hmc_obj[IRDMA_HMC_IW_QP].max_cnt)
-		return -EINVAL;
+	    qp->qp_uk.qp_id >= (cqp->dev->hmc_info->hmc_obj[IRDMA_HMC_IW_QP].max_cnt))
+		return IRDMA_ERR_INVALID_QP_ID;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 16, qp->hw_host_ctx_pa);
 	set_64bit_val(wqe, 40, qp->shadow_area_pa);
@@ -496,8 +473,9 @@ int irdma_sc_qp_create(struct irdma_sc_qp *qp, struct irdma_create_qp_info *info
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-int irdma_sc_qp_modify(struct irdma_sc_qp *qp, struct irdma_modify_qp_info *info,
-		       u64 scratch, bool post_sq)
+enum irdma_status_code irdma_sc_qp_modify(struct irdma_sc_qp *qp,
+					  struct irdma_modify_qp_info *info,
+					  u64 scratch, bool post_sq)
 {
 	__le64 *wqe;
 	struct irdma_sc_cqp *cqp;
@@ -508,7 +486,7 @@ int irdma_sc_qp_modify(struct irdma_sc_qp *qp, struct irdma_modify_qp_info *info
 	cqp = qp->dev->cqp;
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	if (info->next_iwarp_state == IRDMA_QP_STATE_TERMINATE) {
 		if (info->dont_send_fin)
@@ -566,8 +544,9 @@ int irdma_sc_qp_modify(struct irdma_sc_qp *qp, struct irdma_modify_qp_info *info
  * @ignore_mw_bnd: memory window bind flag
  * @post_sq: flag for cqp db to ring
  */
-int irdma_sc_qp_destroy(struct irdma_sc_qp *qp, u64 scratch,
-			bool remove_hash_idx, bool ignore_mw_bnd, bool post_sq)
+enum irdma_status_code irdma_sc_qp_destroy(struct irdma_sc_qp *qp, u64 scratch,
+					   bool remove_hash_idx, bool ignore_mw_bnd,
+					   bool post_sq)
 {
 	__le64 *wqe;
 	struct irdma_sc_cqp *cqp;
@@ -576,7 +555,7 @@ int irdma_sc_qp_destroy(struct irdma_sc_qp *qp, u64 scratch,
 	cqp = qp->dev->cqp;
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 16, qp->hw_host_ctx_pa);
 	set_64bit_val(wqe, 40, qp->shadow_area_pa);
@@ -758,15 +737,16 @@ void irdma_sc_qp_setctx_roce(struct irdma_sc_qp *qp, __le64 *qp_ctx,
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_alloc_local_mac_entry(struct irdma_sc_cqp *cqp, u64 scratch,
-					  bool post_sq)
+static enum irdma_status_code
+irdma_sc_alloc_local_mac_entry(struct irdma_sc_cqp *cqp, u64 scratch,
+			       bool post_sq)
 {
 	__le64 *wqe;
 	u64 hdr;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	hdr = FIELD_PREP(IRDMA_CQPSQ_OPCODE,
 			 IRDMA_CQP_OP_ALLOCATE_LOC_MAC_TABLE_ENTRY) |
@@ -792,16 +772,17 @@ static int irdma_sc_alloc_local_mac_entry(struct irdma_sc_cqp *cqp, u64 scratch,
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_add_local_mac_entry(struct irdma_sc_cqp *cqp,
-					struct irdma_local_mac_entry_info *info,
-					u64 scratch, bool post_sq)
+static enum irdma_status_code
+irdma_sc_add_local_mac_entry(struct irdma_sc_cqp *cqp,
+			     struct irdma_local_mac_entry_info *info,
+			     u64 scratch, bool post_sq)
 {
 	__le64 *wqe;
 	u64 header;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 32, ether_addr_to_u64(info->mac_addr));
 
@@ -830,16 +811,16 @@ static int irdma_sc_add_local_mac_entry(struct irdma_sc_cqp *cqp,
  * @ignore_ref_count: to force mac adde delete
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_del_local_mac_entry(struct irdma_sc_cqp *cqp, u64 scratch,
-					u16 entry_idx, u8 ignore_ref_count,
-					bool post_sq)
+static enum irdma_status_code
+irdma_sc_del_local_mac_entry(struct irdma_sc_cqp *cqp, u64 scratch,
+			     u16 entry_idx, u8 ignore_ref_count, bool post_sq)
 {
 	__le64 *wqe;
 	u64 header;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 	header = FIELD_PREP(IRDMA_CQPSQ_MLM_TABLEIDX, entry_idx) |
 		 FIELD_PREP(IRDMA_CQPSQ_OPCODE,
 			    IRDMA_CQP_OP_MANAGE_LOC_MAC_TABLE) |
@@ -1052,9 +1033,10 @@ void irdma_sc_qp_setctx(struct irdma_sc_qp *qp, __le64 *qp_ctx,
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_alloc_stag(struct irdma_sc_dev *dev,
-			       struct irdma_allocate_stag_info *info,
-			       u64 scratch, bool post_sq)
+static enum irdma_status_code
+irdma_sc_alloc_stag(struct irdma_sc_dev *dev,
+		    struct irdma_allocate_stag_info *info, u64 scratch,
+		    bool post_sq)
 {
 	__le64 *wqe;
 	struct irdma_sc_cqp *cqp;
@@ -1071,7 +1053,7 @@ static int irdma_sc_alloc_stag(struct irdma_sc_dev *dev,
 	cqp = dev->cqp;
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 8,
 		      FLD_LS_64(dev, info->pd_id, IRDMA_CQPSQ_STAG_PDID) |
@@ -1113,9 +1095,10 @@ static int irdma_sc_alloc_stag(struct irdma_sc_dev *dev,
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_mr_reg_non_shared(struct irdma_sc_dev *dev,
-				      struct irdma_reg_ns_stag_info *info,
-				      u64 scratch, bool post_sq)
+static enum irdma_status_code
+irdma_sc_mr_reg_non_shared(struct irdma_sc_dev *dev,
+			   struct irdma_reg_ns_stag_info *info, u64 scratch,
+			   bool post_sq)
 {
 	__le64 *wqe;
 	u64 fbo;
@@ -1133,7 +1116,7 @@ static int irdma_sc_mr_reg_non_shared(struct irdma_sc_dev *dev,
 	else if (info->page_size == 0x1000)
 		page_size = IRDMA_PAGE_SIZE_4K;
 	else
-		return -EINVAL;
+		return IRDMA_ERR_PARAM;
 
 	if (info->access_rights & (IRDMA_ACCESS_FLAGS_REMOTEREAD_ONLY |
 				   IRDMA_ACCESS_FLAGS_REMOTEWRITE_ONLY))
@@ -1143,12 +1126,12 @@ static int irdma_sc_mr_reg_non_shared(struct irdma_sc_dev *dev,
 
 	pble_obj_cnt = dev->hmc_info->hmc_obj[IRDMA_HMC_IW_PBLE].cnt;
 	if (info->chunk_size && info->first_pm_pbl_index >= pble_obj_cnt)
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_PBLE_INDEX;
 
 	cqp = dev->cqp;
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 	fbo = info->va & (info->page_size - 1);
 
 	set_64bit_val(wqe, 0,
@@ -1201,9 +1184,10 @@ static int irdma_sc_mr_reg_non_shared(struct irdma_sc_dev *dev,
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_dealloc_stag(struct irdma_sc_dev *dev,
-				 struct irdma_dealloc_stag_info *info,
-				 u64 scratch, bool post_sq)
+static enum irdma_status_code
+irdma_sc_dealloc_stag(struct irdma_sc_dev *dev,
+		      struct irdma_dealloc_stag_info *info, u64 scratch,
+		      bool post_sq)
 {
 	u64 hdr;
 	__le64 *wqe;
@@ -1212,7 +1196,7 @@ static int irdma_sc_dealloc_stag(struct irdma_sc_dev *dev,
 	cqp = dev->cqp;
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 8,
 		      FLD_LS_64(dev, info->pd_id, IRDMA_CQPSQ_STAG_PDID));
@@ -1241,9 +1225,9 @@ static int irdma_sc_dealloc_stag(struct irdma_sc_dev *dev,
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_mw_alloc(struct irdma_sc_dev *dev,
-			     struct irdma_mw_alloc_info *info, u64 scratch,
-			     bool post_sq)
+static enum irdma_status_code
+irdma_sc_mw_alloc(struct irdma_sc_dev *dev, struct irdma_mw_alloc_info *info,
+		  u64 scratch, bool post_sq)
 {
 	u64 hdr;
 	struct irdma_sc_cqp *cqp;
@@ -1252,7 +1236,7 @@ static int irdma_sc_mw_alloc(struct irdma_sc_dev *dev,
 	cqp = dev->cqp;
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 8,
 		      FLD_LS_64(dev, info->pd_id, IRDMA_CQPSQ_STAG_PDID));
@@ -1282,9 +1266,9 @@ static int irdma_sc_mw_alloc(struct irdma_sc_dev *dev,
  * @info: fast mr info
  * @post_sq: flag for cqp db to ring
  */
-int irdma_sc_mr_fast_register(struct irdma_sc_qp *qp,
-			      struct irdma_fast_reg_stag_info *info,
-			      bool post_sq)
+enum irdma_status_code
+irdma_sc_mr_fast_register(struct irdma_sc_qp *qp,
+			  struct irdma_fast_reg_stag_info *info, bool post_sq)
 {
 	u64 temp, hdr;
 	__le64 *wqe;
@@ -1306,7 +1290,7 @@ int irdma_sc_mr_fast_register(struct irdma_sc_qp *qp,
 	wqe = irdma_qp_get_next_send_wqe(&qp->qp_uk, &wqe_idx,
 					 IRDMA_QP_WQE_MIN_QUANTA, 0, &sq_info);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_QP_TOOMANY_WRS_POSTED;
 
 	irdma_clr_wqes(&qp->qp_uk, wqe_idx);
 
@@ -1433,6 +1417,44 @@ void irdma_sc_send_lsmm(struct irdma_sc_qp *qp, void *lsmm_buf, u32 size,
 
 	if (qp->dev->hw_attrs.uk_attrs.feature_flags & IRDMA_FEATURE_RTS_AE)
 		irdma_sc_gen_rts_ae(qp);
+}
+
+/**
+ * irdma_sc_send_lsmm_nostag - for privilege qp
+ * @qp: sc qp struct
+ * @lsmm_buf: buffer with lsmm message
+ * @size: size of lsmm buffer
+ */
+void irdma_sc_send_lsmm_nostag(struct irdma_sc_qp *qp, void *lsmm_buf, u32 size)
+{
+	__le64 *wqe;
+	u64 hdr;
+	struct irdma_qp_uk *qp_uk;
+
+	qp_uk = &qp->qp_uk;
+	wqe = qp_uk->sq_base->elem;
+
+	set_64bit_val(wqe, 0, (uintptr_t)lsmm_buf);
+
+	if (qp->qp_uk.uk_attrs->hw_rev == IRDMA_GEN_1)
+		set_64bit_val(wqe, 8,
+			      FIELD_PREP(IRDMAQPSQ_GEN1_FRAG_LEN, size));
+	else
+		set_64bit_val(wqe, 8,
+			      FIELD_PREP(IRDMAQPSQ_FRAG_LEN, size) |
+			      FIELD_PREP(IRDMAQPSQ_VALID, qp->qp_uk.swqe_polarity));
+	set_64bit_val(wqe, 16, 0);
+
+	hdr = FIELD_PREP(IRDMAQPSQ_OPCODE, IRDMAQP_OP_RDMA_SEND) |
+	      FIELD_PREP(IRDMAQPSQ_STREAMMODE, 1) |
+	      FIELD_PREP(IRDMAQPSQ_WAITFORRCVPDU, 1) |
+	      FIELD_PREP(IRDMAQPSQ_VALID, qp->qp_uk.swqe_polarity);
+	dma_wmb(); /* make sure WQE is written before valid bit is set */
+
+	set_64bit_val(wqe, 24, hdr);
+
+	print_hex_dump_debug("WQE: SEND_LSMM_NOSTAG WQE", DUMP_PREFIX_OFFSET,
+			     16, 8, wqe, IRDMA_QP_WQE_MIN_SIZE, false);
 }
 
 /**
@@ -1835,7 +1857,8 @@ void irdma_terminate_received(struct irdma_sc_qp *qp,
 	}
 }
 
-static int irdma_null_ws_add(struct irdma_sc_vsi *vsi, u8 user_pri)
+static enum irdma_status_code irdma_null_ws_add(struct irdma_sc_vsi *vsi,
+						u8 user_pri)
 {
 	return 0;
 }
@@ -1858,6 +1881,7 @@ static void irdma_null_ws_reset(struct irdma_sc_vsi *vsi)
 void irdma_sc_vsi_init(struct irdma_sc_vsi  *vsi,
 		       struct irdma_vsi_init_info *info)
 {
+	struct irdma_l2params *l2p;
 	int i;
 
 	vsi->dev = info->dev;
@@ -1870,8 +1894,18 @@ void irdma_sc_vsi_init(struct irdma_sc_vsi  *vsi,
 	if (vsi->dev->hw_attrs.uk_attrs.hw_rev == IRDMA_GEN_1)
 		vsi->fcn_id = info->dev->hmc_fn_id;
 
-	irdma_set_qos_info(vsi, info->params);
+	l2p = info->params;
+	vsi->qos_rel_bw = l2p->vsi_rel_bw;
+	vsi->qos_prio_type = l2p->vsi_prio_type;
 	for (i = 0; i < IRDMA_MAX_USER_PRIORITY; i++) {
+		if (vsi->dev->hw_attrs.uk_attrs.hw_rev == IRDMA_GEN_1)
+			vsi->qos[i].qs_handle = l2p->qs_handle_list[i];
+		vsi->qos[i].traffic_class = info->params->up2tc[i];
+		vsi->qos[i].rel_bw =
+			l2p->tc_info[vsi->qos[i].traffic_class].rel_bw;
+		vsi->qos[i].prio_type =
+			l2p->tc_info[vsi->qos[i].traffic_class].prio_type;
+		vsi->qos[i].valid = false;
 		mutex_init(&vsi->qos[i].qos_mutex);
 		INIT_LIST_HEAD(&vsi->qos[i].qplist);
 	}
@@ -1920,8 +1954,8 @@ static u8 irdma_get_fcn_id(struct irdma_sc_vsi *vsi)
  * @vsi: pointer to the vsi structure
  * @info: The info structure used for initialization
  */
-int irdma_vsi_stats_init(struct irdma_sc_vsi *vsi,
-			 struct irdma_vsi_stats_info *info)
+enum irdma_status_code irdma_vsi_stats_init(struct irdma_sc_vsi *vsi,
+					    struct irdma_vsi_stats_info *info)
 {
 	u8 fcn_id = info->fcn_id;
 	struct irdma_dma_mem *stats_buff_mem;
@@ -1936,7 +1970,7 @@ int irdma_vsi_stats_init(struct irdma_sc_vsi *vsi,
 						&stats_buff_mem->pa,
 						GFP_KERNEL);
 	if (!stats_buff_mem->va)
-		return -ENOMEM;
+		return IRDMA_ERR_NO_MEMORY;
 
 	vsi->pestat->gather_info.gather_stats_va = stats_buff_mem->va;
 	vsi->pestat->gather_info.last_gather_stats_va =
@@ -1963,7 +1997,7 @@ stats_error:
 			  stats_buff_mem->va, stats_buff_mem->pa);
 	stats_buff_mem->va = NULL;
 
-	return -EIO;
+	return IRDMA_ERR_CQP_COMPL_ERROR;
 }
 
 /**
@@ -2025,19 +2059,19 @@ u8 irdma_get_encoded_wqe_size(u32 wqsize, enum irdma_queue_type queue_type)
  * @info: gather stats info structure
  * @scratch: u64 saved to be used during cqp completion
  */
-static int irdma_sc_gather_stats(struct irdma_sc_cqp *cqp,
-				 struct irdma_stats_gather_info *info,
-				 u64 scratch)
+static enum irdma_status_code
+irdma_sc_gather_stats(struct irdma_sc_cqp *cqp,
+		      struct irdma_stats_gather_info *info, u64 scratch)
 {
 	__le64 *wqe;
 	u64 temp;
 
 	if (info->stats_buff_mem.size < IRDMA_GATHER_STATS_BUF_SIZE)
-		return -ENOMEM;
+		return IRDMA_ERR_BUF_TOO_SHORT;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 40,
 		      FIELD_PREP(IRDMA_CQPSQ_STATS_HMC_FCN_INDEX, info->hmc_fcn_index));
@@ -2072,16 +2106,17 @@ static int irdma_sc_gather_stats(struct irdma_sc_cqp *cqp,
  * @alloc: alloc vs. delete flag
  * @scratch: u64 saved to be used during cqp completion
  */
-static int irdma_sc_manage_stats_inst(struct irdma_sc_cqp *cqp,
-				      struct irdma_stats_inst_info *info,
-				      bool alloc, u64 scratch)
+static enum irdma_status_code
+irdma_sc_manage_stats_inst(struct irdma_sc_cqp *cqp,
+			   struct irdma_stats_inst_info *info, bool alloc,
+			   u64 scratch)
 {
 	__le64 *wqe;
 	u64 temp;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 40,
 		      FIELD_PREP(IRDMA_CQPSQ_STATS_HMC_FCN_INDEX, info->hmc_fn_id));
@@ -2109,8 +2144,9 @@ static int irdma_sc_manage_stats_inst(struct irdma_sc_cqp *cqp,
  * @info: User priority map info
  * @scratch: u64 saved to be used during cqp completion
  */
-static int irdma_sc_set_up_map(struct irdma_sc_cqp *cqp,
-			       struct irdma_up_info *info, u64 scratch)
+static enum irdma_status_code irdma_sc_set_up_map(struct irdma_sc_cqp *cqp,
+						  struct irdma_up_info *info,
+						  u64 scratch)
 {
 	__le64 *wqe;
 	u64 temp = 0;
@@ -2118,7 +2154,7 @@ static int irdma_sc_set_up_map(struct irdma_sc_cqp *cqp,
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	for (i = 0; i < IRDMA_MAX_USER_PRIORITY; i++)
 		temp |= (u64)info->map[i] << (i * 8);
@@ -2151,16 +2187,17 @@ static int irdma_sc_set_up_map(struct irdma_sc_cqp *cqp,
  * @node_op: 0 for add 1 for modify, 2 for delete
  * @scratch: u64 saved to be used during cqp completion
  */
-static int irdma_sc_manage_ws_node(struct irdma_sc_cqp *cqp,
-				   struct irdma_ws_node_info *info,
-				   enum irdma_ws_node_op node_op, u64 scratch)
+static enum irdma_status_code
+irdma_sc_manage_ws_node(struct irdma_sc_cqp *cqp,
+			struct irdma_ws_node_info *info,
+			enum irdma_ws_node_op node_op, u64 scratch)
 {
 	__le64 *wqe;
 	u64 temp = 0;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 32,
 		      FIELD_PREP(IRDMA_CQPSQ_WS_VSI, info->vsi) |
@@ -2193,9 +2230,9 @@ static int irdma_sc_manage_ws_node(struct irdma_sc_cqp *cqp,
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-int irdma_sc_qp_flush_wqes(struct irdma_sc_qp *qp,
-			   struct irdma_qp_flush_info *info, u64 scratch,
-			   bool post_sq)
+enum irdma_status_code irdma_sc_qp_flush_wqes(struct irdma_sc_qp *qp,
+					      struct irdma_qp_flush_info *info,
+					      u64 scratch, bool post_sq)
 {
 	u64 temp = 0;
 	__le64 *wqe;
@@ -2214,13 +2251,13 @@ int irdma_sc_qp_flush_wqes(struct irdma_sc_qp *qp,
 		ibdev_dbg(to_ibdev(qp->dev),
 			  "CQP: Additional flush request ignored for qp %x\n",
 			  qp->qp_uk.qp_id);
-		return -EALREADY;
+		return IRDMA_ERR_FLUSHED_Q;
 	}
 
 	cqp = qp->pd->dev->cqp;
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	if (info->userflushcode) {
 		if (flush_rq)
@@ -2267,9 +2304,9 @@ int irdma_sc_qp_flush_wqes(struct irdma_sc_qp *qp,
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_gen_ae(struct irdma_sc_qp *qp,
-			   struct irdma_gen_ae_info *info, u64 scratch,
-			   bool post_sq)
+static enum irdma_status_code irdma_sc_gen_ae(struct irdma_sc_qp *qp,
+					      struct irdma_gen_ae_info *info,
+					      u64 scratch, bool post_sq)
 {
 	u64 temp;
 	__le64 *wqe;
@@ -2279,7 +2316,7 @@ static int irdma_sc_gen_ae(struct irdma_sc_qp *qp,
 	cqp = qp->pd->dev->cqp;
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	temp = info->ae_code | FIELD_PREP(IRDMA_CQPSQ_FWQE_AESOURCE,
 					  info->ae_src);
@@ -2307,9 +2344,10 @@ static int irdma_sc_gen_ae(struct irdma_sc_qp *qp,
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_qp_upload_context(struct irdma_sc_dev *dev,
-				      struct irdma_upload_context_info *info,
-				      u64 scratch, bool post_sq)
+static enum irdma_status_code
+irdma_sc_qp_upload_context(struct irdma_sc_dev *dev,
+			   struct irdma_upload_context_info *info, u64 scratch,
+			   bool post_sq)
 {
 	__le64 *wqe;
 	struct irdma_sc_cqp *cqp;
@@ -2318,7 +2356,7 @@ static int irdma_sc_qp_upload_context(struct irdma_sc_dev *dev,
 	cqp = dev->cqp;
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 16, info->buf_pa);
 
@@ -2347,20 +2385,21 @@ static int irdma_sc_qp_upload_context(struct irdma_sc_dev *dev,
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_manage_push_page(struct irdma_sc_cqp *cqp,
-				     struct irdma_cqp_manage_push_page_info *info,
-				     u64 scratch, bool post_sq)
+static enum irdma_status_code
+irdma_sc_manage_push_page(struct irdma_sc_cqp *cqp,
+			  struct irdma_cqp_manage_push_page_info *info,
+			  u64 scratch, bool post_sq)
 {
 	__le64 *wqe;
 	u64 hdr;
 
 	if (info->free_page &&
 	    info->push_idx >= cqp->dev->hw_attrs.max_hw_device_pages)
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_PUSH_PAGE_INDEX;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 16, info->qs_handle);
 	hdr = FIELD_PREP(IRDMA_CQPSQ_MPP_PPIDX, info->push_idx) |
@@ -2386,15 +2425,16 @@ static int irdma_sc_manage_push_page(struct irdma_sc_cqp *cqp,
  * @qp: sc qp struct
  * @scratch: u64 saved to be used during cqp completion
  */
-static int irdma_sc_suspend_qp(struct irdma_sc_cqp *cqp, struct irdma_sc_qp *qp,
-			       u64 scratch)
+static enum irdma_status_code irdma_sc_suspend_qp(struct irdma_sc_cqp *cqp,
+						  struct irdma_sc_qp *qp,
+						  u64 scratch)
 {
 	u64 hdr;
 	__le64 *wqe;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	hdr = FIELD_PREP(IRDMA_CQPSQ_SUSPENDQP_QPID, qp->qp_uk.qp_id) |
 	      FIELD_PREP(IRDMA_CQPSQ_OPCODE, IRDMA_CQP_OP_SUSPEND_QP) |
@@ -2416,15 +2456,16 @@ static int irdma_sc_suspend_qp(struct irdma_sc_cqp *cqp, struct irdma_sc_qp *qp,
  * @qp: sc qp struct
  * @scratch: u64 saved to be used during cqp completion
  */
-static int irdma_sc_resume_qp(struct irdma_sc_cqp *cqp, struct irdma_sc_qp *qp,
-			      u64 scratch)
+static enum irdma_status_code irdma_sc_resume_qp(struct irdma_sc_cqp *cqp,
+						 struct irdma_sc_qp *qp,
+						 u64 scratch)
 {
 	u64 hdr;
 	__le64 *wqe;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 16,
 		      FIELD_PREP(IRDMA_CQPSQ_RESUMEQP_QSHANDLE, qp->qs_handle));
@@ -2457,20 +2498,24 @@ static inline void irdma_sc_cq_ack(struct irdma_sc_cq *cq)
  * @cq: cq struct
  * @info: cq initialization info
  */
-int irdma_sc_cq_init(struct irdma_sc_cq *cq, struct irdma_cq_init_info *info)
+enum irdma_status_code irdma_sc_cq_init(struct irdma_sc_cq *cq,
+					struct irdma_cq_init_info *info)
 {
+	enum irdma_status_code ret_code;
 	u32 pble_obj_cnt;
 
 	pble_obj_cnt = info->dev->hmc_info->hmc_obj[IRDMA_HMC_IW_PBLE].cnt;
 	if (info->virtual_map && info->first_pm_pbl_idx >= pble_obj_cnt)
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_PBLE_INDEX;
 
 	cq->cq_pa = info->cq_base_pa;
 	cq->dev = info->dev;
 	cq->ceq_id = info->ceq_id;
 	info->cq_uk_init_info.cqe_alloc_db = cq->dev->cq_arm_db;
 	info->cq_uk_init_info.cq_ack_db = cq->dev->cq_ack_db;
-	irdma_uk_cq_init(&cq->cq_uk, &info->cq_uk_init_info);
+	ret_code = irdma_uk_cq_init(&cq->cq_uk, &info->cq_uk_init_info);
+	if (ret_code)
+		return ret_code;
 
 	cq->virtual_map = info->virtual_map;
 	cq->pbl_chunk_size = info->pbl_chunk_size;
@@ -2494,21 +2539,23 @@ int irdma_sc_cq_init(struct irdma_sc_cq *cq, struct irdma_cq_init_info *info)
  * @check_overflow: flag for overflow check
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_cq_create(struct irdma_sc_cq *cq, u64 scratch,
-			      bool check_overflow, bool post_sq)
+static enum irdma_status_code irdma_sc_cq_create(struct irdma_sc_cq *cq,
+						 u64 scratch,
+						 bool check_overflow,
+						 bool post_sq)
 {
 	__le64 *wqe;
 	struct irdma_sc_cqp *cqp;
 	u64 hdr;
 	struct irdma_sc_ceq *ceq;
-	int ret_code = 0;
+	enum irdma_status_code ret_code = 0;
 
 	cqp = cq->dev->cqp;
-	if (cq->cq_uk.cq_id >= cqp->dev->hmc_info->hmc_obj[IRDMA_HMC_IW_CQ].max_cnt)
-		return -EINVAL;
+	if (cq->cq_uk.cq_id >= (cqp->dev->hmc_info->hmc_obj[IRDMA_HMC_IW_CQ].max_cnt))
+		return IRDMA_ERR_INVALID_CQ_ID;
 
-	if (cq->ceq_id >= cq->dev->hmc_fpm_misc.max_ceqs)
-		return -EINVAL;
+	if (cq->ceq_id >= (cq->dev->hmc_fpm_misc.max_ceqs))
+		return IRDMA_ERR_INVALID_CEQ_ID;
 
 	ceq = cq->dev->ceq[cq->ceq_id];
 	if (ceq && ceq->reg_cq)
@@ -2521,7 +2568,7 @@ static int irdma_sc_cq_create(struct irdma_sc_cq *cq, u64 scratch,
 	if (!wqe) {
 		if (ceq && ceq->reg_cq)
 			irdma_sc_remove_cq_ctx(ceq, cq);
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 	}
 
 	set_64bit_val(wqe, 0, cq->cq_uk.cq_size);
@@ -2567,7 +2614,8 @@ static int irdma_sc_cq_create(struct irdma_sc_cq *cq, u64 scratch,
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-int irdma_sc_cq_destroy(struct irdma_sc_cq *cq, u64 scratch, bool post_sq)
+enum irdma_status_code irdma_sc_cq_destroy(struct irdma_sc_cq *cq, u64 scratch,
+					   bool post_sq)
 {
 	struct irdma_sc_cqp *cqp;
 	__le64 *wqe;
@@ -2577,7 +2625,7 @@ int irdma_sc_cq_destroy(struct irdma_sc_cq *cq, u64 scratch, bool post_sq)
 	cqp = cq->dev->cqp;
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	ceq = cq->dev->ceq[cq->ceq_id];
 	if (ceq && ceq->reg_cq)
@@ -2633,9 +2681,9 @@ void irdma_sc_cq_resize(struct irdma_sc_cq *cq, struct irdma_modify_cq_info *inf
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag to post to sq
  */
-static int irdma_sc_cq_modify(struct irdma_sc_cq *cq,
-			      struct irdma_modify_cq_info *info, u64 scratch,
-			      bool post_sq)
+static enum irdma_status_code
+irdma_sc_cq_modify(struct irdma_sc_cq *cq, struct irdma_modify_cq_info *info,
+		   u64 scratch, bool post_sq)
 {
 	struct irdma_sc_cqp *cqp;
 	__le64 *wqe;
@@ -2645,12 +2693,12 @@ static int irdma_sc_cq_modify(struct irdma_sc_cq *cq,
 	pble_obj_cnt = cq->dev->hmc_info->hmc_obj[IRDMA_HMC_IW_PBLE].cnt;
 	if (info->cq_resize && info->virtual_map &&
 	    info->first_pm_pbl_idx >= pble_obj_cnt)
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_PBLE_INDEX;
 
 	cqp = cq->dev->cqp;
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 0, info->cq_size);
 	set_64bit_val(wqe, 8, (uintptr_t)cq >> 1);
@@ -2724,8 +2772,8 @@ static inline void irdma_get_cqp_reg_info(struct irdma_sc_cqp *cqp, u32 *val,
  * @tail: wqtail register value
  * @count: how many times to try for completion
  */
-static int irdma_cqp_poll_registers(struct irdma_sc_cqp *cqp, u32 tail,
-				    u32 count)
+static enum irdma_status_code irdma_cqp_poll_registers(struct irdma_sc_cqp *cqp,
+						       u32 tail, u32 count)
 {
 	u32 i = 0;
 	u32 newtail, error, val;
@@ -2737,7 +2785,7 @@ static int irdma_cqp_poll_registers(struct irdma_sc_cqp *cqp, u32 tail,
 			ibdev_dbg(to_ibdev(cqp->dev),
 				  "CQP: CQPERRCODES error_code[x%08X]\n",
 				  error);
-			return -EIO;
+			return IRDMA_ERR_CQP_COMPL_ERROR;
 		}
 		if (newtail != tail) {
 			/* SUCCESS */
@@ -2748,7 +2796,7 @@ static int irdma_cqp_poll_registers(struct irdma_sc_cqp *cqp, u32 tail,
 		udelay(cqp->dev->hw_attrs.max_sleep_count);
 	}
 
-	return -ETIMEDOUT;
+	return IRDMA_ERR_TIMEOUT;
 }
 
 /**
@@ -2903,9 +2951,10 @@ static u64 irdma_sc_decode_fpm_query(__le64 *buf, u32 buf_idx,
  * parses fpm query buffer and copy max_cnt and
  * size value of hmc objects in hmc_info
  */
-static int irdma_sc_parse_fpm_query_buf(struct irdma_sc_dev *dev, __le64 *buf,
-					struct irdma_hmc_info *hmc_info,
-					struct irdma_hmc_fpm_misc *hmc_fpm_misc)
+static enum irdma_status_code
+irdma_sc_parse_fpm_query_buf(struct irdma_sc_dev *dev, __le64 *buf,
+			     struct irdma_hmc_info *hmc_info,
+			     struct irdma_hmc_fpm_misc *hmc_fpm_misc)
 {
 	struct irdma_hmc_obj_info *obj_info;
 	u64 temp;
@@ -2944,7 +2993,7 @@ static int irdma_sc_parse_fpm_query_buf(struct irdma_sc_dev *dev, __le64 *buf,
 	obj_info[IRDMA_HMC_IW_XFFL].size = 4;
 	hmc_fpm_misc->xf_block_size = FIELD_GET(IRDMA_QUERY_FPM_XFBLOCKSIZE, temp);
 	if (!hmc_fpm_misc->xf_block_size)
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_SIZE;
 
 	irdma_sc_decode_fpm_query(buf, 72, obj_info, IRDMA_HMC_IW_Q1);
 	get_64bit_val(buf, 80, &temp);
@@ -2953,7 +3002,7 @@ static int irdma_sc_parse_fpm_query_buf(struct irdma_sc_dev *dev, __le64 *buf,
 
 	hmc_fpm_misc->q1_block_size = FIELD_GET(IRDMA_QUERY_FPM_Q1BLOCKSIZE, temp);
 	if (!hmc_fpm_misc->q1_block_size)
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_SIZE;
 
 	irdma_sc_decode_fpm_query(buf, 88, obj_info, IRDMA_HMC_IW_TIMER);
 
@@ -2977,7 +3026,7 @@ static int irdma_sc_parse_fpm_query_buf(struct irdma_sc_dev *dev, __le64 *buf,
 	hmc_fpm_misc->rrf_block_size = FIELD_GET(IRDMA_QUERY_FPM_RRFBLOCKSIZE, temp);
 	if (!hmc_fpm_misc->rrf_block_size &&
 	    obj_info[IRDMA_HMC_IW_RRFFL].max_cnt)
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_SIZE;
 
 	irdma_sc_decode_fpm_query(buf, 144, obj_info, IRDMA_HMC_IW_HDR);
 	irdma_sc_decode_fpm_query(buf, 152, obj_info, IRDMA_HMC_IW_MD);
@@ -2989,7 +3038,7 @@ static int irdma_sc_parse_fpm_query_buf(struct irdma_sc_dev *dev, __le64 *buf,
 	hmc_fpm_misc->ooiscf_block_size = FIELD_GET(IRDMA_QUERY_FPM_OOISCFBLOCKSIZE, temp);
 	if (!hmc_fpm_misc->ooiscf_block_size &&
 	    obj_info[IRDMA_HMC_IW_OOISCFFL].max_cnt)
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_SIZE;
 
 	return 0;
 }
@@ -3017,7 +3066,8 @@ static u32 irdma_sc_find_reg_cq(struct irdma_sc_ceq *ceq,
  * @ceq: ceq sc structure
  * @cq: cq sc structure
  */
-int irdma_sc_add_cq_ctx(struct irdma_sc_ceq *ceq, struct irdma_sc_cq *cq)
+enum irdma_status_code irdma_sc_add_cq_ctx(struct irdma_sc_ceq *ceq,
+					   struct irdma_sc_cq *cq)
 {
 	unsigned long flags;
 
@@ -3025,7 +3075,7 @@ int irdma_sc_add_cq_ctx(struct irdma_sc_ceq *ceq, struct irdma_sc_cq *cq)
 
 	if (ceq->reg_cq_size == ceq->elem_cnt) {
 		spin_unlock_irqrestore(&ceq->req_cq_lock, flags);
-		return -ENOMEM;
+		return IRDMA_ERR_REG_CQ_FULL;
 	}
 
 	ceq->reg_cq[ceq->reg_cq_size++] = cq;
@@ -3066,15 +3116,15 @@ exit:
  *
  * Initializes the object and context buffers for a control Queue Pair.
  */
-int irdma_sc_cqp_init(struct irdma_sc_cqp *cqp,
-		      struct irdma_cqp_init_info *info)
+enum irdma_status_code irdma_sc_cqp_init(struct irdma_sc_cqp *cqp,
+					 struct irdma_cqp_init_info *info)
 {
 	u8 hw_sq_size;
 
 	if (info->sq_size > IRDMA_CQP_SW_SQSIZE_2048 ||
 	    info->sq_size < IRDMA_CQP_SW_SQSIZE_4 ||
 	    ((info->sq_size & (info->sq_size - 1))))
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_SIZE;
 
 	hw_sq_size = irdma_get_encoded_wqe_size(info->sq_size,
 						IRDMA_QUEUE_TYPE_CQP);
@@ -3124,12 +3174,13 @@ int irdma_sc_cqp_init(struct irdma_sc_cqp *cqp,
  * @maj_err: If error, major err number
  * @min_err: If error, minor err number
  */
-int irdma_sc_cqp_create(struct irdma_sc_cqp *cqp, u16 *maj_err, u16 *min_err)
+enum irdma_status_code irdma_sc_cqp_create(struct irdma_sc_cqp *cqp, u16 *maj_err,
+					   u16 *min_err)
 {
 	u64 temp;
 	u8 hw_rev;
 	u32 cnt = 0, p1, p2, val = 0, err_code;
-	int ret_code;
+	enum irdma_status_code ret_code;
 
 	hw_rev = cqp->dev->hw_attrs.uk_attrs.hw_rev;
 	cqp->sdbuf.size = ALIGN(IRDMA_UPDATE_SD_BUFF_SIZE * cqp->sq_size,
@@ -3138,7 +3189,7 @@ int irdma_sc_cqp_create(struct irdma_sc_cqp *cqp, u16 *maj_err, u16 *min_err)
 					   cqp->sdbuf.size, &cqp->sdbuf.pa,
 					   GFP_KERNEL);
 	if (!cqp->sdbuf.va)
-		return -ENOMEM;
+		return IRDMA_ERR_NO_MEMORY;
 
 	spin_lock_init(&cqp->dev->cqp_lock);
 
@@ -3193,7 +3244,7 @@ int irdma_sc_cqp_create(struct irdma_sc_cqp *cqp, u16 *maj_err, u16 *min_err)
 
 	do {
 		if (cnt++ > cqp->dev->hw_attrs.max_done_count) {
-			ret_code = -ETIMEDOUT;
+			ret_code = IRDMA_ERR_TIMEOUT;
 			goto err;
 		}
 		udelay(cqp->dev->hw_attrs.max_sleep_count);
@@ -3201,7 +3252,7 @@ int irdma_sc_cqp_create(struct irdma_sc_cqp *cqp, u16 *maj_err, u16 *min_err)
 	} while (!val);
 
 	if (FLD_RS_32(cqp->dev, val, IRDMA_CCQPSTATUS_CCQP_ERR)) {
-		ret_code = -EOPNOTSUPP;
+		ret_code = IRDMA_ERR_DEVICE_NOT_SUPPORTED;
 		goto err;
 	}
 
@@ -3242,7 +3293,7 @@ __le64 *irdma_sc_cqp_get_next_send_wqe_idx(struct irdma_sc_cqp *cqp, u64 scratch
 					   u32 *wqe_idx)
 {
 	__le64 *wqe = NULL;
-	int ret_code;
+	enum irdma_status_code ret_code;
 
 	if (IRDMA_RING_FULL_ERR(cqp->sq_ring)) {
 		ibdev_dbg(to_ibdev(cqp->dev),
@@ -3269,16 +3320,16 @@ __le64 *irdma_sc_cqp_get_next_send_wqe_idx(struct irdma_sc_cqp *cqp, u64 scratch
  * irdma_sc_cqp_destroy - destroy cqp during close
  * @cqp: struct for cqp hw
  */
-int irdma_sc_cqp_destroy(struct irdma_sc_cqp *cqp)
+enum irdma_status_code irdma_sc_cqp_destroy(struct irdma_sc_cqp *cqp)
 {
 	u32 cnt = 0, val;
-	int ret_code = 0;
+	enum irdma_status_code ret_code = 0;
 
 	writel(0, cqp->dev->hw_regs[IRDMA_CCQPHIGH]);
 	writel(0, cqp->dev->hw_regs[IRDMA_CCQPLOW]);
 	do {
 		if (cnt++ > cqp->dev->hw_attrs.max_done_count) {
-			ret_code = -ETIMEDOUT;
+			ret_code = IRDMA_ERR_TIMEOUT;
 			break;
 		}
 		udelay(cqp->dev->hw_attrs.max_sleep_count);
@@ -3323,8 +3374,8 @@ void irdma_sc_ccq_arm(struct irdma_sc_cq *ccq)
  * @ccq: ccq sc struct
  * @info: completion q entry to return
  */
-int irdma_sc_ccq_get_cqe_info(struct irdma_sc_cq *ccq,
-			      struct irdma_ccq_cqe_info *info)
+enum irdma_status_code irdma_sc_ccq_get_cqe_info(struct irdma_sc_cq *ccq,
+						 struct irdma_ccq_cqe_info *info)
 {
 	u64 qp_ctx, temp, temp1;
 	__le64 *cqe;
@@ -3332,7 +3383,7 @@ int irdma_sc_ccq_get_cqe_info(struct irdma_sc_cq *ccq,
 	u32 wqe_idx;
 	u32 error;
 	u8 polarity;
-	int ret_code = 0;
+	enum irdma_status_code ret_code = 0;
 
 	if (ccq->cq_uk.avoid_mem_cflct)
 		cqe = IRDMA_GET_CURRENT_EXTENDED_CQ_ELEM(&ccq->cq_uk);
@@ -3342,7 +3393,7 @@ int irdma_sc_ccq_get_cqe_info(struct irdma_sc_cq *ccq,
 	get_64bit_val(cqe, 24, &temp);
 	polarity = (u8)FIELD_GET(IRDMA_CQ_VALID, temp);
 	if (polarity != ccq->cq_uk.polarity)
-		return -ENOENT;
+		return IRDMA_ERR_Q_EMPTY;
 
 	get_64bit_val(cqe, 8, &qp_ctx);
 	cqp = (struct irdma_sc_cqp *)(unsigned long)qp_ctx;
@@ -3389,25 +3440,25 @@ int irdma_sc_ccq_get_cqe_info(struct irdma_sc_cq *ccq,
  * @op_code: cqp opcode for completion
  * @compl_info: completion q entry to return
  */
-int irdma_sc_poll_for_cqp_op_done(struct irdma_sc_cqp *cqp, u8 op_code,
-				  struct irdma_ccq_cqe_info *compl_info)
+enum irdma_status_code irdma_sc_poll_for_cqp_op_done(struct irdma_sc_cqp *cqp, u8 op_code,
+						     struct irdma_ccq_cqe_info *compl_info)
 {
 	struct irdma_ccq_cqe_info info = {};
 	struct irdma_sc_cq *ccq;
-	int ret_code = 0;
+	enum irdma_status_code ret_code = 0;
 	u32 cnt = 0;
 
 	ccq = cqp->dev->ccq;
 	while (1) {
 		if (cnt++ > 100 * cqp->dev->hw_attrs.max_done_count)
-			return -ETIMEDOUT;
+			return IRDMA_ERR_TIMEOUT;
 
 		if (irdma_sc_ccq_get_cqe_info(ccq, &info)) {
 			udelay(cqp->dev->hw_attrs.max_sleep_count);
 			continue;
 		}
 		if (info.error && info.op_code != IRDMA_CQP_OP_QUERY_STAG) {
-			ret_code = -EIO;
+			ret_code = IRDMA_ERR_CQP_COMPL_ERROR;
 			break;
 		}
 		/* make sure op code matches*/
@@ -3431,16 +3482,17 @@ int irdma_sc_poll_for_cqp_op_done(struct irdma_sc_cqp *cqp, u8 op_code,
  * @info: info for the manage function table operation
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_manage_hmc_pm_func_table(struct irdma_sc_cqp *cqp,
-					     struct irdma_hmc_fcn_info *info,
-					     u64 scratch, bool post_sq)
+static enum irdma_status_code
+irdma_sc_manage_hmc_pm_func_table(struct irdma_sc_cqp *cqp,
+				  struct irdma_hmc_fcn_info *info,
+				  u64 scratch, bool post_sq)
 {
 	__le64 *wqe;
 	u64 hdr;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 0, 0);
 	set_64bit_val(wqe, 8, 0);
@@ -3473,7 +3525,8 @@ static int irdma_sc_manage_hmc_pm_func_table(struct irdma_sc_cqp *cqp,
  * for fpm commit
  * @cqp: struct for cqp hw
  */
-static int irdma_sc_commit_fpm_val_done(struct irdma_sc_cqp *cqp)
+static enum irdma_status_code
+irdma_sc_commit_fpm_val_done(struct irdma_sc_cqp *cqp)
 {
 	return irdma_sc_poll_for_cqp_op_done(cqp, IRDMA_CQP_OP_COMMIT_FPM_VAL,
 					     NULL);
@@ -3488,19 +3541,19 @@ static int irdma_sc_commit_fpm_val_done(struct irdma_sc_cqp *cqp)
  * @post_sq: flag for cqp db to ring
  * @wait_type: poll ccq or cqp registers for cqp completion
  */
-static int irdma_sc_commit_fpm_val(struct irdma_sc_cqp *cqp, u64 scratch,
-				   u8 hmc_fn_id,
-				   struct irdma_dma_mem *commit_fpm_mem,
-				   bool post_sq, u8 wait_type)
+static enum irdma_status_code
+irdma_sc_commit_fpm_val(struct irdma_sc_cqp *cqp, u64 scratch, u8 hmc_fn_id,
+			struct irdma_dma_mem *commit_fpm_mem, bool post_sq,
+			u8 wait_type)
 {
 	__le64 *wqe;
 	u64 hdr;
 	u32 tail, val, error;
-	int ret_code = 0;
+	enum irdma_status_code ret_code = 0;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 16, hmc_fn_id);
 	set_64bit_val(wqe, 32, commit_fpm_mem->pa);
@@ -3534,7 +3587,8 @@ static int irdma_sc_commit_fpm_val(struct irdma_sc_cqp *cqp, u64 scratch,
  * query fpm
  * @cqp: struct for cqp hw
  */
-static int irdma_sc_query_fpm_val_done(struct irdma_sc_cqp *cqp)
+static enum irdma_status_code
+irdma_sc_query_fpm_val_done(struct irdma_sc_cqp *cqp)
 {
 	return irdma_sc_poll_for_cqp_op_done(cqp, IRDMA_CQP_OP_QUERY_FPM_VAL,
 					     NULL);
@@ -3549,19 +3603,19 @@ static int irdma_sc_query_fpm_val_done(struct irdma_sc_cqp *cqp)
  * @post_sq: flag for cqp db to ring
  * @wait_type: poll ccq or cqp registers for cqp completion
  */
-static int irdma_sc_query_fpm_val(struct irdma_sc_cqp *cqp, u64 scratch,
-				  u8 hmc_fn_id,
-				  struct irdma_dma_mem *query_fpm_mem,
-				  bool post_sq, u8 wait_type)
+static enum irdma_status_code
+irdma_sc_query_fpm_val(struct irdma_sc_cqp *cqp, u64 scratch, u8 hmc_fn_id,
+		       struct irdma_dma_mem *query_fpm_mem, bool post_sq,
+		       u8 wait_type)
 {
 	__le64 *wqe;
 	u64 hdr;
 	u32 tail, val, error;
-	int ret_code = 0;
+	enum irdma_status_code ret_code = 0;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 16, hmc_fn_id);
 	set_64bit_val(wqe, 32, query_fpm_mem->pa);
@@ -3593,21 +3647,21 @@ static int irdma_sc_query_fpm_val(struct irdma_sc_cqp *cqp, u64 scratch,
  * @ceq: ceq sc structure
  * @info: ceq initialization info
  */
-int irdma_sc_ceq_init(struct irdma_sc_ceq *ceq,
-		      struct irdma_ceq_init_info *info)
+enum irdma_status_code irdma_sc_ceq_init(struct irdma_sc_ceq *ceq,
+					 struct irdma_ceq_init_info *info)
 {
 	u32 pble_obj_cnt;
 
 	if (info->elem_cnt < info->dev->hw_attrs.min_hw_ceq_size ||
 	    info->elem_cnt > info->dev->hw_attrs.max_hw_ceq_size)
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_SIZE;
 
-	if (info->ceq_id >= info->dev->hmc_fpm_misc.max_ceqs)
-		return -EINVAL;
+	if (info->ceq_id >= (info->dev->hmc_fpm_misc.max_ceqs))
+		return IRDMA_ERR_INVALID_CEQ_ID;
 	pble_obj_cnt = info->dev->hmc_info->hmc_obj[IRDMA_HMC_IW_PBLE].cnt;
 
 	if (info->virtual_map && info->first_pm_pbl_idx >= pble_obj_cnt)
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_PBLE_INDEX;
 
 	ceq->size = sizeof(*ceq);
 	ceq->ceqe_base = (struct irdma_ceqe *)info->ceqe_base;
@@ -3640,8 +3694,8 @@ int irdma_sc_ceq_init(struct irdma_sc_ceq *ceq,
  * @post_sq: flag for cqp db to ring
  */
 
-static int irdma_sc_ceq_create(struct irdma_sc_ceq *ceq, u64 scratch,
-			       bool post_sq)
+static enum irdma_status_code irdma_sc_ceq_create(struct irdma_sc_ceq *ceq, u64 scratch,
+						  bool post_sq)
 {
 	struct irdma_sc_cqp *cqp;
 	__le64 *wqe;
@@ -3650,7 +3704,7 @@ static int irdma_sc_ceq_create(struct irdma_sc_ceq *ceq, u64 scratch,
 	cqp = ceq->dev->cqp;
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 	set_64bit_val(wqe, 16, ceq->elem_cnt);
 	set_64bit_val(wqe, 32,
 		      (ceq->virtual_map ? 0 : ceq->ceq_elem_pa));
@@ -3682,7 +3736,8 @@ static int irdma_sc_ceq_create(struct irdma_sc_ceq *ceq, u64 scratch,
  * irdma_sc_cceq_create_done - poll for control ceq wqe to complete
  * @ceq: ceq sc structure
  */
-static int irdma_sc_cceq_create_done(struct irdma_sc_ceq *ceq)
+static enum irdma_status_code
+irdma_sc_cceq_create_done(struct irdma_sc_ceq *ceq)
 {
 	struct irdma_sc_cqp *cqp;
 
@@ -3695,7 +3750,7 @@ static int irdma_sc_cceq_create_done(struct irdma_sc_ceq *ceq)
  * irdma_sc_cceq_destroy_done - poll for destroy cceq to complete
  * @ceq: ceq sc structure
  */
-int irdma_sc_cceq_destroy_done(struct irdma_sc_ceq *ceq)
+enum irdma_status_code irdma_sc_cceq_destroy_done(struct irdma_sc_ceq *ceq)
 {
 	struct irdma_sc_cqp *cqp;
 
@@ -3714,9 +3769,9 @@ int irdma_sc_cceq_destroy_done(struct irdma_sc_ceq *ceq)
  * @ceq: ceq sc structure
  * @scratch: u64 saved to be used during cqp completion
  */
-int irdma_sc_cceq_create(struct irdma_sc_ceq *ceq, u64 scratch)
+enum irdma_status_code irdma_sc_cceq_create(struct irdma_sc_ceq *ceq, u64 scratch)
 {
-	int ret_code;
+	enum irdma_status_code ret_code;
 	struct irdma_sc_dev *dev = ceq->dev;
 
 	dev->ccq->vsi = ceq->vsi;
@@ -3739,7 +3794,8 @@ int irdma_sc_cceq_create(struct irdma_sc_ceq *ceq, u64 scratch)
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-int irdma_sc_ceq_destroy(struct irdma_sc_ceq *ceq, u64 scratch, bool post_sq)
+enum irdma_status_code irdma_sc_ceq_destroy(struct irdma_sc_ceq *ceq, u64 scratch,
+					    bool post_sq)
 {
 	struct irdma_sc_cqp *cqp;
 	__le64 *wqe;
@@ -3748,7 +3804,7 @@ int irdma_sc_ceq_destroy(struct irdma_sc_ceq *ceq, u64 scratch, bool post_sq)
 	cqp = ceq->dev->cqp;
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 16, ceq->elem_cnt);
 	set_64bit_val(wqe, 48, ceq->first_pm_pbl_idx);
@@ -3867,19 +3923,19 @@ void irdma_sc_cleanup_ceqes(struct irdma_sc_cq *cq, struct irdma_sc_ceq *ceq)
  * @aeq: aeq structure ptr
  * @info: aeq initialization info
  */
-int irdma_sc_aeq_init(struct irdma_sc_aeq *aeq,
-		      struct irdma_aeq_init_info *info)
+enum irdma_status_code irdma_sc_aeq_init(struct irdma_sc_aeq *aeq,
+					 struct irdma_aeq_init_info *info)
 {
 	u32 pble_obj_cnt;
 
 	if (info->elem_cnt < info->dev->hw_attrs.min_hw_aeq_size ||
 	    info->elem_cnt > info->dev->hw_attrs.max_hw_aeq_size)
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_SIZE;
 
 	pble_obj_cnt = info->dev->hmc_info->hmc_obj[IRDMA_HMC_IW_PBLE].cnt;
 
 	if (info->virtual_map && info->first_pm_pbl_idx >= pble_obj_cnt)
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_PBLE_INDEX;
 
 	aeq->size = sizeof(*aeq);
 	aeq->polarity = 1;
@@ -3904,8 +3960,8 @@ int irdma_sc_aeq_init(struct irdma_sc_aeq *aeq,
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_aeq_create(struct irdma_sc_aeq *aeq, u64 scratch,
-			       bool post_sq)
+static enum irdma_status_code irdma_sc_aeq_create(struct irdma_sc_aeq *aeq,
+						  u64 scratch, bool post_sq)
 {
 	__le64 *wqe;
 	struct irdma_sc_cqp *cqp;
@@ -3914,7 +3970,7 @@ static int irdma_sc_aeq_create(struct irdma_sc_aeq *aeq, u64 scratch,
 	cqp = aeq->dev->cqp;
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 	set_64bit_val(wqe, 16, aeq->elem_cnt);
 	set_64bit_val(wqe, 32,
 		      (aeq->virtual_map ? 0 : aeq->aeq_elem_pa));
@@ -3943,8 +3999,8 @@ static int irdma_sc_aeq_create(struct irdma_sc_aeq *aeq, u64 scratch,
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-static int irdma_sc_aeq_destroy(struct irdma_sc_aeq *aeq, u64 scratch,
-				bool post_sq)
+static enum irdma_status_code irdma_sc_aeq_destroy(struct irdma_sc_aeq *aeq,
+						   u64 scratch, bool post_sq)
 {
 	__le64 *wqe;
 	struct irdma_sc_cqp *cqp;
@@ -3957,7 +4013,7 @@ static int irdma_sc_aeq_destroy(struct irdma_sc_aeq *aeq, u64 scratch,
 	cqp = dev->cqp;
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 	set_64bit_val(wqe, 16, aeq->elem_cnt);
 	set_64bit_val(wqe, 48, aeq->first_pm_pbl_idx);
 	hdr = FIELD_PREP(IRDMA_CQPSQ_OPCODE, IRDMA_CQP_OP_DESTROY_AEQ) |
@@ -3980,8 +4036,8 @@ static int irdma_sc_aeq_destroy(struct irdma_sc_aeq *aeq, u64 scratch,
  * @aeq: aeq structure ptr
  * @info: aeqe info to be returned
  */
-int irdma_sc_get_next_aeqe(struct irdma_sc_aeq *aeq,
-			   struct irdma_aeqe_info *info)
+enum irdma_status_code irdma_sc_get_next_aeqe(struct irdma_sc_aeq *aeq,
+					      struct irdma_aeqe_info *info)
 {
 	u64 temp, compl_ctx;
 	__le64 *aeqe;
@@ -3995,7 +4051,7 @@ int irdma_sc_get_next_aeqe(struct irdma_sc_aeq *aeq,
 	polarity = (u8)FIELD_GET(IRDMA_AEQE_VALID, temp);
 
 	if (aeq->polarity != polarity)
-		return -ENOENT;
+		return IRDMA_ERR_Q_EMPTY;
 
 	print_hex_dump_debug("WQE: AEQ_ENTRY WQE", DUMP_PREFIX_OFFSET, 16, 8,
 			     aeqe, 16, false);
@@ -4140,21 +4196,22 @@ void irdma_sc_repost_aeq_entries(struct irdma_sc_dev *dev, u32 count)
  * @cq: sc's cq ctruct
  * @info: info for control cq initialization
  */
-int irdma_sc_ccq_init(struct irdma_sc_cq *cq, struct irdma_ccq_init_info *info)
+enum irdma_status_code irdma_sc_ccq_init(struct irdma_sc_cq *cq,
+					 struct irdma_ccq_init_info *info)
 {
 	u32 pble_obj_cnt;
 
 	if (info->num_elem < info->dev->hw_attrs.uk_attrs.min_hw_cq_size ||
 	    info->num_elem > info->dev->hw_attrs.uk_attrs.max_hw_cq_size)
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_SIZE;
 
-	if (info->ceq_id >= info->dev->hmc_fpm_misc.max_ceqs)
-		return -EINVAL;
+	if (info->ceq_id >= (info->dev->hmc_fpm_misc.max_ceqs ))
+		return IRDMA_ERR_INVALID_CEQ_ID;
 
 	pble_obj_cnt = info->dev->hmc_info->hmc_obj[IRDMA_HMC_IW_PBLE].cnt;
 
 	if (info->virtual_map && info->first_pm_pbl_idx >= pble_obj_cnt)
-		return -EINVAL;
+		return IRDMA_ERR_INVALID_PBLE_INDEX;
 
 	cq->cq_pa = info->cq_pa;
 	cq->cq_uk.cq_base = info->cq_base;
@@ -4191,7 +4248,7 @@ int irdma_sc_ccq_init(struct irdma_sc_cq *cq, struct irdma_ccq_init_info *info)
  * irdma_sc_ccq_create_done - poll cqp for ccq create
  * @ccq: ccq sc struct
  */
-static inline int irdma_sc_ccq_create_done(struct irdma_sc_cq *ccq)
+static inline enum irdma_status_code irdma_sc_ccq_create_done(struct irdma_sc_cq *ccq)
 {
 	struct irdma_sc_cqp *cqp;
 
@@ -4207,10 +4264,10 @@ static inline int irdma_sc_ccq_create_done(struct irdma_sc_cq *ccq)
  * @check_overflow: overlow flag for ccq
  * @post_sq: flag for cqp db to ring
  */
-int irdma_sc_ccq_create(struct irdma_sc_cq *ccq, u64 scratch,
-			bool check_overflow, bool post_sq)
+enum irdma_status_code irdma_sc_ccq_create(struct irdma_sc_cq *ccq, u64 scratch,
+					   bool check_overflow, bool post_sq)
 {
-	int ret_code;
+	enum irdma_status_code ret_code;
 
 	ret_code = irdma_sc_cq_create(ccq, scratch, check_overflow, post_sq);
 	if (ret_code)
@@ -4232,18 +4289,19 @@ int irdma_sc_ccq_create(struct irdma_sc_cq *ccq, u64 scratch,
  * @scratch: u64 saved to be used during cqp completion
  * @post_sq: flag for cqp db to ring
  */
-int irdma_sc_ccq_destroy(struct irdma_sc_cq *ccq, u64 scratch, bool post_sq)
+enum irdma_status_code irdma_sc_ccq_destroy(struct irdma_sc_cq *ccq, u64 scratch,
+					    bool post_sq)
 {
 	struct irdma_sc_cqp *cqp;
 	__le64 *wqe;
 	u64 hdr;
-	int ret_code = 0;
+	enum irdma_status_code ret_code = 0;
 	u32 tail, val, error;
 
 	cqp = ccq->dev->cqp;
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 0, ccq->cq_uk.cq_size);
 	set_64bit_val(wqe, 8, (uintptr_t)ccq >> 1);
@@ -4282,12 +4340,13 @@ int irdma_sc_ccq_destroy(struct irdma_sc_cq *ccq, u64 scratch, bool post_sq)
  * @dev : ptr to irdma_dev struct
  * @hmc_fn_id: hmc function id
  */
-int irdma_sc_init_iw_hmc(struct irdma_sc_dev *dev, u8 hmc_fn_id)
+enum irdma_status_code irdma_sc_init_iw_hmc(struct irdma_sc_dev *dev,
+					    u8 hmc_fn_id)
 {
 	struct irdma_hmc_info *hmc_info;
 	struct irdma_hmc_fpm_misc *hmc_fpm_misc;
 	struct irdma_dma_mem query_fpm_mem;
-	int ret_code = 0;
+	enum irdma_status_code ret_code = 0;
 	u8 wait_type;
 
 	hmc_info = dev->hmc_info;
@@ -4318,13 +4377,14 @@ int irdma_sc_init_iw_hmc(struct irdma_sc_dev *dev, u8 hmc_fn_id)
  * @dev : ptr to irdma_dev struct
  * @hmc_fn_id: hmc function id
  */
-static int irdma_sc_cfg_iw_fpm(struct irdma_sc_dev *dev, u8 hmc_fn_id)
+static enum irdma_status_code irdma_sc_cfg_iw_fpm(struct irdma_sc_dev *dev,
+						  u8 hmc_fn_id)
 {
 	struct irdma_hmc_info *hmc_info;
 	struct irdma_hmc_obj_info *obj_info;
 	__le64 *buf;
 	struct irdma_dma_mem commit_fpm_mem;
-	int ret_code = 0;
+	enum irdma_status_code ret_code = 0;
 	u8 wait_type;
 
 	hmc_info = dev->hmc_info;
@@ -4387,8 +4447,9 @@ static int irdma_sc_cfg_iw_fpm(struct irdma_sc_dev *dev, u8 hmc_fn_id)
  * @info: sd info for wqe
  * @scratch: u64 saved to be used during cqp completion
  */
-static int cqp_sds_wqe_fill(struct irdma_sc_cqp *cqp,
-			    struct irdma_update_sds_info *info, u64 scratch)
+static enum irdma_status_code
+cqp_sds_wqe_fill(struct irdma_sc_cqp *cqp, struct irdma_update_sds_info *info,
+		 u64 scratch)
 {
 	u64 data;
 	u64 hdr;
@@ -4400,7 +4461,7 @@ static int cqp_sds_wqe_fill(struct irdma_sc_cqp *cqp,
 
 	wqe = irdma_sc_cqp_get_next_send_wqe_idx(cqp, scratch, &wqe_idx);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	wqe_entries = (info->cnt > 3) ? 3 : info->cnt;
 	mem_entries = info->cnt - wqe_entries;
@@ -4466,11 +4527,12 @@ static int cqp_sds_wqe_fill(struct irdma_sc_cqp *cqp,
  * @info: sd info for sd's
  * @scratch: u64 saved to be used during cqp completion
  */
-static int irdma_update_pe_sds(struct irdma_sc_dev *dev,
-			       struct irdma_update_sds_info *info, u64 scratch)
+static enum irdma_status_code
+irdma_update_pe_sds(struct irdma_sc_dev *dev,
+		    struct irdma_update_sds_info *info, u64 scratch)
 {
 	struct irdma_sc_cqp *cqp = dev->cqp;
-	int ret_code;
+	enum irdma_status_code ret_code;
 
 	ret_code = cqp_sds_wqe_fill(cqp, info, scratch);
 	if (!ret_code)
@@ -4484,12 +4546,13 @@ static int irdma_update_pe_sds(struct irdma_sc_dev *dev,
  * @dev: sc device struct
  * @info: sd info for sd's
  */
-int irdma_update_sds_noccq(struct irdma_sc_dev *dev,
-			   struct irdma_update_sds_info *info)
+enum irdma_status_code
+irdma_update_sds_noccq(struct irdma_sc_dev *dev,
+		       struct irdma_update_sds_info *info)
 {
 	u32 error, val, tail;
 	struct irdma_sc_cqp *cqp = dev->cqp;
-	int ret_code;
+	enum irdma_status_code ret_code;
 
 	ret_code = cqp_sds_wqe_fill(cqp, info, 0);
 	if (ret_code)
@@ -4510,9 +4573,10 @@ int irdma_update_sds_noccq(struct irdma_sc_dev *dev,
  * @post_sq: flag for cqp db to ring
  * @poll_registers: flag to poll register for cqp completion
  */
-int irdma_sc_static_hmc_pages_allocated(struct irdma_sc_cqp *cqp, u64 scratch,
-					u8 hmc_fn_id, bool post_sq,
-					bool poll_registers)
+enum irdma_status_code
+irdma_sc_static_hmc_pages_allocated(struct irdma_sc_cqp *cqp, u64 scratch,
+				    u8 hmc_fn_id, bool post_sq,
+				    bool poll_registers)
 {
 	u64 hdr;
 	__le64 *wqe;
@@ -4520,7 +4584,7 @@ int irdma_sc_static_hmc_pages_allocated(struct irdma_sc_cqp *cqp, u64 scratch,
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 16,
 		      FIELD_PREP(IRDMA_SHMC_PAGE_ALLOCATED_HMC_FN_ID, hmc_fn_id));
@@ -4595,7 +4659,8 @@ static u32 irdma_est_sd(struct irdma_sc_dev *dev,
  * irdma_sc_query_rdma_features_done - poll cqp for query features done
  * @cqp: struct for cqp hw
  */
-static int irdma_sc_query_rdma_features_done(struct irdma_sc_cqp *cqp)
+static enum irdma_status_code
+irdma_sc_query_rdma_features_done(struct irdma_sc_cqp *cqp)
 {
 	return irdma_sc_poll_for_cqp_op_done(cqp,
 					     IRDMA_CQP_OP_QUERY_RDMA_FEATURES,
@@ -4608,15 +4673,16 @@ static int irdma_sc_query_rdma_features_done(struct irdma_sc_cqp *cqp)
  * @buf: buffer to hold query info
  * @scratch: u64 saved to be used during cqp completion
  */
-static int irdma_sc_query_rdma_features(struct irdma_sc_cqp *cqp,
-					struct irdma_dma_mem *buf, u64 scratch)
+static enum irdma_status_code
+irdma_sc_query_rdma_features(struct irdma_sc_cqp *cqp,
+			     struct irdma_dma_mem *buf, u64 scratch)
 {
 	__le64 *wqe;
 	u64 temp;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	temp = buf->pa;
 	set_64bit_val(wqe, 32, temp);
@@ -4640,9 +4706,9 @@ static int irdma_sc_query_rdma_features(struct irdma_sc_cqp *cqp,
  * irdma_get_rdma_features - get RDMA features
  * @dev: sc device struct
  */
-int irdma_get_rdma_features(struct irdma_sc_dev *dev)
+enum irdma_status_code irdma_get_rdma_features(struct irdma_sc_dev *dev)
 {
-	int ret_code;
+	enum irdma_status_code ret_code;
 	struct irdma_dma_mem feat_buf;
 	u64 temp;
 	u16 byte_idx, feat_type, feat_cnt, feat_idx;
@@ -4652,7 +4718,7 @@ int irdma_get_rdma_features(struct irdma_sc_dev *dev)
 	feat_buf.va = dma_alloc_coherent(dev->hw->device, feat_buf.size,
 					 &feat_buf.pa, GFP_KERNEL);
 	if (!feat_buf.va)
-		return -ENOMEM;
+		return IRDMA_ERR_NO_MEMORY;
 
 	ret_code = irdma_sc_query_rdma_features(dev->cqp, &feat_buf, 0);
 	if (!ret_code)
@@ -4663,7 +4729,7 @@ int irdma_get_rdma_features(struct irdma_sc_dev *dev)
 	get_64bit_val(feat_buf.va, 0, &temp);
 	feat_cnt = (u16)FIELD_GET(IRDMA_FEATURE_CNT, temp);
 	if (feat_cnt < 2) {
-		ret_code = -EINVAL;
+		ret_code = IRDMA_ERR_INVALID_FEAT_CNT;
 		goto exit;
 	} else if (feat_cnt > IRDMA_MAX_FEATURES) {
 		ibdev_dbg(to_ibdev(dev),
@@ -4677,7 +4743,7 @@ int irdma_get_rdma_features(struct irdma_sc_dev *dev)
 						 feat_buf.size, &feat_buf.pa,
 						 GFP_KERNEL);
 		if (!feat_buf.va)
-			return -ENOMEM;
+			return IRDMA_ERR_NO_MEMORY;
 
 		ret_code = irdma_sc_query_rdma_features(dev->cqp, &feat_buf, 0);
 		if (!ret_code)
@@ -4688,7 +4754,7 @@ int irdma_get_rdma_features(struct irdma_sc_dev *dev)
 		get_64bit_val(feat_buf.va, 0, &temp);
 		feat_cnt = (u16)FIELD_GET(IRDMA_FEATURE_CNT, temp);
 		if (feat_cnt < 2) {
-			ret_code = -EINVAL;
+			ret_code = IRDMA_ERR_INVALID_FEAT_CNT;
 			goto exit;
 		}
 	}
@@ -4767,7 +4833,7 @@ static void cfg_fpm_value_gen_2(struct irdma_sc_dev *dev,
  * @dev: sc device struct
  * @qp_count: desired qp count
  */
-int irdma_cfg_fpm_val(struct irdma_sc_dev *dev, u32 qp_count)
+enum irdma_status_code irdma_cfg_fpm_val(struct irdma_sc_dev *dev, u32 qp_count)
 {
 	struct irdma_virt_mem virt_mem;
 	u32 i, mem_size;
@@ -4778,7 +4844,7 @@ int irdma_cfg_fpm_val(struct irdma_sc_dev *dev, u32 qp_count)
 	u32 loop_count = 0;
 	struct irdma_hmc_info *hmc_info;
 	struct irdma_hmc_fpm_misc *hmc_fpm_misc;
-	int ret_code = 0;
+	enum irdma_status_code ret_code = 0;
 
 	hmc_info = dev->hmc_info;
 	hmc_fpm_misc = &dev->hmc_fpm_misc;
@@ -4872,12 +4938,10 @@ int irdma_cfg_fpm_val(struct irdma_sc_dev *dev, u32 qp_count)
 
 		sd_diff = sd_needed - hmc_fpm_misc->max_sds;
 		if (sd_diff > 128) {
-			if (!(loop_count % 2) && qpwanted > 128) {
+			if (qpwanted > 128 && sd_diff > 144)
 				qpwanted /= 2;
-			} else {
-				mrwanted /= 2;
-				pblewanted /= 2;
-			}
+			mrwanted /= 2;
+			pblewanted /= 2;
 			continue;
 		}
 		if (dev->cqp->hmc_profile != IRDMA_HMC_PROFILE_FAVOR_VF &&
@@ -4907,7 +4971,7 @@ int irdma_cfg_fpm_val(struct irdma_sc_dev *dev, u32 qp_count)
 		ibdev_dbg(to_ibdev(dev),
 			  "HMC: cfg_fpm failed loop_cnt=%d, sd_needed=%d, max sd count %d\n",
 			  loop_count, sd_needed, hmc_info->sd_table.sd_cnt);
-		return -EINVAL;
+		return IRDMA_ERR_CFG;
 	}
 
 	if (loop_count > 1 && sd_needed < hmc_fpm_misc->max_sds) {
@@ -4943,7 +5007,7 @@ int irdma_cfg_fpm_val(struct irdma_sc_dev *dev, u32 qp_count)
 	if (!virt_mem.va) {
 		ibdev_dbg(to_ibdev(dev),
 			  "HMC: failed to allocate memory for sd_entry buffer\n");
-		return -ENOMEM;
+		return IRDMA_ERR_NO_MEMORY;
 	}
 	hmc_info->sd_table.sd_entry = virt_mem.va;
 
@@ -4955,10 +5019,10 @@ int irdma_cfg_fpm_val(struct irdma_sc_dev *dev, u32 qp_count)
  * @dev: rdma device
  * @pcmdinfo: cqp command info
  */
-static int irdma_exec_cqp_cmd(struct irdma_sc_dev *dev,
-			      struct cqp_cmds_info *pcmdinfo)
+static enum irdma_status_code irdma_exec_cqp_cmd(struct irdma_sc_dev *dev,
+						 struct cqp_cmds_info *pcmdinfo)
 {
-	int status;
+	enum irdma_status_code status;
 	struct irdma_dma_mem val_mem;
 	bool alloc = false;
 
@@ -5220,7 +5284,7 @@ static int irdma_exec_cqp_cmd(struct irdma_sc_dev *dev,
 						   pcmdinfo->in.u.mc_modify.scratch);
 		break;
 	default:
-		status = -EOPNOTSUPP;
+		status = IRDMA_NOT_SUPPORTED;
 		break;
 	}
 
@@ -5232,10 +5296,10 @@ static int irdma_exec_cqp_cmd(struct irdma_sc_dev *dev,
  * @dev: sc device struct
  * @pcmdinfo: cqp command info
  */
-int irdma_process_cqp_cmd(struct irdma_sc_dev *dev,
-			  struct cqp_cmds_info *pcmdinfo)
+enum irdma_status_code irdma_process_cqp_cmd(struct irdma_sc_dev *dev,
+					     struct cqp_cmds_info *pcmdinfo)
 {
-	int status = 0;
+	enum irdma_status_code status = 0;
 	unsigned long flags;
 
 	spin_lock_irqsave(&dev->cqp_lock, flags);
@@ -5251,9 +5315,9 @@ int irdma_process_cqp_cmd(struct irdma_sc_dev *dev,
  * irdma_process_bh - called from tasklet for cqp list
  * @dev: sc device struct
  */
-int irdma_process_bh(struct irdma_sc_dev *dev)
+enum irdma_status_code irdma_process_bh(struct irdma_sc_dev *dev)
 {
-	int status = 0;
+	enum irdma_status_code status = 0;
 	struct cqp_cmds_info *pcmdinfo;
 	unsigned long flags;
 
@@ -5341,11 +5405,12 @@ static inline void irdma_sc_init_hw(struct irdma_sc_dev *dev)
  * @dev: Device pointer
  * @info: Device init info
  */
-int irdma_sc_dev_init(enum irdma_vers ver, struct irdma_sc_dev *dev,
-		      struct irdma_device_init_info *info)
+enum irdma_status_code irdma_sc_dev_init(enum irdma_vers ver,
+					 struct irdma_sc_dev *dev,
+					 struct irdma_device_init_info *info)
 {
 	u32 val;
-	int ret_code = 0;
+	enum irdma_status_code ret_code = 0;
 	u8 db_size;
 
 	INIT_LIST_HEAD(&dev->cqp_cmd_head); /* for CQP command backlog */
@@ -5389,7 +5454,7 @@ int irdma_sc_dev_init(enum irdma_vers ver, struct irdma_sc_dev *dev,
 	irdma_sc_init_hw(dev);
 
 	if (irdma_wait_pe_ready(dev))
-		return -ETIMEDOUT;
+		return IRDMA_ERR_TIMEOUT;
 
 	val = readl(dev->hw_regs[IRDMA_GLPCI_LBARCTRL]);
 	db_size = (u8)FIELD_GET(IRDMA_GLPCI_LBARCTRL_PE_DB_SIZE, val);
@@ -5397,7 +5462,7 @@ int irdma_sc_dev_init(enum irdma_vers ver, struct irdma_sc_dev *dev,
 		ibdev_dbg(to_ibdev(dev),
 			  "DEV: RDMA PE doorbell is not enabled in CSR val 0x%x db_size=%d\n",
 			  val, db_size);
-		return -ENODEV;
+		return IRDMA_ERR_PE_DOORBELL_NOT_ENA;
 	}
 	dev->db_addr = dev->hw->hw_addr + (uintptr_t)dev->hw_regs[IRDMA_DB_ADDR_OFFSET];
 

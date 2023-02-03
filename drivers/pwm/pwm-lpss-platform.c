@@ -7,31 +7,52 @@
  * Derived from the original pwm-lpss.c
  */
 
+#include <linux/acpi.h>
 #include <linux/kernel.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
-#include <linux/property.h>
 
 #include "pwm-lpss.h"
 
+/* BayTrail */
+static const struct pwm_lpss_boardinfo pwm_lpss_byt_info = {
+	.clk_rate = 25000000,
+	.npwm = 1,
+	.base_unit_bits = 16,
+};
+
+/* Braswell */
+static const struct pwm_lpss_boardinfo pwm_lpss_bsw_info = {
+	.clk_rate = 19200000,
+	.npwm = 1,
+	.base_unit_bits = 16,
+	.other_devices_aml_touches_pwm_regs = true,
+};
+
+/* Broxton */
+static const struct pwm_lpss_boardinfo pwm_lpss_bxt_info = {
+	.clk_rate = 19200000,
+	.npwm = 4,
+	.base_unit_bits = 22,
+	.bypass = true,
+};
 
 static int pwm_lpss_probe_platform(struct platform_device *pdev)
 {
 	const struct pwm_lpss_boardinfo *info;
+	const struct acpi_device_id *id;
 	struct pwm_lpss_chip *lpwm;
-	void __iomem *base;
+	struct resource *r;
 
-	info = device_get_match_data(&pdev->dev);
-	if (!info)
+	id = acpi_match_device(pdev->dev.driver->acpi_match_table, &pdev->dev);
+	if (!id)
 		return -ENODEV;
 
-	base = devm_platform_ioremap_resource(pdev, 0);
-	if (IS_ERR(base))
-		return PTR_ERR(base);
+	info = (const struct pwm_lpss_boardinfo *)id->driver_data;
+	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 
-	lpwm = devm_pwm_lpss_probe(&pdev->dev, base, info);
+	lpwm = pwm_lpss_probe(&pdev->dev, r, info);
 	if (IS_ERR(lpwm))
 		return PTR_ERR(lpwm);
 
@@ -89,5 +110,4 @@ module_platform_driver(pwm_lpss_driver_platform);
 
 MODULE_DESCRIPTION("PWM platform driver for Intel LPSS");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS(PWM_LPSS);
 MODULE_ALIAS("platform:pwm-lpss");

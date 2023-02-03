@@ -107,7 +107,7 @@
 		regulator-boot-on;
 	};
 
-	gpio-keys {
+	gpio_keys {
 		compatible = "gpio-keys";
 		autorepeat;
 		pinctrl-names = "default";

@@ -16,7 +16,6 @@
 #include "../disk-io.h"
 #include "../qgroup.h"
 #include "../block-group.h"
-#include "../fs.h"
 
 static struct vfsmount *test_mnt = NULL;
 
@@ -60,7 +59,6 @@ struct inode *btrfs_new_test_inode(void)
 		return NULL;
 
 	inode->i_mode = S_IFREG;
-	inode->i_ino = BTRFS_FIRST_FREE_OBJECTID;
 	BTRFS_I(inode)->location.type = BTRFS_INODE_ITEM_KEY;
 	BTRFS_I(inode)->location.objectid = BTRFS_FIRST_FREE_OBJECTID;
 	BTRFS_I(inode)->location.offset = 0;
@@ -102,7 +100,7 @@ struct btrfs_device *btrfs_alloc_dummy_device(struct btrfs_fs_info *fs_info)
 	if (!dev)
 		return ERR_PTR(-ENOMEM);
 
-	extent_io_tree_init(NULL, &dev->alloc_state, 0);
+	extent_io_tree_init(NULL, &dev->alloc_state, 0, NULL);
 	INIT_LIST_HEAD(&dev->dev_list);
 	list_add(&dev->dev_list, &fs_info->fs_devices->devices);
 
@@ -206,7 +204,6 @@ void btrfs_free_dummy_root(struct btrfs_root *root)
 	/* Will be freed by btrfs_free_fs_roots */
 	if (WARN_ON(test_bit(BTRFS_ROOT_IN_RADIX, &root->state)))
 		return;
-	btrfs_global_root_delete(root);
 	btrfs_put_root(root);
 }
 
@@ -244,7 +241,7 @@ void btrfs_free_dummy_block_group(struct btrfs_block_group *cache)
 {
 	if (!cache)
 		return;
-	btrfs_remove_free_space_cache(cache);
+	__btrfs_remove_free_space_cache(cache->free_space_ctl);
 	kfree(cache->free_space_ctl);
 	kfree(cache);
 }

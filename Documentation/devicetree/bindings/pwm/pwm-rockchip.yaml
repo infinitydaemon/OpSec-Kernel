@@ -21,7 +21,6 @@ properties:
           - const: rockchip,rk2928-pwm
       - items:
           - enum:
-              - rockchip,rk3128-pwm
               - rockchip,rk3368-pwm
               - rockchip,rk3399-pwm
               - rockchip,rv1108-pwm
@@ -31,7 +30,6 @@ properties:
               - rockchip,px30-pwm
               - rockchip,rk3308-pwm
               - rockchip,rk3568-pwm
-              - rockchip,rk3588-pwm
           - const: rockchip,rk3328-pwm
 
   reg:
@@ -53,44 +51,42 @@ properties:
 required:
   - compatible
   - reg
+  - "#pwm-cells"
 
-allOf:
-  - $ref: pwm.yaml#
+if:
+  properties:
+    compatible:
+      contains:
+        enum:
+          - rockchip,rk3328-pwm
+          - rockchip,rv1108-pwm
 
-  - if:
-      properties:
-        compatible:
-          contains:
-            enum:
-              - rockchip,rk3328-pwm
-              - rockchip,rv1108-pwm
+then:
+  properties:
+    clocks:
+      items:
+        - description: Used to derive the functional clock for the device.
+        - description: Used as the APB bus clock.
 
-    then:
-      properties:
-        clocks:
-          items:
-            - description: Used to derive the functional clock for the device.
-            - description: Used as the APB bus clock.
+    clock-names:
+      items:
+        - const: pwm
+        - const: pclk
 
-        clock-names:
-          items:
-            - const: pwm
-            - const: pclk
+  required:
+    - clocks
+    - clock-names
 
-      required:
-        - clocks
-        - clock-names
+else:
+  properties:
+    clocks:
+      maxItems: 1
+      description:
+        Used both to derive the functional clock
+        for the device and as the bus clock.
 
-    else:
-      properties:
-        clocks:
-          maxItems: 1
-          description:
-            Used both to derive the functional clock
-            for the device and as the bus clock.
-
-      required:
-        - clocks
+  required:
+    - clocks
 
 additionalProperties: false
 

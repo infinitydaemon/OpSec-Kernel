@@ -203,7 +203,7 @@
 	pinctrl-names = "default";
 	status = "okay";
 
-	flash@0 {
+	spi-flash@0 {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		compatible = "mx25l25635e", "jedec,spi-nor";

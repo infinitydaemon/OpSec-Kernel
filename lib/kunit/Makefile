@@ -1,7 +1,6 @@
 obj-$(CONFIG_KUNIT) +=			kunit.o
 
 kunit-objs +=				test.o \
-					resource.o \
 					string-stream.o \
 					assert.o \
 					try-catch.o \

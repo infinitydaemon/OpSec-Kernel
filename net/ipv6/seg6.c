@@ -438,11 +438,7 @@ static int __net_init seg6_net_init(struct net *net)
 	net->ipv6.seg6_data = sdata;
 
 #ifdef CONFIG_IPV6_SEG6_HMAC
-	if (seg6_hmac_net_init(net)) {
-		kfree(rcu_dereference_raw(sdata->tun_src));
-		kfree(sdata);
-		return -ENOMEM;
-	}
+	seg6_hmac_net_init(net);
 #endif
 
 	return 0;
@@ -456,7 +452,7 @@ static void __net_exit seg6_net_exit(struct net *net)
 	seg6_hmac_net_exit(net);
 #endif
 
-	kfree(rcu_dereference_raw(sdata->tun_src));
+	kfree(sdata->tun_src);
 	kfree(sdata);
 }
 
@@ -504,7 +500,6 @@ static struct genl_family seg6_genl_family __ro_after_init = {
 	.parallel_ops	= true,
 	.ops		= seg6_genl_ops,
 	.n_ops		= ARRAY_SIZE(seg6_genl_ops),
-	.resv_start_op	= SEG6_CMD_GET_TUNSRC + 1,
 	.module		= THIS_MODULE,
 };
 

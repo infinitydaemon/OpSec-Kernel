@@ -687,12 +687,11 @@ int parse_rock_ridge_inode(struct iso_directory_record *de, struct inode *inode,
 }
 
 /*
- * read_folio() for symlinks: reads symlink contents into the folio and either
+ * readpage() for symlinks: reads symlink contents into the page and either
  * makes it uptodate and returns 0 or returns error (-EIO)
  */
-static int rock_ridge_symlink_read_folio(struct file *file, struct folio *folio)
+static int rock_ridge_symlink_readpage(struct file *file, struct page *page)
 {
-	struct page *page = &folio->page;
 	struct inode *inode = page->mapping->host;
 	struct iso_inode_info *ei = ISOFS_I(inode);
 	struct isofs_sb_info *sbi = ISOFS_SB(inode->i_sb);
@@ -805,5 +804,5 @@ error:
 }
 
 const struct address_space_operations isofs_symlink_aops = {
-	.read_folio = rock_ridge_symlink_read_folio
+	.readpage = rock_ridge_symlink_readpage
 };

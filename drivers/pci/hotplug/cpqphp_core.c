@@ -1254,7 +1254,7 @@ static void __exit unload_cpqphpd(void)
 	struct pci_resource *res;
 	struct pci_resource *tres;
 
-	compaq_nvram_store(cpqhp_rom_start);
+	rc = compaq_nvram_store(cpqhp_rom_start);
 
 	ctrl = cpqhp_ctrl_list;
 

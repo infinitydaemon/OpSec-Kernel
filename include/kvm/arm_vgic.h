@@ -5,11 +5,9 @@
 #ifndef __KVM_ARM_VGIC_H
 #define __KVM_ARM_VGIC_H
 
-#include <linux/bits.h>
+#include <linux/kernel.h>
 #include <linux/kvm.h>
 #include <linux/irqreturn.h>
-#include <linux/kref.h>
-#include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <linux/static_key.h>
 #include <linux/types.h>
@@ -231,9 +229,6 @@ struct vgic_dist {
 
 	/* Implementation revision as reported in the GICD_IIDR */
 	u32			implementation_rev;
-#define KVM_VGIC_IMP_REV_2	2 /* GICv2 restorable groups */
-#define KVM_VGIC_IMP_REV_3	3 /* GICv3 GICR_CTLR.{IW,CES,RWP} */
-#define KVM_VGIC_IMP_REV_LATEST	KVM_VGIC_IMP_REV_3
 
 	/* Userspace can write to GICv2 IGROUPR */
 	bool			v2_groups_user_writable;
@@ -263,7 +258,6 @@ struct vgic_dist {
 	struct vgic_io_device	dist_iodev;
 
 	bool			has_its;
-	bool			save_its_tables_in_progress;
 
 	/*
 	 * Contains the attributes and gpa of the LPI configuration table.
@@ -348,12 +342,11 @@ struct vgic_cpu {
 	struct vgic_io_device	rd_iodev;
 	struct vgic_redist_region *rdreg;
 	u32 rdreg_index;
-	atomic_t syncr_busy;
 
 	/* Contains the attributes and gpa of the LPI pending tables. */
 	u64 pendbaser;
-	/* GICR_CTLR.{ENABLE_LPIS,RWP} */
-	atomic_t ctlr;
+
+	bool lpis_enabled;
 
 	/* Cache guest priority bits */
 	u32 num_pri_bits;
@@ -365,7 +358,7 @@ struct vgic_cpu {
 extern struct static_key_false vgic_v2_cpuif_trap;
 extern struct static_key_false vgic_v3_cpuif_trap;
 
-int kvm_set_legacy_vgic_v2_addr(struct kvm *kvm, struct kvm_arm_device_addr *dev_addr);
+int kvm_vgic_addr(struct kvm *kvm, unsigned long type, u64 *addr, bool write);
 void kvm_vgic_early_init(struct kvm *kvm);
 int kvm_vgic_vcpu_init(struct kvm_vcpu *vcpu);
 int kvm_vgic_create(struct kvm *kvm, u32 type);

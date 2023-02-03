@@ -80,7 +80,10 @@ static const struct dpu_dspp_cfg *_dspp_offset(enum dpu_dspp dspp,
 
 	for (i = 0; i < m->dspp_count; i++) {
 		if (dspp == m->dspp[i].id) {
-			b->blk_addr = addr + m->dspp[i].base;
+			b->base_off = addr;
+			b->blk_off = m->dspp[i].base;
+			b->length = m->dspp[i].len;
+			b->hwversion = m->hwversion;
 			b->log_mask = DPU_DBG_MASK_DSPP;
 			return &m->dspp[i];
 		}

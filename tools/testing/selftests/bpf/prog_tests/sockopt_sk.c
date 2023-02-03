@@ -173,11 +173,11 @@ static int getsetsockopt(void)
 	}
 
 	memset(&buf, 0, sizeof(buf));
-	buf.zc.address = 12345; /* Not page aligned. Rejected by tcp_zerocopy_receive() */
+	buf.zc.address = 12345; /* rejected by BPF */
 	optlen = sizeof(buf.zc);
 	errno = 0;
 	err = getsockopt(fd, SOL_TCP, TCP_ZEROCOPY_RECEIVE, &buf, &optlen);
-	if (errno != EINVAL) {
+	if (errno != EPERM) {
 		log_err("Unexpected getsockopt(TCP_ZEROCOPY_RECEIVE) err=%d errno=%d",
 			err, errno);
 		goto err;
@@ -223,7 +223,7 @@ void test_sockopt_sk(void)
 	int cgroup_fd;
 
 	cgroup_fd = test__join_cgroup("/sockopt_sk");
-	if (!ASSERT_GE(cgroup_fd, 0, "join_cgroup /sockopt_sk"))
+	if (CHECK_FAIL(cgroup_fd < 0))
 		return;
 
 	run_test(cgroup_fd);

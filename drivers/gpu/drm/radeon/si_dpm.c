@@ -329,7 +329,7 @@ static const struct si_dte_data dte_data_malta =
 	true
 };
 
-static struct si_cac_config_reg cac_weights_pitcairn[] =
+struct si_cac_config_reg cac_weights_pitcairn[] =
 {
 	{ 0x0, 0x0000ffff, 0, 0x8a, SISLANDS_CACCONFIG_CGIND },
 	{ 0x0, 0xffff0000, 16, 0x0, SISLANDS_CACCONFIG_CGIND },
@@ -1085,7 +1085,7 @@ static const struct si_dte_data dte_data_venus_pro =
 	true
 };
 
-static struct si_cac_config_reg cac_weights_oland[] =
+struct si_cac_config_reg cac_weights_oland[] =
 {
 	{ 0x0, 0x0000ffff, 0, 0x82, SISLANDS_CACCONFIG_CGIND },
 	{ 0x0, 0xffff0000, 16, 0x4F, SISLANDS_CACCONFIG_CGIND },

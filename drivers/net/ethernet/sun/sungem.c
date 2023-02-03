@@ -52,6 +52,7 @@
 #endif
 
 #ifdef CONFIG_PPC_PMAC
+#include <asm/prom.h>
 #include <asm/machdep.h>
 #include <asm/pmac_feature.h>
 #endif
@@ -1088,7 +1089,7 @@ static netdev_tx_t gem_start_xmit(struct sk_buff *skb,
 		netif_stop_queue(dev);
 
 		/* netif_stop_queue() must be done before checking
-		 * tx index in TX_BUFFS_AVAIL() below, because
+		 * checking tx index in TX_BUFFS_AVAIL() below, because
 		 * in gem_tx(), we update tx_old before checking for
 		 * netif_queue_stopped().
 		 */
@@ -1809,7 +1810,7 @@ static u32 gem_setup_multicast(struct gem *gp)
 
 static void gem_init_mac(struct gem *gp)
 {
-	const unsigned char *e = &gp->dev->dev_addr[0];
+	unsigned char *e = &gp->dev->dev_addr[0];
 
 	writel(0x1bf0, gp->regs + MAC_SNDPAUSE);
 
@@ -2086,7 +2087,7 @@ static void gem_stop_phy(struct gem *gp, int wol)
 	writel(mifcfg, gp->regs + MIF_CFG);
 
 	if (wol && gp->has_wol) {
-		const unsigned char *e = &gp->dev->dev_addr[0];
+		unsigned char *e = &gp->dev->dev_addr[0];
 		u32 csr;
 
 		/* Setup wake-on-lan for MAGIC packet */
@@ -2430,13 +2431,13 @@ static struct net_device_stats *gem_get_stats(struct net_device *dev)
 static int gem_set_mac_address(struct net_device *dev, void *addr)
 {
 	struct sockaddr *macaddr = (struct sockaddr *) addr;
-	const unsigned char *e = &dev->dev_addr[0];
 	struct gem *gp = netdev_priv(dev);
+	unsigned char *e = &dev->dev_addr[0];
 
 	if (!is_valid_ether_addr(macaddr->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(dev, macaddr->sa_data);
+	memcpy(dev->dev_addr, macaddr->sa_data, dev->addr_len);
 
 	/* We'll just catch it later when the device is up'd or resumed */
 	if (!netif_running(dev) || !netif_device_present(dev))
@@ -2521,9 +2522,9 @@ static void gem_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info
 {
 	struct gem *gp = netdev_priv(dev);
 
-	strscpy(info->driver, DRV_NAME, sizeof(info->driver));
-	strscpy(info->version, DRV_VERSION, sizeof(info->version));
-	strscpy(info->bus_info, pci_name(gp->pdev), sizeof(info->bus_info));
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, pci_name(gp->pdev), sizeof(info->bus_info));
 }
 
 static int gem_get_link_ksettings(struct net_device *dev,
@@ -2796,12 +2797,9 @@ static int gem_get_device_address(struct gem *gp)
 		return -1;
 #endif
 	}
-	eth_hw_addr_set(dev, addr);
+	memcpy(dev->dev_addr, addr, ETH_ALEN);
 #else
-	u8 addr[ETH_ALEN];
-
-	get_gem_mac_nonobp(gp->pdev, addr);
-	eth_hw_addr_set(gp->dev, addr);
+	get_gem_mac_nonobp(gp->pdev, gp->dev->dev_addr);
 #endif
 	return 0;
 }
@@ -2980,7 +2978,7 @@ static int gem_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto err_out_free_consistent;
 
 	dev->netdev_ops = &gem_netdev_ops;
-	netif_napi_add(dev, &gp->napi, gem_poll);
+	netif_napi_add(dev, &gp->napi, gem_poll, 64);
 	dev->ethtool_ops = &gem_ethtool_ops;
 	dev->watchdog_timeo = 5 * HZ;
 	dev->dma = 0;

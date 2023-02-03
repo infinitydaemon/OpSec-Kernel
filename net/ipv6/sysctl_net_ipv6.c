@@ -23,6 +23,8 @@
 #endif
 #include <linux/ioam6.h>
 
+static int two = 2;
+static int three = 3;
 static int flowlabel_reflect_max = 0x7;
 static int auto_flowlabels_max = IP6_AUTO_FLOW_LABEL_MAX;
 static u32 rt6_multipath_hash_fields_all_mask =
@@ -170,7 +172,7 @@ static struct ctl_table ipv6_table_template[] = {
 		.mode		= 0644,
 		.proc_handler   = proc_rt6_multipath_hash_policy,
 		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_THREE,
+		.extra2		= &three,
 	},
 	{
 		.procname	= "fib_multipath_hash_fields",
@@ -195,7 +197,7 @@ static struct ctl_table ipv6_table_template[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dou8vec_minmax,
 		.extra1         = SYSCTL_ZERO,
-		.extra2         = SYSCTL_TWO,
+		.extra2         = &two,
 	},
 	{
 		.procname	= "ioam6_id",

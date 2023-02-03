@@ -24,6 +24,7 @@
  */
 
 
+#include <linux/delay.h>
 #include "dcn30/dcn30_hubbub.h"
 #include "dcn31_hubbub.h"
 #include "dm_services.h"
@@ -876,7 +877,7 @@ static bool hubbub31_get_dcc_compression_cap(struct hubbub *hubbub,
 	return true;
 }
 
-int hubbub31_init_dchub_sys_ctx(struct hubbub *hubbub,
+static int hubbub31_init_dchub_sys_ctx(struct hubbub *hubbub,
 		struct dcn_hubbub_phys_addr_config *pa_config)
 {
 	struct dcn20_hubbub *hubbub2 = TO_DCN20_HUBBUB(hubbub);

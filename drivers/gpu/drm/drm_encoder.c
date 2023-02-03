@@ -213,7 +213,6 @@ static void drmm_encoder_alloc_release(struct drm_device *dev, void *ptr)
 	drm_encoder_cleanup(encoder);
 }
 
-__printf(5, 0)
 static int __drmm_encoder_init(struct drm_device *dev,
 			       struct drm_encoder *encoder,
 			       const struct drm_encoder_funcs *funcs,
@@ -248,7 +247,7 @@ void *__drmm_encoder_alloc(struct drm_device *dev, size_t size, size_t offset,
 
 	container = drmm_kzalloc(dev, size, GFP_KERNEL);
 	if (!container)
-		return ERR_PTR(-ENOMEM);
+		return ERR_PTR(-EINVAL);
 
 	encoder = container + offset;
 

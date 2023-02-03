@@ -8,6 +8,7 @@
 
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
+#include <linux/async.h>
 #include <scsi/scsi_host.h>
 #include <scsi/scsi_eh.h>
 #include "sas_internal.h"
@@ -545,17 +546,19 @@ static void sas_chain_event(int event, unsigned long *pending,
 	}
 }
 
-void sas_discover_event(struct asd_sas_port *port, enum discover_event ev)
+int sas_discover_event(struct asd_sas_port *port, enum discover_event ev)
 {
 	struct sas_discovery *disc;
 
 	if (!port)
-		return;
+		return 0;
 	disc = &port->disc;
 
 	BUG_ON(ev >= DISC_NUM_EVENTS);
 
 	sas_chain_event(ev, &disc->pending, &disc->disc_work[ev].work, port->ha);
+
+	return 0;
 }
 
 /**

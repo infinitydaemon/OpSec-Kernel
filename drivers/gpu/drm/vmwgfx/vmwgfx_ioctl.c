@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 /**************************************************************************
  *
- * Copyright 2009-2022 VMware, Inc., Palo Alto, CA., USA
+ * Copyright 2009-2015 VMware, Inc., Palo Alto, CA., USA
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the
@@ -27,10 +27,8 @@
 
 #include "vmwgfx_drv.h"
 #include "vmwgfx_devcaps.h"
-#include "vmwgfx_kms.h"
-
 #include <drm/vmwgfx_drm.h>
-#include <linux/pci.h>
+#include "vmwgfx_kms.h"
 
 int vmw_getparam_ioctl(struct drm_device *dev, void *data,
 		       struct drm_file *file_priv)
@@ -64,15 +62,17 @@ int vmw_getparam_ioctl(struct drm_device *dev, void *data,
 		break;
 	case DRM_VMW_PARAM_FIFO_HW_VERSION:
 	{
-		if ((dev_priv->capabilities & SVGA_CAP_GBOBJECTS))
+		if ((dev_priv->capabilities & SVGA_CAP_GBOBJECTS)) {
 			param->value = SVGA3D_HWVERSION_WS8_B1;
-		else
-			param->value = vmw_fifo_mem_read(
-					       dev_priv,
-					       ((vmw_fifo_caps(dev_priv) &
-						 SVGA_FIFO_CAP_3D_HWVERSION_REVISED) ?
-							SVGA_FIFO_3D_HWVERSION_REVISED :
-							SVGA_FIFO_3D_HWVERSION));
+			break;
+		}
+
+		param->value =
+			vmw_fifo_mem_read(dev_priv,
+					  ((vmw_fifo_caps(dev_priv) &
+					    SVGA_FIFO_CAP_3D_HWVERSION_REVISED) ?
+						   SVGA_FIFO_3D_HWVERSION_REVISED :
+						   SVGA_FIFO_3D_HWVERSION));
 		break;
 	}
 	case DRM_VMW_PARAM_MAX_SURF_MEMORY:
@@ -104,12 +104,6 @@ int vmw_getparam_ioctl(struct drm_device *dev, void *data,
 		break;
 	case DRM_VMW_PARAM_SM5:
 		param->value = has_sm5_context(dev_priv);
-		break;
-	case DRM_VMW_PARAM_GL43:
-		param->value = has_gl43_context(dev_priv);
-		break;
-	case DRM_VMW_PARAM_DEVICE_ID:
-		param->value = to_pci_dev(dev_priv->drm.dev)->device;
 		break;
 	default:
 		return -EINVAL;

@@ -264,16 +264,15 @@ static void cleanup_one_si(struct smi_info *smi_info);
 static void cleanup_ipmi_si(void);
 
 #ifdef DEBUG_TIMING
-void debug_timestamp(struct smi_info *smi_info, char *msg)
+void debug_timestamp(char *msg)
 {
 	struct timespec64 t;
 
 	ktime_get_ts64(&t);
-	dev_dbg(smi_info->io.dev, "**%s: %lld.%9.9ld\n",
-		msg, t.tv_sec, t.tv_nsec);
+	pr_debug("**%s: %lld.%9.9ld\n", msg, t.tv_sec, t.tv_nsec);
 }
 #else
-#define debug_timestamp(smi_info, x)
+#define debug_timestamp(x)
 #endif
 
 static ATOMIC_NOTIFIER_HEAD(xaction_notifier_list);
@@ -319,7 +318,7 @@ static enum si_sm_result start_next_msg(struct smi_info *smi_info)
 
 		smi_info->curr_msg = smi_info->waiting_msg;
 		smi_info->waiting_msg = NULL;
-		debug_timestamp(smi_info, "Start2");
+		debug_timestamp("Start2");
 		err = atomic_notifier_call_chain(&xaction_notifier_list,
 				0, smi_info);
 		if (err & NOTIFY_STOP_MASK) {
@@ -539,7 +538,7 @@ static void handle_transaction_done(struct smi_info *smi_info)
 {
 	struct ipmi_smi_msg *msg;
 
-	debug_timestamp(smi_info, "Done");
+	debug_timestamp("Done");
 	switch (smi_info->si_state) {
 	case SI_NORMAL:
 		if (!smi_info->curr_msg)
@@ -902,7 +901,7 @@ static void sender(void                *send_info,
 	struct smi_info   *smi_info = send_info;
 	unsigned long     flags;
 
-	debug_timestamp(smi_info, "Enqueue");
+	debug_timestamp("Enqueue");
 
 	if (smi_info->run_to_completion) {
 		/*
@@ -1080,7 +1079,7 @@ static void smi_timeout(struct timer_list *t)
 	long		  timeout;
 
 	spin_lock_irqsave(&(smi_info->si_lock), flags);
-	debug_timestamp(smi_info, "Timer");
+	debug_timestamp("Timer");
 
 	jiffies_now = jiffies;
 	time_diff = (((long)jiffies_now - (long)smi_info->last_timeout_jiffies)
@@ -1129,7 +1128,7 @@ irqreturn_t ipmi_si_irq_handler(int irq, void *data)
 
 	smi_inc_stat(smi_info, interrupts);
 
-	debug_timestamp(smi_info, "Interrupt");
+	debug_timestamp("Interrupt");
 
 	smi_event_handler(smi_info, 0);
 	spin_unlock_irqrestore(&(smi_info->si_lock), flags);
@@ -1604,7 +1603,7 @@ static ssize_t name##_show(struct device *dev,			\
 {									\
 	struct smi_info *smi_info = dev_get_drvdata(dev);		\
 									\
-	return sysfs_emit(buf, "%u\n", smi_get_stat(smi_info, name));	\
+	return snprintf(buf, 10, "%u\n", smi_get_stat(smi_info, name));	\
 }									\
 static DEVICE_ATTR_RO(name)
 
@@ -1614,7 +1613,7 @@ static ssize_t type_show(struct device *dev,
 {
 	struct smi_info *smi_info = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%s\n", si_to_str[smi_info->io.si_type]);
+	return snprintf(buf, 10, "%s\n", si_to_str[smi_info->io.si_type]);
 }
 static DEVICE_ATTR_RO(type);
 
@@ -1625,7 +1624,7 @@ static ssize_t interrupts_enabled_show(struct device *dev,
 	struct smi_info *smi_info = dev_get_drvdata(dev);
 	int enabled = smi_info->io.irq && !smi_info->interrupt_disabled;
 
-	return sysfs_emit(buf, "%d\n", enabled);
+	return snprintf(buf, 10, "%d\n", enabled);
 }
 static DEVICE_ATTR_RO(interrupts_enabled);
 
@@ -1647,7 +1646,7 @@ static ssize_t params_show(struct device *dev,
 {
 	struct smi_info *smi_info = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf,
+	return snprintf(buf, 200,
 			"%s,%s,0x%lx,rsp=%d,rsi=%d,rsh=%d,irq=%d,ipmb=%d\n",
 			si_to_str[smi_info->io.si_type],
 			addr_space_to_str[smi_info->io.addr_space],
@@ -2232,7 +2231,10 @@ static void cleanup_one_si(struct smi_info *smi_info)
 		return;
 
 	list_del(&smi_info->link);
-	ipmi_unregister_smi(smi_info->intf);
+
+	if (smi_info->intf)
+		ipmi_unregister_smi(smi_info->intf);
+
 	kfree(smi_info);
 }
 

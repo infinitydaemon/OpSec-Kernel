@@ -3,7 +3,7 @@
  * Copyright 2018 Noralf Trønnes
  */
 
-#include <linux/iosys-map.h>
+#include <linux/dma-buf-map.h>
 #include <linux/list.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -235,10 +235,10 @@ static void drm_client_buffer_delete(struct drm_client_buffer *buffer)
 {
 	struct drm_device *dev = buffer->client->dev;
 
-	if (buffer->gem) {
-		drm_gem_vunmap_unlocked(buffer->gem, &buffer->map);
+	drm_gem_vunmap(buffer->gem, &buffer->map);
+
+	if (buffer->gem)
 		drm_gem_object_put(buffer->gem);
-	}
 
 	if (buffer->handle)
 		drm_mode_destroy_dumb(dev, buffer->handle, buffer->client->file);
@@ -264,7 +264,7 @@ drm_client_buffer_create(struct drm_client_dev *client, u32 width, u32 height, u
 
 	dumb_args.width = width;
 	dumb_args.height = height;
-	dumb_args.bpp = drm_format_info_bpp(info, 0);
+	dumb_args.bpp = info->cpp[0] * 8;
 	ret = drm_mode_create_dumb(dev, &dumb_args, client->file);
 	if (ret)
 		goto err_delete;
@@ -309,10 +309,9 @@ err_delete:
  *	0 on success, or a negative errno code otherwise.
  */
 int
-drm_client_buffer_vmap(struct drm_client_buffer *buffer,
-		       struct iosys_map *map_copy)
+drm_client_buffer_vmap(struct drm_client_buffer *buffer, struct dma_buf_map *map_copy)
 {
-	struct iosys_map *map = &buffer->map;
+	struct dma_buf_map *map = &buffer->map;
 	int ret;
 
 	/*
@@ -323,7 +322,7 @@ drm_client_buffer_vmap(struct drm_client_buffer *buffer,
 	 * fd_install step out of the driver backend hooks, to make that
 	 * final step optional for internal users.
 	 */
-	ret = drm_gem_vmap_unlocked(buffer->gem, map);
+	ret = drm_gem_vmap(buffer->gem, map);
 	if (ret)
 		return ret;
 
@@ -343,9 +342,9 @@ EXPORT_SYMBOL(drm_client_buffer_vmap);
  */
 void drm_client_buffer_vunmap(struct drm_client_buffer *buffer)
 {
-	struct iosys_map *map = &buffer->map;
+	struct dma_buf_map *map = &buffer->map;
 
-	drm_gem_vunmap_unlocked(buffer->gem, map);
+	drm_gem_vunmap(buffer->gem, map);
 }
 EXPORT_SYMBOL(drm_client_buffer_vunmap);
 
@@ -373,7 +372,7 @@ static int drm_client_buffer_addfb(struct drm_client_buffer *buffer,
 	int ret;
 
 	info = drm_format_info(format);
-	fb_req.bpp = drm_format_info_bpp(info, 0);
+	fb_req.bpp = info->cpp[0] * 8;
 	fb_req.depth = info->depth;
 	fb_req.width = width;
 	fb_req.height = height;

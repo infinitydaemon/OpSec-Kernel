@@ -946,7 +946,10 @@ int __init dra7xx_dt_clk_init(void)
 	int rc;
 	struct clk *dpll_ck, *hdcp_ck;
 
-	ti_dt_clocks_register(dra7xx_clks);
+	if (ti_clk_get_features()->flags & TI_CLK_CLKCTRL_COMPAT)
+		ti_dt_clocks_register(dra7xx_compat_clks);
+	else
+		ti_dt_clocks_register(dra7xx_clks);
 
 	omap2_clk_disable_autoidle_all();
 

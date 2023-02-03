@@ -16,7 +16,9 @@
 #include <linux/clk.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
+#include <linux/gpio.h>
 #include <linux/gpio/consumer.h>
+#include <linux/of_gpio.h>
 #include <linux/v4l2-mediabus.h>
 #include <linux/videodev2.h>
 
@@ -1269,7 +1271,7 @@ err_clk:
 	return ret;
 }
 
-static void ov2640_remove(struct i2c_client *client)
+static int ov2640_remove(struct i2c_client *client)
 {
 	struct ov2640_priv       *priv = to_ov2640(client);
 
@@ -1279,6 +1281,7 @@ static void ov2640_remove(struct i2c_client *client)
 	media_entity_cleanup(&priv->subdev.entity);
 	v4l2_device_unregister_subdev(&priv->subdev);
 	clk_disable_unprepare(priv->clk);
+	return 0;
 }
 
 static const struct i2c_device_id ov2640_id[] = {

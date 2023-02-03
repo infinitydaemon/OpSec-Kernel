@@ -248,9 +248,10 @@ static int da9062_thermal_probe(struct platform_device *pdev)
 		jiffies_to_msecs(thermal->zone->passive_delay_jiffies));
 
 	ret = platform_get_irq_byname(pdev, "THERMAL");
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Failed to get platform IRQ.\n");
 		goto err_zone;
-
+	}
 	thermal->irq = ret;
 
 	ret = request_threaded_irq(thermal->irq, NULL,

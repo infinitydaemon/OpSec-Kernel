@@ -683,6 +683,7 @@ static int send_packet(struct imon_context *ictx)
  */
 static int send_associate_24g(struct imon_context *ictx)
 {
+	int retval;
 	const unsigned char packet[8] = { 0x01, 0x00, 0x00, 0x00,
 					  0x00, 0x00, 0x00, 0x20 };
 
@@ -697,8 +698,9 @@ static int send_associate_24g(struct imon_context *ictx)
 	}
 
 	memcpy(ictx->usb_tx_buf, packet, sizeof(packet));
+	retval = send_packet(ictx);
 
-	return send_packet(ictx);
+	return retval;
 }
 
 /*
@@ -2364,10 +2366,8 @@ urb_submit_failed:
 touch_setup_failed:
 find_endpoint_failed:
 	usb_put_dev(ictx->usbdev_intf1);
-	ictx->usbdev_intf1 = NULL;
 	mutex_unlock(&ictx->lock);
 	usb_free_urb(rx_urb);
-	ictx->rx_urb_intf1 = NULL;
 rx_urb_alloc_failed:
 	dev_err(ictx->dev, "unable to initialize intf1, err %d\n", ret);
 
@@ -2518,6 +2518,7 @@ static void imon_disconnect(struct usb_interface *interface)
 	if (ifnum == 0) {
 		ictx->dev_present_intf0 = false;
 		usb_kill_urb(ictx->rx_urb_intf0);
+		usb_put_dev(ictx->usbdev_intf0);
 		input_unregister_device(ictx->idev);
 		rc_unregister_device(ictx->rdev);
 		if (ictx->display_supported) {
@@ -2526,15 +2527,14 @@ static void imon_disconnect(struct usb_interface *interface)
 			else if (ictx->display_type == IMON_DISPLAY_TYPE_VFD)
 				usb_deregister_dev(interface, &imon_vfd_class);
 		}
-		usb_put_dev(ictx->usbdev_intf0);
 	} else {
 		ictx->dev_present_intf1 = false;
 		usb_kill_urb(ictx->rx_urb_intf1);
-		if (ictx->display_type == IMON_DISPLAY_TYPE_VGA) {
-			del_timer_sync(&ictx->ttimer);
-			input_unregister_device(ictx->touch);
-		}
 		usb_put_dev(ictx->usbdev_intf1);
+		if (ictx->display_type == IMON_DISPLAY_TYPE_VGA) {
+			input_unregister_device(ictx->touch);
+			del_timer_sync(&ictx->ttimer);
+		}
 	}
 
 	if (refcount_dec_and_test(&ictx->users))
@@ -2571,7 +2571,7 @@ static int imon_resume(struct usb_interface *intf)
 			usb_rx_callback_intf0, ictx,
 			ictx->rx_endpoint_intf0->bInterval);
 
-		rc = usb_submit_urb(ictx->rx_urb_intf0, GFP_NOIO);
+		rc = usb_submit_urb(ictx->rx_urb_intf0, GFP_ATOMIC);
 
 	} else {
 		usb_fill_int_urb(ictx->rx_urb_intf1, ictx->usbdev_intf1,
@@ -2581,7 +2581,7 @@ static int imon_resume(struct usb_interface *intf)
 			usb_rx_callback_intf1, ictx,
 			ictx->rx_endpoint_intf1->bInterval);
 
-		rc = usb_submit_urb(ictx->rx_urb_intf1, GFP_NOIO);
+		rc = usb_submit_urb(ictx->rx_urb_intf1, GFP_ATOMIC);
 	}
 
 	return rc;

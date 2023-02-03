@@ -113,7 +113,7 @@ static struct scsi_host_template oakscsi_template = {
 	.cmd_per_lun		= 2,
 	.dma_boundary		= PAGE_SIZE - 1,
 	.proc_name		= "oakscsi",
-	.cmd_size		= sizeof(struct NCR5380_cmd),
+	.cmd_size		= NCR5380_CMD_SIZE,
 	.max_sectors		= 128,
 };
 

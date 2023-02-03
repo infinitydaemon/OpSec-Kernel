@@ -9,7 +9,6 @@
 #define __U_UAC1_H
 
 #include <linux/usb/composite.h>
-#include "uac_common.h"
 
 #define UAC1_OUT_EP_MAX_PACKET_SIZE	200
 #define UAC1_DEF_CCHMASK	0x3
@@ -31,10 +30,10 @@
 struct f_uac1_opts {
 	struct usb_function_instance	func_inst;
 	int				c_chmask;
-	int				c_srates[UAC_MAX_RATES];
+	int				c_srate;
 	int				c_ssize;
 	int				p_chmask;
-	int				p_srates[UAC_MAX_RATES];
+	int				p_srate;
 	int				p_ssize;
 
 	bool			p_mute_present;
@@ -51,8 +50,6 @@ struct f_uac1_opts {
 
 	int				req_number;
 	unsigned			bound:1;
-
-	char			function_name[32];
 
 	struct mutex			lock;
 	int				refcnt;

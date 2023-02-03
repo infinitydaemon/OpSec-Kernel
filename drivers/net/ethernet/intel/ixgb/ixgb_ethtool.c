@@ -456,17 +456,15 @@ ixgb_get_drvinfo(struct net_device *netdev,
 {
 	struct ixgb_adapter *adapter = netdev_priv(netdev);
 
-	strscpy(drvinfo->driver,  ixgb_driver_name,
+	strlcpy(drvinfo->driver,  ixgb_driver_name,
 		sizeof(drvinfo->driver));
-	strscpy(drvinfo->bus_info, pci_name(adapter->pdev),
+	strlcpy(drvinfo->bus_info, pci_name(adapter->pdev),
 		sizeof(drvinfo->bus_info));
 }
 
 static void
 ixgb_get_ringparam(struct net_device *netdev,
-		   struct ethtool_ringparam *ring,
-		   struct kernel_ethtool_ringparam *kernel_ring,
-		   struct netlink_ext_ack *extack)
+		struct ethtool_ringparam *ring)
 {
 	struct ixgb_adapter *adapter = netdev_priv(netdev);
 	struct ixgb_desc_ring *txdr = &adapter->tx_ring;
@@ -480,9 +478,7 @@ ixgb_get_ringparam(struct net_device *netdev,
 
 static int
 ixgb_set_ringparam(struct net_device *netdev,
-		   struct ethtool_ringparam *ring,
-		   struct kernel_ethtool_ringparam *kernel_ring,
-		   struct netlink_ext_ack *extack)
+		struct ethtool_ringparam *ring)
 {
 	struct ixgb_adapter *adapter = netdev_priv(netdev);
 	struct ixgb_desc_ring *txdr = &adapter->tx_ring;

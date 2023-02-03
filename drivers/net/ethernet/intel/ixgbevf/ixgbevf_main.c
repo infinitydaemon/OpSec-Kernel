@@ -944,7 +944,7 @@ static struct sk_buff *ixgbevf_build_skb(struct ixgbevf_ring *rx_ring,
 	net_prefetch(xdp->data_meta);
 
 	/* build an skb around the page buffer */
-	skb = napi_build_skb(xdp->data_hard_start, truesize);
+	skb = build_skb(xdp->data_hard_start, truesize);
 	if (unlikely(!skb))
 		return NULL;
 
@@ -1070,7 +1070,7 @@ static struct sk_buff *ixgbevf_run_xdp(struct ixgbevf_adapter *adapter,
 			goto out_failure;
 		break;
 	default:
-		bpf_warn_invalid_xdp_action(rx_ring->netdev, xdp_prog, act);
+		bpf_warn_invalid_xdp_action(act);
 		fallthrough;
 	case XDP_ABORTED:
 out_failure:
@@ -2044,16 +2044,12 @@ static int ixgbevf_vlan_rx_add_vid(struct net_device *netdev,
 
 	spin_unlock_bh(&adapter->mbx_lock);
 
-	if (err) {
-		netdev_err(netdev, "VF could not set VLAN %d\n", vid);
+	/* translate error return types so error makes sense */
+	if (err == IXGBE_ERR_MBX)
+		return -EIO;
 
-		/* translate error return types so error makes sense */
-		if (err == IXGBE_ERR_MBX)
-			return -EIO;
-
-		if (err == IXGBE_ERR_INVALID_ARGUMENT)
-			return -EACCES;
-	}
+	if (err == IXGBE_ERR_INVALID_ARGUMENT)
+		return -EACCES;
 
 	set_bit(vid, adapter->active_vlans);
 
@@ -2073,9 +2069,6 @@ static int ixgbevf_vlan_rx_kill_vid(struct net_device *netdev,
 	err = hw->mac.ops.set_vfta(hw, vid, 0, false);
 
 	spin_unlock_bh(&adapter->mbx_lock);
-
-	if (err)
-		netdev_err(netdev, "Could not remove VLAN %d\n", vid);
 
 	clear_bit(vid, adapter->active_vlans);
 
@@ -2274,7 +2267,6 @@ static void ixgbevf_negotiate_api(struct ixgbevf_adapter *adapter)
 {
 	struct ixgbe_hw *hw = &adapter->hw;
 	static const int api[] = {
-		ixgbe_mbox_api_15,
 		ixgbe_mbox_api_14,
 		ixgbe_mbox_api_13,
 		ixgbe_mbox_api_12,
@@ -2293,21 +2285,13 @@ static void ixgbevf_negotiate_api(struct ixgbevf_adapter *adapter)
 		idx++;
 	}
 
-	if (hw->api_version >= ixgbe_mbox_api_15) {
-		hw->mbx.ops.init_params(hw);
-		memcpy(&hw->mbx.ops, &ixgbevf_mbx_ops,
-		       sizeof(struct ixgbe_mbx_operations));
-	}
-
 	spin_unlock_bh(&adapter->mbx_lock);
 }
 
 static void ixgbevf_up_complete(struct ixgbevf_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
-	struct pci_dev *pdev = adapter->pdev;
 	struct ixgbe_hw *hw = &adapter->hw;
-	bool state;
 
 	ixgbevf_configure_msix(adapter);
 
@@ -2319,11 +2303,6 @@ static void ixgbevf_up_complete(struct ixgbevf_adapter *adapter)
 		hw->mac.ops.set_rar(hw, 0, hw->mac.perm_addr, 0);
 
 	spin_unlock_bh(&adapter->mbx_lock);
-
-	state = adapter->link_state;
-	hw->mac.ops.get_link_state(hw, &adapter->link_state);
-	if (state && state != adapter->link_state)
-		dev_info(&pdev->dev, "VF is administratively disabled\n");
 
 	smp_mb__before_atomic();
 	clear_bit(__IXGBEVF_DOWN, &adapter->state);
@@ -2562,7 +2541,7 @@ void ixgbevf_reset(struct ixgbevf_adapter *adapter)
 	}
 
 	if (is_valid_ether_addr(adapter->hw.mac.addr)) {
-		eth_hw_addr_set(netdev, adapter->hw.mac.addr);
+		ether_addr_copy(netdev->dev_addr, adapter->hw.mac.addr);
 		ether_addr_copy(netdev->perm_addr, adapter->hw.mac.addr);
 	}
 
@@ -2649,7 +2628,6 @@ static void ixgbevf_set_num_queues(struct ixgbevf_adapter *adapter)
 		case ixgbe_mbox_api_12:
 		case ixgbe_mbox_api_13:
 		case ixgbe_mbox_api_14:
-		case ixgbe_mbox_api_15:
 			if (adapter->xdp_prog &&
 			    hw->mac.max_tx_queues == rss)
 				rss = rss > 3 ? 2 : 1;
@@ -2740,7 +2718,7 @@ static int ixgbevf_alloc_q_vector(struct ixgbevf_adapter *adapter, int v_idx,
 		return -ENOMEM;
 
 	/* initialize NAPI */
-	netif_napi_add(adapter->netdev, &q_vector->napi, ixgbevf_poll);
+	netif_napi_add(adapter->netdev, &q_vector->napi, ixgbevf_poll, 64);
 
 	/* tie q_vector and adapter together */
 	adapter->q_vector[v_idx] = q_vector;
@@ -2767,7 +2745,7 @@ static int ixgbevf_alloc_q_vector(struct ixgbevf_adapter *adapter, int v_idx,
 		ring->reg_idx = reg_idx;
 
 		/* assign ring to adapter */
-		adapter->tx_ring[txr_idx] = ring;
+		 adapter->tx_ring[txr_idx] = ring;
 
 		/* update count and index */
 		txr_count--;
@@ -3077,7 +3055,7 @@ static int ixgbevf_sw_init(struct ixgbevf_adapter *adapter)
 		else if (is_zero_ether_addr(adapter->hw.mac.addr))
 			dev_info(&pdev->dev,
 				 "MAC address not assigned by administrator.\n");
-		eth_hw_addr_set(netdev, hw->mac.addr);
+		ether_addr_copy(netdev->dev_addr, hw->mac.addr);
 	}
 
 	if (!is_valid_ether_addr(netdev->dev_addr)) {
@@ -3094,8 +3072,6 @@ static int ixgbevf_sw_init(struct ixgbevf_adapter *adapter)
 	/* set default ring sizes */
 	adapter->tx_ring_count = IXGBEVF_DEFAULT_TXD;
 	adapter->rx_ring_count = IXGBEVF_DEFAULT_RXD;
-
-	adapter->link_state = true;
 
 	set_bit(__IXGBEVF_DOWN, &adapter->state);
 	return 0;
@@ -3329,7 +3305,7 @@ static void ixgbevf_watchdog_subtask(struct ixgbevf_adapter *adapter)
 
 	ixgbevf_watchdog_update_link(adapter);
 
-	if (adapter->link_up && adapter->link_state)
+	if (adapter->link_up)
 		ixgbevf_watchdog_link_is_up(adapter);
 	else
 		ixgbevf_watchdog_link_is_down(adapter);
@@ -4256,7 +4232,7 @@ static int ixgbevf_set_mac(struct net_device *netdev, void *p)
 
 	ether_addr_copy(hw->mac.addr, addr->sa_data);
 	ether_addr_copy(hw->mac.perm_addr, addr->sa_data);
-	eth_hw_addr_set(netdev, addr->sa_data);
+	ether_addr_copy(netdev->dev_addr, addr->sa_data);
 
 	return 0;
 }
@@ -4357,10 +4333,10 @@ static void ixgbevf_get_tx_ring_stats(struct rtnl_link_stats64 *stats,
 
 	if (ring) {
 		do {
-			start = u64_stats_fetch_begin(&ring->syncp);
+			start = u64_stats_fetch_begin_irq(&ring->syncp);
 			bytes = ring->stats.bytes;
 			packets = ring->stats.packets;
-		} while (u64_stats_fetch_retry(&ring->syncp, start));
+		} while (u64_stats_fetch_retry_irq(&ring->syncp, start));
 		stats->tx_bytes += bytes;
 		stats->tx_packets += packets;
 	}
@@ -4383,10 +4359,10 @@ static void ixgbevf_get_stats(struct net_device *netdev,
 	for (i = 0; i < adapter->num_rx_queues; i++) {
 		ring = adapter->rx_ring[i];
 		do {
-			start = u64_stats_fetch_begin(&ring->syncp);
+			start = u64_stats_fetch_begin_irq(&ring->syncp);
 			bytes = ring->stats.bytes;
 			packets = ring->stats.packets;
-		} while (u64_stats_fetch_retry(&ring->syncp, start));
+		} while (u64_stats_fetch_retry_irq(&ring->syncp, start));
 		stats->rx_bytes += bytes;
 		stats->rx_packets += packets;
 	}
@@ -4528,17 +4504,22 @@ static int ixgbevf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	struct ixgbevf_adapter *adapter = NULL;
 	struct ixgbe_hw *hw = NULL;
 	const struct ixgbevf_info *ii = ixgbevf_info_tbl[ent->driver_data];
+	int err, pci_using_dac;
 	bool disable_dev = false;
-	int err;
 
 	err = pci_enable_device(pdev);
 	if (err)
 		return err;
 
-	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
-	if (err) {
-		dev_err(&pdev->dev, "No usable DMA configuration, aborting\n");
-		goto err_dma;
+	if (!dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64))) {
+		pci_using_dac = 1;
+	} else {
+		err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
+		if (err) {
+			dev_err(&pdev->dev, "No usable DMA configuration, aborting\n");
+			goto err_dma;
+		}
+		pci_using_dac = 0;
 	}
 
 	err = pci_request_regions(pdev, ixgbevf_driver_name);
@@ -4585,7 +4566,7 @@ static int ixgbevf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	memcpy(&hw->mac.ops, ii->mac_ops, sizeof(hw->mac.ops));
 	hw->mac.type  = ii->mac;
 
-	memcpy(&hw->mbx.ops, &ixgbevf_mbx_ops_legacy,
+	memcpy(&hw->mbx.ops, &ixgbevf_mbx_ops,
 	       sizeof(struct ixgbe_mbx_operations));
 
 	/* setup the private structure */
@@ -4618,7 +4599,10 @@ static int ixgbevf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	netdev->hw_features |= NETIF_F_GSO_PARTIAL |
 			       IXGBEVF_GSO_PARTIAL_FEATURES;
 
-	netdev->features = netdev->hw_features | NETIF_F_HIGHDMA;
+	netdev->features = netdev->hw_features;
+
+	if (pci_using_dac)
+		netdev->features |= NETIF_F_HIGHDMA;
 
 	netdev->vlan_features |= netdev->features | NETIF_F_TSO_MANGLEID;
 	netdev->mpls_features |= NETIF_F_SG |
@@ -4642,7 +4626,6 @@ static int ixgbevf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	case ixgbe_mbox_api_12:
 	case ixgbe_mbox_api_13:
 	case ixgbe_mbox_api_14:
-	case ixgbe_mbox_api_15:
 		netdev->max_mtu = IXGBE_MAX_JUMBO_FRAME_SIZE -
 				  (ETH_HLEN + ETH_FCS_LEN);
 		break;
@@ -4794,7 +4777,7 @@ static pci_ers_result_t ixgbevf_io_error_detected(struct pci_dev *pdev,
 		pci_disable_device(pdev);
 	rtnl_unlock();
 
-	/* Request a slot reset. */
+	/* Request a slot slot reset. */
 	return PCI_ERS_RESULT_NEED_RESET;
 }
 

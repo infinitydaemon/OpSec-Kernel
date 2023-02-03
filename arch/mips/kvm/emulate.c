@@ -952,14 +952,16 @@ enum emulation_result kvm_mips_emul_wait(struct kvm_vcpu *vcpu)
 	if (!vcpu->arch.pending_exceptions) {
 		kvm_vz_lose_htimer(vcpu);
 		vcpu->arch.wait = 1;
-		kvm_vcpu_halt(vcpu);
+		kvm_vcpu_block(vcpu);
 
 		/*
-		 * We are runnable, then definitely go off to user space to
+		 * We we are runnable, then definitely go off to user space to
 		 * check if any I/O interrupts are pending.
 		 */
-		if (kvm_arch_vcpu_runnable(vcpu))
+		if (kvm_check_request(KVM_REQ_UNHALT, vcpu)) {
+			kvm_clear_request(KVM_REQ_UNHALT, vcpu);
 			vcpu->run->exit_reason = KVM_EXIT_IRQ_WINDOW_OPEN;
+		}
 	}
 
 	return EMULATE_DONE;

@@ -13,8 +13,6 @@
 #include <linux/mutex.h>
 #include <linux/kernel.h>
 
-#include <linux/iio/iio.h>
-
 #define AD5310_CMD(x)				((x) << 12)
 
 #define AD5683_DATA(x)				((x) << 4)
@@ -139,7 +137,7 @@ struct ad5686_state {
 	struct mutex			lock;
 
 	/*
-	 * DMA (thus cache coherency maintenance) may require the
+	 * DMA (thus cache coherency maintenance) requires the
 	 * transfer buffers to live in their own cache lines.
 	 */
 
@@ -147,7 +145,7 @@ struct ad5686_state {
 		__be32 d32;
 		__be16 d16;
 		u8 d8[4];
-	} data[3] __aligned(IIO_DMA_MINALIGN);
+	} data[3] ____cacheline_aligned;
 };
 
 
@@ -156,7 +154,7 @@ int ad5686_probe(struct device *dev,
 		 const char *name, ad5686_write_func write,
 		 ad5686_read_func read);
 
-void ad5686_remove(struct device *dev);
+int ad5686_remove(struct device *dev);
 
 
 #endif /* __DRIVERS_IIO_DAC_AD5686_H__ */

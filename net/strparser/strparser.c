@@ -533,9 +533,6 @@ EXPORT_SYMBOL_GPL(strp_check_rcv);
 
 static int __init strp_dev_init(void)
 {
-	BUILD_BUG_ON(sizeof(struct sk_skb_cb) >
-		     sizeof_field(struct sk_buff, cb));
-
 	strp_wq = create_singlethread_workqueue("kstrp");
 	if (unlikely(!strp_wq))
 		return -ENOMEM;

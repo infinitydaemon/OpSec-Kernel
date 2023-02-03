@@ -91,7 +91,7 @@ struct smbd_connection {
 	/* Memory registrations */
 	/* Maximum number of RDMA read/write outstanding on this connection */
 	int responder_resources;
-	/* Maximum number of pages in a single RDMA write/read on this connection */
+	/* Maximum number of SGEs in a RDMA write/read */
 	int max_frmr_depth;
 	/*
 	 * If payload is less than or equal to the threshold,
@@ -225,24 +225,20 @@ struct smbd_buffer_descriptor_v1 {
 	__le32 length;
 } __packed;
 
-/* Maximum number of SGEs used by smbdirect.c in any send work request */
-#define SMBDIRECT_MAX_SEND_SGE	6
-
+/* Default maximum number of SGEs in a RDMA send/recv */
+#define SMBDIRECT_MAX_SGE	16
 /* The context for a SMBD request */
 struct smbd_request {
 	struct smbd_connection *info;
 	struct ib_cqe cqe;
 
-	/* the SGE entries for this work request */
-	struct ib_sge sge[SMBDIRECT_MAX_SEND_SGE];
+	/* the SGE entries for this packet */
+	struct ib_sge sge[SMBDIRECT_MAX_SGE];
 	int num_sge;
 
 	/* SMBD packet header follows this structure */
 	u8 packet[];
 };
-
-/* Maximum number of SGEs used by smbdirect.c in any receive work request */
-#define SMBDIRECT_MAX_RECV_SGE	1
 
 /* The context for a SMBD response */
 struct smbd_response {

@@ -33,8 +33,6 @@
 #include <drm/intel_lpe_audio.h>
 #include "intel_hdmi_audio.h"
 
-#define INTEL_HDMI_AUDIO_SUSPEND_DELAY_MS  5000
-
 #define for_each_pipe(card_ctx, pipe) \
 	for ((pipe) = 0; (pipe) < (card_ctx)->num_pipes; (pipe)++)
 #define for_each_port(card_ctx, port) \
@@ -1068,9 +1066,7 @@ static int had_pcm_open(struct snd_pcm_substream *substream)
 	intelhaddata = snd_pcm_substream_chip(substream);
 	runtime = substream->runtime;
 
-	retval = pm_runtime_resume_and_get(intelhaddata->dev);
-	if (retval < 0)
-		return retval;
+	pm_runtime_get_sync(intelhaddata->dev);
 
 	/* set the runtime hw parameter with local snd_pcm_hardware struct */
 	runtime->hw = had_pcm_hardware;
@@ -1258,6 +1254,18 @@ static snd_pcm_uframes_t had_pcm_pointer(struct snd_pcm_substream *substream)
 }
 
 /*
+ * ALSA PCM mmap callback
+ */
+static int had_pcm_mmap(struct snd_pcm_substream *substream,
+			struct vm_area_struct *vma)
+{
+	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+	return remap_pfn_range(vma, vma->vm_start,
+			substream->runtime->dma_addr >> PAGE_SHIFT,
+			vma->vm_end - vma->vm_start, vma->vm_page_prot);
+}
+
+/*
  * ALSA PCM ops
  */
 static const struct snd_pcm_ops had_pcm_ops = {
@@ -1268,6 +1276,7 @@ static const struct snd_pcm_ops had_pcm_ops = {
 	.trigger =	had_pcm_trigger,
 	.sync_stop =	had_pcm_sync_stop,
 	.pointer =	had_pcm_pointer,
+	.mmap =		had_pcm_mmap,
 };
 
 /* process mode change of the running stream; called in mutex */
@@ -1538,12 +1547,8 @@ static void had_audio_wq(struct work_struct *work)
 		container_of(work, struct snd_intelhad, hdmi_audio_wq);
 	struct intel_hdmi_lpe_audio_pdata *pdata = ctx->dev->platform_data;
 	struct intel_hdmi_lpe_audio_port_pdata *ppdata = &pdata->port[ctx->port];
-	int ret;
 
-	ret = pm_runtime_resume_and_get(ctx->dev);
-	if (ret < 0)
-		return;
-
+	pm_runtime_get_sync(ctx->dev);
 	mutex_lock(&ctx->mutex);
 	if (ppdata->pipe < 0) {
 		dev_dbg(ctx->dev, "%s: Event: HAD_NOTIFY_HOT_UNPLUG : port = %d\n",
@@ -1745,9 +1750,7 @@ static int __hdmi_lpe_audio_probe(struct platform_device *pdev)
 	card_ctx->irq = irq;
 
 	/* only 32bit addressable */
-	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
-	if (ret)
-		return ret;
+	dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
 
 	init_channel_allocations();
 
@@ -1810,11 +1813,8 @@ static int __hdmi_lpe_audio_probe(struct platform_device *pdev)
 	pdata->notify_audio_lpe = notify_audio_lpe;
 	spin_unlock_irq(&pdata->lpe_audio_slock);
 
-	pm_runtime_set_autosuspend_delay(&pdev->dev, INTEL_HDMI_AUDIO_SUSPEND_DELAY_MS);
 	pm_runtime_use_autosuspend(&pdev->dev);
-	pm_runtime_enable(&pdev->dev);
 	pm_runtime_mark_last_busy(&pdev->dev);
-	pm_runtime_idle(&pdev->dev);
 
 	dev_dbg(&pdev->dev, "%s: handle pending notification\n", __func__);
 	for_each_port(card_ctx, port) {

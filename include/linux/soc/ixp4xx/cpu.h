@@ -9,7 +9,6 @@
 #define __SOC_IXP4XX_CPU_H__
 
 #include <linux/io.h>
-#include <linux/regmap.h>
 #ifdef CONFIG_ARM
 #include <asm/cputype.h>
 #endif
@@ -23,9 +22,6 @@
 
 #define IXP46X_PROCESSOR_ID_VALUE	0x69054200 /* including IXP455 */
 #define IXP46X_PROCESSOR_ID_MASK	0xfffffff0
-
-/* Feature register in the expansion bus controller */
-#define IXP4XX_EXP_CNFG2		0x2c
 
 /* "fuse" bits of IXP_EXP_CFG2 */
 /* All IXP4xx CPUs */
@@ -90,30 +86,20 @@
 			 IXP43X_PROCESSOR_ID_VALUE)
 #define cpu_is_ixp46x()	((read_cpuid_id() & IXP46X_PROCESSOR_ID_MASK) == \
 			 IXP46X_PROCESSOR_ID_VALUE)
-static inline u32 cpu_ixp4xx_features(struct regmap *rmap)
-{
-	u32 val;
 
-	regmap_read(rmap, IXP4XX_EXP_CNFG2, &val);
-	/* For some reason this register is inverted */
-	val = ~val;
-	if (cpu_is_ixp42x_rev_a0())
-		return IXP42X_FEATURE_MASK & ~(IXP4XX_FEATURE_RCOMP |
-					       IXP4XX_FEATURE_AES);
-	if (cpu_is_ixp42x())
-		return val & IXP42X_FEATURE_MASK;
-	if (cpu_is_ixp43x())
-		return val & IXP43X_FEATURE_MASK;
-	return val & IXP46X_FEATURE_MASK;
-}
+u32 ixp4xx_read_feature_bits(void);
+void ixp4xx_write_feature_bits(u32 value);
 #else
 #define cpu_is_ixp42x_rev_a0()		0
 #define cpu_is_ixp42x()			0
 #define cpu_is_ixp43x()			0
 #define cpu_is_ixp46x()			0
-static inline u32 cpu_ixp4xx_features(struct regmap *rmap)
+static inline u32 ixp4xx_read_feature_bits(void)
 {
 	return 0;
+}
+static inline void ixp4xx_write_feature_bits(u32 value)
+{
 }
 #endif
 

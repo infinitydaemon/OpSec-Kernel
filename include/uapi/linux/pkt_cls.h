@@ -19,16 +19,13 @@ enum {
 	TCA_ACT_FLAGS,
 	TCA_ACT_HW_STATS,
 	TCA_ACT_USED_HW_STATS,
-	TCA_ACT_IN_HW_COUNT,
 	__TCA_ACT_MAX
 };
 
 /* See other TCA_ACT_FLAGS_ * flags in include/net/act_api.h. */
-#define TCA_ACT_FLAGS_NO_PERCPU_STATS (1 << 0) /* Don't use percpu allocator for
-						* actions stats.
-						*/
-#define TCA_ACT_FLAGS_SKIP_HW	(1 << 1) /* don't offload action to HW */
-#define TCA_ACT_FLAGS_SKIP_SW	(1 << 2) /* don't use action in SW */
+#define TCA_ACT_FLAGS_NO_PERCPU_STATS 1 /* Don't use percpu allocator for
+					 * actions stats.
+					 */
 
 /* tca HW stats type
  * When user does not pass the attribute, he does not care.
@@ -256,7 +253,7 @@ struct tc_u32_sel {
 
 	short			hoff;
 	__be32			hmask;
-	struct tc_u32_key	keys[];
+	struct tc_u32_key	keys[0];
 };
 
 struct tc_u32_mark {
@@ -268,7 +265,7 @@ struct tc_u32_mark {
 struct tc_u32_pcnt {
 	__u64 rcnt;
 	__u64 rhit;
-	__u64 kcnts[];
+	__u64 kcnts[0];
 };
 
 /* Flags */
@@ -587,13 +584,6 @@ enum {
 	TCA_FLOWER_KEY_HASH,		/* u32 */
 	TCA_FLOWER_KEY_HASH_MASK,	/* u32 */
 
-	TCA_FLOWER_KEY_NUM_OF_VLANS,    /* u8 */
-
-	TCA_FLOWER_KEY_PPPOE_SID,	/* be16 */
-	TCA_FLOWER_KEY_PPP_PROTO,	/* be16 */
-
-	TCA_FLOWER_KEY_L2TPV3_SID,	/* be32 */
-
 	__TCA_FLOWER_MAX,
 };
 
@@ -621,10 +611,6 @@ enum {
 					 */
 	TCA_FLOWER_KEY_ENC_OPTS_ERSPAN,	/* Nested
 					 * TCA_FLOWER_KEY_ENC_OPT_ERSPAN_
-					 * attributes
-					 */
-	TCA_FLOWER_KEY_ENC_OPTS_GTP,	/* Nested
-					 * TCA_FLOWER_KEY_ENC_OPT_GTP_
 					 * attributes
 					 */
 	__TCA_FLOWER_KEY_ENC_OPTS_MAX,
@@ -664,17 +650,6 @@ enum {
 
 #define TCA_FLOWER_KEY_ENC_OPT_ERSPAN_MAX \
 		(__TCA_FLOWER_KEY_ENC_OPT_ERSPAN_MAX - 1)
-
-enum {
-	TCA_FLOWER_KEY_ENC_OPT_GTP_UNSPEC,
-	TCA_FLOWER_KEY_ENC_OPT_GTP_PDU_TYPE,		/* u8 */
-	TCA_FLOWER_KEY_ENC_OPT_GTP_QFI,			/* u8 */
-
-	__TCA_FLOWER_KEY_ENC_OPT_GTP_MAX,
-};
-
-#define TCA_FLOWER_KEY_ENC_OPT_GTP_MAX \
-		(__TCA_FLOWER_KEY_ENC_OPT_GTP_MAX - 1)
 
 enum {
 	TCA_FLOWER_KEY_MPLS_OPTS_UNSPEC,

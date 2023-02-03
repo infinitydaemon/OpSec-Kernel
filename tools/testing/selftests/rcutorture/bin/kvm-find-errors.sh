@@ -30,15 +30,9 @@ editor=${EDITOR-vi}
 files=
 for i in ${rundir}/*/Make.out
 do
-	scenariodir="`dirname $i`"
-	scenariobasedir="`echo ${scenariodir} | sed -e 's/\.[0-9]*$//'`"
-	if egrep -q "error:|warning:|^ld: .*undefined reference to" < $i
+	if egrep -q "error:|warning:" < $i
 	then
-		egrep "error:|warning:|^ld: .*undefined reference to" < $i > $i.diags
-		files="$files $i.diags $i"
-	elif ! test -f ${scenariobasedir}/vmlinux && ! test -f "${rundir}/re-run"
-	then
-		echo No ${scenariobasedir}/vmlinux file > $i.diags
+		egrep "error:|warning:" < $i > $i.diags
 		files="$files $i.diags $i"
 	fi
 done

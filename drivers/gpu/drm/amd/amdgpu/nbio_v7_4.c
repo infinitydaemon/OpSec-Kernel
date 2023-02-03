@@ -56,15 +56,12 @@
  * These are nbio v7_4_1 registers mask. Temporarily define these here since
  * nbio v7_4_1 header is incomplete.
  */
-#define GPU_HDP_FLUSH_DONE__RSVD_ENG0_MASK	0x00001000L /* Don't use.  Firmware uses this bit internally */
+#define GPU_HDP_FLUSH_DONE__RSVD_ENG0_MASK	0x00001000L
 #define GPU_HDP_FLUSH_DONE__RSVD_ENG1_MASK	0x00002000L
 #define GPU_HDP_FLUSH_DONE__RSVD_ENG2_MASK	0x00004000L
 #define GPU_HDP_FLUSH_DONE__RSVD_ENG3_MASK	0x00008000L
 #define GPU_HDP_FLUSH_DONE__RSVD_ENG4_MASK	0x00010000L
 #define GPU_HDP_FLUSH_DONE__RSVD_ENG5_MASK	0x00020000L
-#define GPU_HDP_FLUSH_DONE__RSVD_ENG6_MASK	0x00040000L
-#define GPU_HDP_FLUSH_DONE__RSVD_ENG7_MASK	0x00080000L
-#define GPU_HDP_FLUSH_DONE__RSVD_ENG8_MASK	0x00100000L
 
 #define mmBIF_MMSCH1_DOORBELL_RANGE                     0x01dc
 #define mmBIF_MMSCH1_DOORBELL_RANGE_BASE_IDX            2
@@ -273,7 +270,7 @@ static void nbio_v7_4_update_medium_grain_light_sleep(struct amdgpu_device *adev
 }
 
 static void nbio_v7_4_get_clockgating_state(struct amdgpu_device *adev,
-					    u64 *flags)
+					    u32 *flags)
 {
 	int data;
 
@@ -337,28 +334,17 @@ const struct nbio_hdp_flush_reg nbio_v7_4_hdp_flush_reg = {
 	.ref_and_mask_cp9 = GPU_HDP_FLUSH_DONE__CP9_MASK,
 	.ref_and_mask_sdma0 = GPU_HDP_FLUSH_DONE__SDMA0_MASK,
 	.ref_and_mask_sdma1 = GPU_HDP_FLUSH_DONE__SDMA1_MASK,
+	.ref_and_mask_sdma2 = GPU_HDP_FLUSH_DONE__RSVD_ENG0_MASK,
+	.ref_and_mask_sdma3 = GPU_HDP_FLUSH_DONE__RSVD_ENG1_MASK,
+	.ref_and_mask_sdma4 = GPU_HDP_FLUSH_DONE__RSVD_ENG2_MASK,
+	.ref_and_mask_sdma5 = GPU_HDP_FLUSH_DONE__RSVD_ENG3_MASK,
+	.ref_and_mask_sdma6 = GPU_HDP_FLUSH_DONE__RSVD_ENG4_MASK,
+	.ref_and_mask_sdma7 = GPU_HDP_FLUSH_DONE__RSVD_ENG5_MASK,
 };
 
 static void nbio_v7_4_init_registers(struct amdgpu_device *adev)
 {
-	uint32_t baco_cntl;
 
-	if (amdgpu_sriov_vf(adev))
-		adev->rmmio_remap.reg_offset = SOC15_REG_OFFSET(NBIO, 0,
-			mmBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL) << 2;
-
-	if (adev->ip_versions[NBIO_HWIP][0] == IP_VERSION(7, 4, 4) &&
-	    !amdgpu_sriov_vf(adev)) {
-		baco_cntl = RREG32_SOC15(NBIO, 0, mmBACO_CNTL);
-		if (baco_cntl &
-		    (BACO_CNTL__BACO_DUMMY_EN_MASK | BACO_CNTL__BACO_EN_MASK)) {
-			baco_cntl &= ~(BACO_CNTL__BACO_DUMMY_EN_MASK |
-				       BACO_CNTL__BACO_EN_MASK);
-			dev_dbg(adev->dev, "Unsetting baco dummy mode %x",
-				baco_cntl);
-			WREG32_SOC15(NBIO, 0, mmBACO_CNTL, baco_cntl);
-		}
-	}
 }
 
 static void nbio_v7_4_handle_ras_controller_intr_no_bifring(struct amdgpu_device *adev)
@@ -401,13 +387,13 @@ static void nbio_v7_4_handle_ras_controller_intr_no_bifring(struct amdgpu_device
 						"errors detected in %s block, "
 						"no user action is needed.\n",
 						obj->err_data.ce_count,
-						get_ras_block_str(adev->nbio.ras_if));
+						ras_block_str(adev->nbio.ras_if->block));
 
 			if (err_data.ue_count)
 				dev_info(adev->dev, "%ld uncorrectable hardware "
 						"errors detected in %s block\n",
 						obj->err_data.ue_count,
-						get_ras_block_str(adev->nbio.ras_if));
+						ras_block_str(adev->nbio.ras_if->block));
 		}
 
 		dev_info(adev->dev, "RAS controller interrupt triggered "
@@ -580,9 +566,7 @@ static int nbio_v7_4_init_ras_err_event_athub_interrupt (struct amdgpu_device *a
 	return r;
 }
 
-#define smnPARITY_ERROR_STATUS_UNCORR_GRP2	    0x13a20030
-#define smnPARITY_ERROR_STATUS_UNCORR_GRP2_ALDE	0x13b20030
-#define smnRAS_GLOBAL_STATUS_LO_ALDE            0x13b20020
+#define smnPARITY_ERROR_STATUS_UNCORR_GRP2	0x13a20030
 
 static void nbio_v7_4_query_ras_error_count(struct amdgpu_device *adev,
 					void *ras_error_status)
@@ -591,20 +575,12 @@ static void nbio_v7_4_query_ras_error_count(struct amdgpu_device *adev,
 	uint32_t corr, fatal, non_fatal;
 	struct ras_err_data *err_data = (struct ras_err_data *)ras_error_status;
 
-	if (adev->asic_type == CHIP_ALDEBARAN)
-		global_sts = RREG32_PCIE(smnRAS_GLOBAL_STATUS_LO_ALDE);
-	else
-		global_sts = RREG32_PCIE(smnRAS_GLOBAL_STATUS_LO);
-
+	global_sts = RREG32_PCIE(smnRAS_GLOBAL_STATUS_LO);
 	corr = REG_GET_FIELD(global_sts, RAS_GLOBAL_STATUS_LO, ParityErrCorr);
 	fatal = REG_GET_FIELD(global_sts, RAS_GLOBAL_STATUS_LO, ParityErrFatal);
 	non_fatal = REG_GET_FIELD(global_sts, RAS_GLOBAL_STATUS_LO,
 				ParityErrNonFatal);
-
-	if (adev->asic_type == CHIP_ALDEBARAN)
-		parity_sts = RREG32_PCIE(smnPARITY_ERROR_STATUS_UNCORR_GRP2_ALDE);
-	else
-		parity_sts = RREG32_PCIE(smnPARITY_ERROR_STATUS_UNCORR_GRP2);
+	parity_sts = RREG32_PCIE(smnPARITY_ERROR_STATUS_UNCORR_GRP2);
 
 	if (corr)
 		err_data->ce_count++;
@@ -613,21 +589,13 @@ static void nbio_v7_4_query_ras_error_count(struct amdgpu_device *adev,
 
 	if (corr || fatal || non_fatal) {
 		central_sts = RREG32_PCIE(smnBIFL_RAS_CENTRAL_STATUS);
-
 		/* clear error status register */
-		if (adev->asic_type == CHIP_ALDEBARAN)
-			WREG32_PCIE(smnRAS_GLOBAL_STATUS_LO_ALDE, global_sts);
-		else
-			WREG32_PCIE(smnRAS_GLOBAL_STATUS_LO, global_sts);
+		WREG32_PCIE(smnRAS_GLOBAL_STATUS_LO, global_sts);
 
 		if (fatal)
-		{
 			/* clear parity fatal error indication field */
-			if (adev->asic_type == CHIP_ALDEBARAN)
-				WREG32_PCIE(smnPARITY_ERROR_STATUS_UNCORR_GRP2_ALDE, parity_sts);
-			else
-				WREG32_PCIE(smnPARITY_ERROR_STATUS_UNCORR_GRP2, parity_sts);
-		}
+			WREG32_PCIE(smnPARITY_ERROR_STATUS_UNCORR_GRP2,
+				    parity_sts);
 
 		if (REG_GET_FIELD(central_sts, BIFL_RAS_CENTRAL_STATUS,
 				BIFL_RasContller_Intr_Recv)) {
@@ -652,26 +620,15 @@ static void nbio_v7_4_enable_doorbell_interrupt(struct amdgpu_device *adev,
 		       DOORBELL_INTERRUPT_DISABLE, enable ? 0 : 1);
 }
 
-const struct amdgpu_ras_block_hw_ops nbio_v7_4_ras_hw_ops = {
-	.query_ras_error_count = nbio_v7_4_query_ras_error_count,
-};
-
-struct amdgpu_nbio_ras nbio_v7_4_ras = {
-	.ras_block = {
-		.ras_comm = {
-			.name = "pcie_bif",
-			.block = AMDGPU_RAS_BLOCK__PCIE_BIF,
-			.type = AMDGPU_RAS_ERROR__MULTI_UNCORRECTABLE,
-		},
-		.hw_ops = &nbio_v7_4_ras_hw_ops,
-		.ras_late_init = amdgpu_nbio_ras_late_init,
-	},
+const struct amdgpu_nbio_ras_funcs nbio_v7_4_ras_funcs = {
 	.handle_ras_controller_intr_no_bifring = nbio_v7_4_handle_ras_controller_intr_no_bifring,
 	.handle_ras_err_event_athub_intr_no_bifring = nbio_v7_4_handle_ras_err_event_athub_intr_no_bifring,
 	.init_ras_controller_interrupt = nbio_v7_4_init_ras_controller_interrupt,
 	.init_ras_err_event_athub_interrupt = nbio_v7_4_init_ras_err_event_athub_interrupt,
+	.query_ras_error_count = nbio_v7_4_query_ras_error_count,
+	.ras_late_init = amdgpu_nbio_ras_late_init,
+	.ras_fini = amdgpu_nbio_ras_fini,
 };
-
 
 #ifdef CONFIG_PCIEASPM
 static void nbio_v7_4_program_ltr(struct amdgpu_device *adev)
@@ -701,9 +658,6 @@ static void nbio_v7_4_program_aspm(struct amdgpu_device *adev)
 {
 #ifdef CONFIG_PCIEASPM
 	uint32_t def, data;
-
-	if (adev->ip_versions[NBIO_HWIP][0] == IP_VERSION(7, 4, 4))
-		return;
 
 	def = data = RREG32_PCIE(smnPCIE_LC_CNTL);
 	data &= ~PCIE_LC_CNTL__LC_L1_INACTIVITY_MASK;

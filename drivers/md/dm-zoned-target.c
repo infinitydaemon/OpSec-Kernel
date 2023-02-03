@@ -125,10 +125,11 @@ static int dmz_submit_bio(struct dmz_target *dmz, struct dm_zone *zone,
 	if (dev->flags & DMZ_BDEV_DYING)
 		return -EIO;
 
-	clone = bio_alloc_clone(dev->bdev, bio, GFP_NOIO, &dmz->bio_set);
+	clone = bio_clone_fast(bio, GFP_NOIO, &dmz->bio_set);
 	if (!clone)
 		return -ENOMEM;
 
+	bio_set_dev(clone, dev->bdev);
 	bioctx->dev = dev;
 	clone->bi_iter.bi_sector =
 		dmz_start_sect(dmz->metadata, zone) + dmz_blk2sect(chunk_block);
@@ -730,8 +731,9 @@ static int dmz_get_zoned_device(struct dm_target *ti, char *path,
 	}
 	dev->bdev = bdev;
 	dev->dev_idx = idx;
+	(void)bdevname(dev->bdev, dev->name);
 
-	dev->capacity = bdev_nr_sectors(bdev);
+	dev->capacity = i_size_read(bdev->bd_inode) >> SECTOR_SHIFT;
 	if (ti->begin) {
 		ti->error = "Partial mapping is not supported";
 		goto err;
@@ -764,7 +766,8 @@ static void dmz_put_zoned_device(struct dm_target *ti)
 static int dmz_fixup_devices(struct dm_target *ti)
 {
 	struct dmz_target *dmz = ti->private;
-	struct dmz_dev *reg_dev = NULL;
+	struct dmz_dev *reg_dev, *zoned_dev;
+	struct request_queue *q;
 	sector_t zone_nr_sectors = 0;
 	int i;
 
@@ -779,32 +782,32 @@ static int dmz_fixup_devices(struct dm_target *ti)
 			return -EINVAL;
 		}
 		for (i = 1; i < dmz->nr_ddevs; i++) {
-			struct dmz_dev *zoned_dev = &dmz->dev[i];
-			struct block_device *bdev = zoned_dev->bdev;
-
+			zoned_dev = &dmz->dev[i];
 			if (zoned_dev->flags & DMZ_BDEV_REGULAR) {
 				ti->error = "Secondary disk is not a zoned device";
 				return -EINVAL;
 			}
+			q = bdev_get_queue(zoned_dev->bdev);
 			if (zone_nr_sectors &&
-			    zone_nr_sectors != bdev_zone_sectors(bdev)) {
+			    zone_nr_sectors != blk_queue_zone_sectors(q)) {
 				ti->error = "Zone nr sectors mismatch";
 				return -EINVAL;
 			}
-			zone_nr_sectors = bdev_zone_sectors(bdev);
+			zone_nr_sectors = blk_queue_zone_sectors(q);
 			zoned_dev->zone_nr_sectors = zone_nr_sectors;
-			zoned_dev->nr_zones = bdev_nr_zones(bdev);
+			zoned_dev->nr_zones =
+				blkdev_nr_zones(zoned_dev->bdev->bd_disk);
 		}
 	} else {
-		struct dmz_dev *zoned_dev = &dmz->dev[0];
-		struct block_device *bdev = zoned_dev->bdev;
-
+		reg_dev = NULL;
+		zoned_dev = &dmz->dev[0];
 		if (zoned_dev->flags & DMZ_BDEV_REGULAR) {
 			ti->error = "Disk is not a zoned device";
 			return -EINVAL;
 		}
-		zoned_dev->zone_nr_sectors = bdev_zone_sectors(bdev);
-		zoned_dev->nr_zones = bdev_nr_zones(bdev);
+		q = bdev_get_queue(zoned_dev->bdev);
+		zoned_dev->zone_nr_sectors = blk_queue_zone_sectors(q);
+		zoned_dev->nr_zones = blkdev_nr_zones(zoned_dev->bdev->bd_disk);
 	}
 
 	if (reg_dev) {
@@ -964,6 +967,7 @@ static void dmz_dtr(struct dm_target *ti)
 	struct dmz_target *dmz = ti->private;
 	int i;
 
+	flush_workqueue(dmz->chunk_wq);
 	destroy_workqueue(dmz->chunk_wq);
 
 	for (i = 0; i < dmz->nr_ddevs; i++)
@@ -1000,7 +1004,7 @@ static void dmz_io_hints(struct dm_target *ti, struct queue_limits *limits)
 	blk_limits_io_min(limits, DMZ_BLOCK_SIZE);
 	blk_limits_io_opt(limits, DMZ_BLOCK_SIZE);
 
-	limits->discard_alignment = 0;
+	limits->discard_alignment = DMZ_BLOCK_SIZE;
 	limits->discard_granularity = DMZ_BLOCK_SIZE;
 	limits->max_discard_sectors = chunk_sectors;
 	limits->max_hw_discard_sectors = chunk_sectors;

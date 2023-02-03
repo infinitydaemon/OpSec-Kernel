@@ -25,16 +25,16 @@
  * USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <drm/drm_mipi_dsi.h>
+
 #include <linux/device.h>
 #include <linux/module.h>
 #include <linux/of_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/slab.h>
 
-#include <drm/display/drm_dsc.h>
-#include <drm/drm_mipi_dsi.h>
+#include <drm/drm_dsc.h>
 #include <drm/drm_print.h>
-
 #include <video/mipi_display.h>
 
 /**
@@ -246,52 +246,6 @@ void mipi_dsi_device_unregister(struct mipi_dsi_device *dsi)
 }
 EXPORT_SYMBOL(mipi_dsi_device_unregister);
 
-static void devm_mipi_dsi_device_unregister(void *arg)
-{
-	struct mipi_dsi_device *dsi = arg;
-
-	mipi_dsi_device_unregister(dsi);
-}
-
-/**
- * devm_mipi_dsi_device_register_full - create a managed MIPI DSI device
- * @dev: device to tie the MIPI-DSI device lifetime to
- * @host: DSI host to which this device is connected
- * @info: pointer to template containing DSI device information
- *
- * Create a MIPI DSI device by using the device information provided by
- * mipi_dsi_device_info template
- *
- * This is the managed version of mipi_dsi_device_register_full() which
- * automatically calls mipi_dsi_device_unregister() when @dev is
- * unbound.
- *
- * Returns:
- * A pointer to the newly created MIPI DSI device, or, a pointer encoded
- * with an error
- */
-struct mipi_dsi_device *
-devm_mipi_dsi_device_register_full(struct device *dev,
-				   struct mipi_dsi_host *host,
-				   const struct mipi_dsi_device_info *info)
-{
-	struct mipi_dsi_device *dsi;
-	int ret;
-
-	dsi = mipi_dsi_device_register_full(host, info);
-	if (IS_ERR(dsi))
-		return dsi;
-
-	ret = devm_add_action_or_reset(dev,
-				       devm_mipi_dsi_device_unregister,
-				       dsi);
-	if (ret)
-		return ERR_PTR(ret);
-
-	return dsi;
-}
-EXPORT_SYMBOL_GPL(devm_mipi_dsi_device_register_full);
-
 static DEFINE_MUTEX(host_lock);
 static LIST_HEAD(host_list);
 
@@ -391,41 +345,6 @@ int mipi_dsi_detach(struct mipi_dsi_device *dsi)
 	return ops->detach(dsi->host, dsi);
 }
 EXPORT_SYMBOL(mipi_dsi_detach);
-
-static void devm_mipi_dsi_detach(void *arg)
-{
-	struct mipi_dsi_device *dsi = arg;
-
-	mipi_dsi_detach(dsi);
-}
-
-/**
- * devm_mipi_dsi_attach - Attach a MIPI-DSI device to its DSI Host
- * @dev: device to tie the MIPI-DSI device attachment lifetime to
- * @dsi: DSI peripheral
- *
- * This is the managed version of mipi_dsi_attach() which automatically
- * calls mipi_dsi_detach() when @dev is unbound.
- *
- * Returns:
- * 0 on success, a negative error code on failure.
- */
-int devm_mipi_dsi_attach(struct device *dev,
-			 struct mipi_dsi_device *dsi)
-{
-	int ret;
-
-	ret = mipi_dsi_attach(dsi);
-	if (ret)
-		return ret;
-
-	ret = devm_add_action_or_reset(dev, devm_mipi_dsi_detach, dsi);
-	if (ret)
-		return ret;
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(devm_mipi_dsi_attach);
 
 static ssize_t mipi_dsi_device_transfer(struct mipi_dsi_device *dsi,
 					struct mipi_dsi_msg *msg)
@@ -606,7 +525,7 @@ int mipi_dsi_turn_on_peripheral(struct mipi_dsi_device *dsi)
 EXPORT_SYMBOL(mipi_dsi_turn_on_peripheral);
 
 /*
- * mipi_dsi_set_maximum_return_packet_size() - specify the maximum size of
+ * mipi_dsi_set_maximum_return_packet_size() - specify the maximum size of the
  *    the payload in a long packet transmitted from the peripheral back to the
  *    host processor
  * @dsi: DSI peripheral device
@@ -1237,9 +1156,7 @@ static int mipi_dsi_drv_remove(struct device *dev)
 	struct mipi_dsi_driver *drv = to_mipi_dsi_driver(dev->driver);
 	struct mipi_dsi_device *dsi = to_mipi_dsi_device(dev);
 
-	drv->remove(dsi);
-
-	return 0;
+	return drv->remove(dsi);
 }
 
 static void mipi_dsi_drv_shutdown(struct device *dev)

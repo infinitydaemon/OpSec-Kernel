@@ -55,7 +55,9 @@ struct qcom_cpufreq_match_data {
 };
 
 struct qcom_cpufreq_drv {
-	int *opp_tokens;
+	struct opp_table **names_opp_tables;
+	struct opp_table **hw_opp_tables;
+	struct opp_table **genpd_opp_tables;
 	u32 versions;
 	const struct qcom_cpufreq_match_data *data;
 };
@@ -64,7 +66,7 @@ static struct platform_device *cpufreq_dt_pdev, *cpufreq_pdev;
 
 static void get_krait_bin_format_a(struct device *cpu_dev,
 					  int *speed, int *pvs, int *pvs_ver,
-					  u8 *buf)
+					  struct nvmem_cell *pvs_nvmem, u8 *buf)
 {
 	u32 pte_efuse;
 
@@ -95,7 +97,7 @@ static void get_krait_bin_format_a(struct device *cpu_dev,
 
 static void get_krait_bin_format_b(struct device *cpu_dev,
 					  int *speed, int *pvs, int *pvs_ver,
-					  u8 *buf)
+					  struct nvmem_cell *pvs_nvmem, u8 *buf)
 {
 	u32 pte_efuse, redundant_sel;
 
@@ -223,11 +225,11 @@ static int qcom_cpufreq_krait_name_version(struct device *cpu_dev,
 	switch (len) {
 	case 4:
 		get_krait_bin_format_a(cpu_dev, &speed, &pvs, &pvs_ver,
-				       speedbin);
+				       speedbin_nvmem, speedbin);
 		break;
 	case 8:
 		get_krait_bin_format_b(cpu_dev, &speed, &pvs, &pvs_ver,
-				       speedbin);
+				       speedbin_nvmem, speedbin);
 		break;
 	default:
 		dev_err(cpu_dev, "Unable to read nvmem data. Defaulting to 0!\n");
@@ -299,8 +301,11 @@ static int qcom_cpufreq_probe(struct platform_device *pdev)
 	if (drv->data->get_version) {
 		speedbin_nvmem = of_nvmem_cell_get(np, NULL);
 		if (IS_ERR(speedbin_nvmem)) {
-			ret = dev_err_probe(cpu_dev, PTR_ERR(speedbin_nvmem),
-					    "Could not get nvmem cell\n");
+			if (PTR_ERR(speedbin_nvmem) != -EPROBE_DEFER)
+				dev_err(cpu_dev,
+					"Could not get nvmem cell: %ld\n",
+					PTR_ERR(speedbin_nvmem));
+			ret = PTR_ERR(speedbin_nvmem);
 			goto free_drv;
 		}
 
@@ -314,43 +319,72 @@ static int qcom_cpufreq_probe(struct platform_device *pdev)
 	}
 	of_node_put(np);
 
-	drv->opp_tokens = kcalloc(num_possible_cpus(), sizeof(*drv->opp_tokens),
+	drv->names_opp_tables = kcalloc(num_possible_cpus(),
+				  sizeof(*drv->names_opp_tables),
 				  GFP_KERNEL);
-	if (!drv->opp_tokens) {
+	if (!drv->names_opp_tables) {
 		ret = -ENOMEM;
 		goto free_drv;
 	}
+	drv->hw_opp_tables = kcalloc(num_possible_cpus(),
+				  sizeof(*drv->hw_opp_tables),
+				  GFP_KERNEL);
+	if (!drv->hw_opp_tables) {
+		ret = -ENOMEM;
+		goto free_opp_names;
+	}
+
+	drv->genpd_opp_tables = kcalloc(num_possible_cpus(),
+					sizeof(*drv->genpd_opp_tables),
+					GFP_KERNEL);
+	if (!drv->genpd_opp_tables) {
+		ret = -ENOMEM;
+		goto free_opp;
+	}
 
 	for_each_possible_cpu(cpu) {
-		struct dev_pm_opp_config config = {
-			.supported_hw = NULL,
-		};
-
 		cpu_dev = get_cpu_device(cpu);
 		if (NULL == cpu_dev) {
 			ret = -ENODEV;
-			goto free_opp;
+			goto free_genpd_opp;
 		}
 
 		if (drv->data->get_version) {
-			config.supported_hw = &drv->versions;
-			config.supported_hw_count = 1;
 
-			if (pvs_name)
-				config.prop_name = pvs_name;
+			if (pvs_name) {
+				drv->names_opp_tables[cpu] = dev_pm_opp_set_prop_name(
+								     cpu_dev,
+								     pvs_name);
+				if (IS_ERR(drv->names_opp_tables[cpu])) {
+					ret = PTR_ERR(drv->names_opp_tables[cpu]);
+					dev_err(cpu_dev, "Failed to add OPP name %s\n",
+						pvs_name);
+					goto free_opp;
+				}
+			}
+
+			drv->hw_opp_tables[cpu] = dev_pm_opp_set_supported_hw(
+									 cpu_dev, &drv->versions, 1);
+			if (IS_ERR(drv->hw_opp_tables[cpu])) {
+				ret = PTR_ERR(drv->hw_opp_tables[cpu]);
+				dev_err(cpu_dev,
+					"Failed to set supported hardware\n");
+				goto free_genpd_opp;
+			}
 		}
 
 		if (drv->data->genpd_names) {
-			config.genpd_names = drv->data->genpd_names;
-			config.virt_devs = NULL;
-		}
-
-		if (config.supported_hw || config.genpd_names) {
-			drv->opp_tokens[cpu] = dev_pm_opp_set_config(cpu_dev, &config);
-			if (drv->opp_tokens[cpu] < 0) {
-				ret = drv->opp_tokens[cpu];
-				dev_err(cpu_dev, "Failed to set OPP config\n");
-				goto free_opp;
+			drv->genpd_opp_tables[cpu] =
+				dev_pm_opp_attach_genpd(cpu_dev,
+							drv->data->genpd_names,
+							NULL);
+			if (IS_ERR(drv->genpd_opp_tables[cpu])) {
+				ret = PTR_ERR(drv->genpd_opp_tables[cpu]);
+				if (ret != -EPROBE_DEFER)
+					dev_err(cpu_dev,
+						"Could not attach to pm_domain: %d\n",
+						ret);
+				goto free_genpd_opp;
 			}
 		}
 	}
@@ -365,10 +399,27 @@ static int qcom_cpufreq_probe(struct platform_device *pdev)
 	ret = PTR_ERR(cpufreq_dt_pdev);
 	dev_err(cpu_dev, "Failed to register platform device\n");
 
+free_genpd_opp:
+	for_each_possible_cpu(cpu) {
+		if (IS_ERR(drv->genpd_opp_tables[cpu]))
+			break;
+		dev_pm_opp_detach_genpd(drv->genpd_opp_tables[cpu]);
+	}
+	kfree(drv->genpd_opp_tables);
 free_opp:
-	for_each_possible_cpu(cpu)
-		dev_pm_opp_clear_config(drv->opp_tokens[cpu]);
-	kfree(drv->opp_tokens);
+	for_each_possible_cpu(cpu) {
+		if (IS_ERR(drv->names_opp_tables[cpu]))
+			break;
+		dev_pm_opp_put_prop_name(drv->names_opp_tables[cpu]);
+	}
+	for_each_possible_cpu(cpu) {
+		if (IS_ERR(drv->hw_opp_tables[cpu]))
+			break;
+		dev_pm_opp_put_supported_hw(drv->hw_opp_tables[cpu]);
+	}
+	kfree(drv->hw_opp_tables);
+free_opp_names:
+	kfree(drv->names_opp_tables);
 free_drv:
 	kfree(drv);
 
@@ -382,10 +433,15 @@ static int qcom_cpufreq_remove(struct platform_device *pdev)
 
 	platform_device_unregister(cpufreq_dt_pdev);
 
-	for_each_possible_cpu(cpu)
-		dev_pm_opp_clear_config(drv->opp_tokens[cpu]);
+	for_each_possible_cpu(cpu) {
+		dev_pm_opp_put_supported_hw(drv->names_opp_tables[cpu]);
+		dev_pm_opp_put_supported_hw(drv->hw_opp_tables[cpu]);
+		dev_pm_opp_detach_genpd(drv->genpd_opp_tables[cpu]);
+	}
 
-	kfree(drv->opp_tokens);
+	kfree(drv->names_opp_tables);
+	kfree(drv->hw_opp_tables);
+	kfree(drv->genpd_opp_tables);
 	kfree(drv);
 
 	return 0;

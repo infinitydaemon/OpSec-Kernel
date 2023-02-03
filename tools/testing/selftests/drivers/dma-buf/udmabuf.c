@@ -32,8 +32,7 @@ int main(int argc, char *argv[])
 
 	devfd = open("/dev/udmabuf", O_RDWR);
 	if (devfd < 0) {
-		printf("%s: [skip,no-udmabuf: Unable to access DMA buffer device file]\n",
-		       TEST_PREFIX);
+		printf("%s: [skip,no-udmabuf]\n", TEST_PREFIX);
 		exit(77);
 	}
 

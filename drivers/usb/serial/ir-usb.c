@@ -51,8 +51,7 @@ static unsigned int ir_write_room(struct tty_struct *tty);
 static void ir_write_bulk_callback(struct urb *urb);
 static void ir_process_read_urb(struct urb *urb);
 static void ir_set_termios(struct tty_struct *tty,
-			   struct usb_serial_port *port,
-			   const struct ktermios *old_termios);
+		struct usb_serial_port *port, struct ktermios *old_termios);
 
 /* Not that this lot means you can only have one per system */
 static u8 ir_baud;
@@ -377,8 +376,7 @@ static void ir_process_read_urb(struct urb *urb)
 }
 
 static void ir_set_termios(struct tty_struct *tty,
-			   struct usb_serial_port *port,
-			   const struct ktermios *old_termios)
+		struct usb_serial_port *port, struct ktermios *old_termios)
 {
 	struct usb_device *udev = port->serial->dev;
 	unsigned char *transfer_buffer;

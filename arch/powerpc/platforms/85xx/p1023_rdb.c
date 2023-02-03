@@ -15,7 +15,6 @@
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/fsl_devices.h>
-#include <linux/of_address.h>
 #include <linux/of_platform.h>
 #include <linux/of_device.h>
 
@@ -23,6 +22,7 @@
 #include <asm/machdep.h>
 #include <asm/pci-bridge.h>
 #include <mm/mmu_decl.h>
+#include <asm/prom.h>
 #include <asm/udbg.h>
 #include <asm/mpic.h>
 #include "smp.h"

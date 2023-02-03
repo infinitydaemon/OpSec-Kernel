@@ -11,6 +11,7 @@ struct pt_regs;
 struct task_struct;
 
 #include <asm/ptrace.h>
+#include <registers.h>
 #include <sysdep/archsetjmp.h>
 
 #include <linux/prefetch.h>
@@ -55,6 +56,15 @@ struct thread_struct {
 	.request		= { 0 } \
 }
 
+static inline void release_thread(struct task_struct *task)
+{
+}
+
+static inline void mm_copy_segments(struct mm_struct *from_mm,
+				    struct mm_struct *new_mm)
+{
+}
+
 /*
  * User space process size: 3GB (default).
  */
@@ -95,8 +105,7 @@ extern struct cpuinfo_um boot_cpu_data;
 #define current_cpu_data boot_cpu_data
 #define cache_line_size()	(boot_cpu_data.cache_alignment)
 
-extern unsigned long get_thread_reg(int reg, jmp_buf *buf);
 #define KSTK_REG(tsk, reg) get_thread_reg(reg, &tsk->thread.switch_buf)
-extern unsigned long __get_wchan(struct task_struct *p);
+extern unsigned long get_wchan(struct task_struct *p);
 
 #endif

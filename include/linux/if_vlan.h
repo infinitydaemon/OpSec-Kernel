@@ -46,10 +46,8 @@ struct vlan_hdr {
  *	@h_vlan_encapsulated_proto: packet type ID or len
  */
 struct vlan_ethhdr {
-	struct_group(addrs,
-		unsigned char	h_dest[ETH_ALEN];
-		unsigned char	h_source[ETH_ALEN];
-	);
+	unsigned char	h_dest[ETH_ALEN];
+	unsigned char	h_source[ETH_ALEN];
 	__be16		h_vlan_proto;
 	__be16		h_vlan_TCI;
 	__be16		h_vlan_encapsulated_proto;
@@ -76,7 +74,7 @@ static inline bool is_vlan_dev(const struct net_device *dev)
         return dev->priv_flags & IFF_802_1Q_VLAN;
 }
 
-#define skb_vlan_tag_present(__skb)	(!!(__skb)->vlan_all)
+#define skb_vlan_tag_present(__skb)	((__skb)->vlan_present)
 #define skb_vlan_tag_get(__skb)		((__skb)->vlan_tci)
 #define skb_vlan_tag_get_id(__skb)	((__skb)->vlan_tci & VLAN_VID_MASK)
 #define skb_vlan_tag_get_cfi(__skb)	(!!((__skb)->vlan_tci & VLAN_CFI_MASK))
@@ -118,11 +116,11 @@ static inline void vlan_drop_rx_stag_filter_info(struct net_device *dev)
  *	@tx_dropped: number of tx drops
  */
 struct vlan_pcpu_stats {
-	u64_stats_t		rx_packets;
-	u64_stats_t		rx_bytes;
-	u64_stats_t		rx_multicast;
-	u64_stats_t		tx_packets;
-	u64_stats_t		tx_bytes;
+	u64			rx_packets;
+	u64			rx_bytes;
+	u64			rx_multicast;
+	u64			tx_packets;
+	u64			tx_bytes;
 	struct u64_stats_sync	syncp;
 	u32			rx_errors;
 	u32			tx_dropped;
@@ -164,7 +162,6 @@ struct netpoll;
  *	@vlan_id: VLAN identifier
  *	@flags: device flags
  *	@real_dev: underlying netdevice
- *	@dev_tracker: refcount tracker for @real_dev reference
  *	@real_dev_addr: address of underlying netdevice
  *	@dent: proc dir entry
  *	@vlan_pcpu_stats: ptr to percpu rx stats
@@ -180,8 +177,6 @@ struct vlan_dev_priv {
 	u16					flags;
 
 	struct net_device			*real_dev;
-	netdevice_tracker			dev_tracker;
-
 	unsigned char				real_dev_addr[ETH_ALEN];
 
 	struct proc_dir_entry			*dent;
@@ -471,7 +466,7 @@ static inline struct sk_buff *vlan_insert_tag_set_proto(struct sk_buff *skb,
  */
 static inline void __vlan_hwaccel_clear_tag(struct sk_buff *skb)
 {
-	skb->vlan_all = 0;
+	skb->vlan_present = 0;
 }
 
 /**
@@ -483,7 +478,9 @@ static inline void __vlan_hwaccel_clear_tag(struct sk_buff *skb)
  */
 static inline void __vlan_hwaccel_copy_tag(struct sk_buff *dst, const struct sk_buff *src)
 {
-	dst->vlan_all = src->vlan_all;
+	dst->vlan_present = src->vlan_present;
+	dst->vlan_proto = src->vlan_proto;
+	dst->vlan_tci = src->vlan_tci;
 }
 
 /*
@@ -517,6 +514,7 @@ static inline void __vlan_hwaccel_put_tag(struct sk_buff *skb,
 {
 	skb->vlan_proto = vlan_proto;
 	skb->vlan_tci = vlan_tci;
+	skb->vlan_present = 1;
 }
 
 /**

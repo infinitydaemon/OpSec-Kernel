@@ -348,7 +348,7 @@ typedef struct TAG_TW_New_Ioctl {
 	unsigned int data_buffer_length;
 	unsigned char padding [508];
 	TW_Command firmware_command;
-	char data_buffer[];
+	char data_buffer[1];
 } TW_New_Ioctl;
 
 /* GetParam descriptor */

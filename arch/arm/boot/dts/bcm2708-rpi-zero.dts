@@ -4,11 +4,14 @@
 #include "bcm2708-rpi.dtsi"
 #include "bcm283x-rpi-csi1-2lane.dtsi"
 #include "bcm283x-rpi-i2c0mux_0_28.dtsi"
-#include "bcm283x-rpi-led-deprecated.dtsi"
 
 / {
 	compatible = "raspberrypi,model-zero", "brcm,bcm2835";
 	model = "Raspberry Pi Zero";
+
+	chosen {
+		bootargs = "coherent_pool=1M snd_bcm2835.enable_compat_alsa=0 snd_bcm2835.enable_hdmi=1";
+	};
 };
 
 &gpio {
@@ -153,20 +156,22 @@
 	pinctrl-0 = <&i2s_pins>;
 };
 
-&led_act {
-	label = "led0";
-	gpios = <&gpio 47 GPIO_ACTIVE_LOW>;
-	default-state = "off";
-	linux,default-trigger = "actpwr";
+&leds {
+	act_led: led-act {
+		label = "led0";
+		linux,default-trigger = "actpwr";
+		gpios = <&gpio 47 GPIO_ACTIVE_LOW>;
+	};
 };
 
 &hdmi {
 	hpd-gpios = <&gpio 46 GPIO_ACTIVE_LOW>;
 };
 
-&vchiq {
+&audio {
 	pinctrl-names = "default";
 	pinctrl-0 = <&audio_pins>;
+	brcm,disable-headphones = <1>;
 };
 
 &cam1_reg {
@@ -178,10 +183,8 @@ cam0_reg: &cam_dummy_reg {
 
 / {
 	__overrides__ {
-		audio = <&chosen>,"bootargs{on='snd_bcm2835.enable_hdmi=1',off='snd_bcm2835.enable_hdmi=0'}";
-
-		act_led_gpio = <&led_act>,"gpios:4";
-		act_led_activelow = <&led_act>,"gpios:8";
-		act_led_trigger = <&led_act>,"linux,default-trigger";
+		act_led_gpio = <&act_led>,"gpios:4";
+		act_led_activelow = <&act_led>,"gpios:8";
+		act_led_trigger = <&act_led>,"linux,default-trigger";
 	};
 };

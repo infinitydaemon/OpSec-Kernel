@@ -22,15 +22,19 @@
 #include "misc.h"
 #include "error.h"
 #include "../string.h"
-#include "efi.h"
 
 #include <generated/compile.h>
 #include <linux/module.h>
 #include <linux/uts.h>
 #include <linux/utsname.h>
 #include <linux/ctype.h>
-#include <generated/utsversion.h>
+#include <linux/efi.h>
 #include <generated/utsrelease.h>
+#include <asm/efi.h>
+
+/* Macros used by the included decompressor code below. */
+#define STATIC
+#include <linux/decompress/mm.h>
 
 #define _SETUP
 #include <asm/setup.h>	/* For COMMAND_LINE_SIZE */
@@ -668,7 +672,7 @@ static bool process_mem_region(struct mem_vector *region,
 		}
 	}
 #endif
-	return false;
+	return 0;
 }
 
 #ifdef CONFIG_EFI

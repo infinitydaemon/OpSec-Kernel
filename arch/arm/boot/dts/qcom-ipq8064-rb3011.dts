@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "qcom-ipq8064.dtsi"
 #include <dt-bindings/input/input.h>
-#include <dt-bindings/leds/common.h>
 
 / {
 	model = "MikroTik RB3011UiAS-RM";
-	compatible = "mikrotik,rb3011", "qcom,ipq8064";
+	compatible = "mikrotik,rb3011";
 
 	aliases {
 		serial0 = &gsbi7_serial;
@@ -173,7 +172,7 @@
 
 				cs-gpios = <&qcom_pinmux 20 GPIO_ACTIVE_HIGH>;
 
-				norflash: flash@0 {
+				norflash: s25fl016k@0 {
 					compatible = "jedec,spi-nor";
 					#address-cells = <1>;
 					#size-cells = <1>;
@@ -188,12 +187,12 @@
 			};
 		};
 
-		gpio-keys {
+		gpio_keys {
 			compatible = "gpio-keys";
 			pinctrl-0 = <&buttons_pins>;
 			pinctrl-names = "default";
 
-			button {
+			button@1 {
 				label = "reset";
 				linux,code = <KEY_RESTART>;
 				gpios = <&qcom_pinmux 66 GPIO_ACTIVE_LOW>;
@@ -209,7 +208,6 @@
 
 			led@7 {
 				label = "rb3011:green:user";
-				color = <LED_COLOR_ID_GREEN>;
 				gpios = <&qcom_pinmux 33 GPIO_ACTIVE_HIGH>;
 				default-state = "off";
 			};
@@ -264,7 +262,8 @@
 &nand {
 	status = "okay";
 
-	nand@0 {
+	nandcs@0 {
+		compatible = "qcom,nandcs";
 		reg = <0>;
 
 		nand-ecc-strength = <4>;
@@ -302,6 +301,15 @@
 		mux {
 			pins = "gpio33";
 			drive-strength = <16>;
+			bias-disable;
+		};
+	};
+
+	mdio0_pins: mdio0_pins {
+		mux {
+			pins = "gpio0", "gpio1";
+			function = "gpio";
+			drive-strength = <8>;
 			bias-disable;
 		};
 	};

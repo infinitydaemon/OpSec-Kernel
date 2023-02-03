@@ -7,6 +7,7 @@
 
 #include <linux/export.h>
 #include <linux/seq_file.h>
+#include <linux/netfs.h>
 #include "internal.h"
 
 atomic_t netfs_n_rh_readahead;

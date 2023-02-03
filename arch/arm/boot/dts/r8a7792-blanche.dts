@@ -335,7 +335,7 @@
 			compatible = "dlg,da9063-rtc";
 		};
 
-		watchdog {
+		wdt {
 			compatible = "dlg,da9063-watchdog";
 		};
 	};

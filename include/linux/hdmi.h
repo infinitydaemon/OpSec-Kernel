@@ -336,12 +336,7 @@ ssize_t hdmi_audio_infoframe_pack(struct hdmi_audio_infoframe *frame,
 				  void *buffer, size_t size);
 ssize_t hdmi_audio_infoframe_pack_only(const struct hdmi_audio_infoframe *frame,
 				       void *buffer, size_t size);
-int hdmi_audio_infoframe_check(const struct hdmi_audio_infoframe *frame);
-
-struct dp_sdp;
-ssize_t
-hdmi_audio_infoframe_pack_for_dp(const struct hdmi_audio_infoframe *frame,
-				 struct dp_sdp *sdp, u8 dp_version);
+int hdmi_audio_infoframe_check(struct hdmi_audio_infoframe *frame);
 
 enum hdmi_3d_structure {
 	HDMI_3D_STRUCTURE_INVALID = -1,

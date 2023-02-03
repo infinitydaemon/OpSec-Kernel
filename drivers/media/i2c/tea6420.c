@@ -87,7 +87,8 @@ static const struct v4l2_subdev_ops tea6420_ops = {
 	.audio = &tea6420_audio_ops,
 };
 
-static int tea6420_probe(struct i2c_client *client)
+static int tea6420_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
 	struct v4l2_subdev *sd;
 	int err, i;
@@ -115,11 +116,12 @@ static int tea6420_probe(struct i2c_client *client)
 	return 0;
 }
 
-static void tea6420_remove(struct i2c_client *client)
+static int tea6420_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 
 	v4l2_device_unregister_subdev(sd);
+	return 0;
 }
 
 static const struct i2c_device_id tea6420_id[] = {
@@ -132,7 +134,7 @@ static struct i2c_driver tea6420_driver = {
 	.driver = {
 		.name	= "tea6420",
 	},
-	.probe_new	= tea6420_probe,
+	.probe		= tea6420_probe,
 	.remove		= tea6420_remove,
 	.id_table	= tea6420_id,
 };

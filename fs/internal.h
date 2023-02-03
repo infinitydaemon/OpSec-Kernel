@@ -16,7 +16,6 @@ struct shrink_control;
 struct fs_context;
 struct user_namespace;
 struct pipe_inode_info;
-struct iov_iter;
 
 /*
  * block/bdev.c
@@ -38,7 +37,7 @@ static inline int emergency_thaw_bdev(struct super_block *sb)
 /*
  * buffer.c
  */
-int __block_write_begin_int(struct folio *folio, loff_t pos, unsigned len,
+int __block_write_begin_int(struct page *page, loff_t pos, unsigned len,
 		get_block_t *get_block, const struct iomap *iomap);
 
 /*
@@ -63,7 +62,7 @@ extern int vfs_path_lookup(struct dentry *, struct vfsmount *,
 			   const char *, unsigned int, struct path *);
 int do_rmdir(int dfd, struct filename *name);
 int do_unlinkat(int dfd, struct filename *name);
-int may_linkat(struct user_namespace *mnt_userns, const struct path *link);
+int may_linkat(struct user_namespace *mnt_userns, struct path *link);
 int do_renameat2(int olddfd, struct filename *oldname, int newdfd,
 		 struct filename *newname, unsigned int flags);
 int do_mkdirat(int dfd, struct filename *name, umode_t mode);
@@ -75,7 +74,7 @@ int do_linkat(int olddfd, struct filename *old, int newdfd,
  * namespace.c
  */
 extern struct vfsmount *lookup_mnt(const struct path *);
-extern int finish_automount(struct vfsmount *, const struct path *);
+extern int finish_automount(struct vfsmount *, struct path *);
 
 extern int sb_prepare_remount_readonly(struct super_block *);
 
@@ -85,7 +84,6 @@ extern int __mnt_want_write_file(struct file *);
 extern void __mnt_drop_write_file(struct file *);
 
 extern void dissolve_on_fput(struct vfsmount *);
-extern bool may_mount(void);
 
 int path_mount(const char *dev_name, struct path *path,
 		const char *type_page, unsigned long flags, void *data_page);
@@ -137,7 +135,7 @@ extern struct file *do_file_open_root(const struct path *,
 		const char *, const struct open_flags *);
 extern struct open_how build_open_how(int flags, umode_t mode);
 extern int build_open_flags(const struct open_how *how, struct open_flags *op);
-extern struct file *__close_fd_get_file(unsigned int fd);
+extern int __close_fd_get_file(unsigned int fd, struct file **res);
 
 long do_sys_ftruncate(unsigned int fd, loff_t length, int small);
 int chmod_common(const struct path *path, umode_t mode);
@@ -150,9 +148,8 @@ extern int vfs_open(const struct path *, struct file *);
  * inode.c
  */
 extern long prune_icache_sb(struct super_block *sb, struct shrink_control *sc);
-int dentry_needs_remove_privs(struct user_namespace *, struct dentry *dentry);
-bool in_group_or_capable(struct user_namespace *mnt_userns,
-			 const struct inode *inode, vfsgid_t vfsgid);
+extern void inode_add_lru(struct inode *inode);
+extern int dentry_needs_remove_privs(struct dentry *dentry);
 
 /*
  * fs-writeback.c
@@ -170,6 +167,11 @@ extern struct dentry * d_alloc_pseudo(struct super_block *, const struct qstr *)
 extern char *simple_dname(struct dentry *, char *, int);
 extern void dput_to_list(struct dentry *, struct list_head *);
 extern void shrink_dentry_list(struct list_head *);
+
+/*
+ * read_write.c
+ */
+extern int rw_verify_area(int, struct file *, const loff_t *, size_t);
 
 /*
  * pipe.c
@@ -193,9 +195,7 @@ int sb_init_dio_done_wq(struct super_block *sb);
 /*
  * fs/stat.c:
  */
-
-int getname_statx_lookup_flags(int flags);
-int do_statx(int dfd, struct filename *filename, unsigned int flags,
+int do_statx(int dfd, const char __user *filename, unsigned flags,
 	     unsigned int mask, struct statx __user *buffer);
 
 /*
@@ -226,40 +226,6 @@ struct xattr_ctx {
 	unsigned int flags;
 };
 
-
-ssize_t do_getxattr(struct mnt_idmap *idmap,
-		    struct dentry *d,
-		    struct xattr_ctx *ctx);
-
 int setxattr_copy(const char __user *name, struct xattr_ctx *ctx);
-int do_setxattr(struct mnt_idmap *idmap, struct dentry *dentry,
+int do_setxattr(struct user_namespace *mnt_userns, struct dentry *dentry,
 		struct xattr_ctx *ctx);
-int may_write_xattr(struct user_namespace *mnt_userns, struct inode *inode);
-
-#ifdef CONFIG_FS_POSIX_ACL
-int do_set_acl(struct mnt_idmap *idmap, struct dentry *dentry,
-	       const char *acl_name, const void *kvalue, size_t size);
-ssize_t do_get_acl(struct mnt_idmap *idmap, struct dentry *dentry,
-		   const char *acl_name, void *kvalue, size_t size);
-#else
-static inline int do_set_acl(struct mnt_idmap *idmap,
-			     struct dentry *dentry, const char *acl_name,
-			     const void *kvalue, size_t size)
-{
-	return -EOPNOTSUPP;
-}
-static inline ssize_t do_get_acl(struct mnt_idmap *idmap,
-				 struct dentry *dentry, const char *acl_name,
-				 void *kvalue, size_t size)
-{
-	return -EOPNOTSUPP;
-}
-#endif
-
-ssize_t __kernel_write_iter(struct file *file, struct iov_iter *from, loff_t *pos);
-
-/*
- * fs/attr.c
- */
-int setattr_should_drop_sgid(struct user_namespace *mnt_userns,
-			     const struct inode *inode);

@@ -1,5 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
-// Copyright (C) 2015-2017 Broadcom
+/*
+ * Copyright (C) 2015-2017 Broadcom
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation version 2.
+ *
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 
 #include <linux/bitops.h>
 #include <linux/gpio/driver.h>
@@ -375,7 +385,12 @@ static int brcmstb_gpio_remove(struct platform_device *pdev)
 {
 	struct brcmstb_gpio_priv *priv = platform_get_drvdata(pdev);
 	struct brcmstb_gpio_bank *bank;
-	int offset, virq;
+	int offset, ret = 0, virq;
+
+	if (!priv) {
+		dev_err(&pdev->dev, "called %s without drvdata!\n", __func__);
+		return -EFAULT;
+	}
 
 	if (priv->parent_irq > 0)
 		irq_set_chained_handler_and_data(priv->parent_irq, NULL, NULL);
@@ -396,7 +411,7 @@ static int brcmstb_gpio_remove(struct platform_device *pdev)
 	list_for_each_entry(bank, &priv->bank_list, node)
 		gpiochip_remove(&bank->gc);
 
-	return 0;
+	return ret;
 }
 
 static int brcmstb_gpio_of_xlate(struct gpio_chip *gc,
@@ -688,8 +703,9 @@ static int brcmstb_gpio_probe(struct platform_device *pdev)
 			goto fail;
 		}
 
+		gc->of_node = np;
 		gc->owner = THIS_MODULE;
-		gc->label = devm_kasprintf(dev, GFP_KERNEL, "%pOF", np);
+		gc->label = devm_kasprintf(dev, GFP_KERNEL, "%pOF", dev->of_node);
 		if (!gc->label) {
 			err = -ENOMEM;
 			goto fail;

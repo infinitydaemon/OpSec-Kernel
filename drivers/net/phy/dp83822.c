@@ -94,8 +94,7 @@
 #define DP83822_WOL_INDICATION_SEL BIT(8)
 #define DP83822_WOL_CLR_INDICATION BIT(11)
 
-/* RCSR bits */
-#define DP83822_RGMII_MODE_EN	BIT(9)
+/* RSCR bits */
 #define DP83822_RX_CLK_SHIFT	BIT(12)
 #define DP83822_TX_CLK_SHIFT	BIT(11)
 
@@ -406,12 +405,6 @@ static int dp83822_config_init(struct phy_device *phydev)
 			if (err)
 				return err;
 		}
-
-		phy_set_bits_mmd(phydev, DP83822_DEVADDR,
-					MII_DP83822_RCSR, DP83822_RGMII_MODE_EN);
-	} else {
-		phy_clear_bits_mmd(phydev, DP83822_DEVADDR,
-					MII_DP83822_RCSR, DP83822_RGMII_MODE_EN);
 	}
 
 	if (dp83822->fx_enabled) {
@@ -523,8 +516,6 @@ static int dp83822_read_straps(struct phy_device *phydev)
 	val = phy_read_mmd(phydev, DP83822_DEVADDR, MII_DP83822_SOR1);
 	if (val < 0)
 		return val;
-
-	phydev_dbg(phydev, "SOR1 strap register: 0x%04x\n", val);
 
 	fx_enabled = (val & DP83822_COL_STRAP_MASK) >> DP83822_COL_SHIFT;
 	if (fx_enabled == DP83822_STRAP_MODE2 ||

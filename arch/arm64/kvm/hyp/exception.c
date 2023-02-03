@@ -304,14 +304,14 @@ static void enter_exception32(struct kvm_vcpu *vcpu, u32 mode, u32 vect_offset)
 static void kvm_inject_exception(struct kvm_vcpu *vcpu)
 {
 	if (vcpu_el1_is_32bit(vcpu)) {
-		switch (vcpu_get_flag(vcpu, EXCEPT_MASK)) {
-		case unpack_vcpu_flag(EXCEPT_AA32_UND):
+		switch (vcpu->arch.flags & KVM_ARM64_EXCEPT_MASK) {
+		case KVM_ARM64_EXCEPT_AA32_UND:
 			enter_exception32(vcpu, PSR_AA32_MODE_UND, 4);
 			break;
-		case unpack_vcpu_flag(EXCEPT_AA32_IABT):
+		case KVM_ARM64_EXCEPT_AA32_IABT:
 			enter_exception32(vcpu, PSR_AA32_MODE_ABT, 12);
 			break;
-		case unpack_vcpu_flag(EXCEPT_AA32_DABT):
+		case KVM_ARM64_EXCEPT_AA32_DABT:
 			enter_exception32(vcpu, PSR_AA32_MODE_ABT, 16);
 			break;
 		default:
@@ -319,8 +319,9 @@ static void kvm_inject_exception(struct kvm_vcpu *vcpu)
 			break;
 		}
 	} else {
-		switch (vcpu_get_flag(vcpu, EXCEPT_MASK)) {
-		case unpack_vcpu_flag(EXCEPT_AA64_EL1_SYNC):
+		switch (vcpu->arch.flags & KVM_ARM64_EXCEPT_MASK) {
+		case (KVM_ARM64_EXCEPT_AA64_ELx_SYNC |
+		      KVM_ARM64_EXCEPT_AA64_EL1):
 			enter_exception64(vcpu, PSR_MODE_EL1h, except_type_sync);
 			break;
 		default:
@@ -340,12 +341,12 @@ static void kvm_inject_exception(struct kvm_vcpu *vcpu)
  */
 void __kvm_adjust_pc(struct kvm_vcpu *vcpu)
 {
-	if (vcpu_get_flag(vcpu, PENDING_EXCEPTION)) {
+	if (vcpu->arch.flags & KVM_ARM64_PENDING_EXCEPTION) {
 		kvm_inject_exception(vcpu);
-		vcpu_clear_flag(vcpu, PENDING_EXCEPTION);
-		vcpu_clear_flag(vcpu, EXCEPT_MASK);
-	} else if (vcpu_get_flag(vcpu, INCREMENT_PC)) {
+		vcpu->arch.flags &= ~(KVM_ARM64_PENDING_EXCEPTION |
+				      KVM_ARM64_EXCEPT_MASK);
+	} else 	if (vcpu->arch.flags & KVM_ARM64_INCREMENT_PC) {
 		kvm_skip_instr(vcpu);
-		vcpu_clear_flag(vcpu, INCREMENT_PC);
+		vcpu->arch.flags &= ~KVM_ARM64_INCREMENT_PC;
 	}
 }

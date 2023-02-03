@@ -114,7 +114,7 @@ void irq_domain_free_fwnode(struct fwnode_handle *fwnode)
 {
 	struct irqchip_fwid *fwid;
 
-	if (!fwnode || WARN_ON(!is_fwnode_irqchip(fwnode)))
+	if (WARN_ON(!is_fwnode_irqchip(fwnode)))
 		return;
 
 	fwid = container_of(fwnode, struct irqchip_fwid, fwnode);
@@ -147,8 +147,7 @@ struct irq_domain *__irq_domain_add(struct fwnode_handle *fwnode, unsigned int s
 	static atomic_t unknown_domains;
 
 	if (WARN_ON((size && direct_max) ||
-		    (!IS_ENABLED(CONFIG_IRQ_DOMAIN_NOMAP) && direct_max) ||
-		    (direct_max && (direct_max != hwirq_max))))
+		    (!IS_ENABLED(CONFIG_IRQ_DOMAIN_NOMAP) && direct_max)))
 		return NULL;
 
 	domain = kzalloc_node(struct_size(domain, revmap, size),
@@ -220,6 +219,7 @@ struct irq_domain *__irq_domain_add(struct fwnode_handle *fwnode, unsigned int s
 	domain->hwirq_max = hwirq_max;
 
 	if (direct_max) {
+		size = direct_max;
 		domain->flags |= IRQ_DOMAIN_FLAG_NO_MAP;
 	}
 
@@ -650,9 +650,9 @@ unsigned int irq_create_direct_mapping(struct irq_domain *domain)
 		pr_debug("create_direct virq allocation failed\n");
 		return 0;
 	}
-	if (virq >= domain->hwirq_max) {
-		pr_err("ERROR: no free irqs available below %lu maximum\n",
-			domain->hwirq_max);
+	if (virq >= domain->revmap_size) {
+		pr_err("ERROR: no free irqs available below %i maximum\n",
+			domain->revmap_size);
 		irq_free_desc(virq);
 		return 0;
 	}
@@ -744,8 +744,9 @@ static int irq_domain_translate(struct irq_domain *d,
 	return 0;
 }
 
-void of_phandle_args_to_fwspec(struct device_node *np, const u32 *args,
-			       unsigned int count, struct irq_fwspec *fwspec)
+static void of_phandle_args_to_fwspec(struct device_node *np, const u32 *args,
+				      unsigned int count,
+				      struct irq_fwspec *fwspec)
 {
 	int i;
 
@@ -755,7 +756,6 @@ void of_phandle_args_to_fwspec(struct device_node *np, const u32 *args,
 	for (i = 0; i < count; i++)
 		fwspec->param[i] = args[i];
 }
-EXPORT_SYMBOL_GPL(of_phandle_args_to_fwspec);
 
 unsigned int irq_create_fwspec_mapping(struct irq_fwspec *fwspec)
 {
@@ -906,7 +906,7 @@ struct irq_desc *__irq_resolve_mapping(struct irq_domain *domain,
 		return desc;
 
 	if (irq_domain_is_nomap(domain)) {
-		if (hwirq < domain->hwirq_max) {
+		if (hwirq < domain->revmap_size) {
 			data = irq_domain_get_irq_data(domain, hwirq);
 			if (data && data->hwirq == hwirq)
 				desc = irq_data_to_desc(data);
@@ -1321,8 +1321,7 @@ EXPORT_SYMBOL_GPL(irq_domain_get_irq_data);
  * @chip_data:	The associated chip data
  */
 int irq_domain_set_hwirq_and_chip(struct irq_domain *domain, unsigned int virq,
-				  irq_hw_number_t hwirq,
-				  const struct irq_chip *chip,
+				  irq_hw_number_t hwirq, struct irq_chip *chip,
 				  void *chip_data)
 {
 	struct irq_data *irq_data = irq_domain_get_irq_data(domain, virq);
@@ -1331,7 +1330,7 @@ int irq_domain_set_hwirq_and_chip(struct irq_domain *domain, unsigned int virq,
 		return -ENOENT;
 
 	irq_data->hwirq = hwirq;
-	irq_data->chip = (struct irq_chip *)(chip ? chip : &no_irq_chip);
+	irq_data->chip = chip ? chip : &no_irq_chip;
 	irq_data->chip_data = chip_data;
 
 	return 0;
@@ -1350,7 +1349,7 @@ EXPORT_SYMBOL_GPL(irq_domain_set_hwirq_and_chip);
  * @handler_name:	The interrupt handler name
  */
 void irq_domain_set_info(struct irq_domain *domain, unsigned int virq,
-			 irq_hw_number_t hwirq, const struct irq_chip *chip,
+			 irq_hw_number_t hwirq, struct irq_chip *chip,
 			 void *chip_data, irq_flow_handler_t handler,
 			 void *handler_data, const char *handler_name)
 {
@@ -1505,7 +1504,6 @@ out_free_desc:
 	irq_free_descs(virq, nr_irqs);
 	return ret;
 }
-EXPORT_SYMBOL_GPL(__irq_domain_alloc_irqs);
 
 /* The irq_data was moved, fix the revmap to refer to the new location */
 static void irq_domain_fix_revmap(struct irq_data *d)
@@ -1856,7 +1854,7 @@ EXPORT_SYMBOL_GPL(irq_domain_get_irq_data);
  * @handler_name:	The interrupt handler name
  */
 void irq_domain_set_info(struct irq_domain *domain, unsigned int virq,
-			 irq_hw_number_t hwirq, const struct irq_chip *chip,
+			 irq_hw_number_t hwirq, struct irq_chip *chip,
 			 void *chip_data, irq_flow_handler_t handler,
 			 void *handler_data, const char *handler_name)
 {

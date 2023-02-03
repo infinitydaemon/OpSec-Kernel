@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/*
- * Copyright (c) 2018, Linaro Limited
- */
+// Copyright (c) 2018, Linaro Limited
 
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/clock/qcom,gcc-qcs404.h>
@@ -112,7 +110,7 @@
 		};
 	};
 
-	cpu_opp_table: opp-table-cpu {
+	cpu_opp_table: cpu-opp-table {
 		compatible = "operating-points-v2-kryo-cpu";
 		opp-shared;
 
@@ -130,7 +128,7 @@
 		};
 	};
 
-	cpr_opp_table: opp-table-cpr {
+	cpr_opp_table: cpr-opp-table {
 		compatible = "operating-points-v2-qcom-level";
 
 		cpr_opp1: opp1 {
@@ -228,7 +226,7 @@
 			qcom,glink-channels = "rpm_requests";
 
 			rpmcc: clock-controller {
-				compatible = "qcom,rpmcc-qcs404", "qcom,rpmcc";
+				compatible = "qcom,rpmcc-qcs404";
 				#clock-cells = <1>;
 			};
 
@@ -297,6 +295,12 @@
 		hwlocks = <&tcsr_mutex 3>;
 	};
 
+	tcsr_mutex: hwlock {
+		compatible = "qcom,tcsr-mutex";
+		syscon = <&tcsr_mutex_regs 0 0x1000>;
+		#hwlock-cells = <1>;
+	};
+
 	soc: soc@0 {
 		#address-cells = <1>;
 		#size-cells = <1>;
@@ -362,7 +366,7 @@
 		};
 
 		qfprom: qfprom@a4000 {
-			compatible = "qcom,qcs404-qfprom", "qcom,qfprom";
+			compatible = "qcom,qfprom";
 			reg = <0x000a4000 0x1000>;
 			#address-cells = <1>;
 			#size-cells = <1>;
@@ -525,7 +529,7 @@
 		};
 
 		usb3: usb@7678800 {
-			compatible = "qcom,qcs404-dwc3", "qcom,dwc3";
+			compatible = "qcom,dwc3";
 			reg = <0x07678800 0x400>;
 			#address-cells = <1>;
 			#size-cells = <1>;
@@ -540,7 +544,7 @@
 			assigned-clock-rates = <19200000>, <200000000>;
 			status = "disabled";
 
-			usb3_dwc3: usb@7580000 {
+			dwc3@7580000 {
 				compatible = "snps,dwc3";
 				reg = <0x07580000 0xcd00>;
 				interrupts = <GIC_SPI 26 IRQ_TYPE_LEVEL_HIGH>;
@@ -554,7 +558,7 @@
 		};
 
 		usb2: usb@79b8800 {
-			compatible = "qcom,qcs404-dwc3", "qcom,dwc3";
+			compatible = "qcom,dwc3";
 			reg = <0x079b8800 0x400>;
 			#address-cells = <1>;
 			#size-cells = <1>;
@@ -569,7 +573,7 @@
 			assigned-clock-rates = <19200000>, <133333333>;
 			status = "disabled";
 
-			usb@78c0000 {
+			dwc3@78c0000 {
 				compatible = "snps,dwc3";
 				reg = <0x078c0000 0xcc00>;
 				interrupts = <GIC_SPI 44 IRQ_TYPE_LEVEL_HIGH>;
@@ -595,130 +599,101 @@
 			interrupt-controller;
 			#interrupt-cells = <2>;
 
-			blsp1_i2c0_default: blsp1-i2c0-default-state {
+			blsp1_i2c0_default: blsp1-i2c0-default {
 				pins = "gpio32", "gpio33";
 				function = "blsp_i2c0";
 			};
 
-			blsp1_i2c1_default: blsp1-i2c1-default-state {
+			blsp1_i2c1_default: blsp1-i2c1-default {
 				pins = "gpio24", "gpio25";
 				function = "blsp_i2c1";
 			};
 
-			blsp1_i2c2_default: blsp1-i2c2-default-state {
-				sda-pins {
+			blsp1_i2c2_default: blsp1-i2c2-default {
+				sda {
 					pins = "gpio19";
 					function = "blsp_i2c_sda_a2";
 				};
 
-				scl-pins {
+				scl {
 					pins = "gpio20";
 					function = "blsp_i2c_scl_a2";
 				};
 			};
 
-			blsp1_i2c3_default: blsp1-i2c3-default-state {
+			blsp1_i2c3_default: blsp1-i2c3-default {
 				pins = "gpio84", "gpio85";
 				function = "blsp_i2c3";
 			};
 
-			blsp1_i2c4_default: blsp1-i2c4-default-state {
+			blsp1_i2c4_default: blsp1-i2c4-default {
 				pins = "gpio117", "gpio118";
 				function = "blsp_i2c4";
 			};
 
-			blsp1_uart0_default: blsp1-uart0-default-state {
+			blsp1_uart0_default: blsp1-uart0-default {
 				pins = "gpio30", "gpio31", "gpio32", "gpio33";
 				function = "blsp_uart0";
 			};
 
-			blsp1_uart1_default: blsp1-uart1-default-state {
+			blsp1_uart1_default: blsp1-uart1-default {
 				pins = "gpio22", "gpio23";
 				function = "blsp_uart1";
 			};
 
-			blsp1_uart2_default: blsp1-uart2-default-state {
-				rx-pins {
+			blsp1_uart2_default: blsp1-uart2-default {
+				rx {
 					pins = "gpio18";
 					function = "blsp_uart_rx_a2";
 				};
 
-				tx-pins {
+				tx {
 					pins = "gpio17";
 					function = "blsp_uart_tx_a2";
 				};
 			};
 
-			blsp1_uart3_default: blsp1-uart3-default-state {
-				cts-pins {
-					pins = "gpio84";
-					function = "blsp_uart3";
-				};
-
-				rts-tx-pins {
-					pins = "gpio85", "gpio82";
-					function = "blsp_uart3";
-				};
-
-				rx-pins {
-					pins = "gpio83";
-					function = "blsp_uart3";
-				};
+			blsp1_uart3_default: blsp1-uart3-default {
+				pins = "gpio82", "gpio83", "gpio84", "gpio85";
+				function = "blsp_uart3";
 			};
 
-			blsp2_i2c0_default: blsp2-i2c0-default-state {
+			blsp2_i2c0_default: blsp2-i2c0-default {
 				pins = "gpio28", "gpio29";
 				function = "blsp_i2c5";
 			};
 
-			blsp1_spi0_default: blsp1-spi0-default-state {
+			blsp1_spi0_default: blsp1-spi0-default {
 				pins = "gpio30", "gpio31", "gpio32", "gpio33";
 				function = "blsp_spi0";
 			};
 
-			blsp1_spi1_default: blsp1-spi1-default-state {
-				mosi-pins {
-					pins = "gpio22";
-					function = "blsp_spi_mosi_a1";
-				};
-
-				miso-pins {
-					pins = "gpio23";
-					function = "blsp_spi_miso_a1";
-				};
-
-				cs-n-pins {
-					pins = "gpio24";
-					function = "blsp_spi_cs_n_a1";
-				};
-
-				clk-pins {
-					pins = "gpio25";
-					function = "blsp_spi_clk_a1";
-				};
+			blsp1_spi1_default: blsp1-spi1-default {
+				pins = "gpio22", "gpio23", "gpio24", "gpio25";
+				function = "blsp_spi1";
 			};
 
-			blsp1_spi2_default: blsp1-spi2-default-state {
+			blsp1_spi2_default: blsp1-spi2-default {
 				pins = "gpio17", "gpio18", "gpio19", "gpio20";
 				function = "blsp_spi2";
 			};
 
-			blsp1_spi3_default: blsp1-spi3-default-state {
+			blsp1_spi3_default: blsp1-spi3-default {
 				pins = "gpio82", "gpio83", "gpio84", "gpio85";
 				function = "blsp_spi3";
 			};
 
-			blsp1_spi4_default: blsp1-spi4-default-state {
+			blsp1_spi4_default: blsp1-spi4-default {
 				pins = "gpio37", "gpio38", "gpio117", "gpio118";
 				function = "blsp_spi4";
 			};
 
-			blsp2_spi0_default: blsp2-spi0-default-state {
+			blsp2_spi0_default: blsp2-spi0-default {
 				pins = "gpio26", "gpio27", "gpio28", "gpio29";
 				function = "blsp_spi5";
 			};
 
-			blsp2_uart0_default: blsp2-uart0-default-state {
+			blsp2_uart0_default: blsp2-uart0-default {
 				pins = "gpio26", "gpio27", "gpio28", "gpio29";
 				function = "blsp_uart5";
 			};
@@ -734,20 +709,14 @@
 			assigned-clock-rates = <19200000>;
 		};
 
-		tcsr_mutex: hwlock@1905000 {
-			compatible = "qcom,tcsr-mutex";
+		tcsr_mutex_regs: syscon@1905000 {
+			compatible = "syscon";
 			reg = <0x01905000 0x20000>;
-			#hwlock-cells = <1>;
 		};
 
 		tcsr: syscon@1937000 {
-			compatible = "qcom,qcs404-tcsr", "syscon";
+			compatible = "syscon";
 			reg = <0x01937000 0x25000>;
-		};
-
-		sram@290000 {
-			compatible = "qcom,rpm-stats";
-			reg = <0x00290000 0x10000>;
 		};
 
 		spmi_bus: spmi@200f000 {
@@ -815,7 +784,7 @@
 			status = "disabled";
 		};
 
-		sdcc1: mmc@7804000 {
+		sdcc1: sdcc@7804000 {
 			compatible = "qcom,qcs404-sdhci", "qcom,sdhci-msm-v5";
 			reg = <0x07804000 0x1000>, <0x7805000 0x1000>;
 			reg-names = "hc", "cqhci";
@@ -824,10 +793,10 @@
 				     <GIC_SPI 138 IRQ_TYPE_LEVEL_HIGH>;
 			interrupt-names = "hc_irq", "pwr_irq";
 
-			clocks = <&gcc GCC_SDCC1_AHB_CLK>,
-				 <&gcc GCC_SDCC1_APPS_CLK>,
+			clocks = <&gcc GCC_SDCC1_APPS_CLK>,
+				 <&gcc GCC_SDCC1_AHB_CLK>,
 				 <&xo_board>;
-			clock-names = "iface", "core", "xo";
+			clock-names = "core", "iface", "xo";
 
 			status = "disabled";
 		};
@@ -849,8 +818,8 @@
 			interrupts = <GIC_SPI 107 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&gcc GCC_BLSP1_UART0_APPS_CLK>, <&gcc GCC_BLSP1_AHB_CLK>;
 			clock-names = "core", "iface";
-			dmas = <&blsp1_dma 0>, <&blsp1_dma 1>;
-			dma-names = "tx", "rx";
+			dmas = <&blsp1_dma 1>, <&blsp1_dma 0>;
+			dma-names = "rx", "tx";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp1_uart0_default>;
 			status = "disabled";
@@ -862,8 +831,8 @@
 			interrupts = <GIC_SPI 108 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&gcc GCC_BLSP1_UART1_APPS_CLK>, <&gcc GCC_BLSP1_AHB_CLK>;
 			clock-names = "core", "iface";
-			dmas = <&blsp1_dma 2>, <&blsp1_dma 3>;
-			dma-names = "tx", "rx";
+			dmas = <&blsp1_dma 3>, <&blsp1_dma 2>;
+			dma-names = "rx", "tx";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp1_uart1_default>;
 			status = "disabled";
@@ -875,8 +844,8 @@
 			interrupts = <GIC_SPI 118 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&gcc GCC_BLSP1_UART2_APPS_CLK>, <&gcc GCC_BLSP1_AHB_CLK>;
 			clock-names = "core", "iface";
-			dmas = <&blsp1_dma 4>, <&blsp1_dma 5>;
-			dma-names = "tx", "rx";
+			dmas = <&blsp1_dma 5>, <&blsp1_dma 4>;
+			dma-names = "rx", "tx";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp1_uart2_default>;
 			status = "okay";
@@ -929,8 +898,8 @@
 			interrupts = <GIC_SPI 119 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&gcc GCC_BLSP1_UART3_APPS_CLK>, <&gcc GCC_BLSP1_AHB_CLK>;
 			clock-names = "core", "iface";
-			dmas = <&blsp1_dma 6>, <&blsp1_dma 7>;
-			dma-names = "tx", "rx";
+			dmas = <&blsp1_dma 7>, <&blsp1_dma 6>;
+			dma-names = "rx", "tx";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp1_uart3_default>;
 			status = "disabled";
@@ -940,9 +909,9 @@
 			compatible = "qcom,i2c-qup-v2.2.1";
 			reg = <0x078b5000 0x600>;
 			interrupts = <GIC_SPI 95 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&gcc GCC_BLSP1_QUP0_I2C_APPS_CLK>,
-				 <&gcc GCC_BLSP1_AHB_CLK>;
-			clock-names = "core", "iface";
+			clocks = <&gcc GCC_BLSP1_AHB_CLK>,
+				 <&gcc GCC_BLSP1_QUP0_I2C_APPS_CLK>;
+			clock-names = "iface", "core";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp1_i2c0_default>;
 			#address-cells = <1>;
@@ -954,9 +923,9 @@
 			compatible = "qcom,spi-qup-v2.2.1";
 			reg = <0x078b5000 0x600>;
 			interrupts = <GIC_SPI 95 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&gcc GCC_BLSP1_QUP0_SPI_APPS_CLK>,
-				 <&gcc GCC_BLSP1_AHB_CLK>;
-			clock-names = "core", "iface";
+			clocks = <&gcc GCC_BLSP1_AHB_CLK>,
+				 <&gcc GCC_BLSP1_QUP0_SPI_APPS_CLK>;
+			clock-names = "iface", "core";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp1_spi0_default>;
 			#address-cells = <1>;
@@ -968,9 +937,9 @@
 			compatible = "qcom,i2c-qup-v2.2.1";
 			reg = <0x078b6000 0x600>;
 			interrupts = <GIC_SPI 96 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&gcc GCC_BLSP1_QUP1_I2C_APPS_CLK>,
-				 <&gcc GCC_BLSP1_AHB_CLK>;
-			clock-names = "core", "iface";
+			clocks = <&gcc GCC_BLSP1_AHB_CLK>,
+				 <&gcc GCC_BLSP1_QUP1_I2C_APPS_CLK>;
+			clock-names = "iface", "core";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp1_i2c1_default>;
 			#address-cells = <1>;
@@ -982,9 +951,9 @@
 			compatible = "qcom,spi-qup-v2.2.1";
 			reg = <0x078b6000 0x600>;
 			interrupts = <GIC_SPI 96 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&gcc GCC_BLSP1_QUP1_SPI_APPS_CLK>,
-				 <&gcc GCC_BLSP1_AHB_CLK>;
-			clock-names = "core", "iface";
+			clocks = <&gcc GCC_BLSP1_AHB_CLK>,
+				 <&gcc GCC_BLSP1_QUP1_SPI_APPS_CLK>;
+			clock-names = "iface", "core";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp1_spi1_default>;
 			#address-cells = <1>;
@@ -996,9 +965,9 @@
 			compatible = "qcom,i2c-qup-v2.2.1";
 			reg = <0x078b7000 0x600>;
 			interrupts = <GIC_SPI 97 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&gcc GCC_BLSP1_QUP2_I2C_APPS_CLK>,
-				 <&gcc GCC_BLSP1_AHB_CLK>;
-			clock-names = "core", "iface";
+			clocks = <&gcc GCC_BLSP1_AHB_CLK>,
+				 <&gcc GCC_BLSP1_QUP2_I2C_APPS_CLK>;
+			clock-names = "iface", "core";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp1_i2c2_default>;
 			#address-cells = <1>;
@@ -1010,9 +979,9 @@
 			compatible = "qcom,spi-qup-v2.2.1";
 			reg = <0x078b7000 0x600>;
 			interrupts = <GIC_SPI 97 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&gcc GCC_BLSP1_QUP2_SPI_APPS_CLK>,
-				 <&gcc GCC_BLSP1_AHB_CLK>;
-			clock-names = "core", "iface";
+			clocks = <&gcc GCC_BLSP1_AHB_CLK>,
+				 <&gcc GCC_BLSP1_QUP2_SPI_APPS_CLK>;
+			clock-names = "iface", "core";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp1_spi2_default>;
 			#address-cells = <1>;
@@ -1024,9 +993,9 @@
 			compatible = "qcom,i2c-qup-v2.2.1";
 			reg = <0x078b8000 0x600>;
 			interrupts = <GIC_SPI 98 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&gcc GCC_BLSP1_QUP3_I2C_APPS_CLK>,
-				 <&gcc GCC_BLSP1_AHB_CLK>;
-			clock-names = "core", "iface";
+			clocks = <&gcc GCC_BLSP1_AHB_CLK>,
+				 <&gcc GCC_BLSP1_QUP3_I2C_APPS_CLK>;
+			clock-names = "iface", "core";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp1_i2c3_default>;
 			#address-cells = <1>;
@@ -1038,9 +1007,9 @@
 			compatible = "qcom,spi-qup-v2.2.1";
 			reg = <0x078b8000 0x600>;
 			interrupts = <GIC_SPI 98 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&gcc GCC_BLSP1_QUP3_SPI_APPS_CLK>,
-				 <&gcc GCC_BLSP1_AHB_CLK>;
-			clock-names = "core", "iface";
+			clocks = <&gcc GCC_BLSP1_AHB_CLK>,
+				 <&gcc GCC_BLSP1_QUP3_SPI_APPS_CLK>;
+			clock-names = "iface", "core";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp1_spi3_default>;
 			#address-cells = <1>;
@@ -1052,9 +1021,9 @@
 			compatible = "qcom,i2c-qup-v2.2.1";
 			reg = <0x078b9000 0x600>;
 			interrupts = <GIC_SPI 99 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&gcc GCC_BLSP1_QUP4_I2C_APPS_CLK>,
-				 <&gcc GCC_BLSP1_AHB_CLK>;
-			clock-names = "core", "iface";
+			clocks = <&gcc GCC_BLSP1_AHB_CLK>,
+				 <&gcc GCC_BLSP1_QUP4_I2C_APPS_CLK>;
+			clock-names = "iface", "core";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp1_i2c4_default>;
 			#address-cells = <1>;
@@ -1066,9 +1035,9 @@
 			compatible = "qcom,spi-qup-v2.2.1";
 			reg = <0x078b9000 0x600>;
 			interrupts = <GIC_SPI 99 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&gcc GCC_BLSP1_QUP4_SPI_APPS_CLK>,
-				 <&gcc GCC_BLSP1_AHB_CLK>;
-			clock-names = "core", "iface";
+			clocks = <&gcc GCC_BLSP1_AHB_CLK>,
+				 <&gcc GCC_BLSP1_QUP4_SPI_APPS_CLK>;
+			clock-names = "iface", "core";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp1_spi4_default>;
 			#address-cells = <1>;
@@ -1093,8 +1062,8 @@
 			interrupts = <GIC_SPI 297 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&gcc GCC_BLSP2_UART0_APPS_CLK>, <&gcc GCC_BLSP2_AHB_CLK>;
 			clock-names = "core", "iface";
-			dmas = <&blsp2_dma 0>, <&blsp2_dma 1>;
-			dma-names = "tx", "rx";
+			dmas = <&blsp2_dma 1>, <&blsp2_dma 0>;
+			dma-names = "rx", "tx";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp2_uart0_default>;
 			status = "disabled";
@@ -1104,9 +1073,9 @@
 			compatible = "qcom,i2c-qup-v2.2.1";
 			reg = <0x07af5000 0x600>;
 			interrupts = <GIC_SPI 299 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&gcc GCC_BLSP2_QUP0_I2C_APPS_CLK>,
-				 <&gcc GCC_BLSP2_AHB_CLK>;
-			clock-names = "core", "iface";
+			clocks = <&gcc GCC_BLSP2_AHB_CLK>,
+				 <&gcc GCC_BLSP2_QUP0_I2C_APPS_CLK>;
+			clock-names = "iface", "core";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp2_i2c0_default>;
 			#address-cells = <1>;
@@ -1118,9 +1087,9 @@
 			compatible = "qcom,spi-qup-v2.2.1";
 			reg = <0x07af5000 0x600>;
 			interrupts = <GIC_SPI 299 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&gcc GCC_BLSP2_QUP0_SPI_APPS_CLK>,
-				 <&gcc GCC_BLSP2_AHB_CLK>;
-			clock-names = "core", "iface";
+			clocks = <&gcc GCC_BLSP2_AHB_CLK>,
+				 <&gcc GCC_BLSP2_QUP0_SPI_APPS_CLK>;
+			clock-names = "iface", "core";
 			pinctrl-names = "default";
 			pinctrl-0 = <&blsp2_spi0_default>;
 			#address-cells = <1>;
@@ -1128,8 +1097,8 @@
 			status = "disabled";
 		};
 
-		sram@8600000 {
-			compatible = "qcom,qcs404-imem", "syscon", "simple-mfd";
+		imem@8600000 {
+			compatible = "simple-mfd";
 			reg = <0x08600000 0x1000>;
 
 			#address-cells = <1>;
@@ -1306,7 +1275,7 @@
 		};
 
 		pcie: pci@10000000 {
-			compatible = "qcom,pcie-qcs404";
+			compatible = "qcom,pcie-qcs404", "snps,dw-pcie";
 			reg =  <0x10000000 0xf1d>,
 			       <0x10000f20 0xa8>,
 			       <0x07780000 0x2000>,

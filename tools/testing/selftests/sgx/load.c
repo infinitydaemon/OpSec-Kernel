@@ -21,8 +21,6 @@
 
 void encl_delete(struct encl *encl)
 {
-	struct encl_segment *heap_seg;
-
 	if (encl->encl_base)
 		munmap((void *)encl->encl_base, encl->encl_size);
 
@@ -32,11 +30,8 @@ void encl_delete(struct encl *encl)
 	if (encl->fd)
 		close(encl->fd);
 
-	if (encl->segment_tbl) {
-		heap_seg = &encl->segment_tbl[encl->nr_segments - 1];
-		munmap(heap_seg->src, heap_seg->size);
+	if (encl->segment_tbl)
 		free(encl->segment_tbl);
-	}
 
 	memset(encl, 0, sizeof(*encl));
 }
@@ -112,14 +107,11 @@ static bool encl_ioc_add_pages(struct encl *encl, struct encl_segment *seg)
 	memset(&secinfo, 0, sizeof(secinfo));
 	secinfo.flags = seg->flags;
 
-	ioc.src = (uint64_t)seg->src;
+	ioc.src = (uint64_t)encl->src + seg->offset;
 	ioc.offset = seg->offset;
 	ioc.length = seg->size;
 	ioc.secinfo = (unsigned long)&secinfo;
-	if (seg->measure)
-		ioc.flags = SGX_PAGE_MEASURE;
-	else
-		ioc.flags = 0;
+	ioc.flags = SGX_PAGE_MEASURE;
 
 	rc = ioctl(encl->fd, SGX_IOC_ENCLAVE_ADD_PAGES, &ioc);
 	if (rc < 0) {
@@ -130,51 +122,11 @@ static bool encl_ioc_add_pages(struct encl *encl, struct encl_segment *seg)
 	return true;
 }
 
-/*
- * Parse the enclave code's symbol table to locate and return address of
- * the provided symbol
- */
-uint64_t encl_get_entry(struct encl *encl, const char *symbol)
-{
-	Elf64_Shdr *sections;
-	Elf64_Sym *symtab;
-	Elf64_Ehdr *ehdr;
-	char *sym_names;
-	int num_sym;
-	int i;
 
-	ehdr = encl->bin;
-	sections = encl->bin + ehdr->e_shoff;
 
-	for (i = 0; i < ehdr->e_shnum; i++) {
-		if (sections[i].sh_type == SHT_SYMTAB) {
-			symtab = (Elf64_Sym *)((char *)encl->bin + sections[i].sh_offset);
-			num_sym = sections[i].sh_size / sections[i].sh_entsize;
-			break;
-		}
-	}
-
-	for (i = 0; i < ehdr->e_shnum; i++) {
-		if (sections[i].sh_type == SHT_STRTAB) {
-			sym_names = (char *)encl->bin + sections[i].sh_offset;
-			break;
-		}
-	}
-
-	for (i = 0; i < num_sym; i++) {
-		Elf64_Sym *sym = &symtab[i];
-
-		if (!strcmp(symbol, sym_names + sym->st_name))
-			return (uint64_t)sym->st_value;
-	}
-
-	return 0;
-}
-
-bool encl_load(const char *path, struct encl *encl, unsigned long heap_size)
+bool encl_load(const char *path, struct encl *encl)
 {
 	const char device_path[] = "/dev/sgx_enclave";
-	struct encl_segment *seg;
 	Elf64_Phdr *phdr_tbl;
 	off_t src_offset;
 	Elf64_Ehdr *ehdr;
@@ -226,8 +178,6 @@ bool encl_load(const char *path, struct encl *encl, unsigned long heap_size)
 	ehdr = encl->bin;
 	phdr_tbl = encl->bin + ehdr->e_phoff;
 
-	encl->nr_segments = 1; /* one for the heap */
-
 	for (i = 0; i < ehdr->e_phnum; i++) {
 		Elf64_Phdr *phdr = &phdr_tbl[i];
 
@@ -243,6 +193,7 @@ bool encl_load(const char *path, struct encl *encl, unsigned long heap_size)
 	for (i = 0, j = 0; i < ehdr->e_phnum; i++) {
 		Elf64_Phdr *phdr = &phdr_tbl[i];
 		unsigned int flags = phdr->p_flags;
+		struct encl_segment *seg;
 
 		if (phdr->p_type != PT_LOAD)
 			continue;
@@ -265,7 +216,6 @@ bool encl_load(const char *path, struct encl *encl, unsigned long heap_size)
 
 		if (j == 0) {
 			src_offset = phdr->p_offset & PAGE_MASK;
-			encl->src = encl->bin + src_offset;
 
 			seg->prot = PROT_READ | PROT_WRITE;
 			seg->flags = SGX_PAGE_TYPE_TCS << 8;
@@ -278,27 +228,15 @@ bool encl_load(const char *path, struct encl *encl, unsigned long heap_size)
 
 		seg->offset = (phdr->p_offset & PAGE_MASK) - src_offset;
 		seg->size = (phdr->p_filesz + PAGE_SIZE - 1) & PAGE_MASK;
-		seg->src = encl->src + seg->offset;
-		seg->measure = true;
 
 		j++;
 	}
 
-	assert(j == encl->nr_segments - 1);
+	assert(j == encl->nr_segments);
 
-	seg = &encl->segment_tbl[j];
-	seg->offset =  encl->segment_tbl[j - 1].offset + encl->segment_tbl[j - 1].size;
-	seg->size = heap_size;
-	seg->src = mmap(NULL, heap_size, PROT_READ | PROT_WRITE,
-			MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-	seg->prot = PROT_READ | PROT_WRITE;
-	seg->flags = (SGX_PAGE_TYPE_REG << 8) | seg->prot;
-	seg->measure = false;
-
-	if (seg->src == MAP_FAILED)
-		goto err;
-
-	encl->src_size = encl->segment_tbl[j].offset + encl->segment_tbl[j].size;
+	encl->src = encl->bin + src_offset;
+	encl->src_size = encl->segment_tbl[j - 1].offset +
+			 encl->segment_tbl[j - 1].size;
 
 	for (encl->encl_size = 4096; encl->encl_size < encl->src_size; )
 		encl->encl_size <<= 1;

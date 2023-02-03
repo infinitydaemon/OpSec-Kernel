@@ -143,9 +143,9 @@
 	};
 
 	fragment@19 {
-		target-path = "/chosen";
+		target = <&audio>;
 		__overlay__  {
-			bootargs = "snd_bcm2835.enable_hdmi=0";
+		    brcm,disable-hdmi;
 		};
 	};
 

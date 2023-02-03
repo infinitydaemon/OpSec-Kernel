@@ -11,28 +11,15 @@
 #include <linux/pci.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/ptp_clock_kernel.h>
 #include <linux/net_tstamp.h>
+#include <linux/timecounter.h>
 #include <linux/timekeeping.h>
 #include <linux/ptp_classify.h>
-#include <linux/clocksource.h>
 #include "bnxt_hsi.h"
 #include "bnxt.h"
 #include "bnxt_hwrm.h"
 #include "bnxt_ptp.h"
-
-static int bnxt_ptp_cfg_settime(struct bnxt *bp, u64 time)
-{
-	struct hwrm_func_ptp_cfg_input *req;
-	int rc;
-
-	rc = hwrm_req_init(bp, req, HWRM_FUNC_PTP_CFG);
-	if (rc)
-		return rc;
-
-	req->enables = cpu_to_le16(FUNC_PTP_CFG_REQ_ENABLES_PTP_SET_TIME);
-	req->ptp_set_time = cpu_to_le64(time);
-	return hwrm_req_send(bp, req);
-}
 
 int bnxt_ptp_parse(struct sk_buff *skb, u16 *seq_id, u16 *hdr_off)
 {
@@ -62,9 +49,6 @@ static int bnxt_ptp_settime(struct ptp_clock_info *ptp_info,
 	struct bnxt_ptp_cfg *ptp = container_of(ptp_info, struct bnxt_ptp_cfg,
 						ptp_info);
 	u64 ns = timespec64_to_ns(ts);
-
-	if (ptp->bp->fw_cap & BNXT_FW_CAP_PTP_RTC)
-		return bnxt_ptp_cfg_settime(ptp->bp, ns);
 
 	spin_lock_bh(&ptp->ptp_lock);
 	timecounter_init(&ptp->tc, &ptp->cc, ns);
@@ -158,46 +142,10 @@ static int bnxt_ptp_gettimex(struct ptp_clock_info *ptp_info,
 	return 0;
 }
 
-/* Caller holds ptp_lock */
-void bnxt_ptp_update_current_time(struct bnxt *bp)
-{
-	struct bnxt_ptp_cfg *ptp = bp->ptp_cfg;
-
-	bnxt_refclk_read(ptp->bp, NULL, &ptp->current_time);
-	WRITE_ONCE(ptp->old_time, ptp->current_time);
-}
-
-static int bnxt_ptp_adjphc(struct bnxt_ptp_cfg *ptp, s64 delta)
-{
-	struct hwrm_port_mac_cfg_input *req;
-	int rc;
-
-	rc = hwrm_req_init(ptp->bp, req, HWRM_PORT_MAC_CFG);
-	if (rc)
-		return rc;
-
-	req->enables = cpu_to_le32(PORT_MAC_CFG_REQ_ENABLES_PTP_ADJ_PHASE);
-	req->ptp_adj_phase = cpu_to_le64(delta);
-
-	rc = hwrm_req_send(ptp->bp, req);
-	if (rc) {
-		netdev_err(ptp->bp->dev, "ptp adjphc failed. rc = %x\n", rc);
-	} else {
-		spin_lock_bh(&ptp->ptp_lock);
-		bnxt_ptp_update_current_time(ptp->bp);
-		spin_unlock_bh(&ptp->ptp_lock);
-	}
-
-	return rc;
-}
-
 static int bnxt_ptp_adjtime(struct ptp_clock_info *ptp_info, s64 delta)
 {
 	struct bnxt_ptp_cfg *ptp = container_of(ptp_info, struct bnxt_ptp_cfg,
 						ptp_info);
-
-	if (ptp->bp->fw_cap & BNXT_FW_CAP_PTP_RTC)
-		return bnxt_ptp_adjphc(ptp, delta);
 
 	spin_lock_bh(&ptp->ptp_lock);
 	timecounter_adjtime(&ptp->tc, delta);
@@ -205,33 +153,24 @@ static int bnxt_ptp_adjtime(struct ptp_clock_info *ptp_info, s64 delta)
 	return 0;
 }
 
-static int bnxt_ptp_adjfine(struct ptp_clock_info *ptp_info, long scaled_ppm)
+static int bnxt_ptp_adjfreq(struct ptp_clock_info *ptp_info, s32 ppb)
 {
 	struct bnxt_ptp_cfg *ptp = container_of(ptp_info, struct bnxt_ptp_cfg,
 						ptp_info);
 	struct hwrm_port_mac_cfg_input *req;
 	struct bnxt *bp = ptp->bp;
-	int rc = 0;
+	int rc;
 
-	if (!(ptp->bp->fw_cap & BNXT_FW_CAP_PTP_RTC)) {
-		spin_lock_bh(&ptp->ptp_lock);
-		timecounter_read(&ptp->tc);
-		ptp->cc.mult = adjust_by_scaled_ppm(ptp->cmult, scaled_ppm);
-		spin_unlock_bh(&ptp->ptp_lock);
-	} else {
-		s32 ppb = scaled_ppm_to_ppb(scaled_ppm);
+	rc = hwrm_req_init(bp, req, HWRM_PORT_MAC_CFG);
+	if (rc)
+		return rc;
 
-		rc = hwrm_req_init(bp, req, HWRM_PORT_MAC_CFG);
-		if (rc)
-			return rc;
-
-		req->ptp_freq_adj_ppb = cpu_to_le32(ppb);
-		req->enables = cpu_to_le32(PORT_MAC_CFG_REQ_ENABLES_PTP_FREQ_ADJ_PPB);
-		rc = hwrm_req_send(ptp->bp, req);
-		if (rc)
-			netdev_err(ptp->bp->dev,
-				   "ptp adjfine failed. rc = %d\n", rc);
-	}
+	req->ptp_freq_adj_ppb = cpu_to_le32(ppb);
+	req->enables = cpu_to_le32(PORT_MAC_CFG_REQ_ENABLES_PTP_FREQ_ADJ_PPB);
+	rc = hwrm_req_send(ptp->bp, req);
+	if (rc)
+		netdev_err(ptp->bp->dev,
+			   "ptp adjfreq failed. rc = %d\n", rc);
 	return rc;
 }
 
@@ -312,40 +251,6 @@ static int bnxt_ptp_cfg_event(struct bnxt *bp, u8 event)
 	req->enables = cpu_to_le16(FUNC_PTP_CFG_REQ_ENABLES_PTP_PPS_EVENT);
 	req->ptp_pps_event = event;
 	return hwrm_req_send(bp, req);
-}
-
-void bnxt_ptp_cfg_tstamp_filters(struct bnxt *bp)
-{
-	struct bnxt_ptp_cfg *ptp = bp->ptp_cfg;
-	struct hwrm_port_mac_cfg_input *req;
-
-	if (!ptp || !ptp->tstamp_filters)
-		return;
-
-	if (hwrm_req_init(bp, req, HWRM_PORT_MAC_CFG))
-		goto out;
-
-	if (!(bp->fw_cap & BNXT_FW_CAP_RX_ALL_PKT_TS) && (ptp->tstamp_filters &
-	    (PORT_MAC_CFG_REQ_FLAGS_ALL_RX_TS_CAPTURE_ENABLE |
-	     PORT_MAC_CFG_REQ_FLAGS_ALL_RX_TS_CAPTURE_DISABLE))) {
-		ptp->tstamp_filters &= ~(PORT_MAC_CFG_REQ_FLAGS_ALL_RX_TS_CAPTURE_ENABLE |
-					 PORT_MAC_CFG_REQ_FLAGS_ALL_RX_TS_CAPTURE_DISABLE);
-		netdev_warn(bp->dev, "Unsupported FW for all RX pkts timestamp filter\n");
-	}
-
-	req->flags = cpu_to_le32(ptp->tstamp_filters);
-	req->enables = cpu_to_le32(PORT_MAC_CFG_REQ_ENABLES_RX_TS_CAPTURE_PTP_MSG_TYPE);
-	req->rx_ts_capture_ptp_msg_type = cpu_to_le16(ptp->rxctl);
-
-	if (!hwrm_req_send(bp, req)) {
-		bp->ptp_all_rx_tstamp = !!(ptp->tstamp_filters &
-					   PORT_MAC_CFG_REQ_FLAGS_ALL_RX_TS_CAPTURE_ENABLE);
-		return;
-	}
-	ptp->tstamp_filters = 0;
-out:
-	bp->ptp_all_rx_tstamp = 0;
-	netdev_warn(bp->dev, "Failed to configure HW packet timestamp filters\n");
 }
 
 void bnxt_ptp_reapply_pps(struct bnxt *bp)
@@ -488,45 +393,27 @@ static int bnxt_ptp_enable(struct ptp_clock_info *ptp_info,
 static int bnxt_hwrm_ptp_cfg(struct bnxt *bp)
 {
 	struct bnxt_ptp_cfg *ptp = bp->ptp_cfg;
+	struct hwrm_port_mac_cfg_input *req;
 	u32 flags = 0;
-	int rc = 0;
+	int rc;
 
-	switch (ptp->rx_filter) {
-	case HWTSTAMP_FILTER_ALL:
-		flags = PORT_MAC_CFG_REQ_FLAGS_ALL_RX_TS_CAPTURE_ENABLE;
-		break;
-	case HWTSTAMP_FILTER_NONE:
-		flags = PORT_MAC_CFG_REQ_FLAGS_PTP_RX_TS_CAPTURE_DISABLE;
-		if (bp->fw_cap & BNXT_FW_CAP_RX_ALL_PKT_TS)
-			flags |= PORT_MAC_CFG_REQ_FLAGS_ALL_RX_TS_CAPTURE_DISABLE;
-		break;
-	case HWTSTAMP_FILTER_PTP_V2_EVENT:
-	case HWTSTAMP_FILTER_PTP_V2_SYNC:
-	case HWTSTAMP_FILTER_PTP_V2_DELAY_REQ:
-		flags = PORT_MAC_CFG_REQ_FLAGS_PTP_RX_TS_CAPTURE_ENABLE;
-		break;
-	}
+	rc = hwrm_req_init(bp, req, HWRM_PORT_MAC_CFG);
+	if (rc)
+		return rc;
 
+	if (ptp->rx_filter)
+		flags |= PORT_MAC_CFG_REQ_FLAGS_PTP_RX_TS_CAPTURE_ENABLE;
+	else
+		flags |= PORT_MAC_CFG_REQ_FLAGS_PTP_RX_TS_CAPTURE_DISABLE;
 	if (ptp->tx_tstamp_en)
 		flags |= PORT_MAC_CFG_REQ_FLAGS_PTP_TX_TS_CAPTURE_ENABLE;
 	else
 		flags |= PORT_MAC_CFG_REQ_FLAGS_PTP_TX_TS_CAPTURE_DISABLE;
+	req->flags = cpu_to_le32(flags);
+	req->enables = cpu_to_le32(PORT_MAC_CFG_REQ_ENABLES_RX_TS_CAPTURE_PTP_MSG_TYPE);
+	req->rx_ts_capture_ptp_msg_type = cpu_to_le16(ptp->rxctl);
 
-	ptp->tstamp_filters = flags;
-
-	if (netif_running(bp->dev)) {
-		if (ptp->rx_filter == HWTSTAMP_FILTER_ALL) {
-			rc = bnxt_close_nic(bp, false, false);
-			if (!rc)
-				rc = bnxt_open_nic(bp, false, false);
-		} else {
-			bnxt_ptp_cfg_tstamp_filters(bp);
-		}
-		if (!rc && !ptp->tstamp_filters)
-			rc = -EIO;
-	}
-
-	return rc;
+	return hwrm_req_send(bp, req);
 }
 
 int bnxt_hwtstamp_set(struct net_device *dev, struct ifreq *ifr)
@@ -545,6 +432,9 @@ int bnxt_hwtstamp_set(struct net_device *dev, struct ifreq *ifr)
 	if (copy_from_user(&stmpconf, ifr->ifr_data, sizeof(stmpconf)))
 		return -EFAULT;
 
+	if (stmpconf.flags)
+		return -EINVAL;
+
 	if (stmpconf.tx_type != HWTSTAMP_TX_ON &&
 	    stmpconf.tx_type != HWTSTAMP_TX_OFF)
 		return -ERANGE;
@@ -557,12 +447,6 @@ int bnxt_hwtstamp_set(struct net_device *dev, struct ifreq *ifr)
 		ptp->rxctl = 0;
 		ptp->rx_filter = HWTSTAMP_FILTER_NONE;
 		break;
-	case HWTSTAMP_FILTER_ALL:
-		if (bp->fw_cap & BNXT_FW_CAP_RX_ALL_PKT_TS) {
-			ptp->rx_filter = HWTSTAMP_FILTER_ALL;
-			break;
-		}
-		return -EOPNOTSUPP;
 	case HWTSTAMP_FILTER_PTP_V2_EVENT:
 	case HWTSTAMP_FILTER_PTP_V2_L2_EVENT:
 	case HWTSTAMP_FILTER_PTP_V2_L4_EVENT:
@@ -759,7 +643,7 @@ static const struct ptp_clock_info bnxt_ptp_caps = {
 	.n_per_out	= 0,
 	.n_pins		= 0,
 	.pps		= 0,
-	.adjfine	= bnxt_ptp_adjfine,
+	.adjfreq	= bnxt_ptp_adjfreq,
 	.adjtime	= bnxt_ptp_adjtime,
 	.do_aux_work	= bnxt_ptp_ts_aux_work,
 	.gettimex64	= bnxt_ptp_gettimex,
@@ -848,71 +732,7 @@ static bool bnxt_pps_config_ok(struct bnxt *bp)
 	return !(bp->fw_cap & BNXT_FW_CAP_PTP_PPS) == !ptp->ptp_info.pin_config;
 }
 
-static void bnxt_ptp_timecounter_init(struct bnxt *bp, bool init_tc)
-{
-	struct bnxt_ptp_cfg *ptp = bp->ptp_cfg;
-
-	if (!ptp->ptp_clock) {
-		memset(&ptp->cc, 0, sizeof(ptp->cc));
-		ptp->cc.read = bnxt_cc_read;
-		ptp->cc.mask = CYCLECOUNTER_MASK(48);
-		ptp->cc.shift = BNXT_CYCLES_SHIFT;
-		ptp->cc.mult = clocksource_khz2mult(BNXT_DEVCLK_FREQ, ptp->cc.shift);
-		ptp->cmult = ptp->cc.mult;
-		ptp->next_overflow_check = jiffies + BNXT_PHC_OVERFLOW_PERIOD;
-	}
-	if (init_tc)
-		timecounter_init(&ptp->tc, &ptp->cc, ktime_to_ns(ktime_get_real()));
-}
-
-/* Caller holds ptp_lock */
-void bnxt_ptp_rtc_timecounter_init(struct bnxt_ptp_cfg *ptp, u64 ns)
-{
-	timecounter_init(&ptp->tc, &ptp->cc, ns);
-	/* For RTC, cycle_last must be in sync with the timecounter value. */
-	ptp->tc.cycle_last = ns & ptp->cc.mask;
-}
-
-int bnxt_ptp_init_rtc(struct bnxt *bp, bool phc_cfg)
-{
-	struct timespec64 tsp;
-	u64 ns;
-	int rc;
-
-	if (!bp->ptp_cfg || !(bp->fw_cap & BNXT_FW_CAP_PTP_RTC))
-		return -ENODEV;
-
-	if (!phc_cfg) {
-		ktime_get_real_ts64(&tsp);
-		ns = timespec64_to_ns(&tsp);
-		rc = bnxt_ptp_cfg_settime(bp, ns);
-		if (rc)
-			return rc;
-	} else {
-		rc = bnxt_hwrm_port_ts_query(bp, PORT_TS_QUERY_REQ_FLAGS_CURRENT_TIME, &ns);
-		if (rc)
-			return rc;
-	}
-	spin_lock_bh(&bp->ptp_cfg->ptp_lock);
-	bnxt_ptp_rtc_timecounter_init(bp->ptp_cfg, ns);
-	spin_unlock_bh(&bp->ptp_cfg->ptp_lock);
-
-	return 0;
-}
-
-static void bnxt_ptp_free(struct bnxt *bp)
-{
-	struct bnxt_ptp_cfg *ptp = bp->ptp_cfg;
-
-	if (ptp->ptp_clock) {
-		ptp_clock_unregister(ptp->ptp_clock);
-		ptp->ptp_clock = NULL;
-		kfree(ptp->ptp_info.pin_config);
-		ptp->ptp_info.pin_config = NULL;
-	}
-}
-
-int bnxt_ptp_init(struct bnxt *bp, bool phc_cfg)
+int bnxt_ptp_init(struct bnxt *bp)
 {
 	struct bnxt_ptp_cfg *ptp = bp->ptp_cfg;
 	int rc;
@@ -927,19 +747,23 @@ int bnxt_ptp_init(struct bnxt *bp, bool phc_cfg)
 	if (ptp->ptp_clock && bnxt_pps_config_ok(bp))
 		return 0;
 
-	bnxt_ptp_free(bp);
-
+	if (ptp->ptp_clock) {
+		ptp_clock_unregister(ptp->ptp_clock);
+		ptp->ptp_clock = NULL;
+		kfree(ptp->ptp_info.pin_config);
+		ptp->ptp_info.pin_config = NULL;
+	}
 	atomic_set(&ptp->tx_avail, BNXT_MAX_TX_TS);
 	spin_lock_init(&ptp->ptp_lock);
 
-	if (bp->fw_cap & BNXT_FW_CAP_PTP_RTC) {
-		bnxt_ptp_timecounter_init(bp, false);
-		rc = bnxt_ptp_init_rtc(bp, phc_cfg);
-		if (rc)
-			goto out;
-	} else {
-		bnxt_ptp_timecounter_init(bp, true);
-	}
+	memset(&ptp->cc, 0, sizeof(ptp->cc));
+	ptp->cc.read = bnxt_cc_read;
+	ptp->cc.mask = CYCLECOUNTER_MASK(48);
+	ptp->cc.shift = 0;
+	ptp->cc.mult = 1;
+
+	ptp->next_overflow_check = jiffies + BNXT_PHC_OVERFLOW_PERIOD;
+	timecounter_init(&ptp->tc, &ptp->cc, ktime_to_ns(ktime_get_real()));
 
 	ptp->ptp_info = bnxt_ptp_caps;
 	if ((bp->fw_cap & BNXT_FW_CAP_PTP_PPS)) {
@@ -951,8 +775,8 @@ int bnxt_ptp_init(struct bnxt *bp, bool phc_cfg)
 		int err = PTR_ERR(ptp->ptp_clock);
 
 		ptp->ptp_clock = NULL;
-		rc = err;
-		goto out;
+		bnxt_unmap_ptp_regs(bp);
+		return err;
 	}
 	if (bp->flags & BNXT_FLAG_CHIP_P5) {
 		spin_lock_bh(&ptp->ptp_lock);
@@ -962,11 +786,6 @@ int bnxt_ptp_init(struct bnxt *bp, bool phc_cfg)
 		ptp_schedule_worker(ptp->ptp_clock, 0);
 	}
 	return 0;
-
-out:
-	bnxt_ptp_free(bp);
-	bnxt_unmap_ptp_regs(bp);
-	return rc;
 }
 
 void bnxt_ptp_clear(struct bnxt *bp)

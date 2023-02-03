@@ -217,7 +217,7 @@ static int handle_itdb(struct kvm_vcpu *vcpu)
 		return 0;
 	if (current->thread.per_flags & PER_FLAG_NO_TE)
 		return 0;
-	itdb = phys_to_virt(vcpu->arch.sie_block->itdba);
+	itdb = (struct kvm_s390_itdb *)vcpu->arch.sie_block->itdba;
 	rc = write_guest_lc(vcpu, __LC_PGM_TDB, itdb, sizeof(*itdb));
 	if (rc)
 		return rc;
@@ -331,18 +331,18 @@ static int handle_mvpg_pei(struct kvm_vcpu *vcpu)
 
 	kvm_s390_get_regs_rre(vcpu, &reg1, &reg2);
 
-	/* Ensure that the source is paged-in, no actual access -> no key checking */
-	rc = guest_translate_address_with_key(vcpu, vcpu->run->s.regs.gprs[reg2],
-					      reg2, &srcaddr, GACC_FETCH, 0);
+	/* Make sure that the source is paged-in */
+	rc = guest_translate_address(vcpu, vcpu->run->s.regs.gprs[reg2],
+				     reg2, &srcaddr, GACC_FETCH);
 	if (rc)
 		return kvm_s390_inject_prog_cond(vcpu, rc);
 	rc = kvm_arch_fault_in_page(vcpu, srcaddr, 0);
 	if (rc != 0)
 		return rc;
 
-	/* Ensure that the source is paged-in, no actual access -> no key checking */
-	rc = guest_translate_address_with_key(vcpu, vcpu->run->s.regs.gprs[reg1],
-					      reg1, &dstaddr, GACC_STORE, 0);
+	/* Make sure that the destination is paged-in */
+	rc = guest_translate_address(vcpu, vcpu->run->s.regs.gprs[reg1],
+				     reg1, &dstaddr, GACC_STORE);
 	if (rc)
 		return kvm_s390_inject_prog_cond(vcpu, rc);
 	rc = kvm_arch_fault_in_page(vcpu, dstaddr, 1);
@@ -409,7 +409,8 @@ int handle_sthyi(struct kvm_vcpu *vcpu)
 out:
 	if (!cc) {
 		if (kvm_s390_pv_cpu_is_protected(vcpu)) {
-			memcpy(sida_addr(vcpu->arch.sie_block), sctns, PAGE_SIZE);
+			memcpy((void *)(sida_origin(vcpu->arch.sie_block)),
+			       sctns, PAGE_SIZE);
 		} else {
 			r = write_guest(vcpu, addr, reg2, sctns, PAGE_SIZE);
 			if (r) {
@@ -463,7 +464,7 @@ static int handle_operexc(struct kvm_vcpu *vcpu)
 
 static int handle_pv_spx(struct kvm_vcpu *vcpu)
 {
-	u32 pref = *(u32 *)sida_addr(vcpu->arch.sie_block);
+	u32 pref = *(u32 *)vcpu->arch.sie_block->sidad;
 
 	kvm_s390_set_prefix(vcpu, pref);
 	trace_kvm_s390_handle_prefix(vcpu, 1, pref);
@@ -496,7 +497,7 @@ static int handle_pv_sclp(struct kvm_vcpu *vcpu)
 
 static int handle_pv_uvc(struct kvm_vcpu *vcpu)
 {
-	struct uv_cb_share *guest_uvcb = sida_addr(vcpu->arch.sie_block);
+	struct uv_cb_share *guest_uvcb = (void *)vcpu->arch.sie_block->sidad;
 	struct uv_cb_cts uvcb = {
 		.header.cmd	= UVC_CMD_UNPIN_PAGE_SHARED,
 		.header.len	= sizeof(uvcb),
@@ -517,11 +518,6 @@ static int handle_pv_uvc(struct kvm_vcpu *vcpu)
 	 */
 	if (rc == -EINVAL)
 		return 0;
-	/*
-	 * If we got -EAGAIN here, we simply return it. It will eventually
-	 * get propagated all the way to userspace, which should then try
-	 * again.
-	 */
 	return rc;
 }
 

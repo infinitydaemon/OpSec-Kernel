@@ -77,15 +77,7 @@ temp_crit_show(struct device *dev, struct device_attribute *attr, char *buf)
 	int temperature;
 	int ret;
 
-	mutex_lock(&tz->lock);
-
-	if (device_is_registered(&tz->device))
-		ret = tz->ops->get_crit_temp(tz, &temperature);
-	else
-		ret = -ENODEV;
-
-	mutex_unlock(&tz->lock);
-
+	ret = tz->ops->get_crit_temp(tz, &temperature);
 	if (ret)
 		return ret;
 
@@ -155,10 +147,10 @@ int thermal_add_hwmon_sysfs(struct thermal_zone_device *tz)
 		return -ENOMEM;
 
 	INIT_LIST_HEAD(&hwmon->tz_list);
-	strscpy(hwmon->type, tz->type, THERMAL_NAME_LENGTH);
+	strlcpy(hwmon->type, tz->type, THERMAL_NAME_LENGTH);
 	strreplace(hwmon->type, '-', '_');
-	hwmon->device = hwmon_device_register_for_thermal(&tz->device,
-							  hwmon->type, hwmon);
+	hwmon->device = hwmon_device_register_with_info(&tz->device, hwmon->type,
+							hwmon, NULL, NULL);
 	if (IS_ERR(hwmon->device)) {
 		result = PTR_ERR(hwmon->device);
 		goto free_mem;
@@ -285,5 +277,3 @@ int devm_thermal_add_hwmon_sysfs(struct thermal_zone_device *tz)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(devm_thermal_add_hwmon_sysfs);
-
-MODULE_IMPORT_NS(HWMON_THERMAL);

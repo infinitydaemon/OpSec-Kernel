@@ -32,7 +32,7 @@ TRACE_EVENT(fib_table_lookup,
 		__array(	__u8,	gw6,	16	)
 		__field(	u16,	sport		)
 		__field(	u16,	dport		)
-		__array(char,  name,   IFNAMSIZ )
+		__dynamic_array(char,  name,   IFNAMSIZ )
 	),
 
 	TP_fast_assign(
@@ -66,7 +66,7 @@ TRACE_EVENT(fib_table_lookup,
 		}
 
 		dev = nhc ? nhc->nhc_dev : NULL;
-		strlcpy(__entry->name, dev ? dev->name : "-", IFNAMSIZ);
+		__assign_str(name, dev ? dev->name : "-");
 
 		if (nhc) {
 			if (nhc->nhc_gw_family == AF_INET) {
@@ -95,7 +95,7 @@ TRACE_EVENT(fib_table_lookup,
 		  __entry->tb_id, __entry->oif, __entry->iif, __entry->proto,
 		  __entry->src, __entry->sport, __entry->dst, __entry->dport,
 		  __entry->tos, __entry->scope, __entry->flags,
-		  __entry->name, __entry->gw4, __entry->gw6, __entry->err)
+		  __get_str(name), __entry->gw4, __entry->gw6, __entry->err)
 );
 #endif /* _TRACE_FIB_H */
 

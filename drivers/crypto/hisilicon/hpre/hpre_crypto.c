@@ -51,12 +51,6 @@ struct hpre_ctx;
 #define HPRE_ECC_HW256_KSZ_B	32
 #define HPRE_ECC_HW384_KSZ_B	48
 
-/* capability register mask of driver */
-#define HPRE_DRV_RSA_MASK_CAP		BIT(0)
-#define HPRE_DRV_DH_MASK_CAP		BIT(1)
-#define HPRE_DRV_ECDH_MASK_CAP		BIT(2)
-#define HPRE_DRV_X25519_MASK_CAP	BIT(5)
-
 typedef void (*hpre_cb)(struct hpre_ctx *ctx, void *sqe);
 
 struct hpre_rsa_ctx {
@@ -147,23 +141,13 @@ struct hpre_asym_request {
 	struct timespec64 req_time;
 };
 
-static inline unsigned int hpre_align_sz(void)
-{
-	return ((crypto_dma_align() - 1) | (HPRE_ALIGN_SZ - 1)) + 1;
-}
-
-static inline unsigned int hpre_align_pd(void)
-{
-	return (hpre_align_sz() - 1) & ~(crypto_tfm_ctx_alignment() - 1);
-}
-
 static int hpre_alloc_req_id(struct hpre_ctx *ctx)
 {
 	unsigned long flags;
 	int id;
 
 	spin_lock_irqsave(&ctx->req_lock, flags);
-	id = idr_alloc(&ctx->req_idr, NULL, 0, ctx->qp->sq_depth, GFP_ATOMIC);
+	id = idr_alloc(&ctx->req_idr, NULL, 0, QM_Q_DEPTH, GFP_ATOMIC);
 	spin_unlock_irqrestore(&ctx->req_lock, flags);
 
 	return id;
@@ -504,7 +488,7 @@ static int hpre_ctx_init(struct hpre_ctx *ctx, u8 type)
 	qp->qp_ctx = ctx;
 	qp->req_cb = hpre_alg_cb;
 
-	ret = hpre_ctx_set(ctx, qp, qp->sq_depth);
+	ret = hpre_ctx_set(ctx, qp, QM_Q_DEPTH);
 	if (ret)
 		hpre_stop_qp_and_put(qp);
 
@@ -527,7 +511,7 @@ static int hpre_msg_request_set(struct hpre_ctx *ctx, void *req, bool is_rsa)
 		}
 
 		tmp = akcipher_request_ctx(akreq);
-		h_req = PTR_ALIGN(tmp, hpre_align_sz());
+		h_req = PTR_ALIGN(tmp, HPRE_ALIGN_SZ);
 		h_req->cb = hpre_rsa_cb;
 		h_req->areq.rsa = akreq;
 		msg = &h_req->req;
@@ -541,7 +525,7 @@ static int hpre_msg_request_set(struct hpre_ctx *ctx, void *req, bool is_rsa)
 		}
 
 		tmp = kpp_request_ctx(kreq);
-		h_req = PTR_ALIGN(tmp, hpre_align_sz());
+		h_req = PTR_ALIGN(tmp, HPRE_ALIGN_SZ);
 		h_req->cb = hpre_dh_cb;
 		h_req->areq.dh = kreq;
 		msg = &h_req->req;
@@ -592,7 +576,7 @@ static int hpre_dh_compute_value(struct kpp_request *req)
 	struct crypto_kpp *tfm = crypto_kpp_reqtfm(req);
 	struct hpre_ctx *ctx = kpp_tfm_ctx(tfm);
 	void *tmp = kpp_request_ctx(req);
-	struct hpre_asym_request *hpre_req = PTR_ALIGN(tmp, hpre_align_sz());
+	struct hpre_asym_request *hpre_req = PTR_ALIGN(tmp, HPRE_ALIGN_SZ);
 	struct hpre_sqe *msg = &hpre_req->req;
 	int ret;
 
@@ -750,8 +734,6 @@ static int hpre_dh_init_tfm(struct crypto_kpp *tfm)
 {
 	struct hpre_ctx *ctx = kpp_tfm_ctx(tfm);
 
-	kpp_set_reqsize(tfm, sizeof(struct hpre_asym_request) + hpre_align_pd());
-
 	return hpre_ctx_init(ctx, HPRE_V2_ALG_TYPE);
 }
 
@@ -795,7 +777,7 @@ static int hpre_rsa_enc(struct akcipher_request *req)
 	struct crypto_akcipher *tfm = crypto_akcipher_reqtfm(req);
 	struct hpre_ctx *ctx = akcipher_tfm_ctx(tfm);
 	void *tmp = akcipher_request_ctx(req);
-	struct hpre_asym_request *hpre_req = PTR_ALIGN(tmp, hpre_align_sz());
+	struct hpre_asym_request *hpre_req = PTR_ALIGN(tmp, HPRE_ALIGN_SZ);
 	struct hpre_sqe *msg = &hpre_req->req;
 	int ret;
 
@@ -843,7 +825,7 @@ static int hpre_rsa_dec(struct akcipher_request *req)
 	struct crypto_akcipher *tfm = crypto_akcipher_reqtfm(req);
 	struct hpre_ctx *ctx = akcipher_tfm_ctx(tfm);
 	void *tmp = akcipher_request_ctx(req);
-	struct hpre_asym_request *hpre_req = PTR_ALIGN(tmp, hpre_align_sz());
+	struct hpre_asym_request *hpre_req = PTR_ALIGN(tmp, HPRE_ALIGN_SZ);
 	struct hpre_sqe *msg = &hpre_req->req;
 	int ret;
 
@@ -1177,9 +1159,6 @@ static int hpre_rsa_init_tfm(struct crypto_akcipher *tfm)
 		return PTR_ERR(ctx->rsa.soft_tfm);
 	}
 
-	akcipher_set_reqsize(tfm, sizeof(struct hpre_asym_request) +
-				  hpre_align_pd());
-
 	ret = hpre_ctx_init(ctx, HPRE_V2_ALG_TYPE);
 	if (ret)
 		crypto_free_akcipher(ctx->rsa.soft_tfm);
@@ -1198,10 +1177,13 @@ static void hpre_rsa_exit_tfm(struct crypto_akcipher *tfm)
 static void hpre_key_to_big_end(u8 *data, int len)
 {
 	int i, j;
+	u8 tmp;
 
 	for (i = 0; i < len / 2; i++) {
 		j = len - i - 1;
-		swap(data[j], data[i]);
+		tmp = data[j];
+		data[j] = data[i];
+		data[i] = tmp;
 	}
 }
 
@@ -1500,7 +1482,7 @@ static int hpre_ecdh_msg_request_set(struct hpre_ctx *ctx,
 	}
 
 	tmp = kpp_request_ctx(req);
-	h_req = PTR_ALIGN(tmp, hpre_align_sz());
+	h_req = PTR_ALIGN(tmp, HPRE_ALIGN_SZ);
 	h_req->cb = hpre_ecdh_cb;
 	h_req->areq.ecdh = req;
 	msg = &h_req->req;
@@ -1581,7 +1563,7 @@ static int hpre_ecdh_compute_value(struct kpp_request *req)
 	struct hpre_ctx *ctx = kpp_tfm_ctx(tfm);
 	struct device *dev = ctx->dev;
 	void *tmp = kpp_request_ctx(req);
-	struct hpre_asym_request *hpre_req = PTR_ALIGN(tmp, hpre_align_sz());
+	struct hpre_asym_request *hpre_req = PTR_ALIGN(tmp, HPRE_ALIGN_SZ);
 	struct hpre_sqe *msg = &hpre_req->req;
 	int ret;
 
@@ -1632,8 +1614,6 @@ static int hpre_ecdh_nist_p192_init_tfm(struct crypto_kpp *tfm)
 
 	ctx->curve_id = ECC_CURVE_NIST_P192;
 
-	kpp_set_reqsize(tfm, sizeof(struct hpre_asym_request) + hpre_align_pd());
-
 	return hpre_ctx_init(ctx, HPRE_V3_ECC_ALG_TYPE);
 }
 
@@ -1643,8 +1623,6 @@ static int hpre_ecdh_nist_p256_init_tfm(struct crypto_kpp *tfm)
 
 	ctx->curve_id = ECC_CURVE_NIST_P256;
 
-	kpp_set_reqsize(tfm, sizeof(struct hpre_asym_request) + hpre_align_pd());
-
 	return hpre_ctx_init(ctx, HPRE_V3_ECC_ALG_TYPE);
 }
 
@@ -1653,8 +1631,6 @@ static int hpre_ecdh_nist_p384_init_tfm(struct crypto_kpp *tfm)
 	struct hpre_ctx *ctx = kpp_tfm_ctx(tfm);
 
 	ctx->curve_id = ECC_CURVE_NIST_P384;
-
-	kpp_set_reqsize(tfm, sizeof(struct hpre_asym_request) + hpre_align_pd());
 
 	return hpre_ctx_init(ctx, HPRE_V3_ECC_ALG_TYPE);
 }
@@ -1812,7 +1788,7 @@ static int hpre_curve25519_msg_request_set(struct hpre_ctx *ctx,
 	}
 
 	tmp = kpp_request_ctx(req);
-	h_req = PTR_ALIGN(tmp, hpre_align_sz());
+	h_req = PTR_ALIGN(tmp, HPRE_ALIGN_SZ);
 	h_req->cb = hpre_curve25519_cb;
 	h_req->areq.curve25519 = req;
 	msg = &h_req->req;
@@ -1933,7 +1909,7 @@ static int hpre_curve25519_compute_value(struct kpp_request *req)
 	struct hpre_ctx *ctx = kpp_tfm_ctx(tfm);
 	struct device *dev = ctx->dev;
 	void *tmp = kpp_request_ctx(req);
-	struct hpre_asym_request *hpre_req = PTR_ALIGN(tmp, hpre_align_sz());
+	struct hpre_asym_request *hpre_req = PTR_ALIGN(tmp, HPRE_ALIGN_SZ);
 	struct hpre_sqe *msg = &hpre_req->req;
 	int ret;
 
@@ -1982,8 +1958,6 @@ static int hpre_curve25519_init_tfm(struct crypto_kpp *tfm)
 {
 	struct hpre_ctx *ctx = kpp_tfm_ctx(tfm);
 
-	kpp_set_reqsize(tfm, sizeof(struct hpre_asym_request) + hpre_align_pd());
-
 	return hpre_ctx_init(ctx, HPRE_V3_ECC_ALG_TYPE);
 }
 
@@ -2004,6 +1978,7 @@ static struct akcipher_alg rsa = {
 	.max_size = hpre_rsa_max_size,
 	.init = hpre_rsa_init_tfm,
 	.exit = hpre_rsa_exit_tfm,
+	.reqsize = sizeof(struct hpre_asym_request) + HPRE_ALIGN_SZ,
 	.base = {
 		.cra_ctxsize = sizeof(struct hpre_ctx),
 		.cra_priority = HPRE_CRYPTO_ALG_PRI,
@@ -2020,6 +1995,7 @@ static struct kpp_alg dh = {
 	.max_size = hpre_dh_max_size,
 	.init = hpre_dh_init_tfm,
 	.exit = hpre_dh_exit_tfm,
+	.reqsize = sizeof(struct hpre_asym_request) + HPRE_ALIGN_SZ,
 	.base = {
 		.cra_ctxsize = sizeof(struct hpre_ctx),
 		.cra_priority = HPRE_CRYPTO_ALG_PRI,
@@ -2029,50 +2005,55 @@ static struct kpp_alg dh = {
 	},
 };
 
-static struct kpp_alg ecdh_curves[] = {
-	{
-		.set_secret = hpre_ecdh_set_secret,
-		.generate_public_key = hpre_ecdh_compute_value,
-		.compute_shared_secret = hpre_ecdh_compute_value,
-		.max_size = hpre_ecdh_max_size,
-		.init = hpre_ecdh_nist_p192_init_tfm,
-		.exit = hpre_ecdh_exit_tfm,
-		.base = {
-			.cra_ctxsize = sizeof(struct hpre_ctx),
-			.cra_priority = HPRE_CRYPTO_ALG_PRI,
-			.cra_name = "ecdh-nist-p192",
-			.cra_driver_name = "hpre-ecdh-nist-p192",
-			.cra_module = THIS_MODULE,
-		},
-	}, {
-		.set_secret = hpre_ecdh_set_secret,
-		.generate_public_key = hpre_ecdh_compute_value,
-		.compute_shared_secret = hpre_ecdh_compute_value,
-		.max_size = hpre_ecdh_max_size,
-		.init = hpre_ecdh_nist_p256_init_tfm,
-		.exit = hpre_ecdh_exit_tfm,
-		.base = {
-			.cra_ctxsize = sizeof(struct hpre_ctx),
-			.cra_priority = HPRE_CRYPTO_ALG_PRI,
-			.cra_name = "ecdh-nist-p256",
-			.cra_driver_name = "hpre-ecdh-nist-p256",
-			.cra_module = THIS_MODULE,
-		},
-	}, {
-		.set_secret = hpre_ecdh_set_secret,
-		.generate_public_key = hpre_ecdh_compute_value,
-		.compute_shared_secret = hpre_ecdh_compute_value,
-		.max_size = hpre_ecdh_max_size,
-		.init = hpre_ecdh_nist_p384_init_tfm,
-		.exit = hpre_ecdh_exit_tfm,
-		.base = {
-			.cra_ctxsize = sizeof(struct hpre_ctx),
-			.cra_priority = HPRE_CRYPTO_ALG_PRI,
-			.cra_name = "ecdh-nist-p384",
-			.cra_driver_name = "hpre-ecdh-nist-p384",
-			.cra_module = THIS_MODULE,
-		},
-	}
+static struct kpp_alg ecdh_nist_p192 = {
+	.set_secret = hpre_ecdh_set_secret,
+	.generate_public_key = hpre_ecdh_compute_value,
+	.compute_shared_secret = hpre_ecdh_compute_value,
+	.max_size = hpre_ecdh_max_size,
+	.init = hpre_ecdh_nist_p192_init_tfm,
+	.exit = hpre_ecdh_exit_tfm,
+	.reqsize = sizeof(struct hpre_asym_request) + HPRE_ALIGN_SZ,
+	.base = {
+		.cra_ctxsize = sizeof(struct hpre_ctx),
+		.cra_priority = HPRE_CRYPTO_ALG_PRI,
+		.cra_name = "ecdh-nist-p192",
+		.cra_driver_name = "hpre-ecdh-nist-p192",
+		.cra_module = THIS_MODULE,
+	},
+};
+
+static struct kpp_alg ecdh_nist_p256 = {
+	.set_secret = hpre_ecdh_set_secret,
+	.generate_public_key = hpre_ecdh_compute_value,
+	.compute_shared_secret = hpre_ecdh_compute_value,
+	.max_size = hpre_ecdh_max_size,
+	.init = hpre_ecdh_nist_p256_init_tfm,
+	.exit = hpre_ecdh_exit_tfm,
+	.reqsize = sizeof(struct hpre_asym_request) + HPRE_ALIGN_SZ,
+	.base = {
+		.cra_ctxsize = sizeof(struct hpre_ctx),
+		.cra_priority = HPRE_CRYPTO_ALG_PRI,
+		.cra_name = "ecdh-nist-p256",
+		.cra_driver_name = "hpre-ecdh-nist-p256",
+		.cra_module = THIS_MODULE,
+	},
+};
+
+static struct kpp_alg ecdh_nist_p384 = {
+	.set_secret = hpre_ecdh_set_secret,
+	.generate_public_key = hpre_ecdh_compute_value,
+	.compute_shared_secret = hpre_ecdh_compute_value,
+	.max_size = hpre_ecdh_max_size,
+	.init = hpre_ecdh_nist_p384_init_tfm,
+	.exit = hpre_ecdh_exit_tfm,
+	.reqsize = sizeof(struct hpre_asym_request) + HPRE_ALIGN_SZ,
+	.base = {
+		.cra_ctxsize = sizeof(struct hpre_ctx),
+		.cra_priority = HPRE_CRYPTO_ALG_PRI,
+		.cra_name = "ecdh-nist-p384",
+		.cra_driver_name = "hpre-ecdh-nist-p384",
+		.cra_module = THIS_MODULE,
+	},
 };
 
 static struct kpp_alg curve25519_alg = {
@@ -2082,6 +2063,7 @@ static struct kpp_alg curve25519_alg = {
 	.max_size = hpre_curve25519_max_size,
 	.init = hpre_curve25519_init_tfm,
 	.exit = hpre_curve25519_exit_tfm,
+	.reqsize = sizeof(struct hpre_asym_request) + HPRE_ALIGN_SZ,
 	.base = {
 		.cra_ctxsize = sizeof(struct hpre_ctx),
 		.cra_priority = HPRE_CRYPTO_ALG_PRI,
@@ -2091,144 +2073,78 @@ static struct kpp_alg curve25519_alg = {
 	},
 };
 
-static int hpre_register_rsa(struct hisi_qm *qm)
+
+static int hpre_register_ecdh(void)
 {
 	int ret;
 
-	if (!hpre_check_alg_support(qm, HPRE_DRV_RSA_MASK_CAP))
-		return 0;
-
-	rsa.base.cra_flags = 0;
-	ret = crypto_register_akcipher(&rsa);
+	ret = crypto_register_kpp(&ecdh_nist_p192);
 	if (ret)
-		dev_err(&qm->pdev->dev, "failed to register rsa (%d)!\n", ret);
+		return ret;
 
-	return ret;
-}
-
-static void hpre_unregister_rsa(struct hisi_qm *qm)
-{
-	if (!hpre_check_alg_support(qm, HPRE_DRV_RSA_MASK_CAP))
-		return;
-
-	crypto_unregister_akcipher(&rsa);
-}
-
-static int hpre_register_dh(struct hisi_qm *qm)
-{
-	int ret;
-
-	if (!hpre_check_alg_support(qm, HPRE_DRV_DH_MASK_CAP))
-		return 0;
-
-	ret = crypto_register_kpp(&dh);
+	ret = crypto_register_kpp(&ecdh_nist_p256);
 	if (ret)
-		dev_err(&qm->pdev->dev, "failed to register dh (%d)!\n", ret);
+		goto unregister_ecdh_p192;
 
-	return ret;
-}
-
-static void hpre_unregister_dh(struct hisi_qm *qm)
-{
-	if (!hpre_check_alg_support(qm, HPRE_DRV_DH_MASK_CAP))
-		return;
-
-	crypto_unregister_kpp(&dh);
-}
-
-static int hpre_register_ecdh(struct hisi_qm *qm)
-{
-	int ret, i;
-
-	if (!hpre_check_alg_support(qm, HPRE_DRV_ECDH_MASK_CAP))
-		return 0;
-
-	for (i = 0; i < ARRAY_SIZE(ecdh_curves); i++) {
-		ret = crypto_register_kpp(&ecdh_curves[i]);
-		if (ret) {
-			dev_err(&qm->pdev->dev, "failed to register %s (%d)!\n",
-				ecdh_curves[i].base.cra_name, ret);
-			goto unreg_kpp;
-		}
-	}
+	ret = crypto_register_kpp(&ecdh_nist_p384);
+	if (ret)
+		goto unregister_ecdh_p256;
 
 	return 0;
 
-unreg_kpp:
-	for (--i; i >= 0; --i)
-		crypto_unregister_kpp(&ecdh_curves[i]);
-
+unregister_ecdh_p256:
+	crypto_unregister_kpp(&ecdh_nist_p256);
+unregister_ecdh_p192:
+	crypto_unregister_kpp(&ecdh_nist_p192);
 	return ret;
 }
 
-static void hpre_unregister_ecdh(struct hisi_qm *qm)
+static void hpre_unregister_ecdh(void)
 {
-	int i;
-
-	if (!hpre_check_alg_support(qm, HPRE_DRV_ECDH_MASK_CAP))
-		return;
-
-	for (i = ARRAY_SIZE(ecdh_curves) - 1; i >= 0; --i)
-		crypto_unregister_kpp(&ecdh_curves[i]);
-}
-
-static int hpre_register_x25519(struct hisi_qm *qm)
-{
-	int ret;
-
-	if (!hpre_check_alg_support(qm, HPRE_DRV_X25519_MASK_CAP))
-		return 0;
-
-	ret = crypto_register_kpp(&curve25519_alg);
-	if (ret)
-		dev_err(&qm->pdev->dev, "failed to register x25519 (%d)!\n", ret);
-
-	return ret;
-}
-
-static void hpre_unregister_x25519(struct hisi_qm *qm)
-{
-	if (!hpre_check_alg_support(qm, HPRE_DRV_X25519_MASK_CAP))
-		return;
-
-	crypto_unregister_kpp(&curve25519_alg);
+	crypto_unregister_kpp(&ecdh_nist_p384);
+	crypto_unregister_kpp(&ecdh_nist_p256);
+	crypto_unregister_kpp(&ecdh_nist_p192);
 }
 
 int hpre_algs_register(struct hisi_qm *qm)
 {
 	int ret;
 
-	ret = hpre_register_rsa(qm);
+	rsa.base.cra_flags = 0;
+	ret = crypto_register_akcipher(&rsa);
 	if (ret)
 		return ret;
 
-	ret = hpre_register_dh(qm);
+	ret = crypto_register_kpp(&dh);
 	if (ret)
 		goto unreg_rsa;
 
-	ret = hpre_register_ecdh(qm);
-	if (ret)
-		goto unreg_dh;
-
-	ret = hpre_register_x25519(qm);
-	if (ret)
-		goto unreg_ecdh;
-
-	return ret;
+	if (qm->ver >= QM_HW_V3) {
+		ret = hpre_register_ecdh();
+		if (ret)
+			goto unreg_dh;
+		ret = crypto_register_kpp(&curve25519_alg);
+		if (ret)
+			goto unreg_ecdh;
+	}
+	return 0;
 
 unreg_ecdh:
-	hpre_unregister_ecdh(qm);
+	hpre_unregister_ecdh();
 unreg_dh:
-	hpre_unregister_dh(qm);
+	crypto_unregister_kpp(&dh);
 unreg_rsa:
-	hpre_unregister_rsa(qm);
+	crypto_unregister_akcipher(&rsa);
 	return ret;
 }
 
 void hpre_algs_unregister(struct hisi_qm *qm)
 {
-	hpre_unregister_x25519(qm);
-	hpre_unregister_ecdh(qm);
-	hpre_unregister_dh(qm);
-	hpre_unregister_rsa(qm);
+	if (qm->ver >= QM_HW_V3) {
+		crypto_unregister_kpp(&curve25519_alg);
+		hpre_unregister_ecdh();
+	}
+
+	crypto_unregister_kpp(&dh);
+	crypto_unregister_akcipher(&rsa);
 }

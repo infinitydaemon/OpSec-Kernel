@@ -44,7 +44,7 @@ xvip_dma_remote_subdev(struct media_pad *local, u32 *pad)
 {
 	struct media_pad *remote;
 
-	remote = media_pad_remote_pad_first(local);
+	remote = media_entity_remote_pad(local);
 	if (!remote || !is_media_entity_v4l2_subdev(remote->entity))
 		return NULL;
 
@@ -107,7 +107,7 @@ static int xvip_pipeline_start_stop(struct xvip_pipeline *pipe, bool start)
 		if (!(pad->flags & MEDIA_PAD_FL_SINK))
 			break;
 
-		pad = media_pad_remote_pad_first(pad);
+		pad = media_entity_remote_pad(pad);
 		if (!pad || !is_media_entity_v4l2_subdev(pad->entity))
 			break;
 
@@ -402,9 +402,10 @@ static int xvip_dma_start_streaming(struct vb2_queue *vq, unsigned int count)
 	 * Use the pipeline object embedded in the first DMA object that starts
 	 * streaming.
 	 */
-	pipe = to_xvip_pipeline(&dma->video) ? : &dma->pipe;
+	pipe = dma->video.entity.pipe
+	     ? to_xvip_pipeline(&dma->video.entity) : &dma->pipe;
 
-	ret = video_device_pipeline_start(&dma->video, &pipe->pipe);
+	ret = media_pipeline_start(&dma->video.entity, &pipe->pipe);
 	if (ret < 0)
 		goto error;
 
@@ -430,7 +431,7 @@ static int xvip_dma_start_streaming(struct vb2_queue *vq, unsigned int count)
 	return 0;
 
 error_stop:
-	video_device_pipeline_stop(&dma->video);
+	media_pipeline_stop(&dma->video.entity);
 
 error:
 	/* Give back all queued buffers to videobuf2. */
@@ -447,7 +448,7 @@ error:
 static void xvip_dma_stop_streaming(struct vb2_queue *vq)
 {
 	struct xvip_dma *dma = vb2_get_drv_priv(vq);
-	struct xvip_pipeline *pipe = to_xvip_pipeline(&dma->video);
+	struct xvip_pipeline *pipe = to_xvip_pipeline(&dma->video.entity);
 	struct xvip_dma_buffer *buf, *nbuf;
 
 	/* Stop the pipeline. */
@@ -458,7 +459,7 @@ static void xvip_dma_stop_streaming(struct vb2_queue *vq)
 
 	/* Cleanup the pipeline and mark it as being stopped. */
 	xvip_pipeline_cleanup(pipe);
-	video_device_pipeline_stop(&dma->video);
+	media_pipeline_stop(&dma->video.entity);
 
 	/* Give back all queued buffers to videobuf2. */
 	spin_lock_irq(&dma->queued_lock);

@@ -32,8 +32,6 @@
  */
 #define BCM2835_ISP_NUM_INSTANCES 2
 
-MODULE_IMPORT_NS(DMA_BUF);
-
 static unsigned int debug;
 module_param(debug, uint, 0644);
 MODULE_PARM_DESC(debug, "activates debug info");
@@ -200,9 +198,9 @@ static int set_wb_gains(struct bcm2835_isp_node *node)
 
 static int set_digital_gain(struct bcm2835_isp_node *node, uint32_t gain)
 {
-	struct s32_fract digital_gain = {
-		.numerator = gain,
-		.denominator = 1000
+	struct mmal_parameter_rational digital_gain = {
+		.num = gain,
+		.den = 1000
 	};
 
 	return set_isp_param(node, MMAL_PARAMETER_DIGITAL_GAIN,

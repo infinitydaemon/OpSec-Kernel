@@ -362,7 +362,7 @@ static int ieee80211_ccmp_get_key(void *key, int len, u8 *seq, void *priv)
 	struct ieee80211_ccmp_data *data = priv;
 
 	if (len < CCMP_TK_LEN)
-		return 0;
+		return -1;
 
 	if (!data->key_set)
 		return 0;
@@ -415,7 +415,7 @@ int __init ieee80211_crypto_ccmp_init(void)
 	return ieee80211_register_crypto_ops(&ieee80211_crypt_ccmp);
 }
 
-void ieee80211_crypto_ccmp_exit(void)
+void __exit ieee80211_crypto_ccmp_exit(void)
 {
 	ieee80211_unregister_crypto_ops(&ieee80211_crypt_ccmp);
 }

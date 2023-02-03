@@ -190,7 +190,7 @@ struct ssctl_shutdown_resp {
 	struct qmi_response_type_v01 resp;
 };
 
-static const struct qmi_elem_info ssctl_shutdown_resp_ei[] = {
+static struct qmi_elem_info ssctl_shutdown_resp_ei[] = {
 	{
 		.data_type	= QMI_STRUCT,
 		.elem_len	= 1,
@@ -211,7 +211,7 @@ struct ssctl_subsys_event_req {
 	u32 evt_driven;
 };
 
-static const struct qmi_elem_info ssctl_subsys_event_req_ei[] = {
+static struct qmi_elem_info ssctl_subsys_event_req_ei[] = {
 	{
 		.data_type	= QMI_DATA_LEN,
 		.elem_len	= 1,
@@ -269,7 +269,7 @@ struct ssctl_subsys_event_resp {
 	struct qmi_response_type_v01 resp;
 };
 
-static const struct qmi_elem_info ssctl_subsys_event_resp_ei[] = {
+static struct qmi_elem_info ssctl_subsys_event_resp_ei[] = {
 	{
 		.data_type	= QMI_STRUCT,
 		.elem_len	= 1,
@@ -283,7 +283,7 @@ static const struct qmi_elem_info ssctl_subsys_event_resp_ei[] = {
 	{}
 };
 
-static const struct qmi_elem_info ssctl_shutdown_ind_ei[] = {
+static struct qmi_elem_info ssctl_shutdown_ind_ei[] = {
 	{}
 };
 
@@ -512,12 +512,10 @@ static int sysmon_start(struct rproc_subdev *subdev)
 
 	mutex_lock(&sysmon_lock);
 	list_for_each_entry(target, &sysmon_list, node) {
-		mutex_lock(&target->state_lock);
-		if (target == sysmon || target->state != SSCTL_SSR_EVENT_AFTER_POWERUP) {
-			mutex_unlock(&target->state_lock);
+		if (target == sysmon)
 			continue;
-		}
 
+		mutex_lock(&target->state_lock);
 		event.subsys_name = target->name;
 		event.ssr_event = target->state;
 

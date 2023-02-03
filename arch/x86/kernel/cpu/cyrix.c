@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/bitops.h>
 #include <linux/delay.h>
-#include <linux/isa-dma.h>
 #include <linux/pci.h>
 #include <asm/dma.h>
 #include <linux/io.h>

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2003-2022, Intel Corporation. All rights reserved.
+ * Copyright (c) 2003-2020, Intel Corporation. All rights reserved.
  * Intel Management Engine Interface (Intel MEI) Linux driver
  */
 
@@ -10,7 +10,6 @@
 #include <linux/errno.h>
 #include <linux/types.h>
 #include <linux/pci.h>
-#include <linux/dma-mapping.h>
 #include <linux/sched.h>
 #include <linux/interrupt.h>
 
@@ -198,14 +197,21 @@ static int mei_me_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto end;
 	}
 
-	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
+	if (dma_set_mask(&pdev->dev, DMA_BIT_MASK(64)) ||
+	    dma_set_coherent_mask(&pdev->dev, DMA_BIT_MASK(64))) {
+
+		err = dma_set_mask(&pdev->dev, DMA_BIT_MASK(32));
+		if (err)
+			err = dma_set_coherent_mask(&pdev->dev,
+						    DMA_BIT_MASK(32));
+	}
 	if (err) {
 		dev_err(&pdev->dev, "No usable DMA configuration, aborting\n");
 		goto end;
 	}
 
 	/* allocates and initializes the mei dev structure */
-	dev = mei_me_dev_init(&pdev->dev, cfg, false);
+	dev = mei_me_dev_init(&pdev->dev, cfg);
 	if (!dev) {
 		err = -ENOMEM;
 		goto end;

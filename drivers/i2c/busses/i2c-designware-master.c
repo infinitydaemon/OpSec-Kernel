@@ -239,7 +239,7 @@ static void i2c_dw_xfer_init(struct dw_i2c_dev *dev)
 		     msgs[dev->msg_write_idx].addr | ic_tar);
 
 	/* Enforce disabled interrupts (due to HW issues) */
-	regmap_write(dev->map, DW_IC_INTR_MASK, 0);
+	i2c_dw_disable_int(dev);
 
 	/* Enable the adapter */
 	__i2c_dw_enable(dev);
@@ -299,7 +299,7 @@ static int amd_i2c_dw_xfer_quirk(struct i2c_adapter *adap, struct i2c_msg *msgs,
 	dev->msgs = msgs;
 	dev->msgs_num = num_msgs;
 	i2c_dw_xfer_init(dev);
-	regmap_write(dev->map, DW_IC_INTR_MASK, 0);
+	i2c_dw_disable_int(dev);
 
 	/* Initiate messages read/write transaction */
 	for (msg_wrt_idx = 0; msg_wrt_idx < num_msgs; msg_wrt_idx++) {
@@ -567,6 +567,11 @@ i2c_dw_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 		goto done_nolock;
 	}
 
+	if (dev_WARN_ONCE(dev->dev, dev->suspended, "Transfer while suspended\n")) {
+		ret = -ESHUTDOWN;
+		goto done_nolock;
+	}
+
 	reinit_completion(&dev->cmd_complete);
 	dev->msgs = msgs;
 	dev->msgs_num = num;
@@ -574,7 +579,7 @@ i2c_dw_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 	dev->msg_write_idx = 0;
 	dev->msg_read_idx = 0;
 	dev->msg_err = 0;
-	dev->status = 0;
+	dev->status = STATUS_IDLE;
 	dev->abort_source = 0;
 	dev->rx_outstanding = 0;
 
@@ -696,8 +701,7 @@ static u32 i2c_dw_read_clear_intrbits(struct dw_i2c_dev *dev)
 		regmap_read(dev->map, DW_IC_CLR_RX_DONE, &dummy);
 	if (stat & DW_IC_INTR_ACTIVITY)
 		regmap_read(dev->map, DW_IC_CLR_ACTIVITY, &dummy);
-	if ((stat & DW_IC_INTR_STOP_DET) &&
-	    ((dev->rx_outstanding == 0) || (stat & DW_IC_INTR_RX_FULL)))
+	if (stat & DW_IC_INTR_STOP_DET)
 		regmap_read(dev->map, DW_IC_CLR_STOP_DET, &dummy);
 	if (stat & DW_IC_INTR_START_DET)
 		regmap_read(dev->map, DW_IC_CLR_START_DET, &dummy);
@@ -711,18 +715,9 @@ static u32 i2c_dw_read_clear_intrbits(struct dw_i2c_dev *dev)
  * Interrupt service routine. This gets called whenever an I2C master interrupt
  * occurs.
  */
-static irqreturn_t i2c_dw_isr(int this_irq, void *dev_id)
+static int i2c_dw_irq_handler_master(struct dw_i2c_dev *dev)
 {
-	struct dw_i2c_dev *dev = dev_id;
-	u32 stat, enabled;
-
-	regmap_read(dev->map, DW_IC_ENABLE, &enabled);
-	regmap_read(dev->map, DW_IC_RAW_INTR_STAT, &stat);
-	if (!enabled || !(stat & ~DW_IC_INTR_ACTIVITY))
-		return IRQ_NONE;
-	if (pm_runtime_suspended(dev->dev) || stat == GENMASK(31, 0))
-		return IRQ_NONE;
-	dev_dbg(dev->dev, "enabled=%#x stat=%#x\n", enabled, stat);
+	u32 stat;
 
 	stat = i2c_dw_read_clear_intrbits(dev);
 
@@ -735,13 +730,12 @@ static irqreturn_t i2c_dw_isr(int this_irq, void *dev_id)
 		 * the HW active).
 		 */
 		regmap_write(dev->map, DW_IC_INTR_MASK, 0);
-		return IRQ_HANDLED;
+		return 0;
 	}
 
 	if (stat & DW_IC_INTR_TX_ABRT) {
 		dev->cmd_err |= DW_IC_ERR_TX_ABRT;
-		dev->status &= ~STATUS_MASK;
-		dev->rx_outstanding = 0;
+		dev->status = STATUS_IDLE;
 
 		/*
 		 * Anytime TX_ABRT is set, the contents of the tx/rx
@@ -764,15 +758,30 @@ static irqreturn_t i2c_dw_isr(int this_irq, void *dev_id)
 	 */
 
 tx_aborted:
-	if (((stat & (DW_IC_INTR_TX_ABRT | DW_IC_INTR_STOP_DET)) || dev->msg_err) &&
-	     (dev->rx_outstanding == 0))
+	if ((stat & (DW_IC_INTR_TX_ABRT | DW_IC_INTR_STOP_DET)) || dev->msg_err)
 		complete(&dev->cmd_complete);
 	else if (unlikely(dev->flags & ACCESS_INTR_MASK)) {
 		/* Workaround to trigger pending interrupt */
 		regmap_read(dev->map, DW_IC_INTR_MASK, &stat);
-		regmap_write(dev->map, DW_IC_INTR_MASK, 0);
+		i2c_dw_disable_int(dev);
 		regmap_write(dev->map, DW_IC_INTR_MASK, stat);
 	}
+
+	return 0;
+}
+
+static irqreturn_t i2c_dw_isr(int this_irq, void *dev_id)
+{
+	struct dw_i2c_dev *dev = dev_id;
+	u32 stat, enabled;
+
+	regmap_read(dev->map, DW_IC_ENABLE, &enabled);
+	regmap_read(dev->map, DW_IC_RAW_INTR_STAT, &stat);
+	dev_dbg(dev->dev, "enabled=%#x stat=%#x\n", enabled, stat);
+	if (!enabled || !(stat & ~DW_IC_INTR_ACTIVITY))
+		return IRQ_NONE;
+
+	i2c_dw_irq_handler_master(dev);
 
 	return IRQ_HANDLED;
 }
@@ -871,6 +880,7 @@ int i2c_dw_probe_master(struct dw_i2c_dev *dev)
 
 	dev->init = i2c_dw_init_master;
 	dev->disable = i2c_dw_disable;
+	dev->disable_int = i2c_dw_disable_int;
 
 	ret = i2c_dw_init_regmap(dev);
 	if (ret)
@@ -905,13 +915,7 @@ int i2c_dw_probe_master(struct dw_i2c_dev *dev)
 		irq_flags = IRQF_SHARED | IRQF_COND_SUSPEND;
 	}
 
-	ret = i2c_dw_acquire_lock(dev);
-	if (ret)
-		return ret;
-
-	regmap_write(dev->map, DW_IC_INTR_MASK, 0);
-	i2c_dw_release_lock(dev);
-
+	i2c_dw_disable_int(dev);
 	ret = devm_request_irq(dev->dev, dev->irq, i2c_dw_isr, irq_flags,
 			       dev_name(dev->dev), dev);
 	if (ret) {

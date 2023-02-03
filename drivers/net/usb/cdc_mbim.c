@@ -21,7 +21,6 @@
 #include <net/ipv6.h>
 #include <net/addrconf.h>
 #include <net/ipv6_stubs.h>
-#include <net/ndisc.h>
 
 /* alternative VLAN for IP session 0 if not untagged */
 #define MBIM_IPS0_VID	4094

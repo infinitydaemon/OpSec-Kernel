@@ -100,7 +100,6 @@
  *
  */
 
-#include <linux/aperture.h>
 #include <linux/version.h>
 
 #include "matroxfb_base.h"
@@ -2045,10 +2044,6 @@ static int matroxfb_probe(struct pci_dev* pdev, const struct pci_device_id* dumm
 	u_int32_t cmd;
 	DBG(__func__)
 
-	err = aperture_remove_conflicting_pci_devices(pdev, "matroxfb");
-	if (err)
-		return err;
-
 	svid = pdev->subsystem_vendor;
 	sid = pdev->subsystem_device;
 	for (b = dev_list; b->vendor; b++) {
@@ -2314,9 +2309,6 @@ static void __init matroxfb_init_params(void) {
 static int __init matrox_init(void) {
 	int err;
 
-	if (fb_modesetting_disabled("matroxfb"))
-		return -ENODEV;
-
 	matroxfb_init_params();
 	err = pci_register_driver(&matroxfb_driver);
 	dev = -1;	/* accept all new devices... */
@@ -2391,9 +2383,9 @@ static int __init matroxfb_setup(char *options) {
 		else if (!strncmp(this_opt, "mem:", 4))
 			mem = simple_strtoul(this_opt+4, NULL, 0);
 		else if (!strncmp(this_opt, "mode:", 5))
-			strscpy(videomode, this_opt + 5, sizeof(videomode));
+			strlcpy(videomode, this_opt+5, sizeof(videomode));
 		else if (!strncmp(this_opt, "outputs:", 8))
-			strscpy(outputs, this_opt + 8, sizeof(outputs));
+			strlcpy(outputs, this_opt+8, sizeof(outputs));
 		else if (!strncmp(this_opt, "dfp:", 4)) {
 			dfp_type = simple_strtoul(this_opt+4, NULL, 0);
 			dfp = 1;
@@ -2463,7 +2455,7 @@ static int __init matroxfb_setup(char *options) {
 			else if (!strcmp(this_opt, "dfp"))
 				dfp = value;
 			else {
-				strscpy(videomode, this_opt, sizeof(videomode));
+				strlcpy(videomode, this_opt, sizeof(videomode));
 			}
 		}
 	}

@@ -1,7 +1,9 @@
 # BK Id: %F% %I% %G% %U% %#%
 #
 # This file is included by the global makefile so that you can add your own
-# architecture-specific flags and dependencies.
+# architecture-specific flags and dependencies. Remember to do have actions
+# for "archclean" and "archdep" for cleaning up and making dependencies for
+# this architecture
 #
 # This file is subject to the terms and conditions of the GNU General Public
 # License.  See the file "COPYING" in the main directory of this archive
@@ -21,7 +23,6 @@ OBJCOPYFLAGS    := -O binary -R .note -R .comment -S
 LIBGCC 		:= $(shell $(CC) $(KBUILD_CFLAGS) -print-libgcc-file-name)
 
 KBUILD_CFLAGS	+= -pipe -ffixed-r10 -D__linux__
-KBUILD_CFLAGS	+= -msfimm -mshftimm
 
 all: vmlinux.bin
 
@@ -39,21 +40,7 @@ else
 	KBUILD_CFLAGS += $(call cc-option,-msoft-div)
 endif
 
-ifeq ($(CONFIG_OPENRISC_HAVE_INST_CMOV),y)
-	KBUILD_CFLAGS += $(call cc-option,-mcmov)
-endif
-
-ifeq ($(CONFIG_OPENRISC_HAVE_INST_ROR),y)
-	KBUILD_CFLAGS += $(call cc-option,-mror)
-endif
-
-ifeq ($(CONFIG_OPENRISC_HAVE_INST_RORI),y)
-	KBUILD_CFLAGS += $(call cc-option,-mrori)
-endif
-
-ifeq ($(CONFIG_OPENRISC_HAVE_INST_SEXT),y)
-	KBUILD_CFLAGS += $(call cc-option,-msext)
-endif
+head-y 		:= arch/openrisc/kernel/head.o
 
 libs-y		+= $(LIBGCC)
 
@@ -61,3 +48,6 @@ PHONY += vmlinux.bin
 
 vmlinux.bin: vmlinux
 	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
+
+archclean:
+	$(Q)$(MAKE) $(clean)=$(boot)

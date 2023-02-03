@@ -17,49 +17,7 @@
 #include <asm/insn.h>
 #include <asm/patching.h>
 
-#ifdef CONFIG_DYNAMIC_FTRACE_WITH_ARGS
-struct fregs_offset {
-	const char *name;
-	int offset;
-};
-
-#define FREGS_OFFSET(n, field)				\
-{							\
-	.name = n,					\
-	.offset = offsetof(struct ftrace_regs, field),	\
-}
-
-static const struct fregs_offset fregs_offsets[] = {
-	FREGS_OFFSET("x0", regs[0]),
-	FREGS_OFFSET("x1", regs[1]),
-	FREGS_OFFSET("x2", regs[2]),
-	FREGS_OFFSET("x3", regs[3]),
-	FREGS_OFFSET("x4", regs[4]),
-	FREGS_OFFSET("x5", regs[5]),
-	FREGS_OFFSET("x6", regs[6]),
-	FREGS_OFFSET("x7", regs[7]),
-	FREGS_OFFSET("x8", regs[8]),
-
-	FREGS_OFFSET("x29", fp),
-	FREGS_OFFSET("x30", lr),
-	FREGS_OFFSET("lr", lr),
-
-	FREGS_OFFSET("sp", sp),
-	FREGS_OFFSET("pc", pc),
-};
-
-int ftrace_regs_query_register_offset(const char *name)
-{
-	for (int i = 0; i < ARRAY_SIZE(fregs_offsets); i++) {
-		const struct fregs_offset *roff = &fregs_offsets[i];
-		if (!strcmp(roff->name, name))
-			return roff->offset;
-	}
-
-	return -EINVAL;
-}
-#endif
-
+#ifdef CONFIG_DYNAMIC_FTRACE
 /*
  * Replace a single instruction, which may be a branch or NOP.
  * If @validate == true, a replaced instruction is checked against 'old'.
@@ -98,7 +56,7 @@ int ftrace_update_ftrace_func(ftrace_func_t func)
 	unsigned long pc;
 	u32 new;
 
-	pc = (unsigned long)ftrace_call;
+	pc = (unsigned long)function_nocfi(ftrace_call);
 	new = aarch64_insn_gen_branch_imm(pc, (unsigned long)func,
 					  AARCH64_INSN_BRANCH_LINK);
 
@@ -112,6 +70,9 @@ static struct plt_entry *get_ftrace_plt(struct module *mod, unsigned long addr)
 
 	if (addr == FTRACE_ADDR)
 		return &plt[FTRACE_PLT_IDX];
+	if (addr == FTRACE_REGS_ADDR &&
+	    IS_ENABLED(CONFIG_DYNAMIC_FTRACE_WITH_REGS))
+		return &plt[FTRACE_REGS_PLT_IDX];
 #endif
 	return NULL;
 }
@@ -193,7 +154,25 @@ int ftrace_make_call(struct dyn_ftrace *rec, unsigned long addr)
 	return ftrace_modify_code(pc, old, new, true);
 }
 
-#ifdef CONFIG_DYNAMIC_FTRACE_WITH_ARGS
+#ifdef CONFIG_DYNAMIC_FTRACE_WITH_REGS
+int ftrace_modify_call(struct dyn_ftrace *rec, unsigned long old_addr,
+			unsigned long addr)
+{
+	unsigned long pc = rec->ip;
+	u32 old, new;
+
+	if (!ftrace_find_callable_addr(rec, NULL, &old_addr))
+		return -EINVAL;
+	if (!ftrace_find_callable_addr(rec, NULL, &addr))
+		return -EINVAL;
+
+	old = aarch64_insn_gen_branch_imm(pc, old_addr,
+					  AARCH64_INSN_BRANCH_LINK);
+	new = aarch64_insn_gen_branch_imm(pc, addr, AARCH64_INSN_BRANCH_LINK);
+
+	return ftrace_modify_code(pc, old, new, true);
+}
+
 /*
  * The compiler has inserted two NOPs before the regular function prologue.
  * All instrumented functions follow the AAPCS, so x0-x8 and x19-x30 are live,
@@ -249,7 +228,7 @@ int ftrace_make_nop(struct module *mod, struct dyn_ftrace *rec,
 	 *
 	 * Note: 'mod' is only set at module load time.
 	 */
-	if (!IS_ENABLED(CONFIG_DYNAMIC_FTRACE_WITH_ARGS) &&
+	if (!IS_ENABLED(CONFIG_DYNAMIC_FTRACE_WITH_REGS) &&
 	    IS_ENABLED(CONFIG_ARM64_MODULE_PLTS) && mod) {
 		return aarch64_insn_patch_text_nosync((void *)pc, new);
 	}
@@ -268,12 +247,20 @@ void arch_ftrace_update_code(int command)
 	ftrace_modify_all_code(command);
 }
 
+int __init ftrace_dyn_arch_init(void)
+{
+	return 0;
+}
+#endif /* CONFIG_DYNAMIC_FTRACE */
+
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
 /*
  * function_graph tracer expects ftrace_return_to_handler() to be called
  * on the way back to parent. For this purpose, this function is called
  * in _mcount() or ftrace_caller() to replace return address (*parent) on
  * the call stack to return_to_handler.
+ *
+ * Note that @frame_pointer is used only for sanity check later.
  */
 void prepare_ftrace_return(unsigned long self_addr, unsigned long *parent,
 			   unsigned long frame_pointer)
@@ -291,19 +278,11 @@ void prepare_ftrace_return(unsigned long self_addr, unsigned long *parent,
 	 */
 	old = *parent;
 
-	if (!function_graph_enter(old, self_addr, frame_pointer,
-	    (void *)frame_pointer)) {
+	if (!function_graph_enter(old, self_addr, frame_pointer, NULL))
 		*parent = return_hooker;
-	}
 }
 
-#ifdef CONFIG_DYNAMIC_FTRACE_WITH_ARGS
-void ftrace_graph_func(unsigned long ip, unsigned long parent_ip,
-		       struct ftrace_ops *op, struct ftrace_regs *fregs)
-{
-	prepare_ftrace_return(ip, &fregs->lr, fregs->fp);
-}
-#else
+#ifdef CONFIG_DYNAMIC_FTRACE
 /*
  * Turn on/off the call to ftrace_graph_caller() in ftrace_caller()
  * depending on @enable.
@@ -333,5 +312,5 @@ int ftrace_disable_ftrace_graph_caller(void)
 {
 	return ftrace_modify_graph_caller(false);
 }
-#endif /* CONFIG_DYNAMIC_FTRACE_WITH_ARGS */
+#endif /* CONFIG_DYNAMIC_FTRACE */
 #endif /* CONFIG_FUNCTION_GRAPH_TRACER */

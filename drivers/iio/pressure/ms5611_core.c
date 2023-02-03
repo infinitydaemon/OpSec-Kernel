@@ -474,15 +474,17 @@ err_fini:
 	ms5611_fini(indio_dev);
 	return ret;
 }
-EXPORT_SYMBOL_NS(ms5611_probe, IIO_MS5611);
+EXPORT_SYMBOL(ms5611_probe);
 
-void ms5611_remove(struct iio_dev *indio_dev)
+int ms5611_remove(struct iio_dev *indio_dev)
 {
 	iio_device_unregister(indio_dev);
 	iio_triggered_buffer_cleanup(indio_dev);
 	ms5611_fini(indio_dev);
+
+	return 0;
 }
-EXPORT_SYMBOL_NS(ms5611_remove, IIO_MS5611);
+EXPORT_SYMBOL(ms5611_remove);
 
 MODULE_AUTHOR("Tomasz Duszynski <tduszyns@gmail.com>");
 MODULE_DESCRIPTION("MS5611 core driver");

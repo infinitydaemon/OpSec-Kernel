@@ -24,7 +24,8 @@
 #include <asm/irq.h>
 #include <asm/mach/irq.h>
 
-#include "hardware.h"
+#include <mach/hardware.h>
+
 #include "iomap.h"
 #include "common.h"
 #include "fpga.h"

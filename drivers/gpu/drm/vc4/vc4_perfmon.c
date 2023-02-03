@@ -17,16 +17,13 @@
 
 void vc4_perfmon_get(struct vc4_perfmon *perfmon)
 {
-	struct vc4_dev *vc4;
+	struct vc4_dev *vc4 = perfmon->dev;
 
-	if (!perfmon)
-		return;
-
-	vc4 = perfmon->dev;
 	if (WARN_ON_ONCE(vc4->is_vc5))
 		return;
 
-	refcount_inc(&perfmon->refcnt);
+	if (perfmon)
+		refcount_inc(&perfmon->refcnt);
 }
 
 void vc4_perfmon_put(struct vc4_perfmon *perfmon)

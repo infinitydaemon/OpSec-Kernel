@@ -9,7 +9,7 @@ title: |
   Controller device
 
 maintainers:
-  - Krzysztof Kozlowski <krzk@kernel.org>
+  - Krzysztof Kozlowski <krzysztof.kozlowski@canonical.com>
   - Lukasz Luba <lukasz.luba@arm.com>
 
 description: |
@@ -45,15 +45,13 @@ properties:
     $ref: '/schemas/types.yaml#/definitions/phandle-array'
     minItems: 1
     maxItems: 16
-    items:
-      maxItems: 1
     description: phandles of the PPMU events used by the controller.
 
   device-handle:
     $ref: '/schemas/types.yaml#/definitions/phandle'
     description: |
       phandle of the connected DRAM memory device. For more information please
-      refer to jedec,lpddr3.yaml.
+      refer to documentation file: Documentation/devicetree/bindings/ddr/lpddr3.txt
 
   operating-points-v2: true
 

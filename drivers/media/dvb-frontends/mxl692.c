@@ -7,6 +7,15 @@
  * based on code:
  * Copyright (c) 2016 MaxLinear, Inc. All rights reserved
  * which was released under GPL V2
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/mutex.h>
@@ -1308,7 +1317,8 @@ static const struct dvb_frontend_ops mxl692_ops = {
 	.read_snr             = mxl692_read_snr,
 };
 
-static int mxl692_probe(struct i2c_client *client)
+static int mxl692_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct mxl692_config *config = client->dev.platform_data;
 	struct mxl692_dev *dev;
@@ -1336,13 +1346,15 @@ err:
 	return -ENODEV;
 }
 
-static void mxl692_remove(struct i2c_client *client)
+static int mxl692_remove(struct i2c_client *client)
 {
 	struct mxl692_dev *dev = i2c_get_clientdata(client);
 
 	dev->fe.demodulator_priv = NULL;
 	i2c_set_clientdata(client, NULL);
 	kfree(dev);
+
+	return 0;
 }
 
 static const struct i2c_device_id mxl692_id_table[] = {
@@ -1355,7 +1367,7 @@ static struct i2c_driver mxl692_driver = {
 	.driver = {
 		.name	= "mxl692",
 	},
-	.probe_new	= mxl692_probe,
+	.probe		= mxl692_probe,
 	.remove		= mxl692_remove,
 	.id_table	= mxl692_id_table,
 };

@@ -21,7 +21,6 @@
 #include <linux/seq_file.h>
 #include <asm/fixmap.h>
 #include <linux/const.h>
-#include <linux/kasan.h>
 #include <asm/page.h>
 #include <asm/hugetlb.h>
 
@@ -124,7 +123,7 @@ static struct ptdump_range ptdump_range[] __ro_after_init = {
 
 void pt_dump_size(struct seq_file *m, unsigned long size)
 {
-	static const char units[] = " KMGTPE";
+	static const char units[] = "KMGTPE";
 	const char *unit = units;
 
 	/* Work out what appropriate unit to use */
@@ -177,7 +176,7 @@ static void dump_addr(struct pg_state *st, unsigned long addr)
 
 	pt_dump_seq_printf(st->seq, REG "-" REG " ", st->start_address, addr - 1);
 	pt_dump_seq_printf(st->seq, " " REG " ", st->start_pa);
-	pt_dump_size(st->seq, addr - st->start_address);
+	pt_dump_size(st->seq, (addr - st->start_address) >> 10);
 }
 
 static void note_prot_wx(struct pg_state *st, unsigned long addr)
@@ -290,11 +289,11 @@ static void populate_markers(void)
 #endif
 	address_markers[i++].start_address = FIXADDR_START;
 	address_markers[i++].start_address = FIXADDR_TOP;
-#endif /* CONFIG_PPC64 */
 #ifdef CONFIG_KASAN
 	address_markers[i++].start_address = KASAN_SHADOW_START;
 	address_markers[i++].start_address = KASAN_SHADOW_END;
 #endif
+#endif /* CONFIG_PPC64 */
 }
 
 static int ptdump_show(struct seq_file *m, void *v)
@@ -316,7 +315,7 @@ static int ptdump_show(struct seq_file *m, void *v)
 
 DEFINE_SHOW_ATTRIBUTE(ptdump);
 
-static void __init build_pgtable_complete_mask(void)
+static void build_pgtable_complete_mask(void)
 {
 	unsigned int i, j;
 

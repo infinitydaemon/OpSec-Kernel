@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2022 Broadcom. All Rights Reserved. The term *
+ * Copyright (C) 2017-2021 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.  *
  * Copyright (C) 2009-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -59,14 +59,6 @@
 #define bf_set(name, ptr, value) \
 	((ptr)->name##_WORD = ((((value) & name##_MASK) << name##_SHIFT) | \
 		 ((ptr)->name##_WORD & ~(name##_MASK << name##_SHIFT))))
-
-#define get_wqe_reqtag(x)	(((x)->wqe.words[9] >>  0) & 0xFFFF)
-#define get_wqe_tmo(x)		(((x)->wqe.words[7] >> 24) & 0x00FF)
-
-#define get_job_ulpword(x, y)	((x)->iocb.un.ulpWord[y])
-
-#define set_job_ulpstatus(x, y)	bf_set(lpfc_wcqe_c_status, &(x)->wcqe_cmpl, y)
-#define set_job_ulpword4(x, y)	((&(x)->wcqe_cmpl)->parameter = y)
 
 struct dma_address {
 	uint32_t addr_lo;
@@ -237,34 +229,6 @@ struct lpfc_sli_intf {
 
 /* PORT_CAPABILITIES constants. */
 #define LPFC_MAX_SUPPORTED_PAGES	8
-
-enum ulp_bde64_word3 {
-	ULP_BDE64_SIZE_MASK		= 0xffffff,
-
-	ULP_BDE64_TYPE_SHIFT		= 24,
-	ULP_BDE64_TYPE_MASK		= (0xff << ULP_BDE64_TYPE_SHIFT),
-
-	/* BDE (Host_resident) */
-	ULP_BDE64_TYPE_BDE_64		= (0x00 << ULP_BDE64_TYPE_SHIFT),
-	/* Immediate Data BDE */
-	ULP_BDE64_TYPE_BDE_IMMED	= (0x01 << ULP_BDE64_TYPE_SHIFT),
-	/* BDE (Port-resident) */
-	ULP_BDE64_TYPE_BDE_64P		= (0x02 << ULP_BDE64_TYPE_SHIFT),
-	/* Input BDE (Host-resident) */
-	ULP_BDE64_TYPE_BDE_64I		= (0x08 << ULP_BDE64_TYPE_SHIFT),
-	/* Input BDE (Port-resident) */
-	ULP_BDE64_TYPE_BDE_64IP		= (0x0A << ULP_BDE64_TYPE_SHIFT),
-	/* BLP (Host-resident) */
-	ULP_BDE64_TYPE_BLP_64		= (0x40 << ULP_BDE64_TYPE_SHIFT),
-	/* BLP (Port-resident) */
-	ULP_BDE64_TYPE_BLP_64P		= (0x42 << ULP_BDE64_TYPE_SHIFT),
-};
-
-struct ulp_bde64_le {
-	__le32 type_size; /* type 31:24, size 23:0 */
-	__le32 addr_low;
-	__le32 addr_high;
-};
 
 struct ulp_bde64 {
 	union ULP_BDE_TUS {
@@ -709,10 +673,6 @@ struct lpfc_register {
 #define lpfc_sliport_status_rdy_SHIFT	23
 #define lpfc_sliport_status_rdy_MASK	0x1
 #define lpfc_sliport_status_rdy_WORD	word0
-#define lpfc_sliport_status_pldv_SHIFT	0
-#define lpfc_sliport_status_pldv_MASK	0x1
-#define lpfc_sliport_status_pldv_WORD	word0
-#define CFG_PLD				0x3C
 #define MAX_IF_TYPE_2_RESETS		6
 
 #define LPFC_CTL_PORT_CTL_OFFSET	0x408
@@ -738,7 +698,6 @@ struct lpfc_register {
 #define lpfc_sliport_eqdelay_id_WORD	word0
 #define LPFC_SEC_TO_USEC		1000000
 #define LPFC_SEC_TO_MSEC		1000
-#define LPFC_MSECS_TO_SECS(msecs) ((msecs) / 1000)
 
 /* The following Registers apply to SLI4 if_type 0 UCNAs. They typically
  * reside in BAR 2.
@@ -2894,9 +2853,6 @@ struct lpfc_mbx_read_config {
 #define lpfc_mbx_rd_conf_extnts_inuse_SHIFT	31
 #define lpfc_mbx_rd_conf_extnts_inuse_MASK	0x00000001
 #define lpfc_mbx_rd_conf_extnts_inuse_WORD	word1
-#define lpfc_mbx_rd_conf_fawwpn_SHIFT		30
-#define lpfc_mbx_rd_conf_fawwpn_MASK		0x00000001
-#define lpfc_mbx_rd_conf_fawwpn_WORD		word1
 #define lpfc_mbx_rd_conf_wcs_SHIFT		28	/* warning signaling */
 #define lpfc_mbx_rd_conf_wcs_MASK		0x00000001
 #define lpfc_mbx_rd_conf_wcs_WORD		word1
@@ -3162,8 +3118,7 @@ struct lpfc_mbx_memory_dump_type3 {
 #define SFF_LENGTH_COPPER		18
 #define SSF_LENGTH_50UM_OM3		19
 #define SSF_VENDOR_NAME			20
-#define SSF_TRANSCEIVER2		36
-#define SSF_VENDOR_OUI			37
+#define SSF_VENDOR_OUI			36
 #define SSF_VENDOR_PN			40
 #define SSF_VENDOR_REV			56
 #define SSF_WAVELENGTH_B1		60
@@ -3282,7 +3237,7 @@ struct sff_trasnceiver_codes_byte6 {
 
 struct sff_trasnceiver_codes_byte7 {
 	uint8_t fc_sp_100MB:1;   /*  100 MB/sec */
-	uint8_t speed_chk_ecc:1;
+	uint8_t reserve:1;
 	uint8_t fc_sp_200mb:1;   /*  200 MB/sec */
 	uint8_t fc_sp_3200MB:1;  /* 3200 MB/sec */
 	uint8_t fc_sp_400MB:1;   /*  400 MB/sec */
@@ -3485,10 +3440,9 @@ struct lpfc_sli4_parameters {
 
 #define LPFC_SET_UE_RECOVERY		0x10
 #define LPFC_SET_MDS_DIAGS		0x12
-#define LPFC_SET_DUAL_DUMP		0x1e
 #define LPFC_SET_CGN_SIGNAL		0x1f
+#define LPFC_SET_DUAL_DUMP		0x1e
 #define LPFC_SET_ENABLE_MI		0x21
-#define LPFC_SET_LD_SIGNAL		0x23
 #define LPFC_SET_ENABLE_CMF		0x24
 struct lpfc_mbx_set_feature {
 	struct mbox_header header;
@@ -3519,17 +3473,13 @@ struct lpfc_mbx_set_feature {
 #define lpfc_mbx_set_feature_cmf_SHIFT		0
 #define lpfc_mbx_set_feature_cmf_MASK		0x00000001
 #define lpfc_mbx_set_feature_cmf_WORD		word6
-#define lpfc_mbx_set_feature_lds_qry_SHIFT	0
-#define lpfc_mbx_set_feature_lds_qry_MASK	0x00000001
-#define lpfc_mbx_set_feature_lds_qry_WORD	word6
-#define LPFC_QUERY_LDS_OP		1
 #define lpfc_mbx_set_feature_mi_SHIFT		0
 #define lpfc_mbx_set_feature_mi_MASK		0x0000ffff
 #define lpfc_mbx_set_feature_mi_WORD		word6
 #define lpfc_mbx_set_feature_milunq_SHIFT	16
 #define lpfc_mbx_set_feature_milunq_MASK	0x0000ffff
 #define lpfc_mbx_set_feature_milunq_WORD	word6
-	u32 word7;
+	uint32_t word7;
 #define lpfc_mbx_set_feature_UERP_SHIFT 0
 #define lpfc_mbx_set_feature_UERP_MASK  0x0000ffff
 #define lpfc_mbx_set_feature_UERP_WORD  word7
@@ -3543,8 +3493,6 @@ struct lpfc_mbx_set_feature {
 #define lpfc_mbx_set_feature_CGN_acqe_freq_SHIFT 0
 #define lpfc_mbx_set_feature_CGN_acqe_freq_MASK  0x000000ff
 #define lpfc_mbx_set_feature_CGN_acqe_freq_WORD  word8
-	u32 word9;
-	u32 word10;
 };
 
 
@@ -4322,7 +4270,7 @@ struct lpfc_acqe_cgn_signal {
 struct lpfc_acqe_sli {
 	uint32_t event_data1;
 	uint32_t event_data2;
-	uint32_t event_data3;
+	uint32_t reserved;
 	uint32_t trailer;
 #define LPFC_SLI_EVENT_TYPE_PORT_ERROR		0x1
 #define LPFC_SLI_EVENT_TYPE_OVER_TEMP		0x2
@@ -4335,7 +4283,6 @@ struct lpfc_acqe_sli {
 #define LPFC_SLI_EVENT_TYPE_MISCONF_FAWWN	0xF
 #define LPFC_SLI_EVENT_TYPE_EEPROM_FAILURE	0x10
 #define LPFC_SLI_EVENT_TYPE_CGN_SIGNAL		0x11
-#define LPFC_SLI_EVENT_TYPE_RD_SIGNAL           0x12
 };
 
 /*
@@ -4486,8 +4433,12 @@ struct wqe_common {
 #define wqe_cmd_type_MASK     0x0000000f
 #define wqe_cmd_type_WORD     word11
 #define wqe_els_id_SHIFT      4
-#define wqe_els_id_MASK       0x00000007
+#define wqe_els_id_MASK       0x00000003
 #define wqe_els_id_WORD       word11
+#define LPFC_ELS_ID_FLOGI	3
+#define LPFC_ELS_ID_FDISC	2
+#define LPFC_ELS_ID_LOGO	1
+#define LPFC_ELS_ID_DEFAULT	0
 #define wqe_irsp_SHIFT        4
 #define wqe_irsp_MASK         0x00000001
 #define wqe_irsp_WORD         word11
@@ -4535,14 +4486,6 @@ struct lpfc_wqe_generic{
 	uint32_t word5;
 	struct wqe_common wqe_com;
 	uint32_t payload[4];
-};
-
-enum els_request64_wqe_word11 {
-	LPFC_ELS_ID_DEFAULT,
-	LPFC_ELS_ID_LOGO,
-	LPFC_ELS_ID_FDISC,
-	LPFC_ELS_ID_FLOGI,
-	LPFC_ELS_ID_PLOGI,
 };
 
 struct els_request64_wqe {
@@ -4746,6 +4689,7 @@ struct create_xri_wqe {
 	uint32_t rsvd_12_15[4];         /* word 12-15 */
 };
 
+#define INHIBIT_ABORT 1
 #define T_REQUEST_TAG 3
 #define T_XRI_TAG 1
 
@@ -4808,9 +4752,6 @@ struct cmf_sync_wqe {
 #define cmf_sync_cqid_WORD	word11
 	uint32_t read_bytes;
 	uint32_t word13;
-#define cmf_sync_period_SHIFT	16
-#define cmf_sync_period_MASK	0x0000ffff
-#define cmf_sync_period_WORD	word13
 	uint32_t word14;
 	uint32_t word15;
 };
@@ -5058,6 +4999,22 @@ struct lpfc_grp_hdr {
 	{ FPIN_CONGN_SEVERITY_WARNING,		"Warning" },	\
 	{ FPIN_CONGN_SEVERITY_ERROR,		"Alarm" },	\
 }
+
+/* EDC supports two descriptors.  When allocated, it is the
+ * size of this structure plus each supported descriptor.
+ */
+struct lpfc_els_edc_req {
+	struct fc_els_edc               edc;       /* hdr up to descriptors */
+	struct fc_diag_cg_sig_desc      cgn_desc;  /* 1st descriptor */
+};
+
+/* Minimum structure defines for the EDC response.
+ * Balance is in buffer.
+ */
+struct lpfc_els_edc_rsp {
+	struct fc_els_edc_resp          edc_rsp;   /* hdr up to descriptors */
+	struct fc_diag_cg_sig_desc      cgn_desc;  /* 1st descriptor */
+};
 
 /* Used for logging FPIN messages */
 #define LPFC_FPIN_WWPN_LINE_SZ  128

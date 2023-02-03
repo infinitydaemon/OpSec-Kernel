@@ -30,9 +30,7 @@ static inline const char *scmd_name(const struct scsi_cmnd *scmd)
 {
 	struct request *rq = scsi_cmd_to_rq((struct scsi_cmnd *)scmd);
 
-	if (!rq->q || !rq->q->disk)
-		return NULL;
-	return rq->q->disk->disk_name;
+	return rq->rq_disk ? rq->rq_disk->disk_name : NULL;
 }
 
 static size_t sdev_format_header(char *logbuf, size_t logbuf_len,
@@ -87,7 +85,7 @@ void scmd_printk(const char *level, const struct scsi_cmnd *scmd,
 	char *logbuf;
 	size_t off = 0, logbuf_len;
 
-	if (!scmd)
+	if (!scmd || !scmd->cmnd)
 		return;
 
 	logbuf = scsi_log_reserve_buffer(&logbuf_len);
@@ -182,6 +180,9 @@ void scsi_print_command(struct scsi_cmnd *cmd)
 	int k;
 	char *logbuf;
 	size_t off, logbuf_len;
+
+	if (!cmd->cmnd)
+		return;
 
 	logbuf = scsi_log_reserve_buffer(&logbuf_len);
 	if (!logbuf)

@@ -545,15 +545,13 @@ static int kvaser_usb_hydra_send_simple_cmd(struct kvaser_usb *dev,
 					    u8 cmd_no, int channel)
 {
 	struct kvaser_cmd *cmd;
-	size_t cmd_len;
 	int err;
 
-	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
+	cmd = kcalloc(1, sizeof(struct kvaser_cmd), GFP_KERNEL);
 	if (!cmd)
 		return -ENOMEM;
 
 	cmd->header.cmd_no = cmd_no;
-	cmd_len = kvaser_usb_hydra_cmd_size(cmd);
 	if (channel < 0) {
 		kvaser_usb_hydra_set_cmd_dest_he
 				(cmd, KVASER_USB_HYDRA_HE_ADDRESS_ILLEGAL);
@@ -570,7 +568,7 @@ static int kvaser_usb_hydra_send_simple_cmd(struct kvaser_usb *dev,
 	kvaser_usb_hydra_set_cmd_transid
 				(cmd, kvaser_usb_hydra_get_next_transid(dev));
 
-	err = kvaser_usb_send_cmd(dev, cmd, cmd_len);
+	err = kvaser_usb_send_cmd(dev, cmd, kvaser_usb_hydra_cmd_size(cmd));
 	if (err)
 		goto end;
 
@@ -586,22 +584,21 @@ kvaser_usb_hydra_send_simple_cmd_async(struct kvaser_usb_net_priv *priv,
 {
 	struct kvaser_cmd *cmd;
 	struct kvaser_usb *dev = priv->dev;
-	size_t cmd_len;
 	int err;
 
-	cmd = kzalloc(sizeof(*cmd), GFP_ATOMIC);
+	cmd = kcalloc(1, sizeof(struct kvaser_cmd), GFP_ATOMIC);
 	if (!cmd)
 		return -ENOMEM;
 
 	cmd->header.cmd_no = cmd_no;
-	cmd_len = kvaser_usb_hydra_cmd_size(cmd);
 
 	kvaser_usb_hydra_set_cmd_dest_he
 		(cmd, dev->card_data.hydra.channel_to_he[priv->channel]);
 	kvaser_usb_hydra_set_cmd_transid
 				(cmd, kvaser_usb_hydra_get_next_transid(dev));
 
-	err = kvaser_usb_send_cmd_async(priv, cmd, cmd_len);
+	err = kvaser_usb_send_cmd_async(priv, cmd,
+					kvaser_usb_hydra_cmd_size(cmd));
 	if (err)
 		kfree(cmd);
 
@@ -710,7 +707,7 @@ static int kvaser_usb_hydra_map_channel(struct kvaser_usb *dev, u16 transid,
 	struct kvaser_cmd *cmd;
 	int err;
 
-	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
+	cmd = kcalloc(1, sizeof(struct kvaser_cmd), GFP_KERNEL);
 	if (!cmd)
 		return -ENOMEM;
 
@@ -745,26 +742,24 @@ static int kvaser_usb_hydra_get_single_capability(struct kvaser_usb *dev,
 {
 	struct kvaser_usb_dev_card_data *card_data = &dev->card_data;
 	struct kvaser_cmd *cmd;
-	size_t cmd_len;
 	u32 value = 0;
 	u32 mask = 0;
 	u16 cap_cmd_res;
 	int err;
 	int i;
 
-	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
+	cmd = kcalloc(1, sizeof(struct kvaser_cmd), GFP_KERNEL);
 	if (!cmd)
 		return -ENOMEM;
 
 	cmd->header.cmd_no = CMD_GET_CAPABILITIES_REQ;
-	cmd_len = kvaser_usb_hydra_cmd_size(cmd);
 	cmd->cap_req.cap_cmd = cpu_to_le16(cap_cmd_req);
 
 	kvaser_usb_hydra_set_cmd_dest_he(cmd, card_data->hydra.sysdbg_he);
 	kvaser_usb_hydra_set_cmd_transid
 				(cmd, kvaser_usb_hydra_get_next_transid(dev));
 
-	err = kvaser_usb_send_cmd(dev, cmd, cmd_len);
+	err = kvaser_usb_send_cmd(dev, cmd, kvaser_usb_hydra_cmd_size(cmd));
 	if (err)
 		goto end;
 
@@ -922,6 +917,7 @@ static void kvaser_usb_hydra_update_state(struct kvaser_usb_net_priv *priv,
 	struct net_device *netdev = priv->netdev;
 	struct can_frame *cf;
 	struct sk_buff *skb;
+	struct net_device_stats *stats;
 	enum can_state new_state, old_state;
 
 	old_state = priv->can.state;
@@ -969,11 +965,13 @@ static void kvaser_usb_hydra_update_state(struct kvaser_usb_net_priv *priv,
 		priv->can.can_stats.restarts++;
 
 	if (new_state != CAN_STATE_BUS_OFF) {
-		cf->can_id |= CAN_ERR_CNT;
 		cf->data[6] = bec->txerr;
 		cf->data[7] = bec->rxerr;
 	}
 
+	stats = &netdev->stats;
+	stats->rx_packets++;
+	stats->rx_bytes += cf->len;
 	netif_rx(skb);
 }
 
@@ -1124,11 +1122,12 @@ kvaser_usb_hydra_error_frame(struct kvaser_usb_net_priv *priv,
 
 	cf->can_id |= CAN_ERR_BUSERROR;
 	if (new_state != CAN_STATE_BUS_OFF) {
-		cf->can_id |= CAN_ERR_CNT;
 		cf->data[6] = bec.txerr;
 		cf->data[7] = bec.rxerr;
 	}
 
+	stats->rx_packets++;
+	stats->rx_bytes += cf->len;
 	netif_rx(skb);
 
 	priv->bec.txerr = bec.txerr;
@@ -1162,6 +1161,8 @@ static void kvaser_usb_hydra_one_shot_fail(struct kvaser_usb_net_priv *priv,
 	}
 
 	stats->tx_errors++;
+	stats->rx_packets++;
+	stats->rx_bytes += cf->len;
 	netif_rx(skb);
 }
 
@@ -1171,7 +1172,6 @@ static void kvaser_usb_hydra_tx_acknowledge(const struct kvaser_usb *dev,
 	struct kvaser_usb_tx_urb_context *context;
 	struct kvaser_usb_net_priv *priv;
 	unsigned long irq_flags;
-	unsigned int len;
 	bool one_shot_fail = false;
 	bool is_err_frame = false;
 	u16 transid = kvaser_usb_hydra_get_cmd_transid(cmd);
@@ -1198,22 +1198,21 @@ static void kvaser_usb_hydra_tx_acknowledge(const struct kvaser_usb *dev,
 	}
 
 	context = &priv->tx_contexts[transid % dev->max_tx_urbs];
+	if (!one_shot_fail && !is_err_frame) {
+		struct net_device_stats *stats = &priv->netdev->stats;
+
+		stats->tx_packets++;
+		stats->tx_bytes += can_fd_dlc2len(context->dlc);
+	}
 
 	spin_lock_irqsave(&priv->tx_contexts_lock, irq_flags);
 
-	len = can_get_echo_skb(priv->netdev, context->echo_index, NULL);
+	can_get_echo_skb(priv->netdev, context->echo_index, NULL);
 	context->echo_index = dev->max_tx_urbs;
 	--priv->active_tx_contexts;
 	netif_wake_queue(priv->netdev);
 
 	spin_unlock_irqrestore(&priv->tx_contexts_lock, irq_flags);
-
-	if (!one_shot_fail && !is_err_frame) {
-		struct net_device_stats *stats = &priv->netdev->stats;
-
-		stats->tx_packets++;
-		stats->tx_bytes += len;
-	}
 }
 
 static void kvaser_usb_hydra_rx_msg_std(const struct kvaser_usb *dev,
@@ -1265,15 +1264,13 @@ static void kvaser_usb_hydra_rx_msg_std(const struct kvaser_usb *dev,
 
 	cf->len = can_cc_dlc2len(cmd->rx_can.dlc);
 
-	if (flags & KVASER_USB_HYDRA_CF_FLAG_REMOTE_FRAME) {
+	if (flags & KVASER_USB_HYDRA_CF_FLAG_REMOTE_FRAME)
 		cf->can_id |= CAN_RTR_FLAG;
-	} else {
+	else
 		memcpy(cf->data, cmd->rx_can.data, cf->len);
 
-		stats->rx_bytes += cf->len;
-	}
 	stats->rx_packets++;
-
+	stats->rx_bytes += cf->len;
 	netif_rx(skb);
 }
 
@@ -1345,15 +1342,13 @@ static void kvaser_usb_hydra_rx_msg_ext(const struct kvaser_usb *dev,
 		cf->len = can_cc_dlc2len(dlc);
 	}
 
-	if (flags & KVASER_USB_HYDRA_CF_FLAG_REMOTE_FRAME) {
+	if (flags & KVASER_USB_HYDRA_CF_FLAG_REMOTE_FRAME)
 		cf->can_id |= CAN_RTR_FLAG;
-	} else {
+	else
 		memcpy(cf->data, cmd->rx_can.kcan_payload, cf->len);
 
-		stats->rx_bytes += cf->len;
-	}
 	stats->rx_packets++;
-
+	stats->rx_bytes += cf->len;
 	netif_rx(skb);
 }
 
@@ -1436,8 +1431,8 @@ static void kvaser_usb_hydra_handle_cmd(const struct kvaser_usb *dev,
 
 static void *
 kvaser_usb_hydra_frame_to_cmd_ext(const struct kvaser_usb_net_priv *priv,
-				  const struct sk_buff *skb, int *cmd_len,
-				  u16 transid)
+				  const struct sk_buff *skb, int *frame_len,
+				  int *cmd_len, u16 transid)
 {
 	struct kvaser_usb *dev = priv->dev;
 	struct kvaser_cmd_ext *cmd;
@@ -1449,7 +1444,9 @@ kvaser_usb_hydra_frame_to_cmd_ext(const struct kvaser_usb_net_priv *priv,
 	u32 kcan_id;
 	u32 kcan_header;
 
-	cmd = kzalloc(sizeof(*cmd), GFP_ATOMIC);
+	*frame_len = nbr_of_bytes;
+
+	cmd = kcalloc(1, sizeof(struct kvaser_cmd_ext), GFP_ATOMIC);
 	if (!cmd)
 		return NULL;
 
@@ -1514,8 +1511,8 @@ kvaser_usb_hydra_frame_to_cmd_ext(const struct kvaser_usb_net_priv *priv,
 
 static void *
 kvaser_usb_hydra_frame_to_cmd_std(const struct kvaser_usb_net_priv *priv,
-				  const struct sk_buff *skb, int *cmd_len,
-				  u16 transid)
+				  const struct sk_buff *skb, int *frame_len,
+				  int *cmd_len, u16 transid)
 {
 	struct kvaser_usb *dev = priv->dev;
 	struct kvaser_cmd *cmd;
@@ -1523,7 +1520,9 @@ kvaser_usb_hydra_frame_to_cmd_std(const struct kvaser_usb_net_priv *priv,
 	u32 flags;
 	u32 id;
 
-	cmd = kzalloc(sizeof(*cmd), GFP_ATOMIC);
+	*frame_len = cf->len;
+
+	cmd = kcalloc(1, sizeof(struct kvaser_cmd), GFP_ATOMIC);
 	if (!cmd)
 		return NULL;
 
@@ -1556,7 +1555,7 @@ kvaser_usb_hydra_frame_to_cmd_std(const struct kvaser_usb_net_priv *priv,
 	cmd->tx_can.id = cpu_to_le32(id);
 	cmd->tx_can.flags = flags;
 
-	memcpy(cmd->tx_can.data, cf->data, cf->len);
+	memcpy(cmd->tx_can.data, cf->data, *frame_len);
 
 	return cmd;
 }
@@ -1583,7 +1582,6 @@ static int kvaser_usb_hydra_get_busparams(struct kvaser_usb_net_priv *priv,
 	struct kvaser_usb *dev = priv->dev;
 	struct kvaser_usb_net_hydra_priv *hydra = priv->sub_priv;
 	struct kvaser_cmd *cmd;
-	size_t cmd_len;
 	int err;
 
 	if (!hydra)
@@ -1594,7 +1592,6 @@ static int kvaser_usb_hydra_get_busparams(struct kvaser_usb_net_priv *priv,
 		return -ENOMEM;
 
 	cmd->header.cmd_no = CMD_GET_BUSPARAMS_REQ;
-	cmd_len = kvaser_usb_hydra_cmd_size(cmd);
 	kvaser_usb_hydra_set_cmd_dest_he
 		(cmd, dev->card_data.hydra.channel_to_he[priv->channel]);
 	kvaser_usb_hydra_set_cmd_transid
@@ -1604,7 +1601,7 @@ static int kvaser_usb_hydra_get_busparams(struct kvaser_usb_net_priv *priv,
 
 	reinit_completion(&priv->get_busparams_comp);
 
-	err = kvaser_usb_send_cmd(dev, cmd, cmd_len);
+	err = kvaser_usb_send_cmd(dev, cmd, kvaser_usb_hydra_cmd_size(cmd));
 	if (err)
 		return err;
 
@@ -1631,15 +1628,13 @@ static int kvaser_usb_hydra_set_bittiming(const struct net_device *netdev,
 	struct kvaser_cmd *cmd;
 	struct kvaser_usb_net_priv *priv = netdev_priv(netdev);
 	struct kvaser_usb *dev = priv->dev;
-	size_t cmd_len;
 	int err;
 
-	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
+	cmd = kcalloc(1, sizeof(struct kvaser_cmd), GFP_KERNEL);
 	if (!cmd)
 		return -ENOMEM;
 
 	cmd->header.cmd_no = CMD_SET_BUSPARAMS_REQ;
-	cmd_len = kvaser_usb_hydra_cmd_size(cmd);
 	memcpy(&cmd->set_busparams_req.busparams_nominal, busparams,
 	       sizeof(cmd->set_busparams_req.busparams_nominal));
 
@@ -1648,7 +1643,7 @@ static int kvaser_usb_hydra_set_bittiming(const struct net_device *netdev,
 	kvaser_usb_hydra_set_cmd_transid
 				(cmd, kvaser_usb_hydra_get_next_transid(dev));
 
-	err = kvaser_usb_send_cmd(dev, cmd, cmd_len);
+	err = kvaser_usb_send_cmd(dev, cmd, kvaser_usb_hydra_cmd_size(cmd));
 
 	kfree(cmd);
 
@@ -1661,15 +1656,13 @@ static int kvaser_usb_hydra_set_data_bittiming(const struct net_device *netdev,
 	struct kvaser_cmd *cmd;
 	struct kvaser_usb_net_priv *priv = netdev_priv(netdev);
 	struct kvaser_usb *dev = priv->dev;
-	size_t cmd_len;
 	int err;
 
-	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
+	cmd = kcalloc(1, sizeof(struct kvaser_cmd), GFP_KERNEL);
 	if (!cmd)
 		return -ENOMEM;
 
 	cmd->header.cmd_no = CMD_SET_BUSPARAMS_FD_REQ;
-	cmd_len = kvaser_usb_hydra_cmd_size(cmd);
 	memcpy(&cmd->set_busparams_req.busparams_data, busparams,
 	       sizeof(cmd->set_busparams_req.busparams_data));
 
@@ -1687,7 +1680,7 @@ static int kvaser_usb_hydra_set_data_bittiming(const struct net_device *netdev,
 	kvaser_usb_hydra_set_cmd_transid
 				(cmd, kvaser_usb_hydra_get_next_transid(dev));
 
-	err = kvaser_usb_send_cmd(dev, cmd, cmd_len);
+	err = kvaser_usb_send_cmd(dev, cmd, kvaser_usb_hydra_cmd_size(cmd));
 
 	kfree(cmd);
 
@@ -1815,17 +1808,15 @@ static int kvaser_usb_hydra_get_software_info(struct kvaser_usb *dev)
 static int kvaser_usb_hydra_get_software_details(struct kvaser_usb *dev)
 {
 	struct kvaser_cmd *cmd;
-	size_t cmd_len;
 	int err;
 	u32 flags;
 	struct kvaser_usb_dev_card_data *card_data = &dev->card_data;
 
-	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
+	cmd = kcalloc(1, sizeof(struct kvaser_cmd), GFP_KERNEL);
 	if (!cmd)
 		return -ENOMEM;
 
 	cmd->header.cmd_no = CMD_GET_SOFTWARE_DETAILS_REQ;
-	cmd_len = kvaser_usb_hydra_cmd_size(cmd);
 	cmd->sw_detail_req.use_ext_cmd = 1;
 	kvaser_usb_hydra_set_cmd_dest_he
 				(cmd, KVASER_USB_HYDRA_HE_ADDRESS_ILLEGAL);
@@ -1833,7 +1824,7 @@ static int kvaser_usb_hydra_get_software_details(struct kvaser_usb *dev)
 	kvaser_usb_hydra_set_cmd_transid
 				(cmd, kvaser_usb_hydra_get_next_transid(dev));
 
-	err = kvaser_usb_send_cmd(dev, cmd, cmd_len);
+	err = kvaser_usb_send_cmd(dev, cmd, kvaser_usb_hydra_cmd_size(cmd));
 	if (err)
 		goto end;
 
@@ -1951,7 +1942,6 @@ static int kvaser_usb_hydra_set_opt_mode(const struct kvaser_usb_net_priv *priv)
 {
 	struct kvaser_usb *dev = priv->dev;
 	struct kvaser_cmd *cmd;
-	size_t cmd_len;
 	int err;
 
 	if ((priv->can.ctrlmode &
@@ -1962,12 +1952,11 @@ static int kvaser_usb_hydra_set_opt_mode(const struct kvaser_usb_net_priv *priv)
 		return -EINVAL;
 	}
 
-	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
+	cmd = kcalloc(1, sizeof(struct kvaser_cmd), GFP_KERNEL);
 	if (!cmd)
 		return -ENOMEM;
 
 	cmd->header.cmd_no = CMD_SET_DRIVERMODE_REQ;
-	cmd_len = kvaser_usb_hydra_cmd_size(cmd);
 	kvaser_usb_hydra_set_cmd_dest_he
 		(cmd, dev->card_data.hydra.channel_to_he[priv->channel]);
 	kvaser_usb_hydra_set_cmd_transid
@@ -1977,7 +1966,7 @@ static int kvaser_usb_hydra_set_opt_mode(const struct kvaser_usb_net_priv *priv)
 	else
 		cmd->set_ctrlmode.mode = KVASER_USB_HYDRA_CTRLMODE_NORMAL;
 
-	err = kvaser_usb_send_cmd(dev, cmd, cmd_len);
+	err = kvaser_usb_send_cmd(dev, cmd, kvaser_usb_hydra_cmd_size(cmd));
 	kfree(cmd);
 
 	return err;
@@ -2121,17 +2110,17 @@ static void kvaser_usb_hydra_read_bulk_callback(struct kvaser_usb *dev,
 
 static void *
 kvaser_usb_hydra_frame_to_cmd(const struct kvaser_usb_net_priv *priv,
-			      const struct sk_buff *skb, int *cmd_len,
-			      u16 transid)
+			      const struct sk_buff *skb, int *frame_len,
+			      int *cmd_len, u16 transid)
 {
 	void *buf;
 
 	if (priv->dev->card_data.capabilities & KVASER_USB_HYDRA_CAP_EXT_CMD)
-		buf = kvaser_usb_hydra_frame_to_cmd_ext(priv, skb, cmd_len,
-							transid);
+		buf = kvaser_usb_hydra_frame_to_cmd_ext(priv, skb, frame_len,
+							cmd_len, transid);
 	else
-		buf = kvaser_usb_hydra_frame_to_cmd_std(priv, skb, cmd_len,
-							transid);
+		buf = kvaser_usb_hydra_frame_to_cmd_std(priv, skb, frame_len,
+							cmd_len, transid);
 
 	return buf;
 }

@@ -144,7 +144,7 @@ alloc_buffer:
 	spin_unlock_irq(&pcpu_lock);
 
 	/* there can be at most this many free and allocated fragments */
-	buffer = vmalloc_array(2 * max_nr_alloc + 1, sizeof(int));
+	buffer = vmalloc(array_size(sizeof(int), (2 * max_nr_alloc + 1)));
 	if (!buffer)
 		return -ENOMEM;
 

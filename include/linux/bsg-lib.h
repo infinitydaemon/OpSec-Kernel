@@ -10,6 +10,7 @@
 #define _BLK_BSG_
 
 #include <linux/blkdev.h>
+#include <scsi/scsi_request.h>
 
 struct bsg_job;
 struct request;

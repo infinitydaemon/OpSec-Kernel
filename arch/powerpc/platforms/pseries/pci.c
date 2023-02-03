@@ -14,6 +14,7 @@
 
 #include <asm/eeh.h>
 #include <asm/pci-bridge.h>
+#include <asm/prom.h>
 #include <asm/ppc-pci.h>
 #include <asm/pci.h>
 #include "pseries.h"

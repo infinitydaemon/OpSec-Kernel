@@ -26,9 +26,11 @@ static int ksz8863_mdio_read(void *ctx, const void *reg_buf, size_t reg_len,
 	struct mdio_device *mdev;
 	u8 reg = *(u8 *)reg_buf;
 	u8 *val = val_buf;
+	struct ksz8 *ksz8;
 	int i, ret = 0;
 
-	mdev = dev->priv;
+	ksz8 = dev->priv;
+	mdev = ksz8->priv;
 
 	mutex_lock_nested(&mdev->bus->mdio_lock, MDIO_MUTEX_NESTED);
 	for (i = 0; i < val_len; i++) {
@@ -53,11 +55,13 @@ static int ksz8863_mdio_write(void *ctx, const void *data, size_t count)
 {
 	struct ksz_device *dev = ctx;
 	struct mdio_device *mdev;
+	struct ksz8 *ksz8;
 	int i, ret = 0;
 	u32 reg;
 	u8 *val;
 
-	mdev = dev->priv;
+	ksz8 = dev->priv;
+	mdev = ksz8->priv;
 
 	val = (u8 *)(data + 4);
 	reg = *(u32 *)data;
@@ -138,10 +142,17 @@ static int ksz8863_smi_probe(struct mdio_device *mdiodev)
 {
 	struct regmap_config rc;
 	struct ksz_device *dev;
+	struct ksz8 *ksz8;
 	int ret;
 	int i;
 
-	dev = ksz_switch_alloc(&mdiodev->dev, mdiodev);
+	ksz8 = devm_kzalloc(&mdiodev->dev, sizeof(struct ksz8), GFP_KERNEL);
+	if (!ksz8)
+		return -ENOMEM;
+
+	ksz8->priv = mdiodev;
+
+	dev = ksz_switch_alloc(&mdiodev->dev, ksz8);
 	if (!dev)
 		return -ENOMEM;
 
@@ -152,17 +163,18 @@ static int ksz8863_smi_probe(struct mdio_device *mdiodev)
 						  &regmap_smi[i], dev,
 						  &rc);
 		if (IS_ERR(dev->regmap[i])) {
-			return dev_err_probe(&mdiodev->dev,
-					     PTR_ERR(dev->regmap[i]),
-					     "Failed to initialize regmap%i\n",
-					     ksz8863_regmap_config[i].val_bits);
+			ret = PTR_ERR(dev->regmap[i]);
+			dev_err(&mdiodev->dev,
+				"Failed to initialize regmap%i: %d\n",
+				ksz8863_regmap_config[i].val_bits, ret);
+			return ret;
 		}
 	}
 
 	if (mdiodev->dev.platform_data)
 		dev->pdata = mdiodev->dev.platform_data;
 
-	ret = ksz_switch_register(dev);
+	ret = ksz8_switch_register(dev);
 
 	/* Main DSA driver may not be started yet. */
 	if (ret)
@@ -179,6 +191,8 @@ static void ksz8863_smi_remove(struct mdio_device *mdiodev)
 
 	if (dev)
 		ksz_switch_remove(dev);
+
+	dev_set_drvdata(&mdiodev->dev, NULL);
 }
 
 static void ksz8863_smi_shutdown(struct mdio_device *mdiodev)
@@ -192,14 +206,8 @@ static void ksz8863_smi_shutdown(struct mdio_device *mdiodev)
 }
 
 static const struct of_device_id ksz8863_dt_ids[] = {
-	{
-		.compatible = "microchip,ksz8863",
-		.data = &ksz_switch_chips[KSZ8830]
-	},
-	{
-		.compatible = "microchip,ksz8873",
-		.data = &ksz_switch_chips[KSZ8830]
-	},
+	{ .compatible = "microchip,ksz8863" },
+	{ .compatible = "microchip,ksz8873" },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, ksz8863_dt_ids);

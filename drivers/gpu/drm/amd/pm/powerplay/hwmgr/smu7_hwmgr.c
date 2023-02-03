@@ -2109,7 +2109,7 @@ static void smu7_patch_ppt_v1_with_vdd_leakage(struct pp_hwmgr *hwmgr,
 	}
 
 	if (*voltage > ATOM_VIRTUAL_VOLTAGE_ID0)
-		pr_info("Voltage value looks like a Leakage ID but it's not patched\n");
+		pr_err("Voltage value looks like a Leakage ID but it's not patched \n");
 }
 
 /**
@@ -2592,7 +2592,7 @@ static void smu7_patch_ppt_v0_with_vdd_leakage(struct pp_hwmgr *hwmgr,
 	}
 
 	if (*voltage > ATOM_VIRTUAL_VOLTAGE_ID0)
-		pr_info("Voltage value looks like a Leakage ID but it's not patched\n");
+		pr_err("Voltage value looks like a Leakage ID but it's not patched \n");
 }
 
 
@@ -3295,6 +3295,10 @@ static int smu7_apply_state_adjust_rules(struct pp_hwmgr *hwmgr,
 			request_ps->classification.ui_label);
 	data->mclk_ignore_signal = false;
 
+	PP_ASSERT_WITH_CODE(smu7_ps->performance_level_count == 2,
+				 "VI should always have 2 performance levels",
+				);
+
 	max_limits = adev->pm.ac_power ?
 			&(hwmgr->dyn_state.max_clock_voltage_on_ac) :
 			&(hwmgr->dyn_state.max_clock_voltage_on_dc);
@@ -3603,7 +3607,7 @@ static int smu7_get_pp_table_entry_callback_func_v1(struct pp_hwmgr *hwmgr,
 			return -EINVAL);
 
 	PP_ASSERT_WITH_CODE(
-			(smu7_power_state->performance_level_count <
+			(smu7_power_state->performance_level_count <=
 					hwmgr->platform_descriptor.hardwareActivityPerformanceLevels),
 			"Performance levels exceeds Driver limit!",
 			return -EINVAL);
@@ -5494,6 +5498,14 @@ static int smu7_get_power_profile_mode(struct pp_hwmgr *hwmgr, char *buf)
 	uint32_t i, size = 0;
 	uint32_t len;
 
+	static const char *profile_name[7] = {"BOOTUP_DEFAULT",
+					"3D_FULL_SCREEN",
+					"POWER_SAVING",
+					"VIDEO",
+					"VR",
+					"COMPUTE",
+					"CUSTOM"};
+
 	static const char *title[8] = {"NUM",
 			"MODE_NAME",
 			"SCLK_UP_HYST",
@@ -5517,7 +5529,7 @@ static int smu7_get_power_profile_mode(struct pp_hwmgr *hwmgr, char *buf)
 	for (i = 0; i < len; i++) {
 		if (i == hwmgr->power_profile_mode) {
 			size += sysfs_emit_at(buf, size, "%3d %14s %s: %8d %16d %16d %16d %16d %16d\n",
-			i, amdgpu_pp_profile_name[i], "*",
+			i, profile_name[i], "*",
 			data->current_profile_setting.sclk_up_hyst,
 			data->current_profile_setting.sclk_down_hyst,
 			data->current_profile_setting.sclk_activity,
@@ -5528,12 +5540,12 @@ static int smu7_get_power_profile_mode(struct pp_hwmgr *hwmgr, char *buf)
 		}
 		if (smu7_profiling[i].bupdate_sclk)
 			size += sysfs_emit_at(buf, size, "%3d %16s: %8d %16d %16d ",
-			i, amdgpu_pp_profile_name[i], smu7_profiling[i].sclk_up_hyst,
+			i, profile_name[i], smu7_profiling[i].sclk_up_hyst,
 			smu7_profiling[i].sclk_down_hyst,
 			smu7_profiling[i].sclk_activity);
 		else
 			size += sysfs_emit_at(buf, size, "%3d %16s: %8s %16s %16s ",
-			i, amdgpu_pp_profile_name[i], "-", "-", "-");
+			i, profile_name[i], "-", "-", "-");
 
 		if (smu7_profiling[i].bupdate_mclk)
 			size += sysfs_emit_at(buf, size, "%16d %16d %16d\n",

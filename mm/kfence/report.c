@@ -75,21 +75,15 @@ static int get_stack_skipnr(const unsigned long stack_entries[], int num_entries
 
 		if (str_has_prefix(buf, ARCH_FUNC_PREFIX "kfence_") ||
 		    str_has_prefix(buf, ARCH_FUNC_PREFIX "__kfence_") ||
-		    str_has_prefix(buf, ARCH_FUNC_PREFIX "__kmem_cache_free") ||
 		    !strncmp(buf, ARCH_FUNC_PREFIX "__slab_free", len)) {
 			/*
-			 * In case of tail calls from any of the below to any of
-			 * the above, optimized by the compiler such that the
-			 * stack trace would omit the initial entry point below.
+			 * In case of tail calls from any of the below
+			 * to any of the above.
 			 */
 			fallback = skipnr + 1;
 		}
 
-		/*
-		 * The below list should only include the initial entry points
-		 * into the slab allocators. Includes the *_bulk() variants by
-		 * checking prefixes.
-		 */
+		/* Also the *_bulk() variants by only checking prefixes. */
 		if (str_has_prefix(buf, ARCH_FUNC_PREFIX "kfree") ||
 		    str_has_prefix(buf, ARCH_FUNC_PREFIX "kmem_cache_free") ||
 		    str_has_prefix(buf, ARCH_FUNC_PREFIX "__kmalloc") ||
@@ -291,7 +285,7 @@ static void kfence_to_kp_stack(const struct kfence_track *track, void **kp_stack
 		kp_stack[j] = NULL;
 }
 
-bool __kfence_obj_info(struct kmem_obj_info *kpp, void *object, struct slab *slab)
+bool __kfence_obj_info(struct kmem_obj_info *kpp, void *object, struct page *page)
 {
 	struct kfence_metadata *meta = addr_to_metadata((unsigned long)object);
 	unsigned long flags;
@@ -311,7 +305,7 @@ bool __kfence_obj_info(struct kmem_obj_info *kpp, void *object, struct slab *sla
 
 	raw_spin_lock_irqsave(&meta->lock, flags);
 
-	kpp->kp_slab = slab;
+	kpp->kp_page = page;
 	kpp->kp_slab_cache = meta->cache;
 	kpp->kp_objp = (void *)meta->addr;
 	kfence_to_kp_stack(&meta->alloc_track, kpp->kp_stack);

@@ -37,7 +37,7 @@ struct vdso_image {
 extern const struct vdso_image vdso_image_64;
 #endif
 
-#ifdef CONFIG_X86_X32_ABI
+#ifdef CONFIG_X86_X32
 extern const struct vdso_image vdso_image_x32;
 #endif
 

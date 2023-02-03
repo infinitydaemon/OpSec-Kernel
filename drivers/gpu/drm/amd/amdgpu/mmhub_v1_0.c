@@ -302,10 +302,10 @@ static void mmhub_v1_0_update_power_gating(struct amdgpu_device *adev,
 	if (amdgpu_sriov_vf(adev))
 		return;
 
-	if (adev->pg_flags & AMD_PG_SUPPORT_MMHUB)
-		amdgpu_dpm_set_powergating_by_smu(adev,
-						  AMD_IP_BLOCK_TYPE_GMC,
-						  enable);
+	if (enable && adev->pg_flags & AMD_PG_SUPPORT_MMHUB) {
+		amdgpu_dpm_set_powergating_by_smu(adev, AMD_IP_BLOCK_TYPE_GMC, true);
+
+	}
 }
 
 static int mmhub_v1_0_gart_enable(struct amdgpu_device *adev)
@@ -547,7 +547,7 @@ static int mmhub_v1_0_set_clockgating(struct amdgpu_device *adev,
 	return 0;
 }
 
-static void mmhub_v1_0_get_clockgating(struct amdgpu_device *adev, u64 *flags)
+static void mmhub_v1_0_get_clockgating(struct amdgpu_device *adev, u32 *flags)
 {
 	int data, data1;
 
@@ -775,15 +775,11 @@ static void mmhub_v1_0_reset_ras_error_count(struct amdgpu_device *adev)
 	}
 }
 
-struct amdgpu_ras_block_hw_ops mmhub_v1_0_ras_hw_ops = {
+const struct amdgpu_mmhub_ras_funcs mmhub_v1_0_ras_funcs = {
+	.ras_late_init = amdgpu_mmhub_ras_late_init,
+	.ras_fini = amdgpu_mmhub_ras_fini,
 	.query_ras_error_count = mmhub_v1_0_query_ras_error_count,
 	.reset_ras_error_count = mmhub_v1_0_reset_ras_error_count,
-};
-
-struct amdgpu_mmhub_ras mmhub_v1_0_ras = {
-	.ras_block = {
-		.hw_ops = &mmhub_v1_0_ras_hw_ops,
-	},
 };
 
 const struct amdgpu_mmhub_funcs mmhub_v1_0_funcs = {

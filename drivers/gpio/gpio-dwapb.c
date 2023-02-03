@@ -15,6 +15,7 @@
 #include <linux/irq.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/property.h>
 #include <linux/reset.h>
@@ -52,9 +53,7 @@
 #define GPIO_SWPORT_DR_STRIDE	0x0c /* register stride 3*32 bits */
 #define GPIO_SWPORT_DDR_STRIDE	0x0c /* register stride 3*32 bits */
 
-#define GPIO_REG_OFFSET_V1	0
 #define GPIO_REG_OFFSET_V2	1
-#define GPIO_REG_OFFSET_MASK	BIT(0)
 
 #define GPIO_INTMASK_V2		0x44
 #define GPIO_INTTYPE_LEVEL_V2	0x34
@@ -95,6 +94,7 @@ struct dwapb_context {
 #endif
 
 struct dwapb_gpio_port_irqchip {
+	struct irq_chip		irqchip;
 	unsigned int		nr_irqs;
 	unsigned int		irq[DWAPB_MAX_GPIOS];
 };
@@ -141,7 +141,7 @@ static inline u32 gpio_reg_v2_convert(unsigned int offset)
 
 static inline u32 gpio_reg_convert(struct dwapb_gpio *gpio, unsigned int offset)
 {
-	if ((gpio->flags & GPIO_REG_OFFSET_MASK) == GPIO_REG_OFFSET_V2)
+	if (gpio->flags & GPIO_REG_OFFSET_V2)
 		return gpio_reg_v2_convert(offset);
 
 	return offset;
@@ -251,30 +251,24 @@ static void dwapb_irq_mask(struct irq_data *d)
 {
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
 	struct dwapb_gpio *gpio = to_dwapb_gpio(gc);
-	irq_hw_number_t hwirq = irqd_to_hwirq(d);
 	unsigned long flags;
 	u32 val;
 
 	raw_spin_lock_irqsave(&gc->bgpio_lock, flags);
-	val = dwapb_read(gpio, GPIO_INTMASK) | BIT(hwirq);
+	val = dwapb_read(gpio, GPIO_INTMASK) | BIT(irqd_to_hwirq(d));
 	dwapb_write(gpio, GPIO_INTMASK, val);
 	raw_spin_unlock_irqrestore(&gc->bgpio_lock, flags);
-
-	gpiochip_disable_irq(gc, hwirq);
 }
 
 static void dwapb_irq_unmask(struct irq_data *d)
 {
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
 	struct dwapb_gpio *gpio = to_dwapb_gpio(gc);
-	irq_hw_number_t hwirq = irqd_to_hwirq(d);
 	unsigned long flags;
 	u32 val;
 
-	gpiochip_enable_irq(gc, hwirq);
-
 	raw_spin_lock_irqsave(&gc->bgpio_lock, flags);
-	val = dwapb_read(gpio, GPIO_INTMASK) & ~BIT(hwirq);
+	val = dwapb_read(gpio, GPIO_INTMASK) & ~BIT(irqd_to_hwirq(d));
 	dwapb_write(gpio, GPIO_INTMASK, val);
 	raw_spin_unlock_irqrestore(&gc->bgpio_lock, flags);
 }
@@ -369,22 +363,7 @@ static int dwapb_irq_set_wake(struct irq_data *d, unsigned int enable)
 
 	return 0;
 }
-#else
-#define dwapb_irq_set_wake	NULL
 #endif
-
-static const struct irq_chip dwapb_irq_chip = {
-	.name		= DWAPB_DRIVER_NAME,
-	.irq_ack	= dwapb_irq_ack,
-	.irq_mask	= dwapb_irq_mask,
-	.irq_unmask	= dwapb_irq_unmask,
-	.irq_set_type	= dwapb_irq_set_type,
-	.irq_enable	= dwapb_irq_enable,
-	.irq_disable	= dwapb_irq_disable,
-	.irq_set_wake	= dwapb_irq_set_wake,
-	.flags		= IRQCHIP_IMMUTABLE,
-	GPIOCHIP_IRQ_RESOURCE_HELPERS,
-};
 
 static int dwapb_gpio_set_debounce(struct gpio_chip *gc,
 				   unsigned offset, unsigned debounce)
@@ -459,6 +438,16 @@ static void dwapb_configure_irqs(struct dwapb_gpio *gpio,
 	girq->default_type = IRQ_TYPE_NONE;
 
 	port->pirq = pirq;
+	pirq->irqchip.name = DWAPB_DRIVER_NAME;
+	pirq->irqchip.irq_ack = dwapb_irq_ack;
+	pirq->irqchip.irq_mask = dwapb_irq_mask;
+	pirq->irqchip.irq_unmask = dwapb_irq_unmask;
+	pirq->irqchip.irq_set_type = dwapb_irq_set_type;
+	pirq->irqchip.irq_enable = dwapb_irq_enable;
+	pirq->irqchip.irq_disable = dwapb_irq_disable;
+#ifdef CONFIG_PM_SLEEP
+	pirq->irqchip.irq_set_wake = dwapb_irq_set_wake;
+#endif
 
 	/*
 	 * Intel ACPI-based platforms mostly have the DesignWare APB GPIO
@@ -485,7 +474,7 @@ static void dwapb_configure_irqs(struct dwapb_gpio *gpio,
 		girq->parent_handler = dwapb_irq_handler;
 	}
 
-	gpio_irq_chip_set_chip(girq, &dwapb_irq_chip);
+	girq->chip = &pirq->irqchip;
 
 	return;
 
@@ -524,7 +513,9 @@ static int dwapb_gpio_add_port(struct dwapb_gpio *gpio,
 		return err;
 	}
 
-	port->gc.fwnode = pp->fwnode;
+#ifdef CONFIG_OF_GPIO
+	port->gc.of_node = to_of_node(pp->fwnode);
+#endif
 	port->gc.ngpio = pp->ngpio;
 	port->gc.base = pp->gpio_base;
 
@@ -676,15 +667,15 @@ static int dwapb_get_clks(struct dwapb_gpio *gpio)
 }
 
 static const struct of_device_id dwapb_of_match[] = {
-	{ .compatible = "snps,dw-apb-gpio", .data = (void *)GPIO_REG_OFFSET_V1},
+	{ .compatible = "snps,dw-apb-gpio", .data = (void *)0},
 	{ .compatible = "apm,xgene-gpio-v2", .data = (void *)GPIO_REG_OFFSET_V2},
 	{ /* Sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, dwapb_of_match);
 
 static const struct acpi_device_id dwapb_acpi_match[] = {
-	{"HISI0181", GPIO_REG_OFFSET_V1},
-	{"APMC0D07", GPIO_REG_OFFSET_V1},
+	{"HISI0181", 0},
+	{"APMC0D07", 0},
 	{"APMC0D81", GPIO_REG_OFFSET_V2},
 	{ }
 };

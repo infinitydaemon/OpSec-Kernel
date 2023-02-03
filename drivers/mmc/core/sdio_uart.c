@@ -28,7 +28,6 @@
 #include <linux/sched.h>
 #include <linux/mutex.h>
 #include <linux/seq_file.h>
-#include <linux/serial.h>
 #include <linux/serial_reg.h>
 #include <linux/circ_buf.h>
 #include <linux/tty.h>
@@ -246,12 +245,26 @@ static inline void sdio_uart_update_mctrl(struct sdio_uart_port *port,
 
 static void sdio_uart_change_speed(struct sdio_uart_port *port,
 				   struct ktermios *termios,
-				   const struct ktermios *old)
+				   struct ktermios *old)
 {
 	unsigned char cval, fcr = 0;
 	unsigned int baud, quot;
 
-	cval = UART_LCR_WLEN(tty_get_char_size(termios->c_cflag));
+	switch (termios->c_cflag & CSIZE) {
+	case CS5:
+		cval = UART_LCR_WLEN5;
+		break;
+	case CS6:
+		cval = UART_LCR_WLEN6;
+		break;
+	case CS7:
+		cval = UART_LCR_WLEN7;
+		break;
+	default:
+	case CS8:
+		cval = UART_LCR_WLEN8;
+		break;
+	}
 
 	if (termios->c_cflag & CSTOPB)
 		cval |= UART_LCR_STOP;
@@ -859,7 +872,7 @@ static void sdio_uart_unthrottle(struct tty_struct *tty)
 }
 
 static void sdio_uart_set_termios(struct tty_struct *tty,
-				  const struct ktermios *old_termios)
+						struct ktermios *old_termios)
 {
 	struct sdio_uart_port *port = tty->driver_data;
 	unsigned int cflag = tty->termios.c_cflag;

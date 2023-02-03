@@ -3,8 +3,6 @@
  * Copyright © 2014 Intel Corporation
  */
 
-#include "gem/i915_gem_internal.h"
-
 #include "i915_drv.h"
 #include "intel_renderstate.h"
 #include "intel_context.h"
@@ -215,7 +213,9 @@ int intel_renderstate_emit(struct intel_renderstate *so,
 	if (!so->vma)
 		return 0;
 
-	err = i915_vma_move_to_active(so->vma, rq, 0);
+	err = i915_request_await_object(rq, so->vma->obj, false);
+	if (err == 0)
+		err = i915_vma_move_to_active(so->vma, rq, 0);
 	if (err)
 		return err;
 

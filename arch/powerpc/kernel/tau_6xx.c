@@ -29,6 +29,7 @@
 #include <asm/cache.h>
 #include <asm/8xx_immap.h>
 #include <asm/machdep.h>
+#include <asm/asm-prototypes.h>
 
 #include "setup.h"
 

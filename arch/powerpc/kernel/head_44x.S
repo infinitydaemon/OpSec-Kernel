@@ -52,8 +52,8 @@
  *
  */
 	__HEAD
-_GLOBAL(_stext);
-_GLOBAL(_start);
+_ENTRY(_stext);
+_ENTRY(_start);
 	/*
 	 * Reserve a word at a fixed location to store the address
 	 * of abatron_pteptrs
@@ -109,7 +109,7 @@ _GLOBAL(_start);
 	lis	r1,init_thread_union@h
 	ori	r1,r1,init_thread_union@l
 	li	r0,0
-	stwu	r0,THREAD_SIZE-STACK_FRAME_MIN_SIZE(r1)
+	stwu	r0,THREAD_SIZE-STACK_FRAME_OVERHEAD(r1)
 
 	bl	early_init
 
@@ -334,10 +334,6 @@ interrupt_base:
 	mfspr	r12,SPRN_MMUCR
 	mfspr   r13,SPRN_PID		/* Get PID */
 	rlwimi	r12,r13,0,24,31		/* Set TID */
-#ifdef CONFIG_PPC_KUAP
-	cmpwi	r13,0
-	beq	2f			/* KUAP Fault */
-#endif
 
 4:
 	mtspr	SPRN_MMUCR,r12
@@ -448,10 +444,6 @@ interrupt_base:
 	mfspr	r12,SPRN_MMUCR
 	mfspr   r13,SPRN_PID		/* Get PID */
 	rlwimi	r12,r13,0,24,31		/* Set TID */
-#ifdef CONFIG_PPC_KUAP
-	cmpwi	r13,0
-	beq	2f			/* KUAP Fault */
-#endif
 
 4:
 	mtspr	SPRN_MMUCR,r12
@@ -540,7 +532,10 @@ finish_tlb_load_44x:
 	andi.	r10,r12,_PAGE_USER		/* User page ? */
 	beq	1f				/* nope, leave U bits empty */
 	rlwimi	r11,r11,3,26,28			/* yes, copy S bits to U */
-	rlwinm	r11,r11,0,~PPC44x_TLB_SX	/* Clear SX if User page */
+#ifdef CONFIG_PPC_KUEP
+0:	rlwinm	r11,r11,0,~PPC44x_TLB_SX	/* Clear SX if User page */
+	patch_site 0b, patch__tlb_44x_kuep
+#endif
 1:	tlbwe	r11,r13,PPC44x_TLB_ATTRIB	/* Write ATTRIB */
 
 	/* Done...restore registers and get out of here.
@@ -580,10 +575,6 @@ finish_tlb_load_44x:
 3:	mfspr	r11,SPRN_SPRG3
 	lwz	r11,PGDIR(r11)
 	mfspr   r12,SPRN_PID		/* Get PID */
-#ifdef CONFIG_PPC_KUAP
-	cmpwi	r12,0
-	beq	2f			/* KUAP Fault */
-#endif
 4:	mtspr	SPRN_MMUCR,r12		/* Set MMUCR */
 
 	/* Mask of required permission bits. Note that while we
@@ -681,10 +672,6 @@ finish_tlb_load_44x:
 3:	mfspr	r11,SPRN_SPRG_THREAD
 	lwz	r11,PGDIR(r11)
 	mfspr   r12,SPRN_PID		/* Get PID */
-#ifdef CONFIG_PPC_KUAP
-	cmpwi	r12,0
-	beq	2f			/* KUAP Fault */
-#endif
 4:	mtspr	SPRN_MMUCR,r12		/* Set MMUCR */
 
 	/* Make up the required permissions */
@@ -760,7 +747,10 @@ finish_tlb_load_47x:
 	andi.	r10,r12,_PAGE_USER		/* User page ? */
 	beq	1f				/* nope, leave U bits empty */
 	rlwimi	r11,r11,3,26,28			/* yes, copy S bits to U */
-	rlwinm	r11,r11,0,~PPC47x_TLB2_SX	/* Clear SX if User page */
+#ifdef CONFIG_PPC_KUEP
+0:	rlwinm	r11,r11,0,~PPC47x_TLB2_SX	/* Clear SX if User page */
+	patch_site 0b, patch__tlb_47x_kuep
+#endif
 1:	tlbwe	r11,r13,2
 
 	/* Done...restore registers and get out of here.
@@ -1012,7 +1002,7 @@ _GLOBAL(start_secondary_47x)
 	 */
 	lis	r1,temp_boot_stack@h
 	ori	r1,r1,temp_boot_stack@l
-	addi	r1,r1,1024-STACK_FRAME_MIN_SIZE
+	addi	r1,r1,1024-STACK_FRAME_OVERHEAD
 	li	r0,0
 	stw	r0,0(r1)
 	bl	mmu_init_secondary
@@ -1025,7 +1015,7 @@ _GLOBAL(start_secondary_47x)
 	lwz	r1,TASK_STACK(r2)
 
 	/* Current stack pointer */
-	addi	r1,r1,THREAD_SIZE-STACK_FRAME_MIN_SIZE
+	addi	r1,r1,THREAD_SIZE-STACK_FRAME_OVERHEAD
 	li	r0,0
 	stw	r0,0(r1)
 

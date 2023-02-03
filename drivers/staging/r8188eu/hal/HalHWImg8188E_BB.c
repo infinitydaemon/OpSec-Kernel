@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /* Copyright(c) 2007 - 2011 Realtek Corporation. */
 
+#include "../include/odm_precomp.h"
 #include "../include/rtw_iol.h"
 
 #define read_next_pair(array, v1, v2, i)		\
@@ -12,12 +13,17 @@
 
 static bool CheckCondition(const u32  condition, const u32  hex)
 {
+	u32 _board     = (hex & 0x000000FF);
 	u32 _interface = (hex & 0x0000FF00) >> 8;
 	u32 _platform  = (hex & 0x00FF0000) >> 16;
 	u32 cond = condition;
 
 	if (condition == 0xCDCDCDCD)
 		return true;
+
+	cond = condition & 0x000000FF;
+	if ((_board == cond) && cond != 0x00)
+		return false;
 
 	cond = condition & 0x0000FF00;
 	cond = cond >> 8;
@@ -166,26 +172,24 @@ static u32 array_agc_tab_1t_8188e[] = {
 		0xC78, 0x407F0001,
 };
 
-static void odm_ConfigBB_AGC_8188E(struct odm_dm_struct *pDM_Odm, u32 Addr, u32 Bitmask, u32 Data)
-{
-	rtl8188e_PHY_SetBBReg(pDM_Odm->Adapter, Addr, Bitmask, Data);
-	/*  Add 1us delay between BB/RF register setting. */
-	udelay(1);
-}
-
-int ODM_ReadAndConfig_AGC_TAB_1T_8188E(struct odm_dm_struct *dm_odm)
+enum HAL_STATUS ODM_ReadAndConfig_AGC_TAB_1T_8188E(struct odm_dm_struct *dm_odm)
 {
 	u32     hex         = 0;
 	u32     i           = 0;
-	u32     arraylen    = ARRAY_SIZE(array_agc_tab_1t_8188e);
+	u8     platform    = dm_odm->SupportPlatform;
+	u8     interfaceValue   = dm_odm->SupportInterface;
+	u8     board       = dm_odm->BoardType;
+	u32     arraylen    = sizeof(array_agc_tab_1t_8188e) / sizeof(u32);
 	u32    *array       = array_agc_tab_1t_8188e;
 	bool		biol = false;
 	struct adapter *adapter =  dm_odm->Adapter;
 	struct xmit_frame *pxmit_frame = NULL;
 	u8 bndy_cnt = 1;
+	enum HAL_STATUS rst = HAL_STATUS_SUCCESS;
 
-	hex += ODM_ITRF_USB << 8;
-	hex += ODM_CE << 16;
+	hex += board;
+	hex += interfaceValue << 8;
+	hex += platform << 16;
 	hex += 0xFF000000;
 	biol = rtw_IOL_applied(adapter);
 
@@ -193,7 +197,7 @@ int ODM_ReadAndConfig_AGC_TAB_1T_8188E(struct odm_dm_struct *dm_odm)
 		pxmit_frame = rtw_IOL_accquire_xmit_frame(adapter);
 		if (!pxmit_frame) {
 			pr_info("rtw_IOL_accquire_xmit_frame failed\n");
-			return -ENOMEM;
+			return HAL_STATUS_FAILURE;
 		}
 	}
 
@@ -242,12 +246,12 @@ int ODM_ReadAndConfig_AGC_TAB_1T_8188E(struct odm_dm_struct *dm_odm)
 		}
 	}
 	if (biol) {
-		if (!rtl8188e_IOL_exec_cmds_sync(dm_odm->Adapter, pxmit_frame, 1000, bndy_cnt)) {
+		if (!rtw_IOL_exec_cmds_sync(dm_odm->Adapter, pxmit_frame, 1000, bndy_cnt)) {
 			printk("~~~ %s IOL_exec_cmds Failed !!!\n", __func__);
-			return -1;
+			rst = HAL_STATUS_FAILURE;
 		}
 	}
-	return 0;
+	return rst;
 }
 
 /******************************************************************************
@@ -448,42 +452,23 @@ static u32 array_phy_reg_1t_8188e[] = {
 		0xF00, 0x00000300,
 };
 
-static void odm_ConfigBB_PHY_8188E(struct odm_dm_struct *pDM_Odm, u32 Addr, u32 Bitmask, u32 Data)
-{
-	if (Addr == 0xfe) {
-		msleep(50);
-	} else if (Addr == 0xfd) {
-		mdelay(5);
-	} else if (Addr == 0xfc) {
-		mdelay(1);
-	} else if (Addr == 0xfb) {
-		udelay(50);
-	} else if (Addr == 0xfa) {
-		udelay(5);
-	} else if (Addr == 0xf9) {
-		udelay(1);
-	} else {
-		if (Addr == 0xa24)
-			pDM_Odm->RFCalibrateInfo.RegA24 = Data;
-		rtl8188e_PHY_SetBBReg(pDM_Odm->Adapter, Addr, Bitmask, Data);
-
-		/*  Add 1us delay between BB/RF register setting. */
-		udelay(1);
-	}
-}
-
-int ODM_ReadAndConfig_PHY_REG_1T_8188E(struct odm_dm_struct *dm_odm)
+enum HAL_STATUS ODM_ReadAndConfig_PHY_REG_1T_8188E(struct odm_dm_struct *dm_odm)
 {
 	u32     hex         = 0;
 	u32     i           = 0;
-	u32     arraylen    = ARRAY_SIZE(array_phy_reg_1t_8188e);
+	u8     platform    = dm_odm->SupportPlatform;
+	u8     interfaceValue   = dm_odm->SupportInterface;
+	u8     board       = dm_odm->BoardType;
+	u32     arraylen    = sizeof(array_phy_reg_1t_8188e) / sizeof(u32);
 	u32    *array       = array_phy_reg_1t_8188e;
 	bool	biol = false;
 	struct adapter *adapter =  dm_odm->Adapter;
 	struct xmit_frame *pxmit_frame = NULL;
 	u8 bndy_cnt = 1;
-	hex += ODM_ITRF_USB << 8;
-	hex += ODM_CE << 16;
+	enum HAL_STATUS rst = HAL_STATUS_SUCCESS;
+	hex += board;
+	hex += interfaceValue << 8;
+	hex += platform << 16;
 	hex += 0xFF000000;
 	biol = rtw_IOL_applied(adapter);
 
@@ -491,7 +476,7 @@ int ODM_ReadAndConfig_PHY_REG_1T_8188E(struct odm_dm_struct *dm_odm)
 		pxmit_frame = rtw_IOL_accquire_xmit_frame(adapter);
 		if (!pxmit_frame) {
 			pr_info("rtw_IOL_accquire_xmit_frame failed\n");
-			return -ENOMEM;
+			return HAL_STATUS_FAILURE;
 		}
 	}
 
@@ -572,12 +557,12 @@ int ODM_ReadAndConfig_PHY_REG_1T_8188E(struct odm_dm_struct *dm_odm)
 		}
 	}
 	if (biol) {
-		if (!rtl8188e_IOL_exec_cmds_sync(dm_odm->Adapter, pxmit_frame, 1000, bndy_cnt)) {
+		if (!rtw_IOL_exec_cmds_sync(dm_odm->Adapter, pxmit_frame, 1000, bndy_cnt)) {
+			rst = HAL_STATUS_FAILURE;
 			pr_info("~~~ IOL Config %s Failed !!!\n", __func__);
-			return -1;
 		}
 	}
-	return 0;
+	return rst;
 }
 
 /******************************************************************************
@@ -676,34 +661,18 @@ static u32 array_phy_reg_pg_8188e[] = {
 
 };
 
-static void odm_ConfigBB_PHY_REG_PG_8188E(struct odm_dm_struct *pDM_Odm, u32 Addr, u32 Bitmask,
-					  u32 Data)
-{
-	if (Addr == 0xfe)
-		msleep(50);
-	else if (Addr == 0xfd)
-		mdelay(5);
-	else if (Addr == 0xfc)
-		mdelay(1);
-	else if (Addr == 0xfb)
-		udelay(50);
-	else if (Addr == 0xfa)
-		udelay(5);
-	else if (Addr == 0xf9)
-		udelay(1);
-	else
-		storePwrIndexDiffRateOffset(pDM_Odm->Adapter, Addr, Bitmask, Data);
-}
-
 void ODM_ReadAndConfig_PHY_REG_PG_8188E(struct odm_dm_struct *dm_odm)
 {
 	u32  hex;
 	u32  i           = 0;
-	u32  arraylen    = ARRAY_SIZE(array_phy_reg_pg_8188e);
+	u8  platform    = dm_odm->SupportPlatform;
+	u8  interfaceValue   = dm_odm->SupportInterface;
+	u8  board       = dm_odm->BoardType;
+	u32  arraylen    = sizeof(array_phy_reg_pg_8188e) / sizeof(u32);
 	u32 *array       = array_phy_reg_pg_8188e;
 
-	hex = ODM_ITRF_USB << 8;
-	hex += (ODM_CE << 16) + 0xFF000000;
+	hex = board + (interfaceValue << 8);
+	hex += (platform << 16) + 0xFF000000;
 
 	for (i = 0; i < arraylen; i += 3) {
 		u32 v1 = array[i];

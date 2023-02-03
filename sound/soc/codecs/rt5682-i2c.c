@@ -118,7 +118,8 @@ static void rt5682_i2c_disable_regulators(void *data)
 	regulator_bulk_disable(ARRAY_SIZE(rt5682->supplies), rt5682->supplies);
 }
 
-static int rt5682_i2c_probe(struct i2c_client *i2c)
+static int rt5682_i2c_probe(struct i2c_client *i2c,
+		const struct i2c_device_id *id)
 {
 	struct rt5682_platform_data *pdata = dev_get_platdata(&i2c->dev);
 	struct rt5682_priv *rt5682;
@@ -273,9 +274,14 @@ static int rt5682_i2c_probe(struct i2c_client *i2c)
 
 #ifdef CONFIG_COMMON_CLK
 	/* Check if MCLK provided */
-	rt5682->mclk = devm_clk_get_optional(&i2c->dev, "mclk");
-	if (IS_ERR(rt5682->mclk))
-		return PTR_ERR(rt5682->mclk);
+	rt5682->mclk = devm_clk_get(&i2c->dev, "mclk");
+	if (IS_ERR(rt5682->mclk)) {
+		if (PTR_ERR(rt5682->mclk) != -ENOENT) {
+			ret = PTR_ERR(rt5682->mclk);
+			return ret;
+		}
+		rt5682->mclk = NULL;
+	}
 
 	/* Register CCF DAI clock control */
 	ret = rt5682_register_dai_clks(rt5682);
@@ -302,9 +308,11 @@ static void rt5682_i2c_shutdown(struct i2c_client *client)
 	rt5682_reset(rt5682);
 }
 
-static void rt5682_i2c_remove(struct i2c_client *client)
+static int rt5682_i2c_remove(struct i2c_client *client)
 {
 	rt5682_i2c_shutdown(client);
+
+	return 0;
 }
 
 static const struct of_device_id rt5682_of_match[] = {
@@ -332,7 +340,7 @@ static struct i2c_driver rt5682_i2c_driver = {
 		.acpi_match_table = rt5682_acpi_match,
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 	},
-	.probe_new = rt5682_i2c_probe,
+	.probe = rt5682_i2c_probe,
 	.remove = rt5682_i2c_remove,
 	.shutdown = rt5682_i2c_shutdown,
 	.id_table = rt5682_i2c_id,

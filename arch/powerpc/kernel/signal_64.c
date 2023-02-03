@@ -66,11 +66,6 @@ struct rt_sigframe {
 	char abigap[USER_REDZONE_SIZE];
 } __attribute__ ((aligned (16)));
 
-unsigned long get_min_sigframe_size_64(void)
-{
-	return sizeof(struct rt_sigframe) + __SIGNAL_FRAMESIZE;
-}
-
 /*
  * This computes a quad word aligned pointer inside the vmx_reserve array
  * element. For historical reasons sigcontext might not be quad word aligned,
@@ -128,7 +123,7 @@ static long notrace __unsafe_setup_sigcontext(struct sigcontext __user *sc,
 #endif
 	struct pt_regs *regs = tsk->thread.regs;
 	unsigned long msr = regs->msr;
-	/* Force usr to always see softe as 1 (interrupts enabled) */
+	/* Force usr to alway see softe as 1 (interrupts enabled) */
 	unsigned long softe = 0x1;
 
 	BUG_ON(tsk != current);
@@ -377,12 +372,9 @@ static long notrace __unsafe_restore_sigcontext(struct task_struct *tsk, sigset_
 		unsafe_get_user(set->sig[0], &sc->oldmask, efault_out);
 
 	/*
-	 * Force reload of FP/VEC/VSX so userspace sees any changes.
-	 * Clear these bits from the user process' MSR before copying into the
-	 * thread struct. If we are rescheduled or preempted and another task
-	 * uses FP/VEC/VSX, and this process has the MSR bits set, then the
-	 * context switch code will save the current CPU state into the
-	 * thread_struct - possibly overwriting the data we are updating here.
+	 * Force reload of FP/VEC.
+	 * This has to be done before copying stuff into tsk->thread.fpr/vr
+	 * for the reasons explained in the previous comment.
 	 */
 	regs_set_return_msr(regs, regs->msr & ~(MSR_FP | MSR_FE0 | MSR_FE1 | MSR_VEC | MSR_VSX));
 
@@ -944,11 +936,11 @@ int handle_rt_signal64(struct ksignal *ksig, sigset_t *set,
 		 * descriptor is the entry address of signal and the second
 		 * entry is the TOC value we need to use.
 		 */
-		struct func_desc __user *ptr =
-			(struct func_desc __user *)ksig->ka.sa.sa_handler;
+		func_descr_t __user *funct_desc_ptr =
+			(func_descr_t __user *) ksig->ka.sa.sa_handler;
 
-		err |= get_user(regs->ctr, &ptr->addr);
-		err |= get_user(regs->gpr[2], &ptr->toc);
+		err |= get_user(regs->ctr, &funct_desc_ptr->entry);
+		err |= get_user(regs->gpr[2], &funct_desc_ptr->toc);
 	}
 
 	/* enter the signal handler in native-endian mode */

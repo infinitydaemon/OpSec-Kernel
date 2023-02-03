@@ -227,14 +227,10 @@ struct NCR5380_hostdata {
 };
 
 struct NCR5380_cmd {
-	char *ptr;
-	int this_residual;
-	struct scatterlist *buffer;
-	int status;
-	int message;
-	int phase;
 	struct list_head list;
 };
+
+#define NCR5380_CMD_SIZE		(sizeof(struct NCR5380_cmd))
 
 #define NCR5380_PIO_CHUNK_SIZE		256
 
@@ -244,11 +240,6 @@ struct NCR5380_cmd {
 static inline struct scsi_cmnd *NCR5380_to_scmd(struct NCR5380_cmd *ncmd_ptr)
 {
 	return ((struct scsi_cmnd *)ncmd_ptr) - 1;
-}
-
-static inline struct NCR5380_cmd *NCR5380_to_ncmd(struct scsi_cmnd *cmd)
-{
-	return scsi_cmd_priv(cmd);
 }
 
 #ifndef NDEBUG

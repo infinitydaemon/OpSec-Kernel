@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <string.h>
+#include <sys/resource.h>
 
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
@@ -146,8 +147,7 @@ int main(int ac, char **argv)
 	signal(SIGINT, int_exit);
 	signal(SIGTERM, int_exit);
 
-	/* start 'ping' in the background to have some kfree_skb_reason
-	 * events */
+	/* start 'ping' in the background to have some kfree_skb events */
 	f = popen("ping -4 -c5 localhost", "r");
 	(void) f;
 

@@ -190,7 +190,8 @@ static void __init sama5d4_pmc_setup(struct device_node *np)
 	hw = at91_clk_register_master_pres(regmap, "masterck_pres", 4,
 					   parent_names,
 					   &at91sam9x5_master_layout,
-					   &mck_characteristics, &mck_lock);
+					   &mck_characteristics, &mck_lock,
+					   CLK_SET_RATE_GATE, INT_MIN);
 	if (IS_ERR(hw))
 		goto err_free;
 
@@ -198,7 +199,7 @@ static void __init sama5d4_pmc_setup(struct device_node *np)
 					  "masterck_pres",
 					  &at91sam9x5_master_layout,
 					  &mck_characteristics, &mck_lock,
-					  CLK_SET_RATE_GATE, 0);
+					  CLK_SET_RATE_GATE);
 	if (IS_ERR(hw))
 		goto err_free;
 

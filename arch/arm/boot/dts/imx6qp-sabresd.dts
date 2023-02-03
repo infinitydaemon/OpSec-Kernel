@@ -50,12 +50,8 @@
 	};
 };
 
-&vgen3_reg {
-	regulator-always-on;
-};
-
 &pcie {
-	status = "okay";
+	status = "disabled";
 };
 
 &sata {

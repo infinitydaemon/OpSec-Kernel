@@ -293,7 +293,7 @@ static int fm2fb_probe(struct zorro_dev *z, const struct zorro_device_id *id)
 	return 0;
 }
 
-static int __init fm2fb_setup(char *options)
+int __init fm2fb_setup(char *options)
 {
 	char *this_opt;
 
@@ -309,7 +309,7 @@ static int __init fm2fb_setup(char *options)
 	return 0;
 }
 
-static int __init fm2fb_init(void)
+int __init fm2fb_init(void)
 {
 	char *option = NULL;
 

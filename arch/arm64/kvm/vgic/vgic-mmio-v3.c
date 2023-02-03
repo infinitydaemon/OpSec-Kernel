@@ -155,27 +155,13 @@ static int vgic_mmio_uaccess_write_v3_misc(struct kvm_vcpu *vcpu,
 					   unsigned long val)
 {
 	struct vgic_dist *dist = &vcpu->kvm->arch.vgic;
-	u32 reg;
 
 	switch (addr & 0x0c) {
 	case GICD_TYPER2:
+	case GICD_IIDR:
 		if (val != vgic_mmio_read_v3_misc(vcpu, addr, len))
 			return -EINVAL;
 		return 0;
-	case GICD_IIDR:
-		reg = vgic_mmio_read_v3_misc(vcpu, addr, len);
-		if ((reg ^ val) & ~GICD_IIDR_REVISION_MASK)
-			return -EINVAL;
-
-		reg = FIELD_GET(GICD_IIDR_REVISION_MASK, reg);
-		switch (reg) {
-		case KVM_VGIC_IMP_REV_2:
-		case KVM_VGIC_IMP_REV_3:
-			dist->implementation_rev = reg;
-			return 0;
-		default:
-			return -EINVAL;
-		}
 	case GICD_CTLR:
 		/* Not a GICv4.1? No HW SGIs */
 		if (!kvm_vgic_global_state.has_gicv4_1)
@@ -235,58 +221,34 @@ static void vgic_mmio_write_irouter(struct kvm_vcpu *vcpu,
 	vgic_put_irq(vcpu->kvm, irq);
 }
 
-bool vgic_lpis_enabled(struct kvm_vcpu *vcpu)
-{
-	struct vgic_cpu *vgic_cpu = &vcpu->arch.vgic_cpu;
-
-	return atomic_read(&vgic_cpu->ctlr) == GICR_CTLR_ENABLE_LPIS;
-}
-
 static unsigned long vgic_mmio_read_v3r_ctlr(struct kvm_vcpu *vcpu,
 					     gpa_t addr, unsigned int len)
 {
 	struct vgic_cpu *vgic_cpu = &vcpu->arch.vgic_cpu;
-	unsigned long val;
 
-	val = atomic_read(&vgic_cpu->ctlr);
-	if (vgic_get_implementation_rev(vcpu) >= KVM_VGIC_IMP_REV_3)
-		val |= GICR_CTLR_IR | GICR_CTLR_CES;
-
-	return val;
+	return vgic_cpu->lpis_enabled ? GICR_CTLR_ENABLE_LPIS : 0;
 }
+
 
 static void vgic_mmio_write_v3r_ctlr(struct kvm_vcpu *vcpu,
 				     gpa_t addr, unsigned int len,
 				     unsigned long val)
 {
 	struct vgic_cpu *vgic_cpu = &vcpu->arch.vgic_cpu;
-	u32 ctlr;
+	bool was_enabled = vgic_cpu->lpis_enabled;
 
 	if (!vgic_has_its(vcpu->kvm))
 		return;
 
-	if (!(val & GICR_CTLR_ENABLE_LPIS)) {
-		/*
-		 * Don't disable if RWP is set, as there already an
-		 * ongoing disable. Funky guest...
-		 */
-		ctlr = atomic_cmpxchg_acquire(&vgic_cpu->ctlr,
-					      GICR_CTLR_ENABLE_LPIS,
-					      GICR_CTLR_RWP);
-		if (ctlr != GICR_CTLR_ENABLE_LPIS)
-			return;
+	vgic_cpu->lpis_enabled = val & GICR_CTLR_ENABLE_LPIS;
 
+	if (was_enabled && !vgic_cpu->lpis_enabled) {
 		vgic_flush_pending_lpis(vcpu);
 		vgic_its_invalidate_cache(vcpu->kvm);
-		atomic_set_release(&vgic_cpu->ctlr, 0);
-	} else {
-		ctlr = atomic_cmpxchg_acquire(&vgic_cpu->ctlr, 0,
-					      GICR_CTLR_ENABLE_LPIS);
-		if (ctlr != 0)
-			return;
-
-		vgic_enable_lpis(vcpu);
 	}
+
+	if (!was_enabled && vgic_cpu->lpis_enabled)
+		vgic_enable_lpis(vcpu);
 }
 
 static bool vgic_mmio_vcpu_rdist_is_last(struct kvm_vcpu *vcpu)
@@ -351,6 +313,42 @@ static unsigned long vgic_mmio_read_v3_idregs(struct kvm_vcpu *vcpu,
 	}
 
 	return 0;
+}
+
+static unsigned long vgic_v3_uaccess_read_pending(struct kvm_vcpu *vcpu,
+						  gpa_t addr, unsigned int len)
+{
+	u32 intid = VGIC_ADDR_TO_INTID(addr, 1);
+	u32 value = 0;
+	int i;
+
+	/*
+	 * pending state of interrupt is latched in pending_latch variable.
+	 * Userspace will save and restore pending state and line_level
+	 * separately.
+	 * Refer to Documentation/virt/kvm/devices/arm-vgic-v3.rst
+	 * for handling of ISPENDR and ICPENDR.
+	 */
+	for (i = 0; i < len * 8; i++) {
+		struct vgic_irq *irq = vgic_get_irq(vcpu->kvm, vcpu, intid + i);
+		bool state = irq->pending_latch;
+
+		if (irq->hw && vgic_irq_is_sgi(irq->intid)) {
+			int err;
+
+			err = irq_get_irqchip_state(irq->host_irq,
+						    IRQCHIP_STATE_PENDING,
+						    &state);
+			WARN_ON(err);
+		}
+
+		if (state)
+			value |= (1U << i);
+
+		vgic_put_irq(vcpu->kvm, irq);
+	}
+
+	return value;
 }
 
 static int vgic_v3_uaccess_write_pending(struct kvm_vcpu *vcpu,
@@ -480,10 +478,11 @@ static void vgic_mmio_write_propbase(struct kvm_vcpu *vcpu,
 				     unsigned long val)
 {
 	struct vgic_dist *dist = &vcpu->kvm->arch.vgic;
+	struct vgic_cpu *vgic_cpu = &vcpu->arch.vgic_cpu;
 	u64 old_propbaser, propbaser;
 
 	/* Storing a value with LPIs already enabled is undefined */
-	if (vgic_lpis_enabled(vcpu))
+	if (vgic_cpu->lpis_enabled)
 		return;
 
 	do {
@@ -514,7 +513,7 @@ static void vgic_mmio_write_pendbase(struct kvm_vcpu *vcpu,
 	u64 old_pendbaser, pendbaser;
 
 	/* Storing a value with LPIs already enabled is undefined */
-	if (vgic_lpis_enabled(vcpu))
+	if (vgic_cpu->lpis_enabled)
 		return;
 
 	do {
@@ -524,63 +523,6 @@ static void vgic_mmio_write_pendbase(struct kvm_vcpu *vcpu,
 		pendbaser = vgic_sanitise_pendbaser(pendbaser);
 	} while (cmpxchg64(&vgic_cpu->pendbaser, old_pendbaser,
 			   pendbaser) != old_pendbaser);
-}
-
-static unsigned long vgic_mmio_read_sync(struct kvm_vcpu *vcpu,
-					 gpa_t addr, unsigned int len)
-{
-	return !!atomic_read(&vcpu->arch.vgic_cpu.syncr_busy);
-}
-
-static void vgic_set_rdist_busy(struct kvm_vcpu *vcpu, bool busy)
-{
-	if (busy) {
-		atomic_inc(&vcpu->arch.vgic_cpu.syncr_busy);
-		smp_mb__after_atomic();
-	} else {
-		smp_mb__before_atomic();
-		atomic_dec(&vcpu->arch.vgic_cpu.syncr_busy);
-	}
-}
-
-static void vgic_mmio_write_invlpi(struct kvm_vcpu *vcpu,
-				   gpa_t addr, unsigned int len,
-				   unsigned long val)
-{
-	struct vgic_irq *irq;
-
-	/*
-	 * If the guest wrote only to the upper 32bit part of the
-	 * register, drop the write on the floor, as it is only for
-	 * vPEs (which we don't support for obvious reasons).
-	 *
-	 * Also discard the access if LPIs are not enabled.
-	 */
-	if ((addr & 4) || !vgic_lpis_enabled(vcpu))
-		return;
-
-	vgic_set_rdist_busy(vcpu, true);
-
-	irq = vgic_get_irq(vcpu->kvm, NULL, lower_32_bits(val));
-	if (irq) {
-		vgic_its_inv_lpi(vcpu->kvm, irq);
-		vgic_put_irq(vcpu->kvm, irq);
-	}
-
-	vgic_set_rdist_busy(vcpu, false);
-}
-
-static void vgic_mmio_write_invall(struct kvm_vcpu *vcpu,
-				   gpa_t addr, unsigned int len,
-				   unsigned long val)
-{
-	/* See vgic_mmio_write_invlpi() for the early return rationale */
-	if ((addr & 4) || !vgic_lpis_enabled(vcpu))
-		return;
-
-	vgic_set_rdist_busy(vcpu, true);
-	vgic_its_invall(vcpu);
-	vgic_set_rdist_busy(vcpu, false);
 }
 
 /*
@@ -630,7 +572,7 @@ static const struct vgic_register_region vgic_v3_dist_registers[] = {
 		VGIC_ACCESS_32bit),
 	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ISPENDR,
 		vgic_mmio_read_pending, vgic_mmio_write_spending,
-		vgic_uaccess_read_pending, vgic_v3_uaccess_write_pending, 1,
+		vgic_v3_uaccess_read_pending, vgic_v3_uaccess_write_pending, 1,
 		VGIC_ACCESS_32bit),
 	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ICPENDR,
 		vgic_mmio_read_pending, vgic_mmio_write_cpending,
@@ -688,15 +630,6 @@ static const struct vgic_register_region vgic_v3_rd_registers[] = {
 	REGISTER_DESC_WITH_LENGTH(GICR_PENDBASER,
 		vgic_mmio_read_pendbase, vgic_mmio_write_pendbase, 8,
 		VGIC_ACCESS_64bit | VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_INVLPIR,
-		vgic_mmio_read_raz, vgic_mmio_write_invlpi, 8,
-		VGIC_ACCESS_64bit | VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_INVALLR,
-		vgic_mmio_read_raz, vgic_mmio_write_invall, 8,
-		VGIC_ACCESS_64bit | VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_SYNCR,
-		vgic_mmio_read_sync, vgic_mmio_write_wi, 4,
-		VGIC_ACCESS_32bit),
 	REGISTER_DESC_WITH_LENGTH(GICR_IDREGS,
 		vgic_mmio_read_v3_idregs, vgic_mmio_write_wi, 48,
 		VGIC_ACCESS_32bit),
@@ -714,7 +647,7 @@ static const struct vgic_register_region vgic_v3_rd_registers[] = {
 		VGIC_ACCESS_32bit),
 	REGISTER_DESC_WITH_LENGTH_UACCESS(SZ_64K + GICR_ISPENDR0,
 		vgic_mmio_read_pending, vgic_mmio_write_spending,
-		vgic_uaccess_read_pending, vgic_v3_uaccess_write_pending, 4,
+		vgic_v3_uaccess_read_pending, vgic_v3_uaccess_write_pending, 4,
 		VGIC_ACCESS_32bit),
 	REGISTER_DESC_WITH_LENGTH_UACCESS(SZ_64K + GICR_ICPENDR0,
 		vgic_mmio_read_pending, vgic_mmio_write_cpending,
@@ -821,8 +754,7 @@ static void vgic_unregister_redist_iodev(struct kvm_vcpu *vcpu)
 static int vgic_register_all_redist_iodevs(struct kvm *kvm)
 {
 	struct kvm_vcpu *vcpu;
-	unsigned long c;
-	int ret = 0;
+	int c, ret = 0;
 
 	kvm_for_each_vcpu(c, vcpu, kvm) {
 		ret = vgic_register_redist_iodev(vcpu);
@@ -831,12 +763,10 @@ static int vgic_register_all_redist_iodevs(struct kvm *kvm)
 	}
 
 	if (ret) {
-		/* The current c failed, so iterate over the previous ones. */
-		int i;
-
+		/* The current c failed, so we start with the previous one. */
 		mutex_lock(&kvm->slots_lock);
-		for (i = 0; i < c; i++) {
-			vcpu = kvm_get_vcpu(kvm, i);
+		for (c--; c >= 0; c--) {
+			vcpu = kvm_get_vcpu(kvm, c);
 			vgic_unregister_redist_iodev(vcpu);
 		}
 		mutex_unlock(&kvm->slots_lock);
@@ -866,9 +796,7 @@ static int vgic_v3_alloc_redist_region(struct kvm *kvm, uint32_t index,
 	struct vgic_dist *d = &kvm->arch.vgic;
 	struct vgic_redist_region *rdreg;
 	struct list_head *rd_regions = &d->rd_regions;
-	int nr_vcpus = atomic_read(&kvm->online_vcpus);
-	size_t size = count ? count * KVM_VGIC_V3_REDIST_SIZE
-			    : nr_vcpus * KVM_VGIC_V3_REDIST_SIZE;
+	size_t size = count * KVM_VGIC_V3_REDIST_SIZE;
 	int ret;
 
 	/* cross the end of memory ? */
@@ -906,13 +834,13 @@ static int vgic_v3_alloc_redist_region(struct kvm *kvm, uint32_t index,
 	if (vgic_v3_rdist_overlap(kvm, base, size))
 		return -EINVAL;
 
-	rdreg = kzalloc(sizeof(*rdreg), GFP_KERNEL_ACCOUNT);
+	rdreg = kzalloc(sizeof(*rdreg), GFP_KERNEL);
 	if (!rdreg)
 		return -ENOMEM;
 
 	rdreg->base = VGIC_ADDR_UNDEF;
 
-	ret = vgic_check_iorange(kvm, rdreg->base, base, SZ_64K, size);
+	ret = vgic_check_ioaddr(kvm, &rdreg->base, base, SZ_64K);
 	if (ret)
 		goto free;
 
@@ -986,8 +914,12 @@ int vgic_v3_has_attr_regs(struct kvm_device *dev, struct kvm_device_attr *attr)
 		iodev.base_addr = 0;
 		break;
 	}
-	case KVM_DEV_ARM_VGIC_GRP_CPU_SYSREGS:
-		return vgic_v3_has_cpu_sysregs_attr(vcpu, attr);
+	case KVM_DEV_ARM_VGIC_GRP_CPU_SYSREGS: {
+		u64 reg, id;
+
+		id = (attr->attr & KVM_DEV_ARM_VGIC_SYSREG_INSTR_MASK);
+		return vgic_v3_has_cpu_sysregs_attr(vcpu, 0, id, &reg);
+	}
 	default:
 		return -ENXIO;
 	}
@@ -1061,10 +993,10 @@ void vgic_v3_dispatch_sgi(struct kvm_vcpu *vcpu, u64 reg, bool allow_group1)
 	struct kvm_vcpu *c_vcpu;
 	u16 target_cpus;
 	u64 mpidr;
-	int sgi;
+	int sgi, c;
 	int vcpu_id = vcpu->vcpu_id;
 	bool broadcast;
-	unsigned long c, flags;
+	unsigned long flags;
 
 	sgi = (reg & ICC_SGI1R_SGI_ID_MASK) >> ICC_SGI1R_SGI_ID_SHIFT;
 	broadcast = reg & BIT_ULL(ICC_SGI1R_IRQ_ROUTING_MODE_BIT);
@@ -1154,7 +1086,7 @@ int vgic_v3_redist_uaccess(struct kvm_vcpu *vcpu, bool is_write,
 }
 
 int vgic_v3_line_level_info_uaccess(struct kvm_vcpu *vcpu, bool is_write,
-				    u32 intid, u32 *val)
+				    u32 intid, u64 *val)
 {
 	if (intid % 32)
 		return -EINVAL;

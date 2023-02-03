@@ -99,7 +99,7 @@ static void df_v1_7_update_medium_grain_clock_gating(struct amdgpu_device *adev,
 }
 
 static void df_v1_7_get_clockgating_state(struct amdgpu_device *adev,
-					  u64 *flags)
+					  u32 *flags)
 {
 	u32 tmp;
 

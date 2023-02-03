@@ -1778,26 +1778,39 @@ static void gfx_v6_0_constants_init(struct amdgpu_device *adev)
 	udelay(50);
 }
 
+
+static void gfx_v6_0_scratch_init(struct amdgpu_device *adev)
+{
+	adev->gfx.scratch.num_reg = 8;
+	adev->gfx.scratch.reg_base = mmSCRATCH_REG0;
+	adev->gfx.scratch.free_mask = (1u << adev->gfx.scratch.num_reg) - 1;
+}
+
 static int gfx_v6_0_ring_test_ring(struct amdgpu_ring *ring)
 {
 	struct amdgpu_device *adev = ring->adev;
+	uint32_t scratch;
 	uint32_t tmp = 0;
 	unsigned i;
 	int r;
 
-	WREG32(mmSCRATCH_REG0, 0xCAFEDEAD);
-
-	r = amdgpu_ring_alloc(ring, 3);
+	r = amdgpu_gfx_scratch_get(adev, &scratch);
 	if (r)
 		return r;
 
+	WREG32(scratch, 0xCAFEDEAD);
+
+	r = amdgpu_ring_alloc(ring, 3);
+	if (r)
+		goto error_free_scratch;
+
 	amdgpu_ring_write(ring, PACKET3(PACKET3_SET_CONFIG_REG, 1));
-	amdgpu_ring_write(ring, mmSCRATCH_REG0 - PACKET3_SET_CONFIG_REG_START);
+	amdgpu_ring_write(ring, (scratch - PACKET3_SET_CONFIG_REG_START));
 	amdgpu_ring_write(ring, 0xDEADBEEF);
 	amdgpu_ring_commit(ring);
 
 	for (i = 0; i < adev->usec_timeout; i++) {
-		tmp = RREG32(mmSCRATCH_REG0);
+		tmp = RREG32(scratch);
 		if (tmp == 0xDEADBEEF)
 			break;
 		udelay(1);
@@ -1805,6 +1818,9 @@ static int gfx_v6_0_ring_test_ring(struct amdgpu_ring *ring)
 
 	if (i >= adev->usec_timeout)
 		r = -ETIMEDOUT;
+
+error_free_scratch:
+	amdgpu_gfx_scratch_free(adev, scratch);
 	return r;
 }
 
@@ -1887,42 +1903,50 @@ static void gfx_v6_0_ring_emit_ib(struct amdgpu_ring *ring,
 static int gfx_v6_0_ring_test_ib(struct amdgpu_ring *ring, long timeout)
 {
 	struct amdgpu_device *adev = ring->adev;
-	struct dma_fence *f = NULL;
 	struct amdgpu_ib ib;
+	struct dma_fence *f = NULL;
+	uint32_t scratch;
 	uint32_t tmp = 0;
 	long r;
 
-	WREG32(mmSCRATCH_REG0, 0xCAFEDEAD);
-	memset(&ib, 0, sizeof(ib));
-	r = amdgpu_ib_get(adev, NULL, 256, AMDGPU_IB_POOL_DIRECT, &ib);
+	r = amdgpu_gfx_scratch_get(adev, &scratch);
 	if (r)
 		return r;
 
+	WREG32(scratch, 0xCAFEDEAD);
+	memset(&ib, 0, sizeof(ib));
+	r = amdgpu_ib_get(adev, NULL, 256,
+					AMDGPU_IB_POOL_DIRECT, &ib);
+	if (r)
+		goto err1;
+
 	ib.ptr[0] = PACKET3(PACKET3_SET_CONFIG_REG, 1);
-	ib.ptr[1] = mmSCRATCH_REG0 - PACKET3_SET_CONFIG_REG_START;
+	ib.ptr[1] = ((scratch - PACKET3_SET_CONFIG_REG_START));
 	ib.ptr[2] = 0xDEADBEEF;
 	ib.length_dw = 3;
 
 	r = amdgpu_ib_schedule(ring, 1, &ib, NULL, &f);
 	if (r)
-		goto error;
+		goto err2;
 
 	r = dma_fence_wait_timeout(f, false, timeout);
 	if (r == 0) {
 		r = -ETIMEDOUT;
-		goto error;
+		goto err2;
 	} else if (r < 0) {
-		goto error;
+		goto err2;
 	}
-	tmp = RREG32(mmSCRATCH_REG0);
+	tmp = RREG32(scratch);
 	if (tmp == 0xDEADBEEF)
 		r = 0;
 	else
 		r = -EINVAL;
 
-error:
+err2:
 	amdgpu_ib_free(adev, &ib, NULL);
 	dma_fence_put(f);
+err1:
+	amdgpu_gfx_scratch_free(adev, scratch);
 	return r;
 }
 
@@ -2093,7 +2117,7 @@ static int gfx_v6_0_cp_gfx_resume(struct amdgpu_device *adev)
 	WREG32(mmCP_RB0_WPTR, ring->wptr);
 
 	/* set the wb address whether it's enabled or not */
-	rptr_addr = ring->rptr_gpu_addr;
+	rptr_addr = adev->wb.gpu_addr + (ring->rptr_offs * 4);
 	WREG32(mmCP_RB0_RPTR_ADDR, lower_32_bits(rptr_addr));
 	WREG32(mmCP_RB0_RPTR_ADDR_HI, upper_32_bits(rptr_addr) & 0xFF);
 
@@ -2115,7 +2139,7 @@ static int gfx_v6_0_cp_gfx_resume(struct amdgpu_device *adev)
 
 static u64 gfx_v6_0_ring_get_rptr(struct amdgpu_ring *ring)
 {
-	return *ring->rptr_cpu_addr;
+	return ring->adev->wb.wb[ring->rptr_offs];
 }
 
 static u64 gfx_v6_0_ring_get_wptr(struct amdgpu_ring *ring)
@@ -2179,7 +2203,7 @@ static int gfx_v6_0_cp_compute_resume(struct amdgpu_device *adev)
 	ring->wptr = 0;
 	WREG32(mmCP_RB1_WPTR, ring->wptr);
 
-	rptr_addr = ring->rptr_gpu_addr;
+	rptr_addr = adev->wb.gpu_addr + (ring->rptr_offs * 4);
 	WREG32(mmCP_RB1_RPTR_ADDR, lower_32_bits(rptr_addr));
 	WREG32(mmCP_RB1_RPTR_ADDR_HI, upper_32_bits(rptr_addr) & 0xFF);
 
@@ -2198,7 +2222,7 @@ static int gfx_v6_0_cp_compute_resume(struct amdgpu_device *adev)
 	WREG32(mmCP_RB2_CNTL, tmp | CP_RB2_CNTL__RB_RPTR_WR_ENA_MASK);
 	ring->wptr = 0;
 	WREG32(mmCP_RB2_WPTR, ring->wptr);
-	rptr_addr = ring->rptr_gpu_addr;
+	rptr_addr = adev->wb.gpu_addr + (ring->rptr_offs * 4);
 	WREG32(mmCP_RB2_RPTR_ADDR, lower_32_bits(rptr_addr));
 	WREG32(mmCP_RB2_RPTR_ADDR_HI, upper_32_bits(rptr_addr) & 0xFF);
 
@@ -3069,6 +3093,8 @@ static int gfx_v6_0_sw_init(void *handle)
 	r = amdgpu_irq_add_id(adev, AMDGPU_IRQ_CLIENTID_LEGACY, 185, &adev->gfx.priv_inst_irq);
 	if (r)
 		return r;
+
+	gfx_v6_0_scratch_init(adev);
 
 	r = gfx_v6_0_init_microcode(adev);
 	if (r) {

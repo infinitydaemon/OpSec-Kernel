@@ -13,6 +13,7 @@
 #include <asm/machdep.h>
 #include <asm/pci-bridge.h>
 #include <asm/ppc4xx.h>
+#include <asm/prom.h>
 #include <asm/time.h>
 #include <asm/udbg.h>
 #include <asm/uic.h>

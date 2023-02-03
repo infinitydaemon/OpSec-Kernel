@@ -6,21 +6,17 @@
  * Author: Brendan Higgins <brendanhiggins@google.com>
  */
 
-#include <kunit/resource.h>
 #include <kunit/test.h>
 #include <kunit/test-bug.h>
 #include <linux/kernel.h>
-#include <linux/module.h>
+#include <linux/kref.h>
 #include <linux/moduleparam.h>
-#include <linux/panic.h>
 #include <linux/sched/debug.h>
 #include <linux/sched.h>
 
 #include "debugfs.h"
 #include "string-stream.h"
 #include "try-catch-impl.h"
-
-DEFINE_STATIC_KEY_FALSE(kunit_running);
 
 #if IS_BUILTIN(CONFIG_KUNIT)
 /*
@@ -55,17 +51,6 @@ void __kunit_fail_current_test(const char *file, int line, const char *fmt, ...)
 }
 EXPORT_SYMBOL_GPL(__kunit_fail_current_test);
 #endif
-
-/*
- * Enable KUnit tests to run.
- */
-#ifdef CONFIG_KUNIT_DEFAULT_ENABLED
-static bool enable_param = true;
-#else
-static bool enable_param;
-#endif
-module_param_named(enable, enable_param, bool, 0);
-MODULE_PARM_DESC(enable, "Enable KUnit tests");
 
 /*
  * KUnit statistic mode:
@@ -149,9 +134,8 @@ size_t kunit_suite_num_test_cases(struct kunit_suite *suite)
 }
 EXPORT_SYMBOL_GPL(kunit_suite_num_test_cases);
 
-static void kunit_print_suite_start(struct kunit_suite *suite)
+static void kunit_print_subtest_start(struct kunit_suite *suite)
 {
-	kunit_log(KERN_INFO, suite, KUNIT_SUBTEST_INDENT "KTAP version 1\n");
 	kunit_log(KERN_INFO, suite, KUNIT_SUBTEST_INDENT "# Subtest: %s",
 		  suite->name);
 	kunit_log(KERN_INFO, suite, KUNIT_SUBTEST_INDENT "1..%zd",
@@ -178,13 +162,13 @@ static void kunit_print_ok_not_ok(void *test_or_suite,
 	 * representation.
 	 */
 	if (suite)
-		pr_info("%s %zd %s%s%s\n",
+		pr_info("%s %zd - %s%s%s\n",
 			kunit_status_to_ok_not_ok(status),
 			test_number, description, directive_header,
 			(status == KUNIT_SKIPPED) ? directive : "");
 	else
 		kunit_log(KERN_INFO, test,
-			  KUNIT_SUBTEST_INDENT "%s %zd %s%s%s",
+			  KUNIT_SUBTEST_INDENT "%s %zd - %s%s%s",
 			  kunit_status_to_ok_not_ok(status),
 			  test_number, description, directive_header,
 			  (status == KUNIT_SKIPPED) ? directive : "");
@@ -194,9 +178,6 @@ enum kunit_status kunit_suite_has_succeeded(struct kunit_suite *suite)
 {
 	const struct kunit_case *test_case;
 	enum kunit_status status = KUNIT_SKIPPED;
-
-	if (suite->suite_init_err)
-		return KUNIT_FAILURE;
 
 	kunit_suite_for_each_test_case(suite, test_case) {
 		if (test_case->status == KUNIT_FAILURE)
@@ -209,10 +190,10 @@ enum kunit_status kunit_suite_has_succeeded(struct kunit_suite *suite)
 }
 EXPORT_SYMBOL_GPL(kunit_suite_has_succeeded);
 
-static size_t kunit_suite_counter = 1;
-
-static void kunit_print_suite_end(struct kunit_suite *suite)
+static void kunit_print_subtest_end(struct kunit_suite *suite)
 {
+	static size_t kunit_suite_counter = 1;
+
 	kunit_print_ok_not_ok((void *)suite, false,
 			      kunit_suite_has_succeeded(suite),
 			      kunit_suite_counter++,
@@ -259,29 +240,26 @@ static void kunit_print_string_stream(struct kunit *test,
 	}
 }
 
-static void kunit_fail(struct kunit *test, const struct kunit_loc *loc,
-		       enum kunit_assert_type type, const struct kunit_assert *assert,
-		       assert_format_t assert_format, const struct va_format *message)
+static void kunit_fail(struct kunit *test, struct kunit_assert *assert)
 {
 	struct string_stream *stream;
 
 	kunit_set_failure(test);
 
 	stream = alloc_string_stream(test, GFP_KERNEL);
-	if (IS_ERR(stream)) {
+	if (!stream) {
 		WARN(true,
 		     "Could not allocate stream to print failed assertion in %s:%d\n",
-		     loc->file,
-		     loc->line);
+		     assert->file,
+		     assert->line);
 		return;
 	}
 
-	kunit_assert_prologue(loc, type, stream);
-	assert_format(assert, message, stream);
+	assert->format(assert, stream);
 
 	kunit_print_string_stream(test, stream);
 
-	string_stream_destroy(stream);
+	WARN_ON(string_stream_destroy(stream));
 }
 
 static void __noreturn kunit_abort(struct kunit *test)
@@ -297,28 +275,29 @@ static void __noreturn kunit_abort(struct kunit *test)
 	WARN_ONCE(true, "Throw could not abort from test!\n");
 }
 
-void kunit_do_failed_assertion(struct kunit *test,
-			       const struct kunit_loc *loc,
-			       enum kunit_assert_type type,
-			       const struct kunit_assert *assert,
-			       assert_format_t assert_format,
-			       const char *fmt, ...)
+void kunit_do_assertion(struct kunit *test,
+			struct kunit_assert *assert,
+			bool pass,
+			const char *fmt, ...)
 {
 	va_list args;
-	struct va_format message;
+
+	if (pass)
+		return;
+
 	va_start(args, fmt);
 
-	message.fmt = fmt;
-	message.va = &args;
+	assert->message.fmt = fmt;
+	assert->message.va = &args;
 
-	kunit_fail(test, loc, type, assert, assert_format, &message);
+	kunit_fail(test, assert);
 
 	va_end(args);
 
-	if (type == KUNIT_ASSERTION)
+	if (assert->type == KUNIT_ASSERTION)
 		kunit_abort(test);
 }
-EXPORT_SYMBOL_GPL(kunit_do_failed_assertion);
+EXPORT_SYMBOL_GPL(kunit_do_assertion);
 
 void kunit_init_test(struct kunit *test, const char *name, char *log)
 {
@@ -518,19 +497,7 @@ int kunit_run_tests(struct kunit_suite *suite)
 	struct kunit_result_stats suite_stats = { 0 };
 	struct kunit_result_stats total_stats = { 0 };
 
-	/* Taint the kernel so we know we've run tests. */
-	add_taint(TAINT_TEST, LOCKDEP_STILL_OK);
-
-	if (suite->suite_init) {
-		suite->suite_init_err = suite->suite_init(suite);
-		if (suite->suite_init_err) {
-			kunit_err(suite, KUNIT_SUBTEST_INDENT
-				  "# failed to initialize (%d)", suite->suite_init_err);
-			goto suite_end;
-		}
-	}
-
-	kunit_print_suite_start(suite);
+	kunit_print_subtest_start(suite);
 
 	kunit_suite_for_each_test_case(suite, test_case) {
 		struct kunit test = { .param_value = NULL, .param_index = 0 };
@@ -545,10 +512,6 @@ int kunit_run_tests(struct kunit_suite *suite)
 			/* Get initial param. */
 			param_desc[0] = '\0';
 			test.param_value = test_case->generate_params(NULL, param_desc);
-			kunit_log(KERN_INFO, &test, KUNIT_SUBTEST_INDENT KUNIT_SUBTEST_INDENT
-				  "KTAP version 1\n");
-			kunit_log(KERN_INFO, &test, KUNIT_SUBTEST_INDENT KUNIT_SUBTEST_INDENT
-				  "# Subtest: %s", test_case->name);
 
 			while (test.param_value) {
 				kunit_run_case_catch_errors(suite, test_case, &test);
@@ -559,8 +522,9 @@ int kunit_run_tests(struct kunit_suite *suite)
 				}
 
 				kunit_log(KERN_INFO, &test,
-					  KUNIT_SUBTEST_INDENT KUNIT_SUBTEST_INDENT
-					  "%s %d %s",
+					  KUNIT_SUBTEST_INDENT
+					  "# %s: %s %d - %s",
+					  test_case->name,
 					  kunit_status_to_ok_not_ok(test.status),
 					  test.param_index + 1, param_desc);
 
@@ -585,12 +549,8 @@ int kunit_run_tests(struct kunit_suite *suite)
 		kunit_accumulate_stats(&total_stats, param_stats);
 	}
 
-	if (suite->suite_exit)
-		suite->suite_exit(suite);
-
 	kunit_print_suite_stats(suite, suite_stats, total_stats);
-suite_end:
-	kunit_print_suite_end(suite);
+	kunit_print_subtest_end(suite);
 
 	return 0;
 }
@@ -600,31 +560,16 @@ static void kunit_init_suite(struct kunit_suite *suite)
 {
 	kunit_debugfs_create_suite(suite);
 	suite->status_comment[0] = '\0';
-	suite->suite_init_err = 0;
 }
 
-bool kunit_enabled(void)
-{
-	return enable_param;
-}
-
-int __kunit_test_suites_init(struct kunit_suite * const * const suites, int num_suites)
+int __kunit_test_suites_init(struct kunit_suite * const * const suites)
 {
 	unsigned int i;
 
-	if (!kunit_enabled() && num_suites > 0) {
-		pr_info("kunit: disabled\n");
-		return 0;
-	}
-
-	static_branch_inc(&kunit_running);
-
-	for (i = 0; i < num_suites; i++) {
+	for (i = 0; suites[i] != NULL; i++) {
 		kunit_init_suite(suites[i]);
 		kunit_run_tests(suites[i]);
 	}
-
-	static_branch_dec(&kunit_running);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(__kunit_test_suites_init);
@@ -634,56 +579,128 @@ static void kunit_exit_suite(struct kunit_suite *suite)
 	kunit_debugfs_destroy_suite(suite);
 }
 
-void __kunit_test_suites_exit(struct kunit_suite **suites, int num_suites)
+void __kunit_test_suites_exit(struct kunit_suite **suites)
 {
 	unsigned int i;
 
-	if (!kunit_enabled())
-		return;
-
-	for (i = 0; i < num_suites; i++)
+	for (i = 0; suites[i] != NULL; i++)
 		kunit_exit_suite(suites[i]);
-
-	kunit_suite_counter = 1;
 }
 EXPORT_SYMBOL_GPL(__kunit_test_suites_exit);
 
-#ifdef CONFIG_MODULES
-static void kunit_module_init(struct module *mod)
+/*
+ * Used for static resources and when a kunit_resource * has been created by
+ * kunit_alloc_resource().  When an init function is supplied, @data is passed
+ * into the init function; otherwise, we simply set the resource data field to
+ * the data value passed in.
+ */
+int kunit_add_resource(struct kunit *test,
+		       kunit_resource_init_t init,
+		       kunit_resource_free_t free,
+		       struct kunit_resource *res,
+		       void *data)
 {
-	__kunit_test_suites_init(mod->kunit_suites, mod->num_kunit_suites);
-}
+	int ret = 0;
+	unsigned long flags;
 
-static void kunit_module_exit(struct module *mod)
-{
-	__kunit_test_suites_exit(mod->kunit_suites, mod->num_kunit_suites);
-}
+	res->free = free;
+	kref_init(&res->refcount);
 
-static int kunit_module_notify(struct notifier_block *nb, unsigned long val,
-			       void *data)
-{
-	struct module *mod = data;
-
-	switch (val) {
-	case MODULE_STATE_LIVE:
-		kunit_module_init(mod);
-		break;
-	case MODULE_STATE_GOING:
-		kunit_module_exit(mod);
-		break;
-	case MODULE_STATE_COMING:
-	case MODULE_STATE_UNFORMED:
-		break;
+	if (init) {
+		ret = init(res, data);
+		if (ret)
+			return ret;
+	} else {
+		res->data = data;
 	}
+
+	spin_lock_irqsave(&test->lock, flags);
+	list_add_tail(&res->node, &test->resources);
+	/* refcount for list is established by kref_init() */
+	spin_unlock_irqrestore(&test->lock, flags);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(kunit_add_resource);
+
+int kunit_add_named_resource(struct kunit *test,
+			     kunit_resource_init_t init,
+			     kunit_resource_free_t free,
+			     struct kunit_resource *res,
+			     const char *name,
+			     void *data)
+{
+	struct kunit_resource *existing;
+
+	if (!name)
+		return -EINVAL;
+
+	existing = kunit_find_named_resource(test, name);
+	if (existing) {
+		kunit_put_resource(existing);
+		return -EEXIST;
+	}
+
+	res->name = name;
+
+	return kunit_add_resource(test, init, free, res, data);
+}
+EXPORT_SYMBOL_GPL(kunit_add_named_resource);
+
+struct kunit_resource *kunit_alloc_and_get_resource(struct kunit *test,
+						    kunit_resource_init_t init,
+						    kunit_resource_free_t free,
+						    gfp_t internal_gfp,
+						    void *data)
+{
+	struct kunit_resource *res;
+	int ret;
+
+	res = kzalloc(sizeof(*res), internal_gfp);
+	if (!res)
+		return NULL;
+
+	ret = kunit_add_resource(test, init, free, res, data);
+	if (!ret) {
+		/*
+		 * bump refcount for get; kunit_resource_put() should be called
+		 * when done.
+		 */
+		kunit_get_resource(res);
+		return res;
+	}
+	return NULL;
+}
+EXPORT_SYMBOL_GPL(kunit_alloc_and_get_resource);
+
+void kunit_remove_resource(struct kunit *test, struct kunit_resource *res)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&test->lock, flags);
+	list_del(&res->node);
+	spin_unlock_irqrestore(&test->lock, flags);
+	kunit_put_resource(res);
+}
+EXPORT_SYMBOL_GPL(kunit_remove_resource);
+
+int kunit_destroy_resource(struct kunit *test, kunit_resource_match_t match,
+			   void *match_data)
+{
+	struct kunit_resource *res = kunit_find_resource(test, match,
+							 match_data);
+
+	if (!res)
+		return -ENOENT;
+
+	kunit_remove_resource(test, res);
+
+	/* We have a reference also via _find(); drop it. */
+	kunit_put_resource(res);
 
 	return 0;
 }
-
-static struct notifier_block kunit_mod_nb = {
-	.notifier_call = kunit_module_notify,
-	.priority = 0,
-};
-#endif
+EXPORT_SYMBOL_GPL(kunit_destroy_resource);
 
 struct kunit_kmalloc_array_params {
 	size_t n;
@@ -723,20 +740,21 @@ void *kunit_kmalloc_array(struct kunit *test, size_t n, size_t size, gfp_t gfp)
 }
 EXPORT_SYMBOL_GPL(kunit_kmalloc_array);
 
-static inline bool kunit_kfree_match(struct kunit *test,
-				     struct kunit_resource *res, void *match_data)
-{
-	/* Only match resources allocated with kunit_kmalloc() and friends. */
-	return res->free == kunit_kmalloc_array_free && res->data == match_data;
-}
-
 void kunit_kfree(struct kunit *test, const void *ptr)
 {
-	if (!ptr)
-		return;
+	struct kunit_resource *res;
 
-	if (kunit_destroy_resource(test, kunit_kfree_match, (void *)ptr))
-		KUNIT_FAIL(test, "kunit_kfree: %px already freed or not allocated by kunit", ptr);
+	res = kunit_find_resource(test, kunit_resource_instance_match,
+				  (void *)ptr);
+
+	/*
+	 * Removing the resource from the list of resources drops the
+	 * reference count to 1; the final put will trigger the free.
+	 */
+	kunit_remove_resource(test, res);
+
+	kunit_put_resource(res);
+
 }
 EXPORT_SYMBOL_GPL(kunit_kfree);
 
@@ -778,19 +796,13 @@ EXPORT_SYMBOL_GPL(kunit_cleanup);
 static int __init kunit_init(void)
 {
 	kunit_debugfs_init();
-#ifdef CONFIG_MODULES
-	return register_module_notifier(&kunit_mod_nb);
-#else
+
 	return 0;
-#endif
 }
 late_initcall(kunit_init);
 
 static void __exit kunit_exit(void)
 {
-#ifdef CONFIG_MODULES
-	unregister_module_notifier(&kunit_mod_nb);
-#endif
 	kunit_debugfs_cleanup();
 }
 module_exit(kunit_exit);

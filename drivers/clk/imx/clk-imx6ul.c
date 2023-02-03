@@ -126,12 +126,12 @@ static void __init imx6ul_clocks_init(struct device_node *ccm_node)
 
 	hws[IMX6UL_CLK_DUMMY] = imx_clk_hw_fixed("dummy", 0);
 
-	hws[IMX6UL_CLK_CKIL] = imx_get_clk_hw_by_name(ccm_node, "ckil");
-	hws[IMX6UL_CLK_OSC] = imx_get_clk_hw_by_name(ccm_node, "osc");
+	hws[IMX6UL_CLK_CKIL] = imx_obtain_fixed_clk_hw(ccm_node, "ckil");
+	hws[IMX6UL_CLK_OSC] = imx_obtain_fixed_clk_hw(ccm_node, "osc");
 
 	/* ipp_di clock is external input */
-	hws[IMX6UL_CLK_IPP_DI0] = imx_get_clk_hw_by_name(ccm_node, "ipp_di0");
-	hws[IMX6UL_CLK_IPP_DI1] = imx_get_clk_hw_by_name(ccm_node, "ipp_di1");
+	hws[IMX6UL_CLK_IPP_DI0] = imx_obtain_fixed_clk_hw(ccm_node, "ipp_di0");
+	hws[IMX6UL_CLK_IPP_DI1] = imx_obtain_fixed_clk_hw(ccm_node, "ipp_di1");
 
 	np = of_find_compatible_node(NULL, NULL, "fsl,imx6ul-anatop");
 	base = of_iomap(np, 0);
@@ -380,6 +380,7 @@ static void __init imx6ul_clocks_init(struct device_node *ccm_node)
 		hws[IMX6ULL_CLK_ESAI_IPG]	= imx_clk_hw_gate2_shared("esai_ipg",	"ahb",		base + 0x70,	0, &share_count_esai);
 		hws[IMX6ULL_CLK_ESAI_MEM]	= imx_clk_hw_gate2_shared("esai_mem",	"ahb",		base + 0x70,	0, &share_count_esai);
 	}
+	hws[IMX6UL_CLK_CSI]		= imx_clk_hw_gate2("csi",		"csi_podf",		base + 0x70,	2);
 	hws[IMX6UL_CLK_I2C1]		= imx_clk_hw_gate2("i2c1",		"perclk",	base + 0x70,	6);
 	hws[IMX6UL_CLK_I2C2]		= imx_clk_hw_gate2("i2c2",		"perclk",	base + 0x70,	8);
 	hws[IMX6UL_CLK_I2C3]		= imx_clk_hw_gate2("i2c3",		"perclk",	base + 0x70,	10);
@@ -390,12 +391,6 @@ static void __init imx6ul_clocks_init(struct device_node *ccm_node)
 	hws[IMX6UL_CLK_PXP]		= imx_clk_hw_gate2("pxp",		"axi",		base + 0x70,	30);
 
 	/* CCGR3 */
-	/*
-	 * Although the imx6ull reference manual lists CCGR2 as the csi clk
-	 * gate register, tests have shown that it is actually the CCGR3
-	 * register bit 0/1, same as for the imx6ul.
-	 */
-	hws[IMX6UL_CLK_CSI]		= imx_clk_hw_gate2("csi",	"csi_podf",	base + 0x74,	0);
 	hws[IMX6UL_CLK_UART5_IPG]	= imx_clk_hw_gate2("uart5_ipg",	"ipg",		base + 0x74,	2);
 	hws[IMX6UL_CLK_UART5_SERIAL]	= imx_clk_hw_gate2("uart5_serial",	"uart_podf",	base + 0x74,	2);
 	if (clk_on_imx6ul()) {

@@ -1782,7 +1782,7 @@ static int adt7462_detect(struct i2c_client *client,
 	if (revision != ADT7462_REVISION)
 		return -ENODEV;
 
-	strscpy(info->type, "adt7462", I2C_NAME_SIZE);
+	strlcpy(info->type, "adt7462", I2C_NAME_SIZE);
 
 	return 0;
 }

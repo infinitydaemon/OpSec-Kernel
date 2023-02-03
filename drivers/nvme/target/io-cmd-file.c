@@ -13,9 +13,16 @@
 
 #define NVMET_MIN_MPOOL_OBJ		16
 
-void nvmet_file_ns_revalidate(struct nvmet_ns *ns)
+int nvmet_file_ns_revalidate(struct nvmet_ns *ns)
 {
-	ns->size = i_size_read(ns->file->f_mapping->host);
+	struct kstat stat;
+	int ret;
+
+	ret = vfs_getattr(&ns->file->f_path, &stat, STATX_SIZE,
+			  AT_STATX_FORCE_SYNC);
+	if (!ret)
+		ns->size = stat.size;
+	return ret;
 }
 
 void nvmet_file_ns_disable(struct nvmet_ns *ns)
@@ -33,7 +40,7 @@ void nvmet_file_ns_disable(struct nvmet_ns *ns)
 int nvmet_file_ns_enable(struct nvmet_ns *ns)
 {
 	int flags = O_RDWR | O_LARGEFILE;
-	int ret = 0;
+	int ret;
 
 	if (!ns->buffered_io)
 		flags |= O_DIRECT;
@@ -47,7 +54,9 @@ int nvmet_file_ns_enable(struct nvmet_ns *ns)
 		return ret;
 	}
 
-	nvmet_file_ns_revalidate(ns);
+	ret = nvmet_file_ns_revalidate(ns);
+	if (ret)
+		goto err;
 
 	/*
 	 * i_blkbits can be greater than the universally accepted upper bound,
@@ -92,22 +101,22 @@ static ssize_t nvmet_file_submit_bvec(struct nvmet_req *req, loff_t pos,
 		if (req->cmd->rw.control & cpu_to_le16(NVME_RW_FUA))
 			ki_flags |= IOCB_DSYNC;
 		call_iter = req->ns->file->f_op->write_iter;
-		rw = ITER_SOURCE;
+		rw = WRITE;
 	} else {
 		call_iter = req->ns->file->f_op->read_iter;
-		rw = ITER_DEST;
+		rw = READ;
 	}
 
 	iov_iter_bvec(&iter, rw, req->f.bvec, nr_segs, count);
 
 	iocb->ki_pos = pos;
 	iocb->ki_filp = req->ns->file;
-	iocb->ki_flags = ki_flags | iocb->ki_filp->f_iocb_flags;
+	iocb->ki_flags = ki_flags | iocb_flags(req->ns->file);
 
 	return call_iter(iocb, &iter);
 }
 
-static void nvmet_file_io_done(struct kiocb *iocb, long ret)
+static void nvmet_file_io_done(struct kiocb *iocb, long ret, long ret2)
 {
 	struct nvmet_req *req = container_of(iocb, struct nvmet_req, f.iocb);
 	u16 status = NVME_SC_SUCCESS;
@@ -204,7 +213,7 @@ static bool nvmet_file_execute_io(struct nvmet_req *req, int ki_flags)
 	}
 
 complete:
-	nvmet_file_io_done(&req->f.iocb, ret);
+	nvmet_file_io_done(&req->f.iocb, ret, 0);
 	return true;
 }
 

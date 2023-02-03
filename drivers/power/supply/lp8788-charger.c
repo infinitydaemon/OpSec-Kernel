@@ -376,7 +376,7 @@ static int lp8788_update_charger_params(struct platform_device *pdev,
 		return 0;
 	}
 
-	/* setting charging parameters */
+	/* settting charging parameters */
 	for (i = 0; i < pdata->num_chg_params; i++) {
 		param = pdata->chg_params + i;
 
@@ -520,7 +520,7 @@ err_free_irq:
 static int lp8788_irq_register(struct platform_device *pdev,
 				struct lp8788_charger *pchg)
 {
-	static const char * const name[] = {
+	const char *name[] = {
 		LP8788_CHG_IRQ, LP8788_PRSW_IRQ, LP8788_BATT_IRQ
 	};
 	int i;

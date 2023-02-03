@@ -596,11 +596,12 @@ static __init int asic3_gpio_probe(struct platform_device *pdev,
 	return gpiochip_add_data(&asic->gpio, asic);
 }
 
-static void asic3_gpio_remove(struct platform_device *pdev)
+static int asic3_gpio_remove(struct platform_device *pdev)
 {
 	struct asic3 *asic = platform_get_drvdata(pdev);
 
 	gpiochip_remove(&asic->gpio);
+	return 0;
 }
 
 static void asic3_clk_enable(struct asic3 *asic, struct asic3_clk *clk)
@@ -1029,6 +1030,7 @@ static int __init asic3_probe(struct platform_device *pdev)
 
 static int asic3_remove(struct platform_device *pdev)
 {
+	int ret;
 	struct asic3 *asic = platform_get_drvdata(pdev);
 
 	asic3_set_register(asic, ASIC3_OFFSET(EXTCF, SELECT),
@@ -1036,8 +1038,9 @@ static int asic3_remove(struct platform_device *pdev)
 
 	asic3_mfd_remove(pdev);
 
-	asic3_gpio_remove(pdev);
-
+	ret = asic3_gpio_remove(pdev);
+	if (ret < 0)
+		return ret;
 	asic3_irq_remove(pdev);
 
 	asic3_write_register(asic, ASIC3_OFFSET(CLOCK, SEL), 0);

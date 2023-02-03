@@ -8,13 +8,6 @@
 static bool nohmem;
 module_param_named(disable, nohmem, bool, 0444);
 
-static struct resource hmem_active = {
-	.name = "HMEM devices",
-	.start = 0,
-	.end = -1,
-	.flags = IORESOURCE_MEM,
-};
-
 void hmem_register_device(int target_nid, struct resource *r)
 {
 	/* define a clean / non-busy resource for the platform device */
@@ -48,12 +41,6 @@ void hmem_register_device(int target_nid, struct resource *r)
 		goto out_pdev;
 	}
 
-	if (!__request_region(&hmem_active, res.start, resource_size(&res),
-			      dev_name(&pdev->dev), 0)) {
-		dev_dbg(&pdev->dev, "hmem range %pr already active\n", &res);
-		goto out_active;
-	}
-
 	pdev->dev.numa_node = numa_map_to_online_node(target_nid);
 	info = (struct memregion_info) {
 		.target_node = target_nid,
@@ -61,7 +48,7 @@ void hmem_register_device(int target_nid, struct resource *r)
 	rc = platform_device_add_data(pdev, &info, sizeof(info));
 	if (rc < 0) {
 		pr_err("hmem memregion_info allocation failure for %pr\n", &res);
-		goto out_resource;
+		goto out_pdev;
 	}
 
 	rc = platform_device_add_resources(pdev, &res, 1);
@@ -79,15 +66,22 @@ void hmem_register_device(int target_nid, struct resource *r)
 	return;
 
 out_resource:
-	__release_region(&hmem_active, res.start, resource_size(&res));
-out_active:
-	platform_device_put(pdev);
+	put_device(&pdev->dev);
 out_pdev:
 	memregion_free(id);
 }
 
 static __init int hmem_register_one(struct resource *res, void *data)
 {
+	/*
+	 * If the resource is not a top-level resource it was already
+	 * assigned to a device by the HMAT parsing.
+	 */
+	if (res->parent != &iomem_resource) {
+		pr_info("HMEM: skip %pr, already claimed\n", res);
+		return 0;
+	}
+
 	hmem_register_device(phys_to_target_node(res->start), res);
 
 	return 0;

@@ -53,6 +53,10 @@
 #if __riscv_xlen == 32
 #define VDSO_32BIT		1
 #endif
+#else /* nds32 */
+#define VDSO_VERSION		4
+#define VDSO_NAMES		1
+#define VDSO_32BIT		1
 #endif
 
 static const char *versions[6] = {

@@ -19,9 +19,12 @@
 #include <linux/module.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
+#include <linux/pm_runtime.h>
 #include <linux/reset.h>
 
 #include <drm/drm_drv.h>
+#include <drm/drm_fb_cma_helper.h>
+#include <drm/drm_fb_helper.h>
 #include <drm/drm_managed.h>
 
 #include <soc/bcm2835/raspberrypi-firmware.h>
@@ -37,6 +40,42 @@
 #define DRIVER_MAJOR 1
 #define DRIVER_MINOR 0
 #define DRIVER_PATCHLEVEL 0
+
+#ifdef CONFIG_PM
+static int v3d_runtime_suspend(struct device *dev)
+{
+	struct drm_device *drm = dev_get_drvdata(dev);
+	struct v3d_dev *v3d = to_v3d_dev(drm);
+
+	v3d_irq_disable(v3d);
+
+	clk_disable_unprepare(v3d->clk);
+
+	return 0;
+}
+
+static int v3d_runtime_resume(struct device *dev)
+{
+	struct drm_device *drm = dev_get_drvdata(dev);
+	struct v3d_dev *v3d = to_v3d_dev(drm);
+	int ret;
+
+	ret = clk_prepare_enable(v3d->clk);
+	if (ret != 0)
+		return ret;
+
+	/* XXX: VPM base */
+
+	v3d_mmu_set_page_table(v3d);
+	v3d_irq_enable(v3d);
+
+	return 0;
+}
+#endif
+
+static const struct dev_pm_ops v3d_pm_ops = {
+	SET_RUNTIME_PM_OPS(v3d_runtime_suspend, v3d_runtime_resume, NULL)
+};
 
 static int v3d_get_param_ioctl(struct drm_device *dev, void *data,
 			       struct drm_file *file_priv)
@@ -77,6 +116,7 @@ static int v3d_get_param_ioctl(struct drm_device *dev, void *data,
 		return 0;
 	}
 
+
 	switch (args->param) {
 	case DRM_V3D_PARAM_SUPPORTS_TFU:
 		args->value = 1;
@@ -89,9 +129,6 @@ static int v3d_get_param_ioctl(struct drm_device *dev, void *data,
 		return 0;
 	case DRM_V3D_PARAM_SUPPORTS_PERFMON:
 		args->value = (v3d->ver >= 40);
-		return 0;
-	case DRM_V3D_PARAM_SUPPORTS_MULTISYNC_EXT:
-		args->value = 1;
 		return 0;
 	default:
 		DRM_DEBUG("Unknown parameter %d\n", args->param);
@@ -132,8 +169,9 @@ v3d_postclose(struct drm_device *dev, struct drm_file *file)
 	struct v3d_file_priv *v3d_priv = file->driver_priv;
 	enum v3d_queue q;
 
-	for (q = 0; q < V3D_MAX_QUEUES; q++)
+	for (q = 0; q < V3D_MAX_QUEUES; q++) {
 		drm_sched_entity_destroy(&v3d_priv->sched_entity[q]);
+	}
 
 	v3d_perfmon_close_file(v3d_priv);
 	kfree(v3d_priv);
@@ -142,7 +180,7 @@ v3d_postclose(struct drm_device *dev, struct drm_file *file)
 DEFINE_DRM_GEM_FOPS(v3d_drm_fops);
 
 /* DRM_AUTH is required on SUBMIT_CL for now, while we don't have GMP
- * protection between clients.  Note that render nodes would be
+ * protection between clients.  Note that render nodes would be be
  * able to submit CLs that could access BOs from clients authenticated
  * with the master node.  The TFU doesn't use the GMP, so it would
  * need to stay DRM_AUTH until we do buffer size/offset validation.
@@ -192,9 +230,9 @@ static const struct drm_driver v3d_drm_driver = {
 };
 
 static const struct of_device_id v3d_of_match[] = {
-	{ .compatible = "brcm,2711-v3d" },
 	{ .compatible = "brcm,7268-v3d" },
 	{ .compatible = "brcm,7278-v3d" },
+	{ .compatible = "brcm,2711-v3d" },
 	{},
 };
 MODULE_DEVICE_TABLE(of, v3d_of_match);
@@ -202,7 +240,10 @@ MODULE_DEVICE_TABLE(of, v3d_of_match);
 static int
 map_regs(struct v3d_dev *v3d, void __iomem **regs, const char *name)
 {
-	*regs = devm_platform_ioremap_resource_byname(v3d_to_pdev(v3d), name);
+	struct resource *res =
+		platform_get_resource_byname(v3d_to_pdev(v3d), IORESOURCE_MEM, name);
+
+	*regs = devm_ioremap_resource(v3d->drm.dev, res);
 	return PTR_ERR_OR_ZERO(*regs);
 }
 
@@ -217,6 +258,7 @@ static int v3d_platform_drm_probe(struct platform_device *pdev)
 	u32 mmu_debug;
 	u32 ident1;
 	u64 mask;
+
 
 	v3d = devm_drm_dev_alloc(dev, &v3d_drm_driver, struct v3d_dev, drm);
 	if (IS_ERR(v3d))
@@ -305,6 +347,7 @@ static int v3d_platform_drm_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
+
 	ret = v3d_gem_init(drm);
 	if (ret)
 		goto dma_free;
@@ -352,6 +395,7 @@ static struct platform_driver v3d_platform_driver = {
 	.driver		= {
 		.name	= "v3d",
 		.of_match_table = v3d_of_match,
+		.pm = &v3d_pm_ops,
 	},
 };
 

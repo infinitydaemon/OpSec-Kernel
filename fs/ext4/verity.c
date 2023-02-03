@@ -69,9 +69,6 @@ static int pagecache_read(struct inode *inode, void *buf, size_t count,
 static int pagecache_write(struct inode *inode, const void *buf, size_t count,
 			   loff_t pos)
 {
-	struct address_space *mapping = inode->i_mapping;
-	const struct address_space_operations *aops = mapping->a_ops;
-
 	if (pos + count > inode->i_sb->s_maxbytes)
 		return -EFBIG;
 
@@ -82,13 +79,15 @@ static int pagecache_write(struct inode *inode, const void *buf, size_t count,
 		void *fsdata = NULL;
 		int res;
 
-		res = aops->write_begin(NULL, mapping, pos, n, &page, &fsdata);
+		res = pagecache_write_begin(NULL, inode->i_mapping, pos, n, 0,
+					    &page, &fsdata);
 		if (res)
 			return res;
 
 		memcpy_to_page(page, offset_in_page(pos), buf, n);
 
-		res = aops->write_end(NULL, mapping, pos, n, n, page, fsdata);
+		res = pagecache_write_end(NULL, inode->i_mapping, pos, n, n,
+					  page, fsdata);
 		if (res < 0)
 			return res;
 		if (res != n)
@@ -298,14 +297,16 @@ static int ext4_get_verity_descriptor_location(struct inode *inode,
 	last_extent = path[path->p_depth].p_ext;
 	if (!last_extent) {
 		EXT4_ERROR_INODE(inode, "verity file has no extents");
-		ext4_free_ext_path(path);
+		ext4_ext_drop_refs(path);
+		kfree(path);
 		return -EFSCORRUPTED;
 	}
 
 	end_lblk = le32_to_cpu(last_extent->ee_block) +
 		   ext4_ext_get_actual_len(last_extent);
 	desc_size_pos = (u64)end_lblk << inode->i_blkbits;
-	ext4_free_ext_path(path);
+	ext4_ext_drop_refs(path);
+	kfree(path);
 
 	if (desc_size_pos < sizeof(desc_size_disk))
 		goto bad;

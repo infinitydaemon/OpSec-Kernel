@@ -6,17 +6,14 @@
  * Copyright (C) 2012 Regents of the University of California
  */
 
-#include <linux/compat.h>
 #include <linux/signal.h>
 #include <linux/uaccess.h>
 #include <linux/syscalls.h>
-#include <linux/resume_user_mode.h>
+#include <linux/tracehook.h>
 #include <linux/linkage.h>
 
 #include <asm/ucontext.h>
 #include <asm/vdso.h>
-#include <asm/signal.h>
-#include <asm/signal32.h>
 #include <asm/switch_to.h>
 #include <asm/csr.h>
 
@@ -263,13 +260,8 @@ static void handle_signal(struct ksignal *ksig, struct pt_regs *regs)
 		}
 	}
 
-	rseq_signal_deliver(ksig, regs);
-
 	/* Set up the stack frame */
-	if (is_compat_task())
-		ret = compat_setup_rt_frame(ksig, oldset, regs);
-	else
-		ret = setup_rt_frame(ksig, oldset, regs);
+	ret = setup_rt_frame(ksig, oldset, regs);
 
 	signal_setup_done(ret, ksig, 0);
 }
@@ -313,27 +305,19 @@ static void do_signal(struct pt_regs *regs)
 }
 
 /*
- * Handle any pending work on the resume-to-userspace path, as indicated by
- * _TIF_WORK_MASK. Entered from assembly with IRQs off.
+ * notification of userspace execution resumption
+ * - triggered by the _TIF_WORK_MASK flags
  */
-asmlinkage __visible void do_work_pending(struct pt_regs *regs,
-					  unsigned long thread_info_flags)
+asmlinkage __visible void do_notify_resume(struct pt_regs *regs,
+					   unsigned long thread_info_flags)
 {
-	do {
-		if (thread_info_flags & _TIF_NEED_RESCHED) {
-			schedule();
-		} else {
-			local_irq_enable();
-			if (thread_info_flags & _TIF_UPROBE)
-				uprobe_notify_resume(regs);
-			/* Handle pending signal delivery */
-			if (thread_info_flags & (_TIF_SIGPENDING |
-						 _TIF_NOTIFY_SIGNAL))
-				do_signal(regs);
-			if (thread_info_flags & _TIF_NOTIFY_RESUME)
-				resume_user_mode_work(regs);
-		}
-		local_irq_disable();
-		thread_info_flags = read_thread_flags();
-	} while (thread_info_flags & _TIF_WORK_MASK);
+	if (thread_info_flags & _TIF_UPROBE)
+		uprobe_notify_resume(regs);
+
+	/* Handle pending signal delivery */
+	if (thread_info_flags & (_TIF_SIGPENDING | _TIF_NOTIFY_SIGNAL))
+		do_signal(regs);
+
+	if (thread_info_flags & _TIF_NOTIFY_RESUME)
+		tracehook_notify_resume(regs);
 }

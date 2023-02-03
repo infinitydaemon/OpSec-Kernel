@@ -109,6 +109,20 @@ def to_cmdfile(path):
     return os.path.join(dir, '.' + base + '.cmd')
 
 
+def cmdfiles_for_o(obj):
+    """Generate the iterator of .cmd files associated with the object
+
+    Yield the .cmd file used to build the given object
+
+    Args:
+        obj: The object path
+
+    Yields:
+        The path to .cmd file
+    """
+    yield to_cmdfile(obj)
+
+
 def cmdfiles_for_a(archive, ar):
     """Generate the iterator of .cmd files associated with the archive.
 
@@ -138,15 +152,15 @@ def cmdfiles_for_modorder(modorder):
     """
     with open(modorder) as f:
         for line in f:
-            obj = line.rstrip()
-            base, ext = os.path.splitext(obj)
-            if ext != '.o':
-                sys.exit('{}: module path must end with .o'.format(obj))
+            ko = line.rstrip()
+            base, ext = os.path.splitext(ko)
+            if ext != '.ko':
+                sys.exit('{}: module path must end with .ko'.format(ko))
             mod = base + '.mod'
-            # Read from *.mod, to get a list of objects that compose the module.
+	    # The first line of *.mod lists the objects that compose the module.
             with open(mod) as m:
-                for mod_line in m:
-                    yield to_cmdfile(mod_line.rstrip())
+                for obj in m.readline().split():
+                    yield to_cmdfile(obj)
 
 
 def process_line(root_directory, command_prefix, file_path):
@@ -197,10 +211,13 @@ def main():
     for path in paths:
         # If 'path' is a directory, handle all .cmd files under it.
         # Otherwise, handle .cmd files associated with the file.
-        # built-in objects are linked via vmlinux.a
+        # Most of built-in objects are linked via archives (built-in.a or lib.a)
+        # but some objects are linked to vmlinux directly.
         # Modules are listed in modules.order.
         if os.path.isdir(path):
             cmdfiles = cmdfiles_in_dir(path)
+        elif path.endswith('.o'):
+            cmdfiles = cmdfiles_for_o(path)
         elif path.endswith('.a'):
             cmdfiles = cmdfiles_for_a(path, ar)
         elif path.endswith('modules.order'):

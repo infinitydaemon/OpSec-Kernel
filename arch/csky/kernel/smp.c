@@ -180,13 +180,15 @@ void __init setup_smp_ipi(void)
 void __init setup_smp(void)
 {
 	struct device_node *node = NULL;
-	unsigned int cpu;
+	int cpu;
 
 	for_each_of_cpu_node(node) {
 		if (!of_device_is_available(node))
 			continue;
 
-		cpu = of_get_cpu_hwid(node, 0);
+		if (of_property_read_u32(node, "reg", &cpu))
+			continue;
+
 		if (cpu >= NR_CPUS)
 			continue;
 
@@ -241,6 +243,11 @@ int __cpu_up(unsigned int cpu, struct task_struct *tidle)
 
 void __init smp_cpus_done(unsigned int max_cpus)
 {
+}
+
+int setup_profiling_timer(unsigned int multiplier)
+{
+	return -EINVAL;
 }
 
 void csky_start_secondary(void)

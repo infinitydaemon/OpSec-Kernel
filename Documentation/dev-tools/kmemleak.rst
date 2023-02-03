@@ -174,6 +174,7 @@ mapping:
 
 - ``kmemleak_alloc_phys``
 - ``kmemleak_free_part_phys``
+- ``kmemleak_not_leak_phys``
 - ``kmemleak_ignore_phys``
 
 Dealing with false positives/negatives

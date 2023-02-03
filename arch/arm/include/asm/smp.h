@@ -43,7 +43,7 @@ extern void set_smp_ipi_range(int ipi_base, int nr_ipi);
  * Called from platform specific assembly code, this is the
  * secondary CPU entry point.
  */
-asmlinkage void secondary_start_kernel(struct task_struct *task);
+asmlinkage void secondary_start_kernel(void);
 
 
 /*
@@ -56,7 +56,6 @@ struct secondary_data {
 	};
 	unsigned long swapper_pg_dir;
 	void *stack;
-	struct task_struct *task;
 };
 extern struct secondary_data secondary_data;
 extern void secondary_startup(void);

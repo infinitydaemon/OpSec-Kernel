@@ -8,7 +8,6 @@
 #include <asm/udbg.h>
 #include <asm/io.h>
 #include <asm/reg_a2.h>
-#include <asm/early_ioremap.h>
 
 extern u8 real_readb(volatile u8 __iomem  *addr);
 extern void real_writeb(u8 data, volatile u8 __iomem *addr);
@@ -85,7 +84,7 @@ static int udbg_uart_getc(void)
 	return udbg_uart_in(UART_RBR);
 }
 
-static void __init udbg_use_uart(void)
+static void udbg_use_uart(void)
 {
 	udbg_putc = udbg_uart_putc;
 	udbg_flush = udbg_uart_flush;
@@ -93,7 +92,7 @@ static void __init udbg_use_uart(void)
 	udbg_getc_poll = udbg_uart_getc_poll;
 }
 
-void __init udbg_uart_setup(unsigned int speed, unsigned int clock)
+void udbg_uart_setup(unsigned int speed, unsigned int clock)
 {
 	unsigned int dll, base_bauds;
 
@@ -122,7 +121,7 @@ void __init udbg_uart_setup(unsigned int speed, unsigned int clock)
 	udbg_uart_out(UART_FCR, 0x7);
 }
 
-unsigned int __init udbg_probe_uart_speed(unsigned int clock)
+unsigned int udbg_probe_uart_speed(unsigned int clock)
 {
 	unsigned int dll, dlm, divisor, prescaler, speed;
 	u8 old_lcr;
@@ -173,7 +172,7 @@ static void udbg_uart_out_pio(unsigned int reg, u8 data)
 	outb(data, udbg_uart.pio_base + (reg * udbg_uart_stride));
 }
 
-void __init udbg_uart_init_pio(unsigned long port, unsigned int stride)
+void udbg_uart_init_pio(unsigned long port, unsigned int stride)
 {
 	if (!port)
 		return;
@@ -195,7 +194,7 @@ static void udbg_uart_out_mmio(unsigned int reg, u8 data)
 }
 
 
-void __init udbg_uart_init_mmio(void __iomem *addr, unsigned int stride)
+void udbg_uart_init_mmio(void __iomem *addr, unsigned int stride)
 {
 	if (!addr)
 		return;
@@ -298,34 +297,41 @@ void __init udbg_init_40x_realmode(void)
 
 #endif /* CONFIG_PPC_EARLY_DEBUG_40x */
 
-#ifdef CONFIG_PPC_EARLY_DEBUG_16550
+#ifdef CONFIG_PPC_EARLY_DEBUG_MICROWATT
 
-static void __iomem *udbg_uart_early_addr;
+#define UDBG_UART_MW_ADDR	((void __iomem *)0xc0002000)
 
-void __init udbg_init_debug_16550(void)
+static u8 udbg_uart_in_isa300_rm(unsigned int reg)
 {
-	udbg_uart_early_addr = early_ioremap(CONFIG_PPC_EARLY_DEBUG_16550_PHYSADDR, 0x1000);
-	udbg_uart_init_mmio(udbg_uart_early_addr, CONFIG_PPC_EARLY_DEBUG_16550_STRIDE);
+	uint64_t msr = mfmsr();
+	uint8_t  c;
+
+	mtmsr(msr & ~(MSR_EE|MSR_DR));
+	isync();
+	eieio();
+	c = __raw_rm_readb(UDBG_UART_MW_ADDR + (reg << 2));
+	mtmsr(msr);
+	isync();
+	return c;
 }
 
-static int __init udbg_init_debug_16550_ioremap(void)
+static void udbg_uart_out_isa300_rm(unsigned int reg, u8 val)
 {
-	void __iomem *addr;
+	uint64_t msr = mfmsr();
 
-	if (!udbg_uart_early_addr)
-		return 0;
-
-	addr = ioremap(CONFIG_PPC_EARLY_DEBUG_16550_PHYSADDR, 0x1000);
-	if (WARN_ON(!addr))
-		return -ENOMEM;
-
-	udbg_uart_init_mmio(addr, CONFIG_PPC_EARLY_DEBUG_16550_STRIDE);
-	early_iounmap(udbg_uart_early_addr, 0x1000);
-	udbg_uart_early_addr = NULL;
-
-	return 0;
+	mtmsr(msr & ~(MSR_EE|MSR_DR));
+	isync();
+	eieio();
+	__raw_rm_writeb(val, UDBG_UART_MW_ADDR + (reg << 2));
+	mtmsr(msr);
+	isync();
 }
 
-early_initcall(udbg_init_debug_16550_ioremap);
+void __init udbg_init_debug_microwatt(void)
+{
+	udbg_uart_in = udbg_uart_in_isa300_rm;
+	udbg_uart_out = udbg_uart_out_isa300_rm;
+	udbg_use_uart();
+}
 
-#endif /* CONFIG_PPC_EARLY_DEBUG_16550 */
+#endif /* CONFIG_PPC_EARLY_DEBUG_MICROWATT */

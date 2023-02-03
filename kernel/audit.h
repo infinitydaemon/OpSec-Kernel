@@ -14,7 +14,6 @@
 #include <linux/skbuff.h>
 #include <uapi/linux/mqueue.h>
 #include <linux/tty.h>
-#include <uapi/linux/openat2.h> // struct open_how
 
 /* AUDIT_NAMES is the number of slots we reserve in the audit_context
  * for saving names from getname().  If we get more names we will allocate
@@ -101,15 +100,10 @@ struct audit_proctitle {
 /* The per-task audit context. */
 struct audit_context {
 	int		    dummy;	/* must be the first element */
-	enum {
-		AUDIT_CTX_UNUSED,	/* audit_context is currently unused */
-		AUDIT_CTX_SYSCALL,	/* in use by syscall */
-		AUDIT_CTX_URING,	/* in use by io_uring */
-	} context;
+	int		    in_syscall;	/* 1 if task is in a syscall */
 	enum audit_state    state, current_state;
 	unsigned int	    serial;     /* serial number for record */
 	int		    major;      /* syscall number */
-	int		    uring_op;   /* uring operation */
 	struct timespec64   ctime;      /* time of syscall entry */
 	unsigned long	    argv[4];    /* syscall arguments */
 	long		    return_code;/* syscall return code */
@@ -133,7 +127,7 @@ struct audit_context {
 	struct sockaddr_storage *sockaddr;
 	size_t sockaddr_len;
 				/* Save things to print about task_struct */
-	pid_t		    ppid;
+	pid_t		    pid, ppid;
 	kuid_t		    uid, euid, suid, fsuid;
 	kgid_t		    gid, egid, sgid, fsgid;
 	unsigned long	    personality;
@@ -194,7 +188,6 @@ struct audit_context {
 			int			fd;
 			int			flags;
 		} mmap;
-		struct open_how openat2;
 		struct {
 			int			argc;
 		} execve;
@@ -244,6 +237,8 @@ struct audit_netlink_list {
 };
 
 int audit_send_list_thread(void *_dest);
+
+extern int selinux_audit_rule_update(void);
 
 extern struct mutex audit_filter_mutex;
 extern int audit_del_rule(struct audit_entry *entry);

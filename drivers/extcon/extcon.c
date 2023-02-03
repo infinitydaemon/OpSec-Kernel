@@ -167,16 +167,6 @@ static const struct __extcon_info {
 		.id = EXTCON_DISP_HMD,
 		.name = "HMD",
 	},
-	[EXTCON_DISP_CVBS] = {
-		.type = EXTCON_TYPE_DISP,
-		.id = EXTCON_DISP_CVBS,
-		.name = "CVBS",
-	},
-	[EXTCON_DISP_EDP] = {
-		.type = EXTCON_TYPE_DISP,
-		.id = EXTCON_DISP_EDP,
-		.name = "EDP",
-	},
 
 	/* Miscellaneous external connector */
 	[EXTCON_DOCK] = {
@@ -257,7 +247,7 @@ static int find_cable_index_by_id(struct extcon_dev *edev, const unsigned int id
 {
 	int i;
 
-	/* Find the index of extcon cable in edev->supported_cable */
+	/* Find the the index of extcon cable in edev->supported_cable */
 	for (i = 0; i < edev->max_supported; i++) {
 		if (edev->supported_cable[i] == id)
 			return i;
@@ -409,7 +399,6 @@ static ssize_t cable_state_show(struct device *dev,
 /**
  * extcon_sync() - Synchronize the state for an external connector.
  * @edev:	the extcon device
- * @id:		the unique id indicating an external connector
  *
  * Note that this function send a notification in order to synchronize
  * the state and property of an external connector.
@@ -587,7 +576,19 @@ EXPORT_SYMBOL_GPL(extcon_set_state);
  */
 int extcon_set_state_sync(struct extcon_dev *edev, unsigned int id, bool state)
 {
-	int ret;
+	int ret, index;
+	unsigned long flags;
+
+	index = find_cable_index_by_id(edev, id);
+	if (index < 0)
+		return index;
+
+	/* Check whether the external connector's state is changed. */
+	spin_lock_irqsave(&edev->lock, flags);
+	ret = is_extcon_changed(edev, index, state);
+	spin_unlock_irqrestore(&edev->lock, flags);
+	if (!ret)
+		return 0;
 
 	ret = extcon_set_state(edev, id, state);
 	if (ret < 0)
@@ -747,9 +748,6 @@ EXPORT_SYMBOL_GPL(extcon_set_property);
 
 /**
  * extcon_set_property_sync() - Set property of an external connector with sync.
- * @edev:	the extcon device
- * @id:		the unique id indicating an external connector
- * @prop:	the property id indicating an extcon property
  * @prop_val:	the pointer including the new value of extcon property
  *
  * Note that when setting the property value of external connector,

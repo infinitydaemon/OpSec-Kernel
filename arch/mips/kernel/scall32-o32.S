@@ -19,6 +19,7 @@
 #include <asm/sysmips.h>
 #include <asm/thread_info.h>
 #include <asm/unistd.h>
+#include <asm/war.h>
 #include <asm/asm-offsets.h>
 
 	.align	5

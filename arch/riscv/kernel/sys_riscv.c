@@ -29,9 +29,7 @@ SYSCALL_DEFINE6(mmap, unsigned long, addr, unsigned long, len,
 {
 	return riscv_sys_mmap(addr, len, prot, flags, fd, offset, 0);
 }
-#endif
-
-#if defined(CONFIG_32BIT) || defined(CONFIG_COMPAT)
+#else
 SYSCALL_DEFINE6(mmap2, unsigned long, addr, unsigned long, len,
 	unsigned long, prot, unsigned long, flags,
 	unsigned long, fd, off_t, offset)
@@ -42,7 +40,7 @@ SYSCALL_DEFINE6(mmap2, unsigned long, addr, unsigned long, len,
 	 */
 	return riscv_sys_mmap(addr, len, prot, flags, fd, offset, 12);
 }
-#endif
+#endif /* !CONFIG_64BIT */
 
 /*
  * Allows the instruction cache to be flushed from userspace.  Despite RISC-V

@@ -203,11 +203,6 @@ static struct severity {
 		BITSET(MCI_STATUS_OVER|MCI_STATUS_UC)
 		),
 	MCESEV(
-		PANIC, "Uncorrected in kernel",
-		BITSET(MCI_STATUS_UC),
-		KERNEL
-		),
-	MCESEV(
 		UC, "Uncorrected",
 		BITSET(MCI_STATUS_UC)
 		),
@@ -226,9 +221,6 @@ static bool is_copy_from_user(struct pt_regs *regs)
 	unsigned long addr;
 	struct insn insn;
 	int ret;
-
-	if (!regs)
-		return false;
 
 	if (copy_from_kernel_nofault(insn_buf, (void *)regs->ip, MAX_INSN_SIZE))
 		return false;
@@ -271,103 +263,116 @@ static bool is_copy_from_user(struct pt_regs *regs)
  * distinguish an exception taken in user from from one
  * taken in the kernel.
  */
-static noinstr int error_context(struct mce *m, struct pt_regs *regs)
+static int error_context(struct mce *m, struct pt_regs *regs)
 {
-	int fixup_type;
-	bool copy_user;
-
 	if ((m->cs & 3) == 3)
 		return IN_USER;
-
 	if (!mc_recoverable(m->mcgstatus))
 		return IN_KERNEL;
 
-	/* Allow instrumentation around external facilities usage. */
-	instrumentation_begin();
-	fixup_type = ex_get_fixup_type(m->ip);
-	copy_user  = is_copy_from_user(regs);
-	instrumentation_end();
-
-	switch (fixup_type) {
+	switch (ex_get_fixup_type(m->ip)) {
 	case EX_TYPE_UACCESS:
 	case EX_TYPE_COPY:
-		if (!copy_user)
+		if (!regs || !is_copy_from_user(regs))
 			return IN_KERNEL;
 		m->kflags |= MCE_IN_KERNEL_COPYIN;
 		fallthrough;
-
+	case EX_TYPE_FAULT:
 	case EX_TYPE_FAULT_MCE_SAFE:
 	case EX_TYPE_DEFAULT_MCE_SAFE:
 		m->kflags |= MCE_IN_KERNEL_RECOV;
 		return IN_KERNEL_RECOV;
-
 	default:
 		return IN_KERNEL;
 	}
 }
 
-/* See AMD PPR(s) section Machine Check Error Handling. */
-static noinstr int mce_severity_amd(struct mce *m, struct pt_regs *regs, char **msg, bool is_excp)
+static int mce_severity_amd_smca(struct mce *m, enum context err_ctx)
 {
-	char *panic_msg = NULL;
-	int ret;
+	u32 addr = MSR_AMD64_SMCA_MCx_CONFIG(m->bank);
+	u32 low, high;
 
 	/*
-	 * Default return value: Action required, the error must be handled
-	 * immediately.
+	 * We need to look at the following bits:
+	 * - "succor" bit (data poisoning support), and
+	 * - TCC bit (Task Context Corrupt)
+	 * in MCi_STATUS to determine error severity.
 	 */
-	ret = MCE_AR_SEVERITY;
+	if (!mce_flags.succor)
+		return MCE_PANIC_SEVERITY;
 
-	/* Processor Context Corrupt, no need to fumble too much, die! */
-	if (m->status & MCI_STATUS_PCC) {
-		panic_msg = "Processor Context Corrupt";
-		ret = MCE_PANIC_SEVERITY;
-		goto out;
-	}
+	if (rdmsr_safe(addr, &low, &high))
+		return MCE_PANIC_SEVERITY;
 
-	if (m->status & MCI_STATUS_DEFERRED) {
-		ret = MCE_DEFERRED_SEVERITY;
-		goto out;
-	}
+	/* TCC (Task context corrupt). If set and if IN_KERNEL, panic. */
+	if ((low & MCI_CONFIG_MCAX) &&
+	    (m->status & MCI_STATUS_TCC) &&
+	    (err_ctx == IN_KERNEL))
+		return MCE_PANIC_SEVERITY;
 
-	/*
-	 * If the UC bit is not set, the system either corrected or deferred
-	 * the error. No action will be required after logging the error.
-	 */
-	if (!(m->status & MCI_STATUS_UC)) {
-		ret = MCE_KEEP_SEVERITY;
-		goto out;
-	}
-
-	/*
-	 * On MCA overflow, without the MCA overflow recovery feature the
-	 * system will not be able to recover, panic.
-	 */
-	if ((m->status & MCI_STATUS_OVER) && !mce_flags.overflow_recov) {
-		panic_msg = "Overflowed uncorrected error without MCA Overflow Recovery";
-		ret = MCE_PANIC_SEVERITY;
-		goto out;
-	}
-
-	if (!mce_flags.succor) {
-		panic_msg = "Uncorrected error without MCA Recovery";
-		ret = MCE_PANIC_SEVERITY;
-		goto out;
-	}
-
-	if (error_context(m, regs) == IN_KERNEL) {
-		panic_msg = "Uncorrected unrecoverable error in kernel context";
-		ret = MCE_PANIC_SEVERITY;
-	}
-
-out:
-	if (msg && panic_msg)
-		*msg = panic_msg;
-
-	return ret;
+	 /* ...otherwise invoke hwpoison handler. */
+	return MCE_AR_SEVERITY;
 }
 
-static noinstr int mce_severity_intel(struct mce *m, struct pt_regs *regs, char **msg, bool is_excp)
+/*
+ * See AMD Error Scope Hierarchy table in a newer BKDG. For example
+ * 49125_15h_Models_30h-3Fh_BKDG.pdf, section "RAS Features"
+ */
+static int mce_severity_amd(struct mce *m, struct pt_regs *regs, int tolerant,
+			    char **msg, bool is_excp)
+{
+	enum context ctx = error_context(m, regs);
+
+	/* Processor Context Corrupt, no need to fumble too much, die! */
+	if (m->status & MCI_STATUS_PCC)
+		return MCE_PANIC_SEVERITY;
+
+	if (m->status & MCI_STATUS_UC) {
+
+		if (ctx == IN_KERNEL)
+			return MCE_PANIC_SEVERITY;
+
+		/*
+		 * On older systems where overflow_recov flag is not present, we
+		 * should simply panic if an error overflow occurs. If
+		 * overflow_recov flag is present and set, then software can try
+		 * to at least kill process to prolong system operation.
+		 */
+		if (mce_flags.overflow_recov) {
+			if (mce_flags.smca)
+				return mce_severity_amd_smca(m, ctx);
+
+			/* kill current process */
+			return MCE_AR_SEVERITY;
+		} else {
+			/* at least one error was not logged */
+			if (m->status & MCI_STATUS_OVER)
+				return MCE_PANIC_SEVERITY;
+		}
+
+		/*
+		 * For any other case, return MCE_UC_SEVERITY so that we log the
+		 * error and exit #MC handler.
+		 */
+		return MCE_UC_SEVERITY;
+	}
+
+	/*
+	 * deferred error: poll handler catches these and adds to mce_ring so
+	 * memory-failure can take recovery actions.
+	 */
+	if (m->status & MCI_STATUS_DEFERRED)
+		return MCE_DEFERRED_SEVERITY;
+
+	/*
+	 * corrected error: poll handler catches these and passes responsibility
+	 * of decoding the error to EDAC
+	 */
+	return MCE_KEEP_SEVERITY;
+}
+
+static int mce_severity_intel(struct mce *m, struct pt_regs *regs,
+			      int tolerant, char **msg, bool is_excp)
 {
 	enum exception excp = (is_excp ? EXCP_CONTEXT : NO_EXCP);
 	enum context ctx = error_context(m, regs);
@@ -395,18 +400,23 @@ static noinstr int mce_severity_intel(struct mce *m, struct pt_regs *regs, char 
 		if (msg)
 			*msg = s->msg;
 		s->covered = 1;
-
+		if (s->sev >= MCE_UC_SEVERITY && ctx == IN_KERNEL) {
+			if (tolerant < 1)
+				return MCE_PANIC_SEVERITY;
+		}
 		return s->sev;
 	}
 }
 
-int noinstr mce_severity(struct mce *m, struct pt_regs *regs, char **msg, bool is_excp)
+/* Default to mce_severity_intel */
+int (*mce_severity)(struct mce *m, struct pt_regs *regs, int tolerant, char **msg, bool is_excp) =
+		    mce_severity_intel;
+
+void __init mcheck_vendor_init_severity(void)
 {
 	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD ||
 	    boot_cpu_data.x86_vendor == X86_VENDOR_HYGON)
-		return mce_severity_amd(m, regs, msg, is_excp);
-	else
-		return mce_severity_intel(m, regs, msg, is_excp);
+		mce_severity = mce_severity_amd;
 }
 
 #ifdef CONFIG_DEBUG_FS

@@ -40,11 +40,8 @@
 #include <asm/mach-types.h>
 
 #include <linux/omap-dma.h>
-#include <linux/platform_data/usb-omap1.h>
 
-#include <linux/soc/ti/omap1-usb.h>
-#include <linux/soc/ti/omap1-soc.h>
-#include <linux/soc/ti/omap1-io.h>
+#include <mach/usb.h>
 
 #include "omap_udc.h"
 
@@ -1006,7 +1003,7 @@ irq_wait:
 static int omap_ep_dequeue(struct usb_ep *_ep, struct usb_request *_req)
 {
 	struct omap_ep	*ep = container_of(_ep, struct omap_ep, ep);
-	struct omap_req	*req = NULL, *iter;
+	struct omap_req	*req;
 	unsigned long	flags;
 
 	if (!_ep || !_req)
@@ -1015,13 +1012,11 @@ static int omap_ep_dequeue(struct usb_ep *_ep, struct usb_request *_req)
 	spin_lock_irqsave(&ep->udc->lock, flags);
 
 	/* make sure it's actually queued on this endpoint */
-	list_for_each_entry(iter, &ep->queue, queue) {
-		if (&iter->req != _req)
-			continue;
-		req = iter;
-		break;
+	list_for_each_entry(req, &ep->queue, queue) {
+		if (&req->req == _req)
+			break;
 	}
-	if (!req) {
+	if (&req->req != _req) {
 		spin_unlock_irqrestore(&ep->udc->lock, flags);
 		return -EINVAL;
 	}
@@ -1470,7 +1465,7 @@ static void ep0_irq(struct omap_udc *udc, u16 irq_src)
 			if (!udc->ep0_in) {
 				stat = 0;
 				/* read next OUT packet of request, maybe
-				 * reactivating the fifo; stall on errors.
+				 * reactiviting the fifo; stall on errors.
 				 */
 				stat = read_fifo(ep0, req);
 				if (!req || stat < 0) {
@@ -2234,7 +2229,7 @@ static int proc_otg_show(struct seq_file *s)
 	char		*ctrl_name = "(UNKNOWN)";
 
 	tmp = omap_readl(OTG_REV);
-	ctrl_name = "transceiver_ctrl";
+	ctrl_name = "tranceiver_ctrl";
 	trans = omap_readw(USB_TRANSCEIVER_CTRL);
 	seq_printf(s, "\nOTG rev %d.%d, %s %05x\n",
 		tmp >> 4, tmp & 0xf, ctrl_name, trans);
@@ -2558,7 +2553,7 @@ omap_ep_setup(char *name, u8 addr, u8 type,
 
 	/* set up driver data structures */
 	BUG_ON(strlen(name) >= sizeof ep->name);
-	strscpy(ep->name, name, sizeof(ep->name));
+	strlcpy(ep->name, name, sizeof ep->name);
 	INIT_LIST_HEAD(&ep->queue);
 	INIT_LIST_HEAD(&ep->iso);
 	ep->bEndpointAddress = addr;
@@ -2609,8 +2604,6 @@ static void omap_udc_release(struct device *dev)
 	if (udc->dc_clk) {
 		if (udc->clk_requested)
 			omap_udc_enable_clock(0);
-		clk_unprepare(udc->hhc_clk);
-		clk_unprepare(udc->dc_clk);
 		clk_put(udc->hhc_clk);
 		clk_put(udc->dc_clk);
 	}
@@ -2775,8 +2768,8 @@ static int omap_udc_probe(struct platform_device *pdev)
 		hhc_clk = clk_get(&pdev->dev, "usb_hhc_ck");
 		BUG_ON(IS_ERR(dc_clk) || IS_ERR(hhc_clk));
 		/* can't use omap_udc_enable_clock yet */
-		clk_prepare_enable(dc_clk);
-		clk_prepare_enable(hhc_clk);
+		clk_enable(dc_clk);
+		clk_enable(hhc_clk);
 		udelay(100);
 	}
 
@@ -2785,8 +2778,8 @@ static int omap_udc_probe(struct platform_device *pdev)
 		hhc_clk = clk_get(&pdev->dev, "l3_ocpi_ck");
 		BUG_ON(IS_ERR(dc_clk) || IS_ERR(hhc_clk));
 		/* can't use omap_udc_enable_clock yet */
-		clk_prepare_enable(dc_clk);
-		clk_prepare_enable(hhc_clk);
+		clk_enable(dc_clk);
+		clk_enable(hhc_clk);
 		udelay(100);
 	}
 
@@ -2934,8 +2927,8 @@ cleanup0:
 		usb_put_phy(xceiv);
 
 	if (cpu_is_omap16xx() || cpu_is_omap7xx()) {
-		clk_disable_unprepare(hhc_clk);
-		clk_disable_unprepare(dc_clk);
+		clk_disable(hhc_clk);
+		clk_disable(dc_clk);
 		clk_put(hhc_clk);
 		clk_put(dc_clk);
 	}

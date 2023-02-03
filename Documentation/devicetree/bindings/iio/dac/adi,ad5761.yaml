@@ -22,15 +22,18 @@ properties:
   reg:
     maxItems: 1
 
+  spi-max-frequency: true
+
   vref-supply:
     description: If not supplied, internal reference will be used.
+
+additionalProperties: false
 
 required:
   - compatible
   - reg
 
 allOf:
-  - $ref: /schemas/spi/spi-peripheral-props.yaml#
   - if:
       properties:
         compatible:
@@ -41,8 +44,6 @@ allOf:
     then:
       required:
         - vref-supply
-
-unevaluatedProperties: false
 
 examples:
   - |

@@ -823,6 +823,7 @@ static const struct snd_soc_component_driver soc_component_dev_wm8988 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config wm8988_regmap = {
@@ -871,7 +872,8 @@ static struct spi_driver wm8988_spi_driver = {
 #endif /* CONFIG_SPI_MASTER */
 
 #if IS_ENABLED(CONFIG_I2C)
-static int wm8988_i2c_probe(struct i2c_client *i2c)
+static int wm8988_i2c_probe(struct i2c_client *i2c,
+			    const struct i2c_device_id *id)
 {
 	struct wm8988_priv *wm8988;
 	int ret;
@@ -905,7 +907,7 @@ static struct i2c_driver wm8988_i2c_driver = {
 	.driver = {
 		.name = "wm8988",
 	},
-	.probe_new = wm8988_i2c_probe,
+	.probe =    wm8988_i2c_probe,
 	.id_table = wm8988_i2c_id,
 };
 #endif

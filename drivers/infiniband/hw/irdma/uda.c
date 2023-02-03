@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 or Linux-OpenIB
 /* Copyright (c) 2016 - 2021 Intel Corporation */
-#include <linux/etherdevice.h>
-
 #include "osdep.h"
+#include "status.h"
 #include "hmc.h"
 #include "defs.h"
 #include "type.h"
@@ -17,15 +16,16 @@
  * @op: Operation
  * @scratch: u64 saved to be used during cqp completion
  */
-int irdma_sc_access_ah(struct irdma_sc_cqp *cqp, struct irdma_ah_info *info,
-		       u32 op, u64 scratch)
+enum irdma_status_code irdma_sc_access_ah(struct irdma_sc_cqp *cqp,
+					  struct irdma_ah_info *info,
+					  u32 op, u64 scratch)
 {
 	__le64 *wqe;
 	u64 qw1, qw2;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe)
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 
 	set_64bit_val(wqe, 0, ether_addr_to_u64(info->mac_addr) << 16);
 	qw1 = FIELD_PREP(IRDMA_UDA_CQPSQ_MAV_PDINDEXLO, info->pd_idx) |
@@ -84,7 +84,8 @@ int irdma_sc_access_ah(struct irdma_sc_cqp *cqp, struct irdma_ah_info *info,
  * irdma_create_mg_ctx() - create a mcg context
  * @info: multicast group context info
  */
-static void irdma_create_mg_ctx(struct irdma_mcast_grp_info *info)
+static enum irdma_status_code
+irdma_create_mg_ctx(struct irdma_mcast_grp_info *info)
 {
 	struct irdma_mcast_grp_ctx_entry_info *entry_info = NULL;
 	u8 idx = 0; /* index in the array */
@@ -103,6 +104,8 @@ static void irdma_create_mg_ctx(struct irdma_mcast_grp_info *info)
 			ctx_idx++;
 		}
 	}
+
+	return 0;
 }
 
 /**
@@ -112,24 +115,27 @@ static void irdma_create_mg_ctx(struct irdma_mcast_grp_info *info)
  * @op: operation to perform
  * @scratch: u64 saved to be used during cqp completion
  */
-int irdma_access_mcast_grp(struct irdma_sc_cqp *cqp,
-			   struct irdma_mcast_grp_info *info, u32 op,
-			   u64 scratch)
+enum irdma_status_code irdma_access_mcast_grp(struct irdma_sc_cqp *cqp,
+					      struct irdma_mcast_grp_info *info,
+					      u32 op, u64 scratch)
 {
 	__le64 *wqe;
+	enum irdma_status_code ret_code = 0;
 
 	if (info->mg_id >= IRDMA_UDA_MAX_FSI_MGS) {
 		ibdev_dbg(to_ibdev(cqp->dev), "WQE: mg_id out of range\n");
-		return -EINVAL;
+		return IRDMA_ERR_PARAM;
 	}
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
 	if (!wqe) {
 		ibdev_dbg(to_ibdev(cqp->dev), "WQE: ring full\n");
-		return -ENOMEM;
+		return IRDMA_ERR_RING_FULL;
 	}
 
-	irdma_create_mg_ctx(info);
+	ret_code = irdma_create_mg_ctx(info);
+	if (ret_code)
+		return ret_code;
 
 	set_64bit_val(wqe, 32, info->dma_mem_mc.pa);
 	set_64bit_val(wqe, 16,
@@ -190,8 +196,8 @@ static bool irdma_compare_mgs(struct irdma_mcast_grp_ctx_entry_info *entry1,
  * @ctx: Multcast group context
  * @mg: Multcast group info
  */
-int irdma_sc_add_mcast_grp(struct irdma_mcast_grp_info *ctx,
-			   struct irdma_mcast_grp_ctx_entry_info *mg)
+enum irdma_status_code irdma_sc_add_mcast_grp(struct irdma_mcast_grp_info *ctx,
+					      struct irdma_mcast_grp_ctx_entry_info *mg)
 {
 	u32 idx;
 	bool free_entry_found = false;
@@ -220,7 +226,7 @@ int irdma_sc_add_mcast_grp(struct irdma_mcast_grp_info *ctx,
 		return 0;
 	}
 
-	return -ENOMEM;
+	return IRDMA_ERR_NO_MEMORY;
 }
 
 /**
@@ -231,8 +237,8 @@ int irdma_sc_add_mcast_grp(struct irdma_mcast_grp_info *ctx,
  * Finds and removes a specific mulicast group from context, all
  * parameters must match to remove a multicast group.
  */
-int irdma_sc_del_mcast_grp(struct irdma_mcast_grp_info *ctx,
-			   struct irdma_mcast_grp_ctx_entry_info *mg)
+enum irdma_status_code irdma_sc_del_mcast_grp(struct irdma_mcast_grp_info *ctx,
+					      struct irdma_mcast_grp_ctx_entry_info *mg)
 {
 	u32 idx;
 
@@ -261,5 +267,5 @@ int irdma_sc_del_mcast_grp(struct irdma_mcast_grp_info *ctx,
 		}
 	}
 
-	return -EINVAL;
+	return IRDMA_ERR_PARAM;
 }

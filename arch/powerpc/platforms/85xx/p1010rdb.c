@@ -16,6 +16,7 @@
 #include <asm/machdep.h>
 #include <asm/pci-bridge.h>
 #include <mm/mmu_decl.h>
+#include <asm/prom.h>
 #include <asm/udbg.h>
 #include <asm/mpic.h>
 

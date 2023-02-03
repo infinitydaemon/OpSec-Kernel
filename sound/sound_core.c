@@ -30,7 +30,7 @@ MODULE_DESCRIPTION("Core sound module");
 MODULE_AUTHOR("Alan Cox");
 MODULE_LICENSE("GPL");
 
-static char *sound_devnode(const struct device *dev, umode_t *mode)
+static char *sound_devnode(struct device *dev, umode_t *mode)
 {
 	if (MAJOR(dev->devt) == SOUND_MAJOR)
 		return NULL;
@@ -136,7 +136,11 @@ struct sound_unit
  * All these clutters are scheduled to be removed along with
  * sound-slot/service-* module aliases.
  */
-static int preclaim_oss = IS_ENABLED(CONFIG_SOUND_OSS_CORE_PRECLAIM);
+#ifdef CONFIG_SOUND_OSS_CORE_PRECLAIM
+static int preclaim_oss = 1;
+#else
+static int preclaim_oss = 0;
+#endif
 
 module_param(preclaim_oss, int, 0444);
 
@@ -577,20 +581,20 @@ static int soundcore_open(struct inode *inode, struct file *file)
 			new_fops = fops_get(s->unit_fops);
 	}
 	spin_unlock(&sound_loader_lock);
+	if (new_fops) {
+		/*
+		 * We rely upon the fact that we can't be unloaded while the
+		 * subdriver is there.
+		 */
+		int err = 0;
+		replace_fops(file, new_fops);
 
-	if (!new_fops)
-		return -ENODEV;
+		if (file->f_op->open)
+			err = file->f_op->open(inode,file);
 
-	/*
-	 * We rely upon the fact that we can't be unloaded while the
-	 * subdriver is there.
-	 */
-	replace_fops(file, new_fops);
-
-	if (!file->f_op->open)
-		return -ENODEV;
-
-	return file->f_op->open(inode, file);
+		return err;
+	}
+	return -ENODEV;
 }
 
 MODULE_ALIAS_CHARDEV_MAJOR(SOUND_MAJOR);

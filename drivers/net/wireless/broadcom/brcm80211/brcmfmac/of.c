@@ -5,7 +5,6 @@
 #include <linux/init.h>
 #include <linux/of.h>
 #include <linux/of_irq.h>
-#include <linux/of_net.h>
 
 #include <defs.h>
 #include "debug.h"
@@ -25,19 +24,13 @@ static int brcmf_of_get_country_codes(struct device *dev,
 
 	count = of_property_count_strings(np, "brcm,ccode-map");
 	if (count < 0) {
-		/* If no explicit country code map is specified, check whether
-		 * the trivial map should be used.
-		 */
-		settings->trivial_ccode_map =
-			of_property_read_bool(np, "brcm,ccode-map-trivial");
-
 		/* The property is optional, so return success if it doesn't
 		 * exist. Otherwise propagate the error code.
 		 */
 		return (count == -EINVAL) ? 0 : count;
 	}
 
-	cc = devm_kzalloc(dev, struct_size(cc, table, count), GFP_KERNEL);
+	cc = devm_kzalloc(dev, sizeof(*cc) + count * sizeof(*cce), GFP_KERNEL);
 	if (!cc)
 		return -ENOMEM;
 
@@ -71,37 +64,28 @@ void brcmf_of_probe(struct device *dev, enum brcmf_bus_type bus_type,
 {
 	struct brcmfmac_sdio_pd *sdio = &settings->bus.sdio;
 	struct device_node *root, *np = dev->of_node;
-	const char *prop;
 	int irq;
 	int err;
 	u32 irqf;
 	u32 val;
 
-	/* Apple ARM64 platforms have their own idea of board type, passed in
-	 * via the device tree. They also have an antenna SKU parameter
-	 */
-	err = of_property_read_string(np, "brcm,board-type", &prop);
-	if (!err)
-		settings->board_type = prop;
-
-	if (!of_property_read_string(np, "apple,antenna-sku", &prop))
-		settings->antenna_sku = prop;
-
 	/* Set board-type to the first string of the machine compatible prop */
 	root = of_find_node_by_path("/");
-	if (root && err) {
+	if (root) {
+		int i, len;
 		char *board_type;
 		const char *tmp;
 
 		of_property_read_string_index(root, "compatible", 0, &tmp);
 
 		/* get rid of '/' in the compatible string to be able to find the FW */
-		board_type = devm_kstrdup(dev, tmp, GFP_KERNEL);
-		if (!board_type) {
-			of_node_put(root);
-			return;
+		len = strlen(tmp) + 1;
+		board_type = devm_kzalloc(dev, len, GFP_KERNEL);
+		strscpy(board_type, tmp, len);
+		for (i = 0; i < board_type[i]; i++) {
+			if (board_type[i] == '/')
+				board_type[i] = '-';
 		}
-		strreplace(board_type, '/', '-');
 		settings->board_type = board_type;
 
 		of_node_put(root);
@@ -113,8 +97,6 @@ void brcmf_of_probe(struct device *dev, enum brcmf_bus_type bus_type,
 	err = brcmf_of_get_country_codes(dev, settings);
 	if (err)
 		brcmf_err("failed to get OF country code map (err=%d)\n", err);
-
-	of_get_mac_address(np, settings->mac);
 
 	if (bus_type != BRCMF_BUSTYPE_SDIO)
 		return;

@@ -167,6 +167,7 @@ struct imx477_mode {
 static const struct imx477_reg mode_common_regs[] = {
 	{0x0136, 0x18},
 	{0x0137, 0x00},
+	{0x0138, 0x01},
 	{0xe000, 0x00},
 	{0xe07a, 0x01},
 	{0x0808, 0x02},
@@ -2271,7 +2272,7 @@ error_power_off:
 	return ret;
 }
 
-static void imx477_remove(struct i2c_client *client)
+static int imx477_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct imx477 *imx477 = to_imx477(sd);
@@ -2284,6 +2285,8 @@ static void imx477_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		imx477_power_off(&client->dev);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 MODULE_DEVICE_TABLE(of, imx477_dt_ids);

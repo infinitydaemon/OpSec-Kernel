@@ -375,7 +375,7 @@ static struct dio_driver hpfb_driver = {
     .remove    = hpfb_remove_one,
 };
 
-static int __init hpfb_init(void)
+int __init hpfb_init(void)
 {
 	unsigned int sid;
 	unsigned char i;
@@ -415,7 +415,7 @@ static int __init hpfb_init(void)
 	return 0;
 }
 
-static void __exit hpfb_cleanup_module(void)
+void __exit hpfb_cleanup_module(void)
 {
 	dio_unregister_driver(&hpfb_driver);
 }

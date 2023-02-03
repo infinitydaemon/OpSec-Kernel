@@ -65,7 +65,7 @@ static struct attribute *format_attrs[] = {
 	NULL,
 };
 
-static const struct attribute_group format_group = {
+static struct attribute_group format_group = {
 	.name = "format",
 	.attrs = format_attrs,
 };
@@ -126,11 +126,11 @@ static struct attribute *cpumask_attrs[] = {
 	NULL,
 };
 
-static const struct attribute_group cpumask_attr_group = {
+static struct attribute_group cpumask_attr_group = {
 	.attrs = cpumask_attrs,
 };
 
-static const struct attribute_group interface_group = {
+static struct attribute_group interface_group = {
 	.name = "interface",
 	.attrs = interface_attrs,
 };

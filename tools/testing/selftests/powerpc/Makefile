@@ -30,10 +30,8 @@ SUB_DIRS = alignment		\
 	   eeh			\
 	   vphn         \
 	   math		\
-	   papr_attributes	\
 	   ptrace	\
-	   security	\
-	   mce
+	   security
 
 endif
 

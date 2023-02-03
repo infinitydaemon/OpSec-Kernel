@@ -491,7 +491,8 @@ static int lm3630a_parse_node(struct lm3630a_chip *pchip,
 	return ret;
 }
 
-static int lm3630a_probe(struct i2c_client *client)
+static int lm3630a_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct lm3630a_platform_data *pdata = dev_get_platdata(&client->dev);
 	struct lm3630a_chip *pchip;
@@ -578,7 +579,7 @@ static int lm3630a_probe(struct i2c_client *client)
 	return 0;
 }
 
-static void lm3630a_remove(struct i2c_client *client)
+static int lm3630a_remove(struct i2c_client *client)
 {
 	int rval;
 	struct lm3630a_chip *pchip = i2c_get_clientdata(client);
@@ -593,8 +594,10 @@ static void lm3630a_remove(struct i2c_client *client)
 
 	if (pchip->irq) {
 		free_irq(pchip->irq, pchip);
+		flush_workqueue(pchip->irqthread);
 		destroy_workqueue(pchip->irqthread);
 	}
+	return 0;
 }
 
 static const struct i2c_device_id lm3630a_id[] = {
@@ -616,7 +619,7 @@ static struct i2c_driver lm3630a_i2c_driver = {
 		   .name = LM3630A_NAME,
 		   .of_match_table = lm3630a_match_table,
 		   },
-	.probe_new = lm3630a_probe,
+	.probe = lm3630a_probe,
 	.remove = lm3630a_remove,
 	.id_table = lm3630a_id,
 };

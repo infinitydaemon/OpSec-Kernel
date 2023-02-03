@@ -875,7 +875,8 @@ static void tas_exit_codec(struct aoa_codec *codec)
 }
 
 
-static int tas_i2c_probe(struct i2c_client *client)
+static int tas_i2c_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct device_node *node = client->dev.of_node;
 	struct tas *tas;
@@ -911,7 +912,7 @@ static int tas_i2c_probe(struct i2c_client *client)
 	return -EINVAL;
 }
 
-static void tas_i2c_remove(struct i2c_client *client)
+static int tas_i2c_remove(struct i2c_client *client)
 {
 	struct tas *tas = i2c_get_clientdata(client);
 	u8 tmp = TAS_ACR_ANALOG_PDOWN;
@@ -924,6 +925,7 @@ static void tas_i2c_remove(struct i2c_client *client)
 
 	mutex_destroy(&tas->mtx);
 	kfree(tas);
+	return 0;
 }
 
 static const struct i2c_device_id tas_i2c_id[] = {
@@ -936,7 +938,7 @@ static struct i2c_driver tas_driver = {
 	.driver = {
 		.name = "aoa_codec_tas",
 	},
-	.probe_new = tas_i2c_probe,
+	.probe = tas_i2c_probe,
 	.remove = tas_i2c_remove,
 	.id_table = tas_i2c_id,
 };

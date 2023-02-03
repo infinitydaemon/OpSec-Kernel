@@ -248,7 +248,8 @@ static const struct rx85x1_config rx8571_config = {
 	.num_nvram = 2
 };
 
-static int rx8581_probe(struct i2c_client *client)
+static int rx8581_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct rx8581 *rx8581;
 	const struct rx85x1_config *config = &rx8581_config;
@@ -325,7 +326,7 @@ static struct i2c_driver rx8581_driver = {
 		.name	= "rtc-rx8581",
 		.of_match_table = of_match_ptr(rx8581_of_match),
 	},
-	.probe_new	= rx8581_probe,
+	.probe		= rx8581_probe,
 	.id_table	= rx8581_id,
 };
 

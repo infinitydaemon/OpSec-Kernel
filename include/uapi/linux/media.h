@@ -20,6 +20,9 @@
 #ifndef __LINUX_MEDIA_H
 #define __LINUX_MEDIA_H
 
+#ifndef __KERNEL__
+#include <stdint.h>
+#endif
 #include <linux/ioctl.h>
 #include <linux/types.h>
 

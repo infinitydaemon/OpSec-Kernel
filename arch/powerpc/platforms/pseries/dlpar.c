@@ -19,6 +19,7 @@
 #include "of_helpers.h"
 #include "pseries.h"
 
+#include <asm/prom.h>
 #include <asm/machdep.h>
 #include <linux/uaccess.h>
 #include <asm/rtas.h>
@@ -388,7 +389,7 @@ static void pseries_hp_work_fn(struct work_struct *work)
 	handle_dlpar_errorlog(hp_work->errlog);
 
 	kfree(hp_work->errlog);
-	kfree(work);
+	kfree((void *)work);
 }
 
 void queue_hotplug_event(struct pseries_hp_errorlog *hp_errlog)

@@ -148,8 +148,7 @@ static struct snd_soc_dai_driver psc_i2s_dai[] = {{
 } };
 
 static const struct snd_soc_component_driver psc_i2s_component = {
-	.name			= "mpc5200-i2s",
-	.legacy_dai_naming	= 1,
+	.name		= "mpc5200-i2s",
 };
 
 /* ---------------------------------------------------------------------

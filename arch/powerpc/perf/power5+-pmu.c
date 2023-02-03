@@ -677,11 +677,11 @@ static struct power_pmu power5p_pmu = {
 	.cache_events		= &power5p_cache_events,
 };
 
-int __init init_power5p_pmu(void)
+int init_power5p_pmu(void)
 {
-	unsigned int pvr = mfspr(SPRN_PVR);
-
-	if (PVR_VER(pvr) != PVR_POWER5p)
+	if (!cur_cpu_spec->oprofile_cpu_type ||
+	    (strcmp(cur_cpu_spec->oprofile_cpu_type, "ppc64/power5+")
+	     && strcmp(cur_cpu_spec->oprofile_cpu_type, "ppc64/power5++")))
 		return -ENODEV;
 
 	return register_power_pmu(&power5p_pmu);

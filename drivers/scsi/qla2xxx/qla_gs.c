@@ -1537,8 +1537,7 @@ qla25xx_fdmi_port_speed_capability(struct qla_hw_data *ha)
 	}
 	if (IS_QLA2031(ha)) {
 		if ((ha->pdev->subsystem_vendor == 0x103C) &&
-		    ((ha->pdev->subsystem_device == 0x8002) ||
-		    (ha->pdev->subsystem_device == 0x8086))) {
+		    (ha->pdev->subsystem_device == 0x8002)) {
 			speeds = FDMI_PORT_SPEED_16GB;
 		} else {
 			speeds = FDMI_PORT_SPEED_16GB|FDMI_PORT_SPEED_8GB|
@@ -1616,7 +1615,7 @@ qla2x00_hba_attributes(scsi_qla_host_t *vha, void *entries,
 	eiter->type = cpu_to_be16(FDMI_HBA_MANUFACTURER);
 	alen = scnprintf(
 		eiter->a.manufacturer, sizeof(eiter->a.manufacturer),
-		"%s", QLA2XXX_MANUFACTURER);
+		"%s", "QLogic Corporation");
 	alen += FDMI_ATTR_ALIGNMENT(alen);
 	alen += FDMI_ATTR_TYPELEN(eiter);
 	eiter->len = cpu_to_be16(alen);
@@ -1765,7 +1764,7 @@ qla2x00_hba_attributes(scsi_qla_host_t *vha, void *entries,
 	size += alen;
 	ql_dbg(ql_dbg_disc, vha, 0x20aa,
 	    "CT PAYLOAD LENGTH = 0x%x.\n", be32_to_cpu(eiter->a.max_ct_len));
-	/* Node Symbolic Name */
+	/* Node Sybolic Name */
 	eiter = entries + size;
 	eiter->type = cpu_to_be16(FDMI_HBA_NODE_SYMBOLIC_NAME);
 	alen = qla2x00_get_sym_node_name(vha, eiter->a.sym_name,

@@ -17,4 +17,3 @@ Thermal
    intel_powerclamp
    nouveau_thermal
    x86_pkg_temperature_thermal
-   intel_dptf

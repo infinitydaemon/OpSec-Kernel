@@ -16,7 +16,7 @@
 #include <linux/kdev_t.h>
 #include <linux/err.h>
 #include <linux/slab.h>
-#include <linux/blkdev.h>
+#include <linux/genhd.h>
 #include <linux/mutex.h>
 #include "base.h"
 
@@ -62,7 +62,7 @@ static void class_release(struct kobject *kobj)
 	kfree(cp);
 }
 
-static const struct kobj_ns_type_operations *class_child_ns_type(const struct kobject *kobj)
+static const struct kobj_ns_type_operations *class_child_ns_type(struct kobject *kobj)
 {
 	struct subsys_private *cp = to_subsys_private(kobj);
 	struct class *class = cp->class;
@@ -265,7 +265,7 @@ EXPORT_SYMBOL_GPL(__class_create);
  */
 void class_destroy(struct class *cls)
 {
-	if (IS_ERR_OR_NULL(cls))
+	if ((cls == NULL) || (IS_ERR(cls)))
 		return;
 
 	class_unregister(cls);

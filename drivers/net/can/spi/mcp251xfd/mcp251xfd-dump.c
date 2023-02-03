@@ -207,10 +207,10 @@ static void mcp251xfd_dump_tx_ring(const struct mcp251xfd_priv *priv,
 			.val = tx->base,
 		}, {
 			.key = MCP251XFD_DUMP_OBJECT_RING_KEY_NR,
-			.val = tx->nr,
+			.val = 0,
 		}, {
 			.key = MCP251XFD_DUMP_OBJECT_RING_KEY_FIFO_NR,
-			.val = tx->fifo_nr,
+			.val = MCP251XFD_TX_FIFO,
 		}, {
 			.key = MCP251XFD_DUMP_OBJECT_RING_KEY_OBJ_NUM,
 			.val = tx->obj_num,
@@ -253,7 +253,7 @@ void mcp251xfd_dump(const struct mcp251xfd_priv *priv)
 		file_size += mcp251xfd_dump_reg_space[i].size / sizeof(u32) *
 			sizeof(struct mcp251xfd_dump_object_reg);
 
-	/* TEF ring, RX rings, TX ring */
+	/* TEF ring, RX ring, TX rings */
 	rings_num = 1 + priv->rx_ring_num + 1;
 	obj_num += rings_num;
 	file_size += rings_num * __MCP251XFD_DUMP_OBJECT_RING_KEY_MAX  *

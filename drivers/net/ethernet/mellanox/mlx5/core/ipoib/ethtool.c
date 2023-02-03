@@ -32,7 +32,6 @@
 
 #include "en.h"
 #include "ipoib.h"
-#include "en/fs_ethtool.h"
 
 static void mlx5i_get_drvinfo(struct net_device *dev,
 			      struct ethtool_drvinfo *drvinfo)
@@ -40,7 +39,7 @@ static void mlx5i_get_drvinfo(struct net_device *dev,
 	struct mlx5e_priv *priv = mlx5i_epriv(dev);
 
 	mlx5e_ethtool_get_drvinfo(priv, drvinfo);
-	strscpy(drvinfo->driver, KBUILD_MODNAME "[ib_ipoib]",
+	strlcpy(drvinfo->driver, KBUILD_MODNAME "[ib_ipoib]",
 		sizeof(drvinfo->driver));
 }
 
@@ -68,9 +67,7 @@ static void mlx5i_get_ethtool_stats(struct net_device *dev,
 }
 
 static int mlx5i_set_ringparam(struct net_device *dev,
-			       struct ethtool_ringparam *param,
-			       struct kernel_ethtool_ringparam *kernel_param,
-			       struct netlink_ext_ack *extack)
+			       struct ethtool_ringparam *param)
 {
 	struct mlx5e_priv *priv = mlx5i_epriv(dev);
 
@@ -78,33 +75,19 @@ static int mlx5i_set_ringparam(struct net_device *dev,
 }
 
 static void mlx5i_get_ringparam(struct net_device *dev,
-				struct ethtool_ringparam *param,
-				struct kernel_ethtool_ringparam *kernel_param,
-				struct netlink_ext_ack *extack)
+				struct ethtool_ringparam *param)
 {
 	struct mlx5e_priv *priv = mlx5i_epriv(dev);
 
-	mlx5e_ethtool_get_ringparam(priv, param, kernel_param);
+	mlx5e_ethtool_get_ringparam(priv, param);
 }
 
 static int mlx5i_set_channels(struct net_device *dev,
 			      struct ethtool_channels *ch)
 {
-	struct mlx5i_priv *ipriv = netdev_priv(dev);
-	struct mlx5e_priv *epriv = mlx5i_epriv(dev);
+	struct mlx5e_priv *priv = mlx5i_epriv(dev);
 
-	/* rtnl lock protects from race between this ethtool op and sub
-	 * interface ndo_init/uninit.
-	 */
-	ASSERT_RTNL();
-	if (ipriv->num_sub_interfaces > 0) {
-		mlx5_core_warn(epriv->mdev,
-			       "can't change number of channels for interfaces with sub interfaces (%u)\n",
-			       ipriv->num_sub_interfaces);
-		return -EINVAL;
-	}
-
-	return mlx5e_ethtool_set_channels(epriv, ch);
+	return mlx5e_ethtool_set_channels(priv, ch);
 }
 
 static void mlx5i_get_channels(struct net_device *dev,
@@ -122,7 +105,7 @@ static int mlx5i_set_coalesce(struct net_device *netdev,
 {
 	struct mlx5e_priv *priv = mlx5i_epriv(netdev);
 
-	return mlx5e_ethtool_set_coalesce(priv, coal, kernel_coal, extack);
+	return mlx5e_ethtool_set_coalesce(priv, coal);
 }
 
 static int mlx5i_get_coalesce(struct net_device *netdev,
@@ -132,7 +115,7 @@ static int mlx5i_get_coalesce(struct net_device *netdev,
 {
 	struct mlx5e_priv *priv = mlx5i_epriv(netdev);
 
-	return mlx5e_ethtool_get_coalesce(priv, coal, kernel_coal);
+	return mlx5e_ethtool_get_coalesce(priv, coal);
 }
 
 static int mlx5i_get_ts_info(struct net_device *netdev,
@@ -234,40 +217,6 @@ static int mlx5i_get_link_ksettings(struct net_device *netdev,
 	return 0;
 }
 
-static u32 mlx5i_flow_type_mask(u32 flow_type)
-{
-	return flow_type & ~(FLOW_EXT | FLOW_MAC_EXT | FLOW_RSS);
-}
-
-static int mlx5i_set_rxnfc(struct net_device *dev, struct ethtool_rxnfc *cmd)
-{
-	struct mlx5e_priv *priv = mlx5i_epriv(dev);
-	struct ethtool_rx_flow_spec *fs = &cmd->fs;
-
-	if (mlx5i_flow_type_mask(fs->flow_type) == ETHER_FLOW)
-		return -EINVAL;
-
-	return mlx5e_ethtool_set_rxnfc(priv, cmd);
-}
-
-static int mlx5i_get_rxnfc(struct net_device *dev, struct ethtool_rxnfc *info,
-			   u32 *rule_locs)
-{
-	struct mlx5e_priv *priv = mlx5i_epriv(dev);
-
-	/* ETHTOOL_GRXRINGS is needed by ethtool -x which is not part
-	 * of rxnfc. We keep this logic out of mlx5e_ethtool_get_rxnfc,
-	 * to avoid breaking "ethtool -x" when mlx5e_ethtool_get_rxnfc
-	 * is compiled out via CONFIG_MLX5_EN_RXNFC=n.
-	 */
-	if (info->cmd == ETHTOOL_GRXRINGS) {
-		info->data = priv->channels.params.num_channels;
-		return 0;
-	}
-
-	return mlx5e_ethtool_get_rxnfc(priv, info, rule_locs);
-}
-
 const struct ethtool_ops mlx5i_ethtool_ops = {
 	.supported_coalesce_params = ETHTOOL_COALESCE_USECS |
 				     ETHTOOL_COALESCE_MAX_FRAMES |
@@ -284,8 +233,6 @@ const struct ethtool_ops mlx5i_ethtool_ops = {
 	.get_coalesce       = mlx5i_get_coalesce,
 	.set_coalesce       = mlx5i_set_coalesce,
 	.get_ts_info        = mlx5i_get_ts_info,
-	.get_rxnfc          = mlx5i_get_rxnfc,
-	.set_rxnfc          = mlx5i_set_rxnfc,
 	.get_link_ksettings = mlx5i_get_link_ksettings,
 	.get_link           = ethtool_op_get_link,
 };

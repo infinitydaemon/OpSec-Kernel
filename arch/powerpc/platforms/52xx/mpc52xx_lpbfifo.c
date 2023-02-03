@@ -11,12 +11,11 @@
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/of.h>
-#include <linux/of_address.h>
-#include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/spinlock.h>
 #include <linux/module.h>
 #include <asm/io.h>
+#include <asm/prom.h>
 #include <asm/mpc52xx.h>
 #include <asm/time.h>
 
@@ -59,8 +58,6 @@ static struct mpc52xx_lpbfifo lpbfifo;
 
 /**
  * mpc52xx_lpbfifo_kick - Trigger the next block of data to be transferred
- *
- * @req: Pointer to request structure
  */
 static void mpc52xx_lpbfifo_kick(struct mpc52xx_lpbfifo_request *req)
 {
@@ -107,7 +104,7 @@ static void mpc52xx_lpbfifo_kick(struct mpc52xx_lpbfifo_request *req)
 		 *
 		 * Configure the watermarks so DMA will always complete correctly.
 		 * It may be worth experimenting with the ALARM value to see if
-		 * there is a performance impact.  However, if it is wrong there
+		 * there is a performance impacit.  However, if it is wrong there
 		 * is a risk of DMA not transferring the last chunk of data
 		 */
 		if (write) {
@@ -180,8 +177,6 @@ static void mpc52xx_lpbfifo_kick(struct mpc52xx_lpbfifo_request *req)
 
 /**
  * mpc52xx_lpbfifo_irq - IRQ handler for LPB FIFO
- * @irq: IRQ number to be handled
- * @dev_id: device ID cookie
  *
  * On transmit, the dma completion irq triggers before the fifo completion
  * triggers.  Handle the dma completion here instead of the LPB FIFO Bestcomm
@@ -220,8 +215,6 @@ static void mpc52xx_lpbfifo_kick(struct mpc52xx_lpbfifo_request *req)
  * or nested spinlock condition.  The out path is non-trivial, so
  * extra fiddling is done to make sure all paths lead to the same
  * outbound code.
- *
- * Return: irqreturn code (%IRQ_HANDLED)
  */
 static irqreturn_t mpc52xx_lpbfifo_irq(int irq, void *dev_id)
 {
@@ -326,12 +319,8 @@ static irqreturn_t mpc52xx_lpbfifo_irq(int irq, void *dev_id)
 
 /**
  * mpc52xx_lpbfifo_bcom_irq - IRQ handler for LPB FIFO Bestcomm task
- * @irq: IRQ number to be handled
- * @dev_id: device ID cookie
  *
  * Only used when receiving data.
- *
- * Return: irqreturn code (%IRQ_HANDLED)
  */
 static irqreturn_t mpc52xx_lpbfifo_bcom_irq(int irq, void *dev_id)
 {
@@ -382,7 +371,7 @@ static irqreturn_t mpc52xx_lpbfifo_bcom_irq(int irq, void *dev_id)
 }
 
 /**
- * mpc52xx_lpbfifo_poll - Poll for DMA completion
+ * mpc52xx_lpbfifo_bcom_poll - Poll for DMA completion
  */
 void mpc52xx_lpbfifo_poll(void)
 {
@@ -403,8 +392,6 @@ EXPORT_SYMBOL(mpc52xx_lpbfifo_poll);
 /**
  * mpc52xx_lpbfifo_submit - Submit an LPB FIFO transfer request.
  * @req: Pointer to request structure
- *
- * Return: %0 on success, -errno code on error
  */
 int mpc52xx_lpbfifo_submit(struct mpc52xx_lpbfifo_request *req)
 {

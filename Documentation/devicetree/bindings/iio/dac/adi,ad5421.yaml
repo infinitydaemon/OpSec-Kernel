@@ -26,14 +26,13 @@ properties:
     maxItems: 1
     description: Fault signal.
 
+  spi-max-frequency: true
+
 required:
   - compatible
   - reg
 
-allOf:
-  - $ref: /schemas/spi/spi-peripheral-props.yaml#
-
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

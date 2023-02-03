@@ -8,6 +8,7 @@
 #include <linux/perf_event.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <sys/resource.h>
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
 #include "trace_helpers.h"

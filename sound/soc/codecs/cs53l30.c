@@ -899,6 +899,7 @@ static const struct snd_soc_component_driver cs53l30_driver = {
 	.num_dapm_routes	= ARRAY_SIZE(cs53l30_dapm_routes),
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static struct regmap_config cs53l30_regmap = {
@@ -917,7 +918,8 @@ static struct regmap_config cs53l30_regmap = {
 	.use_single_write = true,
 };
 
-static int cs53l30_i2c_probe(struct i2c_client *client)
+static int cs53l30_i2c_probe(struct i2c_client *client,
+			     const struct i2c_device_id *id)
 {
 	const struct device_node *np = client->dev.of_node;
 	struct device *dev = &client->dev;
@@ -1043,7 +1045,7 @@ error_supplies:
 	return ret;
 }
 
-static void cs53l30_i2c_remove(struct i2c_client *client)
+static int cs53l30_i2c_remove(struct i2c_client *client)
 {
 	struct cs53l30_private *cs53l30 = i2c_get_clientdata(client);
 
@@ -1052,6 +1054,8 @@ static void cs53l30_i2c_remove(struct i2c_client *client)
 
 	regulator_bulk_disable(ARRAY_SIZE(cs53l30->supplies),
 			       cs53l30->supplies);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -1121,7 +1125,7 @@ static struct i2c_driver cs53l30_i2c_driver = {
 		.pm = &cs53l30_runtime_pm,
 	},
 	.id_table = cs53l30_id,
-	.probe_new = cs53l30_i2c_probe,
+	.probe = cs53l30_i2c_probe,
 	.remove = cs53l30_i2c_remove,
 };
 

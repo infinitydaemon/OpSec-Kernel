@@ -22,7 +22,6 @@
 #include <linux/prefetch.h>
 #include <asm/byteorder.h>
 #include <asm/qspinlock.h>
-#include <trace/events/lock.h>
 
 /*
  * Include queued spinlock statistics code
@@ -313,7 +312,7 @@ static __always_inline u32  __pv_wait_head_or_lock(struct qspinlock *lock,
  * contended             :    (*,x,y) +--> (*,0,0) ---> (*,0,1) -'  :
  *   queue               :         ^--'                             :
  */
-void __lockfunc queued_spin_lock_slowpath(struct qspinlock *lock, u32 val)
+void queued_spin_lock_slowpath(struct qspinlock *lock, u32 val)
 {
 	struct mcs_spinlock *prev, *next, *node;
 	u32 old, tail;
@@ -401,8 +400,6 @@ pv_queue:
 	node = this_cpu_ptr(&qnodes[0].mcs);
 	idx = node->count++;
 	tail = encode_tail(smp_processor_id(), idx);
-
-	trace_contention_begin(lock, LCB_F_SPIN);
 
 	/*
 	 * 4 nodes are allocated based on the assumption that there will
@@ -557,8 +554,6 @@ locked:
 	pv_kick_node(lock, next);
 
 release:
-	trace_contention_end(lock, 0);
-
 	/*
 	 * release the node
 	 */

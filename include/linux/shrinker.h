@@ -2,9 +2,6 @@
 #ifndef _LINUX_SHRINKER_H
 #define _LINUX_SHRINKER_H
 
-#include <linux/atomic.h>
-#include <linux/types.h>
-
 /*
  * This struct is used to pass information from page reclaim to the shrinkers.
  * We consolidate the values for easier extension later.
@@ -76,11 +73,6 @@ struct shrinker {
 	/* ID in shrinker_idr */
 	int id;
 #endif
-#ifdef CONFIG_SHRINKER_DEBUG
-	int debugfs_id;
-	const char *name;
-	struct dentry *debugfs_entry;
-#endif
 	/* objs pending delete, per node */
 	atomic_long_t *nr_deferred;
 };
@@ -96,32 +88,9 @@ struct shrinker {
  */
 #define SHRINKER_NONSLAB	(1 << 3)
 
-extern int __printf(2, 3) prealloc_shrinker(struct shrinker *shrinker,
-					    const char *fmt, ...);
+extern int prealloc_shrinker(struct shrinker *shrinker);
 extern void register_shrinker_prepared(struct shrinker *shrinker);
-extern int __printf(2, 3) register_shrinker(struct shrinker *shrinker,
-					    const char *fmt, ...);
+extern int register_shrinker(struct shrinker *shrinker);
 extern void unregister_shrinker(struct shrinker *shrinker);
 extern void free_prealloced_shrinker(struct shrinker *shrinker);
-extern void synchronize_shrinkers(void);
-
-#ifdef CONFIG_SHRINKER_DEBUG
-extern int shrinker_debugfs_add(struct shrinker *shrinker);
-extern void shrinker_debugfs_remove(struct shrinker *shrinker);
-extern int __printf(2, 3) shrinker_debugfs_rename(struct shrinker *shrinker,
-						  const char *fmt, ...);
-#else /* CONFIG_SHRINKER_DEBUG */
-static inline int shrinker_debugfs_add(struct shrinker *shrinker)
-{
-	return 0;
-}
-static inline void shrinker_debugfs_remove(struct shrinker *shrinker)
-{
-}
-static inline __printf(2, 3)
-int shrinker_debugfs_rename(struct shrinker *shrinker, const char *fmt, ...)
-{
-	return 0;
-}
-#endif /* CONFIG_SHRINKER_DEBUG */
-#endif /* _LINUX_SHRINKER_H */
+#endif

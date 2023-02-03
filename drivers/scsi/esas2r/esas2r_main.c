@@ -248,6 +248,8 @@ static struct scsi_host_template driver_template = {
 	.sg_tablesize			= SG_CHUNK_SIZE,
 	.cmd_per_lun			=
 		ESAS2R_DEFAULT_CMD_PER_LUN,
+	.present			= 0,
+	.emulated			= 0,
 	.proc_name			= ESAS2R_DRVR_NAME,
 	.change_queue_depth		= scsi_change_queue_depth,
 	.max_sectors			= 0xFFFF,
@@ -635,13 +637,10 @@ static void __exit esas2r_exit(void)
 	esas2r_log(ESAS2R_LOG_INFO, "%s called", __func__);
 
 	if (esas2r_proc_major > 0) {
-		struct proc_dir_entry *proc_dir;
-
 		esas2r_log(ESAS2R_LOG_INFO, "unregister proc");
 
-		proc_dir = scsi_template_proc_dir(esas2r_proc_host->hostt);
-		if (proc_dir)
-			remove_proc_entry(ATTONODE_NAME, proc_dir);
+		remove_proc_entry(ATTONODE_NAME,
+				  esas2r_proc_host->hostt->proc_dir);
 		unregister_chrdev(esas2r_proc_major, ESAS2R_DRVR_NAME);
 
 		esas2r_proc_major = 0;
@@ -731,13 +730,11 @@ const char *esas2r_info(struct Scsi_Host *sh)
 			       esas2r_proc_major);
 
 		if (esas2r_proc_major > 0) {
-			struct proc_dir_entry *proc_dir;
-			struct proc_dir_entry *pde = NULL;
+			struct proc_dir_entry *pde;
 
-			proc_dir = scsi_template_proc_dir(sh->hostt);
-			if (proc_dir)
-				pde = proc_create(ATTONODE_NAME, 0, proc_dir,
-						  &esas2r_proc_ops);
+			pde = proc_create(ATTONODE_NAME, 0,
+					  sh->hostt->proc_dir,
+					  &esas2r_proc_ops);
 
 			if (!pde) {
 				esas2r_log_dev(ESAS2R_LOG_WARN,
@@ -831,7 +828,7 @@ int esas2r_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *cmd)
 
 	if (unlikely(test_bit(AF_DEGRADED_MODE, &a->flags))) {
 		cmd->result = DID_NO_CONNECT << 16;
-		scsi_done(cmd);
+		cmd->scsi_done(cmd);
 		return 0;
 	}
 
@@ -991,7 +988,7 @@ int esas2r_eh_abort(struct scsi_cmnd *cmd)
 
 		scsi_set_resid(cmd, 0);
 
-		scsi_done(cmd);
+		cmd->scsi_done(cmd);
 
 		return SUCCESS;
 	}
@@ -1057,7 +1054,7 @@ check_active_queue:
 
 	scsi_set_resid(cmd, 0);
 
-	scsi_done(cmd);
+	cmd->scsi_done(cmd);
 
 	return SUCCESS;
 }
@@ -1538,7 +1535,7 @@ void esas2r_complete_request_cb(struct esas2r_adapter *a,
 			scsi_set_resid(rq->cmd, 0);
 	}
 
-	scsi_done(rq->cmd);
+	rq->cmd->scsi_done(rq->cmd);
 
 	esas2r_free_request(a, rq);
 }

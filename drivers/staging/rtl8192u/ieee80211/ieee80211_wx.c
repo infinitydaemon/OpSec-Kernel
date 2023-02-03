@@ -470,9 +470,7 @@ int ieee80211_wx_get_encode(struct ieee80211_device *ieee,
 		return 0;
 	}
 	len = crypt->ops->get_key(keybuf, SCM_KEY_LEN, NULL, crypt->priv);
-	if (len < 0)
-		len = 0;
-	erq->length = len;
+	erq->length = (len >= 0 ? len : 0);
 
 	erq->flags |= IW_ENCODE_ENABLED;
 
@@ -688,9 +686,9 @@ int ieee80211_wx_get_encode_ext(struct ieee80211_device *ieee,
 	} else {
 		if (strcmp(crypt->ops->name, "WEP") == 0)
 			ext->alg = IW_ENCODE_ALG_WEP;
-		else if (strcmp(crypt->ops->name, "TKIP") == 0)
+		else if (strcmp(crypt->ops->name, "TKIP"))
 			ext->alg = IW_ENCODE_ALG_TKIP;
-		else if (strcmp(crypt->ops->name, "CCMP") == 0)
+		else if (strcmp(crypt->ops->name, "CCMP"))
 			ext->alg = IW_ENCODE_ALG_CCMP;
 		else
 			return -EINVAL;

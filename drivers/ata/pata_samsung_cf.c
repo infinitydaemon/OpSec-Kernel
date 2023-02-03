@@ -308,7 +308,8 @@ static void pata_s3c_dev_select(struct ata_port *ap, unsigned int device)
 /*
  * pata_s3c_devchk - PATA device presence detection
  */
-static bool pata_s3c_devchk(struct ata_port *ap, unsigned int device)
+static unsigned int pata_s3c_devchk(struct ata_port *ap,
+				unsigned int device)
 {
 	struct ata_ioports *ioaddr = &ap->ioaddr;
 	u8 nsect, lbal;
@@ -328,9 +329,9 @@ static bool pata_s3c_devchk(struct ata_port *ap, unsigned int device)
 	lbal = ata_inb(ap->host, ioaddr->lbal_addr);
 
 	if ((nsect == 0x55) && (lbal == 0xaa))
-		return true;	/* we found a device */
+		return 1;	/* we found a device */
 
-	return false;		/* nothing found */
+	return 0;		/* nothing found */
 }
 
 /*
@@ -607,8 +608,7 @@ static int pata_s3c_suspend(struct device *dev)
 {
 	struct ata_host *host = dev_get_drvdata(dev);
 
-	ata_host_suspend(host, PMSG_SUSPEND);
-	return 0;
+	return ata_host_suspend(host, PMSG_SUSPEND);
 }
 
 static int pata_s3c_resume(struct device *dev)

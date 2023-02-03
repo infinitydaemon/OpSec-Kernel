@@ -70,7 +70,7 @@ static struct kmem_cache *isofs_inode_cachep;
 static struct inode *isofs_alloc_inode(struct super_block *sb)
 {
 	struct iso_inode_info *ei;
-	ei = alloc_inode_sb(sb, isofs_inode_cachep, GFP_KERNEL);
+	ei = kmem_cache_alloc(isofs_inode_cachep, GFP_KERNEL);
 	if (!ei)
 		return NULL;
 	return &ei->vfs_inode;
@@ -1174,9 +1174,9 @@ struct buffer_head *isofs_bread(struct inode *inode, sector_t block)
 	return sb_bread(inode->i_sb, blknr);
 }
 
-static int isofs_read_folio(struct file *file, struct folio *folio)
+static int isofs_readpage(struct file *file, struct page *page)
 {
-	return mpage_read_folio(folio, isofs_get_block);
+	return mpage_readpage(page, isofs_get_block);
 }
 
 static void isofs_readahead(struct readahead_control *rac)
@@ -1190,7 +1190,7 @@ static sector_t _isofs_bmap(struct address_space *mapping, sector_t block)
 }
 
 static const struct address_space_operations isofs_aops = {
-	.read_folio = isofs_read_folio,
+	.readpage = isofs_readpage,
 	.readahead = isofs_readahead,
 	.bmap = _isofs_bmap
 };
@@ -1277,11 +1277,13 @@ static int isofs_read_level3_size(struct inode *inode)
 	} while (more_entries);
 out:
 	kfree(tmpde);
-	brelse(bh);
+	if (bh)
+		brelse(bh);
 	return 0;
 
 out_nomem:
-	brelse(bh);
+	if (bh)
+		brelse(bh);
 	return -ENOMEM;
 
 out_noread:
@@ -1484,7 +1486,8 @@ static int isofs_read_inode(struct inode *inode, int relocated)
 	ret = 0;
 out:
 	kfree(tmpde);
-	brelse(bh);
+	if (bh)
+		brelse(bh);
 	return ret;
 
 out_badread:

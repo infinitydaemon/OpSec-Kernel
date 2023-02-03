@@ -542,8 +542,8 @@ static int snd_dw_hdmi_probe(struct platform_device *pdev)
 	if (ret < 0)
 		return ret;
 
-	strscpy(card->driver, DRIVER_NAME, sizeof(card->driver));
-	strscpy(card->shortname, "DW-HDMI", sizeof(card->shortname));
+	strlcpy(card->driver, DRIVER_NAME, sizeof(card->driver));
+	strlcpy(card->shortname, "DW-HDMI", sizeof(card->shortname));
 	snprintf(card->longname, sizeof(card->longname),
 		 "%s rev 0x%02x, irq %d", card->shortname, revision,
 		 data->irq);
@@ -561,7 +561,7 @@ static int snd_dw_hdmi_probe(struct platform_device *pdev)
 
 	dw->pcm = pcm;
 	pcm->private_data = dw;
-	strscpy(pcm->name, DRIVER_NAME, sizeof(pcm->name));
+	strlcpy(pcm->name, DRIVER_NAME, sizeof(pcm->name));
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &snd_dw_hdmi_ops);
 
 	/*

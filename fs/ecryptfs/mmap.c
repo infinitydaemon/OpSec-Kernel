@@ -170,17 +170,16 @@ out:
 }
 
 /**
- * ecryptfs_read_folio
+ * ecryptfs_readpage
  * @file: An eCryptfs file
- * @folio: Folio from eCryptfs inode mapping into which to stick the read data
+ * @page: Page from eCryptfs inode mapping into which to stick the read data
  *
- * Read in a folio, decrypting if necessary.
+ * Read in a page, decrypting if necessary.
  *
  * Returns zero on success; non-zero on error.
  */
-static int ecryptfs_read_folio(struct file *file, struct folio *folio)
+static int ecryptfs_readpage(struct file *file, struct page *page)
 {
-	struct page *page = &folio->page;
 	struct ecryptfs_crypt_stat *crypt_stat =
 		&ecryptfs_inode_to_private(page->mapping->host)->crypt_stat;
 	int rc = 0;
@@ -265,7 +264,7 @@ out:
  */
 static int ecryptfs_write_begin(struct file *file,
 			struct address_space *mapping,
-			loff_t pos, unsigned len,
+			loff_t pos, unsigned len, unsigned flags,
 			struct page **pagep, void **fsdata)
 {
 	pgoff_t index = pos >> PAGE_SHIFT;
@@ -273,7 +272,7 @@ static int ecryptfs_write_begin(struct file *file,
 	loff_t prev_page_end_size;
 	int rc = 0;
 
-	page = grab_cache_page_write_begin(mapping, index);
+	page = grab_cache_page_write_begin(mapping, index, flags);
 	if (!page)
 		return -ENOMEM;
 	*pagep = page;
@@ -541,16 +540,15 @@ const struct address_space_operations ecryptfs_aops = {
 	 * XXX: This is pretty broken for multiple reasons: ecryptfs does not
 	 * actually use buffer_heads, and ecryptfs will crash without
 	 * CONFIG_BLOCK.  But it matches the behavior before the default for
-	 * address_space_operations without the ->dirty_folio method was
+	 * address_space_operations without the ->set_page_dirty method was
 	 * cleaned up, so this is the best we can do without maintainer
 	 * feedback.
 	 */
 #ifdef CONFIG_BLOCK
-	.dirty_folio	= block_dirty_folio,
-	.invalidate_folio = block_invalidate_folio,
+	.set_page_dirty = __set_page_dirty_buffers,
 #endif
 	.writepage = ecryptfs_writepage,
-	.read_folio = ecryptfs_read_folio,
+	.readpage = ecryptfs_readpage,
 	.write_begin = ecryptfs_write_begin,
 	.write_end = ecryptfs_write_end,
 	.bmap = ecryptfs_bmap,

@@ -117,6 +117,7 @@ struct scsi_tape_stats {
 
 /* The tape drive descriptor */
 struct scsi_tape {
+	struct scsi_driver *driver;
 	struct scsi_device *device;
 	struct mutex lock;	/* For serialization */
 	struct completion wait;	/* For SCSI commands */

@@ -40,6 +40,7 @@ static struct dma_coherent_mem *dma_init_coherent_memory(phys_addr_t phys_addr,
 {
 	struct dma_coherent_mem *dma_mem;
 	int pages = size >> PAGE_SHIFT;
+	int bitmap_size = BITS_TO_LONGS(pages) * sizeof(long);
 	void *mem_base;
 
 	if (!size)
@@ -52,7 +53,7 @@ static struct dma_coherent_mem *dma_init_coherent_memory(phys_addr_t phys_addr,
 	dma_mem = kzalloc(sizeof(struct dma_coherent_mem), GFP_KERNEL);
 	if (!dma_mem)
 		goto out_unmap_membase;
-	dma_mem->bitmap = bitmap_zalloc(pages, GFP_KERNEL);
+	dma_mem->bitmap = kzalloc(bitmap_size, GFP_KERNEL);
 	if (!dma_mem->bitmap)
 		goto out_free_dma_mem;
 
@@ -74,13 +75,13 @@ out_unmap_membase:
 	return ERR_PTR(-ENOMEM);
 }
 
-static void _dma_release_coherent_memory(struct dma_coherent_mem *mem)
+static void dma_release_coherent_memory(struct dma_coherent_mem *mem)
 {
 	if (!mem)
 		return;
 
 	memunmap(mem->virt_base);
-	bitmap_free(mem->bitmap);
+	kfree(mem->bitmap);
 	kfree(mem);
 }
 
@@ -126,14 +127,8 @@ int dma_declare_coherent_memory(struct device *dev, phys_addr_t phys_addr,
 
 	ret = dma_assign_coherent_memory(dev, mem);
 	if (ret)
-		_dma_release_coherent_memory(mem);
+		dma_release_coherent_memory(mem);
 	return ret;
-}
-
-void dma_release_coherent_memory(struct device *dev)
-{
-	if (dev)
-		_dma_release_coherent_memory(dev->dma_mem);
 }
 
 static void *__dma_alloc_from_coherent(struct device *dev,

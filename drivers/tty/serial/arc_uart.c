@@ -166,7 +166,8 @@ static void arc_serial_tx_chars(struct uart_port *port)
 		sent = 1;
 	} else if (!uart_circ_empty(xmit)) {
 		ch = xmit->buf[xmit->tail];
-		uart_xmit_advance(port, 1);
+		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+		port->icount.tx++;
 		while (!(UART_GET_STATUS(port) & TXEMPTY))
 			cpu_relax();
 		UART_SET_DATA(port, ch);
@@ -350,7 +351,7 @@ static void arc_serial_shutdown(struct uart_port *port)
 
 static void
 arc_serial_set_termios(struct uart_port *port, struct ktermios *new,
-		       const struct ktermios *old)
+		       struct ktermios *old)
 {
 	struct arc_uart_port *uart = to_arc_port(port);
 	unsigned int baud, uartl, uarth, hw_val;
@@ -507,7 +508,7 @@ static int arc_serial_console_setup(struct console *co, char *options)
 	return uart_set_options(port, co, baud, parity, bits, flow);
 }
 
-static void arc_serial_console_putchar(struct uart_port *port, unsigned char ch)
+static void arc_serial_console_putchar(struct uart_port *port, int ch)
 {
 	while (!(UART_GET_STATUS(port) & TXEMPTY))
 		cpu_relax();

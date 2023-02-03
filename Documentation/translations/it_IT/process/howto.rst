@@ -44,7 +44,7 @@ altro, utili riferimenti:
 - "C:  A Reference Manual" di Harbison and Steele [Prentice Hall]
 
 Il kernel è stato scritto usando GNU C e la toolchain GNU.
-Sebbene si attenga allo standard ISO C11, esso utilizza una serie di
+Sebbene si attenga allo standard ISO C89, esso utilizza una serie di
 estensioni che non sono previste in questo standard. Il kernel è un
 ambiente C indipendente, che non ha alcuna dipendenza dalle librerie
 C standard, così alcune parti del C standard non sono supportate.
@@ -109,7 +109,8 @@ Di seguito una lista di file che sono presenti nei sorgente del kernel e che
     accetteranno patch solo se queste osserveranno tali regole, e molte
     persone revisioneranno il codice solo se scritto nello stile appropriato.
 
-  :ref:`Documentation/translations/it_IT/process/submitting-patches.rst <it_submittingpatches>`
+  :ref:`Documentation/translations/it_IT/process/submitting-patches.rst <it_submittingpatches>` e
+  :ref:`Documentation/translations/it_IT/process/submitting-drivers.rst <it_submittingdrivers>`
 
     Questo file descrive dettagliatamente come creare ed inviare una patch
     con successo, includendo (ma non solo questo):
@@ -394,7 +395,7 @@ trovati al sito:
 Ci sono diversi archivi della lista di discussione. Usate un qualsiasi motore
 di ricerca per trovarli. Per esempio:
 
-	https://lore.kernel.org/lkml/
+	http://dir.gmane.org/gmane.linux.kernel
 
 É caldamente consigliata una ricerca in questi archivi sul tema che volete
 sollevare, prima di pubblicarlo sulla lista. Molte cose sono già state

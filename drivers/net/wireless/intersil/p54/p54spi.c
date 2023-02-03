@@ -670,7 +670,7 @@ err_free:
 	return ret;
 }
 
-static void p54spi_remove(struct spi_device *spi)
+static int p54spi_remove(struct spi_device *spi)
 {
 	struct p54s_priv *priv = spi_get_drvdata(spi);
 
@@ -685,6 +685,8 @@ static void p54spi_remove(struct spi_device *spi)
 	mutex_destroy(&priv->mutex);
 
 	p54_free_common(priv->hw);
+
+	return 0;
 }
 
 

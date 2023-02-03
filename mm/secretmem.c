@@ -144,22 +144,29 @@ static const struct file_operations secretmem_fops = {
 	.mmap		= secretmem_mmap,
 };
 
-static int secretmem_migrate_folio(struct address_space *mapping,
-		struct folio *dst, struct folio *src, enum migrate_mode mode)
+static bool secretmem_isolate_page(struct page *page, isolate_mode_t mode)
+{
+	return false;
+}
+
+static int secretmem_migratepage(struct address_space *mapping,
+				 struct page *newpage, struct page *page,
+				 enum migrate_mode mode)
 {
 	return -EBUSY;
 }
 
-static void secretmem_free_folio(struct folio *folio)
+static void secretmem_freepage(struct page *page)
 {
-	set_direct_map_default_noflush(&folio->page);
-	folio_zero_segment(folio, 0, folio_size(folio));
+	set_direct_map_default_noflush(page);
+	clear_highpage(page);
 }
 
 const struct address_space_operations secretmem_aops = {
-	.dirty_folio	= noop_dirty_folio,
-	.free_folio	= secretmem_free_folio,
-	.migrate_folio	= secretmem_migrate_folio,
+	.set_page_dirty	= __set_page_dirty_no_writeback,
+	.freepage	= secretmem_freepage,
+	.migratepage	= secretmem_migratepage,
+	.isolate_page	= secretmem_isolate_page,
 };
 
 static int secretmem_setattr(struct user_namespace *mnt_userns,
@@ -192,19 +199,10 @@ static struct file *secretmem_file_create(unsigned long flags)
 {
 	struct file *file = ERR_PTR(-ENOMEM);
 	struct inode *inode;
-	const char *anon_name = "[secretmem]";
-	const struct qstr qname = QSTR_INIT(anon_name, strlen(anon_name));
-	int err;
 
 	inode = alloc_anon_inode(secretmem_mnt->mnt_sb);
 	if (IS_ERR(inode))
 		return ERR_CAST(inode);
-
-	err = security_inode_init_security_anon(inode, &qname, NULL);
-	if (err) {
-		file = ERR_PTR(err);
-		goto err_free_inode;
-	}
 
 	file = alloc_file_pseudo(inode, secretmem_mnt, "secretmem",
 				 O_RDWR, &secretmem_fops);
@@ -276,10 +274,12 @@ static struct file_system_type secretmem_fs = {
 	.kill_sb	= kill_anon_super,
 };
 
-static int __init secretmem_init(void)
+static int secretmem_init(void)
 {
+	int ret = 0;
+
 	if (!secretmem_enable)
-		return 0;
+		return ret;
 
 	secretmem_mnt = kern_mount(&secretmem_fs);
 	if (IS_ERR(secretmem_mnt))
@@ -288,6 +288,6 @@ static int __init secretmem_init(void)
 	/* prevent secretmem mappings from ever getting PROT_EXEC */
 	secretmem_mnt->mnt_flags |= MNT_NOEXEC;
 
-	return 0;
+	return ret;
 }
 fs_initcall(secretmem_init);

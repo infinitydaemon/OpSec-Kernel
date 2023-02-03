@@ -5,9 +5,7 @@ EHCI:
 -----
 
 Required properties:
-- compatible: should be one of
-    "nuvoton,npcm750-ehci"
-    "nuvoton,npcm845-ehci"
+- compatible: "nuvoton,npcm750-ehci"
 - interrupts: Should contain the EHCI interrupt
 - reg:        Physical address and length of the register set for the device
 

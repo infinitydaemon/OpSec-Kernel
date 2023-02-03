@@ -25,6 +25,7 @@
 #include <linux/gpio/consumer.h>
 
 #include <scsi/scsi_host.h>
+#include <mach/palmld.h>
 
 #define DRV_NAME "pata_palmld"
 
@@ -62,9 +63,9 @@ static int palmld_pata_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	/* remap drive's physical memory address */
-	mem = devm_platform_ioremap_resource(pdev, 0);
-	if (IS_ERR(mem))
-		return PTR_ERR(mem);
+	mem = devm_ioremap(dev, PALMLD_IDE_PHYS, 0x1000);
+	if (!mem)
+		return -ENOMEM;
 
 	/* request and activate power and reset GPIOs */
 	lda->power = devm_gpiod_get(dev, "power", GPIOD_OUT_HIGH);

@@ -84,13 +84,6 @@ properties:
       - const: vfe0
       - const: vfe1
 
-  interconnects:
-    maxItems: 1
-
-  interconnect-names:
-    items:
-      - const: vfe-mem
-
   iommus:
     maxItems: 4
 
@@ -118,11 +111,16 @@ properties:
             unevaluatedProperties: false
 
             properties:
+              clock-lanes:
+                items:
+                  - const: 7
+
               data-lanes:
                 minItems: 1
                 maxItems: 4
 
             required:
+              - clock-lanes
               - data-lanes
 
       port@1:
@@ -137,11 +135,16 @@ properties:
             unevaluatedProperties: false
 
             properties:
+              clock-lanes:
+                items:
+                  - const: 7
+
               data-lanes:
                 minItems: 1
                 maxItems: 4
 
             required:
+              - clock-lanes
               - data-lanes
 
       port@2:
@@ -156,11 +159,16 @@ properties:
             unevaluatedProperties: false
 
             properties:
+              clock-lanes:
+                items:
+                  - const: 7
+
               data-lanes:
                 minItems: 1
                 maxItems: 4
 
             required:
+              - clock-lanes
               - data-lanes
 
       port@3:
@@ -175,11 +183,16 @@ properties:
             unevaluatedProperties: false
 
             properties:
+              clock-lanes:
+                items:
+                  - const: 7
+
               data-lanes:
                 minItems: 1
                 maxItems: 4
 
             required:
+              - clock-lanes
               - data-lanes
 
   reg:

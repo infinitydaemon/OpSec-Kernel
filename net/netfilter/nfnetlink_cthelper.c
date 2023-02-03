@@ -96,13 +96,11 @@ static int
 nfnl_cthelper_from_nlattr(struct nlattr *attr, struct nf_conn *ct)
 {
 	struct nf_conn_help *help = nfct_help(ct);
-	const struct nf_conntrack_helper *helper;
 
 	if (attr == NULL)
 		return -EINVAL;
 
-	helper = rcu_dereference(help->helper);
-	if (!helper || helper->data_len == 0)
+	if (help->helper->data_len == 0)
 		return -EINVAL;
 
 	nla_memcpy(help->data, attr, sizeof(help->data));
@@ -113,11 +111,9 @@ static int
 nfnl_cthelper_to_nlattr(struct sk_buff *skb, const struct nf_conn *ct)
 {
 	const struct nf_conn_help *help = nfct_help(ct);
-	const struct nf_conntrack_helper *helper;
 
-	helper = rcu_dereference(help->helper);
-	if (helper && helper->data_len &&
-	    nla_put(skb, CTA_HELP_INFO, helper->data_len, &help->data))
+	if (help->helper->data_len &&
+	    nla_put(skb, CTA_HELP_INFO, help->helper->data_len, &help->data))
 		goto nla_put_failure;
 
 	return 0;

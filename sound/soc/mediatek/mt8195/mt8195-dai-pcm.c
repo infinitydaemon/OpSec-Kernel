@@ -213,6 +213,8 @@ static int mtk_dai_pcm_configure(struct snd_pcm_substream *substream,
 static int mtk_dai_pcm_prepare(struct snd_pcm_substream *substream,
 			       struct snd_soc_dai *dai)
 {
+	int ret;
+
 	dev_dbg(dai->dev, "%s(), id %d, stream %d, widget active p %d, c %d\n",
 		__func__, dai->id, substream->stream,
 		dai->playback_widget->active, dai->capture_widget->active);
@@ -220,7 +222,11 @@ static int mtk_dai_pcm_prepare(struct snd_pcm_substream *substream,
 	if (dai->playback_widget->active || dai->capture_widget->active)
 		return 0;
 
-	return mtk_dai_pcm_configure(substream, dai);
+	ret = mtk_dai_pcm_configure(substream, dai);
+	if (ret)
+		return ret;
+
+	return 0;
 }
 
 static int mtk_dai_pcm_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
@@ -266,11 +272,11 @@ static int mtk_dai_pcm_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 		return -EINVAL;
 	}
 
-	switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-	case SND_SOC_DAIFMT_BC_FC:
+	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
+	case SND_SOC_DAIFMT_CBM_CFM:
 		pcmif_priv->slave_mode = 1;
 		break;
-	case SND_SOC_DAIFMT_BP_FP:
+	case SND_SOC_DAIFMT_CBS_CFS:
 		pcmif_priv->slave_mode = 0;
 		break;
 	default:

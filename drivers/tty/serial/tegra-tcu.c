@@ -126,7 +126,7 @@ static void tegra_tcu_uart_shutdown(struct uart_port *port)
 
 static void tegra_tcu_uart_set_termios(struct uart_port *port,
 				       struct ktermios *new,
-				       const struct ktermios *old)
+				       struct ktermios *old)
 {
 }
 

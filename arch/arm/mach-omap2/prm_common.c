@@ -752,10 +752,8 @@ int __init omap2_prm_base_init(void)
 		data = (struct omap_prcm_init_data *)match->data;
 
 		ret = of_address_to_resource(np, 0, &res);
-		if (ret) {
-			of_node_put(np);
+		if (ret)
 			return ret;
-		}
 
 		data->mem = ioremap(res.start, resource_size(&res));
 
@@ -801,10 +799,8 @@ int __init omap_prcm_init(void)
 		data = match->data;
 
 		ret = omap2_clk_provider_init(np, data->index, NULL, data->mem);
-		if (ret) {
-			of_node_put(np);
+		if (ret)
 			return ret;
-		}
 	}
 
 	omap_cm_init();

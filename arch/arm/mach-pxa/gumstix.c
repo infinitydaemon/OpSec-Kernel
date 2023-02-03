@@ -28,6 +28,7 @@
 #include <asm/setup.h>
 #include <asm/memory.h>
 #include <asm/mach-types.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
 #include <linux/sizes.h>
 

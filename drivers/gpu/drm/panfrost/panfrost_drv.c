@@ -227,7 +227,7 @@ panfrost_copy_in_sync(struct drm_device *dev,
 		if (ret)
 			goto fail;
 
-		ret = drm_sched_job_add_dependency(&job->base, fence);
+		ret = drm_gem_fence_array_add(&job->deps, fence);
 
 		if (ret)
 			goto fail;
@@ -242,11 +242,10 @@ static int panfrost_ioctl_submit(struct drm_device *dev, void *data,
 		struct drm_file *file)
 {
 	struct panfrost_device *pfdev = dev->dev_private;
-	struct panfrost_file_priv *file_priv = file->driver_priv;
 	struct drm_panfrost_submit *args = data;
 	struct drm_syncobj *sync_out = NULL;
 	struct panfrost_job *job;
-	int ret = 0, slot;
+	int ret = 0;
 
 	if (!args->jc)
 		return -EINVAL;
@@ -263,47 +262,38 @@ static int panfrost_ioctl_submit(struct drm_device *dev, void *data,
 	job = kzalloc(sizeof(*job), GFP_KERNEL);
 	if (!job) {
 		ret = -ENOMEM;
-		goto out_put_syncout;
+		goto fail_out_sync;
 	}
 
 	kref_init(&job->refcount);
+
+	xa_init_flags(&job->deps, XA_FLAGS_ALLOC);
 
 	job->pfdev = pfdev;
 	job->jc = args->jc;
 	job->requirements = args->requirements;
 	job->flush_id = panfrost_gpu_get_latest_flush_id(pfdev);
-	job->mmu = file_priv->mmu;
-
-	slot = panfrost_job_get_slot(job);
-
-	ret = drm_sched_job_init(&job->base,
-				 &file_priv->sched_entity[slot],
-				 NULL);
-	if (ret)
-		goto out_put_job;
+	job->file_priv = file->driver_priv;
 
 	ret = panfrost_copy_in_sync(dev, file, args, job);
 	if (ret)
-		goto out_cleanup_job;
+		goto fail_job;
 
 	ret = panfrost_lookup_bos(dev, file, args, job);
 	if (ret)
-		goto out_cleanup_job;
+		goto fail_job;
 
 	ret = panfrost_job_push(job);
 	if (ret)
-		goto out_cleanup_job;
+		goto fail_job;
 
 	/* Update the return sync object for the job */
 	if (sync_out)
 		drm_syncobj_replace_fence(sync_out, job->render_done_fence);
 
-out_cleanup_job:
-	if (ret)
-		drm_sched_job_cleanup(&job->base);
-out_put_job:
+fail_job:
 	panfrost_job_put(job);
-out_put_syncout:
+fail_out_sync:
 	if (sync_out)
 		drm_syncobj_put(sync_out);
 
@@ -326,8 +316,7 @@ panfrost_ioctl_wait_bo(struct drm_device *dev, void *data,
 	if (!gem_obj)
 		return -ENOENT;
 
-	ret = dma_resv_wait_timeout(gem_obj->resv, DMA_RESV_USAGE_READ,
-				    true, timeout);
+	ret = dma_resv_wait_timeout(gem_obj->resv, true, true, timeout);
 	if (!ret)
 		ret = timeout ? -ETIMEDOUT : -EBUSY;
 
@@ -573,7 +562,7 @@ static int panfrost_probe(struct platform_device *pdev)
 
 	pfdev->coherent = device_get_dma_attr(&pdev->dev) == DEV_DMA_COHERENT;
 
-	/* Allocate and initialize the DRM device. */
+	/* Allocate and initialze the DRM device. */
 	ddev = drm_dev_alloc(&panfrost_drm_driver, &pdev->dev);
 	if (IS_ERR(ddev))
 		return PTR_ERR(ddev);
@@ -635,29 +624,24 @@ static int panfrost_remove(struct platform_device *pdev)
 	return 0;
 }
 
-/*
- * The OPP core wants the supply names to be NULL terminated, but we need the
- * correct num_supplies value for regulator core. Hence, we NULL terminate here
- * and then initialize num_supplies with ARRAY_SIZE - 1.
- */
-static const char * const default_supplies[] = { "mali", NULL };
+static const char * const default_supplies[] = { "mali" };
 static const struct panfrost_compatible default_data = {
-	.num_supplies = ARRAY_SIZE(default_supplies) - 1,
+	.num_supplies = ARRAY_SIZE(default_supplies),
 	.supply_names = default_supplies,
 	.num_pm_domains = 1, /* optional */
 	.pm_domain_names = NULL,
 };
 
 static const struct panfrost_compatible amlogic_data = {
-	.num_supplies = ARRAY_SIZE(default_supplies) - 1,
+	.num_supplies = ARRAY_SIZE(default_supplies),
 	.supply_names = default_supplies,
 	.vendor_quirk = panfrost_gpu_amlogic_quirk,
 };
 
-static const char * const mediatek_mt8183_supplies[] = { "mali", "sram", NULL };
-static const char * const mediatek_mt8183_pm_domains[] = { "core0", "core1", "core2" };
+const char * const mediatek_mt8183_supplies[] = { "mali", "sram" };
+const char * const mediatek_mt8183_pm_domains[] = { "core0", "core1", "core2" };
 static const struct panfrost_compatible mediatek_mt8183_data = {
-	.num_supplies = ARRAY_SIZE(mediatek_mt8183_supplies) - 1,
+	.num_supplies = ARRAY_SIZE(mediatek_mt8183_supplies),
 	.supply_names = mediatek_mt8183_supplies,
 	.num_pm_domains = ARRAY_SIZE(mediatek_mt8183_pm_domains),
 	.pm_domain_names = mediatek_mt8183_pm_domains,
@@ -679,7 +663,6 @@ static const struct of_device_id dt_match[] = {
 	{ .compatible = "arm,mali-t860", .data = &default_data, },
 	{ .compatible = "arm,mali-t880", .data = &default_data, },
 	{ .compatible = "arm,mali-bifrost", .data = &default_data, },
-	{ .compatible = "arm,mali-valhall-jm", .data = &default_data, },
 	{ .compatible = "mediatek,mt8183-mali", .data = &mediatek_mt8183_data },
 	{}
 };

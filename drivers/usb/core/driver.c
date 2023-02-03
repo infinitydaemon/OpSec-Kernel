@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * drivers/usb/core/driver.c - most of the driver model stuff for usb
+ * drivers/usb/driver.c - most of the driver model stuff for usb
  *
  * (C) Copyright 2005 Greg Kroah-Hartman <gregkh@suse.de>
  *
@@ -834,7 +834,6 @@ const struct usb_device_id *usb_device_match_id(struct usb_device *udev,
 
 	return NULL;
 }
-EXPORT_SYMBOL_GPL(usb_device_match_id);
 
 bool usb_driver_applicable(struct usb_device *udev,
 			   struct usb_device_driver *udrv)
@@ -1482,7 +1481,7 @@ static int usb_suspend_both(struct usb_device *udev, pm_message_t msg)
  * @msg: Power Management message describing this state transition
  *
  * This is the central routine for resuming USB devices.  It calls the
- * resume method for @udev and then calls the resume methods for all
+ * the resume method for @udev and then calls the resume methods for all
  * the interface drivers in @udev.
  *
  * Autoresume requests originating from a child device or an interface
@@ -1533,23 +1532,22 @@ static void choose_wakeup(struct usb_device *udev, pm_message_t msg)
 {
 	int	w;
 
-	/*
-	 * For FREEZE/QUIESCE, disable remote wakeups so no interrupts get
-	 * generated.
+	/* Remote wakeup is needed only when we actually go to sleep.
+	 * For things like FREEZE and QUIESCE, if the device is already
+	 * autosuspended then its current wakeup setting is okay.
 	 */
 	if (msg.event == PM_EVENT_FREEZE || msg.event == PM_EVENT_QUIESCE) {
-		w = 0;
-
-	} else {
-		/*
-		 * Enable remote wakeup if it is allowed, even if no interface
-		 * drivers actually want it.
-		 */
-		w = device_may_wakeup(&udev->dev);
+		if (udev->state != USB_STATE_SUSPENDED)
+			udev->do_remote_wakeup = 0;
+		return;
 	}
 
-	/*
-	 * If the device is autosuspended with the wrong wakeup setting,
+	/* Enable remote wakeup if it is allowed, even if no interface drivers
+	 * actually want it.
+	 */
+	w = device_may_wakeup(&udev->dev);
+
+	/* If the device is autosuspended with the wrong wakeup setting,
 	 * autoresume now so the setting can be changed.
 	 */
 	if (udev->state == USB_STATE_SUSPENDED && w != udev->do_remote_wakeup)

@@ -31,9 +31,6 @@ static const int fw_versions[] = {
 	UTIL_FW_VERSION
 };
 
-/* See comment with struct hv_vss_msg regarding the max VMbus packet size */
-#define VSS_MAX_PKT_SIZE (HV_HYP_PAGE_SIZE * 2)
-
 /*
  * Timeout values are based on expecations from host
  */
@@ -301,7 +298,7 @@ void hv_vss_onchannelcallback(void *context)
 	if (vss_transaction.state > HVUTIL_READY)
 		return;
 
-	if (vmbus_recvpacket(channel, recv_buffer, VSS_MAX_PKT_SIZE, &recvlen, &requestid)) {
+	if (vmbus_recvpacket(channel, recv_buffer, HV_HYP_PAGE_SIZE * 2, &recvlen, &requestid)) {
 		pr_err_ratelimited("VSS request received. Could not read into recv buf\n");
 		return;
 	}
@@ -378,7 +375,7 @@ hv_vss_init(struct hv_util_service *srv)
 	}
 	recv_buffer = srv->recv_buffer;
 	vss_transaction.recv_channel = srv->channel;
-	vss_transaction.recv_channel->max_pkt_size = VSS_MAX_PKT_SIZE;
+	vss_transaction.recv_channel->max_pkt_size = HV_HYP_PAGE_SIZE * 2;
 
 	/*
 	 * When this driver loads, the user level daemon that

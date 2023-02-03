@@ -17,7 +17,9 @@
 #define _RTL871X_RECV_C_
 
 #include <linux/ip.h>
+#include <linux/slab.h>
 #include <linux/if_ether.h>
+#include <linux/kmemleak.h>
 #include <linux/etherdevice.h>
 #include <linux/ieee80211.h>
 #include <net/cfg80211.h>
@@ -42,10 +44,9 @@ void _r8712_init_sta_recv_priv(struct sta_recv_priv *psta_recvpriv)
 	_init_queue(&psta_recvpriv->defrag_q);
 }
 
-int _r8712_init_recv_priv(struct recv_priv *precvpriv,
-			  struct _adapter *padapter)
+void _r8712_init_recv_priv(struct recv_priv *precvpriv,
+			   struct _adapter *padapter)
 {
-	int ret;
 	sint i;
 	union recv_frame *precvframe;
 
@@ -59,7 +60,8 @@ int _r8712_init_recv_priv(struct recv_priv *precvpriv,
 				sizeof(union recv_frame) + RXFRAME_ALIGN_SZ,
 				GFP_ATOMIC);
 	if (!precvpriv->pallocated_frame_buf)
-		return -ENOMEM;
+		return;
+	kmemleak_not_leak(precvpriv->pallocated_frame_buf);
 	precvpriv->precv_frame_buf = precvpriv->pallocated_frame_buf +
 				    RXFRAME_ALIGN_SZ -
 				    ((addr_t)(precvpriv->pallocated_frame_buf) &
@@ -74,11 +76,7 @@ int _r8712_init_recv_priv(struct recv_priv *precvpriv,
 		precvframe++;
 	}
 	precvpriv->rx_pending_cnt = 1;
-	ret = r8712_init_recv_priv(precvpriv, padapter);
-	if (ret)
-		kfree(precvpriv->pallocated_frame_buf);
-
-	return ret;
+	r8712_init_recv_priv(precvpriv, padapter);
 }
 
 void _r8712_free_recv_priv(struct recv_priv *precvpriv)
@@ -236,7 +234,7 @@ union recv_frame *r8712_portctrl(struct _adapter *adapter,
 	u16 ether_type;
 
 	pstapriv = &adapter->stapriv;
-	ptr = precv_frame->u.hdr.rx_data;
+	ptr = get_recvframe_data(precv_frame);
 	pfhdr = &precv_frame->u.hdr;
 	psta_addr = pfhdr->attrib.ta;
 	psta = r8712_get_stainfo(pstapriv, psta_addr);
@@ -457,6 +455,7 @@ static sint validate_recv_mgnt_frame(struct _adapter *adapter,
 	return _FAIL;
 }
 
+
 static sint validate_recv_data_frame(struct _adapter *adapter,
 				     union recv_frame *precv_frame)
 {
@@ -594,7 +593,7 @@ int r8712_wlanhdr_to_ethhdr(union recv_frame *precvframe)
 	struct _adapter	*adapter = precvframe->u.hdr.adapter;
 	struct mlme_priv *pmlmepriv = &adapter->mlmepriv;
 
-	u8 *ptr = precvframe->u.hdr.rx_data; /*point to frame_ctrl field*/
+	u8 *ptr = get_recvframe_data(precvframe); /*point to frame_ctrl field*/
 	struct rx_pkt_attrib *pattrib = &precvframe->u.hdr.attrib;
 
 	if (pattrib->encrypt)

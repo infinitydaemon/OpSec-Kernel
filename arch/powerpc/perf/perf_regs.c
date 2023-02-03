@@ -90,11 +90,7 @@ static u64 get_ext_regs_value(int idx)
 		return mfspr(SPRN_SIER2);
 	case PERF_REG_POWERPC_SIER3:
 		return mfspr(SPRN_SIER3);
-	case PERF_REG_POWERPC_SDAR:
-		return mfspr(SPRN_SDAR);
 #endif
-	case PERF_REG_POWERPC_SIAR:
-		return mfspr(SPRN_SIAR);
 	default: return 0;
 	}
 }
@@ -134,10 +130,12 @@ int perf_reg_validate(u64 mask)
 
 u64 perf_reg_abi(struct task_struct *task)
 {
-	if (is_tsk_32bit_task(task))
-		return PERF_SAMPLE_REGS_ABI_32;
-	else
+#ifdef CONFIG_PPC64
+	if (!test_tsk_thread_flag(task, TIF_32BIT))
 		return PERF_SAMPLE_REGS_ABI_64;
+	else
+#endif
+	return PERF_SAMPLE_REGS_ABI_32;
 }
 
 void perf_get_regs_user(struct perf_regs *regs_user,

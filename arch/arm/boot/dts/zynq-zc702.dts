@@ -30,14 +30,14 @@
 	gpio-keys {
 		compatible = "gpio-keys";
 		autorepeat;
-		switch-14 {
+		sw14 {
 			label = "sw14";
 			gpios = <&gpio0 12 0>;
 			linux,code = <108>; /* down */
 			wakeup-source;
 			autorepeat;
 		};
-		switch-13 {
+		sw13 {
 			label = "sw13";
 			gpios = <&gpio0 14 0>;
 			linux,code = <103>; /* up */

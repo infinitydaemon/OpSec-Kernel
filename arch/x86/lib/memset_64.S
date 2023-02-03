@@ -17,6 +17,7 @@
  *
  * rax   original destination
  */
+SYM_FUNC_START_WEAK(memset)
 SYM_FUNC_START(__memset)
 	/*
 	 * Some CPUs support enhanced REP MOVSB/STOSB feature. It is recommended
@@ -41,10 +42,9 @@ SYM_FUNC_START(__memset)
 	movq %r9,%rax
 	RET
 SYM_FUNC_END(__memset)
-EXPORT_SYMBOL(__memset)
-
-SYM_FUNC_ALIAS_WEAK(memset, __memset)
+SYM_FUNC_END_ALIAS(memset)
 EXPORT_SYMBOL(memset)
+EXPORT_SYMBOL(__memset)
 
 /*
  * ISO C memset - set a memory block to a byte value. This function uses

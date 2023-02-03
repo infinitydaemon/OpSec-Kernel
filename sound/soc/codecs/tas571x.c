@@ -756,6 +756,7 @@ static const struct snd_soc_component_driver tas571x_component = {
 	.num_dapm_routes	= ARRAY_SIZE(tas571x_dapm_routes),
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static struct snd_soc_dai_driver tas571x_dai = {
@@ -773,9 +774,9 @@ static struct snd_soc_dai_driver tas571x_dai = {
 };
 
 static const struct of_device_id tas571x_of_match[] __maybe_unused;
-static const struct i2c_device_id tas571x_i2c_id[];
 
-static int tas571x_i2c_probe(struct i2c_client *client)
+static int tas571x_i2c_probe(struct i2c_client *client,
+			     const struct i2c_device_id *id)
 {
 	struct tas571x_private *priv;
 	struct device *dev = &client->dev;
@@ -790,11 +791,8 @@ static int tas571x_i2c_probe(struct i2c_client *client)
 	of_id = of_match_device(tas571x_of_match, dev);
 	if (of_id)
 		priv->chip = of_id->data;
-	else {
-		const struct i2c_device_id *id =
-			i2c_match_id(tas571x_i2c_id, client);
+	else
 		priv->chip = (void *) id->driver_data;
-	}
 
 	priv->mclk = devm_clk_get(dev, "mclk");
 	if (IS_ERR(priv->mclk) && PTR_ERR(priv->mclk) != -ENOENT) {
@@ -832,8 +830,7 @@ static int tas571x_i2c_probe(struct i2c_client *client)
 	if (IS_ERR(priv->pdn_gpio)) {
 		dev_err(dev, "error requesting pdn_gpio: %ld\n",
 			PTR_ERR(priv->pdn_gpio));
-		ret = PTR_ERR(priv->pdn_gpio);
-		goto disable_regs;
+		return PTR_ERR(priv->pdn_gpio);
 	}
 
 	priv->reset_gpio = devm_gpiod_get_optional(dev, "reset",
@@ -841,8 +838,7 @@ static int tas571x_i2c_probe(struct i2c_client *client)
 	if (IS_ERR(priv->reset_gpio)) {
 		dev_err(dev, "error requesting reset_gpio: %ld\n",
 			PTR_ERR(priv->reset_gpio));
-		ret = PTR_ERR(priv->reset_gpio);
-		goto disable_regs;
+		return PTR_ERR(priv->reset_gpio);
 	} else if (priv->reset_gpio) {
 		/* pulse the active low reset line for ~100us */
 		usleep_range(100, 200);
@@ -884,11 +880,13 @@ disable_regs:
 	return ret;
 }
 
-static void tas571x_i2c_remove(struct i2c_client *client)
+static int tas571x_i2c_remove(struct i2c_client *client)
 {
 	struct tas571x_private *priv = i2c_get_clientdata(client);
 
 	regulator_bulk_disable(priv->chip->num_supply_names, priv->supplies);
+
+	return 0;
 }
 
 static const struct of_device_id tas571x_of_match[] __maybe_unused = {
@@ -916,7 +914,7 @@ static struct i2c_driver tas571x_i2c_driver = {
 		.name = "tas571x",
 		.of_match_table = of_match_ptr(tas571x_of_match),
 	},
-	.probe_new = tas571x_i2c_probe,
+	.probe = tas571x_i2c_probe,
 	.remove = tas571x_i2c_remove,
 	.id_table = tas571x_i2c_id,
 };

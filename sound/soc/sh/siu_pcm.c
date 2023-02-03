@@ -540,14 +540,13 @@ static void siu_pcm_free(struct snd_soc_component *component,
 }
 
 const struct snd_soc_component_driver siu_component = {
-	.name			= DRV_NAME,
-	.open			= siu_pcm_open,
-	.close			= siu_pcm_close,
-	.prepare		= siu_pcm_prepare,
-	.trigger		= siu_pcm_trigger,
-	.pointer		= siu_pcm_pointer_dma,
-	.pcm_construct		= siu_pcm_new,
-	.pcm_destruct		= siu_pcm_free,
-	.legacy_dai_naming	= 1,
+	.name		= DRV_NAME,
+	.open		= siu_pcm_open,
+	.close		= siu_pcm_close,
+	.prepare	= siu_pcm_prepare,
+	.trigger	= siu_pcm_trigger,
+	.pointer	= siu_pcm_pointer_dma,
+	.pcm_construct	= siu_pcm_new,
+	.pcm_destruct	= siu_pcm_free,
 };
 EXPORT_SYMBOL_GPL(siu_component);

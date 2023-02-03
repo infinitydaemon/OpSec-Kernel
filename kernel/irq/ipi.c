@@ -115,11 +115,11 @@ free_descs:
 int irq_destroy_ipi(unsigned int irq, const struct cpumask *dest)
 {
 	struct irq_data *data = irq_get_irq_data(irq);
-	const struct cpumask *ipimask;
+	struct cpumask *ipimask = data ? irq_data_get_affinity_mask(data) : NULL;
 	struct irq_domain *domain;
 	unsigned int nr_irqs;
 
-	if (!irq || !data)
+	if (!irq || !data || !ipimask)
 		return -EINVAL;
 
 	domain = data->domain;
@@ -131,8 +131,7 @@ int irq_destroy_ipi(unsigned int irq, const struct cpumask *dest)
 		return -EINVAL;
 	}
 
-	ipimask = irq_data_get_affinity_mask(data);
-	if (!ipimask || WARN_ON(!cpumask_subset(dest, ipimask)))
+	if (WARN_ON(!cpumask_subset(dest, ipimask)))
 		/*
 		 * Must be destroying a subset of CPUs to which this IPI
 		 * was set up to target
@@ -163,13 +162,12 @@ int irq_destroy_ipi(unsigned int irq, const struct cpumask *dest)
 irq_hw_number_t ipi_get_hwirq(unsigned int irq, unsigned int cpu)
 {
 	struct irq_data *data = irq_get_irq_data(irq);
-	const struct cpumask *ipimask;
+	struct cpumask *ipimask = data ? irq_data_get_affinity_mask(data) : NULL;
 
-	if (!data || cpu >= nr_cpu_ids)
+	if (!data || !ipimask || cpu >= nr_cpu_ids)
 		return INVALID_HWIRQ;
 
-	ipimask = irq_data_get_affinity_mask(data);
-	if (!ipimask || !cpumask_test_cpu(cpu, ipimask))
+	if (!cpumask_test_cpu(cpu, ipimask))
 		return INVALID_HWIRQ;
 
 	/*
@@ -188,7 +186,7 @@ EXPORT_SYMBOL_GPL(ipi_get_hwirq);
 static int ipi_send_verify(struct irq_chip *chip, struct irq_data *data,
 			   const struct cpumask *dest, unsigned int cpu)
 {
-	const struct cpumask *ipimask = irq_data_get_affinity_mask(data);
+	struct cpumask *ipimask = irq_data_get_affinity_mask(data);
 
 	if (!chip || !ipimask)
 		return -EINVAL;

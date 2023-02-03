@@ -79,7 +79,7 @@
 	pinctrl-0 = <&spi1_pins>;
 	pinctrl-names = "default";
 
-	flash@0 {
+	spi-flash@0 {
 		#address-cells = <1>;
 		#size-cells = <0>;
 		compatible = "n25q128a13", "jedec,spi-nor";

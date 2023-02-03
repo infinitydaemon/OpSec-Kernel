@@ -15,7 +15,7 @@
 struct brcmf_xtlv {
 	u16 id;
 	u16 len;
-	u8 data[];
+	u8 data[0];
 };
 
 enum brcmf_xtlv_option {

@@ -299,8 +299,6 @@ static void wcove_irq_unmask(struct irq_data *data)
 	if (gpio >= WCOVE_GPIO_NUM)
 		return;
 
-	gpiochip_enable_irq(chip, gpio);
-
 	wg->set_irq_mask = false;
 	wg->update |= UPDATE_IRQ_MASK;
 }
@@ -316,19 +314,15 @@ static void wcove_irq_mask(struct irq_data *data)
 
 	wg->set_irq_mask = true;
 	wg->update |= UPDATE_IRQ_MASK;
-
-	gpiochip_disable_irq(chip, gpio);
 }
 
-static const struct irq_chip wcove_irqchip = {
+static struct irq_chip wcove_irqchip = {
 	.name			= "Whiskey Cove",
 	.irq_mask		= wcove_irq_mask,
 	.irq_unmask		= wcove_irq_unmask,
 	.irq_set_type		= wcove_irq_type,
 	.irq_bus_lock		= wcove_bus_lock,
 	.irq_bus_sync_unlock	= wcove_bus_sync_unlock,
-	.flags			= IRQCHIP_IMMUTABLE,
-	GPIOCHIP_IRQ_RESOURCE_HELPERS,
 };
 
 static irqreturn_t wcove_gpio_irq_handler(int irq, void *data)
@@ -458,7 +452,7 @@ static int wcove_gpio_probe(struct platform_device *pdev)
 	}
 
 	girq = &wg->chip.irq;
-	gpio_irq_chip_set_chip(girq, &wcove_irqchip);
+	girq->chip = &wcove_irqchip;
 	/* This will let us handle the parent IRQ in the driver */
 	girq->parent_handler = NULL;
 	girq->num_parents = 0;

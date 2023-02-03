@@ -506,7 +506,8 @@ static const struct regmap_irq_chip axp152_regmap_irq_chip = {
 	.name			= "axp152_irq_chip",
 	.status_base		= AXP152_IRQ1_STATE,
 	.ack_base		= AXP152_IRQ1_STATE,
-	.unmask_base		= AXP152_IRQ1_EN,
+	.mask_base		= AXP152_IRQ1_EN,
+	.mask_invert		= true,
 	.init_ack_masked	= true,
 	.irqs			= axp152_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp152_regmap_irqs),
@@ -517,7 +518,8 @@ static const struct regmap_irq_chip axp20x_regmap_irq_chip = {
 	.name			= "axp20x_irq_chip",
 	.status_base		= AXP20X_IRQ1_STATE,
 	.ack_base		= AXP20X_IRQ1_STATE,
-	.unmask_base		= AXP20X_IRQ1_EN,
+	.mask_base		= AXP20X_IRQ1_EN,
+	.mask_invert		= true,
 	.init_ack_masked	= true,
 	.irqs			= axp20x_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp20x_regmap_irqs),
@@ -529,7 +531,8 @@ static const struct regmap_irq_chip axp22x_regmap_irq_chip = {
 	.name			= "axp22x_irq_chip",
 	.status_base		= AXP20X_IRQ1_STATE,
 	.ack_base		= AXP20X_IRQ1_STATE,
-	.unmask_base		= AXP20X_IRQ1_EN,
+	.mask_base		= AXP20X_IRQ1_EN,
+	.mask_invert		= true,
 	.init_ack_masked	= true,
 	.irqs			= axp22x_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp22x_regmap_irqs),
@@ -540,7 +543,8 @@ static const struct regmap_irq_chip axp288_regmap_irq_chip = {
 	.name			= "axp288_irq_chip",
 	.status_base		= AXP20X_IRQ1_STATE,
 	.ack_base		= AXP20X_IRQ1_STATE,
-	.unmask_base		= AXP20X_IRQ1_EN,
+	.mask_base		= AXP20X_IRQ1_EN,
+	.mask_invert		= true,
 	.init_ack_masked	= true,
 	.irqs			= axp288_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp288_regmap_irqs),
@@ -552,7 +556,8 @@ static const struct regmap_irq_chip axp803_regmap_irq_chip = {
 	.name			= "axp803",
 	.status_base		= AXP20X_IRQ1_STATE,
 	.ack_base		= AXP20X_IRQ1_STATE,
-	.unmask_base		= AXP20X_IRQ1_EN,
+	.mask_base		= AXP20X_IRQ1_EN,
+	.mask_invert		= true,
 	.init_ack_masked	= true,
 	.irqs			= axp803_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp803_regmap_irqs),
@@ -563,7 +568,8 @@ static const struct regmap_irq_chip axp806_regmap_irq_chip = {
 	.name			= "axp806",
 	.status_base		= AXP20X_IRQ1_STATE,
 	.ack_base		= AXP20X_IRQ1_STATE,
-	.unmask_base		= AXP20X_IRQ1_EN,
+	.mask_base		= AXP20X_IRQ1_EN,
+	.mask_invert		= true,
 	.init_ack_masked	= true,
 	.irqs			= axp806_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp806_regmap_irqs),
@@ -574,7 +580,8 @@ static const struct regmap_irq_chip axp809_regmap_irq_chip = {
 	.name			= "axp809",
 	.status_base		= AXP20X_IRQ1_STATE,
 	.ack_base		= AXP20X_IRQ1_STATE,
-	.unmask_base		= AXP20X_IRQ1_EN,
+	.mask_base		= AXP20X_IRQ1_EN,
+	.mask_invert		= true,
 	.init_ack_masked	= true,
 	.irqs			= axp809_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp809_regmap_irqs),
@@ -612,9 +619,6 @@ static const struct mfd_cell axp20x_cells[] = {
 
 static const struct mfd_cell axp221_cells[] = {
 	{
-		.name		= "axp20x-gpio",
-		.of_compatible	= "x-powers,axp221-gpio",
-	}, {
 		.name		= "axp221-pek",
 		.num_resources	= ARRAY_SIZE(axp22x_pek_resources),
 		.resources	= axp22x_pek_resources,
@@ -641,9 +645,6 @@ static const struct mfd_cell axp221_cells[] = {
 
 static const struct mfd_cell axp223_cells[] = {
 	{
-		.name		= "axp20x-gpio",
-		.of_compatible	= "x-powers,axp221-gpio",
-	}, {
 		.name		= "axp221-pek",
 		.num_resources	= ARRAY_SIZE(axp22x_pek_resources),
 		.resources	= axp22x_pek_resources,
@@ -784,9 +785,6 @@ static const struct mfd_cell axp806_cells[] = {
 
 static const struct mfd_cell axp809_cells[] = {
 	{
-		.name		= "axp20x-gpio",
-		.of_compatible	= "x-powers,axp221-gpio",
-	}, {
 		.name		= "axp221-pek",
 		.num_resources	= ARRAY_SIZE(axp809_pek_resources),
 		.resources	= axp809_pek_resources,
@@ -835,7 +833,7 @@ static void axp20x_power_off(void)
 		     AXP20X_OFF);
 
 	/* Give capacitors etc. time to drain to avoid kernel panic msg. */
-	mdelay(500);
+	msleep(500);
 }
 
 int axp20x_match_device(struct axp20x_dev *axp20x)

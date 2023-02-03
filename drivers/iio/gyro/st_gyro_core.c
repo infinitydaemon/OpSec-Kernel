@@ -406,17 +406,24 @@ read_error:
 static int st_gyro_write_raw(struct iio_dev *indio_dev,
 		struct iio_chan_spec const *chan, int val, int val2, long mask)
 {
+	int err;
+
 	switch (mask) {
 	case IIO_CHAN_INFO_SCALE:
-		return st_sensors_set_fullscale_by_gain(indio_dev, val2);
+		err = st_sensors_set_fullscale_by_gain(indio_dev, val2);
+		break;
 	case IIO_CHAN_INFO_SAMP_FREQ:
 		if (val2)
 			return -EINVAL;
-
-		return st_sensors_set_odr(indio_dev, val);
+		mutex_lock(&indio_dev->mlock);
+		err = st_sensors_set_odr(indio_dev, val);
+		mutex_unlock(&indio_dev->mlock);
+		return err;
 	default:
-		return -EINVAL;
+		err = -EINVAL;
 	}
+
+	return err;
 }
 
 static ST_SENSORS_DEV_ATTR_SAMP_FREQ_AVAIL();
@@ -465,13 +472,12 @@ const struct st_sensor_settings *st_gyro_get_settings(const char *name)
 
 	return &st_gyro_sensors_settings[index];
 }
-EXPORT_SYMBOL_NS(st_gyro_get_settings, IIO_ST_SENSORS);
+EXPORT_SYMBOL(st_gyro_get_settings);
 
 int st_gyro_common_probe(struct iio_dev *indio_dev)
 {
 	struct st_sensor_data *gdata = iio_priv(indio_dev);
 	struct st_sensors_platform_data *pdata;
-	struct device *parent = indio_dev->dev.parent;
 	int err;
 
 	indio_dev->modes = INDIO_DIRECT_MODE;
@@ -485,7 +491,7 @@ int st_gyro_common_probe(struct iio_dev *indio_dev)
 	indio_dev->channels = gdata->sensor_settings->ch;
 	indio_dev->num_channels = ST_SENSORS_NUMBER_ALL_CHANNELS;
 
-	err = iio_read_mount_matrix(parent, &gdata->mount_matrix);
+	err = iio_read_mount_matrix(gdata->dev, &gdata->mount_matrix);
 	if (err)
 		return err;
 
@@ -509,11 +515,32 @@ int st_gyro_common_probe(struct iio_dev *indio_dev)
 			return err;
 	}
 
-	return devm_iio_device_register(parent, indio_dev);
+	err = iio_device_register(indio_dev);
+	if (err)
+		goto st_gyro_device_register_error;
+
+	dev_info(&indio_dev->dev, "registered gyroscope %s\n",
+		 indio_dev->name);
+
+	return 0;
+
+st_gyro_device_register_error:
+	if (gdata->irq > 0)
+		st_sensors_deallocate_trigger(indio_dev);
+	return err;
 }
-EXPORT_SYMBOL_NS(st_gyro_common_probe, IIO_ST_SENSORS);
+EXPORT_SYMBOL(st_gyro_common_probe);
+
+void st_gyro_common_remove(struct iio_dev *indio_dev)
+{
+	struct st_sensor_data *gdata = iio_priv(indio_dev);
+
+	iio_device_unregister(indio_dev);
+	if (gdata->irq > 0)
+		st_sensors_deallocate_trigger(indio_dev);
+}
+EXPORT_SYMBOL(st_gyro_common_remove);
 
 MODULE_AUTHOR("Denis Ciocca <denis.ciocca@st.com>");
 MODULE_DESCRIPTION("STMicroelectronics gyroscopes driver");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS(IIO_ST_SENSORS);

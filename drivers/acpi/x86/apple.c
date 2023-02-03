@@ -8,7 +8,6 @@
 #include <linux/bitmap.h>
 #include <linux/platform_data/x86/apple.h>
 #include <linux/uuid.h>
-#include "../internal.h"
 
 /* Apple _DSM device properties GUID */
 static const guid_t apple_prp_guid =

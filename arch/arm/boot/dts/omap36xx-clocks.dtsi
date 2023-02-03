@@ -58,19 +58,12 @@
 		ti,set-bit-to-disable;
 	};
 
-	clock@1000 {
-		compatible = "ti,clksel";
+	uart4_fck: uart4_fck@1000 {
+		#clock-cells = <0>;
+		compatible = "ti,wait-gate-clock";
+		clocks = <&per_48m_fck>;
 		reg = <0x1000>;
-		#clock-cells = <2>;
-		#address-cells = <0>;
-
-		uart4_fck: clock-uart4-fck {
-			#clock-cells = <0>;
-			compatible = "ti,wait-gate-clock";
-			clock-output-names = "uart4_fck";
-			clocks = <&per_48m_fck>;
-			ti,bit-shift = <18>;
-		};
+		ti,bit-shift = <18>;
 	};
 };
 

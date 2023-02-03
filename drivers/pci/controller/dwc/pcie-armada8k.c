@@ -21,6 +21,7 @@
 #include <linux/platform_device.h>
 #include <linux/resource.h>
 #include <linux/of_pci.h>
+#include <linux/of_irq.h>
 
 #include "pcie-designware.h"
 
@@ -165,7 +166,7 @@ static int armada8k_pcie_start_link(struct dw_pcie *pci)
 	return 0;
 }
 
-static int armada8k_pcie_host_init(struct dw_pcie_rp *pp)
+static int armada8k_pcie_host_init(struct pcie_port *pp)
 {
 	u32 reg;
 	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
@@ -232,7 +233,7 @@ static int armada8k_add_pcie_port(struct armada8k_pcie *pcie,
 				  struct platform_device *pdev)
 {
 	struct dw_pcie *pci = pcie->pci;
-	struct dw_pcie_rp *pp = &pci->pp;
+	struct pcie_port *pp = &pci->pp;
 	struct device *dev = &pdev->dev;
 	int ret;
 
@@ -342,7 +343,7 @@ static struct platform_driver armada8k_pcie_driver = {
 	.probe		= armada8k_pcie_probe,
 	.driver = {
 		.name	= "armada8k-pcie",
-		.of_match_table = armada8k_pcie_of_match,
+		.of_match_table = of_match_ptr(armada8k_pcie_of_match),
 		.suppress_bind_attrs = true,
 	},
 };

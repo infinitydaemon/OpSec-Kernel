@@ -6,6 +6,8 @@
  *         Roger Nilsson <roger.xr.nilsson@stericsson.com>,
  *         Sandeep Kaushik <sandeep.kaushik@st.com>
  *         for ST-Ericsson.
+ *
+ * License terms:
  */
 
 #include <linux/module.h>

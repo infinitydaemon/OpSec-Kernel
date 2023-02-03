@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*****************************************************************************
  *                                                                           *
  * File: sge.c                                                               *
@@ -8,6 +7,16 @@
  *  DMA engine.                                                              *
  *  part of the Chelsio 10Gb Ethernet Driver.                                *
  *                                                                           *
+ * This program is free software; you can redistribute it and/or modify      *
+ * it under the terms of the GNU General Public License, version 2, as       *
+ * published by the Free Software Foundation.                                *
+ *                                                                           *
+ * You should have received a copy of the GNU General Public License along   *
+ * with this program; if not, see <http://www.gnu.org/licenses/>.            *
+ *                                                                           *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED    *
+ * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF      *
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.                     *
  *                                                                           *
  * http://www.chelsio.com                                                    *
  *                                                                           *
@@ -1350,7 +1359,7 @@ static void restart_sched(struct tasklet_struct *t)
  *	@fl: the free list that contains the packet buffer
  *	@len: the packet length
  *
- *	Process an ingress ethernet packet and deliver it to the stack.
+ *	Process an ingress ethernet pakcet and deliver it to the stack.
  */
 static void sge_rx(struct sge *sge, struct freelQ *fl, unsigned int len)
 {

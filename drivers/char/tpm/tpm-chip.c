@@ -373,11 +373,6 @@ out:
 }
 EXPORT_SYMBOL_GPL(tpm_chip_alloc);
 
-static void tpm_put_device(void *dev)
-{
-	put_device(dev);
-}
-
 /**
  * tpmm_chip_alloc() - allocate a new struct tpm_chip instance
  * @pdev: parent device to which the chip is associated
@@ -396,7 +391,7 @@ struct tpm_chip *tpmm_chip_alloc(struct device *pdev,
 		return chip;
 
 	rc = devm_add_action_or_reset(pdev,
-				      tpm_put_device,
+				      (void (*)(void *)) put_device,
 				      &chip->dev);
 	if (rc)
 		return ERR_PTR(rc);
@@ -420,7 +415,7 @@ static int tpm_add_char_device(struct tpm_chip *chip)
 		return rc;
 	}
 
-	if (chip->flags & TPM_CHIP_FLAG_TPM2 && !tpm_is_firmware_upgrade(chip)) {
+	if (chip->flags & TPM_CHIP_FLAG_TPM2) {
 		rc = tpm_devs_add(chip);
 		if (rc)
 			goto err_del_cdev;
@@ -471,8 +466,7 @@ static void tpm_del_legacy_sysfs(struct tpm_chip *chip)
 {
 	struct attribute **i;
 
-	if (chip->flags & (TPM_CHIP_FLAG_TPM2 | TPM_CHIP_FLAG_VIRTUAL) ||
-	    tpm_is_firmware_upgrade(chip))
+	if (chip->flags & (TPM_CHIP_FLAG_TPM2 | TPM_CHIP_FLAG_VIRTUAL))
 		return;
 
 	sysfs_remove_link(&chip->dev.parent->kobj, "ppi");
@@ -490,8 +484,7 @@ static int tpm_add_legacy_sysfs(struct tpm_chip *chip)
 	struct attribute **i;
 	int rc;
 
-	if (chip->flags & (TPM_CHIP_FLAG_TPM2 | TPM_CHIP_FLAG_VIRTUAL) ||
-		tpm_is_firmware_upgrade(chip))
+	if (chip->flags & (TPM_CHIP_FLAG_TPM2 | TPM_CHIP_FLAG_VIRTUAL))
 		return 0;
 
 	rc = compat_only_sysfs_link_entry_to_kobj(
@@ -521,7 +514,7 @@ static int tpm_hwrng_read(struct hwrng *rng, void *data, size_t max, bool wait)
 
 static int tpm_add_hwrng(struct tpm_chip *chip)
 {
-	if (!IS_ENABLED(CONFIG_HW_RANDOM_TPM) || tpm_is_firmware_upgrade(chip))
+	if (!IS_ENABLED(CONFIG_HW_RANDOM_TPM))
 		return 0;
 
 	snprintf(chip->hwrng_name, sizeof(chip->hwrng_name),
@@ -534,9 +527,6 @@ static int tpm_add_hwrng(struct tpm_chip *chip)
 static int tpm_get_pcr_allocation(struct tpm_chip *chip)
 {
 	int rc;
-
-	if (tpm_is_firmware_upgrade(chip))
-		return 0;
 
 	rc = (chip->flags & TPM_CHIP_FLAG_TPM2) ?
 	     tpm2_get_pcr_allocation(chip) :
@@ -600,7 +590,7 @@ int tpm_chip_register(struct tpm_chip *chip)
 	return 0;
 
 out_hwrng:
-	if (IS_ENABLED(CONFIG_HW_RANDOM_TPM) && !tpm_is_firmware_upgrade(chip))
+	if (IS_ENABLED(CONFIG_HW_RANDOM_TPM))
 		hwrng_unregister(&chip->hwrng);
 out_ppi:
 	tpm_bios_log_teardown(chip);
@@ -625,10 +615,10 @@ EXPORT_SYMBOL_GPL(tpm_chip_register);
 void tpm_chip_unregister(struct tpm_chip *chip)
 {
 	tpm_del_legacy_sysfs(chip);
-	if (IS_ENABLED(CONFIG_HW_RANDOM_TPM) && !tpm_is_firmware_upgrade(chip))
+	if (IS_ENABLED(CONFIG_HW_RANDOM_TPM))
 		hwrng_unregister(&chip->hwrng);
 	tpm_bios_log_teardown(chip);
-	if (chip->flags & TPM_CHIP_FLAG_TPM2 && !tpm_is_firmware_upgrade(chip))
+	if (chip->flags & TPM_CHIP_FLAG_TPM2)
 		tpm_devs_remove(chip);
 	tpm_del_char_device(chip);
 }

@@ -28,6 +28,7 @@
 #include <asm/setup.h>
 #include <asm/memory.h>
 #include <asm/mach-types.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
 #include <linux/sizes.h>
 
@@ -38,13 +39,12 @@
 
 #include "pxa27x.h"
 #include "lpd270.h"
-#include "addr-map.h"
-#include <linux/platform_data/asoc-pxa.h>
+#include <mach/audio.h>
 #include <linux/platform_data/video-pxafb.h>
 #include <linux/platform_data/mmc-pxamci.h>
 #include <linux/platform_data/irda-pxaficp.h>
 #include <linux/platform_data/usb-ohci-pxa27x.h>
-#include "smemc.h"
+#include <mach/smemc.h>
 
 #include "generic.h"
 #include "devices.h"

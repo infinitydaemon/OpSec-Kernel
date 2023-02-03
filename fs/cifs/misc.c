@@ -23,7 +23,6 @@
 #include "dns_resolve.h"
 #endif
 #include "fs_context.h"
-#include "cached_dir.h"
 
 extern mempool_t *cifs_sm_req_poolp;
 extern mempool_t *cifs_req_poolp;
@@ -70,14 +69,12 @@ sesInfoAlloc(void)
 	ret_buf = kzalloc(sizeof(struct cifs_ses), GFP_KERNEL);
 	if (ret_buf) {
 		atomic_inc(&sesInfoAllocCount);
-		spin_lock_init(&ret_buf->ses_lock);
-		ret_buf->ses_status = SES_NEW;
+		ret_buf->status = CifsNew;
 		++ret_buf->ses_count;
 		INIT_LIST_HEAD(&ret_buf->smb_ses_list);
 		INIT_LIST_HEAD(&ret_buf->tcon_list);
 		mutex_init(&ret_buf->session_mutex);
 		spin_lock_init(&ret_buf->iface_lock);
-		INIT_LIST_HEAD(&ret_buf->iface_list);
 		spin_lock_init(&ret_buf->chan_lock);
 	}
 	return ret_buf;
@@ -86,8 +83,6 @@ sesInfoAlloc(void)
 void
 sesInfoFree(struct cifs_ses *buf_to_free)
 {
-	struct cifs_server_iface *iface = NULL, *niface = NULL;
-
 	if (buf_to_free == NULL) {
 		cifs_dbg(FYI, "Null buffer passed to sesInfoFree\n");
 		return;
@@ -101,11 +96,7 @@ sesInfoFree(struct cifs_ses *buf_to_free)
 	kfree(buf_to_free->user_name);
 	kfree(buf_to_free->domainName);
 	kfree_sensitive(buf_to_free->auth_key.response);
-	spin_lock(&buf_to_free->iface_lock);
-	list_for_each_entry_safe(iface, niface, &buf_to_free->iface_list,
-				 iface_head)
-		kref_put(&iface->refcount, release_iface);
-	spin_unlock(&buf_to_free->iface_lock);
+	kfree(buf_to_free->iface_list);
 	kfree_sensitive(buf_to_free);
 }
 
@@ -117,19 +108,19 @@ tconInfoAlloc(void)
 	ret_buf = kzalloc(sizeof(*ret_buf), GFP_KERNEL);
 	if (!ret_buf)
 		return NULL;
-	ret_buf->cfids = init_cached_dirs();
-	if (!ret_buf->cfids) {
+	ret_buf->crfid.fid = kzalloc(sizeof(*ret_buf->crfid.fid), GFP_KERNEL);
+	if (!ret_buf->crfid.fid) {
 		kfree(ret_buf);
 		return NULL;
 	}
 
 	atomic_inc(&tconInfoAllocCount);
-	ret_buf->status = TID_NEW;
+	ret_buf->tidStatus = CifsNew;
 	++ret_buf->tc_count;
-	spin_lock_init(&ret_buf->tc_lock);
 	INIT_LIST_HEAD(&ret_buf->openFileList);
 	INIT_LIST_HEAD(&ret_buf->tcon_list);
 	spin_lock_init(&ret_buf->open_file_lock);
+	mutex_init(&ret_buf->crfid.fid_mutex);
 	spin_lock_init(&ret_buf->stat_lock);
 	atomic_set(&ret_buf->num_local_opens, 0);
 	atomic_set(&ret_buf->num_remote_opens, 0);
@@ -138,17 +129,17 @@ tconInfoAlloc(void)
 }
 
 void
-tconInfoFree(struct cifs_tcon *tcon)
+tconInfoFree(struct cifs_tcon *buf_to_free)
 {
-	if (tcon == NULL) {
+	if (buf_to_free == NULL) {
 		cifs_dbg(FYI, "Null buffer passed to tconInfoFree\n");
 		return;
 	}
-	free_cached_dirs(tcon->cfids);
 	atomic_dec(&tconInfoAllocCount);
-	kfree(tcon->nativeFileSystem);
-	kfree_sensitive(tcon->password);
-	kfree(tcon);
+	kfree(buf_to_free->nativeFileSystem);
+	kfree_sensitive(buf_to_free->password);
+	kfree(buf_to_free->crfid.fid);
+	kfree(buf_to_free);
 }
 
 struct smb_hdr *
@@ -159,7 +150,7 @@ cifs_buf_get(void)
 	 * SMB2 header is bigger than CIFS one - no problems to clean some
 	 * more bytes for CIFS.
 	 */
-	size_t buf_size = sizeof(struct smb2_hdr);
+	size_t buf_size = sizeof(struct smb2_sync_hdr);
 
 	/*
 	 * We could use negotiated size instead of max_msgsize -
@@ -172,9 +163,9 @@ cifs_buf_get(void)
 	/* clear the first few header bytes */
 	/* for most paths, more is cleared in header_assemble */
 	memset(ret_buf, 0, buf_size + 3);
-	atomic_inc(&buf_alloc_count);
+	atomic_inc(&bufAllocCount);
 #ifdef CONFIG_CIFS_STATS2
-	atomic_inc(&total_buf_alloc_count);
+	atomic_inc(&totBufAllocCount);
 #endif /* CONFIG_CIFS_STATS2 */
 
 	return ret_buf;
@@ -189,7 +180,7 @@ cifs_buf_release(void *buf_to_free)
 	}
 	mempool_free(buf_to_free, cifs_req_poolp);
 
-	atomic_dec(&buf_alloc_count);
+	atomic_dec(&bufAllocCount);
 	return;
 }
 
@@ -205,9 +196,9 @@ cifs_small_buf_get(void)
 	ret_buf = mempool_alloc(cifs_sm_req_poolp, GFP_NOFS);
 	/* No need to clear memory here, cleared in header assemble */
 	/*	memset(ret_buf, 0, sizeof(struct smb_hdr) + 27);*/
-	atomic_inc(&small_buf_alloc_count);
+	atomic_inc(&smBufAllocCount);
 #ifdef CONFIG_CIFS_STATS2
-	atomic_inc(&total_small_buf_alloc_count);
+	atomic_inc(&totSmBufAllocCount);
 #endif /* CONFIG_CIFS_STATS2 */
 
 	return ret_buf;
@@ -223,7 +214,7 @@ cifs_small_buf_release(void *buf_to_free)
 	}
 	mempool_free(buf_to_free, cifs_sm_req_poolp);
 
-	atomic_dec(&small_buf_alloc_count);
+	atomic_dec(&smBufAllocCount);
 	return;
 }
 
@@ -354,7 +345,7 @@ checkSMB(char *buf, unsigned int total_read, struct TCP_Server_Info *server)
 	/* otherwise, there is enough to get to the BCC */
 	if (check_smb_hdr(smb))
 		return -EIO;
-	clc_len = smbCalcSize(smb);
+	clc_len = smbCalcSize(smb, server);
 
 	if (4 + rfclen != total_read) {
 		cifs_dbg(VFS, "Length read does not match RFC1001 length %d\n",
@@ -400,7 +391,7 @@ is_valid_oplock_break(char *buffer, struct TCP_Server_Info *srv)
 {
 	struct smb_hdr *buf = (struct smb_hdr *)buffer;
 	struct smb_com_lock_req *pSMB = (struct smb_com_lock_req *)buf;
-	struct TCP_Server_Info *pserver;
+	struct list_head *tmp, *tmp1, *tmp2;
 	struct cifs_ses *ses;
 	struct cifs_tcon *tcon;
 	struct cifsInodeInfo *pCifsInode;
@@ -465,19 +456,20 @@ is_valid_oplock_break(char *buffer, struct TCP_Server_Info *srv)
 	if (!(pSMB->LockType & LOCKING_ANDX_OPLOCK_RELEASE))
 		return false;
 
-	/* If server is a channel, select the primary channel */
-	pserver = CIFS_SERVER_IS_CHAN(srv) ? srv->primary_server : srv;
-
 	/* look up tcon based on tid & uid */
 	spin_lock(&cifs_tcp_ses_lock);
-	list_for_each_entry(ses, &pserver->smb_ses_list, smb_ses_list) {
-		list_for_each_entry(tcon, &ses->tcon_list, tcon_list) {
+	list_for_each(tmp, &srv->smb_ses_list) {
+		ses = list_entry(tmp, struct cifs_ses, smb_ses_list);
+		list_for_each(tmp1, &ses->tcon_list) {
+			tcon = list_entry(tmp1, struct cifs_tcon, tcon_list);
 			if (tcon->tid != buf->Tid)
 				continue;
 
 			cifs_stats_inc(&tcon->stats.cifs_stats.num_oplock_brks);
 			spin_lock(&tcon->open_file_lock);
-			list_for_each_entry(netfile, &tcon->openFileList, tlist) {
+			list_for_each(tmp2, &tcon->openFileList) {
+				netfile = list_entry(tmp2, struct cifsFileInfo,
+						     tlist);
 				if (pSMB->Fid != netfile->fid.netfid)
 					continue;
 
@@ -529,7 +521,7 @@ cifs_autodisable_serverino(struct cifs_sb_info *cifs_sb)
 		cifs_sb->mnt_cifs_flags &= ~CIFS_MOUNT_SERVER_INUM;
 		cifs_sb->mnt_cifs_serverino_autodisabled = true;
 		cifs_dbg(VFS, "Autodisabling the use of server inode numbers on %s\n",
-			 tcon ? tcon->tree_name : "new server");
+			 tcon ? tcon->treeName : "new server");
 		cifs_dbg(VFS, "The server doesn't seem to support them properly or the files might be on different servers (DFS)\n");
 		cifs_dbg(VFS, "Hardlinks will not be recognized on this mount. Consider mounting with the \"noserverino\" option to silence this message.\n");
 
@@ -543,11 +535,11 @@ void cifs_set_oplock_level(struct cifsInodeInfo *cinode, __u32 oplock)
 	if (oplock == OPLOCK_EXCLUSIVE) {
 		cinode->oplock = CIFS_CACHE_WRITE_FLG | CIFS_CACHE_READ_FLG;
 		cifs_dbg(FYI, "Exclusive Oplock granted on inode %p\n",
-			 &cinode->netfs.inode);
+			 &cinode->vfs_inode);
 	} else if (oplock == OPLOCK_READ) {
 		cinode->oplock = CIFS_CACHE_READ_FLG;
 		cifs_dbg(FYI, "Level II Oplock granted on inode %p\n",
-			 &cinode->netfs.inode);
+			 &cinode->vfs_inode);
 	} else
 		cinode->oplock = 0;
 }
@@ -764,12 +756,14 @@ void
 cifs_close_all_deferred_files(struct cifs_tcon *tcon)
 {
 	struct cifsFileInfo *cfile;
+	struct list_head *tmp;
 	struct file_list *tmp_list, *tmp_next_list;
 	struct list_head file_head;
 
 	INIT_LIST_HEAD(&file_head);
 	spin_lock(&tcon->open_file_lock);
-	list_for_each_entry(cfile, &tcon->openFileList, tlist) {
+	list_for_each(tmp, &tcon->openFileList) {
+		cfile = list_entry(tmp, struct cifsFileInfo, tlist);
 		if (delayed_work_pending(&cfile->deferred)) {
 			if (cancel_delayed_work(&cfile->deferred)) {
 				cifs_del_deferred_close(cfile);
@@ -794,6 +788,7 @@ void
 cifs_close_deferred_file_under_dentry(struct cifs_tcon *tcon, const char *path)
 {
 	struct cifsFileInfo *cfile;
+	struct list_head *tmp;
 	struct file_list *tmp_list, *tmp_next_list;
 	struct list_head file_head;
 	void *page;
@@ -802,7 +797,8 @@ cifs_close_deferred_file_under_dentry(struct cifs_tcon *tcon, const char *path)
 	INIT_LIST_HEAD(&file_head);
 	page = alloc_dentry_path();
 	spin_lock(&tcon->open_file_lock);
-	list_for_each_entry(cfile, &tcon->openFileList, tlist) {
+	list_for_each(tmp, &tcon->openFileList) {
+		cfile = list_entry(tmp, struct cifsFileInfo, tlist);
 		full_path = build_path_from_dentry(cfile->dentry, page);
 		if (strstr(full_path, path)) {
 			if (delayed_work_pending(&cfile->deferred)) {
@@ -828,7 +824,7 @@ cifs_close_deferred_file_under_dentry(struct cifs_tcon *tcon, const char *path)
 	free_dentry_path(page);
 }
 
-/* parses DFS referral V3 structure
+/* parses DFS refferal V3 structure
  * caller is responsible for freeing target_nodes
  * returns:
  * - on success - 0
@@ -1030,7 +1026,7 @@ setup_aio_ctx_iter(struct cifs_aio_ctx *ctx, struct iov_iter *iter, int rw)
 	saved_len = count;
 
 	while (count && npages < max_pages) {
-		rc = iov_iter_get_pages2(iter, pages, count, max_pages, &start);
+		rc = iov_iter_get_pages(iter, pages, count, max_pages, &start);
 		if (rc < 0) {
 			cifs_dbg(VFS, "Couldn't get user pages (rc=%zd)\n", rc);
 			break;
@@ -1042,6 +1038,7 @@ setup_aio_ctx_iter(struct cifs_aio_ctx *ctx, struct iov_iter *iter, int rw)
 			break;
 		}
 
+		iov_iter_advance(iter, rc);
 		count -= rc;
 		rc += start;
 		cur_npages = DIV_ROUND_UP(rc, PAGE_SIZE);
@@ -1075,58 +1072,59 @@ setup_aio_ctx_iter(struct cifs_aio_ctx *ctx, struct iov_iter *iter, int rw)
 /**
  * cifs_alloc_hash - allocate hash and hash context together
  * @name: The name of the crypto hash algo
- * @sdesc: SHASH descriptor where to put the pointer to the hash TFM
+ * @shash: Where to put the pointer to the hash algo
+ * @sdesc: Where to put the pointer to the hash descriptor
  *
  * The caller has to make sure @sdesc is initialized to either NULL or
- * a valid context. It can be freed via cifs_free_hash().
+ * a valid context. Both can be freed via cifs_free_hash().
  */
 int
-cifs_alloc_hash(const char *name, struct shash_desc **sdesc)
+cifs_alloc_hash(const char *name,
+		struct crypto_shash **shash, struct sdesc **sdesc)
 {
 	int rc = 0;
-	struct crypto_shash *alg = NULL;
+	size_t size;
 
-	if (*sdesc)
+	if (*sdesc != NULL)
 		return 0;
 
-	alg = crypto_alloc_shash(name, 0, 0);
-	if (IS_ERR(alg)) {
-		cifs_dbg(VFS, "Could not allocate shash TFM '%s'\n", name);
-		rc = PTR_ERR(alg);
+	*shash = crypto_alloc_shash(name, 0, 0);
+	if (IS_ERR(*shash)) {
+		cifs_dbg(VFS, "Could not allocate crypto %s\n", name);
+		rc = PTR_ERR(*shash);
+		*shash = NULL;
 		*sdesc = NULL;
 		return rc;
 	}
 
-	*sdesc = kmalloc(sizeof(struct shash_desc) + crypto_shash_descsize(alg), GFP_KERNEL);
+	size = sizeof(struct shash_desc) + crypto_shash_descsize(*shash);
+	*sdesc = kmalloc(size, GFP_KERNEL);
 	if (*sdesc == NULL) {
-		cifs_dbg(VFS, "no memory left to allocate shash TFM '%s'\n", name);
-		crypto_free_shash(alg);
+		cifs_dbg(VFS, "no memory left to allocate crypto %s\n", name);
+		crypto_free_shash(*shash);
+		*shash = NULL;
 		return -ENOMEM;
 	}
 
-	(*sdesc)->tfm = alg;
+	(*sdesc)->shash.tfm = *shash;
 	return 0;
 }
 
 /**
  * cifs_free_hash - free hash and hash context together
- * @sdesc: Where to find the pointer to the hash TFM
+ * @shash: Where to find the pointer to the hash algo
+ * @sdesc: Where to find the pointer to the hash descriptor
  *
- * Freeing a NULL descriptor is safe.
+ * Freeing a NULL hash or context is safe.
  */
 void
-cifs_free_hash(struct shash_desc **sdesc)
+cifs_free_hash(struct crypto_shash **shash, struct sdesc **sdesc)
 {
-	if (unlikely(!sdesc) || !*sdesc)
-		return;
-
-	if ((*sdesc)->tfm) {
-		crypto_free_shash((*sdesc)->tfm);
-		(*sdesc)->tfm = NULL;
-	}
-
-	kfree_sensitive(*sdesc);
+	kfree(*sdesc);
 	*sdesc = NULL;
+	if (*shash)
+		crypto_free_shash(*shash);
+	*shash = NULL;
 }
 
 /**
@@ -1258,30 +1256,44 @@ int match_target_ip(struct TCP_Server_Info *server,
 		    bool *result)
 {
 	int rc;
-	char *target;
-	struct sockaddr_storage ss;
+	char *target, *tip = NULL;
+	struct sockaddr tipaddr;
 
 	*result = false;
 
 	target = kzalloc(share_len + 3, GFP_KERNEL);
-	if (!target)
-		return -ENOMEM;
+	if (!target) {
+		rc = -ENOMEM;
+		goto out;
+	}
 
 	scnprintf(target, share_len + 3, "\\\\%.*s", (int)share_len, share);
 
 	cifs_dbg(FYI, "%s: target name: %s\n", __func__, target + 2);
 
-	rc = dns_resolve_server_name_to_ip(target, (struct sockaddr *)&ss, NULL);
-	kfree(target);
-
+	rc = dns_resolve_server_name_to_ip(target, &tip, NULL);
 	if (rc < 0)
-		return rc;
+		goto out;
 
-	spin_lock(&server->srv_lock);
-	*result = cifs_match_ipaddr((struct sockaddr *)&server->dstaddr, (struct sockaddr *)&ss);
-	spin_unlock(&server->srv_lock);
+	cifs_dbg(FYI, "%s: target ip: %s\n", __func__, tip);
+
+	if (!cifs_convert_address(&tipaddr, tip, strlen(tip))) {
+		cifs_dbg(VFS, "%s: failed to convert target ip address\n",
+			 __func__);
+		rc = -EINVAL;
+		goto out;
+	}
+
+	*result = cifs_match_ipaddr((struct sockaddr *)&server->dstaddr,
+				    &tipaddr);
 	cifs_dbg(FYI, "%s: ip addresses match: %u\n", __func__, *result);
-	return 0;
+	rc = 0;
+
+out:
+	kfree(target);
+	kfree(tip);
+
+	return rc;
 }
 
 int cifs_update_super_prepath(struct cifs_sb_info *cifs_sb, char *prefix)

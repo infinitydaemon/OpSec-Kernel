@@ -1,5 +1,3 @@
-.. SPDX-License-Identifier: GPL-2.0-only
-
 =======================
 S3C24XX CPUfreq support
 =======================
@@ -75,3 +73,4 @@ Document Author
 ---------------
 
 Ben Dooks, Copyright 2009 Simtec Electronics
+Licensed under GPLv2

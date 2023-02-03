@@ -11,9 +11,6 @@
 #include <linux/fsl/guts.h>
 #include <linux/interrupt.h>
 #include <linux/genalloc.h>
-#include <linux/of_address.h>
-#include <linux/of_irq.h>
-#include <linux/platform_device.h>
 
 #include <asm/mpc85xx.h>
 
@@ -211,7 +208,7 @@ int pamu_config_ppaace(int liodn, u32 omi, u32 stashid, int prot)
 		ppaace->op_encode.index_ot.omi = omi;
 	} else if (~omi != 0) {
 		pr_debug("bad operation mapping index: %d\n", omi);
-		return -ENODEV;
+		return -EINVAL;
 	}
 
 	/* configure stash id */
@@ -779,7 +776,7 @@ static int fsl_pamu_probe(struct platform_device *pdev)
 	of_get_address(dev->of_node, 0, &size, NULL);
 
 	irq = irq_of_parse_and_map(dev->of_node, 0);
-	if (!irq) {
+	if (irq == NO_IRQ) {
 		dev_warn(dev, "no interrupts listed in PAMU node\n");
 		goto error;
 	}
@@ -903,7 +900,7 @@ static int fsl_pamu_probe(struct platform_device *pdev)
 	return 0;
 
 error:
-	if (irq)
+	if (irq != NO_IRQ)
 		free_irq(irq, data);
 
 	kfree_sensitive(data);

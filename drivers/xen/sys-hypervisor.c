@@ -22,10 +22,11 @@
 #endif
 
 #define HYPERVISOR_ATTR_RO(_name) \
-static struct hyp_sysfs_attr _name##_attr = __ATTR_RO(_name)
+static struct hyp_sysfs_attr  _name##_attr = __ATTR_RO(_name)
 
 #define HYPERVISOR_ATTR_RW(_name) \
-static struct hyp_sysfs_attr _name##_attr = __ATTR_RW(_name)
+static struct hyp_sysfs_attr _name##_attr = \
+	__ATTR(_name, 0644, _name##_show, _name##_store)
 
 struct hyp_sysfs_attr {
 	struct attribute attr;

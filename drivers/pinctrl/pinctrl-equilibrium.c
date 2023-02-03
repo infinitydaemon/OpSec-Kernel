@@ -11,7 +11,6 @@
 #include <linux/pinctrl/pinconf-generic.h>
 #include <linux/pinctrl/pinmux.h>
 #include <linux/platform_device.h>
-#include <linux/property.h>
 
 #include "core.h"
 #include "pinconf.h"
@@ -168,9 +167,11 @@ static int gpiochip_setup(struct device *dev, struct eqbr_gpio_ctrl *gctrl)
 
 	gc = &gctrl->chip;
 	gc->label = gctrl->name;
-	gc->fwnode = gctrl->fwnode;
+#if defined(CONFIG_OF_GPIO)
+	gc->of_node = gctrl->node;
+#endif
 
-	if (!fwnode_property_read_bool(gctrl->fwnode, "interrupt-controller")) {
+	if (!of_property_read_bool(gctrl->node, "interrupt-controller")) {
 		dev_dbg(dev, "gc %s: doesn't act as interrupt controller!\n",
 			gctrl->name);
 		return 0;
@@ -208,7 +209,7 @@ static int gpiolib_reg(struct eqbr_pinctrl_drv_data *drvdata)
 
 	for (i = 0; i < drvdata->nr_gpio_ctrls; i++) {
 		gctrl = drvdata->gpio_ctrls + i;
-		np = to_of_node(gctrl->fwnode);
+		np = gctrl->node;
 
 		gctrl->name = devm_kasprintf(dev, GFP_KERNEL, "gpiochip%d", i);
 		if (!gctrl->name)
@@ -894,7 +895,7 @@ static int pinbank_probe(struct eqbr_pinctrl_drv_data *drvdata)
 
 		pinbank_init(np_gpio, drvdata, banks + i, i);
 
-		gctrls[i].fwnode = of_fwnode_handle(np_gpio);
+		gctrls[i].node = np_gpio;
 		gctrls[i].bank = banks + i;
 		i++;
 	}

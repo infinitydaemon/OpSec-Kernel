@@ -80,6 +80,19 @@ static inline void __write_pkey_reg(u64 pkey_reg)
 	assert(pkey_reg == __read_pkey_reg());
 }
 
+static inline void __cpuid(unsigned int *eax, unsigned int *ebx,
+		unsigned int *ecx, unsigned int *edx)
+{
+	/* ecx is often an input as well as an output. */
+	asm volatile(
+		"cpuid;"
+		: "=a" (*eax),
+		  "=b" (*ebx),
+		  "=c" (*ecx),
+		  "=d" (*edx)
+		: "0" (*eax), "2" (*ecx));
+}
+
 /* Intel-defined CPU features, CPUID level 0x00000007:0 (ecx) */
 #define X86_FEATURE_PKU        (1<<3) /* Protection Keys for Userspace */
 #define X86_FEATURE_OSPKE      (1<<4) /* OS Protection Keys Enable */
@@ -91,7 +104,9 @@ static inline int cpu_has_pkeys(void)
 	unsigned int ecx;
 	unsigned int edx;
 
-	__cpuid_count(0x7, 0x0, eax, ebx, ecx, edx);
+	eax = 0x7;
+	ecx = 0x0;
+	__cpuid(&eax, &ebx, &ecx, &edx);
 
 	if (!(ecx & X86_FEATURE_PKU)) {
 		dprintf2("cpu does not have PKU\n");
@@ -139,7 +154,9 @@ int pkey_reg_xstate_offset(void)
 	/* assume that XSTATE_PKEY is set in XCR0 */
 	leaf = XSTATE_PKEY_BIT;
 	{
-		__cpuid_count(XSTATE_CPUID, leaf, eax, ebx, ecx, edx);
+		eax = XSTATE_CPUID;
+		ecx = leaf;
+		__cpuid(&eax, &ebx, &ecx, &edx);
 
 		if (leaf == XSTATE_PKEY_BIT) {
 			xstate_offset = ebx;

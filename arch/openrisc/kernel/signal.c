@@ -21,12 +21,14 @@
 #include <linux/ptrace.h>
 #include <linux/unistd.h>
 #include <linux/stddef.h>
-#include <linux/resume_user_mode.h>
+#include <linux/tracehook.h>
 
 #include <asm/processor.h>
 #include <asm/syscall.h>
 #include <asm/ucontext.h>
 #include <linux/uaccess.h>
+
+#define DEBUG_SIG 0
 
 struct rt_sigframe {
 	struct siginfo info;
@@ -309,11 +311,11 @@ do_work_pending(struct pt_regs *regs, unsigned int thread_flags, int syscall)
 				}
 				syscall = 0;
 			} else {
-				resume_user_mode_work(regs);
+				tracehook_notify_resume(regs);
 			}
 		}
 		local_irq_disable();
-		thread_flags = read_thread_flags();
+		thread_flags = current_thread_info()->flags;
 	} while (thread_flags & _TIF_WORK_MASK);
 	return 0;
 }

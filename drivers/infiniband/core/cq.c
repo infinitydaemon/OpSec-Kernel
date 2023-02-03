@@ -2,6 +2,7 @@
 /*
  * Copyright (c) 2015 HGST, a Western Digital Company.
  */
+#include <linux/module.h>
 #include <linux/err.h>
 #include <linux/slab.h>
 #include <rdma/ib_verbs.h>

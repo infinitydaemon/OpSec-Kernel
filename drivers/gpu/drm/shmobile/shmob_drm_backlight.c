@@ -18,7 +18,11 @@ static int shmob_drm_backlight_update(struct backlight_device *bdev)
 	struct shmob_drm_connector *scon = bl_get_data(bdev);
 	struct shmob_drm_device *sdev = scon->connector.dev->dev_private;
 	const struct shmob_drm_backlight_data *bdata = &sdev->pdata->backlight;
-	int brightness = backlight_get_brightness(bdev);
+	int brightness = bdev->props.brightness;
+
+	if (bdev->props.power != FB_BLANK_UNBLANK ||
+	    bdev->props.state & BL_CORE_SUSPENDED)
+		brightness = 0;
 
 	return bdata->set_brightness(brightness);
 }

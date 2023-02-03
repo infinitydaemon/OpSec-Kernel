@@ -25,17 +25,17 @@
 	leds {
 		compatible = "gpio-leds";
 
-		led-wps {
+		wps {
 			label = "bcm53xx:blue:wps";
 			gpios = <&chipcommon 10 GPIO_ACTIVE_HIGH>;
 		};
 
-		led-5ghz {
+		5ghz {
 			label = "bcm53xx:blue:5ghz";
 			gpios = <&chipcommon 11 GPIO_ACTIVE_HIGH>;
 		};
 
-		led-2ghz {
+		2ghz {
 			label = "bcm53xx:blue:2ghz";
 			gpios = <&chipcommon 12 GPIO_ACTIVE_HIGH>;
 		};
@@ -44,13 +44,13 @@
 	gpio-keys {
 		compatible = "gpio-keys";
 
-		button-restart {
+		restart {
 			label = "Reset";
 			linux,code = <KEY_RESTART>;
 			gpios = <&chipcommon 7 GPIO_ACTIVE_HIGH>;
 		};
 
-		button-wps {
+		wps {
 			label = "WPS";
 			linux,code = <KEY_WPS_BUTTON>;
 			gpios = <&chipcommon 9 GPIO_ACTIVE_LOW>;

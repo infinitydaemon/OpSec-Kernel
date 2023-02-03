@@ -298,6 +298,7 @@ struct rmnet_map_header *rmnet_map_add_map_header(struct sk_buff *skb,
 {
 	struct rmnet_map_header *map_header;
 	u32 padding, map_datalen;
+	u8 *padbytes;
 
 	map_datalen = skb->len - hdrlen;
 	map_header = (struct rmnet_map_header *)
@@ -322,7 +323,8 @@ struct rmnet_map_header *rmnet_map_add_map_header(struct sk_buff *skb,
 	if (skb_tailroom(skb) < padding)
 		return NULL;
 
-	skb_put_zero(skb, padding);
+	padbytes = (u8 *)skb_put(skb, padding);
+	memset(padbytes, 0, padding);
 
 done:
 	map_header->pkt_len = htons(map_datalen + padding);

@@ -10,7 +10,6 @@
 #include <drm/drm_debugfs.h>
 #include <drm/drm_file.h>
 #include <drm/drm_fb_helper.h>
-#include <drm/drm_framebuffer.h>
 
 #include "omap_drv.h"
 #include "omap_dmm_tiler.h"

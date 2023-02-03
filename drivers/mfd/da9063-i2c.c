@@ -351,9 +351,9 @@ static const struct of_device_id da9063_dt_ids[] = {
 	{ }
 };
 MODULE_DEVICE_TABLE(of, da9063_dt_ids);
-static int da9063_i2c_probe(struct i2c_client *i2c)
+static int da9063_i2c_probe(struct i2c_client *i2c,
+			    const struct i2c_device_id *id)
 {
-	const struct i2c_device_id *id = i2c_client_get_device_id(i2c);
 	struct da9063 *da9063;
 	int ret;
 
@@ -391,7 +391,6 @@ static int da9063_i2c_probe(struct i2c_client *i2c)
 				&da9063_bb_da_volatile_table;
 			break;
 		case PMIC_DA9063_DA:
-		case PMIC_DA9063_EA:
 			da9063_regmap_config.rd_table =
 				&da9063_da_readable_table;
 			da9063_regmap_config.wr_table =
@@ -417,7 +416,6 @@ static int da9063_i2c_probe(struct i2c_client *i2c)
 				&da9063l_bb_da_volatile_table;
 			break;
 		case PMIC_DA9063_DA:
-		case PMIC_DA9063_EA:
 			da9063_regmap_config.rd_table =
 				&da9063l_da_readable_table;
 			da9063_regmap_config.wr_table =
@@ -469,7 +467,7 @@ static struct i2c_driver da9063_i2c_driver = {
 		.name = "da9063",
 		.of_match_table = da9063_dt_ids,
 	},
-	.probe_new = da9063_i2c_probe,
+	.probe    = da9063_i2c_probe,
 	.id_table = da9063_i2c_id,
 };
 

@@ -12,7 +12,6 @@
 
 #include <linux/err.h>
 #include <linux/errno.h>
-#include <linux/jump_label.h>
 #include <linux/kernel.h>
 #include <linux/kmod.h>
 #include <linux/module.h>
@@ -31,11 +30,6 @@ EXPORT_SYMBOL_GPL(crypto_alg_sem);
 BLOCKING_NOTIFIER_HEAD(crypto_chain);
 EXPORT_SYMBOL_GPL(crypto_chain);
 
-#ifndef CONFIG_CRYPTO_MANAGER_DISABLE_TESTS
-DEFINE_STATIC_KEY_FALSE(__crypto_boot_test_finished);
-EXPORT_SYMBOL_GPL(__crypto_boot_test_finished);
-#endif
-
 static struct crypto_alg *crypto_larval_wait(struct crypto_alg *alg);
 
 struct crypto_alg *crypto_mod_get(struct crypto_alg *alg)
@@ -52,6 +46,11 @@ void crypto_mod_put(struct crypto_alg *alg)
 	module_put(module);
 }
 EXPORT_SYMBOL_GPL(crypto_mod_put);
+
+static inline int crypto_is_test_larval(struct crypto_larval *larval)
+{
+	return larval->alg.cra_driver_name[0];
+}
 
 static struct crypto_alg *__crypto_alg_lookup(const char *name, u32 type,
 					      u32 mask)
@@ -116,7 +115,7 @@ struct crypto_larval *crypto_larval_alloc(const char *name, u32 type, u32 mask)
 	larval->alg.cra_priority = -1;
 	larval->alg.cra_destroy = crypto_larval_destroy;
 
-	strscpy(larval->alg.cra_name, name, CRYPTO_MAX_ALG_NAME);
+	strlcpy(larval->alg.cra_name, name, CRYPTO_MAX_ALG_NAME);
 	init_completion(&larval->completion);
 
 	return larval;
@@ -164,48 +163,10 @@ void crypto_larval_kill(struct crypto_alg *alg)
 }
 EXPORT_SYMBOL_GPL(crypto_larval_kill);
 
-void crypto_wait_for_test(struct crypto_larval *larval)
-{
-	int err;
-
-	err = crypto_probing_notify(CRYPTO_MSG_ALG_REGISTER, larval->adult);
-	if (WARN_ON_ONCE(err != NOTIFY_STOP))
-		goto out;
-
-	err = wait_for_completion_killable(&larval->completion);
-	WARN_ON(err);
-out:
-	crypto_larval_kill(&larval->alg);
-}
-EXPORT_SYMBOL_GPL(crypto_wait_for_test);
-
-static void crypto_start_test(struct crypto_larval *larval)
-{
-	if (!crypto_is_test_larval(larval))
-		return;
-
-	if (larval->test_started)
-		return;
-
-	down_write(&crypto_alg_sem);
-	if (larval->test_started) {
-		up_write(&crypto_alg_sem);
-		return;
-	}
-
-	larval->test_started = true;
-	up_write(&crypto_alg_sem);
-
-	crypto_wait_for_test(larval);
-}
-
 static struct crypto_alg *crypto_larval_wait(struct crypto_alg *alg)
 {
 	struct crypto_larval *larval = (void *)alg;
 	long timeout;
-
-	if (!crypto_boot_test_finished())
-		crypto_start_test(larval);
 
 	timeout = wait_for_completion_killable_timeout(
 		&larval->completion, 60 * HZ);
@@ -222,8 +183,6 @@ static struct crypto_alg *crypto_larval_wait(struct crypto_alg *alg)
 	else if (crypto_is_test_larval(larval) &&
 		 !(alg->cra_flags & CRYPTO_ALG_TESTED))
 		alg = ERR_PTR(-EAGAIN);
-	else if (alg->cra_flags & CRYPTO_ALG_FIPS_INTERNAL)
-		alg = ERR_PTR(-EAGAIN);
 	else if (!crypto_mod_get(alg))
 		alg = ERR_PTR(-EAGAIN);
 	crypto_mod_put(&larval->alg);
@@ -234,7 +193,6 @@ static struct crypto_alg *crypto_larval_wait(struct crypto_alg *alg)
 static struct crypto_alg *crypto_alg_lookup(const char *name, u32 type,
 					    u32 mask)
 {
-	const u32 fips = CRYPTO_ALG_FIPS_INTERNAL;
 	struct crypto_alg *alg;
 	u32 test = 0;
 
@@ -242,20 +200,8 @@ static struct crypto_alg *crypto_alg_lookup(const char *name, u32 type,
 		test |= CRYPTO_ALG_TESTED;
 
 	down_read(&crypto_alg_sem);
-	alg = __crypto_alg_lookup(name, (type | test) & ~fips,
-				  (mask | test) & ~fips);
-	if (alg) {
-		if (((type | mask) ^ fips) & fips)
-			mask |= fips;
-		mask &= fips;
-
-		if (!crypto_is_larval(alg) &&
-		    ((type ^ alg->cra_flags) & mask)) {
-			/* Algorithm is disallowed in FIPS mode. */
-			crypto_mod_put(alg);
-			alg = ERR_PTR(-ENOENT);
-		}
-	} else if (test) {
+	alg = __crypto_alg_lookup(name, type | test, mask | test);
+	if (!alg && test) {
 		alg = __crypto_alg_lookup(name, type, mask);
 		if (alg && !crypto_is_larval(alg)) {
 			/* Test failed */
@@ -320,7 +266,7 @@ struct crypto_alg *crypto_alg_mod_lookup(const char *name, u32 type, u32 mask)
 
 	/*
 	 * If the internal flag is set for a cipher, require a caller to
-	 * invoke the cipher with the internal flag to use that cipher.
+	 * to invoke the cipher with the internal flag to use that cipher.
 	 * Also, if a caller wants to allocate a cipher that may or may
 	 * not be an internal cipher, use type | CRYPTO_ALG_INTERNAL and
 	 * !(mask & CRYPTO_ALG_INTERNAL).

@@ -25,10 +25,6 @@
 #include "camss-csid-gen1.h"
 #include "camss.h"
 
-/* offset of CSID registers in VFE region for VFE 480 */
-#define VFE_480_CSID_OFFSET 0x1200
-#define VFE_480_LITE_CSID_OFFSET 0x200
-
 #define MSM_CSID_NAME "msm_csid"
 
 const char * const csid_testgen_modes[] = {
@@ -156,25 +152,15 @@ static int csid_set_clock_rates(struct csid_device *csid)
 static int csid_set_power(struct v4l2_subdev *sd, int on)
 {
 	struct csid_device *csid = v4l2_get_subdevdata(sd);
-	struct camss *camss = csid->camss;
-	struct device *dev = camss->dev;
-	struct vfe_device *vfe = &camss->vfe[csid->id];
-	u32 version = camss->version;
-	int ret = 0;
+	struct device *dev = csid->camss->dev;
+	int ret;
 
 	if (on) {
-		if (version == CAMSS_8250 || version == CAMSS_845) {
-			ret = vfe_get(vfe);
-			if (ret < 0)
-				return ret;
-		}
-
 		ret = pm_runtime_resume_and_get(dev);
 		if (ret < 0)
 			return ret;
 
-		ret = regulator_bulk_enable(csid->num_supplies,
-					    csid->supplies);
+		ret = regulator_enable(csid->vdda);
 		if (ret < 0) {
 			pm_runtime_put_sync(dev);
 			return ret;
@@ -182,16 +168,14 @@ static int csid_set_power(struct v4l2_subdev *sd, int on)
 
 		ret = csid_set_clock_rates(csid);
 		if (ret < 0) {
-			regulator_bulk_disable(csid->num_supplies,
-					       csid->supplies);
+			regulator_disable(csid->vdda);
 			pm_runtime_put_sync(dev);
 			return ret;
 		}
 
 		ret = camss_enable_clocks(csid->nclocks, csid->clock, dev);
 		if (ret < 0) {
-			regulator_bulk_disable(csid->num_supplies,
-					       csid->supplies);
+			regulator_disable(csid->vdda);
 			pm_runtime_put_sync(dev);
 			return ret;
 		}
@@ -202,8 +186,7 @@ static int csid_set_power(struct v4l2_subdev *sd, int on)
 		if (ret < 0) {
 			disable_irq(csid->irq);
 			camss_disable_clocks(csid->nclocks, csid->clock);
-			regulator_bulk_disable(csid->num_supplies,
-					       csid->supplies);
+			regulator_disable(csid->vdda);
 			pm_runtime_put_sync(dev);
 			return ret;
 		}
@@ -212,11 +195,8 @@ static int csid_set_power(struct v4l2_subdev *sd, int on)
 	} else {
 		disable_irq(csid->irq);
 		camss_disable_clocks(csid->nclocks, csid->clock);
-		regulator_bulk_disable(csid->num_supplies,
-				       csid->supplies);
+		ret = regulator_disable(csid->vdda);
 		pm_runtime_put_sync(dev);
-		if (version == CAMSS_8250 || version == CAMSS_845)
-			vfe_put(vfe);
 	}
 
 	return ret;
@@ -245,7 +225,7 @@ static int csid_set_stream(struct v4l2_subdev *sd, int enable)
 		}
 
 		if (!csid->testgen.enabled &&
-		    !media_pad_remote_pad_first(&csid->pads[MSM_CSID_PAD_SINK]))
+		    !media_entity_remote_pad(&csid->pads[MSM_CSID_PAD_SINK]))
 			return -ENOLINK;
 	}
 
@@ -518,7 +498,7 @@ static int csid_set_test_pattern(struct csid_device *csid, s32 value)
 	struct csid_testgen_config *tg = &csid->testgen;
 
 	/* If CSID is linked to CSIPHY, do not allow to enable test generator */
-	if (value && media_pad_remote_pad_first(&csid->pads[MSM_CSID_PAD_SINK]))
+	if (value && media_entity_remote_pad(&csid->pads[MSM_CSID_PAD_SINK]))
 		return -EBUSY;
 
 	tg->enabled = !!value;
@@ -564,6 +544,7 @@ int msm_csid_subdev_init(struct camss *camss, struct csid_device *csid,
 {
 	struct device *dev = camss->dev;
 	struct platform_device *pdev = to_platform_device(dev);
+	struct resource *r;
 	int i, j;
 	int ret;
 
@@ -575,9 +556,8 @@ int msm_csid_subdev_init(struct camss *camss, struct csid_device *csid,
 	} else if (camss->version == CAMSS_8x96 ||
 		   camss->version == CAMSS_660) {
 		csid->ops = &csid_ops_4_7;
-	} else if (camss->version == CAMSS_845 ||
-		   camss->version == CAMSS_8250) {
-		csid->ops = &csid_ops_gen2;
+	} else if (camss->version == CAMSS_845) {
+		csid->ops = &csid_ops_170;
 	} else {
 		return -EINVAL;
 	}
@@ -585,28 +565,20 @@ int msm_csid_subdev_init(struct camss *camss, struct csid_device *csid,
 
 	/* Memory */
 
-	if (camss->version == CAMSS_8250) {
-		/* for titan 480, CSID registers are inside the VFE region,
-		 * between the VFE "top" and "bus" registers. this requires
-		 * VFE to be initialized before CSID
-		 */
-		if (id >= 2) /* VFE/CSID lite */
-			csid->base = camss->vfe[id].base + VFE_480_LITE_CSID_OFFSET;
-		else
-			csid->base = camss->vfe[id].base + VFE_480_CSID_OFFSET;
-	} else {
-		csid->base = devm_platform_ioremap_resource_byname(pdev, res->reg[0]);
-		if (IS_ERR(csid->base))
-			return PTR_ERR(csid->base);
-	}
+	csid->base = devm_platform_ioremap_resource_byname(pdev, res->reg[0]);
+	if (IS_ERR(csid->base))
+		return PTR_ERR(csid->base);
 
 	/* Interrupt */
 
-	ret = platform_get_irq_byname(pdev, res->interrupt[0]);
-	if (ret < 0)
-		return ret;
+	r = platform_get_resource_byname(pdev, IORESOURCE_IRQ,
+					 res->interrupt[0]);
+	if (!r) {
+		dev_err(dev, "missing IRQ\n");
+		return -EINVAL;
+	}
 
-	csid->irq = ret;
+	csid->irq = r->start;
 	snprintf(csid->irq_name, sizeof(csid->irq_name), "%s_%s%d",
 		 dev_name(dev), MSM_CSID_NAME, csid->id);
 	ret = devm_request_irq(dev, csid->irq, csid->ops->isr,
@@ -658,27 +630,12 @@ int msm_csid_subdev_init(struct camss *camss, struct csid_device *csid,
 	}
 
 	/* Regulator */
-	for (i = 0; i < ARRAY_SIZE(res->regulators); i++) {
-		if (res->regulators[i])
-			csid->num_supplies++;
+
+	csid->vdda = devm_regulator_get(dev, res->regulator[0]);
+	if (IS_ERR(csid->vdda)) {
+		dev_err(dev, "could not get regulator\n");
+		return PTR_ERR(csid->vdda);
 	}
-
-	if (csid->num_supplies) {
-		csid->supplies = devm_kmalloc_array(camss->dev,
-						    csid->num_supplies,
-						    sizeof(*csid->supplies),
-						    GFP_KERNEL);
-		if (!csid->supplies)
-			return -ENOMEM;
-	}
-
-	for (i = 0; i < csid->num_supplies; i++)
-		csid->supplies[i].supply = res->regulators[i];
-
-	ret = devm_regulator_bulk_get(camss->dev, csid->num_supplies,
-				      csid->supplies);
-	if (ret)
-		return ret;
 
 	init_completion(&csid->reset_complete);
 
@@ -729,7 +686,7 @@ static int csid_link_setup(struct media_entity *entity,
 			   const struct media_pad *remote, u32 flags)
 {
 	if (flags & MEDIA_LNK_FL_ENABLED)
-		if (media_pad_remote_pad_first(local))
+		if (media_entity_remote_pad(local))
 			return -EBUSY;
 
 	if ((local->flags & MEDIA_PAD_FL_SINK) &&

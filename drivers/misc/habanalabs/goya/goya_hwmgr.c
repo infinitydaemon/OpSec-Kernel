@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 /*
- * Copyright 2016-2022 HabanaLabs, Ltd.
+ * Copyright 2016-2019 HabanaLabs, Ltd.
  * All Rights Reserved.
  */
 
@@ -11,28 +11,56 @@ void goya_set_pll_profile(struct hl_device *hdev, enum hl_pll_frequency freq)
 {
 	struct goya_device *goya = hdev->asic_specific;
 
-	if (!hdev->pdev)
-		return;
-
 	switch (freq) {
 	case PLL_HIGH:
-		hl_fw_set_frequency(hdev, HL_GOYA_MME_PLL, hdev->high_pll);
-		hl_fw_set_frequency(hdev, HL_GOYA_TPC_PLL, hdev->high_pll);
-		hl_fw_set_frequency(hdev, HL_GOYA_IC_PLL, hdev->high_pll);
+		hl_set_frequency(hdev, HL_GOYA_MME_PLL, hdev->high_pll);
+		hl_set_frequency(hdev, HL_GOYA_TPC_PLL, hdev->high_pll);
+		hl_set_frequency(hdev, HL_GOYA_IC_PLL, hdev->high_pll);
 		break;
 	case PLL_LOW:
-		hl_fw_set_frequency(hdev, HL_GOYA_MME_PLL, GOYA_PLL_FREQ_LOW);
-		hl_fw_set_frequency(hdev, HL_GOYA_TPC_PLL, GOYA_PLL_FREQ_LOW);
-		hl_fw_set_frequency(hdev, HL_GOYA_IC_PLL, GOYA_PLL_FREQ_LOW);
+		hl_set_frequency(hdev, HL_GOYA_MME_PLL, GOYA_PLL_FREQ_LOW);
+		hl_set_frequency(hdev, HL_GOYA_TPC_PLL, GOYA_PLL_FREQ_LOW);
+		hl_set_frequency(hdev, HL_GOYA_IC_PLL, GOYA_PLL_FREQ_LOW);
 		break;
 	case PLL_LAST:
-		hl_fw_set_frequency(hdev, HL_GOYA_MME_PLL, goya->mme_clk);
-		hl_fw_set_frequency(hdev, HL_GOYA_TPC_PLL, goya->tpc_clk);
-		hl_fw_set_frequency(hdev, HL_GOYA_IC_PLL, goya->ic_clk);
+		hl_set_frequency(hdev, HL_GOYA_MME_PLL, goya->mme_clk);
+		hl_set_frequency(hdev, HL_GOYA_TPC_PLL, goya->tpc_clk);
+		hl_set_frequency(hdev, HL_GOYA_IC_PLL, goya->ic_clk);
 		break;
 	default:
 		dev_err(hdev->dev, "unknown frequency setting\n");
 	}
+}
+
+int goya_get_clk_rate(struct hl_device *hdev, u32 *cur_clk, u32 *max_clk)
+{
+	long value;
+
+	if (!hl_device_operational(hdev, NULL))
+		return -ENODEV;
+
+	value = hl_get_frequency(hdev, HL_GOYA_MME_PLL, false);
+
+	if (value < 0) {
+		dev_err(hdev->dev, "Failed to retrieve device max clock %ld\n",
+			value);
+		return value;
+	}
+
+	*max_clk = (value / 1000 / 1000);
+
+	value = hl_get_frequency(hdev, HL_GOYA_MME_PLL, true);
+
+	if (value < 0) {
+		dev_err(hdev->dev,
+			"Failed to retrieve device current clock %ld\n",
+			value);
+		return value;
+	}
+
+	*cur_clk = (value / 1000 / 1000);
+
+	return 0;
 }
 
 static ssize_t mme_clk_show(struct device *dev, struct device_attribute *attr,
@@ -44,7 +72,7 @@ static ssize_t mme_clk_show(struct device *dev, struct device_attribute *attr,
 	if (!hl_device_operational(hdev, NULL))
 		return -ENODEV;
 
-	value = hl_fw_get_frequency(hdev, HL_GOYA_MME_PLL, false);
+	value = hl_get_frequency(hdev, HL_GOYA_MME_PLL, false);
 
 	if (value < 0)
 		return value;
@@ -65,7 +93,7 @@ static ssize_t mme_clk_store(struct device *dev, struct device_attribute *attr,
 		goto fail;
 	}
 
-	if (goya->pm_mng_profile == PM_AUTO) {
+	if (hdev->pm_mng_profile == PM_AUTO) {
 		count = -EPERM;
 		goto fail;
 	}
@@ -77,7 +105,7 @@ static ssize_t mme_clk_store(struct device *dev, struct device_attribute *attr,
 		goto fail;
 	}
 
-	hl_fw_set_frequency(hdev, HL_GOYA_MME_PLL, value);
+	hl_set_frequency(hdev, HL_GOYA_MME_PLL, value);
 	goya->mme_clk = value;
 
 fail:
@@ -93,7 +121,7 @@ static ssize_t tpc_clk_show(struct device *dev, struct device_attribute *attr,
 	if (!hl_device_operational(hdev, NULL))
 		return -ENODEV;
 
-	value = hl_fw_get_frequency(hdev, HL_GOYA_TPC_PLL, false);
+	value = hl_get_frequency(hdev, HL_GOYA_TPC_PLL, false);
 
 	if (value < 0)
 		return value;
@@ -114,7 +142,7 @@ static ssize_t tpc_clk_store(struct device *dev, struct device_attribute *attr,
 		goto fail;
 	}
 
-	if (goya->pm_mng_profile == PM_AUTO) {
+	if (hdev->pm_mng_profile == PM_AUTO) {
 		count = -EPERM;
 		goto fail;
 	}
@@ -126,7 +154,7 @@ static ssize_t tpc_clk_store(struct device *dev, struct device_attribute *attr,
 		goto fail;
 	}
 
-	hl_fw_set_frequency(hdev, HL_GOYA_TPC_PLL, value);
+	hl_set_frequency(hdev, HL_GOYA_TPC_PLL, value);
 	goya->tpc_clk = value;
 
 fail:
@@ -142,7 +170,7 @@ static ssize_t ic_clk_show(struct device *dev, struct device_attribute *attr,
 	if (!hl_device_operational(hdev, NULL))
 		return -ENODEV;
 
-	value = hl_fw_get_frequency(hdev, HL_GOYA_IC_PLL, false);
+	value = hl_get_frequency(hdev, HL_GOYA_IC_PLL, false);
 
 	if (value < 0)
 		return value;
@@ -163,7 +191,7 @@ static ssize_t ic_clk_store(struct device *dev, struct device_attribute *attr,
 		goto fail;
 	}
 
-	if (goya->pm_mng_profile == PM_AUTO) {
+	if (hdev->pm_mng_profile == PM_AUTO) {
 		count = -EPERM;
 		goto fail;
 	}
@@ -175,7 +203,7 @@ static ssize_t ic_clk_store(struct device *dev, struct device_attribute *attr,
 		goto fail;
 	}
 
-	hl_fw_set_frequency(hdev, HL_GOYA_IC_PLL, value);
+	hl_set_frequency(hdev, HL_GOYA_IC_PLL, value);
 	goya->ic_clk = value;
 
 fail:
@@ -191,7 +219,7 @@ static ssize_t mme_clk_curr_show(struct device *dev,
 	if (!hl_device_operational(hdev, NULL))
 		return -ENODEV;
 
-	value = hl_fw_get_frequency(hdev, HL_GOYA_MME_PLL, true);
+	value = hl_get_frequency(hdev, HL_GOYA_MME_PLL, true);
 
 	if (value < 0)
 		return value;
@@ -208,7 +236,7 @@ static ssize_t tpc_clk_curr_show(struct device *dev,
 	if (!hl_device_operational(hdev, NULL))
 		return -ENODEV;
 
-	value = hl_fw_get_frequency(hdev, HL_GOYA_TPC_PLL, true);
+	value = hl_get_frequency(hdev, HL_GOYA_TPC_PLL, true);
 
 	if (value < 0)
 		return value;
@@ -225,7 +253,7 @@ static ssize_t ic_clk_curr_show(struct device *dev,
 	if (!hl_device_operational(hdev, NULL))
 		return -ENODEV;
 
-	value = hl_fw_get_frequency(hdev, HL_GOYA_IC_PLL, true);
+	value = hl_get_frequency(hdev, HL_GOYA_IC_PLL, true);
 
 	if (value < 0)
 		return value;
@@ -237,14 +265,13 @@ static ssize_t pm_mng_profile_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
 	struct hl_device *hdev = dev_get_drvdata(dev);
-	struct goya_device *goya = hdev->asic_specific;
 
 	if (!hl_device_operational(hdev, NULL))
 		return -ENODEV;
 
 	return sprintf(buf, "%s\n",
-			(goya->pm_mng_profile == PM_AUTO) ? "auto" :
-			(goya->pm_mng_profile == PM_MANUAL) ? "manual" :
+			(hdev->pm_mng_profile == PM_AUTO) ? "auto" :
+			(hdev->pm_mng_profile == PM_MANUAL) ? "manual" :
 			"unknown");
 }
 
@@ -252,7 +279,6 @@ static ssize_t pm_mng_profile_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct hl_device *hdev = dev_get_drvdata(dev);
-	struct goya_device *goya = hdev->asic_specific;
 
 	if (!hl_device_operational(hdev, NULL)) {
 		count = -ENODEV;
@@ -261,7 +287,7 @@ static ssize_t pm_mng_profile_store(struct device *dev,
 
 	mutex_lock(&hdev->fpriv_list_lock);
 
-	if (hdev->is_compute_ctx_active) {
+	if (hdev->compute_ctx) {
 		dev_err(hdev->dev,
 			"Can't change PM profile while compute context is opened on the device\n");
 		count = -EPERM;
@@ -270,27 +296,26 @@ static ssize_t pm_mng_profile_store(struct device *dev,
 
 	if (strncmp("auto", buf, strlen("auto")) == 0) {
 		/* Make sure we are in LOW PLL when changing modes */
-		if (goya->pm_mng_profile == PM_MANUAL) {
-			goya->curr_pll_profile = PLL_HIGH;
-			goya->pm_mng_profile = PM_AUTO;
-			goya_set_frequency(hdev, PLL_LOW);
+		if (hdev->pm_mng_profile == PM_MANUAL) {
+			hdev->curr_pll_profile = PLL_HIGH;
+			hdev->pm_mng_profile = PM_AUTO;
+			hl_device_set_frequency(hdev, PLL_LOW);
 		}
 	} else if (strncmp("manual", buf, strlen("manual")) == 0) {
-		if (goya->pm_mng_profile == PM_AUTO) {
+		if (hdev->pm_mng_profile == PM_AUTO) {
 			/* Must release the lock because the work thread also
 			 * takes this lock. But before we release it, set
 			 * the mode to manual so nothing will change if a user
 			 * suddenly opens the device
 			 */
-			goya->pm_mng_profile = PM_MANUAL;
+			hdev->pm_mng_profile = PM_MANUAL;
 
 			mutex_unlock(&hdev->fpriv_list_lock);
 
 			/* Flush the current work so we can return to the user
 			 * knowing that he is the only one changing frequencies
 			 */
-			if (goya->goya_work)
-				flush_delayed_work(&goya->goya_work->work_freq);
+			flush_delayed_work(&hdev->work_freq);
 
 			return count;
 		}
@@ -350,7 +375,7 @@ static DEVICE_ATTR_RW(pm_mng_profile);
 static DEVICE_ATTR_RW(tpc_clk);
 static DEVICE_ATTR_RO(tpc_clk_curr);
 
-static struct attribute *goya_clk_dev_attrs[] = {
+static struct attribute *goya_dev_attrs[] = {
 	&dev_attr_high_pll.attr,
 	&dev_attr_ic_clk.attr,
 	&dev_attr_ic_clk_curr.attr,
@@ -362,26 +387,8 @@ static struct attribute *goya_clk_dev_attrs[] = {
 	NULL,
 };
 
-static ssize_t infineon_ver_show(struct device *dev, struct device_attribute *attr, char *buf)
+void goya_add_device_attr(struct hl_device *hdev,
+			struct attribute_group *dev_attr_grp)
 {
-	struct hl_device *hdev = dev_get_drvdata(dev);
-	struct cpucp_info *cpucp_info;
-
-	cpucp_info = &hdev->asic_prop.cpucp_info;
-
-	return sprintf(buf, "%#04x\n", le32_to_cpu(cpucp_info->infineon_version));
-}
-
-static DEVICE_ATTR_RO(infineon_ver);
-
-static struct attribute *goya_vrm_dev_attrs[] = {
-	&dev_attr_infineon_ver.attr,
-	NULL,
-};
-
-void goya_add_device_attr(struct hl_device *hdev, struct attribute_group *dev_clk_attr_grp,
-				struct attribute_group *dev_vrm_attr_grp)
-{
-	dev_clk_attr_grp->attrs = goya_clk_dev_attrs;
-	dev_vrm_attr_grp->attrs = goya_vrm_dev_attrs;
+	dev_attr_grp->attrs = goya_dev_attrs;
 }

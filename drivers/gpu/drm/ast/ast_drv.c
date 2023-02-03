@@ -26,6 +26,7 @@
  * Authors: Dave Airlie <airlied@redhat.com>
  */
 
+#include <linux/console.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 
@@ -33,14 +34,12 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_drv.h>
-#include <drm/drm_fbdev_generic.h>
-#include <drm/drm_gem_shmem_helper.h>
-#include <drm/drm_module.h>
+#include <drm/drm_gem_vram_helper.h>
 #include <drm/drm_probe_helper.h>
 
 #include "ast_drv.h"
 
-static int ast_modeset = -1;
+int ast_modeset = -1;
 
 MODULE_PARM_DESC(modeset, "Disable/Enable modesetting");
 module_param_named(modeset, ast_modeset, int, 0400);
@@ -64,7 +63,7 @@ static const struct drm_driver ast_driver = {
 	.minor = DRIVER_MINOR,
 	.patchlevel = DRIVER_PATCHLEVEL,
 
-	DRM_GEM_SHMEM_DRIVER_OPS
+	DRM_GEM_VRAM_DRIVER
 };
 
 /*
@@ -160,10 +159,15 @@ static int ast_drm_thaw(struct drm_device *dev)
 
 static int ast_drm_resume(struct drm_device *dev)
 {
+	int ret;
+
 	if (pci_enable_device(to_pci_dev(dev->dev)))
 		return -EIO;
 
-	return ast_drm_thaw(dev);
+	ret = ast_drm_thaw(dev);
+	if (ret)
+		return ret;
+	return 0;
 }
 
 static int ast_pm_suspend(struct device *dev)
@@ -227,7 +231,22 @@ static struct pci_driver ast_pci_driver = {
 	.driver.pm = &ast_pm_ops,
 };
 
-drm_module_pci_driver_if_modeset(ast_pci_driver, ast_modeset);
+static int __init ast_init(void)
+{
+	if (vgacon_text_force() && ast_modeset == -1)
+		return -EINVAL;
+
+	if (ast_modeset == 0)
+		return -EINVAL;
+	return pci_register_driver(&ast_pci_driver);
+}
+static void __exit ast_exit(void)
+{
+	pci_unregister_driver(&ast_pci_driver);
+}
+
+module_init(ast_init);
+module_exit(ast_exit);
 
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);

@@ -81,27 +81,27 @@ static struct ralink_pmx_group rt3883_pinmux_data[] = {
 	{ 0 }
 };
 
-static int rt3883_pinctrl_probe(struct platform_device *pdev)
+static int rt3883_pinmux_probe(struct platform_device *pdev)
 {
-	return ralink_pinctrl_init(pdev, rt3883_pinmux_data);
+	return ralink_pinmux_init(pdev, rt3883_pinmux_data);
 }
 
-static const struct of_device_id rt3883_pinctrl_match[] = {
-	{ .compatible = "ralink,rt3883-pinctrl" },
+static const struct of_device_id rt3883_pinmux_match[] = {
+	{ .compatible = "ralink,rt2880-pinmux" },
 	{}
 };
-MODULE_DEVICE_TABLE(of, rt3883_pinctrl_match);
+MODULE_DEVICE_TABLE(of, rt3883_pinmux_match);
 
-static struct platform_driver rt3883_pinctrl_driver = {
-	.probe = rt3883_pinctrl_probe,
+static struct platform_driver rt3883_pinmux_driver = {
+	.probe = rt3883_pinmux_probe,
 	.driver = {
-		.name = "rt3883-pinctrl",
-		.of_match_table = rt3883_pinctrl_match,
+		.name = "rt2880-pinmux",
+		.of_match_table = rt3883_pinmux_match,
 	},
 };
 
-static int __init rt3883_pinctrl_init(void)
+static int __init rt3883_pinmux_init(void)
 {
-	return platform_driver_register(&rt3883_pinctrl_driver);
+	return platform_driver_register(&rt3883_pinmux_driver);
 }
-core_initcall_sync(rt3883_pinctrl_init);
+core_initcall_sync(rt3883_pinmux_init);

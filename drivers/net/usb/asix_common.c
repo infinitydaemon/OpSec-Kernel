@@ -68,27 +68,6 @@ void asix_write_cmd_async(struct usbnet *dev, u8 cmd, u16 value, u16 index,
 			       value, index, data, size);
 }
 
-static int asix_set_sw_mii(struct usbnet *dev, int in_pm)
-{
-	int ret;
-
-	ret = asix_write_cmd(dev, AX_CMD_SET_SW_MII, 0x0000, 0, 0, NULL, in_pm);
-
-	if (ret < 0)
-		netdev_err(dev->net, "Failed to enable software MII access\n");
-	return ret;
-}
-
-static int asix_set_hw_mii(struct usbnet *dev, int in_pm)
-{
-	int ret;
-
-	ret = asix_write_cmd(dev, AX_CMD_SET_HW_MII, 0x0000, 0, 0, NULL, in_pm);
-	if (ret < 0)
-		netdev_err(dev->net, "Failed to enable hardware MII access\n");
-	return ret;
-}
-
 static int asix_check_host_enable(struct usbnet *dev, int in_pm)
 {
 	int i, ret;
@@ -318,6 +297,25 @@ struct sk_buff *asix_tx_fixup(struct usbnet *dev, struct sk_buff *skb,
 	return skb;
 }
 
+int asix_set_sw_mii(struct usbnet *dev, int in_pm)
+{
+	int ret;
+	ret = asix_write_cmd(dev, AX_CMD_SET_SW_MII, 0x0000, 0, 0, NULL, in_pm);
+
+	if (ret < 0)
+		netdev_err(dev->net, "Failed to enable software MII access\n");
+	return ret;
+}
+
+int asix_set_hw_mii(struct usbnet *dev, int in_pm)
+{
+	int ret;
+	ret = asix_write_cmd(dev, AX_CMD_SET_HW_MII, 0x0000, 0, 0, NULL, in_pm);
+	if (ret < 0)
+		netdev_err(dev->net, "Failed to enable hardware MII access\n");
+	return ret;
+}
+
 int asix_read_phy_addr(struct usbnet *dev, bool internal)
 {
 	int ret, offset;
@@ -494,8 +492,7 @@ void asix_set_multicast(struct net_device *net)
 	asix_write_cmd_async(dev, AX_CMD_WRITE_RX_CTL, rx_ctl, 0, 0, NULL);
 }
 
-static int __asix_mdio_read(struct net_device *netdev, int phy_id, int loc,
-			    bool in_pm)
+int asix_mdio_read(struct net_device *netdev, int phy_id, int loc)
 {
 	struct usbnet *dev = netdev_priv(netdev);
 	__le16 res;
@@ -503,18 +500,18 @@ static int __asix_mdio_read(struct net_device *netdev, int phy_id, int loc,
 
 	mutex_lock(&dev->phy_mutex);
 
-	ret = asix_check_host_enable(dev, in_pm);
+	ret = asix_check_host_enable(dev, 0);
 	if (ret == -ENODEV || ret == -ETIMEDOUT) {
 		mutex_unlock(&dev->phy_mutex);
 		return ret;
 	}
 
 	ret = asix_read_cmd(dev, AX_CMD_READ_MII_REG, phy_id, (__u16)loc, 2,
-			    &res, in_pm);
+			    &res, 0);
 	if (ret < 0)
 		goto out;
 
-	ret = asix_set_hw_mii(dev, in_pm);
+	ret = asix_set_hw_mii(dev, 0);
 out:
 	mutex_unlock(&dev->phy_mutex);
 
@@ -524,13 +521,8 @@ out:
 	return ret < 0 ? ret : le16_to_cpu(res);
 }
 
-int asix_mdio_read(struct net_device *netdev, int phy_id, int loc)
-{
-	return __asix_mdio_read(netdev, phy_id, loc, false);
-}
-
 static int __asix_mdio_write(struct net_device *netdev, int phy_id, int loc,
-			     int val, bool in_pm)
+			     int val)
 {
 	struct usbnet *dev = netdev_priv(netdev);
 	__le16 res = cpu_to_le16(val);
@@ -541,16 +533,16 @@ static int __asix_mdio_write(struct net_device *netdev, int phy_id, int loc,
 
 	mutex_lock(&dev->phy_mutex);
 
-	ret = asix_check_host_enable(dev, in_pm);
+	ret = asix_check_host_enable(dev, 0);
 	if (ret == -ENODEV)
 		goto out;
 
 	ret = asix_write_cmd(dev, AX_CMD_WRITE_MII_REG, phy_id, (__u16)loc, 2,
-			     &res, in_pm);
+			     &res, 0);
 	if (ret < 0)
 		goto out;
 
-	ret = asix_set_hw_mii(dev, in_pm);
+	ret = asix_set_hw_mii(dev, 0);
 out:
 	mutex_unlock(&dev->phy_mutex);
 
@@ -559,7 +551,7 @@ out:
 
 void asix_mdio_write(struct net_device *netdev, int phy_id, int loc, int val)
 {
-	__asix_mdio_write(netdev, phy_id, loc, val, false);
+	__asix_mdio_write(netdev, phy_id, loc, val);
 }
 
 /* MDIO read and write wrappers for phylib */
@@ -567,25 +559,67 @@ int asix_mdio_bus_read(struct mii_bus *bus, int phy_id, int regnum)
 {
 	struct usbnet *priv = bus->priv;
 
-	return __asix_mdio_read(priv->net, phy_id, regnum, false);
+	return asix_mdio_read(priv->net, phy_id, regnum);
 }
 
 int asix_mdio_bus_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 {
 	struct usbnet *priv = bus->priv;
 
-	return __asix_mdio_write(priv->net, phy_id, regnum, val, false);
+	return __asix_mdio_write(priv->net, phy_id, regnum, val);
 }
 
 int asix_mdio_read_nopm(struct net_device *netdev, int phy_id, int loc)
 {
-	return __asix_mdio_read(netdev, phy_id, loc, true);
+	struct usbnet *dev = netdev_priv(netdev);
+	__le16 res;
+	int ret;
+
+	mutex_lock(&dev->phy_mutex);
+
+	ret = asix_check_host_enable(dev, 1);
+	if (ret == -ENODEV || ret == -ETIMEDOUT) {
+		mutex_unlock(&dev->phy_mutex);
+		return ret;
+	}
+
+	ret = asix_read_cmd(dev, AX_CMD_READ_MII_REG, phy_id,
+			    (__u16)loc, 2, &res, 1);
+	if (ret < 0) {
+		mutex_unlock(&dev->phy_mutex);
+		return ret;
+	}
+	asix_set_hw_mii(dev, 1);
+	mutex_unlock(&dev->phy_mutex);
+
+	netdev_dbg(dev->net, "asix_mdio_read_nopm() phy_id=0x%02x, loc=0x%02x, returns=0x%04x\n",
+			phy_id, loc, le16_to_cpu(res));
+
+	return le16_to_cpu(res);
 }
 
 void
 asix_mdio_write_nopm(struct net_device *netdev, int phy_id, int loc, int val)
 {
-	__asix_mdio_write(netdev, phy_id, loc, val, true);
+	struct usbnet *dev = netdev_priv(netdev);
+	__le16 res = cpu_to_le16(val);
+	int ret;
+
+	netdev_dbg(dev->net, "asix_mdio_write() phy_id=0x%02x, loc=0x%02x, val=0x%04x\n",
+			phy_id, loc, val);
+
+	mutex_lock(&dev->phy_mutex);
+
+	ret = asix_check_host_enable(dev, 1);
+	if (ret == -ENODEV) {
+		mutex_unlock(&dev->phy_mutex);
+		return;
+	}
+
+	asix_write_cmd(dev, AX_CMD_WRITE_MII_REG, phy_id,
+		       (__u16)loc, 2, &res, 1);
+	asix_set_hw_mii(dev, 1);
+	mutex_unlock(&dev->phy_mutex);
 }
 
 void asix_get_wol(struct net_device *net, struct ethtool_wolinfo *wolinfo)
@@ -752,8 +786,8 @@ void asix_get_drvinfo(struct net_device *net, struct ethtool_drvinfo *info)
 {
 	/* Inherit standard device info */
 	usbnet_get_drvinfo(net, info);
-	strscpy(info->driver, DRIVER_NAME, sizeof(info->driver));
-	strscpy(info->version, DRIVER_VERSION, sizeof(info->version));
+	strlcpy(info->driver, DRIVER_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRIVER_VERSION, sizeof(info->version));
 }
 
 int asix_set_mac_address(struct net_device *net, void *p)
@@ -767,7 +801,7 @@ int asix_set_mac_address(struct net_device *net, void *p)
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(net, addr->sa_data);
+	memcpy(net->dev_addr, addr->sa_data, ETH_ALEN);
 
 	/* We use the 20 byte dev->data
 	 * for our 6 byte mac buffer

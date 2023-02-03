@@ -28,6 +28,7 @@ description: |+
       '------------'                  '-----'  '-----'  '-----'
 
 
+
 allOf:
   - $ref: /schemas/i2c/i2c-mux.yaml#
 

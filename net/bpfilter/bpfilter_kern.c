@@ -70,7 +70,7 @@ static int bpfilter_process_sockopt(struct sock *sk, int optname,
 		.addr		= (uintptr_t)optval.user,
 		.len		= optlen,
 	};
-	if (sockptr_is_kernel(optval)) {
+	if (uaccess_kernel() || sockptr_is_kernel(optval)) {
 		pr_err("kernel access not supported\n");
 		return -EFAULT;
 	}

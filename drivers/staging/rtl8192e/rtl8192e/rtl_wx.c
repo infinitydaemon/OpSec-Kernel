@@ -52,7 +52,7 @@ static int _rtl92e_wx_set_rate(struct net_device *dev,
 	int ret;
 	struct r8192_priv *priv = rtllib_priv(dev);
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
 
 	mutex_lock(&priv->wx_mutex);
@@ -71,7 +71,7 @@ static int _rtl92e_wx_set_rts(struct net_device *dev,
 	int ret;
 	struct r8192_priv *priv = rtllib_priv(dev);
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
 
 	mutex_lock(&priv->wx_mutex);
@@ -99,7 +99,7 @@ static int _rtl92e_wx_set_power(struct net_device *dev,
 	int ret;
 	struct r8192_priv *priv = rtllib_priv(dev);
 
-	if (priv->hw_radio_off) {
+	if (priv->bHwRadioOff) {
 		netdev_warn(dev, "%s(): Can't set Power: Radio is Off.\n",
 			    __func__);
 		return 0;
@@ -129,7 +129,7 @@ static int _rtl92e_wx_set_rawtx(struct net_device *dev,
 	struct r8192_priv *priv = rtllib_priv(dev);
 	int ret;
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
 
 	mutex_lock(&priv->wx_mutex);
@@ -149,6 +149,8 @@ static int _rtl92e_wx_force_reset(struct net_device *dev,
 
 	mutex_lock(&priv->wx_mutex);
 
+	RT_TRACE(COMP_DBG, "%s(): force reset ! extra is %d\n",
+		 __func__, *extra);
 	priv->force_reset = *extra;
 	mutex_unlock(&priv->wx_mutex);
 	return 0;
@@ -159,21 +161,23 @@ static int _rtl92e_wx_adapter_power_status(struct net_device *dev,
 					   union iwreq_data *wrqu, char *extra)
 {
 	struct r8192_priv *priv = rtllib_priv(dev);
-	struct rt_pwr_save_ctrl *psc = (struct rt_pwr_save_ctrl *)
-					(&priv->rtllib->pwr_save_ctrl);
+	struct rt_pwr_save_ctrl *pPSC = (struct rt_pwr_save_ctrl *)
+					(&priv->rtllib->PowerSaveControl);
 	struct rtllib_device *ieee = priv->rtllib;
 
 	mutex_lock(&priv->wx_mutex);
 
+	RT_TRACE(COMP_POWER, "%s(): %s\n", __func__, (*extra == 6) ?
+		 "DC power" : "AC power");
 	if (*extra || priv->force_lps) {
 		priv->ps_force = false;
-		psc->bLeisurePs = true;
+		pPSC->bLeisurePs = true;
 	} else {
 		if (priv->rtllib->state == RTLLIB_LINKED)
 			rtl92e_leisure_ps_leave(dev);
 
 		priv->ps_force = true;
-		psc->bLeisurePs = false;
+		pPSC->bLeisurePs = false;
 		ieee->ps = *extra;
 	}
 
@@ -188,15 +192,15 @@ static int _rtl92e_wx_set_lps_awake_interval(struct net_device *dev,
 					     char *extra)
 {
 	struct r8192_priv *priv = rtllib_priv(dev);
-	struct rt_pwr_save_ctrl *psc = (struct rt_pwr_save_ctrl *)
-					(&priv->rtllib->pwr_save_ctrl);
+	struct rt_pwr_save_ctrl *pPSC = (struct rt_pwr_save_ctrl *)
+					(&priv->rtllib->PowerSaveControl);
 
 	mutex_lock(&priv->wx_mutex);
 
 	netdev_info(dev, "%s(): set lps awake interval ! extra is %d\n",
 		    __func__, *extra);
 
-	psc->reg_max_lps_awake_intvl = *extra;
+	pPSC->RegMaxLPSAwakeIntvl = *extra;
 	mutex_unlock(&priv->wx_mutex);
 	return 0;
 }
@@ -224,7 +228,7 @@ static int _rtl92e_wx_set_debug(struct net_device *dev,
 	struct r8192_priv *priv = rtllib_priv(dev);
 	u8 c = *extra;
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
 
 	netdev_info(dev, "=====>%s(), *extra:%x, debugflag:%x\n", __func__,
@@ -243,29 +247,31 @@ static int _rtl92e_wx_set_mode(struct net_device *dev,
 	struct r8192_priv *priv = rtllib_priv(dev);
 	struct rtllib_device *ieee = netdev_priv_rsl(dev);
 
-	enum rt_rf_power_state rt_state;
+	enum rt_rf_power_state rtState;
 	int ret;
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
-	rt_state = priv->rtllib->rf_power_state;
+	rtState = priv->rtllib->eRFPowerState;
 	mutex_lock(&priv->wx_mutex);
 	if (wrqu->mode == IW_MODE_ADHOC || wrqu->mode == IW_MODE_MONITOR ||
-	    ieee->net_promiscuous_md) {
-		if (rt_state == rf_off) {
-			if (priv->rtllib->rf_off_reason >
-			    RF_CHANGE_BY_IPS) {
-				netdev_warn(dev, "%s(): RF is OFF.\n",
+	    ieee->bNetPromiscuousMode) {
+		if (priv->rtllib->PowerSaveControl.bInactivePs) {
+			if (rtState == eRfOff) {
+				if (priv->rtllib->RfOffReason >
+				    RF_CHANGE_BY_IPS) {
+					netdev_warn(dev, "%s(): RF is OFF.\n",
+						    __func__);
+					mutex_unlock(&priv->wx_mutex);
+					return -1;
+				}
+				netdev_info(dev,
+					    "=========>%s(): rtl92e_ips_leave\n",
 					    __func__);
-				mutex_unlock(&priv->wx_mutex);
-				return -1;
+				mutex_lock(&priv->rtllib->ips_mutex);
+				rtl92e_ips_leave(dev);
+				mutex_unlock(&priv->rtllib->ips_mutex);
 			}
-			netdev_info(dev,
-				    "=========>%s(): rtl92e_ips_leave\n",
-				    __func__);
-			mutex_lock(&priv->rtllib->ips_mutex);
-			rtl92e_ips_leave(dev);
-			mutex_unlock(&priv->rtllib->ips_mutex);
 		}
 	}
 	ret = rtllib_wx_set_mode(priv->rtllib, a, wrqu, b);
@@ -373,7 +379,7 @@ static int _rtl92e_wx_set_scan(struct net_device *dev,
 {
 	struct r8192_priv *priv = rtllib_priv(dev);
 	struct rtllib_device *ieee = priv->rtllib;
-	enum rt_rf_power_state rt_state;
+	enum rt_rf_power_state rtState;
 	int ret;
 
 	if (!(ieee->softmac_features & IEEE_SOFTMAC_SCAN)) {
@@ -385,15 +391,15 @@ static int _rtl92e_wx_set_scan(struct net_device *dev,
 			return 0;
 	}
 
-	if (priv->hw_radio_off) {
+	if (priv->bHwRadioOff) {
 		netdev_info(dev, "================>%s(): hwradio off\n",
 			    __func__);
 		return 0;
 	}
-	rt_state = priv->rtllib->rf_power_state;
+	rtState = priv->rtllib->eRFPowerState;
 	if (!priv->up)
 		return -ENETDOWN;
-	if (priv->rtllib->link_detect_info.bBusyTraffic == true)
+	if (priv->rtllib->LinkDetectInfo.bBusyTraffic == true)
 		return -EAGAIN;
 
 	if (wrqu->data.flags & IW_SCAN_THIS_ESSID) {
@@ -412,24 +418,29 @@ static int _rtl92e_wx_set_scan(struct net_device *dev,
 	priv->rtllib->FirstIe_InScan = true;
 
 	if (priv->rtllib->state != RTLLIB_LINKED) {
-		if (rt_state == rf_off) {
-			if (priv->rtllib->rf_off_reason >
-			    RF_CHANGE_BY_IPS) {
-				netdev_warn(dev, "%s(): RF is OFF.\n",
-					    __func__);
-				mutex_unlock(&priv->wx_mutex);
-				return -1;
+		if (priv->rtllib->PowerSaveControl.bInactivePs) {
+			if (rtState == eRfOff) {
+				if (priv->rtllib->RfOffReason >
+				    RF_CHANGE_BY_IPS) {
+					netdev_warn(dev, "%s(): RF is OFF.\n",
+						    __func__);
+					mutex_unlock(&priv->wx_mutex);
+					return -1;
+				}
+				RT_TRACE(COMP_PS,
+					 "=========>%s(): rtl92e_ips_leave\n",
+					 __func__);
+				mutex_lock(&priv->rtllib->ips_mutex);
+				rtl92e_ips_leave(dev);
+				mutex_unlock(&priv->rtllib->ips_mutex);
 			}
-			mutex_lock(&priv->rtllib->ips_mutex);
-			rtl92e_ips_leave(dev);
-			mutex_unlock(&priv->rtllib->ips_mutex);
 		}
 		rtllib_stop_scan(priv->rtllib);
 		if (priv->rtllib->LedControlHandler)
 			priv->rtllib->LedControlHandler(dev,
 							 LED_CTL_SITE_SURVEY);
 
-		if (priv->rtllib->rf_power_state != rf_off) {
+		if (priv->rtllib->eRFPowerState != eRfOff) {
 			priv->rtllib->actscanning = true;
 
 			if (ieee->ScanOperationBackupHandler)
@@ -462,7 +473,7 @@ static int _rtl92e_wx_get_scan(struct net_device *dev,
 	if (!priv->up)
 		return -ENETDOWN;
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
 
 	mutex_lock(&priv->wx_mutex);
@@ -481,9 +492,9 @@ static int _rtl92e_wx_set_essid(struct net_device *dev,
 	struct r8192_priv *priv = rtllib_priv(dev);
 	int ret;
 
-	if (priv->hw_radio_off) {
+	if (priv->bHwRadioOff) {
 		netdev_info(dev,
-			    "=========>%s():hw radio off,or Rf state is rf_off, return\n",
+			    "=========>%s():hw radio off,or Rf state is eRfOff, return\n",
 			    __func__);
 		return 0;
 	}
@@ -549,7 +560,7 @@ static int _rtl92e_wx_set_freq(struct net_device *dev,
 	int ret;
 	struct r8192_priv *priv = rtllib_priv(dev);
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
 
 	mutex_lock(&priv->wx_mutex);
@@ -575,7 +586,7 @@ static int _rtl92e_wx_set_frag(struct net_device *dev,
 {
 	struct r8192_priv *priv = rtllib_priv(dev);
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
 
 	if (wrqu->frag.disabled)
@@ -611,7 +622,7 @@ static int _rtl92e_wx_set_wap(struct net_device *dev,
 	int ret;
 	struct r8192_priv *priv = rtllib_priv(dev);
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
 
 	mutex_lock(&priv->wx_mutex);
@@ -658,7 +669,7 @@ static int _rtl92e_wx_set_enc(struct net_device *dev,
 			     {0x00, 0x00, 0x00, 0x00, 0x00, 0x03} };
 	int i;
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
 
 	if (!priv->up)
@@ -670,6 +681,7 @@ static int _rtl92e_wx_set_enc(struct net_device *dev,
 	mutex_unlock(&priv->rtllib->ips_mutex);
 	mutex_lock(&priv->wx_mutex);
 
+	RT_TRACE(COMP_SEC, "Setting SW wep key");
 	ret = rtllib_wx_set_encode(priv->rtllib, info, wrqu, key);
 	mutex_unlock(&priv->wx_mutex);
 
@@ -742,7 +754,7 @@ static int _rtl92e_wx_set_scan_type(struct net_device *dev,
 	int *parms = (int *)p;
 	int mode = parms[0];
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
 
 	priv->rtllib->active_scan = mode;
@@ -758,7 +770,7 @@ static int _rtl92e_wx_set_retry(struct net_device *dev,
 	struct r8192_priv *priv = rtllib_priv(dev);
 	int err = 0;
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
 
 	mutex_lock(&priv->wx_mutex);
@@ -831,7 +843,7 @@ static int _rtl92e_wx_set_sens(struct net_device *dev,
 
 	short err = 0;
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
 
 	mutex_lock(&priv->wx_mutex);
@@ -858,7 +870,7 @@ static int _rtl92e_wx_set_encode_ext(struct net_device *dev,
 	struct r8192_priv *priv = rtllib_priv(dev);
 	struct rtllib_device *ieee = priv->rtllib;
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
 
 	mutex_lock(&priv->wx_mutex);
@@ -915,7 +927,7 @@ static int _rtl92e_wx_set_encode_ext(struct net_device *dev,
 					 key, 0);
 		} else {
 			if ((ieee->pairwise_key_type == KEY_TYPE_CCMP) &&
-			     ieee->ht_info->bCurrentHTSupport)
+			     ieee->pHTInfo->bCurrentHTSupport)
 				rtl92e_writeb(dev, 0x173, 1);
 			rtl92e_set_key(dev, 4, idx, alg,
 				       (u8 *)ieee->ap_mac_addr, 0, key);
@@ -938,7 +950,7 @@ static int _rtl92e_wx_set_auth(struct net_device *dev,
 
 	struct r8192_priv *priv = rtllib_priv(dev);
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
 
 	mutex_lock(&priv->wx_mutex);
@@ -955,7 +967,7 @@ static int _rtl92e_wx_set_mlme(struct net_device *dev,
 
 	struct r8192_priv *priv = rtllib_priv(dev);
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
 
 	mutex_lock(&priv->wx_mutex);
@@ -972,7 +984,7 @@ static int _rtl92e_wx_set_gen_ie(struct net_device *dev,
 
 	struct r8192_priv *priv = rtllib_priv(dev);
 
-	if (priv->hw_radio_off)
+	if (priv->bHwRadioOff)
 		return 0;
 
 	mutex_lock(&priv->wx_mutex);
@@ -1014,29 +1026,29 @@ static int _rtl92e_wx_set_promisc_mode(struct net_device *dev,
 	u32 info_buf[3];
 
 	u32 oid;
-	u32 promiscuous_on;
-	u32 fltr_src_sta_frame;
+	u32 bPromiscuousOn;
+	u32 bFilterSourceStationFrame;
 
 	if (copy_from_user(info_buf, wrqu->data.pointer, sizeof(info_buf)))
 		return -EFAULT;
 
 	oid = info_buf[0];
-	promiscuous_on = info_buf[1];
-	fltr_src_sta_frame = info_buf[2];
+	bPromiscuousOn = info_buf[1];
+	bFilterSourceStationFrame = info_buf[2];
 
 	if (oid == OID_RT_INTEL_PROMISCUOUS_MODE) {
-		ieee->intel_promiscuous_md_info.promiscuous_on =
-					(promiscuous_on) ? (true) : (false);
-		ieee->intel_promiscuous_md_info.fltr_src_sta_frame =
-			(fltr_src_sta_frame) ? (true) : (false);
-		(promiscuous_on) ?
+		ieee->IntelPromiscuousModeInfo.bPromiscuousOn =
+					(bPromiscuousOn) ? (true) : (false);
+		ieee->IntelPromiscuousModeInfo.bFilterSourceStationFrame =
+			(bFilterSourceStationFrame) ? (true) : (false);
+		(bPromiscuousOn) ?
 		(rtllib_EnableIntelPromiscuousMode(dev, false)) :
 		(rtllib_DisableIntelPromiscuousMode(dev, false));
 
 		netdev_info(dev,
 			    "=======>%s(), on = %d, filter src sta = %d\n",
-			    __func__, promiscuous_on,
-			    fltr_src_sta_frame);
+			    __func__, bPromiscuousOn,
+			    bFilterSourceStationFrame);
 	} else {
 		return -1;
 	}
@@ -1054,8 +1066,8 @@ static int _rtl92e_wx_get_promisc_mode(struct net_device *dev,
 	mutex_lock(&priv->wx_mutex);
 
 	snprintf(extra, 45, "PromiscuousMode:%d, FilterSrcSTAFrame:%d",
-		 ieee->intel_promiscuous_md_info.promiscuous_on,
-		 ieee->intel_promiscuous_md_info.fltr_src_sta_frame);
+		 ieee->IntelPromiscuousModeInfo.bPromiscuousOn,
+		 ieee->IntelPromiscuousModeInfo.bFilterSourceStationFrame);
 	wrqu->data.length = strlen(extra) + 1;
 
 	mutex_unlock(&priv->wx_mutex);

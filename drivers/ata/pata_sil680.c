@@ -47,9 +47,11 @@
  *	criticial.
  */
 
-static int sil680_selreg(struct ata_port *ap, int r)
+static unsigned long sil680_selreg(struct ata_port *ap, int r)
 {
-	return 0xA0 + (ap->port_no << 4) + r;
+	unsigned long base = 0xA0 + r;
+	base += (ap->port_no << 4);
+	return base;
 }
 
 /**
@@ -63,9 +65,12 @@ static int sil680_selreg(struct ata_port *ap, int r)
  *	the unit shift.
  */
 
-static int sil680_seldev(struct ata_port *ap, struct ata_device *adev, int r)
+static unsigned long sil680_seldev(struct ata_port *ap, struct ata_device *adev, int r)
 {
-	return 0xA0 + (ap->port_no << 4) + r + (adev->devno << 1);
+	unsigned long base = 0xA0 + r;
+	base += (ap->port_no << 4);
+	base |= adev->devno ? 2 : 0;
+	return base;
 }
 
 
@@ -80,9 +85,8 @@ static int sil680_seldev(struct ata_port *ap, struct ata_device *adev, int r)
 static int sil680_cable_detect(struct ata_port *ap)
 {
 	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
-	int addr = sil680_selreg(ap, 0);
+	unsigned long addr = sil680_selreg(ap, 0);
 	u8 ata66;
-
 	pci_read_config_byte(pdev, addr, &ata66);
 	if (ata66 & 1)
 		return ATA_CBL_PATA80;
@@ -109,9 +113,9 @@ static void sil680_set_piomode(struct ata_port *ap, struct ata_device *adev)
 		0x328A, 0x2283, 0x1281, 0x10C3, 0x10C1
 	};
 
-	int tfaddr = sil680_selreg(ap, 0x02);
-	int addr = sil680_seldev(ap, adev, 0x04);
-	int addr_mask = 0x80 + 4 * ap->port_no;
+	unsigned long tfaddr = sil680_selreg(ap, 0x02);
+	unsigned long addr = sil680_seldev(ap, adev, 0x04);
+	unsigned long addr_mask = 0x80 + 4 * ap->port_no;
 	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
 	int pio = adev->pio_mode - XFER_PIO_0;
 	int lowest_pio = pio;
@@ -161,9 +165,9 @@ static void sil680_set_dmamode(struct ata_port *ap, struct ata_device *adev)
 	static const u16 dma_table[3] = { 0x2208, 0x10C2, 0x10C1 };
 
 	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
-	int ma = sil680_seldev(ap, adev, 0x08);
-	int ua = sil680_seldev(ap, adev, 0x0C);
-	int addr_mask = 0x80 + 4 * ap->port_no;
+	unsigned long ma = sil680_seldev(ap, adev, 0x08);
+	unsigned long ua = sil680_seldev(ap, adev, 0x0C);
+	unsigned long addr_mask = 0x80 + 4 * ap->port_no;
 	int port_shift = adev->devno * 4;
 	u8 scsc, mode;
 	u16 multi, ultra;
@@ -208,6 +212,7 @@ static void sil680_set_dmamode(struct ata_port *ap, struct ata_device *adev)
 static void sil680_sff_exec_command(struct ata_port *ap,
 				    const struct ata_taskfile *tf)
 {
+	DPRINTK("ata%u: cmd 0x%X\n", ap->print_id, tf->command);
 	iowrite8(tf->command, ap->ioaddr.command_addr);
 	ioread8(ap->ioaddr.bmdma_addr + ATA_DMA_CMD);
 }
@@ -215,7 +220,7 @@ static void sil680_sff_exec_command(struct ata_port *ap,
 static bool sil680_sff_irq_check(struct ata_port *ap)
 {
 	struct pci_dev *pdev	= to_pci_dev(ap->host->dev);
-	int addr		= sil680_selreg(ap, 1);
+	unsigned long addr	= sil680_selreg(ap, 1);
 	u8 val;
 
 	pci_read_config_byte(pdev, addr, &val);
@@ -304,17 +309,17 @@ static u8 sil680_init_chip(struct pci_dev *pdev, int *try_mmio)
 
 	switch (tmpbyte & 0x30) {
 	case 0x00:
-		dev_info(&pdev->dev, "sil680: 100MHz clock.\n");
+		printk(KERN_INFO "sil680: 100MHz clock.\n");
 		break;
 	case 0x10:
-		dev_info(&pdev->dev, "sil680: 133MHz clock.\n");
+		printk(KERN_INFO "sil680: 133MHz clock.\n");
 		break;
 	case 0x20:
-		dev_info(&pdev->dev, "sil680: Using PCI clock.\n");
+		printk(KERN_INFO "sil680: Using PCI clock.\n");
 		break;
 	/* This last case is _NOT_ ok */
 	case 0x30:
-		dev_err(&pdev->dev, "sil680: Clock disabled ?\n");
+		printk(KERN_ERR "sil680: Clock disabled ?\n");
 	}
 	return tmpbyte & 0x30;
 }

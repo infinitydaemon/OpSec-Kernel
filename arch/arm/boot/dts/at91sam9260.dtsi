@@ -11,7 +11,6 @@
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/clock/at91.h>
-#include <dt-bindings/mfd/at91-usart.h>
 
 / {
 	#address-cells = <1>;
@@ -124,7 +123,7 @@
 				clock-names = "slow_xtal", "main_xtal";
 			};
 
-			reset-controller@fffffd00 {
+			rstc@fffffd00 {
 				compatible = "atmel,at91sam9260-rstc";
 				reg = <0xfffffd00 0x10>;
 				clocks = <&pmc PMC_TYPE_CORE PMC_SLOW>;
@@ -167,7 +166,7 @@
 				clock-names = "t0_clk", "t1_clk", "t2_clk", "slow_clk";
 			};
 
-			pinctrl: pinctrl@fffff400 {
+			pinctrl@fffff400 {
 				#address-cells = <1>;
 				#size-cells = <1>;
 				compatible = "atmel,at91rm9200-pinctrl", "simple-bus";
@@ -533,7 +532,6 @@
 			dbgu: serial@fffff200 {
 				compatible = "atmel,at91sam9260-dbgu", "atmel,at91sam9260-usart";
 				reg = <0xfffff200 0x200>;
-				atmel,usart-mode = <AT91_USART_MODE_SERIAL>;
 				interrupts = <1 IRQ_TYPE_LEVEL_HIGH 7>;
 				pinctrl-names = "default";
 				pinctrl-0 = <&pinctrl_dbgu>;
@@ -545,7 +543,6 @@
 			usart0: serial@fffb0000 {
 				compatible = "atmel,at91sam9260-usart";
 				reg = <0xfffb0000 0x200>;
-				atmel,usart-mode = <AT91_USART_MODE_SERIAL>;
 				interrupts = <6 IRQ_TYPE_LEVEL_HIGH 5>;
 				atmel,use-dma-rx;
 				atmel,use-dma-tx;
@@ -559,7 +556,6 @@
 			usart1: serial@fffb4000 {
 				compatible = "atmel,at91sam9260-usart";
 				reg = <0xfffb4000 0x200>;
-				atmel,usart-mode = <AT91_USART_MODE_SERIAL>;
 				interrupts = <7 IRQ_TYPE_LEVEL_HIGH 5>;
 				atmel,use-dma-rx;
 				atmel,use-dma-tx;
@@ -573,7 +569,6 @@
 			usart2: serial@fffb8000 {
 				compatible = "atmel,at91sam9260-usart";
 				reg = <0xfffb8000 0x200>;
-				atmel,usart-mode = <AT91_USART_MODE_SERIAL>;
 				interrupts = <8 IRQ_TYPE_LEVEL_HIGH 5>;
 				atmel,use-dma-rx;
 				atmel,use-dma-tx;
@@ -587,7 +582,6 @@
 			usart3: serial@fffd0000 {
 				compatible = "atmel,at91sam9260-usart";
 				reg = <0xfffd0000 0x200>;
-				atmel,usart-mode = <AT91_USART_MODE_SERIAL>;
 				interrupts = <23 IRQ_TYPE_LEVEL_HIGH 5>;
 				atmel,use-dma-rx;
 				atmel,use-dma-tx;
@@ -601,7 +595,6 @@
 			uart0: serial@fffd4000 {
 				compatible = "atmel,at91sam9260-usart";
 				reg = <0xfffd4000 0x200>;
-				atmel,usart-mode = <AT91_USART_MODE_SERIAL>;
 				interrupts = <24 IRQ_TYPE_LEVEL_HIGH 5>;
 				atmel,use-dma-rx;
 				atmel,use-dma-tx;
@@ -615,7 +608,6 @@
 			uart1: serial@fffd8000 {
 				compatible = "atmel,at91sam9260-usart";
 				reg = <0xfffd8000 0x200>;
-				atmel,usart-mode = <AT91_USART_MODE_SERIAL>;
 				interrupts = <25 IRQ_TYPE_LEVEL_HIGH 5>;
 				atmel,use-dma-rx;
 				atmel,use-dma-tx;

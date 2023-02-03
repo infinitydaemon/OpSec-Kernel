@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
+ * include/net/9p/9p.h
+ *
  * 9P protocol definitions.
  *
  *  Copyright (C) 2005 by Latchesar Ionkov <lucho@ionkov.net>
@@ -331,9 +333,6 @@ enum p9_qid_t {
 /* size of header for zero copy read/write */
 #define P9_ZC_HDR_SZ 4096
 
-/* maximum length of an error string */
-#define P9_ERRMAX 128
-
 /**
  * struct p9_qid - file system entity information
  * @type: 8-bit type &p9_qid_t
@@ -531,7 +530,6 @@ struct p9_rstatfs {
  * @offset: used by marshalling routines to track current position in buffer
  * @capacity: used by marshalling routines to track total malloc'd capacity
  * @sdata: payload
- * @zc: whether zero-copy is used
  *
  * &p9_fcall represents the structure for all 9P RPC
  * transactions.  Requests are packaged into fcalls, and reponses
@@ -550,10 +548,11 @@ struct p9_fcall {
 
 	struct kmem_cache *cache;
 	u8 *sdata;
-	bool zc;
 };
 
 int p9_errstr2errno(char *errstr, int len);
 
 int p9_error_init(void);
+int p9_trans_fd_init(void);
+void p9_trans_fd_exit(void);
 #endif /* NET_9P_H */

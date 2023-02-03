@@ -324,7 +324,11 @@ error:
 static int ps8622_backlight_update(struct backlight_device *bl)
 {
 	struct ps8622_bridge *ps8622 = dev_get_drvdata(&bl->dev);
-	int ret, brightness = backlight_get_brightness(bl);
+	int ret, brightness = bl->props.brightness;
+
+	if (bl->props.power != FB_BLANK_UNBLANK ||
+	    bl->props.state & (BL_CORE_SUSPENDED | BL_CORE_FBBLANK))
+		brightness = 0;
 
 	if (!ps8622->enabled)
 		return -EINVAL;
@@ -448,13 +452,18 @@ static int ps8622_probe(struct i2c_client *client,
 	struct device *dev = &client->dev;
 	struct ps8622_bridge *ps8622;
 	struct drm_bridge *panel_bridge;
+	struct drm_panel *panel;
 	int ret;
 
 	ps8622 = devm_kzalloc(dev, sizeof(*ps8622), GFP_KERNEL);
 	if (!ps8622)
 		return -ENOMEM;
 
-	panel_bridge = devm_drm_of_get_bridge(dev, dev->of_node, 0, 0);
+	ret = drm_of_find_panel_or_bridge(dev->of_node, 0, 0, &panel, NULL);
+	if (ret)
+		return ret;
+
+	panel_bridge = devm_drm_panel_bridge_add(dev, panel);
 	if (IS_ERR(panel_bridge))
 		return PTR_ERR(panel_bridge);
 
@@ -520,12 +529,14 @@ static int ps8622_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void ps8622_remove(struct i2c_client *client)
+static int ps8622_remove(struct i2c_client *client)
 {
 	struct ps8622_bridge *ps8622 = i2c_get_clientdata(client);
 
 	backlight_device_unregister(ps8622->bl);
 	drm_bridge_remove(&ps8622->bridge);
+
+	return 0;
 }
 
 static const struct i2c_device_id ps8622_i2c_table[] = {

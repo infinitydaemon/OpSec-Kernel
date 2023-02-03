@@ -17,6 +17,7 @@ static const char *__doc_err_only__=
 #include <ctype.h>
 #include <unistd.h>
 #include <locale.h>
+#include <sys/resource.h>
 #include <getopt.h>
 #include <net/if.h>
 #include <time.h>

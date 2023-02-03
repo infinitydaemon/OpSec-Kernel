@@ -867,7 +867,8 @@ static int fsl_qspi_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, q);
 
 	/* find the resources */
-	q->iobase = devm_platform_ioremap_resource_byname(pdev, "QuadSPI");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "QuadSPI");
+	q->iobase = devm_ioremap_resource(dev, res);
 	if (IS_ERR(q->iobase)) {
 		ret = PTR_ERR(q->iobase);
 		goto err_put_ctrl;

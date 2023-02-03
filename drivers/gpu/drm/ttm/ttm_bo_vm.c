@@ -46,13 +46,17 @@
 static vm_fault_t ttm_bo_vm_fault_idle(struct ttm_buffer_object *bo,
 				struct vm_fault *vmf)
 {
-	long err = 0;
+	vm_fault_t ret = 0;
+	int err = 0;
+
+	if (likely(!bo->moving))
+		goto out_unlock;
 
 	/*
 	 * Quick non-stalling check for idle.
 	 */
-	if (dma_resv_test_signaled(bo->base.resv, DMA_RESV_USAGE_KERNEL))
-		return 0;
+	if (dma_fence_is_signaled(bo->moving))
+		goto out_clear;
 
 	/*
 	 * If possible, avoid waiting for GPU with mmap_lock
@@ -60,30 +64,34 @@ static vm_fault_t ttm_bo_vm_fault_idle(struct ttm_buffer_object *bo,
 	 * is the first attempt.
 	 */
 	if (fault_flag_allow_retry_first(vmf->flags)) {
+		ret = VM_FAULT_RETRY;
 		if (vmf->flags & FAULT_FLAG_RETRY_NOWAIT)
-			return VM_FAULT_RETRY;
+			goto out_unlock;
 
 		ttm_bo_get(bo);
 		mmap_read_unlock(vmf->vma->vm_mm);
-		(void)dma_resv_wait_timeout(bo->base.resv,
-					    DMA_RESV_USAGE_KERNEL, true,
-					    MAX_SCHEDULE_TIMEOUT);
+		(void) dma_fence_wait(bo->moving, true);
 		dma_resv_unlock(bo->base.resv);
 		ttm_bo_put(bo);
-		return VM_FAULT_RETRY;
+		goto out_unlock;
 	}
 
 	/*
 	 * Ordinary wait.
 	 */
-	err = dma_resv_wait_timeout(bo->base.resv, DMA_RESV_USAGE_KERNEL, true,
-				    MAX_SCHEDULE_TIMEOUT);
-	if (unlikely(err < 0)) {
-		return (err != -ERESTARTSYS) ? VM_FAULT_SIGBUS :
+	err = dma_fence_wait(bo->moving, true);
+	if (unlikely(err != 0)) {
+		ret = (err != -ERESTARTSYS) ? VM_FAULT_SIGBUS :
 			VM_FAULT_NOPAGE;
+		goto out_unlock;
 	}
 
-	return 0;
+out_clear:
+	dma_fence_put(bo->moving);
+	bo->moving = NULL;
+
+out_unlock:
+	return ret;
 }
 
 static unsigned long ttm_bo_io_mem_pfn(struct ttm_buffer_object *bo,
@@ -102,7 +110,7 @@ static unsigned long ttm_bo_io_mem_pfn(struct ttm_buffer_object *bo,
  * @bo: The buffer object
  * @vmf: The fault structure handed to the callback
  *
- * vm callbacks like fault() and *_mkwrite() allow for the mmap_lock to be dropped
+ * vm callbacks like fault() and *_mkwrite() allow for the mm_sem to be dropped
  * during long waits, and after the wait the callback will be restarted. This
  * is to allow other threads using the same virtual memory space concurrent
  * access to map(), unmap() completely unrelated buffer objects. TTM buffer
@@ -154,11 +162,9 @@ vm_fault_t ttm_bo_vm_reserve(struct ttm_buffer_object *bo,
 	 * Refuse to fault imported pages. This should be handled
 	 * (if at all) by redirecting mmap to the exporter.
 	 */
-	if (bo->ttm && (bo->ttm->page_flags & TTM_TT_FLAG_EXTERNAL)) {
-		if (!(bo->ttm->page_flags & TTM_TT_FLAG_EXTERNAL_MAPPABLE)) {
-			dma_resv_unlock(bo->base.resv);
-			return VM_FAULT_SIGBUS;
-		}
+	if (bo->ttm && (bo->ttm->page_flags & TTM_PAGE_FLAG_SG)) {
+		dma_resv_unlock(bo->base.resv);
+		return VM_FAULT_SIGBUS;
 	}
 
 	return 0;
@@ -217,7 +223,7 @@ vm_fault_t ttm_bo_vm_fault_reserved(struct vm_fault *vmf,
 	page_last = vma_pages(vma) + vma->vm_pgoff -
 		drm_vma_node_start(&bo->base.vma_node);
 
-	if (unlikely(page_offset >= PFN_UP(bo->base.size)))
+	if (unlikely(page_offset >= bo->resource->num_pages))
 		return VM_FAULT_SIGBUS;
 
 	prot = ttm_io_prot(bo, bo->resource, prot);
@@ -250,6 +256,8 @@ vm_fault_t ttm_bo_vm_fault_reserved(struct vm_fault *vmf,
 			} else if (unlikely(!page)) {
 				break;
 			}
+			page->index = drm_vma_node_start(&bo->base.vma_node) +
+				page_offset;
 			pfn = page_to_pfn(page);
 		}
 
@@ -412,7 +420,7 @@ int ttm_bo_vm_access(struct vm_area_struct *vma, unsigned long addr,
 		 << PAGE_SHIFT);
 	int ret;
 
-	if (len < 1 || (offset + len) > bo->base.size)
+	if (len < 1 || (offset + len) >> PAGE_SHIFT > bo->resource->num_pages)
 		return -EIO;
 
 	ret = ttm_bo_reserve(bo, true, false, NULL);

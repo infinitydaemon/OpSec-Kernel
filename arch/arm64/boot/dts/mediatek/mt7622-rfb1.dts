@@ -40,14 +40,15 @@
 
 	gpio-keys {
 		compatible = "gpio-keys";
+		poll-interval = <100>;
 
-		key-factory {
+		factory {
 			label = "factory";
 			linux,code = <BTN_0>;
 			gpios = <&pio 0 0>;
 		};
 
-		key-wps {
+		wps {
 			label = "wps";
 			linux,code = <KEY_WPS_BUTTON>;
 			gpios = <&pio 102 0>;
@@ -208,6 +209,7 @@
 	bus-width = <4>;
 	max-frequency = <50000000>;
 	cap-sd-highspeed;
+	r_smpl = <1>;
 	cd-gpios = <&pio 81 GPIO_ACTIVE_LOW>;
 	vmmc-supply = <&reg_3p3v>;
 	vqmmc-supply = <&reg_3p3v>;
@@ -232,10 +234,14 @@
 	};
 };
 
-&pcie0 {
+&pcie {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pcie0_pins>;
 	status = "okay";
+
+	pcie@0,0 {
+		status = "okay";
+	};
 };
 
 &pio {
@@ -296,14 +302,14 @@
 	i2c1_pins: i2c1-pins {
 		mux {
 			function = "i2c";
-			groups = "i2c1_0";
+			groups =  "i2c1_0";
 		};
 	};
 
 	i2c2_pins: i2c2-pins {
 		mux {
 			function = "i2c";
-			groups = "i2c2_0";
+			groups =  "i2c2_0";
 		};
 	};
 
@@ -326,14 +332,14 @@
 	irrx_pins: irrx-pins {
 		mux {
 			function = "ir";
-			groups = "ir_1_rx";
+			groups =  "ir_1_rx";
 		};
 	};
 
 	irtx_pins: irtx-pins {
 		mux {
 			function = "ir";
-			groups = "ir_1_tx";
+			groups =  "ir_1_tx";
 		};
 	};
 

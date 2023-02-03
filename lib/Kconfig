@@ -24,7 +24,6 @@ config LINEAR_RANGES
 
 config PACKING
 	bool "Generic bitfield packing and unpacking"
-	select BITREVERSE
 	default n
 	help
 	  This option provides the packing() helper function, which permits
@@ -63,6 +62,9 @@ config GENERIC_STRNLEN_USER
 	def_bool !ARCH_HAS_STRNLEN_USER
 
 config GENERIC_NET_UTILS
+	bool
+
+config GENERIC_FIND_FIRST_BIT
 	bool
 
 source "lib/math/Kconfig"
@@ -119,14 +121,10 @@ config INDIRECT_IOMEM_FALLBACK
 	  mmio accesses when the IO memory address is not a registered
 	  emulated region.
 
-config TRACE_MMIO_ACCESS
-	bool "Register read/write tracing"
-	depends on TRACING && ARCH_HAVE_TRACE_MMIO_ACCESS
-	help
-	  Create tracepoints for MMIO read/write operations. These trace events
-	  can be used for logging all MMIO read/write operations.
-
 source "lib/crypto/Kconfig"
+
+config LIB_MEMNEQ
+	bool
 
 config CRC_CCITT
 	tristate "CRC-CCITT functions"
@@ -152,15 +150,6 @@ config CRC_T10DIF
 	  This option is only needed if a module that's not in the
 	  kernel tree needs to calculate CRC checks for use with the
 	  SCSI data integrity subsystem.
-
-config CRC64_ROCKSOFT
-	tristate "CRC calculation for the Rocksoft model CRC64"
-	select CRC64
-	select CRYPTO
-	select CRYPTO_CRC64_ROCKSOFT
-	help
-	  This option provides a CRC64 API to a registered crypto driver.
-	  This is used with the block layer's data integrity subsystem.
 
 config CRC_ITU_T
 	tristate "CRC ITU-T V.41 functions"
@@ -341,16 +330,12 @@ config LZ4HC_COMPRESS
 config LZ4_DECOMPRESS
 	tristate
 
-config ZSTD_COMMON
+config ZSTD_COMPRESS
 	select XXHASH
 	tristate
 
-config ZSTD_COMPRESS
-	select ZSTD_COMMON
-	tristate
-
 config ZSTD_DECOMPRESS
-	select ZSTD_COMMON
+	select XXHASH
 	tristate
 
 source "lib/xz/Kconfig"
@@ -480,10 +465,6 @@ config INTERVAL_TREE
 
 	  for more information.
 
-config INTERVAL_TREE_SPAN_ITER
-	bool
-	depends on INTERVAL_TREE
-
 config XARRAY_MULTI
 	bool
 	help
@@ -532,15 +513,6 @@ config CPUMASK_OFFSTACK
 	  Use dynamic allocation for cpumask_var_t, instead of putting
 	  them on the stack.  This is a bit more expensive, but avoids
 	  stack overflow.
-
-config FORCE_NR_CPUS
-       bool "Set number of CPUs at compile time"
-       depends on SMP && EXPERT && !COMPILE_TEST
-       help
-         Say Yes if you have NR_CPUS set to an actual number of possible
-         CPUs in your system, not to a default value. This forces the core
-         code to rely on compile-time value and optimize kernel routines
-         better.
 
 config CPU_RMAP
 	bool
@@ -677,9 +649,6 @@ config ARCH_HAS_PMEM_API
 config MEMREGION
 	bool
 
-config ARCH_HAS_CPU_CACHE_INVALIDATE_MEMREGION
-	bool
-
 config ARCH_HAS_MEMREMAP_COMPAT_ALIGN
 	bool
 
@@ -706,14 +675,14 @@ config STACKDEPOT
 	bool
 	select STACKTRACE
 
-config STACKDEPOT_ALWAYS_INIT
-	bool
-	select STACKDEPOT
-
-config REF_TRACKER
-	bool
-	depends on STACKTRACE_SUPPORT
-	select STACKDEPOT
+config STACK_HASH_ORDER
+	int "stack depot hash size (12 => 4KB, 20 => 1024KB)"
+	range 12 20
+	default 20
+	depends on STACKDEPOT
+	help
+	 Select the hash size as a power of 2 for the stackdepot hash table.
+	 Choose a lower value to reduce the memory impact.
 
 config SBITMAP
 	bool
@@ -755,7 +724,4 @@ config PLDMFW
 	default n
 
 config ASN1_ENCODER
-       tristate
-
-config POLYNOMIAL
        tristate

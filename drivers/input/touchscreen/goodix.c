@@ -18,7 +18,6 @@
 #include <linux/delay.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
-#include <linux/platform_data/x86/soc.h>
 #include <linux/slab.h>
 #include <linux/acpi.h>
 #include <linux/of.h>
@@ -175,13 +174,7 @@ int goodix_i2c_read(struct i2c_client *client, u16 reg, u8 *buf, int len)
 	msgs[1].buf   = buf;
 
 	ret = i2c_transfer(client->adapter, msgs, 2);
-	if (ret >= 0)
-		ret = (ret == ARRAY_SIZE(msgs) ? 0 : -EIO);
-
-	if (ret)
-		dev_err(&client->dev, "Error reading %d bytes from 0x%04x: %d\n",
-			len, reg, ret);
-	return ret;
+	return ret < 0 ? ret : (ret != ARRAY_SIZE(msgs) ? -EIO : 0);
 }
 
 /**
@@ -212,15 +205,8 @@ int goodix_i2c_write(struct i2c_client *client, u16 reg, const u8 *buf, int len)
 	msg.len = len + 2;
 
 	ret = i2c_transfer(client->adapter, &msg, 1);
-	if (ret >= 0)
-		ret = (ret == 1 ? 0 : -EIO);
-
 	kfree(addr_buf);
-
-	if (ret)
-		dev_err(&client->dev, "Error writing %d bytes to 0x%04x: %d\n",
-			len, reg, ret);
-	return ret;
+	return ret < 0 ? ret : (ret != 1 ? -EIO : 0);
 }
 
 int goodix_i2c_write_u8(struct i2c_client *client, u16 reg, u8 value)
@@ -262,8 +248,11 @@ static int goodix_ts_read_input_report(struct goodix_ts_data *ts, u8 *data)
 	do {
 		error = goodix_i2c_read(ts->client, addr, data,
 					header_contact_keycode_size);
-		if (error)
+		if (error) {
+			dev_err(&ts->client->dev, "I2C transfer error: %d\n",
+					error);
 			return error;
+		}
 
 		if (data[0] & GOODIX_BUFFER_STATUS_READY) {
 			touch_num = data[0] & 0x0f;
@@ -284,11 +273,6 @@ static int goodix_ts_read_input_report(struct goodix_ts_data *ts, u8 *data)
 			return touch_num;
 		}
 
-		if (data[0] == 0 && ts->firmware_name) {
-			if (goodix_handle_fw_request(ts))
-				return 0;
-		}
-
 		usleep_range(1000, 2000); /* Poll every 1 - 2 ms */
 	} while (time_before(jiffies, max_timeout));
 
@@ -297,98 +281,6 @@ static int goodix_ts_read_input_report(struct goodix_ts_data *ts, u8 *data)
 	 * 'finger up' event, which will always cause a timeout.
 	 */
 	return -ENOMSG;
-}
-
-static int goodix_create_pen_input(struct goodix_ts_data *ts)
-{
-	struct device *dev = &ts->client->dev;
-	struct input_dev *input;
-
-	input = devm_input_allocate_device(dev);
-	if (!input)
-		return -ENOMEM;
-
-	input_copy_abs(input, ABS_X, ts->input_dev, ABS_MT_POSITION_X);
-	input_copy_abs(input, ABS_Y, ts->input_dev, ABS_MT_POSITION_Y);
-	/*
-	 * The resolution of these touchscreens is about 10 units/mm, the actual
-	 * resolution does not matter much since we set INPUT_PROP_DIRECT.
-	 * Userspace wants something here though, so just set it to 10 units/mm.
-	 */
-	input_abs_set_res(input, ABS_X, 10);
-	input_abs_set_res(input, ABS_Y, 10);
-	input_set_abs_params(input, ABS_PRESSURE, 0, 255, 0, 0);
-
-	input_set_capability(input, EV_KEY, BTN_TOUCH);
-	input_set_capability(input, EV_KEY, BTN_TOOL_PEN);
-	input_set_capability(input, EV_KEY, BTN_STYLUS);
-	input_set_capability(input, EV_KEY, BTN_STYLUS2);
-	__set_bit(INPUT_PROP_DIRECT, input->propbit);
-
-	input->name = "Goodix Active Pen";
-	input->phys = "input/pen";
-	input->id.bustype = BUS_I2C;
-	input->id.vendor = 0x0416;
-	if (kstrtou16(ts->id, 10, &input->id.product))
-		input->id.product = 0x1001;
-	input->id.version = ts->version;
-
-	ts->input_pen = input;
-	return 0;
-}
-
-static void goodix_ts_report_pen_down(struct goodix_ts_data *ts, u8 *data)
-{
-	int input_x, input_y, input_w, error;
-	u8 key_value;
-
-	if (!ts->pen_input_registered) {
-		error = input_register_device(ts->input_pen);
-		ts->pen_input_registered = (error == 0) ? 1 : error;
-	}
-
-	if (ts->pen_input_registered < 0)
-		return;
-
-	if (ts->contact_size == 9) {
-		input_x = get_unaligned_le16(&data[4]);
-		input_y = get_unaligned_le16(&data[6]);
-		input_w = get_unaligned_le16(&data[8]);
-	} else {
-		input_x = get_unaligned_le16(&data[2]);
-		input_y = get_unaligned_le16(&data[4]);
-		input_w = get_unaligned_le16(&data[6]);
-	}
-
-	touchscreen_report_pos(ts->input_pen, &ts->prop, input_x, input_y, false);
-	input_report_abs(ts->input_pen, ABS_PRESSURE, input_w);
-
-	input_report_key(ts->input_pen, BTN_TOUCH, 1);
-	input_report_key(ts->input_pen, BTN_TOOL_PEN, 1);
-
-	if (data[0] & GOODIX_HAVE_KEY) {
-		key_value = data[1 + ts->contact_size];
-		input_report_key(ts->input_pen, BTN_STYLUS, key_value & 0x10);
-		input_report_key(ts->input_pen, BTN_STYLUS2, key_value & 0x20);
-	} else {
-		input_report_key(ts->input_pen, BTN_STYLUS, 0);
-		input_report_key(ts->input_pen, BTN_STYLUS2, 0);
-	}
-
-	input_sync(ts->input_pen);
-}
-
-static void goodix_ts_report_pen_up(struct goodix_ts_data *ts)
-{
-	if (!ts->input_pen)
-		return;
-
-	input_report_key(ts->input_pen, BTN_TOUCH, 0);
-	input_report_key(ts->input_pen, BTN_TOOL_PEN, 0);
-	input_report_key(ts->input_pen, BTN_STYLUS, 0);
-	input_report_key(ts->input_pen, BTN_STYLUS2, 0);
-
-	input_sync(ts->input_pen);
 }
 
 static void goodix_ts_report_touch_8b(struct goodix_ts_data *ts, u8 *coor_data)
@@ -421,14 +313,6 @@ static void goodix_ts_report_touch_9b(struct goodix_ts_data *ts, u8 *coor_data)
 	input_report_abs(ts->input_dev, ABS_MT_WIDTH_MAJOR, input_w);
 }
 
-static void goodix_ts_release_keys(struct goodix_ts_data *ts)
-{
-	int i;
-
-	for (i = 0; i < GOODIX_MAX_KEYS; i++)
-		input_report_key(ts->input_dev, ts->keymap[i], 0);
-}
-
 static void goodix_ts_report_key(struct goodix_ts_data *ts, u8 *data)
 {
 	int touch_num;
@@ -443,7 +327,8 @@ static void goodix_ts_report_key(struct goodix_ts_data *ts, u8 *data)
 				input_report_key(ts->input_dev,
 						 ts->keymap[i], 1);
 	} else {
-		goodix_ts_release_keys(ts);
+		for (i = 0; i < GOODIX_MAX_KEYS; i++)
+			input_report_key(ts->input_dev, ts->keymap[i], 0);
 	}
 }
 
@@ -465,15 +350,6 @@ static void goodix_process_events(struct goodix_ts_data *ts)
 	if (touch_num < 0)
 		return;
 
-	/* The pen being down is always reported as a single touch */
-	if (touch_num == 1 && (point_data[1] & 0x80)) {
-		goodix_ts_report_pen_down(ts, point_data);
-		goodix_ts_release_keys(ts);
-		goto sync; /* Release any previously registered touches */
-	} else {
-		goodix_ts_report_pen_up(ts);
-	}
-
 	goodix_ts_report_key(ts, point_data);
 
 	for (i = 0; i < touch_num; i++)
@@ -484,7 +360,6 @@ static void goodix_process_events(struct goodix_ts_data *ts)
 			goodix_ts_report_touch_8b(ts,
 				&point_data[1 + ts->contact_size * i]);
 
-sync:
 	input_mt_sync_frame(ts->input_dev);
 	input_sync(ts->input_dev);
 }
@@ -500,7 +375,9 @@ static irqreturn_t goodix_ts_irq_handler(int irq, void *dev_id)
 	struct goodix_ts_data *ts = dev_id;
 
 	goodix_process_events(ts);
-	goodix_i2c_write_u8(ts->client, GOODIX_READ_COOR_ADDR, 0);
+
+	if (goodix_i2c_write_u8(ts->client, GOODIX_READ_COOR_ADDR, 0) < 0)
+		dev_err(&ts->client->dev, "I2C write end_cmd error\n");
 
 	return IRQ_HANDLED;
 }
@@ -625,9 +502,11 @@ int goodix_send_cfg(struct goodix_ts_data *ts, const u8 *cfg, int len)
 		return error;
 
 	error = goodix_i2c_write(ts->client, ts->chip->config_addr, cfg, len);
-	if (error)
+	if (error) {
+		dev_err(&ts->client->dev, "Failed to write config data: %d",
+			error);
 		return error;
-
+	}
 	dev_dbg(&ts->client->dev, "Config sent successfully.");
 
 	/* Let the firmware reconfigure itself, so sleep for 10ms */
@@ -797,6 +676,21 @@ static int goodix_reset(struct goodix_ts_data *ts)
 }
 
 #ifdef ACPI_GPIO_SUPPORT
+#include <asm/cpu_device_id.h>
+#include <asm/intel-family.h>
+
+static const struct x86_cpu_id baytrail_cpu_ids[] = {
+	{ X86_VENDOR_INTEL, 6, INTEL_FAM6_ATOM_SILVERMONT, X86_FEATURE_ANY, },
+	{}
+};
+
+static inline bool is_byt(void)
+{
+	const struct x86_cpu_id *id = x86_match_cpu(baytrail_cpu_ids);
+
+	return !!id;
+}
+
 static const struct acpi_gpio_params first_gpio = { 0, 0, false };
 static const struct acpi_gpio_params second_gpio = { 1, 0, false };
 
@@ -823,16 +717,22 @@ static int goodix_resource(struct acpi_resource *ares, void *data)
 	struct device *dev = &ts->client->dev;
 	struct acpi_resource_gpio *gpio;
 
-	if (acpi_gpio_get_irq_resource(ares, &gpio)) {
-		if (ts->gpio_int_idx == -1) {
-			ts->gpio_int_idx = ts->gpio_count;
-		} else {
-			dev_err(dev, "More then one GpioInt resource, ignoring ACPI GPIO resources\n");
-			ts->gpio_int_idx = -2;
+	switch (ares->type) {
+	case ACPI_RESOURCE_TYPE_GPIO:
+		gpio = &ares->data.gpio;
+		if (gpio->connection_type == ACPI_RESOURCE_GPIO_TYPE_INT) {
+			if (ts->gpio_int_idx == -1) {
+				ts->gpio_int_idx = ts->gpio_count;
+			} else {
+				dev_err(dev, "More then one GpioInt resource, ignoring ACPI GPIO resources\n");
+				ts->gpio_int_idx = -2;
+			}
 		}
 		ts->gpio_count++;
-	} else if (acpi_gpio_get_io_resource(ares, &gpio))
-		ts->gpio_count++;
+		break;
+	default:
+		break;
+	}
 
 	return 0;
 }
@@ -849,7 +749,7 @@ static int goodix_add_acpi_gpio_mappings(struct goodix_ts_data *ts)
 	const struct acpi_gpio_mapping *gpio_mapping = NULL;
 	struct device *dev = &ts->client->dev;
 	LIST_HEAD(resources);
-	int irq, ret;
+	int ret;
 
 	ts->gpio_count = 0;
 	ts->gpio_int_idx = -1;
@@ -861,20 +761,6 @@ static int goodix_add_acpi_gpio_mappings(struct goodix_ts_data *ts)
 	}
 
 	acpi_dev_free_resource_list(&resources);
-
-	/*
-	 * CHT devices should have a GpioInt + a regular GPIO ACPI resource.
-	 * Some CHT devices have a bug (where the also is bogus Interrupt
-	 * resource copied from a previous BYT based generation). i2c-core-acpi
-	 * will use the non-working Interrupt resource, fix this up.
-	 */
-	if (soc_intel_is_cht() && ts->gpio_count == 2 && ts->gpio_int_idx != -1) {
-		irq = acpi_dev_gpio_irq_get(ACPI_COMPANION(dev), 0);
-		if (irq > 0 && irq != ts->client->irq) {
-			dev_warn(dev, "Overriding IRQ %d -> %d\n", ts->client->irq, irq);
-			ts->client->irq = irq;
-		}
-	}
 
 	if (ts->gpio_count == 2 && ts->gpio_int_idx == 0) {
 		ts->irq_pin_access_method = IRQ_PIN_ACCESS_ACPI_GPIO;
@@ -888,18 +774,13 @@ static int goodix_add_acpi_gpio_mappings(struct goodix_ts_data *ts)
 		dev_info(dev, "Using ACPI INTI and INTO methods for IRQ pin access\n");
 		ts->irq_pin_access_method = IRQ_PIN_ACCESS_ACPI_METHOD;
 		gpio_mapping = acpi_goodix_reset_only_gpios;
-	} else if (soc_intel_is_byt() && ts->gpio_count == 2 && ts->gpio_int_idx == -1) {
+	} else if (is_byt() && ts->gpio_count == 2 && ts->gpio_int_idx == -1) {
 		dev_info(dev, "No ACPI GpioInt resource, assuming that the GPIO order is reset, int\n");
 		ts->irq_pin_access_method = IRQ_PIN_ACCESS_ACPI_GPIO;
 		gpio_mapping = acpi_goodix_int_last_gpios;
 	} else {
 		dev_warn(dev, "Unexpected ACPI resources: gpio_count %d, gpio_int_idx %d\n",
 			 ts->gpio_count, ts->gpio_int_idx);
-		/*
-		 * On some devices _PS0 does a reset for us and
-		 * sometimes this is necessary for things to work.
-		 */
-		acpi_device_fix_up_power(ACPI_COMPANION(dev));
 		return -EINVAL;
 	}
 
@@ -966,7 +847,7 @@ retry_get_irq_gpio:
 	if (IS_ERR(gpiod)) {
 		error = PTR_ERR(gpiod);
 		if (error != -EPROBE_DEFER)
-			dev_err(dev, "Failed to get %s GPIO: %d\n",
+			dev_dbg(dev, "Failed to get %s GPIO: %d\n",
 				GOODIX_GPIO_INT_NAME, error);
 		return error;
 	}
@@ -983,7 +864,7 @@ retry_get_irq_gpio:
 	if (IS_ERR(gpiod)) {
 		error = PTR_ERR(gpiod);
 		if (error != -EPROBE_DEFER)
-			dev_err(dev, "Failed to get %s GPIO: %d\n",
+			dev_dbg(dev, "Failed to get %s GPIO: %d\n",
 				GOODIX_GPIO_RST_NAME, error);
 		return error;
 	}
@@ -1030,19 +911,14 @@ static void goodix_read_config(struct goodix_ts_data *ts)
 	int x_max, y_max;
 	int error;
 
-	/*
-	 * On controllers where we need to upload the firmware
-	 * (controllers without flash) ts->config already has the config
-	 * at this point and the controller itself does not have it yet!
-	 */
-	if (!ts->firmware_name) {
-		error = goodix_i2c_read(ts->client, ts->chip->config_addr,
-					ts->config, ts->chip->config_len);
-		if (error) {
-			ts->int_trigger_type = GOODIX_INT_TRIGGER;
-			ts->max_touch_num = GOODIX_MAX_CONTACTS;
-			return;
-		}
+	error = goodix_i2c_read(ts->client, ts->chip->config_addr,
+				ts->config, ts->chip->config_len);
+	if (error) {
+		dev_warn(&ts->client->dev, "Error reading config: %d\n",
+			 error);
+		ts->int_trigger_type = GOODIX_INT_TRIGGER;
+		ts->max_touch_num = GOODIX_MAX_CONTACTS;
+		return;
 	}
 
 	ts->int_trigger_type = ts->config[TRIGGER_LOC] & 0x03;
@@ -1070,8 +946,10 @@ static int goodix_read_version(struct goodix_ts_data *ts)
 	char id_str[GOODIX_ID_MAX_LEN + 1];
 
 	error = goodix_i2c_read(ts->client, GOODIX_REG_ID, buf, sizeof(buf));
-	if (error)
+	if (error) {
+		dev_err(&ts->client->dev, "read version failed: %d\n", error);
 		return error;
+	}
 
 	memcpy(id_str, buf, GOODIX_ID_MAX_LEN);
 	id_str[GOODIX_ID_MAX_LEN] = 0;
@@ -1097,10 +975,13 @@ static int goodix_i2c_test(struct i2c_client *client)
 	u8 test;
 
 	while (retry++ < 2) {
-		error = goodix_i2c_read(client, GOODIX_REG_ID, &test, 1);
+		error = goodix_i2c_read(client, GOODIX_REG_ID,
+					&test, 1);
 		if (!error)
 			return 0;
 
+		dev_err(&client->dev, "i2c test failed attempt %d: %d\n",
+			retry, error);
 		msleep(20);
 	}
 
@@ -1216,17 +1097,6 @@ retry_read_config:
 		return error;
 	}
 
-	/*
-	 * Create the input_pen device before goodix_request_irq() calls
-	 * devm_request_threaded_irq() so that the devm framework frees
-	 * it after disabling the irq.
-	 * Unfortunately there is no way to detect if the touchscreen has pen
-	 * support, so registering the dev is delayed till the first pen event.
-	 */
-	error = goodix_create_pen_input(ts);
-	if (error)
-		return error;
-
 	ts->irq_flags = goodix_irq_flags[ts->int_trigger_type] | IRQF_ONESHOT;
 	error = goodix_request_irq(ts);
 	if (error) {
@@ -1251,16 +1121,7 @@ static void goodix_config_cb(const struct firmware *cfg, void *ctx)
 	struct goodix_ts_data *ts = ctx;
 	int error;
 
-	if (ts->firmware_name) {
-		if (!cfg)
-			goto err_release_cfg;
-
-		error = goodix_check_cfg(ts, cfg->data, cfg->size);
-		if (error)
-			goto err_release_cfg;
-
-		memcpy(ts->config, cfg->data, cfg->size);
-	} else if (cfg) {
+	if (cfg) {
 		/* send device configuration to the firmware */
 		error = goodix_send_cfg(ts, cfg->data, cfg->size);
 		if (error)
@@ -1282,10 +1143,10 @@ static void goodix_disable_regulators(void *arg)
 	regulator_disable(ts->avdd28);
 }
 
-static int goodix_ts_probe(struct i2c_client *client)
+static int goodix_ts_probe(struct i2c_client *client,
+			   const struct i2c_device_id *id)
 {
 	struct goodix_ts_data *ts;
-	const char *cfg_name;
 	int error;
 
 	dev_dbg(&client->dev, "I2C Address: 0x%02x\n", client->addr);
@@ -1351,27 +1212,20 @@ reset:
 		return error;
 	}
 
-	error = goodix_firmware_check(ts);
-	if (error)
-		return error;
-
 	error = goodix_read_version(ts);
-	if (error)
+	if (error) {
+		dev_err(&client->dev, "Read version failed.\n");
 		return error;
+	}
 
 	ts->chip = goodix_get_chip_data(ts->id);
 
 	if (ts->load_cfg_from_disk) {
 		/* update device config */
-		error = device_property_read_string(&client->dev,
-						    "goodix,config-name",
-						    &cfg_name);
-		if (!error)
-			snprintf(ts->cfg_name, sizeof(ts->cfg_name),
-				 "goodix/%s", cfg_name);
-		else
-			snprintf(ts->cfg_name, sizeof(ts->cfg_name),
-				 "goodix_%s_cfg.bin", ts->id);
+		ts->cfg_name = devm_kasprintf(&client->dev, GFP_KERNEL,
+					      "goodix_%s_cfg.bin", ts->id);
+		if (!ts->cfg_name)
+			return -ENOMEM;
 
 		error = request_firmware_nowait(THIS_MODULE, true, ts->cfg_name,
 						&client->dev, GFP_KERNEL, ts,
@@ -1393,12 +1247,14 @@ reset:
 	return 0;
 }
 
-static void goodix_ts_remove(struct i2c_client *client)
+static int goodix_ts_remove(struct i2c_client *client)
 {
 	struct goodix_ts_data *ts = i2c_get_clientdata(client);
 
 	if (ts->load_cfg_from_disk)
 		wait_for_completion(&ts->firmware_loading_complete);
+
+	return 0;
 }
 
 static int __maybe_unused goodix_suspend(struct device *dev)
@@ -1419,9 +1275,6 @@ static int __maybe_unused goodix_suspend(struct device *dev)
 	/* Free IRQ as IRQ pin is used as output in the suspend sequence */
 	goodix_free_irq(ts);
 
-	/* Save reference (calibration) info if necessary */
-	goodix_save_bak_ref(ts);
-
 	/* Output LOW on the INT pin for 5 ms */
 	error = goodix_irq_direction_output(ts, 0);
 	if (error) {
@@ -1434,6 +1287,7 @@ static int __maybe_unused goodix_suspend(struct device *dev)
 	error = goodix_i2c_write_u8(ts->client, GOODIX_REG_COMMAND,
 				    GOODIX_CMD_SCREEN_OFF);
 	if (error) {
+		dev_err(&ts->client->dev, "Screen off command failed\n");
 		goodix_irq_direction_input(ts);
 		goodix_request_irq(ts);
 		return -EAGAIN;
@@ -1476,7 +1330,10 @@ static int __maybe_unused goodix_resume(struct device *dev)
 
 	error = goodix_i2c_read(ts->client, ts->chip->config_addr,
 				&config_ver, 1);
-	if (!error && config_ver != ts->config[0])
+	if (error)
+		dev_warn(dev, "Error reading config version: %d, resetting controller\n",
+			 error);
+	else if (config_ver != ts->config[0])
 		dev_info(dev, "Config version mismatch %d != %d, resetting controller\n",
 			 config_ver, ts->config[0]);
 
@@ -1536,7 +1393,7 @@ MODULE_DEVICE_TABLE(of, goodix_of_match);
 #endif
 
 static struct i2c_driver goodix_ts_driver = {
-	.probe_new = goodix_ts_probe,
+	.probe = goodix_ts_probe,
 	.remove = goodix_ts_remove,
 	.id_table = goodix_ts_id,
 	.driver = {

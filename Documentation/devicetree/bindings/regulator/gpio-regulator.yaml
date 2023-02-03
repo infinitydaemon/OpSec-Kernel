@@ -85,9 +85,6 @@ properties:
       - current
     default: voltage
 
-  vin-supply:
-    description: Input supply phandle.
-
 required:
   - compatible
   - regulator-name

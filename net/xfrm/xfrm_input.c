@@ -20,7 +20,6 @@
 #include <net/xfrm.h>
 #include <net/ip_tunnels.h>
 #include <net/ip6_tunnel.h>
-#include <net/dst_metadata.h>
 
 #include "xfrm_inout.h"
 
@@ -532,7 +531,7 @@ int xfrm_input(struct sk_buff *skb, int nexthdr, __be32 spi, int encap_type)
 				goto drop;
 			}
 
-			if (xfrm_parse_spi(skb, nexthdr, &spi, &seq)) {
+			if ((err = xfrm_parse_spi(skb, nexthdr, &spi, &seq)) != 0) {
 				XFRM_INC_STATS(net, LINUX_MIB_XFRMINHDRERROR);
 				goto drop;
 			}
@@ -562,7 +561,7 @@ int xfrm_input(struct sk_buff *skb, int nexthdr, __be32 spi, int encap_type)
 	}
 
 	seq = 0;
-	if (!spi && xfrm_parse_spi(skb, nexthdr, &spi, &seq)) {
+	if (!spi && (err = xfrm_parse_spi(skb, nexthdr, &spi, &seq)) != 0) {
 		secpath_reset(skb);
 		XFRM_INC_STATS(net, LINUX_MIB_XFRMINHDRERROR);
 		goto drop;
@@ -671,7 +670,6 @@ resume:
 
 		x->curlft.bytes += skb->len;
 		x->curlft.packets++;
-		x->lastused = ktime_get_real_seconds();
 
 		spin_unlock(&x->lock);
 
@@ -722,8 +720,7 @@ resume:
 		sp = skb_sec_path(skb);
 		if (sp)
 			sp->olen = 0;
-		if (skb_valid_dst(skb))
-			skb_dst_drop(skb);
+		skb_dst_drop(skb);
 		gro_cells_receive(&gro_cells, skb);
 		return 0;
 	} else {
@@ -741,8 +738,7 @@ resume:
 			sp = skb_sec_path(skb);
 			if (sp)
 				sp->olen = 0;
-			if (skb_valid_dst(skb))
-				skb_dst_drop(skb);
+			skb_dst_drop(skb);
 			gro_cells_receive(&gro_cells, skb);
 			return err;
 		}

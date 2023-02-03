@@ -92,10 +92,6 @@ static const struct of_device_id st_accel_of_match[] = {
 		.compatible = "st,lis3de",
 		.data = LIS3DE_ACCEL_DEV_NAME,
 	},
-	{
-		.compatible = "st,lis302dl",
-		.data = LIS302DL_ACCEL_DEV_NAME,
-	},
 	{}
 };
 MODULE_DEVICE_TABLE(of, st_accel_of_match);
@@ -131,7 +127,27 @@ static int st_accel_spi_probe(struct spi_device *spi)
 	if (err)
 		return err;
 
-	return st_accel_common_probe(indio_dev);
+	err = st_accel_common_probe(indio_dev);
+	if (err < 0)
+		goto st_accel_power_off;
+
+	return 0;
+
+st_accel_power_off:
+	st_sensors_power_disable(indio_dev);
+
+	return err;
+}
+
+static int st_accel_spi_remove(struct spi_device *spi)
+{
+	struct iio_dev *indio_dev = spi_get_drvdata(spi);
+
+	st_accel_common_remove(indio_dev);
+
+	st_sensors_power_disable(indio_dev);
+
+	return 0;
 }
 
 static const struct spi_device_id st_accel_id_table[] = {
@@ -151,7 +167,6 @@ static const struct spi_device_id st_accel_id_table[] = {
 	{ LIS2DW12_ACCEL_DEV_NAME },
 	{ LIS3DHH_ACCEL_DEV_NAME },
 	{ LIS3DE_ACCEL_DEV_NAME },
-	{ LIS302DL_ACCEL_DEV_NAME },
 	{},
 };
 MODULE_DEVICE_TABLE(spi, st_accel_id_table);
@@ -162,6 +177,7 @@ static struct spi_driver st_accel_driver = {
 		.of_match_table = st_accel_of_match,
 	},
 	.probe = st_accel_spi_probe,
+	.remove = st_accel_spi_remove,
 	.id_table = st_accel_id_table,
 };
 module_spi_driver(st_accel_driver);
@@ -169,4 +185,3 @@ module_spi_driver(st_accel_driver);
 MODULE_AUTHOR("Denis Ciocca <denis.ciocca@st.com>");
 MODULE_DESCRIPTION("STMicroelectronics accelerometers spi driver");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS(IIO_ST_SENSORS);

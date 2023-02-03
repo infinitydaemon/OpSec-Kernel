@@ -28,7 +28,6 @@
 #include <linux/udp.h>
 #include <linux/if_vlan.h>
 #include <linux/slab.h>
-#include <linux/jiffies.h>
 #include <net/ip6_checksum.h>
 #include "jme.h"
 
@@ -314,7 +313,7 @@ jme_load_macaddr(struct net_device *netdev)
 	val = jread32(jme, JME_RXUMA_HI);
 	macaddr[4] = (val >>  0) & 0xFF;
 	macaddr[5] = (val >>  8) & 0xFF;
-	eth_hw_addr_set(netdev, macaddr);
+	memcpy(netdev->dev_addr, macaddr, ETH_ALEN);
 	spin_unlock_bh(&jme->macaddr_lock);
 }
 
@@ -2180,7 +2179,7 @@ jme_stop_queue_if_full(struct jme_adapter *jme)
 	}
 
 	if (unlikely(txbi->start_xmit &&
-			time_is_before_eq_jiffies(txbi->start_xmit + TX_TIMEOUT) &&
+			(jiffies - txbi->start_xmit) >= TX_TIMEOUT &&
 			txbi->skb)) {
 		netif_stop_queue(jme->dev);
 		netif_info(jme, tx_queued, jme->dev,
@@ -2255,7 +2254,7 @@ jme_set_macaddr(struct net_device *netdev, void *p)
 		return -EBUSY;
 
 	spin_lock_bh(&jme->macaddr_lock);
-	eth_hw_addr_set(netdev, addr->sa_data);
+	memcpy(netdev->dev_addr, addr->sa_data, netdev->addr_len);
 	jme_set_unicastaddr(netdev);
 	spin_unlock_bh(&jme->macaddr_lock);
 
@@ -2332,9 +2331,9 @@ jme_get_drvinfo(struct net_device *netdev,
 {
 	struct jme_adapter *jme = netdev_priv(netdev);
 
-	strscpy(info->driver, DRV_NAME, sizeof(info->driver));
-	strscpy(info->version, DRV_VERSION, sizeof(info->version));
-	strscpy(info->bus_info, pci_name(jme->pdev), sizeof(info->bus_info));
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, pci_name(jme->pdev), sizeof(info->bus_info));
 }
 
 static int
@@ -3009,7 +3008,7 @@ jme_init_one(struct pci_dev *pdev,
 		jwrite32(jme, JME_APMC, apmc);
 	}
 
-	netif_napi_add(netdev, &jme->napi, jme_poll);
+	NETIF_NAPI_SET(netdev, &jme->napi, jme_poll, NAPI_POLL_WEIGHT)
 
 	spin_lock_init(&jme->phy_lock);
 	spin_lock_init(&jme->macaddr_lock);

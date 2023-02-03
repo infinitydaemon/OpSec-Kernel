@@ -153,12 +153,12 @@ static int cs5520_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	/* Perform set up for DMA */
 	if (pci_enable_device_io(pdev)) {
-		dev_err(&pdev->dev, "unable to configure BAR2.\n");
+		printk(KERN_ERR DRV_NAME ": unable to configure BAR2.\n");
 		return -ENODEV;
 	}
 
 	if (dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32))) {
-		dev_err(&pdev->dev, "unable to configure DMA mask.\n");
+		printk(KERN_ERR DRV_NAME ": unable to configure DMA mask.\n");
 		return -ENODEV;
 	}
 
@@ -259,8 +259,11 @@ static int cs5520_reinit_one(struct pci_dev *pdev)
 static int cs5520_pci_device_suspend(struct pci_dev *pdev, pm_message_t mesg)
 {
 	struct ata_host *host = pci_get_drvdata(pdev);
+	int rc = 0;
 
-	ata_host_suspend(host, mesg);
+	rc = ata_host_suspend(host, mesg);
+	if (rc)
+		return rc;
 
 	pci_save_state(pdev);
 	return 0;

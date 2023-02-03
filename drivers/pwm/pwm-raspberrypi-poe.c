@@ -90,9 +90,9 @@ static int raspberrypi_pwm_get_property(struct raspberrypi_pwm *pwm,
 	return ret;
 }
 
-static int raspberrypi_pwm_get_state(struct pwm_chip *chip,
-				     struct pwm_device *pwm,
-				     struct pwm_state *state)
+static void raspberrypi_pwm_get_state(struct pwm_chip *chip,
+				      struct pwm_device *pwm,
+				      struct pwm_state *state)
 {
 	struct raspberrypi_pwm *rpipwm = raspberrypi_pwm_from_chip(chip);
 
@@ -101,8 +101,6 @@ static int raspberrypi_pwm_get_state(struct pwm_chip *chip,
 					 RPI_PWM_MAX_DUTY);
 	state->enabled = !!(rpipwm->duty_cycle);
 	state->polarity = PWM_POLARITY_NORMAL;
-
-	return 0;
 }
 
 static int raspberrypi_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
@@ -179,6 +177,7 @@ static int raspberrypi_pwm_probe(struct platform_device *pdev)
 
 	rpipwm->chip.dev = dev;
 	rpipwm->chip.ops = &raspberrypi_pwm_ops;
+	rpipwm->chip.base = -1;
 	rpipwm->chip.npwm = RASPBERRYPI_FIRMWARE_PWM_NUM;
 
 	ret = raspberrypi_pwm_get_property(rpipwm, RPI_PWM_CUR_DUTY_REG,

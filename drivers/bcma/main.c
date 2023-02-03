@@ -20,7 +20,7 @@ MODULE_DESCRIPTION("Broadcom's specific AMBA driver");
 MODULE_LICENSE("GPL");
 
 /* contains the number the next bus should get. */
-static unsigned int bcma_bus_next_num;
+static unsigned int bcma_bus_next_num = 0;
 
 /* bcma_buses_mutex locks the bcma_bus_next_num */
 static DEFINE_MUTEX(bcma_buses_mutex);
@@ -293,7 +293,7 @@ static int bcma_register_devices(struct bcma_bus *bus)
 	int err;
 
 	list_for_each_entry(core, &bus->cores, list) {
-		/* We support that core ourselves */
+		/* We support that cores ourself */
 		switch (core->id.id) {
 		case BCMA_CORE_4706_CHIPCOMMON:
 		case BCMA_CORE_CHIPCOMMON:
@@ -344,10 +344,8 @@ static int bcma_register_devices(struct bcma_bus *bus)
 	err = bcma_gpio_init(&bus->drv_cc);
 	if (err == -ENOTSUPP)
 		bcma_debug(bus, "GPIO driver not activated\n");
-	else if (err) {
+	else if (err)
 		bcma_err(bus, "Error registering GPIO driver: %i\n", err);
-		return err;
-	}
 
 	if (bus->hosttype == BCMA_HOSTTYPE_SOC) {
 		err = bcma_chipco_watchdog_register(&bus->drv_cc);
@@ -371,7 +369,7 @@ void bcma_unregister_cores(struct bcma_bus *bus)
 	if (bus->hosttype == BCMA_HOSTTYPE_SOC)
 		platform_device_unregister(bus->drv_cc.watchdog);
 
-	/* Now no one uses internally-handled cores, we can free them */
+	/* Now noone uses internally-handled cores, we can free them */
 	list_for_each_entry_safe(core, tmp, &bus->cores, list) {
 		list_del(&core->list);
 		put_device(&core->dev);

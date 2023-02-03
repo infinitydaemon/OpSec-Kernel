@@ -24,6 +24,9 @@
 
 #include "fsi-master.h"
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/fsi.h>
+
 #define FSI_SLAVE_CONF_NEXT_MASK	GENMASK(31, 31)
 #define FSI_SLAVE_CONF_SLOTS_MASK	GENMASK(23, 16)
 #define FSI_SLAVE_CONF_SLOTS_SHIFT	16
@@ -91,9 +94,6 @@ struct fsi_slave {
 	u8			t_send_delay;
 	u8			t_echo_delay;
 };
-
-#define CREATE_TRACE_POINTS
-#include <trace/events/fsi.h>
 
 #define to_fsi_master(d) container_of(d, struct fsi_master, dev)
 #define to_fsi_slave(d) container_of(d, struct fsi_slave, dev)
@@ -392,8 +392,8 @@ int fsi_slave_write(struct fsi_slave *slave, uint32_t addr,
 }
 EXPORT_SYMBOL_GPL(fsi_slave_write);
 
-int fsi_slave_claim_range(struct fsi_slave *slave,
-			  uint32_t addr, uint32_t size)
+extern int fsi_slave_claim_range(struct fsi_slave *slave,
+		uint32_t addr, uint32_t size)
 {
 	if (addr + size < addr)
 		return -EINVAL;
@@ -406,8 +406,8 @@ int fsi_slave_claim_range(struct fsi_slave *slave,
 }
 EXPORT_SYMBOL_GPL(fsi_slave_claim_range);
 
-void fsi_slave_release_range(struct fsi_slave *slave,
-			     uint32_t addr, uint32_t size)
+extern void fsi_slave_release_range(struct fsi_slave *slave,
+		uint32_t addr, uint32_t size)
 {
 }
 EXPORT_SYMBOL_GPL(fsi_slave_release_range);
@@ -523,8 +523,6 @@ static int fsi_slave_scan(struct fsi_slave *slave)
 			dev->unit = i;
 			dev->addr = engine_addr;
 			dev->size = slots * engine_page_size;
-
-			trace_fsi_dev_init(dev);
 
 			dev_dbg(&slave->dev,
 			"engine[%i]: type %x, version %x, addr %x size %x\n",
@@ -1008,7 +1006,6 @@ static int fsi_slave_init(struct fsi_master *master, int link, uint8_t id)
 
 	crc = crc4(0, cfam_id, 32);
 	if (crc) {
-		trace_fsi_slave_invalid_cfam(master, link, cfam_id);
 		dev_warn(&master->dev, "slave %02x:%02x invalid cfam id CRC!\n",
 				link, id);
 		return -EIO;
@@ -1082,8 +1079,6 @@ static int fsi_slave_init(struct fsi_master *master, int link, uint8_t id)
 				 &slave->cdev_idx);
 	if (rc)
 		goto err_free;
-
-	trace_fsi_slave_init(slave);
 
 	/* Create chardev for userspace access */
 	cdev_init(&slave->cdev, &cfam_fops);

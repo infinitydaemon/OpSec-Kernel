@@ -19,20 +19,28 @@
 
 #include "usb_ops_linux.h"
 
+void rtl8188eu_set_hw_type(struct adapter *padapter);
+#define hal_set_hw_type rtl8188eu_set_hw_type
+void rtl8188eu_set_intf_ops(struct _io_ops *pops);
+#define usb_set_intf_ops rtl8188eu_set_intf_ops
+
 /*
  * Increase and check if the continual_urb_error of this @param dvobjprivei
  * is larger than MAX_CONTINUAL_URB_ERR
  * @return true:
  * @return false:
  */
-static inline bool rtw_inc_and_chk_continual_urb_error(struct dvobj_priv *dvobj)
+static inline int rtw_inc_and_chk_continual_urb_error(struct dvobj_priv *dvobj)
 {
-	int value = atomic_inc_return(&dvobj->continual_urb_error);
-
-	if (value > MAX_CONTINUAL_URB_ERR)
-		return true;
-
-	return false;
+	int ret = false;
+	int value;
+	value = atomic_inc_return(&dvobj->continual_urb_error);
+	if (value > MAX_CONTINUAL_URB_ERR) {
+		DBG_88E("[dvobj:%p][ERROR] continual_urb_error:%d > %d\n",
+			dvobj, value, MAX_CONTINUAL_URB_ERR);
+		ret = true;
+	}
+	return ret;
 }
 
 /*
@@ -46,14 +54,19 @@ static inline void rtw_reset_continual_urb_error(struct dvobj_priv *dvobj)
 #define USB_HIGH_SPEED_BULK_SIZE	512
 #define USB_FULL_SPEED_BULK_SIZE	64
 
-static inline bool rtw_usb_bulk_size_boundary(struct adapter *padapter, int buf_len)
+static inline u8 rtw_usb_bulk_size_boundary(struct adapter *padapter,
+					    int buf_len)
 {
+	u8 rst = true;
 	struct dvobj_priv *pdvobjpriv = adapter_to_dvobj(padapter);
 
-	if (pdvobjpriv->pusbdev->speed == USB_SPEED_HIGH)
-		return buf_len % USB_HIGH_SPEED_BULK_SIZE == 0;
+	if (pdvobjpriv->ishighspeed)
+		rst = (0 == (buf_len) % USB_HIGH_SPEED_BULK_SIZE) ?
+		      true : false;
 	else
-		return buf_len % USB_FULL_SPEED_BULK_SIZE == 0;
+		rst = (0 == (buf_len) % USB_FULL_SPEED_BULK_SIZE) ?
+		      true : false;
+	return rst;
 }
 
 #endif /* __USB_OPS_H_ */

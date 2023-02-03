@@ -495,7 +495,8 @@ static void abeoz9_hwmon_register(struct device *dev,
 
 #endif
 
-static int abeoz9_probe(struct i2c_client *client)
+static int abeoz9_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct abeoz9_rtc_data *data = NULL;
 	struct device *dev = &client->dev;
@@ -533,6 +534,7 @@ static int abeoz9_probe(struct i2c_client *client)
 	data->rtc->ops = &rtc_ops;
 	data->rtc->range_min = RTC_TIMESTAMP_BEGIN_2000;
 	data->rtc->range_max = RTC_TIMESTAMP_END_2099;
+	data->rtc->uie_unsupported = 1;
 	clear_bit(RTC_FEATURE_ALARM, data->rtc->features);
 
 	if (client->irq > 0) {
@@ -544,8 +546,6 @@ static int abeoz9_probe(struct i2c_client *client)
 			dev_err(dev, "failed to request alarm irq\n");
 			return ret;
 		}
-	} else {
-		clear_bit(RTC_FEATURE_UPDATE_INTERRUPT, data->rtc->features);
 	}
 
 	if (client->irq > 0 || device_property_read_bool(dev, "wakeup-source")) {
@@ -579,7 +579,7 @@ static struct i2c_driver abeoz9_driver = {
 		.name = "rtc-ab-eoz9",
 		.of_match_table = of_match_ptr(abeoz9_dt_match),
 	},
-	.probe_new = abeoz9_probe,
+	.probe	  = abeoz9_probe,
 	.id_table = abeoz9_id,
 };
 

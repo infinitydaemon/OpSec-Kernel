@@ -35,7 +35,6 @@
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 #include <linux/bitops.h>
-#include <linux/of.h>
 #include <net/checksum.h>
 
 #include "spider_net.h"
@@ -596,24 +595,24 @@ spider_net_set_multi(struct net_device *netdev)
 	int i;
 	u32 reg;
 	struct spider_net_card *card = netdev_priv(netdev);
-	DECLARE_BITMAP(bitmask, SPIDER_NET_MULTICAST_HASHES);
+	DECLARE_BITMAP(bitmask, SPIDER_NET_MULTICAST_HASHES) = {};
 
 	spider_net_set_promisc(card);
 
 	if (netdev->flags & IFF_ALLMULTI) {
-		bitmap_fill(bitmask, SPIDER_NET_MULTICAST_HASHES);
+		for (i = 0; i < SPIDER_NET_MULTICAST_HASHES; i++) {
+			set_bit(i, bitmask);
+		}
 		goto write_hash;
 	}
 
-	bitmap_zero(bitmask, SPIDER_NET_MULTICAST_HASHES);
-
 	/* well, we know, what the broadcast hash value is: it's xfd
 	hash = spider_net_get_multicast_hash(netdev, netdev->broadcast); */
-	__set_bit(0xfd, bitmask);
+	set_bit(0xfd, bitmask);
 
 	netdev_for_each_mc_addr(ha, netdev) {
 		hash = spider_net_get_multicast_hash(netdev, ha->addr);
-		__set_bit(hash, bitmask);
+		set_bit(hash, bitmask);
 	}
 
 write_hash:
@@ -1297,7 +1296,7 @@ spider_net_set_mac(struct net_device *netdev, void *p)
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(netdev, addr->sa_data);
+	memcpy(netdev->dev_addr, addr->sa_data, ETH_ALEN);
 
 	/* switch off GMACTPE and GMACRPE */
 	regvalue = spider_net_read_reg(card, SPIDER_NET_GMACOPEMD);
@@ -2270,7 +2269,8 @@ spider_net_setup_netdev(struct spider_net_card *card)
 	card->aneg_count = 0;
 	timer_setup(&card->aneg_timer, spider_net_link_phy, 0);
 
-	netif_napi_add(netdev, &card->napi, spider_net_poll);
+	netif_napi_add(netdev, &card->napi,
+		       spider_net_poll, SPIDER_NET_NAPI_WEIGHT);
 
 	spider_net_setup_netdev_ops(netdev);
 

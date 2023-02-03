@@ -1356,7 +1356,7 @@ err_ret:
 	return ret;
 }
 
-static void mrf24j40_remove(struct spi_device *spi)
+static int mrf24j40_remove(struct spi_device *spi)
 {
 	struct mrf24j40 *devrec = spi_get_drvdata(spi);
 
@@ -1366,6 +1366,8 @@ static void mrf24j40_remove(struct spi_device *spi)
 	ieee802154_free_hw(devrec->hw);
 	/* TODO: Will ieee802154_free_device() wait until ->xmit() is
 	 * complete? */
+
+	return 0;
 }
 
 static const struct of_device_id mrf24j40_of_match[] = {

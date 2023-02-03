@@ -14,7 +14,7 @@
 #include <asm/mach/arch.h>
 
 #include <video/samsung_fimd.h>
-#include "irqs.h"
+#include <mach/irqs.h>
 #include "map.h"
 #include "regs-gpio.h"
 #include "gpio-samsung.h"

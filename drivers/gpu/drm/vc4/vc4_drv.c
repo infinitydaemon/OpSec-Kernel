@@ -33,7 +33,8 @@
 #include <drm/drm_aperture.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_drv.h>
-#include <drm/drm_fbdev_generic.h>
+#include <drm/drm_fb_cma_helper.h>
+#include <drm/drm_fb_helper.h>
 #include <drm/drm_vblank.h>
 
 #include <soc/bcm2835/raspberrypi-firmware.h>
@@ -51,11 +52,13 @@
 #define DRIVER_PATCHLEVEL 0
 
 /* Helper function for mapping the regs on a platform device. */
-void __iomem *vc4_ioremap_regs(struct platform_device *pdev, int index)
+void __iomem *vc4_ioremap_regs(struct platform_device *dev, int index)
 {
+	struct resource *res;
 	void __iomem *map;
 
-	map = devm_platform_ioremap_resource(pdev, index);
+	res = platform_get_resource(dev, IORESOURCE_MEM, index);
+	map = devm_ioremap_resource(&dev->dev, res);
 	if (IS_ERR(map))
 		return map;
 
@@ -75,7 +78,7 @@ int vc4_dumb_fixup_args(struct drm_mode_create_dumb *args)
 	return 0;
 }
 
-static int vc5_dumb_create(struct drm_file *file_priv,
+static int vc4_dumb_create(struct drm_file *file_priv,
 			   struct drm_device *dev,
 			   struct drm_mode_create_dumb *args)
 {
@@ -85,7 +88,7 @@ static int vc5_dumb_create(struct drm_file *file_priv,
 	if (ret)
 		return ret;
 
-	return drm_gem_dma_dumb_create_internal(file_priv, dev, args);
+	return drm_gem_cma_dumb_create_internal(file_priv, dev, args);
 }
 
 static int vc4_get_param_ioctl(struct drm_device *dev, void *data,
@@ -196,7 +199,7 @@ static const struct drm_ioctl_desc vc4_drm_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(VC4_PERFMON_GET_VALUES, vc4_perfmon_get_values_ioctl, DRM_RENDER_ALLOW),
 };
 
-const struct drm_driver vc4_drm_driver = {
+static const struct drm_driver vc4_drm_driver = {
 	.driver_features = (DRIVER_MODESET |
 			    DRIVER_ATOMIC |
 			    DRIVER_GEM |
@@ -211,7 +214,7 @@ const struct drm_driver vc4_drm_driver = {
 
 	.gem_create_object = vc4_create_object,
 
-	DRM_GEM_DMA_DRIVER_OPS_WITH_DUMB_CREATE(vc4_bo_dumb_create),
+	DRM_GEM_CMA_DRIVER_OPS_WITH_DUMB_CREATE(vc4_bo_dumb_create),
 
 	.ioctls = vc4_drm_ioctls,
 	.num_ioctls = ARRAY_SIZE(vc4_drm_ioctls),
@@ -225,7 +228,7 @@ const struct drm_driver vc4_drm_driver = {
 	.patchlevel = DRIVER_PATCHLEVEL,
 };
 
-const struct drm_driver vc5_drm_driver = {
+static const struct drm_driver vc5_drm_driver = {
 	.driver_features = (DRIVER_MODESET |
 			    DRIVER_ATOMIC |
 			    DRIVER_GEM),
@@ -234,7 +237,7 @@ const struct drm_driver vc5_drm_driver = {
 	.debugfs_init = vc4_debugfs_init,
 #endif
 
-	DRM_GEM_DMA_DRIVER_OPS_WITH_DUMB_CREATE(vc5_dumb_create),
+	DRM_GEM_CMA_DRIVER_OPS_WITH_DUMB_CREATE(vc4_dumb_create),
 
 	.fops = &vc4_drm_fops,
 
@@ -245,6 +248,11 @@ const struct drm_driver vc5_drm_driver = {
 	.minor = DRIVER_MINOR,
 	.patchlevel = DRIVER_PATCHLEVEL,
 };
+
+static int compare_dev(struct device *dev, void *data)
+{
+	return dev == data;
+}
 
 static void vc4_match_add_drivers(struct device *dev,
 				  struct component_match **match,
@@ -259,7 +267,7 @@ static void vc4_match_add_drivers(struct device *dev,
 
 		while ((d = platform_find_device_by_driver(p, drv))) {
 			put_device(p);
-			component_match_add(dev, match, component_compare_dev, d);
+			component_match_add(dev, match, compare_dev, d);
 			p = d;
 		}
 		put_device(p);
@@ -273,8 +281,7 @@ static void vc4_component_unbind_all(void *ptr)
 	component_unbind_all(vc4->dev, &vc4->base);
 }
 
-static const struct of_device_id vc4_dma_range_matches[] = {
-	{ .compatible = "brcm,bcm2711-hvs" },
+const struct of_device_id vc4_dma_range_matches[] = {
 	{ .compatible = "brcm,bcm2835-hvs" },
 	{ .compatible = "brcm,bcm2711-hvs" },
 	{ .compatible = "raspberrypi,rpi-firmware-kms" },
@@ -390,7 +397,7 @@ static int vc4_drm_bind(struct device *dev)
 	if (!vc4->firmware_kms) {
 		ret = vc4_plane_create_additional_planes(drm);
 		if (ret)
-			return ret;
+			goto unbind_all;
 	}
 
 	ret = vc4_kms_load(drm);
@@ -486,9 +493,6 @@ static struct platform_driver vc4_platform_driver = {
 static int __init vc4_drm_register(void)
 {
 	int ret;
-
-	if (drm_firmware_drivers_only())
-		return -ENODEV;
 
 	ret = platform_register_drivers(component_drivers,
 					ARRAY_SIZE(component_drivers));

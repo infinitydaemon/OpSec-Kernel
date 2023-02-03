@@ -254,15 +254,14 @@ void rmgr_pop_handle(struct ia_css_rmgr_vbuf_pool *pool,
 void ia_css_rmgr_acq_vbuf(struct ia_css_rmgr_vbuf_pool *pool,
 			  struct ia_css_rmgr_vbuf_handle **handle)
 {
+	struct ia_css_rmgr_vbuf_handle h;
+
 	if ((!pool) || (!handle) || (!*handle)) {
 		IA_CSS_LOG("Invalid inputs");
 		return;
 	}
 
 	if (pool->copy_on_write) {
-		struct ia_css_rmgr_vbuf_handle *new_handle;
-		struct ia_css_rmgr_vbuf_handle h = { 0 };
-
 		/* only one reference, reuse (no new retain) */
 		if ((*handle)->count == 1)
 			return;
@@ -273,29 +272,23 @@ void ia_css_rmgr_acq_vbuf(struct ia_css_rmgr_vbuf_pool *pool,
 			h.size = (*handle)->size;
 			/* release ref to current buffer */
 			ia_css_rmgr_refcount_release_vbuf(handle);
-			new_handle = &h;
-		} else {
-			new_handle = *handle;
+			*handle = &h;
 		}
 		/* get new buffer for needed size */
-		if (new_handle->vptr == 0x0) {
+		if ((*handle)->vptr == 0x0) {
 			if (pool->recycle) {
 				/* try and pop from pool */
-				rmgr_pop_handle(pool, &new_handle);
+				rmgr_pop_handle(pool, handle);
 			}
-			if (new_handle->vptr == 0x0) {
+			if ((*handle)->vptr == 0x0) {
 				/* we need to allocate */
-				new_handle->vptr = hmm_alloc(new_handle->size);
+				(*handle)->vptr = hmm_alloc((*handle)->size,
+							     HMM_BO_PRIVATE, 0, NULL, 0);
 			} else {
 				/* we popped a buffer */
-				*handle = new_handle;
 				return;
 			}
 		}
-		/* Note that new_handle will change to an internally maintained one */
-		ia_css_rmgr_refcount_retain_vbuf(&new_handle);
-		*handle = new_handle;
-		return;
 	}
 	/* Note that handle will change to an internally maintained one */
 	ia_css_rmgr_refcount_retain_vbuf(handle);

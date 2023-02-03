@@ -110,13 +110,14 @@ long jfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case FITRIM:
 	{
 		struct super_block *sb = inode->i_sb;
+		struct request_queue *q = bdev_get_queue(sb->s_bdev);
 		struct fstrim_range range;
 		s64 ret = 0;
 
 		if (!capable(CAP_SYS_ADMIN))
 			return -EPERM;
 
-		if (!bdev_max_discard_sectors(sb->s_bdev)) {
+		if (!blk_queue_discard(q)) {
 			jfs_warn("FITRIM not supported on device");
 			return -EOPNOTSUPP;
 		}
@@ -126,7 +127,7 @@ long jfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			return -EFAULT;
 
 		range.minlen = max_t(unsigned int, range.minlen,
-				     bdev_discard_granularity(sb->s_bdev));
+			q->limits.discard_granularity);
 
 		ret = jfs_ioc_trim(inode, &range);
 		if (ret < 0)

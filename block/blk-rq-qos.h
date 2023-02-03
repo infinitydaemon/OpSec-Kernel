@@ -17,6 +17,7 @@ enum rq_qos_id {
 	RQ_QOS_WBT,
 	RQ_QOS_LATENCY,
 	RQ_QOS_COST,
+	RQ_QOS_IOPRIO,
 };
 
 struct rq_wait {
@@ -105,11 +106,8 @@ static inline int rq_qos_add(struct request_queue *q, struct rq_qos *rqos)
 
 	blk_mq_unfreeze_queue(q);
 
-	if (rqos->ops->debugfs_attrs) {
-		mutex_lock(&q->debugfs_mutex);
+	if (rqos->ops->debugfs_attrs)
 		blk_mq_debugfs_register_rqos(rqos);
-		mutex_unlock(&q->debugfs_mutex);
-	}
 
 	return 0;
 ebusy:
@@ -140,9 +138,7 @@ static inline void rq_qos_del(struct request_queue *q, struct rq_qos *rqos)
 
 	blk_mq_unfreeze_queue(q);
 
-	mutex_lock(&q->debugfs_mutex);
 	blk_mq_debugfs_unregister_rqos(rqos);
-	mutex_unlock(&q->debugfs_mutex);
 }
 
 typedef bool (acquire_inflight_cb_t)(struct rq_wait *rqw, void *private_data);

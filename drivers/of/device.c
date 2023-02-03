@@ -28,7 +28,7 @@
 const struct of_device_id *of_match_device(const struct of_device_id *matches,
 					   const struct device *dev)
 {
-	if (!matches || !dev->of_node || dev->of_node_reused)
+	if ((!matches) || (!dev->of_node))
 		return NULL;
 	return of_match_node(matches, dev->of_node);
 }
@@ -116,19 +116,12 @@ int of_dma_configure_id(struct device *dev, struct device_node *np,
 {
 	const struct iommu_ops *iommu;
 	const struct bus_dma_region *map = NULL;
-	struct device_node *bus_np;
 	u64 dma_start = 0;
 	u64 mask, end, size = 0;
 	bool coherent;
 	int ret;
 
-	if (np == dev->of_node)
-		bus_np = __of_get_dma_parent(np);
-	else
-		bus_np = of_node_get(np);
-
-	ret = of_dma_get_range(bus_np, &map);
-	of_node_put(bus_np);
+	ret = of_dma_get_range(np, &map);
 	if (ret < 0) {
 		/*
 		 * For legacy reasons, we have to assume some devices need
@@ -332,10 +325,10 @@ EXPORT_SYMBOL_GPL(of_device_modalias);
 
 /**
  * of_device_uevent - Display OF related uevent information
- * @dev:	Device to display the uevent information for
- * @env:	Kernel object's userspace event reference to fill up
+ * @dev:	Device to apply DMA configuration
+ * @env:	Kernel object's userspace event reference
  */
-void of_device_uevent(const struct device *dev, struct kobj_uevent_env *env)
+void of_device_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
 	const char *compat, *type;
 	struct alias_prop *app;

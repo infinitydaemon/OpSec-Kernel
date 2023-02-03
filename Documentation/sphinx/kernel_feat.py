@@ -33,7 +33,6 @@ u"""
 
 import codecs
 import os
-import re
 import subprocess
 import sys
 
@@ -83,7 +82,7 @@ class KernelFeat(Directive):
 
         env = doc.settings.env
         cwd = path.dirname(doc.current_source)
-        cmd = "get_feat.pl rest --enable-fname --dir "
+        cmd = "get_feat.pl rest --dir "
         cmd += self.arguments[0]
 
         if len(self.arguments) > 1:
@@ -103,26 +102,11 @@ class KernelFeat(Directive):
         shell_env["srctree"] = srctree
 
         lines = self.runCmd(cmd, shell=True, cwd=cwd, env=shell_env)
-
-        line_regex = re.compile("^\.\. FILE (\S+)$")
-
-        out_lines = ""
-
-        for line in lines.split("\n"):
-            match = line_regex.search(line)
-            if match:
-                fname = match.group(1)
-
-                # Add the file to Sphinx build dependencies
-                env.note_dependency(os.path.abspath(fname))
-            else:
-                out_lines += line + "\n"
-
-        nodeList = self.nestedParse(out_lines, fname)
+        nodeList = self.nestedParse(lines, fname)
         return nodeList
 
     def runCmd(self, cmd, **kwargs):
-        u"""Run command ``cmd`` and return its stdout as unicode."""
+        u"""Run command ``cmd`` and return it's stdout as unicode."""
 
         try:
             proc = subprocess.Popen(

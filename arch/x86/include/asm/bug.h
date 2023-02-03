@@ -4,7 +4,6 @@
 
 #include <linux/stringify.h>
 #include <linux/instrumentation.h>
-#include <linux/objtool.h>
 
 /*
  * Despite that some emulators terminate on UD2, we use it for WARN().
@@ -18,7 +17,7 @@
 #ifdef CONFIG_X86_32
 # define __BUG_REL(val)	".long " __stringify(val)
 #else
-# define __BUG_REL(val)	".long " __stringify(val) " - ."
+# define __BUG_REL(val)	".long " __stringify(val) " - 2b"
 #endif
 
 #ifdef CONFIG_DEBUG_BUGVERBOSE

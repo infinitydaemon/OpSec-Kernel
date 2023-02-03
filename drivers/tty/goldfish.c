@@ -298,7 +298,7 @@ static int goldfish_tty_probe(struct platform_device *pdev)
 	struct resource *r;
 	struct device *ttydev;
 	void __iomem *base;
-	int irq;
+	u32 irq;
 	unsigned int line;
 
 	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -313,11 +313,13 @@ static int goldfish_tty_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
-	irq = platform_get_irq(pdev, 0);
-	if (irq < 0) {
-		ret = irq;
+	r = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
+	if (!r) {
+		pr_err("goldfish_tty: No IRQ resource available!\n");
 		goto err_unmap;
 	}
+
+	irq = r->start;
 
 	mutex_lock(&goldfish_tty_lock);
 
@@ -436,7 +438,7 @@ static int goldfish_tty_remove(struct platform_device *pdev)
 }
 
 #ifdef CONFIG_GOLDFISH_TTY_EARLY_CONSOLE
-static void gf_early_console_putchar(struct uart_port *port, unsigned char ch)
+static void gf_early_console_putchar(struct uart_port *port, int ch)
 {
 	gf_iowrite32(ch, port->membase);
 }

@@ -203,7 +203,7 @@ EXPORT_SYMBOL_GPL(balloon_page_dequeue);
 
 #ifdef CONFIG_BALLOON_COMPACTION
 
-static bool balloon_page_isolate(struct page *page, isolate_mode_t mode)
+bool balloon_page_isolate(struct page *page, isolate_mode_t mode)
 
 {
 	struct balloon_dev_info *b_dev_info = balloon_page_device(page);
@@ -217,7 +217,7 @@ static bool balloon_page_isolate(struct page *page, isolate_mode_t mode)
 	return true;
 }
 
-static void balloon_page_putback(struct page *page)
+void balloon_page_putback(struct page *page)
 {
 	struct balloon_dev_info *b_dev_info = balloon_page_device(page);
 	unsigned long flags;
@@ -228,8 +228,10 @@ static void balloon_page_putback(struct page *page)
 	spin_unlock_irqrestore(&b_dev_info->pages_lock, flags);
 }
 
+
 /* move_to_new_page() counterpart for a ballooned page */
-static int balloon_page_migrate(struct page *newpage, struct page *page,
+int balloon_page_migrate(struct address_space *mapping,
+		struct page *newpage, struct page *page,
 		enum migrate_mode mode)
 {
 	struct balloon_dev_info *balloon = balloon_page_device(page);
@@ -248,11 +250,11 @@ static int balloon_page_migrate(struct page *newpage, struct page *page,
 	return balloon->migratepage(balloon, newpage, page, mode);
 }
 
-const struct movable_operations balloon_mops = {
-	.migrate_page = balloon_page_migrate,
+const struct address_space_operations balloon_aops = {
+	.migratepage = balloon_page_migrate,
 	.isolate_page = balloon_page_isolate,
 	.putback_page = balloon_page_putback,
 };
-EXPORT_SYMBOL_GPL(balloon_mops);
+EXPORT_SYMBOL_GPL(balloon_aops);
 
 #endif /* CONFIG_BALLOON_COMPACTION */

@@ -163,7 +163,7 @@ static int zynqmp_get_clock_name(u32 clk_id, char *clk_name)
 
 	ret = zynqmp_is_valid_clock(clk_id);
 	if (ret == 1) {
-		strscpy(clk_name, clock[clk_id].clk_name, MAX_NAME_LEN);
+		strncpy(clk_name, clock[clk_id].clk_name, MAX_NAME_LEN);
 		return 0;
 	}
 
@@ -220,22 +220,18 @@ static int zynqmp_pm_clock_get_num_clocks(u32 *nclocks)
  * This function is used to get name of clock specified by given
  * clock ID.
  *
- * Return: 0 on success else error+reason
+ * Return: Returns 0
  */
 static int zynqmp_pm_clock_get_name(u32 clock_id,
 				    struct name_resp *response)
 {
 	struct zynqmp_pm_query_data qdata = {0};
 	u32 ret_payload[PAYLOAD_ARG_CNT];
-	int ret;
 
 	qdata.qid = PM_QID_CLOCK_GET_NAME;
 	qdata.arg1 = clock_id;
 
-	ret = zynqmp_pm_query_data(qdata, ret_payload);
-	if (ret)
-		return ret;
-
+	zynqmp_pm_query_data(qdata, ret_payload);
 	memcpy(response, ret_payload, sizeof(*response));
 
 	return 0;
@@ -723,7 +719,7 @@ static void zynqmp_get_clock_info(void)
 
 		if (!strcmp(name.name, RESERVED_CLK_NAME))
 			continue;
-		strscpy(clock[i].clk_name, name.name, MAX_NAME_LEN);
+		strncpy(clock[i].clk_name, name.name, MAX_NAME_LEN);
 	}
 
 	/* Get topology of all clock */

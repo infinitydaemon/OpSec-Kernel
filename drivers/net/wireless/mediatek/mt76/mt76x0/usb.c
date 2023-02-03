@@ -141,7 +141,6 @@ static const struct ieee80211_ops mt76x0u_ops = {
 	.set_tim = mt76_set_tim,
 	.release_buffered_frames = mt76_release_buffered_frames,
 	.get_antenna = mt76_get_antenna,
-	.set_sar_specs = mt76x0_set_sar_specs,
 };
 
 static int mt76x0u_init_hardware(struct mt76x02_dev *dev, bool reset)
@@ -245,7 +244,7 @@ static int mt76x0u_probe(struct usb_interface *usb_intf,
 	usb_set_intfdata(usb_intf, dev);
 
 	mt76x02u_init_mcu(mdev);
-	ret = mt76u_init(mdev, usb_intf);
+	ret = mt76u_init(mdev, usb_intf, false);
 	if (ret)
 		goto err;
 

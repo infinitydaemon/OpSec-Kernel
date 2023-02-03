@@ -26,6 +26,8 @@
 #include <linux/mount.h>
 #include <linux/bug.h>
 
+#include <linux/uaccess.h>
+
 #include "internal.h"
 
 static void proc_evict_inode(struct inode *inode)
@@ -64,7 +66,7 @@ static struct inode *proc_alloc_inode(struct super_block *sb)
 {
 	struct proc_inode *ei;
 
-	ei = alloc_inode_sb(sb, proc_inode_cachep, GFP_KERNEL);
+	ei = kmem_cache_alloc(proc_inode_cachep, GFP_KERNEL);
 	if (!ei)
 		return NULL;
 	ei->pid = NULL;
@@ -212,15 +214,7 @@ static void unuse_pde(struct proc_dir_entry *pde)
 		complete(pde->pde_unload_completion);
 }
 
-/*
- * At most 2 contexts can enter this function: the one doing the last
- * close on the descriptor and whoever is deleting PDE itself.
- *
- * First to enter calls ->proc_release hook and signals its completion
- * to the second one which waits and then does nothing.
- *
- * PDE is locked on entry, unlocked on exit.
- */
+/* pde is locked on entry, unlocked on exit */
 static void close_pdeo(struct proc_dir_entry *pde, struct pde_opener *pdeo)
 	__releases(&pde->pde_unload_lock)
 {
@@ -230,6 +224,9 @@ static void close_pdeo(struct proc_dir_entry *pde, struct pde_opener *pdeo)
 	 *
 	 * rmmod (remove_proc_entry() et al) can't delete an entry and proceed:
 	 * "struct file" needs to be available at the right moment.
+	 *
+	 * Therefore, first process to enter this function does ->release() and
+	 * signals its completion to the other process which does nothing.
 	 */
 	if (pdeo->closing) {
 		/* somebody else is doing that, just wait */
@@ -243,12 +240,10 @@ static void close_pdeo(struct proc_dir_entry *pde, struct pde_opener *pdeo)
 
 		pdeo->closing = true;
 		spin_unlock(&pde->pde_unload_lock);
-
 		file = pdeo->file;
 		pde->proc_ops->proc_release(file_inode(file), file);
-
 		spin_lock(&pde->pde_unload_lock);
-		/* Strictly after ->proc_release, see above. */
+		/* After ->release. */
 		list_del(&pdeo->lh);
 		c = pdeo->c;
 		spin_unlock(&pde->pde_unload_lock);
@@ -494,9 +489,6 @@ static int proc_reg_open(struct inode *inode, struct file *file)
 	typeof_member(struct proc_ops, proc_release) release;
 	struct pde_opener *pdeo;
 
-	if (!pde->proc_ops->proc_lseek)
-		file->f_mode &= ~FMODE_LSEEK;
-
 	if (pde_is_permanent(pde)) {
 		open = pde->proc_ops->proc_open;
 		if (open)
@@ -658,7 +650,6 @@ struct inode *proc_get_inode(struct super_block *sb, struct proc_dir_entry *de)
 		return NULL;
 	}
 
-	inode->i_private = de->data;
 	inode->i_ino = de->low_ino;
 	inode->i_mtime = inode->i_atime = inode->i_ctime = current_time(inode);
 	PROC_I(inode)->pde = de;

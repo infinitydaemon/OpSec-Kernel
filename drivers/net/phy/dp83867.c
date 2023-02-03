@@ -14,7 +14,6 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/bitfield.h>
-#include <linux/nvmem-consumer.h>
 
 #include <dt-bindings/net/ti-dp83867.h>
 
@@ -184,7 +183,7 @@ static int dp83867_set_wol(struct phy_device *phydev,
 {
 	struct net_device *ndev = phydev->attached_dev;
 	u16 val_rxcfg, val_micr;
-	const u8 *mac;
+	u8 *mac;
 
 	val_rxcfg = phy_read_mmd(phydev, DP83867_DEVADDR, DP83867_RXFCFG);
 	val_micr = phy_read(phydev, MII_DP83867_MICR);
@@ -195,7 +194,7 @@ static int dp83867_set_wol(struct phy_device *phydev,
 		val_micr |= MII_DP83867_MICR_WOL_INT_EN;
 
 		if (wol->wolopts & WAKE_MAGIC) {
-			mac = (const u8 *)ndev->dev_addr;
+			mac = (u8 *)ndev->dev_addr;
 
 			if (!is_valid_ether_addr(mac))
 				return -EINVAL;
@@ -523,51 +522,6 @@ static int dp83867_verify_rgmii_cfg(struct phy_device *phydev)
 }
 
 #if IS_ENABLED(CONFIG_OF_MDIO)
-static int dp83867_of_init_io_impedance(struct phy_device *phydev)
-{
-	struct dp83867_private *dp83867 = phydev->priv;
-	struct device *dev = &phydev->mdio.dev;
-	struct device_node *of_node = dev->of_node;
-	struct nvmem_cell *cell;
-	u8 *buf, val;
-	int ret;
-
-	cell = of_nvmem_cell_get(of_node, "io_impedance_ctrl");
-	if (IS_ERR(cell)) {
-		ret = PTR_ERR(cell);
-		if (ret != -ENOENT && ret != -EOPNOTSUPP)
-			return phydev_err_probe(phydev, ret,
-						"failed to get nvmem cell io_impedance_ctrl\n");
-
-		/* If no nvmem cell, check for the boolean properties. */
-		if (of_property_read_bool(of_node, "ti,max-output-impedance"))
-			dp83867->io_impedance = DP83867_IO_MUX_CFG_IO_IMPEDANCE_MAX;
-		else if (of_property_read_bool(of_node, "ti,min-output-impedance"))
-			dp83867->io_impedance = DP83867_IO_MUX_CFG_IO_IMPEDANCE_MIN;
-		else
-			dp83867->io_impedance = -1; /* leave at default */
-
-		return 0;
-	}
-
-	buf = nvmem_cell_read(cell, NULL);
-	nvmem_cell_put(cell);
-
-	if (IS_ERR(buf))
-		return PTR_ERR(buf);
-
-	val = *buf;
-	kfree(buf);
-
-	if ((val & DP83867_IO_MUX_CFG_IO_IMPEDANCE_MASK) != val) {
-		phydev_err(phydev, "nvmem cell 'io_impedance_ctrl' contents out of range\n");
-		return -ERANGE;
-	}
-	dp83867->io_impedance = val;
-
-	return 0;
-}
-
 static int dp83867_of_init(struct phy_device *phydev)
 {
 	struct dp83867_private *dp83867 = phydev->priv;
@@ -595,9 +549,12 @@ static int dp83867_of_init(struct phy_device *phydev)
 		}
 	}
 
-	ret = dp83867_of_init_io_impedance(phydev);
-	if (ret)
-		return ret;
+	if (of_property_read_bool(of_node, "ti,max-output-impedance"))
+		dp83867->io_impedance = DP83867_IO_MUX_CFG_IO_IMPEDANCE_MAX;
+	else if (of_property_read_bool(of_node, "ti,min-output-impedance"))
+		dp83867->io_impedance = DP83867_IO_MUX_CFG_IO_IMPEDANCE_MIN;
+	else
+		dp83867->io_impedance = -1; /* leave at default */
 
 	dp83867->rxctrl_strap_quirk = of_property_read_bool(of_node,
 							    "ti,dp83867-rxctrl-strap-quirk");
@@ -663,32 +620,6 @@ static int dp83867_of_init(struct phy_device *phydev)
 #else
 static int dp83867_of_init(struct phy_device *phydev)
 {
-	struct dp83867_private *dp83867 = phydev->priv;
-	u16 delay;
-
-	/* For non-OF device, the RX and TX ID values are either strapped
-	 * or take from default value. So, we init RX & TX ID values here
-	 * so that the RGMIIDCTL is configured correctly later in
-	 * dp83867_config_init();
-	 */
-	delay = phy_read_mmd(phydev, DP83867_DEVADDR, DP83867_RGMIIDCTL);
-	dp83867->rx_id_delay = delay & DP83867_RGMII_RX_CLK_DELAY_MAX;
-	dp83867->tx_id_delay = (delay >> DP83867_RGMII_TX_CLK_DELAY_SHIFT) &
-			       DP83867_RGMII_TX_CLK_DELAY_MAX;
-
-	/* Per datasheet, IO impedance is default to 50-ohm, so we set the
-	 * same here or else the default '0' means highest IO impedance
-	 * which is wrong.
-	 */
-	dp83867->io_impedance = DP83867_IO_MUX_CFG_IO_IMPEDANCE_MIN / 2;
-
-	/* For non-OF device, the RX and TX FIFO depths are taken from
-	 * default value. So, we init RX & TX FIFO depths here
-	 * so that it is configured correctly later in dp83867_config_init();
-	 */
-	dp83867->tx_fifo_depth = DP83867_PHYCR_FIFO_DEPTH_4_B_NIB;
-	dp83867->rx_fifo_depth = DP83867_PHYCR_FIFO_DEPTH_4_B_NIB;
-
 	return 0;
 }
 #endif /* CONFIG_OF_MDIO */
@@ -940,12 +871,6 @@ static void dp83867_link_change_notify(struct phy_device *phydev)
 	}
 }
 
-static int dp83867_loopback(struct phy_device *phydev, bool enable)
-{
-	return phy_modify(phydev, MII_BMCR, BMCR_LOOPBACK,
-			  enable ? BMCR_LOOPBACK : 0);
-}
-
 static struct phy_driver dp83867_driver[] = {
 	{
 		.phy_id		= DP83867_PHY_ID,
@@ -972,7 +897,6 @@ static struct phy_driver dp83867_driver[] = {
 		.resume		= genphy_resume,
 
 		.link_change_notify = dp83867_link_change_notify,
-		.set_loopback	= dp83867_loopback,
 	},
 };
 module_phy_driver(dp83867_driver);

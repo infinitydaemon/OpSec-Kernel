@@ -3,7 +3,6 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/device.h>
-#include <linux/kstrtox.h>
 #include <linux/nls.h>
 #include <linux/usb/composite.h>
 #include <linux/usb/gadget_configfs.h>
@@ -74,11 +73,6 @@ static inline struct config_usb_cfg *to_config_usb_cfg(struct config_item *item)
 			group);
 }
 
-static inline struct gadget_info *cfg_to_gadget_info(struct config_usb_cfg *cfg)
-{
-	return container_of(cfg->c.cdev, struct gadget_info, cdev);
-}
-
 struct gadget_strings {
 	struct usb_gadget_strings stringtab_dev;
 	struct usb_string strings[USB_GADGET_FIRST_AVAIL_IDX];
@@ -88,6 +82,10 @@ struct gadget_strings {
 
 	struct config_group group;
 	struct list_head list;
+};
+
+struct os_desc {
+	struct config_group group;
 };
 
 struct gadget_config_name {
@@ -285,7 +283,7 @@ static ssize_t gadget_dev_desc_UDC_store(struct config_item *item,
 			goto err;
 		}
 		gi->composite.gadget_driver.udc_name = name;
-		ret = usb_gadget_register_driver(&gi->composite.gadget_driver);
+		ret = usb_gadget_probe_driver(&gi->composite.gadget_driver);
 		if (ret) {
 			gi->composite.gadget_driver.udc_name = NULL;
 			goto err;
@@ -393,7 +391,6 @@ static void gadget_info_attr_release(struct config_item *item)
 	WARN_ON(!list_empty(&gi->string_list));
 	WARN_ON(!list_empty(&gi->available_func));
 	kfree(gi->composite.gadget_driver.function);
-	kfree(gi->composite.gadget_driver.driver.name);
 	kfree(gi);
 }
 
@@ -416,11 +413,13 @@ static int config_usb_cfg_link(
 	struct config_item *usb_func_ci)
 {
 	struct config_usb_cfg *cfg = to_config_usb_cfg(usb_cfg_ci);
-	struct gadget_info *gi = cfg_to_gadget_info(cfg);
+	struct usb_composite_dev *cdev = cfg->c.cdev;
+	struct gadget_info *gi = container_of(cdev, struct gadget_info, cdev);
 
-	struct usb_function_instance *fi =
-			to_usb_function_instance(usb_func_ci);
-	struct usb_function_instance *a_fi = NULL, *iter;
+	struct config_group *group = to_config_group(usb_func_ci);
+	struct usb_function_instance *fi = container_of(group,
+			struct usb_function_instance, group);
+	struct usb_function_instance *a_fi;
 	struct usb_function *f;
 	int ret;
 
@@ -430,13 +429,11 @@ static int config_usb_cfg_link(
 	 * from another gadget or a random directory.
 	 * Also a function instance can only be linked once.
 	 */
-	list_for_each_entry(iter, &gi->available_func, cfs_list) {
-		if (iter != fi)
-			continue;
-		a_fi = iter;
-		break;
+	list_for_each_entry(a_fi, &gi->available_func, cfs_list) {
+		if (a_fi == fi)
+			break;
 	}
-	if (!a_fi) {
+	if (a_fi != fi) {
 		ret = -EINVAL;
 		goto out;
 	}
@@ -467,10 +464,12 @@ static void config_usb_cfg_unlink(
 	struct config_item *usb_func_ci)
 {
 	struct config_usb_cfg *cfg = to_config_usb_cfg(usb_cfg_ci);
-	struct gadget_info *gi = cfg_to_gadget_info(cfg);
+	struct usb_composite_dev *cdev = cfg->c.cdev;
+	struct gadget_info *gi = container_of(cdev, struct gadget_info, cdev);
 
-	struct usb_function_instance *fi =
-			to_usb_function_instance(usb_func_ci);
+	struct config_group *group = to_config_group(usb_func_ci);
+	struct usb_function_instance *fi = container_of(group,
+			struct usb_function_instance, group);
 	struct usb_function *f;
 
 	/*
@@ -506,15 +505,12 @@ static struct configfs_item_operations gadget_config_item_ops = {
 static ssize_t gadget_config_desc_MaxPower_show(struct config_item *item,
 		char *page)
 {
-	struct config_usb_cfg *cfg = to_config_usb_cfg(item);
-
-	return sprintf(page, "%u\n", cfg->c.MaxPower);
+	return sprintf(page, "%u\n", to_config_usb_cfg(item)->c.MaxPower);
 }
 
 static ssize_t gadget_config_desc_MaxPower_store(struct config_item *item,
 		const char *page, size_t len)
 {
-	struct config_usb_cfg *cfg = to_config_usb_cfg(item);
 	u16 val;
 	int ret;
 	ret = kstrtou16(page, 0, &val);
@@ -522,22 +518,20 @@ static ssize_t gadget_config_desc_MaxPower_store(struct config_item *item,
 		return ret;
 	if (DIV_ROUND_UP(val, 8) > 0xff)
 		return -ERANGE;
-	cfg->c.MaxPower = val;
+	to_config_usb_cfg(item)->c.MaxPower = val;
 	return len;
 }
 
 static ssize_t gadget_config_desc_bmAttributes_show(struct config_item *item,
 		char *page)
 {
-	struct config_usb_cfg *cfg = to_config_usb_cfg(item);
-
-	return sprintf(page, "0x%02x\n", cfg->c.bmAttributes);
+	return sprintf(page, "0x%02x\n",
+		to_config_usb_cfg(item)->c.bmAttributes);
 }
 
 static ssize_t gadget_config_desc_bmAttributes_store(struct config_item *item,
 		const char *page, size_t len)
 {
-	struct config_usb_cfg *cfg = to_config_usb_cfg(item);
 	u8 val;
 	int ret;
 	ret = kstrtou8(page, 0, &val);
@@ -548,7 +542,7 @@ static ssize_t gadget_config_desc_bmAttributes_store(struct config_item *item,
 	if (val & ~(USB_CONFIG_ATT_ONE | USB_CONFIG_ATT_SELFPOWER |
 				USB_CONFIG_ATT_WAKEUP))
 		return -EINVAL;
-	cfg->c.bmAttributes = val;
+	to_config_usb_cfg(item)->c.bmAttributes = val;
 	return len;
 }
 
@@ -781,11 +775,15 @@ static void gadget_strings_attr_release(struct config_item *item)
 USB_CONFIG_STRING_RW_OPS(gadget_strings);
 USB_CONFIG_STRINGS_LANG(gadget_strings, gadget_info);
 
+static inline struct os_desc *to_os_desc(struct config_item *item)
+{
+	return container_of(to_config_group(item), struct os_desc, group);
+}
+
 static inline struct gadget_info *os_desc_item_to_gadget_info(
 		struct config_item *item)
 {
-	return container_of(to_config_group(item),
-			struct gadget_info, os_desc_group);
+	return to_gadget_info(to_os_desc(item)->group.cg_item.ci_parent);
 }
 
 static ssize_t os_desc_use_show(struct config_item *item, char *page)
@@ -802,7 +800,7 @@ static ssize_t os_desc_use_store(struct config_item *item, const char *page,
 	bool use;
 
 	mutex_lock(&gi->lock);
-	ret = kstrtobool(page, &use);
+	ret = strtobool(page, &use);
 	if (!ret) {
 		gi->use_os_desc = use;
 		ret = len;
@@ -880,23 +878,30 @@ static struct configfs_attribute *os_desc_attrs[] = {
 	NULL,
 };
 
+static void os_desc_attr_release(struct config_item *item)
+{
+	struct os_desc *os_desc = to_os_desc(item);
+	kfree(os_desc);
+}
+
 static int os_desc_link(struct config_item *os_desc_ci,
 			struct config_item *usb_cfg_ci)
 {
-	struct gadget_info *gi = os_desc_item_to_gadget_info(os_desc_ci);
+	struct gadget_info *gi = container_of(to_config_group(os_desc_ci),
+					struct gadget_info, os_desc_group);
 	struct usb_composite_dev *cdev = &gi->cdev;
-	struct config_usb_cfg *c_target = to_config_usb_cfg(usb_cfg_ci);
-	struct usb_configuration *c = NULL, *iter;
+	struct config_usb_cfg *c_target =
+		container_of(to_config_group(usb_cfg_ci),
+			     struct config_usb_cfg, group);
+	struct usb_configuration *c;
 	int ret;
 
 	mutex_lock(&gi->lock);
-	list_for_each_entry(iter, &cdev->configs, list) {
-		if (iter != &c_target->c)
-			continue;
-		c = iter;
-		break;
+	list_for_each_entry(c, &cdev->configs, list) {
+		if (c == &c_target->c)
+			break;
 	}
-	if (!c) {
+	if (c != &c_target->c) {
 		ret = -EINVAL;
 		goto out;
 	}
@@ -917,7 +922,8 @@ out:
 static void os_desc_unlink(struct config_item *os_desc_ci,
 			  struct config_item *usb_cfg_ci)
 {
-	struct gadget_info *gi = os_desc_item_to_gadget_info(os_desc_ci);
+	struct gadget_info *gi = container_of(to_config_group(os_desc_ci),
+					struct gadget_info, os_desc_group);
 	struct usb_composite_dev *cdev = &gi->cdev;
 
 	mutex_lock(&gi->lock);
@@ -929,6 +935,7 @@ static void os_desc_unlink(struct config_item *os_desc_ci,
 }
 
 static struct configfs_item_operations os_desc_ops = {
+	.release                = os_desc_attr_release,
 	.allow_link		= os_desc_link,
 	.drop_link		= os_desc_unlink,
 };
@@ -1573,6 +1580,7 @@ static const struct usb_gadget_driver configfs_driver_template = {
 	.max_speed	= USB_SPEED_SUPER_PLUS,
 	.driver = {
 		.owner          = THIS_MODULE,
+		.name		= "configfs-gadget",
 	},
 	.match_existing_only = 1,
 };
@@ -1623,21 +1631,13 @@ static struct config_group *gadgets_make(
 
 	gi->composite.gadget_driver = configfs_driver_template;
 
-	gi->composite.gadget_driver.driver.name = kasprintf(GFP_KERNEL,
-							    "configfs-gadget.%s", name);
-	if (!gi->composite.gadget_driver.driver.name)
-		goto err;
-
 	gi->composite.gadget_driver.function = kstrdup(name, GFP_KERNEL);
 	gi->composite.name = gi->composite.gadget_driver.function;
 
 	if (!gi->composite.gadget_driver.function)
-		goto out_free_driver_name;
+		goto err;
 
 	return &gi->group;
-
-out_free_driver_name:
-	kfree(gi->composite.gadget_driver.driver.name);
 err:
 	kfree(gi);
 	return ERR_PTR(-ENOMEM);

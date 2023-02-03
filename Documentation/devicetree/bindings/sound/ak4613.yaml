@@ -4,13 +4,10 @@
 $id: http://devicetree.org/schemas/sound/ak4613.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
-title: AK4613 I2C transmitter
+title: AK4613 I2C transmitter Device Tree Bindings
 
 maintainers:
   - Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
-
-allOf:
-  - $ref: dai-common.yaml#
 
 properties:
   compatible:
@@ -38,7 +35,7 @@ required:
   - compatible
   - reg
 
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

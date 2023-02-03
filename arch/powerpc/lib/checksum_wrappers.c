@@ -24,6 +24,7 @@ __wsum csum_and_copy_from_user(const void __user *src, void *dst,
 	user_read_access_end();
 	return csum;
 }
+EXPORT_SYMBOL(csum_and_copy_from_user);
 
 __wsum csum_and_copy_to_user(const void *src, void __user *dst, int len)
 {
@@ -37,3 +38,4 @@ __wsum csum_and_copy_to_user(const void *src, void __user *dst, int len)
 	user_write_access_end();
 	return csum;
 }
+EXPORT_SYMBOL(csum_and_copy_to_user);

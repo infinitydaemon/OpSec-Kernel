@@ -26,16 +26,16 @@
 #include <linux/irq.h>
 #include <linux/irqchip.h>
 #include <linux/platform_data/mmp_dma.h>
-#include <linux/soc/pxa/cpu.h>
 
 #include <asm/mach/map.h>
 #include <asm/suspend.h>
-#include "irqs.h"
+#include <mach/hardware.h>
+#include <mach/irqs.h>
 #include "pxa25x.h"
-#include "reset.h"
+#include <mach/reset.h>
 #include "pm.h"
-#include "addr-map.h"
-#include "smemc.h"
+#include <mach/dma.h>
+#include <mach/smemc.h>
 
 #include "generic.h"
 #include "devices.h"
@@ -240,7 +240,7 @@ static int __init pxa25x_init(void)
 
 	if (cpu_is_pxa25x()) {
 
-		pxa_register_wdt(RCSR);
+		reset_status = RCSR;
 
 		pxa25x_init_pm();
 

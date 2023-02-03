@@ -69,7 +69,7 @@
 			reg = <0x25>;
 			wakeup-source;
 
-			extcon {
+			muic: max77836-muic {
 				compatible = "maxim,max77836-muic";
 			};
 

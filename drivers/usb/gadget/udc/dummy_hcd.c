@@ -751,7 +751,7 @@ static int dummy_dequeue(struct usb_ep *_ep, struct usb_request *_req)
 	struct dummy		*dum;
 	int			retval = -EINVAL;
 	unsigned long		flags;
-	struct dummy_request	*req = NULL, *iter;
+	struct dummy_request	*req = NULL;
 
 	if (!_ep || !_req)
 		return retval;
@@ -763,14 +763,13 @@ static int dummy_dequeue(struct usb_ep *_ep, struct usb_request *_req)
 
 	local_irq_save(flags);
 	spin_lock(&dum->lock);
-	list_for_each_entry(iter, &ep->queue, queue) {
-		if (&iter->req != _req)
-			continue;
-		list_del_init(&iter->queue);
-		_req->status = -ECONNRESET;
-		req = iter;
-		retval = 0;
-		break;
+	list_for_each_entry(req, &ep->queue, queue) {
+		if (&req->req == _req) {
+			list_del_init(&req->queue);
+			_req->status = -ECONNRESET;
+			retval = 0;
+			break;
+		}
 	}
 	spin_unlock(&dum->lock);
 
@@ -2766,7 +2765,7 @@ static struct platform_driver dummy_hcd_driver = {
 static struct platform_device *the_udc_pdev[MAX_NUM_UDC];
 static struct platform_device *the_hcd_pdev[MAX_NUM_UDC];
 
-static int __init dummy_hcd_init(void)
+static int __init init(void)
 {
 	int	retval = -ENOMEM;
 	int	i;
@@ -2888,9 +2887,9 @@ err_alloc_udc:
 		platform_device_put(the_hcd_pdev[i]);
 	return retval;
 }
-module_init(dummy_hcd_init);
+module_init(init);
 
-static void __exit dummy_hcd_cleanup(void)
+static void __exit cleanup(void)
 {
 	int i;
 
@@ -2906,4 +2905,4 @@ static void __exit dummy_hcd_cleanup(void)
 	platform_driver_unregister(&dummy_udc_driver);
 	platform_driver_unregister(&dummy_hcd_driver);
 }
-module_exit(dummy_hcd_cleanup);
+module_exit(cleanup);

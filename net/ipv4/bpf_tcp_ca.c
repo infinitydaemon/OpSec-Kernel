@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /* Copyright (c) 2019 Facebook  */
 
-#include <linux/init.h>
 #include <linux/types.h>
 #include <linux/bpf_verifier.h>
 #include <linux/bpf.h>
@@ -13,6 +12,18 @@
 
 /* "extern" is to avoid sparse warning.  It is only used in bpf_struct_ops.c. */
 extern struct bpf_struct_ops bpf_tcp_congestion_ops;
+
+static u32 optional_ops[] = {
+	offsetof(struct tcp_congestion_ops, init),
+	offsetof(struct tcp_congestion_ops, release),
+	offsetof(struct tcp_congestion_ops, set_state),
+	offsetof(struct tcp_congestion_ops, cwnd_event),
+	offsetof(struct tcp_congestion_ops, in_ack_event),
+	offsetof(struct tcp_congestion_ops, pkts_acked),
+	offsetof(struct tcp_congestion_ops, min_tso_segs),
+	offsetof(struct tcp_congestion_ops, sndbuf_expand),
+	offsetof(struct tcp_congestion_ops, cong_control),
+};
 
 static u32 unsupported_ops[] = {
 	offsetof(struct tcp_congestion_ops, get_info),
@@ -39,6 +50,18 @@ static int bpf_tcp_ca_init(struct btf *btf)
 	return 0;
 }
 
+static bool is_optional(u32 member_offset)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(optional_ops); i++) {
+		if (member_offset == optional_ops[i])
+			return true;
+	}
+
+	return false;
+}
+
 static bool is_unsupported(u32 member_offset)
 {
 	unsigned int i;
@@ -58,12 +81,17 @@ static bool bpf_tcp_ca_is_valid_access(int off, int size,
 				       const struct bpf_prog *prog,
 				       struct bpf_insn_access_aux *info)
 {
-	if (!bpf_tracing_btf_ctx_access(off, size, type, prog, info))
+	if (off < 0 || off >= sizeof(__u64) * MAX_BPF_FUNC_ARGS)
+		return false;
+	if (type != BPF_READ)
+		return false;
+	if (off % size != 0)
 		return false;
 
-	if (base_type(info->reg_type) == PTR_TO_BTF_ID &&
-	    !bpf_type_has_unsafe_modifiers(info->reg_type) &&
-	    info->btf_id == sock_id)
+	if (!btf_ctx_access(off, size, type, prog, info))
+		return false;
+
+	if (info->reg_type == PTR_TO_BTF_ID && info->btf_id == sock_id)
 		/* promote it to tcp_sock */
 		info->btf_id = tcp_sock_id;
 
@@ -71,29 +99,22 @@ static bool bpf_tcp_ca_is_valid_access(int off, int size,
 }
 
 static int bpf_tcp_ca_btf_struct_access(struct bpf_verifier_log *log,
-					const struct bpf_reg_state *reg,
-					int off, int size, enum bpf_access_type atype,
-					u32 *next_btf_id, enum bpf_type_flag *flag)
+					const struct btf *btf,
+					const struct btf_type *t, int off,
+					int size, enum bpf_access_type atype,
+					u32 *next_btf_id)
 {
-	const struct btf_type *t;
 	size_t end;
 
 	if (atype == BPF_READ)
-		return btf_struct_access(log, reg, off, size, atype, next_btf_id, flag);
+		return btf_struct_access(log, btf, t, off, size, atype, next_btf_id);
 
-	t = btf_type_by_id(reg->btf, reg->btf_id);
 	if (t != tcp_sock_type) {
 		bpf_log(log, "only read is supported\n");
 		return -EACCES;
 	}
 
 	switch (off) {
-	case offsetof(struct sock, sk_pacing_rate):
-		end = offsetofend(struct sock, sk_pacing_rate);
-		break;
-	case offsetof(struct sock, sk_pacing_status):
-		end = offsetofend(struct sock, sk_pacing_status);
-		break;
 	case bpf_ctx_range(struct inet_connection_sock, icsk_ca_priv):
 		end = offsetofend(struct inet_connection_sock, icsk_ca_priv);
 		break;
@@ -125,7 +146,7 @@ static int bpf_tcp_ca_btf_struct_access(struct bpf_verifier_log *log,
 		return -EACCES;
 	}
 
-	return 0;
+	return NOT_INIT;
 }
 
 BPF_CALL_2(bpf_tcp_send_ack, struct tcp_sock *, tp, u32, rcv_nxt)
@@ -155,7 +176,7 @@ static u32 prog_ops_moff(const struct bpf_prog *prog)
 	t = bpf_tcp_congestion_ops.type;
 	m = &btf_type_member(t)[midx];
 
-	return __btf_member_bit_offset(t, m) / 8;
+	return btf_member_bit_offset(t, m) / 8;
 }
 
 static const struct bpf_func_proto *
@@ -198,23 +219,54 @@ bpf_tcp_ca_get_func_proto(enum bpf_func_id func_id,
 	}
 }
 
-BTF_SET8_START(bpf_tcp_ca_check_kfunc_ids)
-BTF_ID_FLAGS(func, tcp_reno_ssthresh)
-BTF_ID_FLAGS(func, tcp_reno_cong_avoid)
-BTF_ID_FLAGS(func, tcp_reno_undo_cwnd)
-BTF_ID_FLAGS(func, tcp_slow_start)
-BTF_ID_FLAGS(func, tcp_cong_avoid_ai)
-BTF_SET8_END(bpf_tcp_ca_check_kfunc_ids)
+BTF_SET_START(bpf_tcp_ca_kfunc_ids)
+BTF_ID(func, tcp_reno_ssthresh)
+BTF_ID(func, tcp_reno_cong_avoid)
+BTF_ID(func, tcp_reno_undo_cwnd)
+BTF_ID(func, tcp_slow_start)
+BTF_ID(func, tcp_cong_avoid_ai)
+#ifdef CONFIG_X86
+#ifdef CONFIG_DYNAMIC_FTRACE
+#if IS_BUILTIN(CONFIG_TCP_CONG_CUBIC)
+BTF_ID(func, cubictcp_init)
+BTF_ID(func, cubictcp_recalc_ssthresh)
+BTF_ID(func, cubictcp_cong_avoid)
+BTF_ID(func, cubictcp_state)
+BTF_ID(func, cubictcp_cwnd_event)
+BTF_ID(func, cubictcp_acked)
+#endif
+#if IS_BUILTIN(CONFIG_TCP_CONG_DCTCP)
+BTF_ID(func, dctcp_init)
+BTF_ID(func, dctcp_update_alpha)
+BTF_ID(func, dctcp_cwnd_event)
+BTF_ID(func, dctcp_ssthresh)
+BTF_ID(func, dctcp_cwnd_undo)
+BTF_ID(func, dctcp_state)
+#endif
+#if IS_BUILTIN(CONFIG_TCP_CONG_BBR)
+BTF_ID(func, bbr_init)
+BTF_ID(func, bbr_main)
+BTF_ID(func, bbr_sndbuf_expand)
+BTF_ID(func, bbr_undo_cwnd)
+BTF_ID(func, bbr_cwnd_event)
+BTF_ID(func, bbr_ssthresh)
+BTF_ID(func, bbr_min_tso_segs)
+BTF_ID(func, bbr_set_state)
+#endif
+#endif  /* CONFIG_DYNAMIC_FTRACE */
+#endif	/* CONFIG_X86 */
+BTF_SET_END(bpf_tcp_ca_kfunc_ids)
 
-static const struct btf_kfunc_id_set bpf_tcp_ca_kfunc_set = {
-	.owner = THIS_MODULE,
-	.set   = &bpf_tcp_ca_check_kfunc_ids,
-};
+static bool bpf_tcp_ca_check_kfunc_call(u32 kfunc_btf_id)
+{
+	return btf_id_set_contains(&bpf_tcp_ca_kfunc_ids, kfunc_btf_id);
+}
 
 static const struct bpf_verifier_ops bpf_tcp_ca_verifier_ops = {
 	.get_func_proto		= bpf_tcp_ca_get_func_proto,
 	.is_valid_access	= bpf_tcp_ca_is_valid_access,
 	.btf_struct_access	= bpf_tcp_ca_btf_struct_access,
+	.check_kfunc_call	= bpf_tcp_ca_check_kfunc_call,
 };
 
 static int bpf_tcp_ca_init_member(const struct btf_type *t,
@@ -223,12 +275,13 @@ static int bpf_tcp_ca_init_member(const struct btf_type *t,
 {
 	const struct tcp_congestion_ops *utcp_ca;
 	struct tcp_congestion_ops *tcp_ca;
+	int prog_fd;
 	u32 moff;
 
 	utcp_ca = (const struct tcp_congestion_ops *)udata;
 	tcp_ca = (struct tcp_congestion_ops *)kdata;
 
-	moff = __btf_member_bit_offset(t, member) / 8;
+	moff = btf_member_bit_offset(t, member) / 8;
 	switch (moff) {
 	case offsetof(struct tcp_congestion_ops, flags):
 		if (utcp_ca->flags & ~TCP_CONG_MASK)
@@ -244,13 +297,21 @@ static int bpf_tcp_ca_init_member(const struct btf_type *t,
 		return 1;
 	}
 
+	if (!btf_type_resolve_func_ptr(btf_vmlinux, member->type, NULL))
+		return 0;
+
+	/* Ensure bpf_prog is provided for compulsory func ptr */
+	prog_fd = (int)(*(unsigned long *)(udata + moff));
+	if (!prog_fd && !is_optional(moff) && !is_unsupported(moff))
+		return -EINVAL;
+
 	return 0;
 }
 
 static int bpf_tcp_ca_check_member(const struct btf_type *t,
 				   const struct btf_member *member)
 {
-	if (is_unsupported(__btf_member_bit_offset(t, member) / 8))
+	if (is_unsupported(btf_member_bit_offset(t, member) / 8))
 		return -ENOTSUPP;
 	return 0;
 }
@@ -274,9 +335,3 @@ struct bpf_struct_ops bpf_tcp_congestion_ops = {
 	.init = bpf_tcp_ca_init,
 	.name = "tcp_congestion_ops",
 };
-
-static int __init bpf_tcp_ca_kfunc_init(void)
-{
-	return register_btf_kfunc_id_set(BPF_PROG_TYPE_STRUCT_OPS, &bpf_tcp_ca_kfunc_set);
-}
-late_initcall(bpf_tcp_ca_kfunc_init);

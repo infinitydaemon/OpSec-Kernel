@@ -130,11 +130,13 @@ static int spi_byte_probe(struct spi_device *spi)
 	return 0;
 }
 
-static void spi_byte_remove(struct spi_device *spi)
+static int spi_byte_remove(struct spi_device *spi)
 {
 	struct spi_byte_led	*led = spi_get_drvdata(spi);
 
 	mutex_destroy(&led->mutex);
+
+	return 0;
 }
 
 static struct spi_driver spi_byte_driver = {

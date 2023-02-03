@@ -57,9 +57,9 @@ static inline struct rockchip_pwm_chip *to_rockchip_pwm_chip(struct pwm_chip *c)
 	return container_of(c, struct rockchip_pwm_chip, chip);
 }
 
-static int rockchip_pwm_get_state(struct pwm_chip *chip,
-				  struct pwm_device *pwm,
-				  struct pwm_state *state)
+static void rockchip_pwm_get_state(struct pwm_chip *chip,
+				   struct pwm_device *pwm,
+				   struct pwm_state *state)
 {
 	struct rockchip_pwm_chip *pc = to_rockchip_pwm_chip(chip);
 	u32 enable_conf = pc->data->enable_conf;
@@ -70,11 +70,11 @@ static int rockchip_pwm_get_state(struct pwm_chip *chip,
 
 	ret = clk_enable(pc->pclk);
 	if (ret)
-		return ret;
+		return;
 
 	ret = clk_enable(pc->clk);
 	if (ret)
-		return ret;
+		return;
 
 	clk_rate = clk_get_rate(pc->clk);
 
@@ -96,8 +96,6 @@ static int rockchip_pwm_get_state(struct pwm_chip *chip,
 
 	clk_disable(pc->clk);
 	clk_disable(pc->pclk);
-
-	return 0;
 }
 
 static void rockchip_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
@@ -330,16 +328,22 @@ static int rockchip_pwm_probe(struct platform_device *pdev)
 	else
 		pc->pclk = pc->clk;
 
-	if (IS_ERR(pc->pclk))
-		return dev_err_probe(&pdev->dev, PTR_ERR(pc->pclk), "Can't get APB clk\n");
+	if (IS_ERR(pc->pclk)) {
+		ret = PTR_ERR(pc->pclk);
+		if (ret != -EPROBE_DEFER)
+			dev_err(&pdev->dev, "Can't get APB clk: %d\n", ret);
+		return ret;
+	}
 
 	ret = clk_prepare_enable(pc->clk);
-	if (ret)
-		return dev_err_probe(&pdev->dev, ret, "Can't prepare enable PWM clk\n");
+	if (ret) {
+		dev_err(&pdev->dev, "Can't prepare enable PWM clk: %d\n", ret);
+		return ret;
+	}
 
 	ret = clk_prepare_enable(pc->pclk);
 	if (ret) {
-		dev_err_probe(&pdev->dev, ret, "Can't prepare enable APB clk\n");
+		dev_err(&pdev->dev, "Can't prepare enable APB clk: %d\n", ret);
 		goto err_clk;
 	}
 
@@ -356,7 +360,7 @@ static int rockchip_pwm_probe(struct platform_device *pdev)
 
 	ret = pwmchip_add(&pc->chip);
 	if (ret < 0) {
-		dev_err_probe(&pdev->dev, ret, "pwmchip_add() failed\n");
+		dev_err(&pdev->dev, "pwmchip_add() failed: %d\n", ret);
 		goto err_pclk;
 	}
 

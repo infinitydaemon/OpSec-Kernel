@@ -35,7 +35,6 @@
 #include <drm/drm_device.h>
 #include <drm/drm_file.h>
 #include <drm/drm_fourcc.h>
-#include <drm/drm_framebuffer.h>
 #include <drm/drm_vblank.h>
 #include <drm/radeon_drm.h>
 

@@ -3,10 +3,6 @@
 #define _INET_COMMON_H
 
 #include <linux/indirect_call_wrapper.h>
-#include <linux/net.h>
-#include <linux/netdev_features.h>
-#include <linux/types.h>
-#include <net/sock.h>
 
 extern const struct proto_ops inet_stream_ops;
 extern const struct proto_ops inet_dgram_ops;
@@ -16,8 +12,6 @@ extern const struct proto_ops inet_dgram_ops;
  */
 
 struct msghdr;
-struct net;
-struct page;
 struct sock;
 struct sockaddr;
 struct socket;

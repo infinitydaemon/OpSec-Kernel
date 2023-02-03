@@ -9,19 +9,18 @@
 
 #include <linux/device.h>
 #include <linux/err.h>
+#include <linux/init.h>
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/of.h>
-#include <linux/seq_file.h>
-#include <linux/slab.h>
-#include <linux/spinlock.h>
-
 #include <linux/pinctrl/consumer.h>
 #include <linux/pinctrl/machine.h>
-#include <linux/pinctrl/pinconf-generic.h>
 #include <linux/pinctrl/pinconf.h>
+#include <linux/pinctrl/pinconf-generic.h>
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/pinctrl/pinmux.h>
+#include <linux/slab.h>
+#include <linux/spinlock.h>
 
 #include "core.h"
 #include "../core.h"
@@ -398,7 +397,7 @@ static int sh_pfc_gpio_request_enable(struct pinctrl_dev *pctldev,
 
 	spin_lock_irqsave(&pfc->lock, flags);
 
-	if (!pfc->gpio && !cfg->mux_mark) {
+	if (!pfc->gpio) {
 		/* If GPIOs are handled externally the pin mux type needs to be
 		 * set to GPIO here.
 		 */
@@ -505,6 +504,7 @@ static u32 sh_pfc_pinconf_find_drive_strength_reg(struct sh_pfc *pfc,
 static int sh_pfc_pinconf_get_drive_strength(struct sh_pfc *pfc,
 					     unsigned int pin)
 {
+	unsigned long flags;
 	unsigned int offset;
 	unsigned int size;
 	u32 reg;
@@ -514,7 +514,11 @@ static int sh_pfc_pinconf_get_drive_strength(struct sh_pfc *pfc,
 	if (!reg)
 		return -EINVAL;
 
-	val = (sh_pfc_read(pfc, reg) >> offset) & GENMASK(size - 1, 0);
+	spin_lock_irqsave(&pfc->lock, flags);
+	val = sh_pfc_read(pfc, reg);
+	spin_unlock_irqrestore(&pfc->lock, flags);
+
+	val = (val >> offset) & GENMASK(size - 1, 0);
 
 	/* Convert the value to mA based on a full drive strength value of 24mA.
 	 * We can make the full value configurable later if needed.
@@ -640,11 +644,13 @@ static int sh_pfc_pinconf_get(struct pinctrl_dev *pctldev, unsigned _pin,
 		if (!pfc->info->ops || !pfc->info->ops->pin_to_pocctrl)
 			return -ENOTSUPP;
 
-		bit = pfc->info->ops->pin_to_pocctrl(_pin, &pocctrl);
+		bit = pfc->info->ops->pin_to_pocctrl(pfc, _pin, &pocctrl);
 		if (WARN(bit < 0, "invalid pin %#x", _pin))
 			return bit;
 
+		spin_lock_irqsave(&pfc->lock, flags);
 		val = sh_pfc_read(pfc, pocctrl);
+		spin_unlock_irqrestore(&pfc->lock, flags);
 
 		lower_voltage = (pin->configs & SH_PFC_PIN_VOLTAGE_25_33) ?
 			2500 : 1800;
@@ -712,7 +718,7 @@ static int sh_pfc_pinconf_set(struct pinctrl_dev *pctldev, unsigned _pin,
 			if (!pfc->info->ops || !pfc->info->ops->pin_to_pocctrl)
 				return -ENOTSUPP;
 
-			bit = pfc->info->ops->pin_to_pocctrl(_pin, &pocctrl);
+			bit = pfc->info->ops->pin_to_pocctrl(pfc, _pin, &pocctrl);
 			if (WARN(bit < 0, "invalid pin %#x", _pin))
 				return bit;
 
@@ -836,16 +842,16 @@ int sh_pfc_register_pinctrl(struct sh_pfc *pfc)
 }
 
 const struct pinmux_bias_reg *
-rcar_pin_to_bias_reg(const struct sh_pfc_soc_info *info, unsigned int pin,
+rcar_pin_to_bias_reg(const struct sh_pfc *pfc, unsigned int pin,
 		     unsigned int *bit)
 {
 	unsigned int i, j;
 
-	for (i = 0; info->bias_regs[i].puen || info->bias_regs[i].pud; i++) {
-		for (j = 0; j < ARRAY_SIZE(info->bias_regs[i].pins); j++) {
-			if (info->bias_regs[i].pins[j] == pin) {
+	for (i = 0; pfc->info->bias_regs[i].puen || pfc->info->bias_regs[i].pud; i++) {
+		for (j = 0; j < ARRAY_SIZE(pfc->info->bias_regs[i].pins); j++) {
+			if (pfc->info->bias_regs[i].pins[j] == pin) {
 				*bit = j;
-				return &info->bias_regs[i];
+				return &pfc->info->bias_regs[i];
 			}
 		}
 	}
@@ -860,7 +866,7 @@ unsigned int rcar_pinmux_get_bias(struct sh_pfc *pfc, unsigned int pin)
 	const struct pinmux_bias_reg *reg;
 	unsigned int bit;
 
-	reg = rcar_pin_to_bias_reg(pfc->info, pin, &bit);
+	reg = rcar_pin_to_bias_reg(pfc, pin, &bit);
 	if (!reg)
 		return PIN_CONFIG_BIAS_DISABLE;
 
@@ -886,7 +892,7 @@ void rcar_pinmux_set_bias(struct sh_pfc *pfc, unsigned int pin,
 	u32 enable, updown;
 	unsigned int bit;
 
-	reg = rcar_pin_to_bias_reg(pfc->info, pin, &bit);
+	reg = rcar_pin_to_bias_reg(pfc, pin, &bit);
 	if (!reg)
 		return;
 
@@ -920,8 +926,7 @@ void rcar_pinmux_set_bias(struct sh_pfc *pfc, unsigned int pin,
 
 unsigned int rmobile_pinmux_get_bias(struct sh_pfc *pfc, unsigned int pin)
 {
-	void __iomem *reg = pfc->windows->virt +
-			    pfc->info->ops->pin_to_portcr(pin);
+	void __iomem *reg = pfc->info->ops->pin_to_portcr(pfc, pin);
 	u32 value = ioread8(reg) & PORTnCR_PULMD_MASK;
 
 	switch (value) {
@@ -938,8 +943,7 @@ unsigned int rmobile_pinmux_get_bias(struct sh_pfc *pfc, unsigned int pin)
 void rmobile_pinmux_set_bias(struct sh_pfc *pfc, unsigned int pin,
 			     unsigned int bias)
 {
-	void __iomem *reg = pfc->windows->virt +
-			    pfc->info->ops->pin_to_portcr(pin);
+	void __iomem *reg = pfc->info->ops->pin_to_portcr(pfc, pin);
 	u32 value = ioread8(reg) & ~PORTnCR_PULMD_MASK;
 
 	switch (bias) {

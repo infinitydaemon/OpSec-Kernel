@@ -281,18 +281,50 @@ out_bad_resource:
 	return ret;
 }
 
+/**
+ * vmw_user_resource_noref_lookup_handle - lookup a struct resource from a
+ * TTM user-space handle and perform basic type checks
+ *
+ * @dev_priv:     Pointer to a device private struct
+ * @tfile:        Pointer to a struct ttm_object_file identifying the caller
+ * @handle:       The TTM user-space handle
+ * @converter:    Pointer to an object describing the resource type
+ *
+ * If the handle can't be found or is associated with an incorrect resource
+ * type, -EINVAL will be returned.
+ */
+struct vmw_resource *
+vmw_user_resource_noref_lookup_handle(struct vmw_private *dev_priv,
+				      struct ttm_object_file *tfile,
+				      uint32_t handle,
+				      const struct vmw_user_resource_conv
+				      *converter)
+{
+	struct ttm_base_object *base;
+
+	base = ttm_base_object_noref_lookup(tfile, handle);
+	if (!base)
+		return ERR_PTR(-ESRCH);
+
+	if (unlikely(ttm_base_object_type(base) != converter->object_type)) {
+		ttm_base_object_noref_release();
+		return ERR_PTR(-EINVAL);
+	}
+
+	return converter->base_obj_to_res(base);
+}
+
 /*
  * Helper function that looks either a surface or bo.
  *
  * The pointer this pointed at by out_surf and out_buf needs to be null.
  */
 int vmw_user_lookup_handle(struct vmw_private *dev_priv,
-			   struct drm_file *filp,
+			   struct ttm_object_file *tfile,
 			   uint32_t handle,
 			   struct vmw_surface **out_surf,
 			   struct vmw_buffer_object **out_buf)
 {
-	struct ttm_object_file *tfile = vmw_fpriv(filp)->tfile;
 	struct vmw_resource *res;
 	int ret;
 
@@ -307,7 +339,7 @@ int vmw_user_lookup_handle(struct vmw_private *dev_priv,
 	}
 
 	*out_surf = NULL;
-	ret = vmw_user_bo_lookup(filp, handle, out_buf);
+	ret = vmw_user_bo_lookup(tfile, handle, out_buf, NULL);
 	return ret;
 }
 
@@ -330,10 +362,14 @@ static int vmw_resource_buf_alloc(struct vmw_resource *res,
 		return 0;
 	}
 
-	ret = vmw_bo_create(res->dev_priv, res->backup_size,
-			    res->func->backup_placement,
-			    interruptible, false,
-			    &vmw_bo_bo_free, &backup);
+	backup = kzalloc(sizeof(*backup), GFP_KERNEL);
+	if (unlikely(!backup))
+		return -ENOMEM;
+
+	ret = vmw_bo_init(res->dev_priv, backup, res->backup_size,
+			      res->func->backup_placement,
+			      interruptible, false,
+			      &vmw_bo_bo_free);
 	if (unlikely(ret != 0))
 		goto out_no_bo;
 
@@ -492,7 +528,7 @@ void vmw_resource_unreserve(struct vmw_resource *res,
  *                             for a resource and in that case, allocate
  *                             one, reserve and validate it.
  *
- * @ticket:         The ww acquire context to use, or NULL if trylocking.
+ * @ticket:         The ww aqcquire context to use, or NULL if trylocking.
  * @res:            The resource for which to allocate a backup buffer.
  * @interruptible:  Whether any sleeps during allocation should be
  *                  performed while interruptible.
@@ -653,7 +689,7 @@ out_no_unbind:
  * @intr: Perform waits interruptible if possible.
  * @dirtying: Pending GPU operation will dirty the resource
  *
- * On successful return, any backup DMA buffer pointed to by @res->backup will
+ * On succesful return, any backup DMA buffer pointed to by @res->backup will
  * be reserved and validated.
  * On hardware resource shortage, this function will repeatedly evict
  * resources of the same type until the validation succeeds.
@@ -771,7 +807,7 @@ void vmw_resource_unbind_list(struct vmw_buffer_object *vbo)
  * @dx_query_mob: Buffer containing the DX query MOB
  *
  * Read back cached states from the device if they exist.  This function
- * assumes binding_mutex is held.
+ * assumings binding_mutex is held.
  */
 int vmw_query_readback_all(struct vmw_buffer_object *dx_query_mob)
 {
@@ -1092,7 +1128,7 @@ int vmw_resources_clean(struct vmw_buffer_object *vbo, pgoff_t start,
 	}
 
 	/*
-	 * In order of increasing backup_offset, clean dirty resources
+	 * In order of increasing backup_offset, clean dirty resorces
 	 * intersecting the range.
 	 */
 	while (found) {
@@ -1128,6 +1164,10 @@ int vmw_resources_clean(struct vmw_buffer_object *vbo, pgoff_t start,
 		*num_prefault = __KERNEL_DIV_ROUND_UP(last_cleaned - res_start,
 						      PAGE_SIZE);
 		vmw_bo_fence_single(bo, NULL);
+		if (bo->moving)
+			dma_fence_put(bo->moving);
+		bo->moving = dma_fence_get
+			(dma_resv_excl_fence(bo->base.resv));
 	}
 
 	return 0;

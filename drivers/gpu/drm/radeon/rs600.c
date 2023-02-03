@@ -42,7 +42,6 @@
 #include <drm/drm_device.h>
 #include <drm/drm_vblank.h>
 #include <drm/drm_fourcc.h>
-#include <drm/drm_framebuffer.h>
 
 #include "atom.h"
 #include "radeon.h"

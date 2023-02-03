@@ -5,6 +5,8 @@
 #ifndef _DPU_HW_DSPP_H
 #define _DPU_HW_DSPP_H
 
+#include "dpu_hw_blk.h"
+
 struct dpu_hw_dspp;
 
 /**

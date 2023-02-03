@@ -8,7 +8,6 @@
  */
 
 #include <linux/clk.h>
-#include <linux/media-bus-format.h>
 #include <linux/mfd/atmel-hlcdc.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/pm.h>

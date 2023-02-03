@@ -6,20 +6,18 @@
 #include "mt76.h"
 
 struct sk_buff *
-__mt76_mcu_msg_alloc(struct mt76_dev *dev, const void *data,
-		     int len, int data_len, gfp_t gfp)
+mt76_mcu_msg_alloc(struct mt76_dev *dev, const void *data,
+		   int data_len)
 {
 	const struct mt76_mcu_ops *ops = dev->mcu_ops;
+	int length = ops->headroom + data_len + ops->tailroom;
 	struct sk_buff *skb;
 
-	len = max_t(int, len, data_len);
-	len = ops->headroom + len + ops->tailroom;
-
-	skb = alloc_skb(len, gfp);
+	skb = alloc_skb(length, GFP_KERNEL);
 	if (!skb)
 		return NULL;
 
-	memset(skb->head, 0, len);
+	memset(skb->head, 0, length);
 	skb_reserve(skb, ops->headroom);
 
 	if (data && data_len)
@@ -27,7 +25,7 @@ __mt76_mcu_msg_alloc(struct mt76_dev *dev, const void *data,
 
 	return skb;
 }
-EXPORT_SYMBOL_GPL(__mt76_mcu_msg_alloc);
+EXPORT_SYMBOL_GPL(mt76_mcu_msg_alloc);
 
 struct sk_buff *mt76_mcu_get_response(struct mt76_dev *dev,
 				      unsigned long expires)
@@ -108,13 +106,13 @@ out:
 }
 EXPORT_SYMBOL_GPL(mt76_mcu_skb_send_and_get_msg);
 
-int __mt76_mcu_send_firmware(struct mt76_dev *dev, int cmd, const void *data,
-			     int len, int max_len)
+int mt76_mcu_send_firmware(struct mt76_dev *dev, int cmd, const void *data,
+			   int len)
 {
 	int err, cur_len;
 
 	while (len > 0) {
-		cur_len = min_t(int, max_len, len);
+		cur_len = min_t(int, 4096 - dev->mcu_ops->headroom, len);
 
 		err = mt76_mcu_send_msg(dev, cmd, data, cur_len, false);
 		if (err)
@@ -131,4 +129,4 @@ int __mt76_mcu_send_firmware(struct mt76_dev *dev, int cmd, const void *data,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(__mt76_mcu_send_firmware);
+EXPORT_SYMBOL_GPL(mt76_mcu_send_firmware);

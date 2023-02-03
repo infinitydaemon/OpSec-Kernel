@@ -44,14 +44,11 @@
 .endm
 
 .macro MEMSWAP dst,src,buf,len
-10:	larl	%r0,purgatory_end
-	larl	%r1,stack
-	slgr	%r0,%r1
-	cgr	\len,%r0
+10:	cghi	\len,bufsz
 	jh	11f
 	lgr	%r4,\len
 	j	12f
-11:	lgr	%r4,%r0
+11:	lghi	%r4,bufsz
 
 12:	MEMCPY	\buf,\dst,%r4
 	MEMCPY	\dst,\src,%r4
@@ -138,18 +135,12 @@ ENTRY(purgatory_start)
 
 .start_crash_kernel:
 	/* Location of purgatory_start in crash memory */
-	larl	%r0,.base_crash
-	larl	%r1,purgatory_start
-	slgr	%r0,%r1
 	lgr	%r8,%r13
-	sgr	%r8,%r0
+	aghi	%r8,-(.base_crash-purgatory_start)
 
 	/* Destination for this code i.e. end of memory to be swapped. */
-	larl	%r0,purgatory_end
-	larl	%r1,purgatory_start
-	slgr	%r0,%r1
 	lg	%r9,crash_size-.base_crash(%r13)
-	sgr	%r9,%r0
+	aghi	%r9,-(purgatory_end-purgatory_start)
 
 	/* Destination in crash memory, i.e. same as r9 but in crash memory. */
 	lg	%r10,crash_start-.base_crash(%r13)
@@ -158,19 +149,15 @@ ENTRY(purgatory_start)
 	/* Buffer location (in crash memory) and size. As the purgatory is
 	 * behind the point of no return it can re-use the stack as buffer.
 	 */
-	larl	%r11,purgatory_end
+	lghi	%r11,bufsz
 	larl	%r12,stack
-	slgr	%r11,%r12
 
 	MEMCPY	%r12,%r9,%r11	/* dst	-> (crash) buf */
 	MEMCPY	%r9,%r8,%r11	/* self -> dst */
 
 	/* Jump to new location. */
 	lgr	%r7,%r9
-	larl	%r0,.jump_to_dst
-	larl	%r1,purgatory_start
-	slgr	%r0,%r1
-	agr	%r7,%r0
+	aghi	%r7,.jump_to_dst-purgatory_start
 	br	%r7
 
 .jump_to_dst:
@@ -182,10 +169,7 @@ ENTRY(purgatory_start)
 
 	/* Load new buffer location after jump */
 	larl	%r7,stack
-	lgr	%r0,%r7
-	larl	%r1,purgatory_start
-	slgr	%r0,%r1
-	agr	%r10,%r0
+	aghi	%r10,stack-purgatory_start
 	MEMCPY	%r10,%r7,%r11	/* (new) buf -> (crash) buf */
 
 	/* Now the code is set up to run from its designated location. Start

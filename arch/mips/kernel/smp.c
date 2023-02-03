@@ -518,12 +518,6 @@ static inline void smp_on_each_tlb(void (*func) (void *info), void *info)
 
 void flush_tlb_mm(struct mm_struct *mm)
 {
-	if (!mm)
-		return;
-
-	if (atomic_read(&mm->mm_users) == 0)
-		return;		/* happens as a result of exit_mmap() */
-
 	preempt_disable();
 
 	if (cpu_has_mmid) {

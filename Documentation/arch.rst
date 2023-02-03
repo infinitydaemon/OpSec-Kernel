@@ -9,11 +9,9 @@ implementation.
 .. toctree::
    :maxdepth: 2
 
-   arc/index
    arm/index
    arm64/index
    ia64/index
-   loongarch/index
    m68k/index
    mips/index
    nios2/index

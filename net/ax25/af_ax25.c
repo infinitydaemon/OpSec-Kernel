@@ -102,8 +102,7 @@ again:
 			ax25_disconnect(s, ENETUNREACH);
 			s->ax25_dev = NULL;
 			if (sk->sk_socket) {
-				netdev_put(ax25_dev->dev,
-					   &ax25_dev->dev_tracker);
+				dev_put(ax25_dev->dev);
 				ax25_dev_put(ax25_dev);
 			}
 			ax25_cb_del(s);
@@ -222,7 +221,7 @@ struct sock *ax25_get_socket(ax25_address *my_addr, ax25_address *dest_addr,
  *	Find an AX.25 control block given both ends. It will only pick up
  *	floating AX.25 control blocks or non Raw socket bound control blocks.
  */
-ax25_cb *ax25_find_cb(const ax25_address *src_addr, ax25_address *dest_addr,
+ax25_cb *ax25_find_cb(ax25_address *src_addr, ax25_address *dest_addr,
 	ax25_digi *digi, struct net_device *dev)
 {
 	ax25_cb *s;
@@ -723,7 +722,7 @@ static int ax25_getsockopt(struct socket *sock, int level, int optname,
 	if (maxlen < 1)
 		return -EFAULT;
 
-	valptr = &val;
+	valptr = (void *) &val;
 	length = min_t(unsigned int, maxlen, sizeof(int));
 
 	lock_sock(sk);
@@ -778,14 +777,14 @@ static int ax25_getsockopt(struct socket *sock, int level, int optname,
 		ax25_dev = ax25->ax25_dev;
 
 		if (ax25_dev != NULL && ax25_dev->dev != NULL) {
-			strscpy(devname, ax25_dev->dev->name, sizeof(devname));
+			strlcpy(devname, ax25_dev->dev->name, sizeof(devname));
 			length = strlen(devname) + 1;
 		} else {
 			*devname = '\0';
 			length = 1;
 		}
 
-		valptr = devname;
+		valptr = (void *) devname;
 		break;
 
 	default:
@@ -1066,7 +1065,7 @@ static int ax25_release(struct socket *sock)
 			del_timer_sync(&ax25->t3timer);
 			del_timer_sync(&ax25->idletimer);
 		}
-		netdev_put(ax25_dev->dev, &ax25->dev_tracker);
+		dev_put(ax25_dev->dev);
 		ax25_dev_put(ax25_dev);
 	}
 
@@ -1147,7 +1146,7 @@ static int ax25_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 
 	if (ax25_dev) {
 		ax25_fillin_cb(ax25, ax25_dev);
-		netdev_hold(ax25_dev->dev, &ax25->dev_tracker, GFP_ATOMIC);
+		dev_hold(ax25_dev->dev);
 	}
 
 done:

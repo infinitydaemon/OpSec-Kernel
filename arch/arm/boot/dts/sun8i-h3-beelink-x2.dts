@@ -57,12 +57,6 @@
 		ethernet1 = &sdiowifi;
 	};
 
-	cec-gpio {
-		compatible = "cec-gpio";
-		cec-gpios = <&pio 0 14 (GPIO_ACTIVE_HIGH|GPIO_OPEN_DRAIN)>; /* PA14 */
-		hdmi-phandle = <&hdmi>;
-	};
-
 	chosen {
 		stdout-path = "serial0:115200n8";
 	};
@@ -93,15 +87,11 @@
 		};
 	};
 
-	gpio-keys {
-		compatible = "gpio-keys";
-
-		key-power {
-			label = "power";
-			linux,code = <KEY_POWER>;
-			gpios = <&r_pio 0 3 GPIO_ACTIVE_LOW>;
-			wakeup-source;
-		};
+	wifi_pwrseq: wifi_pwrseq {
+		compatible = "mmc-pwrseq-simple";
+		reset-gpios = <&r_pio 0 7 GPIO_ACTIVE_LOW>; /* PL7 */
+		clocks = <&rtc 1>;
+		clock-names = "ext_clock";
 	};
 
 	sound_spdif {
@@ -122,11 +112,15 @@
 		compatible = "linux,spdif-dit";
 	};
 
-	wifi_pwrseq: wifi_pwrseq {
-		compatible = "mmc-pwrseq-simple";
-		reset-gpios = <&r_pio 0 7 GPIO_ACTIVE_LOW>; /* PL7 */
-		clocks = <&rtc CLK_OSC32K_FANOUT>;
-		clock-names = "ext_clock";
+	r-gpio-keys {
+		compatible = "gpio-keys";
+
+		power {
+			label = "power";
+			linux,code = <KEY_POWER>;
+			gpios = <&r_pio 0 3 GPIO_ACTIVE_LOW>;
+			wakeup-source;
+		};
 	};
 };
 

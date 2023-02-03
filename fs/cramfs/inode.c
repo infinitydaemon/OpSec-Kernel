@@ -183,7 +183,6 @@ static void *cramfs_blkdev_read(struct super_block *sb, unsigned int offset,
 				unsigned int len)
 {
 	struct address_space *mapping = sb->s_bdev->bd_inode->i_mapping;
-	struct file_ra_state ra;
 	struct page *pages[BLKS_PER_BUF];
 	unsigned i, blocknr, buffer;
 	unsigned long devsize;
@@ -210,12 +209,9 @@ static void *cramfs_blkdev_read(struct super_block *sb, unsigned int offset,
 		return read_buffers[i] + blk_offset;
 	}
 
-	devsize = bdev_nr_bytes(sb->s_bdev) >> PAGE_SHIFT;
+	devsize = mapping->host->i_size >> PAGE_SHIFT;
 
 	/* Ok, read in BLKS_PER_BUF pages completely first. */
-	file_ra_state_init(&ra, mapping);
-	page_cache_sync_readahead(mapping, &ra, NULL, blocknr, BLKS_PER_BUF);
-
 	for (i = 0; i < BLKS_PER_BUF; i++) {
 		struct page *page = NULL;
 
@@ -226,6 +222,19 @@ static void *cramfs_blkdev_read(struct super_block *sb, unsigned int offset,
 				page = NULL;
 		}
 		pages[i] = page;
+	}
+
+	for (i = 0; i < BLKS_PER_BUF; i++) {
+		struct page *page = pages[i];
+
+		if (page) {
+			wait_on_page_locked(page);
+			if (!PageUptodate(page)) {
+				/* asynchronous error */
+				put_page(page);
+				pages[i] = NULL;
+			}
+		}
 	}
 
 	buffer = next_buffer;
@@ -405,7 +414,7 @@ static int cramfs_physmem_mmap(struct file *file, struct vm_area_struct *vma)
 		/*
 		 * Let's create a mixed map if we can't map it all.
 		 * The normal paging machinery will take care of the
-		 * unpopulated ptes via cramfs_read_folio().
+		 * unpopulated ptes via cramfs_readpage().
 		 */
 		int i;
 		vma->vm_flags |= VM_MIXEDMAP;
@@ -805,9 +814,8 @@ out:
 	return d_splice_alias(inode, dentry);
 }
 
-static int cramfs_read_folio(struct file *file, struct folio *folio)
+static int cramfs_readpage(struct file *file, struct page *page)
 {
-	struct page *page = &folio->page;
 	struct inode *inode = page->mapping->host;
 	u32 maxblock;
 	int bytes_filled;
@@ -917,7 +925,7 @@ err:
 }
 
 static const struct address_space_operations cramfs_aops = {
-	.read_folio = cramfs_read_folio
+	.readpage = cramfs_readpage
 };
 
 /*

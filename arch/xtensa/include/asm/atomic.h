@@ -25,15 +25,15 @@
  *
  * Locking interrupts looks like this:
  *
- *    rsil a14, TOPLEVEL
+ *    rsil a15, TOPLEVEL
  *    <code>
- *    wsr  a14, PS
+ *    wsr  a15, PS
  *    rsync
  *
- * Note that a14 is used here because the register allocation
+ * Note that a15 is used here because the register allocation
  * done by the compiler is not guaranteed and a window overflow
  * may not occur between the rsil and wsr instructions. By using
- * a14 in the rsil, the machine is guaranteed to be in a state
+ * a15 in the rsil, the machine is guaranteed to be in a state
  * where no register reference will cause an overflow.
  */
 
@@ -185,15 +185,15 @@ static inline void arch_atomic_##op(int i, atomic_t * v)		\
 	unsigned int vval;						\
 									\
 	__asm__ __volatile__(						\
-			"       rsil    a14, "__stringify(TOPLEVEL)"\n"	\
+			"       rsil    a15, "__stringify(TOPLEVEL)"\n"	\
 			"       l32i    %[result], %[mem]\n"		\
 			"       " #op " %[result], %[result], %[i]\n"	\
 			"       s32i    %[result], %[mem]\n"		\
-			"       wsr     a14, ps\n"			\
+			"       wsr     a15, ps\n"			\
 			"       rsync\n"				\
 			: [result] "=&a" (vval), [mem] "+m" (*v)	\
 			: [i] "a" (i)					\
-			: "a14", "memory"				\
+			: "a15", "memory"				\
 			);						\
 }									\
 
@@ -203,15 +203,15 @@ static inline int arch_atomic_##op##_return(int i, atomic_t * v)	\
 	unsigned int vval;						\
 									\
 	__asm__ __volatile__(						\
-			"       rsil    a14,"__stringify(TOPLEVEL)"\n"	\
+			"       rsil    a15,"__stringify(TOPLEVEL)"\n"	\
 			"       l32i    %[result], %[mem]\n"		\
 			"       " #op " %[result], %[result], %[i]\n"	\
 			"       s32i    %[result], %[mem]\n"		\
-			"       wsr     a14, ps\n"			\
+			"       wsr     a15, ps\n"			\
 			"       rsync\n"				\
 			: [result] "=&a" (vval), [mem] "+m" (*v)	\
 			: [i] "a" (i)					\
-			: "a14", "memory"				\
+			: "a15", "memory"				\
 			);						\
 									\
 	return vval;							\
@@ -223,16 +223,16 @@ static inline int arch_atomic_fetch_##op(int i, atomic_t * v)		\
 	unsigned int tmp, vval;						\
 									\
 	__asm__ __volatile__(						\
-			"       rsil    a14,"__stringify(TOPLEVEL)"\n"	\
+			"       rsil    a15,"__stringify(TOPLEVEL)"\n"	\
 			"       l32i    %[result], %[mem]\n"		\
 			"       " #op " %[tmp], %[result], %[i]\n"	\
 			"       s32i    %[tmp], %[mem]\n"		\
-			"       wsr     a14, ps\n"			\
+			"       wsr     a15, ps\n"			\
 			"       rsync\n"				\
 			: [result] "=&a" (vval), [tmp] "=&a" (tmp),	\
 			  [mem] "+m" (*v)				\
 			: [i] "a" (i)					\
-			: "a14", "memory"				\
+			: "a15", "memory"				\
 			);						\
 									\
 	return vval;							\

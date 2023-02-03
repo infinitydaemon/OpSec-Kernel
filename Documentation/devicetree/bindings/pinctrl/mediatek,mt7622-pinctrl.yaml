@@ -4,7 +4,7 @@
 $id: http://devicetree.org/schemas/pinctrl/mediatek,mt7622-pinctrl.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
-title: Mediatek MT7622 Pin Controller
+title: Mediatek MT7622 Pin Controller Device Tree Bindings
 
 maintainers:
   - Sean Wang <sean.wang@kernel.org>
@@ -41,9 +41,6 @@ properties:
 
   "#interrupt-cells":
     const: 2
-
-allOf:
-  - $ref: "pinctrl.yaml#"
 
 required:
   - compatible

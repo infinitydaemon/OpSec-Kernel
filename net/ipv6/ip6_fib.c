@@ -15,7 +15,6 @@
 
 #define pr_fmt(fmt) "IPv6: " fmt
 
-#include <linux/bpf.h>
 #include <linux/errno.h>
 #include <linux/types.h>
 #include <linux/net.h>
@@ -91,12 +90,13 @@ static void fib6_walker_unlink(struct net *net, struct fib6_walker *w)
 
 static int fib6_new_sernum(struct net *net)
 {
-	int new, old = atomic_read(&net->ipv6.fib6_sernum);
+	int new, old;
 
 	do {
+		old = atomic_read(&net->ipv6.fib6_sernum);
 		new = old < INT_MAX ? old + 1 : 1;
-	} while (!atomic_try_cmpxchg(&net->ipv6.fib6_sernum, &old, new));
-
+	} while (atomic_cmpxchg(&net->ipv6.fib6_sernum,
+				old, new) != old);
 	return new;
 }
 

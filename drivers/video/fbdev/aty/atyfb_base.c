@@ -48,7 +48,6 @@
 
 ******************************************************************************/
 
-#include <linux/aperture.h>
 #include <linux/compat.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -80,6 +79,7 @@
 
 #ifdef __powerpc__
 #include <asm/machdep.h>
+#include <asm/prom.h>
 #include "../macmodes.h"
 #endif
 #ifdef __sparc__
@@ -3192,7 +3192,8 @@ static void aty_init_lcd(struct atyfb_par *par, u32 bios_base)
 		 * which we print to the screen.
 		 */
 		id = *(u8 *)par->lcd_table;
-		strscpy(model, (char *)par->lcd_table+1, sizeof(model));
+		strncpy(model, (char *)par->lcd_table+1, 24);
+		model[23] = 0;
 
 		width = par->lcd_width = *(u16 *)(par->lcd_table+25);
 		height = par->lcd_height = *(u16 *)(par->lcd_table+27);
@@ -3533,11 +3534,7 @@ static int atyfb_pci_probe(struct pci_dev *pdev,
 	struct fb_info *info;
 	struct resource *rp;
 	struct atyfb_par *par;
-	int rc;
-
-	rc = aperture_remove_conflicting_pci_devices(pdev, "atyfb");
-	if (rc)
-		return rc;
+	int rc = -ENOMEM;
 
 	/* Enable device in PCI config */
 	if (pci_enable_device(pdev)) {
@@ -3895,7 +3892,7 @@ static int __init atyfb_setup(char *options)
 			 && (!strncmp(this_opt, "Mach64:", 7))) {
 			static unsigned char m64_num;
 			static char mach64_str[80];
-			strscpy(mach64_str, this_opt + 7, sizeof(mach64_str));
+			strlcpy(mach64_str, this_opt + 7, sizeof(mach64_str));
 			if (!store_video_par(mach64_str, m64_num)) {
 				m64_num++;
 				mach64_count = m64_num;
@@ -3964,12 +3961,7 @@ static int __init atyfb_init(void)
 	int err1 = 1, err2 = 1;
 #ifndef MODULE
 	char *option = NULL;
-#endif
 
-	if (fb_modesetting_disabled("atyfb"))
-		return -ENODEV;
-
-#ifndef MODULE
 	if (fb_get_options("atyfb", &option))
 		return -ENODEV;
 	atyfb_setup(option);

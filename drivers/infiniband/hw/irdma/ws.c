@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 or Linux-OpenIB
 /* Copyright (c) 2017 - 2021 Intel Corporation */
 #include "osdep.h"
+#include "status.h"
 #include "hmc.h"
 #include "defs.h"
 #include "type.h"
@@ -86,8 +87,8 @@ static void irdma_free_node(struct irdma_sc_vsi *vsi,
  * @node: pointer to node
  * @cmd: add, remove or modify
  */
-static int irdma_ws_cqp_cmd(struct irdma_sc_vsi *vsi,
-			    struct irdma_ws_node *node, u8 cmd)
+static enum irdma_status_code
+irdma_ws_cqp_cmd(struct irdma_sc_vsi *vsi, struct irdma_ws_node *node, u8 cmd)
 {
 	struct irdma_ws_node_info node_info = {};
 
@@ -105,7 +106,7 @@ static int irdma_ws_cqp_cmd(struct irdma_sc_vsi *vsi,
 	node_info.enable = node->enable;
 	if (irdma_cqp_ws_node_cmd(vsi->dev, cmd, &node_info)) {
 		ibdev_dbg(to_ibdev(vsi->dev), "WS: CQP WS CMD failed\n");
-		return -ENOMEM;
+		return IRDMA_ERR_NO_MEMORY;
 	}
 
 	if (node->type_leaf && cmd == IRDMA_OP_WS_ADD_NODE) {
@@ -233,18 +234,18 @@ static void irdma_remove_leaf(struct irdma_sc_vsi *vsi, u8 user_pri)
  * @vsi: vsi pointer
  * @user_pri: user priority
  */
-int irdma_ws_add(struct irdma_sc_vsi *vsi, u8 user_pri)
+enum irdma_status_code irdma_ws_add(struct irdma_sc_vsi *vsi, u8 user_pri)
 {
 	struct irdma_ws_node *ws_tree_root;
 	struct irdma_ws_node *vsi_node;
 	struct irdma_ws_node *tc_node;
 	u16 traffic_class;
-	int ret = 0;
+	enum irdma_status_code ret = 0;
 	int i;
 
 	mutex_lock(&vsi->dev->ws_mutex);
 	if (vsi->tc_change_pending) {
-		ret = -EBUSY;
+		ret = IRDMA_ERR_NOT_READY;
 		goto exit;
 	}
 
@@ -257,7 +258,7 @@ int irdma_ws_add(struct irdma_sc_vsi *vsi, u8 user_pri)
 		ws_tree_root = irdma_alloc_node(vsi, user_pri,
 						WS_NODE_TYPE_PARENT, NULL);
 		if (!ws_tree_root) {
-			ret = -ENOMEM;
+			ret = IRDMA_ERR_NO_MEMORY;
 			goto exit;
 		}
 
@@ -282,7 +283,7 @@ int irdma_ws_add(struct irdma_sc_vsi *vsi, u8 user_pri)
 		vsi_node = irdma_alloc_node(vsi, user_pri, WS_NODE_TYPE_PARENT,
 					    ws_tree_root);
 		if (!vsi_node) {
-			ret = -ENOMEM;
+			ret = IRDMA_ERR_NO_MEMORY;
 			goto vsi_add_err;
 		}
 
@@ -309,7 +310,7 @@ int irdma_ws_add(struct irdma_sc_vsi *vsi, u8 user_pri)
 		tc_node = irdma_alloc_node(vsi, user_pri, WS_NODE_TYPE_LEAF,
 					   vsi_node);
 		if (!tc_node) {
-			ret = -ENOMEM;
+			ret = IRDMA_ERR_NO_MEMORY;
 			goto leaf_add_err;
 		}
 

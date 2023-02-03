@@ -24,7 +24,7 @@
 		compatible = "gpio-keys";
 		autorepeat;
 
-		key-power {
+		power {
 			gpios = <&gpio0 RK_PA4 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_POWER>;
 			label = "GPIO Key Power";
@@ -126,21 +126,18 @@
 };
 
 &emac {
-	phy = <&phy0>;
-	phy-supply = <&vcc_rmii>;
-	pinctrl-names = "default";
-	pinctrl-0 = <&emac_xfer>, <&emac_mdio>, <&phy_int>;
 	status = "okay";
 
-	mdio {
-		#address-cells = <1>;
-		#size-cells = <0>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&emac_xfer>, <&emac_mdio>, <&phy_int>;
 
-		phy0: ethernet-phy@0 {
-			reg = <0>;
-			interrupt-parent = <&gpio3>;
-			interrupts = <RK_PD2 IRQ_TYPE_LEVEL_LOW>;
-		};
+	phy = <&phy0>;
+	phy-supply = <&vcc_rmii>;
+
+	phy0: ethernet-phy@0 {
+		reg = <0>;
+		interrupt-parent = <&gpio3>;
+		interrupts = <RK_PD2 IRQ_TYPE_LEVEL_LOW>;
 	};
 };
 

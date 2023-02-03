@@ -13,7 +13,7 @@ Supported chips:
       https://www.microchip.com/en-us/product/EMC2305
 
 Description:
-------------
+-----------
 This driver implements support for Microchip EMC2301/2/3/5 RPM-based PWM Fan Controller.
 The EMC2305 Fan Controller supports up to 5 independently controlled PWM fan drives.
 Fan rotation speeds are reported in RPM.
@@ -35,3 +35,6 @@ sysfs interfaces in thermal subsystem:
 cur_state         RW file for the current cooling state of the cooling device (0..max_state)
 max_state         RO file for the maximum cooling state of the cooling device
 ================= == ========================================================================
+
+Configuration is possible via device tree:
+Documentation/devicetree/bindings/hwmon/microchip,emc2305.yaml

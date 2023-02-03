@@ -170,10 +170,7 @@
 	status = "okay";
 
 	phy0: ethernet-phy@0 {
-		compatible = "ethernet-phy-id0007.c0f1",
-			     "ethernet-phy-ieee802.3-c22";
 		reg = <0>;
-		reset-gpios = <&pfc 18 GPIO_ACTIVE_LOW>;
 	};
 };
 
@@ -266,7 +263,7 @@
 		function = "lcd0";
 	};
 
-	lcd0-mux-hog {
+	lcd0_mux {
 		/* DBGMD/LCDC0/FSIA MUX */
 		gpio-hog;
 		gpios = <176 0>;

@@ -23,7 +23,7 @@
 #include <sound/soc.h>
 
 #include <asm/mach-types.h>
-#include <linux/platform_data/asoc-pxa.h>
+#include <mach/audio.h>
 
 SND_SOC_DAILINK_DEFS(ac97,
 	DAILINK_COMP_ARRAY(COMP_CPU("pxa2xx-ac97")),

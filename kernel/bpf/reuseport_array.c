@@ -6,7 +6,6 @@
 #include <linux/err.h>
 #include <linux/sock_diag.h>
 #include <net/sock_reuseport.h>
-#include <linux/btf_ids.h>
 
 struct reuseport_array {
 	struct bpf_map map;
@@ -21,11 +20,14 @@ static struct reuseport_array *reuseport_array(struct bpf_map *map)
 /* The caller must hold the reuseport_lock */
 void bpf_sk_reuseport_detach(struct sock *sk)
 {
-	struct sock __rcu **socks;
+	uintptr_t sk_user_data;
 
 	write_lock_bh(&sk->sk_callback_lock);
-	socks = __locked_read_sk_user_data_with_flags(sk, SK_USER_DATA_BPF);
-	if (socks) {
+	sk_user_data = (uintptr_t)sk->sk_user_data;
+	if (sk_user_data & SK_USER_DATA_BPF) {
+		struct sock __rcu **socks;
+
+		socks = (void *)(sk_user_data & SK_USER_DATA_PTRMASK);
 		WRITE_ONCE(sk->sk_user_data, NULL);
 		/*
 		 * Do not move this NULL assignment outside of
@@ -141,7 +143,7 @@ static void reuseport_array_free(struct bpf_map *map)
 
 	/*
 	 * Once reaching here, all sk->sk_user_data is not
-	 * referencing this "array". "array" can be freed now.
+	 * referenceing this "array".  "array" can be freed now.
 	 */
 	bpf_map_area_free(array);
 }
@@ -150,12 +152,16 @@ static struct bpf_map *reuseport_array_alloc(union bpf_attr *attr)
 {
 	int numa_node = bpf_map_attr_numa_node(attr);
 	struct reuseport_array *array;
+	u64 array_size;
 
 	if (!bpf_capable())
 		return ERR_PTR(-EPERM);
 
+	array_size = sizeof(*array);
+	array_size += (u64)attr->max_entries * sizeof(struct sock *);
+
 	/* allocate all map elements and zero-initialize them */
-	array = bpf_map_area_alloc(struct_size(array, ptrs, attr->max_entries), numa_node);
+	array = bpf_map_area_alloc(array_size, numa_node);
 	if (!array)
 		return ERR_PTR(-ENOMEM);
 
@@ -335,7 +341,7 @@ static int reuseport_array_get_next_key(struct bpf_map *map, void *key,
 	return 0;
 }
 
-BTF_ID_LIST_SINGLE(reuseport_array_map_btf_ids, struct, reuseport_array)
+static int reuseport_array_map_btf_id;
 const struct bpf_map_ops reuseport_array_ops = {
 	.map_meta_equal = bpf_map_meta_equal,
 	.map_alloc_check = reuseport_array_alloc_check,
@@ -344,5 +350,6 @@ const struct bpf_map_ops reuseport_array_ops = {
 	.map_lookup_elem = reuseport_array_lookup_elem,
 	.map_get_next_key = reuseport_array_get_next_key,
 	.map_delete_elem = reuseport_array_delete_elem,
-	.map_btf_id = &reuseport_array_map_btf_ids[0],
+	.map_btf_name = "reuseport_array",
+	.map_btf_id = &reuseport_array_map_btf_id,
 };
