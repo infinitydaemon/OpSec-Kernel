@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0
-VERSION = 6
-PATCHLEVEL = 2
-SUBLEVEL = 4
+VERSION = 5
+PATCHLEVEL = 15
+SUBLEVEL = 84
 EXTRAVERSION = cwdsystems
 NAME = infinitydaemon
 
+# Merge with mainline kernel for better patch updates.
+# Build configs remain at CWD SYSTEMS criteria.
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
 # More info can be located in ./README
