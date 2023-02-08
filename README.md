@@ -31,7 +31,7 @@ cd OpSec-Kernel
 KERNEL=kernel8
 make bcm2711_defconfig
 edit the .config file and put a different name and build version for your kernel as :
-CONFIG_LOCALVERSION="-OpSec-6x"
+CONFIG_LOCALVERSION="-OpSec-515"
 make -j4 Image.gz modules dtbs
 sudo make modules_install
 sudo cp arch/arm64/boot/dts/broadcom/*.dtb /boot/
