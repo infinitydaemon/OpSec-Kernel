@@ -466,7 +466,7 @@ static struct attribute *ps3_system_bus_dev_attrs[] = {
 };
 ATTRIBUTE_GROUPS(ps3_system_bus_dev);
 
-struct bus_type ps3_system_bus_type = {
+static struct bus_type ps3_system_bus_type = {
 	.name = "ps3_system_bus",
 	.match = ps3_system_bus_match,
 	.uevent = ps3_system_bus_uevent,
@@ -601,9 +601,9 @@ static dma_addr_t ps3_ioc0_map_page(struct device *_dev, struct page *page,
 		iopte_flag |= CBE_IOPTE_PP_W | CBE_IOPTE_SO_RW;
 		break;
 	default:
-		/* not happned */
+		/* not happened */
 		BUG();
-	};
+	}
 	result = ps3_dma_map(dev->d_region, (unsigned long)ptr, size,
 			     &bus_addr, iopte_flag);
 
@@ -762,7 +762,7 @@ int ps3_system_bus_device_register(struct ps3_system_bus_device *dev)
 		break;
 	default:
 		BUG();
-	};
+	}
 
 	dev->core.of_node = NULL;
 	set_dev_node(&dev->core, 0);

@@ -6,6 +6,7 @@
  *           (C) 2017 Anju T Sudhakar, IBM Corporation.
  *           (C) 2017 Hemant K Shaw, IBM Corporation.
  */
+#include <linux/of.h>
 #include <linux/perf_event.h>
 #include <linux/slab.h>
 #include <asm/opal.h>
@@ -21,7 +22,7 @@
  * Used to avoid races in counting the nest-pmu units during hotplug
  * register and unregister
  */
-static DEFINE_SPINLOCK(nest_init_lock);
+static DEFINE_MUTEX(nest_init_lock);
 static DEFINE_PER_CPU(struct imc_pmu_ref *, local_nest_imc_refc);
 static struct imc_pmu **per_nest_pmu_arr;
 static cpumask_t nest_imc_cpumask;
@@ -72,7 +73,7 @@ static struct attribute *imc_format_attrs[] = {
 	NULL,
 };
 
-static struct attribute_group imc_format_group = {
+static const struct attribute_group imc_format_group = {
 	.name = "format",
 	.attrs = imc_format_attrs,
 };
@@ -91,7 +92,7 @@ static struct attribute *trace_imc_format_attrs[] = {
 	NULL,
 };
 
-static struct attribute_group trace_imc_format_group = {
+static const struct attribute_group trace_imc_format_group = {
 .name = "format",
 .attrs = trace_imc_format_attrs,
 };
@@ -126,7 +127,7 @@ static struct attribute *imc_pmu_cpumask_attrs[] = {
 	NULL,
 };
 
-static struct attribute_group imc_pmu_cpumask_attr_group = {
+static const struct attribute_group imc_pmu_cpumask_attr_group = {
 	.attrs = imc_pmu_cpumask_attrs,
 };
 
@@ -240,8 +241,10 @@ static int update_events_in_group(struct device_node *node, struct imc_pmu *pmu)
 	ct = of_get_child_count(pmu_events);
 
 	/* Get the event prefix */
-	if (of_property_read_string(node, "events-prefix", &prefix))
+	if (of_property_read_string(node, "events-prefix", &prefix)) {
+		of_node_put(pmu_events);
 		return 0;
+	}
 
 	/* Get a global unit and scale data if available */
 	if (of_property_read_string(node, "scale", &g_scale))
@@ -255,8 +258,10 @@ static int update_events_in_group(struct device_node *node, struct imc_pmu *pmu)
 
 	/* Allocate memory for the events */
 	pmu->events = kcalloc(ct, sizeof(struct imc_events), GFP_KERNEL);
-	if (!pmu->events)
+	if (!pmu->events) {
+		of_node_put(pmu_events);
 		return -ENOMEM;
+	}
 
 	ct = 0;
 	/* Parse the events and update the struct */
@@ -265,6 +270,8 @@ static int update_events_in_group(struct device_node *node, struct imc_pmu *pmu)
 		if (!ret)
 			ct++;
 	}
+
+	of_node_put(pmu_events);
 
 	/* Allocate memory for attribute group */
 	attr_group = kzalloc(sizeof(*attr_group), GFP_KERNEL);
@@ -522,7 +529,7 @@ static int nest_imc_event_init(struct perf_event *event)
 
 	/*
 	 * Nest HW counter memory resides in a per-chip reserve-memory (HOMER).
-	 * Get the base memory addresss for this cpu.
+	 * Get the base memory address for this cpu.
 	 */
 	chip_id = cpu_to_chip_id(event->cpu);
 
@@ -673,7 +680,7 @@ static int ppc_core_imc_cpu_offline(unsigned int cpu)
 	/*
 	 * Check whether core_imc is registered. We could end up here
 	 * if the cpuhotplug callback registration fails. i.e, callback
-	 * invokes the offline path for all sucessfully registered cpus.
+	 * invokes the offline path for all successfully registered cpus.
 	 * At this stage, core_imc pmu will not be registered and we
 	 * should return here.
 	 *
@@ -1622,7 +1629,7 @@ static void imc_common_mem_free(struct imc_pmu *pmu_ptr)
 static void imc_common_cpuhp_mem_free(struct imc_pmu *pmu_ptr)
 {
 	if (pmu_ptr->domain == IMC_DOMAIN_NEST) {
-		spin_lock(&nest_init_lock);
+		mutex_lock(&nest_init_lock);
 		if (nest_pmus == 1) {
 			cpuhp_remove_state(CPUHP_AP_PERF_POWERPC_NEST_IMC_ONLINE);
 			kfree(nest_imc_refc);
@@ -1632,7 +1639,7 @@ static void imc_common_cpuhp_mem_free(struct imc_pmu *pmu_ptr)
 
 		if (nest_pmus > 0)
 			nest_pmus--;
-		spin_unlock(&nest_init_lock);
+		mutex_unlock(&nest_init_lock);
 	}
 
 	/* Free core_imc memory */
@@ -1789,11 +1796,11 @@ int init_imc_pmu(struct device_node *parent, struct imc_pmu *pmu_ptr, int pmu_id
 		* rest. To handle the cpuhotplug callback unregister, we track
 		* the number of nest pmus in "nest_pmus".
 		*/
-		spin_lock(&nest_init_lock);
+		mutex_lock(&nest_init_lock);
 		if (nest_pmus == 0) {
 			ret = init_nest_pmu_ref();
 			if (ret) {
-				spin_unlock(&nest_init_lock);
+				mutex_unlock(&nest_init_lock);
 				kfree(per_nest_pmu_arr);
 				per_nest_pmu_arr = NULL;
 				goto err_free_mem;
@@ -1801,7 +1808,7 @@ int init_imc_pmu(struct device_node *parent, struct imc_pmu *pmu_ptr, int pmu_id
 			/* Register for cpu hotplug notification. */
 			ret = nest_pmu_cpumask_init();
 			if (ret) {
-				spin_unlock(&nest_init_lock);
+				mutex_unlock(&nest_init_lock);
 				kfree(nest_imc_refc);
 				kfree(per_nest_pmu_arr);
 				per_nest_pmu_arr = NULL;
@@ -1809,7 +1816,7 @@ int init_imc_pmu(struct device_node *parent, struct imc_pmu *pmu_ptr, int pmu_id
 			}
 		}
 		nest_pmus++;
-		spin_unlock(&nest_init_lock);
+		mutex_unlock(&nest_init_lock);
 		break;
 	case IMC_DOMAIN_CORE:
 		ret = core_imc_pmu_cpumask_init();

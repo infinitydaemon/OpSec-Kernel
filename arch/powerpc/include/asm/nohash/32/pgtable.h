@@ -130,10 +130,10 @@ void unmap_kernel_page(unsigned long va);
 #include <asm/nohash/32/pte-40x.h>
 #elif defined(CONFIG_44x)
 #include <asm/nohash/32/pte-44x.h>
-#elif defined(CONFIG_FSL_BOOKE) && defined(CONFIG_PTE_64BIT)
-#include <asm/nohash/pte-book3e.h>
-#elif defined(CONFIG_FSL_BOOKE)
-#include <asm/nohash/32/pte-fsl-booke.h>
+#elif defined(CONFIG_PPC_85xx) && defined(CONFIG_PTE_64BIT)
+#include <asm/nohash/pte-e500.h>
+#elif defined(CONFIG_PPC_85xx)
+#include <asm/nohash/32/pte-85xx.h>
 #elif defined(CONFIG_PPC_8xx)
 #include <asm/nohash/32/pte-8xx.h>
 #endif
@@ -248,7 +248,7 @@ static int number_of_cells_per_pte(pmd_t *pmd, pte_basic_t val, int huge)
 static inline pte_basic_t pte_update(struct mm_struct *mm, unsigned long addr, pte_t *p,
 				     unsigned long clr, unsigned long set, int huge)
 {
-	pte_basic_t *entry = &p->pte;
+	pte_basic_t *entry = (pte_basic_t *)p;
 	pte_basic_t old = pte_val(*p);
 	pte_basic_t new = (old & ~(pte_basic_t)clr) | set;
 	int num, i;
@@ -256,14 +256,20 @@ static inline pte_basic_t pte_update(struct mm_struct *mm, unsigned long addr, p
 
 	num = number_of_cells_per_pte(pmd, new, huge);
 
-	for (i = 0; i < num; i++, entry++, new += SZ_4K)
-		*entry = new;
+	for (i = 0; i < num; i += PAGE_SIZE / SZ_4K, new += PAGE_SIZE) {
+		*entry++ = new;
+		if (IS_ENABLED(CONFIG_PPC_16K_PAGES) && num != 1) {
+			*entry++ = new;
+			*entry++ = new;
+			*entry++ = new;
+		}
+	}
 
 	return old;
 }
 
 #ifdef CONFIG_PPC_16K_PAGES
-#define __HAVE_ARCH_PTEP_GET
+#define ptep_get ptep_get
 static inline pte_t ptep_get(pte_t *ptep)
 {
 	pte_basic_t val = READ_ONCE(ptep->pte);
@@ -338,9 +344,6 @@ static inline int pte_young(pte_t pte)
 	return pte_val(pte) & _PAGE_ACCESSED;
 }
 
-#define __HAVE_ARCH_PTE_SAME
-#define pte_same(A,B)	((pte_val(A) ^ pte_val(B)) == 0)
-
 /*
  * Note that on Book E processors, the pmd contains the kernel virtual
  * (lowmem) address of the pte page.  The physical address is less useful
@@ -349,15 +352,14 @@ static inline int pte_young(pte_t pte)
  * of the pte page.  -- paulus
  */
 #ifndef CONFIG_BOOKE
-#define pmd_page(pmd)		\
-	pfn_to_page(pmd_val(pmd) >> PAGE_SHIFT)
+#define pmd_pfn(pmd)		(pmd_val(pmd) >> PAGE_SHIFT)
 #else
 #define pmd_page_vaddr(pmd)	\
 	((unsigned long)(pmd_val(pmd) & ~(PTE_TABLE_SIZE - 1)))
-#define pmd_page(pmd)		\
-	pfn_to_page((__pa(pmd_val(pmd)) >> PAGE_SHIFT))
+#define pmd_pfn(pmd)		(__pa(pmd_val(pmd)) >> PAGE_SHIFT)
 #endif
 
+#define pmd_page(pmd)		pfn_to_page(pmd_pfn(pmd))
 /*
  * Encode and decode a swap entry.
  * Note that the bits we use in a PTE for representing a swap entry
