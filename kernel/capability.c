@@ -360,6 +360,7 @@ bool has_capability_noaudit(struct task_struct *t, int cap)
 {
 	return has_ns_capability_noaudit(t, &init_user_ns, cap);
 }
+EXPORT_SYMBOL(has_capability_noaudit);
 
 static bool ns_capable_common(struct user_namespace *ns,
 			      int cap,
@@ -488,8 +489,8 @@ bool privileged_wrt_inode_uidgid(struct user_namespace *ns,
 				 struct user_namespace *mnt_userns,
 				 const struct inode *inode)
 {
-	return kuid_has_mapping(ns, i_uid_into_mnt(mnt_userns, inode)) &&
-	       kgid_has_mapping(ns, i_gid_into_mnt(mnt_userns, inode));
+	return vfsuid_has_mapping(ns, i_uid_into_vfsuid(mnt_userns, inode)) &&
+	       vfsgid_has_mapping(ns, i_gid_into_vfsgid(mnt_userns, inode));
 }
 
 /**

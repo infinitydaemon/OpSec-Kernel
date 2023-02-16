@@ -251,16 +251,12 @@ int perf_kprobe_init(struct perf_event *p_event, bool is_retprobe)
 	struct trace_event_call *tp_event;
 
 	if (p_event->attr.kprobe_func) {
-		func = kzalloc(KSYM_NAME_LEN, GFP_KERNEL);
-		if (!func)
-			return -ENOMEM;
-		ret = strncpy_from_user(
-			func, u64_to_user_ptr(p_event->attr.kprobe_func),
-			KSYM_NAME_LEN);
-		if (ret == KSYM_NAME_LEN)
-			ret = -E2BIG;
-		if (ret < 0)
-			goto out;
+		func = strndup_user(u64_to_user_ptr(p_event->attr.kprobe_func),
+				    KSYM_NAME_LEN);
+		if (IS_ERR(func)) {
+			ret = PTR_ERR(func);
+			return (ret == -EINVAL) ? -E2BIG : ret;
+		}
 
 		if (func[0] == '\0') {
 			kfree(func);
@@ -401,7 +397,8 @@ void *perf_trace_buf_alloc(int size, struct pt_regs **regs, int *rctxp)
 	BUILD_BUG_ON(PERF_MAX_TRACE_SIZE % sizeof(unsigned long));
 
 	if (WARN_ONCE(size > PERF_MAX_TRACE_SIZE,
-		      "perf buffer not large enough"))
+		      "perf buffer not large enough, wanted %d, have %d",
+		      size, PERF_MAX_TRACE_SIZE))
 		return NULL;
 
 	*rctxp = rctx = perf_swevent_get_recursion_context();
