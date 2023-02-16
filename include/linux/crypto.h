@@ -133,6 +133,15 @@
 #define CRYPTO_ALG_ALLOCATES_MEMORY	0x00010000
 
 /*
+ * Mark an algorithm as a service implementation only usable by a
+ * template and never by a normal user of the kernel crypto API.
+ * This is intended to be used by algorithms that are themselves
+ * not FIPS-approved but may instead be used to implement parts of
+ * a FIPS-approved algorithm (e.g., dh vs. ffdhe2048(dh)).
+ */
+#define CRYPTO_ALG_FIPS_INTERNAL	0x00020000
+
+/*
  * Transform masks and values (for crt_flags).
  */
 #define CRYPTO_TFM_NEED_KEY		0x00000001
@@ -703,11 +712,6 @@ static inline void crypto_tfm_set_flags(struct crypto_tfm *tfm, u32 flags)
 static inline void crypto_tfm_clear_flags(struct crypto_tfm *tfm, u32 flags)
 {
 	tfm->crt_flags &= ~flags;
-}
-
-static inline void *crypto_tfm_ctx(struct crypto_tfm *tfm)
-{
-	return tfm->__crt_ctx;
 }
 
 static inline unsigned int crypto_tfm_ctx_alignment(void)

@@ -4,12 +4,9 @@
 #ifndef __WWAN_H
 #define __WWAN_H
 
-#include <linux/device.h>
-#include <linux/kernel.h>
 #include <linux/poll.h>
-#include <linux/skbuff.h>
-#include <linux/netlink.h>
 #include <linux/netdevice.h>
+#include <linux/types.h>
 
 /**
  * enum wwan_port_type - WWAN port types
@@ -18,6 +15,7 @@
  * @WWAN_PORT_QMI: Qcom modem/MSM interface for modem control
  * @WWAN_PORT_QCDM: Qcom Modem diagnostic interface
  * @WWAN_PORT_FIREHOSE: XML based command protocol
+ * @WWAN_PORT_XMMRPC: Control protocol for Intel XMM modems
  *
  * @WWAN_PORT_MAX: Highest supported port types
  * @WWAN_PORT_UNKNOWN: Special value to indicate an unknown port type
@@ -29,6 +27,7 @@ enum wwan_port_type {
 	WWAN_PORT_QMI,
 	WWAN_PORT_QCDM,
 	WWAN_PORT_FIREHOSE,
+	WWAN_PORT_XMMRPC,
 
 	/* Add new port types above this line */
 
@@ -37,6 +36,10 @@ enum wwan_port_type {
 	WWAN_PORT_UNKNOWN,
 };
 
+struct device;
+struct file;
+struct netlink_ext_ack;
+struct sk_buff;
 struct wwan_port;
 
 /** struct wwan_port_ops - The WWAN port operations
@@ -170,5 +173,16 @@ int wwan_register_ops(struct device *parent, const struct wwan_ops *ops,
 		      void *ctxt, u32 def_link_id);
 
 void wwan_unregister_ops(struct device *parent);
+
+#ifdef CONFIG_WWAN_DEBUGFS
+struct dentry *wwan_get_debugfs_dir(struct device *parent);
+void wwan_put_debugfs_dir(struct dentry *dir);
+#else
+static inline struct dentry *wwan_get_debugfs_dir(struct device *parent)
+{
+	return ERR_PTR(-ENODEV);
+}
+static inline void wwan_put_debugfs_dir(struct dentry *dir) {}
+#endif
 
 #endif /* __WWAN_H */
