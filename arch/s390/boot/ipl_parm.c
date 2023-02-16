@@ -8,8 +8,15 @@
 #include <asm/sections.h>
 #include <asm/boot_data.h>
 #include <asm/facility.h>
+#include <asm/setup.h>
 #include <asm/uv.h>
 #include "boot.h"
+
+struct parmarea parmarea __section(".parmarea") = {
+	.kernel_version		= (unsigned long)kernel_version,
+	.max_command_line_size	= COMMAND_LINE_SIZE,
+	.command_line		= "root=/dev/ram0 ro",
+};
 
 char __bootdata(early_command_line)[COMMAND_LINE_SIZE];
 int __bootdata(noexec_disabled);
@@ -70,6 +77,9 @@ bool is_ipl_block_dump(void)
 	if (ipl_block.pb0_hdr.pbt == IPL_PBT_NVME &&
 	    ipl_block.nvme.opt == IPL_PB0_NVME_OPT_DUMP)
 		return true;
+	if (ipl_block.pb0_hdr.pbt == IPL_PBT_ECKD &&
+	    ipl_block.eckd.opt == IPL_PB0_ECKD_OPT_DUMP)
+		return true;
 	return false;
 }
 
@@ -101,6 +111,11 @@ static size_t ipl_block_get_ascii_scpdata(char *dest, size_t size,
 		scp_data_len = ipb->nvme.scp_data_len;
 		scp_data = ipb->nvme.scp_data;
 		break;
+	case IPL_PBT_ECKD:
+		scp_data_len = ipb->eckd.scp_data_len;
+		scp_data = ipb->eckd.scp_data;
+		break;
+
 	default:
 		goto out;
 	}
@@ -146,6 +161,7 @@ static void append_ipl_block_parm(void)
 		break;
 	case IPL_PBT_FCP:
 	case IPL_PBT_NVME:
+	case IPL_PBT_ECKD:
 		rc = ipl_block_get_ascii_scpdata(
 			parm, COMMAND_LINE_SIZE - len - 1, &ipl_block);
 		break;
@@ -170,10 +186,10 @@ static inline int has_ebcdic_char(const char *str)
 
 void setup_boot_command_line(void)
 {
-	parmarea.command_line[ARCH_COMMAND_LINE_SIZE - 1] = 0;
+	parmarea.command_line[COMMAND_LINE_SIZE - 1] = 0;
 	/* convert arch command line to ascii if necessary */
 	if (has_ebcdic_char(parmarea.command_line))
-		EBCASC(parmarea.command_line, ARCH_COMMAND_LINE_SIZE);
+		EBCASC(parmarea.command_line, COMMAND_LINE_SIZE);
 	/* copy arch command line */
 	strcpy(early_command_line, strim(parmarea.command_line));
 
