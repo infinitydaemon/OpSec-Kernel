@@ -10,7 +10,6 @@
 #include <linux/slab.h>
 
 #include <linux/scatterlist.h>
-#include <linux/swap.h>		/* For nr_free_buffer_pages() */
 #include <linux/list.h>
 
 #include <linux/debugfs.h>
@@ -933,7 +932,6 @@ static int mmc_test_transfer(struct mmc_test_card *test,
 	unsigned blocks, unsigned blksz, int write)
 {
 	int ret, i;
-	unsigned long flags;
 
 	if (write) {
 		for (i = 0; i < blocks * blksz; i++)
@@ -941,9 +939,7 @@ static int mmc_test_transfer(struct mmc_test_card *test,
 	} else {
 		memset(test->scratch, 0, BUFFER_SIZE);
 	}
-	local_irq_save(flags);
 	sg_copy_from_buffer(sg, sg_len, test->scratch, BUFFER_SIZE);
-	local_irq_restore(flags);
 
 	ret = mmc_test_set_blksize(test, blksz);
 	if (ret)
@@ -988,9 +984,7 @@ static int mmc_test_transfer(struct mmc_test_card *test,
 				return RESULT_FAIL;
 		}
 	} else {
-		local_irq_save(flags);
 		sg_copy_to_buffer(sg, sg_len, test->scratch, BUFFER_SIZE);
-		local_irq_restore(flags);
 		for (i = 0; i < blocks * blksz; i++) {
 			if (test->scratch[i] != (u8)i)
 				return RESULT_FAIL;
@@ -2326,10 +2320,9 @@ static int mmc_test_profile_sglen_r_nonblock_perf(struct mmc_test_card *test)
 static int mmc_test_reset(struct mmc_test_card *test)
 {
 	struct mmc_card *card = test->card;
-	struct mmc_host *host = card->host;
 	int err;
 
-	err = mmc_hw_reset(host);
+	err = mmc_hw_reset(card);
 	if (!err) {
 		/*
 		 * Reset will re-enable the card's command queue, but tests

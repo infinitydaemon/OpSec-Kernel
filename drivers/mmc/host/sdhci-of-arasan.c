@@ -21,6 +21,7 @@
 #include <linux/of_device.h>
 #include <linux/phy/phy.h>
 #include <linux/regmap.h>
+#include <linux/reset.h>
 #include <linux/of.h>
 #include <linux/firmware/xlnx-zynqmp.h>
 
@@ -189,6 +190,13 @@ static const struct sdhci_arasan_soc_ctl_map intel_lgm_emmc_soc_ctl_map = {
 static const struct sdhci_arasan_soc_ctl_map intel_lgm_sdxc_soc_ctl_map = {
 	.baseclkfreq = { .reg = 0x80, .width = 8, .shift = 2 },
 	.clockmultiplier = { .reg = 0, .width = -1, .shift = -1 },
+	.hiword_update = false,
+};
+
+static const struct sdhci_arasan_soc_ctl_map thunderbay_soc_ctl_map = {
+	.baseclkfreq = { .reg = 0x0, .width = 8, .shift = 14 },
+	.clockmultiplier = { .reg = 0x4, .width = 8, .shift = 14 },
+	.support64b = { .reg = 0x4, .width = 1, .shift = 24 },
 	.hiword_update = false,
 };
 
@@ -455,6 +463,15 @@ static const struct sdhci_pltfm_data sdhci_arasan_cqe_pdata = {
 	.quirks = SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN,
 	.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN |
 			SDHCI_QUIRK2_CLOCK_DIV_ZERO_BROKEN,
+};
+
+static const struct sdhci_pltfm_data sdhci_arasan_thunderbay_pdata = {
+	.ops = &sdhci_arasan_cqe_ops,
+	.quirks = SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN | SDHCI_QUIRK_NO_ENDATTR_IN_NOPDESC,
+	.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN |
+		SDHCI_QUIRK2_CLOCK_DIV_ZERO_BROKEN |
+		SDHCI_QUIRK2_STOP_WITH_TC |
+		SDHCI_QUIRK2_CAPS_BIT63_FOR_HS400,
 };
 
 #ifdef CONFIG_PM_SLEEP
@@ -1133,6 +1150,12 @@ static struct sdhci_arasan_of_data sdhci_arasan_generic_data = {
 	.clk_ops = &arasan_clk_ops,
 };
 
+static const struct sdhci_arasan_of_data sdhci_arasan_thunderbay_data = {
+	.soc_ctl_map = &thunderbay_soc_ctl_map,
+	.pdata = &sdhci_arasan_thunderbay_pdata,
+	.clk_ops = &arasan_clk_ops,
+};
+
 static const struct sdhci_pltfm_data sdhci_keembay_emmc_pdata = {
 	.ops = &sdhci_arasan_cqe_ops,
 	.quirks = SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN |
@@ -1265,6 +1288,10 @@ static const struct of_device_id sdhci_arasan_of_match[] = {
 	{
 		.compatible = "intel,keembay-sdhci-5.1-sdio",
 		.data = &intel_keembay_sdio_data,
+	},
+	{
+		.compatible = "intel,thunderbay-sdhci-5.1",
+		.data = &sdhci_arasan_thunderbay_data,
 	},
 	/* Generic compatible below here */
 	{
@@ -1496,6 +1523,65 @@ static int sdhci_arasan_register_sdclk(struct sdhci_arasan_data *sdhci_arasan,
 	return 0;
 }
 
+static int sdhci_zynqmp_set_dynamic_config(struct device *dev,
+					   struct sdhci_arasan_data *sdhci_arasan)
+{
+	struct sdhci_host *host = sdhci_arasan->host;
+	struct clk_hw *hw = &sdhci_arasan->clk_data.sdcardclk_hw;
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	const char *clk_name = clk_hw_get_name(hw);
+	u32 mhz, node_id = !strcmp(clk_name, "clk_out_sd0") ? NODE_SD_0 : NODE_SD_1;
+	struct reset_control *rstc;
+	int ret;
+
+	/* Obtain SDHC reset control */
+	rstc = devm_reset_control_get_optional_exclusive(dev, NULL);
+	if (IS_ERR(rstc)) {
+		dev_err(dev, "Cannot get SDHC reset.\n");
+		return PTR_ERR(rstc);
+	}
+
+	ret = reset_control_assert(rstc);
+	if (ret)
+		return ret;
+
+	ret = zynqmp_pm_set_sd_config(node_id, SD_CONFIG_FIXED, 0);
+	if (ret)
+		return ret;
+
+	ret = zynqmp_pm_set_sd_config(node_id, SD_CONFIG_EMMC_SEL,
+				      !!(host->mmc->caps & MMC_CAP_NONREMOVABLE));
+	if (ret)
+		return ret;
+
+	mhz = DIV_ROUND_CLOSEST_ULL(clk_get_rate(pltfm_host->clk), 1000000);
+	if (mhz > 100 && mhz <= 200)
+		mhz = 200;
+	else if (mhz > 50 && mhz <= 100)
+		mhz = 100;
+	else if (mhz > 25 && mhz <= 50)
+		mhz = 50;
+	else
+		mhz = 25;
+
+	ret = zynqmp_pm_set_sd_config(node_id, SD_CONFIG_BASECLK, mhz);
+	if (ret)
+		return ret;
+
+	ret = zynqmp_pm_set_sd_config(node_id, SD_CONFIG_8BIT,
+				      !!(host->mmc->caps & MMC_CAP_8_BIT_DATA));
+	if (ret)
+		return ret;
+
+	ret = reset_control_deassert(rstc);
+	if (ret)
+		return ret;
+
+	usleep_range(1000, 1500);
+
+	return 0;
+}
+
 static int sdhci_arasan_add_host(struct sdhci_arasan_data *sdhci_arasan)
 {
 	struct sdhci_host *host = sdhci_arasan->host;
@@ -1552,6 +1638,9 @@ static int sdhci_arasan_probe(struct platform_device *pdev)
 	const struct sdhci_arasan_of_data *data;
 
 	data = of_device_get_match_data(dev);
+	if (!data)
+		return -EINVAL;
+
 	host = sdhci_pltfm_init(pdev, data->pdata, sizeof(*sdhci_arasan));
 
 	if (IS_ERR(host))
@@ -1627,7 +1716,8 @@ static int sdhci_arasan_probe(struct platform_device *pdev)
 
 	if (of_device_is_compatible(np, "intel,keembay-sdhci-5.1-emmc") ||
 	    of_device_is_compatible(np, "intel,keembay-sdhci-5.1-sd") ||
-	    of_device_is_compatible(np, "intel,keembay-sdhci-5.1-sdio")) {
+	    of_device_is_compatible(np, "intel,keembay-sdhci-5.1-sdio") ||
+	    of_device_is_compatible(np, "intel,thunderbay-sdhci-5.1")) {
 		sdhci_arasan_update_clockmultiplier(host, 0x0);
 		sdhci_arasan_update_support64b(host, 0x0);
 
@@ -1654,6 +1744,15 @@ static int sdhci_arasan_probe(struct platform_device *pdev)
 	if (ret) {
 		ret = dev_err_probe(dev, ret, "parsing dt failed.\n");
 		goto unreg_clk;
+	}
+
+	if (of_device_is_compatible(np, "xlnx,zynqmp-8.9a")) {
+		ret = zynqmp_pm_is_function_supported(PM_IOCTL, IOCTL_SET_SD_CONFIG);
+		if (!ret) {
+			ret = sdhci_zynqmp_set_dynamic_config(dev, sdhci_arasan);
+			if (ret)
+				goto unreg_clk;
+		}
 	}
 
 	sdhci_arasan->phy = ERR_PTR(-ENODEV);
@@ -1704,7 +1803,6 @@ err_pltfm_free:
 
 static int sdhci_arasan_remove(struct platform_device *pdev)
 {
-	int ret;
 	struct sdhci_host *host = platform_get_drvdata(pdev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
@@ -1718,11 +1816,11 @@ static int sdhci_arasan_remove(struct platform_device *pdev)
 
 	sdhci_arasan_unregister_sdclk(&pdev->dev);
 
-	ret = sdhci_pltfm_unregister(pdev);
+	sdhci_pltfm_unregister(pdev);
 
 	clk_disable_unprepare(clk_ahb);
 
-	return ret;
+	return 0;
 }
 
 static struct platform_driver sdhci_arasan_driver = {

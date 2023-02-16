@@ -17,7 +17,7 @@
  * @h_ch_num: high channel for PDI
  * @ch_count: total channel count for PDI
  * @dir: data direction
- * @type: stream type, PDM or PCM
+ * @type: stream type, (only PCM supported)
  */
 struct sdw_cdns_pdi {
 	int num;
@@ -62,21 +62,15 @@ struct sdw_cdns_streams {
  * @pcm_bd: number of bidirectional PCM streams supported
  * @pcm_in: number of input PCM streams supported
  * @pcm_out: number of output PCM streams supported
- * @pdm_bd: number of bidirectional PDM streams supported
- * @pdm_in: number of input PDM streams supported
- * @pdm_out: number of output PDM streams supported
  */
 struct sdw_cdns_stream_config {
 	unsigned int pcm_bd;
 	unsigned int pcm_in;
 	unsigned int pcm_out;
-	unsigned int pdm_bd;
-	unsigned int pdm_in;
-	unsigned int pdm_out;
 };
 
 /**
- * struct sdw_cdns_dma_data: Cadence DMA data
+ * struct sdw_cdns_dai_runtime: Cadence DAI runtime data
  *
  * @name: SoundWire stream name
  * @stream: stream runtime
@@ -86,8 +80,10 @@ struct sdw_cdns_stream_config {
  * @link_id: Master link id
  * @hw_params: hw_params to be applied in .prepare step
  * @suspended: status set when suspended, to be used in .prepare
+ * @paused: status set in .trigger, to be used in suspend
+ * @direction: stream direction
  */
-struct sdw_cdns_dma_data {
+struct sdw_cdns_dai_runtime {
 	char *name;
 	struct sdw_stream_runtime *stream;
 	struct sdw_cdns_pdi *pdi;
@@ -96,6 +92,8 @@ struct sdw_cdns_dma_data {
 	int link_id;
 	struct snd_pcm_hw_params *hw_params;
 	bool suspended;
+	bool paused;
+	int direction;
 };
 
 /**
@@ -109,10 +107,10 @@ struct sdw_cdns_dma_data {
  * @ports: Data ports
  * @num_ports: Total number of data ports
  * @pcm: PCM streams
- * @pdm: PDM streams
  * @registers: Cadence registers
  * @link_up: Link status
  * @msg_count: Messages sent on bus
+ * @dai_runtime_array: runtime context for each allocated DAI.
  */
 struct sdw_cdns {
 	struct device *dev;
@@ -127,7 +125,6 @@ struct sdw_cdns {
 	int num_ports;
 
 	struct sdw_cdns_streams pcm;
-	struct sdw_cdns_streams pdm;
 
 	int pdi_loopback_source;
 	int pdi_loopback_target;
@@ -141,6 +138,8 @@ struct sdw_cdns {
 	struct work_struct work;
 
 	struct list_head list;
+
+	struct sdw_cdns_dai_runtime **dai_runtime_array;
 };
 
 #define bus_to_cdns(_bus) container_of(_bus, struct sdw_cdns, bus)
@@ -183,10 +182,12 @@ enum sdw_command_response
 cdns_xfer_msg_defer(struct sdw_bus *bus,
 		    struct sdw_msg *msg, struct sdw_defer *defer);
 
+u32 cdns_read_ping_status(struct sdw_bus *bus);
+
 int cdns_bus_conf(struct sdw_bus *bus, struct sdw_bus_params *params);
 
 int cdns_set_sdw_stream(struct snd_soc_dai *dai,
-			void *stream, bool pcm, int direction);
+			void *stream, int direction);
 
 void sdw_cdns_check_self_clearing_bits(struct sdw_cdns *cdns, const char *string,
 				       bool initial_delay, int reset_iterations);

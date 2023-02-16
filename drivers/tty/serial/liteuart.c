@@ -93,7 +93,7 @@ static void liteuart_timer(struct timer_list *t)
 	mod_timer(&uart->timer, jiffies + uart_poll_timeout(port));
 }
 
-static void liteuart_putchar(struct uart_port *port, int ch)
+static void liteuart_putchar(struct uart_port *port, unsigned char ch)
 {
 	while (litex_read8(port->membase + OFF_TXFULL))
 		cpu_relax();
@@ -136,8 +136,7 @@ static void liteuart_start_tx(struct uart_port *port)
 	} else if (!uart_circ_empty(xmit)) {
 		while (xmit->head != xmit->tail) {
 			ch = xmit->buf[xmit->tail];
-			xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
-			port->icount.tx++;
+			uart_xmit_advance(port, 1);
 			liteuart_putchar(port, ch);
 		}
 	}
@@ -178,7 +177,7 @@ static void liteuart_shutdown(struct uart_port *port)
 }
 
 static void liteuart_set_termios(struct uart_port *port, struct ktermios *new,
-				 struct ktermios *old)
+				 const struct ktermios *old)
 {
 	unsigned int baud;
 	unsigned long flags;

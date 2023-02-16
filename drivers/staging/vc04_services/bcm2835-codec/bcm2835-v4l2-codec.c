@@ -41,6 +41,8 @@
 #include "vchiq-mmal/mmal-parameters.h"
 #include "vchiq-mmal/mmal-vchiq.h"
 
+MODULE_IMPORT_NS(DMA_BUF);
+
 /*
  * Default /dev/videoN node numbers for decode and encode.
  * Deliberately avoid the very low numbers as these are often taken by webcams
@@ -930,8 +932,8 @@ static void setup_mmal_port_format(struct bcm2835_codec_ctx *ctx,
 			port->es.video.crop.height = q_data->crop_height;
 			port->format.flags = MMAL_ES_FORMAT_FLAG_COL_FMTS_WIDTH_IS_COL_STRIDE;
 		}
-		port->es.video.frame_rate.num = ctx->framerate_num;
-		port->es.video.frame_rate.den = ctx->framerate_denom;
+		port->es.video.frame_rate.numerator = ctx->framerate_num;
+		port->es.video.frame_rate.denominator = ctx->framerate_denom;
 	} else {
 		/* Compressed format - leave resolution as 0 for decode */
 		if (ctx->dev->role == DECODE) {
@@ -945,8 +947,8 @@ static void setup_mmal_port_format(struct bcm2835_codec_ctx *ctx,
 			port->es.video.crop.width = q_data->crop_width;
 			port->es.video.crop.height = q_data->crop_height;
 			port->format.bitrate = ctx->bitrate;
-			port->es.video.frame_rate.num = ctx->framerate_num;
-			port->es.video.frame_rate.den = ctx->framerate_denom;
+			port->es.video.frame_rate.numerator = ctx->framerate_num;
+			port->es.video.frame_rate.denominator = ctx->framerate_denom;
 		}
 	}
 	port->es.video.crop.x = 0;
@@ -1121,8 +1123,8 @@ static void handle_fmt_changed(struct bcm2835_codec_ctx *ctx,
 		color_mmal2v4l(ctx, format->format.encoding,
 			       format->es.video.color_space);
 
-	q_data->aspect_ratio.numerator = format->es.video.par.num;
-	q_data->aspect_ratio.denominator = format->es.video.par.den;
+	q_data->aspect_ratio.numerator = format->es.video.par.numerator;
+	q_data->aspect_ratio.denominator = format->es.video.par.denominator;
 
 	ret = vchiq_mmal_port_parameter_get(ctx->dev->instance,
 					    &ctx->component->output[0],
