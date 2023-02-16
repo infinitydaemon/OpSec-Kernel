@@ -6,13 +6,14 @@
 #include "bcm283x-rpi-csi1-2lane.dtsi"
 #include "bcm283x-rpi-i2c0mux_0_44.dtsi"
 #include "bcm271x-rpi-bt.dtsi"
+#include "bcm283x-rpi-led-deprecated.dtsi"
 
 / {
 	compatible = "raspberrypi,3-model-b-plus", "brcm,bcm2837";
 	model = "Raspberry Pi 3 Model B+";
 
 	chosen {
-		bootargs = "coherent_pool=1M 8250.nr_uarts=1 snd_bcm2835.enable_compat_alsa=0 snd_bcm2835.enable_hdmi=1";
+		bootargs = "coherent_pool=1M 8250.nr_uarts=1 snd_bcm2835.enable_headphones=0";
 	};
 
 	aliases {
@@ -143,6 +144,7 @@
 	audio_pins: audio_pins {
 		brcm,pins = <40 41>;
 		brcm,function = <4>;
+		brcm,pull = <0>;
 	};
 };
 
@@ -230,17 +232,19 @@
 	pinctrl-0 = <&i2s_pins>;
 };
 
-&leds {
-	act_led: led-act {
-		label = "led0";
-		linux,default-trigger = "mmc0";
-		gpios = <&gpio 29 0>;
-	};
+&led_act {
+	label = "led0";
+	gpios = <&gpio 29 GPIO_ACTIVE_HIGH>;
+	default-state = "off";
+	linux,default-trigger = "mmc0";
+};
 
-	pwr_led: led-pwr {
+&leds {
+	led_pwr: led-pwr {
 		label = "led1";
-		linux,default-trigger = "default-on";
 		gpios = <&expgpio 2 GPIO_ACTIVE_LOW>;
+		default-state = "off";
+		linux,default-trigger = "default-on";
 	};
 };
 
@@ -248,7 +252,7 @@
 	hpd-gpios = <&gpio 28 GPIO_ACTIVE_LOW>;
 };
 
-&audio {
+&vchiq {
 	pinctrl-names = "default";
 	pinctrl-0 = <&audio_pins>;
 };
@@ -268,13 +272,15 @@ cam0_reg: &cam_dummy_reg {
 
 / {
 	__overrides__ {
-		act_led_gpio = <&act_led>,"gpios:4";
-		act_led_activelow = <&act_led>,"gpios:8";
-		act_led_trigger = <&act_led>,"linux,default-trigger";
+		audio = <&chosen>,"bootargs{on='snd_bcm2835.enable_headphones=1 snd_bcm2835.enable_hdmi=1',off='snd_bcm2835.enable_headphones=0 snd_bcm2835.enable_hdmi=0'}";
 
-		pwr_led_gpio = <&pwr_led>,"gpios:4";
-		pwr_led_activelow = <&pwr_led>,"gpios:8";
-		pwr_led_trigger = <&pwr_led>,"linux,default-trigger";
+		act_led_gpio = <&led_act>,"gpios:4";
+		act_led_activelow = <&led_act>,"gpios:8";
+		act_led_trigger = <&led_act>,"linux,default-trigger";
+
+		pwr_led_gpio = <&led_pwr>,"gpios:4";
+		pwr_led_activelow = <&led_pwr>,"gpios:8";
+		pwr_led_trigger = <&led_pwr>,"linux,default-trigger";
 
 		eee = <&eth_phy>,"microchip,eee-enabled?";
 		tx_lpi_timer = <&eth_phy>,"microchip,tx-lpi-timer:0";
