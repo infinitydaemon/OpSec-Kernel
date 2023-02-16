@@ -4,7 +4,7 @@
 $id: http://devicetree.org/schemas/rtc/ingenic,rtc.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
-title: Ingenic SoCs Real-Time Clock DT bindings
+title: Ingenic SoCs Real-Time Clock
 
 maintainers:
   - Paul Cercueil <paul@crapouillou.net>
@@ -72,7 +72,7 @@ unevaluatedProperties: false
 
 examples:
   - |
-    #include <dt-bindings/clock/jz4740-cgu.h>
+    #include <dt-bindings/clock/ingenic,jz4740-cgu.h>
     rtc_dev: rtc@10003000 {
       compatible = "ingenic,jz4740-rtc";
       reg = <0x10003000 0x40>;

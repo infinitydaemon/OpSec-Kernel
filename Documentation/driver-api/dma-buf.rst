@@ -119,6 +119,12 @@ DMA Buffer ioctls
 
 .. kernel-doc:: include/uapi/linux/dma-buf.h
 
+DMA-BUF locking convention
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. kernel-doc:: drivers/dma-buf/dma-buf.c
+   :doc: locking convention
+
 Kernel Functions and Structures Reference
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -126,15 +132,6 @@ Kernel Functions and Structures Reference
    :export:
 
 .. kernel-doc:: include/linux/dma-buf.h
-   :internal:
-
-Buffer Mapping Helpers
-~~~~~~~~~~~~~~~~~~~~~~
-
-.. kernel-doc:: include/linux/dma-buf-map.h
-   :doc: overview
-
-.. kernel-doc:: include/linux/dma-buf-map.h
    :internal:
 
 Reservation Objects
@@ -176,12 +173,6 @@ DMA Fences Functions Reference
 .. kernel-doc:: include/linux/dma-fence.h
    :internal:
 
-Seqno Hardware Fences
-~~~~~~~~~~~~~~~~~~~~~
-
-.. kernel-doc:: include/linux/seqno-fence.h
-   :internal:
-
 DMA Fence Array
 ~~~~~~~~~~~~~~~
 
@@ -198,6 +189,12 @@ DMA Fence Chain
    :export:
 
 .. kernel-doc:: include/linux/dma-fence-chain.h
+   :internal:
+
+DMA Fence unwrap
+~~~~~~~~~~~~~~~~
+
+.. kernel-doc:: include/linux/dma-fence-unwrap.h
    :internal:
 
 DMA Fence uABI/Sync File

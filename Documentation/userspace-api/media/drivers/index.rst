@@ -31,12 +31,14 @@ For more details see the file COPYING in the source distribution of Linux.
 	:maxdepth: 5
 	:numbered:
 
+	aspeed-video
 	ccs
 	cx2341x-uapi
-        hantro
+	dw100
 	imx-uapi
 	bcm2835-isp
 	max2175
 	meye-uapi
 	omap3isp-uapi
+	st-vgxy61
 	uvcvideo

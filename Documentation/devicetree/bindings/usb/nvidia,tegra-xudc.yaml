@@ -4,7 +4,7 @@
 $id: "http://devicetree.org/schemas/usb/nvidia,tegra-xudc.yaml#"
 $schema: "http://devicetree.org/meta-schemas/core.yaml#"
 
-title: Device tree binding for NVIDIA Tegra XUSB device mode controller (XUDC)
+title: NVIDIA Tegra XUSB device mode controller (XUDC)
 
 description:
   The Tegra XUDC controller supports both USB 2.0 HighSpeed/FullSpeed and
@@ -59,6 +59,19 @@ properties:
       - const: fs_src
       - const: hs_src
 
+  interconnects:
+    items:
+      - description: memory read client
+      - description: memory write client
+
+  interconnect-names:
+    items:
+      - const: dma-mem # read
+      - const: write
+
+  iommus:
+    maxItems: 1
+
   power-domains:
     items:
       - description: XUSBB(device) power-domain
@@ -70,7 +83,7 @@ properties:
       - const: ss
 
   nvidia,xusb-padctl:
-    $ref: /schemas/types.yaml#/definitions/phandle-array
+    $ref: /schemas/types.yaml#/definitions/phandle
     description:
       phandle to the XUSB pad controller that is used to configure the USB pads
       used by the XUDC controller.
