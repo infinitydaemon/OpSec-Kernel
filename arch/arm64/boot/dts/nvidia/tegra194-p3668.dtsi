@@ -20,7 +20,7 @@
 	};
 
 	chosen {
-		bootargs = "console=ttyS0,115200n8";
+		bootargs = "console=ttyTCU0,115200n8";
 		stdout-path = "serial0:115200n8";
 	};
 
@@ -36,7 +36,7 @@
 				#address-cells = <1>;
 				#size-cells = <0>;
 
-				phy: phy@0 {
+				phy: ethernet-phy@0 {
 					compatible = "ethernet-phy-ieee802.3-c22";
 					reg = <0x0>;
 					interrupt-parent = <&gpio>;
