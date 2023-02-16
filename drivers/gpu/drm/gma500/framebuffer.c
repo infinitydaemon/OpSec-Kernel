@@ -21,11 +21,11 @@
 #include <drm/drm_crtc.h>
 #include <drm/drm_fb_helper.h>
 #include <drm/drm_fourcc.h>
+#include <drm/drm_framebuffer.h>
 #include <drm/drm_gem_framebuffer_helper.h>
 
 #include "framebuffer.h"
 #include "gem.h"
-#include "gtt.h"
 #include "psb_drv.h"
 #include "psb_intel_drv.h"
 #include "psb_intel_reg.h"
@@ -81,15 +81,14 @@ static vm_fault_t psbfb_vm_fault(struct vm_fault *vmf)
 	struct vm_area_struct *vma = vmf->vma;
 	struct drm_framebuffer *fb = vma->vm_private_data;
 	struct drm_device *dev = fb->dev;
-	struct drm_psb_private *dev_priv = dev->dev_private;
-	struct gtt_range *gtt = to_gtt_range(fb->obj[0]);
+	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
+	struct psb_gem_object *pobj = to_psb_gem_object(fb->obj[0]);
 	int page_num;
 	int i;
 	unsigned long address;
 	vm_fault_t ret = VM_FAULT_SIGBUS;
 	unsigned long pfn;
-	unsigned long phys_addr = (unsigned long)dev_priv->stolen_base +
-				  gtt->offset;
+	unsigned long phys_addr = (unsigned long)dev_priv->stolen_base + pobj->offset;
 
 	page_num = vma_pages(vma);
 	address = vmf->address - (vmf->pgoff << PAGE_SHIFT);
@@ -148,6 +147,8 @@ static const struct fb_ops psbfb_unaccel_ops = {
 	.owner = THIS_MODULE,
 	DRM_FB_HELPER_DEFAULT_OPS,
 	.fb_setcolreg = psbfb_setcolreg,
+	.fb_read = drm_fb_helper_cfb_read,
+	.fb_write = drm_fb_helper_cfb_write,
 	.fb_fillrect = drm_fb_helper_cfb_fillrect,
 	.fb_copyarea = drm_fb_helper_cfb_copyarea,
 	.fb_imageblit = drm_fb_helper_cfb_imageblit,
@@ -226,31 +227,6 @@ static struct drm_framebuffer *psb_framebuffer_create
 }
 
 /**
- *	psbfb_alloc		-	allocate frame buffer memory
- *	@dev: the DRM device
- *	@aligned_size: space needed
- *
- *	Allocate the frame buffer. In the usual case we get a GTT range that
- *	is stolen memory backed and life is simple. If there isn't sufficient
- *	we fail as we don't have the virtual mapping space to really vmap it
- *	and the kernel console code can't handle non linear framebuffers.
- *
- *	Re-address this as and if the framebuffer layer grows this ability.
- */
-static struct gtt_range *psbfb_alloc(struct drm_device *dev, int aligned_size)
-{
-	struct gtt_range *backing;
-	/* Begin by trying to use stolen memory backing */
-	backing = psb_gtt_alloc_range(dev, aligned_size, "fb", 1, PAGE_SIZE);
-	if (backing) {
-		backing->gem.funcs = &psb_gem_object_funcs;
-		drm_gem_private_object_init(dev, &backing->gem, aligned_size);
-		return backing;
-	}
-	return NULL;
-}
-
-/**
  *	psbfb_create		-	create a framebuffer
  *	@fb_helper: the framebuffer helper
  *	@sizes: specification of the layout
@@ -261,14 +237,15 @@ static int psbfb_create(struct drm_fb_helper *fb_helper,
 				struct drm_fb_helper_surface_size *sizes)
 {
 	struct drm_device *dev = fb_helper->dev;
-	struct drm_psb_private *dev_priv = dev->dev_private;
+	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
 	struct pci_dev *pdev = to_pci_dev(dev->dev);
 	struct fb_info *info;
 	struct drm_framebuffer *fb;
 	struct drm_mode_fb_cmd2 mode_cmd;
 	int size;
 	int ret;
-	struct gtt_range *backing;
+	struct psb_gem_object *backing;
+	struct drm_gem_object *obj;
 	u32 bpp, depth;
 
 	mode_cmd.width = sizes->surface_width;
@@ -286,31 +263,32 @@ static int psbfb_create(struct drm_fb_helper *fb_helper,
 	size = ALIGN(size, PAGE_SIZE);
 
 	/* Allocate the framebuffer in the GTT with stolen page backing */
-	backing = psbfb_alloc(dev, size);
-	if (backing == NULL)
-		return -ENOMEM;
+	backing = psb_gem_create(dev, size, "fb", true, PAGE_SIZE);
+	if (IS_ERR(backing))
+		return PTR_ERR(backing);
+	obj = &backing->base;
 
 	memset(dev_priv->vram_addr + backing->offset, 0, size);
 
-	info = drm_fb_helper_alloc_fbi(fb_helper);
+	info = drm_fb_helper_alloc_info(fb_helper);
 	if (IS_ERR(info)) {
 		ret = PTR_ERR(info);
-		goto out;
+		goto err_drm_gem_object_put;
 	}
 
 	mode_cmd.pixel_format = drm_mode_legacy_fb_format(bpp, depth);
 
-	fb = psb_framebuffer_create(dev, &mode_cmd, &backing->gem);
+	fb = psb_framebuffer_create(dev, &mode_cmd, obj);
 	if (IS_ERR(fb)) {
 		ret = PTR_ERR(fb);
-		goto out;
+		goto err_drm_gem_object_put;
 	}
 
 	fb_helper->fb = fb;
 
 	info->fbops = &psbfb_unaccel_ops;
 
-	info->fix.smem_start = dev->mode_config.fb_base;
+	info->fix.smem_start = dev_priv->fb_base;
 	info->fix.smem_len = size;
 	info->fix.ywrapstep = 0;
 	info->fix.ypanstep = 0;
@@ -320,7 +298,7 @@ static int psbfb_create(struct drm_fb_helper *fb_helper,
 	info->screen_size = size;
 
 	if (dev_priv->gtt.stolen_size) {
-		info->apertures->ranges[0].base = dev->mode_config.fb_base;
+		info->apertures->ranges[0].base = dev_priv->fb_base;
 		info->apertures->ranges[0].size = dev_priv->gtt.stolen_size;
 	}
 
@@ -334,8 +312,9 @@ static int psbfb_create(struct drm_fb_helper *fb_helper,
 	dev_dbg(dev->dev, "allocated %dx%d fb\n", fb->width, fb->height);
 
 	return 0;
-out:
-	psb_gtt_free_range(dev, backing);
+
+err_drm_gem_object_put:
+	drm_gem_object_put(obj);
 	return ret;
 }
 
@@ -374,7 +353,7 @@ static int psbfb_probe(struct drm_fb_helper *fb_helper,
 				struct drm_fb_helper_surface_size *sizes)
 {
 	struct drm_device *dev = fb_helper->dev;
-	struct drm_psb_private *dev_priv = dev->dev_private;
+	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
 	unsigned int fb_size;
 	int bytespp;
 
@@ -406,7 +385,7 @@ static int psb_fbdev_destroy(struct drm_device *dev,
 {
 	struct drm_framebuffer *fb = fb_helper->fb;
 
-	drm_fb_helper_unregister_fbi(fb_helper);
+	drm_fb_helper_unregister_info(fb_helper);
 
 	drm_fb_helper_fini(fb_helper);
 	drm_framebuffer_unregister_private(fb);
@@ -422,7 +401,7 @@ static int psb_fbdev_destroy(struct drm_device *dev,
 int psb_fbdev_init(struct drm_device *dev)
 {
 	struct drm_fb_helper *fb_helper;
-	struct drm_psb_private *dev_priv = dev->dev_private;
+	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
 	int ret;
 
 	fb_helper = kzalloc(sizeof(*fb_helper), GFP_KERNEL);
@@ -457,7 +436,7 @@ free:
 
 static void psb_fbdev_fini(struct drm_device *dev)
 {
-	struct drm_psb_private *dev_priv = dev->dev_private;
+	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
 
 	if (!dev_priv->fb_helper)
 		return;
@@ -474,7 +453,8 @@ static const struct drm_mode_config_funcs psb_mode_funcs = {
 
 static void psb_setup_outputs(struct drm_device *dev)
 {
-	struct drm_psb_private *dev_priv = dev->dev_private;
+	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
+	struct drm_connector_list_iter conn_iter;
 	struct drm_connector *connector;
 
 	drm_mode_create_scaling_mode_property(dev);
@@ -485,8 +465,8 @@ static void psb_setup_outputs(struct drm_device *dev)
 							"backlight", 0, 100);
 	dev_priv->ops->output_init(dev);
 
-	list_for_each_entry(connector, &dev->mode_config.connector_list,
-			    head) {
+	drm_connector_list_iter_begin(dev, &conn_iter);
+	drm_for_each_connector_iter(connector, &conn_iter) {
 		struct gma_encoder *gma_encoder = gma_attached_encoder(connector);
 		struct drm_encoder *encoder = &gma_encoder->base;
 		int crtc_mask = 0, clone_mask = 0;
@@ -529,16 +509,18 @@ static void psb_setup_outputs(struct drm_device *dev)
 		encoder->possible_clones =
 		    gma_connector_clones(dev, clone_mask);
 	}
+	drm_connector_list_iter_end(&conn_iter);
 }
 
 void psb_modeset_init(struct drm_device *dev)
 {
-	struct drm_psb_private *dev_priv = dev->dev_private;
+	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
 	struct psb_intel_mode_device *mode_dev = &dev_priv->mode_dev;
 	struct pci_dev *pdev = to_pci_dev(dev->dev);
 	int i;
 
-	drm_mode_config_init(dev);
+	if (drmm_mode_config_init(dev))
+		return;
 
 	dev->mode_config.min_width = 0;
 	dev->mode_config.min_height = 0;
@@ -547,7 +529,7 @@ void psb_modeset_init(struct drm_device *dev)
 
 	/* set memory base */
 	/* Oaktrail and Poulsbo should use BAR 2*/
-	pci_read_config_dword(pdev, PSB_BSM, (u32 *)&(dev->mode_config.fb_base));
+	pci_read_config_dword(pdev, PSB_BSM, (u32 *)&(dev_priv->fb_base));
 
 	/* num pipes is 2 for PSB but 1 for Mrst */
 	for (i = 0; i < dev_priv->num_pipe; i++)
@@ -566,10 +548,9 @@ void psb_modeset_init(struct drm_device *dev)
 
 void psb_modeset_cleanup(struct drm_device *dev)
 {
-	struct drm_psb_private *dev_priv = dev->dev_private;
+	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
 	if (dev_priv->modeset) {
 		drm_kms_helper_poll_fini(dev);
 		psb_fbdev_fini(dev);
-		drm_mode_config_cleanup(dev);
 	}
 }

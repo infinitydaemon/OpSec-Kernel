@@ -168,6 +168,7 @@ struct vc4_hdmi {
 	struct clk *cec_clock;
 	struct clk *pixel_clock;
 	struct clk *hsm_clock;
+	struct clk *hsm_rpm_clock;
 	struct clk *audio_clock;
 	struct clk *pixel_bvb_clock;
 
@@ -175,6 +176,14 @@ struct vc4_hdmi {
 
 	struct debugfs_regset32 hdmi_regset;
 	struct debugfs_regset32 hd_regset;
+
+	/* VC5 only */
+	struct debugfs_regset32 cec_regset;
+	struct debugfs_regset32 csc_regset;
+	struct debugfs_regset32 dvp_regset;
+	struct debugfs_regset32 phy_regset;
+	struct debugfs_regset32 ram_regset;
+	struct debugfs_regset32 rm_regset;
 
 	/**
 	 * @hw_lock: Spinlock protecting device register access.
@@ -194,10 +203,10 @@ struct vc4_hdmi {
 	struct drm_display_mode saved_adjusted_mode;
 
 	/**
-	 * @output_enabled: Is the HDMI controller currently active?
-	 * Protected by @mutex.
+	 * @packet_ram_enabled: Is the HDMI controller packet RAM currently
+	 * on? Protected by @mutex.
 	 */
-	bool output_enabled;
+	bool packet_ram_enabled;
 
 	/**
 	 * @scdc_enabled: Is the HDMI controller currently running with
@@ -227,14 +236,6 @@ struct vc4_hdmi {
 	 * for use outside of KMS hooks. Protected by @mutex.
 	 */
 	int broadcast_rgb;
-
-	/* VC5 debugfs regset */
-	struct debugfs_regset32 cec_regset;
-	struct debugfs_regset32 csc_regset;
-	struct debugfs_regset32 dvp_regset;
-	struct debugfs_regset32 phy_regset;
-	struct debugfs_regset32 ram_regset;
-	struct debugfs_regset32 rm_regset;
 };
 
 static inline struct vc4_hdmi *
@@ -252,7 +253,7 @@ encoder_to_vc4_hdmi(struct drm_encoder *encoder)
 
 struct vc4_hdmi_connector_state {
 	struct drm_connector_state	base;
-	unsigned long long		pixel_rate;
+	unsigned long long		tmds_char_rate;
 	unsigned int 			output_bpc;
 	enum vc4_hdmi_output_format	output_format;
 	enum vc4_hdmi_output_format	requested_output_format;

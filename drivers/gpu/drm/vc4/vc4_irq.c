@@ -51,6 +51,7 @@
 
 #include "vc4_drv.h"
 #include "vc4_regs.h"
+#include "vc4_trace.h"
 
 #define V3D_DRIVER_IRQS (V3D_INT_OUTOMEM | \
 			 V3D_INT_FLDONE | \
@@ -104,7 +105,7 @@ vc4_overflow_mem_work(struct work_struct *work)
 	}
 	vc4->bin_alloc_overflow = BIT(bin_bo_slot);
 
-	V3D_WRITE(V3D_BPOA, bo->base.paddr + bin_bo_slot * vc4->bin_alloc_size);
+	V3D_WRITE(V3D_BPOA, bo->base.dma_addr + bin_bo_slot * vc4->bin_alloc_size);
 	V3D_WRITE(V3D_BPOS, bo->base.base.size);
 	V3D_WRITE(V3D_INTCTL, V3D_INT_OUTOMEM);
 	V3D_WRITE(V3D_INTENA, V3D_INT_OUTOMEM);
@@ -122,6 +123,8 @@ vc4_irq_finish_bin_job(struct drm_device *dev)
 
 	if (!exec)
 		return;
+
+	trace_vc4_bcl_end_irq(dev, exec->seqno);
 
 	vc4_move_job_to_render(dev, exec);
 	next = vc4_first_bin_job(vc4);
@@ -160,6 +163,8 @@ vc4_irq_finish_render_job(struct drm_device *dev)
 
 	if (!exec)
 		return;
+
+	trace_vc4_rcl_end_irq(dev, exec->seqno);
 
 	vc4->finished_seqno++;
 	list_move_tail(&exec->head, &vc4->job_done_list);

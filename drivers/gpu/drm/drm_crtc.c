@@ -35,9 +35,11 @@
 #include <linux/export.h>
 #include <linux/dma-fence.h>
 #include <linux/uaccess.h>
+#include <drm/drm_blend.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_fourcc.h>
+#include <drm/drm_framebuffer.h>
 #include <drm/drm_managed.h>
 #include <drm/drm_modeset_lock.h>
 #include <drm/drm_atomic.h>
@@ -377,6 +379,7 @@ static void drmm_crtc_init_with_planes_cleanup(struct drm_device *dev,
 	drm_crtc_cleanup(crtc);
 }
 
+__printf(6, 0)
 static int __drmm_crtc_init_with_planes(struct drm_device *dev,
 					struct drm_crtc *crtc,
 					struct drm_plane *primary,
