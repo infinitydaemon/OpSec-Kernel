@@ -300,6 +300,12 @@ mlx5_esw_bridge_port_obj_attr_set(struct net_device *dev,
 		err = mlx5_esw_bridge_vlan_filtering_set(vport_num, esw_owner_vhca_id,
 							 attr->u.vlan_filtering, br_offloads);
 		break;
+	case SWITCHDEV_ATTR_ID_BRIDGE_VLAN_PROTOCOL:
+		err = mlx5_esw_bridge_vlan_proto_set(vport_num,
+						     esw_owner_vhca_id,
+						     attr->u.vlan_protocol,
+						     br_offloads);
+		break;
 	default:
 		err = -EOPNOTSUPP;
 	}
@@ -432,10 +438,6 @@ static int mlx5_esw_bridge_switchdev_event(struct notifier_block *nb,
 
 	switch (event) {
 	case SWITCHDEV_FDB_ADD_TO_BRIDGE:
-		/* only handle the event on native eswtich of representor */
-		if (!mlx5_esw_bridge_is_local(dev, rep, esw))
-			break;
-
 		fdb_info = container_of(info,
 					struct switchdev_notifier_fdb_info,
 					info);

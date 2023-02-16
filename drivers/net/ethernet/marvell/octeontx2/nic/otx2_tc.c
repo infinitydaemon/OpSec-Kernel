@@ -64,7 +64,7 @@ int otx2_tc_alloc_ent_bitmap(struct otx2_nic *nic)
 {
 	struct otx2_tc_info *tc = &nic->tc_info;
 
-	if (!nic->flow_cfg->max_flows || is_otx2_vf(nic->pcifunc))
+	if (!nic->flow_cfg->max_flows)
 		return 0;
 
 	/* Max flows changed, free the existing bitmap */
@@ -224,6 +224,40 @@ static int otx2_tc_validate_flow(struct otx2_nic *nic,
 	return 0;
 }
 
+static int otx2_policer_validate(const struct flow_action *action,
+				 const struct flow_action_entry *act,
+				 struct netlink_ext_ack *extack)
+{
+	if (act->police.exceed.act_id != FLOW_ACTION_DROP) {
+		NL_SET_ERR_MSG_MOD(extack,
+				   "Offload not supported when exceed action is not drop");
+		return -EOPNOTSUPP;
+	}
+
+	if (act->police.notexceed.act_id != FLOW_ACTION_PIPE &&
+	    act->police.notexceed.act_id != FLOW_ACTION_ACCEPT) {
+		NL_SET_ERR_MSG_MOD(extack,
+				   "Offload not supported when conform action is not pipe or ok");
+		return -EOPNOTSUPP;
+	}
+
+	if (act->police.notexceed.act_id == FLOW_ACTION_ACCEPT &&
+	    !flow_action_is_last_entry(action, act)) {
+		NL_SET_ERR_MSG_MOD(extack,
+				   "Offload not supported when conform action is ok, but action is not last");
+		return -EOPNOTSUPP;
+	}
+
+	if (act->police.peakrate_bytes_ps ||
+	    act->police.avrate || act->police.overhead) {
+		NL_SET_ERR_MSG_MOD(extack,
+				   "Offload not supported when peakrate/avrate/overhead is configured");
+		return -EOPNOTSUPP;
+	}
+
+	return 0;
+}
+
 static int otx2_tc_egress_matchall_install(struct otx2_nic *nic,
 					   struct tc_cls_matchall_offload *cls)
 {
@@ -246,6 +280,10 @@ static int otx2_tc_egress_matchall_install(struct otx2_nic *nic,
 	entry = &cls->rule->action.entries[0];
 	switch (entry->id) {
 	case FLOW_ACTION_POLICE:
+		err = otx2_policer_validate(&cls->rule->action, entry, extack);
+		if (err)
+			return err;
+
 		if (entry->police.rate_pkt_ps) {
 			NL_SET_ERR_MSG_MOD(extack, "QoS offload not support packets per second");
 			return -EOPNOTSUPP;
@@ -349,6 +387,7 @@ static int otx2_tc_parse_actions(struct otx2_nic *nic,
 	u8 nr_police = 0;
 	bool pps = false;
 	u64 rate;
+	int err;
 	int i;
 
 	if (!flow_action_has_entries(flow_action)) {
@@ -388,6 +427,10 @@ static int otx2_tc_parse_actions(struct otx2_nic *nic,
 					"Ingress policing not supported on this platform");
 				return -EOPNOTSUPP;
 			}
+
+			err = otx2_policer_validate(flow_action, act, extack);
+			if (err)
+				return err;
 
 			if (act->police.rate_bytes_ps > 0) {
 				rate = act->police.rate_bytes_ps * 8;
@@ -487,6 +530,31 @@ static int otx2_tc_prepare_flow(struct otx2_nic *nic, struct otx2_tc_flow *node,
 			req->features |= BIT_ULL(NPC_IPPROTO_ICMP);
 		else if (ip_proto == IPPROTO_ICMPV6)
 			req->features |= BIT_ULL(NPC_IPPROTO_ICMP6);
+	}
+
+	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_CONTROL)) {
+		struct flow_match_control match;
+
+		flow_rule_match_control(rule, &match);
+		if (match.mask->flags & FLOW_DIS_FIRST_FRAG) {
+			NL_SET_ERR_MSG_MOD(extack, "HW doesn't support frag first/later");
+			return -EOPNOTSUPP;
+		}
+
+		if (match.mask->flags & FLOW_DIS_IS_FRAGMENT) {
+			if (ntohs(flow_spec->etype) == ETH_P_IP) {
+				flow_spec->ip_flag = IPV4_FLAG_MORE;
+				flow_mask->ip_flag = 0xff;
+				req->features |= BIT_ULL(NPC_IPFRAG_IPV4);
+			} else if (ntohs(flow_spec->etype) == ETH_P_IPV6) {
+				flow_spec->next_header = IPPROTO_FRAGMENT;
+				flow_mask->next_header = 0xff;
+				req->features |= BIT_ULL(NPC_IPFRAG_IPV6);
+			} else {
+				NL_SET_ERR_MSG_MOD(extack, "flow-type should be either IPv4 and IPv6");
+				return -EOPNOTSUPP;
+			}
+		}
 	}
 
 	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ETH_ADDRS)) {
@@ -1063,6 +1131,7 @@ int otx2_setup_tc(struct net_device *netdev, enum tc_setup_type type,
 		return -EOPNOTSUPP;
 	}
 }
+EXPORT_SYMBOL(otx2_setup_tc);
 
 static const struct rhashtable_params tc_flow_ht_params = {
 	.head_offset = offsetof(struct otx2_tc_flow, node),
@@ -1097,6 +1166,7 @@ int otx2_init_tc(struct otx2_nic *nic)
 	}
 	return err;
 }
+EXPORT_SYMBOL(otx2_init_tc);
 
 void otx2_shutdown_tc(struct otx2_nic *nic)
 {
@@ -1105,3 +1175,4 @@ void otx2_shutdown_tc(struct otx2_nic *nic)
 	kfree(tc->tc_entries_bitmap);
 	rhashtable_destroy(&tc->flow_table);
 }
+EXPORT_SYMBOL(otx2_shutdown_tc);

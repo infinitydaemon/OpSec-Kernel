@@ -35,9 +35,9 @@ struct macvtap_dev {
  */
 static dev_t macvtap_major;
 
-static const void *macvtap_net_namespace(struct device *d)
+static const void *macvtap_net_namespace(const struct device *d)
 {
-	struct net_device *dev = to_net_dev(d->parent);
+	const struct net_device *dev = to_net_dev(d->parent);
 	return dev_net(dev);
 }
 
@@ -175,7 +175,7 @@ static int macvtap_device_event(struct notifier_block *unused,
 
 		devt = MKDEV(MAJOR(macvtap_major), vlantap->tap.minor);
 		classdev = device_create(&macvtap_class, &dev->dev, devt,
-					 dev, tap_name);
+					 dev, "%s", tap_name);
 		if (IS_ERR(classdev)) {
 			tap_free_minor(macvtap_major, &vlantap->tap);
 			return notifier_from_errno(PTR_ERR(classdev));
@@ -207,7 +207,7 @@ static struct notifier_block macvtap_notifier_block __read_mostly = {
 	.notifier_call	= macvtap_device_event,
 };
 
-static int macvtap_init(void)
+static int __init macvtap_init(void)
 {
 	int err;
 
@@ -241,7 +241,7 @@ out1:
 }
 module_init(macvtap_init);
 
-static void macvtap_exit(void)
+static void __exit macvtap_exit(void)
 {
 	rtnl_link_unregister(&macvtap_link_ops);
 	unregister_netdevice_notifier(&macvtap_notifier_block);

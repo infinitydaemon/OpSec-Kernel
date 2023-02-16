@@ -21,12 +21,15 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#include "display/intel_dp.h"
-
+#include "i915_reg.h"
+#include "intel_ddi.h"
+#include "intel_ddi_buf_trans.h"
 #include "intel_de.h"
+#include "intel_display_power_well.h"
 #include "intel_display_types.h"
+#include "intel_dp.h"
 #include "intel_dpio_phy.h"
-#include "intel_sideband.h"
+#include "vlv_sideband.h"
 
 /**
  * DOC: DPIO
@@ -266,15 +269,22 @@ void bxt_port_to_phy_channel(struct drm_i915_private *dev_priv, enum port port,
 	*ch = DPIO_CH0;
 }
 
-void bxt_ddi_phy_set_signal_level(struct drm_i915_private *dev_priv,
-				  enum port port, u32 margin, u32 scale,
-				  u32 enable, u32 deemphasis)
+void bxt_ddi_phy_set_signal_levels(struct intel_encoder *encoder,
+				   const struct intel_crtc_state *crtc_state)
 {
-	u32 val;
-	enum dpio_phy phy;
+	struct drm_i915_private *dev_priv = to_i915(encoder->base.dev);
+	int level = intel_ddi_level(encoder, crtc_state, 0);
+	const struct intel_ddi_buf_trans *trans;
 	enum dpio_channel ch;
+	enum dpio_phy phy;
+	int n_entries;
+	u32 val;
 
-	bxt_port_to_phy_channel(dev_priv, port, &phy, &ch);
+	trans = encoder->get_buf_trans(encoder, crtc_state, &n_entries);
+	if (drm_WARN_ON_ONCE(&dev_priv->drm, !trans))
+		return;
+
+	bxt_port_to_phy_channel(dev_priv, encoder->port, &phy, &ch);
 
 	/*
 	 * While we write to the group register to program all lanes at once we
@@ -286,12 +296,13 @@ void bxt_ddi_phy_set_signal_level(struct drm_i915_private *dev_priv,
 
 	val = intel_de_read(dev_priv, BXT_PORT_TX_DW2_LN0(phy, ch));
 	val &= ~(MARGIN_000 | UNIQ_TRANS_SCALE);
-	val |= margin << MARGIN_000_SHIFT | scale << UNIQ_TRANS_SCALE_SHIFT;
+	val |= trans->entries[level].bxt.margin << MARGIN_000_SHIFT |
+		trans->entries[level].bxt.scale << UNIQ_TRANS_SCALE_SHIFT;
 	intel_de_write(dev_priv, BXT_PORT_TX_DW2_GRP(phy, ch), val);
 
 	val = intel_de_read(dev_priv, BXT_PORT_TX_DW3_LN0(phy, ch));
 	val &= ~SCALE_DCOMP_METHOD;
-	if (enable)
+	if (trans->entries[level].bxt.enable)
 		val |= SCALE_DCOMP_METHOD;
 
 	if ((val & UNIQUE_TRANGE_EN_METHOD) && !(val & SCALE_DCOMP_METHOD))
@@ -302,7 +313,7 @@ void bxt_ddi_phy_set_signal_level(struct drm_i915_private *dev_priv,
 
 	val = intel_de_read(dev_priv, BXT_PORT_TX_DW4_LN0(phy, ch));
 	val &= ~DE_EMPHASIS;
-	val |= deemphasis << DEEMPH_SHIFT;
+	val |= trans->entries[level].bxt.deemphasis << DEEMPH_SHIFT;
 	intel_de_write(dev_priv, BXT_PORT_TX_DW4_GRP(phy, ch), val);
 
 	val = intel_de_read(dev_priv, BXT_PORT_PCS_DW10_LN01(phy, ch));
@@ -474,7 +485,7 @@ void bxt_ddi_phy_init(struct drm_i915_private *dev_priv, enum dpio_phy phy)
 	enum dpio_phy rcomp_phy = phy_info->rcomp_phy;
 	bool was_enabled;
 
-	lockdep_assert_held(&dev_priv->power_domains.lock);
+	lockdep_assert_held(&dev_priv->display.power.domains.lock);
 
 	was_enabled = true;
 	if (rcomp_phy != -1)
@@ -643,6 +654,48 @@ bxt_ddi_phy_get_lane_lat_optim_mask(struct intel_encoder *encoder)
 	}
 
 	return mask;
+}
+
+enum dpio_channel vlv_dig_port_to_channel(struct intel_digital_port *dig_port)
+{
+	switch (dig_port->base.port) {
+	default:
+		MISSING_CASE(dig_port->base.port);
+		fallthrough;
+	case PORT_B:
+	case PORT_D:
+		return DPIO_CH0;
+	case PORT_C:
+		return DPIO_CH1;
+	}
+}
+
+enum dpio_phy vlv_dig_port_to_phy(struct intel_digital_port *dig_port)
+{
+	switch (dig_port->base.port) {
+	default:
+		MISSING_CASE(dig_port->base.port);
+		fallthrough;
+	case PORT_B:
+	case PORT_C:
+		return DPIO_PHY0;
+	case PORT_D:
+		return DPIO_PHY1;
+	}
+}
+
+enum dpio_channel vlv_pipe_to_channel(enum pipe pipe)
+{
+	switch (pipe) {
+	default:
+		MISSING_CASE(pipe);
+		fallthrough;
+	case PIPE_A:
+	case PIPE_C:
+		return DPIO_CH0;
+	case PIPE_B:
+		return DPIO_CH1;
+	}
 }
 
 void chv_set_phy_signal_level(struct intel_encoder *encoder,

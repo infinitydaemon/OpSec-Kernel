@@ -7,6 +7,7 @@
 #define QUEUE_SIZE 128
 #define SIGNAL_PER_DIV_QUEUE 16
 #define TH_NUMS_TO_DRAIN 2
+#define DR_SEND_INFO_POOL_SIZE 1000
 
 enum { CQ_OK = 0, CQ_EMPTY = -1, CQ_POLL_ERR = -2 };
 
@@ -49,6 +50,136 @@ struct dr_qp_init_attr {
 	u8 isolate_vl_tc:1;
 };
 
+struct mlx5dr_send_info_pool_obj {
+	struct mlx5dr_ste_send_info ste_send_info;
+	struct mlx5dr_send_info_pool *pool;
+	struct list_head list_node;
+};
+
+struct mlx5dr_send_info_pool {
+	struct list_head free_list;
+};
+
+static int dr_send_info_pool_fill(struct mlx5dr_send_info_pool *pool)
+{
+	struct mlx5dr_send_info_pool_obj *pool_obj, *tmp_pool_obj;
+	int i;
+
+	for (i = 0; i < DR_SEND_INFO_POOL_SIZE; i++) {
+		pool_obj = kzalloc(sizeof(*pool_obj), GFP_KERNEL);
+		if (!pool_obj)
+			goto clean_pool;
+
+		pool_obj->pool = pool;
+		list_add_tail(&pool_obj->list_node, &pool->free_list);
+	}
+
+	return 0;
+
+clean_pool:
+	list_for_each_entry_safe(pool_obj, tmp_pool_obj, &pool->free_list, list_node) {
+		list_del(&pool_obj->list_node);
+		kfree(pool_obj);
+	}
+
+	return -ENOMEM;
+}
+
+static void dr_send_info_pool_destroy(struct mlx5dr_send_info_pool *pool)
+{
+	struct mlx5dr_send_info_pool_obj *pool_obj, *tmp_pool_obj;
+
+	list_for_each_entry_safe(pool_obj, tmp_pool_obj, &pool->free_list, list_node) {
+		list_del(&pool_obj->list_node);
+		kfree(pool_obj);
+	}
+
+	kfree(pool);
+}
+
+void mlx5dr_send_info_pool_destroy(struct mlx5dr_domain *dmn)
+{
+	dr_send_info_pool_destroy(dmn->send_info_pool_tx);
+	dr_send_info_pool_destroy(dmn->send_info_pool_rx);
+}
+
+static struct mlx5dr_send_info_pool *dr_send_info_pool_create(void)
+{
+	struct mlx5dr_send_info_pool *pool;
+	int ret;
+
+	pool = kzalloc(sizeof(*pool), GFP_KERNEL);
+	if (!pool)
+		return NULL;
+
+	INIT_LIST_HEAD(&pool->free_list);
+
+	ret = dr_send_info_pool_fill(pool);
+	if (ret) {
+		kfree(pool);
+		return NULL;
+	}
+
+	return pool;
+}
+
+int mlx5dr_send_info_pool_create(struct mlx5dr_domain *dmn)
+{
+	dmn->send_info_pool_rx = dr_send_info_pool_create();
+	if (!dmn->send_info_pool_rx)
+		return -ENOMEM;
+
+	dmn->send_info_pool_tx = dr_send_info_pool_create();
+	if (!dmn->send_info_pool_tx) {
+		dr_send_info_pool_destroy(dmn->send_info_pool_rx);
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
+struct mlx5dr_ste_send_info
+*mlx5dr_send_info_alloc(struct mlx5dr_domain *dmn,
+			enum mlx5dr_domain_nic_type nic_type)
+{
+	struct mlx5dr_send_info_pool_obj *pool_obj;
+	struct mlx5dr_send_info_pool *pool;
+	int ret;
+
+	pool = nic_type == DR_DOMAIN_NIC_TYPE_RX ? dmn->send_info_pool_rx :
+						   dmn->send_info_pool_tx;
+
+	if (unlikely(list_empty(&pool->free_list))) {
+		ret = dr_send_info_pool_fill(pool);
+		if (ret)
+			return NULL;
+	}
+
+	pool_obj = list_first_entry_or_null(&pool->free_list,
+					    struct mlx5dr_send_info_pool_obj,
+					    list_node);
+
+	if (likely(pool_obj)) {
+		list_del_init(&pool_obj->list_node);
+	} else {
+		WARN_ONCE(!pool_obj, "Failed getting ste send info obj from pool");
+		return NULL;
+	}
+
+	return &pool_obj->ste_send_info;
+}
+
+void mlx5dr_send_info_free(struct mlx5dr_ste_send_info *ste_send_info)
+{
+	struct mlx5dr_send_info_pool_obj *pool_obj;
+
+	pool_obj = container_of(ste_send_info,
+				struct mlx5dr_send_info_pool_obj,
+				ste_send_info);
+
+	list_add(&pool_obj->list_node, &pool_obj->pool->free_list);
+}
+
 static int dr_parse_cqe(struct mlx5dr_cq *dr_cq, struct mlx5_cqe64 *cqe64)
 {
 	unsigned int idx;
@@ -78,8 +209,15 @@ static int dr_cq_poll_one(struct mlx5dr_cq *dr_cq)
 	int err;
 
 	cqe64 = mlx5_cqwq_get_cqe(&dr_cq->wq);
-	if (!cqe64)
+	if (!cqe64) {
+		if (unlikely(dr_cq->mdev->state ==
+			     MLX5_DEVICE_STATE_INTERNAL_ERROR)) {
+			mlx5_core_dbg_once(dr_cq->mdev,
+					   "Polling CQ while device is shutting down\n");
+			return CQ_POLL_ERR;
+		}
 		return CQ_EMPTY;
+	}
 
 	mlx5_cqwq_pop(&dr_cq->wq);
 	err = dr_parse_cqe(dr_cq, cqe64);
@@ -350,7 +488,7 @@ static void dr_fill_data_segs(struct mlx5dr_send_ring *send_ring,
 	send_info->read.length = send_info->write.length;
 	/* Read into the same write area */
 	send_info->read.addr = (uintptr_t)send_info->write.addr;
-	send_info->read.lkey = send_ring->mr->mkey.key;
+	send_info->read.lkey = send_ring->mr->mkey;
 
 	if (send_ring->pending_wqe % send_ring->signal_th == 0)
 		send_info->read.send_flags = IB_SEND_SIGNALED;
@@ -388,7 +526,7 @@ static int dr_postsend_icm_data(struct mlx5dr_domain *dmn,
 		       (void *)(uintptr_t)send_info->write.addr,
 		       send_info->write.length);
 		send_info->write.addr = (uintptr_t)send_ring->mr->dma_addr + buff_offset;
-		send_info->write.lkey = send_ring->mr->mkey.key;
+		send_info->write.lkey = send_ring->mr->mkey;
 	}
 
 	send_ring->tx_head++;
@@ -407,17 +545,17 @@ static int dr_get_tbl_copy_details(struct mlx5dr_domain *dmn,
 				   int *iterations,
 				   int *num_stes)
 {
+	u32 chunk_byte_size = mlx5dr_icm_pool_get_chunk_byte_size(htbl->chunk);
 	int alloc_size;
 
-	if (htbl->chunk->byte_size > dmn->send_ring->max_post_send_size) {
-		*iterations = htbl->chunk->byte_size /
-			dmn->send_ring->max_post_send_size;
+	if (chunk_byte_size > dmn->send_ring->max_post_send_size) {
+		*iterations = chunk_byte_size / dmn->send_ring->max_post_send_size;
 		*byte_size = dmn->send_ring->max_post_send_size;
 		alloc_size = *byte_size;
 		*num_stes = *byte_size / DR_STE_SIZE;
 	} else {
 		*iterations = 1;
-		*num_stes = htbl->chunk->num_of_entries;
+		*num_stes = mlx5dr_icm_pool_get_chunk_num_of_entries(htbl->chunk);
 		alloc_size = *num_stes * DR_STE_SIZE;
 	}
 
@@ -453,7 +591,7 @@ int mlx5dr_send_postsend_ste(struct mlx5dr_domain *dmn, struct mlx5dr_ste *ste,
 	send_info.write.length = size;
 	send_info.write.lkey = 0;
 	send_info.remote_addr = mlx5dr_ste_get_mr_addr(ste) + offset;
-	send_info.rkey = ste->htbl->chunk->rkey;
+	send_info.rkey = mlx5dr_icm_pool_get_chunk_rkey(ste->htbl->chunk);
 
 	return dr_postsend_icm_data(dmn, &send_info);
 }
@@ -462,7 +600,7 @@ int mlx5dr_send_postsend_htbl(struct mlx5dr_domain *dmn,
 			      struct mlx5dr_ste_htbl *htbl,
 			      u8 *formatted_ste, u8 *mask)
 {
-	u32 byte_size = htbl->chunk->byte_size;
+	u32 byte_size = mlx5dr_icm_pool_get_chunk_byte_size(htbl->chunk);
 	int num_stes_per_iter;
 	int iterations;
 	u8 *data;
@@ -486,7 +624,7 @@ int mlx5dr_send_postsend_htbl(struct mlx5dr_domain *dmn,
 		 * need to add the bit_mask
 		 */
 		for (j = 0; j < num_stes_per_iter; j++) {
-			struct mlx5dr_ste *ste = &htbl->ste_arr[ste_index + j];
+			struct mlx5dr_ste *ste = &htbl->chunk->ste_arr[ste_index + j];
 			u32 ste_off = j * DR_STE_SIZE;
 
 			if (mlx5dr_ste_is_not_used(ste)) {
@@ -495,7 +633,8 @@ int mlx5dr_send_postsend_htbl(struct mlx5dr_domain *dmn,
 			} else {
 				/* Copy data */
 				memcpy(data + ste_off,
-				       htbl->ste_arr[ste_index + j].hw_ste,
+				       htbl->chunk->hw_ste_arr +
+				       DR_STE_SIZE_REDUCED * (ste_index + j),
 				       DR_STE_SIZE_REDUCED);
 				/* Copy bit_mask */
 				memcpy(data + ste_off + DR_STE_SIZE_REDUCED,
@@ -511,8 +650,8 @@ int mlx5dr_send_postsend_htbl(struct mlx5dr_domain *dmn,
 		send_info.write.length = byte_size;
 		send_info.write.lkey = 0;
 		send_info.remote_addr =
-			mlx5dr_ste_get_mr_addr(htbl->ste_arr + ste_index);
-		send_info.rkey = htbl->chunk->rkey;
+			mlx5dr_ste_get_mr_addr(htbl->chunk->ste_arr + ste_index);
+		send_info.rkey = mlx5dr_icm_pool_get_chunk_rkey(htbl->chunk);
 
 		ret = dr_postsend_icm_data(dmn, &send_info);
 		if (ret)
@@ -530,7 +669,7 @@ int mlx5dr_send_postsend_formatted_htbl(struct mlx5dr_domain *dmn,
 					u8 *ste_init_data,
 					bool update_hw_ste)
 {
-	u32 byte_size = htbl->chunk->byte_size;
+	u32 byte_size = mlx5dr_icm_pool_get_chunk_byte_size(htbl->chunk);
 	int iterations;
 	int num_stes;
 	u8 *copy_dst;
@@ -546,7 +685,7 @@ int mlx5dr_send_postsend_formatted_htbl(struct mlx5dr_domain *dmn,
 	if (update_hw_ste) {
 		/* Copy the reduced STE to hash table ste_arr */
 		for (i = 0; i < num_stes; i++) {
-			copy_dst = htbl->hw_ste_arr + i * DR_STE_SIZE_REDUCED;
+			copy_dst = htbl->chunk->hw_ste_arr + i * DR_STE_SIZE_REDUCED;
 			memcpy(copy_dst, ste_init_data, DR_STE_SIZE_REDUCED);
 		}
 	}
@@ -568,8 +707,8 @@ int mlx5dr_send_postsend_formatted_htbl(struct mlx5dr_domain *dmn,
 		send_info.write.length = byte_size;
 		send_info.write.lkey = 0;
 		send_info.remote_addr =
-			mlx5dr_ste_get_mr_addr(htbl->ste_arr + ste_index);
-		send_info.rkey = htbl->chunk->rkey;
+			mlx5dr_ste_get_mr_addr(htbl->chunk->ste_arr + ste_index);
+		send_info.rkey = mlx5dr_icm_pool_get_chunk_rkey(htbl->chunk);
 
 		ret = dr_postsend_icm_data(dmn, &send_info);
 		if (ret)
@@ -591,8 +730,9 @@ int mlx5dr_send_postsend_action(struct mlx5dr_domain *dmn,
 	send_info.write.length = action->rewrite->num_of_actions *
 				 DR_MODIFY_ACTION_SIZE;
 	send_info.write.lkey = 0;
-	send_info.remote_addr = action->rewrite->chunk->mr_addr;
-	send_info.rkey = action->rewrite->chunk->rkey;
+	send_info.remote_addr =
+		mlx5dr_icm_pool_get_chunk_mr_addr(action->rewrite->chunk);
+	send_info.rkey = mlx5dr_icm_pool_get_chunk_rkey(action->rewrite->chunk);
 
 	ret = dr_postsend_icm_data(dmn, &send_info);
 
@@ -831,6 +971,7 @@ static struct mlx5dr_cq *dr_create_cq(struct mlx5_core_dev *mdev,
 
 	cq->mcq.vector = 0;
 	cq->mcq.uar = uar;
+	cq->mdev = mdev;
 
 	return cq;
 
@@ -848,8 +989,7 @@ static void dr_destroy_cq(struct mlx5_core_dev *mdev, struct mlx5dr_cq *cq)
 	kfree(cq);
 }
 
-static int
-dr_create_mkey(struct mlx5_core_dev *mdev, u32 pdn, struct mlx5_core_mkey *mkey)
+static int dr_create_mkey(struct mlx5_core_dev *mdev, u32 pdn, u32 *mkey)
 {
 	u32 in[MLX5_ST_SZ_DW(create_mkey_in)] = {};
 	void *mkc;
@@ -908,7 +1048,7 @@ static struct mlx5dr_mr *dr_reg_mr(struct mlx5_core_dev *mdev,
 
 static void dr_dereg_mr(struct mlx5_core_dev *mdev, struct mlx5dr_mr *mr)
 {
-	mlx5_core_destroy_mkey(mdev, &mr->mkey);
+	mlx5_core_destroy_mkey(mdev, mr->mkey);
 	dma_unmap_single(mlx5_core_dma_dev(mdev), mr->dma_addr, mr->size,
 			 DMA_BIDIRECTIONAL);
 	kfree(mr);
@@ -1039,7 +1179,7 @@ int mlx5dr_send_ring_force_drain(struct mlx5dr_domain *dmn)
 	send_info.write.lkey = 0;
 	/* Using the sync_mr in order to write/read */
 	send_info.remote_addr = (uintptr_t)send_ring->sync_mr->addr;
-	send_info.rkey = send_ring->sync_mr->mkey.key;
+	send_info.rkey = send_ring->sync_mr->mkey;
 
 	for (i = 0; i < num_of_sends_req; i++) {
 		ret = dr_postsend_icm_data(dmn, &send_info);
