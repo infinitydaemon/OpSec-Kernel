@@ -233,6 +233,34 @@ Elf_Scn *elf_section_by_name(Elf *elf, GElf_Ehdr *ep,
 	return NULL;
 }
 
+bool filename__has_section(const char *filename, const char *sec)
+{
+	int fd;
+	Elf *elf;
+	GElf_Ehdr ehdr;
+	GElf_Shdr shdr;
+	bool found = false;
+
+	fd = open(filename, O_RDONLY);
+	if (fd < 0)
+		return false;
+
+	elf = elf_begin(fd, PERF_ELF_C_READ_MMAP, NULL);
+	if (elf == NULL)
+		goto out;
+
+	if (gelf_getehdr(elf, &ehdr) == NULL)
+		goto elf_out;
+
+	found = !!elf_section_by_name(elf, &ehdr, &shdr, sec, NULL);
+
+elf_out:
+	elf_end(elf);
+out:
+	close(fd);
+	return found;
+}
+
 static int elf_read_program_header(Elf *elf, u64 vaddr, GElf_Phdr *phdr)
 {
 	size_t i, phdrnum;
@@ -1254,6 +1282,17 @@ dso__load_sym_internal(struct dso *dso, struct map *map, struct symsrc *syms_ss,
 			goto out_elf_end;
 
 		gelf_getshdr(sec, &shdr);
+
+		/*
+		 * If the attribute bit SHF_ALLOC is not set, the section
+		 * doesn't occupy memory during process execution.
+		 * E.g. ".gnu.warning.*" section is used by linker to generate
+		 * warnings when calling deprecated functions, the symbols in
+		 * the section aren't loaded to memory during process execution,
+		 * so skip them.
+		 */
+		if (!(shdr.sh_flags & SHF_ALLOC))
+			continue;
 
 		secstrs = secstrs_sym;
 
