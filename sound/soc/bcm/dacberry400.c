@@ -230,7 +230,8 @@ static int snd_rpi_dacberry400_probe(struct platform_device *pdev)
 
 static int snd_rpi_dacberry400_remove(struct platform_device *pdev)
 {
-	return snd_soc_unregister_card(&snd_rpi_dacberry400);
+	snd_soc_unregister_card(&snd_rpi_dacberry400);
+	return 0;
 }
 
 static const struct of_device_id dacberry400_match_id[] = {

@@ -124,7 +124,7 @@ EXPORT_SYMBOL_GPL(snd_soc_dai_set_pll);
  */
 int snd_soc_dai_set_bclk_ratio(struct snd_soc_dai *dai, unsigned int ratio)
 {
-	int ret = -EINVAL;
+	int ret = -ENOTSUPP;
 
 	if (dai->driver->ops &&
 	    dai->driver->ops->set_bclk_ratio)
@@ -208,8 +208,7 @@ int snd_soc_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 {
 	int ret = -ENOTSUPP;
 
-	if (dai->driver->ops &&
-	    dai->driver->ops->set_fmt)
+	if (dai->driver->ops && dai->driver->ops->set_fmt)
 		ret = dai->driver->ops->set_fmt(dai, fmt);
 
 	return soc_dai_ret(dai, ret);
@@ -387,23 +386,16 @@ int snd_soc_dai_hw_params(struct snd_soc_dai *dai,
 			  struct snd_pcm_substream *substream,
 			  struct snd_pcm_hw_params *params)
 {
-	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
 	int ret = 0;
 
 	if (dai->driver->ops &&
-	    dai->driver->ops->hw_params) {
-		/* perform any topology hw_params fixups before DAI  */
-		ret = snd_soc_link_be_hw_params_fixup(rtd, params);
-		if (ret < 0)
-			goto end;
-
+	    dai->driver->ops->hw_params)
 		ret = dai->driver->ops->hw_params(substream, params, dai);
-	}
 
 	/* mark substream if succeeded */
 	if (ret == 0)
 		soc_dai_mark_push(dai, substream, hw_params);
-end:
+
 	return soc_dai_ret(dai, ret);
 }
 
@@ -451,18 +443,6 @@ void snd_soc_dai_shutdown(struct snd_soc_dai *dai,
 
 	/* remove marked substream */
 	soc_dai_mark_pop(dai, substream, startup);
-}
-
-snd_pcm_sframes_t snd_soc_dai_delay(struct snd_soc_dai *dai,
-				    struct snd_pcm_substream *substream)
-{
-	int delay = 0;
-
-	if (dai->driver->ops &&
-	    dai->driver->ops->delay)
-		delay = dai->driver->ops->delay(substream, dai);
-
-	return delay;
 }
 
 int snd_soc_dai_compress_new(struct snd_soc_dai *dai,
@@ -691,6 +671,34 @@ int snd_soc_pcm_dai_bespoke_trigger(struct snd_pcm_substream *substream,
 	}
 
 	return 0;
+}
+
+void snd_soc_pcm_dai_delay(struct snd_pcm_substream *substream,
+			   snd_pcm_sframes_t *cpu_delay,
+			   snd_pcm_sframes_t *codec_delay)
+{
+	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+	struct snd_soc_dai *dai;
+	int i;
+
+	/*
+	 * We're looking for the delay through the full audio path so it needs to
+	 * be the maximum of the DAIs doing transmit and the maximum of the DAIs
+	 * doing receive (ie, all CPUs and all CODECs) rather than just the maximum
+	 * of all DAIs.
+	 */
+
+	/* for CPU */
+	for_each_rtd_cpu_dais(rtd, i, dai)
+		if (dai->driver->ops &&
+		    dai->driver->ops->delay)
+			*cpu_delay = max(*cpu_delay, dai->driver->ops->delay(substream, dai));
+
+	/* for Codec */
+	for_each_rtd_codec_dais(rtd, i, dai)
+		if (dai->driver->ops &&
+		    dai->driver->ops->delay)
+			*codec_delay = max(*codec_delay, dai->driver->ops->delay(substream, dai));
 }
 
 int snd_soc_dai_compr_startup(struct snd_soc_dai *dai,

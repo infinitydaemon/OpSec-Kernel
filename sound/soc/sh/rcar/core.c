@@ -755,11 +755,11 @@ static int rsnd_soc_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	struct rsnd_dai *rdai = rsnd_dai_to_rdai(dai);
 
 	/* set clock master for audio interface */
-	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
-	case SND_SOC_DAIFMT_CBP_CFP:
+	switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
+	case SND_SOC_DAIFMT_BC_FC:
 		rdai->clk_master = 0;
 		break;
-	case SND_SOC_DAIFMT_CBC_CFC:
+	case SND_SOC_DAIFMT_BP_FP:
 		rdai->clk_master = 1; /* cpu is master */
 		break;
 	default:
@@ -1518,7 +1518,8 @@ static int rsnd_hw_params(struct snd_soc_component *component,
 		int stream = substream->stream;
 
 		for_each_dpcm_be(fe, stream, dpcm) {
-			struct snd_pcm_hw_params *be_params = &dpcm->hw_params;
+			struct snd_soc_pcm_runtime *be = dpcm->be;
+			struct snd_pcm_hw_params *be_params = &be->dpcm[stream].hw_params;
 
 			if (params_channels(hw_params) != params_channels(be_params))
 				io->converted_chan = params_channels(be_params);
@@ -1581,9 +1582,9 @@ static int rsnd_hw_params(struct snd_soc_component *component,
 				hw_params->cmask |= SNDRV_PCM_HW_PARAM_RATE;
 			} else if (params_rate(hw_params) * k_up < io->converted_rate) {
 				hw_param_interval(hw_params, SNDRV_PCM_HW_PARAM_RATE)->min =
-					(io->converted_rate + k_up - 1) / k_up;
+					DIV_ROUND_UP(io->converted_rate, k_up);
 				hw_param_interval(hw_params, SNDRV_PCM_HW_PARAM_RATE)->max =
-					(io->converted_rate + k_up - 1) / k_up;
+					DIV_ROUND_UP(io->converted_rate, k_up);
 				hw_params->cmask |= SNDRV_PCM_HW_PARAM_RATE;
 			}
 
@@ -1813,11 +1814,12 @@ int rsnd_kctrl_new(struct rsnd_mod *mod,
  *		snd_soc_component
  */
 static const struct snd_soc_component_driver rsnd_soc_component = {
-	.name		= "rsnd",
-	.probe		= rsnd_debugfs_probe,
-	.hw_params	= rsnd_hw_params,
-	.hw_free	= rsnd_hw_free,
-	.pointer	= rsnd_pointer,
+	.name			= "rsnd",
+	.probe			= rsnd_debugfs_probe,
+	.hw_params		= rsnd_hw_params,
+	.hw_free		= rsnd_hw_free,
+	.pointer		= rsnd_pointer,
+	.legacy_dai_naming	= 1,
 };
 
 static int rsnd_rdai_continuance_probe(struct rsnd_priv *priv,
@@ -1968,19 +1970,26 @@ static int rsnd_remove(struct platform_device *pdev)
 		rsnd_cmd_remove,
 		rsnd_adg_remove,
 	};
-	int ret = 0, i;
+	int i;
 
 	pm_runtime_disable(&pdev->dev);
 
 	for_each_rsnd_dai(rdai, priv, i) {
-		ret |= rsnd_dai_call(remove, &rdai->playback, priv);
-		ret |= rsnd_dai_call(remove, &rdai->capture, priv);
+		int ret;
+
+		ret = rsnd_dai_call(remove, &rdai->playback, priv);
+		if (ret)
+			dev_warn(&pdev->dev, "Failed to remove playback dai #%d\n", i);
+
+		ret = rsnd_dai_call(remove, &rdai->capture, priv);
+		if (ret)
+			dev_warn(&pdev->dev, "Failed to remove capture dai #%d\n", i);
 	}
 
 	for (i = 0; i < ARRAY_SIZE(remove_func); i++)
 		remove_func[i](priv);
 
-	return ret;
+	return 0;
 }
 
 static int __maybe_unused rsnd_suspend(struct device *dev)
