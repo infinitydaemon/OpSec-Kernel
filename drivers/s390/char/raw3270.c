@@ -111,12 +111,6 @@ static inline int raw3270_state_ready(struct raw3270 *rp)
 	return rp->state == RAW3270_STATE_READY;
 }
 
-static inline int raw3270_state_final(struct raw3270 *rp)
-{
-	return rp->state == RAW3270_STATE_INIT ||
-		rp->state == RAW3270_STATE_READY;
-}
-
 void
 raw3270_buffer_address(struct raw3270 *rp, char *cp, unsigned short addr)
 {
@@ -749,6 +743,12 @@ raw3270_setup_device(struct ccw_device *cdev, struct raw3270 *rp, char *ascebc)
 /* Tentative definition - see below for actual definition. */
 static struct ccw_driver raw3270_ccw_driver;
 
+static inline int raw3270_state_final(struct raw3270 *rp)
+{
+	return rp->state == RAW3270_STATE_INIT ||
+		rp->state == RAW3270_STATE_READY;
+}
+
 /*
  * Setup 3270 device configured as console.
  */
@@ -828,6 +828,21 @@ raw3270_create_device(struct ccw_device *cdev)
 	/* Get reference to ccw_device structure. */
 	get_device(&cdev->dev);
 	return rp;
+}
+
+/*
+ * This helper just validates that it is safe to activate a
+ * view in the panic() context, due to locking restrictions.
+ */
+int raw3270_view_lock_unavailable(struct raw3270_view *view)
+{
+	struct raw3270 *rp = view->dev;
+
+	if (!rp)
+		return -ENODEV;
+	if (spin_is_locked(get_ccwdev_lock(rp->cdev)))
+		return -EBUSY;
+	return 0;
 }
 
 /*
@@ -1047,24 +1062,24 @@ raw3270_probe (struct ccw_device *cdev)
 static ssize_t
 raw3270_model_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "%i\n",
-			((struct raw3270 *) dev_get_drvdata(dev))->model);
+	return sysfs_emit(buf, "%i\n",
+			  ((struct raw3270 *)dev_get_drvdata(dev))->model);
 }
 static DEVICE_ATTR(model, 0444, raw3270_model_show, NULL);
 
 static ssize_t
 raw3270_rows_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "%i\n",
-			((struct raw3270 *) dev_get_drvdata(dev))->rows);
+	return sysfs_emit(buf, "%i\n",
+			  ((struct raw3270 *)dev_get_drvdata(dev))->rows);
 }
 static DEVICE_ATTR(rows, 0444, raw3270_rows_show, NULL);
 
 static ssize_t
 raw3270_columns_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "%i\n",
-			((struct raw3270 *) dev_get_drvdata(dev))->cols);
+	return sysfs_emit(buf, "%i\n",
+			  ((struct raw3270 *)dev_get_drvdata(dev))->cols);
 }
 static DEVICE_ATTR(columns, 0444, raw3270_columns_show, NULL);
 

@@ -193,12 +193,14 @@ static void clk_test_get_rate(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate;
 
 	rate = clk_get_rate(clk);
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_EQ(test, rate, ctx->rate);
+
+	clk_put(clk);
 }
 
 /*
@@ -212,7 +214,7 @@ static void clk_test_set_get_rate(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate;
 
 	KUNIT_ASSERT_EQ(test,
@@ -222,6 +224,8 @@ static void clk_test_set_get_rate(struct kunit *test)
 	rate = clk_get_rate(clk);
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_EQ(test, rate, DUMMY_CLOCK_RATE_1);
+
+	clk_put(clk);
 }
 
 /*
@@ -235,7 +239,7 @@ static void clk_test_set_set_get_rate(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate;
 
 	KUNIT_ASSERT_EQ(test,
@@ -249,6 +253,8 @@ static void clk_test_set_set_get_rate(struct kunit *test)
 	rate = clk_get_rate(clk);
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_EQ(test, rate, DUMMY_CLOCK_RATE_2);
+
+	clk_put(clk);
 }
 
 /*
@@ -259,7 +265,7 @@ static void clk_test_round_set_get_rate(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rounded_rate, set_rate;
 
 	rounded_rate = clk_round_rate(clk, DUMMY_CLOCK_RATE_1);
@@ -273,6 +279,8 @@ static void clk_test_round_set_get_rate(struct kunit *test)
 	set_rate = clk_get_rate(clk);
 	KUNIT_ASSERT_GT(test, set_rate, 0);
 	KUNIT_EXPECT_EQ(test, rounded_rate, set_rate);
+
+	clk_put(clk);
 }
 
 static struct kunit_case clk_test_cases[] = {
@@ -286,7 +294,7 @@ static struct kunit_case clk_test_cases[] = {
 /*
  * Test suite for a basic rate clock, without any parent.
  *
- * These tests are supposed to exercise the rate API with simple scenarios
+ * These tests exercise the rate API with simple scenarios
  */
 static struct kunit_suite clk_test_suite = {
 	.name = "clk-test",
@@ -326,17 +334,20 @@ static void clk_test_uncached_get_rate(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate;
 
 	rate = clk_get_rate(clk);
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_EQ(test, rate, DUMMY_CLOCK_INIT_RATE);
 
+	/* We change the rate behind the clock framework's back */
 	ctx->rate = DUMMY_CLOCK_RATE_1;
 	rate = clk_get_rate(clk);
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_EQ(test, rate, DUMMY_CLOCK_RATE_1);
+
+	clk_put(clk);
 }
 
 /*
@@ -347,7 +358,7 @@ static void clk_test_uncached_set_range(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate;
 
 	KUNIT_ASSERT_EQ(test,
@@ -360,6 +371,8 @@ static void clk_test_uncached_set_range(struct kunit *test)
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_GE(test, rate, DUMMY_CLOCK_RATE_1);
 	KUNIT_EXPECT_LE(test, rate, DUMMY_CLOCK_RATE_2);
+
+	clk_put(clk);
 }
 
 /*
@@ -374,9 +387,10 @@ static void clk_test_uncached_updated_rate_set_range(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate;
 
+	/* We change the rate behind the clock framework's back */
 	ctx->rate = DUMMY_CLOCK_RATE_1 + 1000;
 	KUNIT_ASSERT_EQ(test,
 			clk_set_rate_range(clk,
@@ -387,6 +401,8 @@ static void clk_test_uncached_updated_rate_set_range(struct kunit *test)
 	rate = clk_get_rate(clk);
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_EQ(test, rate, DUMMY_CLOCK_RATE_1 + 1000);
+
+	clk_put(clk);
 }
 
 static struct kunit_case clk_uncached_test_cases[] = {
@@ -399,7 +415,7 @@ static struct kunit_case clk_uncached_test_cases[] = {
 /*
  * Test suite for a basic, uncached, rate clock, without any parent.
  *
- * These tests are supposed to exercise the rate API with simple scenarios
+ * These tests exercise the rate API with simple scenarios
  */
 static struct kunit_suite clk_uncached_test_suite = {
 	.name = "clk-uncached-test",
@@ -466,11 +482,13 @@ clk_test_multiple_parents_mux_get_parent(struct kunit *test)
 {
 	struct clk_multiple_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
-	struct clk *parent;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
+	struct clk *parent = clk_hw_get_clk(&ctx->parents_ctx[0].hw, NULL);
 
-	parent = clk_get_parent(clk);
-	KUNIT_EXPECT_TRUE(test, clk_is_match(parent, ctx->parents_ctx[0].hw.clk));
+	KUNIT_EXPECT_TRUE(test, clk_is_match(clk_get_parent(clk), parent));
+
+	clk_put(parent);
+	clk_put(clk);
 }
 
 /*
@@ -482,10 +500,18 @@ clk_test_multiple_parents_mux_has_parent(struct kunit *test)
 {
 	struct clk_multiple_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
+	struct clk *parent;
 
-	KUNIT_EXPECT_TRUE(test, clk_has_parent(clk, ctx->parents_ctx[0].hw.clk));
-	KUNIT_EXPECT_TRUE(test, clk_has_parent(clk, ctx->parents_ctx[1].hw.clk));
+	parent = clk_hw_get_clk(&ctx->parents_ctx[0].hw, NULL);
+	KUNIT_EXPECT_TRUE(test, clk_has_parent(clk, parent));
+	clk_put(parent);
+
+	parent = clk_hw_get_clk(&ctx->parents_ctx[1].hw, NULL);
+	KUNIT_EXPECT_TRUE(test, clk_has_parent(clk, parent));
+	clk_put(parent);
+
+	clk_put(clk);
 }
 
 /*
@@ -502,7 +528,7 @@ clk_test_multiple_parents_mux_set_range_set_parent_get_rate(struct kunit *test)
 {
 	struct clk_multiple_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	struct clk *parent1, *parent2;
 	unsigned long rate;
 	int ret;
@@ -537,6 +563,7 @@ clk_test_multiple_parents_mux_set_range_set_parent_get_rate(struct kunit *test)
 
 	clk_put(parent2);
 	clk_put(parent1);
+	clk_put(clk);
 }
 
 static struct kunit_case clk_multiple_parents_mux_test_cases[] = {
@@ -550,8 +577,8 @@ static struct kunit_case clk_multiple_parents_mux_test_cases[] = {
  * Test suite for a basic mux clock with two parents, with
  * CLK_SET_RATE_PARENT on the child.
  *
- * These tests are supposed to exercise the consumer API and check that
- * the state of the child and parents are sane and consistent.
+ * These tests exercise the consumer API and check that the state of the
+ * child and parents are sane and consistent.
  */
 static struct kunit_suite
 clk_multiple_parents_mux_test_suite = {
@@ -601,19 +628,19 @@ clk_orphan_transparent_multiple_parent_mux_test_exit(struct kunit *test)
 }
 
 /*
- * Test that, for a mux whose current parent hasn't been registered yet,
- * clk_get_parent() will return NULL.
+ * Test that, for a mux whose current parent hasn't been registered yet and is
+ * thus orphan, clk_get_parent() will return NULL.
  */
 static void
 clk_test_orphan_transparent_multiple_parent_mux_get_parent(struct kunit *test)
 {
 	struct clk_multiple_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
-	struct clk *parent;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 
-	parent = clk_get_parent(clk);
-	KUNIT_EXPECT_PTR_EQ(test, parent, NULL);
+	KUNIT_EXPECT_PTR_EQ(test, clk_get_parent(clk), NULL);
+
+	clk_put(clk);
 }
 
 /*
@@ -626,7 +653,7 @@ clk_test_orphan_transparent_multiple_parent_mux_set_parent(struct kunit *test)
 {
 	struct clk_multiple_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	struct clk *parent, *new_parent;
 	int ret;
 
@@ -641,6 +668,7 @@ clk_test_orphan_transparent_multiple_parent_mux_set_parent(struct kunit *test)
 	KUNIT_EXPECT_TRUE(test, clk_is_match(parent, new_parent));
 
 	clk_put(parent);
+	clk_put(clk);
 }
 
 /*
@@ -653,7 +681,8 @@ clk_test_orphan_transparent_multiple_parent_mux_set_parent_drop_range(struct kun
 {
 	struct clk_multiple_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk, *parent;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
+	struct clk *parent;
 	unsigned long parent_rate, new_parent_rate;
 	int ret;
 
@@ -674,6 +703,7 @@ clk_test_orphan_transparent_multiple_parent_mux_set_parent_drop_range(struct kun
 	KUNIT_EXPECT_EQ(test, parent_rate, new_parent_rate);
 
 	clk_put(parent);
+	clk_put(clk);
 }
 
 /*
@@ -685,7 +715,7 @@ clk_test_orphan_transparent_multiple_parent_mux_set_parent_get_rate(struct kunit
 {
 	struct clk_multiple_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	struct clk *parent;
 	unsigned long parent_rate, rate;
 	int ret;
@@ -702,6 +732,9 @@ clk_test_orphan_transparent_multiple_parent_mux_set_parent_get_rate(struct kunit
 	rate = clk_get_rate(clk);
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_EQ(test, parent_rate, rate);
+
+	clk_put(parent);
+	clk_put(clk);
 }
 
 /*
@@ -747,7 +780,8 @@ clk_test_orphan_transparent_multiple_parent_mux_set_parent_set_range_modified(st
 {
 	struct clk_multiple_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk, *parent;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
+	struct clk *parent;
 	unsigned long rate;
 	int ret;
 
@@ -766,6 +800,7 @@ clk_test_orphan_transparent_multiple_parent_mux_set_parent_set_range_modified(st
 	KUNIT_EXPECT_LE(test, rate, DUMMY_CLOCK_RATE_2);
 
 	clk_put(parent);
+	clk_put(clk);
 }
 
 /*
@@ -778,7 +813,8 @@ clk_test_orphan_transparent_multiple_parent_mux_set_parent_set_range_untouched(s
 {
 	struct clk_multiple_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk, *parent;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
+	struct clk *parent;
 	unsigned long parent_rate, new_parent_rate;
 	int ret;
 
@@ -801,26 +837,7 @@ clk_test_orphan_transparent_multiple_parent_mux_set_parent_set_range_untouched(s
 	KUNIT_EXPECT_EQ(test, parent_rate, new_parent_rate);
 
 	clk_put(parent);
-}
-
-/*
- * Test that, for a mux whose current parent hasn't been registered yet,
- * calling clk_set_rate_range() will succeed but won't affect its rate.
- */
-static void
-clk_test_orphan_transparent_multiple_parent_mux_set_range_get_rate(struct kunit *test)
-{
-	struct clk_multiple_parent_ctx *ctx = test->priv;
-	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
-	unsigned long rate;
-	int ret;
-
-	ret = clk_set_rate_range(clk, DUMMY_CLOCK_RATE_1, DUMMY_CLOCK_RATE_2);
-	KUNIT_ASSERT_EQ(test, ret, 0);
-
-	rate = clk_get_rate(clk);
-	KUNIT_EXPECT_EQ(test, rate, 0);
+	clk_put(clk);
 }
 
 /*
@@ -833,7 +850,7 @@ clk_test_orphan_transparent_multiple_parent_mux_set_range_round_rate(struct kuni
 {
 	struct clk_multiple_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate;
 	int ret;
 
@@ -844,6 +861,8 @@ clk_test_orphan_transparent_multiple_parent_mux_set_range_round_rate(struct kuni
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_GE(test, rate, DUMMY_CLOCK_RATE_1);
 	KUNIT_EXPECT_LE(test, rate, DUMMY_CLOCK_RATE_2);
+
+	clk_put(clk);
 }
 
 /*
@@ -860,17 +879,17 @@ clk_test_orphan_transparent_multiple_parent_mux_set_range_set_parent_get_rate(st
 {
 	struct clk_multiple_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk, *parent;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
+	struct clk *parent;
 	unsigned long rate;
 	int ret;
 
 	kunit_skip(test, "This needs to be fixed in the core.");
 
+	clk_hw_set_rate_range(hw, DUMMY_CLOCK_RATE_1, DUMMY_CLOCK_RATE_2);
+
 	parent = clk_hw_get_clk(&ctx->parents_ctx[1].hw, NULL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, parent);
-
-	ret = clk_set_rate_range(clk, DUMMY_CLOCK_RATE_1, DUMMY_CLOCK_RATE_2);
-	KUNIT_ASSERT_EQ(test, ret, 0);
 
 	ret = clk_set_parent(clk, parent);
 	KUNIT_ASSERT_EQ(test, ret, 0);
@@ -881,6 +900,7 @@ clk_test_orphan_transparent_multiple_parent_mux_set_range_set_parent_get_rate(st
 	KUNIT_EXPECT_LE(test, rate, DUMMY_CLOCK_RATE_2);
 
 	clk_put(parent);
+	clk_put(clk);
 }
 
 static struct kunit_case clk_orphan_transparent_multiple_parent_mux_test_cases[] = {
@@ -891,7 +911,6 @@ static struct kunit_case clk_orphan_transparent_multiple_parent_mux_test_cases[]
 	KUNIT_CASE(clk_test_orphan_transparent_multiple_parent_mux_set_parent_put),
 	KUNIT_CASE(clk_test_orphan_transparent_multiple_parent_mux_set_parent_set_range_modified),
 	KUNIT_CASE(clk_test_orphan_transparent_multiple_parent_mux_set_parent_set_range_untouched),
-	KUNIT_CASE(clk_test_orphan_transparent_multiple_parent_mux_set_range_get_rate),
 	KUNIT_CASE(clk_test_orphan_transparent_multiple_parent_mux_set_range_round_rate),
 	KUNIT_CASE(clk_test_orphan_transparent_multiple_parent_mux_set_range_set_parent_get_rate),
 	{}
@@ -902,9 +921,9 @@ static struct kunit_case clk_orphan_transparent_multiple_parent_mux_test_cases[]
  * isn't registered, only the second parent is. By default, the clock
  * will thus be orphan.
  *
- * These tests are supposed to exercise the behaviour of the consumer
- * API when dealing with an orphan clock, and how we deal with the
- * transition to a valid parent.
+ * These tests exercise the behaviour of the consumer API when dealing
+ * with an orphan clock, and how we deal with the transition to a valid
+ * parent.
  */
 static struct kunit_suite clk_orphan_transparent_multiple_parent_mux_test_suite = {
 	.name = "clk-orphan-transparent-multiple-parent-mux-test",
@@ -967,11 +986,13 @@ clk_test_single_parent_mux_get_parent(struct kunit *test)
 {
 	struct clk_single_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
-	struct clk *parent;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
+	struct clk *parent = clk_hw_get_clk(&ctx->parent_ctx.hw, NULL);
 
-	parent = clk_get_parent(clk);
-	KUNIT_EXPECT_TRUE(test, clk_is_match(parent, ctx->parent_ctx.hw.clk));
+	KUNIT_EXPECT_TRUE(test, clk_is_match(clk_get_parent(clk), parent));
+
+	clk_put(parent);
+	clk_put(clk);
 }
 
 /*
@@ -983,10 +1004,13 @@ clk_test_single_parent_mux_has_parent(struct kunit *test)
 {
 	struct clk_single_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
-	struct clk *parent = ctx->parent_ctx.hw.clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
+	struct clk *parent = clk_hw_get_clk(&ctx->parent_ctx.hw, NULL);
 
 	KUNIT_EXPECT_TRUE(test, clk_has_parent(clk, parent));
+
+	clk_put(parent);
+	clk_put(clk);
 }
 
 /*
@@ -1003,7 +1027,7 @@ clk_test_single_parent_mux_set_range_disjoint_child_last(struct kunit *test)
 {
 	struct clk_single_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	struct clk *parent;
 	int ret;
 
@@ -1017,6 +1041,8 @@ clk_test_single_parent_mux_set_range_disjoint_child_last(struct kunit *test)
 
 	ret = clk_set_rate_range(clk, 3000, 4000);
 	KUNIT_EXPECT_LT(test, ret, 0);
+
+	clk_put(clk);
 }
 
 /*
@@ -1033,7 +1059,7 @@ clk_test_single_parent_mux_set_range_disjoint_parent_last(struct kunit *test)
 {
 	struct clk_single_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	struct clk *parent;
 	int ret;
 
@@ -1047,6 +1073,8 @@ clk_test_single_parent_mux_set_range_disjoint_parent_last(struct kunit *test)
 
 	ret = clk_set_rate_range(parent, 3000, 4000);
 	KUNIT_EXPECT_LT(test, ret, 0);
+
+	clk_put(clk);
 }
 
 /*
@@ -1060,7 +1088,7 @@ clk_test_single_parent_mux_set_range_round_rate_parent_only(struct kunit *test)
 {
 	struct clk_single_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	struct clk *parent;
 	unsigned long rate;
 	int ret;
@@ -1075,6 +1103,8 @@ clk_test_single_parent_mux_set_range_round_rate_parent_only(struct kunit *test)
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_GE(test, rate, DUMMY_CLOCK_RATE_1);
 	KUNIT_EXPECT_LE(test, rate, DUMMY_CLOCK_RATE_2);
+
+	clk_put(clk);
 }
 
 /*
@@ -1088,7 +1118,7 @@ clk_test_single_parent_mux_set_range_round_rate_child_smaller(struct kunit *test
 {
 	struct clk_single_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	struct clk *parent;
 	unsigned long rate;
 	int ret;
@@ -1111,6 +1141,8 @@ clk_test_single_parent_mux_set_range_round_rate_child_smaller(struct kunit *test
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_GE(test, rate, DUMMY_CLOCK_RATE_1 + 1000);
 	KUNIT_EXPECT_LE(test, rate, DUMMY_CLOCK_RATE_2 - 1000);
+
+	clk_put(clk);
 }
 
 /*
@@ -1124,7 +1156,7 @@ clk_test_single_parent_mux_set_range_round_rate_parent_smaller(struct kunit *tes
 {
 	struct clk_single_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	struct clk *parent;
 	unsigned long rate;
 	int ret;
@@ -1147,6 +1179,8 @@ clk_test_single_parent_mux_set_range_round_rate_parent_smaller(struct kunit *tes
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_GE(test, rate, DUMMY_CLOCK_RATE_1 + 1000);
 	KUNIT_EXPECT_LE(test, rate, DUMMY_CLOCK_RATE_2 - 1000);
+
+	clk_put(clk);
 }
 
 static struct kunit_case clk_single_parent_mux_test_cases[] = {
@@ -1164,8 +1198,8 @@ static struct kunit_case clk_single_parent_mux_test_cases[] = {
  * Test suite for a basic mux clock with one parent, with
  * CLK_SET_RATE_PARENT on the child.
  *
- * These tests are supposed to exercise the consumer API and check that
- * the state of the child and parent are sane and consistent.
+ * These tests exercise the consumer API and check that the state of the
+ * child and parent are sane and consistent.
  */
 static struct kunit_suite
 clk_single_parent_mux_test_suite = {
@@ -1179,7 +1213,7 @@ static int clk_orphan_transparent_single_parent_mux_test_init(struct kunit *test
 {
 	struct clk_single_parent_ctx *ctx;
 	struct clk_init_data init = { };
-	const char *parents[] = { "orphan_parent" };
+	const char * const parents[] = { "orphan_parent" };
 	int ret;
 
 	ctx = kunit_kzalloc(test, sizeof(*ctx), GFP_KERNEL);
@@ -1222,7 +1256,7 @@ static void clk_test_orphan_transparent_parent_mux_set_range(struct kunit *test)
 {
 	struct clk_single_parent_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate, new_rate;
 
 	rate = clk_get_rate(clk);
@@ -1237,6 +1271,8 @@ static void clk_test_orphan_transparent_parent_mux_set_range(struct kunit *test)
 	new_rate = clk_get_rate(clk);
 	KUNIT_ASSERT_GT(test, new_rate, 0);
 	KUNIT_EXPECT_EQ(test, rate, new_rate);
+
+	clk_put(clk);
 }
 
 static struct kunit_case clk_orphan_transparent_single_parent_mux_test_cases[] = {
@@ -1246,11 +1282,11 @@ static struct kunit_case clk_orphan_transparent_single_parent_mux_test_cases[] =
 
 /*
  * Test suite for a basic mux clock with one parent. The parent is
- * registered after its child. The clock will thus be orphan when
+ * registered after its child. The clock will thus be an orphan when
  * registered, but will no longer be when the tests run.
  *
- * These tests are supposed to make sure a clock that used to be orphan
- * has a sane, consistent, behaviour.
+ * These tests make sure a clock that used to be orphan has a sane,
+ * consistent, behaviour.
  */
 static struct kunit_suite clk_orphan_transparent_single_parent_test_suite = {
 	.name = "clk-orphan-transparent-single-parent-test",
@@ -1324,11 +1360,13 @@ clk_orphan_two_level_root_last_test_get_rate(struct kunit *test)
 {
 	struct clk_single_parent_two_lvl_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate;
 
 	rate = clk_get_rate(clk);
 	KUNIT_EXPECT_EQ(test, rate, DUMMY_CLOCK_INIT_RATE);
+
+	clk_put(clk);
 }
 
 /*
@@ -1344,7 +1382,7 @@ clk_orphan_two_level_root_last_test_set_range(struct kunit *test)
 {
 	struct clk_single_parent_two_lvl_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate;
 	int ret;
 
@@ -1356,6 +1394,8 @@ clk_orphan_two_level_root_last_test_set_range(struct kunit *test)
 	rate = clk_get_rate(clk);
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_EQ(test, rate, DUMMY_CLOCK_INIT_RATE);
+
+	clk_put(clk);
 }
 
 static struct kunit_case
@@ -1373,9 +1413,9 @@ clk_orphan_two_level_root_last_test_cases[] = {
  * clock itself will always have its parent and will never be
  * reparented. Indeed, it's only orphan because its parent is.
  *
- * These tests are supposed to exercise the behaviour of the consumer
- * API when dealing with an orphan clock, and how we deal with the
- * transition to a valid parent.
+ * These tests exercise the behaviour of the consumer API when dealing
+ * with an orphan clock, and how we deal with the transition to a valid
+ * parent.
  */
 static struct kunit_suite
 clk_orphan_two_level_root_last_test_suite = {
@@ -1394,7 +1434,7 @@ static void clk_range_test_set_range(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate;
 
 	KUNIT_ASSERT_EQ(test,
@@ -1407,6 +1447,8 @@ static void clk_range_test_set_range(struct kunit *test)
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_GE(test, rate, DUMMY_CLOCK_RATE_1);
 	KUNIT_EXPECT_LE(test, rate, DUMMY_CLOCK_RATE_2);
+
+	clk_put(clk);
 }
 
 /*
@@ -1417,13 +1459,15 @@ static void clk_range_test_set_range_invalid(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 
 	KUNIT_EXPECT_LT(test,
 			clk_set_rate_range(clk,
 					   DUMMY_CLOCK_RATE_1 + 1000,
 					   DUMMY_CLOCK_RATE_1),
 			0);
+
+	clk_put(clk);
 }
 
 /*
@@ -1462,7 +1506,7 @@ static void clk_range_test_set_range_round_rate_lower(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	long rate;
 
 	KUNIT_ASSERT_EQ(test,
@@ -1475,6 +1519,8 @@ static void clk_range_test_set_range_round_rate_lower(struct kunit *test)
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_GE(test, rate, DUMMY_CLOCK_RATE_1);
 	KUNIT_EXPECT_LE(test, rate, DUMMY_CLOCK_RATE_2);
+
+	clk_put(clk);
 }
 
 /*
@@ -1485,7 +1531,7 @@ static void clk_range_test_set_range_set_rate_lower(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate;
 
 	KUNIT_ASSERT_EQ(test,
@@ -1502,6 +1548,8 @@ static void clk_range_test_set_range_set_rate_lower(struct kunit *test)
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_GE(test, rate, DUMMY_CLOCK_RATE_1);
 	KUNIT_EXPECT_LE(test, rate, DUMMY_CLOCK_RATE_2);
+
+	clk_put(clk);
 }
 
 /*
@@ -1514,7 +1562,7 @@ static void clk_range_test_set_range_set_round_rate_consistent_lower(struct kuni
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	long rounded;
 
 	KUNIT_ASSERT_EQ(test,
@@ -1531,6 +1579,8 @@ static void clk_range_test_set_range_set_round_rate_consistent_lower(struct kuni
 			0);
 
 	KUNIT_EXPECT_EQ(test, rounded, clk_get_rate(clk));
+
+	clk_put(clk);
 }
 
 /*
@@ -1541,7 +1591,7 @@ static void clk_range_test_set_range_round_rate_higher(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	long rate;
 
 	KUNIT_ASSERT_EQ(test,
@@ -1554,6 +1604,8 @@ static void clk_range_test_set_range_round_rate_higher(struct kunit *test)
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_GE(test, rate, DUMMY_CLOCK_RATE_1);
 	KUNIT_EXPECT_LE(test, rate, DUMMY_CLOCK_RATE_2);
+
+	clk_put(clk);
 }
 
 /*
@@ -1564,7 +1616,7 @@ static void clk_range_test_set_range_set_rate_higher(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate;
 
 	KUNIT_ASSERT_EQ(test,
@@ -1581,6 +1633,8 @@ static void clk_range_test_set_range_set_rate_higher(struct kunit *test)
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_GE(test, rate, DUMMY_CLOCK_RATE_1);
 	KUNIT_EXPECT_LE(test, rate, DUMMY_CLOCK_RATE_2);
+
+	clk_put(clk);
 }
 
 /*
@@ -1593,7 +1647,7 @@ static void clk_range_test_set_range_set_round_rate_consistent_higher(struct kun
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	long rounded;
 
 	KUNIT_ASSERT_EQ(test,
@@ -1610,6 +1664,8 @@ static void clk_range_test_set_range_set_round_rate_consistent_higher(struct kun
 			0);
 
 	KUNIT_EXPECT_EQ(test, rounded, clk_get_rate(clk));
+
+	clk_put(clk);
 }
 
 /*
@@ -1624,7 +1680,7 @@ static void clk_range_test_set_range_get_rate_raised(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate;
 
 	KUNIT_ASSERT_EQ(test,
@@ -1640,6 +1696,8 @@ static void clk_range_test_set_range_get_rate_raised(struct kunit *test)
 	rate = clk_get_rate(clk);
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_EQ(test, rate, DUMMY_CLOCK_RATE_1);
+
+	clk_put(clk);
 }
 
 /*
@@ -1654,7 +1712,7 @@ static void clk_range_test_set_range_get_rate_lowered(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate;
 
 	KUNIT_ASSERT_EQ(test,
@@ -1670,6 +1728,8 @@ static void clk_range_test_set_range_get_rate_lowered(struct kunit *test)
 	rate = clk_get_rate(clk);
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_EQ(test, rate, DUMMY_CLOCK_RATE_2);
+
+	clk_put(clk);
 }
 
 static struct kunit_case clk_range_test_cases[] = {
@@ -1690,9 +1750,8 @@ static struct kunit_case clk_range_test_cases[] = {
 /*
  * Test suite for a basic rate clock, without any parent.
  *
- * These tests are supposed to exercise the rate range API
- * (clk_set_rate_range, clk_set_min_rate, clk_set_max_rate,
- * clk_drop_range).
+ * These tests exercise the rate range API: clk_set_rate_range(),
+ * clk_set_min_rate(), clk_set_max_rate(), clk_drop_range().
  */
 static struct kunit_suite clk_range_test_suite = {
 	.name = "clk-range-test",
@@ -1706,14 +1765,14 @@ static struct kunit_suite clk_range_test_suite = {
  * clk_set_rate_range(), the core will reevaluate whether a new rate is
  * needed each and every time.
  *
- * With clk_dummy_maximize_rate_ops, this means that the the rate will
+ * With clk_dummy_maximize_rate_ops, this means that the rate will
  * trail along the maximum as it evolves.
  */
 static void clk_range_test_set_range_rate_maximized(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate;
 
 	KUNIT_ASSERT_EQ(test,
@@ -1749,6 +1808,8 @@ static void clk_range_test_set_range_rate_maximized(struct kunit *test)
 	rate = clk_get_rate(clk);
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_EQ(test, rate, DUMMY_CLOCK_RATE_2);
+
+	clk_put(clk);
 }
 
 /*
@@ -1756,14 +1817,14 @@ static void clk_range_test_set_range_rate_maximized(struct kunit *test)
  * clk_set_rate_range(), across multiple users, the core will reevaluate
  * whether a new rate is needed each and every time.
  *
- * With clk_dummy_maximize_rate_ops, this means that the the rate will
+ * With clk_dummy_maximize_rate_ops, this means that the rate will
  * trail along the maximum as it evolves.
  */
 static void clk_range_test_multiple_set_range_rate_maximized(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	struct clk *user1, *user2;
 	unsigned long rate;
 
@@ -1807,6 +1868,7 @@ static void clk_range_test_multiple_set_range_rate_maximized(struct kunit *test)
 
 	clk_put(user2);
 	clk_put(user1);
+	clk_put(clk);
 }
 
 /*
@@ -1821,7 +1883,7 @@ static void clk_range_test_multiple_set_range_rate_put_maximized(struct kunit *t
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	struct clk *user1, *user2;
 	unsigned long rate;
 
@@ -1862,6 +1924,7 @@ static void clk_range_test_multiple_set_range_rate_put_maximized(struct kunit *t
 	KUNIT_EXPECT_EQ(test, rate, DUMMY_CLOCK_RATE_2);
 
 	clk_put(user1);
+	clk_put(clk);
 }
 
 static struct kunit_case clk_range_maximize_test_cases[] = {
@@ -1874,10 +1937,9 @@ static struct kunit_case clk_range_maximize_test_cases[] = {
 /*
  * Test suite for a basic rate clock, without any parent.
  *
- * These tests are supposed to exercise the rate range API
- * (clk_set_rate_range, clk_set_min_rate, clk_set_max_rate,
- * clk_drop_range), with a driver that will always try to run at the
- * highest possible rate.
+ * These tests exercise the rate range API: clk_set_rate_range(),
+ * clk_set_min_rate(), clk_set_max_rate(), clk_drop_range(), with a
+ * driver that will always try to run at the highest possible rate.
  */
 static struct kunit_suite clk_range_maximize_test_suite = {
 	.name = "clk-range-maximize-test",
@@ -1891,14 +1953,14 @@ static struct kunit_suite clk_range_maximize_test_suite = {
  * clk_set_rate_range(), the core will reevaluate whether a new rate is
  * needed each and every time.
  *
- * With clk_dummy_minimize_rate_ops, this means that the the rate will
+ * With clk_dummy_minimize_rate_ops, this means that the rate will
  * trail along the minimum as it evolves.
  */
 static void clk_range_test_set_range_rate_minimized(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	unsigned long rate;
 
 	KUNIT_ASSERT_EQ(test,
@@ -1934,6 +1996,8 @@ static void clk_range_test_set_range_rate_minimized(struct kunit *test)
 	rate = clk_get_rate(clk);
 	KUNIT_ASSERT_GT(test, rate, 0);
 	KUNIT_EXPECT_EQ(test, rate, DUMMY_CLOCK_RATE_1);
+
+	clk_put(clk);
 }
 
 /*
@@ -1941,14 +2005,14 @@ static void clk_range_test_set_range_rate_minimized(struct kunit *test)
  * clk_set_rate_range(), across multiple users, the core will reevaluate
  * whether a new rate is needed each and every time.
  *
- * With clk_dummy_minimize_rate_ops, this means that the the rate will
+ * With clk_dummy_minimize_rate_ops, this means that the rate will
  * trail along the minimum as it evolves.
  */
 static void clk_range_test_multiple_set_range_rate_minimized(struct kunit *test)
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	struct clk *user1, *user2;
 	unsigned long rate;
 
@@ -1988,6 +2052,7 @@ static void clk_range_test_multiple_set_range_rate_minimized(struct kunit *test)
 
 	clk_put(user2);
 	clk_put(user1);
+	clk_put(clk);
 }
 
 /*
@@ -2002,7 +2067,7 @@ static void clk_range_test_multiple_set_range_rate_put_minimized(struct kunit *t
 {
 	struct clk_dummy_context *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	struct clk *user1, *user2;
 	unsigned long rate;
 
@@ -2039,6 +2104,7 @@ static void clk_range_test_multiple_set_range_rate_put_minimized(struct kunit *t
 	KUNIT_EXPECT_EQ(test, rate, DUMMY_CLOCK_RATE_1);
 
 	clk_put(user1);
+	clk_put(clk);
 }
 
 static struct kunit_case clk_range_minimize_test_cases[] = {
@@ -2051,10 +2117,9 @@ static struct kunit_case clk_range_minimize_test_cases[] = {
 /*
  * Test suite for a basic rate clock, without any parent.
  *
- * These tests are supposed to exercise the rate range API
- * (clk_set_rate_range, clk_set_min_rate, clk_set_max_rate,
- * clk_drop_range), with a driver that will always try to run at the
- * lowest possible rate.
+ * These tests exercise the rate range API: clk_set_rate_range(),
+ * clk_set_min_rate(), clk_set_max_rate(), clk_drop_range(), with a
+ * driver that will always try to run at the lowest possible rate.
  */
 static struct kunit_suite clk_range_minimize_test_suite = {
 	.name = "clk-range-minimize-test",
@@ -2133,7 +2198,7 @@ static void clk_leaf_mux_set_rate_parent_determine_rate(struct kunit *test)
 {
 	struct clk_leaf_mux_ctx *ctx = test->priv;
 	struct clk_hw *hw = &ctx->hw;
-	struct clk *clk = hw->clk;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
 	struct clk_rate_request req;
 	unsigned long rate;
 	int ret;
@@ -2149,6 +2214,8 @@ static void clk_leaf_mux_set_rate_parent_determine_rate(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, req.rate, DUMMY_CLOCK_RATE_2);
 	KUNIT_EXPECT_EQ(test, req.best_parent_rate, DUMMY_CLOCK_RATE_2);
 	KUNIT_EXPECT_PTR_EQ(test, req.best_parent_hw, &ctx->mux_ctx.hw);
+
+	clk_put(clk);
 }
 
 static struct kunit_case clk_leaf_mux_set_rate_parent_test_cases[] = {
@@ -2162,9 +2229,9 @@ static struct kunit_case clk_leaf_mux_set_rate_parent_test_cases[] = {
  * requests to the mux, which will then select which parent is the best
  * fit for a given rate.
  *
- * These tests are supposed to exercise the behaviour of muxes, and the
- * proper selection of parents.
-  */
+ * These tests exercise the behaviour of muxes, and the proper selection
+ * of parents.
+ */
 static struct kunit_suite clk_leaf_mux_set_rate_parent_test_suite = {
 	.name = "clk-leaf-mux-set-rate-parent",
 	.init = clk_leaf_mux_set_rate_parent_test_init,
@@ -2172,10 +2239,166 @@ static struct kunit_suite clk_leaf_mux_set_rate_parent_test_suite = {
 	.test_cases = clk_leaf_mux_set_rate_parent_test_cases,
 };
 
+struct clk_mux_notifier_rate_change {
+	bool done;
+	unsigned long old_rate;
+	unsigned long new_rate;
+	wait_queue_head_t wq;
+};
+
+struct clk_mux_notifier_ctx {
+	struct clk_multiple_parent_ctx mux_ctx;
+	struct clk *clk;
+	struct notifier_block clk_nb;
+	struct clk_mux_notifier_rate_change pre_rate_change;
+	struct clk_mux_notifier_rate_change post_rate_change;
+};
+
+#define NOTIFIER_TIMEOUT_MS 100
+
+static int clk_mux_notifier_callback(struct notifier_block *nb,
+				     unsigned long action, void *data)
+{
+	struct clk_notifier_data *clk_data = data;
+	struct clk_mux_notifier_ctx *ctx = container_of(nb,
+							struct clk_mux_notifier_ctx,
+							clk_nb);
+
+	if (action & PRE_RATE_CHANGE) {
+		ctx->pre_rate_change.old_rate = clk_data->old_rate;
+		ctx->pre_rate_change.new_rate = clk_data->new_rate;
+		ctx->pre_rate_change.done = true;
+		wake_up_interruptible(&ctx->pre_rate_change.wq);
+	}
+
+	if (action & POST_RATE_CHANGE) {
+		ctx->post_rate_change.old_rate = clk_data->old_rate;
+		ctx->post_rate_change.new_rate = clk_data->new_rate;
+		ctx->post_rate_change.done = true;
+		wake_up_interruptible(&ctx->post_rate_change.wq);
+	}
+
+	return 0;
+}
+
+static int clk_mux_notifier_test_init(struct kunit *test)
+{
+	struct clk_mux_notifier_ctx *ctx;
+	const char *top_parents[2] = { "parent-0", "parent-1" };
+	int ret;
+
+	ctx = kunit_kzalloc(test, sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
+		return -ENOMEM;
+	test->priv = ctx;
+	ctx->clk_nb.notifier_call = clk_mux_notifier_callback;
+	init_waitqueue_head(&ctx->pre_rate_change.wq);
+	init_waitqueue_head(&ctx->post_rate_change.wq);
+
+	ctx->mux_ctx.parents_ctx[0].hw.init = CLK_HW_INIT_NO_PARENT("parent-0",
+								    &clk_dummy_rate_ops,
+								    0);
+	ctx->mux_ctx.parents_ctx[0].rate = DUMMY_CLOCK_RATE_1;
+	ret = clk_hw_register(NULL, &ctx->mux_ctx.parents_ctx[0].hw);
+	if (ret)
+		return ret;
+
+	ctx->mux_ctx.parents_ctx[1].hw.init = CLK_HW_INIT_NO_PARENT("parent-1",
+								    &clk_dummy_rate_ops,
+								    0);
+	ctx->mux_ctx.parents_ctx[1].rate = DUMMY_CLOCK_RATE_2;
+	ret = clk_hw_register(NULL, &ctx->mux_ctx.parents_ctx[1].hw);
+	if (ret)
+		return ret;
+
+	ctx->mux_ctx.current_parent = 0;
+	ctx->mux_ctx.hw.init = CLK_HW_INIT_PARENTS("test-mux", top_parents,
+						   &clk_multiple_parents_mux_ops,
+						   0);
+	ret = clk_hw_register(NULL, &ctx->mux_ctx.hw);
+	if (ret)
+		return ret;
+
+	ctx->clk = clk_hw_get_clk(&ctx->mux_ctx.hw, NULL);
+	ret = clk_notifier_register(ctx->clk, &ctx->clk_nb);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+static void clk_mux_notifier_test_exit(struct kunit *test)
+{
+	struct clk_mux_notifier_ctx *ctx = test->priv;
+	struct clk *clk = ctx->clk;
+
+	clk_notifier_unregister(clk, &ctx->clk_nb);
+	clk_put(clk);
+
+	clk_hw_unregister(&ctx->mux_ctx.hw);
+	clk_hw_unregister(&ctx->mux_ctx.parents_ctx[0].hw);
+	clk_hw_unregister(&ctx->mux_ctx.parents_ctx[1].hw);
+}
+
+/*
+ * Test that if the we have a notifier registered on a mux, the core
+ * will notify us when we switch to another parent, and with the proper
+ * old and new rates.
+ */
+static void clk_mux_notifier_set_parent_test(struct kunit *test)
+{
+	struct clk_mux_notifier_ctx *ctx = test->priv;
+	struct clk_hw *hw = &ctx->mux_ctx.hw;
+	struct clk *clk = clk_hw_get_clk(hw, NULL);
+	struct clk *new_parent = clk_hw_get_clk(&ctx->mux_ctx.parents_ctx[1].hw, NULL);
+	int ret;
+
+	ret = clk_set_parent(clk, new_parent);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	ret = wait_event_interruptible_timeout(ctx->pre_rate_change.wq,
+					       ctx->pre_rate_change.done,
+					       msecs_to_jiffies(NOTIFIER_TIMEOUT_MS));
+	KUNIT_ASSERT_GT(test, ret, 0);
+
+	KUNIT_EXPECT_EQ(test, ctx->pre_rate_change.old_rate, DUMMY_CLOCK_RATE_1);
+	KUNIT_EXPECT_EQ(test, ctx->pre_rate_change.new_rate, DUMMY_CLOCK_RATE_2);
+
+	ret = wait_event_interruptible_timeout(ctx->post_rate_change.wq,
+					       ctx->post_rate_change.done,
+					       msecs_to_jiffies(NOTIFIER_TIMEOUT_MS));
+	KUNIT_ASSERT_GT(test, ret, 0);
+
+	KUNIT_EXPECT_EQ(test, ctx->post_rate_change.old_rate, DUMMY_CLOCK_RATE_1);
+	KUNIT_EXPECT_EQ(test, ctx->post_rate_change.new_rate, DUMMY_CLOCK_RATE_2);
+
+	clk_put(new_parent);
+	clk_put(clk);
+}
+
+static struct kunit_case clk_mux_notifier_test_cases[] = {
+	KUNIT_CASE(clk_mux_notifier_set_parent_test),
+	{}
+};
+
+/*
+ * Test suite for a mux with multiple parents, and a notifier registered
+ * on the mux.
+ *
+ * These tests exercise the behaviour of notifiers.
+ */
+static struct kunit_suite clk_mux_notifier_test_suite = {
+	.name = "clk-mux-notifier",
+	.init = clk_mux_notifier_test_init,
+	.exit = clk_mux_notifier_test_exit,
+	.test_cases = clk_mux_notifier_test_cases,
+};
+
 kunit_test_suites(
 	&clk_leaf_mux_set_rate_parent_test_suite,
 	&clk_test_suite,
 	&clk_multiple_parents_mux_test_suite,
+	&clk_mux_notifier_test_suite,
 	&clk_orphan_transparent_multiple_parent_mux_test_suite,
 	&clk_orphan_transparent_single_parent_test_suite,
 	&clk_orphan_two_level_root_last_test_suite,

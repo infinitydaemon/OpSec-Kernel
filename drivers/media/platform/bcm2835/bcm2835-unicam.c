@@ -62,6 +62,7 @@
 #include <linux/uaccess.h>
 #include <linux/videodev2.h>
 
+#include <media/mipi-csi2.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-dev.h>
@@ -73,7 +74,6 @@
 #include <media/videobuf2-dma-contig.h>
 
 #include <media/v4l2-async.h>
-#define v4l2_async_notifier_add_subdev __v4l2_async_notifier_add_subdev
 
 #include "vc4-regs-unicam.h"
 
@@ -192,7 +192,7 @@ static const struct unicam_fmt formats[] = {
 		.fourcc		= V4L2_PIX_FMT_YUYV,
 		.code		= MEDIA_BUS_FMT_YUYV8_2X8,
 		.depth		= 16,
-		.csi_dt		= 0x1e,
+		.csi_dt		= MIPI_CSI2_DT_YUV422_8B,
 		.check_variants = 1,
 		.valid_colorspaces = MASK_CS_SMPTE170M | MASK_CS_REC709 |
 				     MASK_CS_JPEG,
@@ -200,7 +200,7 @@ static const struct unicam_fmt formats[] = {
 		.fourcc		= V4L2_PIX_FMT_UYVY,
 		.code		= MEDIA_BUS_FMT_UYVY8_2X8,
 		.depth		= 16,
-		.csi_dt		= 0x1e,
+		.csi_dt		= MIPI_CSI2_DT_YUV422_8B,
 		.check_variants = 1,
 		.valid_colorspaces = MASK_CS_SMPTE170M | MASK_CS_REC709 |
 				     MASK_CS_JPEG,
@@ -208,7 +208,7 @@ static const struct unicam_fmt formats[] = {
 		.fourcc		= V4L2_PIX_FMT_YVYU,
 		.code		= MEDIA_BUS_FMT_YVYU8_2X8,
 		.depth		= 16,
-		.csi_dt		= 0x1e,
+		.csi_dt		= MIPI_CSI2_DT_YUV422_8B,
 		.check_variants = 1,
 		.valid_colorspaces = MASK_CS_SMPTE170M | MASK_CS_REC709 |
 				     MASK_CS_JPEG,
@@ -216,7 +216,7 @@ static const struct unicam_fmt formats[] = {
 		.fourcc		= V4L2_PIX_FMT_VYUY,
 		.code		= MEDIA_BUS_FMT_VYUY8_2X8,
 		.depth		= 16,
-		.csi_dt		= 0x1e,
+		.csi_dt		= MIPI_CSI2_DT_YUV422_8B,
 		.check_variants = 1,
 		.valid_colorspaces = MASK_CS_SMPTE170M | MASK_CS_REC709 |
 				     MASK_CS_JPEG,
@@ -224,7 +224,7 @@ static const struct unicam_fmt formats[] = {
 		.fourcc		= V4L2_PIX_FMT_YUYV,
 		.code		= MEDIA_BUS_FMT_YUYV8_1X16,
 		.depth		= 16,
-		.csi_dt		= 0x1e,
+		.csi_dt		= MIPI_CSI2_DT_YUV422_8B,
 		.mc_skip	= 1,
 		.valid_colorspaces = MASK_CS_SMPTE170M | MASK_CS_REC709 |
 				     MASK_CS_JPEG,
@@ -232,7 +232,7 @@ static const struct unicam_fmt formats[] = {
 		.fourcc		= V4L2_PIX_FMT_UYVY,
 		.code		= MEDIA_BUS_FMT_UYVY8_1X16,
 		.depth		= 16,
-		.csi_dt		= 0x1e,
+		.csi_dt		= MIPI_CSI2_DT_YUV422_8B,
 		.mc_skip	= 1,
 		.valid_colorspaces = MASK_CS_SMPTE170M | MASK_CS_REC709 |
 				     MASK_CS_JPEG,
@@ -240,7 +240,7 @@ static const struct unicam_fmt formats[] = {
 		.fourcc		= V4L2_PIX_FMT_YVYU,
 		.code		= MEDIA_BUS_FMT_YVYU8_1X16,
 		.depth		= 16,
-		.csi_dt		= 0x1e,
+		.csi_dt		= MIPI_CSI2_DT_YUV422_8B,
 		.mc_skip	= 1,
 		.valid_colorspaces = MASK_CS_SMPTE170M | MASK_CS_REC709 |
 				     MASK_CS_JPEG,
@@ -248,7 +248,7 @@ static const struct unicam_fmt formats[] = {
 		.fourcc		= V4L2_PIX_FMT_VYUY,
 		.code		= MEDIA_BUS_FMT_VYUY8_1X16,
 		.depth		= 16,
-		.csi_dt		= 0x1e,
+		.csi_dt		= MIPI_CSI2_DT_YUV422_8B,
 		.mc_skip	= 1,
 		.valid_colorspaces = MASK_CS_SMPTE170M | MASK_CS_REC709 |
 				     MASK_CS_JPEG,
@@ -257,37 +257,37 @@ static const struct unicam_fmt formats[] = {
 		.fourcc		= V4L2_PIX_FMT_RGB565, /* gggbbbbb rrrrrggg */
 		.code		= MEDIA_BUS_FMT_RGB565_2X8_LE,
 		.depth		= 16,
-		.csi_dt		= 0x22,
+		.csi_dt		= MIPI_CSI2_DT_RGB565,
 		.valid_colorspaces = MASK_CS_SRGB,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_RGB565X, /* rrrrrggg gggbbbbb */
 		.code		= MEDIA_BUS_FMT_RGB565_2X8_BE,
 		.depth		= 16,
-		.csi_dt		= 0x22,
+		.csi_dt		= MIPI_CSI2_DT_RGB565,
 		.valid_colorspaces = MASK_CS_SRGB,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_RGB555, /* gggbbbbb arrrrrgg */
 		.code		= MEDIA_BUS_FMT_RGB555_2X8_PADHI_LE,
 		.depth		= 16,
-		.csi_dt		= 0x21,
+		.csi_dt		= MIPI_CSI2_DT_RGB555,
 		.valid_colorspaces = MASK_CS_SRGB,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_RGB555X, /* arrrrrgg gggbbbbb */
 		.code		= MEDIA_BUS_FMT_RGB555_2X8_PADHI_BE,
 		.depth		= 16,
-		.csi_dt		= 0x21,
+		.csi_dt		= MIPI_CSI2_DT_RGB555,
 		.valid_colorspaces = MASK_CS_SRGB,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_RGB24, /* rgb */
 		.code		= MEDIA_BUS_FMT_RGB888_1X24,
 		.depth		= 24,
-		.csi_dt		= 0x24,
+		.csi_dt		= MIPI_CSI2_DT_RGB888,
 		.valid_colorspaces = MASK_CS_SRGB,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_BGR24, /* bgr */
 		.code		= MEDIA_BUS_FMT_BGR888_1X24,
 		.depth		= 24,
-		.csi_dt		= 0x24,
+		.csi_dt		= MIPI_CSI2_DT_RGB888,
 		.valid_colorspaces = MASK_CS_SRGB,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_RGB32, /* argb */
@@ -300,143 +300,168 @@ static const struct unicam_fmt formats[] = {
 		.fourcc		= V4L2_PIX_FMT_SBGGR8,
 		.code		= MEDIA_BUS_FMT_SBGGR8_1X8,
 		.depth		= 8,
-		.csi_dt		= 0x2a,
+		.csi_dt		= MIPI_CSI2_DT_RAW8,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_SGBRG8,
 		.code		= MEDIA_BUS_FMT_SGBRG8_1X8,
 		.depth		= 8,
-		.csi_dt		= 0x2a,
+		.csi_dt		= MIPI_CSI2_DT_RAW8,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_SGRBG8,
 		.code		= MEDIA_BUS_FMT_SGRBG8_1X8,
 		.depth		= 8,
-		.csi_dt		= 0x2a,
+		.csi_dt		= MIPI_CSI2_DT_RAW8,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_SRGGB8,
 		.code		= MEDIA_BUS_FMT_SRGGB8_1X8,
 		.depth		= 8,
-		.csi_dt		= 0x2a,
+		.csi_dt		= MIPI_CSI2_DT_RAW8,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_SBGGR10P,
 		.repacked_fourcc = V4L2_PIX_FMT_SBGGR10,
 		.code		= MEDIA_BUS_FMT_SBGGR10_1X10,
 		.depth		= 10,
-		.csi_dt		= 0x2b,
+		.csi_dt		= MIPI_CSI2_DT_RAW10,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_SGBRG10P,
 		.repacked_fourcc = V4L2_PIX_FMT_SGBRG10,
 		.code		= MEDIA_BUS_FMT_SGBRG10_1X10,
 		.depth		= 10,
-		.csi_dt		= 0x2b,
+		.csi_dt		= MIPI_CSI2_DT_RAW10,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_SGRBG10P,
 		.repacked_fourcc = V4L2_PIX_FMT_SGRBG10,
 		.code		= MEDIA_BUS_FMT_SGRBG10_1X10,
 		.depth		= 10,
-		.csi_dt		= 0x2b,
+		.csi_dt		= MIPI_CSI2_DT_RAW10,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_SRGGB10P,
 		.repacked_fourcc = V4L2_PIX_FMT_SRGGB10,
 		.code		= MEDIA_BUS_FMT_SRGGB10_1X10,
 		.depth		= 10,
-		.csi_dt		= 0x2b,
+		.csi_dt		= MIPI_CSI2_DT_RAW10,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_SBGGR12P,
 		.repacked_fourcc = V4L2_PIX_FMT_SBGGR12,
 		.code		= MEDIA_BUS_FMT_SBGGR12_1X12,
 		.depth		= 12,
-		.csi_dt		= 0x2c,
+		.csi_dt		= MIPI_CSI2_DT_RAW12,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_SGBRG12P,
 		.repacked_fourcc = V4L2_PIX_FMT_SGBRG12,
 		.code		= MEDIA_BUS_FMT_SGBRG12_1X12,
 		.depth		= 12,
-		.csi_dt		= 0x2c,
+		.csi_dt		= MIPI_CSI2_DT_RAW12,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_SGRBG12P,
 		.repacked_fourcc = V4L2_PIX_FMT_SGRBG12,
 		.code		= MEDIA_BUS_FMT_SGRBG12_1X12,
 		.depth		= 12,
-		.csi_dt		= 0x2c,
+		.csi_dt		= MIPI_CSI2_DT_RAW12,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_SRGGB12P,
 		.repacked_fourcc = V4L2_PIX_FMT_SRGGB12,
 		.code		= MEDIA_BUS_FMT_SRGGB12_1X12,
 		.depth		= 12,
-		.csi_dt		= 0x2c,
+		.csi_dt		= MIPI_CSI2_DT_RAW12,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_SBGGR14P,
 		.repacked_fourcc = V4L2_PIX_FMT_SBGGR14,
 		.code		= MEDIA_BUS_FMT_SBGGR14_1X14,
 		.depth		= 14,
-		.csi_dt		= 0x2d,
+		.csi_dt		= MIPI_CSI2_DT_RAW14,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_SGBRG14P,
 		.repacked_fourcc = V4L2_PIX_FMT_SGBRG14,
 		.code		= MEDIA_BUS_FMT_SGBRG14_1X14,
 		.depth		= 14,
-		.csi_dt		= 0x2d,
+		.csi_dt		= MIPI_CSI2_DT_RAW14,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_SGRBG14P,
 		.repacked_fourcc = V4L2_PIX_FMT_SGRBG14,
 		.code		= MEDIA_BUS_FMT_SGRBG14_1X14,
 		.depth		= 14,
-		.csi_dt		= 0x2d,
+		.csi_dt		= MIPI_CSI2_DT_RAW14,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_SRGGB14P,
 		.repacked_fourcc = V4L2_PIX_FMT_SRGGB14,
 		.code		= MEDIA_BUS_FMT_SRGGB14_1X14,
 		.depth		= 14,
-		.csi_dt		= 0x2d,
+		.csi_dt		= MIPI_CSI2_DT_RAW14,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
-	/*
-	 * 16 bit Bayer formats could be supported, but there is no CSI2
-	 * data_type defined for raw 16, and no sensors that produce it at
-	 * present.
-	 */
+		.fourcc		= V4L2_PIX_FMT_SBGGR16,
+		.code		= MEDIA_BUS_FMT_SBGGR16_1X16,
+		.depth		= 16,
+		.csi_dt		= MIPI_CSI2_DT_RAW16,
+		.valid_colorspaces = MASK_CS_RAW,
+	}, {
+		.fourcc		= V4L2_PIX_FMT_SGBRG16,
+		.code		= MEDIA_BUS_FMT_SGBRG16_1X16,
+		.depth		= 16,
+		.csi_dt		= MIPI_CSI2_DT_RAW16,
+		.valid_colorspaces = MASK_CS_RAW,
+	}, {
+		.fourcc		= V4L2_PIX_FMT_SGRBG16,
+		.code		= MEDIA_BUS_FMT_SGRBG16_1X16,
+		.depth		= 16,
+		.csi_dt		= MIPI_CSI2_DT_RAW16,
+		.valid_colorspaces = MASK_CS_RAW,
+	}, {
+		.fourcc		= V4L2_PIX_FMT_SRGGB16,
+		.code		= MEDIA_BUS_FMT_SRGGB16_1X16,
+		.depth		= 16,
+		.csi_dt		= MIPI_CSI2_DT_RAW16,
+		.valid_colorspaces = MASK_CS_RAW,
+	}, {
 
 	/* Greyscale formats */
 		.fourcc		= V4L2_PIX_FMT_GREY,
 		.code		= MEDIA_BUS_FMT_Y8_1X8,
 		.depth		= 8,
-		.csi_dt		= 0x2a,
+		.csi_dt		= MIPI_CSI2_DT_RAW8,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_Y10P,
 		.repacked_fourcc = V4L2_PIX_FMT_Y10,
 		.code		= MEDIA_BUS_FMT_Y10_1X10,
 		.depth		= 10,
-		.csi_dt		= 0x2b,
+		.csi_dt		= MIPI_CSI2_DT_RAW10,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_Y12P,
 		.repacked_fourcc = V4L2_PIX_FMT_Y12,
 		.code		= MEDIA_BUS_FMT_Y12_1X12,
 		.depth		= 12,
-		.csi_dt		= 0x2c,
+		.csi_dt		= MIPI_CSI2_DT_RAW12,
 		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_Y14P,
 		.repacked_fourcc = V4L2_PIX_FMT_Y14,
 		.code		= MEDIA_BUS_FMT_Y14_1X14,
 		.depth		= 14,
-		.csi_dt		= 0x2d,
+		.csi_dt		= MIPI_CSI2_DT_RAW14,
+		.valid_colorspaces = MASK_CS_RAW,
+	}, {
+		.fourcc		= V4L2_PIX_FMT_Y16,
+		.code		= MEDIA_BUS_FMT_Y16_1X16,
+		.depth		= 16,
+		.csi_dt		= MIPI_CSI2_DT_RAW16,
 		.valid_colorspaces = MASK_CS_RAW,
 	},
 	/* Embedded data format */
@@ -2079,7 +2104,7 @@ static int unicam_mc_video_link_validate(struct media_link *link)
 	struct v4l2_subdev_format source_fmt;
 	int ret;
 
-	if (!media_entity_remote_pad(link->sink->entity->pads)) {
+	if (!media_entity_remote_source_pad_unique(link->sink->entity)) {
 		unicam_dbg(1, unicam,
 			   "video node %s pad not connected\n", vd->name);
 		return -ENOTCONN;
@@ -2360,7 +2385,7 @@ static void unicam_start_rx(struct unicam_device *dev, dma_addr_t *addr)
 		/* CSI2 */
 		set_field(&val, 1, UNICAM_CLE);
 		set_field(&val, 1, UNICAM_CLLPE);
-		if (dev->bus_flags & V4L2_MBUS_CSI2_CONTINUOUS_CLOCK) {
+		if (!(dev->bus_flags & V4L2_MBUS_CSI2_NONCONTINUOUS_CLOCK)) {
 			set_field(&val, 1, UNICAM_CLTRE);
 			set_field(&val, 1, UNICAM_CLHSE);
 		}
@@ -2382,7 +2407,7 @@ static void unicam_start_rx(struct unicam_device *dev, dma_addr_t *addr)
 		/* CSI2 */
 		set_field(&val, 1, UNICAM_DLE);
 		set_field(&val, 1, UNICAM_DLLPE);
-		if (dev->bus_flags & V4L2_MBUS_CSI2_CONTINUOUS_CLOCK) {
+		if (!(dev->bus_flags & V4L2_MBUS_CSI2_NONCONTINUOUS_CLOCK)) {
 			set_field(&val, 1, UNICAM_DLTRE);
 			set_field(&val, 1, UNICAM_DLHSE);
 		}
@@ -2525,7 +2550,7 @@ static int unicam_start_streaming(struct vb2_queue *vq, unsigned int count)
 		goto err_streaming;
 	}
 
-	ret = media_pipeline_start(&node->video_dev.entity, &node->pipe);
+	ret = media_pipeline_start(node->video_dev.entity.pads, &node->pipe);
 	if (ret < 0) {
 		unicam_err(dev, "Failed to start media pipeline: %d\n", ret);
 		goto err_pm_put;
@@ -2543,9 +2568,7 @@ static int unicam_start_streaming(struct vb2_queue *vq, unsigned int count)
 			goto error_pipeline;
 		}
 
-		dev->active_data_lanes =
-			(mbus_config.flags & V4L2_MBUS_CSI2_LANE_MASK) >>
-					__ffs(V4L2_MBUS_CSI2_LANE_MASK);
+		dev->active_data_lanes = mbus_config.bus.mipi_csi2.num_data_lanes;
 		if (!dev->active_data_lanes)
 			dev->active_data_lanes = dev->max_data_lanes;
 		if (dev->active_data_lanes > dev->max_data_lanes) {
@@ -2621,7 +2644,7 @@ err_vpu_clock:
 		unicam_err(dev, "failed to reset the VPU clock\n");
 	clk_disable_unprepare(dev->vpu_clock);
 error_pipeline:
-	media_pipeline_stop(&node->video_dev.entity);
+	media_pipeline_stop(node->video_dev.entity.pads);
 err_pm_put:
 	unicam_runtime_put(dev);
 err_streaming:
@@ -2649,7 +2672,7 @@ static void unicam_stop_streaming(struct vb2_queue *vq)
 
 		unicam_disable(dev);
 
-		media_pipeline_stop(&node->video_dev.entity);
+		media_pipeline_stop(node->video_dev.entity.pads);
 
 		if (dev->clocks_enabled) {
 			if (clk_set_min_rate(dev->vpu_clock, 0))
@@ -2785,7 +2808,7 @@ static void unicam_release(struct kref *kref)
 	media_device_cleanup(&unicam->mdev);
 
 	if (unicam->sensor_state)
-		v4l2_subdev_free_state(unicam->sensor_state);
+		__v4l2_subdev_state_free(unicam->sensor_state);
 
 	kfree(unicam);
 }
@@ -3120,13 +3143,15 @@ static void unregister_nodes(struct unicam_device *unicam)
 
 static int unicam_async_complete(struct v4l2_async_notifier *notifier)
 {
+	static struct lock_class_key key;
 	struct unicam_device *unicam = to_unicam_device(notifier->v4l2_dev);
 	unsigned int i, source_pads = 0;
 	int ret;
 
 	unicam->v4l2_dev.notify = unicam_notify;
 
-	unicam->sensor_state = v4l2_subdev_alloc_state(unicam->sensor);
+	unicam->sensor_state = __v4l2_subdev_state_alloc(unicam->sensor,
+							 "unicam:async->lock", &key);
 	if (!unicam->sensor_state)
 		return -ENOMEM;
 
@@ -3291,18 +3316,18 @@ static int of_unicam_connect_subdevs(struct unicam_device *dev)
 		   dev->max_data_lanes, dev->bus_flags);
 
 	/* Initialize and register the async notifier. */
-	v4l2_async_notifier_init(&dev->notifier);
+	v4l2_async_nf_init(&dev->notifier);
 	dev->notifier.ops = &unicam_async_ops;
 
 	dev->asd.match_type = V4L2_ASYNC_MATCH_FWNODE;
 	dev->asd.match.fwnode = fwnode_graph_get_remote_endpoint(of_fwnode_handle(ep_node));
-	ret = v4l2_async_notifier_add_subdev(&dev->notifier, &dev->asd);
+	ret = __v4l2_async_nf_add_subdev(&dev->notifier, &dev->asd);
 	if (ret) {
 		unicam_err(dev, "Error adding subdevice: %d\n", ret);
 		goto cleanup_exit;
 	}
 
-	ret = v4l2_async_notifier_register(&dev->v4l2_dev, &dev->notifier);
+	ret = v4l2_async_nf_register(&dev->v4l2_dev, &dev->notifier);
 	if (ret) {
 		unicam_err(dev, "Error registering async notifier: %d\n", ret);
 		ret = -EINVAL;
@@ -3439,7 +3464,7 @@ static int unicam_remove(struct platform_device *pdev)
 
 	unicam_dbg(2, unicam, "%s\n", __func__);
 
-	v4l2_async_notifier_unregister(&unicam->notifier);
+	v4l2_async_nf_unregister(&unicam->notifier);
 	v4l2_device_unregister(&unicam->v4l2_dev);
 	media_device_unregister(&unicam->mdev);
 	unregister_nodes(unicam);
