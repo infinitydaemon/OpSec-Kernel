@@ -486,11 +486,11 @@ static int iqs5xx_axis_init(struct i2c_client *client)
 {
 	struct iqs5xx_private *iqs5xx = i2c_get_clientdata(client);
 	struct touchscreen_properties *prop = &iqs5xx->prop;
-	struct input_dev *input;
+	struct input_dev *input = iqs5xx->input;
 	u16 max_x, max_y;
 	int error;
 
-	if (!iqs5xx->input) {
+	if (!input) {
 		input = devm_input_allocate_device(&client->dev);
 		if (!input)
 			return -ENOMEM;
@@ -512,11 +512,11 @@ static int iqs5xx_axis_init(struct i2c_client *client)
 	if (error)
 		return error;
 
-	input_set_abs_params(iqs5xx->input, ABS_MT_POSITION_X, 0, max_x, 0, 0);
-	input_set_abs_params(iqs5xx->input, ABS_MT_POSITION_Y, 0, max_y, 0, 0);
-	input_set_abs_params(iqs5xx->input, ABS_MT_PRESSURE, 0, U16_MAX, 0, 0);
+	input_set_abs_params(input, ABS_MT_POSITION_X, 0, max_x, 0, 0);
+	input_set_abs_params(input, ABS_MT_POSITION_Y, 0, max_y, 0, 0);
+	input_set_abs_params(input, ABS_MT_PRESSURE, 0, U16_MAX, 0, 0);
 
-	touchscreen_parse_properties(iqs5xx->input, true, prop);
+	touchscreen_parse_properties(input, true, prop);
 
 	/*
 	 * The device reserves 0xFFFF for coordinates that correspond to slots
@@ -540,7 +540,7 @@ static int iqs5xx_axis_init(struct i2c_client *client)
 			return error;
 	}
 
-	error = input_mt_init_slots(iqs5xx->input, IQS5XX_NUM_CONTACTS,
+	error = input_mt_init_slots(input, IQS5XX_NUM_CONTACTS,
 				    INPUT_MT_DIRECT);
 	if (error)
 		dev_err(&client->dev, "Failed to initialize slots: %d\n",
@@ -674,7 +674,7 @@ static irqreturn_t iqs5xx_irq(int irq, void *data)
 		input_mt_slot(input, i);
 		if (input_mt_report_slot_state(input, MT_TOOL_FINGER,
 					       pressure != 0)) {
-			touchscreen_report_pos(iqs5xx->input, &iqs5xx->prop,
+			touchscreen_report_pos(input, &iqs5xx->prop,
 					       be16_to_cpu(touch_data->abs_x),
 					       be16_to_cpu(touch_data->abs_y),
 					       true);
@@ -1019,8 +1019,7 @@ static int __maybe_unused iqs5xx_resume(struct device *dev)
 
 static SIMPLE_DEV_PM_OPS(iqs5xx_pm, iqs5xx_suspend, iqs5xx_resume);
 
-static int iqs5xx_probe(struct i2c_client *client,
-			const struct i2c_device_id *id)
+static int iqs5xx_probe(struct i2c_client *client)
 {
 	struct iqs5xx_private *iqs5xx;
 	int error;
@@ -1094,7 +1093,7 @@ static struct i2c_driver iqs5xx_i2c_driver = {
 		.pm		= &iqs5xx_pm,
 	},
 	.id_table	= iqs5xx_id,
-	.probe		= iqs5xx_probe,
+	.probe_new	= iqs5xx_probe,
 };
 module_i2c_driver(iqs5xx_i2c_driver);
 

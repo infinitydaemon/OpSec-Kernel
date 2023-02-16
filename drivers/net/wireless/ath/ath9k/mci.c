@@ -43,7 +43,7 @@ static bool ath_mci_add_profile(struct ath_common *common,
 				struct ath_mci_profile_info *info)
 {
 	struct ath_mci_profile_info *entry;
-	u8 voice_priority[] = { 110, 110, 110, 112, 110, 110, 114, 116, 118 };
+	static const u8 voice_priority[] = { 110, 110, 110, 112, 110, 110, 114, 116, 118 };
 
 	if ((mci->num_sco == ATH_MCI_MAX_SCO_PROFILE) &&
 	    (info->type == MCI_GPM_COEX_PROFILE_VOICE))
@@ -266,7 +266,9 @@ static void ath_mci_set_concur_txprio(struct ath_softc *sc)
 			stomp_txprio[ATH_BTCOEX_STOMP_NONE] =
 				ATH_MCI_INQUIRY_PRIO;
 	} else {
-		u8 prof_prio[] = { 50, 90, 94, 52 };/* RFCOMM, A2DP, HID, PAN */
+		static const u8 prof_prio[] = {
+			50, 90, 94, 52
+		}; /* RFCOMM, A2DP, HID, PAN */
 
 		stomp_txprio[ATH_BTCOEX_STOMP_LOW] =
 		stomp_txprio[ATH_BTCOEX_STOMP_NONE] = 0xff;
@@ -644,7 +646,9 @@ void ath9k_mci_update_wlan_channels(struct ath_softc *sc, bool allow_all)
 	struct ath_hw *ah = sc->sc_ah;
 	struct ath9k_hw_mci *mci = &ah->btcoex_hw.mci;
 	struct ath9k_channel *chan = ah->curchan;
-	u32 channelmap[] = {0x00000000, 0xffff0000, 0xffffffff, 0x7fffffff};
+	static const u32 channelmap[] = {
+		0x00000000, 0xffff0000, 0xffffffff, 0x7fffffff
+	};
 	int i;
 	s16 chan_start, chan_end;
 	u16 wlan_chan;
