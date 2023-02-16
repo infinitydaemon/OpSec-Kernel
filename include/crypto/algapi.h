@@ -7,9 +7,14 @@
 #ifndef _CRYPTO_ALGAPI_H
 #define _CRYPTO_ALGAPI_H
 
+#include <linux/align.h>
+#include <linux/cache.h>
 #include <linux/crypto.h>
+#include <linux/kconfig.h>
 #include <linux/list.h>
-#include <linux/kernel.h>
+#include <linux/types.h>
+
+#include <asm/unaligned.h>
 
 /*
  * Maximum values for blocksize and alignmask, used to allocate
@@ -17,13 +22,22 @@
  * algs and architectures. Ciphers have a lower maximum size.
  */
 #define MAX_ALGAPI_BLOCKSIZE		160
-#define MAX_ALGAPI_ALIGNMASK		63
+#define MAX_ALGAPI_ALIGNMASK		127
 #define MAX_CIPHER_BLOCKSIZE		16
 #define MAX_CIPHER_ALIGNMASK		15
+
+#ifdef ARCH_DMA_MINALIGN
+#define CRYPTO_DMA_ALIGN ARCH_DMA_MINALIGN
+#else
+#define CRYPTO_DMA_ALIGN CRYPTO_MINALIGN
+#endif
+
+#define CRYPTO_DMA_PADDING ((CRYPTO_DMA_ALIGN - 1) & ~(CRYPTO_MINALIGN - 1))
 
 struct crypto_aead;
 struct crypto_instance;
 struct module;
+struct notifier_block;
 struct rtattr;
 struct seq_file;
 struct sk_buff;
@@ -151,9 +165,11 @@ static inline void crypto_xor(u8 *dst, const u8 *src, unsigned int size)
 	    (size % sizeof(unsigned long)) == 0) {
 		unsigned long *d = (unsigned long *)dst;
 		unsigned long *s = (unsigned long *)src;
+		unsigned long l;
 
 		while (size > 0) {
-			*d++ ^= *s++;
+			l = get_unaligned(d) ^ get_unaligned(s++);
+			put_unaligned(l, d++);
 			size -= sizeof(unsigned long);
 		}
 	} else {
@@ -170,9 +186,11 @@ static inline void crypto_xor_cpy(u8 *dst, const u8 *src1, const u8 *src2,
 		unsigned long *d = (unsigned long *)dst;
 		unsigned long *s1 = (unsigned long *)src1;
 		unsigned long *s2 = (unsigned long *)src2;
+		unsigned long l;
 
 		while (size > 0) {
-			*d++ = *s1++ ^ *s2++;
+			l = get_unaligned(s1++) ^ get_unaligned(s2++);
+			put_unaligned(l, d++);
 			size -= sizeof(unsigned long);
 		}
 	} else {
@@ -180,10 +198,38 @@ static inline void crypto_xor_cpy(u8 *dst, const u8 *src1, const u8 *src2,
 	}
 }
 
+static inline void *crypto_tfm_ctx(struct crypto_tfm *tfm)
+{
+	return tfm->__crt_ctx;
+}
+
+static inline void *crypto_tfm_ctx_align(struct crypto_tfm *tfm,
+					 unsigned int align)
+{
+	if (align <= crypto_tfm_ctx_alignment())
+		align = 1;
+
+	return PTR_ALIGN(crypto_tfm_ctx(tfm), align);
+}
+
 static inline void *crypto_tfm_ctx_aligned(struct crypto_tfm *tfm)
 {
-	return PTR_ALIGN(crypto_tfm_ctx(tfm),
-			 crypto_tfm_alg_alignmask(tfm) + 1);
+	return crypto_tfm_ctx_align(tfm, crypto_tfm_alg_alignmask(tfm) + 1);
+}
+
+static inline unsigned int crypto_dma_align(void)
+{
+	return CRYPTO_DMA_ALIGN;
+}
+
+static inline unsigned int crypto_dma_padding(void)
+{
+	return (crypto_dma_align() - 1) & ~(crypto_tfm_ctx_alignment() - 1);
+}
+
+static inline void *crypto_tfm_ctx_dma(struct crypto_tfm *tfm)
+{
+	return crypto_tfm_ctx_align(tfm, crypto_dma_align());
 }
 
 static inline struct crypto_instance *crypto_tfm_alg_instance(

@@ -10,11 +10,17 @@
 #include <linux/iversion.h>
 #include <linux/fsverity.h>
 #include <linux/sched/mm.h>
+#include "messages.h"
 #include "ctree.h"
 #include "btrfs_inode.h"
 #include "transaction.h"
 #include "disk-io.h"
 #include "locking.h"
+#include "fs.h"
+#include "accessors.h"
+#include "ioctl.h"
+#include "verity.h"
+#include "orphan.h"
 
 /*
  * Implementation of the interface defined in struct fsverity_operations.
@@ -333,7 +339,7 @@ static int read_key_bytes(struct btrfs_inode *inode, u8 key_type, u64 offset,
 		if (key.objectid != btrfs_ino(inode) || key.type != key_type)
 			break;
 
-		item_end = btrfs_item_size_nr(leaf, path->slots[0]) + key.offset;
+		item_end = btrfs_item_size(leaf, path->slots[0]) + key.offset;
 
 		if (copied > 0) {
 			/*
@@ -659,8 +665,7 @@ rollback:
  *
  * Returns the size on success or a negative error code on failure.
  */
-static int btrfs_get_verity_descriptor(struct inode *inode, void *buf,
-				       size_t buf_size)
+int btrfs_get_verity_descriptor(struct inode *inode, void *buf, size_t buf_size)
 {
 	u64 true_size;
 	int ret = 0;

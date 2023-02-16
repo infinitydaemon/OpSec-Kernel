@@ -6,12 +6,14 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/sort.h>
+#include "messages.h"
 #include "ctree.h"
 #include "delayed-ref.h"
 #include "transaction.h"
 #include "qgroup.h"
 #include "space-info.h"
 #include "tree-mod-log.h"
+#include "fs.h"
 
 struct kmem_cache *btrfs_delayed_ref_head_cachep;
 struct kmem_cache *btrfs_delayed_tree_ref_cachep;
@@ -69,20 +71,31 @@ int btrfs_should_throttle_delayed_refs(struct btrfs_trans_handle *trans)
 	return btrfs_check_space_for_delayed_refs(trans->fs_info);
 }
 
-/**
- * Release a ref head's reservation
+/*
+ * Release a ref head's reservation.
  *
  * @fs_info:  the filesystem
  * @nr:       number of items to drop
  *
- * This drops the delayed ref head's count from the delayed refs rsv and frees
- * any excess reservation we had.
+ * Drops the delayed ref head's count from the delayed refs rsv and free any
+ * excess reservation we had.
  */
 void btrfs_delayed_refs_rsv_release(struct btrfs_fs_info *fs_info, int nr)
 {
 	struct btrfs_block_rsv *block_rsv = &fs_info->delayed_refs_rsv;
 	u64 num_bytes = btrfs_calc_insert_metadata_size(fs_info, nr);
 	u64 released = 0;
+
+	/*
+	 * We have to check the mount option here because we could be enabling
+	 * the free space tree for the first time and don't have the compat_ro
+	 * option set yet.
+	 *
+	 * We need extra reservations if we have the free space tree because
+	 * we'll have to modify that tree as well.
+	 */
+	if (btrfs_test_opt(fs_info, FREE_SPACE_TREE))
+		num_bytes *= 2;
 
 	released = btrfs_block_rsv_release(fs_info, block_rsv, num_bytes, NULL);
 	if (released)
@@ -91,8 +104,7 @@ void btrfs_delayed_refs_rsv_release(struct btrfs_fs_info *fs_info, int nr)
 }
 
 /*
- * btrfs_update_delayed_refs_rsv - adjust the size of the delayed refs rsv
- * @trans - the trans that may have generated delayed refs
+ * Adjust the size of the delayed refs rsv.
  *
  * This is to be called anytime we may have adjusted trans->delayed_ref_updates,
  * it'll calculate the additional size and add it to the delayed_refs_rsv.
@@ -108,15 +120,26 @@ void btrfs_update_delayed_refs_rsv(struct btrfs_trans_handle *trans)
 
 	num_bytes = btrfs_calc_insert_metadata_size(fs_info,
 						    trans->delayed_ref_updates);
+	/*
+	 * We have to check the mount option here because we could be enabling
+	 * the free space tree for the first time and don't have the compat_ro
+	 * option set yet.
+	 *
+	 * We need extra reservations if we have the free space tree because
+	 * we'll have to modify that tree as well.
+	 */
+	if (btrfs_test_opt(fs_info, FREE_SPACE_TREE))
+		num_bytes *= 2;
+
 	spin_lock(&delayed_rsv->lock);
 	delayed_rsv->size += num_bytes;
-	delayed_rsv->full = 0;
+	delayed_rsv->full = false;
 	spin_unlock(&delayed_rsv->lock);
 	trans->delayed_ref_updates = 0;
 }
 
-/**
- * Transfer bytes to our delayed refs rsv
+/*
+ * Transfer bytes to our delayed refs rsv.
  *
  * @fs_info:   the filesystem
  * @src:       source block rsv to transfer from
@@ -153,7 +176,7 @@ void btrfs_migrate_to_delayed_refs_rsv(struct btrfs_fs_info *fs_info,
 	if (num_bytes)
 		delayed_refs_rsv->reserved += num_bytes;
 	if (delayed_refs_rsv->reserved >= delayed_refs_rsv->size)
-		delayed_refs_rsv->full = 1;
+		delayed_refs_rsv->full = true;
 	spin_unlock(&delayed_refs_rsv->lock);
 
 	if (num_bytes)
@@ -164,8 +187,8 @@ void btrfs_migrate_to_delayed_refs_rsv(struct btrfs_fs_info *fs_info,
 				delayed_refs_rsv->space_info, to_free);
 }
 
-/**
- * Refill based on our delayed refs usage
+/*
+ * Refill based on our delayed refs usage.
  *
  * @fs_info: the filesystem
  * @flush:   control how we can flush for this reservation.
@@ -191,8 +214,7 @@ int btrfs_delayed_refs_rsv_refill(struct btrfs_fs_info *fs_info,
 	if (!num_bytes)
 		return 0;
 
-	ret = btrfs_reserve_metadata_bytes(fs_info->extent_root, block_rsv,
-					   num_bytes, flush);
+	ret = btrfs_reserve_metadata_bytes(fs_info, block_rsv, num_bytes, flush);
 	if (ret)
 		return ret;
 	btrfs_block_rsv_add_bytes(block_rsv, num_bytes, 0);
@@ -906,10 +928,9 @@ int btrfs_add_delayed_tree_ref(struct btrfs_trans_handle *trans,
 	u64 parent = generic_ref->parent;
 	u8 ref_type;
 
-	is_system = (generic_ref->real_root == BTRFS_CHUNK_TREE_OBJECTID);
+	is_system = (generic_ref->tree_ref.owning_root == BTRFS_CHUNK_TREE_OBJECTID);
 
 	ASSERT(generic_ref->type == BTRFS_REF_METADATA && generic_ref->action);
-	BUG_ON(extent_op && extent_op->is_data);
 	ref = kmem_cache_alloc(btrfs_delayed_tree_ref_cachep, GFP_NOFS);
 	if (!ref)
 		return -ENOMEM;
@@ -921,8 +942,6 @@ int btrfs_add_delayed_tree_ref(struct btrfs_trans_handle *trans,
 	}
 
 	if (test_bit(BTRFS_FS_QUOTA_ENABLED, &fs_info->flags) &&
-	    is_fstree(generic_ref->real_root) &&
-	    is_fstree(generic_ref->tree_ref.root) &&
 	    !generic_ref->skip_qgroup) {
 		record = kzalloc(sizeof(*record), GFP_NOFS);
 		if (!record) {
@@ -938,14 +957,15 @@ int btrfs_add_delayed_tree_ref(struct btrfs_trans_handle *trans,
 		ref_type = BTRFS_TREE_BLOCK_REF_KEY;
 
 	init_delayed_ref_common(fs_info, &ref->node, bytenr, num_bytes,
-				generic_ref->tree_ref.root, action, ref_type);
-	ref->root = generic_ref->tree_ref.root;
+				generic_ref->tree_ref.owning_root, action,
+				ref_type);
+	ref->root = generic_ref->tree_ref.owning_root;
 	ref->parent = parent;
 	ref->level = level;
 
 	init_delayed_ref_head(head_ref, record, bytenr, num_bytes,
-			      generic_ref->tree_ref.root, 0, action, false,
-			      is_system);
+			      generic_ref->tree_ref.owning_root, 0, action,
+			      false, is_system);
 	head_ref->extent_op = extent_op;
 
 	delayed_refs = &trans->transaction->delayed_refs;
@@ -997,7 +1017,7 @@ int btrfs_add_delayed_data_ref(struct btrfs_trans_handle *trans,
 	u64 bytenr = generic_ref->bytenr;
 	u64 num_bytes = generic_ref->len;
 	u64 parent = generic_ref->parent;
-	u64 ref_root = generic_ref->data_ref.ref_root;
+	u64 ref_root = generic_ref->data_ref.owning_root;
 	u64 owner = generic_ref->data_ref.ino;
 	u64 offset = generic_ref->data_ref.offset;
 	u8 ref_type;
@@ -1026,8 +1046,6 @@ int btrfs_add_delayed_data_ref(struct btrfs_trans_handle *trans,
 	}
 
 	if (test_bit(BTRFS_FS_QUOTA_ENABLED, &fs_info->flags) &&
-	    is_fstree(ref_root) &&
-	    is_fstree(generic_ref->real_root) &&
 	    !generic_ref->skip_qgroup) {
 		record = kzalloc(sizeof(*record), GFP_NOFS);
 		if (!record) {
@@ -1085,8 +1103,7 @@ int btrfs_add_delayed_extent_op(struct btrfs_trans_handle *trans,
 		return -ENOMEM;
 
 	init_delayed_ref_head(head_ref, NULL, bytenr, num_bytes, 0, 0,
-			      BTRFS_UPDATE_DELAYED_HEAD, extent_op->is_data,
-			      false);
+			      BTRFS_UPDATE_DELAYED_HEAD, false, false);
 	head_ref->extent_op = extent_op;
 
 	delayed_refs = &trans->transaction->delayed_refs;

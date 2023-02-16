@@ -21,6 +21,30 @@
  * https://docs.microsoft.com/en-us/windows/wsl/file-permissions
  * It stores uid/gid/mode/dev in xattr
  *
+ * ntfs allows up to 2^64 clusters per volume.
+ * It means you should use 64 bits lcn to operate with ntfs.
+ * Implementation of ntfs.sys uses only 32 bits lcn.
+ * Default ntfs3 uses 32 bits lcn too.
+ * ntfs3 built with CONFIG_NTFS3_64BIT_CLUSTER (ntfs3_64) uses 64 bits per lcn.
+ *
+ *
+ *     ntfs limits, cluster size is 4K (2^12)
+ * -----------------------------------------------------------------------------
+ * | Volume size   | Clusters | ntfs.sys | ntfs3  | ntfs3_64 | mkntfs | chkdsk |
+ * -----------------------------------------------------------------------------
+ * | < 16T, 2^44   |  < 2^32  |  yes     |  yes   |   yes    |  yes   |  yes   |
+ * | > 16T, 2^44   |  > 2^32  |  no      |  no    |   yes    |  yes   |  yes   |
+ * ----------------------------------------------------------|------------------
+ *
+ * To mount large volumes as ntfs one should use large cluster size (up to 2M)
+ * The maximum volume size in this case is 2^32 * 2^21 = 2^53 = 8P
+ *
+ *     ntfs limits, cluster size is 2M (2^31)
+ * -----------------------------------------------------------------------------
+ * | < 8P, 2^54    |  < 2^32  |  yes     |  yes   |   yes    |  yes   |  yes   |
+ * | > 8P, 2^54    |  > 2^32  |  no      |  no    |   yes    |  yes   |  yes   |
+ * ----------------------------------------------------------|------------------
+ *
  */
 
 #include <linux/blkdev.h>
@@ -223,11 +247,14 @@ enum Opt {
 	Opt_force,
 	Opt_sparse,
 	Opt_nohidden,
+	Opt_hide_dot_files,
+	Opt_windows_names,
 	Opt_showmeta,
 	Opt_acl,
 	Opt_iocharset,
 	Opt_prealloc,
 	Opt_noacsrules,
+	Opt_nocase,
 	Opt_err,
 };
 
@@ -242,10 +269,13 @@ static const struct fs_parameter_spec ntfs_fs_parameters[] = {
 	fsparam_flag_no("force",		Opt_force),
 	fsparam_flag_no("sparse",		Opt_sparse),
 	fsparam_flag_no("hidden",		Opt_nohidden),
+	fsparam_flag_no("hide_dot_files",	Opt_hide_dot_files),
+	fsparam_flag_no("windows_names",	Opt_windows_names),
 	fsparam_flag_no("acl",			Opt_acl),
 	fsparam_flag_no("showmeta",		Opt_showmeta),
 	fsparam_flag_no("prealloc",		Opt_prealloc),
 	fsparam_flag_no("acsrules",		Opt_noacsrules),
+	fsparam_flag_no("nocase",		Opt_nocase),
 	fsparam_string("iocharset",		Opt_iocharset),
 	{}
 };
@@ -330,6 +360,12 @@ static int ntfs_fs_parse_param(struct fs_context *fc,
 	case Opt_nohidden:
 		opts->nohidden = result.negated ? 1 : 0;
 		break;
+	case Opt_hide_dot_files:
+		opts->hide_dot_files = result.negated ? 0 : 1;
+		break;
+	case Opt_windows_names:
+		opts->windows_names = result.negated ? 0 : 1;
+		break;
 	case Opt_acl:
 		if (!result.negated)
 #ifdef CONFIG_NTFS3_FS_POSIX_ACL
@@ -353,6 +389,9 @@ static int ntfs_fs_parse_param(struct fs_context *fc,
 		break;
 	case Opt_noacsrules:
 		opts->noacsrules = result.negated ? 1 : 0;
+		break;
+	case Opt_nocase:
+		opts->nocase = result.negated ? 1 : 0;
 		break;
 	default:
 		/* Should not be here unless we forget add case. */
@@ -400,31 +439,22 @@ static struct kmem_cache *ntfs_inode_cachep;
 
 static struct inode *ntfs_alloc_inode(struct super_block *sb)
 {
-	struct ntfs_inode *ni = kmem_cache_alloc(ntfs_inode_cachep, GFP_NOFS);
+	struct ntfs_inode *ni = alloc_inode_sb(sb, ntfs_inode_cachep, GFP_NOFS);
 
 	if (!ni)
 		return NULL;
 
 	memset(ni, 0, offsetof(struct ntfs_inode, vfs_inode));
-
 	mutex_init(&ni->ni_lock);
-
 	return &ni->vfs_inode;
 }
 
-static void ntfs_i_callback(struct rcu_head *head)
+static void ntfs_free_inode(struct inode *inode)
 {
-	struct inode *inode = container_of(head, struct inode, i_rcu);
 	struct ntfs_inode *ni = ntfs_i(inode);
 
 	mutex_destroy(&ni->ni_lock);
-
 	kmem_cache_free(ntfs_inode_cachep, ni);
-}
-
-static void ntfs_destroy_inode(struct inode *inode)
-{
-	call_rcu(&inode->i_rcu, ntfs_i_callback);
 }
 
 static void init_once(void *foo)
@@ -519,9 +549,9 @@ static int ntfs_show_options(struct seq_file *m, struct dentry *root)
 	seq_printf(m, ",gid=%u",
 		  from_kgid_munged(user_ns, opts->fs_gid));
 	if (opts->fmask)
-		seq_printf(m, ",fmask=%04o", ~opts->fs_fmask_inv);
+		seq_printf(m, ",fmask=%04o", opts->fs_fmask_inv ^ 0xffff);
 	if (opts->dmask)
-		seq_printf(m, ",dmask=%04o", ~opts->fs_dmask_inv);
+		seq_printf(m, ",dmask=%04o", opts->fs_dmask_inv ^ 0xffff);
 	if (opts->nls)
 		seq_printf(m, ",iocharset=%s", opts->nls->charset);
 	else
@@ -536,6 +566,10 @@ static int ntfs_show_options(struct seq_file *m, struct dentry *root)
 		seq_puts(m, ",showmeta");
 	if (opts->nohidden)
 		seq_puts(m, ",nohidden");
+	if (opts->windows_names)
+		seq_puts(m, ",windows_names");
+	if (opts->hide_dot_files)
+		seq_puts(m, ",hide_dot_files");
 	if (opts->force)
 		seq_puts(m, ",force");
 	if (opts->noacsrules)
@@ -592,7 +626,7 @@ static int ntfs_sync_fs(struct super_block *sb, int wait)
 
 static const struct super_operations ntfs_sops = {
 	.alloc_inode = ntfs_alloc_inode,
-	.destroy_inode = ntfs_destroy_inode,
+	.free_inode = ntfs_free_inode,
 	.evict_inode = ntfs_evict_inode,
 	.put_super = ntfs_put_super,
 	.statfs = ntfs_statfs,
@@ -871,6 +905,13 @@ static int ntfs_init_from_boot(struct super_block *sb, u32 sector_size,
 	sb->s_maxbytes = 0xFFFFFFFFull << sbi->cluster_bits;
 #endif
 
+	/*
+	 * Compute the MFT zone at two steps.
+	 * It would be nice if we are able to allocate 1/8 of
+	 * total clusters for MFT but not more then 512 MB.
+	 */
+	sbi->zone_max = min_t(CLST, 0x20000000 >> sbi->cluster_bits, clusters >> 3);
+
 	err = 0;
 
 out:
@@ -887,10 +928,9 @@ static int ntfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	int err;
 	struct ntfs_sb_info *sbi = sb->s_fs_info;
 	struct block_device *bdev = sb->s_bdev;
-	struct request_queue *rq;
 	struct inode *inode;
 	struct ntfs_inode *ni;
-	size_t i, tt;
+	size_t i, tt, bad_len, bad_frags;
 	CLST vcn, lcn, len;
 	struct ATTRIB *attr;
 	const struct VOLUME_INFO *info;
@@ -910,6 +950,7 @@ static int ntfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	sb->s_export_op = &ntfs_export_ops;
 	sb->s_time_gran = NTFS_TIME_GRAN; // 100 nsec
 	sb->s_xattr = ntfs_xattr_handlers;
+	sb->s_d_op = sbi->options->nocase ? &ntfs_dentry_ops : NULL;
 
 	sbi->options->nls = ntfs_load_nls(sbi->options->nls_name);
 	if (IS_ERR(sbi->options->nls)) {
@@ -919,16 +960,15 @@ static int ntfs_fill_super(struct super_block *sb, struct fs_context *fc)
 		goto out;
 	}
 
-	rq = bdev_get_queue(bdev);
-	if (blk_queue_discard(rq) && rq->limits.discard_granularity) {
-		sbi->discard_granularity = rq->limits.discard_granularity;
+	if (bdev_max_discard_sectors(bdev) && bdev_discard_granularity(bdev)) {
+		sbi->discard_granularity = bdev_discard_granularity(bdev);
 		sbi->discard_granularity_mask_inv =
 			~(u64)(sbi->discard_granularity - 1);
 	}
 
 	/* Parse boot. */
-	err = ntfs_init_from_boot(sb, rq ? queue_logical_block_size(rq) : 512,
-				  bdev->bd_inode->i_size);
+	err = ntfs_init_from_boot(sb, bdev_logical_block_size(bdev),
+				  bdev_nr_bytes(bdev));
 	if (err)
 		goto out;
 
@@ -1060,30 +1100,6 @@ static int ntfs_fill_super(struct super_block *sb, struct fs_context *fc)
 
 	sbi->mft.ni = ni;
 
-	/* Load $BadClus. */
-	ref.low = cpu_to_le32(MFT_REC_BADCLUST);
-	ref.seq = cpu_to_le16(MFT_REC_BADCLUST);
-	inode = ntfs_iget5(sb, &ref, &NAME_BADCLUS);
-	if (IS_ERR(inode)) {
-		ntfs_err(sb, "Failed to load $BadClus.");
-		err = PTR_ERR(inode);
-		goto out;
-	}
-
-	ni = ntfs_i(inode);
-
-	for (i = 0; run_get_entry(&ni->file.run, i, &vcn, &lcn, &len); i++) {
-		if (lcn == SPARSE_LCN)
-			continue;
-
-		if (!sbi->bad_clusters)
-			ntfs_notice(sb, "Volume contains bad blocks");
-
-		sbi->bad_clusters += len;
-	}
-
-	iput(inode);
-
 	/* Load $Bitmap. */
 	ref.low = cpu_to_le32(MFT_REC_BITMAP);
 	ref.seq = cpu_to_le16(MFT_REC_BITMAP);
@@ -1120,6 +1136,44 @@ static int ntfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	err = ntfs_refresh_zone(sbi);
 	if (err)
 		goto out;
+
+	/* Load $BadClus. */
+	ref.low = cpu_to_le32(MFT_REC_BADCLUST);
+	ref.seq = cpu_to_le16(MFT_REC_BADCLUST);
+	inode = ntfs_iget5(sb, &ref, &NAME_BADCLUS);
+	if (IS_ERR(inode)) {
+		err = PTR_ERR(inode);
+		ntfs_err(sb, "Failed to load $BadClus (%d).", err);
+		goto out;
+	}
+
+	ni = ntfs_i(inode);
+	bad_len = bad_frags = 0;
+	for (i = 0; run_get_entry(&ni->file.run, i, &vcn, &lcn, &len); i++) {
+		if (lcn == SPARSE_LCN)
+			continue;
+
+		bad_len += len;
+		bad_frags += 1;
+		if (sb_rdonly(sb))
+			continue;
+
+		if (wnd_set_used_safe(&sbi->used.bitmap, lcn, len, &tt) || tt) {
+			/* Bad blocks marked as free in bitmap. */
+			ntfs_set_state(sbi, NTFS_DIRTY_ERROR);
+		}
+	}
+	if (bad_len) {
+		/*
+		 * Notice about bad blocks.
+		 * In normal cases these blocks are marked as used in bitmap.
+		 * And we never allocate space in it.
+		 */
+		ntfs_notice(sb,
+			    "Volume contains %zu bad blocks in %zu fragments.",
+			    bad_len, bad_frags);
+	}
+	iput(inode);
 
 	/* Load $AttrDef. */
 	ref.low = cpu_to_le32(MFT_REC_ATTR);
@@ -1341,7 +1395,7 @@ int ntfs_discard(struct ntfs_sb_info *sbi, CLST lcn, CLST len)
 		return 0;
 
 	err = blkdev_issue_discard(sb->s_bdev, start >> 9, (end - start) >> 9,
-				   GFP_NOFS, 0);
+				   GFP_NOFS);
 
 	if (err == -EOPNOTSUPP)
 		sbi->flags |= NTFS_FLAGS_NODISCARD;
@@ -1382,7 +1436,7 @@ static const struct fs_context_operations ntfs_context_ops = {
 /*
  * ntfs_init_fs_context - Initialize spi and opts
  *
- * This will called when mount/remount. We will first initiliaze
+ * This will called when mount/remount. We will first initialize
  * options so that if remount we can use just that.
  */
 static int ntfs_init_fs_context(struct fs_context *fc)
@@ -1484,11 +1538,8 @@ out1:
 
 static void __exit exit_ntfs_fs(void)
 {
-	if (ntfs_inode_cachep) {
-		rcu_barrier();
-		kmem_cache_destroy(ntfs_inode_cachep);
-	}
-
+	rcu_barrier();
+	kmem_cache_destroy(ntfs_inode_cachep);
 	unregister_filesystem(&ntfs_fs_type);
 	ntfs3_exit_bitmap();
 }

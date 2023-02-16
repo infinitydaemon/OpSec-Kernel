@@ -105,8 +105,8 @@ extern int cifs_lock(struct file *, int, struct file_lock *);
 extern int cifs_fsync(struct file *, loff_t, loff_t, int);
 extern int cifs_strict_fsync(struct file *, loff_t, loff_t, int);
 extern int cifs_flush(struct file *, fl_owner_t id);
-extern int cifs_file_mmap(struct file * , struct vm_area_struct *);
-extern int cifs_file_strict_mmap(struct file * , struct vm_area_struct *);
+extern int cifs_file_mmap(struct file *file, struct vm_area_struct *vma);
+extern int cifs_file_strict_mmap(struct file *file, struct vm_area_struct *vma);
 extern const struct file_operations cifs_dir_ops;
 extern int cifs_dir_open(struct inode *inode, struct file *file);
 extern int cifs_readdir(struct file *file, struct dir_context *ctx);
@@ -152,5 +152,7 @@ extern struct dentry *cifs_smb3_do_mount(struct file_system_type *fs_type,
 extern const struct export_operations cifs_export_ops;
 #endif /* CONFIG_CIFS_NFSD_EXPORT */
 
-#define CIFS_VERSION   "2.33"
+/* when changing internal version - update following two lines at same time */
+#define SMB3_PRODUCT_BUILD 41
+#define CIFS_VERSION   "2.41"
 #endif				/* _CIFSFS_H */
