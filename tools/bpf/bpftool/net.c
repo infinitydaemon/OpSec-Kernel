@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 // Copyright (C) 2018 Facebook
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -551,7 +553,7 @@ static int do_attach_detach_xdp(int progfd, enum net_attach_type attach_type,
 	if (attach_type == NET_ATTACH_TYPE_XDP_OFFLOAD)
 		flags |= XDP_FLAGS_HW_MODE;
 
-	return bpf_set_link_xdp_fd(ifindex, progfd, flags);
+	return bpf_xdp_attach(ifindex, progfd, flags, NULL);
 }
 
 static int do_attach(int argc, char **argv)

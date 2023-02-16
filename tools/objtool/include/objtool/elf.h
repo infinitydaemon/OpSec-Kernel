@@ -30,7 +30,7 @@ struct section {
 	struct hlist_node hash;
 	struct hlist_node name_hash;
 	GElf_Shdr sh;
-	struct rb_root symbol_tree;
+	struct rb_root_cached symbol_tree;
 	struct list_head symbol_list;
 	struct list_head reloc_list;
 	struct section *base, *reloc;
@@ -38,7 +38,7 @@ struct section {
 	Elf_Data *data;
 	char *name;
 	int idx;
-	bool changed, text, rodata, noinstr;
+	bool changed, text, rodata, noinstr, init, truncate;
 };
 
 struct symbol {
@@ -53,13 +53,16 @@ struct symbol {
 	unsigned char bind, type;
 	unsigned long offset;
 	unsigned int len;
+	unsigned long __subtree_last;
 	struct symbol *pfunc, *cfunc, *alias;
 	u8 uaccess_safe      : 1;
 	u8 static_call_tramp : 1;
 	u8 retpoline_thunk   : 1;
 	u8 return_thunk      : 1;
 	u8 fentry            : 1;
-	u8 kcov              : 1;
+	u8 profiling_func    : 1;
+	struct list_head pv_target;
+	struct list_head reloc_list;
 };
 
 struct reloc {
@@ -71,6 +74,7 @@ struct reloc {
 	};
 	struct section *sec;
 	struct symbol *sym;
+	struct list_head sym_reloc_entry;
 	unsigned long offset;
 	unsigned int type;
 	s64 addend;
@@ -86,7 +90,7 @@ struct elf {
 	int fd;
 	bool changed;
 	char *name;
-	unsigned int text_size;
+	unsigned int text_size, num_files;
 	struct list_head sections;
 
 	int symbol_bits;
@@ -131,8 +135,28 @@ static inline u32 reloc_hash(struct reloc *reloc)
 	return sec_offset_hash(reloc->sec, reloc->offset);
 }
 
+/*
+ * Try to see if it's a whole archive (vmlinux.o or module).
+ *
+ * Note this will miss the case where a module only has one source file.
+ */
+static inline bool has_multiple_files(struct elf *elf)
+{
+	return elf->num_files > 1;
+}
+
+static inline int elf_class_addrsize(struct elf *elf)
+{
+	if (elf->ehdr.e_ident[EI_CLASS] == ELFCLASS32)
+		return sizeof(u32);
+	else
+		return sizeof(u64);
+}
+
 struct elf *elf_open_read(const char *name, int flags);
 struct section *elf_create_section(struct elf *elf, const char *name, unsigned int sh_flags, size_t entsize, int nr);
+
+struct symbol *elf_create_prefix_symbol(struct elf *elf, struct symbol *orig, long size);
 
 int elf_add_reloc(struct elf *elf, struct section *sec, unsigned long offset,
 		  unsigned int type, struct symbol *sym, s64 addend);
@@ -152,6 +176,7 @@ struct symbol *find_func_by_offset(struct section *sec, unsigned long offset);
 struct symbol *find_symbol_by_offset(struct section *sec, unsigned long offset);
 struct symbol *find_symbol_by_name(const struct elf *elf, const char *name);
 struct symbol *find_symbol_containing(const struct section *sec, unsigned long offset);
+int find_symbol_hole_containing(const struct section *sec, unsigned long offset);
 struct reloc *find_reloc_by_dest(const struct elf *elf, struct section *sec, unsigned long offset);
 struct reloc *find_reloc_by_dest_range(const struct elf *elf, struct section *sec,
 				     unsigned long offset, unsigned int len);

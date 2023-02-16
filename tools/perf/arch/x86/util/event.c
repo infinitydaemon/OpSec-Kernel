@@ -2,6 +2,7 @@
 #include <linux/types.h>
 #include <linux/string.h>
 #include <linux/zalloc.h>
+#include <stdlib.h>
 
 #include "../../../util/event.h"
 #include "../../../util/synthetic-events.h"
@@ -9,6 +10,7 @@
 #include "../../../util/tool.h"
 #include "../../../util/map.h"
 #include "../../../util/debug.h"
+#include "util/sample.h"
 
 #if defined(__x86_64__)
 
@@ -18,7 +20,7 @@ int perf_event__synthesize_extra_kmaps(struct perf_tool *tool,
 {
 	int rc = 0;
 	struct map *pos;
-	struct maps *kmaps = &machine->kmaps;
+	struct maps *kmaps = machine__kernel_maps(machine);
 	union perf_event *event = zalloc(sizeof(event->mmap) +
 					 machine->id_hdr_size);
 

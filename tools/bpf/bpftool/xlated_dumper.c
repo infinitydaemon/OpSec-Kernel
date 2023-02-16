@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 /* Copyright (C) 2018 Netronome Systems, Inc. */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <bpf/libbpf.h>
+#include <bpf/libbpf_internal.h>
 
 #include "disasm.h"
 #include "json_writer.h"
@@ -32,8 +35,8 @@ void kernel_syms_load(struct dump_data *dd)
 		return;
 
 	while (fgets(buff, sizeof(buff), fp)) {
-		tmp = reallocarray(dd->sym_mapping, dd->sym_count + 1,
-				   sizeof(*dd->sym_mapping));
+		tmp = libbpf_reallocarray(dd->sym_mapping, dd->sym_count + 1,
+					  sizeof(*dd->sym_mapping));
 		if (!tmp) {
 out:
 			free(dd->sym_mapping);

@@ -10,6 +10,7 @@
 #include "event.h"
 #include "evsel.h"
 #include "debug.h"
+#include "util/sample.h"
 #include "util/synthetic-events.h"
 
 #include "tests/tests.h"
@@ -115,7 +116,7 @@ out_free:
  * For now, the PERF_SAMPLE_WEIGHT_STRUCT is the only X86 specific sample type.
  * The test only checks the PERF_SAMPLE_WEIGHT_STRUCT type.
  */
-int test__x86_sample_parsing(struct test *test __maybe_unused, int subtest __maybe_unused)
+int test__x86_sample_parsing(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
 {
 	return do_test(PERF_SAMPLE_WEIGHT_STRUCT);
 }

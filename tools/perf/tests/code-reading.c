@@ -16,7 +16,6 @@
 #include "dso.h"
 #include "env.h"
 #include "parse-events.h"
-#include "trace-event.h"
 #include "evlist.h"
 #include "evsel.h"
 #include "thread_map.h"
@@ -28,6 +27,7 @@
 #include "util/mmap.h"
 #include "util/string2.h"
 #include "util/synthetic-events.h"
+#include "util/util.h"
 #include "thread.h"
 
 #include "tests.h"
@@ -79,7 +79,7 @@ static size_t read_objdump_chunk(const char **line, unsigned char **buf,
 	 * see disassemble_bytes() at binutils/objdump.c for details
 	 * how objdump chooses display endian)
 	 */
-	if (bytes_read > 1 && !bigendian()) {
+	if (bytes_read > 1 && !host_is_bigendian()) {
 		unsigned char *chunk_end = chunk_start + bytes_read - 1;
 		unsigned char tmp;
 
@@ -606,7 +606,8 @@ static int do_test_code_reading(bool try_kcore)
 	}
 
 	ret = perf_event__synthesize_thread_map(NULL, threads,
-						perf_event__process, machine, false);
+						perf_event__process, machine,
+						true, false);
 	if (ret < 0) {
 		pr_debug("perf_event__synthesize_thread_map failed\n");
 		goto out_err;
@@ -637,7 +638,7 @@ static int do_test_code_reading(bool try_kcore)
 
 		str = do_determine_event(excl_kernel);
 		pr_debug("Parsing event '%s'\n", str);
-		ret = parse_events(evlist, str, NULL);
+		ret = parse_event(evlist, str);
 		if (ret < 0) {
 			pr_debug("parse_events failed\n");
 			goto out_put;
@@ -715,7 +716,7 @@ out_err:
 	return err;
 }
 
-int test__code_reading(struct test *test __maybe_unused, int subtest __maybe_unused)
+static int test__code_reading(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
 {
 	int ret;
 
@@ -742,3 +743,5 @@ int test__code_reading(struct test *test __maybe_unused, int subtest __maybe_unu
 		return -1;
 	};
 }
+
+DEFINE_SUITE("Object code reading", code_reading);

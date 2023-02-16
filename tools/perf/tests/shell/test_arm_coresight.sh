@@ -9,8 +9,6 @@
 # SPDX-License-Identifier: GPL-2.0
 # Leo Yan <leo.yan@linaro.org>, 2020
 
-perfdata=$(mktemp /tmp/__perf_test.perf.data.XXXXX)
-file=$(mktemp /tmp/temporary_file.XXXXX)
 glb_err=0
 
 skip_if_no_cs_etm_event() {
@@ -22,13 +20,19 @@ skip_if_no_cs_etm_event() {
 
 skip_if_no_cs_etm_event || exit 2
 
+perfdata=$(mktemp /tmp/__perf_test.perf.data.XXXXX)
+file=$(mktemp /tmp/temporary_file.XXXXX)
+
 cleanup_files()
 {
 	rm -f ${perfdata}
 	rm -f ${file}
+	rm -f "${perfdata}.old"
+	trap - exit term int
+	exit $glb_err
 }
 
-trap cleanup_files exit
+trap cleanup_files exit term int
 
 record_touch_file() {
 	echo "Recording trace (only user mode) with path: CPU$2 => $1"
@@ -45,7 +49,7 @@ perf_script_branch_samples() {
 	#   touch  6512          1         branches:u:      ffffb22082e0 strcmp+0xa0 (/lib/aarch64-linux-gnu/ld-2.27.so)
 	#   touch  6512          1         branches:u:      ffffb2208320 strcmp+0xe0 (/lib/aarch64-linux-gnu/ld-2.27.so)
 	perf script -F,-time -i ${perfdata} 2>&1 | \
-		egrep " +$1 +[0-9]+ .* +branches:(.*:)? +" > /dev/null 2>&1
+		grep -E " +$1 +[0-9]+ .* +branches:(.*:)? +" > /dev/null 2>&1
 }
 
 perf_report_branch_samples() {
@@ -56,7 +60,7 @@ perf_report_branch_samples() {
 	#    7.71%     7.71%  touch    libc-2.27.so      [.] getenv
 	#    2.59%     2.59%  touch    ld-2.27.so        [.] strcmp
 	perf report --stdio -i ${perfdata} 2>&1 | \
-		egrep " +[0-9]+\.[0-9]+% +[0-9]+\.[0-9]+% +$1 " > /dev/null 2>&1
+		grep -E " +[0-9]+\.[0-9]+% +[0-9]+\.[0-9]+% +$1 " > /dev/null 2>&1
 }
 
 perf_report_instruction_samples() {
@@ -66,8 +70,8 @@ perf_report_instruction_samples() {
 	#   68.12%  touch    libc-2.27.so   [.] _dl_addr
 	#    5.80%  touch    libc-2.27.so   [.] getenv
 	#    4.35%  touch    ld-2.27.so     [.] _dl_fixup
-	perf report --itrace=i1000i --stdio -i ${perfdata} 2>&1 | \
-		egrep " +[0-9]+\.[0-9]+% +$1" > /dev/null 2>&1
+	perf report --itrace=i20i --stdio -i ${perfdata} 2>&1 | \
+		grep -E " +[0-9]+\.[0-9]+% +$1" > /dev/null 2>&1
 }
 
 arm_cs_report() {
@@ -83,7 +87,7 @@ is_device_sink() {
 	# If the node of "enable_sink" is existed under the device path, this
 	# means the device is a sink device.  Need to exclude 'tpiu' since it
 	# cannot support perf PMU.
-	echo "$1" | egrep -q -v "tpiu"
+	echo "$1" | grep -E -q -v "tpiu"
 
 	if [ $? -eq 0 -a -e "$1/enable_sink" ]; then
 
