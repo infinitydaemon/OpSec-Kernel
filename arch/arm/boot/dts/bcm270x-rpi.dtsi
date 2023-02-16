@@ -2,7 +2,6 @@
 
 / {
 	aliases {
-		audio = &audio;
 		aux = &aux;
 		sound = &sound;
 		soc = &soc;
@@ -49,10 +48,6 @@
 		regulator-name = "5v0";
 	};
 
-	leds: leds {
-		compatible = "gpio-leds";
-	};
-
 	soc {
 		gpiomem {
 			compatible = "brcm,bcm2835-gpiomem";
@@ -83,7 +78,6 @@
 		i2c0_baudrate = <&i2c0if>,"clock-frequency:0";
 		i2c1_baudrate = <&i2c1>,"clock-frequency:0";
 
-		audio = <&audio>,"status";
 		watchdog = <&watchdog>,"status";
 		random = <&random>,"status";
 		sd_overclock = <&sdhost>,"brcm,overclock-50:0";
@@ -113,6 +107,8 @@
 };
 
 &i2c0mux {
+	pinctrl-names = "i2c0", "i2c_csi_dsi";
+	/delete-property/ clock-frequency;
 	status = "disabled";
 };
 
@@ -131,26 +127,47 @@
 };
 
 &cpu_thermal {
-	/delete-node/ trips;
-	/delete-node/ cooling-maps;
-};
-
-&vec {
-	status = "disabled";
-};
-
-&vchiq {
-	/* Onboard audio */
-	audio: bcm2835_audio {
-		compatible = "brcm,bcm2835-audio";
-		brcm,firmware = <&firmware>;
-		brcm,pwm-channels = <8>;
-		status = "disabled";
+	// Add some labels
+	thermal_trips: trips {
+		cpu-crit {
+			// Raise upstream limit of 90C
+			temperature = <110000>;
+		};
+	};
+	cooling_maps: cooling-maps {
 	};
 };
 
+&vec {
+	clocks = <&firmware_clocks 15>;
+	status = "disabled";
+};
+
 &firmware {
+#ifndef BCM2711
+	firmware_clocks: clocks {
+		compatible = "raspberrypi,firmware-clocks";
+		#clock-cells = <1>;
+	};
+#endif
+
 	vcio: vcio {
 		compatible = "raspberrypi,vcio";
 	};
 };
+
+&vc4 {
+	raspberrypi,firmware = <&firmware>;
+};
+
+#ifndef BCM2711
+
+&hdmi {
+	reg-names = "hdmi",
+		    "hd";
+	clocks = <&firmware_clocks 9>,
+		 <&firmware_clocks 13>;
+	dmas = <&dma (17|(1<<27)|(1<<24))>;
+};
+
+#endif

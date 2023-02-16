@@ -82,6 +82,10 @@
 	};
 };
 
+&v3d {
+	clocks = <&firmware_clocks 5>;
+};
+
 &vchiq {
 	interrupts = <GIC_SPI 34 IRQ_TYPE_LEVEL_HIGH>;
 };

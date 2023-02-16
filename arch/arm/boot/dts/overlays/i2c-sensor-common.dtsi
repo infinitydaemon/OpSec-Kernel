@@ -2,6 +2,8 @@
 /dts-v1/;
 /plugin/;
 
+#include <dt-bindings/gpio/gpio.h>
+
 / {
 	compatible = "brcm,bcm2835";
 
@@ -427,14 +429,14 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 			status = "okay";
-                        clock-frequency = <400000>;
+			clock-frequency = <400000>;
 
-                        mpu6050: mpu6050@68 {
-                                compatible = "invensense,mpu6050";
-                                reg = <0x68>;
-                                interrupt-parent = <&gpio>;
-                                interrupts = <4 2>;
-                        };
+			mpu6050: mpu6050@68 {
+				compatible = "invensense,mpu6050";
+				reg = <0x68>;
+				interrupt-parent = <&gpio>;
+				interrupts = <4 2>;
+			};
 		};
 	};
 
@@ -444,18 +446,37 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 			status = "okay";
-                        clock-frequency = <400000>;
+			clock-frequency = <400000>;
 
-                        mpu9250: mpu9250@68 {
-                                compatible = "invensense,mpu9250";
-                                reg = <0x68>;
-                                interrupt-parent = <&gpio>;
-                                interrupts = <4 2>;
-                        };
+			mpu9250: mpu9250@68 {
+				compatible = "invensense,mpu9250";
+				reg = <0x68>;
+				interrupt-parent = <&gpio>;
+				interrupts = <4 2>;
+			};
 		};
 	};
 
-	// Fragments 30 and 31 omitted due to BNO055 support in rpi-6.1.y
+	fragment@30 {
+		target = <&bno055>;
+		__dormant__ {
+			reset-gpios = <&gpio 5 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	fragment@31 {
+		target = <&i2cbus>;
+		__dormant__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "okay";
+
+			bno055: bno055@29 {
+				compatible = "bosch,bno055";
+				reg = <0x29>;
+			};
+		};
+	};
 
 	fragment@32 {
 		target = <&i2cbus>;
@@ -504,20 +525,21 @@
 		ms8607 = <0>,"+27";
 		mpu6050 = <0>,"+28";
 		mpu9250 = <0>,"+29";
-		// Skip 30 and 31
+		bno055 = <0>,"+31";
 		sht4x = <0>,"+32";
 
-		addr =  <&bme280>,"reg:0", <&bmp280>,"reg:0", <&tmp102>,"reg:0",
+		addr =	<&bme280>,"reg:0", <&bmp280>,"reg:0", <&tmp102>,"reg:0",
 			<&lm75>,"reg:0", <&hdc100x>,"reg:0", <&sht3x>,"reg:0",
 			<&ds1621>,"reg:0", <&bme680>,"reg:0", <&ccs811>,"reg:0",
 			<&bh1750>,"reg:0", <&mcp980x>,"reg:0", <&jc42>,"reg:0",
 			<&ms5637>,"reg:0", <&ms5803>,"reg:0", <&ms5805>,"reg:0",
 			<&ms5837>,"reg:0", <&ms8607>,"reg:0",
 			<&mpu6050>,"reg:0", <&mpu9250>,"reg:0",
-			<&sht4x>,"reg:0";
+			<&bno055>,"reg:0", <&sht4x>,"reg:0";
 		int_pin = <&max30102>, "interrupts:0",
 			<&mpu6050>, "interrupts:0",
 			<&mpu9250>, "interrupts:0";
 		no_timeout = <&jc42>, "smbus-timeout-disable?";
+		reset_pin = <&bno055>,"reset-gpios:4", <0>,"+30";
 	};
 };

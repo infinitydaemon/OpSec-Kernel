@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0
 /dts-v1/;
+#define BCM2711
+#define i2c0 i2c0if
 #include "bcm2711.dtsi"
+#include "bcm283x-rpi-wifi-bt.dtsi"
+#undef i2c0
+#include "bcm270x.dtsi"
+#define i2c0 i2c0mux
 #include "bcm2711-rpi.dtsi"
+#undef i2c0
+#include "bcm283x-rpi-led-deprecated.dtsi"
 //#include "bcm283x-rpi-usb-peripheral.dtsi"
 
 / {
@@ -11,24 +19,6 @@
 	chosen {
 		/* 8250 auxiliary UART instead of pl011 */
 		stdout-path = "serial1:115200n8";
-	};
-
-	leds {
-		led-act {
-			gpios = <&gpio 42 GPIO_ACTIVE_HIGH>;
-		};
-
-		led-pwr {
-			label = "PWR";
-			gpios = <&expgpio 2 GPIO_ACTIVE_LOW>;
-			default-state = "keep";
-			linux,default-trigger = "default-on";
-		};
-	};
-
-	wifi_pwrseq: wifi-pwrseq {
-		compatible = "mmc-pwrseq-simple";
-		reset-gpios = <&expgpio 1 GPIO_ACTIVE_LOW>;
 	};
 
 	sd_io_1v8_reg: sd_io_1v8_reg {
@@ -54,6 +44,10 @@
 		enable-active-high;
 		gpio = <&expgpio 6 GPIO_ACTIVE_HIGH>;
 	};
+};
+
+&bt {
+	shutdown-gpios = <&expgpio 0 GPIO_ACTIVE_HIGH>;
 };
 
 &ddc0 {
@@ -168,6 +162,19 @@
 	status = "okay";
 };
 
+&led_act {
+	gpios = <&gpio 42 GPIO_ACTIVE_HIGH>;
+};
+
+&leds {
+	led_pwr: led-pwr {
+		label = "PWR";
+		gpios = <&expgpio 2 GPIO_ACTIVE_LOW>;
+		default-state = "keep";
+		linux,default-trigger = "default-on";
+	};
+};
+
 &pixelvalve0 {
 	status = "okay";
 };
@@ -188,23 +195,6 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pwm1_0_gpio40 &pwm1_1_gpio41>;
 	status = "okay";
-};
-
-/* SDHCI is used to control the SDIO for wireless */
-&sdhci {
-	#address-cells = <1>;
-	#size-cells = <0>;
-	pinctrl-names = "default";
-	pinctrl-0 = <&emmc_gpio34>;
-	bus-width = <4>;
-	non-removable;
-	mmc-pwrseq = <&wifi_pwrseq>;
-	status = "okay";
-
-	brcmf: wifi@1 {
-		reg = <1>;
-		compatible = "brcm,bcm4329-fmac";
-	};
 };
 
 /* EMMC2 is used to drive the EMMC card */
@@ -231,7 +221,7 @@
 
 &pcie0 {
 	pci@0,0 {
-		device-type = "pci";
+		device_type = "pci";
 		#address-cells = <3>;
 		#size-cells = <2>;
 		ranges;
@@ -245,13 +235,6 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&uart0_ctsrts_gpio30 &uart0_gpio32>;
 	uart-has-rtscts;
-	status = "okay";
-
-	bluetooth {
-		compatible = "brcm,bcm43438-bt";
-		max-speed = <2000000>;
-		shutdown-gpios = <&expgpio 0 GPIO_ACTIVE_HIGH>;
-	};
 };
 
 /* uart1 is mapped to the pin header */
@@ -259,10 +242,6 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&uart1_gpio14>;
 	status = "okay";
-};
-
-&vchiq {
-	interrupts = <GIC_SPI 34 IRQ_TYPE_LEVEL_HIGH>;
 };
 
 &vc4 {
@@ -273,12 +252,13 @@
 	status = "disabled";
 };
 
+&wifi_pwrseq {
+	reset-gpios = <&expgpio 1 GPIO_ACTIVE_LOW>;
+};
+
 // =============================================
 // Downstream rpi- changes
 
-#define BCM2711
-
-#include "bcm270x.dtsi"
 #include "bcm271x-rpi-bt.dtsi"
 
 / {
@@ -295,7 +275,7 @@
 
 / {
 	chosen {
-		bootargs = "coherent_pool=1M 8250.nr_uarts=1 snd_bcm2835.enable_compat_alsa=0 snd_bcm2835.enable_hdmi=1";
+		bootargs = "coherent_pool=1M 8250.nr_uarts=1 snd_bcm2835.enable_headphones=0";
 	};
 
 	aliases {
@@ -537,28 +517,24 @@
 	};
 };
 
-&leds {
-	act_led: led-act {
-		label = "led0";
-		linux,default-trigger = "mmc0";
-		gpios = <&gpio 42 GPIO_ACTIVE_HIGH>;
-	};
+&led_act {
+	label = "led0";
+	default-state = "off";
+	linux,default-trigger = "mmc0";
+};
 
-	pwr_led: led-pwr {
-		label = "led1";
-		linux,default-trigger = "default-on";
-		gpios = <&expgpio 2 GPIO_ACTIVE_LOW>;
-	};
+&led_pwr {
+	label = "led1";
+	default-state = "off";
 };
 
 &pwm1 {
 	status = "disabled";
 };
 
-&audio {
+&vchiq {
 	pinctrl-names = "default";
 	pinctrl-0 = <&audio_pins>;
-	brcm,disable-headphones = <1>;
 };
 
 cam0_reg: &cam1_reg {
@@ -567,13 +543,15 @@ cam0_reg: &cam1_reg {
 
 / {
 	__overrides__ {
-		act_led_gpio = <&act_led>,"gpios:4";
-		act_led_activelow = <&act_led>,"gpios:8";
-		act_led_trigger = <&act_led>,"linux,default-trigger";
+		audio = <&chosen>,"bootargs{on='snd_bcm2835.enable_hdmi=1',off='snd_bcm2835.enable_hdmi=0'}";
 
-		pwr_led_gpio = <&pwr_led>,"gpios:4";
-		pwr_led_activelow = <&pwr_led>,"gpios:8";
-		pwr_led_trigger = <&pwr_led>,"linux,default-trigger";
+		act_led_gpio = <&led_act>,"gpios:4";
+		act_led_activelow = <&led_act>,"gpios:8";
+		act_led_trigger = <&led_act>,"linux,default-trigger";
+
+		pwr_led_gpio = <&led_pwr>,"gpios:4";
+		pwr_led_activelow = <&led_pwr>,"gpios:8";
+		pwr_led_trigger = <&led_pwr>,"linux,default-trigger";
 
 		eth_led0 = <&phy1>,"led-modes:0";
 		eth_led1 = <&phy1>,"led-modes:4";
