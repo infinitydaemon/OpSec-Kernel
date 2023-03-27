@@ -145,8 +145,7 @@ void (*__initdata late_time_init)(void);
 /* Untouched command line saved by arch-specific code. */
 char __initdata boot_command_line[COMMAND_LINE_SIZE];
 /* Untouched saved command line (eg. for /proc) */
-char *saved_command_line __ro_after_init;
-unsigned int saved_command_line_len __ro_after_init;
+char *saved_command_line;
 /* Command line for parameter parsing */
 static char *static_command_line;
 /* Untouched extra command line */
@@ -668,8 +667,6 @@ static void __init setup_command_line(char *command_line)
 			strcpy(saved_command_line + len, extra_init_args);
 		}
 	}
-
-	saved_command_line_len = strlen(saved_command_line);
 }
 
 /*
@@ -863,7 +860,6 @@ static void __init mm_init(void)
 	/* Should be run after espfix64 is set up. */
 	pti_init();
 	kmsan_init_runtime();
-	mm_cache_init();
 }
 
 #ifdef CONFIG_RANDOMIZE_KSTACK_OFFSET
@@ -999,7 +995,7 @@ asmlinkage __visible void __init __no_sanitize_address start_kernel(void)
 	sort_main_extable();
 	trap_init();
 	mm_init();
-	poking_init();
+
 	ftrace_init();
 
 	/* trace_printk can be enabled here */
@@ -1138,6 +1134,7 @@ asmlinkage __visible void __init __no_sanitize_address start_kernel(void)
 	taskstats_init_early();
 	delayacct_init();
 
+	poking_init();
 	check_bugs();
 
 	acpi_subsystem_init();
@@ -1382,7 +1379,7 @@ static void __init do_initcall_level(int level, char *command_line)
 static void __init do_initcalls(void)
 {
 	int level;
-	size_t len = saved_command_line_len + 1;
+	size_t len = strlen(saved_command_line) + 1;
 	char *command_line;
 
 	command_line = kzalloc(len, GFP_KERNEL);

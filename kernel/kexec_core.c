@@ -561,17 +561,23 @@ static int kimage_add_entry(struct kimage *image, kimage_entry_t entry)
 static int kimage_set_destination(struct kimage *image,
 				   unsigned long destination)
 {
-	destination &= PAGE_MASK;
+	int result;
 
-	return kimage_add_entry(image, destination | IND_DESTINATION);
+	destination &= PAGE_MASK;
+	result = kimage_add_entry(image, destination | IND_DESTINATION);
+
+	return result;
 }
 
 
 static int kimage_add_page(struct kimage *image, unsigned long page)
 {
-	page &= PAGE_MASK;
+	int result;
 
-	return kimage_add_entry(image, page | IND_SOURCE);
+	page &= PAGE_MASK;
+	result = kimage_add_entry(image, page | IND_SOURCE);
+
+	return result;
 }
 
 

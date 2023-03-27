@@ -67,37 +67,6 @@ probe_mem_read(void *dest, void *src, size_t size);
 static nokprobe_inline int
 probe_mem_read_user(void *dest, void *src, size_t size);
 
-static nokprobe_inline int
-fetch_store_symstrlen(unsigned long addr)
-{
-	char namebuf[KSYM_SYMBOL_LEN];
-	int ret;
-
-	ret = sprint_symbol(namebuf, addr);
-	if (ret < 0)
-		return 0;
-
-	return ret + 1;
-}
-
-/*
- * Fetch a null-terminated symbol string + offset. Caller MUST set *(u32 *)buf
- * with max length and relative data location.
- */
-static nokprobe_inline int
-fetch_store_symstring(unsigned long addr, void *dest, void *base)
-{
-	int maxlen = get_loc_len(*(u32 *)dest);
-	void *__dest;
-
-	if (unlikely(!maxlen))
-		return -ENOMEM;
-
-	__dest = get_loc_data(dest, base);
-
-	return sprint_symbol(__dest, addr);
-}
-
 /* From the 2nd stage, routine is same */
 static nokprobe_inline int
 process_fetch_insn_bottom(struct fetch_insn *code, unsigned long val,
@@ -130,22 +99,16 @@ stage2:
 stage3:
 	/* 3rd stage: store value to buffer */
 	if (unlikely(!dest)) {
-		switch (code->op) {
-		case FETCH_OP_ST_STRING:
+		if (code->op == FETCH_OP_ST_STRING) {
 			ret = fetch_store_strlen(val + code->offset);
 			code++;
 			goto array;
-		case FETCH_OP_ST_USTRING:
+		} else if (code->op == FETCH_OP_ST_USTRING) {
 			ret += fetch_store_strlen_user(val + code->offset);
 			code++;
 			goto array;
-		case FETCH_OP_ST_SYMSTR:
-			ret += fetch_store_symstrlen(val + code->offset);
-			code++;
-			goto array;
-		default:
+		} else
 			return -EILSEQ;
-		}
 	}
 
 	switch (code->op) {
@@ -165,10 +128,6 @@ stage3:
 	case FETCH_OP_ST_USTRING:
 		loc = *(u32 *)dest;
 		ret = fetch_store_string_user(val + code->offset, dest, base);
-		break;
-	case FETCH_OP_ST_SYMSTR:
-		loc = *(u32 *)dest;
-		ret = fetch_store_symstring(val + code->offset, dest, base);
 		break;
 	default:
 		return -EILSEQ;

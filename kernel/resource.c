@@ -894,7 +894,7 @@ void insert_resource_expand_to_fit(struct resource *root, struct resource *new)
 		if (conflict->end > new->end)
 			new->end = conflict->end;
 
-		pr_info("Expanded resource %s due to conflict with %s\n", new->name, conflict->name);
+		printk("Expanded resource %s due to conflict with %s\n", new->name, conflict->name);
 	}
 	write_unlock(&resource_lock);
 }
@@ -1289,7 +1289,9 @@ void __release_region(struct resource *parent, resource_size_t start,
 
 	write_unlock(&resource_lock);
 
-	pr_warn("Trying to free nonexistent resource <%pa-%pa>\n", &start, &end);
+	printk(KERN_WARNING "Trying to free nonexistent resource "
+		"<%016llx-%016llx>\n", (unsigned long long)start,
+		(unsigned long long)end);
 }
 EXPORT_SYMBOL(__release_region);
 
@@ -1347,20 +1349,6 @@ retry:
 		if (res->start > start || res->end < end) {
 			p = &res->sibling;
 			continue;
-		}
-
-		/*
-		 * All memory regions added from memory-hotplug path have the
-		 * flag IORESOURCE_SYSTEM_RAM. If the resource does not have
-		 * this flag, we know that we are dealing with a resource coming
-		 * from HMM/devm. HMM/devm use another mechanism to add/release
-		 * a resource. This goes via devm_request_mem_region and
-		 * devm_release_mem_region.
-		 * HMM/devm take care to release their resources when they want,
-		 * so if we are dealing with them, let us just back off here.
-		 */
-		if (!(res->flags & IORESOURCE_SYSRAM)) {
-			break;
 		}
 
 		if (!(res->flags & IORESOURCE_MEM))
@@ -1662,7 +1650,6 @@ __setup("reserve=", reserve_setup);
 int iomem_map_sanity_check(resource_size_t addr, unsigned long size)
 {
 	struct resource *p = &iomem_resource;
-	resource_size_t end = addr + size - 1;
 	int err = 0;
 	loff_t l;
 
@@ -1672,12 +1659,12 @@ int iomem_map_sanity_check(resource_size_t addr, unsigned long size)
 		 * We can probably skip the resources without
 		 * IORESOURCE_IO attribute?
 		 */
-		if (p->start > end)
+		if (p->start >= addr + size)
 			continue;
 		if (p->end < addr)
 			continue;
 		if (PFN_DOWN(p->start) <= PFN_DOWN(addr) &&
-		    PFN_DOWN(p->end) >= PFN_DOWN(end))
+		    PFN_DOWN(p->end) >= PFN_DOWN(addr + size - 1))
 			continue;
 		/*
 		 * if a resource is "BUSY", it's not a hardware resource
@@ -1688,8 +1675,10 @@ int iomem_map_sanity_check(resource_size_t addr, unsigned long size)
 		if (p->flags & IORESOURCE_BUSY)
 			continue;
 
-		pr_warn("resource sanity check: requesting [mem %pa-%pa], which spans more than %s %pR\n",
-			&addr, &end, p->name, p);
+		printk(KERN_WARNING "resource sanity check: requesting [mem %#010llx-%#010llx], which spans more than %s %pR\n",
+		       (unsigned long long)addr,
+		       (unsigned long long)(addr + size - 1),
+		       p->name, p);
 		err = -1;
 		break;
 	}
@@ -1710,15 +1699,18 @@ static int strict_iomem_checks;
  *
  * Returns true if exclusive to the kernel, otherwise returns false.
  */
-bool resource_is_exclusive(struct resource *root, u64 addr, resource_size_t size)
+bool iomem_is_exclusive(u64 addr)
 {
 	const unsigned int exclusive_system_ram = IORESOURCE_SYSTEM_RAM |
 						  IORESOURCE_EXCLUSIVE;
 	bool skip_children = false, err = false;
+	int size = PAGE_SIZE;
 	struct resource *p;
 
+	addr = addr & PAGE_MASK;
+
 	read_lock(&resource_lock);
-	for_each_resource(root, p, skip_children) {
+	for_each_resource(&iomem_resource, p, skip_children) {
 		if (p->start >= addr + size)
 			break;
 		if (p->end < addr) {
@@ -1755,12 +1747,6 @@ bool resource_is_exclusive(struct resource *root, u64 addr, resource_size_t size
 	read_unlock(&resource_lock);
 
 	return err;
-}
-
-bool iomem_is_exclusive(u64 addr)
-{
-	return resource_is_exclusive(&iomem_resource, addr & PAGE_MASK,
-				     PAGE_SIZE);
 }
 
 struct resource_entry *resource_list_create_entry(struct resource *res,
