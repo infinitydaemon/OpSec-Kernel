@@ -1597,12 +1597,7 @@ static int tgafb_init(void)
 	int status;
 #ifndef MODULE
 	char *option = NULL;
-#endif
 
-	if (fb_modesetting_disabled("tgafb"))
-		return -ENODEV;
-
-#ifndef MODULE
 	if (fb_get_options("tgafb", &option))
 		return -ENODEV;
 	tgafb_setup(option);

@@ -5,8 +5,6 @@
 #include "bcm283x-rpi-csi0-2lane.dtsi"
 #include "bcm283x-rpi-csi1-4lane.dtsi"
 #include "bcm283x-rpi-i2c0mux_0_28.dtsi"
-#include "bcm283x-rpi-led-deprecated.dtsi"
-
 / {
 	compatible = "raspberrypi,3-compute-module", "brcm,bcm2837";
 	model = "Raspberry Pi Compute Module 3";
@@ -190,11 +188,12 @@ cam0_reg: &cam0_regulator {
 	pinctrl-0 = <&i2s_pins>;
 };
 
-&led_act {
-	label = "led0";
-	gpios = <&virtgpio 0 GPIO_ACTIVE_HIGH>;
-	default-state = "off";
-	linux,default-trigger = "mmc0";
+&leds {
+	act_led: led-act {
+		default-state = "off";
+		linux,default-trigger = "mmc0";
+		gpios = <&virtgpio 0 0>;
+	};
 };
 
 &hdmi {
@@ -210,9 +209,9 @@ cam0_reg: &cam0_regulator {
 	__overrides__ {
 		audio = <&chosen>,"bootargs{on='snd_bcm2835.enable_hdmi=1',off='snd_bcm2835.enable_hdmi=0'}";
 
-		act_led_gpio = <&led_act>,"gpios:4";
-		act_led_activelow = <&led_act>,"gpios:8";
-		act_led_trigger = <&led_act>,"linux,default-trigger";
+		act_led_gpio = <&act_led>,"gpios:4";
+		act_led_activelow = <&act_led>,"gpios:8";
+		act_led_trigger = <&act_led>,"linux,default-trigger";
 		cam0_reg = <&cam0_reg>,"status";
 		cam0_reg_gpio = <&cam0_reg>,"gpio:4";
 		cam1_reg = <&cam1_reg>,"status";

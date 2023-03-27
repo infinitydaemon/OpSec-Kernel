@@ -73,16 +73,14 @@ static void vma_print_allocator(struct i915_vma *vma, const char *reason)
 	char buf[512];
 
 	if (!vma->node.stack) {
-		drm_dbg(&to_i915(vma->obj->base.dev)->drm,
-			"vma.node [%08llx + %08llx] %s: unknown owner\n",
-			vma->node.start, vma->node.size, reason);
+		DRM_DEBUG_DRIVER("vma.node [%08llx + %08llx] %s: unknown owner\n",
+				 vma->node.start, vma->node.size, reason);
 		return;
 	}
 
 	stack_depot_snprint(vma->node.stack, buf, sizeof(buf), 0);
-	drm_dbg(&to_i915(vma->obj->base.dev)->drm,
-		"vma.node [%08llx + %08llx] %s: inserted at %s\n",
-		vma->node.start, vma->node.size, reason, buf);
+	DRM_DEBUG_DRIVER("vma.node [%08llx + %08llx] %s: inserted at %s\n",
+			 vma->node.start, vma->node.size, reason, buf);
 }
 
 #else
@@ -778,15 +776,21 @@ i915_vma_insert(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 	GEM_BUG_ON(!IS_ALIGNED(end, I915_GTT_PAGE_SIZE));
 
 	alignment = max(alignment, i915_vm_obj_min_alignment(vma->vm, vma->obj));
+	/*
+	 * for compact-pt we round up the reservation to prevent
+	 * any smaller pages being used within the same PDE
+	 */
+	if (NEEDS_COMPACT_PT(vma->vm->i915))
+		size = round_up(size, alignment);
 
 	/* If binding the object/GGTT view requires more space than the entire
 	 * aperture has, reject it early before evicting everything in a vain
 	 * attempt to find space.
 	 */
 	if (size > end) {
-		drm_dbg(&to_i915(vma->obj->base.dev)->drm,
-			"Attempting to bind an object larger than the aperture: request=%llu > %s aperture=%llu\n",
-			size, flags & PIN_MAPPABLE ? "mappable" : "total", end);
+		DRM_DEBUG("Attempting to bind an object larger than the aperture: request=%llu > %s aperture=%llu\n",
+			  size, flags & PIN_MAPPABLE ? "mappable" : "total",
+			  end);
 		return -ENOSPC;
 	}
 
@@ -816,8 +820,7 @@ i915_vma_insert(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 		 * forseeable future. See also i915_ggtt_offset().
 		 */
 		if (upper_32_bits(end - 1) &&
-		    vma->page_sizes.sg > I915_GTT_PAGE_SIZE &&
-		    !HAS_64K_PAGES(vma->vm->i915)) {
+		    vma->page_sizes.sg > I915_GTT_PAGE_SIZE) {
 			/*
 			 * We can't mix 64K and 4K PTEs in the same page-table
 			 * (2M block), and so to avoid the ugliness and
@@ -1844,11 +1847,6 @@ int _i915_vma_move_to_active(struct i915_vma *vma,
 
 	GEM_BUG_ON(!vma->pages);
 
-	if (!(flags & __EXEC_OBJECT_NO_REQUEST_AWAIT)) {
-		err = i915_request_await_object(rq, vma->obj, flags & EXEC_OBJECT_WRITE);
-		if (unlikely(err))
-			return err;
-	}
 	err = __i915_vma_move_to_active(vma, rq);
 	if (unlikely(err))
 		return err;

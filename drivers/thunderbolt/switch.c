@@ -8,13 +8,12 @@
 
 #include <linux/delay.h>
 #include <linux/idr.h>
-#include <linux/module.h>
 #include <linux/nvmem-provider.h>
 #include <linux/pm_runtime.h>
 #include <linux/sched/signal.h>
 #include <linux/sizes.h>
 #include <linux/slab.h>
-#include <linux/string_helpers.h>
+#include <linux/module.h>
 
 #include "tb.h"
 
@@ -645,7 +644,7 @@ static int __tb_port_enable(struct tb_port *port, bool enable)
 	if (ret)
 		return ret;
 
-	tb_port_dbg(port, "lane %s\n", str_enabled_disabled(enable));
+	tb_port_dbg(port, "lane %sabled\n", enable ? "en" : "dis");
 	return 0;
 }
 

@@ -428,7 +428,8 @@ static int tusb320_typec_probe(struct i2c_client *client,
 	return 0;
 }
 
-static int tusb320_probe(struct i2c_client *client)
+static int tusb320_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct tusb320_priv *priv;
 	const void *match_data;
@@ -501,7 +502,7 @@ static const struct of_device_id tusb320_extcon_dt_match[] = {
 MODULE_DEVICE_TABLE(of, tusb320_extcon_dt_match);
 
 static struct i2c_driver tusb320_extcon_driver = {
-	.probe_new	= tusb320_probe,
+	.probe		= tusb320_probe,
 	.driver		= {
 		.name	= "extcon-tusb320",
 		.of_match_table = tusb320_extcon_dt_match,

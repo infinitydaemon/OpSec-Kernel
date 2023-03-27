@@ -200,4 +200,9 @@ static inline bool is_guest_mode(struct kvm_vcpu *vcpu)
 	return vcpu->arch.hflags & HF_GUEST_MASK;
 }
 
+static inline bool is_smm(struct kvm_vcpu *vcpu)
+{
+	return vcpu->arch.hflags & HF_SMM_MASK;
+}
+
 #endif

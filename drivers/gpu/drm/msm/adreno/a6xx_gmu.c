@@ -1216,17 +1216,19 @@ static int a6xx_gmu_memory_alloc(struct a6xx_gmu *gmu, struct a6xx_gmu_bo *bo,
 
 static int a6xx_gmu_memory_probe(struct a6xx_gmu *gmu)
 {
+	struct iommu_domain *domain;
 	struct msm_mmu *mmu;
 
-	mmu = msm_iommu_new(gmu->dev, 0);
-	if (!mmu)
+	domain = iommu_domain_alloc(&platform_bus_type);
+	if (!domain)
 		return -ENODEV;
-	if (IS_ERR(mmu))
-		return PTR_ERR(mmu);
 
+	mmu = msm_iommu_new(gmu->dev, domain);
 	gmu->aspace = msm_gem_address_space_create(mmu, "gmu", 0x0, 0x80000000);
-	if (IS_ERR(gmu->aspace))
+	if (IS_ERR(gmu->aspace)) {
+		iommu_domain_free(domain);
 		return PTR_ERR(gmu->aspace);
+	}
 
 	return 0;
 }

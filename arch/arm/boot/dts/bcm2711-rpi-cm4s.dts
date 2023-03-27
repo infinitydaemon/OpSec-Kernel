@@ -9,11 +9,16 @@
 #define i2c0 i2c0mux
 #include "bcm2711-rpi.dtsi"
 #undef i2c0
-#include "bcm283x-rpi-led-deprecated.dtsi"
 
 / {
 	compatible = "raspberrypi,4-compute-module-s", "brcm,bcm2711";
 	model = "Raspberry Pi Compute Module 4S";
+
+	leds {
+		led-act {
+			gpios = <&virtgpio 0 0>;
+		};
+	};
 };
 
 &ddc0 {
@@ -80,10 +85,6 @@
 
 &hdmi0 {
 	status = "okay";
-};
-
-&led_act {
-	gpios = <&virtgpio 0 GPIO_ACTIVE_HIGH>;
 };
 
 &pixelvalve0 {
@@ -385,10 +386,11 @@
 	compatible = "disabled";
 };
 
-&led_act {
-	label = "led0";
-	default-state = "off";
-	linux,default-trigger = "mmc0";
+&leds {
+	act_led: led-act {
+		default-state = "off";
+		linux,default-trigger = "mmc0";
+	};
 };
 
 &pwm1 {
@@ -414,9 +416,9 @@ cam0_reg: &cam0_regulator {
 	__overrides__ {
 		audio = <&chosen>,"bootargs{on='snd_bcm2835.enable_hdmi=1',off='snd_bcm2835.enable_hdmi=0'}";
 
-		act_led_gpio = <&led_act>,"gpios:4";
-		act_led_activelow = <&led_act>,"gpios:8";
-		act_led_trigger = <&led_act>,"linux,default-trigger";
+		act_led_gpio = <&act_led>,"gpios:4";
+		act_led_activelow = <&act_led>,"gpios:8";
+		act_led_trigger = <&act_led>,"linux,default-trigger";
 
 		sd_poll_once = <&emmc2>, "non-removable?";
 		spi_dma4 = <&spi0>, "dmas:0=", <&dma40>,

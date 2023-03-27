@@ -1635,7 +1635,7 @@ int vc4_connector_atomic_check(struct drm_connector *connector,
 static void vc4_hdmi_connector_reset(struct drm_connector *connector)
 {
 	drm_atomic_helper_connector_reset(connector);
-	drm_atomic_helper_connector_tv_margins_reset(connector);
+	drm_atomic_helper_connector_tv_reset(connector);
 }
 
 static const struct drm_connector_funcs vc4_fkms_connector_funcs = {

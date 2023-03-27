@@ -1929,8 +1929,10 @@ int mlx5_ib_alloc_mw(struct ib_mw *ibmw, struct ib_udata *udata)
 	ndescs = req.num_klms ? roundup(req.num_klms, 4) : roundup(1, 4);
 
 	in = kzalloc(inlen, GFP_KERNEL);
-	if (!in)
-		return -ENOMEM;
+	if (!in) {
+		err = -ENOMEM;
+		goto free;
+	}
 
 	mkc = MLX5_ADDR_OF(create_mkey_in, in, memory_key_mkey_entry);
 

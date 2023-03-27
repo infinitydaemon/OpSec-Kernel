@@ -5,8 +5,6 @@
 #define pr_fmt(fmt)     "tdx: " fmt
 
 #include <linux/cpufeature.h>
-#include <linux/export.h>
-#include <linux/io.h>
 #include <asm/coco.h>
 #include <asm/tdx.h>
 #include <asm/vmx.h>
@@ -17,7 +15,6 @@
 /* TDX module Call Leaf IDs */
 #define TDX_GET_INFO			1
 #define TDX_GET_VEINFO			3
-#define TDX_GET_REPORT			4
 #define TDX_ACCEPT_PAGE			6
 
 /* TDX hypercall Leaf IDs */
@@ -38,12 +35,6 @@
 #define VE_IS_IO_STRING(e)	((e) & BIT(4))
 
 #define ATTR_SEPT_VE_DISABLE	BIT(28)
-
-/* TDX Module call error codes */
-#define TDCALL_RETURN_CODE(a)	((a) >> 32)
-#define TDCALL_INVALID_OPERAND	0xc0000100
-
-#define TDREPORT_SUBTYPE_0	0
 
 /*
  * Wrapper for standard use of __tdx_hypercall with no output aside from
@@ -108,37 +99,6 @@ static inline void tdx_module_call(u64 fn, u64 rcx, u64 rdx, u64 r8, u64 r9,
 	if (__tdx_module_call(fn, rcx, rdx, r8, r9, out))
 		panic("TDCALL %lld failed (Buggy TDX module!)\n", fn);
 }
-
-/**
- * tdx_mcall_get_report0() - Wrapper to get TDREPORT0 (a.k.a. TDREPORT
- *                           subtype 0) using TDG.MR.REPORT TDCALL.
- * @reportdata: Address of the input buffer which contains user-defined
- *              REPORTDATA to be included into TDREPORT.
- * @tdreport: Address of the output buffer to store TDREPORT.
- *
- * Refer to section titled "TDG.MR.REPORT leaf" in the TDX Module
- * v1.0 specification for more information on TDG.MR.REPORT TDCALL.
- * It is used in the TDX guest driver module to get the TDREPORT0.
- *
- * Return 0 on success, -EINVAL for invalid operands, or -EIO on
- * other TDCALL failures.
- */
-int tdx_mcall_get_report0(u8 *reportdata, u8 *tdreport)
-{
-	u64 ret;
-
-	ret = __tdx_module_call(TDX_GET_REPORT, virt_to_phys(tdreport),
-				virt_to_phys(reportdata), TDREPORT_SUBTYPE_0,
-				0, NULL);
-	if (ret) {
-		if (TDCALL_RETURN_CODE(ret) == TDCALL_INVALID_OPERAND)
-			return -EINVAL;
-		return -EIO;
-	}
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(tdx_mcall_get_report0);
 
 static void tdx_parse_tdinfo(u64 *cc_mask)
 {
@@ -386,8 +346,8 @@ static int handle_mmio(struct pt_regs *regs, struct ve_info *ve)
 {
 	unsigned long *reg, val, vaddr;
 	char buffer[MAX_INSN_SIZE];
-	enum insn_mmio_type mmio;
 	struct insn insn = {};
+	enum mmio_type mmio;
 	int size, extend_size;
 	u8 extend_val = 0;
 
@@ -402,10 +362,10 @@ static int handle_mmio(struct pt_regs *regs, struct ve_info *ve)
 		return -EINVAL;
 
 	mmio = insn_decode_mmio(&insn, &size);
-	if (WARN_ON_ONCE(mmio == INSN_MMIO_DECODE_FAILED))
+	if (WARN_ON_ONCE(mmio == MMIO_DECODE_FAILED))
 		return -EINVAL;
 
-	if (mmio != INSN_MMIO_WRITE_IMM && mmio != INSN_MMIO_MOVS) {
+	if (mmio != MMIO_WRITE_IMM && mmio != MMIO_MOVS) {
 		reg = insn_get_modrm_reg_ptr(&insn, regs);
 		if (!reg)
 			return -EINVAL;
@@ -426,23 +386,23 @@ static int handle_mmio(struct pt_regs *regs, struct ve_info *ve)
 
 	/* Handle writes first */
 	switch (mmio) {
-	case INSN_MMIO_WRITE:
+	case MMIO_WRITE:
 		memcpy(&val, reg, size);
 		if (!mmio_write(size, ve->gpa, val))
 			return -EIO;
 		return insn.length;
-	case INSN_MMIO_WRITE_IMM:
+	case MMIO_WRITE_IMM:
 		val = insn.immediate.value;
 		if (!mmio_write(size, ve->gpa, val))
 			return -EIO;
 		return insn.length;
-	case INSN_MMIO_READ:
-	case INSN_MMIO_READ_ZERO_EXTEND:
-	case INSN_MMIO_READ_SIGN_EXTEND:
+	case MMIO_READ:
+	case MMIO_READ_ZERO_EXTEND:
+	case MMIO_READ_SIGN_EXTEND:
 		/* Reads are handled below */
 		break;
-	case INSN_MMIO_MOVS:
-	case INSN_MMIO_DECODE_FAILED:
+	case MMIO_MOVS:
+	case MMIO_DECODE_FAILED:
 		/*
 		 * MMIO was accessed with an instruction that could not be
 		 * decoded or handled properly. It was likely not using io.h
@@ -459,15 +419,15 @@ static int handle_mmio(struct pt_regs *regs, struct ve_info *ve)
 		return -EIO;
 
 	switch (mmio) {
-	case INSN_MMIO_READ:
+	case MMIO_READ:
 		/* Zero-extend for 32-bit operation */
 		extend_size = size == 4 ? sizeof(*reg) : 0;
 		break;
-	case INSN_MMIO_READ_ZERO_EXTEND:
+	case MMIO_READ_ZERO_EXTEND:
 		/* Zero extend based on operand size */
 		extend_size = insn.opnd_bytes;
 		break;
-	case INSN_MMIO_READ_SIGN_EXTEND:
+	case MMIO_READ_SIGN_EXTEND:
 		/* Sign extend based on operand size */
 		extend_size = insn.opnd_bytes;
 		if (size == 1 && val & BIT(7))

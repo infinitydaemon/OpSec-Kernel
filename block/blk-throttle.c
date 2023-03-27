@@ -129,7 +129,7 @@ static struct throtl_data *sq_to_td(struct throtl_service_queue *sq)
 /*
  * cgroup's limit in LIMIT_MAX is scaled if low limit is set. This scale is to
  * make the IO dispatch more smooth.
- * Scale up: linearly scale up according to elapsed time since upgrade. For
+ * Scale up: linearly scale up according to lapsed time since upgrade. For
  *           every throtl_slice, the limit scales up 1/2 .low limit till the
  *           limit hits .max limit
  * Scale down: exponentially scale down if a cgroup doesn't hit its .low limit
@@ -395,9 +395,8 @@ static void throtl_pd_init(struct blkg_policy_data *pd)
 	 * If on the default hierarchy, we switch to properly hierarchical
 	 * behavior where limits on a given throtl_grp are applied to the
 	 * whole subtree rather than just the group itself.  e.g. If 16M
-	 * read_bps limit is set on a parent group, summary bps of
-	 * parent group and its subtree groups can't exceed 16M for the
-	 * device.
+	 * read_bps limit is set on the root group, the whole system can't
+	 * exceed 16M for the device.
 	 *
 	 * If not on the default hierarchy, the broken flat hierarchy
 	 * behavior is retained where all throtl_grps are treated as if
@@ -645,7 +644,7 @@ static inline void throtl_start_new_slice_with_credit(struct throtl_grp *tg,
 	 * that bandwidth. Do try to make use of that bandwidth while giving
 	 * credit.
 	 */
-	if (time_after(start, tg->slice_start[rw]))
+	if (time_after_eq(start, tg->slice_start[rw]))
 		tg->slice_start[rw] = start;
 
 	tg->slice_end[rw] = jiffies + tg->td->throtl_slice;
@@ -822,15 +821,17 @@ static void tg_update_carryover(struct throtl_grp *tg)
 		   tg->carryover_ios[READ], tg->carryover_ios[WRITE]);
 }
 
-static unsigned long tg_within_iops_limit(struct throtl_grp *tg, struct bio *bio,
-				 u32 iops_limit)
+static bool tg_within_iops_limit(struct throtl_grp *tg, struct bio *bio,
+				 u32 iops_limit, unsigned long *wait)
 {
 	bool rw = bio_data_dir(bio);
 	unsigned int io_allowed;
 	unsigned long jiffy_elapsed, jiffy_wait, jiffy_elapsed_rnd;
 
 	if (iops_limit == UINT_MAX) {
-		return 0;
+		if (wait)
+			*wait = 0;
+		return true;
 	}
 
 	jiffy_elapsed = jiffies - tg->slice_start[rw];
@@ -840,16 +841,21 @@ static unsigned long tg_within_iops_limit(struct throtl_grp *tg, struct bio *bio
 	io_allowed = calculate_io_allowed(iops_limit, jiffy_elapsed_rnd) +
 		     tg->carryover_ios[rw];
 	if (tg->io_disp[rw] + 1 <= io_allowed) {
-		return 0;
+		if (wait)
+			*wait = 0;
+		return true;
 	}
 
 	/* Calc approx time to dispatch */
 	jiffy_wait = jiffy_elapsed_rnd - jiffy_elapsed;
-	return jiffy_wait;
+
+	if (wait)
+		*wait = jiffy_wait;
+	return false;
 }
 
-static unsigned long tg_within_bps_limit(struct throtl_grp *tg, struct bio *bio,
-				u64 bps_limit)
+static bool tg_within_bps_limit(struct throtl_grp *tg, struct bio *bio,
+				u64 bps_limit, unsigned long *wait)
 {
 	bool rw = bio_data_dir(bio);
 	u64 bytes_allowed, extra_bytes;
@@ -858,7 +864,9 @@ static unsigned long tg_within_bps_limit(struct throtl_grp *tg, struct bio *bio,
 
 	/* no need to throttle if this bio's bytes have been accounted */
 	if (bps_limit == U64_MAX || bio_flagged(bio, BIO_BPS_THROTTLED)) {
-		return 0;
+		if (wait)
+			*wait = 0;
+		return true;
 	}
 
 	jiffy_elapsed = jiffy_elapsed_rnd = jiffies - tg->slice_start[rw];
@@ -871,7 +879,9 @@ static unsigned long tg_within_bps_limit(struct throtl_grp *tg, struct bio *bio,
 	bytes_allowed = calculate_bytes_allowed(bps_limit, jiffy_elapsed_rnd) +
 			tg->carryover_bytes[rw];
 	if (tg->bytes_disp[rw] + bio_size <= bytes_allowed) {
-		return 0;
+		if (wait)
+			*wait = 0;
+		return true;
 	}
 
 	/* Calc approx time to dispatch */
@@ -886,7 +896,9 @@ static unsigned long tg_within_bps_limit(struct throtl_grp *tg, struct bio *bio,
 	 * up we did. Add that time also.
 	 */
 	jiffy_wait = jiffy_wait + (jiffy_elapsed_rnd - jiffy_elapsed);
-	return jiffy_wait;
+	if (wait)
+		*wait = jiffy_wait;
+	return false;
 }
 
 /*
@@ -934,9 +946,8 @@ static bool tg_may_dispatch(struct throtl_grp *tg, struct bio *bio,
 				jiffies + tg->td->throtl_slice);
 	}
 
-	bps_wait = tg_within_bps_limit(tg, bio, bps_limit);
-	iops_wait = tg_within_iops_limit(tg, bio, iops_limit);
-	if (bps_wait + iops_wait == 0) {
+	if (tg_within_bps_limit(tg, bio, bps_limit, &bps_wait) &&
+	    tg_within_iops_limit(tg, bio, iops_limit, &iops_wait)) {
 		if (wait)
 			*wait = 0;
 		return true;
@@ -1055,6 +1066,7 @@ static void tg_dispatch_one_bio(struct throtl_grp *tg, bool rw)
 	sq->nr_queued[rw]--;
 
 	throtl_charge_bio(tg, bio);
+	bio_set_flag(bio, BIO_BPS_THROTTLED);
 
 	/*
 	 * If our parent is another tg, we just need to transfer @bio to
@@ -1067,7 +1079,6 @@ static void tg_dispatch_one_bio(struct throtl_grp *tg, bool rw)
 		throtl_add_bio_tg(bio, &tg->qnode_on_parent[rw], parent_tg);
 		start_parent_slice_with_credit(tg, parent_tg, rw);
 	} else {
-		bio_set_flag(bio, BIO_BPS_THROTTLED);
 		throtl_qnode_add_bio(bio, &tg->qnode_on_parent[rw],
 				     &parent_sq->queued[rw]);
 		BUG_ON(tg->td->nr_queued[rw] <= 0);
@@ -1726,18 +1737,7 @@ void blk_throtl_cancel_bios(struct gendisk *disk)
 		 * Set the flag to make sure throtl_pending_timer_fn() won't
 		 * stop until all throttled bios are dispatched.
 		 */
-		tg->flags |= THROTL_TG_CANCELING;
-
-		/*
-		 * Do not dispatch cgroup without THROTL_TG_PENDING or cgroup
-		 * will be inserted to service queue without THROTL_TG_PENDING
-		 * set in tg_update_disptime below. Then IO dispatched from
-		 * child in tg_dispatch_one_bio will trigger double insertion
-		 * and corrupt the tree.
-		 */
-		if (!(tg->flags & THROTL_TG_PENDING))
-			continue;
-
+		blkg_to_tg(blkg)->flags |= THROTL_TG_CANCELING;
 		/*
 		 * Update disptime after setting the above flag to make sure
 		 * throtl_select_dispatch() won't exit without dispatching.
@@ -1762,6 +1762,7 @@ static unsigned long __tg_last_low_overflow_time(struct throtl_grp *tg)
 	return min(rtime, wtime);
 }
 
+/* tg should not be an intermediate node */
 static unsigned long tg_last_low_overflow_time(struct throtl_grp *tg)
 {
 	struct throtl_service_queue *parent_sq;
@@ -1815,29 +1816,24 @@ static bool throtl_tg_is_idle(struct throtl_grp *tg)
 	return ret;
 }
 
-static bool throtl_low_limit_reached(struct throtl_grp *tg, int rw)
-{
-	struct throtl_service_queue *sq = &tg->service_queue;
-	bool limit = tg->bps[rw][LIMIT_LOW] || tg->iops[rw][LIMIT_LOW];
-
-	/*
-	 * if low limit is zero, low limit is always reached.
-	 * if low limit is non-zero, we can check if there is any request
-	 * is queued to determine if low limit is reached as we throttle
-	 * request according to limit.
-	 */
-	return !limit || sq->nr_queued[rw];
-}
-
 static bool throtl_tg_can_upgrade(struct throtl_grp *tg)
 {
+	struct throtl_service_queue *sq = &tg->service_queue;
+	bool read_limit, write_limit;
+
 	/*
-	 * cgroup reaches low limit when low limit of READ and WRITE are
-	 * both reached, it's ok to upgrade to next limit if cgroup reaches
-	 * low limit
+	 * if cgroup reaches low limit (if low limit is 0, the cgroup always
+	 * reaches), it's ok to upgrade to next limit
 	 */
-	if (throtl_low_limit_reached(tg, READ) &&
-	    throtl_low_limit_reached(tg, WRITE))
+	read_limit = tg->bps[READ][LIMIT_LOW] || tg->iops[READ][LIMIT_LOW];
+	write_limit = tg->bps[WRITE][LIMIT_LOW] || tg->iops[WRITE][LIMIT_LOW];
+	if (!read_limit && !write_limit)
+		return true;
+	if (read_limit && sq->nr_queued[READ] &&
+	    (!write_limit || sq->nr_queued[WRITE]))
+		return true;
+	if (write_limit && sq->nr_queued[WRITE] &&
+	    (!read_limit || sq->nr_queued[READ]))
 		return true;
 
 	if (time_after_eq(jiffies,
@@ -1955,7 +1951,8 @@ static bool throtl_tg_can_downgrade(struct throtl_grp *tg)
 	 * If cgroup is below low limit, consider downgrade and throttle other
 	 * cgroups
 	 */
-	if (time_after_eq(now, tg_last_low_overflow_time(tg) +
+	if (time_after_eq(now, td->low_upgrade_time + td->throtl_slice) &&
+	    time_after_eq(now, tg_last_low_overflow_time(tg) +
 					td->throtl_slice) &&
 	    (!throtl_tg_is_idle(tg) ||
 	     !list_empty(&tg_to_blkg(tg)->blkcg->css.children)))
@@ -1965,11 +1962,6 @@ static bool throtl_tg_can_downgrade(struct throtl_grp *tg)
 
 static bool throtl_hierarchy_can_downgrade(struct throtl_grp *tg)
 {
-	struct throtl_data *td = tg->td;
-
-	if (time_before(jiffies, td->low_upgrade_time + td->throtl_slice))
-		return false;
-
 	while (true) {
 		if (!throtl_tg_can_downgrade(tg))
 			return false;

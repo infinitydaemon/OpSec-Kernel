@@ -48,6 +48,10 @@
 		regulator-name = "5v0";
 	};
 
+	leds: leds {
+		compatible = "gpio-leds";
+	};
+
 	soc {
 		gpiomem {
 			compatible = "brcm,bcm2835-gpiomem";

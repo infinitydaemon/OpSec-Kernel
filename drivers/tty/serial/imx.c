@@ -574,7 +574,8 @@ static inline void imx_uart_transmit_buffer(struct imx_port *sport)
 		/* send xmit->buf[xmit->tail]
 		 * out the port here */
 		imx_uart_writel(sport, xmit->buf[xmit->tail], URTX0);
-		uart_xmit_advance(&sport->port, 1);
+		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+		sport->port.icount.tx++;
 	}
 
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
@@ -600,7 +601,9 @@ static void imx_uart_dma_tx_callback(void *data)
 	ucr1 &= ~UCR1_TXDMAEN;
 	imx_uart_writel(sport, ucr1, UCR1);
 
-	uart_xmit_advance(&sport->port, sport->tx_bytes);
+	/* update the stat */
+	xmit->tail = (xmit->tail + sport->tx_bytes) & (UART_XMIT_SIZE - 1);
+	sport->port.icount.tx += sport->tx_bytes;
 
 	dev_dbg(sport->port.dev, "we finish the TX DMA.\n");
 
@@ -2373,6 +2376,11 @@ static int imx_uart_probe(struct platform_device *pdev)
 	ucr1 = imx_uart_readl(sport, UCR1);
 	ucr1 &= ~(UCR1_ADEN | UCR1_TRDYEN | UCR1_IDEN | UCR1_RRDYEN | UCR1_RTSDEN);
 	imx_uart_writel(sport, ucr1, UCR1);
+
+	/* Disable Ageing Timer interrupt */
+	ucr2 = imx_uart_readl(sport, UCR2);
+	ucr2 &= ~UCR2_ATEN;
+	imx_uart_writel(sport, ucr2, UCR2);
 
 	/*
 	 * In case RS485 is enabled without GPIO RTS control, the UART IP

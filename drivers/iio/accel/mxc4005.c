@@ -385,7 +385,8 @@ static int mxc4005_chip_init(struct mxc4005_data *data)
 	return 0;
 }
 
-static int mxc4005_probe(struct i2c_client *client)
+static int mxc4005_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct mxc4005_data *data;
 	struct iio_dev *indio_dev;
@@ -488,7 +489,7 @@ static struct i2c_driver mxc4005_driver = {
 		.name = MXC4005_DRV_NAME,
 		.acpi_match_table = ACPI_PTR(mxc4005_acpi_match),
 	},
-	.probe_new	= mxc4005_probe,
+	.probe		= mxc4005_probe,
 	.id_table	= mxc4005_id,
 };
 

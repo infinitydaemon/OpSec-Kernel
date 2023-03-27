@@ -19,7 +19,18 @@ description: |-
 
 properties:
   compatible:
-    const: sony,imx296
+    enum:
+      - sony,imx296
+      - sony,imx296ll
+      - sony,imx296lq
+    description:
+      The IMX296 sensor exists in two different models, a colour variant
+      (IMX296LQ) and a monochrome variant (IMX296LL). The device exposes the
+      model through registers, allowing for auto-detection with a common
+      "sony,imx296" compatible string. However, some camera modules disable the
+      ability to read the sensor model register, which disables this feature.
+      In those cases, the exact model needs to be specified as "sony,imx296ll"
+      or "sony,imx296lq".
 
   reg:
     maxItems: 1

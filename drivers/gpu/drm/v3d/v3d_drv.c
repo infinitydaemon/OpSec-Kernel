@@ -22,6 +22,7 @@
 #include <linux/reset.h>
 
 #include <drm/drm_drv.h>
+#include <drm/drm_fb_helper.h>
 #include <drm/drm_managed.h>
 
 #include <soc/bcm2835/raspberrypi-firmware.h>

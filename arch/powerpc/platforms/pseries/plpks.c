@@ -162,15 +162,19 @@ static struct plpks_auth *construct_auth(u8 consumer)
 	if (consumer > PKS_OS_OWNER)
 		return ERR_PTR(-EINVAL);
 
-	auth = kzalloc(struct_size(auth, password, maxpwsize), GFP_KERNEL);
+	auth = kmalloc(struct_size(auth, password, maxpwsize), GFP_KERNEL);
 	if (!auth)
 		return ERR_PTR(-ENOMEM);
 
 	auth->version = 1;
 	auth->consumer = consumer;
+	auth->rsvd0 = 0;
+	auth->rsvd1 = 0;
 
-	if (consumer == PKS_FW_OWNER || consumer == PKS_BOOTLOADER_OWNER)
+	if (consumer == PKS_FW_OWNER || consumer == PKS_BOOTLOADER_OWNER) {
+		auth->passwordlength = 0;
 		return auth;
+	}
 
 	memcpy(auth->password, ospassword, ospasswordlength);
 
@@ -308,6 +312,10 @@ int plpks_write_var(struct plpks_var var)
 	if (!rc)
 		rc = plpks_confirm_object_flushed(label, auth);
 
+	if (rc)
+		pr_err("Failed to write variable %s for component %s with error %d\n",
+		       var.name, var.component, rc);
+
 	rc = pseries_status_to_err(rc);
 	kfree(label);
 out:
@@ -341,6 +349,10 @@ int plpks_remove_var(char *component, u8 varos, struct plpks_var_name vname)
 
 	if (!rc)
 		rc = plpks_confirm_object_flushed(label, auth);
+
+	if (rc)
+		pr_err("Failed to remove variable %s for component %s with error %d\n",
+		       vname.name, component, rc);
 
 	rc = pseries_status_to_err(rc);
 	kfree(label);
@@ -391,6 +403,8 @@ static int plpks_read_var(u8 consumer, struct plpks_var *var)
 
 
 	if (rc != H_SUCCESS) {
+		pr_err("Failed to read variable %s for component %s with error %d\n",
+		       var->name, var->component, rc);
 		rc = pseries_status_to_err(rc);
 		goto out_free_output;
 	}

@@ -13,7 +13,6 @@
 #include <linux/ethtool.h>
 #include <linux/etherdevice.h>
 #include <linux/if_arp.h>
-#include <linux/kstrtox.h>
 #include <linux/mii.h>
 #include <linux/rtnetlink.h>
 #include <linux/usb.h>
@@ -344,7 +343,7 @@ static ssize_t raw_ip_store(struct device *d,  struct device_attribute *attr, co
 	bool enable;
 	int ret;
 
-	if (kstrtobool(buf, &enable))
+	if (strtobool(buf, &enable))
 		return -EINVAL;
 
 	/* no change? */
@@ -493,7 +492,7 @@ static ssize_t pass_through_store(struct device *d,
 	struct qmi_wwan_state *info;
 	bool enable;
 
-	if (kstrtobool(buf, &enable))
+	if (strtobool(buf, &enable))
 		return -EINVAL;
 
 	info = (void *)&dev->data;

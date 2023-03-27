@@ -122,7 +122,8 @@ static pte_t *kvm_mips_walk_pgd(pgd_t *pgd, struct kvm_mmu_memory_cache *cache,
 		if (!cache)
 			return NULL;
 		new_pmd = kvm_mmu_memory_cache_alloc(cache);
-		pmd_init(new_pmd);
+		pmd_init((unsigned long)new_pmd,
+			 (unsigned long)invalid_pte_table);
 		pud_populate(NULL, pud, new_pmd);
 	}
 	pmd = pmd_offset(pud, addr);

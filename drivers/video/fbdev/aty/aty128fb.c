@@ -1766,10 +1766,12 @@ static int aty128_bl_update_status(struct backlight_device *bd)
 	unsigned int reg = aty_ld_le32(LVDS_GEN_CNTL);
 	int level;
 
-	if (!par->lcd_on)
+	if (bd->props.power != FB_BLANK_UNBLANK ||
+	    bd->props.fb_blank != FB_BLANK_UNBLANK ||
+	    !par->lcd_on)
 		level = 0;
 	else
-		level = backlight_get_brightness(bd);
+		level = bd->props.brightness;
 
 	reg |= LVDS_BL_MOD_EN | LVDS_BLON;
 	if (level > 0) {
@@ -2501,12 +2503,7 @@ static int aty128fb_init(void)
 {
 #ifndef MODULE
 	char *option = NULL;
-#endif
 
-	if (fb_modesetting_disabled("aty128fb"))
-		return -ENODEV;
-
-#ifndef MODULE
 	if (fb_get_options("aty128fb", &option))
 		return -ENODEV;
 	aty128fb_setup(option);

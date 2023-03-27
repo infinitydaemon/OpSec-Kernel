@@ -28,6 +28,7 @@
 #include "amdgpu_sync.h"
 #include "amdgpu_object.h"
 #include "amdgpu_vm.h"
+#include "amdgpu_mn.h"
 #include "amdgpu_res_cursor.h"
 #include "kfd_priv.h"
 #include "kfd_svm.h"
@@ -64,11 +65,8 @@ svm_migrate_gart_map(struct amdgpu_ring *ring, uint64_t npages,
 	num_dw = ALIGN(adev->mman.buffer_funcs->copy_num_dw, 8);
 	num_bytes = npages * 8;
 
-	r = amdgpu_job_alloc_with_ib(adev, &adev->mman.entity,
-				     AMDGPU_FENCE_OWNER_UNDEFINED,
-				     num_dw * 4 + num_bytes,
-				     AMDGPU_IB_POOL_DELAYED,
-				     &job);
+	r = amdgpu_job_alloc_with_ib(adev, num_dw * 4 + num_bytes,
+				     AMDGPU_IB_POOL_DELAYED, &job);
 	if (r)
 		return r;
 
@@ -91,9 +89,17 @@ svm_migrate_gart_map(struct amdgpu_ring *ring, uint64_t npages,
 	cpu_addr = &job->ibs[0].ptr[num_dw];
 
 	amdgpu_gart_map(adev, 0, npages, addr, pte_flags, cpu_addr);
-	fence = amdgpu_job_submit(job);
+	r = amdgpu_job_submit(job, &adev->mman.entity,
+			      AMDGPU_FENCE_OWNER_UNDEFINED, &fence);
+	if (r)
+		goto error_free;
+
 	dma_fence_put(fence);
 
+	return r;
+
+error_free:
+	amdgpu_job_free(job);
 	return r;
 }
 
@@ -523,8 +529,8 @@ svm_migrate_ram_to_vram(struct svm_range *prange, uint32_t best_loc,
 	for (addr = start; addr < end;) {
 		unsigned long next;
 
-		vma = vma_lookup(mm, addr);
-		if (!vma)
+		vma = find_vma(mm, addr);
+		if (!vma || addr < vma->vm_start)
 			break;
 
 		next = min(vma->vm_end, end);
@@ -792,8 +798,8 @@ int svm_migrate_vram_to_ram(struct svm_range *prange, struct mm_struct *mm,
 	for (addr = start; addr < end;) {
 		unsigned long next;
 
-		vma = vma_lookup(mm, addr);
-		if (!vma) {
+		vma = find_vma(mm, addr);
+		if (!vma || addr < vma->vm_start) {
 			pr_debug("failed to find vma for prange %p\n", prange);
 			r = -EFAULT;
 			break;

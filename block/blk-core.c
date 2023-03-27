@@ -59,12 +59,13 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(block_split);
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_unplug);
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_rq_insert);
 
-static DEFINE_IDA(blk_queue_ida);
+DEFINE_IDA(blk_queue_ida);
 
 /*
  * For queue allocation
  */
-static struct kmem_cache *blk_requestq_cachep;
+struct kmem_cache *blk_requestq_cachep;
+struct kmem_cache *blk_requestq_srcu_cachep;
 
 /*
  * Controlling structure to kblockd
@@ -252,42 +253,19 @@ void blk_clear_pm_only(struct request_queue *q)
 }
 EXPORT_SYMBOL_GPL(blk_clear_pm_only);
 
-static void blk_free_queue_rcu(struct rcu_head *rcu_head)
-{
-	struct request_queue *q = container_of(rcu_head,
-			struct request_queue, rcu_head);
-
-	percpu_ref_exit(&q->q_usage_counter);
-	kmem_cache_free(blk_requestq_cachep, q);
-}
-
-static void blk_free_queue(struct request_queue *q)
-{
-	if (q->poll_stat)
-		blk_stat_remove_callback(q, q->poll_cb);
-	blk_stat_free_callback(q->poll_cb);
-
-	blk_free_queue_stats(q->stats);
-	kfree(q->poll_stat);
-
-	if (queue_is_mq(q))
-		blk_mq_release(q);
-
-	ida_free(&blk_queue_ida, q->id);
-	call_rcu(&q->rcu_head, blk_free_queue_rcu);
-}
-
 /**
  * blk_put_queue - decrement the request_queue refcount
  * @q: the request_queue structure to decrement the refcount for
  *
- * Decrements the refcount of the request_queue and free it when the refcount
- * reaches 0.
+ * Decrements the refcount of the request_queue kobject. When this reaches 0
+ * we'll have blk_release_queue() called.
+ *
+ * Context: Any context, but the last reference must not be dropped from
+ *          atomic context.
  */
 void blk_put_queue(struct request_queue *q)
 {
-	if (refcount_dec_and_test(&q->refs))
-		blk_free_queue(q);
+	kobject_put(&q->kobj);
 }
 EXPORT_SYMBOL(blk_put_queue);
 
@@ -395,20 +373,26 @@ static void blk_timeout_work(struct work_struct *work)
 {
 }
 
-struct request_queue *blk_alloc_queue(int node_id)
+struct request_queue *blk_alloc_queue(int node_id, bool alloc_srcu)
 {
 	struct request_queue *q;
 
-	q = kmem_cache_alloc_node(blk_requestq_cachep, GFP_KERNEL | __GFP_ZERO,
-				  node_id);
+	q = kmem_cache_alloc_node(blk_get_queue_kmem_cache(alloc_srcu),
+			GFP_KERNEL | __GFP_ZERO, node_id);
 	if (!q)
 		return NULL;
+
+	if (alloc_srcu) {
+		blk_queue_flag_set(QUEUE_FLAG_HAS_SRCU, q);
+		if (init_srcu_struct(q->srcu) != 0)
+			goto fail_q;
+	}
 
 	q->last_merge = NULL;
 
 	q->id = ida_alloc(&blk_queue_ida, GFP_KERNEL);
 	if (q->id < 0)
-		goto fail_q;
+		goto fail_srcu;
 
 	q->stats = blk_alloc_queue_stats();
 	if (!q->stats)
@@ -422,7 +406,8 @@ struct request_queue *blk_alloc_queue(int node_id)
 	INIT_WORK(&q->timeout_work, blk_timeout_work);
 	INIT_LIST_HEAD(&q->icq_list);
 
-	refcount_set(&q->refs, 1);
+	kobject_init(&q->kobj, &blk_queue_ktype);
+
 	mutex_init(&q->debugfs_mutex);
 	mutex_init(&q->sysfs_lock);
 	mutex_init(&q->sysfs_dir_lock);
@@ -449,8 +434,11 @@ fail_stats:
 	blk_free_queue_stats(q->stats);
 fail_id:
 	ida_free(&blk_queue_ida, q->id);
+fail_srcu:
+	if (alloc_srcu)
+		cleanup_srcu_struct(q->srcu);
 fail_q:
-	kmem_cache_free(blk_requestq_cachep, q);
+	kmem_cache_free(blk_get_queue_kmem_cache(alloc_srcu), q);
 	return NULL;
 }
 
@@ -466,7 +454,7 @@ bool blk_get_queue(struct request_queue *q)
 {
 	if (unlikely(blk_queue_dying(q)))
 		return false;
-	refcount_inc(&q->refs);
+	kobject_get(&q->kobj);
 	return true;
 }
 EXPORT_SYMBOL(blk_get_queue);
@@ -684,6 +672,18 @@ static void __submit_bio_noacct_mq(struct bio *bio)
 
 void submit_bio_noacct_nocheck(struct bio *bio)
 {
+	blk_cgroup_bio_start(bio);
+	blkcg_bio_issue_init(bio);
+
+	if (!bio_flagged(bio, BIO_TRACE_COMPLETION)) {
+		trace_block_bio_queue(bio);
+		/*
+		 * Now that enqueuing has been traced, we need to trace
+		 * completion as well.
+		 */
+		bio_set_flag(bio, BIO_TRACE_COMPLETION);
+	}
+
 	/*
 	 * We only want one ->submit_bio to be active at a time, else stack
 	 * usage with stacked devices could be a problem.  Use current->bio_list
@@ -788,17 +788,6 @@ void submit_bio_noacct(struct bio *bio)
 
 	if (blk_throtl_bio(bio))
 		return;
-
-	blk_cgroup_bio_start(bio);
-	blkcg_bio_issue_init(bio);
-
-	if (!bio_flagged(bio, BIO_TRACE_COMPLETION)) {
-		trace_block_bio_queue(bio);
-		/* Now that enqueuing has been traced, we need to trace
-		 * completion as well.
-		 */
-		bio_set_flag(bio, BIO_TRACE_COMPLETION);
-	}
 	submit_bio_noacct_nocheck(bio);
 	return;
 
@@ -853,10 +842,16 @@ EXPORT_SYMBOL(submit_bio);
  */
 int bio_poll(struct bio *bio, struct io_comp_batch *iob, unsigned int flags)
 {
-	struct request_queue *q = bdev_get_queue(bio->bi_bdev);
 	blk_qc_t cookie = READ_ONCE(bio->bi_cookie);
+	struct block_device *bdev;
+	struct request_queue *q;
 	int ret = 0;
 
+	bdev = READ_ONCE(bio->bi_bdev);
+	if (!bdev)
+		return 0;
+
+	q = bdev_get_queue(bdev);
 	if (cookie == BLK_QC_T_NONE ||
 	    !test_bit(QUEUE_FLAG_POLL, &q->queue_flags))
 		return 0;
@@ -916,7 +911,7 @@ int iocb_bio_iopoll(struct kiocb *kiocb, struct io_comp_batch *iob,
 	 */
 	rcu_read_lock();
 	bio = READ_ONCE(kiocb->private);
-	if (bio && bio->bi_bdev)
+	if (bio)
 		ret = bio_poll(bio, iob, flags);
 	rcu_read_unlock();
 
@@ -955,6 +950,18 @@ unsigned long bdev_start_io_acct(struct block_device *bdev,
 	return start_time;
 }
 EXPORT_SYMBOL(bdev_start_io_acct);
+
+/**
+ * bio_start_io_acct_time - start I/O accounting for bio based drivers
+ * @bio:	bio to start account for
+ * @start_time:	start time that should be passed back to bio_end_io_acct().
+ */
+void bio_start_io_acct_time(struct bio *bio, unsigned long start_time)
+{
+	bdev_start_io_acct(bio->bi_bdev, bio_sectors(bio),
+			   bio_op(bio), start_time);
+}
+EXPORT_SYMBOL_GPL(bio_start_io_acct_time);
 
 /**
  * bio_start_io_acct - start I/O accounting for bio based drivers
@@ -1183,6 +1190,9 @@ int __init blk_dev_init(void)
 			sizeof_field(struct request, cmd_flags));
 	BUILD_BUG_ON(REQ_OP_BITS + REQ_FLAG_BITS > 8 *
 			sizeof_field(struct bio, bi_opf));
+	BUILD_BUG_ON(ALIGN(offsetof(struct request_queue, srcu),
+			   __alignof__(struct request_queue)) !=
+		     sizeof(struct request_queue));
 
 	/* used for unplugging and affects IO latency/throughput - HIGHPRI */
 	kblockd_workqueue = alloc_workqueue("kblockd",
@@ -1192,6 +1202,10 @@ int __init blk_dev_init(void)
 
 	blk_requestq_cachep = kmem_cache_create("request_queue",
 			sizeof(struct request_queue), 0, SLAB_PANIC, NULL);
+
+	blk_requestq_srcu_cachep = kmem_cache_create("request_queue_srcu",
+			sizeof(struct request_queue) +
+			sizeof(struct srcu_struct), 0, SLAB_PANIC, NULL);
 
 	blk_debugfs_root = debugfs_create_dir("block", NULL);
 

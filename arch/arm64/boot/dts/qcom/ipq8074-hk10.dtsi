@@ -5,7 +5,6 @@
 /dts-v1/;
 
 #include "ipq8074.dtsi"
-#include <dt-bindings/gpio/gpio.h>
 
 / {
 	aliases {
@@ -23,7 +22,7 @@
 };
 
 &blsp1_spi1 {
-	status = "okay";
+	status = "ok";
 
 	flash@0 {
 		#address-cells = <1>;
@@ -35,33 +34,33 @@
 };
 
 &blsp1_uart5 {
-	status = "okay";
+	status = "ok";
 };
 
 &pcie0 {
-	status = "okay";
-	perst-gpios = <&tlmm 58 GPIO_ACTIVE_LOW>;
+	status = "ok";
+	perst-gpios = <&tlmm 58 0x1>;
 };
 
 &pcie1 {
-	status = "okay";
-	perst-gpios = <&tlmm 61 GPIO_ACTIVE_LOW>;
+	status = "ok";
+	perst-gpios = <&tlmm 61 0x1>;
 };
 
 &pcie_phy0 {
-	status = "okay";
+	status = "ok";
 };
 
 &pcie_phy1 {
-	status = "okay";
+	status = "ok";
 };
 
 &qpic_bam {
-	status = "okay";
+	status = "ok";
 };
 
 &qpic_nand {
-	status = "okay";
+	status = "ok";
 
 	nand@0 {
 		reg = <0>;

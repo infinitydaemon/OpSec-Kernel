@@ -668,7 +668,7 @@ static bool process_mem_region(struct mem_vector *region,
 		}
 	}
 #endif
-	return false;
+	return 0;
 }
 
 #ifdef CONFIG_EFI

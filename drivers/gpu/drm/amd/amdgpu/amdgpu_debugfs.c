@@ -1969,7 +1969,7 @@ int amdgpu_debugfs_init(struct amdgpu_device *adev)
 	amdgpu_ta_if_debugfs_init(adev);
 
 #if defined(CONFIG_DRM_AMD_DC)
-	if (adev->dc_enabled)
+	if (amdgpu_device_has_dc_support(adev))
 		dtn_debugfs_init(adev);
 #endif
 

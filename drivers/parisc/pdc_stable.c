@@ -274,7 +274,8 @@ pdcspath_hwpath_write(struct pdcspath_entry *entry, const char *buf, size_t coun
 
 	/* We'll use a local copy of buf */
 	count = min_t(size_t, count, sizeof(in)-1);
-	strscpy(in, buf, count + 1);
+	strncpy(in, buf, count);
+	in[count] = '\0';
 	
 	/* Let's clean up the target. 0xff is a blank pattern */
 	memset(&hwpath, 0xff, sizeof(hwpath));
@@ -387,7 +388,8 @@ pdcspath_layer_write(struct pdcspath_entry *entry, const char *buf, size_t count
 
 	/* We'll use a local copy of buf */
 	count = min_t(size_t, count, sizeof(in)-1);
-	strscpy(in, buf, count + 1);
+	strncpy(in, buf, count);
+	in[count] = '\0';
 	
 	/* Let's clean up the target. 0 is a blank pattern */
 	memset(&layers, 0, sizeof(layers));
@@ -754,7 +756,8 @@ static ssize_t pdcs_auto_write(struct kobject *kobj,
 
 	/* We'll use a local copy of buf */
 	count = min_t(size_t, count, sizeof(in)-1);
-	strscpy(in, buf, count + 1);
+	strncpy(in, buf, count);
+	in[count] = '\0';
 
 	/* Current flags are stored in primary boot path entry */
 	pathentry = &pdcspath_entry_primary;

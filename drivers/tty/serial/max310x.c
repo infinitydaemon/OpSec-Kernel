@@ -787,7 +787,10 @@ static void max310x_handle_tx(struct uart_port *port)
 		} else {
 			max310x_batch_write(port, xmit->buf + xmit->tail, to_send);
 		}
-		uart_xmit_advance(port, to_send);
+
+		/* Add data to send */
+		port->icount.tx += to_send;
+		xmit->tail = (xmit->tail + to_send) & (UART_XMIT_SIZE - 1);
 	}
 
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)

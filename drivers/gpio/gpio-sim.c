@@ -31,7 +31,6 @@
 
 #include "gpiolib.h"
 
-#define GPIO_SIM_NGPIO_MAX	1024
 #define GPIO_SIM_PROP_MAX	4 /* Max 3 properties + sentinel. */
 #define GPIO_SIM_NUM_ATTRS	3 /* value, pull and sentinel */
 
@@ -371,9 +370,6 @@ static int gpio_sim_add_bank(struct fwnode_handle *swnode, struct device *dev)
 	ret = fwnode_property_read_u32(swnode, "ngpios", &num_lines);
 	if (ret)
 		return ret;
-
-	if (num_lines > GPIO_SIM_NGPIO_MAX)
-		return -ERANGE;
 
 	ret = fwnode_property_read_string(swnode, "gpio-sim,label", &label);
 	if (ret) {

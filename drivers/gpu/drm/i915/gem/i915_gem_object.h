@@ -403,7 +403,8 @@ i915_gem_object_get_dma_address(struct drm_i915_gem_object *obj,
 				unsigned long n);
 
 void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
-				 struct sg_table *pages);
+				 struct sg_table *pages,
+				 unsigned int sg_page_sizes);
 
 int ____i915_gem_object_get_pages(struct drm_i915_gem_object *obj);
 int __i915_gem_object_get_pages(struct drm_i915_gem_object *obj);
@@ -480,10 +481,6 @@ void *__must_check i915_gem_object_pin_map(struct drm_i915_gem_object *obj,
 
 void *__must_check i915_gem_object_pin_map_unlocked(struct drm_i915_gem_object *obj,
 						    enum i915_map_type type);
-
-enum i915_map_type i915_coherent_map_type(struct drm_i915_private *i915,
-					  struct drm_i915_gem_object *obj,
-					  bool always_coherent);
 
 void __i915_gem_object_flush_map(struct drm_i915_gem_object *obj,
 				 unsigned long offset,

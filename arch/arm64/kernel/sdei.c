@@ -144,7 +144,7 @@ static int init_sdei_scs(void)
 	int cpu;
 	int err = 0;
 
-	if (!scs_is_enabled())
+	if (!IS_ENABLED(CONFIG_SHADOW_CALL_STACK))
 		return 0;
 
 	for_each_possible_cpu(cpu) {

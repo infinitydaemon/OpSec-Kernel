@@ -7,7 +7,7 @@
 #include <linux/kvm_host.h>
 
 #include "hyperv.h"
-#include "smm.h"
+#include "kvm_cache_regs.h"
 
 #define KVM_APIC_INIT		0
 #define KVM_APIC_SIPI		1
@@ -188,11 +188,11 @@ static inline bool lapic_in_kernel(struct kvm_vcpu *vcpu)
 
 extern struct static_key_false_deferred apic_hw_disabled;
 
-static inline bool kvm_apic_hw_enabled(struct kvm_lapic *apic)
+static inline int kvm_apic_hw_enabled(struct kvm_lapic *apic)
 {
 	if (static_branch_unlikely(&apic_hw_disabled.key))
 		return apic->vcpu->arch.apic_base & MSR_IA32_APICBASE_ENABLE;
-	return true;
+	return MSR_IA32_APICBASE_ENABLE;
 }
 
 extern struct static_key_false_deferred apic_sw_disabled;

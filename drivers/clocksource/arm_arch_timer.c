@@ -18,7 +18,6 @@
 #include <linux/clocksource.h>
 #include <linux/clocksource_ids.h>
 #include <linux/interrupt.h>
-#include <linux/kstrtox.h>
 #include <linux/of_irq.h>
 #include <linux/of_address.h>
 #include <linux/io.h>
@@ -98,7 +97,7 @@ static bool evtstrm_enable __ro_after_init = IS_ENABLED(CONFIG_ARM_ARCH_TIMER_EV
 
 static int __init early_evtstrm_cfg(char *buf)
 {
-	return kstrtobool(buf, &evtstrm_enable);
+	return strtobool(buf, &evtstrm_enable);
 }
 early_param("clocksource.arm_arch_timer.evtstrm", early_evtstrm_cfg);
 
@@ -688,8 +687,8 @@ static irqreturn_t arch_timer_handler_virt_mem(int irq, void *dev_id)
 	return timer_handler(ARCH_TIMER_MEM_VIRT_ACCESS, evt);
 }
 
-static __always_inline int arch_timer_shutdown(const int access,
-					       struct clock_event_device *clk)
+static __always_inline int timer_shutdown(const int access,
+					  struct clock_event_device *clk)
 {
 	unsigned long ctrl;
 
@@ -702,22 +701,22 @@ static __always_inline int arch_timer_shutdown(const int access,
 
 static int arch_timer_shutdown_virt(struct clock_event_device *clk)
 {
-	return arch_timer_shutdown(ARCH_TIMER_VIRT_ACCESS, clk);
+	return timer_shutdown(ARCH_TIMER_VIRT_ACCESS, clk);
 }
 
 static int arch_timer_shutdown_phys(struct clock_event_device *clk)
 {
-	return arch_timer_shutdown(ARCH_TIMER_PHYS_ACCESS, clk);
+	return timer_shutdown(ARCH_TIMER_PHYS_ACCESS, clk);
 }
 
 static int arch_timer_shutdown_virt_mem(struct clock_event_device *clk)
 {
-	return arch_timer_shutdown(ARCH_TIMER_MEM_VIRT_ACCESS, clk);
+	return timer_shutdown(ARCH_TIMER_MEM_VIRT_ACCESS, clk);
 }
 
 static int arch_timer_shutdown_phys_mem(struct clock_event_device *clk)
 {
-	return arch_timer_shutdown(ARCH_TIMER_MEM_PHYS_ACCESS, clk);
+	return timer_shutdown(ARCH_TIMER_MEM_PHYS_ACCESS, clk);
 }
 
 static __always_inline void set_next_event(const int access, unsigned long evt,

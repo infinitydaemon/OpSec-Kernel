@@ -1489,7 +1489,7 @@ static unsigned ata_exec_internal_sg(struct ata_device *dev,
 	spin_lock_irqsave(ap->lock, flags);
 
 	/* no internal command while frozen */
-	if (ata_port_is_frozen(ap)) {
+	if (ap->pflags & ATA_PFLAG_FROZEN) {
 		spin_unlock_irqrestore(ap->lock, flags);
 		return AC_ERR_SYSTEM;
 	}
@@ -2000,8 +2000,7 @@ retry:
 	if (err_mask) {
 		if (dma) {
 			dev->horkage |= ATA_HORKAGE_NO_DMA_LOG;
-			if (!ata_port_is_frozen(dev->link->ap))
-				goto retry;
+			goto retry;
 		}
 		ata_dev_err(dev,
 			    "Read log 0x%02x page 0x%02x failed, Emask 0x%x\n",
@@ -4725,7 +4724,7 @@ void ata_qc_complete(struct ata_queued_cmd *qc)
 			return;
 		}
 
-		WARN_ON_ONCE(ata_port_is_frozen(ap));
+		WARN_ON_ONCE(ap->pflags & ATA_PFLAG_FROZEN);
 
 		/* read result TF if requested */
 		if (qc->flags & ATA_QCFLAG_RESULT_TF)

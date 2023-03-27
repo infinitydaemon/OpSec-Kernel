@@ -162,7 +162,8 @@ static void meson_uart_start_tx(struct uart_port *port)
 
 		ch = xmit->buf[xmit->tail];
 		writel(ch, port->membase + AML_UART_WFIFO);
-		uart_xmit_advance(port, 1);
+		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+		port->icount.tx++;
 	}
 
 	if (!uart_circ_empty(xmit)) {

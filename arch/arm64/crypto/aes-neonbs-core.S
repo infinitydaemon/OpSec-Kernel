@@ -760,7 +760,7 @@ SYM_FUNC_START_LOCAL(__xts_crypt8)
 	eor		v6.16b, v6.16b, v31.16b
 	eor		v7.16b, v7.16b, v16.16b
 
-	stp		q16, q17, [x6]
+	stp		q16, q17, [sp, #16]
 
 	mov		bskey, x2
 	mov		rounds, x3
@@ -768,8 +768,8 @@ SYM_FUNC_START_LOCAL(__xts_crypt8)
 SYM_FUNC_END(__xts_crypt8)
 
 	.macro		__xts_crypt, do8, o0, o1, o2, o3, o4, o5, o6, o7
-	frame_push	0, 32
-	add		x6, sp, #.Lframe_local_offset
+	stp		x29, x30, [sp, #-48]!
+	mov		x29, sp
 
 	ld1		{v25.16b}, [x5]
 
@@ -781,7 +781,7 @@ SYM_FUNC_END(__xts_crypt8)
 	eor		v18.16b, \o2\().16b, v27.16b
 	eor		v19.16b, \o3\().16b, v28.16b
 
-	ldp		q24, q25, [x6]
+	ldp		q24, q25, [sp, #16]
 
 	eor		v20.16b, \o4\().16b, v29.16b
 	eor		v21.16b, \o5\().16b, v30.16b
@@ -795,7 +795,7 @@ SYM_FUNC_END(__xts_crypt8)
 	b.gt		0b
 
 	st1		{v25.16b}, [x5]
-	frame_pop
+	ldp		x29, x30, [sp], #48
 	ret
 	.endm
 
@@ -820,7 +820,9 @@ SYM_FUNC_END(aesbs_xts_decrypt)
 	 *		     int rounds, int blocks, u8 iv[])
 	 */
 SYM_FUNC_START(aesbs_ctr_encrypt)
-	frame_push	0
+	stp		x29, x30, [sp, #-16]!
+	mov		x29, sp
+
 	ldp		x7, x8, [x5]
 	ld1		{v0.16b}, [x5]
 CPU_LE(	rev		x7, x7		)
@@ -860,6 +862,6 @@ CPU_LE(	rev		x8, x8		)
 	b.gt		0b
 
 	st1		{v0.16b}, [x5]
-	frame_pop
+	ldp		x29, x30, [sp], #16
 	ret
 SYM_FUNC_END(aesbs_ctr_encrypt)

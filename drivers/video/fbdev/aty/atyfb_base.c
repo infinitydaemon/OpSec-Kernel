@@ -2219,7 +2219,13 @@ static int aty_bl_update_status(struct backlight_device *bd)
 {
 	struct atyfb_par *par = bl_get_data(bd);
 	unsigned int reg = aty_ld_lcd(LCD_MISC_CNTL, par);
-	int level = backlight_get_brightness(bd);
+	int level;
+
+	if (bd->props.power != FB_BLANK_UNBLANK ||
+	    bd->props.fb_blank != FB_BLANK_UNBLANK)
+		level = 0;
+	else
+		level = bd->props.brightness;
 
 	reg |= (BLMOD_EN | BIASMOD_EN);
 	if (level > 0) {
@@ -3186,7 +3192,8 @@ static void aty_init_lcd(struct atyfb_par *par, u32 bios_base)
 		 * which we print to the screen.
 		 */
 		id = *(u8 *)par->lcd_table;
-		strscpy(model, (char *)par->lcd_table+1, sizeof(model));
+		strncpy(model, (char *)par->lcd_table+1, 24);
+		model[23] = 0;
 
 		width = par->lcd_width = *(u16 *)(par->lcd_table+25);
 		height = par->lcd_height = *(u16 *)(par->lcd_table+27);
@@ -3958,12 +3965,7 @@ static int __init atyfb_init(void)
 	int err1 = 1, err2 = 1;
 #ifndef MODULE
 	char *option = NULL;
-#endif
 
-	if (fb_modesetting_disabled("atyfb"))
-		return -ENODEV;
-
-#ifndef MODULE
 	if (fb_get_options("atyfb", &option))
 		return -ENODEV;
 	atyfb_setup(option);

@@ -5,7 +5,6 @@
  */
 
 #include "i915_drv.h"
-#include "i915_reg.h"
 #include "intel_de.h"
 #include "intel_display_types.h"
 #include "intel_vrr.h"

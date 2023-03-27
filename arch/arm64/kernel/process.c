@@ -96,9 +96,7 @@ void machine_shutdown(void)
  */
 void machine_halt(void)
 {
-	local_irq_disable();
-	smp_send_stop();
-	while (1);
+	machine_power_off();
 }
 
 /*
@@ -330,8 +328,6 @@ int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
 		dst->thread.za_state = NULL;
 		clear_tsk_thread_flag(dst, TIF_SME);
 	}
-
-	dst->thread.fp_type = FP_STATE_FPSIMD;
 
 	/* clear any pending asynchronous tag fault raised by the parent */
 	clear_tsk_thread_flag(dst, TIF_MTE_ASYNC_FAULT);
@@ -593,7 +589,7 @@ unsigned long __get_wchan(struct task_struct *p)
 unsigned long arch_align_stack(unsigned long sp)
 {
 	if (!(current->personality & ADDR_NO_RANDOMIZE) && randomize_va_space)
-		sp -= get_random_u32_below(PAGE_SIZE);
+		sp -= prandom_u32_max(PAGE_SIZE);
 	return sp & ~0xf;
 }
 

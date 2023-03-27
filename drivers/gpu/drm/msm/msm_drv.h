@@ -224,13 +224,7 @@ struct msm_drm_private {
 
 	struct drm_atomic_state *pm_state;
 
-	/**
-	 * hangcheck_period: For hang detection, in ms
-	 *
-	 * Note that in practice, a submit/job will get at least two hangcheck
-	 * periods, due to checking for progress being implemented as simply
-	 * "have the CP position registers changed since last time?"
-	 */
+	/* For hang detection, in ms */
 	unsigned int hangcheck_period;
 
 	/**

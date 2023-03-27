@@ -396,16 +396,14 @@ int gen8_emit_init_breadcrumb(struct i915_request *rq)
 	return 0;
 }
 
-static int __xehp_emit_bb_start(struct i915_request *rq,
-				u64 offset, u32 len,
-				const unsigned int flags,
-				u32 arb)
+static int __gen125_emit_bb_start(struct i915_request *rq,
+				  u64 offset, u32 len,
+				  const unsigned int flags,
+				  u32 arb)
 {
 	struct intel_context *ce = rq->context;
 	u32 wa_offset = lrc_indirect_bb(ce);
 	u32 *cs;
-
-	GEM_BUG_ON(!ce->wa_bb_page);
 
 	cs = intel_ring_begin(rq, 12);
 	if (IS_ERR(cs))
@@ -437,18 +435,18 @@ static int __xehp_emit_bb_start(struct i915_request *rq,
 	return 0;
 }
 
-int xehp_emit_bb_start_noarb(struct i915_request *rq,
-			     u64 offset, u32 len,
-			     const unsigned int flags)
+int gen125_emit_bb_start_noarb(struct i915_request *rq,
+			       u64 offset, u32 len,
+			       const unsigned int flags)
 {
-	return __xehp_emit_bb_start(rq, offset, len, flags, MI_ARB_DISABLE);
+	return __gen125_emit_bb_start(rq, offset, len, flags, MI_ARB_DISABLE);
 }
 
-int xehp_emit_bb_start(struct i915_request *rq,
-		       u64 offset, u32 len,
-		       const unsigned int flags)
+int gen125_emit_bb_start(struct i915_request *rq,
+			 u64 offset, u32 len,
+			 const unsigned int flags)
 {
-	return __xehp_emit_bb_start(rq, offset, len, flags, MI_ARB_ENABLE);
+	return __gen125_emit_bb_start(rq, offset, len, flags, MI_ARB_ENABLE);
 }
 
 int gen8_emit_bb_start_noarb(struct i915_request *rq,
@@ -585,8 +583,6 @@ u32 *gen8_emit_fini_breadcrumb_xcs(struct i915_request *rq, u32 *cs)
 u32 *gen8_emit_fini_breadcrumb_rcs(struct i915_request *rq, u32 *cs)
 {
 	cs = gen8_emit_pipe_control(cs,
-				    PIPE_CONTROL_CS_STALL |
-				    PIPE_CONTROL_TLB_INVALIDATE |
 				    PIPE_CONTROL_RENDER_TARGET_CACHE_FLUSH |
 				    PIPE_CONTROL_DEPTH_CACHE_FLUSH |
 				    PIPE_CONTROL_DC_FLUSH_ENABLE,
@@ -604,21 +600,15 @@ u32 *gen8_emit_fini_breadcrumb_rcs(struct i915_request *rq, u32 *cs)
 
 u32 *gen11_emit_fini_breadcrumb_rcs(struct i915_request *rq, u32 *cs)
 {
-	cs = gen8_emit_pipe_control(cs,
-				    PIPE_CONTROL_CS_STALL |
-				    PIPE_CONTROL_TLB_INVALIDATE |
-				    PIPE_CONTROL_TILE_CACHE_FLUSH |
-				    PIPE_CONTROL_RENDER_TARGET_CACHE_FLUSH |
-				    PIPE_CONTROL_DEPTH_CACHE_FLUSH |
-				    PIPE_CONTROL_DC_FLUSH_ENABLE,
-				    0);
-
-	/*XXX: Look at gen8_emit_fini_breadcrumb_rcs */
 	cs = gen8_emit_ggtt_write_rcs(cs,
 				      rq->fence.seqno,
 				      hwsp_offset(rq),
-				      PIPE_CONTROL_FLUSH_ENABLE |
-				      PIPE_CONTROL_CS_STALL);
+				      PIPE_CONTROL_CS_STALL |
+				      PIPE_CONTROL_TILE_CACHE_FLUSH |
+				      PIPE_CONTROL_RENDER_TARGET_CACHE_FLUSH |
+				      PIPE_CONTROL_DEPTH_CACHE_FLUSH |
+				      PIPE_CONTROL_DC_FLUSH_ENABLE |
+				      PIPE_CONTROL_FLUSH_ENABLE);
 
 	return gen8_emit_fini_breadcrumb_tail(rq, cs);
 }
@@ -725,7 +715,6 @@ u32 *gen12_emit_fini_breadcrumb_rcs(struct i915_request *rq, u32 *cs)
 {
 	struct drm_i915_private *i915 = rq->engine->i915;
 	u32 flags = (PIPE_CONTROL_CS_STALL |
-		     PIPE_CONTROL_TLB_INVALIDATE |
 		     PIPE_CONTROL_TILE_CACHE_FLUSH |
 		     PIPE_CONTROL_FLUSH_L3 |
 		     PIPE_CONTROL_RENDER_TARGET_CACHE_FLUSH |
@@ -742,15 +731,11 @@ u32 *gen12_emit_fini_breadcrumb_rcs(struct i915_request *rq, u32 *cs)
 	else if (rq->engine->class == COMPUTE_CLASS)
 		flags &= ~PIPE_CONTROL_3D_ENGINE_FLAGS;
 
-	cs = gen12_emit_pipe_control(cs, PIPE_CONTROL0_HDC_PIPELINE_FLUSH, flags, 0);
-
-	/*XXX: Look at gen8_emit_fini_breadcrumb_rcs */
 	cs = gen12_emit_ggtt_write_rcs(cs,
 				       rq->fence.seqno,
 				       hwsp_offset(rq),
-				       0,
-				       PIPE_CONTROL_FLUSH_ENABLE |
-				       PIPE_CONTROL_CS_STALL);
+				       PIPE_CONTROL0_HDC_PIPELINE_FLUSH,
+				       flags);
 
 	return gen12_emit_fini_breadcrumb_tail(rq, cs);
 }

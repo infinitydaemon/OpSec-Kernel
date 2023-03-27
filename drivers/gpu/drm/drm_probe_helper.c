@@ -36,6 +36,7 @@
 #include <drm/drm_client.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_edid.h>
+#include <drm/drm_fb_helper.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_modeset_helper_vtables.h>
 #include <drm/drm_print.h>
@@ -366,7 +367,7 @@ static int drm_helper_probe_get_modes(struct drm_connector *connector)
 	 * override/firmware EDID.
 	 */
 	if (count == 0 && connector->status == connector_status_connected)
-		count = drm_edid_override_connector_update(connector);
+		count = drm_add_override_edid_modes(connector);
 
 	return count;
 }

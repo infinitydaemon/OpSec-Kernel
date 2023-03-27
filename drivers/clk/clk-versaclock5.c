@@ -20,6 +20,7 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
+#include <linux/rational.h>
 #include <linux/regmap.h>
 #include <linux/slab.h>
 

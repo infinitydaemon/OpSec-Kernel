@@ -47,20 +47,15 @@ struct mtk_fixed_factor {
 	const char *parent_name;
 	int mult;
 	int div;
-	unsigned long flags;
 };
 
-#define FACTOR_FLAGS(_id, _name, _parent, _mult, _div, _fl) {	\
+#define FACTOR(_id, _name, _parent, _mult, _div) {	\
 		.id = _id,				\
 		.name = _name,				\
 		.parent_name = _parent,			\
 		.mult = _mult,				\
 		.div = _div,				\
-		.flags = _fl,				\
 	}
-
-#define FACTOR(_id, _name, _parent, _mult, _div)	\
-	FACTOR_FLAGS(_id, _name, _parent, _mult, _div, CLK_SET_RATE_PARENT)
 
 int mtk_clk_register_factors(const struct mtk_fixed_factor *clks, int num,
 			     struct clk_hw_onecell_data *clk_data);

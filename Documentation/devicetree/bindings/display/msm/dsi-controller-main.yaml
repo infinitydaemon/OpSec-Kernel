@@ -49,7 +49,6 @@ properties:
     maxItems: 1
 
   phy-names:
-    deprecated: true
     const: dsi
 
   "#address-cells": true
@@ -80,9 +79,6 @@ properties:
     maxItems: 1
 
   operating-points-v2: true
-
-  opp-table:
-    type: object
 
   ports:
     $ref: "/schemas/graph.yaml#/properties/ports"
@@ -135,6 +131,7 @@ required:
   - clocks
   - clock-names
   - phys
+  - phy-names
   - assigned-clocks
   - assigned-clock-parents
   - ports

@@ -640,9 +640,7 @@ int amd_iommu_bind_pasid(struct pci_dev *pdev, u32 pasid,
 	if (pasid_state->mm == NULL)
 		goto out_free;
 
-	ret = mmu_notifier_register(&pasid_state->mn, mm);
-	if (ret)
-		goto out_free;
+	mmu_notifier_register(&pasid_state->mn, mm);
 
 	ret = set_pasid_state(dev_state, pasid_state, pasid);
 	if (ret)

@@ -1282,7 +1282,8 @@ static void goodix_disable_regulators(void *arg)
 	regulator_disable(ts->avdd28);
 }
 
-static int goodix_ts_probe(struct i2c_client *client)
+static int goodix_ts_probe(struct i2c_client *client,
+			   const struct i2c_device_id *id)
 {
 	struct goodix_ts_data *ts;
 	const char *cfg_name;
@@ -1536,7 +1537,7 @@ MODULE_DEVICE_TABLE(of, goodix_of_match);
 #endif
 
 static struct i2c_driver goodix_ts_driver = {
-	.probe_new = goodix_ts_probe,
+	.probe = goodix_ts_probe,
 	.remove = goodix_ts_remove,
 	.id_table = goodix_ts_id,
 	.driver = {

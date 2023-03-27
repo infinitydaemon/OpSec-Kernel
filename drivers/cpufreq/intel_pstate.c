@@ -298,7 +298,6 @@ static int hwp_active __read_mostly;
 static int hwp_mode_bdw __read_mostly;
 static bool per_cpu_limits __read_mostly;
 static bool hwp_boost __read_mostly;
-static bool hwp_forced __read_mostly;
 
 static struct cpufreq_driver *intel_pstate_driver __read_mostly;
 
@@ -1680,12 +1679,12 @@ static void intel_pstate_update_epp_defaults(struct cpudata *cpudata)
 		return;
 
 	/*
-	 * If the EPP is set by firmware, which means that firmware enabled HWP
-	 * - Is equal or less than 0x80 (default balance_perf EPP)
+	 * If powerup EPP is something other than chipset default 0x80 and
+	 * - is more performance oriented than 0x80 (default balance_perf EPP)
 	 * - But less performance oriented than performance EPP
 	 *   then use this as new balance_perf EPP.
 	 */
-	if (hwp_forced && cpudata->epp_default <= HWP_EPP_BALANCE_PERFORMANCE &&
+	if (cpudata->epp_default < HWP_EPP_BALANCE_PERFORMANCE &&
 	    cpudata->epp_default > HWP_EPP_PERFORMANCE) {
 		epp_values[EPP_INDEX_BALANCE_PERFORMANCE] = cpudata->epp_default;
 		return;
@@ -2379,7 +2378,6 @@ static const struct x86_cpu_id intel_pstate_cpu_ids[] = {
 	X86_MATCH(COMETLAKE,		core_funcs),
 	X86_MATCH(ICELAKE_X,		core_funcs),
 	X86_MATCH(TIGERLAKE,		core_funcs),
-	X86_MATCH(SAPPHIRERAPIDS_X,	core_funcs),
 	{}
 };
 MODULE_DEVICE_TABLE(x86cpu, intel_pstate_cpu_ids);
@@ -3386,7 +3384,7 @@ static int __init intel_pstate_init(void)
 
 	id = x86_match_cpu(hwp_support_ids);
 	if (id) {
-		hwp_forced = intel_pstate_hwp_is_enabled();
+		bool hwp_forced = intel_pstate_hwp_is_enabled();
 
 		if (hwp_forced)
 			pr_info("HWP enabled by BIOS\n");

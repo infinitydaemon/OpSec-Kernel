@@ -38,7 +38,6 @@
 #include "cqhci.h"
 
 #include "sdhci.h"
-#include "sdhci-cqhci.h"
 #include "sdhci-pci.h"
 
 static void sdhci_pci_hw_reset(struct sdhci_host *host);
@@ -233,6 +232,14 @@ static u32 sdhci_cqhci_irq(struct sdhci_host *host, u32 intmask)
 static void sdhci_pci_dumpregs(struct mmc_host *mmc)
 {
 	sdhci_dumpregs(mmc_priv(mmc));
+}
+
+static void sdhci_cqhci_reset(struct sdhci_host *host, u8 mask)
+{
+	if ((host->mmc->caps2 & MMC_CAP2_CQE) && (mask & SDHCI_RESET_ALL) &&
+	    host->mmc->cqe_private)
+		cqhci_deactivate(host->mmc);
+	sdhci_reset(host, mask);
 }
 
 /*****************************************************************************\
@@ -696,7 +703,7 @@ static const struct sdhci_ops sdhci_intel_glk_ops = {
 	.set_power		= sdhci_intel_set_power,
 	.enable_dma		= sdhci_pci_enable_dma,
 	.set_bus_width		= sdhci_set_bus_width,
-	.reset			= sdhci_and_cqhci_reset,
+	.reset			= sdhci_cqhci_reset,
 	.set_uhs_signaling	= sdhci_intel_set_uhs_signaling,
 	.hw_reset		= sdhci_pci_hw_reset,
 	.irq			= sdhci_cqhci_irq,
@@ -2276,8 +2283,7 @@ static struct pci_driver sdhci_driver = {
 	.probe =	sdhci_pci_probe,
 	.remove =	sdhci_pci_remove,
 	.driver =	{
-		.pm =   &sdhci_pci_pm_ops,
-		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
+		.pm =   &sdhci_pci_pm_ops
 	},
 };
 

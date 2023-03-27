@@ -60,8 +60,6 @@ void notrace __cpu_suspend_exit(void)
 	 * PSTATE was not saved over suspend/resume, re-enable any detected
 	 * features that might not have been set correctly.
 	 */
-	if (cpus_have_const_cap(ARM64_HAS_DIT))
-		set_pstate_dit(1);
 	__uaccess_enable_hw_pan();
 
 	/*

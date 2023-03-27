@@ -175,7 +175,6 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 		},
 	},
 	{
-	 /* https://bugs.launchpad.net/bugs/1000146 */
 	 .callback = video_detect_force_vendor,
 	 /* Asus X101CH */
 	 .matches = {
@@ -200,7 +199,6 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 		},
 	},
 	{
-	 /* https://bugs.launchpad.net/bugs/1000146 */
 	 .callback = video_detect_force_vendor,
 	 /* Asus 1015CX */
 	 .matches = {
@@ -408,8 +406,8 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 		DMI_MATCH(DMI_PRODUCT_NAME, "530U4E/540U4E"),
 		},
 	},
+	/* https://bugs.launchpad.net/bugs/1894667 */
 	{
-	 /* https://bugs.launchpad.net/bugs/1894667 */
 	 .callback = video_detect_force_video,
 	 /* HP 635 Notebook */
 	 .matches = {
@@ -434,7 +432,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	 /* Lenovo Ideapad Z570 */
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
-		DMI_MATCH(DMI_PRODUCT_NAME, "102434U"),
+		DMI_MATCH(DMI_PRODUCT_VERSION, "Ideapad Z570"),
 		},
 	},
 	{

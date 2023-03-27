@@ -288,6 +288,7 @@ static void s3c24xx_serial_stop_tx(struct uart_port *port)
 {
 	struct s3c24xx_uart_port *ourport = to_ourport(port);
 	struct s3c24xx_uart_dma *dma = ourport->dma;
+	struct circ_buf *xmit = &port->state->xmit;
 	struct dma_tx_state state;
 	int count;
 
@@ -315,7 +316,8 @@ static void s3c24xx_serial_stop_tx(struct uart_port *port)
 					DMA_TO_DEVICE);
 		async_tx_ack(dma->tx_desc);
 		count = dma->tx_bytes_requested - state.residue;
-		uart_xmit_advance(port, count);
+		xmit->tail = (xmit->tail + count) & (UART_XMIT_SIZE - 1);
+		port->icount.tx += count;
 	}
 
 	ourport->tx_enabled = 0;
@@ -349,7 +351,8 @@ static void s3c24xx_serial_tx_dma_complete(void *args)
 
 	spin_lock_irqsave(&port->lock, flags);
 
-	uart_xmit_advance(port, count);
+	xmit->tail = (xmit->tail + count) & (UART_XMIT_SIZE - 1);
+	port->icount.tx += count;
 	ourport->tx_in_progress = 0;
 
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
@@ -913,7 +916,8 @@ static void s3c24xx_serial_tx_chars(struct s3c24xx_uart_port *ourport)
 			break;
 
 		wr_reg(port, S3C2410_UTXH, xmit->buf[xmit->tail]);
-		uart_xmit_advance(port, 1);
+		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+		port->icount.tx++;
 		count--;
 	}
 
@@ -1728,7 +1732,7 @@ static void __init s3c24xx_serial_register_console(void)
 
 static void s3c24xx_serial_unregister_console(void)
 {
-	if (console_is_registered(&s3c24xx_serial_console))
+	if (s3c24xx_serial_console.flags & CON_ENABLED)
 		unregister_console(&s3c24xx_serial_console);
 }
 

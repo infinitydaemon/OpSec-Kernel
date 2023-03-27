@@ -25,15 +25,9 @@
 #include "blk-rq-qos.h"
 #include "blk-cgroup.h"
 
-#define ALLOC_CACHE_THRESHOLD	16
-#define ALLOC_CACHE_SLACK	64
-#define ALLOC_CACHE_MAX		256
-
 struct bio_alloc_cache {
 	struct bio		*free_list;
-	struct bio		*free_list_irq;
 	unsigned int		nr;
-	unsigned int		nr_irq;
 };
 
 static struct biovec_slab {
@@ -414,22 +408,6 @@ static void punt_bios_to_rescuer(struct bio_set *bs)
 	queue_work(bs->rescue_workqueue, &bs->rescue_work);
 }
 
-static void bio_alloc_irq_cache_splice(struct bio_alloc_cache *cache)
-{
-	unsigned long flags;
-
-	/* cache->free_list must be empty */
-	if (WARN_ON_ONCE(cache->free_list))
-		return;
-
-	local_irq_save(flags);
-	cache->free_list = cache->free_list_irq;
-	cache->free_list_irq = NULL;
-	cache->nr += cache->nr_irq;
-	cache->nr_irq = 0;
-	local_irq_restore(flags);
-}
-
 static struct bio *bio_alloc_percpu_cache(struct block_device *bdev,
 		unsigned short nr_vecs, blk_opf_t opf, gfp_t gfp,
 		struct bio_set *bs)
@@ -439,12 +417,8 @@ static struct bio *bio_alloc_percpu_cache(struct block_device *bdev,
 
 	cache = per_cpu_ptr(bs->cache, get_cpu());
 	if (!cache->free_list) {
-		if (READ_ONCE(cache->nr_irq) >= ALLOC_CACHE_THRESHOLD)
-			bio_alloc_irq_cache_splice(cache);
-		if (!cache->free_list) {
-			put_cpu();
-			return NULL;
-		}
+		put_cpu();
+		return NULL;
 	}
 	bio = cache->free_list;
 	cache->free_list = bio->bi_next;
@@ -487,6 +461,9 @@ static struct bio *bio_alloc_percpu_cache(struct block_device *bdev,
  * mempools. Doing multiple allocations from the same mempool under
  * submit_bio_noacct() should be avoided - instead, use bio_set's front_pad
  * for per bio allocations.
+ *
+ * If REQ_ALLOC_CACHE is set, the final put of the bio MUST be done from process
+ * context, not hard/soft IRQ.
  *
  * Returns: Pointer to new bio on success, NULL on failure.
  */
@@ -549,8 +526,6 @@ struct bio *bio_alloc_bioset(struct block_device *bdev, unsigned short nr_vecs,
 	}
 	if (unlikely(!p))
 		return NULL;
-	if (!mempool_is_saturated(&bs->bio_pool))
-		opf &= ~REQ_ALLOC_CACHE;
 
 	bio = p + bs->front_pad;
 	if (nr_vecs > BIO_INLINE_VECS) {
@@ -701,8 +676,11 @@ void guard_bio_eod(struct bio *bio)
 	bio_truncate(bio, maxsector << 9);
 }
 
-static int __bio_alloc_cache_prune(struct bio_alloc_cache *cache,
-				   unsigned int nr)
+#define ALLOC_CACHE_MAX		512
+#define ALLOC_CACHE_SLACK	 64
+
+static void bio_alloc_cache_prune(struct bio_alloc_cache *cache,
+				  unsigned int nr)
 {
 	unsigned int i = 0;
 	struct bio *bio;
@@ -713,17 +691,6 @@ static int __bio_alloc_cache_prune(struct bio_alloc_cache *cache,
 		bio_free(bio);
 		if (++i == nr)
 			break;
-	}
-	return i;
-}
-
-static void bio_alloc_cache_prune(struct bio_alloc_cache *cache,
-				  unsigned int nr)
-{
-	nr -= __bio_alloc_cache_prune(cache, nr);
-	if (!READ_ONCE(cache->free_list)) {
-		bio_alloc_irq_cache_splice(cache);
-		__bio_alloc_cache_prune(cache, nr);
 	}
 }
 
@@ -758,35 +725,6 @@ static void bio_alloc_cache_destroy(struct bio_set *bs)
 	bs->cache = NULL;
 }
 
-static inline void bio_put_percpu_cache(struct bio *bio)
-{
-	struct bio_alloc_cache *cache;
-
-	cache = per_cpu_ptr(bio->bi_pool->cache, get_cpu());
-	if (READ_ONCE(cache->nr_irq) + cache->nr > ALLOC_CACHE_MAX) {
-		put_cpu();
-		bio_free(bio);
-		return;
-	}
-
-	bio_uninit(bio);
-
-	if ((bio->bi_opf & REQ_POLLED) && !WARN_ON_ONCE(in_interrupt())) {
-		bio->bi_next = cache->free_list;
-		cache->free_list = bio;
-		cache->nr++;
-	} else {
-		unsigned long flags;
-
-		local_irq_save(flags);
-		bio->bi_next = cache->free_list_irq;
-		cache->free_list_irq = bio;
-		cache->nr_irq++;
-		local_irq_restore(flags);
-	}
-	put_cpu();
-}
-
 /**
  * bio_put - release a reference to a bio
  * @bio:   bio to release reference to
@@ -802,10 +740,21 @@ void bio_put(struct bio *bio)
 		if (!atomic_dec_and_test(&bio->__bi_cnt))
 			return;
 	}
-	if (bio->bi_opf & REQ_ALLOC_CACHE)
-		bio_put_percpu_cache(bio);
-	else
+
+	if ((bio->bi_opf & REQ_ALLOC_CACHE) && !WARN_ON_ONCE(in_interrupt())) {
+		struct bio_alloc_cache *cache;
+
+		bio_uninit(bio);
+		cache = per_cpu_ptr(bio->bi_pool->cache, get_cpu());
+		bio->bi_next = cache->free_list;
+		bio->bi_bdev = NULL;
+		cache->free_list = bio;
+		if (++cache->nr > ALLOC_CACHE_MAX + ALLOC_CACHE_SLACK)
+			bio_alloc_cache_prune(cache, ALLOC_CACHE_SLACK);
+		put_cpu();
+	} else {
 		bio_free(bio);
+	}
 }
 EXPORT_SYMBOL(bio_put);
 
@@ -914,8 +863,6 @@ static inline bool page_is_mergeable(const struct bio_vec *bv,
 	if (vec_end_addr + 1 != page_addr + off)
 		return false;
 	if (xen_domain() && !xen_biovec_phys_mergeable(bv, page))
-		return false;
-	if (!zone_device_pages_have_same_pgmap(bv->bv_page, page))
 		return false;
 
 	*same_page = ((vec_end_addr & PAGE_MASK) == page_addr);
@@ -1249,7 +1196,6 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 	unsigned short entries_left = bio->bi_max_vecs - bio->bi_vcnt;
 	struct bio_vec *bv = bio->bi_io_vec + bio->bi_vcnt;
 	struct page **pages = (struct page **)bv;
-	unsigned int gup_flags = 0;
 	ssize_t size, left;
 	unsigned len, i = 0;
 	size_t offset, trim;
@@ -1263,9 +1209,6 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 	BUILD_BUG_ON(PAGE_PTRS_PER_BVEC < 2);
 	pages += entries_left * (PAGE_PTRS_PER_BVEC - 1);
 
-	if (bio->bi_bdev && blk_queue_pci_p2pdma(bio->bi_bdev->bd_disk->queue))
-		gup_flags |= FOLL_PCI_P2PDMA;
-
 	/*
 	 * Each segment in the iov is required to be a block size multiple.
 	 * However, we may not be able to get the entire segment if it spans
@@ -1273,9 +1216,8 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 	 * result to ensure the bio's total size is correct. The remainder of
 	 * the iov data will be picked up in the next bio iteration.
 	 */
-	size = iov_iter_get_pages(iter, pages,
-				  UINT_MAX - bio->bi_iter.bi_size,
-				  nr_pages, &offset, gup_flags);
+	size = iov_iter_get_pages2(iter, pages, UINT_MAX - bio->bi_iter.bi_size,
+				  nr_pages, &offset);
 	if (unlikely(size <= 0))
 		return size ? size : -EFAULT;
 

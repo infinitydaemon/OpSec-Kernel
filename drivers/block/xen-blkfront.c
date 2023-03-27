@@ -2129,6 +2129,7 @@ static void blkfront_closing(struct blkfront_info *info)
 	if (info->rq && info->gd) {
 		blk_mq_stop_hw_queues(info->rq);
 		blk_mark_disk_dead(info->gd);
+		set_capacity(info->gd, 0);
 	}
 
 	for_each_rinfo(info, rinfo, i) {
@@ -2467,7 +2468,7 @@ static void blkback_changed(struct xenbus_device *dev,
 	}
 }
 
-static void blkfront_remove(struct xenbus_device *xbdev)
+static int blkfront_remove(struct xenbus_device *xbdev)
 {
 	struct blkfront_info *info = dev_get_drvdata(&xbdev->dev);
 
@@ -2488,6 +2489,7 @@ static void blkfront_remove(struct xenbus_device *xbdev)
 	}
 
 	kfree(info);
+	return 0;
 }
 
 static int blkfront_is_ready(struct xenbus_device *dev)

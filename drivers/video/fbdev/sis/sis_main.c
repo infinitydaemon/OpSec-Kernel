@@ -6588,12 +6588,7 @@ static int __init sisfb_init(void)
 {
 #ifndef MODULE
 	char *options = NULL;
-#endif
 
-	if (fb_modesetting_disabled("sisfb"))
-		return -ENODEV;
-
-#ifndef MODULE
 	if(fb_get_options("sisfb", &options))
 		return -ENODEV;
 

@@ -24,7 +24,6 @@
 #include <linux/export.h>
 #include <linux/module.h>
 #include <linux/console.h>
-#include <linux/kstrtox.h>
 #include <linux/kthread.h>
 #include <linux/workqueue.h>
 #include <linux/kfifo.h>
@@ -1074,7 +1073,7 @@ ssize_t gserial_set_console(unsigned char port_num, const char *page, size_t cou
 	bool enable;
 	int ret;
 
-	ret = kstrtobool(page, &enable);
+	ret = strtobool(page, &enable);
 	if (ret)
 		return ret;
 

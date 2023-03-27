@@ -125,7 +125,7 @@
 	max-speed = <100>;
 	phy-handle = <&phy0>;
 
-	mdio {
+	mdio0 {
 		#address-cells = <1>;
 		#size-cells = <0>;
 		compatible = "snps,dwmac-mdio";

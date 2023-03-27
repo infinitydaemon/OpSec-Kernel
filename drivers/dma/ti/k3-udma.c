@@ -5,7 +5,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/delay.h>
 #include <linux/dmaengine.h>
 #include <linux/dma-mapping.h>
@@ -4337,10 +4336,18 @@ static const struct of_device_id udma_of_match[] = {
 		.compatible = "ti,j721e-navss-mcu-udmap",
 		.data = &j721e_mcu_data,
 	},
+	{ /* Sentinel */ },
+};
+
+static const struct of_device_id bcdma_of_match[] = {
 	{
 		.compatible = "ti,am64-dmss-bcdma",
 		.data = &am64_bcdma_data,
 	},
+	{ /* Sentinel */ },
+};
+
+static const struct of_device_id pktdma_of_match[] = {
 	{
 		.compatible = "ti,am64-dmss-pktdma",
 		.data = &am64_pktdma_data,
@@ -5265,9 +5272,14 @@ static int udma_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	match = of_match_node(udma_of_match, dev->of_node);
+	if (!match)
+		match = of_match_node(bcdma_of_match, dev->of_node);
 	if (!match) {
-		dev_err(dev, "No compatible match found\n");
-		return -ENODEV;
+		match = of_match_node(pktdma_of_match, dev->of_node);
+		if (!match) {
+			dev_err(dev, "No compatible match found\n");
+			return -ENODEV;
+		}
 	}
 	ud->match_data = match->data;
 
@@ -5500,9 +5512,27 @@ static struct platform_driver udma_driver = {
 	},
 	.probe		= udma_probe,
 };
+builtin_platform_driver(udma_driver);
 
-module_platform_driver(udma_driver);
-MODULE_LICENSE("GPL v2");
+static struct platform_driver bcdma_driver = {
+	.driver = {
+		.name	= "ti-bcdma",
+		.of_match_table = bcdma_of_match,
+		.suppress_bind_attrs = true,
+	},
+	.probe		= udma_probe,
+};
+builtin_platform_driver(bcdma_driver);
+
+static struct platform_driver pktdma_driver = {
+	.driver = {
+		.name	= "ti-pktdma",
+		.of_match_table = pktdma_of_match,
+		.suppress_bind_attrs = true,
+	},
+	.probe		= udma_probe,
+};
+builtin_platform_driver(pktdma_driver);
 
 /* Private interfaces to UDMA */
 #include "k3-udma-private.c"

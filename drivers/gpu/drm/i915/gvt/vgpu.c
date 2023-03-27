@@ -158,7 +158,7 @@ void intel_gvt_clean_vgpu_types(struct intel_gvt *gvt)
 }
 
 /**
- * intel_gvt_activate_vgpu - activate a virtual GPU
+ * intel_gvt_active_vgpu - activate a virtual GPU
  * @vgpu: virtual GPU
  *
  * This function is called when user wants to activate a virtual GPU.
@@ -166,11 +166,13 @@ void intel_gvt_clean_vgpu_types(struct intel_gvt *gvt)
  */
 void intel_gvt_activate_vgpu(struct intel_vgpu *vgpu)
 {
-	set_bit(INTEL_VGPU_STATUS_ACTIVE, vgpu->status);
+	mutex_lock(&vgpu->vgpu_lock);
+	vgpu->active = true;
+	mutex_unlock(&vgpu->vgpu_lock);
 }
 
 /**
- * intel_gvt_deactivate_vgpu - deactivate a virtual GPU
+ * intel_gvt_deactive_vgpu - deactivate a virtual GPU
  * @vgpu: virtual GPU
  *
  * This function is called when user wants to deactivate a virtual GPU.
@@ -181,7 +183,7 @@ void intel_gvt_deactivate_vgpu(struct intel_vgpu *vgpu)
 {
 	mutex_lock(&vgpu->vgpu_lock);
 
-	clear_bit(INTEL_VGPU_STATUS_ACTIVE, vgpu->status);
+	vgpu->active = false;
 
 	if (atomic_read(&vgpu->submission.running_workload_num)) {
 		mutex_unlock(&vgpu->vgpu_lock);
@@ -226,8 +228,7 @@ void intel_gvt_destroy_vgpu(struct intel_vgpu *vgpu)
 	struct intel_gvt *gvt = vgpu->gvt;
 	struct drm_i915_private *i915 = gvt->gt->i915;
 
-	drm_WARN(&i915->drm, test_bit(INTEL_VGPU_STATUS_ACTIVE, vgpu->status),
-		 "vGPU is still active!\n");
+	drm_WARN(&i915->drm, vgpu->active, "vGPU is still active!\n");
 
 	/*
 	 * remove idr first so later clean can judge if need to stop
@@ -284,7 +285,8 @@ struct intel_vgpu *intel_gvt_create_idle_vgpu(struct intel_gvt *gvt)
 	if (ret)
 		goto out_free_vgpu;
 
-	clear_bit(INTEL_VGPU_STATUS_ACTIVE, vgpu->status);
+	vgpu->active = false;
+
 	return vgpu;
 
 out_free_vgpu:
@@ -293,7 +295,7 @@ out_free_vgpu:
 }
 
 /**
- * intel_gvt_destroy_idle_vgpu - destroy an idle virtual GPU
+ * intel_gvt_destroy_vgpu - destroy an idle virtual GPU
  * @vgpu: virtual GPU
  *
  * This function is called when user wants to destroy an idle virtual GPU.

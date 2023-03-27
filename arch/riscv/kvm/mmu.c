@@ -537,8 +537,10 @@ int kvm_arch_prepare_memory_region(struct kvm *kvm,
 	if (change == KVM_MR_FLAGS_ONLY)
 		goto out;
 
+	spin_lock(&kvm->mmu_lock);
 	if (ret)
-		kvm_riscv_gstage_iounmap(kvm, base_gpa, size);
+		gstage_unmap_range(kvm, base_gpa, size, false);
+	spin_unlock(&kvm->mmu_lock);
 
 out:
 	mmap_read_unlock(current->mm);
@@ -630,7 +632,7 @@ int kvm_riscv_gstage_map(struct kvm_vcpu *vcpu,
 
 	mmap_read_lock(current->mm);
 
-	vma = vma_lookup(current->mm, hva);
+	vma = find_vma_intersection(current->mm, hva, hva + 1);
 	if (unlikely(!vma)) {
 		kvm_err("Failed to find VMA for hva 0x%lx\n", hva);
 		mmap_read_unlock(current->mm);

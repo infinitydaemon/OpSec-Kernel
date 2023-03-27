@@ -24,9 +24,6 @@
 
 /* Command2 BKx selection command */
 #define DSI_CMD2BKX_SEL			0xFF
-#define DSI_CMD1			0
-#define DSI_CMD2			BIT(4)
-#define DSI_CMD2BK_MASK			GENMASK(3, 0)
 
 /* Command2, BK0 commands */
 #define DSI_CMD2_BK0_PVGAMCTRL		0xB0 /* Positive Voltage Gamma Control */
@@ -218,18 +215,6 @@ static u8 st7701_vgls_map(struct st7701 *st7701)
 	return 0;
 }
 
-static void st7701_switch_cmd_bkx(struct st7701 *st7701, bool cmd2, u8 bkx)
-{
-	u8 val;
-
-	if (cmd2)
-		val = DSI_CMD2 | FIELD_PREP(DSI_CMD2BK_MASK, bkx);
-	else
-		val = DSI_CMD1;
-
-	ST7701_DSI(st7701, DSI_CMD2BKX_SEL, 0x77, 0x01, 0x00, 0x00, val);
-}
-
 #define ST7701_SPI(st7701, seq...)				\
 	{							\
 		const u16 d[] = { seq };			\
@@ -263,8 +248,8 @@ static void ts8550b_init_sequence(struct st7701 *st7701)
 	msleep(st7701->sleep_delay);
 
 	/* Command2, BK0 */
-	st7701_switch_cmd_bkx(st7701, true, 0);
-
+	ST7701_DSI(st7701, DSI_CMD2BKX_SEL,
+		   0x77, 0x01, 0x00, 0x00, DSI_CMD2BK0_SEL);
 	mipi_dsi_dcs_write(st7701->dsi, DSI_CMD2_BK0_PVGAMCTRL,
 			   desc->pv_gamma, ARRAY_SIZE(desc->pv_gamma));
 	mipi_dsi_dcs_write(st7701->dsi, DSI_CMD2_BK0_NVGAMCTRL,
@@ -302,7 +287,8 @@ static void ts8550b_init_sequence(struct st7701 *st7701)
 			      (clamp((u32)mode->htotal, 512U, 1008U) - 512) / 16));
 
 	/* Command2, BK1 */
-	st7701_switch_cmd_bkx(st7701, true, 1);
+	ST7701_DSI(st7701, DSI_CMD2BKX_SEL,
+			0x77, 0x01, 0x00, 0x00, DSI_CMD2BK1_SEL);
 
 	/* Vop = 3.5375V + (VRHA[7:0] * 0.0125V) */
 	ST7701_DSI(st7701, DSI_CMD2_BK1_VRHS,
@@ -427,27 +413,33 @@ static void dmt028vghmcmi_1a_gip_sequence(struct st7701 *st7701)
 		   0x08, 0x08, 0x08, 0x40,
 			   0x3F, 0x64);
 
-	st7701_switch_cmd_bkx(st7701, false, 0);
+	ST7701_DSI(st7701, DSI_CMD2BKX_SEL,
+		   0x77, 0x01, 0x00, 0x00, DSI_CMD2BKX_SEL_NONE);
 
-	st7701_switch_cmd_bkx(st7701, true, 3);
+	ST7701_DSI(st7701, DSI_CMD2BKX_SEL,
+		   0x77, 0x01, 0x00, 0x00, DSI_CMD2BK3_SEL);
 	ST7701_DSI(st7701, 0xE6, 0x7C);
 	ST7701_DSI(st7701, 0xE8, 0x00, 0x0E);
 
-	st7701_switch_cmd_bkx(st7701, false, 0);
+	ST7701_DSI(st7701, DSI_CMD2BKX_SEL,
+		   0x77, 0x01, 0x00, 0x00, DSI_CMD2BKX_SEL_NONE);
 	ST7701_DSI(st7701, 0x11);
 	msleep(120);
 
-	st7701_switch_cmd_bkx(st7701, true, 3);
+	ST7701_DSI(st7701, DSI_CMD2BKX_SEL,
+		   0x77, 0x01, 0x00, 0x00, DSI_CMD2BK3_SEL);
 	ST7701_DSI(st7701, 0xE8, 0x00, 0x0C);
 	msleep(10);
 	ST7701_DSI(st7701, 0xE8, 0x00, 0x00);
 
-	st7701_switch_cmd_bkx(st7701, false, 0);
+	ST7701_DSI(st7701, DSI_CMD2BKX_SEL,
+		   0x77, 0x01, 0x00, 0x00, DSI_CMD2BKX_SEL_NONE);
 	ST7701_DSI(st7701, 0x11);
 	msleep(120);
 	ST7701_DSI(st7701, 0xE8, 0x00, 0x00);
 
-	st7701_switch_cmd_bkx(st7701, false, 0);
+	ST7701_DSI(st7701, DSI_CMD2BKX_SEL,
+		   0x77, 0x01, 0x00, 0x00, DSI_CMD2BKX_SEL_NONE);
 
 	ST7701_DSI(st7701, 0x3A, 0x70);
 }
@@ -579,7 +571,8 @@ static int st7701_prepare(struct drm_panel *panel)
 		st7701->desc->gip_sequence(st7701);
 
 	/* Disable Command2 */
-	st7701_switch_cmd_bkx(st7701, false, 0);
+	ST7701_DSI(st7701, DSI_CMD2BKX_SEL,
+		   0x77, 0x01, 0x00, 0x00, DSI_CMD2BKX_SEL_NONE);
 
 	return 0;
 }

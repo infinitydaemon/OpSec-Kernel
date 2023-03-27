@@ -699,6 +699,7 @@ static int npcm_fiu_probe(struct platform_device *pdev)
 	struct spi_controller *ctrl;
 	struct npcm_fiu_spi *fiu;
 	void __iomem *regbase;
+	struct resource *res;
 	int id, ret;
 
 	ctrl = devm_spi_alloc_master(dev, sizeof(*fiu));
@@ -724,7 +725,8 @@ static int npcm_fiu_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, fiu);
 	fiu->dev = dev;
 
-	regbase = devm_platform_ioremap_resource_byname(pdev, "control");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "control");
+	regbase = devm_ioremap_resource(dev, res);
 	if (IS_ERR(regbase))
 		return PTR_ERR(regbase);
 

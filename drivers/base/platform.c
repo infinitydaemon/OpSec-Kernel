@@ -441,8 +441,8 @@ static int __platform_get_irq_byname(struct platform_device *dev,
 	struct resource *r;
 	int ret;
 
-	if (!dev->dev.of_node || IS_ENABLED(CONFIG_OF_IRQ)) {
-		ret = fwnode_irq_get_byname(dev_fwnode(&dev->dev), name);
+	if (IS_ENABLED(CONFIG_OF_IRQ) && dev->dev.of_node) {
+		ret = of_irq_get_byname(dev->dev.of_node, name);
 		if (ret > 0 || ret == -EPROBE_DEFER)
 			return ret;
 	}

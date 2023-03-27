@@ -2109,7 +2109,7 @@ out_return_cmd:
 	return 0;
 }
 
-static enum scsi_timeout_action mvumi_timed_out(struct scsi_cmnd *scmd)
+static enum blk_eh_timer_return mvumi_timed_out(struct scsi_cmnd *scmd)
 {
 	struct mvumi_cmd *cmd = mvumi_priv(scmd)->cmd_priv;
 	struct Scsi_Host *host = scmd->device->host;
@@ -2137,7 +2137,7 @@ static enum scsi_timeout_action mvumi_timed_out(struct scsi_cmnd *scmd)
 	mvumi_return_cmd(mhba, cmd);
 	spin_unlock_irqrestore(mhba->shost->host_lock, flags);
 
-	return SCSI_EH_NOT_HANDLED;
+	return BLK_EH_DONE;
 }
 
 static int

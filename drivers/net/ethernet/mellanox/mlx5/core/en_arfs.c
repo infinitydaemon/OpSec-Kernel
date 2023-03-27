@@ -57,6 +57,7 @@ struct mlx5e_arfs_tables {
 	struct arfs_table arfs_tables[ARFS_NUM_TYPES];
 	/* Protect aRFS rules list */
 	spinlock_t                     arfs_lock;
+	struct list_head               rules;
 	int                            last_filter_id;
 	struct workqueue_struct        *wq;
 };
@@ -375,6 +376,7 @@ int mlx5e_arfs_create_tables(struct mlx5e_flow_steering *fs,
 		return -ENOMEM;
 
 	spin_lock_init(&arfs->arfs_lock);
+	INIT_LIST_HEAD(&arfs->rules);
 	arfs->wq = create_singlethread_workqueue("mlx5e_arfs");
 	if (!arfs->wq)
 		goto err;

@@ -583,7 +583,7 @@ static int emc2305_identify(struct device *dev)
 	return 0;
 }
 
-static int emc2305_probe(struct i2c_client *client)
+static int emc2305_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	struct i2c_adapter *adapter = client->adapter;
 	struct device *dev = &client->dev;
@@ -682,7 +682,7 @@ static struct i2c_driver emc2305_driver = {
 		.name = "emc2305",
 		.of_match_table = emc2305_dt_ids,
 	},
-	.probe_new = emc2305_probe,
+	.probe    = emc2305_probe,
 	.remove	  = emc2305_remove,
 	.id_table = emc2305_ids,
 	.address_list = emc2305_normal_i2c,

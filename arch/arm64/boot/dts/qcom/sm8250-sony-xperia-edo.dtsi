@@ -317,8 +317,9 @@
 			regulator-max-microvolt = <2960000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 			regulator-allow-set-load;
-			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
-						   RPMH_REGULATOR_MODE_HPM>;
+			regulator-allowed-modes =
+			    <RPMH_REGULATOR_MODE_LPM
+			     RPMH_REGULATOR_MODE_HPM>;
 		};
 
 		vreg_l7c_2p85: ldo7 {
@@ -341,8 +342,9 @@
 			regulator-max-microvolt = <2960000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 			regulator-allow-set-load;
-			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
-						   RPMH_REGULATOR_MODE_HPM>;
+			regulator-allowed-modes =
+			    <RPMH_REGULATOR_MODE_LPM
+			     RPMH_REGULATOR_MODE_HPM>;
 		};
 
 		vreg_l10c_3p3: ldo10 {
@@ -438,16 +440,7 @@
 	status = "okay";
 	clock-frequency = <400000>;
 
-	nfc@28 {
-		compatible = "nxp,nxp-nci-i2c";
-		reg = <0x28>;
-
-		interrupt-parent = <&tlmm>;
-		interrupts = <111 IRQ_TYPE_EDGE_RISING>;
-
-		enable-gpios = <&tlmm 6 GPIO_ACTIVE_HIGH>;
-		firmware-gpios = <&tlmm 110 GPIO_ACTIVE_HIGH>;
-	};
+	/* NXP PN553 NFC @ 28 */
 };
 
 &i2c2 {
@@ -585,7 +578,7 @@
 	vqmmc-supply = <&vreg_l6c_2p9>;
 	bus-width = <4>;
 	no-sdio;
-	no-mmc;
+	no-emmc;
 };
 
 &slpi {
@@ -595,34 +588,34 @@
 &tlmm {
 	gpio-reserved-ranges = <40 4>, <52 4>;
 
-	sdc2_default_state: sdc2-default-state {
-		clk-pins {
+	sdc2_default_state: sdc2-default {
+		clk {
 			pins = "sdc2_clk";
 			drive-strength = <16>;
 			bias-disable;
 		};
 
-		cmd-pins {
+		cmd {
 			pins = "sdc2_cmd";
 			drive-strength = <16>;
 			bias-pull-up;
 		};
 
-		data-pins {
+		data {
 			pins = "sdc2_data";
 			drive-strength = <16>;
 			bias-pull-up;
 		};
 	};
 
-	mdm2ap_default: mdm2ap-default-state {
+	mdm2ap_default: mdm2ap-default {
 		pins = "gpio1", "gpio3";
 		function = "gpio";
 		drive-strength = <8>;
 		bias-disable;
 	};
 
-	ts_int_default: ts-int-default-state {
+	ts_int_default: ts-int-default {
 		pins = "gpio39";
 		function = "gpio";
 		drive-strength = <2>;
@@ -630,14 +623,14 @@
 		input-enable;
 	};
 
-	ap2mdm_default: ap2mdm-default-state {
+	ap2mdm_default: ap2mdm-default {
 		pins = "gpio56", "gpio57";
 		function = "gpio";
 		drive-strength = <16>;
 		bias-disable;
 	};
 
-	sdc2_card_det_n: sd-card-det-n-state {
+	sdc2_card_det_n: sd-card-det-n {
 		pins = "gpio77";
 		function = "gpio";
 		bias-pull-up;

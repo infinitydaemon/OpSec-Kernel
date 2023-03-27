@@ -174,19 +174,17 @@ static void nvmet_get_cmd_effects_nvm(struct nvme_effects_log *log)
 		cpu_to_le32(NVME_CMD_EFFECTS_CSUPP);
 
 	log->iocs[nvme_cmd_read] =
+	log->iocs[nvme_cmd_write] =
 	log->iocs[nvme_cmd_flush] =
 	log->iocs[nvme_cmd_dsm]	=
-		cpu_to_le32(NVME_CMD_EFFECTS_CSUPP);
-	log->iocs[nvme_cmd_write] =
 	log->iocs[nvme_cmd_write_zeroes] =
-		cpu_to_le32(NVME_CMD_EFFECTS_CSUPP | NVME_CMD_EFFECTS_LBCC);
+		cpu_to_le32(NVME_CMD_EFFECTS_CSUPP);
 }
 
 static void nvmet_get_cmd_effects_zns(struct nvme_effects_log *log)
 {
 	log->iocs[nvme_cmd_zone_append] =
 	log->iocs[nvme_cmd_zone_mgmt_send] =
-		cpu_to_le32(NVME_CMD_EFFECTS_CSUPP | NVME_CMD_EFFECTS_LBCC);
 	log->iocs[nvme_cmd_zone_mgmt_recv] =
 		cpu_to_le32(NVME_CMD_EFFECTS_CSUPP);
 }
@@ -375,9 +373,7 @@ static void nvmet_execute_identify_ctrl(struct nvmet_req *req)
 	memcpy_and_pad(id->mn, sizeof(id->mn), subsys->model_number,
 		       strlen(subsys->model_number), ' ');
 	memcpy_and_pad(id->fr, sizeof(id->fr),
-		       subsys->firmware_rev, strlen(subsys->firmware_rev), ' ');
-
-	put_unaligned_le24(subsys->ieee_oui, id->ieee);
+		       UTS_RELEASE, strlen(UTS_RELEASE), ' ');
 
 	id->rab = 6;
 
@@ -385,6 +381,11 @@ static void nvmet_execute_identify_ctrl(struct nvmet_req *req)
 		id->cntrltype = NVME_CTRL_DISC;
 	else
 		id->cntrltype = NVME_CTRL_IO;
+
+	/*
+	 * XXX: figure out how we can assign a IEEE OUI, but until then
+	 * the safest is to leave it as zeroes.
+	 */
 
 	/* we support multiple ports, multiples hosts and ANA: */
 	id->cmic = NVME_CTRL_CMIC_MULTI_PORT | NVME_CTRL_CMIC_MULTI_CTRL |
@@ -566,7 +567,7 @@ static void nvmet_execute_identify_ns(struct nvmet_req *req)
 	}
 
 	if (req->ns->readonly)
-		id->nsattr |= NVME_NS_ATTR_RO;
+		id->nsattr |= (1 << 0);
 done:
 	if (!status)
 		status = nvmet_copy_to_sgl(req, 0, id, sizeof(*id));

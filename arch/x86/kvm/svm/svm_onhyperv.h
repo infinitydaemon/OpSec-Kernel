@@ -13,14 +13,12 @@
 
 static struct kvm_x86_ops svm_x86_ops;
 
-int svm_hv_enable_l2_tlb_flush(struct kvm_vcpu *vcpu);
+int svm_hv_enable_direct_tlbflush(struct kvm_vcpu *vcpu);
 
 static inline void svm_hv_init_vmcb(struct vmcb *vmcb)
 {
-	struct hv_vmcb_enlightenments *hve = &vmcb->control.hv_enlightenments;
-
-	BUILD_BUG_ON(sizeof(vmcb->control.hv_enlightenments) !=
-		     sizeof(vmcb->control.reserved_sw));
+	struct hv_enlightenments *hve =
+		(struct hv_enlightenments *)vmcb->control.reserved_sw;
 
 	if (npt_enabled &&
 	    ms_hyperv.nested_features & HV_X64_NESTED_ENLIGHTENED_TLB)
@@ -30,7 +28,7 @@ static inline void svm_hv_init_vmcb(struct vmcb *vmcb)
 		hve->hv_enlightenments_control.msr_bitmap = 1;
 }
 
-static inline void svm_hv_hardware_setup(void)
+static inline __init void svm_hv_hardware_setup(void)
 {
 	if (npt_enabled &&
 	    ms_hyperv.nested_features & HV_X64_NESTED_ENLIGHTENED_TLB) {
@@ -53,8 +51,8 @@ static inline void svm_hv_hardware_setup(void)
 
 			vp_ap->nested_control.features.directhypercall = 1;
 		}
-		svm_x86_ops.enable_l2_tlb_flush =
-				svm_hv_enable_l2_tlb_flush;
+		svm_x86_ops.enable_direct_tlbflush =
+				svm_hv_enable_direct_tlbflush;
 	}
 }
 
@@ -62,20 +60,23 @@ static inline void svm_hv_vmcb_dirty_nested_enlightenments(
 		struct kvm_vcpu *vcpu)
 {
 	struct vmcb *vmcb = to_svm(vcpu)->vmcb;
-	struct hv_vmcb_enlightenments *hve = &vmcb->control.hv_enlightenments;
+	struct hv_enlightenments *hve =
+		(struct hv_enlightenments *)vmcb->control.reserved_sw;
 
 	if (hve->hv_enlightenments_control.msr_bitmap)
-		vmcb_mark_dirty(vmcb, HV_VMCB_NESTED_ENLIGHTENMENTS);
+		vmcb_mark_dirty(vmcb, VMCB_HV_NESTED_ENLIGHTENMENTS);
 }
 
-static inline void svm_hv_update_vp_id(struct vmcb *vmcb, struct kvm_vcpu *vcpu)
+static inline void svm_hv_update_vp_id(struct vmcb *vmcb,
+		struct kvm_vcpu *vcpu)
 {
-	struct hv_vmcb_enlightenments *hve = &vmcb->control.hv_enlightenments;
+	struct hv_enlightenments *hve =
+		(struct hv_enlightenments *)vmcb->control.reserved_sw;
 	u32 vp_index = kvm_hv_get_vpindex(vcpu);
 
 	if (hve->hv_vp_id != vp_index) {
 		hve->hv_vp_id = vp_index;
-		vmcb_mark_dirty(vmcb, HV_VMCB_NESTED_ENLIGHTENMENTS);
+		vmcb_mark_dirty(vmcb, VMCB_HV_NESTED_ENLIGHTENMENTS);
 	}
 }
 #else
@@ -84,7 +85,7 @@ static inline void svm_hv_init_vmcb(struct vmcb *vmcb)
 {
 }
 
-static inline void svm_hv_hardware_setup(void)
+static inline __init void svm_hv_hardware_setup(void)
 {
 }
 

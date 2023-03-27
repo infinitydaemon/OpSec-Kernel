@@ -819,7 +819,7 @@ NAPI
 ----
 This driver supports NAPI (Rx polling mode).
 For more information on NAPI, see
-https://wiki.linuxfoundation.org/networking/napi
+https://www.linuxfoundation.org/collaborate/workgroups/networking/napi
 
 
 MACVLAN

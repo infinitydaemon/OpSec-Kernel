@@ -237,8 +237,10 @@ static int sprd_iommu_attach_device(struct iommu_domain *domain,
 	struct sprd_iommu_domain *dom = to_sprd_domain(domain);
 	size_t pgt_size = sprd_iommu_pgt_size(domain);
 
-	if (dom->sdev)
+	if (dom->sdev) {
+		pr_err("There's already a device attached to this domain.\n");
 		return -EINVAL;
+	}
 
 	dom->pgt_va = dma_alloc_coherent(sdev->dev, pgt_size, &dom->pgt_pa, GFP_KERNEL);
 	if (!dom->pgt_va)
@@ -271,11 +273,10 @@ static void sprd_iommu_detach_device(struct iommu_domain *domain,
 }
 
 static int sprd_iommu_map(struct iommu_domain *domain, unsigned long iova,
-			  phys_addr_t paddr, size_t pgsize, size_t pgcount,
-			  int prot, gfp_t gfp, size_t *mapped)
+			  phys_addr_t paddr, size_t size, int prot, gfp_t gfp)
 {
 	struct sprd_iommu_domain *dom = to_sprd_domain(domain);
-	size_t size = pgcount * SPRD_IOMMU_PAGE_SIZE;
+	unsigned int page_num = size >> SPRD_IOMMU_PAGE_SHIFT;
 	unsigned long flags;
 	unsigned int i;
 	u32 *pgt_base_iova;
@@ -297,37 +298,35 @@ static int sprd_iommu_map(struct iommu_domain *domain, unsigned long iova,
 	pgt_base_iova = dom->pgt_va + ((iova - start) >> SPRD_IOMMU_PAGE_SHIFT);
 
 	spin_lock_irqsave(&dom->pgtlock, flags);
-	for (i = 0; i < pgcount; i++) {
+	for (i = 0; i < page_num; i++) {
 		pgt_base_iova[i] = pabase >> SPRD_IOMMU_PAGE_SHIFT;
 		pabase += SPRD_IOMMU_PAGE_SIZE;
 	}
 	spin_unlock_irqrestore(&dom->pgtlock, flags);
 
-	*mapped = size;
 	return 0;
 }
 
 static size_t sprd_iommu_unmap(struct iommu_domain *domain, unsigned long iova,
-			       size_t pgsize, size_t pgcount,
-			       struct iommu_iotlb_gather *iotlb_gather)
+			size_t size, struct iommu_iotlb_gather *iotlb_gather)
 {
 	struct sprd_iommu_domain *dom = to_sprd_domain(domain);
 	unsigned long flags;
 	u32 *pgt_base_iova;
-	size_t size = pgcount * SPRD_IOMMU_PAGE_SIZE;
+	unsigned int page_num = size >> SPRD_IOMMU_PAGE_SHIFT;
 	unsigned long start = domain->geometry.aperture_start;
 	unsigned long end = domain->geometry.aperture_end;
 
 	if (iova < start || (iova + size) > (end + 1))
-		return 0;
+		return -EINVAL;
 
 	pgt_base_iova = dom->pgt_va + ((iova - start) >> SPRD_IOMMU_PAGE_SHIFT);
 
 	spin_lock_irqsave(&dom->pgtlock, flags);
-	memset(pgt_base_iova, 0, pgcount * sizeof(u32));
+	memset(pgt_base_iova, 0, page_num * sizeof(u32));
 	spin_unlock_irqrestore(&dom->pgtlock, flags);
 
-	return size;
+	return 0;
 }
 
 static void sprd_iommu_sync_map(struct iommu_domain *domain,
@@ -410,13 +409,13 @@ static const struct iommu_ops sprd_iommu_ops = {
 	.probe_device	= sprd_iommu_probe_device,
 	.device_group	= sprd_iommu_device_group,
 	.of_xlate	= sprd_iommu_of_xlate,
-	.pgsize_bitmap	= SPRD_IOMMU_PAGE_SIZE,
+	.pgsize_bitmap	= ~0UL << SPRD_IOMMU_PAGE_SHIFT,
 	.owner		= THIS_MODULE,
 	.default_domain_ops = &(const struct iommu_domain_ops) {
 		.attach_dev	= sprd_iommu_attach_device,
 		.detach_dev	= sprd_iommu_detach_device,
-		.map_pages	= sprd_iommu_map,
-		.unmap_pages	= sprd_iommu_unmap,
+		.map		= sprd_iommu_map,
+		.unmap		= sprd_iommu_unmap,
 		.iotlb_sync_map	= sprd_iommu_sync_map,
 		.iotlb_sync	= sprd_iommu_sync,
 		.iova_to_phys	= sprd_iommu_iova_to_phys,

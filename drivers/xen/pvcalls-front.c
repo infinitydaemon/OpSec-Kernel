@@ -1087,7 +1087,7 @@ static const struct xenbus_device_id pvcalls_front_ids[] = {
 	{ "" }
 };
 
-static void pvcalls_front_remove(struct xenbus_device *dev)
+static int pvcalls_front_remove(struct xenbus_device *dev)
 {
 	struct pvcalls_bedata *bedata;
 	struct sock_mapping *map = NULL, *n;
@@ -1123,6 +1123,7 @@ static void pvcalls_front_remove(struct xenbus_device *dev)
 	kfree(bedata->ring.sring);
 	kfree(bedata);
 	xenbus_switch_state(dev, XenbusStateClosed);
+	return 0;
 }
 
 static int pvcalls_front_probe(struct xenbus_device *dev,

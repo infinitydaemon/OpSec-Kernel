@@ -142,8 +142,9 @@ static unsigned long long
 vc4_hdmi_encoder_compute_mode_clock(const struct drm_display_mode *mode,
 				    unsigned int bpc, enum vc4_hdmi_output_format fmt);
 
-static bool vc4_hdmi_supports_scrambling(struct vc4_hdmi *vc4_hdmi)
+static bool vc4_hdmi_supports_scrambling(struct drm_encoder *encoder)
 {
+	struct vc4_hdmi *vc4_hdmi = encoder_to_vc4_hdmi(encoder);
 	struct drm_display_info *display = &vc4_hdmi->connector.display_info;
 
 	lockdep_assert_held(&vc4_hdmi->mutex);
@@ -341,8 +342,9 @@ out:
 static int vc4_hdmi_reset_link(struct drm_connector *connector,
 			       struct drm_modeset_acquire_ctx *ctx)
 {
-	struct drm_device *drm;
-	struct vc4_hdmi *vc4_hdmi;
+	struct drm_device *drm = connector->dev;
+	struct vc4_hdmi *vc4_hdmi = connector_to_vc4_hdmi(connector);
+	struct drm_encoder *encoder = &vc4_hdmi->encoder.base;
 	struct drm_connector_state *conn_state;
 	struct drm_crtc_state *crtc_state;
 	struct drm_crtc *crtc;
@@ -353,7 +355,6 @@ static int vc4_hdmi_reset_link(struct drm_connector *connector,
 	if (!connector)
 		return 0;
 
-	drm = connector->dev;
 	ret = drm_modeset_lock(&drm->mode_config.connection_mutex, ctx);
 	if (ret)
 		return ret;
@@ -371,10 +372,9 @@ static int vc4_hdmi_reset_link(struct drm_connector *connector,
 	if (!crtc_state->active)
 		return 0;
 
-	vc4_hdmi = connector_to_vc4_hdmi(connector);
 	mutex_lock(&vc4_hdmi->mutex);
 
-	if (!vc4_hdmi_supports_scrambling(vc4_hdmi)) {
+	if (!vc4_hdmi_supports_scrambling(encoder)) {
 		mutex_unlock(&vc4_hdmi->mutex);
 		return 0;
 	}
@@ -425,6 +425,7 @@ static void vc4_hdmi_handle_hotplug(struct vc4_hdmi *vc4_hdmi,
 {
 	struct drm_connector *connector = &vc4_hdmi->connector;
 	struct edid *edid;
+	int ret;
 
 	/*
 	 * NOTE: This function should really be called with
@@ -453,7 +454,15 @@ static void vc4_hdmi_handle_hotplug(struct vc4_hdmi *vc4_hdmi,
 	cec_s_phys_addr_from_edid(vc4_hdmi->cec_adap, edid);
 	kfree(edid);
 
-	vc4_hdmi_reset_link(connector, ctx);
+	for (;;) {
+		ret = vc4_hdmi_reset_link(connector, ctx);
+		if (ret == -EDEADLK) {
+			drm_modeset_backoff(ctx);
+			continue;
+		}
+
+		break;
+	}
 }
 
 static int vc4_hdmi_connector_detect_ctx(struct drm_connector *connector,
@@ -648,7 +657,7 @@ static void vc4_hdmi_connector_reset(struct drm_connector *connector)
 	new_state->base.max_bpc = 8;
 	new_state->base.max_requested_bpc = 8;
 	new_state->output_format = VC4_HDMI_OUTPUT_RGB;
-	drm_atomic_helper_connector_tv_margins_reset(connector);
+	drm_atomic_helper_connector_tv_reset(connector);
 }
 
 static struct drm_connector_state *
@@ -1032,7 +1041,7 @@ static void vc4_hdmi_enable_scrambling(struct drm_encoder *encoder)
 
 	lockdep_assert_held(&vc4_hdmi->mutex);
 
-	if (!vc4_hdmi_supports_scrambling(vc4_hdmi))
+	if (!vc4_hdmi_supports_scrambling(encoder))
 		return;
 
 	if (!vc4_hdmi_mode_needs_scrambling(mode,
@@ -1952,9 +1961,6 @@ vc4_hdmi_sink_supports_format_bpc(const struct vc4_hdmi *vc4_hdmi,
 	switch (format) {
 	case VC4_HDMI_OUTPUT_RGB:
 		drm_dbg(dev, "RGB Format, checking the constraints.\n");
-
-		if (!(info->color_formats & DRM_COLOR_FORMAT_RGB444))
-			return false;
 
 		if (bpc == 10 && !(info->edid_hdmi_rgb444_dc_modes & DRM_EDID_HDMI_DC_30)) {
 			drm_dbg(dev, "10 BPC but sink doesn't support Deep Color 30.\n");
