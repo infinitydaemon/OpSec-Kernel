@@ -34,9 +34,22 @@ typedef struct { unsigned long pd; } hugepd_t;
 /*
  * For HugeTLB page, there are more metadata to save in the struct page. But
  * the head struct page cannot meet our needs, so we have to abuse other tail
- * struct page to store the metadata.
+ * struct page to store the metadata. In order to avoid conflicts caused by
+ * subsequent use of more tail struct pages, we gather these discrete indexes
+ * of tail struct page here.
  */
-#define __NR_USED_SUBPAGE 3
+enum {
+	SUBPAGE_INDEX_SUBPOOL = 1,	/* reuse page->private */
+#ifdef CONFIG_CGROUP_HUGETLB
+	SUBPAGE_INDEX_CGROUP,		/* reuse page->private */
+	SUBPAGE_INDEX_CGROUP_RSVD,	/* reuse page->private */
+	__MAX_CGROUP_SUBPAGE_INDEX = SUBPAGE_INDEX_CGROUP_RSVD,
+#endif
+#ifdef CONFIG_MEMORY_FAILURE
+	SUBPAGE_INDEX_HWPOISON,
+#endif
+	__NR_USED_SUBPAGE,
+};
 
 struct hugepage_subpool {
 	spinlock_t lock;
@@ -137,8 +150,6 @@ int move_hugetlb_page_tables(struct vm_area_struct *vma,
 			     unsigned long len);
 int copy_hugetlb_page_range(struct mm_struct *, struct mm_struct *,
 			    struct vm_area_struct *, struct vm_area_struct *);
-struct page *hugetlb_follow_page_mask(struct vm_area_struct *vma,
-				unsigned long address, unsigned int flags);
 long follow_hugetlb_page(struct mm_struct *, struct vm_area_struct *,
 			 struct page **, struct vm_area_struct **,
 			 unsigned long *, unsigned long *, long, unsigned int,
@@ -171,11 +182,10 @@ bool hugetlb_reserve_pages(struct inode *inode, long from, long to,
 long hugetlb_unreserve_pages(struct inode *inode, long start, long end,
 						long freed);
 int isolate_hugetlb(struct page *page, struct list_head *list);
-int get_hwpoison_huge_page(struct page *page, bool *hugetlb, bool unpoison);
-int get_huge_page_for_hwpoison(unsigned long pfn, int flags,
-				bool *migratable_cleared);
+int get_hwpoison_huge_page(struct page *page, bool *hugetlb);
+int get_huge_page_for_hwpoison(unsigned long pfn, int flags);
 void putback_active_hugepage(struct page *page);
-void move_hugetlb_state(struct folio *old_folio, struct folio *new_folio, int reason);
+void move_hugetlb_state(struct page *oldpage, struct page *newpage, int reason);
 void free_huge_page(struct page *page);
 void hugetlb_fix_reserve_counts(struct inode *inode);
 extern struct mutex *hugetlb_fault_mutex_table;
@@ -200,6 +210,17 @@ int huge_pmd_unshare(struct mm_struct *mm, struct vm_area_struct *vma,
 				unsigned long addr, pte_t *ptep);
 void adjust_range_if_pmd_sharing_possible(struct vm_area_struct *vma,
 				unsigned long *start, unsigned long *end);
+struct page *follow_huge_addr(struct mm_struct *mm, unsigned long address,
+			      int write);
+struct page *follow_huge_pd(struct vm_area_struct *vma,
+			    unsigned long address, hugepd_t hpd,
+			    int flags, int pdshift);
+struct page *follow_huge_pmd_pte(struct vm_area_struct *vma, unsigned long address,
+				 int flags);
+struct page *follow_huge_pud(struct mm_struct *mm, unsigned long address,
+				pud_t *pud, int flags);
+struct page *follow_huge_pgd(struct mm_struct *mm, unsigned long address,
+			     pgd_t *pgd, int flags);
 
 void hugetlb_vma_lock_read(struct vm_area_struct *vma);
 void hugetlb_vma_unlock_read(struct vm_area_struct *vma);
@@ -252,12 +273,6 @@ static inline void adjust_range_if_pmd_sharing_possible(
 {
 }
 
-static inline struct page *hugetlb_follow_page_mask(struct vm_area_struct *vma,
-				unsigned long address, unsigned int flags)
-{
-	BUILD_BUG(); /* should never be compiled in if !CONFIG_HUGETLB_PAGE*/
-}
-
 static inline long follow_hugetlb_page(struct mm_struct *mm,
 			struct vm_area_struct *vma, struct page **pages,
 			struct vm_area_struct **vmas, unsigned long *position,
@@ -266,6 +281,12 @@ static inline long follow_hugetlb_page(struct mm_struct *mm,
 {
 	BUG();
 	return 0;
+}
+
+static inline struct page *follow_huge_addr(struct mm_struct *mm,
+					unsigned long address, int write)
+{
+	return ERR_PTR(-EINVAL);
 }
 
 static inline int copy_hugetlb_page_range(struct mm_struct *dst,
@@ -298,6 +319,31 @@ static inline int hugetlb_report_node_meminfo(char *buf, int len, int nid)
 
 static inline void hugetlb_show_meminfo_node(int nid)
 {
+}
+
+static inline struct page *follow_huge_pd(struct vm_area_struct *vma,
+				unsigned long address, hugepd_t hpd, int flags,
+				int pdshift)
+{
+	return NULL;
+}
+
+static inline struct page *follow_huge_pmd_pte(struct vm_area_struct *vma,
+				unsigned long address, int flags)
+{
+	return NULL;
+}
+
+static inline struct page *follow_huge_pud(struct mm_struct *mm,
+				unsigned long address, pud_t *pud, int flags)
+{
+	return NULL;
+}
+
+static inline struct page *follow_huge_pgd(struct mm_struct *mm,
+				unsigned long address, pgd_t *pgd, int flags)
+{
+	return NULL;
 }
 
 static inline int prepare_hugepage_range(struct file *file,
@@ -380,13 +426,12 @@ static inline int isolate_hugetlb(struct page *page, struct list_head *list)
 	return -EBUSY;
 }
 
-static inline int get_hwpoison_huge_page(struct page *page, bool *hugetlb, bool unpoison)
+static inline int get_hwpoison_huge_page(struct page *page, bool *hugetlb)
 {
 	return 0;
 }
 
-static inline int get_huge_page_for_hwpoison(unsigned long pfn, int flags,
-					bool *migratable_cleared)
+static inline int get_huge_page_for_hwpoison(unsigned long pfn, int flags)
 {
 	return 0;
 }
@@ -395,8 +440,8 @@ static inline void putback_active_hugepage(struct page *page)
 {
 }
 
-static inline void move_hugetlb_state(struct folio *old_folio,
-					struct folio *new_folio, int reason)
+static inline void move_hugetlb_state(struct page *oldpage,
+					struct page *newpage, int reason)
 {
 }
 
@@ -579,50 +624,26 @@ enum hugetlb_page_flags {
  */
 #ifdef CONFIG_HUGETLB_PAGE
 #define TESTHPAGEFLAG(uname, flname)				\
-static __always_inline						\
-bool folio_test_hugetlb_##flname(struct folio *folio)		\
-	{	void *private = &folio->private;		\
-		return test_bit(HPG_##flname, private);		\
-	}							\
 static inline int HPage##uname(struct page *page)		\
 	{ return test_bit(HPG_##flname, &(page->private)); }
 
 #define SETHPAGEFLAG(uname, flname)				\
-static __always_inline						\
-void folio_set_hugetlb_##flname(struct folio *folio)		\
-	{	void *private = &folio->private;		\
-		set_bit(HPG_##flname, private);			\
-	}							\
 static inline void SetHPage##uname(struct page *page)		\
 	{ set_bit(HPG_##flname, &(page->private)); }
 
 #define CLEARHPAGEFLAG(uname, flname)				\
-static __always_inline						\
-void folio_clear_hugetlb_##flname(struct folio *folio)		\
-	{	void *private = &folio->private;		\
-		clear_bit(HPG_##flname, private);		\
-	}							\
 static inline void ClearHPage##uname(struct page *page)		\
 	{ clear_bit(HPG_##flname, &(page->private)); }
 #else
 #define TESTHPAGEFLAG(uname, flname)				\
-static inline bool						\
-folio_test_hugetlb_##flname(struct folio *folio)		\
-	{ return 0; }						\
 static inline int HPage##uname(struct page *page)		\
 	{ return 0; }
 
 #define SETHPAGEFLAG(uname, flname)				\
-static inline void						\
-folio_set_hugetlb_##flname(struct folio *folio) 		\
-	{ }							\
 static inline void SetHPage##uname(struct page *page)		\
 	{ }
 
 #define CLEARHPAGEFLAG(uname, flname)				\
-static inline void						\
-folio_clear_hugetlb_##flname(struct folio *folio)		\
-	{ }							\
 static inline void ClearHPage##uname(struct page *page)		\
 	{ }
 #endif
@@ -708,29 +729,18 @@ extern unsigned int default_hstate_idx;
 
 #define default_hstate (hstates[default_hstate_idx])
 
-static inline struct hugepage_subpool *hugetlb_folio_subpool(struct folio *folio)
-{
-	return folio->_hugetlb_subpool;
-}
-
 /*
- * hugetlb page subpool pointer located in hpage[2].hugetlb_subpool
+ * hugetlb page subpool pointer located in hpage[1].private
  */
 static inline struct hugepage_subpool *hugetlb_page_subpool(struct page *hpage)
 {
-	return hugetlb_folio_subpool(page_folio(hpage));
-}
-
-static inline void hugetlb_set_folio_subpool(struct folio *folio,
-					struct hugepage_subpool *subpool)
-{
-	folio->_hugetlb_subpool = subpool;
+	return (void *)page_private(hpage + SUBPAGE_INDEX_SUBPOOL);
 }
 
 static inline void hugetlb_set_page_subpool(struct page *hpage,
 					struct hugepage_subpool *subpool)
 {
-	hugetlb_set_folio_subpool(page_folio(hpage), subpool);
+	set_page_private(hpage + SUBPAGE_INDEX_SUBPOOL, (unsigned long)subpool);
 }
 
 static inline struct hstate *hstate_file(struct file *f)
@@ -817,15 +827,10 @@ static inline pte_t arch_make_huge_pte(pte_t entry, unsigned int shift,
 }
 #endif
 
-static inline struct hstate *folio_hstate(struct folio *folio)
-{
-	VM_BUG_ON_FOLIO(!folio_test_hugetlb(folio), folio);
-	return size_to_hstate(folio_size(folio));
-}
-
 static inline struct hstate *page_hstate(struct page *page)
 {
-	return folio_hstate(page_folio(page));
+	VM_BUG_ON_PAGE(!PageHuge(page), page);
+	return size_to_hstate(page_size(page));
 }
 
 static inline unsigned hstate_index_to_shift(unsigned index)
@@ -982,11 +987,6 @@ void hugetlb_unregister_node(struct node *node);
 #else	/* CONFIG_HUGETLB_PAGE */
 struct hstate {};
 
-static inline struct hugepage_subpool *hugetlb_folio_subpool(struct folio *folio)
-{
-	return NULL;
-}
-
 static inline struct hugepage_subpool *hugetlb_page_subpool(struct page *hpage)
 {
 	return NULL;
@@ -1035,11 +1035,6 @@ static inline struct hstate *hstate_sizelog(int page_size_log)
 }
 
 static inline struct hstate *hstate_vma(struct vm_area_struct *vma)
-{
-	return NULL;
-}
-
-static inline struct hstate *folio_hstate(struct folio *folio)
 {
 	return NULL;
 }

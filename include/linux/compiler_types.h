@@ -49,8 +49,7 @@ static inline void __chk_io_ptr(const volatile void __iomem *ptr) { }
 # endif
 # define __iomem
 # define __percpu	BTF_TYPE_TAG(percpu)
-# define __rcu		BTF_TYPE_TAG(rcu)
-
+# define __rcu
 # define __chk_user_ptr(x)	(void)0
 # define __chk_io_ptr(x)	(void)0
 /* context/locking */
