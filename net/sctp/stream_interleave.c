@@ -490,8 +490,11 @@ static int sctp_enqueue_event(struct sctp_ulpq *ulpq,
 	if (!sctp_ulpevent_is_enabled(event, ulpq->asoc->subscribe))
 		goto out_free;
 
-	skb_queue_splice_tail_init(skb_list,
-				   &sk->sk_receive_queue);
+	if (skb_list)
+		skb_queue_splice_tail_init(skb_list,
+					   &sk->sk_receive_queue);
+	else
+		__skb_queue_tail(&sk->sk_receive_queue, skb);
 
 	if (!sp->data_ready_signalled) {
 		sp->data_ready_signalled = 1;
@@ -501,7 +504,10 @@ static int sctp_enqueue_event(struct sctp_ulpq *ulpq,
 	return 1;
 
 out_free:
-	sctp_queue_purge_ulpevents(skb_list);
+	if (skb_list)
+		sctp_queue_purge_ulpevents(skb_list);
+	else
+		sctp_ulpevent_free(event);
 
 	return 0;
 }

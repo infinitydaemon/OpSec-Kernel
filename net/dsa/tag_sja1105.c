@@ -5,12 +5,7 @@
 #include <linux/dsa/sja1105.h>
 #include <linux/dsa/8021q.h>
 #include <linux/packing.h>
-
-#include "tag.h"
-#include "tag_8021q.h"
-
-#define SJA1105_NAME				"sja1105"
-#define SJA1110_NAME				"sja1110"
+#include "dsa_priv.h"
 
 /* Is this a TX or an RX header? */
 #define SJA1110_HEADER_HOST_TO_SWITCH		BIT(15)
@@ -792,7 +787,7 @@ static int sja1105_connect(struct dsa_switch *ds)
 }
 
 static const struct dsa_device_ops sja1105_netdev_ops = {
-	.name = SJA1105_NAME,
+	.name = "sja1105",
 	.proto = DSA_TAG_PROTO_SJA1105,
 	.xmit = sja1105_xmit,
 	.rcv = sja1105_rcv,
@@ -804,10 +799,10 @@ static const struct dsa_device_ops sja1105_netdev_ops = {
 };
 
 DSA_TAG_DRIVER(sja1105_netdev_ops);
-MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_SJA1105, SJA1105_NAME);
+MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_SJA1105);
 
 static const struct dsa_device_ops sja1110_netdev_ops = {
-	.name = SJA1110_NAME,
+	.name = "sja1110",
 	.proto = DSA_TAG_PROTO_SJA1110,
 	.xmit = sja1110_xmit,
 	.rcv = sja1110_rcv,
@@ -819,7 +814,7 @@ static const struct dsa_device_ops sja1110_netdev_ops = {
 };
 
 DSA_TAG_DRIVER(sja1110_netdev_ops);
-MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_SJA1110, SJA1110_NAME);
+MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_SJA1110);
 
 static struct dsa_tag_driver *sja1105_tag_driver_array[] = {
 	&DSA_TAG_DRIVER_NAME(sja1105_netdev_ops),

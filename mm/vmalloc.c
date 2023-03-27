@@ -43,9 +43,6 @@
 #include <asm/tlbflush.h>
 #include <asm/shmparam.h>
 
-#define CREATE_TRACE_POINTS
-#include <trace/events/vmalloc.h>
-
 #include "internal.h"
 #include "pgalloc-track.h"
 
@@ -1623,8 +1620,6 @@ retry:
 		size, align, vstart, vend);
 	spin_unlock(&free_vmap_area_lock);
 
-	trace_alloc_vmap_area(addr, size, align, vstart, vend, addr == vend);
-
 	/*
 	 * If an allocation fails, the "vend" address is
 	 * returned. Therefore trigger the overflow path.
@@ -1730,7 +1725,6 @@ static void purge_fragmented_blocks_allcpus(void);
 static bool __purge_vmap_area_lazy(unsigned long start, unsigned long end)
 {
 	unsigned long resched_threshold;
-	unsigned int num_purged_areas = 0;
 	struct list_head local_purge_list;
 	struct vmap_area *va, *n_va;
 
@@ -1742,7 +1736,7 @@ static bool __purge_vmap_area_lazy(unsigned long start, unsigned long end)
 	spin_unlock(&purge_vmap_area_lock);
 
 	if (unlikely(list_empty(&local_purge_list)))
-		goto out;
+		return false;
 
 	start = min(start,
 		list_first_entry(&local_purge_list,
@@ -1777,16 +1771,12 @@ static bool __purge_vmap_area_lazy(unsigned long start, unsigned long end)
 					      va->va_start, va->va_end);
 
 		atomic_long_sub(nr, &vmap_lazy_nr);
-		num_purged_areas++;
 
 		if (atomic_long_read(&vmap_lazy_nr) < resched_threshold)
 			cond_resched_lock(&free_vmap_area_lock);
 	}
 	spin_unlock(&free_vmap_area_lock);
-
-out:
-	trace_purge_vmap_area_lazy(start, end, num_purged_areas);
-	return num_purged_areas > 0;
+	return true;
 }
 
 /*
@@ -1821,8 +1811,6 @@ static void drain_vmap_area_work(struct work_struct *work)
  */
 static void free_vmap_area_noflush(struct vmap_area *va)
 {
-	unsigned long nr_lazy_max = lazy_max_pages();
-	unsigned long va_start = va->va_start;
 	unsigned long nr_lazy;
 
 	spin_lock(&vmap_area_lock);
@@ -1840,10 +1828,8 @@ static void free_vmap_area_noflush(struct vmap_area *va)
 		&purge_vmap_area_root, &purge_vmap_area_list);
 	spin_unlock(&purge_vmap_area_lock);
 
-	trace_free_vmap_area_noflush(va_start, nr_lazy, nr_lazy_max);
-
 	/* After this point, we may free va at any time */
-	if (unlikely(nr_lazy > nr_lazy_max))
+	if (unlikely(nr_lazy > lazy_max_pages()))
 		schedule_work(&drain_vmap_work);
 }
 

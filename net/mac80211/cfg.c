@@ -2561,50 +2561,47 @@ static int ieee80211_change_bss(struct wiphy *wiphy,
 				struct bss_parameters *params)
 {
 	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
-	struct ieee80211_link_data *link;
 	struct ieee80211_supported_band *sband;
 	u32 changed = 0;
 
-	link = ieee80211_link_or_deflink(sdata, params->link_id, true);
-	if (IS_ERR(link))
-		return PTR_ERR(link);
-
-	if (!sdata_dereference(link->u.ap.beacon, sdata))
+	if (!sdata_dereference(sdata->deflink.u.ap.beacon, sdata))
 		return -ENOENT;
 
-	sband = ieee80211_get_link_sband(link);
+	sband = ieee80211_get_sband(sdata);
 	if (!sband)
 		return -EINVAL;
 
 	if (params->use_cts_prot >= 0) {
-		link->conf->use_cts_prot = params->use_cts_prot;
+		sdata->vif.bss_conf.use_cts_prot = params->use_cts_prot;
 		changed |= BSS_CHANGED_ERP_CTS_PROT;
 	}
 	if (params->use_short_preamble >= 0) {
-		link->conf->use_short_preamble = params->use_short_preamble;
+		sdata->vif.bss_conf.use_short_preamble =
+			params->use_short_preamble;
 		changed |= BSS_CHANGED_ERP_PREAMBLE;
 	}
 
-	if (!link->conf->use_short_slot &&
+	if (!sdata->vif.bss_conf.use_short_slot &&
 	    (sband->band == NL80211_BAND_5GHZ ||
 	     sband->band == NL80211_BAND_6GHZ)) {
-		link->conf->use_short_slot = true;
+		sdata->vif.bss_conf.use_short_slot = true;
 		changed |= BSS_CHANGED_ERP_SLOT;
 	}
 
 	if (params->use_short_slot_time >= 0) {
-		link->conf->use_short_slot = params->use_short_slot_time;
+		sdata->vif.bss_conf.use_short_slot =
+			params->use_short_slot_time;
 		changed |= BSS_CHANGED_ERP_SLOT;
 	}
 
 	if (params->basic_rates) {
-		ieee80211_parse_bitrates(link->conf->chandef.width,
+		ieee80211_parse_bitrates(sdata->vif.bss_conf.chandef.width,
 					 wiphy->bands[sband->band],
 					 params->basic_rates,
 					 params->basic_rates_len,
-					 &link->conf->basic_rates);
+					 &sdata->vif.bss_conf.basic_rates);
 		changed |= BSS_CHANGED_BASIC_RATES;
-		ieee80211_check_rate_mask(link);
+		ieee80211_check_rate_mask(&sdata->deflink);
 	}
 
 	if (params->ap_isolate >= 0) {
@@ -2616,29 +2613,30 @@ static int ieee80211_change_bss(struct wiphy *wiphy,
 	}
 
 	if (params->ht_opmode >= 0) {
-		link->conf->ht_operation_mode = (u16)params->ht_opmode;
+		sdata->vif.bss_conf.ht_operation_mode =
+			(u16) params->ht_opmode;
 		changed |= BSS_CHANGED_HT;
 	}
 
 	if (params->p2p_ctwindow >= 0) {
-		link->conf->p2p_noa_attr.oppps_ctwindow &=
+		sdata->vif.bss_conf.p2p_noa_attr.oppps_ctwindow &=
 					~IEEE80211_P2P_OPPPS_CTWINDOW_MASK;
-		link->conf->p2p_noa_attr.oppps_ctwindow |=
+		sdata->vif.bss_conf.p2p_noa_attr.oppps_ctwindow |=
 			params->p2p_ctwindow & IEEE80211_P2P_OPPPS_CTWINDOW_MASK;
 		changed |= BSS_CHANGED_P2P_PS;
 	}
 
 	if (params->p2p_opp_ps > 0) {
-		link->conf->p2p_noa_attr.oppps_ctwindow |=
+		sdata->vif.bss_conf.p2p_noa_attr.oppps_ctwindow |=
 					IEEE80211_P2P_OPPPS_ENABLE_BIT;
 		changed |= BSS_CHANGED_P2P_PS;
 	} else if (params->p2p_opp_ps == 0) {
-		link->conf->p2p_noa_attr.oppps_ctwindow &=
+		sdata->vif.bss_conf.p2p_noa_attr.oppps_ctwindow &=
 					~IEEE80211_P2P_OPPPS_ENABLE_BIT;
 		changed |= BSS_CHANGED_P2P_PS;
 	}
 
-	ieee80211_link_info_change_notify(sdata, link, changed);
+	ieee80211_link_info_change_notify(sdata, &sdata->deflink, changed);
 
 	return 0;
 }
@@ -4347,6 +4345,9 @@ static int ieee80211_get_txq_stats(struct wiphy *wiphy,
 	struct ieee80211_sub_if_data *sdata;
 	int ret = 0;
 
+	if (!local->ops->wake_tx_queue)
+		return 1;
+
 	spin_lock_bh(&local->fq.lock);
 	rcu_read_lock();
 
@@ -4622,6 +4623,20 @@ unlock:
 	sdata_unlock(sdata);
 }
 
+void ieee80211_color_collision_detection_work(struct work_struct *work)
+{
+	struct delayed_work *delayed_work = to_delayed_work(work);
+	struct ieee80211_link_data *link =
+		container_of(delayed_work, struct ieee80211_link_data,
+			     color_collision_detect_work);
+	struct ieee80211_sub_if_data *sdata = link->sdata;
+
+	sdata_lock(sdata);
+	cfg80211_obss_color_collision_notify(sdata->dev, link->color_bitmap,
+					     GFP_KERNEL);
+	sdata_unlock(sdata);
+}
+
 void ieee80211_color_change_finish(struct ieee80211_vif *vif)
 {
 	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
@@ -4636,11 +4651,21 @@ ieeee80211_obss_color_collision_notify(struct ieee80211_vif *vif,
 				       u64 color_bitmap, gfp_t gfp)
 {
 	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
+	struct ieee80211_link_data *link = &sdata->deflink;
 
 	if (sdata->vif.bss_conf.color_change_active || sdata->vif.bss_conf.csa_active)
 		return;
 
-	cfg80211_obss_color_collision_notify(sdata->dev, color_bitmap, gfp);
+	if (delayed_work_pending(&link->color_collision_detect_work))
+		return;
+
+	link->color_bitmap = color_bitmap;
+	/* queue the color collision detection event every 500 ms in order to
+	 * avoid sending too much netlink messages to userspace.
+	 */
+	ieee80211_queue_delayed_work(&sdata->local->hw,
+				     &link->color_collision_detect_work,
+				     msecs_to_jiffies(500));
 }
 EXPORT_SYMBOL_GPL(ieeee80211_obss_color_collision_notify);
 

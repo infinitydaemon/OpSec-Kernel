@@ -66,7 +66,6 @@ int mfill_atomic_install_pte(struct mm_struct *dst_mm, pmd_t *dst_pmd,
 	bool vm_shared = dst_vma->vm_flags & VM_SHARED;
 	bool page_in_cache = page_mapping(page);
 	spinlock_t *ptl;
-	struct folio *folio;
 	struct inode *inode;
 	pgoff_t offset, max_off;
 
@@ -114,15 +113,14 @@ int mfill_atomic_install_pte(struct mm_struct *dst_mm, pmd_t *dst_pmd,
 	if (!pte_none_mostly(*dst_pte))
 		goto out_unlock;
 
-	folio = page_folio(page);
 	if (page_in_cache) {
 		/* Usually, cache pages are already added to LRU */
 		if (newly_allocated)
-			folio_add_lru(folio);
+			lru_cache_add(page);
 		page_add_file_rmap(page, dst_vma, false);
 	} else {
 		page_add_new_anon_rmap(page, dst_vma, dst_addr);
-		folio_add_lru_vma(folio, dst_vma);
+		lru_cache_add_inactive_or_unevictable(page, dst_vma);
 	}
 
 	/*
@@ -632,7 +630,7 @@ retry:
 			break;
 		}
 
-		dst_pmdval = pmdp_get_lockless(dst_pmd);
+		dst_pmdval = pmd_read_atomic(dst_pmd);
 		/*
 		 * If the dst_pmd is mapped as THP don't
 		 * override it and just be strict.

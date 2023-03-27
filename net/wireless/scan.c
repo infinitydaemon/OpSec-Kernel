@@ -158,8 +158,9 @@ static inline void bss_ref_put(struct cfg80211_registered_device *rdev,
 
 	if (bss->pub.hidden_beacon_bss) {
 		struct cfg80211_internal_bss *hbss;
-
-		hbss = bss_from_pub(bss->pub.hidden_beacon_bss);
+		hbss = container_of(bss->pub.hidden_beacon_bss,
+				    struct cfg80211_internal_bss,
+				    pub);
 		hbss->refcount--;
 		if (hbss->refcount == 0)
 			bss_free(hbss);
@@ -168,7 +169,9 @@ static inline void bss_ref_put(struct cfg80211_registered_device *rdev,
 	if (bss->pub.transmitted_bss) {
 		struct cfg80211_internal_bss *tbss;
 
-		tbss = bss_from_pub(bss->pub.transmitted_bss);
+		tbss = container_of(bss->pub.transmitted_bss,
+				    struct cfg80211_internal_bss,
+				    pub);
 		tbss->refcount--;
 		if (tbss->refcount == 0)
 			bss_free(tbss);
@@ -1287,8 +1290,7 @@ static int cmp_bss(struct cfg80211_bss *a,
 	int i, r;
 
 	if (a->channel != b->channel)
-		return (b->channel->center_freq * 1000 + b->channel->freq_offset) -
-		       (a->channel->center_freq * 1000 + a->channel->freq_offset);
+		return b->channel->center_freq - a->channel->center_freq;
 
 	a_ies = rcu_access_pointer(a->ies);
 	if (!a_ies)
@@ -1789,8 +1791,13 @@ cfg80211_bss_update(struct cfg80211_registered_device *rdev,
 
 		/* This must be before the call to bss_ref_get */
 		if (tmp->pub.transmitted_bss) {
+			struct cfg80211_internal_bss *pbss =
+				container_of(tmp->pub.transmitted_bss,
+					     struct cfg80211_internal_bss,
+					     pub);
+
 			new->pub.transmitted_bss = tmp->pub.transmitted_bss;
-			bss_ref_get(rdev, bss_from_pub(tmp->pub.transmitted_bss));
+			bss_ref_get(rdev, pbss);
 		}
 
 		list_add_tail(&new->list, &rdev->bss_list);
@@ -2568,12 +2575,15 @@ EXPORT_SYMBOL(cfg80211_inform_bss_frame_data);
 void cfg80211_ref_bss(struct wiphy *wiphy, struct cfg80211_bss *pub)
 {
 	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wiphy);
+	struct cfg80211_internal_bss *bss;
 
 	if (!pub)
 		return;
 
+	bss = container_of(pub, struct cfg80211_internal_bss, pub);
+
 	spin_lock_bh(&rdev->bss_lock);
-	bss_ref_get(rdev, bss_from_pub(pub));
+	bss_ref_get(rdev, bss);
 	spin_unlock_bh(&rdev->bss_lock);
 }
 EXPORT_SYMBOL(cfg80211_ref_bss);
@@ -2581,12 +2591,15 @@ EXPORT_SYMBOL(cfg80211_ref_bss);
 void cfg80211_put_bss(struct wiphy *wiphy, struct cfg80211_bss *pub)
 {
 	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wiphy);
+	struct cfg80211_internal_bss *bss;
 
 	if (!pub)
 		return;
 
+	bss = container_of(pub, struct cfg80211_internal_bss, pub);
+
 	spin_lock_bh(&rdev->bss_lock);
-	bss_ref_put(rdev, bss_from_pub(pub));
+	bss_ref_put(rdev, bss);
 	spin_unlock_bh(&rdev->bss_lock);
 }
 EXPORT_SYMBOL(cfg80211_put_bss);
@@ -2600,7 +2613,7 @@ void cfg80211_unlink_bss(struct wiphy *wiphy, struct cfg80211_bss *pub)
 	if (WARN_ON(!pub))
 		return;
 
-	bss = bss_from_pub(pub);
+	bss = container_of(pub, struct cfg80211_internal_bss, pub);
 
 	spin_lock_bh(&rdev->bss_lock);
 	if (list_empty(&bss->list))
@@ -2609,7 +2622,8 @@ void cfg80211_unlink_bss(struct wiphy *wiphy, struct cfg80211_bss *pub)
 	list_for_each_entry_safe(nontrans_bss, tmp,
 				 &pub->nontrans_list,
 				 nontrans_list) {
-		tmp1 = bss_from_pub(nontrans_bss);
+		tmp1 = container_of(nontrans_bss,
+				    struct cfg80211_internal_bss, pub);
 		if (__cfg80211_unlink_bss(rdev, tmp1))
 			rdev->bss_generation++;
 	}
@@ -2666,7 +2680,9 @@ void cfg80211_update_assoc_bss_entry(struct wireless_dev *wdev,
 
 	/* use transmitting bss */
 	if (cbss->pub.transmitted_bss)
-		cbss = bss_from_pub(cbss->pub.transmitted_bss);
+		cbss = container_of(cbss->pub.transmitted_bss,
+				    struct cfg80211_internal_bss,
+				    pub);
 
 	cbss->pub.channel = chan;
 
@@ -2695,7 +2711,8 @@ void cfg80211_update_assoc_bss_entry(struct wireless_dev *wdev,
 		list_for_each_entry_safe(nontrans_bss, tmp,
 					 &new->pub.nontrans_list,
 					 nontrans_list) {
-			bss = bss_from_pub(nontrans_bss);
+			bss = container_of(nontrans_bss,
+					   struct cfg80211_internal_bss, pub);
 			if (__cfg80211_unlink_bss(rdev, bss))
 				rdev->bss_generation++;
 		}
@@ -2712,7 +2729,8 @@ void cfg80211_update_assoc_bss_entry(struct wireless_dev *wdev,
 	list_for_each_entry_safe(nontrans_bss, tmp,
 				 &cbss->pub.nontrans_list,
 				 nontrans_list) {
-		bss = bss_from_pub(nontrans_bss);
+		bss = container_of(nontrans_bss,
+				   struct cfg80211_internal_bss, pub);
 		bss->pub.channel = chan;
 		rb_erase(&bss->rbn, &rdev->bss_tree);
 		rb_insert_bss(rdev, bss);
@@ -3219,9 +3237,8 @@ static int ieee80211_scan_results(struct cfg80211_registered_device *rdev,
 
 int cfg80211_wext_giwscan(struct net_device *dev,
 			  struct iw_request_info *info,
-			  union iwreq_data *wrqu, char *extra)
+			  struct iw_point *data, char *extra)
 {
-	struct iw_point *data = &wrqu->data;
 	struct cfg80211_registered_device *rdev;
 	int res;
 

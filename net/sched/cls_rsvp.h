@@ -124,8 +124,8 @@ static inline unsigned int hash_src(__be32 *src)
 		return r;				\
 }
 
-TC_INDIRECT_SCOPE int RSVP_CLS(struct sk_buff *skb, const struct tcf_proto *tp,
-			       struct tcf_result *res)
+static int rsvp_classify(struct sk_buff *skb, const struct tcf_proto *tp,
+			 struct tcf_result *res)
 {
 	struct rsvp_head *head = rcu_dereference_bh(tp->root);
 	struct rsvp_session *s;
@@ -738,7 +738,7 @@ static void rsvp_bind_class(void *fh, u32 classid, unsigned long cl, void *q,
 
 static struct tcf_proto_ops RSVP_OPS __read_mostly = {
 	.kind		=	RSVP_ID,
-	.classify	=	RSVP_CLS,
+	.classify	=	rsvp_classify,
 	.init		=	rsvp_init,
 	.destroy	=	rsvp_destroy,
 	.get		=	rsvp_get,

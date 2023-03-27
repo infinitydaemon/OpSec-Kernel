@@ -44,9 +44,16 @@ struct ethtool_devlink_compat {
 
 static struct devlink *netdev_to_devlink_get(struct net_device *dev)
 {
-	if (!dev->devlink_port)
+	struct devlink_port *devlink_port;
+
+	if (!dev->netdev_ops->ndo_get_devlink_port)
 		return NULL;
-	return devlink_try_get(dev->devlink_port->devlink);
+
+	devlink_port = dev->netdev_ops->ndo_get_devlink_port(dev);
+	if (!devlink_port)
+		return NULL;
+
+	return devlink_try_get(devlink_port->devlink);
 }
 
 /*
@@ -706,22 +713,15 @@ static int
 ethtool_get_drvinfo(struct net_device *dev, struct ethtool_devlink_compat *rsp)
 {
 	const struct ethtool_ops *ops = dev->ethtool_ops;
-	struct device *parent = dev->dev.parent;
 
 	rsp->info.cmd = ETHTOOL_GDRVINFO;
 	strscpy(rsp->info.version, UTS_RELEASE, sizeof(rsp->info.version));
 	if (ops->get_drvinfo) {
 		ops->get_drvinfo(dev, &rsp->info);
-		if (!rsp->info.bus_info[0] && parent)
-			strscpy(rsp->info.bus_info, dev_name(parent),
-				sizeof(rsp->info.bus_info));
-		if (!rsp->info.driver[0] && parent && parent->driver)
-			strscpy(rsp->info.driver, parent->driver->name,
-				sizeof(rsp->info.driver));
-	} else if (parent && parent->driver) {
-		strscpy(rsp->info.bus_info, dev_name(parent),
+	} else if (dev->dev.parent && dev->dev.parent->driver) {
+		strscpy(rsp->info.bus_info, dev_name(dev->dev.parent),
 			sizeof(rsp->info.bus_info));
-		strscpy(rsp->info.driver, parent->driver->name,
+		strscpy(rsp->info.driver, dev->dev.parent->driver->name,
 			sizeof(rsp->info.driver));
 	} else if (dev->rtnl_link_ops) {
 		strscpy(rsp->info.driver, dev->rtnl_link_ops->kind,
@@ -1796,8 +1796,7 @@ static noinline_for_stack int ethtool_set_channels(struct net_device *dev,
 {
 	struct ethtool_channels channels, curr = { .cmd = ETHTOOL_GCHANNELS };
 	u16 from_channel, to_channel;
-	u64 max_rxnfc_in_use;
-	u32 max_rxfh_in_use;
+	u32 max_rx_in_use = 0;
 	unsigned int i;
 	int ret;
 
@@ -1828,15 +1827,11 @@ static noinline_for_stack int ethtool_set_channels(struct net_device *dev,
 		return -EINVAL;
 
 	/* ensure the new Rx count fits within the configured Rx flow
-	 * indirection table/rxnfc settings */
-	if (ethtool_get_max_rxnfc_channel(dev, &max_rxnfc_in_use))
-		max_rxnfc_in_use = 0;
-	if (!netif_is_rxfh_configured(dev) ||
-	    ethtool_get_max_rxfh_channel(dev, &max_rxfh_in_use))
-		max_rxfh_in_use = 0;
-	if (channels.combined_count + channels.rx_count <=
-	    max_t(u64, max_rxnfc_in_use, max_rxfh_in_use))
-		return -EINVAL;
+	 * indirection table settings */
+	if (netif_is_rxfh_configured(dev) &&
+	    !ethtool_get_max_rxfh_channel(dev, &max_rx_in_use) &&
+	    (channels.combined_count + channels.rx_count) <= max_rx_in_use)
+	    return -EINVAL;
 
 	/* Disabling channels, query zero-copy AF_XDP sockets */
 	from_channel = channels.combined_count +
@@ -2078,8 +2073,23 @@ static int ethtool_get_stats(struct net_device *dev, void __user *useraddr)
 	return ret;
 }
 
-static int ethtool_vzalloc_stats_array(int n_stats, u64 **data)
+static int ethtool_get_phy_stats(struct net_device *dev, void __user *useraddr)
 {
+	const struct ethtool_phy_ops *phy_ops = ethtool_phy_ops;
+	const struct ethtool_ops *ops = dev->ethtool_ops;
+	struct phy_device *phydev = dev->phydev;
+	struct ethtool_stats stats;
+	u64 *data;
+	int ret, n_stats;
+
+	if (!phydev && (!ops->get_ethtool_phy_stats || !ops->get_sset_count))
+		return -EOPNOTSUPP;
+
+	if (phydev && !ops->get_ethtool_phy_stats &&
+	    phy_ops && phy_ops->get_sset_count)
+		n_stats = phy_ops->get_sset_count(phydev);
+	else
+		n_stats = ops->get_sset_count(dev, ETH_SS_PHY_STATS);
 	if (n_stats < 0)
 		return n_stats;
 	if (n_stats > S32_MAX / sizeof(u64))
@@ -2087,82 +2097,35 @@ static int ethtool_vzalloc_stats_array(int n_stats, u64 **data)
 	if (WARN_ON_ONCE(!n_stats))
 		return -EOPNOTSUPP;
 
-	*data = vzalloc(array_size(n_stats, sizeof(u64)));
-	if (!*data)
-		return -ENOMEM;
-
-	return 0;
-}
-
-static int ethtool_get_phy_stats_phydev(struct phy_device *phydev,
-					 struct ethtool_stats *stats,
-					 u64 **data)
- {
-	const struct ethtool_phy_ops *phy_ops = ethtool_phy_ops;
-	int n_stats, ret;
-
-	if (!phy_ops || !phy_ops->get_sset_count || !phy_ops->get_stats)
-		return -EOPNOTSUPP;
-
-	n_stats = phy_ops->get_sset_count(phydev);
-
-	ret = ethtool_vzalloc_stats_array(n_stats, data);
-	if (ret)
-		return ret;
-
-	stats->n_stats = n_stats;
-	return phy_ops->get_stats(phydev, stats, *data);
-}
-
-static int ethtool_get_phy_stats_ethtool(struct net_device *dev,
-					  struct ethtool_stats *stats,
-					  u64 **data)
-{
-	const struct ethtool_ops *ops = dev->ethtool_ops;
-	int n_stats, ret;
-
-	if (!ops || !ops->get_sset_count || ops->get_ethtool_phy_stats)
-		return -EOPNOTSUPP;
-
-	n_stats = ops->get_sset_count(dev, ETH_SS_PHY_STATS);
-
-	ret = ethtool_vzalloc_stats_array(n_stats, data);
-	if (ret)
-		return ret;
-
-	stats->n_stats = n_stats;
-	ops->get_ethtool_phy_stats(dev, stats, *data);
-
-	return 0;
-}
-
-static int ethtool_get_phy_stats(struct net_device *dev, void __user *useraddr)
-{
-	struct phy_device *phydev = dev->phydev;
-	struct ethtool_stats stats;
-	u64 *data = NULL;
-	int ret = -EOPNOTSUPP;
-
 	if (copy_from_user(&stats, useraddr, sizeof(stats)))
 		return -EFAULT;
 
-	if (phydev)
-		ret = ethtool_get_phy_stats_phydev(phydev, &stats, &data);
+	stats.n_stats = n_stats;
 
-	if (ret == -EOPNOTSUPP)
-		ret = ethtool_get_phy_stats_ethtool(dev, &stats, &data);
+	if (n_stats) {
+		data = vzalloc(array_size(n_stats, sizeof(u64)));
+		if (!data)
+			return -ENOMEM;
 
-	if (ret)
-		goto out;
-
-	if (copy_to_user(useraddr, &stats, sizeof(stats))) {
-		ret = -EFAULT;
-		goto out;
+		if (phydev && !ops->get_ethtool_phy_stats &&
+		    phy_ops && phy_ops->get_stats) {
+			ret = phy_ops->get_stats(phydev, &stats, data);
+			if (ret < 0)
+				goto out;
+		} else {
+			ops->get_ethtool_phy_stats(dev, &stats, data);
+		}
+	} else {
+		data = NULL;
 	}
 
+	ret = -EFAULT;
+	if (copy_to_user(useraddr, &stats, sizeof(stats)))
+		goto out;
 	useraddr += sizeof(stats);
-	if (copy_to_user(useraddr, data, array_size(stats.n_stats, sizeof(u64))))
-		ret = -EFAULT;
+	if (n_stats && copy_to_user(useraddr, data, array_size(n_stats, sizeof(u64))))
+		goto out;
+	ret = 0;
 
  out:
 	vfree(data);

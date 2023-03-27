@@ -357,8 +357,7 @@ static void nft_dynset_destroy(const struct nft_ctx *ctx,
 	nf_tables_destroy_set(ctx, priv->set);
 }
 
-static int nft_dynset_dump(struct sk_buff *skb,
-			   const struct nft_expr *expr, bool reset)
+static int nft_dynset_dump(struct sk_buff *skb, const struct nft_expr *expr)
 {
 	const struct nft_dynset *priv = nft_expr_priv(expr);
 	u32 flags = priv->invert ? NFT_DYNSET_F_INV : 0;
@@ -380,7 +379,7 @@ static int nft_dynset_dump(struct sk_buff *skb,
 	if (priv->set->num_exprs == 0) {
 		if (priv->num_exprs == 1) {
 			if (nft_expr_dump(skb, NFTA_DYNSET_EXPR,
-					  priv->expr_array[0], reset))
+					  priv->expr_array[0]))
 				goto nla_put_failure;
 		} else if (priv->num_exprs > 1) {
 			struct nlattr *nest;
@@ -391,7 +390,7 @@ static int nft_dynset_dump(struct sk_buff *skb,
 
 			for (i = 0; i < priv->num_exprs; i++) {
 				if (nft_expr_dump(skb, NFTA_LIST_ELEM,
-						  priv->expr_array[i], reset))
+						  priv->expr_array[i]))
 					goto nla_put_failure;
 			}
 			nla_nest_end(skb, nest);

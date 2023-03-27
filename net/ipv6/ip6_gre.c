@@ -870,6 +870,26 @@ static inline int ip6gre_xmit_ipv6(struct sk_buff *skb, struct net_device *dev)
 	return 0;
 }
 
+/**
+ * ip6gre_tnl_addr_conflict - compare packet addresses to tunnel's own
+ *   @t: the outgoing tunnel device
+ *   @hdr: IPv6 header from the incoming packet
+ *
+ * Description:
+ *   Avoid trivial tunneling loop by checking that tunnel exit-point
+ *   doesn't match source of incoming packet.
+ *
+ * Return:
+ *   1 if conflict,
+ *   0 else
+ **/
+
+static inline bool ip6gre_tnl_addr_conflict(const struct ip6_tnl *t,
+	const struct ipv6hdr *hdr)
+{
+	return ipv6_addr_equal(&t->parms.raddr, &hdr->saddr);
+}
+
 static int ip6gre_xmit_other(struct sk_buff *skb, struct net_device *dev)
 {
 	struct ip6_tnl *t = netdev_priv(dev);
@@ -895,6 +915,7 @@ static netdev_tx_t ip6gre_tunnel_xmit(struct sk_buff *skb,
 	struct net_device *dev)
 {
 	struct ip6_tnl *t = netdev_priv(dev);
+	struct net_device_stats *stats = &t->dev->stats;
 	__be16 payload_protocol;
 	int ret;
 
@@ -924,8 +945,8 @@ static netdev_tx_t ip6gre_tunnel_xmit(struct sk_buff *skb,
 
 tx_err:
 	if (!t->parms.collect_md || !IS_ERR(skb_tunnel_info_txcheck(skb)))
-		DEV_STATS_INC(dev, tx_errors);
-	DEV_STATS_INC(dev, tx_dropped);
+		stats->tx_errors++;
+	stats->tx_dropped++;
 	kfree_skb(skb);
 	return NETDEV_TX_OK;
 }
@@ -936,6 +957,7 @@ static netdev_tx_t ip6erspan_tunnel_xmit(struct sk_buff *skb,
 	struct ip_tunnel_info *tun_info = NULL;
 	struct ip6_tnl *t = netdev_priv(dev);
 	struct dst_entry *dst = skb_dst(skb);
+	struct net_device_stats *stats;
 	bool truncate = false;
 	int encap_limit = -1;
 	__u8 dsfield = false;
@@ -1084,9 +1106,10 @@ static netdev_tx_t ip6erspan_tunnel_xmit(struct sk_buff *skb,
 	return NETDEV_TX_OK;
 
 tx_err:
+	stats = &t->dev->stats;
 	if (!IS_ERR(tun_info))
-		DEV_STATS_INC(dev, tx_errors);
-	DEV_STATS_INC(dev, tx_dropped);
+		stats->tx_errors++;
+	stats->tx_dropped++;
 	kfree_skb(skb);
 	return NETDEV_TX_OK;
 }

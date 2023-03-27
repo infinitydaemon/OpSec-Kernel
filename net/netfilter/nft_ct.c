@@ -641,8 +641,7 @@ static void nft_ct_set_destroy(const struct nft_ctx *ctx,
 	nf_ct_netns_put(ctx->net, ctx->family);
 }
 
-static int nft_ct_get_dump(struct sk_buff *skb,
-			   const struct nft_expr *expr, bool reset)
+static int nft_ct_get_dump(struct sk_buff *skb, const struct nft_expr *expr)
 {
 	const struct nft_ct *priv = nft_expr_priv(expr);
 
@@ -704,8 +703,7 @@ static bool nft_ct_get_reduce(struct nft_regs_track *track,
 	return nft_expr_reduce_bitwise(track, expr);
 }
 
-static int nft_ct_set_dump(struct sk_buff *skb,
-			   const struct nft_expr *expr, bool reset)
+static int nft_ct_set_dump(struct sk_buff *skb, const struct nft_expr *expr)
 {
 	const struct nft_ct *priv = nft_expr_priv(expr);
 

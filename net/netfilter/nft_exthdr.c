@@ -13,6 +13,7 @@
 #include <linux/sctp.h>
 #include <net/netfilter/nf_tables_core.h>
 #include <net/netfilter/nf_tables.h>
+#include <net/sctp/sctp.h>
 #include <net/tcp.h>
 
 struct nft_exthdr {
@@ -575,8 +576,7 @@ nla_put_failure:
 	return -1;
 }
 
-static int nft_exthdr_dump(struct sk_buff *skb,
-			   const struct nft_expr *expr, bool reset)
+static int nft_exthdr_dump(struct sk_buff *skb, const struct nft_expr *expr)
 {
 	const struct nft_exthdr *priv = nft_expr_priv(expr);
 
@@ -586,8 +586,7 @@ static int nft_exthdr_dump(struct sk_buff *skb,
 	return nft_exthdr_dump_common(skb, priv);
 }
 
-static int nft_exthdr_dump_set(struct sk_buff *skb,
-			       const struct nft_expr *expr, bool reset)
+static int nft_exthdr_dump_set(struct sk_buff *skb, const struct nft_expr *expr)
 {
 	const struct nft_exthdr *priv = nft_expr_priv(expr);
 
@@ -597,8 +596,7 @@ static int nft_exthdr_dump_set(struct sk_buff *skb,
 	return nft_exthdr_dump_common(skb, priv);
 }
 
-static int nft_exthdr_dump_strip(struct sk_buff *skb,
-				 const struct nft_expr *expr, bool reset)
+static int nft_exthdr_dump_strip(struct sk_buff *skb, const struct nft_expr *expr)
 {
 	const struct nft_exthdr *priv = nft_expr_priv(expr);
 

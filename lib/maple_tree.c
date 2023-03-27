@@ -323,19 +323,14 @@ static inline void *mte_safe_root(const struct maple_enode *node)
 	return (void *)((unsigned long)node & ~MAPLE_ROOT_NODE);
 }
 
-static inline void *mte_set_full(const struct maple_enode *node)
+static inline void mte_set_full(const struct maple_enode *node)
 {
-	return (void *)((unsigned long)node & ~MAPLE_ENODE_NULL);
+	node = (void *)((unsigned long)node & ~MAPLE_ENODE_NULL);
 }
 
-static inline void *mte_clear_full(const struct maple_enode *node)
+static inline void mte_clear_full(const struct maple_enode *node)
 {
-	return (void *)((unsigned long)node | MAPLE_ENODE_NULL);
-}
-
-static inline bool mte_has_null(const struct maple_enode *node)
-{
-	return (unsigned long)node & MAPLE_ENODE_NULL;
+	node = (void *)((unsigned long)node | MAPLE_ENODE_NULL);
 }
 
 static inline bool ma_is_root(struct maple_node *node)
@@ -6064,7 +6059,7 @@ void *mas_find_rev(struct ma_state *mas, unsigned long min)
 	if (mas->index < min)
 		return NULL;
 
-	/* Retries on dead nodes handled by mas_prev_entry */
+	/* Retries on dead nodes handled by mas_next_entry */
 	return mas_prev_entry(mas, min);
 }
 EXPORT_SYMBOL_GPL(mas_find_rev);
