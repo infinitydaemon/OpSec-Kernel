@@ -1839,6 +1839,7 @@ int ext4_group_extend(struct super_block *sb, struct ext4_super_block *es,
 	ext4_grpblk_t last;
 	ext4_grpblk_t add;
 	struct buffer_head *bh;
+	int err;
 	ext4_group_t group;
 
 	o_blocks_count = ext4_blocks_count(es);
@@ -1893,7 +1894,8 @@ int ext4_group_extend(struct super_block *sb, struct ext4_super_block *es,
 	}
 	brelse(bh);
 
-	return ext4_group_extend_no_check(sb, o_blocks_count, add);
+	err = ext4_group_extend_no_check(sb, o_blocks_count, add);
+	return err;
 } /* ext4_group_extend */
 
 

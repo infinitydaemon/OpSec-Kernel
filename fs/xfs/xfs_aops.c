@@ -17,8 +17,6 @@
 #include "xfs_bmap.h"
 #include "xfs_bmap_util.h"
 #include "xfs_reflink.h"
-#include "xfs_errortag.h"
-#include "xfs_error.h"
 
 struct xfs_writepage_ctx {
 	struct iomap_writepage_ctx ctx;
@@ -116,8 +114,9 @@ xfs_end_ioend(
 	if (unlikely(error)) {
 		if (ioend->io_flags & IOMAP_F_SHARED) {
 			xfs_reflink_cancel_cow_range(ip, offset, size, true);
-			xfs_bmap_punch_delalloc_range(ip, offset,
-					offset + size);
+			xfs_bmap_punch_delalloc_range(ip,
+						      XFS_B_TO_FSBT(mp, offset),
+						      XFS_B_TO_FSB(mp, size));
 		}
 		goto done;
 	}
@@ -219,17 +218,11 @@ xfs_imap_valid(
 	 * checked (and found nothing at this offset) could have added
 	 * overlapping blocks.
 	 */
-	if (XFS_WPC(wpc)->data_seq != READ_ONCE(ip->i_df.if_seq)) {
-		trace_xfs_wb_data_iomap_invalid(ip, &wpc->iomap,
-				XFS_WPC(wpc)->data_seq, XFS_DATA_FORK);
+	if (XFS_WPC(wpc)->data_seq != READ_ONCE(ip->i_df.if_seq))
 		return false;
-	}
 	if (xfs_inode_has_cow_data(ip) &&
-	    XFS_WPC(wpc)->cow_seq != READ_ONCE(ip->i_cowfp->if_seq)) {
-		trace_xfs_wb_cow_iomap_invalid(ip, &wpc->iomap,
-				XFS_WPC(wpc)->cow_seq, XFS_COW_FORK);
+	    XFS_WPC(wpc)->cow_seq != READ_ONCE(ip->i_cowfp->if_seq))
 		return false;
-	}
 	return true;
 }
 
@@ -292,8 +285,6 @@ xfs_map_blocks(
 
 	if (xfs_is_shutdown(mp))
 		return -EIO;
-
-	XFS_ERRORTAG_DELAY(mp, XFS_ERRTAG_WB_DELAY_MS);
 
 	/*
 	 * COW fork blocks can overlap data fork blocks even if the blocks
@@ -382,7 +373,7 @@ retry:
 	    isnullstartblock(imap.br_startblock))
 		goto allocate_blocks;
 
-	xfs_bmbt_to_iomap(ip, &wpc->iomap, &imap, 0, 0, XFS_WPC(wpc)->data_seq);
+	xfs_bmbt_to_iomap(ip, &wpc->iomap, &imap, 0, 0);
 	trace_xfs_map_blocks_found(ip, offset, count, whichfork, &imap);
 	return 0;
 allocate_blocks:
@@ -464,8 +455,12 @@ xfs_discard_folio(
 	struct folio		*folio,
 	loff_t			pos)
 {
-	struct xfs_inode	*ip = XFS_I(folio->mapping->host);
+	struct inode		*inode = folio->mapping->host;
+	struct xfs_inode	*ip = XFS_I(inode);
 	struct xfs_mount	*mp = ip->i_mount;
+	size_t			offset = offset_in_folio(folio, pos);
+	xfs_fileoff_t		start_fsb = XFS_B_TO_FSBT(mp, pos);
+	xfs_fileoff_t		pageoff_fsb = XFS_B_TO_FSBT(mp, offset);
 	int			error;
 
 	if (xfs_is_shutdown(mp))
@@ -475,9 +470,8 @@ xfs_discard_folio(
 		"page discard on page "PTR_FMT", inode 0x%llx, pos %llu.",
 			folio, ip->i_ino, pos);
 
-	error = xfs_bmap_punch_delalloc_range(ip, pos,
-			round_up(pos, folio_size(folio)));
-
+	error = xfs_bmap_punch_delalloc_range(ip, start_fsb,
+			i_blocks_per_folio(inode, folio) - pageoff_fsb);
 	if (error && !xfs_is_shutdown(mp))
 		xfs_alert(mp, "page discard unable to remove delalloc mapping.");
 }

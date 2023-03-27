@@ -21,6 +21,7 @@
 #include "cifsfs.h"
 #ifdef CONFIG_CIFS_DFS_UPCALL
 #include "dns_resolve.h"
+#include "dfs_cache.h"
 #endif
 #include "fs_context.h"
 #include "cached_dir.h"
@@ -1258,30 +1259,44 @@ int match_target_ip(struct TCP_Server_Info *server,
 		    bool *result)
 {
 	int rc;
-	char *target;
-	struct sockaddr_storage ss;
+	char *target, *tip = NULL;
+	struct sockaddr tipaddr;
 
 	*result = false;
 
 	target = kzalloc(share_len + 3, GFP_KERNEL);
-	if (!target)
-		return -ENOMEM;
+	if (!target) {
+		rc = -ENOMEM;
+		goto out;
+	}
 
 	scnprintf(target, share_len + 3, "\\\\%.*s", (int)share_len, share);
 
 	cifs_dbg(FYI, "%s: target name: %s\n", __func__, target + 2);
 
-	rc = dns_resolve_server_name_to_ip(target, (struct sockaddr *)&ss, NULL);
-	kfree(target);
-
+	rc = dns_resolve_server_name_to_ip(target, &tip, NULL);
 	if (rc < 0)
-		return rc;
+		goto out;
 
-	spin_lock(&server->srv_lock);
-	*result = cifs_match_ipaddr((struct sockaddr *)&server->dstaddr, (struct sockaddr *)&ss);
-	spin_unlock(&server->srv_lock);
+	cifs_dbg(FYI, "%s: target ip: %s\n", __func__, tip);
+
+	if (!cifs_convert_address(&tipaddr, tip, strlen(tip))) {
+		cifs_dbg(VFS, "%s: failed to convert target ip address\n",
+			 __func__);
+		rc = -EINVAL;
+		goto out;
+	}
+
+	*result = cifs_match_ipaddr((struct sockaddr *)&server->dstaddr,
+				    &tipaddr);
 	cifs_dbg(FYI, "%s: ip addresses match: %u\n", __func__, *result);
-	return 0;
+	rc = 0;
+
+out:
+	kfree(target);
+	kfree(tip);
+
+	return rc;
 }
 
 int cifs_update_super_prepath(struct cifs_sb_info *cifs_sb, char *prefix)
@@ -1298,6 +1313,72 @@ int cifs_update_super_prepath(struct cifs_sb_info *cifs_sb, char *prefix)
 		cifs_sb->prepath = NULL;
 
 	cifs_sb->mnt_cifs_flags |= CIFS_MOUNT_USE_PREFIX_PATH;
+	return 0;
+}
+
+/*
+ * Handle weird Windows SMB server behaviour. It responds with
+ * STATUS_OBJECT_NAME_INVALID code to SMB2 QUERY_INFO request for
+ * "\<server>\<dfsname>\<linkpath>" DFS reference, where <dfsname> contains
+ * non-ASCII unicode symbols.
+ */
+int cifs_inval_name_dfs_link_error(const unsigned int xid,
+				   struct cifs_tcon *tcon,
+				   struct cifs_sb_info *cifs_sb,
+				   const char *full_path,
+				   bool *islink)
+{
+	struct cifs_ses *ses = tcon->ses;
+	size_t len;
+	char *path;
+	char *ref_path;
+
+	*islink = false;
+
+	/*
+	 * Fast path - skip check when @full_path doesn't have a prefix path to
+	 * look up or tcon is not DFS.
+	 */
+	if (strlen(full_path) < 2 || !cifs_sb ||
+	    (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_NO_DFS) ||
+	    !is_tcon_dfs(tcon) || !ses->server->origin_fullpath)
+		return 0;
+
+	/*
+	 * Slow path - tcon is DFS and @full_path has prefix path, so attempt
+	 * to get a referral to figure out whether it is an DFS link.
+	 */
+	len = strnlen(tcon->tree_name, MAX_TREE_SIZE + 1) + strlen(full_path) + 1;
+	path = kmalloc(len, GFP_KERNEL);
+	if (!path)
+		return -ENOMEM;
+
+	scnprintf(path, len, "%s%s", tcon->tree_name, full_path);
+	ref_path = dfs_cache_canonical_path(path + 1, cifs_sb->local_nls,
+					    cifs_remap(cifs_sb));
+	kfree(path);
+
+	if (IS_ERR(ref_path)) {
+		if (PTR_ERR(ref_path) != -EINVAL)
+			return PTR_ERR(ref_path);
+	} else {
+		struct dfs_info3_param *refs = NULL;
+		int num_refs = 0;
+
+		/*
+		 * XXX: we are not using dfs_cache_find() here because we might
+		 * end filling all the DFS cache and thus potentially
+		 * removing cached DFS targets that the client would eventually
+		 * need during failover.
+		 */
+		if (ses->server->ops->get_dfs_refer &&
+		    !ses->server->ops->get_dfs_refer(xid, ses, ref_path, &refs,
+						     &num_refs, cifs_sb->local_nls,
+						     cifs_remap(cifs_sb)))
+			*islink = refs[0].server_type == DFS_TYPE_LINK;
+		free_dfs_info_array(refs, num_refs);
+		kfree(ref_path);
+	}
 	return 0;
 }
 #endif

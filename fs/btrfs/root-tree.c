@@ -6,16 +6,11 @@
 #include <linux/err.h>
 #include <linux/uuid.h>
 #include "ctree.h"
-#include "fs.h"
-#include "messages.h"
 #include "transaction.h"
 #include "disk-io.h"
 #include "print-tree.h"
 #include "qgroup.h"
 #include "space-info.h"
-#include "accessors.h"
-#include "root-tree.h"
-#include "orphan.h"
 
 /*
  * Read a root item from the tree. In case we detect a root item smaller then
@@ -332,8 +327,9 @@ out:
 }
 
 int btrfs_del_root_ref(struct btrfs_trans_handle *trans, u64 root_id,
-		       u64 ref_id, u64 dirid, u64 *sequence,
-		       const struct fscrypt_str *name)
+		       u64 ref_id, u64 dirid, u64 *sequence, const char *name,
+		       int name_len)
+
 {
 	struct btrfs_root *tree_root = trans->fs_info->tree_root;
 	struct btrfs_path *path;
@@ -360,8 +356,8 @@ again:
 				     struct btrfs_root_ref);
 		ptr = (unsigned long)(ref + 1);
 		if ((btrfs_root_ref_dirid(leaf, ref) != dirid) ||
-		    (btrfs_root_ref_name_len(leaf, ref) != name->len) ||
-		    memcmp_extent_buffer(leaf, name->name, ptr, name->len)) {
+		    (btrfs_root_ref_name_len(leaf, ref) != name_len) ||
+		    memcmp_extent_buffer(leaf, name, ptr, name_len)) {
 			ret = -ENOENT;
 			goto out;
 		}
@@ -404,8 +400,8 @@ out:
  * Will return 0, -ENOMEM, or anything from the CoW path
  */
 int btrfs_add_root_ref(struct btrfs_trans_handle *trans, u64 root_id,
-		       u64 ref_id, u64 dirid, u64 sequence,
-		       const struct fscrypt_str *name)
+		       u64 ref_id, u64 dirid, u64 sequence, const char *name,
+		       int name_len)
 {
 	struct btrfs_root *tree_root = trans->fs_info->tree_root;
 	struct btrfs_key key;
@@ -424,7 +420,7 @@ int btrfs_add_root_ref(struct btrfs_trans_handle *trans, u64 root_id,
 	key.offset = ref_id;
 again:
 	ret = btrfs_insert_empty_item(trans, tree_root, path, &key,
-				      sizeof(*ref) + name->len);
+				      sizeof(*ref) + name_len);
 	if (ret) {
 		btrfs_abort_transaction(trans, ret);
 		btrfs_free_path(path);
@@ -435,9 +431,9 @@ again:
 	ref = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_root_ref);
 	btrfs_set_root_ref_dirid(leaf, ref, dirid);
 	btrfs_set_root_ref_sequence(leaf, ref, sequence);
-	btrfs_set_root_ref_name_len(leaf, ref, name->len);
+	btrfs_set_root_ref_name_len(leaf, ref, name_len);
 	ptr = (unsigned long)(ref + 1);
-	write_extent_buffer(leaf, name->name, ptr, name->len);
+	write_extent_buffer(leaf, name, ptr, name_len);
 	btrfs_mark_buffer_dirty(leaf);
 
 	if (key.type == BTRFS_ROOT_BACKREF_KEY) {

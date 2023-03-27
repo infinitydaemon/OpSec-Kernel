@@ -24,7 +24,6 @@ struct module;
 enum {
 	NFT_PKTINFO_L4PROTO	= (1 << 0),
 	NFT_PKTINFO_INNER	= (1 << 1),
-	NFT_PKTINFO_INNER_FULL	= (1 << 2),
 };
 
 struct nft_pktinfo {
@@ -33,8 +32,8 @@ struct nft_pktinfo {
 	u8				flags;
 	u8				tprot;
 	u16				fragoff;
-	u16				thoff;
-	u16				inneroff;
+	unsigned int			thoff;
+	unsigned int			inneroff;
 };
 
 static inline struct sock *nft_sk(const struct nft_pktinfo *pkt)
@@ -388,14 +387,10 @@ static inline void *nft_expr_priv(const struct nft_expr *expr)
 	return (void *)expr->data;
 }
 
-struct nft_expr_info;
-
-int nft_expr_inner_parse(const struct nft_ctx *ctx, const struct nlattr *nla,
-			 struct nft_expr_info *info);
 int nft_expr_clone(struct nft_expr *dst, struct nft_expr *src);
 void nft_expr_destroy(const struct nft_ctx *ctx, struct nft_expr *expr);
 int nft_expr_dump(struct sk_buff *skb, unsigned int attr,
-		  const struct nft_expr *expr, bool reset);
+		  const struct nft_expr *expr);
 bool nft_expr_reduce_bitwise(struct nft_regs_track *track,
 			     const struct nft_expr *expr);
 
@@ -883,7 +878,6 @@ struct nft_expr_type {
 						       const struct nlattr * const tb[]);
 	void				(*release_ops)(const struct nft_expr_ops *ops);
 	const struct nft_expr_ops	*ops;
-	const struct nft_expr_ops	*inner_ops;
 	struct list_head		list;
 	const char			*name;
 	struct module			*owner;
@@ -941,8 +935,7 @@ struct nft_expr_ops {
 	void				(*destroy_clone)(const struct nft_ctx *ctx,
 							 const struct nft_expr *expr);
 	int				(*dump)(struct sk_buff *skb,
-						const struct nft_expr *expr,
-						bool reset);
+						const struct nft_expr *expr);
 	int				(*validate)(const struct nft_ctx *ctx,
 						    const struct nft_expr *expr,
 						    const struct nft_data **data);

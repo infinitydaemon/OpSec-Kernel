@@ -435,12 +435,28 @@ out:
 }
 
 static int ovl_set_upper_acl(struct ovl_fs *ofs, struct dentry *upperdentry,
-			     const char *acl_name, struct posix_acl *acl)
+			     const char *name, const struct posix_acl *acl)
 {
+	void *buffer;
+	size_t size;
+	int err;
+
 	if (!IS_ENABLED(CONFIG_FS_POSIX_ACL) || !acl)
 		return 0;
 
-	return ovl_do_set_acl(ofs, upperdentry, acl_name, acl);
+	size = posix_acl_xattr_size(acl->a_count);
+	buffer = kmalloc(size, GFP_KERNEL);
+	if (!buffer)
+		return -ENOMEM;
+
+	err = posix_acl_to_xattr(&init_user_ns, acl, buffer, size);
+	if (err < 0)
+		goto out_free;
+
+	err = ovl_do_setxattr(ofs, upperdentry, name, buffer, size, XATTR_CREATE);
+out_free:
+	kfree(buffer);
+	return err;
 }
 
 static int ovl_create_over_whiteout(struct dentry *dentry, struct inode *inode,
@@ -1309,9 +1325,7 @@ const struct inode_operations ovl_dir_inode_operations = {
 	.permission	= ovl_permission,
 	.getattr	= ovl_getattr,
 	.listxattr	= ovl_listxattr,
-	.get_inode_acl	= ovl_get_inode_acl,
 	.get_acl	= ovl_get_acl,
-	.set_acl	= ovl_set_acl,
 	.update_time	= ovl_update_time,
 	.fileattr_get	= ovl_fileattr_get,
 	.fileattr_set	= ovl_fileattr_set,

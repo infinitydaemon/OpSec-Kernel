@@ -8,15 +8,6 @@
 
 struct xfs_scrub;
 
-/*
- * Standard flags for allocating memory within scrub.  NOFS context is
- * configured by the process allocation scope.  Scrub and repair must be able
- * to back out gracefully if there isn't enough memory.  Force-cast to avoid
- * complaints from static checkers.
- */
-#define XCHK_GFP_FLAGS	((__force gfp_t)(GFP_KERNEL | __GFP_NOWARN | \
-					 __GFP_RETRY_MAYFAIL))
-
 /* Type info and names for the scrub types. */
 enum xchk_type {
 	ST_NONE = 1,	/* disabled */
@@ -48,6 +39,7 @@ struct xchk_ag {
 
 	/* AG btree roots */
 	struct xfs_buf		*agf_bp;
+	struct xfs_buf		*agfl_bp;
 	struct xfs_buf		*agi_bp;
 
 	/* AG btrees */
@@ -168,5 +160,13 @@ void xchk_xref_is_used_rt_space(struct xfs_scrub *sc, xfs_rtblock_t rtbno,
 #else
 # define xchk_xref_is_used_rt_space(sc, rtbno, len) do { } while (0)
 #endif
+
+struct xchk_fscounters {
+	uint64_t		icount;
+	uint64_t		ifree;
+	uint64_t		fdblocks;
+	unsigned long long	icount_min;
+	unsigned long long	icount_max;
+};
 
 #endif	/* __XFS_SCRUB_SCRUB_H__ */

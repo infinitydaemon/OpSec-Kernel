@@ -6,7 +6,6 @@
 #include <linux/fs.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
-#include <linux/sched/mm.h>
 #include <linux/writeback.h>
 #include <linux/pagemap.h>
 #include <linux/blkdev.h>
@@ -24,18 +23,6 @@
 #include "block-group.h"
 #include "space-info.h"
 #include "zoned.h"
-#include "fs.h"
-#include "accessors.h"
-#include "extent-tree.h"
-#include "root-tree.h"
-#include "defrag.h"
-#include "dir-item.h"
-#include "uuid-tree.h"
-#include "ioctl.h"
-#include "relocation.h"
-#include "scrub.h"
-
-static struct kmem_cache *btrfs_trans_handle_cachep;
 
 #define BTRFS_ROOT_TRANS_TAG 0
 
@@ -378,9 +365,9 @@ loop:
 	spin_lock_init(&cur_trans->releasing_ebs_lock);
 	list_add_tail(&cur_trans->list, &fs_info->trans_list);
 	extent_io_tree_init(fs_info, &cur_trans->dirty_pages,
-			IO_TREE_TRANS_DIRTY_PAGES);
+			IO_TREE_TRANS_DIRTY_PAGES, NULL);
 	extent_io_tree_init(fs_info, &cur_trans->pinned_extents,
-			IO_TREE_FS_PINNED_EXTENTS);
+			IO_TREE_FS_PINNED_EXTENTS, NULL);
 	fs_info->generation++;
 	cur_trans->transid = fs_info->generation;
 	fs_info->running_transaction = cur_trans;
@@ -949,7 +936,7 @@ static bool should_end_transaction(struct btrfs_trans_handle *trans)
 	if (btrfs_check_space_for_delayed_refs(fs_info))
 		return true;
 
-	return !!btrfs_block_rsv_check(&fs_info->global_block_rsv, 50);
+	return !!btrfs_block_rsv_check(&fs_info->global_block_rsv, 5);
 }
 
 bool btrfs_should_end_transaction(struct btrfs_trans_handle *trans)
@@ -1620,9 +1607,10 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	struct btrfs_root *root = pending->root;
 	struct btrfs_root *parent_root;
 	struct btrfs_block_rsv *rsv;
-	struct inode *parent_inode = pending->dir;
+	struct inode *parent_inode;
 	struct btrfs_path *path;
 	struct btrfs_dir_item *dir_item;
+	struct dentry *dentry;
 	struct extent_buffer *tmp;
 	struct extent_buffer *old;
 	struct timespec64 cur_time;
@@ -1631,8 +1619,6 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	u64 index = 0;
 	u64 objectid;
 	u64 root_flags;
-	unsigned int nofs_flags;
-	struct fscrypt_name fname;
 
 	ASSERT(pending->path);
 	path = pending->path;
@@ -1640,22 +1626,9 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	ASSERT(pending->root_item);
 	new_root_item = pending->root_item;
 
-	/*
-	 * We're inside a transaction and must make sure that any potential
-	 * allocations with GFP_KERNEL in fscrypt won't recurse back to
-	 * filesystem.
-	 */
-	nofs_flags = memalloc_nofs_save();
-	pending->error = fscrypt_setup_filename(parent_inode,
-						&pending->dentry->d_name, 0,
-						&fname);
-	memalloc_nofs_restore(nofs_flags);
-	if (pending->error)
-		goto free_pending;
-
 	pending->error = btrfs_get_free_objectid(tree_root, &objectid);
 	if (pending->error)
-		goto free_fname;
+		goto no_free_objectid;
 
 	/*
 	 * Make qgroup to skip current new snapshot's qgroupid, as it is
@@ -1684,6 +1657,8 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	trace_btrfs_space_reservation(fs_info, "transaction",
 				      trans->transid,
 				      trans->bytes_reserved, 1);
+	dentry = pending->dentry;
+	parent_inode = pending->dir;
 	parent_root = BTRFS_I(parent_inode)->root;
 	ret = record_root_in_trans(trans, parent_root, 0);
 	if (ret)
@@ -1699,7 +1674,8 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	/* check if there is a file/dir which has the same name. */
 	dir_item = btrfs_lookup_dir_item(NULL, parent_root, path,
 					 btrfs_ino(BTRFS_I(parent_inode)),
-					 &fname.disk_name, 0);
+					 dentry->d_name.name,
+					 dentry->d_name.len, 0);
 	if (dir_item != NULL && !IS_ERR(dir_item)) {
 		pending->error = -EEXIST;
 		goto dir_item_existed;
@@ -1794,7 +1770,7 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	ret = btrfs_add_root_ref(trans, objectid,
 				 parent_root->root_key.objectid,
 				 btrfs_ino(BTRFS_I(parent_inode)), index,
-				 &fname.disk_name);
+				 dentry->d_name.name, dentry->d_name.len);
 	if (ret) {
 		btrfs_abort_transaction(trans, ret);
 		goto fail;
@@ -1826,9 +1802,9 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	if (ret < 0)
 		goto fail;
 
-	ret = btrfs_insert_dir_item(trans, &fname.disk_name,
-				    BTRFS_I(parent_inode), &key, BTRFS_FT_DIR,
-				    index);
+	ret = btrfs_insert_dir_item(trans, dentry->d_name.name,
+				    dentry->d_name.len, BTRFS_I(parent_inode),
+				    &key, BTRFS_FT_DIR, index);
 	/* We have check then name at the beginning, so it is impossible. */
 	BUG_ON(ret == -EEXIST || ret == -EOVERFLOW);
 	if (ret) {
@@ -1837,7 +1813,7 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	}
 
 	btrfs_i_size_write(BTRFS_I(parent_inode), parent_inode->i_size +
-						  fname.disk_name.len * 2);
+					 dentry->d_name.len * 2);
 	parent_inode->i_mtime = current_time(parent_inode);
 	parent_inode->i_ctime = parent_inode->i_mtime;
 	ret = btrfs_update_inode_fallback(trans, parent_root, BTRFS_I(parent_inode));
@@ -1869,9 +1845,7 @@ dir_item_existed:
 	trans->bytes_reserved = 0;
 clear_skip_qgroup:
 	btrfs_clear_skip_qgroup(trans);
-free_fname:
-	fscrypt_free_filename(&fname);
-free_pending:
+no_free_objectid:
 	kfree(new_root_item);
 	pending->root_item = NULL;
 	btrfs_free_path(path);
@@ -2127,8 +2101,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 	ASSERT(refcount_read(&trans->use_count) == 1);
 	btrfs_trans_state_lockdep_acquire(fs_info, BTRFS_LOCKDEP_TRANS_COMMIT_START);
 
-	clear_bit(BTRFS_FS_NEED_TRANS_COMMIT, &fs_info->flags);
-
 	/* Stop the commit early if ->aborted is set */
 	if (TRANS_ABORTED(cur_trans)) {
 		ret = cur_trans->aborted;
@@ -2382,6 +2354,12 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 	if (ret)
 		goto unlock_reloc;
 
+	/*
+	 * Since the transaction is done, we can apply the pending changes
+	 * before the next transaction.
+	 */
+	btrfs_apply_pending_changes(fs_info);
+
 	/* commit_fs_roots gets rid of all the tree log roots, it is now
 	 * safe to free the root of tree log roots
 	 */
@@ -2604,17 +2582,21 @@ int btrfs_clean_one_deleted_snapshot(struct btrfs_fs_info *fs_info)
 	return (ret < 0) ? 0 : 1;
 }
 
-int __init btrfs_transaction_init(void)
+void btrfs_apply_pending_changes(struct btrfs_fs_info *fs_info)
 {
-	btrfs_trans_handle_cachep = kmem_cache_create("btrfs_trans_handle",
-			sizeof(struct btrfs_trans_handle), 0,
-			SLAB_TEMPORARY | SLAB_MEM_SPREAD, NULL);
-	if (!btrfs_trans_handle_cachep)
-		return -ENOMEM;
-	return 0;
-}
+	unsigned long prev;
+	unsigned long bit;
 
-void __cold btrfs_transaction_exit(void)
-{
-	kmem_cache_destroy(btrfs_trans_handle_cachep);
+	prev = xchg(&fs_info->pending_changes, 0);
+	if (!prev)
+		return;
+
+	bit = 1 << BTRFS_PENDING_COMMIT;
+	if (prev & bit)
+		btrfs_debug(fs_info, "pending commit done");
+	prev &= ~bit;
+
+	if (prev)
+		btrfs_warn(fs_info,
+			"unknown pending changes left 0x%lx, ignoring", prev);
 }

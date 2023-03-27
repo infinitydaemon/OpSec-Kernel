@@ -13,13 +13,12 @@
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/memblock.h>
+#include <linux/pstore_ram.h>
 #include <linux/rslib.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/vmalloc.h>
 #include <asm/page.h>
-
-#include "ram_internal.h"
 
 /**
  * struct persistent_ram_buffer - persistent circular RAM buffer
@@ -548,14 +547,8 @@ static int persistent_ram_post_init(struct persistent_ram_zone *prz, u32 sig,
 	return 0;
 }
 
-void persistent_ram_free(struct persistent_ram_zone **_prz)
+void persistent_ram_free(struct persistent_ram_zone *prz)
 {
-	struct persistent_ram_zone *prz;
-
-	if (!_prz)
-		return;
-
-	prz = *_prz;
 	if (!prz)
 		return;
 
@@ -579,7 +572,6 @@ void persistent_ram_free(struct persistent_ram_zone **_prz)
 	persistent_ram_free_old(prz);
 	kfree(prz->label);
 	kfree(prz);
-	*_prz = NULL;
 }
 
 struct persistent_ram_zone *persistent_ram_new(phys_addr_t start, size_t size,
@@ -616,6 +608,6 @@ struct persistent_ram_zone *persistent_ram_new(phys_addr_t start, size_t size,
 
 	return prz;
 err:
-	persistent_ram_free(&prz);
+	persistent_ram_free(prz);
 	return ERR_PTR(ret);
 }

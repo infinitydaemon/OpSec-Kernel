@@ -623,7 +623,7 @@ int ksmbd_override_fsids(struct ksmbd_work *work)
 	if (share->force_gid != KSMBD_SHARE_INVALID_GID)
 		gid = share->force_gid;
 
-	cred = prepare_kernel_cred(&init_task);
+	cred = prepare_kernel_cred(NULL);
 	if (!cred)
 		return -ENOMEM;
 

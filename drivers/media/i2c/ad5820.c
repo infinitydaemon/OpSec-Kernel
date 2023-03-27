@@ -290,7 +290,8 @@ static int __maybe_unused ad5820_resume(struct device *dev)
 	return ad5820_power_on(coil, true);
 }
 
-static int ad5820_probe(struct i2c_client *client)
+static int ad5820_probe(struct i2c_client *client,
+			const struct i2c_device_id *devid)
 {
 	struct ad5820_device *coil;
 	int ret;
@@ -300,15 +301,21 @@ static int ad5820_probe(struct i2c_client *client)
 		return -ENOMEM;
 
 	coil->vana = devm_regulator_get(&client->dev, "VANA");
-	if (IS_ERR(coil->vana))
-		return dev_err_probe(&client->dev, PTR_ERR(coil->vana),
-				     "could not get regulator for vana\n");
+	if (IS_ERR(coil->vana)) {
+		ret = PTR_ERR(coil->vana);
+		if (ret != -EPROBE_DEFER)
+			dev_err(&client->dev, "could not get regulator for vana\n");
+		return ret;
+	}
 
 	coil->enable_gpio = devm_gpiod_get_optional(&client->dev, "enable",
 						    GPIOD_OUT_LOW);
-	if (IS_ERR(coil->enable_gpio))
-		return dev_err_probe(&client->dev, PTR_ERR(coil->enable_gpio),
-				     "could not get enable gpio\n");
+	if (IS_ERR(coil->enable_gpio)) {
+		ret = PTR_ERR(coil->enable_gpio);
+		if (ret != -EPROBE_DEFER)
+			dev_err(&client->dev, "could not get enable gpio\n");
+		return ret;
+	}
 
 	mutex_init(&coil->power_lock);
 
@@ -370,7 +377,7 @@ static struct i2c_driver ad5820_i2c_driver = {
 		.pm	= &ad5820_pm,
 		.of_match_table = ad5820_of_table,
 	},
-	.probe_new	= ad5820_probe,
+	.probe		= ad5820_probe,
 	.remove		= ad5820_remove,
 	.id_table	= ad5820_id_table,
 };

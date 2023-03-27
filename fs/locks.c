@@ -175,7 +175,7 @@ locks_get_lock_context(struct inode *inode, int type)
 	struct file_lock_context *ctx;
 
 	/* paired with cmpxchg() below */
-	ctx = locks_inode_context(inode);
+	ctx = smp_load_acquire(&inode->i_flctx);
 	if (likely(ctx) || type == F_UNLCK)
 		goto out;
 
@@ -194,7 +194,7 @@ locks_get_lock_context(struct inode *inode, int type)
 	 */
 	if (cmpxchg(&inode->i_flctx, NULL, ctx)) {
 		kmem_cache_free(flctx_cache, ctx);
-		ctx = locks_inode_context(inode);
+		ctx = smp_load_acquire(&inode->i_flctx);
 	}
 out:
 	trace_locks_get_lock_context(inode, type, ctx);
@@ -247,7 +247,7 @@ locks_check_ctx_file_list(struct file *filp, struct list_head *list,
 void
 locks_free_lock_context(struct inode *inode)
 {
-	struct file_lock_context *ctx = locks_inode_context(inode);
+	struct file_lock_context *ctx = inode->i_flctx;
 
 	if (unlikely(ctx)) {
 		locks_check_ctx_lists(inode);
@@ -891,7 +891,7 @@ posix_test_lock(struct file *filp, struct file_lock *fl)
 	void *owner;
 	void (*func)(void);
 
-	ctx = locks_inode_context(inode);
+	ctx = smp_load_acquire(&inode->i_flctx);
 	if (!ctx || list_empty_careful(&ctx->flc_posix)) {
 		fl->fl_type = F_UNLCK;
 		return;
@@ -1483,7 +1483,7 @@ int __break_lease(struct inode *inode, unsigned int mode, unsigned int type)
 	new_fl->fl_flags = type;
 
 	/* typically we will check that ctx is non-NULL before calling */
-	ctx = locks_inode_context(inode);
+	ctx = smp_load_acquire(&inode->i_flctx);
 	if (!ctx) {
 		WARN_ON_ONCE(1);
 		goto free_lock;
@@ -1588,7 +1588,7 @@ void lease_get_mtime(struct inode *inode, struct timespec64 *time)
 	struct file_lock_context *ctx;
 	struct file_lock *fl;
 
-	ctx = locks_inode_context(inode);
+	ctx = smp_load_acquire(&inode->i_flctx);
 	if (ctx && !list_empty_careful(&ctx->flc_lease)) {
 		spin_lock(&ctx->flc_lock);
 		fl = list_first_entry_or_null(&ctx->flc_lease,
@@ -1634,7 +1634,7 @@ int fcntl_getlease(struct file *filp)
 	int type = F_UNLCK;
 	LIST_HEAD(dispose);
 
-	ctx = locks_inode_context(inode);
+	ctx = smp_load_acquire(&inode->i_flctx);
 	if (ctx && !list_empty_careful(&ctx->flc_lease)) {
 		percpu_down_read(&file_rwsem);
 		spin_lock(&ctx->flc_lock);
@@ -1823,7 +1823,7 @@ static int generic_delete_lease(struct file *filp, void *owner)
 	struct file_lock_context *ctx;
 	LIST_HEAD(dispose);
 
-	ctx = locks_inode_context(inode);
+	ctx = smp_load_acquire(&inode->i_flctx);
 	if (!ctx) {
 		trace_generic_delete_lease(inode, NULL);
 		return error;
@@ -1862,9 +1862,10 @@ int generic_setlease(struct file *filp, long arg, struct file_lock **flp,
 			void **priv)
 {
 	struct inode *inode = locks_inode(filp);
+	vfsuid_t vfsuid = i_uid_into_vfsuid(file_mnt_user_ns(filp), inode);
 	int error;
 
-	if ((!uid_eq(current_fsuid(), inode->i_uid)) && !capable(CAP_LEASE))
+	if ((!vfsuid_eq_kuid(vfsuid, current_fsuid())) && !capable(CAP_LEASE))
 		return -EACCES;
 	if (!S_ISREG(inode->i_mode))
 		return -EINVAL;
@@ -2096,7 +2097,7 @@ SYSCALL_DEFINE2(flock, unsigned int, fd, unsigned int, cmd)
 	 * throw a warning to let people know that they don't actually work.
 	 */
 	if (cmd & LOCK_MAND) {
-		pr_warn_once("%s(%d): Attempt to set a LOCK_MAND lock via flock(2). This support has been removed and the request ignored.\n", current->comm, current->pid);
+		pr_warn_once("Attempt to set a LOCK_MAND lock via flock(2). This support has been removed and the request ignored.\n");
 		return 0;
 	}
 
@@ -2146,7 +2147,6 @@ SYSCALL_DEFINE2(flock, unsigned int, fd, unsigned int, cmd)
  */
 int vfs_test_lock(struct file *filp, struct file_lock *fl)
 {
-	WARN_ON_ONCE(filp != fl->fl_file);
 	if (filp->f_op->lock)
 		return filp->f_op->lock(filp, F_GETLK, fl);
 	posix_test_lock(filp, fl);
@@ -2296,7 +2296,6 @@ out:
  */
 int vfs_lock_file(struct file *filp, unsigned int cmd, struct file_lock *fl, struct file_lock *conf)
 {
-	WARN_ON_ONCE(filp != fl->fl_file);
 	if (filp->f_op->lock)
 		return filp->f_op->lock(filp, cmd, fl);
 	else
@@ -2563,7 +2562,7 @@ void locks_remove_posix(struct file *filp, fl_owner_t owner)
 	 * posix_lock_file().  Another process could be setting a lock on this
 	 * file at the same time, but we wouldn't remove that lock anyway.
 	 */
-	ctx = locks_inode_context(inode);
+	ctx =  smp_load_acquire(&inode->i_flctx);
 	if (!ctx || list_empty(&ctx->flc_posix))
 		return;
 
@@ -2636,7 +2635,7 @@ void locks_remove_file(struct file *filp)
 {
 	struct file_lock_context *ctx;
 
-	ctx = locks_inode_context(locks_inode(filp));
+	ctx = smp_load_acquire(&locks_inode(filp)->i_flctx);
 	if (!ctx)
 		return;
 
@@ -2665,7 +2664,6 @@ void locks_remove_file(struct file *filp)
  */
 int vfs_cancel_lock(struct file *filp, struct file_lock *fl)
 {
-	WARN_ON_ONCE(filp != fl->fl_file);
 	if (filp->f_op->lock)
 		return filp->f_op->lock(filp, F_CANCELLK, fl);
 	return 0;
@@ -2684,7 +2682,7 @@ bool vfs_inode_has_locks(struct inode *inode)
 	struct file_lock_context *ctx;
 	bool ret;
 
-	ctx = locks_inode_context(inode);
+	ctx = smp_load_acquire(&inode->i_flctx);
 	if (!ctx)
 		return false;
 
@@ -2865,7 +2863,7 @@ void show_fd_locks(struct seq_file *f,
 	struct file_lock_context *ctx;
 	int id = 0;
 
-	ctx = locks_inode_context(inode);
+	ctx = smp_load_acquire(&inode->i_flctx);
 	if (!ctx)
 		return;
 

@@ -2043,6 +2043,9 @@ static int inode_needs_update_time(struct inode *inode, struct timespec64 *now)
 	if (IS_I_VERSION(inode) && inode_iversion_need_inc(inode))
 		sync_it |= S_VERSION;
 
+	if (!sync_it)
+		return 0;
+
 	return sync_it;
 }
 
@@ -2323,15 +2326,15 @@ EXPORT_SYMBOL(inode_init_owner);
 bool inode_owner_or_capable(struct user_namespace *mnt_userns,
 			    const struct inode *inode)
 {
-	vfsuid_t vfsuid;
+	kuid_t i_uid;
 	struct user_namespace *ns;
 
-	vfsuid = i_uid_into_vfsuid(mnt_userns, inode);
-	if (vfsuid_eq_kuid(vfsuid, current_fsuid()))
+	i_uid = i_uid_into_mnt(mnt_userns, inode);
+	if (uid_eq(current_fsuid(), i_uid))
 		return true;
 
 	ns = current_user_ns();
-	if (vfsuid_has_mapping(ns, vfsuid) && ns_capable(ns, CAP_FOWNER))
+	if (kuid_has_mapping(ns, i_uid) && ns_capable(ns, CAP_FOWNER))
 		return true;
 	return false;
 }

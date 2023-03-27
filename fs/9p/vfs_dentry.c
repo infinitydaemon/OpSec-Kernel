@@ -15,6 +15,7 @@
 #include <linux/string.h>
 #include <linux/inet.h>
 #include <linux/namei.h>
+#include <linux/idr.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <net/9p/9p.h>

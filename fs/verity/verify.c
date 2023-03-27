@@ -200,8 +200,9 @@ EXPORT_SYMBOL_GPL(fsverity_verify_page);
  * @bio: the bio to verify
  *
  * Verify a set of pages that have just been read from a verity file.  The pages
- * must be pagecache pages that are still locked and not yet uptodate.  If a
- * page fails verification, then bio->bi_status is set to an error status.
+ * must be pagecache pages that are still locked and not yet uptodate.  Pages
+ * that fail verification are set to the Error state.  Verification is skipped
+ * for pages already in the Error state, e.g. due to fscrypt decryption failure.
  *
  * This is a helper function for use by the ->readahead() method of filesystems
  * that issue bios to read data directly into the page cache.  Filesystems that
@@ -243,10 +244,9 @@ void fsverity_verify_bio(struct bio *bio)
 		unsigned long level0_ra_pages =
 			min(max_ra_pages, params->level0_blocks - level0_index);
 
-		if (!verify_page(inode, vi, req, page, level0_ra_pages)) {
-			bio->bi_status = BLK_STS_IOERR;
-			break;
-		}
+		if (!PageError(page) &&
+		    !verify_page(inode, vi, req, page, level0_ra_pages))
+			SetPageError(page);
 	}
 
 	fsverity_free_hash_request(params->hash_alg, req);

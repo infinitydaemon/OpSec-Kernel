@@ -17,21 +17,6 @@
 #include "discard.h"
 #include "raid56.h"
 #include "zoned.h"
-#include "fs.h"
-#include "accessors.h"
-#include "extent-tree.h"
-
-#ifdef CONFIG_BTRFS_DEBUG
-int btrfs_should_fragment_free_space(struct btrfs_block_group *block_group)
-{
-	struct btrfs_fs_info *fs_info = block_group->fs_info;
-
-	return (btrfs_test_opt(fs_info, FRAGMENT_METADATA) &&
-		block_group->flags & BTRFS_BLOCK_GROUP_METADATA) ||
-	       (btrfs_test_opt(fs_info, FRAGMENT_DATA) &&
-		block_group->flags &  BTRFS_BLOCK_GROUP_DATA);
-}
-#endif
 
 /*
  * Return target flags in extended format or 0 if restripe for this chunk_type
@@ -299,7 +284,7 @@ struct btrfs_block_group *btrfs_next_block_group(
 	return cache;
 }
 
-/*
+/**
  * Check if we can do a NOCOW write for a given extent.
  *
  * @fs_info:       The filesystem information object.
@@ -340,8 +325,10 @@ struct btrfs_block_group *btrfs_inc_nocow_writers(struct btrfs_fs_info *fs_info,
 	return bg;
 }
 
-/*
+/**
  * Decrement the number of NOCOW writers in a block group.
+ *
+ * @bg:       The block group.
  *
  * This is meant to be called after a previous call to btrfs_inc_nocow_writers(),
  * and on the block group returned by that call. Typically this is called after
@@ -1540,30 +1527,6 @@ static inline bool btrfs_should_reclaim(struct btrfs_fs_info *fs_info)
 	return true;
 }
 
-static bool should_reclaim_block_group(struct btrfs_block_group *bg, u64 bytes_freed)
-{
-	const struct btrfs_space_info *space_info = bg->space_info;
-	const int reclaim_thresh = READ_ONCE(space_info->bg_reclaim_threshold);
-	const u64 new_val = bg->used;
-	const u64 old_val = new_val + bytes_freed;
-	u64 thresh;
-
-	if (reclaim_thresh == 0)
-		return false;
-
-	thresh = mult_perc(bg->length, reclaim_thresh);
-
-	/*
-	 * If we were below the threshold before don't reclaim, we are likely a
-	 * brand new block group and we don't want to relocate new block groups.
-	 */
-	if (old_val < thresh)
-		return false;
-	if (new_val >= thresh)
-		return false;
-	return true;
-}
-
 void btrfs_reclaim_bgs_work(struct work_struct *work)
 {
 	struct btrfs_fs_info *fs_info =
@@ -1631,40 +1594,6 @@ void btrfs_reclaim_bgs_work(struct work_struct *work)
 			up_write(&space_info->groups_sem);
 			goto next;
 		}
-		if (bg->used == 0) {
-			/*
-			 * It is possible that we trigger relocation on a block
-			 * group as its extents are deleted and it first goes
-			 * below the threshold, then shortly after goes empty.
-			 *
-			 * In this case, relocating it does delete it, but has
-			 * some overhead in relocation specific metadata, looking
-			 * for the non-existent extents and running some extra
-			 * transactions, which we can avoid by using one of the
-			 * other mechanisms for dealing with empty block groups.
-			 */
-			if (!btrfs_test_opt(fs_info, DISCARD_ASYNC))
-				btrfs_mark_bg_unused(bg);
-			spin_unlock(&bg->lock);
-			up_write(&space_info->groups_sem);
-			goto next;
-
-		}
-		/*
-		 * The block group might no longer meet the reclaim condition by
-		 * the time we get around to reclaiming it, so to avoid
-		 * reclaiming overly full block_groups, skip reclaiming them.
-		 *
-		 * Since the decision making process also depends on the amount
-		 * being freed, pass in a fake giant value to skip that extra
-		 * check, which is more meaningful when adding to the list in
-		 * the first place.
-		 */
-		if (!should_reclaim_block_group(bg, bg->length)) {
-			spin_unlock(&bg->lock);
-			up_write(&space_info->groups_sem);
-			goto next;
-		}
 		spin_unlock(&bg->lock);
 
 		/* Get out fast, in case we're unmounting the filesystem */
@@ -1687,7 +1616,8 @@ void btrfs_reclaim_bgs_work(struct work_struct *work)
 
 		btrfs_info(fs_info,
 			"reclaiming chunk %llu with %llu%% used %llu%% unusable",
-				bg->start, div_u64(bg->used * 100, bg->length),
+				bg->start,
+				div64_u64(bg->used * 100, bg->length),
 				div64_u64(zone_unusable * 100, bg->length));
 		trace_btrfs_reclaim_block_group(bg);
 		ret = btrfs_relocate_chunk(fs_info, bg->start);
@@ -1811,8 +1741,8 @@ static void set_avail_alloc_bits(struct btrfs_fs_info *fs_info, u64 flags)
 	write_sequnlock(&fs_info->profiles_lock);
 }
 
-/*
- * Map a physical disk address to a list of logical addresses.
+/**
+ * Map a physical disk address to a list of logical addresses
  *
  * @fs_info:       the filesystem
  * @chunk_start:   logical address of block group
@@ -2072,7 +2002,6 @@ static int read_one_block_group(struct btrfs_fs_info *info,
 
 	cache->length = key->offset;
 	cache->used = btrfs_stack_block_group_used(bgi);
-	cache->commit_used = cache->used;
 	cache->flags = btrfs_stack_block_group_flags(bgi);
 	cache->global_root_id = btrfs_stack_block_group_chunk_objectid(bgi);
 
@@ -2553,7 +2482,7 @@ struct btrfs_block_group *btrfs_make_block_group(struct btrfs_trans_handle *tran
 	cache->global_root_id = calculate_global_root_id(fs_info, cache->start);
 
 	if (btrfs_fs_compat_ro(fs_info, FREE_SPACE_TREE))
-		set_bit(BLOCK_GROUP_FLAG_NEEDS_FREE_SPACE, &cache->runtime_flags);
+		cache->needs_free_space = 1;
 
 	ret = btrfs_load_block_group_zone_info(cache, true);
 	if (ret) {
@@ -2764,25 +2693,6 @@ static int update_block_group_item(struct btrfs_trans_handle *trans,
 	struct extent_buffer *leaf;
 	struct btrfs_block_group_item bgi;
 	struct btrfs_key key;
-	u64 old_commit_used;
-	u64 used;
-
-	/*
-	 * Block group items update can be triggered out of commit transaction
-	 * critical section, thus we need a consistent view of used bytes.
-	 * We cannot use cache->used directly outside of the spin lock, as it
-	 * may be changed.
-	 */
-	spin_lock(&cache->lock);
-	old_commit_used = cache->commit_used;
-	used = cache->used;
-	/* No change in used bytes, can safely skip it. */
-	if (cache->commit_used == used) {
-		spin_unlock(&cache->lock);
-		return 0;
-	}
-	cache->commit_used = used;
-	spin_unlock(&cache->lock);
 
 	key.objectid = cache->start;
 	key.type = BTRFS_BLOCK_GROUP_ITEM_KEY;
@@ -2797,7 +2707,7 @@ static int update_block_group_item(struct btrfs_trans_handle *trans,
 
 	leaf = path->nodes[0];
 	bi = btrfs_item_ptr_offset(leaf, path->slots[0]);
-	btrfs_set_stack_block_group_used(&bgi, used);
+	btrfs_set_stack_block_group_used(&bgi, cache->used);
 	btrfs_set_stack_block_group_chunk_objectid(&bgi,
 						   cache->global_root_id);
 	btrfs_set_stack_block_group_flags(&bgi, cache->flags);
@@ -2805,12 +2715,6 @@ static int update_block_group_item(struct btrfs_trans_handle *trans,
 	btrfs_mark_buffer_dirty(leaf);
 fail:
 	btrfs_release_path(path);
-	/* We didn't update the block group item, need to revert @commit_used. */
-	if (ret < 0) {
-		spin_lock(&cache->lock);
-		cache->commit_used = old_commit_used;
-		spin_unlock(&cache->lock);
-	}
 	return ret;
 
 }
@@ -3308,6 +3212,31 @@ int btrfs_write_dirty_block_groups(struct btrfs_trans_handle *trans)
 	return ret;
 }
 
+static inline bool should_reclaim_block_group(struct btrfs_block_group *bg,
+					      u64 bytes_freed)
+{
+	const struct btrfs_space_info *space_info = bg->space_info;
+	const int reclaim_thresh = READ_ONCE(space_info->bg_reclaim_threshold);
+	const u64 new_val = bg->used;
+	const u64 old_val = new_val + bytes_freed;
+	u64 thresh;
+
+	if (reclaim_thresh == 0)
+		return false;
+
+	thresh = div_factor_fine(bg->length, reclaim_thresh);
+
+	/*
+	 * If we were below the threshold before don't reclaim, we are likely a
+	 * brand new block group and we don't want to relocate new block groups.
+	 */
+	if (old_val < thresh)
+		return false;
+	if (new_val >= thresh)
+		return false;
+	return true;
+}
+
 int btrfs_update_block_group(struct btrfs_trans_handle *trans,
 			     u64 bytenr, u64 num_bytes, bool alloc)
 {
@@ -3419,9 +3348,8 @@ int btrfs_update_block_group(struct btrfs_trans_handle *trans,
 	return ret;
 }
 
-/*
- * Update the block_group and space info counters.
- *
+/**
+ * btrfs_add_reserved_bytes - update the block_group and space info counters
  * @cache:	The cache we are manipulating
  * @ram_bytes:  The number of bytes of file content, and will be same to
  *              @num_bytes except for the compress path.
@@ -3464,9 +3392,8 @@ int btrfs_add_reserved_bytes(struct btrfs_block_group *cache,
 	return ret;
 }
 
-/*
- * Update the block_group and space info counters.
- *
+/**
+ * btrfs_free_reserved_bytes - update the block_group and space info counters
  * @cache:      The cache we are manipulating
  * @num_bytes:  The number of bytes in question
  * @delalloc:   The blocks are allocated for the delalloc write
@@ -3523,13 +3450,13 @@ static int should_alloc_chunk(struct btrfs_fs_info *fs_info,
 	 */
 	if (force == CHUNK_ALLOC_LIMITED) {
 		thresh = btrfs_super_total_bytes(fs_info->super_copy);
-		thresh = max_t(u64, SZ_64M, mult_perc(thresh, 1));
+		thresh = max_t(u64, SZ_64M, div_factor_fine(thresh, 1));
 
 		if (sinfo->total_bytes - bytes_used < thresh)
 			return 1;
 	}
 
-	if (bytes_used + SZ_2M < mult_perc(sinfo->total_bytes, 80))
+	if (bytes_used + SZ_2M < div_factor(sinfo->total_bytes, 8))
 		return 0;
 	return 1;
 }

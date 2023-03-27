@@ -127,6 +127,11 @@ struct drm_client_buffer {
 	struct drm_client_dev *client;
 
 	/**
+	 * @handle: Buffer handle
+	 */
+	u32 handle;
+
+	/**
 	 * @pitch: Buffer pitch
 	 */
 	u32 pitch;
