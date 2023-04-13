@@ -25,9 +25,6 @@
 #define IPV6_TCLASS		67
 #define IPV6_AUTOFLOWLABEL	70
 
-#define TC_ACT_UNSPEC		(-1)
-#define TC_ACT_SHOT		2
-
 #define SOL_TCP			6
 #define TCP_NODELAY		1
 #define TCP_MAXSEG		2
@@ -49,12 +46,6 @@
 #define ICSK_TIME_PROBE0	3
 #define ICSK_TIME_LOSS_PROBE	5
 #define ICSK_TIME_REO_TIMEOUT	6
-
-#define ETH_HLEN		14
-#define ETH_P_IPV6		0x86DD
-
-#define CHECKSUM_NONE		0
-#define CHECKSUM_PARTIAL	3
 
 #define IFNAMSIZ		16
 

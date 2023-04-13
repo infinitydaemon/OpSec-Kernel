@@ -90,7 +90,7 @@ pass_libs=()
 pass_cnt=0
 
 # Get all TARGETS from selftests Makefile
-targets=$(grep -E "^TARGETS +|^TARGETS =" Makefile | cut -d "=" -f2)
+targets=$(egrep "^TARGETS +|^TARGETS =" Makefile | cut -d "=" -f2)
 
 # Single test case
 if [ $# -eq 2 ]
