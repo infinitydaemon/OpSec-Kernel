@@ -16,12 +16,7 @@ skip_test() {
 [[ $(id -u) -eq 0 ]] || skip_test "Test must be run as root!"
 
 # Set sched verbose flag, if available
-if [[ -d /sys/kernel/debug/sched ]]
-then
-	# Used to restore the original setting during cleanup
-	SCHED_DEBUG=$(cat /sys/kernel/debug/sched/verbose)
-	echo Y > /sys/kernel/debug/sched/verbose
-fi
+[[ -d /sys/kernel/debug/sched ]] && echo Y > /sys/kernel/debug/sched/verbose
 
 # Get wait_inotify location
 WAIT_INOTIFY=$(cd $(dirname $0); pwd)/wait_inotify
@@ -30,7 +25,7 @@ WAIT_INOTIFY=$(cd $(dirname $0); pwd)/wait_inotify
 CGROUP2=$(mount -t cgroup2 | head -1 | awk -e '{print $3}')
 [[ -n "$CGROUP2" ]] || skip_test "Cgroup v2 mount point not found!"
 
-CPUS=$(lscpu | grep "^CPU(s):" | sed -e "s/.*:[[:space:]]*//")
+CPUS=$(lscpu | grep "^CPU(s)" | sed -e "s/.*:[[:space:]]*//")
 [[ $CPUS -lt 8 ]] && skip_test "Test needs at least 8 cpus available!"
 
 # Set verbose flag and delay factor
@@ -58,15 +53,6 @@ cd $CGROUP2
 echo +cpuset > cgroup.subtree_control
 [[ -d test ]] || mkdir test
 cd test
-
-cleanup()
-{
-	online_cpus
-	rmdir A1/A2/A3 A1/A2 A1 B1 > /dev/null 2>&1
-	cd ..
-	rmdir test > /dev/null 2>&1
-	echo "$SCHED_DEBUG" > /sys/kernel/debug/sched/verbose
-}
 
 # Pause in ms
 pause()
@@ -681,7 +667,6 @@ test_inotify()
 	fi
 }
 
-trap cleanup 0 2 3 6
 run_state_test TEST_MATRIX
 test_isolated
 test_inotify
