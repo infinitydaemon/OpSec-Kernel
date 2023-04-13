@@ -326,7 +326,7 @@ enum integrity_status ima_get_cache_status(struct integrity_iint_cache *iint,
 enum hash_algo ima_get_hash_algo(const struct evm_ima_xattr_data *xattr_value,
 				 int xattr_len);
 int ima_read_xattr(struct dentry *dentry,
-		   struct evm_ima_xattr_data **xattr_value, int xattr_len);
+		   struct evm_ima_xattr_data **xattr_value);
 
 #else
 static inline int ima_check_blacklist(struct integrity_iint_cache *iint,
@@ -372,8 +372,7 @@ ima_get_hash_algo(struct evm_ima_xattr_data *xattr_value, int xattr_len)
 }
 
 static inline int ima_read_xattr(struct dentry *dentry,
-				 struct evm_ima_xattr_data **xattr_value,
-				 int xattr_len)
+				 struct evm_ima_xattr_data **xattr_value)
 {
 	return 0;
 }

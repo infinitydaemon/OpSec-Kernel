@@ -816,7 +816,8 @@ static const struct snd_soc_component_driver soc_component_dev_es8326 = {
 	.endianness		= 1,
 };
 
-static int es8326_i2c_probe(struct i2c_client *i2c)
+static int es8326_i2c_probe(struct i2c_client *i2c,
+			    const struct i2c_device_id *id)
 {
 	struct es8326_priv *es8326;
 	int ret;
@@ -896,7 +897,7 @@ static struct i2c_driver es8326_i2c_driver = {
 		.acpi_match_table = ACPI_PTR(es8326_acpi_match),
 		.of_match_table = of_match_ptr(es8326_of_match),
 	},
-	.probe_new = es8326_i2c_probe,
+	.probe = es8326_i2c_probe,
 	.id_table = es8326_i2c_id,
 };
 module_i2c_driver(es8326_i2c_driver);
