@@ -263,7 +263,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_RGBA32,
 		.depth			= 32,
-		.bytesperline_align	= { 32, 32, 32, 32 },
+		.bytesperline_align	= { 32, 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_RGBA,
 		.size_multiplier_x2	= 2,
@@ -705,6 +705,7 @@ struct bcm2835_codec_ctx {
 	struct bcm2835_codec_dev	*dev;
 
 	struct v4l2_ctrl_handler hdl;
+	struct v4l2_ctrl *gop_size;
 
 	struct vchiq_mmal_component  *component;
 	bool component_enabled;
@@ -2286,6 +2287,17 @@ static int bcm2835_codec_s_ctrl(struct v4l2_ctrl *ctrl)
 		break;
 
 	case V4L2_CID_MPEG_VIDEO_H264_I_PERIOD:
+		/*
+		 * Incorrect initial implementation meant that H264_I_PERIOD
+		 * was implemented to control intra-I period. As the MMAL
+		 * encoder never produces I-frames that aren't IDR frames, it
+		 * should actually have been GOP_SIZE.
+		 * Support both controls, but writing to H264_I_PERIOD will
+		 * update GOP_SIZE.
+		 */
+		__v4l2_ctrl_s_ctrl(ctx->gop_size, ctrl->val);
+	fallthrough;
+	case V4L2_CID_MPEG_VIDEO_GOP_SIZE:
 		if (!ctx->component)
 			break;
 
@@ -2367,6 +2379,10 @@ static int bcm2835_codec_s_ctrl(struct v4l2_ctrl *ctrl)
 						    sizeof(u32_value));
 		break;
 	}
+	case V4L2_CID_MPEG_VIDEO_B_FRAMES:
+		ret = 0;
+		break;
+
 	case V4L2_CID_JPEG_COMPRESSION_QUALITY:
 		if (!ctx->component)
 			break;
@@ -3246,6 +3262,7 @@ static void dec_add_profile_ctrls(struct bcm2835_codec_dev *const dev,
 							BIT(V4L2_MPEG_VIDEO_MPEG2_LEVEL_HIGH_1440) |
 							BIT(V4L2_MPEG_VIDEO_MPEG2_LEVEL_HIGH)),
 						      V4L2_MPEG_VIDEO_MPEG2_LEVEL_MAIN);
+			ctrl->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 			ctrl = v4l2_ctrl_new_std_menu(hdl, &bcm2835_codec_ctrl_ops,
 						      V4L2_CID_MPEG_VIDEO_MPEG2_PROFILE,
 						      V4L2_MPEG_VIDEO_MPEG2_PROFILE_MAIN,
@@ -3355,7 +3372,7 @@ static int bcm2835_codec_open(struct file *file)
 	case ENCODE:
 	{
 		/* Encode controls */
-		v4l2_ctrl_handler_init(hdl, 11);
+		v4l2_ctrl_handler_init(hdl, 13);
 
 		v4l2_ctrl_new_std_menu(hdl, &bcm2835_codec_ctrl_ops,
 				       V4L2_CID_MPEG_VIDEO_BITRATE_MODE,
@@ -3416,6 +3433,13 @@ static int bcm2835_codec_open(struct file *file)
 		v4l2_ctrl_new_std(hdl, &bcm2835_codec_ctrl_ops,
 				  V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME,
 				  0, 0, 0, 0);
+		v4l2_ctrl_new_std(hdl, &bcm2835_codec_ctrl_ops,
+				  V4L2_CID_MPEG_VIDEO_B_FRAMES,
+				  0, 0,
+				  1, 0);
+		ctx->gop_size = v4l2_ctrl_new_std(hdl, &bcm2835_codec_ctrl_ops,
+						  V4L2_CID_MPEG_VIDEO_GOP_SIZE,
+						  0, 0x7FFFFFFF, 1, 60);
 		if (hdl->error) {
 			rc = hdl->error;
 			goto free_ctrl_handler;

@@ -33,9 +33,7 @@
 
 #define IMX708_REG_ORIENTATION		0x101
 
-#define IMX708_XCLK_FREQ		24000000
-
-#define IMX708_DEFAULT_LINK_FREQ	450000000
+#define IMX708_INCLK_FREQ		24000000
 
 /* Default initial pixel rate, will get updated for each mode. */
 #define IMX708_INITIAL_PIXEL_RATE	590000000
@@ -181,6 +179,50 @@ static const u8 pdaf_gains[2][9] = {
 	{ 0x35, 0x35, 0x35, 0x38, 0x3e, 0x46, 0x4c, 0x4c, 0x4c }
 };
 
+/* Link frequency setup */
+enum {
+	IMX708_LINK_FREQ_450MHZ,
+	IMX708_LINK_FREQ_447MHZ,
+	IMX708_LINK_FREQ_453MHZ,
+};
+
+static const s64 link_freqs[] = {
+	[IMX708_LINK_FREQ_450MHZ] = 450000000,
+	[IMX708_LINK_FREQ_447MHZ] = 447000000,
+	[IMX708_LINK_FREQ_453MHZ] = 453000000,
+};
+
+/* 450MHz is the nominal "default" link frequency */
+static const struct imx708_reg link_450Mhz_regs[] = {
+	{0x030E, 0x01},
+	{0x030F, 0x2c},
+};
+
+static const struct imx708_reg link_447Mhz_regs[] = {
+	{0x030E, 0x01},
+	{0x030F, 0x2a},
+};
+
+static const struct imx708_reg link_453Mhz_regs[] = {
+	{0x030E, 0x01},
+	{0x030F, 0x2e},
+};
+
+static const struct imx708_reg_list link_freq_regs[] = {
+	[IMX708_LINK_FREQ_450MHZ] = {
+		.regs = link_450Mhz_regs,
+		.num_of_regs = ARRAY_SIZE(link_450Mhz_regs)
+	},
+	[IMX708_LINK_FREQ_447MHZ] = {
+		.regs = link_447Mhz_regs,
+		.num_of_regs = ARRAY_SIZE(link_447Mhz_regs)
+	},
+	[IMX708_LINK_FREQ_453MHZ] = {
+		.regs = link_453Mhz_regs,
+		.num_of_regs = ARRAY_SIZE(link_453Mhz_regs)
+	},
+};
+
 static const struct imx708_reg mode_common_regs[] = {
 	{0x0100, 0x00},
 	{0x0136, 0x18},
@@ -278,8 +320,6 @@ static const struct imx708_reg mode_4608x2592_regs[] = {
 	{0x0307, 0x7C},
 	{0x030B, 0x02},
 	{0x030D, 0x04},
-	{0x030E, 0x01},
-	{0x030F, 0x2C},
 	{0x0310, 0x01},
 	{0x3CA0, 0x00},
 	{0x3CA1, 0x64},
@@ -376,8 +416,6 @@ static const struct imx708_reg mode_2x2binned_regs[] = {
 	{0x0307, 0x7A},
 	{0x030B, 0x02},
 	{0x030D, 0x04},
-	{0x030E, 0x01},
-	{0x030F, 0x2C},
 	{0x0310, 0x01},
 	{0x3CA0, 0x00},
 	{0x3CA1, 0x3C},
@@ -472,8 +510,6 @@ static const struct imx708_reg mode_2x2binned_720p_regs[] = {
 	{0x0307, 0x76},
 	{0x030B, 0x02},
 	{0x030D, 0x04},
-	{0x030E, 0x01},
-	{0x030F, 0x2C},
 	{0x0310, 0x01},
 	{0x3CA0, 0x00},
 	{0x3CA1, 0x3C},
@@ -568,8 +604,6 @@ static const struct imx708_reg mode_hdr_regs[] = {
 	{0x0307, 0xA2},
 	{0x030B, 0x02},
 	{0x030D, 0x04},
-	{0x030E, 0x01},
-	{0x030F, 0x2C},
 	{0x0310, 0x01},
 	{0x3CA0, 0x00},
 	{0x3CA1, 0x00},
@@ -752,13 +786,11 @@ static const int imx708_test_pattern_val[] = {
 /* regulator supplies */
 static const char * const imx708_supply_name[] = {
 	/* Supplies can be enabled in any order */
-	"VANA1",  /* Analog1 (2.8V) supply */
-	"VANA2",  /* Analog2 (1.8V) supply */
-	"VDIG",  /* Digital Core (1.1V) supply */
-	"VDDL",  /* IF (1.8V) supply */
+	"vana1",  /* Analog1 (2.8V) supply */
+	"vana2",  /* Analog2 (1.8V) supply */
+	"vdig",  /* Digital Core (1.1V) supply */
+	"vddl",  /* IF (1.8V) supply */
 };
-
-#define IMX708_NUM_SUPPLIES ARRAY_SIZE(imx708_supply_name)
 
 /*
  * Initialisation delay between XCLR low->high and the moment when the sensor
@@ -777,24 +809,24 @@ struct imx708 {
 
 	struct v4l2_mbus_framefmt fmt;
 
-	struct clk *xclk;
-	u32 xclk_freq;
+	struct clk *inclk;
+	u32 inclk_freq;
 
 	struct gpio_desc *reset_gpio;
-	struct regulator_bulk_data supplies[IMX708_NUM_SUPPLIES];
+	struct regulator_bulk_data supplies[ARRAY_SIZE(imx708_supply_name)];
 
 	struct v4l2_ctrl_handler ctrl_handler;
 	/* V4L2 Controls */
 	struct v4l2_ctrl *pixel_rate;
 	struct v4l2_ctrl *exposure;
-	struct v4l2_ctrl *vflip;
-	struct v4l2_ctrl *hflip;
 	struct v4l2_ctrl *vblank;
 	struct v4l2_ctrl *hblank;
-	struct v4l2_ctrl *red_balance;
-	struct v4l2_ctrl *blue_balance;
-	struct v4l2_ctrl *notify_gains;
 	struct v4l2_ctrl *hdr_mode;
+	struct v4l2_ctrl *link_freq;
+	struct {
+		struct v4l2_ctrl *hflip;
+		struct v4l2_ctrl *vflip;
+	};
 
 	/* Current mode */
 	const struct imx708_mode *mode;
@@ -813,6 +845,8 @@ struct imx708 {
 
 	/* Current long exposure factor in use. Set through V4L2_CID_VBLANK */
 	unsigned int long_exp_shift;
+
+	unsigned int link_freq_idx;
 };
 
 static inline struct imx708 *to_imx708(struct v4l2_subdev *_sd)
@@ -901,9 +935,10 @@ static int imx708_write_regs(struct imx708 *imx708,
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&imx708->sd);
 	unsigned int i;
-	int ret;
 
 	for (i = 0; i < len; i++) {
+		int ret;
+
 		ret = imx708_write_reg(imx708, regs[i].address, 1, regs[i].val);
 		if (ret) {
 			dev_err_ratelimited(&client->dev,
@@ -991,8 +1026,6 @@ static int imx708_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 
 static int imx708_set_exposure(struct imx708 *imx708, unsigned int val)
 {
-	int ret;
-
 	val = max(val, imx708->mode->exposure_lines_min);
 	val -= val % imx708->mode->exposure_lines_step;
 
@@ -1000,11 +1033,9 @@ static int imx708_set_exposure(struct imx708 *imx708, unsigned int val)
 	 * In HDR mode this will set the longest exposure. The sensor
 	 * will automatically divide the medium and short ones by 4,16.
 	 */
-	ret = imx708_write_reg(imx708, IMX708_REG_EXPOSURE,
-			       IMX708_REG_VALUE_16BIT,
-			       val >> imx708->long_exp_shift);
-
-	return ret;
+	return imx708_write_reg(imx708, IMX708_REG_EXPOSURE,
+				IMX708_REG_VALUE_16BIT,
+				val >> imx708->long_exp_shift);
 }
 
 static void imx708_adjust_exposure_range(struct imx708 *imx708,
@@ -1037,7 +1068,7 @@ static int imx708_set_analogue_gain(struct imx708 *imx708, unsigned int val)
 
 static int imx708_set_frame_length(struct imx708 *imx708, unsigned int val)
 {
-	int ret = 0;
+	int ret;
 
 	imx708->long_exp_shift = 0;
 
@@ -1057,8 +1088,8 @@ static int imx708_set_frame_length(struct imx708 *imx708, unsigned int val)
 
 static void imx708_set_framing_limits(struct imx708 *imx708)
 {
-	unsigned int hblank;
 	const struct imx708_mode *mode = imx708->mode;
+	unsigned int hblank;
 
 	__v4l2_ctrl_modify_range(imx708->pixel_rate,
 				 mode->pixel_rate, mode->pixel_rate,
@@ -1168,12 +1199,12 @@ static int imx708_set_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_NOTIFY_GAINS:
 		ret = imx708_write_reg(imx708, IMX708_REG_COLOUR_BALANCE_BLUE,
 				       IMX708_REG_VALUE_16BIT,
-				       imx708->notify_gains->p_new.p_u32[0]);
+				       ctrl->p_new.p_u32[0]);
 		if (ret)
 			break;
 		ret = imx708_write_reg(imx708, IMX708_REG_COLOUR_BALANCE_RED,
 				       IMX708_REG_VALUE_16BIT,
-				       imx708->notify_gains->p_new.p_u32[3]);
+				       ctrl->p_new.p_u32[3]);
 		break;
 	case V4L2_CID_WIDE_DYNAMIC_RANGE:
 		/* Already handled above. */
@@ -1428,7 +1459,7 @@ static int imx708_get_selection(struct v4l2_subdev *sd,
 static int imx708_start_streaming(struct imx708 *imx708)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&imx708->sd);
-	const struct imx708_reg_list *reg_list;
+	const struct imx708_reg_list *reg_list, *freq_regs;
 	int i, ret;
 	u32 val;
 
@@ -1471,6 +1502,16 @@ static int imx708_start_streaming(struct imx708 *imx708)
 	ret = imx708_write_regs(imx708, reg_list->regs, reg_list->num_of_regs);
 	if (ret) {
 		dev_err(&client->dev, "%s failed to set mode\n", __func__);
+		return ret;
+	}
+
+	/* Update the link frequency registers */
+	freq_regs = &link_freq_regs[imx708->link_freq_idx];
+	ret = imx708_write_regs(imx708, freq_regs->regs,
+				freq_regs->num_of_regs);
+	if (ret) {
+		dev_err(&client->dev, "%s failed to set link frequency registers\n",
+			__func__);
 		return ret;
 	}
 
@@ -1555,7 +1596,7 @@ static int imx708_power_on(struct device *dev)
 	struct imx708 *imx708 = to_imx708(sd);
 	int ret;
 
-	ret = regulator_bulk_enable(IMX708_NUM_SUPPLIES,
+	ret = regulator_bulk_enable(ARRAY_SIZE(imx708_supply_name),
 				    imx708->supplies);
 	if (ret) {
 		dev_err(&client->dev, "%s: failed to enable regulators\n",
@@ -1563,7 +1604,7 @@ static int imx708_power_on(struct device *dev)
 		return ret;
 	}
 
-	ret = clk_prepare_enable(imx708->xclk);
+	ret = clk_prepare_enable(imx708->inclk);
 	if (ret) {
 		dev_err(&client->dev, "%s: failed to enable clock\n",
 			__func__);
@@ -1577,7 +1618,8 @@ static int imx708_power_on(struct device *dev)
 	return 0;
 
 reg_off:
-	regulator_bulk_disable(IMX708_NUM_SUPPLIES, imx708->supplies);
+	regulator_bulk_disable(ARRAY_SIZE(imx708_supply_name),
+			       imx708->supplies);
 	return ret;
 }
 
@@ -1588,8 +1630,9 @@ static int imx708_power_off(struct device *dev)
 	struct imx708 *imx708 = to_imx708(sd);
 
 	gpiod_set_value_cansleep(imx708->reset_gpio, 0);
-	regulator_bulk_disable(IMX708_NUM_SUPPLIES, imx708->supplies);
-	clk_disable_unprepare(imx708->xclk);
+	regulator_bulk_disable(ARRAY_SIZE(imx708_supply_name),
+			       imx708->supplies);
+	clk_disable_unprepare(imx708->inclk);
 
 	/* Force reprogramming of the common registers when powered up again. */
 	imx708->common_regs_written = false;
@@ -1635,11 +1678,11 @@ static int imx708_get_regulators(struct imx708 *imx708)
 	struct i2c_client *client = v4l2_get_subdevdata(&imx708->sd);
 	unsigned int i;
 
-	for (i = 0; i < IMX708_NUM_SUPPLIES; i++)
+	for (i = 0; i < ARRAY_SIZE(imx708_supply_name); i++)
 		imx708->supplies[i].supply = imx708_supply_name[i];
 
 	return devm_regulator_bulk_get(&client->dev,
-				       IMX708_NUM_SUPPLIES,
+				       ARRAY_SIZE(imx708_supply_name),
 				       imx708->supplies);
 }
 
@@ -1720,6 +1763,7 @@ static int imx708_init_controls(struct imx708 *imx708)
 	struct v4l2_ctrl_handler *ctrl_hdlr;
 	struct i2c_client *client = v4l2_get_subdevdata(&imx708->sd);
 	struct v4l2_fwnode_device_properties props;
+	struct v4l2_ctrl *ctrl;
 	unsigned int i;
 	int ret;
 
@@ -1737,6 +1781,12 @@ static int imx708_init_controls(struct imx708 *imx708)
 					       IMX708_INITIAL_PIXEL_RATE,
 					       IMX708_INITIAL_PIXEL_RATE, 1,
 					       IMX708_INITIAL_PIXEL_RATE);
+
+	ctrl = v4l2_ctrl_new_int_menu(ctrl_hdlr, &imx708_ctrl_ops,
+				      V4L2_CID_LINK_FREQ, 0, 0,
+				      &link_freqs[imx708->link_freq_idx]);
+	if (ctrl)
+		ctrl->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
 	/*
 	 * Create the controls here, but mode specific limits are setup
@@ -1767,6 +1817,7 @@ static int imx708_init_controls(struct imx708 *imx708)
 
 	imx708->vflip = v4l2_ctrl_new_std(ctrl_hdlr, &imx708_ctrl_ops,
 					  V4L2_CID_VFLIP, 0, 1, 1, 0);
+	v4l2_ctrl_cluster(2, &imx708->hflip);
 
 	v4l2_ctrl_new_std_menu_items(ctrl_hdlr, &imx708_ctrl_ops,
 				     V4L2_CID_TEST_PATTERN,
@@ -1788,8 +1839,7 @@ static int imx708_init_controls(struct imx708 *imx708)
 		/* The "Solid color" pattern is white by default */
 	}
 
-	imx708->notify_gains = v4l2_ctrl_new_custom(ctrl_hdlr,
-						    &imx708_notify_gains_ctrl, NULL);
+	v4l2_ctrl_new_custom(ctrl_hdlr, &imx708_notify_gains_ctrl, NULL);
 
 	imx708->hdr_mode = v4l2_ctrl_new_std(ctrl_hdlr, &imx708_ctrl_ops,
 					     V4L2_CID_WIDE_DYNAMIC_RANGE,
@@ -1833,13 +1883,14 @@ static void imx708_free_controls(struct imx708 *imx708)
 	mutex_destroy(&imx708->mutex);
 }
 
-static int imx708_check_hwcfg(struct device *dev)
+static int imx708_check_hwcfg(struct device *dev, struct imx708 *imx708)
 {
 	struct fwnode_handle *endpoint;
 	struct v4l2_fwnode_endpoint ep_cfg = {
 		.bus_type = V4L2_MBUS_CSI2_DPHY
 	};
 	int ret = -EINVAL;
+	int i;
 
 	endpoint = fwnode_graph_get_next_endpoint(dev_fwnode(dev), NULL);
 	if (!endpoint) {
@@ -1864,11 +1915,18 @@ static int imx708_check_hwcfg(struct device *dev)
 		goto error_out;
 	}
 
-	if (ep_cfg.nr_of_link_frequencies != 1 ||
-	    ep_cfg.link_frequencies[0] != IMX708_DEFAULT_LINK_FREQ) {
+	for (i = 0; i < ARRAY_SIZE(link_freqs); i++) {
+		if (link_freqs[i] == ep_cfg.link_frequencies[0]) {
+			imx708->link_freq_idx = i;
+			break;
+		}
+	}
+
+	if (i == ARRAY_SIZE(link_freqs)) {
 		dev_err(dev, "Link frequency not supported: %lld\n",
 			ep_cfg.link_frequencies[0]);
-		goto error_out;
+			ret = -EINVAL;
+			goto error_out;
 	}
 
 	ret = 0;
@@ -1893,28 +1951,24 @@ static int imx708_probe(struct i2c_client *client)
 	v4l2_i2c_subdev_init(&imx708->sd, client, &imx708_subdev_ops);
 
 	/* Check the hardware configuration in device tree */
-	if (imx708_check_hwcfg(dev))
+	if (imx708_check_hwcfg(dev, imx708))
 		return -EINVAL;
 
-	/* Get system clock (xclk) */
-	imx708->xclk = devm_clk_get(dev, NULL);
-	if (IS_ERR(imx708->xclk)) {
-		dev_err(dev, "failed to get xclk\n");
-		return PTR_ERR(imx708->xclk);
-	}
+	/* Get system clock (inclk) */
+	imx708->inclk = devm_clk_get(dev, "inclk");
+	if (IS_ERR(imx708->inclk))
+		return dev_err_probe(dev, PTR_ERR(imx708->inclk),
+				     "failed to get inclk\n");
 
-	imx708->xclk_freq = clk_get_rate(imx708->xclk);
-	if (imx708->xclk_freq != IMX708_XCLK_FREQ) {
-		dev_err(dev, "xclk frequency not supported: %d Hz\n",
-			imx708->xclk_freq);
-		return -EINVAL;
-	}
+	imx708->inclk_freq = clk_get_rate(imx708->inclk);
+	if (imx708->inclk_freq != IMX708_INCLK_FREQ)
+		return dev_err_probe(dev, -EINVAL,
+				     "inclk frequency not supported: %d Hz\n",
+				     imx708->inclk_freq);
 
 	ret = imx708_get_regulators(imx708);
-	if (ret) {
-		dev_err(dev, "failed to get regulators\n");
-		return ret;
-	}
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to get regulators\n");
 
 	/* Request optional enable pin */
 	imx708->reset_gpio = devm_gpiod_get_optional(dev, "reset",
@@ -1943,7 +1997,7 @@ static int imx708_probe(struct i2c_client *client)
 	/* This needs the pm runtime to be registered. */
 	ret = imx708_init_controls(imx708);
 	if (ret)
-		goto error_power_off;
+		goto error_pm_runtime;
 
 	/* Initialize subdev */
 	imx708->sd.internal_ops = &imx708_internal_ops;
@@ -1975,9 +2029,11 @@ error_media_entity:
 error_handler_free:
 	imx708_free_controls(imx708);
 
-error_power_off:
+error_pm_runtime:
 	pm_runtime_disable(&client->dev);
 	pm_runtime_set_suspended(&client->dev);
+
+error_power_off:
 	imx708_power_off(&client->dev);
 
 	return ret;
