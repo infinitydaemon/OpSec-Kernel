@@ -59,7 +59,6 @@
 #include <linux/ctype.h>
 #include "symbol/kallsyms.h"
 #include <internal/lib.h>
-#include "util/sample.h"
 
 /*
  * Make a group from 'leader' to 'last', requiring that the events were not
@@ -1131,6 +1130,9 @@ int auxtrace_queue_data(struct perf_session *session, bool samples, bool events)
 	};
 
 	if (auxtrace__dont_decode(session))
+		return 0;
+
+	if (perf_data__is_pipe(session->data))
 		return 0;
 
 	if (!session->auxtrace || !session->auxtrace->queue_data)

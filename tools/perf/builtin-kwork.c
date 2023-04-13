@@ -6,15 +6,10 @@
  */
 
 #include "builtin.h"
-#include "perf.h"
 
 #include "util/data.h"
-#include "util/evlist.h"
-#include "util/evsel.h"
-#include "util/header.h"
 #include "util/kwork.h"
 #include "util/debug.h"
-#include "util/session.h"
 #include "util/symbol.h"
 #include "util/thread.h"
 #include "util/string2.h"
@@ -23,11 +18,9 @@
 
 #include <subcmd/pager.h>
 #include <subcmd/parse-options.h>
-#include <traceevent/event-parse.h>
 
 #include <errno.h>
 #include <inttypes.h>
-#include <signal.h>
 #include <linux/err.h>
 #include <linux/time64.h>
 #include <linux/zalloc.h>
@@ -223,7 +216,7 @@ static struct kwork_atom *atom_new(struct perf_kwork *kwork,
 	list_add_tail(&page->list, &kwork->atom_page_list);
 
 found_atom:
-	__set_bit(i, page->bitmap);
+	set_bit(i, page->bitmap);
 	atom->time = sample->time;
 	atom->prev = NULL;
 	atom->page_addr = page;
@@ -236,8 +229,8 @@ static void atom_free(struct kwork_atom *atom)
 	if (atom->prev != NULL)
 		atom_free(atom->prev);
 
-	__clear_bit(atom->bit_inpage,
-		    ((struct kwork_atom_page *)atom->page_addr)->bitmap);
+	clear_bit(atom->bit_inpage,
+		  ((struct kwork_atom_page *)atom->page_addr)->bitmap);
 }
 
 static void atom_del(struct kwork_atom *atom)

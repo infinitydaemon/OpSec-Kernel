@@ -36,7 +36,6 @@
 #include <regex.h>
 
 #include <linux/ctype.h>
-#include <traceevent/event-parse.h>
 
 static int	kmem_slab;
 static int	kmem_page;

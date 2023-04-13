@@ -36,8 +36,8 @@
 
 #define DEFAULT_TRACER  "function_graph"
 
-static volatile sig_atomic_t workload_exec_errno;
-static volatile sig_atomic_t done;
+static volatile int workload_exec_errno;
+static bool done;
 
 static void sig_handler(int sig __maybe_unused)
 {
