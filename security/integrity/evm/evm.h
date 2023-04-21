@@ -5,7 +5,7 @@
  * Authors:
  * Mimi Zohar <zohar@us.ibm.com>
  * Kylene Hall <kjhall@us.ibm.com>
- *
+ * CWD Systems <cwdsystems-at-protonmail.ch>
  * File: evm.h
  */
 
@@ -62,4 +62,4 @@ int evm_init_hmac(struct inode *inode, const struct xattr *xattr,
 		  char *hmac_val);
 int evm_init_secfs(void);
 
-#endif
+#endif /* __INTEGRITY_EVM_H */
