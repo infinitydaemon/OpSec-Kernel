@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# Check if fail2ban is installed
+if ! command -v fail2ban-client &> /dev/null
+then
+    echo "fail2ban is not installed. Please install fail2ban first."
+    exit 1
+fi
+
+# Define the log file to monitor
+LOG_FILE="/var/log/auth.log"
+
+# Monitor the log file for failed login attempts
+tail -n0 -F $LOG_FILE | while read LINE
+do
+    if echo $LINE | grep -q "Failed password"
+    then
+        # Extract the offending IP address
+        IP=$(echo $LINE | awk '{print $(NF-3)}')
+
+        # Ban the IP address using fail2ban
+        fail2ban-client set sshd banip $IP
+
+        # Log the banned IP address
+        echo "$(date) - Banned IP address: $IP"
+    fi
+done
