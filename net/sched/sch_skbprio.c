@@ -138,31 +138,35 @@ static int skbprio_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 
 static struct sk_buff *skbprio_dequeue(struct Qdisc *sch)
 {
-	struct skbprio_sched_data *q = qdisc_priv(sch);
-	struct sk_buff_head *hpq = &q->qdiscs[q->highest_prio];
-	struct sk_buff *skb = __skb_dequeue(hpq);
+    struct skbprio_sched_data *q = qdisc_priv(sch);
+    struct sk_buff_head *hpq;
+    struct sk_buff *skb;
+    int prio;
 
-	if (unlikely(!skb))
-		return NULL;
-
-	sch->q.qlen--;
-	qdisc_qstats_backlog_dec(sch, skb);
-	qdisc_bstats_update(sch, skb);
-
-	q->qstats[q->highest_prio].backlog -= qdisc_pkt_len(skb);
-
-	/* Update highest priority field. */
-	if (skb_queue_empty(hpq)) {
-		if (q->lowest_prio == q->highest_prio) {
-			BUG_ON(sch->q.qlen);
-			q->highest_prio = 0;
-			q->lowest_prio = SKBPRIO_MAX_PRIORITY - 1;
-		} else {
-			q->highest_prio = calc_new_high_prio(q);
-		}
-	}
-	return skb;
+    for (prio = q->highest_prio; prio >= q->lowest_prio; prio--) {
+        hpq = &q->qdiscs[prio];
+        skb = __skb_dequeue(hpq);
+        if (skb) {
+            sch->q.qlen--;
+            qdisc_qstats_backlog_dec(sch, skb);
+            q->qstats[prio].backlog -= qdisc_pkt_len(skb);
+            if (skb_queue_empty(hpq)) {
+                if (q->highest_prio == prio)
+                    q->highest_prio = calc_new_high_prio(q);
+                if (q->lowest_prio == prio)
+                    q->lowest_prio = calc_new_low_prio(q);
+            } else {
+                if (prio == q->highest_prio)
+                    qdisc_bstats_update(sch, skb);
+                else
+                    qdisc_qstats_backlog_inc(sch, skb);
+            }
+            return skb;
+        }
+    }
+    return NULL;
 }
+
 
 static int skbprio_change(struct Qdisc *sch, struct nlattr *opt,
 			struct netlink_ext_ack *extack)
