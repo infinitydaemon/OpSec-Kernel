@@ -9,6 +9,7 @@
 #include <linux/irq.h>
 #include <linux/irqdomain.h>
 #include <linux/of.h>
+#include <linux/device.h>
 
 enum acpi_irq_model_id acpi_irq_model;
 
@@ -54,24 +55,23 @@ EXPORT_SYMBOL_GPL(acpi_gsi_to_irq);
  *          -EINVAL on failure
  */
 int acpi_register_gsi(struct device *dev, u32 gsi, int trigger,
-		      int polarity)
+                      int polarity)
 {
-	struct irq_fwspec fwspec;
+    struct irq_fwspec fwspec;
 
-	fwspec.fwnode = acpi_get_gsi_domain_id(gsi);
-	if (WARN_ON(!fwspec.fwnode)) {
-		pr_warn("GSI: No registered irqchip, giving up\n");
-		return -EINVAL;
-	}
+    fwspec.fwnode = acpi_get_gsi_domain_id(gsi);
+    if (WARN_ON(!fwspec.fwnode)) {
+        pr_warn("GSI: No registered irqchip, giving up\n");
+        return -EINVAL;
+    }
 
-	fwspec.param[0] = gsi;
-	fwspec.param[1] = acpi_dev_get_irq_type(trigger, polarity);
-	fwspec.param_count = 2;
+    fwspec.param[0] = gsi;
+    fwspec.param[1] = acpi_dev_get_irq_type(trigger, polarity);
+    fwspec.param_count = 2;
 
-	return irq_create_fwspec_mapping(&fwspec);
+    return irq_create_fwspec_mapping(&fwspec);
 }
 EXPORT_SYMBOL_GPL(acpi_register_gsi);
-
 /**
  * acpi_unregister_gsi() - Free a GSI<->linux IRQ number mapping
  * @gsi: GSI IRQ number
@@ -90,7 +90,6 @@ void acpi_unregister_gsi(u32 gsi)
 	irq_dispose_mapping(irq);
 }
 EXPORT_SYMBOL_GPL(acpi_unregister_gsi);
-
 /**
  * acpi_get_irq_source_fwhandle() - Retrieve fwhandle from IRQ resource source.
  * @source: acpi_resource_source to use for the lookup.
@@ -112,19 +111,24 @@ acpi_get_irq_source_fwhandle(const struct acpi_resource_source *source,
 	acpi_handle handle;
 	acpi_status status;
 
-	if (!source->string_length)
+	if (!source->string_ptr)
 		return acpi_get_gsi_domain_id(gsi);
 
 	status = acpi_get_handle(NULL, source->string_ptr, &handle);
-	if (WARN_ON(ACPI_FAILURE(status)))
+	if (ACPI_FAILURE(status)) {
+		pr_warn("Failed to get handle for IRQ source %s\n",
+			source->string_ptr);
 		return NULL;
+	}
 
-	device = acpi_get_acpi_dev(handle);
-	if (WARN_ON(!device))
+	device = acpi_get_device(handle);
+	if (!device) {
+		pr_warn("Failed to get device for handle %p\n", handle);
 		return NULL;
+	}
 
 	result = &device->fwnode;
-	acpi_put_acpi_dev(device);
+	fwnode_handle_put(result);
 	return result;
 }
 
@@ -156,20 +160,22 @@ struct acpi_irq_parse_one_ctx {
  * the information passed.
  */
 static inline void acpi_irq_parse_one_match(struct fwnode_handle *fwnode,
-					    u32 hwirq, u8 triggering,
-					    u8 polarity, u8 shareable,
-					    u8 wake_capable,
-					    struct acpi_irq_parse_one_ctx *ctx)
+                                            u32 hwirq, u8 triggering,
+                                            u8 polarity, u8 shareable,
+                                            u8 wake_capable,
+                                            struct acpi_irq_parse_one_ctx *ctx)
 {
-	if (!fwnode)
-		return;
-	ctx->rc = 0;
-	*ctx->res_flags = acpi_dev_irq_flags(triggering, polarity, shareable, wake_capable);
-	ctx->fwspec->fwnode = fwnode;
-	ctx->fwspec->param[0] = hwirq;
-	ctx->fwspec->param[1] = acpi_dev_get_irq_type(triggering, polarity);
-	ctx->fwspec->param_count = 2;
+    if (!fwnode)
+        return;
+
+    ctx->rc = 0;
+    *ctx->res_flags = acpi_dev_irq_flags(triggering, polarity, shareable, wake_capable);
+    ctx->fwspec->fwnode = fwnode;
+    ctx->fwspec->param[0] = hwirq;
+    ctx->fwspec->param[1] = acpi_dev_get_irq_type(triggering, polarity);
+    ctx->fwspec->param_count = 2;
 }
+
 
 /**
  * acpi_irq_parse_one_cb - Handle the given resource.
@@ -247,11 +253,20 @@ static acpi_status acpi_irq_parse_one_cb(struct acpi_resource *ares,
 static int acpi_irq_parse_one(acpi_handle handle, unsigned int index,
 			      struct irq_fwspec *fwspec, unsigned long *flags)
 {
-	struct acpi_irq_parse_one_ctx ctx = { -EINVAL, index, flags, fwspec };
+	struct acpi_irq_parse_one_ctx ctx = {
+		.rc = -EINVAL,
+		.index = index,
+		.res_flags = flags,
+		.fwspec = fwspec
+	};
 
 	acpi_walk_resources(handle, METHOD_NAME__CRS, acpi_irq_parse_one_cb, &ctx);
+
 	return ctx.rc;
 }
+
+EXPORT_SYMBOL_GPL(acpi_irq_parse_one);
+
 
 /**
  * acpi_irq_get - Lookup an ACPI IRQ resource and use it to initialize resource.
@@ -271,7 +286,6 @@ static int acpi_irq_parse_one(acpi_handle handle, unsigned int index,
 int acpi_irq_get(acpi_handle handle, unsigned int index, struct resource *res)
 {
 	struct irq_fwspec fwspec;
-	struct irq_domain *domain;
 	unsigned long flags;
 	int rc;
 
@@ -279,7 +293,7 @@ int acpi_irq_get(acpi_handle handle, unsigned int index, struct resource *res)
 	if (rc)
 		return rc;
 
-	domain = irq_find_matching_fwnode(fwspec.fwnode, DOMAIN_BUS_ANY);
+	struct irq_domain *domain = irq_find_matching_fwnode(fwspec.fwnode, DOMAIN_BUS_ANY);
 	if (!domain)
 		return -EPROBE_DEFER;
 
@@ -287,8 +301,7 @@ int acpi_irq_get(acpi_handle handle, unsigned int index, struct resource *res)
 	if (rc <= 0)
 		return -EINVAL;
 
-	res->start = rc;
-	res->end = rc;
+	res->start = res->end = rc;
 	res->flags = flags;
 
 	return 0;
