@@ -13,9 +13,10 @@ hashes = {
 # Check integrity of each file
 for path, expected_hash in hashes.items():
     try:
-        output = subprocess.check_output(["sha256sum", path]).decode().strip()
+        output = subprocess.check_output(["sha256sum", path], universal_newlines=True)
         actual_hash = output.split()[0]
         if actual_hash != expected_hash:
             print(f"WARNING: {path} has been modified (expected hash {expected_hash}, actual hash {actual_hash})")
     except subprocess.CalledProcessError:
-        print(f"ERROR: failed to calculate hash for {path}")
+        print(f"ERROR: failed to calculate hash for {path}")    
+
