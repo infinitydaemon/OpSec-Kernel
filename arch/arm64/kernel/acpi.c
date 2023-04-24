@@ -360,54 +360,46 @@ void __iomem *acpi_os_ioremap(acpi_physical_address phys, acpi_size size)
  * Used by KVM and the arch do_sea handler.
  * @regs may be NULL when called from process context.
  */
-int apei_claim_sea(struct pt_regs *regs)
+int handle_acpi_sea_notification(struct pt_regs *regs)
 {
-	int err = -ENOENT;
-	bool return_to_irqs_enabled;
-	unsigned long current_flags;
+    if (IS_ENABLED(CONFIG_ACPI_APEI_GHES)) {
+        bool return_to_irqs_enabled;
+        unsigned long current_flags;
+        int error_code = -ENOENT;
 
-	if (!IS_ENABLED(CONFIG_ACPI_APEI_GHES))
-		return err;
+        current_flags = local_daif_save_flags();
+        return_to_irqs_enabled = !irqs_disabled_flags(arch_local_save_flags());
 
-	current_flags = local_daif_save_flags();
+        if (regs) {
+            return_to_irqs_enabled = interrupts_enabled(regs);
+        }
 
-	/* current_flags isn't useful here as daif doesn't tell us about pNMI */
-	return_to_irqs_enabled = !irqs_disabled_flags(arch_local_save_flags());
+        local_daif_restore(DAIF_ERRCTX);
+        nmi_enter();
+        error_code = ghes_notify_sea();
+        nmi_exit();
 
-	if (regs)
-		return_to_irqs_enabled = interrupts_enabled(regs);
+        if (!error_code) {
+            if (return_to_irqs_enabled) {
+                local_daif_restore(DAIF_PROCCTX_NOIRQ);
+                __irq_enter();
+                irq_work_run();
+                __irq_exit();
+            } else {
+                pr_warn_once("APEI work queued but not completed");
+                error_code = -EINPROGRESS;
+            }
+        }
 
-	/*
-	 * SEA can interrupt SError, mask it and describe this as an NMI so
-	 * that APEI defers the handling.
-	 */
-	local_daif_restore(DAIF_ERRCTX);
-	nmi_enter();
-	err = ghes_notify_sea();
-	nmi_exit();
+        local_daif_restore(current_flags);
 
-	/*
-	 * APEI NMI-like notifications are deferred to irq_work. Unless
-	 * we interrupted irqs-masked code, we can do that now.
-	 */
-	if (!err) {
-		if (return_to_irqs_enabled) {
-			local_daif_restore(DAIF_PROCCTX_NOIRQ);
-			__irq_enter();
-			irq_work_run();
-			__irq_exit();
-		} else {
-			pr_warn_ratelimited("APEI work queued but not completed");
-			err = -EINPROGRESS;
-		}
-	}
+        return error_code;
+    }
 
-	local_daif_restore(current_flags);
-
-	return err;
+    return -ENOENT;
 }
 
-void arch_reserve_mem_area(acpi_physical_address addr, size_t size)
+void reserve_memory_region_for_acpi(acpi_physical_address addr, size_t size)
 {
-	memblock_mark_nomap(addr, size);
+    memblock_mark_nomap(addr, size);
 }
