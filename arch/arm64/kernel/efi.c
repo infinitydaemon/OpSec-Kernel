@@ -173,7 +173,7 @@ bool efi_runtime_fixup_exception(struct pt_regs *regs, const char *msg)
 }
 
 /* EFI requires 8 KiB of stack space for runtime services */
-static_assert(THREAD_SIZE >= SZ_8K);
+#define THREAD_SIZE SZ_8K
 
 static int __init arm64_efi_rt_init(void)
 {
@@ -182,7 +182,7 @@ static int __init arm64_efi_rt_init(void)
 	if (!efi_enabled(EFI_RUNTIME_SERVICES))
 		return 0;
 
-	p = __vmalloc_node(THREAD_SIZE, THREAD_ALIGN, GFP_KERNEL,
+	p = __vmalloc_node(THREAD_SIZE + PAGE_SIZE, THREAD_ALIGN, GFP_KERNEL,
 			   NUMA_NO_NODE, &&l);
 l:	if (!p) {
 		pr_warn("Failed to allocate EFI runtime stack\n");
