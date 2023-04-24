@@ -59,18 +59,20 @@ static int psci_acpi_cpu_init_idle(unsigned int cpu)
 
 int acpi_processor_ffh_lpi_probe(unsigned int cpu)
 {
-	return psci_acpi_cpu_init_idle(cpu);
+    return psci_acpi_cpu_init_idle(cpu);
 }
 
 int acpi_processor_ffh_lpi_enter(struct acpi_lpi_state *lpi)
 {
-	u32 state = lpi->address;
+    u32 state = lpi->address;
+    int ret;
 
-	if (ARM64_LPI_IS_RETENTION_STATE(lpi->arch_flags))
-		return CPU_PM_CPU_IDLE_ENTER_RETENTION_PARAM(psci_cpu_suspend_enter,
-						lpi->index, state);
-	else
-		return CPU_PM_CPU_IDLE_ENTER_PARAM(psci_cpu_suspend_enter,
-					     lpi->index, state);
+    if (ARM64_LPI_IS_RETENTION_STATE(lpi->arch_flags))
+        ret = CPU_PM_CPU_IDLE_ENTER_RETENTION_PARAM(psci_cpu_suspend_enter,
+                                                     lpi->index, state);
+    else
+        ret = CPU_PM_CPU_IDLE_ENTER_PARAM(psci_cpu_suspend_enter,
+                                          lpi->index, state);
+
+    return ret;
 }
-#endif
