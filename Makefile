@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 5
-PATCHLEVEL = 15
-SUBLEVEL = 84
+PATCHLEVEL = 20
+SUBLEVEL = 1
 EXTRAVERSION = cwdsystems
 NAME = infinitydaemon
 
