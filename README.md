@@ -21,10 +21,10 @@ if __name__ == '__main__':
 CWD SYSTEMS Linux
 =================
 
-Linux Kernel that was tuned and built as Brooklyn Supreme is now OpSec Kernel used in CWD Appliances. Numerous optimizations and tweaks have been applied for high availability and network wide security.
+Linux Kernel that was tuned and built as Brooklyn Supreme is now OpSec Kernel used in CWD Appliances. Brooklyn Supreme is now obsolete and is not maintained for security, enhancements and is currently deemed insecure and dangerous. Numerous optimizations and tweaks have been applied for high availability and network wide security.
 The build instructions for SBC vary when compared to official kernel.org build instructions. Follow the steps to build the OpSec Kernel for your SBC on Debian based distros. If a menu driven config is required, you will need ncurses-development headers.
 
-```
+```bash
 sudo apt install git bc bison flex libssl-dev make
 git clone https://github.com/infinitydaemon/OpSec-Kernel.git
 cd OpSec-Kernel
@@ -43,7 +43,7 @@ sudo make install
 
 After the built kernel is installed, edit the boot config
 
-```
+```bash
 sudo nano /boot/config.txt
 ```
 
@@ -59,9 +59,9 @@ Install the 64-bit Toolchain for a 64-bit Kernel
 
 ``` sudo apt install crossbuild-essential-arm64 ```
 
-To cross-compile as a 64bit build, do a : 
+An example cross-compile as a 64bit build : 
 
-```
+```bash
 KERNEL=kernel8
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- 
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image modules dtbs
@@ -75,18 +75,9 @@ sudo umount mnt/fat32
 sudo umount mnt/ext4
 
 ```
-
-Now edit your boot/config.txt and specify the built kernel as:
-
-```
-kernel=Name.img
-```
-
-Where Name.img is the specification from your .config file. In case your SBC fails to boot, mount the microSD on your computer via a card reader and edit the config.txt file under boot folder. Simply remove the first line kernel=Name.img and check for any typos or line errors made.
-
 In order to build the documentation, use ``make htmldocs`` or
 ``make pdfdocs``.  The formatted documentation can also be read online at:
 
     https://www.kernel.org/doc/html/latest/
 
-Open an issue request on Github if you encounter platform build errors. Good luck!
+CWD SYSTEMS does not provide support for Kernel builds. Refer to kernel.org forums for generic build instructions and help.
