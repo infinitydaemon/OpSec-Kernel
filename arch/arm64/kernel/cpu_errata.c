@@ -532,6 +532,30 @@ const struct arm64_cpu_capabilities arm64_errata[] = {
 		ERRATA_MIDR_ALL_VERSIONS(MIDR_CORTEX_A73),
 	},
 #endif
+
+#ifdef CONFIG_CPU_FREEZE_WORKAROUND
+   		 struct arm64_cpu_capability cpu_freeze_workaround_cap = {
+     		   .desc = "CWD CPU Freeze Workaround",
+      		   .capability = ARM64_CPU_FREEZE_WORKAROUND,
+      		   .type = ARM64_CPUCAP_LOCAL_CPU_ERRATUM,
+      		   .matches = has_cpu_freeze_workaround,
+      		   .cpu_enable = cpu_freeze_workaround_enable_mitigation,
+    };
+		   void cpu_freeze_workaround_enable_mitigation(void)
+    {
+        /* Implement CPU freeze workaround mitigation technique */
+        /* ... */
+    }
+#endif
+	
+    bool has_cpu_freeze_workaround(void)
+    {
+        /* Check if the CPU is affected by the CPU freeze erratum */
+        /* ... */
+        return true; /* or false */
+    }
+#endif
+
 	{
 		.desc = "Spectre-v2",
 		.capability = ARM64_SPECTRE_V2,
