@@ -5,6 +5,7 @@
  * Copyright (C) 2001 Deep Blue Solutions Ltd.
  * Copyright (C) 2012 ARM Ltd.
  * Copyright (C) 2015 Huawei Futurewei Technologies.
+ * Copyright (C) 2023 CWD SYSTEMS.
  */
 
 #include <linux/linkage.h>
@@ -13,41 +14,34 @@
 #include <asm/sysreg.h>
 #include <asm/virt.h>
 
-.text
-.pushsection    .idmap.text, "awx"
-
-/*
- * cpu_soft_restart(el2_switch, entry, arg0, arg1, arg2)
+/**
+ * cpu_soft_restart() - Put the CPU into the same state as it would be if it had been reset,
+ * and branch to what would be the reset vector.
  *
  * @el2_switch: Flag to indicate a switch to EL2 is needed.
  * @entry: Location to jump to for soft reset.
- * arg0: First argument passed to @entry. (relocation list)
- * arg1: Second argument passed to @entry.(physical kernel entry)
- * arg2: Third argument passed to @entry. (physical dtb address)
+ * @arg0: First argument passed to @entry. (relocation list)
+ * @arg1: Second argument passed to @entry.(physical kernel entry)
+ * @arg2: Third argument passed to @entry. (physical dtb address)
  *
- * Put the CPU into the same state as it would be if it had been reset, and
- * branch to what would be the reset vector. It must be executed with the
- * flat identity mapping.
+ * This function puts the CPU into the same state as it would be if it had been reset, and
+ * branches to what would be the reset vector. It must be executed with the flat identity mapping.
  */
-SYM_TYPED_FUNC_START(cpu_soft_restart)
-	mov_q	x12, INIT_SCTLR_EL1_MMU_OFF
-	pre_disable_mmu_workaround
-	/*
-	 * either disable EL1&0 translation regime or disable EL2&0 translation
-	 * regime if HCR_EL2.E2H == 1
-	 */
-	msr	sctlr_el1, x12
-	isb
+asmlinkage void cpu_soft_restart(bool el2_switch, void *entry, void *arg0, void *arg1, void *arg2)
+{
+	u64 sctlr_el1;
+	void (*reset_vector)(void *arg0, void *arg1, void *arg2);
 
-	cbz	x0, 1f				// el2_switch?
-	mov	x0, #HVC_SOFT_RESTART
-	hvc	#0				// no return
+	/* Disable MMU */
+	sctlr_el1 = read_sysreg_s(SYS_REG_SCTLR_EL1);
+	write_sysreg_s(sctlr_el1 & ~SCTLR_M, SYS_REG_SCTLR_EL1);
+	isb();
 
-1:	mov	x8, x1				// entry
-	mov	x0, x2				// arg0
-	mov	x1, x3				// arg1
-	mov	x2, x4				// arg2
-	br	x8
-SYM_FUNC_END(cpu_soft_restart)
+	/* Switch to EL2 if needed */
+	if (el2_switch) {
+		__asm__ __volatile__("hvc %x0" : : "r"((u32)HVC_SOFT_RESTART));
+	}
 
-.popsection
+	reset_vector = entry;
+	reset_vector(arg0, arg1, arg2);
+}
