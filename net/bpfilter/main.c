@@ -10,9 +10,19 @@
 #include <asm/unistd.h>
 #include "msgfmt.h"
 
+#define DEBUG_FILE_PATH "/dev/kmsg"
+#define REQ_SIZE sizeof(struct mbox_request)
+#define REP_SIZE sizeof(struct mbox_reply)
+
 FILE *debug_f;
 
-static int handle_get_cmd(struct mbox_request *cmd)
+/**
+ * @brief Handles GET command
+ * 
+ * @param cmd The mailbox request command
+ * @return int The status code of the command execution
+ */
+static int handle_get_cmd(const struct mbox_request *cmd)
 {
 	switch (cmd->cmd) {
 	case 0:
@@ -23,21 +33,30 @@ static int handle_get_cmd(struct mbox_request *cmd)
 	return -ENOPROTOOPT;
 }
 
-static int handle_set_cmd(struct mbox_request *cmd)
+/**
+ * @brief Handles SET command
+ * 
+ * @param cmd The mailbox request command
+ * @return int The status code of the command execution
+ */
+static int handle_set_cmd(const struct mbox_request *cmd)
 {
 	return -ENOPROTOOPT;
 }
 
+/**
+ * @brief The main loop of the program
+ */
 static void loop(void)
 {
 	while (1) {
 		struct mbox_request req;
 		struct mbox_reply reply;
-		int n;
+		ssize_t n;
 
-		n = read(0, &req, sizeof(req));
-		if (n != sizeof(req)) {
-			fprintf(debug_f, "invalid request %d\n", n);
+		n = read(STDIN_FILENO, &req, REQ_SIZE);
+		if (n != REQ_SIZE) {
+			perror("invalid request");
 			return;
 		}
 
@@ -45,18 +64,27 @@ static void loop(void)
 			handle_set_cmd(&req) :
 			handle_get_cmd(&req);
 
-		n = write(1, &reply, sizeof(reply));
-		if (n != sizeof(reply)) {
-			fprintf(debug_f, "reply failed %d\n", n);
+		n = write(STDOUT_FILENO, &reply, REP_SIZE);
+		if (n != REP_SIZE) {
+			perror("reply failed");
 			return;
 		}
 	}
 }
 
+/**
+ * @brief The main entry point of the program
+ * 
+ * @return int The exit code of the program
+ */
 int main(void)
 {
-	debug_f = fopen("/dev/kmsg", "w");
-	setvbuf(debug_f, 0, _IOLBF, 0);
+	debug_f = fopen(DEBUG_FILE_PATH, "w");
+	if (debug_f == NULL) {
+		perror("failed to open debug file");
+		return -1;
+	}
+	setvbuf(debug_f, NULL, _IOLBF, 0);
 	fprintf(debug_f, "<5>Started bpfilter\n");
 	loop();
 	fclose(debug_f);
