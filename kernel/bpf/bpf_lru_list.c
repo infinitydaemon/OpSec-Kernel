@@ -9,7 +9,7 @@
 
 #define LOCAL_FREE_TARGET		(128)
 #define LOCAL_NR_SCANS			LOCAL_FREE_TARGET
-
+#define NUM_CPUS 4 /* Static define cores to 4 */
 #define PERCPU_FREE_TARGET		(4)
 #define PERCPU_NR_SCANS			PERCPU_FREE_TARGET
 
@@ -21,21 +21,37 @@
 
 static int get_next_cpu(int cpu)
 {
-	cpu = cpumask_next(cpu, cpu_possible_mask);
-	if (cpu >= nr_cpu_ids)
-		cpu = cpumask_first(cpu_possible_mask);
-	return cpu;
+    static struct cpumask cpus;
+    static int initialized = 0;
+
+    if (!initialized) {
+        cpumask_clear(&cpus);
+        for (int i = 0; i < NUM_CPUS; i++) {
+            cpumask_set_cpu(i, &cpus);
+        }
+        initialized = 1;
+    }
+
+    cpu = cpumask_next(cpu, &cpus);
+    if (cpu >= NUM_CPUS)
+        cpu = cpumask_first(&cpus);
+
+    return cpu;
 }
 
-/* Local list helpers */
-static struct list_head *local_free_list(struct bpf_lru_locallist *loc_l)
+struct bpf_lru_locallist {
+	struct list_head lists[NUM_CPU_CORES][2];
+	/* ... other fields ... */
+};
+
+static struct list_head *local_free_list(struct bpf_lru_locallist *loc_l, int cpu_core)
 {
-	return &loc_l->lists[LOCAL_FREE_LIST_IDX];
+	return &loc_l->lists[cpu_core][LOCAL_FREE_LIST_IDX];
 }
 
-static struct list_head *local_pending_list(struct bpf_lru_locallist *loc_l)
+static struct list_head *local_pending_list(struct bpf_lru_locallist *loc_l, int cpu_core)
 {
-	return &loc_l->lists[LOCAL_PENDING_LIST_IDX];
+	return &loc_l->lists[cpu_core][LOCAL_PENDING_LIST_IDX];
 }
 
 /* bpf_lru_node helpers */
