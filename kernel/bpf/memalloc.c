@@ -74,36 +74,61 @@ static int bpf_mem_cache_idx(size_t size)
 	return fls(size - 1) - 2;
 }
 
-#define NUM_CACHES 11
-
 struct bpf_mem_cache {
-	/* per-cpu list of free objects of size 'unit_size'.
-	 * All accesses are done with interrupts disabled and 'active' counter
-	 * protection with __llist_add() and __llist_del_first().
-	 */
-	struct llist_head free_llist;
-	local_t active;
-
-	/* Operations on the free_list from unit_alloc/unit_free/bpf_mem_refill
-	 * are sequenced by per-cpu 'active' counter. But unit_free() cannot
-	 * fail. When 'active' is busy the unit_free() will add an object to
-	 * free_llist_extra.
-	 */
-	struct llist_head free_llist_extra;
-
-	struct irq_work refill_work;
-	struct obj_cgroup *objcg;
-	int unit_size;
-	/* count of objects in free_llist */
-	int free_cnt;
-	int low_watermark, high_watermark, batch;
-	int percpu_size;
-
-	struct rcu_head rcu;
-	struct llist_head free_by_rcu;
-	struct llist_head waiting_for_gp;
-	atomic_t call_rcu_in_progress;
+    struct llist_head free_llist;
+    local_t active;
+    struct llist_head free_llist_extra;
+    struct irq_work refill_work;
+    struct obj_cgroup *objcg;
+    int unit_size;
+    int free_cnt;
+    int low_watermark, high_watermark, batch;
+    int percpu_size;
+    struct rcu_head rcu;
+    struct llist_head free_by_rcu;
+    struct llist_head waiting_for_gp;
+    atomic_t call_rcu_in_progress;
+    struct list_head free_list_head;
+    int num_cpus;
 };
+
+/* Initializes the bpf_mem_cache struct */
+void bpf_mem_cache_init(struct bpf_mem_cache *cache, int unit_size,
+                        int low_watermark, int high_watermark, int batch,
+                        struct obj_cgroup *objcg, int percpu_size,
+                        int num_cpus)
+{
+    cache->unit_size = unit_size;
+    cache->low_watermark = low_watermark;
+    cache->high_watermark = high_watermark;
+    cache->batch = batch;
+    cache->objcg = objcg;
+    cache->percpu_size = percpu_size;
+    cache->num_cpus = num_cpus;
+
+    INIT_LLIST_HEAD(&cache->free_llist);
+    local_set(&cache->active, 0);
+
+    INIT_LLIST_HEAD(&cache->free_llist_extra);
+
+    INIT_WORK(&cache->refill_work, bpf_mem_refill_worker);
+
+    INIT_RCU_HEAD(&cache->rcu);
+    INIT_LLIST_HEAD(&cache->free_by_rcu);
+    INIT_LLIST_HEAD(&cache->waiting_for_gp);
+
+    atomic_set(&cache->call_rcu_in_progress, 0);
+
+    cache->free_list_head = kmalloc(sizeof(struct list_head) * num_cpus, GFP_KERNEL);
+    if (!cache->free_list_head) {
+        pr_err("Failed to allocate memory for free_list_head\n");
+        return;
+    }
+
+    for (int i = 0; i < num_cpus; i++) {
+        INIT_LIST_HEAD(&cache->free_list_head[i]);
+    }
+}
 
 struct bpf_mem_caches {
 	struct bpf_mem_cache cache[NUM_CACHES];
