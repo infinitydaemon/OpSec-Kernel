@@ -101,7 +101,7 @@ static int pwm_gpio_probe(struct platform_device *pdev)
 	pwm_gpio->gc.parent = dev;
 	pwm_gpio->gc.label = "pwm-gpio";
 	pwm_gpio->gc.owner = THIS_MODULE;
-	pwm_gpio->gc.of_node = dev->of_node;
+	pwm_gpio->gc.fwnode = dev->fwnode;
 	pwm_gpio->gc.base = -1;
 
 	pwm_gpio->gc.get_direction = pwm_gpio_get_direction;

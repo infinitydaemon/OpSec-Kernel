@@ -97,11 +97,8 @@ struct vc4_dpi {
 	struct debugfs_regset32 regset;
 };
 
-static inline struct vc4_dpi *
-to_vc4_dpi(struct drm_encoder *encoder)
-{
-	return container_of(encoder, struct vc4_dpi, encoder.base);
-}
+#define to_vc4_dpi(_encoder)						\
+	container_of_const(_encoder, struct vc4_dpi, encoder.base)
 
 #define DPI_READ(offset)								\
 	({										\
@@ -267,11 +264,8 @@ static int vc4_dpi_late_register(struct drm_encoder *encoder)
 {
 	struct drm_device *drm = encoder->dev;
 	struct vc4_dpi *dpi = to_vc4_dpi(encoder);
-	int ret;
 
-	ret = vc4_debugfs_add_regset32(drm->primary, "dpi_regs", &dpi->regset);
-	if (ret)
-		return ret;
+	vc4_debugfs_add_regset32(drm, "dpi_regs", &dpi->regset);
 
 	return 0;
 }

@@ -11,7 +11,7 @@
  */
 
 #include <linux/err.h>
-#include <linux/gpio.h>
+#include <linux/gpio/driver.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
@@ -79,7 +79,7 @@ static int brcmvirt_gpio_probe(struct platform_device *pdev)
 {
 	int err = 0;
 	struct device *dev = &pdev->dev;
-	struct device_node *np = dev->of_node;
+	struct device_node *np = dev_of_node(dev);
 	struct device_node *fw_node;
 	struct rpi_firmware *fw;
 	struct brcmvirt_gpio *ucb;
@@ -148,7 +148,6 @@ static int brcmvirt_gpio_probe(struct platform_device *pdev)
 	ucb->gc.label = MODULE_NAME;
 	ucb->gc.owner = THIS_MODULE;
 	//ucb->gc.dev = dev;
-	ucb->gc.of_node = np;
 	ucb->gc.base = 100;
 	ucb->gc.ngpio = NUM_GPIO;
 

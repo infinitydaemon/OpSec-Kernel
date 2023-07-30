@@ -116,6 +116,7 @@ MODULE_PARM_DESC(polling_limit_us,
  */
 struct bcm2835_spi {
 	void __iomem *regs;
+	phys_addr_t phys_addr;
 	struct clk *clk;
 	unsigned long clk_hz;
 	int irq;
@@ -887,18 +888,7 @@ static int bcm2835_dma_init(struct spi_controller *ctlr, struct device *dev,
 			    struct bcm2835_spi *bs)
 {
 	struct dma_slave_config slave_config;
-	const __be32 *addr;
-	dma_addr_t dma_reg_base;
 	int ret;
-
-	/* base address in dma-space */
-	addr = of_get_address(ctlr->dev.of_node, 0, NULL, NULL);
-	if (!addr) {
-		dev_err(dev, "could not get DMA-register address - not using dma mode\n");
-		/* Fall back to interrupt mode */
-		return 0;
-	}
-	dma_reg_base = be32_to_cpup(addr);
 
 	/* get tx/rx dma */
 	ctlr->dma_tx = dma_request_chan(dev, "tx");
@@ -921,7 +911,7 @@ static int bcm2835_dma_init(struct spi_controller *ctlr, struct device *dev,
 	 * or, in case of an RX-only transfer, cyclically copies from the zero
 	 * page to the FIFO using a preallocated, reusable descriptor.
 	 */
-	slave_config.dst_addr = (u32)(dma_reg_base + BCM2835_SPI_FIFO);
+	slave_config.dst_addr = bs->phys_addr + BCM2835_SPI_FIFO;
 	slave_config.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 
 	ret = dmaengine_slave_config(ctlr->dma_tx, &slave_config);
@@ -960,9 +950,9 @@ static int bcm2835_dma_init(struct spi_controller *ctlr, struct device *dev,
 	 * RX FIFO or, in case of a TX-only transfer, cyclically writes a
 	 * precalculated value to the CS register to clear the RX FIFO.
 	 */
-	slave_config.src_addr = (u32)(dma_reg_base + BCM2835_SPI_FIFO);
+	slave_config.src_addr = bs->phys_addr + BCM2835_SPI_FIFO;
 	slave_config.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-	slave_config.dst_addr = (u32)(dma_reg_base + BCM2835_SPI_CS);
+	slave_config.dst_addr = bs->phys_addr + BCM2835_SPI_CS;
 	slave_config.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 
 	ret = dmaengine_slave_config(ctlr->dma_rx, &slave_config);
@@ -1284,9 +1274,9 @@ static int bcm2835_spi_setup(struct spi_device *spi)
 	 * The SPI core has successfully requested the CS GPIO line from the
 	 * device tree, so we are done.
 	 */
-	if (spi->cs_gpiod)
+	if (spi_get_csgpiod(spi, 0))
 		return 0;
-	if (spi->chip_select > 1) {
+	if (spi_get_chipselect(spi, 0) > 1) {
 		/* error in the case of native CS requested with CS > 1
 		 * officially there is a CS2, but it is not documented
 		 * which GPIO is connected with that...
@@ -1311,18 +1301,19 @@ static int bcm2835_spi_setup(struct spi_device *spi)
 	if (!chip)
 		return 0;
 
-	spi->cs_gpiod = gpiochip_request_own_desc(chip, 8 - spi->chip_select,
-						  DRV_NAME,
-						  GPIO_LOOKUP_FLAGS_DEFAULT,
-						  GPIOD_OUT_LOW);
-	if (IS_ERR(spi->cs_gpiod)) {
-		ret = PTR_ERR(spi->cs_gpiod);
+	spi_set_csgpiod(spi, 0, gpiochip_request_own_desc(chip,
+							  8 - (spi_get_chipselect(spi, 0)),
+							  DRV_NAME,
+							  GPIO_LOOKUP_FLAGS_DEFAULT,
+							  GPIOD_OUT_LOW));
+	if (IS_ERR(spi_get_csgpiod(spi, 0))) {
+		ret = PTR_ERR(spi_get_csgpiod(spi, 0));
 		goto err_cleanup;
 	}
 
 	/* and set up the "mode" and level */
 	dev_info(&spi->dev, "setting up native-CS%i to use GPIO\n",
-		 spi->chip_select);
+		 spi_get_chipselect(spi, 0));
 
 	return 0;
 
@@ -1335,6 +1326,7 @@ static int bcm2835_spi_probe(struct platform_device *pdev)
 {
 	struct spi_controller *ctlr;
 	struct bcm2835_spi *bs;
+	struct resource *iomem;
 	int err;
 
 	ctlr = devm_spi_alloc_master(&pdev->dev, sizeof(*bs));
@@ -1357,10 +1349,11 @@ static int bcm2835_spi_probe(struct platform_device *pdev)
 	bs = spi_controller_get_devdata(ctlr);
 	bs->ctlr = ctlr;
 
-	bs->regs = devm_platform_ioremap_resource(pdev, 0);
+	bs->regs = devm_platform_get_and_ioremap_resource(pdev, 0, &iomem);
 	if (IS_ERR(bs->regs))
 		return PTR_ERR(bs->regs);
 
+	bs->phys_addr = iomem->start;
 	bs->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(bs->clk))
 		return dev_err_probe(&pdev->dev, PTR_ERR(bs->clk),
@@ -1408,7 +1401,7 @@ out_clk_disable:
 	return err;
 }
 
-static int bcm2835_spi_remove(struct platform_device *pdev)
+static void bcm2835_spi_remove(struct platform_device *pdev)
 {
 	struct spi_controller *ctlr = platform_get_drvdata(pdev);
 	struct bcm2835_spi *bs = spi_controller_get_devdata(ctlr);
@@ -1424,17 +1417,6 @@ static int bcm2835_spi_remove(struct platform_device *pdev)
 		   BCM2835_SPI_CS_CLEAR_RX | BCM2835_SPI_CS_CLEAR_TX);
 
 	clk_disable_unprepare(bs->clk);
-
-	return 0;
-}
-
-static void bcm2835_spi_shutdown(struct platform_device *pdev)
-{
-	int ret;
-
-	ret = bcm2835_spi_remove(pdev);
-	if (ret)
-		dev_err(&pdev->dev, "failed to shutdown\n");
 }
 
 static const struct of_device_id bcm2835_spi_match[] = {
@@ -1449,8 +1431,8 @@ static struct platform_driver bcm2835_spi_driver = {
 		.of_match_table	= bcm2835_spi_match,
 	},
 	.probe		= bcm2835_spi_probe,
-	.remove		= bcm2835_spi_remove,
-	.shutdown	= bcm2835_spi_shutdown,
+	.remove_new	= bcm2835_spi_remove,
+	.shutdown	= bcm2835_spi_remove,
 };
 module_platform_driver(bcm2835_spi_driver);
 

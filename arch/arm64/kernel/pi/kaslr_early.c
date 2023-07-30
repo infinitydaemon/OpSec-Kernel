@@ -85,18 +85,20 @@ static u64 get_kaslr_seed(void *fdt)
 	return ret;
 }
 
-asmlinkage u64 kaslr_get_seed(void *fdt)
+asmlinkage u64 kaslr_early_init(void *fdt)
 {
-	u64 kaslr_seed;
+	u64 seed;
 
-	kaslr_seed = get_kaslr_seed(fdt);
-	if (!kaslr_seed) {
-		if (!__early_cpu_has_rndr() || !__arm64_rndr((unsigned long *)&kaslr_seed))
+	if (is_kaslr_disabled_cmdline(fdt))
+		return 0;
+
+	seed = get_kaslr_seed(fdt);
+	if (!seed) {
+		if (!__early_cpu_has_rndr() ||
+		    !__arm64_rndr((unsigned long *)&seed))
 			return 0;
 	}
 
-	return kaslr_seed;
-}
 	/*
 	 * OK, so we are proceeding with KASLR enabled. Calculate a suitable
 	 * kernel image offset from the seed. Let's place the kernel in the

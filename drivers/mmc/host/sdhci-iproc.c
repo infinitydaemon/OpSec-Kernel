@@ -18,6 +18,7 @@ struct sdhci_iproc_data {
 	u32 caps;
 	u32 caps1;
 	u32 mmc_caps;
+	bool missing_caps;
 };
 
 struct sdhci_iproc_host {
@@ -252,7 +253,6 @@ static const struct sdhci_iproc_data iproc_data = {
 static const struct sdhci_pltfm_data sdhci_bcm2835_pltfm_data = {
 	.quirks = SDHCI_QUIRK_BROKEN_CARD_DETECTION |
 		  SDHCI_QUIRK_DATA_TIMEOUT_USES_SDCLK |
-		  SDHCI_QUIRK_MISSING_CAPS |
 		  SDHCI_QUIRK_NO_HISPD_BIT,
 	.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN,
 	.ops = &sdhci_iproc_32only_ops,
@@ -267,6 +267,7 @@ static const struct sdhci_iproc_data bcm2835_data = {
 	.caps1 = SDHCI_DRIVER_TYPE_A |
 		 SDHCI_DRIVER_TYPE_C,
 	.mmc_caps = 0x00000000,
+	.missing_caps = true,
 };
 
 static const struct sdhci_ops sdhci_iproc_bcm2711_ops = {
@@ -296,8 +297,7 @@ static const struct sdhci_iproc_data bcm2711_data = {
 };
 
 static const struct sdhci_pltfm_data sdhci_bcm7211a0_pltfm_data = {
-	.quirks = SDHCI_QUIRK_MISSING_CAPS |
-		SDHCI_QUIRK_BROKEN_TIMEOUT_VAL |
+	.quirks = SDHCI_QUIRK_BROKEN_TIMEOUT_VAL |
 		SDHCI_QUIRK_BROKEN_DMA |
 		SDHCI_QUIRK_BROKEN_ADMA,
 	.ops = &sdhci_iproc_ops,
@@ -316,6 +316,7 @@ static const struct sdhci_iproc_data bcm7211a0_data = {
 		SDHCI_CAN_DO_HISPD,
 	.caps1 = SDHCI_DRIVER_TYPE_C |
 		 SDHCI_DRIVER_TYPE_D,
+	.missing_caps = true,
 };
 
 static const struct of_device_id sdhci_iproc_of_match[] = {
@@ -398,9 +399,10 @@ static int sdhci_iproc_probe(struct platform_device *pdev)
 		}
 	}
 
-	if (iproc_host->data->pdata->quirks & SDHCI_QUIRK_MISSING_CAPS) {
-		host->caps = iproc_host->data->caps;
-		host->caps1 = iproc_host->data->caps1;
+	if (iproc_host->data->missing_caps) {
+		__sdhci_read_caps(host, NULL,
+				  &iproc_host->data->caps,
+				  &iproc_host->data->caps1);
 	}
 
 	ret = sdhci_add_host(host);

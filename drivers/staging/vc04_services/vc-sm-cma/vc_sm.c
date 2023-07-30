@@ -255,7 +255,7 @@ static void vc_sm_clean_up_dmabuf(struct vc_sm_buffer *buffer)
 		buffer->import.sgt = NULL;
 	}
 	if (buffer->import.attach) {
-		dma_buf_detach(buffer->dma_buf, buffer->import.attach);
+		dma_buf_detach(buffer->import.dma_buf, buffer->import.attach);
 		buffer->import.attach = NULL;
 	}
 }
@@ -444,16 +444,13 @@ static struct sg_table *vc_sm_map_dma_buf(struct dma_buf_attachment *attachment,
 {
 	struct vc_sm_dma_buf_attachment *a = attachment->priv;
 	/* stealing dmabuf mutex to serialize map/unmap operations */
-	struct mutex *lock = &attachment->dmabuf->lock;
 	struct sg_table *table;
 
-	mutex_lock(lock);
 	pr_debug("%s attachment %p\n", __func__, attachment);
 	table = &a->sg_table;
 
 	/* return previously mapped sg table */
 	if (a->dma_dir == direction) {
-		mutex_unlock(lock);
 		return table;
 	}
 
@@ -469,12 +466,10 @@ static struct sg_table *vc_sm_map_dma_buf(struct dma_buf_attachment *attachment,
 				  table->orig_nents, direction);
 	if (!table->nents) {
 		pr_err("failed to map scatterlist\n");
-		mutex_unlock(lock);
 		return ERR_PTR(-EIO);
 	}
 
 	a->dma_dir = direction;
-	mutex_unlock(lock);
 
 	pr_debug("%s attachment %p\n", __func__, attachment);
 	return table;
@@ -496,8 +491,6 @@ static int vc_sm_dmabuf_mmap(struct dma_buf *dmabuf, struct vm_area_struct *vma)
 	pr_debug("%s dmabuf %p, buf %p, vm_start %08lX\n", __func__, dmabuf,
 		 buf, vma->vm_start);
 
-	mutex_lock(&buf->lock);
-
 	/* now map it to userspace */
 	vma->vm_pgoff = 0;
 
@@ -509,9 +502,7 @@ static int vc_sm_dmabuf_mmap(struct dma_buf *dmabuf, struct vm_area_struct *vma)
 		return ret;
 	}
 
-	vma->vm_flags |= VM_DONTEXPAND | VM_DONTDUMP;
-
-	mutex_unlock(&buf->lock);
+	vm_flags_reset(vma, vma->vm_flags | VM_DONTEXPAND | VM_DONTDUMP);
 
 	if (ret)
 		pr_err("%s: failure mapping buffer to userspace\n",

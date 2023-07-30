@@ -686,13 +686,10 @@ static void sc16is7xx_handle_tx(struct uart_port *port)
 		}
 		to_send = (to_send > txlen) ? txlen : to_send;
 
-		/* Add data to send */
-		port->icount.tx += to_send;
-
 		/* Convert to linear buffer */
 		for (i = 0; i < to_send; ++i) {
 			s->buf[i] = xmit->buf[xmit->tail];
-			xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+			uart_xmit_advance(port, 1);
 		}
 
 		sc16is7xx_fifo_write(port, to_send);
@@ -1212,6 +1209,9 @@ static int sc16is7xx_startup(struct uart_port *port)
 	      SC16IS7XX_IER_MSI_BIT;
 	sc16is7xx_port_write(port, SC16IS7XX_IER_REG, val);
 
+	/* Initialize the Modem Control signals to current status */
+	one->old_mctrl = sc16is7xx_get_hwmctrl(port);
+
 	/* Enable modem status polling */
 	spin_lock_irqsave(&port->lock, flags);
 	sc16is7xx_enable_ms(port);
@@ -1671,9 +1671,9 @@ MODULE_ALIAS("spi:sc16is7xx");
 #endif
 
 #ifdef CONFIG_SERIAL_SC16IS7XX_I2C
-static int sc16is7xx_i2c_probe(struct i2c_client *i2c,
-			       const struct i2c_device_id *id)
+static int sc16is7xx_i2c_probe(struct i2c_client *i2c)
 {
+	const struct i2c_device_id *id = i2c_client_get_device_id(i2c);
 	const struct sc16is7xx_devtype *devtype;
 	struct regmap *regmap;
 
