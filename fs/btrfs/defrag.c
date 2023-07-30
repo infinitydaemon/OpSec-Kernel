@@ -765,7 +765,7 @@ again:
 			break;
 
 		unlock_page(page);
-		btrfs_start_ordered_extent(ordered, 1);
+		btrfs_start_ordered_extent(ordered);
 		btrfs_put_ordered_extent(ordered);
 		lock_page(page);
 		/*
@@ -999,7 +999,7 @@ next:
 }
 
 #define CLUSTER_SIZE	(SZ_256K)
-static_assert(IS_ALIGNED(CLUSTER_SIZE, PAGE_SIZE));
+static_assert(PAGE_ALIGNED(CLUSTER_SIZE));
 
 /*
  * Defrag one contiguous target range.
@@ -1040,7 +1040,8 @@ static int defrag_one_locked_target(struct btrfs_inode *inode,
 	clear_extent_bit(&inode->io_tree, start, start + len - 1,
 			 EXTENT_DELALLOC | EXTENT_DO_ACCOUNTING |
 			 EXTENT_DEFRAG, cached_state);
-	set_extent_defrag(&inode->io_tree, start, start + len - 1, cached_state);
+	set_extent_bit(&inode->io_tree, start, start + len - 1,
+		       EXTENT_DELALLOC | EXTENT_DEFRAG, cached_state);
 
 	/* Update the page status */
 	for (i = start_index - first_index; i <= last_index - first_index; i++) {

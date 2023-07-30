@@ -137,18 +137,16 @@ err:
 	return ret;
 }
 
-int fragment_skb(struct sk_buff *skb, int (*xmit)(const struct sk_buff *skb))
+int sch_frag_xmit_hook(struct sk_buff *skb, int (*xmit)(struct sk_buff *skb))
 {
-    u16 mru = tc_skb_cb(skb)->mru;
-    int err;
+	u16 mru = tc_skb_cb(skb)->mru;
+	int err;
 
-    if (mru && skb->len > mru + skb->dev->hard_header_len) {
-        err = sch_fragment(dev_net(skb->dev), skb, mru, xmit);
-    } else {
-        err = xmit(skb);
-    }
+	if (mru && skb->len > mru + skb->dev->hard_header_len)
+		err = sch_fragment(dev_net(skb->dev), skb, mru, xmit);
+	else
+		err = xmit(skb);
 
-    return err;
+	return err;
 }
-
-EXPORT_SYMBOL_GPL(fragment_skb);
+EXPORT_SYMBOL_GPL(sch_frag_xmit_hook);

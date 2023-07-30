@@ -150,9 +150,9 @@
 #define IMX296_FID0_ROIPH1				IMX296_REG_16BIT(0x3310)
 #define IMX296_FID0_ROIPV1				IMX296_REG_16BIT(0x3312)
 #define IMX296_FID0_ROIWH1				IMX296_REG_16BIT(0x3314)
-#define IMX296_FID0_ROIWH1_MIN				96
+#define IMX296_FID0_ROIWH1_MIN				80
 #define IMX296_FID0_ROIWV1				IMX296_REG_16BIT(0x3316)
-#define IMX296_FID0_ROIWV1_MIN				88
+#define IMX296_FID0_ROIWV1_MIN				4
 
 #define IMX296_CM_HSST_STARTTMG				IMX296_REG_16BIT(0x4018)
 #define IMX296_CM_HSST_ENDTMG				IMX296_REG_16BIT(0x401a)
@@ -171,7 +171,6 @@
 #define IMX296_CKREQSEL					IMX296_REG_8BIT(0x4101)
 #define IMX296_CKREQSEL_HS				BIT(2)
 #define IMX296_GTTABLENUM				IMX296_REG_8BIT(0x4114)
-#define IMX296_MIPIC_AREA3W				IMX296_REG_16BIT(0x4182)
 #define IMX296_CTRL418C					IMX296_REG_8BIT(0x418c)
 
 struct imx296_clk_params {
@@ -210,8 +209,6 @@ struct imx296 {
 	struct v4l2_ctrl_handler ctrls;
 	struct v4l2_ctrl *hblank;
 	struct v4l2_ctrl *vblank;
-	struct v4l2_ctrl *vflip;
-	struct v4l2_ctrl *hflip;
 };
 
 static inline struct imx296 *to_imx296(struct v4l2_subdev *sd)
@@ -251,36 +248,6 @@ static int imx296_write(struct imx296 *sensor, u32 addr, u32 value, int *err)
 	}
 
 	return ret;
-}
-
-/*
- * The supported formats.
- * This table MUST contain 4 entries per format, to cover the various flip
- * combinations in the order
- * - no flip
- * - h flip
- * - v flip
- * - h&v flips
- */
-static const u32 mbus_codes[] = {
-	/* 10-bit modes. */
-	MEDIA_BUS_FMT_SRGGB10_1X10,
-	MEDIA_BUS_FMT_SGRBG10_1X10,
-	MEDIA_BUS_FMT_SGBRG10_1X10,
-	MEDIA_BUS_FMT_SBGGR10_1X10,
-};
-
-static u32 imx296_mbus_code(const struct imx296 *sensor)
-{
-	unsigned int i = 0;
-
-	if (sensor->mono)
-		return MEDIA_BUS_FMT_Y10_1X10;
-
-	if (sensor->vflip && sensor->hflip)
-		i = (sensor->vflip->val ? 2 : 0) | (sensor->hflip->val ? 1 : 0);
-
-	return mbus_codes[i];
 }
 
 static int imx296_power_on(struct imx296 *sensor)
@@ -377,13 +344,6 @@ static int imx296_s_ctrl(struct v4l2_ctrl *ctrl)
 			     &ret);
 		break;
 
-	case V4L2_CID_HFLIP:
-	case V4L2_CID_VFLIP:
-		imx296_write(sensor, IMX296_CTRL0E,
-			     sensor->vflip->val | (sensor->hflip->val << 1),
-			     &ret);
-		break;
-
 	case V4L2_CID_TEST_PATTERN:
 		if (ctrl->val) {
 			imx296_write(sensor, IMX296_PGHPOS, 8, &ret);
@@ -423,36 +383,10 @@ static const struct v4l2_ctrl_ops imx296_ctrl_ops = {
 	.s_ctrl = imx296_s_ctrl,
 };
 
-static void imx296_setup_hblank(struct imx296 *sensor, unsigned int width)
-{
-	/*
-	 * Horizontal blanking is controlled through the HMAX register, which
-	 * contains a line length in contains a line length in units of an
-	 * internal 74.25 MHz clock derived from the INCLK. The HMAX value is
-	 * currently fixed to 1100, convert it to a number of pixels based on
-	 * the nominal pixel rate.
-	 *
-	 * Horizontal blanking is fixed, regardless of the crop width, so
-	 * ensure the hblank limits are adjusted to account for this.
-	 */
-	unsigned int hblank = 1100 * 1188000000ULL / 10 / 74250000 - width;
-
-	if (!sensor->hblank) {
-		sensor->hblank = v4l2_ctrl_new_std(&sensor->ctrls,
-						   &imx296_ctrl_ops,
-						   V4L2_CID_HBLANK, hblank,
-						   hblank, 1, hblank);
-		if (sensor->hblank)
-			sensor->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
-	} else {
-		__v4l2_ctrl_modify_range(sensor->hblank, hblank, hblank, 1,
-					 hblank);
-	}
-}
-
 static int imx296_ctrls_init(struct imx296 *sensor)
 {
 	struct v4l2_fwnode_device_properties props;
+	unsigned int hblank;
 	int ret;
 
 	ret = v4l2_fwnode_device_parse(sensor->dev, &props);
@@ -467,17 +401,19 @@ static int imx296_ctrls_init(struct imx296 *sensor)
 			  V4L2_CID_ANALOGUE_GAIN, IMX296_GAIN_MIN,
 			  IMX296_GAIN_MAX, 1, IMX296_GAIN_MIN);
 
-	sensor->hflip = v4l2_ctrl_new_std(&sensor->ctrls, &imx296_ctrl_ops,
-					  V4L2_CID_HFLIP, 0, 1, 1, 0);
-	if (sensor->hflip && !sensor->mono)
-		sensor->hflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
-
-	sensor->vflip = v4l2_ctrl_new_std(&sensor->ctrls, &imx296_ctrl_ops,
-					  V4L2_CID_VFLIP, 0, 1, 1, 0);
-	if (sensor->vflip && !sensor->mono)
-		sensor->vflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
-
-	imx296_setup_hblank(sensor, IMX296_PIXEL_ARRAY_WIDTH);
+	/*
+	 * Horizontal blanking is controlled through the HMAX register, which
+	 * contains a line length in INCK clock units. The INCK frequency is
+	 * fixed to 74.25 MHz. The HMAX value is currently fixed to 1100,
+	 * convert it to a number of pixels based on the nominal pixel rate.
+	 */
+	hblank = 1100 * 1188000000ULL / 10 / 74250000
+	       - IMX296_PIXEL_ARRAY_WIDTH;
+	sensor->hblank = v4l2_ctrl_new_std(&sensor->ctrls, &imx296_ctrl_ops,
+					   V4L2_CID_HBLANK, hblank, hblank, 1,
+					   hblank);
+	if (sensor->hblank)
+		sensor->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
 	sensor->vblank = v4l2_ctrl_new_std(&sensor->ctrls, &imx296_ctrl_ops,
 					   V4L2_CID_VBLANK, 30,
@@ -590,11 +526,8 @@ static int imx296_setup(struct imx296 *sensor, struct v4l2_subdev_state *state)
 		imx296_write(sensor, IMX296_FID0_ROIPV1, crop->top, &ret);
 		imx296_write(sensor, IMX296_FID0_ROIWH1, crop->width, &ret);
 		imx296_write(sensor, IMX296_FID0_ROIWV1, crop->height, &ret);
-		imx296_write(sensor, IMX296_MIPIC_AREA3W, crop->height, &ret);
 	} else {
 		imx296_write(sensor, IMX296_FID0_ROI, 0, &ret);
-		imx296_write(sensor, IMX296_MIPIC_AREA3W,
-			     IMX296_PIXEL_ARRAY_HEIGHT, &ret);
 	}
 
 	imx296_write(sensor, IMX296_CTRL0D,
@@ -633,7 +566,7 @@ static int imx296_setup(struct imx296 *sensor, struct v4l2_subdev_state *state)
 	imx296_write(sensor, IMX296_CTRL418C, sensor->clk_params->ctrl418c,
 		     &ret);
 
-	imx296_write(sensor, IMX296_GAINDLY, IMX296_GAINDLY_1FRAME, &ret);
+	imx296_write(sensor, IMX296_GAINDLY, IMX296_GAINDLY_NONE, &ret);
 	imx296_write(sensor, IMX296_BLKLEVEL, 0x03c, &ret);
 
 	return ret;
@@ -647,10 +580,6 @@ static int imx296_stream_on(struct imx296 *sensor)
 	usleep_range(2000, 5000);
 	imx296_write(sensor, IMX296_CTRL0A, 0, &ret);
 
-	/* vflip and hflip cannot change during streaming */
-	__v4l2_ctrl_grab(sensor->vflip, 1);
-	__v4l2_ctrl_grab(sensor->hflip, 1);
-
 	return ret;
 }
 
@@ -660,9 +589,6 @@ static int imx296_stream_off(struct imx296 *sensor)
 
 	imx296_write(sensor, IMX296_CTRL0A, IMX296_CTRL0A_XMSTA, &ret);
 	imx296_write(sensor, IMX296_CTRL00, IMX296_CTRL00_STANDBY, &ret);
-
-	__v4l2_ctrl_grab(sensor->vflip, 0);
-	__v4l2_ctrl_grab(sensor->hflip, 0);
 
 	return ret;
 }
@@ -734,7 +660,8 @@ static int imx296_enum_mbus_code(struct v4l2_subdev *sd,
 	if (code->index != 0)
 		return -EINVAL;
 
-	code->code = imx296_mbus_code(sensor);
+	code->code = sensor->mono ? MEDIA_BUS_FMT_Y10_1X10
+		   : MEDIA_BUS_FMT_SBGGR10_1X10;
 
 	return 0;
 }
@@ -743,29 +670,21 @@ static int imx296_enum_frame_size(struct v4l2_subdev *sd,
 				  struct v4l2_subdev_state *state,
 				  struct v4l2_subdev_frame_size_enum *fse)
 {
-	const struct imx296 *sensor = to_imx296(sd);
 	const struct v4l2_mbus_framefmt *format;
-	/* Binning only works on the mono sensor variant */
-	unsigned int max_index = sensor->mono ? 2 : 1;
 
 	format = v4l2_subdev_get_pad_format(sd, state, fse->pad);
 
-	if (fse->index >= max_index || fse->code != imx296_mbus_code(sensor))
+	/*
+	 * Binning does not seem to work on either mono or colour sensor
+	 * variants. Disable enumerating the binned frame size for now.
+	 */
+	if (fse->index >= 1 || fse->code != format->code)
 		return -EINVAL;
 
 	fse->min_width = IMX296_PIXEL_ARRAY_WIDTH / (fse->index + 1);
 	fse->max_width = fse->min_width;
 	fse->min_height = IMX296_PIXEL_ARRAY_HEIGHT / (fse->index + 1);
 	fse->max_height = fse->min_height;
-
-	return 0;
-}
-
-static int imx296_get_format(struct v4l2_subdev *sd,
-			     struct v4l2_subdev_state *state,
-			     struct v4l2_subdev_format *fmt)
-{
-	fmt->format = *v4l2_subdev_get_pad_format(sd, state, fmt->pad);
 
 	return 0;
 }
@@ -781,36 +700,11 @@ static int imx296_set_format(struct v4l2_subdev *sd,
 	crop = v4l2_subdev_get_pad_crop(sd, state, fmt->pad);
 	format = v4l2_subdev_get_pad_format(sd, state, fmt->pad);
 
-	/*
-	 * Binning is only allowed when cropping is disabled according to the
-	 * documentation. This should be double-checked.
-	 */
-	if (crop->width == IMX296_PIXEL_ARRAY_WIDTH &&
-	    crop->height == IMX296_PIXEL_ARRAY_HEIGHT) {
-		unsigned int width;
-		unsigned int height;
-		unsigned int hratio;
-		unsigned int vratio;
+	format->width = crop->width;
+	format->height = crop->height;
 
-		/* Clamp the width and height to avoid dividing by zero. */
-		width = clamp_t(unsigned int, fmt->format.width,
-				crop->width / 2, crop->width);
-		height = clamp_t(unsigned int, fmt->format.height,
-				 crop->height / 2, crop->height);
-
-		hratio = DIV_ROUND_CLOSEST(crop->width, width);
-		vratio = DIV_ROUND_CLOSEST(crop->height, height);
-
-		format->width = crop->width / hratio;
-		format->height = crop->height / vratio;
-	} else {
-		format->width = crop->width;
-		format->height = crop->height;
-	}
-
-	imx296_setup_hblank(sensor, format->width);
-
-	format->code = imx296_mbus_code(sensor);
+	format->code = sensor->mono ? MEDIA_BUS_FMT_Y10_1X10
+		     : MEDIA_BUS_FMT_SBGGR10_1X10;
 	format->field = V4L2_FIELD_NONE;
 	format->colorspace = V4L2_COLORSPACE_RAW;
 	format->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
@@ -922,7 +816,7 @@ static const struct v4l2_subdev_video_ops imx296_subdev_video_ops = {
 static const struct v4l2_subdev_pad_ops imx296_subdev_pad_ops = {
 	.enum_mbus_code = imx296_enum_mbus_code,
 	.enum_frame_size = imx296_enum_frame_size,
-	.get_fmt = imx296_get_format,
+	.get_fmt = v4l2_subdev_get_fmt,
 	.set_fmt = imx296_set_format,
 	.get_selection = imx296_get_selection,
 	.set_selection = imx296_set_selection,
@@ -1008,9 +902,11 @@ static int imx296_read_temperature(struct imx296 *sensor, int *temp)
 	if (ret < 0)
 		return ret;
 
-	tmdout = imx296_read(sensor, IMX296_TMDOUT) & IMX296_TMDOUT_MASK;
+	tmdout = imx296_read(sensor, IMX296_TMDOUT);
 	if (tmdout < 0)
 		return tmdout;
+
+	tmdout &= IMX296_TMDOUT_MASK;
 
 	/* T(°C) = 246.312 - 0.304 * TMDOUT */;
 	*temp = 246312 - 304 * tmdout;
@@ -1238,7 +1134,7 @@ static struct i2c_driver imx296_i2c_driver = {
 		.name = "imx296",
 		.pm = &imx296_pm_ops
 	},
-	.probe_new = imx296_probe,
+	.probe = imx296_probe,
 	.remove = imx296_remove,
 };
 

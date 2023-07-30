@@ -689,6 +689,7 @@ static const u32 codes[] = {
 	MEDIA_BUS_FMT_SGBRG10_1X10,
 	MEDIA_BUS_FMT_SBGGR10_1X10
 };
+
 static const char * const imx258_test_pattern_menu[] = {
 	"Disabled",
 	"Solid Colour",
@@ -1603,7 +1604,7 @@ static int imx258_init_controls(struct imx258 *imx258)
 	int ret;
 
 	ctrl_hdlr = &imx258->ctrl_handler;
-	ret = v4l2_ctrl_handler_init(ctrl_hdlr, 12);
+	ret = v4l2_ctrl_handler_init(ctrl_hdlr, 13);
 	if (ret)
 		return ret;
 
@@ -1618,6 +1619,16 @@ static int imx258_init_controls(struct imx258 *imx258)
 
 	if (imx258->link_freq)
 		imx258->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+
+	imx258->hflip = v4l2_ctrl_new_std(ctrl_hdlr, &imx258_ctrl_ops,
+					  V4L2_CID_HFLIP, 0, 1, 1, 1);
+	if (imx258->hflip)
+		imx258->hflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
+
+	imx258->vflip = v4l2_ctrl_new_std(ctrl_hdlr, &imx258_ctrl_ops,
+					  V4L2_CID_VFLIP, 0, 1, 1, 1);
+	if (imx258->vflip)
+		imx258->vflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
 
 	link_freq_cfgs = &imx258->link_freq_configs[0];
 	link_cfg = link_freq_cfgs[imx258->lane_mode_idx].link_cfg;
@@ -1672,31 +1683,21 @@ static int imx258_init_controls(struct imx258 *imx258)
 				ARRAY_SIZE(imx258_test_pattern_menu) - 1,
 				0, 0, imx258_test_pattern_menu);
 
-	ret = v4l2_fwnode_device_parse(&client->dev, &props);
-	if (ret)
-		goto error;
-	ret = v4l2_ctrl_new_fwnode_properties(ctrl_hdlr, &imx258_ctrl_ops,
-					      &props);
-	if (ret)
-		goto error;
-
-	imx258->hflip = v4l2_ctrl_new_std(ctrl_hdlr, &imx258_ctrl_ops,
-					  V4L2_CID_HFLIP, 0, 1, 1,
-					  props.rotation == 180 ? 1 : 0);
-	if (imx258->hflip)
-		imx258->hflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
-
-	imx258->vflip = v4l2_ctrl_new_std(ctrl_hdlr, &imx258_ctrl_ops,
-					  V4L2_CID_VFLIP, 0, 1, 1,
-					  props.rotation == 180 ? 1 : 0);
-	if (imx258->vflip)
-		imx258->vflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
 	if (ctrl_hdlr->error) {
 		ret = ctrl_hdlr->error;
 		dev_err(&client->dev, "%s control init failed (%d)\n",
 				__func__, ret);
 		goto error;
 	}
+
+	ret = v4l2_fwnode_device_parse(&client->dev, &props);
+	if (ret)
+		goto error;
+
+	ret = v4l2_ctrl_new_fwnode_properties(ctrl_hdlr, &imx258_ctrl_ops,
+					      &props);
+	if (ret)
+		goto error;
 
 	imx258->sd.ctrl_handler = ctrl_hdlr;
 
@@ -1919,7 +1920,7 @@ static struct i2c_driver imx258_i2c_driver = {
 		.acpi_match_table = ACPI_PTR(imx258_acpi_ids),
 		.of_match_table	= imx258_dt_ids,
 	},
-	.probe_new = imx258_probe,
+	.probe = imx258_probe,
 	.remove = imx258_remove,
 };
 

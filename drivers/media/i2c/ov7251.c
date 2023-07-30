@@ -1854,7 +1854,7 @@ static struct i2c_driver ov7251_i2c_driver = {
 		.name  = "ov7251",
 		.pm = &ov7251_pm_ops,
 	},
-	.probe_new  = ov7251_probe,
+	.probe = ov7251_probe,
 	.remove = ov7251_remove,
 };
 
