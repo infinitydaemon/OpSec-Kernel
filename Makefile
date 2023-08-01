@@ -3,7 +3,7 @@ VERSION = 6
 PATCHLEVEL = 5
 SUBLEVEL = 1
 EXTRAVERSION = cwdsystems
-NAME = infinitydaemon-rc3
+NAME = infinitydaemon-rc4
 
 # Merge with mainline kernel for better patch updates.
 # Build configs remain at CWD SYSTEMS criteria.
