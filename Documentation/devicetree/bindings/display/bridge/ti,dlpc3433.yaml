@@ -83,7 +83,7 @@ examples:
   - |
     #include <dt-bindings/gpio/gpio.h>
 
-    i2c {
+    i2c1 {
         #address-cells = <1>;
         #size-cells = <0>;
 

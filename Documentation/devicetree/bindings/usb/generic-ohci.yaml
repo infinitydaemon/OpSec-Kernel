@@ -6,6 +6,9 @@ $schema: http://devicetree.org/meta-schemas/core.yaml#
 
 title: USB OHCI Controller
 
+allOf:
+  - $ref: "usb-hcd.yaml"
+
 maintainers:
   - Greg Kroah-Hartman <gregkh@linuxfoundation.org>
 
@@ -17,7 +20,6 @@ properties:
               - allwinner,sun4i-a10-ohci
               - allwinner,sun50i-a64-ohci
               - allwinner,sun50i-h6-ohci
-              - allwinner,sun50i-h616-ohci
               - allwinner,sun5i-a13-ohci
               - allwinner,sun6i-a31-ohci
               - allwinner,sun7i-a20-ohci
@@ -44,19 +46,9 @@ properties:
               - hpe,gxp-ohci
               - ibm,476gtr-ohci
               - ingenic,jz4740-ohci
-              - rockchip,rk3588-ohci
               - snps,hsdk-v1.0-ohci
           - const: generic-ohci
-      - enum:
-          - generic-ohci
-          - ti,ohci-omap3
-      - items:
-          - enum:
-              - cavium,octeon-6335-ohci
-              - nintendo,hollywood-usb-ohci
-              - nxp,ohci-nxp
-              - st,spear600-ohci
-          - const: usb-ohci
+      - const: generic-ohci
 
   reg:
     maxItems: 1
@@ -70,7 +62,7 @@ properties:
 
   clocks:
     minItems: 1
-    maxItems: 4
+    maxItems: 3
     description: |
       In case the Renesas R-Car Gen3 SoCs:
         - if a host only channel: first clock should be host.
@@ -126,44 +118,12 @@ properties:
       - host
       - otg
 
-  transceiver:
-    $ref: /schemas/types.yaml#/definitions/phandle
-    description:
-      The associated ISP1301 device. Necessary for the UDC controller for
-      connecting to the USB physical layer.
-
 required:
   - compatible
   - reg
   - interrupts
 
-allOf:
-  - $ref: usb-hcd.yaml
-  - if:
-      not:
-        properties:
-          compatible:
-            contains:
-              const: nxp,ohci-nxp
-    then:
-      properties:
-        transceiver: false
-  - if:
-      properties:
-        compatible:
-          contains:
-            const: rockchip,rk3588-ohci
-    then:
-      properties:
-        clocks:
-          minItems: 4
-    else:
-      properties:
-        clocks:
-          minItems: 1
-          maxItems: 3
-
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

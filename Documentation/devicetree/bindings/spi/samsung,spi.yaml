@@ -35,6 +35,8 @@ properties:
     minItems: 2
     maxItems: 3
 
+  cs-gpios: true
+
   dmas:
     minItems: 2
     maxItems: 2

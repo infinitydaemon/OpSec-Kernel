@@ -67,7 +67,7 @@ examples:
   - |
     #include <dt-bindings/gpio/gpio.h>
 
-    i2c {
+    i2c4 {
       #address-cells = <1>;
       #size-cells = <0>;
 

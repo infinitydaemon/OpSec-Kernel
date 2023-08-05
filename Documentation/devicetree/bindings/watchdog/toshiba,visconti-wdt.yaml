@@ -24,12 +24,14 @@ properties:
   clocks:
     maxItems: 1
 
+  timeout-sec: true
+
 required:
   - compatible
   - reg
   - clocks
 
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

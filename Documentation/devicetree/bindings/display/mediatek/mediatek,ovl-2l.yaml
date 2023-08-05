@@ -21,9 +21,10 @@ description: |
 properties:
   compatible:
     oneOf:
-      - enum:
-          - mediatek,mt8183-disp-ovl-2l
-          - mediatek,mt8192-disp-ovl-2l
+      - items:
+          - const: mediatek,mt8183-disp-ovl-2l
+      - items:
+          - const: mediatek,mt8192-disp-ovl-2l
       - items:
           - enum:
               - mediatek,mt8186-disp-ovl-2l

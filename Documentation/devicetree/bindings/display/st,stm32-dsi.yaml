@@ -74,6 +74,8 @@ properties:
                   - const: 2
 
 required:
+  - "#address-cells"
+  - "#size-cells"
   - compatible
   - reg
   - clocks

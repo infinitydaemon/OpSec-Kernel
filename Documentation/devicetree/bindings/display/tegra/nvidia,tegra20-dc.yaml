@@ -59,7 +59,8 @@ properties:
   iommus:
     maxItems: 1
 
-  operating-points-v2: true
+  operating-points-v2:
+    $ref: "/schemas/types.yaml#/definitions/phandle"
 
   power-domains:
     items:

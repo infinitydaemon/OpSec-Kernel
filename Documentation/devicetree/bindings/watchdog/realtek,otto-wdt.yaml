@@ -67,9 +67,11 @@ required:
   - reg
   - clocks
   - interrupts
-  - interrupt-names
 
 unevaluatedProperties: false
+
+dependencies:
+  interrupts: [ interrupt-names ]
 
 examples:
   - |

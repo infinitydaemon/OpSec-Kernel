@@ -2,8 +2,8 @@
 # Copyright 2019 Analogix Semiconductor, Inc.
 %YAML 1.2
 ---
-$id: http://devicetree.org/schemas/display/bridge/analogix,anx7625.yaml#
-$schema: http://devicetree.org/meta-schemas/core.yaml#
+$id: "http://devicetree.org/schemas/display/bridge/analogix,anx7625.yaml#"
+$schema: "http://devicetree.org/meta-schemas/core.yaml#"
 
 title: Analogix ANX7625 SlimPort (4K Mobile HD Transmitter)
 
@@ -16,7 +16,8 @@ description: |
 
 properties:
   compatible:
-    const: analogix,anx7625
+    items:
+      - const: analogix,anx7625
 
   reg:
     maxItems: 1
@@ -133,7 +134,7 @@ examples:
   - |
     #include <dt-bindings/gpio/gpio.h>
 
-    i2c {
+    i2c0 {
         #address-cells = <1>;
         #size-cells = <0>;
 

@@ -91,11 +91,9 @@ properties:
           - const: atmel,sama5d2
           - const: atmel,sama5
 
-      - description: Microchip SAM9X60 Evaluation Boards
+      - description: SAM9X60-EK board
         items:
-          - enum:
-              - microchip,sam9x60ek
-              - microchip,sam9x60-curiosity
+          - const: microchip,sam9x60ek
           - const: microchip,sam9x60
           - const: atmel,at91sam9
 

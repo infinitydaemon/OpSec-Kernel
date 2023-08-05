@@ -41,14 +41,13 @@ additionalProperties: false
 
 examples:
   - |+
-    spi {
+    spi0 {
       #address-cells = <1>;
       #size-cells = <0>;
 
       cros_ec: ec@0 {
         compatible = "google,cros-ec-spi";
         reg = <0>;
-        interrupts = <35 0>;
 
         typec {
           compatible = "google,cros-ec-typec";

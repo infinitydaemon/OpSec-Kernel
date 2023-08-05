@@ -3,10 +3,10 @@
 %YAML 1.2
 ---
 
-$id: http://devicetree.org/schemas/display/msm/gmu.yaml#
-$schema: http://devicetree.org/meta-schemas/core.yaml#
+$id: "http://devicetree.org/schemas/display/msm/gmu.yaml#"
+$schema: "http://devicetree.org/meta-schemas/core.yaml#"
 
-title: GMU attached to certain Adreno GPUs
+title: Devicetree bindings for the GMU attached to certain Adreno GPUs
 
 maintainers:
   - Rob Clark <robdclark@gmail.com>
@@ -19,18 +19,16 @@ description: |
 
 properties:
   compatible:
-    oneOf:
-      - items:
-          - pattern: '^qcom,adreno-gmu-6[0-9][0-9]\.[0-9]$'
-          - const: qcom,adreno-gmu
-      - const: qcom,adreno-gmu-wrapper
+    items:
+      - pattern: '^qcom,adreno-gmu-6[0-9][0-9]\.[0-9]$'
+      - const: qcom,adreno-gmu
 
   reg:
-    minItems: 1
+    minItems: 3
     maxItems: 4
 
   reg-names:
-    minItems: 1
+    minItems: 3
     maxItems: 4
 
   clocks:
@@ -45,6 +43,7 @@ properties:
     items:
       - description: GMU HFI interrupt
       - description: GMU interrupt
+
 
   interrupt-names:
     items:
@@ -73,8 +72,14 @@ required:
   - compatible
   - reg
   - reg-names
+  - clocks
+  - clock-names
+  - interrupts
+  - interrupt-names
   - power-domains
   - power-domain-names
+  - iommus
+  - operating-points-v2
 
 additionalProperties: false
 
@@ -117,7 +122,6 @@ allOf:
           contains:
             enum:
               - qcom,adreno-gmu-635.0
-              - qcom,adreno-gmu-660.1
     then:
       properties:
         reg:
@@ -213,28 +217,6 @@ allOf:
             - const: axi
             - const: memnoc
 
-  - if:
-      properties:
-        compatible:
-          contains:
-            const: qcom,adreno-gmu-wrapper
-    then:
-      properties:
-        reg:
-          items:
-            - description: GMU wrapper register space
-        reg-names:
-          items:
-            - const: gmu
-    else:
-      required:
-        - clocks
-        - clock-names
-        - interrupts
-        - interrupt-names
-        - iommus
-        - operating-points-v2
-
 examples:
   - |
     #include <dt-bindings/clock/qcom,gpucc-sdm845.h>
@@ -243,7 +225,7 @@ examples:
     #include <dt-bindings/interrupt-controller/arm-gic.h>
 
     gmu: gmu@506a000 {
-        compatible = "qcom,adreno-gmu-630.2", "qcom,adreno-gmu";
+        compatible="qcom,adreno-gmu-630.2", "qcom,adreno-gmu";
 
         reg = <0x506a000 0x30000>,
               <0xb280000 0x10000>,
@@ -266,13 +248,4 @@ examples:
 
         iommus = <&adreno_smmu 5>;
         operating-points-v2 = <&gmu_opp_table>;
-    };
-
-    gmu_wrapper: gmu@596a000 {
-        compatible = "qcom,adreno-gmu-wrapper";
-        reg = <0x0596a000 0x30000>;
-        reg-names = "gmu";
-        power-domains = <&gpucc GPU_CX_GDSC>,
-                        <&gpucc GPU_GX_GDSC>;
-        power-domain-names = "cx", "gx";
     };

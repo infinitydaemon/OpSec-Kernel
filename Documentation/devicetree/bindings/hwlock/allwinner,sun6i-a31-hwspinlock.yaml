@@ -26,15 +26,11 @@ properties:
   resets:
     maxItems: 1
 
-  '#hwlock-cells':
-    const: 1
-
 required:
   - compatible
   - reg
   - clocks
   - resets
-  - "#hwlock-cells"
 
 additionalProperties: false
 
@@ -48,6 +44,5 @@ examples:
         reg = <0x01c18000 0x1000>;
         clocks = <&ccu CLK_BUS_SPINLOCK>;
         resets = <&ccu RST_BUS_SPINLOCK>;
-        #hwlock-cells = <1>;
     };
 ...
