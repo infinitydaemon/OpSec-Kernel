@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0
 
-# Include the generic Makefile to check the built vdso.
+# Absolute relocation type $(ARCH_REL_TYPE_ABS) needs to be defined before
+# the inclusion of generic Makefile.
+ARCH_REL_TYPE_ABS := R_ARM_JUMP_SLOT|R_ARM_GLOB_DAT|R_ARM_ABS32
 include $(srctree)/lib/vdso/Makefile
 
 hostprogs := vdsomunge
@@ -35,7 +37,6 @@ endif
 
 # Disable gcov profiling for VDSO code
 GCOV_PROFILE := n
-UBSAN_SANITIZE := n
 
 # Prevents link failures: __sanitizer_cov_trace_pc() is not linked in.
 KCOV_INSTRUMENT := n

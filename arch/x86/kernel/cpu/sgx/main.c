@@ -165,17 +165,17 @@ static int __sgx_encl_ewb(struct sgx_epc_page *epc_page, void *va_slot,
 	pginfo.addr = 0;
 	pginfo.secs = 0;
 
-	pginfo.contents = (unsigned long)kmap_local_page(backing->contents);
-	pginfo.metadata = (unsigned long)kmap_local_page(backing->pcmd) +
+	pginfo.contents = (unsigned long)kmap_atomic(backing->contents);
+	pginfo.metadata = (unsigned long)kmap_atomic(backing->pcmd) +
 			  backing->pcmd_offset;
 
 	ret = __ewb(&pginfo, sgx_get_epc_virt_addr(epc_page), va_slot);
 	set_page_dirty(backing->pcmd);
 	set_page_dirty(backing->contents);
 
-	kunmap_local((void *)(unsigned long)(pginfo.metadata -
+	kunmap_atomic((void *)(unsigned long)(pginfo.metadata -
 					      backing->pcmd_offset));
-	kunmap_local((void *)(unsigned long)pginfo.contents);
+	kunmap_atomic((void *)(unsigned long)pginfo.contents);
 
 	return ret;
 }
@@ -892,19 +892,20 @@ static struct miscdevice sgx_dev_provision = {
 int sgx_set_attribute(unsigned long *allowed_attributes,
 		      unsigned int attribute_fd)
 {
-	struct fd f = fdget(attribute_fd);
+	struct file *file;
 
-	if (!f.file)
+	file = fget(attribute_fd);
+	if (!file)
 		return -EINVAL;
 
-	if (f.file->f_op != &sgx_provision_fops) {
-		fdput(f);
+	if (file->f_op != &sgx_provision_fops) {
+		fput(file);
 		return -EINVAL;
 	}
 
 	*allowed_attributes |= SGX_ATTR_PROVISIONKEY;
 
-	fdput(f);
+	fput(file);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(sgx_set_attribute);

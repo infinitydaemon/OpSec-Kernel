@@ -134,7 +134,7 @@ static inline unsigned long kvm_get_pcid(struct kvm_vcpu *vcpu, gpa_t cr3)
 {
 	BUILD_BUG_ON((X86_CR3_PCID_MASK & PAGE_MASK) != 0);
 
-	return kvm_is_cr4_bit_set(vcpu, X86_CR4_PCIDE)
+	return kvm_read_cr4_bits(vcpu, X86_CR4_PCIDE)
 	       ? cr3 & X86_CR3_PCID_MASK
 	       : 0;
 }
@@ -254,14 +254,14 @@ static inline bool kvm_shadow_root_allocated(struct kvm *kvm)
 }
 
 #ifdef CONFIG_X86_64
-extern bool tdp_mmu_enabled;
+static inline bool is_tdp_mmu_enabled(struct kvm *kvm) { return kvm->arch.tdp_mmu_enabled; }
 #else
-#define tdp_mmu_enabled false
+static inline bool is_tdp_mmu_enabled(struct kvm *kvm) { return false; }
 #endif
 
 static inline bool kvm_memslots_have_rmaps(struct kvm *kvm)
 {
-	return !tdp_mmu_enabled || kvm_shadow_root_allocated(kvm);
+	return !is_tdp_mmu_enabled(kvm) || kvm_shadow_root_allocated(kvm);
 }
 
 static inline gfn_t gfn_to_index(gfn_t gfn, gfn_t base_gfn, int level)

@@ -27,7 +27,6 @@
 #include <asm/pti.h>
 #include <asm/text-patching.h>
 #include <asm/memtype.h>
-#include <asm/paravirt.h>
 
 /*
  * We need to define the tracepoints somewhere, and tlb.c
@@ -827,11 +826,8 @@ void __init poking_init(void)
 	spinlock_t *ptl;
 	pte_t *ptep;
 
-	poking_mm = mm_alloc();
+	poking_mm = copy_init_mm();
 	BUG_ON(!poking_mm);
-
-	/* Xen PV guests need the PGD to be pinned. */
-	paravirt_enter_mmap(poking_mm);
 
 	/*
 	 * Randomize the poking address, but make sure that the following page
@@ -1072,11 +1068,6 @@ __visible DEFINE_PER_CPU_ALIGNED(struct tlb_state, cpu_tlbstate) = {
 	.next_asid = 1,
 	.cr4 = ~0UL,	/* fail hard if we screw up cr4 shadow initialization */
 };
-
-#ifdef CONFIG_ADDRESS_MASKING
-DEFINE_PER_CPU(u64, tlbstate_untag_mask);
-EXPORT_PER_CPU_SYMBOL(tlbstate_untag_mask);
-#endif
 
 void update_cache_mode_entry(unsigned entry, enum page_cache_mode cache)
 {
