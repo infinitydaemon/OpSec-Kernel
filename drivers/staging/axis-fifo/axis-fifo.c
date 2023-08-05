@@ -906,6 +906,9 @@ static int axis_fifo_probe(struct platform_device *pdev)
 	if (rc < 0)
 		goto err_initial;
 
+	dev_info(fifo->dt_device, "axis-fifo created at %pa mapped to 0x%pa, irq=%i\n",
+		 &r_mem->start, &fifo->base_addr, fifo->irq);
+
 	return 0;
 
 err_initial:
@@ -913,13 +916,15 @@ err_initial:
 	return rc;
 }
 
-static void axis_fifo_remove(struct platform_device *pdev)
+static int axis_fifo_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct axis_fifo *fifo = dev_get_drvdata(dev);
 
 	misc_deregister(&fifo->miscdev);
 	dev_set_drvdata(dev, NULL);
+
+	return 0;
 }
 
 static const struct of_device_id axis_fifo_of_match[] = {
@@ -934,7 +939,7 @@ static struct platform_driver axis_fifo_driver = {
 		.of_match_table	= axis_fifo_of_match,
 	},
 	.probe		= axis_fifo_probe,
-	.remove_new	= axis_fifo_remove,
+	.remove		= axis_fifo_remove,
 };
 
 static int __init axis_fifo_init(void)

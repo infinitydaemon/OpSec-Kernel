@@ -24,6 +24,7 @@
 #include <linux/component.h>
 #include <linux/dma-mapping.h>
 #include <linux/dmaengine.h>
+#include <linux/i2c.h>
 #include <linux/io.h>
 #include <linux/of_address.h>
 #include <linux/of_platform.h>
@@ -600,14 +601,19 @@ struct vc4_dsi {
 	struct debugfs_regset32 regset;
 };
 
-#define host_to_dsi(host)					\
-	container_of_const(host, struct vc4_dsi, dsi_host)
+#define host_to_dsi(host) container_of(host, struct vc4_dsi, dsi_host)
 
-#define to_vc4_dsi(_encoder)					\
-	container_of_const(_encoder, struct vc4_dsi, encoder.base)
+static inline struct vc4_dsi *
+to_vc4_dsi(struct drm_encoder *encoder)
+{
+	return container_of(encoder, struct vc4_dsi, encoder.base);
+}
 
-#define bridge_to_vc4_dsi(_bridge)				\
-	container_of_const(_bridge, struct vc4_dsi, bridge)
+static inline struct vc4_dsi *
+bridge_to_vc4_dsi(struct drm_bridge *bridge)
+{
+	return container_of(bridge, struct vc4_dsi, bridge);
+}
 
 static inline void
 dsi_dma_workaround_write(struct vc4_dsi *dsi, u32 offset, u32 val)
@@ -1421,8 +1427,12 @@ static int vc4_dsi_late_register(struct drm_encoder *encoder)
 {
 	struct drm_device *drm = encoder->dev;
 	struct vc4_dsi *dsi = to_vc4_dsi(encoder);
+	int ret;
 
-	vc4_debugfs_add_regset32(drm, dsi->variant->debugfs_name, &dsi->regset);
+	ret = vc4_debugfs_add_regset32(drm->primary, dsi->variant->debugfs_name,
+				       &dsi->regset);
+	if (ret)
+		return ret;
 
 	return 0;
 }
@@ -1814,9 +1824,7 @@ static int vc4_dsi_dev_probe(struct platform_device *pdev)
 
 	dsi->pdev = pdev;
 	dsi->bridge.funcs = &vc4_dsi_bridge_funcs;
-#ifdef CONFIG_OF
 	dsi->bridge.of_node = dev->of_node;
-#endif
 	dsi->bridge.type = DRM_MODE_CONNECTOR_DSI;
 	dsi->dsi_host.ops = &vc4_dsi_host_ops;
 	dsi->dsi_host.dev = dev;

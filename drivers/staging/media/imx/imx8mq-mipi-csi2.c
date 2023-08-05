@@ -119,8 +119,11 @@ struct csi_state {
 
 	struct v4l2_mbus_config_mipi_csi2 bus;
 
-	struct mutex lock; /* Protect state */
+	struct mutex lock; /* Protect csi2_fmt, format_mbus, state, hs_settle */
+	const struct csi2_pix_format *csi2_fmt;
+	struct v4l2_mbus_framefmt format_mbus[MIPI_CSI2_PADS_NUM];
 	u32 state;
+	u32 hs_settle;
 
 	struct regmap *phy_gpr;
 	u8 phy_gpr_reg;
@@ -245,6 +248,23 @@ static int imx8mq_mipi_csi_sw_reset(struct csi_state *state)
 	return 0;
 }
 
+static void imx8mq_mipi_csi_system_enable(struct csi_state *state, int on)
+{
+	if (!on) {
+		imx8mq_mipi_csi_write(state, CSI2RX_CFG_DISABLE_DATA_LANES, 0xf);
+		return;
+	}
+
+	regmap_update_bits(state->phy_gpr,
+			   state->phy_gpr_reg,
+			   0x3fff,
+			   GPR_CSI2_1_RX_ENABLE |
+			   GPR_CSI2_1_VID_INTFC_ENB |
+			   GPR_CSI2_1_HSEL |
+			   GPR_CSI2_1_CONT_CLK_MODE |
+			   GPR_CSI2_1_S_PRG_RXHS_SETTLE(state->hs_settle));
+}
+
 static void imx8mq_mipi_csi_set_params(struct csi_state *state)
 {
 	int lanes = state->bus.num_data_lanes;
@@ -284,24 +304,16 @@ static int imx8mq_mipi_csi_clk_get(struct csi_state *state)
 	return devm_clk_bulk_get(state->dev, CSI2_NUM_CLKS, state->clks);
 }
 
-static int imx8mq_mipi_csi_calc_hs_settle(struct csi_state *state,
-					  struct v4l2_subdev_state *sd_state,
-					  u32 *hs_settle)
+static int imx8mq_mipi_csi_calc_hs_settle(struct csi_state *state)
 {
 	s64 link_freq;
 	u32 lane_rate;
 	unsigned long esc_clk_rate;
 	u32 min_ths_settle, max_ths_settle, ths_settle_ns, esc_clk_period_ns;
-	const struct v4l2_mbus_framefmt *fmt;
-	const struct csi2_pix_format *csi2_fmt;
 
 	/* Calculate the line rate from the pixel rate. */
-
-	fmt = v4l2_subdev_get_pad_format(&state->sd, sd_state, MIPI_CSI2_PAD_SINK);
-	csi2_fmt = find_csi2_format(fmt->code);
-
 	link_freq = v4l2_get_link_freq(state->src_sd->ctrl_handler,
-				       csi2_fmt->width,
+				       state->csi2_fmt->width,
 				       state->bus.num_data_lanes * 2);
 	if (link_freq < 0) {
 		dev_err(state->dev, "Unable to obtain link frequency: %d\n",
@@ -342,44 +354,35 @@ static int imx8mq_mipi_csi_calc_hs_settle(struct csi_state *state,
 	max_ths_settle = 140 + 10 * 1000000 / (lane_rate / 1000);
 	ths_settle_ns = (min_ths_settle + max_ths_settle) / 2;
 
-	*hs_settle = ths_settle_ns / esc_clk_period_ns - 1;
+	state->hs_settle = ths_settle_ns / esc_clk_period_ns - 1;
 
 	dev_dbg(state->dev, "lane rate %u Ths_settle %u hs_settle %u\n",
-		lane_rate, ths_settle_ns, *hs_settle);
+		lane_rate, ths_settle_ns, state->hs_settle);
 
 	return 0;
 }
 
-static int imx8mq_mipi_csi_start_stream(struct csi_state *state,
-					struct v4l2_subdev_state *sd_state)
+static int imx8mq_mipi_csi_start_stream(struct csi_state *state)
 {
 	int ret;
-	u32 hs_settle = 0;
 
 	ret = imx8mq_mipi_csi_sw_reset(state);
 	if (ret)
 		return ret;
 
 	imx8mq_mipi_csi_set_params(state);
-	ret = imx8mq_mipi_csi_calc_hs_settle(state, sd_state, &hs_settle);
+	ret = imx8mq_mipi_csi_calc_hs_settle(state);
 	if (ret)
 		return ret;
 
-	regmap_update_bits(state->phy_gpr,
-			   state->phy_gpr_reg,
-			   0x3fff,
-			   GPR_CSI2_1_RX_ENABLE |
-			   GPR_CSI2_1_VID_INTFC_ENB |
-			   GPR_CSI2_1_HSEL |
-			   GPR_CSI2_1_CONT_CLK_MODE |
-			   GPR_CSI2_1_S_PRG_RXHS_SETTLE(hs_settle));
+	imx8mq_mipi_csi_system_enable(state, true);
 
 	return 0;
 }
 
 static void imx8mq_mipi_csi_stop_stream(struct csi_state *state)
 {
-	imx8mq_mipi_csi_write(state, CSI2RX_CFG_DISABLE_DATA_LANES, 0xf);
+	imx8mq_mipi_csi_system_enable(state, false);
 }
 
 /* -----------------------------------------------------------------------------
@@ -394,7 +397,6 @@ static struct csi_state *mipi_sd_to_csi2_state(struct v4l2_subdev *sdev)
 static int imx8mq_mipi_csi_s_stream(struct v4l2_subdev *sd, int enable)
 {
 	struct csi_state *state = mipi_sd_to_csi2_state(sd);
-	struct v4l2_subdev_state *sd_state;
 	int ret = 0;
 
 	if (enable) {
@@ -411,10 +413,7 @@ static int imx8mq_mipi_csi_s_stream(struct v4l2_subdev *sd, int enable)
 			goto unlock;
 		}
 
-		sd_state = v4l2_subdev_lock_and_get_active_state(sd);
-		ret = imx8mq_mipi_csi_start_stream(state, sd_state);
-		v4l2_subdev_unlock_state(sd_state);
-
+		ret = imx8mq_mipi_csi_start_stream(state);
 		if (ret < 0)
 			goto unlock;
 
@@ -438,14 +437,29 @@ unlock:
 	return ret;
 }
 
+static struct v4l2_mbus_framefmt *
+imx8mq_mipi_csi_get_format(struct csi_state *state,
+			   struct v4l2_subdev_state *sd_state,
+			   enum v4l2_subdev_format_whence which,
+			   unsigned int pad)
+{
+	if (which == V4L2_SUBDEV_FORMAT_TRY)
+		return v4l2_subdev_get_try_format(&state->sd, sd_state, pad);
+
+	return &state->format_mbus[pad];
+}
+
 static int imx8mq_mipi_csi_init_cfg(struct v4l2_subdev *sd,
 				    struct v4l2_subdev_state *sd_state)
 {
+	struct csi_state *state = mipi_sd_to_csi2_state(sd);
 	struct v4l2_mbus_framefmt *fmt_sink;
 	struct v4l2_mbus_framefmt *fmt_source;
+	enum v4l2_subdev_format_whence which;
 
-	fmt_sink = v4l2_subdev_get_pad_format(sd, sd_state, MIPI_CSI2_PAD_SINK);
-	fmt_source = v4l2_subdev_get_pad_format(sd, sd_state, MIPI_CSI2_PAD_SOURCE);
+	which = sd_state ? V4L2_SUBDEV_FORMAT_TRY : V4L2_SUBDEV_FORMAT_ACTIVE;
+	fmt_sink = imx8mq_mipi_csi_get_format(state, sd_state, which,
+					      MIPI_CSI2_PAD_SINK);
 
 	fmt_sink->code = MEDIA_BUS_FMT_SGBRG10_1X10;
 	fmt_sink->width = MIPI_CSI2_DEF_PIX_WIDTH;
@@ -459,7 +473,28 @@ static int imx8mq_mipi_csi_init_cfg(struct v4l2_subdev *sd,
 		V4L2_MAP_QUANTIZATION_DEFAULT(false, fmt_sink->colorspace,
 					      fmt_sink->ycbcr_enc);
 
+	fmt_source = imx8mq_mipi_csi_get_format(state, sd_state, which,
+						MIPI_CSI2_PAD_SOURCE);
 	*fmt_source = *fmt_sink;
+
+	return 0;
+}
+
+static int imx8mq_mipi_csi_get_fmt(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_format *sdformat)
+{
+	struct csi_state *state = mipi_sd_to_csi2_state(sd);
+	struct v4l2_mbus_framefmt *fmt;
+
+	fmt = imx8mq_mipi_csi_get_format(state, sd_state, sdformat->which,
+					 sdformat->pad);
+
+	mutex_lock(&state->lock);
+
+	sdformat->format = *fmt;
+
+	mutex_unlock(&state->lock);
 
 	return 0;
 }
@@ -468,6 +503,8 @@ static int imx8mq_mipi_csi_enum_mbus_code(struct v4l2_subdev *sd,
 					  struct v4l2_subdev_state *sd_state,
 					  struct v4l2_subdev_mbus_code_enum *code)
 {
+	struct csi_state *state = mipi_sd_to_csi2_state(sd);
+
 	/*
 	 * We can't transcode in any way, the source format is identical
 	 * to the sink format.
@@ -478,7 +515,8 @@ static int imx8mq_mipi_csi_enum_mbus_code(struct v4l2_subdev *sd,
 		if (code->index > 0)
 			return -EINVAL;
 
-		fmt = v4l2_subdev_get_pad_format(sd, sd_state, code->pad);
+		fmt = imx8mq_mipi_csi_get_format(state, sd_state, code->which,
+						 code->pad);
 		code->code = fmt->code;
 		return 0;
 	}
@@ -498,7 +536,8 @@ static int imx8mq_mipi_csi_set_fmt(struct v4l2_subdev *sd,
 				   struct v4l2_subdev_state *sd_state,
 				   struct v4l2_subdev_format *sdformat)
 {
-	const struct csi2_pix_format *csi2_fmt;
+	struct csi_state *state = mipi_sd_to_csi2_state(sd);
+	struct csi2_pix_format const *csi2_fmt;
 	struct v4l2_mbus_framefmt *fmt;
 
 	/*
@@ -506,7 +545,7 @@ static int imx8mq_mipi_csi_set_fmt(struct v4l2_subdev *sd,
 	 * modified.
 	 */
 	if (sdformat->pad == MIPI_CSI2_PAD_SOURCE)
-		return v4l2_subdev_get_fmt(sd, sd_state, sdformat);
+		return imx8mq_mipi_csi_get_fmt(sd, sd_state, sdformat);
 
 	if (sdformat->pad != MIPI_CSI2_PAD_SINK)
 		return -EINVAL;
@@ -515,7 +554,10 @@ static int imx8mq_mipi_csi_set_fmt(struct v4l2_subdev *sd,
 	if (!csi2_fmt)
 		csi2_fmt = &imx8mq_mipi_csi_formats[0];
 
-	fmt = v4l2_subdev_get_pad_format(sd, sd_state, sdformat->pad);
+	fmt = imx8mq_mipi_csi_get_format(state, sd_state, sdformat->which,
+					 sdformat->pad);
+
+	mutex_lock(&state->lock);
 
 	fmt->code = csi2_fmt->code;
 	fmt->width = sdformat->format.width;
@@ -524,8 +566,15 @@ static int imx8mq_mipi_csi_set_fmt(struct v4l2_subdev *sd,
 	sdformat->format = *fmt;
 
 	/* Propagate the format from sink to source. */
-	fmt = v4l2_subdev_get_pad_format(sd, sd_state, MIPI_CSI2_PAD_SOURCE);
+	fmt = imx8mq_mipi_csi_get_format(state, sd_state, sdformat->which,
+					 MIPI_CSI2_PAD_SOURCE);
 	*fmt = sdformat->format;
+
+	/* Store the CSI2 format descriptor for active formats. */
+	if (sdformat->which == V4L2_SUBDEV_FORMAT_ACTIVE)
+		state->csi2_fmt = csi2_fmt;
+
+	mutex_unlock(&state->lock);
 
 	return 0;
 }
@@ -537,7 +586,7 @@ static const struct v4l2_subdev_video_ops imx8mq_mipi_csi_video_ops = {
 static const struct v4l2_subdev_pad_ops imx8mq_mipi_csi_pad_ops = {
 	.init_cfg		= imx8mq_mipi_csi_init_cfg,
 	.enum_mbus_code		= imx8mq_mipi_csi_enum_mbus_code,
-	.get_fmt		= v4l2_subdev_get_fmt,
+	.get_fmt		= imx8mq_mipi_csi_get_fmt,
 	.set_fmt		= imx8mq_mipi_csi_set_fmt,
 };
 
@@ -665,7 +714,6 @@ static int imx8mq_mipi_csi_pm_resume(struct device *dev)
 {
 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
 	struct csi_state *state = mipi_sd_to_csi2_state(sd);
-	struct v4l2_subdev_state *sd_state;
 	int ret = 0;
 
 	mutex_lock(&state->lock);
@@ -675,9 +723,7 @@ static int imx8mq_mipi_csi_pm_resume(struct device *dev)
 		ret = imx8mq_mipi_csi_clk_enable(state);
 	}
 	if (state->state & ST_STREAMING) {
-		sd_state = v4l2_subdev_lock_and_get_active_state(sd);
-		ret = imx8mq_mipi_csi_start_stream(state, sd_state);
-		v4l2_subdev_unlock_state(sd_state);
+		ret = imx8mq_mipi_csi_start_stream(state);
 		if (ret)
 			goto unlock;
 	}
@@ -757,7 +803,6 @@ static const struct dev_pm_ops imx8mq_mipi_csi_pm_ops = {
 static int imx8mq_mipi_csi_subdev_init(struct csi_state *state)
 {
 	struct v4l2_subdev *sd = &state->sd;
-	int ret;
 
 	v4l2_subdev_init(sd, &imx8mq_mipi_csi_subdev_ops);
 	sd->owner = THIS_MODULE;
@@ -771,22 +816,15 @@ static int imx8mq_mipi_csi_subdev_init(struct csi_state *state)
 
 	sd->dev = state->dev;
 
+	state->csi2_fmt = &imx8mq_mipi_csi_formats[0];
+	imx8mq_mipi_csi_init_cfg(sd, NULL);
+
 	state->pads[MIPI_CSI2_PAD_SINK].flags = MEDIA_PAD_FL_SINK
 					 | MEDIA_PAD_FL_MUST_CONNECT;
 	state->pads[MIPI_CSI2_PAD_SOURCE].flags = MEDIA_PAD_FL_SOURCE
 					   | MEDIA_PAD_FL_MUST_CONNECT;
-	ret = media_entity_pads_init(&sd->entity, MIPI_CSI2_PADS_NUM,
-				     state->pads);
-	if (ret)
-		return ret;
-
-	ret = v4l2_subdev_init_finalize(sd);
-	if (ret) {
-		media_entity_cleanup(&sd->entity);
-		return ret;
-	}
-
-	return 0;
+	return media_entity_pads_init(&sd->entity, MIPI_CSI2_PADS_NUM,
+				      state->pads);
 }
 
 static void imx8mq_mipi_csi_release_icc(struct platform_device *pdev)
@@ -912,7 +950,6 @@ cleanup:
 	imx8mq_mipi_csi_runtime_suspend(&pdev->dev);
 
 	media_entity_cleanup(&state->sd.entity);
-	v4l2_subdev_cleanup(&state->sd);
 	v4l2_async_nf_unregister(&state->notifier);
 	v4l2_async_nf_cleanup(&state->notifier);
 	v4l2_async_unregister_subdev(&state->sd);
@@ -924,7 +961,7 @@ mutex:
 	return ret;
 }
 
-static void imx8mq_mipi_csi_remove(struct platform_device *pdev)
+static int imx8mq_mipi_csi_remove(struct platform_device *pdev)
 {
 	struct v4l2_subdev *sd = platform_get_drvdata(pdev);
 	struct csi_state *state = mipi_sd_to_csi2_state(sd);
@@ -936,10 +973,11 @@ static void imx8mq_mipi_csi_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 	imx8mq_mipi_csi_runtime_suspend(&pdev->dev);
 	media_entity_cleanup(&state->sd.entity);
-	v4l2_subdev_cleanup(&state->sd);
 	mutex_destroy(&state->lock);
 	pm_runtime_set_suspended(&pdev->dev);
 	imx8mq_mipi_csi_release_icc(pdev);
+
+	return 0;
 }
 
 static const struct of_device_id imx8mq_mipi_csi_of_match[] = {
@@ -950,7 +988,7 @@ MODULE_DEVICE_TABLE(of, imx8mq_mipi_csi_of_match);
 
 static struct platform_driver imx8mq_mipi_csi_driver = {
 	.probe		= imx8mq_mipi_csi_probe,
-	.remove_new	= imx8mq_mipi_csi_remove,
+	.remove		= imx8mq_mipi_csi_remove,
 	.driver		= {
 		.of_match_table = imx8mq_mipi_csi_of_match,
 		.name		= MIPI_CSI2_DRIVER_NAME,

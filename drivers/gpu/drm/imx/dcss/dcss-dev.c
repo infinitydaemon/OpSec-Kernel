@@ -249,11 +249,15 @@ void dcss_dev_destroy(struct dcss_dev *dcss)
 	kfree(dcss);
 }
 
-static int dcss_dev_suspend(struct device *dev)
+#ifdef CONFIG_PM_SLEEP
+int dcss_dev_suspend(struct device *dev)
 {
 	struct dcss_dev *dcss = dcss_drv_dev_to_dcss(dev);
 	struct drm_device *ddev = dcss_drv_dev_to_drm(dev);
+	struct dcss_kms_dev *kms = container_of(ddev, struct dcss_kms_dev, base);
 	int ret;
+
+	drm_bridge_connector_disable_hpd(kms->connector);
 
 	drm_mode_config_helper_suspend(ddev);
 
@@ -269,10 +273,11 @@ static int dcss_dev_suspend(struct device *dev)
 	return 0;
 }
 
-static int dcss_dev_resume(struct device *dev)
+int dcss_dev_resume(struct device *dev)
 {
 	struct dcss_dev *dcss = dcss_drv_dev_to_dcss(dev);
 	struct drm_device *ddev = dcss_drv_dev_to_drm(dev);
+	struct dcss_kms_dev *kms = container_of(ddev, struct dcss_kms_dev, base);
 
 	if (pm_runtime_suspended(dev)) {
 		drm_mode_config_helper_resume(ddev);
@@ -287,10 +292,14 @@ static int dcss_dev_resume(struct device *dev)
 
 	drm_mode_config_helper_resume(ddev);
 
+	drm_bridge_connector_enable_hpd(kms->connector);
+
 	return 0;
 }
+#endif /* CONFIG_PM_SLEEP */
 
-static int dcss_dev_runtime_suspend(struct device *dev)
+#ifdef CONFIG_PM
+int dcss_dev_runtime_suspend(struct device *dev)
 {
 	struct dcss_dev *dcss = dcss_drv_dev_to_dcss(dev);
 	int ret;
@@ -304,7 +313,7 @@ static int dcss_dev_runtime_suspend(struct device *dev)
 	return 0;
 }
 
-static int dcss_dev_runtime_resume(struct device *dev)
+int dcss_dev_runtime_resume(struct device *dev)
 {
 	struct dcss_dev *dcss = dcss_drv_dev_to_dcss(dev);
 
@@ -316,8 +325,4 @@ static int dcss_dev_runtime_resume(struct device *dev)
 
 	return 0;
 }
-
-EXPORT_GPL_DEV_PM_OPS(dcss_dev_pm_ops) = {
-	RUNTIME_PM_OPS(dcss_dev_runtime_suspend, dcss_dev_runtime_resume, NULL)
-	SYSTEM_SLEEP_PM_OPS(dcss_dev_suspend, dcss_dev_resume)
-};
+#endif /* CONFIG_PM */

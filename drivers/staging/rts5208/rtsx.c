@@ -191,7 +191,7 @@ static int device_reset(struct scsi_cmnd *srb)
  * this defines our host template, with which we'll allocate hosts
  */
 
-static const struct scsi_host_template rtsx_host_template = {
+static struct scsi_host_template rtsx_host_template = {
 	/* basic userland interface stuff */
 	.name =				CR_DRIVER_NAME,
 	.proc_name =			CR_DRIVER_NAME,
@@ -382,21 +382,27 @@ static int rtsx_control_thread(void *__dev)
 		if (chip->srb->sc_data_direction == DMA_BIDIRECTIONAL) {
 			dev_err(&dev->pci->dev, "UNKNOWN data direction\n");
 			chip->srb->result = DID_ERROR << 16;
-		} else if (chip->srb->device->id) {
-			/* reject if target != 0 or if LUN is higher than
-			 * the maximum known LUN
-			 */
+		}
+
+		/* reject if target != 0 or if LUN is higher than
+		 * the maximum known LUN
+		 */
+		else if (chip->srb->device->id) {
 			dev_err(&dev->pci->dev, "Bad target number (%d:%d)\n",
 				chip->srb->device->id,
 				(u8)chip->srb->device->lun);
 			chip->srb->result = DID_BAD_TARGET << 16;
-		} else if (chip->srb->device->lun > chip->max_lun) {
+		}
+
+		else if (chip->srb->device->lun > chip->max_lun) {
 			dev_err(&dev->pci->dev, "Bad LUN (%d:%d)\n",
 				chip->srb->device->id,
 				(u8)chip->srb->device->lun);
 			chip->srb->result = DID_BAD_TARGET << 16;
-		} else {
-			/* we've got a command, let's do it! */
+		}
+
+		/* we've got a command, let's do it! */
+		else {
 			scsi_show_command(chip);
 			rtsx_invoke_transport(chip->srb, chip);
 		}

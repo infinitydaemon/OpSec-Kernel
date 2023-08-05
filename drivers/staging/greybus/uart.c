@@ -701,7 +701,7 @@ static int gb_tty_ioctl(struct tty_struct *tty, unsigned int cmd,
 	return -ENOIOCTLCMD;
 }
 
-static void gb_tty_dtr_rts(struct tty_port *port, bool active)
+static void gb_tty_dtr_rts(struct tty_port *port, int on)
 {
 	struct gb_tty *gb_tty;
 	u8 newctrl;
@@ -709,7 +709,7 @@ static void gb_tty_dtr_rts(struct tty_port *port, bool active)
 	gb_tty = container_of(port, struct gb_tty, port);
 	newctrl = gb_tty->ctrlout;
 
-	if (active)
+	if (on)
 		newctrl |= (GB_UART_CTRL_DTR | GB_UART_CTRL_RTS);
 	else
 		newctrl &= ~(GB_UART_CTRL_DTR | GB_UART_CTRL_RTS);

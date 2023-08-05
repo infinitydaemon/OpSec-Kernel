@@ -44,6 +44,9 @@
 #define I2C_RETRY_COUNT		5
 
 #define GC2235_FOCAL_LENGTH_NUM	278	/*2.78mm*/
+#define GC2235_FOCAL_LENGTH_DEM	100
+#define GC2235_F_NUMBER_DEFAULT_NUM	26
+#define GC2235_F_NUMBER_DEM	10
 
 #define MAX_FMTS		1
 
@@ -134,6 +137,9 @@ struct gc2235_resolution {
 	u32 skip_frames;
 	u16 pixels_per_line;
 	u16 lines_per_frame;
+	u8 bin_factor_x;
+	u8 bin_factor_y;
+	u8 bin_mode;
 	bool used;
 };
 
@@ -155,6 +161,7 @@ struct gc2235_device {
 	struct gc2235_resolution *res;
 
 	struct camera_sensor_platform_data *platform_data;
+	int vt_pix_clk_freq_mhz;
 	u8 type;
 };
 
@@ -533,6 +540,9 @@ static struct gc2235_resolution gc2235_res_preview[] = {
 		.used = 0,
 		.pixels_per_line = 2132,
 		.lines_per_frame = 1068,
+		.bin_factor_x = 0,
+		.bin_factor_y = 0,
+		.bin_mode = 0,
 		.skip_frames = 3,
 		.regs = gc2235_1600_900_30fps,
 	},
@@ -546,6 +556,9 @@ static struct gc2235_resolution gc2235_res_preview[] = {
 		.used = 0,
 		.pixels_per_line = 2132,
 		.lines_per_frame = 1368,
+		.bin_factor_x = 0,
+		.bin_factor_y = 0,
+		.bin_mode = 0,
 		.skip_frames = 3,
 		.regs = gc2235_1616_1082_30fps,
 	},
@@ -558,6 +571,9 @@ static struct gc2235_resolution gc2235_res_preview[] = {
 		.used = 0,
 		.pixels_per_line = 2132,
 		.lines_per_frame = 1368,
+		.bin_factor_x = 0,
+		.bin_factor_y = 0,
+		.bin_mode = 0,
 		.skip_frames = 3,
 		.regs = gc2235_1616_1216_30fps,
 	},
@@ -581,6 +597,9 @@ static struct gc2235_resolution gc2235_res_still[] = {
 		.used = 0,
 		.pixels_per_line = 2132,
 		.lines_per_frame = 1068,
+		.bin_factor_x = 0,
+		.bin_factor_y = 0,
+		.bin_mode = 0,
 		.skip_frames = 3,
 		.regs = gc2235_1600_900_30fps,
 	},
@@ -593,6 +612,9 @@ static struct gc2235_resolution gc2235_res_still[] = {
 		.used = 0,
 		.pixels_per_line = 2132,
 		.lines_per_frame = 1368,
+		.bin_factor_x = 0,
+		.bin_factor_y = 0,
+		.bin_mode = 0,
 		.skip_frames = 3,
 		.regs = gc2235_1616_1082_30fps,
 	},
@@ -605,6 +627,9 @@ static struct gc2235_resolution gc2235_res_still[] = {
 		.used = 0,
 		.pixels_per_line = 2132,
 		.lines_per_frame = 1368,
+		.bin_factor_x = 0,
+		.bin_factor_y = 0,
+		.bin_mode = 0,
 		.skip_frames = 3,
 		.regs = gc2235_1616_1216_30fps,
 	},
@@ -623,6 +648,9 @@ static struct gc2235_resolution gc2235_res_video[] = {
 		.used = 0,
 		.pixels_per_line = 1828,
 		.lines_per_frame = 888,
+		.bin_factor_x = 0,
+		.bin_factor_y = 0,
+		.bin_mode = 0,
 		.skip_frames = 3,
 		.regs = gc2235_1296_736_30fps,
 	},
@@ -635,6 +663,9 @@ static struct gc2235_resolution gc2235_res_video[] = {
 		.used = 0,
 		.pixels_per_line = 1492,
 		.lines_per_frame = 792,
+		.bin_factor_x = 0,
+		.bin_factor_y = 0,
+		.bin_mode = 0,
 		.skip_frames = 3,
 		.regs = gc2235_960_640_30fps,
 	},

@@ -168,11 +168,15 @@ struct vc4_txp {
 	void __iomem *regs;
 };
 
-#define encoder_to_vc4_txp(_encoder)					\
-	container_of_const(_encoder, struct vc4_txp, encoder.base)
+static inline struct vc4_txp *encoder_to_vc4_txp(struct drm_encoder *encoder)
+{
+	return container_of(encoder, struct vc4_txp, encoder.base);
+}
 
-#define connector_to_vc4_txp(_connector)				\
-	container_of_const(_connector, struct vc4_txp, connector.base)
+static inline struct vc4_txp *connector_to_vc4_txp(struct drm_connector *conn)
+{
+	return container_of(conn, struct vc4_txp, connector.base);
+}
 
 static const struct debugfs_reg32 txp_regs[] = {
 	VC4_REG32(TXP_DST_PTR),

@@ -353,13 +353,12 @@ static int capture_legacy_enum_fmt_vid_cap(struct file *file, void *fh,
 {
 	struct capture_priv *priv = video_drvdata(file);
 	const struct imx_media_pixfmt *cc_src;
-	struct v4l2_subdev_format fmt_src = {
-		.pad = priv->src_sd_pad,
-		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
-	};
+	struct v4l2_subdev_format fmt_src;
 	u32 fourcc;
 	int ret;
 
+	fmt_src.pad = priv->src_sd_pad;
+	fmt_src.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 	ret = v4l2_subdev_call(priv->src_sd, pad, get_fmt, NULL, &fmt_src);
 	if (ret) {
 		dev_err(priv->dev, "failed to get src_sd format\n");
@@ -427,12 +426,11 @@ static int capture_legacy_try_fmt_vid_cap(struct file *file, void *fh,
 					  struct v4l2_format *f)
 {
 	struct capture_priv *priv = video_drvdata(file);
-	struct v4l2_subdev_format fmt_src = {
-		.pad = priv->src_sd_pad,
-		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
-	};
+	struct v4l2_subdev_format fmt_src;
 	int ret;
 
+	fmt_src.pad = priv->src_sd_pad;
+	fmt_src.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 	ret = v4l2_subdev_call(priv->src_sd, pad, get_fmt, NULL, &fmt_src);
 	if (ret)
 		return ret;
@@ -447,10 +445,7 @@ static int capture_legacy_s_fmt_vid_cap(struct file *file, void *fh,
 					struct v4l2_format *f)
 {
 	struct capture_priv *priv = video_drvdata(file);
-	struct v4l2_subdev_format fmt_src = {
-		.pad = priv->src_sd_pad,
-		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
-	};
+	struct v4l2_subdev_format fmt_src;
 	const struct imx_media_pixfmt *cc;
 	int ret;
 
@@ -459,6 +454,8 @@ static int capture_legacy_s_fmt_vid_cap(struct file *file, void *fh,
 		return -EBUSY;
 	}
 
+	fmt_src.pad = priv->src_sd_pad;
+	fmt_src.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 	ret = v4l2_subdev_call(priv->src_sd, pad, get_fmt, NULL, &fmt_src);
 	if (ret)
 		return ret;
@@ -673,14 +670,13 @@ static void capture_buf_queue(struct vb2_buffer *vb)
 
 static int capture_validate_fmt(struct capture_priv *priv)
 {
-	struct v4l2_subdev_format fmt_src = {
-		.pad = priv->src_sd_pad,
-		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
-	};
+	struct v4l2_subdev_format fmt_src;
 	const struct imx_media_pixfmt *cc;
 	int ret;
 
 	/* Retrieve the media bus format on the source subdev. */
+	fmt_src.pad = priv->src_sd_pad;
+	fmt_src.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 	ret = v4l2_subdev_call(priv->src_sd, pad, get_fmt, NULL, &fmt_src);
 	if (ret)
 		return ret;

@@ -365,7 +365,8 @@ static const struct video_device comp_videodev_template = {
 
 /**************************************************************************/
 
-static struct most_video_dev *get_comp_dev(struct most_interface *iface, int channel_idx)
+static struct most_video_dev *get_comp_dev(
+	struct most_interface *iface, int channel_idx)
 {
 	struct most_video_dev *mdev;
 	unsigned long flags;
