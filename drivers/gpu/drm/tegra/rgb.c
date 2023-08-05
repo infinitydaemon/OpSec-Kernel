@@ -5,7 +5,6 @@
  */
 
 #include <linux/clk.h>
-#include <linux/of.h>
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_bridge_connector.h>
@@ -251,12 +250,12 @@ int tegra_dc_rgb_probe(struct tegra_dc *dc)
 	return 0;
 }
 
-void tegra_dc_rgb_remove(struct tegra_dc *dc)
+int tegra_dc_rgb_remove(struct tegra_dc *dc)
 {
 	struct tegra_rgb *rgb;
 
 	if (!dc->rgb)
-		return;
+		return 0;
 
 	rgb = to_rgb(dc->rgb);
 	clk_put(rgb->pll_d2_out0);
@@ -264,6 +263,8 @@ void tegra_dc_rgb_remove(struct tegra_dc *dc)
 
 	tegra_output_remove(dc->rgb);
 	dc->rgb = NULL;
+
+	return 0;
 }
 
 int tegra_dc_rgb_init(struct drm_device *drm, struct tegra_dc *dc)

@@ -579,7 +579,7 @@ static int tegra_dpaux_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void tegra_dpaux_remove(struct platform_device *pdev)
+static int tegra_dpaux_remove(struct platform_device *pdev)
 {
 	struct tegra_dpaux *dpaux = platform_get_drvdata(pdev);
 
@@ -594,8 +594,11 @@ static void tegra_dpaux_remove(struct platform_device *pdev)
 	mutex_lock(&dpaux_lock);
 	list_del(&dpaux->list);
 	mutex_unlock(&dpaux_lock);
+
+	return 0;
 }
 
+#ifdef CONFIG_PM
 static int tegra_dpaux_suspend(struct device *dev)
 {
 	struct tegra_dpaux *dpaux = dev_get_drvdata(dev);
@@ -654,9 +657,10 @@ disable_clk:
 	clk_disable_unprepare(dpaux->clk);
 	return err;
 }
+#endif
 
 static const struct dev_pm_ops tegra_dpaux_pm_ops = {
-	RUNTIME_PM_OPS(tegra_dpaux_suspend, tegra_dpaux_resume, NULL)
+	SET_RUNTIME_PM_OPS(tegra_dpaux_suspend, tegra_dpaux_resume, NULL)
 };
 
 static const struct tegra_dpaux_soc tegra124_dpaux_soc = {
@@ -690,10 +694,10 @@ struct platform_driver tegra_dpaux_driver = {
 	.driver = {
 		.name = "tegra-dpaux",
 		.of_match_table = tegra_dpaux_of_match,
-		.pm = pm_ptr(&tegra_dpaux_pm_ops),
+		.pm = &tegra_dpaux_pm_ops,
 	},
 	.probe = tegra_dpaux_probe,
-	.remove_new = tegra_dpaux_remove,
+	.remove = tegra_dpaux_remove,
 };
 
 struct drm_dp_aux *drm_dp_aux_find_by_of_node(struct device_node *np)

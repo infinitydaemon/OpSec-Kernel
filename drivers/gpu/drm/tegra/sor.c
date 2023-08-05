@@ -586,7 +586,6 @@ static u8 tegra_clk_sor_pad_get_parent(struct clk_hw *hw)
 }
 
 static const struct clk_ops tegra_clk_sor_pad_ops = {
-	.determine_rate = clk_hw_determine_rate_no_reparent,
 	.set_parent = tegra_clk_sor_pad_set_parent,
 	.get_parent = tegra_clk_sor_pad_get_parent,
 };
@@ -2141,8 +2140,10 @@ static void tegra_sor_hdmi_disable_scrambling(struct tegra_sor *sor)
 
 static void tegra_sor_hdmi_scdc_disable(struct tegra_sor *sor)
 {
-	drm_scdc_set_high_tmds_clock_ratio(&sor->output.connector, false);
-	drm_scdc_set_scrambling(&sor->output.connector, false);
+	struct i2c_adapter *ddc = sor->output.ddc;
+
+	drm_scdc_set_high_tmds_clock_ratio(ddc, false);
+	drm_scdc_set_scrambling(ddc, false);
 
 	tegra_sor_hdmi_disable_scrambling(sor);
 }
@@ -2167,8 +2168,10 @@ static void tegra_sor_hdmi_enable_scrambling(struct tegra_sor *sor)
 
 static void tegra_sor_hdmi_scdc_enable(struct tegra_sor *sor)
 {
-	drm_scdc_set_high_tmds_clock_ratio(&sor->output.connector, true);
-	drm_scdc_set_scrambling(&sor->output.connector, true);
+	struct i2c_adapter *ddc = sor->output.ddc;
+
+	drm_scdc_set_high_tmds_clock_ratio(ddc, true);
+	drm_scdc_set_scrambling(ddc, true);
 
 	tegra_sor_hdmi_enable_scrambling(sor);
 }
@@ -2176,8 +2179,9 @@ static void tegra_sor_hdmi_scdc_enable(struct tegra_sor *sor)
 static void tegra_sor_hdmi_scdc_work(struct work_struct *work)
 {
 	struct tegra_sor *sor = container_of(work, struct tegra_sor, scdc.work);
+	struct i2c_adapter *ddc = sor->output.ddc;
 
-	if (!drm_scdc_get_scrambling_status(&sor->output.connector)) {
+	if (!drm_scdc_get_scrambling_status(ddc)) {
 		DRM_DEBUG_KMS("SCDC not scrambled\n");
 		tegra_sor_hdmi_scdc_enable(sor);
 	}
@@ -2960,9 +2964,11 @@ static int tegra_sor_hdmi_probe(struct tegra_sor *sor)
 	int err;
 
 	sor->avdd_io_supply = devm_regulator_get(sor->dev, "avdd-io-hdmi-dp");
-	if (IS_ERR(sor->avdd_io_supply))
-		return dev_err_probe(sor->dev, PTR_ERR(sor->avdd_io_supply),
-				     "cannot get AVDD I/O supply\n");
+	if (IS_ERR(sor->avdd_io_supply)) {
+		dev_err(sor->dev, "cannot get AVDD I/O supply: %ld\n",
+			PTR_ERR(sor->avdd_io_supply));
+		return PTR_ERR(sor->avdd_io_supply);
+	}
 
 	err = tegra_sor_enable_regulator(sor, sor->avdd_io_supply);
 	if (err < 0) {
@@ -2972,9 +2978,11 @@ static int tegra_sor_hdmi_probe(struct tegra_sor *sor)
 	}
 
 	sor->vdd_pll_supply = devm_regulator_get(sor->dev, "vdd-hdmi-dp-pll");
-	if (IS_ERR(sor->vdd_pll_supply))
-		return dev_err_probe(sor->dev, PTR_ERR(sor->vdd_pll_supply),
-				     "cannot get VDD PLL supply\n");
+	if (IS_ERR(sor->vdd_pll_supply)) {
+		dev_err(sor->dev, "cannot get VDD PLL supply: %ld\n",
+			PTR_ERR(sor->vdd_pll_supply));
+		return PTR_ERR(sor->vdd_pll_supply);
+	}
 
 	err = tegra_sor_enable_regulator(sor, sor->vdd_pll_supply);
 	if (err < 0) {
@@ -2984,9 +2992,11 @@ static int tegra_sor_hdmi_probe(struct tegra_sor *sor)
 	}
 
 	sor->hdmi_supply = devm_regulator_get(sor->dev, "hdmi");
-	if (IS_ERR(sor->hdmi_supply))
-		return dev_err_probe(sor->dev, PTR_ERR(sor->hdmi_supply),
-				     "cannot get HDMI supply\n");
+	if (IS_ERR(sor->hdmi_supply)) {
+		dev_err(sor->dev, "cannot get HDMI supply: %ld\n",
+			PTR_ERR(sor->hdmi_supply));
+		return PTR_ERR(sor->hdmi_supply);
+	}
 
 	err = tegra_sor_enable_regulator(sor, sor->hdmi_supply);
 	if (err < 0) {
@@ -3789,8 +3799,10 @@ static int tegra_sor_probe(struct platform_device *pdev)
 	}
 
 	err = platform_get_irq(pdev, 0);
-	if (err < 0)
+	if (err < 0) {
+		dev_err(&pdev->dev, "failed to get IRQ: %d\n", err);
 		goto remove;
+	}
 
 	sor->irq = err;
 
@@ -3966,11 +3978,17 @@ put_aux:
 	return err;
 }
 
-static void tegra_sor_remove(struct platform_device *pdev)
+static int tegra_sor_remove(struct platform_device *pdev)
 {
 	struct tegra_sor *sor = platform_get_drvdata(pdev);
+	int err;
 
-	host1x_client_unregister(&sor->client);
+	err = host1x_client_unregister(&sor->client);
+	if (err < 0) {
+		dev_err(&pdev->dev, "failed to unregister host1x client: %d\n",
+			err);
+		return err;
+	}
 
 	pm_runtime_disable(&pdev->dev);
 
@@ -3980,6 +3998,8 @@ static void tegra_sor_remove(struct platform_device *pdev)
 	}
 
 	tegra_output_remove(&sor->output);
+
+	return 0;
 }
 
 static int __maybe_unused tegra_sor_suspend(struct device *dev)
@@ -4039,5 +4059,5 @@ struct platform_driver tegra_sor_driver = {
 		.pm = &tegra_sor_pm_ops,
 	},
 	.probe = tegra_sor_probe,
-	.remove_new = tegra_sor_remove,
+	.remove = tegra_sor_remove,
 };

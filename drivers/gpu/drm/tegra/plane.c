@@ -777,17 +777,21 @@ int tegra_plane_interconnect_init(struct tegra_plane *plane)
 
 	plane->icc_mem = devm_of_icc_get(dev, icc_name);
 	err = PTR_ERR_OR_ZERO(plane->icc_mem);
-	if (err)
-		return dev_err_probe(dev, err, "failed to get %s interconnect\n",
-				     icc_name);
+	if (err) {
+		dev_err_probe(dev, err, "failed to get %s interconnect\n",
+			      icc_name);
+		return err;
+	}
 
 	/* plane B on T20/30 has a dedicated memory client for a 6-tap vertical filter */
 	if (plane->index == 1 && dc->soc->has_win_b_vfilter_mem_client) {
 		plane->icc_mem_vfilter = devm_of_icc_get(dev, "winb-vfilter");
 		err = PTR_ERR_OR_ZERO(plane->icc_mem_vfilter);
-		if (err)
-			return dev_err_probe(dev, err, "failed to get %s interconnect\n",
-					     "winb-vfilter");
+		if (err) {
+			dev_err_probe(dev, err, "failed to get %s interconnect\n",
+				      "winb-vfilter");
+			return err;
+		}
 	}
 
 	return 0;

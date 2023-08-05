@@ -56,6 +56,9 @@ static int tegra_atomic_check(struct drm_device *drm,
 
 static const struct drm_mode_config_funcs tegra_drm_mode_config_funcs = {
 	.fb_create = tegra_fb_create,
+#ifdef CONFIG_DRM_FBDEV_EMULATION
+	.output_poll_changed = drm_fb_helper_output_poll_changed,
+#endif
 	.atomic_check = tegra_atomic_check,
 	.atomic_commit = drm_atomic_helper_commit,
 };
@@ -882,6 +885,7 @@ static const struct drm_driver tegra_drm_driver = {
 			   DRIVER_ATOMIC | DRIVER_RENDER | DRIVER_SYNCOBJ,
 	.open = tegra_drm_open,
 	.postclose = tegra_drm_postclose,
+	.lastclose = drm_fb_helper_lastclose,
 
 #if defined(CONFIG_DEBUG_FS)
 	.debugfs_init = tegra_debugfs_init,
@@ -1053,7 +1057,7 @@ void *tegra_drm_alloc(struct tegra_drm *tegra, size_t size, dma_addr_t *dma)
 
 	*dma = iova_dma_addr(&tegra->carveout.domain, alloc);
 	err = iommu_map(tegra->domain, *dma, virt_to_phys(virt),
-			size, IOMMU_READ | IOMMU_WRITE, GFP_KERNEL);
+			size, IOMMU_READ | IOMMU_WRITE);
 	if (err < 0)
 		goto free_iova;
 
@@ -1181,11 +1185,15 @@ static int host1x_drm_probe(struct host1x_device *dev)
 	drm->mode_config.funcs = &tegra_drm_mode_config_funcs;
 	drm->mode_config.helper_private = &tegra_drm_mode_config_helpers;
 
+	err = tegra_drm_fb_prepare(drm);
+	if (err < 0)
+		goto config;
+
 	drm_kms_helper_poll_init(drm);
 
 	err = host1x_device_init(dev);
 	if (err < 0)
-		goto poll;
+		goto fbdev;
 
 	/*
 	 * Now that all display controller have been initialized, the maximum
@@ -1244,18 +1252,22 @@ static int host1x_drm_probe(struct host1x_device *dev)
 
 	drm_mode_config_reset(drm);
 
-	err = drm_aperture_remove_framebuffers(&tegra_drm_driver);
+	err = drm_aperture_remove_framebuffers(false, &tegra_drm_driver);
+	if (err < 0)
+		goto hub;
+
+	err = tegra_drm_fb_init(drm);
 	if (err < 0)
 		goto hub;
 
 	err = drm_dev_register(drm, 0);
 	if (err < 0)
-		goto hub;
-
-	tegra_fbdev_setup(drm);
+		goto fb;
 
 	return 0;
 
+fb:
+	tegra_drm_fb_exit(drm);
 hub:
 	if (tegra->hub)
 		tegra_display_hub_cleanup(tegra->hub);
@@ -1268,8 +1280,10 @@ device:
 	}
 
 	host1x_device_exit(dev);
-poll:
+fbdev:
 	drm_kms_helper_poll_fini(drm);
+	tegra_drm_fb_free(drm);
+config:
 	drm_mode_config_cleanup(drm);
 domain:
 	if (tegra->domain)
@@ -1290,6 +1304,7 @@ static int host1x_drm_remove(struct host1x_device *dev)
 	drm_dev_unregister(drm);
 
 	drm_kms_helper_poll_fini(drm);
+	tegra_drm_fb_exit(drm);
 	drm_atomic_helper_shutdown(drm);
 	drm_mode_config_cleanup(drm);
 
@@ -1371,7 +1386,6 @@ static const struct of_device_id host1x_drm_subdevs[] = {
 	{ .compatible = "nvidia,tegra194-vic", },
 	{ .compatible = "nvidia,tegra194-nvdec", },
 	{ .compatible = "nvidia,tegra234-vic", },
-	{ .compatible = "nvidia,tegra234-nvdec", },
 	{ /* sentinel */ }
 };
 
