@@ -2,10 +2,12 @@
 #include <linux/vgaarb.h>
 #include <linux/vga_switcheroo.h>
 
+#include <drm/drm_crtc_helper.h>
 #include <drm/drm_fb_helper.h>
 
 #include "nouveau_drv.h"
 #include "nouveau_acpi.h"
+#include "nouveau_fbcon.h"
 #include "nouveau_vga.h"
 
 static unsigned int
