@@ -3304,10 +3304,7 @@ static struct kvm_mips_callbacks kvm_vz_callbacks = {
 	.vcpu_reenter = kvm_vz_vcpu_reenter,
 };
 
-/* FIXME: Get rid of the callbacks now that trap-and-emulate is gone. */
-const struct kvm_mips_callbacks * const kvm_mips_callbacks = &kvm_vz_callbacks;
-
-int kvm_mips_emulation_init(void)
+int kvm_mips_emulation_init(struct kvm_mips_callbacks **install_callbacks)
 {
 	if (!cpu_has_vz)
 		return -ENODEV;
@@ -3321,5 +3318,7 @@ int kvm_mips_emulation_init(void)
 		return -ENODEV;
 
 	pr_info("Starting KVM with MIPS VZ extensions\n");
+
+	*install_callbacks = &kvm_vz_callbacks;
 	return 0;
 }
