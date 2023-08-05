@@ -201,7 +201,6 @@ static int __init icoll_of_init(struct device_node *np,
 	stmp_reset_block(icoll_priv.ctrl);
 
 	icoll_add_domain(np, ICOLL_NUM_IRQS);
-	set_handle_irq(icoll_handle_irq);
 
 	return 0;
 }

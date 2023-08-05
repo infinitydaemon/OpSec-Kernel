@@ -43,7 +43,7 @@ static int kfd_debugfs_hang_hws_read(struct seq_file *m, void *data)
 static ssize_t kfd_debugfs_hang_hws_write(struct file *file,
 	const char __user *user_buf, size_t size, loff_t *ppos)
 {
-	struct kfd_node *dev;
+	struct kfd_dev *dev;
 	char tmp[16];
 	uint32_t gpu_id;
 	int ret = -EINVAL;

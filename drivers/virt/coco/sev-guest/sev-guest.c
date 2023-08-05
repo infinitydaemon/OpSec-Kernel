@@ -182,10 +182,12 @@ static struct snp_guest_crypto *init_crypto(struct snp_guest_dev *snp_dev, u8 *k
 	crypto->a_len = crypto_aead_authsize(crypto->tfm);
 	crypto->authtag = kmalloc(crypto->a_len, GFP_KERNEL_ACCOUNT);
 	if (!crypto->authtag)
-		goto e_free_iv;
+		goto e_free_auth;
 
 	return crypto;
 
+e_free_auth:
+	kfree(crypto->authtag);
 e_free_iv:
 	kfree(crypto->iv);
 e_free_crypto:
@@ -332,12 +334,11 @@ static int enc_payload(struct snp_guest_dev *snp_dev, u64 seqno, int version, u8
 	return __enc_payload(snp_dev, req, payload, sz);
 }
 
-static int __handle_guest_request(struct snp_guest_dev *snp_dev, u64 exit_code,
-				  struct snp_guest_request_ioctl *rio)
+static int __handle_guest_request(struct snp_guest_dev *snp_dev, u64 exit_code, __u64 *fw_err)
 {
+	unsigned long err = 0xff, override_err = 0;
 	unsigned long req_start = jiffies;
 	unsigned int override_npages = 0;
-	u64 override_err = 0;
 	int rc;
 
 retry_request:
@@ -347,7 +348,7 @@ retry_request:
 	 * sequence number must be incremented or the VMPCK must be deleted to
 	 * prevent reuse of the IV.
 	 */
-	rc = snp_issue_guest_request(exit_code, &snp_dev->input, rio);
+	rc = snp_issue_guest_request(exit_code, &snp_dev->input, &err);
 	switch (rc) {
 	case -ENOSPC:
 		/*
@@ -365,7 +366,7 @@ retry_request:
 		 * request buffer size was too small and give the caller the
 		 * required buffer size.
 		 */
-		override_err = SNP_GUEST_VMM_ERR(SNP_GUEST_VMM_ERR_INVALID_LEN);
+		override_err	= SNP_GUEST_REQ_INVALID_LEN;
 
 		/*
 		 * If this call to the firmware succeeds, the sequence number can
@@ -378,7 +379,7 @@ retry_request:
 		goto retry_request;
 
 	/*
-	 * The host may return SNP_GUEST_VMM_ERR_BUSY if the request has been
+	 * The host may return SNP_GUEST_REQ_ERR_EBUSY if the request has been
 	 * throttled. Retry in the driver to avoid returning and reusing the
 	 * message sequence number on a different message.
 	 */
@@ -399,29 +400,27 @@ retry_request:
 	 */
 	snp_inc_msg_seqno(snp_dev);
 
-	if (override_err) {
-		rio->exitinfo2 = override_err;
-
-		/*
-		 * If an extended guest request was issued and the supplied certificate
-		 * buffer was not large enough, a standard guest request was issued to
-		 * prevent IV reuse. If the standard request was successful, return -EIO
-		 * back to the caller as would have originally been returned.
-		 */
-		if (!rc && override_err == SNP_GUEST_VMM_ERR(SNP_GUEST_VMM_ERR_INVALID_LEN))
-			rc = -EIO;
-	}
+	if (fw_err)
+		*fw_err = override_err ?: err;
 
 	if (override_npages)
 		snp_dev->input.data_npages = override_npages;
 
+	/*
+	 * If an extended guest request was issued and the supplied certificate
+	 * buffer was not large enough, a standard guest request was issued to
+	 * prevent IV reuse. If the standard request was successful, return -EIO
+	 * back to the caller as would have originally been returned.
+	 */
+	if (!rc && override_err == SNP_GUEST_REQ_INVALID_LEN)
+		return -EIO;
+
 	return rc;
 }
 
-static int handle_guest_request(struct snp_guest_dev *snp_dev, u64 exit_code,
-				struct snp_guest_request_ioctl *rio, u8 type,
-				void *req_buf, size_t req_sz, void *resp_buf,
-				u32 resp_sz)
+static int handle_guest_request(struct snp_guest_dev *snp_dev, u64 exit_code, int msg_ver,
+				u8 type, void *req_buf, size_t req_sz, void *resp_buf,
+				u32 resp_sz, __u64 *fw_err)
 {
 	u64 seqno;
 	int rc;
@@ -435,7 +434,7 @@ static int handle_guest_request(struct snp_guest_dev *snp_dev, u64 exit_code,
 	memset(snp_dev->response, 0, sizeof(struct snp_guest_msg));
 
 	/* Encrypt the userspace provided payload in snp_dev->secret_request. */
-	rc = enc_payload(snp_dev, seqno, rio->msg_version, type, req_buf, req_sz);
+	rc = enc_payload(snp_dev, seqno, msg_ver, type, req_buf, req_sz);
 	if (rc)
 		return rc;
 
@@ -446,16 +445,12 @@ static int handle_guest_request(struct snp_guest_dev *snp_dev, u64 exit_code,
 	memcpy(snp_dev->request, &snp_dev->secret_request,
 	       sizeof(snp_dev->secret_request));
 
-	rc = __handle_guest_request(snp_dev, exit_code, rio);
+	rc = __handle_guest_request(snp_dev, exit_code, fw_err);
 	if (rc) {
-		if (rc == -EIO &&
-		    rio->exitinfo2 == SNP_GUEST_VMM_ERR(SNP_GUEST_VMM_ERR_INVALID_LEN))
+		if (rc == -EIO && *fw_err == SNP_GUEST_REQ_INVALID_LEN)
 			return rc;
 
-		dev_alert(snp_dev->dev,
-			  "Detected error from ASP request. rc: %d, exitinfo2: 0x%llx\n",
-			  rc, rio->exitinfo2);
-
+		dev_alert(snp_dev->dev, "Detected error from ASP request. rc: %d, fw_err: %llu\n", rc, *fw_err);
 		snp_disable_vmpck(snp_dev);
 		return rc;
 	}
@@ -495,9 +490,9 @@ static int get_report(struct snp_guest_dev *snp_dev, struct snp_guest_request_io
 	if (!resp)
 		return -ENOMEM;
 
-	rc = handle_guest_request(snp_dev, SVM_VMGEXIT_GUEST_REQUEST, arg,
+	rc = handle_guest_request(snp_dev, SVM_VMGEXIT_GUEST_REQUEST, arg->msg_version,
 				  SNP_MSG_REPORT_REQ, &req, sizeof(req), resp->data,
-				  resp_len);
+				  resp_len, &arg->fw_err);
 	if (rc)
 		goto e_free;
 
@@ -535,8 +530,9 @@ static int get_derived_key(struct snp_guest_dev *snp_dev, struct snp_guest_reque
 	if (copy_from_user(&req, (void __user *)arg->req_data, sizeof(req)))
 		return -EFAULT;
 
-	rc = handle_guest_request(snp_dev, SVM_VMGEXIT_GUEST_REQUEST, arg,
-				  SNP_MSG_KEY_REQ, &req, sizeof(req), buf, resp_len);
+	rc = handle_guest_request(snp_dev, SVM_VMGEXIT_GUEST_REQUEST, arg->msg_version,
+				  SNP_MSG_KEY_REQ, &req, sizeof(req), buf, resp_len,
+				  &arg->fw_err);
 	if (rc)
 		return rc;
 
@@ -596,12 +592,12 @@ cmd:
 		return -ENOMEM;
 
 	snp_dev->input.data_npages = npages;
-	ret = handle_guest_request(snp_dev, SVM_VMGEXIT_EXT_GUEST_REQUEST, arg,
+	ret = handle_guest_request(snp_dev, SVM_VMGEXIT_EXT_GUEST_REQUEST, arg->msg_version,
 				   SNP_MSG_REPORT_REQ, &req.data,
-				   sizeof(req.data), resp->data, resp_len);
+				   sizeof(req.data), resp->data, resp_len, &arg->fw_err);
 
 	/* If certs length is invalid then copy the returned length */
-	if (arg->vmm_error == SNP_GUEST_VMM_ERR_INVALID_LEN) {
+	if (arg->fw_err == SNP_GUEST_REQ_INVALID_LEN) {
 		req.certs_len = snp_dev->input.data_npages << PAGE_SHIFT;
 
 		if (copy_to_user((void __user *)arg->req_data, &req, sizeof(req)))
@@ -636,7 +632,7 @@ static long snp_guest_ioctl(struct file *file, unsigned int ioctl, unsigned long
 	if (copy_from_user(&input, argp, sizeof(input)))
 		return -EFAULT;
 
-	input.exitinfo2 = 0xff;
+	input.fw_err = 0xff;
 
 	/* Message version must be non-zero */
 	if (!input.msg_version)
@@ -667,7 +663,7 @@ static long snp_guest_ioctl(struct file *file, unsigned int ioctl, unsigned long
 
 	mutex_unlock(&snp_cmd_mutex);
 
-	if (input.exitinfo2 && copy_to_user(argp, &input, sizeof(input)))
+	if (input.fw_err && copy_to_user(argp, &input, sizeof(input)))
 		return -EFAULT;
 
 	return ret;

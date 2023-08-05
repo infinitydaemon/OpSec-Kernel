@@ -131,7 +131,6 @@ struct PP_TemperatureRange {
 	int mem_min;
 	int mem_crit_max;
 	int mem_emergency_max;
-	int sw_ctf_threshold;
 };
 
 struct PP_StateValidationBlock {

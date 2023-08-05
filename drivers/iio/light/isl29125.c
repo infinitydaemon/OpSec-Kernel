@@ -241,7 +241,8 @@ static const struct iio_buffer_setup_ops isl29125_buffer_setup_ops = {
 	.predisable = isl29125_buffer_predisable,
 };
 
-static int isl29125_probe(struct i2c_client *client)
+static int isl29125_probe(struct i2c_client *client,
+			   const struct i2c_device_id *id)
 {
 	struct isl29125_data *data;
 	struct iio_dev *indio_dev;

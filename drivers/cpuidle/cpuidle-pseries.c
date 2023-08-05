@@ -33,18 +33,17 @@ static struct cpuidle_state *cpuidle_state_table __read_mostly;
 static u64 snooze_timeout __read_mostly;
 static bool snooze_timeout_en __read_mostly;
 
-static __cpuidle
-int snooze_loop(struct cpuidle_device *dev, struct cpuidle_driver *drv,
-		int index)
+static int snooze_loop(struct cpuidle_device *dev,
+			struct cpuidle_driver *drv,
+			int index)
 {
 	u64 snooze_exit_time;
 
 	set_thread_flag(TIF_POLLING_NRFLAG);
 
 	pseries_idle_prolog();
-	raw_local_irq_enable();
+	local_irq_enable();
 	snooze_exit_time = get_tb() + snooze_timeout;
-	dev->poll_time_limit = false;
 
 	while (!need_resched()) {
 		HMT_low();
@@ -55,7 +54,6 @@ int snooze_loop(struct cpuidle_device *dev, struct cpuidle_driver *drv,
 			 * loop anyway. Require a barrier after polling is
 			 * cleared to order subsequent test of need_resched().
 			 */
-			dev->poll_time_limit = true;
 			clear_thread_flag(TIF_POLLING_NRFLAG);
 			smp_mb();
 			break;
@@ -65,14 +63,14 @@ int snooze_loop(struct cpuidle_device *dev, struct cpuidle_driver *drv,
 	HMT_medium();
 	clear_thread_flag(TIF_POLLING_NRFLAG);
 
-	raw_local_irq_disable();
+	local_irq_disable();
 
 	pseries_idle_epilog();
 
 	return index;
 }
 
-static __cpuidle void check_and_cede_processor(void)
+static void check_and_cede_processor(void)
 {
 	/*
 	 * Ensure our interrupt state is properly tracked,
@@ -216,9 +214,9 @@ static int __init parse_cede_parameters(void)
 #define NR_DEDICATED_STATES	2 /* snooze, CEDE */
 static u8 cede_latency_hint[NR_DEDICATED_STATES];
 
-static __cpuidle
-int dedicated_cede_loop(struct cpuidle_device *dev, struct cpuidle_driver *drv,
-			int index)
+static int dedicated_cede_loop(struct cpuidle_device *dev,
+				struct cpuidle_driver *drv,
+				int index)
 {
 	u8 old_latency_hint;
 
@@ -230,7 +228,7 @@ int dedicated_cede_loop(struct cpuidle_device *dev, struct cpuidle_driver *drv,
 	HMT_medium();
 	check_and_cede_processor();
 
-	raw_local_irq_disable();
+	local_irq_disable();
 	get_lppaca()->donate_dedicated_cpu = 0;
 	get_lppaca()->cede_latency_hint = old_latency_hint;
 
@@ -239,9 +237,9 @@ int dedicated_cede_loop(struct cpuidle_device *dev, struct cpuidle_driver *drv,
 	return index;
 }
 
-static __cpuidle
-int shared_cede_loop(struct cpuidle_device *dev, struct cpuidle_driver *drv,
-		     int index)
+static int shared_cede_loop(struct cpuidle_device *dev,
+			struct cpuidle_driver *drv,
+			int index)
 {
 
 	pseries_idle_prolog();
@@ -255,7 +253,7 @@ int shared_cede_loop(struct cpuidle_device *dev, struct cpuidle_driver *drv,
 	 */
 	check_and_cede_processor();
 
-	raw_local_irq_disable();
+	local_irq_disable();
 	pseries_idle_epilog();
 
 	return index;
@@ -270,8 +268,7 @@ static struct cpuidle_state dedicated_states[NR_DEDICATED_STATES] = {
 		.desc = "snooze",
 		.exit_latency = 0,
 		.target_residency = 0,
-		.enter = &snooze_loop,
-		.flags = CPUIDLE_FLAG_POLLING },
+		.enter = &snooze_loop },
 	{ /* CEDE */
 		.name = "CEDE",
 		.desc = "CEDE",
@@ -289,8 +286,7 @@ static struct cpuidle_state shared_states[] = {
 		.desc = "snooze",
 		.exit_latency = 0,
 		.target_residency = 0,
-		.enter = &snooze_loop,
-		.flags = CPUIDLE_FLAG_POLLING },
+		.enter = &snooze_loop },
 	{ /* Shared Cede */
 		.name = "Shared Cede",
 		.desc = "Shared Cede",

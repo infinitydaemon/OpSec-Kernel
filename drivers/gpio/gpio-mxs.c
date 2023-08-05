@@ -364,3 +364,4 @@ MODULE_AUTHOR("Freescale Semiconductor, "
 	      "Daniel Mack <danielncaiaq.de>, "
 	      "Juergen Beisert <kernel@pengutronix.de>");
 MODULE_DESCRIPTION("Freescale MXS GPIO");
+MODULE_LICENSE("GPL");

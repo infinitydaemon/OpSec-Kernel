@@ -26,8 +26,6 @@
 #include <linux/delay.h>
 
 #include <drm/display/drm_scdc_helper.h>
-#include <drm/drm_connector.h>
-#include <drm/drm_device.h>
 #include <drm/drm_print.h>
 
 /**
@@ -142,7 +140,7 @@ EXPORT_SYMBOL(drm_scdc_write);
 
 /**
  * drm_scdc_get_scrambling_status - what is status of scrambling?
- * @connector: connector
+ * @adapter: I2C adapter for DDC channel
  *
  * Reads the scrambler status over SCDC, and checks the
  * scrambling status.
@@ -150,16 +148,14 @@ EXPORT_SYMBOL(drm_scdc_write);
  * Returns:
  * True if the scrambling is enabled, false otherwise.
  */
-bool drm_scdc_get_scrambling_status(struct drm_connector *connector)
+bool drm_scdc_get_scrambling_status(struct i2c_adapter *adapter)
 {
 	u8 status;
 	int ret;
 
-	ret = drm_scdc_readb(connector->ddc, SCDC_SCRAMBLER_STATUS, &status);
+	ret = drm_scdc_readb(adapter, SCDC_SCRAMBLER_STATUS, &status);
 	if (ret < 0) {
-		drm_dbg_kms(connector->dev,
-			    "[CONNECTOR:%d:%s] Failed to read scrambling status: %d\n",
-			    connector->base.id, connector->name, ret);
+		DRM_DEBUG_KMS("Failed to read scrambling status: %d\n", ret);
 		return false;
 	}
 
@@ -169,7 +165,7 @@ EXPORT_SYMBOL(drm_scdc_get_scrambling_status);
 
 /**
  * drm_scdc_set_scrambling - enable scrambling
- * @connector: connector
+ * @adapter: I2C adapter for DDC channel
  * @enable: bool to indicate if scrambling is to be enabled/disabled
  *
  * Writes the TMDS config register over SCDC channel, and:
@@ -179,17 +175,14 @@ EXPORT_SYMBOL(drm_scdc_get_scrambling_status);
  * Returns:
  * True if scrambling is set/reset successfully, false otherwise.
  */
-bool drm_scdc_set_scrambling(struct drm_connector *connector,
-			     bool enable)
+bool drm_scdc_set_scrambling(struct i2c_adapter *adapter, bool enable)
 {
 	u8 config;
 	int ret;
 
-	ret = drm_scdc_readb(connector->ddc, SCDC_TMDS_CONFIG, &config);
+	ret = drm_scdc_readb(adapter, SCDC_TMDS_CONFIG, &config);
 	if (ret < 0) {
-		drm_dbg_kms(connector->dev,
-			    "[CONNECTOR:%d:%s] Failed to read TMDS config: %d\n",
-			    connector->base.id, connector->name, ret);
+		DRM_DEBUG_KMS("Failed to read TMDS config: %d\n", ret);
 		return false;
 	}
 
@@ -198,11 +191,9 @@ bool drm_scdc_set_scrambling(struct drm_connector *connector,
 	else
 		config &= ~SCDC_SCRAMBLING_ENABLE;
 
-	ret = drm_scdc_writeb(connector->ddc, SCDC_TMDS_CONFIG, config);
+	ret = drm_scdc_writeb(adapter, SCDC_TMDS_CONFIG, config);
 	if (ret < 0) {
-		drm_dbg_kms(connector->dev,
-			    "[CONNECTOR:%d:%s] Failed to enable scrambling: %d\n",
-			    connector->base.id, connector->name, ret);
+		DRM_DEBUG_KMS("Failed to enable scrambling: %d\n", ret);
 		return false;
 	}
 
@@ -212,7 +203,7 @@ EXPORT_SYMBOL(drm_scdc_set_scrambling);
 
 /**
  * drm_scdc_set_high_tmds_clock_ratio - set TMDS clock ratio
- * @connector: connector
+ * @adapter: I2C adapter for DDC channel
  * @set: ret or reset the high clock ratio
  *
  *
@@ -239,17 +230,14 @@ EXPORT_SYMBOL(drm_scdc_set_scrambling);
  * Returns:
  * True if write is successful, false otherwise.
  */
-bool drm_scdc_set_high_tmds_clock_ratio(struct drm_connector *connector,
-					bool set)
+bool drm_scdc_set_high_tmds_clock_ratio(struct i2c_adapter *adapter, bool set)
 {
 	u8 config;
 	int ret;
 
-	ret = drm_scdc_readb(connector->ddc, SCDC_TMDS_CONFIG, &config);
+	ret = drm_scdc_readb(adapter, SCDC_TMDS_CONFIG, &config);
 	if (ret < 0) {
-		drm_dbg_kms(connector->dev,
-			    "[CONNECTOR:%d:%s] Failed to read TMDS config: %d\n",
-			    connector->base.id, connector->name, ret);
+		DRM_DEBUG_KMS("Failed to read TMDS config: %d\n", ret);
 		return false;
 	}
 
@@ -258,11 +246,9 @@ bool drm_scdc_set_high_tmds_clock_ratio(struct drm_connector *connector,
 	else
 		config &= ~SCDC_TMDS_BIT_CLOCK_RATIO_BY_40;
 
-	ret = drm_scdc_writeb(connector->ddc, SCDC_TMDS_CONFIG, config);
+	ret = drm_scdc_writeb(adapter, SCDC_TMDS_CONFIG, config);
 	if (ret < 0) {
-		drm_dbg_kms(connector->dev,
-			    "[CONNECTOR:%d:%s] Failed to set TMDS clock ratio: %d\n",
-			    connector->base.id, connector->name, ret);
+		DRM_DEBUG_KMS("Failed to set TMDS clock ratio: %d\n", ret);
 		return false;
 	}
 

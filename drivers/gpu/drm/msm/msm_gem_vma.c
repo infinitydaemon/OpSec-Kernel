@@ -40,34 +40,25 @@ msm_gem_address_space_get(struct msm_gem_address_space *aspace)
 
 bool msm_gem_vma_inuse(struct msm_gem_vma *vma)
 {
-	bool ret = true;
-
-	spin_lock(&vma->lock);
-
 	if (vma->inuse > 0)
-		goto out;
+		return true;
 
 	while (vma->fence_mask) {
 		unsigned idx = ffs(vma->fence_mask) - 1;
 
 		if (!msm_fence_completed(vma->fctx[idx], vma->fence[idx]))
-			goto out;
+			return true;
 
 		vma->fence_mask &= ~BIT(idx);
 	}
 
-	ret = false;
-
-out:
-	spin_unlock(&vma->lock);
-
-	return ret;
+	return false;
 }
 
 /* Actually unmap memory for the vma */
-void msm_gem_vma_purge(struct msm_gem_vma *vma)
+void msm_gem_purge_vma(struct msm_gem_address_space *aspace,
+		struct msm_gem_vma *vma)
 {
-	struct msm_gem_address_space *aspace = vma->aspace;
 	unsigned size = vma->node.size;
 
 	/* Print a message if we try to purge a vma in use */
@@ -77,12 +68,14 @@ void msm_gem_vma_purge(struct msm_gem_vma *vma)
 	if (!vma->mapped)
 		return;
 
-	aspace->mmu->funcs->unmap(aspace->mmu, vma->iova, size);
+	if (aspace->mmu)
+		aspace->mmu->funcs->unmap(aspace->mmu, vma->iova, size);
 
 	vma->mapped = false;
 }
 
-static void vma_unpin_locked(struct msm_gem_vma *vma)
+/* Remove reference counts for the mapping */
+void msm_gem_unpin_vma(struct msm_gem_vma *vma)
 {
 	if (GEM_WARN_ON(!vma->inuse))
 		return;
@@ -90,75 +83,50 @@ static void vma_unpin_locked(struct msm_gem_vma *vma)
 		vma->inuse--;
 }
 
-/* Remove reference counts for the mapping */
-void msm_gem_vma_unpin(struct msm_gem_vma *vma)
-{
-	spin_lock(&vma->lock);
-	vma_unpin_locked(vma);
-	spin_unlock(&vma->lock);
-}
-
 /* Replace pin reference with fence: */
-void msm_gem_vma_unpin_fenced(struct msm_gem_vma *vma, struct msm_fence_context *fctx)
+void msm_gem_unpin_vma_fenced(struct msm_gem_vma *vma, struct msm_fence_context *fctx)
 {
-	spin_lock(&vma->lock);
 	vma->fctx[fctx->index] = fctx;
 	vma->fence[fctx->index] = fctx->last_fence;
 	vma->fence_mask |= BIT(fctx->index);
-	vma_unpin_locked(vma);
-	spin_unlock(&vma->lock);
+	msm_gem_unpin_vma(vma);
 }
 
 /* Map and pin vma: */
 int
-msm_gem_vma_map(struct msm_gem_vma *vma, int prot,
+msm_gem_map_vma(struct msm_gem_address_space *aspace,
+		struct msm_gem_vma *vma, int prot,
 		struct sg_table *sgt, int size)
 {
-	struct msm_gem_address_space *aspace = vma->aspace;
-	int ret;
+	int ret = 0;
 
 	if (GEM_WARN_ON(!vma->iova))
 		return -EINVAL;
 
 	/* Increase the usage counter */
-	spin_lock(&vma->lock);
 	vma->inuse++;
-	spin_unlock(&vma->lock);
 
 	if (vma->mapped)
 		return 0;
 
 	vma->mapped = true;
 
-	if (!aspace)
-		return 0;
-
-	/*
-	 * NOTE: iommu/io-pgtable can allocate pages, so we cannot hold
-	 * a lock across map/unmap which is also used in the job_run()
-	 * path, as this can cause deadlock in job_run() vs shrinker/
-	 * reclaim.
-	 *
-	 * Revisit this if we can come up with a scheme to pre-alloc pages
-	 * for the pgtable in map/unmap ops.
-	 */
-	ret = aspace->mmu->funcs->map(aspace->mmu, vma->iova, sgt, size, prot);
+	if (aspace && aspace->mmu)
+		ret = aspace->mmu->funcs->map(aspace->mmu, vma->iova, sgt,
+				size, prot);
 
 	if (ret) {
 		vma->mapped = false;
-		spin_lock(&vma->lock);
 		vma->inuse--;
-		spin_unlock(&vma->lock);
 	}
 
 	return ret;
 }
 
 /* Close an iova.  Warn if it is still in use */
-void msm_gem_vma_close(struct msm_gem_vma *vma)
+void msm_gem_close_vma(struct msm_gem_address_space *aspace,
+		struct msm_gem_vma *vma)
 {
-	struct msm_gem_address_space *aspace = vma->aspace;
-
 	GEM_WARN_ON(msm_gem_vma_inuse(vma) || vma->mapped);
 
 	spin_lock(&aspace->lock);
@@ -171,29 +139,12 @@ void msm_gem_vma_close(struct msm_gem_vma *vma)
 	msm_gem_address_space_put(aspace);
 }
 
-struct msm_gem_vma *msm_gem_vma_new(struct msm_gem_address_space *aspace)
-{
-	struct msm_gem_vma *vma;
-
-	vma = kzalloc(sizeof(*vma), GFP_KERNEL);
-	if (!vma)
-		return NULL;
-
-	spin_lock_init(&vma->lock);
-	vma->aspace = aspace;
-
-	return vma;
-}
-
 /* Initialize a new vma and allocate an iova for it */
-int msm_gem_vma_init(struct msm_gem_vma *vma, int size,
+int msm_gem_init_vma(struct msm_gem_address_space *aspace,
+		struct msm_gem_vma *vma, int size,
 		u64 range_start, u64 range_end)
 {
-	struct msm_gem_address_space *aspace = vma->aspace;
 	int ret;
-
-	if (GEM_WARN_ON(!aspace))
-		return -EINVAL;
 
 	if (GEM_WARN_ON(vma->iova))
 		return -EBUSY;

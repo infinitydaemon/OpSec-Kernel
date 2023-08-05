@@ -57,12 +57,11 @@ static void vcn_v1_0_idle_work_handler(struct work_struct *work);
 static void vcn_v1_0_ring_begin_use(struct amdgpu_ring *ring);
 
 /**
- * vcn_v1_0_early_init - set function pointers and load microcode
+ * vcn_v1_0_early_init - set function pointers
  *
  * @handle: amdgpu_device pointer
  *
  * Set ring and irq function pointers
- * Load microcode from filesystem
  */
 static int vcn_v1_0_early_init(void *handle)
 {
@@ -76,7 +75,7 @@ static int vcn_v1_0_early_init(void *handle)
 
 	jpeg_v1_0_early_init(handle);
 
-	return amdgpu_vcn_early_init(adev);
+	return 0;
 }
 
 /**
@@ -120,7 +119,6 @@ static int vcn_v1_0_sw_init(void *handle)
 		return r;
 
 	ring = &adev->vcn.inst->ring_dec;
-	ring->vm_hub = AMDGPU_MMHUB0(0);
 	sprintf(ring->name, "vcn_dec");
 	r = amdgpu_ring_init(adev, ring, 512, &adev->vcn.inst->irq, 0,
 			     AMDGPU_RING_PRIO_DEFAULT, NULL);
@@ -142,7 +140,6 @@ static int vcn_v1_0_sw_init(void *handle)
 		enum amdgpu_ring_priority_level hw_prio = amdgpu_vcn_get_enc_ring_prio(i);
 
 		ring = &adev->vcn.inst->ring_enc[i];
-		ring->vm_hub = AMDGPU_MMHUB0(0);
 		sprintf(ring->name, "vcn_enc%d", i);
 		r = amdgpu_ring_init(adev, ring, 512, &adev->vcn.inst->irq, 0,
 				     hw_prio, NULL);
@@ -211,7 +208,7 @@ static int vcn_v1_0_hw_init(void *handle)
 			goto done;
 	}
 
-	ring = adev->jpeg.inst->ring_dec;
+	ring = &adev->jpeg.inst->ring_dec;
 	r = amdgpu_ring_test_helper(ring);
 	if (r)
 		goto done;
@@ -1304,7 +1301,7 @@ static int vcn_v1_0_pause_dpg_mode(struct amdgpu_device *adev,
 							UVD_DPG_PAUSE__JPEG_PAUSE_DPG_ACK_MASK);
 
 				/* Restore */
-				ring = adev->jpeg.inst->ring_dec;
+				ring = &adev->jpeg.inst->ring_dec;
 				WREG32_SOC15(UVD, 0, mmUVD_LMI_JRBC_RB_VMID, 0);
 				WREG32_SOC15(UVD, 0, mmUVD_JRBC_RB_CNTL,
 							UVD_JRBC_RB_CNTL__RB_NO_FETCH_MASK |
@@ -1550,7 +1547,7 @@ static void vcn_v1_0_dec_ring_emit_reg_wait(struct amdgpu_ring *ring,
 static void vcn_v1_0_dec_ring_emit_vm_flush(struct amdgpu_ring *ring,
 					    unsigned vmid, uint64_t pd_addr)
 {
-	struct amdgpu_vmhub *hub = &ring->adev->vmhub[ring->vm_hub];
+	struct amdgpu_vmhub *hub = &ring->adev->vmhub[ring->funcs->vmhub];
 	uint32_t data0, data1, mask;
 
 	pd_addr = amdgpu_gmc_emit_flush_gpu_tlb(ring, vmid, pd_addr);
@@ -1695,7 +1692,7 @@ static void vcn_v1_0_enc_ring_emit_reg_wait(struct amdgpu_ring *ring,
 static void vcn_v1_0_enc_ring_emit_vm_flush(struct amdgpu_ring *ring,
 					    unsigned int vmid, uint64_t pd_addr)
 {
-	struct amdgpu_vmhub *hub = &ring->adev->vmhub[ring->vm_hub];
+	struct amdgpu_vmhub *hub = &ring->adev->vmhub[ring->funcs->vmhub];
 
 	pd_addr = amdgpu_gmc_emit_flush_gpu_tlb(ring, vmid, pd_addr);
 
@@ -1802,7 +1799,7 @@ static void vcn_v1_0_idle_work_handler(struct work_struct *work)
 		else
 			new_state.fw_based = VCN_DPG_STATE__UNPAUSE;
 
-		if (amdgpu_fence_count_emitted(adev->jpeg.inst->ring_dec))
+		if (amdgpu_fence_count_emitted(&adev->jpeg.inst->ring_dec))
 			new_state.jpeg = VCN_DPG_STATE__PAUSE;
 		else
 			new_state.jpeg = VCN_DPG_STATE__UNPAUSE;
@@ -1810,7 +1807,7 @@ static void vcn_v1_0_idle_work_handler(struct work_struct *work)
 		adev->vcn.pause_dpg_mode(adev, 0, &new_state);
 	}
 
-	fences += amdgpu_fence_count_emitted(adev->jpeg.inst->ring_dec);
+	fences += amdgpu_fence_count_emitted(&adev->jpeg.inst->ring_dec);
 	fences += amdgpu_fence_count_emitted(&adev->vcn.inst->ring_dec);
 
 	if (fences == 0) {
@@ -1832,7 +1829,7 @@ static void vcn_v1_0_ring_begin_use(struct amdgpu_ring *ring)
 
 	mutex_lock(&adev->vcn.vcn1_jpeg1_workaround);
 
-	if (amdgpu_fence_wait_empty(ring->adev->jpeg.inst->ring_dec))
+	if (amdgpu_fence_wait_empty(&ring->adev->jpeg.inst->ring_dec))
 		DRM_ERROR("VCN dec: jpeg dec ring may not be empty\n");
 
 	vcn_v1_0_set_pg_for_begin_use(ring, set_clocks);
@@ -1864,7 +1861,7 @@ void vcn_v1_0_set_pg_for_begin_use(struct amdgpu_ring *ring, bool set_clocks)
 		else
 			new_state.fw_based = VCN_DPG_STATE__UNPAUSE;
 
-		if (amdgpu_fence_count_emitted(adev->jpeg.inst->ring_dec))
+		if (amdgpu_fence_count_emitted(&adev->jpeg.inst->ring_dec))
 			new_state.jpeg = VCN_DPG_STATE__PAUSE;
 		else
 			new_state.jpeg = VCN_DPG_STATE__UNPAUSE;
@@ -1979,6 +1976,7 @@ static const struct amdgpu_ring_funcs vcn_v1_0_dec_ring_vm_funcs = {
 	.support_64bit_ptrs = false,
 	.no_user_fence = true,
 	.secure_submission_supported = true,
+	.vmhub = AMDGPU_MMHUB_0,
 	.get_rptr = vcn_v1_0_dec_ring_get_rptr,
 	.get_wptr = vcn_v1_0_dec_ring_get_wptr,
 	.set_wptr = vcn_v1_0_dec_ring_set_wptr,
@@ -2013,6 +2011,7 @@ static const struct amdgpu_ring_funcs vcn_v1_0_enc_ring_vm_funcs = {
 	.nop = VCN_ENC_CMD_NO_OP,
 	.support_64bit_ptrs = false,
 	.no_user_fence = true,
+	.vmhub = AMDGPU_MMHUB_0,
 	.get_rptr = vcn_v1_0_enc_ring_get_rptr,
 	.get_wptr = vcn_v1_0_enc_ring_get_wptr,
 	.set_wptr = vcn_v1_0_enc_ring_set_wptr,

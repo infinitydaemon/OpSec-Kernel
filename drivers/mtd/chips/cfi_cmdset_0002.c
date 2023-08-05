@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Common Flash Interface support:
  *   AMD & Fujitsu Standard Vendor Command Set (ID 0x0002)
@@ -17,6 +16,8 @@
  * 25/09/2008 Christopher Moore: TopBottom fixup for many Macronix with CFI V1.0
  *
  * Occasionally maintained by Thayne Harbaugh tharbaugh at lnxi dot com
+ *
+ * This code is GPL
  */
 
 #include <linux/module.h>

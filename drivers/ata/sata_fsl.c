@@ -566,7 +566,7 @@ static unsigned int sata_fsl_qc_issue(struct ata_queued_cmd *qc)
 	return 0;
 }
 
-static void sata_fsl_qc_fill_rtf(struct ata_queued_cmd *qc)
+static bool sata_fsl_qc_fill_rtf(struct ata_queued_cmd *qc)
 {
 	struct sata_fsl_port_priv *pp = qc->ap->private_data;
 	struct sata_fsl_host_priv *host_priv = qc->ap->host->private_data;
@@ -577,6 +577,7 @@ static void sata_fsl_qc_fill_rtf(struct ata_queued_cmd *qc)
 	cd = pp->cmdentry + tag;
 
 	ata_tf_from_fis(cd->sfis, &qc->result_tf);
+	return true;
 }
 
 static int sata_fsl_scr_write(struct ata_link *link,
@@ -1041,7 +1042,7 @@ static void sata_fsl_error_handler(struct ata_port *ap)
 
 static void sata_fsl_post_internal_cmd(struct ata_queued_cmd *qc)
 {
-	if (qc->flags & ATA_QCFLAG_EH)
+	if (qc->flags & ATA_QCFLAG_FAILED)
 		qc->err_mask |= AC_ERR_OTHER;
 
 	if (qc->err_mask) {
@@ -1376,7 +1377,7 @@ static void sata_fsl_host_stop(struct ata_host *host)
 /*
  * scsi mid-layer and libata interface structures
  */
-static const struct scsi_host_template sata_fsl_sht = {
+static struct scsi_host_template sata_fsl_sht = {
 	ATA_NCQ_SHT_QD("sata_fsl", SATA_FSL_QUEUE_DEPTH),
 	.sg_tablesize = SATA_FSL_MAX_PRD_USABLE,
 	.dma_boundary = ATA_DMA_BOUNDARY,

@@ -645,6 +645,8 @@ fcloop_fcp_recv_work(struct work_struct *work)
 	}
 	if (ret)
 		fcloop_call_host_done(fcpreq, tfcp_req, ret);
+
+	return;
 }
 
 static void
@@ -1166,8 +1168,7 @@ __wait_localport_unreg(struct fcloop_lport *lport)
 
 	ret = nvme_fc_unregister_localport(lport->localport);
 
-	if (!ret)
-		wait_for_completion(&lport->unreg_done);
+	wait_for_completion(&lport->unreg_done);
 
 	kfree(lport);
 
@@ -1567,7 +1568,7 @@ static int __init fcloop_init(void)
 {
 	int ret;
 
-	fcloop_class = class_create("fcloop");
+	fcloop_class = class_create(THIS_MODULE, "fcloop");
 	if (IS_ERR(fcloop_class)) {
 		pr_err("couldn't register class fcloop\n");
 		ret = PTR_ERR(fcloop_class);

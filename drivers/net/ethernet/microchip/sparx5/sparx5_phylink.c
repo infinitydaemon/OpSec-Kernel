@@ -91,7 +91,8 @@ static void sparx5_pcs_get_state(struct phylink_pcs *pcs,
 	state->pause = status.pause;
 }
 
-static int sparx5_pcs_config(struct phylink_pcs *pcs, unsigned int neg_mode,
+static int sparx5_pcs_config(struct phylink_pcs *pcs,
+			     unsigned int mode,
 			     phy_interface_t interface,
 			     const unsigned long *advertising,
 			     bool permit_pause_to_mac)
@@ -103,9 +104,8 @@ static int sparx5_pcs_config(struct phylink_pcs *pcs, unsigned int neg_mode,
 	conf = port->conf;
 	conf.power_down = false;
 	conf.portmode = interface;
-	conf.inband = neg_mode == PHYLINK_PCS_NEG_INBAND_DISABLED ||
-		      neg_mode == PHYLINK_PCS_NEG_INBAND_ENABLED;
-	conf.autoneg = neg_mode == PHYLINK_PCS_NEG_INBAND_ENABLED;
+	conf.inband = phylink_autoneg_inband(mode);
+	conf.autoneg = phylink_test(advertising, Autoneg);
 	conf.pause_adv = 0;
 	if (phylink_test(advertising, Pause))
 		conf.pause_adv |= ADVERTISE_1000XPAUSE;
@@ -138,6 +138,7 @@ const struct phylink_pcs_ops sparx5_phylink_pcs_ops = {
 };
 
 const struct phylink_mac_ops sparx5_phylink_mac_ops = {
+	.validate = phylink_generic_validate,
 	.mac_select_pcs = sparx5_phylink_mac_select_pcs,
 	.mac_config = sparx5_phylink_mac_config,
 	.mac_link_down = sparx5_phylink_mac_link_down,

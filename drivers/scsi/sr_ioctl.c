@@ -188,15 +188,13 @@ static int sr_play_trkind(struct cdrom_device_info *cdi,
 int sr_do_ioctl(Scsi_CD *cd, struct packet_command *cgc)
 {
 	struct scsi_device *SDev;
-	struct scsi_sense_hdr local_sshdr, *sshdr;
+	struct scsi_sense_hdr local_sshdr, *sshdr = &local_sshdr;
 	int result, err = 0, retries = 0;
-	const struct scsi_exec_args exec_args = {
-		.sshdr = cgc->sshdr ? : &local_sshdr,
-	};
 
 	SDev = cd->device;
 
-	sshdr = exec_args.sshdr;
+	if (cgc->sshdr)
+		sshdr = cgc->sshdr;
 
       retry:
 	if (!scsi_block_when_processing_errors(SDev)) {
@@ -204,11 +202,10 @@ int sr_do_ioctl(Scsi_CD *cd, struct packet_command *cgc)
 		goto out;
 	}
 
-	result = scsi_execute_cmd(SDev, cgc->cmd,
-				  cgc->data_direction == DMA_TO_DEVICE ?
-				  REQ_OP_DRV_OUT : REQ_OP_DRV_IN, cgc->buffer,
-				  cgc->buflen, cgc->timeout, IOCTL_RETRIES,
-				  &exec_args);
+	result = scsi_execute(SDev, cgc->cmd, cgc->data_direction,
+			      cgc->buffer, cgc->buflen, NULL, sshdr,
+			      cgc->timeout, IOCTL_RETRIES, 0, 0, NULL);
+
 	/* Minimal error checking.  Ignore cases we know about, and report the rest. */
 	if (result < 0) {
 		err = result;

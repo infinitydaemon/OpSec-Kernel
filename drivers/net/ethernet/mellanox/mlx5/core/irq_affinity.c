@@ -45,28 +45,30 @@ static int cpu_get_least_loaded(struct mlx5_irq_pool *pool,
 
 /* Creating an IRQ from irq_pool */
 static struct mlx5_irq *
-irq_pool_request_irq(struct mlx5_irq_pool *pool, struct irq_affinity_desc *af_desc)
+irq_pool_request_irq(struct mlx5_irq_pool *pool, const struct cpumask *req_mask)
 {
-	struct irq_affinity_desc auto_desc = {};
+	cpumask_var_t auto_mask;
+	struct mlx5_irq *irq;
 	u32 irq_index;
 	int err;
 
+	if (!zalloc_cpumask_var(&auto_mask, GFP_KERNEL))
+		return ERR_PTR(-ENOMEM);
 	err = xa_alloc(&pool->irqs, &irq_index, NULL, pool->xa_num_irqs, GFP_KERNEL);
 	if (err)
 		return ERR_PTR(err);
 	if (pool->irqs_per_cpu) {
-		if (cpumask_weight(&af_desc->mask) > 1)
+		if (cpumask_weight(req_mask) > 1)
 			/* if req_mask contain more then one CPU, set the least loadad CPU
 			 * of req_mask
 			 */
-			cpumask_set_cpu(cpu_get_least_loaded(pool, &af_desc->mask),
-					&auto_desc.mask);
+			cpumask_set_cpu(cpu_get_least_loaded(pool, req_mask), auto_mask);
 		else
-			cpu_get(pool, cpumask_first(&af_desc->mask));
+			cpu_get(pool, cpumask_first(req_mask));
 	}
-	return mlx5_irq_alloc(pool, irq_index,
-			      cpumask_empty(&auto_desc.mask) ? af_desc : &auto_desc,
-			      NULL);
+	irq = mlx5_irq_alloc(pool, irq_index, cpumask_empty(auto_mask) ? req_mask : auto_mask);
+	free_cpumask_var(auto_mask);
+	return irq;
 }
 
 /* Looking for the IRQ with the smallest refcount that fits req_mask.
@@ -113,22 +115,22 @@ irq_pool_find_least_loaded(struct mlx5_irq_pool *pool, const struct cpumask *req
 /**
  * mlx5_irq_affinity_request - request an IRQ according to the given mask.
  * @pool: IRQ pool to request from.
- * @af_desc: affinity descriptor for this IRQ.
+ * @req_mask: cpumask requested for this IRQ.
  *
  * This function returns a pointer to IRQ, or ERR_PTR in case of error.
  */
 struct mlx5_irq *
-mlx5_irq_affinity_request(struct mlx5_irq_pool *pool, struct irq_affinity_desc *af_desc)
+mlx5_irq_affinity_request(struct mlx5_irq_pool *pool, const struct cpumask *req_mask)
 {
 	struct mlx5_irq *least_loaded_irq, *new_irq;
 
 	mutex_lock(&pool->lock);
-	least_loaded_irq = irq_pool_find_least_loaded(pool, &af_desc->mask);
+	least_loaded_irq = irq_pool_find_least_loaded(pool, req_mask);
 	if (least_loaded_irq &&
 	    mlx5_irq_read_locked(least_loaded_irq) < pool->min_threshold)
 		goto out;
 	/* We didn't find an IRQ with less than min_thres, try to allocate a new IRQ */
-	new_irq = irq_pool_request_irq(pool, af_desc);
+	new_irq = irq_pool_request_irq(pool, req_mask);
 	if (IS_ERR(new_irq)) {
 		if (!least_loaded_irq) {
 			/* We failed to create an IRQ and we didn't find an IRQ */
@@ -192,30 +194,32 @@ int mlx5_irq_affinity_irqs_request_auto(struct mlx5_core_dev *dev, int nirqs,
 					struct mlx5_irq **irqs)
 {
 	struct mlx5_irq_pool *pool = mlx5_irq_pool_get(dev);
-	struct irq_affinity_desc af_desc = {};
+	cpumask_var_t req_mask;
 	struct mlx5_irq *irq;
 	int i = 0;
 
-	af_desc.is_managed = 1;
-	cpumask_copy(&af_desc.mask, cpu_online_mask);
+	if (!zalloc_cpumask_var(&req_mask, GFP_KERNEL))
+		return -ENOMEM;
+	cpumask_copy(req_mask, cpu_online_mask);
 	for (i = 0; i < nirqs; i++) {
 		if (mlx5_irq_pool_is_sf_pool(pool))
-			irq = mlx5_irq_affinity_request(pool, &af_desc);
+			irq = mlx5_irq_affinity_request(pool, req_mask);
 		else
 			/* In case SF pool doesn't exists, fallback to the PF IRQs.
 			 * The PF IRQs are already allocated and binded to CPU
 			 * at this point. Hence, only an index is needed.
 			 */
-			irq = mlx5_irq_request(dev, i, NULL, NULL);
+			irq = mlx5_irq_request(dev, i, NULL);
 		if (IS_ERR(irq))
 			break;
 		irqs[i] = irq;
-		cpumask_clear_cpu(cpumask_first(mlx5_irq_get_affinity_mask(irq)), &af_desc.mask);
+		cpumask_clear_cpu(cpumask_first(mlx5_irq_get_affinity_mask(irq)), req_mask);
 		mlx5_core_dbg(pool->dev, "IRQ %u mapped to cpu %*pbl, %u EQs on this irq\n",
 			      pci_irq_vector(dev->pdev, mlx5_irq_get_index(irq)),
 			      cpumask_pr_args(mlx5_irq_get_affinity_mask(irq)),
 			      mlx5_irq_read_locked(irq) / MLX5_EQ_REFS_PER_IRQ);
 	}
+	free_cpumask_var(req_mask);
 	if (!i)
 		return PTR_ERR(irq);
 	return i;

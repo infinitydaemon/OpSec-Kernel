@@ -1,10 +1,11 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
-/*
+/* SPDX-License-Identifier: GPL-2.0
+ *
  * Copyright (C) 2021 Microsoft Corporation
  *
  * Author: Tushar Sugandhi <tusharsu@linux.microsoft.com>
  *
- * Header file for device mapper IMA measurements.
+ * File: dm-ima.h
+ *       Header file for device mapper IMA measurements.
  */
 
 #ifndef DM_IMA_H

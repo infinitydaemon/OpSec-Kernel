@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0+
 
 #include <net/pkt_cls.h>
-#include <net/pkt_sched.h>
 
 #include "lan966x_main.h"
 
@@ -21,14 +20,8 @@ static int lan966x_tc_setup_qdisc_mqprio(struct lan966x_port *port,
 static int lan966x_tc_setup_qdisc_taprio(struct lan966x_port *port,
 					 struct tc_taprio_qopt_offload *taprio)
 {
-	switch (taprio->cmd) {
-	case TAPRIO_CMD_REPLACE:
-		return lan966x_taprio_add(port, taprio);
-	case TAPRIO_CMD_DESTROY:
-		return lan966x_taprio_del(port);
-	default:
-		return -EOPNOTSUPP;
-	}
+	return taprio->enable ? lan966x_taprio_add(port, taprio) :
+				lan966x_taprio_del(port);
 }
 
 static int lan966x_tc_setup_qdisc_tbf(struct lan966x_port *port,
@@ -76,8 +69,6 @@ static int lan966x_tc_block_cb(enum tc_setup_type type, void *type_data,
 	switch (type) {
 	case TC_SETUP_CLSMATCHALL:
 		return lan966x_tc_matchall(port, type_data, ingress);
-	case TC_SETUP_CLSFLOWER:
-		return lan966x_tc_flower(port, type_data, ingress);
 	default:
 		return -EOPNOTSUPP;
 	}

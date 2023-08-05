@@ -182,7 +182,6 @@ int cros_ec_register(struct cros_ec_device *ec_dev)
 	int err = 0;
 
 	BLOCKING_INIT_NOTIFIER_HEAD(&ec_dev->event_notifier);
-	BLOCKING_INIT_NOTIFIER_HEAD(&ec_dev->panic_notifier);
 
 	ec_dev->max_request = sizeof(struct ec_params_hello);
 	ec_dev->max_response = sizeof(struct ec_response_get_protocol_info);
@@ -199,14 +198,12 @@ int cros_ec_register(struct cros_ec_device *ec_dev)
 	if (!ec_dev->dout)
 		return -ENOMEM;
 
-	lockdep_register_key(&ec_dev->lockdep_key);
 	mutex_init(&ec_dev->lock);
-	lockdep_set_class(&ec_dev->lock, &ec_dev->lockdep_key);
 
 	err = cros_ec_query_all(ec_dev);
 	if (err) {
 		dev_err(dev, "Cannot identify the EC: error %d\n", err);
-		goto exit;
+		return err;
 	}
 
 	if (ec_dev->irq > 0) {
@@ -218,7 +215,7 @@ int cros_ec_register(struct cros_ec_device *ec_dev)
 		if (err) {
 			dev_err(dev, "Failed to request IRQ %d: %d\n",
 				ec_dev->irq, err);
-			goto exit;
+			return err;
 		}
 	}
 
@@ -229,8 +226,7 @@ int cros_ec_register(struct cros_ec_device *ec_dev)
 	if (IS_ERR(ec_dev->ec)) {
 		dev_err(ec_dev->dev,
 			"Failed to create CrOS EC platform device\n");
-		err = PTR_ERR(ec_dev->ec);
-		goto exit;
+		return PTR_ERR(ec_dev->ec);
 	}
 
 	if (ec_dev->max_passthru) {
@@ -296,8 +292,6 @@ int cros_ec_register(struct cros_ec_device *ec_dev)
 exit:
 	platform_device_unregister(ec_dev->ec);
 	platform_device_unregister(ec_dev->pd);
-	mutex_destroy(&ec_dev->lock);
-	lockdep_unregister_key(&ec_dev->lockdep_key);
 	return err;
 }
 EXPORT_SYMBOL(cros_ec_register);
@@ -312,10 +306,9 @@ EXPORT_SYMBOL(cros_ec_register);
  */
 void cros_ec_unregister(struct cros_ec_device *ec_dev)
 {
-	platform_device_unregister(ec_dev->pd);
+	if (ec_dev->pd)
+		platform_device_unregister(ec_dev->pd);
 	platform_device_unregister(ec_dev->ec);
-	mutex_destroy(&ec_dev->lock);
-	lockdep_unregister_key(&ec_dev->lockdep_key);
 }
 EXPORT_SYMBOL(cros_ec_unregister);
 

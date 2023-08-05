@@ -624,7 +624,8 @@ static int stmfts_enable_led(struct stmfts_data *sdata)
 	return 0;
 }
 
-static int stmfts_probe(struct i2c_client *client)
+static int stmfts_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	int err;
 	struct stmfts_data *sdata;
@@ -742,7 +743,7 @@ static void stmfts_remove(struct i2c_client *client)
 	pm_runtime_disable(&client->dev);
 }
 
-static int stmfts_runtime_suspend(struct device *dev)
+static int __maybe_unused stmfts_runtime_suspend(struct device *dev)
 {
 	struct stmfts_data *sdata = dev_get_drvdata(dev);
 	int ret;
@@ -754,7 +755,7 @@ static int stmfts_runtime_suspend(struct device *dev)
 	return ret;
 }
 
-static int stmfts_runtime_resume(struct device *dev)
+static int __maybe_unused stmfts_runtime_resume(struct device *dev)
 {
 	struct stmfts_data *sdata = dev_get_drvdata(dev);
 	int ret;
@@ -766,7 +767,7 @@ static int stmfts_runtime_resume(struct device *dev)
 	return ret;
 }
 
-static int stmfts_suspend(struct device *dev)
+static int __maybe_unused stmfts_suspend(struct device *dev)
 {
 	struct stmfts_data *sdata = dev_get_drvdata(dev);
 
@@ -775,7 +776,7 @@ static int stmfts_suspend(struct device *dev)
 	return 0;
 }
 
-static int stmfts_resume(struct device *dev)
+static int __maybe_unused stmfts_resume(struct device *dev)
 {
 	struct stmfts_data *sdata = dev_get_drvdata(dev);
 
@@ -783,8 +784,8 @@ static int stmfts_resume(struct device *dev)
 }
 
 static const struct dev_pm_ops stmfts_pm_ops = {
-	SYSTEM_SLEEP_PM_OPS(stmfts_suspend, stmfts_resume)
-	RUNTIME_PM_OPS(stmfts_runtime_suspend, stmfts_runtime_resume, NULL)
+	SET_SYSTEM_SLEEP_PM_OPS(stmfts_suspend, stmfts_resume)
+	SET_RUNTIME_PM_OPS(stmfts_runtime_suspend, stmfts_runtime_resume, NULL)
 };
 
 #ifdef CONFIG_OF
@@ -805,7 +806,7 @@ static struct i2c_driver stmfts_driver = {
 	.driver = {
 		.name = STMFTS_DEV_NAME,
 		.of_match_table = of_match_ptr(stmfts_of_match),
-		.pm = pm_ptr(&stmfts_pm_ops),
+		.pm = &stmfts_pm_ops,
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 	},
 	.probe = stmfts_probe,

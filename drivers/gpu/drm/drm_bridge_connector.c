@@ -128,7 +128,14 @@ static void drm_bridge_connector_hpd_cb(void *cb_data,
 	drm_kms_helper_hotplug_event(dev);
 }
 
-static void drm_bridge_connector_enable_hpd(struct drm_connector *connector)
+/**
+ * drm_bridge_connector_enable_hpd - Enable hot-plug detection for the connector
+ * @connector: The DRM bridge connector
+ *
+ * This function enables hot-plug detection for the given bridge connector.
+ * This is typically used by display drivers in their resume handler.
+ */
+void drm_bridge_connector_enable_hpd(struct drm_connector *connector)
 {
 	struct drm_bridge_connector *bridge_connector =
 		to_drm_bridge_connector(connector);
@@ -138,8 +145,17 @@ static void drm_bridge_connector_enable_hpd(struct drm_connector *connector)
 		drm_bridge_hpd_enable(hpd, drm_bridge_connector_hpd_cb,
 				      bridge_connector);
 }
+EXPORT_SYMBOL_GPL(drm_bridge_connector_enable_hpd);
 
-static void drm_bridge_connector_disable_hpd(struct drm_connector *connector)
+/**
+ * drm_bridge_connector_disable_hpd - Disable hot-plug detection for the
+ * connector
+ * @connector: The DRM bridge connector
+ *
+ * This function disables hot-plug detection for the given bridge connector.
+ * This is typically used by display drivers in their suspend handler.
+ */
+void drm_bridge_connector_disable_hpd(struct drm_connector *connector)
 {
 	struct drm_bridge_connector *bridge_connector =
 		to_drm_bridge_connector(connector);
@@ -148,6 +164,7 @@ static void drm_bridge_connector_disable_hpd(struct drm_connector *connector)
 	if (hpd)
 		drm_bridge_hpd_disable(hpd);
 }
+EXPORT_SYMBOL_GPL(drm_bridge_connector_disable_hpd);
 
 /* -----------------------------------------------------------------------------
  * Bridge Connector Functions
@@ -288,8 +305,6 @@ static int drm_bridge_connector_get_modes(struct drm_connector *connector)
 static const struct drm_connector_helper_funcs drm_bridge_connector_helper_funcs = {
 	.get_modes = drm_bridge_connector_get_modes,
 	/* No need for .mode_valid(), the bridges are checked by the core. */
-	.enable_hpd = drm_bridge_connector_enable_hpd,
-	.disable_hpd = drm_bridge_connector_disable_hpd,
 };
 
 /* -----------------------------------------------------------------------------
@@ -372,8 +387,10 @@ struct drm_connector *drm_bridge_connector_init(struct drm_device *drm,
 				    connector_type, ddc);
 	drm_connector_helper_add(connector, &drm_bridge_connector_helper_funcs);
 
-	if (bridge_connector->bridge_hpd)
+	if (bridge_connector->bridge_hpd) {
 		connector->polled = DRM_CONNECTOR_POLL_HPD;
+		drm_bridge_connector_enable_hpd(connector);
+	}
 	else if (bridge_connector->bridge_detect)
 		connector->polled = DRM_CONNECTOR_POLL_CONNECT
 				  | DRM_CONNECTOR_POLL_DISCONNECT;

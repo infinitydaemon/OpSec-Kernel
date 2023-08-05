@@ -45,10 +45,9 @@ struct virtio_pci_vq_info {
 struct virtio_pci_device {
 	struct virtio_device vdev;
 	struct pci_dev *pci_dev;
-	union {
-		struct virtio_pci_legacy_device ldev;
-		struct virtio_pci_modern_device mdev;
-	};
+	struct virtio_pci_legacy_device ldev;
+	struct virtio_pci_modern_device mdev;
+
 	bool is_legacy;
 
 	/* Where to read and clear interrupt */

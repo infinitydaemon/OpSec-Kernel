@@ -89,7 +89,10 @@ struct cca_pvt_ext_crt_sec {
 #define CCA_PVT_EXT_CRT_SEC_FMT_CL 0x40
 
 /**
- * Set up private key fields of a type6 MEX message.
+ * Set up private key fields of a type6 MEX message. The _pad variant
+ * strips leading zeroes from the b_key.
+ * Note that all numerics in the key token are big-endian,
+ * while the entries in the key block header are little-endian.
  *
  * @mex: pointer to user input data
  * @p: pointer to memory area for the key
@@ -108,9 +111,10 @@ static inline int zcrypt_type6_mex_key_en(struct ica_rsa_modexpo *mex, void *p)
 		struct t6_keyblock_hdr t6_hdr;
 		struct cca_token_hdr pubhdr;
 		struct cca_public_sec pubsec;
-		char exponent[];
+		char exponent[0];
 	} __packed *key = p;
-	unsigned char *ptr;
+	unsigned char *temp;
+	int i;
 
 	/*
 	 * The inputdatalength was a selection criteria in the dispatching
@@ -127,29 +131,37 @@ static inline int zcrypt_type6_mex_key_en(struct ica_rsa_modexpo *mex, void *p)
 	key->pubsec = static_pub_sec;
 
 	/* key parameter block */
-	ptr = key->exponent;
-	if (copy_from_user(ptr, mex->b_key, mex->inputdatalength))
+	temp = key->exponent;
+	if (copy_from_user(temp, mex->b_key, mex->inputdatalength))
 		return -EFAULT;
-	ptr += mex->inputdatalength;
+	/* Strip leading zeroes from b_key. */
+	for (i = 0; i < mex->inputdatalength; i++)
+		if (temp[i])
+			break;
+	if (i >= mex->inputdatalength)
+		return -EINVAL;
+	memmove(temp, temp + i, mex->inputdatalength - i);
+	temp += mex->inputdatalength - i;
 	/* modulus */
-	if (copy_from_user(ptr, mex->n_modulus, mex->inputdatalength))
+	if (copy_from_user(temp, mex->n_modulus, mex->inputdatalength))
 		return -EFAULT;
 
 	key->pubsec.modulus_bit_len = 8 * mex->inputdatalength;
 	key->pubsec.modulus_byte_len = mex->inputdatalength;
-	key->pubsec.exponent_len = mex->inputdatalength;
+	key->pubsec.exponent_len = mex->inputdatalength - i;
 	key->pubsec.section_length = sizeof(key->pubsec) +
-					2 * mex->inputdatalength;
+					2 * mex->inputdatalength - i;
 	key->pubhdr.token_length =
 		key->pubsec.section_length + sizeof(key->pubhdr);
 	key->t6_hdr.ulen = key->pubhdr.token_length + 4;
 	key->t6_hdr.blen = key->pubhdr.token_length + 6;
-
-	return sizeof(*key) + 2 * mex->inputdatalength;
+	return sizeof(*key) + 2 * mex->inputdatalength - i;
 }
 
 /**
  * Set up private key fields of a type6 CRT message.
+ * Note that all numerics in the key token are big-endian,
+ * while the entries in the key block header are little-endian.
  *
  * @mex: pointer to user input data
  * @p: pointer to memory area for the key
@@ -168,7 +180,7 @@ static inline int zcrypt_type6_crt_key(struct ica_rsa_modexpo_crt *crt, void *p)
 		struct t6_keyblock_hdr t6_hdr;
 		struct cca_token_hdr token;
 		struct cca_pvt_ext_crt_sec pvt;
-		char key_parts[];
+		char key_parts[0];
 	} __packed *key = p;
 	struct cca_public_sec *pub;
 	int short_len, long_len, pad_len, key_len, size;
@@ -230,7 +242,6 @@ static inline int zcrypt_type6_crt_key(struct ica_rsa_modexpo_crt *crt, void *p)
 	 * used.
 	 */
 	memcpy((char *)(pub + 1), pk_exponent, 3);
-
 	return size;
 }
 

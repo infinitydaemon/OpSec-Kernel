@@ -154,7 +154,7 @@ __i40e_add_ethtool_stats(u64 **data, void *pointer,
  * @ring: the ring to copy
  *
  * Queue statistics must be copied while protected by
- * u64_stats_fetch_begin, so we can't directly use i40e_add_ethtool_stats.
+ * u64_stats_fetch_begin_irq, so we can't directly use i40e_add_ethtool_stats.
  * Assumes that queue stats are defined in i40e_gstrings_queue_stats. If the
  * ring pointer is null, zero out the queue stat values and update the data
  * pointer. Otherwise safely copy the stats from the ring into the supplied
@@ -172,16 +172,16 @@ i40e_add_queue_stats(u64 **data, struct i40e_ring *ring)
 
 	/* To avoid invalid statistics values, ensure that we keep retrying
 	 * the copy until we get a consistent value according to
-	 * u64_stats_fetch_retry. But first, make sure our ring is
+	 * u64_stats_fetch_retry_irq. But first, make sure our ring is
 	 * non-null before attempting to access its syncp.
 	 */
 	do {
-		start = !ring ? 0 : u64_stats_fetch_begin(&ring->syncp);
+		start = !ring ? 0 : u64_stats_fetch_begin_irq(&ring->syncp);
 		for (i = 0; i < size; i++) {
 			i40e_add_one_ethtool_stat(&(*data)[i], ring,
 						  &stats[i]);
 		}
-	} while (ring && u64_stats_fetch_retry(&ring->syncp, start));
+	} while (ring && u64_stats_fetch_retry_irq(&ring->syncp, start));
 
 	/* Once we successfully copy the stats in, update the data pointer */
 	*data += size;
@@ -1287,10 +1287,8 @@ static int i40e_set_link_ksettings(struct net_device *netdev,
 	 * trying to set something that we do not support.
 	 */
 	if (memcmp(&copy_ks.base, &safe_ks.base,
-		   sizeof(struct ethtool_link_settings))) {
-		netdev_err(netdev, "Only speed and autoneg are supported.\n");
+		   sizeof(struct ethtool_link_settings)))
 		return -EOPNOTSUPP;
-	}
 
 	while (test_and_set_bit(__I40E_CONFIG_BUSY, pf->state)) {
 		timeout--;
@@ -1455,8 +1453,8 @@ static int i40e_set_link_ksettings(struct net_device *netdev,
 		status = i40e_aq_set_phy_config(hw, &config, NULL);
 		if (status) {
 			netdev_info(netdev,
-				    "Set phy config failed, err %pe aq_err %s\n",
-				    ERR_PTR(status),
+				    "Set phy config failed, err %d aq_err %s\n",
+				    status,
 				    i40e_aq_str(hw, hw->aq.asq_last_status));
 			err = -EAGAIN;
 			goto done;
@@ -1465,8 +1463,8 @@ static int i40e_set_link_ksettings(struct net_device *netdev,
 		status = i40e_update_link_info(hw);
 		if (status)
 			netdev_dbg(netdev,
-				   "Updating link info failed with err %pe aq_err %s\n",
-				   ERR_PTR(status),
+				   "Updating link info failed with err %d aq_err %s\n",
+				   status,
 				   i40e_aq_str(hw, hw->aq.asq_last_status));
 
 	} else {
@@ -1517,8 +1515,8 @@ static int i40e_set_fec_cfg(struct net_device *netdev, u8 fec_cfg)
 		status = i40e_aq_set_phy_config(hw, &config, NULL);
 		if (status) {
 			netdev_info(netdev,
-				    "Set phy config failed, err %pe aq_err %s\n",
-				    ERR_PTR(status),
+				    "Set phy config failed, err %d aq_err %s\n",
+				    status,
 				    i40e_aq_str(hw, hw->aq.asq_last_status));
 			err = -EAGAIN;
 			goto done;
@@ -1531,8 +1529,8 @@ static int i40e_set_fec_cfg(struct net_device *netdev, u8 fec_cfg)
 			 * (e.g. no physical connection etc.)
 			 */
 			netdev_dbg(netdev,
-				   "Updating link info failed with err %pe aq_err %s\n",
-				   ERR_PTR(status),
+				   "Updating link info failed with err %d aq_err %s\n",
+				   status,
 				   i40e_aq_str(hw, hw->aq.asq_last_status));
 	}
 
@@ -1638,8 +1636,8 @@ static int i40e_nway_reset(struct net_device *netdev)
 
 	ret = i40e_aq_set_link_restart_an(hw, link_up, NULL);
 	if (ret) {
-		netdev_info(netdev, "link restart failed, err %pe aq_err %s\n",
-			    ERR_PTR(ret),
+		netdev_info(netdev, "link restart failed, err %d aq_err %s\n",
+			    ret,
 			    i40e_aq_str(hw, hw->aq.asq_last_status));
 		return -EIO;
 	}
@@ -1755,20 +1753,20 @@ static int i40e_set_pauseparam(struct net_device *netdev,
 	status = i40e_set_fc(hw, &aq_failures, link_up);
 
 	if (aq_failures & I40E_SET_FC_AQ_FAIL_GET) {
-		netdev_info(netdev, "Set fc failed on the get_phy_capabilities call with err %pe aq_err %s\n",
-			    ERR_PTR(status),
+		netdev_info(netdev, "Set fc failed on the get_phy_capabilities call with err %d aq_err %s\n",
+			    status,
 			    i40e_aq_str(hw, hw->aq.asq_last_status));
 		err = -EAGAIN;
 	}
 	if (aq_failures & I40E_SET_FC_AQ_FAIL_SET) {
-		netdev_info(netdev, "Set fc failed on the set_phy_config call with err %pe aq_err %s\n",
-			    ERR_PTR(status),
+		netdev_info(netdev, "Set fc failed on the set_phy_config call with err %d aq_err %s\n",
+			    status,
 			    i40e_aq_str(hw, hw->aq.asq_last_status));
 		err = -EAGAIN;
 	}
 	if (aq_failures & I40E_SET_FC_AQ_FAIL_UPDATE) {
-		netdev_info(netdev, "Set fc failed on the get_link_info call with err %pe aq_err %s\n",
-			    ERR_PTR(status),
+		netdev_info(netdev, "Set fc failed on the get_link_info call with err %d aq_err %s\n",
+			    status,
 			    i40e_aq_str(hw, hw->aq.asq_last_status));
 		err = -EAGAIN;
 	}
@@ -5362,8 +5360,8 @@ flags_complete:
 						0, NULL);
 		if (ret && pf->hw.aq.asq_last_status != I40E_AQ_RC_ESRCH) {
 			dev_info(&pf->pdev->dev,
-				 "couldn't set switch config bits, err %pe aq_err %s\n",
-				 ERR_PTR(ret),
+				 "couldn't set switch config bits, err %d aq_err %s\n",
+				 ret,
 				 i40e_aq_str(&pf->hw,
 					     pf->hw.aq.asq_last_status));
 			/* not a fatal problem, just keep going */
@@ -5402,13 +5400,6 @@ flags_complete:
 		return -EOPNOTSUPP;
 	}
 
-	if ((changed_flags & I40E_FLAG_LEGACY_RX) &&
-	    I40E_2K_TOO_SMALL_WITH_PADDING) {
-		dev_warn(&pf->pdev->dev,
-			 "2k Rx buffer is too small to fit standard MTU and skb_shared_info\n");
-		return -EOPNOTSUPP;
-	}
-
 	if ((changed_flags & new_flags &
 	     I40E_FLAG_LINK_DOWN_ON_CLOSE_ENABLED) &&
 	    (new_flags & I40E_FLAG_MFP_ENABLED))
@@ -5442,8 +5433,8 @@ flags_complete:
 					return -EBUSY;
 				default:
 					dev_warn(&pf->pdev->dev,
-						 "Starting FW LLDP agent failed: error: %pe, %s\n",
-						 ERR_PTR(status),
+						 "Starting FW LLDP agent failed: error: %d, %s\n",
+						 status,
 						 i40e_aq_str(&pf->hw,
 							     adq_err));
 					return -EINVAL;

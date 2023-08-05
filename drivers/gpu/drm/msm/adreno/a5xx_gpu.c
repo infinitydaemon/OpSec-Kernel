@@ -5,7 +5,7 @@
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/cpumask.h>
-#include <linux/firmware/qcom/qcom_scm.h>
+#include <linux/qcom_scm.h>
 #include <linux/pm_opp.h>
 #include <linux/nvmem-consumer.h>
 #include <linux/slab.h>
@@ -89,7 +89,7 @@ static void a5xx_submit_in_rb(struct msm_gpu *gpu, struct msm_gem_submit *submit
 			 * since we've already mapped it once in
 			 * submit_reloc()
 			 */
-			if (WARN_ON(!ptr))
+			if (WARN_ON(IS_ERR_OR_NULL(ptr)))
 				return;
 
 			for (i = 0; i < dwords; i++) {
@@ -567,7 +567,7 @@ static void a5xx_ucode_check_version(struct a5xx_gpu *a5xx_gpu,
 	msm_gem_put_vaddr(obj);
 }
 
-static int a5xx_ucode_load(struct msm_gpu *gpu)
+static int a5xx_ucode_init(struct msm_gpu *gpu)
 {
 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
 	struct a5xx_gpu *a5xx_gpu = to_a5xx_gpu(adreno_gpu);
@@ -605,24 +605,9 @@ static int a5xx_ucode_load(struct msm_gpu *gpu)
 		a5xx_ucode_check_version(a5xx_gpu, a5xx_gpu->pfp_bo);
 	}
 
-	if (a5xx_gpu->has_whereami) {
-		if (!a5xx_gpu->shadow_bo) {
-			a5xx_gpu->shadow = msm_gem_kernel_new(gpu->dev,
-				sizeof(u32) * gpu->nr_rings,
-				MSM_BO_WC | MSM_BO_MAP_PRIV,
-				gpu->aspace, &a5xx_gpu->shadow_bo,
-				&a5xx_gpu->shadow_iova);
+	gpu_write64(gpu, REG_A5XX_CP_ME_INSTR_BASE_LO, a5xx_gpu->pm4_iova);
 
-			if (IS_ERR(a5xx_gpu->shadow))
-				return PTR_ERR(a5xx_gpu->shadow);
-
-			msm_gem_object_set_name(a5xx_gpu->shadow_bo, "shadow");
-		}
-	} else if (gpu->nr_rings > 1) {
-		/* Disable preemption if WHERE_AM_I isn't available */
-		a5xx_preempt_fini(gpu);
-		gpu->nr_rings = 1;
-	}
+	gpu_write64(gpu, REG_A5XX_CP_PFP_INSTR_BASE_LO, a5xx_gpu->pfp_iova);
 
 	return 0;
 }
@@ -915,8 +900,9 @@ static int a5xx_hw_init(struct msm_gpu *gpu)
 	if (adreno_is_a530(adreno_gpu) || adreno_is_a540(adreno_gpu))
 		a5xx_gpmu_ucode_init(gpu);
 
-	gpu_write64(gpu, REG_A5XX_CP_ME_INSTR_BASE_LO, a5xx_gpu->pm4_iova);
-	gpu_write64(gpu, REG_A5XX_CP_PFP_INSTR_BASE_LO, a5xx_gpu->pfp_iova);
+	ret = a5xx_ucode_init(gpu);
+	if (ret)
+		return ret;
 
 	/* Set the ringbuffer address */
 	gpu_write64(gpu, REG_A5XX_CP_RB_BASE, gpu->rb[0]->iova);
@@ -930,10 +916,27 @@ static int a5xx_hw_init(struct msm_gpu *gpu)
 	gpu_write(gpu, REG_A5XX_CP_RB_CNTL,
 		MSM_GPU_RB_CNTL_DEFAULT | AXXX_CP_RB_CNTL_NO_UPDATE);
 
-	/* Configure the RPTR shadow if needed: */
-	if (a5xx_gpu->shadow_bo) {
+	/* Create a privileged buffer for the RPTR shadow */
+	if (a5xx_gpu->has_whereami) {
+		if (!a5xx_gpu->shadow_bo) {
+			a5xx_gpu->shadow = msm_gem_kernel_new(gpu->dev,
+				sizeof(u32) * gpu->nr_rings,
+				MSM_BO_WC | MSM_BO_MAP_PRIV,
+				gpu->aspace, &a5xx_gpu->shadow_bo,
+				&a5xx_gpu->shadow_iova);
+
+			if (IS_ERR(a5xx_gpu->shadow))
+				return PTR_ERR(a5xx_gpu->shadow);
+
+			msm_gem_object_set_name(a5xx_gpu->shadow_bo, "shadow");
+		}
+
 		gpu_write64(gpu, REG_A5XX_CP_RB_RPTR_ADDR,
 			    shadowptr(a5xx_gpu, gpu->rb[0]));
+	} else if (gpu->nr_rings > 1) {
+		/* Disable preemption if WHERE_AM_I isn't available */
+		a5xx_preempt_fini(gpu);
+		gpu->nr_rings = 1;
 	}
 
 	a5xx_preempt_hw_init(gpu);
@@ -1096,19 +1099,14 @@ bool a5xx_idle(struct msm_gpu *gpu, struct msm_ringbuffer *ring)
 static int a5xx_fault_handler(void *arg, unsigned long iova, int flags, void *data)
 {
 	struct msm_gpu *gpu = arg;
-	struct adreno_smmu_fault_info *info = data;
-	char block[12] = "unknown";
-	u32 scratch[] = {
+	pr_warn_ratelimited("*** gpu fault: iova=%08lx, flags=%d (%u,%u,%u,%u)\n",
+			iova, flags,
 			gpu_read(gpu, REG_A5XX_CP_SCRATCH_REG(4)),
 			gpu_read(gpu, REG_A5XX_CP_SCRATCH_REG(5)),
 			gpu_read(gpu, REG_A5XX_CP_SCRATCH_REG(6)),
-			gpu_read(gpu, REG_A5XX_CP_SCRATCH_REG(7)),
-	};
+			gpu_read(gpu, REG_A5XX_CP_SCRATCH_REG(7)));
 
-	if (info)
-		snprintf(block, sizeof(block), "%x", info->fsynr1);
-
-	return adreno_fault_handler(gpu, iova, flags, info, block, scratch);
+	return 0;
 }
 
 static void a5xx_cp_err_irq(struct msm_gpu *gpu)
@@ -1684,7 +1682,6 @@ static const struct adreno_gpu_funcs funcs = {
 		.get_param = adreno_get_param,
 		.set_param = adreno_set_param,
 		.hw_init = a5xx_hw_init,
-		.ucode_load = a5xx_ucode_load,
 		.pm_suspend = a5xx_pm_suspend,
 		.pm_resume = a5xx_pm_resume,
 		.recover = a5xx_recover,
@@ -1701,7 +1698,7 @@ static const struct adreno_gpu_funcs funcs = {
 		.gpu_busy = a5xx_gpu_busy,
 		.gpu_state_get = a5xx_gpu_state_get,
 		.gpu_state_put = a5xx_gpu_state_put,
-		.create_address_space = adreno_create_address_space,
+		.create_address_space = adreno_iommu_create_address_space,
 		.get_rptr = a5xx_get_rptr,
 	},
 	.get_timestamp = a5xx_get_timestamp,

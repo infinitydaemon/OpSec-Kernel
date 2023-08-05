@@ -178,7 +178,7 @@ int pamu_update_paace_stash(int liodn, u32 value)
 }
 
 /**
- * pamu_config_ppaace() - Sets up PPAACE entry for specified liodn
+ * pamu_config_paace() - Sets up PPAACE entry for specified liodn
  *
  * @liodn: Logical IO device number
  * @omi: Operation mapping index -- if ~omi == 0 then omi not defined
@@ -211,7 +211,7 @@ int pamu_config_ppaace(int liodn, u32 omi, u32 stashid, int prot)
 		ppaace->op_encode.index_ot.omi = omi;
 	} else if (~omi != 0) {
 		pr_debug("bad operation mapping index: %d\n", omi);
-		return -ENODEV;
+		return -EINVAL;
 	}
 
 	/* configure stash id */
@@ -232,8 +232,7 @@ int pamu_config_ppaace(int liodn, u32 omi, u32 stashid, int prot)
 /**
  * get_ome_index() - Returns the index in the operation mapping table
  *                   for device.
- * @omi_index: pointer for storing the index value
- * @dev: target device
+ * @*omi_index: pointer for storing the index value
  *
  */
 void get_ome_index(u32 *omi_index, struct device *dev)
@@ -329,7 +328,7 @@ found_cpu_node:
 #define QMAN_PORTAL_PAACE 2
 #define BMAN_PAACE 3
 
-/*
+/**
  * Setup operation mapping and stash destinations for QMAN and QMAN portal.
  * Memory accesses to QMAN and BMAN private memory need not be coherent, so
  * clear the PAACE entry coherency attribute for them.
@@ -358,7 +357,7 @@ static void setup_qbman_paace(struct paace *ppaace, int  paace_type)
 	}
 }
 
-/*
+/**
  * Setup the operation mapping table for various devices. This is a static
  * table where each table index corresponds to a particular device. PAMU uses
  * this table to translate device transaction to appropriate corenet
@@ -780,7 +779,7 @@ static int fsl_pamu_probe(struct platform_device *pdev)
 	of_get_address(dev->of_node, 0, &size, NULL);
 
 	irq = irq_of_parse_and_map(dev->of_node, 0);
-	if (!irq) {
+	if (irq == NO_IRQ) {
 		dev_warn(dev, "no interrupts listed in PAMU node\n");
 		goto error;
 	}
@@ -904,7 +903,7 @@ static int fsl_pamu_probe(struct platform_device *pdev)
 	return 0;
 
 error:
-	if (irq)
+	if (irq != NO_IRQ)
 		free_irq(irq, data);
 
 	kfree_sensitive(data);

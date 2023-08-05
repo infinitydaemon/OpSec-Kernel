@@ -37,6 +37,7 @@
 
 #include "i915_drv.h"
 #include "i915_sysfs.h"
+#include "intel_pm.h"
 
 struct drm_i915_private *kdev_minor_to_i915(struct device *kdev)
 {
@@ -217,8 +218,7 @@ static const struct bin_attribute error_state_attr = {
 static void i915_setup_error_capture(struct device *kdev)
 {
 	if (sysfs_create_bin_file(&kdev->kobj, &error_state_attr))
-		drm_err(&kdev_minor_to_i915(kdev)->drm,
-			"error_state sysfs setup failed\n");
+		DRM_ERROR("error_state sysfs setup failed\n");
 }
 
 static void i915_teardown_error_capture(struct device *kdev)

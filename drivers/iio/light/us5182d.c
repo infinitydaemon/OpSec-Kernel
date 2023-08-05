@@ -832,7 +832,8 @@ static irqreturn_t us5182d_irq_thread_handler(int irq, void *private)
 	return IRQ_HANDLED;
 }
 
-static int us5182d_probe(struct i2c_client *client)
+static int us5182d_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct us5182d_data *data;
 	struct iio_dev *indio_dev;

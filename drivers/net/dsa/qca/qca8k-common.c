@@ -101,6 +101,45 @@ const struct regmap_access_table qca8k_readable_table = {
 	.n_yes_ranges = ARRAY_SIZE(qca8k_readable_ranges),
 };
 
+/* TODO: remove these extra ops when we can support regmap bulk read/write */
+static int qca8k_bulk_read(struct qca8k_priv *priv, u32 reg, u32 *val, int len)
+{
+	int i, count = len / sizeof(u32), ret;
+
+	if (priv->mgmt_master && priv->info->ops->read_eth &&
+	    !priv->info->ops->read_eth(priv, reg, val, len))
+		return 0;
+
+	for (i = 0; i < count; i++) {
+		ret = regmap_read(priv->regmap, reg + (i * 4), val + i);
+		if (ret < 0)
+			return ret;
+	}
+
+	return 0;
+}
+
+/* TODO: remove these extra ops when we can support regmap bulk read/write */
+static int qca8k_bulk_write(struct qca8k_priv *priv, u32 reg, u32 *val, int len)
+{
+	int i, count = len / sizeof(u32), ret;
+	u32 tmp;
+
+	if (priv->mgmt_master && priv->info->ops->write_eth &&
+	    !priv->info->ops->write_eth(priv, reg, val, len))
+		return 0;
+
+	for (i = 0; i < count; i++) {
+		tmp = val[i];
+
+		ret = regmap_write(priv->regmap, reg + (i * 4), tmp);
+		if (ret < 0)
+			return ret;
+	}
+
+	return 0;
+}
+
 static int qca8k_busy_wait(struct qca8k_priv *priv, u32 reg, u32 mask)
 {
 	u32 val;
@@ -111,12 +150,11 @@ static int qca8k_busy_wait(struct qca8k_priv *priv, u32 reg, u32 mask)
 
 static int qca8k_fdb_read(struct qca8k_priv *priv, struct qca8k_fdb *fdb)
 {
-	u32 reg[QCA8K_ATU_TABLE_SIZE];
+	u32 reg[3];
 	int ret;
 
 	/* load the ARL table into an array */
-	ret = regmap_bulk_read(priv->regmap, QCA8K_REG_ATU_DATA0, reg,
-			       QCA8K_ATU_TABLE_SIZE);
+	ret = qca8k_bulk_read(priv, QCA8K_REG_ATU_DATA0, reg, sizeof(reg));
 	if (ret)
 		return ret;
 
@@ -140,7 +178,7 @@ static int qca8k_fdb_read(struct qca8k_priv *priv, struct qca8k_fdb *fdb)
 static void qca8k_fdb_write(struct qca8k_priv *priv, u16 vid, u8 port_mask,
 			    const u8 *mac, u8 aging)
 {
-	u32 reg[QCA8K_ATU_TABLE_SIZE] = { 0 };
+	u32 reg[3] = { 0 };
 
 	/* vid - 83:72 */
 	reg[2] = FIELD_PREP(QCA8K_ATU_VID_MASK, vid);
@@ -157,8 +195,7 @@ static void qca8k_fdb_write(struct qca8k_priv *priv, u16 vid, u8 port_mask,
 	reg[0] |= FIELD_PREP(QCA8K_ATU_ADDR5_MASK, mac[5]);
 
 	/* load the array into the ARL table */
-	regmap_bulk_write(priv->regmap, QCA8K_REG_ATU_DATA0, reg,
-			  QCA8K_ATU_TABLE_SIZE);
+	qca8k_bulk_write(priv, QCA8K_REG_ATU_DATA0, reg, sizeof(reg));
 }
 
 static int qca8k_fdb_access(struct qca8k_priv *priv, enum qca8k_fdb_cmd cmd,
@@ -244,7 +281,7 @@ void qca8k_fdb_flush(struct qca8k_priv *priv)
 }
 
 static int qca8k_fdb_search_and_insert(struct qca8k_priv *priv, u8 port_mask,
-				       const u8 *mac, u16 vid)
+				       const u8 *mac, u16 vid, u8 aging)
 {
 	struct qca8k_fdb fdb = { 0 };
 	int ret;
@@ -261,10 +298,12 @@ static int qca8k_fdb_search_and_insert(struct qca8k_priv *priv, u8 port_mask,
 		goto exit;
 
 	/* Rule exist. Delete first */
-	if (!fdb.aging) {
+	if (fdb.aging) {
 		ret = qca8k_fdb_access(priv, QCA8K_FDB_PURGE, -1);
 		if (ret)
 			goto exit;
+	} else {
+		fdb.aging = aging;
 	}
 
 	/* Add port to fdb portmask */
@@ -288,6 +327,10 @@ static int qca8k_fdb_search_and_del(struct qca8k_priv *priv, u8 port_mask,
 
 	qca8k_fdb_write(priv, vid, 0, mac, 0);
 	ret = qca8k_fdb_access(priv, QCA8K_FDB_SEARCH, -1);
+	if (ret < 0)
+		goto exit;
+
+	ret = qca8k_fdb_read(priv, &fdb);
 	if (ret < 0)
 		goto exit;
 
@@ -760,7 +803,7 @@ int qca8k_port_fdb_add(struct dsa_switch *ds, int port,
 		       const unsigned char *addr, u16 vid,
 		       struct dsa_db db)
 {
-	struct qca8k_priv *priv = ds->priv;
+	struct qca8k_priv *priv = (struct qca8k_priv *)ds->priv;
 	u16 port_mask = BIT(port);
 
 	return qca8k_port_fdb_insert(priv, addr, port_mask, vid);
@@ -770,7 +813,7 @@ int qca8k_port_fdb_del(struct dsa_switch *ds, int port,
 		       const unsigned char *addr, u16 vid,
 		       struct dsa_db db)
 {
-	struct qca8k_priv *priv = ds->priv;
+	struct qca8k_priv *priv = (struct qca8k_priv *)ds->priv;
 	u16 port_mask = BIT(port);
 
 	if (!vid)
@@ -782,7 +825,7 @@ int qca8k_port_fdb_del(struct dsa_switch *ds, int port,
 int qca8k_port_fdb_dump(struct dsa_switch *ds, int port,
 			dsa_fdb_dump_cb_t *cb, void *data)
 {
-	struct qca8k_priv *priv = ds->priv;
+	struct qca8k_priv *priv = (struct qca8k_priv *)ds->priv;
 	struct qca8k_fdb _fdb = { 0 };
 	int cnt = QCA8K_NUM_FDB_RECORDS;
 	bool is_static;
@@ -810,7 +853,11 @@ int qca8k_port_mdb_add(struct dsa_switch *ds, int port,
 	const u8 *addr = mdb->addr;
 	u16 vid = mdb->vid;
 
-	return qca8k_fdb_search_and_insert(priv, BIT(port), addr, vid);
+	if (!vid)
+		vid = QCA8K_PORT_VID_DEF;
+
+	return qca8k_fdb_search_and_insert(priv, BIT(port), addr, vid,
+					   QCA8K_ATU_STATUS_STATIC);
 }
 
 int qca8k_port_mdb_del(struct dsa_switch *ds, int port,
@@ -820,6 +867,9 @@ int qca8k_port_mdb_del(struct dsa_switch *ds, int port,
 	struct qca8k_priv *priv = ds->priv;
 	const u8 *addr = mdb->addr;
 	u16 vid = mdb->vid;
+
+	if (!vid)
+		vid = QCA8K_PORT_VID_DEF;
 
 	return qca8k_fdb_search_and_del(priv, BIT(port), addr, vid);
 }

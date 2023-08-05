@@ -8,7 +8,6 @@
 
 #include "gem/i915_gem_internal.h"
 
-#include "i915_reg.h"
 #include "intel_engine_heartbeat.h"
 #include "intel_engine_pm.h"
 #include "intel_engine_regs.h"
@@ -123,14 +122,14 @@ create_spin_counter(struct intel_engine_cs *engine,
 		if (srm) {
 			*cs++ = MI_STORE_REGISTER_MEM_GEN8;
 			*cs++ = i915_mmio_reg_offset(CS_GPR(COUNT));
-			*cs++ = lower_32_bits(i915_vma_offset(vma) + end * sizeof(*cs));
-			*cs++ = upper_32_bits(i915_vma_offset(vma) + end * sizeof(*cs));
+			*cs++ = lower_32_bits(vma->node.start + end * sizeof(*cs));
+			*cs++ = upper_32_bits(vma->node.start + end * sizeof(*cs));
 		}
 	}
 
 	*cs++ = MI_BATCH_BUFFER_START_GEN8;
-	*cs++ = lower_32_bits(i915_vma_offset(vma) + loop * sizeof(*cs));
-	*cs++ = upper_32_bits(i915_vma_offset(vma) + loop * sizeof(*cs));
+	*cs++ = lower_32_bits(vma->node.start + loop * sizeof(*cs));
+	*cs++ = upper_32_bits(vma->node.start + loop * sizeof(*cs));
 	GEM_BUG_ON(cs - base > end);
 
 	i915_gem_object_flush_map(obj);
@@ -300,13 +299,13 @@ int live_rps_clock_interval(void *arg)
 			for (i = 0; i < 5; i++) {
 				preempt_disable();
 
-				cycles_[i] = -intel_uncore_read_fw(gt->uncore, GEN6_RP_CUR_UP_EI);
 				dt_[i] = ktime_get();
+				cycles_[i] = -intel_uncore_read_fw(gt->uncore, GEN6_RP_CUR_UP_EI);
 
 				udelay(1000);
 
-				cycles_[i] += intel_uncore_read_fw(gt->uncore, GEN6_RP_CUR_UP_EI);
 				dt_[i] = ktime_sub(ktime_get(), dt_[i]);
+				cycles_[i] += intel_uncore_read_fw(gt->uncore, GEN6_RP_CUR_UP_EI);
 
 				preempt_enable();
 			}
@@ -538,8 +537,8 @@ static u64 __measure_frequency(u32 *cntr, int duration_ms)
 {
 	u64 dc, dt;
 
-	dc = READ_ONCE(*cntr);
 	dt = ktime_get();
+	dc = READ_ONCE(*cntr);
 	usleep_range(1000 * duration_ms, 2000 * duration_ms);
 	dc = READ_ONCE(*cntr) - dc;
 	dt = ktime_get() - dt;
@@ -567,8 +566,8 @@ static u64 __measure_cs_frequency(struct intel_engine_cs *engine,
 {
 	u64 dc, dt;
 
-	dc = intel_uncore_read_fw(engine->uncore, CS_GPR(0));
 	dt = ktime_get();
+	dc = intel_uncore_read_fw(engine->uncore, CS_GPR(0));
 	usleep_range(1000 * duration_ms, 2000 * duration_ms);
 	dc = intel_uncore_read_fw(engine->uncore, CS_GPR(0)) - dc;
 	dt = ktime_get() - dt;
@@ -653,10 +652,12 @@ int live_rps_frequency_cs(void *arg)
 			goto err_vma;
 		}
 
-		err = i915_vma_move_to_active(vma, rq, 0);
+		err = i915_request_await_object(rq, vma->obj, false);
+		if (!err)
+			err = i915_vma_move_to_active(vma, rq, 0);
 		if (!err)
 			err = rq->engine->emit_bb_start(rq,
-							i915_vma_offset(vma),
+							vma->node.start,
 							PAGE_SIZE, 0);
 		i915_request_add(rq);
 		if (err)
@@ -792,10 +793,12 @@ int live_rps_frequency_srm(void *arg)
 			goto err_vma;
 		}
 
-		err = i915_vma_move_to_active(vma, rq, 0);
+		err = i915_request_await_object(rq, vma->obj, false);
+		if (!err)
+			err = i915_vma_move_to_active(vma, rq, 0);
 		if (!err)
 			err = rq->engine->emit_bb_start(rq,
-							i915_vma_offset(vma),
+							vma->node.start,
 							PAGE_SIZE, 0);
 		i915_request_add(rq);
 		if (err)
@@ -1095,8 +1098,8 @@ static u64 __measure_power(int duration_ms)
 {
 	u64 dE, dt;
 
-	dE = librapl_energy_uJ();
 	dt = ktime_get();
+	dE = librapl_energy_uJ();
 	usleep_range(1000 * duration_ms, 2000 * duration_ms);
 	dE = librapl_energy_uJ() - dE;
 	dt = ktime_get() - dt;
@@ -1104,25 +1107,19 @@ static u64 __measure_power(int duration_ms)
 	return div64_u64(1000 * 1000 * dE, dt);
 }
 
-static u64 measure_power(struct intel_rps *rps, int *freq)
+static u64 measure_power_at(struct intel_rps *rps, int *freq)
 {
 	u64 x[5];
 	int i;
 
+	*freq = rps_set_check(rps, *freq);
 	for (i = 0; i < 5; i++)
 		x[i] = __measure_power(5);
-
-	*freq = (*freq + intel_rps_read_actual_frequency(rps)) / 2;
+	*freq = (*freq + read_cagf(rps)) / 2;
 
 	/* A simple triangle filter for better result stability */
 	sort(x, 5, sizeof(*x), cmp_u64, NULL);
 	return div_u64(x[1] + 2 * x[2] + x[3], 4);
-}
-
-static u64 measure_power_at(struct intel_rps *rps, int *freq)
-{
-	*freq = rps_set_check(rps, *freq);
-	return measure_power(rps, freq);
 }
 
 int live_rps_power(void *arg)

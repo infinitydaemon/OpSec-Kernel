@@ -253,7 +253,8 @@ static const struct iio_info lidar_info = {
 	.read_raw = lidar_read_raw,
 };
 
-static int lidar_probe(struct i2c_client *client)
+static int lidar_probe(struct i2c_client *client,
+		       const struct i2c_device_id *id)
 {
 	struct lidar_data *data;
 	struct iio_dev *indio_dev;

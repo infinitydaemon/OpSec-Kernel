@@ -27,7 +27,7 @@
 // *** IMPORTANT ***
 // SMU TEAM: Always increment the interface version if
 // any structure is changed in this file
-#define SMU13_0_4_DRIVER_IF_VERSION 8
+#define PMFW_DRIVER_IF_VERSION 8
 
 typedef struct {
   int32_t value;

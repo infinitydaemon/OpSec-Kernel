@@ -589,12 +589,13 @@ static int intel_cbphy_probe(struct platform_device *pdev)
 	return intel_cbphy_create(cbphy);
 }
 
-static void intel_cbphy_remove(struct platform_device *pdev)
+static int intel_cbphy_remove(struct platform_device *pdev)
 {
 	struct intel_combo_phy *cbphy = platform_get_drvdata(pdev);
 
 	intel_cbphy_rst_assert(cbphy);
 	clk_disable_unprepare(cbphy->core_clk);
+	return 0;
 }
 
 static const struct of_device_id of_intel_cbphy_match[] = {
@@ -605,7 +606,7 @@ static const struct of_device_id of_intel_cbphy_match[] = {
 
 static struct platform_driver intel_cbphy_driver = {
 	.probe = intel_cbphy_probe,
-	.remove_new = intel_cbphy_remove,
+	.remove = intel_cbphy_remove,
 	.driver = {
 		.name = "intel-combo-phy",
 		.of_match_table = of_intel_cbphy_match,
@@ -615,3 +616,4 @@ static struct platform_driver intel_cbphy_driver = {
 module_platform_driver(intel_cbphy_driver);
 
 MODULE_DESCRIPTION("Intel Combo-phy driver");
+MODULE_LICENSE("GPL v2");

@@ -25,7 +25,8 @@ static const struct regmap_config st_uvis25_i2c_regmap_config = {
 	.read_flag_mask = UVIS25_I2C_AUTO_INCREMENT,
 };
 
-static int st_uvis25_i2c_probe(struct i2c_client *client)
+static int st_uvis25_i2c_probe(struct i2c_client *client,
+			       const struct i2c_device_id *id)
 {
 	struct regmap *regmap;
 

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-1.0+
 /*======================================================================
 
     A PCMCIA ethernet driver for NS8390-based cards
@@ -18,7 +17,9 @@
 
     Written 1992,1993 by Donald Becker.
     Copyright 1993 United States Government as represented by the
-    Director, National Security Agency.
+    Director, National Security Agency.  This software may be used and
+    distributed according to the terms of the GNU General Public License,
+    incorporated herein by reference.
     Donald Becker may be reached at becker@scyld.com
 
     Based also on Keith Moore's changes to Don Becker's code, for IBM

@@ -139,8 +139,7 @@ static int smi_spi_probe(struct platform_device *pdev, struct smi *smi,
 			goto error;
 		}
 
-		dev_dbg(dev, "SPI device %s using chip select %u", name,
-			spi_get_chipselect(spi_dev, 0));
+		dev_dbg(dev, "SPI device %s using chip select %u", name, spi_dev->chip_select);
 
 		smi->spi_devs[i] = spi_dev;
 		smi->spi_num++;
@@ -266,11 +265,13 @@ static int smi_probe(struct platform_device *pdev)
 	}
 }
 
-static void smi_remove(struct platform_device *pdev)
+static int smi_remove(struct platform_device *pdev)
 {
 	struct smi *smi = platform_get_drvdata(pdev);
 
 	smi_devs_unregister(smi);
+
+	return 0;
 }
 
 static const struct smi_node bsg1160_data = {
@@ -338,7 +339,7 @@ static struct platform_driver smi_driver = {
 		.acpi_match_table = smi_acpi_ids,
 	},
 	.probe = smi_probe,
-	.remove_new = smi_remove,
+	.remove = smi_remove,
 };
 module_platform_driver(smi_driver);
 

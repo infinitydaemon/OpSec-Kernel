@@ -21,6 +21,7 @@
 #include "omap_crtc.h"
 #include "omap_encoder.h"
 #include "omap_fb.h"
+#include "omap_fbdev.h"
 #include "omap_gem.h"
 #include "omap_irq.h"
 #include "omap_plane.h"
@@ -75,6 +76,8 @@ struct omap_drm_private {
 	struct omap_hw_overlay *overlays[8];
 
 	struct drm_private_obj glob_obj;
+
+	struct drm_fb_helper *fbdev;
 
 	struct workqueue_struct *wq;
 

@@ -542,7 +542,8 @@ static struct attribute_group ilitek_attrs_group = {
 	.attrs = ilitek_sysfs_attrs,
 };
 
-static int ilitek_ts_i2c_probe(struct i2c_client *client)
+static int ilitek_ts_i2c_probe(struct i2c_client *client,
+			       const struct i2c_device_id *id)
 {
 	struct ilitek_ts_data *ts;
 	struct device *dev = &client->dev;
@@ -604,7 +605,7 @@ static int ilitek_ts_i2c_probe(struct i2c_client *client)
 	return 0;
 }
 
-static int ilitek_suspend(struct device *dev)
+static int __maybe_unused ilitek_suspend(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct ilitek_ts_data *ts = i2c_get_clientdata(client);
@@ -621,7 +622,7 @@ static int ilitek_suspend(struct device *dev)
 	return 0;
 }
 
-static int ilitek_resume(struct device *dev)
+static int __maybe_unused ilitek_resume(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct ilitek_ts_data *ts = i2c_get_clientdata(client);
@@ -640,7 +641,7 @@ static int ilitek_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(ilitek_pm_ops, ilitek_suspend, ilitek_resume);
+static SIMPLE_DEV_PM_OPS(ilitek_pm_ops, ilitek_suspend, ilitek_resume);
 
 static const struct i2c_device_id ilitek_ts_i2c_id[] = {
 	{ ILITEK_TS_NAME, 0 },
@@ -675,7 +676,7 @@ MODULE_DEVICE_TABLE(of, ilitek_ts_i2c_match);
 static struct i2c_driver ilitek_ts_i2c_driver = {
 	.driver = {
 		.name = ILITEK_TS_NAME,
-		.pm = pm_sleep_ptr(&ilitek_pm_ops),
+		.pm = &ilitek_pm_ops,
 		.of_match_table = of_match_ptr(ilitek_ts_i2c_match),
 		.acpi_match_table = ACPI_PTR(ilitekts_acpi_id),
 	},

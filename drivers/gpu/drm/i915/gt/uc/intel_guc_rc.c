@@ -6,7 +6,6 @@
 #include <linux/string_helpers.h>
 
 #include "intel_guc_rc.h"
-#include "intel_guc_print.h"
 #include "gt/intel_gt.h"
 #include "i915_drv.h"
 
@@ -60,12 +59,13 @@ static int __guc_rc_control(struct intel_guc *guc, bool enable)
 
 	ret = guc_action_control_gucrc(guc, enable);
 	if (ret) {
-		guc_probe_error(guc, "Failed to %s RC (%pe)\n",
-				str_enable_disable(enable), ERR_PTR(ret));
+		i915_probe_error(guc_to_gt(guc)->i915, "Failed to %s GuC RC (%pe)\n",
+				 str_enable_disable(enable), ERR_PTR(ret));
 		return ret;
 	}
 
-	guc_info(guc, "RC %s\n", str_enabled_disabled(enable));
+	drm_info(&gt->i915->drm, "GuC RC: %s\n",
+		 str_enabled_disabled(enable));
 
 	return 0;
 }

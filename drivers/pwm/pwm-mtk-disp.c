@@ -183,14 +183,14 @@ static int mtk_disp_pwm_get_state(struct pwm_chip *chip,
 	err = clk_prepare_enable(mdp->clk_main);
 	if (err < 0) {
 		dev_err(chip->dev, "Can't enable mdp->clk_main: %pe\n", ERR_PTR(err));
-		return err;
+		return 0;
 	}
 
 	err = clk_prepare_enable(mdp->clk_mm);
 	if (err < 0) {
 		dev_err(chip->dev, "Can't enable mdp->clk_mm: %pe\n", ERR_PTR(err));
 		clk_disable_unprepare(mdp->clk_main);
-		return err;
+		return 0;
 	}
 
 	/*
@@ -269,11 +269,13 @@ static int mtk_disp_pwm_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void mtk_disp_pwm_remove(struct platform_device *pdev)
+static int mtk_disp_pwm_remove(struct platform_device *pdev)
 {
 	struct mtk_disp_pwm *mdp = platform_get_drvdata(pdev);
 
 	pwmchip_remove(&mdp->chip);
+
+	return 0;
 }
 
 static const struct mtk_pwm_data mt2701_pwm_data = {
@@ -321,7 +323,7 @@ static struct platform_driver mtk_disp_pwm_driver = {
 		.of_match_table = mtk_disp_pwm_of_match,
 	},
 	.probe = mtk_disp_pwm_probe,
-	.remove_new = mtk_disp_pwm_remove,
+	.remove = mtk_disp_pwm_remove,
 };
 module_platform_driver(mtk_disp_pwm_driver);
 

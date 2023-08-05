@@ -391,9 +391,11 @@ err:
 	return ret;
 }
 
-static void mixel_lvds_phy_remove(struct platform_device *pdev)
+static int mixel_lvds_phy_remove(struct platform_device *pdev)
 {
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 static int __maybe_unused mixel_lvds_phy_runtime_suspend(struct device *dev)
@@ -434,7 +436,7 @@ MODULE_DEVICE_TABLE(of, mixel_lvds_phy_of_match);
 
 static struct platform_driver mixel_lvds_phy_driver = {
 	.probe	= mixel_lvds_phy_probe,
-	.remove_new = mixel_lvds_phy_remove,
+	.remove	= mixel_lvds_phy_remove,
 	.driver = {
 		.pm = &mixel_lvds_phy_pm_ops,
 		.name = "mixel-lvds-phy",

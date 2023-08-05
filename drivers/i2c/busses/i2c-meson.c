@@ -535,12 +535,14 @@ static int meson_i2c_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void meson_i2c_remove(struct platform_device *pdev)
+static int meson_i2c_remove(struct platform_device *pdev)
 {
 	struct meson_i2c *i2c = platform_get_drvdata(pdev);
 
 	i2c_del_adapter(&i2c->adap);
 	clk_disable_unprepare(i2c->clk);
+
+	return 0;
 }
 
 static const struct meson_i2c_data i2c_meson6_data = {
@@ -566,7 +568,7 @@ MODULE_DEVICE_TABLE(of, meson_i2c_match);
 
 static struct platform_driver meson_i2c_driver = {
 	.probe   = meson_i2c_probe,
-	.remove_new = meson_i2c_remove,
+	.remove  = meson_i2c_remove,
 	.driver  = {
 		.name  = "meson-i2c",
 		.of_match_table = meson_i2c_match,

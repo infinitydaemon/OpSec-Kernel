@@ -450,18 +450,18 @@ int cca_clr2seckey(u16 cardnr, u16 domain, u32 keybitsize,
 		char  rule_array[8];
 		struct lv1 {
 			u16 len;
-			u8  clrkey[];
+			u8  clrkey[0];
 		} lv1;
-		/* followed by struct lv2 */
-	} __packed * preqparm;
-	struct lv2 {
-		u16 len;
-		struct keyid {
+		struct lv2 {
 			u16 len;
-			u16 attr;
-			u8  data[SECKEYBLOBSIZE];
-		} keyid;
-	} __packed * plv2;
+			struct keyid {
+				u16 len;
+				u16 attr;
+				u8  data[SECKEYBLOBSIZE];
+			} keyid;
+		} lv2;
+	} __packed * preqparm;
+	struct lv2 *plv2;
 	struct cmrepparm {
 		u8  subfunc_code[2];
 		u16 rule_array_len;
@@ -512,11 +512,11 @@ int cca_clr2seckey(u16 cardnr, u16 domain, u32 keybitsize,
 	}
 	preqparm->lv1.len = sizeof(struct lv1) + keysize;
 	memcpy(preqparm->lv1.clrkey, clrkey, keysize);
-	plv2 = (struct lv2 *)(((u8 *)preqparm) + sizeof(*preqparm) + keysize);
+	plv2 = (struct lv2 *)(((u8 *)&preqparm->lv2) + keysize);
 	plv2->len = sizeof(struct lv2);
 	plv2->keyid.len = sizeof(struct keyid);
 	plv2->keyid.attr = 0x30;
-	preqcblk->req_parml = sizeof(*preqparm) + keysize + sizeof(*plv2);
+	preqcblk->req_parml = sizeof(struct cmreqparm) + keysize;
 
 	/* fill xcrb struct */
 	prep_xcrb(&xcrb, cardnr, preqcblk, prepcblk);
@@ -689,7 +689,7 @@ int cca_sec2protkey(u16 cardnr, u16 domain,
 		goto out;
 	}
 
-	/* copy the translated protected key */
+	/* copy the tanslated protected key */
 	switch (prepparm->lv3.ckb.len) {
 	case 16 + 32:
 		/* AES 128 protected key */
@@ -761,22 +761,22 @@ int cca_gencipherkey(u16 cardnr, u16 domain, u32 keybitsize, u32 keygenflags,
 			u16 key_name_2_len;
 			u16 user_data_1_len;
 			u16 user_data_2_len;
-			/* u8  key_name_1[]; */
-			/* u8  key_name_2[]; */
-			/* u8  user_data_1[]; */
-			/* u8  user_data_2[]; */
+			u8  key_name_1[0];
+			u8  key_name_2[0];
+			u8  user_data_1[0];
+			u8  user_data_2[0];
 		} vud;
 		struct {
 			u16 len;
 			struct {
 				u16 len;
 				u16 flag;
-				/* u8  kek_id_1[]; */
+				u8  kek_id_1[0];
 			} tlv1;
 			struct {
 				u16 len;
 				u16 flag;
-				/* u8  kek_id_2[]; */
+				u8  kek_id_2[0];
 			} tlv2;
 			struct {
 				u16 len;
@@ -786,17 +786,17 @@ int cca_gencipherkey(u16 cardnr, u16 domain, u32 keybitsize, u32 keygenflags,
 			struct {
 				u16 len;
 				u16 flag;
-				/* u8  gen_key_id_1_label[]; */
+				u8  gen_key_id_1_label[0];
 			} tlv4;
 			struct {
 				u16 len;
 				u16 flag;
-				/* u8  gen_key_id_2[]; */
+				u8  gen_key_id_2[0];
 			} tlv5;
 			struct {
 				u16 len;
 				u16 flag;
-				/* u8  gen_key_id_2_label[]; */
+				u8  gen_key_id_2_label[0];
 			} tlv6;
 		} kb;
 	} __packed * preqparm;
@@ -811,7 +811,7 @@ int cca_gencipherkey(u16 cardnr, u16 domain, u32 keybitsize, u32 keygenflags,
 			struct {
 				u16 len;
 				u16 flag;
-				u8  gen_key[]; /* 120-136 bytes */
+				u8  gen_key[0]; /* 120-136 bytes */
 			} tlv1;
 		} kb;
 	} __packed * prepparm;
@@ -955,7 +955,7 @@ static int _ip_cprb_helper(u16 cardnr, u16 domain,
 	struct rule_array_block {
 		u8  subfunc_code[2];
 		u16 rule_array_len;
-		char rule_array[];
+		char rule_array[0];
 	} __packed * preq_ra_block;
 	struct vud_block {
 		u16 len;
@@ -967,7 +967,7 @@ static int _ip_cprb_helper(u16 cardnr, u16 domain,
 		struct {
 			u16 len;
 			u16 flag;	/* 0x0063 */
-			u8  clr_key[];	/* clear key value bytes */
+			u8  clr_key[0]; /* clear key value bytes */
 		} tlv2;
 	} __packed * preq_vud_block;
 	struct key_block {
@@ -975,7 +975,7 @@ static int _ip_cprb_helper(u16 cardnr, u16 domain,
 		struct {
 			u16 len;
 			u16 flag;	  /* 0x0030 */
-			u8  key_token[];  /* key skeleton */
+			u8  key_token[0]; /* key skeleton */
 		} tlv1;
 	} __packed * preq_key_block;
 	struct iprepparm {
@@ -989,7 +989,7 @@ static int _ip_cprb_helper(u16 cardnr, u16 domain,
 			struct {
 				u16 len;
 				u16 flag;	  /* 0x0030 */
-				u8  key_token[];  /* key token */
+				u8  key_token[0]; /* key token */
 			} tlv1;
 		} kb;
 	} __packed * prepparm;
@@ -1201,7 +1201,7 @@ int cca_cipher2protkey(u16 cardnr, u16 domain, const u8 *ckey,
 			u16 len;
 			u16 cca_key_token_len;
 			u16 cca_key_token_flags;
-			u8  cca_key_token[]; /* 64 or more */
+			u8  cca_key_token[0]; // 64 or more
 		} kb;
 	} __packed * preqparm;
 	struct aurepparm {
@@ -1370,7 +1370,7 @@ int cca_ecc2protkey(u16 cardnr, u16 domain, const u8 *key,
 			u16 len;
 			u16 cca_key_token_len;
 			u16 cca_key_token_flags;
-			u8  cca_key_token[];
+			u8  cca_key_token[0];
 		} kb;
 	} __packed * preqparm;
 	struct aurepparm {
@@ -1387,15 +1387,17 @@ int cca_ecc2protkey(u16 cardnr, u16 domain, const u8 *key,
 				u8  form;
 				u8  pad1[3];
 				u16 keylen;
-				u8  key[];  /* the key (keylen bytes) */
-				/* u16 keyattrlen; */
-				/* u8  keyattr[32]; */
-				/* u8  pad2[1]; */
-				/* u8  vptype; */
-				/* u8  vp[32];	verification pattern */
+				u8  key[0];  /* the key (keylen bytes) */
+				u16 keyattrlen;
+				u8  keyattr[32];
+				u8  pad2[1];
+				u8  vptype;
+				u8  vp[32];  /* verification pattern */
 			} ckb;
 		} vud;
-		/* followed by a key block */
+		struct {
+			u16 len;
+		} kb;
 	} __packed * prepparm;
 	int keylen = ((struct eccprivkeytoken *)key)->len;
 
@@ -1523,7 +1525,7 @@ int cca_query_crypto_facility(u16 cardnr, u16 domain,
 	size_t parmbsize = sizeof(struct fqreqparm);
 	struct fqrepparm {
 		u8  subfunc_code[2];
-		u8  lvdata[];
+		u8  lvdata[0];
 	} __packed * prepparm;
 
 	/* get already prepared memory for 2 cprbs with param block each */

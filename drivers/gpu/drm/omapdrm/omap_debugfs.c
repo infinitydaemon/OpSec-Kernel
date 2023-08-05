@@ -47,15 +47,15 @@ static int fb_show(struct seq_file *m, void *arg)
 {
 	struct drm_info_node *node = (struct drm_info_node *) m->private;
 	struct drm_device *dev = node->minor->dev;
-	struct drm_fb_helper *helper = dev->fb_helper;
+	struct omap_drm_private *priv = dev->dev_private;
 	struct drm_framebuffer *fb;
 
 	seq_printf(m, "fbcon ");
-	omap_framebuffer_describe(helper->fb, m);
+	omap_framebuffer_describe(priv->fbdev->fb, m);
 
 	mutex_lock(&dev->mode_config.fb_lock);
 	list_for_each_entry(fb, &dev->mode_config.fb_list, head) {
-		if (fb == helper->fb)
+		if (fb == priv->fbdev->fb)
 			continue;
 
 		seq_printf(m, "user ");

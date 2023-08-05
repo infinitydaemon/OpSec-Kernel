@@ -240,27 +240,23 @@ static int mbigen_of_create_domain(struct platform_device *pdev,
 	struct irq_domain *domain;
 	struct device_node *np;
 	u32 num_pins;
-	int ret = 0;
-
-	parent = bus_get_dev_root(&platform_bus_type);
-	if (!parent)
-		return -ENODEV;
 
 	for_each_child_of_node(pdev->dev.of_node, np) {
 		if (!of_property_read_bool(np, "interrupt-controller"))
 			continue;
 
+		parent = platform_bus_type.dev_root;
 		child = of_platform_device_create(np, NULL, parent);
 		if (!child) {
-			ret = -ENOMEM;
-			break;
+			of_node_put(np);
+			return -ENOMEM;
 		}
 
 		if (of_property_read_u32(child->dev.of_node, "num-pins",
 					 &num_pins) < 0) {
 			dev_err(&pdev->dev, "No num-pins property\n");
-			ret = -EINVAL;
-			break;
+			of_node_put(np);
+			return -EINVAL;
 		}
 
 		domain = platform_msi_create_device_domain(&child->dev, num_pins,
@@ -268,16 +264,12 @@ static int mbigen_of_create_domain(struct platform_device *pdev,
 							   &mbigen_domain_ops,
 							   mgn_chip);
 		if (!domain) {
-			ret = -ENOMEM;
-			break;
+			of_node_put(np);
+			return -ENOMEM;
 		}
 	}
 
-	put_device(parent);
-	if (ret)
-		of_node_put(np);
-
-	return ret;
+	return 0;
 }
 
 #ifdef CONFIG_ACPI
@@ -397,4 +389,5 @@ module_platform_driver(mbigen_platform_driver);
 
 MODULE_AUTHOR("Jun Ma <majun258@huawei.com>");
 MODULE_AUTHOR("Yun Wu <wuyun.wu@huawei.com>");
+MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("HiSilicon MBI Generator driver");

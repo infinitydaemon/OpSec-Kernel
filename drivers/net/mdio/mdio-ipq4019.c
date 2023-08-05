@@ -53,8 +53,7 @@ static int ipq4019_mdio_wait_busy(struct mii_bus *bus)
 				  IPQ4019_MDIO_SLEEP, IPQ4019_MDIO_TIMEOUT);
 }
 
-static int ipq4019_mdio_read_c45(struct mii_bus *bus, int mii_id, int mmd,
-				 int reg)
+static int ipq4019_mdio_read(struct mii_bus *bus, int mii_id, int regnum)
 {
 	struct ipq4019_mdio_data *priv = bus->priv;
 	unsigned int data;
@@ -63,19 +62,38 @@ static int ipq4019_mdio_read_c45(struct mii_bus *bus, int mii_id, int mmd,
 	if (ipq4019_mdio_wait_busy(bus))
 		return -ETIMEDOUT;
 
-	data = readl(priv->membase + MDIO_MODE_REG);
+	/* Clause 45 support */
+	if (regnum & MII_ADDR_C45) {
+		unsigned int mmd = (regnum >> 16) & 0x1F;
+		unsigned int reg = regnum & 0xFFFF;
 
-	data |= MDIO_MODE_C45;
+		/* Enter Clause 45 mode */
+		data = readl(priv->membase + MDIO_MODE_REG);
 
-	writel(data, priv->membase + MDIO_MODE_REG);
+		data |= MDIO_MODE_C45;
 
-	/* issue the phy address and mmd */
-	writel((mii_id << 8) | mmd, priv->membase + MDIO_ADDR_REG);
+		writel(data, priv->membase + MDIO_MODE_REG);
 
-	/* issue reg */
-	writel(reg, priv->membase + MDIO_DATA_WRITE_REG);
+		/* issue the phy address and mmd */
+		writel((mii_id << 8) | mmd, priv->membase + MDIO_ADDR_REG);
 
-	cmd = MDIO_CMD_ACCESS_START | MDIO_CMD_ACCESS_CODE_C45_ADDR;
+		/* issue reg */
+		writel(reg, priv->membase + MDIO_DATA_WRITE_REG);
+
+		cmd = MDIO_CMD_ACCESS_START | MDIO_CMD_ACCESS_CODE_C45_ADDR;
+	} else {
+		/* Enter Clause 22 mode */
+		data = readl(priv->membase + MDIO_MODE_REG);
+
+		data &= ~MDIO_MODE_C45;
+
+		writel(data, priv->membase + MDIO_MODE_REG);
+
+		/* issue the phy address and reg */
+		writel((mii_id << 8) | regnum, priv->membase + MDIO_ADDR_REG);
+
+		cmd = MDIO_CMD_ACCESS_START | MDIO_CMD_ACCESS_CODE_READ;
+	}
 
 	/* issue read command */
 	writel(cmd, priv->membase + MDIO_CMD_REG);
@@ -84,50 +102,21 @@ static int ipq4019_mdio_read_c45(struct mii_bus *bus, int mii_id, int mmd,
 	if (ipq4019_mdio_wait_busy(bus))
 		return -ETIMEDOUT;
 
-	cmd = MDIO_CMD_ACCESS_START | MDIO_CMD_ACCESS_CODE_C45_READ;
+	if (regnum & MII_ADDR_C45) {
+		cmd = MDIO_CMD_ACCESS_START | MDIO_CMD_ACCESS_CODE_C45_READ;
 
-	writel(cmd, priv->membase + MDIO_CMD_REG);
+		writel(cmd, priv->membase + MDIO_CMD_REG);
 
-	if (ipq4019_mdio_wait_busy(bus))
-		return -ETIMEDOUT;
-
-	/* Read and return data */
-	return readl(priv->membase + MDIO_DATA_READ_REG);
-}
-
-static int ipq4019_mdio_read_c22(struct mii_bus *bus, int mii_id, int regnum)
-{
-	struct ipq4019_mdio_data *priv = bus->priv;
-	unsigned int data;
-	unsigned int cmd;
-
-	if (ipq4019_mdio_wait_busy(bus))
-		return -ETIMEDOUT;
-
-	data = readl(priv->membase + MDIO_MODE_REG);
-
-	data &= ~MDIO_MODE_C45;
-
-	writel(data, priv->membase + MDIO_MODE_REG);
-
-	/* issue the phy address and reg */
-	writel((mii_id << 8) | regnum, priv->membase + MDIO_ADDR_REG);
-
-	cmd = MDIO_CMD_ACCESS_START | MDIO_CMD_ACCESS_CODE_READ;
-
-	/* issue read command */
-	writel(cmd, priv->membase + MDIO_CMD_REG);
-
-	/* Wait read complete */
-	if (ipq4019_mdio_wait_busy(bus))
-		return -ETIMEDOUT;
+		if (ipq4019_mdio_wait_busy(bus))
+			return -ETIMEDOUT;
+	}
 
 	/* Read and return data */
 	return readl(priv->membase + MDIO_DATA_READ_REG);
 }
 
-static int ipq4019_mdio_write_c45(struct mii_bus *bus, int mii_id, int mmd,
-				  int reg, u16 value)
+static int ipq4019_mdio_write(struct mii_bus *bus, int mii_id, int regnum,
+							 u16 value)
 {
 	struct ipq4019_mdio_data *priv = bus->priv;
 	unsigned int data;
@@ -136,63 +125,50 @@ static int ipq4019_mdio_write_c45(struct mii_bus *bus, int mii_id, int mmd,
 	if (ipq4019_mdio_wait_busy(bus))
 		return -ETIMEDOUT;
 
-	data = readl(priv->membase + MDIO_MODE_REG);
+	/* Clause 45 support */
+	if (regnum & MII_ADDR_C45) {
+		unsigned int mmd = (regnum >> 16) & 0x1F;
+		unsigned int reg = regnum & 0xFFFF;
 
-	data |= MDIO_MODE_C45;
+		/* Enter Clause 45 mode */
+		data = readl(priv->membase + MDIO_MODE_REG);
 
-	writel(data, priv->membase + MDIO_MODE_REG);
+		data |= MDIO_MODE_C45;
 
-	/* issue the phy address and mmd */
-	writel((mii_id << 8) | mmd, priv->membase + MDIO_ADDR_REG);
+		writel(data, priv->membase + MDIO_MODE_REG);
 
-	/* issue reg */
-	writel(reg, priv->membase + MDIO_DATA_WRITE_REG);
+		/* issue the phy address and mmd */
+		writel((mii_id << 8) | mmd, priv->membase + MDIO_ADDR_REG);
 
-	cmd = MDIO_CMD_ACCESS_START | MDIO_CMD_ACCESS_CODE_C45_ADDR;
+		/* issue reg */
+		writel(reg, priv->membase + MDIO_DATA_WRITE_REG);
 
-	writel(cmd, priv->membase + MDIO_CMD_REG);
+		cmd = MDIO_CMD_ACCESS_START | MDIO_CMD_ACCESS_CODE_C45_ADDR;
 
-	if (ipq4019_mdio_wait_busy(bus))
-		return -ETIMEDOUT;
+		writel(cmd, priv->membase + MDIO_CMD_REG);
 
-	/* issue write data */
-	writel(value, priv->membase + MDIO_DATA_WRITE_REG);
+		if (ipq4019_mdio_wait_busy(bus))
+			return -ETIMEDOUT;
+	} else {
+		/* Enter Clause 22 mode */
+		data = readl(priv->membase + MDIO_MODE_REG);
 
-	cmd = MDIO_CMD_ACCESS_START | MDIO_CMD_ACCESS_CODE_C45_WRITE;
-	writel(cmd, priv->membase + MDIO_CMD_REG);
+		data &= ~MDIO_MODE_C45;
 
-	/* Wait write complete */
-	if (ipq4019_mdio_wait_busy(bus))
-		return -ETIMEDOUT;
+		writel(data, priv->membase + MDIO_MODE_REG);
 
-	return 0;
-}
-
-static int ipq4019_mdio_write_c22(struct mii_bus *bus, int mii_id, int regnum,
-				  u16 value)
-{
-	struct ipq4019_mdio_data *priv = bus->priv;
-	unsigned int data;
-	unsigned int cmd;
-
-	if (ipq4019_mdio_wait_busy(bus))
-		return -ETIMEDOUT;
-
-	/* Enter Clause 22 mode */
-	data = readl(priv->membase + MDIO_MODE_REG);
-
-	data &= ~MDIO_MODE_C45;
-
-	writel(data, priv->membase + MDIO_MODE_REG);
-
-	/* issue the phy address and reg */
-	writel((mii_id << 8) | regnum, priv->membase + MDIO_ADDR_REG);
+		/* issue the phy address and reg */
+		writel((mii_id << 8) | regnum, priv->membase + MDIO_ADDR_REG);
+	}
 
 	/* issue write data */
 	writel(value, priv->membase + MDIO_DATA_WRITE_REG);
 
 	/* issue write command */
-	cmd = MDIO_CMD_ACCESS_START | MDIO_CMD_ACCESS_CODE_WRITE;
+	if (regnum & MII_ADDR_C45)
+		cmd = MDIO_CMD_ACCESS_START | MDIO_CMD_ACCESS_CODE_C45_WRITE;
+	else
+		cmd = MDIO_CMD_ACCESS_START | MDIO_CMD_ACCESS_CODE_WRITE;
 
 	writel(cmd, priv->membase + MDIO_CMD_REG);
 
@@ -259,10 +235,8 @@ static int ipq4019_mdio_probe(struct platform_device *pdev)
 		priv->eth_ldo_rdy = devm_ioremap_resource(&pdev->dev, res);
 
 	bus->name = "ipq4019_mdio";
-	bus->read = ipq4019_mdio_read_c22;
-	bus->write = ipq4019_mdio_write_c22;
-	bus->read_c45 = ipq4019_mdio_read_c45;
-	bus->write_c45 = ipq4019_mdio_write_c45;
+	bus->read = ipq4019_mdio_read;
+	bus->write = ipq4019_mdio_write;
 	bus->reset = ipq_mdio_reset;
 	bus->parent = &pdev->dev;
 	snprintf(bus->id, MII_BUS_ID_SIZE, "%s%d", pdev->name, pdev->id);

@@ -1560,12 +1560,12 @@ static int edge_ioctl(struct tty_struct *tty,
  * SerialBreak
  *	this function sends a break to the port
  *****************************************************************************/
-static int edge_break(struct tty_struct *tty, int break_state)
+static void edge_break(struct tty_struct *tty, int break_state)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct edgeport_port *edge_port = usb_get_serial_port_data(port);
 	struct edgeport_serial *edge_serial = usb_get_serial_data(port->serial);
-	int status = 0;
+	int status;
 
 	if (!edge_serial->is_epic ||
 	    edge_serial->epic_descriptor.Supports.IOSPChase) {
@@ -1597,8 +1597,6 @@ static int edge_break(struct tty_struct *tty, int break_state)
 			dev_dbg(&port->dev, "%s - error sending break set/clear command.\n",
 				__func__);
 	}
-
-	return status;
 }
 
 

@@ -103,32 +103,26 @@ static int __must_check fsl_mc_resource_pool_remove_device(struct fsl_mc_device
 	struct fsl_mc_resource *resource;
 	int error = -EINVAL;
 
-	mc_bus_dev = to_fsl_mc_device(mc_dev->dev.parent);
-	mc_bus = to_fsl_mc_bus(mc_bus_dev);
+	if (!fsl_mc_is_allocatable(mc_dev))
+		goto out;
 
 	resource = mc_dev->resource;
-	if (!resource || resource->data != mc_dev) {
-		dev_err(&mc_bus_dev->dev, "resource mismatch\n");
+	if (!resource || resource->data != mc_dev)
 		goto out;
-	}
 
+	mc_bus_dev = to_fsl_mc_device(mc_dev->dev.parent);
+	mc_bus = to_fsl_mc_bus(mc_bus_dev);
 	res_pool = resource->parent_pool;
-	if (res_pool != &mc_bus->resource_pools[resource->type]) {
-		dev_err(&mc_bus_dev->dev, "pool mismatch\n");
+	if (res_pool != &mc_bus->resource_pools[resource->type])
 		goto out;
-	}
 
 	mutex_lock(&res_pool->mutex);
 
-	if (res_pool->max_count <= 0) {
-		dev_err(&mc_bus_dev->dev, "max_count underflow\n");
+	if (res_pool->max_count <= 0)
 		goto out_unlock;
-	}
 	if (res_pool->free_count <= 0 ||
-	    res_pool->free_count > res_pool->max_count) {
-		dev_err(&mc_bus_dev->dev, "free_count mismatch\n");
+	    res_pool->free_count > res_pool->max_count)
 		goto out_unlock;
-	}
 
 	/*
 	 * If the device is currently allocated, its resource is not
@@ -563,9 +557,12 @@ static void fsl_mc_cleanup_resource_pool(struct fsl_mc_device *mc_bus_dev,
 	struct fsl_mc_bus *mc_bus = to_fsl_mc_bus(mc_bus_dev);
 	struct fsl_mc_resource_pool *res_pool =
 					&mc_bus->resource_pools[pool_type];
+	int free_count = 0;
 
-	list_for_each_entry_safe(resource, next, &res_pool->free_list, node)
+	list_for_each_entry_safe(resource, next, &res_pool->free_list, node) {
+		free_count++;
 		devm_kfree(&mc_bus_dev->dev, resource);
+	}
 }
 
 void fsl_mc_cleanup_all_resource_pools(struct fsl_mc_device *mc_bus_dev)
@@ -612,18 +609,22 @@ static int fsl_mc_allocator_probe(struct fsl_mc_device *mc_dev)
  * fsl_mc_allocator_remove - callback invoked when an allocatable device is
  * being removed from the system
  */
-static void fsl_mc_allocator_remove(struct fsl_mc_device *mc_dev)
+static int fsl_mc_allocator_remove(struct fsl_mc_device *mc_dev)
 {
 	int error;
+
+	if (!fsl_mc_is_allocatable(mc_dev))
+		return -EINVAL;
 
 	if (mc_dev->resource) {
 		error = fsl_mc_resource_pool_remove_device(mc_dev);
 		if (error < 0)
-			return;
+			return error;
 	}
 
 	dev_dbg(&mc_dev->dev,
 		"Allocatable fsl-mc device unbound from fsl_mc_allocator driver");
+	return 0;
 }
 
 static const struct fsl_mc_device_id match_id_table[] = {

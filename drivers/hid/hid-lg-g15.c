@@ -7,7 +7,6 @@
 
 #include <linux/device.h>
 #include <linux/hid.h>
-#include <linux/leds.h>
 #include <linux/module.h>
 #include <linux/random.h>
 #include <linux/sched.h>

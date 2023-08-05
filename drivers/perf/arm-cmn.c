@@ -44,11 +44,8 @@
 #define CMN_MAX_DTMS			(CMN_MAX_XPS + (CMN_MAX_DIMENSION - 1) * 4)
 
 /* The CFG node has various info besides the discovery tree */
-#define CMN_CFGM_PERIPH_ID_01		0x0008
-#define CMN_CFGM_PID0_PART_0		GENMASK_ULL(7, 0)
-#define CMN_CFGM_PID1_PART_1		GENMASK_ULL(35, 32)
-#define CMN_CFGM_PERIPH_ID_23		0x0010
-#define CMN_CFGM_PID2_REVISION		GENMASK_ULL(7, 4)
+#define CMN_CFGM_PERIPH_ID_2		0x0010
+#define CMN_CFGM_PID2_REVISION		GENMASK(7, 4)
 
 #define CMN_CFGM_INFO_GLOBAL		0x900
 #define CMN_INFO_MULTIPLE_DTM_EN	BIT_ULL(63)
@@ -189,7 +186,6 @@
 #define CMN_WP_DOWN			2
 
 
-/* Internal values for encoding event support */
 enum cmn_model {
 	CMN600 = 1,
 	CMN650 = 2,
@@ -201,34 +197,26 @@ enum cmn_model {
 	CMN_650ON = CMN650 | CMN700,
 };
 
-/* Actual part numbers and revision IDs defined by the hardware */
-enum cmn_part {
-	PART_CMN600 = 0x434,
-	PART_CMN650 = 0x436,
-	PART_CMN700 = 0x43c,
-	PART_CI700 = 0x43a,
-};
-
 /* CMN-600 r0px shouldn't exist in silicon, thankfully */
 enum cmn_revision {
-	REV_CMN600_R1P0,
-	REV_CMN600_R1P1,
-	REV_CMN600_R1P2,
-	REV_CMN600_R1P3,
-	REV_CMN600_R2P0,
-	REV_CMN600_R3P0,
-	REV_CMN600_R3P1,
-	REV_CMN650_R0P0 = 0,
-	REV_CMN650_R1P0,
-	REV_CMN650_R1P1,
-	REV_CMN650_R2P0,
-	REV_CMN650_R1P2,
-	REV_CMN700_R0P0 = 0,
-	REV_CMN700_R1P0,
-	REV_CMN700_R2P0,
-	REV_CI700_R0P0 = 0,
-	REV_CI700_R1P0,
-	REV_CI700_R2P0,
+	CMN600_R1P0,
+	CMN600_R1P1,
+	CMN600_R1P2,
+	CMN600_R1P3,
+	CMN600_R2P0,
+	CMN600_R3P0,
+	CMN600_R3P1,
+	CMN650_R0P0 = 0,
+	CMN650_R1P0,
+	CMN650_R1P1,
+	CMN650_R2P0,
+	CMN650_R1P2,
+	CMN700_R0P0 = 0,
+	CMN700_R1P0,
+	CMN700_R2P0,
+	CI700_R0P0 = 0,
+	CI700_R1P0,
+	CI700_R2P0,
 };
 
 enum cmn_node_type {
@@ -318,7 +306,7 @@ struct arm_cmn {
 	unsigned int state;
 
 	enum cmn_revision rev;
-	enum cmn_part part;
+	enum cmn_model model;
 	u8 mesh_x;
 	u8 mesh_y;
 	u16 num_xps;
@@ -406,35 +394,19 @@ static struct arm_cmn_node *arm_cmn_node(const struct arm_cmn *cmn,
 	return NULL;
 }
 
-static enum cmn_model arm_cmn_model(const struct arm_cmn *cmn)
-{
-	switch (cmn->part) {
-	case PART_CMN600:
-		return CMN600;
-	case PART_CMN650:
-		return CMN650;
-	case PART_CMN700:
-		return CMN700;
-	case PART_CI700:
-		return CI700;
-	default:
-		return 0;
-	};
-}
-
 static u32 arm_cmn_device_connect_info(const struct arm_cmn *cmn,
 				       const struct arm_cmn_node *xp, int port)
 {
 	int offset = CMN_MXP__CONNECT_INFO(port);
 
 	if (port >= 2) {
-		if (cmn->part == PART_CMN600 || cmn->part == PART_CMN650)
+		if (cmn->model & (CMN600 | CMN650))
 			return 0;
 		/*
 		 * CI-700 may have extra ports, but still has the
 		 * mesh_port_connect_info registers in the way.
 		 */
-		if (cmn->part == PART_CI700)
+		if (cmn->model == CI700)
 			offset += CI700_CONNECT_INFO_P2_5_OFFSET;
 	}
 
@@ -668,7 +640,7 @@ static umode_t arm_cmn_event_attr_is_visible(struct kobject *kobj,
 
 	eattr = container_of(attr, typeof(*eattr), attr.attr);
 
-	if (!(eattr->model & arm_cmn_model(cmn)))
+	if (!(eattr->model & cmn->model))
 		return 0;
 
 	type = eattr->type;
@@ -686,7 +658,7 @@ static umode_t arm_cmn_event_attr_is_visible(struct kobject *kobj,
 		if ((intf & 4) && !(cmn->ports_used & BIT(intf & 3)))
 			return 0;
 
-		if (chan == 4 && cmn->part == PART_CMN600)
+		if (chan == 4 && cmn->model == CMN600)
 			return 0;
 
 		if ((chan == 5 && cmn->rsp_vc_num < 2) ||
@@ -697,19 +669,19 @@ static umode_t arm_cmn_event_attr_is_visible(struct kobject *kobj,
 	}
 
 	/* Revision-specific differences */
-	if (cmn->part == PART_CMN600) {
-		if (cmn->rev < REV_CMN600_R1P3) {
+	if (cmn->model == CMN600) {
+		if (cmn->rev < CMN600_R1P3) {
 			if (type == CMN_TYPE_CXRA && eventid > 0x10)
 				return 0;
 		}
-		if (cmn->rev < REV_CMN600_R1P2) {
+		if (cmn->rev < CMN600_R1P2) {
 			if (type == CMN_TYPE_HNF && eventid == 0x1b)
 				return 0;
 			if (type == CMN_TYPE_CXRA || type == CMN_TYPE_CXHA)
 				return 0;
 		}
-	} else if (cmn->part == PART_CMN650) {
-		if (cmn->rev < REV_CMN650_R2P0 || cmn->rev == REV_CMN650_R1P2) {
+	} else if (cmn->model == CMN650) {
+		if (cmn->rev < CMN650_R2P0 || cmn->rev == CMN650_R1P2) {
 			if (type == CMN_TYPE_HNF && eventid > 0x22)
 				return 0;
 			if (type == CMN_TYPE_SBSX && eventid == 0x17)
@@ -717,8 +689,8 @@ static umode_t arm_cmn_event_attr_is_visible(struct kobject *kobj,
 			if (type == CMN_TYPE_RNI && eventid > 0x10)
 				return 0;
 		}
-	} else if (cmn->part == PART_CMN700) {
-		if (cmn->rev < REV_CMN700_R2P0) {
+	} else if (cmn->model == CMN700) {
+		if (cmn->rev < CMN700_R2P0) {
 			if (type == CMN_TYPE_HNF && eventid > 0x2c)
 				return 0;
 			if (type == CMN_TYPE_CCHA && eventid > 0x74)
@@ -726,7 +698,7 @@ static umode_t arm_cmn_event_attr_is_visible(struct kobject *kobj,
 			if (type == CMN_TYPE_CCLA && eventid > 0x27)
 				return 0;
 		}
-		if (cmn->rev < REV_CMN700_R1P0) {
+		if (cmn->rev < CMN700_R1P0) {
 			if (type == CMN_TYPE_HNF && eventid > 0x2b)
 				return 0;
 		}
@@ -1199,31 +1171,19 @@ static ssize_t arm_cmn_cpumask_show(struct device *dev,
 static struct device_attribute arm_cmn_cpumask_attr =
 		__ATTR(cpumask, 0444, arm_cmn_cpumask_show, NULL);
 
-static ssize_t arm_cmn_identifier_show(struct device *dev,
-				       struct device_attribute *attr, char *buf)
-{
-	struct arm_cmn *cmn = to_cmn(dev_get_drvdata(dev));
-
-	return sysfs_emit(buf, "%03x%02x\n", cmn->part, cmn->rev);
-}
-
-static struct device_attribute arm_cmn_identifier_attr =
-		__ATTR(identifier, 0444, arm_cmn_identifier_show, NULL);
-
-static struct attribute *arm_cmn_other_attrs[] = {
+static struct attribute *arm_cmn_cpumask_attrs[] = {
 	&arm_cmn_cpumask_attr.attr,
-	&arm_cmn_identifier_attr.attr,
 	NULL,
 };
 
-static const struct attribute_group arm_cmn_other_attrs_group = {
-	.attrs = arm_cmn_other_attrs,
+static const struct attribute_group arm_cmn_cpumask_attr_group = {
+	.attrs = arm_cmn_cpumask_attrs,
 };
 
 static const struct attribute_group *arm_cmn_attr_groups[] = {
 	&arm_cmn_event_attrs_group,
 	&arm_cmn_format_attrs_group,
-	&arm_cmn_other_attrs_group,
+	&arm_cmn_cpumask_attr_group,
 	NULL
 };
 
@@ -1240,7 +1200,7 @@ static u32 arm_cmn_wp_config(struct perf_event *event)
 	u32 grp = CMN_EVENT_WP_GRP(event);
 	u32 exc = CMN_EVENT_WP_EXCLUSIVE(event);
 	u32 combine = CMN_EVENT_WP_COMBINE(event);
-	bool is_cmn600 = to_cmn(event->pmu)->part == PART_CMN600;
+	bool is_cmn600 = to_cmn(event->pmu)->model == CMN600;
 
 	config = FIELD_PREP(CMN_DTM_WPn_CONFIG_WP_DEV_SEL, dev) |
 		 FIELD_PREP(CMN_DTM_WPn_CONFIG_WP_CHN_SEL, chn) |
@@ -1560,14 +1520,14 @@ done:
 	return ret;
 }
 
-static enum cmn_filter_select arm_cmn_filter_sel(const struct arm_cmn *cmn,
+static enum cmn_filter_select arm_cmn_filter_sel(enum cmn_model model,
 						 enum cmn_node_type type,
 						 unsigned int eventid)
 {
 	struct arm_cmn_event_attr *e;
-	enum cmn_model model = arm_cmn_model(cmn);
+	int i;
 
-	for (int i = 0; i < ARRAY_SIZE(arm_cmn_event_attrs) - 1; i++) {
+	for (i = 0; i < ARRAY_SIZE(arm_cmn_event_attrs) - 1; i++) {
 		e = container_of(arm_cmn_event_attrs[i], typeof(*e), attr.attr);
 		if (e->model & model && e->type == type && e->eventid == eventid)
 			return e->fsel;
@@ -1598,7 +1558,7 @@ static int arm_cmn_event_init(struct perf_event *event)
 	type = CMN_EVENT_TYPE(event);
 	/* DTC events (i.e. cycles) already have everything they need */
 	if (type == CMN_TYPE_DTC)
-		return arm_cmn_validate_group(cmn, event);
+		return 0;
 
 	eventid = CMN_EVENT_EVENTID(event);
 	/* For watchpoints we need the actual XP node here */
@@ -1610,12 +1570,12 @@ static int arm_cmn_event_init(struct perf_event *event)
 		/* ...but the DTM may depend on which port we're watching */
 		if (cmn->multi_dtm)
 			hw->dtm_offset = CMN_EVENT_WP_DEV_SEL(event) / 2;
-	} else if (type == CMN_TYPE_XP && cmn->part == PART_CMN700) {
+	} else if (type == CMN_TYPE_XP && cmn->model == CMN700) {
 		hw->wide_sel = true;
 	}
 
 	/* This is sufficiently annoying to recalculate, so cache it */
-	hw->filter_sel = arm_cmn_filter_sel(cmn, type, eventid);
+	hw->filter_sel = arm_cmn_filter_sel(cmn->model, type, eventid);
 
 	bynodeid = CMN_EVENT_BYNODEID(event);
 	nodeid = CMN_EVENT_NODEID(event);
@@ -1922,7 +1882,6 @@ static void arm_cmn_init_dtm(struct arm_cmn_dtm *dtm, struct arm_cmn_node *xp, i
 
 	dtm->base = xp->pmu_base + CMN_DTM_OFFSET(idx);
 	dtm->pmu_config_low = CMN_DTM_PMU_CONFIG_PMU_EN;
-	writeq_relaxed(dtm->pmu_config_low, dtm->base + CMN_DTM_PMU_CONFIG);
 	for (i = 0; i < 4; i++) {
 		dtm->wp_event[i] = -1;
 		writeq_relaxed(0, dtm->base + CMN_DTM_WPn_MASK(i));
@@ -2047,7 +2006,6 @@ static int arm_cmn_discover(struct arm_cmn *cmn, unsigned int rgn_offset)
 	void __iomem *cfg_region;
 	struct arm_cmn_node cfg, *dn;
 	struct arm_cmn_dtm *dtm;
-	enum cmn_part part;
 	u16 child_count, child_poff;
 	u32 xp_offset[CMN_MAX_XPS];
 	u64 reg;
@@ -2059,19 +2017,7 @@ static int arm_cmn_discover(struct arm_cmn *cmn, unsigned int rgn_offset)
 		return -ENODEV;
 
 	cfg_region = cmn->base + rgn_offset;
-
-	reg = readq_relaxed(cfg_region + CMN_CFGM_PERIPH_ID_01);
-	part = FIELD_GET(CMN_CFGM_PID0_PART_0, reg);
-	part |= FIELD_GET(CMN_CFGM_PID1_PART_1, reg) << 8;
-	if (cmn->part && cmn->part != part)
-		dev_warn(cmn->dev,
-			 "Firmware binding mismatch: expected part number 0x%x, found 0x%x\n",
-			 cmn->part, part);
-	cmn->part = part;
-	if (!arm_cmn_model(cmn))
-		dev_warn(cmn->dev, "Unknown part number: 0x%x\n", part);
-
-	reg = readl_relaxed(cfg_region + CMN_CFGM_PERIPH_ID_23);
+	reg = readl_relaxed(cfg_region + CMN_CFGM_PERIPH_ID_2);
 	cmn->rev = FIELD_GET(CMN_CFGM_PID2_REVISION, reg);
 
 	reg = readq_relaxed(cfg_region + CMN_CFGM_INFO_GLOBAL);
@@ -2135,7 +2081,7 @@ static int arm_cmn_discover(struct arm_cmn *cmn, unsigned int rgn_offset)
 		if (xp->id == (1 << 3))
 			cmn->mesh_x = xp->logid;
 
-		if (cmn->part == PART_CMN600)
+		if (cmn->model == CMN600)
 			xp->dtc = 0xf;
 		else
 			xp->dtc = 1 << readl_relaxed(xp_region + CMN_DTM_UNIT_INFO);
@@ -2255,7 +2201,7 @@ static int arm_cmn_discover(struct arm_cmn *cmn, unsigned int rgn_offset)
 	if (cmn->num_xps == 1)
 		dev_warn(cmn->dev, "1x1 config not fully supported, translate XP events manually\n");
 
-	dev_dbg(cmn->dev, "periph_id part 0x%03x revision %d\n", cmn->part, cmn->rev);
+	dev_dbg(cmn->dev, "model %d, periph_id_2 revision %d\n", cmn->model, cmn->rev);
 	reg = cmn->ports_used;
 	dev_dbg(cmn->dev, "mesh %dx%d, ID width %d, ports %6pbl%s\n",
 		cmn->mesh_x, cmn->mesh_y, arm_cmn_xyidbits(cmn), &reg,
@@ -2310,17 +2256,17 @@ static int arm_cmn_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	cmn->dev = &pdev->dev;
-	cmn->part = (unsigned long)device_get_match_data(cmn->dev);
+	cmn->model = (unsigned long)device_get_match_data(cmn->dev);
 	platform_set_drvdata(pdev, cmn);
 
-	if (cmn->part == PART_CMN600 && has_acpi_companion(cmn->dev)) {
+	if (cmn->model == CMN600 && has_acpi_companion(cmn->dev)) {
 		rootnode = arm_cmn600_acpi_probe(pdev, cmn);
 	} else {
 		rootnode = 0;
 		cmn->base = devm_platform_ioremap_resource(pdev, 0);
 		if (IS_ERR(cmn->base))
 			return PTR_ERR(cmn->base);
-		if (cmn->part == PART_CMN600)
+		if (cmn->model == CMN600)
 			rootnode = arm_cmn600_of_probe(pdev->dev.of_node);
 	}
 	if (rootnode < 0)
@@ -2389,10 +2335,10 @@ static int arm_cmn_remove(struct platform_device *pdev)
 
 #ifdef CONFIG_OF
 static const struct of_device_id arm_cmn_of_match[] = {
-	{ .compatible = "arm,cmn-600", .data = (void *)PART_CMN600 },
-	{ .compatible = "arm,cmn-650" },
-	{ .compatible = "arm,cmn-700" },
-	{ .compatible = "arm,ci-700" },
+	{ .compatible = "arm,cmn-600", .data = (void *)CMN600 },
+	{ .compatible = "arm,cmn-650", .data = (void *)CMN650 },
+	{ .compatible = "arm,cmn-700", .data = (void *)CMN700 },
+	{ .compatible = "arm,ci-700", .data = (void *)CI700 },
 	{}
 };
 MODULE_DEVICE_TABLE(of, arm_cmn_of_match);
@@ -2400,9 +2346,9 @@ MODULE_DEVICE_TABLE(of, arm_cmn_of_match);
 
 #ifdef CONFIG_ACPI
 static const struct acpi_device_id arm_cmn_acpi_match[] = {
-	{ "ARMHC600", PART_CMN600 },
-	{ "ARMHC650" },
-	{ "ARMHC700" },
+	{ "ARMHC600", CMN600 },
+	{ "ARMHC650", CMN650 },
+	{ "ARMHC700", CMN700 },
 	{}
 };
 MODULE_DEVICE_TABLE(acpi, arm_cmn_acpi_match);

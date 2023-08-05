@@ -139,7 +139,9 @@ static int its_alloc_vcpu_sgis(struct its_vpe *vpe, int idx)
 	if (!vpe->sgi_domain)
 		goto err;
 
-	sgi_base = irq_domain_alloc_irqs(vpe->sgi_domain, 16, NUMA_NO_NODE, vpe);
+	sgi_base = __irq_domain_alloc_irqs(vpe->sgi_domain, -1, 16,
+					       NUMA_NO_NODE, vpe,
+					       false, NULL);
 	if (sgi_base <= 0)
 		goto err;
 
@@ -174,8 +176,9 @@ int its_alloc_vcpu_irqs(struct its_vm *vm)
 		vm->vpes[i]->idai = true;
 	}
 
-	vpe_base_irq = irq_domain_alloc_irqs(vm->domain, vm->nr_vpes,
-					     NUMA_NO_NODE, vm);
+	vpe_base_irq = __irq_domain_alloc_irqs(vm->domain, -1, vm->nr_vpes,
+					       NUMA_NO_NODE, vm,
+					       false, NULL);
 	if (vpe_base_irq <= 0)
 		goto err;
 

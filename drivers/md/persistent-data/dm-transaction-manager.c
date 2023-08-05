@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2011 Red Hat, Inc.
  *
@@ -37,7 +36,6 @@ static unsigned int prefetch_hash(dm_block_t b)
 static void prefetch_wipe(struct prefetch_set *p)
 {
 	unsigned int i;
-
 	for (i = 0; i < PREFETCH_SIZE; i++)
 		p->blocks[i] = PREFETCH_SENTINEL;
 }
@@ -199,9 +197,6 @@ EXPORT_SYMBOL_GPL(dm_tm_create_non_blocking_clone);
 
 void dm_tm_destroy(struct dm_transaction_manager *tm)
 {
-	if (!tm)
-		return;
-
 	if (!tm->is_clone)
 		wipe_shadow_table(tm);
 

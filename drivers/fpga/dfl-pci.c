@@ -21,6 +21,7 @@
 #include <linux/module.h>
 #include <linux/stddef.h>
 #include <linux/errno.h>
+#include <linux/aer.h>
 
 #include "dfl.h"
 
@@ -375,6 +376,10 @@ int cci_pci_probe(struct pci_dev *pcidev, const struct pci_device_id *pcidevid)
 		return ret;
 	}
 
+	ret = pci_enable_pcie_error_reporting(pcidev);
+	if (ret && ret != -EINVAL)
+		dev_info(&pcidev->dev, "PCIE AER unavailable %d.\n", ret);
+
 	pci_set_master(pcidev);
 
 	ret = dma_set_mask_and_coherent(&pcidev->dev, DMA_BIT_MASK(64));
@@ -382,22 +387,24 @@ int cci_pci_probe(struct pci_dev *pcidev, const struct pci_device_id *pcidevid)
 		ret = dma_set_mask_and_coherent(&pcidev->dev, DMA_BIT_MASK(32));
 	if (ret) {
 		dev_err(&pcidev->dev, "No suitable DMA support available.\n");
-		return ret;
+		goto disable_error_report_exit;
 	}
 
 	ret = cci_init_drvdata(pcidev);
 	if (ret) {
 		dev_err(&pcidev->dev, "Fail to init drvdata %d.\n", ret);
-		return ret;
+		goto disable_error_report_exit;
 	}
 
 	ret = cci_enumerate_feature_devs(pcidev);
-	if (ret) {
-		dev_err(&pcidev->dev, "enumeration failure %d.\n", ret);
+	if (!ret)
 		return ret;
-	}
 
-	return 0;
+	dev_err(&pcidev->dev, "enumeration failure %d.\n", ret);
+
+disable_error_report_exit:
+	pci_disable_pcie_error_reporting(pcidev);
+	return ret;
 }
 
 static int cci_pci_sriov_configure(struct pci_dev *pcidev, int num_vfs)
@@ -441,6 +448,7 @@ static void cci_pci_remove(struct pci_dev *pcidev)
 		cci_pci_sriov_configure(pcidev, 0);
 
 	cci_remove_feature_devs(pcidev);
+	pci_disable_pcie_error_reporting(pcidev);
 }
 
 static struct pci_driver cci_pci_driver = {

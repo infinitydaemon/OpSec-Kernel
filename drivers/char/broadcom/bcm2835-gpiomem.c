@@ -181,7 +181,7 @@ static int bcm2835_gpiomem_probe(struct platform_device *pdev)
 
 	/* Create sysfs entries */
 
-	bcm2835_gpiomem_class = class_create(DEVICE_NAME);
+	bcm2835_gpiomem_class = class_create(THIS_MODULE, DEVICE_NAME);
 	ptr_err = bcm2835_gpiomem_class;
 	if (IS_ERR(ptr_err))
 		goto failed_class_create;

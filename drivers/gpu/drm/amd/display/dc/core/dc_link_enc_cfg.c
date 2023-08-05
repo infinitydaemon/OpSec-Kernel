@@ -24,7 +24,7 @@
 
 #include "link_enc_cfg.h"
 #include "resource.h"
-#include "link.h"
+#include "dc_link_dp.h"
 
 #define DC_LOGGER dc->ctx->logger
 
@@ -48,7 +48,7 @@ static bool is_dig_link_enc_stream(struct dc_stream_state *stream)
 					/* DIGs do not support DP2.0 streams with 128b/132b encoding. */
 					struct dc_link_settings link_settings = {0};
 
-					stream->ctx->dc->link_srv->dp_decide_link_settings(stream, &link_settings);
+					decide_link_settings(stream, &link_settings);
 					if ((link_settings.link_rate >= LINK_RATE_LOW) &&
 							link_settings.link_rate <= LINK_RATE_HIGH3) {
 						is_dig_stream = true;
@@ -305,17 +305,15 @@ void link_enc_cfg_link_encs_assign(
 	for (i = 0; i < stream_count; i++) {
 		struct dc_stream_state *stream = streams[i];
 
-		/* skip it if the link is mappable endpoint. */
-		if (stream->link->is_dig_mapping_flexible)
-			continue;
-
 		/* Skip stream if not supported by DIG link encoder. */
 		if (!is_dig_link_enc_stream(stream))
 			continue;
 
 		/* Physical endpoints have a fixed mapping to DIG link encoders. */
-		eng_id = stream->link->eng_id;
-		add_link_enc_assignment(state, stream, eng_id);
+		if (!stream->link->is_dig_mapping_flexible) {
+			eng_id = stream->link->eng_id;
+			add_link_enc_assignment(state, stream, eng_id);
+		}
 	}
 
 	/* (b) Retain previous assignments for mappable endpoints if encoders still available. */
@@ -327,12 +325,11 @@ void link_enc_cfg_link_encs_assign(
 		for (i = 0; i < stream_count; i++) {
 			struct dc_stream_state *stream = state->streams[i];
 
-			/* Skip it if the link is NOT mappable endpoint. */
-			if (!stream->link->is_dig_mapping_flexible)
-				continue;
-
 			/* Skip stream if not supported by DIG link encoder. */
 			if (!is_dig_link_enc_stream(stream))
+				continue;
+
+			if (!stream->link->is_dig_mapping_flexible)
 				continue;
 
 			for (j = 0; j < prev_state->stream_count; j++) {
@@ -341,7 +338,6 @@ void link_enc_cfg_link_encs_assign(
 				if (stream == prev_stream && stream->link == prev_stream->link &&
 						prev_state->res_ctx.link_enc_cfg_ctx.link_enc_assignments[j].valid) {
 					eng_id = prev_state->res_ctx.link_enc_cfg_ctx.link_enc_assignments[j].eng_id;
-
 					if (is_avail_link_enc(state, eng_id, stream))
 						add_link_enc_assignment(state, stream, eng_id);
 				}
@@ -354,15 +350,6 @@ void link_enc_cfg_link_encs_assign(
 
 	for (i = 0; i < stream_count; i++) {
 		struct dc_stream_state *stream = streams[i];
-		struct link_encoder *link_enc = NULL;
-
-		/* Skip it if the link is NOT mappable endpoint. */
-		if (!stream->link->is_dig_mapping_flexible)
-			continue;
-
-		/* Skip if encoder assignment retained in step (b) above. */
-		if (stream->link_enc)
-			continue;
 
 		/* Skip stream if not supported by DIG link encoder. */
 		if (!is_dig_link_enc_stream(stream)) {
@@ -371,18 +358,24 @@ void link_enc_cfg_link_encs_assign(
 		}
 
 		/* Mappable endpoints have a flexible mapping to DIG link encoders. */
+		if (stream->link->is_dig_mapping_flexible) {
+			struct link_encoder *link_enc = NULL;
 
-		/* For MST, multiple streams will share the same link / display
-		 * endpoint. These streams should use the same link encoder
-		 * assigned to that endpoint.
-		 */
-		link_enc = get_link_enc_used_by_link(state, stream->link);
-		if (link_enc == NULL)
-			eng_id = find_first_avail_link_enc(stream->ctx, state);
-		else
-			eng_id =  link_enc->preferred_engine;
+			/* Skip if encoder assignment retained in step (b) above. */
+			if (stream->link_enc)
+				continue;
 
-		add_link_enc_assignment(state, stream, eng_id);
+			/* For MST, multiple streams will share the same link / display
+			 * endpoint. These streams should use the same link encoder
+			 * assigned to that endpoint.
+			 */
+			link_enc = get_link_enc_used_by_link(state, stream->link);
+			if (link_enc == NULL)
+				eng_id = find_first_avail_link_enc(stream->ctx, state);
+			else
+				eng_id =  link_enc->preferred_engine;
+			add_link_enc_assignment(state, stream, eng_id);
+		}
 	}
 
 	link_enc_cfg_validate(dc, state);
@@ -426,6 +419,10 @@ void link_enc_cfg_link_enc_unassign(
 		struct dc_stream_state *stream)
 {
 	enum engine_id eng_id = ENGINE_ID_UNKNOWN;
+
+	/* Only DIG link encoders. */
+	if (!is_dig_link_enc_stream(stream))
+		return;
 
 	if (stream->link_enc)
 		eng_id = stream->link_enc->preferred_engine;
@@ -622,6 +619,7 @@ bool link_enc_cfg_validate(struct dc *dc, struct dc_state *state)
 	int i, j;
 	uint8_t valid_count = 0;
 	uint8_t dig_stream_count = 0;
+	int matching_stream_ptrs = 0;
 	int eng_ids_per_ep_id[MAX_PIPES] = {0};
 	int ep_ids_per_eng_id[MAX_PIPES] = {0};
 	int valid_bitmap = 0;
@@ -644,7 +642,9 @@ bool link_enc_cfg_validate(struct dc *dc, struct dc_state *state)
 		struct link_enc_assignment assignment = state->res_ctx.link_enc_cfg_ctx.link_enc_assignments[i];
 
 		if (assignment.valid) {
-			if (assignment.stream != state->streams[i])
+			if (assignment.stream == state->streams[i])
+				matching_stream_ptrs++;
+			else
 				valid_stream_ptrs = false;
 		}
 	}

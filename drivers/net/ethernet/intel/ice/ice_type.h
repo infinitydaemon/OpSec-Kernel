@@ -524,14 +524,7 @@ struct ice_sched_node {
 	struct ice_sched_node *sibling; /* next sibling in the same layer */
 	struct ice_sched_node **children;
 	struct ice_aqc_txsched_elem_data info;
-	char *name;
-	struct devlink_rate *rate_node;
-	u64 tx_max;
-	u64 tx_share;
 	u32 agg_id;			/* aggregator group ID */
-	u32 id;
-	u32 tx_priority;
-	u32 tx_weight;
 	u16 vsi_handle;
 	u8 in_use;			/* suspended or in use */
 	u8 tx_sched_layer;		/* Logical Layer (1-9) */
@@ -713,9 +706,7 @@ struct ice_port_info {
 	/* List contain profile ID(s) and other params per layer */
 	struct list_head rl_prof_list[ICE_AQC_TOPO_MAX_LEVEL_NUM];
 	struct ice_qos_cfg qos_cfg;
-	struct xarray sched_node_ids;
 	u8 is_vf:1;
-	u8 is_custom_tx_enabled:1;
 };
 
 struct ice_switch_info {
@@ -784,15 +775,14 @@ struct ice_mbx_snap_buffer_data {
 	u16 max_num_msgs_mbx;
 };
 
-/* Structure used to track a single VF's messages on the mailbox:
- * 1. list_entry: linked list entry node
- * 2. msg_count: the number of asynchronous messages sent by this VF
- * 3. malicious: whether this VF has been detected as malicious before
+/* Structure to track messages sent by VFs on mailbox:
+ * 1. vf_cntr: a counter array of VFs to track the number of
+ * asynchronous messages sent by each VF
+ * 2. vfcntr_len: number of entries in VF counter array
  */
-struct ice_mbx_vf_info {
-	struct list_head list_entry;
-	u32 msg_count;
-	u8 malicious : 1;
+struct ice_mbx_vf_counter {
+	u32 *vf_cntr;
+	u32 vfcntr_len;
 };
 
 /* Structure to hold data relevant to the captured static snapshot
@@ -800,7 +790,7 @@ struct ice_mbx_vf_info {
  */
 struct ice_mbx_snapshot {
 	struct ice_mbx_snap_buffer_data mbx_buf;
-	struct list_head mbx_vf;
+	struct ice_mbx_vf_counter mbx_vf;
 };
 
 /* Structure to hold data to be used for capturing or updating a

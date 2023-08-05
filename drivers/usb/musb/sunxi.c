@@ -15,7 +15,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of.h>
-#include <linux/of_device.h>
 #include <linux/phy/phy-sun4i-usb.h>
 #include <linux/platform_device.h>
 #include <linux/reset.h>
@@ -67,13 +66,6 @@
 #define SUNXI_MUSB_FL_HAS_RESET			6
 #define SUNXI_MUSB_FL_NO_CONFIGDATA		7
 #define SUNXI_MUSB_FL_PHY_MODE_PEND		8
-
-struct sunxi_musb_cfg {
-	const struct musb_hdrc_config *hdrc_config;
-	bool has_sram;
-	bool has_reset;
-	bool no_configdata;
-};
 
 /* Our read/write methods need access and do not get passed in a musb ref :| */
 static struct musb *sunxi_musb;
@@ -629,10 +621,11 @@ static const struct musb_platform_ops sunxi_musb_ops = {
 	.post_root_reset_end = sunxi_musb_post_root_reset_end,
 };
 
+/* Allwinner OTG supports up to 5 endpoints */
+#define SUNXI_MUSB_MAX_EP_NUM	6
 #define SUNXI_MUSB_RAM_BITS	11
 
-/* Allwinner OTG supports up to 5 endpoints */
-static struct musb_fifo_cfg sunxi_musb_mode_cfg_5eps[] = {
+static struct musb_fifo_cfg sunxi_musb_mode_cfg[] = {
 	MUSB_EP_FIFO_SINGLE(1, FIFO_TX, 512),
 	MUSB_EP_FIFO_SINGLE(1, FIFO_RX, 512),
 	MUSB_EP_FIFO_SINGLE(2, FIFO_TX, 512),
@@ -646,7 +639,9 @@ static struct musb_fifo_cfg sunxi_musb_mode_cfg_5eps[] = {
 };
 
 /* H3/V3s OTG supports only 4 endpoints */
-static struct musb_fifo_cfg sunxi_musb_mode_cfg_4eps[] = {
+#define SUNXI_MUSB_MAX_EP_NUM_H3	5
+
+static struct musb_fifo_cfg sunxi_musb_mode_cfg_h3[] = {
 	MUSB_EP_FIFO_SINGLE(1, FIFO_TX, 512),
 	MUSB_EP_FIFO_SINGLE(1, FIFO_RX, 512),
 	MUSB_EP_FIFO_SINGLE(2, FIFO_TX, 512),
@@ -657,25 +652,24 @@ static struct musb_fifo_cfg sunxi_musb_mode_cfg_4eps[] = {
 	MUSB_EP_FIFO_SINGLE(4, FIFO_RX, 512),
 };
 
-static const struct musb_hdrc_config sunxi_musb_hdrc_config_5eps = {
-	.fifo_cfg       = sunxi_musb_mode_cfg_5eps,
-	.fifo_cfg_size  = ARRAY_SIZE(sunxi_musb_mode_cfg_5eps),
+static const struct musb_hdrc_config sunxi_musb_hdrc_config = {
+	.fifo_cfg       = sunxi_musb_mode_cfg,
+	.fifo_cfg_size  = ARRAY_SIZE(sunxi_musb_mode_cfg),
 	.multipoint	= true,
 	.dyn_fifo	= true,
-	/* Two FIFOs per endpoint, plus ep_0. */
-	.num_eps	= (ARRAY_SIZE(sunxi_musb_mode_cfg_5eps) / 2) + 1,
+	.num_eps	= SUNXI_MUSB_MAX_EP_NUM,
 	.ram_bits	= SUNXI_MUSB_RAM_BITS,
 };
 
-static const struct musb_hdrc_config sunxi_musb_hdrc_config_4eps = {
-	.fifo_cfg       = sunxi_musb_mode_cfg_4eps,
-	.fifo_cfg_size  = ARRAY_SIZE(sunxi_musb_mode_cfg_4eps),
+static struct musb_hdrc_config sunxi_musb_hdrc_config_h3 = {
+	.fifo_cfg       = sunxi_musb_mode_cfg_h3,
+	.fifo_cfg_size  = ARRAY_SIZE(sunxi_musb_mode_cfg_h3),
 	.multipoint	= true,
 	.dyn_fifo	= true,
-	/* Two FIFOs per endpoint, plus ep_0. */
-	.num_eps	= (ARRAY_SIZE(sunxi_musb_mode_cfg_4eps) / 2) + 1,
+	.num_eps	= SUNXI_MUSB_MAX_EP_NUM_H3,
 	.ram_bits	= SUNXI_MUSB_RAM_BITS,
 };
+
 
 static int sunxi_musb_probe(struct platform_device *pdev)
 {
@@ -683,7 +677,6 @@ static int sunxi_musb_probe(struct platform_device *pdev)
 	struct platform_device_info	pinfo;
 	struct sunxi_glue		*glue;
 	struct device_node		*np = pdev->dev.of_node;
-	const struct sunxi_musb_cfg	*cfg;
 	int ret;
 
 	if (!np) {
@@ -720,25 +713,26 @@ static int sunxi_musb_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 	pdata.platform_ops	= &sunxi_musb_ops;
-
-	cfg = of_device_get_match_data(&pdev->dev);
-	if (!cfg)
-		return -EINVAL;
-
-	pdata.config = cfg->hdrc_config;
+	if (!of_device_is_compatible(np, "allwinner,sun8i-h3-musb"))
+		pdata.config = &sunxi_musb_hdrc_config;
+	else
+		pdata.config = &sunxi_musb_hdrc_config_h3;
 
 	glue->dev = &pdev->dev;
 	INIT_WORK(&glue->work, sunxi_musb_work);
 	glue->host_nb.notifier_call = sunxi_musb_host_notifier;
 
-	if (cfg->has_sram)
+	if (of_device_is_compatible(np, "allwinner,sun4i-a10-musb"))
 		set_bit(SUNXI_MUSB_FL_HAS_SRAM, &glue->flags);
 
-	if (cfg->has_reset)
+	if (of_device_is_compatible(np, "allwinner,sun6i-a31-musb"))
 		set_bit(SUNXI_MUSB_FL_HAS_RESET, &glue->flags);
 
-	if (cfg->no_configdata)
+	if (of_device_is_compatible(np, "allwinner,sun8i-a33-musb") ||
+	    of_device_is_compatible(np, "allwinner,sun8i-h3-musb")) {
+		set_bit(SUNXI_MUSB_FL_HAS_RESET, &glue->flags);
 		set_bit(SUNXI_MUSB_FL_NO_CONFIGDATA, &glue->flags);
+	}
 
 	glue->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(glue->clk)) {
@@ -805,62 +799,29 @@ err_unregister_usb_phy:
 	return ret;
 }
 
-static void sunxi_musb_remove(struct platform_device *pdev)
+static int sunxi_musb_remove(struct platform_device *pdev)
 {
 	struct sunxi_glue *glue = platform_get_drvdata(pdev);
 	struct platform_device *usb_phy = glue->usb_phy;
 
 	platform_device_unregister(glue->musb_pdev);
 	usb_phy_generic_unregister(usb_phy);
+
+	return 0;
 }
 
-static const struct sunxi_musb_cfg sun4i_a10_musb_cfg = {
-	.hdrc_config = &sunxi_musb_hdrc_config_5eps,
-	.has_sram = true,
-};
-
-static const struct sunxi_musb_cfg sun6i_a31_musb_cfg = {
-	.hdrc_config = &sunxi_musb_hdrc_config_5eps,
-	.has_reset = true,
-};
-
-static const struct sunxi_musb_cfg sun8i_a33_musb_cfg = {
-	.hdrc_config = &sunxi_musb_hdrc_config_5eps,
-	.has_reset = true,
-	.no_configdata = true,
-};
-
-static const struct sunxi_musb_cfg sun8i_h3_musb_cfg = {
-	.hdrc_config = &sunxi_musb_hdrc_config_4eps,
-	.has_reset = true,
-	.no_configdata = true,
-};
-
-static const struct sunxi_musb_cfg suniv_f1c100s_musb_cfg = {
-	.hdrc_config = &sunxi_musb_hdrc_config_5eps,
-	.has_sram = true,
-	.has_reset = true,
-	.no_configdata = true,
-};
-
 static const struct of_device_id sunxi_musb_match[] = {
-	{ .compatible = "allwinner,sun4i-a10-musb",
-	  .data = &sun4i_a10_musb_cfg, },
-	{ .compatible = "allwinner,sun6i-a31-musb",
-	  .data = &sun6i_a31_musb_cfg, },
-	{ .compatible = "allwinner,sun8i-a33-musb",
-	  .data = &sun8i_a33_musb_cfg, },
-	{ .compatible = "allwinner,sun8i-h3-musb",
-	  .data = &sun8i_h3_musb_cfg, },
-	{ .compatible = "allwinner,suniv-f1c100s-musb",
-	  .data = &suniv_f1c100s_musb_cfg, },
+	{ .compatible = "allwinner,sun4i-a10-musb", },
+	{ .compatible = "allwinner,sun6i-a31-musb", },
+	{ .compatible = "allwinner,sun8i-a33-musb", },
+	{ .compatible = "allwinner,sun8i-h3-musb", },
 	{}
 };
 MODULE_DEVICE_TABLE(of, sunxi_musb_match);
 
 static struct platform_driver sunxi_musb_driver = {
 	.probe = sunxi_musb_probe,
-	.remove_new = sunxi_musb_remove,
+	.remove = sunxi_musb_remove,
 	.driver = {
 		.name = "musb-sunxi",
 		.of_match_table = sunxi_musb_match,

@@ -173,13 +173,15 @@ add_fail:
 	return ret;
 }
 
-static void bcm2835_pwm_remove(struct platform_device *pdev)
+static int bcm2835_pwm_remove(struct platform_device *pdev)
 {
 	struct bcm2835_pwm *pc = platform_get_drvdata(pdev);
 
 	pwmchip_remove(&pc->chip);
 
 	clk_disable_unprepare(pc->clk);
+
+	return 0;
 }
 
 static const struct of_device_id bcm2835_pwm_of_match[] = {
@@ -194,7 +196,7 @@ static struct platform_driver bcm2835_pwm_driver = {
 		.of_match_table = bcm2835_pwm_of_match,
 	},
 	.probe = bcm2835_pwm_probe,
-	.remove_new = bcm2835_pwm_remove,
+	.remove = bcm2835_pwm_remove,
 };
 module_platform_driver(bcm2835_pwm_driver);
 

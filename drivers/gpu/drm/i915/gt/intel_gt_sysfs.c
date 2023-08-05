@@ -12,7 +12,6 @@
 #include "i915_drv.h"
 #include "i915_sysfs.h"
 #include "intel_gt.h"
-#include "intel_gt_print.h"
 #include "intel_gt_sysfs.h"
 #include "intel_gt_sysfs_pm.h"
 #include "intel_gt_types.h"
@@ -72,7 +71,7 @@ static void kobj_gt_release(struct kobject *kobj)
 {
 }
 
-static const struct kobj_type kobj_gt_type = {
+static struct kobj_type kobj_gt_type = {
 	.release = kobj_gt_release,
 	.sysfs_ops = &kobj_sysfs_ops,
 	.default_groups = id_groups,
@@ -106,7 +105,8 @@ void intel_gt_sysfs_register(struct intel_gt *gt)
 
 exit_fail:
 	kobject_put(&gt->sysfs_gt);
-	gt_warn(gt, "failed to initialize sysfs root\n");
+	drm_warn(&gt->i915->drm,
+		 "failed to initialize gt%d sysfs root\n", gt->info.id);
 }
 
 void intel_gt_sysfs_unregister(struct intel_gt *gt)

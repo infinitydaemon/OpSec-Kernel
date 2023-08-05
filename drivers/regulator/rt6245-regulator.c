@@ -243,10 +243,9 @@ MODULE_DEVICE_TABLE(of, rt6245_of_match_table);
 static struct i2c_driver rt6245_driver = {
 	.driver = {
 		.name = "rt6245",
-		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 		.of_match_table = rt6245_of_match_table,
 	},
-	.probe = rt6245_probe,
+	.probe_new = rt6245_probe,
 };
 module_i2c_driver(rt6245_driver);
 

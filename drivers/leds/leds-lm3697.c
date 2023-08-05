@@ -299,7 +299,8 @@ child_out:
 	return ret;
 }
 
-static int lm3697_probe(struct i2c_client *client)
+static int lm3697_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
 	struct lm3697 *led;

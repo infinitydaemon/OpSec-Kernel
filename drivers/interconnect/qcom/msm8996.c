@@ -21,17 +21,21 @@
 #include "smd-rpm.h"
 #include "msm8996.h"
 
-static const char * const mm_intf_clocks[] = {
+static const char * const bus_mm_clocks[] = {
+	"bus",
+	"bus_a",
 	"iface"
 };
 
-static const char * const a0noc_intf_clocks[] = {
+static const char * const bus_a0noc_clocks[] = {
 	"aggre0_snoc_axi",
 	"aggre0_cnoc_ahb",
 	"aggre0_noc_mpu_cfg"
 };
 
-static const char * const a2noc_intf_clocks[] = {
+static const char * const bus_a2noc_clocks[] = {
+	"bus",
+	"bus_a",
 	"aggre2_ufs_axi",
 	"ufs_axi"
 };
@@ -1817,9 +1821,8 @@ static const struct qcom_icc_desc msm8996_a0noc = {
 	.type = QCOM_ICC_NOC,
 	.nodes = a0noc_nodes,
 	.num_nodes = ARRAY_SIZE(a0noc_nodes),
-	.intf_clocks = a0noc_intf_clocks,
-	.num_intf_clocks = ARRAY_SIZE(a0noc_intf_clocks),
-	.no_clk_scaling = true,
+	.clocks = bus_a0noc_clocks,
+	.num_clocks = ARRAY_SIZE(bus_a0noc_clocks),
 	.regmap_cfg = &msm8996_a0noc_regmap_config
 };
 
@@ -1862,8 +1865,8 @@ static const struct qcom_icc_desc msm8996_a2noc = {
 	.type = QCOM_ICC_NOC,
 	.nodes = a2noc_nodes,
 	.num_nodes = ARRAY_SIZE(a2noc_nodes),
-	.intf_clocks = a2noc_intf_clocks,
-	.num_intf_clocks = ARRAY_SIZE(a2noc_intf_clocks),
+	.clocks = bus_a2noc_clocks,
+	.num_clocks = ARRAY_SIZE(bus_a2noc_clocks),
 	.regmap_cfg = &msm8996_a2noc_regmap_config
 };
 
@@ -2001,8 +2004,8 @@ static const struct qcom_icc_desc msm8996_mnoc = {
 	.type = QCOM_ICC_NOC,
 	.nodes = mnoc_nodes,
 	.num_nodes = ARRAY_SIZE(mnoc_nodes),
-	.intf_clocks = mm_intf_clocks,
-	.num_intf_clocks = ARRAY_SIZE(mm_intf_clocks),
+	.clocks = bus_mm_clocks,
+	.num_clocks = ARRAY_SIZE(bus_mm_clocks),
 	.regmap_cfg = &msm8996_mnoc_regmap_config
 };
 
@@ -2108,17 +2111,7 @@ static struct platform_driver qnoc_driver = {
 		.sync_state = icc_sync_state,
 	}
 };
-static int __init qnoc_driver_init(void)
-{
-	return platform_driver_register(&qnoc_driver);
-}
-core_initcall(qnoc_driver_init);
-
-static void __exit qnoc_driver_exit(void)
-{
-	platform_driver_unregister(&qnoc_driver);
-}
-module_exit(qnoc_driver_exit);
+module_platform_driver(qnoc_driver);
 
 MODULE_AUTHOR("Yassine Oudjana <y.oudjana@protonmail.com>");
 MODULE_DESCRIPTION("Qualcomm MSM8996 NoC driver");

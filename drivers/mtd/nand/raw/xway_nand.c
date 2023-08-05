@@ -238,7 +238,7 @@ static int xway_nand_probe(struct platform_device *pdev)
 /*
  * Remove a NAND device.
  */
-static void xway_nand_remove(struct platform_device *pdev)
+static int xway_nand_remove(struct platform_device *pdev)
 {
 	struct xway_nand_data *data = platform_get_drvdata(pdev);
 	struct nand_chip *chip = &data->chip;
@@ -247,6 +247,8 @@ static void xway_nand_remove(struct platform_device *pdev)
 	ret = mtd_device_unregister(nand_to_mtd(chip));
 	WARN_ON(ret);
 	nand_cleanup(chip);
+
+	return 0;
 }
 
 static const struct of_device_id xway_nand_match[] = {
@@ -256,7 +258,7 @@ static const struct of_device_id xway_nand_match[] = {
 
 static struct platform_driver xway_nand_driver = {
 	.probe	= xway_nand_probe,
-	.remove_new = xway_nand_remove,
+	.remove	= xway_nand_remove,
 	.driver	= {
 		.name		= "lantiq,nand-xway",
 		.of_match_table = xway_nand_match,

@@ -170,11 +170,12 @@ virt_reg_failed:
 	return err;
 }
 
-static void mlxcpld_mux_remove(struct platform_device *pdev)
+static int mlxcpld_mux_remove(struct platform_device *pdev)
 {
 	struct i2c_mux_core *muxc = platform_get_drvdata(pdev);
 
 	i2c_mux_del_adapters(muxc);
+	return 0;
 }
 
 static struct platform_driver mlxcpld_mux_driver = {
@@ -182,7 +183,7 @@ static struct platform_driver mlxcpld_mux_driver = {
 		.name = "i2c-mux-mlxcpld",
 	},
 	.probe = mlxcpld_mux_probe,
-	.remove_new = mlxcpld_mux_remove,
+	.remove = mlxcpld_mux_remove,
 };
 
 module_platform_driver(mlxcpld_mux_driver);

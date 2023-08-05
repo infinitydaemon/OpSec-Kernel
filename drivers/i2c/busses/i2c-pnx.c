@@ -743,12 +743,14 @@ out_clock:
 	return ret;
 }
 
-static void i2c_pnx_remove(struct platform_device *pdev)
+static int i2c_pnx_remove(struct platform_device *pdev)
 {
 	struct i2c_pnx_algo_data *alg_data = platform_get_drvdata(pdev);
 
 	i2c_del_adapter(&alg_data->adapter);
 	clk_disable_unprepare(alg_data->clk);
+
+	return 0;
 }
 
 #ifdef CONFIG_OF
@@ -766,7 +768,7 @@ static struct platform_driver i2c_pnx_driver = {
 		.pm = PNX_I2C_PM,
 	},
 	.probe = i2c_pnx_probe,
-	.remove_new = i2c_pnx_remove,
+	.remove = i2c_pnx_remove,
 };
 
 static int __init i2c_adap_pnx_init(void)

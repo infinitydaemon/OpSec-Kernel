@@ -69,7 +69,7 @@ static int xlnx_pr_decoupler_enable_show(struct fpga_bridge *bridge)
 	if (err)
 		return err;
 
-	status = xlnx_pr_decouple_read(priv, CTRL_OFFSET);
+	status = readl(priv->io_base);
 
 	clk_disable(priv->clk);
 

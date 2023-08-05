@@ -172,9 +172,9 @@ static int st_mmap_probe(struct platform_device *pdev)
 	return st_thermal_register(pdev,  st_mmap_thermal_of_match);
 }
 
-static void st_mmap_remove(struct platform_device *pdev)
+static int st_mmap_remove(struct platform_device *pdev)
 {
-	st_thermal_unregister(pdev);
+	return st_thermal_unregister(pdev);
 }
 
 static struct platform_driver st_mmap_thermal_driver = {
@@ -184,7 +184,7 @@ static struct platform_driver st_mmap_thermal_driver = {
 		.of_match_table = st_mmap_thermal_of_match,
 	},
 	.probe		= st_mmap_probe,
-	.remove_new	= st_mmap_remove,
+	.remove		= st_mmap_remove,
 };
 
 module_platform_driver(st_mmap_thermal_driver);

@@ -18,6 +18,7 @@
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_blend.h>
+#include <drm/drm_crtc_helper.h>
 #include <drm/drm_fb_dma_helper.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem_dma_helper.h>
@@ -802,8 +803,10 @@ static int sprd_dpu_context_init(struct sprd_dpu *dpu,
 	}
 
 	ctx->irq = platform_get_irq(pdev, 0);
-	if (ctx->irq < 0)
+	if (ctx->irq < 0) {
+		dev_err(dev, "failed to get dpu irq\n");
 		return ctx->irq;
+	}
 
 	/* disable and clear interrupts before register dpu IRQ. */
 	writel(0x00, ctx->base + REG_DPU_INT_EN);

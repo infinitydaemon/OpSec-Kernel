@@ -12,7 +12,6 @@
 #include <linux/io.h>
 #include <linux/iio/iio.h>
 #include <linux/module.h>
-#include <linux/mutex.h>
 #include <linux/nvmem-consumer.h>
 #include <linux/interrupt.h>
 #include <linux/of.h>
@@ -277,8 +276,6 @@ struct meson_sar_adc_priv {
 	struct clk				*adc_div_clk;
 	struct clk_divider			clk_div;
 	struct completion			done;
-	/* lock to protect against multiple access to the device */
-	struct mutex				lock;
 	int					calibbias;
 	int					calibscale;
 	struct regmap				*tsc_regmap;
@@ -489,7 +486,7 @@ static int meson_sar_adc_lock(struct iio_dev *indio_dev)
 	struct meson_sar_adc_priv *priv = iio_priv(indio_dev);
 	int val, ret;
 
-	mutex_lock(&priv->lock);
+	mutex_lock(&indio_dev->mlock);
 
 	if (priv->param->has_bl30_integration) {
 		/* prevent BL30 from using the SAR ADC while we are using it */
@@ -507,7 +504,7 @@ static int meson_sar_adc_lock(struct iio_dev *indio_dev)
 						      !(val & MESON_SAR_ADC_DELAY_BL30_BUSY),
 						      1, 10000);
 		if (ret) {
-			mutex_unlock(&priv->lock);
+			mutex_unlock(&indio_dev->mlock);
 			return ret;
 		}
 	}
@@ -524,7 +521,7 @@ static void meson_sar_adc_unlock(struct iio_dev *indio_dev)
 		regmap_update_bits(priv->regmap, MESON_SAR_ADC_DELAY,
 				   MESON_SAR_ADC_DELAY_KERNEL_BUSY, 0);
 
-	mutex_unlock(&priv->lock);
+	mutex_unlock(&indio_dev->mlock);
 }
 
 static void meson_sar_adc_clear_fifo(struct iio_dev *indio_dev)
@@ -957,18 +954,14 @@ err_lock:
 	return ret;
 }
 
-static void meson_sar_adc_hw_disable(struct iio_dev *indio_dev)
+static int meson_sar_adc_hw_disable(struct iio_dev *indio_dev)
 {
 	struct meson_sar_adc_priv *priv = iio_priv(indio_dev);
 	int ret;
 
-	/*
-	 * If taking the lock fails we have to assume that BL30 is broken. The
-	 * best we can do then is to release the resources anyhow.
-	 */
 	ret = meson_sar_adc_lock(indio_dev);
 	if (ret)
-		dev_err(indio_dev->dev.parent, "Failed to lock ADC (%pE)\n", ERR_PTR(ret));
+		return ret;
 
 	clk_disable_unprepare(priv->adc_clk);
 
@@ -981,8 +974,9 @@ static void meson_sar_adc_hw_disable(struct iio_dev *indio_dev)
 
 	regulator_disable(priv->vref);
 
-	if (!ret)
-		meson_sar_adc_unlock(indio_dev);
+	meson_sar_adc_unlock(indio_dev);
+
+	return 0;
 }
 
 static irqreturn_t meson_sar_adc_irq(int irq, void *data)
@@ -1256,8 +1250,6 @@ static int meson_sar_adc_probe(struct platform_device *pdev)
 	if (ret)
 		goto err;
 
-	mutex_init(&priv->lock);
-
 	ret = meson_sar_adc_hw_enable(indio_dev);
 	if (ret)
 		goto err;
@@ -1286,18 +1278,14 @@ static int meson_sar_adc_remove(struct platform_device *pdev)
 
 	iio_device_unregister(indio_dev);
 
-	meson_sar_adc_hw_disable(indio_dev);
-
-	return 0;
+	return meson_sar_adc_hw_disable(indio_dev);
 }
 
 static int meson_sar_adc_suspend(struct device *dev)
 {
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 
-	meson_sar_adc_hw_disable(indio_dev);
-
-	return 0;
+	return meson_sar_adc_hw_disable(indio_dev);
 }
 
 static int meson_sar_adc_resume(struct device *dev)

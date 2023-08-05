@@ -50,45 +50,6 @@ static inline struct tpm_tis_tcg_phy *to_tpm_tis_tcg_phy(struct tpm_tis_data *da
 	return container_of(data, struct tpm_tis_tcg_phy, priv);
 }
 
-#ifdef CONFIG_PREEMPT_RT
-/*
- * Flush previous write operations with a dummy read operation to the
- * TPM MMIO base address.
- */
-static inline void tpm_tis_flush(void __iomem *iobase)
-{
-	ioread8(iobase + TPM_ACCESS(0));
-}
-#else
-#define tpm_tis_flush(iobase) do { } while (0)
-#endif
-
-/*
- * Write a byte word to the TPM MMIO address, and flush the write queue.
- * The flush ensures that the data is sent immediately over the bus and not
- * aggregated with further requests and transferred later in a batch. The large
- * write requests can lead to unwanted latency spikes by blocking the CPU until
- * the complete batch has been transferred.
- */
-static inline void tpm_tis_iowrite8(u8 b, void __iomem *iobase, u32 addr)
-{
-	iowrite8(b, iobase + addr);
-	tpm_tis_flush(iobase);
-}
-
-/*
- * Write a 32-bit word to the TPM MMIO address, and flush the write queue.
- * The flush ensures that the data is sent immediately over the bus and not
- * aggregated with further requests and transferred later in a batch. The large
- * write requests can lead to unwanted latency spikes by blocking the CPU until
- * the complete batch has been transferred.
- */
-static inline void tpm_tis_iowrite32(u32 b, void __iomem *iobase, u32 addr)
-{
-	iowrite32(b, iobase + addr);
-	tpm_tis_flush(iobase);
-}
-
 static int interrupts = -1;
 module_param(interrupts, int, 0444);
 MODULE_PARM_DESC(interrupts, "Enable interrupts");
@@ -116,22 +77,6 @@ static int tpm_tis_disable_irq(const struct dmi_system_id *d)
 static const struct dmi_system_id tpm_tis_dmi_table[] = {
 	{
 		.callback = tpm_tis_disable_irq,
-		.ident = "Framework Laptop (12th Gen Intel Core)",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Framework"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "Laptop (12th Gen Intel Core)"),
-		},
-	},
-	{
-		.callback = tpm_tis_disable_irq,
-		.ident = "Framework Laptop (13th Gen Intel Core)",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Framework"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "Laptop (13th Gen Intel Core)"),
-		},
-	},
-	{
-		.callback = tpm_tis_disable_irq,
 		.ident = "ThinkPad T490s",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
@@ -152,22 +97,6 @@ static const struct dmi_system_id tpm_tis_dmi_table[] = {
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
 			DMI_MATCH(DMI_PRODUCT_VERSION, "ThinkPad L490"),
-		},
-	},
-	{
-		.callback = tpm_tis_disable_irq,
-		.ident = "ThinkPad L590",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
-			DMI_MATCH(DMI_PRODUCT_VERSION, "ThinkPad L590"),
-		},
-	},
-	{
-		.callback = tpm_tis_disable_irq,
-		.ident = "UPX-TGL",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "AAEON"),
-			DMI_MATCH(DMI_PRODUCT_VERSION, "UPX-TGL"),
 		},
 	},
 	{}
@@ -273,12 +202,12 @@ static int tpm_tcg_write_bytes(struct tpm_tis_data *data, u32 addr, u16 len,
 	switch (io_mode) {
 	case TPM_TIS_PHYS_8:
 		while (len--)
-			tpm_tis_iowrite8(*value++, phy->iobase, addr);
+			iowrite8(*value++, phy->iobase + addr);
 		break;
 	case TPM_TIS_PHYS_16:
 		return -EINVAL;
 	case TPM_TIS_PHYS_32:
-		tpm_tis_iowrite32(le32_to_cpu(*((__le32 *)value)), phy->iobase, addr);
+		iowrite32(le32_to_cpu(*((__le32 *)value)), phy->iobase + addr);
 		break;
 	}
 
@@ -411,12 +340,14 @@ static int tpm_tis_plat_probe(struct platform_device *pdev)
 	return tpm_tis_init(&pdev->dev, &tpm_info);
 }
 
-static void tpm_tis_plat_remove(struct platform_device *pdev)
+static int tpm_tis_plat_remove(struct platform_device *pdev)
 {
 	struct tpm_chip *chip = dev_get_drvdata(&pdev->dev);
 
 	tpm_chip_unregister(chip);
 	tpm_tis_remove(chip);
+
+	return 0;
 }
 
 #ifdef CONFIG_OF
@@ -429,7 +360,7 @@ MODULE_DEVICE_TABLE(of, tis_of_platform_match);
 
 static struct platform_driver tis_drv = {
 	.probe = tpm_tis_plat_probe,
-	.remove_new = tpm_tis_plat_remove,
+	.remove = tpm_tis_plat_remove,
 	.driver = {
 		.name		= "tpm_tis",
 		.pm		= &tpm_tis_pm,

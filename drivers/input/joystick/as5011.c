@@ -212,7 +212,8 @@ static int as5011_configure_chip(struct as5011_device *as5011,
 	return 0;
 }
 
-static int as5011_probe(struct i2c_client *client)
+static int as5011_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	const struct as5011_platform_data *plat_data;
 	struct as5011_device *as5011;

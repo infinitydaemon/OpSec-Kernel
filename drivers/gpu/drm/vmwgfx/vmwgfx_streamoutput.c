@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 /**************************************************************************
  *
- * Copyright © 2018-2023 VMware, Inc., Palo Alto, CA., USA
+ * Copyright © 2018-2019 VMware, Inc., Palo Alto, CA., USA
  * All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -26,12 +26,11 @@
  *
  **************************************************************************/
 
-#include "vmwgfx_binding.h"
-#include "vmwgfx_bo.h"
+#include <drm/ttm/ttm_placement.h>
+
 #include "vmwgfx_drv.h"
 #include "vmwgfx_resource_priv.h"
-
-#include <drm/ttm/ttm_placement.h>
+#include "vmwgfx_binding.h"
 
 /**
  * struct vmw_dx_streamoutput - Streamoutput resource metadata.
@@ -63,11 +62,10 @@ static void vmw_dx_streamoutput_commit_notify(struct vmw_resource *res,
 
 static const struct vmw_res_func vmw_dx_streamoutput_func = {
 	.res_type = vmw_res_streamoutput,
-	.needs_guest_memory = true,
+	.needs_backup = true,
 	.may_evict = false,
 	.type_name = "DX streamoutput",
-	.domain = VMW_BO_DOMAIN_MOB,
-	.busy_domain = VMW_BO_DOMAIN_MOB,
+	.backup_placement = &vmw_mob_placement,
 	.create = vmw_dx_streamoutput_create,
 	.destroy = NULL, /* Command buffer managed resource. */
 	.bind = vmw_dx_streamoutput_bind,
@@ -106,8 +104,8 @@ static int vmw_dx_streamoutput_unscrub(struct vmw_resource *res)
 	cmd->header.id = SVGA_3D_CMD_DX_BIND_STREAMOUTPUT;
 	cmd->header.size = sizeof(cmd->body);
 	cmd->body.soid = so->id;
-	cmd->body.mobid = res->guest_memory_bo->tbo.resource->start;
-	cmd->body.offsetInBytes = res->guest_memory_offset;
+	cmd->body.mobid = res->backup->base.resource->start;
+	cmd->body.offsetInBytes = res->backup_offset;
 	cmd->body.sizeInBytes = so->size;
 	vmw_cmd_commit(dev_priv, sizeof(*cmd));
 
@@ -197,7 +195,7 @@ static int vmw_dx_streamoutput_unbind(struct vmw_resource *res, bool readback,
 	struct vmw_fence_obj *fence;
 	int ret;
 
-	if (WARN_ON(res->guest_memory_bo->tbo.resource->mem_type != VMW_PL_MOB))
+	if (WARN_ON(res->backup->base.resource->mem_type != VMW_PL_MOB))
 		return -EINVAL;
 
 	mutex_lock(&dev_priv->binding_mutex);

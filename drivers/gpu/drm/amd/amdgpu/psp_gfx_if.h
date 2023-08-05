@@ -102,7 +102,6 @@ enum psp_gfx_cmd_id
     GFX_CMD_ID_LOAD_TOC           = 0x00000020,   /* Load TOC and obtain TMR size */
     GFX_CMD_ID_AUTOLOAD_RLC       = 0x00000021,   /* Indicates all graphics fw loaded, start RLC autoload */
     GFX_CMD_ID_BOOT_CFG           = 0x00000022,   /* Boot Config */
-    GFX_CMD_ID_SRIOV_SPATIAL_PART = 0x00000027,   /* Configure spatial partitioning mode */
 };
 
 /* PSP boot config sub-commands */
@@ -339,13 +338,6 @@ struct psp_gfx_cmd_boot_cfg
     uint32_t                        boot_config_valid;    /* dynamic boot configuration valid bits bitmask */
 };
 
-struct psp_gfx_cmd_sriov_spatial_part {
-	uint32_t mode;
-	uint32_t override_ips;
-	uint32_t override_xcds_avail;
-	uint32_t override_this_aid;
-};
-
 /* All GFX ring buffer commands. */
 union psp_gfx_commands
 {
@@ -359,7 +351,6 @@ union psp_gfx_commands
     struct psp_gfx_cmd_setup_tmr        cmd_setup_vmr;
     struct psp_gfx_cmd_load_toc         cmd_load_toc;
     struct psp_gfx_cmd_boot_cfg         boot_cfg;
-    struct psp_gfx_cmd_sriov_spatial_part cmd_spatial_part;
 };
 
 struct psp_gfx_uresp_reserved

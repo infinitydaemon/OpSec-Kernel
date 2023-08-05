@@ -2273,7 +2273,7 @@ return_error:
 	return err;
 }
 
-static void omap_nand_remove(struct platform_device *pdev)
+static int omap_nand_remove(struct platform_device *pdev)
 {
 	struct mtd_info *mtd = platform_get_drvdata(pdev);
 	struct nand_chip *nand_chip = mtd_to_nand(mtd);
@@ -2285,6 +2285,7 @@ static void omap_nand_remove(struct platform_device *pdev)
 		dma_release_channel(info->dma);
 	WARN_ON(mtd_device_unregister(mtd));
 	nand_cleanup(nand_chip);
+	return 0;
 }
 
 /* omap_nand_ids defined in linux/platform_data/mtd-nand-omap2.h */
@@ -2292,7 +2293,7 @@ MODULE_DEVICE_TABLE(of, omap_nand_ids);
 
 static struct platform_driver omap_nand_driver = {
 	.probe		= omap_nand_probe,
-	.remove_new	= omap_nand_remove,
+	.remove		= omap_nand_remove,
 	.driver		= {
 		.name	= DRIVER_NAME,
 		.of_match_table = omap_nand_ids,

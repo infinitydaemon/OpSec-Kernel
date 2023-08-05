@@ -894,7 +894,6 @@ static int qcom_labibb_regulator_probe(struct platform_device *pdev)
 static struct platform_driver qcom_labibb_regulator_driver = {
 	.driver	= {
 		.name = "qcom-lab-ibb-regulator",
-		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 		.of_match_table	= qcom_labibb_match,
 	},
 	.probe = qcom_labibb_regulator_probe,

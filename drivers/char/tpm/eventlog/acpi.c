@@ -14,7 +14,6 @@
  * Access to the event log extended by the TCG BIOS of PC platform
  */
 
-#include <linux/device.h>
 #include <linux/seq_file.h>
 #include <linux/fs.h>
 #include <linux/security.h>
@@ -136,7 +135,7 @@ int tpm_read_log_acpi(struct tpm_chip *chip)
 	}
 
 	/* malloc EventLog space */
-	log->bios_event_log = devm_kmalloc(&chip->dev, len, GFP_KERNEL);
+	log->bios_event_log = kmalloc(len, GFP_KERNEL);
 	if (!log->bios_event_log)
 		return -ENOMEM;
 
@@ -165,7 +164,7 @@ int tpm_read_log_acpi(struct tpm_chip *chip)
 	return format;
 
 err:
-	devm_kfree(&chip->dev, log->bios_event_log);
+	kfree(log->bios_event_log);
 	log->bios_event_log = NULL;
 	return ret;
 }

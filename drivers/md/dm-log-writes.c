@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2014 Facebook. All rights reserved.
  *
@@ -232,13 +231,13 @@ static int write_metadata(struct log_writes_c *lc, void *entry,
 		goto error;
 	}
 
-	ptr = kmap_local_page(page);
+	ptr = kmap_atomic(page);
 	memcpy(ptr, entry, entrylen);
 	if (datalen)
 		memcpy(ptr + entrylen, data, datalen);
 	memset(ptr + entrylen + datalen, 0,
 	       lc->sectorsize - entrylen - datalen);
-	kunmap_local(ptr);
+	kunmap_atomic(ptr);
 
 	ret = bio_add_page(bio, page, lc->sectorsize, 0);
 	if (ret != lc->sectorsize) {
@@ -287,11 +286,11 @@ static int write_inline_data(struct log_writes_c *lc, void *entry,
 				goto error_bio;
 			}
 
-			ptr = kmap_local_page(page);
+			ptr = kmap_atomic(page);
 			memcpy(ptr, data, pg_datalen);
 			if (pg_sectorlen > pg_datalen)
 				memset(ptr + pg_datalen, 0, pg_sectorlen - pg_datalen);
-			kunmap_local(ptr);
+			kunmap_atomic(ptr);
 
 			ret = bio_add_page(bio, page, pg_sectorlen, 0);
 			if (ret != pg_sectorlen) {
@@ -429,7 +428,7 @@ static inline sector_t logdev_last_sector(struct log_writes_c *lc)
 
 static int log_writes_kthread(void *arg)
 {
-	struct log_writes_c *lc = arg;
+	struct log_writes_c *lc = (struct log_writes_c *)arg;
 	sector_t sector = 0;
 
 	while (!kthread_should_stop()) {
@@ -743,9 +742,9 @@ static int log_writes_map(struct dm_target *ti, struct bio *bio)
 			return DM_MAPIO_KILL;
 		}
 
-		dst = kmap_local_page(page);
+		dst = kmap_atomic(page);
 		memcpy_from_bvec(dst, &bv);
-		kunmap_local(dst);
+		kunmap_atomic(dst);
 		block->vecs[i].bv_page = page;
 		block->vecs[i].bv_len = bv.bv_len;
 		block->vec_cnt++;
@@ -937,7 +936,24 @@ static struct target_type log_writes_target = {
 	.dax_zero_page_range = log_writes_dax_zero_page_range,
 	.dax_recovery_write = log_writes_dax_recovery_write,
 };
-module_dm(log_writes);
+
+static int __init dm_log_writes_init(void)
+{
+	int r = dm_register_target(&log_writes_target);
+
+	if (r < 0)
+		DMERR("register failed %d", r);
+
+	return r;
+}
+
+static void __exit dm_log_writes_exit(void)
+{
+	dm_unregister_target(&log_writes_target);
+}
+
+module_init(dm_log_writes_init);
+module_exit(dm_log_writes_exit);
 
 MODULE_DESCRIPTION(DM_NAME " log writes target");
 MODULE_AUTHOR("Josef Bacik <jbacik@fb.com>");

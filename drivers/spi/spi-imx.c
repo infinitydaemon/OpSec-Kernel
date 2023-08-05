@@ -77,6 +77,7 @@ struct spi_imx_devtype_data {
 	void (*reset)(struct spi_imx_data *spi_imx);
 	void (*setup_wml)(struct spi_imx_data *spi_imx);
 	void (*disable)(struct spi_imx_data *spi_imx);
+	void (*disable_dma)(struct spi_imx_data *spi_imx);
 	bool has_dmamode;
 	bool has_slavemode;
 	unsigned int fifo_size;
@@ -281,7 +282,6 @@ static bool spi_imx_can_dma(struct spi_controller *controller, struct spi_device
 #define MX51_ECSPI_CONFIG_SCLKPOL(cs)	(1 << ((cs & 3) +  4))
 #define MX51_ECSPI_CONFIG_SBBCTRL(cs)	(1 << ((cs & 3) +  8))
 #define MX51_ECSPI_CONFIG_SSBPOL(cs)	(1 << ((cs & 3) + 12))
-#define MX51_ECSPI_CONFIG_DATACTL(cs)	(1 << ((cs & 3) + 16))
 #define MX51_ECSPI_CONFIG_SCLKCTL(cs)	(1 << ((cs & 3) + 20))
 
 #define MX51_ECSPI_INT		0x10
@@ -508,6 +508,11 @@ static void mx51_ecspi_trigger(struct spi_imx_data *spi_imx)
 	writel(reg, spi_imx->base + MX51_ECSPI_CTRL);
 }
 
+static void mx51_disable_dma(struct spi_imx_data *spi_imx)
+{
+	writel(0, spi_imx->base + MX51_ECSPI_DMA);
+}
+
 static void mx51_ecspi_disable(struct spi_imx_data *spi_imx)
 {
 	u32 ctrl;
@@ -515,13 +520,6 @@ static void mx51_ecspi_disable(struct spi_imx_data *spi_imx)
 	ctrl = readl(spi_imx->base + MX51_ECSPI_CTRL);
 	ctrl &= ~MX51_ECSPI_CTRL_ENABLE;
 	writel(ctrl, spi_imx->base + MX51_ECSPI_CTRL);
-}
-
-static int mx51_ecspi_channel(const struct spi_device *spi)
-{
-	if (!spi_get_csgpiod(spi, 0))
-		return spi_get_chipselect(spi, 0);
-	return spi->controller->unused_native_cs;
 }
 
 static int mx51_ecspi_prepare_message(struct spi_imx_data *spi_imx,
@@ -534,7 +532,6 @@ static int mx51_ecspi_prepare_message(struct spi_imx_data *spi_imx,
 	u32 testreg, delay;
 	u32 cfg = readl(spi_imx->base + MX51_ECSPI_CONFIG);
 	u32 current_cfg = cfg;
-	int channel = mx51_ecspi_channel(spi);
 
 	/* set Master or Slave mode */
 	if (spi_imx->slave_mode)
@@ -549,7 +546,7 @@ static int mx51_ecspi_prepare_message(struct spi_imx_data *spi_imx,
 		ctrl |= MX51_ECSPI_CTRL_DRCTL(spi_imx->spi_drctl);
 
 	/* set chip select to use */
-	ctrl |= MX51_ECSPI_CTRL_CS(channel);
+	ctrl |= MX51_ECSPI_CTRL_CS(spi->chip_select);
 
 	/*
 	 * The ctrl register must be written first, with the EN bit set other
@@ -570,27 +567,22 @@ static int mx51_ecspi_prepare_message(struct spi_imx_data *spi_imx,
 	 * BURST_LENGTH + 1 bits are received
 	 */
 	if (spi_imx->slave_mode && is_imx53_ecspi(spi_imx))
-		cfg &= ~MX51_ECSPI_CONFIG_SBBCTRL(channel);
+		cfg &= ~MX51_ECSPI_CONFIG_SBBCTRL(spi->chip_select);
 	else
-		cfg |= MX51_ECSPI_CONFIG_SBBCTRL(channel);
+		cfg |= MX51_ECSPI_CONFIG_SBBCTRL(spi->chip_select);
 
 	if (spi->mode & SPI_CPOL) {
-		cfg |= MX51_ECSPI_CONFIG_SCLKPOL(channel);
-		cfg |= MX51_ECSPI_CONFIG_SCLKCTL(channel);
+		cfg |= MX51_ECSPI_CONFIG_SCLKPOL(spi->chip_select);
+		cfg |= MX51_ECSPI_CONFIG_SCLKCTL(spi->chip_select);
 	} else {
-		cfg &= ~MX51_ECSPI_CONFIG_SCLKPOL(channel);
-		cfg &= ~MX51_ECSPI_CONFIG_SCLKCTL(channel);
+		cfg &= ~MX51_ECSPI_CONFIG_SCLKPOL(spi->chip_select);
+		cfg &= ~MX51_ECSPI_CONFIG_SCLKCTL(spi->chip_select);
 	}
 
-	if (spi->mode & SPI_MOSI_IDLE_LOW)
-		cfg |= MX51_ECSPI_CONFIG_DATACTL(channel);
-	else
-		cfg &= ~MX51_ECSPI_CONFIG_DATACTL(channel);
-
 	if (spi->mode & SPI_CS_HIGH)
-		cfg |= MX51_ECSPI_CONFIG_SSBPOL(channel);
+		cfg |= MX51_ECSPI_CONFIG_SSBPOL(spi->chip_select);
 	else
-		cfg &= ~MX51_ECSPI_CONFIG_SSBPOL(channel);
+		cfg &= ~MX51_ECSPI_CONFIG_SSBPOL(spi->chip_select);
 
 	if (cfg == current_cfg)
 		return 0;
@@ -635,15 +627,14 @@ static void mx51_configure_cpha(struct spi_imx_data *spi_imx,
 	bool cpha = (spi->mode & SPI_CPHA);
 	bool flip_cpha = (spi->mode & SPI_RX_CPHA_FLIP) && spi_imx->rx_only;
 	u32 cfg = readl(spi_imx->base + MX51_ECSPI_CONFIG);
-	int channel = mx51_ecspi_channel(spi);
 
 	/* Flip cpha logical value iff flip_cpha */
 	cpha ^= flip_cpha;
 
 	if (cpha)
-		cfg |= MX51_ECSPI_CONFIG_SCLKPHA(channel);
+		cfg |= MX51_ECSPI_CONFIG_SCLKPHA(spi->chip_select);
 	else
-		cfg &= ~MX51_ECSPI_CONFIG_SCLKPHA(channel);
+		cfg &= ~MX51_ECSPI_CONFIG_SCLKPHA(spi->chip_select);
 
 	writel(cfg, spi_imx->base + MX51_ECSPI_CONFIG);
 }
@@ -795,8 +786,8 @@ static int mx31_prepare_transfer(struct spi_imx_data *spi_imx,
 		reg |= MX31_CSPICTRL_POL;
 	if (spi->mode & SPI_CS_HIGH)
 		reg |= MX31_CSPICTRL_SSPOL;
-	if (!spi_get_csgpiod(spi, 0))
-		reg |= (spi_get_chipselect(spi, 0)) <<
+	if (!spi->cs_gpiod)
+		reg |= (spi->chip_select) <<
 			(is_imx35_cspi(spi_imx) ? MX35_CSPICTRL_CS_SHIFT :
 						  MX31_CSPICTRL_CS_SHIFT);
 
@@ -895,8 +886,8 @@ static int mx21_prepare_transfer(struct spi_imx_data *spi_imx,
 		reg |= MX21_CSPICTRL_POL;
 	if (spi->mode & SPI_CS_HIGH)
 		reg |= MX21_CSPICTRL_SSPOL;
-	if (!spi_get_csgpiod(spi, 0))
-		reg |= spi_get_chipselect(spi, 0) << MX21_CSPICTRL_CS_SHIFT;
+	if (!spi->cs_gpiod)
+		reg |= spi->chip_select << MX21_CSPICTRL_CS_SHIFT;
 
 	writel(reg, spi_imx->base + MXC_CSPICTRL);
 
@@ -1063,6 +1054,7 @@ static struct spi_imx_devtype_data imx51_ecspi_devtype_data = {
 	.rx_available = mx51_ecspi_rx_available,
 	.reset = mx51_ecspi_reset,
 	.setup_wml = mx51_setup_wml,
+	.disable_dma = mx51_disable_dma,
 	.fifo_size = 64,
 	.has_dmamode = true,
 	.dynamic_burst = true,
@@ -1077,6 +1069,7 @@ static struct spi_imx_devtype_data imx53_ecspi_devtype_data = {
 	.prepare_transfer = mx51_ecspi_prepare_transfer,
 	.trigger = mx51_ecspi_trigger,
 	.rx_available = mx51_ecspi_rx_available,
+	.disable_dma = mx51_disable_dma,
 	.reset = mx51_ecspi_reset,
 	.fifo_size = 64,
 	.has_dmamode = true,
@@ -1752,21 +1745,20 @@ static int spi_imx_probe(struct platform_device *pdev)
 	else
 		controller->num_chipselect = 3;
 
-	controller->transfer_one = spi_imx_transfer_one;
-	controller->setup = spi_imx_setup;
-	controller->cleanup = spi_imx_cleanup;
-	controller->prepare_message = spi_imx_prepare_message;
-	controller->unprepare_message = spi_imx_unprepare_message;
-	controller->slave_abort = spi_imx_slave_abort;
-	controller->mode_bits = SPI_CPOL | SPI_CPHA | SPI_CS_HIGH | SPI_NO_CS |
-				SPI_MOSI_IDLE_LOW;
+	spi_imx->controller->transfer_one = spi_imx_transfer_one;
+	spi_imx->controller->setup = spi_imx_setup;
+	spi_imx->controller->cleanup = spi_imx_cleanup;
+	spi_imx->controller->prepare_message = spi_imx_prepare_message;
+	spi_imx->controller->unprepare_message = spi_imx_unprepare_message;
+	spi_imx->controller->slave_abort = spi_imx_slave_abort;
+	spi_imx->controller->mode_bits = SPI_CPOL | SPI_CPHA | SPI_CS_HIGH | SPI_NO_CS;
 
 	if (is_imx35_cspi(spi_imx) || is_imx51_ecspi(spi_imx) ||
 	    is_imx53_ecspi(spi_imx))
-		controller->mode_bits |= SPI_LOOP | SPI_READY;
+		spi_imx->controller->mode_bits |= SPI_LOOP | SPI_READY;
 
 	if (is_imx51_ecspi(spi_imx) || is_imx53_ecspi(spi_imx))
-		controller->mode_bits |= SPI_RX_CPHA_FLIP;
+		spi_imx->controller->mode_bits |= SPI_RX_CPHA_FLIP;
 
 	if (is_imx51_ecspi(spi_imx) &&
 	    device_property_read_u32(&pdev->dev, "cs-gpios", NULL))
@@ -1775,18 +1767,14 @@ static int spi_imx_probe(struct platform_device *pdev)
 		 * setting the burst length to the word size. This is
 		 * considerably faster than manually controlling the CS.
 		 */
-		controller->mode_bits |= SPI_CS_WORD;
-
-	if (is_imx51_ecspi(spi_imx) || is_imx53_ecspi(spi_imx)) {
-		controller->max_native_cs = 4;
-		controller->flags |= SPI_MASTER_GPIO_SS;
-	}
+		spi_imx->controller->mode_bits |= SPI_CS_WORD;
 
 	spi_imx->spi_drctl = spi_drctl;
 
 	init_completion(&spi_imx->xfer_done);
 
-	spi_imx->base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	spi_imx->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(spi_imx->base)) {
 		ret = PTR_ERR(spi_imx->base);
 		goto out_controller_put;
@@ -1880,7 +1868,7 @@ out_controller_put:
 	return ret;
 }
 
-static void spi_imx_remove(struct platform_device *pdev)
+static int spi_imx_remove(struct platform_device *pdev)
 {
 	struct spi_controller *controller = platform_get_drvdata(pdev);
 	struct spi_imx_data *spi_imx = spi_controller_get_devdata(controller);
@@ -1899,6 +1887,8 @@ static void spi_imx_remove(struct platform_device *pdev)
 	pm_runtime_disable(spi_imx->dev);
 
 	spi_imx_sdma_exit(spi_imx);
+
+	return 0;
 }
 
 static int __maybe_unused spi_imx_runtime_resume(struct device *dev)
@@ -1960,7 +1950,7 @@ static struct platform_driver spi_imx_driver = {
 		   .pm = &imx_spi_pm,
 	},
 	.probe = spi_imx_probe,
-	.remove_new = spi_imx_remove,
+	.remove = spi_imx_remove,
 };
 module_platform_driver(spi_imx_driver);
 

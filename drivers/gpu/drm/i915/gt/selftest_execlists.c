@@ -85,6 +85,8 @@ static int wait_for_reset(struct intel_engine_cs *engine,
 			break;
 	} while (time_before(jiffies, timeout));
 
+	flush_scheduled_work();
+
 	if (rq->fence.error != -EIO) {
 		pr_err("%s: hanging request %llx:%lld not reset\n",
 		       engine->name,
@@ -2741,11 +2743,11 @@ static int create_gang(struct intel_engine_cs *engine,
 		MI_SEMAPHORE_POLL |
 		MI_SEMAPHORE_SAD_EQ_SDD;
 	*cs++ = 0;
-	*cs++ = lower_32_bits(i915_vma_offset(vma));
-	*cs++ = upper_32_bits(i915_vma_offset(vma));
+	*cs++ = lower_32_bits(vma->node.start);
+	*cs++ = upper_32_bits(vma->node.start);
 
 	if (*prev) {
-		u64 offset = i915_vma_offset((*prev)->batch);
+		u64 offset = (*prev)->batch->node.start;
 
 		/* Terminate the spinner in the next lower priority batch. */
 		*cs++ = MI_STORE_DWORD_IMM_GEN4;
@@ -2767,11 +2769,15 @@ static int create_gang(struct intel_engine_cs *engine,
 	rq->batch = i915_vma_get(vma);
 	i915_request_get(rq);
 
-	err = igt_vma_move_to_active_unlocked(vma, rq, 0);
+	i915_vma_lock(vma);
+	err = i915_request_await_object(rq, vma->obj, false);
+	if (!err)
+		err = i915_vma_move_to_active(vma, rq, 0);
 	if (!err)
 		err = rq->engine->emit_bb_start(rq,
-						i915_vma_offset(vma),
+						vma->node.start,
 						PAGE_SIZE, 0);
+	i915_vma_unlock(vma);
 	i915_request_add(rq);
 	if (err)
 		goto err_rq;
@@ -3097,7 +3103,7 @@ create_gpr_user(struct intel_engine_cs *engine,
 		*cs++ = MI_MATH_ADD;
 		*cs++ = MI_MATH_STORE(MI_MATH_REG(i), MI_MATH_REG_ACCU);
 
-		addr = i915_vma_offset(result) + offset + i * sizeof(*cs);
+		addr = result->node.start + offset + i * sizeof(*cs);
 		*cs++ = MI_STORE_REGISTER_MEM_GEN8;
 		*cs++ = CS_GPR(engine, 2 * i);
 		*cs++ = lower_32_bits(addr);
@@ -3107,8 +3113,8 @@ create_gpr_user(struct intel_engine_cs *engine,
 			MI_SEMAPHORE_POLL |
 			MI_SEMAPHORE_SAD_GTE_SDD;
 		*cs++ = i;
-		*cs++ = lower_32_bits(i915_vma_offset(result));
-		*cs++ = upper_32_bits(i915_vma_offset(result));
+		*cs++ = lower_32_bits(result->node.start);
+		*cs++ = upper_32_bits(result->node.start);
 	}
 
 	*cs++ = MI_BATCH_BUFFER_END;
@@ -3179,14 +3185,20 @@ create_gpr_client(struct intel_engine_cs *engine,
 		goto out_batch;
 	}
 
-	err = igt_vma_move_to_active_unlocked(vma, rq, 0);
+	i915_vma_lock(vma);
+	err = i915_request_await_object(rq, vma->obj, false);
+	if (!err)
+		err = i915_vma_move_to_active(vma, rq, 0);
+	i915_vma_unlock(vma);
 
 	i915_vma_lock(batch);
+	if (!err)
+		err = i915_request_await_object(rq, batch->obj, false);
 	if (!err)
 		err = i915_vma_move_to_active(batch, rq, 0);
 	if (!err)
 		err = rq->engine->emit_bb_start(rq,
-						i915_vma_offset(batch),
+						batch->node.start,
 						PAGE_SIZE, 0);
 	i915_vma_unlock(batch);
 	i915_vma_unpin(batch);
@@ -3514,11 +3526,15 @@ static int smoke_submit(struct preempt_smoke *smoke,
 	}
 
 	if (vma) {
-		err = igt_vma_move_to_active_unlocked(vma, rq, 0);
+		i915_vma_lock(vma);
+		err = i915_request_await_object(rq, vma->obj, false);
+		if (!err)
+			err = i915_vma_move_to_active(vma, rq, 0);
 		if (!err)
 			err = rq->engine->emit_bb_start(rq,
-							i915_vma_offset(vma),
+							vma->node.start,
 							PAGE_SIZE, 0);
+		i915_vma_unlock(vma);
 	}
 
 	i915_request_add(rq);

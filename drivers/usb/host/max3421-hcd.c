@@ -72,6 +72,12 @@
 #define USB_MAX_FRAME_NUMBER	0x7ff
 #define USB_MAX_RETRIES		3 /* # of retries before error is reported */
 
+/*
+ * Max. # of times we're willing to retransmit a request immediately in
+ * resposne to a NAK.  Afterwards, we fall back on trying once a frame.
+ */
+#define NAK_MAX_FAST_RETRANSMITS	2
+
 #define POWER_BUDGET	500	/* in mA; use 8 for low-power port testing */
 
 /* Port-change mask: */
@@ -918,8 +924,11 @@ max3421_handle_error(struct usb_hcd *hcd, u8 hrsl)
 		 * Device wasn't ready for data or has no data
 		 * available: retry the packet again.
 		 */
-		max3421_next_transfer(hcd, 1);
-		switch_sndfifo = 0;
+		if (max3421_ep->naks++ < NAK_MAX_FAST_RETRANSMITS) {
+			max3421_next_transfer(hcd, 1);
+			switch_sndfifo = 0;
+		} else
+			max3421_slow_retransmit(hcd);
 		break;
 	}
 	if (switch_sndfifo)
@@ -1951,7 +1960,7 @@ static struct spi_driver max3421_driver = {
 	.remove		= max3421_remove,
 	.driver		= {
 		.name	= "max3421-hcd",
-		.of_match_table = max3421_of_match_table,
+		.of_match_table = of_match_ptr(max3421_of_match_table),
 	},
 };
 

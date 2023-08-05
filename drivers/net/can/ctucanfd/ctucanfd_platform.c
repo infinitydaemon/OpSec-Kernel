@@ -47,6 +47,7 @@ static void ctucan_platform_set_drvdata(struct device *dev,
  */
 static int ctucan_platform_probe(struct platform_device *pdev)
 {
+	struct resource *res; /* IO mem resources */
 	struct device	*dev = &pdev->dev;
 	void __iomem *addr;
 	int ret;
@@ -54,7 +55,8 @@ static int ctucan_platform_probe(struct platform_device *pdev)
 	int irq;
 
 	/* Get the virtual base address for the device */
-	addr = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	addr = devm_ioremap_resource(dev, res);
 	if (IS_ERR(addr)) {
 		ret = PTR_ERR(addr);
 		goto err;
@@ -86,7 +88,7 @@ err:
  * This function frees all the resources allocated to the device.
  * Return: 0 always
  */
-static void ctucan_platform_remove(struct platform_device *pdev)
+static int ctucan_platform_remove(struct platform_device *pdev)
 {
 	struct net_device *ndev = platform_get_drvdata(pdev);
 	struct ctucan_priv *priv = netdev_priv(ndev);
@@ -97,6 +99,8 @@ static void ctucan_platform_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 	netif_napi_del(&priv->napi);
 	free_candev(ndev);
+
+	return 0;
 }
 
 static SIMPLE_DEV_PM_OPS(ctucan_platform_pm_ops, ctucan_suspend, ctucan_resume);
@@ -111,7 +115,7 @@ MODULE_DEVICE_TABLE(of, ctucan_of_match);
 
 static struct platform_driver ctucanfd_driver = {
 	.probe	= ctucan_platform_probe,
-	.remove_new = ctucan_platform_remove,
+	.remove	= ctucan_platform_remove,
 	.driver	= {
 		.name = DRV_NAME,
 		.pm = &ctucan_platform_pm_ops,

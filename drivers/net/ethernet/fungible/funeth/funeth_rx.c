@@ -323,8 +323,9 @@ static int fun_gather_pkt(struct funeth_rxq *q, unsigned int tot_len,
 		if (ref_ok)
 			ref_ok |= buf->node;
 
-		skb_frag_fill_page_desc(frags++, buf->page, q->buf_offset,
-					frag_len);
+		__skb_frag_set_page(frags, buf->page);
+		skb_frag_off_set(frags, q->buf_offset);
+		skb_frag_size_set(frags++, frag_len);
 
 		tot_len -= frag_len;
 		if (!tot_len)

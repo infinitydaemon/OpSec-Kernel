@@ -281,6 +281,11 @@ struct inno_mipi_dphy_timing inno_mipi_dphy_timing_table_max_2_5ghz[] = {
 	{2500000000, 0x15, 0x54, 0x7f, 0x15, 0x6a},
 };
 
+static inline struct inno_dsidphy *hw_to_inno(struct clk_hw *hw)
+{
+	return container_of(hw, struct inno_dsidphy, pll.hw);
+}
+
 static void phy_update_bits(struct inno_dsidphy *inno,
 			    u8 first, u8 second, u8 mask, u8 val)
 {
@@ -750,11 +755,13 @@ static int inno_dsidphy_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void inno_dsidphy_remove(struct platform_device *pdev)
+static int inno_dsidphy_remove(struct platform_device *pdev)
 {
 	struct inno_dsidphy *inno = platform_get_drvdata(pdev);
 
 	pm_runtime_disable(inno->dev);
+
+	return 0;
 }
 
 static const struct of_device_id inno_dsidphy_of_match[] = {
@@ -781,7 +788,7 @@ static struct platform_driver inno_dsidphy_driver = {
 		.of_match_table	= of_match_ptr(inno_dsidphy_of_match),
 	},
 	.probe = inno_dsidphy_probe,
-	.remove_new = inno_dsidphy_remove,
+	.remove = inno_dsidphy_remove,
 };
 module_platform_driver(inno_dsidphy_driver);
 

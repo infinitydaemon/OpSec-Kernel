@@ -251,7 +251,8 @@ static const struct iio_info hdc2010_info = {
 	.attrs = &hdc2010_attribute_group,
 };
 
-static int hdc2010_probe(struct i2c_client *client)
+static int hdc2010_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct iio_dev *indio_dev;
 	struct hdc2010_data *data;

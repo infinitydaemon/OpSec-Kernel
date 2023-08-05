@@ -131,12 +131,19 @@ static int gmc_v6_0_init_microcode(struct amdgpu_device *adev)
 		snprintf(fw_name, sizeof(fw_name), "amdgpu/si58_mc.bin");
 	else
 		snprintf(fw_name, sizeof(fw_name), "amdgpu/%s_mc.bin", chip_name);
-	err = amdgpu_ucode_request(adev, &adev->gmc.fw, fw_name);
+	err = request_firmware(&adev->gmc.fw, fw_name, adev->dev);
+	if (err)
+		goto out;
+
+	err = amdgpu_ucode_validate(adev->gmc.fw);
+
+out:
 	if (err) {
 		dev_err(adev->dev,
 		       "si_mc: Failed to load firmware \"%s\"\n",
 		       fw_name);
-		amdgpu_ucode_release(&adev->gmc.fw);
+		release_firmware(adev->gmc.fw);
+		adev->gmc.fw = NULL;
 	}
 	return err;
 }
@@ -251,7 +258,7 @@ static void gmc_v6_0_mc_program(struct amdgpu_device *adev)
 	WREG32(mmMC_VM_SYSTEM_APERTURE_HIGH_ADDR,
 	       adev->gmc.vram_end >> 12);
 	WREG32(mmMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR,
-	       adev->mem_scratch.gpu_addr >> 12);
+	       adev->vram_scratch.gpu_addr >> 12);
 	WREG32(mmMC_VM_AGP_BASE, 0);
 	WREG32(mmMC_VM_AGP_TOP, 0x0FFFFFFF);
 	WREG32(mmMC_VM_AGP_BOT, 0x0FFFFFFF);
@@ -808,7 +815,7 @@ static int gmc_v6_0_sw_init(void *handle)
 	int r;
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
-	set_bit(AMDGPU_GFXHUB(0), adev->vmhubs_mask);
+	adev->num_vmhubs = 1;
 
 	if (adev->flags & AMD_IS_APU) {
 		adev->gmc.vram_type = AMDGPU_VRAM_TYPE_UNKNOWN;
@@ -887,7 +894,8 @@ static int gmc_v6_0_sw_fini(void *handle)
 	amdgpu_vm_manager_fini(adev);
 	amdgpu_gart_table_vram_free(adev);
 	amdgpu_bo_fini(adev);
-	amdgpu_ucode_release(&adev->gmc.fw);
+	release_firmware(adev->gmc.fw);
+	adev->gmc.fw = NULL;
 
 	return 0;
 }

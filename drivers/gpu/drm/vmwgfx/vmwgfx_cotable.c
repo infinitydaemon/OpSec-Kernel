@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 /**************************************************************************
  *
- * Copyright 2014-2023 VMware, Inc., Palo Alto, CA., USA
+ * Copyright 2014-2015 VMware, Inc., Palo Alto, CA., USA
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the
@@ -30,13 +30,11 @@
  * whenever the backing MOB is evicted.
  */
 
-#include "vmwgfx_bo.h"
+#include <drm/ttm/ttm_placement.h>
+
 #include "vmwgfx_drv.h"
-#include "vmwgfx_mksstat.h"
 #include "vmwgfx_resource_priv.h"
 #include "vmwgfx_so.h"
-
-#include <drm/ttm/ttm_placement.h>
 
 /**
  * struct vmw_cotable - Context Object Table resource
@@ -74,24 +72,12 @@ struct vmw_cotable_info {
 			    bool);
 };
 
-
-/*
- * Getting the initial size right is difficult because it all depends
- * on what the userspace is doing. The sizes will be aligned up to
- * a PAGE_SIZE so we just want to make sure that for majority of apps
- * the initial number of entries doesn't require an immediate resize.
- * For all cotables except SVGACOTableDXElementLayoutEntry and
- * SVGACOTableDXBlendStateEntry the initial number of entries fits
- * within the PAGE_SIZE. For SVGACOTableDXElementLayoutEntry and
- * SVGACOTableDXBlendStateEntry we want to reserve two pages,
- * because that's what all apps will require initially.
- */
 static const struct vmw_cotable_info co_info[] = {
 	{1, sizeof(SVGACOTableDXRTViewEntry), &vmw_view_cotable_list_destroy},
 	{1, sizeof(SVGACOTableDXDSViewEntry), &vmw_view_cotable_list_destroy},
 	{1, sizeof(SVGACOTableDXSRViewEntry), &vmw_view_cotable_list_destroy},
-	{PAGE_SIZE/sizeof(SVGACOTableDXElementLayoutEntry) + 1, sizeof(SVGACOTableDXElementLayoutEntry), NULL},
-	{PAGE_SIZE/sizeof(SVGACOTableDXBlendStateEntry) + 1, sizeof(SVGACOTableDXBlendStateEntry), NULL},
+	{1, sizeof(SVGACOTableDXElementLayoutEntry), NULL},
+	{1, sizeof(SVGACOTableDXBlendStateEntry), NULL},
 	{1, sizeof(SVGACOTableDXDepthStencilEntry), NULL},
 	{1, sizeof(SVGACOTableDXRasterizerStateEntry), NULL},
 	{1, sizeof(SVGACOTableDXSamplerEntry), NULL},
@@ -131,13 +117,12 @@ static int vmw_cotable_destroy(struct vmw_resource *res);
 
 static const struct vmw_res_func vmw_cotable_func = {
 	.res_type = vmw_res_cotable,
-	.needs_guest_memory = true,
+	.needs_backup = true,
 	.may_evict = true,
 	.prio = 3,
 	.dirty_prio = 3,
 	.type_name = "context guest backed object tables",
-	.domain = VMW_BO_DOMAIN_MOB,
-	.busy_domain = VMW_BO_DOMAIN_MOB,
+	.backup_placement = &vmw_mob_placement,
 	.create = vmw_cotable_create,
 	.destroy = vmw_cotable_destroy,
 	.bind = vmw_cotable_bind,
@@ -182,7 +167,7 @@ static int vmw_cotable_unscrub(struct vmw_resource *res)
 {
 	struct vmw_cotable *vcotbl = vmw_cotable(res);
 	struct vmw_private *dev_priv = res->dev_priv;
-	struct ttm_buffer_object *bo = &res->guest_memory_bo->tbo;
+	struct ttm_buffer_object *bo = &res->backup->base;
 	struct {
 		SVGA3dCmdHeader header;
 		SVGA3dCmdDXSetCOTable body;
@@ -230,7 +215,7 @@ static int vmw_cotable_bind(struct vmw_resource *res,
 	 * take the opportunity to correct the value here so that it's not
 	 * misused in the future.
 	 */
-	val_buf->bo = &res->guest_memory_bo->tbo;
+	val_buf->bo = &res->backup->base;
 
 	return vmw_cotable_unscrub(res);
 }
@@ -291,7 +276,7 @@ int vmw_cotable_scrub(struct vmw_resource *res, bool readback)
 		cmd0->body.cid = vcotbl->ctx->id;
 		cmd0->body.type = vcotbl->type;
 		cmd1 = (void *) &cmd0[1];
-		vcotbl->size_read_back = res->guest_memory_size;
+		vcotbl->size_read_back = res->backup_size;
 	}
 	cmd1->header.id = SVGA_3D_CMD_DX_SET_COTABLE;
 	cmd1->header.size = sizeof(cmd1->body);
@@ -373,12 +358,12 @@ static int vmw_cotable_readback(struct vmw_resource *res)
 		cmd->header.size = sizeof(cmd->body);
 		cmd->body.cid = vcotbl->ctx->id;
 		cmd->body.type = vcotbl->type;
-		vcotbl->size_read_back = res->guest_memory_size;
+		vcotbl->size_read_back = res->backup_size;
 		vmw_cmd_commit(dev_priv, sizeof(*cmd));
 	}
 
 	(void) vmw_execbuf_fence_commands(NULL, dev_priv, &fence, NULL);
-	vmw_bo_fence_single(&res->guest_memory_bo->tbo, fence);
+	vmw_bo_fence_single(&res->backup->base, fence);
 	vmw_fence_obj_unreference(&fence);
 
 	return 0;
@@ -401,28 +386,18 @@ static int vmw_cotable_resize(struct vmw_resource *res, size_t new_size)
 	struct ttm_operation_ctx ctx = { false, false };
 	struct vmw_private *dev_priv = res->dev_priv;
 	struct vmw_cotable *vcotbl = vmw_cotable(res);
-	struct vmw_bo *buf, *old_buf = res->guest_memory_bo;
-	struct ttm_buffer_object *bo, *old_bo = &res->guest_memory_bo->tbo;
-	size_t old_size = res->guest_memory_size;
+	struct vmw_buffer_object *buf, *old_buf = res->backup;
+	struct ttm_buffer_object *bo, *old_bo = &res->backup->base;
+	size_t old_size = res->backup_size;
 	size_t old_size_read_back = vcotbl->size_read_back;
 	size_t cur_size_read_back;
 	struct ttm_bo_kmap_obj old_map, new_map;
 	int ret;
 	size_t i;
-	struct vmw_bo_params bo_params = {
-		.domain = VMW_BO_DOMAIN_MOB,
-		.busy_domain = VMW_BO_DOMAIN_MOB,
-		.bo_type = ttm_bo_type_device,
-		.size = new_size,
-		.pin = true
-	};
-
-	MKS_STAT_TIME_DECL(MKSSTAT_KERN_COTABLE_RESIZE);
-	MKS_STAT_TIME_PUSH(MKSSTAT_KERN_COTABLE_RESIZE);
 
 	ret = vmw_cotable_readback(res);
 	if (ret)
-		goto out_done;
+		return ret;
 
 	cur_size_read_back = vcotbl->size_read_back;
 	vcotbl->size_read_back = old_size_read_back;
@@ -432,13 +407,14 @@ static int vmw_cotable_resize(struct vmw_resource *res, size_t new_size)
 	 * for the new COTable. Initially pin the buffer object to make sure
 	 * we can use tryreserve without failure.
 	 */
-	ret = vmw_bo_create(dev_priv, &bo_params, &buf);
+	ret = vmw_bo_create(dev_priv, new_size, &vmw_mob_placement,
+			    true, true, vmw_bo_bo_free, &buf);
 	if (ret) {
 		DRM_ERROR("Failed initializing new cotable MOB.\n");
-		goto out_done;
+		return ret;
 	}
 
-	bo = &buf->tbo;
+	bo = &buf->base;
 	WARN_ON_ONCE(ttm_bo_reserve(bo, false, true, NULL));
 
 	ret = ttm_bo_wait(old_bo, false, false);
@@ -451,7 +427,7 @@ static int vmw_cotable_resize(struct vmw_resource *res, size_t new_size)
 	 * Do a page by page copy of COTables. This eliminates slow vmap()s.
 	 * This should really be a TTM utility.
 	 */
-	for (i = 0; i < PFN_UP(old_bo->resource->size); ++i) {
+	for (i = 0; i < old_bo->resource->num_pages; ++i) {
 		bool dummy;
 
 		ret = ttm_bo_kmap(old_bo, i, 1, &old_map);
@@ -472,18 +448,15 @@ static int vmw_cotable_resize(struct vmw_resource *res, size_t new_size)
 	}
 
 	/* Unpin new buffer, and switch backup buffers. */
-	vmw_bo_placement_set(buf,
-			     VMW_BO_DOMAIN_MOB,
-			     VMW_BO_DOMAIN_MOB);
-	ret = ttm_bo_validate(bo, &buf->placement, &ctx);
+	ret = ttm_bo_validate(bo, &vmw_mob_placement, &ctx);
 	if (unlikely(ret != 0)) {
 		DRM_ERROR("Failed validating new COTable backup buffer.\n");
 		goto out_wait;
 	}
 
 	vmw_resource_mob_detach(res);
-	res->guest_memory_bo = buf;
-	res->guest_memory_size = new_size;
+	res->backup = buf;
+	res->backup_size = new_size;
 	vcotbl->size_read_back = cur_size_read_back;
 
 	/*
@@ -493,8 +466,8 @@ static int vmw_cotable_resize(struct vmw_resource *res, size_t new_size)
 	ret = vmw_cotable_unscrub(res);
 	if (ret) {
 		DRM_ERROR("Failed switching COTable backup buffer.\n");
-		res->guest_memory_bo = old_buf;
-		res->guest_memory_size = old_size;
+		res->backup = old_buf;
+		res->backup_size = old_size;
 		vcotbl->size_read_back = old_size_read_back;
 		vmw_resource_mob_attach(res);
 		goto out_wait;
@@ -509,10 +482,8 @@ static int vmw_cotable_resize(struct vmw_resource *res, size_t new_size)
 	if (unlikely(ret))
 		goto out_wait;
 
-	/* Release the pin acquired in vmw_bo_create */
+	/* Release the pin acquired in vmw_bo_init */
 	ttm_bo_unpin(bo);
-
-	MKS_STAT_TIME_POP(MKSSTAT_KERN_COTABLE_RESIZE);
 
 	return 0;
 
@@ -522,9 +493,6 @@ out_wait:
 	ttm_bo_unpin(bo);
 	ttm_bo_unreserve(bo);
 	vmw_bo_unreference(&buf);
-
-out_done:
-	MKS_STAT_TIME_POP(MKSSTAT_KERN_COTABLE_RESIZE);
 
 	return ret;
 }
@@ -544,7 +512,7 @@ out_done:
 static int vmw_cotable_create(struct vmw_resource *res)
 {
 	struct vmw_cotable *vcotbl = vmw_cotable(res);
-	size_t new_size = res->guest_memory_size;
+	size_t new_size = res->backup_size;
 	size_t needed_size;
 	int ret;
 
@@ -553,7 +521,7 @@ static int vmw_cotable_create(struct vmw_resource *res)
 	while (needed_size > new_size)
 		new_size *= 2;
 
-	if (likely(new_size <= res->guest_memory_size)) {
+	if (likely(new_size <= res->backup_size)) {
 		if (vcotbl->scrubbed && vmw_resource_mob_attached(res)) {
 			ret = vmw_cotable_unscrub(res);
 			if (ret)
@@ -617,12 +585,12 @@ struct vmw_resource *vmw_cotable_alloc(struct vmw_private *dev_priv,
 
 	INIT_LIST_HEAD(&vcotbl->resource_list);
 	vcotbl->res.id = type;
-	vcotbl->res.guest_memory_size = PAGE_SIZE;
+	vcotbl->res.backup_size = PAGE_SIZE;
 	num_entries = PAGE_SIZE / co_info[type].size;
 	if (num_entries < co_info[type].min_initial_entries) {
-		vcotbl->res.guest_memory_size = co_info[type].min_initial_entries *
+		vcotbl->res.backup_size = co_info[type].min_initial_entries *
 			co_info[type].size;
-		vcotbl->res.guest_memory_size = PFN_ALIGN(vcotbl->res.guest_memory_size);
+		vcotbl->res.backup_size = PFN_ALIGN(vcotbl->res.backup_size);
 	}
 
 	vcotbl->scrubbed = true;

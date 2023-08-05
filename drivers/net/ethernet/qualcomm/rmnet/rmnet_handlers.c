@@ -164,18 +164,8 @@ static int rmnet_map_egress_handler(struct sk_buff *skb,
 
 	map_header->mux_id = mux_id;
 
-	if (READ_ONCE(port->egress_agg_params.count) > 1) {
-		unsigned int len;
-
-		len = rmnet_map_tx_aggregate(skb, port, orig_dev);
-		if (likely(len)) {
-			rmnet_vnd_tx_fixup_len(len, orig_dev);
-			return -EINPROGRESS;
-		}
-		return -ENOMEM;
-	}
-
 	skb->protocol = htons(ETH_P_MAP);
+
 	return 0;
 }
 
@@ -245,7 +235,6 @@ void rmnet_egress_handler(struct sk_buff *skb)
 	struct rmnet_port *port;
 	struct rmnet_priv *priv;
 	u8 mux_id;
-	int err;
 
 	sk_pacing_shift_update(skb->sk, 8);
 
@@ -258,11 +247,8 @@ void rmnet_egress_handler(struct sk_buff *skb)
 	if (!port)
 		goto drop;
 
-	err = rmnet_map_egress_handler(skb, port, mux_id, orig_dev);
-	if (err == -ENOMEM)
+	if (rmnet_map_egress_handler(skb, port, mux_id, orig_dev))
 		goto drop;
-	else if (err == -EINPROGRESS)
-		return;
 
 	rmnet_vnd_tx_fixup(skb, orig_dev);
 

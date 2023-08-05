@@ -368,8 +368,7 @@ static bool ocelot_fdma_receive_skb(struct ocelot *ocelot, struct sk_buff *skb)
 	if (unlikely(!ndev))
 		return false;
 
-	if (pskb_trim(skb, skb->len - ETH_FCS_LEN))
-		return false;
+	pskb_trim(skb, skb->len - ETH_FCS_LEN);
 
 	skb->dev = ndev;
 	skb->protocol = eth_type_trans(skb, skb->dev);

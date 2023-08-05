@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2018 Red Hat, Inc.
  *
@@ -570,7 +570,24 @@ static struct target_type dust_target = {
 	.status = dust_status,
 	.prepare_ioctl = dust_prepare_ioctl,
 };
-module_dm(dust);
+
+static int __init dm_dust_init(void)
+{
+	int r = dm_register_target(&dust_target);
+
+	if (r < 0)
+		DMERR("dm_register_target failed %d", r);
+
+	return r;
+}
+
+static void __exit dm_dust_exit(void)
+{
+	dm_unregister_target(&dust_target);
+}
+
+module_init(dm_dust_init);
+module_exit(dm_dust_exit);
 
 MODULE_DESCRIPTION(DM_NAME " dust test target");
 MODULE_AUTHOR("Bryan Gurney <dm-devel@redhat.com>");

@@ -279,12 +279,13 @@ fail_rtc_register:
 	return ret;
 };
 
-static void tps6586x_rtc_remove(struct platform_device *pdev)
+static int tps6586x_rtc_remove(struct platform_device *pdev)
 {
 	struct device *tps_dev = to_tps6586x_dev(&pdev->dev);
 
 	tps6586x_update(tps_dev, RTC_CTRL, 0,
 		RTC_ENABLE | OSC_SRC_SEL | PRE_BYPASS | CL_SEL_MASK);
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -316,7 +317,7 @@ static struct platform_driver tps6586x_rtc_driver = {
 		.pm	= &tps6586x_pm_ops,
 	},
 	.probe	= tps6586x_rtc_probe,
-	.remove_new = tps6586x_rtc_remove,
+	.remove	= tps6586x_rtc_remove,
 };
 module_platform_driver(tps6586x_rtc_driver);
 

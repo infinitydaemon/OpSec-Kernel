@@ -21,7 +21,6 @@
 #include <linux/adb.h>
 #include <linux/pmu.h>
 #include <linux/scatterlist.h>
-#include <linux/irqdomain.h>
 #include <linux/of.h>
 #include <linux/gfp.h>
 #include <linux/pci.h>
@@ -909,7 +908,7 @@ static int pata_macio_do_resume(struct pata_macio_priv *priv)
 }
 #endif /* CONFIG_PM_SLEEP */
 
-static const struct scsi_host_template pata_macio_sht = {
+static struct scsi_host_template pata_macio_sht = {
 	__ATA_BASE_SHT(DRV_NAME),
 	.sg_tablesize		= MAX_DCMDS,
 	/* We may not need that strict one */

@@ -555,30 +555,32 @@ static int rx_submit (struct usbnet *dev, struct urb *urb, gfp_t flags)
 
 /*-------------------------------------------------------------------------*/
 
-static inline int rx_process(struct usbnet *dev, struct sk_buff *skb)
+static inline void rx_process (struct usbnet *dev, struct sk_buff *skb)
 {
 	if (dev->driver_info->rx_fixup &&
 	    !dev->driver_info->rx_fixup (dev, skb)) {
 		/* With RX_ASSEMBLE, rx_fixup() must update counters */
 		if (!(dev->driver_info->flags & FLAG_RX_ASSEMBLE))
 			dev->net->stats.rx_errors++;
-		return -EPROTO;
+		goto done;
 	}
 	// else network stack removes extra byte if we forced a short packet
 
 	/* all data was already cloned from skb inside the driver */
 	if (dev->driver_info->flags & FLAG_MULTI_PACKET)
-		return -EALREADY;
+		goto done;
 
 	if (skb->len < ETH_HLEN) {
 		dev->net->stats.rx_errors++;
 		dev->net->stats.rx_length_errors++;
 		netif_dbg(dev, rx_err, dev->net, "rx length %d\n", skb->len);
-		return -EPROTO;
+	} else {
+		usbnet_skb_return(dev, skb);
+		return;
 	}
 
-	usbnet_skb_return(dev, skb);
-	return 0;
+done:
+	skb_queue_tail(&dev->done, skb);
 }
 
 /*-------------------------------------------------------------------------*/
@@ -1512,14 +1514,6 @@ err:
 	return ret;
 }
 
-static inline void usb_free_skb(struct sk_buff *skb)
-{
-	struct skb_data *entry = (struct skb_data *)skb->cb;
-
-	usb_free_urb(entry->urb);
-	dev_kfree_skb(skb);
-}
-
 /*-------------------------------------------------------------------------*/
 
 // tasklet (work deferred from completions, in_irq) or timer
@@ -1534,14 +1528,15 @@ static void usbnet_bh (struct timer_list *t)
 		entry = (struct skb_data *) skb->cb;
 		switch (entry->state) {
 		case rx_done:
-			if (rx_process(dev, skb))
-				usb_free_skb(skb);
+			entry->state = rx_cleanup;
+			rx_process (dev, skb);
 			continue;
 		case tx_done:
 			kfree(entry->urb->sg);
 			fallthrough;
 		case rx_cleanup:
-			usb_free_skb(skb);
+			usb_free_urb (entry->urb);
+			dev_kfree_skb (skb);
 			continue;
 		default:
 			netdev_dbg(dev->net, "bogus skb state %d\n", entry->state);
@@ -1775,10 +1770,6 @@ usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
 	} else if (!info->in || !info->out)
 		status = usbnet_get_endpoints (dev, udev);
 	else {
-		u8 ep_addrs[3] = {
-			info->in + USB_DIR_IN, info->out + USB_DIR_OUT, 0
-		};
-
 		dev->in = usb_rcvbulkpipe (xdev, info->in);
 		dev->out = usb_sndbulkpipe (xdev, info->out);
 		if (!(info->flags & FLAG_NO_SETINT))
@@ -1788,8 +1779,6 @@ usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
 		else
 			status = 0;
 
-		if (status == 0 && !usb_check_bulk_endpoints(udev, ep_addrs))
-			status = -EINVAL;
 	}
 	if (status >= 0 && dev->status)
 		status = init_status (dev, udev);

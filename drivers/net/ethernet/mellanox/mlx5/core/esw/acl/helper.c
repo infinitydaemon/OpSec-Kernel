@@ -35,8 +35,7 @@ esw_acl_table_create(struct mlx5_eswitch *esw, struct mlx5_vport *vport, int ns,
 	}
 
 	ft_attr.max_fte = size;
-	if (vport_num || mlx5_core_is_ecpf(esw->dev))
-		ft_attr.flags = MLX5_FLOW_TABLE_OTHER_VPORT;
+	ft_attr.flags = MLX5_FLOW_TABLE_OTHER_VPORT;
 	acl = mlx5_create_vport_flow_table(root_ns, &ft_attr, vport_num);
 	if (IS_ERR(acl)) {
 		err = PTR_ERR(acl);

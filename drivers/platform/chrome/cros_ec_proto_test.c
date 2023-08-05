@@ -5,8 +5,7 @@
 
 #include <kunit/test.h>
 
-#include <asm/unaligned.h>
-
+#include <asm-generic/unaligned.h>
 #include <linux/platform_data/cros_ec_commands.h>
 #include <linux/platform_data/cros_ec_proto.h>
 
@@ -2371,7 +2370,7 @@ static void cros_ec_proto_test_get_host_event_normal(struct kunit *test)
 static void cros_ec_proto_test_check_features_cached(struct kunit *test)
 {
 	int ret, i;
-	static struct cros_ec_dev ec;
+	struct cros_ec_dev ec;
 
 	ec.features.flags[0] = EC_FEATURE_MASK_0(EC_FEATURE_FINGERPRINT);
 	ec.features.flags[1] = EC_FEATURE_MASK_0(EC_FEATURE_SCP);
@@ -2396,7 +2395,7 @@ static void cros_ec_proto_test_check_features_not_cached(struct kunit *test)
 	struct cros_ec_device *ec_dev = &priv->ec_dev;
 	struct ec_xfer_mock *mock;
 	int ret, i;
-	static struct cros_ec_dev ec;
+	struct cros_ec_dev ec;
 
 	ec_dev->max_request = 0xff;
 	ec_dev->max_response = 0xee;
@@ -2449,7 +2448,7 @@ static void cros_ec_proto_test_get_sensor_count_normal(struct kunit *test)
 	struct cros_ec_device *ec_dev = &priv->ec_dev;
 	struct ec_xfer_mock *mock;
 	int ret;
-	static struct cros_ec_dev ec;
+	struct cros_ec_dev ec;
 
 	ec_dev->max_request = 0xff;
 	ec_dev->max_response = 0xee;
@@ -2494,7 +2493,7 @@ static void cros_ec_proto_test_get_sensor_count_xfer_error(struct kunit *test)
 	struct cros_ec_device *ec_dev = &priv->ec_dev;
 	struct ec_xfer_mock *mock;
 	int ret;
-	static struct cros_ec_dev ec;
+	struct cros_ec_dev ec;
 
 	ec_dev->max_request = 0xff;
 	ec_dev->max_response = 0xee;
@@ -2534,7 +2533,7 @@ static void cros_ec_proto_test_get_sensor_count_legacy(struct kunit *test)
 	struct cros_ec_device *ec_dev = &priv->ec_dev;
 	struct ec_xfer_mock *mock;
 	int ret, i;
-	static struct cros_ec_dev ec;
+	struct cros_ec_dev ec;
 	struct {
 		u8 readmem_data;
 		int expected_result;

@@ -924,43 +924,6 @@ error:
 	return r;
 }
 
-int amdgpu_mes_set_shader_debugger(struct amdgpu_device *adev,
-				uint64_t process_context_addr,
-				uint32_t spi_gdbg_per_vmid_cntl,
-				const uint32_t *tcp_watch_cntl,
-				uint32_t flags,
-				bool trap_en)
-{
-	struct mes_misc_op_input op_input = {0};
-	int r;
-
-	if (!adev->mes.funcs->misc_op) {
-		DRM_ERROR("mes set shader debugger is not supported!\n");
-		return -EINVAL;
-	}
-
-	op_input.op = MES_MISC_OP_SET_SHADER_DEBUGGER;
-	op_input.set_shader_debugger.process_context_addr = process_context_addr;
-	op_input.set_shader_debugger.flags.u32all = flags;
-	op_input.set_shader_debugger.spi_gdbg_per_vmid_cntl = spi_gdbg_per_vmid_cntl;
-	memcpy(op_input.set_shader_debugger.tcp_watch_cntl, tcp_watch_cntl,
-			sizeof(op_input.set_shader_debugger.tcp_watch_cntl));
-
-	if (((adev->mes.sched_version & AMDGPU_MES_API_VERSION_MASK) >>
-			AMDGPU_MES_API_VERSION_SHIFT) >= 14)
-		op_input.set_shader_debugger.trap_en = trap_en;
-
-	amdgpu_mes_lock(&adev->mes);
-
-	r = adev->mes.funcs->misc_op(&adev->mes, &op_input);
-	if (r)
-		DRM_ERROR("failed to set_shader_debugger\n");
-
-	amdgpu_mes_unlock(&adev->mes);
-
-	return r;
-}
-
 static void
 amdgpu_mes_ring_to_queue_props(struct amdgpu_device *adev,
 			       struct amdgpu_ring *ring,
@@ -1141,11 +1104,6 @@ int amdgpu_mes_ctx_alloc_meta_data(struct amdgpu_device *adev,
 			    &ctx_data->meta_data_obj,
 			    &ctx_data->meta_data_mc_addr,
 			    &ctx_data->meta_data_ptr);
-	if (r) {
-		dev_warn(adev->dev, "(%d) create CTX bo failed\n", r);
-		return r;
-	}
-
 	if (!ctx_data->meta_data_obj)
 		return -ENOMEM;
 
@@ -1342,9 +1300,14 @@ static int amdgpu_mes_test_queues(struct amdgpu_ring **added_rings)
 		if (!ring)
 			continue;
 
-		r = amdgpu_ring_test_helper(ring);
-		if (r)
+		r = amdgpu_ring_test_ring(ring);
+		if (r) {
+			DRM_DEV_ERROR(ring->adev->dev,
+				      "ring %s test failed (%d)\n",
+				      ring->name, r);
 			return r;
+		} else
+			DRM_INFO("ring %s test pass\n", ring->name);
 
 		r = amdgpu_ring_test_ib(ring, 1000 * 10);
 		if (r) {
@@ -1382,7 +1345,7 @@ int amdgpu_mes_self_test(struct amdgpu_device *adev)
 		goto error_pasid;
 	}
 
-	r = amdgpu_vm_init(adev, vm, -1);
+	r = amdgpu_vm_init(adev, vm);
 	if (r) {
 		DRM_ERROR("failed to initialize vm\n");
 		goto error_pasid;

@@ -80,8 +80,7 @@ static int clk_mt7629_ethsys_init(struct platform_device *pdev)
 
 	clk_data = mtk_alloc_clk_data(CLK_ETH_NR_CLK);
 
-	mtk_clk_register_gates(&pdev->dev, node, eth_clks,
-			       CLK_ETH_NR_CLK, clk_data);
+	mtk_clk_register_gates(node, eth_clks, CLK_ETH_NR_CLK, clk_data);
 
 	r = of_clk_add_hw_provider(node, of_clk_hw_onecell_get, clk_data);
 	if (r)
@@ -103,8 +102,8 @@ static int clk_mt7629_sgmiisys_init(struct platform_device *pdev)
 
 	clk_data = mtk_alloc_clk_data(CLK_SGMII_NR_CLK);
 
-	mtk_clk_register_gates(&pdev->dev, node, sgmii_clks[id++],
-			       CLK_SGMII_NR_CLK, clk_data);
+	mtk_clk_register_gates(node, sgmii_clks[id++], CLK_SGMII_NR_CLK,
+			       clk_data);
 
 	r = of_clk_add_hw_provider(node, of_clk_hw_onecell_get, clk_data);
 	if (r)
@@ -126,7 +125,6 @@ static const struct of_device_id of_match_clk_mt7629_eth[] = {
 		/* sentinel */
 	}
 };
-MODULE_DEVICE_TABLE(of, of_match_clk_mt7629_eth);
 
 static int clk_mt7629_eth_probe(struct platform_device *pdev)
 {
@@ -155,4 +153,3 @@ static struct platform_driver clk_mt7629_eth_drv = {
 };
 
 builtin_platform_driver(clk_mt7629_eth_drv);
-MODULE_LICENSE("GPL");

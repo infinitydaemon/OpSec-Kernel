@@ -937,13 +937,10 @@ static struct phylink_pcs *stmmac_mac_select_pcs(struct phylink_config *config,
 {
 	struct stmmac_priv *priv = netdev_priv(to_net_dev(config->dev));
 
-	if (priv->hw->xpcs)
-		return &priv->hw->xpcs->pcs;
+	if (!priv->hw->xpcs)
+		return NULL;
 
-	if (priv->hw->lynx_pcs)
-		return priv->hw->lynx_pcs;
-
-	return NULL;
+	return &priv->hw->xpcs->pcs;
 }
 
 static void stmmac_mac_config(struct phylink_config *config, unsigned int mode,
@@ -990,9 +987,6 @@ static void stmmac_mac_link_up(struct phylink_config *config,
 {
 	struct stmmac_priv *priv = netdev_priv(to_net_dev(config->dev));
 	u32 old_ctrl, ctrl;
-
-	if (priv->plat->serdes_up_after_phy_linkup && priv->plat->serdes_powerup)
-		priv->plat->serdes_powerup(priv->dev, priv->plat->bsp_priv);
 
 	old_ctrl = readl(priv->ioaddr + MAC_CTRL_REG);
 	ctrl = old_ctrl & ~priv->hw->link.speed_mask;
@@ -1095,6 +1089,7 @@ static void stmmac_mac_link_up(struct phylink_config *config,
 }
 
 static const struct phylink_mac_ops stmmac_phylink_mac_ops = {
+	.validate = phylink_generic_validate,
 	.mac_select_pcs = stmmac_mac_select_pcs,
 	.mac_config = stmmac_mac_config,
 	.mac_link_down = stmmac_mac_link_down,
@@ -1616,12 +1611,6 @@ static int stmmac_alloc_rx_buffers_zc(struct stmmac_priv *priv,
 {
 	struct stmmac_rx_queue *rx_q = &dma_conf->rx_queue[queue];
 	int i;
-
-	/* struct stmmac_xdp_buff is using cb field (maximum size of 24 bytes)
-	 * in struct xdp_buff_xsk to stash driver specific information. Thus,
-	 * use this macro to make sure no size violations.
-	 */
-	XSK_CHECK_PRIV_TYPE(struct stmmac_xdp_buff);
 
 	for (i = 0; i < dma_conf->dma_rx_size; i++) {
 		struct stmmac_rx_buffer *buf;
@@ -3816,8 +3805,7 @@ static int __stmmac_open(struct net_device *dev,
 	if (priv->hw->pcs != STMMAC_PCS_TBI &&
 	    priv->hw->pcs != STMMAC_PCS_RTBI &&
 	    (!priv->hw->xpcs ||
-	     xpcs_get_an_mode(priv->hw->xpcs, mode) != DW_AN_C73) &&
-	    !priv->hw->lynx_pcs) {
+	     xpcs_get_an_mode(priv->hw->xpcs, mode) != DW_AN_C73)) {
 		ret = stmmac_init_phy(dev);
 		if (ret) {
 			netdev_err(priv->dev,
@@ -3838,7 +3826,7 @@ static int __stmmac_open(struct net_device *dev,
 
 	stmmac_reset_queues_param(priv);
 
-	if (!priv->plat->serdes_up_after_phy_linkup && priv->plat->serdes_powerup) {
+	if (priv->plat->serdes_powerup) {
 		ret = priv->plat->serdes_powerup(dev, priv->plat->bsp_priv);
 		if (ret < 0) {
 			netdev_err(priv->dev, "%s: Serdes powerup failed\n",
@@ -4575,9 +4563,12 @@ dma_map_err:
 
 static void stmmac_rx_vlan(struct net_device *dev, struct sk_buff *skb)
 {
-	struct vlan_ethhdr *veth = skb_vlan_eth_hdr(skb);
-	__be16 vlan_proto = veth->h_vlan_proto;
+	struct vlan_ethhdr *veth;
+	__be16 vlan_proto;
 	u16 vlanid;
+
+	veth = (struct vlan_ethhdr *)skb->data;
+	vlan_proto = veth->h_vlan_proto;
 
 	if ((vlan_proto == htons(ETH_P_8021Q) &&
 	     dev->features & NETIF_F_HW_VLAN_CTAG_RX) ||
@@ -5007,16 +4998,6 @@ static bool stmmac_rx_refill_zc(struct stmmac_priv *priv, u32 queue, u32 budget)
 	return ret;
 }
 
-static struct stmmac_xdp_buff *xsk_buff_to_stmmac_ctx(struct xdp_buff *xdp)
-{
-	/* In XDP zero copy data path, xdp field in struct xdp_buff_xsk is used
-	 * to represent incoming packet, whereas cb field in the same structure
-	 * is used to store driver specific info. Thus, struct stmmac_xdp_buff
-	 * is laid on top of xdp and cb fields of struct xdp_buff_xsk.
-	 */
-	return (struct stmmac_xdp_buff *)xdp;
-}
-
 static int stmmac_rx_zc(struct stmmac_priv *priv, int limit, u32 queue)
 {
 	struct stmmac_rx_queue *rx_q = &priv->dma_conf.rx_queue[queue];
@@ -5046,7 +5027,6 @@ static int stmmac_rx_zc(struct stmmac_priv *priv, int limit, u32 queue)
 	}
 	while (count < limit) {
 		struct stmmac_rx_buffer *buf;
-		struct stmmac_xdp_buff *ctx;
 		unsigned int buf1_len = 0;
 		struct dma_desc *np, *p;
 		int entry;
@@ -5132,11 +5112,6 @@ read_again:
 			goto read_again;
 		}
 
-		ctx = xsk_buff_to_stmmac_ctx(buf->xdp);
-		ctx->priv = priv;
-		ctx->desc = p;
-		ctx->ndesc = np;
-
 		/* XDP ZC Frame only support primary buffers for now */
 		buf1_len = stmmac_rx_buf1_len(priv, p, status, len);
 		len += buf1_len;
@@ -5215,7 +5190,7 @@ static int stmmac_rx(struct stmmac_priv *priv, int limit, u32 queue)
 	enum dma_data_direction dma_dir;
 	unsigned int desc_size;
 	struct sk_buff *skb = NULL;
-	struct stmmac_xdp_buff ctx;
+	struct xdp_buff xdp;
 	int xdp_status = 0;
 	int buf_sz;
 
@@ -5336,22 +5311,17 @@ read_again:
 			dma_sync_single_for_cpu(priv->device, buf->addr,
 						buf1_len, dma_dir);
 
-			xdp_init_buff(&ctx.xdp, buf_sz, &rx_q->xdp_rxq);
-			xdp_prepare_buff(&ctx.xdp, page_address(buf->page),
-					 buf->page_offset, buf1_len, true);
+			xdp_init_buff(&xdp, buf_sz, &rx_q->xdp_rxq);
+			xdp_prepare_buff(&xdp, page_address(buf->page),
+					 buf->page_offset, buf1_len, false);
 
-			pre_len = ctx.xdp.data_end - ctx.xdp.data_hard_start -
+			pre_len = xdp.data_end - xdp.data_hard_start -
 				  buf->page_offset;
-
-			ctx.priv = priv;
-			ctx.desc = p;
-			ctx.ndesc = np;
-
-			skb = stmmac_xdp_run_prog(priv, &ctx.xdp);
+			skb = stmmac_xdp_run_prog(priv, &xdp);
 			/* Due xdp_adjust_tail: DMA sync for_device
 			 * cover max len CPU touch
 			 */
-			sync_len = ctx.xdp.data_end - ctx.xdp.data_hard_start -
+			sync_len = xdp.data_end - xdp.data_hard_start -
 				   buf->page_offset;
 			sync_len = max(sync_len, pre_len);
 
@@ -5361,7 +5331,7 @@ read_again:
 
 				if (xdp_res & STMMAC_XDP_CONSUMED) {
 					page_pool_put_page(rx_q->page_pool,
-							   virt_to_head_page(ctx.xdp.data),
+							   virt_to_head_page(xdp.data),
 							   sync_len, true);
 					buf->page = NULL;
 					priv->dev->stats.rx_dropped++;
@@ -5389,7 +5359,7 @@ read_again:
 
 		if (!skb) {
 			/* XDP program may expand or reduce tail */
-			buf1_len = ctx.xdp.data_end - ctx.xdp.data;
+			buf1_len = xdp.data_end - xdp.data;
 
 			skb = napi_alloc_skb(&ch->rx_napi, buf1_len);
 			if (!skb) {
@@ -5399,7 +5369,7 @@ read_again:
 			}
 
 			/* XDP program may adjust header */
-			skb_copy_to_linear_data(skb, ctx.xdp.data, buf1_len);
+			skb_copy_to_linear_data(skb, xdp.data, buf1_len);
 			skb_put(skb, buf1_len);
 
 			/* Data payload copied into SKB, page ready for recycle */
@@ -5798,7 +5768,7 @@ static void stmmac_common_interrupt(struct stmmac_priv *priv)
 		}
 
 		/* PCS link status */
-		if (priv->hw->pcs && !priv->plat->has_integrated_pcs) {
+		if (priv->hw->pcs) {
 			if (priv->xstats.pcs_link)
 				netif_carrier_on(priv->dev);
 			else
@@ -6035,8 +6005,6 @@ static int stmmac_setup_tc(struct net_device *ndev, enum tc_setup_type type,
 	struct stmmac_priv *priv = netdev_priv(ndev);
 
 	switch (type) {
-	case TC_QUERY_CAPS:
-		return stmmac_tc_query_caps(priv, priv, type_data);
 	case TC_SETUP_BLOCK:
 		return flow_block_cb_setup_simple(type_data,
 						  &stmmac_block_cb_list,
@@ -7099,37 +7067,6 @@ void stmmac_fpe_handshake(struct stmmac_priv *priv, bool enable)
 	}
 }
 
-static int stmmac_xdp_rx_timestamp(const struct xdp_md *_ctx, u64 *timestamp)
-{
-	const struct stmmac_xdp_buff *ctx = (void *)_ctx;
-	struct dma_desc *desc_contains_ts = ctx->desc;
-	struct stmmac_priv *priv = ctx->priv;
-	struct dma_desc *ndesc = ctx->ndesc;
-	struct dma_desc *desc = ctx->desc;
-	u64 ns = 0;
-
-	if (!priv->hwts_rx_en)
-		return -ENODATA;
-
-	/* For GMAC4, the valid timestamp is from CTX next desc. */
-	if (priv->plat->has_gmac4 || priv->plat->has_xgmac)
-		desc_contains_ts = ndesc;
-
-	/* Check if timestamp is available */
-	if (stmmac_get_rx_timestamp_status(priv, desc, ndesc, priv->adv_ts)) {
-		stmmac_get_timestamp(priv, desc_contains_ts, priv->adv_ts, &ns);
-		ns -= priv->plat->cdc_error_adj;
-		*timestamp = ns_to_ktime(ns);
-		return 0;
-	}
-
-	return -ENODATA;
-}
-
-static const struct xdp_metadata_ops stmmac_xdp_metadata_ops = {
-	.xmo_rx_timestamp		= stmmac_xdp_rx_timestamp,
-};
-
 /**
  * stmmac_dvr_probe
  * @device: device pointer
@@ -7237,12 +7174,8 @@ int stmmac_dvr_probe(struct device *device,
 
 	ndev->netdev_ops = &stmmac_netdev_ops;
 
-	ndev->xdp_metadata_ops = &stmmac_xdp_metadata_ops;
-
 	ndev->hw_features = NETIF_F_SG | NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
 			    NETIF_F_RXCSUM;
-	ndev->xdp_features = NETDEV_XDP_ACT_BASIC | NETDEV_XDP_ACT_REDIRECT |
-			     NETDEV_XDP_ACT_XSK_ZEROCOPY;
 
 	ret = stmmac_tc_init(priv, priv);
 	if (!ret) {
@@ -7324,10 +7257,6 @@ int stmmac_dvr_probe(struct device *device,
 	if (priv->dma_cap.rssen && priv->plat->rss_en)
 		ndev->features |= NETIF_F_RXHASH;
 
-	ndev->vlan_features |= ndev->features;
-	/* TSO doesn't work on VLANs yet */
-	ndev->vlan_features &= ~NETIF_F_TSO;
-
 	/* MTU range: 46 - hw-specific max */
 	ndev->min_mtu = ETH_ZLEN - ETH_HLEN;
 	if (priv->plat->has_xgmac)
@@ -7349,8 +7278,6 @@ int stmmac_dvr_probe(struct device *device,
 
 	if (flow_ctrl)
 		priv->flow_ctrl = FLOW_AUTO;	/* RX/TX pause on */
-
-	ndev->priv_flags |= IFF_LIVE_ADDR_CHANGE;
 
 	/* Setup channels NAPI */
 	stmmac_napi_add(ndev);
@@ -7447,7 +7374,7 @@ EXPORT_SYMBOL_GPL(stmmac_dvr_probe);
  * Description: this function resets the TX/RX processes, disables the MAC RX/TX
  * changes the link status, releases the DMA descriptor rings.
  */
-void stmmac_dvr_remove(struct device *dev)
+int stmmac_dvr_remove(struct device *dev)
 {
 	struct net_device *ndev = dev_get_drvdata(dev);
 	struct stmmac_priv *priv = netdev_priv(ndev);
@@ -7477,6 +7404,8 @@ void stmmac_dvr_remove(struct device *dev)
 
 	pm_runtime_disable(dev);
 	pm_runtime_put_noidle(dev);
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(stmmac_dvr_remove);
 
@@ -7621,7 +7550,7 @@ int stmmac_resume(struct device *dev)
 			stmmac_mdio_reset(priv->mii);
 	}
 
-	if (!priv->plat->serdes_up_after_phy_linkup && priv->plat->serdes_powerup) {
+	if (priv->plat->serdes_powerup) {
 		ret = priv->plat->serdes_powerup(ndev,
 						 priv->plat->bsp_priv);
 

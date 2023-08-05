@@ -245,7 +245,6 @@ typedef struct {
   QuadraticInt_t SsCurve;
 } DpmDescriptor_t;
 
-#pragma pack(push, 1)
 typedef struct {
   uint32_t Version;
 
@@ -509,7 +508,6 @@ typedef struct {
   uint32_t     MmHubPadding[7];
 
 } PPTable_t;
-#pragma pack(pop)
 
 typedef struct {
 

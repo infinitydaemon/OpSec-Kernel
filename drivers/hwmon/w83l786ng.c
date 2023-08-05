@@ -16,6 +16,7 @@
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/hwmon.h>
+#include <linux/hwmon-vid.h>
 #include <linux/hwmon-sysfs.h>
 #include <linux/err.h>
 #include <linux/mutex.h>
@@ -751,7 +752,7 @@ static struct i2c_driver w83l786ng_driver = {
 	.driver = {
 		   .name = "w83l786ng",
 	},
-	.probe		= w83l786ng_probe,
+	.probe_new	= w83l786ng_probe,
 	.id_table	= w83l786ng_id,
 	.detect		= w83l786ng_detect,
 	.address_list	= normal_i2c,

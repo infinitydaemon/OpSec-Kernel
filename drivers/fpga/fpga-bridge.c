@@ -293,15 +293,12 @@ static ssize_t state_show(struct device *dev,
 			  struct device_attribute *attr, char *buf)
 {
 	struct fpga_bridge *bridge = to_fpga_bridge(dev);
-	int state = 1;
+	int enable = 1;
 
-	if (bridge->br_ops && bridge->br_ops->enable_show) {
-		state = bridge->br_ops->enable_show(bridge);
-		if (state < 0)
-			return state;
-	}
+	if (bridge->br_ops && bridge->br_ops->enable_show)
+		enable = bridge->br_ops->enable_show(bridge);
 
-	return sysfs_emit(buf, "%s\n", state ? "enabled" : "disabled");
+	return sprintf(buf, "%s\n", enable ? "enabled" : "disabled");
 }
 
 static DEVICE_ATTR_RO(name);
@@ -417,7 +414,7 @@ static void fpga_bridge_dev_release(struct device *dev)
 
 static int __init fpga_bridge_dev_init(void)
 {
-	fpga_bridge_class = class_create("fpga_bridge");
+	fpga_bridge_class = class_create(THIS_MODULE, "fpga_bridge");
 	if (IS_ERR(fpga_bridge_class))
 		return PTR_ERR(fpga_bridge_class);
 

@@ -106,13 +106,15 @@ fail:
 	return retval;
 }
 
-static void npcm7xx_ehci_hcd_drv_remove(struct platform_device *pdev)
+static int npcm7xx_ehci_hcd_drv_remove(struct platform_device *pdev)
 {
 	struct usb_hcd *hcd = platform_get_drvdata(pdev);
 
 	usb_remove_hcd(hcd);
 
 	usb_put_hcd(hcd);
+
+	return 0;
 }
 
 static const struct of_device_id npcm7xx_ehci_id_table[] = {
@@ -123,7 +125,7 @@ MODULE_DEVICE_TABLE(of, npcm7xx_ehci_id_table);
 
 static struct platform_driver npcm7xx_ehci_hcd_driver = {
 	.probe		= npcm7xx_ehci_hcd_drv_probe,
-	.remove_new	= npcm7xx_ehci_hcd_drv_remove,
+	.remove		= npcm7xx_ehci_hcd_drv_remove,
 	.shutdown	= usb_hcd_platform_shutdown,
 	.driver		= {
 		.name = "npcm7xx-ehci",

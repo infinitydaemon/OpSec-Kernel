@@ -41,7 +41,8 @@ static const struct adxl367_ops adxl367_i2c_ops = {
 	.read_fifo = adxl367_i2c_read_fifo,
 };
 
-static int adxl367_i2c_probe(struct i2c_client *client)
+static int adxl367_i2c_probe(struct i2c_client *client,
+			     const struct i2c_device_id *id)
 {
 	struct adxl367_i2c_state *st;
 	struct regmap *regmap;

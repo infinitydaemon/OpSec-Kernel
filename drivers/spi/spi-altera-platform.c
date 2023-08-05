@@ -39,16 +39,16 @@ static int altera_spi_probe(struct platform_device *pdev)
 	struct altera_spi_platform_data *pdata = dev_get_platdata(&pdev->dev);
 	enum altera_spi_type type = ALTERA_SPI_TYPE_UNKNOWN;
 	struct altera_spi *hw;
-	struct spi_controller *host;
+	struct spi_master *master;
 	int err = -ENODEV;
 	u16 i;
 
-	host = spi_alloc_host(&pdev->dev, sizeof(struct altera_spi));
-	if (!host)
+	master = spi_alloc_master(&pdev->dev, sizeof(struct altera_spi));
+	if (!master)
 		return err;
 
-	/* setup the host state. */
-	host->bus_num = -1;
+	/* setup the master state. */
+	master->bus_num = -1;
 
 	if (pdata) {
 		if (pdata->num_chipselect > ALTERA_SPI_MAX_CS) {
@@ -59,18 +59,18 @@ static int altera_spi_probe(struct platform_device *pdev)
 			goto exit;
 		}
 
-		host->num_chipselect = pdata->num_chipselect;
-		host->mode_bits = pdata->mode_bits;
-		host->bits_per_word_mask = pdata->bits_per_word_mask;
+		master->num_chipselect = pdata->num_chipselect;
+		master->mode_bits = pdata->mode_bits;
+		master->bits_per_word_mask = pdata->bits_per_word_mask;
 	} else {
-		host->num_chipselect = 16;
-		host->mode_bits = SPI_CS_HIGH;
-		host->bits_per_word_mask = SPI_BPW_RANGE_MASK(1, 16);
+		master->num_chipselect = 16;
+		master->mode_bits = SPI_CS_HIGH;
+		master->bits_per_word_mask = SPI_BPW_RANGE_MASK(1, 16);
 	}
 
-	host->dev.of_node = pdev->dev.of_node;
+	master->dev.of_node = pdev->dev.of_node;
 
-	hw = spi_controller_get_devdata(host);
+	hw = spi_master_get_devdata(master);
 	hw->dev = &pdev->dev;
 
 	if (platid)
@@ -107,24 +107,24 @@ static int altera_spi_probe(struct platform_device *pdev)
 		}
 	}
 
-	altera_spi_init_host(host);
+	altera_spi_init_master(master);
 
 	/* irq is optional */
 	hw->irq = platform_get_irq(pdev, 0);
 	if (hw->irq >= 0) {
 		err = devm_request_irq(&pdev->dev, hw->irq, altera_spi_irq, 0,
-				       pdev->name, host);
+				       pdev->name, master);
 		if (err)
 			goto exit;
 	}
 
-	err = devm_spi_register_controller(&pdev->dev, host);
+	err = devm_spi_register_master(&pdev->dev, master);
 	if (err)
 		goto exit;
 
 	if (pdata) {
 		for (i = 0; i < pdata->num_devices; i++) {
-			if (!spi_new_device(host, pdata->devices + i))
+			if (!spi_new_device(master, pdata->devices + i))
 				dev_warn(&pdev->dev,
 					 "unable to create SPI device: %s\n",
 					 pdata->devices[i].modalias);
@@ -135,7 +135,7 @@ static int altera_spi_probe(struct platform_device *pdev)
 
 	return 0;
 exit:
-	spi_controller_put(host);
+	spi_master_put(master);
 	return err;
 }
 

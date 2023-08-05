@@ -203,7 +203,6 @@ config USB_F_UAC2
 
 config USB_F_UVC
 	tristate
-	select UVC_COMMON
 
 config USB_F_MIDI
 	tristate

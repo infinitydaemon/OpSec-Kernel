@@ -1,9 +1,8 @@
-// SPDX-License-Identifier: GPL-1.0+
 /*
  * originally based on the dummy device.
  *
  * Copyright 1999, Thomas Davis, tadavis@lbl.gov.
- * Based on dummy.c, and eql.c devices.
+ * Licensed under the GPL. Based on dummy.c, and eql.c devices.
  *
  * bonding.c: an Ethernet Bonding driver
  *
@@ -308,7 +307,7 @@ netdev_tx_t bond_dev_queue_xmit(struct bonding *bond, struct sk_buff *skb,
 	return dev_queue_xmit(skb);
 }
 
-static bool bond_sk_check(struct bonding *bond)
+bool bond_sk_check(struct bonding *bond)
 {
 	switch (BOND_MODE(bond)) {
 	case BOND_MODE_8023AD:
@@ -420,10 +419,8 @@ static int bond_vlan_rx_kill_vid(struct net_device *bond_dev,
 /**
  * bond_ipsec_add_sa - program device with a security association
  * @xs: pointer to transformer state struct
- * @extack: extack point to fill failure reason
  **/
-static int bond_ipsec_add_sa(struct xfrm_state *xs,
-			     struct netlink_ext_ack *extack)
+static int bond_ipsec_add_sa(struct xfrm_state *xs)
 {
 	struct net_device *bond_dev = xs->xso.dev;
 	struct bond_ipsec *ipsec;
@@ -445,7 +442,7 @@ static int bond_ipsec_add_sa(struct xfrm_state *xs,
 	if (!slave->dev->xfrmdev_ops ||
 	    !slave->dev->xfrmdev_ops->xdo_dev_state_add ||
 	    netif_is_bond_master(slave->dev)) {
-		NL_SET_ERR_MSG_MOD(extack, "Slave does not support ipsec offload");
+		slave_warn(bond_dev, slave->dev, "Slave does not support ipsec offload\n");
 		rcu_read_unlock();
 		return -EINVAL;
 	}
@@ -457,7 +454,7 @@ static int bond_ipsec_add_sa(struct xfrm_state *xs,
 	}
 	xs->xso.real_dev = slave->dev;
 
-	err = slave->dev->xfrmdev_ops->xdo_dev_state_add(xs, extack);
+	err = slave->dev->xfrmdev_ops->xdo_dev_state_add(xs);
 	if (!err) {
 		ipsec->xs = xs;
 		INIT_LIST_HEAD(&ipsec->list);
@@ -497,7 +494,7 @@ static void bond_ipsec_add_sa_all(struct bonding *bond)
 	spin_lock_bh(&bond->ipsec_lock);
 	list_for_each_entry(ipsec, &bond->ipsec_list, list) {
 		ipsec->xs->xso.real_dev = slave->dev;
-		if (slave->dev->xfrmdev_ops->xdo_dev_state_add(ipsec->xs, NULL)) {
+		if (slave->dev->xfrmdev_ops->xdo_dev_state_add(ipsec->xs)) {
 			slave_warn(bond_dev, slave->dev, "%s: failed to add SA\n", __func__);
 			ipsec->xs->xso.real_dev = NULL;
 		}
@@ -1401,6 +1398,13 @@ static netdev_features_t bond_fix_features(struct net_device *dev,
 	netdev_features_t mask;
 	struct slave *slave;
 
+#if IS_ENABLED(CONFIG_TLS_DEVICE)
+	if (bond_sk_check(bond))
+		features |= BOND_TLS_FEATURES;
+	else
+		features &= ~BOND_TLS_FEATURES;
+#endif
+
 	mask = features;
 
 	features &= ~NETIF_F_ONE_FOR_ALL;
@@ -1508,6 +1512,11 @@ static void bond_setup_by_slave(struct net_device *bond_dev,
 
 	memcpy(bond_dev->broadcast, slave_dev->broadcast,
 		slave_dev->addr_len);
+
+	if (slave_dev->flags & IFF_POINTOPOINT) {
+		bond_dev->flags &= ~(IFF_BROADCAST | IFF_MULTICAST);
+		bond_dev->flags |= (IFF_POINTOPOINT | IFF_NOARP);
+	}
 }
 
 /* On bonding slaves other than the currently active slave, suppress
@@ -1635,19 +1644,13 @@ static int bond_master_upper_dev_link(struct bonding *bond, struct slave *slave,
 {
 	struct netdev_lag_upper_info lag_upper_info;
 	enum netdev_lag_tx_type type;
-	int err;
 
 	type = bond_lag_tx_type(bond);
 	lag_upper_info.tx_type = type;
 	lag_upper_info.hash_type = bond_lag_hash_type(bond, type);
 
-	err = netdev_master_upper_dev_link(slave->dev, bond->dev, slave,
-					   &lag_upper_info, extack);
-	if (err)
-		return err;
-
-	slave->dev->flags |= IFF_SLAVE;
-	return 0;
+	return netdev_master_upper_dev_link(slave->dev, bond->dev, slave,
+					    &lag_upper_info, extack);
 }
 
 static void bond_upper_dev_unlink(struct bonding *bond, struct slave *slave)
@@ -1788,26 +1791,6 @@ static void bond_ether_setup(struct net_device *bond_dev)
 	ether_setup(bond_dev);
 	bond_dev->flags |= IFF_MASTER | flags;
 	bond_dev->priv_flags &= ~IFF_TX_SKB_SHARING;
-}
-
-void bond_xdp_set_features(struct net_device *bond_dev)
-{
-	struct bonding *bond = netdev_priv(bond_dev);
-	xdp_features_t val = NETDEV_XDP_ACT_MASK;
-	struct list_head *iter;
-	struct slave *slave;
-
-	ASSERT_RTNL();
-
-	if (!bond_xdp_check(bond)) {
-		xdp_clear_features_flag(bond_dev);
-		return;
-	}
-
-	bond_for_each_slave(bond, slave, iter)
-		val &= slave->dev->xdp_features;
-
-	xdp_set_features_flag(bond_dev, val);
 }
 
 /* enslave device <slave> to bond device <master> */
@@ -1991,8 +1974,8 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev,
 		}
 	}
 
-	/* set no_addrconf flag before open to prevent IPv6 addrconf */
-	slave_dev->priv_flags |= IFF_NO_ADDRCONF;
+	/* set slave flag before open to prevent IPv6 addrconf */
+	slave_dev->flags |= IFF_SLAVE;
 
 	/* open the slave since the application closed it */
 	res = dev_open(slave_dev, extack);
@@ -2257,8 +2240,6 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev,
 			bpf_prog_inc(bond->xdp_prog);
 	}
 
-	bond_xdp_set_features(bond_dev);
-
 	slave_info(bond_dev, slave_dev, "Enslaving as %s interface with %s link\n",
 		   bond_is_active_slave(new_slave) ? "an active" : "a backup",
 		   new_slave->link != BOND_LINK_DOWN ? "an up" : "a down");
@@ -2297,7 +2278,7 @@ err_close:
 	dev_close(slave_dev);
 
 err_restore_mac:
-	slave_dev->priv_flags &= ~IFF_NO_ADDRCONF;
+	slave_dev->flags &= ~IFF_SLAVE;
 	if (!bond->params.fail_over_mac ||
 	    BOND_MODE(bond) != BOND_MODE_ACTIVEBACKUP) {
 		/* XXX TODO - fom follow mode needs to change master's
@@ -2487,8 +2468,6 @@ static int __bond_release_one(struct net_device *bond_dev,
 	/* close slave before restoring its mac address */
 	dev_close(slave_dev);
 
-	slave_dev->priv_flags &= ~IFF_NO_ADDRCONF;
-
 	if (bond->params.fail_over_mac != BOND_FOM_ACTIVE ||
 	    BOND_MODE(bond) != BOND_MODE_ACTIVEBACKUP) {
 		/* restore original ("permanent") mac address */
@@ -2506,7 +2485,6 @@ static int __bond_release_one(struct net_device *bond_dev,
 	if (!netif_is_bond_master(slave_dev))
 		slave_dev->priv_flags &= ~IFF_BONDING;
 
-	bond_xdp_set_features(bond_dev);
 	kobject_put(&slave->kobj);
 
 	return 0;
@@ -2872,8 +2850,6 @@ static bool bond_has_this_ip(struct bonding *bond, __be32 ip)
 	return ret;
 }
 
-#define BOND_VLAN_PROTO_NONE cpu_to_be16(0xffff)
-
 static bool bond_handle_vlan(struct slave *slave, struct bond_vlan_tag *tags,
 			     struct sk_buff *skb)
 {
@@ -2881,13 +2857,13 @@ static bool bond_handle_vlan(struct slave *slave, struct bond_vlan_tag *tags,
 	struct net_device *slave_dev = slave->dev;
 	struct bond_vlan_tag *outer_tag = tags;
 
-	if (!tags || tags->vlan_proto == BOND_VLAN_PROTO_NONE)
+	if (!tags || tags->vlan_proto == VLAN_N_VID)
 		return true;
 
 	tags++;
 
 	/* Go through all the tags backwards and add them to the packet */
-	while (tags->vlan_proto != BOND_VLAN_PROTO_NONE) {
+	while (tags->vlan_proto != VLAN_N_VID) {
 		if (!tags->vlan_id) {
 			tags++;
 			continue;
@@ -2963,7 +2939,7 @@ struct bond_vlan_tag *bond_verify_device_path(struct net_device *start_dev,
 		tags = kcalloc(level + 1, sizeof(*tags), GFP_ATOMIC);
 		if (!tags)
 			return ERR_PTR(-ENOMEM);
-		tags[level].vlan_proto = BOND_VLAN_PROTO_NONE;
+		tags[level].vlan_proto = VLAN_N_VID;
 		return tags;
 	}
 
@@ -3959,9 +3935,6 @@ static int bond_slave_netdev_event(unsigned long event,
 	case NETDEV_RESEND_IGMP:
 		/* Propagate to master device */
 		call_netdevice_notifiers(event, slave->bond->dev);
-		break;
-	case NETDEV_XDP_FEAT_CHANGE:
-		bond_xdp_set_features(bond_dev);
 		break;
 	default:
 		break;
@@ -5442,7 +5415,7 @@ static netdev_tx_t bond_tls_device_xmit(struct bonding *bond, struct sk_buff *sk
 {
 	struct net_device *tls_netdev = rcu_dereference(tls_get_ctx(skb->sk)->netdev);
 
-	/* tls_netdev might become NULL, even if tls_is_skb_tx_device_offloaded
+	/* tls_netdev might become NULL, even if tls_is_sk_tx_device_offloaded
 	 * was true, if tls_device_down is running in parallel, but it's OK,
 	 * because bond_get_slave_by_dev has a NULL check.
 	 */
@@ -5461,7 +5434,7 @@ static netdev_tx_t __bond_start_xmit(struct sk_buff *skb, struct net_device *dev
 		return NETDEV_TX_OK;
 
 #if IS_ENABLED(CONFIG_TLS_DEVICE)
-	if (tls_is_skb_tx_device_offloaded(skb))
+	if (skb->sk && tls_is_sk_tx_device_offloaded(skb->sk))
 		return bond_tls_device_xmit(bond, skb, dev);
 #endif
 
@@ -5730,13 +5703,9 @@ static int bond_ethtool_get_ts_info(struct net_device *bond_dev,
 				    struct ethtool_ts_info *info)
 {
 	struct bonding *bond = netdev_priv(bond_dev);
-	struct ethtool_ts_info ts_info;
 	const struct ethtool_ops *ops;
 	struct net_device *real_dev;
-	bool sw_tx_support = false;
 	struct phy_device *phydev;
-	struct list_head *iter;
-	struct slave *slave;
 	int ret = 0;
 
 	rcu_read_lock();
@@ -5755,36 +5724,10 @@ static int bond_ethtool_get_ts_info(struct net_device *bond_dev,
 			ret = ops->get_ts_info(real_dev, info);
 			goto out;
 		}
-	} else {
-		/* Check if all slaves support software tx timestamping */
-		rcu_read_lock();
-		bond_for_each_slave_rcu(bond, slave, iter) {
-			ret = -1;
-			ops = slave->dev->ethtool_ops;
-			phydev = slave->dev->phydev;
-
-			if (phy_has_tsinfo(phydev))
-				ret = phy_ts_info(phydev, &ts_info);
-			else if (ops->get_ts_info)
-				ret = ops->get_ts_info(slave->dev, &ts_info);
-
-			if (!ret && (ts_info.so_timestamping & SOF_TIMESTAMPING_TX_SOFTWARE)) {
-				sw_tx_support = true;
-				continue;
-			}
-
-			sw_tx_support = false;
-			break;
-		}
-		rcu_read_unlock();
 	}
 
-	ret = 0;
 	info->so_timestamping = SOF_TIMESTAMPING_RX_SOFTWARE |
 				SOF_TIMESTAMPING_SOFTWARE;
-	if (sw_tx_support)
-		info->so_timestamping |= SOF_TIMESTAMPING_TX_SOFTWARE;
-
 	info->phc_index = -1;
 
 out:
@@ -5907,9 +5850,10 @@ void bond_setup(struct net_device *bond_dev)
 	if (BOND_MODE(bond) == BOND_MODE_ACTIVEBACKUP)
 		bond_dev->features |= BOND_XFRM_FEATURES;
 #endif /* CONFIG_XFRM_OFFLOAD */
-
-	if (bond_xdp_check(bond))
-		bond_dev->xdp_features = NETDEV_XDP_ACT_MASK;
+#if IS_ENABLED(CONFIG_TLS_DEVICE)
+	if (bond_sk_check(bond))
+		bond_dev->features |= BOND_TLS_FEATURES;
+#endif
 }
 
 /* Destroy a bonding device.

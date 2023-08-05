@@ -16,15 +16,13 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
-#include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/types.h>
 
-#include <linux/pinctrl/consumer.h>
-#include <linux/pinctrl/pinconf-generic.h>
-#include <linux/pinctrl/pinconf.h>
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/pinctrl/pinmux.h>
+#include <linux/pinctrl/pinconf.h>
+#include <linux/pinctrl/pinconf-generic.h>
 
 #include "pinctrl-intel.h"
 
@@ -341,18 +339,18 @@ static const char *lp_get_function_name(struct pinctrl_dev *pctldev,
 {
 	struct intel_pinctrl *lg = pinctrl_dev_get_drvdata(pctldev);
 
-	return lg->soc->functions[selector].func.name;
+	return lg->soc->functions[selector].name;
 }
 
 static int lp_get_function_groups(struct pinctrl_dev *pctldev,
 				  unsigned int selector,
 				  const char * const **groups,
-				  unsigned int *ngroups)
+				  unsigned int *num_groups)
 {
 	struct intel_pinctrl *lg = pinctrl_dev_get_drvdata(pctldev);
 
-	*groups		= lg->soc->functions[selector].func.groups;
-	*ngroups	= lg->soc->functions[selector].func.ngroups;
+	*groups		= lg->soc->functions[selector].groups;
+	*num_groups	= lg->soc->functions[selector].ngroups;
 
 	return 0;
 }

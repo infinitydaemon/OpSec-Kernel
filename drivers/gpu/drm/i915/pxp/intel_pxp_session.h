@@ -8,18 +8,8 @@
 
 #include <linux/types.h>
 
-struct intel_pxp;
+struct work_struct;
 
-#ifdef CONFIG_DRM_I915_PXP
-void intel_pxp_session_management_init(struct intel_pxp *pxp);
-void intel_pxp_terminate(struct intel_pxp *pxp, bool post_invalidation_needs_restart);
-#else
-static inline void intel_pxp_session_management_init(struct intel_pxp *pxp)
-{
-}
+void intel_pxp_session_work(struct work_struct *work);
 
-static inline void intel_pxp_terminate(struct intel_pxp *pxp, bool post_invalidation_needs_restart)
-{
-}
-#endif
 #endif /* __INTEL_PXP_SESSION_H__ */

@@ -145,9 +145,7 @@ static struct lp_struct lp_table[LP_NO];
 static int port_num[LP_NO];
 
 static unsigned int lp_count = 0;
-static const struct class lp_class = {
-	.name = "printer",
-};
+static struct class *lp_class;
 
 #ifdef CONFIG_LP_CONSOLE
 static struct parport *console_registered;
@@ -934,7 +932,7 @@ static int lp_register(int nr, struct parport *port)
 	if (reset)
 		lp_reset(nr);
 
-	device_create(&lp_class, port->dev, MKDEV(LP_MAJOR, nr), NULL,
+	device_create(lp_class, port->dev, MKDEV(LP_MAJOR, nr), NULL,
 		      "lp%d", nr);
 
 	printk(KERN_INFO "lp%d: using %s (%s).\n", nr, port->name,
@@ -1006,7 +1004,7 @@ static void lp_detach(struct parport *port)
 		if (port_num[n] == port->number) {
 			port_num[n] = -1;
 			lp_count--;
-			device_destroy(&lp_class, MKDEV(LP_MAJOR, n));
+			device_destroy(lp_class, MKDEV(LP_MAJOR, n));
 			parport_unregister_device(lp_table[n].dev);
 		}
 	}
@@ -1051,9 +1049,11 @@ static int __init lp_init(void)
 		return -EIO;
 	}
 
-	err = class_register(&lp_class);
-	if (err)
+	lp_class = class_create(THIS_MODULE, "printer");
+	if (IS_ERR(lp_class)) {
+		err = PTR_ERR(lp_class);
 		goto out_reg;
+	}
 
 	if (parport_register_driver(&lp_driver)) {
 		printk(KERN_ERR "lp: unable to register with parport\n");
@@ -1072,7 +1072,7 @@ static int __init lp_init(void)
 	return 0;
 
 out_class:
-	class_unregister(&lp_class);
+	class_destroy(lp_class);
 out_reg:
 	unregister_chrdev(LP_MAJOR, "lp");
 	return err;
@@ -1115,7 +1115,7 @@ static void lp_cleanup_module(void)
 #endif
 
 	unregister_chrdev(LP_MAJOR, "lp");
-	class_unregister(&lp_class);
+	class_destroy(lp_class);
 }
 
 __setup("lp=", lp_setup);

@@ -10,6 +10,7 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/interrupt.h>
+#include <linux/msi.h>
 #include <linux/dma-mapping.h>
 #include <linux/delay.h>
 #include <linux/io.h>
@@ -270,7 +271,7 @@ static void dpio_teardown_irqs(struct fsl_mc_device *dpio_dev)
 	fsl_mc_free_irqs(dpio_dev);
 }
 
-static void dpaa2_dpio_remove(struct fsl_mc_device *dpio_dev)
+static int dpaa2_dpio_remove(struct fsl_mc_device *dpio_dev)
 {
 	struct device *dev;
 	struct dpio_priv *priv;
@@ -297,8 +298,14 @@ static void dpaa2_dpio_remove(struct fsl_mc_device *dpio_dev)
 
 	dpio_close(dpio_dev->mc_io, 0, dpio_dev->mc_handle);
 
+	fsl_mc_portal_free(dpio_dev->mc_io);
+
+	return 0;
+
 err_open:
 	fsl_mc_portal_free(dpio_dev->mc_io);
+
+	return err;
 }
 
 static const struct fsl_mc_device_id dpaa2_dpio_match_id_table[] = {

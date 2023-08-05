@@ -121,7 +121,8 @@ static struct hclgevf_dev *hclgevf_ae_get_hdev(struct hnae3_handle *handle)
 		return container_of(handle, struct hclgevf_dev, nic);
 }
 
-static void hclgevf_update_stats(struct hnae3_handle *handle)
+static void hclgevf_update_stats(struct hnae3_handle *handle,
+				 struct net_device_stats *net_stats)
 {
 	struct hclgevf_dev *hdev = hclgevf_ae_get_hdev(handle);
 	int status;
@@ -1644,7 +1645,8 @@ err_reset:
 	hclgevf_reset_err_handle(hdev);
 }
 
-static enum hnae3_reset_type hclgevf_get_reset_level(unsigned long *addr)
+static enum hnae3_reset_type hclgevf_get_reset_level(struct hclgevf_dev *hdev,
+						     unsigned long *addr)
 {
 	enum hnae3_reset_type rst_level = HNAE3_NONE_RESET;
 
@@ -1683,7 +1685,8 @@ static void hclgevf_reset_event(struct pci_dev *pdev,
 
 	if (hdev->default_reset_request)
 		hdev->reset_level =
-			hclgevf_get_reset_level(&hdev->default_reset_request);
+			hclgevf_get_reset_level(hdev,
+						&hdev->default_reset_request);
 	else
 		hdev->reset_level = HNAE3_VF_FUNC_RESET;
 
@@ -1825,7 +1828,7 @@ static void hclgevf_reset_service_task(struct hclgevf_dev *hdev)
 
 		hdev->last_reset_time = jiffies;
 		hdev->reset_type =
-			hclgevf_get_reset_level(&hdev->reset_pending);
+			hclgevf_get_reset_level(hdev, &hdev->reset_pending);
 		if (hdev->reset_type != HNAE3_NONE_RESET)
 			hclgevf_reset(hdev);
 	} else if (test_and_clear_bit(HCLGEVF_RESET_REQUESTED,
@@ -2157,7 +2160,8 @@ static int hclgevf_rss_init_hw(struct hclgevf_dev *hdev)
 		if (ret)
 			return ret;
 
-		ret = hclge_comm_set_rss_input_tuple(&hdev->hw.hw, rss_cfg);
+		ret = hclge_comm_set_rss_input_tuple(&hdev->nic, &hdev->hw.hw,
+						     false, rss_cfg);
 		if (ret)
 			return ret;
 	}
@@ -2597,7 +2601,7 @@ static int hclgevf_pci_init(struct hclgevf_dev *hdev)
 	if (!hw->hw.io_base) {
 		dev_err(&pdev->dev, "can't map configuration register space\n");
 		ret = -ENOMEM;
-		goto err_release_regions;
+		goto err_clr_master;
 	}
 
 	ret = hclgevf_dev_mem_map(hdev);
@@ -2608,7 +2612,8 @@ static int hclgevf_pci_init(struct hclgevf_dev *hdev)
 
 err_unmap_io_base:
 	pci_iounmap(pdev, hdev->hw.hw.io_base);
-err_release_regions:
+err_clr_master:
+	pci_clear_master(pdev);
 	pci_release_regions(pdev);
 err_disable_device:
 	pci_disable_device(pdev);
@@ -2624,6 +2629,7 @@ static void hclgevf_pci_uninit(struct hclgevf_dev *hdev)
 		devm_iounmap(&pdev->dev, hdev->hw.hw.mem_base);
 
 	pci_iounmap(pdev, hdev->hw.hw.io_base);
+	pci_clear_master(pdev);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
 }

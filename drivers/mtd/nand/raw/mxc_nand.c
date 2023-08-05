@@ -1599,6 +1599,16 @@ static inline int is_imx25_nfc(struct mxc_nand_host *host)
 	return host->devtype_data == &imx25_nand_devtype_data;
 }
 
+static inline int is_imx51_nfc(struct mxc_nand_host *host)
+{
+	return host->devtype_data == &imx51_nand_devtype_data;
+}
+
+static inline int is_imx53_nfc(struct mxc_nand_host *host)
+{
+	return host->devtype_data == &imx53_nand_devtype_data;
+}
+
 static const struct of_device_id mxcnd_dt_ids[] = {
 	{ .compatible = "fsl,imx21-nand", .data = &imx21_nand_devtype_data, },
 	{ .compatible = "fsl,imx27-nand", .data = &imx27_nand_devtype_data, },
@@ -1821,7 +1831,7 @@ escan:
 	return err;
 }
 
-static void mxcnd_remove(struct platform_device *pdev)
+static int mxcnd_remove(struct platform_device *pdev)
 {
 	struct mxc_nand_host *host = platform_get_drvdata(pdev);
 	struct nand_chip *chip = &host->nand;
@@ -1832,6 +1842,8 @@ static void mxcnd_remove(struct platform_device *pdev)
 	nand_cleanup(chip);
 	if (host->clk_act)
 		clk_disable_unprepare(host->clk);
+
+	return 0;
 }
 
 static struct platform_driver mxcnd_driver = {
@@ -1840,7 +1852,7 @@ static struct platform_driver mxcnd_driver = {
 		   .of_match_table = mxcnd_dt_ids,
 	},
 	.probe = mxcnd_probe,
-	.remove_new = mxcnd_remove,
+	.remove = mxcnd_remove,
 };
 module_platform_driver(mxcnd_driver);
 

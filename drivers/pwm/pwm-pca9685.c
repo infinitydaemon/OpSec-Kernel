@@ -515,7 +515,8 @@ static const struct regmap_config pca9685_regmap_i2c_config = {
 	.cache_type = REGCACHE_NONE,
 };
 
-static int pca9685_pwm_probe(struct i2c_client *client)
+static int pca9685_pwm_probe(struct i2c_client *client,
+				const struct i2c_device_id *id)
 {
 	struct pca9685 *pca;
 	unsigned int reg;

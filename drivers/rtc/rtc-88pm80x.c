@@ -317,10 +317,11 @@ out:
 	return ret;
 }
 
-static void pm80x_rtc_remove(struct platform_device *pdev)
+static int pm80x_rtc_remove(struct platform_device *pdev)
 {
 	struct pm80x_rtc_info *info = platform_get_drvdata(pdev);
 	pm80x_free_irq(info->chip, info->irq, info);
+	return 0;
 }
 
 static struct platform_driver pm80x_rtc_driver = {
@@ -329,7 +330,7 @@ static struct platform_driver pm80x_rtc_driver = {
 		   .pm = &pm80x_rtc_pm_ops,
 		   },
 	.probe = pm80x_rtc_probe,
-	.remove_new = pm80x_rtc_remove,
+	.remove = pm80x_rtc_remove,
 };
 
 module_platform_driver(pm80x_rtc_driver);

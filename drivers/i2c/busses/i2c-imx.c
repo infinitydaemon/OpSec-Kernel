@@ -1451,7 +1451,8 @@ static int i2c_imx_probe(struct platform_device *pdev)
 	if (irq < 0)
 		return irq;
 
-	base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
@@ -1482,10 +1483,16 @@ static int i2c_imx_probe(struct platform_device *pdev)
 	ACPI_COMPANION_SET(&i2c_imx->adapter.dev, ACPI_COMPANION(&pdev->dev));
 
 	/* Get I2C clock */
-	i2c_imx->clk = devm_clk_get_enabled(&pdev->dev, NULL);
+	i2c_imx->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(i2c_imx->clk))
 		return dev_err_probe(&pdev->dev, PTR_ERR(i2c_imx->clk),
 				     "can't get I2C clock\n");
+
+	ret = clk_prepare_enable(i2c_imx->clk);
+	if (ret) {
+		dev_err(&pdev->dev, "can't enable I2C clock, ret=%d\n", ret);
+		return ret;
+	}
 
 	/* Init queue */
 	init_waitqueue_head(&i2c_imx->queue);
@@ -1558,10 +1565,11 @@ rpm_disable:
 	pm_runtime_disable(&pdev->dev);
 	pm_runtime_set_suspended(&pdev->dev);
 	pm_runtime_dont_use_autosuspend(&pdev->dev);
+	clk_disable_unprepare(i2c_imx->clk);
 	return ret;
 }
 
-static void i2c_imx_remove(struct platform_device *pdev)
+static int i2c_imx_remove(struct platform_device *pdev)
 {
 	struct imx_i2c_struct *i2c_imx = platform_get_drvdata(pdev);
 	int irq, ret;
@@ -1583,6 +1591,7 @@ static void i2c_imx_remove(struct platform_device *pdev)
 		imx_i2c_write_reg(0, i2c_imx, IMX_I2C_IFDR);
 		imx_i2c_write_reg(0, i2c_imx, IMX_I2C_I2CR);
 		imx_i2c_write_reg(0, i2c_imx, IMX_I2C_I2SR);
+		clk_disable(i2c_imx->clk);
 	}
 
 	clk_notifier_unregister(i2c_imx->clk, &i2c_imx->clk_change_nb);
@@ -1590,8 +1599,12 @@ static void i2c_imx_remove(struct platform_device *pdev)
 	if (irq >= 0)
 		free_irq(irq, i2c_imx);
 
+	clk_unprepare(i2c_imx->clk);
+
 	pm_runtime_put_noidle(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 static int __maybe_unused i2c_imx_runtime_suspend(struct device *dev)
@@ -1622,7 +1635,7 @@ static const struct dev_pm_ops i2c_imx_pm_ops = {
 
 static struct platform_driver i2c_imx_driver = {
 	.probe = i2c_imx_probe,
-	.remove_new = i2c_imx_remove,
+	.remove = i2c_imx_remove,
 	.driver = {
 		.name = DRIVER_NAME,
 		.pm = &i2c_imx_pm_ops,

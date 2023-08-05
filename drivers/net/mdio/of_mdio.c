@@ -131,7 +131,7 @@ bool of_mdiobus_child_is_phy(struct device_node *child)
 		return true;
 	}
 
-	if (!of_property_present(child, "compatible"))
+	if (!of_find_property(child, "compatible", NULL))
 		return true;
 
 	return false;
@@ -205,7 +205,7 @@ int __of_mdiobus_register(struct mii_bus *mdio, struct device_node *np,
 	/* auto scan for PHYs with empty reg property */
 	for_each_available_child_of_node(np, child) {
 		/* Skip PHYs with reg property set */
-		if (of_property_present(child, "reg"))
+		if (of_find_property(child, "reg", NULL))
 			continue;
 
 		for (addr = 0; addr < PHY_MAX_ADDR; addr++) {

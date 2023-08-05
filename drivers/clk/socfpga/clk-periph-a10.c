@@ -57,8 +57,8 @@ static const struct clk_ops periclk_ops = {
 	.get_parent = clk_periclk_get_parent,
 };
 
-static void __init __socfpga_periph_init(struct device_node *node,
-					 const struct clk_ops *ops)
+static __init void __socfpga_periph_init(struct device_node *node,
+	const struct clk_ops *ops)
 {
 	u32 reg;
 	struct clk_hw *hw_clk;
@@ -106,25 +106,21 @@ static void __init __socfpga_periph_init(struct device_node *node,
 
 	hw_clk = &periph_clk->hw.hw;
 
-	rc = clk_hw_register(NULL, hw_clk);
-	if (rc) {
-		pr_err("Could not register clock:%s\n", clk_name);
-		goto err_clk_hw_register;
+	if (clk_hw_register(NULL, hw_clk)) {
+		kfree(periph_clk);
+		return;
 	}
-
-	rc = of_clk_add_hw_provider(node, of_clk_hw_simple_get, hw_clk);
-	if (rc) {
+	rc = of_clk_add_provider(node, of_clk_src_simple_get, hw_clk);
+	if (rc < 0) {
 		pr_err("Could not register clock provider for node:%s\n",
 		       clk_name);
-		goto err_of_clk_add_hw_provider;
+		goto err_clk;
 	}
 
 	return;
 
-err_of_clk_add_hw_provider:
+err_clk:
 	clk_hw_unregister(hw_clk);
-err_clk_hw_register:
-	kfree(periph_clk);
 }
 
 void __init socfpga_a10_periph_init(struct device_node *node)

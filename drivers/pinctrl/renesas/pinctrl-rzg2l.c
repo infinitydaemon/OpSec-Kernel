@@ -8,19 +8,16 @@
 #include <linux/bitops.h>
 #include <linux/clk.h>
 #include <linux/gpio/driver.h>
-#include <linux/interrupt.h>
 #include <linux/io.h>
+#include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/of_device.h>
 #include <linux/of_irq.h>
-#include <linux/seq_file.h>
-#include <linux/spinlock.h>
-
-#include <linux/pinctrl/consumer.h>
 #include <linux/pinctrl/pinconf-generic.h>
 #include <linux/pinctrl/pinconf.h>
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/pinctrl/pinmux.h>
+#include <linux/spinlock.h>
 
 #include <dt-bindings/pinctrl/rzg2l-pinctrl.h>
 
@@ -451,7 +448,8 @@ static int rzg2l_dt_node_to_map(struct pinctrl_dev *pctldev,
 	ret = -EINVAL;
 
 done:
-	rzg2l_dt_free_map(pctldev, *map, *num_maps);
+	if (ret < 0)
+		rzg2l_dt_free_map(pctldev, *map, *num_maps);
 
 	return ret;
 }
@@ -1480,12 +1478,6 @@ static int rzg2l_pinctrl_probe(struct platform_device *pdev)
 	struct rzg2l_pinctrl *pctrl;
 	int ret;
 
-	BUILD_BUG_ON(ARRAY_SIZE(rzg2l_gpio_configs) * RZG2L_PINS_PER_PORT >
-		     ARRAY_SIZE(rzg2l_gpio_names));
-
-	BUILD_BUG_ON(ARRAY_SIZE(r9a07g043_gpio_configs) * RZG2L_PINS_PER_PORT >
-		     ARRAY_SIZE(rzg2l_gpio_names));
-
 	pctrl = devm_kzalloc(&pdev->dev, sizeof(*pctrl), GFP_KERNEL);
 	if (!pctrl)
 		return -ENOMEM;
@@ -1549,7 +1541,7 @@ static struct rzg2l_pinctrl_data r9a07g044_data = {
 	.port_pin_configs = rzg2l_gpio_configs,
 	.n_ports = ARRAY_SIZE(rzg2l_gpio_configs),
 	.dedicated_pins = rzg2l_dedicated_pins.common,
-	.n_port_pins = ARRAY_SIZE(rzg2l_gpio_configs) * RZG2L_PINS_PER_PORT,
+	.n_port_pins = ARRAY_SIZE(rzg2l_gpio_names),
 	.n_dedicated_pins = ARRAY_SIZE(rzg2l_dedicated_pins.common) +
 		ARRAY_SIZE(rzg2l_dedicated_pins.rzg2l_pins),
 };
@@ -1582,3 +1574,4 @@ core_initcall(rzg2l_pinctrl_init);
 
 MODULE_AUTHOR("Lad Prabhakar <prabhakar.mahadev-lad.rj@bp.renesas.com>");
 MODULE_DESCRIPTION("Pin and gpio controller driver for RZ/G2L family");
+MODULE_LICENSE("GPL v2");

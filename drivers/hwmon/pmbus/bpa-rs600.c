@@ -196,7 +196,7 @@ static struct i2c_driver bpa_rs600_driver = {
 		.name = "bpa-rs600",
 		.of_match_table = of_match_ptr(bpa_rs600_of_match),
 	},
-	.probe = bpa_rs600_probe,
+	.probe_new = bpa_rs600_probe,
 	.id_table = bpa_rs600_id,
 };
 

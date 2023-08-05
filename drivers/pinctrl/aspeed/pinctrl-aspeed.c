@@ -5,7 +5,6 @@
 
 #include <linux/mfd/syscon.h>
 #include <linux/platform_device.h>
-#include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include "../core.h"

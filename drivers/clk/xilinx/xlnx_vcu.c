@@ -702,11 +702,13 @@ error_clk_provider:
  * Return:	Returns 0 on success
  *		Negative error code otherwise
  */
-static void xvcu_remove(struct platform_device *pdev)
+static int xvcu_remove(struct platform_device *pdev)
 {
 	struct xvcu_device *xvcu;
 
 	xvcu = platform_get_drvdata(pdev);
+	if (!xvcu)
+		return -ENODEV;
 
 	xvcu_unregister_clock_provider(xvcu);
 
@@ -714,6 +716,8 @@ static void xvcu_remove(struct platform_device *pdev)
 	regmap_write(xvcu->logicore_reg_ba, VCU_GASKET_INIT, 0);
 
 	clk_disable_unprepare(xvcu->aclk);
+
+	return 0;
 }
 
 static const struct of_device_id xvcu_of_id_table[] = {
@@ -729,7 +733,7 @@ static struct platform_driver xvcu_driver = {
 		.of_match_table = xvcu_of_id_table,
 	},
 	.probe                  = xvcu_probe,
-	.remove_new             = xvcu_remove,
+	.remove                 = xvcu_remove,
 };
 
 module_platform_driver(xvcu_driver);

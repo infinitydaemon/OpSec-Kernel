@@ -841,7 +841,7 @@ static int ti_pipe3_probe(struct platform_device *pdev)
 	return PTR_ERR_OR_ZERO(phy_provider);
 }
 
-static void ti_pipe3_remove(struct platform_device *pdev)
+static int ti_pipe3_remove(struct platform_device *pdev)
 {
 	struct ti_pipe3 *phy = platform_get_drvdata(pdev);
 
@@ -850,6 +850,8 @@ static void ti_pipe3_remove(struct platform_device *pdev)
 		phy->sata_refclk_enabled = false;
 	}
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 static int ti_pipe3_enable_clocks(struct ti_pipe3 *phy)
@@ -926,7 +928,7 @@ MODULE_DEVICE_TABLE(of, ti_pipe3_id_table);
 
 static struct platform_driver ti_pipe3_driver = {
 	.probe		= ti_pipe3_probe,
-	.remove_new	= ti_pipe3_remove,
+	.remove		= ti_pipe3_remove,
 	.driver		= {
 		.name	= "ti-pipe3",
 		.of_match_table = ti_pipe3_id_table,

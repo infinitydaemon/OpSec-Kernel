@@ -39,6 +39,7 @@
 #include <linux/ipv6.h>
 #include <linux/if_vlan.h>
 #include <linux/mdio.h>
+#include <linux/aer.h>
 #include <linux/bitops.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
@@ -1744,6 +1745,7 @@ static int alx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto out_pci_disable;
 	}
 
+	pci_enable_pcie_error_reporting(pdev);
 	pci_set_master(pdev);
 
 	if (!pdev->pm_cap) {
@@ -1877,6 +1879,7 @@ out_free_netdev:
 	free_netdev(netdev);
 out_pci_release:
 	pci_release_mem_regions(pdev);
+	pci_disable_pcie_error_reporting(pdev);
 out_pci_disable:
 	pci_disable_device(pdev);
 	return err;
@@ -1894,6 +1897,7 @@ static void alx_remove(struct pci_dev *pdev)
 	iounmap(hw->hw_addr);
 	pci_release_mem_regions(pdev);
 
+	pci_disable_pcie_error_reporting(pdev);
 	pci_disable_device(pdev);
 
 	mutex_destroy(&alx->mtx);
@@ -1901,6 +1905,7 @@ static void alx_remove(struct pci_dev *pdev)
 	free_netdev(alx->dev);
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int alx_suspend(struct device *dev)
 {
 	struct alx_priv *alx = dev_get_drvdata(dev);
@@ -1946,7 +1951,12 @@ unlock:
 	return err;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(alx_pm_ops, alx_suspend, alx_resume);
+static SIMPLE_DEV_PM_OPS(alx_pm_ops, alx_suspend, alx_resume);
+#define ALX_PM_OPS      (&alx_pm_ops)
+#else
+#define ALX_PM_OPS      NULL
+#endif
+
 
 static pci_ers_result_t alx_pci_error_detected(struct pci_dev *pdev,
 					       pci_channel_state_t state)
@@ -2045,7 +2055,7 @@ static struct pci_driver alx_driver = {
 	.probe       = alx_probe,
 	.remove      = alx_remove,
 	.err_handler = &alx_err_handlers,
-	.driver.pm   = pm_sleep_ptr(&alx_pm_ops),
+	.driver.pm   = ALX_PM_OPS,
 };
 
 module_pci_driver(alx_driver);

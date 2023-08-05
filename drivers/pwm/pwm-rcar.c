@@ -238,13 +238,15 @@ static int rcar_pwm_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void rcar_pwm_remove(struct platform_device *pdev)
+static int rcar_pwm_remove(struct platform_device *pdev)
 {
 	struct rcar_pwm_chip *rcar_pwm = platform_get_drvdata(pdev);
 
 	pwmchip_remove(&rcar_pwm->chip);
 
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 static const struct of_device_id rcar_pwm_of_table[] = {
@@ -255,10 +257,10 @@ MODULE_DEVICE_TABLE(of, rcar_pwm_of_table);
 
 static struct platform_driver rcar_pwm_driver = {
 	.probe = rcar_pwm_probe,
-	.remove_new = rcar_pwm_remove,
+	.remove = rcar_pwm_remove,
 	.driver = {
 		.name = "pwm-rcar",
-		.of_match_table = rcar_pwm_of_table,
+		.of_match_table = of_match_ptr(rcar_pwm_of_table),
 	}
 };
 module_platform_driver(rcar_pwm_driver);

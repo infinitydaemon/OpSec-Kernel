@@ -28,7 +28,6 @@
 #include "dsi.xml.h"
 #include "sfpb.xml.h"
 #include "dsi_cfg.h"
-#include "msm_dsc_helper.h"
 #include "msm_kms.h"
 #include "msm_gem.h"
 #include "phy/dsi_phy.h"
@@ -118,15 +117,18 @@ struct msm_dsi_host {
 	struct clk *byte_clk;
 	struct clk *esc_clk;
 	struct clk *pixel_clk;
+	struct clk *byte_clk_src;
+	struct clk *pixel_clk_src;
 	struct clk *byte_intf_clk;
 
 	unsigned long byte_clk_rate;
-	unsigned long byte_intf_clk_rate;
 	unsigned long pixel_clk_rate;
 	unsigned long esc_clk_rate;
 
 	/* DSI v2 specific clocks */
 	struct clk *src_clk;
+	struct clk *esc_clk_src;
+	struct clk *dsi_clk_src;
 
 	unsigned long src_clk_rate;
 
@@ -211,6 +213,10 @@ static const struct msm_dsi_cfg_handler *dsi_get_config(
 	int ret;
 	u32 major = 0, minor = 0;
 
+	cfg_hnd = device_get_match_data(dev);
+	if (cfg_hnd)
+		return cfg_hnd;
+
 	ahb_clk = msm_clk_get(msm_host->pdev, "iface");
 	if (IS_ERR(ahb_clk)) {
 		pr_err("%s: cannot get interface clock\n", __func__);
@@ -261,6 +267,21 @@ int dsi_clk_init_v2(struct msm_dsi_host *msm_host)
 			__func__, ret);
 		msm_host->src_clk = NULL;
 		return ret;
+	}
+
+	msm_host->esc_clk_src = clk_get_parent(msm_host->esc_clk);
+	if (!msm_host->esc_clk_src) {
+		ret = -ENODEV;
+		pr_err("%s: can't get esc clock parent. ret=%d\n",
+			__func__, ret);
+		return ret;
+	}
+
+	msm_host->dsi_clk_src = clk_get_parent(msm_host->src_clk);
+	if (!msm_host->dsi_clk_src) {
+		ret = -ENODEV;
+		pr_err("%s: can't get src clock parent. ret=%d\n",
+			__func__, ret);
 	}
 
 	return ret;
@@ -327,6 +348,20 @@ static int dsi_clk_init(struct msm_dsi_host *msm_host)
 		goto exit;
 	}
 
+	msm_host->byte_clk_src = clk_get_parent(msm_host->byte_clk);
+	if (IS_ERR(msm_host->byte_clk_src)) {
+		ret = PTR_ERR(msm_host->byte_clk_src);
+		pr_err("%s: can't find byte_clk clock. ret=%d\n", __func__, ret);
+		goto exit;
+	}
+
+	msm_host->pixel_clk_src = clk_get_parent(msm_host->pixel_clk);
+	if (IS_ERR(msm_host->pixel_clk_src)) {
+		ret = PTR_ERR(msm_host->pixel_clk_src);
+		pr_err("%s: can't find pixel_clk clock. ret=%d\n", __func__, ret);
+		goto exit;
+	}
+
 	if (cfg_hnd->ops->clk_init_ver)
 		ret = cfg_hnd->ops->clk_init_ver(msm_host);
 exit:
@@ -363,6 +398,7 @@ int msm_dsi_runtime_resume(struct device *dev)
 
 int dsi_link_clk_set_rate_6g(struct msm_dsi_host *msm_host)
 {
+	unsigned long byte_intf_rate;
 	int ret;
 
 	DBG("Set clk rates: pclk=%d, byteclk=%lu",
@@ -382,7 +418,13 @@ int dsi_link_clk_set_rate_6g(struct msm_dsi_host *msm_host)
 	}
 
 	if (msm_host->byte_intf_clk) {
-		ret = clk_set_rate(msm_host->byte_intf_clk, msm_host->byte_intf_clk_rate);
+		/* For CPHY, byte_intf_clk is same as byte_clk */
+		if (msm_host->cphy_mode)
+			byte_intf_rate = msm_host->byte_clk_rate;
+		else
+			byte_intf_rate = msm_host->byte_clk_rate / 2;
+
+		ret = clk_set_rate(msm_host->byte_intf_clk, byte_intf_rate);
 		if (ret) {
 			pr_err("%s: Failed to set rate byte intf clk, %d\n",
 			       __func__, ret);
@@ -528,26 +570,12 @@ void dsi_link_clk_disable_v2(struct msm_dsi_host *msm_host)
 	clk_disable_unprepare(msm_host->byte_clk);
 }
 
-static unsigned long dsi_adjust_pclk_for_compression(const struct drm_display_mode *mode,
-		const struct drm_dsc_config *dsc)
+static unsigned long dsi_get_pclk_rate(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 {
-	int new_hdisplay = DIV_ROUND_UP(mode->hdisplay * drm_dsc_get_bpp_int(dsc),
-			dsc->bits_per_component * 3);
-
-	int new_htotal = mode->htotal - mode->hdisplay + new_hdisplay;
-
-	return new_htotal * mode->vtotal * drm_mode_vrefresh(mode);
-}
-
-static unsigned long dsi_get_pclk_rate(const struct drm_display_mode *mode,
-		const struct drm_dsc_config *dsc, bool is_bonded_dsi)
-{
+	struct drm_display_mode *mode = msm_host->mode;
 	unsigned long pclk_rate;
 
 	pclk_rate = mode->clock * 1000;
-
-	if (dsc)
-		pclk_rate = dsi_adjust_pclk_for_compression(mode, dsc);
 
 	/*
 	 * For bonded DSI mode, the current DRM mode has the complete width of the
@@ -561,14 +589,12 @@ static unsigned long dsi_get_pclk_rate(const struct drm_display_mode *mode,
 	return pclk_rate;
 }
 
-unsigned long dsi_byte_clk_get_rate(struct mipi_dsi_host *host, bool is_bonded_dsi,
-				    const struct drm_display_mode *mode)
+static void dsi_calc_pclk(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 {
-	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
 	u8 lanes = msm_host->lanes;
 	u32 bpp = dsi_get_bpp(msm_host->format);
-	unsigned long pclk_rate = dsi_get_pclk_rate(mode, msm_host->dsc, is_bonded_dsi);
-	unsigned long pclk_bpp;
+	unsigned long pclk_rate = dsi_get_pclk_rate(msm_host, is_bonded_dsi);
+	u64 pclk_bpp = (u64)pclk_rate * bpp;
 
 	if (lanes == 0) {
 		pr_err("%s: forcing mdss_dsi lanes to 1\n", __func__);
@@ -577,18 +603,12 @@ unsigned long dsi_byte_clk_get_rate(struct mipi_dsi_host *host, bool is_bonded_d
 
 	/* CPHY "byte_clk" is in units of 16 bits */
 	if (msm_host->cphy_mode)
-		pclk_bpp = mult_frac(pclk_rate, bpp, 16 * lanes);
+		do_div(pclk_bpp, (16 * lanes));
 	else
-		pclk_bpp = mult_frac(pclk_rate, bpp, 8 * lanes);
+		do_div(pclk_bpp, (8 * lanes));
 
-	return pclk_bpp;
-}
-
-static void dsi_calc_pclk(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
-{
-	msm_host->pixel_clk_rate = dsi_get_pclk_rate(msm_host->mode, msm_host->dsc, is_bonded_dsi);
-	msm_host->byte_clk_rate = dsi_byte_clk_get_rate(&msm_host->base, is_bonded_dsi,
-							msm_host->mode);
+	msm_host->pixel_clk_rate = pclk_rate;
+	msm_host->byte_clk_rate = pclk_bpp;
 
 	DBG("pclk=%lu, bclk=%lu", msm_host->pixel_clk_rate,
 				msm_host->byte_clk_rate);
@@ -610,12 +630,15 @@ int dsi_calc_clk_rate_6g(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 int dsi_calc_clk_rate_v2(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 {
 	u32 bpp = dsi_get_bpp(msm_host->format);
+	u64 pclk_bpp;
 	unsigned int esc_mhz, esc_div;
 	unsigned long byte_mhz;
 
 	dsi_calc_pclk(msm_host, is_bonded_dsi);
 
-	msm_host->src_clk_rate = mult_frac(msm_host->pixel_clk_rate, bpp, 8);
+	pclk_bpp = (u64)dsi_get_pclk_rate(msm_host, is_bonded_dsi) * bpp;
+	do_div(pclk_bpp, 8);
+	msm_host->src_clk_rate = pclk_bpp;
 
 	/*
 	 * esc clock is byte clock followed by a 4 bit divider,
@@ -705,18 +728,18 @@ static inline enum dsi_cmd_dst_format dsi_get_cmd_fmt(
 	}
 }
 
-static void dsi_ctrl_disable(struct msm_dsi_host *msm_host)
-{
-	dsi_write(msm_host, REG_DSI_CTRL, 0);
-}
-
-static void dsi_ctrl_enable(struct msm_dsi_host *msm_host,
+static void dsi_ctrl_config(struct msm_dsi_host *msm_host, bool enable,
 			struct msm_dsi_phy_shared_timings *phy_shared_timings, struct msm_dsi_phy *phy)
 {
 	u32 flags = msm_host->mode_flags;
 	enum mipi_dsi_pixel_format mipi_fmt = msm_host->format;
 	const struct msm_dsi_cfg_handler *cfg_hnd = msm_host->cfg_hnd;
 	u32 data = 0, lane_ctrl = 0;
+
+	if (!enable) {
+		dsi_write(msm_host, REG_DSI_CTRL, 0);
+		return;
+	}
 
 	if (flags & MIPI_DSI_MODE_VIDEO) {
 		if (flags & MIPI_DSI_MODE_VIDEO_HSE)
@@ -802,7 +825,7 @@ static void dsi_ctrl_enable(struct msm_dsi_host *msm_host,
 	if (!(flags & MIPI_DSI_CLOCK_NON_CONTINUOUS)) {
 		lane_ctrl = dsi_read(msm_host, REG_DSI_LANE_CTRL);
 
-		if (msm_dsi_phy_set_continuous_clock(phy, true))
+		if (msm_dsi_phy_set_continuous_clock(phy, enable))
 			lane_ctrl &= ~DSI_LANE_CTRL_HS_REQ_SEL_PHY;
 
 		dsi_write(msm_host, REG_DSI_LANE_CTRL,
@@ -828,7 +851,7 @@ static void dsi_update_dsc_timing(struct msm_dsi_host *msm_host, bool is_cmd_mod
 	/* first calculate dsc parameters and then program
 	 * compress mode registers
 	 */
-	slice_per_intf = msm_dsc_get_slices_per_intf(dsc, hdisplay);
+	slice_per_intf = DIV_ROUND_UP(hdisplay, dsc->slice_width);
 
 	total_bytes_per_intf = dsc->slice_chunk_size * slice_per_intf;
 
@@ -930,7 +953,7 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 		 * pulse width same
 		 */
 		h_total -= hdisplay;
-		hdisplay = DIV_ROUND_UP(msm_dsc_get_bytes_per_line(msm_host->dsc), 3);
+		hdisplay /= 3;
 		h_total += hdisplay;
 		ha_end = ha_start + hdisplay;
 	}
@@ -1717,9 +1740,28 @@ static int dsi_host_parse_lane_data(struct msm_dsi_host *msm_host,
 	return -EINVAL;
 }
 
+static u32 dsi_dsc_rc_buf_thresh[DSC_NUM_BUF_RANGES - 1] = {
+	0x0e, 0x1c, 0x2a, 0x38, 0x46, 0x54, 0x62,
+	0x69, 0x70, 0x77, 0x79, 0x7b, 0x7d, 0x7e
+};
+
+/* only 8bpc, 8bpp added */
+static char min_qp[DSC_NUM_BUF_RANGES] = {
+	0, 0, 1, 1, 3, 3, 3, 3, 3, 3, 5, 5, 5, 7, 13
+};
+
+static char max_qp[DSC_NUM_BUF_RANGES] = {
+	4, 4, 5, 6, 7, 7, 7, 8, 9, 10, 11, 12, 13, 13, 15
+};
+
+static char bpg_offset[DSC_NUM_BUF_RANGES] = {
+	2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12
+};
+
 static int dsi_populate_dsc_params(struct msm_dsi_host *msm_host, struct drm_dsc_config *dsc)
 {
-	int ret;
+	int i;
+	u16 bpp = dsc->bits_per_pixel >> 4;
 
 	if (dsc->bits_per_pixel & 0xf) {
 		DRM_DEV_ERROR(&msm_host->pdev->dev, "DSI does not support fractional bits_per_pixel\n");
@@ -1731,22 +1773,48 @@ static int dsi_populate_dsc_params(struct msm_dsi_host *msm_host, struct drm_dsc
 		return -EOPNOTSUPP;
 	}
 
+	dsc->rc_model_size = 8192;
+	dsc->first_line_bpg_offset = 12;
+	dsc->rc_edge_factor = 6;
+	dsc->rc_tgt_offset_high = 3;
+	dsc->rc_tgt_offset_low = 3;
 	dsc->simple_422 = 0;
 	dsc->convert_rgb = 1;
 	dsc->vbr_enable = 0;
 
-	drm_dsc_set_const_params(dsc);
-	drm_dsc_set_rc_buf_thresh(dsc);
+	/* handle only bpp = bpc = 8 */
+	for (i = 0; i < DSC_NUM_BUF_RANGES - 1 ; i++)
+		dsc->rc_buf_thresh[i] = dsi_dsc_rc_buf_thresh[i];
 
-	/* handle only bpp = bpc = 8, pre-SCR panels */
-	ret = drm_dsc_setup_rc_params(dsc, DRM_DSC_1_1_PRE_SCR);
-	if (ret) {
-		DRM_DEV_ERROR(&msm_host->pdev->dev, "could not find DSC RC parameters\n");
-		return ret;
+	for (i = 0; i < DSC_NUM_BUF_RANGES; i++) {
+		dsc->rc_range_params[i].range_min_qp = min_qp[i];
+		dsc->rc_range_params[i].range_max_qp = max_qp[i];
+		/*
+		 * Range BPG Offset contains two's-complement signed values that fill
+		 * 8 bits, yet the registers and DCS PPS field are only 6 bits wide.
+		 */
+		dsc->rc_range_params[i].range_bpg_offset = bpg_offset[i] & DSC_RANGE_BPG_OFFSET_MASK;
 	}
 
-	dsc->initial_scale_value = drm_dsc_initial_scale_value(dsc);
+	dsc->initial_offset = 6144;		/* Not bpp 12 */
+	if (bpp != 8)
+		dsc->initial_offset = 2048;	/* bpp = 12 */
+
+	if (dsc->bits_per_component <= 10)
+		dsc->mux_word_size = DSC_MUX_WORD_SIZE_8_10_BPC;
+	else
+		dsc->mux_word_size = DSC_MUX_WORD_SIZE_12_BPC;
+
+	dsc->initial_xmit_delay = 512;
+	dsc->initial_scale_value = 32;
+	dsc->first_line_bpg_offset = 12;
 	dsc->line_buf_depth = dsc->bits_per_component + 1;
+
+	/* bpc 8 */
+	dsc->flatness_min_qp = 3;
+	dsc->flatness_max_qp = 12;
+	dsc->rc_quant_incr_limit0 = 11;
+	dsc->rc_quant_incr_limit1 = 11;
 
 	return drm_dsc_compute_rc_parameters(dsc);
 }
@@ -1799,16 +1867,16 @@ static int dsi_host_get_id(struct msm_dsi_host *msm_host)
 	struct platform_device *pdev = msm_host->pdev;
 	const struct msm_dsi_config *cfg = msm_host->cfg_hnd->cfg;
 	struct resource *res;
-	int i, j;
+	int i;
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dsi_ctrl");
 	if (!res)
 		return -EINVAL;
 
-	for (i = 0; i < VARIANTS_MAX; i++)
-		for (j = 0; j < DSI_MAX; j++)
-			if (cfg->io_start[i][j] == res->start)
-				return j;
+	for (i = 0; i < cfg->num_dsi; i++) {
+		if (cfg->io_start[i] == res->start)
+			return i;
+	}
 
 	return -EINVAL;
 }
@@ -1822,7 +1890,8 @@ int msm_dsi_host_init(struct msm_dsi *msm_dsi)
 
 	msm_host = devm_kzalloc(&pdev->dev, sizeof(*msm_host), GFP_KERNEL);
 	if (!msm_host) {
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto fail;
 	}
 
 	msm_host->pdev = pdev;
@@ -1831,28 +1900,31 @@ int msm_dsi_host_init(struct msm_dsi *msm_dsi)
 	ret = dsi_host_parse_dt(msm_host);
 	if (ret) {
 		pr_err("%s: failed to parse dt\n", __func__);
-		return ret;
+		goto fail;
 	}
 
 	msm_host->ctrl_base = msm_ioremap_size(pdev, "dsi_ctrl", &msm_host->ctrl_size);
 	if (IS_ERR(msm_host->ctrl_base)) {
 		pr_err("%s: unable to map Dsi ctrl base\n", __func__);
-		return PTR_ERR(msm_host->ctrl_base);
+		ret = PTR_ERR(msm_host->ctrl_base);
+		goto fail;
 	}
 
 	pm_runtime_enable(&pdev->dev);
 
 	msm_host->cfg_hnd = dsi_get_config(msm_host);
 	if (!msm_host->cfg_hnd) {
+		ret = -EINVAL;
 		pr_err("%s: get config failed\n", __func__);
-		return -EINVAL;
+		goto fail;
 	}
 	cfg = msm_host->cfg_hnd->cfg;
 
 	msm_host->id = dsi_host_get_id(msm_host);
 	if (msm_host->id < 0) {
+		ret = msm_host->id;
 		pr_err("%s: unable to identify DSI host index\n", __func__);
-		return msm_host->id;
+		goto fail;
 	}
 
 	/* fixup base address by io offset */
@@ -1862,18 +1934,19 @@ int msm_dsi_host_init(struct msm_dsi *msm_dsi)
 					    cfg->regulator_data,
 					    &msm_host->supplies);
 	if (ret)
-		return ret;
+		goto fail;
 
 	ret = dsi_clk_init(msm_host);
 	if (ret) {
 		pr_err("%s: unable to initialize dsi clks\n", __func__);
-		return ret;
+		goto fail;
 	}
 
 	msm_host->rx_buf = devm_kzalloc(&pdev->dev, SZ_4K, GFP_KERNEL);
 	if (!msm_host->rx_buf) {
+		ret = -ENOMEM;
 		pr_err("%s: alloc rx temp buf failed\n", __func__);
-		return -ENOMEM;
+		goto fail;
 	}
 
 	ret = devm_pm_opp_set_clkname(&pdev->dev, "byte");
@@ -1920,6 +1993,9 @@ int msm_dsi_host_init(struct msm_dsi *msm_dsi)
 
 	DBG("Dsi Host %d initialized", msm_host->id);
 	return 0;
+
+fail:
+	return ret;
 }
 
 void msm_dsi_host_destroy(struct mipi_dsi_host *host)
@@ -2325,10 +2401,6 @@ int msm_dsi_host_power_on(struct mipi_dsi_host *host,
 		goto unlock_ret;
 	}
 
-	msm_host->byte_intf_clk_rate = msm_host->byte_clk_rate;
-	if (phy_shared_timings->byte_intf_clk_div_2)
-		msm_host->byte_intf_clk_rate /= 2;
-
 	msm_dsi_sfpb_config(msm_host, true);
 
 	ret = regulator_bulk_enable(msm_host->cfg_hnd->cfg->num_regulators,
@@ -2358,7 +2430,7 @@ int msm_dsi_host_power_on(struct mipi_dsi_host *host,
 
 	dsi_timing_setup(msm_host, is_bonded_dsi);
 	dsi_sw_reset(msm_host);
-	dsi_ctrl_enable(msm_host, phy_shared_timings, phy);
+	dsi_ctrl_config(msm_host, true, phy_shared_timings, phy);
 
 	if (msm_host->disp_en_gpio)
 		gpiod_set_value(msm_host->disp_en_gpio, 1);
@@ -2390,7 +2462,7 @@ int msm_dsi_host_power_off(struct mipi_dsi_host *host)
 		goto unlock_ret;
 	}
 
-	dsi_ctrl_disable(msm_host);
+	dsi_ctrl_config(msm_host, false, NULL, NULL);
 
 	if (msm_host->disp_en_gpio)
 		gpiod_set_value(msm_host->disp_en_gpio, 0);

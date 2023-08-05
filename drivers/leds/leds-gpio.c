@@ -13,7 +13,6 @@
 #include <linux/leds.h>
 #include <linux/module.h>
 #include <linux/of.h>
-#include <linux/pinctrl/consumer.h>
 #include <linux/platform_device.h>
 #include <linux/property.h>
 #include <linux/slab.h>
@@ -92,7 +91,6 @@ static int create_gpio_led(const struct gpio_led *template,
 	struct fwnode_handle *fwnode, gpio_blink_set_t blink_set)
 {
 	struct led_init_data init_data = {};
-	struct pinctrl *pinctrl;
 	int ret, state;
 
 	led_dat->cdev.default_trigger = template->default_trigger;
@@ -136,22 +134,6 @@ static int create_gpio_led(const struct gpio_led *template,
 						     &init_data);
 	}
 
-	if (ret)
-		return ret;
-
-	pinctrl = devm_pinctrl_get_select_default(led_dat->cdev.dev);
-	if (IS_ERR(pinctrl)) {
-		ret = PTR_ERR(pinctrl);
-		if (ret != -ENODEV) {
-			dev_warn(led_dat->cdev.dev,
-				 "Failed to select %pOF pinctrl: %d\n",
-				 to_of_node(fwnode), ret);
-		} else {
-			/* pinctrl-%d not present, not an error */
-			ret = 0;
-		}
-	}
-
 	return ret;
 }
 
@@ -184,8 +166,9 @@ static struct gpio_leds_priv *gpio_leds_create(struct platform_device *pdev)
 		 * will be updated after LED class device is registered,
 		 * Only then the final LED name is known.
 		 */
-		led.gpiod = devm_fwnode_gpiod_get(dev, child, NULL, GPIOD_ASIS,
-						  NULL);
+		led.gpiod = devm_fwnode_get_gpiod_from_child(dev, NULL, child,
+							     GPIOD_ASIS,
+							     NULL);
 		if (IS_ERR(led.gpiod)) {
 			fwnode_handle_put(child);
 			return ERR_CAST(led.gpiod);

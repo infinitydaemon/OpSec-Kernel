@@ -26,7 +26,7 @@
 
 static DEFINE_IDA(gadget_id_numbers);
 
-static const struct bus_type gadget_bus_type;
+static struct bus_type gadget_bus_type;
 
 /**
  * struct usb_udc - describes one usb device controller
@@ -61,7 +61,7 @@ struct usb_udc {
 	struct mutex			connect_lock;
 };
 
-static const struct class udc_class;
+static struct class *udc_class;
 static LIST_HEAD(udc_list);
 
 /* Protects udc_list, udc->driver, driver->is_bound, and related calls */
@@ -525,33 +525,6 @@ out:
 EXPORT_SYMBOL_GPL(usb_gadget_wakeup);
 
 /**
- * usb_gadget_set_remote_wakeup - configures the device remote wakeup feature.
- * @gadget:the device being configured for remote wakeup
- * @set:value to be configured.
- *
- * set to one to enable remote wakeup feature and zero to disable it.
- *
- * returns zero on success, else negative errno.
- */
-int usb_gadget_set_remote_wakeup(struct usb_gadget *gadget, int set)
-{
-	int ret = 0;
-
-	if (!gadget->ops->set_remote_wakeup) {
-		ret = -EOPNOTSUPP;
-		goto out;
-	}
-
-	ret = gadget->ops->set_remote_wakeup(gadget, set);
-
-out:
-	trace_usb_gadget_set_remote_wakeup(gadget, ret);
-
-	return ret;
-}
-EXPORT_SYMBOL_GPL(usb_gadget_set_remote_wakeup);
-
-/**
  * usb_gadget_set_selfpowered - sets the device selfpowered feature.
  * @gadget:the device being declared as self-powered
  *
@@ -878,7 +851,6 @@ int usb_gadget_activate(struct usb_gadget *gadget)
 	 */
 	if (gadget->connected)
 		ret = usb_gadget_connect_locked(gadget);
-	mutex_unlock(&gadget->udc->connect_lock);
 
 unlock:
 	mutex_unlock(&gadget->udc->connect_lock);
@@ -1378,7 +1350,7 @@ int usb_add_gadget(struct usb_gadget *gadget)
 
 	device_initialize(&udc->dev);
 	udc->dev.release = usb_udc_release;
-	udc->dev.class = &udc_class;
+	udc->dev.class = udc_class;
 	udc->dev.groups = usb_udc_attr_groups;
 	udc->dev.parent = gadget->dev.parent;
 	ret = dev_set_name(&udc->dev, "%s",
@@ -1832,9 +1804,9 @@ static const struct attribute_group *usb_udc_attr_groups[] = {
 	NULL,
 };
 
-static int usb_udc_uevent(const struct device *dev, struct kobj_uevent_env *env)
+static int usb_udc_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
-	const struct usb_udc	*udc = container_of(dev, struct usb_udc, dev);
+	struct usb_udc		*udc = container_of(dev, struct usb_udc, dev);
 	int			ret;
 
 	ret = add_uevent_var(env, "USB_UDC_NAME=%s", udc->gadget->name);
@@ -1856,12 +1828,7 @@ static int usb_udc_uevent(const struct device *dev, struct kobj_uevent_env *env)
 	return 0;
 }
 
-static const struct class udc_class = {
-	.name		= "udc",
-	.dev_uevent	= usb_udc_uevent,
-};
-
-static const struct bus_type gadget_bus_type = {
+static struct bus_type gadget_bus_type = {
 	.name = "gadget",
 	.probe = gadget_bind_driver,
 	.remove = gadget_unbind_driver,
@@ -1872,13 +1839,18 @@ static int __init usb_udc_init(void)
 {
 	int rc;
 
-	rc = class_register(&udc_class);
-	if (rc)
-		return rc;
+	udc_class = class_create(THIS_MODULE, "udc");
+	if (IS_ERR(udc_class)) {
+		pr_err("failed to create udc class --> %ld\n",
+				PTR_ERR(udc_class));
+		return PTR_ERR(udc_class);
+	}
+
+	udc_class->dev_uevent = usb_udc_uevent;
 
 	rc = bus_register(&gadget_bus_type);
 	if (rc)
-		class_unregister(&udc_class);
+		class_destroy(udc_class);
 	return rc;
 }
 subsys_initcall(usb_udc_init);
@@ -1886,7 +1858,7 @@ subsys_initcall(usb_udc_init);
 static void __exit usb_udc_exit(void)
 {
 	bus_unregister(&gadget_bus_type);
-	class_unregister(&udc_class);
+	class_destroy(udc_class);
 }
 module_exit(usb_udc_exit);
 

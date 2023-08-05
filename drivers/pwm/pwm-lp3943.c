@@ -8,6 +8,7 @@
  */
 
 #include <linux/err.h>
+#include <linux/i2c.h>
 #include <linux/mfd/lp3943.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>

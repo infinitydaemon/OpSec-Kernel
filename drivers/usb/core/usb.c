@@ -499,9 +499,9 @@ static void usb_release_dev(struct device *dev)
 	kfree(udev);
 }
 
-static int usb_dev_uevent(const struct device *dev, struct kobj_uevent_env *env)
+static int usb_dev_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
-	const struct usb_device *usb_dev;
+	struct usb_device *usb_dev;
 
 	usb_dev = to_usb_device(dev);
 
@@ -581,10 +581,10 @@ static const struct dev_pm_ops usb_device_pm_ops = {
 #endif	/* CONFIG_PM */
 
 
-static char *usb_devnode(const struct device *dev,
+static char *usb_devnode(struct device *dev,
 			 umode_t *mode, kuid_t *uid, kgid_t *gid)
 {
-	const struct usb_device *usb_dev;
+	struct usb_device *usb_dev;
 
 	usb_dev = to_usb_device(dev);
 	return kasprintf(GFP_KERNEL, "bus/usb/%03d/%03d",

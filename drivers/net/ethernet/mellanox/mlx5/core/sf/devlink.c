@@ -28,6 +28,7 @@ struct mlx5_sf_table {
 	struct mutex sf_state_lock; /* Serializes sf state among user cmds & vhca event handler. */
 	struct notifier_block esw_nb;
 	struct notifier_block vhca_nb;
+	u8 ecpu: 1;
 };
 
 static struct mlx5_sf *
@@ -282,7 +283,7 @@ out:
 static int mlx5_sf_add(struct mlx5_core_dev *dev, struct mlx5_sf_table *table,
 		       const struct devlink_port_new_attrs *new_attr,
 		       struct netlink_ext_ack *extack,
-		       struct devlink_port **dl_port)
+		       unsigned int *new_port_index)
 {
 	struct mlx5_eswitch *esw = dev->priv.eswitch;
 	struct mlx5_sf *sf;
@@ -296,7 +297,7 @@ static int mlx5_sf_add(struct mlx5_core_dev *dev, struct mlx5_sf_table *table,
 						new_attr->controller, new_attr->sfnum);
 	if (err)
 		goto esw_err;
-	*dl_port = &sf->dl_port;
+	*new_port_index = sf->port_index;
 	trace_mlx5_sf_add(dev, sf->port_index, sf->controller, sf->hw_fn_id, new_attr->sfnum);
 	return 0;
 
@@ -338,7 +339,7 @@ mlx5_sf_new_check_attr(struct mlx5_core_dev *dev, const struct devlink_port_new_
 int mlx5_devlink_sf_port_new(struct devlink *devlink,
 			     const struct devlink_port_new_attrs *new_attr,
 			     struct netlink_ext_ack *extack,
-			     struct devlink_port **dl_port)
+			     unsigned int *new_port_index)
 {
 	struct mlx5_core_dev *dev = devlink_priv(devlink);
 	struct mlx5_sf_table *table;
@@ -354,7 +355,7 @@ int mlx5_devlink_sf_port_new(struct devlink *devlink,
 				   "Port add is only supported in eswitch switchdev mode or SF ports are disabled.");
 		return -EOPNOTSUPP;
 	}
-	err = mlx5_sf_add(dev, table, new_attr, extack, dl_port);
+	err = mlx5_sf_add(dev, table, new_attr, extack, new_port_index);
 	mlx5_sf_table_put(table);
 	return err;
 }
@@ -378,8 +379,7 @@ static void mlx5_sf_dealloc(struct mlx5_sf_table *table, struct mlx5_sf *sf)
 	}
 }
 
-int mlx5_devlink_sf_port_del(struct devlink *devlink,
-			     struct devlink_port *dl_port,
+int mlx5_devlink_sf_port_del(struct devlink *devlink, unsigned int port_index,
 			     struct netlink_ext_ack *extack)
 {
 	struct mlx5_core_dev *dev = devlink_priv(devlink);
@@ -394,7 +394,7 @@ int mlx5_devlink_sf_port_del(struct devlink *devlink,
 				   "Port del is only supported in eswitch switchdev mode or SF ports are disabled.");
 		return -EOPNOTSUPP;
 	}
-	sf = mlx5_sf_lookup_by_index(table, dl_port->index);
+	sf = mlx5_sf_lookup_by_index(table, port_index);
 	if (!sf) {
 		err = -ENODEV;
 		goto sf_err;

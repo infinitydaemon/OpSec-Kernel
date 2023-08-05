@@ -100,21 +100,6 @@ static const struct cros_ec_bs_map cros_ec_keyb_bs[] = {
 		.code		= KEY_VOLUMEDOWN,
 		.bit		= EC_MKBP_VOL_DOWN,
 	},
-	{
-		.ev_type        = EV_KEY,
-		.code           = KEY_BRIGHTNESSUP,
-		.bit            = EC_MKBP_BRI_UP,
-	},
-	{
-		.ev_type        = EV_KEY,
-		.code           = KEY_BRIGHTNESSDOWN,
-		.bit            = EC_MKBP_BRI_DOWN,
-	},
-	{
-		.ev_type        = EV_KEY,
-		.code           = KEY_SCREENLOCK,
-		.bit            = EC_MKBP_SCREEN_LOCK,
-	},
 
 	/* Switches */
 	{
@@ -430,7 +415,7 @@ static int cros_ec_keyb_query_switches(struct cros_ec_keyb *ckdev)
  *
  * Returns 0 if no error or -error upon error.
  */
-static int cros_ec_keyb_resume(struct device *dev)
+static __maybe_unused int cros_ec_keyb_resume(struct device *dev)
 {
 	struct cros_ec_keyb *ckdev = dev_get_drvdata(dev);
 
@@ -775,7 +760,7 @@ static const struct of_device_id cros_ec_keyb_of_match[] = {
 MODULE_DEVICE_TABLE(of, cros_ec_keyb_of_match);
 #endif
 
-static DEFINE_SIMPLE_DEV_PM_OPS(cros_ec_keyb_pm_ops, NULL, cros_ec_keyb_resume);
+static SIMPLE_DEV_PM_OPS(cros_ec_keyb_pm_ops, NULL, cros_ec_keyb_resume);
 
 static struct platform_driver cros_ec_keyb_driver = {
 	.probe = cros_ec_keyb_probe,
@@ -784,7 +769,7 @@ static struct platform_driver cros_ec_keyb_driver = {
 		.name = "cros-ec-keyb",
 		.of_match_table = of_match_ptr(cros_ec_keyb_of_match),
 		.acpi_match_table = ACPI_PTR(cros_ec_keyb_acpi_match),
-		.pm = pm_sleep_ptr(&cros_ec_keyb_pm_ops),
+		.pm = &cros_ec_keyb_pm_ops,
 	},
 };
 

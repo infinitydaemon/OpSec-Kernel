@@ -477,7 +477,7 @@ out:
 	return ret;
 }
 
-static void riic_i2c_remove(struct platform_device *pdev)
+static int riic_i2c_remove(struct platform_device *pdev)
 {
 	struct riic_dev *riic = platform_get_drvdata(pdev);
 
@@ -486,6 +486,8 @@ static void riic_i2c_remove(struct platform_device *pdev)
 	pm_runtime_put(&pdev->dev);
 	i2c_del_adapter(&riic->adapter);
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 static const struct of_device_id riic_i2c_dt_ids[] = {
@@ -495,7 +497,7 @@ static const struct of_device_id riic_i2c_dt_ids[] = {
 
 static struct platform_driver riic_i2c_driver = {
 	.probe		= riic_i2c_probe,
-	.remove_new	= riic_i2c_remove,
+	.remove		= riic_i2c_remove,
 	.driver		= {
 		.name	= "i2c-riic",
 		.of_match_table = riic_i2c_dt_ids,

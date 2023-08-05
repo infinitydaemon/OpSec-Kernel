@@ -519,15 +519,15 @@ int npe_load_firmware(struct npe *npe, const char *name, struct device *dev)
 		u32 id;
 		u32 size;
 		union {
-			DECLARE_FLEX_ARRAY(u32, data);
-			DECLARE_FLEX_ARRAY(struct dl_block, blocks);
+			u32 data[0];
+			struct dl_block blocks[0];
 		};
 	} *image;
 
 	struct dl_codeblock {
 		u32 npe_addr;
 		u32 size;
-		u32 data[];
+		u32 data[0];
 	} *cb;
 
 	int i, j, err, data_size, instr_size, blocks, table_end;

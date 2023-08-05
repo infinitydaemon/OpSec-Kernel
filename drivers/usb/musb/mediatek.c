@@ -508,13 +508,15 @@ err_unregister_usb_phy:
 	return ret;
 }
 
-static void mtk_musb_remove(struct platform_device *pdev)
+static int mtk_musb_remove(struct platform_device *pdev)
 {
 	struct mtk_glue *glue = platform_get_drvdata(pdev);
 	struct platform_device *usb_phy = glue->usb_phy;
 
 	platform_device_unregister(glue->musb_pdev);
 	usb_phy_generic_unregister(usb_phy);
+
+	return 0;
 }
 
 #ifdef CONFIG_OF
@@ -527,7 +529,7 @@ MODULE_DEVICE_TABLE(of, mtk_musb_match);
 
 static struct platform_driver mtk_musb_driver = {
 	.probe = mtk_musb_probe,
-	.remove_new = mtk_musb_remove,
+	.remove = mtk_musb_remove,
 	.driver = {
 		   .name = "musb-mtk",
 		   .of_match_table = of_match_ptr(mtk_musb_match),

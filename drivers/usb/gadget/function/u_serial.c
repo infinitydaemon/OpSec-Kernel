@@ -24,7 +24,6 @@
 #include <linux/export.h>
 #include <linux/module.h>
 #include <linux/console.h>
-#include <linux/kstrtox.h>
 #include <linux/kthread.h>
 #include <linux/workqueue.h>
 #include <linux/kfifo.h>
@@ -539,12 +538,9 @@ static int gs_alloc_requests(struct usb_ep *ep, struct list_head *head,
 static int gs_start_io(struct gs_port *port)
 {
 	struct list_head	*head = &port->read_pool;
-	struct usb_ep		*ep;
+	struct usb_ep		*ep = port->port_usb->out;
 	int			status;
 	unsigned		started;
-
-	if (!port->port_usb || !port->port.tty)
-		return -EIO;
 
 	/* Allocate RX and TX I/O buffers.  We can't easily do this much
 	 * earlier (with GFP_KERNEL) because the requests are coupled to
@@ -552,7 +548,6 @@ static int gs_start_io(struct gs_port *port)
 	 * configurations may use different endpoints with a given port;
 	 * and high speed vs full speed changes packet sizes too.
 	 */
-	ep = port->port_usb->out;
 	status = gs_alloc_requests(ep, head, gs_read_complete,
 		&port->read_allocated);
 	if (status)
@@ -920,11 +915,8 @@ static void __gs_console_push(struct gs_console *cons)
 	}
 
 	req->length = size;
-
-	spin_unlock_irq(&cons->lock);
 	if (usb_ep_queue(ep, req, GFP_ATOMIC))
 		req->length = 0;
-	spin_lock_irq(&cons->lock);
 }
 
 static void gs_console_work(struct work_struct *work)
@@ -1081,7 +1073,7 @@ ssize_t gserial_set_console(unsigned char port_num, const char *page, size_t cou
 	bool enable;
 	int ret;
 
-	ret = kstrtobool(page, &enable);
+	ret = strtobool(page, &enable);
 	if (ret)
 		return ret;
 

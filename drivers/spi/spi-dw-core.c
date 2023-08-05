@@ -57,17 +57,21 @@ static const struct debugfs_reg32 dw_spi_dbgfs_regs[] = {
 	DW_SPI_DBGFS_REG("RX_SAMPLE_DLY", DW_SPI_RX_SAMPLE_DLY),
 };
 
-static void dw_spi_debugfs_init(struct dw_spi *dws)
+static int dw_spi_debugfs_init(struct dw_spi *dws)
 {
 	char name[32];
 
 	snprintf(name, 32, "dw_spi%d", dws->master->bus_num);
 	dws->debugfs = debugfs_create_dir(name, NULL);
+	if (!dws->debugfs)
+		return -ENOMEM;
 
 	dws->regset.regs = dw_spi_dbgfs_regs;
 	dws->regset.nregs = ARRAY_SIZE(dw_spi_dbgfs_regs);
 	dws->regset.base = dws->regs;
 	debugfs_create_regset32("registers", 0400, dws->debugfs, &dws->regset);
+
+	return 0;
 }
 
 static void dw_spi_debugfs_remove(struct dw_spi *dws)
@@ -76,8 +80,9 @@ static void dw_spi_debugfs_remove(struct dw_spi *dws)
 }
 
 #else
-static inline void dw_spi_debugfs_init(struct dw_spi *dws)
+static inline int dw_spi_debugfs_init(struct dw_spi *dws)
 {
+	return 0;
 }
 
 static inline void dw_spi_debugfs_remove(struct dw_spi *dws)
@@ -98,7 +103,7 @@ void dw_spi_set_cs(struct spi_device *spi, bool enable)
 	 * support active-high or active-low CS level.
 	 */
 	if (cs_high == enable)
-		dw_writel(dws, DW_SPI_SER, BIT(spi_get_chipselect(spi, 0)));
+		dw_writel(dws, DW_SPI_SER, BIT(spi->chip_select));
 	else
 		dw_writel(dws, DW_SPI_SER, 0);
 }

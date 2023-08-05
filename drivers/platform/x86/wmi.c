@@ -105,7 +105,6 @@ MODULE_DEVICE_TABLE(acpi, wmi_device_ids);
 /* allow duplicate GUIDs as these device drivers use struct wmi_driver */
 static const char * const allow_duplicates[] = {
 	"05901221-D566-11D1-B2F0-00A0C9062910",	/* wmi-bmof */
-	"8A42EA14-4F2A-FD45-6422-0087F7A7E608",	/* dell-wmi-ddv */
 	NULL
 };
 
@@ -254,9 +253,7 @@ static acpi_status get_event_data(const struct wmi_block *wblock, struct acpi_bu
  * @wdev: A wmi bus device from a driver
  * @length: Required buffer size
  *
- * Allocates memory needed for buffer, stores the buffer size in that memory.
- *
- * Return: 0 on success or a negative error code for failure.
+ * Allocates memory needed for buffer, stores the buffer size in that memory
  */
 int set_required_buffer_size(struct wmi_device *wdev, u64 length)
 {
@@ -270,57 +267,14 @@ int set_required_buffer_size(struct wmi_device *wdev, u64 length)
 EXPORT_SYMBOL_GPL(set_required_buffer_size);
 
 /**
- * wmi_instance_count - Get number of WMI object instances
- * @guid_string: 36 char string of the form fa50ff2b-f2e8-45de-83fa-65417f2f49ba
- *
- * Get the number of WMI object instances.
- *
- * Returns: Number of WMI object instances or negative error code.
- */
-int wmi_instance_count(const char *guid_string)
-{
-	struct wmi_block *wblock;
-	acpi_status status;
-
-	status = find_guid(guid_string, &wblock);
-	if (ACPI_FAILURE(status)) {
-		if (status == AE_BAD_PARAMETER)
-			return -EINVAL;
-
-		return -ENODEV;
-	}
-
-	return wmidev_instance_count(&wblock->dev);
-}
-EXPORT_SYMBOL_GPL(wmi_instance_count);
-
-/**
- * wmidev_instance_count - Get number of WMI object instances
- * @wdev: A wmi bus device from a driver
- *
- * Get the number of WMI object instances.
- *
- * Returns: Number of WMI object instances.
- */
-u8 wmidev_instance_count(struct wmi_device *wdev)
-{
-	struct wmi_block *wblock = container_of(wdev, struct wmi_block, dev);
-
-	return wblock->gblock.instance_count;
-}
-EXPORT_SYMBOL_GPL(wmidev_instance_count);
-
-/**
- * wmi_evaluate_method - Evaluate a WMI method (deprecated)
+ * wmi_evaluate_method - Evaluate a WMI method
  * @guid_string: 36 char string of the form fa50ff2b-f2e8-45de-83fa-65417f2f49ba
  * @instance: Instance index
  * @method_id: Method ID to call
  * @in: Buffer containing input for the method call
  * @out: Empty buffer to return the method results
  *
- * Call an ACPI-WMI method, the caller must free @out.
- *
- * Return: acpi_status signaling success or error.
+ * Call an ACPI-WMI method
  */
 acpi_status wmi_evaluate_method(const char *guid_string, u8 instance, u32 method_id,
 				const struct acpi_buffer *in, struct acpi_buffer *out)
@@ -345,9 +299,7 @@ EXPORT_SYMBOL_GPL(wmi_evaluate_method);
  * @in: Buffer containing input for the method call
  * @out: Empty buffer to return the method results
  *
- * Call an ACPI-WMI method, the caller must free @out.
- *
- * Return: acpi_status signaling success or error.
+ * Call an ACPI-WMI method
  */
 acpi_status wmidev_evaluate_method(struct wmi_device *wdev, u8 instance, u32 method_id,
 				   const struct acpi_buffer *in, struct acpi_buffer *out)
@@ -464,9 +416,7 @@ static acpi_status __query_block(struct wmi_block *wblock, u8 instance,
  * @instance: Instance index
  * @out: Empty buffer to return the contents of the data block to
  *
- * Query a ACPI-WMI block, the caller must free @out.
- *
- * Return: ACPI object containing the content of the WMI block.
+ * Return the contents of an ACPI-WMI data block to a buffer
  */
 acpi_status wmi_query_block(const char *guid_string, u8 instance,
 			    struct acpi_buffer *out)
@@ -482,15 +432,6 @@ acpi_status wmi_query_block(const char *guid_string, u8 instance,
 }
 EXPORT_SYMBOL_GPL(wmi_query_block);
 
-/**
- * wmidev_block_query - Return contents of a WMI block
- * @wdev: A wmi bus device from a driver
- * @instance: Instance index
- *
- * Query an ACPI-WMI block, the caller must free the result.
- *
- * Return: ACPI object containing the content of the WMI block.
- */
 union acpi_object *wmidev_block_query(struct wmi_device *wdev, u8 instance)
 {
 	struct acpi_buffer out = { ACPI_ALLOCATE_BUFFER, NULL };
@@ -504,14 +445,12 @@ union acpi_object *wmidev_block_query(struct wmi_device *wdev, u8 instance)
 EXPORT_SYMBOL_GPL(wmidev_block_query);
 
 /**
- * wmi_set_block - Write to a WMI block (deprecated)
+ * wmi_set_block - Write to a WMI block
  * @guid_string: 36 char string of the form fa50ff2b-f2e8-45de-83fa-65417f2f49ba
  * @instance: Instance index
  * @in: Buffer containing new values for the data block
  *
- * Write the contents of the input buffer to an ACPI-WMI data block.
- *
- * Return: acpi_status signaling success or error.
+ * Write the contents of the input buffer to an ACPI-WMI data block
  */
 acpi_status wmi_set_block(const char *guid_string, u8 instance,
 			  const struct acpi_buffer *in)
@@ -615,14 +554,12 @@ static void wmi_notify_debug(u32 value, void *context)
 }
 
 /**
- * wmi_install_notify_handler - Register handler for WMI events (deprecated)
+ * wmi_install_notify_handler - Register handler for WMI events
  * @guid: 36 char string of the form fa50ff2b-f2e8-45de-83fa-65417f2f49ba
  * @handler: Function to handle notifications
  * @data: Data to be returned to handler when event is fired
  *
  * Register a handler for events sent to the ACPI-WMI mapper device.
- *
- * Return: acpi_status signaling success or error.
  */
 acpi_status wmi_install_notify_handler(const char *guid,
 				       wmi_notify_handler handler,
@@ -661,12 +598,10 @@ acpi_status wmi_install_notify_handler(const char *guid,
 EXPORT_SYMBOL_GPL(wmi_install_notify_handler);
 
 /**
- * wmi_remove_notify_handler - Unregister handler for WMI events (deprecated)
+ * wmi_remove_notify_handler - Unregister handler for WMI events
  * @guid: 36 char string of the form fa50ff2b-f2e8-45de-83fa-65417f2f49ba
  *
  * Unregister handler for events sent to the ACPI-WMI mapper device.
- *
- * Return: acpi_status signaling success or error.
  */
 acpi_status wmi_remove_notify_handler(const char *guid)
 {
@@ -708,14 +643,12 @@ acpi_status wmi_remove_notify_handler(const char *guid)
 EXPORT_SYMBOL_GPL(wmi_remove_notify_handler);
 
 /**
- * wmi_get_event_data - Get WMI data associated with an event (deprecated)
+ * wmi_get_event_data - Get WMI data associated with an event
  *
  * @event: Event to find
- * @out: Buffer to hold event data
+ * @out: Buffer to hold event data. out->pointer should be freed with kfree()
  *
- * Get extra data associated with an WMI event, the caller needs to free @out.
- *
- * Return: acpi_status signaling success or error.
+ * Returns extra data associated with an event in WMI.
  */
 acpi_status wmi_get_event_data(u32 event, struct acpi_buffer *out)
 {
@@ -736,9 +669,7 @@ EXPORT_SYMBOL_GPL(wmi_get_event_data);
  * wmi_has_guid - Check if a GUID is available
  * @guid_string: 36 char string of the form fa50ff2b-f2e8-45de-83fa-65417f2f49ba
  *
- * Check if a given GUID is defined by _WDG.
- *
- * Return: True if GUID is available, false otherwise.
+ * Check if a given GUID is defined by _WDG
  */
 bool wmi_has_guid(const char *guid_string)
 {
@@ -747,12 +678,12 @@ bool wmi_has_guid(const char *guid_string)
 EXPORT_SYMBOL_GPL(wmi_has_guid);
 
 /**
- * wmi_get_acpi_device_uid() - Get _UID name of ACPI device that defines GUID (deprecated)
+ * wmi_get_acpi_device_uid() - Get _UID name of ACPI device that defines GUID
  * @guid_string: 36 char string of the form fa50ff2b-f2e8-45de-83fa-65417f2f49ba
  *
  * Find the _UID of ACPI device associated with this WMI GUID.
  *
- * Return: The ACPI _UID field value or NULL if the WMI GUID was not found.
+ * Return: The ACPI _UID field value or NULL if the WMI GUID was not found
  */
 char *wmi_get_acpi_device_uid(const char *guid_string)
 {
@@ -767,8 +698,15 @@ char *wmi_get_acpi_device_uid(const char *guid_string)
 }
 EXPORT_SYMBOL_GPL(wmi_get_acpi_device_uid);
 
-#define dev_to_wblock(__dev)	container_of_const(__dev, struct wmi_block, dev.dev)
-#define dev_to_wdev(__dev)	container_of_const(__dev, struct wmi_device, dev)
+static struct wmi_block *dev_to_wblock(struct device *dev)
+{
+	return container_of(dev, struct wmi_block, dev.dev);
+}
+
+static struct wmi_device *dev_to_wdev(struct device *dev)
+{
+	return container_of(dev, struct wmi_device, dev);
+}
 
 static inline struct wmi_driver *drv_to_wdrv(struct device_driver *drv)
 {
@@ -871,9 +809,9 @@ static struct attribute *wmi_method_attrs[] = {
 };
 ATTRIBUTE_GROUPS(wmi_method);
 
-static int wmi_dev_uevent(const struct device *dev, struct kobj_uevent_env *env)
+static int wmi_dev_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
-	const struct wmi_block *wblock = dev_to_wblock(dev);
+	struct wmi_block *wblock = dev_to_wblock(dev);
 
 	if (add_uevent_var(env, "MODALIAS=wmi:%pUL", &wblock->gblock.guid))
 		return -ENOMEM;
@@ -1241,7 +1179,11 @@ static bool guid_already_parsed_for_legacy(struct acpi_device *device, const gui
 	list_for_each_entry(wblock, &wmi_block_list, list) {
 		/* skip warning and register if we know the driver will use struct wmi_driver */
 		for (int i = 0; allow_duplicates[i] != NULL; i++) {
-			if (guid_parse_and_compare(allow_duplicates[i], guid))
+			guid_t tmp;
+
+			if (guid_parse(allow_duplicates[i], &tmp))
+				continue;
+			if (guid_equal(&tmp, guid))
 				return false;
 		}
 		if (guid_equal(&wblock->gblock.guid, guid)) {
@@ -1435,7 +1377,7 @@ static void acpi_wmi_notify_handler(acpi_handle handle, u32 event,
 		event, 0);
 }
 
-static void acpi_wmi_remove(struct platform_device *device)
+static int acpi_wmi_remove(struct platform_device *device)
 {
 	struct acpi_device *acpi_device = ACPI_COMPANION(&device->dev);
 
@@ -1445,6 +1387,8 @@ static void acpi_wmi_remove(struct platform_device *device)
 				ACPI_ADR_SPACE_EC, &acpi_wmi_ec_space_handler);
 	wmi_free_devices(acpi_device);
 	device_unregister(dev_get_drvdata(&device->dev));
+
+	return 0;
 }
 
 static int acpi_wmi_probe(struct platform_device *device)
@@ -1520,12 +1464,6 @@ int __must_check __wmi_driver_register(struct wmi_driver *driver,
 }
 EXPORT_SYMBOL(__wmi_driver_register);
 
-/**
- * wmi_driver_unregister() - Unregister a WMI driver
- * @driver: WMI driver to unregister
- *
- * Unregisters a WMI driver from the WMI bus.
- */
 void wmi_driver_unregister(struct wmi_driver *driver)
 {
 	driver_unregister(&driver->driver);
@@ -1538,7 +1476,7 @@ static struct platform_driver acpi_wmi_driver = {
 		.acpi_match_table = wmi_device_ids,
 	},
 	.probe = acpi_wmi_probe,
-	.remove_new = acpi_wmi_remove,
+	.remove = acpi_wmi_remove,
 };
 
 static int __init acpi_wmi_init(void)

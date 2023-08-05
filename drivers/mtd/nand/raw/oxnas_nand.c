@@ -171,7 +171,7 @@ err_clk_unprepare:
 	return err;
 }
 
-static void oxnas_nand_remove(struct platform_device *pdev)
+static int oxnas_nand_remove(struct platform_device *pdev)
 {
 	struct oxnas_nand_ctrl *oxnas = platform_get_drvdata(pdev);
 	struct nand_chip *chip;
@@ -184,6 +184,8 @@ static void oxnas_nand_remove(struct platform_device *pdev)
 	}
 
 	clk_disable_unprepare(oxnas->clk);
+
+	return 0;
 }
 
 static const struct of_device_id oxnas_nand_match[] = {
@@ -194,7 +196,7 @@ MODULE_DEVICE_TABLE(of, oxnas_nand_match);
 
 static struct platform_driver oxnas_nand_driver = {
 	.probe	= oxnas_nand_probe,
-	.remove_new = oxnas_nand_remove,
+	.remove	= oxnas_nand_remove,
 	.driver	= {
 		.name		= "oxnas_nand",
 		.of_match_table = oxnas_nand_match,

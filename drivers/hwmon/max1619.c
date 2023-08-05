@@ -305,7 +305,7 @@ static struct i2c_driver max1619_driver = {
 		.name	= "max1619",
 		.of_match_table = of_match_ptr(max1619_of_match),
 	},
-	.probe		= max1619_probe,
+	.probe_new	= max1619_probe,
 	.id_table	= max1619_id,
 	.detect		= max1619_detect,
 	.address_list	= normal_i2c,

@@ -346,7 +346,7 @@ static int rockchip_sfc_xfer_setup(struct rockchip_sfc *sfc,
 
 	/* set the Controller */
 	ctrl |= SFC_CTRL_PHASE_SEL_NEGETIVE;
-	cmd |= spi_get_chipselect(mem->spi, 0) << SFC_CMD_CS_SHIFT;
+	cmd |= mem->spi->chip_select << SFC_CMD_CS_SHIFT;
 
 	dev_dbg(sfc->dev, "sfc addr.nbytes=%x(x%d) dummy.nbytes=%x(x%d)\n",
 		op->addr.nbytes, op->addr.buswidth,
@@ -558,6 +558,7 @@ static int rockchip_sfc_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct spi_master *master;
+	struct resource *res;
 	struct rockchip_sfc *sfc;
 	int ret;
 
@@ -575,7 +576,8 @@ static int rockchip_sfc_probe(struct platform_device *pdev)
 	sfc = spi_master_get_devdata(master);
 	sfc->dev = dev;
 
-	sfc->regbase = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	sfc->regbase = devm_ioremap_resource(dev, res);
 	if (IS_ERR(sfc->regbase))
 		return PTR_ERR(sfc->regbase);
 
@@ -654,7 +656,7 @@ err_hclk:
 	return ret;
 }
 
-static void rockchip_sfc_remove(struct platform_device *pdev)
+static int rockchip_sfc_remove(struct platform_device *pdev)
 {
 	struct spi_master *master = platform_get_drvdata(pdev);
 	struct rockchip_sfc *sfc = platform_get_drvdata(pdev);
@@ -663,6 +665,8 @@ static void rockchip_sfc_remove(struct platform_device *pdev)
 
 	clk_disable_unprepare(sfc->clk);
 	clk_disable_unprepare(sfc->hclk);
+
+	return 0;
 }
 
 static const struct of_device_id rockchip_sfc_dt_ids[] = {
@@ -677,7 +681,7 @@ static struct platform_driver rockchip_sfc_driver = {
 		.of_match_table = rockchip_sfc_dt_ids,
 	},
 	.probe	= rockchip_sfc_probe,
-	.remove_new = rockchip_sfc_remove,
+	.remove	= rockchip_sfc_remove,
 };
 module_platform_driver(rockchip_sfc_driver);
 

@@ -218,13 +218,54 @@ void npc_config_secret_key(struct rvu *rvu, int blkaddr)
 
 void npc_program_mkex_hash(struct rvu *rvu, int blkaddr)
 {
+	struct npc_mcam_kex_hash *mh = rvu->kpu.mkex_hash;
 	struct hw_cap *hwcap = &rvu->hw->cap;
+	u8 intf, ld, hdr_offset, byte_len;
 	struct rvu_hwinfo *hw = rvu->hw;
-	u8 intf;
+	u64 cfg;
 
+	/* Check if hardware supports hash extraction */
 	if (!hwcap->npc_hash_extract)
 		return;
 
+	/* Check if IPv6 source/destination address
+	 * should be hash enabled.
+	 * Hashing reduces 128bit SIP/DIP fields to 32bit
+	 * so that 224 bit X2 key can be used for IPv6 based filters as well,
+	 * which in turn results in more number of MCAM entries available for
+	 * use.
+	 *
+	 * Hashing of IPV6 SIP/DIP is enabled in below scenarios
+	 * 1. If the silicon variant supports hashing feature
+	 * 2. If the number of bytes of IP addr being extracted is 4 bytes ie
+	 *    32bit. The assumption here is that if user wants 8bytes of LSB of
+	 *    IP addr or full 16 bytes then his intention is not to use 32bit
+	 *    hash.
+	 */
+	for (intf = 0; intf < hw->npc_intfs; intf++) {
+		for (ld = 0; ld < NPC_MAX_LD; ld++) {
+			cfg = rvu_read64(rvu, blkaddr,
+					 NPC_AF_INTFX_LIDX_LTX_LDX_CFG(intf,
+								       NPC_LID_LC,
+								       NPC_LT_LC_IP6,
+								       ld));
+			hdr_offset = FIELD_GET(NPC_HDR_OFFSET, cfg);
+			byte_len = FIELD_GET(NPC_BYTESM, cfg);
+			/* Hashing of IPv6 source/destination address should be
+			 * enabled if,
+			 * hdr_offset == 8 (offset of source IPv6 address) or
+			 * hdr_offset == 24 (offset of destination IPv6)
+			 * address) and the number of byte to be
+			 * extracted is 4. As per hardware configuration
+			 * byte_len should be == actual byte_len - 1.
+			 * Hence byte_len is checked against 3 but nor 4.
+			 */
+			if ((hdr_offset == 8 || hdr_offset == 24) && byte_len == 3)
+				mh->lid_lt_ld_hash_en[intf][NPC_LID_LC][NPC_LT_LC_IP6][ld] = true;
+		}
+	}
+
+	/* Update hash configuration if the field is hash enabled */
 	for (intf = 0; intf < hw->npc_intfs; intf++) {
 		npc_program_mkex_hash_rx(rvu, blkaddr, intf);
 		npc_program_mkex_hash_tx(rvu, blkaddr, intf);
@@ -503,7 +544,7 @@ static bool rvu_npc_exact_alloc_id(struct rvu *rvu, u32 *seq_id)
 	if (idx == table->tot_ids) {
 		mutex_unlock(&table->lock);
 		dev_err(rvu->dev, "%s: No space in id bitmap (%d)\n",
-			__func__, table->tot_ids);
+			__func__, bitmap_weight(table->id_bmap, table->tot_ids));
 
 		return false;
 	}
@@ -1871,11 +1912,12 @@ int rvu_npc_exact_init(struct rvu *rvu)
 	/* Set capability to true */
 	rvu->hw->cap.npc_exact_match_enabled = true;
 
-	table = kzalloc(sizeof(*table), GFP_KERNEL);
+	table = kmalloc(sizeof(*table), GFP_KERNEL);
 	if (!table)
 		return -ENOMEM;
 
 	dev_dbg(rvu->dev, "%s: Memory allocation for table success\n", __func__);
+	memset(table, 0, sizeof(*table));
 	rvu->hw->table = table;
 
 	/* Read table size, ways and depth */
@@ -1899,24 +1941,24 @@ int rvu_npc_exact_init(struct rvu *rvu)
 	table_size = table->mem_table.depth * table->mem_table.ways;
 
 	/* Allocate bitmap for 4way 2K table */
-	table->mem_table.bmap = devm_bitmap_zalloc(rvu->dev, table_size,
-						   GFP_KERNEL);
+	table->mem_table.bmap = devm_kcalloc(rvu->dev, BITS_TO_LONGS(table_size),
+					     sizeof(long), GFP_KERNEL);
 	if (!table->mem_table.bmap)
 		return -ENOMEM;
 
 	dev_dbg(rvu->dev, "%s: Allocated bitmap for 4way 2K entry table\n", __func__);
 
 	/* Allocate bitmap for 32 entry mcam */
-	table->cam_table.bmap = devm_bitmap_zalloc(rvu->dev, 32, GFP_KERNEL);
+	table->cam_table.bmap = devm_kcalloc(rvu->dev, 1, sizeof(long), GFP_KERNEL);
 
 	if (!table->cam_table.bmap)
 		return -ENOMEM;
 
 	dev_dbg(rvu->dev, "%s: Allocated bitmap for 32 entry cam\n", __func__);
 
-	table->tot_ids = table_size + table->cam_table.depth;
-	table->id_bmap = devm_bitmap_zalloc(rvu->dev, table->tot_ids,
-					    GFP_KERNEL);
+	table->tot_ids = (table->mem_table.depth * table->mem_table.ways) + table->cam_table.depth;
+	table->id_bmap = devm_kcalloc(rvu->dev, BITS_TO_LONGS(table->tot_ids),
+				      table->tot_ids, GFP_KERNEL);
 
 	if (!table->id_bmap)
 		return -ENOMEM;
@@ -1957,9 +1999,7 @@ int rvu_npc_exact_init(struct rvu *rvu)
 	/* Install SDP drop rule */
 	drop_mcam_idx = &table->num_drop_rules;
 
-	max_lmac_cnt = rvu->cgx_cnt_max * rvu->hw->lmac_per_cgx +
-		       PF_CGXMAP_BASE;
-
+	max_lmac_cnt = rvu->cgx_cnt_max * MAX_LMAC_PER_CGX + PF_CGXMAP_BASE;
 	for (i = PF_CGXMAP_BASE; i < max_lmac_cnt; i++) {
 		if (rvu->pf2cgxlmac_map[i] == 0xFF)
 			continue;

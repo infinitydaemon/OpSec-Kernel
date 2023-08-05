@@ -425,7 +425,8 @@ static struct regmap_bus gp2ap002_regmap_bus = {
 	.reg_write = gp2ap002_regmap_i2c_write,
 };
 
-static int gp2ap002_probe(struct i2c_client *client)
+static int gp2ap002_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
 	struct gp2ap002 *gp2ap002;
 	struct iio_dev *indio_dev;

@@ -8,7 +8,6 @@
 
 #include <linux/debugfs.h>
 #include <linux/i2c.h>
-#include <linux/kstrtox.h>
 #include <linux/module.h>
 #include <linux/of_device.h>
 #include "pmbus.h"
@@ -412,7 +411,7 @@ static struct i2c_driver q54sj108a2_driver = {
 		.name = "q54sj108a2",
 		.of_match_table = q54sj108a2_of_match,
 	},
-	.probe = q54sj108a2_probe,
+	.probe_new = q54sj108a2_probe,
 	.id_table = q54sj108a2_id,
 };
 

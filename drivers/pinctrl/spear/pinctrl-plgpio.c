@@ -301,7 +301,6 @@ static void plgpio_irq_disable(struct irq_data *d)
 	spin_lock_irqsave(&plgpio->lock, flags);
 	plgpio_reg_set(plgpio->regmap, offset, plgpio->regs.ie);
 	spin_unlock_irqrestore(&plgpio->lock, flags);
-	gpiochip_disable_irq(gc, irqd_to_hwirq(d));
 }
 
 static void plgpio_irq_enable(struct irq_data *d)
@@ -318,7 +317,6 @@ static void plgpio_irq_enable(struct irq_data *d)
 			return;
 	}
 
-	gpiochip_enable_irq(gc, irqd_to_hwirq(d));
 	spin_lock_irqsave(&plgpio->lock, flags);
 	plgpio_reg_reset(plgpio->regmap, offset, plgpio->regs.ie);
 	spin_unlock_irqrestore(&plgpio->lock, flags);
@@ -358,13 +356,11 @@ static int plgpio_irq_set_type(struct irq_data *d, unsigned trigger)
 	return 0;
 }
 
-static const struct irq_chip plgpio_irqchip = {
+static struct irq_chip plgpio_irqchip = {
 	.name		= "PLGPIO",
 	.irq_enable	= plgpio_irq_enable,
 	.irq_disable	= plgpio_irq_disable,
 	.irq_set_type	= plgpio_irq_set_type,
-	.flags		= IRQCHIP_IMMUTABLE,
-	GPIOCHIP_IRQ_RESOURCE_HELPERS,
 };
 
 static void plgpio_irq_handler(struct irq_desc *desc)
@@ -599,7 +595,7 @@ static int plgpio_probe(struct platform_device *pdev)
 		struct gpio_irq_chip *girq;
 
 		girq = &plgpio->chip.irq;
-		gpio_irq_chip_set_chip(girq, &plgpio_irqchip);
+		girq->chip = &plgpio_irqchip;
 		girq->parent_handler = plgpio_irq_handler;
 		girq->num_parents = 1;
 		girq->parents = devm_kcalloc(&pdev->dev, 1,

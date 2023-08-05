@@ -29,7 +29,18 @@
 	}
 
 #define LKF_COMMUNITY(b, s, e, g)			\
-	INTEL_COMMUNITY_GPPS(b, s, e, g, LKF)
+	{						\
+		.barno = (b),				\
+		.padown_offset = LKF_PAD_OWN,		\
+		.padcfglock_offset = LKF_PADCFGLOCK,	\
+		.hostown_offset = LKF_HOSTSW_OWN,	\
+		.is_offset = LKF_GPI_IS,		\
+		.ie_offset = LKF_GPI_IE,		\
+		.pin_base = (s),			\
+		.npins = ((e) - (s) + 1),		\
+		.gpps = (g),				\
+		.ngpps = ARRAY_SIZE(g),			\
+	}
 
 /* Lakefield */
 static const struct pinctrl_pin_desc lkf_pins[] = {

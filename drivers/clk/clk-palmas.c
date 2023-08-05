@@ -271,9 +271,10 @@ static int palmas_clks_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void palmas_clks_remove(struct platform_device *pdev)
+static int palmas_clks_remove(struct platform_device *pdev)
 {
 	of_clk_del_provider(pdev->dev.of_node);
+	return 0;
 }
 
 static struct platform_driver palmas_clks_driver = {
@@ -282,7 +283,7 @@ static struct platform_driver palmas_clks_driver = {
 		.of_match_table = palmas_clks_of_match,
 	},
 	.probe = palmas_clks_probe,
-	.remove_new = palmas_clks_remove,
+	.remove = palmas_clks_remove,
 };
 
 module_platform_driver(palmas_clks_driver);

@@ -125,6 +125,7 @@ static int keyscan_probe(struct platform_device *pdev)
 {
 	struct st_keyscan *keypad_data;
 	struct input_dev *input_dev;
+	struct resource *res;
 	int error;
 
 	if (!pdev->dev.of_node) {
@@ -168,7 +169,8 @@ static int keyscan_probe(struct platform_device *pdev)
 
 	input_set_drvdata(input_dev, keypad_data);
 
-	keypad_data->base = devm_platform_get_and_ioremap_resource(pdev, 0, NULL);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	keypad_data->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(keypad_data->base))
 		return PTR_ERR(keypad_data->base);
 
@@ -210,6 +212,7 @@ static int keyscan_probe(struct platform_device *pdev)
 	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int keyscan_suspend(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
@@ -244,9 +247,9 @@ static int keyscan_resume(struct device *dev)
 	mutex_unlock(&input->mutex);
 	return retval;
 }
+#endif
 
-static DEFINE_SIMPLE_DEV_PM_OPS(keyscan_dev_pm_ops,
-				keyscan_suspend, keyscan_resume);
+static SIMPLE_DEV_PM_OPS(keyscan_dev_pm_ops, keyscan_suspend, keyscan_resume);
 
 static const struct of_device_id keyscan_of_match[] = {
 	{ .compatible = "st,sti-keyscan" },
@@ -258,8 +261,8 @@ static struct platform_driver keyscan_device_driver = {
 	.probe		= keyscan_probe,
 	.driver		= {
 		.name	= "st-keyscan",
-		.pm	= pm_sleep_ptr(&keyscan_dev_pm_ops),
-		.of_match_table = keyscan_of_match,
+		.pm	= &keyscan_dev_pm_ops,
+		.of_match_table = of_match_ptr(keyscan_of_match),
 	}
 };
 

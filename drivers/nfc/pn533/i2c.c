@@ -163,7 +163,8 @@ static const struct pn533_phy_ops i2c_phy_ops = {
 };
 
 
-static int pn533_i2c_probe(struct i2c_client *client)
+static int pn533_i2c_probe(struct i2c_client *client,
+			       const struct i2c_device_id *id)
 {
 	struct pn533_i2c_phy *phy;
 	struct pn533 *priv;

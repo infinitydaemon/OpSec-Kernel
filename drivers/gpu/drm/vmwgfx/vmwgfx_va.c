@@ -25,7 +25,6 @@
  *
  **************************************************************************/
 
-#include "vmwgfx_bo.h"
 #include "vmwgfx_drv.h"
 #include "vmwgfx_resource_priv.h"
 
@@ -81,11 +80,10 @@ static void vmw_stream_set_arg_handle(void *data, u32 handle)
 static const struct vmw_simple_resource_func va_stream_func = {
 	.res_func = {
 		.res_type = vmw_res_stream,
-		.needs_guest_memory = false,
+		.needs_backup = false,
 		.may_evict = false,
 		.type_name = "overlay stream",
-		.domain = VMW_BO_DOMAIN_SYS,
-		.busy_domain = VMW_BO_DOMAIN_SYS,
+		.backup_placement = NULL,
 		.create = NULL,
 		.destroy = NULL,
 		.bind = NULL,

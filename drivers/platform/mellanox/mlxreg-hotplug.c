@@ -239,17 +239,6 @@ static ssize_t mlxreg_hotplug_attr_show(struct device *dev,
 #define PRIV_ATTR(i) priv->mlxreg_hotplug_attr[i]
 #define PRIV_DEV_ATTR(i) priv->mlxreg_hotplug_dev_attr[i]
 
-static int mlxreg_hotplug_item_label_index_get(u32 mask, u32 bit)
-{
-	int i, j;
-
-	for (i = 0, j = -1; i <= bit; i++) {
-		if (mask & BIT(i))
-			j++;
-	}
-	return j;
-}
-
 static int mlxreg_hotplug_attr_init(struct mlxreg_hotplug_priv_data *priv)
 {
 	struct mlxreg_core_hotplug_platform_data *pdata;
@@ -257,7 +246,7 @@ static int mlxreg_hotplug_attr_init(struct mlxreg_hotplug_priv_data *priv)
 	struct mlxreg_core_data *data;
 	unsigned long mask;
 	u32 regval;
-	int num_attrs = 0, id = 0, i, j, k, count, ret;
+	int num_attrs = 0, id = 0, i, j, k, ret;
 
 	pdata = dev_get_platdata(&priv->pdev->dev);
 	item = pdata->items;
@@ -283,8 +272,7 @@ static int mlxreg_hotplug_attr_init(struct mlxreg_hotplug_priv_data *priv)
 		/* Go over all unmasked units within item. */
 		mask = item->mask;
 		k = 0;
-		count = item->ind ? item->ind : item->count;
-		for_each_set_bit(j, &mask, count) {
+		for_each_set_bit(j, &mask, item->count) {
 			if (data->capability) {
 				/*
 				 * Read capability register and skip non
@@ -294,17 +282,16 @@ static int mlxreg_hotplug_attr_init(struct mlxreg_hotplug_priv_data *priv)
 						  data->capability, &regval);
 				if (ret)
 					return ret;
-
 				if (!(regval & data->bit)) {
 					data++;
 					continue;
 				}
 			}
-
 			PRIV_ATTR(id) = &PRIV_DEV_ATTR(id).dev_attr.attr;
 			PRIV_ATTR(id)->name = devm_kasprintf(&priv->pdev->dev,
 							     GFP_KERNEL,
 							     data->label);
+
 			if (!PRIV_ATTR(id)->name) {
 				dev_err(priv->dev, "Memory allocation failed for attr %d.\n",
 					id);
@@ -378,14 +365,9 @@ mlxreg_hotplug_work_helper(struct mlxreg_hotplug_priv_data *priv,
 	regval &= item->mask;
 	asserted = item->cache ^ regval;
 	item->cache = regval;
+
 	for_each_set_bit(bit, &asserted, 8) {
-		int pos;
-
-		pos = mlxreg_hotplug_item_label_index_get(item->mask, bit);
-		if (pos < 0)
-			goto out;
-
-		data = item->data + pos;
+		data = item->data + bit;
 		if (regval & BIT(bit)) {
 			if (item->inversed)
 				mlxreg_hotplug_device_destroy(priv, data, item->kind);

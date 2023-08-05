@@ -308,10 +308,9 @@ MODULE_DEVICE_TABLE(of, rt6160_of_match_table);
 static struct i2c_driver rt6160_driver = {
 	.driver = {
 		.name = "rt6160",
-		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 		.of_match_table = rt6160_of_match_table,
 	},
-	.probe = rt6160_probe,
+	.probe_new = rt6160_probe,
 };
 module_i2c_driver(rt6160_driver);
 

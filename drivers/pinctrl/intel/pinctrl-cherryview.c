@@ -16,14 +16,12 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/seq_file.h>
 #include <linux/types.h>
 
-#include <linux/pinctrl/consumer.h>
-#include <linux/pinctrl/pinconf-generic.h>
-#include <linux/pinctrl/pinconf.h>
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/pinctrl/pinmux.h>
+#include <linux/pinctrl/pinconf.h>
+#include <linux/pinctrl/pinconf-generic.h>
 
 #include "pinctrl-intel.h"
 
@@ -75,7 +73,7 @@ struct intel_pad_context {
 	u32 padctrl1;
 };
 
-#define CHV_INVALID_HWIRQ	(~0U)
+#define CHV_INVALID_HWIRQ	((unsigned int)INVALID_HWIRQ)
 
 /**
  * struct intel_community_context - community context for Cherryview
@@ -694,7 +692,7 @@ static const char *chv_get_function_name(struct pinctrl_dev *pctldev,
 {
 	struct intel_pinctrl *pctrl = pinctrl_dev_get_drvdata(pctldev);
 
-	return pctrl->soc->functions[function].func.name;
+	return pctrl->soc->functions[function].name;
 }
 
 static int chv_get_function_groups(struct pinctrl_dev *pctldev,
@@ -704,8 +702,8 @@ static int chv_get_function_groups(struct pinctrl_dev *pctldev,
 {
 	struct intel_pinctrl *pctrl = pinctrl_dev_get_drvdata(pctldev);
 
-	*groups = pctrl->soc->functions[function].func.groups;
-	*ngroups = pctrl->soc->functions[function].func.ngroups;
+	*groups = pctrl->soc->functions[function].groups;
+	*ngroups = pctrl->soc->functions[function].ngroups;
 	return 0;
 }
 
@@ -1413,10 +1411,8 @@ static int chv_gpio_irq_type(struct irq_data *d, unsigned int type)
 	raw_spin_lock_irqsave(&chv_lock, flags);
 
 	ret = chv_gpio_set_intr_line(pctrl, hwirq);
-	if (ret) {
-		raw_spin_unlock_irqrestore(&chv_lock, flags);
-		return ret;
-	}
+	if (ret)
+		goto out_unlock;
 
 	/*
 	 * Pins which can be used as shared interrupt are configured in
@@ -1457,9 +1453,10 @@ static int chv_gpio_irq_type(struct irq_data *d, unsigned int type)
 	else if (type & IRQ_TYPE_LEVEL_MASK)
 		irq_set_handler_locked(d, handle_level_irq);
 
+out_unlock:
 	raw_spin_unlock_irqrestore(&chv_lock, flags);
 
-	return 0;
+	return ret;
 }
 
 static const struct irq_chip chv_gpio_irq_chip = {

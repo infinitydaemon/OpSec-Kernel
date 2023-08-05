@@ -67,8 +67,6 @@ struct wwan_device {
  * @rxq: Buffer inbound queue
  * @waitqueue: The waitqueue for port fops (read/write/poll)
  * @data_lock: Port specific data access serialization
- * @headroom_len: SKB reserved headroom size
- * @frag_len: Length to fragment packet
  * @at_data: AT port specific data
  */
 struct wwan_port {
@@ -81,8 +79,6 @@ struct wwan_port {
 	struct sk_buff_head rxq;
 	wait_queue_head_t waitqueue;
 	struct mutex data_lock;	/* Port specific data access serialization */
-	size_t headroom_len;
-	size_t frag_len;
 	union {
 		struct {
 			struct ktermios termios;
@@ -323,10 +319,6 @@ static const struct {
 		.name = "FIREHOSE",
 		.devsuf = "firehose",
 	},
-	[WWAN_PORT_XMMRPC] = {
-		.name = "XMMRPC",
-		.devsuf = "xmmrpc",
-	},
 };
 
 static ssize_t type_show(struct device *dev, struct device_attribute *attr,
@@ -430,7 +422,6 @@ static int __wwan_port_dev_assign_name(struct wwan_port *port, const char *fmt)
 struct wwan_port *wwan_create_port(struct device *parent,
 				   enum wwan_port_type type,
 				   const struct wwan_port_ops *ops,
-				   struct wwan_port_caps *caps,
 				   void *drvdata)
 {
 	struct wwan_device *wwandev;
@@ -464,8 +455,6 @@ struct wwan_port *wwan_create_port(struct device *parent,
 
 	port->type = type;
 	port->ops = ops;
-	port->frag_len = caps ? caps->frag_len : SIZE_MAX;
-	port->headroom_len = caps ? caps->headroom_len : 0;
 	mutex_init(&port->ops_lock);
 	skb_queue_head_init(&port->rxq);
 	init_waitqueue_head(&port->waitqueue);
@@ -492,7 +481,6 @@ struct wwan_port *wwan_create_port(struct device *parent,
 	if (err)
 		goto error_put_device;
 
-	dev_info(&wwandev->dev, "port %s attached\n", dev_name(&port->dev));
 	return port;
 
 error_put_device:
@@ -518,8 +506,6 @@ void wwan_remove_port(struct wwan_port *port)
 
 	skb_queue_purge(&port->rxq);
 	dev_set_drvdata(&port->dev, NULL);
-
-	dev_info(&wwandev->dev, "port %s disconnected\n", dev_name(&port->dev));
 	device_unregister(&port->dev);
 
 	/* Release related wwan device */
@@ -712,53 +698,30 @@ static ssize_t wwan_port_fops_read(struct file *filp, char __user *buf,
 static ssize_t wwan_port_fops_write(struct file *filp, const char __user *buf,
 				    size_t count, loff_t *offp)
 {
-	struct sk_buff *skb, *head = NULL, *tail = NULL;
 	struct wwan_port *port = filp->private_data;
-	size_t frag_len, remain = count;
+	struct sk_buff *skb;
 	int ret;
 
 	ret = wwan_wait_tx(port, !!(filp->f_flags & O_NONBLOCK));
 	if (ret)
 		return ret;
 
-	do {
-		frag_len = min(remain, port->frag_len);
-		skb = alloc_skb(frag_len + port->headroom_len, GFP_KERNEL);
-		if (!skb) {
-			ret = -ENOMEM;
-			goto freeskb;
-		}
-		skb_reserve(skb, port->headroom_len);
+	skb = alloc_skb(count, GFP_KERNEL);
+	if (!skb)
+		return -ENOMEM;
 
-		if (!head) {
-			head = skb;
-		} else if (!tail) {
-			skb_shinfo(head)->frag_list = skb;
-			tail = skb;
-		} else {
-			tail->next = skb;
-			tail = skb;
-		}
+	if (copy_from_user(skb_put(skb, count), buf, count)) {
+		kfree_skb(skb);
+		return -EFAULT;
+	}
 
-		if (copy_from_user(skb_put(skb, frag_len), buf + count - remain, frag_len)) {
-			ret = -EFAULT;
-			goto freeskb;
-		}
+	ret = wwan_port_op_tx(port, skb, !!(filp->f_flags & O_NONBLOCK));
+	if (ret) {
+		kfree_skb(skb);
+		return ret;
+	}
 
-		if (skb != head) {
-			head->data_len += skb->len;
-			head->len += skb->len;
-			head->truesize += skb->truesize;
-		}
-	} while (remain -= frag_len);
-
-	ret = wwan_port_op_tx(port, head, !!(filp->f_flags & O_NONBLOCK));
-	if (!ret)
-		return count;
-
-freeskb:
-	kfree_skb(head);
-	return ret;
+	return count;
 }
 
 static __poll_t wwan_port_fops_poll(struct file *filp, poll_table *wait)
@@ -1095,7 +1058,7 @@ static void wwan_create_default_link(struct wwan_device *wwandev,
 		goto unlock;
 	}
 
-	rtnl_configure_link(dev, NULL, 0, NULL); /* Link initialized, notify new link */
+	rtnl_configure_link(dev, NULL); /* Link initialized, notify new link */
 
 unlock:
 	rtnl_unlock();
@@ -1207,7 +1170,7 @@ static int __init wwan_init(void)
 	if (err)
 		return err;
 
-	wwan_class = class_create("wwan");
+	wwan_class = class_create(THIS_MODULE, "wwan");
 	if (IS_ERR(wwan_class)) {
 		err = PTR_ERR(wwan_class);
 		goto unregister;

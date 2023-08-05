@@ -70,11 +70,11 @@ static int rockchip_pwm_get_state(struct pwm_chip *chip,
 
 	ret = clk_enable(pc->pclk);
 	if (ret)
-		return ret;
+		return 0;
 
 	ret = clk_enable(pc->clk);
 	if (ret)
-		return ret;
+		return 0;
 
 	clk_rate = clk_get_rate(pc->clk);
 
@@ -376,7 +376,7 @@ err_clk:
 	return ret;
 }
 
-static void rockchip_pwm_remove(struct platform_device *pdev)
+static int rockchip_pwm_remove(struct platform_device *pdev)
 {
 	struct rockchip_pwm_chip *pc = platform_get_drvdata(pdev);
 
@@ -384,6 +384,8 @@ static void rockchip_pwm_remove(struct platform_device *pdev)
 
 	clk_unprepare(pc->pclk);
 	clk_unprepare(pc->clk);
+
+	return 0;
 }
 
 static struct platform_driver rockchip_pwm_driver = {
@@ -392,7 +394,7 @@ static struct platform_driver rockchip_pwm_driver = {
 		.of_match_table = rockchip_pwm_dt_ids,
 	},
 	.probe = rockchip_pwm_probe,
-	.remove_new = rockchip_pwm_remove,
+	.remove = rockchip_pwm_remove,
 };
 module_platform_driver(rockchip_pwm_driver);
 

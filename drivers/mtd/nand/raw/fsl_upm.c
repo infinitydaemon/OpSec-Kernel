@@ -235,7 +235,7 @@ static int fun_probe(struct platform_device *ofdev)
 	return 0;
 }
 
-static void fun_remove(struct platform_device *ofdev)
+static int fun_remove(struct platform_device *ofdev)
 {
 	struct fsl_upm_nand *fun = dev_get_drvdata(&ofdev->dev);
 	struct nand_chip *chip = &fun->chip;
@@ -245,6 +245,8 @@ static void fun_remove(struct platform_device *ofdev)
 	ret = mtd_device_unregister(mtd);
 	WARN_ON(ret);
 	nand_cleanup(chip);
+
+	return 0;
 }
 
 static const struct of_device_id of_fun_match[] = {
@@ -259,7 +261,7 @@ static struct platform_driver of_fun_driver = {
 		.of_match_table = of_fun_match,
 	},
 	.probe		= fun_probe,
-	.remove_new	= fun_remove,
+	.remove		= fun_remove,
 };
 
 module_platform_driver(of_fun_driver);

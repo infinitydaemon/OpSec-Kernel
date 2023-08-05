@@ -31,7 +31,6 @@
 
 #include "gpiolib.h"
 
-#define GPIO_SIM_NGPIO_MAX	1024
 #define GPIO_SIM_PROP_MAX	4 /* Max 3 properties + sentinel. */
 #define GPIO_SIM_NUM_ATTRS	3 /* value, pull and sentinel */
 
@@ -372,13 +371,10 @@ static int gpio_sim_add_bank(struct fwnode_handle *swnode, struct device *dev)
 	if (ret)
 		return ret;
 
-	if (num_lines > GPIO_SIM_NGPIO_MAX)
-		return -ERANGE;
-
 	ret = fwnode_property_read_string(swnode, "gpio-sim,label", &label);
 	if (ret) {
-		label = devm_kasprintf(dev, GFP_KERNEL, "%s-%pfwP",
-				       dev_name(dev), swnode);
+		label = devm_kasprintf(dev, GFP_KERNEL, "%s-%s",
+				       dev_name(dev), fwnode_get_name(swnode));
 		if (!label)
 			return -ENOMEM;
 	}
@@ -696,9 +692,6 @@ static char **gpio_sim_make_line_names(struct gpio_sim_bank *bank,
 	char **line_names;
 
 	list_for_each_entry(line, &bank->line_list, siblings) {
-		if (line->offset >= bank->num_lines)
-			continue;
-
 		if (line->name) {
 			if (line->offset > max_offset)
 				max_offset = line->offset;
@@ -725,9 +718,6 @@ static char **gpio_sim_make_line_names(struct gpio_sim_bank *bank,
 		return ERR_PTR(-ENOMEM);
 
 	list_for_each_entry(line, &bank->line_list, siblings) {
-		if (line->offset >= bank->num_lines)
-			continue;
-
 		if (line->name && (line->offset <= max_offset))
 			line_names[line->offset] = line->name;
 	}
@@ -762,9 +752,6 @@ static int gpio_sim_add_hogs(struct gpio_sim_device *dev)
 
 	list_for_each_entry(bank, &dev->bank_list, siblings) {
 		list_for_each_entry(line, &bank->line_list, siblings) {
-			if (line->offset >= bank->num_lines)
-				continue;
-
 			if (line->hog)
 				num_hogs++;
 		}
@@ -780,9 +767,6 @@ static int gpio_sim_add_hogs(struct gpio_sim_device *dev)
 
 	list_for_each_entry(bank, &dev->bank_list, siblings) {
 		list_for_each_entry(line, &bank->line_list, siblings) {
-			if (line->offset >= bank->num_lines)
-				continue;
-
 			if (!line->hog)
 				continue;
 
@@ -798,9 +782,10 @@ static int gpio_sim_add_hogs(struct gpio_sim_device *dev)
 							  GFP_KERNEL);
 			else
 				hog->chip_label = kasprintf(GFP_KERNEL,
-							"gpio-sim.%u-%pfwP",
+							"gpio-sim.%u-%s",
 							dev->id,
-							bank->swnode);
+							fwnode_get_name(
+								bank->swnode));
 			if (!hog->chip_label) {
 				gpio_sim_remove_hogs(dev);
 				return -ENOMEM;
@@ -967,9 +952,9 @@ static void gpio_sim_device_deactivate_unlocked(struct gpio_sim_device *dev)
 
 	swnode = dev_fwnode(&dev->pdev->dev);
 	platform_device_unregister(dev->pdev);
-	gpio_sim_remove_hogs(dev);
 	gpio_sim_remove_swnode_recursive(swnode);
 	dev->pdev = NULL;
+	gpio_sim_remove_hogs(dev);
 }
 
 static ssize_t

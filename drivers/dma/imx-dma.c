@@ -750,6 +750,7 @@ static int imxdma_alloc_chan_resources(struct dma_chan *chan)
 		desc = kzalloc(sizeof(*desc), GFP_KERNEL);
 		if (!desc)
 			break;
+		memset(&desc->desc, 0, sizeof(struct dma_async_tx_descriptor));
 		dma_async_tx_descriptor_init(&desc->desc, chan);
 		desc->desc.tx_submit = imxdma_tx_submit;
 		/* txd.flags will be overwritten in prep funcs */
@@ -1037,6 +1038,7 @@ static struct dma_chan *imxdma_xlate(struct of_phandle_args *dma_spec,
 static int __init imxdma_probe(struct platform_device *pdev)
 {
 	struct imxdma_engine *imxdma;
+	struct resource *res;
 	int ret, i;
 	int irq, irq_err;
 
@@ -1047,7 +1049,8 @@ static int __init imxdma_probe(struct platform_device *pdev)
 	imxdma->dev = &pdev->dev;
 	imxdma->devtype = (uintptr_t)of_device_get_match_data(&pdev->dev);
 
-	imxdma->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	imxdma->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(imxdma->base))
 		return PTR_ERR(imxdma->base);
 

@@ -26,15 +26,7 @@
 
 #include <linux/i2c.h>
 
-#define RAS_TABLE_VER_V1           0x00010000
-#define RAS_TABLE_VER_V2_1         0x00021000
-
 struct amdgpu_device;
-
-enum amdgpu_ras_gpu_health_status {
-	GPU_HEALTH_USABLE = 0,
-	GPU_RETIRED__ECC_REACH_THRESHOLD = 2,
-};
 
 enum amdgpu_ras_eeprom_err_type {
 	AMDGPU_RAS_EEPROM_ERR_NA,
@@ -51,17 +43,8 @@ struct amdgpu_ras_eeprom_table_header {
 	uint32_t checksum;
 } __packed;
 
-struct amdgpu_ras_eeprom_table_ras_info {
-	u8  rma_status;
-	u8  health_percent;
-	u16 ecc_page_threshold;
-	u32 padding[64 - 1];
-} __packed;
-
 struct amdgpu_ras_eeprom_control {
 	struct amdgpu_ras_eeprom_table_header tbl_hdr;
-
-	struct amdgpu_ras_eeprom_table_ras_info tbl_rai;
 
 	/* Base I2C EEPPROM 19-bit memory address,
 	 * where the table is located. For more information,
@@ -75,7 +58,6 @@ struct amdgpu_ras_eeprom_control {
 	 * right after the header.
 	 */
 	u32 ras_header_offset;
-	u32 ras_info_offset;
 	u32 ras_record_offset;
 
 	/* Number of records in the table.
@@ -142,7 +124,7 @@ int amdgpu_ras_eeprom_read(struct amdgpu_ras_eeprom_control *control,
 int amdgpu_ras_eeprom_append(struct amdgpu_ras_eeprom_control *control,
 			     struct eeprom_table_record *records, const u32 num);
 
-uint32_t amdgpu_ras_eeprom_max_record_count(struct amdgpu_ras_eeprom_control *control);
+uint32_t amdgpu_ras_eeprom_max_record_count(void);
 
 void amdgpu_ras_debugfs_set_ret_size(struct amdgpu_ras_eeprom_control *control);
 

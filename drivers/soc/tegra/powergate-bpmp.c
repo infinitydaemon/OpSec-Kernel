@@ -286,7 +286,7 @@ remove:
 		tegra_powergate_remove(powergate);
 	}
 
-	kfree(domains);
+	kfree(genpd->domains);
 	return err;
 }
 

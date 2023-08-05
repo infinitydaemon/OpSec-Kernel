@@ -1647,7 +1647,6 @@ dr_ste_v0_build_src_gvmi_qpn_tag(struct mlx5dr_match_param *value,
 				 u8 *tag)
 {
 	struct mlx5dr_match_misc *misc = &value->misc;
-	int id = misc->source_eswitch_owner_vhca_id;
 	struct mlx5dr_cmd_vport_cap *vport_cap;
 	struct mlx5dr_domain *dmn = sb->dmn;
 	struct mlx5dr_domain *vport_dmn;
@@ -1658,11 +1657,11 @@ dr_ste_v0_build_src_gvmi_qpn_tag(struct mlx5dr_match_param *value,
 
 	if (sb->vhca_id_valid) {
 		/* Find port GVMI based on the eswitch_owner_vhca_id */
-		if (id == dmn->info.caps.gvmi)
+		if (misc->source_eswitch_owner_vhca_id == dmn->info.caps.gvmi)
 			vport_dmn = dmn;
-		else if (id < MLX5_MAX_PORTS && dmn->peer_dmn[id] &&
-			 (id == dmn->peer_dmn[id]->info.caps.gvmi))
-			vport_dmn = dmn->peer_dmn[id];
+		else if (dmn->peer_dmn && (misc->source_eswitch_owner_vhca_id ==
+					   dmn->peer_dmn->info.caps.gvmi))
+			vport_dmn = dmn->peer_dmn;
 		else
 			return -EINVAL;
 

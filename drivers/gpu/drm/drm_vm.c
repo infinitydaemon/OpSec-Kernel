@@ -476,7 +476,7 @@ static int drm_mmap_dma(struct file *filp, struct vm_area_struct *vma)
 
 	if (!capable(CAP_SYS_ADMIN) &&
 	    (dma->flags & _DRM_DMA_USE_PCI_RO)) {
-		vm_flags_clear(vma, VM_WRITE | VM_MAYWRITE);
+		vma->vm_flags &= ~(VM_WRITE | VM_MAYWRITE);
 #if defined(__i386__) || defined(__x86_64__)
 		pgprot_val(vma->vm_page_prot) &= ~_PAGE_RW;
 #else
@@ -492,7 +492,7 @@ static int drm_mmap_dma(struct file *filp, struct vm_area_struct *vma)
 
 	vma->vm_ops = &drm_vm_dma_ops;
 
-	vm_flags_set(vma, VM_DONTEXPAND | VM_DONTDUMP);
+	vma->vm_flags |= VM_DONTEXPAND | VM_DONTDUMP;
 
 	drm_vm_open_locked(dev, vma);
 	return 0;
@@ -560,7 +560,7 @@ static int drm_mmap_locked(struct file *filp, struct vm_area_struct *vma)
 		return -EINVAL;
 
 	if (!capable(CAP_SYS_ADMIN) && (map->flags & _DRM_READ_ONLY)) {
-		vm_flags_clear(vma, VM_WRITE | VM_MAYWRITE);
+		vma->vm_flags &= ~(VM_WRITE | VM_MAYWRITE);
 #if defined(__i386__) || defined(__x86_64__)
 		pgprot_val(vma->vm_page_prot) &= ~_PAGE_RW;
 #else
@@ -628,7 +628,7 @@ static int drm_mmap_locked(struct file *filp, struct vm_area_struct *vma)
 	default:
 		return -EINVAL;	/* This should never happen. */
 	}
-	vm_flags_set(vma, VM_DONTEXPAND | VM_DONTDUMP);
+	vma->vm_flags |= VM_DONTEXPAND | VM_DONTDUMP;
 
 	drm_vm_open_locked(dev, vma);
 	return 0;

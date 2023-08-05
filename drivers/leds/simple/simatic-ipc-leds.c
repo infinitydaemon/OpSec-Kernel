@@ -126,6 +126,7 @@ static struct platform_driver simatic_ipc_led_driver = {
 		.name = KBUILD_MODNAME,
 	}
 };
+
 module_platform_driver(simatic_ipc_led_driver);
 
 MODULE_LICENSE("GPL v2");

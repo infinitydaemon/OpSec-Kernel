@@ -442,7 +442,8 @@ static const struct iio_info tcs3472_info = {
 	.attrs = &tcs3472_attribute_group,
 };
 
-static int tcs3472_probe(struct i2c_client *client)
+static int tcs3472_probe(struct i2c_client *client,
+			   const struct i2c_device_id *id)
 {
 	struct tcs3472_data *data;
 	struct iio_dev *indio_dev;

@@ -11,7 +11,6 @@
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/usb/g_uvc.h>
-#include <linux/usb/uvc.h>
 #include <linux/videodev2.h>
 #include <linux/vmalloc.h>
 #include <linux/wait.h>
@@ -19,6 +18,7 @@
 #include <media/v4l2-dev.h>
 #include <media/v4l2-event.h>
 #include <media/v4l2-ioctl.h>
+#include <media/v4l2-uvc.h>
 
 #include "f_uvc.h"
 #include "uvc.h"
@@ -27,10 +27,10 @@
 #include "uvc_v4l2.h"
 #include "uvc_configfs.h"
 
-static const struct uvc_format_desc *to_uvc_format(struct uvcg_format *uformat)
+static struct uvc_format_desc *to_uvc_format(struct uvcg_format *uformat)
 {
 	char guid[16] = UVC_GUID_FORMAT_MJPEG;
-	const struct uvc_format_desc *format;
+	struct uvc_format_desc *format;
 	struct uvcg_uncompressed *unc;
 
 	if (uformat->type == UVCG_UNCOMPRESSED) {
@@ -119,7 +119,7 @@ static struct uvcg_format *find_format_by_pix(struct uvc_device *uvc,
 	struct uvcg_format *uformat = NULL;
 
 	list_for_each_entry(format, &uvc->header->formats, entry) {
-		const struct uvc_format_desc *fmtdesc = to_uvc_format(format->fmt);
+		struct uvc_format_desc *fmtdesc = to_uvc_format(format->fmt);
 
 		if (fmtdesc->fcc == pixelformat) {
 			uformat = format->fmt;
@@ -364,7 +364,7 @@ uvc_v4l2_enum_format(struct file *file, void *fh, struct v4l2_fmtdesc *f)
 {
 	struct video_device *vdev = video_devdata(file);
 	struct uvc_device *uvc = video_get_drvdata(vdev);
-	const struct uvc_format_desc *fmtdesc;
+	struct uvc_format_desc *fmtdesc;
 	struct uvcg_format *uformat;
 
 	if (f->index >= uvc->header->num_fmt)
@@ -374,8 +374,14 @@ uvc_v4l2_enum_format(struct file *file, void *fh, struct v4l2_fmtdesc *f)
 	if (!uformat)
 		return -EINVAL;
 
+	if (uformat->type != UVCG_UNCOMPRESSED)
+		f->flags |= V4L2_FMT_FLAG_COMPRESSED;
+
 	fmtdesc = to_uvc_format(uformat);
 	f->pixelformat = fmtdesc->fcc;
+
+	strscpy(f->description, fmtdesc->name, sizeof(f->description));
+	f->description[strlen(fmtdesc->name) - 1] = 0;
 
 	return 0;
 }

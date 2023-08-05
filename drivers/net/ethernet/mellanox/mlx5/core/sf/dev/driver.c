@@ -3,7 +3,6 @@
 
 #include <linux/mlx5/driver.h>
 #include <linux/mlx5/device.h>
-#include <linux/mlx5/eswitch.h>
 #include "mlx5_core.h"
 #include "dev.h"
 #include "devlink.h"
@@ -29,11 +28,7 @@ static int mlx5_sf_dev_probe(struct auxiliary_device *adev, const struct auxilia
 	mdev->priv.adev_idx = adev->id;
 	sf_dev->mdev = mdev;
 
-	/* Only local SFs do light probe */
-	if (MLX5_ESWITCH_MANAGER(sf_dev->parent_mdev))
-		mlx5_dev_set_lightweight(mdev);
-
-	err = mlx5_mdev_init(mdev, MLX5_SF_PROF);
+	err = mlx5_mdev_init(mdev, MLX5_DEFAULT_PROF);
 	if (err) {
 		mlx5_core_warn(mdev, "mlx5_mdev_init on err=%d\n", err);
 		goto mdev_err;
@@ -46,10 +41,7 @@ static int mlx5_sf_dev_probe(struct auxiliary_device *adev, const struct auxilia
 		goto remap_err;
 	}
 
-	if (MLX5_ESWITCH_MANAGER(sf_dev->parent_mdev))
-		err = mlx5_init_one_light(mdev);
-	else
-		err = mlx5_init_one(mdev);
+	err = mlx5_init_one(mdev);
 	if (err) {
 		mlx5_core_warn(mdev, "mlx5_init_one err=%d\n", err);
 		goto init_one_err;
@@ -73,10 +65,7 @@ static void mlx5_sf_dev_remove(struct auxiliary_device *adev)
 
 	mlx5_drain_health_wq(sf_dev->mdev);
 	devlink_unregister(devlink);
-	if (mlx5_dev_is_lightweight(sf_dev->mdev))
-		mlx5_uninit_one_light(sf_dev->mdev);
-	else
-		mlx5_uninit_one(sf_dev->mdev);
+	mlx5_uninit_one(sf_dev->mdev);
 	iounmap(sf_dev->mdev->iseg);
 	mlx5_mdev_uninit(sf_dev->mdev);
 	mlx5_devlink_free(devlink);

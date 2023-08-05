@@ -1016,7 +1016,7 @@ static void smsc911x_phy_adjust_link(struct net_device *dev)
 static int smsc911x_mii_probe(struct net_device *dev)
 {
 	struct smsc911x_data *pdata = netdev_priv(dev);
-	struct phy_device *phydev;
+	struct phy_device *phydev = NULL;
 	int ret;
 
 	/* find the first phy */
@@ -1744,6 +1744,7 @@ irq_stop_out:
 	free_irq(dev->irq, dev);
 mii_free_out:
 	phy_disconnect(dev->phydev);
+	dev->phydev = NULL;
 out:
 	pm_runtime_put(dev->dev.parent);
 	return retval;
@@ -1774,6 +1775,7 @@ static int smsc911x_stop(struct net_device *dev)
 	if (dev->phydev) {
 		phy_stop(dev->phydev);
 		phy_disconnect(dev->phydev);
+		dev->phydev = NULL;
 	}
 	netif_carrier_off(dev);
 	pm_runtime_put(dev->dev.parent);

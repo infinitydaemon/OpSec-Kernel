@@ -456,9 +456,9 @@ static int populate_attr_groups(struct platform_device *pdev)
 		 */
 		if (!of_property_read_string(np, "label", &label))
 			sensor_groups[type].attr_count++;
-		if (of_property_present(np, "sensor-data-min"))
+		if (of_find_property(np, "sensor-data-min", NULL))
 			sensor_groups[type].attr_count++;
-		if (of_property_present(np, "sensor-data-max"))
+		if (of_find_property(np, "sensor-data-max", NULL))
 			sensor_groups[type].attr_count++;
 	}
 

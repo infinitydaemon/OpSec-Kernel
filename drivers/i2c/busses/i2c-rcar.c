@@ -1155,7 +1155,7 @@ static int rcar_i2c_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void rcar_i2c_remove(struct platform_device *pdev)
+static int rcar_i2c_remove(struct platform_device *pdev)
 {
 	struct rcar_i2c_priv *priv = platform_get_drvdata(pdev);
 	struct device *dev = &pdev->dev;
@@ -1167,6 +1167,8 @@ static void rcar_i2c_remove(struct platform_device *pdev)
 	if (priv->flags & ID_P_PM_BLOCKED)
 		pm_runtime_put(dev);
 	pm_runtime_disable(dev);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -1202,7 +1204,7 @@ static struct platform_driver rcar_i2c_driver = {
 		.pm	= DEV_PM_OPS,
 	},
 	.probe		= rcar_i2c_probe,
-	.remove_new	= rcar_i2c_remove,
+	.remove		= rcar_i2c_remove,
 };
 
 module_platform_driver(rcar_i2c_driver);

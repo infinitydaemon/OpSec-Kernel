@@ -28,6 +28,7 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_uapi.h>
+#include <drm/drm_crtc_helper.h>
 #include <drm/drm_device.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_encoder.h>
@@ -297,9 +298,7 @@ EXPORT_SYMBOL(drm_plane_helper_destroy);
  * scale and positioning are not expected to change since the plane is always
  * a fullscreen scanout buffer.
  *
- * This is often the case for the primary plane of simple framebuffers. See
- * also drm_crtc_helper_atomic_check() for the respective CRTC-state check
- * helper function.
+ * This is often the case for the primary plane of simple framebuffers.
  *
  * RETURNS:
  * Zero on success, or an errno code otherwise.

@@ -452,7 +452,8 @@ static const struct rtc_class_ops nct3018y_rtc_ops = {
 	.ioctl		= nct3018y_ioctl,
 };
 
-static int nct3018y_probe(struct i2c_client *client)
+static int nct3018y_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
 	struct nct3018y *nct3018y;
 	int err, flags;

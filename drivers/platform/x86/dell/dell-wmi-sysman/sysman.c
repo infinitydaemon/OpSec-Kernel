@@ -255,7 +255,7 @@ static void attr_name_release(struct kobject *kobj)
 	kfree(kobj);
 }
 
-static const struct kobj_type attr_name_ktype = {
+static struct kobj_type attr_name_ktype = {
 	.release	= attr_name_release,
 	.sysfs_ops	= &wmi_sysman_kobj_sysfs_ops,
 };
@@ -303,13 +303,16 @@ union acpi_object *get_wmiobj_pointer(int instance_id, const char *guid_string)
  */
 int get_instance_count(const char *guid_string)
 {
-	int ret;
+	union acpi_object *wmi_obj = NULL;
+	int i = 0;
 
-	ret = wmi_instance_count(guid_string);
-	if (ret < 0)
-		return 0;
+	do {
+		kfree(wmi_obj);
+		wmi_obj = get_wmiobj_pointer(i, guid_string);
+		i++;
+	} while (wmi_obj);
 
-	return ret;
+	return (i-1);
 }
 
 /**

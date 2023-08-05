@@ -159,13 +159,15 @@ disable:
 	return err;
 }
 
-static void dwc_qos_remove(struct platform_device *pdev)
+static int dwc_qos_remove(struct platform_device *pdev)
 {
 	struct net_device *ndev = platform_get_drvdata(pdev);
 	struct stmmac_priv *priv = netdev_priv(ndev);
 
 	clk_disable_unprepare(priv->plat->pclk);
 	clk_disable_unprepare(priv->plat->stmmac_clk);
+
+	return 0;
 }
 
 #define SDMEMCOMPPADCTRL 0x8800
@@ -382,7 +384,7 @@ error:
 	return err;
 }
 
-static void tegra_eqos_remove(struct platform_device *pdev)
+static int tegra_eqos_remove(struct platform_device *pdev)
 {
 	struct tegra_eqos *eqos = get_stmmac_bsp_priv(&pdev->dev);
 
@@ -392,13 +394,15 @@ static void tegra_eqos_remove(struct platform_device *pdev)
 	clk_disable_unprepare(eqos->clk_rx);
 	clk_disable_unprepare(eqos->clk_slave);
 	clk_disable_unprepare(eqos->clk_master);
+
+	return 0;
 }
 
 struct dwc_eth_dwmac_data {
 	int (*probe)(struct platform_device *pdev,
 		     struct plat_stmmacenet_data *data,
 		     struct stmmac_resources *res);
-	void (*remove)(struct platform_device *pdev);
+	int (*remove)(struct platform_device *pdev);
 };
 
 static const struct dwc_eth_dwmac_data dwc_qos_data = {
@@ -464,19 +468,26 @@ remove_config:
 	return ret;
 }
 
-static void dwc_eth_dwmac_remove(struct platform_device *pdev)
+static int dwc_eth_dwmac_remove(struct platform_device *pdev)
 {
 	struct net_device *ndev = platform_get_drvdata(pdev);
 	struct stmmac_priv *priv = netdev_priv(ndev);
 	const struct dwc_eth_dwmac_data *data;
+	int err;
 
 	data = device_get_match_data(&pdev->dev);
 
-	stmmac_dvr_remove(&pdev->dev);
+	err = stmmac_dvr_remove(&pdev->dev);
+	if (err < 0)
+		dev_err(&pdev->dev, "failed to remove platform: %d\n", err);
 
-	data->remove(pdev);
+	err = data->remove(pdev);
+	if (err < 0)
+		dev_err(&pdev->dev, "failed to remove subdriver: %d\n", err);
 
 	stmmac_remove_config_dt(pdev, priv->plat);
+
+	return err;
 }
 
 static const struct of_device_id dwc_eth_dwmac_match[] = {
@@ -488,7 +499,7 @@ MODULE_DEVICE_TABLE(of, dwc_eth_dwmac_match);
 
 static struct platform_driver dwc_eth_dwmac_driver = {
 	.probe  = dwc_eth_dwmac_probe,
-	.remove_new = dwc_eth_dwmac_remove,
+	.remove = dwc_eth_dwmac_remove,
 	.driver = {
 		.name           = "dwc-eth-dwmac",
 		.pm             = &stmmac_pltfr_pm_ops,

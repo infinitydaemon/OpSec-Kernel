@@ -118,10 +118,10 @@ struct carl9170_reg_list {
 } __packed;
 
 struct carl9170_write_reg {
-	DECLARE_FLEX_ARRAY(struct {
+	struct {
 		__le32		addr;
 		__le32		val;
-	} __packed, regs);
+	} regs[0] __packed;
 } __packed;
 
 struct carl9170_write_reg_byte {
@@ -320,9 +320,9 @@ struct carl9170_rsp {
 		struct carl9170_u32_list	rreg_res;
 		struct carl9170_u32_list	echo;
 #ifdef __CARL9170FW__
-		DECLARE_FLEX_ARRAY(struct carl9170_tx_status, tx_status);
+		struct carl9170_tx_status	tx_status[0];
 #endif /* __CARL9170FW__ */
-		DECLARE_FLEX_ARRAY(struct _carl9170_tx_status, _tx_status);
+		struct _carl9170_tx_status	_tx_status[0];
 		struct carl9170_gpio		gpio;
 		struct carl9170_tsf_rsp		tsf;
 		struct carl9170_psm		psm;

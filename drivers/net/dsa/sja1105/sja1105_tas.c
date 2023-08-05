@@ -516,11 +516,10 @@ int sja1105_setup_tc_taprio(struct dsa_switch *ds, int port,
 	/* Can't change an already configured port (must delete qdisc first).
 	 * Can't delete the qdisc from an unconfigured port.
 	 */
-	if ((!!tas_data->offload[port] && admin->cmd == TAPRIO_CMD_REPLACE) ||
-	    (!tas_data->offload[port] && admin->cmd == TAPRIO_CMD_DESTROY))
+	if (!!tas_data->offload[port] == admin->enable)
 		return -EINVAL;
 
-	if (admin->cmd == TAPRIO_CMD_DESTROY) {
+	if (!admin->enable) {
 		taprio_offload_free(tas_data->offload[port]);
 		tas_data->offload[port] = NULL;
 
@@ -529,8 +528,6 @@ int sja1105_setup_tc_taprio(struct dsa_switch *ds, int port,
 			return rc;
 
 		return sja1105_static_config_reload(priv, SJA1105_SCHEDULING);
-	} else if (admin->cmd != TAPRIO_CMD_REPLACE) {
-		return -EOPNOTSUPP;
 	}
 
 	/* The cycle time extension is the amount of time the last cycle from

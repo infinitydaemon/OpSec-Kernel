@@ -71,6 +71,10 @@ enum {
 #define MT6360_STRBTO_STEPUS		32000
 #define MT6360_STRBTO_MAXUS		2432000
 
+#define STATE_OFF			0
+#define STATE_KEEP			1
+#define STATE_ON			2
+
 struct mt6360_led {
 	union {
 		struct led_classdev isnk;
@@ -80,7 +84,7 @@ struct mt6360_led {
 	struct v4l2_flash *v4l2_flash;
 	struct mt6360_priv *priv;
 	u32 led_no;
-	enum led_default_state default_state;
+	u32 default_state;
 };
 
 struct mt6360_priv {
@@ -401,10 +405,10 @@ static int mt6360_isnk_init_default_state(struct mt6360_led *led)
 		level = LED_OFF;
 
 	switch (led->default_state) {
-	case LEDS_DEFSTATE_ON:
+	case STATE_ON:
 		led->isnk.brightness = led->isnk.max_brightness;
 		break;
-	case LEDS_DEFSTATE_KEEP:
+	case STATE_KEEP:
 		led->isnk.brightness = min(level, led->isnk.max_brightness);
 		break;
 	default:
@@ -439,10 +443,10 @@ static int mt6360_flash_init_default_state(struct mt6360_led *led)
 		level = LED_OFF;
 
 	switch (led->default_state) {
-	case LEDS_DEFSTATE_ON:
+	case STATE_ON:
 		flash->led_cdev.brightness = flash->led_cdev.max_brightness;
 		break;
-	case LEDS_DEFSTATE_KEEP:
+	case STATE_KEEP:
 		flash->led_cdev.brightness =
 			min(level, flash->led_cdev.max_brightness);
 		break;
@@ -756,6 +760,25 @@ static int mt6360_init_flash_properties(struct mt6360_led *led,
 	return 0;
 }
 
+static int mt6360_init_common_properties(struct mt6360_led *led,
+					 struct led_init_data *init_data)
+{
+	const char *const states[] = { "off", "keep", "on" };
+	const char *str;
+	int ret;
+
+	if (!fwnode_property_read_string(init_data->fwnode,
+					 "default-state", &str)) {
+		ret = match_string(states, ARRAY_SIZE(states), str);
+		if (ret < 0)
+			ret = STATE_OFF;
+
+		led->default_state = ret;
+	}
+
+	return 0;
+}
+
 static void mt6360_v4l2_flash_release(struct mt6360_priv *priv)
 {
 	int i;
@@ -829,7 +852,10 @@ static int mt6360_led_probe(struct platform_device *pdev)
 
 		led->led_no = reg;
 		led->priv = priv;
-		led->default_state = led_init_default_state_get(child);
+
+		ret = mt6360_init_common_properties(led, &init_data);
+		if (ret)
+			goto out_flash_release;
 
 		if (reg == MT6360_VIRTUAL_MULTICOLOR ||
 		    reg <= MT6360_LED_ISNKML)

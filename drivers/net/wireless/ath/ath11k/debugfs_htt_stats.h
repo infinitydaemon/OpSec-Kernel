@@ -111,8 +111,6 @@ enum htt_tlv_tag_t {
 	HTT_STATS_TXBF_OFDMA_STEER_STATS_TAG		    = 116,
 	HTT_STATS_PHY_COUNTERS_TAG			    = 121,
 	HTT_STATS_PHY_STATS_TAG				    = 122,
-	HTT_STATS_PHY_RESET_COUNTERS_TAG		    = 123,
-	HTT_STATS_PHY_RESET_STATS_TAG			    = 124,
 
 	HTT_STATS_MAX_TAG,
 };
@@ -145,8 +143,7 @@ enum htt_tx_pdev_underrun_enum {
 /* Bytes stored in little endian order */
 /* Length should be multiple of DWORD */
 struct htt_stats_string_tlv {
-	 /* Can be variable length */
-	DECLARE_FLEX_ARRAY(u32, data);
+	u32 data[0]; /* Can be variable length */
 } __packed;
 
 #define HTT_STATS_MAC_ID	GENMASK(7, 0)
@@ -208,32 +205,27 @@ struct htt_tx_pdev_stats_cmn_tlv {
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_tx_pdev_stats_urrn_tlv_v {
-	/* HTT_TX_PDEV_MAX_URRN_STATS */
-	DECLARE_FLEX_ARRAY(u32, urrn_stats);
+	u32 urrn_stats[0]; /* HTT_TX_PDEV_MAX_URRN_STATS */
 };
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_tx_pdev_stats_flush_tlv_v {
-	/* HTT_TX_PDEV_MAX_FLUSH_REASON_STATS */
-	DECLARE_FLEX_ARRAY(u32, flush_errs);
+	u32 flush_errs[0]; /* HTT_TX_PDEV_MAX_FLUSH_REASON_STATS */
 };
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_tx_pdev_stats_sifs_tlv_v {
-	/* HTT_TX_PDEV_MAX_SIFS_BURST_STATS */
-	DECLARE_FLEX_ARRAY(u32, sifs_status);
+	u32 sifs_status[0]; /* HTT_TX_PDEV_MAX_SIFS_BURST_STATS */
 };
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_tx_pdev_stats_phy_err_tlv_v {
-	/* HTT_TX_PDEV_MAX_PHY_ERR_STATS */
-	DECLARE_FLEX_ARRAY(u32, phy_errs);
+	u32  phy_errs[0]; /* HTT_TX_PDEV_MAX_PHY_ERR_STATS */
 };
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_tx_pdev_stats_sifs_hist_tlv_v {
-	/* HTT_TX_PDEV_SIFS_BURST_HIST_STATS */
-	DECLARE_FLEX_ARRAY(u32, sifs_hist_status);
+	u32 sifs_hist_status[0]; /* HTT_TX_PDEV_SIFS_BURST_HIST_STATS */
 };
 
 struct htt_tx_pdev_stats_tx_ppdu_stats_tlv_v {
@@ -598,20 +590,20 @@ struct htt_tx_hwq_difs_latency_stats_tlv_v {
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_tx_hwq_cmd_result_stats_tlv_v {
-	/* Histogram of sched cmd result, HTT_TX_HWQ_MAX_CMD_RESULT_STATS */
-	DECLARE_FLEX_ARRAY(u32, cmd_result);
+	/* Histogram of sched cmd result */
+	u32 cmd_result[0]; /* HTT_TX_HWQ_MAX_CMD_RESULT_STATS */
 };
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_tx_hwq_cmd_stall_stats_tlv_v {
-	/* Histogram of various pause conitions, HTT_TX_HWQ_MAX_CMD_STALL_STATS */
-	DECLARE_FLEX_ARRAY(u32, cmd_stall_status);
+	/* Histogram of various pause conitions */
+	u32 cmd_stall_status[0]; /* HTT_TX_HWQ_MAX_CMD_STALL_STATS */
 };
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_tx_hwq_fes_result_stats_tlv_v {
-	/* Histogram of number of user fes result, HTT_TX_HWQ_MAX_FES_RESULT_STATS */
-	DECLARE_FLEX_ARRAY(u32, fes_result);
+	/* Histogram of number of user fes result */
+	u32 fes_result[0]; /* HTT_TX_HWQ_MAX_FES_RESULT_STATS */
 };
 
 /* NOTE: Variable length TLV, use length spec to infer array size
@@ -643,8 +635,8 @@ struct htt_tx_hwq_tried_mpdu_cnt_hist_tlv_v {
  * #define WAL_TXOP_USED_HISTOGRAM_INTERVAL 1000 ( 1 ms )
  */
 struct htt_tx_hwq_txop_used_cnt_hist_tlv_v {
-	/* Histogram of txop used cnt,  HTT_TX_HWQ_TXOP_USED_CNT_HIST */
-	DECLARE_FLEX_ARRAY(u32, txop_used_cnt_hist);
+	/* Histogram of txop used cnt */
+	u32 txop_used_cnt_hist[0]; /* HTT_TX_HWQ_TXOP_USED_CNT_HIST */
 };
 
 /* == TX SELFGEN STATS == */
@@ -812,20 +804,17 @@ struct htt_tx_pdev_mpdu_stats_tlv {
 /* == TX SCHED STATS == */
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_sched_txq_cmd_posted_tlv_v {
-	/* HTT_TX_PDEV_SCHED_TX_MODE_MAX */
-	DECLARE_FLEX_ARRAY(u32, sched_cmd_posted);
+	u32 sched_cmd_posted[0]; /* HTT_TX_PDEV_SCHED_TX_MODE_MAX */
 };
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_sched_txq_cmd_reaped_tlv_v {
-	/* HTT_TX_PDEV_SCHED_TX_MODE_MAX */
-	DECLARE_FLEX_ARRAY(u32, sched_cmd_reaped);
+	u32 sched_cmd_reaped[0]; /* HTT_TX_PDEV_SCHED_TX_MODE_MAX */
 };
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_sched_txq_sched_order_su_tlv_v {
-	/* HTT_TX_PDEV_NUM_SCHED_ORDER_LOG */
-	DECLARE_FLEX_ARRAY(u32, sched_order_su);
+	u32 sched_order_su[0]; /* HTT_TX_PDEV_NUM_SCHED_ORDER_LOG */
 };
 
 enum htt_sched_txq_sched_ineligibility_tlv_enum {
@@ -853,7 +842,7 @@ enum htt_sched_txq_sched_ineligibility_tlv_enum {
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_sched_txq_sched_ineligibility_tlv_v {
 	/* indexed by htt_sched_txq_sched_ineligibility_tlv_enum */
-	DECLARE_FLEX_ARRAY(u32, sched_ineligibility);
+	u32 sched_ineligibility[0];
 };
 
 #define	HTT_TX_PDEV_STATS_SCHED_PER_TXQ_MAC_ID	GENMASK(7, 0)
@@ -899,20 +888,18 @@ struct htt_stats_tx_sched_cmn_tlv {
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_tx_tqm_gen_mpdu_stats_tlv_v {
-	/* HTT_TX_TQM_MAX_GEN_MPDU_END_REASON */
-	DECLARE_FLEX_ARRAY(u32, gen_mpdu_end_reason);
+	u32 gen_mpdu_end_reason[0]; /* HTT_TX_TQM_MAX_GEN_MPDU_END_REASON */
 };
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_tx_tqm_list_mpdu_stats_tlv_v {
-	 /* HTT_TX_TQM_MAX_LIST_MPDU_END_REASON */
-	DECLARE_FLEX_ARRAY(u32, list_mpdu_end_reason);
+	u32 list_mpdu_end_reason[0]; /* HTT_TX_TQM_MAX_LIST_MPDU_END_REASON */
 };
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_tx_tqm_list_mpdu_cnt_tlv_v {
-	/* HTT_TX_TQM_MAX_LIST_MPDU_CNT_HISTOGRAM_BINS */
-	DECLARE_FLEX_ARRAY(u32, list_mpdu_cnt_hist);
+	u32 list_mpdu_cnt_hist[0];
+			/* HTT_TX_TQM_MAX_LIST_MPDU_CNT_HISTOGRAM_BINS */
 };
 
 struct htt_tx_tqm_pdev_stats_tlv_v {
@@ -1111,7 +1098,7 @@ struct htt_tx_de_compl_stats_tlv {
  *                               ENTRIES_PER_BIN_COUNT)
  */
 struct htt_tx_de_fw2wbm_ring_full_hist_tlv {
-	DECLARE_FLEX_ARRAY(u32, fw2wbm_ring_full_hist);
+	u32 fw2wbm_ring_full_hist[0];
 };
 
 struct htt_tx_de_cmn_stats_tlv {
@@ -1164,7 +1151,7 @@ struct htt_ring_if_cmn_tlv {
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_sfm_client_user_tlv_v {
 	/* Number of DWORDS used per user and per client */
-	DECLARE_FLEX_ARRAY(u32, dwords_used_by_user_n);
+	u32 dwords_used_by_user_n[0];
 };
 
 struct htt_sfm_client_tlv {
@@ -1449,14 +1436,12 @@ struct htt_rx_soc_fw_stats_tlv {
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_rx_soc_fw_refill_ring_empty_tlv_v {
-	/* HTT_RX_STATS_REFILL_MAX_RING */
-	DECLARE_FLEX_ARRAY(u32, refill_ring_empty_cnt);
+	u32 refill_ring_empty_cnt[0]; /* HTT_RX_STATS_REFILL_MAX_RING */
 };
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_rx_soc_fw_refill_ring_num_refill_tlv_v {
-	/* HTT_RX_STATS_REFILL_MAX_RING */
-	DECLARE_FLEX_ARRAY(u32, refill_ring_num_refill);
+	u32 refill_ring_num_refill[0]; /* HTT_RX_STATS_REFILL_MAX_RING */
 };
 
 /* RXDMA error code from WBM released packets */
@@ -1488,7 +1473,7 @@ enum htt_rx_rxdma_error_code_enum {
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_rx_soc_fw_refill_ring_num_rxdma_err_tlv_v {
-	DECLARE_FLEX_ARRAY(u32, rxdma_err); /* HTT_RX_RXDMA_MAX_ERR_CODE */
+	u32 rxdma_err[0]; /* HTT_RX_RXDMA_MAX_ERR_CODE */
 };
 
 /* REO error code from WBM released packets */
@@ -1520,7 +1505,7 @@ enum htt_rx_reo_error_code_enum {
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_rx_soc_fw_refill_ring_num_reo_err_tlv_v {
-	DECLARE_FLEX_ARRAY(u32, reo_err); /* HTT_RX_REO_MAX_ERR_CODE */
+	u32 reo_err[0]; /* HTT_RX_REO_MAX_ERR_CODE */
 };
 
 /* == RX PDEV STATS == */
@@ -1637,13 +1622,13 @@ struct htt_rx_pdev_fw_stats_phy_err_tlv {
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_rx_pdev_fw_ring_mpdu_err_tlv_v {
 	/* Num error MPDU for each RxDMA error type  */
-	DECLARE_FLEX_ARRAY(u32, fw_ring_mpdu_err); /* HTT_RX_STATS_RXDMA_MAX_ERR */
+	u32 fw_ring_mpdu_err[0]; /* HTT_RX_STATS_RXDMA_MAX_ERR */
 };
 
 /* NOTE: Variable length TLV, use length spec to infer array size */
 struct htt_rx_pdev_fw_mpdu_drop_tlv_v {
 	/* Num MPDU dropped  */
-	DECLARE_FLEX_ARRAY(u32, fw_mpdu_drop); /* HTT_RX_STATS_FW_DROP_REASON_MAX */
+	u32 fw_mpdu_drop[0]; /* HTT_RX_STATS_FW_DROP_REASON_MAX */
 };
 
 #define HTT_PDEV_CCA_STATS_TX_FRAME_INFO_PRESENT               (0x1)
@@ -1964,47 +1949,6 @@ struct htt_phy_stats_tlv {
 	s32 ani_level;
 	/* running time in minutes since FW boot */
 	u32 fw_run_time;
-};
-
-struct htt_phy_reset_counters_tlv {
-	u32 pdev_id;
-	u32 cf_active_low_fail_cnt;
-	u32 cf_active_low_pass_cnt;
-	u32 phy_off_through_vreg_cnt;
-	u32 force_calibration_cnt;
-	u32 rf_mode_switch_phy_off_cnt;
-};
-
-struct htt_phy_reset_stats_tlv {
-	u32 pdev_id;
-	u32 chan_mhz;
-	u32 chan_band_center_freq1;
-	u32 chan_band_center_freq2;
-	u32 chan_phy_mode;
-	u32 chan_flags;
-	u32 chan_num;
-	u32 reset_cause;
-	u32 prev_reset_cause;
-	u32 phy_warm_reset_src;
-	u32 rx_gain_tbl_mode;
-	u32 xbar_val;
-	u32 force_calibration;
-	u32 phyrf_mode;
-	u32 phy_homechan;
-	u32 phy_tx_ch_mask;
-	u32 phy_rx_ch_mask;
-	u32 phybb_ini_mask;
-	u32 phyrf_ini_mask;
-	u32 phy_dfs_en_mask;
-	u32 phy_sscan_en_mask;
-	u32 phy_synth_sel_mask;
-	u32 phy_adfs_freq;
-	u32 cck_fir_settings;
-	u32 phy_dyn_pri_chan;
-	u32 cca_thresh;
-	u32 dyn_cca_status;
-	u32 rxdesense_thresh_hw;
-	u32 rxdesense_thresh_sw;
 };
 
 struct htt_peer_ctrl_path_txrx_stats_tlv {

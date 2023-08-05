@@ -130,8 +130,7 @@ int dasd_scan_partitions(struct dasd_block *block)
 	struct block_device *bdev;
 	int rc;
 
-	bdev = blkdev_get_by_dev(disk_devt(block->gdp), BLK_OPEN_READ, NULL,
-				 NULL);
+	bdev = blkdev_get_by_dev(disk_devt(block->gdp), FMODE_READ, NULL);
 	if (IS_ERR(bdev)) {
 		DBF_DEV_EVENT(DBF_ERR, block->base,
 			      "scan partitions error, blkdev_get returned %ld",
@@ -180,7 +179,7 @@ void dasd_destroy_partitions(struct dasd_block *block)
 	mutex_unlock(&bdev->bd_disk->open_mutex);
 
 	/* Matching blkdev_put to the blkdev_get in dasd_scan_partitions. */
-	blkdev_put(bdev, NULL);
+	blkdev_put(bdev, FMODE_READ);
 }
 
 int dasd_gendisk_init(void)

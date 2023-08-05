@@ -20,7 +20,7 @@
 #include <linux/thermal.h>
 #include <linux/units.h>
 
-#include "thermal_trace.h"
+#include <trace/events/thermal.h>
 
 #define SCALE_ERROR_MITIGATION	100
 

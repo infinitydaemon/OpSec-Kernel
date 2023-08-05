@@ -78,7 +78,18 @@ unsigned int can_skb_get_frame_len(const struct sk_buff *skb)
 	else
 		len = cf->len;
 
-	return can_frame_bytes(can_is_canfd_skb(skb), cf->can_id & CAN_EFF_FLAG,
-			       false, len);
+	if (can_is_canfd_skb(skb)) {
+		if (cf->can_id & CAN_EFF_FLAG)
+			len += CANFD_FRAME_OVERHEAD_EFF;
+		else
+			len += CANFD_FRAME_OVERHEAD_SFF;
+	} else {
+		if (cf->can_id & CAN_EFF_FLAG)
+			len += CAN_FRAME_OVERHEAD_EFF;
+		else
+			len += CAN_FRAME_OVERHEAD_SFF;
+	}
+
+	return len;
 }
 EXPORT_SYMBOL_GPL(can_skb_get_frame_len);

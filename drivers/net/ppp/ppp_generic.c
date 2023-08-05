@@ -1394,7 +1394,7 @@ static int __init ppp_init(void)
 		goto out_net;
 	}
 
-	ppp_class = class_create("ppp");
+	ppp_class = class_create(THIS_MODULE, "ppp");
 	if (IS_ERR(ppp_class)) {
 		err = PTR_ERR(ppp_class);
 		goto out_chrdev;

@@ -1489,9 +1489,10 @@ static int __init cmos_platform_probe(struct platform_device *pdev)
 	return cmos_do_probe(&pdev->dev, resource, irq);
 }
 
-static void cmos_platform_remove(struct platform_device *pdev)
+static int cmos_platform_remove(struct platform_device *pdev)
 {
 	cmos_do_remove(&pdev->dev);
+	return 0;
 }
 
 static void cmos_platform_shutdown(struct platform_device *pdev)
@@ -1513,7 +1514,7 @@ static void cmos_platform_shutdown(struct platform_device *pdev)
 MODULE_ALIAS("platform:rtc_cmos");
 
 static struct platform_driver cmos_platform_driver = {
-	.remove_new	= cmos_platform_remove,
+	.remove		= cmos_platform_remove,
 	.shutdown	= cmos_platform_shutdown,
 	.driver = {
 		.name		= driver_name,

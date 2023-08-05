@@ -37,49 +37,42 @@ struct vdpasim_dev_attr {
 	struct vdpa_mgmt_dev *mgmt_dev;
 	const char *name;
 	u64 supported_features;
-	size_t alloc_size;
 	size_t config_size;
+	size_t buffer_size;
 	int nvqs;
 	u32 id;
 	u32 ngroups;
 	u32 nas;
 
-	void (*work_fn)(struct vdpasim *vdpasim);
+	work_func_t work_fn;
 	void (*get_config)(struct vdpasim *vdpasim, void *config);
 	void (*set_config)(struct vdpasim *vdpasim, const void *config);
-	int (*get_stats)(struct vdpasim *vdpasim, u16 idx,
-			 struct sk_buff *msg,
-			 struct netlink_ext_ack *extack);
-	void (*free)(struct vdpasim *vdpasim);
 };
 
 /* State of each vdpasim device */
 struct vdpasim {
 	struct vdpa_device vdpa;
 	struct vdpasim_virtqueue *vqs;
-	struct kthread_worker *worker;
-	struct kthread_work work;
-	struct mm_struct *mm_bound;
+	struct work_struct work;
 	struct vdpasim_dev_attr dev_attr;
-	/* mutex to synchronize virtqueue state */
-	struct mutex mutex;
+	/* spinlock to synchronize virtqueue state */
+	spinlock_t lock;
 	/* virtio config according to device type */
 	void *config;
 	struct vhost_iotlb *iommu;
-	bool *iommu_pt;
+	struct iova_domain iova;
+	void *buffer;
 	u32 status;
 	u32 generation;
 	u64 features;
 	u32 groups;
 	bool running;
-	bool pending_kick;
 	/* spinlock to synchronize iommu table */
 	spinlock_t iommu_lock;
 };
 
 struct vdpasim *vdpasim_create(struct vdpasim_dev_attr *attr,
 			       const struct vdpa_dev_set_config *config);
-void vdpasim_schedule_work(struct vdpasim *vdpasim);
 
 /* TODO: cross-endian support */
 static inline bool vdpasim_is_little_endian(struct vdpasim *vdpasim)

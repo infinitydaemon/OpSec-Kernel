@@ -25,15 +25,16 @@
  *
  */
 
+#include <drm/drm_edid.h>
 #include <drm/display/drm_dp_helper.h>
 #include <drm/display/drm_dsc_helper.h>
-#include <drm/drm_edid.h>
+
+#include "display/intel_display.h"
+#include "display/intel_display_types.h"
+#include "display/intel_gmbus.h"
 
 #include "i915_drv.h"
 #include "i915_reg.h"
-#include "intel_display.h"
-#include "intel_display_types.h"
-#include "intel_gmbus.h"
 
 #define _INTEL_BIOS_PRIVATE
 #include "intel_vbt_defs.h"
@@ -141,8 +142,8 @@ struct bdb_block_entry {
 };
 
 static const void *
-bdb_find_section(struct drm_i915_private *i915,
-		 enum bdb_block_id section_id)
+find_section(struct drm_i915_private *i915,
+	     enum bdb_block_id section_id)
 {
 	struct bdb_block_entry *entry;
 
@@ -201,7 +202,7 @@ static size_t lfp_data_min_size(struct drm_i915_private *i915)
 	const struct bdb_lvds_lfp_data_ptrs *ptrs;
 	size_t size;
 
-	ptrs = bdb_find_section(i915, BDB_LVDS_LFP_DATA_PTRS);
+	ptrs = find_section(i915, BDB_LVDS_LFP_DATA_PTRS);
 	if (!ptrs)
 		return 0;
 
@@ -619,18 +620,18 @@ static void dump_pnp_id(struct drm_i915_private *i915,
 
 static int opregion_get_panel_type(struct drm_i915_private *i915,
 				   const struct intel_bios_encoder_data *devdata,
-				   const struct drm_edid *drm_edid, bool use_fallback)
+				   const struct edid *edid, bool use_fallback)
 {
 	return intel_opregion_get_panel_type(i915);
 }
 
 static int vbt_get_panel_type(struct drm_i915_private *i915,
 			      const struct intel_bios_encoder_data *devdata,
-			      const struct drm_edid *drm_edid, bool use_fallback)
+			      const struct edid *edid, bool use_fallback)
 {
 	const struct bdb_lvds_options *lvds_options;
 
-	lvds_options = bdb_find_section(i915, BDB_LVDS_OPTIONS);
+	lvds_options = find_section(i915, BDB_LVDS_OPTIONS);
 	if (!lvds_options)
 		return -1;
 
@@ -651,13 +652,12 @@ static int vbt_get_panel_type(struct drm_i915_private *i915,
 
 static int pnpid_get_panel_type(struct drm_i915_private *i915,
 				const struct intel_bios_encoder_data *devdata,
-				const struct drm_edid *drm_edid, bool use_fallback)
+				const struct edid *edid, bool use_fallback)
 {
 	const struct bdb_lvds_lfp_data *data;
 	const struct bdb_lvds_lfp_data_ptrs *ptrs;
 	const struct lvds_pnp_id *edid_id;
 	struct lvds_pnp_id edid_id_nodate;
-	const struct edid *edid = drm_edid_raw(drm_edid); /* FIXME */
 	int i, best = -1;
 
 	if (!edid)
@@ -671,11 +671,11 @@ static int pnpid_get_panel_type(struct drm_i915_private *i915,
 
 	dump_pnp_id(i915, edid_id, "EDID");
 
-	ptrs = bdb_find_section(i915, BDB_LVDS_LFP_DATA_PTRS);
+	ptrs = find_section(i915, BDB_LVDS_LFP_DATA_PTRS);
 	if (!ptrs)
 		return -1;
 
-	data = bdb_find_section(i915, BDB_LVDS_LFP_DATA);
+	data = find_section(i915, BDB_LVDS_LFP_DATA);
 	if (!data)
 		return -1;
 
@@ -701,7 +701,7 @@ static int pnpid_get_panel_type(struct drm_i915_private *i915,
 
 static int fallback_get_panel_type(struct drm_i915_private *i915,
 				   const struct intel_bios_encoder_data *devdata,
-				   const struct drm_edid *drm_edid, bool use_fallback)
+				   const struct edid *edid, bool use_fallback)
 {
 	return use_fallback ? 0 : -1;
 }
@@ -715,13 +715,13 @@ enum panel_type {
 
 static int get_panel_type(struct drm_i915_private *i915,
 			  const struct intel_bios_encoder_data *devdata,
-			  const struct drm_edid *drm_edid, bool use_fallback)
+			  const struct edid *edid, bool use_fallback)
 {
 	struct {
 		const char *name;
 		int (*get_panel_type)(struct drm_i915_private *i915,
 				      const struct intel_bios_encoder_data *devdata,
-				      const struct drm_edid *drm_edid, bool use_fallback);
+				      const struct edid *edid, bool use_fallback);
 		int panel_type;
 	} panel_types[] = {
 		[PANEL_TYPE_OPREGION] = {
@@ -745,7 +745,7 @@ static int get_panel_type(struct drm_i915_private *i915,
 
 	for (i = 0; i < ARRAY_SIZE(panel_types); i++) {
 		panel_types[i].panel_type = panel_types[i].get_panel_type(i915, devdata,
-									  drm_edid, use_fallback);
+									  edid, use_fallback);
 
 		drm_WARN_ON(&i915->drm, panel_types[i].panel_type > 0xf &&
 			    panel_types[i].panel_type != 0xff);
@@ -791,7 +791,7 @@ parse_panel_options(struct drm_i915_private *i915,
 	int panel_type = panel->vbt.panel_type;
 	int drrs_mode;
 
-	lvds_options = bdb_find_section(i915, BDB_LVDS_OPTIONS);
+	lvds_options = find_section(i915, BDB_LVDS_OPTIONS);
 	if (!lvds_options)
 		return;
 
@@ -881,11 +881,11 @@ parse_lfp_data(struct drm_i915_private *i915,
 	const struct lvds_pnp_id *pnp_id;
 	int panel_type = panel->vbt.panel_type;
 
-	ptrs = bdb_find_section(i915, BDB_LVDS_LFP_DATA_PTRS);
+	ptrs = find_section(i915, BDB_LVDS_LFP_DATA_PTRS);
 	if (!ptrs)
 		return;
 
-	data = bdb_find_section(i915, BDB_LVDS_LFP_DATA);
+	data = find_section(i915, BDB_LVDS_LFP_DATA);
 	if (!data)
 		return;
 
@@ -932,7 +932,7 @@ parse_generic_dtd(struct drm_i915_private *i915,
 	if (i915->display.vbt.version < 229)
 		return;
 
-	generic_dtd = bdb_find_section(i915, BDB_GENERIC_DTD);
+	generic_dtd = find_section(i915, BDB_GENERIC_DTD);
 	if (!generic_dtd)
 		return;
 
@@ -1011,7 +1011,7 @@ parse_lfp_backlight(struct drm_i915_private *i915,
 	int panel_type = panel->vbt.panel_type;
 	u16 level;
 
-	backlight_data = bdb_find_section(i915, BDB_LVDS_BACKLIGHT);
+	backlight_data = find_section(i915, BDB_LVDS_BACKLIGHT);
 	if (!backlight_data)
 		return;
 
@@ -1033,7 +1033,6 @@ parse_lfp_backlight(struct drm_i915_private *i915,
 	}
 
 	panel->vbt.backlight.type = INTEL_BACKLIGHT_DISPLAY_DDI;
-	panel->vbt.backlight.controller = 0;
 	if (i915->display.vbt.version >= 191) {
 		size_t exp_size;
 
@@ -1084,12 +1083,6 @@ parse_lfp_backlight(struct drm_i915_private *i915,
 		panel->vbt.backlight.min_brightness = entry->min_brightness;
 	}
 
-	if (i915->display.vbt.version >= 239)
-		panel->vbt.backlight.hdr_dpcd_refresh_timeout =
-			DIV_ROUND_UP(backlight_data->hdr_dpcd_refresh_timeout[panel_type], 100);
-	else
-		panel->vbt.backlight.hdr_dpcd_refresh_timeout = 30;
-
 	drm_dbg_kms(&i915->drm,
 		    "VBT backlight PWM modulation frequency %u Hz, "
 		    "active %s, min brightness %u, level %u, controller %u\n",
@@ -1119,14 +1112,14 @@ parse_sdvo_panel_data(struct drm_i915_private *i915,
 	if (index == -1) {
 		const struct bdb_sdvo_lvds_options *sdvo_lvds_options;
 
-		sdvo_lvds_options = bdb_find_section(i915, BDB_SDVO_LVDS_OPTIONS);
+		sdvo_lvds_options = find_section(i915, BDB_SDVO_LVDS_OPTIONS);
 		if (!sdvo_lvds_options)
 			return;
 
 		index = sdvo_lvds_options->panel_type;
 	}
 
-	dtds = bdb_find_section(i915, BDB_SDVO_PANEL_DTDS);
+	dtds = find_section(i915, BDB_SDVO_PANEL_DTDS);
 	if (!dtds)
 		return;
 
@@ -1162,7 +1155,7 @@ parse_general_features(struct drm_i915_private *i915)
 {
 	const struct bdb_general_features *general;
 
-	general = bdb_find_section(i915, BDB_GENERAL_FEATURES);
+	general = find_section(i915, BDB_GENERAL_FEATURES);
 	if (!general)
 		return;
 
@@ -1208,7 +1201,9 @@ child_device_ptr(const struct bdb_general_definitions *defs, int i)
 static void
 parse_sdvo_device_mapping(struct drm_i915_private *i915)
 {
+	struct sdvo_device_mapping *mapping;
 	const struct intel_bios_encoder_data *devdata;
+	const struct child_device_config *child;
 	int count = 0;
 
 	/*
@@ -1221,8 +1216,7 @@ parse_sdvo_device_mapping(struct drm_i915_private *i915)
 	}
 
 	list_for_each_entry(devdata, &i915->display.vbt.display_devices, node) {
-		const struct child_device_config *child = &devdata->child;
-		struct sdvo_device_mapping *mapping;
+		child = &devdata->child;
 
 		if (child->slave_addr != SLAVE_ADDR1 &&
 		    child->slave_addr != SLAVE_ADDR2) {
@@ -1285,7 +1279,7 @@ parse_driver_features(struct drm_i915_private *i915)
 {
 	const struct bdb_driver_features *driver;
 
-	driver = bdb_find_section(i915, BDB_DRIVER_FEATURES);
+	driver = find_section(i915, BDB_DRIVER_FEATURES);
 	if (!driver)
 		return;
 
@@ -1322,7 +1316,7 @@ parse_panel_driver_features(struct drm_i915_private *i915,
 {
 	const struct bdb_driver_features *driver;
 
-	driver = bdb_find_section(i915, BDB_DRIVER_FEATURES);
+	driver = find_section(i915, BDB_DRIVER_FEATURES);
 	if (!driver)
 		return;
 
@@ -1362,7 +1356,7 @@ parse_power_conservation_features(struct drm_i915_private *i915,
 	if (i915->display.vbt.version < 228)
 		return;
 
-	power = bdb_find_section(i915, BDB_LFP_POWER);
+	power = find_section(i915, BDB_LFP_POWER);
 	if (!power)
 		return;
 
@@ -1402,7 +1396,7 @@ parse_edp(struct drm_i915_private *i915,
 	const struct edp_fast_link_params *edp_link_params;
 	int panel_type = panel->vbt.panel_type;
 
-	edp = bdb_find_section(i915, BDB_EDP);
+	edp = find_section(i915, BDB_EDP);
 	if (!edp)
 		return;
 
@@ -1532,7 +1526,7 @@ parse_psr(struct drm_i915_private *i915,
 	const struct psr_table *psr_table;
 	int panel_type = panel->vbt.panel_type;
 
-	psr = bdb_find_section(i915, BDB_PSR);
+	psr = find_section(i915, BDB_PSR);
 	if (!psr) {
 		drm_dbg_kms(&i915->drm, "No PSR BDB found.\n");
 		return;
@@ -1693,7 +1687,7 @@ parse_mipi_config(struct drm_i915_private *i915,
 	/* Parse #52 for panel index used from panel_type already
 	 * parsed
 	 */
-	start = bdb_find_section(i915, BDB_MIPI_CONFIG);
+	start = find_section(i915, BDB_MIPI_CONFIG);
 	if (!start) {
 		drm_dbg_kms(&i915->drm, "No MIPI config BDB found");
 		return;
@@ -2005,7 +1999,7 @@ parse_mipi_sequence(struct drm_i915_private *i915,
 	if (panel->vbt.dsi.panel_id != MIPI_DSI_GENERIC_PANEL_ID)
 		return;
 
-	sequence = bdb_find_section(i915, BDB_MIPI_SEQUENCE);
+	sequence = find_section(i915, BDB_MIPI_SEQUENCE);
 	if (!sequence) {
 		drm_dbg_kms(&i915->drm,
 			    "No MIPI Sequence found, parsing complete\n");
@@ -2080,13 +2074,14 @@ parse_compression_parameters(struct drm_i915_private *i915)
 {
 	const struct bdb_compression_parameters *params;
 	struct intel_bios_encoder_data *devdata;
+	const struct child_device_config *child;
 	u16 block_size;
 	int index;
 
 	if (i915->display.vbt.version < 198)
 		return;
 
-	params = bdb_find_section(i915, BDB_COMPRESSION_PARAMETERS);
+	params = find_section(i915, BDB_COMPRESSION_PARAMETERS);
 	if (params) {
 		/* Sanity checks */
 		if (params->entry_size != sizeof(params->data[0])) {
@@ -2104,7 +2099,7 @@ parse_compression_parameters(struct drm_i915_private *i915)
 	}
 
 	list_for_each_entry(devdata, &i915->display.vbt.display_devices, node) {
-		const struct child_device_config *child = &devdata->child;
+		child = &devdata->child;
 
 		if (!child->compression_enable)
 			continue;
@@ -2141,60 +2136,60 @@ static u8 translate_iboost(u8 val)
 
 static const u8 cnp_ddc_pin_map[] = {
 	[0] = 0, /* N/A */
-	[GMBUS_PIN_1_BXT] = DDC_BUS_DDI_B,
-	[GMBUS_PIN_2_BXT] = DDC_BUS_DDI_C,
-	[GMBUS_PIN_4_CNP] = DDC_BUS_DDI_D, /* sic */
-	[GMBUS_PIN_3_BXT] = DDC_BUS_DDI_F, /* sic */
+	[DDC_BUS_DDI_B] = GMBUS_PIN_1_BXT,
+	[DDC_BUS_DDI_C] = GMBUS_PIN_2_BXT,
+	[DDC_BUS_DDI_D] = GMBUS_PIN_4_CNP, /* sic */
+	[DDC_BUS_DDI_F] = GMBUS_PIN_3_BXT, /* sic */
 };
 
 static const u8 icp_ddc_pin_map[] = {
-	[GMBUS_PIN_1_BXT] = ICL_DDC_BUS_DDI_A,
-	[GMBUS_PIN_2_BXT] = ICL_DDC_BUS_DDI_B,
-	[GMBUS_PIN_3_BXT] = TGL_DDC_BUS_DDI_C,
-	[GMBUS_PIN_9_TC1_ICP] = ICL_DDC_BUS_PORT_1,
-	[GMBUS_PIN_10_TC2_ICP] = ICL_DDC_BUS_PORT_2,
-	[GMBUS_PIN_11_TC3_ICP] = ICL_DDC_BUS_PORT_3,
-	[GMBUS_PIN_12_TC4_ICP] = ICL_DDC_BUS_PORT_4,
-	[GMBUS_PIN_13_TC5_TGP] = TGL_DDC_BUS_PORT_5,
-	[GMBUS_PIN_14_TC6_TGP] = TGL_DDC_BUS_PORT_6,
+	[ICL_DDC_BUS_DDI_A] = GMBUS_PIN_1_BXT,
+	[ICL_DDC_BUS_DDI_B] = GMBUS_PIN_2_BXT,
+	[TGL_DDC_BUS_DDI_C] = GMBUS_PIN_3_BXT,
+	[ICL_DDC_BUS_PORT_1] = GMBUS_PIN_9_TC1_ICP,
+	[ICL_DDC_BUS_PORT_2] = GMBUS_PIN_10_TC2_ICP,
+	[ICL_DDC_BUS_PORT_3] = GMBUS_PIN_11_TC3_ICP,
+	[ICL_DDC_BUS_PORT_4] = GMBUS_PIN_12_TC4_ICP,
+	[TGL_DDC_BUS_PORT_5] = GMBUS_PIN_13_TC5_TGP,
+	[TGL_DDC_BUS_PORT_6] = GMBUS_PIN_14_TC6_TGP,
 };
 
 static const u8 rkl_pch_tgp_ddc_pin_map[] = {
-	[GMBUS_PIN_1_BXT] = ICL_DDC_BUS_DDI_A,
-	[GMBUS_PIN_2_BXT] = ICL_DDC_BUS_DDI_B,
-	[GMBUS_PIN_9_TC1_ICP] = RKL_DDC_BUS_DDI_D,
-	[GMBUS_PIN_10_TC2_ICP] = RKL_DDC_BUS_DDI_E,
+	[ICL_DDC_BUS_DDI_A] = GMBUS_PIN_1_BXT,
+	[ICL_DDC_BUS_DDI_B] = GMBUS_PIN_2_BXT,
+	[RKL_DDC_BUS_DDI_D] = GMBUS_PIN_9_TC1_ICP,
+	[RKL_DDC_BUS_DDI_E] = GMBUS_PIN_10_TC2_ICP,
 };
 
 static const u8 adls_ddc_pin_map[] = {
-	[GMBUS_PIN_1_BXT] = ICL_DDC_BUS_DDI_A,
-	[GMBUS_PIN_9_TC1_ICP] = ADLS_DDC_BUS_PORT_TC1,
-	[GMBUS_PIN_10_TC2_ICP] = ADLS_DDC_BUS_PORT_TC2,
-	[GMBUS_PIN_11_TC3_ICP] = ADLS_DDC_BUS_PORT_TC3,
-	[GMBUS_PIN_12_TC4_ICP] = ADLS_DDC_BUS_PORT_TC4,
+	[ICL_DDC_BUS_DDI_A] = GMBUS_PIN_1_BXT,
+	[ADLS_DDC_BUS_PORT_TC1] = GMBUS_PIN_9_TC1_ICP,
+	[ADLS_DDC_BUS_PORT_TC2] = GMBUS_PIN_10_TC2_ICP,
+	[ADLS_DDC_BUS_PORT_TC3] = GMBUS_PIN_11_TC3_ICP,
+	[ADLS_DDC_BUS_PORT_TC4] = GMBUS_PIN_12_TC4_ICP,
 };
 
 static const u8 gen9bc_tgp_ddc_pin_map[] = {
-	[GMBUS_PIN_2_BXT] = DDC_BUS_DDI_B,
-	[GMBUS_PIN_9_TC1_ICP] = DDC_BUS_DDI_C,
-	[GMBUS_PIN_10_TC2_ICP] = DDC_BUS_DDI_D,
+	[DDC_BUS_DDI_B] = GMBUS_PIN_2_BXT,
+	[DDC_BUS_DDI_C] = GMBUS_PIN_9_TC1_ICP,
+	[DDC_BUS_DDI_D] = GMBUS_PIN_10_TC2_ICP,
 };
 
 static const u8 adlp_ddc_pin_map[] = {
-	[GMBUS_PIN_1_BXT] = ICL_DDC_BUS_DDI_A,
-	[GMBUS_PIN_2_BXT] = ICL_DDC_BUS_DDI_B,
-	[GMBUS_PIN_9_TC1_ICP] = ADLP_DDC_BUS_PORT_TC1,
-	[GMBUS_PIN_10_TC2_ICP] = ADLP_DDC_BUS_PORT_TC2,
-	[GMBUS_PIN_11_TC3_ICP] = ADLP_DDC_BUS_PORT_TC3,
-	[GMBUS_PIN_12_TC4_ICP] = ADLP_DDC_BUS_PORT_TC4,
+	[ICL_DDC_BUS_DDI_A] = GMBUS_PIN_1_BXT,
+	[ICL_DDC_BUS_DDI_B] = GMBUS_PIN_2_BXT,
+	[ADLP_DDC_BUS_PORT_TC1] = GMBUS_PIN_9_TC1_ICP,
+	[ADLP_DDC_BUS_PORT_TC2] = GMBUS_PIN_10_TC2_ICP,
+	[ADLP_DDC_BUS_PORT_TC3] = GMBUS_PIN_11_TC3_ICP,
+	[ADLP_DDC_BUS_PORT_TC4] = GMBUS_PIN_12_TC4_ICP,
 };
 
 static u8 map_ddc_pin(struct drm_i915_private *i915, u8 vbt_pin)
 {
 	const u8 *ddc_pin_map;
-	int i, n_entries;
+	int n_entries;
 
-	if (HAS_PCH_MTP(i915) || IS_ALDERLAKE_P(i915)) {
+	if (IS_ALDERLAKE_P(i915)) {
 		ddc_pin_map = adlp_ddc_pin_map;
 		n_entries = ARRAY_SIZE(adlp_ddc_pin_map);
 	} else if (IS_ALDERLAKE_S(i915)) {
@@ -2219,10 +2214,8 @@ static u8 map_ddc_pin(struct drm_i915_private *i915, u8 vbt_pin)
 		return vbt_pin;
 	}
 
-	for (i = 0; i < n_entries; i++) {
-		if (ddc_pin_map[i] == vbt_pin)
-			return i;
-	}
+	if (vbt_pin < n_entries && ddc_pin_map[vbt_pin] != 0)
+		return ddc_pin_map[vbt_pin];
 
 	drm_dbg_kms(&i915->drm,
 		    "Ignoring alternate pin: VBT claims DDC pin %d, which is not valid for this platform\n",
@@ -2232,14 +2225,14 @@ static u8 map_ddc_pin(struct drm_i915_private *i915, u8 vbt_pin)
 
 static enum port get_port_by_ddc_pin(struct drm_i915_private *i915, u8 ddc_pin)
 {
+	const struct intel_bios_encoder_data *devdata;
 	enum port port;
 
 	if (!ddc_pin)
 		return PORT_NONE;
 
 	for_each_port(port) {
-		const struct intel_bios_encoder_data *devdata =
-			i915->display.vbt.ports[port];
+		devdata = i915->display.vbt.ports[port];
 
 		if (devdata && ddc_pin == devdata->child.ddc_pin)
 			return port;
@@ -2298,14 +2291,14 @@ static void sanitize_ddc_pin(struct intel_bios_encoder_data *devdata,
 
 static enum port get_port_by_aux_ch(struct drm_i915_private *i915, u8 aux_ch)
 {
+	const struct intel_bios_encoder_data *devdata;
 	enum port port;
 
 	if (!aux_ch)
 		return PORT_NONE;
 
 	for_each_port(port) {
-		const struct intel_bios_encoder_data *devdata =
-			i915->display.vbt.ports[port];
+		devdata = i915->display.vbt.ports[port];
 
 		if (devdata && aux_ch == devdata->child.aux_channel)
 			return port;
@@ -2528,7 +2521,7 @@ static int parse_bdb_216_dp_max_link_rate(const int vbt_max_link_rate)
 	}
 }
 
-int intel_bios_dp_max_link_rate(const struct intel_bios_encoder_data *devdata)
+static int _intel_bios_dp_max_link_rate(const struct intel_bios_encoder_data *devdata)
 {
 	if (!devdata || devdata->i915->display.vbt.version < 216)
 		return 0;
@@ -2539,7 +2532,7 @@ int intel_bios_dp_max_link_rate(const struct intel_bios_encoder_data *devdata)
 		return parse_bdb_216_dp_max_link_rate(devdata->child.dp_max_link_rate);
 }
 
-int intel_bios_dp_max_lane_count(const struct intel_bios_encoder_data *devdata)
+static int _intel_bios_dp_max_lane_count(const struct intel_bios_encoder_data *devdata)
 {
 	if (!devdata || devdata->i915->display.vbt.version < 244)
 		return 0;
@@ -2593,7 +2586,7 @@ intel_bios_encoder_supports_dp(const struct intel_bios_encoder_data *devdata)
 	return devdata->child.device_type & DEVICE_TYPE_DISPLAYPORT_OUTPUT;
 }
 
-bool
+static bool
 intel_bios_encoder_supports_edp(const struct intel_bios_encoder_data *devdata)
 {
 	return intel_bios_encoder_supports_dp(devdata) &&
@@ -2606,14 +2599,7 @@ intel_bios_encoder_supports_dsi(const struct intel_bios_encoder_data *devdata)
 	return devdata->child.device_type & DEVICE_TYPE_MIPI_OUTPUT;
 }
 
-bool
-intel_bios_encoder_is_lspcon(const struct intel_bios_encoder_data *devdata)
-{
-	return devdata && HAS_LSPCON(devdata->i915) && devdata->child.lspcon;
-}
-
-/* This is an index in the HDMI/DVI DDI buffer translation table, or -1 */
-int intel_bios_hdmi_level_shift(const struct intel_bios_encoder_data *devdata)
+static int _intel_bios_hdmi_level_shift(const struct intel_bios_encoder_data *devdata)
 {
 	if (!devdata || devdata->i915->display.vbt.version < 158)
 		return -1;
@@ -2621,7 +2607,7 @@ int intel_bios_hdmi_level_shift(const struct intel_bios_encoder_data *devdata)
 	return devdata->child.hdmi_level_shifter_value;
 }
 
-int intel_bios_hdmi_max_tmds_clock(const struct intel_bios_encoder_data *devdata)
+static int _intel_bios_max_tmds_clock(const struct intel_bios_encoder_data *devdata)
 {
 	if (!devdata || devdata->i915->display.vbt.version < 204)
 		return 0;
@@ -2677,52 +2663,43 @@ static void print_ddi_port(const struct intel_bios_encoder_data *devdata,
 	supports_tbt = intel_bios_encoder_supports_tbt(devdata);
 
 	drm_dbg_kms(&i915->drm,
-		    "Port %c VBT info: CRT:%d DVI:%d HDMI:%d DP:%d eDP:%d DSI:%d DP++:%d LSPCON:%d USB-Type-C:%d TBT:%d DSC:%d\n",
+		    "Port %c VBT info: CRT:%d DVI:%d HDMI:%d DP:%d eDP:%d DSI:%d LSPCON:%d USB-Type-C:%d TBT:%d DSC:%d\n",
 		    port_name(port), is_crt, is_dvi, is_hdmi, is_dp, is_edp, is_dsi,
-		    intel_bios_encoder_supports_dp_dual_mode(devdata),
-		    intel_bios_encoder_is_lspcon(devdata),
+		    HAS_LSPCON(i915) && child->lspcon,
 		    supports_typec_usb, supports_tbt,
 		    devdata->dsc != NULL);
 
-	hdmi_level_shift = intel_bios_hdmi_level_shift(devdata);
+	hdmi_level_shift = _intel_bios_hdmi_level_shift(devdata);
 	if (hdmi_level_shift >= 0) {
 		drm_dbg_kms(&i915->drm,
 			    "Port %c VBT HDMI level shift: %d\n",
 			    port_name(port), hdmi_level_shift);
 	}
 
-	max_tmds_clock = intel_bios_hdmi_max_tmds_clock(devdata);
+	max_tmds_clock = _intel_bios_max_tmds_clock(devdata);
 	if (max_tmds_clock)
 		drm_dbg_kms(&i915->drm,
 			    "Port %c VBT HDMI max TMDS clock: %d kHz\n",
 			    port_name(port), max_tmds_clock);
 
 	/* I_boost config for SKL and above */
-	dp_boost_level = intel_bios_dp_boost_level(devdata);
+	dp_boost_level = intel_bios_encoder_dp_boost_level(devdata);
 	if (dp_boost_level)
 		drm_dbg_kms(&i915->drm,
 			    "Port %c VBT (e)DP boost level: %d\n",
 			    port_name(port), dp_boost_level);
 
-	hdmi_boost_level = intel_bios_hdmi_boost_level(devdata);
+	hdmi_boost_level = intel_bios_encoder_hdmi_boost_level(devdata);
 	if (hdmi_boost_level)
 		drm_dbg_kms(&i915->drm,
 			    "Port %c VBT HDMI boost level: %d\n",
 			    port_name(port), hdmi_boost_level);
 
-	dp_max_link_rate = intel_bios_dp_max_link_rate(devdata);
+	dp_max_link_rate = _intel_bios_dp_max_link_rate(devdata);
 	if (dp_max_link_rate)
 		drm_dbg_kms(&i915->drm,
 			    "Port %c VBT DP max link rate: %d\n",
 			    port_name(port), dp_max_link_rate);
-
-	/*
-	 * FIXME need to implement support for VBT
-	 * vswing/preemph tables should this ever trigger.
-	 */
-	drm_WARN(&i915->drm, child->use_vbt_vswing,
-		 "Port %c asks to use VBT vswing/preemph tables\n",
-		 port_name(port));
 }
 
 static void parse_ddi_port(struct intel_bios_encoder_data *devdata)
@@ -2795,7 +2772,7 @@ parse_general_definitions(struct drm_i915_private *i915)
 	u16 block_size;
 	int bus_pin;
 
-	defs = bdb_find_section(i915, BDB_GENERAL_DEFINITIONS);
+	defs = find_section(i915, BDB_GENERAL_DEFINITIONS);
 	if (!defs) {
 		drm_dbg_kms(&i915->drm,
 			    "No general definition block is found, no devices defined.\n");
@@ -2825,7 +2802,7 @@ parse_general_definitions(struct drm_i915_private *i915)
 		expected_size = 37;
 	} else if (i915->display.vbt.version <= 215) {
 		expected_size = 38;
-	} else if (i915->display.vbt.version <= 250) {
+	} else if (i915->display.vbt.version <= 237) {
 		expected_size = 39;
 	} else {
 		expected_size = sizeof(*child);
@@ -3033,13 +3010,6 @@ bool intel_bios_is_valid_vbt(const void *buf, size_t size)
 	return vbt;
 }
 
-static u32 intel_spi_read(struct intel_uncore *uncore, u32 offset)
-{
-	intel_uncore_write(uncore, PRIMARY_SPI_ADDRESS, offset);
-
-	return intel_uncore_read(uncore, PRIMARY_SPI_TRIGGER);
-}
-
 static struct vbt_header *spi_oprom_get_vbt(struct drm_i915_private *i915)
 {
 	u32 count, data, found, store = 0;
@@ -3056,7 +3026,9 @@ static struct vbt_header *spi_oprom_get_vbt(struct drm_i915_private *i915)
 	oprom_offset &= OROM_OFFSET_MASK;
 
 	for (count = 0; count < oprom_size; count += 4) {
-		data = intel_spi_read(&i915->uncore, oprom_offset + count);
+		intel_uncore_write(&i915->uncore, PRIMARY_SPI_ADDRESS, oprom_offset + count);
+		data = intel_uncore_read(&i915->uncore, PRIMARY_SPI_TRIGGER);
+
 		if (data == *((const u32 *)"$VBT")) {
 			found = oprom_offset + count;
 			break;
@@ -3067,16 +3039,20 @@ static struct vbt_header *spi_oprom_get_vbt(struct drm_i915_private *i915)
 		goto err_not_found;
 
 	/* Get VBT size and allocate space for the VBT */
-	vbt_size = intel_spi_read(&i915->uncore,
-				  found + offsetof(struct vbt_header, vbt_size));
+	intel_uncore_write(&i915->uncore, PRIMARY_SPI_ADDRESS, found +
+		   offsetof(struct vbt_header, vbt_size));
+	vbt_size = intel_uncore_read(&i915->uncore, PRIMARY_SPI_TRIGGER);
 	vbt_size &= 0xffff;
 
 	vbt = kzalloc(round_up(vbt_size, 4), GFP_KERNEL);
 	if (!vbt)
 		goto err_not_found;
 
-	for (count = 0; count < vbt_size; count += 4)
-		*(vbt + store++) = intel_spi_read(&i915->uncore, found + count);
+	for (count = 0; count < vbt_size; count += 4) {
+		intel_uncore_write(&i915->uncore, PRIMARY_SPI_ADDRESS, found + count);
+		data = intel_uncore_read(&i915->uncore, PRIMARY_SPI_TRIGGER);
+		*(vbt + store++) = data;
+	}
 
 	if (!intel_bios_is_valid_vbt(vbt, vbt_size))
 		goto err_free_vbt;
@@ -3228,7 +3204,7 @@ out:
 static void intel_bios_init_panel(struct drm_i915_private *i915,
 				  struct intel_panel *panel,
 				  const struct intel_bios_encoder_data *devdata,
-				  const struct drm_edid *drm_edid,
+				  const struct edid *edid,
 				  bool use_fallback)
 {
 	/* already have it? */
@@ -3238,7 +3214,7 @@ static void intel_bios_init_panel(struct drm_i915_private *i915,
 	}
 
 	panel->vbt.panel_type = get_panel_type(i915, devdata,
-					       drm_edid, use_fallback);
+					       edid, use_fallback);
 	if (panel->vbt.panel_type < 0) {
 		drm_WARN_ON(&i915->drm, use_fallback);
 		return;
@@ -3269,9 +3245,9 @@ void intel_bios_init_panel_early(struct drm_i915_private *i915,
 void intel_bios_init_panel_late(struct drm_i915_private *i915,
 				struct intel_panel *panel,
 				const struct intel_bios_encoder_data *devdata,
-				const struct drm_edid *drm_edid)
+				const struct edid *edid)
 {
-	intel_bios_init_panel(i915, panel, devdata, drm_edid, true);
+	intel_bios_init_panel(i915, panel, devdata, edid, true);
 }
 
 /**
@@ -3321,6 +3297,7 @@ void intel_bios_fini_panel(struct intel_panel *panel)
 bool intel_bios_is_tv_present(struct drm_i915_private *i915)
 {
 	const struct intel_bios_encoder_data *devdata;
+	const struct child_device_config *child;
 
 	if (!i915->display.vbt.int_tv_support)
 		return false;
@@ -3329,7 +3306,7 @@ bool intel_bios_is_tv_present(struct drm_i915_private *i915)
 		return true;
 
 	list_for_each_entry(devdata, &i915->display.vbt.display_devices, node) {
-		const struct child_device_config *child = &devdata->child;
+		child = &devdata->child;
 
 		/*
 		 * If the device type is not TV, continue.
@@ -3363,12 +3340,13 @@ bool intel_bios_is_tv_present(struct drm_i915_private *i915)
 bool intel_bios_is_lvds_present(struct drm_i915_private *i915, u8 *i2c_pin)
 {
 	const struct intel_bios_encoder_data *devdata;
+	const struct child_device_config *child;
 
 	if (list_empty(&i915->display.vbt.display_devices))
 		return true;
 
 	list_for_each_entry(devdata, &i915->display.vbt.display_devices, node) {
-		const struct child_device_config *child = &devdata->child;
+		child = &devdata->child;
 
 		/* If the device type is not LFP, continue.
 		 * We have to check both the new identifiers as well as the
@@ -3410,25 +3388,28 @@ bool intel_bios_is_lvds_present(struct drm_i915_private *i915, u8 *i2c_pin)
  */
 bool intel_bios_is_port_present(struct drm_i915_private *i915, enum port port)
 {
-	const struct intel_bios_encoder_data *devdata;
-
 	if (WARN_ON(!has_ddi_port_info(i915)))
 		return true;
 
-	if (!is_port_valid(i915, port))
-		return false;
-
-	list_for_each_entry(devdata, &i915->display.vbt.display_devices, node) {
-		const struct child_device_config *child = &devdata->child;
-
-		if (dvo_port_to_port(i915, child->dvo_port) == port)
-			return true;
-	}
-
-	return false;
+	return i915->display.vbt.ports[port];
 }
 
-bool intel_bios_encoder_supports_dp_dual_mode(const struct intel_bios_encoder_data *devdata)
+/**
+ * intel_bios_is_port_edp - is the device in given port eDP
+ * @i915:	i915 device instance
+ * @port:	port to check
+ *
+ * Return true if the device in %port is eDP.
+ */
+bool intel_bios_is_port_edp(struct drm_i915_private *i915, enum port port)
+{
+	const struct intel_bios_encoder_data *devdata =
+		intel_bios_encoder_data_lookup(i915, port);
+
+	return devdata && intel_bios_encoder_supports_edp(devdata);
+}
+
+static bool intel_bios_encoder_supports_dp_dual_mode(const struct intel_bios_encoder_data *devdata)
 {
 	const struct child_device_config *child = &devdata->child;
 
@@ -3447,6 +3428,15 @@ bool intel_bios_encoder_supports_dp_dual_mode(const struct intel_bios_encoder_da
 	return false;
 }
 
+bool intel_bios_is_port_dp_dual_mode(struct drm_i915_private *i915,
+				     enum port port)
+{
+	const struct intel_bios_encoder_data *devdata =
+		intel_bios_encoder_data_lookup(i915, port);
+
+	return devdata && intel_bios_encoder_supports_dp_dual_mode(devdata);
+}
+
 /**
  * intel_bios_is_dsi_present - is DSI present in VBT
  * @i915:	i915 device instance
@@ -3458,13 +3448,16 @@ bool intel_bios_is_dsi_present(struct drm_i915_private *i915,
 			       enum port *port)
 {
 	const struct intel_bios_encoder_data *devdata;
+	const struct child_device_config *child;
+	u8 dvo_port;
 
 	list_for_each_entry(devdata, &i915->display.vbt.display_devices, node) {
-		const struct child_device_config *child = &devdata->child;
-		u8 dvo_port = child->dvo_port;
+		child = &devdata->child;
 
 		if (!(child->device_type & DEVICE_TYPE_MIPI_OUTPUT))
 			continue;
+
+		dvo_port = child->dvo_port;
 
 		if (dsi_dvo_port_to_port(i915, dvo_port) == PORT_NONE) {
 			drm_dbg_kms(&i915->drm,
@@ -3552,9 +3545,10 @@ bool intel_bios_get_dsc_params(struct intel_encoder *encoder,
 {
 	struct drm_i915_private *i915 = to_i915(encoder->base.dev);
 	const struct intel_bios_encoder_data *devdata;
+	const struct child_device_config *child;
 
 	list_for_each_entry(devdata, &i915->display.vbt.display_devices, node) {
-		const struct child_device_config *child = &devdata->child;
+		child = &devdata->child;
 
 		if (!(child->device_type & DEVICE_TYPE_MIPI_OUTPUT))
 			continue;
@@ -3573,93 +3567,170 @@ bool intel_bios_get_dsc_params(struct intel_encoder *encoder,
 	return false;
 }
 
-static const u8 adlp_aux_ch_map[] = {
-	[AUX_CH_A] = DP_AUX_A,
-	[AUX_CH_B] = DP_AUX_B,
-	[AUX_CH_C] = DP_AUX_C,
-	[AUX_CH_D_XELPD] = DP_AUX_D,
-	[AUX_CH_E_XELPD] = DP_AUX_E,
-	[AUX_CH_USBC1] = DP_AUX_F,
-	[AUX_CH_USBC2] = DP_AUX_G,
-	[AUX_CH_USBC3] = DP_AUX_H,
-	[AUX_CH_USBC4] = DP_AUX_I,
-};
-
-/*
- * ADL-S VBT uses PHY based mapping. Combo PHYs A,B,C,D,E
- * map to DDI A,TC1,TC2,TC3,TC4 respectively.
+/**
+ * intel_bios_is_port_hpd_inverted - is HPD inverted for %port
+ * @i915:	i915 device instance
+ * @port:	port to check
+ *
+ * Return true if HPD should be inverted for %port.
  */
-static const u8 adls_aux_ch_map[] = {
-	[AUX_CH_A] = DP_AUX_A,
-	[AUX_CH_USBC1] = DP_AUX_B,
-	[AUX_CH_USBC2] = DP_AUX_C,
-	[AUX_CH_USBC3] = DP_AUX_D,
-	[AUX_CH_USBC4] = DP_AUX_E,
-};
-
-/*
- * RKL/DG1 VBT uses PHY based mapping. Combo PHYs A,B,C,D
- * map to DDI A,B,TC1,TC2 respectively.
- */
-static const u8 rkl_aux_ch_map[] = {
-	[AUX_CH_A] = DP_AUX_A,
-	[AUX_CH_B] = DP_AUX_B,
-	[AUX_CH_USBC1] = DP_AUX_C,
-	[AUX_CH_USBC2] = DP_AUX_D,
-};
-
-static const u8 direct_aux_ch_map[] = {
-	[AUX_CH_A] = DP_AUX_A,
-	[AUX_CH_B] = DP_AUX_B,
-	[AUX_CH_C] = DP_AUX_C,
-	[AUX_CH_D] = DP_AUX_D, /* aka AUX_CH_USBC1 */
-	[AUX_CH_E] = DP_AUX_E, /* aka AUX_CH_USBC2 */
-	[AUX_CH_F] = DP_AUX_F, /* aka AUX_CH_USBC3 */
-	[AUX_CH_G] = DP_AUX_G, /* aka AUX_CH_USBC4 */
-	[AUX_CH_H] = DP_AUX_H, /* aka AUX_CH_USBC5 */
-	[AUX_CH_I] = DP_AUX_I, /* aka AUX_CH_USBC6 */
-};
-
-static enum aux_ch map_aux_ch(struct drm_i915_private *i915, u8 aux_channel)
+bool
+intel_bios_is_port_hpd_inverted(const struct drm_i915_private *i915,
+				enum port port)
 {
-	const u8 *aux_ch_map;
-	int i, n_entries;
+	const struct intel_bios_encoder_data *devdata = i915->display.vbt.ports[port];
 
-	if (DISPLAY_VER(i915) >= 13) {
-		aux_ch_map = adlp_aux_ch_map;
-		n_entries = ARRAY_SIZE(adlp_aux_ch_map);
-	} else if (IS_ALDERLAKE_S(i915)) {
-		aux_ch_map = adls_aux_ch_map;
-		n_entries = ARRAY_SIZE(adls_aux_ch_map);
-	} else if (IS_DG1(i915) || IS_ROCKETLAKE(i915)) {
-		aux_ch_map = rkl_aux_ch_map;
-		n_entries = ARRAY_SIZE(rkl_aux_ch_map);
-	} else {
-		aux_ch_map = direct_aux_ch_map;
-		n_entries = ARRAY_SIZE(direct_aux_ch_map);
-	}
+	if (drm_WARN_ON_ONCE(&i915->drm,
+			     !IS_GEMINILAKE(i915) && !IS_BROXTON(i915)))
+		return false;
 
-	for (i = 0; i < n_entries; i++) {
-		if (aux_ch_map[i] == aux_channel)
-			return i;
-	}
-
-	drm_dbg_kms(&i915->drm,
-		    "Ignoring alternate AUX CH: VBT claims AUX 0x%x, which is not valid for this platform\n",
-		    aux_channel);
-
-	return AUX_CH_NONE;
+	return devdata && devdata->child.hpd_invert;
 }
 
-enum aux_ch intel_bios_dp_aux_ch(const struct intel_bios_encoder_data *devdata)
+/**
+ * intel_bios_is_lspcon_present - if LSPCON is attached on %port
+ * @i915:	i915 device instance
+ * @port:	port to check
+ *
+ * Return true if LSPCON is present on this port
+ */
+bool
+intel_bios_is_lspcon_present(const struct drm_i915_private *i915,
+			     enum port port)
 {
-	if (!devdata || !devdata->child.aux_channel)
-		return AUX_CH_NONE;
+	const struct intel_bios_encoder_data *devdata = i915->display.vbt.ports[port];
 
-	return map_aux_ch(devdata->i915, devdata->child.aux_channel);
+	return HAS_LSPCON(i915) && devdata && devdata->child.lspcon;
 }
 
-int intel_bios_dp_boost_level(const struct intel_bios_encoder_data *devdata)
+/**
+ * intel_bios_is_lane_reversal_needed - if lane reversal needed on port
+ * @i915:       i915 device instance
+ * @port:       port to check
+ *
+ * Return true if port requires lane reversal
+ */
+bool
+intel_bios_is_lane_reversal_needed(const struct drm_i915_private *i915,
+				   enum port port)
+{
+	const struct intel_bios_encoder_data *devdata = i915->display.vbt.ports[port];
+
+	return devdata && devdata->child.lane_reversal;
+}
+
+enum aux_ch intel_bios_port_aux_ch(struct drm_i915_private *i915,
+				   enum port port)
+{
+	const struct intel_bios_encoder_data *devdata = i915->display.vbt.ports[port];
+	enum aux_ch aux_ch;
+
+	if (!devdata || !devdata->child.aux_channel) {
+		aux_ch = (enum aux_ch)port;
+
+		drm_dbg_kms(&i915->drm,
+			    "using AUX %c for port %c (platform default)\n",
+			    aux_ch_name(aux_ch), port_name(port));
+		return aux_ch;
+	}
+
+	/*
+	 * RKL/DG1 VBT uses PHY based mapping. Combo PHYs A,B,C,D
+	 * map to DDI A,B,TC1,TC2 respectively.
+	 *
+	 * ADL-S VBT uses PHY based mapping. Combo PHYs A,B,C,D,E
+	 * map to DDI A,TC1,TC2,TC3,TC4 respectively.
+	 */
+	switch (devdata->child.aux_channel) {
+	case DP_AUX_A:
+		aux_ch = AUX_CH_A;
+		break;
+	case DP_AUX_B:
+		if (IS_ALDERLAKE_S(i915))
+			aux_ch = AUX_CH_USBC1;
+		else
+			aux_ch = AUX_CH_B;
+		break;
+	case DP_AUX_C:
+		if (IS_ALDERLAKE_S(i915))
+			aux_ch = AUX_CH_USBC2;
+		else if (IS_DG1(i915) || IS_ROCKETLAKE(i915))
+			aux_ch = AUX_CH_USBC1;
+		else
+			aux_ch = AUX_CH_C;
+		break;
+	case DP_AUX_D:
+		if (DISPLAY_VER(i915) >= 13)
+			aux_ch = AUX_CH_D_XELPD;
+		else if (IS_ALDERLAKE_S(i915))
+			aux_ch = AUX_CH_USBC3;
+		else if (IS_DG1(i915) || IS_ROCKETLAKE(i915))
+			aux_ch = AUX_CH_USBC2;
+		else
+			aux_ch = AUX_CH_D;
+		break;
+	case DP_AUX_E:
+		if (DISPLAY_VER(i915) >= 13)
+			aux_ch = AUX_CH_E_XELPD;
+		else if (IS_ALDERLAKE_S(i915))
+			aux_ch = AUX_CH_USBC4;
+		else
+			aux_ch = AUX_CH_E;
+		break;
+	case DP_AUX_F:
+		if (DISPLAY_VER(i915) >= 13)
+			aux_ch = AUX_CH_USBC1;
+		else
+			aux_ch = AUX_CH_F;
+		break;
+	case DP_AUX_G:
+		if (DISPLAY_VER(i915) >= 13)
+			aux_ch = AUX_CH_USBC2;
+		else
+			aux_ch = AUX_CH_G;
+		break;
+	case DP_AUX_H:
+		if (DISPLAY_VER(i915) >= 13)
+			aux_ch = AUX_CH_USBC3;
+		else
+			aux_ch = AUX_CH_H;
+		break;
+	case DP_AUX_I:
+		if (DISPLAY_VER(i915) >= 13)
+			aux_ch = AUX_CH_USBC4;
+		else
+			aux_ch = AUX_CH_I;
+		break;
+	default:
+		MISSING_CASE(devdata->child.aux_channel);
+		aux_ch = AUX_CH_A;
+		break;
+	}
+
+	drm_dbg_kms(&i915->drm, "using AUX %c for port %c (VBT)\n",
+		    aux_ch_name(aux_ch), port_name(port));
+
+	return aux_ch;
+}
+
+int intel_bios_max_tmds_clock(struct intel_encoder *encoder)
+{
+	struct drm_i915_private *i915 = to_i915(encoder->base.dev);
+	const struct intel_bios_encoder_data *devdata = i915->display.vbt.ports[encoder->port];
+
+	return _intel_bios_max_tmds_clock(devdata);
+}
+
+/* This is an index in the HDMI/DVI DDI buffer translation table, or -1 */
+int intel_bios_hdmi_level_shift(struct intel_encoder *encoder)
+{
+	struct drm_i915_private *i915 = to_i915(encoder->base.dev);
+	const struct intel_bios_encoder_data *devdata = i915->display.vbt.ports[encoder->port];
+
+	return _intel_bios_hdmi_level_shift(devdata);
+}
+
+int intel_bios_encoder_dp_boost_level(const struct intel_bios_encoder_data *devdata)
 {
 	if (!devdata || devdata->i915->display.vbt.version < 196 || !devdata->child.iboost)
 		return 0;
@@ -3667,7 +3738,7 @@ int intel_bios_dp_boost_level(const struct intel_bios_encoder_data *devdata)
 	return translate_iboost(devdata->child.dp_iboost_level);
 }
 
-int intel_bios_hdmi_boost_level(const struct intel_bios_encoder_data *devdata)
+int intel_bios_encoder_hdmi_boost_level(const struct intel_bios_encoder_data *devdata)
 {
 	if (!devdata || devdata->i915->display.vbt.version < 196 || !devdata->child.iboost)
 		return 0;
@@ -3675,12 +3746,31 @@ int intel_bios_hdmi_boost_level(const struct intel_bios_encoder_data *devdata)
 	return translate_iboost(devdata->child.hdmi_iboost_level);
 }
 
-int intel_bios_hdmi_ddc_pin(const struct intel_bios_encoder_data *devdata)
+int intel_bios_dp_max_link_rate(struct intel_encoder *encoder)
 {
+	struct drm_i915_private *i915 = to_i915(encoder->base.dev);
+	const struct intel_bios_encoder_data *devdata = i915->display.vbt.ports[encoder->port];
+
+	return _intel_bios_dp_max_link_rate(devdata);
+}
+
+int intel_bios_dp_max_lane_count(struct intel_encoder *encoder)
+{
+	struct drm_i915_private *i915 = to_i915(encoder->base.dev);
+	const struct intel_bios_encoder_data *devdata = i915->display.vbt.ports[encoder->port];
+
+	return _intel_bios_dp_max_lane_count(devdata);
+}
+
+int intel_bios_alternate_ddc_pin(struct intel_encoder *encoder)
+{
+	struct drm_i915_private *i915 = to_i915(encoder->base.dev);
+	const struct intel_bios_encoder_data *devdata = i915->display.vbt.ports[encoder->port];
+
 	if (!devdata || !devdata->child.ddc_pin)
 		return 0;
 
-	return map_ddc_pin(devdata->i915, devdata->child.ddc_pin);
+	return map_ddc_pin(i915, devdata->child.ddc_pin);
 }
 
 bool intel_bios_encoder_supports_typec_usb(const struct intel_bios_encoder_data *devdata)
@@ -3691,16 +3781,6 @@ bool intel_bios_encoder_supports_typec_usb(const struct intel_bios_encoder_data 
 bool intel_bios_encoder_supports_tbt(const struct intel_bios_encoder_data *devdata)
 {
 	return devdata->i915->display.vbt.version >= 209 && devdata->child.tbt;
-}
-
-bool intel_bios_encoder_lane_reversal(const struct intel_bios_encoder_data *devdata)
-{
-	return devdata && devdata->child.lane_reversal;
-}
-
-bool intel_bios_encoder_hpd_invert(const struct intel_bios_encoder_data *devdata)
-{
-	return devdata && devdata->child.hpd_invert;
 }
 
 const struct intel_bios_encoder_data *

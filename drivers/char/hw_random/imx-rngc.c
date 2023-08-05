@@ -17,7 +17,6 @@
 #include <linux/hw_random.h>
 #include <linux/completion.h>
 #include <linux/io.h>
-#include <linux/bitfield.h>
 
 #define RNGC_VER_ID			0x0000
 #define RNGC_COMMAND			0x0004
@@ -27,7 +26,7 @@
 #define RNGC_FIFO			0x0014
 
 /* the fields in the ver id register */
-#define RNG_TYPE			GENMASK(31, 28)
+#define RNGC_TYPE_SHIFT		28
 #define RNGC_VER_MAJ_SHIFT		8
 
 /* the rng_type field */
@@ -35,19 +34,20 @@
 #define RNGC_TYPE_RNGC			0x2
 
 
-#define RNGC_CMD_CLR_ERR		BIT(5)
-#define RNGC_CMD_CLR_INT		BIT(4)
-#define RNGC_CMD_SEED			BIT(1)
-#define RNGC_CMD_SELF_TEST		BIT(0)
+#define RNGC_CMD_CLR_ERR		0x00000020
+#define RNGC_CMD_CLR_INT		0x00000010
+#define RNGC_CMD_SEED			0x00000002
+#define RNGC_CMD_SELF_TEST		0x00000001
 
-#define RNGC_CTRL_MASK_ERROR		BIT(6)
-#define RNGC_CTRL_MASK_DONE		BIT(5)
-#define RNGC_CTRL_AUTO_SEED		BIT(4)
+#define RNGC_CTRL_MASK_ERROR		0x00000040
+#define RNGC_CTRL_MASK_DONE		0x00000020
+#define RNGC_CTRL_AUTO_SEED		0x00000010
 
-#define RNGC_STATUS_ERROR		BIT(16)
-#define RNGC_STATUS_FIFO_LEVEL_MASK	GENMASK(11, 8)
-#define RNGC_STATUS_SEED_DONE		BIT(5)
-#define RNGC_STATUS_ST_DONE		BIT(4)
+#define RNGC_STATUS_ERROR		0x00010000
+#define RNGC_STATUS_FIFO_LEVEL_MASK	0x00000f00
+#define RNGC_STATUS_FIFO_LEVEL_SHIFT	8
+#define RNGC_STATUS_SEED_DONE		0x00000020
+#define RNGC_STATUS_ST_DONE		0x00000010
 
 #define RNGC_ERROR_STATUS_STAT_ERR	0x00000008
 
@@ -122,6 +122,7 @@ static int imx_rngc_read(struct hwrng *rng, void *data, size_t max, bool wait)
 {
 	struct imx_rngc *rngc = container_of(rng, struct imx_rngc, rng);
 	unsigned int status;
+	unsigned int level;
 	int retval = 0;
 
 	while (max >= sizeof(u32)) {
@@ -131,7 +132,11 @@ static int imx_rngc_read(struct hwrng *rng, void *data, size_t max, bool wait)
 		if (status & RNGC_STATUS_ERROR)
 			break;
 
-		if (status & RNGC_STATUS_FIFO_LEVEL_MASK) {
+		/* how many random numbers are in FIFO? [0-16] */
+		level = (status & RNGC_STATUS_FIFO_LEVEL_MASK) >>
+			RNGC_STATUS_FIFO_LEVEL_SHIFT;
+
+		if (level) {
 			/* retrieve a random number from FIFO */
 			*(u32 *)data = readl(rngc->base + RNGC_FIFO);
 
@@ -222,7 +227,7 @@ static void imx_rngc_cleanup(struct hwrng *rng)
 	imx_rngc_irq_mask_clear(rngc);
 }
 
-static int __init imx_rngc_probe(struct platform_device *pdev)
+static int imx_rngc_probe(struct platform_device *pdev)
 {
 	struct imx_rngc *rngc;
 	int ret;
@@ -249,7 +254,7 @@ static int __init imx_rngc_probe(struct platform_device *pdev)
 		return irq;
 
 	ver_id = readl(rngc->base + RNGC_VER_ID);
-	rng_type = FIELD_GET(RNG_TYPE, ver_id);
+	rng_type = ver_id >> RNGC_TYPE_SHIFT;
 	/*
 	 * This driver supports only RNGC and RNGB. (There's a different
 	 * driver for RNGA.)
@@ -298,7 +303,7 @@ static int __init imx_rngc_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int imx_rngc_suspend(struct device *dev)
+static int __maybe_unused imx_rngc_suspend(struct device *dev)
 {
 	struct imx_rngc *rngc = dev_get_drvdata(dev);
 
@@ -307,7 +312,7 @@ static int imx_rngc_suspend(struct device *dev)
 	return 0;
 }
 
-static int imx_rngc_resume(struct device *dev)
+static int __maybe_unused imx_rngc_resume(struct device *dev)
 {
 	struct imx_rngc *rngc = dev_get_drvdata(dev);
 
@@ -316,10 +321,10 @@ static int imx_rngc_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(imx_rngc_pm_ops, imx_rngc_suspend, imx_rngc_resume);
+static SIMPLE_DEV_PM_OPS(imx_rngc_pm_ops, imx_rngc_suspend, imx_rngc_resume);
 
 static const struct of_device_id imx_rngc_dt_ids[] = {
-	{ .compatible = "fsl,imx25-rngb" },
+	{ .compatible = "fsl,imx25-rngb", .data = NULL, },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, imx_rngc_dt_ids);
@@ -327,7 +332,7 @@ MODULE_DEVICE_TABLE(of, imx_rngc_dt_ids);
 static struct platform_driver imx_rngc_driver = {
 	.driver = {
 		.name = KBUILD_MODNAME,
-		.pm = pm_sleep_ptr(&imx_rngc_pm_ops),
+		.pm = &imx_rngc_pm_ops,
 		.of_match_table = imx_rngc_dt_ids,
 	},
 };

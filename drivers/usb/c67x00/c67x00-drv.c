@@ -177,7 +177,7 @@ static int c67x00_drv_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void c67x00_drv_remove(struct platform_device *pdev)
+static int c67x00_drv_remove(struct platform_device *pdev)
 {
 	struct c67x00_device *c67x00 = platform_get_drvdata(pdev);
 	struct resource *res;
@@ -197,11 +197,13 @@ static void c67x00_drv_remove(struct platform_device *pdev)
 	release_mem_region(res->start, resource_size(res));
 
 	kfree(c67x00);
+
+	return 0;
 }
 
 static struct platform_driver c67x00_driver = {
 	.probe	= c67x00_drv_probe,
-	.remove_new = c67x00_drv_remove,
+	.remove	= c67x00_drv_remove,
 	.driver	= {
 		.name = "c67x00",
 	},

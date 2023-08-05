@@ -390,12 +390,6 @@ done_free_sp:
 	fcport->flags &= ~FCF_ASYNC_SENT;
 done:
 	fcport->flags &= ~FCF_ASYNC_ACTIVE;
-
-	/*
-	 * async login failed. Could be due to iocb/exchange resource
-	 * being low. Set state DELETED for re-login process to start again.
-	 */
-	qla2x00_set_fcport_disc_state(fcport, DSC_DELETED);
 	return rval;
 }
 
@@ -1654,6 +1648,7 @@ static void qla_chk_n2n_b4_login(struct scsi_qla_host *vha, fc_port_t *fcport)
 int qla24xx_fcport_handle_login(struct scsi_qla_host *vha, fc_port_t *fcport)
 {
 	u16 data[2];
+	u64 wwn;
 	u16 sec;
 
 	ql_dbg(ql_dbg_disc, vha, 0x20d8,
@@ -1693,6 +1688,7 @@ int qla24xx_fcport_handle_login(struct scsi_qla_host *vha, fc_port_t *fcport)
 
 	switch (fcport->disc_state) {
 	case DSC_DELETED:
+		wwn = wwn_to_u64(fcport->node_name);
 		switch (vha->hw->current_topology) {
 		case ISP_CFG_N:
 			if (fcport_is_smaller(fcport)) {
@@ -1716,7 +1712,12 @@ int qla24xx_fcport_handle_login(struct scsi_qla_host *vha, fc_port_t *fcport)
 			}
 			break;
 		default:
-			if (fcport->loop_id == FC_NO_LOOP_ID) {
+			if (wwn == 0)    {
+				ql_dbg(ql_dbg_disc, vha, 0xffff,
+				    "%s %d %8phC post GNNID\n",
+				    __func__, __LINE__, fcport->port_name);
+				qla24xx_post_gnnid_work(vha, fcport);
+			} else if (fcport->loop_id == FC_NO_LOOP_ID) {
 				ql_dbg(ql_dbg_disc, vha, 0x20bd,
 				    "%s %d %8phC post gnl\n",
 				    __func__, __LINE__, fcport->port_name);
@@ -2532,7 +2533,7 @@ qla24xx_handle_plogi_done_event(struct scsi_qla_host *vha, struct event_arg *ea)
 			ea->fcport->login_pause = 1;
 
 			ql_dbg(ql_dbg_disc, vha, 0x20ed,
-			    "%s %d %8phC NPortId %06x inuse with loopid 0x%x.\n",
+			    "%s %d %8phC NPortId %06x inuse with loopid 0x%x. post gidpn\n",
 			    __func__, __LINE__, ea->fcport->port_name,
 			    ea->fcport->d_id.b24, lid);
 		} else {
@@ -5036,9 +5037,9 @@ qla2x00_configure_hba(scsi_qla_host_t *vha)
 	spin_lock_irqsave(&ha->hardware_lock, flags);
 	if (vha->hw->flags.edif_enabled) {
 		if (topo != 2)
-			qla_update_host_map(vha, id);
+			qlt_update_host_map(vha, id);
 	} else if (!(topo == 2 && ha->flags.n2n_bigger))
-		qla_update_host_map(vha, id);
+		qlt_update_host_map(vha, id);
 	spin_unlock_irqrestore(&ha->hardware_lock, flags);
 
 	if (!vha->flags.init_done)
@@ -5076,7 +5077,7 @@ qla2x00_set_model_info(scsi_qla_host_t *vha, uint8_t *model, size_t len,
 		if (use_tbl &&
 		    ha->pdev->subsystem_vendor == PCI_VENDOR_ID_QLOGIC &&
 		    index < QLA_MODEL_NAMES)
-			strscpy(ha->model_desc,
+			strlcpy(ha->model_desc,
 			    qla2x00_model_name[index * 2 + 1],
 			    sizeof(ha->model_desc));
 	} else {
@@ -5084,14 +5085,14 @@ qla2x00_set_model_info(scsi_qla_host_t *vha, uint8_t *model, size_t len,
 		if (use_tbl &&
 		    ha->pdev->subsystem_vendor == PCI_VENDOR_ID_QLOGIC &&
 		    index < QLA_MODEL_NAMES) {
-			strscpy(ha->model_number,
+			strlcpy(ha->model_number,
 				qla2x00_model_name[index * 2],
 				sizeof(ha->model_number));
-			strscpy(ha->model_desc,
+			strlcpy(ha->model_desc,
 			    qla2x00_model_name[index * 2 + 1],
 			    sizeof(ha->model_desc));
 		} else {
-			strscpy(ha->model_number, def,
+			strlcpy(ha->model_number, def,
 				sizeof(ha->model_number));
 		}
 	}
@@ -5433,6 +5434,27 @@ qla2x00_nvram_config(scsi_qla_host_t *vha)
 	return (rval);
 }
 
+static void
+qla2x00_rport_del(void *data)
+{
+	fc_port_t *fcport = data;
+	struct fc_rport *rport;
+	unsigned long flags;
+
+	spin_lock_irqsave(fcport->vha->host->host_lock, flags);
+	rport = fcport->drport ? fcport->drport : fcport->rport;
+	fcport->drport = NULL;
+	spin_unlock_irqrestore(fcport->vha->host->host_lock, flags);
+	if (rport) {
+		ql_dbg(ql_dbg_disc, fcport->vha, 0x210b,
+		    "%s %8phN. rport %p roles %x\n",
+		    __func__, fcport->port_name, rport,
+		    rport->roles);
+
+		fc_remote_port_delete(rport);
+	}
+}
+
 void qla2x00_set_fcport_state(fc_port_t *fcport, int state)
 {
 	int old_state;
@@ -5757,6 +5779,7 @@ static int
 qla2x00_configure_local_loop(scsi_qla_host_t *vha)
 {
 	int		rval, rval2;
+	int		found_devs;
 	int		found;
 	fc_port_t	*fcport, *new_fcport;
 	uint16_t	index;
@@ -5771,6 +5794,7 @@ qla2x00_configure_local_loop(scsi_qla_host_t *vha)
 	if (N2N_TOPO(ha))
 		return qla2x00_configure_n2n_loop(vha);
 
+	found_devs = 0;
 	new_fcport = NULL;
 	entries = MAX_FIBRE_DEVICES_LOOP;
 
@@ -5929,6 +5953,8 @@ qla2x00_configure_local_loop(scsi_qla_host_t *vha)
 
 		/* Base iIDMA settings on HBA port speed. */
 		fcport->fp_speed = ha->link_data_rate;
+
+		found_devs++;
 	}
 
 	list_for_each_entry(fcport, &vha->vp_fcports, list) {
@@ -6220,6 +6246,7 @@ qla2x00_configure_fabric(scsi_qla_host_t *vha)
 	fc_port_t	*fcport;
 	uint16_t	mb[MAILBOX_REGISTER_COUNT];
 	uint16_t	loop_id;
+	LIST_HEAD(new_fcports);
 	struct qla_hw_data *ha = vha->hw;
 	int		discovery_gen;
 
@@ -6947,6 +6974,33 @@ int qla2x00_perform_loop_resync(scsi_qla_host_t *ha)
 	}
 
 	return rval;
+}
+
+void
+qla2x00_update_fcports(scsi_qla_host_t *base_vha)
+{
+	fc_port_t *fcport;
+	struct scsi_qla_host *vha, *tvp;
+	struct qla_hw_data *ha = base_vha->hw;
+	unsigned long flags;
+
+	spin_lock_irqsave(&ha->vport_slock, flags);
+	/* Go with deferred removal of rport references. */
+	list_for_each_entry_safe(vha, tvp, &base_vha->hw->vp_list, list) {
+		atomic_inc(&vha->vref_count);
+		list_for_each_entry(fcport, &vha->vp_fcports, list) {
+			if (fcport->drport &&
+			    atomic_read(&fcport->state) != FCS_UNCONFIGURED) {
+				spin_unlock_irqrestore(&ha->vport_slock, flags);
+				qla2x00_rport_del(fcport);
+
+				spin_lock_irqsave(&ha->vport_slock, flags);
+			}
+		}
+		atomic_dec(&vha->vref_count);
+		wake_up(&vha->vref_waitq);
+	}
+	spin_unlock_irqrestore(&ha->vport_slock, flags);
 }
 
 /* Assumes idc_lock always held on entry */
@@ -8434,7 +8488,7 @@ qla24xx_load_risc_flash(scsi_qla_host_t *vha, uint32_t *srisc_addr,
 		ql_dbg(ql_dbg_init, vha, 0x0163,
 		    "-> fwdt%u template allocate template %#x words...\n",
 		    j, risc_size);
-		fwdt->template = vmalloc_array(risc_size, sizeof(*dcode));
+		fwdt->template = vmalloc(risc_size * sizeof(*dcode));
 		if (!fwdt->template) {
 			ql_log(ql_log_warn, vha, 0x0164,
 			    "-> fwdt%u failed allocate template.\n", j);
@@ -8689,7 +8743,7 @@ qla24xx_load_risc_blob(scsi_qla_host_t *vha, uint32_t *srisc_addr)
 		ql_dbg(ql_dbg_init, vha, 0x0173,
 		    "-> fwdt%u template allocate template %#x words...\n",
 		    j, risc_size);
-		fwdt->template = vmalloc_array(risc_size, sizeof(*dcode));
+		fwdt->template = vmalloc(risc_size * sizeof(*dcode));
 		if (!fwdt->template) {
 			ql_log(ql_log_warn, vha, 0x0174,
 			    "-> fwdt%u failed allocate template.\n", j);
@@ -9640,9 +9694,8 @@ struct qla_qpair *qla2xxx_create_qpair(struct scsi_qla_host *vha, int qos,
 		qpair->req = ha->req_q_map[req_id];
 		qpair->rsp->req = qpair->req;
 		qpair->rsp->qpair = qpair;
-
-		if (!qpair->cpu_mapped)
-			qla_cpu_update(qpair, raw_smp_processor_id());
+		/* init qpair to this cpu. Will adjust at run time. */
+		qla_cpu_update(qpair, raw_smp_processor_id());
 
 		if (IS_T10_PI_CAPABLE(ha) && ql2xenabledif) {
 			if (ha->fw_attributes & BIT_4)
@@ -9655,13 +9708,6 @@ struct qla_qpair *qla2xxx_create_qpair(struct scsi_qla_host *vha, int qos,
 			    "Failed to create srb mempool for qpair %d\n",
 			    qpair->id);
 			goto fail_mempool;
-		}
-
-		if (qla_create_buf_pool(vha, qpair)) {
-			ql_log(ql_log_warn, vha, 0xd036,
-			    "Failed to initialize buf pool for qpair %d\n",
-			    qpair->id);
-			goto fail_bufpool;
 		}
 
 		/* Mark as online */
@@ -9679,10 +9725,7 @@ struct qla_qpair *qla2xxx_create_qpair(struct scsi_qla_host *vha, int qos,
 	}
 	return qpair;
 
-fail_bufpool:
-	mempool_destroy(qpair->srb_mempool);
 fail_mempool:
-	qla25xx_delete_req_que(vha, qpair->req);
 fail_req:
 	qla25xx_delete_rsp_que(vha, qpair->rsp);
 fail_rsp:
@@ -9707,8 +9750,6 @@ int qla2xxx_delete_qpair(struct scsi_qla_host *vha, struct qla_qpair *qpair)
 	struct qla_hw_data *ha = qpair->hw;
 
 	qpair->delete_in_progress = 1;
-
-	qla_free_buf_pool(qpair);
 
 	ret = qla25xx_delete_req_que(vha, qpair->req);
 	if (ret != QLA_SUCCESS)

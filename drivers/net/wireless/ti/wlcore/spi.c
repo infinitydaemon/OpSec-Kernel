@@ -14,6 +14,7 @@
 #include <linux/swab.h>
 #include <linux/crc7.h>
 #include <linux/spi/spi.h>
+#include <linux/wl12xx.h>
 #include <linux/platform_device.h>
 #include <linux/of_irq.h>
 #include <linux/regulator/consumer.h>
@@ -447,7 +448,8 @@ static int wlcore_probe_of(struct spi_device *spi, struct wl12xx_spi_glue *glue,
 	dev_info(&spi->dev, "selected chip family is %s\n",
 		 pdev_data->family->name);
 
-	pdev_data->ref_clock_xtal = of_property_read_bool(dt_node, "clock-xtal");
+	if (of_find_property(dt_node, "clock-xtal", NULL))
+		pdev_data->ref_clock_xtal = true;
 
 	/* optional clock frequency params */
 	of_property_read_u32(dt_node, "ref-clock-frequency",

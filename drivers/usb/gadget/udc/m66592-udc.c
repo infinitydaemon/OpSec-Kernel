@@ -1512,13 +1512,13 @@ static const struct usb_gadget_ops m66592_gadget_ops = {
 	.pullup			= m66592_pullup,
 };
 
-static void m66592_remove(struct platform_device *pdev)
+static int m66592_remove(struct platform_device *pdev)
 {
 	struct m66592		*m66592 = platform_get_drvdata(pdev);
 
 	usb_del_gadget_udc(&m66592->gadget);
 
-	timer_shutdown_sync(&m66592->timer);
+	del_timer_sync(&m66592->timer);
 	iounmap(m66592->reg);
 	free_irq(platform_get_irq(pdev, 0), m66592);
 	m66592_free_request(&m66592->ep[0].ep, m66592->ep0_req);
@@ -1527,6 +1527,7 @@ static void m66592_remove(struct platform_device *pdev)
 		clk_put(m66592->clk);
 	}
 	kfree(m66592);
+	return 0;
 }
 
 static void nop_completion(struct usb_ep *ep, struct usb_request *r)
@@ -1687,7 +1688,7 @@ clean_up:
 
 /*-------------------------------------------------------------------------*/
 static struct platform_driver m66592_driver = {
-	.remove_new =	m66592_remove,
+	.remove =	m66592_remove,
 	.driver		= {
 		.name =	udc_name,
 	},

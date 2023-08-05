@@ -26,7 +26,7 @@
 #ifndef __DAL_AUX_ENGINE_DCE110_H__
 #define __DAL_AUX_ENGINE_DCE110_H__
 
-#include "gpio_service_interface.h"
+#include "i2caux_interface.h"
 #include "inc/hw/aux_engine.h"
 
 enum aux_return_code_type;

@@ -169,6 +169,7 @@ static int olpc_apsp_probe(struct platform_device *pdev)
 {
 	struct serio *kb_serio, *pad_serio;
 	struct olpc_apsp *priv;
+	struct resource *res;
 	int error;
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(struct olpc_apsp), GFP_KERNEL);
@@ -177,7 +178,8 @@ static int olpc_apsp_probe(struct platform_device *pdev)
 
 	priv->dev = &pdev->dev;
 
-	priv->base = devm_platform_get_and_ioremap_resource(pdev, 0, NULL);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	priv->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(priv->base)) {
 		dev_err(&pdev->dev, "Failed to map WTM registers\n");
 		return PTR_ERR(priv->base);

@@ -854,7 +854,7 @@ typedef struct {
 	   The following is packed:
 	   - N cardrsp_rds_rings
 	   - N cardrs_sds_rings */
-	char data[];
+	char data[0];
 } nx_cardrsp_rx_ctx_t;
 
 #define SIZEOF_HOSTRQ_RX(HOSTRQ_RX, rds_rings, sds_rings)	\

@@ -417,6 +417,8 @@ struct mbox_chan *omap_mbox_request_channel(struct mbox_client *cl,
 	struct device *dev = cl->dev;
 	struct omap_mbox *mbox = NULL;
 	struct omap_mbox_device *mdev;
+	struct mbox_chan *chan;
+	unsigned long flags;
 	int ret;
 
 	if (!dev)
@@ -439,11 +441,23 @@ struct mbox_chan *omap_mbox_request_channel(struct mbox_client *cl,
 	if (!mbox || !mbox->chan)
 		return ERR_PTR(-ENOENT);
 
-	ret = mbox_bind_client(mbox->chan, cl);
-	if (ret)
-		return ERR_PTR(ret);
+	chan = mbox->chan;
+	spin_lock_irqsave(&chan->lock, flags);
+	chan->msg_free = 0;
+	chan->msg_count = 0;
+	chan->active_req = NULL;
+	chan->cl = cl;
+	init_completion(&chan->tx_complete);
+	spin_unlock_irqrestore(&chan->lock, flags);
 
-	return mbox->chan;
+	ret = chan->mbox->ops->startup(chan);
+	if (ret) {
+		pr_err("Unable to startup the chan (%d)\n", ret);
+		mbox_free_channel(chan);
+		chan = ERR_PTR(ret);
+	}
+
+	return chan;
 }
 EXPORT_SYMBOL(omap_mbox_request_channel);
 
@@ -749,7 +763,8 @@ static int omap_mbox_probe(struct platform_device *pdev)
 
 		finfo->name = child->name;
 
-		finfo->send_no_irq = of_property_read_bool(child, "ti,mbox-send-noirq");
+		if (of_find_property(child, "ti,mbox-send-noirq", NULL))
+			finfo->send_no_irq = true;
 
 		if (finfo->tx_id >= num_fifos || finfo->rx_id >= num_fifos ||
 		    finfo->tx_usr >= num_users || finfo->rx_usr >= num_users)

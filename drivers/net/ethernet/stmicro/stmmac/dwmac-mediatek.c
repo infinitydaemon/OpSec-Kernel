@@ -678,12 +678,15 @@ err_remove_config_dt:
 	return ret;
 }
 
-static void mediatek_dwmac_remove(struct platform_device *pdev)
+static int mediatek_dwmac_remove(struct platform_device *pdev)
 {
 	struct mediatek_dwmac_plat_data *priv_plat = get_stmmac_bsp_priv(&pdev->dev);
+	int ret;
 
-	stmmac_pltfr_remove(pdev);
+	ret = stmmac_pltfr_remove(pdev);
 	mediatek_dwmac_clks_config(priv_plat, false);
+
+	return ret;
 }
 
 static const struct of_device_id mediatek_dwmac_match[] = {
@@ -698,7 +701,7 @@ MODULE_DEVICE_TABLE(of, mediatek_dwmac_match);
 
 static struct platform_driver mediatek_dwmac_driver = {
 	.probe  = mediatek_dwmac_probe,
-	.remove_new = mediatek_dwmac_remove,
+	.remove = mediatek_dwmac_remove,
 	.driver = {
 		.name           = "dwmac-mediatek",
 		.pm		= &stmmac_pltfr_pm_ops,

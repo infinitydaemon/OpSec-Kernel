@@ -626,12 +626,14 @@ static void mux_dl_adb_decode(struct iosm_mux *ipc_mux,
 		if (adth->signature != cpu_to_le32(IOSM_AGGR_MUX_SIG_ADTH))
 			goto adb_decode_err;
 
-		if (le16_to_cpu(adth->table_length) < sizeof(struct mux_adth))
+		if (le16_to_cpu(adth->table_length) < (sizeof(struct mux_adth) -
+				sizeof(struct mux_adth_dg)))
 			goto adb_decode_err;
 
 		/* Calculate the number of datagrams. */
 		nr_of_dg = (le16_to_cpu(adth->table_length) -
-					sizeof(struct mux_adth)) /
+					sizeof(struct mux_adth) +
+					sizeof(struct mux_adth_dg)) /
 					sizeof(struct mux_adth_dg);
 
 		/* Is the datagram table empty ? */
@@ -647,7 +649,7 @@ static void mux_dl_adb_decode(struct iosm_mux *ipc_mux,
 		}
 
 		/* New aggregated datagram table. */
-		dg = adth->dg;
+		dg = &adth->dg;
 		if (mux_dl_process_dg(ipc_mux, adbh, dg, skb, if_id,
 				      nr_of_dg) < 0)
 			goto adb_decode_err;
@@ -847,7 +849,7 @@ static void ipc_mux_ul_encode_adth(struct iosm_mux *ipc_mux,
 			adth->if_id = i;
 			adth->table_length = cpu_to_le16(adth_dg_size);
 			adth_dg_size -= offsetof(struct mux_adth, dg);
-			memcpy(adth->dg, ul_adb->dg[i], adth_dg_size);
+			memcpy(&adth->dg, ul_adb->dg[i], adth_dg_size);
 			ul_adb->if_cnt++;
 		}
 
@@ -1424,13 +1426,14 @@ static int ipc_mux_get_payload_from_adb(struct iosm_mux *ipc_mux,
 
 		if (adth->signature == cpu_to_le32(IOSM_AGGR_MUX_SIG_ADTH)) {
 			nr_of_dg = (le16_to_cpu(adth->table_length) -
-					sizeof(struct mux_adth)) /
+					sizeof(struct mux_adth) +
+					sizeof(struct mux_adth_dg)) /
 					sizeof(struct mux_adth_dg);
 
 			if (nr_of_dg <= 0)
 				return payload_size;
 
-			dg = adth->dg;
+			dg = &adth->dg;
 
 			for (i = 0; i < nr_of_dg; i++, dg++) {
 				if (le32_to_cpu(dg->datagram_index) <

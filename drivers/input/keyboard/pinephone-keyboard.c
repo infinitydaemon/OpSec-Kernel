@@ -455,7 +455,7 @@ static const struct of_device_id ppkb_of_match[] = {
 MODULE_DEVICE_TABLE(of, ppkb_of_match);
 
 static struct i2c_driver ppkb_driver = {
-	.probe		= ppkb_probe,
+	.probe_new	= ppkb_probe,
 	.driver		= {
 		.name		= DRV_NAME,
 		.of_match_table = ppkb_of_match,

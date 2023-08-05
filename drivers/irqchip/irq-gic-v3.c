@@ -12,7 +12,6 @@
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/irqdomain.h>
-#include <linux/kstrtox.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
@@ -40,7 +39,6 @@
 #define FLAGS_WORKAROUND_GICR_WAKER_MSM8996	(1ULL << 0)
 #define FLAGS_WORKAROUND_CAVIUM_ERRATUM_38539	(1ULL << 1)
 #define FLAGS_WORKAROUND_MTK_GICR_SAVE		(1ULL << 2)
-#define FLAGS_WORKAROUND_ASR_ERRATUM_8601001	(1ULL << 3)
 
 #define GIC_IRQ_TYPE_PARTITION	(GIC_IRQ_TYPE_LPI + 1)
 
@@ -98,6 +96,15 @@ static DEFINE_STATIC_KEY_TRUE(supports_deactivate_key);
  *   interrupt.
  */
 static DEFINE_STATIC_KEY_FALSE(supports_pseudo_nmis);
+
+/*
+ * Global static key controlling whether an update to PMR allowing more
+ * interrupts requires to be propagated to the redistributor (DSB SY).
+ * And this needs to be exported for modules to be able to enable
+ * interrupts...
+ */
+DEFINE_STATIC_KEY_FALSE(gic_pmr_sync);
+EXPORT_SYMBOL(gic_pmr_sync);
 
 DEFINE_STATIC_KEY_FALSE(gic_nonsecure_priorities);
 EXPORT_SYMBOL(gic_nonsecure_priorities);
@@ -657,15 +664,9 @@ static int gic_irq_set_vcpu_affinity(struct irq_data *d, void *vcpu)
 	return 0;
 }
 
-static u64 gic_cpu_to_affinity(int cpu)
+static u64 gic_mpidr_to_affinity(unsigned long mpidr)
 {
-	u64 mpidr = cpu_logical_map(cpu);
 	u64 aff;
-
-	/* ASR8601 needs to have its affinities shifted down... */
-	if (unlikely(gic_data.flags & FLAGS_WORKAROUND_ASR_ERRATUM_8601001))
-		mpidr = (MPIDR_AFFINITY_LEVEL(mpidr, 1)	|
-			 (MPIDR_AFFINITY_LEVEL(mpidr, 2) << 8));
 
 	aff = ((u64)MPIDR_AFFINITY_LEVEL(mpidr, 3) << 32 |
 	       MPIDR_AFFINITY_LEVEL(mpidr, 2) << 16 |
@@ -921,7 +922,7 @@ static void __init gic_dist_init(void)
 	 * Set all global interrupts to the boot CPU only. ARE must be
 	 * enabled.
 	 */
-	affinity = gic_cpu_to_affinity(smp_processor_id());
+	affinity = gic_mpidr_to_affinity(cpu_logical_map(smp_processor_id()));
 	for (i = 32; i < GIC_LINE_NR; i++)
 		gic_write_irouter(affinity, base + GICD_IROUTER + i * 8);
 
@@ -970,7 +971,7 @@ static int gic_iterate_rdists(int (*fn)(struct redist_region *, void __iomem *))
 
 static int __gic_populate_rdist(struct redist_region *region, void __iomem *ptr)
 {
-	unsigned long mpidr;
+	unsigned long mpidr = cpu_logical_map(smp_processor_id());
 	u64 typer;
 	u32 aff;
 
@@ -978,8 +979,6 @@ static int __gic_populate_rdist(struct redist_region *region, void __iomem *ptr)
 	 * Convert affinity to a 32bit value that can be matched to
 	 * GICR_TYPER bits [63:32].
 	 */
-	mpidr = gic_cpu_to_affinity(smp_processor_id());
-
 	aff = (MPIDR_AFFINITY_LEVEL(mpidr, 3) << 24 |
 	       MPIDR_AFFINITY_LEVEL(mpidr, 2) << 16 |
 	       MPIDR_AFFINITY_LEVEL(mpidr, 1) << 8 |
@@ -1093,7 +1092,7 @@ static inline bool gic_dist_security_disabled(void)
 static void gic_cpu_sys_reg_init(void)
 {
 	int i, cpu = smp_processor_id();
-	u64 mpidr = gic_cpu_to_affinity(cpu);
+	u64 mpidr = cpu_logical_map(cpu);
 	u64 need_rss = MPIDR_RS(mpidr);
 	bool group0;
 	u32 pribits;
@@ -1192,11 +1191,11 @@ static void gic_cpu_sys_reg_init(void)
 	for_each_online_cpu(i) {
 		bool have_rss = per_cpu(has_rss, i) && per_cpu(has_rss, cpu);
 
-		need_rss |= MPIDR_RS(gic_cpu_to_affinity(i));
+		need_rss |= MPIDR_RS(cpu_logical_map(i));
 		if (need_rss && (!have_rss))
 			pr_crit("CPU%d (%lx) can't SGI CPU%d (%lx), no RSS\n",
 				cpu, (unsigned long)mpidr,
-				i, (unsigned long)gic_cpu_to_affinity(i));
+				i, (unsigned long)cpu_logical_map(i));
 	}
 
 	/**
@@ -1214,7 +1213,7 @@ static bool gicv3_nolpi;
 
 static int __init gicv3_nolpi_cfg(char *buf)
 {
-	return kstrtobool(buf, &gicv3_nolpi);
+	return strtobool(buf, &gicv3_nolpi);
 }
 early_param("irqchip.gicv3_nolpi", gicv3_nolpi_cfg);
 
@@ -1272,10 +1271,8 @@ static u16 gic_compute_target_list(int *base_cpu, const struct cpumask *mask,
 				   unsigned long cluster_id)
 {
 	int next_cpu, cpu = *base_cpu;
-	unsigned long mpidr;
+	unsigned long mpidr = cpu_logical_map(cpu);
 	u16 tlist = 0;
-
-	mpidr = gic_cpu_to_affinity(cpu);
 
 	while (cpu < nr_cpu_ids) {
 		tlist |= 1 << (mpidr & 0xf);
@@ -1285,7 +1282,7 @@ static u16 gic_compute_target_list(int *base_cpu, const struct cpumask *mask,
 			goto out;
 		cpu = next_cpu;
 
-		mpidr = gic_cpu_to_affinity(cpu);
+		mpidr = cpu_logical_map(cpu);
 
 		if (cluster_id != MPIDR_TO_SGI_CLUSTER_ID(mpidr)) {
 			cpu--;
@@ -1330,7 +1327,7 @@ static void gic_ipi_send_mask(struct irq_data *d, const struct cpumask *mask)
 	dsb(ishst);
 
 	for_each_cpu(cpu, mask) {
-		u64 cluster_id = MPIDR_TO_SGI_CLUSTER_ID(gic_cpu_to_affinity(cpu));
+		u64 cluster_id = MPIDR_TO_SGI_CLUSTER_ID(cpu_logical_map(cpu));
 		u16 tlist;
 
 		tlist = gic_compute_target_list(&cpu, mask, cluster_id);
@@ -1354,7 +1351,9 @@ static void __init gic_smp_init(void)
 				  gic_starting_cpu, NULL);
 
 	/* Register all 8 non-secure SGIs */
-	base_sgi = irq_domain_alloc_irqs(gic_data.domain, 8, NUMA_NO_NODE, &sgi_fwspec);
+	base_sgi = __irq_domain_alloc_irqs(gic_data.domain, -1, 8,
+					   NUMA_NO_NODE, &sgi_fwspec,
+					   false, NULL);
 	if (WARN_ON(base_sgi <= 0))
 		return;
 
@@ -1388,7 +1387,7 @@ static int gic_set_affinity(struct irq_data *d, const struct cpumask *mask_val,
 
 	offset = convert_offset_index(d, GICD_IROUTER, &index);
 	reg = gic_dist_base(d) + offset + (index * 8);
-	val = gic_cpu_to_affinity(cpu);
+	val = gic_mpidr_to_affinity(cpu_logical_map(cpu));
 
 	gic_write_irouter(val, reg);
 
@@ -1807,25 +1806,11 @@ static bool gic_enable_quirk_nvidia_t241(void *data)
 	return true;
 }
 
-static bool gic_enable_quirk_asr8601(void *data)
-{
-	struct gic_chip_data *d = data;
-
-	d->flags |= FLAGS_WORKAROUND_ASR_ERRATUM_8601001;
-
-	return true;
-}
-
 static const struct gic_quirk gic_quirks[] = {
 	{
 		.desc	= "GICv3: Qualcomm MSM8996 broken firmware",
 		.compatible = "qcom,msm8996-gic-v3",
 		.init	= gic_enable_quirk_msm8996,
-	},
-	{
-		.desc	= "GICv3: ASR erratum 8601001",
-		.compatible = "asr,asr8601-gic-v3",
-		.init	= gic_enable_quirk_asr8601,
 	},
 	{
 		.desc	= "GICv3: Mediatek Chromebook GICR save problem",
@@ -1886,8 +1871,16 @@ static void gic_enable_nmi_support(void)
 	for (i = 0; i < gic_data.ppi_nr; i++)
 		refcount_set(&ppi_nmi_refs[i], 0);
 
+	/*
+	 * Linux itself doesn't use 1:N distribution, so has no need to
+	 * set PMHE. The only reason to have it set is if EL3 requires it
+	 * (and we can't change it).
+	 */
+	if (gic_read_ctlr() & ICC_CTLR_EL1_PMHE_MASK)
+		static_branch_enable(&gic_pmr_sync);
+
 	pr_info("Pseudo-NMIs enabled using %s ICC_PMR_EL1 synchronisation\n",
-		gic_has_relaxed_pmr_sync() ? "relaxed" : "forced");
+		static_branch_unlikely(&gic_pmr_sync) ? "forced" : "relaxed");
 
 	/*
 	 * How priority values are used by the GIC depends on two things:

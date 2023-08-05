@@ -346,8 +346,14 @@ static int hsdk_pll_clk_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	return devm_of_clk_add_hw_provider(dev, of_clk_hw_simple_get,
-					   &pll_clk->hw);
+	return of_clk_add_hw_provider(dev->of_node, of_clk_hw_simple_get,
+			&pll_clk->hw);
+}
+
+static int hsdk_pll_clk_remove(struct platform_device *pdev)
+{
+	of_clk_del_provider(pdev->dev.of_node);
+	return 0;
 }
 
 static void __init of_hsdk_pll_clk_setup(struct device_node *node)
@@ -426,5 +432,6 @@ static struct platform_driver hsdk_pll_clk_driver = {
 		.of_match_table = hsdk_pll_clk_id,
 	},
 	.probe = hsdk_pll_clk_probe,
+	.remove = hsdk_pll_clk_remove,
 };
 builtin_platform_driver(hsdk_pll_clk_driver);

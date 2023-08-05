@@ -28,7 +28,6 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_edid.h>
 
-#include "i915_reg.h"
 #include "intel_de.h"
 #include "intel_display_types.h"
 #include "intel_dp.h"
@@ -689,7 +688,7 @@ void lspcon_resume(struct intel_digital_port *dig_port)
 	struct drm_i915_private *i915 = to_i915(dev);
 	enum drm_lspcon_mode expected_mode;
 
-	if (!intel_bios_encoder_is_lspcon(dig_port->base.devdata))
+	if (!intel_bios_is_lspcon_present(i915, dig_port->base.port))
 		return;
 
 	if (!lspcon->active) {

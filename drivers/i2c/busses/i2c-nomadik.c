@@ -1000,14 +1000,16 @@ static int nmk_i2c_probe(struct amba_device *adev, const struct amba_id *id)
 	dev->irq = adev->irq[0];
 	ret = devm_request_irq(&adev->dev, dev->irq, i2c_irq_handler, 0,
 				DRIVER_NAME, dev);
-	if (ret)
-		return dev_err_probe(&adev->dev, ret,
-				     "cannot claim the irq %d\n", dev->irq);
+	if (ret) {
+		dev_err(&adev->dev, "cannot claim the irq %d\n", dev->irq);
+		return ret;
+	}
 
 	dev->clk = devm_clk_get_enabled(&adev->dev, NULL);
-	if (IS_ERR(dev->clk))
-		return dev_err_probe(&adev->dev, PTR_ERR(dev->clk),
-				     "could enable i2c clock\n");
+	if (IS_ERR(dev->clk)) {
+		dev_err(&adev->dev, "could enable i2c clock\n");
+		return PTR_ERR(dev->clk);
+	}
 
 	init_hw(dev);
 

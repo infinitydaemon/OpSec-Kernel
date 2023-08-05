@@ -106,18 +106,20 @@ clk_err:
 	return ret;
 }
 
-static void ci_hdrc_usb2_remove(struct platform_device *pdev)
+static int ci_hdrc_usb2_remove(struct platform_device *pdev)
 {
 	struct ci_hdrc_usb2_priv *priv = platform_get_drvdata(pdev);
 
 	pm_runtime_disable(&pdev->dev);
 	ci_hdrc_remove_device(priv->ci_pdev);
 	clk_disable_unprepare(priv->clk);
+
+	return 0;
 }
 
 static struct platform_driver ci_hdrc_usb2_driver = {
 	.probe	= ci_hdrc_usb2_probe,
-	.remove_new = ci_hdrc_usb2_remove,
+	.remove	= ci_hdrc_usb2_remove,
 	.driver	= {
 		.name		= "chipidea-usb2",
 		.of_match_table	= of_match_ptr(ci_hdrc_usb2_of_match),

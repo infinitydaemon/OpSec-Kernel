@@ -11,6 +11,7 @@
 
 #include "net_driver.h"
 #include <linux/module.h>
+#include <linux/aer.h>
 #include "efx_common.h"
 #include "efx_channels.h"
 #include "io.h"
@@ -438,6 +439,8 @@ static void ef100_pci_remove(struct pci_dev *pci_dev)
 	efx_fini_io(efx);
 
 	pci_dbg(pci_dev, "shutdown successful\n");
+
+	pci_disable_pcie_error_reporting(pci_dev);
 
 	pci_set_drvdata(pci_dev, NULL);
 	efx_fini_struct(efx);

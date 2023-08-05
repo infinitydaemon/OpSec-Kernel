@@ -225,18 +225,6 @@ static const struct host1x_sid_entry tegra234_sid_table[] = {
 		.offset = 0x34,
 		.limit = 0x34
 	},
-	{
-		/* NVDEC channel */
-		.base = 0x17c8,
-		.offset = 0x30,
-		.limit = 0x30,
-	},
-	{
-		/* NVDEC MMIO */
-		.base = 0x1698,
-		.offset = 0x34,
-		.limit = 0x34,
-	},
 };
 
 static const struct host1x_info host1x08_info = {
@@ -487,6 +475,7 @@ static int host1x_get_resets(struct host1x *host)
 static int host1x_probe(struct platform_device *pdev)
 {
 	struct host1x *host;
+	int syncpt_irq;
 	int err;
 
 	host = devm_kzalloc(&pdev->dev, sizeof(*host), GFP_KERNEL);
@@ -515,9 +504,9 @@ static int host1x_probe(struct platform_device *pdev)
 			return PTR_ERR(host->regs);
 	}
 
-	host->syncpt_irq = platform_get_irq(pdev, 0);
-	if (host->syncpt_irq < 0)
-		return host->syncpt_irq;
+	syncpt_irq = platform_get_irq(pdev, 0);
+	if (syncpt_irq < 0)
+		return syncpt_irq;
 
 	mutex_init(&host->devices_lock);
 	INIT_LIST_HEAD(&host->devices);
@@ -577,7 +566,7 @@ static int host1x_probe(struct platform_device *pdev)
 		goto free_contexts;
 	}
 
-	err = host1x_intr_init(host);
+	err = host1x_intr_init(host, syncpt_irq);
 	if (err) {
 		dev_err(&pdev->dev, "failed to initialize interrupts\n");
 		goto deinit_syncpt;

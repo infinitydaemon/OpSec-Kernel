@@ -541,7 +541,8 @@ static int sprd_adi_probe(struct platform_device *pdev)
 	dev_set_drvdata(&pdev->dev, ctlr);
 	sadi = spi_controller_get_devdata(ctlr);
 
-	sadi->base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	sadi->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(sadi->base)) {
 		ret = PTR_ERR(sadi->base);
 		goto put_ctlr;
@@ -607,12 +608,13 @@ put_ctlr:
 	return ret;
 }
 
-static void sprd_adi_remove(struct platform_device *pdev)
+static int sprd_adi_remove(struct platform_device *pdev)
 {
 	struct spi_controller *ctlr = dev_get_drvdata(&pdev->dev);
 	struct sprd_adi *sadi = spi_controller_get_devdata(ctlr);
 
 	unregister_restart_handler(&sadi->restart_handler);
+	return 0;
 }
 
 static struct sprd_adi_data sc9860_data = {
@@ -658,7 +660,7 @@ static struct platform_driver sprd_adi_driver = {
 		.of_match_table = sprd_adi_of_match,
 	},
 	.probe = sprd_adi_probe,
-	.remove_new = sprd_adi_remove,
+	.remove = sprd_adi_remove,
 };
 module_platform_driver(sprd_adi_driver);
 

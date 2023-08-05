@@ -32,6 +32,15 @@ tc_act_parse_tun_encap(struct mlx5e_tc_act_parse_state *parse_state,
 	return 0;
 }
 
+static bool
+tc_act_can_offload_tun_decap(struct mlx5e_tc_act_parse_state *parse_state,
+			     const struct flow_action_entry *act,
+			     int act_index,
+			     struct mlx5_flow_attr *attr)
+{
+	return true;
+}
+
 static int
 tc_act_parse_tun_decap(struct mlx5e_tc_act_parse_state *parse_state,
 		       const struct flow_action_entry *act,
@@ -49,5 +58,6 @@ struct mlx5e_tc_act mlx5e_tc_act_tun_encap = {
 };
 
 struct mlx5e_tc_act mlx5e_tc_act_tun_decap = {
+	.can_offload = tc_act_can_offload_tun_decap,
 	.parse_action = tc_act_parse_tun_decap,
 };

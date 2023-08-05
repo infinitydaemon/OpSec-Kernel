@@ -119,8 +119,6 @@ static const struct alpha_pll_config gpll10_config = {
 	.vco_mask = GENMASK(21, 20),
 	.main_output_mask = BIT(0),
 	.config_ctl_val = 0x4001055b,
-	.test_ctl_hi1_val = 0x1,
-	.test_ctl_hi_mask = 0x1,
 };
 
 static struct clk_alpha_pll gpll10 = {
@@ -172,8 +170,6 @@ static const struct alpha_pll_config gpll11_config = {
 	.vco_val = 0x2 << 20,
 	.vco_mask = GENMASK(21, 20),
 	.config_ctl_val = 0x4001055b,
-	.test_ctl_hi1_val = 0x1,
-	.test_ctl_hi_mask = 0x1,
 };
 
 static struct clk_alpha_pll gpll11 = {
@@ -366,8 +362,6 @@ static const struct alpha_pll_config gpll8_config = {
 	.post_div_val = 0x1 << 8,
 	.post_div_mask = GENMASK(11, 8),
 	.config_ctl_val = 0x4001055b,
-	.test_ctl_hi1_val = 0x1,
-	.test_ctl_hi_mask = 0x1,
 };
 
 static struct clk_alpha_pll gpll8 = {
@@ -419,8 +413,6 @@ static const struct alpha_pll_config gpll9_config = {
 	.post_div_mask = GENMASK(9, 8),
 	.main_output_mask = BIT(0),
 	.config_ctl_val = 0x00004289,
-	.test_ctl_mask = GENMASK(31, 0),
-	.test_ctl_val = 0x08000000,
 };
 
 static struct clk_alpha_pll gpll9 = {
@@ -1266,7 +1258,7 @@ static struct clk_rcg2 gcc_sdcc1_apps_clk_src = {
 		.name = "gcc_sdcc1_apps_clk_src",
 		.parent_data = gcc_parents_1,
 		.num_parents = ARRAY_SIZE(gcc_parents_1),
-		.ops = &clk_rcg2_floor_ops,
+		.ops = &clk_rcg2_ops,
 	},
 };
 
@@ -1313,7 +1305,7 @@ static struct clk_rcg2 gcc_sdcc2_apps_clk_src = {
 		.name = "gcc_sdcc2_apps_clk_src",
 		.parent_data = gcc_parents_11,
 		.num_parents = ARRAY_SIZE(gcc_parents_11),
-		.ops = &clk_rcg2_floor_ops,
+		.ops = &clk_rcg2_ops,
 		.flags = CLK_OPS_PARENT_ENABLE,
 	},
 };

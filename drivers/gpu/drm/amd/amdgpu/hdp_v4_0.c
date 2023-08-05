@@ -49,8 +49,7 @@ static void hdp_v4_0_flush_hdp(struct amdgpu_device *adev,
 static void hdp_v4_0_invalidate_hdp(struct amdgpu_device *adev,
 				    struct amdgpu_ring *ring)
 {
-	if (adev->ip_versions[HDP_HWIP][0] == IP_VERSION(4, 4, 0) ||
-	    adev->ip_versions[HDP_HWIP][0] == IP_VERSION(4, 4, 2))
+	if (adev->ip_versions[HDP_HWIP][0] == IP_VERSION(4, 4, 0))
 		return;
 
 	if (!ring || !ring->funcs->emit_wreg)
@@ -161,6 +160,11 @@ struct amdgpu_ras_block_hw_ops hdp_v4_0_ras_hw_ops = {
 
 struct amdgpu_hdp_ras hdp_v4_0_ras = {
 	.ras_block = {
+		.ras_comm = {
+			.name = "hdp",
+			.block = AMDGPU_RAS_BLOCK__HDP,
+			.type = AMDGPU_RAS_ERROR__MULTI_UNCORRECTABLE,
+		},
 		.hw_ops = &hdp_v4_0_ras_hw_ops,
 	},
 };

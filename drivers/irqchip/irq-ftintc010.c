@@ -125,7 +125,7 @@ static struct irq_chip ft010_irq_chip = {
 /* Local static for the IRQ entry call */
 static struct ft010_irq_data firq;
 
-static asmlinkage void __exception_irq_entry ft010_irqchip_handle_irq(struct pt_regs *regs)
+asmlinkage void __exception_irq_entry ft010_irqchip_handle_irq(struct pt_regs *regs)
 {
 	struct ft010_irq_data *f = &firq;
 	int irq;
@@ -162,7 +162,7 @@ static const struct irq_domain_ops ft010_irqdomain_ops = {
 	.xlate = irq_domain_xlate_onetwocell,
 };
 
-static int __init ft010_of_init_irq(struct device_node *node,
+int __init ft010_of_init_irq(struct device_node *node,
 			      struct device_node *parent)
 {
 	struct ft010_irq_data *f = &firq;

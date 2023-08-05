@@ -408,9 +408,6 @@ static struct hns3_dbg_cap_info hns3_dbg_cap[] = {
 	}, {
 		.name = "support lane num",
 		.cap_bit = HNAE3_DEV_SUPPORT_LANE_NUM_B,
-	}, {
-		.name = "support wake on lan",
-		.cap_bit = HNAE3_DEV_SUPPORT_WOL_B,
 	}
 };
 
@@ -958,7 +955,8 @@ static const struct hns3_dbg_item tx_bd_info_items[] = {
 	{ "MSS_HW_CSUM", 0 },
 };
 
-static void hns3_dump_tx_bd_info(struct hns3_desc *desc, char **result, int idx)
+static void hns3_dump_tx_bd_info(struct hns3_nic_priv *priv,
+				 struct hns3_desc *desc, char **result, int idx)
 {
 	unsigned int j = 0;
 
@@ -1007,7 +1005,7 @@ static int hns3_dbg_tx_bd_info(struct hns3_dbg_data *d, char *buf, int len)
 	for (i = 0; i < ring->desc_num; i++) {
 		desc = &ring->desc[i];
 
-		hns3_dump_tx_bd_info(desc, result, i);
+		hns3_dump_tx_bd_info(priv, desc, result, i);
 		hns3_dbg_fill_content(content, sizeof(content),
 				      tx_bd_info_items, (const char **)result,
 				      ARRAY_SIZE(tx_bd_info_items));

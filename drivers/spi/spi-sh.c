@@ -377,12 +377,14 @@ static irqreturn_t spi_sh_irq(int irq, void *_ss)
 	return IRQ_HANDLED;
 }
 
-static void spi_sh_remove(struct platform_device *pdev)
+static int spi_sh_remove(struct platform_device *pdev)
 {
 	struct spi_sh_data *ss = platform_get_drvdata(pdev);
 
 	spi_unregister_master(ss->master);
 	free_irq(ss->irq, ss);
+
+	return 0;
 }
 
 static int spi_sh_probe(struct platform_device *pdev)
@@ -459,7 +461,7 @@ static int spi_sh_probe(struct platform_device *pdev)
 
 static struct platform_driver spi_sh_driver = {
 	.probe = spi_sh_probe,
-	.remove_new = spi_sh_remove,
+	.remove = spi_sh_remove,
 	.driver = {
 		.name = "sh_spi",
 	},

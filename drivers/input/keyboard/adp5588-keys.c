@@ -718,7 +718,8 @@ static void adp5588_disable_regulator(void *reg)
 	regulator_disable(reg);
 }
 
-static int adp5588_probe(struct i2c_client *client)
+static int adp5588_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct adp5588_kpad *kpad;
 	struct input_dev *input;

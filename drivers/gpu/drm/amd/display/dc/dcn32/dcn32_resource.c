@@ -57,6 +57,7 @@
 #include "dcn31/dcn31_hpo_dp_stream_encoder.h"
 #include "dcn31/dcn31_hpo_dp_link_encoder.h"
 #include "dcn32/dcn32_hpo_dp_link_encoder.h"
+#include "dc_link_dp.h"
 #include "dcn31/dcn31_apg.h"
 #include "dcn31/dcn31_dio_link_encoder.h"
 #include "dcn32/dcn32_dio_link_encoder.h"
@@ -68,7 +69,7 @@
 #include "dml/display_mode_vba.h"
 #include "dcn32/dcn32_dccg.h"
 #include "dcn10/dcn10_resource.h"
-#include "link.h"
+#include "dc_link_ddc.h"
 #include "dcn31/dcn31_panel_cntl.h"
 
 #include "dcn30/dcn30_dwb.h"
@@ -105,6 +106,8 @@ enum dcn32_clk_src_array_id {
  */
 
 /* DCN */
+/* TODO awful hack. fixup dcn20_dwb.h */
+#undef BASE_INNER
 #define BASE_INNER(seg) ctx->dcn_reg_offsets[seg]
 
 #define BASE(seg) BASE_INNER(seg)
@@ -163,9 +166,6 @@ enum dcn32_clk_src_array_id {
 #define SRII_DWB(reg_name, temp_name, block, id)\
 	REG_STRUCT.reg_name[id] = BASE(reg ## block ## id ## _ ## temp_name ## _BASE_IDX) + \
 		reg ## block ## id ## _ ## temp_name
-
-#define SF_DWB2(reg_name, block, id, field_name, post_fix)	\
-	.field_name = reg_name ## __ ## field_name ## post_fix
 
 #define DCCG_SRII(reg_name, block, id)\
 	REG_STRUCT.block ## _ ## reg_name[id] = BASE(reg ## block ## id ## _ ## reg_name ## _BASE_IDX) + \
@@ -324,6 +324,7 @@ static const struct dcn10_link_enc_shift le_shift = {
 
 static const struct dcn10_link_enc_mask le_mask = {
 	LINK_ENCODER_MASK_SH_LIST_DCN31(_MASK), \
+
 	//DPCS_DCN31_MASK_SH_LIST(_MASK)
 };
 
@@ -656,6 +657,8 @@ static const struct resource_caps res_cap_dcn32 = {
 
 static const struct dc_plane_cap plane_cap = {
 	.type = DC_PLANE_TYPE_DCN_UNIVERSAL,
+	.blends_with_above = true,
+	.blends_with_below = true,
 	.per_pixel_alpha = true,
 
 	.pixel_format_support = {
@@ -719,20 +722,29 @@ static const struct dc_debug_options debug_defaults_drv = {
 	/* Must match enable_single_display_2to1_odm_policy to support dynamic ODM transitions*/
 	.enable_double_buffered_dsc_pg_support = true,
 	.enable_dp_dig_pixel_rate_div_policy = 1,
-	.allow_sw_cursor_fallback = false, // Linux can't do SW cursor "fallback"
+	.allow_sw_cursor_fallback = false,
 	.alloc_extra_way_for_cursor = true,
 	.min_prefetch_in_strobe_ns = 60000, // 60us
-	.disable_unbounded_requesting = false,
-	.override_dispclk_programming = true,
-	.disable_fpo_optimizations = false,
-	.fpo_vactive_margin_us = 2000, // 2000us
-	.disable_fpo_vactive = false,
-	.disable_boot_optimizations = false,
-	.disable_subvp_high_refresh = false,
-	.disable_dp_plus_plus_wa = true,
-	.fpo_vactive_min_active_margin_us = 200,
-	.fpo_vactive_max_blank_us = 1000,
-	.enable_legacy_fast_update = false,
+};
+
+static const struct dc_debug_options debug_defaults_diags = {
+	.disable_dmcu = true,
+	.force_abm_enable = false,
+	.timing_trace = true,
+	.clock_trace = true,
+	.disable_dpp_power_gate = true,
+	.disable_hubp_power_gate = true,
+	.disable_dsc_power_gate = true,
+	.disable_clock_gate = true,
+	.disable_pplib_clock_request = true,
+	.disable_pplib_wm_range = true,
+	.disable_stutter = false,
+	.scl_reset_length10 = true,
+	.dwb_fi_phase = -1, // -1 = disable
+	.dmub_command_table = true,
+	.enable_tri_buf = true,
+	.use_max_lb = true,
+	.force_disable_subvp = true
 };
 
 static struct dce_aux *dcn32_aux_engine_create(
@@ -818,7 +830,6 @@ static struct clock_source *dcn32_clock_source_create(
 		return &clk_src->base;
 	}
 
-	kfree(clk_src);
 	BREAK_TO_DEBUGGER();
 	return NULL;
 }
@@ -1338,6 +1349,15 @@ static const struct resource_create_funcs res_create_funcs = {
 	.create_hwseq = dcn32_hwseq_create,
 };
 
+static const struct resource_create_funcs res_create_maximus_funcs = {
+	.read_dce_straps = NULL,
+	.create_audio = NULL,
+	.create_stream_encoder = NULL,
+	.create_hpo_dp_stream_encoder = dcn32_hpo_dp_stream_encoder_create,
+	.create_hpo_dp_link_encoder = dcn32_hpo_dp_link_encoder_create,
+	.create_hwseq = dcn32_hwseq_create,
+};
+
 static void dcn32_resource_destruct(struct dcn32_resource_pool *pool)
 {
 	unsigned int i;
@@ -1484,11 +1504,8 @@ static void dcn32_resource_destruct(struct dcn32_resource_pool *pool)
 	if (pool->base.dccg != NULL)
 		dcn_dccg_destroy(&pool->base.dccg);
 
-	if (pool->base.oem_device != NULL) {
-		struct dc *dc = pool->base.oem_device->ctx->dc;
-
-		dc->link_srv->destroy_ddc_service(&pool->base.oem_device);
-	}
+	if (pool->base.oem_device != NULL)
+		dal_ddc_service_destroy(&pool->base.oem_device);
 }
 
 
@@ -1592,6 +1609,7 @@ bool dcn32_acquire_post_bldn_3dlut(
 		struct dc_transfer_func **shaper)
 {
 	bool ret = false;
+	union dc_3dlut_state *state;
 
 	ASSERT(*lut == NULL && *shaper == NULL);
 	*lut = NULL;
@@ -1600,6 +1618,7 @@ bool dcn32_acquire_post_bldn_3dlut(
 	if (!res_ctx->is_mpc_3dlut_acquired[mpcc_id]) {
 		*lut = pool->mpc_lut[mpcc_id];
 		*shaper = pool->mpc_shaper[mpcc_id];
+		state = &pool->mpc_lut[mpcc_id]->state;
 		res_ctx->is_mpc_3dlut_acquired[mpcc_id] = true;
 		ret = true;
 	}
@@ -1660,7 +1679,7 @@ static void dcn32_enable_phantom_plane(struct dc *dc,
 
 		/* Shadow pipe has small viewport. */
 		phantom_plane->clip_rect.y = 0;
-		phantom_plane->clip_rect.height = phantom_stream->src.height;
+		phantom_plane->clip_rect.height = phantom_stream->timing.v_addressable;
 
 		phantom_plane->is_phantom = true;
 
@@ -1700,29 +1719,8 @@ static struct dc_stream_state *dcn32_enable_phantom_stream(struct dc *dc,
 	return phantom_stream;
 }
 
-void dcn32_retain_phantom_pipes(struct dc *dc, struct dc_state *context)
-{
-	int i;
-	struct dc_plane_state *phantom_plane = NULL;
-	struct dc_stream_state *phantom_stream = NULL;
-
-	for (i = 0; i < dc->res_pool->pipe_count; i++) {
-		struct pipe_ctx *pipe = &context->res_ctx.pipe_ctx[i];
-
-		if (!pipe->top_pipe && !pipe->prev_odm_pipe &&
-				pipe->plane_state && pipe->stream &&
-				pipe->stream->mall_stream_config.type == SUBVP_PHANTOM) {
-			phantom_plane = pipe->plane_state;
-			phantom_stream = pipe->stream;
-
-			dc_plane_state_retain(phantom_plane);
-			dc_stream_retain(phantom_stream);
-		}
-	}
-}
-
 // return true if removed piped from ctx, false otherwise
-bool dcn32_remove_phantom_pipes(struct dc *dc, struct dc_state *context, bool fast_update)
+bool dcn32_remove_phantom_pipes(struct dc *dc, struct dc_state *context)
 {
 	int i;
 	bool removed_pipe = false;
@@ -1749,23 +1747,14 @@ bool dcn32_remove_phantom_pipes(struct dc *dc, struct dc_state *context, bool fa
 			removed_pipe = true;
 		}
 
-		/* For non-full updates, a shallow copy of the current state
-		 * is created. In this case we don't want to erase the current
-		 * state (there can be 2 HIRQL threads, one in flip, and one in
-		 * checkMPO) that can cause a race condition.
-		 *
-		 * This is just a workaround, needs a proper fix.
-		 */
-		if (!fast_update) {
-			// Clear all phantom stream info
-			if (pipe->stream) {
-				pipe->stream->mall_stream_config.type = SUBVP_NONE;
-				pipe->stream->mall_stream_config.paired_stream = NULL;
-			}
+		// Clear all phantom stream info
+		if (pipe->stream) {
+			pipe->stream->mall_stream_config.type = SUBVP_NONE;
+			pipe->stream->mall_stream_config.paired_stream = NULL;
+		}
 
-			if (pipe->plane_state) {
-				pipe->plane_state->is_phantom = false;
-			}
+		if (pipe->plane_state) {
+			pipe->plane_state->is_phantom = false;
 		}
 	}
 	return removed_pipe;
@@ -1864,8 +1853,6 @@ bool dcn32_validate_bandwidth(struct dc *dc,
 
 	dc->res_pool->funcs->calculate_wm_and_dlg(dc, context, pipes, pipe_cnt, vlevel);
 
-	dcn32_override_min_req_memclk(dc, context);
-
 	BW_VAL_TRACE_END_WATERMARKS();
 
 	goto validate_out;
@@ -1894,6 +1881,7 @@ int dcn32_populate_dml_pipes_from_context(
 	struct resource_context *res_ctx = &context->res_ctx;
 	struct pipe_ctx *pipe;
 	bool subvp_in_use = false;
+	uint8_t is_pipe_split_expected[MAX_PIPES] = {0};
 	struct dc_crtc_timing *timing;
 	bool vsr_odm_support = false;
 
@@ -1943,28 +1931,23 @@ int dcn32_populate_dml_pipes_from_context(
 		pipes[pipe_cnt].pipe.src.unbounded_req_mode = false;
 		pipes[pipe_cnt].pipe.scale_ratio_depth.lb_depth = dm_lb_19;
 
-		/* Only populate DML input with subvp info for full updates.
-		 * This is just a workaround -- needs a proper fix.
-		 */
-		if (!fast_validate) {
-			switch (pipe->stream->mall_stream_config.type) {
-			case SUBVP_MAIN:
-				pipes[pipe_cnt].pipe.src.use_mall_for_pstate_change = dm_use_mall_pstate_change_sub_viewport;
-				subvp_in_use = true;
-				break;
-			case SUBVP_PHANTOM:
-				pipes[pipe_cnt].pipe.src.use_mall_for_pstate_change = dm_use_mall_pstate_change_phantom_pipe;
-				pipes[pipe_cnt].pipe.src.use_mall_for_static_screen = dm_use_mall_static_screen_disable;
-				// Disallow unbounded req for SubVP according to DCHUB programming guide
-				pipes[pipe_cnt].pipe.src.unbounded_req_mode = false;
-				break;
-			case SUBVP_NONE:
-				pipes[pipe_cnt].pipe.src.use_mall_for_pstate_change = dm_use_mall_pstate_change_disable;
-				pipes[pipe_cnt].pipe.src.use_mall_for_static_screen = dm_use_mall_static_screen_disable;
-				break;
-			default:
-				break;
-			}
+		switch (pipe->stream->mall_stream_config.type) {
+		case SUBVP_MAIN:
+			pipes[pipe_cnt].pipe.src.use_mall_for_pstate_change = dm_use_mall_pstate_change_sub_viewport;
+			subvp_in_use = true;
+			break;
+		case SUBVP_PHANTOM:
+			pipes[pipe_cnt].pipe.src.use_mall_for_pstate_change = dm_use_mall_pstate_change_phantom_pipe;
+			pipes[pipe_cnt].pipe.src.use_mall_for_static_screen = dm_use_mall_static_screen_disable;
+			// Disallow unbounded req for SubVP according to DCHUB programming guide
+			pipes[pipe_cnt].pipe.src.unbounded_req_mode = false;
+			break;
+		case SUBVP_NONE:
+			pipes[pipe_cnt].pipe.src.use_mall_for_pstate_change = dm_use_mall_pstate_change_disable;
+			pipes[pipe_cnt].pipe.src.use_mall_for_static_screen = dm_use_mall_static_screen_disable;
+			break;
+		default:
+			break;
 		}
 
 		pipes[pipe_cnt].dout.dsc_input_bpc = 0;
@@ -1986,7 +1969,7 @@ int dcn32_populate_dml_pipes_from_context(
 		}
 
 		DC_FP_START();
-		dcn32_predict_pipe_split(context, &pipes[pipe_cnt]);
+		is_pipe_split_expected[i] = dcn32_predict_pipe_split(context, &pipes[pipe_cnt]);
 		DC_FP_END();
 
 		pipe_cnt++;
@@ -2052,9 +2035,6 @@ static struct resource_funcs dcn32_res_pool_funcs = {
 	.update_soc_for_wm_a = dcn30_update_soc_for_wm_a,
 	.add_phantom_pipes = dcn32_add_phantom_pipes,
 	.remove_phantom_pipes = dcn32_remove_phantom_pipes,
-	.retain_phantom_pipes = dcn32_retain_phantom_pipes,
-	.save_mall_state = dcn32_save_mall_state,
-	.restore_mall_state = dcn32_restore_mall_state,
 };
 
 static uint32_t read_pipe_fuses(struct dc_context *ctx)
@@ -2078,28 +2058,27 @@ static bool dcn32_resource_construct(
 	uint32_t pipe_fuses = 0;
 	uint32_t num_pipes  = 4;
 
-#undef REG_STRUCT
-#define REG_STRUCT bios_regs
-	bios_regs_init();
+	#undef REG_STRUCT
+	#define REG_STRUCT bios_regs
+		bios_regs_init();
 
-#undef REG_STRUCT
-#define REG_STRUCT clk_src_regs
-	clk_src_regs_init(0, A),
-	clk_src_regs_init(1, B),
-	clk_src_regs_init(2, C),
-	clk_src_regs_init(3, D),
-	clk_src_regs_init(4, E);
+	#undef REG_STRUCT
+	#define REG_STRUCT clk_src_regs
+		clk_src_regs_init(0, A),
+		clk_src_regs_init(1, B),
+		clk_src_regs_init(2, C),
+		clk_src_regs_init(3, D),
+		clk_src_regs_init(4, E);
+	#undef REG_STRUCT
+	#define REG_STRUCT abm_regs
+		abm_regs_init(0),
+		abm_regs_init(1),
+		abm_regs_init(2),
+		abm_regs_init(3);
 
-#undef REG_STRUCT
-#define REG_STRUCT abm_regs
-	abm_regs_init(0),
-	abm_regs_init(1),
-	abm_regs_init(2),
-	abm_regs_init(3);
-
-#undef REG_STRUCT
-#define REG_STRUCT dccg_regs
-	dccg_regs_init();
+	#undef REG_STRUCT
+	#define REG_STRUCT dccg_regs
+		dccg_regs_init();
 
 	DC_FP_START();
 
@@ -2156,27 +2135,22 @@ static bool dcn32_resource_construct(
 	dc->caps.mall_size_total = dc->caps.max_cab_allocation_bytes;
 
 	dc->caps.subvp_fw_processing_delay_us = 15;
-	dc->caps.subvp_drr_max_vblank_margin_us = 40;
 	dc->caps.subvp_prefetch_end_to_mall_start_us = 15;
 	dc->caps.subvp_swath_height_margin_lines = 16;
 	dc->caps.subvp_pstate_allow_width_us = 20;
 	dc->caps.subvp_vertical_int_margin_us = 30;
-	dc->caps.subvp_drr_vblank_start_margin_us = 100; // 100us margin
 
 	dc->caps.max_slave_planes = 2;
 	dc->caps.max_slave_yuv_planes = 2;
 	dc->caps.max_slave_rgb_planes = 2;
 	dc->caps.post_blend_color_processing = true;
 	dc->caps.force_dp_tps4_for_cp2520 = true;
-	if (dc->config.forceHBR2CP2520)
-		dc->caps.force_dp_tps4_for_cp2520 = false;
 	dc->caps.dp_hpo = true;
 	dc->caps.dp_hdmi21_pcon_support = true;
 	dc->caps.edp_dsc_support = true;
 	dc->caps.extended_aux_timeout_support = true;
 	dc->caps.dmcub_support = true;
 	dc->caps.seamless_odm = true;
-	dc->caps.max_v_total = (1 << 15) - 1;
 
 	/* Color pipeline capabilities */
 	dc->caps.color.dpp.dcn_arch = 1;
@@ -2215,7 +2189,6 @@ static bool dcn32_resource_construct(
 	/* Use pipe context based otg sync logic */
 	dc->config.use_pipe_ctx_sync_logic = true;
 
-	dc->config.dc_mode_clk_limit_support = true;
 	/* read VBIOS LTTPR caps */
 	{
 		if (ctx->dc_bios->funcs->get_lttpr_caps) {
@@ -2234,7 +2207,10 @@ static bool dcn32_resource_construct(
 
 	if (dc->ctx->dce_environment == DCE_ENV_PRODUCTION_DRV)
 		dc->debug = debug_defaults_drv;
-
+	else if (dc->ctx->dce_environment == DCE_ENV_FPGA_MAXIMUS) {
+		dc->debug = debug_defaults_diags;
+	} else
+		dc->debug = debug_defaults_diags;
 	// Init the vm_helper
 	if (dc->vm_helper)
 		vm_helper_init(dc->vm_helper, 16);
@@ -2290,7 +2266,8 @@ static bool dcn32_resource_construct(
 	}
 
 	/* DML */
-	dml_init_instance(&dc->dml, &dcn3_2_soc, &dcn3_2_ip, DML_PROJECT_DCN32);
+	if (!IS_FPGA_MAXIMUS_DC(dc->ctx->dce_environment))
+		dml_init_instance(&dc->dml, &dcn3_2_soc, &dcn3_2_ip, DML_PROJECT_DCN32);
 
 	/* IRQ Service */
 	init_data.ctx = dc->ctx;
@@ -2427,8 +2404,9 @@ static bool dcn32_resource_construct(
 
 	/* Audio, HWSeq, Stream Encoders including HPO and virtual, MPC 3D LUTs */
 	if (!resource_construct(num_virtual_links, dc, &pool->base,
-			&res_create_funcs))
-		goto create_fail;
+			(!IS_FPGA_MAXIMUS_DC(dc->ctx->dce_environment) ?
+			&res_create_funcs : &res_create_maximus_funcs)))
+			goto create_fail;
 
 	/* HW Sequencer init functions and Plane caps */
 	dcn32_hw_sequencer_init_functions(dc);
@@ -2446,13 +2424,10 @@ static bool dcn32_resource_construct(
 		ddc_init_data.id.id = dc->ctx->dc_bios->fw_info.oem_i2c_obj_id;
 		ddc_init_data.id.enum_id = 0;
 		ddc_init_data.id.type = OBJECT_TYPE_GENERIC;
-		pool->base.oem_device = dc->link_srv->create_ddc_service(&ddc_init_data);
+		pool->base.oem_device = dal_ddc_service_create(&ddc_init_data);
 	} else {
 		pool->base.oem_device = NULL;
 	}
-
-	if (ASICREV_IS_GC_11_0_3(dc->ctx->asic_id.hw_internal_rev) && (dc->config.sdpif_request_limit_words_per_umc == 0))
-		dc->config.sdpif_request_limit_words_per_umc = 16;
 
 	DC_FP_END();
 

@@ -19,7 +19,6 @@
 #include <linux/etherdevice.h>
 #include <linux/ip.h>
 #include <linux/in.h>
-#include <linux/inet.h>
 #include <linux/ipv6.h>
 #include <linux/inetdevice.h>
 #include <linux/igmp.h>
@@ -47,9 +46,9 @@ int qeth_l3_ipaddr_to_string(enum qeth_prot_versions proto, const u8 *addr,
 			     char *buf)
 {
 	if (proto == QETH_PROT_IPV4)
-		return scnprintf(buf, INET_ADDRSTRLEN, "%pI4", addr);
+		return sprintf(buf, "%pI4", addr);
 	else
-		return scnprintf(buf, INET6_ADDRSTRLEN, "%pI6", addr);
+		return sprintf(buf, "%pI6", addr);
 }
 
 static struct qeth_ipaddr *qeth_l3_find_addr_by_ip(struct qeth_card *card,
@@ -159,7 +158,7 @@ static int qeth_l3_add_ip(struct qeth_card *card, struct qeth_ipaddr *tmp_addr)
 {
 	int rc = 0;
 	struct qeth_ipaddr *addr;
-	char buf[INET6_ADDRSTRLEN];
+	char buf[40];
 
 	if (tmp_addr->type == QETH_IP_TYPE_RXIP)
 		QETH_CARD_TEXT(card, 2, "addrxip");
