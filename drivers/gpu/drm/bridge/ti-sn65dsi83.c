@@ -655,9 +655,7 @@ static int sn65dsi83_host_attach(struct sn65dsi83 *ctx)
 
 	dsi->lanes = dsi_lanes;
 	dsi->format = MIPI_DSI_FMT_RGB888;
-	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST |
-			  MIPI_DSI_MODE_VIDEO_NO_HFP | MIPI_DSI_MODE_VIDEO_NO_HBP |
-			  MIPI_DSI_MODE_VIDEO_NO_HSA | MIPI_DSI_MODE_NO_EOT_PACKET;
+	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST;
 
 	ret = devm_mipi_dsi_attach(dev, dsi);
 	if (ret < 0) {
@@ -668,9 +666,9 @@ static int sn65dsi83_host_attach(struct sn65dsi83 *ctx)
 	return 0;
 }
 
-static int sn65dsi83_probe(struct i2c_client *client)
+static int sn65dsi83_probe(struct i2c_client *client,
+			   const struct i2c_device_id *id)
 {
-	const struct i2c_device_id *id = i2c_client_get_device_id(client);
 	struct device *dev = &client->dev;
 	enum sn65dsi83_model model;
 	struct sn65dsi83 *ctx;
@@ -714,10 +712,8 @@ static int sn65dsi83_probe(struct i2c_client *client)
 	drm_bridge_add(&ctx->bridge);
 
 	ret = sn65dsi83_host_attach(ctx);
-	if (ret) {
-		dev_err_probe(dev, ret, "failed to attach DSI host\n");
+	if (ret)
 		goto err_remove_bridge;
-	}
 
 	return 0;
 

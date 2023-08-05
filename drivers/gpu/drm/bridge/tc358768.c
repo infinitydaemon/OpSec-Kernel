@@ -17,6 +17,7 @@
 #include <linux/slab.h>
 
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_crtc_helper.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_of.h>
@@ -642,7 +643,7 @@ static void tc358768_bridge_pre_enable(struct drm_bridge *bridge)
 	u32 val, val2, lptxcnt, hact, data_type;
 	s32 raw_val;
 	const struct drm_display_mode *mode;
-	u32 dsibclk_nsk, dsiclk_nsk, ui_nsk;
+	u32 dsibclk_nsk, dsiclk_nsk, ui_nsk, phy_delay_nsk;
 	u32 dsiclk, dsibclk, video_start;
 	const u32 internal_delay = 40;
 	int ret, i;
@@ -726,9 +727,11 @@ static void tc358768_bridge_pre_enable(struct drm_bridge *bridge)
 				  dsibclk);
 	dsiclk_nsk = (u32)div_u64((u64)1000000000 * TC358768_PRECISION, dsiclk);
 	ui_nsk = dsiclk_nsk / 2;
+	phy_delay_nsk = dsibclk_nsk + 2 * dsiclk_nsk;
 	dev_dbg(priv->dev, "dsiclk_nsk: %u\n", dsiclk_nsk);
 	dev_dbg(priv->dev, "ui_nsk: %u\n", ui_nsk);
 	dev_dbg(priv->dev, "dsibclk_nsk: %u\n", dsibclk_nsk);
+	dev_dbg(priv->dev, "phy_delay_nsk: %u\n", phy_delay_nsk);
 
 	/* LP11 > 100us for D-PHY Rx Init */
 	val = tc358768_ns_to_cnt(100 * 1000, dsibclk_nsk) - 1;
@@ -952,7 +955,7 @@ tc358768_atomic_get_input_bus_fmts(struct drm_bridge *bridge,
 	case 24:
 		input_fmts[0] = MEDIA_BUS_FMT_RGB888_1X24;
 		break;
-	}
+	};
 
 	*num_input_fmts = MAX_INPUT_SEL_FORMATS;
 
@@ -1068,7 +1071,8 @@ static int tc358768_get_regulators(struct tc358768_priv *priv)
 	return ret;
 }
 
-static int tc358768_i2c_probe(struct i2c_client *client)
+static int tc358768_i2c_probe(struct i2c_client *client,
+			      const struct i2c_device_id *id)
 {
 	struct tc358768_priv *priv;
 	struct device *dev = &client->dev;

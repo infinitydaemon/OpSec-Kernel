@@ -12,12 +12,12 @@
 #include <linux/vt_kern.h>
 
 #include <drm/drm_aperture.h>
+#include <drm/drm_crtc_helper.h>
 #include <drm/drm_drv.h>
-#include <drm/drm_fbdev_generic.h>
+#include <drm/drm_fb_helper.h>
 #include <drm/drm_file.h>
 #include <drm/drm_ioctl.h>
 #include <drm/drm_managed.h>
-#include <drm/drm_modeset_helper.h>
 #include <drm/drm_module.h>
 
 #include "vbox_drv.h"
@@ -102,6 +102,7 @@ static void vbox_pci_remove(struct pci_dev *pdev)
 	vbox_hw_fini(vbox);
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int vbox_pm_suspend(struct device *dev)
 {
 	struct vbox_private *vbox = dev_get_drvdata(dev);
@@ -159,13 +160,16 @@ static const struct dev_pm_ops vbox_pm_ops = {
 	.poweroff = vbox_pm_poweroff,
 	.restore = vbox_pm_resume,
 };
+#endif
 
 static struct pci_driver vbox_pci_driver = {
 	.name = DRIVER_NAME,
 	.id_table = pciidlist,
 	.probe = vbox_pci_probe,
 	.remove = vbox_pci_remove,
-	.driver.pm = pm_sleep_ptr(&vbox_pm_ops),
+#ifdef CONFIG_PM_SLEEP
+	.driver.pm = &vbox_pm_ops,
+#endif
 };
 
 DEFINE_DRM_GEM_FOPS(vbox_fops);
@@ -173,6 +177,8 @@ DEFINE_DRM_GEM_FOPS(vbox_fops);
 static const struct drm_driver driver = {
 	.driver_features =
 	    DRIVER_MODESET | DRIVER_GEM | DRIVER_ATOMIC,
+
+	.lastclose = drm_fb_helper_lastclose,
 
 	.fops = &vbox_fops,
 	.name = DRIVER_NAME,
