@@ -1214,7 +1214,8 @@ static const u16 anx78xx_chipid_list[] = {
 	0x7818,
 };
 
-static int anx78xx_i2c_probe(struct i2c_client *client)
+static int anx78xx_i2c_probe(struct i2c_client *client,
+			     const struct i2c_device_id *id)
 {
 	struct anx78xx *anx78xx;
 	struct anx78xx_platform_data *pdata;

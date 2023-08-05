@@ -740,7 +740,8 @@ static int chipone_dsi_probe(struct mipi_dsi_device *dsi)
 	return ret;
 }
 
-static int chipone_i2c_probe(struct i2c_client *client)
+static int chipone_i2c_probe(struct i2c_client *client,
+			     const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
 	struct chipone *icn;

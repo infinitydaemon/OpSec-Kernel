@@ -257,7 +257,8 @@ static const struct drm_bridge_funcs ptn3460_bridge_funcs = {
 	.get_edid = ptn3460_get_edid,
 };
 
-static int ptn3460_probe(struct i2c_client *client)
+static int ptn3460_probe(struct i2c_client *client,
+				const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
 	struct ptn3460_bridge *ptn_bridge;

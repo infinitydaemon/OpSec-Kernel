@@ -17,6 +17,7 @@
 #include <linux/types.h>
 #include <linux/workqueue.h>
 
+#include <linux/of_gpio.h>
 #include <linux/of_graph.h>
 #include <linux/of_platform.h>
 
@@ -25,6 +26,7 @@
 #include <drm/display/drm_hdcp_helper.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_bridge.h>
+#include <drm/drm_crtc_helper.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_of.h>
@@ -1401,6 +1403,7 @@ static void anx7625_stop_dp_work(struct anx7625_data *ctx)
 {
 	ctx->hpd_status = 0;
 	ctx->hpd_high_cnt = 0;
+	ctx->display_timing_valid = 0;
 }
 
 static void anx7625_start_dp_work(struct anx7625_data *ctx)
@@ -2800,7 +2803,7 @@ static struct i2c_driver anx7625_driver = {
 		.of_match_table = anx_match_table,
 		.pm = &anx7625_pm_ops,
 	},
-	.probe = anx7625_i2c_probe,
+	.probe_new = anx7625_i2c_probe,
 	.remove = anx7625_i2c_remove,
 
 	.id_table = anx7625_id,

@@ -528,7 +528,8 @@ static const struct regmap_config ch7033_regmap_config = {
 	.max_register = 0x7f,
 };
 
-static int ch7033_probe(struct i2c_client *client)
+static int ch7033_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
 	struct ch7033_priv *priv;

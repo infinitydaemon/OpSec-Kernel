@@ -400,7 +400,7 @@ static const struct of_device_id dlpc3433_match_table[] = {
 MODULE_DEVICE_TABLE(of, dlpc3433_match_table);
 
 static struct i2c_driver dlpc3433_driver = {
-	.probe = dlpc3433_probe,
+	.probe_new = dlpc3433_probe,
 	.remove = dlpc3433_remove,
 	.id_table = dlpc3433_id,
 	.driver = {
