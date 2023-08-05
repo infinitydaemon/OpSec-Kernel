@@ -17,7 +17,7 @@ description:
 
 properties:
   $nodename:
-    pattern: "^timestamp(@.*|-([0-9]|[1-9][0-9]+))?$"
+    pattern: "^timestamp(@.*|-[0-9a-f])?$"
 
   "#timestamp-cells":
     description:
