@@ -742,12 +742,15 @@ static void pch_dma_tx_complete(void *arg)
 {
 	struct eg20t_port *priv = arg;
 	struct uart_port *port = &priv->port;
+	struct circ_buf *xmit = &port->state->xmit;
 	struct scatterlist *sg = priv->sg_tx_p;
 	int i;
 
-	for (i = 0; i < priv->nent; i++, sg++)
-		uart_xmit_advance(port, sg_dma_len(sg));
-
+	for (i = 0; i < priv->nent; i++, sg++) {
+		xmit->tail += sg_dma_len(sg);
+		port->icount.tx += sg_dma_len(sg);
+	}
+	xmit->tail &= UART_XMIT_SIZE - 1;
 	async_tx_ack(priv->desc_tx);
 	dma_unmap_sg(port->dev, priv->sg_tx_p, priv->orig_nent, DMA_TO_DEVICE);
 	priv->tx_dma_use = 0;
@@ -844,7 +847,8 @@ static unsigned int handle_tx(struct eg20t_port *priv)
 
 	while (!uart_tx_stopped(port) && !uart_circ_empty(xmit) && fifo_size) {
 		iowrite8(xmit->buf[xmit->tail], priv->membase + PCH_UART_THR);
-		uart_xmit_advance(port, 1);
+		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+		port->icount.tx++;
 		fifo_size--;
 		tx_empty = 0;
 	}

@@ -496,7 +496,8 @@ static void tegra_uart_fill_tx_fifo(struct tegra_uart_port *tup, int max_bytes)
 				break;
 		}
 		tegra_uart_write(tup, xmit->buf[xmit->tail], UART_TX);
-		uart_xmit_advance(&tup->uport, 1);
+		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+		tup->uport.icount.tx++;
 	}
 }
 

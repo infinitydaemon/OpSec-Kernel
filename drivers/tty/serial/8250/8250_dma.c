@@ -38,8 +38,9 @@ static void __dma_tx_complete(void *param)
 	spin_unlock_irqrestore(&p->port.lock, flags);
 }
 
-static void __dma_rx_complete(struct uart_8250_port *p)
+static void __dma_rx_complete(void *param)
 {
+	struct uart_8250_port	*p = param;
 	struct uart_8250_dma	*dma = p->dma;
 	struct tty_port		*tty_port = &p->port.state->port;
 	struct dma_tx_state	state;
@@ -73,13 +74,6 @@ static void dma_rx_complete(void *param)
 	spin_lock_irqsave(&p->port.lock, flags);
 	if (dma->rx_running)
 		__dma_rx_complete(p);
-
-	/*
-	 * Cannot be combined with the previous check because __dma_rx_complete()
-	 * changes dma->rx_running.
-	 */
-	if (!dma->rx_running && (serial_lsr_in(p) & UART_LSR_DR))
-		p->dma->rx_dma(p);
 	spin_unlock_irqrestore(&p->port.lock, flags);
 }
 

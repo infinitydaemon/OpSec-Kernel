@@ -425,7 +425,9 @@ static int brcmuart_tx_dma(struct uart_8250_port *p)
 
 	priv->dma.tx_err = 0;
 	memcpy(priv->tx_buf, &xmit->buf[xmit->tail], tx_size);
-	uart_xmit_advance(&p->port, tx_size);
+	xmit->tail += tx_size;
+	xmit->tail &= UART_XMIT_SIZE - 1;
+	p->port.icount.tx += tx_size;
 
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&p->port);
@@ -605,13 +607,9 @@ static int brcmuart_startup(struct uart_port *port)
 	/*
 	 * Disable the Receive Data Interrupt because the DMA engine
 	 * will handle this.
-	 *
-	 * Synchronize UART_IER access against the console.
 	 */
-	spin_lock_irq(&port->lock);
 	up->ier &= ~UART_IER_RDI;
 	serial_port_out(port, UART_IER, up->ier);
-	spin_unlock_irq(&port->lock);
 
 	priv->tx_running = false;
 	priv->dma.rx_dma = NULL;

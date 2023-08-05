@@ -226,11 +226,7 @@ static int stm32_usart_config_rs485(struct uart_port *port, struct ktermios *ter
 
 	stm32_usart_clr_bits(port, ofs->cr1, BIT(cfg->uart_enable_bit));
 
-	if (port->rs485_rx_during_tx_gpio)
-		gpiod_set_value_cansleep(port->rs485_rx_during_tx_gpio,
-					 !!(rs485conf->flags & SER_RS485_RX_DURING_TX));
-	else
-		rs485conf->flags |= SER_RS485_RX_DURING_TX;
+	rs485conf->flags |= SER_RS485_RX_DURING_TX;
 
 	if (rs485conf->flags & SER_RS485_ENABLED) {
 		cr1 = readl_relaxed(port->membase + ofs->cr1);
@@ -600,7 +596,8 @@ static void stm32_usart_transmit_chars_pio(struct uart_port *port)
 		if (!(readl_relaxed(port->membase + ofs->isr) & USART_SR_TXE))
 			break;
 		writel_relaxed(xmit->buf[xmit->tail], port->membase + ofs->tdr);
-		uart_xmit_advance(port, 1);
+		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+		port->icount.tx++;
 	}
 
 	/* rely on TXE irq (mask or unmask) for sending remaining data */
@@ -676,8 +673,8 @@ static void stm32_usart_transmit_chars_dma(struct uart_port *port)
 
 	stm32_usart_set_bits(port, ofs->cr3, USART_CR3_DMAT);
 
-	uart_xmit_advance(port, count);
-
+	xmit->tail = (xmit->tail + count) & (UART_XMIT_SIZE - 1);
+	port->icount.tx += count;
 	return;
 
 fallback_err:
@@ -744,6 +741,7 @@ static void stm32_usart_transmit_chars(struct uart_port *port)
 		stm32_usart_tx_interrupt_disable(port);
 		if (!stm32_port->hw_flow_control &&
 		    port->rs485.flags & SER_RS485_ENABLED) {
+			stm32_port->txdone = true;
 			stm32_usart_tc_interrupt_enable(port);
 		}
 	}
@@ -1755,10 +1753,13 @@ static int stm32_usart_serial_remove(struct platform_device *pdev)
 	struct uart_port *port = platform_get_drvdata(pdev);
 	struct stm32_port *stm32_port = to_stm32_port(port);
 	const struct stm32_usart_offsets *ofs = &stm32_port->info->ofs;
+	int err;
 	u32 cr3;
 
 	pm_runtime_get_sync(&pdev->dev);
-	uart_remove_one_port(&stm32_usart_driver, port);
+	err = uart_remove_one_port(&stm32_usart_driver, port);
+	if (err)
+		return(err);
 
 	pm_runtime_disable(&pdev->dev);
 	pm_runtime_set_suspended(&pdev->dev);

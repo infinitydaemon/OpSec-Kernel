@@ -508,7 +508,8 @@ static void sunzilog_transmit_chars(struct uart_sunzilog_port *up,
 	ZSDELAY();
 	ZS_WSYNC(channel);
 
-	uart_xmit_advance(&up->port, 1);
+	xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+	up->port.icount.tx++;
 
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&up->port);
@@ -708,7 +709,8 @@ static void sunzilog_start_tx(struct uart_port *port)
 		ZSDELAY();
 		ZS_WSYNC(channel);
 
-		uart_xmit_advance(port, 1);
+		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+		port->icount.tx++;
 
 		if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 			uart_write_wakeup(&up->port);
@@ -1403,7 +1405,7 @@ static int zs_probe(struct platform_device *op)
 	int keyboard_mouse = 0;
 	int err;
 
-	if (of_property_present(op->dev.of_node, "keyboard"))
+	if (of_find_property(op->dev.of_node, "keyboard", NULL))
 		keyboard_mouse = 1;
 
 	/* uarts must come before keyboards/mice */
@@ -1553,7 +1555,7 @@ static int __init sunzilog_init(void)
 
 	for_each_node_by_name(dp, "zs") {
 		num_sunzilog++;
-		if (of_property_present(dp, "keyboard"))
+		if (of_find_property(dp, "keyboard", NULL))
 			num_keybms++;
 	}
 
