@@ -11,7 +11,7 @@ maintainers:
   - Woojung Huh <Woojung.Huh@microchip.com>
 
 allOf:
-  - $ref: dsa.yaml#/$defs/ethernet-ports
+  - $ref: dsa.yaml#
   - $ref: /schemas/spi/spi-peripheral-props.yaml#
 
 properties:
@@ -67,7 +67,7 @@ examples:
         };
     };
 
-    spi {
+    spi0 {
         #address-cells = <1>;
         #size-cells = <0>;
 

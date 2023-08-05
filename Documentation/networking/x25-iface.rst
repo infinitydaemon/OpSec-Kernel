@@ -1,7 +1,8 @@
 .. SPDX-License-Identifier: GPL-2.0
 
+============================-
 X.25 Device Driver Interface
-============================
+============================-
 
 Version 1.1
 

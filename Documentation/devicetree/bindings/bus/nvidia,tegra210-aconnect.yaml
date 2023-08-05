@@ -40,10 +40,10 @@ properties:
     maxItems: 1
 
   "#address-cells":
-    enum: [ 1, 2 ]
+    const: 1
 
   "#size-cells":
-    enum: [ 1, 2 ]
+    const: 1
 
   ranges: true
 

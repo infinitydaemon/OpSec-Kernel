@@ -20,8 +20,7 @@ properties:
 
   lab:
     type: object
-    $ref: regulator.yaml#
-    unevaluatedProperties: false
+    additionalProperties: false
 
     properties:
       qcom,soft-start-us:
@@ -47,8 +46,7 @@ properties:
 
   ibb:
     type: object
-    $ref: regulator.yaml#
-    unevaluatedProperties: false
+    additionalProperties: false
 
     properties:
       qcom,discharge-resistor-kohms:

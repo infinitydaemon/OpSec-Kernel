@@ -7,4 +7,3 @@ Other
 
    ringbuf
    llvm_reloc
-   graph_ds_impl

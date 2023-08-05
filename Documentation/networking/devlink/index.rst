@@ -50,7 +50,6 @@ parameters, info versions, and other features it supports.
    :maxdepth: 1
 
    bnxt
-   etas_es58x
    hns3
    ionic
    ice
@@ -66,4 +65,3 @@ parameters, info versions, and other features it supports.
    prestera
    iosm
    octeontx2
-   sfc

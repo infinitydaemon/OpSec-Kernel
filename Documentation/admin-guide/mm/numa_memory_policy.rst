@@ -1,3 +1,5 @@
+.. _numa_memory_policy:
+
 ==================
 NUMA Memory Policy
 ==================
@@ -244,7 +246,7 @@ MPOL_INTERLEAVED
 	interleaved system default policy works in this mode.
 
 MPOL_PREFERRED_MANY
-	This mode specifies that the allocation should be preferably
+	This mode specifices that the allocation should be preferrably
 	satisfied from the nodemask specified in the policy. If there is
 	a memory pressure on all nodes in the nodemask, the allocation
 	can fall back to all existing numa nodes. This is effectively
@@ -358,7 +360,7 @@ and NUMA nodes.  "Usage" here means one of the following:
 2) examination of the policy to determine the policy mode and associated node
    or node lists, if any, for page allocation.  This is considered a "hot
    path".  Note that for MPOL_BIND, the "usage" extends across the entire
-   allocation process, which may sleep during page reclamation, because the
+   allocation process, which may sleep during page reclaimation, because the
    BIND policy nodemask is used, by reference, to filter ineligible nodes.
 
 We can avoid taking an extra reference during the usages listed above as

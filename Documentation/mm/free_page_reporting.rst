@@ -1,3 +1,5 @@
+.. _free_page_reporting:
+
 =====================
 Free Page Reporting
 =====================

@@ -13,7 +13,6 @@ properties:
     enum:
       - qcom,spmi-adc-tm5
       - qcom,spmi-adc-tm5-gen2
-      - qcom,adc-tm7 # Incomplete / subject to change
 
   reg:
     maxItems: 1
@@ -178,11 +177,10 @@ examples:
             #io-channel-cells = <1>;
 
             /* Other properties are omitted */
-            channel@4f {
+            conn-therm@4f {
                 reg = <ADC5_AMUX_THM3_100K_PU>;
                 qcom,ratiometric;
                 qcom,hw-settle-time = <200>;
-                label = "conn_therm";
             };
         };
 
@@ -218,18 +216,16 @@ examples:
             #io-channel-cells = <1>;
 
             /* Other properties are omitted */
-            channel@44 {
+            xo-therm@44 {
                 reg = <PMK8350_ADC7_AMUX_THM1_100K_PU>;
                 qcom,ratiometric;
                 qcom,hw-settle-time = <200>;
-                label = "xo_therm";
             };
 
-            channel@147 {
-                reg = <PM8350_ADC7_AMUX_THM4_100K_PU(1)>;
+            conn-therm@47 {
+                reg = <PM8350_ADC7_AMUX_THM4_100K_PU>;
                 qcom,ratiometric;
                 qcom,hw-settle-time = <200>;
-                label = "conn_therm";
             };
         };
 
@@ -251,7 +247,7 @@ examples:
 
             conn-therm@1 {
                 reg = <1>;
-                io-channels = <&pmk8350_vadc PM8350_ADC7_AMUX_THM4_100K_PU(1)>;
+                io-channels = <&pmk8350_vadc PM8350_ADC7_AMUX_THM4_100K_PU>;
                 qcom,avg-samples = <2>;
                 qcom,ratiometric;
                 qcom,hw-settle-time-us = <200>;

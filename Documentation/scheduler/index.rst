@@ -1,6 +1,6 @@
-=========
-Scheduler
-=========
+===============
+Linux Scheduler
+===============
 
 .. toctree::
     :maxdepth: 1
@@ -15,7 +15,6 @@ Scheduler
     sched-capacity
     sched-energy
     schedutil
-    sched-util-clamp
     sched-nice-design
     sched-rt-group
     sched-stats

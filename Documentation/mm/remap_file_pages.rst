@@ -1,3 +1,5 @@
+.. _remap_file_pages:
+
 ==============================
 remap_file_pages() system call
 ==============================

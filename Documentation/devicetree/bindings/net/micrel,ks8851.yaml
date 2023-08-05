@@ -50,7 +50,6 @@ allOf:
           contains:
             const: micrel,ks8851
     then:
-      $ref: /schemas/spi/spi-peripheral-props.yaml#
       properties:
         reg:
           maxItems: 1
@@ -60,7 +59,6 @@ allOf:
           contains:
             const: micrel,ks8851-mll
     then:
-      $ref: /schemas/memory-controllers/mc-peripheral-props.yaml#
       properties:
         reg:
           minItems: 2

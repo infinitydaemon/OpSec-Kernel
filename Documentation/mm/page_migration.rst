@@ -1,3 +1,5 @@
+.. _page_migration:
+
 ==============
 Page migration
 ==============
@@ -7,8 +9,8 @@ nodes in a NUMA system while the process is running. This means that the
 virtual addresses that the process sees do not change. However, the
 system rearranges the physical location of those pages.
 
-Also see Documentation/mm/hmm.rst for migrating pages to or from device
-private memory.
+Also see :ref:`Heterogeneous Memory Management (HMM) <hmm>`
+for migrating pages to or from device private memory.
 
 The main intent of page migration is to reduce the latency of memory accesses
 by moving pages near to the processor where the process accessing that memory
@@ -73,13 +75,14 @@ In kernel use of migrate_pages()
    It also prevents the swapper or other scans from encountering
    the page.
 
-2. We need to have a function of type new_folio_t that can be
+2. We need to have a function of type new_page_t that can be
    passed to migrate_pages(). This function should figure out
-   how to allocate the correct new folio given the old folio.
+   how to allocate the correct new page given the old page.
 
 3. The migrate_pages() function is called which attempts
    to do the migration. It will call the function to allocate
-   the new folio for each folio that is considered for moving.
+   the new page for each page that is considered for
+   moving.
 
 How migrate_pages() works
 =========================

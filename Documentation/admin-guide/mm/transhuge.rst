@@ -1,3 +1,5 @@
+.. _admin_guide_transhuge:
+
 ============================
 Transparent Hugepage Support
 ============================

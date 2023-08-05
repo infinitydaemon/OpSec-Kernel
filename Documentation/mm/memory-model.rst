@@ -1,5 +1,7 @@
 .. SPDX-License-Identifier: GPL-2.0
 
+.. _physical_memory_model:
+
 =====================
 Physical Memory Model
 =====================

@@ -1,3 +1,5 @@
+.. _slub:
+
 ==========================
 Short users guide for SLUB
 ==========================
@@ -19,7 +21,7 @@ slabs that have data in them. See "slabinfo -h" for more options when
 running the command. ``slabinfo`` can be compiled with
 ::
 
-	gcc -o slabinfo tools/mm/slabinfo.c
+	gcc -o slabinfo tools/vm/slabinfo.c
 
 Some of the modes of operation of ``slabinfo`` require that slub debugging
 be enabled on the command line. F.e. no tracking information will be
@@ -114,8 +116,6 @@ options from the ``slub_debug`` parameter translate to the following files::
 	T	trace
 	A	failslab
 
-failslab file is writable, so writing 1 or 0 will enable or disable
-the option at runtime. Write returns -EINVAL if cache is an alias.
 Careful with tracing: It may spew out lots of information and never stop if
 used on the wrong slab.
 

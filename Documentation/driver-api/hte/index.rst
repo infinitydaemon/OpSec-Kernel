@@ -18,5 +18,5 @@ HTE Tegra Provider
 .. toctree::
    :maxdepth: 1
 
-   tegra-hte
+   tegra194-hte
 

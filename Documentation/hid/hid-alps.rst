@@ -9,7 +9,7 @@ Currently ALPS HID driver supports U1 Touchpad device.
 U1 device basic information.
 
 ==========	======
-Vendor ID	0x044E
+Vender ID	0x044E
 Product ID	0x120B
 Version ID	0x0121
 ==========	======

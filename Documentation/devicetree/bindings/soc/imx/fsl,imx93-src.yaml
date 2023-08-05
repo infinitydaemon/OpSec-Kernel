@@ -38,9 +38,8 @@ properties:
 
 patternProperties:
   "power-domain@[0-9a-f]+$":
-    type: object
-    additionalProperties: false
 
+    type: object
     properties:
       compatible:
         items:

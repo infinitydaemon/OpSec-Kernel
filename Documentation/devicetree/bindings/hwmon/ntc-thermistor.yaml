@@ -6,6 +6,7 @@ $schema: http://devicetree.org/meta-schemas/core.yaml#
 title: NTC thermistor temperature sensors
 
 maintainers:
+  - Naveen Krishna Chatradhi <ch.naveen@samsung.com>
   - Linus Walleij <linus.walleij@linaro.org>
 
 description: |
@@ -131,7 +132,7 @@ additionalProperties: false
 
 examples:
   - |
-    thermistor {
+    thermistor0 {
       compatible = "murata,ncp18wb473";
       io-channels = <&gpadc 0x06>;
       pullup-uv = <1800000>;

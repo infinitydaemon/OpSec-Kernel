@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 # Copyright (c) 2018-2019 The Linux Foundation. All rights reserved.
+
 %YAML 1.2
 ---
 $id: http://devicetree.org/schemas/net/wireless/mediatek,mt76.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
-title: MediaTek mt76 wireless devices
+title: MediaTek mt76 wireless devices Generic Binding
 
 maintainers:
   - Felix Fietkau <nbd@nbd.name>
@@ -111,11 +112,6 @@ properties:
     $ref: /schemas/leds/common.yaml#
     additionalProperties: false
     properties:
-      led-active-low:
-        description:
-          LED is enabled with ground signal.
-        type: boolean
-
       led-sources:
         maxItems: 1
 

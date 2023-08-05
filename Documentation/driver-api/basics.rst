@@ -84,13 +84,7 @@ Reference counting
 Atomics
 -------
 
-.. kernel-doc:: include/linux/atomic/atomic-instrumented.h
-   :internal:
-
-.. kernel-doc:: include/linux/atomic/atomic-arch-fallback.h
-   :internal:
-
-.. kernel-doc:: include/linux/atomic/atomic-long.h
+.. kernel-doc:: arch/x86/include/asm/atomic.h
    :internal:
 
 Kernel objects manipulation

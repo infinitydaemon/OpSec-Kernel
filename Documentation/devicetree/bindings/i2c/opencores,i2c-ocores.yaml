@@ -60,7 +60,6 @@ properties:
     default: 0
 
   regstep:
-    $ref: /schemas/types.yaml#/definitions/uint32
     description: |
       deprecated, use reg-shift above
     deprecated: true

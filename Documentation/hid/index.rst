@@ -11,7 +11,6 @@ Human Interface Devices (HID)
    hidraw
    hid-sensor
    hid-transport
-   hid-bpf
 
    uhid
 
