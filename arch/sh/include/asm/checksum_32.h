@@ -7,7 +7,6 @@
  */
 
 #include <linux/in6.h>
-#include <linux/uaccess.h>
 
 /*
  * computes the checksum of a memory block at buff, length len,
