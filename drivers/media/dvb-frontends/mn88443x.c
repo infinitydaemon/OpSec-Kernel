@@ -673,9 +673,9 @@ static const struct regmap_config regmap_config = {
 	.cache_type = REGCACHE_NONE,
 };
 
-static int mn88443x_probe(struct i2c_client *client)
+static int mn88443x_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
-	const struct i2c_device_id *id = i2c_client_get_device_id(client);
 	struct mn88443x_config *conf = client->dev.platform_data;
 	struct mn88443x_priv *chip;
 	struct device *dev = &client->dev;

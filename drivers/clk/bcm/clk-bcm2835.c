@@ -2446,3 +2446,4 @@ postcore_initcall(__bcm2835_clk_driver_init);
 
 MODULE_AUTHOR("Eric Anholt <eric@anholt.net>");
 MODULE_DESCRIPTION("BCM2835 clock driver");
+MODULE_LICENSE("GPL");

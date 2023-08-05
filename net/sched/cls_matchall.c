@@ -12,7 +12,6 @@
 
 #include <net/sch_generic.h>
 #include <net/pkt_cls.h>
-#include <net/tc_wrapper.h>
 
 struct cls_mall_head {
 	struct tcf_exts exts;
@@ -25,9 +24,8 @@ struct cls_mall_head {
 	bool deleting;
 };
 
-TC_INDIRECT_SCOPE int mall_classify(struct sk_buff *skb,
-				    const struct tcf_proto *tp,
-				    struct tcf_result *res)
+static int mall_classify(struct sk_buff *skb, const struct tcf_proto *tp,
+			 struct tcf_result *res)
 {
 	struct cls_mall_head *head = rcu_dereference_bh(tp->root);
 
@@ -320,7 +318,11 @@ static void mall_stats_hw_filter(struct tcf_proto *tp,
 
 	tc_setup_cb_call(block, TC_SETUP_CLSMATCHALL, &cls_mall, false, true);
 
-	tcf_exts_hw_stats_update(&head->exts, &cls_mall.stats, cls_mall.use_act_stats);
+	tcf_exts_hw_stats_update(&head->exts, cls_mall.stats.bytes,
+				 cls_mall.stats.pkts, cls_mall.stats.drops,
+				 cls_mall.stats.lastused,
+				 cls_mall.stats.used_hw_stats,
+				 cls_mall.stats.used_hw_stats_valid);
 }
 
 static int mall_dump(struct net *net, struct tcf_proto *tp, void *fh,

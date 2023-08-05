@@ -81,7 +81,8 @@ struct rtc_device *alarmtimer_get_rtcdev(void)
 }
 EXPORT_SYMBOL_GPL(alarmtimer_get_rtcdev);
 
-static int alarmtimer_rtc_add_device(struct device *dev)
+static int alarmtimer_rtc_add_device(struct device *dev,
+				struct class_interface *class_intf)
 {
 	unsigned long flags;
 	struct rtc_device *rtc = to_rtc_device(dev);
@@ -751,7 +752,7 @@ static int alarm_timer_create(struct k_itimer *new_timer)
 static enum alarmtimer_restart alarmtimer_nsleep_wakeup(struct alarm *alarm,
 								ktime_t now)
 {
-	struct task_struct *task = alarm->data;
+	struct task_struct *task = (struct task_struct *)alarm->data;
 
 	alarm->data = NULL;
 	if (task)
@@ -847,7 +848,7 @@ static int alarm_timer_nsleep(const clockid_t which_clock, int flags,
 	struct restart_block *restart = &current->restart_block;
 	struct alarm alarm;
 	ktime_t exp;
-	int ret;
+	int ret = 0;
 
 	if (!alarmtimer_get_rtcdev())
 		return -EOPNOTSUPP;

@@ -1,7 +1,4 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-
-#include <linux/stddef.h>
-
 static const char *const initial_sid_to_string[] = {
 	NULL,
 	"kernel",

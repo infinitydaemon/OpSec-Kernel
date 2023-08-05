@@ -59,7 +59,6 @@
 #include <linux/ctype.h>
 #include "symbol/kallsyms.h"
 #include <internal/lib.h>
-#include "util/sample.h"
 
 /*
  * Make a group from 'leader' to 'last', requiring that the events were not
@@ -1394,7 +1393,6 @@ void itrace_synth_opts__set_default(struct itrace_synth_opts *synth_opts,
 		synth_opts->calls = true;
 	} else {
 		synth_opts->instructions = true;
-		synth_opts->cycles = true;
 		synth_opts->period_type = PERF_ITRACE_DEFAULT_PERIOD_TYPE;
 		synth_opts->period = PERF_ITRACE_DEFAULT_PERIOD;
 	}
@@ -1483,11 +1481,7 @@ int itrace_do_parse_synth_opts(struct itrace_synth_opts *synth_opts,
 	for (p = str; *p;) {
 		switch (*p++) {
 		case 'i':
-		case 'y':
-			if (p[-1] == 'y')
-				synth_opts->cycles = true;
-			else
-				synth_opts->instructions = true;
+			synth_opts->instructions = true;
 			while (*p == ' ' || *p == ',')
 				p += 1;
 			if (isdigit(*p)) {
@@ -1646,7 +1640,7 @@ int itrace_do_parse_synth_opts(struct itrace_synth_opts *synth_opts,
 		}
 	}
 out:
-	if (synth_opts->instructions || synth_opts->cycles) {
+	if (synth_opts->instructions) {
 		if (!period_type_set)
 			synth_opts->period_type =
 					PERF_ITRACE_DEFAULT_PERIOD_TYPE;
@@ -2560,7 +2554,7 @@ static struct dso *load_dso(const char *name)
 	if (map__load(map) < 0)
 		pr_err("File '%s' not found or has no symbols.\n", name);
 
-	dso = dso__get(map__dso(map));
+	dso = dso__get(map->dso);
 
 	map__put(map);
 

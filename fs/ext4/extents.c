@@ -2635,8 +2635,9 @@ ext4_ext_rm_leaf(handle_t *handle, struct inode *inode,
 			  unwritten, ex_ee_len);
 		path[depth].p_ext = ex;
 
-		a = max(ex_ee_block, start);
-		b = min(ex_ee_block + ex_ee_len - 1, end);
+		a = ex_ee_block > start ? ex_ee_block : start;
+		b = ex_ee_block+ex_ee_len - 1 < end ?
+			ex_ee_block+ex_ee_len - 1 : end;
 
 		ext_debug(inode, "  border %u:%u\n", a, b);
 
@@ -3123,7 +3124,7 @@ void ext4_ext_release(struct super_block *sb)
 #endif
 }
 
-static void ext4_zeroout_es(struct inode *inode, struct ext4_extent *ex)
+static int ext4_zeroout_es(struct inode *inode, struct ext4_extent *ex)
 {
 	ext4_lblk_t  ee_block;
 	ext4_fsblk_t ee_pblock;
@@ -3134,10 +3135,10 @@ static void ext4_zeroout_es(struct inode *inode, struct ext4_extent *ex)
 	ee_pblock = ext4_ext_pblock(ex);
 
 	if (ee_len == 0)
-		return;
+		return 0;
 
-	ext4_es_insert_extent(inode, ee_block, ee_len, ee_pblock,
-			      EXTENT_STATUS_WRITTEN);
+	return ext4_es_insert_extent(inode, ee_block, ee_len, ee_pblock,
+				     EXTENT_STATUS_WRITTEN);
 }
 
 /* FIXME!! we need to try to merge to left or right after zero-out  */
@@ -3251,7 +3252,7 @@ static int ext4_split_extent_at(handle_t *handle,
 		ext4_ext_mark_unwritten(ex2);
 
 	err = ext4_ext_insert_extent(handle, inode, ppath, &newex, flags);
-	if (err != -ENOSPC && err != -EDQUOT && err != -ENOMEM)
+	if (err != -ENOSPC && err != -EDQUOT)
 		goto out;
 
 	if (EXT4_EXT_MAY_ZEROOUT & split_flag) {
@@ -3287,7 +3288,7 @@ static int ext4_split_extent_at(handle_t *handle,
 			err = ext4_ext_dirty(handle, inode, path + path->p_depth);
 			if (!err)
 				/* update extent status tree */
-				ext4_zeroout_es(inode, &zero_ex);
+				err = ext4_zeroout_es(inode, &zero_ex);
 			/* If we failed at this point, we don't know in which
 			 * state the extent tree exactly is so don't try to fix
 			 * length of the original extent as it may do even more
@@ -3640,8 +3641,9 @@ fallback:
 out:
 	/* If we have gotten a failure, don't zero out status tree */
 	if (!err) {
-		ext4_zeroout_es(inode, &zero_ex1);
-		ext4_zeroout_es(inode, &zero_ex2);
+		err = ext4_zeroout_es(inode, &zero_ex1);
+		if (!err)
+			err = ext4_zeroout_es(inode, &zero_ex2);
 	}
 	return err ? err : allocated;
 }
@@ -4402,8 +4404,15 @@ int ext4_ext_truncate(handle_t *handle, struct inode *inode)
 
 	last_block = (inode->i_size + sb->s_blocksize - 1)
 			>> EXT4_BLOCK_SIZE_BITS(sb);
-	ext4_es_remove_extent(inode, last_block, EXT_MAX_BLOCKS - last_block);
-
+retry:
+	err = ext4_es_remove_extent(inode, last_block,
+				    EXT_MAX_BLOCKS - last_block);
+	if (err == -ENOMEM) {
+		memalloc_retry_wait(GFP_ATOMIC);
+		goto retry;
+	}
+	if (err)
+		return err;
 retry_remove_space:
 	err = ext4_ext_remove_space(inode, last_block, EXT_MAX_BLOCKS - 1);
 	if (err == -ENOMEM) {
@@ -4518,6 +4527,13 @@ static long ext4_zero_range(struct file *file, loff_t offset,
 
 	trace_ext4_zero_range(inode, offset, len, mode);
 
+	/* Call ext4_force_commit to flush all data in case of data=journal. */
+	if (ext4_should_journal_data(inode)) {
+		ret = ext4_force_commit(inode->i_sb);
+		if (ret)
+			return ret;
+	}
+
 	/*
 	 * Round up offset. This is not fallocate, we need to zero out
 	 * blocks, so convert interior block aligned part of the range to
@@ -4601,20 +4617,6 @@ static long ext4_zero_range(struct file *file, loff_t offset,
 			filemap_invalidate_unlock(mapping);
 			goto out_mutex;
 		}
-
-		/*
-		 * For journalled data we need to write (and checkpoint) pages
-		 * before discarding page cache to avoid inconsitent data on
-		 * disk in case of crash before zeroing trans is committed.
-		 */
-		if (ext4_should_journal_data(inode)) {
-			ret = filemap_write_and_wait_range(mapping, start, end);
-			if (ret) {
-				filemap_invalidate_unlock(mapping);
-				goto out_mutex;
-			}
-		}
-
 		/* Now release the pages and zero block aligned part of pages */
 		truncate_pagecache_range(inode, start, end - 1);
 		inode->i_mtime = inode->i_ctime = current_time(inode);
@@ -5289,6 +5291,13 @@ static int ext4_collapse_range(struct file *file, loff_t offset, loff_t len)
 	punch_start = offset >> EXT4_BLOCK_SIZE_BITS(sb);
 	punch_stop = (offset + len) >> EXT4_BLOCK_SIZE_BITS(sb);
 
+	/* Call ext4_force_commit to flush all data in case of data=journal. */
+	if (ext4_should_journal_data(inode)) {
+		ret = ext4_force_commit(inode->i_sb);
+		if (ret)
+			return ret;
+	}
+
 	inode_lock(inode);
 	/*
 	 * There is no need to overlap collapse range with EOF, in which case
@@ -5355,7 +5364,13 @@ static int ext4_collapse_range(struct file *file, loff_t offset, loff_t len)
 
 	down_write(&EXT4_I(inode)->i_data_sem);
 	ext4_discard_preallocations(inode, 0);
-	ext4_es_remove_extent(inode, punch_start, EXT_MAX_BLOCKS - punch_start);
+
+	ret = ext4_es_remove_extent(inode, punch_start,
+				    EXT_MAX_BLOCKS - punch_start);
+	if (ret) {
+		up_write(&EXT4_I(inode)->i_data_sem);
+		goto out_stop;
+	}
 
 	ret = ext4_ext_remove_space(inode, punch_start, punch_stop - 1);
 	if (ret) {
@@ -5428,6 +5443,13 @@ static int ext4_insert_range(struct file *file, loff_t offset, loff_t len)
 
 	offset_lblk = offset >> EXT4_BLOCK_SIZE_BITS(sb);
 	len_lblk = len >> EXT4_BLOCK_SIZE_BITS(sb);
+
+	/* Call ext4_force_commit to flush all data in case of data=journal */
+	if (ext4_should_journal_data(inode)) {
+		ret = ext4_force_commit(inode->i_sb);
+		if (ret)
+			return ret;
+	}
 
 	inode_lock(inode);
 	/* Currently just for extent based files */
@@ -5533,14 +5555,20 @@ static int ext4_insert_range(struct file *file, loff_t offset, loff_t len)
 		ext4_free_ext_path(path);
 	}
 
-	ext4_es_remove_extent(inode, offset_lblk, EXT_MAX_BLOCKS - offset_lblk);
+	ret = ext4_es_remove_extent(inode, offset_lblk,
+			EXT_MAX_BLOCKS - offset_lblk);
+	if (ret) {
+		up_write(&EXT4_I(inode)->i_data_sem);
+		goto out_stop;
+	}
 
 	/*
 	 * if offset_lblk lies in a hole which is at start of file, use
 	 * ee_start_lblk to shift extents
 	 */
 	ret = ext4_ext_shift_extents(inode, handle,
-		max(ee_start_lblk, offset_lblk), len_lblk, SHIFT_RIGHT);
+		ee_start_lblk > offset_lblk ? ee_start_lblk : offset_lblk,
+		len_lblk, SHIFT_RIGHT);
 
 	up_write(&EXT4_I(inode)->i_data_sem);
 	if (IS_SYNC(inode))
@@ -5591,8 +5619,12 @@ ext4_swap_extents(handle_t *handle, struct inode *inode1,
 	BUG_ON(!inode_is_locked(inode1));
 	BUG_ON(!inode_is_locked(inode2));
 
-	ext4_es_remove_extent(inode1, lblk1, count);
-	ext4_es_remove_extent(inode2, lblk2, count);
+	*erp = ext4_es_remove_extent(inode1, lblk1, count);
+	if (unlikely(*erp))
+		return 0;
+	*erp = ext4_es_remove_extent(inode2, lblk2, count);
+	if (unlikely(*erp))
+		return 0;
 
 	while (count) {
 		struct ext4_extent *ex1, *ex2, tmp_ex;

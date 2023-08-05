@@ -9,7 +9,7 @@
  * Copyright 2009, Johannes Berg <johannes@sipsolutions.net>
  * Copyright 2013-2014  Intel Mobile Communications GmbH
  * Copyright(c) 2016 Intel Deutschland GmbH
- * Copyright(c) 2018-2023 Intel Corporation
+ * Copyright(c) 2018-2022 Intel Corporation
  */
 
 #include <linux/delay.h>
@@ -226,7 +226,7 @@ static void __ieee80211_sta_join_ibss(struct ieee80211_sub_if_data *sdata,
 	struct ieee80211_local *local = sdata->local;
 	struct ieee80211_mgmt *mgmt;
 	struct cfg80211_bss *bss;
-	u64 bss_change;
+	u32 bss_change;
 	struct cfg80211_chan_def chandef;
 	struct ieee80211_channel *chan;
 	struct beacon_data *presp;
@@ -478,8 +478,7 @@ static void ieee80211_sta_join_ibss(struct ieee80211_sub_if_data *sdata,
 }
 
 int ieee80211_ibss_csa_beacon(struct ieee80211_sub_if_data *sdata,
-			      struct cfg80211_csa_settings *csa_settings,
-			      u64 *changed)
+			      struct cfg80211_csa_settings *csa_settings)
 {
 	struct ieee80211_if_ibss *ifibss = &sdata->u.ibss;
 	struct beacon_data *presp, *old_presp;
@@ -521,11 +520,10 @@ int ieee80211_ibss_csa_beacon(struct ieee80211_sub_if_data *sdata,
 	if (old_presp)
 		kfree_rcu(old_presp, rcu_head);
 
-	*changed |= BSS_CHANGED_BEACON;
-	return 0;
+	return BSS_CHANGED_BEACON;
 }
 
-int ieee80211_ibss_finish_csa(struct ieee80211_sub_if_data *sdata, u64 *changed)
+int ieee80211_ibss_finish_csa(struct ieee80211_sub_if_data *sdata)
 {
 	struct ieee80211_if_ibss *ifibss = &sdata->u.ibss;
 	struct cfg80211_bss *cbss;
@@ -554,15 +552,14 @@ int ieee80211_ibss_finish_csa(struct ieee80211_sub_if_data *sdata, u64 *changed)
 	ifibss->chandef = sdata->deflink.csa_chandef;
 
 	/* generate the beacon */
-	return ieee80211_ibss_csa_beacon(sdata, NULL, changed);
+	return ieee80211_ibss_csa_beacon(sdata, NULL);
 }
 
 void ieee80211_ibss_stop(struct ieee80211_sub_if_data *sdata)
 {
 	struct ieee80211_if_ibss *ifibss = &sdata->u.ibss;
 
-	wiphy_work_cancel(sdata->local->hw.wiphy,
-			  &ifibss->csa_connection_drop_work);
+	cancel_work_sync(&ifibss->csa_connection_drop_work);
 }
 
 static struct sta_info *ieee80211_ibss_finish_sta(struct sta_info *sta)
@@ -731,8 +728,7 @@ static void ieee80211_ibss_disconnect(struct ieee80211_sub_if_data *sdata)
 	mutex_unlock(&local->mtx);
 }
 
-static void ieee80211_csa_connection_drop_work(struct wiphy *wiphy,
-					       struct wiphy_work *work)
+static void ieee80211_csa_connection_drop_work(struct work_struct *work)
 {
 	struct ieee80211_sub_if_data *sdata =
 		container_of(work, struct ieee80211_sub_if_data,
@@ -745,7 +741,7 @@ static void ieee80211_csa_connection_drop_work(struct wiphy *wiphy,
 	skb_queue_purge(&sdata->skb_queue);
 
 	/* trigger a scan to find another IBSS network to join */
-	wiphy_work_queue(sdata->local->hw.wiphy, &sdata->work);
+	ieee80211_queue_work(&sdata->local->hw, &sdata->work);
 
 	sdata_unlock(sdata);
 }
@@ -898,8 +894,8 @@ ieee80211_ibss_process_chanswitch(struct ieee80211_sub_if_data *sdata,
 	return true;
 disconnect:
 	ibss_dbg(sdata, "Can't handle channel switch, disconnect\n");
-	wiphy_work_queue(sdata->local->hw.wiphy,
-			 &ifibss->csa_connection_drop_work);
+	ieee80211_queue_work(&sdata->local->hw,
+			     &ifibss->csa_connection_drop_work);
 
 	ieee80211_ibss_csa_mark_radar(sdata);
 
@@ -1246,7 +1242,7 @@ void ieee80211_ibss_rx_no_sta(struct ieee80211_sub_if_data *sdata,
 	spin_lock(&ifibss->incomplete_lock);
 	list_add(&sta->list, &ifibss->incomplete_stations);
 	spin_unlock(&ifibss->incomplete_lock);
-	wiphy_work_queue(local->hw.wiphy, &sdata->work);
+	ieee80211_queue_work(&local->hw, &sdata->work);
 }
 
 static void ieee80211_ibss_sta_expire(struct ieee80211_sub_if_data *sdata)
@@ -1725,7 +1721,7 @@ static void ieee80211_ibss_timer(struct timer_list *t)
 	struct ieee80211_sub_if_data *sdata =
 		from_timer(sdata, t, u.ibss.timer);
 
-	wiphy_work_queue(sdata->local->hw.wiphy, &sdata->work);
+	ieee80211_queue_work(&sdata->local->hw, &sdata->work);
 }
 
 void ieee80211_ibss_setup_sdata(struct ieee80211_sub_if_data *sdata)
@@ -1735,8 +1731,8 @@ void ieee80211_ibss_setup_sdata(struct ieee80211_sub_if_data *sdata)
 	timer_setup(&ifibss->timer, ieee80211_ibss_timer, 0);
 	INIT_LIST_HEAD(&ifibss->incomplete_stations);
 	spin_lock_init(&ifibss->incomplete_lock);
-	wiphy_work_init(&ifibss->csa_connection_drop_work,
-			ieee80211_csa_connection_drop_work);
+	INIT_WORK(&ifibss->csa_connection_drop_work,
+		  ieee80211_csa_connection_drop_work);
 }
 
 /* scan finished notification */
@@ -1758,7 +1754,7 @@ void ieee80211_ibss_notify_scan_completed(struct ieee80211_local *local)
 int ieee80211_ibss_join(struct ieee80211_sub_if_data *sdata,
 			struct cfg80211_ibss_params *params)
 {
-	u64 changed = 0;
+	u32 changed = 0;
 	u32 rate_flags;
 	struct ieee80211_supported_band *sband;
 	enum ieee80211_chanctx_mode chanmode;
@@ -1860,7 +1856,7 @@ int ieee80211_ibss_join(struct ieee80211_sub_if_data *sdata,
 	sdata->deflink.needed_rx_chains = local->rx_chains;
 	sdata->control_port_over_nl80211 = params->control_port_over_nl80211;
 
-	wiphy_work_queue(local->hw.wiphy, &sdata->work);
+	ieee80211_queue_work(&local->hw, &sdata->work);
 
 	return 0;
 }

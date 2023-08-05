@@ -167,8 +167,7 @@ static struct snd_soc_dai_link littlemill_dai[] = {
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
 				| SND_SOC_DAIFMT_CBM_CFM,
 		.ignore_suspend = 1,
-		.c2c_params = &baseband_params,
-		.num_c2c_params = 1,
+		.params = &baseband_params,
 		SND_SOC_DAILINK_REG(baseband),
 	},
 };

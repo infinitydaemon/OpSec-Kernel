@@ -4657,9 +4657,11 @@ static int wm8994_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void wm8994_remove(struct platform_device *pdev)
+static int wm8994_remove(struct platform_device *pdev)
 {
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -4699,7 +4701,7 @@ static struct platform_driver wm8994_codec_driver = {
 		.pm = &wm8994_pm_ops,
 	},
 	.probe = wm8994_probe,
-	.remove_new = wm8994_remove,
+	.remove = wm8994_remove,
 };
 
 module_platform_driver(wm8994_codec_driver);

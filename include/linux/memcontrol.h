@@ -97,7 +97,6 @@ struct shrinker_info {
 	struct rcu_head rcu;
 	atomic_long_t *nr_deferred;
 	unsigned long *map;
-	int map_nr_max;
 };
 
 struct lruvec_stats_percpu {
@@ -419,7 +418,7 @@ static inline struct obj_cgroup *__folio_objcg(struct folio *folio)
  *
  * - the folio lock
  * - LRU isolation
- * - folio_memcg_lock()
+ * - lock_page_memcg()
  * - exclusive reference
  * - mem_cgroup_trylock_pages()
  *
@@ -467,34 +466,34 @@ static inline struct mem_cgroup *folio_memcg_rcu(struct folio *folio)
 }
 
 /*
- * folio_memcg_check - Get the memory cgroup associated with a folio.
- * @folio: Pointer to the folio.
+ * page_memcg_check - get the memory cgroup associated with a page
+ * @page: a pointer to the page struct
  *
- * Returns a pointer to the memory cgroup associated with the folio,
- * or NULL. This function unlike folio_memcg() can take any folio
- * as an argument. It has to be used in cases when it's not known if a folio
+ * Returns a pointer to the memory cgroup associated with the page,
+ * or NULL. This function unlike page_memcg() can take any page
+ * as an argument. It has to be used in cases when it's not known if a page
  * has an associated memory cgroup pointer or an object cgroups vector or
  * an object cgroup.
  *
- * For a non-kmem folio any of the following ensures folio and memcg binding
+ * For a non-kmem page any of the following ensures page and memcg binding
  * stability:
  *
- * - the folio lock
+ * - the page lock
  * - LRU isolation
- * - lock_folio_memcg()
+ * - lock_page_memcg()
  * - exclusive reference
  * - mem_cgroup_trylock_pages()
  *
- * For a kmem folio a caller should hold an rcu read lock to protect memcg
- * associated with a kmem folio from being released.
+ * For a kmem page a caller should hold an rcu read lock to protect memcg
+ * associated with a kmem page from being released.
  */
-static inline struct mem_cgroup *folio_memcg_check(struct folio *folio)
+static inline struct mem_cgroup *page_memcg_check(struct page *page)
 {
 	/*
-	 * Because folio->memcg_data might be changed asynchronously
-	 * for slabs, READ_ONCE() should be used here.
+	 * Because page->memcg_data might be changed asynchronously
+	 * for slab pages, READ_ONCE() should be used here.
 	 */
-	unsigned long memcg_data = READ_ONCE(folio->memcg_data);
+	unsigned long memcg_data = READ_ONCE(page->memcg_data);
 
 	if (memcg_data & MEMCG_DATA_OBJCGS)
 		return NULL;
@@ -507,13 +506,6 @@ static inline struct mem_cgroup *folio_memcg_check(struct folio *folio)
 	}
 
 	return (struct mem_cgroup *)(memcg_data & ~MEMCG_DATA_FLAGS_MASK);
-}
-
-static inline struct mem_cgroup *page_memcg_check(struct page *page)
-{
-	if (PageTail(page))
-		return NULL;
-	return folio_memcg_check((struct folio *)page);
 }
 
 static inline struct mem_cgroup *get_mem_cgroup_from_objcg(struct obj_cgroup *objcg)
@@ -623,32 +615,28 @@ static inline void mem_cgroup_protection(struct mem_cgroup *root,
 void mem_cgroup_calculate_protection(struct mem_cgroup *root,
 				     struct mem_cgroup *memcg);
 
-static inline bool mem_cgroup_unprotected(struct mem_cgroup *target,
-					  struct mem_cgroup *memcg)
+static inline bool mem_cgroup_supports_protection(struct mem_cgroup *memcg)
 {
 	/*
 	 * The root memcg doesn't account charges, and doesn't support
-	 * protection. The target memcg's protection is ignored, see
-	 * mem_cgroup_calculate_protection() and mem_cgroup_protection()
+	 * protection.
 	 */
-	return mem_cgroup_disabled() || mem_cgroup_is_root(memcg) ||
-		memcg == target;
+	return !mem_cgroup_disabled() && !mem_cgroup_is_root(memcg);
+
 }
 
-static inline bool mem_cgroup_below_low(struct mem_cgroup *target,
-					struct mem_cgroup *memcg)
+static inline bool mem_cgroup_below_low(struct mem_cgroup *memcg)
 {
-	if (mem_cgroup_unprotected(target, memcg))
+	if (!mem_cgroup_supports_protection(memcg))
 		return false;
 
 	return READ_ONCE(memcg->memory.elow) >=
 		page_counter_read(&memcg->memory);
 }
 
-static inline bool mem_cgroup_below_min(struct mem_cgroup *target,
-					struct mem_cgroup *memcg)
+static inline bool mem_cgroup_below_min(struct mem_cgroup *memcg)
 {
-	if (mem_cgroup_unprotected(target, memcg))
+	if (!mem_cgroup_supports_protection(memcg))
 		return false;
 
 	return READ_ONCE(memcg->memory.emin) >=
@@ -802,11 +790,6 @@ static inline void obj_cgroup_put(struct obj_cgroup *objcg)
 	percpu_ref_put(&objcg->refcnt);
 }
 
-static inline bool mem_cgroup_tryget(struct mem_cgroup *memcg)
-{
-	return !memcg || css_tryget(&memcg->css);
-}
-
 static inline void mem_cgroup_put(struct mem_cgroup *memcg)
 {
 	if (memcg)
@@ -820,8 +803,8 @@ struct mem_cgroup *mem_cgroup_iter(struct mem_cgroup *,
 				   struct mem_cgroup *,
 				   struct mem_cgroup_reclaim_cookie *);
 void mem_cgroup_iter_break(struct mem_cgroup *, struct mem_cgroup *);
-void mem_cgroup_scan_tasks(struct mem_cgroup *memcg,
-			   int (*)(struct task_struct *, void *), void *arg);
+int mem_cgroup_scan_tasks(struct mem_cgroup *,
+			  int (*)(struct task_struct *, void *), void *);
 
 static inline unsigned short mem_cgroup_id(struct mem_cgroup *memcg)
 {
@@ -891,7 +874,7 @@ static inline bool mm_match_cgroup(struct mm_struct *mm,
 	return match;
 }
 
-struct cgroup_subsys_state *mem_cgroup_css_from_folio(struct folio *folio);
+struct cgroup_subsys_state *mem_cgroup_css_from_page(struct page *page);
 ino_t page_cgroup_ino(struct page *page);
 
 static inline bool mem_cgroup_online(struct mem_cgroup *memcg)
@@ -949,6 +932,8 @@ void mem_cgroup_print_oom_group(struct mem_cgroup *memcg);
 
 void folio_memcg_lock(struct folio *folio);
 void folio_memcg_unlock(struct folio *folio);
+void lock_page_memcg(struct page *page);
+void unlock_page_memcg(struct page *page);
 
 void __mod_memcg_state(struct mem_cgroup *memcg, int idx, int val);
 
@@ -1036,7 +1021,7 @@ static inline unsigned long lruvec_page_state_local(struct lruvec *lruvec,
 }
 
 void mem_cgroup_flush_stats(void);
-void mem_cgroup_flush_stats_ratelimited(void);
+void mem_cgroup_flush_stats_delayed(void);
 
 void __mod_memcg_lruvec_state(struct lruvec *lruvec, enum node_stat_item idx,
 			      int val);
@@ -1176,11 +1161,6 @@ static inline struct mem_cgroup *folio_memcg_rcu(struct folio *folio)
 	return NULL;
 }
 
-static inline struct mem_cgroup *folio_memcg_check(struct folio *folio)
-{
-	return NULL;
-}
-
 static inline struct mem_cgroup *page_memcg_check(struct page *page)
 {
 	return NULL;
@@ -1229,19 +1209,12 @@ static inline void mem_cgroup_calculate_protection(struct mem_cgroup *root,
 {
 }
 
-static inline bool mem_cgroup_unprotected(struct mem_cgroup *target,
-					  struct mem_cgroup *memcg)
-{
-	return true;
-}
-static inline bool mem_cgroup_below_low(struct mem_cgroup *target,
-					struct mem_cgroup *memcg)
+static inline bool mem_cgroup_below_low(struct mem_cgroup *memcg)
 {
 	return false;
 }
 
-static inline bool mem_cgroup_below_min(struct mem_cgroup *target,
-					struct mem_cgroup *memcg)
+static inline bool mem_cgroup_below_min(struct mem_cgroup *memcg)
 {
 	return false;
 }
@@ -1317,11 +1290,6 @@ static inline void obj_cgroup_put(struct obj_cgroup *objcg)
 {
 }
 
-static inline bool mem_cgroup_tryget(struct mem_cgroup *memcg)
-{
-	return true;
-}
-
 static inline void mem_cgroup_put(struct mem_cgroup *memcg)
 {
 }
@@ -1364,9 +1332,10 @@ static inline void mem_cgroup_iter_break(struct mem_cgroup *root,
 {
 }
 
-static inline void mem_cgroup_scan_tasks(struct mem_cgroup *memcg,
+static inline int mem_cgroup_scan_tasks(struct mem_cgroup *memcg,
 		int (*fn)(struct task_struct *, void *), void *arg)
 {
+	return 0;
 }
 
 static inline unsigned short mem_cgroup_id(struct mem_cgroup *memcg)
@@ -1432,6 +1401,14 @@ mem_cgroup_print_oom_context(struct mem_cgroup *memcg, struct task_struct *p)
 
 static inline void
 mem_cgroup_print_oom_meminfo(struct mem_cgroup *memcg)
+{
+}
+
+static inline void lock_page_memcg(struct page *page)
+{
+}
+
+static inline void unlock_page_memcg(struct page *page)
 {
 }
 
@@ -1525,7 +1502,7 @@ static inline void mem_cgroup_flush_stats(void)
 {
 }
 
-static inline void mem_cgroup_flush_stats_ratelimited(void)
+static inline void mem_cgroup_flush_stats_delayed(void)
 {
 }
 
@@ -1766,30 +1743,24 @@ struct obj_cgroup *get_obj_cgroup_from_page(struct page *page);
 int obj_cgroup_charge(struct obj_cgroup *objcg, gfp_t gfp, size_t size);
 void obj_cgroup_uncharge(struct obj_cgroup *objcg, size_t size);
 
-extern struct static_key_false memcg_bpf_enabled_key;
-static inline bool memcg_bpf_enabled(void)
-{
-	return static_branch_likely(&memcg_bpf_enabled_key);
-}
+extern struct static_key_false memcg_kmem_enabled_key;
 
-extern struct static_key_false memcg_kmem_online_key;
-
-static inline bool memcg_kmem_online(void)
+static inline bool memcg_kmem_enabled(void)
 {
-	return static_branch_likely(&memcg_kmem_online_key);
+	return static_branch_likely(&memcg_kmem_enabled_key);
 }
 
 static inline int memcg_kmem_charge_page(struct page *page, gfp_t gfp,
 					 int order)
 {
-	if (memcg_kmem_online())
+	if (memcg_kmem_enabled())
 		return __memcg_kmem_charge_page(page, gfp, order);
 	return 0;
 }
 
 static inline void memcg_kmem_uncharge_page(struct page *page, int order)
 {
-	if (memcg_kmem_online())
+	if (memcg_kmem_enabled())
 		__memcg_kmem_uncharge_page(page, order);
 }
 
@@ -1810,7 +1781,7 @@ static inline void count_objcg_event(struct obj_cgroup *objcg,
 {
 	struct mem_cgroup *memcg;
 
-	if (!memcg_kmem_online())
+	if (!memcg_kmem_enabled())
 		return;
 
 	rcu_read_lock();
@@ -1850,12 +1821,7 @@ static inline struct obj_cgroup *get_obj_cgroup_from_page(struct page *page)
 	return NULL;
 }
 
-static inline bool memcg_bpf_enabled(void)
-{
-	return false;
-}
-
-static inline bool memcg_kmem_online(void)
+static inline bool memcg_kmem_enabled(void)
 {
 	return false;
 }

@@ -23,7 +23,7 @@
 #define NR_ITERS       111
 #define PERF_TEST_BPF_PATH "/sys/fs/bpf/perf_test"
 
-#if defined(HAVE_LIBBPF_SUPPORT) && defined(HAVE_LIBTRACEEVENT)
+#ifdef HAVE_LIBBPF_SUPPORT
 #include <linux/bpf.h>
 #include <bpf/bpf.h>
 
@@ -153,6 +153,7 @@ static int do_test(struct bpf_object *obj, int (*func)(void),
 	}
 
 	evlist__splice_list_tail(evlist, &parse_state.list);
+	evlist->core.nr_groups = parse_state.nr_groups;
 
 	evlist__config(evlist, &opts, NULL);
 
@@ -333,10 +334,10 @@ static int test__bpf(int i)
 static int test__basic_bpf_test(struct test_suite *test __maybe_unused,
 				int subtest __maybe_unused)
 {
-#if defined(HAVE_LIBBPF_SUPPORT) && defined(HAVE_LIBTRACEEVENT)
+#ifdef HAVE_LIBBPF_SUPPORT
 	return test__bpf(0);
 #else
-	pr_debug("Skip BPF test because BPF or libtraceevent support is not compiled\n");
+	pr_debug("Skip BPF test because BPF support is not compiled\n");
 	return TEST_SKIP;
 #endif
 }
@@ -344,10 +345,10 @@ static int test__basic_bpf_test(struct test_suite *test __maybe_unused,
 static int test__bpf_pinning(struct test_suite *test __maybe_unused,
 			     int subtest __maybe_unused)
 {
-#if defined(HAVE_LIBBPF_SUPPORT) && defined(HAVE_LIBTRACEEVENT)
+#ifdef HAVE_LIBBPF_SUPPORT
 	return test__bpf(1);
 #else
-	pr_debug("Skip BPF test because BPF or libtraceevent support is not compiled\n");
+	pr_debug("Skip BPF test because BPF support is not compiled\n");
 	return TEST_SKIP;
 #endif
 }
@@ -355,17 +356,17 @@ static int test__bpf_pinning(struct test_suite *test __maybe_unused,
 static int test__bpf_prologue_test(struct test_suite *test __maybe_unused,
 				   int subtest __maybe_unused)
 {
-#if defined(HAVE_LIBBPF_SUPPORT) && defined(HAVE_BPF_PROLOGUE) && defined(HAVE_LIBTRACEEVENT)
+#if defined(HAVE_LIBBPF_SUPPORT) && defined(HAVE_BPF_PROLOGUE)
 	return test__bpf(2);
 #else
-	pr_debug("Skip BPF test because BPF or libtraceevent support is not compiled\n");
+	pr_debug("Skip BPF test because BPF support is not compiled\n");
 	return TEST_SKIP;
 #endif
 }
 
 
 static struct test_case bpf_tests[] = {
-#if defined(HAVE_LIBBPF_SUPPORT) && defined(HAVE_LIBTRACEEVENT)
+#ifdef HAVE_LIBBPF_SUPPORT
 	TEST_CASE("Basic BPF filtering", basic_bpf_test),
 	TEST_CASE_REASON("BPF pinning", bpf_pinning,
 			"clang isn't installed or environment missing BPF support"),
@@ -376,9 +377,9 @@ static struct test_case bpf_tests[] = {
 	TEST_CASE_REASON("BPF prologue generation", bpf_prologue_test, "not compiled in"),
 #endif
 #else
-	TEST_CASE_REASON("Basic BPF filtering", basic_bpf_test, "not compiled in or missing libtraceevent support"),
-	TEST_CASE_REASON("BPF pinning", bpf_pinning, "not compiled in or missing libtraceevent support"),
-	TEST_CASE_REASON("BPF prologue generation", bpf_prologue_test, "not compiled in or missing libtraceevent support"),
+	TEST_CASE_REASON("Basic BPF filtering", basic_bpf_test, "not compiled in"),
+	TEST_CASE_REASON("BPF pinning", bpf_pinning, "not compiled in"),
+	TEST_CASE_REASON("BPF prologue generation", bpf_prologue_test, "not compiled in"),
 #endif
 	{ .name = NULL, }
 };

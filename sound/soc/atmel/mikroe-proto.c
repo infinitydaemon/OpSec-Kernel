@@ -155,9 +155,11 @@ put_codec_node:
 	return ret;
 }
 
-static void snd_proto_remove(struct platform_device *pdev)
+static int snd_proto_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_card(&snd_proto);
+
+	return 0;
 }
 
 static const struct of_device_id snd_proto_of_match[] = {
@@ -172,7 +174,7 @@ static struct platform_driver snd_proto_driver = {
 		.of_match_table = snd_proto_of_match,
 	},
 	.probe	  = snd_proto_probe,
-	.remove_new	 = snd_proto_remove,
+	.remove	 = snd_proto_remove,
 };
 
 module_platform_driver(snd_proto_driver);

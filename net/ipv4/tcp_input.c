@@ -458,7 +458,7 @@ static void tcp_sndbuf_expand(struct sock *sk)
 static int __tcp_grow_window(const struct sock *sk, const struct sk_buff *skb,
 			     unsigned int skbtruesize)
 {
-	const struct tcp_sock *tp = tcp_sk(sk);
+	struct tcp_sock *tp = tcp_sk(sk);
 	/* Optimize this! */
 	int truesize = tcp_win_from_space(sk, skbtruesize) >> 1;
 	int window = tcp_win_from_space(sk, READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_rmem[2])) >> 1;
@@ -2867,7 +2867,7 @@ static void tcp_process_loss(struct sock *sk, int flag, int num_dupack,
 	}
 	if (tcp_is_reno(tp)) {
 		/* A Reno DUPACK means new data in F-RTO step 2.b above are
-		 * delivered. Lower inflight to clock out (re)transmissions.
+		 * delivered. Lower inflight to clock out (re)tranmissions.
 		 */
 		if (after(tp->snd_nxt, tp->high_seq) && num_dupack)
 			tcp_add_reno_sack(sk, num_dupack, flag & FLAG_ECE);
@@ -3652,8 +3652,7 @@ static void tcp_send_challenge_ack(struct sock *sk)
 		u32 half = (ack_limit + 1) >> 1;
 
 		WRITE_ONCE(net->ipv4.tcp_challenge_timestamp, now);
-		WRITE_ONCE(net->ipv4.tcp_challenge_count,
-			   get_random_u32_inclusive(half, ack_limit + half - 1));
+		WRITE_ONCE(net->ipv4.tcp_challenge_count, half + prandom_u32_max(ack_limit));
 	}
 	count = READ_ONCE(net->ipv4.tcp_challenge_count);
 	if (count > 0) {
@@ -3880,7 +3879,7 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 	/* We passed data and got it acked, remove any soft error
 	 * log. Something worked...
 	 */
-	WRITE_ONCE(sk->sk_err_soft, 0);
+	sk->sk_err_soft = 0;
 	icsk->icsk_probes_out = 0;
 	tp->rcv_tstamp = tcp_jiffies32;
 	if (!prior_packets)
@@ -4328,15 +4327,15 @@ void tcp_reset(struct sock *sk, struct sk_buff *skb)
 	/* We want the right error as BSD sees it (and indeed as we do). */
 	switch (sk->sk_state) {
 	case TCP_SYN_SENT:
-		WRITE_ONCE(sk->sk_err, ECONNREFUSED);
+		sk->sk_err = ECONNREFUSED;
 		break;
 	case TCP_CLOSE_WAIT:
-		WRITE_ONCE(sk->sk_err, EPIPE);
+		sk->sk_err = EPIPE;
 		break;
 	case TCP_CLOSE:
 		return;
 	default:
-		WRITE_ONCE(sk->sk_err, ECONNRESET);
+		sk->sk_err = ECONNRESET;
 	}
 	/* This barrier is coupled with smp_rmb() in tcp_poll() */
 	smp_wmb();
@@ -4771,8 +4770,8 @@ static void tcp_ofo_queue(struct sock *sk)
 	}
 }
 
-static bool tcp_prune_ofo_queue(struct sock *sk, const struct sk_buff *in_skb);
-static int tcp_prune_queue(struct sock *sk, const struct sk_buff *in_skb);
+static bool tcp_prune_ofo_queue(struct sock *sk);
+static int tcp_prune_queue(struct sock *sk);
 
 static int tcp_try_rmem_schedule(struct sock *sk, struct sk_buff *skb,
 				 unsigned int size)
@@ -4780,11 +4779,11 @@ static int tcp_try_rmem_schedule(struct sock *sk, struct sk_buff *skb,
 	if (atomic_read(&sk->sk_rmem_alloc) > sk->sk_rcvbuf ||
 	    !sk_rmem_schedule(sk, skb, size)) {
 
-		if (tcp_prune_queue(sk, skb) < 0)
+		if (tcp_prune_queue(sk) < 0)
 			return -1;
 
 		while (!sk_rmem_schedule(sk, skb, size)) {
-			if (!tcp_prune_ofo_queue(sk, skb))
+			if (!tcp_prune_ofo_queue(sk))
 				return -1;
 		}
 	}
@@ -5336,8 +5335,6 @@ new_range:
  * Clean the out-of-order queue to make room.
  * We drop high sequences packets to :
  * 1) Let a chance for holes to be filled.
- *    This means we do not drop packets from ooo queue if their sequence
- *    is before incoming packet sequence.
  * 2) not add too big latencies if thousands of packets sit there.
  *    (But if application shrinks SO_RCVBUF, we could still end up
  *     freeing whole queue here)
@@ -5345,31 +5342,24 @@ new_range:
  *
  * Return true if queue has shrunk.
  */
-static bool tcp_prune_ofo_queue(struct sock *sk, const struct sk_buff *in_skb)
+static bool tcp_prune_ofo_queue(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct rb_node *node, *prev;
-	bool pruned = false;
 	int goal;
 
 	if (RB_EMPTY_ROOT(&tp->out_of_order_queue))
 		return false;
 
+	NET_INC_STATS(sock_net(sk), LINUX_MIB_OFOPRUNED);
 	goal = sk->sk_rcvbuf >> 3;
 	node = &tp->ooo_last_skb->rbnode;
-
 	do {
-		struct sk_buff *skb = rb_to_skb(node);
-
-		/* If incoming skb would land last in ofo queue, stop pruning. */
-		if (after(TCP_SKB_CB(in_skb)->seq, TCP_SKB_CB(skb)->seq))
-			break;
-		pruned = true;
 		prev = rb_prev(node);
 		rb_erase(node, &tp->out_of_order_queue);
-		goal -= skb->truesize;
-		tcp_drop_reason(sk, skb, SKB_DROP_REASON_TCP_OFO_QUEUE_PRUNE);
-		tp->ooo_last_skb = rb_to_skb(prev);
+		goal -= rb_to_skb(node)->truesize;
+		tcp_drop_reason(sk, rb_to_skb(node),
+				SKB_DROP_REASON_TCP_OFO_QUEUE_PRUNE);
 		if (!prev || goal <= 0) {
 			if (atomic_read(&sk->sk_rmem_alloc) <= sk->sk_rcvbuf &&
 			    !tcp_under_memory_pressure(sk))
@@ -5378,18 +5368,16 @@ static bool tcp_prune_ofo_queue(struct sock *sk, const struct sk_buff *in_skb)
 		}
 		node = prev;
 	} while (node);
+	tp->ooo_last_skb = rb_to_skb(prev);
 
-	if (pruned) {
-		NET_INC_STATS(sock_net(sk), LINUX_MIB_OFOPRUNED);
-		/* Reset SACK state.  A conforming SACK implementation will
-		 * do the same at a timeout based retransmit.  When a connection
-		 * is in a sad state like this, we care only about integrity
-		 * of the connection not performance.
-		 */
-		if (tp->rx_opt.sack_ok)
-			tcp_sack_reset(&tp->rx_opt);
-	}
-	return pruned;
+	/* Reset SACK state.  A conforming SACK implementation will
+	 * do the same at a timeout based retransmit.  When a connection
+	 * is in a sad state like this, we care only about integrity
+	 * of the connection not performance.
+	 */
+	if (tp->rx_opt.sack_ok)
+		tcp_sack_reset(&tp->rx_opt);
+	return true;
 }
 
 /* Reduce allocated memory if we can, trying to get
@@ -5399,7 +5387,7 @@ static bool tcp_prune_ofo_queue(struct sock *sk, const struct sk_buff *in_skb)
  * until the socket owning process reads some of the data
  * to stabilize the situation.
  */
-static int tcp_prune_queue(struct sock *sk, const struct sk_buff *in_skb)
+static int tcp_prune_queue(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 
@@ -5426,7 +5414,7 @@ static int tcp_prune_queue(struct sock *sk, const struct sk_buff *in_skb)
 	/* Collapsing did not help, destructive actions follow.
 	 * This must not ever occur. */
 
-	tcp_prune_ofo_queue(sk, in_skb);
+	tcp_prune_ofo_queue(sk);
 
 	if (atomic_read(&sk->sk_rmem_alloc) <= sk->sk_rcvbuf)
 		return 0;
@@ -5699,7 +5687,7 @@ static void tcp_urg(struct sock *sk, struct sk_buff *skb, const struct tcphdr *t
  */
 static bool tcp_reset_check(const struct sock *sk, const struct sk_buff *skb)
 {
-	const struct tcp_sock *tp = tcp_sk(sk);
+	struct tcp_sock *tp = tcp_sk(sk);
 
 	return unlikely(TCP_SKB_CB(skb)->seq == (tp->rcv_nxt - 1) &&
 			(1 << sk->sk_state) & (TCPF_CLOSE_WAIT | TCPF_LAST_ACK |
@@ -5720,8 +5708,6 @@ static bool tcp_validate_incoming(struct sock *sk, struct sk_buff *skb,
 	    tp->rx_opt.saw_tstamp &&
 	    tcp_paws_discard(sk, skb)) {
 		if (!th->rst) {
-			if (unlikely(th->syn))
-				goto syn_challenge;
 			NET_INC_STATS(sock_net(sk), LINUX_MIB_PAWSESTABREJECTED);
 			if (!tcp_oow_rate_limited(sock_net(sk), skb,
 						  LINUX_MIB_TCPACKSKIPPEDPAWS,
@@ -6850,18 +6836,10 @@ static bool tcp_syn_flood_action(const struct sock *sk, const char *proto)
 #endif
 		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPREQQFULLDROP);
 
-	if (!READ_ONCE(queue->synflood_warned) && syncookies != 2 &&
-	    xchg(&queue->synflood_warned, 1) == 0) {
-		if (IS_ENABLED(CONFIG_IPV6) && sk->sk_family == AF_INET6) {
-			net_info_ratelimited("%s: Possible SYN flooding on port [%pI6c]:%u. %s.\n",
-					proto, inet6_rcv_saddr(sk),
-					sk->sk_num, msg);
-		} else {
-			net_info_ratelimited("%s: Possible SYN flooding on port %pI4:%u. %s.\n",
-					proto, &sk->sk_rcv_saddr,
-					sk->sk_num, msg);
-		}
-	}
+	if (!queue->synflood_warned && syncookies != 2 &&
+	    xchg(&queue->synflood_warned, 1) == 0)
+		net_info_ratelimited("%s: Possible SYN flooding on port %d. %s.  Check SNMP counters.\n",
+				     proto, sk->sk_num, msg);
 
 	return want_cookie;
 }

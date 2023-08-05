@@ -15,7 +15,6 @@
 #include <linux/mm.h>
 #include <linux/mount.h>
 #include <linux/fs.h>
-#include <linux/filelock.h>
 #include <linux/gfs2_ondisk.h>
 #include <linux/falloc.h>
 #include <linux/swap.h>
@@ -236,7 +235,7 @@ static int do_gfs2_set_flags(struct inode *inode, u32 reqflags, u32 mask)
 		goto out;
 
 	if (!IS_IMMUTABLE(inode)) {
-		error = gfs2_permission(&nop_mnt_idmap, inode, MAY_WRITE);
+		error = gfs2_permission(&init_user_ns, inode, MAY_WRITE);
 		if (error)
 			goto out;
 	}
@@ -274,7 +273,7 @@ out:
 	return error;
 }
 
-int gfs2_fileattr_set(struct mnt_idmap *idmap,
+int gfs2_fileattr_set(struct user_namespace *mnt_userns,
 		      struct dentry *dentry, struct fileattr *fa)
 {
 	struct inode *inode = d_inode(dentry);
@@ -630,9 +629,6 @@ int gfs2_open_common(struct inode *inode, struct file *file)
 		ret = generic_file_open(inode, file);
 		if (ret)
 			return ret;
-
-		if (!gfs2_is_jdata(GFS2_I(inode)))
-			file->f_mode |= FMODE_CAN_ODIRECT;
 	}
 
 	fp = kzalloc(sizeof(struct gfs2_file), GFP_NOFS);
@@ -1055,11 +1051,15 @@ retry:
 			goto out_unlock;
 	}
 
+	current->backing_dev_info = inode_to_bdi(inode);
 	pagefault_disable();
 	ret = iomap_file_buffered_write(iocb, from, &gfs2_iomap_ops);
 	pagefault_enable();
-	if (ret > 0)
+	current->backing_dev_info = NULL;
+	if (ret > 0) {
+		iocb->ki_pos += ret;
 		written += ret;
+	}
 
 	if (inode == sdp->sd_rindex)
 		gfs2_glock_dq_uninit(statfs_gh);
@@ -1456,13 +1456,14 @@ static int gfs2_lock(struct file *file, int cmd, struct file_lock *fl)
 
 static void __flock_holder_uninit(struct file *file, struct gfs2_holder *fl_gh)
 {
-	struct gfs2_glock *gl = gfs2_glock_hold(fl_gh->gh_gl);
+	struct gfs2_glock *gl = fl_gh->gh_gl;
 
 	/*
 	 * Make sure gfs2_glock_put() won't sleep under the file->f_lock
 	 * spinlock.
 	 */
 
+	gfs2_glock_hold(gl);
 	spin_lock(&file->f_lock);
 	gfs2_holder_uninit(fl_gh);
 	spin_unlock(&file->f_lock);
@@ -1578,7 +1579,7 @@ const struct file_operations gfs2_file_fops = {
 	.fsync		= gfs2_fsync,
 	.lock		= gfs2_lock,
 	.flock		= gfs2_flock,
-	.splice_read	= filemap_splice_read,
+	.splice_read	= generic_file_splice_read,
 	.splice_write	= gfs2_file_splice_write,
 	.setlease	= simple_nosetlease,
 	.fallocate	= gfs2_fallocate,
@@ -1609,7 +1610,7 @@ const struct file_operations gfs2_file_fops_nolock = {
 	.open		= gfs2_open,
 	.release	= gfs2_release,
 	.fsync		= gfs2_fsync,
-	.splice_read	= filemap_splice_read,
+	.splice_read	= generic_file_splice_read,
 	.splice_write	= gfs2_file_splice_write,
 	.setlease	= generic_setlease,
 	.fallocate	= gfs2_fallocate,

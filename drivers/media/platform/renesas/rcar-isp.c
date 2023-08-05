@@ -419,7 +419,10 @@ static const struct media_entity_operations risp_entity_ops = {
 static int risp_probe_resources(struct rcar_isp *isp,
 				struct platform_device *pdev)
 {
-	isp->base = devm_platform_get_and_ioremap_resource(pdev, 0, NULL);
+	struct resource *res;
+
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	isp->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(isp->base))
 		return PTR_ERR(isp->base);
 
@@ -430,7 +433,6 @@ static int risp_probe_resources(struct rcar_isp *isp,
 
 static const struct of_device_id risp_of_id_table[] = {
 	{ .compatible = "renesas,r8a779a0-isp" },
-	{ .compatible = "renesas,r8a779g0-isp" },
 	{ /* sentinel */ },
 };
 MODULE_DEVICE_TABLE(of, risp_of_id_table);
@@ -501,7 +503,7 @@ error_mutex:
 	return ret;
 }
 
-static void risp_remove(struct platform_device *pdev)
+static int risp_remove(struct platform_device *pdev)
 {
 	struct rcar_isp *isp = platform_get_drvdata(pdev);
 
@@ -513,6 +515,8 @@ static void risp_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 
 	mutex_destroy(&isp->lock);
+
+	return 0;
 }
 
 static struct platform_driver rcar_isp_driver = {
@@ -521,7 +525,7 @@ static struct platform_driver rcar_isp_driver = {
 		.of_match_table = risp_of_id_table,
 	},
 	.probe = risp_probe,
-	.remove_new = risp_remove,
+	.remove = risp_remove,
 };
 
 module_platform_driver(rcar_isp_driver);

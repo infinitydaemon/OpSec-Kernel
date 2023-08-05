@@ -60,7 +60,7 @@ void namespaces__free(struct namespaces *namespaces)
 	free(namespaces);
 }
 
-static int nsinfo__get_nspid(pid_t *tgid, pid_t *nstgid, bool *in_pidns, const char *path)
+static int nsinfo__get_nspid(struct nsinfo *nsi, const char *path)
 {
 	FILE *f = NULL;
 	char *statln = NULL;
@@ -74,18 +74,19 @@ static int nsinfo__get_nspid(pid_t *tgid, pid_t *nstgid, bool *in_pidns, const c
 	while (getline(&statln, &linesz, f) != -1) {
 		/* Use tgid if CONFIG_PID_NS is not defined. */
 		if (strstr(statln, "Tgid:") != NULL) {
-			*tgid = (pid_t)strtol(strrchr(statln, '\t'), NULL, 10);
-			*nstgid = *tgid;
+			nsi->tgid = (pid_t)strtol(strrchr(statln, '\t'),
+						     NULL, 10);
+			nsi->nstgid = nsinfo__tgid(nsi);
 		}
 
 		if (strstr(statln, "NStgid:") != NULL) {
 			nspid = strrchr(statln, '\t');
-			*nstgid = (pid_t)strtol(nspid, NULL, 10);
+			nsi->nstgid = (pid_t)strtol(nspid, NULL, 10);
 			/*
 			 * If innermost tgid is not the first, process is in a different
 			 * PID namespace.
 			 */
-			*in_pidns = (statln + sizeof("NStgid:") - 1) != nspid;
+			nsi->in_pidns = (statln + sizeof("NStgid:") - 1) != nspid;
 			break;
 		}
 	}
@@ -120,8 +121,8 @@ int nsinfo__init(struct nsinfo *nsi)
 	 * want to switch as part of looking up dso/map data.
 	 */
 	if (old_stat.st_ino != new_stat.st_ino) {
-		RC_CHK_ACCESS(nsi)->need_setns = true;
-		RC_CHK_ACCESS(nsi)->mntns_path = newns;
+		nsi->need_setns = true;
+		nsi->mntns_path = newns;
 		newns = NULL;
 	}
 
@@ -131,24 +132,11 @@ int nsinfo__init(struct nsinfo *nsi)
 	if (snprintf(spath, PATH_MAX, "/proc/%d/status", nsinfo__pid(nsi)) >= PATH_MAX)
 		goto out;
 
-	rv = nsinfo__get_nspid(&RC_CHK_ACCESS(nsi)->tgid, &RC_CHK_ACCESS(nsi)->nstgid,
-			       &RC_CHK_ACCESS(nsi)->in_pidns, spath);
+	rv = nsinfo__get_nspid(nsi, spath);
 
 out:
 	free(newns);
 	return rv;
-}
-
-static struct nsinfo *nsinfo__alloc(void)
-{
-	struct nsinfo *res;
-	RC_STRUCT(nsinfo) *nsi;
-
-	nsi = calloc(1, sizeof(*nsi));
-	if (ADD_RC_CHK(res, nsi))
-		refcount_set(&nsi->refcnt, 1);
-
-	return res;
 }
 
 struct nsinfo *nsinfo__new(pid_t pid)
@@ -158,28 +146,24 @@ struct nsinfo *nsinfo__new(pid_t pid)
 	if (pid == 0)
 		return NULL;
 
-	nsi = nsinfo__alloc();
-	if (!nsi)
-		return NULL;
+	nsi = calloc(1, sizeof(*nsi));
+	if (nsi != NULL) {
+		nsi->pid = pid;
+		nsi->tgid = pid;
+		nsi->nstgid = pid;
+		nsi->need_setns = false;
+		nsi->in_pidns = false;
+		/* Init may fail if the process exits while we're trying to look
+		 * at its proc information.  In that case, save the pid but
+		 * don't try to enter the namespace.
+		 */
+		if (nsinfo__init(nsi) == -1)
+			nsi->need_setns = false;
 
-	RC_CHK_ACCESS(nsi)->pid = pid;
-	RC_CHK_ACCESS(nsi)->tgid = pid;
-	RC_CHK_ACCESS(nsi)->nstgid = pid;
-	nsinfo__clear_need_setns(nsi);
-	RC_CHK_ACCESS(nsi)->in_pidns = false;
-	/* Init may fail if the process exits while we're trying to look at its
-	 * proc information. In that case, save the pid but don't try to enter
-	 * the namespace.
-	 */
-	if (nsinfo__init(nsi) == -1)
-		nsinfo__clear_need_setns(nsi);
+		refcount_set(&nsi->refcnt, 1);
+	}
 
 	return nsi;
-}
-
-static const char *nsinfo__mntns_path(const struct nsinfo *nsi)
-{
-	return RC_CHK_ACCESS(nsi)->mntns_path;
 }
 
 struct nsinfo *nsinfo__copy(const struct nsinfo *nsi)
@@ -189,86 +173,73 @@ struct nsinfo *nsinfo__copy(const struct nsinfo *nsi)
 	if (nsi == NULL)
 		return NULL;
 
-	nnsi = nsinfo__alloc();
-	if (!nnsi)
-		return NULL;
-
-	RC_CHK_ACCESS(nnsi)->pid = nsinfo__pid(nsi);
-	RC_CHK_ACCESS(nnsi)->tgid = nsinfo__tgid(nsi);
-	RC_CHK_ACCESS(nnsi)->nstgid = nsinfo__nstgid(nsi);
-	RC_CHK_ACCESS(nnsi)->need_setns = nsinfo__need_setns(nsi);
-	RC_CHK_ACCESS(nnsi)->in_pidns = nsinfo__in_pidns(nsi);
-	if (nsinfo__mntns_path(nsi)) {
-		RC_CHK_ACCESS(nnsi)->mntns_path = strdup(nsinfo__mntns_path(nsi));
-		if (!RC_CHK_ACCESS(nnsi)->mntns_path) {
-			nsinfo__put(nnsi);
-			return NULL;
+	nnsi = calloc(1, sizeof(*nnsi));
+	if (nnsi != NULL) {
+		nnsi->pid = nsinfo__pid(nsi);
+		nnsi->tgid = nsinfo__tgid(nsi);
+		nnsi->nstgid = nsinfo__nstgid(nsi);
+		nnsi->need_setns = nsinfo__need_setns(nsi);
+		nnsi->in_pidns = nsinfo__in_pidns(nsi);
+		if (nsi->mntns_path) {
+			nnsi->mntns_path = strdup(nsi->mntns_path);
+			if (!nnsi->mntns_path) {
+				free(nnsi);
+				return NULL;
+			}
 		}
+		refcount_set(&nnsi->refcnt, 1);
 	}
 
 	return nnsi;
 }
 
-static refcount_t *nsinfo__refcnt(struct nsinfo *nsi)
-{
-	return &RC_CHK_ACCESS(nsi)->refcnt;
-}
-
 static void nsinfo__delete(struct nsinfo *nsi)
 {
-	if (nsi) {
-		WARN_ONCE(refcount_read(nsinfo__refcnt(nsi)) != 0, "nsinfo refcnt unbalanced\n");
-		zfree(&RC_CHK_ACCESS(nsi)->mntns_path);
-		RC_CHK_FREE(nsi);
-	}
+	zfree(&nsi->mntns_path);
+	free(nsi);
 }
 
 struct nsinfo *nsinfo__get(struct nsinfo *nsi)
 {
-	struct nsinfo *result;
-
-	if (RC_CHK_GET(result, nsi))
-		refcount_inc(nsinfo__refcnt(nsi));
-
-	return result;
+	if (nsi)
+		refcount_inc(&nsi->refcnt);
+	return nsi;
 }
 
 void nsinfo__put(struct nsinfo *nsi)
 {
-	if (nsi && refcount_dec_and_test(nsinfo__refcnt(nsi)))
+	if (nsi && refcount_dec_and_test(&nsi->refcnt))
 		nsinfo__delete(nsi);
-	else
-		RC_CHK_PUT(nsi);
 }
 
 bool nsinfo__need_setns(const struct nsinfo *nsi)
 {
-	return RC_CHK_ACCESS(nsi)->need_setns;
+        return nsi->need_setns;
 }
 
 void nsinfo__clear_need_setns(struct nsinfo *nsi)
 {
-	RC_CHK_ACCESS(nsi)->need_setns = false;
+        nsi->need_setns = false;
 }
 
 pid_t nsinfo__tgid(const struct nsinfo  *nsi)
 {
-	return RC_CHK_ACCESS(nsi)->tgid;
+        return nsi->tgid;
 }
 
 pid_t nsinfo__nstgid(const struct nsinfo  *nsi)
 {
-	return RC_CHK_ACCESS(nsi)->nstgid;
+        return nsi->nstgid;
 }
 
 pid_t nsinfo__pid(const struct nsinfo  *nsi)
 {
-	return RC_CHK_ACCESS(nsi)->pid;
+        return nsi->pid;
 }
 
 pid_t nsinfo__in_pidns(const struct nsinfo  *nsi)
 {
-	return RC_CHK_ACCESS(nsi)->in_pidns;
+        return nsi->in_pidns;
 }
 
 void nsinfo__mountns_enter(struct nsinfo *nsi,
@@ -285,7 +256,7 @@ void nsinfo__mountns_enter(struct nsinfo *nsi,
 	nc->oldns = -1;
 	nc->newns = -1;
 
-	if (!nsi || !nsinfo__need_setns(nsi))
+	if (!nsi || !nsi->need_setns)
 		return;
 
 	if (snprintf(curpath, PATH_MAX, "/proc/self/ns/mnt") >= PATH_MAX)
@@ -299,7 +270,7 @@ void nsinfo__mountns_enter(struct nsinfo *nsi,
 	if (oldns < 0)
 		goto errout;
 
-	newns = open(nsinfo__mntns_path(nsi), O_RDONLY);
+	newns = open(nsi->mntns_path, O_RDONLY);
 	if (newns < 0)
 		goto errout;
 
@@ -368,9 +339,9 @@ int nsinfo__stat(const char *filename, struct stat *st, struct nsinfo *nsi)
 
 bool nsinfo__is_in_root_namespace(void)
 {
-	pid_t tgid = 0, nstgid = 0;
-	bool in_pidns = false;
+	struct nsinfo nsi;
 
-	nsinfo__get_nspid(&tgid, &nstgid, &in_pidns, "/proc/self/status");
-	return !in_pidns;
+	memset(&nsi, 0x0, sizeof(nsi));
+	nsinfo__get_nspid(&nsi, "/proc/self/status");
+	return !nsi.in_pidns;
 }

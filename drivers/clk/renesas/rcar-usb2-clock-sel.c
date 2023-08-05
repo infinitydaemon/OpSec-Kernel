@@ -125,13 +125,15 @@ static int rcar_usb2_clock_sel_resume(struct device *dev)
 	return 0;
 }
 
-static void rcar_usb2_clock_sel_remove(struct platform_device *pdev)
+static int rcar_usb2_clock_sel_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 
 	of_clk_del_provider(dev->of_node);
 	pm_runtime_put(dev);
 	pm_runtime_disable(dev);
+
+	return 0;
 }
 
 static int rcar_usb2_clock_sel_probe(struct platform_device *pdev)
@@ -213,7 +215,7 @@ static struct platform_driver rcar_usb2_clock_sel_driver = {
 		.pm	= &rcar_usb2_clock_sel_pm_ops,
 	},
 	.probe		= rcar_usb2_clock_sel_probe,
-	.remove_new	= rcar_usb2_clock_sel_remove,
+	.remove		= rcar_usb2_clock_sel_remove,
 };
 builtin_platform_driver(rcar_usb2_clock_sel_driver);
 

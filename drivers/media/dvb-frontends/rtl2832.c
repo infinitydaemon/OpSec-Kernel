@@ -1021,7 +1021,8 @@ err:
 	return ret;
 }
 
-static int rtl2832_probe(struct i2c_client *client)
+static int rtl2832_probe(struct i2c_client *client,
+		const struct i2c_device_id *id)
 {
 	struct rtl2832_platform_data *pdata = client->dev.platform_data;
 	struct i2c_adapter *i2c = client->adapter;

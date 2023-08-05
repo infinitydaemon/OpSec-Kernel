@@ -67,7 +67,7 @@ u32 tcp_clamp_probe0_to_user_timeout(const struct sock *sk, u32 when)
 
 static void tcp_write_err(struct sock *sk)
 {
-	WRITE_ONCE(sk->sk_err, READ_ONCE(sk->sk_err_soft) ? : ETIMEDOUT);
+	sk->sk_err = sk->sk_err_soft ? : ETIMEDOUT;
 	sk_error_report(sk);
 
 	tcp_write_queue_purge(sk);
@@ -110,7 +110,7 @@ static int tcp_out_of_resources(struct sock *sk, bool do_reset)
 		shift++;
 
 	/* If some dubious ICMP arrived, penalize even more. */
-	if (READ_ONCE(sk->sk_err_soft))
+	if (sk->sk_err_soft)
 		shift++;
 
 	if (tcp_check_oom(sk, shift)) {
@@ -146,7 +146,7 @@ static int tcp_orphan_retries(struct sock *sk, bool alive)
 	int retries = READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_orphan_retries); /* May be zero. */
 
 	/* We know from an ICMP that something is wrong. */
-	if (READ_ONCE(sk->sk_err_soft) && !alive)
+	if (sk->sk_err_soft && !alive)
 		retries = 0;
 
 	/* However, if socket sent something recently, select some safe
@@ -234,19 +234,14 @@ static int tcp_write_timeout(struct sock *sk)
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct net *net = sock_net(sk);
 	bool expired = false, do_reset;
-	int retry_until, max_retransmits;
+	int retry_until;
 
 	if ((1 << sk->sk_state) & (TCPF_SYN_SENT | TCPF_SYN_RECV)) {
 		if (icsk->icsk_retransmits)
 			__dst_negative_advice(sk);
 		retry_until = icsk->icsk_syn_retries ? :
 			READ_ONCE(net->ipv4.sysctl_tcp_syn_retries);
-
-		max_retransmits = retry_until;
-		if (sk->sk_state == TCP_SYN_SENT)
-			max_retransmits += READ_ONCE(net->ipv4.sysctl_tcp_syn_linear_timeouts);
-
-		expired = icsk->icsk_retransmits >= max_retransmits;
+		expired = icsk->icsk_retransmits >= retry_until;
 	} else {
 		if (retransmits_timed_out(sk, READ_ONCE(net->ipv4.sysctl_tcp_retries1), 0)) {
 			/* Black hole detection */
@@ -592,12 +587,8 @@ out_reset_timer:
 	    icsk->icsk_retransmits <= TCP_THIN_LINEAR_RETRIES) {
 		icsk->icsk_backoff = 0;
 		icsk->icsk_rto = min(__tcp_set_rto(tp), TCP_RTO_MAX);
-	} else if (sk->sk_state != TCP_SYN_SENT ||
-		   icsk->icsk_backoff >
-		   READ_ONCE(net->ipv4.sysctl_tcp_syn_linear_timeouts)) {
-		/* Use normal (exponential) backoff unless linear timeouts are
-		 * activated.
-		 */
+	} else {
+		/* Use normal (exponential) backoff */
 		icsk->icsk_rto = min(icsk->icsk_rto << 1, TCP_RTO_MAX);
 	}
 	inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS,

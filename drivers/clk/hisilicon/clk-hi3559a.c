@@ -810,17 +810,18 @@ static int hi3559av100_crg_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void hi3559av100_crg_remove(struct platform_device *pdev)
+static int hi3559av100_crg_remove(struct platform_device *pdev)
 {
 	struct hisi_crg_dev *crg = platform_get_drvdata(pdev);
 
 	hisi_reset_exit(crg->rstc);
 	crg->funcs->unregister_clks(pdev);
+	return 0;
 }
 
 static struct platform_driver hi3559av100_crg_driver = {
 	.probe		= hi3559av100_crg_probe,
-	.remove_new	= hi3559av100_crg_remove,
+	.remove		= hi3559av100_crg_remove,
 	.driver		= {
 		.name	= "hi3559av100-clock",
 		.of_match_table = hi3559av100_crg_match_table,
@@ -840,4 +841,5 @@ static void __exit hi3559av100_crg_exit(void)
 module_exit(hi3559av100_crg_exit);
 
 
+MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("HiSilicon Hi3559AV100 CRG Driver");

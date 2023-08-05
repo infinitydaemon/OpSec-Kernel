@@ -306,7 +306,6 @@ static void __irq_disable(struct irq_desc *desc, bool mask);
 void irq_shutdown(struct irq_desc *desc)
 {
 	if (irqd_is_started(&desc->irq_data)) {
-		clear_irq_resend(desc);
 		desc->depth = 1;
 		if (desc->irq_data.chip->irq_shutdown) {
 			desc->irq_data.chip->irq_shutdown(&desc->irq_data);
@@ -693,16 +692,8 @@ void handle_fasteoi_irq(struct irq_desc *desc)
 
 	raw_spin_lock(&desc->lock);
 
-	/*
-	 * When an affinity change races with IRQ handling, the next interrupt
-	 * can arrive on the new CPU before the original CPU has completed
-	 * handling the previous one - it may need to be resent.
-	 */
-	if (!irq_may_run(desc)) {
-		if (irqd_needs_resend_when_in_progress(&desc->irq_data))
-			desc->istate |= IRQS_PENDING;
+	if (!irq_may_run(desc))
 		goto out;
-	}
 
 	desc->istate &= ~(IRQS_REPLAY | IRQS_WAITING);
 
@@ -723,12 +714,6 @@ void handle_fasteoi_irq(struct irq_desc *desc)
 	handle_irq_event(desc);
 
 	cond_unmask_eoi_irq(desc, chip);
-
-	/*
-	 * When the race described above happens this will resend the interrupt.
-	 */
-	if (unlikely(desc->istate & IRQS_PENDING))
-		check_irq_resend(desc, false);
 
 	raw_spin_unlock(&desc->lock);
 	return;
@@ -1576,10 +1561,10 @@ int irq_chip_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 	return 0;
 }
 
-static struct device *irq_get_pm_device(struct irq_data *data)
+static struct device *irq_get_parent_device(struct irq_data *data)
 {
 	if (data->domain)
-		return data->domain->pm_dev;
+		return data->domain->dev;
 
 	return NULL;
 }
@@ -1593,7 +1578,7 @@ static struct device *irq_get_pm_device(struct irq_data *data)
  */
 int irq_chip_pm_get(struct irq_data *data)
 {
-	struct device *dev = irq_get_pm_device(data);
+	struct device *dev = irq_get_parent_device(data);
 	int retval = 0;
 
 	if (IS_ENABLED(CONFIG_PM) && dev)
@@ -1612,7 +1597,7 @@ int irq_chip_pm_get(struct irq_data *data)
  */
 int irq_chip_pm_put(struct irq_data *data)
 {
-	struct device *dev = irq_get_pm_device(data);
+	struct device *dev = irq_get_parent_device(data);
 	int retval = 0;
 
 	if (IS_ENABLED(CONFIG_PM) && dev)

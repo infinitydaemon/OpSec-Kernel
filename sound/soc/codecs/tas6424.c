@@ -11,6 +11,7 @@
 #include <linux/errno.h>
 #include <linux/device.h>
 #include <linux/i2c.h>
+#include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/slab.h>
 #include <linux/regulator/consumer.h>
@@ -802,7 +803,7 @@ static struct i2c_driver tas6424_i2c_driver = {
 		.name = "tas6424",
 		.of_match_table = of_match_ptr(tas6424_of_ids),
 	},
-	.probe = tas6424_i2c_probe,
+	.probe_new = tas6424_i2c_probe,
 	.remove = tas6424_i2c_remove,
 	.id_table = tas6424_i2c_ids,
 };

@@ -2622,7 +2622,7 @@ v4l2_dev_unreg:
 	return ret;
 }
 
-static void vpe_remove(struct platform_device *pdev)
+static int vpe_remove(struct platform_device *pdev)
 {
 	struct vpe_dev *dev = platform_get_drvdata(pdev);
 
@@ -2635,6 +2635,8 @@ static void vpe_remove(struct platform_device *pdev)
 	vpe_set_clock_enable(dev, 0);
 	vpe_runtime_put(pdev);
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 #if defined(CONFIG_OF)
@@ -2649,7 +2651,7 @@ MODULE_DEVICE_TABLE(of, vpe_of_match);
 
 static struct platform_driver vpe_pdrv = {
 	.probe		= vpe_probe,
-	.remove_new	= vpe_remove,
+	.remove		= vpe_remove,
 	.driver		= {
 		.name	= VPE_MODULE_NAME,
 		.of_match_table = of_match_ptr(vpe_of_match),

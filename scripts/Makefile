@@ -3,20 +3,15 @@
 # scripts contains sources for various helper programs used throughout
 # the kernel for the build process.
 
+hostprogs-always-$(CONFIG_BUILD_BIN2C)			+= bin2c
 hostprogs-always-$(CONFIG_KALLSYMS)			+= kallsyms
 hostprogs-always-$(BUILD_C_RECORDMCOUNT)		+= recordmcount
 hostprogs-always-$(CONFIG_BUILDTIME_TABLE_SORT)		+= sorttable
 hostprogs-always-$(CONFIG_ASN1)				+= asn1_compiler
 hostprogs-always-$(CONFIG_MODULE_SIG_FORMAT)		+= sign-file
 hostprogs-always-$(CONFIG_SYSTEM_EXTRA_CERTIFICATE)	+= insert-sys-cert
-always-$(CONFIG_RUST)					+= target.json
+hostprogs-always-$(CONFIG_RUST)				+= generate_rust_target
 
-filechk_rust_target = $< < include/config/auto.conf
-
-$(obj)/target.json: scripts/generate_rust_target include/config/auto.conf FORCE
-	$(call filechk,rust_target)
-
-hostprogs += generate_rust_target
 generate_rust_target-rust := y
 
 HOSTCFLAGS_sorttable.o = -I$(srctree)/tools/include

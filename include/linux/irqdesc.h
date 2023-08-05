@@ -102,9 +102,6 @@ struct irq_desc {
 	int			parent_irq;
 	struct module		*owner;
 	const char		*name;
-#ifdef CONFIG_HARDIRQS_SW_RESEND
-	struct hlist_node	resend_node;
-#endif
 } ____cacheline_internodealigned_in_smp;
 
 #ifdef CONFIG_SPARSE_IRQ

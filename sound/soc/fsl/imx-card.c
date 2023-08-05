@@ -551,10 +551,10 @@ static int imx_card_parse_of(struct imx_card_data *data)
 			goto err;
 		}
 
-		ret = snd_soc_of_get_dlc(cpu, &args, link->cpus, 0);
+		ret = of_parse_phandle_with_args(cpu, "sound-dai",
+						 "#sound-dai-cells", 0, &args);
 		if (ret) {
-			dev_err_probe(card->dev, ret,
-				      "%s: error getting cpu dai info\n", link->name);
+			dev_err(card->dev, "%s: error getting cpu phandle\n", link->name);
 			goto err;
 		}
 
@@ -563,7 +563,7 @@ static int imx_card_parse_of(struct imx_card_data *data)
 			link_data->cpu_sysclk_id = FSL_SAI_CLK_MAST1;
 
 			/* sai may support mclk/bclk = 1 */
-			if (of_property_read_bool(np, "fsl,mclk-equal-bclk")) {
+			if (of_find_property(np, "fsl,mclk-equal-bclk", NULL)) {
 				link_data->one2one_ratio = true;
 			} else {
 				int i;
@@ -582,8 +582,16 @@ static int imx_card_parse_of(struct imx_card_data *data)
 			}
 		}
 
+		link->cpus->of_node = args.np;
 		link->platforms->of_node = link->cpus->of_node;
 		link->id = args.args[0];
+
+		ret = snd_soc_of_get_dai_name(cpu, &link->cpus->dai_name);
+		if (ret) {
+			dev_err_probe(card->dev, ret,
+				      "%s: error getting cpu dai name\n", link->name);
+			goto err;
+		}
 
 		codec = of_get_child_by_name(np, "codec");
 		if (codec) {
@@ -607,8 +615,17 @@ static int imx_card_parse_of(struct imx_card_data *data)
 				plat_data->type = CODEC_AK5552;
 
 		} else {
-			link->codecs	 = &asoc_dummy_dlc;
+			dlc = devm_kzalloc(dev, sizeof(*dlc), GFP_KERNEL);
+			if (!dlc) {
+				ret = -ENOMEM;
+				goto err;
+			}
+
+			link->codecs	 = dlc;
 			link->num_codecs = 1;
+
+			link->codecs->dai_name = "snd-soc-dummy-dai";
+			link->codecs->name = "snd-soc-dummy";
 		}
 
 		if (!strncmp(link->name, "HiFi-ASRC-FE", 12)) {

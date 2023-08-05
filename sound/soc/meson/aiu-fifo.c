@@ -34,7 +34,7 @@ snd_pcm_uframes_t aiu_fifo_pointer(struct snd_soc_component *component,
 				   struct snd_pcm_substream *substream)
 {
 	struct snd_soc_dai *dai = aiu_fifo_dai(substream);
-	struct aiu_fifo *fifo = snd_soc_dai_dma_data_get_playback(dai);
+	struct aiu_fifo *fifo = dai->playback_dma_data;
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	unsigned int addr;
 
@@ -46,7 +46,7 @@ snd_pcm_uframes_t aiu_fifo_pointer(struct snd_soc_component *component,
 static void aiu_fifo_enable(struct snd_soc_dai *dai, bool enable)
 {
 	struct snd_soc_component *component = dai->component;
-	struct aiu_fifo *fifo = snd_soc_dai_dma_data_get_playback(dai);
+	struct aiu_fifo *fifo = dai->playback_dma_data;
 	unsigned int en_mask = (AIU_MEM_CONTROL_FILL_EN |
 				AIU_MEM_CONTROL_EMPTY_EN);
 
@@ -80,7 +80,7 @@ int aiu_fifo_prepare(struct snd_pcm_substream *substream,
 		     struct snd_soc_dai *dai)
 {
 	struct snd_soc_component *component = dai->component;
-	struct aiu_fifo *fifo = snd_soc_dai_dma_data_get_playback(dai);
+	struct aiu_fifo *fifo = dai->playback_dma_data;
 
 	snd_soc_component_update_bits(component,
 				      fifo->mem_offset + AIU_MEM_CONTROL,
@@ -98,7 +98,7 @@ int aiu_fifo_hw_params(struct snd_pcm_substream *substream,
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct snd_soc_component *component = dai->component;
-	struct aiu_fifo *fifo = snd_soc_dai_dma_data_get_playback(dai);
+	struct aiu_fifo *fifo = dai->playback_dma_data;
 	dma_addr_t end;
 
 	/* Setup the fifo boundaries */
@@ -132,7 +132,7 @@ static irqreturn_t aiu_fifo_isr(int irq, void *dev_id)
 int aiu_fifo_startup(struct snd_pcm_substream *substream,
 		     struct snd_soc_dai *dai)
 {
-	struct aiu_fifo *fifo = snd_soc_dai_dma_data_get_playback(dai);
+	struct aiu_fifo *fifo = dai->playback_dma_data;
 	int ret;
 
 	snd_soc_set_runtime_hwparams(substream, fifo->pcm);
@@ -168,7 +168,7 @@ int aiu_fifo_startup(struct snd_pcm_substream *substream,
 void aiu_fifo_shutdown(struct snd_pcm_substream *substream,
 		       struct snd_soc_dai *dai)
 {
-	struct aiu_fifo *fifo = snd_soc_dai_dma_data_get_playback(dai);
+	struct aiu_fifo *fifo = dai->playback_dma_data;
 
 	free_irq(fifo->irq, substream);
 	clk_disable_unprepare(fifo->pclk);
@@ -178,7 +178,7 @@ int aiu_fifo_pcm_new(struct snd_soc_pcm_runtime *rtd,
 		     struct snd_soc_dai *dai)
 {
 	struct snd_card *card = rtd->card->snd_card;
-	struct aiu_fifo *fifo = snd_soc_dai_dma_data_get_playback(dai);
+	struct aiu_fifo *fifo = dai->playback_dma_data;
 	size_t size = fifo->pcm->buffer_bytes_max;
 	int ret;
 
@@ -200,16 +200,15 @@ int aiu_fifo_dai_probe(struct snd_soc_dai *dai)
 	if (!fifo)
 		return -ENOMEM;
 
-	snd_soc_dai_dma_data_set_playback(dai, fifo);
+	dai->playback_dma_data = fifo;
 
 	return 0;
 }
 
 int aiu_fifo_dai_remove(struct snd_soc_dai *dai)
 {
-	struct aiu_fifo *fifo = snd_soc_dai_dma_data_get_playback(dai);
-
-	kfree(fifo);
+	kfree(dai->playback_dma_data);
 
 	return 0;
 }
+

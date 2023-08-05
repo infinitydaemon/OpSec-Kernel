@@ -228,9 +228,8 @@ static struct kobj_type ktype_device_ctrl = {
  */
 int edac_device_register_sysfs_main_kobj(struct edac_device_ctl_info *edac_dev)
 {
-	struct device *dev_root;
 	struct bus_type *edac_subsys;
-	int err = -ENODEV;
+	int err;
 
 	edac_dbg(1, "\n");
 
@@ -248,16 +247,15 @@ int edac_device_register_sysfs_main_kobj(struct edac_device_ctl_info *edac_dev)
 	 */
 	edac_dev->owner = THIS_MODULE;
 
-	if (!try_module_get(edac_dev->owner))
+	if (!try_module_get(edac_dev->owner)) {
+		err = -ENODEV;
 		goto err_out;
+	}
 
 	/* register */
-	dev_root = bus_get_dev_root(edac_subsys);
-	if (dev_root) {
-		err = kobject_init_and_add(&edac_dev->kobj, &ktype_device_ctrl,
-					   &dev_root->kobj, "%s", edac_dev->name);
-		put_device(dev_root);
-	}
+	err = kobject_init_and_add(&edac_dev->kobj, &ktype_device_ctrl,
+				   &edac_subsys->dev_root->kobj,
+				   "%s", edac_dev->name);
 	if (err) {
 		edac_dbg(1, "Failed to register '.../edac/%s'\n",
 			 edac_dev->name);

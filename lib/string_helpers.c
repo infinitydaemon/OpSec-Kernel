@@ -979,22 +979,18 @@ EXPORT_SYMBOL(__sysfs_match_string);
 
 /**
  * strreplace - Replace all occurrences of character in string.
- * @str: The string to operate on.
+ * @s: The string to operate on.
  * @old: The character being replaced.
  * @new: The character @old is replaced with.
  *
- * Replaces the each @old character with a @new one in the given string @str.
- *
- * Return: pointer to the string @str itself.
+ * Returns pointer to the nul byte at the end of @s.
  */
-char *strreplace(char *str, char old, char new)
+char *strreplace(char *s, char old, char new)
 {
-	char *s = str;
-
 	for (; *s; ++s)
 		if (*s == old)
 			*s = new;
-	return str;
+	return s;
 }
 EXPORT_SYMBOL(strreplace);
 

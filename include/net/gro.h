@@ -11,23 +11,11 @@
 #include <net/udp.h>
 
 struct napi_gro_cb {
-	union {
-		struct {
-			/* Virtual address of skb_shinfo(skb)->frags[0].page + offset. */
-			void	*frag0;
+	/* Virtual address of skb_shinfo(skb)->frags[0].page + offset. */
+	void	*frag0;
 
-			/* Length of frag0. */
-			unsigned int frag0_len;
-		};
-
-		struct {
-			/* used in skb_gro_receive() slow path */
-			struct sk_buff *last;
-
-			/* jiffies when first packet was created/queued */
-			unsigned long age;
-		};
-	};
+	/* Length of frag0. */
+	unsigned int frag0_len;
 
 	/* This indicates where we are processing relative to skb->data. */
 	int	data_offset;
@@ -43,6 +31,9 @@ struct napi_gro_cb {
 
 	/* Used in ipv6_gro_receive() and foo-over-udp */
 	u16	proto;
+
+	/* jiffies when first packet was created/queued */
+	unsigned long age;
 
 /* Used in napi_gro_cb::free */
 #define NAPI_GRO_FREE             1
@@ -86,6 +77,9 @@ struct napi_gro_cb {
 
 	/* used to support CHECKSUM_COMPLETE for tunneling protocols */
 	__wsum	csum;
+
+	/* used in skb_gro_receive() slow path */
+	struct sk_buff *last;
 };
 
 #define NAPI_GRO_CB(skb) ((struct napi_gro_cb *)(skb)->cb)
@@ -452,6 +446,5 @@ static inline void gro_normal_one(struct napi_struct *napi, struct sk_buff *skb,
 		gro_normal_list(napi);
 }
 
-extern struct list_head offload_base;
 
 #endif /* _NET_IPV6_GRO_H */

@@ -14,7 +14,6 @@
 #include <net/pkt_sched.h>
 #include <net/pkt_cls.h>
 #include <net/tc_act/tc_mpls.h>
-#include <net/tc_wrapper.h>
 
 static struct tc_action_ops act_mpls_ops;
 
@@ -50,9 +49,8 @@ static __be32 tcf_mpls_get_lse(struct mpls_shim_hdr *lse,
 	return cpu_to_be32(new_lse);
 }
 
-TC_INDIRECT_SCOPE int tcf_mpls_act(struct sk_buff *skb,
-				   const struct tc_action *a,
-				   struct tcf_result *res)
+static int tcf_mpls_act(struct sk_buff *skb, const struct tc_action *a,
+			struct tcf_result *res)
 {
 	struct tcf_mpls *m = to_mpls(a);
 	struct tcf_mpls_params *p;
@@ -69,7 +67,7 @@ TC_INDIRECT_SCOPE int tcf_mpls_act(struct sk_buff *skb,
 		skb_push_rcsum(skb, skb->mac_len);
 		mac_len = skb->mac_len;
 	} else {
-		mac_len = skb_network_offset(skb);
+		mac_len = skb_network_header(skb) - skb_mac_header(skb);
 	}
 
 	ret = READ_ONCE(m->tcf_action);

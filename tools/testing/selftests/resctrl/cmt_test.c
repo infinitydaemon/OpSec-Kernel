@@ -82,11 +82,12 @@ void cmt_test_cleanup(void)
 
 int cmt_resctrl_val(int cpu_no, int n, char **benchmark_cmd)
 {
-	int ret;
+	int ret, mum_resctrlfs;
 
 	cache_size = 0;
+	mum_resctrlfs = 1;
 
-	ret = remount_resctrlfs(true);
+	ret = remount_resctrlfs(mum_resctrlfs);
 	if (ret)
 		return ret;
 
@@ -117,7 +118,7 @@ int cmt_resctrl_val(int cpu_no, int n, char **benchmark_cmd)
 		.ctrlgrp	= "c1",
 		.mongrp		= "m1",
 		.cpu_no		= cpu_no,
-		.mum_resctrlfs	= false,
+		.mum_resctrlfs	= 0,
 		.filename	= RESULT_FILE_NAME,
 		.mask		= ~(long_mask << n) & long_mask,
 		.span		= cache_size * n / count_of_bits,
@@ -132,12 +133,13 @@ int cmt_resctrl_val(int cpu_no, int n, char **benchmark_cmd)
 
 	ret = resctrl_val(benchmark_cmd, &param);
 	if (ret)
-		goto out;
+		return ret;
 
 	ret = check_results(&param, n);
+	if (ret)
+		return ret;
 
-out:
 	cmt_test_cleanup();
 
-	return ret;
+	return 0;
 }

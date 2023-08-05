@@ -16,8 +16,6 @@
 
 #define C8SECTPFE_MAX_TSIN_CHAN 8
 
-struct gpio_desc;
-
 struct channel_info {
 
 	int tsin_id;
@@ -27,7 +25,7 @@ struct channel_info {
 	int i2c;
 	int dvb_card;
 
-	struct gpio_desc *rst_gpio;
+	int rst_gpio;
 
 	struct i2c_adapter  *i2c_adapter;
 	struct i2c_adapter  *tuner_i2c;

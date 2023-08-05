@@ -69,7 +69,6 @@ enum cpuhp_state {
 	CPUHP_X86_APB_DEAD,
 	CPUHP_X86_MCE_DEAD,
 	CPUHP_VIRT_NET_DEAD,
-	CPUHP_IBMVNIC_DEAD,
 	CPUHP_SLUB_DEAD,
 	CPUHP_DEBUG_OBJ_DEAD,
 	CPUHP_MM_WRITEBACK_DEAD,
@@ -133,7 +132,6 @@ enum cpuhp_state {
 	CPUHP_MIPS_SOC_PREPARE,
 	CPUHP_BP_PREPARE_DYN,
 	CPUHP_BP_PREPARE_DYN_END		= CPUHP_BP_PREPARE_DYN + 20,
-	CPUHP_BP_KICK_AP,
 	CPUHP_BRINGUP_CPU,
 
 	/*
@@ -142,7 +140,6 @@ enum cpuhp_state {
 	 */
 	CPUHP_AP_IDLE_DEAD,
 	CPUHP_AP_OFFLINE,
-	CPUHP_AP_CACHECTRL_STARTING,
 	CPUHP_AP_SCHED_STARTING,
 	CPUHP_AP_RCUTREE_DYING,
 	CPUHP_AP_CPU_PM_STARTING,
@@ -187,6 +184,10 @@ enum cpuhp_state {
 	CPUHP_AP_CSKY_TIMER_STARTING,
 	CPUHP_AP_TI_GP_TIMER_STARTING,
 	CPUHP_AP_HYPERV_TIMER_STARTING,
+	CPUHP_AP_KVM_STARTING,
+	CPUHP_AP_KVM_ARM_VGIC_INIT_STARTING,
+	CPUHP_AP_KVM_ARM_VGIC_STARTING,
+	CPUHP_AP_KVM_ARM_TIMER_STARTING,
 	/* Must be the last timer callback */
 	CPUHP_AP_DUMMY_TIMER_STARTING,
 	CPUHP_AP_ARM_XEN_STARTING,
@@ -201,8 +202,6 @@ enum cpuhp_state {
 
 	/* Online section invoked on the hotplugged CPU from the hotplug thread */
 	CPUHP_AP_ONLINE_IDLE,
-	CPUHP_AP_HYPERV_ONLINE,
-	CPUHP_AP_KVM_ONLINE,
 	CPUHP_AP_SCHED_WAIT_EMPTY,
 	CPUHP_AP_SMPBOOT_THREADS,
 	CPUHP_AP_X86_VDSO_VMA_ONLINE,
@@ -517,22 +516,6 @@ static inline int cpuhp_state_remove_instance_nocalls(enum cpuhp_state state,
 void cpuhp_online_idle(enum cpuhp_state state);
 #else
 static inline void cpuhp_online_idle(enum cpuhp_state state) { }
-#endif
-
-struct task_struct;
-
-void cpuhp_ap_sync_alive(void);
-void arch_cpuhp_sync_state_poll(void);
-void arch_cpuhp_cleanup_kick_cpu(unsigned int cpu);
-int arch_cpuhp_kick_ap_alive(unsigned int cpu, struct task_struct *tidle);
-bool arch_cpuhp_init_parallel_bringup(void);
-
-#ifdef CONFIG_HOTPLUG_CORE_SYNC_DEAD
-void cpuhp_ap_report_dead(void);
-void arch_cpuhp_cleanup_dead_cpu(unsigned int cpu);
-#else
-static inline void cpuhp_ap_report_dead(void) { }
-static inline void arch_cpuhp_cleanup_dead_cpu(unsigned int cpu) { }
 #endif
 
 #endif

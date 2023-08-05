@@ -190,9 +190,7 @@ static int camif_register_sensor(struct camif_dev *camif)
 	struct s3c_camif_sensor_info *sensor = &camif->pdata.sensor;
 	struct v4l2_device *v4l2_dev = &camif->v4l2_dev;
 	struct i2c_adapter *adapter;
-	struct v4l2_subdev_format format = {
-		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
-	};
+	struct v4l2_subdev_format format;
 	struct v4l2_subdev *sd;
 	int ret;
 
@@ -222,6 +220,7 @@ static int camif_register_sensor(struct camif_dev *camif)
 
 	/* Get initial pixel format and set it at the camif sink pad */
 	format.pad = 0;
+	format.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 	ret = v4l2_subdev_call(sd, pad, get_fmt, NULL, &format);
 
 	if (ret < 0)
@@ -508,7 +507,7 @@ err_sd:
 	return ret;
 }
 
-static void s3c_camif_remove(struct platform_device *pdev)
+static int s3c_camif_remove(struct platform_device *pdev)
 {
 	struct camif_dev *camif = platform_get_drvdata(pdev);
 	struct s3c_camif_plat_data *pdata = &camif->pdata;
@@ -522,6 +521,8 @@ static void s3c_camif_remove(struct platform_device *pdev)
 	camif_clk_put(camif);
 	s3c_camif_unregister_subdev(camif);
 	pdata->gpio_put();
+
+	return 0;
 }
 
 static int s3c_camif_runtime_resume(struct device *dev)
@@ -622,7 +623,7 @@ static const struct dev_pm_ops s3c_camif_pm_ops = {
 
 static struct platform_driver s3c_camif_driver = {
 	.probe		= s3c_camif_probe,
-	.remove_new	= s3c_camif_remove,
+	.remove		= s3c_camif_remove,
 	.id_table	= s3c_camif_driver_ids,
 	.driver = {
 		.name	= S3C_CAMIF_DRIVER_NAME,

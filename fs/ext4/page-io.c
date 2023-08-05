@@ -99,30 +99,30 @@ static void buffer_io_error(struct buffer_head *bh)
 
 static void ext4_finish_bio(struct bio *bio)
 {
-	struct folio_iter fi;
+	struct bio_vec *bvec;
+	struct bvec_iter_all iter_all;
 
-	bio_for_each_folio_all(fi, bio) {
-		struct folio *folio = fi.folio;
-		struct folio *io_folio = NULL;
+	bio_for_each_segment_all(bvec, bio, iter_all) {
+		struct page *page = bvec->bv_page;
+		struct page *bounce_page = NULL;
 		struct buffer_head *bh, *head;
-		size_t bio_start = fi.offset;
-		size_t bio_end = bio_start + fi.length;
+		unsigned bio_start = bvec->bv_offset;
+		unsigned bio_end = bio_start + bvec->bv_len;
 		unsigned under_io = 0;
 		unsigned long flags;
 
-		if (fscrypt_is_bounce_folio(folio)) {
-			io_folio = folio;
-			folio = fscrypt_pagecache_folio(folio);
+		if (fscrypt_is_bounce_page(page)) {
+			bounce_page = page;
+			page = fscrypt_pagecache_page(bounce_page);
 		}
 
 		if (bio->bi_status) {
-			int err = blk_status_to_errno(bio->bi_status);
-			folio_set_error(folio);
-			mapping_set_error(folio->mapping, err);
+			SetPageError(page);
+			mapping_set_error(page->mapping, -EIO);
 		}
-		bh = head = folio_buffers(folio);
+		bh = head = page_buffers(page);
 		/*
-		 * We check all buffers in the folio under b_uptodate_lock
+		 * We check all buffers in the page under b_uptodate_lock
 		 * to avoid races with other end io clearing async_write flags
 		 */
 		spin_lock_irqsave(&head->b_uptodate_lock, flags);
@@ -141,8 +141,8 @@ static void ext4_finish_bio(struct bio *bio)
 		} while ((bh = bh->b_this_page) != head);
 		spin_unlock_irqrestore(&head->b_uptodate_lock, flags);
 		if (!under_io) {
-			fscrypt_free_bounce_page(&io_folio->page);
-			folio_end_writeback(folio);
+			fscrypt_free_bounce_page(bounce_page);
+			end_page_writeback(page);
 		}
 	}
 }
@@ -409,10 +409,12 @@ static void io_submit_init_bio(struct ext4_io_submit *io,
 
 static void io_submit_add_bh(struct ext4_io_submit *io,
 			     struct inode *inode,
-			     struct folio *folio,
-			     struct folio *io_folio,
+			     struct page *pagecache_page,
+			     struct page *bounce_page,
 			     struct buffer_head *bh)
 {
+	int ret;
+
 	if (io->io_bio && (bh->b_blocknr != io->io_next_block ||
 			   !fscrypt_mergeable_bio_bh(io->io_bio, bh))) {
 submit_and_retry:
@@ -420,48 +422,56 @@ submit_and_retry:
 	}
 	if (io->io_bio == NULL)
 		io_submit_init_bio(io, bh);
-	if (!bio_add_folio(io->io_bio, io_folio, bh->b_size, bh_offset(bh)))
+	ret = bio_add_page(io->io_bio, bounce_page ?: pagecache_page,
+			   bh->b_size, bh_offset(bh));
+	if (ret != bh->b_size)
 		goto submit_and_retry;
-	wbc_account_cgroup_owner(io->io_wbc, &folio->page, bh->b_size);
+	wbc_account_cgroup_owner(io->io_wbc, pagecache_page, bh->b_size);
 	io->io_next_block++;
 }
 
-int ext4_bio_write_folio(struct ext4_io_submit *io, struct folio *folio,
-		size_t len)
+int ext4_bio_write_page(struct ext4_io_submit *io,
+			struct page *page,
+			int len,
+			bool keep_towrite)
 {
-	struct folio *io_folio = folio;
-	struct inode *inode = folio->mapping->host;
+	struct page *bounce_page = NULL;
+	struct inode *inode = page->mapping->host;
 	unsigned block_start;
 	struct buffer_head *bh, *head;
 	int ret = 0;
+	int nr_submitted = 0;
 	int nr_to_submit = 0;
 	struct writeback_control *wbc = io->io_wbc;
-	bool keep_towrite = false;
 
-	BUG_ON(!folio_test_locked(folio));
-	BUG_ON(folio_test_writeback(folio));
+	BUG_ON(!PageLocked(page));
+	BUG_ON(PageWriteback(page));
 
-	folio_clear_error(folio);
+	if (keep_towrite)
+		set_page_writeback_keepwrite(page);
+	else
+		set_page_writeback(page);
+	ClearPageError(page);
 
 	/*
 	 * Comments copied from block_write_full_page:
 	 *
-	 * The folio straddles i_size.  It must be zeroed out on each and every
+	 * The page straddles i_size.  It must be zeroed out on each and every
 	 * writepage invocation because it may be mmapped.  "A file is mapped
 	 * in multiples of the page size.  For a file that is not a multiple of
 	 * the page size, the remaining memory is zeroed when mapped, and
 	 * writes to that region are not written out to the file."
 	 */
-	if (len < folio_size(folio))
-		folio_zero_segment(folio, len, folio_size(folio));
+	if (len < PAGE_SIZE)
+		zero_user_segment(page, len, PAGE_SIZE);
 	/*
 	 * In the first loop we prepare and mark buffers to submit. We have to
-	 * mark all buffers in the folio before submitting so that
-	 * folio_end_writeback() cannot be called from ext4_end_bio() when IO
+	 * mark all buffers in the page before submitting so that
+	 * end_page_writeback() cannot be called from ext4_end_bio() when IO
 	 * on the first buffer finishes and we are still working on submitting
 	 * the second buffer.
 	 */
-	bh = head = folio_buffers(folio);
+	bh = head = page_buffers(page);
 	do {
 		block_start = bh_offset(bh);
 		if (block_start >= len) {
@@ -474,34 +484,17 @@ int ext4_bio_write_folio(struct ext4_io_submit *io, struct folio *folio,
 			/* A hole? We can safely clear the dirty bit */
 			if (!buffer_mapped(bh))
 				clear_buffer_dirty(bh);
-			/*
-			 * Keeping dirty some buffer we cannot write? Make sure
-			 * to redirty the folio and keep TOWRITE tag so that
-			 * racing WB_SYNC_ALL writeback does not skip the folio.
-			 * This happens e.g. when doing writeout for
-			 * transaction commit or when journalled data is not
-			 * yet committed.
-			 */
-			if (buffer_dirty(bh) ||
-			    (buffer_jbd(bh) && buffer_jbddirty(bh))) {
-				if (!folio_test_dirty(folio))
-					folio_redirty_for_writepage(wbc, folio);
-				keep_towrite = true;
-			}
+			if (io->io_bio)
+				ext4_io_submit(io);
 			continue;
 		}
 		if (buffer_new(bh))
 			clear_buffer_new(bh);
 		set_buffer_async_write(bh);
-		clear_buffer_dirty(bh);
 		nr_to_submit++;
 	} while ((bh = bh->b_this_page) != head);
 
-	/* Nothing to submit? Just unlock the folio... */
-	if (!nr_to_submit)
-		return 0;
-
-	bh = head = folio_buffers(folio);
+	bh = head = page_buffers(page);
 
 	/*
 	 * If any blocks are being written to an encrypted file, encrypt them
@@ -510,10 +503,9 @@ int ext4_bio_write_folio(struct ext4_io_submit *io, struct folio *folio,
 	 * (e.g. holes) to be unnecessarily encrypted, but this is rare and
 	 * can't happen in the common case of blocksize == PAGE_SIZE.
 	 */
-	if (fscrypt_inode_uses_fs_layer_crypto(inode)) {
+	if (fscrypt_inode_uses_fs_layer_crypto(inode) && nr_to_submit) {
 		gfp_t gfp_flags = GFP_NOFS;
 		unsigned int enc_bytes = round_up(len, i_blocksize(inode));
-		struct page *bounce_page;
 
 		/*
 		 * Since bounce page allocation uses a mempool, we can only use
@@ -523,8 +515,8 @@ int ext4_bio_write_folio(struct ext4_io_submit *io, struct folio *folio,
 		if (io->io_bio)
 			gfp_flags = GFP_NOWAIT | __GFP_NOWARN;
 	retry_encrypt:
-		bounce_page = fscrypt_encrypt_pagecache_blocks(&folio->page,
-					enc_bytes, 0, gfp_flags);
+		bounce_page = fscrypt_encrypt_pagecache_blocks(page, enc_bytes,
+							       0, gfp_flags);
 		if (IS_ERR(bounce_page)) {
 			ret = PTR_ERR(bounce_page);
 			if (ret == -ENOMEM &&
@@ -540,28 +532,28 @@ int ext4_bio_write_folio(struct ext4_io_submit *io, struct folio *folio,
 			}
 
 			printk_ratelimited(KERN_ERR "%s: ret = %d\n", __func__, ret);
-			folio_redirty_for_writepage(wbc, folio);
+			redirty_page_for_writepage(wbc, page);
 			do {
-				if (buffer_async_write(bh)) {
-					clear_buffer_async_write(bh);
-					set_buffer_dirty(bh);
-				}
+				clear_buffer_async_write(bh);
 				bh = bh->b_this_page;
 			} while (bh != head);
-
-			return ret;
+			goto unlock;
 		}
-		io_folio = page_folio(bounce_page);
 	}
-
-	__folio_start_writeback(folio, keep_towrite);
 
 	/* Now submit buffers to write */
 	do {
 		if (!buffer_async_write(bh))
 			continue;
-		io_submit_add_bh(io, inode, folio, io_folio, bh);
+		io_submit_add_bh(io, inode, page, bounce_page, bh);
+		nr_submitted++;
+		clear_buffer_dirty(bh);
 	} while ((bh = bh->b_this_page) != head);
 
-	return 0;
+unlock:
+	unlock_page(page);
+	/* Nothing submitted - we have to end page writeback */
+	if (!nr_submitted)
+		end_page_writeback(page);
+	return ret;
 }

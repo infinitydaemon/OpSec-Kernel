@@ -1447,7 +1447,7 @@ static int fsl_ssi_probe_from_dt(struct fsl_ssi *ssi)
 			return -EINVAL;
 		}
 		strcpy(ssi->card_name, "ac97-codec");
-	} else if (!of_property_read_bool(np, "fsl,ssi-asynchronous")) {
+	} else if (!of_find_property(np, "fsl,ssi-asynchronous", NULL)) {
 		/*
 		 * In synchronous mode, STCK and STFS ports are used by RX
 		 * as well. So the software should limit the sample rates,
@@ -1671,7 +1671,7 @@ error_ac97_ops:
 	return ret;
 }
 
-static void fsl_ssi_remove(struct platform_device *pdev)
+static int fsl_ssi_remove(struct platform_device *pdev)
 {
 	struct fsl_ssi *ssi = dev_get_drvdata(&pdev->dev);
 
@@ -1690,6 +1690,8 @@ static void fsl_ssi_remove(struct platform_device *pdev)
 		snd_soc_set_ac97_ops(NULL);
 		mutex_destroy(&ssi->ac97_reg_lock);
 	}
+
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -1735,7 +1737,7 @@ static struct platform_driver fsl_ssi_driver = {
 		.pm = &fsl_ssi_pm,
 	},
 	.probe = fsl_ssi_probe,
-	.remove_new = fsl_ssi_remove,
+	.remove = fsl_ssi_remove,
 };
 
 module_platform_driver(fsl_ssi_driver);

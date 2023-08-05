@@ -149,7 +149,8 @@ static const struct v4l2_subdev_ops tda9840_ops = {
 
 /* ----------------------------------------------------------------------- */
 
-static int tda9840_probe(struct i2c_client *client)
+static int tda9840_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
 	struct v4l2_subdev *sd;
 

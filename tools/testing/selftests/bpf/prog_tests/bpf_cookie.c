@@ -472,7 +472,6 @@ static void lsm_subtest(struct test_bpf_cookie *skel)
 	int prog_fd;
 	int lsm_fd = -1;
 	LIBBPF_OPTS(bpf_link_create_opts, link_opts);
-	int err;
 
 	skel->bss->lsm_res = 0;
 
@@ -483,9 +482,8 @@ static void lsm_subtest(struct test_bpf_cookie *skel)
 	if (!ASSERT_GE(lsm_fd, 0, "lsm.link_create"))
 		goto cleanup;
 
-	err = stack_mprotect();
-	if (!ASSERT_EQ(err, -1, "stack_mprotect") ||
-	    !ASSERT_EQ(errno, EPERM, "stack_mprotect"))
+	stack_mprotect();
+	if (!ASSERT_EQ(errno, EPERM, "stack_mprotect"))
 		goto cleanup;
 
 	usleep(1);

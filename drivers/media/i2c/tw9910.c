@@ -928,7 +928,8 @@ static const struct v4l2_subdev_ops tw9910_subdev_ops = {
  * i2c_driver function
  */
 
-static int tw9910_probe(struct i2c_client *client)
+static int tw9910_probe(struct i2c_client *client,
+			const struct i2c_device_id *did)
 
 {
 	struct tw9910_priv		*priv;

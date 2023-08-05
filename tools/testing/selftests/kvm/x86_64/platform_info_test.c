@@ -36,12 +36,15 @@ static void guest_code(void)
 
 static void test_msr_platform_info_enabled(struct kvm_vcpu *vcpu)
 {
+	struct kvm_run *run = vcpu->run;
 	struct ucall uc;
 
 	vm_enable_cap(vcpu->vm, KVM_CAP_MSR_PLATFORM_INFO, true);
 	vcpu_run(vcpu);
-	TEST_ASSERT_KVM_EXIT_REASON(vcpu, KVM_EXIT_IO);
-
+	TEST_ASSERT(run->exit_reason == KVM_EXIT_IO,
+			"Exit_reason other than KVM_EXIT_IO: %u (%s),\n",
+			run->exit_reason,
+			exit_reason_str(run->exit_reason));
 	get_ucall(vcpu, &uc);
 	TEST_ASSERT(uc.cmd == UCALL_SYNC,
 			"Received ucall other than UCALL_SYNC: %lu\n", uc.cmd);
@@ -53,9 +56,14 @@ static void test_msr_platform_info_enabled(struct kvm_vcpu *vcpu)
 
 static void test_msr_platform_info_disabled(struct kvm_vcpu *vcpu)
 {
+	struct kvm_run *run = vcpu->run;
+
 	vm_enable_cap(vcpu->vm, KVM_CAP_MSR_PLATFORM_INFO, false);
 	vcpu_run(vcpu);
-	TEST_ASSERT_KVM_EXIT_REASON(vcpu, KVM_EXIT_SHUTDOWN);
+	TEST_ASSERT(run->exit_reason == KVM_EXIT_SHUTDOWN,
+			"Exit_reason other than KVM_EXIT_SHUTDOWN: %u (%s)\n",
+			run->exit_reason,
+			exit_reason_str(run->exit_reason));
 }
 
 int main(int argc, char *argv[])
@@ -63,6 +71,9 @@ int main(int argc, char *argv[])
 	struct kvm_vcpu *vcpu;
 	struct kvm_vm *vm;
 	uint64_t msr_platform_info;
+
+	/* Tell stdout not to buffer its content */
+	setbuf(stdout, NULL);
 
 	TEST_REQUIRE(kvm_has_cap(KVM_CAP_MSR_PLATFORM_INFO));
 

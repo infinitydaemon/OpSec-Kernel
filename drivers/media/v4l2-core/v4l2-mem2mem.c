@@ -921,9 +921,9 @@ static __poll_t v4l2_m2m_poll_for_data(struct file *file,
 	 * means either in driver already or waiting for driver to claim it
 	 * and start processing.
 	 */
-	if ((!vb2_is_streaming(src_q) || src_q->error ||
+	if ((!src_q->streaming || src_q->error ||
 	     list_empty(&src_q->queued_list)) &&
-	    (!vb2_is_streaming(dst_q) || dst_q->error ||
+	    (!dst_q->streaming || dst_q->error ||
 	     (list_empty(&dst_q->queued_list) && !dst_q->last_buffer_dequeued)))
 		return EPOLLERR;
 

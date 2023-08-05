@@ -112,14 +112,10 @@ static int ip6_frag_queue(struct frag_queue *fq, struct sk_buff *skb,
 	struct sk_buff *prev_tail;
 	struct net_device *dev;
 	int err = -ENOENT;
-	SKB_DR(reason);
 	u8 ecn;
 
-	/* If reassembly is already done, @skb must be a duplicate frag. */
-	if (fq->q.flags & INET_FRAG_COMPLETE) {
-		SKB_DR_SET(reason, DUP_FRAG);
+	if (fq->q.flags & INET_FRAG_COMPLETE)
 		goto err;
-	}
 
 	err = -EINVAL;
 	offset = ntohs(fhdr->frag_off) & ~0x7;
@@ -230,9 +226,8 @@ static int ip6_frag_queue(struct frag_queue *fq, struct sk_buff *skb,
 
 insert_error:
 	if (err == IPFRAG_DUP) {
-		SKB_DR_SET(reason, DUP_FRAG);
-		err = -EINVAL;
-		goto err;
+		kfree_skb(skb);
+		return -EINVAL;
 	}
 	err = -EINVAL;
 	__IP6_INC_STATS(net, ip6_dst_idev(skb_dst(skb)),
@@ -242,7 +237,7 @@ discard_fq:
 	__IP6_INC_STATS(net, ip6_dst_idev(skb_dst(skb)),
 			IPSTATS_MIB_REASMFAILS);
 err:
-	kfree_skb_reason(skb, reason);
+	kfree_skb(skb);
 	return err;
 }
 

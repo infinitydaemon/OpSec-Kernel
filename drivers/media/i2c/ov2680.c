@@ -967,8 +967,6 @@ static int ov2680_v4l2_register(struct ov2680_dev *sensor)
 
 	ctrls->gain->flags |= V4L2_CTRL_FLAG_VOLATILE;
 	ctrls->exposure->flags |= V4L2_CTRL_FLAG_VOLATILE;
-	ctrls->vflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
-	ctrls->hflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
 
 	v4l2_ctrl_auto_cluster(2, &ctrls->auto_gain, 0, true);
 	v4l2_ctrl_auto_cluster(2, &ctrls->auto_exp, 1, true);
@@ -1158,7 +1156,7 @@ static struct i2c_driver ov2680_i2c_driver = {
 		.pm = &ov2680_pm_ops,
 		.of_match_table	= of_match_ptr(ov2680_dt_ids),
 	},
-	.probe		= ov2680_probe,
+	.probe_new	= ov2680_probe,
 	.remove		= ov2680_remove,
 };
 module_i2c_driver(ov2680_i2c_driver);

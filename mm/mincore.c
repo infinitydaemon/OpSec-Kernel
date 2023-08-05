@@ -52,7 +52,7 @@ static int mincore_hugetlb(pte_t *pte, unsigned long hmask, unsigned long addr,
 static unsigned char mincore_page(struct address_space *mapping, pgoff_t index)
 {
 	unsigned char present = 0;
-	struct folio *folio;
+	struct page *page;
 
 	/*
 	 * When tmpfs swaps out a page from a file, any process mapping that
@@ -60,10 +60,10 @@ static unsigned char mincore_page(struct address_space *mapping, pgoff_t index)
 	 * any other file mapping (ie. marked !present and faulted in with
 	 * tmpfs's .fault). So swapped out tmpfs mappings are tested here.
 	 */
-	folio = filemap_get_incore_folio(mapping, index);
-	if (!IS_ERR(folio)) {
-		present = folio_test_uptodate(folio);
-		folio_put(folio);
+	page = find_get_incore_page(mapping, index);
+	if (page) {
+		present = PageUptodate(page);
+		put_page(page);
 	}
 
 	return present;
@@ -113,13 +113,14 @@ static int mincore_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 		goto out;
 	}
 
-	ptep = pte_offset_map_lock(walk->mm, pmd, addr, &ptl);
-	if (!ptep) {
-		walk->action = ACTION_AGAIN;
-		return 0;
+	if (pmd_trans_unstable(pmd)) {
+		__mincore_unmapped_range(addr, end, vma, vec);
+		goto out;
 	}
+
+	ptep = pte_offset_map_lock(walk->mm, pmd, addr, &ptl);
 	for (; addr != end; ptep++, addr += PAGE_SIZE) {
-		pte_t pte = ptep_get(ptep);
+		pte_t pte = *ptep;
 
 		/* We need to do cache lookup too for pte markers */
 		if (pte_none_mostly(pte))
@@ -167,7 +168,7 @@ static inline bool can_do_mincore(struct vm_area_struct *vma)
 	 * for writing; otherwise we'd be including shared non-exclusive
 	 * mappings, which opens a side channel.
 	 */
-	return inode_owner_or_capable(&nop_mnt_idmap,
+	return inode_owner_or_capable(&init_user_ns,
 				      file_inode(vma->vm_file)) ||
 	       file_permission(vma->vm_file, MAY_WRITE) == 0;
 }
@@ -189,8 +190,8 @@ static long do_mincore(unsigned long addr, unsigned long pages, unsigned char *v
 	unsigned long end;
 	int err;
 
-	vma = vma_lookup(current->mm, addr);
-	if (!vma)
+	vma = find_vma(current->mm, addr);
+	if (!vma || addr < vma->vm_start)
 		return -ENOMEM;
 	end = min(vma->vm_end, addr + (pages << PAGE_SHIFT));
 	if (!can_do_mincore(vma)) {

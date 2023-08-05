@@ -1209,9 +1209,10 @@ void nfs4_schedule_state_manager(struct nfs_client *clp)
 {
 	struct task_struct *task;
 	char buf[INET6_ADDRSTRLEN + sizeof("-manager") + 1];
+	struct rpc_clnt *cl = clp->cl_rpcclient;
 
-	if (clp->cl_rpcclient->cl_shutdown)
-		return;
+	while (cl != cl->cl_parent)
+		cl = cl->cl_parent;
 
 	set_bit(NFS4CLNT_RUN_MANAGER, &clp->cl_state);
 	if (test_and_set_bit(NFS4CLNT_MANAGER_AVAILABLE, &clp->cl_state) != 0) {
@@ -1506,7 +1507,7 @@ static int nfs4_reclaim_locks(struct nfs4_state *state, const struct nfs4_state_
 	struct file_lock *fl;
 	struct nfs4_lock_state *lsp;
 	int status = 0;
-	struct file_lock_context *flctx = locks_inode_context(inode);
+	struct file_lock_context *flctx = inode->i_flctx;
 	struct list_head *list;
 
 	if (flctx == NULL)
@@ -1624,8 +1625,7 @@ static int __nfs4_reclaim_open_state(struct nfs4_state_owner *sp, struct nfs4_st
 		spin_lock(&state->state_lock);
 		list_for_each_entry(lock, &state->lock_states, ls_locks) {
 			trace_nfs4_state_lock_reclaim(state, lock);
-			if (!test_bit(NFS_LOCK_INITIALIZED, &lock->ls_flags) &&
-			    !test_bit(NFS_LOCK_UNLOCKING, &lock->ls_flags))
+			if (!test_bit(NFS_LOCK_INITIALIZED, &lock->ls_flags))
 				*lost_locks += 1;
 		}
 		spin_unlock(&state->state_lock);

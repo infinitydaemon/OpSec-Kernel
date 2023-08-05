@@ -249,13 +249,14 @@ err_delete_adapter:
 	return ret;
 }
 
-static void s5p_cec_remove(struct platform_device *pdev)
+static int s5p_cec_remove(struct platform_device *pdev)
 {
 	struct s5p_cec_dev *cec = platform_get_drvdata(pdev);
 
 	cec_notifier_cec_adap_unregister(cec->notifier, cec->adap);
 	cec_unregister_adapter(cec->adap);
 	pm_runtime_disable(&pdev->dev);
+	return 0;
 }
 
 static int __maybe_unused s5p_cec_runtime_suspend(struct device *dev)
@@ -294,7 +295,7 @@ MODULE_DEVICE_TABLE(of, s5p_cec_match);
 
 static struct platform_driver s5p_cec_pdrv = {
 	.probe	= s5p_cec_probe,
-	.remove_new = s5p_cec_remove,
+	.remove	= s5p_cec_remove,
 	.driver	= {
 		.name		= CEC_NAME,
 		.of_match_table	= s5p_cec_match,

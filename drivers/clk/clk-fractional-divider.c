@@ -38,15 +38,12 @@
  * saturated values.
  */
 
-#include <linux/debugfs.h>
-#include <linux/device.h>
-#include <linux/io.h>
-#include <linux/math.h>
-#include <linux/module.h>
-#include <linux/rational.h>
-#include <linux/slab.h>
-
 #include <linux/clk-provider.h>
+#include <linux/io.h>
+#include <linux/module.h>
+#include <linux/device.h>
+#include <linux/slab.h>
+#include <linux/rational.h>
 
 #include "clk-fractional-divider.h"
 
@@ -66,13 +63,14 @@ static inline void clk_fd_writel(struct clk_fractional_divider *fd, u32 val)
 		writel(val, fd->reg);
 }
 
-static void clk_fd_get_div(struct clk_hw *hw, struct u32_fract *fract)
+static unsigned long clk_fd_recalc_rate(struct clk_hw *hw,
+					unsigned long parent_rate)
 {
 	struct clk_fractional_divider *fd = to_clk_fd(hw);
 	unsigned long flags = 0;
 	unsigned long m, n;
-	u32 mmask, nmask;
 	u32 val;
+	u64 ret;
 
 	if (fd->lock)
 		spin_lock_irqsave(fd->lock, flags);
@@ -86,33 +84,19 @@ static void clk_fd_get_div(struct clk_hw *hw, struct u32_fract *fract)
 	else
 		__release(fd->lock);
 
-	mmask = GENMASK(fd->mwidth - 1, 0) << fd->mshift;
-	nmask = GENMASK(fd->nwidth - 1, 0) << fd->nshift;
-
-	m = (val & mmask) >> fd->mshift;
-	n = (val & nmask) >> fd->nshift;
+	m = (val & fd->mmask) >> fd->mshift;
+	n = (val & fd->nmask) >> fd->nshift;
 
 	if (fd->flags & CLK_FRAC_DIVIDER_ZERO_BASED) {
 		m++;
 		n++;
 	}
 
-	fract->numerator = m;
-	fract->denominator = n;
-}
-
-static unsigned long clk_fd_recalc_rate(struct clk_hw *hw, unsigned long parent_rate)
-{
-	struct u32_fract fract;
-	u64 ret;
-
-	clk_fd_get_div(hw, &fract);
-
-	if (!fract.numerator || !fract.denominator)
+	if (!n || !m)
 		return parent_rate;
 
-	ret = (u64)parent_rate * fract.numerator;
-	do_div(ret, fract.denominator);
+	ret = (u64)parent_rate * m;
+	do_div(ret, n);
 
 	return ret;
 }
@@ -170,7 +154,6 @@ static int clk_fd_set_rate(struct clk_hw *hw, unsigned long rate,
 	struct clk_fractional_divider *fd = to_clk_fd(hw);
 	unsigned long flags = 0;
 	unsigned long m, n;
-	u32 mmask, nmask;
 	u32 val;
 
 	rational_best_approximation(rate, parent_rate,
@@ -187,11 +170,8 @@ static int clk_fd_set_rate(struct clk_hw *hw, unsigned long rate,
 	else
 		__acquire(fd->lock);
 
-	mmask = GENMASK(fd->mwidth - 1, 0) << fd->mshift;
-	nmask = GENMASK(fd->nwidth - 1, 0) << fd->nshift;
-
 	val = clk_fd_readl(fd);
-	val &= ~(mmask | nmask);
+	val &= ~(fd->mmask | fd->nmask);
 	val |= (m << fd->mshift) | (n << fd->nshift);
 	clk_fd_writel(fd, val);
 
@@ -203,45 +183,10 @@ static int clk_fd_set_rate(struct clk_hw *hw, unsigned long rate,
 	return 0;
 }
 
-#ifdef CONFIG_DEBUG_FS
-static int clk_fd_numerator_get(void *hw, u64 *val)
-{
-	struct u32_fract fract;
-
-	clk_fd_get_div(hw, &fract);
-
-	*val = fract.numerator;
-
-	return 0;
-}
-DEFINE_DEBUGFS_ATTRIBUTE(clk_fd_numerator_fops, clk_fd_numerator_get, NULL, "%llu\n");
-
-static int clk_fd_denominator_get(void *hw, u64 *val)
-{
-	struct u32_fract fract;
-
-	clk_fd_get_div(hw, &fract);
-
-	*val = fract.denominator;
-
-	return 0;
-}
-DEFINE_DEBUGFS_ATTRIBUTE(clk_fd_denominator_fops, clk_fd_denominator_get, NULL, "%llu\n");
-
-static void clk_fd_debug_init(struct clk_hw *hw, struct dentry *dentry)
-{
-	debugfs_create_file("numerator", 0444, dentry, hw, &clk_fd_numerator_fops);
-	debugfs_create_file("denominator", 0444, dentry, hw, &clk_fd_denominator_fops);
-}
-#endif
-
 const struct clk_ops clk_fractional_divider_ops = {
 	.recalc_rate = clk_fd_recalc_rate,
 	.round_rate = clk_fd_round_rate,
 	.set_rate = clk_fd_set_rate,
-#ifdef CONFIG_DEBUG_FS
-	.debug_init = clk_fd_debug_init,
-#endif
 };
 EXPORT_SYMBOL_GPL(clk_fractional_divider_ops);
 
@@ -268,8 +213,10 @@ struct clk_hw *clk_hw_register_fractional_divider(struct device *dev,
 	fd->reg = reg;
 	fd->mshift = mshift;
 	fd->mwidth = mwidth;
+	fd->mmask = GENMASK(mwidth - 1, 0) << mshift;
 	fd->nshift = nshift;
 	fd->nwidth = nwidth;
+	fd->nmask = GENMASK(nwidth - 1, 0) << nshift;
 	fd->flags = clk_divider_flags;
 	fd->lock = lock;
 	fd->hw.init = &init;

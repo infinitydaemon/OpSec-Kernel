@@ -42,7 +42,13 @@ bool arch_support_alt_relocation(struct special_alt *special_alt,
 				 struct instruction *insn,
 				 struct reloc *reloc)
 {
-	return true;
+	/*
+	 * The x86 alternatives code adjusts the offsets only when it
+	 * encounters a branch instruction at the very beginning of the
+	 * replacement group.
+	 */
+	return insn->offset == special_alt->new_off &&
+	       (insn->type == INSN_CALL || is_jump(insn));
 }
 
 /*
@@ -99,10 +105,10 @@ struct reloc *arch_find_switch_table(struct objtool_file *file,
 	    !text_reloc->sym->sec->rodata)
 		return NULL;
 
-	table_offset = reloc_addend(text_reloc);
+	table_offset = text_reloc->addend;
 	table_sec = text_reloc->sym->sec;
 
-	if (reloc_type(text_reloc) == R_X86_64_PC32)
+	if (text_reloc->type == R_X86_64_PC32)
 		table_offset += 4;
 
 	/*
@@ -132,7 +138,7 @@ struct reloc *arch_find_switch_table(struct objtool_file *file,
 	 * indicates a rare GCC quirk/bug which can leave dead
 	 * code behind.
 	 */
-	if (reloc_type(text_reloc) == R_X86_64_PC32)
+	if (text_reloc->type == R_X86_64_PC32)
 		file->ignore_unreachables = true;
 
 	return rodata_reloc;

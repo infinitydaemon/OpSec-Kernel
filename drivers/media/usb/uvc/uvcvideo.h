@@ -51,6 +51,8 @@
 #define UVC_URBS		5
 /* Maximum number of packets per URB. */
 #define UVC_MAX_PACKETS		32
+/* Maximum status buffer size in bytes of interrupt URB. */
+#define UVC_MAX_STATUS_SIZE	16
 
 #define UVC_CTRL_CONTROL_TIMEOUT	5000
 #define UVC_CTRL_STREAMING_TIMEOUT	5000
@@ -115,8 +117,7 @@ struct uvc_control_mapping {
 	enum v4l2_ctrl_type v4l2_type;
 	u32 data_type;
 
-	const u32 *menu_mapping;
-	const char (*menu_names)[UVC_MENU_NAME_LEN];
+	const struct uvc_menu_info *menu_info;
 	unsigned long menu_mask;
 
 	u32 master_id;
@@ -251,7 +252,7 @@ struct uvc_frame {
 	u32 dwMaxVideoFrameBufferSize;
 	u8  bFrameIntervalType;
 	u32 dwDefaultFrameInterval;
-	const u32 *dwFrameInterval;
+	u32 *dwFrameInterval;
 };
 
 struct uvc_format {
@@ -265,7 +266,7 @@ struct uvc_format {
 	u32 flags;
 
 	unsigned int nframes;
-	const struct uvc_frame *frames;
+	struct uvc_frame *frame;
 };
 
 struct uvc_streaming_header {
@@ -438,12 +439,12 @@ struct uvc_streaming {
 	enum v4l2_buf_type type;
 
 	unsigned int nformats;
-	const struct uvc_format *formats;
+	struct uvc_format *format;
 
 	struct uvc_streaming_control ctrl;
-	const struct uvc_format *def_format;
-	const struct uvc_format *cur_format;
-	const struct uvc_frame *cur_frame;
+	struct uvc_format *def_format;
+	struct uvc_format *cur_format;
+	struct uvc_frame *cur_frame;
 
 	/*
 	 * Protect access to ctrl, cur_format, cur_frame and hardware video
@@ -525,26 +526,6 @@ struct uvc_device_info {
 	const struct uvc_control_mapping **mappings;
 };
 
-struct uvc_status_streaming {
-	u8	button;
-} __packed;
-
-struct uvc_status_control {
-	u8	bSelector;
-	u8	bAttribute;
-	u8	bValue[11];
-} __packed;
-
-struct uvc_status {
-	u8	bStatusType;
-	u8	bOriginator;
-	u8	bEvent;
-	union {
-		struct uvc_status_control control;
-		struct uvc_status_streaming streaming;
-	};
-} __packed;
-
 struct uvc_device {
 	struct usb_device *udev;
 	struct usb_interface *intf;
@@ -577,9 +558,8 @@ struct uvc_device {
 	/* Status Interrupt Endpoint */
 	struct usb_host_endpoint *int_ep;
 	struct urb *int_urb;
-	struct uvc_status *status;
 	bool flush_status;
-
+	u8 *status;
 	struct input_dev *input;
 	char input_phys[64];
 
@@ -749,7 +729,6 @@ void uvc_status_stop(struct uvc_device *dev);
 
 /* Controls */
 extern const struct uvc_control_mapping uvc_ctrl_power_line_mapping_limited;
-extern const struct uvc_control_mapping uvc_ctrl_power_line_mapping_uvc11;
 extern const struct v4l2_subscribed_event_ops uvc_ctrl_sub_ev_ops;
 
 int uvc_query_v4l2_ctrl(struct uvc_video_chain *chain,

@@ -35,7 +35,7 @@ struct rnbd_srv_dev {
 	struct kobject                  dev_kobj;
 	struct kobject                  *dev_sessions_kobj;
 	struct kref                     kref;
-	char				name[NAME_MAX];
+	char				id[NAME_MAX];
 	/* List of rnbd_srv_sess_dev structs */
 	struct list_head		sess_dev_list;
 	struct mutex			lock;
@@ -52,7 +52,7 @@ struct rnbd_srv_sess_dev {
 	struct kobject                  kobj;
 	u32                             device_id;
 	bool				keep_id;
-	bool				readonly;
+	fmode_t                         open_flags;
 	struct kref			kref;
 	struct completion               *destroy_comp;
 	char				pathname[NAME_MAX];

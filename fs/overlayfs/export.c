@@ -80,7 +80,7 @@ static int ovl_connectable_layer(struct dentry *dentry)
 
 	/* We can get overlay root from root of any layer */
 	if (dentry == dentry->d_sb->s_root)
-		return ovl_numlower(oe);
+		return oe->numlower;
 
 	/*
 	 * If it's an unindexed merge dir, then it's not connectable with any
@@ -91,7 +91,7 @@ static int ovl_connectable_layer(struct dentry *dentry)
 		return 0;
 
 	/* We can get upper/overlay path from indexed/lower dentry */
-	return ovl_lowerstack(oe)->layer->idx;
+	return oe->lowerstack[0].layer->idx;
 }
 
 /*
@@ -105,7 +105,6 @@ static int ovl_connectable_layer(struct dentry *dentry)
 static int ovl_connect_layer(struct dentry *dentry)
 {
 	struct dentry *next, *parent = NULL;
-	struct ovl_entry *oe = OVL_E(dentry);
 	int origin_layer;
 	int err = 0;
 
@@ -113,7 +112,7 @@ static int ovl_connect_layer(struct dentry *dentry)
 	    WARN_ON(!ovl_dentry_lower(dentry)))
 		return -EIO;
 
-	origin_layer = ovl_lowerstack(oe)->layer->idx;
+	origin_layer = OVL_E(dentry)->lowerstack[0].layer->idx;
 	if (ovl_dentry_test_flag(OVL_E_CONNECTED, dentry))
 		return origin_layer;
 
@@ -286,29 +285,21 @@ static struct dentry *ovl_obtain_alias(struct super_block *sb,
 	struct dentry *lower = lowerpath ? lowerpath->dentry : NULL;
 	struct dentry *upper = upper_alias ?: index;
 	struct dentry *dentry;
-	struct inode *inode = NULL;
+	struct inode *inode;
 	struct ovl_entry *oe;
 	struct ovl_inode_params oip = {
+		.lowerpath = lowerpath,
 		.index = index,
+		.numlower = !!lower
 	};
 
 	/* We get overlay directory dentries with ovl_lookup_real() */
 	if (d_is_dir(upper ?: lower))
 		return ERR_PTR(-EIO);
 
-	oe = ovl_alloc_entry(!!lower);
-	if (!oe)
-		return ERR_PTR(-ENOMEM);
-
 	oip.upperdentry = dget(upper);
-	if (lower) {
-		ovl_lowerstack(oe)->dentry = dget(lower);
-		ovl_lowerstack(oe)->layer = lowerpath->layer;
-	}
-	oip.oe = oe;
 	inode = ovl_get_inode(sb, &oip);
 	if (IS_ERR(inode)) {
-		ovl_free_entry(oe);
 		dput(upper);
 		return ERR_CAST(inode);
 	}
@@ -323,11 +314,19 @@ static struct dentry *ovl_obtain_alias(struct super_block *sb,
 	dentry = d_alloc_anon(inode->i_sb);
 	if (unlikely(!dentry))
 		goto nomem;
+	oe = ovl_alloc_entry(lower ? 1 : 0);
+	if (!oe)
+		goto nomem;
 
+	if (lower) {
+		oe->lowerstack->dentry = dget(lower);
+		oe->lowerstack->layer = lowerpath->layer;
+	}
+	dentry->d_fsdata = oe;
 	if (upper_alias)
 		ovl_dentry_set_upper_alias(dentry);
 
-	ovl_dentry_init_reval(dentry, upper, OVL_I_E(inode));
+	ovl_dentry_init_reval(dentry, upper);
 
 	return d_instantiate_anon(dentry, inode);
 
@@ -339,19 +338,18 @@ out_iput:
 	return dentry;
 }
 
-/* Get the upper or lower dentry in stack whose on layer @idx */
+/* Get the upper or lower dentry in stach whose on layer @idx */
 static struct dentry *ovl_dentry_real_at(struct dentry *dentry, int idx)
 {
-	struct ovl_entry *oe = OVL_E(dentry);
-	struct ovl_path *lowerstack = ovl_lowerstack(oe);
+	struct ovl_entry *oe = dentry->d_fsdata;
 	int i;
 
 	if (!idx)
 		return ovl_dentry_upper(dentry);
 
-	for (i = 0; i < ovl_numlower(oe); i++) {
-		if (lowerstack[i].layer->idx == idx)
-			return lowerstack[i].dentry;
+	for (i = 0; i < oe->numlower; i++) {
+		if (oe->lowerstack[i].layer->idx == idx)
+			return oe->lowerstack[i].dentry;
 	}
 
 	return NULL;
@@ -393,8 +391,8 @@ static struct dentry *ovl_lookup_real_one(struct dentry *connected,
 	 */
 	take_dentry_name_snapshot(&name, real);
 	/*
-	 * No idmap handling here: it's an internal lookup.  Could skip
-	 * permission checking altogether, but for now just use non-idmap
+	 * No mnt_userns handling here: it's an internal lookup.  Could skip
+	 * permission checking altogether, but for now just use non-mnt_userns
 	 * transformed ids.
 	 */
 	this = lookup_one_len(name.name.name, connected, name.name.len);
@@ -464,7 +462,7 @@ static struct dentry *ovl_lookup_real_inode(struct super_block *sb,
 
 	/* Get connected upper overlay dir from index */
 	if (index) {
-		struct dentry *upper = ovl_index_upper(ofs, index, true);
+		struct dentry *upper = ovl_index_upper(ofs, index);
 
 		dput(index);
 		if (IS_ERR_OR_NULL(upper))
@@ -740,7 +738,7 @@ static struct dentry *ovl_lower_fh_to_d(struct super_block *sb,
 
 	/* Then try to get a connected upper dir by index */
 	if (index && d_is_dir(index)) {
-		struct dentry *upper = ovl_index_upper(ofs, index, true);
+		struct dentry *upper = ovl_index_upper(ofs, index);
 
 		err = PTR_ERR(upper);
 		if (IS_ERR_OR_NULL(upper))

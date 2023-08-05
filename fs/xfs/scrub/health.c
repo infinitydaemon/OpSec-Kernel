@@ -1,14 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * Copyright (C) 2019-2023 Oracle.  All Rights Reserved.
- * Author: Darrick J. Wong <djwong@kernel.org>
+ * Copyright (C) 2019 Oracle.  All Rights Reserved.
+ * Author: Darrick J. Wong <darrick.wong@oracle.com>
  */
 #include "xfs.h"
 #include "xfs_fs.h"
 #include "xfs_shared.h"
 #include "xfs_format.h"
-#include "xfs_trans_resv.h"
-#include "xfs_mount.h"
 #include "xfs_btree.h"
 #include "xfs_trans_resv.h"
 #include "xfs_mount.h"

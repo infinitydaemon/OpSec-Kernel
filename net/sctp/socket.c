@@ -59,7 +59,6 @@
 #include <net/ipv6.h>
 #include <net/inet_common.h>
 #include <net/busy_poll.h>
-#include <trace/events/sock.h>
 
 #include <linux/socket.h> /* for sa_family_t */
 #include <linux/export.h>
@@ -4895,7 +4894,7 @@ out:
 }
 
 /* The SCTP ioctl handler. */
-static int sctp_ioctl(struct sock *sk, int cmd, int *karg)
+static int sctp_ioctl(struct sock *sk, int cmd, unsigned long arg)
 {
 	int rc = -ENOTCONN;
 
@@ -4911,7 +4910,7 @@ static int sctp_ioctl(struct sock *sk, int cmd, int *karg)
 	switch (cmd) {
 	case SIOCINQ: {
 		struct sk_buff *skb;
-		*karg = 0;
+		unsigned int amount = 0;
 
 		skb = skb_peek(&sk->sk_receive_queue);
 		if (skb != NULL) {
@@ -4919,9 +4918,9 @@ static int sctp_ioctl(struct sock *sk, int cmd, int *karg)
 			 * We will only return the amount of this packet since
 			 * that is all that will be read.
 			 */
-			*karg = skb->len;
+			amount = skb->len;
 		}
-		rc = 0;
+		rc = put_user(amount, (int __user *)arg);
 		break;
 	}
 	default:
@@ -5192,11 +5191,10 @@ int sctp_get_sctp_info(struct sock *sk, struct sctp_association *asoc,
 	info->sctpi_peer_rwnd = asoc->peer.rwnd;
 	info->sctpi_peer_tag = asoc->c.peer_vtag;
 
-	mask = asoc->peer.intl_capable << 1;
-	mask = (mask | asoc->peer.ecn_capable) << 1;
+	mask = asoc->peer.ecn_capable << 1;
 	mask = (mask | asoc->peer.ipv4_address) << 1;
 	mask = (mask | asoc->peer.ipv6_address) << 1;
-	mask = (mask | asoc->peer.reconf_capable) << 1;
+	mask = (mask | asoc->peer.hostname_address) << 1;
 	mask = (mask | asoc->peer.asconf_capable) << 1;
 	mask = (mask | asoc->peer.prsctp_capable) << 1;
 	mask = (mask | asoc->peer.auth_capable);
@@ -5321,14 +5319,14 @@ EXPORT_SYMBOL_GPL(sctp_for_each_endpoint);
 
 int sctp_transport_lookup_process(sctp_callback_t cb, struct net *net,
 				  const union sctp_addr *laddr,
-				  const union sctp_addr *paddr, void *p, int dif)
+				  const union sctp_addr *paddr, void *p)
 {
 	struct sctp_transport *transport;
 	struct sctp_endpoint *ep;
 	int err = -ENOENT;
 
 	rcu_read_lock();
-	transport = sctp_addrs_lookup_transport(net, laddr, paddr, dif, dif);
+	transport = sctp_addrs_lookup_transport(net, laddr, paddr);
 	if (!transport) {
 		rcu_read_unlock();
 		return err;
@@ -8345,7 +8343,7 @@ static int sctp_get_port_local(struct sock *sk, union sctp_addr *addr)
 
 		inet_sk_get_local_port_range(sk, &low, &high);
 		remaining = (high - low) + 1;
-		rover = get_random_u32_below(remaining) + low;
+		rover = prandom_u32_max(remaining) + low;
 
 		do {
 			rover++;
@@ -8420,7 +8418,6 @@ pp_found:
 		 * in an endpoint.
 		 */
 		sk_for_each_bound(sk2, &pp->owner) {
-			int bound_dev_if2 = READ_ONCE(sk2->sk_bound_dev_if);
 			struct sctp_sock *sp2 = sctp_sk(sk2);
 			struct sctp_endpoint *ep2 = sp2->ep;
 
@@ -8431,9 +8428,7 @@ pp_found:
 			     uid_eq(uid, sock_i_uid(sk2))))
 				continue;
 
-			if ((!sk->sk_bound_dev_if || !bound_dev_if2 ||
-			     sk->sk_bound_dev_if == bound_dev_if2) &&
-			    sctp_bind_addr_conflict(&ep2->base.bind_addr,
+			if (sctp_bind_addr_conflict(&ep2->base.bind_addr,
 						    addr, sp2, sp)) {
 				ret = 1;
 				goto fail_unlock;
@@ -9265,8 +9260,6 @@ do_nonblock:
 void sctp_data_ready(struct sock *sk)
 {
 	struct socket_wq *wq;
-
-	trace_sk_data_ready(sk);
 
 	rcu_read_lock();
 	wq = rcu_dereference(sk->sk_wq);

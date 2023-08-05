@@ -2656,12 +2656,14 @@ _err:
 	return err;
 }
 
-static void dbri_remove(struct platform_device *op)
+static int dbri_remove(struct platform_device *op)
 {
 	struct snd_card *card = dev_get_drvdata(&op->dev);
 
 	snd_dbri_free(card->private_data);
 	snd_card_free(card);
+
+	return 0;
 }
 
 static const struct of_device_id dbri_match[] = {
@@ -2682,7 +2684,7 @@ static struct platform_driver dbri_sbus_driver = {
 		.of_match_table = dbri_match,
 	},
 	.probe		= dbri_probe,
-	.remove_new	= dbri_remove,
+	.remove		= dbri_remove,
 };
 
 module_platform_driver(dbri_sbus_driver);

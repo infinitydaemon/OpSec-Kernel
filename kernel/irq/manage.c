@@ -189,12 +189,9 @@ void irq_set_thread_affinity(struct irq_desc *desc)
 {
 	struct irqaction *action;
 
-	for_each_action_of_desc(desc, action) {
+	for_each_action_of_desc(desc, action)
 		if (action->thread)
 			set_bit(IRQTF_AFFINITY, &action->thread_flags);
-		if (action->secondary && action->secondary->thread)
-			set_bit(IRQTF_AFFINITY, &action->secondary->thread_flags);
-	}
 }
 
 #ifdef CONFIG_GENERIC_IRQ_EFFECTIVE_AFF_MASK
@@ -324,7 +321,7 @@ static int irq_try_set_affinity(struct irq_data *data,
 }
 
 static bool irq_set_affinity_deactivated(struct irq_data *data,
-					 const struct cpumask *mask)
+					 const struct cpumask *mask, bool force)
 {
 	struct irq_desc *desc = irq_data_to_desc(data);
 
@@ -357,7 +354,7 @@ int irq_set_affinity_locked(struct irq_data *data, const struct cpumask *mask,
 	if (!chip || !chip->irq_set_affinity)
 		return -EINVAL;
 
-	if (irq_set_affinity_deactivated(data, mask))
+	if (irq_set_affinity_deactivated(data, mask, force))
 		return 0;
 
 	if (irq_can_move_pcntxt(data) && !irqd_is_setaffinity_pending(data)) {
@@ -726,13 +723,10 @@ EXPORT_SYMBOL(disable_irq_nosync);
  *	to complete before returning. If you use this function while
  *	holding a resource the IRQ handler may need you will deadlock.
  *
- *	Can only be called from preemptible code as it might sleep when
- *	an interrupt thread is associated to @irq.
- *
+ *	This function may be called - with care - from IRQ context.
  */
 void disable_irq(unsigned int irq)
 {
-	might_sleep();
 	if (!__disable_irq_nosync(irq))
 		synchronize_irq(irq);
 }

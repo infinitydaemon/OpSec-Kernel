@@ -90,7 +90,7 @@ void *memset(void *dst, int b, size_t len)
 
 	while (len--) {
 		/* prevent gcc from recognizing memset() here */
-		__asm__ volatile("");
+		asm volatile("");
 		*(p++) = b;
 	}
 	return dst;
@@ -139,7 +139,7 @@ size_t strlen(const char *str)
 	size_t len;
 
 	for (len = 0; str[len]; len++)
-		__asm__("");
+		asm("");
 	return len;
 }
 

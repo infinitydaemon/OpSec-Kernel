@@ -74,18 +74,23 @@ EXPORT_SYMBOL_GPL(meson_card_reallocate_links);
 
 int meson_card_parse_dai(struct snd_soc_card *card,
 			 struct device_node *node,
-			 struct snd_soc_dai_link_component *dlc)
+			 struct device_node **dai_of_node,
+			 const char **dai_name)
 {
+	struct of_phandle_args args;
 	int ret;
 
-	if (!dlc || !node)
+	if (!dai_name || !dai_of_node || !node)
 		return -EINVAL;
 
-	ret = snd_soc_of_get_dlc(node, NULL, dlc, 0);
+	ret = of_parse_phandle_with_args(node, "sound-dai",
+					 "#sound-dai-cells", 0, &args);
 	if (ret)
 		return dev_err_probe(card->dev, ret, "can't parse dai\n");
 
-	return ret;
+	*dai_of_node = args.np;
+
+	return snd_soc_get_dai_name(&args, dai_name);
 }
 EXPORT_SYMBOL_GPL(meson_card_parse_dai);
 
@@ -155,7 +160,8 @@ int meson_card_set_be_link(struct snd_soc_card *card,
 	link->num_codecs = num_codecs;
 
 	for_each_child_of_node(node, np) {
-		ret = meson_card_parse_dai(card, np, codec);
+		ret = meson_card_parse_dai(card, np, &codec->of_node,
+					   &codec->dai_name);
 		if (ret) {
 			of_node_put(np);
 			return ret;
@@ -177,13 +183,21 @@ int meson_card_set_fe_link(struct snd_soc_card *card,
 			   struct device_node *node,
 			   bool is_playback)
 {
-	link->codecs = &asoc_dummy_dlc;
+	struct snd_soc_dai_link_component *codec;
+
+	codec = devm_kzalloc(card->dev, sizeof(*codec), GFP_KERNEL);
+	if (!codec)
+		return -ENOMEM;
+
+	link->codecs = codec;
 	link->num_codecs = 1;
 
 	link->dynamic = 1;
 	link->dpcm_merged_format = 1;
 	link->dpcm_merged_chan = 1;
 	link->dpcm_merged_rate = 1;
+	link->codecs->dai_name = "snd-soc-dummy-dai";
+	link->codecs->name = "snd-soc-dummy";
 
 	if (is_playback)
 		link->dpcm_playback = 1;

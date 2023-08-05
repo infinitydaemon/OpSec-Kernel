@@ -137,13 +137,7 @@ next_attr:
 	rsize = attr->non_res ? 0 : le32_to_cpu(attr->res.data_size);
 	asize = le32_to_cpu(attr->size);
 
-	/*
-	 * Really this check was done in 'ni_enum_attr_ex' -> ... 'mi_enum_attr'.
-	 * There not critical to check this case again
-	 */
-	if (attr->name_len &&
-	    sizeof(short) * attr->name_len + le16_to_cpu(attr->name_off) >
-		    asize)
+	if (le16_to_cpu(attr->name_off) + attr->name_len > asize)
 		goto out;
 
 	if (attr->non_res) {
@@ -262,8 +256,8 @@ next_attr:
 		if (!attr->nres.alloc_size)
 			goto next_attr;
 
-		run = ino == MFT_REC_BITMAP ? &sbi->used.bitmap.run :
-					      &ni->file.run;
+		run = ino == MFT_REC_BITMAP ? &sbi->used.bitmap.run
+					    : &ni->file.run;
 		break;
 
 	case ATTR_ROOT:
@@ -290,9 +284,9 @@ next_attr:
 		if (err)
 			goto out;
 
-		mode = sb->s_root ?
-			       (S_IFDIR | (0777 & sbi->options->fs_dmask_inv)) :
-			       (S_IFDIR | 0777);
+		mode = sb->s_root
+			       ? (S_IFDIR | (0777 & sbi->options->fs_dmask_inv))
+			       : (S_IFDIR | 0777);
 		goto next_attr;
 
 	case ATTR_ALLOC:
@@ -449,8 +443,8 @@ end_enum:
 		ni->std_fa &= ~FILE_ATTRIBUTE_DIRECTORY;
 		inode->i_op = &ntfs_file_inode_operations;
 		inode->i_fop = &ntfs_file_operations;
-		inode->i_mapping->a_ops = is_compressed(ni) ? &ntfs_aops_cmpr :
-							      &ntfs_aops;
+		inode->i_mapping->a_ops =
+			is_compressed(ni) ? &ntfs_aops_cmpr : &ntfs_aops;
 		if (ino != MFT_REC_MFT)
 			init_rwsem(&ni->file.run_lock);
 	} else if (S_ISCHR(mode) || S_ISBLK(mode) || S_ISFIFO(mode) ||
@@ -567,6 +561,17 @@ static noinline int ntfs_get_block_vbo(struct inode *inode, u64 vbo,
 	clear_buffer_new(bh);
 	clear_buffer_uptodate(bh);
 
+	/* Direct write uses 'create=0'. */
+	if (!create && vbo >= ni->i_valid) {
+		/* Out of valid. */
+		return 0;
+	}
+
+	if (vbo >= inode->i_size) {
+		/* Out of size. */
+		return 0;
+	}
+
 	if (is_resident(ni)) {
 		ni_lock(ni);
 		err = attr_data_read_resident(ni, page);
@@ -582,8 +587,7 @@ static noinline int ntfs_get_block_vbo(struct inode *inode, u64 vbo,
 	off = vbo & sbi->cluster_mask;
 	new = false;
 
-	err = attr_data_get_block(ni, vcn, 1, &lcn, &len, create ? &new : NULL,
-				  create && sbi->cluster_size > PAGE_SIZE);
+	err = attr_data_get_block(ni, vcn, 1, &lcn, &len, create ? &new : NULL);
 	if (err)
 		goto out;
 
@@ -601,8 +605,11 @@ static noinline int ntfs_get_block_vbo(struct inode *inode, u64 vbo,
 		WARN_ON(1);
 	}
 
-	if (new)
+	if (new) {
 		set_buffer_new(bh);
+		if ((len << cluster_bits) > block_size)
+			ntfs_sparse_cluster(inode, page, vcn, len);
+	}
 
 	lbo = ((u64)lcn << cluster_bits) + off;
 
@@ -630,6 +637,7 @@ static noinline int ntfs_get_block_vbo(struct inode *inode, u64 vbo,
 		}
 	} else if (vbo >= valid) {
 		/* Read out of valid data. */
+		/* Should never be here 'cause already checked. */
 		clear_buffer_mapped(bh);
 	} else if (vbo + bytes <= valid) {
 		/* Normal read. */
@@ -648,7 +656,6 @@ static noinline int ntfs_get_block_vbo(struct inode *inode, u64 vbo,
 			bh->b_size = block_size;
 			off = vbo & (PAGE_SIZE - 1);
 			set_bh_page(bh, page, off);
-
 			err = bh_read(bh, 0);
 			if (err < 0)
 				goto out;
@@ -786,8 +793,8 @@ static ssize_t ntfs_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 	}
 
 	ret = blockdev_direct_IO(iocb, inode, iter,
-				 wr ? ntfs_get_block_direct_IO_W :
-				      ntfs_get_block_direct_IO_R);
+				 wr ? ntfs_get_block_direct_IO_W
+				    : ntfs_get_block_direct_IO_R);
 
 	if (ret > 0)
 		end = vbo + ret;
@@ -845,29 +852,32 @@ out:
 	return err;
 }
 
-static int ntfs_resident_writepage(struct folio *folio,
-				   struct writeback_control *wbc, void *data)
+static int ntfs_writepage(struct page *page, struct writeback_control *wbc)
 {
-	struct address_space *mapping = data;
-	struct ntfs_inode *ni = ntfs_i(mapping->host);
-	int ret;
+	struct address_space *mapping = page->mapping;
+	struct inode *inode = mapping->host;
+	struct ntfs_inode *ni = ntfs_i(inode);
+	int err;
 
-	ni_lock(ni);
-	ret = attr_data_write_resident(ni, &folio->page);
-	ni_unlock(ni);
+	if (is_resident(ni)) {
+		ni_lock(ni);
+		err = attr_data_write_resident(ni, page);
+		ni_unlock(ni);
+		if (err != E_NTFS_NONRESIDENT) {
+			unlock_page(page);
+			return err;
+		}
+	}
 
-	if (ret != E_NTFS_NONRESIDENT)
-		folio_unlock(folio);
-	mapping_set_error(mapping, ret);
-	return ret;
+	return block_write_full_page(page, ntfs_get_block, wbc);
 }
 
 static int ntfs_writepages(struct address_space *mapping,
 			   struct writeback_control *wbc)
 {
+	/* Redirect call to 'ntfs_writepage' for resident files. */
 	if (is_resident(ntfs_i(mapping->host)))
-		return write_cache_pages(mapping, wbc, ntfs_resident_writepage,
-					 mapping);
+		return generic_writepages(mapping, wbc);
 	return mpage_writepages(mapping, wbc, ntfs_get_block);
 }
 
@@ -887,8 +897,8 @@ int ntfs_write_begin(struct file *file, struct address_space *mapping,
 
 	*pagep = NULL;
 	if (is_resident(ni)) {
-		struct page *page =
-			grab_cache_page_write_begin(mapping, pos >> PAGE_SHIFT);
+		struct page *page = grab_cache_page_write_begin(
+			mapping, pos >> PAGE_SHIFT);
 
 		if (!page) {
 			err = -ENOMEM;
@@ -920,8 +930,9 @@ out:
 /*
  * ntfs_write_end - Address_space_operations::write_end.
  */
-int ntfs_write_end(struct file *file, struct address_space *mapping, loff_t pos,
-		   u32 len, u32 copied, struct page *page, void *fsdata)
+int ntfs_write_end(struct file *file, struct address_space *mapping,
+		   loff_t pos, u32 len, u32 copied, struct page *page,
+		   void *fsdata)
 {
 	struct inode *inode = mapping->host;
 	struct ntfs_inode *ni = ntfs_i(inode);
@@ -965,11 +976,6 @@ int ntfs_write_end(struct file *file, struct address_space *mapping, loff_t pos,
 
 		if (valid != ni->i_valid) {
 			/* ni->i_valid is changed in ntfs_get_block_vbo. */
-			dirty = true;
-		}
-
-		if (pos + err > inode->i_size) {
-			inode->i_size = pos + err;
 			dirty = true;
 		}
 
@@ -1182,20 +1188,8 @@ out:
 	return ERR_PTR(err);
 }
 
-/*
- * ntfs_create_inode
- *
- * Helper function for:
- * - ntfs_create
- * - ntfs_mknod
- * - ntfs_symlink
- * - ntfs_mkdir
- * - ntfs_atomic_open
- *
- * NOTE: if fnd != NULL (ntfs_atomic_open) then @dir is locked
- */
-struct inode *ntfs_create_inode(struct mnt_idmap *idmap, struct inode *dir,
-				struct dentry *dentry,
+struct inode *ntfs_create_inode(struct user_namespace *mnt_userns,
+				struct inode *dir, struct dentry *dentry,
 				const struct cpu_str *uni, umode_t mode,
 				dev_t dev, const char *symname, u32 size,
 				struct ntfs_fnd *fnd)
@@ -1223,8 +1217,7 @@ struct inode *ntfs_create_inode(struct mnt_idmap *idmap, struct inode *dir,
 	struct REPARSE_DATA_BUFFER *rp = NULL;
 	bool rp_inserted = false;
 
-	if (!fnd)
-		ni_lock_dir(dir_ni);
+	ni_lock_dir(dir_ni);
 
 	dir_root = indx_get_root(&dir_ni->dir, dir_ni, NULL, NULL);
 	if (!dir_root) {
@@ -1287,10 +1280,6 @@ struct inode *ntfs_create_inode(struct mnt_idmap *idmap, struct inode *dir,
 		fa = FILE_ATTRIBUTE_ARCHIVE;
 	}
 
-	/* If option "hide_dot_files" then set hidden attribute for dot files. */
-	if (sbi->options->hide_dot_files && name->name[0] == '.')
-		fa |= FILE_ATTRIBUTE_HIDDEN;
-
 	if (!(mode & 0222))
 		fa |= FILE_ATTRIBUTE_READONLY;
 
@@ -1309,17 +1298,18 @@ struct inode *ntfs_create_inode(struct mnt_idmap *idmap, struct inode *dir,
 	if (err)
 		goto out2;
 
-	ni = ntfs_new_inode(sbi, ino, S_ISDIR(mode) ? RECORD_FLAG_DIR : 0);
+	ni = ntfs_new_inode(sbi, ino, fa & FILE_ATTRIBUTE_DIRECTORY);
 	if (IS_ERR(ni)) {
 		err = PTR_ERR(ni);
 		ni = NULL;
 		goto out3;
 	}
 	inode = &ni->vfs_inode;
-	inode_init_owner(idmap, inode, dir, mode);
+	inode_init_owner(mnt_userns, inode, dir, mode);
 	mode = inode->i_mode;
 
-	ni->i_crtime = current_time(inode);
+	inode->i_atime = inode->i_mtime = inode->i_ctime = ni->i_crtime =
+		current_time(inode);
 
 	rec = ni->mi.mrec;
 	rec->hard_links = cpu_to_le16(1);
@@ -1360,9 +1350,10 @@ struct inode *ntfs_create_inode(struct mnt_idmap *idmap, struct inode *dir,
 	attr->res.data_size = cpu_to_le32(dsize);
 
 	std5->cr_time = std5->m_time = std5->c_time = std5->a_time =
-		kernel2nt(&ni->i_crtime);
+		kernel2nt(&inode->i_atime);
 
-	std5->fa = ni->std_fa = fa;
+	ni->std_fa = fa;
+	std5->fa = fa;
 
 	attr = Add2Ptr(attr, asize);
 
@@ -1374,13 +1365,6 @@ struct inode *ntfs_create_inode(struct mnt_idmap *idmap, struct inode *dir,
 	mi_get_ref(&ni->mi, &new_de->ref);
 
 	fname = (struct ATTR_FILE_NAME *)(new_de + 1);
-
-	if (sbi->options->windows_names &&
-	    !valid_windows_name(sbi, (struct le_str *)&fname->name_len)) {
-		err = -EINVAL;
-		goto out4;
-	}
-
 	mi_get_ref(&dir_ni->mi, &fname->home);
 	fname->dup.cr_time = fname->dup.m_time = fname->dup.c_time =
 		fname->dup.a_time = std5->cr_time;
@@ -1437,7 +1421,8 @@ struct inode *ntfs_create_inode(struct mnt_idmap *idmap, struct inode *dir,
 
 		root = Add2Ptr(attr, sizeof(I30_NAME) + SIZEOF_RESIDENT);
 		memcpy(root, dir_root, offsetof(struct INDEX_ROOT, ihdr));
-		root->ihdr.de_off = cpu_to_le32(sizeof(struct INDEX_HDR));
+		root->ihdr.de_off =
+			cpu_to_le32(sizeof(struct INDEX_HDR)); // 0x10
 		root->ihdr.used = cpu_to_le32(sizeof(struct INDEX_HDR) +
 					      sizeof(struct NTFS_DE));
 		root->ihdr.total = root->ihdr.used;
@@ -1543,8 +1528,8 @@ struct inode *ntfs_create_inode(struct mnt_idmap *idmap, struct inode *dir,
 				cpu_to_le64(ntfs_up_cluster(sbi, nsize));
 
 			err = attr_allocate_clusters(sbi, &ni->file.run, 0, 0,
-						     clst, NULL, ALLOCATE_DEF,
-						     &alen, 0, NULL, NULL);
+						     clst, NULL, 0, &alen, 0,
+						     NULL);
 			if (err)
 				goto out5;
 
@@ -1560,15 +1545,11 @@ struct inode *ntfs_create_inode(struct mnt_idmap *idmap, struct inode *dir,
 			}
 
 			asize = SIZEOF_NONRESIDENT + ALIGN(err, 8);
-			/* Write non resident data. */
-			err = ntfs_sb_write_run(sbi, &ni->file.run, 0, rp,
-						nsize, 0);
-			if (err)
-				goto out5;
 		} else {
 			attr->res.data_off = SIZEOF_RESIDENT_LE;
 			attr->res.data_size = cpu_to_le32(nsize);
 			memcpy(Add2Ptr(attr, SIZEOF_RESIDENT), rp, nsize);
+			nsize = 0;
 		}
 		/* Size of symlink equals the length of input string. */
 		inode->i_size = size;
@@ -1589,7 +1570,17 @@ struct inode *ntfs_create_inode(struct mnt_idmap *idmap, struct inode *dir,
 	rec->used = cpu_to_le32(PtrOffset(rec, attr) + 8);
 	rec->next_attr_id = cpu_to_le16(aid);
 
+	/* Step 2: Add new name in index. */
+	err = indx_insert_entry(&dir_ni->dir, dir_ni, new_de, sbi, fnd, 0);
+	if (err)
+		goto out6;
+
+	/* Unlock parent directory before ntfs_init_acl. */
+	ni_unlock(dir_ni);
+
 	inode->i_generation = le16_to_cpu(rec->seq);
+
+	dir->i_mtime = dir->i_ctime = inode->i_atime;
 
 	if (S_ISDIR(mode)) {
 		inode->i_op = &ntfs_dir_inode_operations;
@@ -1603,8 +1594,8 @@ struct inode *ntfs_create_inode(struct mnt_idmap *idmap, struct inode *dir,
 	} else if (S_ISREG(mode)) {
 		inode->i_op = &ntfs_file_inode_operations;
 		inode->i_fop = &ntfs_file_operations;
-		inode->i_mapping->a_ops = is_compressed(ni) ? &ntfs_aops_cmpr :
-							      &ntfs_aops;
+		inode->i_mapping->a_ops =
+			is_compressed(ni) ? &ntfs_aops_cmpr : &ntfs_aops;
 		init_rwsem(&ni->file.run_lock);
 	} else {
 		inode->i_op = &ntfs_special_inode_operations;
@@ -1613,43 +1604,21 @@ struct inode *ntfs_create_inode(struct mnt_idmap *idmap, struct inode *dir,
 
 #ifdef CONFIG_NTFS3_FS_POSIX_ACL
 	if (!S_ISLNK(mode) && (sb->s_flags & SB_POSIXACL)) {
-		err = ntfs_init_acl(idmap, inode, dir);
+		err = ntfs_init_acl(mnt_userns, inode, dir);
 		if (err)
-			goto out5;
+			goto out7;
 	} else
 #endif
 	{
 		inode->i_flags |= S_NOSEC;
 	}
 
-	/*
-	 * ntfs_init_acl and ntfs_save_wsl_perm update extended attribute.
-	 * The packed size of extended attribute is stored in direntry too.
-	 * 'fname' here points to inside new_de.
-	 */
-	ntfs_save_wsl_perm(inode, &fname->dup.ea_size);
-
-	/*
-	 * update ea_size in file_name attribute too.
-	 * Use ni_find_attr cause layout of MFT record may be changed
-	 * in ntfs_init_acl and ntfs_save_wsl_perm.
-	 */
-	attr = ni_find_attr(ni, NULL, NULL, ATTR_NAME, NULL, 0, NULL, NULL);
-	if (attr) {
-		struct ATTR_FILE_NAME *fn;
-
-		fn = resident_data_ex(attr, SIZEOF_ATTRIBUTE_FILENAME);
-		if (fn)
-			fn->dup.ea_size = fname->dup.ea_size;
+	/* Write non resident data. */
+	if (nsize) {
+		err = ntfs_sb_write_run(sbi, &ni->file.run, 0, rp, nsize, 0);
+		if (err)
+			goto out7;
 	}
-
-	/* We do not need to update parent directory later */
-	ni->ni_flags &= ~NI_FLAG_UPDATE_PARENT;
-
-	/* Step 2: Add new name in index. */
-	err = indx_insert_entry(&dir_ni->dir, dir_ni, new_de, sbi, fnd, 0);
-	if (err)
-		goto out6;
 
 	/*
 	 * Call 'd_instantiate' after inode->i_op is set
@@ -1657,16 +1626,20 @@ struct inode *ntfs_create_inode(struct mnt_idmap *idmap, struct inode *dir,
 	 */
 	d_instantiate(dentry, inode);
 
-	/* Set original time. inode times (i_ctime) may be changed in ntfs_init_acl. */
-	inode->i_atime = inode->i_mtime = inode->i_ctime = dir->i_mtime =
-		dir->i_ctime = ni->i_crtime;
-
+	ntfs_save_wsl_perm(inode);
 	mark_inode_dirty(dir);
 	mark_inode_dirty(inode);
 
 	/* Normal exit. */
 	goto out2;
 
+out7:
+
+	/* Undo 'indx_insert_entry'. */
+	ni_lock_dir(dir_ni);
+	indx_delete_entry(&dir_ni->dir, dir_ni, new_de + 1,
+			  le16_to_cpu(new_de->key_size), sbi);
+	/* ni_unlock(dir_ni); will be called later. */
 out6:
 	if (rp_inserted)
 		ntfs_remove_reparse(sbi, IO_REPARSE_TAG_SYMLINK, &new_de->ref);
@@ -1688,11 +1661,10 @@ out2:
 	kfree(rp);
 
 out1:
-	if (!fnd)
+	if (err) {
 		ni_unlock(dir_ni);
-
-	if (err)
 		return ERR_PTR(err);
+	}
 
 	unlock_new_inode(inode);
 
@@ -1789,109 +1761,16 @@ void ntfs_evict_inode(struct inode *inode)
 {
 	truncate_inode_pages_final(&inode->i_data);
 
+	if (inode->i_nlink)
+		_ni_write_inode(inode, inode_needs_sync(inode));
+
 	invalidate_inode_buffers(inode);
 	clear_inode(inode);
 
 	ni_clear(ntfs_i(inode));
 }
 
-/*
- * ntfs_translate_junction
- *
- * Translate a Windows junction target to the Linux equivalent.
- * On junctions, targets are always absolute (they include the drive
- * letter). We have no way of knowing if the target is for the current
- * mounted device or not so we just assume it is.
- */
-static int ntfs_translate_junction(const struct super_block *sb,
-				   const struct dentry *link_de, char *target,
-				   int target_len, int target_max)
-{
-	int tl_len, err = target_len;
-	char *link_path_buffer = NULL, *link_path;
-	char *translated = NULL;
-	char *target_start;
-	int copy_len;
-
-	link_path_buffer = kmalloc(PATH_MAX, GFP_NOFS);
-	if (!link_path_buffer) {
-		err = -ENOMEM;
-		goto out;
-	}
-	/* Get link path, relative to mount point */
-	link_path = dentry_path_raw(link_de, link_path_buffer, PATH_MAX);
-	if (IS_ERR(link_path)) {
-		ntfs_err(sb, "Error getting link path");
-		err = -EINVAL;
-		goto out;
-	}
-
-	translated = kmalloc(PATH_MAX, GFP_NOFS);
-	if (!translated) {
-		err = -ENOMEM;
-		goto out;
-	}
-
-	/* Make translated path a relative path to mount point */
-	strcpy(translated, "./");
-	++link_path; /* Skip leading / */
-	for (tl_len = sizeof("./") - 1; *link_path; ++link_path) {
-		if (*link_path == '/') {
-			if (PATH_MAX - tl_len < sizeof("../")) {
-				ntfs_err(sb,
-					 "Link path %s has too many components",
-					 link_path);
-				err = -EINVAL;
-				goto out;
-			}
-			strcpy(translated + tl_len, "../");
-			tl_len += sizeof("../") - 1;
-		}
-	}
-
-	/* Skip drive letter */
-	target_start = target;
-	while (*target_start && *target_start != ':')
-		++target_start;
-
-	if (!*target_start) {
-		ntfs_err(sb, "Link target (%s) missing drive separator",
-			 target);
-		err = -EINVAL;
-		goto out;
-	}
-
-	/* Skip drive separator and leading /, if exists */
-	target_start += 1 + (target_start[1] == '/');
-	copy_len = target_len - (target_start - target);
-
-	if (PATH_MAX - tl_len <= copy_len) {
-		ntfs_err(sb, "Link target %s too large for buffer (%d <= %d)",
-			 target_start, PATH_MAX - tl_len, copy_len);
-		err = -EINVAL;
-		goto out;
-	}
-
-	/* translated path has a trailing / and target_start does not */
-	strcpy(translated + tl_len, target_start);
-	tl_len += copy_len;
-	if (target_max <= tl_len) {
-		ntfs_err(sb, "Target path %s too large for buffer (%d <= %d)",
-			 translated, target_max, tl_len);
-		err = -EINVAL;
-		goto out;
-	}
-	strcpy(target, translated);
-	err = tl_len;
-
-out:
-	kfree(link_path_buffer);
-	kfree(translated);
-	return err;
-}
-
-static noinline int ntfs_readlink_hlp(const struct dentry *link_de,
-				      struct inode *inode, char *buffer,
+static noinline int ntfs_readlink_hlp(struct inode *inode, char *buffer,
 				      int buflen)
 {
 	int i, err = -EINVAL;
@@ -2034,11 +1913,6 @@ static noinline int ntfs_readlink_hlp(const struct dentry *link_de,
 
 	/* Always set last zero. */
 	buffer[err] = 0;
-
-	/* If this is a junction, translate the link target. */
-	if (rp->ReparseTag == IO_REPARSE_TAG_MOUNT_POINT)
-		err = ntfs_translate_junction(sb, link_de, buffer, err, buflen);
-
 out:
 	kfree(to_free);
 	return err;
@@ -2057,7 +1931,7 @@ static const char *ntfs_get_link(struct dentry *de, struct inode *inode,
 	if (!ret)
 		return ERR_PTR(-ENOMEM);
 
-	err = ntfs_readlink_hlp(de, inode, ret, PAGE_SIZE);
+	err = ntfs_readlink_hlp(inode, ret, PAGE_SIZE);
 	if (err < 0) {
 		kfree(ret);
 		return ERR_PTR(err);
@@ -2073,18 +1947,19 @@ const struct inode_operations ntfs_link_inode_operations = {
 	.get_link	= ntfs_get_link,
 	.setattr	= ntfs3_setattr,
 	.listxattr	= ntfs_listxattr,
+	.permission	= ntfs_permission,
 };
 
 const struct address_space_operations ntfs_aops = {
 	.read_folio	= ntfs_read_folio,
 	.readahead	= ntfs_readahead,
+	.writepage	= ntfs_writepage,
 	.writepages	= ntfs_writepages,
 	.write_begin	= ntfs_write_begin,
 	.write_end	= ntfs_write_end,
 	.direct_IO	= ntfs_direct_IO,
 	.bmap		= ntfs_bmap,
 	.dirty_folio	= block_dirty_folio,
-	.migrate_folio	= buffer_migrate_folio,
 	.invalidate_folio = block_invalidate_folio,
 };
 

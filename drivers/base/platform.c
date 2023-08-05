@@ -441,9 +441,11 @@ static int __platform_get_irq_byname(struct platform_device *dev,
 	struct resource *r;
 	int ret;
 
-	ret = fwnode_irq_get_byname(dev_fwnode(&dev->dev), name);
-	if (ret > 0 || ret == -EPROBE_DEFER)
-		return ret;
+	if (IS_ENABLED(CONFIG_OF_IRQ) && dev->dev.of_node) {
+		ret = of_irq_get_byname(dev->dev.of_node, name);
+		if (ret > 0 || ret == -EPROBE_DEFER)
+			return ret;
+	}
 
 	r = platform_get_resource_byname(dev, IORESOURCE_IRQ, name);
 	if (r) {
@@ -497,8 +499,6 @@ EXPORT_SYMBOL_GPL(platform_get_irq_byname_optional);
  * platform_add_devices - add a numbers of platform devices
  * @devs: array of platform devices to add
  * @num: number of platform devices in array
- *
- * Return: 0 on success, negative error number on failure.
  */
 int platform_add_devices(struct platform_device **devs, int num)
 {
@@ -883,13 +883,6 @@ static int platform_probe_fail(struct platform_device *pdev)
 	return -ENXIO;
 }
 
-static int is_bound_to_driver(struct device *dev, void *driver)
-{
-	if (dev->driver == driver)
-		return 1;
-	return 0;
-}
-
 /**
  * __platform_driver_probe - register driver for non-hotpluggable device
  * @drv: platform driver structure
@@ -913,7 +906,7 @@ static int is_bound_to_driver(struct device *dev, void *driver)
 int __init_or_module __platform_driver_probe(struct platform_driver *drv,
 		int (*probe)(struct platform_device *), struct module *module)
 {
-	int retval;
+	int retval, code;
 
 	if (drv->driver.probe_type == PROBE_PREFER_ASYNCHRONOUS) {
 		pr_err("%s: drivers registered with %s can not be probed asynchronously\n",
@@ -939,21 +932,24 @@ int __init_or_module __platform_driver_probe(struct platform_driver *drv,
 
 	/* temporary section violation during probe() */
 	drv->probe = probe;
-	retval = __platform_driver_register(drv, module);
+	retval = code = __platform_driver_register(drv, module);
 	if (retval)
 		return retval;
 
-	/* Force all new probes of this driver to fail */
-	drv->probe = platform_probe_fail;
-
-	/* Walk all platform devices and see if any actually bound to this driver.
-	 * If not, return an error as the device should have done so by now.
+	/*
+	 * Fixup that section violation, being paranoid about code scanning
+	 * the list of drivers in order to probe new devices.  Check to see
+	 * if the probe was successful, and make sure any forced probes of
+	 * new devices fail.
 	 */
-	if (!bus_for_each_dev(&platform_bus_type, NULL, &drv->driver, is_bound_to_driver)) {
+	spin_lock(&drv->driver.bus->p->klist_drivers.k_lock);
+	drv->probe = platform_probe_fail;
+	if (code == 0 && list_empty(&drv->driver.p->klist_devices.k_list))
 		retval = -ENODEV;
-		platform_driver_unregister(drv);
-	}
+	spin_unlock(&drv->driver.bus->p->klist_drivers.k_lock);
 
+	if (code != retval)
+		platform_driver_unregister(drv);
 	return retval;
 }
 EXPORT_SYMBOL_GPL(__platform_driver_probe);
@@ -1357,9 +1353,9 @@ static int platform_match(struct device *dev, struct device_driver *drv)
 	return (strcmp(pdev->name, drv->name) == 0);
 }
 
-static int platform_uevent(const struct device *dev, struct kobj_uevent_env *env)
+static int platform_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
-	const struct platform_device *pdev = to_platform_device(dev);
+	struct platform_device	*pdev = to_platform_device(dev);
 	int rc;
 
 	/* Some devices have extra OF data and an OF-style MODALIAS */

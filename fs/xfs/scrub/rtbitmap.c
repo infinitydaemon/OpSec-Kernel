@@ -1,7 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * Copyright (C) 2017-2023 Oracle.  All Rights Reserved.
- * Author: Darrick J. Wong <djwong@kernel.org>
+ * Copyright (C) 2017 Oracle.  All Rights Reserved.
+ * Author: Darrick J. Wong <darrick.wong@oracle.com>
  */
 #include "xfs.h"
 #include "xfs_fs.h"

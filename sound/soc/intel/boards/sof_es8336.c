@@ -393,6 +393,13 @@ static struct snd_soc_dai_link_component dmic_component[] = {
 	}
 };
 
+static struct snd_soc_dai_link_component dummy_component[] = {
+	{
+		.name = "snd-soc-dummy",
+		.dai_name = "snd-soc-dummy-dai",
+	}
+};
+
 static int sof_es8336_late_probe(struct snd_soc_card *card)
 {
 	struct sof_es8336_private *priv = snd_soc_card_get_drvdata(card);
@@ -565,8 +572,8 @@ static struct snd_soc_dai_link *sof_card_dai_links_create(struct device *dev,
 			if (!links[id].name)
 				return NULL;
 			links[id].id = id + hdmi_id_offset;
-			links[id].codecs = &asoc_dummy_dlc;
-			links[id].num_codecs = 1;
+			links[id].codecs = dummy_component;
+			links[id].num_codecs = ARRAY_SIZE(dummy_component);
 			links[id].platforms = platform_component;
 			links[id].num_platforms = ARRAY_SIZE(platform_component);
 			links[id].dpcm_capture = 1;
@@ -773,7 +780,7 @@ err_put_codec:
 	return ret;
 }
 
-static void sof_es8336_remove(struct platform_device *pdev)
+static int sof_es8336_remove(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 	struct sof_es8336_private *priv = snd_soc_card_get_drvdata(card);
@@ -782,6 +789,8 @@ static void sof_es8336_remove(struct platform_device *pdev)
 	gpiod_put(priv->gpio_speakers);
 	device_remove_software_node(priv->codec_dev);
 	put_device(priv->codec_dev);
+
+	return 0;
 }
 
 static const struct platform_device_id board_ids[] = {
@@ -808,7 +817,7 @@ static struct platform_driver sof_es8336_driver = {
 		.pm = &snd_soc_pm_ops,
 	},
 	.probe = sof_es8336_probe,
-	.remove_new = sof_es8336_remove,
+	.remove = sof_es8336_remove,
 	.id_table = board_ids,
 };
 module_platform_driver(sof_es8336_driver);

@@ -317,6 +317,7 @@ out:
 	case SMB2_READ:
 	case SMB2_WRITE:
 	case SMB2_LOCK:
+	case SMB2_IOCTL:
 	case SMB2_QUERY_DIRECTORY:
 	case SMB2_CHANGE_NOTIFY:
 	case SMB2_QUERY_INFO:
@@ -828,6 +829,7 @@ create_posix_buf(umode_t mode)
 static int
 add_posix_context(struct kvec *iov, unsigned int *num_iovec, umode_t mode)
 {
+	struct smb2_create_req *req = iov[0].iov_base;
 	unsigned int num = *num_iovec;
 
 	iov[num].iov_base = create_posix_buf(mode);
@@ -836,6 +838,11 @@ add_posix_context(struct kvec *iov, unsigned int *num_iovec, umode_t mode)
 	if (iov[num].iov_base == NULL)
 		return -ENOMEM;
 	iov[num].iov_len = sizeof(struct create_posix);
+	if (!req->CreateContextsOffset)
+		req->CreateContextsOffset = cpu_to_le32(
+				sizeof(struct smb2_create_req) +
+				iov[num - 1].iov_len);
+	le32_add_cpu(&req->CreateContextsLength, sizeof(struct create_posix));
 	*num_iovec = num + 1;
 	return 0;
 }
@@ -1305,12 +1312,7 @@ SMB2_sess_alloc_buffer(struct SMB2_sess_data *sess_data)
 	}
 
 	/* enough to enable echos and oplocks and one max size write */
-	if (server->credits >= server->max_credits)
-		req->hdr.CreditRequest = cpu_to_le16(0);
-	else
-		req->hdr.CreditRequest = cpu_to_le16(
-			min_t(int, server->max_credits -
-			      server->credits, 130));
+	req->hdr.CreditRequest = cpu_to_le16(130);
 
 	/* only one of SMB2 signing flags may be set in SMB2 request */
 	if (server->sign)
@@ -1363,7 +1365,7 @@ SMB2_sess_sendreceive(struct SMB2_sess_data *sess_data)
 
 	/* Testing shows that buffer offset must be at location of Buffer[0] */
 	req->SecurityBufferOffset =
-		cpu_to_le16(sizeof(struct smb2_sess_setup_req));
+		cpu_to_le16(sizeof(struct smb2_sess_setup_req) - 1 /* pad */);
 	req->SecurityBufferLength = cpu_to_le16(sess_data->iov[1].iov_len);
 
 	memset(&rqst, 0, sizeof(struct smb_rqst));
@@ -1857,12 +1859,12 @@ SMB2_tcon(const unsigned int xid, struct cifs_ses *ses, const char *tree,
 	if (unc_path == NULL)
 		return -ENOMEM;
 
-	unc_path_len = cifs_strtoUTF16(unc_path, tree, strlen(tree), cp);
-	if (unc_path_len <= 0) {
+	unc_path_len = cifs_strtoUTF16(unc_path, tree, strlen(tree), cp) + 1;
+	unc_path_len *= 2;
+	if (unc_path_len < 2) {
 		kfree(unc_path);
 		return -EINVAL;
 	}
-	unc_path_len *= 2;
 
 	/* SMB2 TREE_CONNECT request must be called with TreeId == 0 */
 	tcon->tid = 0;
@@ -1882,8 +1884,9 @@ SMB2_tcon(const unsigned int xid, struct cifs_ses *ses, const char *tree,
 	iov[0].iov_len = total_len - 1;
 
 	/* Testing shows that buffer offset must be at location of Buffer[0] */
-	req->PathOffset = cpu_to_le16(sizeof(struct smb2_tree_connect_req));
-	req->PathLength = cpu_to_le16(unc_path_len);
+	req->PathOffset = cpu_to_le16(sizeof(struct smb2_tree_connect_req)
+			- 1 /* pad */);
+	req->PathLength = cpu_to_le16(unc_path_len - 2);
 	iov[1].iov_base = unc_path;
 	iov[1].iov_len = unc_path_len;
 
@@ -1904,12 +1907,7 @@ SMB2_tcon(const unsigned int xid, struct cifs_ses *ses, const char *tree,
 	rqst.rq_nvec = 2;
 
 	/* Need 64 for max size write so ask for more in case not there yet */
-	if (server->credits >= server->max_credits)
-		req->hdr.CreditRequest = cpu_to_le16(0);
-	else
-		req->hdr.CreditRequest = cpu_to_le16(
-			min_t(int, server->max_credits -
-			      server->credits, 64));
+	req->hdr.CreditRequest = cpu_to_le16(64);
 
 	rc = cifs_send_recv(xid, ses, server,
 			    &rqst, &resp_buftype, flags, &rsp_iov);
@@ -1957,9 +1955,6 @@ SMB2_tcon(const unsigned int xid, struct cifs_ses *ses, const char *tree,
 	init_copy_chunk_defaults(tcon);
 	if (server->ops->validate_negotiate)
 		rc = server->ops->validate_negotiate(xid, tcon);
-	if (rc == 0) /* See MS-SMB2 2.2.10 and 3.2.5.5 */
-		if (tcon->share_flags & SMB2_SHAREFLAG_ISOLATED_TRANSPORT)
-			server->nosharesock = true;
 tcon_exit:
 
 	free_rsp_buf(resp_buftype, rsp);
@@ -2083,7 +2078,7 @@ create_reconnect_durable_buf(struct cifs_fid *fid)
 static void
 parse_query_id_ctxt(struct create_context *cc, struct smb2_file_all_info *buf)
 {
-	struct create_disk_id_rsp *pdisk_id = (struct create_disk_id_rsp *)cc;
+	struct create_on_disk_id *pdisk_id = (struct create_on_disk_id *)cc;
 
 	cifs_dbg(FYI, "parse query id context 0x%llx 0x%llx\n",
 		pdisk_id->DiskFileId, pdisk_id->VolumeId);
@@ -2186,11 +2181,10 @@ smb2_parse_contexts(struct TCP_Server_Info *server,
 }
 
 static int
-add_lease_context(struct TCP_Server_Info *server,
-		  struct smb2_create_req *req,
-		  struct kvec *iov,
+add_lease_context(struct TCP_Server_Info *server, struct kvec *iov,
 		  unsigned int *num_iovec, u8 *lease_key, __u8 *oplock)
 {
+	struct smb2_create_req *req = iov[0].iov_base;
 	unsigned int num = *num_iovec;
 
 	iov[num].iov_base = server->ops->create_lease_buf(lease_key, *oplock);
@@ -2198,6 +2192,12 @@ add_lease_context(struct TCP_Server_Info *server,
 		return -ENOMEM;
 	iov[num].iov_len = server->vals->create_lease_size;
 	req->RequestedOplockLevel = SMB2_OPLOCK_LEVEL_LEASE;
+	if (!req->CreateContextsOffset)
+		req->CreateContextsOffset = cpu_to_le32(
+				sizeof(struct smb2_create_req) +
+				iov[num - 1].iov_len);
+	le32_add_cpu(&req->CreateContextsLength,
+		     server->vals->create_lease_size);
 	*num_iovec = num + 1;
 	return 0;
 }
@@ -2276,12 +2276,18 @@ static int
 add_durable_v2_context(struct kvec *iov, unsigned int *num_iovec,
 		    struct cifs_open_parms *oparms)
 {
+	struct smb2_create_req *req = iov[0].iov_base;
 	unsigned int num = *num_iovec;
 
 	iov[num].iov_base = create_durable_v2_buf(oparms);
 	if (iov[num].iov_base == NULL)
 		return -ENOMEM;
 	iov[num].iov_len = sizeof(struct create_durable_v2);
+	if (!req->CreateContextsOffset)
+		req->CreateContextsOffset =
+			cpu_to_le32(sizeof(struct smb2_create_req) +
+								iov[1].iov_len);
+	le32_add_cpu(&req->CreateContextsLength, sizeof(struct create_durable_v2));
 	*num_iovec = num + 1;
 	return 0;
 }
@@ -2290,6 +2296,7 @@ static int
 add_durable_reconnect_v2_context(struct kvec *iov, unsigned int *num_iovec,
 		    struct cifs_open_parms *oparms)
 {
+	struct smb2_create_req *req = iov[0].iov_base;
 	unsigned int num = *num_iovec;
 
 	/* indicate that we don't need to relock the file */
@@ -2299,6 +2306,12 @@ add_durable_reconnect_v2_context(struct kvec *iov, unsigned int *num_iovec,
 	if (iov[num].iov_base == NULL)
 		return -ENOMEM;
 	iov[num].iov_len = sizeof(struct create_durable_handle_reconnect_v2);
+	if (!req->CreateContextsOffset)
+		req->CreateContextsOffset =
+			cpu_to_le32(sizeof(struct smb2_create_req) +
+								iov[1].iov_len);
+	le32_add_cpu(&req->CreateContextsLength,
+			sizeof(struct create_durable_handle_reconnect_v2));
 	*num_iovec = num + 1;
 	return 0;
 }
@@ -2307,6 +2320,7 @@ static int
 add_durable_context(struct kvec *iov, unsigned int *num_iovec,
 		    struct cifs_open_parms *oparms, bool use_persistent)
 {
+	struct smb2_create_req *req = iov[0].iov_base;
 	unsigned int num = *num_iovec;
 
 	if (use_persistent) {
@@ -2326,6 +2340,11 @@ add_durable_context(struct kvec *iov, unsigned int *num_iovec,
 	if (iov[num].iov_base == NULL)
 		return -ENOMEM;
 	iov[num].iov_len = sizeof(struct create_durable);
+	if (!req->CreateContextsOffset)
+		req->CreateContextsOffset =
+			cpu_to_le32(sizeof(struct smb2_create_req) +
+								iov[1].iov_len);
+	le32_add_cpu(&req->CreateContextsLength, sizeof(struct create_durable));
 	*num_iovec = num + 1;
 	return 0;
 }
@@ -2359,12 +2378,18 @@ create_twarp_buf(__u64 timewarp)
 static int
 add_twarp_context(struct kvec *iov, unsigned int *num_iovec, __u64 timewarp)
 {
+	struct smb2_create_req *req = iov[0].iov_base;
 	unsigned int num = *num_iovec;
 
 	iov[num].iov_base = create_twarp_buf(timewarp);
 	if (iov[num].iov_base == NULL)
 		return -ENOMEM;
 	iov[num].iov_len = sizeof(struct crt_twarp_ctxt);
+	if (!req->CreateContextsOffset)
+		req->CreateContextsOffset = cpu_to_le32(
+				sizeof(struct smb2_create_req) +
+				iov[num - 1].iov_len);
+	le32_add_cpu(&req->CreateContextsLength, sizeof(struct crt_twarp_ctxt));
 	*num_iovec = num + 1;
 	return 0;
 }
@@ -2487,6 +2512,7 @@ create_sd_buf(umode_t mode, bool set_owner, unsigned int *len)
 static int
 add_sd_context(struct kvec *iov, unsigned int *num_iovec, umode_t mode, bool set_owner)
 {
+	struct smb2_create_req *req = iov[0].iov_base;
 	unsigned int num = *num_iovec;
 	unsigned int len = 0;
 
@@ -2494,6 +2520,11 @@ add_sd_context(struct kvec *iov, unsigned int *num_iovec, umode_t mode, bool set
 	if (iov[num].iov_base == NULL)
 		return -ENOMEM;
 	iov[num].iov_len = len;
+	if (!req->CreateContextsOffset)
+		req->CreateContextsOffset = cpu_to_le32(
+				sizeof(struct smb2_create_req) +
+				iov[num - 1].iov_len);
+	le32_add_cpu(&req->CreateContextsLength, len);
 	*num_iovec = num + 1;
 	return 0;
 }
@@ -2524,12 +2555,18 @@ create_query_id_buf(void)
 static int
 add_query_id_context(struct kvec *iov, unsigned int *num_iovec)
 {
+	struct smb2_create_req *req = iov[0].iov_base;
 	unsigned int num = *num_iovec;
 
 	iov[num].iov_base = create_query_id_buf();
 	if (iov[num].iov_base == NULL)
 		return -ENOMEM;
 	iov[num].iov_len = sizeof(struct crt_query_id_ctxt);
+	if (!req->CreateContextsOffset)
+		req->CreateContextsOffset = cpu_to_le32(
+				sizeof(struct smb2_create_req) +
+				iov[num - 1].iov_len);
+	le32_add_cpu(&req->CreateContextsLength, sizeof(struct crt_query_id_ctxt));
 	*num_iovec = num + 1;
 	return 0;
 }
@@ -2692,9 +2729,6 @@ int smb311_posix_mkdir(const unsigned int xid, struct inode *inode,
 		rc = add_posix_context(iov, &n_iov, mode);
 		if (rc)
 			goto err_free_req;
-		req->CreateContextsOffset = cpu_to_le32(
-			sizeof(struct smb2_create_req) +
-			iov[1].iov_len);
 		pc_buf = iov[n_iov-1].iov_base;
 	}
 
@@ -2832,13 +2866,21 @@ SMB2_open_init(struct cifs_tcon *tcon, struct TCP_Server_Info *server,
 		  (oparms->create_options & CREATE_NOT_FILE))
 		req->RequestedOplockLevel = *oplock; /* no srv lease support */
 	else {
-		rc = add_lease_context(server, req, iov, &n_iov,
+		rc = add_lease_context(server, iov, &n_iov,
 				       oparms->fid->lease_key, oplock);
 		if (rc)
 			return rc;
 	}
 
 	if (*oplock == SMB2_OPLOCK_LEVEL_BATCH) {
+		/* need to set Next field of lease context if we request it */
+		if (server->capabilities & SMB2_GLOBAL_CAP_LEASING) {
+			struct create_context *ccontext =
+			    (struct create_context *)iov[n_iov-1].iov_base;
+			ccontext->Next =
+				cpu_to_le32(server->vals->create_lease_size);
+		}
+
 		rc = add_durable_context(iov, &n_iov, oparms,
 					tcon->use_persistent);
 		if (rc)
@@ -2846,6 +2888,13 @@ SMB2_open_init(struct cifs_tcon *tcon, struct TCP_Server_Info *server,
 	}
 
 	if (tcon->posix_extensions) {
+		if (n_iov > 2) {
+			struct create_context *ccontext =
+			    (struct create_context *)iov[n_iov-1].iov_base;
+			ccontext->Next =
+				cpu_to_le32(iov[n_iov-1].iov_len);
+		}
+
 		rc = add_posix_context(iov, &n_iov, oparms->mode);
 		if (rc)
 			return rc;
@@ -2853,6 +2902,13 @@ SMB2_open_init(struct cifs_tcon *tcon, struct TCP_Server_Info *server,
 
 	if (tcon->snapshot_time) {
 		cifs_dbg(FYI, "adding snapshot context\n");
+		if (n_iov > 2) {
+			struct create_context *ccontext =
+			    (struct create_context *)iov[n_iov-1].iov_base;
+			ccontext->Next =
+				cpu_to_le32(iov[n_iov-1].iov_len);
+		}
+
 		rc = add_twarp_context(iov, &n_iov, tcon->snapshot_time);
 		if (rc)
 			return rc;
@@ -2876,6 +2932,12 @@ SMB2_open_init(struct cifs_tcon *tcon, struct TCP_Server_Info *server,
 			set_owner = false;
 
 		if (set_owner | set_mode) {
+			if (n_iov > 2) {
+				struct create_context *ccontext =
+				    (struct create_context *)iov[n_iov-1].iov_base;
+				ccontext->Next = cpu_to_le32(iov[n_iov-1].iov_len);
+			}
+
 			cifs_dbg(FYI, "add sd with mode 0x%x\n", oparms->mode);
 			rc = add_sd_context(iov, &n_iov, oparms->mode, set_owner);
 			if (rc)
@@ -2883,30 +2945,12 @@ SMB2_open_init(struct cifs_tcon *tcon, struct TCP_Server_Info *server,
 		}
 	}
 
-	add_query_id_context(iov, &n_iov);
-
 	if (n_iov > 2) {
-		/*
-		 * We have create contexts behind iov[1] (the file
-		 * name), point at them from the main create request
-		 */
-		req->CreateContextsOffset = cpu_to_le32(
-			sizeof(struct smb2_create_req) +
-			iov[1].iov_len);
-		req->CreateContextsLength = 0;
-
-		for (unsigned int i = 2; i < (n_iov-1); i++) {
-			struct kvec *v = &iov[i];
-			size_t len = v->iov_len;
-			struct create_context *cctx =
-				(struct create_context *)v->iov_base;
-
-			cctx->Next = cpu_to_le32(len);
-			le32_add_cpu(&req->CreateContextsLength, len);
-		}
-		le32_add_cpu(&req->CreateContextsLength,
-			     iov[n_iov-1].iov_len);
+		struct create_context *ccontext =
+			(struct create_context *)iov[n_iov-1].iov_base;
+		ccontext->Next = cpu_to_le32(iov[n_iov-1].iov_len);
 	}
+	add_query_id_context(iov, &n_iov);
 
 	rqst->rq_nvec = n_iov;
 	return 0;
@@ -3721,7 +3765,7 @@ SMB2_change_notify(const unsigned int xid, struct cifs_tcon *tcon,
 			ses->Suid, (u8)watch_tree, completion_filter);
 		/* validate that notify information is plausible */
 		if ((rsp_iov.iov_base == NULL) ||
-		    (rsp_iov.iov_len < sizeof(struct smb2_change_notify_rsp) + 1))
+		    (rsp_iov.iov_len < sizeof(struct smb2_change_notify_rsp)))
 			goto cnotify_exit;
 
 		smb_rsp = (struct smb2_change_notify_rsp *)rsp_iov.iov_base;
@@ -3797,12 +3841,6 @@ void smb2_reconnect_server(struct work_struct *work)
 
 	spin_lock(&cifs_tcp_ses_lock);
 	list_for_each_entry(ses, &pserver->smb_ses_list, smb_ses_list) {
-		spin_lock(&ses->ses_lock);
-		if (ses->ses_status == SES_EXITING) {
-			spin_unlock(&ses->ses_lock);
-			continue;
-		}
-		spin_unlock(&ses->ses_lock);
 
 		tcon_selected = false;
 
@@ -3820,7 +3858,7 @@ void smb2_reconnect_server(struct work_struct *work)
 		if (ses->tcon_ipc && ses->tcon_ipc->need_reconnect) {
 			list_add_tail(&ses->tcon_ipc->rlist, &tmp_list);
 			tcon_selected = tcon_exist = true;
-			cifs_smb_ses_inc_refcount(ses);
+			ses->ses_count++;
 		}
 		/*
 		 * handle the case where channel needs to reconnect
@@ -3831,7 +3869,7 @@ void smb2_reconnect_server(struct work_struct *work)
 		if (!tcon_selected && cifs_chan_needs_reconnect(ses, server)) {
 			list_add_tail(&ses->rlist, &tmp_ses_list);
 			ses_exist = true;
-			cifs_smb_ses_inc_refcount(ses);
+			ses->ses_count++;
 		}
 		spin_unlock(&ses->chan_lock);
 	}
@@ -4094,8 +4132,10 @@ smb2_new_read_req(void **buf, unsigned int *total_len,
 		struct smbd_buffer_descriptor_v1 *v1;
 		bool need_invalidate = server->dialect == SMB30_PROT_ID;
 
-		rdata->mr = smbd_register_mr(server->smbd_conn, &rdata->iter,
-					     true, need_invalidate);
+		rdata->mr = smbd_register_mr(
+				server->smbd_conn, rdata->pages,
+				rdata->nr_pages, rdata->page_offset,
+				rdata->tailsz, true, need_invalidate);
 		if (!rdata->mr)
 			return -EAGAIN;
 
@@ -4151,11 +4191,15 @@ smb2_readv_callback(struct mid_q_entry *mid)
 	struct smb2_hdr *shdr =
 				(struct smb2_hdr *)rdata->iov[0].iov_base;
 	struct cifs_credits credits = { .value = 0, .instance = 0 };
-	struct smb_rqst rqst = { .rq_iov = &rdata->iov[1], .rq_nvec = 1 };
+	struct smb_rqst rqst = { .rq_iov = &rdata->iov[1],
+				 .rq_nvec = 1, };
 
 	if (rdata->got_bytes) {
-		rqst.rq_iter	  = rdata->iter;
-		rqst.rq_iter_size = iov_iter_count(&rdata->iter);
+		rqst.rq_pages = rdata->pages;
+		rqst.rq_offset = rdata->page_offset;
+		rqst.rq_npages = rdata->nr_pages;
+		rqst.rq_pagesz = rdata->pagesz;
+		rqst.rq_tailsz = rdata->tailsz;
 	}
 
 	WARN_ONCE(rdata->server != mid->server,
@@ -4174,8 +4218,6 @@ smb2_readv_callback(struct mid_q_entry *mid)
 		if (server->sign && !mid->decrypted) {
 			int rc;
 
-			iov_iter_revert(&rqst.rq_iter, rdata->got_bytes);
-			iov_iter_truncate(&rqst.rq_iter, rdata->got_bytes);
 			rc = smb2_verify_signature(&rqst, server);
 			if (rc)
 				cifs_tcon_dbg(VFS, "SMB signature verification returned error = %d\n",
@@ -4243,7 +4285,6 @@ smb2_async_readv(struct cifs_readdata *rdata)
 	struct TCP_Server_Info *server;
 	struct cifs_tcon *tcon = tlink_tcon(rdata->cfile->tlink);
 	unsigned int total_len;
-	int credit_request;
 
 	cifs_dbg(FYI, "%s: offset=%llu bytes=%u\n",
 		 __func__, rdata->offset, rdata->bytes);
@@ -4275,13 +4316,7 @@ smb2_async_readv(struct cifs_readdata *rdata)
 	if (rdata->credits.value > 0) {
 		shdr->CreditCharge = cpu_to_le16(DIV_ROUND_UP(rdata->bytes,
 						SMB2_MAX_BUFFER_SIZE));
-		credit_request = le16_to_cpu(shdr->CreditCharge) + 8;
-		if (server->credits >= server->max_credits)
-			shdr->CreditRequest = cpu_to_le16(0);
-		else
-			shdr->CreditRequest = cpu_to_le16(
-				min_t(int, server->max_credits -
-						server->credits, credit_request));
+		shdr->CreditRequest = cpu_to_le16(le16_to_cpu(shdr->CreditCharge) + 8);
 
 		rc = adjust_credits(server, &rdata->credits, rdata->bytes);
 		if (rc)
@@ -4491,7 +4526,6 @@ smb2_async_writev(struct cifs_writedata *wdata,
 	unsigned int total_len;
 	struct cifs_io_parms _io_parms;
 	struct cifs_io_parms *io_parms = NULL;
-	int credit_request;
 
 	if (!wdata->server)
 		server = wdata->server = cifs_pick_channel(tcon->ses);
@@ -4526,7 +4560,7 @@ smb2_async_writev(struct cifs_writedata *wdata,
 	req->VolatileFileId = io_parms->volatile_fid;
 	req->WriteChannelInfoOffset = 0;
 	req->WriteChannelInfoLength = 0;
-	req->Channel = SMB2_CHANNEL_NONE;
+	req->Channel = 0;
 	req->Offset = cpu_to_le64(io_parms->offset);
 	req->DataOffset = cpu_to_le16(
 				offsetof(struct smb2_write_req, Buffer));
@@ -4546,18 +4580,26 @@ smb2_async_writev(struct cifs_writedata *wdata,
 	 */
 	if (smb3_use_rdma_offload(io_parms)) {
 		struct smbd_buffer_descriptor_v1 *v1;
-		size_t data_size = iov_iter_count(&wdata->iter);
 		bool need_invalidate = server->dialect == SMB30_PROT_ID;
 
-		wdata->mr = smbd_register_mr(server->smbd_conn, &wdata->iter,
-					     false, need_invalidate);
+		wdata->mr = smbd_register_mr(
+				server->smbd_conn, wdata->pages,
+				wdata->nr_pages, wdata->page_offset,
+				wdata->tailsz, false, need_invalidate);
 		if (!wdata->mr) {
 			rc = -EAGAIN;
 			goto async_writev_out;
 		}
 		req->Length = 0;
 		req->DataOffset = 0;
-		req->RemainingBytes = cpu_to_le32(data_size);
+		if (wdata->nr_pages > 1)
+			req->RemainingBytes =
+				cpu_to_le32(
+					(wdata->nr_pages - 1) * wdata->pagesz -
+					wdata->page_offset + wdata->tailsz
+				);
+		else
+			req->RemainingBytes = cpu_to_le32(wdata->tailsz);
 		req->Channel = SMB2_CHANNEL_RDMA_V1_INVALIDATE;
 		if (need_invalidate)
 			req->Channel = SMB2_CHANNEL_RDMA_V1;
@@ -4576,14 +4618,19 @@ smb2_async_writev(struct cifs_writedata *wdata,
 
 	rqst.rq_iov = iov;
 	rqst.rq_nvec = 1;
-	rqst.rq_iter = wdata->iter;
-	rqst.rq_iter_size = iov_iter_count(&rqst.rq_iter);
+	rqst.rq_pages = wdata->pages;
+	rqst.rq_offset = wdata->page_offset;
+	rqst.rq_npages = wdata->nr_pages;
+	rqst.rq_pagesz = wdata->pagesz;
+	rqst.rq_tailsz = wdata->tailsz;
 #ifdef CONFIG_CIFS_SMB_DIRECT
-	if (wdata->mr)
+	if (wdata->mr) {
 		iov[0].iov_len += sizeof(struct smbd_buffer_descriptor_v1);
+		rqst.rq_npages = 0;
+	}
 #endif
-	cifs_dbg(FYI, "async write at %llu %u bytes iter=%zx\n",
-		 io_parms->offset, io_parms->length, iov_iter_count(&rqst.rq_iter));
+	cifs_dbg(FYI, "async write at %llu %u bytes\n",
+		 io_parms->offset, io_parms->length);
 
 #ifdef CONFIG_CIFS_SMB_DIRECT
 	/* For RDMA read, I/O size is in RemainingBytes not in Length */
@@ -4596,13 +4643,7 @@ smb2_async_writev(struct cifs_writedata *wdata,
 	if (wdata->credits.value > 0) {
 		shdr->CreditCharge = cpu_to_le16(DIV_ROUND_UP(wdata->bytes,
 						    SMB2_MAX_BUFFER_SIZE));
-		credit_request = le16_to_cpu(shdr->CreditCharge) + 8;
-		if (server->credits >= server->max_credits)
-			shdr->CreditRequest = cpu_to_le16(0);
-		else
-			shdr->CreditRequest = cpu_to_le16(
-				min_t(int, server->max_credits -
-						server->credits, credit_request));
+		shdr->CreditRequest = cpu_to_le16(le16_to_cpu(shdr->CreditCharge) + 8);
 
 		rc = adjust_credits(server, &wdata->credits, io_parms->length);
 		if (rc)
@@ -4917,7 +4958,7 @@ int SMB2_query_directory_init(const unsigned int xid,
 	memcpy(bufptr, &asteriks, len);
 
 	req->FileNameOffset =
-		cpu_to_le16(sizeof(struct smb2_query_directory_req));
+		cpu_to_le16(sizeof(struct smb2_query_directory_req) - 1);
 	req->FileNameLength = cpu_to_le16(len);
 	/*
 	 * BB could be 30 bytes or so longer if we used SMB2 specific
@@ -4962,10 +5003,10 @@ smb2_parse_query_directory(struct cifs_tcon *tcon,
 
 	switch (srch_inf->info_level) {
 	case SMB_FIND_FILE_DIRECTORY_INFO:
-		info_buf_size = sizeof(FILE_DIRECTORY_INFO);
+		info_buf_size = sizeof(FILE_DIRECTORY_INFO) - 1;
 		break;
 	case SMB_FIND_FILE_ID_FULL_DIR_INFO:
-		info_buf_size = sizeof(SEARCH_ID_FULL_DIR_INFO);
+		info_buf_size = sizeof(SEARCH_ID_FULL_DIR_INFO) - 1;
 		break;
 	case SMB_FIND_FILE_POSIX_INFO:
 		/* note that posix payload are variable size */
@@ -5113,7 +5154,8 @@ SMB2_set_info_init(struct cifs_tcon *tcon, struct TCP_Server_Info *server,
 	req->VolatileFileId = volatile_fid;
 	req->AdditionalInformation = cpu_to_le32(additional_info);
 
-	req->BufferOffset = cpu_to_le16(sizeof(struct smb2_set_info_req));
+	req->BufferOffset =
+			cpu_to_le16(sizeof(struct smb2_set_info_req) - 1);
 	req->BufferLength = cpu_to_le32(*size);
 
 	memcpy(req->Buffer, *data, *size);
@@ -5347,9 +5389,9 @@ build_qfs_info_req(struct kvec *iov, struct cifs_tcon *tcon,
 	req->VolatileFileId = volatile_fid;
 	/* 1 for pad */
 	req->InputBufferOffset =
-			cpu_to_le16(sizeof(struct smb2_query_info_req));
+			cpu_to_le16(sizeof(struct smb2_query_info_req) - 1);
 	req->OutputBufferLength = cpu_to_le32(
-		outbuf_len + sizeof(struct smb2_query_info_rsp));
+		outbuf_len + sizeof(struct smb2_query_info_rsp) - 1);
 
 	iov->iov_base = (char *)req;
 	iov->iov_len = total_len;

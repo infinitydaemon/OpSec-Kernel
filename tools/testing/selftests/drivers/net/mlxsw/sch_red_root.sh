@@ -73,7 +73,7 @@ red_mirror_test()
 	uninstall_qdisc
 }
 
-bail_on_lldpad "configure DCB" "configure Qdiscs"
+bail_on_lldpad
 
 trap cleanup EXIT
 setup_prepare

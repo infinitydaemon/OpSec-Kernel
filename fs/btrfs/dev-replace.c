@@ -18,13 +18,11 @@
 #include "volumes.h"
 #include "async-thread.h"
 #include "check-integrity.h"
+#include "rcu-string.h"
 #include "dev-replace.h"
 #include "sysfs.h"
 #include "zoned.h"
 #include "block-group.h"
-#include "fs.h"
-#include "accessors.h"
-#include "scrub.h"
 
 /*
  * Device replace overview
@@ -41,7 +39,7 @@
  *   All new writes will be written to both target and source devices, so even
  *   if replace gets canceled, sources device still contains up-to-date data.
  *
- *   Location:		handle_ops_on_dev_replace() from btrfs_map_block()
+ *   Location:		handle_ops_on_dev_replace() from __btrfs_map_block()
  *   Start:		btrfs_dev_replace_start()
  *   End:		btrfs_dev_replace_finishing()
  *   Content:		Latest data/metadata
@@ -248,6 +246,7 @@ static int btrfs_init_dev_replace_tgtdev(struct btrfs_fs_info *fs_info,
 	struct btrfs_fs_devices *fs_devices = fs_info->fs_devices;
 	struct btrfs_device *device;
 	struct block_device *bdev;
+	struct rcu_string *name;
 	u64 devid = BTRFS_DEV_REPLACE_DEVID;
 	int ret = 0;
 
@@ -257,8 +256,8 @@ static int btrfs_init_dev_replace_tgtdev(struct btrfs_fs_info *fs_info,
 		return -EINVAL;
 	}
 
-	bdev = blkdev_get_by_path(device_path, BLK_OPEN_WRITE,
-				  fs_info->bdev_holder, NULL);
+	bdev = blkdev_get_by_path(device_path, FMODE_WRITE | FMODE_EXCL,
+				  fs_info->bdev_holder);
 	if (IS_ERR(bdev)) {
 		btrfs_err(fs_info, "target device %s is invalid!", device_path);
 		return PTR_ERR(bdev);
@@ -291,12 +290,19 @@ static int btrfs_init_dev_replace_tgtdev(struct btrfs_fs_info *fs_info,
 	}
 
 
-	device = btrfs_alloc_device(NULL, &devid, NULL, device_path);
+	device = btrfs_alloc_device(NULL, &devid, NULL);
 	if (IS_ERR(device)) {
 		ret = PTR_ERR(device);
 		goto error;
 	}
 
+	name = rcu_string_strdup(device_path, GFP_KERNEL);
+	if (!name) {
+		btrfs_free_device(device);
+		ret = -ENOMEM;
+		goto error;
+	}
+	rcu_assign_pointer(device->name, name);
 	ret = lookup_bdev(device_path, &device->devt);
 	if (ret)
 		goto error;
@@ -315,7 +321,7 @@ static int btrfs_init_dev_replace_tgtdev(struct btrfs_fs_info *fs_info,
 	device->bdev = bdev;
 	set_bit(BTRFS_DEV_STATE_IN_FS_METADATA, &device->dev_state);
 	set_bit(BTRFS_DEV_STATE_REPLACE_TGT, &device->dev_state);
-	device->holder = fs_info->bdev_holder;
+	device->mode = FMODE_EXCL;
 	device->dev_stats_valid = 1;
 	set_blocksize(device->bdev, BTRFS_BDEV_BLOCKSIZE);
 	device->fs_devices = fs_devices;
@@ -334,7 +340,7 @@ static int btrfs_init_dev_replace_tgtdev(struct btrfs_fs_info *fs_info,
 	return 0;
 
 error:
-	blkdev_put(bdev, fs_info->bdev_holder);
+	blkdev_put(bdev, FMODE_EXCL);
 	return ret;
 }
 
@@ -448,6 +454,14 @@ out:
 	btrfs_free_path(path);
 
 	return ret;
+}
+
+static char* btrfs_dev_name(struct btrfs_device *device)
+{
+	if (!device || test_bit(BTRFS_DEV_STATE_MISSING, &device->dev_state))
+		return "<missing disk>";
+	else
+		return rcu_str_deref(device->name);
 }
 
 static int mark_block_group_to_copy(struct btrfs_fs_info *fs_info,
@@ -665,7 +679,7 @@ static int btrfs_dev_replace_start(struct btrfs_fs_info *fs_info,
 		      "dev_replace from %s (devid %llu) to %s started",
 		      btrfs_dev_name(src_device),
 		      src_device->devid,
-		      btrfs_dev_name(tgt_device));
+		      rcu_str_deref(tgt_device->name));
 
 	/*
 	 * from now on, the writes to the srcdev are all duplicated to
@@ -795,8 +809,8 @@ static int btrfs_set_target_alloc_state(struct btrfs_device *srcdev,
 	while (!find_first_extent_bit(&srcdev->alloc_state, start,
 				      &found_start, &found_end,
 				      CHUNK_ALLOCATED, &cached_state)) {
-		ret = set_extent_bit(&tgtdev->alloc_state, found_start,
-				     found_end, CHUNK_ALLOCATED, NULL);
+		ret = set_extent_bits(&tgtdev->alloc_state, found_start,
+				      found_end, CHUNK_ALLOCATED);
 		if (ret)
 			break;
 		start = found_end + 1;
@@ -924,7 +938,7 @@ static int btrfs_dev_replace_finishing(struct btrfs_fs_info *fs_info,
 				 "btrfs_scrub_dev(%s, %llu, %s) failed %d",
 				 btrfs_dev_name(src_device),
 				 src_device->devid,
-				 btrfs_dev_name(tgt_device), scrub_ret);
+				 rcu_str_deref(tgt_device->name), scrub_ret);
 error:
 		up_write(&dev_replace->rwsem);
 		mutex_unlock(&fs_info->chunk_mutex);
@@ -942,7 +956,7 @@ error:
 			  "dev_replace from %s (devid %llu) to %s finished",
 			  btrfs_dev_name(src_device),
 			  src_device->devid,
-			  btrfs_dev_name(tgt_device));
+			  rcu_str_deref(tgt_device->name));
 	clear_bit(BTRFS_DEV_STATE_REPLACE_TGT, &tgt_device->dev_state);
 	tgt_device->devid = src_device->devid;
 	src_device->devid = BTRFS_DEV_REPLACE_DEVID;

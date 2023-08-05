@@ -217,6 +217,9 @@ struct rt6_info {
 	struct inet6_dev		*rt6i_idev;
 	u32				rt6i_flags;
 
+	struct list_head		rt6i_uncached;
+	struct uncached_list		*rt6i_uncached_list;
+
 	/* more non-fragment space at head required */
 	unsigned short			rt6i_nfheader_len;
 };
@@ -469,10 +472,13 @@ void rt6_get_prefsrc(const struct rt6_info *rt, struct in6_addr *addr)
 	rcu_read_lock();
 
 	from = rcu_dereference(rt->from);
-	if (from)
+	if (from) {
 		*addr = from->fib6_prefsrc.addr;
-	else
-		*addr = in6addr_any;
+	} else {
+		struct in6_addr in6_zero = {};
+
+		*addr = in6_zero;
+	}
 
 	rcu_read_unlock();
 }

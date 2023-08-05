@@ -96,7 +96,10 @@ struct xenbus_device {
 	unsigned int spurious_threshold;
 };
 
-#define to_xenbus_device(__dev)	container_of_const(__dev, struct xenbus_device, dev)
+static inline struct xenbus_device *to_xenbus_device(struct device *dev)
+{
+	return container_of(dev, struct xenbus_device, dev);
+}
 
 struct xenbus_device_id
 {
@@ -114,10 +117,10 @@ struct xenbus_driver {
 		     const struct xenbus_device_id *id);
 	void (*otherend_changed)(struct xenbus_device *dev,
 				 enum xenbus_state backend_state);
-	void (*remove)(struct xenbus_device *dev);
+	int (*remove)(struct xenbus_device *dev);
 	int (*suspend)(struct xenbus_device *dev);
 	int (*resume)(struct xenbus_device *dev);
-	int (*uevent)(const struct xenbus_device *, struct kobj_uevent_env *);
+	int (*uevent)(struct xenbus_device *, struct kobj_uevent_env *);
 	struct device_driver driver;
 	int (*read_otherend_details)(struct xenbus_device *dev);
 	int (*is_ready)(struct xenbus_device *dev);

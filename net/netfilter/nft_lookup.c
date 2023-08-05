@@ -19,7 +19,6 @@ struct nft_lookup {
 	struct nft_set			*set;
 	u8				sreg;
 	u8				dreg;
-	bool				dreg_set;
 	bool				invert;
 	struct nft_set_binding		binding;
 };
@@ -76,7 +75,7 @@ void nft_lookup_eval(const struct nft_expr *expr,
 	}
 
 	if (ext) {
-		if (priv->dreg_set)
+		if (set->flags & NFT_SET_MAP)
 			nft_data_copy(&regs->data[priv->dreg],
 				      nft_set_ext_data(ext), set->dlen);
 
@@ -123,8 +122,11 @@ static int nft_lookup_init(const struct nft_ctx *ctx,
 		if (flags & ~NFT_LOOKUP_F_INV)
 			return -EINVAL;
 
-		if (flags & NFT_LOOKUP_F_INV)
+		if (flags & NFT_LOOKUP_F_INV) {
+			if (set->flags & NFT_SET_MAP)
+				return -EINVAL;
 			priv->invert = true;
+		}
 	}
 
 	if (tb[NFTA_LOOKUP_DREG] != NULL) {
@@ -138,17 +140,8 @@ static int nft_lookup_init(const struct nft_ctx *ctx,
 					       set->dlen);
 		if (err < 0)
 			return err;
-		priv->dreg_set = true;
-	} else if (set->flags & NFT_SET_MAP) {
-		/* Map given, but user asks for lookup only (i.e. to
-		 * ignore value assoicated with key).
-		 *
-		 * This makes no sense for anonymous maps since they are
-		 * scoped to the rule, but for named sets this can be useful.
-		 */
-		if (set->flags & NFT_SET_ANONYMOUS)
-			return -EINVAL;
-	}
+	} else if (set->flags & NFT_SET_MAP)
+		return -EINVAL;
 
 	priv->binding.flags = set->flags & NFT_SET_MAP;
 
@@ -185,8 +178,7 @@ static void nft_lookup_destroy(const struct nft_ctx *ctx,
 	nf_tables_destroy_set(ctx, priv->set);
 }
 
-static int nft_lookup_dump(struct sk_buff *skb,
-			   const struct nft_expr *expr, bool reset)
+static int nft_lookup_dump(struct sk_buff *skb, const struct nft_expr *expr)
 {
 	const struct nft_lookup *priv = nft_expr_priv(expr);
 	u32 flags = priv->invert ? NFT_LOOKUP_F_INV : 0;
@@ -195,7 +187,7 @@ static int nft_lookup_dump(struct sk_buff *skb,
 		goto nla_put_failure;
 	if (nft_dump_register(skb, NFTA_LOOKUP_SREG, priv->sreg))
 		goto nla_put_failure;
-	if (priv->dreg_set)
+	if (priv->set->flags & NFT_SET_MAP)
 		if (nft_dump_register(skb, NFTA_LOOKUP_DREG, priv->dreg))
 			goto nla_put_failure;
 	if (nla_put_be32(skb, NFTA_LOOKUP_FLAGS, htonl(flags)))

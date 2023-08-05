@@ -53,9 +53,8 @@ struct netns_sysctl_ipv6 {
 	int seg6_flowlabel;
 	u32 ioam6_id;
 	u64 ioam6_id_wide;
-	u8 skip_notify_on_dev_down;
+	int skip_notify_on_dev_down;
 	u8 fib_notify_on_flag_change;
-	u8 icmpv6_error_anycast_as_unicast;
 };
 
 struct netns_ipv6 {

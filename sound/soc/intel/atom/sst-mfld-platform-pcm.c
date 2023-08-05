@@ -741,9 +741,10 @@ static int sst_platform_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void sst_platform_remove(struct platform_device *pdev)
+static int sst_platform_remove(struct platform_device *pdev)
 {
 	dev_dbg(&pdev->dev, "sst_platform_remove success\n");
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -812,7 +813,7 @@ static struct platform_driver sst_platform_driver = {
 		.pm             = &sst_platform_pm,
 	},
 	.probe		= sst_platform_probe,
-	.remove_new	= sst_platform_remove,
+	.remove		= sst_platform_remove,
 };
 
 module_platform_driver(sst_platform_driver);

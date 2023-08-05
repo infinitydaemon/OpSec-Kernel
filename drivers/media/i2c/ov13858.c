@@ -1698,7 +1698,8 @@ static void ov13858_free_controls(struct ov13858 *ov13858)
 	mutex_destroy(&ov13858->mutex);
 }
 
-static int ov13858_probe(struct i2c_client *client)
+static int ov13858_probe(struct i2c_client *client,
+			 const struct i2c_device_id *devid)
 {
 	struct ov13858 *ov13858;
 	int ret;

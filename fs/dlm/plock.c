@@ -4,7 +4,6 @@
  */
 
 #include <linux/fs.h>
-#include <linux/filelock.h>
 #include <linux/miscdevice.h>
 #include <linux/poll.h>
 #include <linux/dlm.h>

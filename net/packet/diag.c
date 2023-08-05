@@ -18,18 +18,18 @@ static int pdiag_put_info(const struct packet_sock *po, struct sk_buff *nlskb)
 	pinfo.pdi_version = po->tp_version;
 	pinfo.pdi_reserve = po->tp_reserve;
 	pinfo.pdi_copy_thresh = po->copy_thresh;
-	pinfo.pdi_tstamp = READ_ONCE(po->tp_tstamp);
+	pinfo.pdi_tstamp = po->tp_tstamp;
 
 	pinfo.pdi_flags = 0;
-	if (packet_sock_flag(po, PACKET_SOCK_RUNNING))
+	if (po->running)
 		pinfo.pdi_flags |= PDI_RUNNING;
 	if (packet_sock_flag(po, PACKET_SOCK_AUXDATA))
 		pinfo.pdi_flags |= PDI_AUXDATA;
 	if (packet_sock_flag(po, PACKET_SOCK_ORIGDEV))
 		pinfo.pdi_flags |= PDI_ORIGDEV;
-	if (READ_ONCE(po->vnet_hdr_sz))
+	if (po->has_vnet_hdr)
 		pinfo.pdi_flags |= PDI_VNETHDR;
-	if (packet_sock_flag(po, PACKET_SOCK_TP_LOSS))
+	if (po->tp_loss)
 		pinfo.pdi_flags |= PDI_LOSS;
 
 	return nla_put(nlskb, PACKET_DIAG_INFO, sizeof(pinfo), &pinfo);

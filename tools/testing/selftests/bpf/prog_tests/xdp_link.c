@@ -29,13 +29,13 @@ void serial_test_xdp_link(void)
 	prog_fd2 = bpf_program__fd(skel2->progs.xdp_handler);
 
 	memset(&prog_info, 0, sizeof(prog_info));
-	err = bpf_prog_get_info_by_fd(prog_fd1, &prog_info, &prog_info_len);
+	err = bpf_obj_get_info_by_fd(prog_fd1, &prog_info, &prog_info_len);
 	if (!ASSERT_OK(err, "fd_info1"))
 		goto cleanup;
 	id1 = prog_info.id;
 
 	memset(&prog_info, 0, sizeof(prog_info));
-	err = bpf_prog_get_info_by_fd(prog_fd2, &prog_info, &prog_info_len);
+	err = bpf_obj_get_info_by_fd(prog_fd2, &prog_info, &prog_info_len);
 	if (!ASSERT_OK(err, "fd_info2"))
 		goto cleanup;
 	id2 = prog_info.id;
@@ -119,8 +119,7 @@ void serial_test_xdp_link(void)
 		goto cleanup;
 
 	memset(&link_info, 0, sizeof(link_info));
-	err = bpf_link_get_info_by_fd(bpf_link__fd(link),
-				      &link_info, &link_info_len);
+	err = bpf_obj_get_info_by_fd(bpf_link__fd(link), &link_info, &link_info_len);
 	if (!ASSERT_OK(err, "link_info"))
 		goto cleanup;
 
@@ -138,8 +137,7 @@ void serial_test_xdp_link(void)
 		goto cleanup;
 
 	memset(&link_info, 0, sizeof(link_info));
-	err = bpf_link_get_info_by_fd(bpf_link__fd(link),
-				      &link_info, &link_info_len);
+	err = bpf_obj_get_info_by_fd(bpf_link__fd(link), &link_info, &link_info_len);
 
 	ASSERT_OK(err, "link_info");
 	ASSERT_EQ(link_info.prog_id, id1, "link_prog_id");

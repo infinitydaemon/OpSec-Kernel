@@ -59,8 +59,9 @@ static const struct regmap_irq rt5120_irqs[] = {
 static const struct regmap_irq_chip rt5120_irq_chip = {
 	.name = "rt5120-pmic",
 	.status_base = RT5120_REG_INTSTAT,
-	.unmask_base = RT5120_REG_INTENABLE,
+	.mask_base = RT5120_REG_INTENABLE,
 	.ack_base = RT5120_REG_INTSTAT,
+	.mask_invert = true,
 	.use_ack = true,
 	.num_regs = 1,
 	.irqs = rt5120_irqs,
@@ -114,7 +115,7 @@ static struct i2c_driver rt5120_driver = {
 		.name = "rt5120",
 		.of_match_table = rt5120_device_match_table,
 	},
-	.probe = rt5120_probe,
+	.probe_new = rt5120_probe,
 };
 module_i2c_driver(rt5120_driver);
 

@@ -67,6 +67,11 @@
 #define SCTP_PROTOSW_FLAG INET_PROTOSW_PERMANENT
 #endif
 
+/* Round an int up to the next multiple of 4.  */
+#define SCTP_PAD4(s) (((s)+3)&~3)
+/* Truncate to the previous multiple of 4.  */
+#define SCTP_TRUNC4(s) ((s)&~3)
+
 /*
  * Function declarations.
  */
@@ -109,7 +114,7 @@ struct sctp_transport *sctp_transport_get_idx(struct net *net,
 			struct rhashtable_iter *iter, int pos);
 int sctp_transport_lookup_process(sctp_callback_t cb, struct net *net,
 				  const union sctp_addr *laddr,
-				  const union sctp_addr *paddr, void *p, int dif);
+				  const union sctp_addr *paddr, void *p);
 int sctp_transport_traverse_process(sctp_callback_t cb, sctp_callback_t cb_done,
 				    struct net *net, int *pos, void *p);
 int sctp_for_each_endpoint(int (*cb)(struct sctp_endpoint *, void *), void *p);
@@ -157,12 +162,10 @@ void sctp_unhash_transport(struct sctp_transport *t);
 struct sctp_transport *sctp_addrs_lookup_transport(
 				struct net *net,
 				const union sctp_addr *laddr,
-				const union sctp_addr *paddr,
-				int dif, int sdif);
+				const union sctp_addr *paddr);
 struct sctp_transport *sctp_epaddr_lookup_transport(
 				const struct sctp_endpoint *ep,
 				const union sctp_addr *paddr);
-bool sctp_sk_bound_dev_eq(struct net *net, int bound_dev_if, int dif, int sdif);
 
 /*
  * sctp/proc.c
@@ -425,11 +428,11 @@ static inline bool sctp_chunk_pending(const struct sctp_chunk *chunk)
  * the chunk length to indicate when to stop.  Make sure
  * there is room for a param header too.
  */
-#define sctp_walk_params(pos, chunk)\
-_sctp_walk_params((pos), (chunk), ntohs((chunk)->chunk_hdr.length))
+#define sctp_walk_params(pos, chunk, member)\
+_sctp_walk_params((pos), (chunk), ntohs((chunk)->chunk_hdr.length), member)
 
-#define _sctp_walk_params(pos, chunk, end)\
-for (pos.v = (u8 *)(chunk + 1);\
+#define _sctp_walk_params(pos, chunk, end, member)\
+for (pos.v = chunk->member;\
      (pos.v + offsetof(struct sctp_paramhdr, length) + sizeof(pos.p->length) <=\
       (void *)chunk + end) &&\
      pos.v <= (void *)chunk + end - ntohs(pos.p->length) &&\
@@ -452,8 +455,8 @@ for (err = (struct sctp_errhdr *)((void *)chunk_hdr + \
 _sctp_walk_fwdtsn((pos), (chunk), ntohs((chunk)->chunk_hdr->length) - sizeof(struct sctp_fwdtsn_chunk))
 
 #define _sctp_walk_fwdtsn(pos, chunk, end)\
-for (pos = (void *)(chunk->subh.fwdtsn_hdr + 1);\
-     (void *)pos <= (void *)(chunk->subh.fwdtsn_hdr + 1) + end - sizeof(struct sctp_fwdtsn_skip);\
+for (pos = chunk->subh.fwdtsn_hdr->skip;\
+     (void *)pos <= (void *)chunk->subh.fwdtsn_hdr->skip + end - sizeof(struct sctp_fwdtsn_skip);\
      pos++)
 
 /* External references. */

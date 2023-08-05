@@ -1028,7 +1028,8 @@ static int cs43130_handle_device_data(struct i2c_client *i2c_client,
 }
 
 
-static int allo_cs43130_component_probe(struct i2c_client *i2c)
+static int allo_cs43130_component_probe(struct i2c_client *i2c,
+			     const struct i2c_device_id *id)
 {
 	struct regmap *regmap;
 	struct regmap_config config = cs43130_regmap;

@@ -79,6 +79,7 @@ lib_dir=$(dirname $0)/../../../net/forwarding
 NUM_NETIFS=6
 source $lib_dir/lib.sh
 source $lib_dir/devlink_lib.sh
+source qos_lib.sh
 
 _1KB=1000
 _100KB=$((100 * _1KB))
@@ -392,7 +393,7 @@ test_qos_pfc()
 	log_test "PFC"
 }
 
-bail_on_lldpad "configure DCB" "configure Qdiscs"
+bail_on_lldpad
 
 trap cleanup EXIT
 setup_prepare

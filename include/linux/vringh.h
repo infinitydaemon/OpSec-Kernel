@@ -32,9 +32,6 @@ struct vringh {
 	/* Can we get away with weak barriers? */
 	bool weak_barriers;
 
-	/* Use user's VA */
-	bool use_va;
-
 	/* Last available index we saw (ie. where we're up to). */
 	u16 last_avail_idx;
 
@@ -57,9 +54,6 @@ struct vringh {
 	void (*notify)(struct vringh *);
 };
 
-struct virtio_device;
-typedef void vrh_callback_t(struct virtio_device *, struct vringh *);
-
 /**
  * struct vringh_config_ops - ops for creating a host vring from a virtio driver
  * @find_vrhs: find the host vrings and instantiate them
@@ -71,6 +65,8 @@ typedef void vrh_callback_t(struct virtio_device *, struct vringh *);
  *	Returns 0 on success or error status
  * @del_vrhs: free the host vrings found by find_vrhs().
  */
+struct virtio_device;
+typedef void vrh_callback_t(struct virtio_device *, struct vringh *);
 struct vringh_config_ops {
 	int (*find_vrhs)(struct virtio_device *vdev, unsigned nhvrs,
 			 struct vringh *vrhs[], vrh_callback_t *callbacks[]);
@@ -85,12 +81,6 @@ struct vringh_range {
 
 /**
  * struct vringh_iov - iovec mangler.
- * @iov: array of iovecs to operate on
- * @consumed: number of bytes consumed within iov[i]
- * @i: index of current iovec
- * @used: number of iovecs present in @iov
- * @max_num: maximum number of iovecs.
- *           corresponds to allocated memory of @iov
  *
  * Mangles iovec in place, and restores it.
  * Remaining data is iov + i, of used - i elements.
@@ -102,13 +92,7 @@ struct vringh_iov {
 };
 
 /**
- * struct vringh_kiov - kvec mangler.
- * @iov: array of iovecs to operate on
- * @consumed: number of bytes consumed within iov[i]
- * @i: index of current iovec
- * @used: number of iovecs present in @iov
- * @max_num: maximum number of iovecs.
- *           corresponds to allocated memory of @iov
+ * struct vringh_iov - kvec mangler.
  *
  * Mangles kvec in place, and restores it.
  * Remaining data is iov + i, of used - i elements.
@@ -299,12 +283,6 @@ int vringh_init_iotlb(struct vringh *vrh, u64 features,
 		      struct vring_desc *desc,
 		      struct vring_avail *avail,
 		      struct vring_used *used);
-
-int vringh_init_iotlb_va(struct vringh *vrh, u64 features,
-			 unsigned int num, bool weak_barriers,
-			 struct vring_desc *desc,
-			 struct vring_avail *avail,
-			 struct vring_used *used);
 
 int vringh_getdesc_iotlb(struct vringh *vrh,
 			 struct vringh_kiov *riov,

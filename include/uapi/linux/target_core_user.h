@@ -119,7 +119,7 @@ struct tcmu_cmd_entry {
 			__u64 cdb_off;
 			__u64 __pad1;
 			__u64 __pad2;
-			__DECLARE_FLEX_ARRAY(struct iovec, iov);
+			struct iovec iov[0];
 		} req;
 		struct {
 			__u8 scsi_status;

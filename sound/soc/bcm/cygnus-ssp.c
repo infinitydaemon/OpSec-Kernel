@@ -1377,9 +1377,11 @@ static int cygnus_ssp_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void cygnus_ssp_remove(struct platform_device *pdev)
+static int cygnus_ssp_remove(struct platform_device *pdev)
 {
 	cygnus_soc_platform_unregister(&pdev->dev);
+
+	return 0;
 }
 
 static const struct of_device_id cygnus_ssp_of_match[] = {
@@ -1390,7 +1392,7 @@ MODULE_DEVICE_TABLE(of, cygnus_ssp_of_match);
 
 static struct platform_driver cygnus_ssp_driver = {
 	.probe		= cygnus_ssp_probe,
-	.remove_new	= cygnus_ssp_remove,
+	.remove		= cygnus_ssp_remove,
 	.driver		= {
 		.name	= "cygnus-ssp",
 		.of_match_table = cygnus_ssp_of_match,

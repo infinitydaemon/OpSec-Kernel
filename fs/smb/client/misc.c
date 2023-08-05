@@ -22,7 +22,6 @@
 #ifdef CONFIG_CIFS_DFS_UPCALL
 #include "dns_resolve.h"
 #include "dfs_cache.h"
-#include "dfs.h"
 #endif
 #include "fs_context.h"
 #include "cached_dir.h"
@@ -135,9 +134,6 @@ tconInfoAlloc(void)
 	spin_lock_init(&ret_buf->stat_lock);
 	atomic_set(&ret_buf->num_local_opens, 0);
 	atomic_set(&ret_buf->num_remote_opens, 0);
-#ifdef CONFIG_CIFS_DFS_UPCALL
-	INIT_LIST_HEAD(&ret_buf->dfs_ses_list);
-#endif
 
 	return ret_buf;
 }
@@ -153,10 +149,6 @@ tconInfoFree(struct cifs_tcon *tcon)
 	atomic_dec(&tconInfoAllocCount);
 	kfree(tcon->nativeFileSystem);
 	kfree_sensitive(tcon->password);
-#ifdef CONFIG_CIFS_DFS_UPCALL
-	dfs_put_root_smb_sessions(&tcon->dfs_ses_list);
-#endif
-	kfree(tcon->origin_fullpath);
 	kfree(tcon);
 }
 
@@ -981,27 +973,110 @@ cifs_aio_ctx_release(struct kref *refcount)
 
 	/*
 	 * ctx->bv is only set if setup_aio_ctx_iter() was call successfuly
-	 * which means that iov_iter_extract_pages() was a success and thus
-	 * that we may have references or pins on pages that we need to
-	 * release.
+	 * which means that iov_iter_get_pages() was a success and thus that
+	 * we have taken reference on pages.
 	 */
 	if (ctx->bv) {
-		if (ctx->should_dirty || ctx->bv_need_unpin) {
-			unsigned int i;
+		unsigned i;
 
-			for (i = 0; i < ctx->nr_pinned_pages; i++) {
-				struct page *page = ctx->bv[i].bv_page;
-
-				if (ctx->should_dirty)
-					set_page_dirty(page);
-				if (ctx->bv_need_unpin)
-					unpin_user_page(page);
-			}
+		for (i = 0; i < ctx->npages; i++) {
+			if (ctx->should_dirty)
+				set_page_dirty(ctx->bv[i].bv_page);
+			put_page(ctx->bv[i].bv_page);
 		}
 		kvfree(ctx->bv);
 	}
 
 	kfree(ctx);
+}
+
+#define CIFS_AIO_KMALLOC_LIMIT (1024 * 1024)
+
+int
+setup_aio_ctx_iter(struct cifs_aio_ctx *ctx, struct iov_iter *iter, int rw)
+{
+	ssize_t rc;
+	unsigned int cur_npages;
+	unsigned int npages = 0;
+	unsigned int i;
+	size_t len;
+	size_t count = iov_iter_count(iter);
+	unsigned int saved_len;
+	size_t start;
+	unsigned int max_pages = iov_iter_npages(iter, INT_MAX);
+	struct page **pages = NULL;
+	struct bio_vec *bv = NULL;
+
+	if (iov_iter_is_kvec(iter)) {
+		memcpy(&ctx->iter, iter, sizeof(*iter));
+		ctx->len = count;
+		iov_iter_advance(iter, count);
+		return 0;
+	}
+
+	if (array_size(max_pages, sizeof(*bv)) <= CIFS_AIO_KMALLOC_LIMIT)
+		bv = kmalloc_array(max_pages, sizeof(*bv), GFP_KERNEL);
+
+	if (!bv) {
+		bv = vmalloc(array_size(max_pages, sizeof(*bv)));
+		if (!bv)
+			return -ENOMEM;
+	}
+
+	if (array_size(max_pages, sizeof(*pages)) <= CIFS_AIO_KMALLOC_LIMIT)
+		pages = kmalloc_array(max_pages, sizeof(*pages), GFP_KERNEL);
+
+	if (!pages) {
+		pages = vmalloc(array_size(max_pages, sizeof(*pages)));
+		if (!pages) {
+			kvfree(bv);
+			return -ENOMEM;
+		}
+	}
+
+	saved_len = count;
+
+	while (count && npages < max_pages) {
+		rc = iov_iter_get_pages2(iter, pages, count, max_pages, &start);
+		if (rc < 0) {
+			cifs_dbg(VFS, "Couldn't get user pages (rc=%zd)\n", rc);
+			break;
+		}
+
+		if (rc > count) {
+			cifs_dbg(VFS, "get pages rc=%zd more than %zu\n", rc,
+				 count);
+			break;
+		}
+
+		count -= rc;
+		rc += start;
+		cur_npages = DIV_ROUND_UP(rc, PAGE_SIZE);
+
+		if (npages + cur_npages > max_pages) {
+			cifs_dbg(VFS, "out of vec array capacity (%u vs %u)\n",
+				 npages + cur_npages, max_pages);
+			break;
+		}
+
+		for (i = 0; i < cur_npages; i++) {
+			len = rc > PAGE_SIZE ? PAGE_SIZE : rc;
+			bv[npages + i].bv_page = pages[i];
+			bv[npages + i].bv_offset = start;
+			bv[npages + i].bv_len = len - start;
+			rc -= len;
+			start = 0;
+		}
+
+		npages += cur_npages;
+	}
+
+	kvfree(pages);
+	ctx->bv = bv;
+	ctx->len = saved_len - count;
+	ctx->npages = npages;
+	iov_iter_bvec(&ctx->iter, rw, ctx->bv, npages, ctx->len);
+	return 0;
 }
 
 /**
@@ -1061,6 +1136,25 @@ cifs_free_hash(struct shash_desc **sdesc)
 	*sdesc = NULL;
 }
 
+/**
+ * rqst_page_get_length - obtain the length and offset for a page in smb_rqst
+ * @rqst: The request descriptor
+ * @page: The index of the page to query
+ * @len: Where to store the length for this page:
+ * @offset: Where to store the offset for this page
+ */
+void rqst_page_get_length(const struct smb_rqst *rqst, unsigned int page,
+			  unsigned int *len, unsigned int *offset)
+{
+	*len = rqst->rq_pagesz;
+	*offset = (page == 0) ? rqst->rq_offset : 0;
+
+	if (rqst->rq_npages == 1 || page == rqst->rq_npages-1)
+		*len = rqst->rq_tailsz;
+	else if (page == 0)
+		*len = rqst->rq_pagesz - rqst->rq_offset;
+}
+
 void extract_unc_hostname(const char *unc, const char **h, size_t *len)
 {
 	const char *end;
@@ -1107,25 +1201,20 @@ struct super_cb_data {
 	struct super_block *sb;
 };
 
-static void tcon_super_cb(struct super_block *sb, void *arg)
+static void tcp_super_cb(struct super_block *sb, void *arg)
 {
 	struct super_cb_data *sd = arg;
+	struct TCP_Server_Info *server = sd->data;
 	struct cifs_sb_info *cifs_sb;
-	struct cifs_tcon *t1 = sd->data, *t2;
+	struct cifs_tcon *tcon;
 
 	if (sd->sb)
 		return;
 
 	cifs_sb = CIFS_SB(sb);
-	t2 = cifs_sb_master_tcon(cifs_sb);
-
-	spin_lock(&t2->tc_lock);
-	if (t1->ses == t2->ses &&
-	    t1->ses->server == t2->ses->server &&
-	    t2->origin_fullpath &&
-	    dfs_src_pathname_equal(t2->origin_fullpath, t1->origin_fullpath))
+	tcon = cifs_sb_master_tcon(cifs_sb);
+	if (tcon->ses->server == server)
 		sd->sb = sb;
-	spin_unlock(&t2->tc_lock);
 }
 
 static struct super_block *__cifs_get_super(void (*f)(struct super_block *, void *),
@@ -1151,7 +1240,6 @@ static struct super_block *__cifs_get_super(void (*f)(struct super_block *, void
 			return sd.sb;
 		}
 	}
-	pr_warn_once("%s: could not find dfs superblock\n", __func__);
 	return ERR_PTR(-EINVAL);
 }
 
@@ -1161,15 +1249,9 @@ static void __cifs_put_super(struct super_block *sb)
 		cifs_sb_deactive(sb);
 }
 
-struct super_block *cifs_get_dfs_tcon_super(struct cifs_tcon *tcon)
+struct super_block *cifs_get_tcp_super(struct TCP_Server_Info *server)
 {
-	spin_lock(&tcon->tc_lock);
-	if (!tcon->origin_fullpath) {
-		spin_unlock(&tcon->tc_lock);
-		return ERR_PTR(-ENOENT);
-	}
-	spin_unlock(&tcon->tc_lock);
-	return __cifs_get_super(tcon_super_cb, tcon);
+	return __cifs_get_super(tcp_super_cb, server);
 }
 
 void cifs_put_tcp_super(struct super_block *sb)
@@ -1183,49 +1265,58 @@ int match_target_ip(struct TCP_Server_Info *server,
 		    bool *result)
 {
 	int rc;
-	char *target;
-	struct sockaddr_storage ss;
+	char *target, *tip = NULL;
+	struct sockaddr tipaddr;
 
 	*result = false;
 
 	target = kzalloc(share_len + 3, GFP_KERNEL);
-	if (!target)
-		return -ENOMEM;
+	if (!target) {
+		rc = -ENOMEM;
+		goto out;
+	}
 
 	scnprintf(target, share_len + 3, "\\\\%.*s", (int)share_len, share);
 
 	cifs_dbg(FYI, "%s: target name: %s\n", __func__, target + 2);
 
-	rc = dns_resolve_server_name_to_ip(target, (struct sockaddr *)&ss, NULL);
-	kfree(target);
-
+	rc = dns_resolve_server_name_to_ip(target, &tip, NULL);
 	if (rc < 0)
-		return rc;
+		goto out;
 
-	spin_lock(&server->srv_lock);
-	*result = cifs_match_ipaddr((struct sockaddr *)&server->dstaddr, (struct sockaddr *)&ss);
-	spin_unlock(&server->srv_lock);
+	cifs_dbg(FYI, "%s: target ip: %s\n", __func__, tip);
+
+	if (!cifs_convert_address(&tipaddr, tip, strlen(tip))) {
+		cifs_dbg(VFS, "%s: failed to convert target ip address\n",
+			 __func__);
+		rc = -EINVAL;
+		goto out;
+	}
+
+	*result = cifs_match_ipaddr((struct sockaddr *)&server->dstaddr,
+				    &tipaddr);
 	cifs_dbg(FYI, "%s: ip addresses match: %u\n", __func__, *result);
-	return 0;
+	rc = 0;
+
+out:
+	kfree(target);
+	kfree(tip);
+
+	return rc;
 }
 
 int cifs_update_super_prepath(struct cifs_sb_info *cifs_sb, char *prefix)
 {
-	int rc;
-
 	kfree(cifs_sb->prepath);
-	cifs_sb->prepath = NULL;
 
 	if (prefix && *prefix) {
 		cifs_sb->prepath = cifs_sanitize_prepath(prefix, GFP_ATOMIC);
-		if (IS_ERR(cifs_sb->prepath)) {
-			rc = PTR_ERR(cifs_sb->prepath);
-			cifs_sb->prepath = NULL;
-			return rc;
-		}
-		if (cifs_sb->prepath)
-			convert_delimiter(cifs_sb->prepath, CIFS_DIR_SEP(cifs_sb));
-	}
+		if (!cifs_sb->prepath)
+			return -ENOMEM;
+
+		convert_delimiter(cifs_sb->prepath, CIFS_DIR_SEP(cifs_sb));
+	} else
+		cifs_sb->prepath = NULL;
 
 	cifs_sb->mnt_cifs_flags |= CIFS_MOUNT_USE_PREFIX_PATH;
 	return 0;
@@ -1256,15 +1347,8 @@ int cifs_inval_name_dfs_link_error(const unsigned int xid,
 	 */
 	if (strlen(full_path) < 2 || !cifs_sb ||
 	    (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_NO_DFS) ||
-	    !is_tcon_dfs(tcon))
+	    !is_tcon_dfs(tcon) || !ses->server->origin_fullpath)
 		return 0;
-
-	spin_lock(&tcon->tc_lock);
-	if (!tcon->origin_fullpath) {
-		spin_unlock(&tcon->tc_lock);
-		return 0;
-	}
-	spin_unlock(&tcon->tc_lock);
 
 	/*
 	 * Slow path - tcon is DFS and @full_path has prefix path, so attempt
@@ -1289,11 +1373,10 @@ int cifs_inval_name_dfs_link_error(const unsigned int xid,
 
 		/*
 		 * XXX: we are not using dfs_cache_find() here because we might
-		 * end up filling all the DFS cache and thus potentially
+		 * end filling all the DFS cache and thus potentially
 		 * removing cached DFS targets that the client would eventually
 		 * need during failover.
 		 */
-		ses = CIFS_DFS_ROOT_SES(ses);
 		if (ses->server->ops->get_dfs_refer &&
 		    !ses->server->ops->get_dfs_refer(xid, ses, ref_path, &refs,
 						     &num_refs, cifs_sb->local_nls,

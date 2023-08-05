@@ -669,7 +669,8 @@ static const struct v4l2_ctrl_ops au8522_ctrl_ops = {
 
 /* ----------------------------------------------------------------------- */
 
-static int au8522_probe(struct i2c_client *client)
+static int au8522_probe(struct i2c_client *client,
+			const struct i2c_device_id *did)
 {
 	struct au8522_state *state;
 	struct v4l2_ctrl_handler *hdl;

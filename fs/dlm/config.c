@@ -75,6 +75,9 @@ struct dlm_cluster {
 	unsigned int cl_log_info;
 	unsigned int cl_protocol;
 	unsigned int cl_mark;
+#ifdef CONFIG_DLM_DEPRECATED_API
+	unsigned int cl_timewarn_cs;
+#endif
 	unsigned int cl_new_rsb_count;
 	unsigned int cl_recover_callbacks;
 	char cl_cluster_name[DLM_LOCKSPACE_LEN];
@@ -100,6 +103,9 @@ enum {
 	CLUSTER_ATTR_LOG_INFO,
 	CLUSTER_ATTR_PROTOCOL,
 	CLUSTER_ATTR_MARK,
+#ifdef CONFIG_DLM_DEPRECATED_API
+	CLUSTER_ATTR_TIMEWARN_CS,
+#endif
 	CLUSTER_ATTR_NEW_RSB_COUNT,
 	CLUSTER_ATTR_RECOVER_CALLBACKS,
 	CLUSTER_ATTR_CLUSTER_NAME,
@@ -116,9 +122,9 @@ static ssize_t cluster_cluster_name_store(struct config_item *item,
 {
 	struct dlm_cluster *cl = config_item_to_cluster(item);
 
-	strscpy(dlm_config.ci_cluster_name, buf,
+	strlcpy(dlm_config.ci_cluster_name, buf,
 				sizeof(dlm_config.ci_cluster_name));
-	strscpy(cl->cl_cluster_name, buf, sizeof(cl->cl_cluster_name));
+	strlcpy(cl->cl_cluster_name, buf, sizeof(cl->cl_cluster_name));
 	return len;
 }
 
@@ -177,7 +183,7 @@ static int dlm_check_protocol_and_dlm_running(unsigned int x)
 		return -EINVAL;
 	}
 
-	if (dlm_lowcomms_is_running())
+	if (dlm_allow_conn)
 		return -EBUSY;
 
 	return 0;
@@ -188,7 +194,7 @@ static int dlm_check_zero_and_dlm_running(unsigned int x)
 	if (!x)
 		return -EINVAL;
 
-	if (dlm_lowcomms_is_running())
+	if (dlm_allow_conn)
 		return -EBUSY;
 
 	return 0;
@@ -220,6 +226,9 @@ CLUSTER_ATTR(log_debug, NULL);
 CLUSTER_ATTR(log_info, NULL);
 CLUSTER_ATTR(protocol, dlm_check_protocol_and_dlm_running);
 CLUSTER_ATTR(mark, NULL);
+#ifdef CONFIG_DLM_DEPRECATED_API
+CLUSTER_ATTR(timewarn_cs, dlm_check_zero);
+#endif
 CLUSTER_ATTR(new_rsb_count, NULL);
 CLUSTER_ATTR(recover_callbacks, NULL);
 
@@ -234,6 +243,9 @@ static struct configfs_attribute *cluster_attrs[] = {
 	[CLUSTER_ATTR_LOG_INFO] = &cluster_attr_log_info,
 	[CLUSTER_ATTR_PROTOCOL] = &cluster_attr_protocol,
 	[CLUSTER_ATTR_MARK] = &cluster_attr_mark,
+#ifdef CONFIG_DLM_DEPRECATED_API
+	[CLUSTER_ATTR_TIMEWARN_CS] = &cluster_attr_timewarn_cs,
+#endif
 	[CLUSTER_ATTR_NEW_RSB_COUNT] = &cluster_attr_new_rsb_count,
 	[CLUSTER_ATTR_RECOVER_CALLBACKS] = &cluster_attr_recover_callbacks,
 	[CLUSTER_ATTR_CLUSTER_NAME] = &cluster_attr_cluster_name,
@@ -424,6 +436,9 @@ static struct config_group *make_cluster(struct config_group *g,
 	cl->cl_log_debug = dlm_config.ci_log_debug;
 	cl->cl_log_info = dlm_config.ci_log_info;
 	cl->cl_protocol = dlm_config.ci_protocol;
+#ifdef CONFIG_DLM_DEPRECATED_API
+	cl->cl_timewarn_cs = dlm_config.ci_timewarn_cs;
+#endif
 	cl->cl_new_rsb_count = dlm_config.ci_new_rsb_count;
 	cl->cl_recover_callbacks = dlm_config.ci_recover_callbacks;
 	memcpy(cl->cl_cluster_name, dlm_config.ci_cluster_name,
@@ -944,6 +959,9 @@ int dlm_our_addr(struct sockaddr_storage *addr, int num)
 #define DEFAULT_LOG_INFO           1
 #define DEFAULT_PROTOCOL           DLM_PROTO_TCP
 #define DEFAULT_MARK               0
+#ifdef CONFIG_DLM_DEPRECATED_API
+#define DEFAULT_TIMEWARN_CS      500 /* 5 sec = 500 centiseconds */
+#endif
 #define DEFAULT_NEW_RSB_COUNT    128
 #define DEFAULT_RECOVER_CALLBACKS  0
 #define DEFAULT_CLUSTER_NAME      ""
@@ -959,6 +977,9 @@ struct dlm_config_info dlm_config = {
 	.ci_log_info = DEFAULT_LOG_INFO,
 	.ci_protocol = DEFAULT_PROTOCOL,
 	.ci_mark = DEFAULT_MARK,
+#ifdef CONFIG_DLM_DEPRECATED_API
+	.ci_timewarn_cs = DEFAULT_TIMEWARN_CS,
+#endif
 	.ci_new_rsb_count = DEFAULT_NEW_RSB_COUNT,
 	.ci_recover_callbacks = DEFAULT_RECOVER_CALLBACKS,
 	.ci_cluster_name = DEFAULT_CLUSTER_NAME

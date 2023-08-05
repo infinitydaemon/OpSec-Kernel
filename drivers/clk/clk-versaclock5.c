@@ -20,7 +20,7 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
-#include <linux/property.h>
+#include <linux/rational.h>
 #include <linux/regmap.h>
 #include <linux/slab.h>
 
@@ -123,8 +123,9 @@
 #define VC5_GLOBAL_REGISTER			0x76
 #define VC5_GLOBAL_REGISTER_GLOBAL_RESET	BIT(5)
 
-/* The minimum VCO frequency is 2.5 GHz. The maximum is variant specific. */
+/* PLL/VCO runs between 2.5 GHz and 3.0 GHz */
 #define VC5_PLL_VCO_MIN				2500000000UL
+#define VC5_PLL_VCO_MAX				3000000000UL
 
 /* VC5 Input mux settings */
 #define VC5_MUX_IN_XIN		BIT(0)
@@ -150,7 +151,6 @@ enum vc5_model {
 	IDT_VC5_5P49V5925,
 	IDT_VC5_5P49V5933,
 	IDT_VC5_5P49V5935,
-	IDT_VC6_5P49V60,
 	IDT_VC6_5P49V6901,
 	IDT_VC6_5P49V6965,
 	IDT_VC6_5P49V6975,
@@ -162,7 +162,6 @@ struct vc5_chip_info {
 	const unsigned int	clk_fod_cnt;
 	const unsigned int	clk_out_cnt;
 	const u32		flags;
-	const unsigned long	vco_max;
 };
 
 struct vc5_driver_data;
@@ -282,7 +281,6 @@ static int vc5_mux_set_parent(struct clk_hw *hw, u8 index)
 }
 
 static const struct clk_ops vc5_mux_ops = {
-	.determine_rate	= clk_hw_determine_rate_no_reparent,
 	.set_parent	= vc5_mux_set_parent,
 	.get_parent	= vc5_mux_get_parent,
 };
@@ -449,11 +447,10 @@ static long vc5_pll_round_rate(struct clk_hw *hw, unsigned long rate,
 			       unsigned long *parent_rate)
 {
 	struct vc5_hw_data *hwdata = container_of(hw, struct vc5_hw_data, hw);
-	struct vc5_driver_data *vc5 = hwdata->vc5;
 	u32 div_int;
 	u64 div_frc;
 
-	rate = clamp(rate, VC5_PLL_VCO_MIN, vc5->chip_info->vco_max);
+	rate = clamp(rate, VC5_PLL_VCO_MIN, VC5_PLL_VCO_MAX);
 
 	/* Determine integer part, which is 12 bit wide */
 	div_int = rate / *parent_rate;
@@ -727,7 +724,6 @@ static int vc5_clk_out_set_parent(struct clk_hw *hw, u8 index)
 static const struct clk_ops vc5_clk_out_ops = {
 	.prepare	= vc5_clk_out_prepare,
 	.unprepare	= vc5_clk_out_unprepare,
-	.determine_rate	= clk_hw_determine_rate_no_reparent,
 	.set_parent	= vc5_clk_out_set_parent,
 	.get_parent	= vc5_clk_out_get_parent,
 };
@@ -956,7 +952,7 @@ static int vc5_probe(struct i2c_client *client)
 
 	i2c_set_clientdata(client, vc5);
 	vc5->client = client;
-	vc5->chip_info = device_get_match_data(&client->dev);
+	vc5->chip_info = of_device_get_match_data(&client->dev);
 
 	vc5->pin_xin = devm_clk_get(&client->dev, "xin");
 	if (PTR_ERR(vc5->pin_xin) == -EPROBE_DEFER)
@@ -1243,7 +1239,6 @@ static const struct vc5_chip_info idt_5p49v5923_info = {
 	.clk_fod_cnt = 2,
 	.clk_out_cnt = 3,
 	.flags = 0,
-	.vco_max = 3000000000UL,
 };
 
 static const struct vc5_chip_info idt_5p49v5925_info = {
@@ -1251,7 +1246,6 @@ static const struct vc5_chip_info idt_5p49v5925_info = {
 	.clk_fod_cnt = 4,
 	.clk_out_cnt = 5,
 	.flags = 0,
-	.vco_max = 3000000000UL,
 };
 
 static const struct vc5_chip_info idt_5p49v5933_info = {
@@ -1259,7 +1253,6 @@ static const struct vc5_chip_info idt_5p49v5933_info = {
 	.clk_fod_cnt = 2,
 	.clk_out_cnt = 3,
 	.flags = VC5_HAS_INTERNAL_XTAL,
-	.vco_max = 3000000000UL,
 };
 
 static const struct vc5_chip_info idt_5p49v5935_info = {
@@ -1267,15 +1260,6 @@ static const struct vc5_chip_info idt_5p49v5935_info = {
 	.clk_fod_cnt = 4,
 	.clk_out_cnt = 5,
 	.flags = VC5_HAS_INTERNAL_XTAL,
-	.vco_max = 3000000000UL,
-};
-
-static const struct vc5_chip_info idt_5p49v60_info = {
-	.model = IDT_VC6_5P49V60,
-	.clk_fod_cnt = 4,
-	.clk_out_cnt = 5,
-	.flags = VC5_HAS_PFD_FREQ_DBL | VC5_HAS_BYPASS_SYNC_BIT,
-	.vco_max = 2700000000UL,
 };
 
 static const struct vc5_chip_info idt_5p49v6901_info = {
@@ -1283,7 +1267,6 @@ static const struct vc5_chip_info idt_5p49v6901_info = {
 	.clk_fod_cnt = 4,
 	.clk_out_cnt = 5,
 	.flags = VC5_HAS_PFD_FREQ_DBL | VC5_HAS_BYPASS_SYNC_BIT,
-	.vco_max = 3000000000UL,
 };
 
 static const struct vc5_chip_info idt_5p49v6965_info = {
@@ -1291,7 +1274,6 @@ static const struct vc5_chip_info idt_5p49v6965_info = {
 	.clk_fod_cnt = 4,
 	.clk_out_cnt = 5,
 	.flags = VC5_HAS_BYPASS_SYNC_BIT,
-	.vco_max = 3000000000UL,
 };
 
 static const struct vc5_chip_info idt_5p49v6975_info = {
@@ -1299,7 +1281,6 @@ static const struct vc5_chip_info idt_5p49v6975_info = {
 	.clk_fod_cnt = 4,
 	.clk_out_cnt = 5,
 	.flags = VC5_HAS_BYPASS_SYNC_BIT | VC5_HAS_INTERNAL_XTAL,
-	.vco_max = 3000000000UL,
 };
 
 static const struct i2c_device_id vc5_id[] = {
@@ -1307,7 +1288,6 @@ static const struct i2c_device_id vc5_id[] = {
 	{ "5p49v5925", .driver_data = (kernel_ulong_t)&idt_5p49v5925_info },
 	{ "5p49v5933", .driver_data = (kernel_ulong_t)&idt_5p49v5933_info },
 	{ "5p49v5935", .driver_data = (kernel_ulong_t)&idt_5p49v5935_info },
-	{ "5p49v60", .driver_data = (kernel_ulong_t)&idt_5p49v60_info },
 	{ "5p49v6901", .driver_data = (kernel_ulong_t)&idt_5p49v6901_info },
 	{ "5p49v6965", .driver_data = (kernel_ulong_t)&idt_5p49v6965_info },
 	{ "5p49v6975", .driver_data = (kernel_ulong_t)&idt_5p49v6975_info },
@@ -1320,7 +1300,6 @@ static const struct of_device_id clk_vc5_of_match[] = {
 	{ .compatible = "idt,5p49v5925", .data = &idt_5p49v5925_info },
 	{ .compatible = "idt,5p49v5933", .data = &idt_5p49v5933_info },
 	{ .compatible = "idt,5p49v5935", .data = &idt_5p49v5935_info },
-	{ .compatible = "idt,5p49v60", .data = &idt_5p49v60_info },
 	{ .compatible = "idt,5p49v6901", .data = &idt_5p49v6901_info },
 	{ .compatible = "idt,5p49v6965", .data = &idt_5p49v6965_info },
 	{ .compatible = "idt,5p49v6975", .data = &idt_5p49v6975_info },
@@ -1336,7 +1315,7 @@ static struct i2c_driver vc5_driver = {
 		.pm	= &vc5_pm_ops,
 		.of_match_table = clk_vc5_of_match,
 	},
-	.probe		= vc5_probe,
+	.probe_new	= vc5_probe,
 	.remove		= vc5_remove,
 	.id_table	= vc5_id,
 };

@@ -99,12 +99,11 @@
 #include "sys.h"
 #include "ctype.h"
 #include "signal.h"
-#include "unistd.h"
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
 #include "time.h"
-#include "stackprotector.h"
+#include "unistd.h"
 
 /* Used by programs to avoid std includes */
 #define NOLIBC

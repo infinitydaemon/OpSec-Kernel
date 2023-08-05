@@ -1399,16 +1399,8 @@ static int set_powered(struct sock *sk, struct hci_dev *hdev, void *data,
 		goto failed;
 	}
 
-	/* Cancel potentially blocking sync operation before power off */
-	if (cp->val == 0x00) {
-		__hci_cmd_sync_cancel(hdev, -EHOSTDOWN);
-		err = hci_cmd_sync_queue(hdev, set_powered_sync, cmd,
-					 mgmt_set_powered_complete);
-	} else {
-		/* Use hci_cmd_sync_submit since hdev might not be running */
-		err = hci_cmd_sync_submit(hdev, set_powered_sync, cmd,
-					  mgmt_set_powered_complete);
-	}
+	err = hci_cmd_sync_queue(hdev, set_powered_sync, cmd,
+				 mgmt_set_powered_complete);
 
 	if (err < 0)
 		mgmt_pending_remove(cmd);
@@ -7285,7 +7277,7 @@ static void get_conn_info_complete(struct hci_dev *hdev, void *data, int err)
 
 	bt_dev_dbg(hdev, "err %d", err);
 
-	memcpy(&rp.addr, &cp->addr, sizeof(rp.addr));
+	memcpy(&rp.addr, &cp->addr.bdaddr, sizeof(rp.addr));
 
 	status = mgmt_status(err);
 	if (status == MGMT_STATUS_SUCCESS) {
@@ -7387,8 +7379,9 @@ static int get_conn_info(struct sock *sk, struct hci_dev *hdev, void *data,
 	/* To avoid client trying to guess when to poll again for information we
 	 * calculate conn info age as random value between min/max set in hdev.
 	 */
-	conn_info_age = get_random_u32_inclusive(hdev->conn_info_min_age,
-						 hdev->conn_info_max_age - 1);
+	conn_info_age = hdev->conn_info_min_age +
+			prandom_u32_max(hdev->conn_info_max_age -
+					hdev->conn_info_min_age);
 
 	/* Query controller to refresh cached values if they are too old or were
 	 * never read.
@@ -8397,10 +8390,10 @@ static u32 get_supported_adv_flags(struct hci_dev *hdev)
 		flags |= MGMT_ADV_FLAG_HW_OFFLOAD;
 		flags |= MGMT_ADV_FLAG_CAN_SET_TX_POWER;
 
-		if (le_2m_capable(hdev))
+		if (hdev->le_features[1] & HCI_LE_PHY_2M)
 			flags |= MGMT_ADV_FLAG_SEC_2M;
 
-		if (le_coded_capable(hdev))
+		if (hdev->le_features[1] & HCI_LE_PHY_CODED)
 			flags |= MGMT_ADV_FLAG_SEC_CODED;
 	}
 

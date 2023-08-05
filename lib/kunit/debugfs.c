@@ -10,7 +10,6 @@
 #include <kunit/test.h>
 
 #include "string-stream.h"
-#include "debugfs.h"
 
 #define KUNIT_DEBUGFS_ROOT             "kunit"
 #define KUNIT_DEBUGFS_RESULTS          "results"

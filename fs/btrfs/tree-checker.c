@@ -18,17 +18,13 @@
 #include <linux/types.h>
 #include <linux/stddef.h>
 #include <linux/error-injection.h>
-#include "messages.h"
 #include "ctree.h"
 #include "tree-checker.h"
 #include "disk-io.h"
 #include "compression.h"
 #include "volumes.h"
 #include "misc.h"
-#include "fs.h"
-#include "accessors.h"
-#include "file-item.h"
-#include "inode-item.h"
+#include "btrfs_inode.h"
 
 /*
  * Error message should follow the following format:
@@ -532,7 +528,7 @@ static int check_dir_item(struct extent_buffer *leaf,
 		}
 
 		/* dir type check */
-		dir_type = btrfs_dir_ftype(leaf, di);
+		dir_type = btrfs_dir_type(leaf, di);
 		if (unlikely(dir_type >= BTRFS_FT_MAX)) {
 			dir_item_err(leaf, slot,
 			"invalid dir item type, have %u expect [0, %u)",
@@ -847,20 +843,6 @@ int btrfs_check_chunk_valid(struct extent_buffer *leaf,
 		chunk_err(leaf, chunk, logical,
 			  "invalid chunk stripe length: %llu",
 			  stripe_len);
-		return -EUCLEAN;
-	}
-	/*
-	 * We artificially limit the chunk size, so that the number of stripes
-	 * inside a chunk can be fit into a U32.  The current limit (256G) is
-	 * way too large for real world usage anyway, and it's also much larger
-	 * than our existing limit (10G).
-	 *
-	 * Thus it should be a good way to catch obvious bitflips.
-	 */
-	if (unlikely(length >= btrfs_stripe_nr_to_offset(U32_MAX))) {
-		chunk_err(leaf, chunk, logical,
-			  "chunk length too large: have %llu limit %llu",
-			  length, btrfs_stripe_nr_to_offset(U32_MAX));
 		return -EUCLEAN;
 	}
 	if (unlikely(type & ~(BTRFS_BLOCK_GROUP_TYPE_MASK |
@@ -1620,10 +1602,9 @@ static int check_inode_ref(struct extent_buffer *leaf,
 /*
  * Common point to switch the item-specific validation.
  */
-static enum btrfs_tree_block_status check_leaf_item(struct extent_buffer *leaf,
-						    struct btrfs_key *key,
-						    int slot,
-						    struct btrfs_key *prev_key)
+static int check_leaf_item(struct extent_buffer *leaf,
+			   struct btrfs_key *key, int slot,
+			   struct btrfs_key *prev_key)
 {
 	int ret = 0;
 	struct btrfs_chunk *chunk;
@@ -1672,13 +1653,10 @@ static enum btrfs_tree_block_status check_leaf_item(struct extent_buffer *leaf,
 		ret = check_extent_data_ref(leaf, key, slot);
 		break;
 	}
-
-	if (ret)
-		return BTRFS_TREE_BLOCK_INVALID_ITEM;
-	return BTRFS_TREE_BLOCK_CLEAN;
+	return ret;
 }
 
-enum btrfs_tree_block_status __btrfs_check_leaf(struct extent_buffer *leaf)
+static int check_leaf(struct extent_buffer *leaf, bool check_item_data)
 {
 	struct btrfs_fs_info *fs_info = leaf->fs_info;
 	/* No valid key type is 0, so all key should be larger than this key */
@@ -1691,7 +1669,7 @@ enum btrfs_tree_block_status __btrfs_check_leaf(struct extent_buffer *leaf)
 		generic_err(leaf, 0,
 			"invalid level for leaf, have %d expect 0",
 			btrfs_header_level(leaf));
-		return BTRFS_TREE_BLOCK_INVALID_LEVEL;
+		return -EUCLEAN;
 	}
 
 	/*
@@ -1714,32 +1692,32 @@ enum btrfs_tree_block_status __btrfs_check_leaf(struct extent_buffer *leaf)
 			generic_err(leaf, 0,
 			"invalid root, root %llu must never be empty",
 				    owner);
-			return BTRFS_TREE_BLOCK_INVALID_NRITEMS;
+			return -EUCLEAN;
 		}
 
 		/* Unknown tree */
 		if (unlikely(owner == 0)) {
 			generic_err(leaf, 0,
 				"invalid owner, root 0 is not defined");
-			return BTRFS_TREE_BLOCK_INVALID_OWNER;
+			return -EUCLEAN;
 		}
 
 		/* EXTENT_TREE_V2 can have empty extent trees. */
 		if (btrfs_fs_incompat(fs_info, EXTENT_TREE_V2))
-			return BTRFS_TREE_BLOCK_CLEAN;
+			return 0;
 
 		if (unlikely(owner == BTRFS_EXTENT_TREE_OBJECTID)) {
 			generic_err(leaf, 0,
 			"invalid root, root %llu must never be empty",
 				    owner);
-			return BTRFS_TREE_BLOCK_INVALID_NRITEMS;
+			return -EUCLEAN;
 		}
 
-		return BTRFS_TREE_BLOCK_CLEAN;
+		return 0;
 	}
 
 	if (unlikely(nritems == 0))
-		return BTRFS_TREE_BLOCK_CLEAN;
+		return 0;
 
 	/*
 	 * Check the following things to make sure this is a good leaf, and
@@ -1755,6 +1733,7 @@ enum btrfs_tree_block_status __btrfs_check_leaf(struct extent_buffer *leaf)
 	for (slot = 0; slot < nritems; slot++) {
 		u32 item_end_expected;
 		u64 item_data_end;
+		int ret;
 
 		btrfs_item_key_to_cpu(leaf, &key, slot);
 
@@ -1765,7 +1744,7 @@ enum btrfs_tree_block_status __btrfs_check_leaf(struct extent_buffer *leaf)
 				prev_key.objectid, prev_key.type,
 				prev_key.offset, key.objectid, key.type,
 				key.offset);
-			return BTRFS_TREE_BLOCK_BAD_KEY_ORDER;
+			return -EUCLEAN;
 		}
 
 		item_data_end = (u64)btrfs_item_offset(leaf, slot) +
@@ -1784,7 +1763,7 @@ enum btrfs_tree_block_status __btrfs_check_leaf(struct extent_buffer *leaf)
 			generic_err(leaf, slot,
 				"unexpected item end, have %llu expect %u",
 				item_data_end, item_end_expected);
-			return BTRFS_TREE_BLOCK_INVALID_OFFSETS;
+			return -EUCLEAN;
 		}
 
 		/*
@@ -1796,33 +1775,27 @@ enum btrfs_tree_block_status __btrfs_check_leaf(struct extent_buffer *leaf)
 			generic_err(leaf, slot,
 			"slot end outside of leaf, have %llu expect range [0, %u]",
 				item_data_end, BTRFS_LEAF_DATA_SIZE(fs_info));
-			return BTRFS_TREE_BLOCK_INVALID_OFFSETS;
+			return -EUCLEAN;
 		}
 
 		/* Also check if the item pointer overlaps with btrfs item. */
 		if (unlikely(btrfs_item_ptr_offset(leaf, slot) <
-			     btrfs_item_nr_offset(leaf, slot) + sizeof(struct btrfs_item))) {
+			     btrfs_item_nr_offset(slot) + sizeof(struct btrfs_item))) {
 			generic_err(leaf, slot,
 		"slot overlaps with its data, item end %lu data start %lu",
-				btrfs_item_nr_offset(leaf, slot) +
+				btrfs_item_nr_offset(slot) +
 				sizeof(struct btrfs_item),
 				btrfs_item_ptr_offset(leaf, slot));
-			return BTRFS_TREE_BLOCK_INVALID_OFFSETS;
+			return -EUCLEAN;
 		}
 
-		/*
-		 * We only want to do this if WRITTEN is set, otherwise the leaf
-		 * may be in some intermediate state and won't appear valid.
-		 */
-		if (btrfs_header_flag(leaf, BTRFS_HEADER_FLAG_WRITTEN)) {
-			enum btrfs_tree_block_status ret;
-
+		if (check_item_data) {
 			/*
 			 * Check if the item size and content meet other
 			 * criteria
 			 */
 			ret = check_leaf_item(leaf, &key, slot, &prev_key);
-			if (unlikely(ret != BTRFS_TREE_BLOCK_CLEAN))
+			if (unlikely(ret < 0))
 				return ret;
 		}
 
@@ -1831,21 +1804,21 @@ enum btrfs_tree_block_status __btrfs_check_leaf(struct extent_buffer *leaf)
 		prev_key.offset = key.offset;
 	}
 
-	return BTRFS_TREE_BLOCK_CLEAN;
-}
-
-int btrfs_check_leaf(struct extent_buffer *leaf)
-{
-	enum btrfs_tree_block_status ret;
-
-	ret = __btrfs_check_leaf(leaf);
-	if (unlikely(ret != BTRFS_TREE_BLOCK_CLEAN))
-		return -EUCLEAN;
 	return 0;
 }
-ALLOW_ERROR_INJECTION(btrfs_check_leaf, ERRNO);
 
-enum btrfs_tree_block_status __btrfs_check_node(struct extent_buffer *node)
+int btrfs_check_leaf_full(struct extent_buffer *leaf)
+{
+	return check_leaf(leaf, true);
+}
+ALLOW_ERROR_INJECTION(btrfs_check_leaf_full, ERRNO);
+
+int btrfs_check_leaf_relaxed(struct extent_buffer *leaf)
+{
+	return check_leaf(leaf, false);
+}
+
+int btrfs_check_node(struct extent_buffer *node)
 {
 	struct btrfs_fs_info *fs_info = node->fs_info;
 	unsigned long nr = btrfs_header_nritems(node);
@@ -1853,12 +1826,13 @@ enum btrfs_tree_block_status __btrfs_check_node(struct extent_buffer *node)
 	int slot;
 	int level = btrfs_header_level(node);
 	u64 bytenr;
+	int ret = 0;
 
 	if (unlikely(level <= 0 || level >= BTRFS_MAX_LEVEL)) {
 		generic_err(node, 0,
 			"invalid level for node, have %d expect [1, %d]",
 			level, BTRFS_MAX_LEVEL - 1);
-		return BTRFS_TREE_BLOCK_INVALID_LEVEL;
+		return -EUCLEAN;
 	}
 	if (unlikely(nr == 0 || nr > BTRFS_NODEPTRS_PER_BLOCK(fs_info))) {
 		btrfs_crit(fs_info,
@@ -1866,7 +1840,7 @@ enum btrfs_tree_block_status __btrfs_check_node(struct extent_buffer *node)
 			   btrfs_header_owner(node), node->start,
 			   nr == 0 ? "small" : "large", nr,
 			   BTRFS_NODEPTRS_PER_BLOCK(fs_info));
-		return BTRFS_TREE_BLOCK_INVALID_NRITEMS;
+		return -EUCLEAN;
 	}
 
 	for (slot = 0; slot < nr - 1; slot++) {
@@ -1877,13 +1851,15 @@ enum btrfs_tree_block_status __btrfs_check_node(struct extent_buffer *node)
 		if (unlikely(!bytenr)) {
 			generic_err(node, slot,
 				"invalid NULL node pointer");
-			return BTRFS_TREE_BLOCK_INVALID_BLOCKPTR;
+			ret = -EUCLEAN;
+			goto out;
 		}
 		if (unlikely(!IS_ALIGNED(bytenr, fs_info->sectorsize))) {
 			generic_err(node, slot,
 			"unaligned pointer, have %llu should be aligned to %u",
 				bytenr, fs_info->sectorsize);
-			return BTRFS_TREE_BLOCK_INVALID_BLOCKPTR;
+			ret = -EUCLEAN;
+			goto out;
 		}
 
 		if (unlikely(btrfs_comp_cpu_keys(&key, &next_key) >= 0)) {
@@ -1892,20 +1868,12 @@ enum btrfs_tree_block_status __btrfs_check_node(struct extent_buffer *node)
 				key.objectid, key.type, key.offset,
 				next_key.objectid, next_key.type,
 				next_key.offset);
-			return BTRFS_TREE_BLOCK_BAD_KEY_ORDER;
+			ret = -EUCLEAN;
+			goto out;
 		}
 	}
-	return BTRFS_TREE_BLOCK_CLEAN;
-}
-
-int btrfs_check_node(struct extent_buffer *node)
-{
-	enum btrfs_tree_block_status ret;
-
-	ret = __btrfs_check_node(node);
-	if (unlikely(ret != BTRFS_TREE_BLOCK_CLEAN))
-		return -EUCLEAN;
-	return 0;
+out:
+	return ret;
 }
 ALLOW_ERROR_INJECTION(btrfs_check_node, ERRNO);
 
@@ -1962,62 +1930,4 @@ int btrfs_check_eb_owner(const struct extent_buffer *eb, u64 root_owner)
 		return -EUCLEAN;
 	}
 	return 0;
-}
-
-int btrfs_verify_level_key(struct extent_buffer *eb, int level,
-			   struct btrfs_key *first_key, u64 parent_transid)
-{
-	struct btrfs_fs_info *fs_info = eb->fs_info;
-	int found_level;
-	struct btrfs_key found_key;
-	int ret;
-
-	found_level = btrfs_header_level(eb);
-	if (found_level != level) {
-		WARN(IS_ENABLED(CONFIG_BTRFS_DEBUG),
-		     KERN_ERR "BTRFS: tree level check failed\n");
-		btrfs_err(fs_info,
-"tree level mismatch detected, bytenr=%llu level expected=%u has=%u",
-			  eb->start, level, found_level);
-		return -EIO;
-	}
-
-	if (!first_key)
-		return 0;
-
-	/*
-	 * For live tree block (new tree blocks in current transaction),
-	 * we need proper lock context to avoid race, which is impossible here.
-	 * So we only checks tree blocks which is read from disk, whose
-	 * generation <= fs_info->last_trans_committed.
-	 */
-	if (btrfs_header_generation(eb) > fs_info->last_trans_committed)
-		return 0;
-
-	/* We have @first_key, so this @eb must have at least one item */
-	if (btrfs_header_nritems(eb) == 0) {
-		btrfs_err(fs_info,
-		"invalid tree nritems, bytenr=%llu nritems=0 expect >0",
-			  eb->start);
-		WARN_ON(IS_ENABLED(CONFIG_BTRFS_DEBUG));
-		return -EUCLEAN;
-	}
-
-	if (found_level)
-		btrfs_node_key_to_cpu(eb, &found_key, 0);
-	else
-		btrfs_item_key_to_cpu(eb, &found_key, 0);
-	ret = btrfs_comp_cpu_keys(first_key, &found_key);
-
-	if (ret) {
-		WARN(IS_ENABLED(CONFIG_BTRFS_DEBUG),
-		     KERN_ERR "BTRFS: tree first key check failed\n");
-		btrfs_err(fs_info,
-"tree first key mismatch detected, bytenr=%llu parent_transid=%llu key expected=(%llu,%u,%llu) has=(%llu,%u,%llu)",
-			  eb->start, parent_transid, first_key->objectid,
-			  first_key->type, first_key->offset,
-			  found_key.objectid, found_key.type,
-			  found_key.offset);
-	}
-	return ret;
 }

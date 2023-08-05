@@ -17,8 +17,8 @@ static void validate(void)
 		fprintf(stderr, "benchmark doesn't support multi-producer!\n");
 		exit(1);
 	}
-	if (env.consumer_cnt != 0) {
-		fprintf(stderr, "benchmark doesn't support consumer!\n");
+	if (env.consumer_cnt != 1) {
+		fprintf(stderr, "benchmark doesn't support multi-consumer!\n");
 		exit(1);
 	}
 }
@@ -106,11 +106,17 @@ static void setup_fexit(void)
 	attach_bpf(ctx.skel->progs.prog5);
 }
 
+static void *consumer(void *input)
+{
+	return NULL;
+}
+
 const struct bench bench_rename_base = {
 	.name = "rename-base",
 	.validate = validate,
 	.setup = setup_base,
 	.producer_thread = producer,
+	.consumer_thread = consumer,
 	.measure = measure,
 	.report_progress = hits_drops_report_progress,
 	.report_final = hits_drops_report_final,
@@ -121,6 +127,7 @@ const struct bench bench_rename_kprobe = {
 	.validate = validate,
 	.setup = setup_kprobe,
 	.producer_thread = producer,
+	.consumer_thread = consumer,
 	.measure = measure,
 	.report_progress = hits_drops_report_progress,
 	.report_final = hits_drops_report_final,
@@ -131,6 +138,7 @@ const struct bench bench_rename_kretprobe = {
 	.validate = validate,
 	.setup = setup_kretprobe,
 	.producer_thread = producer,
+	.consumer_thread = consumer,
 	.measure = measure,
 	.report_progress = hits_drops_report_progress,
 	.report_final = hits_drops_report_final,
@@ -141,6 +149,7 @@ const struct bench bench_rename_rawtp = {
 	.validate = validate,
 	.setup = setup_rawtp,
 	.producer_thread = producer,
+	.consumer_thread = consumer,
 	.measure = measure,
 	.report_progress = hits_drops_report_progress,
 	.report_final = hits_drops_report_final,
@@ -151,6 +160,7 @@ const struct bench bench_rename_fentry = {
 	.validate = validate,
 	.setup = setup_fentry,
 	.producer_thread = producer,
+	.consumer_thread = consumer,
 	.measure = measure,
 	.report_progress = hits_drops_report_progress,
 	.report_final = hits_drops_report_final,
@@ -161,6 +171,7 @@ const struct bench bench_rename_fexit = {
 	.validate = validate,
 	.setup = setup_fexit,
 	.producer_thread = producer,
+	.consumer_thread = consumer,
 	.measure = measure,
 	.report_progress = hits_drops_report_progress,
 	.report_final = hits_drops_report_final,

@@ -17,6 +17,7 @@ struct perf_mmap_param;
 struct perf_evlist {
 	struct list_head	 entries;
 	int			 nr_entries;
+	int			 nr_groups;
 	bool			 has_user_cpus;
 	bool			 needs_map_propagation;
 	/**

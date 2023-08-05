@@ -2081,10 +2081,7 @@ struct tegra_dfll_soc_data *tegra_dfll_unregister(struct platform_device *pdev)
 {
 	struct tegra_dfll *td = platform_get_drvdata(pdev);
 
-	/*
-	 * Note that exiting early here doesn't prevent unbinding the driver.
-	 * Exiting early here only leaks some resources.
-	 */
+	/* Try to prevent removal while the DFLL is active */
 	if (td->mode != DFLL_DISABLED) {
 		dev_err(&pdev->dev,
 			"must disable DFLL before removing driver\n");

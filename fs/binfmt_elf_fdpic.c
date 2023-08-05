@@ -743,12 +743,12 @@ static int elf_fdpic_map_file(struct elf_fdpic_params *params,
 	struct elf32_fdpic_loadmap *loadmap;
 #ifdef CONFIG_MMU
 	struct elf32_fdpic_loadseg *mseg;
-	unsigned long load_addr;
 #endif
 	struct elf32_fdpic_loadseg *seg;
 	struct elf32_phdr *phdr;
+	unsigned long load_addr, stop;
 	unsigned nloads, tmp;
-	unsigned long stop;
+	size_t size;
 	int loop, ret;
 
 	/* allocate a load map table */
@@ -760,7 +760,8 @@ static int elf_fdpic_map_file(struct elf_fdpic_params *params,
 	if (nloads == 0)
 		return -ELIBBAD;
 
-	loadmap = kzalloc(struct_size(loadmap, segs, nloads), GFP_KERNEL);
+	size = sizeof(*loadmap) + nloads * sizeof(*seg);
+	loadmap = kzalloc(size, GFP_KERNEL);
 	if (!loadmap)
 		return -ENOMEM;
 
@@ -768,6 +769,9 @@ static int elf_fdpic_map_file(struct elf_fdpic_params *params,
 
 	loadmap->version = ELF32_FDPIC_LOADMAP_VERSION;
 	loadmap->nsegs = nloads;
+
+	load_addr = params->load_addr;
+	seg = loadmap->segs;
 
 	/* map the requested LOADs into the memory space */
 	switch (params->flags & ELF_FDPIC_FLAG_ARRANGEMENT) {
@@ -1265,7 +1269,7 @@ static inline void fill_elf_note_phdr(struct elf_phdr *phdr, int sz, loff_t offs
 	phdr->p_filesz = sz;
 	phdr->p_memsz = 0;
 	phdr->p_flags = 0;
-	phdr->p_align = 4;
+	phdr->p_align = 0;
 	return;
 }
 
@@ -1536,7 +1540,7 @@ static int elf_fdpic_core_dump(struct coredump_params *cprm)
 	fill_note(&auxv_note, "CORE", NT_AUXV, i * sizeof(elf_addr_t), auxv);
 	thread_status_size += notesize(&auxv_note);
 
-	offset = sizeof(*elf);				/* ELF header */
+	offset = sizeof(*elf);				/* Elf header */
 	offset += segs * sizeof(struct elf_phdr);	/* Program headers */
 
 	/* Write notes phdr entry */
@@ -1600,7 +1604,7 @@ static int elf_fdpic_core_dump(struct coredump_params *cprm)
 	if (!elf_core_write_extra_phdrs(cprm, offset))
 		goto end_coredump;
 
-	/* write out the notes section */
+ 	/* write out the notes section */
 	if (!writenote(thread_list->notes, cprm))
 		goto end_coredump;
 	if (!writenote(&psinfo_note, cprm))

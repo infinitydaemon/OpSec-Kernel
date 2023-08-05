@@ -48,7 +48,6 @@ create_vlan_upper_on_top_of_bridge()
 
 	ip link add dev br0 type bridge vlan_filtering 1 \
 		vlan_protocol $bridge_proto vlan_default_pvid 0 mcast_snooping 0
-	ip link set dev br0 addrgenmode none
 
 	ip link set dev br0 up
 	ip link set dev $swp1 master br0
@@ -89,7 +88,6 @@ create_8021ad_vlan_upper_on_top_bridge_port()
 
 	ip link add dev br0 type bridge vlan_filtering 1 \
 		vlan_default_pvid 0 mcast_snooping 0
-	ip link set dev br0 addrgenmode none
 
 	ip link set dev $swp1 master br0
 	ip link set dev br0 up
@@ -157,7 +155,6 @@ create_vlan_upper_on_top_front_panel_enslaved_to_8021ad_bridge()
 
 	ip link add dev br0 type bridge vlan_filtering 1 \
 		vlan_protocol 802.1ad vlan_default_pvid 0 mcast_snooping 0
-	ip link set dev br0 addrgenmode none
 	ip link set dev br0 up
 
 	ip link set dev $swp1 master br0
@@ -180,7 +177,6 @@ create_vlan_upper_on_top_lag_enslaved_to_8021ad_bridge()
 
 	ip link add dev br0 type bridge vlan_filtering 1 \
 		vlan_protocol 802.1ad vlan_default_pvid 0 mcast_snooping 0
-	ip link set dev br0 addrgenmode none
 	ip link set dev br0 up
 
 	ip link add name bond1 type bond mode 802.3ad
@@ -207,7 +203,6 @@ enslave_front_panel_with_vlan_upper_to_8021ad_bridge()
 
 	ip link add dev br0 type bridge vlan_filtering 1 \
 		vlan_protocol 802.1ad vlan_default_pvid 0 mcast_snooping 0
-	ip link set dev br0 addrgenmode none
 	ip link set dev br0 up
 
 	ip link add name $swp1.100 link $swp1 type vlan id 100
@@ -230,7 +225,6 @@ enslave_lag_with_vlan_upper_to_8021ad_bridge()
 
 	ip link add dev br0 type bridge vlan_filtering 1 \
 		vlan_protocol 802.1ad vlan_default_pvid 0 mcast_snooping 0
-	ip link set dev br0 addrgenmode none
 	ip link set dev br0 up
 
 	ip link add name bond1 type bond mode 802.3ad
@@ -258,7 +252,6 @@ add_ip_address_to_8021ad_bridge()
 
 	ip link add dev br0 type bridge vlan_filtering 1 \
 		vlan_protocol 802.1ad vlan_default_pvid 0 mcast_snooping 0
-	ip link set dev br0 addrgenmode none
 
 	ip link set dev br0 up
 	ip link set dev $swp1 master br0
@@ -280,7 +273,6 @@ switch_bridge_protocol_from_8021q_to_8021ad()
 
 	ip link add dev br0 type bridge vlan_filtering 1 \
 		vlan_protocol 802.1ad vlan_default_pvid 0 mcast_snooping 0
-	ip link set dev br0 addrgenmode none
 
 	ip link set dev br0 up
 	ip link set dev $swp1 master br0

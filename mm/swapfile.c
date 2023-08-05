@@ -41,7 +41,6 @@
 #include <linux/swap_slots.h>
 #include <linux/sort.h>
 #include <linux/completion.h>
-#include <linux/suspend.h>
 
 #include <asm/tlbflush.h>
 #include <linux/swapops.h>
@@ -137,7 +136,7 @@ static int __try_to_reclaim_swap(struct swap_info_struct *si,
 	int ret = 0;
 
 	folio = filemap_get_folio(swap_address_space(entry), offset);
-	if (IS_ERR(folio))
+	if (!folio)
 		return 0;
 	/*
 	 * When this function is called from scan_swap_map_slots() and it's
@@ -774,7 +773,8 @@ static void set_cluster_next(struct swap_info_struct *si, unsigned long next)
 		/* No free swap slots available */
 		if (si->highest_bit <= si->lowest_bit)
 			return;
-		next = get_random_u32_inclusive(si->lowest_bit, si->highest_bit);
+		next = si->lowest_bit +
+			prandom_u32_max(si->highest_bit - si->lowest_bit + 1);
 		next = ALIGN_DOWN(next, SWAP_ADDRESS_SPACE_PAGES);
 		next = max_t(unsigned int, next, si->lowest_bit);
 	}
@@ -1100,6 +1100,8 @@ start_over:
 		spin_unlock(&si->lock);
 		if (n_ret || size == SWAPFILE_CLUSTER)
 			goto check_out;
+		pr_debug("scan_swap_map of si %d failed to find offset\n",
+			si->type);
 		cond_resched();
 
 		spin_lock(&swap_avail_lock);
@@ -1220,13 +1222,6 @@ static unsigned char __swap_entry_free_locked(struct swap_info_struct *p,
 }
 
 /*
- * When we get a swap entry, if there aren't some other ways to
- * prevent swapoff, such as the folio in swap cache is locked, page
- * table lock is held, etc., the swap entry may become invalid because
- * of swapoff.  Then, we need to enclose all swap related functions
- * with get_swap_device() and put_swap_device(), unless the swap
- * functions call get/put_swap_device() by themselves.
- *
  * Check whether swap entry is valid in the swap device.  If so,
  * return pointer to swap_info_struct, and keep the swap entry valid
  * via preventing the swap device from being swapoff, until
@@ -1235,8 +1230,9 @@ static unsigned char __swap_entry_free_locked(struct swap_info_struct *p,
  * Notice that swapoff or swapoff+swapon can still happen before the
  * percpu_ref_tryget_live() in get_swap_device() or after the
  * percpu_ref_put() in put_swap_device() if there isn't any other way
- * to prevent swapoff.  The caller must be prepared for that.  For
- * example, the following situation is possible.
+ * to prevent swapoff, such as page lock, page table lock, etc.  The
+ * caller must be prepared for that.  For example, the following
+ * situation is possible.
  *
  *   CPU1				CPU2
  *   do_swap_page()
@@ -1439,10 +1435,16 @@ void swapcache_free_entries(swp_entry_t *entries, int n)
 
 int __swap_count(swp_entry_t entry)
 {
-	struct swap_info_struct *si = swp_swap_info(entry);
+	struct swap_info_struct *si;
 	pgoff_t offset = swp_offset(entry);
+	int count = 0;
 
-	return swap_count(si->swap_map[offset]);
+	si = get_swap_device(entry);
+	if (si) {
+		count = swap_count(si->swap_map[offset]);
+		put_swap_device(si);
+	}
+	return count;
 }
 
 /*
@@ -1450,7 +1452,7 @@ int __swap_count(swp_entry_t entry)
  * This does not give an exact answer when swap count is continued,
  * but does include the high COUNT_CONTINUED flag to allow for that.
  */
-int swap_swapcount(struct swap_info_struct *si, swp_entry_t entry)
+static int swap_swapcount(struct swap_info_struct *si, swp_entry_t entry)
 {
 	pgoff_t offset = swp_offset(entry);
 	struct swap_cluster_info *ci;
@@ -1459,6 +1461,24 @@ int swap_swapcount(struct swap_info_struct *si, swp_entry_t entry)
 	ci = lock_cluster_or_swap_info(si, offset);
 	count = swap_count(si->swap_map[offset]);
 	unlock_cluster_or_swap_info(si, ci);
+	return count;
+}
+
+/*
+ * How many references to @entry are currently swapped out?
+ * This does not give an exact answer when swap count is continued,
+ * but does include the high COUNT_CONTINUED flag to allow for that.
+ */
+int __swp_swapcount(swp_entry_t entry)
+{
+	int count = 0;
+	struct swap_info_struct *si;
+
+	si = get_swap_device(entry);
+	if (si) {
+		count = swap_swapcount(si, entry);
+		put_swap_device(si);
+	}
 	return count;
 }
 
@@ -1745,39 +1765,29 @@ static int unuse_pte(struct vm_area_struct *vma, pmd_t *pmd,
 	struct page *page = folio_file_page(folio, swp_offset(entry));
 	struct page *swapcache;
 	spinlock_t *ptl;
-	pte_t *pte, new_pte, old_pte;
-	bool hwposioned = false;
+	pte_t *pte, new_pte;
 	int ret = 1;
 
 	swapcache = page;
 	page = ksm_might_need_to_copy(page, vma, addr);
 	if (unlikely(!page))
 		return -ENOMEM;
-	else if (unlikely(PTR_ERR(page) == -EHWPOISON))
-		hwposioned = true;
 
 	pte = pte_offset_map_lock(vma->vm_mm, pmd, addr, &ptl);
-	if (unlikely(!pte || !pte_same_as_swp(ptep_get(pte),
-						swp_entry_to_pte(entry)))) {
+	if (unlikely(!pte_same_as_swp(*pte, swp_entry_to_pte(entry)))) {
 		ret = 0;
 		goto out;
 	}
 
-	old_pte = ptep_get(pte);
-
-	if (unlikely(hwposioned || !PageUptodate(page))) {
-		swp_entry_t swp_entry;
+	if (unlikely(!PageUptodate(page))) {
+		pte_t pteval;
 
 		dec_mm_counter(vma->vm_mm, MM_SWAPENTS);
-		if (hwposioned) {
-			swp_entry = make_hwpoison_entry(swapcache);
-			page = swapcache;
-		} else {
-			swp_entry = make_swapin_error_entry();
-		}
-		new_pte = swp_entry_to_pte(swp_entry);
+		pteval = swp_entry_to_pte(make_swapin_error_entry(page));
+		set_pte_at(vma->vm_mm, addr, pte, pteval);
+		swap_free(entry);
 		ret = 0;
-		goto setpte;
+		goto out;
 	}
 
 	/* See do_swap_page() */
@@ -1796,7 +1806,7 @@ static int unuse_pte(struct vm_area_struct *vma, pmd_t *pmd,
 		 * call and have the page locked.
 		 */
 		VM_BUG_ON_PAGE(PageWriteback(page), page);
-		if (pte_swp_exclusive(old_pte))
+		if (pte_swp_exclusive(*pte))
 			rmap_flags |= RMAP_EXCLUSIVE;
 
 		page_add_anon_rmap(page, vma, addr, rmap_flags);
@@ -1805,16 +1815,14 @@ static int unuse_pte(struct vm_area_struct *vma, pmd_t *pmd,
 		lru_cache_add_inactive_or_unevictable(page, vma);
 	}
 	new_pte = pte_mkold(mk_pte(page, vma->vm_page_prot));
-	if (pte_swp_soft_dirty(old_pte))
+	if (pte_swp_soft_dirty(*pte))
 		new_pte = pte_mksoft_dirty(new_pte);
-	if (pte_swp_uffd_wp(old_pte))
+	if (pte_swp_uffd_wp(*pte))
 		new_pte = pte_mkuffd_wp(new_pte);
-setpte:
 	set_pte_at(vma->vm_mm, addr, pte, new_pte);
 	swap_free(entry);
 out:
-	if (pte)
-		pte_unmap_unlock(pte, ptl);
+	pte_unmap_unlock(pte, ptl);
 	if (page != swapcache) {
 		unlock_page(page);
 		put_page(page);
@@ -1826,37 +1834,28 @@ static int unuse_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 			unsigned long addr, unsigned long end,
 			unsigned int type)
 {
-	pte_t *pte = NULL;
+	swp_entry_t entry;
+	pte_t *pte;
 	struct swap_info_struct *si;
+	int ret = 0;
+	volatile unsigned char *swap_map;
 
 	si = swap_info[type];
+	pte = pte_offset_map(pmd, addr);
 	do {
 		struct folio *folio;
 		unsigned long offset;
-		unsigned char swp_count;
-		swp_entry_t entry;
-		int ret;
-		pte_t ptent;
 
-		if (!pte++) {
-			pte = pte_offset_map(pmd, addr);
-			if (!pte)
-				break;
-		}
-
-		ptent = ptep_get_lockless(pte);
-
-		if (!is_swap_pte(ptent))
+		if (!is_swap_pte(*pte))
 			continue;
 
-		entry = pte_to_swp_entry(ptent);
+		entry = pte_to_swp_entry(*pte);
 		if (swp_type(entry) != type)
 			continue;
 
 		offset = swp_offset(entry);
 		pte_unmap(pte);
-		pte = NULL;
-
+		swap_map = &si->swap_map[offset];
 		folio = swap_cache_get_folio(entry, vma, addr);
 		if (!folio) {
 			struct page *page;
@@ -1873,9 +1872,8 @@ static int unuse_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 				folio = page_folio(page);
 		}
 		if (!folio) {
-			swp_count = READ_ONCE(si->swap_map[offset]);
-			if (swp_count == 0 || swp_count == SWAP_MAP_BAD)
-				continue;
+			if (*swap_map == 0 || *swap_map == SWAP_MAP_BAD)
+				goto try_next;
 			return -ENOMEM;
 		}
 
@@ -1885,17 +1883,20 @@ static int unuse_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 		if (ret < 0) {
 			folio_unlock(folio);
 			folio_put(folio);
-			return ret;
+			goto out;
 		}
 
 		folio_free_swap(folio);
 		folio_unlock(folio);
 		folio_put(folio);
-	} while (addr += PAGE_SIZE, addr != end);
+try_next:
+		pte = pte_offset_map(pmd, addr);
+	} while (pte++, addr += PAGE_SIZE, addr != end);
+	pte_unmap(pte - 1);
 
-	if (pte)
-		pte_unmap(pte);
-	return 0;
+	ret = 0;
+out:
+	return ret;
 }
 
 static inline int unuse_pmd_range(struct vm_area_struct *vma, pud_t *pud,
@@ -1910,6 +1911,8 @@ static inline int unuse_pmd_range(struct vm_area_struct *vma, pud_t *pud,
 	do {
 		cond_resched();
 		next = pmd_addr_end(addr, end);
+		if (pmd_none_or_trans_huge_or_clear_bad(pmd))
+			continue;
 		ret = unuse_pte_range(vma, pmd, addr, next, type);
 		if (ret)
 			return ret;
@@ -2087,7 +2090,7 @@ retry:
 
 		entry = swp_entry(type, i);
 		folio = filemap_get_folio(swap_address_space(entry), i);
-		if (IS_ERR(folio))
+		if (!folio)
 			continue;
 
 		/*
@@ -2530,7 +2533,7 @@ SYSCALL_DEFINE1(swapoff, const char __user *, specialfile)
 		struct block_device *bdev = I_BDEV(inode);
 
 		set_blocksize(bdev, old_block_size);
-		blkdev_put(bdev, p);
+		blkdev_put(bdev, FMODE_READ | FMODE_WRITE | FMODE_EXCL);
 	}
 
 	inode_lock(inode);
@@ -2761,7 +2764,7 @@ static int claim_swapfile(struct swap_info_struct *p, struct inode *inode)
 
 	if (S_ISBLK(inode->i_mode)) {
 		p->bdev = blkdev_get_by_dev(inode->i_rdev,
-				BLK_OPEN_READ | BLK_OPEN_WRITE, p, NULL);
+				   FMODE_READ | FMODE_WRITE | FMODE_EXCL, p);
 		if (IS_ERR(p->bdev)) {
 			error = PTR_ERR(p->bdev);
 			p->bdev = NULL;
@@ -3069,7 +3072,7 @@ SYSCALL_DEFINE2(swapon, const char __user *, specialfile, int, swap_flags)
 	if (p->bdev && bdev_stable_writes(p->bdev))
 		p->flags |= SWP_STABLE_WRITES;
 
-	if (p->bdev && bdev_synchronous(p->bdev))
+	if (p->bdev && p->bdev->bd_disk->fops->rw_page)
 		p->flags |= SWP_SYNCHRONOUS_IO;
 
 	if (p->bdev && bdev_nonrot(p->bdev)) {
@@ -3088,7 +3091,7 @@ SYSCALL_DEFINE2(swapon, const char __user *, specialfile, int, swap_flags)
 		 */
 		for_each_possible_cpu(cpu) {
 			per_cpu(*p->cluster_next_cpu, cpu) =
-				get_random_u32_inclusive(1, p->highest_bit);
+				1 + prandom_u32_max(p->highest_bit);
 		}
 		nr_cluster = DIV_ROUND_UP(maxpages, SWAPFILE_CLUSTER);
 
@@ -3212,7 +3215,7 @@ bad_swap:
 	p->cluster_next_cpu = NULL;
 	if (inode && S_ISBLK(inode->i_mode) && p->bdev) {
 		set_blocksize(p->bdev, p->old_block_size);
-		blkdev_put(p->bdev, p);
+		blkdev_put(p->bdev, FMODE_READ | FMODE_WRITE | FMODE_EXCL);
 	}
 	inode = NULL;
 	destroy_swap_extents(p);
@@ -3279,7 +3282,9 @@ static int __swap_duplicate(swp_entry_t entry, unsigned char usage)
 	unsigned char has_cache;
 	int err;
 
-	p = swp_swap_info(entry);
+	p = get_swap_device(entry);
+	if (!p)
+		return -EINVAL;
 
 	offset = swp_offset(entry);
 	ci = lock_cluster_or_swap_info(p, offset);
@@ -3326,6 +3331,7 @@ static int __swap_duplicate(swp_entry_t entry, unsigned char usage)
 
 unlock_out:
 	unlock_cluster_or_swap_info(p, ci);
+	put_swap_device(p);
 	return err;
 }
 
@@ -3456,6 +3462,11 @@ int add_swap_count_continuation(swp_entry_t entry, gfp_t gfp_mask)
 		goto out;
 	}
 
+	/*
+	 * We are fortunate that although vmalloc_to_page uses pte_offset_map,
+	 * no architecture is using highmem pages for kernel page tables: so it
+	 * will not corrupt the GFP_ATOMIC caller's atomic page table kmaps.
+	 */
 	head = vmalloc_to_page(si->swap_map + offset);
 	offset &= ~PAGE_MASK;
 
@@ -3619,12 +3630,12 @@ static void free_swap_count_continuations(struct swap_info_struct *si)
 }
 
 #if defined(CONFIG_MEMCG) && defined(CONFIG_BLK_CGROUP)
-void __folio_throttle_swaprate(struct folio *folio, gfp_t gfp)
+void __cgroup_throttle_swaprate(struct page *page, gfp_t gfp_mask)
 {
 	struct swap_info_struct *si, *next;
-	int nid = folio_nid(folio);
+	int nid = page_to_nid(page);
 
-	if (!(gfp & __GFP_IO))
+	if (!(gfp_mask & __GFP_IO))
 		return;
 
 	if (!blk_cgroup_congested())
@@ -3634,7 +3645,7 @@ void __folio_throttle_swaprate(struct folio *folio, gfp_t gfp)
 	 * We've already scheduled a throttle, avoid taking the global swap
 	 * lock.
 	 */
-	if (current->throttle_disk)
+	if (current->throttle_queue)
 		return;
 
 	spin_lock(&swap_avail_lock);

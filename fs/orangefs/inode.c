@@ -49,8 +49,10 @@ static int orangefs_writepage_locked(struct page *page,
 	/* Should've been handled in orangefs_invalidate_folio. */
 	WARN_ON(off == len || off + wlen > len);
 
+	bv.bv_page = page;
+	bv.bv_len = wlen;
+	bv.bv_offset = off % PAGE_SIZE;
 	WARN_ON(wlen == 0);
-	bvec_set_page(&bv, page, wlen, off % PAGE_SIZE);
 	iov_iter_bvec(&iter, ITER_SOURCE, &bv, 1, wlen);
 
 	ret = wait_for_direct_io(ORANGEFS_IO_WRITE, inode, &off, &iter, wlen,
@@ -100,11 +102,15 @@ static int orangefs_writepages_work(struct orangefs_writepages *ow,
 
 	for (i = 0; i < ow->npages; i++) {
 		set_page_writeback(ow->pages[i]);
-		bvec_set_page(&ow->bv[i], ow->pages[i],
-			      min(page_offset(ow->pages[i]) + PAGE_SIZE,
-			          ow->off + ow->len) -
-			      max(ow->off, page_offset(ow->pages[i])),
-			      i == 0 ? ow->off - page_offset(ow->pages[i]) : 0);
+		ow->bv[i].bv_page = ow->pages[i];
+		ow->bv[i].bv_len = min(page_offset(ow->pages[i]) + PAGE_SIZE,
+		    ow->off + ow->len) -
+		    max(ow->off, page_offset(ow->pages[i]));
+		if (i == 0)
+			ow->bv[i].bv_offset = ow->off -
+			    page_offset(ow->pages[i]);
+		else
+			ow->bv[i].bv_offset = 0;
 	}
 	iov_iter_bvec(&iter, ITER_SOURCE, ow->bv, ow->npages, ow->len);
 
@@ -148,20 +154,21 @@ static int orangefs_writepages_work(struct orangefs_writepages *ow,
 	return ret;
 }
 
-static int orangefs_writepages_callback(struct folio *folio,
-		struct writeback_control *wbc, void *data)
+static int orangefs_writepages_callback(struct page *page,
+    struct writeback_control *wbc, void *data)
 {
 	struct orangefs_writepages *ow = data;
-	struct orangefs_write_range *wr = folio->private;
+	struct orangefs_write_range *wr;
 	int ret;
 
-	if (!wr) {
-		folio_unlock(folio);
+	if (!PagePrivate(page)) {
+		unlock_page(page);
 		/* It's not private so there's nothing to write, right? */
 		printk("writepages_callback not private!\n");
 		BUG();
 		return 0;
 	}
+	wr = (struct orangefs_write_range *)page_private(page);
 
 	ret = -1;
 	if (ow->npages == 0) {
@@ -169,7 +176,7 @@ static int orangefs_writepages_callback(struct folio *folio,
 		ow->len = wr->len;
 		ow->uid = wr->uid;
 		ow->gid = wr->gid;
-		ow->pages[ow->npages++] = &folio->page;
+		ow->pages[ow->npages++] = page;
 		ret = 0;
 		goto done;
 	}
@@ -181,7 +188,7 @@ static int orangefs_writepages_callback(struct folio *folio,
 	}
 	if (ow->off + ow->len == wr->pos) {
 		ow->len += wr->len;
-		ow->pages[ow->npages++] = &folio->page;
+		ow->pages[ow->npages++] = page;
 		ret = 0;
 		goto done;
 	}
@@ -191,10 +198,10 @@ done:
 			orangefs_writepages_work(ow, wbc);
 			ow->npages = 0;
 		}
-		ret = orangefs_writepage_locked(&folio->page, wbc);
-		mapping_set_error(folio->mapping, ret);
-		folio_unlock(folio);
-		folio_end_writeback(folio);
+		ret = orangefs_writepage_locked(page, wbc);
+		mapping_set_error(page->mapping, ret);
+		unlock_page(page);
+		end_page_writeback(page);
 	} else {
 		if (ow->npages == ow->maxpages) {
 			orangefs_writepages_work(ow, wbc);
@@ -244,7 +251,7 @@ static void orangefs_readahead(struct readahead_control *rac)
 	struct iov_iter iter;
 	struct inode *inode = rac->mapping->host;
 	struct xarray *i_pages;
-	struct folio *folio;
+	struct page *page;
 	loff_t new_start = readahead_pos(rac);
 	int ret;
 	size_t new_len = 0;
@@ -275,10 +282,9 @@ static void orangefs_readahead(struct readahead_control *rac)
 		ret = 0;
 
 	/* clean up. */
-	while ((folio = readahead_folio(rac))) {
-		if (!ret)
-			folio_mark_uptodate(folio);
-		folio_unlock(folio);
+	while ((page = readahead_page(rac))) {
+		page_endio(page, false, ret);
+		put_page(page);
 	}
 }
 
@@ -294,7 +300,9 @@ static int orangefs_read_folio(struct file *file, struct folio *folio)
 		orangefs_launder_folio(folio);
 
 	off = folio_pos(folio);
-	bvec_set_folio(&bv, folio, folio_size(folio), 0);
+	bv.bv_page = &folio->page;
+	bv.bv_len = folio_size(folio);
+	bv.bv_offset = 0;
 	iov_iter_bvec(&iter, ITER_DEST, &bv, 1, folio_size(folio));
 
 	ret = wait_for_direct_io(ORANGEFS_IO_READ, inode, &off, &iter,
@@ -522,6 +530,7 @@ static ssize_t orangefs_direct_IO(struct kiocb *iocb,
 	size_t count = iov_iter_count(iter);
 	ssize_t total_count = 0;
 	ssize_t ret = -EINVAL;
+	int i = 0;
 
 	gossip_debug(GOSSIP_FILE_DEBUG,
 		"%s-BEGIN(%pU): count(%d) after estimate_max_iovecs.\n",
@@ -547,6 +556,7 @@ static ssize_t orangefs_direct_IO(struct kiocb *iocb,
 	while (iov_iter_count(iter)) {
 		size_t each_count = iov_iter_count(iter);
 		size_t amt_complete;
+		i++;
 
 		/* how much to transfer in this loop iteration */
 		if (each_count > orangefs_bufmap_size_query())
@@ -814,40 +824,32 @@ again:
 		ORANGEFS_I(inode)->attr_uid = current_fsuid();
 		ORANGEFS_I(inode)->attr_gid = current_fsgid();
 	}
-	setattr_copy(&nop_mnt_idmap, inode, iattr);
+	setattr_copy(&init_user_ns, inode, iattr);
 	spin_unlock(&inode->i_lock);
 	mark_inode_dirty(inode);
+
+	if (iattr->ia_valid & ATTR_MODE)
+		/* change mod on a file that has ACLs */
+		ret = posix_acl_chmod(&init_user_ns, inode, inode->i_mode);
 
 	ret = 0;
 out:
 	return ret;
 }
 
-int __orangefs_setattr_mode(struct dentry *dentry, struct iattr *iattr)
-{
-	int ret;
-	struct inode *inode = d_inode(dentry);
-
-	ret = __orangefs_setattr(inode, iattr);
-	/* change mode on a file that has ACLs */
-	if (!ret && (iattr->ia_valid & ATTR_MODE))
-		ret = posix_acl_chmod(&nop_mnt_idmap, dentry, inode->i_mode);
-	return ret;
-}
-
 /*
  * Change attributes of an object referenced by dentry.
  */
-int orangefs_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
+int orangefs_setattr(struct user_namespace *mnt_userns, struct dentry *dentry,
 		     struct iattr *iattr)
 {
 	int ret;
 	gossip_debug(GOSSIP_INODE_DEBUG, "__orangefs_setattr: called on %pd\n",
 	    dentry);
-	ret = setattr_prepare(&nop_mnt_idmap, dentry, iattr);
+	ret = setattr_prepare(&init_user_ns, dentry, iattr);
 	if (ret)
 	        goto out;
-	ret = __orangefs_setattr_mode(dentry, iattr);
+	ret = __orangefs_setattr(d_inode(dentry), iattr);
 	sync_inode_metadata(d_inode(dentry), 1);
 out:
 	gossip_debug(GOSSIP_INODE_DEBUG, "orangefs_setattr: returning %d\n",
@@ -858,7 +860,7 @@ out:
 /*
  * Obtain attributes of an object given a dentry
  */
-int orangefs_getattr(struct mnt_idmap *idmap, const struct path *path,
+int orangefs_getattr(struct user_namespace *mnt_userns, const struct path *path,
 		     struct kstat *stat, u32 request_mask, unsigned int flags)
 {
 	int ret;
@@ -871,7 +873,7 @@ int orangefs_getattr(struct mnt_idmap *idmap, const struct path *path,
 	ret = orangefs_inode_getattr(inode,
 	    request_mask & STATX_SIZE ? ORANGEFS_GETATTR_SIZE : 0);
 	if (ret == 0) {
-		generic_fillattr(&nop_mnt_idmap, inode, stat);
+		generic_fillattr(&init_user_ns, inode, stat);
 
 		/* override block size reported to stat */
 		if (!(request_mask & STATX_SIZE))
@@ -882,7 +884,7 @@ int orangefs_getattr(struct mnt_idmap *idmap, const struct path *path,
 	return ret;
 }
 
-int orangefs_permission(struct mnt_idmap *idmap,
+int orangefs_permission(struct user_namespace *mnt_userns,
 			struct inode *inode, int mask)
 {
 	int ret;
@@ -897,7 +899,7 @@ int orangefs_permission(struct mnt_idmap *idmap,
 	if (ret < 0)
 		return ret;
 
-	return generic_permission(&nop_mnt_idmap, inode, mask);
+	return generic_permission(&init_user_ns, inode, mask);
 }
 
 int orangefs_update_time(struct inode *inode, struct timespec64 *time, int flags)
@@ -936,7 +938,7 @@ static int orangefs_fileattr_get(struct dentry *dentry, struct fileattr *fa)
 	return 0;
 }
 
-static int orangefs_fileattr_set(struct mnt_idmap *idmap,
+static int orangefs_fileattr_set(struct user_namespace *mnt_userns,
 				 struct dentry *dentry, struct fileattr *fa)
 {
 	u64 val = 0;
@@ -965,7 +967,7 @@ static int orangefs_fileattr_set(struct mnt_idmap *idmap,
 
 /* ORANGEFS2 implementation of VFS inode operations for files */
 static const struct inode_operations orangefs_file_inode_operations = {
-	.get_inode_acl = orangefs_get_acl,
+	.get_acl = orangefs_get_acl,
 	.set_acl = orangefs_set_acl,
 	.setattr = orangefs_setattr,
 	.getattr = orangefs_getattr,
@@ -1095,9 +1097,8 @@ struct inode *orangefs_iget(struct super_block *sb,
  * Allocate an inode for a newly created file and insert it into the inode hash.
  */
 struct inode *orangefs_new_inode(struct super_block *sb, struct inode *dir,
-		umode_t mode, dev_t dev, struct orangefs_object_kref *ref)
+		int mode, dev_t dev, struct orangefs_object_kref *ref)
 {
-	struct posix_acl *acl = NULL, *default_acl = NULL;
 	unsigned long hash = orangefs_handle_hash(ref);
 	struct inode *inode;
 	int error;
@@ -1114,10 +1115,6 @@ struct inode *orangefs_new_inode(struct super_block *sb, struct inode *dir,
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
 
-	error = posix_acl_create(dir, &mode, &default_acl, &acl);
-	if (error)
-		goto out_iput;
-
 	orangefs_set_inode(inode, ref);
 	inode->i_ino = hash;	/* needed for stat etc */
 
@@ -1128,19 +1125,6 @@ struct inode *orangefs_new_inode(struct super_block *sb, struct inode *dir,
 	orangefs_init_iops(inode);
 	inode->i_rdev = dev;
 
-	if (default_acl) {
-		error = __orangefs_set_acl(inode, default_acl,
-					   ACL_TYPE_DEFAULT);
-		if (error)
-			goto out_iput;
-	}
-
-	if (acl) {
-		error = __orangefs_set_acl(inode, acl, ACL_TYPE_ACCESS);
-		if (error)
-			goto out_iput;
-	}
-
 	error = insert_inode_locked4(inode, hash, orangefs_test_inode, ref);
 	if (error < 0)
 		goto out_iput;
@@ -1148,22 +1132,10 @@ struct inode *orangefs_new_inode(struct super_block *sb, struct inode *dir,
 	gossip_debug(GOSSIP_INODE_DEBUG,
 		     "Initializing ACL's for inode %pU\n",
 		     get_khandle_from_ino(inode));
-	if (mode != inode->i_mode) {
-		struct iattr iattr = {
-			.ia_mode = mode,
-			.ia_valid = ATTR_MODE,
-		};
-		inode->i_mode = mode;
-		__orangefs_setattr(inode, &iattr);
-		__posix_acl_chmod(&acl, GFP_KERNEL, inode->i_mode);
-	}
-	posix_acl_release(acl);
-	posix_acl_release(default_acl);
+	orangefs_init_acl(inode, dir);
 	return inode;
 
 out_iput:
 	iput(inode);
-	posix_acl_release(acl);
-	posix_acl_release(default_acl);
 	return ERR_PTR(error);
 }

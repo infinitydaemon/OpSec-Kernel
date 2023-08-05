@@ -279,7 +279,8 @@ check_transfer()
 
 check_mptcp_disabled()
 {
-	local disabled_ns="ns_disabled-$rndh"
+	local disabled_ns
+	disabled_ns="ns_disabled-$sech-$(mktemp -u XXXXXX)"
 	ip netns add ${disabled_ns} || exit $ksft_skip
 
 	# net.mptcp.enabled should be enabled by default
@@ -778,30 +779,9 @@ run_tests_peekmode()
 	run_tests_lo "$ns1" "$ns1" dead:beef:1::1 1 "-P ${peekmode}"
 }
 
-run_tests_mptfo()
-{
-	if ! mptcp_lib_kallsyms_has "mptcp_fastopen_"; then
-		echo "INFO: TFO not supported by the kernel: SKIP"
-		return
-	fi
-
-	echo "INFO: with MPTFO start"
-	ip netns exec "$ns1" sysctl -q net.ipv4.tcp_fastopen=2
-	ip netns exec "$ns2" sysctl -q net.ipv4.tcp_fastopen=1
-
-	run_tests_lo "$ns1" "$ns2" 10.0.1.1 0 "-o MPTFO"
-	run_tests_lo "$ns1" "$ns2" 10.0.1.1 0 "-o MPTFO"
-
-	run_tests_lo "$ns1" "$ns2" dead:beef:1::1 0 "-o MPTFO"
-	run_tests_lo "$ns1" "$ns2" dead:beef:1::1 0 "-o MPTFO"
-
-	ip netns exec "$ns1" sysctl -q net.ipv4.tcp_fastopen=0
-	ip netns exec "$ns2" sysctl -q net.ipv4.tcp_fastopen=0
-	echo "INFO: with MPTFO end"
-}
-
 run_tests_disconnect()
 {
+	local peekmode="$1"
 	local old_cin=$cin
 	local old_sin=$sin
 
@@ -812,8 +792,9 @@ run_tests_disconnect()
 
 	cat $cin $cin $cin > "$cin".disconnect
 
-	# force do_transfer to cope with the multiple transmissions
+	# force do_transfer to cope with the multiple tranmissions
 	sin="$cin.disconnect"
+	sin_disconnect=$old_sin
 	cin="$cin.disconnect"
 	cin_disconnect="$old_cin"
 	connect_per_transfer=3
@@ -824,6 +805,7 @@ run_tests_disconnect()
 
 	# restore previous status
 	sin=$old_sin
+	sin_disconnect="$cout".disconnect
 	cin=$old_cin
 	cin_disconnect="$cin".disconnect
 	connect_per_transfer=1
@@ -940,10 +922,6 @@ done
 run_tests_peekmode "saveWithPeek"
 run_tests_peekmode "saveAfterPeek"
 stop_if_error "Tests with peek mode have failed"
-
-# MPTFO (MultiPath TCP Fatopen tests)
-run_tests_mptfo
-stop_if_error "Tests with MPTFO have failed"
 
 # connect to ns4 ip address, ns2 should intercept/proxy
 run_test_transparent 10.0.3.1 "tproxy ipv4"

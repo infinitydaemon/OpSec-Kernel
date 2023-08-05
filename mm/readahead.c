@@ -120,6 +120,7 @@
 #include <linux/export.h>
 #include <linux/backing-dev.h>
 #include <linux/task_io_accounting_ops.h>
+#include <linux/pagevec.h>
 #include <linux/pagemap.h>
 #include <linux/psi.h>
 #include <linux/syscalls.h>
@@ -800,25 +801,21 @@ void readahead_expand(struct readahead_control *ractl,
 	/* Expand the leading edge downwards */
 	while (ractl->_index > new_index) {
 		unsigned long index = ractl->_index - 1;
-		struct folio *folio = xa_load(&mapping->i_pages, index);
+		struct page *page = xa_load(&mapping->i_pages, index);
 
-		if (folio && !xa_is_value(folio))
-			return; /* Folio apparently present */
+		if (page && !xa_is_value(page))
+			return; /* Page apparently present */
 
-		folio = filemap_alloc_folio(gfp_mask, 0);
-		if (!folio)
+		page = __page_cache_alloc(gfp_mask);
+		if (!page)
 			return;
-		if (filemap_add_folio(mapping, folio, index, gfp_mask) < 0) {
-			folio_put(folio);
+		if (add_to_page_cache_lru(page, mapping, index, gfp_mask) < 0) {
+			put_page(page);
 			return;
 		}
-		if (unlikely(folio_test_workingset(folio)) &&
-				!ractl->_workingset) {
-			ractl->_workingset = true;
-			psi_memstall_enter(&ractl->_pflags);
-		}
+
 		ractl->_nr_pages++;
-		ractl->_index = folio->index;
+		ractl->_index = page->index;
 	}
 
 	new_len += new_start - readahead_pos(ractl);
@@ -827,20 +824,19 @@ void readahead_expand(struct readahead_control *ractl,
 	/* Expand the trailing edge upwards */
 	while (ractl->_nr_pages < new_nr_pages) {
 		unsigned long index = ractl->_index + ractl->_nr_pages;
-		struct folio *folio = xa_load(&mapping->i_pages, index);
+		struct page *page = xa_load(&mapping->i_pages, index);
 
-		if (folio && !xa_is_value(folio))
-			return; /* Folio apparently present */
+		if (page && !xa_is_value(page))
+			return; /* Page apparently present */
 
-		folio = filemap_alloc_folio(gfp_mask, 0);
-		if (!folio)
+		page = __page_cache_alloc(gfp_mask);
+		if (!page)
 			return;
-		if (filemap_add_folio(mapping, folio, index, gfp_mask) < 0) {
-			folio_put(folio);
+		if (add_to_page_cache_lru(page, mapping, index, gfp_mask) < 0) {
+			put_page(page);
 			return;
 		}
-		if (unlikely(folio_test_workingset(folio)) &&
-				!ractl->_workingset) {
+		if (unlikely(PageWorkingset(page)) && !ractl->_workingset) {
 			ractl->_workingset = true;
 			psi_memstall_enter(&ractl->_pflags);
 		}

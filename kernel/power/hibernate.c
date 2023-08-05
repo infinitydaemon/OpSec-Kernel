@@ -11,7 +11,6 @@
 
 #define pr_fmt(fmt) "PM: hibernation: " fmt
 
-#include <linux/blkdev.h>
 #include <linux/export.h>
 #include <linux/suspend.h>
 #include <linux/reboot.h>
@@ -65,6 +64,7 @@ enum {
 static int hibernation_mode = HIBERNATION_SHUTDOWN;
 
 bool freezer_test_done;
+bool snapshot_test;
 
 static const struct platform_hibernation_ops *hibernation_ops;
 
@@ -684,22 +684,26 @@ static void power_down(void)
 		cpu_relax();
 }
 
-static int load_image_and_restore(bool snapshot_test)
+static int load_image_and_restore(void)
 {
 	int error;
 	unsigned int flags;
+	fmode_t mode = FMODE_READ;
+
+	if (snapshot_test)
+		mode |= FMODE_EXCL;
 
 	pm_pr_dbg("Loading hibernation image.\n");
 
 	lock_device_hotplug();
 	error = create_basic_memory_bitmaps();
 	if (error) {
-		swsusp_close(snapshot_test);
+		swsusp_close(mode);
 		goto Unlock;
 	}
 
 	error = swsusp_read(&flags);
-	swsusp_close(snapshot_test);
+	swsusp_close(mode);
 	if (!error)
 		error = hibernation_restore(flags & SF_PLATFORM_MODE);
 
@@ -717,7 +721,6 @@ static int load_image_and_restore(bool snapshot_test)
  */
 int hibernate(void)
 {
-	bool snapshot_test = false;
 	unsigned int sleep_flags;
 	int error;
 
@@ -744,6 +747,9 @@ int hibernate(void)
 	error = freeze_processes();
 	if (error)
 		goto Exit;
+
+	/* protected by system_transition_mutex */
+	snapshot_test = false;
 
 	lock_device_hotplug();
 	/* Allocate memory management structures */
@@ -786,9 +792,9 @@ int hibernate(void)
 	unlock_device_hotplug();
 	if (snapshot_test) {
 		pm_pr_dbg("Checking hibernation image\n");
-		error = swsusp_check(snapshot_test);
+		error = swsusp_check();
 		if (!error)
-			error = load_image_and_restore(snapshot_test);
+			error = load_image_and_restore();
 	}
 	thaw_processes();
 
@@ -904,10 +910,52 @@ unlock:
 }
 EXPORT_SYMBOL_GPL(hibernate_quiet_exec);
 
-static int __init find_resume_device(void)
+/**
+ * software_resume - Resume from a saved hibernation image.
+ *
+ * This routine is called as a late initcall, when all devices have been
+ * discovered and initialized already.
+ *
+ * The image reading code is called to see if there is a hibernation image
+ * available for reading.  If that is the case, devices are quiesced and the
+ * contents of memory is restored from the saved image.
+ *
+ * If this is successful, control reappears in the restored target kernel in
+ * hibernation_snapshot() which returns to hibernate().  Otherwise, the routine
+ * attempts to recover gracefully and make the kernel return to the normal mode
+ * of operation.
+ */
+static int software_resume(void)
 {
-	if (!strlen(resume_file))
-		return -ENOENT;
+	int error;
+
+	/*
+	 * If the user said "noresume".. bail out early.
+	 */
+	if (noresume || !hibernation_available())
+		return 0;
+
+	/*
+	 * name_to_dev_t() below takes a sysfs buffer mutex when sysfs
+	 * is configured into the kernel. Since the regular hibernate
+	 * trigger path is via sysfs which takes a buffer mutex before
+	 * calling hibernate functions (which take system_transition_mutex)
+	 * this can cause lockdep to complain about a possible ABBA deadlock
+	 * which cannot happen since we're in the boot code here and
+	 * sysfs can't be invoked yet. Therefore, we use a subclass
+	 * here to avoid lockdep complaining.
+	 */
+	mutex_lock_nested(&system_transition_mutex, SINGLE_DEPTH_NESTING);
+
+	snapshot_test = false;
+
+	if (swsusp_resume_device)
+		goto Check_image;
+
+	if (!strlen(resume_file)) {
+		error = -ENOENT;
+		goto Unlock;
+	}
 
 	pm_pr_dbg("Checking hibernation image partition %s\n", resume_file);
 
@@ -918,41 +966,40 @@ static int __init find_resume_device(void)
 	}
 
 	/* Check if the device is there */
-	if (!early_lookup_bdev(resume_file, &swsusp_resume_device))
-		return 0;
+	swsusp_resume_device = name_to_dev_t(resume_file);
+	if (!swsusp_resume_device) {
+		/*
+		 * Some device discovery might still be in progress; we need
+		 * to wait for this to finish.
+		 */
+		wait_for_device_probe();
 
-	/*
-	 * Some device discovery might still be in progress; we need to wait for
-	 * this to finish.
-	 */
-	wait_for_device_probe();
-	if (resume_wait) {
-		while (early_lookup_bdev(resume_file, &swsusp_resume_device))
-			msleep(10);
-		async_synchronize_full();
+		if (resume_wait) {
+			while ((swsusp_resume_device = name_to_dev_t(resume_file)) == 0)
+				msleep(10);
+			async_synchronize_full();
+		}
+
+		swsusp_resume_device = name_to_dev_t(resume_file);
+		if (!swsusp_resume_device) {
+			error = -ENODEV;
+			goto Unlock;
+		}
 	}
 
-	return early_lookup_bdev(resume_file, &swsusp_resume_device);
-}
-
-static int software_resume(void)
-{
-	int error;
-
+ Check_image:
 	pm_pr_dbg("Hibernation image partition %d:%d present\n",
 		MAJOR(swsusp_resume_device), MINOR(swsusp_resume_device));
 
 	pm_pr_dbg("Looking for hibernation image.\n");
-
-	mutex_lock(&system_transition_mutex);
-	error = swsusp_check(false);
+	error = swsusp_check();
 	if (error)
 		goto Unlock;
 
 	/* The snapshot device should not be opened while we're running */
 	if (!hibernate_acquire()) {
 		error = -EBUSY;
-		swsusp_close(false);
+		swsusp_close(FMODE_READ | FMODE_EXCL);
 		goto Unlock;
 	}
 
@@ -973,7 +1020,7 @@ static int software_resume(void)
 		goto Close_Finish;
 	}
 
-	error = load_image_and_restore(false);
+	error = load_image_and_restore();
 	thaw_processes();
  Finish:
 	pm_notifier_call_chain(PM_POST_RESTORE);
@@ -987,43 +1034,11 @@ static int software_resume(void)
 	pm_pr_dbg("Hibernation image not present or could not be loaded.\n");
 	return error;
  Close_Finish:
-	swsusp_close(false);
+	swsusp_close(FMODE_READ | FMODE_EXCL);
 	goto Finish;
 }
 
-/**
- * software_resume_initcall - Resume from a saved hibernation image.
- *
- * This routine is called as a late initcall, when all devices have been
- * discovered and initialized already.
- *
- * The image reading code is called to see if there is a hibernation image
- * available for reading.  If that is the case, devices are quiesced and the
- * contents of memory is restored from the saved image.
- *
- * If this is successful, control reappears in the restored target kernel in
- * hibernation_snapshot() which returns to hibernate().  Otherwise, the routine
- * attempts to recover gracefully and make the kernel return to the normal mode
- * of operation.
- */
-static int __init software_resume_initcall(void)
-{
-	/*
-	 * If the user said "noresume".. bail out early.
-	 */
-	if (noresume || !hibernation_available())
-		return 0;
-
-	if (!swsusp_resume_device) {
-		int error = find_resume_device();
-
-		if (error)
-			return error;
-	}
-
-	return software_resume();
-}
-late_initcall_sync(software_resume_initcall);
+late_initcall_sync(software_resume);
 
 
 static const char * const hibernation_modes[] = {
@@ -1162,11 +1177,7 @@ static ssize_t resume_store(struct kobject *kobj, struct kobj_attribute *attr,
 	unsigned int sleep_flags;
 	int len = n;
 	char *name;
-	dev_t dev;
-	int error;
-
-	if (!hibernation_available())
-		return 0;
+	dev_t res;
 
 	if (len && buf[len-1] == '\n')
 		len--;
@@ -1174,30 +1185,13 @@ static ssize_t resume_store(struct kobject *kobj, struct kobj_attribute *attr,
 	if (!name)
 		return -ENOMEM;
 
-	error = lookup_bdev(name, &dev);
-	if (error) {
-		unsigned maj, min, offset;
-		char *p, dummy;
-
-		error = 0;
-		if (sscanf(name, "%u:%u%c", &maj, &min, &dummy) == 2 ||
-		    sscanf(name, "%u:%u:%u:%c", &maj, &min, &offset,
-				&dummy) == 3) {
-			dev = MKDEV(maj, min);
-			if (maj != MAJOR(dev) || min != MINOR(dev))
-				error = -EINVAL;
-		} else {
-			dev = new_decode_dev(simple_strtoul(name, &p, 16));
-			if (*p)
-				error = -EINVAL;
-		}
-	}
+	res = name_to_dev_t(name);
 	kfree(name);
-	if (error)
-		return error;
+	if (!res)
+		return -EINVAL;
 
 	sleep_flags = lock_system_sleep();
-	swsusp_resume_device = dev;
+	swsusp_resume_device = res;
 	unlock_system_sleep(sleep_flags);
 
 	pm_pr_dbg("Configured hibernation resume from disk to %u\n",

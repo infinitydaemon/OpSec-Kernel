@@ -391,7 +391,8 @@ static int lm3560_init_device(struct lm3560_flash *flash)
 	return rval;
 }
 
-static int lm3560_probe(struct i2c_client *client)
+static int lm3560_probe(struct i2c_client *client,
+			const struct i2c_device_id *devid)
 {
 	struct lm3560_flash *flash;
 	struct lm3560_platform_data *pdata = dev_get_platdata(&client->dev);

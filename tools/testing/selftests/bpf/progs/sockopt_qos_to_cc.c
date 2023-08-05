@@ -9,8 +9,6 @@
 
 char _license[] SEC("license") = "GPL";
 
-__u32 page_size = 0;
-
 SEC("cgroup/setsockopt")
 int sockopt_qos_to_cc(struct bpf_sockopt *ctx)
 {
@@ -21,7 +19,7 @@ int sockopt_qos_to_cc(struct bpf_sockopt *ctx)
 	char cc_cubic[TCP_CA_NAME_MAX] = "cubic";
 
 	if (ctx->level != SOL_IPV6 || ctx->optname != IPV6_TCLASS)
-		goto out;
+		return 1;
 
 	if (optval + 1 > optval_end)
 		return 0; /* EPERM, bounds check */
@@ -37,11 +35,5 @@ int sockopt_qos_to_cc(struct bpf_sockopt *ctx)
 				sizeof(cc_reno)))
 			return 0;
 	}
-	return 1;
-
-out:
-	/* optval larger than PAGE_SIZE use kernel's buffer. */
-	if (ctx->optlen > page_size)
-		ctx->optlen = 0;
 	return 1;
 }

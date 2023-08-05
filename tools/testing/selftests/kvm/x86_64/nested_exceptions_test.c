@@ -166,9 +166,12 @@ static void __attribute__((__flatten__)) l1_guest_code(void *test_data)
 
 static void assert_ucall_vector(struct kvm_vcpu *vcpu, int vector)
 {
+	struct kvm_run *run = vcpu->run;
 	struct ucall uc;
 
-	TEST_ASSERT_KVM_EXIT_REASON(vcpu, KVM_EXIT_IO);
+	TEST_ASSERT(run->exit_reason == KVM_EXIT_IO,
+		    "Unexpected exit reason: %u (%s),\n",
+		    run->exit_reason, exit_reason_str(run->exit_reason));
 
 	switch (get_ucall(vcpu, &uc)) {
 	case UCALL_SYNC:

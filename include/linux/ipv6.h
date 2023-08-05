@@ -336,7 +336,10 @@ static inline struct ipv6_pinfo *inet6_sk(const struct sock *__sk)
 	return sk_fullsock(__sk) ? inet_sk(__sk)->pinet6 : NULL;
 }
 
-#define raw6_sk(ptr) container_of_const(ptr, struct raw6_sock, inet.sk)
+static inline struct raw6_sock *raw6_sk(const struct sock *sk)
+{
+	return (struct raw6_sock *)sk;
+}
 
 #define ipv6_only_sock(sk)	(sk->sk_ipv6only)
 #define ipv6_sk_rxinfo(sk)	((sk)->sk_family == PF_INET6 && \

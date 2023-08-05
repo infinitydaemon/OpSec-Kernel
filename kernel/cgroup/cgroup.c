@@ -57,7 +57,6 @@
 #include <linux/file.h>
 #include <linux/fs_parser.h>
 #include <linux/sched/cputime.h>
-#include <linux/sched/deadline.h>
 #include <linux/psi.h>
 #include <net/sock.h>
 
@@ -249,12 +248,6 @@ static int cgroup_addrm_files(struct cgroup_subsys_state *css,
 			      struct cgroup *cgrp, struct cftype cfts[],
 			      bool is_add);
 
-#ifdef CONFIG_DEBUG_CGROUP_REF
-#define CGROUP_REF_FN_ATTRS	noinline
-#define CGROUP_REF_EXPORT(fn)	EXPORT_SYMBOL_GPL(fn);
-#include <linux/cgroup_refcnt.h>
-#endif
-
 /**
  * cgroup_ssid_enabled - cgroup subsys enabled test by subsys ID
  * @ssid: subsys ID of interest
@@ -313,6 +306,8 @@ bool cgroup_ssid_enabled(int ssid)
  *   masks of ancestors.
  *
  * - blkcg: blk-throttle becomes properly hierarchical.
+ *
+ * - debug: disallowed on the default hierarchy.
  */
 bool cgroup_on_dfl(const struct cgroup *cgrp)
 {
@@ -355,7 +350,7 @@ static bool cgroup_has_tasks(struct cgroup *cgrp)
 	return cgrp->nr_populated_csets;
 }
 
-static bool cgroup_is_threaded(struct cgroup *cgrp)
+bool cgroup_is_threaded(struct cgroup *cgrp)
 {
 	return cgrp->dom_cgrp != cgrp;
 }
@@ -394,7 +389,7 @@ static bool cgroup_can_be_thread_root(struct cgroup *cgrp)
 }
 
 /* is @cgrp root of a threaded subtree? */
-static bool cgroup_is_thread_root(struct cgroup *cgrp)
+bool cgroup_is_thread_root(struct cgroup *cgrp)
 {
 	/* thread root should be a domain */
 	if (cgroup_is_threaded(cgrp))
@@ -617,7 +612,7 @@ EXPORT_SYMBOL_GPL(cgroup_get_e_css);
 static void cgroup_get_live(struct cgroup *cgrp)
 {
 	WARN_ON_ONCE(cgroup_is_dead(cgrp));
-	cgroup_get(cgrp);
+	css_get(&cgrp->self);
 }
 
 /**
@@ -686,6 +681,21 @@ EXPORT_SYMBOL_GPL(of_css);
 		if (!((css) = rcu_dereference_check(			\
 				(cgrp)->subsys[(ssid)],			\
 				lockdep_is_held(&cgroup_mutex)))) { }	\
+		else
+
+/**
+ * for_each_e_css - iterate all effective css's of a cgroup
+ * @css: the iteration cursor
+ * @ssid: the index of the subsystem, CGROUP_SUBSYS_COUNT after reaching the end
+ * @cgrp: the target cgroup to iterate css's of
+ *
+ * Should be called under cgroup_[tree_]mutex.
+ */
+#define for_each_e_css(css, ssid, cgrp)					    \
+	for ((ssid) = 0; (ssid) < CGROUP_SUBSYS_COUNT; (ssid)++)	    \
+		if (!((css) = cgroup_e_css_by_mask(cgrp,		    \
+						   cgroup_subsys[(ssid)]))) \
+			;						    \
 		else
 
 /**
@@ -1449,18 +1459,8 @@ static struct cgroup *current_cgns_cgroup_dfl(void)
 {
 	struct css_set *cset;
 
-	if (current->nsproxy) {
-		cset = current->nsproxy->cgroup_ns->root_cset;
-		return __cset_cgroup_from_root(cset, &cgrp_dfl_root);
-	} else {
-		/*
-		 * NOTE: This function may be called from bpf_cgroup_from_id()
-		 * on a task which has already passed exit_task_namespaces() and
-		 * nsproxy == NULL. Fall back to cgrp_dfl_root which will make all
-		 * cgroups visible for lookups.
-		 */
-		return &cgrp_dfl_root.cgrp;
-	}
+	cset = current->nsproxy->cgroup_ns->root_cset;
+	return __cset_cgroup_from_root(cset, &cgrp_dfl_root);
 }
 
 /* look up cgroup associated with given css_set on the specified hierarchy */
@@ -2377,6 +2377,45 @@ int cgroup_path_ns(struct cgroup *cgrp, char *buf, size_t buflen,
 EXPORT_SYMBOL_GPL(cgroup_path_ns);
 
 /**
+ * task_cgroup_path - cgroup path of a task in the first cgroup hierarchy
+ * @task: target task
+ * @buf: the buffer to write the path into
+ * @buflen: the length of the buffer
+ *
+ * Determine @task's cgroup on the first (the one with the lowest non-zero
+ * hierarchy_id) cgroup hierarchy and copy its path into @buf.  This
+ * function grabs cgroup_mutex and shouldn't be used inside locks used by
+ * cgroup controller callbacks.
+ *
+ * Return value is the same as kernfs_path().
+ */
+int task_cgroup_path(struct task_struct *task, char *buf, size_t buflen)
+{
+	struct cgroup_root *root;
+	struct cgroup *cgrp;
+	int hierarchy_id = 1;
+	int ret;
+
+	cgroup_lock();
+	spin_lock_irq(&css_set_lock);
+
+	root = idr_get_next(&cgroup_hierarchy_idr, &hierarchy_id);
+
+	if (root) {
+		cgrp = task_cgroup_from_root(task, root);
+		ret = cgroup_path_ns_locked(cgrp, buf, buflen, &init_cgroup_ns);
+	} else {
+		/* if no hierarchy exists, everyone is in "/" */
+		ret = strscpy(buf, "/", buflen);
+	}
+
+	spin_unlock_irq(&css_set_lock);
+	cgroup_unlock();
+	return ret;
+}
+EXPORT_SYMBOL_GPL(task_cgroup_path);
+
+/**
  * cgroup_attach_lock - Lock for ->attach()
  * @lock_threadgroup: whether to down_write cgroup_threadgroup_rwsem
  *
@@ -2830,17 +2869,19 @@ int cgroup_migrate(struct task_struct *leader, bool threadgroup,
 	struct task_struct *task;
 
 	/*
-	 * The following thread iteration should be inside an RCU critical
-	 * section to prevent tasks from being freed while taking the snapshot.
-	 * spin_lock_irq() implies RCU critical section here.
+	 * Prevent freeing of tasks while we take a snapshot. Tasks that are
+	 * already PF_EXITING could be freed from underneath us unless we
+	 * take an rcu_read_lock.
 	 */
 	spin_lock_irq(&css_set_lock);
+	rcu_read_lock();
 	task = leader;
 	do {
 		cgroup_migrate_add_task(task, mgctx);
 		if (!threadgroup)
 			break;
 	} while_each_thread(leader, task);
+	rcu_read_unlock();
 	spin_unlock_irq(&css_set_lock);
 
 	return cgroup_migrate_execute(mgctx);
@@ -3834,14 +3875,6 @@ static __poll_t cgroup_pressure_poll(struct kernfs_open_file *of,
 	struct cgroup_file_ctx *ctx = of->priv;
 
 	return psi_trigger_poll(&ctx->psi.trigger, of->file, pt);
-}
-
-static int cgroup_pressure_open(struct kernfs_open_file *of)
-{
-	if (of->file->f_mode & FMODE_WRITE && !capable(CAP_SYS_RESOURCE))
-		return -EPERM;
-
-	return 0;
 }
 
 static void cgroup_pressure_release(struct kernfs_open_file *of)
@@ -5042,7 +5075,7 @@ static int cgroup_may_write(const struct cgroup *cgrp, struct super_block *sb)
 	if (!inode)
 		return -ENOMEM;
 
-	ret = inode_permission(&nop_mnt_idmap, inode, MAY_WRITE);
+	ret = inode_permission(&init_user_ns, inode, MAY_WRITE);
 	iput(inode);
 	return ret;
 }
@@ -5243,7 +5276,6 @@ static struct cftype cgroup_psi_files[] = {
 	{
 		.name = "io.pressure",
 		.file_offset = offsetof(struct cgroup, psi_files[PSI_IO]),
-		.open = cgroup_pressure_open,
 		.seq_show = cgroup_io_pressure_show,
 		.write = cgroup_io_pressure_write,
 		.poll = cgroup_pressure_poll,
@@ -5252,7 +5284,6 @@ static struct cftype cgroup_psi_files[] = {
 	{
 		.name = "memory.pressure",
 		.file_offset = offsetof(struct cgroup, psi_files[PSI_MEM]),
-		.open = cgroup_pressure_open,
 		.seq_show = cgroup_memory_pressure_show,
 		.write = cgroup_memory_pressure_write,
 		.poll = cgroup_pressure_poll,
@@ -5261,7 +5292,6 @@ static struct cftype cgroup_psi_files[] = {
 	{
 		.name = "cpu.pressure",
 		.file_offset = offsetof(struct cgroup, psi_files[PSI_CPU]),
-		.open = cgroup_pressure_open,
 		.seq_show = cgroup_cpu_pressure_show,
 		.write = cgroup_cpu_pressure_write,
 		.poll = cgroup_pressure_poll,
@@ -5271,7 +5301,6 @@ static struct cftype cgroup_psi_files[] = {
 	{
 		.name = "irq.pressure",
 		.file_offset = offsetof(struct cgroup, psi_files[PSI_IRQ]),
-		.open = cgroup_pressure_open,
 		.seq_show = cgroup_irq_pressure_show,
 		.write = cgroup_irq_pressure_write,
 		.poll = cgroup_pressure_poll,
@@ -5334,7 +5363,6 @@ static void css_free_rwork_fn(struct work_struct *work)
 		atomic_dec(&cgrp->root->nr_cgrps);
 		cgroup1_pidlist_destroy_all(cgrp);
 		cancel_work_sync(&cgrp->release_agent_work);
-		bpf_cgrp_storage_free(cgrp);
 
 		if (cgroup_parent(cgrp)) {
 			/*
@@ -6662,9 +6690,6 @@ void cgroup_exit(struct task_struct *tsk)
 	list_add_tail(&tsk->cg_list, &cset->dying_tasks);
 	cset->nr_tasks--;
 
-	if (dl_task(tsk))
-		dec_dl_tasks_cs(tsk);
-
 	WARN_ON_ONCE(cgroup_task_frozen(tsk));
 	if (unlikely(!(tsk->flags & PF_KTHREAD) &&
 		     test_bit(CGRP_FREEZE, &task_dfl_cgroup(tsk)->flags)))
@@ -6877,12 +6902,14 @@ EXPORT_SYMBOL_GPL(cgroup_get_from_path);
 struct cgroup *cgroup_v1v2_get_from_fd(int fd)
 {
 	struct cgroup *cgrp;
-	struct fd f = fdget_raw(fd);
-	if (!f.file)
+	struct file *f;
+
+	f = fget_raw(fd);
+	if (!f)
 		return ERR_PTR(-EBADF);
 
-	cgrp = cgroup_v1v2_get_from_file(f.file);
-	fdput(f);
+	cgrp = cgroup_v1v2_get_from_file(f);
+	fput(f);
 	return cgrp;
 }
 

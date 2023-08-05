@@ -35,6 +35,7 @@ SEC("raw_tp/sys_enter")
 int handler2(const void *ctx)
 {
 	int *active;
+	__u32 cpu;
 
 	active = bpf_this_cpu_ptr(&bpf_prog_active);
 	write_active(active);

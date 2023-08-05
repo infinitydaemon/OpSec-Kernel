@@ -189,7 +189,8 @@ static int ext4_read_inline_data(struct inode *inode, void *buffer,
 
 	BUG_ON(len > EXT4_I(inode)->i_inline_size);
 
-	cp_len = min_t(unsigned int, len, EXT4_MIN_INLINE_DATA_SIZE);
+	cp_len = len < EXT4_MIN_INLINE_DATA_SIZE ?
+			len : EXT4_MIN_INLINE_DATA_SIZE;
 
 	raw_inode = ext4_raw_inode(iloc);
 	memcpy(buffer, (void *)(raw_inode->i_block), cp_len);
@@ -477,16 +478,16 @@ out:
 	return error;
 }
 
-static int ext4_read_inline_folio(struct inode *inode, struct folio *folio)
+static int ext4_read_inline_page(struct inode *inode, struct page *page)
 {
 	void *kaddr;
 	int ret = 0;
 	size_t len;
 	struct ext4_iloc iloc;
 
-	BUG_ON(!folio_test_locked(folio));
+	BUG_ON(!PageLocked(page));
 	BUG_ON(!ext4_has_inline_data(inode));
-	BUG_ON(folio->index);
+	BUG_ON(page->index);
 
 	if (!EXT4_I(inode)->i_inline_off) {
 		ext4_warning(inode->i_sb, "inode %lu doesn't have inline data.",
@@ -499,20 +500,19 @@ static int ext4_read_inline_folio(struct inode *inode, struct folio *folio)
 		goto out;
 
 	len = min_t(size_t, ext4_get_inline_size(inode), i_size_read(inode));
-	BUG_ON(len > PAGE_SIZE);
-	kaddr = kmap_local_folio(folio, 0);
+	kaddr = kmap_atomic(page);
 	ret = ext4_read_inline_data(inode, kaddr, len, &iloc);
-	flush_dcache_folio(folio);
-	kunmap_local(kaddr);
-	folio_zero_segment(folio, len, folio_size(folio));
-	folio_mark_uptodate(folio);
+	flush_dcache_page(page);
+	kunmap_atomic(kaddr);
+	zero_user_segment(page, len, PAGE_SIZE);
+	SetPageUptodate(page);
 	brelse(iloc.bh);
 
 out:
 	return ret;
 }
 
-int ext4_readpage_inline(struct inode *inode, struct folio *folio)
+int ext4_readpage_inline(struct inode *inode, struct page *page)
 {
 	int ret = 0;
 
@@ -526,16 +526,16 @@ int ext4_readpage_inline(struct inode *inode, struct folio *folio)
 	 * Current inline data can only exist in the 1st page,
 	 * So for all the other pages, just set them uptodate.
 	 */
-	if (!folio->index)
-		ret = ext4_read_inline_folio(inode, folio);
-	else if (!folio_test_uptodate(folio)) {
-		folio_zero_segment(folio, 0, folio_size(folio));
-		folio_mark_uptodate(folio);
+	if (!page->index)
+		ret = ext4_read_inline_page(inode, page);
+	else if (!PageUptodate(page)) {
+		zero_user_segment(page, 0, PAGE_SIZE);
+		SetPageUptodate(page);
 	}
 
 	up_read(&EXT4_I(inode)->xattr_sem);
 
-	folio_unlock(folio);
+	unlock_page(page);
 	return ret >= 0 ? 0 : ret;
 }
 
@@ -545,7 +545,8 @@ static int ext4_convert_inline_data_to_extent(struct address_space *mapping,
 	int ret, needed_blocks, no_expand;
 	handle_t *handle = NULL;
 	int retries = 0, sem_held = 0;
-	struct folio *folio = NULL;
+	struct page *page = NULL;
+	unsigned int flags;
 	unsigned from, to;
 	struct ext4_iloc iloc;
 
@@ -574,11 +575,12 @@ retry:
 
 	/* We cannot recurse into the filesystem as the transaction is already
 	 * started */
-	folio = __filemap_get_folio(mapping, 0, FGP_WRITEBEGIN | FGP_NOFS,
-			mapping_gfp_mask(mapping));
-	if (IS_ERR(folio)) {
-		ret = PTR_ERR(folio);
-		goto out_nofolio;
+	flags = memalloc_nofs_save();
+	page = grab_cache_page_write_begin(mapping, 0);
+	memalloc_nofs_restore(flags);
+	if (!page) {
+		ret = -ENOMEM;
+		goto out;
 	}
 
 	ext4_write_lock_xattr(inode, &no_expand);
@@ -591,8 +593,8 @@ retry:
 
 	from = 0;
 	to = ext4_get_inline_size(inode);
-	if (!folio_test_uptodate(folio)) {
-		ret = ext4_read_inline_folio(inode, folio);
+	if (!PageUptodate(page)) {
+		ret = ext4_read_inline_page(inode, page);
 		if (ret < 0)
 			goto out;
 	}
@@ -602,21 +604,21 @@ retry:
 		goto out;
 
 	if (ext4_should_dioread_nolock(inode)) {
-		ret = __block_write_begin(&folio->page, from, to,
+		ret = __block_write_begin(page, from, to,
 					  ext4_get_block_unwritten);
 	} else
-		ret = __block_write_begin(&folio->page, from, to, ext4_get_block);
+		ret = __block_write_begin(page, from, to, ext4_get_block);
 
 	if (!ret && ext4_should_journal_data(inode)) {
-		ret = ext4_walk_page_buffers(handle, inode,
-					     folio_buffers(folio), from, to,
-					     NULL, do_journal_get_write_access);
+		ret = ext4_walk_page_buffers(handle, inode, page_buffers(page),
+					     from, to, NULL,
+					     do_journal_get_write_access);
 	}
 
 	if (ret) {
-		folio_unlock(folio);
-		folio_put(folio);
-		folio = NULL;
+		unlock_page(page);
+		put_page(page);
+		page = NULL;
 		ext4_orphan_add(handle, inode);
 		ext4_write_unlock_xattr(inode, &no_expand);
 		sem_held = 0;
@@ -636,14 +638,13 @@ retry:
 	if (ret == -ENOSPC && ext4_should_retry_alloc(inode->i_sb, &retries))
 		goto retry;
 
-	if (folio)
-		block_commit_write(&folio->page, from, to);
+	if (page)
+		block_commit_write(page, from, to);
 out:
-	if (folio) {
-		folio_unlock(folio);
-		folio_put(folio);
+	if (page) {
+		unlock_page(page);
+		put_page(page);
 	}
-out_nofolio:
 	if (sem_held)
 		ext4_write_unlock_xattr(inode, &no_expand);
 	if (handle)
@@ -665,7 +666,8 @@ int ext4_try_to_write_inline_data(struct address_space *mapping,
 {
 	int ret;
 	handle_t *handle;
-	struct folio *folio;
+	unsigned int flags;
+	struct page *page;
 	struct ext4_iloc iloc;
 
 	if (pos + len > ext4_get_max_inline_size(inode))
@@ -702,27 +704,28 @@ int ext4_try_to_write_inline_data(struct address_space *mapping,
 	if (ret)
 		goto out;
 
-	folio = __filemap_get_folio(mapping, 0, FGP_WRITEBEGIN | FGP_NOFS,
-					mapping_gfp_mask(mapping));
-	if (IS_ERR(folio)) {
-		ret = PTR_ERR(folio);
+	flags = memalloc_nofs_save();
+	page = grab_cache_page_write_begin(mapping, 0);
+	memalloc_nofs_restore(flags);
+	if (!page) {
+		ret = -ENOMEM;
 		goto out;
 	}
 
-	*pagep = &folio->page;
+	*pagep = page;
 	down_read(&EXT4_I(inode)->xattr_sem);
 	if (!ext4_has_inline_data(inode)) {
 		ret = 0;
-		folio_unlock(folio);
-		folio_put(folio);
+		unlock_page(page);
+		put_page(page);
 		goto out_up_read;
 	}
 
-	if (!folio_test_uptodate(folio)) {
-		ret = ext4_read_inline_folio(inode, folio);
+	if (!PageUptodate(page)) {
+		ret = ext4_read_inline_page(inode, page);
 		if (ret < 0) {
-			folio_unlock(folio);
-			folio_put(folio);
+			unlock_page(page);
+			put_page(page);
 			goto out_up_read;
 		}
 	}
@@ -741,7 +744,7 @@ convert:
 }
 
 int ext4_write_inline_data_end(struct inode *inode, loff_t pos, unsigned len,
-			       unsigned copied, struct folio *folio)
+			       unsigned copied, struct page *page)
 {
 	handle_t *handle = ext4_journal_current_handle();
 	int no_expand;
@@ -749,14 +752,14 @@ int ext4_write_inline_data_end(struct inode *inode, loff_t pos, unsigned len,
 	struct ext4_iloc iloc;
 	int ret = 0, ret2;
 
-	if (unlikely(copied < len) && !folio_test_uptodate(folio))
+	if (unlikely(copied < len) && !PageUptodate(page))
 		copied = 0;
 
 	if (likely(copied)) {
 		ret = ext4_get_inode_loc(inode, &iloc);
 		if (ret) {
-			folio_unlock(folio);
-			folio_put(folio);
+			unlock_page(page);
+			put_page(page);
 			ext4_std_error(inode->i_sb, ret);
 			goto out;
 		}
@@ -770,30 +773,30 @@ int ext4_write_inline_data_end(struct inode *inode, loff_t pos, unsigned len,
 		 */
 		(void) ext4_find_inline_data_nolock(inode);
 
-		kaddr = kmap_local_folio(folio, 0);
+		kaddr = kmap_atomic(page);
 		ext4_write_inline_data(inode, &iloc, kaddr, pos, copied);
-		kunmap_local(kaddr);
-		folio_mark_uptodate(folio);
-		/* clear dirty flag so that writepages wouldn't work for us. */
-		folio_clear_dirty(folio);
+		kunmap_atomic(kaddr);
+		SetPageUptodate(page);
+		/* clear page dirty so that writepages wouldn't work for us. */
+		ClearPageDirty(page);
 
 		ext4_write_unlock_xattr(inode, &no_expand);
 		brelse(iloc.bh);
 
 		/*
-		 * It's important to update i_size while still holding folio
+		 * It's important to update i_size while still holding page
 		 * lock: page writeout could otherwise come in and zero
 		 * beyond i_size.
 		 */
 		ext4_update_inode_size(inode, pos + copied);
 	}
-	folio_unlock(folio);
-	folio_put(folio);
+	unlock_page(page);
+	put_page(page);
 
 	/*
-	 * Don't mark the inode dirty under folio lock. First, it unnecessarily
-	 * makes the holding time of folio lock longer. Second, it forces lock
-	 * ordering of folio lock and transaction start for journaling
+	 * Don't mark the inode dirty under page lock. First, it unnecessarily
+	 * makes the holding time of page lock longer. Second, it forces lock
+	 * ordering of page lock and transaction start for journaling
 	 * filesystems.
 	 */
 	if (likely(copied))
@@ -822,6 +825,30 @@ out:
 	return ret ? ret : copied;
 }
 
+struct buffer_head *
+ext4_journalled_write_inline_data(struct inode *inode,
+				  unsigned len,
+				  struct page *page)
+{
+	int ret, no_expand;
+	void *kaddr;
+	struct ext4_iloc iloc;
+
+	ret = ext4_get_inode_loc(inode, &iloc);
+	if (ret) {
+		ext4_std_error(inode->i_sb, ret);
+		return NULL;
+	}
+
+	ext4_write_lock_xattr(inode, &no_expand);
+	kaddr = kmap_atomic(page);
+	ext4_write_inline_data(inode, &iloc, kaddr, 0, len);
+	kunmap_atomic(kaddr);
+	ext4_write_unlock_xattr(inode, &no_expand);
+
+	return iloc.bh;
+}
+
 /*
  * Try to make the page cache and handle ready for the inline data case.
  * We can call this function in 2 cases:
@@ -836,12 +863,11 @@ static int ext4_da_convert_inline_data_to_extent(struct address_space *mapping,
 						 void **fsdata)
 {
 	int ret = 0, inline_size;
-	struct folio *folio;
+	struct page *page;
 
-	folio = __filemap_get_folio(mapping, 0, FGP_WRITEBEGIN,
-					mapping_gfp_mask(mapping));
-	if (IS_ERR(folio))
-		return PTR_ERR(folio);
+	page = grab_cache_page_write_begin(mapping, 0);
+	if (!page)
+		return -ENOMEM;
 
 	down_read(&EXT4_I(inode)->xattr_sem);
 	if (!ext4_has_inline_data(inode)) {
@@ -851,32 +877,32 @@ static int ext4_da_convert_inline_data_to_extent(struct address_space *mapping,
 
 	inline_size = ext4_get_inline_size(inode);
 
-	if (!folio_test_uptodate(folio)) {
-		ret = ext4_read_inline_folio(inode, folio);
+	if (!PageUptodate(page)) {
+		ret = ext4_read_inline_page(inode, page);
 		if (ret < 0)
 			goto out;
 	}
 
-	ret = __block_write_begin(&folio->page, 0, inline_size,
+	ret = __block_write_begin(page, 0, inline_size,
 				  ext4_da_get_block_prep);
 	if (ret) {
 		up_read(&EXT4_I(inode)->xattr_sem);
-		folio_unlock(folio);
-		folio_put(folio);
+		unlock_page(page);
+		put_page(page);
 		ext4_truncate_failed_write(inode);
 		return ret;
 	}
 
-	folio_mark_dirty(folio);
-	folio_mark_uptodate(folio);
+	SetPageDirty(page);
+	SetPageUptodate(page);
 	ext4_clear_inode_state(inode, EXT4_STATE_MAY_INLINE_DATA);
 	*fsdata = (void *)CONVERT_INLINE_DATA;
 
 out:
 	up_read(&EXT4_I(inode)->xattr_sem);
-	if (folio) {
-		folio_unlock(folio);
-		folio_put(folio);
+	if (page) {
+		unlock_page(page);
+		put_page(page);
 	}
 	return ret;
 }
@@ -897,9 +923,10 @@ int ext4_da_write_inline_data_begin(struct address_space *mapping,
 {
 	int ret;
 	handle_t *handle;
-	struct folio *folio;
+	struct page *page;
 	struct ext4_iloc iloc;
 	int retries = 0;
+	unsigned int flags;
 
 	ret = ext4_get_inode_loc(inode, &iloc);
 	if (ret)
@@ -931,10 +958,11 @@ retry_journal:
 	 * We cannot recurse into the filesystem as the transaction
 	 * is already started.
 	 */
-	folio = __filemap_get_folio(mapping, 0, FGP_WRITEBEGIN | FGP_NOFS,
-					mapping_gfp_mask(mapping));
-	if (IS_ERR(folio)) {
-		ret = PTR_ERR(folio);
+	flags = memalloc_nofs_save();
+	page = grab_cache_page_write_begin(mapping, 0);
+	memalloc_nofs_restore(flags);
+	if (!page) {
+		ret = -ENOMEM;
 		goto out_journal;
 	}
 
@@ -944,8 +972,8 @@ retry_journal:
 		goto out_release_page;
 	}
 
-	if (!folio_test_uptodate(folio)) {
-		ret = ext4_read_inline_folio(inode, folio);
+	if (!PageUptodate(page)) {
+		ret = ext4_read_inline_page(inode, page);
 		if (ret < 0)
 			goto out_release_page;
 	}
@@ -955,13 +983,13 @@ retry_journal:
 		goto out_release_page;
 
 	up_read(&EXT4_I(inode)->xattr_sem);
-	*pagep = &folio->page;
+	*pagep = page;
 	brelse(iloc.bh);
 	return 1;
 out_release_page:
 	up_read(&EXT4_I(inode)->xattr_sem);
-	folio_unlock(folio);
-	folio_put(folio);
+	unlock_page(page);
+	put_page(page);
 out_journal:
 	ext4_journal_stop(handle);
 out:
@@ -1939,8 +1967,16 @@ int ext4_inline_data_truncate(struct inode *inode, int *has_inline)
 		 * the extent status cache must be cleared to avoid leaving
 		 * behind stale delayed allocated extent entries
 		 */
-		if (!ext4_test_inode_state(inode, EXT4_STATE_MAY_INLINE_DATA))
-			ext4_es_remove_extent(inode, 0, EXT_MAX_BLOCKS);
+		if (!ext4_test_inode_state(inode, EXT4_STATE_MAY_INLINE_DATA)) {
+retry:
+			err = ext4_es_remove_extent(inode, 0, EXT_MAX_BLOCKS);
+			if (err == -ENOMEM) {
+				memalloc_retry_wait(GFP_ATOMIC);
+				goto retry;
+			}
+			if (err)
+				goto out_error;
+		}
 
 		/* Clear the content in the xattr space. */
 		if (inline_size > EXT4_MIN_INLINE_DATA_SIZE) {

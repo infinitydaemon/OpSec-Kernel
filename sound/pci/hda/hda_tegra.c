@@ -580,10 +580,14 @@ static void hda_tegra_probe_work(struct work_struct *work)
 	return; /* no error return from async probe */
 }
 
-static void hda_tegra_remove(struct platform_device *pdev)
+static int hda_tegra_remove(struct platform_device *pdev)
 {
-	snd_card_free(dev_get_drvdata(&pdev->dev));
+	int ret;
+
+	ret = snd_card_free(dev_get_drvdata(&pdev->dev));
 	pm_runtime_disable(&pdev->dev);
+
+	return ret;
 }
 
 static void hda_tegra_shutdown(struct platform_device *pdev)
@@ -605,7 +609,7 @@ static struct platform_driver tegra_platform_hda = {
 		.of_match_table = hda_tegra_match,
 	},
 	.probe = hda_tegra_probe,
-	.remove_new = hda_tegra_remove,
+	.remove = hda_tegra_remove,
 	.shutdown = hda_tegra_shutdown,
 };
 module_platform_driver(tegra_platform_hda);

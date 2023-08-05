@@ -23,10 +23,10 @@
 #include "cifs_fs_sb.h"
 #include "cifsacl.h"
 #include <crypto/internal/hash.h>
+#include <linux/scatterlist.h>
 #include <uapi/linux/cifs/cifs_mount.h>
 #include "../common/smb2pdu.h"
 #include "smb2pdu.h"
-#include <linux/filelock.h>
 
 #define SMB_PATH_MAX 260
 #define CIFS_PORT 445
@@ -78,6 +78,10 @@
 #define SMB_ECHO_INTERVAL_MAX 600
 #define SMB_ECHO_INTERVAL_DEFAULT 60
 
+/* dns resolution intervals in seconds */
+#define SMB_DNS_RESOLVE_INTERVAL_MIN     120
+#define SMB_DNS_RESOLVE_INTERVAL_DEFAULT 600
+
 /* smb multichannel query server interfaces interval in seconds */
 #define SMB_INTERFACE_POLL_INTERVAL	600
 
@@ -103,8 +107,6 @@
 #endif
 
 #define CIFS_MAX_WORKSTATION_LEN  (__NEW_UTS_LEN + 1)  /* reasonable max for client */
-
-#define CIFS_DFS_ROOT_SES(ses) ((ses)->dfs_root_ses ?: (ses))
 
 /*
  * CIFS vfs client Status information (based on what we know.)
@@ -213,9 +215,11 @@ static inline void cifs_free_open_info(struct cifs_open_info_data *data)
 struct smb_rqst {
 	struct kvec	*rq_iov;	/* array of kvecs */
 	unsigned int	rq_nvec;	/* number of kvecs in array */
-	size_t		rq_iter_size;	/* Amount of data in ->rq_iter */
-	struct iov_iter	rq_iter;	/* Data iterator */
-	struct xarray	rq_buffer;	/* Page buffer for encryption */
+	struct page	**rq_pages;	/* pointer to array of page ptrs */
+	unsigned int	rq_offset;	/* the offset to the 1st page */
+	unsigned int	rq_npages;	/* number pages in array */
+	unsigned int	rq_pagesz;	/* page size to use */
+	unsigned int	rq_tailsz;	/* length of last page */
 };
 
 struct mid_q_entry;
@@ -532,7 +536,7 @@ struct smb_version_operations {
 	/* Check for STATUS_IO_TIMEOUT */
 	bool (*is_status_io_timeout)(char *buf);
 	/* Check for STATUS_NETWORK_NAME_DELETED */
-	bool (*is_network_name_deleted)(char *buf, struct TCP_Server_Info *srv);
+	void (*is_network_name_deleted)(char *buf, struct TCP_Server_Info *srv);
 };
 
 struct smb_version_values {
@@ -686,6 +690,7 @@ struct TCP_Server_Info {
 	/* point to the SMBD connection if RDMA is used instead of socket */
 	struct smbd_connection *smbd_conn;
 	struct delayed_work	echo; /* echo ping workqueue job */
+	struct delayed_work	resolve; /* dns resolution workqueue job */
 	char	*smallbuf;	/* pointer to current "small" buffer */
 	char	*bigbuf;	/* pointer to current "big" buffer */
 	/* Total size of this PDU. Only valid from cifs_demultiplex_thread */
@@ -734,22 +739,22 @@ struct TCP_Server_Info {
 	bool use_swn_dstaddr;
 	struct sockaddr_storage swn_dstaddr;
 #endif
+#ifdef CONFIG_CIFS_DFS_UPCALL
+	bool is_dfs_conn; /* if a dfs connection */
 	struct mutex refpath_lock; /* protects leaf_fullpath */
 	/*
-	 * leaf_fullpath: Canonical DFS referral path related to this
-	 *                connection.
-	 *                It is used in DFS cache refresher, reconnect and may
-	 *                change due to nested DFS links.
+	 * Canonical DFS full paths that were used to chase referrals in mount and reconnect.
 	 *
-	 * Protected by @refpath_lock and @srv_lock.  The @refpath_lock is
-	 * mostly used for not requiring a copy of @leaf_fullpath when getting
-	 * cached or new DFS referrals (which might also sleep during I/O).
-	 * While @srv_lock is held for making string and NULL comparions against
-	 * both fields as in mount(2) and cache refresh.
+	 * origin_fullpath: first or original referral path
+	 * leaf_fullpath: last referral path (might be changed due to nested links in reconnect)
 	 *
-	 * format: \\HOST\SHARE[\OPTIONAL PATH]
+	 * current_fullpath: pointer to either origin_fullpath or leaf_fullpath
+	 * NOTE: cannot be accessed outside cifs_reconnect() and smb2_reconnect()
+	 *
+	 * format: \\HOST\SHARE\[OPTIONAL PATH]
 	 */
-	char *leaf_fullpath;
+	char *origin_fullpath, *leaf_fullpath, *current_fullpath;
+#endif
 };
 
 static inline bool is_smb1(struct TCP_Server_Info *server)
@@ -782,7 +787,6 @@ static inline unsigned int
 in_flight(struct TCP_Server_Info *server)
 {
 	unsigned int num;
-
 	spin_lock(&server->req_lock);
 	num = server->in_flight;
 	spin_unlock(&server->req_lock);
@@ -793,7 +797,6 @@ static inline bool
 has_credits(struct TCP_Server_Info *server, int *credits, int num_credits)
 {
 	int num;
-
 	spin_lock(&server->req_lock);
 	num = *credits;
 	spin_unlock(&server->req_lock);
@@ -967,6 +970,43 @@ release_iface(struct kref *ref)
 	kfree(iface);
 }
 
+/*
+ * compare two interfaces a and b
+ * return 0 if everything matches.
+ * return 1 if a has higher link speed, or rdma capable, or rss capable
+ * return -1 otherwise.
+ */
+static inline int
+iface_cmp(struct cifs_server_iface *a, struct cifs_server_iface *b)
+{
+	int cmp_ret = 0;
+
+	WARN_ON(!a || !b);
+	if (a->speed == b->speed) {
+		if (a->rdma_capable == b->rdma_capable) {
+			if (a->rss_capable == b->rss_capable) {
+				cmp_ret = memcmp(&a->sockaddr, &b->sockaddr,
+						 sizeof(a->sockaddr));
+				if (!cmp_ret)
+					return 0;
+				else if (cmp_ret > 0)
+					return 1;
+				else
+					return -1;
+			} else if (a->rss_capable > b->rss_capable)
+				return 1;
+			else
+				return -1;
+		} else if (a->rdma_capable > b->rdma_capable)
+			return 1;
+		else
+			return -1;
+	} else if (a->speed > b->speed)
+		return 1;
+	else
+		return -1;
+}
+
 struct cifs_chan {
 	unsigned int in_reconnect : 1; /* if session setup in progress for this channel */
 	struct TCP_Server_Info *server;
@@ -987,7 +1027,7 @@ struct cifs_ses {
 	struct TCP_Server_Info *server;	/* pointer to server info */
 	int ses_count;		/* reference counter */
 	enum ses_status_enum ses_status;  /* updates protected by cifs_tcp_ses_lock */
-	unsigned int overrideSecFlg; /* if non-zero override global sec flags */
+	unsigned overrideSecFlg;  /* if non-zero override global sec flags */
 	char *serverOS;		/* name of operating system underlying server */
 	char *serverNOS;	/* name of network operating system of server */
 	char *serverDomain;	/* security realm of server */
@@ -1061,7 +1101,6 @@ struct cifs_ses {
 	 */
 	unsigned long chans_need_reconnect;
 	/* ========= end: protected by chan_lock ======== */
-	struct cifs_ses *dfs_root_ses;
 };
 
 static inline bool
@@ -1198,11 +1237,9 @@ struct cifs_tcon {
 	struct cached_fids *cfids;
 	/* BB add field for back pointer to sb struct(s)? */
 #ifdef CONFIG_CIFS_DFS_UPCALL
-	struct list_head dfs_ses_list;
-	struct delayed_work dfs_cache_work;
+	struct list_head ulist; /* cache update list */
 #endif
 	struct delayed_work	query_interfaces; /* query interfaces workqueue job */
-	char *origin_fullpath; /* canonical copy of smb3_fs_context::source */
 };
 
 /*
@@ -1346,7 +1383,7 @@ struct cifsFileInfo {
 	__u32 pid;		/* process id who opened file */
 	struct cifs_fid fid;	/* file id from remote */
 	struct list_head rlist; /* reconnect list */
-	/* BB add lock scope info here if needed */
+	/* BB add lock scope info here if needed */ ;
 	/* lock scope id (0 if none) */
 	struct dentry *dentry;
 	struct tcon_link *tlink;
@@ -1388,11 +1425,10 @@ struct cifs_aio_ctx {
 	struct cifsFileInfo	*cfile;
 	struct bio_vec		*bv;
 	loff_t			pos;
-	unsigned int		nr_pinned_pages;
+	unsigned int		npages;
 	ssize_t			rc;
 	unsigned int		len;
 	unsigned int		total_len;
-	unsigned int		bv_need_unpin;	/* If ->bv[] needs unpinning */
 	bool			should_dirty;
 	/*
 	 * Indicates if this aio_ctx is for direct_io,
@@ -1410,18 +1446,28 @@ struct cifs_readdata {
 	struct address_space		*mapping;
 	struct cifs_aio_ctx		*ctx;
 	__u64				offset;
-	ssize_t				got_bytes;
 	unsigned int			bytes;
+	unsigned int			got_bytes;
 	pid_t				pid;
 	int				result;
 	struct work_struct		work;
-	struct iov_iter			iter;
+	int (*read_into_pages)(struct TCP_Server_Info *server,
+				struct cifs_readdata *rdata,
+				unsigned int len);
+	int (*copy_into_pages)(struct TCP_Server_Info *server,
+				struct cifs_readdata *rdata,
+				struct iov_iter *iter);
 	struct kvec			iov[2];
 	struct TCP_Server_Info		*server;
 #ifdef CONFIG_CIFS_SMB_DIRECT
 	struct smbd_mr			*mr;
 #endif
+	unsigned int			pagesz;
+	unsigned int			page_offset;
+	unsigned int			tailsz;
 	struct cifs_credits		credits;
+	unsigned int			nr_pages;
+	struct page			**pages;
 };
 
 /* asynchronous write support */
@@ -1433,8 +1479,6 @@ struct cifs_writedata {
 	struct work_struct		work;
 	struct cifsFileInfo		*cfile;
 	struct cifs_aio_ctx		*ctx;
-	struct iov_iter			iter;
-	struct bio_vec			*bv;
 	__u64				offset;
 	pid_t				pid;
 	unsigned int			bytes;
@@ -1443,7 +1487,12 @@ struct cifs_writedata {
 #ifdef CONFIG_CIFS_SMB_DIRECT
 	struct smbd_mr			*mr;
 #endif
+	unsigned int			pagesz;
+	unsigned int			page_offset;
+	unsigned int			tailsz;
 	struct cifs_credits		credits;
+	unsigned int			nr_pages;
+	struct page			**pages;
 };
 
 /*
@@ -1710,16 +1759,6 @@ struct file_list {
 	struct cifsFileInfo *cfile;
 };
 
-struct cifs_mount_ctx {
-	struct cifs_sb_info *cifs_sb;
-	struct smb3_fs_context *fs_ctx;
-	unsigned int xid;
-	struct TCP_Server_Info *server;
-	struct cifs_ses *ses;
-	struct cifs_tcon *tcon;
-	struct list_head dfs_ses_list;
-};
-
 static inline void free_dfs_info_param(struct dfs_info3_param *param)
 {
 	if (param) {
@@ -1732,7 +1771,6 @@ static inline void free_dfs_info_array(struct dfs_info3_param *param,
 				       int number_of_items)
 {
 	int i;
-
 	if ((number_of_items == 0) || (param == NULL))
 		return;
 	for (i = 0; i < number_of_items; i++) {
@@ -2101,20 +2139,14 @@ static inline void move_cifs_info_to_smb2(struct smb2_file_all_info *dst, const 
 	dst->FileNameLength = src->FileNameLength;
 }
 
-static inline int cifs_get_num_sgs(const struct smb_rqst *rqst,
-				   int num_rqst,
-				   const u8 *sig)
+static inline unsigned int cifs_get_num_sgs(const struct smb_rqst *rqst,
+					    int num_rqst,
+					    const u8 *sig)
 {
 	unsigned int len, skip;
 	unsigned int nents = 0;
 	unsigned long addr;
 	int i, j;
-
-	/*
-	 * The first rqst has a transform header where the first 20 bytes are
-	 * not part of the encrypted blob.
-	 */
-	skip = 20;
 
 	/* Assumes the first rqst has a transform header as the first iov.
 	 * I.e.
@@ -2123,22 +2155,14 @@ static inline int cifs_get_num_sgs(const struct smb_rqst *rqst,
 	 * rqst[1+].rq_iov[0+] data to be encrypted/decrypted
 	 */
 	for (i = 0; i < num_rqst; i++) {
-		/* We really don't want a mixture of pinned and unpinned pages
-		 * in the sglist.  It's hard to keep track of which is what.
-		 * Instead, we convert to a BVEC-type iterator higher up.
+		/*
+		 * The first rqst has a transform header where the
+		 * first 20 bytes are not part of the encrypted blob.
 		 */
-		if (WARN_ON_ONCE(user_backed_iter(&rqst[i].rq_iter)))
-			return -EIO;
-
-		/* We also don't want to have any extra refs or pins to clean
-		 * up in the sglist.
-		 */
-		if (WARN_ON_ONCE(iov_iter_extract_will_pin(&rqst[i].rq_iter)))
-			return -EIO;
-
 		for (j = 0; j < rqst[i].rq_nvec; j++) {
 			struct kvec *iov = &rqst[i].rq_iov[j];
 
+			skip = (i == 0) && (j == 0) ? 20 : 0;
 			addr = (unsigned long)iov->iov_base + skip;
 			if (unlikely(is_vmalloc_addr((void *)addr))) {
 				len = iov->iov_len - skip;
@@ -2147,9 +2171,8 @@ static inline int cifs_get_num_sgs(const struct smb_rqst *rqst,
 			} else {
 				nents++;
 			}
-			skip = 0;
 		}
-		nents += iov_iter_npages(&rqst[i].rq_iter, INT_MAX);
+		nents += rqst[i].rq_npages;
 	}
 	nents += DIV_ROUND_UP(offset_in_page(sig) + SMB2_SIGNATURE_SIZE, PAGE_SIZE);
 	return nents;
@@ -2158,9 +2181,9 @@ static inline int cifs_get_num_sgs(const struct smb_rqst *rqst,
 /* We can not use the normal sg_set_buf() as we will sometimes pass a
  * stack object as buf.
  */
-static inline void cifs_sg_set_buf(struct sg_table *sgtable,
-				   const void *buf,
-				   unsigned int buflen)
+static inline struct scatterlist *cifs_sg_set_buf(struct scatterlist *sg,
+						  const void *buf,
+						  unsigned int buflen)
 {
 	unsigned long addr = (unsigned long)buf;
 	unsigned int off = offset_in_page(addr);
@@ -2170,17 +2193,16 @@ static inline void cifs_sg_set_buf(struct sg_table *sgtable,
 		do {
 			unsigned int len = min_t(unsigned int, buflen, PAGE_SIZE - off);
 
-			sg_set_page(&sgtable->sgl[sgtable->nents++],
-				    vmalloc_to_page((void *)addr), len, off);
+			sg_set_page(sg++, vmalloc_to_page((void *)addr), len, off);
 
 			off = 0;
 			addr += PAGE_SIZE;
 			buflen -= len;
 		} while (buflen);
 	} else {
-		sg_set_page(&sgtable->sgl[sgtable->nents++],
-			    virt_to_page((void *)addr), buflen, off);
+		sg_set_page(sg++, virt_to_page(addr), buflen, off);
 	}
+	return sg;
 }
 
 #endif	/* _CIFS_GLOB_H */

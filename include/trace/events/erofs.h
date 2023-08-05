@@ -19,17 +19,12 @@ struct erofs_map_blocks;
 		{ 1,		"DIR" })
 
 #define show_map_flags(flags) __print_flags(flags, "|",	\
-	{ EROFS_GET_BLOCKS_FIEMAP,	"FIEMAP" },	\
-	{ EROFS_GET_BLOCKS_READMORE,	"READMORE" },	\
-	{ EROFS_GET_BLOCKS_FINDTAIL,	"FINDTAIL" })
+	{ EROFS_GET_BLOCKS_RAW,	"RAW" })
 
 #define show_mflags(flags) __print_flags(flags, "",	\
-	{ EROFS_MAP_MAPPED,		"M" },		\
-	{ EROFS_MAP_META,		"I" },		\
-	{ EROFS_MAP_ENCODED,		"E" },		\
-	{ EROFS_MAP_FULL_MAPPED,	"F" },		\
-	{ EROFS_MAP_FRAGMENT,		"R" },		\
-	{ EROFS_MAP_PARTIAL_REF,	"P" })
+	{ EROFS_MAP_MAPPED,	"M" },			\
+	{ EROFS_MAP_META,	"I" },			\
+	{ EROFS_MAP_ENCODED,	"E" })
 
 TRACE_EVENT(erofs_lookup,
 
@@ -71,8 +66,8 @@ TRACE_EVENT(erofs_fill_inode,
 	TP_fast_assign(
 		__entry->dev		= inode->i_sb->s_dev;
 		__entry->nid		= EROFS_I(inode)->nid;
-		__entry->blkaddr	= erofs_blknr(inode->i_sb, erofs_iloc(inode));
-		__entry->ofs		= erofs_blkoff(inode->i_sb, erofs_iloc(inode));
+		__entry->blkaddr	= erofs_blknr(erofs_iloc(inode));
+		__entry->ofs		= erofs_blkoff(erofs_iloc(inode));
 	),
 
 	TP_printk("dev = (%d,%d), nid = %llu, blkaddr %u ofs %u",

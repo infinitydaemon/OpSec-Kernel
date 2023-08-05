@@ -8,7 +8,6 @@
 #ifndef _CIFSPROTO_H
 #define _CIFSPROTO_H
 #include <linux/nls.h>
-#include <linux/ctype.h>
 #include "trace.h"
 #ifdef CONFIG_CIFS_DFS_UPCALL
 #include "dfs_cache.h"
@@ -58,9 +57,6 @@ extern void exit_cifs_idmap(void);
 extern int init_cifs_spnego(void);
 extern void exit_cifs_spnego(void);
 extern const char *build_path_from_dentry(struct dentry *, void *);
-char *__build_path_from_dentry_optional_prefix(struct dentry *direntry, void *page,
-					       const char *tree, int tree_len,
-					       bool prefix);
 extern char *build_path_from_dentry_optional_prefix(struct dentry *direntry,
 						    void *page, bool prefix);
 static inline void *alloc_dentry_path(void)
@@ -79,17 +75,16 @@ extern char *cifs_build_path_to_root(struct smb3_fs_context *ctx,
 				     struct cifs_tcon *tcon,
 				     int add_treename);
 extern char *build_wildcard_path_from_dentry(struct dentry *direntry);
-char *cifs_build_devname(char *nodename, const char *prepath);
+extern char *cifs_compose_mount_options(const char *sb_mountdata,
+		const char *fullpath, const struct dfs_info3_param *ref,
+		char **devname);
 extern void delete_mid(struct mid_q_entry *mid);
 extern void release_mid(struct mid_q_entry *mid);
 extern void cifs_wake_up_task(struct mid_q_entry *mid);
 extern int cifs_handle_standard(struct TCP_Server_Info *server,
 				struct mid_q_entry *mid);
-extern char *smb3_fs_context_fullpath(const struct smb3_fs_context *ctx,
-				      char dirsep);
 extern int smb3_parse_devname(const char *devname, struct smb3_fs_context *ctx);
 extern int smb3_parse_opt(const char *options, const char *key, char **val);
-extern int cifs_ipaddr_cmp(struct sockaddr *srcaddr, struct sockaddr *rhs);
 extern bool cifs_match_ipaddr(struct sockaddr *srcaddr, struct sockaddr *rhs);
 extern int cifs_discard_remaining_data(struct TCP_Server_Info *server);
 extern int cifs_call_async(struct TCP_Server_Info *server,
@@ -129,7 +124,7 @@ extern int SendReceive2(const unsigned int /* xid */ , struct cifs_ses *,
 			struct kvec * /* resp vec */);
 extern int SendReceiveBlockingLock(const unsigned int xid,
 			struct cifs_tcon *ptcon,
-			struct smb_hdr *in_buf,
+			struct smb_hdr *in_buf ,
 			struct smb_hdr *out_buf,
 			int *bytes_returned);
 void
@@ -229,10 +224,6 @@ extern struct cifs_ntsd *get_cifs_acl(struct cifs_sb_info *, struct inode *,
 				      const char *, u32 *, u32);
 extern struct cifs_ntsd *get_cifs_acl_by_fid(struct cifs_sb_info *,
 				const struct cifs_fid *, u32 *, u32);
-extern struct posix_acl *cifs_get_acl(struct mnt_idmap *idmap,
-				      struct dentry *dentry, int type);
-extern int cifs_set_acl(struct mnt_idmap *idmap,
-			struct dentry *dentry, struct posix_acl *acl, int type);
 extern int set_cifs_acl(struct cifs_ntsd *, __u32, struct inode *,
 				const char *, int);
 extern unsigned int setup_authusers_ACE(struct cifs_ace *pace);
@@ -248,14 +239,7 @@ extern int cifs_read_page_from_socket(struct TCP_Server_Info *server,
 					struct page *page,
 					unsigned int page_offset,
 					unsigned int to_read);
-int cifs_read_iter_from_socket(struct TCP_Server_Info *server,
-			       struct iov_iter *iter,
-			       unsigned int to_read);
 extern int cifs_setup_cifs_sb(struct cifs_sb_info *cifs_sb);
-void cifs_mount_put_conns(struct cifs_mount_ctx *mnt_ctx);
-int cifs_mount_get_session(struct cifs_mount_ctx *mnt_ctx);
-int cifs_is_path_remote(struct cifs_mount_ctx *mnt_ctx);
-int cifs_mount_get_tcon(struct cifs_mount_ctx *mnt_ctx);
 extern int cifs_match_super(struct super_block *, void *);
 extern int cifs_mount(struct cifs_sb_info *cifs_sb, struct smb3_fs_context *ctx);
 extern void cifs_umount(struct cifs_sb_info *);
@@ -553,14 +537,14 @@ extern int CIFSSMBGetCIFSACL(const unsigned int xid, struct cifs_tcon *tcon,
 			__u16 fid, struct cifs_ntsd **acl_inf, __u32 *buflen);
 extern int CIFSSMBSetCIFSACL(const unsigned int, struct cifs_tcon *, __u16,
 			struct cifs_ntsd *, __u32, int);
-extern int cifs_do_get_acl(const unsigned int xid, struct cifs_tcon *tcon,
-			   const unsigned char *searchName,
-			   struct posix_acl **acl, const int acl_type,
-			   const struct nls_table *nls_codepage, int remap);
-extern int cifs_do_set_acl(const unsigned int xid, struct cifs_tcon *tcon,
-			   const unsigned char *fileName,
-			   const struct posix_acl *acl, const int acl_type,
-			   const struct nls_table *nls_codepage, int remap);
+extern int CIFSSMBGetPosixACL(const unsigned int xid, struct cifs_tcon *tcon,
+		const unsigned char *searchName,
+		char *acl_inf, const int buflen, const int acl_type,
+		const struct nls_table *nls_codepage, int remap_special_chars);
+extern int CIFSSMBSetPosixACL(const unsigned int xid, struct cifs_tcon *tcon,
+		const unsigned char *fileName,
+		const char *local_acl, const int buflen, const int acl_type,
+		const struct nls_table *nls_codepage, int remap_special_chars);
 extern int CIFSGetExtAttr(const unsigned int xid, struct cifs_tcon *tcon,
 			const int netfid, __u64 *pExtAttrBits, __u64 *pMask);
 #endif /* CIFS_ALLOW_INSECURE_LEGACY */
@@ -573,10 +557,13 @@ extern int check_mf_symlink(unsigned int xid, struct cifs_tcon *tcon,
 extern int E_md4hash(const unsigned char *passwd, unsigned char *p16,
 			const struct nls_table *codepage);
 
+extern int
+cifs_setup_volume_info(struct smb3_fs_context *ctx, const char *mntopts, const char *devname);
+
 extern struct TCP_Server_Info *
 cifs_find_tcp_session(struct smb3_fs_context *ctx);
 
-void __cifs_put_smb_ses(struct cifs_ses *ses);
+extern void cifs_put_smb_ses(struct cifs_ses *ses);
 
 extern struct cifs_ses *
 cifs_get_smb_ses(struct TCP_Server_Info *server, struct smb3_fs_context *ctx);
@@ -588,7 +575,10 @@ int cifs_readv_receive(struct TCP_Server_Info *server, struct mid_q_entry *mid);
 int cifs_async_writev(struct cifs_writedata *wdata,
 		      void (*release)(struct kref *kref));
 void cifs_writev_complete(struct work_struct *work);
-struct cifs_writedata *cifs_writedata_alloc(work_func_t complete);
+struct cifs_writedata *cifs_writedata_alloc(unsigned int nr_pages,
+						work_func_t complete);
+struct cifs_writedata *cifs_writedata_direct_alloc(struct page **pages,
+						work_func_t complete);
 void cifs_writedata_release(struct kref *refcount);
 int cifs_query_mf_symlink(unsigned int xid, struct cifs_tcon *tcon,
 			  struct cifs_sb_info *cifs_sb,
@@ -605,10 +595,13 @@ enum securityEnum cifs_select_sectype(struct TCP_Server_Info *,
 					enum securityEnum);
 struct cifs_aio_ctx *cifs_aio_ctx_alloc(void);
 void cifs_aio_ctx_release(struct kref *refcount);
+int setup_aio_ctx_iter(struct cifs_aio_ctx *ctx, struct iov_iter *iter, int rw);
 
 int cifs_alloc_hash(const char *name, struct shash_desc **sdesc);
 void cifs_free_hash(struct shash_desc **sdesc);
 
+void rqst_page_get_length(const struct smb_rqst *rqst, unsigned int page,
+			  unsigned int *len, unsigned int *offset);
 struct cifs_chan *
 cifs_ses_find_chan(struct cifs_ses *ses, struct TCP_Server_Info *server);
 int cifs_try_adding_channels(struct cifs_sb_info *cifs_sb, struct cifs_ses *ses);
@@ -652,7 +645,7 @@ int smb2_parse_query_directory(struct cifs_tcon *tcon, struct kvec *rsp_iov,
 			       int resp_buftype,
 			       struct cifs_search_info *srch_inf);
 
-struct super_block *cifs_get_dfs_tcon_super(struct cifs_tcon *tcon);
+struct super_block *cifs_get_tcp_super(struct TCP_Server_Info *server);
 void cifs_put_tcp_super(struct super_block *sb);
 int cifs_update_super_prepath(struct cifs_sb_info *cifs_sb, char *prefix);
 char *extract_hostname(const char *unc);
@@ -699,46 +692,5 @@ static inline int cifs_create_options(struct cifs_sb_info *cifs_sb, int options)
 struct super_block *cifs_get_tcon_super(struct cifs_tcon *tcon);
 void cifs_put_tcon_super(struct super_block *sb);
 int cifs_wait_for_server_reconnect(struct TCP_Server_Info *server, bool retry);
-
-/* Put references of @ses and @ses->dfs_root_ses */
-static inline void cifs_put_smb_ses(struct cifs_ses *ses)
-{
-	struct cifs_ses *rses = ses->dfs_root_ses;
-
-	__cifs_put_smb_ses(ses);
-	if (rses)
-		__cifs_put_smb_ses(rses);
-}
-
-/* Get an active reference of @ses and @ses->dfs_root_ses.
- *
- * NOTE: make sure to call this function when incrementing reference count of
- * @ses to ensure that any DFS root session attached to it (@ses->dfs_root_ses)
- * will also get its reference count incremented.
- *
- * cifs_put_smb_ses() will put both references, so call it when you're done.
- */
-static inline void cifs_smb_ses_inc_refcount(struct cifs_ses *ses)
-{
-	lockdep_assert_held(&cifs_tcp_ses_lock);
-
-	ses->ses_count++;
-	if (ses->dfs_root_ses)
-		ses->dfs_root_ses->ses_count++;
-}
-
-static inline bool dfs_src_pathname_equal(const char *s1, const char *s2)
-{
-	if (strlen(s1) != strlen(s2))
-		return false;
-	for (; *s1; s1++, s2++) {
-		if (*s1 == '/' || *s1 == '\\') {
-			if (*s2 != '/' && *s2 != '\\')
-				return false;
-		} else if (tolower(*s1) != tolower(*s2))
-			return false;
-	}
-	return true;
-}
 
 #endif			/* _CIFSPROTO_H */

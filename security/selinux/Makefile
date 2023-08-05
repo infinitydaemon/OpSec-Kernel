@@ -3,14 +3,7 @@
 # Makefile for building the SELinux module as part of the kernel tree.
 #
 
-# NOTE: There are a number of improvements that can be made to this Makefile
-# once the kernel requires make v4.3 or greater; the most important feature
-# lacking in older versions of make is support for grouped targets.  These
-# improvements are noted inline in the Makefile below ...
-
 obj-$(CONFIG_SECURITY_SELINUX) := selinux.o
-
-ccflags-y := -I$(srctree)/security/selinux -I$(srctree)/security/selinux/include
 
 selinux-y := avc.o hooks.o selinuxfs.o netlink.o nlmsgtab.o netif.o \
 	     netnode.o netport.o status.o \
@@ -18,23 +11,24 @@ selinux-y := avc.o hooks.o selinuxfs.o netlink.o nlmsgtab.o netif.o \
 	     ss/policydb.o ss/services.o ss/conditional.o ss/mls.o ss/context.o
 
 selinux-$(CONFIG_SECURITY_NETWORK_XFRM) += xfrm.o
+
 selinux-$(CONFIG_NETLABEL) += netlabel.o
+
 selinux-$(CONFIG_SECURITY_INFINIBAND) += ibpkey.o
+
 selinux-$(CONFIG_IMA) += ima.o
 
-genhdrs := flask.h av_permissions.h
+ccflags-y := -I$(srctree)/security/selinux -I$(srctree)/security/selinux/include
 
-# see the note above, replace the dependency rule with the one below:
-#  $(addprefix $(obj)/,$(selinux-y)): $(addprefix $(obj)/,$(genhdrs))
 $(addprefix $(obj)/,$(selinux-y)): $(obj)/flask.h
 
-quiet_cmd_genhdrs = GEN     $(addprefix $(obj)/,$(genhdrs))
-      cmd_genhdrs = $< $(addprefix $(obj)/,$(genhdrs))
+quiet_cmd_flask = GEN     $(obj)/flask.h $(obj)/av_permissions.h
+      cmd_flask = $< $(obj)/flask.h $(obj)/av_permissions.h
 
-# see the note above, replace the $targets and 'flask.h' rule with the lines
-# below:
-#  targets += $(genhdrs)
-#  $(addprefix $(obj)/,$(genhdrs)) &: scripts/selinux/...
-targets += flask.h
+targets += flask.h av_permissions.h
+# once make >= 4.3 is required, we can use grouped targets in the rule below,
+# which basically involves adding both headers and a '&' before the colon, see
+# the example below:
+#   $(obj)/flask.h $(obj)/av_permissions.h &: scripts/selinux/...
 $(obj)/flask.h: scripts/selinux/genheaders/genheaders FORCE
-	$(call if_changed,genhdrs)
+	$(call if_changed,flask)

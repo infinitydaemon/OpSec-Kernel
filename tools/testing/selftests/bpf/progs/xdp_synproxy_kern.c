@@ -310,7 +310,7 @@ static __always_inline void values_get_tcpipopts(__u16 *mss, __u8 *wscale,
 static __always_inline void values_inc_synacks(void)
 {
 	__u32 key = 1;
-	__u64 *value;
+	__u32 *value;
 
 	value = bpf_map_lookup_elem(&values, &key);
 	if (value)

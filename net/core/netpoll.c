@@ -690,7 +690,7 @@ int netpoll_setup(struct netpoll *np)
 		err = -ENODEV;
 		goto unlock;
 	}
-	netdev_hold(ndev, &np->dev_tracker, GFP_KERNEL);
+	dev_hold(ndev);
 
 	if (netdev_master_upper_dev_get(ndev)) {
 		np_err(np, "%s is a slave device, aborting\n", np->dev_name);
@@ -699,7 +699,7 @@ int netpoll_setup(struct netpoll *np)
 	}
 
 	if (!netif_running(ndev)) {
-		unsigned long atmost;
+		unsigned long atmost, atleast;
 
 		np_info(np, "device %s not up yet, forcing it\n", np->dev_name);
 
@@ -711,6 +711,7 @@ int netpoll_setup(struct netpoll *np)
 		}
 
 		rtnl_unlock();
+		atleast = jiffies + HZ/10;
 		atmost = jiffies + carrier_timeout * HZ;
 		while (!netif_carrier_ok(ndev)) {
 			if (time_after(jiffies, atmost)) {
@@ -720,6 +721,15 @@ int netpoll_setup(struct netpoll *np)
 			msleep(1);
 		}
 
+		/* If carrier appears to come up instantly, we don't
+		 * trust it and pause so that we don't pump all our
+		 * queued console messages into the bitbucket.
+		 */
+
+		if (time_before(jiffies, atleast)) {
+			np_notice(np, "carrier detect appears untrustworthy, waiting 4 seconds\n");
+			msleep(4000);
+		}
 		rtnl_lock();
 	}
 
@@ -783,11 +793,12 @@ put_noaddr:
 	err = __netpoll_setup(np, ndev);
 	if (err)
 		goto put;
+	netdev_tracker_alloc(ndev, &np->dev_tracker, GFP_KERNEL);
 	rtnl_unlock();
 	return 0;
 
 put:
-	netdev_put(ndev, &np->dev_tracker);
+	dev_put(ndev);
 unlock:
 	rtnl_unlock();
 	return err;

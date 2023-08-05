@@ -1708,6 +1708,7 @@ minstrel_ht_update_caps(void *priv, struct ieee80211_supported_band *sband,
 	struct sta_info *sta_info;
 	bool ldpc, erp;
 	int use_vht;
+	int n_supported = 0;
 	int ack_dur;
 	int stbc;
 	int i;
@@ -1790,6 +1791,8 @@ minstrel_ht_update_caps(void *priv, struct ieee80211_supported_band *sband,
 				continue;
 
 			mi->supported[i] = mcs->rx_mask[nss - 1];
+			if (mi->supported[i])
+				n_supported++;
 			continue;
 		}
 
@@ -1816,6 +1819,9 @@ minstrel_ht_update_caps(void *priv, struct ieee80211_supported_band *sband,
 
 		mi->supported[i] = minstrel_get_valid_vht_rates(bw, nss,
 				vht_cap->vht_mcs.tx_mcs_map);
+
+		if (mi->supported[i])
+			n_supported++;
 	}
 
 	sta_info = container_of(sta, struct sta_info, sta);
@@ -1956,6 +1962,9 @@ minstrel_ht_alloc(struct ieee80211_hw *hw)
 	else
 		/* safe default, does not necessarily have to match hw properties */
 		mp->max_retry = 7;
+
+	if (hw->max_rates >= 4)
+		mp->has_mrr = true;
 
 	mp->hw = hw;
 	mp->update_interval = HZ / 20;

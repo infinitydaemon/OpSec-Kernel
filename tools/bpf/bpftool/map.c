@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 /* Copyright (C) 2017-2018 Netronome Systems, Inc. */
 
+#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/err.h>
@@ -139,9 +140,6 @@ static void print_entry_json(struct bpf_map_info *info, unsigned char *key,
 		print_hex_data_json(key, info->key_size);
 		jsonw_name(json_wtr, "value");
 		print_hex_data_json(value, info->value_size);
-		if (map_is_map_of_maps(info->type))
-			jsonw_uint_field(json_wtr, "inner_map_id",
-					 *(unsigned int *)value);
 		if (btf) {
 			struct btf_dumper d = {
 				.btf = btf,
@@ -262,13 +260,8 @@ static void print_entry_plain(struct bpf_map_info *info, unsigned char *key,
 		}
 
 		if (info->value_size) {
-			if (map_is_map_of_maps(info->type)) {
-				printf("inner_map_id:%c", break_names ? '\n' : ' ');
-				printf("%u ", *(unsigned int *)value);
-			} else {
-				printf("value:%c", break_names ? '\n' : ' ');
-				fprint_hex(stdout, value, info->value_size, " ");
-			}
+			printf("value:%c", break_names ? '\n' : ' ');
+			fprint_hex(stdout, value, info->value_size, " ");
 		}
 
 		printf("\n");
@@ -526,8 +519,9 @@ static int show_map_close_json(int fd, struct bpf_map_info *info)
 
 		jsonw_name(json_wtr, "pinned");
 		jsonw_start_array(json_wtr);
-		hashmap__for_each_key_entry(map_table, entry, info->id)
-			jsonw_string(json_wtr, entry->pvalue);
+		hashmap__for_each_key_entry(map_table, entry,
+					    u32_as_hash_field(info->id))
+			jsonw_string(json_wtr, entry->value);
 		jsonw_end_array(json_wtr);
 	}
 
@@ -602,8 +596,9 @@ static int show_map_close_plain(int fd, struct bpf_map_info *info)
 	if (!hashmap__empty(map_table)) {
 		struct hashmap_entry *entry;
 
-		hashmap__for_each_key_entry(map_table, entry, info->id)
-			printf("\n\tpinned %s", (char *)entry->pvalue);
+		hashmap__for_each_key_entry(map_table, entry,
+					    u32_as_hash_field(info->id))
+			printf("\n\tpinned %s", (char *)entry->value);
 	}
 
 	if (frozen_str) {
@@ -646,7 +641,7 @@ static int do_show_subset(int argc, char **argv)
 	if (json_output && nb_fds > 1)
 		jsonw_start_array(json_wtr);	/* root array */
 	for (i = 0; i < nb_fds; i++) {
-		err = bpf_map_get_info_by_fd(fds[i], &info, &len);
+		err = bpf_obj_get_info_by_fd(fds[i], &info, &len);
 		if (err) {
 			p_err("can't get map info: %s",
 			      strerror(errno));
@@ -716,7 +711,7 @@ static int do_show(int argc, char **argv)
 			break;
 		}
 
-		err = bpf_map_get_info_by_fd(fd, &info, &len);
+		err = bpf_obj_get_info_by_fd(fd, &info, &len);
 		if (err) {
 			p_err("can't get map info: %s", strerror(errno));
 			close(fd);
@@ -772,7 +767,7 @@ static int maps_have_btf(int *fds, int nb_fds)
 	int err, i;
 
 	for (i = 0; i < nb_fds; i++) {
-		err = bpf_map_get_info_by_fd(fds[i], &info, &len);
+		err = bpf_obj_get_info_by_fd(fds[i], &info, &len);
 		if (err) {
 			p_err("can't get map info: %s", strerror(errno));
 			return -1;
@@ -794,18 +789,18 @@ static int get_map_kv_btf(const struct bpf_map_info *info, struct btf **btf)
 	if (info->btf_vmlinux_value_type_id) {
 		if (!btf_vmlinux) {
 			btf_vmlinux = libbpf_find_kernel_btf();
-			if (!btf_vmlinux) {
+			err = libbpf_get_error(btf_vmlinux);
+			if (err) {
 				p_err("failed to get kernel btf");
-				return -errno;
+				return err;
 			}
 		}
 		*btf = btf_vmlinux;
 	} else if (info->btf_value_type_id) {
 		*btf = btf__load_from_kernel_by_id(info->btf_id);
-		if (!*btf) {
-			err = -errno;
+		err = libbpf_get_error(*btf);
+		if (err)
 			p_err("failed to get btf");
-		}
 	} else {
 		*btf = NULL;
 	}
@@ -815,8 +810,14 @@ static int get_map_kv_btf(const struct bpf_map_info *info, struct btf **btf)
 
 static void free_map_kv_btf(struct btf *btf)
 {
-	if (btf != btf_vmlinux)
+	if (!libbpf_get_error(btf) && btf != btf_vmlinux)
 		btf__free(btf);
+}
+
+static void free_btf_vmlinux(void)
+{
+	if (!libbpf_get_error(btf_vmlinux))
+		btf__free(btf_vmlinux);
 }
 
 static int
@@ -933,7 +934,7 @@ static int do_dump(int argc, char **argv)
 	if (wtr && nb_fds > 1)
 		jsonw_start_array(wtr);	/* root array */
 	for (i = 0; i < nb_fds; i++) {
-		if (bpf_map_get_info_by_fd(fds[i], &info, &len)) {
+		if (bpf_obj_get_info_by_fd(fds[i], &info, &len)) {
 			p_err("can't get map info: %s", strerror(errno));
 			break;
 		}
@@ -955,7 +956,7 @@ exit_close:
 		close(fds[i]);
 exit_free:
 	free(fds);
-	btf__free(btf_vmlinux);
+	free_btf_vmlinux();
 	return err;
 }
 
@@ -1287,11 +1288,6 @@ static int do_create(int argc, char **argv)
 					  "flags"))
 				goto exit;
 		} else if (is_prefix(*argv, "dev")) {
-			p_info("Warning: 'bpftool map create [...] dev <ifname>' syntax is deprecated.\n"
-			       "Going further, please use 'offload_dev <ifname>' to request hardware offload for the map.");
-			goto offload_dev;
-		} else if (is_prefix(*argv, "offload_dev")) {
-offload_dev:
 			NEXT_ARG();
 
 			if (attr.map_ifindex) {
@@ -1436,7 +1432,7 @@ static int do_help(int argc, char **argv)
 		"Usage: %1$s %2$s { show | list }   [MAP]\n"
 		"       %1$s %2$s create     FILE type TYPE key KEY_SIZE value VALUE_SIZE \\\n"
 		"                                  entries MAX_ENTRIES name NAME [flags FLAGS] \\\n"
-		"                                  [inner_map MAP] [offload_dev NAME]\n"
+		"                                  [inner_map MAP] [dev NAME]\n"
 		"       %1$s %2$s dump       MAP\n"
 		"       %1$s %2$s update     MAP [key DATA] [value VALUE] [UPDATE_FLAGS]\n"
 		"       %1$s %2$s lookup     MAP [key DATA]\n"
@@ -1463,7 +1459,7 @@ static int do_help(int argc, char **argv)
 		"                 devmap | devmap_hash | sockmap | cpumap | xskmap | sockhash |\n"
 		"                 cgroup_storage | reuseport_sockarray | percpu_cgroup_storage |\n"
 		"                 queue | stack | sk_storage | struct_ops | ringbuf | inode_storage |\n"
-		"                 task_storage | bloom_filter | user_ringbuf | cgrp_storage }\n"
+		"                 task_storage | bloom_filter | user_ringbuf }\n"
 		"       " HELP_SPEC_OPTIONS " |\n"
 		"                    {-f|--bpffs} | {-n|--nomount} }\n"
 		"",

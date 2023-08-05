@@ -32,7 +32,7 @@ unsigned long __generic_xchg(unsigned long x, volatile void *ptr, int size)
 #else
 		local_irq_save(flags);
 		ret = *(volatile u8 *)ptr;
-		*(volatile u8 *)ptr = (x & 0xffu);
+		*(volatile u8 *)ptr = x;
 		local_irq_restore(flags);
 		return ret;
 #endif /* __xchg_u8 */
@@ -43,7 +43,7 @@ unsigned long __generic_xchg(unsigned long x, volatile void *ptr, int size)
 #else
 		local_irq_save(flags);
 		ret = *(volatile u16 *)ptr;
-		*(volatile u16 *)ptr = (x & 0xffffu);
+		*(volatile u16 *)ptr = x;
 		local_irq_restore(flags);
 		return ret;
 #endif /* __xchg_u16 */
@@ -54,7 +54,7 @@ unsigned long __generic_xchg(unsigned long x, volatile void *ptr, int size)
 #else
 		local_irq_save(flags);
 		ret = *(volatile u32 *)ptr;
-		*(volatile u32 *)ptr = (x & 0xffffffffu);
+		*(volatile u32 *)ptr = x;
 		local_irq_restore(flags);
 		return ret;
 #endif /* __xchg_u32 */

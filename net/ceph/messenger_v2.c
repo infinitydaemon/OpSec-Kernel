@@ -149,13 +149,13 @@ static int do_try_sendpage(struct socket *sock, struct iov_iter *it)
 
 	while (iov_iter_count(it)) {
 		/* iov_iter_iovec() for ITER_BVEC */
-		bvec_set_page(&bv, it->bvec->bv_page,
-			      min(iov_iter_count(it),
-				  it->bvec->bv_len - it->iov_offset),
-			      it->bvec->bv_offset + it->iov_offset);
+		bv.bv_page = it->bvec->bv_page;
+		bv.bv_offset = it->bvec->bv_offset + it->iov_offset;
+		bv.bv_len = min(iov_iter_count(it),
+				it->bvec->bv_len - it->iov_offset);
 
 		/*
-		 * MSG_SPLICE_PAGES cannot properly handle pages with
+		 * sendpage cannot properly handle pages with
 		 * page_count == 0, we need to fall back to sendmsg if
 		 * that's the case.
 		 *
@@ -163,13 +163,14 @@ static int do_try_sendpage(struct socket *sock, struct iov_iter *it)
 		 * coalescing neighboring slab objects into a single frag
 		 * which triggers one of hardened usercopy checks.
 		 */
-		if (sendpage_ok(bv.bv_page))
-			msg.msg_flags |= MSG_SPLICE_PAGES;
-		else
-			msg.msg_flags &= ~MSG_SPLICE_PAGES;
-
-		iov_iter_bvec(&msg.msg_iter, ITER_SOURCE, &bv, 1, bv.bv_len);
-		ret = sock_sendmsg(sock, &msg);
+		if (sendpage_ok(bv.bv_page)) {
+			ret = sock->ops->sendpage(sock, bv.bv_page,
+						  bv.bv_offset, bv.bv_len,
+						  CEPH_MSG_FLAGS);
+		} else {
+			iov_iter_bvec(&msg.msg_iter, ITER_SOURCE, &bv, 1, bv.bv_len);
+			ret = sock_sendmsg(sock, &msg);
+		}
 		if (ret <= 0) {
 			if (ret == -EAGAIN)
 				ret = 0;
@@ -184,7 +185,7 @@ static int do_try_sendpage(struct socket *sock, struct iov_iter *it)
 
 /*
  * Write as much as possible.  The socket is expected to be corked,
- * so we don't bother with MSG_MORE here.
+ * so we don't bother with MSG_MORE/MSG_SENDPAGE_NOTLAST here.
  *
  * Return:
  *   1 - done, nothing (else) to write
@@ -285,8 +286,9 @@ static void set_out_bvec_zero(struct ceph_connection *con)
 	WARN_ON(iov_iter_count(&con->v2.out_iter));
 	WARN_ON(!con->v2.out_zero);
 
-	bvec_set_page(&con->v2.out_bvec, ceph_zero_page,
-		      min(con->v2.out_zero, (int)PAGE_SIZE), 0);
+	con->v2.out_bvec.bv_page = ceph_zero_page;
+	con->v2.out_bvec.bv_offset = 0;
+	con->v2.out_bvec.bv_len = min(con->v2.out_zero, (int)PAGE_SIZE);
 	con->v2.out_iter_sendpage = true;
 	iov_iter_bvec(&con->v2.out_iter, ITER_SOURCE, &con->v2.out_bvec, 1,
 		      con->v2.out_bvec.bv_len);
@@ -872,7 +874,10 @@ static void get_bvec_at(struct ceph_msg_data_cursor *cursor,
 
 	/* get a piece of data, cursor isn't advanced */
 	page = ceph_msg_data_next(cursor, &off, &len);
-	bvec_set_page(bv, page, len, off);
+
+	bv->bv_page = page;
+	bv->bv_offset = off;
+	bv->bv_len = len;
 }
 
 static int calc_sg_cnt(void *buf, int buf_len)
@@ -1861,8 +1866,9 @@ static void prepare_read_enc_page(struct ceph_connection *con)
 	     con->v2.in_enc_resid);
 	WARN_ON(!con->v2.in_enc_resid);
 
-	bvec_set_page(&bv, con->v2.in_enc_pages[con->v2.in_enc_i],
-		      min(con->v2.in_enc_resid, (int)PAGE_SIZE), 0);
+	bv.bv_page = con->v2.in_enc_pages[con->v2.in_enc_i];
+	bv.bv_offset = 0;
+	bv.bv_len = min(con->v2.in_enc_resid, (int)PAGE_SIZE);
 
 	set_in_bvec(con, &bv);
 	con->v2.in_enc_i++;
@@ -3003,8 +3009,9 @@ static void queue_enc_page(struct ceph_connection *con)
 	     con->v2.out_enc_resid);
 	WARN_ON(!con->v2.out_enc_resid);
 
-	bvec_set_page(&bv, con->v2.out_enc_pages[con->v2.out_enc_i],
-		      min(con->v2.out_enc_resid, (int)PAGE_SIZE), 0);
+	bv.bv_page = con->v2.out_enc_pages[con->v2.out_enc_i];
+	bv.bv_offset = 0;
+	bv.bv_len = min(con->v2.out_enc_resid, (int)PAGE_SIZE);
 
 	set_out_bvec(con, &bv, false);
 	con->v2.out_enc_i++;

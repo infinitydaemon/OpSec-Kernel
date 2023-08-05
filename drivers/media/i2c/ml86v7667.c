@@ -359,7 +359,8 @@ static int ml86v7667_init(struct ml86v7667_priv *priv)
 	return ret;
 }
 
-static int ml86v7667_probe(struct i2c_client *client)
+static int ml86v7667_probe(struct i2c_client *client,
+			   const struct i2c_device_id *did)
 {
 	struct ml86v7667_priv *priv;
 	int ret;

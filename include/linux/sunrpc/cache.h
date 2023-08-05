@@ -300,18 +300,17 @@ static inline int get_time(char **bpp, time64_t *time)
 	return 0;
 }
 
-static inline int get_expiry(char **bpp, time64_t *rvp)
+static inline time64_t get_expiry(char **bpp)
 {
-	int error;
+	time64_t rv;
 	struct timespec64 boot;
 
-	error = get_time(bpp, rvp);
-	if (error)
-		return error;
-
+	if (get_time(bpp, &rv))
+		return 0;
+	if (rv < 0)
+		return 0;
 	getboottime64(&boot);
-	(*rvp) -= boot.tv_sec;
-	return 0;
+	return rv - boot.tv_sec;
 }
 
 #endif /*  _LINUX_SUNRPC_CACHE_H_ */

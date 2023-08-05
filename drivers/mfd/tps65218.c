@@ -280,7 +280,8 @@ static int tps65218_voltage_set_uvlo(struct tps65218 *tps)
 	return 0;
 }
 
-static int tps65218_probe(struct i2c_client *client)
+static int tps65218_probe(struct i2c_client *client,
+				const struct i2c_device_id *ids)
 {
 	struct tps65218 *tps;
 	int ret;

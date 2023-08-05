@@ -28,23 +28,15 @@
 #include "hantro_hw.h"
 #include "hantro_v4l2.h"
 
-#define  HANTRO_DEFAULT_BIT_DEPTH 8
-
 static int hantro_set_fmt_out(struct hantro_ctx *ctx,
-			      struct v4l2_pix_format_mplane *pix_mp,
-			      bool need_postproc);
+			      struct v4l2_pix_format_mplane *pix_mp);
 static int hantro_set_fmt_cap(struct hantro_ctx *ctx,
 			      struct v4l2_pix_format_mplane *pix_mp);
 
 static const struct hantro_fmt *
-hantro_get_formats(const struct hantro_ctx *ctx, unsigned int *num_fmts, bool need_postproc)
+hantro_get_formats(const struct hantro_ctx *ctx, unsigned int *num_fmts)
 {
 	const struct hantro_fmt *formats;
-
-	if (need_postproc) {
-		*num_fmts = 0;
-		return NULL;
-	}
 
 	if (ctx->is_encoder) {
 		formats = ctx->dev->variant->enc_fmts;
@@ -77,7 +69,6 @@ int hantro_get_format_depth(u32 fourcc)
 	switch (fourcc) {
 	case V4L2_PIX_FMT_P010:
 	case V4L2_PIX_FMT_P010_4L4:
-	case V4L2_PIX_FMT_NV15_4L4:
 		return 10;
 	default:
 		return 8;
@@ -85,16 +76,17 @@ int hantro_get_format_depth(u32 fourcc)
 }
 
 static bool
-hantro_check_depth_match(const struct hantro_fmt *fmt, int bit_depth)
+hantro_check_depth_match(const struct hantro_ctx *ctx,
+			 const struct hantro_fmt *fmt)
 {
-	int fmt_depth;
+	int fmt_depth, ctx_depth = 8;
 
 	if (!fmt->match_depth && !fmt->postprocessed)
 		return true;
 
 	/* 0 means default depth, which is 8 */
-	if (!bit_depth)
-		bit_depth = HANTRO_DEFAULT_BIT_DEPTH;
+	if (ctx->bit_depth)
+		ctx_depth = ctx->bit_depth;
 
 	fmt_depth = hantro_get_format_depth(fmt->fourcc);
 
@@ -103,9 +95,9 @@ hantro_check_depth_match(const struct hantro_fmt *fmt, int bit_depth)
 	 * It may be possible to relax that on some HW.
 	 */
 	if (!fmt->match_depth)
-		return fmt_depth <= bit_depth;
+		return fmt_depth <= ctx_depth;
 
-	return fmt_depth == bit_depth;
+	return fmt_depth == ctx_depth;
 }
 
 static const struct hantro_fmt *
@@ -114,7 +106,7 @@ hantro_find_format(const struct hantro_ctx *ctx, u32 fourcc)
 	const struct hantro_fmt *formats;
 	unsigned int i, num_fmts;
 
-	formats = hantro_get_formats(ctx, &num_fmts, HANTRO_AUTO_POSTPROC);
+	formats = hantro_get_formats(ctx, &num_fmts);
 	for (i = 0; i < num_fmts; i++)
 		if (formats[i].fourcc == fourcc)
 			return &formats[i];
@@ -127,28 +119,18 @@ hantro_find_format(const struct hantro_ctx *ctx, u32 fourcc)
 }
 
 const struct hantro_fmt *
-hantro_get_default_fmt(const struct hantro_ctx *ctx, bool bitstream,
-		       int bit_depth, bool need_postproc)
+hantro_get_default_fmt(const struct hantro_ctx *ctx, bool bitstream)
 {
 	const struct hantro_fmt *formats;
 	unsigned int i, num_fmts;
 
-	formats = hantro_get_formats(ctx, &num_fmts, need_postproc);
+	formats = hantro_get_formats(ctx, &num_fmts);
 	for (i = 0; i < num_fmts; i++) {
 		if (bitstream == (formats[i].codec_mode !=
 				  HANTRO_MODE_NONE) &&
-		    hantro_check_depth_match(&formats[i], bit_depth))
+		    hantro_check_depth_match(ctx, &formats[i]))
 			return &formats[i];
 	}
-
-	formats = hantro_get_postproc_formats(ctx, &num_fmts);
-	for (i = 0; i < num_fmts; i++) {
-		if (bitstream == (formats[i].codec_mode !=
-				  HANTRO_MODE_NONE) &&
-		    hantro_check_depth_match(&formats[i], bit_depth))
-			return &formats[i];
-	}
-
 	return NULL;
 }
 
@@ -160,6 +142,8 @@ static int vidioc_querycap(struct file *file, void *priv,
 
 	strscpy(cap->driver, vpu->dev->driver->name, sizeof(cap->driver));
 	strscpy(cap->card, vdev->name, sizeof(cap->card));
+	snprintf(cap->bus_info, sizeof(cap->bus_info), "platform: %s",
+		 vpu->dev->driver->name);
 	return 0;
 }
 
@@ -215,14 +199,14 @@ static int vidioc_enum_fmt(struct file *file, void *priv,
 	 */
 	skip_mode_none = capture == ctx->is_encoder;
 
-	formats = hantro_get_formats(ctx, &num_fmts, HANTRO_AUTO_POSTPROC);
+	formats = hantro_get_formats(ctx, &num_fmts);
 	for (i = 0; i < num_fmts; i++) {
 		bool mode_none = formats[i].codec_mode == HANTRO_MODE_NONE;
 		fmt = &formats[i];
 
 		if (skip_mode_none == mode_none)
 			continue;
-		if (!hantro_check_depth_match(fmt, ctx->bit_depth))
+		if (!hantro_check_depth_match(ctx, fmt))
 			continue;
 		if (j == f->index) {
 			f->pixelformat = fmt->fourcc;
@@ -242,7 +226,7 @@ static int vidioc_enum_fmt(struct file *file, void *priv,
 	for (i = 0; i < num_fmts; i++) {
 		fmt = &formats[i];
 
-		if (!hantro_check_depth_match(fmt, ctx->bit_depth))
+		if (!hantro_check_depth_match(ctx, fmt))
 			continue;
 		if (j == f->index) {
 			f->pixelformat = fmt->fourcc;
@@ -296,7 +280,7 @@ static int hantro_try_fmt(const struct hantro_ctx *ctx,
 			  struct v4l2_pix_format_mplane *pix_mp,
 			  enum v4l2_buf_type type)
 {
-	const struct hantro_fmt *fmt;
+	const struct hantro_fmt *fmt, *vpu_fmt;
 	bool capture = V4L2_TYPE_IS_CAPTURE(type);
 	bool coded;
 
@@ -310,13 +294,17 @@ static int hantro_try_fmt(const struct hantro_ctx *ctx,
 
 	fmt = hantro_find_format(ctx, pix_mp->pixelformat);
 	if (!fmt) {
-		fmt = hantro_get_default_fmt(ctx, coded, HANTRO_DEFAULT_BIT_DEPTH, HANTRO_AUTO_POSTPROC);
+		fmt = hantro_get_default_fmt(ctx, coded);
 		pix_mp->pixelformat = fmt->fourcc;
 	}
 
 	if (coded) {
 		pix_mp->num_planes = 1;
-	} else if (!ctx->is_encoder) {
+		vpu_fmt = fmt;
+	} else if (ctx->is_encoder) {
+		vpu_fmt = ctx->vpu_dst_fmt;
+	} else {
+		vpu_fmt = fmt;
 		/*
 		 * Width/height on the CAPTURE end of a decoder are ignored and
 		 * replaced by the OUTPUT ones.
@@ -328,7 +316,7 @@ static int hantro_try_fmt(const struct hantro_ctx *ctx,
 	pix_mp->field = V4L2_FIELD_NONE;
 
 	v4l2_apply_frmsize_constraints(&pix_mp->width, &pix_mp->height,
-				       &fmt->frmsize);
+				       &vpu_fmt->frmsize);
 
 	if (!coded) {
 		/* Fill remaining fields */
@@ -349,11 +337,6 @@ static int hantro_try_fmt(const struct hantro_ctx *ctx,
 			pix_mp->plane_fmt[0].sizeimage +=
 				hantro_hevc_mv_size(pix_mp->width,
 						    pix_mp->height);
-		else if (ctx->vpu_src_fmt->fourcc == V4L2_PIX_FMT_AV1_FRAME &&
-			 !hantro_needs_postproc(ctx, fmt))
-			pix_mp->plane_fmt[0].sizeimage +=
-				hantro_av1_mv_size(pix_mp->width,
-						   pix_mp->height);
 	} else if (!pix_mp->plane_fmt[0].sizeimage) {
 		/*
 		 * For coded formats the application can specify
@@ -397,59 +380,58 @@ static void
 hantro_reset_encoded_fmt(struct hantro_ctx *ctx)
 {
 	const struct hantro_fmt *vpu_fmt;
-	struct v4l2_pix_format_mplane fmt;
+	struct v4l2_pix_format_mplane *fmt;
 
-	vpu_fmt = hantro_get_default_fmt(ctx, true, HANTRO_DEFAULT_BIT_DEPTH, HANTRO_AUTO_POSTPROC);
-	if (!vpu_fmt)
-		return;
-
-	hantro_reset_fmt(&fmt, vpu_fmt);
-	fmt.width = vpu_fmt->frmsize.min_width;
-	fmt.height = vpu_fmt->frmsize.min_height;
-	if (ctx->is_encoder)
-		hantro_set_fmt_cap(ctx, &fmt);
-	else
-		hantro_set_fmt_out(ctx, &fmt, HANTRO_AUTO_POSTPROC);
-}
-
-int
-hantro_reset_raw_fmt(struct hantro_ctx *ctx, int bit_depth, bool need_postproc)
-{
-	const struct hantro_fmt *raw_vpu_fmt;
-	struct v4l2_pix_format_mplane raw_fmt, *encoded_fmt;
-	int ret;
-
-	raw_vpu_fmt = hantro_get_default_fmt(ctx, false, bit_depth, need_postproc);
-	if (!raw_vpu_fmt)
-		return -EINVAL;
+	vpu_fmt = hantro_get_default_fmt(ctx, true);
 
 	if (ctx->is_encoder) {
-		encoded_fmt = &ctx->dst_fmt;
-		ctx->vpu_src_fmt = raw_vpu_fmt;
+		ctx->vpu_dst_fmt = vpu_fmt;
+		fmt = &ctx->dst_fmt;
 	} else {
+		ctx->vpu_src_fmt = vpu_fmt;
+		fmt = &ctx->src_fmt;
+	}
+
+	hantro_reset_fmt(fmt, vpu_fmt);
+	fmt->width = vpu_fmt->frmsize.min_width;
+	fmt->height = vpu_fmt->frmsize.min_height;
+	if (ctx->is_encoder)
+		hantro_set_fmt_cap(ctx, fmt);
+	else
+		hantro_set_fmt_out(ctx, fmt);
+}
+
+static void
+hantro_reset_raw_fmt(struct hantro_ctx *ctx)
+{
+	const struct hantro_fmt *raw_vpu_fmt;
+	struct v4l2_pix_format_mplane *raw_fmt, *encoded_fmt;
+
+	raw_vpu_fmt = hantro_get_default_fmt(ctx, false);
+
+	if (ctx->is_encoder) {
+		ctx->vpu_src_fmt = raw_vpu_fmt;
+		raw_fmt = &ctx->src_fmt;
+		encoded_fmt = &ctx->dst_fmt;
+	} else {
+		ctx->vpu_dst_fmt = raw_vpu_fmt;
+		raw_fmt = &ctx->dst_fmt;
 		encoded_fmt = &ctx->src_fmt;
 	}
 
-	hantro_reset_fmt(&raw_fmt, raw_vpu_fmt);
-	raw_fmt.width = encoded_fmt->width;
-	raw_fmt.height = encoded_fmt->height;
+	hantro_reset_fmt(raw_fmt, raw_vpu_fmt);
+	raw_fmt->width = encoded_fmt->width;
+	raw_fmt->height = encoded_fmt->height;
 	if (ctx->is_encoder)
-		ret = hantro_set_fmt_out(ctx, &raw_fmt, need_postproc);
+		hantro_set_fmt_out(ctx, raw_fmt);
 	else
-		ret = hantro_set_fmt_cap(ctx, &raw_fmt);
-
-	if (!ret) {
-		ctx->bit_depth = bit_depth;
-		ctx->need_postproc = need_postproc;
-	}
-
-	return ret;
+		hantro_set_fmt_cap(ctx, raw_fmt);
 }
 
 void hantro_reset_fmts(struct hantro_ctx *ctx)
 {
 	hantro_reset_encoded_fmt(ctx);
-	hantro_reset_raw_fmt(ctx, HANTRO_DEFAULT_BIT_DEPTH, HANTRO_AUTO_POSTPROC);
+	hantro_reset_raw_fmt(ctx);
 }
 
 static void
@@ -496,8 +478,7 @@ hantro_update_requires_hold_capture_buf(struct hantro_ctx *ctx, u32 fourcc)
 }
 
 static int hantro_set_fmt_out(struct hantro_ctx *ctx,
-			      struct v4l2_pix_format_mplane *pix_mp,
-			      bool need_postproc)
+			      struct v4l2_pix_format_mplane *pix_mp)
 {
 	struct vb2_queue *vq;
 	int ret;
@@ -550,9 +531,7 @@ static int hantro_set_fmt_out(struct hantro_ctx *ctx,
 	 * changes to the raw format.
 	 */
 	if (!ctx->is_encoder)
-		hantro_reset_raw_fmt(ctx,
-				     hantro_get_format_depth(pix_mp->pixelformat),
-				     need_postproc);
+		hantro_reset_raw_fmt(ctx);
 
 	/* Colorimetry information are always propagated. */
 	ctx->dst_fmt.colorspace = pix_mp->colorspace;
@@ -615,7 +594,7 @@ static int hantro_set_fmt_cap(struct hantro_ctx *ctx,
 	 * changes to the raw format.
 	 */
 	if (ctx->is_encoder)
-		hantro_reset_raw_fmt(ctx, HANTRO_DEFAULT_BIT_DEPTH, HANTRO_AUTO_POSTPROC);
+		hantro_reset_raw_fmt(ctx);
 
 	/* Colorimetry information are always propagated. */
 	ctx->src_fmt.colorspace = pix_mp->colorspace;
@@ -635,7 +614,7 @@ static int hantro_set_fmt_cap(struct hantro_ctx *ctx,
 static int
 vidioc_s_fmt_out_mplane(struct file *file, void *priv, struct v4l2_format *f)
 {
-	return hantro_set_fmt_out(fh_to_ctx(priv), &f->fmt.pix_mp, HANTRO_AUTO_POSTPROC);
+	return hantro_set_fmt_out(fh_to_ctx(priv), &f->fmt.pix_mp);
 }
 
 static int

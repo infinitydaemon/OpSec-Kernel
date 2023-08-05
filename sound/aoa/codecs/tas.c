@@ -875,7 +875,8 @@ static void tas_exit_codec(struct aoa_codec *codec)
 }
 
 
-static int tas_i2c_probe(struct i2c_client *client)
+static int tas_i2c_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct device_node *node = client->dev.of_node;
 	struct tas *tas;

@@ -135,7 +135,7 @@ struct dev_pagemap {
 	int nr_range;
 	union {
 		struct range range;
-		DECLARE_FLEX_ARRAY(struct range, ranges);
+		struct range ranges[0];
 	};
 };
 

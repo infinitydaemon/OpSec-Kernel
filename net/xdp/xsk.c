@@ -22,7 +22,6 @@
 #include <linux/net.h>
 #include <linux/netdevice.h>
 #include <linux/rculist.h>
-#include <linux/vmalloc.h>
 #include <net/xdp_sock_drv.h>
 #include <net/busy_poll.h>
 #include <net/xdp.h>
@@ -853,6 +852,7 @@ static int xsk_release(struct socket *sock)
 	sock_orphan(sk);
 	sock->sk = NULL;
 
+	sk_refcnt_debug_release(sk);
 	sock_put(sk);
 
 	return 0;
@@ -1306,10 +1306,11 @@ static int xsk_mmap(struct file *file, struct socket *sock,
 	loff_t offset = (loff_t)vma->vm_pgoff << PAGE_SHIFT;
 	unsigned long size = vma->vm_end - vma->vm_start;
 	struct xdp_sock *xs = xdp_sk(sock->sk);
-	int state = READ_ONCE(xs->state);
 	struct xsk_queue *q = NULL;
+	unsigned long pfn;
+	struct page *qpg;
 
-	if (state != XSK_READY && state != XSK_BOUND)
+	if (READ_ONCE(xs->state) != XSK_READY)
 		return -EBUSY;
 
 	if (offset == XDP_PGOFF_RX_RING) {
@@ -1320,11 +1321,9 @@ static int xsk_mmap(struct file *file, struct socket *sock,
 		/* Matches the smp_wmb() in XDP_UMEM_REG */
 		smp_rmb();
 		if (offset == XDP_UMEM_PGOFF_FILL_RING)
-			q = state == XSK_READY ? READ_ONCE(xs->fq_tmp) :
-						 READ_ONCE(xs->pool->fq);
+			q = READ_ONCE(xs->fq_tmp);
 		else if (offset == XDP_UMEM_PGOFF_COMPLETION_RING)
-			q = state == XSK_READY ? READ_ONCE(xs->cq_tmp) :
-						 READ_ONCE(xs->pool->cq);
+			q = READ_ONCE(xs->cq_tmp);
 	}
 
 	if (!q)
@@ -1332,10 +1331,13 @@ static int xsk_mmap(struct file *file, struct socket *sock,
 
 	/* Matches the smp_wmb() in xsk_init_queue */
 	smp_rmb();
-	if (size > q->ring_vmalloc_size)
+	qpg = virt_to_head_page(q->ring);
+	if (size > page_size(qpg))
 		return -EINVAL;
 
-	return remap_vmalloc_range(vma, q->ring, 0);
+	pfn = virt_to_phys(q->ring) >> PAGE_SHIFT;
+	return remap_pfn_range(vma, vma->vm_start, pfn,
+			       size, vma->vm_page_prot);
 }
 
 static int xsk_notifier(struct notifier_block *this,
@@ -1394,6 +1396,7 @@ static const struct proto_ops xsk_proto_ops = {
 	.sendmsg	= xsk_sendmsg,
 	.recvmsg	= xsk_recvmsg,
 	.mmap		= xsk_mmap,
+	.sendpage	= sock_no_sendpage,
 };
 
 static void xsk_destruct(struct sock *sk)
@@ -1405,6 +1408,8 @@ static void xsk_destruct(struct sock *sk)
 
 	if (!xp_put_pool(xs->pool))
 		xdp_put_umem(xs->umem, !xs->pool);
+
+	sk_refcnt_debug_dec(sk);
 }
 
 static int xsk_create(struct net *net, struct socket *sock, int protocol,
@@ -1434,6 +1439,7 @@ static int xsk_create(struct net *net, struct socket *sock, int protocol,
 	sk->sk_family = PF_XDP;
 
 	sk->sk_destruct = xsk_destruct;
+	sk_refcnt_debug_inc(sk);
 
 	sock_set_flag(sk, SOCK_RCU_FREE);
 

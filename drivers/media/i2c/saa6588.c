@@ -448,7 +448,8 @@ static const struct v4l2_subdev_ops saa6588_ops = {
 
 /* ---------------------------------------------------------------------- */
 
-static int saa6588_probe(struct i2c_client *client)
+static int saa6588_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct saa6588 *s;
 	struct v4l2_subdev *sd;

@@ -22,7 +22,6 @@ obj-$(CONFIG_RC_MAP) += \
 			rc-avertv-303.o \
 			rc-azurewave-ad-tu700.o \
 			rc-beelink-gs1.o \
-			rc-beelink-mxiii.o \
 			rc-behold-columbus.o \
 			rc-behold.o \
 			rc-budget-ci-old.o \
@@ -38,7 +37,6 @@ obj-$(CONFIG_RC_MAP) += \
 			rc-dm1105-nec.o \
 			rc-dntv-live-dvb-t.o \
 			rc-dntv-live-dvbt-pro.o \
-			rc-dreambox.o \
 			rc-dtt200u.o \
 			rc-dvbsky.o \
 			rc-dvico-mce.o \

@@ -412,13 +412,15 @@ err_disable_ana:
 	return ret;
 }
 
-static void tse850_remove(struct platform_device *pdev)
+static int tse850_remove(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 	struct tse850_priv *tse850 = snd_soc_card_get_drvdata(card);
 
 	snd_soc_unregister_card(card);
 	regulator_disable(tse850->ana);
+
+	return 0;
 }
 
 static const struct of_device_id tse850_dt_ids[] = {
@@ -433,7 +435,7 @@ static struct platform_driver tse850_driver = {
 		.of_match_table = of_match_ptr(tse850_dt_ids),
 	},
 	.probe = tse850_probe,
-	.remove_new = tse850_remove,
+	.remove = tse850_remove,
 };
 
 module_platform_driver(tse850_driver);

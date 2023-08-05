@@ -12,9 +12,9 @@
 #include <linux/sched/clock.h>
 
 #ifdef CONFIG_SPARSE_IRQ
-# define MAX_SPARSE_IRQS	INT_MAX
+# define IRQ_BITMAP_BITS	(NR_IRQS + 8196)
 #else
-# define MAX_SPARSE_IRQS	NR_IRQS
+# define IRQ_BITMAP_BITS	NR_IRQS
 #endif
 
 #define istate core_internal_state__do_not_mess_with_it
@@ -47,12 +47,9 @@ enum {
  *				  detection
  * IRQS_POLL_INPROGRESS		- polling in progress
  * IRQS_ONESHOT			- irq is not unmasked in primary handler
- * IRQS_REPLAY			- irq has been resent and will not be resent
- * 				  again until the handler has run and cleared
- * 				  this flag.
+ * IRQS_REPLAY			- irq is replayed
  * IRQS_WAITING			- irq is waiting
- * IRQS_PENDING			- irq needs to be resent and should be resent
- * 				  at the next available opportunity.
+ * IRQS_PENDING			- irq is pending and replayed later
  * IRQS_SUSPENDED		- irq is suspended
  * IRQS_NMI			- irq line is used to deliver NMIs
  * IRQS_SYSFS			- descriptor has been added to sysfs
@@ -116,8 +113,6 @@ irqreturn_t handle_irq_event(struct irq_desc *desc);
 
 /* Resending of interrupts :*/
 int check_irq_resend(struct irq_desc *desc, bool inject);
-void clear_irq_resend(struct irq_desc *desc);
-void irq_resend_init(struct irq_desc *desc);
 bool irq_wait_for_poll(struct irq_desc *desc);
 void __irq_wake_thread(struct irq_desc *desc, struct irqaction *action);
 

@@ -849,7 +849,7 @@ static int ceph_writepages_start(struct address_space *mapping,
 	struct ceph_vino vino = ceph_vino(inode);
 	pgoff_t index, start_index, end = -1;
 	struct ceph_snap_context *snapc = NULL, *last_snapc = NULL, *pgsnapc;
-	struct folio_batch fbatch;
+	struct pagevec pvec;
 	int rc = 0;
 	unsigned int wsize = i_blocksize(inode);
 	struct ceph_osd_request *req = NULL;
@@ -857,7 +857,6 @@ static int ceph_writepages_start(struct address_space *mapping,
 	bool should_loop, range_whole = false;
 	bool done = false;
 	bool caching = ceph_is_cache_enabled(inode);
-	xa_mark_t tag;
 
 	if (wbc->sync_mode == WB_SYNC_NONE &&
 	    fsc->write_congested)
@@ -879,16 +878,11 @@ static int ceph_writepages_start(struct address_space *mapping,
 	if (fsc->mount_options->wsize < wsize)
 		wsize = fsc->mount_options->wsize;
 
-	folio_batch_init(&fbatch);
+	pagevec_init(&pvec);
 
 	start_index = wbc->range_cyclic ? mapping->writeback_index : 0;
 	index = start_index;
 
-	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages) {
-		tag = PAGECACHE_TAG_TOWRITE;
-	} else {
-		tag = PAGECACHE_TAG_DIRTY;
-	}
 retry:
 	/* find oldest snap context with dirty data */
 	snapc = get_oldest_context(inode, &ceph_wbc, NULL);
@@ -927,15 +921,12 @@ retry:
 		dout(" non-head snapc, range whole\n");
 	}
 
-	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
-		tag_pages_for_writeback(mapping, index, end);
-
 	ceph_put_snap_context(last_snapc);
 	last_snapc = snapc;
 
 	while (!done && index <= end) {
 		int num_ops = 0, op_idx;
-		unsigned i, nr_folios, max_pages, locked_pages = 0;
+		unsigned i, pvec_pages, max_pages, locked_pages = 0;
 		struct page **pages = NULL, **data_pages;
 		struct page *page;
 		pgoff_t strip_unit_end = 0;
@@ -945,13 +936,13 @@ retry:
 		max_pages = wsize >> PAGE_SHIFT;
 
 get_more_pages:
-		nr_folios = filemap_get_folios_tag(mapping, &index,
-						   end, tag, &fbatch);
-		dout("pagevec_lookup_range_tag got %d\n", nr_folios);
-		if (!nr_folios && !locked_pages)
+		pvec_pages = pagevec_lookup_range_tag(&pvec, mapping, &index,
+						end, PAGECACHE_TAG_DIRTY);
+		dout("pagevec_lookup_range_tag got %d\n", pvec_pages);
+		if (!pvec_pages && !locked_pages)
 			break;
-		for (i = 0; i < nr_folios && locked_pages < max_pages; i++) {
-			page = &fbatch.folios[i]->page;
+		for (i = 0; i < pvec_pages && locked_pages < max_pages; i++) {
+			page = pvec.pages[i];
 			dout("? %p idx %lu\n", page, page->index);
 			if (locked_pages == 0)
 				lock_page(page);  /* first page */
@@ -1061,7 +1052,7 @@ get_more_pages:
 				len = 0;
 			}
 
-			/* note position of first page in fbatch */
+			/* note position of first page in pvec */
 			dout("%p will write page %p idx %lu\n",
 			     inode, page, page->index);
 
@@ -1071,30 +1062,30 @@ get_more_pages:
 				fsc->write_congested = true;
 
 			pages[locked_pages++] = page;
-			fbatch.folios[i] = NULL;
+			pvec.pages[i] = NULL;
 
 			len += thp_size(page);
 		}
 
 		/* did we get anything? */
 		if (!locked_pages)
-			goto release_folios;
+			goto release_pvec_pages;
 		if (i) {
 			unsigned j, n = 0;
-			/* shift unused page to beginning of fbatch */
-			for (j = 0; j < nr_folios; j++) {
-				if (!fbatch.folios[j])
+			/* shift unused page to beginning of pvec */
+			for (j = 0; j < pvec_pages; j++) {
+				if (!pvec.pages[j])
 					continue;
 				if (n < j)
-					fbatch.folios[n] = fbatch.folios[j];
+					pvec.pages[n] = pvec.pages[j];
 				n++;
 			}
-			fbatch.nr = n;
+			pvec.nr = n;
 
-			if (nr_folios && i == nr_folios &&
+			if (pvec_pages && i == pvec_pages &&
 			    locked_pages < max_pages) {
-				dout("reached end fbatch, trying for more\n");
-				folio_batch_release(&fbatch);
+				dout("reached end pvec, trying for more\n");
+				pagevec_release(&pvec);
 				goto get_more_pages;
 			}
 		}
@@ -1230,10 +1221,10 @@ new_request:
 		if (wbc->nr_to_write <= 0 && wbc->sync_mode == WB_SYNC_NONE)
 			done = true;
 
-release_folios:
-		dout("folio_batch release on %d folios (%p)\n", (int)fbatch.nr,
-		     fbatch.nr ? fbatch.folios[0] : NULL);
-		folio_batch_release(&fbatch);
+release_pvec_pages:
+		dout("pagevec_release on %d pages (%p)\n", (int)pvec.nr,
+		     pvec.nr ? pvec.pages[0] : NULL);
+		pagevec_release(&pvec);
 	}
 
 	if (should_loop && !done) {
@@ -1250,17 +1241,15 @@ release_folios:
 			unsigned i, nr;
 			index = 0;
 			while ((index <= end) &&
-			       (nr = filemap_get_folios_tag(mapping, &index,
-						(pgoff_t)-1,
-						PAGECACHE_TAG_WRITEBACK,
-						&fbatch))) {
+			       (nr = pagevec_lookup_tag(&pvec, mapping, &index,
+						PAGECACHE_TAG_WRITEBACK))) {
 				for (i = 0; i < nr; i++) {
-					page = &fbatch.folios[i]->page;
+					page = pvec.pages[i];
 					if (page_snap_context(page) != snapc)
 						continue;
 					wait_on_page_writeback(page);
 				}
-				folio_batch_release(&fbatch);
+				pagevec_release(&pvec);
 				cond_resched();
 			}
 		}
@@ -1435,7 +1424,7 @@ out:
 	folio_put(folio);
 
 	if (check_cap)
-		ceph_check_caps(ceph_inode(inode), CHECK_CAPS_AUTHONLY);
+		ceph_check_caps(ceph_inode(inode), CHECK_CAPS_AUTHONLY, NULL);
 
 	return copied;
 }

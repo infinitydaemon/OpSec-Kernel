@@ -250,14 +250,9 @@ static int nft_flow_route(const struct nft_pktinfo *pkt,
 		break;
 	}
 
-	if (!dst_hold_safe(this_dst))
-		return -ENOENT;
-
 	nf_route(nft_net(pkt), &other_dst, &fl, false, nft_pf(pkt));
-	if (!other_dst) {
-		dst_release(this_dst);
+	if (!other_dst)
 		return -ENOENT;
-	}
 
 	nft_default_forward_path(route, this_dst, dir);
 	nft_default_forward_path(route, other_dst, !dir);
@@ -354,7 +349,8 @@ static void nft_flow_offload_eval(const struct nft_expr *expr,
 	if (!flow)
 		goto err_flow_alloc;
 
-	flow_offload_route_init(flow, &route);
+	if (flow_offload_route_init(flow, &route) < 0)
+		goto err_flow_add;
 
 	if (tcph) {
 		ct->proto.tcp.seen[0].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
@@ -365,12 +361,12 @@ static void nft_flow_offload_eval(const struct nft_expr *expr,
 	if (ret < 0)
 		goto err_flow_add;
 
+	dst_release(route.tuple[!dir].dst);
 	return;
 
 err_flow_add:
 	flow_offload_free(flow);
 err_flow_alloc:
-	dst_release(route.tuple[dir].dst);
 	dst_release(route.tuple[!dir].dst);
 err_flow_route:
 	clear_bit(IPS_OFFLOAD_BIT, &ct->status);
@@ -408,10 +404,8 @@ static int nft_flow_offload_init(const struct nft_ctx *ctx,
 	if (IS_ERR(flowtable))
 		return PTR_ERR(flowtable);
 
-	if (!nft_use_inc(&flowtable->use))
-		return -EMFILE;
-
 	priv->flowtable = flowtable;
+	flowtable->use++;
 
 	return nf_ct_netns_get(ctx->net, ctx->family);
 }
@@ -430,7 +424,7 @@ static void nft_flow_offload_activate(const struct nft_ctx *ctx,
 {
 	struct nft_flow_offload *priv = nft_expr_priv(expr);
 
-	nft_use_inc_restore(&priv->flowtable->use);
+	priv->flowtable->use++;
 }
 
 static void nft_flow_offload_destroy(const struct nft_ctx *ctx,
@@ -439,8 +433,7 @@ static void nft_flow_offload_destroy(const struct nft_ctx *ctx,
 	nf_ct_netns_put(ctx->net, ctx->family);
 }
 
-static int nft_flow_offload_dump(struct sk_buff *skb,
-				 const struct nft_expr *expr, bool reset)
+static int nft_flow_offload_dump(struct sk_buff *skb, const struct nft_expr *expr)
 {
 	struct nft_flow_offload *priv = nft_expr_priv(expr);
 

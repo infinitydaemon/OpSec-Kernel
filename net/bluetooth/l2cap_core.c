@@ -45,7 +45,7 @@
 #define LE_FLOWCTL_MAX_CREDITS 65535
 
 bool disable_ertm;
-bool enable_ecred = IS_ENABLED(CONFIG_BT_LE_L2CAP_ECRED);
+bool enable_ecred;
 
 static u32 l2cap_feat_mask = L2CAP_FEAT_FIXED_CHAN | L2CAP_FEAT_UCD;
 
@@ -745,7 +745,7 @@ EXPORT_SYMBOL_GPL(l2cap_chan_list);
 static void l2cap_conn_update_id_addr(struct work_struct *work)
 {
 	struct l2cap_conn *conn = container_of(work, struct l2cap_conn,
-					       id_addr_timer.work);
+					       id_addr_update_work);
 	struct hci_conn *hcon = conn->hcon;
 	struct l2cap_chan *chan;
 
@@ -1907,7 +1907,8 @@ static void l2cap_conn_del(struct hci_conn *hcon, int err)
 	if (work_pending(&conn->pending_rx_work))
 		cancel_work_sync(&conn->pending_rx_work);
 
-	cancel_delayed_work_sync(&conn->id_addr_timer);
+	if (work_pending(&conn->id_addr_update_work))
+		cancel_work_sync(&conn->id_addr_update_work);
 
 	l2cap_unregister_all_users(conn);
 
@@ -6374,14 +6375,9 @@ static inline int l2cap_le_command_rej(struct l2cap_conn *conn,
 	if (!chan)
 		goto done;
 
-	chan = l2cap_chan_hold_unless_zero(chan);
-	if (!chan)
-		goto done;
-
 	l2cap_chan_lock(chan);
 	l2cap_chan_del(chan, ECONNREFUSED);
 	l2cap_chan_unlock(chan);
-	l2cap_chan_put(chan);
 
 done:
 	mutex_unlock(&conn->chan_lock);
@@ -7890,7 +7886,7 @@ static struct l2cap_conn *l2cap_conn_add(struct hci_conn *hcon)
 
 	skb_queue_head_init(&conn->pending_rx);
 	INIT_WORK(&conn->pending_rx_work, process_pending_rx);
-	INIT_DELAYED_WORK(&conn->id_addr_timer, l2cap_conn_update_id_addr);
+	INIT_WORK(&conn->id_addr_update_work, l2cap_conn_update_id_addr);
 
 	conn->disc_reason = HCI_ERROR_REMOTE_USER_TERM;
 

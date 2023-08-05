@@ -117,12 +117,12 @@ static int cal_legacy_enum_fmt_vid_cap(struct file *file, void *priv,
 static int __subdev_get_format(struct cal_ctx *ctx,
 			       struct v4l2_mbus_framefmt *fmt)
 {
-	struct v4l2_subdev_format sd_fmt = {
-		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
-		.pad = 0,
-	};
+	struct v4l2_subdev_format sd_fmt;
 	struct v4l2_mbus_framefmt *mbus_fmt = &sd_fmt.format;
 	int ret;
+
+	sd_fmt.which = V4L2_SUBDEV_FORMAT_ACTIVE;
+	sd_fmt.pad = 0;
 
 	ret = v4l2_subdev_call(ctx->phy->source, pad, get_fmt, NULL, &sd_fmt);
 	if (ret)
@@ -139,13 +139,12 @@ static int __subdev_get_format(struct cal_ctx *ctx,
 static int __subdev_set_format(struct cal_ctx *ctx,
 			       struct v4l2_mbus_framefmt *fmt)
 {
-	struct v4l2_subdev_format sd_fmt = {
-		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
-		.pad = 0,
-	};
+	struct v4l2_subdev_format sd_fmt;
 	struct v4l2_mbus_framefmt *mbus_fmt = &sd_fmt.format;
 	int ret;
 
+	sd_fmt.which = V4L2_SUBDEV_FORMAT_ACTIVE;
+	sd_fmt.pad = 0;
 	*mbus_fmt = *fmt;
 
 	ret = v4l2_subdev_call(ctx->phy->source, pad, set_fmt, NULL, &sd_fmt);
@@ -191,9 +190,7 @@ static int cal_legacy_try_fmt_vid_cap(struct file *file, void *priv,
 {
 	struct cal_ctx *ctx = video_drvdata(file);
 	const struct cal_format_info *fmtinfo;
-	struct v4l2_subdev_frame_size_enum fse = {
-		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
-	};
+	struct v4l2_subdev_frame_size_enum fse;
 	int found;
 
 	fmtinfo = find_format_by_pix(ctx, f->fmt.pix.pixelformat);
@@ -212,6 +209,7 @@ static int cal_legacy_try_fmt_vid_cap(struct file *file, void *priv,
 	found = false;
 	fse.pad = 0;
 	fse.code = fmtinfo->code;
+	fse.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 	for (fse.index = 0; ; fse.index++) {
 		int ret;
 
@@ -304,11 +302,7 @@ static int cal_legacy_enum_framesizes(struct file *file, void *fh,
 {
 	struct cal_ctx *ctx = video_drvdata(file);
 	const struct cal_format_info *fmtinfo;
-	struct v4l2_subdev_frame_size_enum fse = {
-		.index = fsize->index,
-		.pad = 0,
-		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
-	};
+	struct v4l2_subdev_frame_size_enum fse;
 	int ret;
 
 	/* check for valid format */
@@ -319,7 +313,10 @@ static int cal_legacy_enum_framesizes(struct file *file, void *fh,
 		return -EINVAL;
 	}
 
+	fse.index = fsize->index;
+	fse.pad = 0;
 	fse.code = fmtinfo->code;
+	fse.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 
 	ret = v4l2_subdev_call(ctx->phy->source, pad, enum_frame_size, NULL,
 			       &fse);

@@ -14,14 +14,14 @@ fi
 
 case "$1" in
 binutils)
-	echo 2.25.0
+	echo 2.23.0
 	;;
 gcc)
-	if [ "$ARCH" = parisc64 ]; then
-		echo 12.0.0
-	else
-		echo 5.1.0
-	fi
+	echo 5.1.0
+	;;
+icc)
+	# temporary
+	echo 16.0.3
 	;;
 llvm)
 	if [ "$SRCARCH" = s390 ]; then
@@ -31,7 +31,7 @@ llvm)
 	fi
 	;;
 rustc)
-	echo 1.68.2
+	echo 1.62.0
 	;;
 bindgen)
 	echo 0.56.0

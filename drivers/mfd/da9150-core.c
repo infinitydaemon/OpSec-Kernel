@@ -392,7 +392,8 @@ static struct mfd_cell da9150_devs[] = {
 	},
 };
 
-static int da9150_probe(struct i2c_client *client)
+static int da9150_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct da9150 *da9150;
 	struct da9150_pdata *pdata = dev_get_platdata(&client->dev);

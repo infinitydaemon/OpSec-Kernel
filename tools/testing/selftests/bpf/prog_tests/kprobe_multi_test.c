@@ -312,17 +312,17 @@ static inline __u64 get_time_ns(void)
 	return (__u64) t.tv_sec * 1000000000 + t.tv_nsec;
 }
 
-static size_t symbol_hash(long key, void *ctx __maybe_unused)
+static size_t symbol_hash(const void *key, void *ctx __maybe_unused)
 {
 	return str_hash((const char *) key);
 }
 
-static bool symbol_equal(long key1, long key2, void *ctx __maybe_unused)
+static bool symbol_equal(const void *key1, const void *key2, void *ctx __maybe_unused)
 {
 	return strcmp((const char *) key1, (const char *) key2) == 0;
 }
 
-static int get_syms(char ***symsp, size_t *cntp, bool kernel)
+static int get_syms(char ***symsp, size_t *cntp)
 {
 	size_t cap = 0, cnt = 0, i;
 	char *name = NULL, **syms = NULL;
@@ -338,12 +338,7 @@ static int get_syms(char ***symsp, size_t *cntp, bool kernel)
 	 * Filtering out duplicates by using hashmap__add, which won't
 	 * add existing entry.
 	 */
-
-	if (access("/sys/kernel/tracing/trace", F_OK) == 0)
-		f = fopen("/sys/kernel/tracing/available_filter_functions", "r");
-	else
-		f = fopen("/sys/kernel/debug/tracing/available_filter_functions", "r");
-
+	f = fopen("/sys/kernel/debug/tracing/available_filter_functions", "r");
 	if (!f)
 		return -EINVAL;
 
@@ -354,9 +349,8 @@ static int get_syms(char ***symsp, size_t *cntp, bool kernel)
 	}
 
 	while (fgets(buf, sizeof(buf), f)) {
-		if (kernel && strchr(buf, '['))
-			continue;
-		if (!kernel && !strchr(buf, '['))
+		/* skip modules */
+		if (strchr(buf, '['))
 			continue;
 
 		free(name);
@@ -380,11 +374,9 @@ static int get_syms(char ***symsp, size_t *cntp, bool kernel)
 			     sizeof("__ftrace_invalid_address__") - 1))
 			continue;
 
-		err = hashmap__add(map, name, 0);
-		if (err == -EEXIST) {
-			err = 0;
+		err = hashmap__add(map, name, NULL);
+		if (err == -EEXIST)
 			continue;
-		}
 		if (err)
 			goto error;
 
@@ -412,7 +404,7 @@ error:
 	return err;
 }
 
-static void test_kprobe_multi_bench_attach(bool kernel)
+void serial_test_kprobe_multi_bench_attach(void)
 {
 	LIBBPF_OPTS(bpf_kprobe_multi_opts, opts);
 	struct kprobe_multi_empty *skel = NULL;
@@ -423,7 +415,7 @@ static void test_kprobe_multi_bench_attach(bool kernel)
 	char **syms = NULL;
 	size_t cnt = 0, i;
 
-	if (!ASSERT_OK(get_syms(&syms, &cnt, kernel), "get_syms"))
+	if (!ASSERT_OK(get_syms(&syms, &cnt), "get_syms"))
 		return;
 
 	skel = kprobe_multi_empty__open_and_load();
@@ -459,14 +451,6 @@ cleanup:
 			free(syms[i]);
 		free(syms);
 	}
-}
-
-void serial_test_kprobe_multi_bench_attach(void)
-{
-	if (test__start_subtest("kernel"))
-		test_kprobe_multi_bench_attach(true);
-	if (test__start_subtest("modules"))
-		test_kprobe_multi_bench_attach(false);
 }
 
 void test_kprobe_multi_test(void)

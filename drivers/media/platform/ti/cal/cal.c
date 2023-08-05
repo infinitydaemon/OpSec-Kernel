@@ -1293,7 +1293,7 @@ error_pm_runtime:
 	return ret;
 }
 
-static void cal_remove(struct platform_device *pdev)
+static int cal_remove(struct platform_device *pdev)
 {
 	struct cal_dev *cal = platform_get_drvdata(pdev);
 	unsigned int i;
@@ -1319,6 +1319,8 @@ static void cal_remove(struct platform_device *pdev)
 	if (ret >= 0)
 		pm_runtime_put_sync(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 static int cal_runtime_resume(struct device *dev)
@@ -1362,7 +1364,7 @@ static const struct dev_pm_ops cal_pm_ops = {
 
 static struct platform_driver cal_pdrv = {
 	.probe		= cal_probe,
-	.remove_new	= cal_remove,
+	.remove		= cal_remove,
 	.driver		= {
 		.name	= CAL_MODULE_NAME,
 		.pm	= &cal_pm_ops,

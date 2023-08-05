@@ -254,7 +254,7 @@ static int vpu_core_register(struct device *dev, struct vpu_core *core)
 	if (vpu_core_is_exist(vpu, core))
 		return 0;
 
-	core->workqueue = alloc_ordered_workqueue("vpu", WQ_MEM_RECLAIM);
+	core->workqueue = alloc_workqueue("vpu", WQ_UNBOUND | WQ_MEM_RECLAIM, 1);
 	if (!core->workqueue) {
 		dev_err(core->dev, "fail to alloc workqueue\n");
 		return -ENOMEM;
@@ -709,7 +709,7 @@ err_runtime_disable:
 	return ret;
 }
 
-static void vpu_core_remove(struct platform_device *pdev)
+static int vpu_core_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct vpu_core *core = platform_get_drvdata(pdev);
@@ -728,6 +728,8 @@ static void vpu_core_remove(struct platform_device *pdev)
 	memunmap(core->rpc.virt);
 	mutex_destroy(&core->lock);
 	mutex_destroy(&core->cmd_lock);
+
+	return 0;
 }
 
 static int __maybe_unused vpu_core_runtime_resume(struct device *dev)
@@ -826,7 +828,7 @@ static const struct dev_pm_ops vpu_core_pm_ops = {
 
 static struct vpu_core_resources imx8q_enc = {
 	.type = VPU_CORE_TYPE_ENC,
-	.fwname = "vpu/vpu_fw_imx8_enc.bin",
+	.fwname = "amphion/vpu/vpu_fw_imx8_enc.bin",
 	.stride = 16,
 	.max_width = 1920,
 	.max_height = 1920,
@@ -841,7 +843,7 @@ static struct vpu_core_resources imx8q_enc = {
 
 static struct vpu_core_resources imx8q_dec = {
 	.type = VPU_CORE_TYPE_DEC,
-	.fwname = "vpu/vpu_fw_imx8_dec.bin",
+	.fwname = "amphion/vpu/vpu_fw_imx8_dec.bin",
 	.stride = 256,
 	.max_width = 8188,
 	.max_height = 8188,
@@ -862,7 +864,7 @@ MODULE_DEVICE_TABLE(of, vpu_core_dt_match);
 
 static struct platform_driver amphion_vpu_core_driver = {
 	.probe = vpu_core_probe,
-	.remove_new = vpu_core_remove,
+	.remove = vpu_core_remove,
 	.driver = {
 		.name = "amphion-vpu-core",
 		.of_match_table = vpu_core_dt_match,

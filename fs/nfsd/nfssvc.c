@@ -91,12 +91,8 @@ unsigned long	nfsd_drc_mem_used;
 #if defined(CONFIG_NFSD_V2_ACL) || defined(CONFIG_NFSD_V3_ACL)
 static struct svc_stat	nfsd_acl_svcstats;
 static const struct svc_version *nfsd_acl_version[] = {
-# if defined(CONFIG_NFSD_V2_ACL)
 	[2] = &nfsd_acl_version2,
-# endif
-# if defined(CONFIG_NFSD_V3_ACL)
 	[3] = &nfsd_acl_version3,
-# endif
 };
 
 #define NFSD_ACL_MINVERS            2
@@ -120,9 +116,7 @@ static struct svc_stat	nfsd_acl_svcstats = {
 #endif /* defined(CONFIG_NFSD_V2_ACL) || defined(CONFIG_NFSD_V3_ACL) */
 
 static const struct svc_version *nfsd_version[] = {
-#if defined(CONFIG_NFSD_V2)
 	[2] = &nfsd_version2,
-#endif
 	[3] = &nfsd_version3,
 #if defined(CONFIG_NFSD_V4)
 	[4] = &nfsd_version4,
@@ -402,11 +396,6 @@ void nfsd_reset_write_verifier(struct nfsd_net *nn)
 	write_sequnlock(&nn->writeverf_lock);
 }
 
-/*
- * Crank up a set of per-namespace resources for a new NFSD instance,
- * including lockd, a duplicate reply cache, an open file cache
- * instance, and a cache of NFSv4 state objects.
- */
 static int nfsd_startup_net(struct net *net, const struct cred *cred)
 {
 	struct nfsd_net *nn = net_generic(net, nfsd_net_id);
@@ -432,14 +421,9 @@ static int nfsd_startup_net(struct net *net, const struct cred *cred)
 	ret = nfsd_file_cache_start_net(net);
 	if (ret)
 		goto out_lockd;
-
-	ret = nfsd_reply_cache_init(nn);
-	if (ret)
-		goto out_filecache;
-
 	ret = nfs4_state_start_net(net);
 	if (ret)
-		goto out_reply_cache;
+		goto out_filecache;
 
 #ifdef CONFIG_NFSD_V4_2_INTER_SSC
 	nfsd4_ssc_init_umount_work(nn);
@@ -447,8 +431,6 @@ static int nfsd_startup_net(struct net *net, const struct cred *cred)
 	nn->nfsd_net_up = true;
 	return 0;
 
-out_reply_cache:
-	nfsd_reply_cache_shutdown(nn);
 out_filecache:
 	nfsd_file_cache_shutdown_net(net);
 out_lockd:
@@ -466,7 +448,6 @@ static void nfsd_shutdown_net(struct net *net)
 	struct nfsd_net *nn = net_generic(net, nfsd_net_id);
 
 	nfs4_state_shutdown_net(net);
-	nfsd_reply_cache_shutdown(nn);
 	nfsd_file_cache_shutdown_net(net);
 	if (nn->lockd_up) {
 		lockd_down(net);
@@ -1035,6 +1016,7 @@ out:
 /**
  * nfsd_dispatch - Process an NFS or NFSACL Request
  * @rqstp: incoming request
+ * @statp: pointer to location of accept_stat field in RPC Reply buffer
  *
  * This RPC dispatcher integrates the NFS server's duplicate reply cache.
  *
@@ -1042,10 +1024,9 @@ out:
  *  %0: Processing complete; do not send a Reply
  *  %1: Processing complete; send Reply in rqstp->rq_res
  */
-int nfsd_dispatch(struct svc_rqst *rqstp)
+int nfsd_dispatch(struct svc_rqst *rqstp, __be32 *statp)
 {
 	const struct svc_procedure *proc = rqstp->rq_procinfo;
-	__be32 *statp = rqstp->rq_accept_statp;
 
 	/*
 	 * Give the xdr decoder a chance to change this if it wants
@@ -1053,6 +1034,7 @@ int nfsd_dispatch(struct svc_rqst *rqstp)
 	 */
 	rqstp->rq_cachetype = proc->pc_cachetype;
 
+	svcxdr_init_decode(rqstp);
 	if (!proc->pc_decode(rqstp, &rqstp->rq_arg_stream))
 		goto out_decode_err;
 
@@ -1065,8 +1047,14 @@ int nfsd_dispatch(struct svc_rqst *rqstp)
 		goto out_dropit;
 	}
 
+	/*
+	 * Need to grab the location to store the status, as
+	 * NFSv4 does some encoding while processing
+	 */
+	svcxdr_init_encode(rqstp);
+
 	*statp = proc->pc_func(rqstp);
-	if (test_bit(RQ_DROPME, &rqstp->rq_flags))
+	if (*statp == rpc_drop_reply || test_bit(RQ_DROPME, &rqstp->rq_flags))
 		goto out_update_drop;
 
 	if (!proc->pc_encode(rqstp, &rqstp->rq_res_stream))

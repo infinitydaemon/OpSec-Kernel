@@ -879,11 +879,13 @@ static int hvs_probe(struct hv_device *hdev,
 	return 0;
 }
 
-static void hvs_remove(struct hv_device *hdev)
+static int hvs_remove(struct hv_device *hdev)
 {
 	struct vmbus_channel *chan = hdev->channel;
 
 	vmbus_close(chan);
+
+	return 0;
 }
 
 /* hv_sock connections can not persist across hibernation, and all the hv_sock

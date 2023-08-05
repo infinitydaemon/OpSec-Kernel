@@ -547,9 +547,9 @@ retry_locked:
 	 * Contents of the page are now protected against changing by holding
 	 * the page lock.
 	 */
-	addr = kmap_local_page(page);
+	addr = kmap(page);
 	res = fuse_parse_cache(ff, addr, size, ctx);
-	kunmap_local(addr);
+	kunmap(page);
 	unlock_page(page);
 	put_page(page);
 

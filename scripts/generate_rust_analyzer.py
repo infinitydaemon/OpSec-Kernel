@@ -68,12 +68,6 @@ def generate_crates(srctree, objtree, sysroot_src):
     crates[-1]["proc_macro_dylib_path"] = "rust/libmacros.so"
 
     append_crate(
-        "build_error",
-        srctree / "rust" / "build_error.rs",
-        ["core", "compiler_builtins"],
-    )
-
-    append_crate(
         "bindings",
         srctree / "rust"/ "bindings" / "lib.rs",
         ["core"],
@@ -84,7 +78,7 @@ def generate_crates(srctree, objtree, sysroot_src):
     append_crate(
         "kernel",
         srctree / "rust" / "kernel" / "lib.rs",
-        ["core", "alloc", "macros", "build_error", "bindings"],
+        ["core", "alloc", "macros", "bindings"],
         cfg=cfg,
     )
     crates[-1]["source"] = {
@@ -104,10 +98,7 @@ def generate_crates(srctree, objtree, sysroot_src):
             name = path.name.replace(".rs", "")
 
             # Skip those that are not crate roots.
-            try:
-                if f"{name}.o" not in open(path.parent / "Makefile").read():
-                    continue
-            except FileNotFoundError:
+            if f"{name}.o" not in open(path.parent / "Makefile").read():
                 continue
 
             logging.info("Adding %s", name)

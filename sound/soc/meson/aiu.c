@@ -331,9 +331,11 @@ err:
 	return ret;
 }
 
-static void aiu_remove(struct platform_device *pdev)
+static int aiu_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_component(&pdev->dev);
+
+	return 0;
 }
 
 static const struct aiu_platform_data aiu_gxbb_pdata = {
@@ -362,7 +364,7 @@ MODULE_DEVICE_TABLE(of, aiu_of_match);
 
 static struct platform_driver aiu_pdrv = {
 	.probe = aiu_probe,
-	.remove_new = aiu_remove,
+	.remove = aiu_remove,
 	.driver = {
 		.name = "meson-aiu",
 		.of_match_table = aiu_of_match,

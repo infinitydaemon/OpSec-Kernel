@@ -75,7 +75,6 @@ static int __io_getxattr_prep(struct io_kiocb *req,
 	}
 
 	req->flags |= REQ_F_NEED_CLEANUP;
-	req->flags |= REQ_F_FORCE_ASYNC;
 	return 0;
 }
 
@@ -110,9 +109,10 @@ int io_fgetxattr(struct io_kiocb *req, unsigned int issue_flags)
 	struct io_xattr *ix = io_kiocb_to_cmd(req, struct io_xattr);
 	int ret;
 
-	WARN_ON_ONCE(issue_flags & IO_URING_F_NONBLOCK);
+	if (issue_flags & IO_URING_F_NONBLOCK)
+		return -EAGAIN;
 
-	ret = do_getxattr(mnt_idmap(req->file->f_path.mnt),
+	ret = do_getxattr(mnt_user_ns(req->file->f_path.mnt),
 			req->file->f_path.dentry,
 			&ix->ctx);
 
@@ -127,12 +127,15 @@ int io_getxattr(struct io_kiocb *req, unsigned int issue_flags)
 	struct path path;
 	int ret;
 
-	WARN_ON_ONCE(issue_flags & IO_URING_F_NONBLOCK);
+	if (issue_flags & IO_URING_F_NONBLOCK)
+		return -EAGAIN;
 
 retry:
 	ret = filename_lookup(AT_FDCWD, ix->filename, lookup_flags, &path, NULL);
 	if (!ret) {
-		ret = do_getxattr(mnt_idmap(path.mnt), path.dentry, &ix->ctx);
+		ret = do_getxattr(mnt_user_ns(path.mnt),
+				path.dentry,
+				&ix->ctx);
 
 		path_put(&path);
 		if (retry_estale(ret, lookup_flags)) {
@@ -173,7 +176,6 @@ static int __io_setxattr_prep(struct io_kiocb *req,
 	}
 
 	req->flags |= REQ_F_NEED_CLEANUP;
-	req->flags |= REQ_F_FORCE_ASYNC;
 	return 0;
 }
 
@@ -211,7 +213,7 @@ static int __io_setxattr(struct io_kiocb *req, unsigned int issue_flags,
 
 	ret = mnt_want_write(path->mnt);
 	if (!ret) {
-		ret = do_setxattr(mnt_idmap(path->mnt), path->dentry, &ix->ctx);
+		ret = do_setxattr(mnt_user_ns(path->mnt), path->dentry, &ix->ctx);
 		mnt_drop_write(path->mnt);
 	}
 
@@ -222,7 +224,8 @@ int io_fsetxattr(struct io_kiocb *req, unsigned int issue_flags)
 {
 	int ret;
 
-	WARN_ON_ONCE(issue_flags & IO_URING_F_NONBLOCK);
+	if (issue_flags & IO_URING_F_NONBLOCK)
+		return -EAGAIN;
 
 	ret = __io_setxattr(req, issue_flags, &req->file->f_path);
 	io_xattr_finish(req, ret);
@@ -236,7 +239,8 @@ int io_setxattr(struct io_kiocb *req, unsigned int issue_flags)
 	struct path path;
 	int ret;
 
-	WARN_ON_ONCE(issue_flags & IO_URING_F_NONBLOCK);
+	if (issue_flags & IO_URING_F_NONBLOCK)
+		return -EAGAIN;
 
 retry:
 	ret = filename_lookup(AT_FDCWD, ix->filename, lookup_flags, &path, NULL);

@@ -266,7 +266,7 @@ static int ksmbd_negotiate_smb_dialect(void *buf)
 		if (smb2_neg_size > smb_buf_length)
 			goto err_out;
 
-		if (struct_size(req, Dialects, le16_to_cpu(req->DialectCount)) >
+		if (smb2_neg_size + le16_to_cpu(req->DialectCount) * sizeof(__le16) >
 		    smb_buf_length)
 			goto err_out;
 
@@ -359,8 +359,8 @@ static int smb1_check_user_session(struct ksmbd_work *work)
  */
 static int smb1_allocate_rsp_buf(struct ksmbd_work *work)
 {
-	work->response_buf = kzalloc(MAX_CIFS_SMALL_BUFFER_SIZE,
-			GFP_KERNEL);
+	work->response_buf = kmalloc(MAX_CIFS_SMALL_BUFFER_SIZE,
+			GFP_KERNEL | __GFP_ZERO);
 	work->response_sz = MAX_CIFS_SMALL_BUFFER_SIZE;
 
 	if (!work->response_buf) {
@@ -420,7 +420,7 @@ int ksmbd_populate_dot_dotdot_entries(struct ksmbd_work *work, int info_level,
 {
 	int i, rc = 0;
 	struct ksmbd_conn *conn = work->conn;
-	struct mnt_idmap *idmap = file_mnt_idmap(dir->filp);
+	struct user_namespace *user_ns = file_mnt_user_ns(dir->filp);
 
 	for (i = 0; i < 2; i++) {
 		struct kstat kstat;
@@ -446,7 +446,7 @@ int ksmbd_populate_dot_dotdot_entries(struct ksmbd_work *work, int info_level,
 
 			ksmbd_kstat.kstat = &kstat;
 			ksmbd_vfs_fill_dentry_attrs(work,
-						    idmap,
+						    user_ns,
 						    dentry,
 						    &ksmbd_kstat);
 			rc = fn(conn, info_level, d_info, &ksmbd_kstat);
@@ -732,7 +732,7 @@ int ksmbd_override_fsids(struct ksmbd_work *work)
 	if (share->force_gid != KSMBD_SHARE_INVALID_GID)
 		gid = share->force_gid;
 
-	cred = prepare_kernel_cred(&init_task);
+	cred = prepare_kernel_cred(NULL);
 	if (!cred)
 		return -ENOMEM;
 

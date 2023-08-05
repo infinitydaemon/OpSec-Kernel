@@ -563,7 +563,7 @@ static int fib_detect_death(struct fib_info *fi, int order,
 		n = NULL;
 
 	if (n) {
-		state = READ_ONCE(n->nud_state);
+		state = n->nud_state;
 		neigh_release(n);
 	} else {
 		return 0;
@@ -2191,7 +2191,7 @@ static bool fib_good_nh(const struct fib_nh *nh)
 	if (nh->fib_nh_scope == RT_SCOPE_LINK) {
 		struct neighbour *n;
 
-		rcu_read_lock();
+		rcu_read_lock_bh();
 
 		if (likely(nh->fib_nh_gw_family == AF_INET))
 			n = __ipv4_neigh_lookup_noref(nh->fib_nh_dev,
@@ -2202,9 +2202,9 @@ static bool fib_good_nh(const struct fib_nh *nh)
 		else
 			n = NULL;
 		if (n)
-			state = READ_ONCE(n->nud_state);
+			state = n->nud_state;
 
-		rcu_read_unlock();
+		rcu_read_unlock_bh();
 	}
 
 	return !!(state & NUD_VALID);

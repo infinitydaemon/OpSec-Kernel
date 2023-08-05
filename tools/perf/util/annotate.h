@@ -94,8 +94,8 @@ struct annotation_options {
 	int  min_pcnt;
 	int  max_lines;
 	int  context;
-	char *objdump_path;
-	char *disassembler_style;
+	const char *objdump_path;
+	const char *disassembler_style;
 	const char *prefix;
 	const char *prefix_strip;
 	unsigned int percent_type;
@@ -108,6 +108,8 @@ enum {
 };
 
 #define ANNOTATION__MIN_OFFSET_LEVEL ANNOTATION__OFFSET_JUMP_TARGETS
+
+extern struct annotation_options annotation__default_options;
 
 struct annotation;
 
@@ -271,7 +273,8 @@ struct annotated_source {
 	struct sym_hist	   *histograms;
 };
 
-struct LOCKABLE annotation {
+struct annotation {
+	struct mutex lock;
 	u64			max_coverage;
 	u64			start;
 	u64			hit_cycles;
@@ -297,14 +300,8 @@ struct LOCKABLE annotation {
 	struct annotated_source *src;
 };
 
-static inline void annotation__init(struct annotation *notes __maybe_unused)
-{
-}
+void annotation__init(struct annotation *notes);
 void annotation__exit(struct annotation *notes);
-
-void annotation__lock(struct annotation *notes) EXCLUSIVE_LOCK_FUNCTION(*notes);
-void annotation__unlock(struct annotation *notes) UNLOCK_FUNCTION(*notes);
-bool annotation__trylock(struct annotation *notes) EXCLUSIVE_TRYLOCK_FUNCTION(true, *notes);
 
 static inline int annotation__cycles_width(struct annotation *notes)
 {
@@ -420,9 +417,6 @@ static inline int symbol__tui_annotate(struct map_symbol *ms __maybe_unused,
 	return 0;
 }
 #endif
-
-void annotation_options__init(struct annotation_options *opt);
-void annotation_options__exit(struct annotation_options *opt);
 
 void annotation_config__init(struct annotation_options *opt);
 

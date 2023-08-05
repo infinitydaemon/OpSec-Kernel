@@ -257,9 +257,9 @@ static inline void tipc_loopback_trace(struct net *net,
 }
 
 /* check if device MTU is too low for tipc headers */
-static inline bool tipc_mtu_bad(struct net_device *dev)
+static inline bool tipc_mtu_bad(struct net_device *dev, unsigned int reserve)
 {
-	if (dev->mtu >= TIPC_MIN_BEARER_MTU)
+	if (dev->mtu >= TIPC_MIN_BEARER_MTU + reserve)
 		return false;
 	netdev_warn(dev, "MTU too low for tipc bearer\n");
 	return true;

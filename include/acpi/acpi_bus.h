@@ -52,7 +52,7 @@ bool acpi_dock_match(acpi_handle handle);
 bool acpi_check_dsm(acpi_handle handle, const guid_t *guid, u64 rev, u64 funcs);
 union acpi_object *acpi_evaluate_dsm(acpi_handle handle, const guid_t *guid,
 			u64 rev, u64 func, union acpi_object *argv4);
-#ifdef CONFIG_ACPI
+
 static inline union acpi_object *
 acpi_evaluate_dsm_typed(acpi_handle handle, const guid_t *guid, u64 rev,
 			u64 func, union acpi_object *argv4,
@@ -68,7 +68,6 @@ acpi_evaluate_dsm_typed(acpi_handle handle, const guid_t *guid, u64 rev,
 
 	return obj;
 }
-#endif
 
 #define	ACPI_INIT_DSM_ARGV4(cnt, eles)			\
 	{						\
@@ -150,7 +149,7 @@ struct acpi_hotplug_context {
  */
 
 typedef int (*acpi_op_add) (struct acpi_device * device);
-typedef void (*acpi_op_remove) (struct acpi_device *device);
+typedef int (*acpi_op_remove) (struct acpi_device * device);
 typedef void (*acpi_op_notify) (struct acpi_device * device, u32 event);
 
 struct acpi_device_ops {
@@ -289,8 +288,6 @@ struct acpi_dep_data {
 	acpi_handle supplier;
 	acpi_handle consumer;
 	bool honor_dep;
-	bool met;
-	bool free_when_met;
 };
 
 /* Performance Management */
@@ -660,7 +657,6 @@ static inline bool acpi_quirk_skip_acpi_ac_and_battery(void)
 #if IS_ENABLED(CONFIG_X86_ANDROID_TABLETS)
 bool acpi_quirk_skip_i2c_client_enumeration(struct acpi_device *adev);
 int acpi_quirk_skip_serdev_enumeration(struct device *controller_parent, bool *skip);
-bool acpi_quirk_skip_gpio_event_handlers(void);
 #else
 static inline bool acpi_quirk_skip_i2c_client_enumeration(struct acpi_device *adev)
 {
@@ -671,10 +667,6 @@ acpi_quirk_skip_serdev_enumeration(struct device *controller_parent, bool *skip)
 {
 	*skip = false;
 	return 0;
-}
-static inline bool acpi_quirk_skip_gpio_event_handlers(void)
-{
-	return false;
 }
 #endif
 

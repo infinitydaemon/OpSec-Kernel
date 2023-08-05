@@ -63,17 +63,14 @@ svc_put_auth_ops(struct auth_ops *aops)
 int
 svc_authenticate(struct svc_rqst *rqstp)
 {
-	struct auth_ops *aops;
-	u32 flavor;
+	rpc_authflavor_t	flavor;
+	struct auth_ops		*aops;
 
 	rqstp->rq_auth_stat = rpc_auth_ok;
 
-	/*
-	 * Decode the Call credential's flavor field. The credential's
-	 * body field is decoded in the chosen ->accept method below.
-	 */
-	if (xdr_stream_decode_u32(&rqstp->rq_arg_stream, &flavor) < 0)
-		return SVC_GARBAGE;
+	flavor = svc_getnl(&rqstp->rq_arg.head[0]);
+
+	dprintk("svc: svc_authenticate (%d)\n", flavor);
 
 	aops = svc_get_auth_ops(flavor);
 	if (aops == NULL) {

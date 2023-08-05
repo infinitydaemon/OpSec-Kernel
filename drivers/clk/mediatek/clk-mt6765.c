@@ -367,12 +367,10 @@ static const struct mtk_mux top_muxes[] = {
 	/* CLK_CFG_0 */
 	MUX_GATE_CLR_SET_UPD_FLAGS(CLK_TOP_AXI_SEL, "axi_sel", axi_parents,
 			      CLK_CFG_0, CLK_CFG_0_SET, CLK_CFG_0_CLR,
-			      0, 2, 7, CLK_CFG_UPDATE, 0,
-			      CLK_IS_CRITICAL | CLK_SET_RATE_PARENT),
+			      0, 2, 7, CLK_CFG_UPDATE, 0, CLK_IS_CRITICAL),
 	MUX_GATE_CLR_SET_UPD_FLAGS(CLK_TOP_MEM_SEL, "mem_sel", mem_parents,
 			      CLK_CFG_0, CLK_CFG_0_SET, CLK_CFG_0_CLR,
-			      8, 2, 15, CLK_CFG_UPDATE, 1,
-			      CLK_IS_CRITICAL | CLK_SET_RATE_PARENT),
+			      8, 2, 15, CLK_CFG_UPDATE, 1, CLK_IS_CRITICAL),
 	MUX_GATE_CLR_SET_UPD(CLK_TOP_MM_SEL, "mm_sel", mm_parents, CLK_CFG_0,
 			CLK_CFG_0_SET, CLK_CFG_0_CLR, 16, 3, 23,
 			CLK_CFG_UPDATE, 2),
@@ -406,15 +404,15 @@ static const struct mtk_mux top_muxes[] = {
 			CLK_CFG_2_SET, CLK_CFG_2_CLR, 24, 2, 31,
 			CLK_CFG_UPDATE, 11),
 	/* CLK_CFG_3 */
-	MUX_GATE_CLR_SET_UPD_FLAGS(CLK_TOP_MSDC50_0_HCLK_SEL, "msdc5hclk",
+	MUX_GATE_CLR_SET_UPD(CLK_TOP_MSDC50_0_HCLK_SEL, "msdc5hclk",
 			msdc5hclk_parents, CLK_CFG_3, CLK_CFG_3_SET,
-			CLK_CFG_3_CLR, 0, 2, 7, CLK_CFG_UPDATE, 12, 0),
-	MUX_GATE_CLR_SET_UPD_FLAGS(CLK_TOP_MSDC50_0_SEL, "msdc50_0_sel",
+			CLK_CFG_3_CLR, 0, 2, 7, CLK_CFG_UPDATE, 12),
+	MUX_GATE_CLR_SET_UPD(CLK_TOP_MSDC50_0_SEL, "msdc50_0_sel",
 			msdc50_0_parents, CLK_CFG_3, CLK_CFG_3_SET,
-			CLK_CFG_3_CLR, 8, 3, 15, CLK_CFG_UPDATE, 13, 0),
-	MUX_GATE_CLR_SET_UPD_FLAGS(CLK_TOP_MSDC30_1_SEL, "msdc30_1_sel",
+			CLK_CFG_3_CLR, 8, 3, 15, CLK_CFG_UPDATE, 13),
+	MUX_GATE_CLR_SET_UPD(CLK_TOP_MSDC30_1_SEL, "msdc30_1_sel",
 			msdc30_1_parents, CLK_CFG_3, CLK_CFG_3_SET,
-			CLK_CFG_3_CLR, 16, 3, 23, CLK_CFG_UPDATE, 14, 0),
+			CLK_CFG_3_CLR, 16, 3, 23, CLK_CFG_UPDATE, 14),
 	MUX_GATE_CLR_SET_UPD(CLK_TOP_AUDIO_SEL, "audio_sel", audio_parents,
 			CLK_CFG_3, CLK_CFG_3_SET, CLK_CFG_3_CLR,
 			24, 2, 31, CLK_CFG_UPDATE, 15),
@@ -461,7 +459,7 @@ static const struct mtk_mux top_muxes[] = {
 	MUX_GATE_CLR_SET_UPD_FLAGS(CLK_TOP_PWRAP_ULPOSC_SEL, "ulposc_sel",
 			      ulposc_parents, CLK_CFG_7, CLK_CFG_7_SET,
 			      CLK_CFG_7_CLR, 0, 3, 7, CLK_CFG_UPDATE, 28,
-			      CLK_IS_CRITICAL | CLK_SET_RATE_PARENT),
+			      CLK_IS_CRITICAL),
 	MUX_GATE_CLR_SET_UPD(CLK_TOP_CAMTM_SEL, "camtm_sel", camtm_parents,
 			CLK_CFG_7, CLK_CFG_7_SET, CLK_CFG_7_CLR, 8, 2, 15,
 			CLK_CFG_UPDATE, 29),
@@ -743,7 +741,7 @@ static int clk_mt6765_apmixed_probe(struct platform_device *pdev)
 
 	mtk_clk_register_plls(node, plls, ARRAY_SIZE(plls), clk_data);
 
-	mtk_clk_register_gates(&pdev->dev, node, apmixed_clks,
+	mtk_clk_register_gates(node, apmixed_clks,
 			       ARRAY_SIZE(apmixed_clks), clk_data);
 	r = of_clk_add_hw_provider(node, of_clk_hw_onecell_get, clk_data);
 
@@ -780,11 +778,10 @@ static int clk_mt6765_top_probe(struct platform_device *pdev)
 				    clk_data);
 	mtk_clk_register_factors(top_divs, ARRAY_SIZE(top_divs),
 				 clk_data);
-	mtk_clk_register_muxes(&pdev->dev, top_muxes,
-			       ARRAY_SIZE(top_muxes), node,
+	mtk_clk_register_muxes(top_muxes, ARRAY_SIZE(top_muxes), node,
 			       &mt6765_clk_lock, clk_data);
-	mtk_clk_register_gates(&pdev->dev, node, top_clks,
-			       ARRAY_SIZE(top_clks), clk_data);
+	mtk_clk_register_gates(node, top_clks, ARRAY_SIZE(top_clks),
+			       clk_data);
 
 	r = of_clk_add_hw_provider(node, of_clk_hw_onecell_get, clk_data);
 
@@ -817,8 +814,8 @@ static int clk_mt6765_ifr_probe(struct platform_device *pdev)
 
 	clk_data = mtk_alloc_clk_data(CLK_IFR_NR_CLK);
 
-	mtk_clk_register_gates(&pdev->dev, node, ifr_clks,
-			       ARRAY_SIZE(ifr_clks), clk_data);
+	mtk_clk_register_gates(node, ifr_clks, ARRAY_SIZE(ifr_clks),
+			       clk_data);
 	r = of_clk_add_hw_provider(node, of_clk_hw_onecell_get, clk_data);
 
 	if (r)
@@ -842,7 +839,6 @@ static const struct of_device_id of_match_clk_mt6765[] = {
 		/* sentinel */
 	}
 };
-MODULE_DEVICE_TABLE(of, of_match_clk_mt6765);
 
 static int clk_mt6765_probe(struct platform_device *pdev)
 {
@@ -876,4 +872,3 @@ static int __init clk_mt6765_init(void)
 }
 
 arch_initcall(clk_mt6765_init);
-MODULE_LICENSE("GPL");

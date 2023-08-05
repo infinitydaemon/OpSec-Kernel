@@ -314,8 +314,7 @@ unsigned long rethook_trampoline_handler(struct pt_regs *regs,
 			break;
 		handler = READ_ONCE(rhn->rethook->handler);
 		if (handler)
-			handler(rhn, rhn->rethook->data,
-				correct_ret_addr, regs);
+			handler(rhn, rhn->rethook->data, regs);
 
 		if (first == node)
 			break;

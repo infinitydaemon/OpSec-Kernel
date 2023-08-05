@@ -270,13 +270,15 @@ static int au1xi2s_drvprobe(struct platform_device *pdev)
 					  &au1xi2s_dai_driver, 1);
 }
 
-static void au1xi2s_drvremove(struct platform_device *pdev)
+static int au1xi2s_drvremove(struct platform_device *pdev)
 {
 	struct au1xpsc_audio_data *ctx = platform_get_drvdata(pdev);
 
 	snd_soc_unregister_component(&pdev->dev);
 
 	WR(ctx, I2S_ENABLE, EN_D);	/* clock off, disable */
+
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -313,7 +315,7 @@ static struct platform_driver au1xi2s_driver = {
 		.pm	= AU1XI2SC_PMOPS,
 	},
 	.probe		= au1xi2s_drvprobe,
-	.remove_new	= au1xi2s_drvremove,
+	.remove		= au1xi2s_drvremove,
 };
 
 module_platform_driver(au1xi2s_driver);

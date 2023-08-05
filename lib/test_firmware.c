@@ -52,7 +52,7 @@ struct test_batched_req {
 };
 
 /**
- * struct test_config - represents configuration for the test for different triggers
+ * test_config - represents configuration for the test for different triggers
  *
  * @name: the name of the firmware file to look for
  * @into_buf: when the into_buf is used if this is true
@@ -292,7 +292,7 @@ static ssize_t config_show(struct device *dev,
 				test_fw_config->name);
 	else
 		len += scnprintf(buf + len, PAGE_SIZE - len,
-				"name:\tEMPTY\n");
+				"name:\tEMTPY\n");
 
 	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"num_requests:\t%u\n", test_fw_config->num_requests);
@@ -323,7 +323,7 @@ static ssize_t config_show(struct device *dev,
 				test_fw_config->upload_name);
 	else
 		len += scnprintf(buf + len, PAGE_SIZE - len,
-				"upload_name:\tEMPTY\n");
+				"upload_name:\tEMTPY\n");
 
 	mutex_unlock(&test_fw_mutex);
 

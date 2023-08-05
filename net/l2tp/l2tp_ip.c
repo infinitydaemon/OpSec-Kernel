@@ -562,18 +562,19 @@ out:
 	return err ? err : copied;
 }
 
-int l2tp_ioctl(struct sock *sk, int cmd, int *karg)
+int l2tp_ioctl(struct sock *sk, int cmd, unsigned long arg)
 {
 	struct sk_buff *skb;
+	int amount;
 
 	switch (cmd) {
 	case SIOCOUTQ:
-		*karg = sk_wmem_alloc_get(sk);
+		amount = sk_wmem_alloc_get(sk);
 		break;
 	case SIOCINQ:
 		spin_lock_bh(&sk->sk_receive_queue.lock);
 		skb = skb_peek(&sk->sk_receive_queue);
-		*karg = skb ? skb->len : 0;
+		amount = skb ? skb->len : 0;
 		spin_unlock_bh(&sk->sk_receive_queue.lock);
 		break;
 
@@ -581,7 +582,7 @@ int l2tp_ioctl(struct sock *sk, int cmd, int *karg)
 		return -ENOIOCTLCMD;
 	}
 
-	return 0;
+	return put_user(amount, (int __user *)arg);
 }
 EXPORT_SYMBOL_GPL(l2tp_ioctl);
 
@@ -624,6 +625,7 @@ static const struct proto_ops l2tp_ip_ops = {
 	.sendmsg	   = inet_sendmsg,
 	.recvmsg	   = sock_common_recvmsg,
 	.mmap		   = sock_no_mmap,
+	.sendpage	   = sock_no_sendpage,
 };
 
 static struct inet_protosw l2tp_ip_protosw = {

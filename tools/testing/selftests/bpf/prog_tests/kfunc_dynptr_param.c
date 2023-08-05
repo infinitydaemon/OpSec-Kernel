@@ -10,11 +10,20 @@
 #include <test_progs.h>
 #include "test_kfunc_dynptr_param.skel.h"
 
+static size_t log_buf_sz = 1048576; /* 1 MB */
+static char obj_log_buf[1048576];
+
 static struct {
 	const char *prog_name;
+	const char *expected_verifier_err_msg;
 	int expected_runtime_err;
 } kfunc_dynptr_tests[] = {
-	{"dynptr_data_null", -EBADMSG},
+	{"dynptr_type_not_supp",
+	 "arg#0 pointer type STRUCT bpf_dynptr_kern points to unsupported dynamic pointer type", 0},
+	{"not_valid_dynptr",
+	 "arg#0 pointer type STRUCT bpf_dynptr_kern must be valid and initialized", 0},
+	{"not_ptr_to_stack", "arg#0 pointer type STRUCT bpf_dynptr_kern not to stack", 0},
+	{"dynptr_data_null", NULL, -EBADMSG},
 };
 
 static bool kfunc_not_supported;
@@ -32,15 +41,29 @@ static int libbpf_print_cb(enum libbpf_print_level level, const char *fmt,
 	return 0;
 }
 
-static bool has_pkcs7_kfunc_support(void)
+static void verify_fail(const char *prog_name, const char *expected_err_msg)
 {
 	struct test_kfunc_dynptr_param *skel;
+	LIBBPF_OPTS(bpf_object_open_opts, opts);
 	libbpf_print_fn_t old_print_cb;
+	struct bpf_program *prog;
 	int err;
 
-	skel = test_kfunc_dynptr_param__open();
-	if (!ASSERT_OK_PTR(skel, "test_kfunc_dynptr_param__open"))
-		return false;
+	opts.kernel_log_buf = obj_log_buf;
+	opts.kernel_log_size = log_buf_sz;
+	opts.kernel_log_level = 1;
+
+	skel = test_kfunc_dynptr_param__open_opts(&opts);
+	if (!ASSERT_OK_PTR(skel, "test_kfunc_dynptr_param__open_opts"))
+		goto cleanup;
+
+	prog = bpf_object__find_program_by_name(skel->obj, prog_name);
+	if (!ASSERT_OK_PTR(prog, "bpf_object__find_program_by_name"))
+		goto cleanup;
+
+	bpf_program__set_autoload(prog, true);
+
+	bpf_map__set_max_entries(skel->maps.ringbuf, getpagesize());
 
 	kfunc_not_supported = false;
 
@@ -52,18 +75,26 @@ static bool has_pkcs7_kfunc_support(void)
 		fprintf(stderr,
 		  "%s:SKIP:bpf_verify_pkcs7_signature() kfunc not supported\n",
 		  __func__);
-		test_kfunc_dynptr_param__destroy(skel);
-		return false;
+		test__skip();
+		goto cleanup;
 	}
 
-	test_kfunc_dynptr_param__destroy(skel);
+	if (!ASSERT_ERR(err, "unexpected load success"))
+		goto cleanup;
 
-	return true;
+	if (!ASSERT_OK_PTR(strstr(obj_log_buf, expected_err_msg), "expected_err_msg")) {
+		fprintf(stderr, "Expected err_msg: %s\n", expected_err_msg);
+		fprintf(stderr, "Verifier output: %s\n", obj_log_buf);
+	}
+
+cleanup:
+	test_kfunc_dynptr_param__destroy(skel);
 }
 
 static void verify_success(const char *prog_name, int expected_runtime_err)
 {
 	struct test_kfunc_dynptr_param *skel;
+	libbpf_print_fn_t old_print_cb;
 	struct bpf_program *prog;
 	struct bpf_link *link;
 	__u32 next_id;
@@ -75,7 +106,21 @@ static void verify_success(const char *prog_name, int expected_runtime_err)
 
 	skel->bss->pid = getpid();
 
+	bpf_map__set_max_entries(skel->maps.ringbuf, getpagesize());
+
+	kfunc_not_supported = false;
+
+	old_print_cb = libbpf_set_print(libbpf_print_cb);
 	err = test_kfunc_dynptr_param__load(skel);
+	libbpf_set_print(old_print_cb);
+
+	if (err < 0 && kfunc_not_supported) {
+		fprintf(stderr,
+		  "%s:SKIP:bpf_verify_pkcs7_signature() kfunc not supported\n",
+		  __func__);
+		test__skip();
+		goto cleanup;
+	}
 
 	if (!ASSERT_OK(err, "test_kfunc_dynptr_param__load"))
 		goto cleanup;
@@ -105,15 +150,15 @@ void test_kfunc_dynptr_param(void)
 {
 	int i;
 
-	if (!has_pkcs7_kfunc_support())
-		return;
-
 	for (i = 0; i < ARRAY_SIZE(kfunc_dynptr_tests); i++) {
 		if (!test__start_subtest(kfunc_dynptr_tests[i].prog_name))
 			continue;
 
-		verify_success(kfunc_dynptr_tests[i].prog_name,
-			kfunc_dynptr_tests[i].expected_runtime_err);
+		if (kfunc_dynptr_tests[i].expected_verifier_err_msg)
+			verify_fail(kfunc_dynptr_tests[i].prog_name,
+			  kfunc_dynptr_tests[i].expected_verifier_err_msg);
+		else
+			verify_success(kfunc_dynptr_tests[i].prog_name,
+				kfunc_dynptr_tests[i].expected_runtime_err);
 	}
-	RUN_TESTS(test_kfunc_dynptr_param);
 }

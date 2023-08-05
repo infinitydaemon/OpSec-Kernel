@@ -156,7 +156,6 @@ struct cs_dsp {
 	unsigned int sysclk_reg;
 	unsigned int sysclk_mask;
 	unsigned int sysclk_shift;
-	bool no_core_startstop;
 
 	struct list_head alg_regions;
 

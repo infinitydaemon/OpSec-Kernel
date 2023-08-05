@@ -294,6 +294,11 @@ static void omfs_readahead(struct readahead_control *rac)
 	mpage_readahead(rac, omfs_get_block);
 }
 
+static int omfs_writepage(struct page *page, struct writeback_control *wbc)
+{
+	return block_write_full_page(page, omfs_get_block, wbc);
+}
+
 static int
 omfs_writepages(struct address_space *mapping, struct writeback_control *wbc)
 {
@@ -334,16 +339,16 @@ const struct file_operations omfs_file_operations = {
 	.write_iter = generic_file_write_iter,
 	.mmap = generic_file_mmap,
 	.fsync = generic_file_fsync,
-	.splice_read = filemap_splice_read,
+	.splice_read = generic_file_splice_read,
 };
 
-static int omfs_setattr(struct mnt_idmap *idmap,
+static int omfs_setattr(struct user_namespace *mnt_userns,
 			struct dentry *dentry, struct iattr *attr)
 {
 	struct inode *inode = d_inode(dentry);
 	int error;
 
-	error = setattr_prepare(&nop_mnt_idmap, dentry, attr);
+	error = setattr_prepare(&init_user_ns, dentry, attr);
 	if (error)
 		return error;
 
@@ -356,7 +361,7 @@ static int omfs_setattr(struct mnt_idmap *idmap,
 		omfs_truncate(inode);
 	}
 
-	setattr_copy(&nop_mnt_idmap, inode, attr);
+	setattr_copy(&init_user_ns, inode, attr);
 	mark_inode_dirty(inode);
 	return 0;
 }
@@ -370,10 +375,10 @@ const struct address_space_operations omfs_aops = {
 	.invalidate_folio = block_invalidate_folio,
 	.read_folio = omfs_read_folio,
 	.readahead = omfs_readahead,
+	.writepage = omfs_writepage,
 	.writepages = omfs_writepages,
 	.write_begin = omfs_write_begin,
 	.write_end = generic_write_end,
 	.bmap = omfs_bmap,
-	.migrate_folio = buffer_migrate_folio,
 };
 

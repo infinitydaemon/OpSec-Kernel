@@ -74,13 +74,13 @@ static const struct sysfs_ops ubifs_attr_ops = {
 	.show	= ubifs_attr_show,
 };
 
-static const struct kobj_type ubifs_sb_ktype = {
+static struct kobj_type ubifs_sb_ktype = {
 	.default_groups	= ubifs_groups,
 	.sysfs_ops	= &ubifs_attr_ops,
 	.release	= ubifs_sb_release,
 };
 
-static const struct kobj_type ubifs_ktype = {
+static struct kobj_type ubifs_ktype = {
 	.sysfs_ops	= &ubifs_attr_ops,
 };
 

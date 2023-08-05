@@ -27,7 +27,6 @@
 #define _GLOBAL_TOC(A) _GLOBAL(A)
 #define _GLOBAL_TOC_KASAN(A) _GLOBAL(A)
 #define _GLOBAL_KASAN(A) _GLOBAL(A)
-#define CFUNC(name) name
 
 #define PPC_MTOCRF(A, B)	mtocrf A, B
 

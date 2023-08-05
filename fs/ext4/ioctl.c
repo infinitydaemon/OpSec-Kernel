@@ -155,6 +155,9 @@ static int ext4_update_backup_sb(struct super_block *sb,
 	set_buffer_uptodate(bh);
 	unlock_buffer(bh);
 
+	if (err)
+		goto out_bh;
+
 	if (handle) {
 		err = ext4_handle_dirty_metadata(handle, NULL, bh);
 		if (err)
@@ -355,12 +358,12 @@ void ext4_reset_inode_seed(struct inode *inode)
  * important fields of the inodes.
  *
  * @sb:         the super block of the filesystem
- * @idmap:	idmap of the mount the inode was found from
+ * @mnt_userns:	user namespace of the mount the inode was found from
  * @inode:      the inode to swap with EXT4_BOOT_LOADER_INO
  *
  */
 static long swap_inode_boot_loader(struct super_block *sb,
-				struct mnt_idmap *idmap,
+				struct user_namespace *mnt_userns,
 				struct inode *inode)
 {
 	handle_t *handle;
@@ -390,7 +393,7 @@ static long swap_inode_boot_loader(struct super_block *sb,
 	}
 
 	if (IS_RDONLY(inode) || IS_APPEND(inode) || IS_IMMUTABLE(inode) ||
-	    !inode_owner_or_capable(idmap, inode) ||
+	    !inode_owner_or_capable(mnt_userns, inode) ||
 	    !capable(CAP_SYS_ADMIN)) {
 		err = -EPERM;
 		goto journal_err_out;
@@ -793,10 +796,17 @@ static int ext4_ioctl_setproject(struct inode *inode, __u32 projid)
 }
 #endif
 
-int ext4_force_shutdown(struct super_block *sb, u32 flags)
+static int ext4_shutdown(struct super_block *sb, unsigned long arg)
 {
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
+	__u32 flags;
 	int ret;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (get_user(flags, (__u32 __user *)arg))
+		return -EFAULT;
 
 	if (flags > EXT4_GOING_FLAGS_NOLOGFLUSH)
 		return -EINVAL;
@@ -832,19 +842,6 @@ int ext4_force_shutdown(struct super_block *sb, u32 flags)
 	}
 	clear_opt(sb, DISCARD);
 	return 0;
-}
-
-static int ext4_ioctl_shutdown(struct super_block *sb, unsigned long arg)
-{
-	u32 flags;
-
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	if (get_user(flags, (__u32 __user *)arg))
-		return -EFAULT;
-
-	return ext4_force_shutdown(sb, flags);
 }
 
 struct getfsmap_info {
@@ -986,7 +983,7 @@ int ext4_fileattr_get(struct dentry *dentry, struct fileattr *fa)
 	return 0;
 }
 
-int ext4_fileattr_set(struct mnt_idmap *idmap,
+int ext4_fileattr_set(struct user_namespace *mnt_userns,
 		      struct dentry *dentry, struct fileattr *fa)
 {
 	struct inode *inode = d_inode(dentry);
@@ -1224,7 +1221,7 @@ static long __ext4_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	struct inode *inode = file_inode(filp);
 	struct super_block *sb = inode->i_sb;
-	struct mnt_idmap *idmap = file_mnt_idmap(filp);
+	struct user_namespace *mnt_userns = file_mnt_user_ns(filp);
 
 	ext4_debug("cmd = %u, arg = %lu\n", cmd, arg);
 
@@ -1241,7 +1238,7 @@ static long __ext4_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		__u32 generation;
 		int err;
 
-		if (!inode_owner_or_capable(idmap, inode))
+		if (!inode_owner_or_capable(mnt_userns, inode))
 			return -EPERM;
 
 		if (ext4_has_metadata_csum(inode->i_sb)) {
@@ -1383,7 +1380,7 @@ mext_out:
 	case EXT4_IOC_MIGRATE:
 	{
 		int err;
-		if (!inode_owner_or_capable(idmap, inode))
+		if (!inode_owner_or_capable(mnt_userns, inode))
 			return -EACCES;
 
 		err = mnt_want_write_file(filp);
@@ -1405,7 +1402,7 @@ mext_out:
 	case EXT4_IOC_ALLOC_DA_BLKS:
 	{
 		int err;
-		if (!inode_owner_or_capable(idmap, inode))
+		if (!inode_owner_or_capable(mnt_userns, inode))
 			return -EACCES;
 
 		err = mnt_want_write_file(filp);
@@ -1424,7 +1421,7 @@ mext_out:
 		err = mnt_want_write_file(filp);
 		if (err)
 			return err;
-		err = swap_inode_boot_loader(sb, idmap, inode);
+		err = swap_inode_boot_loader(sb, mnt_userns, inode);
 		mnt_drop_write_file(filp);
 		return err;
 	}
@@ -1549,7 +1546,7 @@ resizefs_out:
 
 	case EXT4_IOC_CLEAR_ES_CACHE:
 	{
-		if (!inode_owner_or_capable(idmap, inode))
+		if (!inode_owner_or_capable(mnt_userns, inode))
 			return -EACCES;
 		ext4_clear_inode_es(inode);
 		return 0;
@@ -1575,7 +1572,7 @@ resizefs_out:
 		return ext4_ioctl_get_es_cache(filp, arg);
 
 	case EXT4_IOC_SHUTDOWN:
-		return ext4_ioctl_shutdown(sb, arg);
+		return ext4_shutdown(sb, arg);
 
 	case FS_IOC_ENABLE_VERITY:
 		if (!ext4_has_feature_verity(sb))

@@ -8,8 +8,10 @@
 #define pr_fmt(fmt) "damon-reclaim: " fmt
 
 #include <linux/damon.h>
-#include <linux/kstrtox.h>
+#include <linux/ioport.h>
 #include <linux/module.h>
+#include <linux/sched.h>
+#include <linux/workqueue.h>
 
 #include "modules-common.h"
 
@@ -99,15 +101,6 @@ static unsigned long monitor_region_end __read_mostly;
 module_param(monitor_region_end, ulong, 0600);
 
 /*
- * Skip anonymous pages reclamation.
- *
- * If this parameter is set as ``Y``, DAMON_RECLAIM does not reclaim anonymous
- * pages.  By default, ``N``.
- */
-static bool skip_anon __read_mostly;
-module_param(skip_anon, bool, 0600);
-
-/*
  * PID of the DAMON thread
  *
  * If DAMON_RECLAIM is enabled, this becomes the PID of the worker thread.
@@ -151,7 +144,6 @@ static struct damos *damon_reclaim_new_scheme(void)
 static int damon_reclaim_apply_parameters(void)
 {
 	struct damos *scheme;
-	struct damos_filter *filter;
 	int err = 0;
 
 	err = damon_set_attrs(ctx, &damon_reclaim_mon_attrs);
@@ -162,15 +154,6 @@ static int damon_reclaim_apply_parameters(void)
 	scheme = damon_reclaim_new_scheme();
 	if (!scheme)
 		return -ENOMEM;
-	if (skip_anon) {
-		filter = damos_new_filter(DAMOS_FILTER_TYPE_ANON, true);
-		if (!filter) {
-			/* Will be freed by next 'damon_set_schemes()' below */
-			damon_destroy_scheme(scheme);
-			return -ENOMEM;
-		}
-		damos_add_filter(scheme, filter);
-	}
 	damon_set_schemes(ctx, &scheme, 1);
 
 	return damon_set_region_biggest_system_ram_default(target,
@@ -200,31 +183,38 @@ static int damon_reclaim_turn(bool on)
 	return 0;
 }
 
+static struct delayed_work damon_reclaim_timer;
+static void damon_reclaim_timer_fn(struct work_struct *work)
+{
+	static bool last_enabled;
+	bool now_enabled;
+
+	now_enabled = enabled;
+	if (last_enabled != now_enabled) {
+		if (!damon_reclaim_turn(now_enabled))
+			last_enabled = now_enabled;
+		else
+			enabled = last_enabled;
+	}
+}
+static DECLARE_DELAYED_WORK(damon_reclaim_timer, damon_reclaim_timer_fn);
+
+static bool damon_reclaim_initialized;
+
 static int damon_reclaim_enabled_store(const char *val,
 		const struct kernel_param *kp)
 {
-	bool is_enabled = enabled;
-	bool enable;
-	int err;
+	int rc = param_set_bool(val, kp);
 
-	err = kstrtobool(val, &enable);
-	if (err)
-		return err;
+	if (rc < 0)
+		return rc;
 
-	if (is_enabled == enable)
-		return 0;
+	/* system_wq might not initialized yet */
+	if (!damon_reclaim_initialized)
+		return rc;
 
-	/* Called before init function.  The function will handle this. */
-	if (!ctx)
-		goto set_param_out;
-
-	err = damon_reclaim_turn(enable);
-	if (err)
-		return err;
-
-set_param_out:
-	enabled = enable;
-	return err;
+	schedule_delayed_work(&damon_reclaim_timer, 0);
+	return 0;
 }
 
 static const struct kernel_param_ops enabled_param_ops = {
@@ -266,19 +256,29 @@ static int damon_reclaim_after_wmarks_check(struct damon_ctx *c)
 
 static int __init damon_reclaim_init(void)
 {
-	int err = damon_modules_new_paddr_ctx_target(&ctx, &target);
+	ctx = damon_new_ctx();
+	if (!ctx)
+		return -ENOMEM;
 
-	if (err)
-		return err;
+	if (damon_select_ops(ctx, DAMON_OPS_PADDR)) {
+		damon_destroy_ctx(ctx);
+		return -EINVAL;
+	}
 
 	ctx->callback.after_wmarks_check = damon_reclaim_after_wmarks_check;
 	ctx->callback.after_aggregation = damon_reclaim_after_aggregation;
 
-	/* 'enabled' has set before this function, probably via command line */
-	if (enabled)
-		err = damon_reclaim_turn(true);
+	target = damon_new_target();
+	if (!target) {
+		damon_destroy_ctx(ctx);
+		return -ENOMEM;
+	}
+	damon_add_target(ctx, target);
 
-	return err;
+	schedule_delayed_work(&damon_reclaim_timer, 0);
+
+	damon_reclaim_initialized = true;
+	return 0;
 }
 
 module_init(damon_reclaim_init);

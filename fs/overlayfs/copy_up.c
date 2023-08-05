@@ -44,35 +44,6 @@ static bool ovl_must_copy_xattr(const char *name)
 	       !strncmp(name, XATTR_SECURITY_PREFIX, XATTR_SECURITY_PREFIX_LEN);
 }
 
-static int ovl_copy_acl(struct ovl_fs *ofs, const struct path *path,
-			struct dentry *dentry, const char *acl_name)
-{
-	int err;
-	struct posix_acl *clone, *real_acl = NULL;
-
-	real_acl = ovl_get_acl_path(path, acl_name, false);
-	if (!real_acl)
-		return 0;
-
-	if (IS_ERR(real_acl)) {
-		err = PTR_ERR(real_acl);
-		if (err == -ENODATA || err == -EOPNOTSUPP)
-			return 0;
-		return err;
-	}
-
-	clone = posix_acl_clone(real_acl, GFP_KERNEL);
-	posix_acl_release(real_acl); /* release original acl */
-	if (!clone)
-		return -ENOMEM;
-
-	err = ovl_do_set_acl(ofs, dentry, acl_name, clone);
-
-	/* release cloned acl */
-	posix_acl_release(clone);
-	return err;
-}
-
 int ovl_copy_xattr(struct super_block *sb, const struct path *oldpath, struct dentry *new)
 {
 	struct dentry *old = oldpath->dentry;
@@ -81,7 +52,8 @@ int ovl_copy_xattr(struct super_block *sb, const struct path *oldpath, struct de
 	int error = 0;
 	size_t slen;
 
-	if (!old->d_inode->i_op->listxattr || !new->d_inode->i_op->listxattr)
+	if (!(old->d_inode->i_opflags & IOP_XATTR) ||
+	    !(new->d_inode->i_opflags & IOP_XATTR))
 		return 0;
 
 	list_size = vfs_listxattr(old, NULL, 0);
@@ -121,15 +93,6 @@ int ovl_copy_xattr(struct super_block *sb, const struct path *oldpath, struct de
 			error = 0;
 			continue; /* Discard */
 		}
-
-		if (is_posix_acl_xattr(name)) {
-			error = ovl_copy_acl(OVL_FS(sb), oldpath, new, name);
-			if (!error)
-				continue;
-			/* POSIX ACLs must be copied. */
-			break;
-		}
-
 retry:
 		size = ovl_do_getxattr(oldpath, name, value, value_size);
 		if (size == -ERANGE)
@@ -1072,15 +1035,6 @@ static int ovl_copy_up_flags(struct dentry *dentry, int flags)
 	 */
 	if (WARN_ON(disconnected && d_is_dir(dentry)))
 		return -EIO;
-
-	/*
-	 * We may not need lowerdata if we are only doing metacopy up, but it is
-	 * not very important to optimize this case, so do lazy lowerdata lookup
-	 * before any copy up, so we can do it before taking ovl_inode_lock().
-	 */
-	err = ovl_maybe_lookup_lowerdata(dentry);
-	if (err)
-		return err;
 
 	old_cred = ovl_override_creds(dentry->d_sb);
 	while (!err) {

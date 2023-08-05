@@ -890,13 +890,15 @@ static int fsl_soc_dma_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void fsl_soc_dma_remove(struct platform_device *pdev)
+static int fsl_soc_dma_remove(struct platform_device *pdev)
 {
 	struct dma_object *dma = dev_get_drvdata(&pdev->dev);
 
 	iounmap(dma->channel);
 	irq_dispose_mapping(dma->irq);
 	kfree(dma);
+
+	return 0;
 }
 
 static const struct of_device_id fsl_soc_dma_ids[] = {
@@ -911,7 +913,7 @@ static struct platform_driver fsl_soc_dma_driver = {
 		.of_match_table = fsl_soc_dma_ids,
 	},
 	.probe = fsl_soc_dma_probe,
-	.remove_new = fsl_soc_dma_remove,
+	.remove = fsl_soc_dma_remove,
 };
 
 module_platform_driver(fsl_soc_dma_driver);

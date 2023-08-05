@@ -4,7 +4,6 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/io.h>
-#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/clk.h>
 #include <linux/of_clk.h>
@@ -14,8 +13,6 @@
 #include <linux/pm_runtime.h>
 #include <linux/of_platform.h>
 #include <sound/tlv.h>
-
-#include "lpass-macro-common.h"
 #include "lpass-wsa-macro.h"
 
 #define CDC_WSA_CLK_RST_CTRL_MCLK_CONTROL	(0x0000)
@@ -1858,8 +1855,10 @@ static int wsa_macro_rx_mux_put(struct snd_kcontrol *kcontrol,
 
 	aif_rst = wsa->rx_port_value[widget->shift];
 	if (!rx_port_value) {
-		if (aif_rst == 0)
+		if (aif_rst == 0) {
+			dev_err(component->dev, "%s: AIF reset already\n", __func__);
 			return 0;
+		}
 		if (aif_rst >= WSA_MACRO_RX_MAX) {
 			dev_err(component->dev, "%s: Invalid AIF reset\n", __func__);
 			return 0;
@@ -2270,10 +2269,17 @@ static int wsa_swrm_clock(struct wsa_macro *wsa, bool enable)
 		}
 		wsa_macro_mclk_enable(wsa, true);
 
+		/* reset swr ip */
+		regmap_update_bits(regmap, CDC_WSA_CLK_RST_CTRL_SWR_CONTROL,
+				   CDC_WSA_SWR_RST_EN_MASK, CDC_WSA_SWR_RST_ENABLE);
+
 		regmap_update_bits(regmap, CDC_WSA_CLK_RST_CTRL_SWR_CONTROL,
 				   CDC_WSA_SWR_CLK_EN_MASK,
 				   CDC_WSA_SWR_CLK_ENABLE);
 
+		/* Bring out of reset */
+		regmap_update_bits(regmap, CDC_WSA_CLK_RST_CTRL_SWR_CONTROL,
+				   CDC_WSA_SWR_RST_EN_MASK, CDC_WSA_SWR_RST_DISABLE);
 	} else {
 		regmap_update_bits(regmap, CDC_WSA_CLK_RST_CTRL_SWR_CONTROL,
 				   CDC_WSA_SWR_CLK_EN_MASK, 0);
@@ -2344,18 +2350,14 @@ static int wsa_macro_register_mclk_output(struct wsa_macro *wsa)
 {
 	struct device *dev = wsa->dev;
 	const char *parent_clk_name;
+	const char *clk_name = "mclk";
 	struct clk_hw *hw;
 	struct clk_init_data init;
 	int ret;
 
-	if (wsa->npl)
-		parent_clk_name = __clk_get_name(wsa->npl);
-	else
-		parent_clk_name = __clk_get_name(wsa->mclk);
+	parent_clk_name = __clk_get_name(wsa->npl);
 
-	init.name = "mclk";
-	of_property_read_string(dev_of_node(dev), "clock-output-names",
-				&init.name);
+	init.name = clk_name;
 	init.ops = &swclk_gate_ops;
 	init.flags = 0;
 	init.parent_names = &parent_clk_name;
@@ -2384,11 +2386,8 @@ static int wsa_macro_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct wsa_macro *wsa;
-	kernel_ulong_t flags;
 	void __iomem *base;
 	int ret;
-
-	flags = (kernel_ulong_t)device_get_match_data(dev);
 
 	wsa = devm_kzalloc(dev, sizeof(*wsa), GFP_KERNEL);
 	if (!wsa)
@@ -2406,11 +2405,9 @@ static int wsa_macro_probe(struct platform_device *pdev)
 	if (IS_ERR(wsa->mclk))
 		return PTR_ERR(wsa->mclk);
 
-	if (flags & LPASS_MACRO_FLAG_HAS_NPL_CLOCK) {
-		wsa->npl = devm_clk_get(dev, "npl");
-		if (IS_ERR(wsa->npl))
-			return PTR_ERR(wsa->npl);
-	}
+	wsa->npl = devm_clk_get(dev, "npl");
+	if (IS_ERR(wsa->npl))
+		return PTR_ERR(wsa->npl);
 
 	wsa->fsgen = devm_clk_get(dev, "fsgen");
 	if (IS_ERR(wsa->fsgen))
@@ -2452,17 +2449,6 @@ static int wsa_macro_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_fsgen;
 
-	/* reset swr ip */
-	regmap_update_bits(wsa->regmap, CDC_WSA_CLK_RST_CTRL_SWR_CONTROL,
-			   CDC_WSA_SWR_RST_EN_MASK, CDC_WSA_SWR_RST_ENABLE);
-
-	regmap_update_bits(wsa->regmap, CDC_WSA_CLK_RST_CTRL_SWR_CONTROL,
-			   CDC_WSA_SWR_CLK_EN_MASK, CDC_WSA_SWR_CLK_ENABLE);
-
-	/* Bring out of reset */
-	regmap_update_bits(wsa->regmap, CDC_WSA_CLK_RST_CTRL_SWR_CONTROL,
-			   CDC_WSA_SWR_RST_EN_MASK, CDC_WSA_SWR_RST_DISABLE);
-
 	ret = devm_snd_soc_register_component(dev, &wsa_macro_component_drv,
 					      wsa_macro_dai,
 					      ARRAY_SIZE(wsa_macro_dai));
@@ -2496,7 +2482,7 @@ err:
 
 }
 
-static void wsa_macro_remove(struct platform_device *pdev)
+static int wsa_macro_remove(struct platform_device *pdev)
 {
 	struct wsa_macro *wsa = dev_get_drvdata(&pdev->dev);
 
@@ -2505,6 +2491,8 @@ static void wsa_macro_remove(struct platform_device *pdev)
 	clk_disable_unprepare(wsa->mclk);
 	clk_disable_unprepare(wsa->npl);
 	clk_disable_unprepare(wsa->fsgen);
+
+	return 0;
 }
 
 static int __maybe_unused wsa_macro_runtime_suspend(struct device *dev)
@@ -2561,21 +2549,10 @@ static const struct dev_pm_ops wsa_macro_pm_ops = {
 };
 
 static const struct of_device_id wsa_macro_dt_match[] = {
-	{
-		.compatible = "qcom,sc7280-lpass-wsa-macro",
-		.data = (void *)LPASS_MACRO_FLAG_HAS_NPL_CLOCK,
-	}, {
-		.compatible = "qcom,sm8250-lpass-wsa-macro",
-		.data = (void *)LPASS_MACRO_FLAG_HAS_NPL_CLOCK,
-	}, {
-		.compatible = "qcom,sm8450-lpass-wsa-macro",
-		.data = (void *)LPASS_MACRO_FLAG_HAS_NPL_CLOCK,
-	}, {
-		.compatible = "qcom,sm8550-lpass-wsa-macro",
-	}, {
-		.compatible = "qcom,sc8280xp-lpass-wsa-macro",
-		.data = (void *)LPASS_MACRO_FLAG_HAS_NPL_CLOCK,
-	},
+	{.compatible = "qcom,sc7280-lpass-wsa-macro"},
+	{.compatible = "qcom,sm8250-lpass-wsa-macro"},
+	{.compatible = "qcom,sm8450-lpass-wsa-macro"},
+	{.compatible = "qcom,sc8280xp-lpass-wsa-macro" },
 	{}
 };
 MODULE_DEVICE_TABLE(of, wsa_macro_dt_match);
@@ -2587,7 +2564,7 @@ static struct platform_driver wsa_macro_driver = {
 		.pm = &wsa_macro_pm_ops,
 	},
 	.probe = wsa_macro_probe,
-	.remove_new = wsa_macro_remove,
+	.remove = wsa_macro_remove,
 };
 
 module_platform_driver(wsa_macro_driver);

@@ -17,7 +17,6 @@
 
 #include <linux/crash_core.h>
 #include <asm/io.h>
-#include <linux/range.h>
 
 #include <uapi/linux/kexec.h>
 #include <linux/verification.h>
@@ -190,6 +189,7 @@ int kexec_purgatory_get_set_symbol(struct kimage *image, const char *name,
 				   void *buf, unsigned int size,
 				   bool get_value);
 void *kexec_purgatory_get_symbol_addr(struct kimage *image, const char *name);
+void *kexec_image_load_default(struct kimage *image);
 
 #ifndef arch_kexec_kernel_image_probe
 static inline int
@@ -203,6 +203,13 @@ arch_kexec_kernel_image_probe(struct kimage *image, void *buf, unsigned long buf
 static inline int arch_kimage_file_post_load_cleanup(struct kimage *image)
 {
 	return kexec_image_post_load_cleanup_default(image);
+}
+#endif
+
+#ifndef arch_kexec_kernel_image_load
+static inline void *arch_kexec_kernel_image_load(struct kimage *image)
+{
+	return kexec_image_load_default(image);
 }
 #endif
 
@@ -233,10 +240,14 @@ static inline int arch_kexec_locate_mem_hole(struct kexec_buf *kbuf)
 /* Alignment required for elf header segment */
 #define ELF_CORE_HEADER_ALIGN   4096
 
+struct crash_mem_range {
+	u64 start, end;
+};
+
 struct crash_mem {
 	unsigned int max_nr_ranges;
 	unsigned int nr_ranges;
-	struct range ranges[];
+	struct crash_mem_range ranges[];
 };
 
 extern int crash_exclude_mem_range(struct crash_mem *mem,
@@ -395,8 +406,7 @@ extern int kimage_crash_copy_vmcoreinfo(struct kimage *image);
 
 extern struct kimage *kexec_image;
 extern struct kimage *kexec_crash_image;
-
-bool kexec_load_permitted(int kexec_image_type);
+extern int kexec_load_disabled;
 
 #ifndef kexec_flush_icache_page
 #define kexec_flush_icache_page(page)

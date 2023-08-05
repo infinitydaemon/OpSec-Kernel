@@ -132,8 +132,7 @@ int __init integrity_init_keyring(const unsigned int id)
 		| KEY_USR_READ | KEY_USR_SEARCH;
 
 	if (id == INTEGRITY_KEYRING_PLATFORM ||
-	    (id == INTEGRITY_KEYRING_MACHINE &&
-	    !IS_ENABLED(CONFIG_INTEGRITY_CA_MACHINE_KEYRING))) {
+	    id == INTEGRITY_KEYRING_MACHINE) {
 		restriction = NULL;
 		goto out;
 	}
@@ -145,10 +144,7 @@ int __init integrity_init_keyring(const unsigned int id)
 	if (!restriction)
 		return -ENOMEM;
 
-	if (id == INTEGRITY_KEYRING_MACHINE)
-		restriction->check = restrict_link_by_ca;
-	else
-		restriction->check = restrict_link_to_ima;
+	restriction->check = restrict_link_to_ima;
 
 	/*
 	 * MOK keys can only be added through a read-only runtime services

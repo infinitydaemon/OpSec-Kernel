@@ -669,24 +669,6 @@ bool afs_check_validity(struct afs_vnode *vnode)
 }
 
 /*
- * Returns true if the pagecache is still valid.  Does not sleep.
- */
-bool afs_pagecache_valid(struct afs_vnode *vnode)
-{
-	if (unlikely(test_bit(AFS_VNODE_DELETED, &vnode->flags))) {
-		if (vnode->netfs.inode.i_nlink)
-			clear_nlink(&vnode->netfs.inode);
-		return true;
-	}
-
-	if (test_bit(AFS_VNODE_CB_PROMISED, &vnode->flags) &&
-	    afs_check_validity(vnode))
-		return true;
-
-	return false;
-}
-
-/*
  * validate a vnode/inode
  * - there are several things we need to check
  *   - parent dir data changes (rm, rmdir, rename, mkdir, create, link,
@@ -703,7 +685,14 @@ int afs_validate(struct afs_vnode *vnode, struct key *key)
 	       vnode->fid.vid, vnode->fid.vnode, vnode->flags,
 	       key_serial(key));
 
-	if (afs_pagecache_valid(vnode))
+	if (unlikely(test_bit(AFS_VNODE_DELETED, &vnode->flags))) {
+		if (vnode->netfs.inode.i_nlink)
+			clear_nlink(&vnode->netfs.inode);
+		goto valid;
+	}
+
+	if (test_bit(AFS_VNODE_CB_PROMISED, &vnode->flags) &&
+	    afs_check_validity(vnode))
 		goto valid;
 
 	down_write(&vnode->validate_lock);
@@ -749,7 +738,7 @@ error_unlock:
 /*
  * read the attributes of an inode
  */
-int afs_getattr(struct mnt_idmap *idmap, const struct path *path,
+int afs_getattr(struct user_namespace *mnt_userns, const struct path *path,
 		struct kstat *stat, u32 request_mask, unsigned int query_flags)
 {
 	struct inode *inode = d_inode(path->dentry);
@@ -773,7 +762,7 @@ int afs_getattr(struct mnt_idmap *idmap, const struct path *path,
 
 	do {
 		read_seqbegin_or_lock(&vnode->cb_lock, &seq);
-		generic_fillattr(&nop_mnt_idmap, inode, stat);
+		generic_fillattr(&init_user_ns, inode, stat);
 		if (test_bit(AFS_VNODE_SILLY_DELETED, &vnode->flags) &&
 		    stat->nlink > 0)
 			stat->nlink -= 1;
@@ -889,7 +878,7 @@ static const struct afs_operation_ops afs_setattr_operation = {
 /*
  * set the attributes of an inode
  */
-int afs_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
+int afs_setattr(struct user_namespace *mnt_userns, struct dentry *dentry,
 		struct iattr *attr)
 {
 	const unsigned int supported =

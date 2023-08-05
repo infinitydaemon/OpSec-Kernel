@@ -331,7 +331,8 @@ static const struct v4l2_subdev_ops empty_ops = {};
  * concerning the addresses: i2c wants 7 bit (without the r/w bit), so '>>1'
  */
 
-static int saa7706h_probe(struct i2c_client *client)
+static int saa7706h_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
 	struct saa7706h_state *state;
 	struct v4l2_subdev *sd;

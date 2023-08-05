@@ -109,9 +109,11 @@ static int mop500_probe(struct platform_device *pdev)
 
 	mop500_card.dev = &pdev->dev;
 
-	ret = mop500_of_probe(pdev, np);
-	if (ret)
-		return ret;
+	if (np) {
+		ret = mop500_of_probe(pdev, np);
+		if (ret)
+			return ret;
+	}
 
 	dev_dbg(&pdev->dev, "%s: Card %s: Set platform drvdata.\n",
 		__func__, mop500_card.name);
@@ -134,7 +136,7 @@ static int mop500_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void mop500_remove(struct platform_device *pdev)
+static int mop500_remove(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 
@@ -143,6 +145,8 @@ static void mop500_remove(struct platform_device *pdev)
 	snd_soc_unregister_card(card);
 	mop500_ab8500_remove(card);
 	mop500_of_node_put();
+
+	return 0;
 }
 
 static const struct of_device_id snd_soc_mop500_match[] = {
@@ -157,7 +161,7 @@ static struct platform_driver snd_soc_mop500_driver = {
 		.of_match_table = snd_soc_mop500_match,
 	},
 	.probe = mop500_probe,
-	.remove_new = mop500_remove,
+	.remove = mop500_remove,
 };
 
 module_platform_driver(snd_soc_mop500_driver);

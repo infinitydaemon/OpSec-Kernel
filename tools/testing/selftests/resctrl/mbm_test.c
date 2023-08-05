@@ -89,23 +89,22 @@ static int check_results(int span)
 static int mbm_setup(int num, ...)
 {
 	struct resctrl_val_param *p;
+	static int num_of_runs;
 	va_list param;
 	int ret = 0;
+
+	/* Run NUM_OF_RUNS times */
+	if (num_of_runs++ >= NUM_OF_RUNS)
+		return END_OF_TESTS;
 
 	va_start(param, num);
 	p = va_arg(param, struct resctrl_val_param *);
 	va_end(param);
 
-	/* Run NUM_OF_RUNS times */
-	if (p->num_of_runs >= NUM_OF_RUNS)
-		return END_OF_TESTS;
-
 	/* Set up shemata with 100% allocation on the first run. */
-	if (p->num_of_runs == 0)
+	if (num_of_runs == 0)
 		ret = write_schemata(p->ctrlgrp, "100", p->cpu_no,
 				     p->resctrl_val);
-
-	p->num_of_runs++;
 
 	return ret;
 }
@@ -123,7 +122,7 @@ int mbm_bw_change(int span, int cpu_no, char *bw_report, char **benchmark_cmd)
 		.mongrp		= "m1",
 		.span		= span,
 		.cpu_no		= cpu_no,
-		.mum_resctrlfs	= true,
+		.mum_resctrlfs	= 1,
 		.filename	= RESULT_FILE_NAME,
 		.bw_report	=  bw_report,
 		.setup		= mbm_setup
@@ -134,12 +133,13 @@ int mbm_bw_change(int span, int cpu_no, char *bw_report, char **benchmark_cmd)
 
 	ret = resctrl_val(benchmark_cmd, &param);
 	if (ret)
-		goto out;
+		return ret;
 
 	ret = check_results(span);
+	if (ret)
+		return ret;
 
-out:
 	mbm_test_cleanup();
 
-	return ret;
+	return 0;
 }

@@ -189,7 +189,8 @@ static const struct v4l2_subdev_ops tw9903_ops = {
 
 /* --------------------------------------------------------------------------*/
 
-static int tw9903_probe(struct i2c_client *client)
+static int tw9903_probe(struct i2c_client *client,
+			     const struct i2c_device_id *id)
 {
 	struct tw9903 *dec;
 	struct v4l2_subdev *sd;

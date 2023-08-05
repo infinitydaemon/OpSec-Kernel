@@ -216,9 +216,7 @@ static void p9_xen_response(struct work_struct *work)
 			goto recv_error;
 		}
 
-		req->rc.size = h.size;
-		req->rc.id = h.id;
-		req->rc.tag = h.tag;
+		memcpy(&req->rc, &h, sizeof(h));
 		req->rc.offset = 0;
 
 		masked_cons = xen_9pfs_mask(cons, XEN_9PFS_RING_SIZE(ring));
@@ -309,12 +307,13 @@ static void xen_9pfs_front_free(struct xen_9pfs_front_priv *priv)
 	kfree(priv);
 }
 
-static void xen_9pfs_front_remove(struct xenbus_device *dev)
+static int xen_9pfs_front_remove(struct xenbus_device *dev)
 {
 	struct xen_9pfs_front_priv *priv = dev_get_drvdata(&dev->dev);
 
 	dev_set_drvdata(&dev->dev, NULL);
 	xen_9pfs_front_free(priv);
+	return 0;
 }
 
 static int xen_9pfs_front_alloc_dataring(struct xenbus_device *dev,

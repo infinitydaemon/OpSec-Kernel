@@ -390,6 +390,49 @@ struct nstoken {
 	int orig_netns_fd;
 };
 
+static int setns_by_fd(int nsfd)
+{
+	int err;
+
+	err = setns(nsfd, CLONE_NEWNET);
+	close(nsfd);
+
+	if (!ASSERT_OK(err, "setns"))
+		return err;
+
+	/* Switch /sys to the new namespace so that e.g. /sys/class/net
+	 * reflects the devices in the new namespace.
+	 */
+	err = unshare(CLONE_NEWNS);
+	if (!ASSERT_OK(err, "unshare"))
+		return err;
+
+	/* Make our /sys mount private, so the following umount won't
+	 * trigger the global umount in case it's shared.
+	 */
+	err = mount("none", "/sys", NULL, MS_PRIVATE, NULL);
+	if (!ASSERT_OK(err, "remount private /sys"))
+		return err;
+
+	err = umount2("/sys", MNT_DETACH);
+	if (!ASSERT_OK(err, "umount2 /sys"))
+		return err;
+
+	err = mount("sysfs", "/sys", "sysfs", 0, NULL);
+	if (!ASSERT_OK(err, "mount /sys"))
+		return err;
+
+	err = mount("bpffs", "/sys/fs/bpf", "bpf", 0, NULL);
+	if (!ASSERT_OK(err, "mount /sys/fs/bpf"))
+		return err;
+
+	err = mount("debugfs", "/sys/kernel/debug", "debugfs", 0, NULL);
+	if (!ASSERT_OK(err, "mount /sys/kernel/debug"))
+		return err;
+
+	return 0;
+}
+
 struct nstoken *open_netns(const char *name)
 {
 	int nsfd;
@@ -410,9 +453,8 @@ struct nstoken *open_netns(const char *name)
 	if (!ASSERT_GE(nsfd, 0, "open netns fd"))
 		goto fail;
 
-	err = setns(nsfd, CLONE_NEWNET);
-	close(nsfd);
-	if (!ASSERT_OK(err, "setns"))
+	err = setns_by_fd(nsfd);
+	if (!ASSERT_OK(err, "setns_by_fd"))
 		goto fail;
 
 	return token;
@@ -423,30 +465,6 @@ fail:
 
 void close_netns(struct nstoken *token)
 {
-	ASSERT_OK(setns(token->orig_netns_fd, CLONE_NEWNET), "setns");
-	close(token->orig_netns_fd);
+	ASSERT_OK(setns_by_fd(token->orig_netns_fd), "setns_by_fd");
 	free(token);
-}
-
-int get_socket_local_port(int sock_fd)
-{
-	struct sockaddr_storage addr;
-	socklen_t addrlen = sizeof(addr);
-	int err;
-
-	err = getsockname(sock_fd, (struct sockaddr *)&addr, &addrlen);
-	if (err < 0)
-		return err;
-
-	if (addr.ss_family == AF_INET) {
-		struct sockaddr_in *sin = (struct sockaddr_in *)&addr;
-
-		return sin->sin_port;
-	} else if (addr.ss_family == AF_INET6) {
-		struct sockaddr_in6 *sin = (struct sockaddr_in6 *)&addr;
-
-		return sin->sin6_port;
-	}
-
-	return -1;
 }

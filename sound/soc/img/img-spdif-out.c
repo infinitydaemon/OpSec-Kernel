@@ -402,11 +402,13 @@ err_pm_disable:
 	return ret;
 }
 
-static void img_spdif_out_dev_remove(struct platform_device *pdev)
+static int img_spdif_out_dev_remove(struct platform_device *pdev)
 {
 	pm_runtime_disable(&pdev->dev);
 	if (!pm_runtime_status_suspended(&pdev->dev))
 		img_spdif_out_runtime_suspend(&pdev->dev);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -468,7 +470,7 @@ static struct platform_driver img_spdif_out_driver = {
 		.pm = &img_spdif_out_pm_ops
 	},
 	.probe = img_spdif_out_probe,
-	.remove_new = img_spdif_out_dev_remove
+	.remove = img_spdif_out_dev_remove
 };
 module_platform_driver(img_spdif_out_driver);
 

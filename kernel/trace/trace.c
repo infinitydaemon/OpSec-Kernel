@@ -19,6 +19,7 @@
 #include <linux/kallsyms.h>
 #include <linux/security.h>
 #include <linux/seq_file.h>
+#include <linux/notifier.h>
 #include <linux/irqflags.h>
 #include <linux/debugfs.h>
 #include <linux/tracefs.h>
@@ -49,8 +50,6 @@
 #include <linux/irq_work.h>
 #include <linux/workqueue.h>
 
-#include <asm/setup.h> /* COMMAND_LINE_SIZE */
-
 #include "trace.h"
 #include "trace_output.h"
 
@@ -60,7 +59,6 @@
  */
 bool ring_buffer_expanded;
 
-#ifdef CONFIG_FTRACE_STARTUP_TEST
 /*
  * We need to change this state when a selftest is running.
  * A selftest will lurk into the ring-buffer to count the
@@ -76,6 +74,7 @@ static bool __read_mostly tracing_selftest_running;
  */
 bool __read_mostly tracing_selftest_disabled;
 
+#ifdef CONFIG_FTRACE_STARTUP_TEST
 void __init disable_tracing_selftest(const char *reason)
 {
 	if (!tracing_selftest_disabled) {
@@ -83,13 +82,10 @@ void __init disable_tracing_selftest(const char *reason)
 		pr_info("Ftrace startup test is disabled due to %s\n", reason);
 	}
 }
-#else
-#define tracing_selftest_running	0
-#define tracing_selftest_disabled	0
 #endif
 
 /* Pipe tracepoints to printk */
-static struct trace_iterator *tracepoint_print_iter;
+struct trace_iterator *tracepoint_print_iter;
 int tracepoint_printk;
 static bool tracepoint_printk_stop_on_boot __initdata;
 static DEFINE_STATIC_KEY_FALSE(tracepoint_printk_key);
@@ -191,15 +187,9 @@ static char *default_bootup_tracer;
 static bool allocate_snapshot;
 static bool snapshot_at_boot;
 
-static char boot_instance_info[COMMAND_LINE_SIZE] __initdata;
-static int boot_instance_index;
-
-static char boot_snapshot_info[COMMAND_LINE_SIZE] __initdata;
-static int boot_snapshot_index;
-
 static int __init set_cmdline_ftrace(char *str)
 {
-	strscpy(bootup_tracer_buf, str, MAX_TRACER_SIZE);
+	strlcpy(bootup_tracer_buf, str, MAX_TRACER_SIZE);
 	default_bootup_tracer = bootup_tracer_buf;
 	/* We are using ftrace early, expand it */
 	ring_buffer_expanded = true;
@@ -233,22 +223,9 @@ __setup("traceoff_on_warning", stop_trace_on_warning);
 
 static int __init boot_alloc_snapshot(char *str)
 {
-	char *slot = boot_snapshot_info + boot_snapshot_index;
-	int left = sizeof(boot_snapshot_info) - boot_snapshot_index;
-	int ret;
-
-	if (str[0] == '=') {
-		str++;
-		if (strlen(str) >= left)
-			return -1;
-
-		ret = snprintf(slot, left, "%s\t", str);
-		boot_snapshot_index += ret;
-	} else {
-		allocate_snapshot = true;
-		/* We also need the main ring buffer expanded */
-		ring_buffer_expanded = true;
-	}
+	allocate_snapshot = true;
+	/* We also need the main ring buffer expanded */
+	ring_buffer_expanded = true;
 	return 1;
 }
 __setup("alloc_snapshot", boot_alloc_snapshot);
@@ -263,28 +240,11 @@ static int __init boot_snapshot(char *str)
 __setup("ftrace_boot_snapshot", boot_snapshot);
 
 
-static int __init boot_instance(char *str)
-{
-	char *slot = boot_instance_info + boot_instance_index;
-	int left = sizeof(boot_instance_info) - boot_instance_index;
-	int ret;
-
-	if (strlen(str) >= left)
-		return -1;
-
-	ret = snprintf(slot, left, "%s\t", str);
-	boot_instance_index += ret;
-
-	return 1;
-}
-__setup("trace_instance=", boot_instance);
-
-
 static char trace_boot_options_buf[MAX_TRACER_SIZE] __initdata;
 
 static int __init set_trace_boot_options(char *str)
 {
-	strscpy(trace_boot_options_buf, str, MAX_TRACER_SIZE);
+	strlcpy(trace_boot_options_buf, str, MAX_TRACER_SIZE);
 	return 1;
 }
 __setup("trace_options=", set_trace_boot_options);
@@ -294,7 +254,7 @@ static char *trace_boot_clock __initdata;
 
 static int __init set_trace_boot_clock(char *str)
 {
-	strscpy(trace_boot_clock_buf, str, MAX_TRACER_SIZE);
+	strlcpy(trace_boot_clock_buf, str, MAX_TRACER_SIZE);
 	trace_boot_clock = trace_boot_clock_buf;
 	return 1;
 }
@@ -1039,7 +999,7 @@ __buffer_unlock_commit(struct trace_buffer *buffer, struct ring_buffer_event *ev
 		/* ring_buffer_unlock_commit() enables preemption */
 		preempt_enable_notrace();
 	} else
-		ring_buffer_unlock_commit(buffer);
+		ring_buffer_unlock_commit(buffer, event);
 }
 
 int __trace_array_puts(struct trace_array *tr, unsigned long ip,
@@ -1054,10 +1014,7 @@ int __trace_array_puts(struct trace_array *tr, unsigned long ip,
 	if (!(tr->trace_flags & TRACE_ITER_PRINTK))
 		return 0;
 
-	if (unlikely(tracing_selftest_running && tr == &global_trace))
-		return 0;
-
-	if (unlikely(tracing_disabled))
+	if (unlikely(tracing_selftest_running || tracing_disabled))
 		return 0;
 
 	alloc = sizeof(*entry) + size + 2; /* possible \n added */
@@ -1193,7 +1150,7 @@ void tracing_snapshot_instance(struct trace_array *tr)
  *
  * Note, make sure to allocate the snapshot with either
  * a tracing_snapshot_alloc(), or by doing it manually
- * with: echo 1 > /sys/kernel/tracing/snapshot
+ * with: echo 1 > /sys/kernel/debug/tracing/snapshot
  *
  * If the snapshot buffer is not allocated, it will stop tracing.
  * Basically making a permanent snapshot.
@@ -1928,10 +1885,9 @@ update_max_tr_single(struct trace_array *tr, struct task_struct *tsk, int cpu)
 		 * place on this CPU. We fail to record, but we reset
 		 * the max trace buffer (no one writes directly to it)
 		 * and flag that it failed.
-		 * Another reason is resize is in progress.
 		 */
 		trace_array_printk_buf(tr->max_buffer.buffer, _THIS_IP_,
-			"Failed to swap buffers due to commit or resize in progress\n");
+			"Failed to swap buffers due to commit in progress\n");
 	}
 
 	WARN_ON_ONCE(ret && ret != -EAGAIN && ret != -EBUSY);
@@ -2048,24 +2004,6 @@ static int run_tracer_selftest(struct tracer *type)
 	return 0;
 }
 
-static int do_run_tracer_selftest(struct tracer *type)
-{
-	int ret;
-
-	/*
-	 * Tests can take a long time, especially if they are run one after the
-	 * other, as does happen during bootup when all the tracers are
-	 * registered. This could cause the soft lockup watchdog to trigger.
-	 */
-	cond_resched();
-
-	tracing_selftest_running = true;
-	ret = run_tracer_selftest(type);
-	tracing_selftest_running = false;
-
-	return ret;
-}
-
 static __init int init_trace_selftests(void)
 {
 	struct trace_selftests *p, *n;
@@ -2117,10 +2055,6 @@ static inline int run_tracer_selftest(struct tracer *type)
 {
 	return 0;
 }
-static inline int do_run_tracer_selftest(struct tracer *type)
-{
-	return 0;
-}
 #endif /* CONFIG_FTRACE_STARTUP_TEST */
 
 static void add_tracer_options(struct trace_array *tr, struct tracer *t);
@@ -2156,6 +2090,8 @@ int __init register_tracer(struct tracer *type)
 
 	mutex_lock(&trace_types_lock);
 
+	tracing_selftest_running = true;
+
 	for (t = trace_types; t; t = t->next) {
 		if (strcmp(type->name, t->name) == 0) {
 			/* already found */
@@ -2184,7 +2120,7 @@ int __init register_tracer(struct tracer *type)
 	/* store the tracer for __set_tracer_option */
 	type->flags->trace = type;
 
-	ret = do_run_tracer_selftest(type);
+	ret = run_tracer_selftest(type);
 	if (ret < 0)
 		goto out;
 
@@ -2193,6 +2129,7 @@ int __init register_tracer(struct tracer *type)
 	add_tracer_options(&global_trace, type);
 
  out:
+	tracing_selftest_running = false;
 	mutex_unlock(&trace_types_lock);
 
 	if (ret || !default_bootup_tracer)
@@ -2547,7 +2484,7 @@ static void __trace_find_cmdline(int pid, char comm[])
 	if (map != NO_CMDLINE_MAP) {
 		tpid = savedcmd->map_cmdline_to_pid[map];
 		if (tpid == pid) {
-			strscpy(comm, get_saved_cmdlines(map), TASK_COMM_LEN);
+			strlcpy(comm, get_saved_cmdlines(map), TASK_COMM_LEN);
 			return;
 		}
 	}
@@ -3119,7 +3056,6 @@ static void __ftrace_trace_stack(struct trace_buffer *buffer,
 	struct ftrace_stack *fstack;
 	struct stack_entry *entry;
 	int stackidx;
-	void *ptr;
 
 	/*
 	 * Add one, for this function and the call to save_stack_trace()
@@ -3163,25 +3099,9 @@ static void __ftrace_trace_stack(struct trace_buffer *buffer,
 				    trace_ctx);
 	if (!event)
 		goto out;
-	ptr = ring_buffer_event_data(event);
-	entry = ptr;
+	entry = ring_buffer_event_data(event);
 
-	/*
-	 * For backward compatibility reasons, the entry->caller is an
-	 * array of 8 slots to store the stack. This is also exported
-	 * to user space. The amount allocated on the ring buffer actually
-	 * holds enough for the stack specified by nr_entries. This will
-	 * go into the location of entry->caller. Due to string fortifiers
-	 * checking the size of the destination of memcpy() it triggers
-	 * when it detects that size is greater than 8. To hide this from
-	 * the fortifiers, we use "ptr" and pointer arithmetic to assign caller.
-	 *
-	 * The below is really just:
-	 *   memcpy(&entry->caller, fstack->calls, size);
-	 */
-	ptr += offsetof(typeof(*entry), caller);
-	memcpy(ptr, fstack->calls, size);
-
+	memcpy(&entry->caller, fstack->calls, size);
 	entry->size = nr_entries;
 
 	if (!call_filter_check_discard(call, entry, buffer, event))
@@ -3215,9 +3135,6 @@ void __trace_stack(struct trace_array *tr, unsigned int trace_ctx,
 		__ftrace_trace_stack(buffer, trace_ctx, skip, NULL);
 		return;
 	}
-
-	if (WARN_ON_ONCE(IS_ENABLED(CONFIG_GENERIC_ENTRY)))
-		return;
 
 	/*
 	 * When an NMI triggers, RCU is enabled via ct_nmi_enter(),
@@ -3533,7 +3450,7 @@ __trace_array_vprintk(struct trace_buffer *buffer,
 	unsigned int trace_ctx;
 	char *tbuffer;
 
-	if (tracing_disabled)
+	if (tracing_disabled || tracing_selftest_running)
 		return 0;
 
 	/* Don't pollute graph traces with trace_vprintk internals */
@@ -3581,9 +3498,6 @@ __printf(3, 0)
 int trace_array_vprintk(struct trace_array *tr,
 			unsigned long ip, const char *fmt, va_list args)
 {
-	if (tracing_selftest_running && tr == &global_trace)
-		return 0;
-
 	return __trace_array_vprintk(tr->array_buffer.buffer, ip, fmt, args);
 }
 
@@ -3772,7 +3686,7 @@ __find_next_entry(struct trace_iterator *iter, int *ent_cpu,
 #define STATIC_FMT_BUF_SIZE	128
 static char static_fmt_buf[STATIC_FMT_BUF_SIZE];
 
-char *trace_iter_expand_format(struct trace_iterator *iter)
+static char *trace_iter_expand_format(struct trace_iterator *iter)
 {
 	char *tmp;
 
@@ -4492,11 +4406,8 @@ static enum print_line_t print_trace_fmt(struct trace_iterator *iter)
 	if (trace_seq_has_overflowed(s))
 		return TRACE_TYPE_PARTIAL_LINE;
 
-	if (event) {
-		if (tr->trace_flags & TRACE_ITER_FIELDS)
-			return print_event_fields(iter, event);
+	if (event)
 		return event->funcs->trace(iter, sym_flags, event);
-	}
 
 	trace_seq_printf(s, "Unknown type %d\n", entry->type);
 
@@ -5217,7 +5128,7 @@ static const struct file_operations tracing_fops = {
 	.open		= tracing_open,
 	.read		= seq_read,
 	.read_iter	= seq_read_iter,
-	.splice_read	= copy_splice_read,
+	.splice_read	= generic_file_splice_read,
 	.write		= tracing_write_stub,
 	.llseek		= tracing_lseek,
 	.release	= tracing_release,
@@ -5690,17 +5601,10 @@ static const char readme_msg[] =
 	"  uprobe_events\t\t- Create/append/remove/show the userspace dynamic events\n"
 	"\t\t\t  Write into this file to define/undefine new trace events.\n"
 #endif
-#if defined(CONFIG_KPROBE_EVENTS) || defined(CONFIG_UPROBE_EVENTS) || \
-    defined(CONFIG_FPROBE_EVENTS)
-	"\t  accepts: event-definitions (one definition per line)\n"
 #if defined(CONFIG_KPROBE_EVENTS) || defined(CONFIG_UPROBE_EVENTS)
+	"\t  accepts: event-definitions (one definition per line)\n"
 	"\t   Format: p[:[<group>/][<event>]] <place> [<args>]\n"
 	"\t           r[maxactive][:[<group>/][<event>]] <place> [<args>]\n"
-#endif
-#ifdef CONFIG_FPROBE_EVENTS
-	"\t           f[:[<group>/][<event>]] <func-name>[%return] [<args>]\n"
-	"\t           t[:[<group>/][<event>]] <tracepoint> [<args>]\n"
-#endif
 #ifdef CONFIG_HIST_TRIGGERS
 	"\t           s:[synthetic/]<event> <field> [<field>]\n"
 #endif
@@ -5716,16 +5620,12 @@ static const char readme_msg[] =
 	"\t     args: <name>=fetcharg[:type]\n"
 	"\t fetcharg: (%<register>|$<efield>), @<address>, @<symbol>[+|-<offset>],\n"
 #ifdef CONFIG_HAVE_FUNCTION_ARG_ACCESS_API
-#ifdef CONFIG_PROBE_EVENTS_BTF_ARGS
-	"\t           $stack<index>, $stack, $retval, $comm, $arg<N>, <argname>\n"
-#else
 	"\t           $stack<index>, $stack, $retval, $comm, $arg<N>,\n"
-#endif
 #else
 	"\t           $stack<index>, $stack, $retval, $comm,\n"
 #endif
 	"\t           +|-[u]<offset>(<fetcharg>), \\imm-value, \\\"imm-string\"\n"
-	"\t     type: s8/16/32/64, u8/16/32/64, x8/16/32/64, char, string, symbol,\n"
+	"\t     type: s8/16/32/64, u8/16/32/64, x8/16/32/64, string, symbol,\n"
 	"\t           b<bit-width>@<bit-offset>/<container-size>, ustring,\n"
 	"\t           symstr, <type>\\[<array-size>\\]\n"
 #ifdef CONFIG_HIST_TRIGGERS
@@ -5788,7 +5688,6 @@ static const char readme_msg[] =
 	"\t            [:size=#entries]\n"
 	"\t            [:pause][:continue][:clear]\n"
 	"\t            [:name=histname1]\n"
-	"\t            [:nohitcount]\n"
 	"\t            [:<handler>.<action>]\n"
 	"\t            [if <filter>]\n\n"
 	"\t    Note, special fields can be used as well:\n"
@@ -5809,7 +5708,7 @@ static const char readme_msg[] =
 	"\t    table using the key(s) and value(s) named, and the value of a\n"
 	"\t    sum called 'hitcount' is incremented.  Keys and values\n"
 	"\t    correspond to fields in the event's format description.  Keys\n"
-	"\t    can be any field, or the special string 'common_stacktrace'.\n"
+	"\t    can be any field, or the special string 'stacktrace'.\n"
 	"\t    Compound keys consisting of up to two fields can be specified\n"
 	"\t    by the 'keys' keyword.  Values must correspond to numeric\n"
 	"\t    fields.  Sort keys consisting of up to two fields can be\n"
@@ -5845,8 +5744,6 @@ static const char readme_msg[] =
 	"\t    The 'clear' parameter will clear the contents of a running\n"
 	"\t    hist trigger and leave its current paused/active state\n"
 	"\t    unchanged.\n\n"
-	"\t    The 'nohitcount' (or NOHC) parameter will suppress display of\n"
-	"\t    raw hitcount in the histogram.\n\n"
 	"\t    The enable_hist and disable_hist triggers can be used to\n"
 	"\t    have one event conditionally start and stop another event's\n"
 	"\t    already-attached hist trigger.  The syntax is analogous to\n"
@@ -5867,7 +5764,7 @@ static const char readme_msg[] =
 #ifdef CONFIG_SYNTH_EVENTS
 	"  events/synthetic_events\t- Create/append/remove/show synthetic events\n"
 	"\t  Write into this file to define/undefine new synthetic events.\n"
-	"\t     example: echo 'myevent u64 lat; char name[]; long[] stack' >> synthetic_events\n"
+	"\t     example: echo 'myevent u64 lat; char name[]' >> synthetic_events\n"
 #endif
 #endif
 ;
@@ -9333,6 +9230,10 @@ static int allocate_trace_buffers(struct trace_array *tr, int size)
 	}
 	tr->allocated_snapshot = allocate_snapshot;
 
+	/*
+	 * Only the top level trace array gets its snapshot allocated
+	 * from the kernel command line.
+	 */
 	allocate_snapshot = false;
 #endif
 
@@ -9980,39 +9881,39 @@ static __init int tracer_init_tracefs(void)
 
 fs_initcall(tracer_init_tracefs);
 
-static int trace_die_panic_handler(struct notifier_block *self,
-				unsigned long ev, void *unused);
+static int trace_panic_handler(struct notifier_block *this,
+			       unsigned long event, void *unused)
+{
+	if (ftrace_dump_on_oops)
+		ftrace_dump(ftrace_dump_on_oops);
+	return NOTIFY_OK;
+}
 
 static struct notifier_block trace_panic_notifier = {
-	.notifier_call = trace_die_panic_handler,
-	.priority = INT_MAX - 1,
+	.notifier_call  = trace_panic_handler,
+	.next           = NULL,
+	.priority       = 150   /* priority: INT_MAX >= x >= 0 */
 };
+
+static int trace_die_handler(struct notifier_block *self,
+			     unsigned long val,
+			     void *data)
+{
+	switch (val) {
+	case DIE_OOPS:
+		if (ftrace_dump_on_oops)
+			ftrace_dump(ftrace_dump_on_oops);
+		break;
+	default:
+		break;
+	}
+	return NOTIFY_OK;
+}
 
 static struct notifier_block trace_die_notifier = {
-	.notifier_call = trace_die_panic_handler,
-	.priority = INT_MAX - 1,
+	.notifier_call = trace_die_handler,
+	.priority = 200
 };
-
-/*
- * The idea is to execute the following die/panic callback early, in order
- * to avoid showing irrelevant information in the trace (like other panic
- * notifier functions); we are the 2nd to run, after hung_task/rcu_stall
- * warnings get disabled (to prevent potential log flooding).
- */
-static int trace_die_panic_handler(struct notifier_block *self,
-				unsigned long ev, void *unused)
-{
-	if (!ftrace_dump_on_oops)
-		return NOTIFY_DONE;
-
-	/* The die notifier requires DIE_OOPS to trigger */
-	if (self == &trace_die_notifier && ev != DIE_OOPS)
-		return NOTIFY_DONE;
-
-	ftrace_dump(ftrace_dump_on_oops);
-
-	return NOTIFY_DONE;
-}
 
 /*
  * printk is set to max of 1024, we really don't need it that big.
@@ -10249,79 +10150,6 @@ out:
 	return ret;
 }
 
-#ifdef CONFIG_TRACER_MAX_TRACE
-__init static bool tr_needs_alloc_snapshot(const char *name)
-{
-	char *test;
-	int len = strlen(name);
-	bool ret;
-
-	if (!boot_snapshot_index)
-		return false;
-
-	if (strncmp(name, boot_snapshot_info, len) == 0 &&
-	    boot_snapshot_info[len] == '\t')
-		return true;
-
-	test = kmalloc(strlen(name) + 3, GFP_KERNEL);
-	if (!test)
-		return false;
-
-	sprintf(test, "\t%s\t", name);
-	ret = strstr(boot_snapshot_info, test) == NULL;
-	kfree(test);
-	return ret;
-}
-
-__init static void do_allocate_snapshot(const char *name)
-{
-	if (!tr_needs_alloc_snapshot(name))
-		return;
-
-	/*
-	 * When allocate_snapshot is set, the next call to
-	 * allocate_trace_buffers() (called by trace_array_get_by_name())
-	 * will allocate the snapshot buffer. That will alse clear
-	 * this flag.
-	 */
-	allocate_snapshot = true;
-}
-#else
-static inline void do_allocate_snapshot(const char *name) { }
-#endif
-
-__init static void enable_instances(void)
-{
-	struct trace_array *tr;
-	char *curr_str;
-	char *str;
-	char *tok;
-
-	/* A tab is always appended */
-	boot_instance_info[boot_instance_index - 1] = '\0';
-	str = boot_instance_info;
-
-	while ((curr_str = strsep(&str, "\t"))) {
-
-		tok = strsep(&curr_str, ",");
-
-		if (IS_ENABLED(CONFIG_TRACER_MAX_TRACE))
-			do_allocate_snapshot(tok);
-
-		tr = trace_array_get_by_name(tok);
-		if (!tr) {
-			pr_warn("Failed to create instance buffer %s\n", curr_str);
-			continue;
-		}
-		/* Allow user space to delete it */
-		trace_array_put(tr);
-
-		while ((tok = strsep(&curr_str, ","))) {
-			early_enable_events(tr, tok, true);
-		}
-	}
-}
-
 __init static int tracer_alloc_buffers(void)
 {
 	int ring_buf_size;
@@ -10455,20 +10283,10 @@ out:
 
 void __init ftrace_boot_snapshot(void)
 {
-#ifdef CONFIG_TRACER_MAX_TRACE
-	struct trace_array *tr;
-
-	if (!snapshot_at_boot)
-		return;
-
-	list_for_each_entry(tr, &ftrace_trace_arrays, list) {
-		if (!tr->allocated_snapshot)
-			continue;
-
-		tracing_snapshot_instance(tr);
-		trace_array_puts(tr, "** Boot snapshot taken **\n");
+	if (snapshot_at_boot) {
+		tracing_snapshot();
+		internal_trace_puts("** Boot snapshot taken **\n");
 	}
-#endif
 }
 
 void __init early_trace_init(void)
@@ -10490,9 +10308,6 @@ void __init early_trace_init(void)
 void __init trace_init(void)
 {
 	trace_event_init();
-
-	if (boot_instance_index)
-		enable_instances();
 }
 
 __init static void clear_boot_tracer(void)

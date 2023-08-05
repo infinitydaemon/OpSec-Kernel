@@ -16,7 +16,9 @@
 #include <linux/clk.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
+#include <linux/gpio.h>
 #include <linux/gpio/consumer.h>
+#include <linux/of_gpio.h>
 #include <linux/v4l2-mediabus.h>
 #include <linux/videodev2.h>
 
@@ -1298,7 +1300,7 @@ static struct i2c_driver ov2640_i2c_driver = {
 		.name = "ov2640",
 		.of_match_table = of_match_ptr(ov2640_of_match),
 	},
-	.probe    = ov2640_probe,
+	.probe_new = ov2640_probe,
 	.remove   = ov2640_remove,
 	.id_table = ov2640_id,
 };

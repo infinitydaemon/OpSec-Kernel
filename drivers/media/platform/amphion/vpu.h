@@ -85,8 +85,7 @@ struct vpu_dev {
 
 struct vpu_format {
 	u32 pixfmt;
-	u32 mem_planes;
-	u32 comp_planes;
+	unsigned int num_planes;
 	u32 type;
 	u32 flags;
 	u32 width;
@@ -94,7 +93,6 @@ struct vpu_format {
 	u32 sizeimage[VIDEO_MAX_PLANES];
 	u32 bytesperline[VIDEO_MAX_PLANES];
 	u32 field;
-	u32 sibling;
 };
 
 struct vpu_core_resources {

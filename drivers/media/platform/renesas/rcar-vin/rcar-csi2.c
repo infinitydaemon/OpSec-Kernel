@@ -345,7 +345,7 @@ static const struct rcsi2_mbps_reg hsfreqrange_h3_v3h_m3n[] = {
 	{ /* sentinel */ },
 };
 
-static const struct rcsi2_mbps_reg hsfreqrange_m3w[] = {
+static const struct rcsi2_mbps_reg hsfreqrange_m3w_h3es1[] = {
 	{ .mbps =   80,	.reg = 0x00 },
 	{ .mbps =   90,	.reg = 0x10 },
 	{ .mbps =  100,	.reg = 0x20 },
@@ -483,15 +483,11 @@ enum rcar_csi2_pads {
 struct rcar_csi2_info {
 	int (*init_phtw)(struct rcar_csi2 *priv, unsigned int mbps);
 	int (*phy_post_init)(struct rcar_csi2 *priv);
-	int (*start_receiver)(struct rcar_csi2 *priv);
-	void (*enter_standby)(struct rcar_csi2 *priv);
 	const struct rcsi2_mbps_reg *hsfreqrange;
 	unsigned int csi0clkfreqrange;
 	unsigned int num_channels;
 	bool clear_ulps;
 	bool use_isp;
-	bool support_dphy;
-	bool support_cphy;
 };
 
 struct rcar_csi2 {
@@ -513,7 +509,6 @@ struct rcar_csi2 {
 	struct v4l2_mbus_framefmt mf;
 	int stream_count;
 
-	bool cphy;
 	unsigned short lanes;
 	unsigned char lane_swap[4];
 };
@@ -538,17 +533,10 @@ static void rcsi2_write(struct rcar_csi2 *priv, unsigned int reg, u32 data)
 	iowrite32(data, priv->base + reg);
 }
 
-static void rcsi2_enter_standby_gen3(struct rcar_csi2 *priv)
+static void rcsi2_enter_standby(struct rcar_csi2 *priv)
 {
 	rcsi2_write(priv, PHYCNT_REG, 0);
 	rcsi2_write(priv, PHTC_REG, PHTC_TESTCLR);
-}
-
-static void rcsi2_enter_standby(struct rcar_csi2 *priv)
-{
-	if (priv->info->enter_standby)
-		priv->info->enter_standby(priv);
-
 	reset_control_assert(priv->rstc);
 	usleep_range(100, 150);
 	pm_runtime_put(priv->dev);
@@ -668,16 +656,7 @@ static int rcsi2_get_active_lanes(struct rcar_csi2 *priv,
 		return ret;
 	}
 
-	switch (mbus_config.type) {
-	case V4L2_MBUS_CSI2_CPHY:
-		if (!priv->cphy)
-			return -EINVAL;
-		break;
-	case V4L2_MBUS_CSI2_DPHY:
-		if (priv->cphy)
-			return -EINVAL;
-		break;
-	default:
+	if (mbus_config.type != V4L2_MBUS_CSI2_DPHY) {
 		dev_err(priv->dev, "Unsupported media bus type %u\n",
 			mbus_config.type);
 		return -EINVAL;
@@ -695,7 +674,7 @@ static int rcsi2_get_active_lanes(struct rcar_csi2 *priv,
 	return 0;
 }
 
-static int rcsi2_start_receiver_gen3(struct rcar_csi2 *priv)
+static int rcsi2_start_receiver(struct rcar_csi2 *priv)
 {
 	const struct rcar_csi2_format *format;
 	u32 phycnt, vcdt = 0, vcdt2 = 0, fld = 0;
@@ -842,7 +821,7 @@ static int rcsi2_start(struct rcar_csi2 *priv)
 	if (ret < 0)
 		return ret;
 
-	ret = priv->info->start_receiver(priv);
+	ret = rcsi2_start_receiver(priv);
 	if (ret) {
 		rcsi2_enter_standby(priv);
 		return ret;
@@ -1037,41 +1016,15 @@ static int rcsi2_parse_v4l2(struct rcar_csi2 *priv,
 	if (vep->base.port || vep->base.id)
 		return -ENOTCONN;
 
-	priv->lanes = vep->bus.mipi_csi2.num_data_lanes;
-
-	switch (vep->bus_type) {
-	case V4L2_MBUS_CSI2_DPHY:
-		if (!priv->info->support_dphy) {
-			dev_err(priv->dev, "D-PHY not supported\n");
-			return -EINVAL;
-		}
-
-		if (priv->lanes != 1 && priv->lanes != 2 && priv->lanes != 4) {
-			dev_err(priv->dev,
-				"Unsupported number of data-lanes for D-PHY: %u\n",
-				priv->lanes);
-			return -EINVAL;
-		}
-
-		priv->cphy = false;
-		break;
-	case V4L2_MBUS_CSI2_CPHY:
-		if (!priv->info->support_cphy) {
-			dev_err(priv->dev, "C-PHY not supported\n");
-			return -EINVAL;
-		}
-
-		if (priv->lanes != 3) {
-			dev_err(priv->dev,
-				"Unsupported number of data-lanes for C-PHY: %u\n",
-				priv->lanes);
-			return -EINVAL;
-		}
-
-		priv->cphy = true;
-		break;
-	default:
+	if (vep->bus_type != V4L2_MBUS_CSI2_DPHY) {
 		dev_err(priv->dev, "Unsupported bus: %u\n", vep->bus_type);
+		return -EINVAL;
+	}
+
+	priv->lanes = vep->bus.mipi_csi2.num_data_lanes;
+	if (priv->lanes != 1 && priv->lanes != 2 && priv->lanes != 4) {
+		dev_err(priv->dev, "Unsupported number of data-lanes: %u\n",
+			priv->lanes);
 		return -EINVAL;
 	}
 
@@ -1095,7 +1048,7 @@ static int rcsi2_parse_dt(struct rcar_csi2 *priv)
 	struct fwnode_handle *fwnode;
 	struct fwnode_handle *ep;
 	struct v4l2_fwnode_endpoint v4l2_ep = {
-		.bus_type = V4L2_MBUS_UNKNOWN,
+		.bus_type = V4L2_MBUS_CSI2_DPHY
 	};
 	int ret;
 
@@ -1410,90 +1363,68 @@ static int rcsi2_probe_resources(struct rcar_csi2 *priv,
 
 static const struct rcar_csi2_info rcar_csi2_info_r8a7795 = {
 	.init_phtw = rcsi2_init_phtw_h3_v3h_m3n,
-	.start_receiver = rcsi2_start_receiver_gen3,
-	.enter_standby = rcsi2_enter_standby_gen3,
 	.hsfreqrange = hsfreqrange_h3_v3h_m3n,
 	.csi0clkfreqrange = 0x20,
 	.num_channels = 4,
 	.clear_ulps = true,
-	.support_dphy = true,
+};
+
+static const struct rcar_csi2_info rcar_csi2_info_r8a7795es1 = {
+	.hsfreqrange = hsfreqrange_m3w_h3es1,
+	.num_channels = 4,
 };
 
 static const struct rcar_csi2_info rcar_csi2_info_r8a7795es2 = {
 	.init_phtw = rcsi2_init_phtw_h3es2,
-	.start_receiver = rcsi2_start_receiver_gen3,
-	.enter_standby = rcsi2_enter_standby_gen3,
 	.hsfreqrange = hsfreqrange_h3_v3h_m3n,
 	.csi0clkfreqrange = 0x20,
 	.num_channels = 4,
 	.clear_ulps = true,
-	.support_dphy = true,
 };
 
 static const struct rcar_csi2_info rcar_csi2_info_r8a7796 = {
-	.start_receiver = rcsi2_start_receiver_gen3,
-	.enter_standby = rcsi2_enter_standby_gen3,
-	.hsfreqrange = hsfreqrange_m3w,
+	.hsfreqrange = hsfreqrange_m3w_h3es1,
 	.num_channels = 4,
-	.support_dphy = true,
 };
 
 static const struct rcar_csi2_info rcar_csi2_info_r8a77961 = {
-	.start_receiver = rcsi2_start_receiver_gen3,
-	.enter_standby = rcsi2_enter_standby_gen3,
-	.hsfreqrange = hsfreqrange_m3w,
+	.hsfreqrange = hsfreqrange_m3w_h3es1,
 	.num_channels = 4,
-	.support_dphy = true,
 };
 
 static const struct rcar_csi2_info rcar_csi2_info_r8a77965 = {
 	.init_phtw = rcsi2_init_phtw_h3_v3h_m3n,
-	.start_receiver = rcsi2_start_receiver_gen3,
-	.enter_standby = rcsi2_enter_standby_gen3,
 	.hsfreqrange = hsfreqrange_h3_v3h_m3n,
 	.csi0clkfreqrange = 0x20,
 	.num_channels = 4,
 	.clear_ulps = true,
-	.support_dphy = true,
 };
 
 static const struct rcar_csi2_info rcar_csi2_info_r8a77970 = {
 	.init_phtw = rcsi2_init_phtw_v3m_e3,
 	.phy_post_init = rcsi2_phy_post_init_v3m_e3,
-	.start_receiver = rcsi2_start_receiver_gen3,
-	.enter_standby = rcsi2_enter_standby_gen3,
 	.num_channels = 4,
-	.support_dphy = true,
 };
 
 static const struct rcar_csi2_info rcar_csi2_info_r8a77980 = {
 	.init_phtw = rcsi2_init_phtw_h3_v3h_m3n,
-	.start_receiver = rcsi2_start_receiver_gen3,
-	.enter_standby = rcsi2_enter_standby_gen3,
 	.hsfreqrange = hsfreqrange_h3_v3h_m3n,
 	.csi0clkfreqrange = 0x20,
 	.clear_ulps = true,
-	.support_dphy = true,
 };
 
 static const struct rcar_csi2_info rcar_csi2_info_r8a77990 = {
 	.init_phtw = rcsi2_init_phtw_v3m_e3,
 	.phy_post_init = rcsi2_phy_post_init_v3m_e3,
-	.start_receiver = rcsi2_start_receiver_gen3,
-	.enter_standby = rcsi2_enter_standby_gen3,
 	.num_channels = 2,
-	.support_dphy = true,
 };
 
 static const struct rcar_csi2_info rcar_csi2_info_r8a779a0 = {
 	.init_phtw = rcsi2_init_phtw_v3u,
-	.start_receiver = rcsi2_start_receiver_gen3,
-	.enter_standby = rcsi2_enter_standby_gen3,
 	.hsfreqrange = hsfreqrange_v3u,
 	.csi0clkfreqrange = 0x20,
 	.clear_ulps = true,
 	.use_isp = true,
-	.support_dphy = true,
 };
 
 static const struct of_device_id rcar_csi2_of_table[] = {
@@ -1550,6 +1481,10 @@ static const struct of_device_id rcar_csi2_of_table[] = {
 MODULE_DEVICE_TABLE(of, rcar_csi2_of_table);
 
 static const struct soc_device_attribute r8a7795[] = {
+	{
+		.soc_id = "r8a7795", .revision = "ES1.*",
+		.data = &rcar_csi2_info_r8a7795es1,
+	},
 	{
 		.soc_id = "r8a7795", .revision = "ES2.*",
 		.data = &rcar_csi2_info_r8a7795es2,
@@ -1639,7 +1574,7 @@ error_mutex:
 	return ret;
 }
 
-static void rcsi2_remove(struct platform_device *pdev)
+static int rcsi2_remove(struct platform_device *pdev)
 {
 	struct rcar_csi2 *priv = platform_get_drvdata(pdev);
 
@@ -1650,10 +1585,12 @@ static void rcsi2_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 
 	mutex_destroy(&priv->lock);
+
+	return 0;
 }
 
 static struct platform_driver rcar_csi2_pdrv = {
-	.remove_new = rcsi2_remove,
+	.remove	= rcsi2_remove,
 	.probe	= rcsi2_probe,
 	.driver	= {
 		.name	= "rcar-csi2",

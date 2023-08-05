@@ -125,6 +125,11 @@ kunit_test_suites(&executor_test_suite);
 
 /* Test helpers */
 
+static void kfree_res_free(struct kunit_resource *res)
+{
+	kfree(res->data);
+}
+
 /* Use the resource API to register a call to kfree(to_free).
  * Since we never actually use the resource, it's safe to use on const data.
  */
@@ -133,10 +138,8 @@ static void kfree_at_end(struct kunit *test, const void *to_free)
 	/* kfree() handles NULL already, but avoid allocating a no-op cleanup. */
 	if (IS_ERR_OR_NULL(to_free))
 		return;
-
-	kunit_add_action(test,
-			(kunit_action_t *)kfree,
-			(void *)to_free);
+	kunit_alloc_resource(test, NULL, kfree_res_free, GFP_KERNEL,
+			     (void *)to_free);
 }
 
 static struct kunit_suite *alloc_fake_suite(struct kunit *test,

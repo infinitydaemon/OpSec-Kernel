@@ -50,8 +50,8 @@ const struct argp bench_strncmp_argp = {
 
 static void strncmp_validate(void)
 {
-	if (env.consumer_cnt != 0) {
-		fprintf(stderr, "strncmp benchmark doesn't support consumer!\n");
+	if (env.consumer_cnt != 1) {
+		fprintf(stderr, "strncmp benchmark doesn't support multi-consumer!\n");
 		exit(1);
 	}
 }
@@ -128,6 +128,11 @@ static void *strncmp_producer(void *ctx)
 	return NULL;
 }
 
+static void *strncmp_consumer(void *ctx)
+{
+	return NULL;
+}
+
 static void strncmp_measure(struct bench_res *res)
 {
 	res->hits = atomic_swap(&ctx.skel->bss->hits, 0);
@@ -135,10 +140,10 @@ static void strncmp_measure(struct bench_res *res)
 
 const struct bench bench_strncmp_no_helper = {
 	.name = "strncmp-no-helper",
-	.argp = &bench_strncmp_argp,
 	.validate = strncmp_validate,
 	.setup = strncmp_no_helper_setup,
 	.producer_thread = strncmp_producer,
+	.consumer_thread = strncmp_consumer,
 	.measure = strncmp_measure,
 	.report_progress = hits_drops_report_progress,
 	.report_final = hits_drops_report_final,
@@ -146,10 +151,10 @@ const struct bench bench_strncmp_no_helper = {
 
 const struct bench bench_strncmp_helper = {
 	.name = "strncmp-helper",
-	.argp = &bench_strncmp_argp,
 	.validate = strncmp_validate,
 	.setup = strncmp_helper_setup,
 	.producer_thread = strncmp_producer,
+	.consumer_thread = strncmp_consumer,
 	.measure = strncmp_measure,
 	.report_progress = hits_drops_report_progress,
 	.report_final = hits_drops_report_final,

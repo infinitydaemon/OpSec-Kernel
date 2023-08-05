@@ -236,28 +236,6 @@ int snd_soc_component_force_enable_pin_unlocked(
 }
 EXPORT_SYMBOL_GPL(snd_soc_component_force_enable_pin_unlocked);
 
-int snd_soc_component_notify_control(struct snd_soc_component *component,
-				     const char * const ctl)
-{
-	char name[SNDRV_CTL_ELEM_ID_NAME_MAXLEN];
-	struct snd_kcontrol *kctl;
-
-	if (component->name_prefix)
-		snprintf(name, ARRAY_SIZE(name), "%s %s", component->name_prefix, ctl);
-	else
-		snprintf(name, ARRAY_SIZE(name), "%s", ctl);
-
-	kctl = snd_soc_card_get_kcontrol(component->card, name);
-	if (!kctl)
-		return soc_component_ret(component, -EINVAL);
-
-	snd_ctl_notify(component->card->snd_card,
-		       SNDRV_CTL_EVENT_MASK_VALUE, &kctl->id);
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(snd_soc_component_notify_control);
-
 /**
  * snd_soc_component_set_jack - configure component jack.
  * @component: COMPONENTs
@@ -277,26 +255,6 @@ int snd_soc_component_set_jack(struct snd_soc_component *component,
 	return soc_component_ret(component, ret);
 }
 EXPORT_SYMBOL_GPL(snd_soc_component_set_jack);
-
-/**
- * snd_soc_component_get_jack_type
- * @component: COMPONENTs
- *
- * Returns the jack type of the component
- * This can either be the supported type or one read from
- * devicetree with the property: jack-type.
- */
-int snd_soc_component_get_jack_type(
-	struct snd_soc_component *component)
-{
-	int ret = -ENOTSUPP;
-
-	if (component->driver->get_jack_type)
-		ret = component->driver->get_jack_type(component);
-
-	return soc_component_ret(component, ret);
-}
-EXPORT_SYMBOL_GPL(snd_soc_component_get_jack_type);
 
 int snd_soc_component_module_get(struct snd_soc_component *component,
 				 void *mark, int upon_open)
@@ -572,7 +530,7 @@ int snd_soc_component_compr_get_caps(struct snd_compr_stream *cstream,
 	struct snd_soc_component *component;
 	int i, ret = 0;
 
-	snd_soc_dpcm_mutex_lock(rtd);
+	mutex_lock_nested(&rtd->card->pcm_mutex, rtd->card->pcm_subclass);
 
 	for_each_rtd_components(rtd, i, component) {
 		if (component->driver->compress_ops &&
@@ -583,7 +541,7 @@ int snd_soc_component_compr_get_caps(struct snd_compr_stream *cstream,
 		}
 	}
 
-	snd_soc_dpcm_mutex_unlock(rtd);
+	mutex_unlock(&rtd->card->pcm_mutex);
 
 	return soc_component_ret(component, ret);
 }
@@ -596,7 +554,7 @@ int snd_soc_component_compr_get_codec_caps(struct snd_compr_stream *cstream,
 	struct snd_soc_component *component;
 	int i, ret = 0;
 
-	snd_soc_dpcm_mutex_lock(rtd);
+	mutex_lock_nested(&rtd->card->pcm_mutex, rtd->card->pcm_subclass);
 
 	for_each_rtd_components(rtd, i, component) {
 		if (component->driver->compress_ops &&
@@ -607,7 +565,7 @@ int snd_soc_component_compr_get_codec_caps(struct snd_compr_stream *cstream,
 		}
 	}
 
-	snd_soc_dpcm_mutex_unlock(rtd);
+	mutex_unlock(&rtd->card->pcm_mutex);
 
 	return soc_component_ret(component, ret);
 }
@@ -660,7 +618,7 @@ int snd_soc_component_compr_copy(struct snd_compr_stream *cstream,
 	struct snd_soc_component *component;
 	int i, ret = 0;
 
-	snd_soc_dpcm_mutex_lock(rtd);
+	mutex_lock_nested(&rtd->card->pcm_mutex, rtd->card->pcm_subclass);
 
 	for_each_rtd_components(rtd, i, component) {
 		if (component->driver->compress_ops &&
@@ -671,7 +629,7 @@ int snd_soc_component_compr_copy(struct snd_compr_stream *cstream,
 		}
 	}
 
-	snd_soc_dpcm_mutex_unlock(rtd);
+	mutex_unlock(&rtd->card->pcm_mutex);
 
 	return soc_component_ret(component, ret);
 }

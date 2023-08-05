@@ -24,7 +24,8 @@ static const struct mfd_cell lp873x_cells[] = {
 	{ .name = "lp873x-gpio", },
 };
 
-static int lp873x_probe(struct i2c_client *client)
+static int lp873x_probe(struct i2c_client *client,
+			const struct i2c_device_id *ids)
 {
 	struct lp873x *lp873;
 	int ret;

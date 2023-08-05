@@ -78,6 +78,8 @@ struct snd_soc_dpcm {
 	struct list_head list_be;
 	struct list_head list_fe;
 
+	/* hw params for this link - may be different for each link */
+	struct snd_pcm_hw_params hw_params;
 #ifdef CONFIG_DEBUG_FS
 	struct dentry *debugfs_state;
 #endif
@@ -91,6 +93,7 @@ struct snd_soc_dpcm_runtime {
 	struct list_head fe_clients;
 
 	int users;
+	struct snd_pcm_runtime *runtime;
 	struct snd_pcm_hw_params hw_params;
 
 	/* state and update */
@@ -165,8 +168,6 @@ int dpcm_be_dai_prepare(struct snd_soc_pcm_runtime *fe, int stream);
 int dpcm_dapm_stream_event(struct snd_soc_pcm_runtime *fe, int dir,
 	int event);
 bool dpcm_end_walk_at_be(struct snd_soc_dapm_widget *widget, enum snd_soc_dapm_direction dir);
-int widget_in_list(struct snd_soc_dapm_widget_list *list,
-		   struct snd_soc_dapm_widget *widget);
 
 #define dpcm_be_dai_startup_rollback(fe, stream, last)	\
 						dpcm_be_dai_stop(fe, stream, 0, last)

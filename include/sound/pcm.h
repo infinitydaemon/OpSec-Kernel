@@ -378,18 +378,18 @@ struct snd_pcm_runtime {
 	unsigned int rate_den;
 	unsigned int no_period_wakeup: 1;
 
-	/* -- SW params; see struct snd_pcm_sw_params for comments -- */
-	int tstamp_mode;
+	/* -- SW params -- */
+	int tstamp_mode;		/* mmap timestamp is updated */
   	unsigned int period_step;
 	snd_pcm_uframes_t start_threshold;
 	snd_pcm_uframes_t stop_threshold;
-	snd_pcm_uframes_t silence_threshold;
-	snd_pcm_uframes_t silence_size;
-	snd_pcm_uframes_t boundary;
+	snd_pcm_uframes_t silence_threshold; /* Silence filling happens when
+						noise is nearest than this */
+	snd_pcm_uframes_t silence_size;	/* Silence filling size */
+	snd_pcm_uframes_t boundary;	/* pointers wrap point */
 
-	/* internal data of auto-silencer */
 	snd_pcm_uframes_t silence_start; /* starting pointer to silence area */
-	snd_pcm_uframes_t silence_filled; /* already filled part of silence area */
+	snd_pcm_uframes_t silence_filled; /* size filled with silence */
 
 	union snd_pcm_sync_id sync;	/* hardware synchronization ID */
 

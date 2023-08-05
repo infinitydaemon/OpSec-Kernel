@@ -1159,12 +1159,13 @@ err_release:
 	return ret;
 }
 
-static void apple_mca_remove(struct platform_device *pdev)
+static int apple_mca_remove(struct platform_device *pdev)
 {
 	struct mca_data *mca = platform_get_drvdata(pdev);
 
 	snd_soc_unregister_component(&pdev->dev);
 	apple_mca_release(mca);
+	return 0;
 }
 
 static const struct of_device_id apple_mca_of_match[] = {
@@ -1179,7 +1180,7 @@ static struct platform_driver apple_mca_driver = {
 		.of_match_table = apple_mca_of_match,
 	},
 	.probe = apple_mca_probe,
-	.remove_new = apple_mca_remove,
+	.remove = apple_mca_remove,
 };
 module_platform_driver(apple_mca_driver);
 

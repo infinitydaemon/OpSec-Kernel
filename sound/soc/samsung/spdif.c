@@ -460,7 +460,7 @@ err0:
 	return ret;
 }
 
-static void spdif_remove(struct platform_device *pdev)
+static int spdif_remove(struct platform_device *pdev)
 {
 	struct samsung_spdif_info *spdif = &spdif_info;
 	struct resource *mem_res;
@@ -472,11 +472,13 @@ static void spdif_remove(struct platform_device *pdev)
 
 	clk_disable_unprepare(spdif->sclk);
 	clk_disable_unprepare(spdif->pclk);
+
+	return 0;
 }
 
 static struct platform_driver samsung_spdif_driver = {
 	.probe	= spdif_probe,
-	.remove_new = spdif_remove,
+	.remove	= spdif_remove,
 	.driver	= {
 		.name	= "samsung-spdif",
 	},

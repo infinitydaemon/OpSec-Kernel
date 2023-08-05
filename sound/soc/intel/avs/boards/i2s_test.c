@@ -28,11 +28,13 @@ static int avs_create_dai_link(struct device *dev, const char *platform_name, in
 
 	dl->name = devm_kasprintf(dev, GFP_KERNEL, "SSP%d-Codec", ssp_port);
 	dl->cpus = devm_kzalloc(dev, sizeof(*dl->cpus), GFP_KERNEL);
-	if (!dl->name || !dl->cpus)
+	dl->codecs = devm_kzalloc(dev, sizeof(*dl->codecs), GFP_KERNEL);
+	if (!dl->name || !dl->cpus || !dl->codecs)
 		return -ENOMEM;
 
 	dl->cpus->dai_name = devm_kasprintf(dev, GFP_KERNEL, "SSP%d Pin", ssp_port);
-	dl->codecs = &asoc_dummy_dlc;
+	dl->codecs->name = devm_kasprintf(dev, GFP_KERNEL, "snd-soc-dummy");
+	dl->codecs->dai_name = devm_kasprintf(dev, GFP_KERNEL, "snd-soc-dummy-dai");
 	if (!dl->cpus->dai_name || !dl->codecs->name || !dl->codecs->dai_name)
 		return -ENOMEM;
 

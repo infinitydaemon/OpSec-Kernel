@@ -23,7 +23,6 @@ FILES=                                          \
          test-libbfd-liberty.bin                \
          test-libbfd-liberty-z.bin              \
          test-cplus-demangle.bin                \
-         test-cxa-demangle.bin                  \
          test-libcap.bin			\
          test-libelf.bin                        \
          test-libelf-getphdrnum.bin             \
@@ -59,13 +58,19 @@ FILES=                                          \
          test-lzma.bin                          \
          test-bpf.bin                           \
          test-libbpf.bin                        \
+         test-libbpf-btf__load_from_kernel_by_id.bin	\
+         test-libbpf-bpf_prog_load.bin          \
+         test-libbpf-bpf_map_create.bin		\
+         test-libbpf-bpf_object__next_program.bin \
+         test-libbpf-bpf_object__next_map.bin   \
+         test-libbpf-bpf_program__set_insns.bin	\
+         test-libbpf-btf__raw_data.bin          \
          test-get_cpuid.bin                     \
          test-sdt.bin                           \
          test-cxx.bin                           \
          test-gettid.bin			\
          test-jvmti.bin				\
          test-jvmti-cmlr.bin			\
-         test-scandirat.bin			\
          test-sched_getcpu.bin			\
          test-setns.bin				\
          test-libopencsd.bin			\
@@ -128,9 +133,6 @@ $(OUTPUT)test-get_current_dir_name.bin:
 	$(BUILD)
 
 $(OUTPUT)test-glibc.bin:
-	$(BUILD)
-
-$(OUTPUT)test-scandirat.bin:
 	$(BUILD)
 
 $(OUTPUT)test-sched_getcpu.bin:
@@ -208,7 +210,7 @@ $(OUTPUT)test-libtraceevent.bin:
 	$(BUILD) -ltraceevent
 
 $(OUTPUT)test-libtracefs.bin:
-	 $(BUILD) $(shell $(PKG_CONFIG) --cflags libtraceevent 2>/dev/null) -ltracefs
+	$(BUILD) -ltracefs
 
 $(OUTPUT)test-libcrypto.bin:
 	$(BUILD) -lcrypto
@@ -266,9 +268,6 @@ $(OUTPUT)test-libbfd-liberty-z.bin:
 
 $(OUTPUT)test-cplus-demangle.bin:
 	$(BUILD) -liberty
-
-$(OUTPUT)test-cxa-demangle.bin:
-	$(BUILDXX)
 
 $(OUTPUT)test-backtrace.bin:
 	$(BUILD)

@@ -12,11 +12,7 @@
 #include <linux/of_mdio.h>
 #include <linux/of_net.h>
 
-#include "dsa.h"
-#include "port.h"
-#include "slave.h"
-#include "switch.h"
-#include "tag_8021q.h"
+#include "dsa_priv.h"
 
 /**
  * dsa_port_notify - Notify the switching fabric of changes to a port
@@ -114,21 +110,19 @@ static bool dsa_port_can_configure_learning(struct dsa_port *dp)
 	return !err;
 }
 
-bool dsa_port_supports_hwtstamp(struct dsa_port *dp)
+bool dsa_port_supports_hwtstamp(struct dsa_port *dp, struct ifreq *ifr)
 {
 	struct dsa_switch *ds = dp->ds;
-	struct ifreq ifr = {};
 	int err;
 
 	if (!ds->ops->port_hwtstamp_get || !ds->ops->port_hwtstamp_set)
 		return false;
 
 	/* "See through" shim implementations of the "get" method.
-	 * Since we can't cook up a complete ioctl request structure, this will
-	 * fail in copy_to_user() with -EFAULT, which hopefully is enough to
-	 * detect a valid implementation.
+	 * This will clobber the ifreq structure, but we will either return an
+	 * error, or the master will overwrite it with proper values.
 	 */
-	err = ds->ops->port_hwtstamp_get(ds, dp->index, &ifr);
+	err = ds->ops->port_hwtstamp_get(ds, dp->index, ifr);
 	return err != -EOPNOTSUPP;
 }
 
@@ -1030,6 +1024,9 @@ static int dsa_port_host_fdb_add(struct dsa_port *dp,
 		.db = db,
 	};
 
+	if (!dp->ds->fdb_isolation)
+		info.db.bridge.num = 0;
+
 	return dsa_port_notify(dp, DSA_NOTIFIER_HOST_FDB_ADD, &info);
 }
 
@@ -1053,9 +1050,6 @@ int dsa_port_bridge_host_fdb_add(struct dsa_port *dp,
 		.bridge = *dp->bridge,
 	};
 	int err;
-
-	if (!dp->ds->fdb_isolation)
-		db.bridge.num = 0;
 
 	/* Avoid a call to __dev_set_promiscuity() on the master, which
 	 * requires rtnl_lock(), since we can't guarantee that is held here,
@@ -1081,6 +1075,9 @@ static int dsa_port_host_fdb_del(struct dsa_port *dp,
 		.db = db,
 	};
 
+	if (!dp->ds->fdb_isolation)
+		info.db.bridge.num = 0;
+
 	return dsa_port_notify(dp, DSA_NOTIFIER_HOST_FDB_DEL, &info);
 }
 
@@ -1104,9 +1101,6 @@ int dsa_port_bridge_host_fdb_del(struct dsa_port *dp,
 		.bridge = *dp->bridge,
 	};
 	int err;
-
-	if (!dp->ds->fdb_isolation)
-		db.bridge.num = 0;
 
 	if (master->priv_flags & IFF_UNICAST_FLT) {
 		err = dev_uc_del(master, addr);
@@ -1212,6 +1206,9 @@ static int dsa_port_host_mdb_add(const struct dsa_port *dp,
 		.db = db,
 	};
 
+	if (!dp->ds->fdb_isolation)
+		info.db.bridge.num = 0;
+
 	return dsa_port_notify(dp, DSA_NOTIFIER_HOST_MDB_ADD, &info);
 }
 
@@ -1236,9 +1233,6 @@ int dsa_port_bridge_host_mdb_add(const struct dsa_port *dp,
 	};
 	int err;
 
-	if (!dp->ds->fdb_isolation)
-		db.bridge.num = 0;
-
 	err = dev_mc_add(master, mdb->addr);
 	if (err)
 		return err;
@@ -1255,6 +1249,9 @@ static int dsa_port_host_mdb_del(const struct dsa_port *dp,
 		.mdb = mdb,
 		.db = db,
 	};
+
+	if (!dp->ds->fdb_isolation)
+		info.db.bridge.num = 0;
 
 	return dsa_port_notify(dp, DSA_NOTIFIER_HOST_MDB_DEL, &info);
 }
@@ -1279,9 +1276,6 @@ int dsa_port_bridge_host_mdb_del(const struct dsa_port *dp,
 		.bridge = *dp->bridge,
 	};
 	int err;
-
-	if (!dp->ds->fdb_isolation)
-		db.bridge.num = 0;
 
 	err = dev_mc_del(master, mdb->addr);
 	if (err)
@@ -1558,14 +1552,16 @@ static void dsa_port_phylink_validate(struct phylink_config *config,
 				      unsigned long *supported,
 				      struct phylink_link_state *state)
 {
-	/* Skip call for drivers which don't yet set mac_capabilities,
-	 * since validating in that case would mean their PHY will advertise
-	 * nothing. In turn, skipping validation makes them advertise
-	 * everything that the PHY supports, so those drivers should be
-	 * converted ASAP.
-	 */
-	if (config->mac_capabilities)
-		phylink_generic_validate(config, supported, state);
+	struct dsa_port *dp = container_of(config, struct dsa_port, pl_config);
+	struct dsa_switch *ds = dp->ds;
+
+	if (!ds->ops->phylink_validate) {
+		if (config->mac_capabilities)
+			phylink_generic_validate(config, supported, state);
+		return;
+	}
+
+	ds->ops->phylink_validate(ds, dp->index, supported, state);
 }
 
 static void dsa_port_phylink_mac_pcs_get_state(struct phylink_config *config,
@@ -1603,21 +1599,6 @@ dsa_port_phylink_mac_select_pcs(struct phylink_config *config,
 	return pcs;
 }
 
-static int dsa_port_phylink_mac_prepare(struct phylink_config *config,
-					unsigned int mode,
-					phy_interface_t interface)
-{
-	struct dsa_port *dp = container_of(config, struct dsa_port, pl_config);
-	struct dsa_switch *ds = dp->ds;
-	int err = 0;
-
-	if (ds->ops->phylink_mac_prepare)
-		err = ds->ops->phylink_mac_prepare(ds, dp->index, mode,
-						   interface);
-
-	return err;
-}
-
 static void dsa_port_phylink_mac_config(struct phylink_config *config,
 					unsigned int mode,
 					const struct phylink_link_state *state)
@@ -1629,21 +1610,6 @@ static void dsa_port_phylink_mac_config(struct phylink_config *config,
 		return;
 
 	ds->ops->phylink_mac_config(ds, dp->index, mode, state);
-}
-
-static int dsa_port_phylink_mac_finish(struct phylink_config *config,
-				       unsigned int mode,
-				       phy_interface_t interface)
-{
-	struct dsa_port *dp = container_of(config, struct dsa_port, pl_config);
-	struct dsa_switch *ds = dp->ds;
-	int err = 0;
-
-	if (ds->ops->phylink_mac_finish)
-		err = ds->ops->phylink_mac_finish(ds, dp->index, mode,
-						  interface);
-
-	return err;
 }
 
 static void dsa_port_phylink_mac_an_restart(struct phylink_config *config)
@@ -1701,9 +1667,7 @@ static const struct phylink_mac_ops dsa_port_phylink_mac_ops = {
 	.validate = dsa_port_phylink_validate,
 	.mac_select_pcs = dsa_port_phylink_mac_select_pcs,
 	.mac_pcs_get_state = dsa_port_phylink_mac_pcs_get_state,
-	.mac_prepare = dsa_port_phylink_mac_prepare,
 	.mac_config = dsa_port_phylink_mac_config,
-	.mac_finish = dsa_port_phylink_mac_finish,
 	.mac_an_restart = dsa_port_phylink_mac_an_restart,
 	.mac_link_down = dsa_port_phylink_mac_link_down,
 	.mac_link_up = dsa_port_phylink_mac_link_up,

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <errno.h>
-#include <signal.h>
 #include <inttypes.h>
 #include <linux/err.h>
 #include <linux/kernel.h>
@@ -33,7 +32,7 @@
 #include "stat.h"
 #include "tsc.h"
 #include "ui/progress.h"
-#include "util.h"
+#include "../perf.h"
 #include "arch/common.h"
 #include "units.h"
 #include <internal/lib.h>
@@ -278,6 +277,11 @@ struct perf_session *__perf_session__new(struct perf_data *data,
 	return ERR_PTR(ret);
 }
 
+static void perf_session__delete_threads(struct perf_session *session)
+{
+	machine__delete_threads(&session->machines.host);
+}
+
 static void perf_decomp__release_events(struct decomp *next)
 {
 	struct decomp *decomp;
@@ -300,6 +304,7 @@ void perf_session__delete(struct perf_session *session)
 	auxtrace__free(session);
 	auxtrace_index__free(&session->auxtrace_index);
 	perf_session__destroy_kernel_maps(session);
+	perf_session__delete_threads(session);
 	perf_decomp__release_events(session->decomp_data.decomp);
 	perf_env__exit(&session->header.env);
 	machines__exit(&session->machines);
@@ -308,9 +313,7 @@ void perf_session__delete(struct perf_session *session)
 			evlist__delete(session->evlist);
 		perf_data__close(session->data);
 	}
-#ifdef HAVE_LIBTRACEEVENT
 	trace_event__cleanup(&session->tevent);
-#endif
 	free(session);
 }
 
@@ -1174,7 +1177,7 @@ static void branch_stack__printf(struct perf_sample *sample, bool callstack)
 		struct branch_entry *e = &entries[i];
 
 		if (!callstack) {
-			printf("..... %2"PRIu64": %016" PRIx64 " -> %016" PRIx64 " %hu cycles %s%s%s%s %x %s %s\n",
+			printf("..... %2"PRIu64": %016" PRIx64 " -> %016" PRIx64 " %hu cycles %s%s%s%s %x %s\n",
 				i, e->from, e->to,
 				(unsigned short)e->flags.cycles,
 				e->flags.mispred ? "M" : " ",
@@ -1182,8 +1185,7 @@ static void branch_stack__printf(struct perf_sample *sample, bool callstack)
 				e->flags.abort ? "A" : " ",
 				e->flags.in_tx ? "T" : " ",
 				(unsigned)e->flags.reserved,
-				get_branch_type(e),
-				e->flags.spec ? branch_spec_desc(e->flags.spec) : "");
+				get_branch_type(e));
 		} else {
 			if (i == 0) {
 				printf("..... %2"PRIu64": %016" PRIx64 "\n"
@@ -1576,8 +1578,7 @@ static int machines__deliver_event(struct machines *machines,
 			evlist->stats.total_lost += event->lost.lost;
 		return tool->lost(tool, event, sample, machine);
 	case PERF_RECORD_LOST_SAMPLES:
-		if (tool->lost_samples == perf_event__process_lost_samples &&
-		    !(event->header.misc & PERF_RECORD_MISC_LOST_SAMPLES_BPF))
+		if (tool->lost_samples == perf_event__process_lost_samples)
 			evlist->stats.total_lost_samples += event->lost_samples.lost;
 		return tool->lost_samples(tool, event, sample, machine);
 	case PERF_RECORD_READ:
@@ -1695,13 +1696,8 @@ static s64 perf_session__process_user_event(struct perf_session *session,
 	case PERF_RECORD_AUXTRACE_INFO:
 		return tool->auxtrace_info(session, event);
 	case PERF_RECORD_AUXTRACE:
-		/*
-		 * Setup for reading amidst mmap, but only when we
-		 * are in 'file' mode.  The 'pipe' fd is in proper
-		 * place already.
-		 */
-		if (!perf_data__is_pipe(session->data))
-			lseek(fd, file_offset + event->header.size, SEEK_SET);
+		/* setup for reading amidst mmap */
+		lseek(fd, file_offset + event->header.size, SEEK_SET);
 		return tool->auxtrace(session, event);
 	case PERF_RECORD_AUXTRACE_ERROR:
 		perf_session__auxtrace_error_inc(session, event);
@@ -2026,7 +2022,7 @@ static int perf_session__flush_thread_stacks(struct perf_session *session)
 					 NULL);
 }
 
-volatile sig_atomic_t session_done;
+volatile int session_done;
 
 static int __perf_session__process_decomp_events(struct perf_session *session);
 
@@ -2752,7 +2748,7 @@ int perf_session__cpu_bitmap(struct perf_session *session,
 			goto out_delete_map;
 		}
 
-		__set_bit(cpu.cpu, cpu_bitmap);
+		set_bit(cpu.cpu, cpu_bitmap);
 	}
 
 	err = 0;
@@ -2801,7 +2797,7 @@ static int perf_session__set_guest_cpu(struct perf_session *session, pid_t pid,
 
 	if (!thread)
 		return -ENOMEM;
-	thread__set_guest_cpu(thread, guest_cpu);
+	thread->guest_cpu = guest_cpu;
 	thread__put(thread);
 
 	return 0;

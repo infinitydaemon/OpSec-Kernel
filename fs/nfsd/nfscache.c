@@ -148,23 +148,12 @@ void nfsd_drc_slab_free(void)
 	kmem_cache_destroy(drc_slab);
 }
 
-/**
- * nfsd_net_reply_cache_init - per net namespace reply cache set-up
- * @nn: nfsd_net being initialized
- *
- * Returns zero on succes; otherwise a negative errno is returned.
- */
-int nfsd_net_reply_cache_init(struct nfsd_net *nn)
+static int nfsd_reply_cache_stats_init(struct nfsd_net *nn)
 {
 	return nfsd_percpu_counters_init(nn->counter, NFSD_NET_COUNTERS_NUM);
 }
 
-/**
- * nfsd_net_reply_cache_destroy - per net namespace reply cache tear-down
- * @nn: nfsd_net being freed
- *
- */
-void nfsd_net_reply_cache_destroy(struct nfsd_net *nn)
+static void nfsd_reply_cache_stats_destroy(struct nfsd_net *nn)
 {
 	nfsd_percpu_counters_destroy(nn->counter, NFSD_NET_COUNTERS_NUM);
 }
@@ -180,13 +169,17 @@ int nfsd_reply_cache_init(struct nfsd_net *nn)
 	hashsize = nfsd_hashsize(nn->max_drc_entries);
 	nn->maskbits = ilog2(hashsize);
 
+	status = nfsd_reply_cache_stats_init(nn);
+	if (status)
+		goto out_nomem;
+
 	nn->nfsd_reply_cache_shrinker.scan_objects = nfsd_reply_cache_scan;
 	nn->nfsd_reply_cache_shrinker.count_objects = nfsd_reply_cache_count;
 	nn->nfsd_reply_cache_shrinker.seeks = 1;
 	status = register_shrinker(&nn->nfsd_reply_cache_shrinker,
 				   "nfsd-reply:%s", nn->nfsd_name);
 	if (status)
-		return status;
+		goto out_stats_destroy;
 
 	nn->drc_hashtbl = kvzalloc(array_size(hashsize,
 				sizeof(*nn->drc_hashtbl)), GFP_KERNEL);
@@ -202,6 +195,9 @@ int nfsd_reply_cache_init(struct nfsd_net *nn)
 	return 0;
 out_shrinker:
 	unregister_shrinker(&nn->nfsd_reply_cache_shrinker);
+out_stats_destroy:
+	nfsd_reply_cache_stats_destroy(nn);
+out_nomem:
 	printk(KERN_ERR "nfsd: failed to allocate reply cache\n");
 	return -ENOMEM;
 }
@@ -221,6 +217,7 @@ void nfsd_reply_cache_shutdown(struct nfsd_net *nn)
 									rp, nn);
 		}
 	}
+	nfsd_reply_cache_stats_destroy(nn);
 
 	kvfree(nn->drc_hashtbl);
 	nn->drc_hashtbl = NULL;
@@ -491,7 +488,7 @@ found_entry:
 	case RC_NOCACHE:
 		break;
 	case RC_REPLSTAT:
-		xdr_stream_encode_be32(&rqstp->rq_res_stream, rp->c_replstat);
+		svc_putu32(&rqstp->rq_res.head[0], rp->c_replstat);
 		rtn = RC_REPLY;
 		break;
 	case RC_REPLBUFF:
@@ -512,7 +509,7 @@ out_trace:
  * nfsd_cache_update - Update an entry in the duplicate reply cache.
  * @rqstp: svc_rqst with a finished Reply
  * @cachetype: which cache to update
- * @statp: pointer to Reply's NFS status code, or NULL
+ * @statp: Reply's status code
  *
  * This is called from nfsd_dispatch when the procedure has been
  * executed and the complete reply is in rqstp->rq_res.

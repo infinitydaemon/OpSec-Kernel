@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
-ccflags-y := -I$(srctree)/drivers/cxl/ -I$(srctree)/drivers/cxl/core
+ccflags-y := -I$(srctree)/drivers/cxl/
 
 obj-m += cxl_test.o
 obj-m += cxl_mock.o

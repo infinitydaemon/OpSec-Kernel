@@ -12,7 +12,6 @@
 
 #include <linux/ctype.h>
 #include <linux/zalloc.h>
-#include <internal/cpumap.h>
 
 static struct perf_cpu max_cpu_num;
 static struct perf_cpu max_present_cpu_num;
@@ -77,9 +76,9 @@ static struct perf_cpu_map *cpu_map__from_entries(const struct perf_record_cpu_m
 			 * otherwise it would become 65535.
 			 */
 			if (data->cpus_data.cpu[i] == (u16) -1)
-				RC_CHK_ACCESS(map)->map[i].cpu = -1;
+				map->map[i].cpu = -1;
 			else
-				RC_CHK_ACCESS(map)->map[i].cpu = (int) data->cpus_data.cpu[i];
+				map->map[i].cpu = (int) data->cpus_data.cpu[i];
 		}
 	}
 
@@ -107,7 +106,7 @@ static struct perf_cpu_map *cpu_map__from_mask(const struct perf_record_cpu_map_
 
 		perf_record_cpu_map_data__read_one_mask(data, i, local_copy);
 		for_each_set_bit(cpu, local_copy, 64)
-			RC_CHK_ACCESS(map)->map[j++].cpu = cpu + cpus_per_i;
+			map->map[j++].cpu = cpu + cpus_per_i;
 	}
 	return map;
 
@@ -124,11 +123,11 @@ static struct perf_cpu_map *cpu_map__from_range(const struct perf_record_cpu_map
 		return NULL;
 
 	if (data->range_cpu_data.any_cpu)
-		RC_CHK_ACCESS(map)->map[i++].cpu = -1;
+		map->map[i++].cpu = -1;
 
 	for (int cpu = data->range_cpu_data.start_cpu; cpu <= data->range_cpu_data.end_cpu;
 	     i++, cpu++)
-		RC_CHK_ACCESS(map)->map[i].cpu = cpu;
+		map->map[i].cpu = cpu;
 
 	return map;
 }
@@ -160,11 +159,16 @@ size_t cpu_map__fprintf(struct perf_cpu_map *map, FILE *fp)
 
 struct perf_cpu_map *perf_cpu_map__empty_new(int nr)
 {
-	struct perf_cpu_map *cpus = perf_cpu_map__alloc(nr);
+	struct perf_cpu_map *cpus = malloc(sizeof(*cpus) + sizeof(int) * nr);
 
 	if (cpus != NULL) {
-		for (int i = 0; i < nr; i++)
-			RC_CHK_ACCESS(cpus)->map[i].cpu = -1;
+		int i;
+
+		cpus->nr = nr;
+		for (i = 0; i < nr; i++)
+			cpus->map[i].cpu = -1;
+
+		refcount_set(&cpus->refcnt, 1);
 	}
 
 	return cpus;
@@ -222,10 +226,6 @@ static int aggr_cpu_id__cmp(const void *a_pointer, const void *b_pointer)
 		return a->socket - b->socket;
 	else if (a->die != b->die)
 		return a->die - b->die;
-	else if (a->cache_lvl != b->cache_lvl)
-		return a->cache_lvl - b->cache_lvl;
-	else if (a->cache != b->cache)
-		return a->cache - b->cache;
 	else if (a->core != b->core)
 		return a->core - b->core;
 	else
@@ -234,11 +234,11 @@ static int aggr_cpu_id__cmp(const void *a_pointer, const void *b_pointer)
 
 struct cpu_aggr_map *cpu_aggr_map__new(const struct perf_cpu_map *cpus,
 				       aggr_cpu_id_get_t get_id,
-				       void *data, bool needs_sort)
+				       void *data)
 {
 	int idx;
 	struct perf_cpu cpu;
-	struct cpu_aggr_map *c = cpu_aggr_map__empty_new(perf_cpu_map__nr(cpus));
+	struct cpu_aggr_map *c = cpu_aggr_map__empty_new(cpus->nr);
 
 	if (!c)
 		return NULL;
@@ -262,7 +262,7 @@ struct cpu_aggr_map *cpu_aggr_map__new(const struct perf_cpu_map *cpus,
 		}
 	}
 	/* Trim. */
-	if (c->nr != perf_cpu_map__nr(cpus)) {
+	if (c->nr != cpus->nr) {
 		struct cpu_aggr_map *trimmed_c =
 			realloc(c,
 				sizeof(struct cpu_aggr_map) + sizeof(struct aggr_cpu_id) * c->nr);
@@ -270,10 +270,8 @@ struct cpu_aggr_map *cpu_aggr_map__new(const struct perf_cpu_map *cpus,
 		if (trimmed_c)
 			c = trimmed_c;
 	}
-
 	/* ensure we process id in increasing order */
-	if (needs_sort)
-		qsort(c->map, c->nr, sizeof(struct aggr_cpu_id), aggr_cpu_id__cmp);
+	qsort(c->map, c->nr, sizeof(struct aggr_cpu_id), aggr_cpu_id__cmp);
 
 	return c;
 
@@ -353,16 +351,6 @@ struct aggr_cpu_id aggr_cpu_id__node(struct perf_cpu cpu, void *data __maybe_unu
 	struct aggr_cpu_id id = aggr_cpu_id__empty();
 
 	id.node = cpu__get_node(cpu);
-	return id;
-}
-
-struct aggr_cpu_id aggr_cpu_id__global(struct perf_cpu cpu, void *data __maybe_unused)
-{
-	struct aggr_cpu_id id = aggr_cpu_id__empty();
-
-	/* it always aggregates to the cpu 0 */
-	cpu.cpu = 0;
-	id.cpu = cpu;
 	return id;
 }
 
@@ -581,31 +569,31 @@ size_t cpu_map__snprint(struct perf_cpu_map *map, char *buf, size_t size)
 
 #define COMMA first ? "" : ","
 
-	for (i = 0; i < perf_cpu_map__nr(map) + 1; i++) {
+	for (i = 0; i < map->nr + 1; i++) {
 		struct perf_cpu cpu = { .cpu = INT_MAX };
-		bool last = i == perf_cpu_map__nr(map);
+		bool last = i == map->nr;
 
 		if (!last)
-			cpu = perf_cpu_map__cpu(map, i);
+			cpu = map->map[i];
 
 		if (start == -1) {
 			start = i;
 			if (last) {
 				ret += snprintf(buf + ret, size - ret,
 						"%s%d", COMMA,
-						perf_cpu_map__cpu(map, i).cpu);
+						map->map[i].cpu);
 			}
-		} else if (((i - start) != (cpu.cpu - perf_cpu_map__cpu(map, start).cpu)) || last) {
+		} else if (((i - start) != (cpu.cpu - map->map[start].cpu)) || last) {
 			int end = i - 1;
 
 			if (start == end) {
 				ret += snprintf(buf + ret, size - ret,
 						"%s%d", COMMA,
-						perf_cpu_map__cpu(map, start).cpu);
+						map->map[start].cpu);
 			} else {
 				ret += snprintf(buf + ret, size - ret,
 						"%s%d-%d", COMMA,
-						perf_cpu_map__cpu(map, start).cpu, perf_cpu_map__cpu(map, end).cpu);
+						map->map[start].cpu, map->map[end].cpu);
 			}
 			first = false;
 			start = i;
@@ -632,7 +620,7 @@ size_t cpu_map__snprint_mask(struct perf_cpu_map *map, char *buf, size_t size)
 	int i, cpu;
 	char *ptr = buf;
 	unsigned char *bitmap;
-	struct perf_cpu last_cpu = perf_cpu_map__cpu(map, perf_cpu_map__nr(map) - 1);
+	struct perf_cpu last_cpu = perf_cpu_map__cpu(map, map->nr - 1);
 
 	if (buf == NULL)
 		return 0;
@@ -643,7 +631,7 @@ size_t cpu_map__snprint_mask(struct perf_cpu_map *map, char *buf, size_t size)
 		return 0;
 	}
 
-	for (i = 0; i < perf_cpu_map__nr(map); i++) {
+	for (i = 0; i < map->nr; i++) {
 		cpu = perf_cpu_map__cpu(map, i).cpu;
 		bitmap[cpu / 8] |= 1 << (cpu % 8);
 	}
@@ -667,9 +655,9 @@ size_t cpu_map__snprint_mask(struct perf_cpu_map *map, char *buf, size_t size)
 	return ptr - buf;
 }
 
-struct perf_cpu_map *cpu_map__online(void) /* thread unsafe */
+const struct perf_cpu_map *cpu_map__online(void) /* thread unsafe */
 {
-	static struct perf_cpu_map *online;
+	static const struct perf_cpu_map *online = NULL;
 
 	if (!online)
 		online = perf_cpu_map__new(NULL); /* from /sys/devices/system/cpu/online */
@@ -683,8 +671,6 @@ bool aggr_cpu_id__equal(const struct aggr_cpu_id *a, const struct aggr_cpu_id *b
 		a->node == b->node &&
 		a->socket == b->socket &&
 		a->die == b->die &&
-		a->cache_lvl == b->cache_lvl &&
-		a->cache == b->cache &&
 		a->core == b->core &&
 		a->cpu.cpu == b->cpu.cpu;
 }
@@ -695,8 +681,6 @@ bool aggr_cpu_id__is_empty(const struct aggr_cpu_id *a)
 		a->node == -1 &&
 		a->socket == -1 &&
 		a->die == -1 &&
-		a->cache_lvl == -1 &&
-		a->cache == -1 &&
 		a->core == -1 &&
 		a->cpu.cpu == -1;
 }
@@ -708,8 +692,6 @@ struct aggr_cpu_id aggr_cpu_id__empty(void)
 		.node = -1,
 		.socket = -1,
 		.die = -1,
-		.cache_lvl = -1,
-		.cache = -1,
 		.core = -1,
 		.cpu = (struct perf_cpu){ .cpu = -1 },
 	};

@@ -308,7 +308,7 @@ _ti_clkctrl_clk_register(struct omap_clkctrl_provider *provider,
 	init.ops = ops;
 	init.flags = 0;
 
-	clk = of_ti_clk_register(node, clk_hw, init.name);
+	clk = ti_clk_register(NULL, clk_hw, init.name);
 	if (IS_ERR_OR_NULL(clk)) {
 		ret = -EINVAL;
 		goto cleanup;
@@ -515,16 +515,16 @@ static void __init _ti_omap4_clkctrl_setup(struct device_node *node)
 	struct clk_hw_omap *hw;
 	struct clk *clk;
 	struct omap_clkctrl_clk *clkctrl_clk = NULL;
+	const __be32 *addrp;
 	bool legacy_naming;
 	const char *clkctrl_name;
 	u32 addr;
 	int ret;
 	char *c;
 	u16 soc_mask = 0;
-	struct resource res;
 
-	of_address_to_resource(node, 0, &res);
-	addr = (u32)res.start;
+	addrp = of_get_address(node, 0, NULL, NULL);
+	addr = (u32)of_translate_address(node, addrp);
 
 #ifdef CONFIG_ARCH_OMAP4
 	if (of_machine_is_compatible("ti,omap4"))
@@ -689,7 +689,7 @@ clkdm_found:
 		init.ops = &omap4_clkctrl_clk_ops;
 		hw->hw.init = &init;
 
-		clk = of_ti_clk_register_omap_hw(node, &hw->hw, init.name);
+		clk = ti_clk_register_omap_hw(NULL, &hw->hw, init.name);
 		if (IS_ERR_OR_NULL(clk))
 			goto cleanup;
 

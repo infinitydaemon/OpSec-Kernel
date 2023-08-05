@@ -15,7 +15,6 @@
 #include "internal.h"
 
 static LIST_HEAD(unloaded_tainted_modules);
-extern struct dentry *mod_debugfs_root;
 
 int try_add_tainted_module(struct module *mod)
 {
@@ -121,8 +120,12 @@ static const struct file_operations unloaded_tainted_modules_fops = {
 
 static int __init unloaded_tainted_modules_init(void)
 {
-	debugfs_create_file("unloaded_tainted", 0444, mod_debugfs_root, NULL,
+	struct dentry *dir;
+
+	dir = debugfs_create_dir("modules", NULL);
+	debugfs_create_file("unloaded_tainted", 0444, dir, NULL,
 			    &unloaded_tainted_modules_fops);
+
 	return 0;
 }
 module_init(unloaded_tainted_modules_init);

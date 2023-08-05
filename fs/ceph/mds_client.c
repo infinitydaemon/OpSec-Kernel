@@ -645,7 +645,6 @@ bad:
 	err = -EIO;
 out_bad:
 	pr_err("mds parse_reply err %d\n", err);
-	ceph_msg_dump(msg);
 	return err;
 }
 
@@ -2571,7 +2570,6 @@ static struct ceph_msg *create_request_message(struct ceph_mds_session *session,
 	u64 ino1 = 0, ino2 = 0;
 	int pathlen1 = 0, pathlen2 = 0;
 	bool freepath1 = false, freepath2 = false;
-	struct dentry *old_dentry = NULL;
 	int len;
 	u16 releases;
 	void *p, *end;
@@ -2589,10 +2587,7 @@ static struct ceph_msg *create_request_message(struct ceph_mds_session *session,
 	}
 
 	/* If r_old_dentry is set, then assume that its parent is locked */
-	if (req->r_old_dentry &&
-	    !(req->r_old_dentry->d_flags & DCACHE_DISCONNECTED))
-		old_dentry = req->r_old_dentry;
-	ret = set_request_path_attr(NULL, old_dentry,
+	ret = set_request_path_attr(NULL, req->r_old_dentry,
 			      req->r_old_dentry_dir,
 			      req->r_path2, req->r_ino2.ino,
 			      &path2, &pathlen2, &ino2, &freepath2, true);
@@ -3539,7 +3534,6 @@ static void handle_forward(struct ceph_mds_client *mdsc,
 
 bad:
 	pr_err("mdsc_handle_forward decode error err=%d\n", err);
-	ceph_msg_dump(msg);
 }
 
 static int __decode_session_metadata(void **p, void *end,
@@ -5260,7 +5254,6 @@ void ceph_mdsc_handle_fsmap(struct ceph_mds_client *mdsc, struct ceph_msg *msg)
 bad:
 	pr_err("error decoding fsmap %d. Shutting down mount.\n", err);
 	ceph_umount_begin(mdsc->fsc->sb);
-	ceph_msg_dump(msg);
 err_out:
 	mutex_lock(&mdsc->mutex);
 	mdsc->mdsmap_err = err;
@@ -5329,7 +5322,6 @@ bad_unlock:
 bad:
 	pr_err("error decoding mdsmap %d. Shutting down mount.\n", err);
 	ceph_umount_begin(mdsc->fsc->sb);
-	ceph_msg_dump(msg);
 	return;
 }
 

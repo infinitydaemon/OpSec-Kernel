@@ -24,7 +24,6 @@ struct module;
 enum {
 	NFT_PKTINFO_L4PROTO	= (1 << 0),
 	NFT_PKTINFO_INNER	= (1 << 1),
-	NFT_PKTINFO_INNER_FULL	= (1 << 2),
 };
 
 struct nft_pktinfo {
@@ -33,8 +32,8 @@ struct nft_pktinfo {
 	u8				flags;
 	u8				tprot;
 	u16				fragoff;
-	u16				thoff;
-	u16				inneroff;
+	unsigned int			thoff;
+	unsigned int			inneroff;
 };
 
 static inline struct sock *nft_sk(const struct nft_pktinfo *pkt)
@@ -388,14 +387,10 @@ static inline void *nft_expr_priv(const struct nft_expr *expr)
 	return (void *)expr->data;
 }
 
-struct nft_expr_info;
-
-int nft_expr_inner_parse(const struct nft_ctx *ctx, const struct nlattr *nla,
-			 struct nft_expr_info *info);
 int nft_expr_clone(struct nft_expr *dst, struct nft_expr *src);
 void nft_expr_destroy(const struct nft_ctx *ctx, struct nft_expr *expr);
 int nft_expr_dump(struct sk_buff *skb, unsigned int attr,
-		  const struct nft_expr *expr, bool reset);
+		  const struct nft_expr *expr);
 bool nft_expr_reduce_bitwise(struct nft_regs_track *track,
 			     const struct nft_expr *expr);
 
@@ -889,7 +884,6 @@ struct nft_expr_type {
 						       const struct nlattr * const tb[]);
 	void				(*release_ops)(const struct nft_expr_ops *ops);
 	const struct nft_expr_ops	*ops;
-	const struct nft_expr_ops	*inner_ops;
 	struct list_head		list;
 	const char			*name;
 	struct module			*owner;
@@ -948,8 +942,7 @@ struct nft_expr_ops {
 	void				(*destroy_clone)(const struct nft_ctx *ctx,
 							 const struct nft_expr *expr);
 	int				(*dump)(struct sk_buff *skb,
-						const struct nft_expr *expr,
-						bool reset);
+						const struct nft_expr *expr);
 	int				(*validate)(const struct nft_ctx *ctx,
 						    const struct nft_expr *expr,
 						    const struct nft_data **data);
@@ -1055,18 +1048,6 @@ struct nft_rule_dp {
 	unsigned char			data[]
 		__attribute__((aligned(__alignof__(struct nft_expr))));
 };
-
-struct nft_rule_dp_last {
-	struct nft_rule_dp end;		/* end of nft_rule_blob marker */
-	struct rcu_head h;		/* call_rcu head */
-	struct nft_rule_blob *blob;	/* ptr to free via call_rcu */
-	const struct nft_chain *chain;	/* for nftables tracing */
-};
-
-static inline const struct nft_rule_dp *nft_rule_next(const struct nft_rule_dp *rule)
-{
-	return (void *)rule + sizeof(*rule) + rule->dlen;
-}
 
 struct nft_rule_blob {
 	unsigned long			size;
@@ -1211,29 +1192,6 @@ int __nft_release_basechain(struct nft_ctx *ctx);
 
 unsigned int nft_do_chain(struct nft_pktinfo *pkt, void *priv);
 
-static inline bool nft_use_inc(u32 *use)
-{
-	if (*use == UINT_MAX)
-		return false;
-
-	(*use)++;
-
-	return true;
-}
-
-static inline void nft_use_dec(u32 *use)
-{
-	WARN_ON_ONCE((*use)-- == 0);
-}
-
-/* For error and abort path: restore use counter to previous state. */
-static inline void nft_use_inc_restore(u32 *use)
-{
-	WARN_ON_ONCE(!nft_use_inc(use));
-}
-
-#define nft_use_dec_restore	nft_use_dec
-
 /**
  *	struct nft_table - nf_tables table
  *
@@ -1250,7 +1208,6 @@ static inline void nft_use_inc_restore(u32 *use)
  *	@genmask: generation mask
  *	@afinfo: address family info
  *	@name: name of the table
- *	@validate_state: internal, set when transaction adds jumps
  */
 struct nft_table {
 	struct list_head		list;
@@ -1269,7 +1226,6 @@ struct nft_table {
 	char				*name;
 	u16				udlen;
 	u8				*udata;
-	u8				validate_state;
 };
 
 static inline bool nft_table_has_owner(const struct nft_table *table)
@@ -1319,8 +1275,8 @@ struct nft_object {
 	struct list_head		list;
 	struct rhlist_head		rhlhead;
 	struct nft_object_hash_key	key;
-	u32				genmask:2;
-	u32				use;
+	u32				genmask:2,
+					use:30;
 	u64				handle;
 	u16				udlen;
 	u8				*udata;
@@ -1422,8 +1378,8 @@ struct nft_flowtable {
 	char				*name;
 	int				hooknum;
 	int				ops_len;
-	u32				genmask:2;
-	u32				use;
+	u32				genmask:2,
+					use:30;
 	u64				handle;
 	/* runtime data below here */
 	struct list_head		hook_list ____cacheline_aligned;
@@ -1449,7 +1405,11 @@ void nft_unregister_flowtable_type(struct nf_flowtable_type *type);
  *	@type: event type (enum nft_trace_types)
  *	@skbid: hash of skb to be used as trace id
  *	@packet_dumped: packet headers sent in a previous traceinfo message
+ *	@pkt: pktinfo currently processed
  *	@basechain: base chain currently processed
+ *	@chain: chain currently processed
+ *	@rule:  rule that was evaluated
+ *	@verdict: verdict given by rule
  */
 struct nft_traceinfo {
 	bool				trace;
@@ -1457,16 +1417,18 @@ struct nft_traceinfo {
 	bool				packet_dumped;
 	enum nft_trace_types		type:8;
 	u32				skbid;
+	const struct nft_pktinfo	*pkt;
 	const struct nft_base_chain	*basechain;
+	const struct nft_chain		*chain;
+	const struct nft_rule_dp	*rule;
+	const struct nft_verdict	*verdict;
 };
 
 void nft_trace_init(struct nft_traceinfo *info, const struct nft_pktinfo *pkt,
+		    const struct nft_verdict *verdict,
 		    const struct nft_chain *basechain);
 
-void nft_trace_notify(const struct nft_pktinfo *pkt,
-		      const struct nft_verdict *verdict,
-		      const struct nft_rule_dp *rule,
-		      struct nft_traceinfo *info);
+void nft_trace_notify(struct nft_traceinfo *info);
 
 #define MODULE_ALIAS_NFT_CHAIN(family, name) \
 	MODULE_ALIAS("nft-chain-" __stringify(family) "-" name)
@@ -1634,7 +1596,6 @@ struct nft_trans_set {
 	u64				timeout;
 	bool				update;
 	bool				bound;
-	u32				size;
 };
 
 #define nft_trans_set(trans)	\
@@ -1649,8 +1610,6 @@ struct nft_trans_set {
 	(((struct nft_trans_set *)trans->data)->timeout)
 #define nft_trans_set_gc_int(trans)	\
 	(((struct nft_trans_set *)trans->data)->gc_int)
-#define nft_trans_set_size(trans)	\
-	(((struct nft_trans_set *)trans->data)->size)
 
 struct nft_trans_chain {
 	struct nft_chain		*chain;
@@ -1660,8 +1619,6 @@ struct nft_trans_chain {
 	u8				policy;
 	bool				bound;
 	u32				chain_id;
-	struct nft_base_chain		*basechain;
-	struct list_head		hook_list;
 };
 
 #define nft_trans_chain(trans)	\
@@ -1678,10 +1635,6 @@ struct nft_trans_chain {
 	(((struct nft_trans_chain *)trans->data)->bound)
 #define nft_trans_chain_id(trans)	\
 	(((struct nft_trans_chain *)trans->data)->chain_id)
-#define nft_trans_basechain(trans)	\
-	(((struct nft_trans_chain *)trans->data)->basechain)
-#define nft_trans_chain_hooks(trans)	\
-	(((struct nft_trans_chain *)trans->data)->hook_list)
 
 struct nft_trans_table {
 	bool				update;
@@ -1758,6 +1711,7 @@ struct nftables_pernet {
 	struct mutex		commit_mutex;
 	u64			table_handle;
 	unsigned int		base_seq;
+	u8			validate_state;
 };
 
 extern unsigned int nf_tables_net_id;

@@ -11,7 +11,6 @@
 #include <linux/syscalls.h>
 #include <linux/utime.h>
 #include <linux/file.h>
-#include <linux/kstrtox.h>
 #include <linux/memblock.h>
 #include <linux/mm.h>
 #include <linux/namei.h>
@@ -60,8 +59,15 @@ static void __init error(char *x)
 		message = x;
 }
 
-#define panic_show_mem(fmt, ...) \
-	({ show_mem(0, NULL); panic(fmt, ##__VA_ARGS__); })
+static void panic_show_mem(const char *fmt, ...)
+{
+	va_list args;
+
+	show_mem(0, NULL);
+	va_start(args, fmt);
+	panic(fmt, args);
+	va_end(args);
+}
 
 /* link hash */
 
@@ -455,7 +461,7 @@ static long __init write_buffer(char *buf, unsigned long len)
 
 static long __init flush_buffer(void *bufv, unsigned long len)
 {
-	char *buf = bufv;
+	char *buf = (char *) bufv;
 	long written;
 	long origLen = len;
 	if (message)
@@ -565,7 +571,8 @@ __setup("keepinitrd", keepinitrd_setup);
 static bool __initdata initramfs_async = true;
 static int __init initramfs_async_setup(char *str)
 {
-	return kstrtobool(str, &initramfs_async) == 0;
+	strtobool(str, &initramfs_async);
+	return 1;
 }
 __setup("initramfs_async=", initramfs_async_setup);
 

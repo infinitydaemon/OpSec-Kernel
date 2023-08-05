@@ -813,11 +813,13 @@ bool inet_bind2_bucket_match_addr_any(const struct inet_bind2_bucket *tb, const 
 				      unsigned short port, int l3mdev, const struct sock *sk)
 {
 #if IS_ENABLED(CONFIG_IPV6)
+	struct in6_addr addr_any = {};
+
 	if (sk->sk_family != tb->family) {
 		if (sk->sk_family == AF_INET)
 			return net_eq(ib2_net(tb), net) && tb->port == port &&
 				tb->l3mdev == l3mdev &&
-				ipv6_addr_any(&tb->v6_rcv_saddr);
+				ipv6_addr_equal(&tb->v6_rcv_saddr, &addr_any);
 
 		return false;
 	}
@@ -825,7 +827,7 @@ bool inet_bind2_bucket_match_addr_any(const struct inet_bind2_bucket *tb, const 
 	if (sk->sk_family == AF_INET6)
 		return net_eq(ib2_net(tb), net) && tb->port == port &&
 			tb->l3mdev == l3mdev &&
-			ipv6_addr_any(&tb->v6_rcv_saddr);
+			ipv6_addr_equal(&tb->v6_rcv_saddr, &addr_any);
 	else
 #endif
 		return net_eq(ib2_net(tb), net) && tb->port == port &&
@@ -851,10 +853,11 @@ inet_bhash2_addr_any_hashbucket(const struct sock *sk, const struct net *net, in
 {
 	struct inet_hashinfo *hinfo = tcp_or_dccp_get_hashinfo(sk);
 	u32 hash;
-
 #if IS_ENABLED(CONFIG_IPV6)
+	struct in6_addr addr_any = {};
+
 	if (sk->sk_family == AF_INET6)
-		hash = ipv6_portaddr_hash(net, &in6addr_any, port);
+		hash = ipv6_portaddr_hash(net, &addr_any, port);
 	else
 #endif
 		hash = ipv4_portaddr_hash(net, 0, port);
@@ -1091,7 +1094,7 @@ ok:
 	 * on low contention the randomness is maximal and on high contention
 	 * it may be inexistent.
 	 */
-	i = max_t(int, i, get_random_u32_below(8) * 2);
+	i = max_t(int, i, prandom_u32_max(8) * 2);
 	WRITE_ONCE(table_perturb[index], READ_ONCE(table_perturb[index]) + i + 2);
 
 	/* Head lock still held and bh's disabled */

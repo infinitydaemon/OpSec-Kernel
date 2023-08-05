@@ -88,7 +88,7 @@ static int aiu_fifo_i2s_hw_params(struct snd_pcm_substream *substream,
 				  struct snd_soc_dai *dai)
 {
 	struct snd_soc_component *component = dai->component;
-	struct aiu_fifo *fifo = snd_soc_dai_dma_data_get_playback(dai);
+	struct aiu_fifo *fifo = dai->playback_dma_data;
 	unsigned int val;
 	int ret;
 
@@ -158,7 +158,7 @@ int aiu_fifo_i2s_dai_probe(struct snd_soc_dai *dai)
 	if (ret)
 		return ret;
 
-	fifo = snd_soc_dai_dma_data_get_playback(dai);
+	fifo = dai->playback_dma_data;
 
 	fifo->pcm = &fifo_i2s_pcm;
 	fifo->mem_offset = AIU_MEM_I2S_START;

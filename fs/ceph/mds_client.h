@@ -355,8 +355,8 @@ struct ceph_snapid_map {
 	struct rb_node node;
 	struct list_head lru;
 	atomic_t ref;
-	dev_t dev;
 	u64 snap;
+	dev_t dev;
 	unsigned long last_used;
 };
 

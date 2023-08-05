@@ -13,7 +13,6 @@
 #include <linux/perf_event.h>
 #include <linux/refcount.h>
 #include <linux/types.h>
-#include <internal/rc_check.h>
 
 #ifndef HAVE_SETNS_SUPPORT
 int setns(int fd, int nstype);
@@ -30,7 +29,7 @@ struct namespaces {
 struct namespaces *namespaces__new(struct perf_record_namespaces *event);
 void namespaces__free(struct namespaces *namespaces);
 
-DECLARE_RC_STRUCT(nsinfo) {
+struct nsinfo {
 	pid_t			pid;
 	pid_t			tgid;
 	pid_t			nstgid;

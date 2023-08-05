@@ -12,7 +12,8 @@
 
 #include "src4xxx.h"
 
-static int src4xxx_i2c_probe(struct i2c_client *i2c)
+static int src4xxx_i2c_probe(struct i2c_client *i2c,
+			const struct i2c_device_id *id)
 {
 	return src4xxx_probe(&i2c->dev,
 		devm_regmap_init_i2c(i2c, &src4xxx_regmap_config), NULL);
@@ -24,7 +25,7 @@ static const struct i2c_device_id src4xxx_i2c_ids[] = {
 };
 MODULE_DEVICE_TABLE(i2c, src4xxx_i2c_ids);
 
-static const struct of_device_id src4xxx_of_match[] __maybe_unused = {
+static const struct of_device_id src4xxx_of_match[] = {
 	{ .compatible = "ti,src4392", },
 	{ }
 };

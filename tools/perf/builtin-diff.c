@@ -6,6 +6,7 @@
  * DSOs and symbol information, sort them and produce a diff.
  */
 #include "builtin.h"
+#include "perf.h"
 
 #include "util/debug.h"
 #include "util/event.h"
@@ -25,7 +26,6 @@
 #include "util/spark.h"
 #include "util/block-info.h"
 #include "util/stream.h"
-#include "util/util.h"
 #include <linux/err.h>
 #include <linux/zalloc.h>
 #include <subcmd/pager.h>
@@ -409,26 +409,24 @@ static int diff__process_sample_event(struct perf_tool *tool,
 		return 0;
 	}
 
-	addr_location__init(&al);
 	if (machine__resolve(machine, &al, sample) < 0) {
 		pr_warning("problem processing %d event, skipping it.\n",
 			   event->header.type);
-		ret = -1;
-		goto out;
+		return -1;
 	}
 
 	if (cpu_list && !test_bit(sample->cpu, cpu_bitmap)) {
 		ret = 0;
-		goto out;
+		goto out_put;
 	}
 
 	switch (compute) {
 	case COMPUTE_CYCLES:
 		if (!hists__add_entry_ops(hists, &block_hist_ops, &al, NULL,
-					  NULL, NULL, NULL, sample, true)) {
+					  NULL, NULL, sample, true)) {
 			pr_warning("problem incrementing symbol period, "
 				   "skipping event\n");
-			goto out;
+			goto out_put;
 		}
 
 		hist__account_cycles(sample->branch_stack, &al, sample, false,
@@ -439,16 +437,16 @@ static int diff__process_sample_event(struct perf_tool *tool,
 		if (hist_entry_iter__add(&iter, &al, PERF_MAX_STACK_DEPTH,
 					 NULL)) {
 			pr_debug("problem adding hist entry, skipping event\n");
-			goto out;
+			goto out_put;
 		}
 		break;
 
 	default:
-		if (!hists__add_entry(hists, &al, NULL, NULL, NULL, NULL, sample,
+		if (!hists__add_entry(hists, &al, NULL, NULL, NULL, sample,
 				      true)) {
 			pr_warning("problem incrementing symbol period, "
 				   "skipping event\n");
-			goto out;
+			goto out_put;
 		}
 	}
 
@@ -462,8 +460,8 @@ static int diff__process_sample_event(struct perf_tool *tool,
 	if (!al.filtered)
 		hists->stats.total_non_filtered_period += sample->period;
 	ret = 0;
-out:
-	addr_location__exit(&al);
+out_put:
+	addr_location__put(&al);
 	return ret;
 }
 
@@ -1378,8 +1376,8 @@ static int cycles_printf(struct hist_entry *he, struct hist_entry *pair,
 	end_line = map__srcline(he->ms.map, bi->sym->start + bi->end,
 				he->ms.sym);
 
-	if (start_line != SRCLINE_UNKNOWN &&
-	    end_line != SRCLINE_UNKNOWN) {
+	if ((strncmp(start_line, SRCLINE_UNKNOWN, strlen(SRCLINE_UNKNOWN)) != 0) &&
+	    (strncmp(end_line, SRCLINE_UNKNOWN, strlen(SRCLINE_UNKNOWN)) != 0)) {
 		scnprintf(buf, sizeof(buf), "[%s -> %s] %4ld",
 			  start_line, end_line, block_he->diff.cycles);
 	} else {
@@ -1387,8 +1385,8 @@ static int cycles_printf(struct hist_entry *he, struct hist_entry *pair,
 			  bi->start, bi->end, block_he->diff.cycles);
 	}
 
-	zfree_srcline(&start_line);
-	zfree_srcline(&end_line);
+	free_srcline(start_line);
+	free_srcline(end_line);
 
 	return scnprintf(hpp->buf, hpp->size, "%*s", width, buf);
 }

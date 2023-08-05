@@ -388,7 +388,6 @@ static inline bool seccomp_cache_check_allow(const struct seccomp_filter *sfilte
 }
 #endif /* SECCOMP_ARCH_NATIVE */
 
-#define ACTION_ONLY(ret) ((s32)((ret) & (SECCOMP_RET_ACTION_FULL)))
 /**
  * seccomp_run_filters - evaluates all seccomp filters against @sd
  * @sd: optional seccomp data to be passed to filters
@@ -398,6 +397,7 @@ static inline bool seccomp_cache_check_allow(const struct seccomp_filter *sfilte
  *
  * Returns valid seccomp BPF response codes.
  */
+#define ACTION_ONLY(ret) ((s32)((ret) & (SECCOMP_RET_ACTION_FULL)))
 static u32 seccomp_run_filters(const struct seccomp_data *sd,
 			       struct seccomp_filter **match)
 {
@@ -2368,6 +2368,12 @@ static int seccomp_actions_logged_handler(struct ctl_table *ro_table, int write,
 	return ret;
 }
 
+static struct ctl_path seccomp_sysctl_path[] = {
+	{ .procname = "kernel", },
+	{ .procname = "seccomp", },
+	{ }
+};
+
 static struct ctl_table seccomp_sysctl_table[] = {
 	{
 		.procname	= "actions_avail",
@@ -2386,7 +2392,14 @@ static struct ctl_table seccomp_sysctl_table[] = {
 
 static int __init seccomp_sysctl_init(void)
 {
-	register_sysctl_init("kernel/seccomp", seccomp_sysctl_table);
+	struct ctl_table_header *hdr;
+
+	hdr = register_sysctl_paths(seccomp_sysctl_path, seccomp_sysctl_table);
+	if (!hdr)
+		pr_warn("sysctl registration failed\n");
+	else
+		kmemleak_not_leak(hdr);
+
 	return 0;
 }
 

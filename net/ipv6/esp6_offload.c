@@ -17,7 +17,6 @@
 #include <linux/err.h>
 #include <linux/module.h>
 #include <net/gro.h>
-#include <net/gso.h>
 #include <net/ip.h>
 #include <net/xfrm.h>
 #include <net/esp.h>
@@ -57,11 +56,12 @@ static struct sk_buff *esp6_gro_receive(struct list_head *head,
 	__be32 seq;
 	__be32 spi;
 	int nhoff;
+	int err;
 
 	if (!pskb_pull(skb, offset))
 		return NULL;
 
-	if (xfrm_parse_spi(skb, IPPROTO_ESP, &spi, &seq) != 0)
+	if ((err = xfrm_parse_spi(skb, IPPROTO_ESP, &spi, &seq)) != 0)
 		goto out;
 
 	xo = xfrm_offload(skb);

@@ -685,12 +685,8 @@ void hci_cmd_sync_cancel(struct hci_dev *hdev, int err)
 }
 EXPORT_SYMBOL(hci_cmd_sync_cancel);
 
-/* Submit HCI command to be run in as cmd_sync_work:
- *
- * - hdev must _not_ be unregistered
- */
-int hci_cmd_sync_submit(struct hci_dev *hdev, hci_cmd_sync_work_func_t func,
-			void *data, hci_cmd_sync_work_destroy_t destroy)
+int hci_cmd_sync_queue(struct hci_dev *hdev, hci_cmd_sync_work_func_t func,
+		       void *data, hci_cmd_sync_work_destroy_t destroy)
 {
 	struct hci_cmd_sync_work_entry *entry;
 	int err = 0;
@@ -719,23 +715,6 @@ int hci_cmd_sync_submit(struct hci_dev *hdev, hci_cmd_sync_work_func_t func,
 unlock:
 	mutex_unlock(&hdev->unregister_lock);
 	return err;
-}
-EXPORT_SYMBOL(hci_cmd_sync_submit);
-
-/* Queue HCI command:
- *
- * - hdev must be running
- */
-int hci_cmd_sync_queue(struct hci_dev *hdev, hci_cmd_sync_work_func_t func,
-		       void *data, hci_cmd_sync_work_destroy_t destroy)
-{
-	/* Only queue command if hdev is running which means it had been opened
-	 * and is either on init phase or is already up.
-	 */
-	if (!test_bit(HCI_RUNNING, &hdev->flags))
-		return -ENETDOWN;
-
-	return hci_cmd_sync_submit(hdev, func, data, destroy);
 }
 EXPORT_SYMBOL(hci_cmd_sync_queue);
 
@@ -2452,7 +2431,7 @@ static int hci_pause_addr_resolution(struct hci_dev *hdev)
 
 	/* Return if address resolution is disabled and RPA is not used. */
 	if (!err && scan_use_rpa(hdev))
-		return 0;
+		return err;
 
 	hci_resume_advertising_sync(hdev);
 	return err;
@@ -3221,7 +3200,6 @@ int hci_update_name_sync(struct hci_dev *hdev)
  * Enable Authentication
  * lmp_bredr_capable(Set Fast Connectable -> Set Scan Type -> Set Class ->
  * Set Name -> Set EIR)
- * HCI_FORCE_STATIC_ADDR | BDADDR_ANY && !HCI_BREDR_ENABLED (Set Static Address)
  */
 int hci_powered_update_sync(struct hci_dev *hdev)
 {
@@ -3259,23 +3237,6 @@ int hci_powered_update_sync(struct hci_dev *hdev)
 		hci_update_class_sync(hdev);
 		hci_update_name_sync(hdev);
 		hci_update_eir_sync(hdev);
-	}
-
-	/* If forcing static address is in use or there is no public
-	 * address use the static address as random address (but skip
-	 * the HCI command if the current random address is already the
-	 * static one.
-	 *
-	 * In case BR/EDR has been disabled on a dual-mode controller
-	 * and a static address has been configured, then use that
-	 * address instead of the public BR/EDR address.
-	 */
-	if (hci_dev_test_flag(hdev, HCI_FORCE_STATIC_ADDR) ||
-	    (!bacmp(&hdev->bdaddr, BDADDR_ANY) &&
-	    !hci_dev_test_flag(hdev, HCI_BREDR_ENABLED))) {
-		if (bacmp(&hdev->static_addr, BDADDR_ANY))
-			return hci_set_random_addr_sync(hdev,
-							&hdev->static_addr);
 	}
 
 	return 0;
@@ -4539,38 +4500,18 @@ static int hci_le_set_write_def_data_len_sync(struct hci_dev *hdev)
 				     sizeof(cp), &cp, HCI_CMD_TIMEOUT);
 }
 
-/* Set Default PHY parameters if command is supported, enables all supported
- * PHYs according to the LE Features bits.
- */
+/* Set Default PHY parameters if command is supported */
 static int hci_le_set_default_phy_sync(struct hci_dev *hdev)
 {
 	struct hci_cp_le_set_default_phy cp;
 
-	if (!(hdev->commands[35] & 0x20)) {
-		/* If the command is not supported it means only 1M PHY is
-		 * supported.
-		 */
-		hdev->le_tx_def_phys = HCI_LE_SET_PHY_1M;
-		hdev->le_rx_def_phys = HCI_LE_SET_PHY_1M;
+	if (!(hdev->commands[35] & 0x20))
 		return 0;
-	}
 
 	memset(&cp, 0, sizeof(cp));
 	cp.all_phys = 0x00;
-	cp.tx_phys = HCI_LE_SET_PHY_1M;
-	cp.rx_phys = HCI_LE_SET_PHY_1M;
-
-	/* Enables 2M PHY if supported */
-	if (le_2m_capable(hdev)) {
-		cp.tx_phys |= HCI_LE_SET_PHY_2M;
-		cp.rx_phys |= HCI_LE_SET_PHY_2M;
-	}
-
-	/* Enables Coded PHY if supported */
-	if (le_coded_capable(hdev)) {
-		cp.tx_phys |= HCI_LE_SET_PHY_CODED;
-		cp.rx_phys |= HCI_LE_SET_PHY_CODED;
-	}
+	cp.tx_phys = hdev->le_tx_def_phys;
+	cp.rx_phys = hdev->le_rx_def_phys;
 
 	return __hci_cmd_sync_status(hdev, HCI_OP_LE_SET_DEFAULT_PHY,
 				     sizeof(cp), &cp, HCI_CMD_TIMEOUT);
@@ -4719,15 +4660,18 @@ static int hci_dev_setup_sync(struct hci_dev *hdev)
 	 * BD_ADDR invalid before creating the HCI device or in
 	 * its setup callback.
 	 */
-	invalid_bdaddr = test_bit(HCI_QUIRK_INVALID_BDADDR, &hdev->quirks) ||
-			 test_bit(HCI_QUIRK_USE_BDADDR_PROPERTY, &hdev->quirks);
+	invalid_bdaddr = test_bit(HCI_QUIRK_INVALID_BDADDR, &hdev->quirks);
+
 	if (!ret) {
 		if (test_bit(HCI_QUIRK_USE_BDADDR_PROPERTY, &hdev->quirks) &&
 		    !bacmp(&hdev->public_addr, BDADDR_ANY) &&
-		    (invalid_bdaddr || !fwnode_property_present(fwnode, "fallback-bd-address")))
+		    (invalid_bdaddr ||
+		     !fwnode_property_present(fwnode, "fallback-bd-address")))
 			hci_dev_get_bd_addr_from_property(hdev);
 
-		if (invalid_bdaddr && bacmp(&hdev->public_addr, BDADDR_ANY) &&
+		if ((invalid_bdaddr ||
+		     test_bit(HCI_QUIRK_USE_BDADDR_PROPERTY, &hdev->quirks)) &&
+		    bacmp(&hdev->public_addr, BDADDR_ANY) &&
 		    hdev->set_bdaddr) {
 			ret = hdev->set_bdaddr(hdev, &hdev->public_addr);
 			if (!ret)
@@ -4871,8 +4815,6 @@ int hci_dev_open_sync(struct hci_dev *hdev)
 		ret = -EIO;
 		goto done;
 	}
-
-	hci_devcd_reset(hdev);
 
 	set_bit(HCI_RUNNING, &hdev->flags);
 	hci_sock_dev_event(hdev, HCI_DEV_OPEN);
@@ -5255,12 +5197,10 @@ static int hci_disconnect_sync(struct hci_dev *hdev, struct hci_conn *conn,
 	cp.handle = cpu_to_le16(conn->handle);
 	cp.reason = reason;
 
-	/* Wait for HCI_EV_DISCONN_COMPLETE, not HCI_EV_CMD_STATUS, when the
-	 * reason is anything but HCI_ERROR_REMOTE_POWER_OFF. This reason is
-	 * used when suspending or powering off, where we don't want to wait
-	 * for the peer's response.
+	/* Wait for HCI_EV_DISCONN_COMPLETE not HCI_EV_CMD_STATUS when not
+	 * suspending.
 	 */
-	if (reason != HCI_ERROR_REMOTE_POWER_OFF)
+	if (!hdev->suspended)
 		return __hci_cmd_sync_status_sk(hdev, HCI_OP_DISCONNECT,
 						sizeof(cp), &cp,
 						HCI_EV_DISCONN_COMPLETE,
@@ -6002,6 +5942,7 @@ static int hci_le_ext_directed_advertising_sync(struct hci_dev *hdev,
 	memset(&cp, 0, sizeof(cp));
 
 	cp.evt_properties = cpu_to_le16(LE_LEGACY_ADV_DIRECT_IND);
+	cp.own_addr_type = own_addr_type;
 	cp.channel_map = hdev->le_adv_channel_map;
 	cp.tx_power = HCI_TX_POWER_INVALID;
 	cp.primary_phy = HCI_ADV_PHY_1M;
@@ -6260,71 +6201,6 @@ done:
 	/* Re-enable advertising after the connection attempt is finished. */
 	hci_resume_advertising_sync(hdev);
 	return err;
-}
-
-int hci_le_create_cis_sync(struct hci_dev *hdev, struct hci_conn *conn)
-{
-	struct {
-		struct hci_cp_le_create_cis cp;
-		struct hci_cis cis[0x1f];
-	} cmd;
-	u8 cig;
-	struct hci_conn *hcon = conn;
-
-	memset(&cmd, 0, sizeof(cmd));
-	cmd.cis[0].acl_handle = cpu_to_le16(conn->parent->handle);
-	cmd.cis[0].cis_handle = cpu_to_le16(conn->handle);
-	cmd.cp.num_cis++;
-	cig = conn->iso_qos.ucast.cig;
-
-	hci_dev_lock(hdev);
-
-	rcu_read_lock();
-
-	list_for_each_entry_rcu(conn, &hdev->conn_hash.list, list) {
-		struct hci_cis *cis = &cmd.cis[cmd.cp.num_cis];
-
-		if (conn == hcon || conn->type != ISO_LINK ||
-		    conn->state == BT_CONNECTED ||
-		    conn->iso_qos.ucast.cig != cig)
-			continue;
-
-		/* Check if all CIS(s) belonging to a CIG are ready */
-		if (!conn->parent || conn->parent->state != BT_CONNECTED ||
-		    conn->state != BT_CONNECT) {
-			cmd.cp.num_cis = 0;
-			break;
-		}
-
-		/* Group all CIS with state BT_CONNECT since the spec don't
-		 * allow to send them individually:
-		 *
-		 * BLUETOOTH CORE SPECIFICATION Version 5.3 | Vol 4, Part E
-		 * page 2566:
-		 *
-		 * If the Host issues this command before all the
-		 * HCI_LE_CIS_Established events from the previous use of the
-		 * command have been generated, the Controller shall return the
-		 * error code Command Disallowed (0x0C).
-		 */
-		cis->acl_handle = cpu_to_le16(conn->parent->handle);
-		cis->cis_handle = cpu_to_le16(conn->handle);
-		cmd.cp.num_cis++;
-	}
-
-	rcu_read_unlock();
-
-	hci_dev_unlock(hdev);
-
-	if (!cmd.cp.num_cis)
-		return 0;
-
-	/* Wait for HCI_LE_CIS_Established */
-	return __hci_cmd_sync_status_sk(hdev, HCI_OP_LE_CREATE_CIS,
-					sizeof(cmd.cp) + sizeof(cmd.cis[0]) *
-					cmd.cp.num_cis, &cmd,
-					HCI_EVT_LE_CIS_ESTABLISHED,
-					conn->conn_timeout, NULL);
 }
 
 int hci_le_remove_cig_sync(struct hci_dev *hdev, u8 handle)

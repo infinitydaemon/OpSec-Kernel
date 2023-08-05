@@ -262,7 +262,7 @@ static int fanotify_get_response(struct fsnotify_group *group,
 	}
 
 	/* userspace responded, convert to something usable */
-	switch (event->response & FANOTIFY_RESPONSE_ACCESS) {
+	switch (event->response & ~FAN_AUDIT) {
 	case FAN_ALLOW:
 		ret = 0;
 		break;
@@ -273,8 +273,7 @@ static int fanotify_get_response(struct fsnotify_group *group,
 
 	/* Check if the response should be audited */
 	if (event->response & FAN_AUDIT)
-		audit_fanotify(event->response & ~FAN_AUDIT,
-			       &event->audit_rule);
+		audit_fanotify(event->response & ~FAN_AUDIT);
 
 	pr_debug("%s: group=%p event=%p about to return ret=%d\n", __func__,
 		 group, event, ret);
@@ -380,7 +379,7 @@ static int fanotify_encode_fh_len(struct inode *inode)
 	if (!inode)
 		return 0;
 
-	exportfs_encode_fid(inode, NULL, &dwords);
+	exportfs_encode_inode_fh(inode, NULL, &dwords, NULL);
 	fh_len = dwords << 2;
 
 	/*
@@ -443,9 +442,9 @@ static int fanotify_encode_fh(struct fanotify_fh *fh, struct inode *inode,
 	}
 
 	dwords = fh_len >> 2;
-	type = exportfs_encode_fid(inode, buf, &dwords);
+	type = exportfs_encode_inode_fh(inode, buf, &dwords, NULL);
 	err = -EINVAL;
-	if (type <= 0 || type == FILEID_INVALID || fh_len != dwords << 2)
+	if (!type || type == FILEID_INVALID || fh_len != dwords << 2)
 		goto out_err;
 
 	fh->type = type;
@@ -564,9 +563,6 @@ static struct fanotify_event *fanotify_alloc_perm_event(const struct path *path,
 
 	pevent->fae.type = FANOTIFY_EVENT_TYPE_PATH_PERM;
 	pevent->response = 0;
-	pevent->hdr.type = FAN_RESPONSE_INFO_NONE;
-	pevent->hdr.pad = 0;
-	pevent->hdr.len = 0;
 	pevent->state = FAN_EVENT_INIT;
 	pevent->path = *path;
 	path_get(path);

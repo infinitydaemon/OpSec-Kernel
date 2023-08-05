@@ -386,10 +386,12 @@ static int stm32_adfsdm_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void stm32_adfsdm_remove(struct platform_device *pdev)
+static int stm32_adfsdm_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_component(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 static struct platform_driver stm32_adfsdm_driver = {
@@ -398,7 +400,7 @@ static struct platform_driver stm32_adfsdm_driver = {
 		   .of_match_table = stm32_adfsdm_of_match,
 		   },
 	.probe = stm32_adfsdm_probe,
-	.remove_new = stm32_adfsdm_remove,
+	.remove = stm32_adfsdm_remove,
 };
 
 module_platform_driver(stm32_adfsdm_driver);

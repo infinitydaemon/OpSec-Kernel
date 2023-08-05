@@ -808,15 +808,14 @@ static const struct snd_soc_component_driver soc_component_dev_es8316 = {
 	.endianness		= 1,
 };
 
-static bool es8316_volatile_reg(struct device *dev, unsigned int reg)
-{
-	switch (reg) {
-	case ES8316_GPIO_FLAG:
-		return true;
-	default:
-		return false;
-	}
-}
+static const struct regmap_range es8316_volatile_ranges[] = {
+	regmap_reg_range(ES8316_GPIO_FLAG, ES8316_GPIO_FLAG),
+};
+
+static const struct regmap_access_table es8316_volatile_table = {
+	.yes_ranges	= es8316_volatile_ranges,
+	.n_yes_ranges	= ARRAY_SIZE(es8316_volatile_ranges),
+};
 
 static const struct regmap_config es8316_regmap = {
 	.reg_bits = 8,
@@ -824,8 +823,8 @@ static const struct regmap_config es8316_regmap = {
 	.use_single_read = true,
 	.use_single_write = true,
 	.max_register = 0x53,
-	.volatile_reg = es8316_volatile_reg,
-	.cache_type = REGCACHE_MAPLE,
+	.volatile_table	= &es8316_volatile_table,
+	.cache_type = REGCACHE_RBTREE,
 };
 
 static int es8316_i2c_probe(struct i2c_client *i2c_client)
@@ -892,7 +891,7 @@ static struct i2c_driver es8316_i2c_driver = {
 		.acpi_match_table	= ACPI_PTR(es8316_acpi_match),
 		.of_match_table		= of_match_ptr(es8316_of_match),
 	},
-	.probe		= es8316_i2c_probe,
+	.probe_new	= es8316_i2c_probe,
 	.id_table	= es8316_i2c_id,
 };
 module_i2c_driver(es8316_i2c_driver);

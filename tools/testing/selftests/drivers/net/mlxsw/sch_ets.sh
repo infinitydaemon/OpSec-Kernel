@@ -5,6 +5,7 @@
 lib_dir=$(dirname $0)/../../../net/forwarding
 source $lib_dir/sch_ets_core.sh
 source $lib_dir/devlink_lib.sh
+source qos_lib.sh
 
 ALL_TESTS="
 	ping_ipv4
@@ -77,5 +78,5 @@ collect_stats()
 	done
 }
 
-bail_on_lldpad "configure DCB" "configure Qdiscs"
+bail_on_lldpad
 ets_run

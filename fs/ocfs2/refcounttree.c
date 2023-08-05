@@ -2952,11 +2952,10 @@ retry:
 		 */
 		if (PAGE_SIZE <= OCFS2_SB(sb)->s_clustersize) {
 			if (PageDirty(page)) {
-				unlock_page(page);
-				put_page(page);
-
-				ret = filemap_write_and_wait_range(mapping,
-						offset, map_end - 1);
+				/*
+				 * write_on_page will unlock the page on return
+				 */
+				ret = write_one_page(page);
 				goto retry;
 			}
 		}
@@ -4317,7 +4316,7 @@ static inline int ocfs2_may_create(struct inode *dir, struct dentry *child)
 		return -EEXIST;
 	if (IS_DEADDIR(dir))
 		return -ENOENT;
-	return inode_permission(&nop_mnt_idmap, dir, MAY_WRITE | MAY_EXEC);
+	return inode_permission(&init_user_ns, dir, MAY_WRITE | MAY_EXEC);
 }
 
 /**
@@ -4371,7 +4370,7 @@ static int ocfs2_vfs_reflink(struct dentry *old_dentry, struct inode *dir,
 	 * file.
 	 */
 	if (!preserve) {
-		error = inode_permission(&nop_mnt_idmap, inode, MAY_READ);
+		error = inode_permission(&init_user_ns, inode, MAY_READ);
 		if (error)
 			return error;
 	}

@@ -17,7 +17,6 @@
 #include <linux/err.h>
 #include <linux/module.h>
 #include <net/gro.h>
-#include <net/gso.h>
 #include <net/ip.h>
 #include <net/xfrm.h>
 #include <net/esp.h>

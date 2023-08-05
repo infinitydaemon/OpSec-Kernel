@@ -64,8 +64,6 @@
 #include <linux/io_uring.h>
 #include <linux/syscall_user_dispatch.h>
 #include <linux/coredump.h>
-#include <linux/time_namespace.h>
-#include <linux/user_events.h>
 
 #include <linux/uaccess.h>
 #include <asm/mmu_context.h>
@@ -152,6 +150,8 @@ SYSCALL_DEFINE1(uselib, const char __user *, library)
 			 path_noexec(&file->f_path)))
 		goto exit;
 
+	fsnotify_open(file);
+
 	error = -ENOEXEC;
 
 	read_lock(&binfmt_lock);
@@ -171,7 +171,7 @@ SYSCALL_DEFINE1(uselib, const char __user *, library)
 exit:
 	fput(file);
 out:
-	return error;
+  	return error;
 }
 #endif /* #ifdef CONFIG_USELIB */
 
@@ -224,7 +224,7 @@ static struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
 	 */
 	ret = get_user_pages_remote(mm, pos, 1,
 			write ? FOLL_WRITE : 0,
-			&page, NULL);
+			&page, NULL, NULL);
 	mmap_read_unlock(mm);
 	if (ret <= 0)
 		return NULL;
@@ -275,7 +275,7 @@ static int __bprm_mm_init(struct linux_binprm *bprm)
 	BUILD_BUG_ON(VM_STACK_FLAGS & VM_STACK_INCOMPLETE_SETUP);
 	vma->vm_end = STACK_TOP_MAX;
 	vma->vm_start = vma->vm_end - PAGE_SIZE;
-	vm_flags_init(vma, VM_SOFTDIRTY | VM_STACK_FLAGS | VM_STACK_INCOMPLETE_SETUP);
+	vma->vm_flags = VM_SOFTDIRTY | VM_STACK_FLAGS | VM_STACK_INCOMPLETE_SETUP;
 	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
 
 	err = insert_vm_struct(mm, vma);
@@ -704,7 +704,7 @@ static int shift_arg_pages(struct vm_area_struct *vma, unsigned long shift)
 	/*
 	 * cover the whole range: [new_start, old_end)
 	 */
-	if (vma_expand(&vmi, vma, new_start, old_end, vma->vm_pgoff, NULL))
+	if (vma_adjust(vma, new_start, old_end, vma->vm_pgoff, NULL))
 		return -ENOMEM;
 
 	/*
@@ -736,9 +736,12 @@ static int shift_arg_pages(struct vm_area_struct *vma, unsigned long shift)
 	}
 	tlb_finish_mmu(&tlb);
 
-	vma_prev(&vmi);
-	/* Shrink the vma to just the new range */
-	return vma_shrink(&vmi, vma, new_start, new_end, vma->vm_pgoff);
+	/*
+	 * Shrink the vma to just the new range.  Always succeeds.
+	 */
+	vma_adjust(vma, new_start, new_end, vma->vm_pgoff, NULL);
+
+	return 0;
 }
 
 /*
@@ -760,7 +763,6 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	unsigned long stack_expand;
 	unsigned long rlim_stack;
 	struct mmu_gather tlb;
-	struct vma_iterator vmi;
 
 #ifdef CONFIG_STACK_GROWSUP
 	/* Limit stack size */
@@ -815,10 +817,8 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	vm_flags |= mm->def_flags;
 	vm_flags |= VM_STACK_INCOMPLETE_SETUP;
 
-	vma_iter_init(&vmi, mm, vma->vm_start);
-
 	tlb_gather_mmu(&tlb, mm);
-	ret = mprotect_fixup(&vmi, &tlb, vma, &prev, vma->vm_start, vma->vm_end,
+	ret = mprotect_fixup(&tlb, vma, &prev, vma->vm_start, vma->vm_end,
 			vm_flags);
 	tlb_finish_mmu(&tlb);
 
@@ -839,7 +839,7 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	}
 
 	/* mprotect_fixup is overkill to remove the temporary stack flags */
-	vm_flags_clear(vma, VM_STACK_INCOMPLETE_SETUP);
+	vma->vm_flags &= ~VM_STACK_INCOMPLETE_SETUP;
 
 	stack_expand = 131072UL; /* randomly 32*4k (or 2*64k) pages */
 	stack_size = vma->vm_end - vma->vm_start;
@@ -848,13 +848,16 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	 * will align it up.
 	 */
 	rlim_stack = bprm->rlim_stack.rlim_cur & PAGE_MASK;
-
-	stack_expand = min(rlim_stack, stack_size + stack_expand);
-
 #ifdef CONFIG_STACK_GROWSUP
-	stack_base = vma->vm_start + stack_expand;
+	if (stack_size + stack_expand > rlim_stack)
+		stack_base = vma->vm_start + rlim_stack;
+	else
+		stack_base = vma->vm_end + stack_expand;
 #else
-	stack_base = vma->vm_end - stack_expand;
+	if (stack_size + stack_expand > rlim_stack)
+		stack_base = vma->vm_end - rlim_stack;
+	else
+		stack_base = vma->vm_start - stack_expand;
 #endif
 	current->mm->start_stack = bprm->p;
 	ret = expand_stack_locked(vma, stack_base);
@@ -938,6 +941,9 @@ static struct file *do_open_execat(int fd, struct filename *name, int flags)
 	if (err)
 		goto exit;
 
+	if (name->name[0] != '\0')
+		fsnotify_open(file);
+
 out:
 	return file;
 
@@ -1012,7 +1018,6 @@ static int exec_mmap(struct mm_struct *mm)
 	active_mm = tsk->active_mm;
 	tsk->active_mm = mm;
 	tsk->mm = mm;
-	mm_init_cid(mm);
 	/*
 	 * This prevents preemption while active_mm is being loaded and
 	 * it and mm are being updated, which could cause problems for
@@ -1036,7 +1041,7 @@ static int exec_mmap(struct mm_struct *mm)
 		mmput(old_mm);
 		return 0;
 	}
-	mmdrop_lazy_tlb(active_mm);
+	mmdrop(active_mm);
 	return 0;
 }
 
@@ -1298,10 +1303,6 @@ int begin_new_exec(struct linux_binprm * bprm)
 
 	bprm->mm = NULL;
 
-	retval = exec_task_namespaces();
-	if (retval)
-		goto out_unlock;
-
 #ifdef CONFIG_POSIX_TIMERS
 	spin_lock_irq(&me->sighand->siglock);
 	posix_cpu_timers_exit(me);
@@ -1417,15 +1418,15 @@ EXPORT_SYMBOL(begin_new_exec);
 void would_dump(struct linux_binprm *bprm, struct file *file)
 {
 	struct inode *inode = file_inode(file);
-	struct mnt_idmap *idmap = file_mnt_idmap(file);
-	if (inode_permission(idmap, inode, MAY_READ) < 0) {
+	struct user_namespace *mnt_userns = file_mnt_user_ns(file);
+	if (inode_permission(mnt_userns, inode, MAY_READ) < 0) {
 		struct user_namespace *old, *user_ns;
 		bprm->interp_flags |= BINPRM_FLAGS_ENFORCE_NONDUMP;
 
 		/* Ensure mm->user_ns contains the executable */
 		user_ns = old = bprm->mm->user_ns;
 		while ((user_ns != &init_user_ns) &&
-		       !privileged_wrt_inode_uidgid(user_ns, idmap, inode))
+		       !privileged_wrt_inode_uidgid(user_ns, mnt_userns, inode))
 			user_ns = user_ns->parent;
 
 		if (old != user_ns) {
@@ -1573,12 +1574,6 @@ static void check_unsafe_exec(struct linux_binprm *bprm)
 	if (task_no_new_privs(current))
 		bprm->unsafe |= LSM_UNSAFE_NO_NEW_PRIVS;
 
-	/*
-	 * If another task is sharing our fs, we cannot safely
-	 * suid exec because the differently privileged task
-	 * will be able to manipulate the current directory, etc.
-	 * It would be nice to force an unshare instead...
-	 */
 	t = p;
 	n_fs = 1;
 	spin_lock(&p->fs->lock);
@@ -1599,11 +1594,11 @@ static void check_unsafe_exec(struct linux_binprm *bprm)
 static void bprm_fill_uid(struct linux_binprm *bprm, struct file *file)
 {
 	/* Handle suid and sgid on files */
-	struct mnt_idmap *idmap;
+	struct user_namespace *mnt_userns;
 	struct inode *inode = file_inode(file);
 	unsigned int mode;
-	vfsuid_t vfsuid;
-	vfsgid_t vfsgid;
+	kuid_t uid;
+	kgid_t gid;
 
 	if (!mnt_may_suid(file->f_path.mnt))
 		return;
@@ -1615,30 +1610,30 @@ static void bprm_fill_uid(struct linux_binprm *bprm, struct file *file)
 	if (!(mode & (S_ISUID|S_ISGID)))
 		return;
 
-	idmap = file_mnt_idmap(file);
+	mnt_userns = file_mnt_user_ns(file);
 
 	/* Be careful if suid/sgid is set */
 	inode_lock(inode);
 
 	/* reload atomically mode/uid/gid now that lock held */
 	mode = inode->i_mode;
-	vfsuid = i_uid_into_vfsuid(idmap, inode);
-	vfsgid = i_gid_into_vfsgid(idmap, inode);
+	uid = i_uid_into_mnt(mnt_userns, inode);
+	gid = i_gid_into_mnt(mnt_userns, inode);
 	inode_unlock(inode);
 
 	/* We ignore suid/sgid if there are no mappings for them in the ns */
-	if (!vfsuid_has_mapping(bprm->cred->user_ns, vfsuid) ||
-	    !vfsgid_has_mapping(bprm->cred->user_ns, vfsgid))
+	if (!kuid_has_mapping(bprm->cred->user_ns, uid) ||
+		 !kgid_has_mapping(bprm->cred->user_ns, gid))
 		return;
 
 	if (mode & S_ISUID) {
 		bprm->per_clear |= PER_CLEAR_ON_SETID;
-		bprm->cred->euid = vfsuid_into_kuid(vfsuid);
+		bprm->cred->euid = uid;
 	}
 
 	if ((mode & (S_ISGID | S_IXGRP)) == (S_ISGID | S_IXGRP)) {
 		bprm->per_clear |= PER_CLEAR_ON_SETID;
-		bprm->cred->egid = vfsgid_into_kgid(vfsgid);
+		bprm->cred->egid = gid;
 	}
 }
 
@@ -1759,7 +1754,6 @@ static int search_binary_handler(struct linux_binprm *bprm)
 	return retval;
 }
 
-/* binfmt handlers will call back into begin_new_exec() on success. */
 static int exec_binprm(struct linux_binprm *bprm)
 {
 	pid_t old_pid, old_vpid;
@@ -1818,14 +1812,8 @@ static int bprm_execve(struct linux_binprm *bprm,
 	if (retval)
 		return retval;
 
-	/*
-	 * Check for unsafe execution states before exec_binprm(), which
-	 * will call back into begin_new_exec(), into bprm_creds_from_file(),
-	 * where setuid-ness is evaluated.
-	 */
 	check_unsafe_exec(bprm);
 	current->in_execve = 1;
-	sched_mm_cid_before_execve(current);
 
 	file = do_open_execat(fd, filename, flags);
 	retval = PTR_ERR(file);
@@ -1856,12 +1844,10 @@ static int bprm_execve(struct linux_binprm *bprm,
 	if (retval < 0)
 		goto out;
 
-	sched_mm_cid_after_execve(current);
 	/* execve succeeded */
 	current->fs->in_exec = 0;
 	current->in_execve = 0;
 	rseq_execve(current);
-	user_events_execve(current);
 	acct_update_integrals(current);
 	task_numa_free(current, false);
 	return retval;
@@ -1877,7 +1863,6 @@ out:
 		force_fatal_sig(SIGSEGV);
 
 out_unmark:
-	sched_mm_cid_after_execve(current);
 	current->fs->in_exec = 0;
 	current->in_execve = 0;
 

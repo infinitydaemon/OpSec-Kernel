@@ -69,15 +69,13 @@ depot_stack_handle_t kmsan_save_stack_with_flags(gfp_t flags,
 {
 	unsigned long entries[KMSAN_STACK_DEPTH];
 	unsigned int nr_entries;
-	depot_stack_handle_t handle;
 
 	nr_entries = stack_trace_save(entries, KMSAN_STACK_DEPTH, 0);
 
-	/* Don't sleep. */
-	flags &= ~(__GFP_DIRECT_RECLAIM | __GFP_KSWAPD_RECLAIM);
+	/* Don't sleep (see might_sleep_if() in __alloc_pages_nodemask()). */
+	flags &= ~__GFP_DIRECT_RECLAIM;
 
-	handle = __stack_depot_save(entries, nr_entries, flags, true);
-	return stack_depot_set_extra_bits(handle, extra);
+	return __stack_depot_save(entries, nr_entries, extra, flags, true);
 }
 
 /* Copy the metadata following the memmove() behavior. */
@@ -217,7 +215,6 @@ depot_stack_handle_t kmsan_internal_chain_origin(depot_stack_handle_t id)
 	u32 extra_bits;
 	int depth;
 	bool uaf;
-	depot_stack_handle_t handle;
 
 	if (!id)
 		return id;
@@ -245,7 +242,7 @@ depot_stack_handle_t kmsan_internal_chain_origin(depot_stack_handle_t id)
 	extra_bits = kmsan_extra_bits(depth, uaf);
 
 	entries[0] = KMSAN_CHAIN_MAGIC_ORIGIN;
-	entries[1] = kmsan_save_stack_with_flags(__GFP_HIGH, 0);
+	entries[1] = kmsan_save_stack_with_flags(GFP_ATOMIC, 0);
 	entries[2] = id;
 	/*
 	 * @entries is a local var in non-instrumented code, so KMSAN does not
@@ -253,9 +250,8 @@ depot_stack_handle_t kmsan_internal_chain_origin(depot_stack_handle_t id)
 	 * positives when __stack_depot_save() passes it to instrumented code.
 	 */
 	kmsan_internal_unpoison_memory(entries, sizeof(entries), false);
-	handle = __stack_depot_save(entries, ARRAY_SIZE(entries), __GFP_HIGH,
-				    true);
-	return stack_depot_set_extra_bits(handle, extra_bits);
+	return __stack_depot_save(entries, ARRAY_SIZE(entries), extra_bits,
+				  GFP_ATOMIC, true);
 }
 
 void kmsan_internal_set_shadow_origin(void *addr, size_t size, int b,

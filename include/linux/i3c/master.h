@@ -22,10 +22,9 @@
 #define I3C_BROADCAST_ADDR		0x7e
 #define I3C_MAX_ADDR			GENMASK(6, 0)
 
-struct i2c_client;
-
 struct i3c_master_controller;
 struct i3c_bus;
+struct i2c_device;
 struct i3c_device;
 
 /**
@@ -542,7 +541,7 @@ int i3c_master_register(struct i3c_master_controller *master,
 			struct device *parent,
 			const struct i3c_master_controller_ops *ops,
 			bool secondary);
-void i3c_master_unregister(struct i3c_master_controller *master);
+int i3c_master_unregister(struct i3c_master_controller *master);
 
 /**
  * i3c_dev_get_master_data() - get master private data attached to an I3C

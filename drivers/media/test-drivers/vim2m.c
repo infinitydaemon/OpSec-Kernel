@@ -1379,7 +1379,7 @@ error_free:
 	return ret;
 }
 
-static void vim2m_remove(struct platform_device *pdev)
+static int vim2m_remove(struct platform_device *pdev)
 {
 	struct vim2m_dev *dev = platform_get_drvdata(pdev);
 
@@ -1390,11 +1390,13 @@ static void vim2m_remove(struct platform_device *pdev)
 	v4l2_m2m_unregister_media_controller(dev->m2m_dev);
 #endif
 	video_unregister_device(&dev->vfd);
+
+	return 0;
 }
 
 static struct platform_driver vim2m_pdrv = {
 	.probe		= vim2m_probe,
-	.remove_new	= vim2m_remove,
+	.remove		= vim2m_remove,
 	.driver		= {
 		.name	= MEM2MEM_NAME,
 	},

@@ -83,7 +83,7 @@ ingenic_pll_recalc_rate(struct clk_hw *hw, unsigned long parent_rate)
 	const struct ingenic_cgu_clk_info *clk_info = to_clk_info(ingenic_clk);
 	struct ingenic_cgu *cgu = ingenic_clk->cgu;
 	const struct ingenic_cgu_pll_info *pll_info;
-	unsigned m, n, od, od_enc = 0;
+	unsigned m, n, od_enc, od;
 	bool bypass;
 	u32 ctl;
 
@@ -96,11 +96,8 @@ ingenic_pll_recalc_rate(struct clk_hw *hw, unsigned long parent_rate)
 	m += pll_info->m_offset;
 	n = (ctl >> pll_info->n_shift) & GENMASK(pll_info->n_bits - 1, 0);
 	n += pll_info->n_offset;
-
-	if (pll_info->od_bits > 0) {
-		od_enc = ctl >> pll_info->od_shift;
-		od_enc &= GENMASK(pll_info->od_bits - 1, 0);
-	}
+	od_enc = ctl >> pll_info->od_shift;
+	od_enc &= GENMASK(pll_info->od_bits - 1, 0);
 
 	if (pll_info->bypass_bit >= 0) {
 		ctl = readl(cgu->base + pll_info->bypass_reg);
@@ -111,15 +108,11 @@ ingenic_pll_recalc_rate(struct clk_hw *hw, unsigned long parent_rate)
 			return parent_rate;
 	}
 
-	for (od = 0; od < pll_info->od_max; od++)
+	for (od = 0; od < pll_info->od_max; od++) {
 		if (pll_info->od_encoding[od] == od_enc)
 			break;
-
-	/* if od_max = 0, od_bits should be 0 and od is fixed to 1. */
-	if (pll_info->od_max == 0)
-		BUG_ON(pll_info->od_bits != 0);
-	else
-		BUG_ON(od == pll_info->od_max);
+	}
+	BUG_ON(od == pll_info->od_max);
 	od++;
 
 	return div_u64((u64)parent_rate * m * pll_info->rate_multiplier,
@@ -189,9 +182,6 @@ static inline int ingenic_pll_check_stable(struct ingenic_cgu *cgu,
 {
 	u32 ctl;
 
-	if (pll_info->stable_bit < 0)
-		return 0;
-
 	return readl_poll_timeout(cgu->base + pll_info->reg, ctl,
 				  ctl & BIT(pll_info->stable_bit),
 				  0, 100 * USEC_PER_MSEC);
@@ -225,18 +215,13 @@ ingenic_pll_set_rate(struct clk_hw *hw, unsigned long req_rate,
 	ctl &= ~(GENMASK(pll_info->n_bits - 1, 0) << pll_info->n_shift);
 	ctl |= (n - pll_info->n_offset) << pll_info->n_shift;
 
-	if (pll_info->od_bits > 0) {
-		ctl &= ~(GENMASK(pll_info->od_bits - 1, 0) << pll_info->od_shift);
-		ctl |= pll_info->od_encoding[od - 1] << pll_info->od_shift;
-	}
+	ctl &= ~(GENMASK(pll_info->od_bits - 1, 0) << pll_info->od_shift);
+	ctl |= pll_info->od_encoding[od - 1] << pll_info->od_shift;
 
 	writel(ctl, cgu->base + pll_info->reg);
 
-	if (pll_info->set_rate_hook)
-		pll_info->set_rate_hook(pll_info, rate, parent_rate);
-
 	/* If the PLL is enabled, verify that it's stable */
-	if (pll_info->enable_bit >= 0 && (ctl & BIT(pll_info->enable_bit)))
+	if (ctl & BIT(pll_info->enable_bit))
 		ret = ingenic_pll_check_stable(cgu, pll_info);
 
 	spin_unlock_irqrestore(&cgu->lock, flags);
@@ -253,9 +238,6 @@ static int ingenic_pll_enable(struct clk_hw *hw)
 	unsigned long flags;
 	int ret;
 	u32 ctl;
-
-	if (pll_info->enable_bit < 0)
-		return 0;
 
 	spin_lock_irqsave(&cgu->lock, flags);
 	if (pll_info->bypass_bit >= 0) {
@@ -287,9 +269,6 @@ static void ingenic_pll_disable(struct clk_hw *hw)
 	unsigned long flags;
 	u32 ctl;
 
-	if (pll_info->enable_bit < 0)
-		return;
-
 	spin_lock_irqsave(&cgu->lock, flags);
 	ctl = readl(cgu->base + pll_info->reg);
 
@@ -306,9 +285,6 @@ static int ingenic_pll_is_enabled(struct clk_hw *hw)
 	const struct ingenic_cgu_clk_info *clk_info = to_clk_info(ingenic_clk);
 	const struct ingenic_cgu_pll_info *pll_info = &clk_info->pll;
 	u32 ctl;
-
-	if (pll_info->enable_bit < 0)
-		return true;
 
 	ctl = readl(cgu->base + pll_info->reg);
 
@@ -491,23 +467,22 @@ ingenic_clk_calc_div(struct clk_hw *hw,
 	return div;
 }
 
-static int ingenic_clk_determine_rate(struct clk_hw *hw,
-				      struct clk_rate_request *req)
+static long
+ingenic_clk_round_rate(struct clk_hw *hw, unsigned long req_rate,
+		       unsigned long *parent_rate)
 {
 	struct ingenic_clk *ingenic_clk = to_ingenic_clk(hw);
 	const struct ingenic_cgu_clk_info *clk_info = to_clk_info(ingenic_clk);
 	unsigned int div = 1;
 
 	if (clk_info->type & CGU_CLK_DIV)
-		div = ingenic_clk_calc_div(hw, clk_info, req->best_parent_rate,
-					   req->rate);
+		div = ingenic_clk_calc_div(hw, clk_info, *parent_rate, req_rate);
 	else if (clk_info->type & CGU_CLK_FIXDIV)
 		div = clk_info->fixdiv.div;
 	else if (clk_hw_can_set_rate_parent(hw))
-		req->best_parent_rate = req->rate;
+		*parent_rate = req_rate;
 
-	req->rate = DIV_ROUND_UP(req->best_parent_rate, div);
-	return 0;
+	return DIV_ROUND_UP(*parent_rate, div);
 }
 
 static inline int ingenic_clk_check_stable(struct ingenic_cgu *cgu,
@@ -627,7 +602,7 @@ static const struct clk_ops ingenic_clk_ops = {
 	.set_parent = ingenic_clk_set_parent,
 
 	.recalc_rate = ingenic_clk_recalc_rate,
-	.determine_rate = ingenic_clk_determine_rate,
+	.round_rate = ingenic_clk_round_rate,
 	.set_rate = ingenic_clk_set_rate,
 
 	.enable = ingenic_clk_enable,

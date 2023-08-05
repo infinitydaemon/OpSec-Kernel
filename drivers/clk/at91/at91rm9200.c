@@ -108,12 +108,12 @@ static void __init at91rm9200_pmc_setup(struct device_node *np)
 
 	bypass = of_property_read_bool(np, "atmel,osc-bypass");
 
-	hw = at91_clk_register_main_osc(regmap, "main_osc", mainxtal_name, NULL,
+	hw = at91_clk_register_main_osc(regmap, "main_osc", mainxtal_name,
 					bypass);
 	if (IS_ERR(hw))
 		goto err_free;
 
-	hw = at91_clk_register_rm9200_main(regmap, "mainck", "main_osc", NULL);
+	hw = at91_clk_register_rm9200_main(regmap, "mainck", "main_osc");
 	if (IS_ERR(hw))
 		goto err_free;
 
@@ -140,7 +140,7 @@ static void __init at91rm9200_pmc_setup(struct device_node *np)
 	parent_names[2] = "pllack";
 	parent_names[3] = "pllbck";
 	hw = at91_clk_register_master_pres(regmap, "masterck_pres", 4,
-					   parent_names, NULL,
+					   parent_names,
 					   &at91rm9200_master_layout,
 					   &rm9200_mck_characteristics,
 					   &rm9200_mck_lock);
@@ -148,7 +148,7 @@ static void __init at91rm9200_pmc_setup(struct device_node *np)
 		goto err_free;
 
 	hw = at91_clk_register_master_div(regmap, "masterck_div",
-					  "masterck_pres", NULL,
+					  "masterck_pres",
 					  &at91rm9200_master_layout,
 					  &rm9200_mck_characteristics,
 					  &rm9200_mck_lock, CLK_SET_RATE_GATE, 0);
@@ -171,7 +171,7 @@ static void __init at91rm9200_pmc_setup(struct device_node *np)
 		snprintf(name, sizeof(name), "prog%d", i);
 
 		hw = at91_clk_register_programmable(regmap, name,
-						    parent_names, NULL, 4, i,
+						    parent_names, 4, i,
 						    &at91rm9200_programmable_layout,
 						    NULL);
 		if (IS_ERR(hw))
@@ -182,8 +182,8 @@ static void __init at91rm9200_pmc_setup(struct device_node *np)
 
 	for (i = 0; i < ARRAY_SIZE(at91rm9200_systemck); i++) {
 		hw = at91_clk_register_system(regmap, at91rm9200_systemck[i].n,
-					      at91rm9200_systemck[i].p, NULL,
-					      at91rm9200_systemck[i].id, 0);
+					      at91rm9200_systemck[i].p,
+					      at91rm9200_systemck[i].id);
 		if (IS_ERR(hw))
 			goto err_free;
 
@@ -193,7 +193,7 @@ static void __init at91rm9200_pmc_setup(struct device_node *np)
 	for (i = 0; i < ARRAY_SIZE(at91rm9200_periphck); i++) {
 		hw = at91_clk_register_peripheral(regmap,
 						  at91rm9200_periphck[i].n,
-						  "masterck_div", NULL,
+						  "masterck_div",
 						  at91rm9200_periphck[i].id);
 		if (IS_ERR(hw))
 			goto err_free;

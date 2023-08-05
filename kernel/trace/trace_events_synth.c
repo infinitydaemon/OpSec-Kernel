@@ -456,15 +456,16 @@ static unsigned int trace_string(struct synth_trace_event *entry,
 	if (is_dynamic) {
 		u32 data_offset;
 
-		data_offset = struct_size(entry, fields, event->n_u64);
+		data_offset = offsetof(typeof(*entry), fields);
+		data_offset += event->n_u64 * sizeof(u64);
 		data_offset += data_size;
 
-		len = fetch_store_strlen((unsigned long)str_val);
+		len = kern_fetch_store_strlen((unsigned long)str_val);
 
 		data_offset |= len << 16;
 		*(u32 *)&entry->fields[*n_u64] = data_offset;
 
-		ret = fetch_store_string((unsigned long)str_val, &entry->fields[*n_u64], entry);
+		ret = kern_fetch_store_string((unsigned long)str_val, &entry->fields[*n_u64], entry);
 
 		(*n_u64)++;
 	} else {
@@ -549,12 +550,7 @@ static notrace void trace_event_raw_event_synth(void *__data,
 		val_idx = var_ref_idx[field_pos];
 		str_val = (char *)(long)var_ref_vals[val_idx];
 
-		if (event->dynamic_fields[i]->is_stack) {
-			len = *((unsigned long *)str_val);
-			len *= sizeof(unsigned long);
-		} else {
-			len = fetch_store_strlen((unsigned long)str_val);
-		}
+		len = kern_fetch_store_strlen((unsigned long)str_val);
 
 		fields_size += len;
 	}

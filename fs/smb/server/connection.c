@@ -112,8 +112,10 @@ void ksmbd_conn_enqueue_request(struct ksmbd_work *work)
 	struct ksmbd_conn *conn = work->conn;
 	struct list_head *requests_queue = NULL;
 
-	if (conn->ops->get_cmd_val(work) != SMB2_CANCEL_HE)
+	if (conn->ops->get_cmd_val(work) != SMB2_CANCEL_HE) {
 		requests_queue = &conn->requests;
+		work->syncronous = true;
+	}
 
 	if (requests_queue) {
 		atomic_inc(&conn->req_running);
@@ -134,14 +136,14 @@ int ksmbd_conn_try_dequeue_request(struct ksmbd_work *work)
 
 	if (!work->multiRsp)
 		atomic_dec(&conn->req_running);
+	spin_lock(&conn->request_lock);
 	if (!work->multiRsp) {
-		spin_lock(&conn->request_lock);
 		list_del_init(&work->request_entry);
-		spin_unlock(&conn->request_lock);
-		if (work->asynchronous)
-			release_async_work(work);
+		if (work->syncronous == false)
+			list_del_init(&work->async_request_entry);
 		ret = 0;
 	}
+	spin_unlock(&conn->request_lock);
 
 	wake_up_all(&conn->req_running_q);
 	return ret;
@@ -341,7 +343,7 @@ int ksmbd_conn_handler_loop(void *p)
 			max_allowed_pdu_size = SMB3_MAX_MSGSIZE;
 
 		if (pdu_size > max_allowed_pdu_size) {
-			pr_err_ratelimited("PDU length(%u) exceeded maximum allowed pdu size(%u) on connection(%d)\n",
+			pr_err_ratelimited("PDU length(%u) excceed maximum allowed pdu size(%u) on connection(%d)\n",
 					pdu_size, max_allowed_pdu_size,
 					READ_ONCE(conn->status));
 			break;

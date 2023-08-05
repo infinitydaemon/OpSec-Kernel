@@ -1714,7 +1714,7 @@ cleanup:
  *
  * The vidoe device is unregistered
  */
-static void vpif_remove(struct platform_device *device)
+static int vpif_remove(struct platform_device *device)
 {
 	struct channel_obj *ch;
 	int i;
@@ -1732,6 +1732,7 @@ static void vpif_remove(struct platform_device *device)
 		video_unregister_device(&ch->video_dev);
 		kfree(vpif_obj.dev[i]);
 	}
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -1814,7 +1815,7 @@ static __refdata struct platform_driver vpif_driver = {
 		.pm	= &vpif_pm_ops,
 	},
 	.probe = vpif_probe,
-	.remove_new = vpif_remove,
+	.remove = vpif_remove,
 };
 
 module_platform_driver(vpif_driver);

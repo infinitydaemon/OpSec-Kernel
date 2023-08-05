@@ -26,6 +26,7 @@
 #include <linux/random.h>
 #include <linux/rcupdate.h>
 #include <linux/sched/clock.h>
+#include <linux/sched/sysctl.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
@@ -297,13 +298,20 @@ metadata_update_state(struct kfence_metadata *meta, enum kfence_object_state nex
 	WRITE_ONCE(meta->state, next);
 }
 
+/* Write canary byte to @addr. */
+static inline bool set_canary_byte(u8 *addr)
+{
+	*addr = KFENCE_CANARY_PATTERN(addr);
+	return true;
+}
+
 /* Check canary byte at @addr. */
 static inline bool check_canary_byte(u8 *addr)
 {
 	struct kfence_metadata *meta;
 	unsigned long flags;
 
-	if (likely(*addr == KFENCE_CANARY_PATTERN_U8(addr)))
+	if (likely(*addr == KFENCE_CANARY_PATTERN(addr)))
 		return true;
 
 	atomic_long_inc(&counters[KFENCE_COUNTER_BUGS]);
@@ -316,31 +324,15 @@ static inline bool check_canary_byte(u8 *addr)
 	return false;
 }
 
-static inline void set_canary(const struct kfence_metadata *meta)
+/* __always_inline this to ensure we won't do an indirect call to fn. */
+static __always_inline void for_each_canary(const struct kfence_metadata *meta, bool (*fn)(u8 *))
 {
 	const unsigned long pageaddr = ALIGN_DOWN(meta->addr, PAGE_SIZE);
-	unsigned long addr = pageaddr;
+	unsigned long addr;
 
 	/*
-	 * The canary may be written to part of the object memory, but it does
-	 * not affect it. The user should initialize the object before using it.
-	 */
-	for (; addr < meta->addr; addr += sizeof(u64))
-		*((u64 *)addr) = KFENCE_CANARY_PATTERN_U64;
-
-	addr = ALIGN_DOWN(meta->addr + meta->size, sizeof(u64));
-	for (; addr - pageaddr < PAGE_SIZE; addr += sizeof(u64))
-		*((u64 *)addr) = KFENCE_CANARY_PATTERN_U64;
-}
-
-static inline void check_canary(const struct kfence_metadata *meta)
-{
-	const unsigned long pageaddr = ALIGN_DOWN(meta->addr, PAGE_SIZE);
-	unsigned long addr = pageaddr;
-
-	/*
-	 * We'll iterate over each canary byte per-side until a corrupted byte
-	 * is found. However, we'll still iterate over the canary bytes to the
+	 * We'll iterate over each canary byte per-side until fn() returns
+	 * false. However, we'll still iterate over the canary bytes to the
 	 * right of the object even if there was an error in the canary bytes to
 	 * the left of the object. Specifically, if check_canary_byte()
 	 * generates an error, showing both sides might give more clues as to
@@ -348,34 +340,15 @@ static inline void check_canary(const struct kfence_metadata *meta)
 	 */
 
 	/* Apply to left of object. */
-	for (; meta->addr - addr >= sizeof(u64); addr += sizeof(u64)) {
-		if (unlikely(*((u64 *)addr) != KFENCE_CANARY_PATTERN_U64))
-			break;
-	}
-
-	/*
-	 * If the canary is corrupted in a certain 64 bytes, or the canary
-	 * memory cannot be completely covered by multiple consecutive 64 bytes,
-	 * it needs to be checked one by one.
-	 */
-	for (; addr < meta->addr; addr++) {
-		if (unlikely(!check_canary_byte((u8 *)addr)))
+	for (addr = pageaddr; addr < meta->addr; addr++) {
+		if (!fn((u8 *)addr))
 			break;
 	}
 
 	/* Apply to right of object. */
-	for (addr = meta->addr + meta->size; addr % sizeof(u64) != 0; addr++) {
-		if (unlikely(!check_canary_byte((u8 *)addr)))
-			return;
-	}
-	for (; addr - pageaddr < PAGE_SIZE; addr += sizeof(u64)) {
-		if (unlikely(*((u64 *)addr) != KFENCE_CANARY_PATTERN_U64)) {
-
-			for (; addr - pageaddr < PAGE_SIZE; addr++) {
-				if (!check_canary_byte((u8 *)addr))
-					return;
-			}
-		}
+	for (addr = meta->addr + meta->size; addr < pageaddr + PAGE_SIZE; addr++) {
+		if (!fn((u8 *)addr))
+			break;
 	}
 }
 
@@ -387,9 +360,9 @@ static void *kfence_guarded_alloc(struct kmem_cache *cache, size_t size, gfp_t g
 	unsigned long flags;
 	struct slab *slab;
 	void *addr;
-	const bool random_right_allocate = get_random_u32_below(2);
+	const bool random_right_allocate = prandom_u32_max(2);
 	const bool random_fault = CONFIG_KFENCE_STRESS_TEST_FAULTS &&
-				  !get_random_u32_below(CONFIG_KFENCE_STRESS_TEST_FAULTS);
+				  !prandom_u32_max(CONFIG_KFENCE_STRESS_TEST_FAULTS);
 
 	/* Try to obtain a free object. */
 	raw_spin_lock_irqsave(&kfence_freelist_lock, flags);
@@ -462,7 +435,7 @@ static void *kfence_guarded_alloc(struct kmem_cache *cache, size_t size, gfp_t g
 #endif
 
 	/* Memory initialization. */
-	set_canary(meta);
+	for_each_canary(meta, set_canary_byte);
 
 	/*
 	 * We check slab_want_init_on_alloc() ourselves, rather than letting
@@ -523,7 +496,7 @@ static void kfence_guarded_free(void *addr, struct kfence_metadata *meta, bool z
 	alloc_covered_add(meta->alloc_stack_hash, -1);
 
 	/* Check canary bytes for memory corruption. */
-	check_canary(meta);
+	for_each_canary(meta, check_canary_byte);
 
 	/*
 	 * Clear memory if init-on-free is set. While we protect the page, the
@@ -779,7 +752,7 @@ static void kfence_check_all_canary(void)
 		struct kfence_metadata *meta = &kfence_metadata[i];
 
 		if (meta->state == KFENCE_OBJECT_ALLOCATED)
-			check_canary(meta);
+			for_each_canary(meta, check_canary_byte);
 	}
 }
 
@@ -830,7 +803,16 @@ static void toggle_allocation_gate(struct work_struct *work)
 	/* Enable static key, and await allocation to happen. */
 	static_branch_enable(&kfence_allocation_key);
 
-	wait_event_idle(allocation_wait, atomic_read(&kfence_allocation_gate));
+	if (sysctl_hung_task_timeout_secs) {
+		/*
+		 * During low activity with no allocations we might wait a
+		 * while; let's avoid the hung task warning.
+		 */
+		wait_event_idle_timeout(allocation_wait, atomic_read(&kfence_allocation_gate),
+					sysctl_hung_task_timeout_secs * HZ / 2);
+	} else {
+		wait_event_idle(allocation_wait, atomic_read(&kfence_allocation_gate));
+	}
 
 	/* Disable static key and reset timer. */
 	static_branch_disable(&kfence_allocation_key);
@@ -844,10 +826,6 @@ static void toggle_allocation_gate(struct work_struct *work)
 void __init kfence_alloc_pool(void)
 {
 	if (!kfence_sample_interval)
-		return;
-
-	/* if the pool has already been initialized by arch, skip the below. */
-	if (__kfence_pool)
 		return;
 
 	__kfence_pool = memblock_alloc(KFENCE_POOL_SIZE, PAGE_SIZE);

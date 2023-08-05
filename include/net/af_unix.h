@@ -11,7 +11,6 @@
 void unix_inflight(struct user_struct *user, struct file *fp);
 void unix_notinflight(struct user_struct *user, struct file *fp);
 void unix_destruct_scm(struct sk_buff *skb);
-void io_uring_destruct_scm(struct sk_buff *skb);
 void unix_gc(void);
 void wait_for_unix_gc(void);
 struct sock *unix_get_socket(struct file *filp);
@@ -74,7 +73,10 @@ struct unix_sock {
 #endif
 };
 
-#define unix_sk(ptr) container_of_const(ptr, struct unix_sock, sk)
+static inline struct unix_sock *unix_sk(const struct sock *sk)
+{
+	return (struct unix_sock *)sk;
+}
 
 #define peer_wait peer_wq.wait
 

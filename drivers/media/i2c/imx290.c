@@ -1410,7 +1410,7 @@ static int imx290_runtime_suspend(struct device *dev)
 }
 
 static const struct dev_pm_ops imx290_pm_ops = {
-	RUNTIME_PM_OPS(imx290_runtime_suspend, imx290_runtime_resume, NULL)
+	SET_RUNTIME_PM_OPS(imx290_runtime_suspend, imx290_runtime_resume, NULL)
 };
 
 /* ----------------------------------------------------------------------------
@@ -1602,7 +1602,7 @@ static int imx290_probe(struct i2c_client *client)
 	imx290->xclk = devm_clk_get(dev, "xclk");
 	if (IS_ERR(imx290->xclk))
 		return dev_err_probe(dev, PTR_ERR(imx290->xclk),
-				     "Could not get xclk\n");
+				     "Could not get xclk");
 
 	ret = imx290_get_regulators(dev, imx290);
 	if (ret < 0)
@@ -1716,12 +1716,12 @@ static const struct of_device_id imx290_of_match[] = {
 MODULE_DEVICE_TABLE(of, imx290_of_match);
 
 static struct i2c_driver imx290_i2c_driver = {
-	.probe = imx290_probe,
+	.probe_new  = imx290_probe,
 	.remove = imx290_remove,
 	.driver = {
-		.name = "imx290",
-		.pm = pm_ptr(&imx290_pm_ops),
-		.of_match_table = imx290_of_match,
+		.name  = "imx290",
+		.pm = &imx290_pm_ops,
+		.of_match_table = of_match_ptr(imx290_of_match),
 	},
 };
 

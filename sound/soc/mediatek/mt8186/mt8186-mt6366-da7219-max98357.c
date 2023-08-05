@@ -10,10 +10,11 @@
 #include <linux/input.h>
 #include <linux/module.h>
 #include <linux/of_device.h>
-#include <sound/jack.h>
+#include <linux/pm_runtime.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
 
+#include "../../codecs/da7219-aad.h"
 #include "../../codecs/da7219.h"
 #include "../../codecs/mt6358.h"
 #include "../common/mtk-afe-platform-driver.h"
@@ -99,7 +100,7 @@ static int mt8186_da7219_init(struct snd_soc_pcm_runtime *rtd)
 	snd_jack_set_key(jack->jack, SND_JACK_BTN_2, KEY_VOLUMEDOWN);
 	snd_jack_set_key(jack->jack, SND_JACK_BTN_3, KEY_VOICECOMMAND);
 
-	snd_soc_component_set_jack(cmpnt_codec, &priv->headset_jack, NULL);
+	da7219_aad_jack_det(cmpnt_codec, &priv->headset_jack);
 
 	return 0;
 }
@@ -1060,7 +1061,7 @@ static int mt8186_mt6366_da7219_max98357_dev_probe(struct platform_device *pdev)
 		card->name = card->topology_shortname;
 		sof_on = 1;
 	} else {
-		dev_dbg(&pdev->dev, "Probe without adsp\n");
+		dev_info(&pdev->dev, "Probe without adsp\n");
 	}
 
 	if (of_property_read_bool(pdev->dev.of_node, "mediatek,dai-link")) {
@@ -1160,7 +1161,6 @@ static const struct of_device_id mt8186_mt6366_da7219_max98357_dt_match[] = {
 	},
 	{}
 };
-MODULE_DEVICE_TABLE(of, mt8186_mt6366_da7219_max98357_dt_match);
 #endif
 
 static struct platform_driver mt8186_mt6366_da7219_max98357_driver = {

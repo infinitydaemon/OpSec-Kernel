@@ -29,7 +29,8 @@ static const struct regmap_irq rt5033_irqs[] = {
 static const struct regmap_irq_chip rt5033_irq_chip = {
 	.name		= "rt5033",
 	.status_base	= RT5033_REG_PMIC_IRQ_STAT,
-	.unmask_base	= RT5033_REG_PMIC_IRQ_CTRL,
+	.mask_base	= RT5033_REG_PMIC_IRQ_CTRL,
+	.mask_invert	= true,
 	.num_regs	= 1,
 	.irqs		= rt5033_irqs,
 	.num_irqs	= ARRAY_SIZE(rt5033_irqs),
@@ -52,10 +53,11 @@ static const struct regmap_config rt5033_regmap_config = {
 	.max_register	= RT5033_REG_END,
 };
 
-static int rt5033_i2c_probe(struct i2c_client *i2c)
+static int rt5033_i2c_probe(struct i2c_client *i2c,
+				const struct i2c_device_id *id)
 {
 	struct rt5033_dev *rt5033;
-	unsigned int dev_id, chip_rev;
+	unsigned int dev_id;
 	int ret;
 
 	rt5033 = devm_kzalloc(&i2c->dev, sizeof(*rt5033), GFP_KERNEL);
@@ -78,8 +80,7 @@ static int rt5033_i2c_probe(struct i2c_client *i2c)
 		dev_err(&i2c->dev, "Device not found\n");
 		return -ENODEV;
 	}
-	chip_rev = dev_id & RT5033_CHIP_REV_MASK;
-	dev_info(&i2c->dev, "Device found (rev. %d)\n", chip_rev);
+	dev_info(&i2c->dev, "Device found Device ID: %04x\n", dev_id);
 
 	ret = regmap_add_irq_chip(rt5033->regmap, rt5033->irq,
 			IRQF_TRIGGER_FALLING | IRQF_ONESHOT,

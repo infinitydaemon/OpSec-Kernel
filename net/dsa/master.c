@@ -6,15 +6,7 @@
  *	Vivien Didelot <vivien.didelot@savoirfairelinux.com>
  */
 
-#include <linux/ethtool.h>
-#include <linux/netdevice.h>
-#include <linux/netlink.h>
-#include <net/dsa.h>
-
-#include "dsa.h"
-#include "master.h"
-#include "port.h"
-#include "tag.h"
+#include "dsa_priv.h"
 
 static int dsa_master_get_regs_len(struct net_device *dev)
 {
@@ -195,30 +187,37 @@ static void dsa_master_get_strings(struct net_device *dev, uint32_t stringset,
 	}
 }
 
-/* Deny PTP operations on master if there is at least one switch in the tree
- * that is PTP capable.
- */
-int __dsa_master_hwtstamp_validate(struct net_device *dev,
-				   const struct kernel_hwtstamp_config *config,
-				   struct netlink_ext_ack *extack)
+static int dsa_master_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 {
 	struct dsa_port *cpu_dp = dev->dsa_ptr;
 	struct dsa_switch *ds = cpu_dp->ds;
 	struct dsa_switch_tree *dst;
+	int err = -EOPNOTSUPP;
 	struct dsa_port *dp;
 
 	dst = ds->dst;
 
-	list_for_each_entry(dp, &dst->ports, list) {
-		if (dsa_port_supports_hwtstamp(dp)) {
-			NL_SET_ERR_MSG(extack,
-				       "HW timestamping not allowed on DSA master when switch supports the operation");
-			return -EBUSY;
-		}
+	switch (cmd) {
+	case SIOCGHWTSTAMP:
+	case SIOCSHWTSTAMP:
+		/* Deny PTP operations on master if there is at least one
+		 * switch in the tree that is PTP capable.
+		 */
+		list_for_each_entry(dp, &dst->ports, list)
+			if (dsa_port_supports_hwtstamp(dp, ifr))
+				return -EBUSY;
+		break;
 	}
 
-	return 0;
+	if (dev->netdev_ops->ndo_eth_ioctl)
+		err = dev->netdev_ops->ndo_eth_ioctl(dev, ifr, cmd);
+
+	return err;
 }
+
+static const struct dsa_netdevice_ops dsa_netdev_ops = {
+	.ndo_eth_ioctl = dsa_master_ioctl,
+};
 
 static int dsa_master_ethtool_setup(struct net_device *dev)
 {
@@ -260,6 +259,15 @@ static void dsa_master_ethtool_teardown(struct net_device *dev)
 	cpu_dp->orig_ethtool_ops = NULL;
 }
 
+static void dsa_netdev_ops_set(struct net_device *dev,
+			       const struct dsa_netdevice_ops *ops)
+{
+	if (netif_is_lag_master(dev))
+		return;
+
+	dev->dsa_ptr->netdev_ops = ops;
+}
+
 /* Keep the master always promiscuous if the tagging protocol requires that
  * (garbles MAC DA) or if it doesn't support unicast filtering, case in which
  * it would revert to promiscuous mode as soon as we call dev_uc_add() on it
@@ -283,7 +291,7 @@ static ssize_t tagging_show(struct device *d, struct device_attribute *attr,
 	struct net_device *dev = to_net_dev(d);
 	struct dsa_port *cpu_dp = dev->dsa_ptr;
 
-	return sysfs_emit(buf, "%s\n",
+	return sprintf(buf, "%s\n",
 		       dsa_tag_protocol_to_str(cpu_dp->tag_ops));
 }
 
@@ -291,24 +299,13 @@ static ssize_t tagging_store(struct device *d, struct device_attribute *attr,
 			     const char *buf, size_t count)
 {
 	const struct dsa_device_ops *new_tag_ops, *old_tag_ops;
-	const char *end = strchrnul(buf, '\n'), *name;
 	struct net_device *dev = to_net_dev(d);
 	struct dsa_port *cpu_dp = dev->dsa_ptr;
-	size_t len = end - buf;
 	int err;
 
-	/* Empty string passed */
-	if (!len)
-		return -ENOPROTOOPT;
-
-	name = kstrndup(buf, len, GFP_KERNEL);
-	if (!name)
-		return -ENOMEM;
-
 	old_tag_ops = cpu_dp->tag_ops;
-	new_tag_ops = dsa_tag_driver_get_by_name(name);
-	kfree(name);
-	/* Bad tagger name? */
+	new_tag_ops = dsa_find_tagger_by_name(buf);
+	/* Bad tagger name, or module is not loaded? */
 	if (IS_ERR(new_tag_ops))
 		return PTR_ERR(new_tag_ops);
 
@@ -398,13 +395,16 @@ int dsa_master_setup(struct net_device *dev, struct dsa_port *cpu_dp)
 	if (ret)
 		goto out_err_reset_promisc;
 
+	dsa_netdev_ops_set(dev, &dsa_netdev_ops);
+
 	ret = sysfs_create_group(&dev->dev.kobj, &dsa_group);
 	if (ret)
-		goto out_err_ethtool_teardown;
+		goto out_err_ndo_teardown;
 
 	return ret;
 
-out_err_ethtool_teardown:
+out_err_ndo_teardown:
+	dsa_netdev_ops_set(dev, NULL);
 	dsa_master_ethtool_teardown(dev);
 out_err_reset_promisc:
 	dsa_master_set_promiscuity(dev, -1);
@@ -414,6 +414,7 @@ out_err_reset_promisc:
 void dsa_master_teardown(struct net_device *dev)
 {
 	sysfs_remove_group(&dev->dev.kobj, &dsa_group);
+	dsa_netdev_ops_set(dev, NULL);
 	dsa_master_ethtool_teardown(dev);
 	dsa_master_reset_mtu(dev);
 	dsa_master_set_promiscuity(dev, -1);
@@ -444,7 +445,9 @@ int dsa_master_lag_setup(struct net_device *lag_dev, struct dsa_port *cpu_dp,
 
 	err = dsa_port_lag_join(cpu_dp, lag_dev, uinfo, extack);
 	if (err) {
-		NL_SET_ERR_MSG_WEAK_MOD(extack, "CPU port failed to join LAG");
+		if (extack && !extack->_msg)
+			NL_SET_ERR_MSG_MOD(extack,
+					   "CPU port failed to join LAG");
 		goto out_master_teardown;
 	}
 

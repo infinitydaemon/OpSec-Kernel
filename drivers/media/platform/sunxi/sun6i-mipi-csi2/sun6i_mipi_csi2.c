@@ -188,8 +188,7 @@ static int sun6i_mipi_csi2_s_stream(struct v4l2_subdev *subdev, int on)
 		return -ENODEV;
 
 	if (!on) {
-		v4l2_subdev_call(source_subdev, video, s_stream, 0);
-		ret = 0;
+		ret = v4l2_subdev_call(source_subdev, video, s_stream, 0);
 		goto disable;
 	}
 
@@ -281,6 +280,8 @@ static int sun6i_mipi_csi2_s_stream(struct v4l2_subdev *subdev, int on)
 	return 0;
 
 disable:
+	if (!on)
+		ret = 0;
 	phy_power_off(dphy);
 	sun6i_mipi_csi2_disable(csi2_dev);
 
@@ -737,13 +738,15 @@ error_resources:
 	return ret;
 }
 
-static void sun6i_mipi_csi2_remove(struct platform_device *platform_dev)
+static int sun6i_mipi_csi2_remove(struct platform_device *platform_dev)
 {
 	struct sun6i_mipi_csi2_device *csi2_dev =
 		platform_get_drvdata(platform_dev);
 
 	sun6i_mipi_csi2_bridge_cleanup(csi2_dev);
 	sun6i_mipi_csi2_resources_cleanup(csi2_dev);
+
+	return 0;
 }
 
 static const struct of_device_id sun6i_mipi_csi2_of_match[] = {
@@ -754,7 +757,7 @@ MODULE_DEVICE_TABLE(of, sun6i_mipi_csi2_of_match);
 
 static struct platform_driver sun6i_mipi_csi2_platform_driver = {
 	.probe	= sun6i_mipi_csi2_probe,
-	.remove_new = sun6i_mipi_csi2_remove,
+	.remove	= sun6i_mipi_csi2_remove,
 	.driver	= {
 		.name		= SUN6I_MIPI_CSI2_NAME,
 		.of_match_table	= of_match_ptr(sun6i_mipi_csi2_of_match),

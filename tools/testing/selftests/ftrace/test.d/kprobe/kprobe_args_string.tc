@@ -28,9 +28,6 @@ s390*)
 mips*)
   ARG1=%r4
 ;;
-loongarch*)
-  ARG1=%r4
-;;
 *)
   echo "Please implement other architecture here"
   exit_untested

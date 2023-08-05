@@ -21,7 +21,7 @@ static int init_alloc_hint(struct sbitmap *sb, gfp_t flags)
 		int i;
 
 		for_each_possible_cpu(i)
-			*per_cpu_ptr(sb->alloc_hint, i) = get_random_u32_below(depth);
+			*per_cpu_ptr(sb->alloc_hint, i) = prandom_u32_max(depth);
 	}
 	return 0;
 }
@@ -33,7 +33,7 @@ static inline unsigned update_alloc_hint_before_get(struct sbitmap *sb,
 
 	hint = this_cpu_read(*sb->alloc_hint);
 	if (unlikely(hint >= depth)) {
-		hint = depth ? get_random_u32_below(depth) : 0;
+		hint = depth ? prandom_u32_max(depth) : 0;
 		this_cpu_write(*sb->alloc_hint, hint);
 	}
 
@@ -167,16 +167,15 @@ static int __sbitmap_get_word(unsigned long *word, unsigned long depth,
 	return nr;
 }
 
-static int sbitmap_find_bit_in_word(struct sbitmap_word *map,
-				    unsigned int depth,
-				    unsigned int alloc_hint,
-				    bool wrap)
+static int sbitmap_find_bit_in_index(struct sbitmap *sb, int index,
+				     unsigned int alloc_hint)
 {
+	struct sbitmap_word *map = &sb->map[index];
 	int nr;
 
 	do {
-		nr = __sbitmap_get_word(&map->word, depth,
-					alloc_hint, wrap);
+		nr = __sbitmap_get_word(&map->word, __map_depth(sb, index),
+					alloc_hint, !sb->round_robin);
 		if (nr != -1)
 			break;
 		if (!sbitmap_deferred_clear(map))
@@ -186,39 +185,10 @@ static int sbitmap_find_bit_in_word(struct sbitmap_word *map,
 	return nr;
 }
 
-static int sbitmap_find_bit(struct sbitmap *sb,
-			    unsigned int depth,
-			    unsigned int index,
-			    unsigned int alloc_hint,
-			    bool wrap)
-{
-	unsigned int i;
-	int nr = -1;
-
-	for (i = 0; i < sb->map_nr; i++) {
-		nr = sbitmap_find_bit_in_word(&sb->map[index],
-					      min_t(unsigned int,
-						    __map_depth(sb, index),
-						    depth),
-					      alloc_hint, wrap);
-
-		if (nr != -1) {
-			nr += index << sb->shift;
-			break;
-		}
-
-		/* Jump to next index. */
-		alloc_hint = 0;
-		if (++index >= sb->map_nr)
-			index = 0;
-	}
-
-	return nr;
-}
-
 static int __sbitmap_get(struct sbitmap *sb, unsigned int alloc_hint)
 {
-	unsigned int index;
+	unsigned int i, index;
+	int nr = -1;
 
 	index = SB_NR_TO_INDEX(sb, alloc_hint);
 
@@ -232,8 +202,20 @@ static int __sbitmap_get(struct sbitmap *sb, unsigned int alloc_hint)
 	else
 		alloc_hint = 0;
 
-	return sbitmap_find_bit(sb, UINT_MAX, index, alloc_hint,
-				!sb->round_robin);
+	for (i = 0; i < sb->map_nr; i++) {
+		nr = sbitmap_find_bit_in_index(sb, index, alloc_hint);
+		if (nr != -1) {
+			nr += index << sb->shift;
+			break;
+		}
+
+		/* Jump to next index. */
+		alloc_hint = 0;
+		if (++index >= sb->map_nr)
+			index = 0;
+	}
+
+	return nr;
 }
 
 int sbitmap_get(struct sbitmap *sb)
@@ -257,12 +239,37 @@ static int __sbitmap_get_shallow(struct sbitmap *sb,
 				 unsigned int alloc_hint,
 				 unsigned long shallow_depth)
 {
-	unsigned int index;
+	unsigned int i, index;
+	int nr = -1;
 
 	index = SB_NR_TO_INDEX(sb, alloc_hint);
-	alloc_hint = SB_NR_TO_BIT(sb, alloc_hint);
 
-	return sbitmap_find_bit(sb, shallow_depth, index, alloc_hint, true);
+	for (i = 0; i < sb->map_nr; i++) {
+again:
+		nr = __sbitmap_get_word(&sb->map[index].word,
+					min_t(unsigned int,
+					      __map_depth(sb, index),
+					      shallow_depth),
+					SB_NR_TO_BIT(sb, alloc_hint), true);
+		if (nr != -1) {
+			nr += index << sb->shift;
+			break;
+		}
+
+		if (sbitmap_deferred_clear(&sb->map[index]))
+			goto again;
+
+		/* Jump to next index. */
+		index++;
+		alloc_hint = index << sb->shift;
+
+		if (index >= sb->map_nr) {
+			index = 0;
+			alloc_hint = 0;
+		}
+	}
+
+	return nr;
 }
 
 int sbitmap_get_shallow(struct sbitmap *sb, unsigned long shallow_depth)
@@ -550,7 +557,7 @@ EXPORT_SYMBOL_GPL(sbitmap_queue_min_shallow_depth);
 
 static void __sbitmap_queue_wake_up(struct sbitmap_queue *sbq, int nr)
 {
-	int i, wake_index, woken;
+	int i, wake_index;
 
 	if (!atomic_read(&sbq->ws_active))
 		return;
@@ -567,12 +574,13 @@ static void __sbitmap_queue_wake_up(struct sbitmap_queue *sbq, int nr)
 		 */
 		wake_index = sbq_index_inc(wake_index);
 
-		if (waitqueue_active(&ws->wait)) {
-			woken = wake_up_nr(&ws->wait, nr);
-			if (woken == nr)
-				break;
-			nr -= woken;
-		}
+		/*
+		 * It is sufficient to wake up at least one waiter to
+		 * guarantee forward progress.
+		 */
+		if (waitqueue_active(&ws->wait) &&
+		    wake_up_nr(&ws->wait, nr))
+			break;
 	}
 
 	if (wake_index != atomic_read(&sbq->wake_index))

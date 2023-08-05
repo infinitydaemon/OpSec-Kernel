@@ -1884,7 +1884,8 @@ static int isp_initialize_modules(struct isp_device *isp)
 
 	ret = omap3isp_ccp2_init(isp);
 	if (ret < 0) {
-		dev_err_probe(isp->dev, ret, "CCP2 initialization failed\n");
+		if (ret != -EPROBE_DEFER)
+			dev_err(isp->dev, "CCP2 initialization failed\n");
 		goto error_ccp2;
 	}
 
@@ -1997,7 +1998,7 @@ error:
  *
  * Always returns 0.
  */
-static void isp_remove(struct platform_device *pdev)
+static int isp_remove(struct platform_device *pdev)
 {
 	struct isp_device *isp = platform_get_drvdata(pdev);
 
@@ -2014,6 +2015,8 @@ static void isp_remove(struct platform_device *pdev)
 	v4l2_async_nf_cleanup(&isp->notifier);
 
 	kfree(isp);
+
+	return 0;
 }
 
 enum isp_of_phy {
@@ -2474,7 +2477,7 @@ MODULE_DEVICE_TABLE(of, omap3isp_of_table);
 
 static struct platform_driver omap3isp_driver = {
 	.probe = isp_probe,
-	.remove_new = isp_remove,
+	.remove = isp_remove,
 	.id_table = omap3isp_id_table,
 	.driver = {
 		.name = "omap3isp",

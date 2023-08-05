@@ -124,11 +124,9 @@ static int nf_trace_fill_pkt_info(struct sk_buff *nlskb,
 }
 
 static int nf_trace_fill_rule_info(struct sk_buff *nlskb,
-				   const struct nft_verdict *verdict,
-				   const struct nft_rule_dp *rule,
 				   const struct nft_traceinfo *info)
 {
-	if (!rule || rule->is_last)
+	if (!info->rule || info->rule->is_last)
 		return 0;
 
 	/* a continue verdict with ->type == RETURN means that this is
@@ -137,16 +135,15 @@ static int nf_trace_fill_rule_info(struct sk_buff *nlskb,
 	 * Since no rule matched, the ->rule pointer is invalid.
 	 */
 	if (info->type == NFT_TRACETYPE_RETURN &&
-	    verdict->code == NFT_CONTINUE)
+	    info->verdict->code == NFT_CONTINUE)
 		return 0;
 
 	return nla_put_be64(nlskb, NFTA_TRACE_RULE_HANDLE,
-			    cpu_to_be64(rule->handle),
+			    cpu_to_be64(info->rule->handle),
 			    NFTA_TRACE_PAD);
 }
 
-static bool nft_trace_have_verdict_chain(const struct nft_verdict *verdict,
-					 struct nft_traceinfo *info)
+static bool nft_trace_have_verdict_chain(struct nft_traceinfo *info)
 {
 	switch (info->type) {
 	case NFT_TRACETYPE_RETURN:
@@ -156,7 +153,7 @@ static bool nft_trace_have_verdict_chain(const struct nft_verdict *verdict,
 		return false;
 	}
 
-	switch (verdict->code) {
+	switch (info->verdict->code) {
 	case NFT_JUMP:
 	case NFT_GOTO:
 		break;
@@ -167,31 +164,9 @@ static bool nft_trace_have_verdict_chain(const struct nft_verdict *verdict,
 	return true;
 }
 
-static const struct nft_chain *nft_trace_get_chain(const struct nft_rule_dp *rule,
-						   const struct nft_traceinfo *info)
+void nft_trace_notify(struct nft_traceinfo *info)
 {
-	const struct nft_rule_dp_last *last;
-
-	if (!rule)
-		return &info->basechain->chain;
-
-	while (!rule->is_last)
-		rule = nft_rule_next(rule);
-
-	last = (const struct nft_rule_dp_last *)rule;
-
-	if (WARN_ON_ONCE(!last->chain))
-		return &info->basechain->chain;
-
-	return last->chain;
-}
-
-void nft_trace_notify(const struct nft_pktinfo *pkt,
-		      const struct nft_verdict *verdict,
-		      const struct nft_rule_dp *rule,
-		      struct nft_traceinfo *info)
-{
-	const struct nft_chain *chain;
+	const struct nft_pktinfo *pkt = info->pkt;
 	struct nlmsghdr *nlh;
 	struct sk_buff *skb;
 	unsigned int size;
@@ -201,11 +176,9 @@ void nft_trace_notify(const struct nft_pktinfo *pkt,
 	if (!nfnetlink_has_listeners(nft_net(pkt), NFNLGRP_NFTRACE))
 		return;
 
-	chain = nft_trace_get_chain(rule, info);
-
 	size = nlmsg_total_size(sizeof(struct nfgenmsg)) +
-		nla_total_size(strlen(chain->table->name)) +
-		nla_total_size(strlen(chain->name)) +
+		nla_total_size(strlen(info->chain->table->name)) +
+		nla_total_size(strlen(info->chain->name)) +
 		nla_total_size_64bit(sizeof(__be64)) +	/* rule handle */
 		nla_total_size(sizeof(__be32)) +	/* trace type */
 		nla_total_size(0) +			/* VERDICT, nested */
@@ -222,8 +195,8 @@ void nft_trace_notify(const struct nft_pktinfo *pkt,
 		nla_total_size(sizeof(u32)) +		/* nfproto */
 		nla_total_size(sizeof(u32));		/* policy */
 
-	if (nft_trace_have_verdict_chain(verdict, info))
-		size += nla_total_size(strlen(verdict->chain->name)); /* jump target */
+	if (nft_trace_have_verdict_chain(info))
+		size += nla_total_size(strlen(info->verdict->chain->name)); /* jump target */
 
 	skb = nlmsg_new(size, GFP_ATOMIC);
 	if (!skb)
@@ -244,13 +217,13 @@ void nft_trace_notify(const struct nft_pktinfo *pkt,
 	if (nla_put_u32(skb, NFTA_TRACE_ID, info->skbid))
 		goto nla_put_failure;
 
-	if (nla_put_string(skb, NFTA_TRACE_CHAIN, chain->name))
+	if (nla_put_string(skb, NFTA_TRACE_CHAIN, info->chain->name))
 		goto nla_put_failure;
 
-	if (nla_put_string(skb, NFTA_TRACE_TABLE, chain->table->name))
+	if (nla_put_string(skb, NFTA_TRACE_TABLE, info->chain->table->name))
 		goto nla_put_failure;
 
-	if (nf_trace_fill_rule_info(skb, verdict, rule, info))
+	if (nf_trace_fill_rule_info(skb, info))
 		goto nla_put_failure;
 
 	switch (info->type) {
@@ -259,11 +232,11 @@ void nft_trace_notify(const struct nft_pktinfo *pkt,
 		break;
 	case NFT_TRACETYPE_RETURN:
 	case NFT_TRACETYPE_RULE:
-		if (nft_verdict_dump(skb, NFTA_TRACE_VERDICT, verdict))
+		if (nft_verdict_dump(skb, NFTA_TRACE_VERDICT, info->verdict))
 			goto nla_put_failure;
 
 		/* pkt->skb undefined iff NF_STOLEN, disable dump */
-		if (verdict->code == NF_STOLEN)
+		if (info->verdict->code == NF_STOLEN)
 			info->packet_dumped = true;
 		else
 			mark = pkt->skb->mark;
@@ -300,6 +273,7 @@ void nft_trace_notify(const struct nft_pktinfo *pkt,
 }
 
 void nft_trace_init(struct nft_traceinfo *info, const struct nft_pktinfo *pkt,
+		    const struct nft_verdict *verdict,
 		    const struct nft_chain *chain)
 {
 	static siphash_key_t trace_key __read_mostly;
@@ -309,6 +283,8 @@ void nft_trace_init(struct nft_traceinfo *info, const struct nft_pktinfo *pkt,
 	info->trace = true;
 	info->nf_trace = pkt->skb->nf_trace;
 	info->packet_dumped = false;
+	info->pkt = pkt;
+	info->verdict = verdict;
 
 	net_get_random_once(&trace_key, sizeof(trace_key));
 

@@ -76,7 +76,10 @@ static irqreturn_t rga_isr(int irq, void *prv)
 		WARN_ON(!src);
 		WARN_ON(!dst);
 
-		v4l2_m2m_buf_copy_metadata(src, dst, true);
+		dst->timecode = src->timecode;
+		dst->vb2_buf.timestamp = src->vb2_buf.timestamp;
+		dst->flags &= ~V4L2_BUF_FLAG_TSTAMP_SRC_MASK;
+		dst->flags |= src->flags & V4L2_BUF_FLAG_TSTAMP_SRC_MASK;
 
 		v4l2_m2m_buf_done(src, VB2_BUF_STATE_DONE);
 		v4l2_m2m_buf_done(dst, VB2_BUF_STATE_DONE);
@@ -723,10 +726,10 @@ static int rga_enable_clocks(struct rockchip_rga *rga)
 
 	return 0;
 
-err_disable_aclk:
-	clk_disable_unprepare(rga->aclk);
 err_disable_sclk:
 	clk_disable_unprepare(rga->sclk);
+err_disable_aclk:
+	clk_disable_unprepare(rga->aclk);
 
 	return ret;
 }
@@ -927,7 +930,7 @@ err_put_clk:
 	return ret;
 }
 
-static void rga_remove(struct platform_device *pdev)
+static int rga_remove(struct platform_device *pdev)
 {
 	struct rockchip_rga *rga = platform_get_drvdata(pdev);
 
@@ -944,6 +947,8 @@ static void rga_remove(struct platform_device *pdev)
 	v4l2_device_unregister(&rga->v4l2_dev);
 
 	pm_runtime_disable(rga->dev);
+
+	return 0;
 }
 
 static int __maybe_unused rga_runtime_suspend(struct device *dev)
@@ -981,7 +986,7 @@ MODULE_DEVICE_TABLE(of, rockchip_rga_match);
 
 static struct platform_driver rga_pdrv = {
 	.probe = rga_probe,
-	.remove_new = rga_remove,
+	.remove = rga_remove,
 	.driver = {
 		.name = RGA_NAME,
 		.pm = &rga_pm,

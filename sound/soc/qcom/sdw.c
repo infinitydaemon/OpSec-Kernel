@@ -32,8 +32,11 @@ int qcom_snd_sdw_prepare(struct snd_pcm_substream *substream,
 		return 0;
 	}
 
-	if (*stream_prepared)
-		return 0;
+	if (*stream_prepared) {
+		sdw_disable_stream(sruntime);
+		sdw_deprepare_stream(sruntime);
+		*stream_prepared = false;
+	}
 
 	ret = sdw_prepare_stream(sruntime);
 	if (ret)

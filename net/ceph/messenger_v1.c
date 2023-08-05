@@ -40,12 +40,15 @@ static int ceph_tcp_recvmsg(struct socket *sock, void *buf, size_t len)
 static int ceph_tcp_recvpage(struct socket *sock, struct page *page,
 		     int page_offset, size_t length)
 {
-	struct bio_vec bvec;
+	struct bio_vec bvec = {
+		.bv_page = page,
+		.bv_offset = page_offset,
+		.bv_len = length
+	};
 	struct msghdr msg = { .msg_flags = MSG_DONTWAIT | MSG_NOSIGNAL };
 	int r;
 
 	BUG_ON(page_offset + length > PAGE_SIZE);
-	bvec_set_page(&bvec, page, length, page_offset);
 	iov_iter_bvec(&msg.msg_iter, ITER_DEST, &bvec, 1, length);
 	r = sock_recvmsg(sock, &msg, msg.msg_flags);
 	if (r == -EAGAIN)
@@ -75,19 +78,18 @@ static int ceph_tcp_sendmsg(struct socket *sock, struct kvec *iov,
 }
 
 /*
- * @more: MSG_MORE or 0.
+ * @more: either or both of MSG_MORE and MSG_SENDPAGE_NOTLAST
  */
 static int ceph_tcp_sendpage(struct socket *sock, struct page *page,
 			     int offset, size_t size, int more)
 {
-	struct msghdr msg = {
-		.msg_flags = MSG_DONTWAIT | MSG_NOSIGNAL | more,
-	};
-	struct bio_vec bvec;
+	ssize_t (*sendpage)(struct socket *sock, struct page *page,
+			    int offset, size_t size, int flags);
+	int flags = MSG_DONTWAIT | MSG_NOSIGNAL | more;
 	int ret;
 
 	/*
-	 * MSG_SPLICE_PAGES cannot properly handle pages with page_count == 0,
+	 * sendpage cannot properly handle pages with page_count == 0,
 	 * we need to fall back to sendmsg if that's the case.
 	 *
 	 * Same goes for slab pages: skb_can_coalesce() allows
@@ -95,12 +97,11 @@ static int ceph_tcp_sendpage(struct socket *sock, struct page *page,
 	 * triggers one of hardened usercopy checks.
 	 */
 	if (sendpage_ok(page))
-		msg.msg_flags |= MSG_SPLICE_PAGES;
+		sendpage = sock->ops->sendpage;
+	else
+		sendpage = sock_no_sendpage;
 
-	bvec_set_page(&bvec, page, size, offset);
-	iov_iter_bvec(&msg.msg_iter, ITER_SOURCE, &bvec, 1, size);
-
-	ret = sock_sendmsg(sock, &msg);
+	ret = sendpage(sock, page, offset, size, flags);
 	if (ret == -EAGAIN)
 		ret = 0;
 
@@ -466,6 +467,7 @@ static int write_partial_message_data(struct ceph_connection *con)
 	struct ceph_msg *msg = con->out_msg;
 	struct ceph_msg_data_cursor *cursor = &msg->cursor;
 	bool do_datacrc = !ceph_test_opt(from_msgr(con->msgr), NOCRC);
+	int more = MSG_MORE | MSG_SENDPAGE_NOTLAST;
 	u32 crc;
 
 	dout("%s %p msg %p\n", __func__, con, msg);
@@ -494,8 +496,10 @@ static int write_partial_message_data(struct ceph_connection *con)
 		}
 
 		page = ceph_msg_data_next(cursor, &page_offset, &length);
+		if (length == cursor->total_resid)
+			more = MSG_MORE;
 		ret = ceph_tcp_sendpage(con->sock, page, page_offset, length,
-					MSG_MORE);
+					more);
 		if (ret <= 0) {
 			if (do_datacrc)
 				msg->footer.data_crc = cpu_to_le32(crc);
@@ -525,14 +529,17 @@ static int write_partial_message_data(struct ceph_connection *con)
  */
 static int write_partial_skip(struct ceph_connection *con)
 {
+	int more = MSG_MORE | MSG_SENDPAGE_NOTLAST;
 	int ret;
 
 	dout("%s %p %d left\n", __func__, con, con->v1.out_skip);
 	while (con->v1.out_skip > 0) {
 		size_t size = min(con->v1.out_skip, (int)PAGE_SIZE);
 
+		if (size == con->v1.out_skip)
+			more = MSG_MORE;
 		ret = ceph_tcp_sendpage(con->sock, ceph_zero_page, 0, size,
-					MSG_MORE);
+					more);
 		if (ret <= 0)
 			goto out;
 		con->v1.out_skip -= ret;
