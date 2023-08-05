@@ -115,9 +115,20 @@ static inline void wrpkru(u32 pkru)
 }
 #endif
 
-static __always_inline void native_wbinvd(void)
+static inline void native_wbinvd(void)
 {
 	asm volatile("wbinvd": : :"memory");
+}
+
+extern asmlinkage void asm_load_gs_index(unsigned int selector);
+
+static inline void native_load_gs_index(unsigned int selector)
+{
+	unsigned long flags;
+
+	local_irq_save(flags);
+	asm_load_gs_index(selector);
+	local_irq_restore(flags);
 }
 
 static inline unsigned long __read_cr4(void)
@@ -168,14 +179,24 @@ static inline void __write_cr4(unsigned long x)
 	native_write_cr4(x);
 }
 
-static __always_inline void wbinvd(void)
+static inline void wbinvd(void)
 {
 	native_wbinvd();
 }
 
+
+static inline void load_gs_index(unsigned int selector)
+{
+#ifdef CONFIG_X86_64
+	native_load_gs_index(selector);
+#else
+	loadsegment(gs, selector);
+#endif
+}
+
 #endif /* CONFIG_PARAVIRT_XXL */
 
-static __always_inline void clflush(volatile void *__p)
+static inline void clflush(volatile void *__p)
 {
 	asm volatile("clflush %0" : "+m" (*(volatile char __force *)__p));
 }

@@ -161,12 +161,13 @@ static int xen_cpu_up_prepare_hvm(unsigned int cpu)
 	int rc = 0;
 
 	/*
-	 * If a CPU was offlined earlier and offlining timed out then the
-	 * lock mechanism is still initialized. Uninit it unconditionally
-	 * as it's safe to call even if already uninited. Interrupts and
-	 * timer have already been handled in xen_cpu_dead_hvm().
+	 * This can happen if CPU was offlined earlier and
+	 * offlining timed out in common_cpu_die().
 	 */
-	xen_uninit_lock_cpu(cpu);
+	if (cpu_report_state(cpu) == CPU_DEAD_FROZEN) {
+		xen_smp_intr_free(cpu);
+		xen_uninit_lock_cpu(cpu);
+	}
 
 	if (cpu_acpi_id(cpu) != U32_MAX)
 		per_cpu(xen_vcpu_id, cpu) = cpu_acpi_id(cpu);
