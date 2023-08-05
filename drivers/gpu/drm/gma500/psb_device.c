@@ -6,7 +6,6 @@
  **************************************************************************/
 
 #include <drm/drm.h>
-#include <drm/drm_crtc_helper.h>
 
 #include "gma_device.h"
 #include "intel_bios.h"

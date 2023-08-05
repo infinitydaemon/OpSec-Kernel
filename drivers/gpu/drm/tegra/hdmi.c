@@ -867,7 +867,14 @@ static int tegra_hdmi_reconfigure_audio(struct tegra_hdmi *hdmi)
 
 static bool tegra_output_is_hdmi(struct tegra_output *output)
 {
-	return output->connector.display_info.is_hdmi;
+	struct edid *edid;
+
+	if (!output->connector.edid_blob_ptr)
+		return false;
+
+	edid = (struct edid *)output->connector.edid_blob_ptr->data;
+
+	return drm_detect_hdmi_monitor(edid);
 }
 
 static enum drm_connector_status
@@ -1874,13 +1881,21 @@ static int tegra_hdmi_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void tegra_hdmi_remove(struct platform_device *pdev)
+static int tegra_hdmi_remove(struct platform_device *pdev)
 {
 	struct tegra_hdmi *hdmi = platform_get_drvdata(pdev);
+	int err;
 
-	host1x_client_unregister(&hdmi->client);
+	err = host1x_client_unregister(&hdmi->client);
+	if (err < 0) {
+		dev_err(&pdev->dev, "failed to unregister host1x client: %d\n",
+			err);
+		return err;
+	}
 
 	tegra_output_remove(&hdmi->output);
+
+	return 0;
 }
 
 struct platform_driver tegra_hdmi_driver = {
@@ -1889,5 +1904,5 @@ struct platform_driver tegra_hdmi_driver = {
 		.of_match_table = tegra_hdmi_of_match,
 	},
 	.probe = tegra_hdmi_probe,
-	.remove_new = tegra_hdmi_remove,
+	.remove = tegra_hdmi_remove,
 };

@@ -375,7 +375,8 @@ static void tda9950_cec_del(void *data)
 	cec_delete_adapter(priv->adap);
 }
 
-static int tda9950_probe(struct i2c_client *client)
+static int tda9950_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct tda9950_glue *glue = client->dev.platform_data;
 	struct device *dev = &client->dev;
