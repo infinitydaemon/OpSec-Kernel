@@ -92,11 +92,12 @@ int vpe_run(struct vpe *v)
 	write_tc_c0_tchalt(read_tc_c0_tchalt() & ~TCHALT_H);
 
 	/*
-	 * We don't pass the memsize here, so VPE programs need to be
-	 * compiled with DFLT_STACK_SIZE and DFLT_HEAP_SIZE defined.
+	 * The sde-kit passes 'memsize' to __start in $a3, so set something
+	 * here...  Or set $a3 to zero and define DFLT_STACK_SIZE and
+	 * DFLT_HEAP_SIZE when you compile your program
 	 */
-	mttgpr(7, 0);
 	mttgpr(6, v->ntcs);
+	mttgpr(7, physical_memsize);
 
 	/* set up VPE1 */
 	/*
@@ -316,6 +317,7 @@ static void vpe_device_release(struct device *cd)
 
 static struct class vpe_class = {
 	.name = "vpe",
+	.owner = THIS_MODULE,
 	.dev_release = vpe_device_release,
 	.dev_groups = vpe_groups,
 };
