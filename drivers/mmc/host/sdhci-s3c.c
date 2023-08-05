@@ -437,12 +437,12 @@ static int sdhci_s3c_parse_dt(struct device *dev,
 	pdata->max_width = max_width;
 
 	/* get the card detection method */
-	if (of_property_read_bool(node, "broken-cd")) {
+	if (of_get_property(node, "broken-cd", NULL)) {
 		pdata->cd_type = S3C_SDHCI_CD_NONE;
 		return 0;
 	}
 
-	if (of_property_read_bool(node, "non-removable")) {
+	if (of_get_property(node, "non-removable", NULL)) {
 		pdata->cd_type = S3C_SDHCI_CD_PERMANENT;
 		return 0;
 	}

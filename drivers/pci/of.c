@@ -16,37 +16,21 @@
 #include "pci.h"
 
 #ifdef CONFIG_PCI
-/**
- * pci_set_of_node - Find and set device's DT device_node
- * @dev: the PCI device structure to fill
- *
- * Returns 0 on success with of_node set or when no device is described in the
- * DT. Returns -ENODEV if the device is present, but disabled in the DT.
- */
-int pci_set_of_node(struct pci_dev *dev)
+void pci_set_of_node(struct pci_dev *dev)
 {
-	struct device_node *node;
-
 	if (!dev->bus->dev.of_node)
-		return 0;
-
-	node = of_pci_find_child_device(dev->bus->dev.of_node, dev->devfn);
-	if (!node)
-		return 0;
-
-	if (!of_device_is_available(node)) {
-		of_node_put(node);
-		return -ENODEV;
-	}
-
-	device_set_node(&dev->dev, of_fwnode_handle(node));
-	return 0;
+		return;
+	dev->dev.of_node = of_pci_find_child_device(dev->bus->dev.of_node,
+						    dev->devfn);
+	if (dev->dev.of_node)
+		dev->dev.fwnode = &dev->dev.of_node->fwnode;
 }
 
 void pci_release_of_node(struct pci_dev *dev)
 {
 	of_node_put(dev->dev.of_node);
-	device_set_node(&dev->dev, NULL);
+	dev->dev.of_node = NULL;
+	dev->dev.fwnode = NULL;
 }
 
 void pci_set_bus_of_node(struct pci_bus *bus)
@@ -61,13 +45,17 @@ void pci_set_bus_of_node(struct pci_bus *bus)
 			bus->self->external_facing = true;
 	}
 
-	device_set_node(&bus->dev, of_fwnode_handle(node));
+	bus->dev.of_node = node;
+
+	if (bus->dev.of_node)
+		bus->dev.fwnode = &bus->dev.of_node->fwnode;
 }
 
 void pci_release_bus_of_node(struct pci_bus *bus)
 {
 	of_node_put(bus->dev.of_node);
-	device_set_node(&bus->dev, NULL);
+	bus->dev.of_node = NULL;
+	bus->dev.fwnode = NULL;
 }
 
 struct device_node * __weak pcibios_get_phb_of_node(struct pci_bus *bus)
@@ -459,7 +447,7 @@ static int of_irq_parse_pci(const struct pci_dev *pdev, struct of_phandle_args *
 		return -ENODEV;
 
 	/* Local interrupt-map in the device node? Use it! */
-	if (of_property_present(dn, "interrupt-map")) {
+	if (of_get_property(dn, "interrupt-map", NULL)) {
 		pin = pci_swizzle_interrupt_pin(pdev, pin);
 		ppnode = dn;
 	}

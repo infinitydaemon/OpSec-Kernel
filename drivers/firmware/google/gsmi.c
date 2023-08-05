@@ -1030,7 +1030,7 @@ static __init int gsmi_init(void)
 	}
 
 #ifdef CONFIG_EFI
-	ret = efivars_register(&efivars, &efivar_ops);
+	ret = efivars_register(&efivars, &efivar_ops, gsmi_kobj);
 	if (ret) {
 		printk(KERN_INFO "gsmi: Failed to register efivars\n");
 		sysfs_remove_files(gsmi_kobj, gsmi_attrs);

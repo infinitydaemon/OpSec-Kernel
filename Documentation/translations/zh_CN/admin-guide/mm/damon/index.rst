@@ -22,7 +22,6 @@
    start
    usage
    reclaim
-   lru_sort
 
 
 

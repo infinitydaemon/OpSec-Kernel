@@ -28,6 +28,7 @@ struct pwm_bl_data {
 	struct regulator	*power_supply;
 	struct gpio_desc	*enable_gpio;
 	unsigned int		scale;
+	bool			legacy;
 	unsigned int		post_pwm_on_delay;
 	unsigned int		pwm_off_delay;
 	int			(*notify)(struct device *,
@@ -40,51 +41,65 @@ struct pwm_bl_data {
 
 static void pwm_backlight_power_on(struct pwm_bl_data *pb)
 {
+	struct pwm_state state;
 	int err;
 
+	pwm_get_state(pb->pwm, &state);
 	if (pb->enabled)
 		return;
 
-	if (pb->power_supply) {
-		err = regulator_enable(pb->power_supply);
-		if (err < 0)
-			dev_err(pb->dev, "failed to enable power supply\n");
-	}
+	err = regulator_enable(pb->power_supply);
+	if (err < 0)
+		dev_err(pb->dev, "failed to enable power supply\n");
+
+	state.enabled = true;
+	pwm_apply_state(pb->pwm, &state);
 
 	if (pb->post_pwm_on_delay)
 		msleep(pb->post_pwm_on_delay);
 
-	gpiod_set_value_cansleep(pb->enable_gpio, 1);
+	if (pb->enable_gpio)
+		gpiod_set_value_cansleep(pb->enable_gpio, 1);
 
 	pb->enabled = true;
 }
 
 static void pwm_backlight_power_off(struct pwm_bl_data *pb)
 {
+	struct pwm_state state;
+
+	pwm_get_state(pb->pwm, &state);
 	if (!pb->enabled)
 		return;
 
-	gpiod_set_value_cansleep(pb->enable_gpio, 0);
+	if (pb->enable_gpio)
+		gpiod_set_value_cansleep(pb->enable_gpio, 0);
 
 	if (pb->pwm_off_delay)
 		msleep(pb->pwm_off_delay);
 
-	if (pb->power_supply)
-		regulator_disable(pb->power_supply);
+	state.enabled = false;
+	state.duty_cycle = 0;
+	pwm_apply_state(pb->pwm, &state);
+
+	regulator_disable(pb->power_supply);
 	pb->enabled = false;
 }
 
-static int compute_duty_cycle(struct pwm_bl_data *pb, int brightness, struct pwm_state *state)
+static int compute_duty_cycle(struct pwm_bl_data *pb, int brightness)
 {
 	unsigned int lth = pb->lth_brightness;
+	struct pwm_state state;
 	u64 duty_cycle;
+
+	pwm_get_state(pb->pwm, &state);
 
 	if (pb->levels)
 		duty_cycle = pb->levels[brightness];
 	else
 		duty_cycle = brightness;
 
-	duty_cycle *= state->period - lth;
+	duty_cycle *= state.period - lth;
 	do_div(duty_cycle, pb->scale);
 
 	return duty_cycle + lth;
@@ -101,26 +116,11 @@ static int pwm_backlight_update_status(struct backlight_device *bl)
 
 	if (brightness > 0) {
 		pwm_get_state(pb->pwm, &state);
-		state.duty_cycle = compute_duty_cycle(pb, brightness, &state);
-		state.enabled = true;
+		state.duty_cycle = compute_duty_cycle(pb, brightness);
 		pwm_apply_state(pb->pwm, &state);
-
 		pwm_backlight_power_on(pb);
 	} else {
 		pwm_backlight_power_off(pb);
-
-		pwm_get_state(pb->pwm, &state);
-		state.duty_cycle = 0;
-		/*
-		 * We cannot assume a disabled PWM to drive its output to the
-		 * inactive state. If we have an enable GPIO and/or a regulator
-		 * we assume that this isn't relevant and we can disable the PWM
-		 * to save power. If however there is neither an enable GPIO nor
-		 * a regulator keep the PWM on be sure to get a constant
-		 * inactive output.
-		 */
-		state.enabled = !pb->power_supply && !pb->enable_gpio;
-		pwm_apply_state(pb->pwm, &state);
 	}
 
 	if (pb->notify_after)
@@ -417,7 +417,7 @@ static int pwm_backlight_initial_power_state(const struct pwm_bl_data *pb)
 	if (pb->enable_gpio && gpiod_get_value_cansleep(pb->enable_gpio) == 0)
 		active = false;
 
-	if (pb->power_supply && !regulator_is_enabled(pb->power_supply))
+	if (!regulator_is_enabled(pb->power_supply))
 		active = false;
 
 	if (!pwm_is_enabled(pb->pwm))
@@ -427,7 +427,8 @@ static int pwm_backlight_initial_power_state(const struct pwm_bl_data *pb)
 	 * Synchronize the enable_gpio with the observed state of the
 	 * hardware.
 	 */
-	gpiod_direction_output(pb->enable_gpio, active);
+	if (pb->enable_gpio)
+		gpiod_direction_output(pb->enable_gpio, active);
 
 	/*
 	 * Do not change pb->enabled here! pb->enabled essentially
@@ -454,6 +455,7 @@ static int pwm_backlight_probe(struct platform_device *pdev)
 	struct platform_pwm_backlight_data defdata;
 	struct backlight_properties props;
 	struct backlight_device *bl;
+	struct device_node *node = pdev->dev.of_node;
 	struct pwm_bl_data *pb;
 	struct pwm_state state;
 	unsigned int i;
@@ -497,16 +499,19 @@ static int pwm_backlight_probe(struct platform_device *pdev)
 		goto err_alloc;
 	}
 
-	pb->power_supply = devm_regulator_get_optional(&pdev->dev, "power");
+	pb->power_supply = devm_regulator_get(&pdev->dev, "power");
 	if (IS_ERR(pb->power_supply)) {
 		ret = PTR_ERR(pb->power_supply);
-		if (ret == -ENODEV)
-			pb->power_supply = NULL;
-		else
-			goto err_alloc;
+		goto err_alloc;
 	}
 
 	pb->pwm = devm_pwm_get(&pdev->dev, NULL);
+	if (IS_ERR(pb->pwm) && PTR_ERR(pb->pwm) != -EPROBE_DEFER && !node) {
+		dev_err(&pdev->dev, "unable to request PWM, trying legacy API\n");
+		pb->legacy = true;
+		pb->pwm = pwm_request(data->pwm_id, "pwm-backlight");
+	}
+
 	if (IS_ERR(pb->pwm)) {
 		ret = PTR_ERR(pb->pwm);
 		if (ret != -EPROBE_DEFER)
@@ -599,6 +604,8 @@ static int pwm_backlight_probe(struct platform_device *pdev)
 	if (IS_ERR(bl)) {
 		dev_err(&pdev->dev, "failed to register backlight\n");
 		ret = PTR_ERR(bl);
+		if (pb->legacy)
+			pwm_free(pb->pwm);
 		goto err_alloc;
 	}
 
@@ -622,7 +629,7 @@ err_alloc:
 	return ret;
 }
 
-static void pwm_backlight_remove(struct platform_device *pdev)
+static int pwm_backlight_remove(struct platform_device *pdev)
 {
 	struct backlight_device *bl = platform_get_drvdata(pdev);
 	struct pwm_bl_data *pb = bl_get_data(bl);
@@ -632,6 +639,10 @@ static void pwm_backlight_remove(struct platform_device *pdev)
 
 	if (pb->exit)
 		pb->exit(&pdev->dev);
+	if (pb->legacy)
+		pwm_free(pb->pwm);
+
+	return 0;
 }
 
 static void pwm_backlight_shutdown(struct platform_device *pdev)
@@ -685,7 +696,7 @@ static struct platform_driver pwm_backlight_driver = {
 		.of_match_table	= of_match_ptr(pwm_backlight_of_match),
 	},
 	.probe		= pwm_backlight_probe,
-	.remove_new	= pwm_backlight_remove,
+	.remove		= pwm_backlight_remove,
 	.shutdown	= pwm_backlight_shutdown,
 };
 

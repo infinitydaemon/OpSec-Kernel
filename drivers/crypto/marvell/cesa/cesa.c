@@ -66,7 +66,7 @@ static void mv_cesa_rearm_engine(struct mv_cesa_engine *engine)
 		return;
 
 	if (backlog)
-		crypto_request_complete(backlog, -EINPROGRESS);
+		backlog->complete(backlog, -EINPROGRESS);
 
 	ctx = crypto_tfm_ctx(req->tfm);
 	ctx->ops->step(req);
@@ -106,7 +106,7 @@ mv_cesa_complete_req(struct mv_cesa_ctx *ctx, struct crypto_async_request *req,
 {
 	ctx->ops->cleanup(req);
 	local_bh_disable();
-	crypto_request_complete(req, res);
+	req->complete(req, res);
 	local_bh_enable();
 }
 

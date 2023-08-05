@@ -390,7 +390,9 @@ static int pcifront_claim_resource(struct pci_dev *dev, void *data)
 	int i;
 	struct resource *r;
 
-	pci_dev_for_each_resource(dev, r, i) {
+	for (i = 0; i < PCI_NUM_RESOURCES; i++) {
+		r = &dev->resource[i];
+
 		if (!r->parent && r->start && r->flags) {
 			dev_info(&pdev->xdev->dev, "claiming resource %s/%d\n",
 				pci_name(dev), i);
@@ -1053,12 +1055,14 @@ out:
 	return err;
 }
 
-static void pcifront_xenbus_remove(struct xenbus_device *xdev)
+static int pcifront_xenbus_remove(struct xenbus_device *xdev)
 {
 	struct pcifront_device *pdev = dev_get_drvdata(&xdev->dev);
 
 	if (pdev)
 		free_pdev(pdev);
+
+	return 0;
 }
 
 static const struct xenbus_device_id xenpci_ids[] = {

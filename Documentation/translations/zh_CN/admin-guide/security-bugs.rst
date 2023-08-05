@@ -1,6 +1,6 @@
 .. include:: ../disclaimer-zh_CN.rst
 
-:Original: :doc:`../../../process/security-bugs`
+:Original: :doc:`../../../admin-guide/security-bugs`
 
 :译者:
 

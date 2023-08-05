@@ -141,13 +141,9 @@ out_err:
 
 /* creates a new tx descriptor and adds header regd buffer */
 static void iser_create_send_desc(struct iser_conn *iser_conn,
-		struct iser_tx_desc *tx_desc, enum iser_desc_type type,
-		void (*done)(struct ib_cq *cq, struct ib_wc *wc))
+				  struct iser_tx_desc *tx_desc)
 {
 	struct iser_device *device = iser_conn->ib_conn.device;
-
-	tx_desc->type = type;
-	tx_desc->cqe.done = done;
 
 	ib_dma_sync_single_for_cpu(device->ib_device,
 		tx_desc->dma_addr, ISER_HEADERS_LEN, DMA_TO_DEVICE);
@@ -353,8 +349,9 @@ int iser_send_command(struct iscsi_conn *conn, struct iscsi_task *task)
 	edtl = ntohl(hdr->data_length);
 
 	/* build the tx desc regd header and add it to the tx desc dto */
-	iser_create_send_desc(iser_conn, tx_desc, ISCSI_TX_SCSI_COMMAND,
-			      iser_cmd_comp);
+	tx_desc->type = ISCSI_TX_SCSI_COMMAND;
+	tx_desc->cqe.done = iser_cmd_comp;
+	iser_create_send_desc(iser_conn, tx_desc);
 
 	if (hdr->flags & ISCSI_FLAG_CMD_READ) {
 		data_buf = &iser_task->data[ISER_DIR_IN];
@@ -460,6 +457,7 @@ int iser_send_data_out(struct iscsi_conn *conn, struct iscsi_task *task,
 	iser_dbg("data-out itt: %d, offset: %ld, sz: %ld\n",
 		 itt, buf_offset, data_seg_len);
 
+
 	err = iser_post_send(&iser_conn->ib_conn, tx_desc);
 	if (!err)
 		return 0;
@@ -480,8 +478,9 @@ int iser_send_control(struct iscsi_conn *conn, struct iscsi_task *task)
 	struct iser_device *device;
 
 	/* build the tx desc regd header and add it to the tx desc dto */
-	iser_create_send_desc(iser_conn, mdesc, ISCSI_TX_CONTROL,
-			      iser_ctrl_comp);
+	mdesc->type = ISCSI_TX_CONTROL;
+	mdesc->cqe.done = iser_ctrl_comp;
+	iser_create_send_desc(iser_conn, mdesc);
 
 	device = iser_conn->ib_conn.device;
 

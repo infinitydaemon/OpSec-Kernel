@@ -5495,9 +5495,10 @@ static int dsi_probe(struct platform_device *pdev)
 	return component_add(&pdev->dev, &dsi_component_ops);
 }
 
-static void dsi_remove(struct platform_device *pdev)
+static int dsi_remove(struct platform_device *pdev)
 {
 	component_del(&pdev->dev, &dsi_component_ops);
+	return 0;
 }
 
 static int dsi_runtime_suspend(struct device *dev)
@@ -5564,7 +5565,7 @@ static const struct of_device_id dsi_of_match[] = {
 
 static struct platform_driver omap_dsihw_driver = {
 	.probe		= dsi_probe,
-	.remove_new	= dsi_remove,
+	.remove		= dsi_remove,
 	.driver         = {
 		.name   = "omapdss_dsi",
 		.pm	= &dsi_pm_ops,

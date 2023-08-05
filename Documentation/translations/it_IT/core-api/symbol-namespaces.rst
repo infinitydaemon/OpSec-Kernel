@@ -1,6 +1,7 @@
 .. include:: ../disclaimer-ita.rst
 
-:Original: Documentation/core-api/symbol-namespaces.rst
+:Original: :doc:`../../../core-api/symbol-namespaces`
+:Translator: Federico Vaga <federico.vaga@vaga.pv.it>
 
 ===========================
 Spazio dei nomi dei simboli

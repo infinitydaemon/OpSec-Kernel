@@ -971,48 +971,60 @@ static int acpi_data_prop_read_single(const struct acpi_device_data *data,
 				      enum dev_prop_type proptype, void *val)
 {
 	const union acpi_object *obj;
-	int ret = 0;
+	int ret;
 
-	if (proptype >= DEV_PROP_U8 && proptype <= DEV_PROP_U64)
+	if (proptype >= DEV_PROP_U8 && proptype <= DEV_PROP_U64) {
 		ret = acpi_data_get_property(data, propname, ACPI_TYPE_INTEGER, &obj);
-	else if (proptype == DEV_PROP_STRING)
-		ret = acpi_data_get_property(data, propname, ACPI_TYPE_STRING, &obj);
-	if (ret)
-		return ret;
+		if (ret)
+			return ret;
 
-	switch (proptype) {
-	case DEV_PROP_U8:
-		if (obj->integer.value > U8_MAX)
-			return -EOVERFLOW;
-		if (val)
-			*(u8 *)val = obj->integer.value;
-		break;
-	case DEV_PROP_U16:
-		if (obj->integer.value > U16_MAX)
-			return -EOVERFLOW;
-		if (val)
-			*(u16 *)val = obj->integer.value;
-		break;
-	case DEV_PROP_U32:
-		if (obj->integer.value > U32_MAX)
-			return -EOVERFLOW;
-		if (val)
-			*(u32 *)val = obj->integer.value;
-		break;
-	case DEV_PROP_U64:
-		if (val)
-			*(u64 *)val = obj->integer.value;
-		break;
-	case DEV_PROP_STRING:
+		switch (proptype) {
+		case DEV_PROP_U8:
+			if (obj->integer.value > U8_MAX)
+				return -EOVERFLOW;
+
+			if (val)
+				*(u8 *)val = obj->integer.value;
+
+			break;
+		case DEV_PROP_U16:
+			if (obj->integer.value > U16_MAX)
+				return -EOVERFLOW;
+
+			if (val)
+				*(u16 *)val = obj->integer.value;
+
+			break;
+		case DEV_PROP_U32:
+			if (obj->integer.value > U32_MAX)
+				return -EOVERFLOW;
+
+			if (val)
+				*(u32 *)val = obj->integer.value;
+
+			break;
+		default:
+			if (val)
+				*(u64 *)val = obj->integer.value;
+
+			break;
+		}
+
+		if (!val)
+			return 1;
+	} else if (proptype == DEV_PROP_STRING) {
+		ret = acpi_data_get_property(data, propname, ACPI_TYPE_STRING, &obj);
+		if (ret)
+			return ret;
+
 		if (val)
 			*(char **)val = obj->string.pointer;
-		return 1;
-	default:
-		return -EINVAL;
-	}
 
-	/* When no storage provided return number of available values */
-	return val ? 0 : 1;
+		return 1;
+	} else {
+		ret = -EINVAL;
+	}
+	return ret;
 }
 
 #define acpi_copy_property_array_uint(items, val, nval)			\

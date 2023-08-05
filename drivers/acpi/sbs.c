@@ -96,7 +96,7 @@ struct acpi_sbs {
 
 #define to_acpi_sbs(x) power_supply_get_drvdata(x)
 
-static void acpi_sbs_remove(struct acpi_device *device);
+static int acpi_sbs_remove(struct acpi_device *device);
 static int acpi_battery_get_state(struct acpi_battery *battery);
 
 static inline int battery_scale(int log)
@@ -473,32 +473,23 @@ static const struct device_attribute alarm_attr = {
    -------------------------------------------------------------------------- */
 static int acpi_battery_read(struct acpi_battery *battery)
 {
-	int result, saved_present = battery->present;
+	int result = 0, saved_present = battery->present;
 	u16 state;
 
 	if (battery->sbs->manager_present) {
 		result = acpi_smbus_read(battery->sbs->hc, SMBUS_READ_WORD,
 				ACPI_SBS_MANAGER, 0x01, (u8 *)&state);
-		if (result)
-			return result;
-
-		battery->present = state & (1 << battery->id);
-		if (!battery->present)
-			return 0;
-
-		/* Masking necessary for Smart Battery Selectors */
-		state = 0x0fff;
+		if (!result)
+			battery->present = state & (1 << battery->id);
+		state &= 0x0fff;
 		state |= 1 << (battery->id + 12);
 		acpi_smbus_write(battery->sbs->hc, SMBUS_WRITE_WORD,
 				  ACPI_SBS_MANAGER, 0x01, (u8 *)&state, 2);
-	} else {
-		if (battery->id == 0) {
-			battery->present = 1;
-		} else {
-			if (!battery->present)
-				return 0;
-		}
-	}
+	} else if (battery->id == 0)
+		battery->present = 1;
+
+	if (result || !battery->present)
+		return result;
 
 	if (saved_present != battery->present) {
 		battery->update_time = 0;
@@ -673,16 +664,16 @@ end:
 	return result;
 }
 
-static void acpi_sbs_remove(struct acpi_device *device)
+static int acpi_sbs_remove(struct acpi_device *device)
 {
 	struct acpi_sbs *sbs;
 	int id;
 
 	if (!device)
-		return;
+		return -EINVAL;
 	sbs = acpi_driver_data(device);
 	if (!sbs)
-		return;
+		return -EINVAL;
 	mutex_lock(&sbs->lock);
 	acpi_smbus_unregister_callback(sbs->hc);
 	for (id = 0; id < MAX_SBS_BAT; ++id)
@@ -691,6 +682,7 @@ static void acpi_sbs_remove(struct acpi_device *device)
 	mutex_unlock(&sbs->lock);
 	mutex_destroy(&sbs->lock);
 	kfree(sbs);
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP

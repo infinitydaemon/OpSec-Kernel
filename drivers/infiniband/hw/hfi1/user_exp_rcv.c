@@ -27,7 +27,8 @@ static bool tid_cover_invalidate(struct mmu_interval_notifier *mni,
 			         const struct mmu_notifier_range *range,
 			         unsigned long cur_seq);
 static int program_rcvarray(struct hfi1_filedata *fd, struct tid_user_buf *,
-			    struct tid_group *grp, u16 count,
+			    struct tid_group *grp,
+			    unsigned int start, u16 count,
 			    u32 *tidlist, unsigned int *tididx,
 			    unsigned int *pmapped);
 static int unprogram_rcvarray(struct hfi1_filedata *fd, u32 tidinfo);
@@ -249,7 +250,7 @@ int hfi1_user_exp_rcv_setup(struct hfi1_filedata *fd,
 	int ret = 0, need_group = 0, pinned;
 	struct hfi1_ctxtdata *uctxt = fd->uctxt;
 	struct hfi1_devdata *dd = uctxt->dd;
-	unsigned int ngroups, pageset_count,
+	unsigned int ngroups, pageidx = 0, pageset_count,
 		tididx = 0, mapped, mapped_pages = 0;
 	u32 *tidlist = NULL;
 	struct tid_user_buf *tidbuf;
@@ -331,7 +332,7 @@ int hfi1_user_exp_rcv_setup(struct hfi1_filedata *fd,
 			tid_group_pop(&uctxt->tid_group_list);
 
 		ret = program_rcvarray(fd, tidbuf, grp,
-				       dd->rcv_entries.group_size,
+				       pageidx, dd->rcv_entries.group_size,
 				       tidlist, &tididx, &mapped);
 		/*
 		 * If there was a failure to program the RcvArray
@@ -347,10 +348,11 @@ int hfi1_user_exp_rcv_setup(struct hfi1_filedata *fd,
 
 		tid_group_add_tail(grp, &uctxt->tid_full_list);
 		ngroups--;
+		pageidx += ret;
 		mapped_pages += mapped;
 	}
 
-	while (tididx < pageset_count) {
+	while (pageidx < pageset_count) {
 		struct tid_group *grp, *ptr;
 		/*
 		 * If we don't have any partially used tid groups, check
@@ -372,11 +374,11 @@ int hfi1_user_exp_rcv_setup(struct hfi1_filedata *fd,
 		 */
 		list_for_each_entry_safe(grp, ptr, &uctxt->tid_used_list.list,
 					 list) {
-			unsigned use = min_t(unsigned, pageset_count - tididx,
+			unsigned use = min_t(unsigned, pageset_count - pageidx,
 					     grp->size - grp->used);
 
 			ret = program_rcvarray(fd, tidbuf, grp,
-					       use, tidlist,
+					       pageidx, use, tidlist,
 					       &tididx, &mapped);
 			if (ret < 0) {
 				hfi1_cdbg(TID,
@@ -388,10 +390,11 @@ int hfi1_user_exp_rcv_setup(struct hfi1_filedata *fd,
 					tid_group_move(grp,
 						       &uctxt->tid_used_list,
 						       &uctxt->tid_full_list);
+				pageidx += ret;
 				mapped_pages += mapped;
 				need_group = 0;
 				/* Check if we are done so we break out early */
-				if (tididx >= pageset_count)
+				if (pageidx >= pageset_count)
 					break;
 			} else if (WARN_ON(ret == 0)) {
 				/*
@@ -635,6 +638,7 @@ static u32 find_phys_blocks(struct tid_user_buf *tidbuf, unsigned int npages)
  *	  struct tid_pageset holding information on physically contiguous
  *	  chunks from the user buffer), and other fields.
  * @grp: RcvArray group
+ * @start: starting index into sets array
  * @count: number of struct tid_pageset's to program
  * @tidlist: the array of u32 elements when the information about the
  *           programmed RcvArray entries is to be encoded.
@@ -654,14 +658,14 @@ static u32 find_phys_blocks(struct tid_user_buf *tidbuf, unsigned int npages)
  * number of RcvArray entries programmed.
  */
 static int program_rcvarray(struct hfi1_filedata *fd, struct tid_user_buf *tbuf,
-			    struct tid_group *grp, u16 count,
+			    struct tid_group *grp,
+			    unsigned int start, u16 count,
 			    u32 *tidlist, unsigned int *tididx,
 			    unsigned int *pmapped)
 {
 	struct hfi1_ctxtdata *uctxt = fd->uctxt;
 	struct hfi1_devdata *dd = uctxt->dd;
 	u16 idx;
-	unsigned int start = *tididx;
 	u32 tidinfo = 0, rcventry, useidx = 0;
 	int mapped = 0;
 
@@ -706,7 +710,8 @@ static int program_rcvarray(struct hfi1_filedata *fd, struct tid_user_buf *tbuf,
 			return ret;
 		mapped += npages;
 
-		tidinfo = create_tid(rcventry - uctxt->expected_base, npages);
+		tidinfo = rcventry2tidinfo(rcventry - uctxt->expected_base) |
+			EXP_TID_SET(LEN, npages);
 		tidlist[(*tididx)++] = tidinfo;
 		grp->used++;
 		grp->map |= 1 << useidx++;
@@ -790,19 +795,19 @@ static int unprogram_rcvarray(struct hfi1_filedata *fd, u32 tidinfo)
 	struct hfi1_ctxtdata *uctxt = fd->uctxt;
 	struct hfi1_devdata *dd = uctxt->dd;
 	struct tid_rb_node *node;
-	u32 tidctrl = EXP_TID_GET(tidinfo, CTRL);
+	u8 tidctrl = EXP_TID_GET(tidinfo, CTRL);
 	u32 tididx = EXP_TID_GET(tidinfo, IDX) << 1, rcventry;
 
-	if (tidctrl == 0x3 || tidctrl == 0x0)
+	if (tididx >= uctxt->expected_count) {
+		dd_dev_err(dd, "Invalid RcvArray entry (%u) index for ctxt %u\n",
+			   tididx, uctxt->ctxt);
+		return -EINVAL;
+	}
+
+	if (tidctrl == 0x3)
 		return -EINVAL;
 
 	rcventry = tididx + (tidctrl - 1);
-
-	if (rcventry >= uctxt->expected_count) {
-		dd_dev_err(dd, "Invalid RcvArray entry (%u) index for ctxt %u\n",
-			   rcventry, uctxt->ctxt);
-		return -EINVAL;
-	}
 
 	node = fd->entry_to_rb[rcventry];
 	if (!node || node->rcventry != (uctxt->expected_base + rcventry))
@@ -915,8 +920,9 @@ static bool tid_rb_invalidate(struct mmu_interval_notifier *mni,
 	spin_lock(&fdata->invalid_lock);
 	if (fdata->invalid_tid_idx < uctxt->expected_count) {
 		fdata->invalid_tids[fdata->invalid_tid_idx] =
-			create_tid(node->rcventry - uctxt->expected_base,
-				   node->npages);
+			rcventry2tidinfo(node->rcventry - uctxt->expected_base);
+		fdata->invalid_tids[fdata->invalid_tid_idx] |=
+			EXP_TID_SET(LEN, node->npages);
 		if (!fdata->invalid_tid_idx) {
 			unsigned long *ev;
 

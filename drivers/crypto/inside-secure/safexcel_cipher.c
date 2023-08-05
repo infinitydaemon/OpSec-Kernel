@@ -1091,12 +1091,13 @@ static int safexcel_aead_send(struct crypto_async_request *async, int ring,
 static int safexcel_cipher_exit_inv(struct crypto_tfm *tfm,
 				    struct crypto_async_request *base,
 				    struct safexcel_cipher_req *sreq,
-				    struct crypto_wait *result)
+				    struct safexcel_inv_result *result)
 {
 	struct safexcel_cipher_ctx *ctx = crypto_tfm_ctx(tfm);
 	struct safexcel_crypto_priv *priv = ctx->base.priv;
 	int ring = ctx->base.ring;
-	int err;
+
+	init_completion(&result->completion);
 
 	ctx = crypto_tfm_ctx(base->tfm);
 	ctx->base.exit_inv = true;
@@ -1109,13 +1110,13 @@ static int safexcel_cipher_exit_inv(struct crypto_tfm *tfm,
 	queue_work(priv->ring[ring].workqueue,
 		   &priv->ring[ring].work_data.work);
 
-	err = crypto_wait_req(-EINPROGRESS, result);
+	wait_for_completion(&result->completion);
 
-	if (err) {
+	if (result->error) {
 		dev_warn(priv->dev,
 			"cipher: sync: invalidate: completion error %d\n",
-			 err);
-		return err;
+			 result->error);
+		return result->error;
 	}
 
 	return 0;
@@ -1125,12 +1126,12 @@ static int safexcel_skcipher_exit_inv(struct crypto_tfm *tfm)
 {
 	EIP197_REQUEST_ON_STACK(req, skcipher, EIP197_SKCIPHER_REQ_SIZE);
 	struct safexcel_cipher_req *sreq = skcipher_request_ctx(req);
-	DECLARE_CRYPTO_WAIT(result);
+	struct safexcel_inv_result result = {};
 
 	memset(req, 0, sizeof(struct skcipher_request));
 
 	skcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
-				      crypto_req_done, &result);
+				      safexcel_inv_complete, &result);
 	skcipher_request_set_tfm(req, __crypto_skcipher_cast(tfm));
 
 	return safexcel_cipher_exit_inv(tfm, &req->base, sreq, &result);
@@ -1140,12 +1141,12 @@ static int safexcel_aead_exit_inv(struct crypto_tfm *tfm)
 {
 	EIP197_REQUEST_ON_STACK(req, aead, EIP197_AEAD_REQ_SIZE);
 	struct safexcel_cipher_req *sreq = aead_request_ctx(req);
-	DECLARE_CRYPTO_WAIT(result);
+	struct safexcel_inv_result result = {};
 
 	memset(req, 0, sizeof(struct aead_request));
 
 	aead_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
-				  crypto_req_done, &result);
+				  safexcel_inv_complete, &result);
 	aead_request_set_tfm(req, __crypto_aead_cast(tfm));
 
 	return safexcel_cipher_exit_inv(tfm, &req->base, sreq, &result);

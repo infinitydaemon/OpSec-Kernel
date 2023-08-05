@@ -578,7 +578,8 @@ static int owl_mmc_probe(struct platform_device *pdev)
 	owl_host->mmc = mmc;
 	spin_lock_init(&owl_host->lock);
 
-	owl_host->base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	owl_host->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(owl_host->base)) {
 		ret = PTR_ERR(owl_host->base);
 		goto err_free_host;

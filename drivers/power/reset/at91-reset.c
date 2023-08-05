@@ -149,10 +149,11 @@ static int at91_reset(struct notifier_block *this, unsigned long mode,
 	return NOTIFY_DONE;
 }
 
-static const char * __init at91_reset_reason(struct at91_reset *reset)
+static void __init at91_reset_status(struct platform_device *pdev,
+				     void __iomem *base)
 {
-	u32 reg = readl(reset->rstc_base + AT91_RSTC_SR);
 	const char *reason;
+	u32 reg = readl(base + AT91_RSTC_SR);
 
 	switch ((reg & AT91_RSTC_RSTTYP) >> 8) {
 	case RESET_TYPE_GENERAL:
@@ -184,7 +185,7 @@ static const char * __init at91_reset_reason(struct at91_reset *reset)
 		break;
 	}
 
-	return reason;
+	dev_info(&pdev->dev, "Starting after %s\n", reason);
 }
 
 static const struct of_device_id at91_ramc_of_match[] = {
@@ -391,7 +392,7 @@ static int __init at91_reset_probe(struct platform_device *pdev)
 	if (ret)
 		goto disable_clk;
 
-	dev_info(&pdev->dev, "Starting after %s\n", at91_reset_reason(reset));
+	at91_reset_status(pdev, reset->rstc_base);
 
 	return 0;
 

@@ -1737,10 +1737,10 @@ static int sm501fb_init_fb(struct fb_info *fb, enum sm501_controller head,
 
 #if defined(CONFIG_OF)
 #ifdef __BIG_ENDIAN
-	if (of_property_read_bool(info->dev->parent->of_node, "little-endian"))
+	if (of_get_property(info->dev->parent->of_node, "little-endian", NULL))
 		fb->flags |= FBINFO_FOREIGN_ENDIAN;
 #else
-	if (of_property_read_bool(info->dev->parent->of_node, "big-endian"))
+	if (of_get_property(info->dev->parent->of_node, "big-endian", NULL))
 		fb->flags |= FBINFO_FOREIGN_ENDIAN;
 #endif
 #endif
@@ -2045,7 +2045,7 @@ err_alloc:
 /*
  *  Cleanup
  */
-static void sm501fb_remove(struct platform_device *pdev)
+static int sm501fb_remove(struct platform_device *pdev)
 {
 	struct sm501fb_info *info = platform_get_drvdata(pdev);
 	struct fb_info	   *fbinfo_crt = info->fb[0];
@@ -2064,6 +2064,8 @@ static void sm501fb_remove(struct platform_device *pdev)
 
 	framebuffer_release(fbinfo_pnl);
 	framebuffer_release(fbinfo_crt);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -2207,7 +2209,7 @@ static int sm501fb_resume(struct platform_device *pdev)
 
 static struct platform_driver sm501fb_driver = {
 	.probe		= sm501fb_probe,
-	.remove_new	= sm501fb_remove,
+	.remove		= sm501fb_remove,
 	.suspend	= sm501fb_suspend,
 	.resume		= sm501fb_resume,
 	.driver		= {

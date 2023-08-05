@@ -36,8 +36,7 @@ properties:
     const: i2sclk
 
   resets:
-    items:
-      - description: Optional controller resets
+    maxItems: 1
 
   dmas:
     items:
@@ -51,21 +50,21 @@ properties:
       - const: rx
     minItems: 1
 
-allOf:
-  - $ref: dai-common.yaml#
-  - if:
-      properties:
-        compatible:
-          contains:
-            const: canaan,k210-i2s
-    then:
-      properties:
-        "#sound-dai-cells":
-          const: 1
-    else:
-      properties:
-        "#sound-dai-cells":
-          const: 0
+if:
+  properties:
+    compatible:
+      contains:
+        const: canaan,k210-i2s
+
+then:
+  properties:
+    "#sound-dai-cells":
+      const: 1
+
+else:
+  properties:
+    "#sound-dai-cells":
+      const: 0
 
 required:
   - compatible

@@ -184,9 +184,7 @@ static int omap_cpufreq_probe(struct platform_device *pdev)
 
 static int omap_cpufreq_remove(struct platform_device *pdev)
 {
-	cpufreq_unregister_driver(&omap_driver);
-
-	return 0;
+	return cpufreq_unregister_driver(&omap_driver);
 }
 
 static struct platform_driver omap_cpufreq_platdrv = {

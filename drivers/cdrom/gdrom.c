@@ -474,22 +474,22 @@ static const struct cdrom_device_ops gdrom_ops = {
 				  CDC_RESET | CDC_DRIVE_STATUS | CDC_CD_R,
 };
 
-static int gdrom_bdops_open(struct gendisk *disk, blk_mode_t mode)
+static int gdrom_bdops_open(struct block_device *bdev, fmode_t mode)
 {
 	int ret;
 
-	disk_check_media_change(disk);
+	bdev_check_media_change(bdev);
 
 	mutex_lock(&gdrom_mutex);
-	ret = cdrom_open(gd.cd_info, mode);
+	ret = cdrom_open(gd.cd_info, bdev, mode);
 	mutex_unlock(&gdrom_mutex);
 	return ret;
 }
 
-static void gdrom_bdops_release(struct gendisk *disk)
+static void gdrom_bdops_release(struct gendisk *disk, fmode_t mode)
 {
 	mutex_lock(&gdrom_mutex);
-	cdrom_release(gd.cd_info);
+	cdrom_release(gd.cd_info, mode);
 	mutex_unlock(&gdrom_mutex);
 }
 
@@ -499,13 +499,13 @@ static unsigned int gdrom_bdops_check_events(struct gendisk *disk,
 	return cdrom_check_events(gd.cd_info, clearing);
 }
 
-static int gdrom_bdops_ioctl(struct block_device *bdev, blk_mode_t mode,
+static int gdrom_bdops_ioctl(struct block_device *bdev, fmode_t mode,
 	unsigned cmd, unsigned long arg)
 {
 	int ret;
 
 	mutex_lock(&gdrom_mutex);
-	ret = cdrom_ioctl(gd.cd_info, bdev, cmd, arg);
+	ret = cdrom_ioctl(gd.cd_info, bdev, mode, cmd, arg);
 	mutex_unlock(&gdrom_mutex);
 
 	return ret;

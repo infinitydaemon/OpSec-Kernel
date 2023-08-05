@@ -8,7 +8,8 @@ title: Synopsys DesignWare Universal Multi-Protocol Memory Controller
 
 maintainers:
   - Krzysztof Kozlowski <krzk@kernel.org>
-  - Michal Simek <michal.simek@amd.com>
+  - Manish Narani <manish.narani@xilinx.com>
+  - Michal Simek <michal.simek@xilinx.com>
 
 description: |
   Synopsys DesignWare Enhanced uMCTL2 DDR Memory Controller is capable of

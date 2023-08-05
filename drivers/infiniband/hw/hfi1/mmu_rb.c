@@ -45,14 +45,12 @@ int hfi1_mmu_rb_register(void *ops_arg,
 			 struct mmu_rb_handler **handler)
 {
 	struct mmu_rb_handler *h;
-	void *free_ptr;
 	int ret;
 
-	free_ptr = kzalloc(sizeof(*h) + cache_line_size() - 1, GFP_KERNEL);
-	if (!free_ptr)
+	h = kzalloc(sizeof(*h), GFP_KERNEL);
+	if (!h)
 		return -ENOMEM;
 
-	h = PTR_ALIGN(free_ptr, cache_line_size());
 	h->root = RB_ROOT_CACHED;
 	h->ops = ops;
 	h->ops_arg = ops_arg;
@@ -63,11 +61,10 @@ int hfi1_mmu_rb_register(void *ops_arg,
 	INIT_LIST_HEAD(&h->del_list);
 	INIT_LIST_HEAD(&h->lru_list);
 	h->wq = wq;
-	h->free_ptr = free_ptr;
 
 	ret = mmu_notifier_register(&h->mn, current->mm);
 	if (ret) {
-		kfree(free_ptr);
+		kfree(h);
 		return ret;
 	}
 
@@ -114,7 +111,7 @@ void hfi1_mmu_rb_unregister(struct mmu_rb_handler *handler)
 	/* Now the mm may be freed. */
 	mmdrop(handler->mn.mm);
 
-	kfree(handler->free_ptr);
+	kfree(handler);
 }
 
 int hfi1_mmu_rb_insert(struct mmu_rb_handler *handler,
@@ -124,7 +121,7 @@ int hfi1_mmu_rb_insert(struct mmu_rb_handler *handler,
 	unsigned long flags;
 	int ret = 0;
 
-	trace_hfi1_mmu_rb_insert(mnode);
+	trace_hfi1_mmu_rb_insert(mnode->addr, mnode->len);
 
 	if (current->mm != handler->mn.mm)
 		return -EPERM;
@@ -189,7 +186,6 @@ static void release_immediate(struct kref *refcount)
 {
 	struct mmu_rb_node *mnode =
 		container_of(refcount, struct mmu_rb_node, refcount);
-	trace_hfi1_mmu_release_node(mnode);
 	mnode->handler->ops->remove(mnode->handler->ops_arg, mnode);
 }
 
@@ -253,7 +249,6 @@ void hfi1_mmu_rb_evict(struct mmu_rb_handler *handler, void *evict_arg)
 	spin_unlock_irqrestore(&handler->lock, flags);
 
 	list_for_each_entry_safe(rbnode, ptr, &del_list, list) {
-		trace_hfi1_mmu_rb_evict(rbnode);
 		kref_put(&rbnode->refcount, release_immediate);
 	}
 }
@@ -273,7 +268,7 @@ static int mmu_notifier_range_start(struct mmu_notifier *mn,
 		/* Guard against node removal. */
 		ptr = __mmu_int_rb_iter_next(node, range->start,
 					     range->end - 1);
-		trace_hfi1_mmu_mem_invalidate(node);
+		trace_hfi1_mmu_mem_invalidate(node->addr, node->len);
 		/* Remove from rb tree and lru_list. */
 		__mmu_int_rb_remove(node, root);
 		list_del_init(&node->list);
@@ -306,7 +301,6 @@ static void handle_remove(struct work_struct *work)
 	while (!list_empty(&del_list)) {
 		node = list_first_entry(&del_list, struct mmu_rb_node, list);
 		list_del(&node->list);
-		trace_hfi1_mmu_release_node(node);
 		handler->ops->remove(handler->ops_arg, node);
 	}
 }

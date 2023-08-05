@@ -13,9 +13,6 @@ description:
 maintainers:
   - Heiko Stuebner <heiko@sntech.de>
 
-allOf:
-  - $ref: dai-common.yaml#
-
 properties:
   compatible:
     oneOf:
@@ -34,7 +31,6 @@ properties:
               - rockchip,rk3366-i2s
               - rockchip,rk3368-i2s
               - rockchip,rk3399-i2s
-              - rockchip,rk3588-i2s
               - rockchip,rv1126-i2s
           - const: rockchip,rk3066-i2s
 
@@ -83,10 +79,6 @@ properties:
   resets:
     maxItems: 2
 
-  port:
-    $ref: audio-graph-port.yaml#
-    unevaluatedProperties: false
-
   rockchip,capture-channels:
     $ref: /schemas/types.yaml#/definitions/uint32
     default: 2
@@ -119,7 +111,7 @@ required:
   - dma-names
   - "#sound-dai-cells"
 
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

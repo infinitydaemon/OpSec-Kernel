@@ -2314,9 +2314,6 @@ static void __init matroxfb_init_params(void) {
 static int __init matrox_init(void) {
 	int err;
 
-	if (fb_modesetting_disabled("matroxfb"))
-		return -ENODEV;
-
 	matroxfb_init_params();
 	err = pci_register_driver(&matroxfb_driver);
 	dev = -1;	/* accept all new devices... */

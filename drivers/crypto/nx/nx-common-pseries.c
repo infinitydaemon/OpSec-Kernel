@@ -123,16 +123,14 @@ struct ibm_nx842_counters {
 	atomic64_t decomp_times[32];
 };
 
-struct nx842_devdata {
+static struct nx842_devdata {
 	struct vio_dev *vdev;
 	struct device *dev;
 	struct ibm_nx842_counters *counters;
 	unsigned int max_sg_len;
 	unsigned int max_sync_size;
 	unsigned int max_sync_sg;
-};
-
-static struct nx842_devdata __rcu *devdata;
+} __rcu *devdata;
 static DEFINE_SPINLOCK(devdata_mutex);
 
 #define NX842_COUNTER_INC(_x) \

@@ -6,8 +6,6 @@
  * Copyright (C) 2004 Intel Corporation <matthew.e.tolentino@intel.com>
  */
 
-#define pr_fmt(fmt) "efivars: " fmt
-
 #include <linux/types.h>
 #include <linux/sizes.h>
 #include <linux/errno.h>
@@ -21,7 +19,7 @@
 /* Private pointer to registered efivars */
 static struct efivars *__efivars;
 
-static DEFINE_SEMAPHORE(efivars_lock, 1);
+static DEFINE_SEMAPHORE(efivars_lock);
 
 static efi_status_t check_var_size(bool nonblocking, u32 attributes,
 				   unsigned long size)
@@ -42,47 +40,45 @@ static efi_status_t check_var_size(bool nonblocking, u32 attributes,
 }
 
 /**
- * efivar_is_available - check if efivars is available
+ * efivars_kobject - get the kobject for the registered efivars
  *
- * @return true iff evivars is currently registered
+ * If efivars_register() has not been called we return NULL,
+ * otherwise return the kobject used at registration time.
  */
-bool efivar_is_available(void)
+struct kobject *efivars_kobject(void)
 {
-	return __efivars != NULL;
+	if (!__efivars)
+		return NULL;
+
+	return __efivars->kobject;
 }
-EXPORT_SYMBOL_GPL(efivar_is_available);
+EXPORT_SYMBOL_GPL(efivars_kobject);
 
 /**
  * efivars_register - register an efivars
  * @efivars: efivars to register
  * @ops: efivars operations
+ * @kobject: @efivars-specific kobject
  *
  * Only a single efivars can be registered at any time.
  */
 int efivars_register(struct efivars *efivars,
-		     const struct efivar_operations *ops)
+		     const struct efivar_operations *ops,
+		     struct kobject *kobject)
 {
-	int rv;
-
 	if (down_interruptible(&efivars_lock))
 		return -EINTR;
 
-	if (__efivars) {
-		pr_warn("efivars already registered\n");
-		rv = -EBUSY;
-		goto out;
-	}
-
 	efivars->ops = ops;
+	efivars->kobject = kobject;
 
 	__efivars = efivars;
 
 	pr_info("Registered efivars operations\n");
-	rv = 0;
-out:
+
 	up(&efivars_lock);
 
-	return rv;
+	return 0;
 }
 EXPORT_SYMBOL_GPL(efivars_register);
 
@@ -101,7 +97,7 @@ int efivars_unregister(struct efivars *efivars)
 		return -EINTR;
 
 	if (!__efivars) {
-		pr_err("efivars not registered\n");
+		printk(KERN_ERR "efivars not registered\n");
 		rv = -EINVAL;
 		goto out;
 	}
@@ -121,7 +117,7 @@ out:
 }
 EXPORT_SYMBOL_GPL(efivars_unregister);
 
-bool efivar_supports_writes(void)
+int efivar_supports_writes(void)
 {
 	return __efivars && __efivars->ops->set_variable;
 }
@@ -245,15 +241,3 @@ efi_status_t efivar_set_variable(efi_char16_t *name, efi_guid_t *vendor,
 	return status;
 }
 EXPORT_SYMBOL_NS_GPL(efivar_set_variable, EFIVAR);
-
-efi_status_t efivar_query_variable_info(u32 attr,
-					u64 *storage_space,
-					u64 *remaining_space,
-					u64 *max_variable_size)
-{
-	if (!__efivars->ops->query_variable_info)
-		return EFI_UNSUPPORTED;
-	return __efivars->ops->query_variable_info(attr, storage_space,
-			remaining_space, max_variable_size);
-}
-EXPORT_SYMBOL_NS_GPL(efivar_query_variable_info, EFIVAR);

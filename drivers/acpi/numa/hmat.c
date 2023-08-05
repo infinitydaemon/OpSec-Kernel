@@ -718,7 +718,7 @@ static void hmat_register_target_devices(struct memory_target *target)
 	for (res = target->memregions.child; res; res = res->sibling) {
 		int target_nid = pxm_to_node(target->memory_pxm);
 
-		hmem_register_resource(target_nid, res);
+		hmem_register_device(target_nid, res);
 	}
 }
 
@@ -779,6 +779,11 @@ static int hmat_callback(struct notifier_block *self,
 	hmat_register_target(target);
 	return NOTIFY_OK;
 }
+
+static struct notifier_block hmat_callback_nb = {
+	.notifier_call = hmat_callback,
+	.priority = 2,
+};
 
 static __init void hmat_free_structures(void)
 {
@@ -862,11 +867,11 @@ static __init int hmat_init(void)
 	hmat_register_targets();
 
 	/* Keep the table and structures if the notifier may use them */
-	if (!hotplug_memory_notifier(hmat_callback, HMAT_CALLBACK_PRI))
+	if (!register_hotmemory_notifier(&hmat_callback_nb))
 		return 0;
 out_put:
 	hmat_free_structures();
 	acpi_put_table(tbl);
 	return 0;
 }
-subsys_initcall(hmat_init);
+device_initcall(hmat_init);

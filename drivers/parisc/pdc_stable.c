@@ -274,7 +274,8 @@ pdcspath_hwpath_write(struct pdcspath_entry *entry, const char *buf, size_t coun
 
 	/* We'll use a local copy of buf */
 	count = min_t(size_t, count, sizeof(in)-1);
-	strscpy(in, buf, count + 1);
+	strncpy(in, buf, count);
+	in[count] = '\0';
 	
 	/* Let's clean up the target. 0xff is a blank pattern */
 	memset(&hwpath, 0xff, sizeof(hwpath));
@@ -387,7 +388,8 @@ pdcspath_layer_write(struct pdcspath_entry *entry, const char *buf, size_t count
 
 	/* We'll use a local copy of buf */
 	count = min_t(size_t, count, sizeof(in)-1);
-	strscpy(in, buf, count + 1);
+	strncpy(in, buf, count);
+	in[count] = '\0';
 	
 	/* Let's clean up the target. 0 is a blank pattern */
 	memset(&layers, 0, sizeof(layers));
@@ -509,8 +511,6 @@ static struct pdcspath_entry *pdcspath_entries[] = {
 
 /**
  * pdcs_size_read - Stable Storage size output.
- * @kobj: The kobject used to share data with userspace.
- * @attr: The kobject attributes.
  * @buf: The output buffer to write to.
  */
 static ssize_t pdcs_size_read(struct kobject *kobj,
@@ -530,8 +530,6 @@ static ssize_t pdcs_size_read(struct kobject *kobj,
 
 /**
  * pdcs_auto_read - Stable Storage autoboot/search flag output.
- * @kobj: The kobject used to share data with userspace.
- * @attr: The kobject attributes.
  * @buf: The output buffer to write to.
  * @knob: The PF_AUTOBOOT or PF_AUTOSEARCH flag
  */
@@ -558,8 +556,6 @@ static ssize_t pdcs_auto_read(struct kobject *kobj,
 
 /**
  * pdcs_autoboot_read - Stable Storage autoboot flag output.
- * @kobj: The kobject used to share data with userspace.
- * @attr: The kobject attributes.
  * @buf: The output buffer to write to.
  */
 static ssize_t pdcs_autoboot_read(struct kobject *kobj,
@@ -570,8 +566,6 @@ static ssize_t pdcs_autoboot_read(struct kobject *kobj,
 
 /**
  * pdcs_autosearch_read - Stable Storage autoboot flag output.
- * @kobj: The kobject used to share data with userspace.
- * @attr: The kobject attributes.
  * @buf: The output buffer to write to.
  */
 static ssize_t pdcs_autosearch_read(struct kobject *kobj,
@@ -582,8 +576,6 @@ static ssize_t pdcs_autosearch_read(struct kobject *kobj,
 
 /**
  * pdcs_timer_read - Stable Storage timer count output (in seconds).
- * @kobj: The kobject used to share data with userspace.
- * @attr: The kobject attributes.
  * @buf: The output buffer to write to.
  *
  * The value of the timer field correponds to a number of seconds in powers of 2.
@@ -611,8 +603,6 @@ static ssize_t pdcs_timer_read(struct kobject *kobj,
 
 /**
  * pdcs_osid_read - Stable Storage OS ID register output.
- * @kobj: The kobject used to share data with userspace.
- * @attr: The kobject attributes.
  * @buf: The output buffer to write to.
  */
 static ssize_t pdcs_osid_read(struct kobject *kobj,
@@ -631,8 +621,6 @@ static ssize_t pdcs_osid_read(struct kobject *kobj,
 
 /**
  * pdcs_osdep1_read - Stable Storage OS-Dependent data area 1 output.
- * @kobj: The kobject used to share data with userspace.
- * @attr: The kobject attributes.
  * @buf: The output buffer to write to.
  *
  * This can hold 16 bytes of OS-Dependent data.
@@ -659,8 +647,6 @@ static ssize_t pdcs_osdep1_read(struct kobject *kobj,
 
 /**
  * pdcs_diagnostic_read - Stable Storage Diagnostic register output.
- * @kobj: The kobject used to share data with userspace.
- * @attr: The kobject attributes.
  * @buf: The output buffer to write to.
  *
  * I have NFC how to interpret the content of that register ;-).
@@ -685,8 +671,6 @@ static ssize_t pdcs_diagnostic_read(struct kobject *kobj,
 
 /**
  * pdcs_fastsize_read - Stable Storage FastSize register output.
- * @kobj: The kobject used to share data with userspace.
- * @attr: The kobject attributes.
  * @buf: The output buffer to write to.
  *
  * This register holds the amount of system RAM to be tested during boot sequence.
@@ -715,8 +699,6 @@ static ssize_t pdcs_fastsize_read(struct kobject *kobj,
 
 /**
  * pdcs_osdep2_read - Stable Storage OS-Dependent data area 2 output.
- * @kobj: The kobject used to share data with userspace.
- * @attr: The kobject attributes.
  * @buf: The output buffer to write to.
  *
  * This can hold pdcs_size - 224 bytes of OS-Dependent data, when available.
@@ -749,8 +731,6 @@ static ssize_t pdcs_osdep2_read(struct kobject *kobj,
 
 /**
  * pdcs_auto_write - This function handles autoboot/search flag modifying.
- * @kobj: The kobject used to share data with userspace.
- * @attr: The kobject attributes.
  * @buf: The input buffer to read from.
  * @count: The number of bytes to be read.
  * @knob: The PF_AUTOBOOT or PF_AUTOSEARCH flag
@@ -776,7 +756,8 @@ static ssize_t pdcs_auto_write(struct kobject *kobj,
 
 	/* We'll use a local copy of buf */
 	count = min_t(size_t, count, sizeof(in)-1);
-	strscpy(in, buf, count + 1);
+	strncpy(in, buf, count);
+	in[count] = '\0';
 
 	/* Current flags are stored in primary boot path entry */
 	pathentry = &pdcspath_entry_primary;
@@ -823,8 +804,6 @@ parse_error:
 
 /**
  * pdcs_autoboot_write - This function handles autoboot flag modifying.
- * @kobj: The kobject used to share data with userspace.
- * @attr: The kobject attributes.
  * @buf: The input buffer to read from.
  * @count: The number of bytes to be read.
  *
@@ -841,8 +820,6 @@ static ssize_t pdcs_autoboot_write(struct kobject *kobj,
 
 /**
  * pdcs_autosearch_write - This function handles autosearch flag modifying.
- * @kobj: The kobject used to share data with userspace.
- * @attr: The kobject attributes.
  * @buf: The input buffer to read from.
  * @count: The number of bytes to be read.
  *
@@ -859,8 +836,6 @@ static ssize_t pdcs_autosearch_write(struct kobject *kobj,
 
 /**
  * pdcs_osdep1_write - Stable Storage OS-Dependent data area 1 input.
- * @kobj: The kobject used to share data with userspace.
- * @attr: The kobject attributes.
  * @buf: The input buffer to read from.
  * @count: The number of bytes to be read.
  *
@@ -898,8 +873,6 @@ static ssize_t pdcs_osdep1_write(struct kobject *kobj,
 
 /**
  * pdcs_osdep2_write - Stable Storage OS-Dependent data area 2 input.
- * @kobj: The kobject used to share data with userspace.
- * @attr: The kobject attributes.
  * @buf: The input buffer to read from.
  * @count: The number of bytes to be read.
  *
@@ -1053,7 +1026,7 @@ pdcs_unregister_pathentries(void)
 static int __init
 pdc_stable_init(void)
 {
-	int rc = 0, error;
+	int rc = 0, error = 0;
 	u32 result;
 
 	/* find the size of the stable storage */
@@ -1082,10 +1055,6 @@ pdc_stable_init(void)
 
 	/* Don't forget the root entries */
 	error = sysfs_create_group(stable_kobj, &pdcs_attr_group);
-	if (error) {
-		rc = -ENOMEM;
-		goto fail_ksetreg;
-	}
 
 	/* register the paths kset as a child of the stable kset */
 	paths_kset = kset_create_and_add("paths", NULL, stable_kobj);

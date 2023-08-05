@@ -463,7 +463,7 @@ static ssize_t bq24190_sysfs_show(struct device *dev,
 	if (ret)
 		count = ret;
 	else
-		count = sysfs_emit(buf, "%hhx\n", v);
+		count = scnprintf(buf, PAGE_SIZE, "%hhx\n", v);
 
 	pm_runtime_mark_last_busy(bdi->dev);
 	pm_runtime_put_autosuspend(bdi->dev);
@@ -1768,9 +1768,9 @@ static int bq24190_get_config(struct bq24190_dev_info *bdi)
 	return 0;
 }
 
-static int bq24190_probe(struct i2c_client *client)
+static int bq24190_probe(struct i2c_client *client,
+		const struct i2c_device_id *id)
 {
-	const struct i2c_device_id *id = i2c_client_get_device_id(client);
 	struct i2c_adapter *adapter = client->adapter;
 	struct device *dev = &client->dev;
 	struct power_supply_config charger_cfg = {}, battery_cfg = {};

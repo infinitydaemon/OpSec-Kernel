@@ -95,19 +95,18 @@ void tty_ldisc_release(struct tty_struct *tty);
 int __must_check tty_ldisc_init(struct tty_struct *tty);
 void tty_ldisc_deinit(struct tty_struct *tty);
 
-extern int tty_ldisc_autoload;
+void tty_sysctl_init(void);
 
 /* tty_audit.c */
 #ifdef CONFIG_AUDIT
-void tty_audit_add_data(const struct tty_struct *tty, const void *data,
-			size_t size);
-void tty_audit_tiocsti(const struct tty_struct *tty, char ch);
+void tty_audit_add_data(struct tty_struct *tty, const void *data, size_t size);
+void tty_audit_tiocsti(struct tty_struct *tty, char ch);
 #else
-static inline void tty_audit_add_data(const struct tty_struct *tty,
-				      const void *data, size_t size)
+static inline void tty_audit_add_data(struct tty_struct *tty, const void *data,
+				      size_t size)
 {
 }
-static inline void tty_audit_tiocsti(const struct tty_struct *tty, char ch)
+static inline void tty_audit_tiocsti(struct tty_struct *tty, char ch)
 {
 }
 #endif

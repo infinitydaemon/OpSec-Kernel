@@ -14,7 +14,6 @@
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/mfd/syscon.h>
-#include <linux/phy/pcie.h>
 #include <linux/phy/phy.h>
 #include <linux/platform_device.h>
 #include <linux/pm_domain.h>
@@ -268,10 +267,6 @@ static int qcom_pcie_enable_resources(struct qcom_pcie_ep *pcie_ep)
 	ret = phy_init(pcie_ep->phy);
 	if (ret)
 		goto err_disable_clk;
-
-	ret = phy_set_mode_ext(pcie_ep->phy, PHY_MODE_PCIE, PHY_MODE_PCIE_EP);
-	if (ret)
-		goto err_phy_exit;
 
 	ret = phy_power_on(pcie_ep->phy);
 	if (ret)
@@ -569,11 +564,9 @@ static irqreturn_t qcom_pcie_ep_global_irq_thread(int irq, void *data)
 	if (FIELD_GET(PARF_INT_ALL_LINK_DOWN, status)) {
 		dev_dbg(dev, "Received Linkdown event\n");
 		pcie_ep->link_status = QCOM_PCIE_EP_LINK_DOWN;
-		pci_epc_linkdown(pci->ep.epc);
 	} else if (FIELD_GET(PARF_INT_ALL_BME, status)) {
 		dev_dbg(dev, "Received BME event. Link is enabled!\n");
 		pcie_ep->link_status = QCOM_PCIE_EP_LINK_ENABLED;
-		pci_epc_bme_notify(pci->ep.epc);
 	} else if (FIELD_GET(PARF_INT_ALL_PM_TURNOFF, status)) {
 		dev_dbg(dev, "Received PM Turn-off event! Entering L23\n");
 		val = readl_relaxed(pcie_ep->parf + PARF_PM_CTRL);
@@ -786,7 +779,7 @@ err_disable_resources:
 	return ret;
 }
 
-static void qcom_pcie_ep_remove(struct platform_device *pdev)
+static int qcom_pcie_ep_remove(struct platform_device *pdev)
 {
 	struct qcom_pcie_ep *pcie_ep = platform_get_drvdata(pdev);
 
@@ -796,9 +789,11 @@ static void qcom_pcie_ep_remove(struct platform_device *pdev)
 	debugfs_remove_recursive(pcie_ep->debugfs);
 
 	if (pcie_ep->link_status == QCOM_PCIE_EP_LINK_DISABLED)
-		return;
+		return 0;
 
 	qcom_pcie_disable_resources(pcie_ep);
+
+	return 0;
 }
 
 static const struct of_device_id qcom_pcie_ep_match[] = {
@@ -810,7 +805,7 @@ MODULE_DEVICE_TABLE(of, qcom_pcie_ep_match);
 
 static struct platform_driver qcom_pcie_ep_driver = {
 	.probe	= qcom_pcie_ep_probe,
-	.remove_new = qcom_pcie_ep_remove,
+	.remove = qcom_pcie_ep_remove,
 	.driver	= {
 		.name = "qcom-pcie-ep",
 		.of_match_table	= qcom_pcie_ep_match,

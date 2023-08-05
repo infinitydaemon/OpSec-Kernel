@@ -7,7 +7,6 @@
  * Author: Brijesh Singh <brijesh.singh@amd.com>
  */
 
-#include <linux/bitfield.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/kthread.h>
@@ -25,7 +24,6 @@
 #include <linux/cpufeature.h>
 #include <linux/fs.h>
 #include <linux/fs_struct.h>
-#include <linux/psp.h>
 
 #include <asm/smp.h>
 #include <asm/cacheflush.h>
@@ -59,7 +57,6 @@ MODULE_PARM_DESC(psp_init_on_probe, "  if true, the PSP will be initialized on m
 MODULE_FIRMWARE("amd/amd_sev_fam17h_model0xh.sbin"); /* 1st gen EPYC */
 MODULE_FIRMWARE("amd/amd_sev_fam17h_model3xh.sbin"); /* 2nd gen EPYC */
 MODULE_FIRMWARE("amd/amd_sev_fam19h_model0xh.sbin"); /* 3rd gen EPYC */
-MODULE_FIRMWARE("amd/amd_sev_fam19h_model1xh.sbin"); /* 4th gen EPYC */
 
 static bool psp_dead;
 static int psp_timeout;
@@ -104,7 +101,7 @@ static void sev_irq_handler(int irq, void *data, unsigned int status)
 
 	/* Check if it is SEV command completion: */
 	reg = ioread32(sev->io_regs + sev->vdata->cmdresp_reg);
-	if (FIELD_GET(PSP_CMDRESP_RESP, reg)) {
+	if (reg & PSP_CMDRESP_RESP) {
 		sev->int_rcvd = 1;
 		wake_up(&sev->int_queue);
 	}
@@ -348,7 +345,9 @@ static int __sev_do_cmd_locked(int cmd, void *data, int *psp_ret)
 
 	sev->int_rcvd = 0;
 
-	reg = FIELD_PREP(SEV_CMDRESP_CMD, cmd) | SEV_CMDRESP_IOC;
+	reg = cmd;
+	reg <<= SEV_CMDRESP_CMD_SHIFT;
+	reg |= SEV_CMDRESP_IOC;
 	iowrite32(reg, sev->io_regs + sev->vdata->cmdresp_reg);
 
 	/* wait for command completion */
@@ -366,11 +365,11 @@ static int __sev_do_cmd_locked(int cmd, void *data, int *psp_ret)
 	psp_timeout = psp_cmd_timeout;
 
 	if (psp_ret)
-		*psp_ret = FIELD_GET(PSP_CMDRESP_STS, reg);
+		*psp_ret = reg & PSP_CMDRESP_ERR_MASK;
 
-	if (FIELD_GET(PSP_CMDRESP_STS, reg)) {
-		dev_dbg(sev->dev, "sev command %#x failed (%#010lx)\n",
-			cmd, FIELD_GET(PSP_CMDRESP_STS, reg));
+	if (reg & PSP_CMDRESP_ERR_MASK) {
+		dev_dbg(sev->dev, "sev command %#x failed (%#010x)\n",
+			cmd, reg & PSP_CMDRESP_ERR_MASK);
 		ret = -EIO;
 	} else {
 		ret = sev_write_init_ex_file_if_required(cmd);
@@ -442,19 +441,12 @@ static int __sev_init_ex_locked(int *error)
 	return __sev_do_cmd_locked(SEV_CMD_INIT_EX, &data, error);
 }
 
-static inline int __sev_do_init_locked(int *psp_ret)
-{
-	if (sev_init_ex_buffer)
-		return __sev_init_ex_locked(psp_ret);
-	else
-		return __sev_init_locked(psp_ret);
-}
-
 static int __sev_platform_init_locked(int *error)
 {
-	int rc = 0, psp_ret = SEV_RET_NO_FW_CALL;
 	struct psp_device *psp = psp_master;
 	struct sev_device *sev;
+	int rc = 0, psp_ret = -1;
+	int (*init_function)(int *error);
 
 	if (!psp || !psp->sev_data)
 		return -ENODEV;
@@ -465,12 +457,15 @@ static int __sev_platform_init_locked(int *error)
 		return 0;
 
 	if (sev_init_ex_buffer) {
+		init_function = __sev_init_ex_locked;
 		rc = sev_read_init_ex_file();
 		if (rc)
 			return rc;
+	} else {
+		init_function = __sev_init_locked;
 	}
 
-	rc = __sev_do_init_locked(&psp_ret);
+	rc = init_function(&psp_ret);
 	if (rc && psp_ret == SEV_RET_SECURE_DATA_INVALID) {
 		/*
 		 * Initialization command returned an integrity check failure
@@ -479,11 +474,9 @@ static int __sev_platform_init_locked(int *error)
 		 * initialization function should succeed by replacing the state
 		 * with a reset state.
 		 */
-		dev_err(sev->dev,
-"SEV: retrying INIT command because of SECURE_DATA_INVALID error. Retrying once to reset PSP SEV state.");
-		rc = __sev_do_init_locked(&psp_ret);
+		dev_err(sev->dev, "SEV: retrying INIT command because of SECURE_DATA_INVALID error. Retrying once to reset PSP SEV state.");
+		rc = init_function(&psp_ret);
 	}
-
 	if (error)
 		*error = psp_ret;
 
@@ -892,7 +885,7 @@ static int sev_ioctl_do_get_id2(struct sev_issue_cmd *argp)
 		/*
 		 * The length of the ID shouldn't be assumed by software since
 		 * it may change in the future.  The allocation size is limited
-		 * to 1 << (PAGE_SHIFT + MAX_ORDER) by the page allocator.
+		 * to 1 << (PAGE_SHIFT + MAX_ORDER - 1) by the page allocator.
 		 * If the allocation fails, simply return ENOMEM rather than
 		 * warning in the kernel log.
 		 */

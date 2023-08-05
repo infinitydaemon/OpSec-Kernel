@@ -37,9 +37,6 @@ properties:
     items:
       - const: mclk
 
-  power-domains:
-    maxItems: 1
-
   port:
     $ref: /schemas/graph.yaml#/properties/port
 
@@ -52,18 +49,6 @@ required:
   - port
 
 additionalProperties: false
-
-allOf:
-  - if:
-      properties:
-        compatible:
-          contains:
-            enum:
-              - fsl,imx8mq-csi
-              - fsl,imx8mm-csi
-    then:
-      required:
-        - power-domains
 
 examples:
   - |

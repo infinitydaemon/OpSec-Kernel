@@ -2,8 +2,6 @@
 
 ENTRY(__efistub_efi_zboot_header);
 
-PROVIDE(zboot_code_size = ABSOLUTE(0));
-
 SECTIONS
 {
 	.head : ALIGN(4096) {
@@ -19,11 +17,6 @@ SECTIONS
 		*(.gzdata)
 		__efistub__gzdata_end = .;
 		*(.rodata* .init.rodata* .srodata*)
-
-		. = ALIGN(4);
-		__efistub_code_size = .;
-		LONG(zboot_code_size);
-
 		_etext = ALIGN(4096);
 		. = _etext;
 	}

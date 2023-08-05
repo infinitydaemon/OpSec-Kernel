@@ -70,14 +70,23 @@ module_param(device_id_scheme, bool, 0444);
 static int only_lcd = -1;
 module_param(only_lcd, int, 0444);
 
+static int register_backlight_delay;
+module_param(register_backlight_delay, int, 0444);
+MODULE_PARM_DESC(register_backlight_delay,
+	"Delay in seconds before doing fallback (non GPU driver triggered) "
+	"backlight registration, set to 0 to disable.");
+
 static bool may_report_brightness_keys;
 static int register_count;
 static DEFINE_MUTEX(register_count_mutex);
 static DEFINE_MUTEX(video_list_lock);
 static LIST_HEAD(video_bus_head);
 static int acpi_video_bus_add(struct acpi_device *device);
-static void acpi_video_bus_remove(struct acpi_device *device);
+static int acpi_video_bus_remove(struct acpi_device *device);
 static void acpi_video_bus_notify(struct acpi_device *device, u32 event);
+static void acpi_video_bus_register_backlight_work(struct work_struct *ignored);
+static DECLARE_DELAYED_WORK(video_bus_register_backlight_work,
+			    acpi_video_bus_register_backlight_work);
 
 /*
  * Indices in the _BCL method response: the first two items are special,
@@ -2065,13 +2074,13 @@ err_free_video:
 	return error;
 }
 
-static void acpi_video_bus_remove(struct acpi_device *device)
+static int acpi_video_bus_remove(struct acpi_device *device)
 {
 	struct acpi_video_bus *video = NULL;
 
 
 	if (!device || !acpi_driver_data(device))
-		return;
+		return -EINVAL;
 
 	video = acpi_driver_data(device);
 
@@ -2085,6 +2094,13 @@ static void acpi_video_bus_remove(struct acpi_device *device)
 
 	kfree(video->attached_array);
 	kfree(video);
+
+	return 0;
+}
+
+static void acpi_video_bus_register_backlight_work(struct work_struct *ignored)
+{
+	acpi_video_register_backlight();
 }
 
 static int __init is_i740(struct pci_dev *dev)
@@ -2169,6 +2185,17 @@ static bool should_check_lcd_flag(void)
 	return false;
 }
 
+/*
+ * At least one graphics driver has reported that no LCD is connected
+ * via the native interface. cancel the registration for fallback acpi_video0.
+ * If another driver still deems this necessary, it can explicitly register it.
+ */
+void acpi_video_report_nolcd(void)
+{
+	cancel_delayed_work(&video_bus_register_backlight_work);
+}
+EXPORT_SYMBOL(acpi_video_report_nolcd);
+
 int acpi_video_register(void)
 {
 	int ret = 0;
@@ -2197,6 +2224,18 @@ int acpi_video_register(void)
 	 */
 	register_count = 1;
 
+	/*
+	 * acpi_video_bus_add() skips registering the userspace visible
+	 * backlight_device. The intend is for this to be registered by the
+	 * drm/kms driver calling acpi_video_register_backlight() *after* it is
+	 * done setting up its own native backlight device. The delayed work
+	 * ensures that acpi_video_register_backlight() always gets called
+	 * eventually, in case there is no drm/kms driver or it is disabled.
+	 */
+	if (register_backlight_delay)
+		schedule_delayed_work(&video_bus_register_backlight_work,
+				      register_backlight_delay * HZ);
+
 leave:
 	mutex_unlock(&register_count_mutex);
 	return ret;
@@ -2207,6 +2246,7 @@ void acpi_video_unregister(void)
 {
 	mutex_lock(&register_count_mutex);
 	if (register_count) {
+		cancel_delayed_work_sync(&video_bus_register_backlight_work);
 		acpi_bus_unregister_driver(&acpi_video_bus);
 		register_count = 0;
 		may_report_brightness_keys = false;

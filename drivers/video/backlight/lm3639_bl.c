@@ -296,7 +296,8 @@ static const struct regmap_config lm3639_regmap = {
 	.max_register = REG_MAX,
 };
 
-static int lm3639_probe(struct i2c_client *client)
+static int lm3639_probe(struct i2c_client *client,
+				  const struct i2c_device_id *id)
 {
 	int ret;
 	struct lm3639_chip_data *pchip;

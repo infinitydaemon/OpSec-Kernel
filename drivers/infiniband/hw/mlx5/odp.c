@@ -104,7 +104,7 @@ static void populate_klm(struct mlx5_klm *pklm, size_t idx, size_t nentries,
 	if (flags & MLX5_IB_UPD_XLT_ZAP) {
 		for (; pklm != end; pklm++, idx++) {
 			pklm->bcount = cpu_to_be32(MLX5_IMR_MTT_SIZE);
-			pklm->key = mr_to_mdev(imr)->mkeys.null_mkey;
+			pklm->key = cpu_to_be32(mr_to_mdev(imr)->null_mkey);
 			pklm->va = 0;
 		}
 		return;
@@ -137,7 +137,7 @@ static void populate_klm(struct mlx5_klm *pklm, size_t idx, size_t nentries,
 			pklm->key = cpu_to_be32(mtt->ibmr.lkey);
 			pklm->va = cpu_to_be64(idx * MLX5_IMR_MTT_SIZE);
 		} else {
-			pklm->key = mr_to_mdev(imr)->mkeys.null_mkey;
+			pklm->key = cpu_to_be32(mr_to_mdev(imr)->null_mkey);
 			pklm->va = 0;
 		}
 	}
@@ -230,7 +230,8 @@ static bool mlx5_ib_invalidate_range(struct mmu_interval_notifier *mni,
 	struct ib_umem_odp *umem_odp =
 		container_of(mni, struct ib_umem_odp, notifier);
 	struct mlx5_ib_mr *mr;
-	const u64 umr_block_mask = MLX5_UMR_MTT_NUM_ENTRIES_ALIGNMENT - 1;
+	const u64 umr_block_mask = (MLX5_UMR_MTT_ALIGNMENT /
+				    sizeof(struct mlx5_mtt)) - 1;
 	u64 idx = 0, blk_start_idx = 0;
 	u64 invalidations = 0;
 	unsigned long start;
@@ -417,9 +418,8 @@ static struct mlx5_ib_mr *implicit_get_child_mr(struct mlx5_ib_mr *imr,
 	if (IS_ERR(odp))
 		return ERR_CAST(odp);
 
-	mr = mlx5_mr_cache_alloc(dev, imr->access_flags,
-				 MLX5_MKC_ACCESS_MODE_MTT,
-				 MLX5_IMR_MTT_ENTRIES);
+	mr = mlx5_mr_cache_alloc(dev, &dev->cache.ent[MLX5_IMR_MTT_CACHE_ENTRY],
+				 imr->access_flags);
 	if (IS_ERR(mr)) {
 		ib_umem_odp_release(odp);
 		return mr;
@@ -493,8 +493,9 @@ struct mlx5_ib_mr *mlx5_ib_alloc_implicit_mr(struct mlx5_ib_pd *pd,
 	if (IS_ERR(umem_odp))
 		return ERR_CAST(umem_odp);
 
-	imr = mlx5_mr_cache_alloc(dev, access_flags, MLX5_MKC_ACCESS_MODE_KSM,
-				  mlx5_imr_ksm_entries);
+	imr = mlx5_mr_cache_alloc(dev,
+				  &dev->cache.ent[MLX5_IMR_KSM_CACHE_ENTRY],
+				  access_flags);
 	if (IS_ERR(imr)) {
 		ib_umem_odp_release(umem_odp);
 		return imr;
@@ -986,7 +987,7 @@ static int pagefault_data_segments(struct mlx5_ib_dev *dev,
 {
 	int ret = 0, npages = 0;
 	u64 io_virt;
-	__be32 key;
+	u32 key;
 	u32 byte_count;
 	size_t bcnt;
 	int inline_segment;
@@ -1000,7 +1001,7 @@ static int pagefault_data_segments(struct mlx5_ib_dev *dev,
 		struct mlx5_wqe_data_seg *dseg = wqe;
 
 		io_virt = be64_to_cpu(dseg->addr);
-		key = dseg->lkey;
+		key = be32_to_cpu(dseg->lkey);
 		byte_count = be32_to_cpu(dseg->byte_count);
 		inline_segment = !!(byte_count &  MLX5_INLINE_SEG);
 		bcnt	       = byte_count & ~MLX5_INLINE_SEG;
@@ -1014,8 +1015,7 @@ static int pagefault_data_segments(struct mlx5_ib_dev *dev,
 		}
 
 		/* receive WQE end of sg list. */
-		if (receive_queue && bcnt == 0 &&
-		    key == dev->mkeys.terminate_scatter_list_mkey &&
+		if (receive_queue && bcnt == 0 && key == MLX5_INVALID_LKEY &&
 		    io_virt == 0)
 			break;
 
@@ -1035,7 +1035,7 @@ static int pagefault_data_segments(struct mlx5_ib_dev *dev,
 			continue;
 		}
 
-		ret = pagefault_single_data_segment(dev, NULL, be32_to_cpu(key),
+		ret = pagefault_single_data_segment(dev, NULL, key,
 						    io_virt, bcnt,
 						    &pfault->bytes_committed,
 						    bytes_mapped);
@@ -1588,22 +1588,26 @@ mlx5_ib_odp_destroy_eq(struct mlx5_ib_dev *dev, struct mlx5_ib_pf_eq *eq)
 	return err;
 }
 
-int mlx5_odp_init_mkey_cache(struct mlx5_ib_dev *dev)
+void mlx5_odp_init_mkey_cache_entry(struct mlx5_cache_ent *ent)
 {
-	struct mlx5r_cache_rb_key rb_key = {
-		.access_mode = MLX5_MKC_ACCESS_MODE_KSM,
-		.ndescs = mlx5_imr_ksm_entries,
-	};
-	struct mlx5_cache_ent *ent;
+	if (!(ent->dev->odp_caps.general_caps & IB_ODP_SUPPORT_IMPLICIT))
+		return;
 
-	if (!(dev->odp_caps.general_caps & IB_ODP_SUPPORT_IMPLICIT))
-		return 0;
+	switch (ent->order - 2) {
+	case MLX5_IMR_MTT_CACHE_ENTRY:
+		ent->page = PAGE_SHIFT;
+		ent->ndescs = MLX5_IMR_MTT_ENTRIES;
+		ent->access_mode = MLX5_MKC_ACCESS_MODE_MTT;
+		ent->limit = 0;
+		break;
 
-	ent = mlx5r_cache_create_ent_locked(dev, rb_key, true);
-	if (IS_ERR(ent))
-		return PTR_ERR(ent);
-
-	return 0;
+	case MLX5_IMR_KSM_CACHE_ENTRY:
+		ent->page = MLX5_KSM_PAGE_SHIFT;
+		ent->ndescs = mlx5_imr_ksm_entries;
+		ent->access_mode = MLX5_MKC_ACCESS_MODE_KSM;
+		ent->limit = 0;
+		break;
+	}
 }
 
 static const struct ib_device_ops mlx5_ib_dev_odp_ops = {
@@ -1612,15 +1616,25 @@ static const struct ib_device_ops mlx5_ib_dev_odp_ops = {
 
 int mlx5_ib_odp_init_one(struct mlx5_ib_dev *dev)
 {
+	int ret = 0;
+
 	internal_fill_odp_caps(dev);
 
 	if (!(dev->odp_caps.general_caps & IB_ODP_SUPPORT))
-		return 0;
+		return ret;
 
 	ib_set_device_ops(&dev->ib_dev, &mlx5_ib_dev_odp_ops);
 
+	if (dev->odp_caps.general_caps & IB_ODP_SUPPORT_IMPLICIT) {
+		ret = mlx5_cmd_null_mkey(dev->mdev, &dev->null_mkey);
+		if (ret) {
+			mlx5_ib_err(dev, "Error getting null_mkey %d\n", ret);
+			return ret;
+		}
+	}
+
 	mutex_init(&dev->odp_eq_mutex);
-	return 0;
+	return ret;
 }
 
 void mlx5_ib_odp_cleanup_one(struct mlx5_ib_dev *dev)

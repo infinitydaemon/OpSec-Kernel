@@ -1581,7 +1581,8 @@ static const struct regmap_config rt9455_regmap_config = {
 	.cache_type	= REGCACHE_RBTREE,
 };
 
-static int rt9455_probe(struct i2c_client *client)
+static int rt9455_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct i2c_adapter *adapter = client->adapter;
 	struct device *dev = &client->dev;
@@ -1722,7 +1723,7 @@ static const struct i2c_device_id rt9455_i2c_id_table[] = {
 };
 MODULE_DEVICE_TABLE(i2c, rt9455_i2c_id_table);
 
-static const struct of_device_id rt9455_of_match[] __maybe_unused = {
+static const struct of_device_id rt9455_of_match[] = {
 	{ .compatible = "richtek,rt9455", },
 	{ },
 };

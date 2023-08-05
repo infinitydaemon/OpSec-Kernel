@@ -3,8 +3,6 @@
 .. note:: Per leggere la documentazione originale in inglese:
 	  :ref:`Documentation/doc-guide/index.rst <doc_guide>`
 
-.. title:: Commenti in kernel-doc
-
 .. _it_kernel_doc:
 
 =================================

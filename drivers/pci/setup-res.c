@@ -484,9 +484,11 @@ int pci_enable_resources(struct pci_dev *dev, int mask)
 	pci_read_config_word(dev, PCI_COMMAND, &cmd);
 	old_cmd = cmd;
 
-	pci_dev_for_each_resource(dev, r, i) {
+	for (i = 0; i < PCI_NUM_RESOURCES; i++) {
 		if (!(mask & (1 << i)))
 			continue;
+
+		r = &dev->resource[i];
 
 		if (!(r->flags & (IORESOURCE_IO | IORESOURCE_MEM)))
 			continue;

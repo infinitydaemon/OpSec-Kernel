@@ -548,9 +548,7 @@ static int ep93xxfb_probe(struct platform_device *pdev)
 	}
 
 	ep93xxfb_set_par(info);
-	err = clk_prepare_enable(fbi->clk);
-	if (err)
-		goto failed_check;
+	clk_prepare_enable(fbi->clk);
 
 	err = register_framebuffer(info);
 	if (err)
@@ -575,7 +573,7 @@ failed_cmap:
 	return err;
 }
 
-static void ep93xxfb_remove(struct platform_device *pdev)
+static int ep93xxfb_remove(struct platform_device *pdev)
 {
 	struct fb_info *info = platform_get_drvdata(pdev);
 	struct ep93xx_fbi *fbi = info->par;
@@ -589,11 +587,13 @@ static void ep93xxfb_remove(struct platform_device *pdev)
 		fbi->mach_info->teardown(pdev);
 
 	kfree(info);
+
+	return 0;
 }
 
 static struct platform_driver ep93xxfb_driver = {
 	.probe		= ep93xxfb_probe,
-	.remove_new	= ep93xxfb_remove,
+	.remove		= ep93xxfb_remove,
 	.driver = {
 		.name	= "ep93xx-fb",
 	},

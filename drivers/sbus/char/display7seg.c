@@ -200,8 +200,9 @@ static int d7s_probe(struct platform_device *op)
 	 */
 	regs = readb(p->regs);
 	opts = of_find_node_by_path("/options");
-	if (opts)
-	    p->flipped = of_property_read_bool(opts, "d7s-flipped?");
+	if (opts &&
+	    of_get_property(opts, "d7s-flipped?", NULL))
+		p->flipped = true;
 
 	if (p->flipped)
 		regs |= D7S_FLIP;

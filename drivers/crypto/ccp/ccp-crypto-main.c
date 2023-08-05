@@ -78,6 +78,13 @@ struct ccp_crypto_cmd {
 	int ret;
 };
 
+struct ccp_crypto_cpu {
+	struct work_struct work;
+	struct completion completion;
+	struct ccp_crypto_cmd *crypto_cmd;
+	int err;
+};
+
 static inline bool ccp_crypto_success(int err)
 {
 	if (err && (err != -EINPROGRESS) && (err != -EBUSY))
@@ -139,14 +146,14 @@ static void ccp_crypto_complete(void *data, int err)
 	struct ccp_crypto_cmd *crypto_cmd = data;
 	struct ccp_crypto_cmd *held, *next, *backlog;
 	struct crypto_async_request *req = crypto_cmd->req;
-	struct ccp_ctx *ctx = crypto_tfm_ctx_dma(req->tfm);
+	struct ccp_ctx *ctx = crypto_tfm_ctx(req->tfm);
 	int ret;
 
 	if (err == -EINPROGRESS) {
 		/* Only propagate the -EINPROGRESS if necessary */
 		if (crypto_cmd->ret == -EBUSY) {
 			crypto_cmd->ret = -EINPROGRESS;
-			crypto_request_complete(req, -EINPROGRESS);
+			req->complete(req, -EINPROGRESS);
 		}
 
 		return;
@@ -159,18 +166,18 @@ static void ccp_crypto_complete(void *data, int err)
 	held = ccp_crypto_cmd_complete(crypto_cmd, &backlog);
 	if (backlog) {
 		backlog->ret = -EINPROGRESS;
-		crypto_request_complete(backlog->req, -EINPROGRESS);
+		backlog->req->complete(backlog->req, -EINPROGRESS);
 	}
 
 	/* Transition the state from -EBUSY to -EINPROGRESS first */
 	if (crypto_cmd->ret == -EBUSY)
-		crypto_request_complete(req, -EINPROGRESS);
+		req->complete(req, -EINPROGRESS);
 
 	/* Completion callbacks */
 	ret = err;
 	if (ctx->complete)
 		ret = ctx->complete(req, ret);
-	crypto_request_complete(req, ret);
+	req->complete(req, ret);
 
 	/* Submit the next cmd */
 	while (held) {
@@ -183,15 +190,15 @@ static void ccp_crypto_complete(void *data, int err)
 			break;
 
 		/* Error occurred, report it and get the next entry */
-		ctx = crypto_tfm_ctx_dma(held->req->tfm);
+		ctx = crypto_tfm_ctx(held->req->tfm);
 		if (ctx->complete)
 			ret = ctx->complete(held->req, ret);
-		crypto_request_complete(held->req, ret);
+		held->req->complete(held->req, ret);
 
 		next = ccp_crypto_cmd_complete(held, &backlog);
 		if (backlog) {
 			backlog->ret = -EINPROGRESS;
-			crypto_request_complete(backlog->req, -EINPROGRESS);
+			backlog->req->complete(backlog->req, -EINPROGRESS);
 		}
 
 		kfree(held);
@@ -393,7 +400,7 @@ static void ccp_unregister_algs(void)
 	}
 }
 
-static int __init ccp_crypto_init(void)
+static int ccp_crypto_init(void)
 {
 	int ret;
 
@@ -414,7 +421,7 @@ static int __init ccp_crypto_init(void)
 	return ret;
 }
 
-static void __exit ccp_crypto_exit(void)
+static void ccp_crypto_exit(void)
 {
 	ccp_unregister_algs();
 }

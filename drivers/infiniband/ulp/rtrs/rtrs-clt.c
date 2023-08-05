@@ -1064,8 +1064,10 @@ static int rtrs_map_sg_fr(struct rtrs_clt_io_req *req, size_t count)
 
 	/* Align the MR to a 4K page size to match the block virt boundary */
 	nr = ib_map_mr_sg(req->mr, req->sglist, count, NULL, SZ_4K);
-	if (nr != count)
-		return nr < 0 ? nr : -EINVAL;
+	if (nr < 0)
+		return nr;
+	if (nr < req->sg_cnt)
+		return -EINVAL;
 	ib_update_fast_reg_key(req->mr, ib_inc_rkey(req->mr->rkey));
 
 	return nr;
@@ -1515,7 +1517,7 @@ static void rtrs_clt_err_recovery_work(struct work_struct *work)
 	rtrs_clt_stop_and_destroy_conns(clt_path);
 	queue_delayed_work(rtrs_wq, &clt_path->reconnect_dwork,
 			   msecs_to_jiffies(delay_ms +
-					    get_random_u32_below(RTRS_RECONNECT_SEED)));
+					    prandom_u32_max(RTRS_RECONNECT_SEED)));
 }
 
 static struct rtrs_clt_path *alloc_path(struct rtrs_clt_sess *clt,
@@ -1710,6 +1712,7 @@ static int create_con_cq_qp(struct rtrs_clt_con *con)
 			return -ENOMEM;
 		con->queue_num = cq_num;
 	}
+	cq_num = max_send_wr + max_recv_wr;
 	cq_vector = con->cpu % clt_path->s.dev->ib_dev->num_comp_vectors;
 	if (con->c.cid >= clt_path->s.irq_con_num)
 		err = rtrs_cq_qp_create(&clt_path->s, &con->c, max_send_sge,
@@ -3153,7 +3156,7 @@ static int __init rtrs_client_init(void)
 {
 	rtrs_rdma_dev_pd_init(0, &dev_pd);
 
-	rtrs_clt_dev_class = class_create("rtrs-client");
+	rtrs_clt_dev_class = class_create(THIS_MODULE, "rtrs-client");
 	if (IS_ERR(rtrs_clt_dev_class)) {
 		pr_err("Failed to create rtrs-client dev class\n");
 		return PTR_ERR(rtrs_clt_dev_class);

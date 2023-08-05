@@ -10,6 +10,7 @@ Block
    bfq-iosched
    biovecs
    blk-mq
+   capability
    cmdline-partition
    data-integrity
    deadline-iosched
@@ -18,6 +19,7 @@ Block
    kyber-iosched
    null_blk
    pr
+   request
    stat
    switching-sched
    writeback_cache_control

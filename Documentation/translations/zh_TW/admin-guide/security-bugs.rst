@@ -2,7 +2,7 @@
 
 .. include:: ../disclaimer-zh_TW.rst
 
-:Original: :doc:`../../../process/security-bugs`
+:Original: :doc:`../../../admin-guide/security-bugs`
 
 :譯者:
 

@@ -16,15 +16,10 @@ description:
 
 properties:
   compatible:
-    oneOf:
-      - enum:
-          - renesas,r9a07g044-vsp2 # RZ/G2L
-          - renesas,vsp1 # R-Car Gen2 and RZ/G1
-          - renesas,vsp2 # R-Car Gen3 and RZ/G2
-      - items:
-          - enum:
-              - renesas,r9a07g054-vsp2    # RZ/V2L
-          - const: renesas,r9a07g044-vsp2 # RZ/G2L fallback
+    enum:
+      - renesas,r9a07g044-vsp2 # RZ/G2L
+      - renesas,vsp1 # R-Car Gen2 and RZ/G1
+      - renesas,vsp2 # R-Car Gen3 and RZ/G2
 
   reg:
     maxItems: 1

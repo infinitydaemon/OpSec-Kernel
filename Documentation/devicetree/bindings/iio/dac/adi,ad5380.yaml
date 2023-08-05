@@ -12,7 +12,6 @@ maintainers:
 
 description: |
   DAC devices supporting both SPI and I2C interfaces.
-
 properties:
   compatible:
     enum:

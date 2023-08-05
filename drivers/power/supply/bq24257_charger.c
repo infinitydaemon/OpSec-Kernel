@@ -767,7 +767,8 @@ static ssize_t bq24257_show_ovp_voltage(struct device *dev,
 	struct power_supply *psy = dev_get_drvdata(dev);
 	struct bq24257_device *bq = power_supply_get_drvdata(psy);
 
-	return sysfs_emit(buf, "%u\n", bq24257_vovp_map[bq->init_data.vovp]);
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 bq24257_vovp_map[bq->init_data.vovp]);
 }
 
 static ssize_t bq24257_show_in_dpm_voltage(struct device *dev,
@@ -777,7 +778,8 @@ static ssize_t bq24257_show_in_dpm_voltage(struct device *dev,
 	struct power_supply *psy = dev_get_drvdata(dev);
 	struct bq24257_device *bq = power_supply_get_drvdata(psy);
 
-	return sysfs_emit(buf, "%u\n", bq24257_vindpm_map[bq->init_data.vindpm]);
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 bq24257_vindpm_map[bq->init_data.vindpm]);
 }
 
 static ssize_t bq24257_sysfs_show_enable(struct device *dev,
@@ -798,7 +800,7 @@ static ssize_t bq24257_sysfs_show_enable(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	return sysfs_emit(buf, "%d\n", ret);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", ret);
 }
 
 static ssize_t bq24257_sysfs_set_enable(struct device *dev,
@@ -945,9 +947,9 @@ static int bq24257_fw_probe(struct bq24257_device *bq)
 	return 0;
 }
 
-static int bq24257_probe(struct i2c_client *client)
+static int bq24257_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
-	const struct i2c_device_id *id = i2c_client_get_device_id(client);
 	struct i2c_adapter *adapter = client->adapter;
 	struct device *dev = &client->dev;
 	const struct acpi_device_id *acpi_id;
@@ -1140,7 +1142,7 @@ static const struct i2c_device_id bq24257_i2c_ids[] = {
 };
 MODULE_DEVICE_TABLE(i2c, bq24257_i2c_ids);
 
-static const struct of_device_id bq24257_of_match[] __maybe_unused = {
+static const struct of_device_id bq24257_of_match[] = {
 	{ .compatible = "ti,bq24250", },
 	{ .compatible = "ti,bq24251", },
 	{ .compatible = "ti,bq24257", },

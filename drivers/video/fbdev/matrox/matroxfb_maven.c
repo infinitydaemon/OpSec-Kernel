@@ -1249,7 +1249,8 @@ static int maven_shutdown_client(struct i2c_client* clnt) {
 	return 0;
 }
 
-static int maven_probe(struct i2c_client *client)
+static int maven_probe(struct i2c_client *client,
+		       const struct i2c_device_id *id)
 {
 	struct i2c_adapter *adapter = client->adapter;
 	int err = -ENODEV;

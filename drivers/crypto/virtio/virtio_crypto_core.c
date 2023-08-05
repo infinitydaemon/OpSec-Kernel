@@ -480,7 +480,6 @@ static void virtcrypto_free_unused_reqs(struct virtio_crypto *vcrypto)
 			kfree(vc_req->req_data);
 			kfree(vc_req->sgs);
 		}
-		cond_resched();
 	}
 }
 

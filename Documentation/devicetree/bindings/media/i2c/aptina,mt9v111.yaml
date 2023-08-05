@@ -55,7 +55,7 @@ additionalProperties: false
 
 examples:
   - |
-    i2c {
+    i2c0 {
         #address-cells = <1>;
         #size-cells = <0>;
 

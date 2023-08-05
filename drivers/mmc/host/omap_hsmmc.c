@@ -1736,18 +1736,18 @@ static struct omap_hsmmc_platform_data *of_get_hsmmc_pdata(struct device *dev)
 	if (legacy && legacy->name)
 		pdata->name = legacy->name;
 
-	if (of_property_read_bool(np, "ti,dual-volt"))
+	if (of_find_property(np, "ti,dual-volt", NULL))
 		pdata->controller_flags |= OMAP_HSMMC_SUPPORTS_DUAL_VOLT;
 
-	if (of_property_read_bool(np, "ti,non-removable")) {
+	if (of_find_property(np, "ti,non-removable", NULL)) {
 		pdata->nonremovable = true;
 		pdata->no_regulator_off_init = true;
 	}
 
-	if (of_property_read_bool(np, "ti,needs-special-reset"))
+	if (of_find_property(np, "ti,needs-special-reset", NULL))
 		pdata->features |= HSMMC_HAS_UPDATED_RESET;
 
-	if (of_property_read_bool(np, "ti,needs-special-hs-handling"))
+	if (of_find_property(np, "ti,needs-special-hs-handling", NULL))
 		pdata->features |= HSMMC_HAS_HSPE_SUPPORT;
 
 	return pdata;

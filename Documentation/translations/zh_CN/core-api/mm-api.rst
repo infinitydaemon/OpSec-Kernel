@@ -37,7 +37,7 @@ mm/gup.c
 
 该API在以下内核代码中:
 
-include/linux/gfp_types.h
+include/linux/gfp.h
 
 Slab缓存
 ========

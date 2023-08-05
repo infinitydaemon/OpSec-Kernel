@@ -8,7 +8,7 @@
  * This file add support for AES cipher with 128,192,256 bits keysize in
  * CBC and ECB mode.
  *
- * You could find a link for the datasheet in Documentation/arch/arm/sunxi.rst
+ * You could find a link for the datasheet in Documentation/arm/sunxi.rst
  */
 
 #include <linux/bottom_half.h>
@@ -452,7 +452,7 @@ int sun8i_ss_aes_setkey(struct crypto_skcipher *tfm, const u8 *key,
 	}
 	kfree_sensitive(op->key);
 	op->keylen = keylen;
-	op->key = kmemdup(key, keylen, GFP_KERNEL);
+	op->key = kmemdup(key, keylen, GFP_KERNEL | GFP_DMA);
 	if (!op->key)
 		return -ENOMEM;
 
@@ -475,7 +475,7 @@ int sun8i_ss_des3_setkey(struct crypto_skcipher *tfm, const u8 *key,
 
 	kfree_sensitive(op->key);
 	op->keylen = keylen;
-	op->key = kmemdup(key, keylen, GFP_KERNEL);
+	op->key = kmemdup(key, keylen, GFP_KERNEL | GFP_DMA);
 	if (!op->key)
 		return -ENOMEM;
 

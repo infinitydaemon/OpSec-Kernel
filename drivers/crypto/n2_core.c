@@ -9,7 +9,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of.h>
-#include <linux/of_address.h>
 #include <linux/of_device.h>
 #include <linux/cpumask.h>
 #include <linux/slab.h>
@@ -1796,9 +1795,11 @@ static int grab_mdesc_irq_props(struct mdesc_handle *mdesc,
 				struct spu_mdesc_info *ip,
 				const char *node_name)
 {
-	u64 node, reg;
+	const unsigned int *reg;
+	u64 node;
 
-	if (of_property_read_reg(dev->dev.of_node, 0, &reg, NULL) < 0)
+	reg = of_get_property(dev->dev.of_node, "reg", NULL);
+	if (!reg)
 		return -ENODEV;
 
 	mdesc_for_each_node_by_name(mdesc, node, "virtual-device") {
@@ -1809,7 +1810,7 @@ static int grab_mdesc_irq_props(struct mdesc_handle *mdesc,
 		if (!name || strcmp(name, node_name))
 			continue;
 		chdl = mdesc_get_property(mdesc, node, "cfg-handle", NULL);
-		if (!chdl || (*chdl != reg))
+		if (!chdl || (*chdl != *reg))
 			continue;
 		ip->cfg_handle = *chdl;
 		return get_irq_props(mdesc, node, ip);

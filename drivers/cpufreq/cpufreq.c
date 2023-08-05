@@ -73,11 +73,6 @@ static inline bool has_target(void)
 	return cpufreq_driver->target_index || cpufreq_driver->target;
 }
 
-bool has_target_index(void)
-{
-	return !!cpufreq_driver->target_index;
-}
-
 /* internal prototypes */
 static unsigned int __cpufreq_get(struct cpufreq_policy *policy);
 static int cpufreq_init_governor(struct cpufreq_policy *policy);
@@ -730,9 +725,9 @@ static ssize_t store_##file_name					\
 	unsigned long val;						\
 	int ret;							\
 									\
-	ret = kstrtoul(buf, 0, &val);					\
-	if (ret)							\
-		return ret;						\
+	ret = sscanf(buf, "%lu", &val);					\
+	if (ret != 1)							\
+		return -EINVAL;						\
 									\
 	ret = freq_qos_update_request(policy->object##_freq_req, val);\
 	return ret >= 0 ? count : ret;					\
@@ -998,7 +993,7 @@ static const struct sysfs_ops sysfs_ops = {
 	.store	= store,
 };
 
-static const struct kobj_type ktype_cpufreq = {
+static struct kobj_type ktype_cpufreq = {
 	.sysfs_ops	= &sysfs_ops,
 	.default_groups	= cpufreq_groups,
 	.release	= cpufreq_sysfs_release,
@@ -2828,8 +2823,7 @@ int cpufreq_register_driver(struct cpufreq_driver *driver_data)
 	     (driver_data->setpolicy && (driver_data->target_index ||
 		    driver_data->target)) ||
 	     (!driver_data->get_intermediate != !driver_data->target_intermediate) ||
-	     (!driver_data->online != !driver_data->offline) ||
-		 (driver_data->adjust_perf && !driver_data->fast_switch))
+	     (!driver_data->online != !driver_data->offline))
 		return -EINVAL;
 
 	pr_debug("trying to register driver %s\n", driver_data->name);
@@ -2910,12 +2904,12 @@ EXPORT_SYMBOL_GPL(cpufreq_register_driver);
  * Returns zero if successful, and -EINVAL if the cpufreq_driver is
  * currently not initialised.
  */
-void cpufreq_unregister_driver(struct cpufreq_driver *driver)
+int cpufreq_unregister_driver(struct cpufreq_driver *driver)
 {
 	unsigned long flags;
 
-	if (WARN_ON(!cpufreq_driver || (driver != cpufreq_driver)))
-		return;
+	if (!cpufreq_driver || (driver != cpufreq_driver))
+		return -EINVAL;
 
 	pr_debug("unregistering driver %s\n", driver->name);
 
@@ -2932,22 +2926,19 @@ void cpufreq_unregister_driver(struct cpufreq_driver *driver)
 
 	write_unlock_irqrestore(&cpufreq_driver_lock, flags);
 	cpus_read_unlock();
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(cpufreq_unregister_driver);
 
 static int __init cpufreq_core_init(void)
 {
 	struct cpufreq_governor *gov = cpufreq_default_governor();
-	struct device *dev_root;
 
 	if (cpufreq_disabled())
 		return -ENODEV;
 
-	dev_root = bus_get_dev_root(&cpu_subsys);
-	if (dev_root) {
-		cpufreq_global_kobject = kobject_create_and_add("cpufreq", &dev_root->kobj);
-		put_device(dev_root);
-	}
+	cpufreq_global_kobject = kobject_create_and_add("cpufreq", &cpu_subsys.dev_root->kobj);
 	BUG_ON(!cpufreq_global_kobject);
 
 	if (!strlen(default_governor))
