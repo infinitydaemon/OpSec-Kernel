@@ -10,7 +10,7 @@
 #ifndef __MACH_SPEAR_H
 #define __MACH_SPEAR_H
 
-#include <asm/page.h>
+#include <asm/memory.h>
 
 #if defined(CONFIG_ARCH_SPEAR3XX) || defined (CONFIG_ARCH_SPEAR6XX)
 
