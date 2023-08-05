@@ -33,7 +33,6 @@ properties:
               - microchip,25lc040
               - st,m95m02
               - st,m95256
-              - st,m95640
               - cypress,fm25
 
           - const: atmel,at25
@@ -105,7 +104,6 @@ required:
 
 allOf:
   - $ref: /schemas/spi/spi-peripheral-props.yaml#
-  - $ref: /schemas/nvmem/nvmem.yaml
   - if:
       properties:
         compatible:
@@ -123,7 +121,7 @@ unevaluatedProperties: false
 examples:
   - |
     #include <dt-bindings/gpio/gpio.h>
-    spi {
+    spi0 {
         #address-cells = <1>;
         #size-cells = <0>;
 
