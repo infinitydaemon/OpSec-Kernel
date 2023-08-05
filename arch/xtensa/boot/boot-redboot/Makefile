@@ -6,11 +6,15 @@
 
 OBJCOPY_ARGS := -O $(if $(CONFIG_CPU_BIG_ENDIAN),elf32-xtensa-be,elf32-xtensa-le)
 
+LD_ARGS	= -T $(srctree)/$(obj)/boot.ld
+
 boot-y	:= bootstrap.o
 targets	+= $(boot-y)
 
 OBJS	:= $(addprefix $(obj)/,$(boot-y))
 LIBS	:= arch/xtensa/boot/lib/lib.a arch/xtensa/lib/lib.a
+
+LIBGCC := $(shell $(CC) $(KBUILD_CFLAGS) -print-libgcc-file-name)
 
 $(obj)/zImage.o: $(obj)/../vmlinux.bin.gz $(OBJS)
 	$(Q)$(OBJCOPY) $(OBJCOPY_ARGS) -R .comment \
@@ -19,10 +23,7 @@ $(obj)/zImage.o: $(obj)/../vmlinux.bin.gz $(OBJS)
 		$(OBJS) $@
 
 $(obj)/zImage.elf: $(obj)/zImage.o $(LIBS)
-	$(Q)$(LD) $(KBUILD_LDFLAGS) \
-		-T $(srctree)/$(obj)/boot.ld \
-		--build-id=none \
-		-o $@ $^
+	$(Q)$(LD) $(LD_ARGS) -o $@ $^ -L/xtensa-elf/lib $(LIBGCC)
 
 $(obj)/../zImage.redboot: $(obj)/zImage.elf
 	$(Q)$(OBJCOPY) -S -O binary $< $@

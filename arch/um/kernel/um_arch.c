@@ -3,7 +3,6 @@
  * Copyright (C) 2000 - 2007 Jeff Dike (jdike@{addtoit,linux.intel}.com)
  */
 
-#include <linux/cpu.h>
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/mm.h>
@@ -97,7 +96,7 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 
 static void *c_start(struct seq_file *m, loff_t *pos)
 {
-	return *pos < nr_cpu_ids ? &boot_cpu_data + *pos : NULL;
+	return *pos < nr_cpu_ids ? cpu_data + *pos : NULL;
 }
 
 static void *c_next(struct seq_file *m, void *v, loff_t *pos)
@@ -327,13 +326,9 @@ int __init linux_main(int argc, char **argv)
 		add_arg(DEFAULT_COMMAND_LINE_CONSOLE);
 
 	host_task_size = os_get_top_address();
-	/* reserve a few pages for the stubs (taking care of data alignment) */
-	/* align the data portion */
-	BUILD_BUG_ON(!is_power_of_2(STUB_DATA_PAGES));
-	stub_start = (host_task_size - 1) & ~(STUB_DATA_PAGES * PAGE_SIZE - 1);
-	/* another page for the code portion */
-	stub_start -= PAGE_SIZE;
-	host_task_size = stub_start;
+	/* reserve two pages for the stubs */
+	host_task_size -= 2 * PAGE_SIZE;
+	stub_start = host_task_size;
 
 	/*
 	 * TASK_SIZE needs to be PGDIR_SIZE aligned or else exit_mmap craps
@@ -431,13 +426,13 @@ void __init setup_arch(char **cmdline_p)
 	}
 }
 
-void __init arch_cpu_finalize_init(void)
+void __init check_bugs(void)
 {
 	arch_check_bugs();
 	os_check_bugs();
 }
 
-void apply_seal_endbr(s32 *start, s32 *end)
+void apply_ibt_endbr(s32 *start, s32 *end)
 {
 }
 
@@ -446,11 +441,6 @@ void apply_retpolines(s32 *start, s32 *end)
 }
 
 void apply_returns(s32 *start, s32 *end)
-{
-}
-
-void apply_fineibt(s32 *start_retpoline, s32 *end_retpoline,
-		   s32 *start_cfi, s32 *end_cfi)
 {
 }
 

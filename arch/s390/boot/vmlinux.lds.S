@@ -93,8 +93,6 @@ SECTIONS
 		_decompressor_syms_end = .;
 	}
 
-	_decompressor_end = .;
-
 #ifdef CONFIG_KERNEL_UNCOMPRESSED
 	. = 0x100000;
 #else

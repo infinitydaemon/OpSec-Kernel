@@ -37,7 +37,7 @@ int pdc_system_map_find_mods(struct pdc_system_map_mod_info *pdc_mod_info,
 int pdc_system_map_find_addrs(struct pdc_system_map_addr_info *pdc_addr_info,
 			      long mod_index, long addr_index);
 int pdc_model_info(struct pdc_model *model);
-int pdc_model_sysmodel(unsigned int os_id, char *name);
+int pdc_model_sysmodel(char *name);
 int pdc_model_cpuid(unsigned long *cpu_id);
 int pdc_model_versions(unsigned long *versions, int id);
 int pdc_model_capabilities(unsigned long *capabilities);
@@ -88,8 +88,8 @@ int pdc_iodc_print(const unsigned char *str, unsigned count);
 
 void pdc_emergency_unlock(void);
 int pdc_sti_call(unsigned long func, unsigned long flags,
-		unsigned long inptr, unsigned long outputr,
-		unsigned long glob_cfg, int do_call64);
+                 unsigned long inptr, unsigned long outputr,
+                 unsigned long glob_cfg);
 
 int __pdc_cpu_rendezvous(void);
 void pdc_cpu_rendezvous_lock(void);

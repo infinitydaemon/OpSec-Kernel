@@ -51,7 +51,7 @@ _zimage_start:
 _zimage_start_lib:
 	/* Work out the offset between the address we were linked at
 	   and the address where we're running. */
-	bcl	20,31,.+4
+	bl	.+4
 p_base:	mflr	r10		/* r10 now points to runtime addr of p_base */
 #ifndef __powerpc64__
 	/* grab the link address of the dynamic section in r11 */
@@ -274,7 +274,7 @@ prom:
 	mtsrr1	r10
 
 	/* Load FW address, set LR to label 1, and jump to FW */
-	bcl	20,31,0f
+	bl	0f
 0:	mflr	r10
 	addi	r11,r10,(1f-0b)
 	mtlr	r11

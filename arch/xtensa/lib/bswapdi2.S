@@ -19,4 +19,3 @@ ENTRY(__bswapdi2)
 	abi_ret_default
 
 ENDPROC(__bswapdi2)
-EXPORT_SYMBOL(__bswapdi2)

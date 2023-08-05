@@ -22,7 +22,6 @@
 #include <linux/screen_info.h>
 #include <linux/kernel.h>
 #include <linux/percpu.h>
-#include <linux/reboot.h>
 #include <linux/cpu.h>
 #include <linux/of.h>
 #include <linux/of_fdt.h>
@@ -47,7 +46,6 @@
 #include <asm/smp.h>
 #include <asm/sysmem.h>
 #include <asm/timex.h>
-#include <asm/traps.h>
 
 #if defined(CONFIG_VGA_CONSOLE) || defined(CONFIG_DUMMY_CONSOLE)
 struct screen_info screen_info = {
@@ -243,12 +241,6 @@ void __init early_init_devtree(void *params)
 
 void __init init_arch(bp_tag_t *bp_start)
 {
-	/* Initialize basic exception handling if configuration may need it */
-
-	if (IS_ENABLED(CONFIG_KASAN) ||
-	    IS_ENABLED(CONFIG_XTENSA_LOAD_STORE))
-		early_trap_init();
-
 	/* Initialize MMU. */
 
 	init_mmu();
@@ -530,30 +522,19 @@ void cpu_reset(void)
 
 void machine_restart(char * cmd)
 {
-	local_irq_disable();
-	smp_send_stop();
-	do_kernel_restart(cmd);
-	pr_err("Reboot failed -- System halted\n");
-	while (1)
-		cpu_relax();
+	platform_restart();
 }
 
 void machine_halt(void)
 {
-	local_irq_disable();
-	smp_send_stop();
-	do_kernel_power_off();
-	while (1)
-		cpu_relax();
+	platform_halt();
+	while (1);
 }
 
 void machine_power_off(void)
 {
-	local_irq_disable();
-	smp_send_stop();
-	do_kernel_power_off();
-	while (1)
-		cpu_relax();
+	platform_power_off();
+	while (1);
 }
 #ifdef CONFIG_PROC_FS
 
@@ -593,12 +574,6 @@ c_show(struct seq_file *f, void *slot)
 # if XCHAL_HAVE_OCD
 		     "ocd "
 # endif
-#if XCHAL_HAVE_TRAX
-		     "trax "
-#endif
-#if XCHAL_NUM_PERF_COUNTERS
-		     "perf "
-#endif
 #endif
 #if XCHAL_HAVE_DENSITY
 	    	     "density "
@@ -648,13 +623,11 @@ c_show(struct seq_file *f, void *slot)
 	seq_printf(f,"physical aregs\t: %d\n"
 		     "misc regs\t: %d\n"
 		     "ibreak\t\t: %d\n"
-		     "dbreak\t\t: %d\n"
-		     "perf counters\t: %d\n",
+		     "dbreak\t\t: %d\n",
 		     XCHAL_NUM_AREGS,
 		     XCHAL_NUM_MISC_REGS,
 		     XCHAL_NUM_IBREAK,
-		     XCHAL_NUM_DBREAK,
-		     XCHAL_NUM_PERF_COUNTERS);
+		     XCHAL_NUM_DBREAK);
 
 
 	/* Interrupt. */

@@ -228,4 +228,3 @@ ENTRY(__umulsidi3)
 #endif /* XCHAL_NO_MUL */
 
 ENDPROC(__umulsidi3)
-EXPORT_SYMBOL(__umulsidi3)

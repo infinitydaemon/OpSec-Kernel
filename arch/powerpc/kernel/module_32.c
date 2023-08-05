@@ -163,7 +163,8 @@ static uint32_t do_plt_call(void *location,
 
 	pr_debug("Doing plt for call to 0x%x at 0x%x\n", val, (unsigned int)location);
 	/* Init, or core PLT? */
-	if (within_module_core((unsigned long)location, mod))
+	if (location >= mod->core_layout.base
+	    && location < mod->core_layout.base + mod->core_layout.size)
 		entry = (void *)sechdrs[mod->arch.core_plt_section].sh_addr;
 	else
 		entry = (void *)sechdrs[mod->arch.init_plt_section].sh_addr;
@@ -321,14 +322,14 @@ notrace int module_trampoline_target(struct module *mod, unsigned long addr,
 
 int module_finalize_ftrace(struct module *module, const Elf_Shdr *sechdrs)
 {
-	module->arch.tramp = do_plt_call(module->mem[MOD_TEXT].base,
+	module->arch.tramp = do_plt_call(module->core_layout.base,
 					 (unsigned long)ftrace_caller,
 					 sechdrs, module);
 	if (!module->arch.tramp)
 		return -ENOENT;
 
 #ifdef CONFIG_DYNAMIC_FTRACE_WITH_REGS
-	module->arch.tramp_regs = do_plt_call(module->mem[MOD_TEXT].base,
+	module->arch.tramp_regs = do_plt_call(module->core_layout.base,
 					      (unsigned long)ftrace_regs_caller,
 					      sechdrs, module);
 	if (!module->arch.tramp_regs)

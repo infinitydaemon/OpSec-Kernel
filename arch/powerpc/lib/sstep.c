@@ -2284,7 +2284,15 @@ int analyse_instr(struct instruction_op *op, const struct pt_regs *regs,
 			op->type = MKOP(STCX, 0, 4);
 			break;
 
-#ifdef CONFIG_PPC_HAS_LBARX_LHARX
+#ifdef __powerpc64__
+		case 84:	/* ldarx */
+			op->type = MKOP(LARX, 0, 8);
+			break;
+
+		case 214:	/* stdcx. */
+			op->type = MKOP(STCX, 0, 8);
+			break;
+
 		case 52:	/* lbarx */
 			op->type = MKOP(LARX, 0, 1);
 			break;
@@ -2299,15 +2307,6 @@ int analyse_instr(struct instruction_op *op, const struct pt_regs *regs,
 
 		case 726:	/* sthcx. */
 			op->type = MKOP(STCX, 0, 2);
-			break;
-#endif
-#ifdef __powerpc64__
-		case 84:	/* ldarx */
-			op->type = MKOP(LARX, 0, 8);
-			break;
-
-		case 214:	/* stdcx. */
-			op->type = MKOP(STCX, 0, 8);
 			break;
 
 		case 276:	/* lqarx */
@@ -3335,7 +3334,7 @@ int emulate_loadstore(struct pt_regs *regs, struct instruction_op *op)
 		err = 0;
 		val = 0;
 		switch (size) {
-#ifdef CONFIG_PPC_HAS_LBARX_LHARX
+#ifdef __powerpc64__
 		case 1:
 			__get_user_asmx(val, ea, err, "lbarx");
 			break;

@@ -110,7 +110,7 @@
 	.endif
 
 	/* Load &pt_regs in r6 for call below */
-	addi    r6, r1, STACK_INT_FRAME_REGS
+	addi    r6, r1, STACK_FRAME_OVERHEAD
 .endm
 
 .macro	ftrace_regs_exit allregs

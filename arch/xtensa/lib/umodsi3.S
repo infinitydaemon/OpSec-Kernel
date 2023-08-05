@@ -55,4 +55,3 @@ ENTRY(__umodsi3)
 	abi_ret_default
 
 ENDPROC(__umodsi3)
-EXPORT_SYMBOL(__umodsi3)

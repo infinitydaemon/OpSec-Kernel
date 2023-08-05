@@ -59,7 +59,6 @@
 #include <asm/xmon.h>
 #include <asm/cputhreads.h>
 #include <mm/mmu_decl.h>
-#include <asm/archrandom.h>
 #include <asm/fadump.h>
 #include <asm/udbg.h>
 #include <asm/hugetlb.h>
@@ -630,14 +629,13 @@ static __init void probe_machine(void)
 	for (machine_id = &__machine_desc_start;
 	     machine_id < &__machine_desc_end;
 	     machine_id++) {
-		DBG("  %s ...\n", machine_id->name);
-		if (machine_id->compatible && !of_machine_is_compatible(machine_id->compatible))
-			continue;
+		DBG("  %s ...", machine_id->name);
 		memcpy(&ppc_md, machine_id, sizeof(struct machdep_calls));
-		if (ppc_md.probe && !ppc_md.probe())
-			continue;
-		DBG("   %s match !\n", machine_id->name);
-		break;
+		if (ppc_md.probe()) {
+			DBG(" match !\n");
+			break;
+		}
+		DBG("\n");
 	}
 	/* What can we do if we didn't find ? */
 	if (machine_id >= &__machine_desc_end) {

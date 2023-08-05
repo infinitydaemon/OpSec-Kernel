@@ -60,7 +60,6 @@ ENTRY(__modsi3)
 	abi_ret_default
 
 ENDPROC(__modsi3)
-EXPORT_SYMBOL(__modsi3)
 
 #if !XCHAL_HAVE_NSA
 	.section .rodata

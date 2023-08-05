@@ -68,6 +68,8 @@ struct vector_fds {
 };
 
 #define VECTOR_READ	1
+#define VECTOR_WRITE	(1 < 1)
+#define VECTOR_HEADERS	(1 < 2)
 
 extern struct arglist *uml_parse_vector_ifspec(char *arg);
 

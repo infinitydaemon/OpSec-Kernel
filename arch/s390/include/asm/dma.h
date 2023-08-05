@@ -2,7 +2,7 @@
 #ifndef _ASM_S390_DMA_H
 #define _ASM_S390_DMA_H
 
-#include <linux/io.h>
+#include <asm/io.h>
 
 /*
  * MAX_DMA_ADDRESS is ambiguous because on s390 its completely unrelated

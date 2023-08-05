@@ -1508,25 +1508,14 @@ static void do_program_check(struct pt_regs *regs)
 
 		if (!(regs->msr & MSR_PR) &&  /* not user-mode */
 		    report_bug(bugaddr, regs) == BUG_TRAP_TYPE_WARN) {
-			regs_add_return_ip(regs, 4);
-			return;
-		}
+			const struct exception_table_entry *entry;
 
-		if (cpu_has_feature(CPU_FTR_DEXCR_NPHIE) && user_mode(regs)) {
-			ppc_inst_t insn;
-
-			if (get_user_instr(insn, (void __user *)regs->nip)) {
-				_exception(SIGSEGV, regs, SEGV_MAPERR, regs->nip);
-				return;
-			}
-
-			if (ppc_inst_primary_opcode(insn) == 31 &&
-			    get_xop(ppc_inst_val(insn)) == OP_31_XOP_HASHCHK) {
-				_exception(SIGILL, regs, ILL_ILLOPN, regs->nip);
+			entry = search_exception_tables(bugaddr);
+			if (entry) {
+				regs_set_return_ip(regs, extable_fixup(entry) + regs->nip - bugaddr);
 				return;
 			}
 		}
-
 		_exception(SIGTRAP, regs, TRAP_BRKPT, regs->nip);
 		return;
 	}

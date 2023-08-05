@@ -28,14 +28,9 @@
 
 	.section .kprobes.text, "ax"
 
-SYM_FUNC_START(ftrace_stub)
+ENTRY(ftrace_stub)
 	BR_EX	%r14
-SYM_FUNC_END(ftrace_stub)
-
-SYM_CODE_START(ftrace_stub_direct_tramp)
-	lgr	%r1, %r0
-	BR_EX	%r1
-SYM_CODE_END(ftrace_stub_direct_tramp)
+ENDPROC(ftrace_stub)
 
 	.macro	ftrace_regs_entry, allregs=0
 	stg	%r14,(__SF_GPRS+8*8)(%r15)	# save traced function caller
@@ -140,25 +135,10 @@ SYM_FUNC_END(return_to_handler)
 #endif
 #endif /* CONFIG_FUNCTION_TRACER */
 
-SYM_CODE_START(ftrace_shared_hotpatch_trampoline_br)
-	lmg	%r0,%r1,2(%r1)
-	br	%r1
-SYM_INNER_LABEL(ftrace_shared_hotpatch_trampoline_br_end, SYM_L_GLOBAL)
-SYM_CODE_END(ftrace_shared_hotpatch_trampoline_br)
+#ifdef CONFIG_KPROBES
 
-#ifdef CONFIG_EXPOLINE
-SYM_CODE_START(ftrace_shared_hotpatch_trampoline_exrl)
-	lmg	%r0,%r1,2(%r1)
-	exrl	%r0,0f
-	j	.
-0:	br	%r1
-SYM_INNER_LABEL(ftrace_shared_hotpatch_trampoline_exrl_end, SYM_L_GLOBAL)
-SYM_CODE_END(ftrace_shared_hotpatch_trampoline_exrl)
-#endif /* CONFIG_EXPOLINE */
+SYM_FUNC_START(__kretprobe_trampoline)
 
-#ifdef CONFIG_RETHOOK
-
-SYM_CODE_START(arch_rethook_trampoline)
 	stg	%r14,(__SF_GPRS+8*8)(%r15)
 	lay	%r15,-STACK_FRAME_SIZE(%r15)
 	stmg	%r0,%r14,STACK_PTREGS_GPRS(%r15)
@@ -172,15 +152,16 @@ SYM_CODE_START(arch_rethook_trampoline)
 	epsw	%r2,%r3
 	risbg	%r3,%r2,0,31,32
 	stg	%r3,STACK_PTREGS_PSW(%r15)
-	larl	%r1,arch_rethook_trampoline
+	larl	%r1,__kretprobe_trampoline
 	stg	%r1,STACK_PTREGS_PSW+8(%r15)
 
 	lay	%r2,STACK_PTREGS(%r15)
-	brasl	%r14,arch_rethook_trampoline_callback
+	brasl	%r14,trampoline_probe_handler
 
 	mvc	__SF_EMPTY(16,%r7),STACK_PTREGS_PSW(%r15)
 	lmg	%r0,%r15,STACK_PTREGS_GPRS(%r15)
 	lpswe	__SF_EMPTY(%r15)
-SYM_CODE_END(arch_rethook_trampoline)
 
-#endif /* CONFIG_RETHOOK */
+SYM_FUNC_END(__kretprobe_trampoline)
+
+#endif /* CONFIG_KPROBES */

@@ -11,7 +11,6 @@
 #include <linux/signal.h>
 #include <linux/ratelimit.h>
 #include <linux/uaccess.h>
-#include <asm/unaligned.h>
 #include <asm/hardirq.h>
 #include <asm/traps.h>
 

@@ -26,4 +26,3 @@ ENTRY(__lshrdi3)
 	abi_ret_default
 
 ENDPROC(__lshrdi3)
-EXPORT_SYMBOL(__lshrdi3)

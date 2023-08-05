@@ -18,7 +18,6 @@
 #include <asm/firmware.h>
 #include <asm/hvcall.h>
 #include <asm/io.h>
-#include <asm/papr-sysparm.h>
 #include <linux/byteorder/generic.h>
 
 #include <asm/rtas.h>
@@ -67,6 +66,8 @@ static bool is_physical_domain(unsigned int domain)
  * Refer PAPR+ document to get parameter token value as '43'.
  */
 
+#define PROCESSOR_MODULE_INFO   43
+
 static u32 phys_sockets;	/* Physical sockets */
 static u32 phys_chipspersocket;	/* Physical chips per socket*/
 static u32 phys_coresperchip; /* Physical cores per chip */
@@ -78,7 +79,9 @@ static u32 phys_coresperchip; /* Physical cores per chip */
  */
 void read_24x7_sys_info(void)
 {
-	struct papr_sysparm_buf *buf;
+	int call_status, len, ntypes;
+
+	spin_lock(&rtas_data_buf_lock);
 
 	/*
 	 * Making system parameter: chips and sockets and cores per chip
@@ -88,22 +91,32 @@ void read_24x7_sys_info(void)
 	phys_chipspersocket = 1;
 	phys_coresperchip = 1;
 
-	buf = papr_sysparm_buf_alloc();
-	if (!buf)
-		return;
+	call_status = rtas_call(rtas_token("ibm,get-system-parameter"), 3, 1,
+				NULL,
+				PROCESSOR_MODULE_INFO,
+				__pa(rtas_data_buf),
+				RTAS_DATA_BUF_SIZE);
 
-	if (!papr_sysparm_get(PAPR_SYSPARM_PROC_MODULE_INFO, buf)) {
-		int ntypes = be16_to_cpup((__be16 *)&buf->val[0]);
-		int len = be16_to_cpu(buf->len);
+	if (call_status != 0) {
+		pr_err("Error calling get-system-parameter %d\n",
+		       call_status);
+	} else {
+		len = be16_to_cpup((__be16 *)&rtas_data_buf[0]);
+		if (len < 8)
+			goto out;
 
-		if (len >= 8 && ntypes != 0) {
-			phys_sockets = be16_to_cpup((__be16 *)&buf->val[2]);
-			phys_chipspersocket = be16_to_cpup((__be16 *)&buf->val[4]);
-			phys_coresperchip = be16_to_cpup((__be16 *)&buf->val[6]);
-		}
+		ntypes = be16_to_cpup((__be16 *)&rtas_data_buf[2]);
+
+		if (!ntypes)
+			goto out;
+
+		phys_sockets = be16_to_cpup((__be16 *)&rtas_data_buf[4]);
+		phys_chipspersocket = be16_to_cpup((__be16 *)&rtas_data_buf[6]);
+		phys_coresperchip = be16_to_cpup((__be16 *)&rtas_data_buf[8]);
 	}
 
-	papr_sysparm_buf_free(buf);
+out:
+	spin_unlock(&rtas_data_buf_lock);
 }
 
 /* Domains for which more than one result element are returned for each event. */
@@ -1714,8 +1727,7 @@ static int hv_24x7_init(void)
 	}
 
 	/* POWER8 only supports v1, while POWER9 only supports v2. */
-	if (PVR_VER(pvr) == PVR_POWER8 || PVR_VER(pvr) == PVR_POWER8E ||
-	    PVR_VER(pvr) == PVR_POWER8NVL)
+	if (PVR_VER(pvr) == PVR_POWER8)
 		interface_version = 1;
 	else {
 		interface_version = 2;

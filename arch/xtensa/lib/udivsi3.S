@@ -66,4 +66,3 @@ ENTRY(__udivsi3)
 	abi_ret_default
 
 ENDPROC(__udivsi3)
-EXPORT_SYMBOL(__udivsi3)
