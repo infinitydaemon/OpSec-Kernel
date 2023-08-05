@@ -31,11 +31,10 @@ gv100_fb_init_page(struct nvkm_fb *fb)
 static const struct nvkm_fb_func
 gv100_fb = {
 	.dtor = gf100_fb_dtor,
-	.oneinit = gp102_fb_oneinit,
-	.init = gm200_fb_init,
+	.oneinit = gf100_fb_oneinit,
+	.init = gp100_fb_init,
 	.init_page = gv100_fb_init_page,
 	.init_unkn = gp100_fb_init_unkn,
-	.sysmem.flush_page_init = gf100_fb_sysmem_flush_page_init,
 	.vpr.scrub_required = gp102_fb_vpr_scrub_required,
 	.vpr.scrub = gp102_fb_vpr_scrub,
 	.ram_new = gp100_ram_new,
@@ -45,7 +44,12 @@ gv100_fb = {
 int
 gv100_fb_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst, struct nvkm_fb **pfb)
 {
-	return gf100_fb_new_(&gv100_fb, device, type, inst, pfb);
+	return gp102_fb_new_(&gv100_fb, device, type, inst, pfb);
 }
 
 MODULE_FIRMWARE("nvidia/gv100/nvdec/scrubber.bin");
+MODULE_FIRMWARE("nvidia/tu102/nvdec/scrubber.bin");
+MODULE_FIRMWARE("nvidia/tu104/nvdec/scrubber.bin");
+MODULE_FIRMWARE("nvidia/tu106/nvdec/scrubber.bin");
+MODULE_FIRMWARE("nvidia/tu116/nvdec/scrubber.bin");
+MODULE_FIRMWARE("nvidia/tu117/nvdec/scrubber.bin");

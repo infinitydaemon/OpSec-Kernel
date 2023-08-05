@@ -1,6 +1,6 @@
 #ifndef __NOUVEAU_MEM_H__
 #define __NOUVEAU_MEM_H__
-#include <drm/ttm/ttm_bo.h>
+#include <drm/ttm/ttm_bo_api.h>
 struct ttm_tt;
 
 #include <nvif/mem.h>
