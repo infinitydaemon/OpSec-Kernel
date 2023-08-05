@@ -24,7 +24,8 @@
 	move		a0, sp
 	REG_S		a2, sp, PT_BVADDR
 	li.w		a1, \write
-	bl		do_page_fault
+	la.abs		t0, do_page_fault
+	jirl		ra, t0, 0
 	RESTORE_ALL_AND_RET
 	SYM_FUNC_END(tlb_do_page_fault_\write)
 	.endm
@@ -39,7 +40,7 @@ SYM_FUNC_START(handle_tlb_protect)
 	move		a1, zero
 	csrrd		a2, LOONGARCH_CSR_BADV
 	REG_S		a2, sp, PT_BVADDR
-	la_abs		t0, do_page_fault
+	la.abs		t0, do_page_fault
 	jirl		ra, t0, 0
 	RESTORE_ALL_AND_RET
 SYM_FUNC_END(handle_tlb_protect)
@@ -115,7 +116,7 @@ smp_pgtable_change_load:
 
 #ifdef CONFIG_64BIT
 vmalloc_load:
-	la_abs		t1, swapper_pg_dir
+	la.abs		t1, swapper_pg_dir
 	b		vmalloc_done_load
 #endif
 
@@ -184,18 +185,11 @@ tlb_huge_update_load:
 	ertn
 
 nopage_tlb_load:
-	dbar		0x700
+	dbar		0
 	csrrd		ra, EXCEPTION_KS2
-	la_abs		t0, tlb_do_page_fault_0
+	la.abs		t0, tlb_do_page_fault_0
 	jr		t0
 SYM_FUNC_END(handle_tlb_load)
-
-SYM_FUNC_START(handle_tlb_load_ptw)
-	csrwr		t0, LOONGARCH_CSR_KS0
-	csrwr		t1, LOONGARCH_CSR_KS1
-	la_abs		t0, tlb_do_page_fault_0
-	jr		t0
-SYM_FUNC_END(handle_tlb_load_ptw)
 
 SYM_FUNC_START(handle_tlb_store)
 	csrwr		t0, EXCEPTION_KS0
@@ -269,7 +263,7 @@ smp_pgtable_change_store:
 
 #ifdef CONFIG_64BIT
 vmalloc_store:
-	la_abs		t1, swapper_pg_dir
+	la.abs		t1, swapper_pg_dir
 	b		vmalloc_done_store
 #endif
 
@@ -340,18 +334,11 @@ tlb_huge_update_store:
 	ertn
 
 nopage_tlb_store:
-	dbar		0x700
+	dbar		0
 	csrrd		ra, EXCEPTION_KS2
-	la_abs		t0, tlb_do_page_fault_1
+	la.abs		t0, tlb_do_page_fault_1
 	jr		t0
 SYM_FUNC_END(handle_tlb_store)
-
-SYM_FUNC_START(handle_tlb_store_ptw)
-	csrwr		t0, LOONGARCH_CSR_KS0
-	csrwr		t1, LOONGARCH_CSR_KS1
-	la_abs		t0, tlb_do_page_fault_1
-	jr		t0
-SYM_FUNC_END(handle_tlb_store_ptw)
 
 SYM_FUNC_START(handle_tlb_modify)
 	csrwr		t0, EXCEPTION_KS0
@@ -424,7 +411,7 @@ smp_pgtable_change_modify:
 
 #ifdef CONFIG_64BIT
 vmalloc_modify:
-	la_abs		t1, swapper_pg_dir
+	la.abs		t1, swapper_pg_dir
 	b		vmalloc_done_modify
 #endif
 
@@ -494,18 +481,11 @@ tlb_huge_update_modify:
 	ertn
 
 nopage_tlb_modify:
-	dbar		0x700
+	dbar		0
 	csrrd		ra, EXCEPTION_KS2
-	la_abs		t0, tlb_do_page_fault_1
+	la.abs		t0, tlb_do_page_fault_1
 	jr		t0
 SYM_FUNC_END(handle_tlb_modify)
-
-SYM_FUNC_START(handle_tlb_modify_ptw)
-	csrwr		t0, LOONGARCH_CSR_KS0
-	csrwr		t1, LOONGARCH_CSR_KS1
-	la_abs		t0, tlb_do_page_fault_1
-	jr		t0
-SYM_FUNC_END(handle_tlb_modify_ptw)
 
 SYM_FUNC_START(handle_tlb_refill)
 	csrwr		t0, LOONGARCH_CSR_TLBRSAVE

@@ -54,15 +54,13 @@ static inline void __iomem *ioremap_prot(phys_addr_t offset, unsigned long size,
  * @offset:    bus address of the memory
  * @size:      size of the resource to map
  */
-extern pgprot_t pgprot_wc;
-
 #define ioremap_wc(offset, size)	\
-	ioremap_prot((offset), (size), pgprot_val(pgprot_wc))
+	ioremap_prot((offset), (size), pgprot_val(PAGE_KERNEL_WUC))
 
 #define ioremap_cache(offset, size)	\
 	ioremap_prot((offset), (size), pgprot_val(PAGE_KERNEL))
 
-#define mmiowb() wmb()
+#define mmiowb() asm volatile ("dbar 0" ::: "memory")
 
 /*
  * String version of I/O memory access operations.

@@ -115,17 +115,12 @@ static unsigned long __init get_loops_per_jiffy(void)
 	return lpj;
 }
 
-static long init_offset __nosavedata;
-
-void save_counter(void)
-{
-	init_offset = drdtime();
-}
+static long init_timeval;
 
 void sync_counter(void)
 {
 	/* Ensure counter begin at 0 */
-	csr_write64(init_offset, LOONGARCH_CSR_CNTC);
+	csr_write64(-init_timeval, LOONGARCH_CSR_CNTC);
 }
 
 static int get_timer_irq(void)
@@ -133,7 +128,7 @@ static int get_timer_irq(void)
 	struct irq_domain *d = irq_find_matching_fwnode(cpuintc_handle, DOMAIN_BUS_ANY);
 
 	if (d)
-		return irq_create_mapping(d, INT_TI);
+		return irq_create_mapping(d, EXCCODE_TIMER - EXCCODE_INT_START);
 
 	return -EINVAL;
 }
@@ -190,9 +185,9 @@ static u64 read_const_counter(struct clocksource *clk)
 	return drdtime();
 }
 
-static noinstr u64 sched_clock_read(void)
+static u64 native_sched_clock(void)
 {
-	return drdtime();
+	return read_const_counter(NULL);
 }
 
 static struct clocksource clocksource_const = {
@@ -211,7 +206,7 @@ int __init constant_clocksource_init(void)
 
 	res = clocksource_register_hz(&clocksource_const, freq);
 
-	sched_clock_register(sched_clock_read, 64, freq);
+	sched_clock_register(native_sched_clock, 64, freq);
 
 	pr_info("Constant clock source device register\n");
 
@@ -225,7 +220,7 @@ void __init time_init(void)
 	else
 		const_clock_freq = calc_const_freq();
 
-	init_offset = -(drdtime() - csr_read64(LOONGARCH_CSR_CNTC));
+	init_timeval = drdtime() - csr_read64(LOONGARCH_CSR_CNTC);
 
 	constant_clockevent_init();
 	constant_clocksource_init();
