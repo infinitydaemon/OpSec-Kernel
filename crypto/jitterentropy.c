@@ -2,7 +2,7 @@
  * Non-physical true random number generator based on timing jitter --
  * Jitter RNG standalone code.
  *
- * Copyright Stephan Mueller <smueller@chronox.de>, 2015 - 2023
+ * Copyright Stephan Mueller <smueller@chronox.de>, 2015 - 2020
  *
  * Design
  * ======
@@ -47,7 +47,7 @@
 
 /*
  * This Jitterentropy RNG is based on the jitterentropy library
- * version 3.4.0 provided at https://www.chronox.de/jent.html
+ * version 2.2.0 provided at https://www.chronox.de/jent.html
  */
 
 #ifdef __OPTIMIZE__
@@ -57,22 +57,21 @@
 typedef	unsigned long long	__u64;
 typedef	long long		__s64;
 typedef	unsigned int		__u32;
-typedef unsigned char		u8;
 #define NULL    ((void *) 0)
 
 /* The entropy pool */
 struct rand_data {
-	/* SHA3-256 is used as conditioner */
-#define DATA_SIZE_BITS 256
 	/* all data values that are vital to maintain the security
 	 * of the RNG are marked as SENSITIVE. A user must not
 	 * access that information while the RNG executes its loops to
 	 * calculate the next random value. */
-	void *hash_state;		/* SENSITIVE hash state entropy pool */
-	__u64 prev_time;		/* SENSITIVE Previous time stamp */
-	__u64 last_delta;		/* SENSITIVE stuck test */
-	__s64 last_delta2;		/* SENSITIVE stuck test */
-	unsigned int osr;		/* Oversample rate */
+	__u64 data;		/* SENSITIVE Actual random number */
+	__u64 old_data;		/* SENSITIVE Previous random number */
+	__u64 prev_time;	/* SENSITIVE Previous time stamp */
+#define DATA_SIZE_BITS ((sizeof(__u64)) * 8)
+	__u64 last_delta;	/* SENSITIVE stuck test */
+	__s64 last_delta2;	/* SENSITIVE stuck test */
+	unsigned int osr;	/* Oversample rate */
 #define JENT_MEMORY_BLOCKS 64
 #define JENT_MEMORY_BLOCKSIZE 32
 #define JENT_MEMORY_ACCESSLOOPS 128
@@ -302,13 +301,15 @@ static int jent_permanent_health_failure(struct rand_data *ec)
  * an entropy collection.
  *
  * Input:
+ * @ec entropy collector struct -- may be NULL
  * @bits is the number of low bits of the timer to consider
  * @min is the number of bits we shift the timer value to the right at
  *	the end to make sure we have a guaranteed minimum value
  *
  * @return Newly calculated loop counter
  */
-static __u64 jent_loop_shuffle(unsigned int bits, unsigned int min)
+static __u64 jent_loop_shuffle(struct rand_data *ec,
+			       unsigned int bits, unsigned int min)
 {
 	__u64 time = 0;
 	__u64 shuffle = 0;
@@ -316,7 +317,12 @@ static __u64 jent_loop_shuffle(unsigned int bits, unsigned int min)
 	unsigned int mask = (1<<bits) - 1;
 
 	jent_get_nstime(&time);
-
+	/*
+	 * Mix the current state of the random number into the shuffle
+	 * calculation to balance that shuffle a bit more.
+	 */
+	if (ec)
+		time ^= ec->data;
 	/*
 	 * We fold the time value as much as possible to ensure that as many
 	 * bits of the time stamp are included as possible.
@@ -338,32 +344,81 @@ static __u64 jent_loop_shuffle(unsigned int bits, unsigned int min)
  *			      execution time jitter
  *
  * This function injects the individual bits of the time value into the
- * entropy pool using a hash.
+ * entropy pool using an LFSR.
  *
- * ec [in] entropy collector
- * time [in] time stamp to be injected
- * stuck [in] Is the time stamp identified as stuck?
+ * The code is deliberately inefficient with respect to the bit shifting
+ * and shall stay that way. This function is the root cause why the code
+ * shall be compiled without optimization. This function not only acts as
+ * folding operation, but this function's execution is used to measure
+ * the CPU execution time jitter. Any change to the loop in this function
+ * implies that careful retesting must be done.
+ *
+ * @ec [in] entropy collector struct
+ * @time [in] time stamp to be injected
+ * @loop_cnt [in] if a value not equal to 0 is set, use the given value as
+ *		  number of loops to perform the folding
+ * @stuck [in] Is the time stamp identified as stuck?
  *
  * Output:
- * updated hash context in the entropy collector or error code
+ * updated ec->data
+ *
+ * @return Number of loops the folding operation is performed
  */
-static int jent_condition_data(struct rand_data *ec, __u64 time, int stuck)
+static void jent_lfsr_time(struct rand_data *ec, __u64 time, __u64 loop_cnt,
+			   int stuck)
 {
-#define SHA3_HASH_LOOP (1<<3)
-	struct {
-		int rct_count;
-		unsigned int apt_observations;
-		unsigned int apt_count;
-		unsigned int apt_base;
-	} addtl = {
-		ec->rct_count,
-		ec->apt_observations,
-		ec->apt_count,
-		ec->apt_base
-	};
+	unsigned int i;
+	__u64 j = 0;
+	__u64 new = 0;
+#define MAX_FOLD_LOOP_BIT 4
+#define MIN_FOLD_LOOP_BIT 0
+	__u64 fold_loop_cnt =
+		jent_loop_shuffle(ec, MAX_FOLD_LOOP_BIT, MIN_FOLD_LOOP_BIT);
 
-	return jent_hash_time(ec->hash_state, time, (u8 *)&addtl, sizeof(addtl),
-			      SHA3_HASH_LOOP, stuck);
+	/*
+	 * testing purposes -- allow test app to set the counter, not
+	 * needed during runtime
+	 */
+	if (loop_cnt)
+		fold_loop_cnt = loop_cnt;
+	for (j = 0; j < fold_loop_cnt; j++) {
+		new = ec->data;
+		for (i = 1; (DATA_SIZE_BITS) >= i; i++) {
+			__u64 tmp = time << (DATA_SIZE_BITS - i);
+
+			tmp = tmp >> (DATA_SIZE_BITS - 1);
+
+			/*
+			* Fibonacci LSFR with polynomial of
+			*  x^64 + x^61 + x^56 + x^31 + x^28 + x^23 + 1 which is
+			*  primitive according to
+			*   http://poincare.matf.bg.ac.rs/~ezivkovm/publications/primpol1.pdf
+			* (the shift values are the polynomial values minus one
+			* due to counting bits from 0 to 63). As the current
+			* position is always the LSB, the polynomial only needs
+			* to shift data in from the left without wrap.
+			*/
+			tmp ^= ((new >> 63) & 1);
+			tmp ^= ((new >> 60) & 1);
+			tmp ^= ((new >> 55) & 1);
+			tmp ^= ((new >> 30) & 1);
+			tmp ^= ((new >> 27) & 1);
+			tmp ^= ((new >> 22) & 1);
+			new <<= 1;
+			new ^= tmp;
+		}
+	}
+
+	/*
+	 * If the time stamp is stuck, do not finally insert the value into
+	 * the entropy pool. Although this operation should not do any harm
+	 * even when the time stamp has no entropy, SP800-90B requires that
+	 * any conditioning operation (SP800-90B considers the LFSR to be a
+	 * conditioning operation) to have an identical amount of input
+	 * data according to section 3.1.5.
+	 */
+	if (!stuck)
+		ec->data = new;
 }
 
 /*
@@ -397,7 +452,7 @@ static void jent_memaccess(struct rand_data *ec, __u64 loop_cnt)
 #define MAX_ACC_LOOP_BIT 7
 #define MIN_ACC_LOOP_BIT 0
 	__u64 acc_loop_cnt =
-		jent_loop_shuffle(MAX_ACC_LOOP_BIT, MIN_ACC_LOOP_BIT);
+		jent_loop_shuffle(ec, MAX_ACC_LOOP_BIT, MIN_ACC_LOOP_BIT);
 
 	if (NULL == ec || NULL == ec->mem)
 		return;
@@ -465,15 +520,14 @@ static int jent_measure_jitter(struct rand_data *ec)
 	stuck = jent_stuck(ec, current_delta);
 
 	/* Now call the next noise sources which also injects the data */
-	if (jent_condition_data(ec, current_delta, stuck))
-		stuck = 1;
+	jent_lfsr_time(ec, current_delta, 0, stuck);
 
 	return stuck;
 }
 
 /*
  * Generator of one 64 bit random number
- * Function fills rand_data->hash_state
+ * Function fills rand_data->data
  *
  * @ec [in] Reference to entropy collector
  */
@@ -520,7 +574,7 @@ static void jent_gen_entropy(struct rand_data *ec)
  * @return 0 when request is fulfilled or an error
  *
  * The following error codes can occur:
- *	-1	entropy_collector is NULL or the generation failed
+ *	-1	entropy_collector is NULL
  *	-2	Intermittent health failure
  *	-3	Permanent health failure
  */
@@ -550,7 +604,7 @@ int jent_read_entropy(struct rand_data *ec, unsigned char *data,
 			 * Perform startup health tests and return permanent
 			 * error if it fails.
 			 */
-			if (jent_entropy_init(ec->hash_state))
+			if (jent_entropy_init())
 				return -3;
 
 			return -2;
@@ -560,8 +614,7 @@ int jent_read_entropy(struct rand_data *ec, unsigned char *data,
 			tocopy = (DATA_SIZE_BITS / 8);
 		else
 			tocopy = len;
-		if (jent_read_random_block(ec->hash_state, p, tocopy))
-			return -1;
+		jent_memcpy(p, &ec->data, tocopy);
 
 		len -= tocopy;
 		p += tocopy;
@@ -575,8 +628,7 @@ int jent_read_entropy(struct rand_data *ec, unsigned char *data,
  ***************************************************************************/
 
 struct rand_data *jent_entropy_collector_alloc(unsigned int osr,
-					       unsigned int flags,
-					       void *hash_state)
+					       unsigned int flags)
 {
 	struct rand_data *entropy_collector;
 
@@ -603,8 +655,6 @@ struct rand_data *jent_entropy_collector_alloc(unsigned int osr,
 		osr = 1; /* minimum sampling rate is 1 */
 	entropy_collector->osr = osr;
 
-	entropy_collector->hash_state = hash_state;
-
 	/* fill the data pad with non-zero values */
 	jent_gen_entropy(entropy_collector);
 
@@ -618,7 +668,7 @@ void jent_entropy_collector_free(struct rand_data *entropy_collector)
 	jent_zfree(entropy_collector);
 }
 
-int jent_entropy_init(void *hash_state)
+int jent_entropy_init(void)
 {
 	int i;
 	__u64 delta_sum = 0;
@@ -631,7 +681,6 @@ int jent_entropy_init(void *hash_state)
 
 	/* Required for RCT */
 	ec.osr = 1;
-	ec.hash_state = hash_state;
 
 	/* We could perform statistical tests here, but the problem is
 	 * that we only have a few loop counts to do testing. These
@@ -669,7 +718,7 @@ int jent_entropy_init(void *hash_state)
 		/* Invoke core entropy collection logic */
 		jent_get_nstime(&time);
 		ec.prev_time = time;
-		jent_condition_data(&ec, time, 0);
+		jent_lfsr_time(&ec, time, 0, 0);
 		jent_get_nstime(&time2);
 
 		/* test whether timer works */

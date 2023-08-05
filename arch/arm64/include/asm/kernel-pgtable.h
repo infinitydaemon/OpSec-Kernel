@@ -18,6 +18,11 @@
  * with 4K (section size = 2M) but not with 16K (section size = 32M) or
  * 64K (section size = 512M).
  */
+#ifdef CONFIG_ARM64_4K_PAGES
+#define ARM64_KERNEL_USES_PMD_MAPS 1
+#else
+#define ARM64_KERNEL_USES_PMD_MAPS 0
+#endif
 
 /*
  * The idmap and swapper page tables need some space reserved in the kernel
@@ -29,7 +34,7 @@
  * VA range, so pages required to map highest possible PA are reserved in all
  * cases.
  */
-#ifdef CONFIG_ARM64_4K_PAGES
+#if ARM64_KERNEL_USES_PMD_MAPS
 #define SWAPPER_PGTABLE_LEVELS	(CONFIG_PGTABLE_LEVELS - 1)
 #else
 #define SWAPPER_PGTABLE_LEVELS	(CONFIG_PGTABLE_LEVELS)
@@ -59,11 +64,8 @@
 #define EARLY_KASLR	(0)
 #endif
 
-#define SPAN_NR_ENTRIES(vstart, vend, shift) \
-	((((vend) - 1) >> (shift)) - ((vstart) >> (shift)) + 1)
-
 #define EARLY_ENTRIES(vstart, vend, shift, add) \
-	(SPAN_NR_ENTRIES(vstart, vend, shift) + (add))
+	((((vend) - 1) >> (shift)) - ((vstart) >> (shift)) + 1 + add)
 
 #define EARLY_PGDS(vstart, vend, add) (EARLY_ENTRIES(vstart, vend, PGDIR_SHIFT, add))
 
@@ -94,7 +96,7 @@
 #define INIT_IDMAP_DIR_PAGES	EARLY_PAGES(KIMAGE_VADDR, _end + MAX_FDT_SIZE + SWAPPER_BLOCK_SIZE, 1)
 
 /* Initial memory map size */
-#ifdef CONFIG_ARM64_4K_PAGES
+#if ARM64_KERNEL_USES_PMD_MAPS
 #define SWAPPER_BLOCK_SHIFT	PMD_SHIFT
 #define SWAPPER_BLOCK_SIZE	PMD_SIZE
 #define SWAPPER_TABLE_SHIFT	PUD_SHIFT
@@ -107,14 +109,14 @@
 /*
  * Initial memory map attributes.
  */
-#define SWAPPER_PTE_FLAGS	(PTE_TYPE_PAGE | PTE_AF | PTE_SHARED | PTE_UXN)
-#define SWAPPER_PMD_FLAGS	(PMD_TYPE_SECT | PMD_SECT_AF | PMD_SECT_S | PTE_UXN)
+#define SWAPPER_PTE_FLAGS	(PTE_TYPE_PAGE | PTE_AF | PTE_SHARED)
+#define SWAPPER_PMD_FLAGS	(PMD_TYPE_SECT | PMD_SECT_AF | PMD_SECT_S)
 
-#ifdef CONFIG_ARM64_4K_PAGES
-#define SWAPPER_RW_MMUFLAGS	(PMD_ATTRINDX(MT_NORMAL) | SWAPPER_PMD_FLAGS | PTE_WRITE)
+#if ARM64_KERNEL_USES_PMD_MAPS
+#define SWAPPER_RW_MMUFLAGS	(PMD_ATTRINDX(MT_NORMAL) | SWAPPER_PMD_FLAGS)
 #define SWAPPER_RX_MMUFLAGS	(SWAPPER_RW_MMUFLAGS | PMD_SECT_RDONLY)
 #else
-#define SWAPPER_RW_MMUFLAGS	(PTE_ATTRINDX(MT_NORMAL) | SWAPPER_PTE_FLAGS | PTE_WRITE)
+#define SWAPPER_RW_MMUFLAGS	(PTE_ATTRINDX(MT_NORMAL) | SWAPPER_PTE_FLAGS)
 #define SWAPPER_RX_MMUFLAGS	(SWAPPER_RW_MMUFLAGS | PTE_RDONLY)
 #endif
 

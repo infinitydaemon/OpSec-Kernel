@@ -198,6 +198,7 @@
 		power-supply = <&pp3300_disp>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&bl_en>;
+		pwm-delay-us = <10000>;
 	};
 
 	gpio_keys: gpio-keys {

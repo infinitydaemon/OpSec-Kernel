@@ -11,9 +11,3 @@
 	model = "Sony Xperia XZ2 Compact";
 	compatible = "sony,apollo-row", "qcom,sdm845";
 };
-
-&panel {
-	compatible = "sony,td4353-jdi-tama";
-	height-mm = <112>;
-	width-mm = <56>;
-};

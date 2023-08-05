@@ -16,7 +16,6 @@ d) memory reclaim
 e) thrashing
 f) direct compact
 g) write-protect copy
-h) IRQ/SOFTIRQ
 
 and makes these statistics available to userspace through
 the taskstats interface.
@@ -50,7 +49,7 @@ this structure. See
 for a description of the fields pertaining to delay accounting.
 It will generally be in the form of counters returning the cumulative
 delay seen for cpu, sync block I/O, swapin, memory reclaim, thrash page
-cache, direct compact, write-protect copy, IRQ/SOFTIRQ etc.
+cache, direct compact, write-protect copy etc.
 
 Taking the difference of two successive readings of a given
 counter (say cpu_delay_total) for a task will give the delay
@@ -110,19 +109,17 @@ Get sum of delays, since system boot, for all pids with tgid 5::
 	CPU             count     real total  virtual total    delay total  delay average
 	                    8        7000000        6872122        3382277          0.423ms
 	IO              count    delay total  delay average
-                   0              0          0.000ms
+		            0              0              0ms
 	SWAP            count    delay total  delay average
-                       0              0          0.000ms
+	                    0              0              0ms
 	RECLAIM         count    delay total  delay average
-                   0              0          0.000ms
+		            0              0              0ms
 	THRASHING       count    delay total  delay average
-                       0              0          0.000ms
+	                    0              0              0ms
 	COMPACT         count    delay total  delay average
-                       0              0          0.000ms
-	WPCOPY          count    delay total  delay average
-                       0              0          0.000ms
-	IRQ             count    delay total  delay average
-                       0              0          0.000ms
+	                    0              0              0ms
+        WPCOPY          count    delay total  delay average
+                            0              0              0ms
 
 Get IO accounting for pid 1, it works only with -p::
 

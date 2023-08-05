@@ -11,11 +11,6 @@
 		     "google,tomato", "mediatek,mt8195";
 };
 
-&audio_codec {
-	compatible = "realtek,rt5682s";
-	realtek,amic-delay-ms = <250>;
-};
-
 &pio_default {
 	pins-low-power-hdmi-disable {
 		pinmux = <PINMUX_GPIO31__FUNC_GPIO31>,
@@ -34,11 +29,6 @@
 		input-enable;
 		bias-pull-down;
 	};
-};
-
-&sound {
-	compatible = "mediatek,mt8195_mt6359_rt1019_rt5682";
-	model = "m8195_r1019_5682s";
 };
 
 &ts_10 {

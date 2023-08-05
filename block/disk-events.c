@@ -263,31 +263,31 @@ static unsigned int disk_clear_events(struct gendisk *disk, unsigned int mask)
 }
 
 /**
- * disk_check_media_change - check if a removable media has been changed
- * @disk: gendisk to check
+ * bdev_check_media_change - check if a removable media has been changed
+ * @bdev: block device to check
  *
  * Check whether a removable media has been changed, and attempt to free all
  * dentries and inodes and invalidates all block device page cache entries in
  * that case.
  *
- * Returns %true if the media has changed, or %false if not.
+ * Returns %true if the block device changed, or %false if not.
  */
-bool disk_check_media_change(struct gendisk *disk)
+bool bdev_check_media_change(struct block_device *bdev)
 {
 	unsigned int events;
 
-	events = disk_clear_events(disk, DISK_EVENT_MEDIA_CHANGE |
+	events = disk_clear_events(bdev->bd_disk, DISK_EVENT_MEDIA_CHANGE |
 				   DISK_EVENT_EJECT_REQUEST);
 	if (!(events & DISK_EVENT_MEDIA_CHANGE))
 		return false;
 
-	if (__invalidate_device(disk->part0, true))
+	if (__invalidate_device(bdev, true))
 		pr_warn("VFS: busy inodes on changed media %s\n",
-			disk->disk_name);
-	set_bit(GD_NEED_PART_SCAN, &disk->state);
+			bdev->bd_disk->disk_name);
+	set_bit(GD_NEED_PART_SCAN, &bdev->bd_disk->state);
 	return true;
 }
-EXPORT_SYMBOL(disk_check_media_change);
+EXPORT_SYMBOL(bdev_check_media_change);
 
 /**
  * disk_force_media_change - force a media change event

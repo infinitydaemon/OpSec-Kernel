@@ -51,7 +51,7 @@
 };
 
 &apps_rsc {
-	regulators-0 {
+	pm8150-rpmh-regulators {
 		compatible = "qcom,pm8150-rpmh-regulators";
 		qcom,pmic-id = "a";
 
@@ -206,7 +206,7 @@
 		};
 	};
 
-	regulators-1 {
+	pm8150l-rpmh-regulators {
 		compatible = "qcom,pm8150l-rpmh-regulators";
 		qcom,pmic-id = "c";
 
@@ -319,7 +319,7 @@
 		};
 	};
 
-	regulators-2 {
+	pm8009-rpmh-regulators {
 		compatible = "qcom,pm8009-rpmh-regulators";
 		qcom,pmic-id = "f";
 
@@ -354,11 +354,6 @@
 };
 
 &gpu {
-	/*
-	 * NOTE: "amd,imageon" makes Adreno start in headless mode, remove it
-	 * after display support is added on this board.
-	 */
-	compatible = "qcom,adreno-640.1", "qcom,adreno", "amd,imageon";
 	status = "okay";
 };
 

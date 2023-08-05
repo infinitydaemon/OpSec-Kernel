@@ -9,7 +9,6 @@
 
 / {
 	model = "Google damu board";
-	chassis-type = "convertible";
 	compatible = "google,damu", "mediatek,mt8183";
 };
 

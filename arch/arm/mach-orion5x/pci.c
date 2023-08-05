@@ -522,14 +522,14 @@ static int __init pci_setup(struct pci_sys_data *sys)
 static void rc_pci_fixup(struct pci_dev *dev)
 {
 	if (dev->bus->parent == NULL && dev->devfn == 0) {
-		struct resource *r;
+		int i;
 
 		dev->class &= 0xff;
 		dev->class |= PCI_CLASS_BRIDGE_HOST << 8;
-		pci_dev_for_each_resource(dev, r) {
-			r->start	= 0;
-			r->end		= 0;
-			r->flags	= 0;
+		for (i = 0; i < DEVICE_COUNT_RESOURCE; i++) {
+			dev->resource[i].start = 0;
+			dev->resource[i].end   = 0;
+			dev->resource[i].flags = 0;
 		}
 	}
 }

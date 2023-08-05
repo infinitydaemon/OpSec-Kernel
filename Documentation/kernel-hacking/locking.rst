@@ -967,7 +967,7 @@ you might do the following::
 
             while (list) {
                     struct foo *next = list->next;
-                    timer_delete(&list->timer);
+                    del_timer(&list->timer);
                     kfree(list);
                     list = next;
             }
@@ -981,7 +981,7 @@ the lock after we spin_unlock_bh(), and then try to free
 the element (which has already been freed!).
 
 This can be avoided by checking the result of
-timer_delete(): if it returns 1, the timer has been deleted.
+del_timer(): if it returns 1, the timer has been deleted.
 If 0, it means (in this case) that it is currently running, so we can
 do::
 
@@ -990,7 +990,7 @@ do::
 
                     while (list) {
                             struct foo *next = list->next;
-                            if (!timer_delete(&list->timer)) {
+                            if (!del_timer(&list->timer)) {
                                     /* Give timer a chance to delete this */
                                     spin_unlock_bh(&list_lock);
                                     goto retry;
@@ -1005,12 +1005,9 @@ do::
 Another common problem is deleting timers which restart themselves (by
 calling add_timer() at the end of their timer function).
 Because this is a fairly common case which is prone to races, you should
-use timer_delete_sync() (``include/linux/timer.h``) to handle this case.
-
-Before freeing a timer, timer_shutdown() or timer_shutdown_sync() should be
-called which will keep it from being rearmed. Any subsequent attempt to
-rearm the timer will be silently ignored by the core code.
-
+use del_timer_sync() (``include/linux/timer.h``) to
+handle this case. It returns the number of times the timer had to be
+deleted before we finally stopped it from adding itself back in.
 
 Locking Speed
 =============
@@ -1277,11 +1274,11 @@ Manfred Spraul points out that you can still do this, even if the data
 is very occasionally accessed in user context or softirqs/tasklets. The
 irq handler doesn't use a lock, and all other accesses are done as so::
 
-        mutex_lock(&lock);
+        spin_lock(&lock);
         disable_irq(irq);
         ...
         enable_irq(irq);
-        mutex_unlock(&lock);
+        spin_unlock(&lock);
 
 The disable_irq() prevents the irq handler from running
 (and waits for it to finish if it's currently running on other CPUs).
@@ -1338,7 +1335,7 @@ lock.
 
 -  kfree()
 
--  add_timer() and timer_delete()
+-  add_timer() and del_timer()
 
 Mutex API reference
 ===================

@@ -10,7 +10,6 @@
 
 / {
 	model = "MediaTek MT8173 evaluation board";
-	chassis-type = "embedded";
 	compatible = "mediatek,mt8173-evb", "mediatek,mt8173";
 
 	aliases {
@@ -301,7 +300,7 @@
 	/* Only MT8173 E1 needs USB power domain */
 	power-domains = <&spm MT8173_POWER_DOMAIN_USB>;
 
-	pmic: pmic {
+	pmic: mt6397 {
 		compatible = "mediatek,mt6397";
 		interrupt-parent = <&pio>;
 		interrupts = <11 IRQ_TYPE_LEVEL_HIGH>;

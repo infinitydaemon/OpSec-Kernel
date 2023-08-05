@@ -9,7 +9,6 @@
 #include <linux/gpio.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/pci.h>
 #include <linux/irq.h>

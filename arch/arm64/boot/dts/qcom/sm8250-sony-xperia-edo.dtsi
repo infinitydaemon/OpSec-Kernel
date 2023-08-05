@@ -64,7 +64,7 @@
 			gpios = <&pm8150_gpios 1 GPIO_ACTIVE_LOW>;
 			debounce-interval = <15>;
 			linux,can-disable;
-			wakeup-source;
+			gpio-key,wakeup;
 		};
 	};
 
@@ -124,7 +124,7 @@
 };
 
 &apps_rsc {
-	regulators-0 {
+	pm8150-rpmh-regulators {
 		compatible = "qcom,pm8150-rpmh-regulators";
 		qcom,pmic-id = "a";
 
@@ -248,7 +248,7 @@
 	 * ab: 4600000-6100000
 	 * ibb: 800000-5400000
 	 */
-	regulators-1 {
+	pm8150l-rpmh-regulators {
 		compatible = "qcom,pm8150l-rpmh-regulators";
 		qcom,pmic-id = "c";
 
@@ -318,8 +318,9 @@
 			regulator-max-microvolt = <2960000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 			regulator-allow-set-load;
-			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
-						   RPMH_REGULATOR_MODE_HPM>;
+			regulator-allowed-modes =
+			    <RPMH_REGULATOR_MODE_LPM
+			     RPMH_REGULATOR_MODE_HPM>;
 		};
 
 		vreg_l7c_2p85: ldo7 {
@@ -342,8 +343,9 @@
 			regulator-max-microvolt = <2960000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 			regulator-allow-set-load;
-			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
-						   RPMH_REGULATOR_MODE_HPM>;
+			regulator-allowed-modes =
+			    <RPMH_REGULATOR_MODE_LPM
+			     RPMH_REGULATOR_MODE_HPM>;
 		};
 
 		vreg_l10c_3p3: ldo10 {
@@ -361,7 +363,7 @@
 		};
 	};
 
-	regulators-2 {
+	pm8009-rpmh-regulators {
 		compatible = "qcom,pm8009-rpmh-regulators";
 		qcom,pmic-id = "f";
 
@@ -439,23 +441,14 @@
 	status = "okay";
 	clock-frequency = <400000>;
 
-	nfc@28 {
-		compatible = "nxp,nxp-nci-i2c";
-		reg = <0x28>;
-
-		interrupt-parent = <&tlmm>;
-		interrupts = <111 IRQ_TYPE_EDGE_RISING>;
-
-		enable-gpios = <&tlmm 6 GPIO_ACTIVE_HIGH>;
-		firmware-gpios = <&tlmm 110 GPIO_ACTIVE_HIGH>;
-	};
+	/* NXP PN553 NFC @ 28 */
 };
 
 &i2c2 {
 	status = "okay";
 	clock-frequency = <1000000>;
 
-	cs35l41_l: speaker-amp@40 {
+	cs35l41_l: cs35l41@40 {
 		compatible = "cirrus,cs35l41";
 		reg = <0x40>;
 		interrupt-parent = <&tlmm>;
@@ -470,7 +463,7 @@
 		#sound-dai-cells = <1>;
 	};
 
-	cs35l41_r: speaker-amp@41 {
+	cs35l41_r: cs35l41@41 {
 		compatible = "cirrus,cs35l41";
 		reg = <0x41>;
 		interrupt-parent = <&tlmm>;
@@ -523,8 +516,10 @@
 	clock-frequency = <400000>;
 
 	/* Qcom SMB1390 @ 10 */
+	/* Silicon Labs SI4704 FM Radio Receiver @ 11 */
 	/* Qcom SMB1390_slave @ 18 */
 	/* HALO HL6111R Qi charger @ 25 */
+	/* Richwave RTC6226 FM Radio Receiver @ 64 */
 };
 
 &pcie0 {
@@ -584,7 +579,7 @@
 	vqmmc-supply = <&vreg_l6c_2p9>;
 	bus-width = <4>;
 	no-sdio;
-	no-mmc;
+	no-emmc;
 };
 
 &slpi {
@@ -594,48 +589,49 @@
 &tlmm {
 	gpio-reserved-ranges = <40 4>, <52 4>;
 
-	sdc2_default_state: sdc2-default-state {
-		clk-pins {
+	sdc2_default_state: sdc2-default {
+		clk {
 			pins = "sdc2_clk";
 			drive-strength = <16>;
 			bias-disable;
 		};
 
-		cmd-pins {
+		cmd {
 			pins = "sdc2_cmd";
 			drive-strength = <16>;
 			bias-pull-up;
 		};
 
-		data-pins {
+		data {
 			pins = "sdc2_data";
 			drive-strength = <16>;
 			bias-pull-up;
 		};
 	};
 
-	mdm2ap_default: mdm2ap-default-state {
+	mdm2ap_default: mdm2ap-default {
 		pins = "gpio1", "gpio3";
 		function = "gpio";
 		drive-strength = <8>;
 		bias-disable;
 	};
 
-	ts_int_default: ts-int-default-state {
+	ts_int_default: ts-int-default {
 		pins = "gpio39";
 		function = "gpio";
 		drive-strength = <2>;
 		bias-disable;
+		input-enable;
 	};
 
-	ap2mdm_default: ap2mdm-default-state {
+	ap2mdm_default: ap2mdm-default {
 		pins = "gpio56", "gpio57";
 		function = "gpio";
 		drive-strength = <16>;
 		bias-disable;
 	};
 
-	sdc2_card_det_n: sd-card-det-n-state {
+	sdc2_card_det_n: sd-card-det-n {
 		pins = "gpio77";
 		function = "gpio";
 		bias-pull-up;
@@ -672,9 +668,4 @@
 
 	vdda-phy-supply = <&vreg_l9a_1p2>;
 	vdda-pll-supply = <&vreg_l18a_0p9>;
-};
-
-&venus {
-	firmware-name = "qcom/sm8250/Sony/edo/venus.mbn";
-	status = "okay";
 };

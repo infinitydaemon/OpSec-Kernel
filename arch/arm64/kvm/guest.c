@@ -24,7 +24,6 @@
 #include <asm/fpsimd.h>
 #include <asm/kvm.h>
 #include <asm/kvm_emulate.h>
-#include <asm/kvm_nested.h>
 #include <asm/sigcontext.h>
 
 #include "trace.h"
@@ -254,11 +253,6 @@ static int set_core_reg(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg)
 			if (!vcpu_el1_is_32bit(vcpu))
 				return -EINVAL;
 			break;
-		case PSR_MODE_EL2h:
-		case PSR_MODE_EL2t:
-			if (!vcpu_has_nv(vcpu))
-				return -EINVAL;
-			fallthrough;
 		case PSR_MODE_EL0t:
 		case PSR_MODE_EL1t:
 		case PSR_MODE_EL1h:
@@ -590,16 +584,11 @@ static unsigned long num_core_regs(const struct kvm_vcpu *vcpu)
 	return copy_core_reg_indices(vcpu, NULL);
 }
 
-static const u64 timer_reg_list[] = {
-	KVM_REG_ARM_TIMER_CTL,
-	KVM_REG_ARM_TIMER_CNT,
-	KVM_REG_ARM_TIMER_CVAL,
-	KVM_REG_ARM_PTIMER_CTL,
-	KVM_REG_ARM_PTIMER_CNT,
-	KVM_REG_ARM_PTIMER_CVAL,
-};
+/**
+ * ARM64 versions of the TIMER registers, always available on arm64
+ */
 
-#define NUM_TIMER_REGS ARRAY_SIZE(timer_reg_list)
+#define NUM_TIMER_REGS 3
 
 static bool is_timer_reg(u64 index)
 {
@@ -607,9 +596,6 @@ static bool is_timer_reg(u64 index)
 	case KVM_REG_ARM_TIMER_CTL:
 	case KVM_REG_ARM_TIMER_CNT:
 	case KVM_REG_ARM_TIMER_CVAL:
-	case KVM_REG_ARM_PTIMER_CTL:
-	case KVM_REG_ARM_PTIMER_CNT:
-	case KVM_REG_ARM_PTIMER_CVAL:
 		return true;
 	}
 	return false;
@@ -617,11 +603,14 @@ static bool is_timer_reg(u64 index)
 
 static int copy_timer_indices(struct kvm_vcpu *vcpu, u64 __user *uindices)
 {
-	for (int i = 0; i < NUM_TIMER_REGS; i++) {
-		if (put_user(timer_reg_list[i], uindices))
-			return -EFAULT;
-		uindices++;
-	}
+	if (put_user(KVM_REG_ARM_TIMER_CTL, uindices))
+		return -EFAULT;
+	uindices++;
+	if (put_user(KVM_REG_ARM_TIMER_CNT, uindices))
+		return -EFAULT;
+	uindices++;
+	if (put_user(KVM_REG_ARM_TIMER_CVAL, uindices))
+		return -EFAULT;
 
 	return 0;
 }
@@ -1026,8 +1015,8 @@ int kvm_arm_vcpu_arch_has_attr(struct kvm_vcpu *vcpu,
 	return ret;
 }
 
-int kvm_vm_ioctl_mte_copy_tags(struct kvm *kvm,
-			       struct kvm_arm_copy_mte_tags *copy_tags)
+long kvm_vm_ioctl_mte_copy_tags(struct kvm *kvm,
+				struct kvm_arm_copy_mte_tags *copy_tags)
 {
 	gpa_t guest_ipa = copy_tags->guest_ipa;
 	size_t length = copy_tags->length;
@@ -1046,10 +1035,6 @@ int kvm_vm_ioctl_mte_copy_tags(struct kvm *kvm,
 		return -EINVAL;
 
 	if (length & ~PAGE_MASK || guest_ipa & ~PAGE_MASK)
-		return -EINVAL;
-
-	/* Lengths above INT_MAX cannot be represented in the return value */
-	if (length > INT_MAX)
 		return -EINVAL;
 
 	gfn = gpa_to_gfn(guest_ipa);
@@ -1085,19 +1070,15 @@ int kvm_vm_ioctl_mte_copy_tags(struct kvm *kvm,
 					clear_user(tags, MTE_GRANULES_PER_PAGE);
 			kvm_release_pfn_clean(pfn);
 		} else {
-			/*
-			 * Only locking to serialise with a concurrent
-			 * set_pte_at() in the VMM but still overriding the
-			 * tags, hence ignoring the return value.
-			 */
-			try_page_mte_tagging(page);
 			num_tags = mte_copy_tags_from_user(maddr, tags,
 							MTE_GRANULES_PER_PAGE);
 
-			/* uaccess failed, don't leave stale tags */
-			if (num_tags != MTE_GRANULES_PER_PAGE)
-				mte_clear_page_tags(maddr);
-			set_page_mte_tagged(page);
+			/*
+			 * Set the flag after checking the write
+			 * completed fully
+			 */
+			if (num_tags == MTE_GRANULES_PER_PAGE)
+				set_page_mte_tagged(page);
 
 			kvm_release_pfn_dirty(pfn);
 		}

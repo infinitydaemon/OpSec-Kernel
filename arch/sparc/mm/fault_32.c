@@ -178,11 +178,8 @@ retry:
 	 */
 	fault = handle_mm_fault(vma, address, flags, regs);
 
-	if (fault_signal_pending(fault, regs)) {
-		if (!from_user)
-			goto no_context;
+	if (fault_signal_pending(fault, regs))
 		return;
-	}
 
 	/* The fault is fully completed (including releasing mmap lock) */
 	if (fault & VM_FAULT_COMPLETED)

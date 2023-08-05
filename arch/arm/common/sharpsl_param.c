@@ -11,7 +11,7 @@
 #include <linux/module.h>
 #include <linux/string.h>
 #include <asm/mach/sharpsl_param.h>
-#include <asm/page.h>
+#include <asm/memory.h>
 
 /*
  * Certain hardware parameters determined at the time of device manufacture,

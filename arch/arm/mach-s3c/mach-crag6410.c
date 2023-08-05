@@ -14,7 +14,6 @@
 #include <linux/fb.h>
 #include <linux/io.h>
 #include <linux/init.h>
-#include <linux/input-event-codes.h>
 #include <linux/gpio.h>
 #include <linux/gpio/machine.h>
 #include <linux/leds.h>
@@ -58,6 +57,7 @@
 #include "keypad.h"
 #include "devs.h"
 #include "cpu.h"
+#include <linux/soc/samsung/s3c-adc.h>
 #include <linux/platform_data/i2c-s3c2410.h>
 #include "pm.h"
 

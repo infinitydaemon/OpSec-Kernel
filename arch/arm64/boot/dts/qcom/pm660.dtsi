@@ -11,7 +11,7 @@
 
 / {
 	thermal-zones {
-		pm660-thermal {
+		pm660 {
 			polling-delay-passive = <250>;
 			polling-delay = <1000>;
 
@@ -170,7 +170,7 @@
 			};
 		};
 
-		pm660_gpios: gpio@c000 {
+		pm660_gpios: gpios@c000 {
 			compatible = "qcom,pm660-gpio", "qcom,spmi-gpio";
 			reg = <0xc000>;
 			gpio-controller;

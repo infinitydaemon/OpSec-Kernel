@@ -58,7 +58,7 @@
 };
 
 &tlmm {
-	thinq_key_default: thinq-key-default-state {
+	thinq_key_default: thinq-key-default {
 		pins = "gpio89";
 		function = "gpio";
 

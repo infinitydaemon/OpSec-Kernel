@@ -13,7 +13,6 @@
 #include <dt-bindings/sound/qcom,q6afe.h>
 #include <dt-bindings/sound/qcom,q6asm.h>
 #include "sdm850.dtsi"
-#include "sdm845-wcd9340.dtsi"
 #include "pm8998.dtsi"
 
 /*
@@ -95,12 +94,12 @@
 };
 
 &adsp_pas {
-	firmware-name = "qcom/sdm850/LENOVO/81JL/qcadsp850.mbn";
+	firmware-name = "qcom/LENOVO/81JL/qcadsp850.mbn";
 	status = "okay";
 };
 
 &apps_rsc {
-	regulators-0 {
+	pm8998-rpmh-regulators {
 		compatible = "qcom,pm8998-rpmh-regulators";
 		qcom,pmic-id = "a";
 
@@ -307,8 +306,27 @@
 };
 
 &cdsp_pas {
-	firmware-name = "qcom/sdm850/LENOVO/81JL/qccdsp850.mbn";
+	firmware-name = "qcom/LENOVO/81JL/qccdsp850.mbn";
 	status = "okay";
+};
+
+&dsi0 {
+	status = "okay";
+	vdda-supply = <&vreg_l26a_1p2>;
+
+	ports {
+		port@1 {
+			endpoint {
+				remote-endpoint = <&sn65dsi86_in_a>;
+				data-lanes = <0 1 2 3>;
+			};
+		};
+	};
+};
+
+&dsi0_phy {
+	status = "okay";
+	vdds-supply = <&vreg_l1a_0p875>;
 };
 
 &gcc {
@@ -327,7 +345,7 @@
 	status = "okay";
 	zap-shader {
 		memory-region = <&gpu_mem>;
-		firmware-name = "qcom/sdm850/LENOVO/81JL/qcdxkmsuc850.mbn";
+		firmware-name = "qcom/LENOVO/81JL/qcdxkmsuc850.mbn";
 	};
 };
 
@@ -403,7 +421,7 @@
 			port@0 {
 				reg = <0>;
 				sn65dsi86_in_a: endpoint {
-					remote-endpoint = <&mdss_dsi0_out>;
+					remote-endpoint = <&dsi0_out>;
 				};
 			};
 
@@ -447,47 +465,55 @@
 };
 
 &ipa {
-	qcom,gsi-loader = "self";
-	memory-region = <&ipa_fw_mem>;
 	status = "okay";
+	memory-region = <&ipa_fw_mem>;
 };
 
 &mdss {
 	status = "okay";
 };
 
-&mdss_dsi0 {
-	status = "okay";
-	vdda-supply = <&vreg_l26a_1p2>;
-
-	ports {
-		port@1 {
-			endpoint {
-				remote-endpoint = <&sn65dsi86_in_a>;
-				data-lanes = <0 1 2 3>;
-			};
-		};
-	};
-};
-
-&mdss_dsi0_phy {
-	status = "okay";
-	vdds-supply = <&vreg_l1a_0p875>;
-};
-
 &mss_pil {
 	status = "okay";
-	firmware-name = "qcom/sdm850/LENOVO/81JL/qcdsp1v2850.mbn", "qcom/sdm850/LENOVO/81JL/qcdsp2850.mbn";
+	firmware-name = "qcom/LENOVO/81JL/qcdsp1v2850.mbn", "qcom/LENOVO/81JL/qcdsp2850.mbn";
 };
 
 &qup_i2c10_default {
-	drive-strength = <2>;
-	bias-disable;
+	pinconf {
+		pins = "gpio55", "gpio56";
+		drive-strength = <2>;
+		bias-disable;
+	};
 };
 
 &qup_i2c12_default {
-	drive-strength = <2>;
-	bias-disable;
+	pinmux {
+		drive-strength = <2>;
+		bias-disable;
+	};
+};
+
+&qup_uart6_default {
+	pinmux {
+		 pins = "gpio45", "gpio46", "gpio47", "gpio48";
+		 function = "qup6";
+	};
+
+	cts {
+		pins = "gpio45";
+		bias-pull-down;
+	};
+
+	rts-tx {
+		pins = "gpio46", "gpio47";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	rx {
+		pins = "gpio48";
+		bias-pull-up;
+	};
 };
 
 &qupv3_id_0 {
@@ -513,7 +539,7 @@
 };
 
 &sound {
-	compatible = "lenovo,yoga-c630-sndcard", "qcom,sdm845-sndcard";
+	compatible = "qcom,db845c-sndcard";
 	model = "Lenovo-YOGA-C630-13Q50";
 
 	audio-routing =
@@ -595,55 +621,66 @@
 &tlmm {
 	gpio-reserved-ranges = <0 4>, <81 4>;
 
-	sn65dsi86_pin_active: sn65dsi86-enable-state {
+	sn65dsi86_pin_active: sn65dsi86-enable {
 		pins = "gpio96";
-		function = "gpio";
 		drive-strength = <2>;
 		bias-disable;
 	};
 
-	i2c3_hid_active: i2c2-hid-active-state {
+	i2c3_hid_active: i2c2-hid-active {
 		pins = "gpio37";
 		function = "gpio";
 
+		input-enable;
 		bias-pull-up;
 		drive-strength = <2>;
 	};
 
-	i2c5_hid_active: i2c5-hid-active-state {
+	i2c5_hid_active: i2c5-hid-active {
 		pins = "gpio125";
 		function = "gpio";
 
+		input-enable;
 		bias-pull-up;
 		drive-strength = <2>;
 	};
 
-	i2c11_hid_active: i2c11-hid-active-state {
+	i2c11_hid_active: i2c11-hid-active {
 		pins = "gpio92";
 		function = "gpio";
 
+		input-enable;
 		bias-pull-up;
 		drive-strength = <2>;
 	};
 
-	lid_pin_active: lid-pin-state {
+	wcd_intr_default: wcd_intr_default {
+		pins = "gpio54";
+		function = "gpio";
+
+		input-enable;
+		bias-pull-down;
+		drive-strength = <2>;
+	};
+
+	lid_pin_active: lid-pin {
 		pins = "gpio124";
 		function = "gpio";
 
+		input-enable;
 		bias-disable;
 	};
 
-	mode_pin_active: mode-pin-state {
+	mode_pin_active: mode-pin {
 		pins = "gpio95";
 		function = "gpio";
 
+		input-enable;
 		bias-disable;
 	};
 };
 
 &uart6 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&qup_uart6_4pin>;
 	status = "okay";
 
 	bluetooth {
@@ -729,11 +766,14 @@
 };
 
 &venus {
-	firmware-name = "qcom/sdm850/LENOVO/81JL/qcvss850.mbn";
 	status = "okay";
 };
 
-&wcd9340 {
+&wcd9340{
+	pinctrl-0 = <&wcd_intr_default>;
+	pinctrl-names = "default";
+	clock-names = "extclk";
+	clocks = <&rpmhcc RPMH_LN_BB_CLK2>;
 	reset-gpios = <&tlmm 64 GPIO_ACTIVE_HIGH>;
 	vdd-buck-supply = <&vreg_s4a_1p8>;
 	vdd-buck-sido-supply = <&vreg_s4a_1p8>;
@@ -745,18 +785,18 @@
 	qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
 
 	swm: swm@c85 {
-		left_spkr: speaker@0,3 {
+		left_spkr: wsa8810-left{
 			compatible = "sdw10217211000";
 			reg = <0 3>;
-			powerdown-gpios = <&wcdgpio 1 GPIO_ACTIVE_LOW>;
+			powerdown-gpios = <&wcdgpio 1 GPIO_ACTIVE_HIGH>;
 			#thermal-sensor-cells = <0>;
 			sound-name-prefix = "SpkrLeft";
 			#sound-dai-cells = <0>;
 		};
 
-		right_spkr: speaker@0,4 {
+		right_spkr: wsa8810-right{
 			compatible = "sdw10217211000";
-			powerdown-gpios = <&wcdgpio 2 GPIO_ACTIVE_LOW>;
+			powerdown-gpios = <&wcdgpio 2 GPIO_ACTIVE_HIGH>;
 			reg = <0 4>;
 			#thermal-sensor-cells = <0>;
 			sound-name-prefix = "SpkrRight";

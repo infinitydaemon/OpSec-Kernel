@@ -8,7 +8,6 @@
 
 / {
 	model = "Google Hanawl";
-	chassis-type = "laptop";
 	compatible = "google,hana-rev7", "mediatek,mt8173";
 };
 

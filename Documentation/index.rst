@@ -2,7 +2,6 @@
 
 .. _linux_doc:
 
-==============================
 The Linux Kernel documentation
 ==============================
 
@@ -14,7 +13,7 @@ documentation are welcome; join the linux-doc list at vger.kernel.org if
 you want to help out.
 
 Working with the development community
-======================================
+--------------------------------------
 
 The essential guides for interacting with the kernel's development
 community and getting your work upstream.
@@ -30,7 +29,7 @@ community and getting your work upstream.
 
 
 Internal API manuals
-====================
+--------------------
 
 Manuals for use by developers working to interface with the rest of the
 kernel.
@@ -44,7 +43,7 @@ kernel.
    Locking in the kernel <locking/index>
 
 Development tools and processes
-===============================
+-------------------------------
 
 Various other manuals with useful information for all kernel developers.
 
@@ -63,7 +62,7 @@ Various other manuals with useful information for all kernel developers.
 
 
 User-oriented documentation
-===========================
+---------------------------
 
 The following manuals are written for *users* of the kernel — those who are
 trying to get it to work optimally on a given system and application
@@ -82,7 +81,7 @@ See also: the `Linux man pages <https://www.kernel.org/doc/man-pages/>`_,
 which are kept separately from the kernel's own documentation.
 
 Firmware-related documentation
-==============================
+------------------------------
 The following holds information on the kernel's expectations regarding the
 platform firmwares.
 
@@ -94,16 +93,16 @@ platform firmwares.
 
 
 Architecture-specific documentation
-===================================
+-----------------------------------
 
 .. toctree::
    :maxdepth: 2
 
-   arch/index
+   arch
 
 
 Other documentation
-===================
+-------------------
 
 There are several unsorted documents that don't seem to fit on other parts
 of the documentation body, or may require some adjustments and/or conversion
@@ -116,7 +115,7 @@ to ReStructured Text format, or are simply too old.
 
 
 Translations
-============
+------------
 
 .. toctree::
    :maxdepth: 2

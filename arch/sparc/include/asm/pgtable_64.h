@@ -187,9 +187,6 @@ bool kern_addr_valid(unsigned long addr);
 #define _PAGE_SZHUGE_4U	_PAGE_SZ4MB_4U
 #define _PAGE_SZHUGE_4V	_PAGE_SZ4MB_4V
 
-/* We borrow bit 20 to store the exclusive marker in swap PTEs. */
-#define _PAGE_SWP_EXCLUSIVE	_AC(0x0000000000100000, UL)
-
 #ifndef __ASSEMBLY__
 
 pte_t mk_pte_io(unsigned long, pgprot_t, int, unsigned long);
@@ -357,42 +354,6 @@ static inline pgprot_t pgprot_noncached(pgprot_t prot)
  */
 #define pgprot_noncached pgprot_noncached
 
-static inline unsigned long pte_dirty(pte_t pte)
-{
-	unsigned long mask;
-
-	__asm__ __volatile__(
-	"\n661:	mov		%1, %0\n"
-	"	nop\n"
-	"	.section	.sun4v_2insn_patch, \"ax\"\n"
-	"	.word		661b\n"
-	"	sethi		%%uhi(%2), %0\n"
-	"	sllx		%0, 32, %0\n"
-	"	.previous\n"
-	: "=r" (mask)
-	: "i" (_PAGE_MODIFIED_4U), "i" (_PAGE_MODIFIED_4V));
-
-	return (pte_val(pte) & mask);
-}
-
-static inline unsigned long pte_write(pte_t pte)
-{
-	unsigned long mask;
-
-	__asm__ __volatile__(
-	"\n661:	mov		%1, %0\n"
-	"	nop\n"
-	"	.section	.sun4v_2insn_patch, \"ax\"\n"
-	"	.word		661b\n"
-	"	sethi		%%uhi(%2), %0\n"
-	"	sllx		%0, 32, %0\n"
-	"	.previous\n"
-	: "=r" (mask)
-	: "i" (_PAGE_WRITE_4U), "i" (_PAGE_WRITE_4V));
-
-	return (pte_val(pte) & mask);
-}
-
 #if defined(CONFIG_HUGETLB_PAGE) || defined(CONFIG_TRANSPARENT_HUGEPAGE)
 pte_t arch_make_huge_pte(pte_t entry, unsigned int shift, vm_flags_t flags);
 #define arch_make_huge_pte arch_make_huge_pte
@@ -454,43 +415,28 @@ static inline bool is_hugetlb_pte(pte_t pte)
 }
 #endif
 
-static inline pte_t __pte_mkhwwrite(pte_t pte)
-{
-	unsigned long val = pte_val(pte);
-
-	/*
-	 * Note: we only want to set the HW writable bit if the SW writable bit
-	 * and the SW dirty bit are set.
-	 */
-	__asm__ __volatile__(
-	"\n661:	or		%0, %2, %0\n"
-	"	.section	.sun4v_1insn_patch, \"ax\"\n"
-	"	.word		661b\n"
-	"	or		%0, %3, %0\n"
-	"	.previous\n"
-	: "=r" (val)
-	: "0" (val), "i" (_PAGE_W_4U), "i" (_PAGE_W_4V));
-
-	return __pte(val);
-}
-
 static inline pte_t pte_mkdirty(pte_t pte)
 {
-	unsigned long val = pte_val(pte), mask;
+	unsigned long val = pte_val(pte), tmp;
 
 	__asm__ __volatile__(
-	"\n661:	mov		%1, %0\n"
+	"\n661:	or		%0, %3, %0\n"
+	"	nop\n"
+	"\n662:	nop\n"
 	"	nop\n"
 	"	.section	.sun4v_2insn_patch, \"ax\"\n"
 	"	.word		661b\n"
-	"	sethi		%%uhi(%2), %0\n"
-	"	sllx		%0, 32, %0\n"
+	"	sethi		%%uhi(%4), %1\n"
+	"	sllx		%1, 32, %1\n"
+	"	.word		662b\n"
+	"	or		%1, %%lo(%4), %1\n"
+	"	or		%0, %1, %0\n"
 	"	.previous\n"
-	: "=r" (mask)
-	: "i" (_PAGE_MODIFIED_4U), "i" (_PAGE_MODIFIED_4V));
+	: "=r" (val), "=r" (tmp)
+	: "0" (val), "i" (_PAGE_MODIFIED_4U | _PAGE_W_4U),
+	  "i" (_PAGE_MODIFIED_4V | _PAGE_W_4V));
 
-	pte = __pte(val | mask);
-	return pte_write(pte) ? __pte_mkhwwrite(pte) : pte;
+	return __pte(val);
 }
 
 static inline pte_t pte_mkclean(pte_t pte)
@@ -532,8 +478,7 @@ static inline pte_t pte_mkwrite(pte_t pte)
 	: "=r" (mask)
 	: "i" (_PAGE_WRITE_4U), "i" (_PAGE_WRITE_4V));
 
-	pte = __pte(val | mask);
-	return pte_dirty(pte) ? __pte_mkhwwrite(pte) : pte;
+	return __pte(val | mask);
 }
 
 static inline pte_t pte_wrprotect(pte_t pte)
@@ -632,6 +577,42 @@ static inline unsigned long pte_young(pte_t pte)
 	"	.previous\n"
 	: "=r" (mask)
 	: "i" (_PAGE_ACCESSED_4U), "i" (_PAGE_ACCESSED_4V));
+
+	return (pte_val(pte) & mask);
+}
+
+static inline unsigned long pte_dirty(pte_t pte)
+{
+	unsigned long mask;
+
+	__asm__ __volatile__(
+	"\n661:	mov		%1, %0\n"
+	"	nop\n"
+	"	.section	.sun4v_2insn_patch, \"ax\"\n"
+	"	.word		661b\n"
+	"	sethi		%%uhi(%2), %0\n"
+	"	sllx		%0, 32, %0\n"
+	"	.previous\n"
+	: "=r" (mask)
+	: "i" (_PAGE_MODIFIED_4U), "i" (_PAGE_MODIFIED_4V));
+
+	return (pte_val(pte) & mask);
+}
+
+static inline unsigned long pte_write(pte_t pte)
+{
+	unsigned long mask;
+
+	__asm__ __volatile__(
+	"\n661:	mov		%1, %0\n"
+	"	nop\n"
+	"	.section	.sun4v_2insn_patch, \"ax\"\n"
+	"	.word		661b\n"
+	"	sethi		%%uhi(%2), %0\n"
+	"	sllx		%0, 32, %0\n"
+	"	.previous\n"
+	: "=r" (mask)
+	: "i" (_PAGE_WRITE_4U), "i" (_PAGE_WRITE_4V));
 
 	return (pte_val(pte) & mask);
 }
@@ -980,45 +961,17 @@ void pgtable_trans_huge_deposit(struct mm_struct *mm, pmd_t *pmdp,
 pgtable_t pgtable_trans_huge_withdraw(struct mm_struct *mm, pmd_t *pmdp);
 #endif
 
-/*
- * Encode/decode swap entries and swap PTEs. Swap PTEs are all PTEs that
- * are !pte_none() && !pte_present().
- *
- * Format of swap PTEs:
- *
- *   6 6 6 6 5 5 5 5 5 5 5 5 5 5 4 4 4 4 4 4 4 4 4 4 3 3 3 3 3 3 3 3
- *   3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2
- *   <--------------------------- offset ---------------------------
- *
- *   3 3 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1
- *   1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
- *   --------------------> E <-- type ---> <------- zeroes -------->
- */
-#define __swp_type(entry)	(((entry).val >> PAGE_SHIFT) & 0x7fUL)
+/* Encode and de-code a swap entry */
+#define __swp_type(entry)	(((entry).val >> PAGE_SHIFT) & 0xffUL)
 #define __swp_offset(entry)	((entry).val >> (PAGE_SHIFT + 8UL))
 #define __swp_entry(type, offset)	\
 	( (swp_entry_t) \
 	  { \
-		((((long)(type) & 0x7fUL) << PAGE_SHIFT) | \
+		(((long)(type) << PAGE_SHIFT) | \
                  ((long)(offset) << (PAGE_SHIFT + 8UL))) \
 	  } )
 #define __pte_to_swp_entry(pte)		((swp_entry_t) { pte_val(pte) })
 #define __swp_entry_to_pte(x)		((pte_t) { (x).val })
-
-static inline int pte_swp_exclusive(pte_t pte)
-{
-	return pte_val(pte) & _PAGE_SWP_EXCLUSIVE;
-}
-
-static inline pte_t pte_swp_mkexclusive(pte_t pte)
-{
-	return __pte(pte_val(pte) | _PAGE_SWP_EXCLUSIVE);
-}
-
-static inline pte_t pte_swp_clear_exclusive(pte_t pte)
-{
-	return __pte(pte_val(pte) & ~_PAGE_SWP_EXCLUSIVE);
-}
 
 int page_in_phys_avail(unsigned long paddr);
 

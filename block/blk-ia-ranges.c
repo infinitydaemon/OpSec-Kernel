@@ -75,7 +75,7 @@ static void blk_ia_range_sysfs_nop_release(struct kobject *kobj)
 {
 }
 
-static const struct kobj_type blk_ia_range_ktype = {
+static struct kobj_type blk_ia_range_ktype = {
 	.sysfs_ops	= &blk_ia_range_sysfs_ops,
 	.default_groups	= blk_ia_range_groups,
 	.release	= blk_ia_range_sysfs_nop_release,
@@ -94,7 +94,7 @@ static void blk_ia_ranges_sysfs_release(struct kobject *kobj)
 	kfree(iars);
 }
 
-static const struct kobj_type blk_ia_ranges_ktype = {
+static struct kobj_type blk_ia_ranges_ktype = {
 	.release	= blk_ia_ranges_sysfs_release,
 };
 
@@ -123,8 +123,7 @@ int disk_register_independent_access_ranges(struct gendisk *disk)
 	 */
 	WARN_ON(iars->sysfs_registered);
 	ret = kobject_init_and_add(&iars->kobj, &blk_ia_ranges_ktype,
-				   &disk->queue_kobj, "%s",
-				   "independent_access_ranges");
+				   &q->kobj, "%s", "independent_access_ranges");
 	if (ret) {
 		disk->ia_ranges = NULL;
 		kobject_put(&iars->kobj);

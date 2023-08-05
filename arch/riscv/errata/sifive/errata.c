@@ -14,7 +14,7 @@
 #include <asm/errata_list.h>
 
 struct errata_info_t {
-	char name[32];
+	char name[ERRATA_STRING_LENGTH_MAX];
 	bool (*check_func)(unsigned long  arch_id, unsigned long impid);
 };
 
@@ -82,9 +82,11 @@ static void __init_or_module warn_miss_errata(u32 miss_errata)
 	pr_warn("----------------------------------------------------------------\n");
 }
 
-void sifive_errata_patch_func(struct alt_entry *begin, struct alt_entry *end,
-			      unsigned long archid, unsigned long impid,
-			      unsigned int stage)
+void __init_or_module sifive_errata_patch_func(struct alt_entry *begin,
+					       struct alt_entry *end,
+					       unsigned long archid,
+					       unsigned long impid,
+					       unsigned int stage)
 {
 	struct alt_entry *alt;
 	u32 cpu_req_errata;
@@ -99,16 +101,15 @@ void sifive_errata_patch_func(struct alt_entry *begin, struct alt_entry *end,
 	for (alt = begin; alt < end; alt++) {
 		if (alt->vendor_id != SIFIVE_VENDOR_ID)
 			continue;
-		if (alt->patch_id >= ERRATA_SIFIVE_NUMBER) {
-			WARN(1, "This errata id:%d is not in kernel errata list", alt->patch_id);
+		if (alt->errata_id >= ERRATA_SIFIVE_NUMBER) {
+			WARN(1, "This errata id:%d is not in kernel errata list", alt->errata_id);
 			continue;
 		}
 
-		tmp = (1U << alt->patch_id);
+		tmp = (1U << alt->errata_id);
 		if (cpu_req_errata & tmp) {
 			mutex_lock(&text_mutex);
-			patch_text_nosync(ALT_OLD_PTR(alt), ALT_ALT_PTR(alt),
-					  alt->alt_len);
+			patch_text_nosync(alt->old_ptr, alt->alt_ptr, alt->alt_len);
 			mutex_unlock(&text_mutex);
 			cpu_apply_errata |= tmp;
 		}

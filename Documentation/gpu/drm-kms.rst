@@ -520,12 +520,6 @@ HDMI Specific Connector Properties
 .. kernel-doc:: drivers/gpu/drm/drm_connector.c
    :doc: HDMI connector properties
 
-Analog TV Specific Connector Properties
----------------------------------------
-
-.. kernel-doc:: drivers/gpu/drm/drm_connector.c
-   :doc: Analog TV Connector Properties
-
 Standard CRTC Properties
 ------------------------
 

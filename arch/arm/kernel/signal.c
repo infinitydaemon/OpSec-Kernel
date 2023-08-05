@@ -18,7 +18,6 @@
 #include <asm/traps.h>
 #include <asm/unistd.h>
 #include <asm/vfp.h>
-#include <asm/syscalls.h>
 
 #include "signal.h"
 
