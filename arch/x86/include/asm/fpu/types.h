@@ -321,7 +321,7 @@ struct xstate_header {
 struct xregs_state {
 	struct fxregs_state		i387;
 	struct xstate_header		header;
-	u8				extended_state_area[];
+	u8				extended_state_area[0];
 } __attribute__ ((packed, aligned (64)));
 
 /*
