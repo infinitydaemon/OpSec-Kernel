@@ -1061,8 +1061,7 @@ static int irs1125_ident_setup(struct irs1125 *sensor, struct device *dev)
 	return 0;
 }
 
-static int irs1125_probe(struct i2c_client *client,
-			 const struct i2c_device_id *id)
+static int irs1125_probe(struct i2c_client *client)
 {
 	struct device *dev = &client->dev;
 	struct irs1125 *sensor;

@@ -85,10 +85,8 @@ static int uclogic_input_configured(struct hid_device *hdev,
 {
 	struct uclogic_drvdata *drvdata = hid_get_drvdata(hdev);
 	struct uclogic_params *params = &drvdata->params;
-	char *name;
 	const char *suffix = NULL;
 	struct hid_field *field;
-	size_t len;
 	size_t i;
 	const struct uclogic_params_frame *frame;
 
@@ -146,14 +144,9 @@ static int uclogic_input_configured(struct hid_device *hdev,
 		}
 	}
 
-	if (suffix) {
-		len = strlen(hdev->name) + 2 + strlen(suffix);
-		name = devm_kzalloc(&hi->input->dev, len, GFP_KERNEL);
-		if (name) {
-			snprintf(name, len, "%s %s", hdev->name, suffix);
-			hi->input->name = name;
-		}
-	}
+	if (suffix)
+		hi->input->name = devm_kasprintf(&hdev->dev, GFP_KERNEL,
+						 "%s %s", hdev->name, suffix);
 
 	return 0;
 }
@@ -248,6 +241,34 @@ static int uclogic_resume(struct hid_device *hdev)
 	return rc;
 }
 #endif
+
+/**
+ * uclogic_exec_event_hook - if the received event is hooked schedules the
+ * associated work.
+ *
+ * @p:		Tablet interface report parameters.
+ * @event:	Raw event.
+ * @size:	The size of event.
+ *
+ * Returns:
+ *	Whether the event was hooked or not.
+ */
+static bool uclogic_exec_event_hook(struct uclogic_params *p, u8 *event, int size)
+{
+	struct uclogic_raw_event_hook *curr;
+
+	if (!p->event_hooks)
+		return false;
+
+	list_for_each_entry(curr, &p->event_hooks->list, list) {
+		if (curr->size == size && memcmp(curr->event, event, size) == 0) {
+			schedule_work(&curr->work);
+			return true;
+		}
+	}
+
+	return false;
+}
 
 /**
  * uclogic_raw_event_pen - handle raw pen events (pen HID reports).
@@ -407,6 +428,9 @@ static int uclogic_raw_event(struct hid_device *hdev,
 	if (report->type != HID_INPUT_REPORT)
 		return 0;
 
+	if (uclogic_exec_event_hook(params, data, size))
+		return 0;
+
 	while (true) {
 		/* Tweak pen reports, if necessary */
 		if ((report_id == params->pen.id) && (size >= 2)) {
@@ -544,3 +568,7 @@ module_hid_driver(uclogic_driver);
 MODULE_AUTHOR("Martin Rusko");
 MODULE_AUTHOR("Nikolai Kondrashov");
 MODULE_LICENSE("GPL");
+
+#ifdef CONFIG_HID_KUNIT_TEST
+#include "hid-uclogic-core-test.c"
+#endif

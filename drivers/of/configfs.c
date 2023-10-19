@@ -81,7 +81,7 @@ static ssize_t cfs_overlay_item_path_store(struct config_item *item,
 		goto out_err;
 
 	err = of_overlay_fdt_apply((void *)overlay->fw->data,
-				   (u32)overlay->fw->size, &overlay->ov_id);
+				   (u32)overlay->fw->size, &overlay->ov_id, NULL);
 	if (err != 0)
 		goto out_err;
 
@@ -155,7 +155,7 @@ ssize_t cfs_overlay_item_dtbo_write(struct config_item *item,
 	overlay->dtbo_size = count;
 
 	err = of_overlay_fdt_apply(overlay->dtbo, overlay->dtbo_size,
-				   &overlay->ov_id);
+				   &overlay->ov_id, NULL);
 	if (err != 0)
 		goto out_err;
 

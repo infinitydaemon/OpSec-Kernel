@@ -176,6 +176,7 @@ enum rpi_firmware_clk_id {
 	RPI_FIRMWARE_M2MC_CLK_ID,
 	RPI_FIRMWARE_PIXEL_BVB_CLK_ID,
 	RPI_FIRMWARE_VEC_CLK_ID,
+	RPI_FIRMWARE_DISP_CLK_ID,
 	RPI_FIRMWARE_NUM_CLK_ID,
 };
 
@@ -196,7 +197,7 @@ struct rpi_firmware_clk_rate_request {
 
 #define RPI_FIRMWARE_CLK_RATE_REQUEST(_id)	\
 	{					\
-		.id = _id,			\
+		.id = cpu_to_le32(_id),		\
 	}
 
 #if IS_ENABLED(CONFIG_RASPBERRYPI_FIRMWARE)

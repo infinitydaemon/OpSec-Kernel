@@ -5,12 +5,17 @@
 
 #include <linux/kernel.h>
 #include <linux/sched/mm.h>
+#include "messages.h"
 #include "ctree.h"
 #include "disk-io.h"
 #include "locking.h"
 #include "free-space-tree.h"
 #include "transaction.h"
 #include "block-group.h"
+#include "fs.h"
+#include "accessors.h"
+#include "extent-tree.h"
+#include "root-tree.h"
 
 static int __add_block_group_free_space(struct btrfs_trans_handle *trans,
 					struct btrfs_block_group *block_group,
@@ -1281,7 +1286,7 @@ int btrfs_delete_free_space_tree(struct btrfs_fs_info *fs_info)
 	spin_unlock(&fs_info->trans_lock);
 
 	btrfs_tree_lock(free_space_root->node);
-	btrfs_clean_tree_block(free_space_root->node);
+	btrfs_clear_buffer_dirty(trans, free_space_root->node);
 	btrfs_tree_unlock(free_space_root->node);
 	btrfs_free_tree_block(trans, btrfs_root_id(free_space_root),
 			      free_space_root->node, 0, 1);
@@ -1512,8 +1517,10 @@ static int load_free_space_bitmaps(struct btrfs_caching_control *caching_ctl,
 			} else if (prev_bit == 1 && bit == 0) {
 				u64 space_added;
 
-				ret = add_new_free_space(block_group, extent_start,
-							 offset, &space_added);
+				ret = btrfs_add_new_free_space(block_group,
+							       extent_start,
+							       offset,
+							       &space_added);
 				if (ret)
 					goto out;
 				total_found += space_added;
@@ -1528,7 +1535,7 @@ static int load_free_space_bitmaps(struct btrfs_caching_control *caching_ctl,
 		}
 	}
 	if (prev_bit == 1) {
-		ret = add_new_free_space(block_group, extent_start, end, NULL);
+		ret = btrfs_add_new_free_space(block_group, extent_start, end, NULL);
 		if (ret)
 			goto out;
 		extent_count++;
@@ -1585,8 +1592,9 @@ static int load_free_space_extents(struct btrfs_caching_control *caching_ctl,
 		ASSERT(key.type == BTRFS_FREE_SPACE_EXTENT_KEY);
 		ASSERT(key.objectid < end && key.objectid + key.offset <= end);
 
-		ret = add_new_free_space(block_group, key.objectid,
-					 key.objectid + key.offset, &space_added);
+		ret = btrfs_add_new_free_space(block_group, key.objectid,
+					       key.objectid + key.offset,
+					       &space_added);
 		if (ret)
 			goto out;
 		total_found += space_added;

@@ -310,7 +310,7 @@ vc_mem_init(void)
 		goto out_unregister;
 	}
 
-	vc_mem_class = class_create(THIS_MODULE, DRIVER_NAME);
+	vc_mem_class = class_create(DRIVER_NAME);
 	if (IS_ERR(vc_mem_class)) {
 		rc = PTR_ERR(vc_mem_class);
 		pr_err("%s: class_create failed (rc=%d)\n", __func__, rc);

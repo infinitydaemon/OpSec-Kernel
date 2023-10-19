@@ -2732,7 +2732,7 @@ qla2x00_dev_loss_tmo_callbk(struct fc_rport *rport)
 	spin_lock_irqsave(host->host_lock, flags);
 	/* Confirm port has not reappeared before clearing pointers. */
 	if (rport->port_state != FC_PORTSTATE_ONLINE) {
-		fcport->rport = fcport->drport = NULL;
+		fcport->rport = NULL;
 		*((fc_port_t **)rport->dd_data) = NULL;
 	}
 	spin_unlock_irqrestore(host->host_lock, flags);
@@ -3093,8 +3093,6 @@ qla24xx_vport_create(struct fc_vport *fc_vport, bool disable)
 			vha->flags.difdix_supported = 1;
 			ql_dbg(ql_dbg_user, vha, 0x7082,
 			    "Registered for DIF/DIX type 1 and 3 protection.\n");
-			if (ql2xenabledif == 1)
-				prot = SHOST_DIX_TYPE0_PROTECTION;
 			scsi_host_set_prot(vha->host,
 			    prot | SHOST_DIF_TYPE1_PROTECTION
 			    | SHOST_DIF_TYPE2_PROTECTION
@@ -3184,8 +3182,7 @@ qla24xx_vport_delete(struct fc_vport *fc_vport)
 
 	set_bit(VPORT_DELETE, &vha->dpc_flags);
 
-	while (test_bit(LOOP_RESYNC_ACTIVE, &vha->dpc_flags) ||
-	    test_bit(FCPORT_UPDATE_NEEDED, &vha->dpc_flags))
+	while (test_bit(LOOP_RESYNC_ACTIVE, &vha->dpc_flags))
 		msleep(1000);
 
 

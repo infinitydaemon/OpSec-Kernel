@@ -2591,7 +2591,7 @@ static struct i2c_driver arducam_64mp_i2c_driver = {
 		.of_match_table	= arducam_64mp_dt_ids,
 		.pm = &arducam_64mp_pm_ops,
 	},
-	.probe_new = arducam_64mp_probe,
+	.probe = arducam_64mp_probe,
 	.remove = arducam_64mp_remove,
 };
 

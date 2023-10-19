@@ -119,6 +119,9 @@ int btbcm_check_bdaddr(struct hci_dev *hdev)
 	 *
 	 * The address 43:43:A0:12:1F:AC indicates a BCM43430A0 controller
 	 * with no configured address.
+	 *
+	 * The address AA:AA:AA:AA:AA:AA indicates a BCM43430A1 controller
+	 * with no configured address.
 	 */
 	if (!bacmp(&bda->bdaddr, BDADDR_BCM20702A0) ||
 	    !bacmp(&bda->bdaddr, BDADDR_BCM20702A1) ||

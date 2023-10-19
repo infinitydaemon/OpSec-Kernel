@@ -2071,7 +2071,7 @@ static struct i2c_driver imx708_i2c_driver = {
 		.of_match_table	= imx708_dt_ids,
 		.pm = &imx708_pm_ops,
 	},
-	.probe_new = imx708_probe,
+	.probe = imx708_probe,
 	.remove = imx708_remove,
 };
 
