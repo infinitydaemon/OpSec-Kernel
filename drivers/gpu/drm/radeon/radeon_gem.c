@@ -316,7 +316,7 @@ int radeon_gem_pread_ioctl(struct drm_device *dev, void *data,
 {
 	/* TODO: implement */
 	DRM_ERROR("unimplemented %s\n", __func__);
-	return -ENOSYS;
+	return -EOPNOTSUPP;
 }
 
 int radeon_gem_pwrite_ioctl(struct drm_device *dev, void *data,
@@ -324,7 +324,7 @@ int radeon_gem_pwrite_ioctl(struct drm_device *dev, void *data,
 {
 	/* TODO: implement */
 	DRM_ERROR("unimplemented %s\n", __func__);
-	return -ENOSYS;
+	return -EOPNOTSUPP;
 }
 
 int radeon_gem_create_ioctl(struct drm_device *dev, void *data,
@@ -820,6 +820,30 @@ out:
 	return r;
 }
 
+int radeon_align_pitch(struct radeon_device *rdev, int width, int cpp, bool tiled)
+{
+	int aligned = width;
+	int align_large = (ASIC_IS_AVIVO(rdev)) || tiled;
+	int pitch_mask = 0;
+
+	switch (cpp) {
+	case 1:
+		pitch_mask = align_large ? 255 : 127;
+		break;
+	case 2:
+		pitch_mask = align_large ? 127 : 31;
+		break;
+	case 3:
+	case 4:
+		pitch_mask = align_large ? 63 : 15;
+		break;
+	}
+
+	aligned += pitch_mask;
+	aligned &= ~pitch_mask;
+	return aligned * cpp;
+}
+
 int radeon_mode_dumb_create(struct drm_file *file_priv,
 			    struct drm_device *dev,
 			    struct drm_mode_create_dumb *args)
@@ -853,7 +877,7 @@ int radeon_mode_dumb_create(struct drm_file *file_priv,
 #if defined(CONFIG_DEBUG_FS)
 static int radeon_debugfs_gem_info_show(struct seq_file *m, void *unused)
 {
-	struct radeon_device *rdev = (struct radeon_device *)m->private;
+	struct radeon_device *rdev = m->private;
 	struct radeon_bo *rbo;
 	unsigned i = 0;
 

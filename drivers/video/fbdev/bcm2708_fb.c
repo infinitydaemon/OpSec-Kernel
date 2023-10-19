@@ -657,6 +657,8 @@ static long vc_mem_copy(struct bcm2708_fb *fb, struct fb_dmacopy *ioparam)
 	long rc = 0;
 	size_t offset;
 
+return -EFAULT;
+
 	/* restrict this to root user */
 	if (!uid_eq(current_euid(), GLOBAL_ROOT_UID)) {
 		rc = -EFAULT;
@@ -953,6 +955,7 @@ static void bcm2708_fb_imageblit(struct fb_info *info,
 	cfb_imageblit(info, image);
 }
 
+#if 0
 static irqreturn_t bcm2708_fb_dma_irq(int irq, void *cxt)
 {
 	struct bcm2708_fb_dev *fbdev = cxt;
@@ -970,6 +973,7 @@ static irqreturn_t bcm2708_fb_dma_irq(int irq, void *cxt)
 	wake_up(&fbdev->dma_waitq);
 	return IRQ_HANDLED;
 }
+#endif
 
 static struct fb_ops bcm2708_fb_ops = {
 	.owner = THIS_MODULE,
@@ -992,7 +996,7 @@ static int bcm2708_fb_register(struct bcm2708_fb *fb)
 	int ret;
 
 	fb->fb.fbops = &bcm2708_fb_ops;
-	fb->fb.flags = FBINFO_FLAG_DEFAULT | FBINFO_HWACCEL_COPYAREA;
+	fb->fb.flags = FBINFO_HWACCEL_COPYAREA;
 	fb->fb.pseudo_palette = fb->cmap;
 
 	strncpy(fb->fb.fix.id, bcm2708_name, sizeof(fb->fb.fix.id));
@@ -1109,6 +1113,7 @@ static int bcm2708_fb_probe(struct platform_device *dev)
 
 	dev_info(&dev->dev, "FB found %d display(s)\n", num_displays);
 
+#if 0
 	/* Set up the DMA information. Note we have just one set of DMA
 	 * parameters to work with all the FB's so requires synchronising when
 	 * being used
@@ -1141,7 +1146,7 @@ static int bcm2708_fb_probe(struct platform_device *dev)
 			"Failed to request DMA irq\n");
 		goto free_dma_chan;
 	}
-
+#endif
 	rpi_firmware_property(fbdev->fw,
 			      RPI_FIRMWARE_GET_VC_MEMORY,
 			      &gpu_mem, sizeof(gpu_mem));
@@ -1192,12 +1197,12 @@ static int bcm2708_fb_probe(struct platform_device *dev)
 		return ret;
 	}
 
-free_dma_chan:
+//free_dma_chan:
 	bcm_dma_chan_free(fbdev->dma_chan);
-free_cb:
+//free_cb:
 	dma_free_wc(&dev->dev, SZ_64K, fbdev->cb_base,
 			      fbdev->cb_handle);
-free_fb:
+//free_fb:
 	dev_err(&dev->dev, "probe failed, err %d\n", ret);
 
 	return ret;

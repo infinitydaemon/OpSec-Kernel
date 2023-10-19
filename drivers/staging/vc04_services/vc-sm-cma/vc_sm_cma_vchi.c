@@ -267,7 +267,7 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 	return 0;
 }
 
-static enum vchiq_status vc_sm_cma_vchi_callback(struct vchiq_instance *vchiq_instance,
+static int vc_sm_cma_vchi_callback(struct vchiq_instance *vchiq_instance,
 						 enum vchiq_reason reason,
 						 struct vchiq_header *header,
 						 unsigned int handle, void *userdata)
@@ -288,7 +288,7 @@ static enum vchiq_status vc_sm_cma_vchi_callback(struct vchiq_instance *vchiq_in
 		break;
 	}
 
-	return VCHIQ_SUCCESS;
+	return 0;
 }
 
 struct sm_instance *vc_sm_cma_vchi_init(struct vchiq_instance *vchiq_instance,
