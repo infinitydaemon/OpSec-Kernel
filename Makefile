@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 6
-PATCHLEVEL = 5
-SUBLEVEL = 2
+PATCHLEVEL = 6
+SUBLEVEL = 11
 EXTRAVERSION = cwdsystems
-NAME = infinitydaemon-rc5
+NAME = infinitydaemon-st
 
 # Merge with mainline kernel for better patch updates.
 # Build configs remain at CWD SYSTEMS criteria.
