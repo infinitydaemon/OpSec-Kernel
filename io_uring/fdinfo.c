@@ -22,7 +22,6 @@ static __cold int io_uring_show_cred(struct seq_file *m, unsigned int id,
 	struct user_namespace *uns = seq_user_ns(m);
 	struct group_info *gi;
 	kernel_cap_t cap;
-	unsigned __capi;
 	int g;
 
 	seq_printf(m, "%5d\n", id);
@@ -42,15 +41,18 @@ static __cold int io_uring_show_cred(struct seq_file *m, unsigned int id,
 	}
 	seq_puts(m, "\n\tCapEff:\t");
 	cap = cred->cap_effective;
-	CAP_FOR_EACH_U32(__capi)
-		seq_put_hex_ll(m, NULL, cap.cap[CAP_LAST_U32 - __capi], 8);
+	seq_put_hex_ll(m, NULL, cap.val, 16);
 	seq_putc(m, '\n');
 	return 0;
 }
 
-static __cold void __io_uring_show_fdinfo(struct io_ring_ctx *ctx,
-					  struct seq_file *m)
+/*
+ * Caller holds a reference to the file already, we don't need to do
+ * anything else to get an extra reference.
+ */
+__cold void io_uring_show_fdinfo(struct seq_file *m, struct file *f)
 {
+	struct io_ring_ctx *ctx = f->private_data;
 	struct io_sq_data *sq = NULL;
 	struct io_overflow_cqe *ocqe;
 	struct io_rings *r = ctx->rings;
@@ -91,6 +93,8 @@ static __cold void __io_uring_show_fdinfo(struct io_ring_ctx *ctx,
 		struct io_uring_sqe *sqe;
 		unsigned int sq_idx;
 
+		if (ctx->flags & IORING_SETUP_NO_SQARRAY)
+			break;
 		sq_idx = READ_ONCE(ctx->sq_array[entry & sq_mask]);
 		if (sq_idx > sq_mask)
 			continue;
@@ -204,15 +208,5 @@ static __cold void __io_uring_show_fdinfo(struct io_ring_ctx *ctx,
 	}
 
 	spin_unlock(&ctx->completion_lock);
-}
-
-__cold void io_uring_show_fdinfo(struct seq_file *m, struct file *f)
-{
-	struct io_ring_ctx *ctx = f->private_data;
-
-	if (percpu_ref_tryget(&ctx->refs)) {
-		__io_uring_show_fdinfo(ctx, m);
-		percpu_ref_put(&ctx->refs);
-	}
 }
 #endif
