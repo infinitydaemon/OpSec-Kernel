@@ -102,14 +102,14 @@ static int voicehat_daiops_trigger(struct snd_pcm_substream *substream, int cmd,
 		return 0;
 
 	dev_dbg(dai->dev, "CMD             %d", cmd);
-	dev_dbg(dai->dev, "Playback Active %d", dai->stream_active[SNDRV_PCM_STREAM_PLAYBACK]);
-	dev_dbg(dai->dev, "Capture Active  %d", dai->stream_active[SNDRV_PCM_STREAM_CAPTURE]);
+	dev_dbg(dai->dev, "Playback Active %d", dai->stream[SNDRV_PCM_STREAM_PLAYBACK].active);
+	dev_dbg(dai->dev, "Capture Active  %d", dai->stream[SNDRV_PCM_STREAM_CAPTURE].active);
 
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_RESUME:
 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
-		if (dai->stream_active[SNDRV_PCM_STREAM_PLAYBACK]) {
+		if (dai->stream[SNDRV_PCM_STREAM_PLAYBACK].active) {
 			dev_info(dai->dev, "Enabling audio amp...\n");
 			queue_delayed_work(
 				system_power_efficient_wq,
@@ -120,7 +120,7 @@ static int voicehat_daiops_trigger(struct snd_pcm_substream *substream, int cmd,
 	case SNDRV_PCM_TRIGGER_STOP:
 	case SNDRV_PCM_TRIGGER_SUSPEND:
 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
-		if (dai->stream_active[SNDRV_PCM_STREAM_PLAYBACK]) {
+		if (dai->stream[SNDRV_PCM_STREAM_PLAYBACK].active) {
 			cancel_delayed_work(&voicehat->enable_sdmode_work);
 			dev_info(dai->dev, "Disabling audio amp...\n");
 			gpiod_set_value(voicehat->sdmode_gpio, 0);

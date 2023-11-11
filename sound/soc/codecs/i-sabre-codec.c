@@ -341,8 +341,7 @@ static void i_sabre_codec_remove(struct device *dev)
 }
 
 
-static int i_sabre_codec_i2c_probe(
-		struct i2c_client *i2c, const struct i2c_device_id *id)
+static int i_sabre_codec_i2c_probe(struct i2c_client *i2c)
 {
 	struct regmap *regmap;
 

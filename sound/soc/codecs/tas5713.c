@@ -281,8 +281,7 @@ static struct regmap_config tas5713_regmap_config = {
 };
 
 
-static int tas5713_i2c_probe(struct i2c_client *i2c,
-			    const struct i2c_device_id *id)
+static int tas5713_i2c_probe(struct i2c_client *i2c)
 {
 	int ret;
 

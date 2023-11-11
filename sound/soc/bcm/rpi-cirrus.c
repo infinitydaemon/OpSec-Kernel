@@ -904,7 +904,7 @@ static struct snd_soc_dai_link rpi_cirrus_dai[] = {
 				  | SND_SOC_DAIFMT_NB_NF
 				  | SND_SOC_DAIFMT_CBM_CFM,
 		.ignore_suspend = 1,
-		.params		= &rpi_cirrus_dai_link2_params,
+		.c2c_params	= &rpi_cirrus_dai_link2_params,
 		.init		= rpi_cirrus_init_wm8804,
 		SND_SOC_DAILINK_REG(wm8804),
 	},

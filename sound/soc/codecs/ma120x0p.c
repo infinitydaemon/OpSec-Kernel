@@ -1215,8 +1215,7 @@ static struct regmap_config ma120x0p_regmap_config = {
 	.num_reg_defaults = ARRAY_SIZE(ma120x0p_reg_defaults),
 };
 
-static int ma120x0p_i2c_probe(struct i2c_client *i2c,
-	const struct i2c_device_id *id)
+static int ma120x0p_i2c_probe(struct i2c_client *i2c)
 {
 	int ret;
 
