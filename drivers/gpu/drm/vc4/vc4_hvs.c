@@ -347,6 +347,36 @@ static int vc5_hvs_debugfs_gamma(struct seq_file *m, void *data)
 	return 0;
 }
 
+static int vc4_hvs_debugfs_dlist_allocs(struct seq_file *m, void *data)
+{
+	struct drm_info_node *node = m->private;
+	struct drm_device *dev = node->minor->dev;
+	struct vc4_dev *vc4 = to_vc4_dev(dev);
+	struct vc4_hvs *hvs = vc4->hvs;
+	struct drm_printer p = drm_seq_file_printer(m);
+	struct vc4_hvs_dlist_allocation *cur, *next;
+	struct drm_mm_node *mm_node;
+	unsigned long flags;
+
+	spin_lock_irqsave(&hvs->mm_lock, flags);
+
+	drm_printf(&p, "Allocated nodes:\n");
+	list_for_each_entry(mm_node, drm_mm_nodes(&hvs->dlist_mm), node_list) {
+		drm_printf(&p, "node [%08llx + %08llx]\n", mm_node->start, mm_node->size);
+	}
+
+	drm_printf(&p, "Stale nodes:\n");
+	list_for_each_entry_safe(cur, next, &hvs->stale_dlist_entries, node) {
+		drm_printf(&p, "node [%08llx + %08llx] channel %u frcnt %u\n",
+			   cur->mm_node.start, cur->mm_node.size, cur->channel,
+			   cur->target_frame_count);
+	}
+
+	spin_unlock_irqrestore(&hvs->mm_lock, flags);
+
+	return 0;
+}
+
 /* The filter kernel is composed of dwords each containing 3 9-bit
  * signed integers packed next to each other.
  */
@@ -629,7 +659,8 @@ vc4_hvs_alloc_dlist_entry(struct vc4_hvs *hvs,
 				 dlist_count);
 	spin_unlock_irqrestore(&hvs->mm_lock, flags);
 	if (ret) {
-		drm_err(dev, "Failed to allocate DLIST entry: %d\n", ret);
+		drm_err(dev, "Failed to allocate DLIST entry. Requested size=%zu. ret=%d\n",
+			dlist_count, ret);
 		return ERR_PTR(ret);
 	}
 
@@ -697,7 +728,8 @@ static void vc4_hvs_schedule_dlist_sweep(struct vc4_hvs *hvs,
 	if (!list_empty(&hvs->stale_dlist_entries))
 		queue_work(system_unbound_wq, &hvs->free_dlist_work);
 
-	vc4_hvs_irq_clear_eof(hvs, channel);
+	if (list_empty(&hvs->stale_dlist_entries))
+		vc4_hvs_irq_clear_eof(hvs, channel);
 
 	spin_unlock_irqrestore(&hvs->mm_lock, flags);
 }
@@ -710,6 +742,27 @@ static void vc4_hvs_schedule_dlist_sweep(struct vc4_hvs *hvs,
 static bool vc4_hvs_frcnt_lte(u8 cnt1, u8 cnt2)
 {
 	return (s8)((cnt1 << 2) - (cnt2 << 2)) <= 0;
+}
+
+bool vc4_hvs_check_channel_active(struct vc4_hvs *hvs, unsigned int fifo)
+{
+	struct vc4_dev *vc4 = hvs->vc4;
+	struct drm_device *drm = &vc4->base;
+	bool enabled = false;
+	int idx;
+
+	WARN_ON_ONCE(vc4->gen > VC4_GEN_6);
+
+	if (!drm_dev_enter(drm, &idx))
+		return 0;
+
+	if (vc4->gen >= VC4_GEN_6)
+		enabled = HVS_READ(SCALER6_DISPX_CTRL0(fifo)) & SCALER6_DISPX_CTRL0_ENB;
+	else
+		enabled = HVS_READ(SCALER_DISPCTRLX(fifo)) & SCALER_DISPCTRLX_ENABLE;
+
+	drm_dev_exit(idx);
+	return enabled;
 }
 
 /*
@@ -746,7 +799,8 @@ static void vc4_hvs_dlist_free_work(struct work_struct *work)
 		u8 frcnt;
 
 		frcnt = vc4_hvs_get_fifo_frame_count(hvs, cur->channel);
-		if (!vc4_hvs_frcnt_lte(cur->target_frame_count, frcnt))
+		if (vc4_hvs_check_channel_active(hvs, cur->channel) &&
+		    !vc4_hvs_frcnt_lte(cur->target_frame_count, frcnt))
 			continue;
 
 		vc4_hvs_free_dlist_entry_locked(hvs, cur);
@@ -992,13 +1046,11 @@ static void __vc4_hvs_stop_channel(struct vc4_hvs *hvs, unsigned int chan)
 	if (!drm_dev_enter(drm, &idx))
 		return;
 
-	if (HVS_READ(SCALER_DISPCTRLX(chan)) & SCALER_DISPCTRLX_ENABLE)
+	if (!(HVS_READ(SCALER_DISPCTRLX(chan)) & SCALER_DISPCTRLX_ENABLE))
 		goto out;
 
-	HVS_WRITE(SCALER_DISPCTRLX(chan),
-		  HVS_READ(SCALER_DISPCTRLX(chan)) | SCALER_DISPCTRLX_RESET);
-	HVS_WRITE(SCALER_DISPCTRLX(chan),
-		  HVS_READ(SCALER_DISPCTRLX(chan)) & ~SCALER_DISPCTRLX_ENABLE);
+	HVS_WRITE(SCALER_DISPCTRLX(chan), SCALER_DISPCTRLX_RESET);
+	HVS_WRITE(SCALER_DISPCTRLX(chan), 0);
 
 	/* Once we leave, the scaler should be disabled and its fifo empty. */
 	WARN_ON_ONCE(HVS_READ(SCALER_DISPCTRLX(chan)) & SCALER_DISPCTRLX_RESET);
@@ -1006,10 +1058,6 @@ static void __vc4_hvs_stop_channel(struct vc4_hvs *hvs, unsigned int chan)
 	WARN_ON_ONCE(VC4_GET_FIELD(HVS_READ(SCALER_DISPSTATX(chan)),
 				   SCALER_DISPSTATX_MODE) !=
 		     SCALER_DISPSTATX_MODE_DISABLED);
-
-	WARN_ON_ONCE((HVS_READ(SCALER_DISPSTATX(chan)) &
-		      (SCALER_DISPSTATX_FULL | SCALER_DISPSTATX_EMPTY)) !=
-		     SCALER_DISPSTATX_EMPTY);
 
 out:
 	drm_dev_exit(idx);
@@ -1026,7 +1074,7 @@ static void __vc6_hvs_stop_channel(struct vc4_hvs *hvs, unsigned int chan)
 	if (!drm_dev_enter(drm, &idx))
 		return;
 
-	if (HVS_READ(SCALER6_DISPX_CTRL0(chan)) & SCALER6_DISPX_CTRL0_ENB)
+	if (!(HVS_READ(SCALER6_DISPX_CTRL0(chan)) & SCALER6_DISPX_CTRL0_ENB))
 		goto out;
 
 	HVS_WRITE(SCALER6_DISPX_CTRL0(chan),
@@ -1578,6 +1626,8 @@ int vc4_hvs_debugfs_init(struct drm_minor *minor)
 		drm_debugfs_add_file(drm, "hvs_dlists", vc4_hvs_debugfs_dlist, NULL);
 
 	drm_debugfs_add_file(drm, "hvs_underrun", vc4_hvs_debugfs_underrun, NULL);
+
+	drm_debugfs_add_file(drm, "hvs_dlist_allocs", vc4_hvs_debugfs_dlist_allocs, NULL);
 
 	vc4_debugfs_add_regset32(drm, "hvs_regs", &hvs->regset);
 

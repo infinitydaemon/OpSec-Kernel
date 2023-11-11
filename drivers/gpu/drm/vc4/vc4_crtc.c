@@ -399,12 +399,6 @@ static void vc4_crtc_config_pv(struct drm_crtc *crtc, struct drm_encoder *encode
 
 	vc4_crtc_pixelvalve_reset(crtc);
 
-	/*
-	 * NOTE: The BCM2712 has a H_OTE (Horizontal Odd Timing Enable)
-	 * bit that, when set, will allow to specify the timings in
-	 * pixels instead of cycles, thus allowing to specify odd
-	 * timings.
-	 */
 	CRTC_WRITE(PV_HORZA,
 		   VC4_SET_FIELD((mode->htotal - mode->hsync_end) * pixel_rep / ppc,
 				 PV_HORZA_HBP) |
@@ -449,6 +443,7 @@ static void vc4_crtc_config_pv(struct drm_crtc *crtc, struct drm_encoder *encode
 		 */
 		CRTC_WRITE(PV_V_CONTROL,
 			   PV_VCONTROL_CONTINUOUS |
+			   (vc4->gen >= VC4_GEN_6 ? PV_VCONTROL_ODD_TIMING : 0) |
 			   (is_dsi ? PV_VCONTROL_DSI : 0) |
 			   PV_VCONTROL_INTERLACE |
 			   (odd_field_first
@@ -460,6 +455,7 @@ static void vc4_crtc_config_pv(struct drm_crtc *crtc, struct drm_encoder *encode
 	} else {
 		CRTC_WRITE(PV_V_CONTROL,
 			   PV_VCONTROL_CONTINUOUS |
+			   (vc4->gen >= VC4_GEN_6 ? PV_VCONTROL_ODD_TIMING : 0) |
 			   (is_dsi ? PV_VCONTROL_DSI : 0));
 		CRTC_WRITE(PV_VSYNCD_EVEN, 0);
 	}
@@ -660,6 +656,8 @@ static void vc4_crtc_atomic_disable(struct drm_crtc *crtc,
 	drm_crtc_vblank_off(crtc);
 
 	vc4_crtc_disable(crtc, encoder, state, old_vc4_state->assigned_channel);
+
+	vc4_hvs_atomic_disable(crtc, state);
 
 	/*
 	 * Make sure we issue a vblank event after disabling the CRTC if
@@ -1330,7 +1328,7 @@ const struct vc4_pv_data bcm2712_pv0_data = {
 		.hvs_output = 0,
 	},
 	.fifo_depth = 64,
-	.pixels_per_clock = 2,
+	.pixels_per_clock = 1,
 	.encoder_types = {
 		[0] = VC4_ENCODER_TYPE_HDMI0,
 	},
@@ -1343,7 +1341,7 @@ const struct vc4_pv_data bcm2712_pv1_data = {
 		.hvs_output = 1,
 	},
 	.fifo_depth = 64,
-	.pixels_per_clock = 2,
+	.pixels_per_clock = 1,
 	.encoder_types = {
 		[0] = VC4_ENCODER_TYPE_HDMI1,
 	},

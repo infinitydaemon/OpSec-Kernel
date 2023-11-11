@@ -164,6 +164,10 @@ struct imx477_mode {
 	struct imx477_reg_list reg_list;
 };
 
+static const s64 imx477_link_freq_menu[] = {
+	IMX477_DEFAULT_LINK_FREQ,
+};
+
 static const struct imx477_reg mode_common_regs[] = {
 	{0x0136, 0x18},
 	{0x0137, 0x00},
@@ -607,7 +611,7 @@ static const struct imx477_reg mode_2028x1520_regs[] = {
 	{0x0385, 0x01},
 	{0x0387, 0x01},
 	{0x0900, 0x01},
-	{0x0901, 0x12},
+	{0x0901, 0x22},
 	{0x0902, 0x02},
 	{0x3140, 0x02},
 	{0x3c00, 0x00},
@@ -632,7 +636,7 @@ static const struct imx477_reg mode_2028x1520_regs[] = {
 	{0x9e9f, 0x00},
 	{0xa2a9, 0x60},
 	{0xa2b7, 0x00},
-	{0x0401, 0x01},
+	{0x0401, 0x00},
 	{0x0404, 0x00},
 	{0x0405, 0x20},
 	{0x0408, 0x00},
@@ -708,7 +712,7 @@ static const struct imx477_reg mode_2028x1080_regs[] = {
 	{0x0385, 0x01},
 	{0x0387, 0x01},
 	{0x0900, 0x01},
-	{0x0901, 0x12},
+	{0x0901, 0x22},
 	{0x0902, 0x02},
 	{0x3140, 0x02},
 	{0x3c00, 0x00},
@@ -733,7 +737,7 @@ static const struct imx477_reg mode_2028x1080_regs[] = {
 	{0x9e9f, 0x00},
 	{0xa2a9, 0x60},
 	{0xa2b7, 0x00},
-	{0x0401, 0x01},
+	{0x0401, 0x00},
 	{0x0404, 0x00},
 	{0x0405, 0x20},
 	{0x0408, 0x00},
@@ -1110,6 +1114,7 @@ struct imx477 {
 	struct v4l2_ctrl_handler ctrl_handler;
 	/* V4L2 Controls */
 	struct v4l2_ctrl *pixel_rate;
+	struct v4l2_ctrl *link_freq;
 	struct v4l2_ctrl *exposure;
 	struct v4l2_ctrl *vflip;
 	struct v4l2_ctrl *hflip;
@@ -1996,6 +2001,17 @@ static int imx477_init_controls(struct imx477 *imx477)
 					       IMX477_PIXEL_RATE,
 					       IMX477_PIXEL_RATE, 1,
 					       IMX477_PIXEL_RATE);
+	if (imx477->pixel_rate)
+		imx477->pixel_rate->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+
+	/* LINK_FREQ is also read only */
+	imx477->link_freq =
+		v4l2_ctrl_new_int_menu(ctrl_hdlr, &imx477_ctrl_ops,
+				       V4L2_CID_LINK_FREQ,
+				       ARRAY_SIZE(imx477_link_freq_menu) - 1, 0,
+				       imx477_link_freq_menu);
+	if (imx477->link_freq)
+		imx477->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
 	/*
 	 * Create the controls here, but mode specific limits are setup
