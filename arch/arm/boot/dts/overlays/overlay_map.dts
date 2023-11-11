@@ -48,6 +48,16 @@
 		bcm2712;
 	};
 
+	dwc2 {
+		bcm2835;
+		bcm2711;
+		bcm2712 = "dwc2-pi5";
+	};
+
+	dwc2-pi5 {
+		bcm2712;
+	};
+
 	highperi {
 		bcm2711;
 	};
@@ -248,6 +258,10 @@
 
 	sdio-1bit {
 		deprecated = "use sdio,bus_width=1,gpios_22_25";
+	};
+
+	sdio-pi5 {
+		bcm2712;
 	};
 
 	sdtweak {

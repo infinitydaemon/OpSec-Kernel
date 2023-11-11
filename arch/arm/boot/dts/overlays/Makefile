@@ -59,6 +59,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	draws.dtbo \
 	dwc-otg.dtbo \
 	dwc2.dtbo \
+	dwc2-pi5.dtbo \
 	edt-ft5406.dtbo \
 	enc28j60.dtbo \
 	enc28j60-spi2.dtbo \
@@ -225,6 +226,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	sc16is752-spi1.dtbo \
 	sdhost.dtbo \
 	sdio.dtbo \
+	sdio-pi5.dtbo \
 	seeed-can-fd-hat-v1.dtbo \
 	seeed-can-fd-hat-v2.dtbo \
 	sh1106-spi.dtbo \

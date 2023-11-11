@@ -173,6 +173,30 @@ Params:
         cooling_fan             Enables the Pi 5 cooling fan (enabled
                                 automatically by the firmware)
 
+        drm_fb0_rp1_dpi         Assign /dev/fb0 to the RP1 DPI output
+
+        drm_fb0_rp1_dsi0        Assign /dev/fb0 to the RP1 DSI0 output
+
+        drm_fb0_rp1_dsi1        Assign /dev/fb0 to the RP1 DSI1 output
+
+        drm_fb0_vc4             Assign /dev/fb0 to the vc4 outputs
+
+        drm_fb1_rp1_dpi         Assign /dev/fb1 to the RP1 DPI output
+
+        drm_fb1_rp1_dsi0        Assign /dev/fb1 to the RP1 DSI0 output
+
+        drm_fb1_rp1_dsi1        Assign /dev/fb1 to the RP1 DSI1 output
+
+        drm_fb1_vc4             Assign /dev/fb1 to the vc4 outputs
+
+        drm_fb2_rp1_dpi         Assign /dev/fb2 to the RP1 DPI output
+
+        drm_fb2_rp1_dsi0        Assign /dev/fb2 to the RP1 DSI0 output
+
+        drm_fb2_rp1_dsi1        Assign /dev/fb2 to the RP1 DSI1 output
+
+        drm_fb2_vc4             Assign /dev/fb2 to the vc4 outputs
+
         eee                     Enable Energy Efficient Ethernet support for
                                 compatible devices (default "on"). See also
                                 "tx_lpi_timer". Pi3B+ only.
@@ -256,6 +280,10 @@ Params:
                                 (2711 only, but not applicable on CM4S)
                                 N.B. USB-A ports on 4B are subsequently disabled
 
+        pcie_tperst_clk_ms      Add N milliseconds between PCIe reference clock
+                                activation and PERST# deassertion
+                                (CM4 and 2712, default "0")
+
         pciex1                  Set to "on" to enable the external PCIe link
                                 (2712 only, default "off")
 
@@ -265,6 +293,9 @@ Params:
         pciex1_no_l0s           Set to "on" to disable ASPM L0s on the external
                                 PCIe link for devices that have broken
                                 implementations (2712 only, default "off")
+
+        pciex1_tperst_clk_ms    Alias for pcie_tperst_clk_ms
+                                (2712 only, default "0")
 
         spi                     Set to "on" to enable the spi interfaces
                                 (default "off")
@@ -1081,6 +1112,10 @@ Params: dr_mode                 Dual role mode: "host", "peripheral" or "otg"
 
         g-np-tx-fifo-size       Size of non-periodic tx fifo size in gadget
                                 mode
+
+
+Name:   dwc2-pi5
+Info:   See dwc2 (this is the Pi 5 version)
 
 
 [ The ds1307-rtc overlay has been deleted. See i2c-rtc. ]
@@ -2810,6 +2845,16 @@ Params: gpiopin                 Gpio pin connected to the INTA output of the
 
         mcp23008                Configure an MCP23008 instead.
         noints                  Disable the interrupt GPIO line.
+        i2c0                    Choose the I2C0 bus on GPIOs 0&1
+        i2c_csi_dsi             Choose the I2C0 bus on GPIOs 44&45
+        i2c3                    Choose the I2C3 bus (configure with the i2c3
+                                overlay - BCM2711 only)
+        i2c4                    Choose the I2C4 bus (configure with the i2c4
+                                overlay - BCM2711 only)
+        i2c5                    Choose the I2C5 bus (configure with the i2c5
+                                overlay - BCM2711 only)
+        i2c6                    Choose the I2C6 bus (configure with the i2c6
+                                overlay - BCM2711 only)
 
 
 Name:   mcp23s17
@@ -3704,7 +3749,7 @@ Name:   rpi-ft5406
 Info:   Official Raspberry Pi display touchscreen
 Load:   dtoverlay=rpi-ft5406,<param>=<val>
 Params: touchscreen-size-x      Touchscreen X resolution (default 800)
-        touchscreen-size-y      Touchscreen Y resolution (default 600);
+        touchscreen-size-y      Touchscreen Y resolution (default 480);
         touchscreen-inverted-x  Invert touchscreen X coordinates (default 0);
         touchscreen-inverted-y  Invert touchscreen Y coordinates (default 0);
         touchscreen-swapped-x-y Swap X and Y cordinates (default 0);
@@ -3889,6 +3934,13 @@ Name:   sdio-1bit
 Info:   This overlay is now deprecated. Use
         "dtoverlay=sdio,bus_width=1,gpios_22_25" instead.
 Load:   <Deprecated>
+
+
+Name:   sdio-pi5
+Info:   Selects the rp1_mmc0 interface and enables it on GPIOs 22-27.
+        Pi 5 only.
+Load:   dtoverlay=sdio-pi5
+Params: <None>
 
 
 Name:   sdtweak

@@ -52,7 +52,7 @@
 
 / {
 	compatible = "raspberrypi,5-model-b", "brcm,bcm2712";
-	model = "Raspberry Pi 5 Model B";
+	model = "Raspberry Pi 5";
 
 	/* Will be filled by the bootloader */
 	memory@0 {
@@ -157,9 +157,16 @@
 	dummy: dummy {
 		// A target for unwanted overlay fragments
 	};
+
+
+	// A few extra labels to keep overlays happy
+
+	i2c0if: i2c0if {};
+	i2c0mux: i2c0mux {};
 };
 
 rp1_target: &pcie2 {
+	brcm,enable-mps-rcb;
 	brcm,vdm-qos-map = <0xbbaa9888>;
 	aspm-no-l0s;
 	status = "okay";
@@ -242,19 +249,16 @@ aux: &dummy {};
 
 #include "bcm2712-rpi.dtsi"
 
-// A few extra labels to keep overlays happy
-
-i2c0if: &rp1_gpio {};
-i2c0mux: &rp1_gpio {};
-
 i2c_csi_dsi0: &i2c6 { // Note: This is for MIPI0 connector only
 	pinctrl-0 = <&rp1_i2c6_38_39>;
 	pinctrl-names = "default";
+	clock-frequency = <100000>;
 };
 
 i2c_csi_dsi1: &i2c4 { // Note: This is for MIPI1 connector only
 	pinctrl-0 = <&rp1_i2c4_40_41>;
 	pinctrl-names = "default";
+	clock-frequency = <100000>;
 };
 
 i2c_csi_dsi: &i2c_csi_dsi1 { }; // An alias for compatibility
@@ -785,8 +789,8 @@ spi10_cs_pins: &spi10_cs_gpio1 {};
 		gpio4 = &pinctrl_aon;
 		usb0 = &rp1_usb0;
 		usb1 = &rp1_usb1;
-		drm_dsi1 = &dsi0;
-		drm_dsi2 = &dsi1;
+		drm-dsi1 = &dsi0;
+		drm-dsi2 = &dsi1;
 	};
 
 	__overrides__ {
@@ -807,10 +811,13 @@ spi10_cs_pins: &spi10_cs_gpio1 {};
 		i2c_baudrate = <&i2c_arm>, "clock-frequency:0";
 		i2c_arm_baudrate = <&i2c_arm>, "clock-frequency:0";
 		i2c_vc_baudrate = <&i2c_vc>, "clock-frequency:0";
+		krnbt = <&bluetooth>, "status";
 		nvme = <&pciex1>, "status";
 		pciex1 = <&pciex1>, "status";
 		pciex1_gen = <&pciex1> , "max-link-speed:0";
 		pciex1_no_l0s = <&pciex1>, "aspm-no-l0s?";
+		pciex1_tperst_clk_ms = <&pciex1>, "brcm,tperst-clk-ms:0";
+		pcie_tperst_clk_ms = <&pciex1>, "brcm,tperst-clk-ms:0";
 		random = <&random>, "status";
 		rtc_bbat_vchg = <&rpi_rtc>, "trickle-charge-microvolt:0";
 		spi = <&spi0>, "status";
@@ -822,5 +829,17 @@ spi10_cs_pins: &spi10_cs_gpio1 {};
 		act_led_trigger = <&act_led>, "linux,default-trigger";
 		pwr_led_activelow = <&pwr_led>, "gpios:8";
 		pwr_led_trigger = <&pwr_led>, "linux,default-trigger";
+		drm_fb0_rp1_dsi0 = <&aliases>, "drm-fb0=",&dsi0;
+		drm_fb0_rp1_dsi1 = <&aliases>, "drm-fb0=",&dsi1;
+		drm_fb0_rp1_dpi = <&aliases>, "drm-fb0=",&dpi;
+		drm_fb0_vc4 = <&aliases>, "drm-fb0=",&vc4;
+		drm_fb1_rp1_dsi0 = <&aliases>, "drm-fb1=",&dsi0;
+		drm_fb1_rp1_dsi1 = <&aliases>, "drm-fb1=",&dsi1;
+		drm_fb1_rp1_dpi = <&aliases>, "drm-fb1=",&dpi;
+		drm_fb1_vc4 = <&aliases>, "drm-fb1=",&vc4;
+		drm_fb2_rp1_dsi0 = <&aliases>, "drm-fb2=",&dsi0;
+		drm_fb2_rp1_dsi1 = <&aliases>, "drm-fb2=",&dsi1;
+		drm_fb2_rp1_dpi = <&aliases>, "drm-fb2=",&dpi;
+		drm_fb2_vc4 = <&aliases>, "drm-fb2=",&vc4;
 	};
 };
