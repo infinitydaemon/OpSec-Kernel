@@ -3,7 +3,7 @@ VERSION = 6
 PATCHLEVEL = 5
 SUBLEVEL = 1
 EXTRAVERSION = RC4+
-NAME = CWD Boost
+NAME = Catnapped
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
