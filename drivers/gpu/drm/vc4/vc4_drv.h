@@ -78,7 +78,7 @@ struct vc4_perfmon {
 	 * Note that counter values can't be reset, but you can fake a reset by
 	 * destroying the perfmon and creating a new one.
 	 */
-	u64 counters[];
+	u64 counters[] __counted_by(ncounters);
 };
 
 enum vc4_gen {
@@ -667,6 +667,7 @@ struct vc4_hvs_dlist_allocation {
 	struct drm_mm_node mm_node;
 	unsigned int channel;
 	u8 target_frame_count;
+	bool dlist_programmed;
 };
 
 struct vc4_crtc_state {

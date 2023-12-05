@@ -56,6 +56,7 @@ config DRM_CROS_EC_ANX7688
 config DRM_DISPLAY_CONNECTOR
 	tristate "Display connector support"
 	depends on OF
+	select DRM_KMS_HELPER
 	help
 	  Driver for display connectors with support for DDC and hot-plug
 	  detection. Most display controllers handle display connectors
@@ -181,6 +182,7 @@ config DRM_NWL_MIPI_DSI
 	select DRM_KMS_HELPER
 	select DRM_MIPI_DSI
 	select DRM_PANEL_BRIDGE
+	select GENERIC_PHY
 	select GENERIC_PHY_MIPI_DPHY
 	select MFD_SYSCON
 	select MULTIPLEXER
@@ -227,6 +229,7 @@ config DRM_SAMSUNG_DSIM
 	select DRM_KMS_HELPER
 	select DRM_MIPI_DSI
 	select DRM_PANEL_BRIDGE
+	select GENERIC_PHY
 	select GENERIC_PHY_MIPI_DPHY
 	help
 	  The Samsung MIPI DSIM bridge controller driver.

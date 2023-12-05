@@ -18,6 +18,9 @@ description: >
   Finally the operating system assumes the power off failed if
   the system is still running after waiting some time (timeout-ms).
 
+allOf:
+  - $ref: restart-handler.yaml#
+
 properties:
   compatible:
     const: gpio-poweroff
@@ -40,9 +43,16 @@ properties:
     default: 100
     description: Delay to wait after driving gpio inactive
 
+  priority:
+    default: 0
+
   timeout-ms:
     default: 3000
     description: Time to wait before assuming the power off sequence failed.
+
+  export:
+    type: boolean
+    description: Export the GPIO line to the sysfs system
 
 required:
   - compatible

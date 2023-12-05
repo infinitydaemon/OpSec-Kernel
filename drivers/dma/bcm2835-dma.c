@@ -1503,7 +1503,7 @@ err_no_dma:
 	return rc;
 }
 
-static int bcm2835_dma_remove(struct platform_device *pdev)
+static void bcm2835_dma_remove(struct platform_device *pdev)
 {
 	struct bcm2835_dmadev *od = platform_get_drvdata(pdev);
 
@@ -1517,13 +1517,11 @@ static int bcm2835_dma_remove(struct platform_device *pdev)
 		memcpy_chan = NULL;
 	}
 	bcm2835_dma_free(od);
-
-	return 0;
 }
 
 static struct platform_driver bcm2835_dma_driver = {
 	.probe	= bcm2835_dma_probe,
-	.remove	= bcm2835_dma_remove,
+	.remove_new = bcm2835_dma_remove,
 	.driver = {
 		.name = "bcm2835-dma",
 		.of_match_table = of_match_ptr(bcm2835_dma_of_match),

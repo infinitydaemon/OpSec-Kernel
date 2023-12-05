@@ -5290,7 +5290,7 @@ err_disable_clocks:
 	return err;
 }
 
-static int macb_remove(struct platform_device *pdev)
+static void macb_remove(struct platform_device *pdev)
 {
 	struct net_device *dev;
 	struct macb *bp;
@@ -5315,8 +5315,6 @@ static int macb_remove(struct platform_device *pdev)
 		phylink_destroy(bp->phylink);
 		free_netdev(dev);
 	}
-
-	return 0;
 }
 
 static void macb_shutdown(struct platform_device *pdev)
@@ -5545,7 +5543,7 @@ static const struct dev_pm_ops macb_pm_ops = {
 
 static struct platform_driver macb_driver = {
 	.probe		= macb_probe,
-	.remove		= macb_remove,
+	.remove_new	= macb_remove,
 	.shutdown	= macb_shutdown,
 	.driver		= {
 		.name		= "macb",

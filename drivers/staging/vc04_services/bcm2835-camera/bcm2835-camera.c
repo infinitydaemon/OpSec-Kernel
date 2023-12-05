@@ -854,7 +854,7 @@ static int vidioc_enum_input(struct file *file, void *priv,
 		return -EINVAL;
 
 	inp->type = V4L2_INPUT_TYPE_CAMERA;
-	sprintf((char *)inp->name, "Camera %u", inp->index);
+	snprintf((char *)inp->name, sizeof(inp->name), "Camera %u", inp->index);
 	return 0;
 }
 
@@ -1858,6 +1858,12 @@ static int bcm2835_mmal_probe(struct platform_device *pdev)
 	struct vchiq_mmal_instance *instance;
 	unsigned int resolutions[MAX_BCM2835_CAMERAS][2];
 	int i;
+
+	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
+	if (ret) {
+		dev_err(&pdev->dev, "dma_set_mask_and_coherent failed: %d\n", ret);
+		return ret;
+	}
 
 	ret = vchiq_mmal_init(&instance);
 	if (ret < 0)

@@ -983,7 +983,7 @@ static void cfe_buffer_queue(struct vb2_buffer *vb)
 	spin_unlock_irqrestore(&cfe->state_lock, flags);
 }
 
-static u64 sensor_link_frequency(struct cfe_device *cfe)
+static u64 sensor_link_rate(struct cfe_device *cfe)
 {
 	struct v4l2_mbus_framefmt *source_fmt;
 	struct v4l2_subdev_state *state;
@@ -1028,11 +1028,11 @@ static u64 sensor_link_frequency(struct cfe_device *cfe)
 
 	/* x2 for DDR. */
 	link_freq *= 2;
-	cfe_info("Using a link frequency of %lld Hz\n", link_freq);
+	cfe_info("Using a link rate of %lld Mbps\n", link_freq / (1000 * 1000));
 	return link_freq;
 
 err:
-	cfe_err("Unable to determine sensor link frequency, using 999 MHz\n");
+	cfe_err("Unable to determine sensor link rate, using 999 Mbps\n");
 	return 999 * 1000000UL;
 }
 
@@ -1104,7 +1104,7 @@ static int cfe_start_streaming(struct vb2_queue *vq, unsigned int count)
 	}
 
 	cfe_dbg("Configuring CSI-2 block\n");
-	cfe->csi2.dphy.dphy_freq = sensor_link_frequency(cfe) / 1000000UL;
+	cfe->csi2.dphy.dphy_rate = sensor_link_rate(cfe) / 1000000UL;
 	csi2_open_rx(&cfe->csi2);
 
 	cfe_dbg("Starting sensor streaming\n");
@@ -1826,7 +1826,7 @@ static void cfe_unregister_nodes(struct cfe_device *cfe)
 
 static int cfe_link_node_pads(struct cfe_device *cfe)
 {
-	unsigned int i;
+	unsigned int i, source_pad = 0;
 	int ret;
 
 	for (i = 0; i < CSI2_NUM_CHANNELS; i++) {
@@ -1835,14 +1835,23 @@ static int cfe_link_node_pads(struct cfe_device *cfe)
 		if (!check_state(cfe, NODE_REGISTERED, i))
 			continue;
 
-		if (i < cfe->sensor->entity.num_pads) {
+		/* Find next source pad */
+		while (source_pad < cfe->sensor->entity.num_pads &&
+		       !(cfe->sensor->entity.pads[source_pad].flags &
+							MEDIA_PAD_FL_SOURCE))
+			source_pad++;
+
+		if (source_pad < cfe->sensor->entity.num_pads) {
 			/* Sensor -> CSI2 */
-			ret = media_create_pad_link(&cfe->sensor->entity, i,
+			ret = media_create_pad_link(&cfe->sensor->entity, source_pad,
 						    &cfe->csi2.sd.entity, i,
 						    MEDIA_LNK_FL_IMMUTABLE |
 						    MEDIA_LNK_FL_ENABLED);
 			if (ret)
 				return ret;
+
+			/* Dealt with that source_pad, look at the next one next time */
+			source_pad++;
 		}
 
 		/* CSI2 channel # -> /dev/video# */

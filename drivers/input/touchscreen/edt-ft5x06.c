@@ -69,6 +69,7 @@
 #define TOUCH_EVENT_RESERVED		0x03
 
 #define EDT_NAME_LEN			23
+#define EDT_NAME_PREFIX_LEN		8
 #define EDT_SWITCH_MODE_RETRIES		10
 #define EDT_SWITCH_MODE_DELAY		5 /* msec */
 #define EDT_RAW_DATA_RETRIES		100
@@ -145,7 +146,7 @@ struct edt_ft5x06_ts_data {
 	int tdata_offset;
 	unsigned int known_ids;
 
-	char name[EDT_NAME_LEN];
+	char name[EDT_NAME_PREFIX_LEN + EDT_NAME_LEN];
 	char fw_version[EDT_NAME_LEN];
 	int init_td_status;
 
@@ -652,10 +653,7 @@ static struct attribute *edt_ft5x06_attrs[] = {
 	&dev_attr_crc_errors.attr,
 	NULL
 };
-
-static const struct attribute_group edt_ft5x06_attr_group = {
-	.attrs = edt_ft5x06_attrs,
-};
+ATTRIBUTE_GROUPS(edt_ft5x06);
 
 static void edt_ft5x06_restore_reg_parameters(struct edt_ft5x06_ts_data *tsdata)
 {
@@ -936,6 +934,9 @@ static int edt_ft5x06_ts_identify(struct i2c_client *client,
 	int error;
 	char *model_name = tsdata->name;
 	char *fw_version = tsdata->fw_version;
+
+	snprintf(model_name, EDT_NAME_PREFIX_LEN, "%s ", dev_name(&client->dev));
+	model_name += strlen(model_name);
 
 	/* see what we find if we assume it is a M06 *
 	 * if we get less than EDT_NAME_LEN, we don't want
@@ -1416,10 +1417,6 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 		add_timer(&tsdata->timer);
 	}
 
-	error = devm_device_add_group(&client->dev, &edt_ft5x06_attr_group);
-	if (error)
-		return error;
-
 	error = input_register_device(input);
 	if (error)
 		return error;
@@ -1592,6 +1589,7 @@ MODULE_DEVICE_TABLE(of, edt_ft5x06_of_match);
 static struct i2c_driver edt_ft5x06_ts_driver = {
 	.driver = {
 		.name = "edt_ft5x06",
+		.dev_groups = edt_ft5x06_groups,
 		.of_match_table = edt_ft5x06_of_match,
 		.pm = pm_sleep_ptr(&edt_ft5x06_ts_pm_ops),
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,

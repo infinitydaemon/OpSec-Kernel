@@ -452,7 +452,7 @@ static void ssbs_thread_switch(struct task_struct *next)
 	 * If all CPUs implement the SSBS extension, then we just need to
 	 * context-switch the PSTATE field.
 	 */
-	if (cpus_have_const_cap(ARM64_SSBS))
+	if (alternative_has_cap_unlikely(ARM64_SSBS))
 		return;
 
 	spectre_v4_enable_task_mitigation(next);
@@ -722,7 +722,6 @@ static struct ctl_table tagged_addr_sysctl_table[] = {
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= SYSCTL_ONE,
 	},
-	{ }
 };
 
 static int __init tagged_addr_init(void)
