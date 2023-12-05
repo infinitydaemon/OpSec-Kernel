@@ -184,7 +184,7 @@ static void snd_rpi_hifiberry_dacplus_set_sclk(struct snd_soc_component *compone
 
 static int snd_rpi_hifiberry_dacplus_init(struct snd_soc_pcm_runtime *rtd)
 {
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
 	struct pcm512x_priv *priv;
 	struct snd_soc_card *card = &snd_rpi_hifiberry_dacplus;
 
@@ -247,7 +247,7 @@ static int snd_rpi_hifiberry_dacplus_update_rate_den(
 	struct snd_pcm_substream *substream, struct snd_pcm_hw_params *params)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
 	struct pcm512x_priv *pcm512x = snd_soc_component_get_drvdata(component);
 	struct snd_ratnum *rats_no_pll;
 	unsigned int num = 0, den = 0;
@@ -282,7 +282,7 @@ static int snd_rpi_hifiberry_dacplus_hw_params(
 	int width = 32;
 
 	if (snd_rpi_hifiberry_is_dacpro) {
-		struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+		struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
 
 		width = snd_pcm_format_physical_width(params_format(params));
 
@@ -293,10 +293,10 @@ static int snd_rpi_hifiberry_dacplus_hw_params(
 			substream, params);
 	}
 
-	ret = snd_soc_dai_set_bclk_ratio(asoc_rtd_to_cpu(rtd, 0), channels * width);
+	ret = snd_soc_dai_set_bclk_ratio(snd_soc_rtd_to_cpu(rtd, 0), channels * width);
 	if (ret)
 		return ret;
-	ret = snd_soc_dai_set_bclk_ratio(asoc_rtd_to_codec(rtd, 0), channels * width);
+	ret = snd_soc_dai_set_bclk_ratio(snd_soc_rtd_to_codec(rtd, 0), channels * width);
 	return ret;
 }
 
@@ -304,7 +304,7 @@ static int snd_rpi_hifiberry_dacplus_startup(
 	struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
 
 	if (auto_mute)
 		gpiod_set_value_cansleep(snd_mute_gpio, 0);
@@ -318,7 +318,7 @@ static void snd_rpi_hifiberry_dacplus_shutdown(
 	struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
 
 	snd_soc_component_update_bits(component, PCM512x_GPIO_CONTROL_1, 0x08, 0x00);
 	if (auto_mute)

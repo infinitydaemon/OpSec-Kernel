@@ -39,11 +39,11 @@ static struct snd_pcm_hw_constraint_list audioinjector_isolated_constraints = {
 
 static int audioinjector_isolated_dai_init(struct snd_soc_pcm_runtime *rtd)
 {
-	int ret=snd_soc_dai_set_sysclk(asoc_rtd_to_codec(rtd, 0), 0, 24576000, 0);
+	int ret=snd_soc_dai_set_sysclk(snd_soc_rtd_to_codec(rtd, 0), 0, 24576000, 0);
 	if (ret)
 		return ret;
 
-	return snd_soc_dai_set_bclk_ratio(asoc_rtd_to_cpu(rtd, 0), 64);
+	return snd_soc_dai_set_bclk_ratio(snd_soc_rtd_to_cpu(rtd, 0), 64);
 }
 
 static int audioinjector_isolated_startup(struct snd_pcm_substream *substream)

@@ -31,7 +31,7 @@
 static int snd_fe_pi_audio_init(struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_soc_card *card = rtd->card;
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
 
 	snd_soc_dapm_force_enable_pin(&card->dapm, "LO");
 	snd_soc_dapm_force_enable_pin(&card->dapm, "ADC");
@@ -48,7 +48,7 @@ static int snd_fe_pi_audio_hw_params(struct snd_pcm_substream *substream,
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct device *dev = rtd->card->dev;
-	struct snd_soc_dai *codec_dai = asoc_rtd_to_codec(rtd, 0);
+	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
 
 	int ret;
 

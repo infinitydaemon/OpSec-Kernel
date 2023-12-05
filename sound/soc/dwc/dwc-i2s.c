@@ -21,7 +21,7 @@
 #include <linux/reset.h>
 #include <linux/slab.h>
 #include <linux/pm_runtime.h>
-#include <sound/designware_i2s.h> 
+#include <sound/designware_i2s.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
@@ -208,9 +208,23 @@ static void i2s_start(struct dw_i2s_dev *dev,
 	i2s_write_reg(dev->i2s_base, CER, 1);
 }
 
-static void i2s_pause(struct dw_i2s_dev *dev, struct snd_pcm_substream *substream)
+static void i2s_stop(struct dw_i2s_dev *dev,
+		struct snd_pcm_substream *substream)
 {
+	if (dev->is_jh7110) {
+		struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+		struct snd_soc_dai_link *dai_link = rtd->dai_link;
 
+		dai_link->trigger_stop = SND_SOC_TRIGGER_ORDER_LDC;
+	}
+	i2s_clear_irqs(dev, substream->stream);
+
+	i2s_disable_irqs(dev, substream->stream, 8);
+}
+
+static void i2s_pause(struct dw_i2s_dev *dev,
+		struct snd_pcm_substream *substream)
+{
 	i2s_clear_irqs(dev, substream->stream);
 
 	if (dev->use_pio || dev->is_jh7110)
@@ -224,20 +238,80 @@ static void i2s_pause(struct dw_i2s_dev *dev, struct snd_pcm_substream *substrea
 	}
 }
 
-static void i2s_stop(struct dw_i2s_dev *dev, struct snd_pcm_substream *substream)
+static void dw_i2s_config(struct dw_i2s_dev *dev, int stream);
+static int dw_i2s_startup(struct snd_pcm_substream *substream,
+			  struct snd_soc_dai *cpu_dai)
 {
-	i2s_clear_irqs(dev, substream->stream);
+	struct dw_i2s_dev *dev = snd_soc_dai_get_drvdata(cpu_dai);
+	union dw_i2s_snd_dma_data *dma_data = NULL;
+	u32 dmacr;
+
+	dev_dbg(dev->dev, "%s(%s)\n", __func__, substream->name);
+	if (!(dev->capability & DWC_I2S_RECORD) &&
+	    substream->stream == SNDRV_PCM_STREAM_CAPTURE)
+		return -EINVAL;
+
+	if (!(dev->capability & DWC_I2S_PLAY) &&
+	    substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+		return -EINVAL;
+
+	dw_i2s_config(dev, substream->stream);
+	dmacr = i2s_read_reg(dev->i2s_base, I2S_DMACR);
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+		dma_data = &dev->play_dma_data;
+		dmacr |= DMACR_DMAEN_TX;
+	} else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
+		dma_data = &dev->capture_dma_data;
+		dmacr |= DMACR_DMAEN_RX;
+	}
+
+	snd_soc_dai_set_dma_data(cpu_dai, substream, (void *)dma_data);
+	i2s_write_reg(dev->i2s_base, I2S_DMACR, dmacr);
+
+	if (dev->is_jh7110) {
+		struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+		struct snd_soc_dai_link *dai_link = rtd->dai_link;
+
+		dai_link->trigger_stop = SND_SOC_TRIGGER_ORDER_LDC;
+	}
+
+	return 0;
+}
+
+static void dw_i2s_shutdown(struct snd_pcm_substream *substream,
+			    struct snd_soc_dai *dai)
+{
+	struct dw_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
+
+	dev_dbg(dev->dev, "%s(%s)\n", __func__, substream->name);
+	i2s_disable_channels(dev, substream->stream);
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+		i2s_write_reg(dev->i2s_base, ITER, 0);
+	else
+		i2s_write_reg(dev->i2s_base, IRER, 0);
 
 	i2s_disable_irqs(dev, substream->stream, 8);
+
+	if (!dev->active) {
+		i2s_write_reg(dev->i2s_base, CER, 0);
+		i2s_write_reg(dev->i2s_base, IER, 0);
+	}
 }
 
 static void dw_i2s_config(struct dw_i2s_dev *dev, int stream)
 {
 	u32 ch_reg;
 	struct i2s_clk_config_data *config = &dev->config;
-	u32 dmacr = 0;
+	u32 dmacr;
 
 	i2s_disable_channels(dev, stream);
+
+	dmacr = i2s_read_reg(dev->i2s_base, I2S_DMACR);
+
+	if (stream == SNDRV_PCM_STREAM_PLAYBACK)
+		dmacr &= ~(DMACR_DMAEN_TXCH0 * 0xf);
+	else
+		dmacr &= ~(DMACR_DMAEN_RXCH0 * 0xf);
 
 	for (ch_reg = 0; ch_reg < (config->chan_nr / 2); ch_reg++) {
 		if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
@@ -258,10 +332,6 @@ static void dw_i2s_config(struct dw_i2s_dev *dev, int stream)
 			dmacr |= (DMACR_DMAEN_RXCH0 << ch_reg);
 		}
 	}
-	if (stream == SNDRV_PCM_STREAM_PLAYBACK)
-		dmacr |= DMACR_DMAEN_TX;
-	else if (stream == SNDRV_PCM_STREAM_CAPTURE)
-		dmacr |= DMACR_DMAEN_RX;
 
 	i2s_write_reg(dev->i2s_base, I2S_DMACR, dmacr);
 }
@@ -350,62 +420,6 @@ static int dw_i2s_hw_params(struct snd_pcm_substream *substream,
 		}
 	}
 	return 0;
-}
-
-static int dw_i2s_startup(struct snd_pcm_substream *substream,
-			  struct snd_soc_dai *cpu_dai)
-{
-	struct dw_i2s_dev *dev = snd_soc_dai_get_drvdata(cpu_dai);
-	union dw_i2s_snd_dma_data *dma_data = NULL;
-	u32 dmacr;
-
-	dev_dbg(dev->dev, "%s(%s)\n", __func__, substream->name);
-	if (!(dev->capability & DWC_I2S_RECORD) &&
-	    substream->stream == SNDRV_PCM_STREAM_CAPTURE)
-		return -EINVAL;
-
-	if (!(dev->capability & DWC_I2S_PLAY) &&
-	    substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-		return -EINVAL;
-
-	dw_i2s_config(dev, substream->stream);
-	dmacr = i2s_read_reg(dev->i2s_base, I2S_DMACR);
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-		dma_data = &dev->play_dma_data;
-	else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
-		dma_data = &dev->capture_dma_data;
-
-	snd_soc_dai_set_dma_data(cpu_dai, substream, (void *)dma_data);
-	i2s_write_reg(dev->i2s_base, I2S_DMACR, dmacr);
-
-	if (dev->is_jh7110) {
-		struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
-		struct snd_soc_dai_link *dai_link = rtd->dai_link;
-
-		dai_link->trigger_stop = SND_SOC_TRIGGER_ORDER_LDC;
-	}
-
-	return 0;
-}
-
-static void dw_i2s_shutdown(struct snd_pcm_substream *substream,
-			    struct snd_soc_dai *dai)
-{
-	struct dw_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
-
-	dev_dbg(dev->dev, "%s(%s)\n", __func__, substream->name);
-	i2s_disable_channels(dev, substream->stream);
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-		i2s_write_reg(dev->i2s_base, ITER, 0);
-	else
-		i2s_write_reg(dev->i2s_base, IRER, 0);
-
-	i2s_disable_irqs(dev, substream->stream, 8);
-
-	if (!dev->active) {
-		i2s_write_reg(dev->i2s_base, CER, 0);
-		i2s_write_reg(dev->i2s_base, IER, 0);
-	}
 }
 
 static int dw_i2s_prepare(struct snd_pcm_substream *substream,
@@ -528,11 +542,8 @@ static int dw_i2s_set_bclk_ratio(struct snd_soc_dai *cpu_dai,
 				 unsigned int ratio)
 {
 	struct dw_i2s_dev *dev = snd_soc_dai_get_drvdata(cpu_dai);
-	struct i2s_clk_config_data *config = &dev->config;
 
 	dev_dbg(dev->dev, "%s(%d)\n", __func__, ratio);
-	if (ratio < config->data_width * 2)
-		return -EINVAL;
 
 	switch (ratio) {
 	case 32:
@@ -799,7 +810,7 @@ static int dw_configure_dai_by_dt(struct dw_i2s_dev *dev,
 	u32 idx2;
 	int ret;
 
-	ret = dw_configure_dai(dev, dw_i2s_dai, SNDRV_PCM_RATE_8000_192000);
+	ret = dw_configure_dai(dev, dw_i2s_dai, SNDRV_PCM_RATE_8000_384000);
 	if (ret < 0)
 		return ret;
 

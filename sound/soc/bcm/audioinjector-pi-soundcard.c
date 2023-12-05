@@ -51,7 +51,7 @@ static int snd_audioinjector_pi_soundcard_hw_params(struct snd_pcm_substream *su
 				       struct snd_pcm_hw_params *params)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 
 	switch (params_rate(params)){
 		case 8000:
@@ -81,7 +81,7 @@ static struct snd_soc_ops snd_audioinjector_pi_soundcard_ops = {
 
 static int audioinjector_pi_soundcard_dai_init(struct snd_soc_pcm_runtime *rtd)
 {
-	return snd_soc_dai_set_sysclk(asoc_rtd_to_codec(rtd, 0), WM8731_SYSCLK_XTAL, 12000000, SND_SOC_CLOCK_IN);
+	return snd_soc_dai_set_sysclk(snd_soc_rtd_to_codec(rtd, 0), WM8731_SYSCLK_XTAL, 12000000, SND_SOC_CLOCK_IN);
 }
 
 SND_SOC_DAILINK_DEFS(audioinjector_pi,
