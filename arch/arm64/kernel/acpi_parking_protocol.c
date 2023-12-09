@@ -26,8 +26,14 @@ struct cpu_mailbox_entry {
 
 static struct cpu_mailbox_entry cpu_mailbox_entries[NR_CPUS];
 
-void __init acpi_set_mailbox_entry(int cpu,
-				   struct acpi_madt_generic_interrupt *p)
+/**
+ * acpi_set_mailbox_entry - Set mailbox entry information for a CPU.
+ * @cpu: CPU index
+ * @p: ACPI MADT GICC entry for the CPU
+ *
+ * Initializes the mailbox entry information for the specified CPU using the ACPI MADT GICC entry.
+ */
+void __init acpi_set_mailbox_entry(int cpu, struct acpi_madt_generic_interrupt *p)
 {
 	struct cpu_mailbox_entry *cpu_entry = &cpu_mailbox_entries[cpu];
 
@@ -36,6 +42,12 @@ void __init acpi_set_mailbox_entry(int cpu,
 	cpu_entry->gic_cpu_id = p->cpu_interface_number;
 }
 
+/**
+ * acpi_parking_protocol_valid - Check if ACPI parking protocol is valid for a CPU.
+ * @cpu: CPU index
+ *
+ * Returns true if the ACPI parking protocol is valid for the specified CPU, false otherwise.
+ */
 bool acpi_parking_protocol_valid(int cpu)
 {
 	struct cpu_mailbox_entry *cpu_entry = &cpu_mailbox_entries[cpu];
@@ -43,6 +55,12 @@ bool acpi_parking_protocol_valid(int cpu)
 	return cpu_entry->mailbox_addr && cpu_entry->version;
 }
 
+/**
+ * acpi_parking_protocol_cpu_init - Initialize ACPI parking protocol for a CPU.
+ * @cpu: CPU index
+ *
+ * Initializes the ACPI parking protocol for the specified CPU during initialization.
+ */
 static int acpi_parking_protocol_cpu_init(unsigned int cpu)
 {
 	pr_debug("%s: ACPI parked addr=%llx\n", __func__,
@@ -51,63 +69,59 @@ static int acpi_parking_protocol_cpu_init(unsigned int cpu)
 	return 0;
 }
 
+/**
+ * acpi_parking_protocol_cpu_prepare - Prepare ACPI parking protocol for a CPU.
+ * @cpu: CPU index
+ *
+ * Prepares the ACPI parking protocol for the specified CPU before booting.
+ */
 static int acpi_parking_protocol_cpu_prepare(unsigned int cpu)
 {
 	return 0;
 }
 
+/**
+ * acpi_parking_protocol_cpu_boot - Boot a CPU using ACPI parking protocol.
+ * @cpu: CPU index
+ *
+ * Boots the specified CPU using the ACPI parking protocol.
+ */
 static int acpi_parking_protocol_cpu_boot(unsigned int cpu)
 {
 	struct cpu_mailbox_entry *cpu_entry = &cpu_mailbox_entries[cpu];
 	struct parking_protocol_mailbox __iomem *mailbox;
 	u32 cpu_id;
 
-	/*
-	 * Map mailbox memory with attribute device nGnRE (ie ioremap -
-	 * this deviates from the parking protocol specifications since
-	 * the mailboxes are required to be mapped nGnRnE; the attribute
-	 * discrepancy is harmless insofar as the protocol specification
-	 * is concerned).
-	 * If the mailbox is mistakenly allocated in the linear mapping
-	 * by FW ioremap will fail since the mapping will be prevented
-	 * by the kernel (it clashes with the linear mapping attributes
-	 * specifications).
-	 */
+	// Map mailbox memory with attribute device nGnRE
 	mailbox = ioremap(cpu_entry->mailbox_addr, sizeof(*mailbox));
 	if (!mailbox)
 		return -EIO;
 
 	cpu_id = readl_relaxed(&mailbox->cpu_id);
-	/*
-	 * Check if firmware has set-up the mailbox entry properly
-	 * before kickstarting the respective cpu.
-	 */
+
+	// Check if firmware has set up the mailbox entry properly
 	if (cpu_id != ~0U) {
 		iounmap(mailbox);
 		return -ENXIO;
 	}
 
-	/*
-	 * stash the mailbox address mapping to use it for further FW
-	 * checks in the postboot method
-	 */
 	cpu_entry->mailbox = mailbox;
 
-	/*
-	 * We write the entry point and cpu id as LE regardless of the
-	 * native endianness of the kernel. Therefore, any boot-loaders
-	 * that read this address need to convert this address to the
-	 * Boot-Loader's endianness before jumping.
-	 */
-	writeq_relaxed(__pa_symbol(secondary_entry),
-		       &mailbox->entry_point);
+	// Write the entry point and CPU ID to the mailbox
+	writeq_relaxed(__pa_symbol(secondary_entry), &mailbox->entry_point);
 	writel_relaxed(cpu_entry->gic_cpu_id, &mailbox->cpu_id);
 
+	// Send wakeup IPI to the CPU
 	arch_send_wakeup_ipi(cpu);
 
 	return 0;
 }
 
+/**
+ * acpi_parking_protocol_cpu_postboot - Post-boot checks for ACPI parking protocol.
+ *
+ * Performs post-boot checks for the ACPI parking protocol.
+ */
 static void acpi_parking_protocol_cpu_postboot(void)
 {
 	int cpu = smp_processor_id();
@@ -116,13 +130,12 @@ static void acpi_parking_protocol_cpu_postboot(void)
 	u64 entry_point;
 
 	entry_point = readq_relaxed(&mailbox->entry_point);
-	/*
-	 * Check if firmware has cleared the entry_point as expected
-	 * by the protocol specification.
-	 */
+
+	// Check if firmware has cleared the entry_point as expected
 	WARN_ON(entry_point);
 }
 
+// CPU operations structure for ACPI parking protocol
 const struct cpu_operations acpi_parking_protocol_ops = {
 	.name		= "parking-protocol",
 	.cpu_init	= acpi_parking_protocol_cpu_init,
