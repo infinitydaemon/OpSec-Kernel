@@ -200,8 +200,11 @@ struct pci_bus *pci_acpi_scan_root(struct acpi_pci_root *root)
 	root_ops->prepare_resources = pci_acpi_root_prepare_resources;
 	root_ops->pci_ops = (struct pci_ops *)&ri->cfg->ops->pci_ops;
 	bus = acpi_pci_root_create(root, root_ops, &ri->common, ri->cfg);
-	if (!bus)
+	if (!bus) {
+		kfree(ri);
+		kfree(root_ops);
 		return NULL;
+	}
 
 	/* If we must preserve the resource configuration, claim now */
 	host = pci_find_host_bridge(bus);
@@ -214,20 +217,10 @@ struct pci_bus *pci_acpi_scan_root(struct acpi_pci_root *root)
 	 */
 	pci_assign_unassigned_root_bus_resources(bus);
 
-	list_for_each_entry(child, &bus->children, node)
-		pcie_bus_configure_settings(child);
-
-	return bus;
-}
-
-void pcibios_add_bus(struct pci_bus *bus)
-{
-	acpi_pci_add_bus(bus);
-}
-
-void pcibios_remove_bus(struct pci_bus *bus)
-{
-	acpi_pci_remove_bus(bus);
-}
-
-#endif
+	/* Enable MSI interrupts for each device on the bus */
+	struct pci_dev *pdev;
+	list_for_each_entry(pdev, &bus->devices, bus_list) {
+		if (pci_msi_enabled()) {
+			int err = pci_enable_msi(pdev);
+			if (err) {
+				dev_err(&pdev->dev, "Failed to enable MSI: %d
