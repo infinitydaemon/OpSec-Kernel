@@ -133,22 +133,9 @@
 			status = "disabled";
 		};
 
-		usb: usb@7c480000 {
-			compatible = "brcm,bcm2835-usb";
-			reg = <0x7c480000 0x10000>;
-			interrupts = <GIC_SPI 73 IRQ_TYPE_LEVEL_HIGH>;
-			#address-cells = <1>;
-			#size-cells = <0>;
-			clocks = <&clk_usb>;
-			clock-names = "otg";
-			phys = <&usbphy>;
-			phy-names = "usb2-phy";
-			status = "disabled";
-		};
-
 		mop: mop@7c500000 {
 			compatible = "brcm,bcm2712-mop";
-			reg = <0x7c500000 0x20>;
+			reg = <0x7c500000 0x28>;
 			interrupt-parent = <&disp_intr>;
 			interrupts = <1>;
 			status = "disabled";
@@ -641,7 +628,7 @@
 		pwm_aon: pwm@7d517a80 {
 			compatible = "brcm,bcm7038-pwm";
 			reg = <0x7d517a80 0x28>;
-			#pwm-cells = <2>;
+			#pwm-cells = <3>;
 			clocks = <&clk_27MHz>;
 		};
 
@@ -1143,6 +1130,19 @@
 		syscon_piarbctl: syscon@400018 {
 			compatible = "brcm,syscon-piarbctl", "syscon", "simple-mfd";
 			reg = <0x10 0x00400018  0x0 0x18>;
+		};
+
+		usb: usb@480000 {
+			compatible = "brcm,bcm2835-usb";
+			reg = <0x10 0x00480000 0x0 0x10000>;
+			interrupts = <GIC_SPI 73 IRQ_TYPE_LEVEL_HIGH>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			clocks = <&clk_usb>;
+			clock-names = "otg";
+			phys = <&usbphy>;
+			phy-names = "usb2-phy";
+			status = "disabled";
 		};
 
 		rpivid: codec@800000 {

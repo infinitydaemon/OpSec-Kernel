@@ -71,7 +71,7 @@ struct csi2_device {
 	u32 discards_dt_table[DISCARDS_TABLE_NUM_ENTRIES];
 };
 
-void csi2_isr(struct csi2_device *csi2, bool *sof, bool *eof, bool *lci);
+void csi2_isr(struct csi2_device *csi2, bool *sof, bool *eof);
 void csi2_set_buffer(struct csi2_device *csi2, unsigned int channel,
 		     dma_addr_t dmaaddr, unsigned int stride,
 		     unsigned int size);
@@ -79,7 +79,7 @@ void csi2_set_compression(struct csi2_device *csi2, unsigned int channel,
 			  enum csi2_compression_mode mode, unsigned int shift,
 			  unsigned int offset);
 void csi2_start_channel(struct csi2_device *csi2, unsigned int channel,
-			u16 dt, enum csi2_mode mode, bool auto_arm,
+			enum csi2_mode mode, bool auto_arm,
 			bool pack_bytes, unsigned int width,
 			unsigned int height);
 void csi2_stop_channel(struct csi2_device *csi2, unsigned int channel);

@@ -258,7 +258,7 @@ static void csi2_isr_handle_errors(struct csi2_device *csi2, u32 status)
 	spin_unlock(&csi2->errors_lock);
 }
 
-void csi2_isr(struct csi2_device *csi2, bool *sof, bool *eof, bool *lci)
+void csi2_isr(struct csi2_device *csi2, bool *sof, bool *eof)
 {
 	unsigned int i;
 	u32 status;
@@ -290,7 +290,6 @@ void csi2_isr(struct csi2_device *csi2, bool *sof, bool *eof, bool *lci)
 
 		sof[i] = !!(status & IRQ_FS(i));
 		eof[i] = !!(status & IRQ_FE_ACK(i));
-		lci[i] = !!(status & IRQ_LE_ACK(i));
 	}
 
 	if (csi2_track_errors)
@@ -324,25 +323,93 @@ void csi2_set_compression(struct csi2_device *csi2, unsigned int channel,
 	csi2_reg_write(csi2, CSI2_CH_COMP_CTRL(channel), compression);
 }
 
+static int csi2_get_vc_dt_fallback(struct csi2_device *csi2,
+				   unsigned int channel, u8 *vc, u8 *dt)
+{
+	struct v4l2_subdev *sd = &csi2->sd;
+	struct v4l2_subdev_state *state;
+	struct v4l2_mbus_framefmt *fmt;
+	const struct cfe_fmt *cfe_fmt;
+
+	state = v4l2_subdev_get_locked_active_state(sd);
+
+	/* Without Streams API, the channel number matches the sink pad */
+	fmt = v4l2_subdev_get_pad_format(sd, state, channel);
+	if (!fmt)
+		return -EINVAL;
+
+	cfe_fmt = find_format_by_code(fmt->code);
+	if (!cfe_fmt)
+		return -EINVAL;
+
+	*vc = 0;
+	*dt = cfe_fmt->csi_dt;
+
+	return 0;
+}
+
+static int csi2_get_vc_dt(struct csi2_device *csi2, unsigned int channel,
+			  u8 *vc, u8 *dt)
+{
+	struct v4l2_mbus_frame_desc remote_desc;
+	const struct media_pad *remote_pad;
+	struct v4l2_subdev *source_sd;
+	int ret;
+
+	/* Without Streams API, the channel number matches the sink pad */
+	remote_pad = media_pad_remote_pad_first(&csi2->pad[channel]);
+	if (!remote_pad)
+		return -EPIPE;
+
+	source_sd = media_entity_to_v4l2_subdev(remote_pad->entity);
+
+	ret = v4l2_subdev_call(source_sd, pad, get_frame_desc,
+			       remote_pad->index, &remote_desc);
+	if (ret == -ENOIOCTLCMD) {
+		csi2_dbg("source does not support get_frame_desc, use fallback\n");
+		return csi2_get_vc_dt_fallback(csi2, channel, vc, dt);
+	} else if (ret) {
+		csi2_err("Failed to get frame descriptor\n");
+		return ret;
+	}
+
+	if (remote_desc.type != V4L2_MBUS_FRAME_DESC_TYPE_CSI2) {
+		csi2_err("Frame descriptor does not describe CSI-2 link");
+		return -EINVAL;
+	}
+
+	if (remote_desc.num_entries != 1) {
+		csi2_err("Frame descriptor does not have a single entry");
+		return -EINVAL;
+	}
+
+	*vc = remote_desc.entry[0].bus.csi2.vc;
+	*dt = remote_desc.entry[0].bus.csi2.dt;
+
+	return 0;
+}
+
 void csi2_start_channel(struct csi2_device *csi2, unsigned int channel,
-			u16 dt, enum csi2_mode mode, bool auto_arm,
+			enum csi2_mode mode, bool auto_arm,
 			bool pack_bytes, unsigned int width,
 			unsigned int height)
 {
 	u32 ctrl;
+	int ret;
+	u8 vc, dt;
+
+	ret = csi2_get_vc_dt(csi2, channel, &vc, &dt);
+	if (ret)
+		return;
 
 	csi2_dbg("%s [%u]\n", __func__, channel);
 
-	/*
-	 * Disable the channel, but ensure N != 0!  Otherwise we end up with a
-	 * spurious LE + LE_ACK interrupt when re-enabling the channel.
-	 */
-	csi2_reg_write(csi2, CSI2_CH_CTRL(channel), 0x100 << __ffs(LC_MASK));
+	csi2_reg_write(csi2, CSI2_CH_CTRL(channel), 0);
 	csi2_reg_write(csi2, CSI2_CH_DEBUG(channel), 0);
 	csi2_reg_write(csi2, CSI2_STATUS, IRQ_CH_MASK(channel));
 
-	/* Enable channel and FS/FE/LE interrupts. */
-	ctrl = DMA_EN | IRQ_EN_FS | IRQ_EN_FE_ACK | IRQ_EN_LE_ACK | PACK_LINE;
+	/* Enable channel and FS/FE interrupts. */
+	ctrl = DMA_EN | IRQ_EN_FS | IRQ_EN_FE_ACK | PACK_LINE;
 	/* PACK_BYTES ensures no striding for embedded data. */
 	if (pack_bytes)
 		ctrl |= PACK_BYTES;
@@ -351,24 +418,15 @@ void csi2_start_channel(struct csi2_device *csi2, unsigned int channel,
 		ctrl |= AUTO_ARM;
 
 	if (width && height) {
-		int line_int_freq = height >> 2;
-
-		line_int_freq = min(max(0x80, line_int_freq), 0x3ff);
-		set_field(&ctrl, line_int_freq, LC_MASK);
 		set_field(&ctrl, mode, CH_MODE_MASK);
 		csi2_reg_write(csi2, CSI2_CH_FRAME_SIZE(channel),
 			       (height << 16) | width);
 	} else {
-		/*
-		 * Do not disable line interrupts for the embedded data channel,
-		 * set it to the maximum value.  This avoids spamming the ISR
-		 * with spurious line interrupts.
-		 */
-		set_field(&ctrl, 0x3ff, LC_MASK);
-		set_field(&ctrl, 0x00, CH_MODE_MASK);
+		set_field(&ctrl, 0x0, CH_MODE_MASK);
 		csi2_reg_write(csi2, CSI2_CH_FRAME_SIZE(channel), 0);
 	}
 
+	set_field(&ctrl, vc, VC_MASK);
 	set_field(&ctrl, dt, DT_MASK);
 	csi2_reg_write(csi2, CSI2_CH_CTRL(channel), ctrl);
 	csi2->num_lines[channel] = height;
@@ -379,8 +437,7 @@ void csi2_stop_channel(struct csi2_device *csi2, unsigned int channel)
 	csi2_dbg("%s [%u]\n", __func__, channel);
 
 	/* Channel disable.  Use FORCE to allow stopping mid-frame. */
-	csi2_reg_write(csi2, CSI2_CH_CTRL(channel),
-		       (0x100 << __ffs(LC_MASK)) | FORCE);
+	csi2_reg_write(csi2, CSI2_CH_CTRL(channel), FORCE);
 	/* Latch the above change by writing to the ADDR0 register. */
 	csi2_reg_write(csi2, CSI2_CH_ADDR0(channel), 0);
 	/* Write this again, the HW needs it! */
@@ -403,11 +460,6 @@ void csi2_close_rx(struct csi2_device *csi2)
 	dphy_stop(&csi2->dphy);
 
 	csi2_reg_write(csi2, CSI2_IRQ_MASK, 0);
-}
-
-static struct csi2_device *to_csi2_device(struct v4l2_subdev *subdev)
-{
-	return container_of(subdev, struct csi2_device, sd);
 }
 
 static int csi2_init_cfg(struct v4l2_subdev *sd,
@@ -438,59 +490,60 @@ static int csi2_pad_set_fmt(struct v4l2_subdev *sd,
 			    struct v4l2_subdev_state *state,
 			    struct v4l2_subdev_format *format)
 {
-	struct v4l2_mbus_framefmt *fmt;
-	const struct cfe_fmt *cfe_fmt;
-
-	/* TODO: format validation */
-
-	cfe_fmt = find_format_by_code(format->format.code);
-	if (!cfe_fmt)
-		cfe_fmt = find_format_by_code(MEDIA_BUS_FMT_SBGGR10_1X10);
-
-	format->format.code = cfe_fmt->code;
-
-	fmt = v4l2_subdev_get_pad_format(sd, state, format->pad);
-	*fmt = format->format;
-
 	if (format->pad < CSI2_NUM_CHANNELS) {
-		/* Propagate to the source pad */
-		fmt = v4l2_subdev_get_pad_format(sd, state,
-						 format->pad + CSI2_NUM_CHANNELS);
+		/*
+		 * Store the sink pad format and propagate it to the source pad.
+		 */
+
+		struct v4l2_mbus_framefmt *fmt;
+
+		fmt = v4l2_subdev_get_pad_format(sd, state, format->pad);
+		if (!fmt)
+			return -EINVAL;
+
 		*fmt = format->format;
-	}
 
-	return 0;
-}
+		fmt = v4l2_subdev_get_pad_format(sd, state,
+			format->pad + CSI2_NUM_CHANNELS);
+		if (!fmt)
+			return -EINVAL;
 
-static int csi2_link_validate(struct v4l2_subdev *sd, struct media_link *link,
-			      struct v4l2_subdev_format *source_fmt,
-			      struct v4l2_subdev_format *sink_fmt)
-{
-	struct csi2_device *csi2 = to_csi2_device(sd);
+		format->format.field = V4L2_FIELD_NONE;
 
-	csi2_dbg("%s: link \"%s\":%u -> \"%s\":%u\n", __func__,
-		 link->source->entity->name, link->source->index,
-		 link->sink->entity->name, link->sink->index);
+		*fmt = format->format;
+	} else {
+		/*
+		 * Only allow changing the source pad mbus code.
+		 */
 
-	if ((link->source->entity == &csi2->sd.entity &&
-	     link->source->index == 1) ||
-	    (link->sink->entity == &csi2->sd.entity &&
-	     link->sink->index == 1)) {
-		csi2_dbg("Ignore metadata pad for now\n");
-		return 0;
-	}
+		struct v4l2_mbus_framefmt *sink_fmt, *source_fmt;
+		u32 sink_code;
+		u32 code;
 
-	/* The width, height and code must match. */
-	if (source_fmt->format.width != sink_fmt->format.width ||
-	    source_fmt->format.width != sink_fmt->format.width ||
-	    source_fmt->format.code != sink_fmt->format.code) {
-		csi2_err("%s: format does not match (source %ux%u 0x%x, sink %ux%u 0x%x)\n",
-			 __func__,
-			 source_fmt->format.width, source_fmt->format.height,
-			 source_fmt->format.code,
-			 sink_fmt->format.width, sink_fmt->format.height,
-			 sink_fmt->format.code);
-		return -EPIPE;
+		sink_fmt = v4l2_subdev_get_pad_format(sd, state,
+			format->pad - CSI2_NUM_CHANNELS);
+		if (!sink_fmt)
+			return -EINVAL;
+
+		source_fmt = v4l2_subdev_get_pad_format(sd, state, format->pad);
+		if (!source_fmt)
+			return -EINVAL;
+
+		sink_code = sink_fmt->code;
+		code = format->format.code;
+
+		/*
+		 * If the source code from the user does not match the code in
+		 * the sink pad, check that the source code matches either the
+		 * 16-bit version or the compressed version of the sink code.
+		 */
+
+		if (code != sink_code &&
+		    (code == cfe_find_16bit_code(sink_code) ||
+		     code == cfe_find_compressed_code(sink_code)))
+			source_fmt->code = code;
+
+		format->format.code = source_fmt->code;
 	}
 
 	return 0;
@@ -500,7 +553,7 @@ static const struct v4l2_subdev_pad_ops csi2_subdev_pad_ops = {
 	.init_cfg = csi2_init_cfg,
 	.get_fmt = v4l2_subdev_get_fmt,
 	.set_fmt = csi2_pad_set_fmt,
-	.link_validate = csi2_link_validate,
+	.link_validate = v4l2_subdev_link_validate_default,
 };
 
 static const struct media_entity_operations csi2_entity_ops = {

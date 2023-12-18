@@ -85,24 +85,28 @@ static const struct cfe_fmt formats[] = {
 		.code = MEDIA_BUS_FMT_SBGGR8_1X8,
 		.depth = 8,
 		.csi_dt = 0x2a,
+		.remap = { V4L2_PIX_FMT_SBGGR16, V4L2_PIX_FMT_PISP_COMP1_BGGR },
 	},
 	{
 		.fourcc = V4L2_PIX_FMT_SGBRG8,
 		.code = MEDIA_BUS_FMT_SGBRG8_1X8,
 		.depth = 8,
 		.csi_dt = 0x2a,
+		.remap = { V4L2_PIX_FMT_SGBRG16, V4L2_PIX_FMT_PISP_COMP1_GBRG },
 	},
 	{
 		.fourcc = V4L2_PIX_FMT_SGRBG8,
 		.code = MEDIA_BUS_FMT_SGRBG8_1X8,
 		.depth = 8,
 		.csi_dt = 0x2a,
+		.remap = { V4L2_PIX_FMT_SGRBG16, V4L2_PIX_FMT_PISP_COMP1_GRBG },
 	},
 	{
 		.fourcc = V4L2_PIX_FMT_SRGGB8,
 		.code = MEDIA_BUS_FMT_SRGGB8_1X8,
 		.depth = 8,
 		.csi_dt = 0x2a,
+		.remap = { V4L2_PIX_FMT_SRGGB16, V4L2_PIX_FMT_PISP_COMP1_RGGB },
 	},
 	{
 		.fourcc = V4L2_PIX_FMT_SBGGR10P,
@@ -193,24 +197,28 @@ static const struct cfe_fmt formats[] = {
 		.code = MEDIA_BUS_FMT_SBGGR16_1X16,
 		.depth = 16,
 		.flags = CFE_FORMAT_FLAG_FE_OUT,
+		.remap = { V4L2_PIX_FMT_SBGGR16, V4L2_PIX_FMT_PISP_COMP1_BGGR },
 	},
 	{
 		.fourcc = V4L2_PIX_FMT_SGBRG16,
 		.code = MEDIA_BUS_FMT_SGBRG16_1X16,
 		.depth = 16,
 		.flags = CFE_FORMAT_FLAG_FE_OUT,
+		.remap = { V4L2_PIX_FMT_SGBRG16, V4L2_PIX_FMT_PISP_COMP1_GBRG },
 	},
 	{
 		.fourcc = V4L2_PIX_FMT_SGRBG16,
 		.code = MEDIA_BUS_FMT_SGRBG16_1X16,
 		.depth = 16,
 		.flags = CFE_FORMAT_FLAG_FE_OUT,
+		.remap = { V4L2_PIX_FMT_SGRBG16, V4L2_PIX_FMT_PISP_COMP1_GRBG },
 	},
 	{
 		.fourcc = V4L2_PIX_FMT_SRGGB16,
 		.code = MEDIA_BUS_FMT_SRGGB16_1X16,
 		.depth = 16,
 		.flags = CFE_FORMAT_FLAG_FE_OUT,
+		.remap = { V4L2_PIX_FMT_SRGGB16, V4L2_PIX_FMT_PISP_COMP1_RGGB },
 	},
 	/* PiSP Compressed Mode 1 */
 	{

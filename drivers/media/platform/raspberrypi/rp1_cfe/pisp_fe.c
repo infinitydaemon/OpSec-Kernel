@@ -388,11 +388,6 @@ void pisp_fe_stop(struct pisp_fe_device *fe)
 	pisp_fe_reg_write(fe, FE_INT_STATUS, ~0);
 }
 
-static struct pisp_fe_device *to_pisp_fe_device(struct v4l2_subdev *subdev)
-{
-	return container_of(subdev, struct pisp_fe_device, sd);
-}
-
 static int pisp_fe_init_cfg(struct v4l2_subdev *sd,
 			    struct v4l2_subdev_state *state)
 {
@@ -433,62 +428,70 @@ static int pisp_fe_pad_set_fmt(struct v4l2_subdev *sd,
 
 	switch (format->pad) {
 	case FE_STREAM_PAD:
-	case FE_OUTPUT0_PAD:
-	case FE_OUTPUT1_PAD:
 		cfe_fmt = find_format_by_code(format->format.code);
 		if (!cfe_fmt || !(cfe_fmt->flags & CFE_FORMAT_FLAG_FE_OUT))
 			cfe_fmt = find_format_by_code(MEDIA_BUS_FMT_SRGGB16_1X16);
 
 		format->format.code = cfe_fmt->code;
+		format->format.field = V4L2_FIELD_NONE;
 
-		break;
+		fmt = v4l2_subdev_get_pad_format(sd, state, FE_STREAM_PAD);
+		*fmt = format->format;
 
-	case FE_STATS_PAD:
+		fmt = v4l2_subdev_get_pad_format(sd, state, FE_OUTPUT0_PAD);
+		*fmt = format->format;
+
+		fmt = v4l2_subdev_get_pad_format(sd, state, FE_OUTPUT1_PAD);
+		*fmt = format->format;
+
+		return 0;
+
+	case FE_OUTPUT0_PAD:
+	case FE_OUTPUT1_PAD: {
+		/*
+		 * TODO: we should allow scaling and cropping by allowing the
+		 * user to set the size here.
+		 */
+		struct v4l2_mbus_framefmt *sink_fmt, *source_fmt;
+		u32 sink_code;
+		u32 code;
+
+		sink_fmt = v4l2_subdev_get_pad_format(sd, state, FE_STREAM_PAD);
+		if (!sink_fmt)
+			return -EINVAL;
+
+		source_fmt = v4l2_subdev_get_pad_format(sd, state, format->pad);
+		if (!source_fmt)
+			return -EINVAL;
+
+		sink_code = sink_fmt->code;
+		code = format->format.code;
+
+		/*
+		 * If the source code from the user does not match the code in
+		 * the sink pad, check that the source code matches the
+		 * compressed version of the sink code.
+		 */
+
+		if (code != sink_code &&
+		    code == cfe_find_compressed_code(sink_code))
+			source_fmt->code = code;
+
+		return 0;
+	}
+
 	case FE_CONFIG_PAD:
-		format->format.code = MEDIA_BUS_FMT_FIXED;
-		break;
+	case FE_STATS_PAD:
+	default:
+		return v4l2_subdev_get_fmt(sd, state, format);
 	}
-
-	fmt = v4l2_subdev_get_pad_format(sd, state, format->pad);
-	*fmt = format->format;
-
-	return 0;
-}
-
-static int pisp_fe_link_validate(struct v4l2_subdev *sd,
-				 struct media_link *link,
-				 struct v4l2_subdev_format *source_fmt,
-				 struct v4l2_subdev_format *sink_fmt)
-{
-	struct pisp_fe_device *fe = to_pisp_fe_device(sd);
-
-	pisp_fe_dbg("%s: link \"%s\":%u -> \"%s\":%u\n", __func__,
-		    link->source->entity->name, link->source->index,
-		    link->sink->entity->name, link->sink->index);
-
-	/* The width, height and code must match. */
-	if (source_fmt->format.width != sink_fmt->format.width ||
-	    source_fmt->format.width != sink_fmt->format.width ||
-	    source_fmt->format.code != sink_fmt->format.code) {
-		pisp_fe_err("%s: format does not match (source %ux%u 0x%x, sink %ux%u 0x%x)\n",
-			    __func__,
-			     source_fmt->format.width,
-			     source_fmt->format.height,
-			     source_fmt->format.code,
-			     sink_fmt->format.width,
-			     sink_fmt->format.height,
-			     sink_fmt->format.code);
-		return -EPIPE;
-	}
-
-	return 0;
 }
 
 static const struct v4l2_subdev_pad_ops pisp_fe_subdev_pad_ops = {
 	.init_cfg = pisp_fe_init_cfg,
 	.get_fmt = v4l2_subdev_get_fmt,
 	.set_fmt = pisp_fe_pad_set_fmt,
-	.link_validate = pisp_fe_link_validate,
+	.link_validate = v4l2_subdev_link_validate_default,
 };
 
 static const struct media_entity_operations pisp_fe_entity_ops = {
