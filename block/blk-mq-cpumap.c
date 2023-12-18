@@ -21,7 +21,6 @@ void blk_mq_map_queues(struct blk_mq_queue_map *qmap)
 	unsigned int queue, cpu;
 
 	masks = group_cpus_evenly(qmap->nr_queues);
-
 	if (!masks) {
 		for_each_possible_cpu(cpu)
 			qmap->mq_map[cpu] = qmap->queue_offset;
@@ -32,7 +31,6 @@ void blk_mq_map_queues(struct blk_mq_queue_map *qmap)
 		for_each_cpu(cpu, &masks[queue])
 			qmap->mq_map[cpu] = qmap->queue_offset + queue;
 	}
-
 	kfree(masks);
 }
 EXPORT_SYMBOL_GPL(blk_mq_map_queues);
