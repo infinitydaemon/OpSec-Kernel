@@ -5,15 +5,13 @@
  * Author: Fabian Vogt <fabian@ritter-vogt.de>
  */
 
-#include <linux/bitops.h>
+#include <linux/spinlock.h>
 #include <linux/errno.h>
 #include <linux/init.h>
+#include <linux/bitops.h>
 #include <linux/io.h>
-#include <linux/mod_devicetable.h>
-#include <linux/platform_device.h>
+#include <linux/of_device.h>
 #include <linux/slab.h>
-#include <linux/spinlock.h>
-
 #include <linux/gpio/driver.h>
 
 /*
@@ -164,6 +162,7 @@ static const struct gpio_chip zevio_gpio_chip = {
 	.base			= 0,
 	.owner			= THIS_MODULE,
 	.ngpio			= 32,
+	.of_gpio_n_cells	= 2,
 };
 
 /* Initialization */
@@ -175,6 +174,8 @@ static int zevio_gpio_probe(struct platform_device *pdev)
 	controller = devm_kzalloc(&pdev->dev, sizeof(*controller), GFP_KERNEL);
 	if (!controller)
 		return -ENOMEM;
+
+	platform_set_drvdata(pdev, controller);
 
 	/* Copy our reference */
 	controller->chip = zevio_gpio_chip;

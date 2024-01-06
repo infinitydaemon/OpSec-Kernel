@@ -57,8 +57,6 @@ enum ib_uverbs_access_flags {
 	IB_UVERBS_ACCESS_ZERO_BASED = 1 << 5,
 	IB_UVERBS_ACCESS_ON_DEMAND = 1 << 6,
 	IB_UVERBS_ACCESS_HUGETLB = 1 << 7,
-	IB_UVERBS_ACCESS_FLUSH_GLOBAL = 1 << 8,
-	IB_UVERBS_ACCESS_FLUSH_PERSISTENT = 1 << 9,
 
 	IB_UVERBS_ACCESS_RELAXED_ORDERING = IB_UVERBS_ACCESS_OPTIONAL_FIRST,
 	IB_UVERBS_ACCESS_OPTIONAL_RANGE =
@@ -220,8 +218,7 @@ enum ib_uverbs_advise_mr_flag {
 struct ib_uverbs_query_port_resp_ex {
 	struct ib_uverbs_query_port_resp legacy_resp;
 	__u16 port_cap_flags2;
-	__u8  reserved[2];
-	__u32 active_speed_ex;
+	__u8  reserved[6];
 };
 
 struct ib_uverbs_qp_cap {
@@ -254,7 +251,6 @@ enum rdma_driver_id {
 	RDMA_DRIVER_EFA,
 	RDMA_DRIVER_SIW,
 	RDMA_DRIVER_ERDMA,
-	RDMA_DRIVER_MANA,
 };
 
 enum ib_uverbs_gid_type {

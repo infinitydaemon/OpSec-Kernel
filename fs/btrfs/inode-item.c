@@ -4,16 +4,10 @@
  */
 
 #include "ctree.h"
-#include "fs.h"
-#include "messages.h"
 #include "inode-item.h"
 #include "disk-io.h"
 #include "transaction.h"
 #include "print-tree.h"
-#include "space-info.h"
-#include "accessors.h"
-#include "extent-tree.h"
-#include "file-item.h"
 
 struct btrfs_inode_ref *btrfs_find_name_in_backref(struct extent_buffer *leaf,
 						   int slot,
@@ -167,7 +161,7 @@ static int btrfs_del_inode_extref(struct btrfs_trans_handle *trans,
 	memmove_extent_buffer(leaf, ptr, ptr + del_len,
 			      item_size - (ptr + del_len - item_start));
 
-	btrfs_truncate_item(trans, path, item_size - del_len, 1);
+	btrfs_truncate_item(path, item_size - del_len, 1);
 
 out:
 	btrfs_free_path(path);
@@ -229,7 +223,7 @@ int btrfs_del_inode_ref(struct btrfs_trans_handle *trans,
 	item_start = btrfs_item_ptr_offset(leaf, path->slots[0]);
 	memmove_extent_buffer(leaf, ptr, ptr + sub_item_len,
 			      item_size - (ptr + sub_item_len - item_start));
-	btrfs_truncate_item(trans, path, item_size - sub_item_len, 1);
+	btrfs_truncate_item(path, item_size - sub_item_len, 1);
 out:
 	btrfs_free_path(path);
 
@@ -247,7 +241,7 @@ out:
 }
 
 /*
- * Insert an extended inode ref into a tree.
+ * btrfs_insert_inode_extref() - Inserts an extended inode ref into a tree.
  *
  * The caller must have checked against BTRFS_LINK_MAX already.
  */
@@ -282,7 +276,7 @@ static int btrfs_insert_inode_extref(struct btrfs_trans_handle *trans,
 						   name))
 			goto out;
 
-		btrfs_extend_item(trans, path, ins_len);
+		btrfs_extend_item(path, ins_len);
 		ret = 0;
 	}
 	if (ret < 0)
@@ -299,7 +293,7 @@ static int btrfs_insert_inode_extref(struct btrfs_trans_handle *trans,
 
 	ptr = (unsigned long)&extref->name;
 	write_extent_buffer(path->nodes[0], name->name, ptr, name->len);
-	btrfs_mark_buffer_dirty(trans, path->nodes[0]);
+	btrfs_mark_buffer_dirty(path->nodes[0]);
 
 out:
 	btrfs_free_path(path);
@@ -338,7 +332,7 @@ int btrfs_insert_inode_ref(struct btrfs_trans_handle *trans,
 			goto out;
 
 		old_size = btrfs_item_size(path->nodes[0], path->slots[0]);
-		btrfs_extend_item(trans, path, ins_len);
+		btrfs_extend_item(path, ins_len);
 		ref = btrfs_item_ptr(path->nodes[0], path->slots[0],
 				     struct btrfs_inode_ref);
 		ref = (struct btrfs_inode_ref *)((unsigned long)ref + old_size);
@@ -364,7 +358,7 @@ int btrfs_insert_inode_ref(struct btrfs_trans_handle *trans,
 		ptr = (unsigned long)(ref + 1);
 	}
 	write_extent_buffer(path->nodes[0], name->name, ptr, name->len);
-	btrfs_mark_buffer_dirty(trans, path->nodes[0]);
+	btrfs_mark_buffer_dirty(path->nodes[0]);
 
 out:
 	btrfs_free_path(path);
@@ -527,7 +521,7 @@ search_again:
 
 	while (1) {
 		u64 clear_start = 0, clear_len = 0, extent_start = 0;
-		bool refill_delayed_refs_rsv = false;
+		bool should_throttle = false;
 
 		fi = NULL;
 		leaf = path->nodes[0];
@@ -591,7 +585,7 @@ search_again:
 				num_dec = (orig_num_bytes - extent_num_bytes);
 				if (extent_start != 0)
 					control->sub_bytes += num_dec;
-				btrfs_mark_buffer_dirty(trans, leaf);
+				btrfs_mark_buffer_dirty(leaf);
 			} else {
 				extent_num_bytes =
 					btrfs_file_extent_disk_num_bytes(leaf, fi);
@@ -617,7 +611,7 @@ search_again:
 
 				btrfs_set_file_extent_ram_bytes(leaf, fi, size);
 				size = btrfs_file_extent_calc_inline_size(size);
-				btrfs_truncate_item(trans, path, size, 1);
+				btrfs_truncate_item(path, size, 1);
 			} else if (!del_item) {
 				/*
 				 * We have to bail so the last_size is set to
@@ -660,7 +654,8 @@ delete:
 				/* No pending yet, add ourselves */
 				pending_del_slot = path->slots[0];
 				pending_del_nr = 1;
-			} else if (path->slots[0] + 1 == pending_del_slot) {
+			} else if (pending_del_nr &&
+				   path->slots[0] + 1 == pending_del_slot) {
 				/* Hop on the pending chunk */
 				pending_del_nr++;
 				pending_del_slot = path->slots[0];
@@ -676,8 +671,7 @@ delete:
 			bytes_deleted += extent_num_bytes;
 
 			btrfs_init_generic_ref(&ref, BTRFS_DROP_DELAYED_REF,
-					extent_start, extent_num_bytes, 0,
-					root->root_key.objectid);
+					extent_start, extent_num_bytes, 0);
 			btrfs_init_data_ref(&ref, btrfs_header_owner(leaf),
 					control->ino, extent_offset,
 					root->root_key.objectid, false);
@@ -686,8 +680,10 @@ delete:
 				btrfs_abort_transaction(trans, ret);
 				break;
 			}
-			if (be_nice && btrfs_check_space_for_delayed_refs(fs_info))
-				refill_delayed_refs_rsv = true;
+			if (be_nice) {
+				if (btrfs_should_throttle_delayed_refs(trans))
+					should_throttle = true;
+			}
 		}
 
 		if (found_type == BTRFS_INODE_ITEM_KEY)
@@ -695,7 +691,7 @@ delete:
 
 		if (path->slots[0] == 0 ||
 		    path->slots[0] != pending_del_slot ||
-		    refill_delayed_refs_rsv) {
+		    should_throttle) {
 			if (pending_del_nr) {
 				ret = btrfs_del_items(trans, root, path,
 						pending_del_slot,
@@ -718,7 +714,7 @@ delete:
 			 * actually allocate, so just bail if we're short and
 			 * let the normal reservation dance happen higher up.
 			 */
-			if (refill_delayed_refs_rsv) {
+			if (should_throttle) {
 				ret = btrfs_delayed_refs_rsv_refill(fs_info,
 							BTRFS_RESERVE_NO_FLUSH);
 				if (ret) {

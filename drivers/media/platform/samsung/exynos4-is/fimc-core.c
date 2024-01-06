@@ -19,6 +19,7 @@
 #include <linux/mfd/syscon.h>
 #include <linux/io.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/slab.h>
 #include <linux/clk.h>
 #include <media/v4l2-ioctl.h>
@@ -923,6 +924,7 @@ static int fimc_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	u32 lclk_freq = 0;
 	struct fimc_dev *fimc;
+	struct resource *res;
 	int ret = 0;
 	int irq;
 
@@ -959,7 +961,8 @@ static int fimc_probe(struct platform_device *pdev)
 			return PTR_ERR(fimc->sysreg);
 	}
 
-	fimc->regs = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	fimc->regs = devm_ioremap_resource(dev, res);
 	if (IS_ERR(fimc->regs))
 		return PTR_ERR(fimc->regs);
 
@@ -1089,7 +1092,7 @@ static int fimc_suspend(struct device *dev)
 }
 #endif /* CONFIG_PM_SLEEP */
 
-static void fimc_remove(struct platform_device *pdev)
+static int fimc_remove(struct platform_device *pdev)
 {
 	struct fimc_dev *fimc = platform_get_drvdata(pdev);
 
@@ -1105,6 +1108,7 @@ static void fimc_remove(struct platform_device *pdev)
 	fimc_clk_put(fimc);
 
 	dev_info(&pdev->dev, "driver unloaded\n");
+	return 0;
 }
 
 /* S5PV210, S5PC110 */
@@ -1125,7 +1129,7 @@ static const struct fimc_drvdata fimc_drvdata_exynos4210 = {
 	.out_buf_count	= 32,
 };
 
-/* EXYNOS4212, EXYNOS4412 */
+/* EXYNOS4412 */
 static const struct fimc_drvdata fimc_drvdata_exynos4x12 = {
 	.num_entities	= 4,
 	.lclk_frequency	= 166000000UL,
@@ -1156,7 +1160,7 @@ static const struct dev_pm_ops fimc_pm_ops = {
 
 static struct platform_driver fimc_driver = {
 	.probe		= fimc_probe,
-	.remove_new	= fimc_remove,
+	.remove		= fimc_remove,
 	.driver = {
 		.of_match_table = fimc_of_match,
 		.name		= FIMC_DRIVER_NAME,

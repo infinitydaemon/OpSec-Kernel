@@ -3423,11 +3423,9 @@ static u16 MXL_ControlWrite_Group(struct dvb_frontend *fe, u16 controlNum,
 
 			if (controlNum == state->Init_Ctrl[i].Ctrl_Num) {
 
-				u16 size = min_t(u16, state->Init_Ctrl[i].size,
-					       ARRAY_SIZE(state->Init_Ctrl[i].val));
-				highLimit = 1 << size;
+				highLimit = 1 << state->Init_Ctrl[i].size;
 				if (value < highLimit) {
-					for (j = 0; j < size; j++) {
+					for (j = 0; j < state->Init_Ctrl[i].size; j++) {
 						state->Init_Ctrl[i].val[j] = (u8)((value >> j) & 0x01);
 						MXL_RegWriteBit(fe, (u8)(state->Init_Ctrl[i].addr[j]),
 							(u8)(state->Init_Ctrl[i].bit[j]),
@@ -3444,11 +3442,9 @@ static u16 MXL_ControlWrite_Group(struct dvb_frontend *fe, u16 controlNum,
 
 			if (controlNum == state->CH_Ctrl[i].Ctrl_Num) {
 
-				u16 size = min_t(u16, state->CH_Ctrl[i].size,
-					       ARRAY_SIZE(state->CH_Ctrl[i].val));
-				highLimit = 1 << size;
+				highLimit = 1 << state->CH_Ctrl[i].size;
 				if (value < highLimit) {
-					for (j = 0; j < size; j++) {
+					for (j = 0; j < state->CH_Ctrl[i].size; j++) {
 						state->CH_Ctrl[i].val[j] = (u8)((value >> j) & 0x01);
 						MXL_RegWriteBit(fe, (u8)(state->CH_Ctrl[i].addr[j]),
 							(u8)(state->CH_Ctrl[i].bit[j]),
@@ -3641,7 +3637,7 @@ static u16 MXL_GetCHRegister_ZeroIF(struct dvb_frontend *fe, u8 *RegNum,
 	u16 status = 0;
 	int i;
 
-	static const u8 RegAddr[] = {43, 136};
+	u8 RegAddr[] = {43, 136};
 
 	*count = ARRAY_SIZE(RegAddr);
 

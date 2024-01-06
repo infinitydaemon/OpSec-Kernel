@@ -52,17 +52,9 @@ struct ip_tunnel_key {
 	u8			tos;		/* TOS for IPv4, TC for IPv6 */
 	u8			ttl;		/* TTL for IPv4, HL for IPv6 */
 	__be32			label;		/* Flow Label for IPv6 */
-	u32			nhid;
 	__be16			tp_src;
 	__be16			tp_dst;
 	__u8			flow_flags;
-};
-
-struct ip_tunnel_encap {
-	u16			type;
-	u16			flags;
-	__be16			sport;
-	__be16			dport;
 };
 
 /* Flags for ip_tunnel_info mode. */
@@ -75,15 +67,8 @@ struct ip_tunnel_encap {
 	GENMASK((sizeof_field(struct ip_tunnel_info,		\
 			      options_len) * BITS_PER_BYTE) - 1, 0)
 
-#define ip_tunnel_info_opts(info)				\
-	_Generic(info,						\
-		 const struct ip_tunnel_info * : ((const void *)((info) + 1)),\
-		 struct ip_tunnel_info * : ((void *)((info) + 1))\
-	)
-
 struct ip_tunnel_info {
 	struct ip_tunnel_key	key;
-	struct ip_tunnel_encap	encap;
 #ifdef CONFIG_DST_CACHE
 	struct dst_cache	dst_cache;
 #endif
@@ -100,6 +85,13 @@ struct ip_tunnel_6rd_parm {
 	u16			relay_prefixlen;
 };
 #endif
+
+struct ip_tunnel_encap {
+	u16			type;
+	u16			flags;
+	__be16			sport;
+	__be16			dport;
+};
 
 struct ip_tunnel_prl_entry {
 	struct ip_tunnel_prl_entry __rcu *next;
@@ -301,7 +293,6 @@ struct ip_tunnel *ip_tunnel_lookup(struct ip_tunnel_net *itn,
 				   __be32 remote, __be32 local,
 				   __be32 key);
 
-void ip_tunnel_md_udp_encap(struct sk_buff *skb, struct ip_tunnel_info *info);
 int ip_tunnel_rcv(struct ip_tunnel *tunnel, struct sk_buff *skb,
 		  const struct tnl_ptk_info *tpi, struct metadata_dst *tun_dst,
 		  bool log_ecn_error);
@@ -380,23 +371,22 @@ static inline int ip_encap_hlen(struct ip_tunnel_encap *e)
 	return hlen;
 }
 
-static inline int ip_tunnel_encap(struct sk_buff *skb,
-				  struct ip_tunnel_encap *e,
+static inline int ip_tunnel_encap(struct sk_buff *skb, struct ip_tunnel *t,
 				  u8 *protocol, struct flowi4 *fl4)
 {
 	const struct ip_tunnel_encap_ops *ops;
 	int ret = -EINVAL;
 
-	if (e->type == TUNNEL_ENCAP_NONE)
+	if (t->encap.type == TUNNEL_ENCAP_NONE)
 		return 0;
 
-	if (e->type >= MAX_IPTUN_ENCAP_OPS)
+	if (t->encap.type >= MAX_IPTUN_ENCAP_OPS)
 		return -EINVAL;
 
 	rcu_read_lock();
-	ops = rcu_dereference(iptun_encaps[e->type]);
+	ops = rcu_dereference(iptun_encaps[t->encap.type]);
 	if (likely(ops && ops->build_header))
-		ret = ops->build_header(skb, e, protocol, fl4);
+		ret = ops->build_header(skb, &t->encap, protocol, fl4);
 	rcu_read_unlock();
 
 	return ret;
@@ -492,6 +482,11 @@ static inline void iptunnel_xmit_stats(struct net_device *dev, int pkt_len)
 	} else {
 		DEV_STATS_INC(dev, tx_dropped);
 	}
+}
+
+static inline void *ip_tunnel_info_opts(struct ip_tunnel_info *info)
+{
+	return info + 1;
 }
 
 static inline void ip_tunnel_info_opts_get(void *to,

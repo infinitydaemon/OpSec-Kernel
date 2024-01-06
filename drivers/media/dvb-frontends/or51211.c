@@ -26,7 +26,7 @@
 #include <linux/slab.h>
 #include <asm/byteorder.h>
 
-#include <linux/int_log.h>
+#include <media/dvb_math.h>
 #include <media/dvb_frontend.h>
 #include "or51211.h"
 

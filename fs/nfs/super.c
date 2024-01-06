@@ -59,8 +59,6 @@
 #include <linux/uaccess.h>
 #include <linux/nfs_ssc.h>
 
-#include <uapi/linux/tls.h>
-
 #include "nfs4_fs.h"
 #include "callback.h"
 #include "delegation.h"
@@ -70,8 +68,6 @@
 #include "nfs4session.h"
 #include "pnfs.h"
 #include "nfs.h"
-#include "netns.h"
-#include "sysfs.h"
 
 #define NFSDBG_FACILITY		NFSDBG_VFS
 
@@ -129,7 +125,11 @@ static void nfs_ssc_unregister_ops(void)
 }
 #endif /* CONFIG_NFS_V4_2 */
 
-static struct shrinker *acl_shrinker;
+static struct shrinker acl_shrinker = {
+	.count_objects	= nfs_access_cache_count,
+	.scan_objects	= nfs_access_cache_scan,
+	.seeks		= DEFAULT_SEEKS,
+};
 
 /*
  * Register the NFS filesystems
@@ -149,18 +149,9 @@ int __init register_nfs_fs(void)
 	ret = nfs_register_sysctl();
 	if (ret < 0)
 		goto error_2;
-
-	acl_shrinker = shrinker_alloc(0, "nfs-acl");
-	if (!acl_shrinker) {
-		ret = -ENOMEM;
+	ret = register_shrinker(&acl_shrinker, "nfs-acl");
+	if (ret < 0)
 		goto error_3;
-	}
-
-	acl_shrinker->count_objects = nfs_access_cache_count;
-	acl_shrinker->scan_objects = nfs_access_cache_scan;
-
-	shrinker_register(acl_shrinker);
-
 #ifdef CONFIG_NFS_V4_2
 	nfs_ssc_register_ops();
 #endif
@@ -180,7 +171,7 @@ error_0:
  */
 void __exit unregister_nfs_fs(void)
 {
-	shrinker_free(acl_shrinker);
+	unregister_shrinker(&acl_shrinker);
 	nfs_unregister_sysctl();
 	unregister_nfs4_fs();
 #ifdef CONFIG_NFS_V4_2
@@ -500,16 +491,6 @@ static void nfs_show_mount_options(struct seq_file *m, struct nfs_server *nfss,
 	seq_printf(m, ",timeo=%lu", 10U * nfss->client->cl_timeout->to_initval / HZ);
 	seq_printf(m, ",retrans=%u", nfss->client->cl_timeout->to_retries);
 	seq_printf(m, ",sec=%s", nfs_pseudoflavour_to_name(nfss->client->cl_auth->au_flavor));
-	switch (clp->cl_xprtsec.policy) {
-	case RPC_XPRTSEC_TLS_ANON:
-		seq_puts(m, ",xprtsec=tls");
-		break;
-	case RPC_XPRTSEC_TLS_X509:
-		seq_puts(m, ",xprtsec=mtls");
-		break;
-	default:
-		break;
-	}
 
 	if (version != 4)
 		nfs_show_mountd_options(m, nfss, showdefaults);
@@ -711,6 +692,10 @@ int nfs_show_stats(struct seq_file *m, struct dentry *root)
 			totals.events[i] += stats->events[i];
 		for (i = 0; i < __NFSIOS_BYTESMAX; i++)
 			totals.bytes[i] += stats->bytes[i];
+#ifdef CONFIG_NFS_FSCACHE
+		for (i = 0; i < __NFSIOS_FSCACHEMAX; i++)
+			totals.fscache[i] += stats->fscache[i];
+#endif
 
 		preempt_enable();
 	}
@@ -721,6 +706,13 @@ int nfs_show_stats(struct seq_file *m, struct dentry *root)
 	seq_puts(m, "\n\tbytes:\t");
 	for (i = 0; i < __NFSIOS_BYTESMAX; i++)
 		seq_printf(m, "%Lu ", totals.bytes[i]);
+#ifdef CONFIG_NFS_FSCACHE
+	if (nfss->options & NFS_OPTION_FSCACHE) {
+		seq_puts(m, "\n\tfsc:\t");
+		for (i = 0; i < __NFSIOS_FSCACHEMAX; i++)
+			seq_printf(m, "%Lu ", totals.fscache[i]);
+	}
+#endif
 	seq_putc(m, '\n');
 
 	rpc_clnt_show_stats(m, nfss->client);
@@ -1076,7 +1068,7 @@ static void nfs_fill_super(struct super_block *sb, struct nfs_fs_context *ctx)
 		sb->s_export_op = &nfs_export_ops;
 		break;
 	case 4:
-		sb->s_iflags |= SB_I_NOUMASK;
+		sb->s_flags |= SB_POSIXACL;
 		sb->s_time_gran = 1;
 		sb->s_time_min = S64_MIN;
 		sb->s_time_max = S64_MAX;
@@ -1096,7 +1088,6 @@ static void nfs_fill_super(struct super_block *sb, struct nfs_fs_context *ctx)
 						 &sb->s_blocksize_bits);
 
 	nfs_super_set_maxbytes(sb, server->maxfilesize);
-	nfs_sysfs_move_server_to_sb(sb);
 	server->has_sec_mnt_opts = ctx->has_sec_mnt_opts;
 }
 
@@ -1283,6 +1274,9 @@ int nfs_get_tree_common(struct fs_context *fc)
 		if (ctx->clone_data.sb->s_flags & SB_SYNCHRONOUS)
 			fc->sb_flags |= SB_SYNCHRONOUS;
 
+	if (server->caps & NFS_CAP_SECURITY_LABEL)
+		fc->lsm_flags |= SECURITY_LSM_NATIVE_LABELS;
+
 	/* Get a superblock - note that we may end up sharing one that already exists */
 	fc->s_fs_info = server;
 	s = sget_fc(fc, compare_super, nfs_set_super);
@@ -1339,18 +1333,19 @@ error_splat_super:
 }
 
 /*
- * Destroy an NFS superblock
+ * Destroy an NFS2/3 superblock
  */
 void nfs_kill_super(struct super_block *s)
 {
 	struct nfs_server *server = NFS_SB(s);
+	dev_t dev = s->s_dev;
 
-	nfs_sysfs_move_sb_to_server(server);
-	kill_anon_super(s);
+	generic_shutdown_super(s);
 
 	nfs_fscache_release_super_cookie(s);
 
 	nfs_free_server(server);
+	free_anon_bdev(dev);
 }
 EXPORT_SYMBOL_GPL(nfs_kill_super);
 
@@ -1371,7 +1366,6 @@ unsigned short max_session_cb_slots = NFS4_DEF_CB_SLOT_TABLE_SIZE;
 unsigned short send_implementation_id = 1;
 char nfs4_client_id_uniquifier[NFS4_CLIENT_ID_UNIQ_LEN] = "";
 bool recover_lost_locks = false;
-short nfs_delay_retrans = -1;
 
 EXPORT_SYMBOL_GPL(nfs_callback_nr_threads);
 EXPORT_SYMBOL_GPL(nfs_callback_set_tcpport);
@@ -1382,7 +1376,6 @@ EXPORT_SYMBOL_GPL(max_session_cb_slots);
 EXPORT_SYMBOL_GPL(send_implementation_id);
 EXPORT_SYMBOL_GPL(nfs4_client_id_uniquifier);
 EXPORT_SYMBOL_GPL(recover_lost_locks);
-EXPORT_SYMBOL_GPL(nfs_delay_retrans);
 
 #define NFS_CALLBACK_MAXPORTNR (65535U)
 
@@ -1431,9 +1424,5 @@ MODULE_PARM_DESC(recover_lost_locks,
 		 "If the server reports that a lock might be lost, "
 		 "try to recover it risking data corruption.");
 
-module_param_named(delay_retrans, nfs_delay_retrans, short, 0644);
-MODULE_PARM_DESC(delay_retrans,
-		 "Unless negative, specifies the number of times the NFSv4 "
-		 "client retries a request before returning an EAGAIN error, "
-		 "after a reply of NFS4ERR_DELAY from the server.");
+
 #endif /* CONFIG_NFS_V4 */

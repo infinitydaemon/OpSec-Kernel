@@ -42,7 +42,8 @@ static int write_regs(struct i2c_client *client,
 
 static const struct v4l2_subdev_ops ov7640_ops;
 
-static int ov7640_probe(struct i2c_client *client)
+static int ov7640_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct i2c_adapter *adapter = client->adapter;
 	struct v4l2_subdev *sd;

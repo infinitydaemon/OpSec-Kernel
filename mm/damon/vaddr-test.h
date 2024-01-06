@@ -14,26 +14,19 @@
 
 #include <kunit/test.h>
 
-static int __link_vmas(struct maple_tree *mt, struct vm_area_struct *vmas,
+static void __link_vmas(struct maple_tree *mt, struct vm_area_struct *vmas,
 			ssize_t nr_vmas)
 {
-	int i, ret = -ENOMEM;
+	int i;
 	MA_STATE(mas, mt, 0, 0);
 
 	if (!nr_vmas)
-		return 0;
+		return;
 
 	mas_lock(&mas);
-	for (i = 0; i < nr_vmas; i++) {
-		mas_set_range(&mas, vmas[i].vm_start, vmas[i].vm_end - 1);
-		if (mas_store_gfp(&mas, &vmas[i], GFP_KERNEL))
-			goto failed;
-	}
-
-	ret = 0;
-failed:
+	for (i = 0; i < nr_vmas; i++)
+		vma_mas_store(&vmas[i], &mas);
 	mas_unlock(&mas);
-	return ret;
 }
 
 /*
@@ -78,8 +71,7 @@ static void damon_test_three_regions_in_vmas(struct kunit *test)
 	};
 
 	mt_init_flags(&mm.mm_mt, MM_MT_FLAGS);
-	if (__link_vmas(&mm.mm_mt, vmas, ARRAY_SIZE(vmas)))
-		kunit_skip(test, "Failed to create VMA tree");
+	__link_vmas(&mm.mm_mt, vmas, ARRAY_SIZE(vmas));
 
 	__damon_va_three_regions(&mm, regions);
 

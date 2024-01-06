@@ -7,13 +7,11 @@
 
 #include <linux/bitops.h>
 
-#include "tag.h"
-
-#define XRS700X_NAME "xrs700x"
+#include "dsa_priv.h"
 
 static struct sk_buff *xrs700x_xmit(struct sk_buff *skb, struct net_device *dev)
 {
-	struct dsa_port *partner, *dp = dsa_user_to_port(dev);
+	struct dsa_port *partner, *dp = dsa_slave_to_port(dev);
 	u8 *trailer;
 
 	trailer = skb_put(skb, 1);
@@ -39,7 +37,7 @@ static struct sk_buff *xrs700x_rcv(struct sk_buff *skb, struct net_device *dev)
 	if (source_port < 0)
 		return NULL;
 
-	skb->dev = dsa_conduit_find_user(dev, 0, source_port);
+	skb->dev = dsa_master_find_slave(dev, 0, source_port);
 	if (!skb->dev)
 		return NULL;
 
@@ -53,7 +51,7 @@ static struct sk_buff *xrs700x_rcv(struct sk_buff *skb, struct net_device *dev)
 }
 
 static const struct dsa_device_ops xrs700x_netdev_ops = {
-	.name	= XRS700X_NAME,
+	.name	= "xrs700x",
 	.proto	= DSA_TAG_PROTO_XRS700X,
 	.xmit	= xrs700x_xmit,
 	.rcv	= xrs700x_rcv,
@@ -61,6 +59,6 @@ static const struct dsa_device_ops xrs700x_netdev_ops = {
 };
 
 MODULE_LICENSE("GPL");
-MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_XRS700X, XRS700X_NAME);
+MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_XRS700X);
 
 module_dsa_tag_driver(xrs700x_netdev_ops);

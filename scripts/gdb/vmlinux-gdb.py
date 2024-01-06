@@ -40,12 +40,3 @@ else:
     import linux.clk
     import linux.genpd
     import linux.device
-    import linux.vfs
-    import linux.pgtable
-    import linux.radixtree
-    import linux.interrupts
-    import linux.mm
-    import linux.stackdepot
-    import linux.page_owner
-    import linux.slab
-    import linux.vmalloc

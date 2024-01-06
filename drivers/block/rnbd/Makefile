@@ -3,11 +3,13 @@
 ccflags-y := -I$(srctree)/drivers/infiniband/ulp/rtrs
 
 rnbd-client-y := rnbd-clt.o \
-		  rnbd-clt-sysfs.o
+		  rnbd-clt-sysfs.o \
+		  rnbd-common.o
 
 CFLAGS_rnbd-srv-trace.o = -I$(src)
 
-rnbd-server-y := rnbd-srv.o \
+rnbd-server-y := rnbd-common.o \
+		  rnbd-srv.o \
 		  rnbd-srv-sysfs.o \
 		  rnbd-srv-trace.o
 

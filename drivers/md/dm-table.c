@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2001 Sistina Software (UK) Limited.
  * Copyright (C) 2004-2008 Red Hat, Inc. All rights reserved.
@@ -73,7 +72,7 @@ static sector_t high(struct dm_table *t, unsigned int l, unsigned int n)
 		n = get_child(n, CHILDREN_PER_NODE - 1);
 
 	if (n >= t->counts[l])
-		return (sector_t) -1;
+		return (sector_t) - 1;
 
 	return get_node(t, l, n)[KEYS_PER_NODE - 1];
 }
@@ -126,7 +125,7 @@ static int alloc_targets(struct dm_table *t, unsigned int num)
 	return 0;
 }
 
-int dm_table_create(struct dm_table **result, blk_mode_t mode,
+int dm_table_create(struct dm_table **result, fmode_t mode,
 		    unsigned int num_targets, struct mapped_device *md)
 {
 	struct dm_table *t = kzalloc(sizeof(*t), GFP_KERNEL);
@@ -305,7 +304,7 @@ static int device_area_is_invalid(struct dm_target *ti, struct dm_dev *dev,
  * device and not to touch the existing bdev field in case
  * it is accessed concurrently.
  */
-static int upgrade_mode(struct dm_dev_internal *dd, blk_mode_t new_mode,
+static int upgrade_mode(struct dm_dev_internal *dd, fmode_t new_mode,
 			struct mapped_device *md)
 {
 	int r;
@@ -325,13 +324,23 @@ static int upgrade_mode(struct dm_dev_internal *dd, blk_mode_t new_mode,
 }
 
 /*
+ * Convert the path to a device
+ */
+dev_t dm_get_dev_t(const char *path)
+{
+	dev_t dev;
+
+	if (lookup_bdev(path, &dev))
+		dev = name_to_dev_t(path);
+	return dev;
+}
+EXPORT_SYMBOL_GPL(dm_get_dev_t);
+
+/*
  * Add a device to the list, or just increment the usage count if
  * it's already present.
- *
- * Note: the __ref annotation is because this function can call the __init
- * marked early_lookup_bdev when called during early boot code from dm-init.c.
  */
-int __ref dm_get_device(struct dm_target *ti, const char *path, blk_mode_t mode,
+int dm_get_device(struct dm_target *ti, const char *path, fmode_t mode,
 		  struct dm_dev **result)
 {
 	int r;
@@ -349,16 +358,10 @@ int __ref dm_get_device(struct dm_target *ti, const char *path, blk_mode_t mode,
 		if (MAJOR(dev) != major || MINOR(dev) != minor)
 			return -EOVERFLOW;
 	} else {
-		r = lookup_bdev(path, &dev);
-#ifndef MODULE
-		if (r && system_state < SYSTEM_RUNNING)
-			r = early_lookup_bdev(path, &dev);
-#endif
-		if (r)
-			return r;
+		dev = dm_get_dev_t(path);
+		if (!dev)
+			return -ENODEV;
 	}
-	if (dev == disk_devt(t->md->disk))
-		return -EINVAL;
 
 	down_write(&t->devices_lock);
 
@@ -370,8 +373,7 @@ int __ref dm_get_device(struct dm_target *ti, const char *path, blk_mode_t mode,
 			goto unlock_ret_r;
 		}
 
-		r = dm_get_table_device(t->md, dev, mode, &dd->dm_dev);
-		if (r) {
+		if ((r = dm_get_table_device(t->md, dev, mode, &dd->dm_dev))) {
 			kfree(dd);
 			goto unlock_ret_r;
 		}
@@ -678,8 +680,7 @@ int dm_table_add_target(struct dm_table *t, const char *type,
 		t->singleton = true;
 	}
 
-	if (dm_target_always_writeable(ti->type) &&
-	    !(t->mode & BLK_OPEN_WRITE)) {
+	if (dm_target_always_writeable(ti->type) && !(t->mode & FMODE_WRITE)) {
 		ti->error = "target type may not be included in a read-only table";
 		goto bad;
 	}
@@ -844,8 +845,7 @@ static bool dm_table_supports_dax(struct dm_table *t,
 		if (!ti->type->direct_access)
 			return false;
 
-		if (dm_target_is_wildcard(ti->type) ||
-		    !ti->type->iterate_devices ||
+		if (!ti->type->iterate_devices ||
 		    ti->type->iterate_devices(ti, iterate_fn, NULL))
 			return false;
 	}
@@ -1528,7 +1528,7 @@ static bool dm_table_any_dev_attr(struct dm_table *t,
 		if (ti->type->iterate_devices &&
 		    ti->type->iterate_devices(ti, func, data))
 			return true;
-	}
+        }
 
 	return false;
 }
@@ -1588,14 +1588,6 @@ static int device_not_zoned_model(struct dm_target *ti, struct dm_dev *dev,
 	return blk_queue_zoned_model(q) != *zoned_model;
 }
 
-static int device_is_zoned_model(struct dm_target *ti, struct dm_dev *dev,
-				 sector_t start, sector_t len, void *data)
-{
-	struct request_queue *q = bdev_get_queue(dev->bdev);
-
-	return blk_queue_zoned_model(q) != BLK_ZONED_NONE;
-}
-
 /*
  * Check the device zoned model based on the target feature flag. If the target
  * has the DM_TARGET_ZONED_HM feature flag set, host-managed zoned devices are
@@ -1608,18 +1600,6 @@ static bool dm_table_supports_zoned_model(struct dm_table *t,
 {
 	for (unsigned int i = 0; i < t->num_targets; i++) {
 		struct dm_target *ti = dm_table_get_target(t, i);
-
-		/*
-		 * For the wildcard target (dm-error), if we do not have a
-		 * backing device, we must always return false. If we have a
-		 * backing device, the result must depend on checking zoned
-		 * model, like for any other target. So for this, check directly
-		 * if the target backing device is zoned as we get "false" when
-		 * dm-error was set without a backing device.
-		 */
-		if (dm_target_is_wildcard(ti->type) &&
-		    !ti->type->iterate_devices(ti, device_is_zoned_model, NULL))
-			return false;
 
 		if (dm_target_supports_zoned_hm(ti->type)) {
 			if (!ti->type->iterate_devices ||
@@ -1693,12 +1673,8 @@ int dm_calculate_queue_limits(struct dm_table *t,
 
 		blk_set_stacking_limits(&ti_limits);
 
-		if (!ti->type->iterate_devices) {
-			/* Set I/O hints portion of queue limits */
-			if (ti->type->io_hints)
-				ti->type->io_hints(ti, &ti_limits);
+		if (!ti->type->iterate_devices)
 			goto combine_limits;
-		}
 
 		/*
 		 * Combine queue limits of all the devices this target uses.
@@ -1995,7 +1971,8 @@ int dm_table_set_restrictions(struct dm_table *t, struct request_queue *q,
 		blk_queue_flag_set(QUEUE_FLAG_DAX, q);
 		if (dm_table_supports_dax(t, device_not_dax_synchronous_capable))
 			set_dax_synchronous(t->md->dax_dev);
-	} else
+	}
+	else
 		blk_queue_flag_clear(QUEUE_FLAG_DAX, q);
 
 	if (dm_table_any_dev_attr(t, device_dax_write_cache_enabled, NULL))
@@ -2071,7 +2048,7 @@ struct list_head *dm_table_get_devices(struct dm_table *t)
 	return &t->devices;
 }
 
-blk_mode_t dm_table_get_mode(struct dm_table *t)
+fmode_t dm_table_get_mode(struct dm_table *t)
 {
 	return t->mode;
 }

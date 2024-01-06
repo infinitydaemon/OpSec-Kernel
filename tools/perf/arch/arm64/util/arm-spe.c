@@ -36,6 +36,29 @@ struct arm_spe_recording {
 	bool			*wrapped;
 };
 
+static void arm_spe_set_timestamp(struct auxtrace_record *itr,
+				  struct evsel *evsel)
+{
+	struct arm_spe_recording *ptr;
+	struct perf_pmu *arm_spe_pmu;
+	struct evsel_config_term *term = evsel__get_config_term(evsel, CFG_CHG);
+	u64 user_bits = 0, bit;
+
+	ptr = container_of(itr, struct arm_spe_recording, itr);
+	arm_spe_pmu = ptr->arm_spe_pmu;
+
+	if (term)
+		user_bits = term->val.cfg_chg;
+
+	bit = perf_pmu__format_bits(&arm_spe_pmu->format, "ts_enable");
+
+	/* Skip if user has set it */
+	if (bit & user_bits)
+		return;
+
+	evsel->core.attr.config |= bit;
+}
+
 static size_t
 arm_spe_info_priv_size(struct auxtrace_record *itr __maybe_unused,
 		       struct evlist *evlist __maybe_unused)
@@ -113,25 +136,6 @@ arm_spe_snapshot_resolve_auxtrace_defaults(struct record_opts *opts,
 	}
 }
 
-static __u64 arm_spe_pmu__sample_period(const struct perf_pmu *arm_spe_pmu)
-{
-	static __u64 sample_period;
-
-	if (sample_period)
-		return sample_period;
-
-	/*
-	 * If kernel driver doesn't advertise a minimum,
-	 * use max allowable by PMSIDR_EL1.INTERVAL
-	 */
-	if (perf_pmu__scan_file(arm_spe_pmu, "caps/min_interval", "%llu",
-				&sample_period) != 1) {
-		pr_debug("arm_spe driver doesn't advertise a min. interval. Using 4096\n");
-		sample_period = 4096;
-	}
-	return sample_period;
-}
-
 static int arm_spe_recording_options(struct auxtrace_record *itr,
 				     struct evlist *evlist,
 				     struct record_opts *opts)
@@ -155,7 +159,7 @@ static int arm_spe_recording_options(struct auxtrace_record *itr,
 				return -EINVAL;
 			}
 			evsel->core.attr.freq = 0;
-			evsel->core.attr.sample_period = arm_spe_pmu__sample_period(arm_spe_pmu);
+			evsel->core.attr.sample_period = arm_spe_pmu->default_config->sample_period;
 			evsel->needs_auxtrace_mmap = true;
 			arm_spe_evsel = evsel;
 			opts->full_auxtrace = true;
@@ -234,8 +238,7 @@ static int arm_spe_recording_options(struct auxtrace_record *itr,
 	 */
 	if (!perf_cpu_map__empty(cpus)) {
 		evsel__set_sample_bit(arm_spe_evsel, CPU);
-		evsel__set_config_if_unset(arm_spe_pmu, arm_spe_evsel,
-					   "ts_enable", 1);
+		arm_spe_set_timestamp(itr, arm_spe_evsel);
 	}
 
 	/*
@@ -249,7 +252,7 @@ static int arm_spe_recording_options(struct auxtrace_record *itr,
 	 * inform that the resulting output's SPE samples contain physical addresses
 	 * where applicable.
 	 */
-	bit = perf_pmu__format_bits(arm_spe_pmu, "pa_enable");
+	bit = perf_pmu__format_bits(&arm_spe_pmu->format, "pa_enable");
 	if (arm_spe_evsel->core.attr.config & bit)
 		evsel__set_sample_bit(arm_spe_evsel, PHYS_ADDR);
 
@@ -476,7 +479,7 @@ static void arm_spe_recording_free(struct auxtrace_record *itr)
 	struct arm_spe_recording *sper =
 			container_of(itr, struct arm_spe_recording, itr);
 
-	zfree(&sper->wrapped);
+	free(sper->wrapped);
 	free(sper);
 }
 
@@ -514,8 +517,29 @@ struct auxtrace_record *arm_spe_recording_init(int *err,
 	return &sper->itr;
 }
 
-void
-arm_spe_pmu_default_config(const struct perf_pmu *arm_spe_pmu, struct perf_event_attr *attr)
+struct perf_event_attr
+*arm_spe_pmu_default_config(struct perf_pmu *arm_spe_pmu)
 {
-	attr->sample_period = arm_spe_pmu__sample_period(arm_spe_pmu);
+	struct perf_event_attr *attr;
+
+	attr = zalloc(sizeof(struct perf_event_attr));
+	if (!attr) {
+		pr_err("arm_spe default config cannot allocate a perf_event_attr\n");
+		return NULL;
+	}
+
+	/*
+	 * If kernel driver doesn't advertise a minimum,
+	 * use max allowable by PMSIDR_EL1.INTERVAL
+	 */
+	if (perf_pmu__scan_file(arm_spe_pmu, "caps/min_interval", "%llu",
+				  &attr->sample_period) != 1) {
+		pr_debug("arm_spe driver doesn't advertise a min. interval. Using 4096\n");
+		attr->sample_period = 4096;
+	}
+
+	arm_spe_pmu->selectable = true;
+	arm_spe_pmu->is_uncore = false;
+
+	return attr;
 }

@@ -784,12 +784,13 @@ retry:
 		if (!strcmp(domainname, "parent")) {
 			char *cp;
 
-			strscpy(ee->tmp, old_domain->domainname->name, TOMOYO_EXEC_TMPSIZE);
+			strncpy(ee->tmp, old_domain->domainname->name,
+				TOMOYO_EXEC_TMPSIZE - 1);
 			cp = strrchr(ee->tmp, ' ');
 			if (cp)
 				*cp = '\0';
 		} else if (*domainname == '<')
-			strscpy(ee->tmp, domainname, TOMOYO_EXEC_TMPSIZE);
+			strncpy(ee->tmp, domainname, TOMOYO_EXEC_TMPSIZE - 1);
 		else
 			snprintf(ee->tmp, TOMOYO_EXEC_TMPSIZE - 1, "%s %s",
 				 old_domain->domainname->name, domainname);
@@ -915,7 +916,7 @@ bool tomoyo_dump_page(struct linux_binprm *bprm, unsigned long pos,
 	 */
 	mmap_read_lock(bprm->mm);
 	ret = get_user_pages_remote(bprm->mm, pos, 1,
-				    FOLL_FORCE, &page, NULL);
+				    FOLL_FORCE, &page, NULL, NULL);
 	mmap_read_unlock(bprm->mm);
 	if (ret <= 0)
 		return false;

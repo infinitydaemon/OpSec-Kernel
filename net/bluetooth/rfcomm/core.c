@@ -35,8 +35,6 @@
 #include <net/bluetooth/l2cap.h>
 #include <net/bluetooth/rfcomm.h>
 
-#include <trace/events/sock.h>
-
 #define VERSION "1.11"
 
 static bool disable_cfc;
@@ -188,8 +186,6 @@ static void rfcomm_l2state_change(struct sock *sk)
 
 static void rfcomm_l2data_ready(struct sock *sk)
 {
-	trace_sk_data_ready(sk);
-
 	BT_DBG("%p", sk);
 	rfcomm_schedule();
 }

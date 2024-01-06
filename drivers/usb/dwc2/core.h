@@ -1003,7 +1003,6 @@ struct dwc2_hregs_backup {
  * @ctrl_out_desc:	EP0 OUT data phase desc chain pointer
  * @irq:		Interrupt request line number
  * @clk:		Pointer to otg clock
- * @utmi_clk:		Pointer to utmi_clk clock
  * @reset:		Pointer to dwc2 reset controller
  * @reset_ecc:          Pointer to dwc2 optional reset controller in Stratix10.
  * @regset:		A pointer to a struct debugfs_regset32, which contains
@@ -1066,7 +1065,6 @@ struct dwc2_hsotg {
 	void *priv;
 	int     irq;
 	struct clk *clk;
-	struct clk *utmi_clk;
 	struct reset_control *reset;
 	struct reset_control *reset_ecc;
 
@@ -1330,7 +1328,6 @@ irqreturn_t dwc2_handle_common_intr(int irq, void *dev);
 /* The device ID match table */
 extern const struct of_device_id dwc2_of_match_table[];
 extern const struct acpi_device_id dwc2_acpi_match[];
-extern const struct pci_device_id dwc2_pci_ids[];
 
 int dwc2_lowlevel_hw_enable(struct dwc2_hsotg *hsotg);
 int dwc2_lowlevel_hw_disable(struct dwc2_hsotg *hsotg);

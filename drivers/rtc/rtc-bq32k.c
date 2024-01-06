@@ -13,7 +13,6 @@
 #include <linux/i2c.h>
 #include <linux/rtc.h>
 #include <linux/init.h>
-#include <linux/kstrtox.h>
 #include <linux/errno.h>
 #include <linux/bcd.h>
 
@@ -320,7 +319,7 @@ static struct i2c_driver bq32k_driver = {
 		.name	= "bq32k",
 		.of_match_table = of_match_ptr(bq32k_of_match),
 	},
-	.probe		= bq32k_probe,
+	.probe_new	= bq32k_probe,
 	.remove		= bq32k_remove,
 	.id_table	= bq32k_id,
 };

@@ -103,10 +103,9 @@
 #include <linux/interrupt.h>
 #include <linux/jiffies.h>
 #include <linux/hwmon.h>
-#include <linux/kstrtox.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 #include <linux/workqueue.h>
@@ -2664,6 +2663,11 @@ static void lm90_remove_pec(void *dev)
 	device_remove_file(dev, &dev_attr_pec);
 }
 
+static void lm90_regulator_disable(void *regulator)
+{
+	regulator_disable(regulator);
+}
+
 static int lm90_probe_channel_from_dt(struct i2c_client *client,
 				      struct device_node *child,
 				      struct lm90_data *data)
@@ -2745,13 +2749,24 @@ static int lm90_probe(struct i2c_client *client)
 	struct device *dev = &client->dev;
 	struct i2c_adapter *adapter = client->adapter;
 	struct hwmon_channel_info *info;
+	struct regulator *regulator;
 	struct device *hwmon_dev;
 	struct lm90_data *data;
 	int err;
 
-	err = devm_regulator_get_enable(dev, "vcc");
+	regulator = devm_regulator_get(dev, "vcc");
+	if (IS_ERR(regulator))
+		return PTR_ERR(regulator);
+
+	err = regulator_enable(regulator);
+	if (err < 0) {
+		dev_err(dev, "Failed to enable regulator: %d\n", err);
+		return err;
+	}
+
+	err = devm_add_action_or_reset(dev, lm90_regulator_disable, regulator);
 	if (err)
-		return dev_err_probe(dev, err, "Failed to enable regulator\n");
+		return err;
 
 	data = devm_kzalloc(dev, sizeof(struct lm90_data), GFP_KERNEL);
 	if (!data)
@@ -2765,7 +2780,7 @@ static int lm90_probe(struct i2c_client *client)
 
 	/* Set the device type */
 	if (client->dev.of_node)
-		data->kind = (uintptr_t)of_device_get_match_data(&client->dev);
+		data->kind = (enum chips)of_device_get_match_data(&client->dev);
 	else
 		data->kind = i2c_match_id(lm90_id, client)->driver_data;
 
@@ -2972,7 +2987,7 @@ static struct i2c_driver lm90_driver = {
 		.of_match_table = of_match_ptr(lm90_of_match),
 		.pm	= pm_sleep_ptr(&lm90_pm_ops),
 	},
-	.probe		= lm90_probe,
+	.probe_new	= lm90_probe,
 	.alert		= lm90_alert,
 	.id_table	= lm90_id,
 	.detect		= lm90_detect,

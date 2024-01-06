@@ -91,7 +91,8 @@ static int uhci_hcd_platform_probe(struct platform_device *pdev)
 
 	uhci = hcd_to_uhci(hcd);
 
-	hcd->regs = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	hcd->regs = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(hcd->regs)) {
 		ret = PTR_ERR(hcd->regs);
 		goto err_rmr;
@@ -151,7 +152,7 @@ err_rmr:
 	return ret;
 }
 
-static void uhci_hcd_platform_remove(struct platform_device *pdev)
+static int uhci_hcd_platform_remove(struct platform_device *pdev)
 {
 	struct usb_hcd *hcd = platform_get_drvdata(pdev);
 	struct uhci_hcd *uhci = hcd_to_uhci(hcd);
@@ -159,6 +160,8 @@ static void uhci_hcd_platform_remove(struct platform_device *pdev)
 	clk_disable_unprepare(uhci->clk);
 	usb_remove_hcd(hcd);
 	usb_put_hcd(hcd);
+
+	return 0;
 }
 
 /* Make sure the controller is quiescent and that we're not using it
@@ -184,7 +187,7 @@ MODULE_DEVICE_TABLE(of, platform_uhci_ids);
 
 static struct platform_driver uhci_platform_driver = {
 	.probe		= uhci_hcd_platform_probe,
-	.remove_new	= uhci_hcd_platform_remove,
+	.remove		= uhci_hcd_platform_remove,
 	.shutdown	= uhci_hcd_platform_shutdown,
 	.driver = {
 		.name = "platform-uhci",

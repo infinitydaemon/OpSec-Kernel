@@ -13,9 +13,9 @@ static const struct regmap_config bmg160_regmap_i2c_conf = {
 	.max_register = 0x3f
 };
 
-static int bmg160_i2c_probe(struct i2c_client *client)
+static int bmg160_i2c_probe(struct i2c_client *client,
+			    const struct i2c_device_id *id)
 {
-	const struct i2c_device_id *id = i2c_client_get_device_id(client);
 	struct regmap *regmap;
 	const char *name = NULL;
 

@@ -13,6 +13,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/reset.h>
 
@@ -232,7 +233,7 @@ out_disable_clk:
 	return ret;
 }
 
-static void denali_dt_remove(struct platform_device *pdev)
+static int denali_dt_remove(struct platform_device *pdev)
 {
 	struct denali_dt *dt = platform_get_drvdata(pdev);
 
@@ -242,11 +243,13 @@ static void denali_dt_remove(struct platform_device *pdev)
 	clk_disable_unprepare(dt->clk_ecc);
 	clk_disable_unprepare(dt->clk_x);
 	clk_disable_unprepare(dt->clk);
+
+	return 0;
 }
 
 static struct platform_driver denali_dt_driver = {
 	.probe		= denali_dt_probe,
-	.remove_new	= denali_dt_remove,
+	.remove		= denali_dt_remove,
 	.driver		= {
 		.name	= "denali-nand-dt",
 		.of_match_table	= denali_nand_dt_ids,

@@ -2016,6 +2016,7 @@ static int stfsm_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	struct flash_info *info;
+	struct resource *res;
 	struct stfsm *fsm;
 	int ret;
 
@@ -2032,14 +2033,29 @@ static int stfsm_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, fsm);
 
-	fsm->base = devm_platform_ioremap_resource(pdev, 0);
-	if (IS_ERR(fsm->base))
-		return PTR_ERR(fsm->base);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!res) {
+		dev_err(&pdev->dev, "Resource not found\n");
+		return -ENODEV;
+	}
 
-	fsm->clk = devm_clk_get_enabled(&pdev->dev, NULL);
+	fsm->base = devm_ioremap_resource(&pdev->dev, res);
+	if (IS_ERR(fsm->base)) {
+		dev_err(&pdev->dev,
+			"Failed to reserve memory region %pR\n", res);
+		return PTR_ERR(fsm->base);
+	}
+
+	fsm->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(fsm->clk)) {
 		dev_err(fsm->dev, "Couldn't find EMI clock.\n");
 		return PTR_ERR(fsm->clk);
+	}
+
+	ret = clk_prepare_enable(fsm->clk);
+	if (ret) {
+		dev_err(fsm->dev, "Failed to enable EMI clock.\n");
+		return ret;
 	}
 
 	mutex_init(&fsm->lock);
@@ -2047,15 +2063,17 @@ static int stfsm_probe(struct platform_device *pdev)
 	ret = stfsm_init(fsm);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to initialise FSM Controller\n");
-		return ret;
+		goto err_clk_unprepare;
 	}
 
 	stfsm_fetch_platform_configs(pdev);
 
 	/* Detect SPI FLASH device */
 	info = stfsm_jedec_probe(fsm);
-	if (!info)
-		return -ENODEV;
+	if (!info) {
+		ret = -ENODEV;
+		goto err_clk_unprepare;
+	}
 	fsm->info = info;
 
 	/* Use device size to determine address width */
@@ -2071,7 +2089,7 @@ static int stfsm_probe(struct platform_device *pdev)
 	else
 		ret = stfsm_prepare_rwe_seqs_default(fsm);
 	if (ret)
-		return ret;
+		goto err_clk_unprepare;
 
 	fsm->mtd.name		= info->name;
 	fsm->mtd.dev.parent	= &pdev->dev;
@@ -2094,14 +2112,24 @@ static int stfsm_probe(struct platform_device *pdev)
 		(long long)fsm->mtd.size, (long long)(fsm->mtd.size >> 20),
 		fsm->mtd.erasesize, (fsm->mtd.erasesize >> 10));
 
-	return mtd_device_register(&fsm->mtd, NULL, 0);
+	ret = mtd_device_register(&fsm->mtd, NULL, 0);
+	if (ret) {
+err_clk_unprepare:
+		clk_disable_unprepare(fsm->clk);
+	}
+
+	return ret;
 }
 
-static void stfsm_remove(struct platform_device *pdev)
+static int stfsm_remove(struct platform_device *pdev)
 {
 	struct stfsm *fsm = platform_get_drvdata(pdev);
 
 	WARN_ON(mtd_device_unregister(&fsm->mtd));
+
+	clk_disable_unprepare(fsm->clk);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -2132,7 +2160,7 @@ MODULE_DEVICE_TABLE(of, stfsm_match);
 
 static struct platform_driver stfsm_driver = {
 	.probe		= stfsm_probe,
-	.remove_new	= stfsm_remove,
+	.remove		= stfsm_remove,
 	.driver		= {
 		.name	= "st-spi-fsm",
 		.of_match_table = stfsm_match,

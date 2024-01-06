@@ -7,8 +7,9 @@
 #include <linux/clk.h>
 #include <linux/device.h>
 #include <linux/io.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
+#include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
@@ -535,12 +536,18 @@ static int tegra210_amx_platform_probe(struct platform_device *pdev)
 	struct tegra210_amx *amx;
 	void __iomem *regs;
 	int err;
+	const struct of_device_id *match;
+	struct tegra210_amx_soc_data *soc_data;
+
+	match = of_match_device(tegra210_amx_of_match, dev);
+
+	soc_data = (struct tegra210_amx_soc_data *)match->data;
 
 	amx = devm_kzalloc(dev, sizeof(*amx), GFP_KERNEL);
 	if (!amx)
 		return -ENOMEM;
 
-	amx->soc_data = device_get_match_data(dev);
+	amx->soc_data = soc_data;
 
 	dev_set_drvdata(dev, amx);
 
@@ -549,7 +556,7 @@ static int tegra210_amx_platform_probe(struct platform_device *pdev)
 		return PTR_ERR(regs);
 
 	amx->regmap = devm_regmap_init_mmio(dev, regs,
-					    amx->soc_data->regmap_conf);
+					    soc_data->regmap_conf);
 	if (IS_ERR(amx->regmap)) {
 		dev_err(dev, "regmap init failed\n");
 		return PTR_ERR(amx->regmap);
@@ -570,9 +577,11 @@ static int tegra210_amx_platform_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void tegra210_amx_platform_remove(struct platform_device *pdev)
+static int tegra210_amx_platform_remove(struct platform_device *pdev)
 {
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 static const struct dev_pm_ops tegra210_amx_pm_ops = {
@@ -589,7 +598,7 @@ static struct platform_driver tegra210_amx_driver = {
 		.pm = &tegra210_amx_pm_ops,
 	},
 	.probe = tegra210_amx_platform_probe,
-	.remove_new = tegra210_amx_platform_remove,
+	.remove = tegra210_amx_platform_remove,
 };
 module_platform_driver(tegra210_amx_driver);
 

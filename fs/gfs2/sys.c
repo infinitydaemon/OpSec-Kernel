@@ -82,13 +82,11 @@ static ssize_t status_show(struct gfs2_sbd *sdp, char *buf)
 		     "RO Recovery:              %d\n"
 		     "Skip DLM Unlock:          %d\n"
 		     "Force AIL Flush:          %d\n"
-		     "FS Freeze Initiator:      %d\n"
 		     "FS Frozen:                %d\n"
 		     "Withdrawing:              %d\n"
 		     "Withdraw In Prog:         %d\n"
 		     "Remote Withdraw:          %d\n"
 		     "Withdraw Recovery:        %d\n"
-		     "Deactivating:             %d\n"
 		     "sd_log_error:             %d\n"
 		     "sd_log_flush_lock:        %d\n"
 		     "sd_log_num_revoke:        %u\n"
@@ -98,10 +96,7 @@ static ssize_t status_show(struct gfs2_sbd *sdp, char *buf)
 		     "sd_log_flush_head:        %d\n"
 		     "sd_log_flush_tail:        %d\n"
 		     "sd_log_blks_reserved:     %d\n"
-		     "sd_log_revokes_available: %d\n"
-		     "sd_log_pinned:            %d\n"
-		     "sd_log_thresh1:           %d\n"
-		     "sd_log_thresh2:           %d\n",
+		     "sd_log_revokes_available: %d\n",
 		     test_bit(SDF_JOURNAL_CHECKED, &f),
 		     test_bit(SDF_JOURNAL_LIVE, &f),
 		     (sdp->sd_jdesc ? sdp->sd_jdesc->jd_jid : 0),
@@ -115,13 +110,11 @@ static ssize_t status_show(struct gfs2_sbd *sdp, char *buf)
 		     test_bit(SDF_RORECOVERY, &f),
 		     test_bit(SDF_SKIP_DLM_UNLOCK, &f),
 		     test_bit(SDF_FORCE_AIL_FLUSH, &f),
-		     test_bit(SDF_FREEZE_INITIATOR, &f),
-		     test_bit(SDF_FROZEN, &f),
+		     test_bit(SDF_FS_FROZEN, &f),
 		     test_bit(SDF_WITHDRAWING, &f),
 		     test_bit(SDF_WITHDRAW_IN_PROG, &f),
 		     test_bit(SDF_REMOTE_WITHDRAW, &f),
 		     test_bit(SDF_WITHDRAW_RECOVERY, &f),
-		     test_bit(SDF_KILL, &f),
 		     sdp->sd_log_error,
 		     rwsem_is_locked(&sdp->sd_log_flush_lock),
 		     sdp->sd_log_num_revoke,
@@ -131,10 +124,7 @@ static ssize_t status_show(struct gfs2_sbd *sdp, char *buf)
 		     sdp->sd_log_flush_head,
 		     sdp->sd_log_flush_tail,
 		     sdp->sd_log_blks_reserved,
-		     atomic_read(&sdp->sd_log_revokes_available),
-		     atomic_read(&sdp->sd_log_pinned),
-		     atomic_read(&sdp->sd_log_thresh1),
-		     atomic_read(&sdp->sd_log_thresh2));
+		     atomic_read(&sdp->sd_log_revokes_available));
 	return s;
 }
 
@@ -174,10 +164,10 @@ static ssize_t freeze_store(struct gfs2_sbd *sdp, const char *buf, size_t len)
 
 	switch (n) {
 	case 0:
-		error = thaw_super(sdp->sd_vfs, FREEZE_HOLDER_USERSPACE);
+		error = thaw_super(sdp->sd_vfs);
 		break;
 	case 1:
-		error = freeze_super(sdp->sd_vfs, FREEZE_HOLDER_USERSPACE);
+		error = freeze_super(sdp->sd_vfs);
 		break;
 	default:
 		return -EINVAL;
@@ -777,10 +767,10 @@ void gfs2_sys_fs_del(struct gfs2_sbd *sdp)
 	wait_for_completion(&sdp->sd_kobj_unregister);
 }
 
-static int gfs2_uevent(const struct kobject *kobj, struct kobj_uevent_env *env)
+static int gfs2_uevent(struct kobject *kobj, struct kobj_uevent_env *env)
 {
-	const struct gfs2_sbd *sdp = container_of(kobj, struct gfs2_sbd, sd_kobj);
-	const struct super_block *s = sdp->sd_vfs;
+	struct gfs2_sbd *sdp = container_of(kobj, struct gfs2_sbd, sd_kobj);
+	struct super_block *s = sdp->sd_vfs;
 
 	add_uevent_var(env, "LOCKTABLE=%s", sdp->sd_table_name);
 	add_uevent_var(env, "LOCKPROTO=%s", sdp->sd_proto_name);

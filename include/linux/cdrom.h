@@ -13,7 +13,6 @@
 
 #include <linux/fs.h>		/* not really needed, later.. */
 #include <linux/list.h>
-#include <linux/blkdev.h>
 #include <scsi/scsi_common.h>
 #include <uapi/linux/cdrom.h>
 
@@ -62,9 +61,9 @@ struct cdrom_device_info {
 	__u8 last_sense;
 	__u8 media_written;		/* dirty flag, DVD+RW bookkeeping */
 	unsigned short mmc3_profile;	/* current MMC3 profile */
+	int for_data;
 	int (*exit)(struct cdrom_device_info *);
 	int mrw_mode_page;
-	bool opened_for_data;
 	__s64 last_media_change_ms;
 };
 
@@ -102,10 +101,11 @@ int cdrom_read_tocentry(struct cdrom_device_info *cdi,
 		struct cdrom_tocentry *entry);
 
 /* the general block_device operations structure: */
-int cdrom_open(struct cdrom_device_info *cdi, blk_mode_t mode);
-void cdrom_release(struct cdrom_device_info *cdi);
-int cdrom_ioctl(struct cdrom_device_info *cdi, struct block_device *bdev,
-		unsigned int cmd, unsigned long arg);
+extern int cdrom_open(struct cdrom_device_info *cdi, struct block_device *bdev,
+			fmode_t mode);
+extern void cdrom_release(struct cdrom_device_info *cdi, fmode_t mode);
+extern int cdrom_ioctl(struct cdrom_device_info *cdi, struct block_device *bdev,
+		       fmode_t mode, unsigned int cmd, unsigned long arg);
 extern unsigned int cdrom_check_events(struct cdrom_device_info *cdi,
 				       unsigned int clearing);
 

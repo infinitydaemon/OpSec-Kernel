@@ -14,7 +14,6 @@ struct hist_entry_ops;
 struct addr_location;
 struct map_symbol;
 struct mem_info;
-struct kvm_info;
 struct branch_info;
 struct branch_stack;
 struct block_info;
@@ -81,7 +80,6 @@ enum hist_column {
 	HISTC_ADDR_FROM,
 	HISTC_ADDR_TO,
 	HISTC_ADDR,
-	HISTC_SIMD,
 	HISTC_NR_COLS, /* Last entry */
 };
 
@@ -152,7 +150,6 @@ struct hist_entry *hists__add_entry(struct hists *hists,
 				    struct symbol *parent,
 				    struct branch_info *bi,
 				    struct mem_info *mi,
-				    struct kvm_info *ki,
 				    struct perf_sample *sample,
 				    bool sample_self);
 
@@ -162,7 +159,6 @@ struct hist_entry *hists__add_entry_ops(struct hists *hists,
 					struct symbol *sym_parent,
 					struct branch_info *bi,
 					struct mem_info *mi,
-					struct kvm_info *ki,
 					struct perf_sample *sample,
 					bool sample_self);
 
@@ -276,7 +272,6 @@ struct perf_hpp_fmt {
 		      struct hists *hists, int line, int *span);
 	int (*width)(struct perf_hpp_fmt *fmt, struct perf_hpp *hpp,
 		     struct hists *hists);
-	void (*init)(struct perf_hpp_fmt *fmt, struct hist_entry *he);
 	int (*color)(struct perf_hpp_fmt *fmt, struct perf_hpp *hpp,
 		     struct hist_entry *he);
 	int (*entry)(struct perf_hpp_fmt *fmt, struct perf_hpp *hpp,

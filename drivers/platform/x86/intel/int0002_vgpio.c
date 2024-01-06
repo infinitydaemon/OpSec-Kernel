@@ -223,10 +223,11 @@ static int int0002_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void int0002_remove(struct platform_device *pdev)
+static int int0002_remove(struct platform_device *pdev)
 {
 	device_init_wakeup(&pdev->dev, false);
 	acpi_unregister_wakeup_handler(int0002_check_wake, NULL);
+	return 0;
 }
 
 static int int0002_suspend(struct device *dev)
@@ -272,7 +273,7 @@ static struct platform_driver int0002_driver = {
 		.pm			= &int0002_pm_ops,
 	},
 	.probe	= int0002_probe,
-	.remove_new = int0002_remove,
+	.remove	= int0002_remove,
 };
 
 module_platform_driver(int0002_driver);

@@ -17,6 +17,7 @@
 #include <linux/mfd/core.h>
 #include <linux/mfd/max8925.h>
 #include <linux/of.h>
+#include <linux/of_platform.h>
 
 static const struct resource bk_resources[] = {
 	{ 0x84, 0x84, "mode control", IORESOURCE_REG, },
@@ -467,6 +468,12 @@ static struct max8925_irq_data max8925_irqs[] = {
 		.tsc_irq	= 1,
 	},
 };
+
+static inline struct max8925_irq_data *irq_to_max8925(struct max8925_chip *chip,
+						      int irq)
+{
+	return &max8925_irqs[irq - chip->irq_base];
+}
 
 static irqreturn_t max8925_irq(int irq, void *data)
 {

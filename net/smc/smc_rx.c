@@ -13,10 +13,8 @@
 #include <linux/net.h>
 #include <linux/rcupdate.h>
 #include <linux/sched/signal.h>
-#include <linux/splice.h>
 
 #include <net/sock.h>
-#include <trace/events/sock.h>
 
 #include "smc.h"
 #include "smc_core.h"
@@ -32,8 +30,6 @@
 static void smc_rx_wake_up(struct sock *sk)
 {
 	struct socket_wq *wq;
-
-	trace_sk_data_ready(sk);
 
 	/* derived from sock_def_readable() */
 	/* called already in smc_listen_work() */

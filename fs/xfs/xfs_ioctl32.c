@@ -204,7 +204,7 @@ xfs_compat_ioc_fsbulkstat(
 	struct xfs_fsop_bulkreq	bulkreq;
 	struct xfs_ibulk	breq = {
 		.mp		= mp,
-		.idmap		= file_mnt_idmap(file),
+		.mnt_userns	= file_mnt_user_ns(file),
 		.ocount		= 0,
 	};
 	xfs_ino_t		lastino;

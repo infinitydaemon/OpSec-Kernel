@@ -30,7 +30,6 @@
 #include <linux/pinctrl/pinconf.h>
 #include <linux/pinctrl/pinconf-generic.h>
 #include <linux/pinctrl/pinmux.h>
-#include <linux/suspend.h>
 
 #include "core.h"
 #include "pinctrl-utils.h"
@@ -623,8 +622,9 @@ static bool do_amd_gpio_irq_handler(int irq, void *dev_id)
 			regval = readl(regs + i);
 
 			if (regval & PIN_IRQ_PENDING)
-				pm_pr_dbg("GPIO %d is active: 0x%x",
-					  irqnr + i, regval);
+				dev_dbg(&gpio_dev->pdev->dev,
+					"GPIO %d is active: 0x%x",
+					irqnr + i, regval);
 
 			/* caused wake on resume context for shared IRQ */
 			if (irq < 0 && (regval & BIT(WAKE_STS_OFF)))
@@ -1166,7 +1166,7 @@ out2:
 	return ret;
 }
 
-static void amd_gpio_remove(struct platform_device *pdev)
+static int amd_gpio_remove(struct platform_device *pdev)
 {
 	struct amd_gpio *gpio_dev;
 
@@ -1174,6 +1174,8 @@ static void amd_gpio_remove(struct platform_device *pdev)
 
 	gpiochip_remove(&gpio_dev->gc);
 	acpi_unregister_wakeup_handler(amd_gpio_check_wake, gpio_dev);
+
+	return 0;
 }
 
 #ifdef CONFIG_ACPI
@@ -1195,10 +1197,11 @@ static struct platform_driver amd_gpio_driver = {
 #endif
 	},
 	.probe		= amd_gpio_probe,
-	.remove_new	= amd_gpio_remove,
+	.remove		= amd_gpio_remove,
 };
 
 module_platform_driver(amd_gpio_driver);
 
+MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Ken Xue <Ken.Xue@amd.com>, Jeff Wu <Jeff.Wu@amd.com>");
 MODULE_DESCRIPTION("AMD GPIO pinctrl driver");

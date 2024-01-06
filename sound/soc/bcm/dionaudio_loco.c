@@ -29,7 +29,7 @@ static int snd_rpi_dionaudio_loco_hw_params(
 	struct snd_pcm_substream *substream, struct snd_pcm_hw_params *params)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
 
 	unsigned int sample_bits =
 		snd_pcm_format_physical_width(params_format(params));

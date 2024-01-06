@@ -15,6 +15,7 @@
 #include <linux/mfd/max8907.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/regmap.h>
 #include <linux/slab.h>
 
@@ -63,7 +64,7 @@ static const struct regmap_config max8907_regmap_gen_config = {
 	.precious_reg = max8907_gen_is_precious_reg,
 	.writeable_reg = max8907_gen_is_writeable_reg,
 	.max_register = MAX8907_REG_LDO20VOUT,
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 };
 
 static bool max8907_rtc_is_volatile_reg(struct device *dev, unsigned int reg)
@@ -108,7 +109,7 @@ static const struct regmap_config max8907_regmap_rtc_config = {
 	.precious_reg = max8907_rtc_is_precious_reg,
 	.writeable_reg = max8907_rtc_is_writeable_reg,
 	.max_register = MAX8907_REG_MPL_CNTL,
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 };
 
 static const struct regmap_irq max8907_chg_irqs[] = {
@@ -180,7 +181,8 @@ static void max8907_power_off(void)
 			MAX8907_MASK_POWER_OFF, MAX8907_MASK_POWER_OFF);
 }
 
-static int max8907_i2c_probe(struct i2c_client *i2c)
+static int max8907_i2c_probe(struct i2c_client *i2c,
+				       const struct i2c_device_id *id)
 {
 	struct max8907 *max8907;
 	int ret;
@@ -200,6 +202,8 @@ static int max8907_i2c_probe(struct i2c_client *i2c)
 	}
 
 	max8907->dev = &i2c->dev;
+	dev_set_drvdata(max8907->dev, max8907);
+
 	max8907->i2c_gen = i2c;
 	i2c_set_clientdata(i2c, max8907);
 	max8907->regmap_gen = devm_regmap_init_i2c(i2c,

@@ -543,6 +543,7 @@ static int rdacm21_initialize(struct rdacm21_device *dev)
 static int rdacm21_probe(struct i2c_client *client)
 {
 	struct rdacm21_device *dev;
+	struct fwnode_handle *ep;
 	int ret;
 
 	dev = devm_kzalloc(&client->dev, sizeof(*dev), GFP_KERNEL);
@@ -587,12 +588,24 @@ static int rdacm21_probe(struct i2c_client *client)
 	if (ret < 0)
 		goto error_free_ctrls;
 
+	ep = fwnode_graph_get_next_endpoint(dev_fwnode(&client->dev), NULL);
+	if (!ep) {
+		dev_err(&client->dev,
+			"Unable to get endpoint in node %pOF\n",
+			client->dev.of_node);
+		ret = -ENOENT;
+		goto error_free_ctrls;
+	}
+	dev->sd.fwnode = ep;
+
 	ret = v4l2_async_register_subdev(&dev->sd);
 	if (ret)
-		goto error_free_ctrls;
+		goto error_put_node;
 
 	return 0;
 
+error_put_node:
+	fwnode_handle_put(dev->sd.fwnode);
 error_free_ctrls:
 	v4l2_ctrl_handler_free(&dev->ctrls);
 error:
@@ -608,6 +621,7 @@ static void rdacm21_remove(struct i2c_client *client)
 	v4l2_async_unregister_subdev(&dev->sd);
 	v4l2_ctrl_handler_free(&dev->ctrls);
 	i2c_unregister_device(dev->isp);
+	fwnode_handle_put(dev->sd.fwnode);
 }
 
 static const struct of_device_id rdacm21_of_ids[] = {
@@ -621,7 +635,7 @@ static struct i2c_driver rdacm21_i2c_driver = {
 		.name	= "rdacm21",
 		.of_match_table = rdacm21_of_ids,
 	},
-	.probe		= rdacm21_probe,
+	.probe_new	= rdacm21_probe,
 	.remove		= rdacm21_remove,
 };
 

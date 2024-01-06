@@ -17,6 +17,7 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/of_dma.h>
 #include <linux/platform_device.h>
 #include <linux/pm.h>
@@ -230,6 +231,11 @@ struct tegra_dma {
 static inline void tdma_write(struct tegra_dma *tdma, u32 reg, u32 val)
 {
 	writel(val, tdma->base_addr + reg);
+}
+
+static inline u32 tdma_read(struct tegra_dma *tdma, u32 reg)
+{
+	return readl(tdma->base_addr + reg);
 }
 
 static inline void tdc_write(struct tegra_dma_channel *tdc,
@@ -1581,7 +1587,7 @@ err_clk_unprepare:
 	return ret;
 }
 
-static void tegra_dma_remove(struct platform_device *pdev)
+static int tegra_dma_remove(struct platform_device *pdev)
 {
 	struct tegra_dma *tdma = platform_get_drvdata(pdev);
 
@@ -1589,6 +1595,8 @@ static void tegra_dma_remove(struct platform_device *pdev)
 	dma_async_device_unregister(&tdma->dma_dev);
 	pm_runtime_disable(&pdev->dev);
 	clk_unprepare(tdma->dma_clk);
+
+	return 0;
 }
 
 static int __maybe_unused tegra_dma_runtime_suspend(struct device *dev)
@@ -1675,7 +1683,7 @@ static struct platform_driver tegra_dmac_driver = {
 		.of_match_table = tegra_dma_of_match,
 	},
 	.probe		= tegra_dma_probe,
-	.remove_new	= tegra_dma_remove,
+	.remove		= tegra_dma_remove,
 };
 
 module_platform_driver(tegra_dmac_driver);

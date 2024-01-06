@@ -257,10 +257,12 @@ static int deferred_devs_show(struct seq_file *s, void *data)
 DEFINE_SHOW_ATTRIBUTE(deferred_devs);
 
 #ifdef CONFIG_MODULES
-static int driver_deferred_probe_timeout = 10;
+int driver_deferred_probe_timeout = 10;
 #else
-static int driver_deferred_probe_timeout;
+int driver_deferred_probe_timeout;
 #endif
+
+EXPORT_SYMBOL_GPL(driver_deferred_probe_timeout);
 
 static int __init deferred_probe_timeout_setup(char *str)
 {
@@ -315,8 +317,6 @@ static void deferred_probe_timeout_work_func(struct work_struct *work)
 	list_for_each_entry(p, &deferred_probe_pending_list, deferred_probe)
 		dev_info(p->device, "deferred probe pending\n");
 	mutex_unlock(&deferred_probe_mutex);
-
-	fw_devlink_probing_done();
 }
 static DECLARE_DELAYED_WORK(deferred_probe_timeout_work, deferred_probe_timeout_work_func);
 
@@ -366,10 +366,6 @@ static int deferred_probe_initcall(void)
 		schedule_delayed_work(&deferred_probe_timeout_work,
 			driver_deferred_probe_timeout * HZ);
 	}
-
-	if (!IS_ENABLED(CONFIG_MODULES))
-		fw_devlink_probing_done();
-
 	return 0;
 }
 late_initcall(deferred_probe_initcall);
@@ -417,7 +413,10 @@ static void driver_bound(struct device *dev)
 	driver_deferred_probe_del(dev);
 	driver_deferred_probe_trigger();
 
-	bus_notify(dev, BUS_NOTIFY_BOUND_DRIVER);
+	if (dev->bus)
+		blocking_notifier_call_chain(&dev->bus->p->bus_notifier,
+					     BUS_NOTIFY_BOUND_DRIVER, dev);
+
 	kobject_uevent(&dev->kobj, KOBJ_BIND);
 }
 
@@ -436,7 +435,9 @@ static int driver_sysfs_add(struct device *dev)
 {
 	int ret;
 
-	bus_notify(dev, BUS_NOTIFY_BIND_DRIVER);
+	if (dev->bus)
+		blocking_notifier_call_chain(&dev->bus->p->bus_notifier,
+					     BUS_NOTIFY_BIND_DRIVER, dev);
 
 	ret = sysfs_create_link(&dev->driver->p->kobj, &dev->kobj,
 				kobject_name(&dev->kobj));
@@ -501,35 +502,15 @@ int device_bind_driver(struct device *dev)
 		device_links_force_bind(dev);
 		driver_bound(dev);
 	}
-	else
-		bus_notify(dev, BUS_NOTIFY_DRIVER_NOT_BOUND);
+	else if (dev->bus)
+		blocking_notifier_call_chain(&dev->bus->p->bus_notifier,
+					     BUS_NOTIFY_DRIVER_NOT_BOUND, dev);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(device_bind_driver);
 
 static atomic_t probe_count = ATOMIC_INIT(0);
 static DECLARE_WAIT_QUEUE_HEAD(probe_waitqueue);
-
-static ssize_t state_synced_store(struct device *dev,
-				  struct device_attribute *attr,
-				  const char *buf, size_t count)
-{
-	int ret = 0;
-
-	if (strcmp("1", buf))
-		return -EINVAL;
-
-	device_lock(dev);
-	if (!dev->state_synced) {
-		dev->state_synced = true;
-		dev_sync_state(dev);
-	} else {
-		ret = -EINVAL;
-	}
-	device_unlock(dev);
-
-	return ret ? ret : count;
-}
 
 static ssize_t state_synced_show(struct device *dev,
 				 struct device_attribute *attr, char *buf)
@@ -542,7 +523,7 @@ static ssize_t state_synced_show(struct device *dev,
 
 	return sysfs_emit(buf, "%u\n", val);
 }
-static DEVICE_ATTR_RW(state_synced);
+static DEVICE_ATTR_RO(state_synced);
 
 static void device_unbind_cleanup(struct device *dev)
 {
@@ -716,7 +697,9 @@ dev_groups_failed:
 probe_failed:
 	driver_sysfs_remove(dev);
 sysfs_failed:
-	bus_notify(dev, BUS_NOTIFY_DRIVER_NOT_BOUND);
+	if (dev->bus)
+		blocking_notifier_call_chain(&dev->bus->p->bus_notifier,
+					     BUS_NOTIFY_DRIVER_NOT_BOUND, dev);
 	if (dev->bus && dev->bus->dma_cleanup)
 		dev->bus->dma_cleanup(dev);
 pinctrl_bind_failed:
@@ -753,12 +736,14 @@ static int really_probe_debug(struct device *dev, struct device_driver *drv)
  *
  * Should somehow figure out how to use a semaphore, not an atomic variable...
  */
-bool __init driver_probe_done(void)
+int driver_probe_done(void)
 {
 	int local_probe_count = atomic_read(&probe_count);
 
 	pr_debug("%s: probe_count = %d\n", __func__, local_probe_count);
-	return !local_probe_count;
+	if (local_probe_count)
+		return -EBUSY;
+	return 0;
 }
 
 /**
@@ -865,7 +850,7 @@ static int __init save_async_options(char *buf)
 }
 __setup("driver_async_probe=", save_async_options);
 
-static bool driver_allows_async_probing(struct device_driver *drv)
+bool driver_allows_async_probing(struct device_driver *drv)
 {
 	switch (drv->probe_type) {
 	case PROBE_PREFER_ASYNCHRONOUS:
@@ -1265,7 +1250,10 @@ static void __device_release_driver(struct device *dev, struct device *parent)
 
 		driver_sysfs_remove(dev);
 
-		bus_notify(dev, BUS_NOTIFY_UNBIND_DRIVER);
+		if (dev->bus)
+			blocking_notifier_call_chain(&dev->bus->p->bus_notifier,
+						     BUS_NOTIFY_UNBIND_DRIVER,
+						     dev);
 
 		pm_runtime_put_sync(dev);
 
@@ -1279,8 +1267,11 @@ static void __device_release_driver(struct device *dev, struct device *parent)
 
 		klist_remove(&dev->p->knode_driver);
 		device_pm_check_callbacks(dev);
+		if (dev->bus)
+			blocking_notifier_call_chain(&dev->bus->p->bus_notifier,
+						     BUS_NOTIFY_UNBOUND_DRIVER,
+						     dev);
 
-		bus_notify(dev, BUS_NOTIFY_UNBOUND_DRIVER);
 		kobject_uevent(&dev->kobj, KOBJ_UNBIND);
 	}
 }

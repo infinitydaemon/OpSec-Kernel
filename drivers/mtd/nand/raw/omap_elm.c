@@ -422,10 +422,11 @@ static int elm_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void elm_remove(struct platform_device *pdev)
+static int elm_remove(struct platform_device *pdev)
 {
 	pm_runtime_put_sync(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -560,7 +561,7 @@ static struct platform_driver elm_driver = {
 		.pm	= &elm_pm_ops,
 	},
 	.probe	= elm_probe,
-	.remove_new = elm_remove,
+	.remove	= elm_remove,
 };
 
 module_platform_driver(elm_driver);

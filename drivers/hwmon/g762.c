@@ -39,6 +39,7 @@
 #include <linux/kernel.h>
 #include <linux/clk.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/platform_data/g762.h>
 
 #define DRVNAME "g762"
@@ -619,12 +620,7 @@ static int g762_of_clock_enable(struct i2c_client *client)
 	data = i2c_get_clientdata(client);
 	data->clk = clk;
 
-	ret = devm_add_action(&client->dev, g762_of_clock_disable, data);
-	if (ret) {
-		dev_err(&client->dev, "failed to add disable clock action\n");
-		goto clk_unprep;
-	}
-
+	devm_add_action(&client->dev, g762_of_clock_disable, data);
 	return 0;
 
  clk_unprep:
@@ -1083,7 +1079,7 @@ static struct i2c_driver g762_driver = {
 		.name = DRVNAME,
 		.of_match_table = of_match_ptr(g762_dt_match),
 	},
-	.probe = g762_probe,
+	.probe_new = g762_probe,
 	.id_table = g762_id,
 };
 

@@ -139,10 +139,6 @@ static int __ref zero_pmd_populate(pud_t *pud, unsigned long addr,
 	return 0;
 }
 
-void __weak __meminit pmd_init(void *addr)
-{
-}
-
 static int __ref zero_pud_populate(p4d_t *p4d, unsigned long addr,
 				unsigned long end)
 {
@@ -170,19 +166,14 @@ static int __ref zero_pud_populate(p4d_t *p4d, unsigned long addr,
 				if (!p)
 					return -ENOMEM;
 			} else {
-				p = early_alloc(PAGE_SIZE, NUMA_NO_NODE);
-				pmd_init(p);
-				pud_populate(&init_mm, pud, p);
+				pud_populate(&init_mm, pud,
+					early_alloc(PAGE_SIZE, NUMA_NO_NODE));
 			}
 		}
 		zero_pmd_populate(pud, addr, next);
 	} while (pud++, addr = next, addr != end);
 
 	return 0;
-}
-
-void __weak __meminit pud_init(void *addr)
-{
 }
 
 static int __ref zero_p4d_populate(pgd_t *pgd, unsigned long addr,
@@ -216,9 +207,8 @@ static int __ref zero_p4d_populate(pgd_t *pgd, unsigned long addr,
 				if (!p)
 					return -ENOMEM;
 			} else {
-				p = early_alloc(PAGE_SIZE, NUMA_NO_NODE);
-				pud_init(p);
-				p4d_populate(&init_mm, p4d, p);
+				p4d_populate(&init_mm, p4d,
+					early_alloc(PAGE_SIZE, NUMA_NO_NODE));
 			}
 		}
 		zero_pud_populate(p4d, addr, next);
@@ -296,7 +286,7 @@ static void kasan_free_pte(pte_t *pte_start, pmd_t *pmd)
 
 	for (i = 0; i < PTRS_PER_PTE; i++) {
 		pte = pte_start + i;
-		if (!pte_none(ptep_get(pte)))
+		if (!pte_none(*pte))
 			return;
 	}
 
@@ -353,19 +343,16 @@ static void kasan_remove_pte_table(pte_t *pte, unsigned long addr,
 				unsigned long end)
 {
 	unsigned long next;
-	pte_t ptent;
 
 	for (; addr < end; addr = next, pte++) {
 		next = (addr + PAGE_SIZE) & PAGE_MASK;
 		if (next > end)
 			next = end;
 
-		ptent = ptep_get(pte);
-
-		if (!pte_present(ptent))
+		if (!pte_present(*pte))
 			continue;
 
-		if (WARN_ON(!kasan_early_shadow_page_entry(ptent)))
+		if (WARN_ON(!kasan_early_shadow_page_entry(*pte)))
 			continue;
 		pte_clear(&init_mm, addr, pte);
 	}

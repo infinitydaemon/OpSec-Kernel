@@ -82,11 +82,18 @@ extern nodemask_t cpuset_mems_allowed(struct task_struct *p);
 void cpuset_init_current_mems_allowed(void);
 int cpuset_nodemask_valid_mems_allowed(nodemask_t *nodemask);
 
-extern bool cpuset_node_allowed(int node, gfp_t gfp_mask);
+extern bool __cpuset_node_allowed(int node, gfp_t gfp_mask);
+
+static inline bool cpuset_node_allowed(int node, gfp_t gfp_mask)
+{
+	if (cpusets_enabled())
+		return __cpuset_node_allowed(node, gfp_mask);
+	return true;
+}
 
 static inline bool __cpuset_zone_allowed(struct zone *z, gfp_t gfp_mask)
 {
-	return cpuset_node_allowed(zone_to_nid(z), gfp_mask);
+	return __cpuset_node_allowed(zone_to_nid(z), gfp_mask);
 }
 
 static inline bool cpuset_zone_allowed(struct zone *z, gfp_t gfp_mask)
@@ -218,6 +225,11 @@ static inline void cpuset_init_current_mems_allowed(void) {}
 static inline int cpuset_nodemask_valid_mems_allowed(nodemask_t *nodemask)
 {
 	return 1;
+}
+
+static inline bool cpuset_node_allowed(int node, gfp_t gfp_mask)
+{
+	return true;
 }
 
 static inline bool __cpuset_zone_allowed(struct zone *z, gfp_t gfp_mask)

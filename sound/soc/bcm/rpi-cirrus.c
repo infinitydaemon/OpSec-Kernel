@@ -188,7 +188,7 @@ static int rpi_cirrus_spdif_playback_put(struct snd_kcontrol *kcontrol,
 {
 	struct snd_soc_card *card = snd_kcontrol_chip(kcontrol);
 	struct snd_soc_component *wm8804_component =
-		snd_soc_rtd_to_codec(get_wm8804_runtime(card), 0)->component;
+		asoc_rtd_to_codec(get_wm8804_runtime(card), 0)->component;
 	struct rpi_cirrus_priv *priv = snd_soc_card_get_drvdata(card);
 	unsigned char *stat = priv->iec958_status;
 	unsigned char *ctrl_stat = ucontrol->value.iec958.status;
@@ -224,7 +224,7 @@ static int rpi_cirrus_spdif_capture_get(struct snd_kcontrol *kcontrol,
 {
 	struct snd_soc_card *card = snd_kcontrol_chip(kcontrol);
 	struct snd_soc_component *wm8804_component =
-		snd_soc_rtd_to_codec(get_wm8804_runtime(card), 0)->component;
+		asoc_rtd_to_codec(get_wm8804_runtime(card), 0)->component;
 	unsigned int val, mask;
 	int i;
 
@@ -256,7 +256,7 @@ static int rpi_cirrus_spdif_status_flag_get(struct snd_kcontrol *kcontrol,
 {
 	struct snd_soc_card *card = snd_kcontrol_chip(kcontrol);
 	struct snd_soc_component *wm8804_component =
-		snd_soc_rtd_to_codec(get_wm8804_runtime(card), 0)->component;
+		asoc_rtd_to_codec(get_wm8804_runtime(card), 0)->component;
 
 	unsigned int bit = kcontrol->private_value & 0xff;
 	unsigned int reg = (kcontrol->private_value >> 8) & 0xff;
@@ -301,7 +301,7 @@ static int rpi_cirrus_recovered_frequency_get(struct snd_kcontrol *kcontrol,
 {
 	struct snd_soc_card *card = snd_kcontrol_chip(kcontrol);
 	struct snd_soc_component *wm8804_component =
-		snd_soc_rtd_to_codec(get_wm8804_runtime(card), 0)->component;
+		asoc_rtd_to_codec(get_wm8804_runtime(card), 0)->component;
 	unsigned int val;
 
 	val = snd_soc_component_read(wm8804_component, WM8804_SPDSTAT);
@@ -500,7 +500,7 @@ static int rpi_cirrus_spdif_rx_enable_event(struct snd_soc_dapm_widget *w,
 	struct snd_soc_card *card = w->dapm->card;
 	struct rpi_cirrus_priv *priv = snd_soc_card_get_drvdata(card);
 	struct snd_soc_component *wm5102_component =
-		snd_soc_rtd_to_codec(get_wm5102_runtime(card), 0)->component;
+		asoc_rtd_to_codec(get_wm5102_runtime(card), 0)->component;
 
 	unsigned int clk_freq, aif2_freq;
 	int ret = 0;
@@ -558,12 +558,12 @@ static int rpi_cirrus_set_bias_level(struct snd_soc_card *card,
 	struct rpi_cirrus_priv *priv = snd_soc_card_get_drvdata(card);
 	struct snd_soc_pcm_runtime *wm5102_runtime = get_wm5102_runtime(card);
 	struct snd_soc_component *wm5102_component =
-		snd_soc_rtd_to_codec(wm5102_runtime, 0)->component;
+		asoc_rtd_to_codec(wm5102_runtime, 0)->component;
 
 	int ret = 0;
 	unsigned int clk_freq;
 
-	if (dapm->dev != snd_soc_rtd_to_codec(wm5102_runtime, 0)->dev)
+	if (dapm->dev != asoc_rtd_to_codec(wm5102_runtime, 0)->dev)
 		return 0;
 
 	switch (level) {
@@ -604,9 +604,9 @@ static int rpi_cirrus_set_bias_level_post(struct snd_soc_card *card,
 	struct rpi_cirrus_priv *priv = snd_soc_card_get_drvdata(card);
 	struct snd_soc_pcm_runtime *wm5102_runtime = get_wm5102_runtime(card);
 	struct snd_soc_component *wm5102_component =
-		snd_soc_rtd_to_codec(wm5102_runtime, 0)->component;
+		asoc_rtd_to_codec(wm5102_runtime, 0)->component;
 
-	if (dapm->dev != snd_soc_rtd_to_codec(wm5102_runtime, 0)->dev)
+	if (dapm->dev != asoc_rtd_to_codec(wm5102_runtime, 0)->dev)
 		return 0;
 
 	switch (level) {
@@ -698,9 +698,9 @@ static int rpi_cirrus_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_card *card = rtd->card;
 	struct rpi_cirrus_priv *priv = snd_soc_card_get_drvdata(card);
-	struct snd_soc_dai *bcm_i2s_dai = snd_soc_rtd_to_cpu(rtd, 0);
-	struct snd_soc_component *wm5102_component = snd_soc_rtd_to_codec(rtd, 0)->component;
-	struct snd_soc_dai *wm8804_dai = snd_soc_rtd_to_codec(get_wm8804_runtime(card), 0);
+	struct snd_soc_dai *bcm_i2s_dai = asoc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_component *wm5102_component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_dai *wm8804_dai = asoc_rtd_to_codec(get_wm8804_runtime(card), 0);
 
 	int ret;
 
@@ -719,7 +719,7 @@ static int rpi_cirrus_hw_params(struct snd_pcm_substream *substream,
 		goto out;
 	}
 
-	ret = snd_soc_dai_set_tdm_slot(snd_soc_rtd_to_codec(rtd, 0), 0x03, 0x03, 2, width);
+	ret = snd_soc_dai_set_tdm_slot(asoc_rtd_to_codec(rtd, 0), 0x03, 0x03, 2, width);
 	if (ret) {
 		dev_err(card->dev, "set_tdm_slot failed: %d\n", ret);
 		goto out;
@@ -777,7 +777,7 @@ static int rpi_cirrus_hw_free(struct snd_pcm_substream *substream)
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_card *card = rtd->card;
 	struct rpi_cirrus_priv *priv = snd_soc_card_get_drvdata(card);
-	struct snd_soc_component *wm5102_component = snd_soc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *wm5102_component = asoc_rtd_to_codec(rtd, 0)->component;
 	int ret;
 	unsigned int old_params_set = priv->params_set;
 
@@ -803,7 +803,7 @@ static int rpi_cirrus_hw_free(struct snd_pcm_substream *substream)
 
 static int rpi_cirrus_init_wm5102(struct snd_soc_pcm_runtime *rtd)
 {
-	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
 	int ret;
 
 	/* no 32kHz input, derive it from sysclk if needed  */
@@ -828,7 +828,7 @@ static int rpi_cirrus_init_wm5102(struct snd_soc_pcm_runtime *rtd)
 
 static int rpi_cirrus_init_wm8804(struct snd_soc_pcm_runtime *rtd)
 {
-	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
+	struct snd_soc_dai *codec_dai = asoc_rtd_to_codec(rtd, 0);
 	struct snd_soc_component *component = codec_dai->component;
 	struct snd_soc_card *card = rtd->card;
 	struct rpi_cirrus_priv *priv = snd_soc_card_get_drvdata(card);
@@ -904,7 +904,7 @@ static struct snd_soc_dai_link rpi_cirrus_dai[] = {
 				  | SND_SOC_DAIFMT_NB_NF
 				  | SND_SOC_DAIFMT_CBM_CFM,
 		.ignore_suspend = 1,
-		.c2c_params	= &rpi_cirrus_dai_link2_params,
+		.params		= &rpi_cirrus_dai_link2_params,
 		.init		= rpi_cirrus_init_wm8804,
 		SND_SOC_DAILINK_REG(wm8804),
 	},
@@ -925,7 +925,7 @@ static int rpi_cirrus_late_probe(struct snd_soc_card *card)
 		priv->iec958_status[3]);
 
 	ret = snd_soc_dai_set_sysclk(
-		snd_soc_rtd_to_codec(wm5102_runtime, 0), ARIZONA_CLK_SYSCLK, 0, 0);
+		asoc_rtd_to_codec(wm5102_runtime, 0), ARIZONA_CLK_SYSCLK, 0, 0);
 	if (ret) {
 		dev_err(card->dev,
 			"Failed to set WM5102 codec dai clk domain: %d\n", ret);
@@ -933,7 +933,7 @@ static int rpi_cirrus_late_probe(struct snd_soc_card *card)
 	}
 
 	ret = snd_soc_dai_set_sysclk(
-		snd_soc_rtd_to_cpu(wm8804_runtime, 0), ARIZONA_CLK_SYSCLK, 0, 0);
+		asoc_rtd_to_cpu(wm8804_runtime, 0), ARIZONA_CLK_SYSCLK, 0, 0);
 	if (ret)
 		dev_err(card->dev,
 			"Failed to set WM8804 codec dai clk domain: %d\n", ret);

@@ -5,8 +5,9 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/gpio/consumer.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/i2c.h>
+#include <linux/of_gpio.h>
 #include <linux/clk.h>
 #include <sound/soc.h>
 #include <sound/pcm_params.h>
@@ -290,7 +291,7 @@ static int imx_aif_hw_params(struct snd_pcm_substream *substream,
 			     struct snd_pcm_hw_params *params)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
 	struct snd_soc_card *card = rtd->card;
 	struct imx_card_data *data = snd_soc_card_get_drvdata(card);
 	struct dai_link_data *link_data = &data->link_data[rtd->num];
@@ -550,10 +551,10 @@ static int imx_card_parse_of(struct imx_card_data *data)
 			goto err;
 		}
 
-		ret = snd_soc_of_get_dlc(cpu, &args, link->cpus, 0);
+		ret = of_parse_phandle_with_args(cpu, "sound-dai",
+						 "#sound-dai-cells", 0, &args);
 		if (ret) {
-			dev_err_probe(card->dev, ret,
-				      "%s: error getting cpu dai info\n", link->name);
+			dev_err(card->dev, "%s: error getting cpu phandle\n", link->name);
 			goto err;
 		}
 
@@ -581,8 +582,16 @@ static int imx_card_parse_of(struct imx_card_data *data)
 			}
 		}
 
+		link->cpus->of_node = args.np;
 		link->platforms->of_node = link->cpus->of_node;
 		link->id = args.args[0];
+
+		ret = snd_soc_of_get_dai_name(cpu, &link->cpus->dai_name);
+		if (ret) {
+			dev_err_probe(card->dev, ret,
+				      "%s: error getting cpu dai name\n", link->name);
+			goto err;
+		}
 
 		codec = of_get_child_by_name(np, "codec");
 		if (codec) {
@@ -606,8 +615,17 @@ static int imx_card_parse_of(struct imx_card_data *data)
 				plat_data->type = CODEC_AK5552;
 
 		} else {
-			link->codecs	 = &snd_soc_dummy_dlc;
+			dlc = devm_kzalloc(dev, sizeof(*dlc), GFP_KERNEL);
+			if (!dlc) {
+				ret = -ENOMEM;
+				goto err;
+			}
+
+			link->codecs	 = dlc;
 			link->num_codecs = 1;
+
+			link->codecs->dai_name = "snd-soc-dummy-dai";
+			link->codecs->name = "snd-soc-dummy";
 		}
 
 		if (!strncmp(link->name, "HiFi-ASRC-FE", 12)) {
@@ -654,7 +672,7 @@ static int imx_card_parse_of(struct imx_card_data *data)
 			snd_soc_dai_link_set_capabilities(link);
 
 		/* Get dai fmt */
-		ret = simple_util_parse_daifmt(dev, np, codec,
+		ret = asoc_simple_parse_daifmt(dev, np, codec,
 					       NULL, &link->dai_fmt);
 		if (ret)
 			link->dai_fmt = SND_SOC_DAIFMT_NB_NF |

@@ -43,9 +43,10 @@
 #include <linux/io.h>
 #include <linux/io-64-nonatomic-lo-hi.h>
 #include <linux/interrupt.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
+#include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/uaccess.h>
 #include <linux/watchdog.h>
@@ -360,7 +361,7 @@ static int __maybe_unused sbsa_gwdt_suspend(struct device *dev)
 {
 	struct sbsa_gwdt *gwdt = dev_get_drvdata(dev);
 
-	if (watchdog_hw_running(&gwdt->wdd))
+	if (watchdog_active(&gwdt->wdd))
 		sbsa_gwdt_stop(&gwdt->wdd);
 
 	return 0;
@@ -371,7 +372,7 @@ static int __maybe_unused sbsa_gwdt_resume(struct device *dev)
 {
 	struct sbsa_gwdt *gwdt = dev_get_drvdata(dev);
 
-	if (watchdog_hw_running(&gwdt->wdd))
+	if (watchdog_active(&gwdt->wdd))
 		sbsa_gwdt_start(&gwdt->wdd);
 
 	return 0;

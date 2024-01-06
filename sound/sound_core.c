@@ -23,22 +23,19 @@ static inline int init_oss_soundcore(void)	{ return 0; }
 static inline void cleanup_oss_soundcore(void)	{ }
 #endif
 
+struct class *sound_class;
+EXPORT_SYMBOL(sound_class);
+
 MODULE_DESCRIPTION("Core sound module");
 MODULE_AUTHOR("Alan Cox");
 MODULE_LICENSE("GPL");
 
-static char *sound_devnode(const struct device *dev, umode_t *mode)
+static char *sound_devnode(struct device *dev, umode_t *mode)
 {
 	if (MAJOR(dev->devt) == SOUND_MAJOR)
 		return NULL;
 	return kasprintf(GFP_KERNEL, "snd/%s", dev_name(dev));
 }
-
-const struct class sound_class = {
-	.name = "sound",
-	.devnode = sound_devnode,
-};
-EXPORT_SYMBOL(sound_class);
 
 static int __init init_soundcore(void)
 {
@@ -48,11 +45,13 @@ static int __init init_soundcore(void)
 	if (rc)
 		return rc;
 
-	rc = class_register(&sound_class);
-	if (rc) {
+	sound_class = class_create(THIS_MODULE, "sound");
+	if (IS_ERR(sound_class)) {
 		cleanup_oss_soundcore();
-		return rc;
+		return PTR_ERR(sound_class);
 	}
+
+	sound_class->devnode = sound_devnode;
 
 	return 0;
 }
@@ -60,7 +59,7 @@ static int __init init_soundcore(void)
 static void __exit cleanup_soundcore(void)
 {
 	cleanup_oss_soundcore();
-	class_unregister(&sound_class);
+	class_destroy(sound_class);
 }
 
 subsys_initcall(init_soundcore);
@@ -277,7 +276,7 @@ retry:
 		}
 	}
 
-	device_create(&sound_class, dev, MKDEV(SOUND_MAJOR, s->unit_minor),
+	device_create(sound_class, dev, MKDEV(SOUND_MAJOR, s->unit_minor),
 		      NULL, "%s", s->name+6);
 	return s->unit_minor;
 
@@ -303,7 +302,7 @@ static void sound_remove_unit(struct sound_unit **list, int unit)
 		if (!preclaim_oss)
 			__unregister_chrdev(SOUND_MAJOR, p->unit_minor, 1,
 					    p->name);
-		device_destroy(&sound_class, MKDEV(SOUND_MAJOR, p->unit_minor));
+		device_destroy(sound_class, MKDEV(SOUND_MAJOR, p->unit_minor));
 		kfree(p);
 	}
 }

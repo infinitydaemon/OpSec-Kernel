@@ -15,7 +15,8 @@
 #include <linux/mfd/core.h>
 #include <linux/slab.h>
 #include <linux/err.h>
-#include <linux/mod_devicetable.h>
+#include <linux/of.h>
+#include <linux/of_device.h>
 
 #include <linux/mfd/wm831x/core.h>
 #include <linux/mfd/wm831x/pdata.h>
@@ -1429,7 +1430,7 @@ struct regmap_config wm831x_regmap_config = {
 	.reg_bits = 16,
 	.val_bits = 16,
 
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 
 	.max_register = WM831X_DBE_CHECK_DATA,
 	.readable_reg = wm831x_reg_readable,

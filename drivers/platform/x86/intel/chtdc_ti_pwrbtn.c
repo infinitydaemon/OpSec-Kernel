@@ -67,10 +67,11 @@ static int chtdc_ti_pwrbtn_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void chtdc_ti_pwrbtn_remove(struct platform_device *pdev)
+static int chtdc_ti_pwrbtn_remove(struct platform_device *pdev)
 {
 	dev_pm_clear_wake_irq(&pdev->dev);
 	device_init_wakeup(&pdev->dev, false);
+	return 0;
 }
 
 static const struct platform_device_id chtdc_ti_pwrbtn_id_table[] = {
@@ -84,7 +85,7 @@ static struct platform_driver chtdc_ti_pwrbtn_driver = {
 		.name	= KBUILD_MODNAME,
 	},
 	.probe		= chtdc_ti_pwrbtn_probe,
-	.remove_new	= chtdc_ti_pwrbtn_remove,
+	.remove		= chtdc_ti_pwrbtn_remove,
 	.id_table	= chtdc_ti_pwrbtn_id_table,
 };
 module_platform_driver(chtdc_ti_pwrbtn_driver);

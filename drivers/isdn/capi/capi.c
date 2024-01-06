@@ -1077,13 +1077,13 @@ static void capinc_tty_close(struct tty_struct *tty, struct file *filp)
 	tty_port_close(&mp->port, tty, filp);
 }
 
-static ssize_t capinc_tty_write(struct tty_struct *tty, const u8 *buf,
-				size_t count)
+static int capinc_tty_write(struct tty_struct *tty,
+			    const unsigned char *buf, int count)
 {
 	struct capiminor *mp = tty->driver_data;
 	struct sk_buff *skb;
 
-	pr_debug("capinc_tty_write(count=%zu)\n", count);
+	pr_debug("capinc_tty_write(count=%d)\n", count);
 
 	spin_lock_bh(&mp->outlock);
 	skb = mp->outskb;
@@ -1112,7 +1112,7 @@ static ssize_t capinc_tty_write(struct tty_struct *tty, const u8 *buf,
 	return count;
 }
 
-static int capinc_tty_put_char(struct tty_struct *tty, u8 ch)
+static int capinc_tty_put_char(struct tty_struct *tty, unsigned char ch)
 {
 	struct capiminor *mp = tty->driver_data;
 	bool invoke_send = false;
@@ -1393,7 +1393,7 @@ static int __init capi_init(void)
 		kcapi_exit();
 		return major_ret;
 	}
-	capi_class = class_create("capi");
+	capi_class = class_create(THIS_MODULE, "capi");
 	if (IS_ERR(capi_class)) {
 		unregister_chrdev(capi_major, "capi20");
 		kcapi_exit();

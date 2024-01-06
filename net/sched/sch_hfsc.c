@@ -116,6 +116,7 @@ struct hfsc_class {
 	struct net_rate_estimator __rcu *rate_est;
 	struct tcf_proto __rcu *filter_list; /* filter list */
 	struct tcf_block *block;
+	unsigned int	filter_cnt;	/* filter count */
 	unsigned int	level;		/* class level in hierarchy */
 
 	struct hfsc_sched *sched;	/* scheduler data */
@@ -1107,11 +1108,8 @@ hfsc_delete_class(struct Qdisc *sch, unsigned long arg,
 	struct hfsc_sched *q = qdisc_priv(sch);
 	struct hfsc_class *cl = (struct hfsc_class *)arg;
 
-	if (cl->level > 0 || qdisc_class_in_use(&cl->cl_common) ||
-	    cl == &q->root) {
-		NL_SET_ERR_MSG(extack, "HFSC class in use");
+	if (cl->level > 0 || cl->filter_cnt > 0 || cl == &q->root)
 		return -EBUSY;
-	}
 
 	sch_tree_lock(sch);
 
@@ -1239,7 +1237,7 @@ hfsc_bind_tcf(struct Qdisc *sch, unsigned long parent, u32 classid)
 	if (cl != NULL) {
 		if (p != NULL && p->level <= cl->level)
 			return 0;
-		qdisc_class_get(&cl->cl_common);
+		cl->filter_cnt++;
 	}
 
 	return (unsigned long)cl;
@@ -1250,7 +1248,7 @@ hfsc_unbind_tcf(struct Qdisc *sch, unsigned long arg)
 {
 	struct hfsc_class *cl = (struct hfsc_class *)arg;
 
-	qdisc_class_put(&cl->cl_common);
+	cl->filter_cnt--;
 }
 
 static struct tcf_block *hfsc_tcf_block(struct Qdisc *sch, unsigned long arg,
@@ -1693,6 +1691,5 @@ hfsc_cleanup(void)
 }
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Hierarchical Fair Service Curve scheduler");
 module_init(hfsc_init);
 module_exit(hfsc_cleanup);

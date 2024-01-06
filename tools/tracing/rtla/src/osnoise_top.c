@@ -3,7 +3,6 @@
  * Copyright (C) 2021 Red Hat Inc, Daniel Bristot de Oliveira <bristot@kernel.org>
  */
 
-#define _GNU_SOURCE
 #include <getopt.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,24 +10,17 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <time.h>
-#include <sched.h>
 
 #include "osnoise.h"
 #include "utils.h"
-
-enum osnoise_mode {
-	MODE_OSNOISE = 0,
-	MODE_HWNOISE
-};
 
 /*
  * osnoise top parameters
  */
 struct osnoise_top_params {
 	char			*cpus;
-	cpu_set_t		monitored_cpus;
+	char			*monitored_cpus;
 	char			*trace_output;
-	char			*cgroup_name;
 	unsigned long long	runtime;
 	unsigned long long	period;
 	long long		threshold;
@@ -38,12 +30,8 @@ struct osnoise_top_params {
 	int			duration;
 	int			quiet;
 	int			set_sched;
-	int			cgroup;
-	int			hk_cpus;
-	cpu_set_t		hk_cpu_set;
 	struct sched_attr	sched_param;
 	struct trace_events	*events;
-	enum osnoise_mode	mode;
 };
 
 struct osnoise_top_cpu {
@@ -155,23 +143,15 @@ osnoise_top_handler(struct trace_seq *s, struct tep_record *record,
  */
 static void osnoise_top_header(struct osnoise_tool *top)
 {
-	struct osnoise_top_params *params = top->params;
 	struct trace_seq *s = top->trace.seq;
 	char duration[26];
 
 	get_duration(top->start_time, duration, sizeof(duration));
 
 	trace_seq_printf(s, "\033[2;37;40m");
-	trace_seq_printf(s, "                                          ");
-
-	if (params->mode == MODE_OSNOISE) {
-		trace_seq_printf(s, "Operating System Noise");
-		trace_seq_printf(s, "                                       ");
-	} else if (params->mode == MODE_HWNOISE) {
-		trace_seq_printf(s, "Hardware-related Noise");
-	}
-
-	trace_seq_printf(s, "                                   ");
+	trace_seq_printf(s, "                                          Operating System Noise");
+	trace_seq_printf(s, "                                     ");
+	trace_seq_printf(s, "                                     ");
 	trace_seq_printf(s, "\033[0;0;0m");
 	trace_seq_printf(s, "\n");
 
@@ -182,14 +162,7 @@ static void osnoise_top_header(struct osnoise_tool *top)
 	trace_seq_printf(s, "       Noise ");
 	trace_seq_printf(s, " %% CPU Aval ");
 	trace_seq_printf(s, "  Max Noise   Max Single ");
-	trace_seq_printf(s, "         HW          NMI");
-
-	if (params->mode == MODE_HWNOISE)
-		goto eol;
-
-	trace_seq_printf(s, "          IRQ      Softirq       Thread");
-
-eol:
+	trace_seq_printf(s, "         HW          NMI          IRQ      Softirq       Thread");
 	trace_seq_printf(s, "\033[0;0;0m");
 	trace_seq_printf(s, "\n");
 }
@@ -208,7 +181,6 @@ static void clear_terminal(struct trace_seq *seq)
  */
 static void osnoise_top_print(struct osnoise_tool *tool, int cpu)
 {
-	struct osnoise_top_params *params = tool->params;
 	struct trace_seq *s = tool->trace.seq;
 	struct osnoise_top_cpu *cpu_data;
 	struct osnoise_top_data *data;
@@ -233,12 +205,6 @@ static void osnoise_top_print(struct osnoise_tool *tool, int cpu)
 
 	trace_seq_printf(s, "%12llu ", cpu_data->hw_count);
 	trace_seq_printf(s, "%12llu ", cpu_data->nmi_count);
-
-	if (params->mode == MODE_HWNOISE) {
-		trace_seq_printf(s, "\n");
-		return;
-	}
-
 	trace_seq_printf(s, "%12llu ", cpu_data->irq_count);
 	trace_seq_printf(s, "%12llu ", cpu_data->softirq_count);
 	trace_seq_printf(s, "%12llu\n", cpu_data->thread_count);
@@ -263,7 +229,7 @@ osnoise_print_stats(struct osnoise_top_params *params, struct osnoise_tool *top)
 	osnoise_top_header(top);
 
 	for (i = 0; i < nr_cpus; i++) {
-		if (params->cpus && !CPU_ISSET(i, &params->monitored_cpus))
+		if (params->cpus && !params->monitored_cpus[i])
 			continue;
 		osnoise_top_print(top, i);
 	}
@@ -275,14 +241,14 @@ osnoise_print_stats(struct osnoise_top_params *params, struct osnoise_tool *top)
 /*
  * osnoise_top_usage - prints osnoise top usage message
  */
-static void osnoise_top_usage(struct osnoise_top_params *params, char *usage)
+void osnoise_top_usage(char *usage)
 {
 	int i;
 
 	static const char * const msg[] = {
-		" [-h] [-q] [-D] [-d s] [-a us] [-p us] [-r us] [-s us] [-S us] \\",
+		"  usage: rtla osnoise [top] [-h] [-q] [-D] [-d s] [-a us] [-p us] [-r us] [-s us] [-S us] \\",
 		"	  [-T us] [-t[=file]] [-e sys[:event]] [--filter <filter>] [--trigger <trigger>] \\",
-		"	  [-c cpu-list] [-H cpu-list] [-P priority] [-C[=cgroup_name]]",
+		"	  [-c cpu-list] [-P priority]",
 		"",
 		"	  -h/--help: print this menu",
 		"	  -a/--auto: set automatic trace mode, stopping the session if argument in us sample is hit",
@@ -292,8 +258,6 @@ static void osnoise_top_usage(struct osnoise_top_params *params, char *usage)
 		"	  -S/--stop-total us: stop trace if the total sample is higher than the argument in us",
 		"	  -T/--threshold us: the minimum delta to be considered a noise",
 		"	  -c/--cpus cpu-list: list of cpus to run osnoise threads",
-		"	  -H/--house-keeping cpus: run rtla control threads only on the given cpus",
-		"	  -C/--cgroup[=cgroup_name]: set cgroup, if no cgroup_name is passed, the rtla's cgroup will be inherited",
 		"	  -d/--duration time[s|m|h|d]: duration of the session",
 		"	  -D/--debug: print debug info",
 		"	  -t/--trace[=file]: save the stopped trace to [file|osnoise_trace.txt]",
@@ -313,21 +277,8 @@ static void osnoise_top_usage(struct osnoise_top_params *params, char *usage)
 	if (usage)
 		fprintf(stderr, "%s\n", usage);
 
-	if (params->mode == MODE_OSNOISE) {
-		fprintf(stderr,
-			"rtla osnoise top: a per-cpu summary of the OS noise (version %s)\n",
+	fprintf(stderr, "rtla osnoise top: a per-cpu summary of the OS noise (version %s)\n",
 			VERSION);
-
-		fprintf(stderr, "  usage: rtla osnoise [top]");
-	}
-
-	if (params->mode == MODE_HWNOISE) {
-		fprintf(stderr,
-			"rtla hwnoise: a summary of hardware-related noise (version %s)\n",
-			VERSION);
-
-		fprintf(stderr, "  usage: rtla hwnoise");
-	}
 
 	for (i = 0; msg[i]; i++)
 		fprintf(stderr, "%s\n", msg[i]);
@@ -348,24 +299,13 @@ struct osnoise_top_params *osnoise_top_parse_args(int argc, char **argv)
 	if (!params)
 		exit(1);
 
-	if (strcmp(argv[0], "hwnoise") == 0) {
-		params->mode = MODE_HWNOISE;
-		/*
-		 * Reduce CPU usage for 75% to avoid killing the system.
-		 */
-		params->runtime = 750000;
-		params->period = 1000000;
-	}
-
 	while (1) {
 		static struct option long_options[] = {
 			{"auto",		required_argument,	0, 'a'},
 			{"cpus",		required_argument,	0, 'c'},
-			{"cgroup",		optional_argument,	0, 'C'},
 			{"debug",		no_argument,		0, 'D'},
 			{"duration",		required_argument,	0, 'd'},
 			{"event",		required_argument,	0, 'e'},
-			{"house-keeping",	required_argument,	0, 'H'},
 			{"help",		no_argument,		0, 'h'},
 			{"period",		required_argument,	0, 'p'},
 			{"priority",		required_argument,	0, 'P'},
@@ -383,7 +323,7 @@ struct osnoise_top_params *osnoise_top_parse_args(int argc, char **argv)
 		/* getopt_long stores the option index here. */
 		int option_index = 0;
 
-		c = getopt_long(argc, argv, "a:c:C::d:De:hH:p:P:qr:s:S:t::T:0:1:",
+		c = getopt_long(argc, argv, "a:c:d:De:hp:P:qr:s:S:t::T:0:1:",
 				 long_options, &option_index);
 
 		/* Detect the end of the options. */
@@ -403,20 +343,10 @@ struct osnoise_top_params *osnoise_top_parse_args(int argc, char **argv)
 
 			break;
 		case 'c':
-			retval = parse_cpu_set(optarg, &params->monitored_cpus);
+			retval = parse_cpu_list(optarg, &params->monitored_cpus);
 			if (retval)
-				osnoise_top_usage(params, "\nInvalid -c cpu list\n");
+				osnoise_top_usage("\nInvalid -c cpu list\n");
 			params->cpus = optarg;
-			break;
-		case 'C':
-			params->cgroup = 1;
-			if (!optarg) {
-				/* will inherit this cgroup */
-				params->cgroup_name = NULL;
-			} else if (*optarg == '=') {
-				/* skip the = */
-				params->cgroup_name = ++optarg;
-			}
 			break;
 		case 'D':
 			config_debug = 1;
@@ -424,7 +354,7 @@ struct osnoise_top_params *osnoise_top_parse_args(int argc, char **argv)
 		case 'd':
 			params->duration = parse_seconds_duration(optarg);
 			if (!params->duration)
-				osnoise_top_usage(params, "Invalid -D duration\n");
+				osnoise_top_usage("Invalid -D duration\n");
 			break;
 		case 'e':
 			tevent = trace_event_alloc(optarg);
@@ -440,25 +370,17 @@ struct osnoise_top_params *osnoise_top_parse_args(int argc, char **argv)
 			break;
 		case 'h':
 		case '?':
-			osnoise_top_usage(params, NULL);
-			break;
-		case 'H':
-			params->hk_cpus = 1;
-			retval = parse_cpu_set(optarg, &params->hk_cpu_set);
-			if (retval) {
-				err_msg("Error parsing house keeping CPUs\n");
-				exit(EXIT_FAILURE);
-			}
+			osnoise_top_usage(NULL);
 			break;
 		case 'p':
 			params->period = get_llong_from_str(optarg);
 			if (params->period > 10000000)
-				osnoise_top_usage(params, "Period longer than 10 s\n");
+				osnoise_top_usage("Period longer than 10 s\n");
 			break;
 		case 'P':
 			retval = parse_prio(optarg, &params->sched_param);
 			if (retval == -1)
-				osnoise_top_usage(params, "Invalid -P priority");
+				osnoise_top_usage("Invalid -P priority");
 			params->set_sched = 1;
 			break;
 		case 'q':
@@ -467,7 +389,7 @@ struct osnoise_top_params *osnoise_top_parse_args(int argc, char **argv)
 		case 'r':
 			params->runtime = get_llong_from_str(optarg);
 			if (params->runtime < 100)
-				osnoise_top_usage(params, "Runtime shorter than 100 us\n");
+				osnoise_top_usage("Runtime shorter than 100 us\n");
 			break;
 		case 's':
 			params->stop_us = get_llong_from_str(optarg);
@@ -493,7 +415,7 @@ struct osnoise_top_params *osnoise_top_parse_args(int argc, char **argv)
 					exit(EXIT_FAILURE);
 				}
 			} else {
-				osnoise_top_usage(params, "--trigger requires a previous -e\n");
+				osnoise_top_usage("--trigger requires a previous -e\n");
 			}
 			break;
 		case '1': /* filter */
@@ -504,11 +426,11 @@ struct osnoise_top_params *osnoise_top_parse_args(int argc, char **argv)
 					exit(EXIT_FAILURE);
 				}
 			} else {
-				osnoise_top_usage(params, "--filter requires a previous -e\n");
+				osnoise_top_usage("--filter requires a previous -e\n");
 			}
 			break;
 		default:
-			osnoise_top_usage(params, "Invalid option");
+			osnoise_top_usage("Invalid option");
 		}
 	}
 
@@ -571,32 +493,6 @@ osnoise_top_apply_config(struct osnoise_tool *tool, struct osnoise_top_params *p
 			err_msg("Failed to set tracing_thresh\n");
 			goto out_err;
 		}
-	}
-
-	if (params->mode == MODE_HWNOISE) {
-		retval = osnoise_set_irq_disable(tool->context, 1);
-		if (retval) {
-			err_msg("Failed to set OSNOISE_IRQ_DISABLE option\n");
-			goto out_err;
-		}
-	}
-
-	if (params->hk_cpus) {
-		retval = sched_setaffinity(getpid(), sizeof(params->hk_cpu_set),
-					   &params->hk_cpu_set);
-		if (retval == -1) {
-			err_msg("Failed to set rtla to the house keeping CPUs\n");
-			goto out_err;
-		}
-	} else if (params->cpus) {
-		/*
-		 * Even if the user do not set a house-keeping CPU, try to
-		 * move rtla to a CPU set different to the one where the user
-		 * set the workload to run.
-		 *
-		 * No need to check results as this is an automatic attempt.
-		 */
-		auto_house_keeping(&params->monitored_cpus);
 	}
 
 	return 0;
@@ -695,13 +591,7 @@ int osnoise_top_main(int argc, char **argv)
 		}
 	}
 
-	if (params->cgroup) {
-		retval = set_comm_cgroup("osnoise/", params->cgroup_name);
-		if (!retval) {
-			err_msg("Failed to move threads to cgroup\n");
-			goto out_free;
-		}
-	}
+	trace_instance_start(trace);
 
 	if (params->trace_output) {
 		record = osnoise_init_trace_tool("osnoise");
@@ -715,18 +605,9 @@ int osnoise_top_main(int argc, char **argv)
 			if (retval)
 				goto out_top;
 		}
-	}
 
-	/*
-	 * Start the tracer here, after having set all instances.
-	 *
-	 * Let the trace instance start first for the case of hitting a stop
-	 * tracing while enabling other instances. The trace instance is the
-	 * one with most valuable information.
-	 */
-	if (params->trace_output)
 		trace_instance_start(&record->trace);
-	trace_instance_start(trace);
+	}
 
 	tool->start_time = time(NULL);
 	osnoise_top_set_signals(params);

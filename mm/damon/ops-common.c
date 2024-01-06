@@ -16,54 +16,68 @@
  * Get an online page for a pfn if it's in the LRU list.  Otherwise, returns
  * NULL.
  *
- * The body of this function is stolen from the 'page_idle_get_folio()'.  We
+ * The body of this function is stolen from the 'page_idle_get_page()'.  We
  * steal rather than reuse it because the code is quite simple.
  */
-struct folio *damon_get_folio(unsigned long pfn)
+struct page *damon_get_page(unsigned long pfn)
 {
 	struct page *page = pfn_to_online_page(pfn);
-	struct folio *folio;
 
-	if (!page || PageTail(page))
+	if (!page || !PageLRU(page) || !get_page_unless_zero(page))
 		return NULL;
 
-	folio = page_folio(page);
-	if (!folio_test_lru(folio) || !folio_try_get(folio))
-		return NULL;
-	if (unlikely(page_folio(page) != folio || !folio_test_lru(folio))) {
-		folio_put(folio);
-		folio = NULL;
+	if (unlikely(!PageLRU(page))) {
+		put_page(page);
+		page = NULL;
 	}
-	return folio;
+	return page;
 }
 
 void damon_ptep_mkold(pte_t *pte, struct vm_area_struct *vma, unsigned long addr)
 {
-	struct folio *folio = damon_get_folio(pte_pfn(ptep_get(pte)));
+	bool referenced = false;
+	struct page *page = damon_get_page(pte_pfn(*pte));
 
-	if (!folio)
+	if (!page)
 		return;
 
-	if (ptep_clear_young_notify(vma, addr, pte))
-		folio_set_young(folio);
+	if (ptep_test_and_clear_young(vma, addr, pte))
+		referenced = true;
 
-	folio_set_idle(folio);
-	folio_put(folio);
+#ifdef CONFIG_MMU_NOTIFIER
+	if (mmu_notifier_clear_young(vma->vm_mm, addr, addr + PAGE_SIZE))
+		referenced = true;
+#endif /* CONFIG_MMU_NOTIFIER */
+
+	if (referenced)
+		set_page_young(page);
+
+	set_page_idle(page);
+	put_page(page);
 }
 
 void damon_pmdp_mkold(pmd_t *pmd, struct vm_area_struct *vma, unsigned long addr)
 {
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
-	struct folio *folio = damon_get_folio(pmd_pfn(pmdp_get(pmd)));
+	bool referenced = false;
+	struct page *page = damon_get_page(pmd_pfn(*pmd));
 
-	if (!folio)
+	if (!page)
 		return;
 
-	if (pmdp_clear_young_notify(vma, addr, pmd))
-		folio_set_young(folio);
+	if (pmdp_test_and_clear_young(vma, addr, pmd))
+		referenced = true;
 
-	folio_set_idle(folio);
-	folio_put(folio);
+#ifdef CONFIG_MMU_NOTIFIER
+	if (mmu_notifier_clear_young(vma->vm_mm, addr, addr + HPAGE_PMD_SIZE))
+		referenced = true;
+#endif /* CONFIG_MMU_NOTIFIER */
+
+	if (referenced)
+		set_page_young(page);
+
+	set_page_idle(page);
+	put_page(page);
 #endif /* CONFIG_TRANSPARENT_HUGEPAGE */
 }
 

@@ -312,11 +312,12 @@ clk_err:
 	return ret;
 }
 
-static void xlnx_spdif_remove(struct platform_device *pdev)
+static int xlnx_spdif_remove(struct platform_device *pdev)
 {
 	struct spdif_dev_data *ctx = dev_get_drvdata(&pdev->dev);
 
 	clk_disable_unprepare(ctx->axi_clk);
+	return 0;
 }
 
 static struct platform_driver xlnx_spdif_driver = {
@@ -325,7 +326,7 @@ static struct platform_driver xlnx_spdif_driver = {
 		.of_match_table = xlnx_spdif_of_match,
 	},
 	.probe = xlnx_spdif_probe,
-	.remove_new = xlnx_spdif_remove,
+	.remove = xlnx_spdif_remove,
 };
 module_platform_driver(xlnx_spdif_driver);
 

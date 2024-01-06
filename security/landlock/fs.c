@@ -146,8 +146,17 @@ retry:
 #define ACCESS_FILE ( \
 	LANDLOCK_ACCESS_FS_EXECUTE | \
 	LANDLOCK_ACCESS_FS_WRITE_FILE | \
-	LANDLOCK_ACCESS_FS_READ_FILE | \
-	LANDLOCK_ACCESS_FS_TRUNCATE)
+	LANDLOCK_ACCESS_FS_READ_FILE)
+/* clang-format on */
+
+/*
+ * All access rights that are denied by default whether they are handled or not
+ * by a ruleset/layer.  This must be ORed with all ruleset->fs_access_masks[]
+ * entries when we need to get the absolute handled access masks.
+ */
+/* clang-format off */
+#define ACCESS_INITIALLY_DENIED ( \
+	LANDLOCK_ACCESS_FS_REFER)
 /* clang-format on */
 
 /*
@@ -158,9 +167,7 @@ int landlock_append_fs_rule(struct landlock_ruleset *const ruleset,
 			    access_mask_t access_rights)
 {
 	int err;
-	struct landlock_id id = {
-		.type = LANDLOCK_KEY_INODE,
-	};
+	struct landlock_object *object;
 
 	/* Files only get access rights that make sense. */
 	if (!d_is_dir(path->dentry) &&
@@ -170,19 +177,20 @@ int landlock_append_fs_rule(struct landlock_ruleset *const ruleset,
 		return -EINVAL;
 
 	/* Transforms relative access rights to absolute ones. */
-	access_rights |= LANDLOCK_MASK_ACCESS_FS &
-			 ~landlock_get_fs_access_mask(ruleset, 0);
-	id.key.object = get_inode_object(d_backing_inode(path->dentry));
-	if (IS_ERR(id.key.object))
-		return PTR_ERR(id.key.object);
+	access_rights |=
+		LANDLOCK_MASK_ACCESS_FS &
+		~(ruleset->fs_access_masks[0] | ACCESS_INITIALLY_DENIED);
+	object = get_inode_object(d_backing_inode(path->dentry));
+	if (IS_ERR(object))
+		return PTR_ERR(object);
 	mutex_lock(&ruleset->lock);
-	err = landlock_insert_rule(ruleset, id, access_rights);
+	err = landlock_insert_rule(ruleset, object, access_rights);
 	mutex_unlock(&ruleset->lock);
 	/*
 	 * No need to check for an error because landlock_insert_rule()
 	 * increments the refcount for the new object if needed.
 	 */
-	landlock_put_object(id.key.object);
+	landlock_put_object(object);
 	return err;
 }
 
@@ -199,9 +207,6 @@ find_rule(const struct landlock_ruleset *const domain,
 {
 	const struct landlock_rule *rule;
 	const struct inode *inode;
-	struct landlock_id id = {
-		.type = LANDLOCK_KEY_INODE,
-	};
 
 	/* Ignores nonexistent leafs. */
 	if (d_is_negative(dentry))
@@ -209,10 +214,64 @@ find_rule(const struct landlock_ruleset *const domain,
 
 	inode = d_backing_inode(dentry);
 	rcu_read_lock();
-	id.key.object = rcu_dereference(landlock_inode(inode)->object);
-	rule = landlock_find_rule(domain, id);
+	rule = landlock_find_rule(
+		domain, rcu_dereference(landlock_inode(inode)->object));
 	rcu_read_unlock();
 	return rule;
+}
+
+/*
+ * @layer_masks is read and may be updated according to the access request and
+ * the matching rule.
+ *
+ * Returns true if the request is allowed (i.e. relevant layer masks for the
+ * request are empty).
+ */
+static inline bool
+unmask_layers(const struct landlock_rule *const rule,
+	      const access_mask_t access_request,
+	      layer_mask_t (*const layer_masks)[LANDLOCK_NUM_ACCESS_FS])
+{
+	size_t layer_level;
+
+	if (!access_request || !layer_masks)
+		return true;
+	if (!rule)
+		return false;
+
+	/*
+	 * An access is granted if, for each policy layer, at least one rule
+	 * encountered on the pathwalk grants the requested access,
+	 * regardless of its position in the layer stack.  We must then check
+	 * the remaining layers for each inode, from the first added layer to
+	 * the last one.  When there is multiple requested accesses, for each
+	 * policy layer, the full set of requested accesses may not be granted
+	 * by only one rule, but by the union (binary OR) of multiple rules.
+	 * E.g. /a/b <execute> + /a <read> => /a/b <execute + read>
+	 */
+	for (layer_level = 0; layer_level < rule->num_layers; layer_level++) {
+		const struct landlock_layer *const layer =
+			&rule->layers[layer_level];
+		const layer_mask_t layer_bit = BIT_ULL(layer->level - 1);
+		const unsigned long access_req = access_request;
+		unsigned long access_bit;
+		bool is_empty;
+
+		/*
+		 * Records in @layer_masks which layer grants access to each
+		 * requested access.
+		 */
+		is_empty = true;
+		for_each_set_bit(access_bit, &access_req,
+				 ARRAY_SIZE(*layer_masks)) {
+			if (layer->access & BIT_ULL(access_bit))
+				(*layer_masks)[access_bit] &= ~layer_bit;
+			is_empty = is_empty && !(*layer_masks)[access_bit];
+		}
+		if (is_empty)
+			return true;
+	}
+	return false;
 }
 
 /*
@@ -227,35 +286,51 @@ static inline bool is_nouser_or_private(const struct dentry *dentry)
 		unlikely(IS_PRIVATE(d_backing_inode(dentry))));
 }
 
-static access_mask_t
-get_raw_handled_fs_accesses(const struct landlock_ruleset *const domain)
+static inline access_mask_t
+get_handled_accesses(const struct landlock_ruleset *const domain)
 {
-	access_mask_t access_dom = 0;
+	access_mask_t access_dom = ACCESS_INITIALLY_DENIED;
 	size_t layer_level;
 
 	for (layer_level = 0; layer_level < domain->num_layers; layer_level++)
-		access_dom |=
-			landlock_get_raw_fs_access_mask(domain, layer_level);
-	return access_dom;
+		access_dom |= domain->fs_access_masks[layer_level];
+	return access_dom & LANDLOCK_MASK_ACCESS_FS;
 }
 
-static access_mask_t
-get_handled_fs_accesses(const struct landlock_ruleset *const domain)
+static inline access_mask_t
+init_layer_masks(const struct landlock_ruleset *const domain,
+		 const access_mask_t access_request,
+		 layer_mask_t (*const layer_masks)[LANDLOCK_NUM_ACCESS_FS])
 {
-	/* Handles all initially denied by default access rights. */
-	return get_raw_handled_fs_accesses(domain) |
-	       LANDLOCK_ACCESS_FS_INITIALLY_DENIED;
-}
+	access_mask_t handled_accesses = 0;
+	size_t layer_level;
 
-static const struct landlock_ruleset *get_current_fs_domain(void)
-{
-	const struct landlock_ruleset *const dom =
-		landlock_get_current_domain();
+	memset(layer_masks, 0, sizeof(*layer_masks));
+	/* An empty access request can happen because of O_WRONLY | O_RDWR. */
+	if (!access_request)
+		return 0;
 
-	if (!dom || !get_raw_handled_fs_accesses(dom))
-		return NULL;
+	/* Saves all handled accesses per layer. */
+	for (layer_level = 0; layer_level < domain->num_layers; layer_level++) {
+		const unsigned long access_req = access_request;
+		unsigned long access_bit;
 
-	return dom;
+		for_each_set_bit(access_bit, &access_req,
+				 ARRAY_SIZE(*layer_masks)) {
+			/*
+			 * Artificially handles all initially denied by default
+			 * access rights.
+			 */
+			if (BIT_ULL(access_bit) &
+			    (domain->fs_access_masks[layer_level] |
+			     ACCESS_INITIALLY_DENIED)) {
+				(*layer_masks)[access_bit] |=
+					BIT_ULL(layer_level);
+				handled_accesses |= BIT_ULL(access_bit);
+			}
+		}
+	}
+	return handled_accesses;
 }
 
 /*
@@ -355,7 +430,7 @@ is_eacces(const layer_mask_t (*const layer_masks)[LANDLOCK_NUM_ACCESS_FS],
 }
 
 /**
- * is_access_to_paths_allowed - Check accesses for requests with a common path
+ * check_access_path_dual - Check accesses for requests with a common path
  *
  * @domain: Domain to check against.
  * @path: File hierarchy to walk through.
@@ -390,10 +465,14 @@ is_eacces(const layer_mask_t (*const layer_masks)[LANDLOCK_NUM_ACCESS_FS],
  * allow the request.
  *
  * Returns:
- * - true if the access request is granted;
- * - false otherwise.
+ * - 0 if the access request is granted;
+ * - -EACCES if it is denied because of access right other than
+ *   LANDLOCK_ACCESS_FS_REFER;
+ * - -EXDEV if the renaming or linking would be a privileged escalation
+ *   (according to each layered policies), or if LANDLOCK_ACCESS_FS_REFER is
+ *   not allowed by the source or the destination.
  */
-static bool is_access_to_paths_allowed(
+static int check_access_path_dual(
 	const struct landlock_ruleset *const domain,
 	const struct path *const path,
 	const access_mask_t access_request_parent1,
@@ -413,28 +492,28 @@ static bool is_access_to_paths_allowed(
 	(*layer_masks_child2)[LANDLOCK_NUM_ACCESS_FS] = NULL;
 
 	if (!access_request_parent1 && !access_request_parent2)
-		return true;
+		return 0;
 	if (WARN_ON_ONCE(!domain || !path))
-		return true;
+		return 0;
 	if (is_nouser_or_private(path->dentry))
-		return true;
+		return 0;
 	if (WARN_ON_ONCE(domain->num_layers < 1 || !layer_masks_parent1))
-		return false;
+		return -EACCES;
 
 	if (unlikely(layer_masks_parent2)) {
 		if (WARN_ON_ONCE(!dentry_child1))
-			return false;
+			return -EACCES;
 		/*
 		 * For a double request, first check for potential privilege
 		 * escalation by looking at domain handled accesses (which are
 		 * a superset of the meaningful requested accesses).
 		 */
 		access_masked_parent1 = access_masked_parent2 =
-			get_handled_fs_accesses(domain);
+			get_handled_accesses(domain);
 		is_dom_check = true;
 	} else {
 		if (WARN_ON_ONCE(dentry_child1 || dentry_child2))
-			return false;
+			return -EACCES;
 		/* For a simple request, only check for requested accesses. */
 		access_masked_parent1 = access_request_parent1;
 		access_masked_parent2 = access_request_parent2;
@@ -442,22 +521,18 @@ static bool is_access_to_paths_allowed(
 	}
 
 	if (unlikely(dentry_child1)) {
-		landlock_unmask_layers(
-			find_rule(domain, dentry_child1),
-			landlock_init_layer_masks(
-				domain, LANDLOCK_MASK_ACCESS_FS,
-				&_layer_masks_child1, LANDLOCK_KEY_INODE),
-			&_layer_masks_child1, ARRAY_SIZE(_layer_masks_child1));
+		unmask_layers(find_rule(domain, dentry_child1),
+			      init_layer_masks(domain, LANDLOCK_MASK_ACCESS_FS,
+					       &_layer_masks_child1),
+			      &_layer_masks_child1);
 		layer_masks_child1 = &_layer_masks_child1;
 		child1_is_directory = d_is_dir(dentry_child1);
 	}
 	if (unlikely(dentry_child2)) {
-		landlock_unmask_layers(
-			find_rule(domain, dentry_child2),
-			landlock_init_layer_masks(
-				domain, LANDLOCK_MASK_ACCESS_FS,
-				&_layer_masks_child2, LANDLOCK_KEY_INODE),
-			&_layer_masks_child2, ARRAY_SIZE(_layer_masks_child2));
+		unmask_layers(find_rule(domain, dentry_child2),
+			      init_layer_masks(domain, LANDLOCK_MASK_ACCESS_FS,
+					       &_layer_masks_child2),
+			      &_layer_masks_child2);
 		layer_masks_child2 = &_layer_masks_child2;
 		child2_is_directory = d_is_dir(dentry_child2);
 	}
@@ -509,16 +584,15 @@ static bool is_access_to_paths_allowed(
 		}
 
 		rule = find_rule(domain, walker_path.dentry);
-		allowed_parent1 = landlock_unmask_layers(
-			rule, access_masked_parent1, layer_masks_parent1,
-			ARRAY_SIZE(*layer_masks_parent1));
-		allowed_parent2 = landlock_unmask_layers(
-			rule, access_masked_parent2, layer_masks_parent2,
-			ARRAY_SIZE(*layer_masks_parent2));
+		allowed_parent1 = unmask_layers(rule, access_masked_parent1,
+						layer_masks_parent1);
+		allowed_parent2 = unmask_layers(rule, access_masked_parent2,
+						layer_masks_parent2);
 
 		/* Stops when a rule from each layer grants access. */
 		if (allowed_parent1 && allowed_parent2)
 			break;
+
 jump_up:
 		if (walker_path.dentry == walker_path.mnt->mnt_root) {
 			if (follow_up(&walker_path)) {
@@ -548,7 +622,24 @@ jump_up:
 	}
 	path_put(&walker_path);
 
-	return allowed_parent1 && allowed_parent2;
+	if (allowed_parent1 && allowed_parent2)
+		return 0;
+
+	/*
+	 * This prioritizes EACCES over EXDEV for all actions, including
+	 * renames with RENAME_EXCHANGE.
+	 */
+	if (likely(is_eacces(layer_masks_parent1, access_request_parent1) ||
+		   is_eacces(layer_masks_parent2, access_request_parent2)))
+		return -EACCES;
+
+	/*
+	 * Gracefully forbids reparenting if the destination directory
+	 * hierarchy is not a superset of restrictions of the source directory
+	 * hierarchy, or if LANDLOCK_ACCESS_FS_REFER is not allowed by the
+	 * source or the destination.
+	 */
+	return -EXDEV;
 }
 
 static inline int check_access_path(const struct landlock_ruleset *const domain,
@@ -557,18 +648,16 @@ static inline int check_access_path(const struct landlock_ruleset *const domain,
 {
 	layer_mask_t layer_masks[LANDLOCK_NUM_ACCESS_FS] = {};
 
-	access_request = landlock_init_layer_masks(
-		domain, access_request, &layer_masks, LANDLOCK_KEY_INODE);
-	if (is_access_to_paths_allowed(domain, path, access_request,
-				       &layer_masks, NULL, 0, NULL, NULL))
-		return 0;
-	return -EACCES;
+	access_request = init_layer_masks(domain, access_request, &layer_masks);
+	return check_access_path_dual(domain, path, access_request,
+				      &layer_masks, NULL, 0, NULL, NULL);
 }
 
 static inline int current_check_access_path(const struct path *const path,
 					    const access_mask_t access_request)
 {
-	const struct landlock_ruleset *const dom = get_current_fs_domain();
+	const struct landlock_ruleset *const dom =
+		landlock_get_current_domain();
 
 	if (!dom)
 		return 0;
@@ -622,9 +711,8 @@ static inline access_mask_t maybe_remove(const struct dentry *const dentry)
  * file.  While walking from @dir to @mnt_root, we record all the domain's
  * allowed accesses in @layer_masks_dom.
  *
- * This is similar to is_access_to_paths_allowed() but much simpler because it
- * only handles walking on the same mount point and only checks one set of
- * accesses.
+ * This is similar to check_access_path_dual() but much simpler because it only
+ * handles walking on the same mount point and only checks one set of accesses.
  *
  * Returns:
  * - true if all the domain access rights are allowed for @dir;
@@ -643,18 +731,16 @@ static bool collect_domain_accesses(
 	if (is_nouser_or_private(dir))
 		return true;
 
-	access_dom = landlock_init_layer_masks(domain, LANDLOCK_MASK_ACCESS_FS,
-					       layer_masks_dom,
-					       LANDLOCK_KEY_INODE);
+	access_dom = init_layer_masks(domain, LANDLOCK_MASK_ACCESS_FS,
+				      layer_masks_dom);
 
 	dget(dir);
 	while (true) {
 		struct dentry *parent_dentry;
 
 		/* Gets all layers allowing all domain accesses. */
-		if (landlock_unmask_layers(find_rule(domain, dir), access_dom,
-					   layer_masks_dom,
-					   ARRAY_SIZE(*layer_masks_dom))) {
+		if (unmask_layers(find_rule(domain, dir), access_dom,
+				  layer_masks_dom)) {
 			/*
 			 * Stops when all handled accesses are allowed by at
 			 * least one rule in each layer.
@@ -733,7 +819,8 @@ static int current_check_refer_path(struct dentry *const old_dentry,
 				    struct dentry *const new_dentry,
 				    const bool removable, const bool exchange)
 {
-	const struct landlock_ruleset *const dom = get_current_fs_domain();
+	const struct landlock_ruleset *const dom =
+		landlock_get_current_domain();
 	bool allow_parent1, allow_parent2;
 	access_mask_t access_request_parent1, access_request_parent2;
 	struct path mnt_dir;
@@ -767,14 +854,13 @@ static int current_check_refer_path(struct dentry *const old_dentry,
 		 * The LANDLOCK_ACCESS_FS_REFER access right is not required
 		 * for same-directory referer (i.e. no reparenting).
 		 */
-		access_request_parent1 = landlock_init_layer_masks(
+		access_request_parent1 = init_layer_masks(
 			dom, access_request_parent1 | access_request_parent2,
-			&layer_masks_parent1, LANDLOCK_KEY_INODE);
-		if (is_access_to_paths_allowed(
-			    dom, new_dir, access_request_parent1,
-			    &layer_masks_parent1, NULL, 0, NULL, NULL))
-			return 0;
-		return -EACCES;
+			&layer_masks_parent1);
+		return check_access_path_dual(dom, new_dir,
+					      access_request_parent1,
+					      &layer_masks_parent1, NULL, 0,
+					      NULL, NULL);
 	}
 
 	access_request_parent1 |= LANDLOCK_ACCESS_FS_REFER;
@@ -800,27 +886,11 @@ static int current_check_refer_path(struct dentry *const old_dentry,
 	 * parent access rights.  This will be useful to compare with the
 	 * destination parent access rights.
 	 */
-	if (is_access_to_paths_allowed(
-		    dom, &mnt_dir, access_request_parent1, &layer_masks_parent1,
-		    old_dentry, access_request_parent2, &layer_masks_parent2,
-		    exchange ? new_dentry : NULL))
-		return 0;
-
-	/*
-	 * This prioritizes EACCES over EXDEV for all actions, including
-	 * renames with RENAME_EXCHANGE.
-	 */
-	if (likely(is_eacces(&layer_masks_parent1, access_request_parent1) ||
-		   is_eacces(&layer_masks_parent2, access_request_parent2)))
-		return -EACCES;
-
-	/*
-	 * Gracefully forbids reparenting if the destination directory
-	 * hierarchy is not a superset of restrictions of the source directory
-	 * hierarchy, or if LANDLOCK_ACCESS_FS_REFER is not allowed by the
-	 * source or the destination.
-	 */
-	return -EXDEV;
+	return check_access_path_dual(dom, &mnt_dir, access_request_parent1,
+				      &layer_masks_parent1, old_dentry,
+				      access_request_parent2,
+				      &layer_masks_parent2,
+				      exchange ? new_dentry : NULL);
 }
 
 /* Inode hooks */
@@ -967,7 +1037,7 @@ static int hook_sb_mount(const char *const dev_name,
 			 const struct path *const path, const char *const type,
 			 const unsigned long flags, void *const data)
 {
-	if (!get_current_fs_domain())
+	if (!landlock_get_current_domain())
 		return 0;
 	return -EPERM;
 }
@@ -975,7 +1045,7 @@ static int hook_sb_mount(const char *const dev_name,
 static int hook_move_mount(const struct path *const from_path,
 			   const struct path *const to_path)
 {
-	if (!get_current_fs_domain())
+	if (!landlock_get_current_domain())
 		return 0;
 	return -EPERM;
 }
@@ -986,14 +1056,14 @@ static int hook_move_mount(const struct path *const from_path,
  */
 static int hook_sb_umount(struct vfsmount *const mnt, const int flags)
 {
-	if (!get_current_fs_domain())
+	if (!landlock_get_current_domain())
 		return 0;
 	return -EPERM;
 }
 
 static int hook_sb_remount(struct super_block *const sb, void *const mnt_opts)
 {
-	if (!get_current_fs_domain())
+	if (!landlock_get_current_domain())
 		return 0;
 	return -EPERM;
 }
@@ -1009,7 +1079,7 @@ static int hook_sb_remount(struct super_block *const sb, void *const mnt_opts)
 static int hook_sb_pivotroot(const struct path *const old_path,
 			     const struct path *const new_path)
 {
-	if (!get_current_fs_domain())
+	if (!landlock_get_current_domain())
 		return 0;
 	return -EPERM;
 }
@@ -1045,7 +1115,8 @@ static int hook_path_mknod(const struct path *const dir,
 			   struct dentry *const dentry, const umode_t mode,
 			   const unsigned int dev)
 {
-	const struct landlock_ruleset *const dom = get_current_fs_domain();
+	const struct landlock_ruleset *const dom =
+		landlock_get_current_domain();
 
 	if (!dom)
 		return 0;
@@ -1071,23 +1142,9 @@ static int hook_path_rmdir(const struct path *const dir,
 	return current_check_access_path(dir, LANDLOCK_ACCESS_FS_REMOVE_DIR);
 }
 
-static int hook_path_truncate(const struct path *const path)
-{
-	return current_check_access_path(path, LANDLOCK_ACCESS_FS_TRUNCATE);
-}
-
 /* File hooks */
 
-/**
- * get_required_file_open_access - Get access needed to open a file
- *
- * @file: File being opened.
- *
- * Returns the access rights that are required for opening the given file,
- * depending on the file type and open mode.
- */
-static inline access_mask_t
-get_required_file_open_access(const struct file *const file)
+static inline access_mask_t get_file_access(const struct file *const file)
 {
 	access_mask_t access = 0;
 
@@ -1105,98 +1162,22 @@ get_required_file_open_access(const struct file *const file)
 	return access;
 }
 
-static int hook_file_alloc_security(struct file *const file)
-{
-	/*
-	 * Grants all access rights, even if most of them are not checked later
-	 * on. It is more consistent.
-	 *
-	 * Notably, file descriptors for regular files can also be acquired
-	 * without going through the file_open hook, for example when using
-	 * memfd_create(2).
-	 */
-	landlock_file(file)->allowed_access = LANDLOCK_MASK_ACCESS_FS;
-	return 0;
-}
-
 static int hook_file_open(struct file *const file)
 {
-	layer_mask_t layer_masks[LANDLOCK_NUM_ACCESS_FS] = {};
-	access_mask_t open_access_request, full_access_request, allowed_access;
-	const access_mask_t optional_access = LANDLOCK_ACCESS_FS_TRUNCATE;
-	const struct landlock_ruleset *const dom = get_current_fs_domain();
+	const struct landlock_ruleset *const dom =
+		landlock_get_current_domain();
 
 	if (!dom)
 		return 0;
-
 	/*
-	 * Because a file may be opened with O_PATH, get_required_file_open_access()
-	 * may return 0.  This case will be handled with a future Landlock
+	 * Because a file may be opened with O_PATH, get_file_access() may
+	 * return 0.  This case will be handled with a future Landlock
 	 * evolution.
 	 */
-	open_access_request = get_required_file_open_access(file);
-
-	/*
-	 * We look up more access than what we immediately need for open(), so
-	 * that we can later authorize operations on opened files.
-	 */
-	full_access_request = open_access_request | optional_access;
-
-	if (is_access_to_paths_allowed(
-		    dom, &file->f_path,
-		    landlock_init_layer_masks(dom, full_access_request,
-					      &layer_masks, LANDLOCK_KEY_INODE),
-		    &layer_masks, NULL, 0, NULL, NULL)) {
-		allowed_access = full_access_request;
-	} else {
-		unsigned long access_bit;
-		const unsigned long access_req = full_access_request;
-
-		/*
-		 * Calculate the actual allowed access rights from layer_masks.
-		 * Add each access right to allowed_access which has not been
-		 * vetoed by any layer.
-		 */
-		allowed_access = 0;
-		for_each_set_bit(access_bit, &access_req,
-				 ARRAY_SIZE(layer_masks)) {
-			if (!layer_masks[access_bit])
-				allowed_access |= BIT_ULL(access_bit);
-		}
-	}
-
-	/*
-	 * For operations on already opened files (i.e. ftruncate()), it is the
-	 * access rights at the time of open() which decide whether the
-	 * operation is permitted. Therefore, we record the relevant subset of
-	 * file access rights in the opened struct file.
-	 */
-	landlock_file(file)->allowed_access = allowed_access;
-
-	if ((open_access_request & allowed_access) == open_access_request)
-		return 0;
-
-	return -EACCES;
+	return check_access_path(dom, &file->f_path, get_file_access(file));
 }
 
-static int hook_file_truncate(struct file *const file)
-{
-	/*
-	 * Allows truncation if the truncate right was available at the time of
-	 * opening the file, to get a consistent access check as for read, write
-	 * and execute operations.
-	 *
-	 * Note: For checks done based on the file's Landlock allowed access, we
-	 * enforce them independently of whether the current thread is in a
-	 * Landlock domain, so that open files passed between independent
-	 * processes retain their behaviour.
-	 */
-	if (landlock_file(file)->allowed_access & LANDLOCK_ACCESS_FS_TRUNCATE)
-		return 0;
-	return -EACCES;
-}
-
-static struct security_hook_list landlock_hooks[] __ro_after_init = {
+static struct security_hook_list landlock_hooks[] __lsm_ro_after_init = {
 	LSM_HOOK_INIT(inode_free_security, hook_inode_free_security),
 
 	LSM_HOOK_INIT(sb_delete, hook_sb_delete),
@@ -1213,11 +1194,8 @@ static struct security_hook_list landlock_hooks[] __ro_after_init = {
 	LSM_HOOK_INIT(path_symlink, hook_path_symlink),
 	LSM_HOOK_INIT(path_unlink, hook_path_unlink),
 	LSM_HOOK_INIT(path_rmdir, hook_path_rmdir),
-	LSM_HOOK_INIT(path_truncate, hook_path_truncate),
 
-	LSM_HOOK_INIT(file_alloc_security, hook_file_alloc_security),
 	LSM_HOOK_INIT(file_open, hook_file_open),
-	LSM_HOOK_INIT(file_truncate, hook_file_truncate),
 };
 
 __init void landlock_add_fs_hooks(void)

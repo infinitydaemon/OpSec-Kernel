@@ -21,6 +21,7 @@
 #include <linux/clk.h>
 #include <linux/usb/gadget.h>
 #include <linux/of.h>
+#include <linux/of_gpio.h>
 #include <linux/regmap.h>
 #include <linux/dma-mapping.h>
 
@@ -36,7 +37,7 @@ void ast_vhub_done(struct ast_vhub_ep *ep, struct ast_vhub_req *req,
 
 	list_del_init(&req->queue);
 
-	if ((req->req.status == -EINPROGRESS) ||  (status == -EOVERFLOW))
+	if (req->req.status == -EINPROGRESS)
 		req->req.status = status;
 
 	if (req->req.dma) {
@@ -253,14 +254,14 @@ void ast_vhub_init_hw(struct ast_vhub *vhub)
 	       vhub->regs + AST_VHUB_IER);
 }
 
-static void ast_vhub_remove(struct platform_device *pdev)
+static int ast_vhub_remove(struct platform_device *pdev)
 {
 	struct ast_vhub *vhub = platform_get_drvdata(pdev);
 	unsigned long flags;
 	int i;
 
 	if (!vhub || !vhub->regs)
-		return;
+		return 0;
 
 	/* Remove devices */
 	for (i = 0; i < vhub->max_ports; i++)
@@ -289,6 +290,8 @@ static void ast_vhub_remove(struct platform_device *pdev)
 				  vhub->ep0_bufs,
 				  vhub->ep0_bufs_dma);
 	vhub->ep0_bufs = NULL;
+
+	return 0;
 }
 
 static int ast_vhub_probe(struct platform_device *pdev)
@@ -328,7 +331,8 @@ static int ast_vhub_probe(struct platform_device *pdev)
 	vhub->port_irq_mask = GENMASK(VHUB_IRQ_DEV1_BIT + vhub->max_ports - 1,
 				      VHUB_IRQ_DEV1_BIT);
 
-	vhub->regs = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	vhub->regs = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(vhub->regs)) {
 		dev_err(&pdev->dev, "Failed to map resources\n");
 		return PTR_ERR(vhub->regs);
@@ -428,7 +432,7 @@ MODULE_DEVICE_TABLE(of, ast_vhub_dt_ids);
 
 static struct platform_driver ast_vhub_driver = {
 	.probe		= ast_vhub_probe,
-	.remove_new	= ast_vhub_remove,
+	.remove		= ast_vhub_remove,
 	.driver		= {
 		.name	= KBUILD_MODNAME,
 		.of_match_table	= ast_vhub_dt_ids,

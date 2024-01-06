@@ -389,7 +389,8 @@ static const struct v4l2_subdev_ops adv7175_ops = {
 
 /* ----------------------------------------------------------------------- */
 
-static int adv7175_probe(struct i2c_client *client)
+static int adv7175_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	int i;
 	struct adv7175 *encoder;

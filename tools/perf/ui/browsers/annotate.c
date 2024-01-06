@@ -314,7 +314,7 @@ static void annotate_browser__calc_percent(struct annotate_browser *browser,
 
 	browser->entries = RB_ROOT;
 
-	annotation__lock(notes);
+	mutex_lock(&notes->lock);
 
 	symbol__calc_percent(sym, evsel);
 
@@ -343,7 +343,7 @@ static void annotate_browser__calc_percent(struct annotate_browser *browser,
 		}
 		disasm_rb_tree__insert(browser, &pos->al);
 	}
-	annotation__unlock(notes);
+	mutex_unlock(&notes->lock);
 
 	browser->curr_hot = rb_last(&browser->entries);
 }
@@ -441,8 +441,7 @@ static void ui_browser__init_asm_mode(struct ui_browser *browser)
 static int sym_title(struct symbol *sym, struct map *map, char *title,
 		     size_t sz, int percent_type)
 {
-	return snprintf(title, sz, "%s  %s [Percent: %s]", sym->name,
-			map__dso(map)->long_name,
+	return snprintf(title, sz, "%s  %s [Percent: %s]", sym->name, map->dso->long_name,
 			percent_type_str(percent_type));
 }
 
@@ -470,10 +469,10 @@ static bool annotate_browser__callq(struct annotate_browser *browser,
 	}
 
 	notes = symbol__annotation(dl->ops.target.sym);
-	annotation__lock(notes);
+	mutex_lock(&notes->lock);
 
 	if (!symbol__hists(dl->ops.target.sym, evsel->evlist->core.nr_entries)) {
-		annotation__unlock(notes);
+		mutex_unlock(&notes->lock);
 		ui__warning("Not enough memory for annotating '%s' symbol!\n",
 			    dl->ops.target.sym->name);
 		return true;
@@ -482,7 +481,7 @@ static bool annotate_browser__callq(struct annotate_browser *browser,
 	target_ms.maps = ms->maps;
 	target_ms.map = ms->map;
 	target_ms.sym = dl->ops.target.sym;
-	annotation__unlock(notes);
+	mutex_unlock(&notes->lock);
 	symbol__tui_annotate(&target_ms, evsel, hbt, browser->opts);
 	sym_title(ms->sym, ms->map, title, sizeof(title), browser->opts->percent_type);
 	ui_browser__show_title(&browser->b, title);
@@ -781,9 +780,9 @@ static int annotate_browser__run(struct annotate_browser *browser,
 			ui_browser__help_window(&browser->b,
 		"UP/DOWN/PGUP\n"
 		"PGDN/SPACE    Navigate\n"
-		"</>           Move to prev/next symbol\n"
 		"q/ESC/CTRL+C  Exit\n\n"
 		"ENTER         Go to target\n"
+		"ESC           Exit\n"
 		"H             Go to hottest instruction\n"
 		"TAB/shift+TAB Cycle thru hottest instructions\n"
 		"j             Toggle showing jump to target arrows\n"
@@ -913,8 +912,6 @@ show_sup_ins:
 			annotation__toggle_full_addr(notes, ms);
 			continue;
 		case K_LEFT:
-		case '<':
-		case '>':
 		case K_ESC:
 		case 'q':
 		case CTRL('c'):
@@ -967,22 +964,20 @@ int symbol__tui_annotate(struct map_symbol *ms, struct evsel *evsel,
 		},
 		.opts = opts,
 	};
-	struct dso *dso;
 	int ret = -1, err;
 	int not_annotated = list_empty(&notes->src->source);
 
 	if (sym == NULL)
 		return -1;
 
-	dso = map__dso(ms->map);
-	if (dso->annotate_warned)
+	if (ms->map->dso->annotate_warned)
 		return -1;
 
 	if (not_annotated) {
 		err = symbol__annotate2(ms, evsel, opts, &browser.arch);
 		if (err) {
 			char msg[BUFSIZ];
-			dso->annotate_warned = true;
+			ms->map->dso->annotate_warned = true;
 			symbol__strerror_disassemble(ms, err, msg, sizeof(msg));
 			ui__error("Couldn't annotate %s:\n%s", sym->name, msg);
 			goto out_free_offsets;

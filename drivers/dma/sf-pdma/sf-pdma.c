@@ -493,6 +493,7 @@ static void sf_pdma_setup_chans(struct sf_pdma *pdma)
 static int sf_pdma_probe(struct platform_device *pdev)
 {
 	struct sf_pdma *pdma;
+	struct resource *res;
 	int ret, n_chans;
 	const enum dma_slave_buswidth widths =
 		DMA_SLAVE_BUSWIDTH_1_BYTE | DMA_SLAVE_BUSWIDTH_2_BYTES |
@@ -517,7 +518,8 @@ static int sf_pdma_probe(struct platform_device *pdev)
 
 	pdma->n_chans = n_chans;
 
-	pdma->membase = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	pdma->membase = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(pdma->membase))
 		return PTR_ERR(pdma->membase);
 
@@ -566,7 +568,7 @@ static int sf_pdma_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void sf_pdma_remove(struct platform_device *pdev)
+static int sf_pdma_remove(struct platform_device *pdev)
 {
 	struct sf_pdma *pdma = platform_get_drvdata(pdev);
 	struct sf_pdma_chan *ch;
@@ -584,6 +586,8 @@ static void sf_pdma_remove(struct platform_device *pdev)
 	}
 
 	dma_async_device_unregister(&pdma->dma_dev);
+
+	return 0;
 }
 
 static const struct of_device_id sf_pdma_dt_ids[] = {
@@ -595,7 +599,7 @@ MODULE_DEVICE_TABLE(of, sf_pdma_dt_ids);
 
 static struct platform_driver sf_pdma_driver = {
 	.probe		= sf_pdma_probe,
-	.remove_new	= sf_pdma_remove,
+	.remove		= sf_pdma_remove,
 	.driver		= {
 		.name	= "sf-pdma",
 		.of_match_table = sf_pdma_dt_ids,

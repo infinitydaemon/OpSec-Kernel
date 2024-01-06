@@ -146,8 +146,10 @@ static int pxa_ssp_probe(struct platform_device *pdev)
 	}
 
 	ssp->irq = platform_get_irq(pdev, 0);
-	if (ssp->irq < 0)
+	if (ssp->irq < 0) {
+		dev_err(dev, "no IRQ resource defined\n");
 		return -ENODEV;
+	}
 
 	if (dev->of_node) {
 		const struct of_device_id *id =
@@ -176,13 +178,15 @@ static int pxa_ssp_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void pxa_ssp_remove(struct platform_device *pdev)
+static int pxa_ssp_remove(struct platform_device *pdev)
 {
 	struct ssp_device *ssp = platform_get_drvdata(pdev);
 
 	mutex_lock(&ssp_lock);
 	list_del(&ssp->node);
 	mutex_unlock(&ssp_lock);
+
+	return 0;
 }
 
 static const struct platform_device_id ssp_id_table[] = {
@@ -197,7 +201,7 @@ static const struct platform_device_id ssp_id_table[] = {
 
 static struct platform_driver pxa_ssp_driver = {
 	.probe		= pxa_ssp_probe,
-	.remove_new	= pxa_ssp_remove,
+	.remove		= pxa_ssp_remove,
 	.driver		= {
 		.name		= "pxa2xx-ssp",
 		.of_match_table	= of_match_ptr(pxa_ssp_of_ids),

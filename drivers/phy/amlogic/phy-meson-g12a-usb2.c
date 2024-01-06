@@ -14,7 +14,7 @@
 #include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/module.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/phy/phy.h>
@@ -172,15 +172,9 @@ static int phy_meson_g12a_usb2_init(struct phy *phy)
 	int ret;
 	unsigned int value;
 
-	ret = clk_prepare_enable(priv->clk);
+	ret = reset_control_reset(priv->reset);
 	if (ret)
 		return ret;
-
-	ret = reset_control_reset(priv->reset);
-	if (ret) {
-		clk_disable_unprepare(priv->clk);
-		return ret;
-	}
 
 	udelay(RESET_COMPLETE_TIME);
 
@@ -283,13 +277,8 @@ static int phy_meson_g12a_usb2_init(struct phy *phy)
 static int phy_meson_g12a_usb2_exit(struct phy *phy)
 {
 	struct phy_meson_g12a_usb2_priv *priv = phy_get_drvdata(phy);
-	int ret;
 
-	ret = reset_control_reset(priv->reset);
-	if (!ret)
-		clk_disable_unprepare(priv->clk);
-
-	return ret;
+	return reset_control_reset(priv->reset);
 }
 
 /* set_mode is not needed, mode setting is handled via the UTMI bus */
@@ -319,7 +308,7 @@ static int phy_meson_g12a_usb2_probe(struct platform_device *pdev)
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
-	priv->soc_id = (uintptr_t)of_device_get_match_data(&pdev->dev);
+	priv->soc_id = (enum meson_soc_id)of_device_get_match_data(&pdev->dev);
 
 	priv->regmap = devm_regmap_init_mmio(dev, base,
 					     &phy_meson_g12a_usb2_regmap_conf);

@@ -16,8 +16,7 @@
 #include <linux/io.h>
 #include <linux/iopoll.h>
 #include <linux/module.h>
-#include <linux/of.h>
-#include <linux/platform_device.h>
+#include <linux/of_device.h>
 
 /* I2C registers */
 #define OWL_I2C_REG_CTL		0x0000
@@ -462,16 +461,21 @@ static int owl_i2c_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	i2c_dev->clk = devm_clk_get_enabled(dev, NULL);
+	i2c_dev->clk = devm_clk_get(dev, NULL);
 	if (IS_ERR(i2c_dev->clk)) {
-		dev_err(dev, "failed to enable clock\n");
+		dev_err(dev, "failed to get clock\n");
 		return PTR_ERR(i2c_dev->clk);
 	}
+
+	ret = clk_prepare_enable(i2c_dev->clk);
+	if (ret)
+		return ret;
 
 	i2c_dev->clk_rate = clk_get_rate(i2c_dev->clk);
 	if (!i2c_dev->clk_rate) {
 		dev_err(dev, "input clock rate should not be zero\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto disable_clk;
 	}
 
 	init_completion(&i2c_dev->msg_complete);
@@ -492,10 +496,15 @@ static int owl_i2c_probe(struct platform_device *pdev)
 			       i2c_dev);
 	if (ret) {
 		dev_err(dev, "failed to request irq %d\n", irq);
-		return ret;
+		goto disable_clk;
 	}
 
 	return i2c_add_adapter(&i2c_dev->adap);
+
+disable_clk:
+	clk_disable_unprepare(i2c_dev->clk);
+
+	return ret;
 }
 
 static const struct of_device_id owl_i2c_of_match[] = {
@@ -510,7 +519,7 @@ static struct platform_driver owl_i2c_driver = {
 	.probe		= owl_i2c_probe,
 	.driver		= {
 		.name	= "owl-i2c",
-		.of_match_table = owl_i2c_of_match,
+		.of_match_table = of_match_ptr(owl_i2c_of_match),
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 	},
 };

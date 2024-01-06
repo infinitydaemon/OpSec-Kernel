@@ -40,14 +40,9 @@ static const struct clk_pcr_layout sama5d2_pcr_layout = {
 static const struct {
 	char *n;
 	char *p;
-	unsigned long flags;
 	u8 id;
 } sama5d2_systemck[] = {
-	/*
-	 * ddrck feeds DDR controller and is enabled by bootloader thus we need
-	 * to keep it enabled in case there is no Linux consumer for it.
-	 */
-	{ .n = "ddrck", .p = "masterck_div", .id = 2, .flags = CLK_IS_CRITICAL },
+	{ .n = "ddrck", .p = "masterck_div", .id = 2 },
 	{ .n = "lcdck", .p = "masterck_div", .id = 3 },
 	{ .n = "uhpck", .p = "usbck",        .id = 6 },
 	{ .n = "udpck", .p = "usbck",        .id = 7 },
@@ -102,7 +97,6 @@ static const struct {
 
 static const struct {
 	char *n;
-	unsigned long flags;
 	u8 id;
 } sama5d2_periphck[] = {
 	{ .n = "dma0_clk",    .id = 6, },
@@ -110,11 +104,7 @@ static const struct {
 	{ .n = "aes_clk",     .id = 9, },
 	{ .n = "aesb_clk",    .id = 10, },
 	{ .n = "sha_clk",     .id = 12, },
-	/*
-	 * mpddr_clk feeds DDR controller and is enabled by bootloader thus we
-	 * need to keep it enabled in case there is no Linux consumer for it.
-	 */
-	{ .n = "mpddr_clk",   .id = 13, .flags = CLK_IS_CRITICAL },
+	{ .n = "mpddr_clk",   .id = 13, },
 	{ .n = "matrix0_clk", .id = 15, },
 	{ .n = "sdmmc0_hclk", .id = 31, },
 	{ .n = "sdmmc1_hclk", .id = 32, },
@@ -202,14 +192,14 @@ static void __init sama5d2_pmc_setup(struct device_node *np)
 
 	bypass = of_property_read_bool(np, "atmel,osc-bypass");
 
-	hw = at91_clk_register_main_osc(regmap, "main_osc", mainxtal_name, NULL,
+	hw = at91_clk_register_main_osc(regmap, "main_osc", mainxtal_name,
 					bypass);
 	if (IS_ERR(hw))
 		goto err_free;
 
 	parent_names[0] = "main_rc_osc";
 	parent_names[1] = "main_osc";
-	hw = at91_clk_register_sam9x5_main(regmap, "mainck", parent_names, NULL, 2);
+	hw = at91_clk_register_sam9x5_main(regmap, "mainck", parent_names, 2);
 	if (IS_ERR(hw))
 		goto err_free;
 
@@ -249,7 +239,7 @@ static void __init sama5d2_pmc_setup(struct device_node *np)
 	if (IS_ERR(regmap_sfr))
 		regmap_sfr = NULL;
 
-	hw = at91_clk_register_utmi(regmap, regmap_sfr, "utmick", "mainck", NULL);
+	hw = at91_clk_register_utmi(regmap, regmap_sfr, "utmick", "mainck");
 	if (IS_ERR(hw))
 		goto err_free;
 
@@ -260,14 +250,14 @@ static void __init sama5d2_pmc_setup(struct device_node *np)
 	parent_names[2] = "plladivck";
 	parent_names[3] = "utmick";
 	hw = at91_clk_register_master_pres(regmap, "masterck_pres", 4,
-					   parent_names, NULL,
+					   parent_names,
 					   &at91sam9x5_master_layout,
 					   &mck_characteristics, &mck_lock);
 	if (IS_ERR(hw))
 		goto err_free;
 
 	hw = at91_clk_register_master_div(regmap, "masterck_div",
-					  "masterck_pres", NULL,
+					  "masterck_pres",
 					  &at91sam9x5_master_layout,
 					  &mck_characteristics, &mck_lock,
 					  CLK_SET_RATE_GATE, 0);
@@ -300,7 +290,7 @@ static void __init sama5d2_pmc_setup(struct device_node *np)
 		snprintf(name, sizeof(name), "prog%d", i);
 
 		hw = at91_clk_register_programmable(regmap, name,
-						    parent_names, NULL, 6, i,
+						    parent_names, 6, i,
 						    &sama5d2_programmable_layout,
 						    NULL);
 		if (IS_ERR(hw))
@@ -311,9 +301,8 @@ static void __init sama5d2_pmc_setup(struct device_node *np)
 
 	for (i = 0; i < ARRAY_SIZE(sama5d2_systemck); i++) {
 		hw = at91_clk_register_system(regmap, sama5d2_systemck[i].n,
-					      sama5d2_systemck[i].p, NULL,
-					      sama5d2_systemck[i].id,
-					      sama5d2_systemck[i].flags);
+					      sama5d2_systemck[i].p,
+					      sama5d2_systemck[i].id);
 		if (IS_ERR(hw))
 			goto err_free;
 
@@ -324,10 +313,9 @@ static void __init sama5d2_pmc_setup(struct device_node *np)
 		hw = at91_clk_register_sam9x5_peripheral(regmap, &pmc_pcr_lock,
 							 &sama5d2_pcr_layout,
 							 sama5d2_periphck[i].n,
-							 "masterck_div", NULL,
+							 "masterck_div",
 							 sama5d2_periphck[i].id,
-							 &range, INT_MIN,
-							 sama5d2_periphck[i].flags);
+							 &range, INT_MIN);
 		if (IS_ERR(hw))
 			goto err_free;
 
@@ -338,10 +326,10 @@ static void __init sama5d2_pmc_setup(struct device_node *np)
 		hw = at91_clk_register_sam9x5_peripheral(regmap, &pmc_pcr_lock,
 							 &sama5d2_pcr_layout,
 							 sama5d2_periph32ck[i].n,
-							 "h32mxck", NULL,
+							 "h32mxck",
 							 sama5d2_periph32ck[i].id,
 							 &sama5d2_periph32ck[i].r,
-							 INT_MIN, 0);
+							 INT_MIN);
 		if (IS_ERR(hw))
 			goto err_free;
 
@@ -358,7 +346,7 @@ static void __init sama5d2_pmc_setup(struct device_node *np)
 		hw = at91_clk_register_generated(regmap, &pmc_pcr_lock,
 						 &sama5d2_pcr_layout,
 						 sama5d2_gck[i].n,
-						 parent_names, NULL, NULL, 6,
+						 parent_names, NULL, 6,
 						 sama5d2_gck[i].id,
 						 &sama5d2_gck[i].r,
 						 sama5d2_gck[i].chg_pid);

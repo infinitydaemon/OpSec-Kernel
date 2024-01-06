@@ -39,7 +39,6 @@
 #include <net/act_api.h>
 #include <net/pkt_cls.h>
 #include <linux/idr.h>
-#include <net/tc_wrapper.h>
 
 struct tc_u_knode {
 	struct tc_u_knode __rcu	*next;
@@ -101,9 +100,8 @@ static inline unsigned int u32_hash_fold(__be32 key,
 	return h;
 }
 
-TC_INDIRECT_SCOPE int u32_classify(struct sk_buff *skb,
-				   const struct tcf_proto *tp,
-				   struct tcf_result *res)
+static int u32_classify(struct sk_buff *skb, const struct tcf_proto *tp,
+			struct tcf_result *res)
 {
 	struct {
 		struct tc_u_knode *knode;
@@ -1489,5 +1487,4 @@ static void __exit exit_u32(void)
 
 module_init(init_u32)
 module_exit(exit_u32)
-MODULE_DESCRIPTION("Universal 32bit based TC Classifier");
 MODULE_LICENSE("GPL");

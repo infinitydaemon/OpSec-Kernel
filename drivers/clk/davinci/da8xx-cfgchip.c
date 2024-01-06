@@ -11,10 +11,10 @@
 #include <linux/init.h>
 #include <linux/mfd/da8xx-cfgchip.h>
 #include <linux/mfd/syscon.h>
+#include <linux/of_device.h>
 #include <linux/of.h>
 #include <linux/platform_data/clk-da8xx-cfgchip.h>
 #include <linux/platform_device.h>
-#include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/slab.h>
 
@@ -229,7 +229,6 @@ static u8 da8xx_cfgchip_mux_clk_get_parent(struct clk_hw *hw)
 }
 
 static const struct clk_ops da8xx_cfgchip_mux_clk_ops = {
-	.determine_rate	= clk_hw_determine_rate_no_reparent,
 	.set_parent	= da8xx_cfgchip_mux_clk_set_parent,
 	.get_parent	= da8xx_cfgchip_mux_clk_get_parent,
 };
@@ -462,12 +461,10 @@ static unsigned long da8xx_usb0_clk48_recalc_rate(struct clk_hw *hw,
 	return 48000000;
 }
 
-static int da8xx_usb0_clk48_determine_rate(struct clk_hw *hw,
-					   struct clk_rate_request *req)
+static long da8xx_usb0_clk48_round_rate(struct clk_hw *hw, unsigned long rate,
+					unsigned long *parent_rate)
 {
-	req->rate = 48000000;
-
-	return 0;
+	return 48000000;
 }
 
 static int da8xx_usb0_clk48_set_parent(struct clk_hw *hw, u8 index)
@@ -496,7 +493,7 @@ static const struct clk_ops da8xx_usb0_clk48_ops = {
 	.disable	= da8xx_usb0_clk48_disable,
 	.is_enabled	= da8xx_usb0_clk48_is_enabled,
 	.recalc_rate	= da8xx_usb0_clk48_recalc_rate,
-	.determine_rate	= da8xx_usb0_clk48_determine_rate,
+	.round_rate	= da8xx_usb0_clk48_round_rate,
 	.set_parent	= da8xx_usb0_clk48_set_parent,
 	.get_parent	= da8xx_usb0_clk48_get_parent,
 };
@@ -567,7 +564,6 @@ static u8 da8xx_usb1_clk48_get_parent(struct clk_hw *hw)
 }
 
 static const struct clk_ops da8xx_usb1_clk48_ops = {
-	.determine_rate	= clk_hw_determine_rate_no_reparent,
 	.set_parent	= da8xx_usb1_clk48_set_parent,
 	.get_parent	= da8xx_usb1_clk48_get_parent,
 };
@@ -744,13 +740,15 @@ static int da8xx_cfgchip_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct da8xx_cfgchip_clk_platform_data *pdata = dev->platform_data;
+	const struct of_device_id *of_id;
 	da8xx_cfgchip_init clk_init = NULL;
 	struct regmap *regmap = NULL;
 
-	clk_init = device_get_match_data(dev);
-	if (clk_init) {
+	of_id = of_match_device(da8xx_cfgchip_of_match, dev);
+	if (of_id) {
 		struct device_node *parent;
 
+		clk_init = of_id->data;
 		parent = of_get_parent(dev->of_node);
 		regmap = syscon_node_to_regmap(parent);
 		of_node_put(parent);

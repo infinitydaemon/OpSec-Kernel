@@ -17,7 +17,6 @@
 #include <linux/module.h>
 #include <linux/libata.h>
 #include <linux/irq.h>
-#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <scsi/scsi_host.h>
@@ -174,7 +173,7 @@ static unsigned int ixp4xx_mmio_data_xfer(struct ata_queued_cmd *qc,
 	return words << 1;
 }
 
-static const struct scsi_host_template ixp4xx_sht = {
+static struct scsi_host_template ixp4xx_sht = {
 	ATA_PIO_SHT(DRV_NAME),
 };
 
@@ -242,6 +241,12 @@ static int ixp4xx_pata_probe(struct platform_device *pdev)
 	int ret;
 	int irq;
 
+	cmd = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	ctl = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+
+	if (!cmd || !ctl)
+		return -EINVAL;
+
 	ixpp = devm_kzalloc(dev, sizeof(*ixpp), GFP_KERNEL);
 	if (!ixpp)
 		return -ENOMEM;
@@ -265,18 +270,18 @@ static int ixp4xx_pata_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	ixpp->cmd = devm_platform_get_and_ioremap_resource(pdev, 0, &cmd);
-	if (IS_ERR(ixpp->cmd))
-		return PTR_ERR(ixpp->cmd);
-
-	ixpp->ctl = devm_platform_get_and_ioremap_resource(pdev, 1, &ctl);
-	if (IS_ERR(ixpp->ctl))
-		return PTR_ERR(ixpp->ctl);
+	ixpp->cmd = devm_ioremap_resource(dev, cmd);
+	ixpp->ctl = devm_ioremap_resource(dev, ctl);
+	if (IS_ERR(ixpp->cmd) || IS_ERR(ixpp->ctl))
+		return -ENOMEM;
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
+	if (irq > 0)
+		irq_set_irq_type(irq, IRQ_TYPE_EDGE_RISING);
+	else if (irq < 0)
 		return irq;
-	irq_set_irq_type(irq, IRQ_TYPE_EDGE_RISING);
+	else
+		return -EINVAL;
 
 	/* Just one port to set up */
 	ixp4xx_setup_port(ixpp->host->ports[0], ixpp, cmd->start, ctl->start);
@@ -297,7 +302,7 @@ static struct platform_driver ixp4xx_pata_platform_driver = {
 		.of_match_table = ixp4xx_pata_of_match,
 	},
 	.probe		= ixp4xx_pata_probe,
-	.remove_new	= ata_platform_remove_one,
+	.remove		= ata_platform_remove_one,
 };
 
 module_platform_driver(ixp4xx_pata_platform_driver);

@@ -84,14 +84,6 @@ int debugfs_file_get(struct dentry *dentry)
 	struct debugfs_fsdata *fsd;
 	void *d_fsd;
 
-	/*
-	 * This could only happen if some debugfs user erroneously calls
-	 * debugfs_file_get() on a dentry that isn't even a file, let
-	 * them know about it.
-	 */
-	if (WARN_ON(!d_is_reg(dentry)))
-		return -EINVAL;
-
 	d_fsd = READ_ONCE(dentry->d_fsdata);
 	if (!((unsigned long)d_fsd & DEBUGFS_FSDATA_IS_REAL_FOPS_BIT)) {
 		fsd = d_fsd;
@@ -108,8 +100,6 @@ int debugfs_file_get(struct dentry *dentry)
 			kfree(fsd);
 			fsd = READ_ONCE(dentry->d_fsdata);
 		}
-		INIT_LIST_HEAD(&fsd->cancellations);
-		mutex_init(&fsd->cancellations_mtx);
 	}
 
 	/*
@@ -147,86 +137,6 @@ void debugfs_file_put(struct dentry *dentry)
 		complete(&fsd->active_users_drained);
 }
 EXPORT_SYMBOL_GPL(debugfs_file_put);
-
-/**
- * debugfs_enter_cancellation - enter a debugfs cancellation
- * @file: the file being accessed
- * @cancellation: the cancellation object, the cancel callback
- *	inside of it must be initialized
- *
- * When a debugfs file is removed it needs to wait for all active
- * operations to complete. However, the operation itself may need
- * to wait for hardware or completion of some asynchronous process
- * or similar. As such, it may need to be cancelled to avoid long
- * waits or even deadlocks.
- *
- * This function can be used inside a debugfs handler that may
- * need to be cancelled. As soon as this function is called, the
- * cancellation's 'cancel' callback may be called, at which point
- * the caller should proceed to call debugfs_leave_cancellation()
- * and leave the debugfs handler function as soon as possible.
- * Note that the 'cancel' callback is only ever called in the
- * context of some kind of debugfs_remove().
- *
- * This function must be paired with debugfs_leave_cancellation().
- */
-void debugfs_enter_cancellation(struct file *file,
-				struct debugfs_cancellation *cancellation)
-{
-	struct debugfs_fsdata *fsd;
-	struct dentry *dentry = F_DENTRY(file);
-
-	INIT_LIST_HEAD(&cancellation->list);
-
-	if (WARN_ON(!d_is_reg(dentry)))
-		return;
-
-	if (WARN_ON(!cancellation->cancel))
-		return;
-
-	fsd = READ_ONCE(dentry->d_fsdata);
-	if (WARN_ON(!fsd ||
-		    ((unsigned long)fsd & DEBUGFS_FSDATA_IS_REAL_FOPS_BIT)))
-		return;
-
-	mutex_lock(&fsd->cancellations_mtx);
-	list_add(&cancellation->list, &fsd->cancellations);
-	mutex_unlock(&fsd->cancellations_mtx);
-
-	/* if we're already removing wake it up to cancel */
-	if (d_unlinked(dentry))
-		complete(&fsd->active_users_drained);
-}
-EXPORT_SYMBOL_GPL(debugfs_enter_cancellation);
-
-/**
- * debugfs_leave_cancellation - leave cancellation section
- * @file: the file being accessed
- * @cancellation: the cancellation previously registered with
- *	debugfs_enter_cancellation()
- *
- * See the documentation of debugfs_enter_cancellation().
- */
-void debugfs_leave_cancellation(struct file *file,
-				struct debugfs_cancellation *cancellation)
-{
-	struct debugfs_fsdata *fsd;
-	struct dentry *dentry = F_DENTRY(file);
-
-	if (WARN_ON(!d_is_reg(dentry)))
-		return;
-
-	fsd = READ_ONCE(dentry->d_fsdata);
-	if (WARN_ON(!fsd ||
-		    ((unsigned long)fsd & DEBUGFS_FSDATA_IS_REAL_FOPS_BIT)))
-		return;
-
-	mutex_lock(&fsd->cancellations_mtx);
-	if (!list_empty(&cancellation->list))
-		list_del(&cancellation->list);
-	mutex_unlock(&fsd->cancellations_mtx);
-}
-EXPORT_SYMBOL_GPL(debugfs_leave_cancellation);
 
 /*
  * Only permit access to world-readable files when the kernel is locked down.
@@ -989,57 +899,12 @@ ssize_t debugfs_read_file_str(struct file *file, char __user *user_buf,
 
 	return ret;
 }
-EXPORT_SYMBOL_GPL(debugfs_create_str);
 
 static ssize_t debugfs_write_file_str(struct file *file, const char __user *user_buf,
 				      size_t count, loff_t *ppos)
 {
-	struct dentry *dentry = F_DENTRY(file);
-	char *old, *new = NULL;
-	int pos = *ppos;
-	int r;
-
-	r = debugfs_file_get(dentry);
-	if (unlikely(r))
-		return r;
-
-	old = *(char **)file->private_data;
-
-	/* only allow strict concatenation */
-	r = -EINVAL;
-	if (pos && pos != strlen(old))
-		goto error;
-
-	r = -E2BIG;
-	if (pos + count + 1 > PAGE_SIZE)
-		goto error;
-
-	r = -ENOMEM;
-	new = kmalloc(pos + count + 1, GFP_KERNEL);
-	if (!new)
-		goto error;
-
-	if (pos)
-		memcpy(new, old, pos);
-
-	r = -EFAULT;
-	if (copy_from_user(new + pos, user_buf, count))
-		goto error;
-
-	new[pos + count] = '\0';
-	strim(new);
-
-	rcu_assign_pointer(*(char __rcu **)file->private_data, new);
-	synchronize_rcu();
-	kfree(old);
-
-	debugfs_file_put(dentry);
-	return count;
-
-error:
-	kfree(new);
-	debugfs_file_put(dentry);
-	return r;
+	/* This is really only for read-only strings */
+	return -EINVAL;
 }
 
 static const struct file_operations fops_str = {
@@ -1074,6 +939,15 @@ static const struct file_operations fops_str_wo = {
  * This function creates a file in debugfs with the given name that
  * contains the value of the variable @value.  If the @mode variable is so
  * set, it can be read from, and written to.
+ *
+ * This function will return a pointer to a dentry if it succeeds.  This
+ * pointer must be passed to the debugfs_remove() function when the file is
+ * to be removed (no automatic cleanup happens if your module is unloaded,
+ * you are responsible here.)  If an error occurs, ERR_PTR(-ERROR) will be
+ * returned.
+ *
+ * If debugfs is not enabled in the kernel, the value ERR_PTR(-ENODEV) will
+ * be returned.
  */
 void debugfs_create_str(const char *name, umode_t mode,
 			struct dentry *parent, char **value)

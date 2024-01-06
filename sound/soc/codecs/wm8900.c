@@ -1223,7 +1223,7 @@ static const struct regmap_config wm8900_regmap = {
 
 	.reg_defaults = wm8900_reg_defaults,
 	.num_reg_defaults = ARRAY_SIZE(wm8900_reg_defaults),
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 
 	.volatile_reg = wm8900_volatile_register,
 };
@@ -1295,7 +1295,7 @@ static struct i2c_driver wm8900_i2c_driver = {
 	.driver = {
 		.name = "wm8900",
 	},
-	.probe =    wm8900_i2c_probe,
+	.probe_new = wm8900_i2c_probe,
 	.remove =   wm8900_i2c_remove,
 	.id_table = wm8900_i2c_id,
 };

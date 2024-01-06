@@ -91,7 +91,7 @@ static int snd_rpi_chipdip_dac_hw_params(struct snd_pcm_substream *substream,
 	int param_value = params_width(params);
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 
-	ret = snd_soc_dai_set_bclk_ratio(snd_soc_rtd_to_cpu(rtd, 0), 2 * 32);
+	ret = snd_soc_dai_set_bclk_ratio(asoc_rtd_to_cpu(rtd, 0), 2 * 32);
 
 	if (current_width != param_value) {
 		current_width = param_value;

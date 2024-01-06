@@ -128,31 +128,19 @@ debug_print_rmap(const struct cpu_rmap *rmap, const char *prefix)
 }
 #endif
 
-static int get_free_index(struct cpu_rmap *rmap)
-{
-	int i;
-
-	for (i = 0; i < rmap->size; i++)
-		if (!rmap->obj[i])
-			return i;
-
-	return -ENOSPC;
-}
-
 /**
  * cpu_rmap_add - add object to a rmap
  * @rmap: CPU rmap allocated with alloc_cpu_rmap()
  * @obj: Object to add to rmap
  *
- * Return index of object or -ENOSPC if no free entry was found
+ * Return index of object.
  */
 int cpu_rmap_add(struct cpu_rmap *rmap, void *obj)
 {
-	int index = get_free_index(rmap);
+	u16 index;
 
-	if (index < 0)
-		return index;
-
+	BUG_ON(rmap->used >= rmap->size);
+	index = rmap->used++;
 	rmap->obj[index] = obj;
 	return index;
 }
@@ -242,7 +230,7 @@ void free_irq_cpu_rmap(struct cpu_rmap *rmap)
 	if (!rmap)
 		return;
 
-	for (index = 0; index < rmap->size; index++) {
+	for (index = 0; index < rmap->used; index++) {
 		glue = rmap->obj[index];
 		if (glue)
 			irq_set_affinity_notifier(glue->notify.irq, NULL);
@@ -286,17 +274,6 @@ static void irq_cpu_rmap_release(struct kref *ref)
 }
 
 /**
- * irq_cpu_rmap_remove - remove an IRQ from a CPU affinity reverse-map
- * @rmap: The reverse-map
- * @irq: The IRQ number
- */
-int irq_cpu_rmap_remove(struct cpu_rmap *rmap, int irq)
-{
-	return irq_set_affinity_notifier(irq, NULL);
-}
-EXPORT_SYMBOL(irq_cpu_rmap_remove);
-
-/**
  * irq_cpu_rmap_add - add an IRQ to a CPU affinity reverse-map
  * @rmap: The reverse-map
  * @irq: The IRQ number
@@ -318,22 +295,13 @@ int irq_cpu_rmap_add(struct cpu_rmap *rmap, int irq)
 	glue->notify.release = irq_cpu_rmap_release;
 	glue->rmap = rmap;
 	cpu_rmap_get(rmap);
-	rc = cpu_rmap_add(rmap, glue);
-	if (rc < 0)
-		goto err_add;
-
-	glue->index = rc;
+	glue->index = cpu_rmap_add(rmap, glue);
 	rc = irq_set_affinity_notifier(irq, &glue->notify);
-	if (rc)
-		goto err_set;
-
-	return rc;
-
-err_set:
-	rmap->obj[glue->index] = NULL;
-err_add:
-	cpu_rmap_put(glue->rmap);
-	kfree(glue);
+	if (rc) {
+		cpu_rmap_put(glue->rmap);
+		rmap->obj[glue->index] = NULL;
+		kfree(glue);
+	}
 	return rc;
 }
 EXPORT_SYMBOL(irq_cpu_rmap_add);

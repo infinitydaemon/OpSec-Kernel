@@ -144,7 +144,7 @@ static void free_dynids(struct usb_serial_driver *drv)
 	spin_unlock(&drv->dynids.lock);
 }
 
-const struct bus_type usb_serial_bus_type = {
+struct bus_type usb_serial_bus_type = {
 	.name =		"usb-serial",
 	.match =	usb_serial_device_match,
 	.probe =	usb_serial_device_probe,

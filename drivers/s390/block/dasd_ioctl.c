@@ -537,7 +537,7 @@ static int __dasd_ioctl_information(struct dasd_block *block,
 	 * This must be hidden from user-space.
 	 */
 	dasd_info->open_count = atomic_read(&block->open_count);
-	if (!block->bdev_handle)
+	if (!block->bdev)
 		dasd_info->open_count++;
 
 	/*
@@ -613,7 +613,7 @@ static int dasd_ioctl_readall_cmb(struct dasd_block *block, unsigned int cmd,
 	return ret;
 }
 
-int dasd_ioctl(struct block_device *bdev, blk_mode_t mode,
+int dasd_ioctl(struct block_device *bdev, fmode_t mode,
 	       unsigned int cmd, unsigned long arg)
 {
 	struct dasd_block *block;

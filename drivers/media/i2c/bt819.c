@@ -380,7 +380,8 @@ static const struct v4l2_subdev_ops bt819_ops = {
 
 /* ----------------------------------------------------------------------- */
 
-static int bt819_probe(struct i2c_client *client)
+static int bt819_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	int i, ver;
 	struct bt819 *decoder;

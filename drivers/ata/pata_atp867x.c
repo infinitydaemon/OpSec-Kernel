@@ -259,7 +259,7 @@ static int atp867x_cable_detect(struct ata_port *ap)
 	return ATA_CBL_PATA_UNK;
 }
 
-static const struct scsi_host_template atp867x_sht = {
+static struct scsi_host_template atp867x_sht = {
 	ATA_BMDMA_SHT(DRV_NAME),
 };
 

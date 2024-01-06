@@ -417,7 +417,7 @@ out_disable_clks:
 	return ret;
 }
 
-static const struct scsi_host_template ahci_platform_sht = {
+static struct scsi_host_template ahci_platform_sht = {
 	AHCI_SHT(DRV_NAME),
 };
 
@@ -544,7 +544,7 @@ out_reset:
 	return ret;
 }
 
-static void brcm_ahci_remove(struct platform_device *pdev)
+static int brcm_ahci_remove(struct platform_device *pdev)
 {
 	struct ata_host *host = dev_get_drvdata(&pdev->dev);
 	struct ahci_host_priv *hpriv = host->private_data;
@@ -552,7 +552,7 @@ static void brcm_ahci_remove(struct platform_device *pdev)
 
 	brcm_sata_phys_disable(priv);
 
-	ata_platform_remove_one(pdev);
+	return ata_platform_remove_one(pdev);
 }
 
 static void brcm_ahci_shutdown(struct platform_device *pdev)
@@ -573,7 +573,7 @@ static SIMPLE_DEV_PM_OPS(ahci_brcm_pm_ops, brcm_ahci_suspend, brcm_ahci_resume);
 
 static struct platform_driver brcm_ahci_driver = {
 	.probe = brcm_ahci_probe,
-	.remove_new = brcm_ahci_remove,
+	.remove = brcm_ahci_remove,
 	.shutdown = brcm_ahci_shutdown,
 	.driver = {
 		.name = DRV_NAME,

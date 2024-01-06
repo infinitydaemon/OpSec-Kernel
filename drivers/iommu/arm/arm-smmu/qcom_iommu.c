@@ -22,11 +22,12 @@
 #include <linux/init.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
-#include <linux/of_platform.h>
+#include <linux/of_address.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
-#include <linux/firmware/qcom/qcom_scm.h>
+#include <linux/qcom_scm.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 
@@ -50,15 +51,14 @@ struct qcom_iommu_dev {
 	struct clk_bulk_data clks[CLK_NUM];
 	void __iomem		*local_base;
 	u32			 sec_id;
-	u8			 max_asid;
-	struct qcom_iommu_ctx	*ctxs[];   /* indexed by asid */
+	u8			 num_ctxs;
+	struct qcom_iommu_ctx	*ctxs[];   /* indexed by asid-1 */
 };
 
 struct qcom_iommu_ctx {
 	struct device		*dev;
 	void __iomem		*base;
 	bool			 secure_init;
-	bool			 secured_ctx;
 	u8			 asid;      /* asid and ctx bank # are 1:1 */
 	struct iommu_domain	*domain;
 };
@@ -94,7 +94,7 @@ static struct qcom_iommu_ctx * to_ctx(struct qcom_iommu_domain *d, unsigned asid
 	struct qcom_iommu_dev *qcom_iommu = d->iommu;
 	if (!qcom_iommu)
 		return NULL;
-	return qcom_iommu->ctxs[asid];
+	return qcom_iommu->ctxs[asid - 1];
 }
 
 static inline void
@@ -273,12 +273,6 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 			ctx->secure_init = true;
 		}
 
-		/* Secured QSMMU-500/QSMMU-v2 contexts cannot be programmed */
-		if (ctx->secured_ctx) {
-			ctx->domain = domain;
-			continue;
-		}
-
 		/* Disable context bank before programming */
 		iommu_writel(ctx, ARM_SMMU_CB_SCTLR, 0);
 
@@ -332,10 +326,12 @@ out_unlock:
 	return ret;
 }
 
-static struct iommu_domain *qcom_iommu_domain_alloc_paging(struct device *dev)
+static struct iommu_domain *qcom_iommu_domain_alloc(unsigned type)
 {
 	struct qcom_iommu_domain *qcom_domain;
 
+	if (type != IOMMU_DOMAIN_UNMANAGED && type != IOMMU_DOMAIN_DMA)
+		return NULL;
 	/*
 	 * Allocate the domain and initialise some of its data structures.
 	 * We can't really do anything meaningful until we've added a
@@ -392,27 +388,26 @@ static int qcom_iommu_attach_dev(struct iommu_domain *domain, struct device *dev
 	 * Sanity check the domain. We don't support domains across
 	 * different IOMMUs.
 	 */
-	if (qcom_domain->iommu != qcom_iommu)
+	if (qcom_domain->iommu != qcom_iommu) {
+		dev_err(dev, "cannot attach to IOMMU %s while already "
+			"attached to domain on IOMMU %s\n",
+			dev_name(qcom_domain->iommu->dev),
+			dev_name(qcom_iommu->dev));
 		return -EINVAL;
+	}
 
 	return 0;
 }
 
-static int qcom_iommu_identity_attach(struct iommu_domain *identity_domain,
-				      struct device *dev)
+static void qcom_iommu_detach_dev(struct iommu_domain *domain, struct device *dev)
 {
-	struct iommu_domain *domain = iommu_get_domain_for_dev(dev);
-	struct qcom_iommu_domain *qcom_domain;
+	struct qcom_iommu_domain *qcom_domain = to_qcom_iommu_domain(domain);
 	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
 	struct qcom_iommu_dev *qcom_iommu = to_iommu(dev);
-	unsigned int i;
+	unsigned i;
 
-	if (domain == identity_domain || !domain)
-		return 0;
-
-	qcom_domain = to_qcom_iommu_domain(domain);
 	if (WARN_ON(!qcom_domain->iommu))
-		return -EINVAL;
+		return;
 
 	pm_runtime_get_sync(qcom_iommu->dev);
 	for (i = 0; i < fwspec->num_ids; i++) {
@@ -424,21 +419,10 @@ static int qcom_iommu_identity_attach(struct iommu_domain *identity_domain,
 		ctx->domain = NULL;
 	}
 	pm_runtime_put_sync(qcom_iommu->dev);
-	return 0;
 }
 
-static struct iommu_domain_ops qcom_iommu_identity_ops = {
-	.attach_dev = qcom_iommu_identity_attach,
-};
-
-static struct iommu_domain qcom_iommu_identity_domain = {
-	.type = IOMMU_DOMAIN_IDENTITY,
-	.ops = &qcom_iommu_identity_ops,
-};
-
 static int qcom_iommu_map(struct iommu_domain *domain, unsigned long iova,
-			  phys_addr_t paddr, size_t pgsize, size_t pgcount,
-			  int prot, gfp_t gfp, size_t *mapped)
+			  phys_addr_t paddr, size_t size, int prot, gfp_t gfp)
 {
 	int ret;
 	unsigned long flags;
@@ -449,14 +433,13 @@ static int qcom_iommu_map(struct iommu_domain *domain, unsigned long iova,
 		return -ENODEV;
 
 	spin_lock_irqsave(&qcom_domain->pgtbl_lock, flags);
-	ret = ops->map_pages(ops, iova, paddr, pgsize, pgcount, prot, GFP_ATOMIC, mapped);
+	ret = ops->map(ops, iova, paddr, size, prot, GFP_ATOMIC);
 	spin_unlock_irqrestore(&qcom_domain->pgtbl_lock, flags);
 	return ret;
 }
 
 static size_t qcom_iommu_unmap(struct iommu_domain *domain, unsigned long iova,
-			       size_t pgsize, size_t pgcount,
-			       struct iommu_iotlb_gather *gather)
+			       size_t size, struct iommu_iotlb_gather *gather)
 {
 	size_t ret;
 	unsigned long flags;
@@ -473,7 +456,7 @@ static size_t qcom_iommu_unmap(struct iommu_domain *domain, unsigned long iova,
 	 */
 	pm_runtime_get_sync(qcom_domain->iommu->dev);
 	spin_lock_irqsave(&qcom_domain->pgtbl_lock, flags);
-	ret = ops->unmap_pages(ops, iova, pgsize, pgcount, gather);
+	ret = ops->unmap(ops, iova, size, gather);
 	spin_unlock_irqrestore(&qcom_domain->pgtbl_lock, flags);
 	pm_runtime_put_sync(qcom_domain->iommu->dev);
 
@@ -576,10 +559,11 @@ static int qcom_iommu_of_xlate(struct device *dev, struct of_phandle_args *args)
 	qcom_iommu = platform_get_drvdata(iommu_pdev);
 
 	/* make sure the asid specified in dt is valid, so we don't have
-	 * to sanity check this elsewhere:
+	 * to sanity check this elsewhere, since 'asid - 1' is used to
+	 * index into qcom_iommu->ctxs:
 	 */
-	if (WARN_ON(asid > qcom_iommu->max_asid) ||
-	    WARN_ON(qcom_iommu->ctxs[asid] == NULL)) {
+	if (WARN_ON(asid < 1) ||
+	    WARN_ON(asid > qcom_iommu->num_ctxs)) {
 		put_device(&iommu_pdev->dev);
 		return -EINVAL;
 	}
@@ -601,17 +585,17 @@ static int qcom_iommu_of_xlate(struct device *dev, struct of_phandle_args *args)
 }
 
 static const struct iommu_ops qcom_iommu_ops = {
-	.identity_domain = &qcom_iommu_identity_domain,
 	.capable	= qcom_iommu_capable,
-	.domain_alloc_paging = qcom_iommu_domain_alloc_paging,
+	.domain_alloc	= qcom_iommu_domain_alloc,
 	.probe_device	= qcom_iommu_probe_device,
 	.device_group	= generic_device_group,
 	.of_xlate	= qcom_iommu_of_xlate,
 	.pgsize_bitmap	= SZ_4K | SZ_64K | SZ_1M | SZ_16M,
 	.default_domain_ops = &(const struct iommu_domain_ops) {
 		.attach_dev	= qcom_iommu_attach_dev,
-		.map_pages	= qcom_iommu_map,
-		.unmap_pages	= qcom_iommu_unmap,
+		.detach_dev	= qcom_iommu_detach_dev,
+		.map		= qcom_iommu_map,
+		.unmap		= qcom_iommu_unmap,
 		.flush_iotlb_all = qcom_iommu_flush_iotlb_all,
 		.iotlb_sync	= qcom_iommu_iotlb_sync,
 		.iova_to_phys	= qcom_iommu_iova_to_phys,
@@ -666,8 +650,7 @@ free_mem:
 
 static int get_asid(const struct device_node *np)
 {
-	u32 reg, val;
-	int asid;
+	u32 reg;
 
 	/* read the "reg" property directly to get the relative address
 	 * of the context bank, and calculate the asid from that:
@@ -675,17 +658,7 @@ static int get_asid(const struct device_node *np)
 	if (of_property_read_u32_index(np, "reg", 0, &reg))
 		return -ENODEV;
 
-	/*
-	 * Context banks are 0x1000 apart but, in some cases, the ASID
-	 * number doesn't match to this logic and needs to be passed
-	 * from the DT configuration explicitly.
-	 */
-	if (!of_property_read_u32(np, "qcom,ctx-asid", &val))
-		asid = val;
-	else
-		asid = reg / 0x1000;
-
-	return asid;
+	return reg / 0x1000;      /* context banks are 0x1000 apart */
 }
 
 static int qcom_iommu_ctx_probe(struct platform_device *pdev)
@@ -693,6 +666,7 @@ static int qcom_iommu_ctx_probe(struct platform_device *pdev)
 	struct qcom_iommu_ctx *ctx;
 	struct device *dev = &pdev->dev;
 	struct qcom_iommu_dev *qcom_iommu = dev_get_drvdata(dev->parent);
+	struct resource *res;
 	int ret, irq;
 
 	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
@@ -702,22 +676,19 @@ static int qcom_iommu_ctx_probe(struct platform_device *pdev)
 	ctx->dev = dev;
 	platform_set_drvdata(pdev, ctx);
 
-	ctx->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	ctx->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(ctx->base))
 		return PTR_ERR(ctx->base);
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
-		return irq;
-
-	if (of_device_is_compatible(dev->of_node, "qcom,msm-iommu-v2-sec"))
-		ctx->secured_ctx = true;
+		return -ENODEV;
 
 	/* clear IRQs before registering fault handler, just in case the
 	 * boot-loader left us a surprise:
 	 */
-	if (!ctx->secured_ctx)
-		iommu_writel(ctx, ARM_SMMU_CB_FSR, iommu_readl(ctx, ARM_SMMU_CB_FSR));
+	iommu_writel(ctx, ARM_SMMU_CB_FSR, iommu_readl(ctx, ARM_SMMU_CB_FSR));
 
 	ret = devm_request_irq(dev, irq,
 			       qcom_iommu_fault,
@@ -739,26 +710,26 @@ static int qcom_iommu_ctx_probe(struct platform_device *pdev)
 
 	dev_dbg(dev, "found asid %u\n", ctx->asid);
 
-	qcom_iommu->ctxs[ctx->asid] = ctx;
+	qcom_iommu->ctxs[ctx->asid - 1] = ctx;
 
 	return 0;
 }
 
-static void qcom_iommu_ctx_remove(struct platform_device *pdev)
+static int qcom_iommu_ctx_remove(struct platform_device *pdev)
 {
 	struct qcom_iommu_dev *qcom_iommu = dev_get_drvdata(pdev->dev.parent);
 	struct qcom_iommu_ctx *ctx = platform_get_drvdata(pdev);
 
 	platform_set_drvdata(pdev, NULL);
 
-	qcom_iommu->ctxs[ctx->asid] = NULL;
+	qcom_iommu->ctxs[ctx->asid - 1] = NULL;
+
+	return 0;
 }
 
 static const struct of_device_id ctx_of_match[] = {
 	{ .compatible = "qcom,msm-iommu-v1-ns" },
 	{ .compatible = "qcom,msm-iommu-v1-sec" },
-	{ .compatible = "qcom,msm-iommu-v2-ns" },
-	{ .compatible = "qcom,msm-iommu-v2-sec" },
 	{ /* sentinel */ }
 };
 
@@ -768,7 +739,7 @@ static struct platform_driver qcom_iommu_ctx_driver = {
 		.of_match_table	= ctx_of_match,
 	},
 	.probe	= qcom_iommu_ctx_probe,
-	.remove_new = qcom_iommu_ctx_remove,
+	.remove = qcom_iommu_ctx_remove,
 };
 
 static bool qcom_iommu_has_secure_context(struct qcom_iommu_dev *qcom_iommu)
@@ -776,8 +747,7 @@ static bool qcom_iommu_has_secure_context(struct qcom_iommu_dev *qcom_iommu)
 	struct device_node *child;
 
 	for_each_child_of_node(qcom_iommu->dev->of_node, child) {
-		if (of_device_is_compatible(child, "qcom,msm-iommu-v1-sec") ||
-		    of_device_is_compatible(child, "qcom,msm-iommu-v2-sec")) {
+		if (of_device_is_compatible(child, "qcom,msm-iommu-v1-sec")) {
 			of_node_put(child);
 			return true;
 		}
@@ -801,11 +771,11 @@ static int qcom_iommu_device_probe(struct platform_device *pdev)
 	for_each_child_of_node(dev->of_node, child)
 		max_asid = max(max_asid, get_asid(child));
 
-	qcom_iommu = devm_kzalloc(dev, struct_size(qcom_iommu, ctxs, max_asid + 1),
+	qcom_iommu = devm_kzalloc(dev, struct_size(qcom_iommu, ctxs, max_asid),
 				  GFP_KERNEL);
 	if (!qcom_iommu)
 		return -ENOMEM;
-	qcom_iommu->max_asid = max_asid;
+	qcom_iommu->num_ctxs = max_asid;
 	qcom_iommu->dev = dev;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -887,7 +857,7 @@ err_pm_disable:
 	return ret;
 }
 
-static void qcom_iommu_device_remove(struct platform_device *pdev)
+static int qcom_iommu_device_remove(struct platform_device *pdev)
 {
 	struct qcom_iommu_dev *qcom_iommu = platform_get_drvdata(pdev);
 
@@ -895,6 +865,8 @@ static void qcom_iommu_device_remove(struct platform_device *pdev)
 	platform_set_drvdata(pdev, NULL);
 	iommu_device_sysfs_remove(&qcom_iommu->iommu);
 	iommu_device_unregister(&qcom_iommu->iommu);
+
+	return 0;
 }
 
 static int __maybe_unused qcom_iommu_resume(struct device *dev)
@@ -921,7 +893,6 @@ static const struct dev_pm_ops qcom_iommu_pm_ops = {
 
 static const struct of_device_id qcom_iommu_of_match[] = {
 	{ .compatible = "qcom,msm-iommu-v1" },
-	{ .compatible = "qcom,msm-iommu-v2" },
 	{ /* sentinel */ }
 };
 
@@ -932,7 +903,7 @@ static struct platform_driver qcom_iommu_driver = {
 		.pm		= &qcom_iommu_pm_ops,
 	},
 	.probe	= qcom_iommu_device_probe,
-	.remove_new = qcom_iommu_device_remove,
+	.remove	= qcom_iommu_device_remove,
 };
 
 static int __init qcom_iommu_init(void)

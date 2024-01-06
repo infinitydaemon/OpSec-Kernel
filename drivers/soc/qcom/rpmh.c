@@ -76,12 +76,18 @@ static struct rpmh_ctrlr *get_rpmh_ctrlr(const struct device *dev)
 	return &drv->client;
 }
 
-void rpmh_tx_done(const struct tcs_request *msg)
+void rpmh_tx_done(const struct tcs_request *msg, int r)
 {
 	struct rpmh_request *rpm_msg = container_of(msg, struct rpmh_request,
 						    msg);
 	struct completion *compl = rpm_msg->completion;
 	bool free = rpm_msg->needs_free;
+
+	rpm_msg->err = r;
+
+	if (r)
+		dev_err(rpm_msg->dev, "RPMH TX fail in msg addr=%#x, err=%d\n",
+			rpm_msg->msg.cmds[0].addr, r);
 
 	if (!compl)
 		goto exit;
@@ -188,7 +194,7 @@ static int __rpmh_write(const struct device *dev, enum rpmh_state state,
 	} else {
 		/* Clean up our call by spoofing tx_done */
 		ret = 0;
-		rpmh_tx_done(&rpm_msg->msg);
+		rpmh_tx_done(&rpm_msg->msg, ret);
 	}
 
 	return ret;
@@ -239,7 +245,7 @@ int rpmh_write_async(const struct device *dev, enum rpmh_state state,
 
 	return __rpmh_write(dev, state, rpm_msg);
 }
-EXPORT_SYMBOL_GPL(rpmh_write_async);
+EXPORT_SYMBOL(rpmh_write_async);
 
 /**
  * rpmh_write: Write a set of RPMH commands and block until response
@@ -270,7 +276,7 @@ int rpmh_write(const struct device *dev, enum rpmh_state state,
 	WARN_ON(!ret);
 	return (ret > 0) ? 0 : -ETIMEDOUT;
 }
-EXPORT_SYMBOL_GPL(rpmh_write);
+EXPORT_SYMBOL(rpmh_write);
 
 static void cache_batch(struct rpmh_ctrlr *ctrlr, struct batch_cache_req *req)
 {
@@ -395,7 +401,7 @@ exit:
 
 	return ret;
 }
-EXPORT_SYMBOL_GPL(rpmh_write_batch);
+EXPORT_SYMBOL(rpmh_write_batch);
 
 static int is_req_valid(struct cache_req *req)
 {
@@ -444,7 +450,7 @@ int rpmh_flush(struct rpmh_ctrlr *ctrlr)
 
 	if (!ctrlr->dirty) {
 		pr_debug("Skipping flush, TCS has latest data.\n");
-		goto write_next_wakeup;
+		goto exit;
 	}
 
 	/* Invalidate the TCSes first to avoid stale data */
@@ -473,8 +479,6 @@ int rpmh_flush(struct rpmh_ctrlr *ctrlr)
 
 	ctrlr->dirty = false;
 
-write_next_wakeup:
-	rpmh_rsc_write_next_wakeup(ctrlr_to_drv(ctrlr));
 exit:
 	spin_unlock(&ctrlr->cache_lock);
 	return ret;
@@ -500,4 +504,4 @@ void rpmh_invalidate(const struct device *dev)
 	ctrlr->dirty = true;
 	spin_unlock_irqrestore(&ctrlr->cache_lock, flags);
 }
-EXPORT_SYMBOL_GPL(rpmh_invalidate);
+EXPORT_SYMBOL(rpmh_invalidate);

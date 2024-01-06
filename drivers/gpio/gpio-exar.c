@@ -141,7 +141,6 @@ static const struct regmap_config exar_regmap_config = {
 	.name		= "exar-gpio",
 	.reg_bits	= 16,
 	.val_bits	= 8,
-	.io_port	= true,
 };
 
 static int gpio_exar_probe(struct platform_device *pdev)
@@ -216,6 +215,8 @@ static int gpio_exar_probe(struct platform_device *pdev)
 	ret = devm_gpiochip_add_data(dev, &exar_gpio->gpio_chip, exar_gpio);
 	if (ret)
 		return ret;
+
+	platform_set_drvdata(pdev, exar_gpio);
 
 	return 0;
 }

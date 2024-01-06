@@ -3,7 +3,7 @@
  *
  * Name: acrestyp.h - Defines, types, and structures for resource descriptors
  *
- * Copyright (C) 2000 - 2023, Intel Corp.
+ * Copyright (C) 2000 - 2022, Intel Corp.
  *
  *****************************************************************************/
 
@@ -142,10 +142,7 @@ struct acpi_resource_irq {
 	u8 shareable;
 	u8 wake_capable;
 	u8 interrupt_count;
-	union {
-		u8 interrupt;
-		 ACPI_FLEX_ARRAY(u8, interrupts);
-	};
+	u8 interrupts[1];
 };
 
 struct acpi_resource_dma {
@@ -153,10 +150,7 @@ struct acpi_resource_dma {
 	u8 bus_master;
 	u8 transfer;
 	u8 channel_count;
-	union {
-		u8 channel;
-		 ACPI_FLEX_ARRAY(u8, channels);
-	};
+	u8 channels[1];
 };
 
 struct acpi_resource_start_dependent {
@@ -200,7 +194,7 @@ struct acpi_resource_fixed_dma {
 
 struct acpi_resource_vendor {
 	u16 byte_length;
-	u8 byte_data[];
+	u8 byte_data[1];
 };
 
 /* Vendor resource with UUID info (introduced in ACPI 3.0) */
@@ -209,7 +203,7 @@ struct acpi_resource_vendor_typed {
 	u16 byte_length;
 	u8 uuid_subtype;
 	u8 uuid[ACPI_UUID_LENGTH];
-	u8 byte_data[];
+	u8 byte_data[1];
 };
 
 struct acpi_resource_end_tag {
@@ -338,10 +332,7 @@ struct acpi_resource_extended_irq {
 	u8 wake_capable;
 	u8 interrupt_count;
 	struct acpi_resource_source resource_source;
-	union {
-		u32 interrupt;
-		 ACPI_FLEX_ARRAY(u32, interrupts);
-	};
+	u32 interrupts[1];
 };
 
 struct acpi_resource_generic_register {
@@ -545,15 +536,6 @@ struct acpi_resource_pin_config {
 	u8 *vendor_data;
 };
 
-struct acpi_resource_clock_input {
-	u8 revision_id;
-	u8 mode;
-	u8 scale;
-	u16 frequency_divisor;
-	u32 frequency_numerator;
-	struct acpi_resource_source resource_source;
-};
-
 /* Values for pin_config_type field above */
 
 #define ACPI_PIN_CONFIG_DEFAULT                 0
@@ -631,8 +613,7 @@ struct acpi_resource_pin_group_config {
 #define ACPI_RESOURCE_TYPE_PIN_GROUP            22	/* ACPI 6.2 */
 #define ACPI_RESOURCE_TYPE_PIN_GROUP_FUNCTION   23	/* ACPI 6.2 */
 #define ACPI_RESOURCE_TYPE_PIN_GROUP_CONFIG     24	/* ACPI 6.2 */
-#define ACPI_RESOURCE_TYPE_CLOCK_INPUT          25	/* ACPI 6.5 */
-#define ACPI_RESOURCE_TYPE_MAX                  25
+#define ACPI_RESOURCE_TYPE_MAX                  24
 
 /* Master union for resource descriptors */
 
@@ -666,7 +647,6 @@ union acpi_resource_data {
 	struct acpi_resource_pin_group pin_group;
 	struct acpi_resource_pin_group_function pin_group_function;
 	struct acpi_resource_pin_group_config pin_group_config;
-	struct acpi_resource_clock_input clock_input;
 
 	/* Common fields */
 
@@ -699,10 +679,7 @@ struct acpi_pci_routing_table {
 	u32 pin;
 	u64 address;		/* here for 64-bit alignment */
 	u32 source_index;
-	union {
-		char pad[4];	/* pad to 64 bits so sizeof() works in all cases */
-		 ACPI_FLEX_ARRAY(char, source);
-	};
+	char source[4];		/* pad to 64 bits so sizeof() works in all cases */
 };
 
 #endif				/* __ACRESTYP_H__ */

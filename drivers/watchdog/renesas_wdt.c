@@ -292,12 +292,14 @@ static int rwdt_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void rwdt_remove(struct platform_device *pdev)
+static int rwdt_remove(struct platform_device *pdev)
 {
 	struct rwdt_priv *priv = platform_get_drvdata(pdev);
 
 	watchdog_unregister_device(&priv->wdev);
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 static int __maybe_unused rwdt_suspend(struct device *dev)
@@ -337,7 +339,7 @@ static struct platform_driver rwdt_driver = {
 		.pm = &rwdt_pm_ops,
 	},
 	.probe = rwdt_probe,
-	.remove_new = rwdt_remove,
+	.remove = rwdt_remove,
 };
 module_platform_driver(rwdt_driver);
 

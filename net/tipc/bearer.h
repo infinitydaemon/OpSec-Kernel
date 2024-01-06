@@ -214,6 +214,8 @@ int tipc_nl_media_get(struct sk_buff *skb, struct genl_info *info);
 int tipc_nl_media_set(struct sk_buff *skb, struct genl_info *info);
 int __tipc_nl_media_set(struct sk_buff *skb, struct genl_info *info);
 
+int tipc_media_set_priority(const char *name, u32 new_value);
+int tipc_media_set_window(const char *name, u32 new_value);
 int tipc_media_addr_printf(char *buf, int len, struct tipc_media_addr *a);
 int tipc_enable_l2_media(struct net *net, struct tipc_bearer *b,
 			 struct nlattr *attrs[]);
@@ -255,9 +257,9 @@ static inline void tipc_loopback_trace(struct net *net,
 }
 
 /* check if device MTU is too low for tipc headers */
-static inline bool tipc_mtu_bad(struct net_device *dev)
+static inline bool tipc_mtu_bad(struct net_device *dev, unsigned int reserve)
 {
-	if (dev->mtu >= TIPC_MIN_BEARER_MTU)
+	if (dev->mtu >= TIPC_MIN_BEARER_MTU + reserve)
 		return false;
 	netdev_warn(dev, "MTU too low for tipc bearer\n");
 	return true;

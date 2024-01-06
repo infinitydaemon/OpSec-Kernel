@@ -15,8 +15,6 @@ source "drivers/base/Kconfig"
 
 source "drivers/bus/Kconfig"
 
-source "drivers/cache/Kconfig"
-
 source "drivers/connector/Kconfig"
 
 source "drivers/firmware/Kconfig"
@@ -101,8 +99,6 @@ source "drivers/media/Kconfig"
 
 source "drivers/video/Kconfig"
 
-source "drivers/accel/Kconfig"
-
 source "sound/Kconfig"
 
 source "drivers/hid/Kconfig"
@@ -131,9 +127,13 @@ source "drivers/dma-buf/Kconfig"
 
 source "drivers/dca/Kconfig"
 
+source "drivers/auxdisplay/Kconfig"
+
 source "drivers/uio/Kconfig"
 
 source "drivers/vfio/Kconfig"
+
+source "drivers/vlynq/Kconfig"
 
 source "drivers/virt/Kconfig"
 
@@ -172,8 +172,6 @@ source "drivers/rpmsg/Kconfig"
 source "drivers/soundwire/Kconfig"
 
 source "drivers/soc/Kconfig"
-
-source "drivers/pmdomain/Kconfig"
 
 source "drivers/devfreq/Kconfig"
 
@@ -240,9 +238,5 @@ source "drivers/most/Kconfig"
 source "drivers/peci/Kconfig"
 
 source "drivers/hte/Kconfig"
-
-source "drivers/cdx/Kconfig"
-
-source "drivers/dpll/Kconfig"
 
 endmenu

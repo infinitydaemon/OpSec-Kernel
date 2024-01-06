@@ -23,7 +23,7 @@
 #include "../../../util/mmap.h"
 #include <subcmd/parse-options.h>
 #include "../../../util/parse-events.h"
-#include "../../../util/pmus.h"
+#include "../../../util/pmu.h"
 #include "../../../util/debug.h"
 #include "../../../util/auxtrace.h"
 #include "../../../util/perf_api_probe.h"
@@ -60,34 +60,43 @@ struct intel_pt_recording {
 	size_t				priv_size;
 };
 
-static int intel_pt_parse_terms_with_default(const struct perf_pmu *pmu,
+static int intel_pt_parse_terms_with_default(const char *pmu_name,
+					     struct list_head *formats,
 					     const char *str,
 					     u64 *config)
 {
-	struct parse_events_terms terms;
+	struct list_head *terms;
 	struct perf_event_attr attr = { .size = 0, };
 	int err;
 
-	parse_events_terms__init(&terms);
-	err = parse_events_terms(&terms, str, /*input=*/ NULL);
+	terms = malloc(sizeof(struct list_head));
+	if (!terms)
+		return -ENOMEM;
+
+	INIT_LIST_HEAD(terms);
+
+	err = parse_events_terms(terms, str);
 	if (err)
 		goto out_free;
 
 	attr.config = *config;
-	err = perf_pmu__config_terms(pmu, &attr, &terms, /*zero=*/true, /*err=*/NULL);
+	err = perf_pmu__config_terms(pmu_name, formats, &attr, terms, true,
+				     NULL);
 	if (err)
 		goto out_free;
 
 	*config = attr.config;
 out_free:
-	parse_events_terms__exit(&terms);
+	parse_events_terms__delete(terms);
 	return err;
 }
 
-static int intel_pt_parse_terms(const struct perf_pmu *pmu, const char *str, u64 *config)
+static int intel_pt_parse_terms(const char *pmu_name, struct list_head *formats,
+				const char *str, u64 *config)
 {
 	*config = 0;
-	return intel_pt_parse_terms_with_default(pmu, str, config);
+	return intel_pt_parse_terms_with_default(pmu_name, formats, str,
+						 config);
 }
 
 static u64 intel_pt_masked_bits(u64 mask, u64 bits)
@@ -117,7 +126,7 @@ static int intel_pt_read_config(struct perf_pmu *intel_pt_pmu, const char *str,
 
 	*res = 0;
 
-	mask = perf_pmu__format_bits(intel_pt_pmu, str);
+	mask = perf_pmu__format_bits(&intel_pt_pmu->format, str);
 	if (!mask)
 		return -EINVAL;
 
@@ -177,7 +186,7 @@ static int intel_pt_pick_bit(int bits, int target)
 	return pick;
 }
 
-static u64 intel_pt_default_config(const struct perf_pmu *intel_pt_pmu)
+static u64 intel_pt_default_config(struct perf_pmu *intel_pt_pmu)
 {
 	char buf[256];
 	int mtc, mtc_periods = 0, mtc_period;
@@ -185,19 +194,16 @@ static u64 intel_pt_default_config(const struct perf_pmu *intel_pt_pmu)
 	int pos = 0;
 	u64 config;
 	char c;
-	int dirfd;
-
-	dirfd = perf_pmu__event_source_devices_fd();
 
 	pos += scnprintf(buf + pos, sizeof(buf) - pos, "tsc");
 
-	if (perf_pmu__scan_file_at(intel_pt_pmu, dirfd, "caps/mtc", "%d",
-				   &mtc) != 1)
+	if (perf_pmu__scan_file(intel_pt_pmu, "caps/mtc", "%d",
+				&mtc) != 1)
 		mtc = 1;
 
 	if (mtc) {
-		if (perf_pmu__scan_file_at(intel_pt_pmu, dirfd, "caps/mtc_periods", "%x",
-					   &mtc_periods) != 1)
+		if (perf_pmu__scan_file(intel_pt_pmu, "caps/mtc_periods", "%x",
+					&mtc_periods) != 1)
 			mtc_periods = 0;
 		if (mtc_periods) {
 			mtc_period = intel_pt_pick_bit(mtc_periods, 3);
@@ -206,13 +212,13 @@ static u64 intel_pt_default_config(const struct perf_pmu *intel_pt_pmu)
 		}
 	}
 
-	if (perf_pmu__scan_file_at(intel_pt_pmu, dirfd, "caps/psb_cyc", "%d",
-				   &psb_cyc) != 1)
+	if (perf_pmu__scan_file(intel_pt_pmu, "caps/psb_cyc", "%d",
+				&psb_cyc) != 1)
 		psb_cyc = 1;
 
 	if (psb_cyc && mtc_periods) {
-		if (perf_pmu__scan_file_at(intel_pt_pmu, dirfd, "caps/psb_periods", "%x",
-					   &psb_periods) != 1)
+		if (perf_pmu__scan_file(intel_pt_pmu, "caps/psb_periods", "%x",
+					&psb_periods) != 1)
 			psb_periods = 0;
 		if (psb_periods) {
 			psb_period = intel_pt_pick_bit(psb_periods, 3);
@@ -221,15 +227,15 @@ static u64 intel_pt_default_config(const struct perf_pmu *intel_pt_pmu)
 		}
 	}
 
-	if (perf_pmu__scan_file_at(intel_pt_pmu, dirfd, "format/pt", "%c", &c) == 1 &&
-	    perf_pmu__scan_file_at(intel_pt_pmu, dirfd, "format/branch", "%c", &c) == 1)
+	if (perf_pmu__scan_file(intel_pt_pmu, "format/pt", "%c", &c) == 1 &&
+	    perf_pmu__scan_file(intel_pt_pmu, "format/branch", "%c", &c) == 1)
 		pos += scnprintf(buf + pos, sizeof(buf) - pos, ",pt,branch");
 
 	pr_debug2("%s default config: %s\n", intel_pt_pmu->name, buf);
 
-	intel_pt_parse_terms(intel_pt_pmu, buf, &config);
+	intel_pt_parse_terms(intel_pt_pmu->name, &intel_pt_pmu->format, buf,
+			     &config);
 
-	close(dirfd);
 	return config;
 }
 
@@ -256,17 +262,20 @@ static int intel_pt_parse_snapshot_options(struct auxtrace_record *itr,
 	return 0;
 }
 
-void intel_pt_pmu_default_config(const struct perf_pmu *intel_pt_pmu,
-				 struct perf_event_attr *attr)
+struct perf_event_attr *
+intel_pt_pmu_default_config(struct perf_pmu *intel_pt_pmu)
 {
-	static u64 config;
-	static bool initialized;
+	struct perf_event_attr *attr;
 
-	if (!initialized) {
-		config = intel_pt_default_config(intel_pt_pmu);
-		initialized = true;
-	}
-	attr->config = config;
+	attr = zalloc(sizeof(struct perf_event_attr));
+	if (!attr)
+		return NULL;
+
+	attr->config = intel_pt_default_config(intel_pt_pmu);
+
+	intel_pt_pmu->selectable = true;
+
+	return attr;
 }
 
 static const char *intel_pt_find_filter(struct evlist *evlist,
@@ -335,11 +344,16 @@ static int intel_pt_info_fill(struct auxtrace_record *itr,
 	if (priv_size != ptr->priv_size)
 		return -EINVAL;
 
-	intel_pt_parse_terms(intel_pt_pmu, "tsc", &tsc_bit);
-	intel_pt_parse_terms(intel_pt_pmu, "noretcomp", &noretcomp_bit);
-	intel_pt_parse_terms(intel_pt_pmu, "mtc", &mtc_bit);
-	mtc_freq_bits = perf_pmu__format_bits(intel_pt_pmu, "mtc_period");
-	intel_pt_parse_terms(intel_pt_pmu, "cyc", &cyc_bit);
+	intel_pt_parse_terms(intel_pt_pmu->name, &intel_pt_pmu->format,
+			     "tsc", &tsc_bit);
+	intel_pt_parse_terms(intel_pt_pmu->name, &intel_pt_pmu->format,
+			     "noretcomp", &noretcomp_bit);
+	intel_pt_parse_terms(intel_pt_pmu->name, &intel_pt_pmu->format,
+			     "mtc", &mtc_bit);
+	mtc_freq_bits = perf_pmu__format_bits(&intel_pt_pmu->format,
+					      "mtc_period");
+	intel_pt_parse_terms(intel_pt_pmu->name, &intel_pt_pmu->format,
+			     "cyc", &cyc_bit);
 
 	intel_pt_tsc_ctc_ratio(&tsc_ctc_ratio_n, &tsc_ctc_ratio_d);
 
@@ -404,7 +418,6 @@ static int intel_pt_info_fill(struct auxtrace_record *itr,
 	return 0;
 }
 
-#ifdef HAVE_LIBTRACEEVENT
 static int intel_pt_track_switches(struct evlist *evlist)
 {
 	const char *sched_switch = "sched:sched_switch";
@@ -426,7 +439,6 @@ static int intel_pt_track_switches(struct evlist *evlist)
 
 	return 0;
 }
-#endif
 
 static void intel_pt_valid_str(char *str, size_t len, u64 valid)
 {
@@ -474,7 +486,7 @@ static void intel_pt_valid_str(char *str, size_t len, u64 valid)
 	}
 }
 
-static int intel_pt_val_config_term(struct perf_pmu *intel_pt_pmu, int dirfd,
+static int intel_pt_val_config_term(struct perf_pmu *intel_pt_pmu,
 				    const char *caps, const char *name,
 				    const char *supported, u64 config)
 {
@@ -484,16 +496,16 @@ static int intel_pt_val_config_term(struct perf_pmu *intel_pt_pmu, int dirfd,
 	u64 bits;
 	int ok;
 
-	if (perf_pmu__scan_file_at(intel_pt_pmu, dirfd, caps, "%llx", &valid) != 1)
+	if (perf_pmu__scan_file(intel_pt_pmu, caps, "%llx", &valid) != 1)
 		valid = 0;
 
 	if (supported &&
-	    perf_pmu__scan_file_at(intel_pt_pmu, dirfd, supported, "%d", &ok) == 1 && !ok)
+	    perf_pmu__scan_file(intel_pt_pmu, supported, "%d", &ok) == 1 && !ok)
 		valid = 0;
 
 	valid |= 1;
 
-	bits = perf_pmu__format_bits(intel_pt_pmu, name);
+	bits = perf_pmu__format_bits(&intel_pt_pmu->format, name);
 
 	config &= bits;
 
@@ -517,45 +529,56 @@ out_err:
 static int intel_pt_validate_config(struct perf_pmu *intel_pt_pmu,
 				    struct evsel *evsel)
 {
-	int err, dirfd;
+	int err;
 	char c;
 
 	if (!evsel)
 		return 0;
 
-	dirfd = perf_pmu__event_source_devices_fd();
-	if (dirfd < 0)
-		return dirfd;
-
 	/*
 	 * If supported, force pass-through config term (pt=1) even if user
 	 * sets pt=0, which avoids senseless kernel errors.
 	 */
-	if (perf_pmu__scan_file_at(intel_pt_pmu, dirfd, "format/pt", "%c", &c) == 1 &&
+	if (perf_pmu__scan_file(intel_pt_pmu, "format/pt", "%c", &c) == 1 &&
 	    !(evsel->core.attr.config & 1)) {
 		pr_warning("pt=0 doesn't make sense, forcing pt=1\n");
 		evsel->core.attr.config |= 1;
 	}
 
-	err = intel_pt_val_config_term(intel_pt_pmu, dirfd, "caps/cycle_thresholds",
+	err = intel_pt_val_config_term(intel_pt_pmu, "caps/cycle_thresholds",
 				       "cyc_thresh", "caps/psb_cyc",
 				       evsel->core.attr.config);
 	if (err)
-		goto out;
+		return err;
 
-	err = intel_pt_val_config_term(intel_pt_pmu, dirfd, "caps/mtc_periods",
+	err = intel_pt_val_config_term(intel_pt_pmu, "caps/mtc_periods",
 				       "mtc_period", "caps/mtc",
 				       evsel->core.attr.config);
 	if (err)
-		goto out;
+		return err;
 
-	err = intel_pt_val_config_term(intel_pt_pmu, dirfd, "caps/psb_periods",
+	return intel_pt_val_config_term(intel_pt_pmu, "caps/psb_periods",
 					"psb_period", "caps/psb_cyc",
 					evsel->core.attr.config);
+}
 
-out:
-	close(dirfd);
-	return err;
+static void intel_pt_config_sample_mode(struct perf_pmu *intel_pt_pmu,
+					struct evsel *evsel)
+{
+	u64 user_bits = 0, bits;
+	struct evsel_config_term *term = evsel__get_config_term(evsel, CFG_CHG);
+
+	if (term)
+		user_bits = term->val.cfg_chg;
+
+	bits = perf_pmu__format_bits(&intel_pt_pmu->format, "psb_period");
+
+	/* Did user change psb_period */
+	if (bits & user_bits)
+		return;
+
+	/* Set psb_period to 0 */
+	evsel->core.attr.config &= ~bits;
 }
 
 static void intel_pt_min_max_sample_sz(struct evlist *evlist,
@@ -649,8 +672,7 @@ static int intel_pt_recording_options(struct auxtrace_record *itr,
 		return 0;
 
 	if (opts->auxtrace_sample_mode)
-		evsel__set_config_if_unset(intel_pt_pmu, intel_pt_evsel,
-					   "psb_period", 0);
+		intel_pt_config_sample_mode(intel_pt_pmu, intel_pt_evsel);
 
 	err = intel_pt_validate_config(intel_pt_pmu, intel_pt_evsel);
 	if (err)
@@ -763,7 +785,8 @@ static int intel_pt_recording_options(struct auxtrace_record *itr,
 		intel_pt_evsel->core.attr.aux_watermark = aux_watermark;
 	}
 
-	intel_pt_parse_terms(intel_pt_pmu, "tsc", &tsc_bit);
+	intel_pt_parse_terms(intel_pt_pmu->name, &intel_pt_pmu->format,
+			     "tsc", &tsc_bit);
 
 	if (opts->full_auxtrace && (intel_pt_evsel->core.attr.config & tsc_bit))
 		have_timing_info = true;
@@ -806,7 +829,6 @@ static int intel_pt_recording_options(struct auxtrace_record *itr,
 					ptr->have_sched_switch = 2;
 			}
 		} else {
-#ifdef HAVE_LIBTRACEEVENT
 			err = intel_pt_track_switches(evlist);
 			if (err == -EPERM)
 				pr_debug2("Unable to select sched:sched_switch\n");
@@ -814,7 +836,6 @@ static int intel_pt_recording_options(struct auxtrace_record *itr,
 				return err;
 			else
 				ptr->have_sched_switch = 1;
-#endif
 		}
 	}
 
@@ -1166,7 +1187,7 @@ static u64 intel_pt_reference(struct auxtrace_record *itr __maybe_unused)
 
 struct auxtrace_record *intel_pt_recording_init(int *err)
 {
-	struct perf_pmu *intel_pt_pmu = perf_pmus__find(INTEL_PT_PMU_NAME);
+	struct perf_pmu *intel_pt_pmu = perf_pmu__find(INTEL_PT_PMU_NAME);
 	struct intel_pt_recording *ptr;
 
 	if (!intel_pt_pmu)

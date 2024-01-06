@@ -41,9 +41,10 @@
 #include "symbol.h"
 #include "ui/ui.h"
 #include "ui/progress.h"
-#include "pmus.h"
+#include "../perf.h"
+#include "pmu.h"
+#include "pmu-hybrid.h"
 #include "string2.h"
-#include "util/util.h"
 
 struct c2c_hists {
 	struct hists		hists;
@@ -164,8 +165,8 @@ static void *c2c_he_zalloc(size_t size)
 	return &c2c_he->he;
 
 out_free:
-	zfree(&c2c_he->nodeset);
-	zfree(&c2c_he->cpuset);
+	free(c2c_he->nodeset);
+	free(c2c_he->cpuset);
 	free(c2c_he);
 	return NULL;
 }
@@ -177,13 +178,13 @@ static void c2c_he_free(void *he)
 	c2c_he = container_of(he, struct c2c_hist_entry, he);
 	if (c2c_he->hists) {
 		hists__delete_entries(&c2c_he->hists->hists);
-		zfree(&c2c_he->hists);
+		free(c2c_he->hists);
 	}
 
-	zfree(&c2c_he->cpuset);
-	zfree(&c2c_he->nodeset);
-	zfree(&c2c_he->nodestr);
-	zfree(&c2c_he->node_stats);
+	free(c2c_he->cpuset);
+	free(c2c_he->nodeset);
+	free(c2c_he->nodestr);
+	free(c2c_he->node_stats);
 	free(c2c_he);
 }
 
@@ -229,7 +230,7 @@ static void c2c_he__set_cpu(struct c2c_hist_entry *c2c_he,
 		      "WARNING: no sample cpu value"))
 		return;
 
-	__set_bit(sample->cpu, c2c_he->cpuset);
+	set_bit(sample->cpu, c2c_he->cpuset);
 }
 
 static void c2c_he__set_node(struct c2c_hist_entry *c2c_he,
@@ -246,7 +247,7 @@ static void c2c_he__set_node(struct c2c_hist_entry *c2c_he,
 	if (WARN_ONCE(node < 0, "WARNING: failed to find node\n"))
 		return;
 
-	__set_bit(node, c2c_he->nodeset);
+	set_bit(node, c2c_he->nodeset);
 
 	if (c2c_he->paddr != sample->phys_addr) {
 		c2c_he->paddr_cnt++;
@@ -284,31 +285,25 @@ static int process_sample_event(struct perf_tool *tool __maybe_unused,
 	struct hist_entry *he;
 	struct addr_location al;
 	struct mem_info *mi, *mi_dup;
-	struct callchain_cursor *cursor;
 	int ret;
 
-	addr_location__init(&al);
 	if (machine__resolve(machine, &al, sample) < 0) {
 		pr_debug("problem processing %d event, skipping it.\n",
 			 event->header.type);
-		ret = -1;
-		goto out;
+		return -1;
 	}
 
 	if (c2c.stitch_lbr)
-		thread__set_lbr_stitch_enable(al.thread, true);
+		al.thread->lbr_stitch_enable = true;
 
-	cursor = get_tls_callchain_cursor();
-	ret = sample__resolve_callchain(sample, cursor, NULL,
+	ret = sample__resolve_callchain(sample, &callchain_cursor, NULL,
 					evsel, &al, sysctl_perf_event_max_stack);
 	if (ret)
 		goto out;
 
 	mi = sample__resolve_mem(sample, &al);
-	if (mi == NULL) {
-		ret = -ENOMEM;
-		goto out;
-	}
+	if (mi == NULL)
+		return -ENOMEM;
 
 	/*
 	 * The mi object is released in hists__add_entry_ops,
@@ -320,7 +315,7 @@ static int process_sample_event(struct perf_tool *tool __maybe_unused,
 	c2c_decode_stats(&stats, mi);
 
 	he = hists__add_entry_ops(&c2c_hists->hists, &c2c_entry_ops,
-				  &al, NULL, NULL, mi, NULL,
+				  &al, NULL, NULL, mi,
 				  sample, true);
 	if (he == NULL)
 		goto free_mi;
@@ -354,7 +349,7 @@ static int process_sample_event(struct perf_tool *tool __maybe_unused,
 			goto free_mi;
 
 		he = hists__add_entry_ops(&c2c_hists->hists, &c2c_entry_ops,
-					  &al, NULL, NULL, mi, NULL,
+					  &al, NULL, NULL, mi,
 					  sample, true);
 		if (he == NULL)
 			goto free_mi;
@@ -374,7 +369,7 @@ static int process_sample_event(struct perf_tool *tool __maybe_unused,
 	}
 
 out:
-	addr_location__exit(&al);
+	addr_location__put(&al);
 	return ret;
 
 free_mi:
@@ -529,7 +524,7 @@ static int dcacheline_entry(struct perf_hpp_fmt *fmt, struct perf_hpp *hpp,
 	char buf[20];
 
 	if (he->mem_info)
-		addr = cl_address(he->mem_info->daddr.addr, chk_double_cl);
+		addr = cl_address(he->mem_info->daddr.addr);
 
 	return scnprintf(hpp->buf, hpp->size, "%*s", width, HEX_STR(buf, addr));
 }
@@ -567,7 +562,7 @@ static int offset_entry(struct perf_hpp_fmt *fmt, struct perf_hpp *hpp,
 	char buf[20];
 
 	if (he->mem_info)
-		addr = cl_offset(he->mem_info->daddr.al_addr, chk_double_cl);
+		addr = cl_offset(he->mem_info->daddr.al_addr);
 
 	return scnprintf(hpp->buf, hpp->size, "%*s", width, HEX_STR(buf, addr));
 }
@@ -579,10 +574,9 @@ offset_cmp(struct perf_hpp_fmt *fmt __maybe_unused,
 	uint64_t l = 0, r = 0;
 
 	if (left->mem_info)
-		l = cl_offset(left->mem_info->daddr.addr, chk_double_cl);
-
+		l = cl_offset(left->mem_info->daddr.addr);
 	if (right->mem_info)
-		r = cl_offset(right->mem_info->daddr.addr, chk_double_cl);
+		r = cl_offset(right->mem_info->daddr.addr);
 
 	return (int64_t)(r - l);
 }
@@ -1155,14 +1149,14 @@ pid_entry(struct perf_hpp_fmt *fmt, struct perf_hpp *hpp,
 {
 	int width = c2c_width(fmt, hpp, he->hists);
 
-	return scnprintf(hpp->buf, hpp->size, "%*d", width, thread__pid(he->thread));
+	return scnprintf(hpp->buf, hpp->size, "%*d", width, he->thread->pid_);
 }
 
 static int64_t
 pid_cmp(struct perf_hpp_fmt *fmt __maybe_unused,
 	struct hist_entry *left, struct hist_entry *right)
 {
-	return thread__pid(left->thread) - thread__pid(right->thread);
+	return left->thread->pid_ - right->thread->pid_;
 }
 
 static int64_t
@@ -2324,7 +2318,7 @@ static int setup_nodes(struct perf_session *session)
 			continue;
 
 		perf_cpu_map__for_each_cpu(cpu, idx, map) {
-			__set_bit(cpu.cpu, set);
+			set_bit(cpu.cpu, set);
 
 			if (WARN_ONCE(cpu2node[cpu.cpu] != -1, "node/cpu topology bug"))
 				return -EINVAL;
@@ -2596,7 +2590,7 @@ perf_c2c_cacheline_browser__title(struct hist_browser *browser,
 	he = cl_browser->he;
 
 	if (he->mem_info)
-		addr = cl_address(he->mem_info->daddr.addr, chk_double_cl);
+		addr = cl_address(he->mem_info->daddr.addr);
 
 	scnprintf(bf, size, "Cacheline 0x%lx", addr);
 	return 0;
@@ -2794,16 +2788,15 @@ static int ui_quirks(void)
 	if (!c2c.use_stdio) {
 		dim_offset.width  = 5;
 		dim_offset.header = header_offset_tui;
-		nodestr = chk_double_cl ? "Double-CL" : "CL";
+		nodestr = "CL";
 	}
 
 	dim_percent_costly_snoop.header = percent_costly_snoop_header[c2c.display];
 
 	/* Fix the zero line for dcacheline column. */
-	buf = fill_line(chk_double_cl ? "Double-Cacheline" : "Cacheline",
-				dim_dcacheline.width +
-				dim_dcacheline_node.width +
-				dim_dcacheline_count.width + 4);
+	buf = fill_line("Cacheline", dim_dcacheline.width +
+				     dim_dcacheline_node.width +
+				     dim_dcacheline_count.width + 4);
 	if (!buf)
 		return -ENOMEM;
 
@@ -3044,7 +3037,6 @@ static int perf_c2c__report(int argc, const char **argv)
 	OPT_BOOLEAN('f', "force", &symbol_conf.force, "don't complain, do it"),
 	OPT_BOOLEAN(0, "stitch-lbr", &c2c.stitch_lbr,
 		    "Enable LBR callgraph stitching approach"),
-	OPT_BOOLEAN(0, "double-cl", &chk_double_cl, "Detect adjacent cacheline false sharing"),
 	OPT_PARENT(c2c_options),
 	OPT_END()
 	};
@@ -3264,8 +3256,10 @@ static int perf_c2c__record(int argc, const char **argv)
 	argc = parse_options(argc, argv, options, record_mem_usage,
 			     PARSE_OPT_KEEP_UNKNOWN);
 
-	/* Max number of arguments multiplied by number of PMUs that can support them. */
-	rec_argc = argc + 11 * perf_pmus__num_mem_pmus();
+	if (!perf_pmu__has_hybrid())
+		rec_argc = argc + 11; /* max number of arguments */
+	else
+		rec_argc = argc + 11 * perf_pmu__hybrid_pmu_num();
 
 	rec_argv = calloc(rec_argc + 1, sizeof(char *));
 	if (!rec_argv)

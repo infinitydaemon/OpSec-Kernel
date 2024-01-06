@@ -217,7 +217,8 @@ static void da311_disable(void *client)
 	da311_enable(client, false);
 }
 
-static int da311_probe(struct i2c_client *client)
+static int da311_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	int ret;
 	struct iio_dev *indio_dev;

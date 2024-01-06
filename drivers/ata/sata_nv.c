@@ -371,11 +371,11 @@ static struct pci_driver nv_pci_driver = {
 	.remove			= ata_pci_remove_one,
 };
 
-static const struct scsi_host_template nv_sht = {
+static struct scsi_host_template nv_sht = {
 	ATA_BMDMA_SHT(DRV_NAME),
 };
 
-static const struct scsi_host_template nv_adma_sht = {
+static struct scsi_host_template nv_adma_sht = {
 	__ATA_BASE_SHT(DRV_NAME),
 	.can_queue		= NV_ADMA_MAX_CPBS,
 	.sg_tablesize		= NV_ADMA_SGTBL_TOTAL_LEN,
@@ -386,7 +386,7 @@ static const struct scsi_host_template nv_adma_sht = {
 	.tag_alloc_policy	= BLK_TAG_ALLOC_RR,
 };
 
-static const struct scsi_host_template nv_swncq_sht = {
+static struct scsi_host_template nv_swncq_sht = {
 	__ATA_BASE_SHT(DRV_NAME),
 	.can_queue		= ATA_MAX_QUEUE - 1,
 	.sg_tablesize		= LIBATA_MAX_PRD,
@@ -520,7 +520,7 @@ static struct ata_port_operations nv_swncq_ops = {
 
 struct nv_pi_priv {
 	irq_handler_t			irq_handler;
-	const struct scsi_host_template	*sht;
+	struct scsi_host_template	*sht;
 };
 
 #define NV_PI_PRIV(_irq_handler, _sht) \
@@ -1529,7 +1529,7 @@ static int nv_hardreset(struct ata_link *link, unsigned int *class,
 		sata_link_hardreset(link, sata_deb_timing_hotplug, deadline,
 				    NULL, NULL);
 	else {
-		const unsigned int *timing = sata_ehc_deb_timing(ehc);
+		const unsigned long *timing = sata_ehc_deb_timing(ehc);
 		int rc;
 
 		if (!(ehc->i.flags & ATA_EHI_QUIET))
@@ -2185,7 +2185,7 @@ static void nv_swncq_host_interrupt(struct ata_port *ap, u16 fis)
 	if (!fis)
 		return;
 
-	if (ata_port_is_frozen(ap))
+	if (ap->pflags & ATA_PFLAG_FROZEN)
 		return;
 
 	if (fis & NV_SWNCQ_IRQ_HOTPLUG) {

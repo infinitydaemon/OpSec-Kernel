@@ -1049,7 +1049,8 @@ static int ov2311_configure_regulators(struct ov2311 *ov2311)
 				       ov2311->supplies);
 }
 
-static int ov2311_probe(struct i2c_client *client)
+static int ov2311_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
 	struct ov2311 *ov2311;

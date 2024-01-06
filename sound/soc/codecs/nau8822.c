@@ -184,7 +184,6 @@ static int nau8822_eq_get(struct snd_kcontrol *kcontrol,
 	struct soc_bytes_ext *params = (void *)kcontrol->private_value;
 	int i, reg;
 	u16 reg_val, *val;
-	__be16 tmp;
 
 	val = (u16 *)ucontrol->value.bytes.data;
 	reg = NAU8822_REG_EQ1;
@@ -193,8 +192,8 @@ static int nau8822_eq_get(struct snd_kcontrol *kcontrol,
 		/* conversion of 16-bit integers between native CPU format
 		 * and big endian format
 		 */
-		tmp = cpu_to_be16(reg_val);
-		memcpy(val + i, &tmp, sizeof(tmp));
+		reg_val = cpu_to_be16(reg_val);
+		memcpy(val + i, &reg_val, sizeof(reg_val));
 	}
 
 	return 0;
@@ -217,7 +216,6 @@ static int nau8822_eq_put(struct snd_kcontrol *kcontrol,
 	void *data;
 	u16 *val, value;
 	int i, reg, ret;
-	__be16 *tmp;
 
 	data = kmemdup(ucontrol->value.bytes.data,
 		params->max, GFP_KERNEL | GFP_DMA);
@@ -230,8 +228,7 @@ static int nau8822_eq_put(struct snd_kcontrol *kcontrol,
 		/* conversion of 16-bit integers between native CPU format
 		 * and big endian format
 		 */
-		tmp = (__be16 *)(val + i);
-		value = be16_to_cpup(tmp);
+		value = be16_to_cpu(*(val + i));
 		ret = snd_soc_component_write(component, reg + i, value);
 		if (ret) {
 			dev_err(component->dev,
@@ -1059,7 +1056,6 @@ static const int update_reg[] = {
 static int nau8822_probe(struct snd_soc_component *component)
 {
 	int i;
-	struct device_node *of_node = component->dev->of_node;
 
 	/*
 	 * Set the update bit in all registers, that have one. This way all
@@ -1069,14 +1065,6 @@ static int nau8822_probe(struct snd_soc_component *component)
 	for (i = 0; i < ARRAY_SIZE(update_reg); i++)
 		snd_soc_component_update_bits(component,
 			update_reg[i], 0x100, 0x100);
-
-	/* Check property to configure the two loudspeaker outputs as
-	 * a single Bridge Tied Load output
-	 */
-	if (of_property_read_bool(of_node, "nuvoton,spk-btl"))
-		snd_soc_component_update_bits(component,
-					      NAU8822_REG_RIGHT_SPEAKER_CONTROL,
-					      NAU8822_RSUBBYP, NAU8822_RSUBBYP);
 
 	return 0;
 }
@@ -1169,7 +1157,7 @@ static struct i2c_driver nau8822_i2c_driver = {
 		.name = "nau8822",
 		.of_match_table = of_match_ptr(nau8822_of_match),
 	},
-	.probe = nau8822_i2c_probe,
+	.probe_new = nau8822_i2c_probe,
 	.id_table = nau8822_i2c_id,
 };
 module_i2c_driver(nau8822_i2c_driver);

@@ -40,7 +40,7 @@ MODULE_ALIAS("ip_set_hash:net,iface");
 #define IP_SET_HASH_WITH_MULTI
 #define IP_SET_HASH_WITH_NET0
 
-#define STRSCPY(a, b)	strscpy(a, b, IFNAMSIZ)
+#define STRLCPY(a, b)	strlcpy(a, b, IFNAMSIZ)
 
 /* IPv4 variant */
 
@@ -182,11 +182,11 @@ hash_netiface4_kadt(struct ip_set *set, const struct sk_buff *skb,
 
 		if (!eiface)
 			return -EINVAL;
-		STRSCPY(e.iface, eiface);
+		STRLCPY(e.iface, eiface);
 		e.physdev = 1;
 #endif
 	} else {
-		STRSCPY(e.iface, SRCDIR ? IFACE(in) : IFACE(out));
+		STRLCPY(e.iface, SRCDIR ? IFACE(in) : IFACE(out));
 	}
 
 	if (strlen(e.iface) == 0)
@@ -400,11 +400,11 @@ hash_netiface6_kadt(struct ip_set *set, const struct sk_buff *skb,
 
 		if (!eiface)
 			return -EINVAL;
-		STRSCPY(e.iface, eiface);
+		STRLCPY(e.iface, eiface);
 		e.physdev = 1;
 #endif
 	} else {
-		STRSCPY(e.iface, SRCDIR ? IFACE(in) : IFACE(out));
+		STRLCPY(e.iface, SRCDIR ? IFACE(in) : IFACE(out));
 	}
 
 	if (strlen(e.iface) == 0)

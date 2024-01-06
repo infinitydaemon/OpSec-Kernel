@@ -30,10 +30,10 @@ static void dwc3_host_fill_xhci_irq_res(struct dwc3 *dwc,
 
 static int dwc3_host_get_irq(struct dwc3 *dwc)
 {
-	struct platform_device	*dwc3_pdev = to_platform_device(dwc->dev);
+	struct platform_device	*pdev = to_platform_device(dwc->dev);
 	int irq;
 
-	irq = platform_get_irq_byname_optional(dwc3_pdev, "host");
+	irq = platform_get_irq_byname_optional(pdev, "host");
 	if (irq > 0) {
 		dwc3_host_fill_xhci_irq_res(dwc, irq, "host");
 		goto out;
@@ -42,7 +42,7 @@ static int dwc3_host_get_irq(struct dwc3 *dwc)
 	if (irq == -EPROBE_DEFER)
 		goto out;
 
-	irq = platform_get_irq_byname_optional(dwc3_pdev, "dwc_usb3");
+	irq = platform_get_irq_byname_optional(pdev, "dwc_usb3");
 	if (irq > 0) {
 		dwc3_host_fill_xhci_irq_res(dwc, irq, "dwc_usb3");
 		goto out;
@@ -51,9 +51,14 @@ static int dwc3_host_get_irq(struct dwc3 *dwc)
 	if (irq == -EPROBE_DEFER)
 		goto out;
 
-	irq = platform_get_irq(dwc3_pdev, 0);
-	if (irq > 0)
+	irq = platform_get_irq(pdev, 0);
+	if (irq > 0) {
 		dwc3_host_fill_xhci_irq_res(dwc, irq, NULL);
+		goto out;
+	}
+
+	if (!irq)
+		irq = -EINVAL;
 
 out:
 	return irq;

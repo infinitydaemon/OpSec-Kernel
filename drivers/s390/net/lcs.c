@@ -17,6 +17,7 @@
 #include <linux/if.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/fddidevice.h>
 #include <linux/inetdevice.h>
 #include <linux/in.h>
 #include <linux/igmp.h>
@@ -34,6 +35,10 @@
 
 #include "lcs.h"
 
+
+#if !defined(CONFIG_ETHERNET) && !defined(CONFIG_FDDI)
+#error Cannot compile lcs.c without some net devices switched on.
+#endif
 
 /*
  * initialization string for output
@@ -1596,11 +1601,19 @@ lcs_startlan_auto(struct lcs_card *card)
 	int rc;
 
 	LCS_DBF_TEXT(2, trace, "strtauto");
+#ifdef CONFIG_ETHERNET
 	card->lan_type = LCS_FRAME_TYPE_ENET;
 	rc = lcs_send_startlan(card, LCS_INITIATOR_TCPIP);
 	if (rc == 0)
 		return 0;
 
+#endif
+#ifdef CONFIG_FDDI
+	card->lan_type = LCS_FRAME_TYPE_FDDI;
+	rc = lcs_send_startlan(card, LCS_INITIATOR_TCPIP);
+	if (rc == 0)
+		return 0;
+#endif
 	return -EIO;
 }
 
@@ -1793,16 +1806,22 @@ lcs_get_frames_cb(struct lcs_channel *channel, struct lcs_buffer *buffer)
 			card->stats.rx_errors++;
 			return;
 		}
-		if (lcs_hdr->type == LCS_FRAME_TYPE_CONTROL)
+		/* What kind of frame is it? */
+		if (lcs_hdr->type == LCS_FRAME_TYPE_CONTROL) {
+			/* Control frame. */
 			lcs_get_control(card, (struct lcs_cmd *) lcs_hdr);
-		else if (lcs_hdr->type == LCS_FRAME_TYPE_ENET)
+		} else if (lcs_hdr->type == LCS_FRAME_TYPE_ENET ||
+			   lcs_hdr->type == LCS_FRAME_TYPE_TR ||
+			   lcs_hdr->type == LCS_FRAME_TYPE_FDDI) {
+			/* Normal network packet. */
 			lcs_get_skb(card, (char *)(lcs_hdr + 1),
 				    lcs_hdr->offset - offset -
 				    sizeof(struct lcs_header));
-		else
-			dev_info_once(&card->dev->dev,
-				      "Unknown frame type %d\n",
-				      lcs_hdr->type);
+		} else {
+			/* Unknown frame type. */
+			; // FIXME: error message ?
+		}
+		/* Proceed to next frame. */
 		offset = lcs_hdr->offset;
 		lcs_hdr->offset = LCS_ILLEGAL_OFFSET;
 		lcs_hdr = (struct lcs_header *) (buffer->data + offset);
@@ -1880,14 +1899,14 @@ lcs_open_device(struct net_device *dev)
 static ssize_t
 lcs_portno_show (struct device *dev, struct device_attribute *attr, char *buf)
 {
-	struct lcs_card *card;
+        struct lcs_card *card;
 
 	card = dev_get_drvdata(dev);
 
-	if (!card)
-		return 0;
+        if (!card)
+                return 0;
 
-	return sysfs_emit(buf, "%d\n", card->portno);
+        return sprintf(buf, "%d\n", card->portno);
 }
 
 /*
@@ -1937,8 +1956,7 @@ lcs_type_show(struct device *dev, struct device_attribute *attr, char *buf)
 	if (!cgdev)
 		return -ENODEV;
 
-	return sysfs_emit(buf, "%s\n",
-			  lcs_type[cgdev->cdev[0]->id.driver_info]);
+	return sprintf(buf, "%s\n", lcs_type[cgdev->cdev[0]->id.driver_info]);
 }
 
 static DEVICE_ATTR(type, 0444, lcs_type_show, NULL);
@@ -1950,7 +1968,7 @@ lcs_timeout_show(struct device *dev, struct device_attribute *attr, char *buf)
 
 	card = dev_get_drvdata(dev);
 
-	return card ? sysfs_emit(buf, "%u\n", card->lancmd_timeout) : 0;
+	return card ? sprintf(buf, "%u\n", card->lancmd_timeout) : 0;
 }
 
 static ssize_t
@@ -2121,10 +2139,18 @@ lcs_new_device(struct ccwgroup_device *ccwgdev)
 		goto netdev_out;
 	}
 	switch (card->lan_type) {
+#ifdef CONFIG_ETHERNET
 	case LCS_FRAME_TYPE_ENET:
 		card->lan_type_trans = eth_type_trans;
 		dev = alloc_etherdev(0);
 		break;
+#endif
+#ifdef CONFIG_FDDI
+	case LCS_FRAME_TYPE_FDDI:
+		card->lan_type_trans = fddi_type_trans;
+		dev = alloc_fddidev(0);
+		break;
+#endif
 	default:
 		LCS_DBF_TEXT(3, setup, "errinit");
 		pr_err(" Initialization failed\n");

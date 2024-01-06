@@ -12,8 +12,7 @@
 #include <linux/interrupt.h>
 #include <linux/list.h>
 #include <linux/module.h>
-#include <linux/of.h>
-#include <linux/platform_device.h>
+#include <linux/of_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/reset.h>
 #include <linux/slab.h>
@@ -379,7 +378,7 @@ err_gen_free:
 	return err;
 }
 
-static void tegra_vde_remove(struct platform_device *pdev)
+static int tegra_vde_remove(struct platform_device *pdev)
 {
 	struct tegra_vde *vde = platform_get_drvdata(pdev);
 	struct device *dev = &pdev->dev;
@@ -408,6 +407,8 @@ static void tegra_vde_remove(struct platform_device *pdev)
 
 	gen_pool_free(vde->iram_pool, (unsigned long)vde->iram,
 		      gen_pool_size(vde->iram_pool));
+
+	return 0;
 }
 
 static void tegra_vde_shutdown(struct platform_device *pdev)
@@ -535,7 +536,7 @@ MODULE_DEVICE_TABLE(of, tegra_vde_of_match);
 
 static struct platform_driver tegra_vde_driver = {
 	.probe		= tegra_vde_probe,
-	.remove_new	= tegra_vde_remove,
+	.remove		= tegra_vde_remove,
 	.shutdown	= tegra_vde_shutdown,
 	.driver		= {
 		.name		= "tegra-vde",

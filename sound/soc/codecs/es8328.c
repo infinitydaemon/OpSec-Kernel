@@ -9,6 +9,7 @@
 
 #include <linux/clk.h>
 #include <linux/delay.h>
+#include <linux/of_device.h>
 #include <linux/module.h>
 #include <linux/pm.h>
 #include <linux/regmap.h>
@@ -556,15 +557,8 @@ static int es8328_set_sysclk(struct snd_soc_dai *codec_dai,
 	struct snd_soc_component *component = codec_dai->component;
 	struct es8328_priv *es8328 = snd_soc_component_get_drvdata(component);
 	int mclkdiv2 = 0;
-	unsigned int round_freq;
 
-	/*
-	 * Allow a small tolerance for frequencies within 100hz. Note
-	 * this value is chosen arbitrarily.
-	 */
-	round_freq = DIV_ROUND_CLOSEST(freq, 100) * 100;
-
-	switch (round_freq) {
+	switch (freq) {
 	case 0:
 		es8328->sysclk_constraints = NULL;
 		es8328->mclk_ratios = NULL;
@@ -828,7 +822,7 @@ const struct regmap_config es8328_regmap_config = {
 	.reg_bits	= 8,
 	.val_bits	= 8,
 	.max_register	= ES8328_REG_MAX,
-	.cache_type	= REGCACHE_MAPLE,
+	.cache_type	= REGCACHE_RBTREE,
 	.use_single_read = true,
 	.use_single_write = true,
 };

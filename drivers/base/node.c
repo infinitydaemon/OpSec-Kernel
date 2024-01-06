@@ -20,6 +20,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/swap.h>
 #include <linux/slab.h>
+#include <linux/hugetlb.h>
 
 static struct bus_type node_subsys = {
 	.name = "node",
@@ -161,15 +162,15 @@ free:
 }
 
 #ifdef CONFIG_HMEM_REPORTING
-#define ACCESS_ATTR(property)						\
-static ssize_t property##_show(struct device *dev,			\
+#define ACCESS_ATTR(name)						\
+static ssize_t name##_show(struct device *dev,				\
 			   struct device_attribute *attr,		\
 			   char *buf)					\
 {									\
 	return sysfs_emit(buf, "%u\n",					\
-			  to_access_nodes(dev)->hmem_attrs.property);	\
+			  to_access_nodes(dev)->hmem_attrs.name);	\
 }									\
-static DEVICE_ATTR_RO(property)
+static DEVICE_ATTR_RO(name)
 
 ACCESS_ATTR(read_bandwidth);
 ACCESS_ATTR(read_latency);
@@ -445,11 +446,8 @@ static ssize_t node_read_meminfo(struct device *dev,
 			     "Node %d AnonHugePages:  %8lu kB\n"
 			     "Node %d ShmemHugePages: %8lu kB\n"
 			     "Node %d ShmemPmdMapped: %8lu kB\n"
-			     "Node %d FileHugePages:  %8lu kB\n"
-			     "Node %d FilePmdMapped:  %8lu kB\n"
-#endif
-#ifdef CONFIG_UNACCEPTED_MEMORY
-			     "Node %d Unaccepted:     %8lu kB\n"
+			     "Node %d FileHugePages: %8lu kB\n"
+			     "Node %d FilePmdMapped: %8lu kB\n"
 #endif
 			     ,
 			     nid, K(node_page_state(pgdat, NR_FILE_DIRTY)),
@@ -479,10 +477,6 @@ static ssize_t node_read_meminfo(struct device *dev,
 			     nid, K(node_page_state(pgdat, NR_SHMEM_PMDMAPPED)),
 			     nid, K(node_page_state(pgdat, NR_FILE_THPS)),
 			     nid, K(node_page_state(pgdat, NR_FILE_PMDMAPPED))
-#endif
-#ifdef CONFIG_UNACCEPTED_MEMORY
-			     ,
-			     nid, K(sum_zone_node_page_state(nid, NR_UNACCEPTED))
 #endif
 			    );
 	len += hugetlb_report_node_meminfo(buf, len, nid);
@@ -592,9 +586,6 @@ static const struct attribute_group *node_dev_groups[] = {
 	&node_dev_group,
 #ifdef CONFIG_HAVE_ARCH_NODE_DEV_GROUP
 	&arch_node_dev_group,
-#endif
-#ifdef CONFIG_MEMORY_FAILURE
-	&memory_failure_attr_group,
 #endif
 	NULL
 };

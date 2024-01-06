@@ -1900,7 +1900,7 @@ err:
 	return ret;
 }
 
-static void delta_remove(struct platform_device *pdev)
+static int delta_remove(struct platform_device *pdev)
 {
 	struct delta_dev *delta = platform_get_drvdata(pdev);
 
@@ -1914,6 +1914,8 @@ static void delta_remove(struct platform_device *pdev)
 	pm_runtime_disable(delta->dev);
 
 	v4l2_device_unregister(&delta->v4l2_dev);
+
+	return 0;
 }
 
 static int delta_runtime_suspend(struct device *dev)
@@ -1954,7 +1956,7 @@ MODULE_DEVICE_TABLE(of, delta_match_types);
 
 static struct platform_driver delta_driver = {
 	.probe = delta_probe,
-	.remove_new = delta_remove,
+	.remove = delta_remove,
 	.driver = {
 		   .name = DELTA_NAME,
 		   .of_match_table = delta_match_types,

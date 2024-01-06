@@ -45,7 +45,7 @@ checkarg () {
 configfrag_boot_params () {
 	if test -r "$2.boot"
 	then
-		echo `grep -v '^#' "$2.boot" | tr '\012' ' '` $1
+		echo $1 `grep -v '^#' "$2.boot" | tr '\012' ' '`
 	else
 		echo $1
 	fi
@@ -159,9 +159,6 @@ identify_boot_image () {
 		qemu-system-aarch64)
 			echo arch/arm64/boot/Image
 			;;
-		qemu-system-s390x)
-			echo arch/s390/boot/bzImage
-			;;
 		*)
 			echo vmlinux
 			;;
@@ -187,9 +184,6 @@ identify_qemu () {
 	elif echo $u | grep -q aarch64
 	then
 		echo qemu-system-aarch64
-	elif echo $u | grep -q 'IBM S/390'
-	then
-		echo qemu-system-s390x
 	elif uname -a | grep -q ppc64
 	then
 		echo qemu-system-ppc64
@@ -250,7 +244,7 @@ identify_qemu_args () {
 		echo -machine virt,gic-version=host -cpu host
 		;;
 	qemu-system-ppc64)
-		echo -M pseries -nodefaults
+		echo -enable-kvm -M pseries -nodefaults
 		echo -device spapr-vscsi
 		if test -n "$TORTURE_QEMU_INTERACTIVE" -a -n "$TORTURE_QEMU_MAC"
 		then
@@ -330,33 +324,4 @@ specify_qemu_net () {
 	else
 		echo $1 -net none
 	fi
-}
-
-# Extract the ftrace output from the console log output
-# The ftrace output in the original logs look like:
-# Dumping ftrace buffer:
-# ---------------------------------
-# [...]
-# ---------------------------------
-extract_ftrace_from_console() {
-	awk < "$1" '
-
-	/Dumping ftrace buffer:/ {
-		buffer_count++
-		print "Ftrace dump " buffer_count ":"
-		capture = 1
-		next
-	}
-
-	/---------------------------------/ {
-		if(capture == 1) {
-			capture = 2
-			next
-		} else if(capture == 2) {
-			capture = 0
-			print ""
-		}
-	}
-
-	capture == 2'
 }

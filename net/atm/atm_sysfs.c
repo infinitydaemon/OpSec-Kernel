@@ -108,14 +108,16 @@ static struct device_attribute *atm_attrs[] = {
 };
 
 
-static int atm_uevent(const struct device *cdev, struct kobj_uevent_env *env)
+static int atm_uevent(struct device *cdev, struct kobj_uevent_env *env)
 {
-	const struct atm_dev *adev;
+	struct atm_dev *adev;
 
 	if (!cdev)
 		return -ENODEV;
 
 	adev = to_atm_dev(cdev);
+	if (!adev)
+		return -ENODEV;
 
 	if (add_uevent_var(env, "NAME=%s%d", adev->type, adev->number))
 		return -ENOMEM;

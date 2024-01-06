@@ -898,13 +898,11 @@ static void tcp_metrics_flush_all(struct net *net)
 	unsigned int row;
 
 	for (row = 0; row < max_rows; row++, hb++) {
-		struct tcp_metrics_block __rcu **pp = &hb->chain;
+		struct tcp_metrics_block __rcu **pp;
 		bool match;
 
-		if (!rcu_access_pointer(*pp))
-			continue;
-
 		spin_lock_bh(&tcp_metrics_lock);
+		pp = &hb->chain;
 		for (tm = deref_locked(*pp); tm; tm = deref_locked(*pp)) {
 			match = net ? net_eq(tm_net(tm), net) :
 				!refcount_read(&tm_net(tm)->ns.count);
@@ -916,7 +914,6 @@ static void tcp_metrics_flush_all(struct net *net)
 			}
 		}
 		spin_unlock_bh(&tcp_metrics_lock);
-		cond_resched();
 	}
 }
 
@@ -992,7 +989,7 @@ static struct genl_family tcp_metrics_nl_family __ro_after_init = {
 	.resv_start_op	= TCP_METRICS_CMD_DEL + 1,
 };
 
-static unsigned int tcpmhash_entries __initdata;
+static unsigned int tcpmhash_entries;
 static int __init set_tcpmhash_entries(char *str)
 {
 	ssize_t ret;
@@ -1008,11 +1005,15 @@ static int __init set_tcpmhash_entries(char *str)
 }
 __setup("tcpmhash_entries=", set_tcpmhash_entries);
 
-static void __init tcp_metrics_hash_alloc(void)
+static int __net_init tcp_net_metrics_init(struct net *net)
 {
-	unsigned int slots = tcpmhash_entries;
 	size_t size;
+	unsigned int slots;
 
+	if (!net_eq(net, &init_net))
+		return 0;
+
+	slots = tcpmhash_entries;
 	if (!slots) {
 		if (totalram_pages() >= 128 * 1024)
 			slots = 16 * 1024;
@@ -1025,7 +1026,9 @@ static void __init tcp_metrics_hash_alloc(void)
 
 	tcp_metrics_hash = kvzalloc(size, GFP_KERNEL);
 	if (!tcp_metrics_hash)
-		panic("Could not allocate the tcp_metrics hash table\n");
+		return -ENOMEM;
+
+	return 0;
 }
 
 static void __net_exit tcp_net_metrics_exit_batch(struct list_head *net_exit_list)
@@ -1034,6 +1037,7 @@ static void __net_exit tcp_net_metrics_exit_batch(struct list_head *net_exit_lis
 }
 
 static __net_initdata struct pernet_operations tcp_net_metrics_ops = {
+	.init		=	tcp_net_metrics_init,
 	.exit_batch	=	tcp_net_metrics_exit_batch,
 };
 
@@ -1041,11 +1045,9 @@ void __init tcp_metrics_init(void)
 {
 	int ret;
 
-	tcp_metrics_hash_alloc();
-
 	ret = register_pernet_subsys(&tcp_net_metrics_ops);
 	if (ret < 0)
-		panic("Could not register tcp_net_metrics_ops\n");
+		panic("Could not allocate the tcp_metrics hash table\n");
 
 	ret = genl_register_family(&tcp_metrics_nl_family);
 	if (ret < 0)

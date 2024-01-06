@@ -557,16 +557,20 @@ static int synquacer_i2c_probe(struct platform_device *pdev)
 		dev_dbg(&pdev->dev, "clock source %p\n", i2c->pclk);
 
 		ret = clk_prepare_enable(i2c->pclk);
-		if (ret)
-			return dev_err_probe(&pdev->dev, ret, "failed to enable clock\n");
+		if (ret) {
+			dev_err(&pdev->dev, "failed to enable clock (%d)\n",
+				ret);
+			return ret;
+		}
 		i2c->pclkrate = clk_get_rate(i2c->pclk);
 	}
 
 	if (i2c->pclkrate < SYNQUACER_I2C_MIN_CLK_RATE ||
-	    i2c->pclkrate > SYNQUACER_I2C_MAX_CLK_RATE)
-		return dev_err_probe(&pdev->dev, -EINVAL,
-				     "PCLK missing or out of range (%d)\n",
-				     i2c->pclkrate);
+	    i2c->pclkrate > SYNQUACER_I2C_MAX_CLK_RATE) {
+		dev_err(&pdev->dev, "PCLK missing or out of range (%d)\n",
+			i2c->pclkrate);
+		return -EINVAL;
+	}
 
 	i2c->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(i2c->base))
@@ -578,8 +582,10 @@ static int synquacer_i2c_probe(struct platform_device *pdev)
 
 	ret = devm_request_irq(&pdev->dev, i2c->irq, synquacer_i2c_isr,
 			       0, dev_name(&pdev->dev), i2c);
-	if (ret < 0)
-		return dev_err_probe(&pdev->dev, ret, "cannot claim IRQ %d\n", i2c->irq);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "cannot claim IRQ %d\n", i2c->irq);
+		return ret;
+	}
 
 	i2c->state = STATE_IDLE;
 	i2c->dev = &pdev->dev;
@@ -599,8 +605,10 @@ static int synquacer_i2c_probe(struct platform_device *pdev)
 	synquacer_i2c_hw_init(i2c);
 
 	ret = i2c_add_numbered_adapter(&i2c->adapter);
-	if (ret)
-		return dev_err_probe(&pdev->dev, ret, "failed to add bus to i2c core\n");
+	if (ret) {
+		dev_err(&pdev->dev, "failed to add bus to i2c core\n");
+		return ret;
+	}
 
 	platform_set_drvdata(pdev, i2c);
 
@@ -610,16 +618,18 @@ static int synquacer_i2c_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void synquacer_i2c_remove(struct platform_device *pdev)
+static int synquacer_i2c_remove(struct platform_device *pdev)
 {
 	struct synquacer_i2c *i2c = platform_get_drvdata(pdev);
 
 	i2c_del_adapter(&i2c->adapter);
 	if (!IS_ERR(i2c->pclk))
 		clk_disable_unprepare(i2c->pclk);
+
+	return 0;
 };
 
-static const struct of_device_id synquacer_i2c_dt_ids[] __maybe_unused = {
+static const struct of_device_id synquacer_i2c_dt_ids[] = {
 	{ .compatible = "socionext,synquacer-i2c" },
 	{ /* sentinel */ }
 };
@@ -635,7 +645,7 @@ MODULE_DEVICE_TABLE(acpi, synquacer_i2c_acpi_ids);
 
 static struct platform_driver synquacer_i2c_driver = {
 	.probe	= synquacer_i2c_probe,
-	.remove_new = synquacer_i2c_remove,
+	.remove	= synquacer_i2c_remove,
 	.driver	= {
 		.name = "synquacer_i2c",
 		.of_match_table = of_match_ptr(synquacer_i2c_dt_ids),

@@ -2651,18 +2651,20 @@ static int idt_init_pci(struct idt_ntb_dev *ndev)
 	}
 
 	/*
-	 * The PCI core enables device error reporting. It's not critical to
+	 * Enable the device advanced error reporting. It's not critical to
 	 * have AER disabled in the kernel.
-	 *
-	 * Cleanup nonfatal error status before getting to init.
 	 */
-	pci_aer_clear_nonfatal_status(pdev);
+	ret = pci_enable_pcie_error_reporting(pdev);
+	if (ret != 0)
+		dev_warn(&pdev->dev, "PCIe AER capability disabled\n");
+	else /* Cleanup nonfatal error status before getting to init */
+		pci_aer_clear_nonfatal_status(pdev);
 
 	/* First enable the PCI device */
 	ret = pcim_enable_device(pdev);
 	if (ret != 0) {
 		dev_err(&pdev->dev, "Failed to enable PCIe device\n");
-		return ret;
+		goto err_disable_aer;
 	}
 
 	/*
@@ -2690,6 +2692,8 @@ static int idt_init_pci(struct idt_ntb_dev *ndev)
 
 err_clear_master:
 	pci_clear_master(pdev);
+err_disable_aer:
+	(void)pci_disable_pcie_error_reporting(pdev);
 
 	return ret;
 }
@@ -2709,6 +2713,9 @@ static void idt_deinit_pci(struct idt_ntb_dev *ndev)
 
 	/* Clear the bus master disabling the Request TLPs translation */
 	pci_clear_master(pdev);
+
+	/* Disable the AER capability */
+	(void)pci_disable_pcie_error_reporting(pdev);
 
 	dev_dbg(&pdev->dev, "NT-function PCIe interface cleared");
 }

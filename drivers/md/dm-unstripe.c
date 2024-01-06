@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2017 Intel Corporation.
  *
@@ -192,7 +191,19 @@ static struct target_type unstripe_target = {
 	.iterate_devices = unstripe_iterate_devices,
 	.io_hints = unstripe_io_hints,
 };
-module_dm(unstripe);
+
+static int __init dm_unstripe_init(void)
+{
+	return dm_register_target(&unstripe_target);
+}
+
+static void __exit dm_unstripe_exit(void)
+{
+	dm_unregister_target(&unstripe_target);
+}
+
+module_init(dm_unstripe_init);
+module_exit(dm_unstripe_exit);
 
 MODULE_DESCRIPTION(DM_NAME " unstriped target");
 MODULE_ALIAS("dm-unstriped");

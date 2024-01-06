@@ -214,7 +214,7 @@ snic_tgt_del(struct work_struct *work)
 		scsi_flush_work(shost);
 
 	/* Block IOs on child devices, stops new IOs */
-	scsi_block_targets(shost, &tgt->dev);
+	scsi_target_block(&tgt->dev);
 
 	/* Cleanup IOs */
 	snic_tgt_scsi_abort_io(tgt);

@@ -23,6 +23,8 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
+#include <linux/of_address.h>
+#include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #include <linux/phy/phy.h>
 #include <linux/phy/phy-sun4i-usb.h>
@@ -97,17 +99,28 @@
 #define DEBOUNCE_TIME			msecs_to_jiffies(50)
 #define POLL_TIME			msecs_to_jiffies(250)
 
+enum sun4i_usb_phy_type {
+	sun4i_a10_phy,
+	sun6i_a31_phy,
+	sun8i_a33_phy,
+	sun8i_a83t_phy,
+	sun8i_h3_phy,
+	sun8i_r40_phy,
+	sun8i_v3s_phy,
+	sun50i_a64_phy,
+	sun50i_h6_phy,
+};
+
 struct sun4i_usb_phy_cfg {
 	int num_phys;
 	int hsic_index;
+	enum sun4i_usb_phy_type type;
 	u32 disc_thresh;
 	u32 hci_phy_ctl_clear;
 	u8 phyctl_offset;
 	bool dedicated_clocks;
 	bool phy0_dual_route;
 	bool needs_phy2_siddq;
-	bool siddq_in_base;
-	bool poll_vbusen;
 	int missing_phys;
 };
 
@@ -239,8 +252,7 @@ static void sun4i_usb_phy_passby(struct sun4i_usb_phy *phy, int enable)
 		SUNXI_AHB_INCRX_ALIGN_EN | SUNXI_ULPI_BYPASS_EN;
 
 	/* A83T USB2 is HSIC */
-	if (phy_data->cfg->hsic_index &&
-	    phy->index == phy_data->cfg->hsic_index)
+	if (phy_data->cfg->type == sun8i_a83t_phy && phy->index == 2)
 		bits |= SUNXI_EHCI_HS_FORCE | SUNXI_HSIC_CONNECT_INT |
 			SUNXI_HSIC;
 
@@ -328,7 +340,8 @@ static int sun4i_usb_phy_init(struct phy *_phy)
 		writel(val, phy->pmu + REG_HCI_PHY_CTL);
 	}
 
-	if (data->cfg->siddq_in_base) {
+	if (data->cfg->type == sun8i_a83t_phy ||
+	    data->cfg->type == sun50i_h6_phy) {
 		if (phy->index == 0) {
 			val = readl(data->base + data->cfg->phyctl_offset);
 			val |= PHY_CTL_VBUSVLDEXT;
@@ -372,7 +385,8 @@ static int sun4i_usb_phy_exit(struct phy *_phy)
 	struct sun4i_usb_phy_data *data = to_sun4i_usb_phy_data(phy);
 
 	if (phy->index == 0) {
-		if (data->cfg->siddq_in_base) {
+		if (data->cfg->type == sun8i_a83t_phy ||
+		    data->cfg->type == sun50i_h6_phy) {
 			void __iomem *phyctl = data->base +
 				data->cfg->phyctl_offset;
 
@@ -452,8 +466,9 @@ static bool sun4i_usb_phy0_poll(struct sun4i_usb_phy_data *data)
 	 * vbus using the N_VBUSEN pin on the pmic, so we must poll
 	 * when using the pmic for vbus-det _and_ we're driving vbus.
 	 */
-	if (data->cfg->poll_vbusen && data->vbus_power_supply &&
-	    data->phys[0].regulator_on)
+	if ((data->cfg->type == sun6i_a31_phy ||
+	     data->cfg->type == sun8i_a33_phy) &&
+	    data->vbus_power_supply && data->phys[0].regulator_on)
 		return true;
 
 	return false;
@@ -696,7 +711,7 @@ static struct phy *sun4i_usb_phy_xlate(struct device *dev,
 	return data->phys[args->args[0]].phy;
 }
 
-static void sun4i_usb_phy_remove(struct platform_device *pdev)
+static int sun4i_usb_phy_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct sun4i_usb_phy_data *data = dev_get_drvdata(dev);
@@ -709,6 +724,8 @@ static void sun4i_usb_phy_remove(struct platform_device *pdev)
 		devm_free_irq(dev, data->vbus_det_irq, data);
 
 	cancel_delayed_work_sync(&data->detect);
+
+	return 0;
 }
 
 static const unsigned int sun4i_usb_phy0_cable[] = {
@@ -754,7 +771,7 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
 		return PTR_ERR(data->vbus_det_gpio);
 	}
 
-	if (of_property_present(np, "usb0_vbus_power-supply")) {
+	if (of_find_property(np, "usb0_vbus_power-supply", NULL)) {
 		data->vbus_power_supply = devm_power_supply_get_by_phandle(dev,
 						     "usb0_vbus_power-supply");
 		if (IS_ERR(data->vbus_power_supply)) {
@@ -782,7 +799,7 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
 
 	for (i = 0; i < data->cfg->num_phys; i++) {
 		struct sun4i_usb_phy *phy = data->phys + i;
-		char name[32];
+		char name[16];
 
 		if (data->cfg->missing_phys & BIT(i))
 			continue;
@@ -901,15 +918,9 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct sun4i_usb_phy_cfg suniv_f1c100s_cfg = {
-	.num_phys = 1,
-	.disc_thresh = 3,
-	.phyctl_offset = REG_PHYCTL_A10,
-	.dedicated_clocks = true,
-};
-
 static const struct sun4i_usb_phy_cfg sun4i_a10_cfg = {
 	.num_phys = 3,
+	.type = sun4i_a10_phy,
 	.disc_thresh = 3,
 	.phyctl_offset = REG_PHYCTL_A10,
 	.dedicated_clocks = false,
@@ -917,6 +928,7 @@ static const struct sun4i_usb_phy_cfg sun4i_a10_cfg = {
 
 static const struct sun4i_usb_phy_cfg sun5i_a13_cfg = {
 	.num_phys = 2,
+	.type = sun4i_a10_phy,
 	.disc_thresh = 2,
 	.phyctl_offset = REG_PHYCTL_A10,
 	.dedicated_clocks = false,
@@ -924,14 +936,15 @@ static const struct sun4i_usb_phy_cfg sun5i_a13_cfg = {
 
 static const struct sun4i_usb_phy_cfg sun6i_a31_cfg = {
 	.num_phys = 3,
+	.type = sun6i_a31_phy,
 	.disc_thresh = 3,
 	.phyctl_offset = REG_PHYCTL_A10,
 	.dedicated_clocks = true,
-	.poll_vbusen = true,
 };
 
 static const struct sun4i_usb_phy_cfg sun7i_a20_cfg = {
 	.num_phys = 3,
+	.type = sun4i_a10_phy,
 	.disc_thresh = 2,
 	.phyctl_offset = REG_PHYCTL_A10,
 	.dedicated_clocks = false,
@@ -939,30 +952,31 @@ static const struct sun4i_usb_phy_cfg sun7i_a20_cfg = {
 
 static const struct sun4i_usb_phy_cfg sun8i_a23_cfg = {
 	.num_phys = 2,
+	.type = sun6i_a31_phy,
 	.disc_thresh = 3,
 	.phyctl_offset = REG_PHYCTL_A10,
 	.dedicated_clocks = true,
-	.poll_vbusen = true,
 };
 
 static const struct sun4i_usb_phy_cfg sun8i_a33_cfg = {
 	.num_phys = 2,
+	.type = sun8i_a33_phy,
 	.disc_thresh = 3,
 	.phyctl_offset = REG_PHYCTL_A33,
 	.dedicated_clocks = true,
-	.poll_vbusen = true,
 };
 
 static const struct sun4i_usb_phy_cfg sun8i_a83t_cfg = {
 	.num_phys = 3,
 	.hsic_index = 2,
+	.type = sun8i_a83t_phy,
 	.phyctl_offset = REG_PHYCTL_A33,
 	.dedicated_clocks = true,
-	.siddq_in_base = true,
 };
 
 static const struct sun4i_usb_phy_cfg sun8i_h3_cfg = {
 	.num_phys = 4,
+	.type = sun8i_h3_phy,
 	.disc_thresh = 3,
 	.phyctl_offset = REG_PHYCTL_A33,
 	.dedicated_clocks = true,
@@ -972,6 +986,7 @@ static const struct sun4i_usb_phy_cfg sun8i_h3_cfg = {
 
 static const struct sun4i_usb_phy_cfg sun8i_r40_cfg = {
 	.num_phys = 3,
+	.type = sun8i_r40_phy,
 	.disc_thresh = 3,
 	.phyctl_offset = REG_PHYCTL_A33,
 	.dedicated_clocks = true,
@@ -981,6 +996,7 @@ static const struct sun4i_usb_phy_cfg sun8i_r40_cfg = {
 
 static const struct sun4i_usb_phy_cfg sun8i_v3s_cfg = {
 	.num_phys = 1,
+	.type = sun8i_v3s_phy,
 	.disc_thresh = 3,
 	.phyctl_offset = REG_PHYCTL_A33,
 	.dedicated_clocks = true,
@@ -990,15 +1006,16 @@ static const struct sun4i_usb_phy_cfg sun8i_v3s_cfg = {
 
 static const struct sun4i_usb_phy_cfg sun20i_d1_cfg = {
 	.num_phys = 2,
+	.type = sun50i_h6_phy,
 	.phyctl_offset = REG_PHYCTL_A33,
 	.dedicated_clocks = true,
 	.hci_phy_ctl_clear = PHY_CTL_SIDDQ,
 	.phy0_dual_route = true,
-	.siddq_in_base = true,
 };
 
 static const struct sun4i_usb_phy_cfg sun50i_a64_cfg = {
 	.num_phys = 2,
+	.type = sun50i_a64_phy,
 	.disc_thresh = 3,
 	.phyctl_offset = REG_PHYCTL_A33,
 	.dedicated_clocks = true,
@@ -1008,22 +1025,22 @@ static const struct sun4i_usb_phy_cfg sun50i_a64_cfg = {
 
 static const struct sun4i_usb_phy_cfg sun50i_h6_cfg = {
 	.num_phys = 4,
+	.type = sun50i_h6_phy,
 	.phyctl_offset = REG_PHYCTL_A33,
 	.dedicated_clocks = true,
 	.phy0_dual_route = true,
 	.missing_phys = BIT(1) | BIT(2),
-	.siddq_in_base = true,
 };
 
 static const struct sun4i_usb_phy_cfg sun50i_h616_cfg = {
 	.num_phys = 4,
+	.type = sun50i_h6_phy,
 	.disc_thresh = 3,
 	.phyctl_offset = REG_PHYCTL_A33,
 	.dedicated_clocks = true,
 	.phy0_dual_route = true,
 	.hci_phy_ctl_clear = PHY_CTL_SIDDQ,
 	.needs_phy2_siddq = true,
-	.siddq_in_base = true,
 };
 
 static const struct of_device_id sun4i_usb_phy_of_match[] = {
@@ -1042,15 +1059,13 @@ static const struct of_device_id sun4i_usb_phy_of_match[] = {
 	  .data = &sun50i_a64_cfg},
 	{ .compatible = "allwinner,sun50i-h6-usb-phy", .data = &sun50i_h6_cfg },
 	{ .compatible = "allwinner,sun50i-h616-usb-phy", .data = &sun50i_h616_cfg },
-	{ .compatible = "allwinner,suniv-f1c100s-usb-phy",
-	  .data = &suniv_f1c100s_cfg },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, sun4i_usb_phy_of_match);
 
 static struct platform_driver sun4i_usb_phy_driver = {
 	.probe	= sun4i_usb_phy_probe,
-	.remove_new = sun4i_usb_phy_remove,
+	.remove	= sun4i_usb_phy_remove,
 	.driver = {
 		.of_match_table	= sun4i_usb_phy_of_match,
 		.name  = "sun4i-usb-phy",

@@ -444,12 +444,8 @@ offload_indication_setup_create()
 {
 	# Create a simple setup with two bridges, each with a VxLAN device
 	# and one local port
-	ip link add name br0 type bridge mcast_snooping 0
-	ip link set dev br0 addrgenmode none
-	ip link set dev br0 up
-	ip link add name br1 type bridge mcast_snooping 0
-	ip link set dev br1 addrgenmode none
-	ip link set dev br1 up
+	ip link add name br0 up type bridge mcast_snooping 0
+	ip link add name br1 up type bridge mcast_snooping 0
 
 	ip link set dev $swp1 master br0
 	ip link set dev $swp2 master br1
@@ -650,12 +646,8 @@ offload_indication_decap_route_test()
 
 	RET=0
 
-	ip link add name br0 type bridge mcast_snooping 0
-	ip link set dev br0 addrgenmode none
-	ip link set dev br0 up
-	ip link add name br1 type bridge mcast_snooping 0
-	ip link set dev br1 addrgenmode none
-	ip link set dev br1 up
+	ip link add name br0 up type bridge mcast_snooping 0
+	ip link add name br1 up type bridge mcast_snooping 0
 	ip link set dev $swp1 master br0
 	ip link set dev $swp2 master br1
 	ip link set dev vxlan0 master br0
@@ -788,9 +780,7 @@ __offload_indication_join_vxlan_first()
 
 offload_indication_join_vxlan_first()
 {
-	ip link add dev br0 type bridge mcast_snooping 0
-	ip link set dev br0 addrgenmode none
-	ip link set dev br0 up
+	ip link add dev br0 up type bridge mcast_snooping 0
 	ip link add name vxlan0 up type vxlan id 10 nolearning $UDPCSUM_FLAFS \
 		ttl 20 tos inherit local $LOCAL_IP_1 dstport 4789
 
@@ -825,9 +815,7 @@ __offload_indication_join_vxlan_last()
 
 offload_indication_join_vxlan_last()
 {
-	ip link add dev br0 type bridge mcast_snooping 0
-	ip link set dev br0 addrgenmode none
-	ip link set dev br0 up
+	ip link add dev br0 up type bridge mcast_snooping 0
 	ip link add name vxlan0 up type vxlan id 10 nolearning $UDPCSUM_FLAFS \
 		ttl 20 tos inherit local $LOCAL_IP_1 dstport 4789
 
@@ -854,7 +842,6 @@ sanitization_vlan_aware_test()
 	RET=0
 
 	ip link add dev br0 type bridge mcast_snooping 0 vlan_filtering 1
-	ip link set dev br0 addrgenmode none
 
 	ip link add name vxlan10 up master br0 type vxlan id 10 nolearning \
 		$UDPCSUM_FLAFS ttl 20 tos inherit local $LOCAL_IP_1 dstport 4789
@@ -928,10 +915,8 @@ offload_indication_vlan_aware_setup_create()
 {
 	# Create a simple setup with two VxLAN devices and a single VLAN-aware
 	# bridge
-	ip link add name br0 type bridge mcast_snooping 0 vlan_filtering 1 \
+	ip link add name br0 up type bridge mcast_snooping 0 vlan_filtering 1 \
 		vlan_default_pvid 0
-	ip link set dev br0 addrgenmode none
-	ip link set dev br0 up
 
 	ip link set dev $swp1 master br0
 
@@ -1075,10 +1060,8 @@ offload_indication_vlan_aware_decap_route_test()
 
 offload_indication_vlan_aware_join_vxlan_first()
 {
-	ip link add dev br0 type bridge mcast_snooping 0 \
+	ip link add dev br0 up type bridge mcast_snooping 0 \
 		vlan_filtering 1 vlan_default_pvid 1
-	ip link set dev br0 addrgenmode none
-	ip link set dev br0 up
 	ip link add name vxlan0 up type vxlan id 10 nolearning $UDPCSUM_FLAFS \
 		ttl 20 tos inherit local $LOCAL_IP_1 dstport 4789
 
@@ -1090,10 +1073,8 @@ offload_indication_vlan_aware_join_vxlan_first()
 
 offload_indication_vlan_aware_join_vxlan_last()
 {
-	ip link add dev br0 type bridge mcast_snooping 0 \
+	ip link add dev br0 up type bridge mcast_snooping 0 \
 		vlan_filtering 1 vlan_default_pvid 1
-	ip link set dev br0 addrgenmode none
-	ip link set dev br0 up
 	ip link add name vxlan0 up type vxlan id 10 nolearning $UDPCSUM_FLAFS \
 		ttl 20 tos inherit local $LOCAL_IP_1 dstport 4789
 
@@ -1110,10 +1091,8 @@ offload_indication_vlan_aware_l3vni_test()
 	RET=0
 
 	sysctl_set net.ipv6.conf.default.disable_ipv6 1
-	ip link add dev br0 type bridge mcast_snooping 0 \
+	ip link add dev br0 up type bridge mcast_snooping 0 \
 		vlan_filtering 1 vlan_default_pvid 0
-	ip link set dev br0 addrgenmode none
-	ip link set dev br0 up
 	ip link add name vxlan0 up type vxlan id 10 nolearning $UDPCSUM_FLAFS \
 		ttl 20 tos inherit local $LOCAL_IP_1 dstport 4789
 

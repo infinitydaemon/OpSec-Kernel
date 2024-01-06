@@ -1,9 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Common Flash Interface support:
  *   Intel Extended Vendor Command Set (ID 0x0001)
  *
- * (C) 2000 Red Hat.
+ * (C) 2000 Red Hat. GPL'd
  *
  *
  * 10/10/2000	Nicolas Pitre <nico@fluxnic.net>

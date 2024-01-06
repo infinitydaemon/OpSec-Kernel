@@ -139,6 +139,12 @@ static int st_ohci_platform_probe(struct platform_device *dev)
 	if (irq < 0)
 		return irq;
 
+	res_mem = platform_get_resource(dev, IORESOURCE_MEM, 0);
+	if (!res_mem) {
+		dev_err(&dev->dev, "no memory resource provided");
+		return -ENXIO;
+	}
+
 	hcd = usb_create_hcd(&ohci_platform_hc_driver, &dev->dev,
 			dev_name(&dev->dev));
 	if (!hcd)
@@ -193,14 +199,14 @@ static int st_ohci_platform_probe(struct platform_device *dev)
 			goto err_power;
 	}
 
-	hcd->regs = devm_platform_get_and_ioremap_resource(dev, 0, &res_mem);
+	hcd->rsrc_start = res_mem->start;
+	hcd->rsrc_len = resource_size(res_mem);
+
+	hcd->regs = devm_ioremap_resource(&dev->dev, res_mem);
 	if (IS_ERR(hcd->regs)) {
 		err = PTR_ERR(hcd->regs);
 		goto err_power;
 	}
-	hcd->rsrc_start = res_mem->start;
-	hcd->rsrc_len = resource_size(res_mem);
-
 	err = usb_add_hcd(hcd, irq, IRQF_SHARED);
 	if (err)
 		goto err_power;
@@ -227,7 +233,7 @@ err_put_hcd:
 	return err;
 }
 
-static void st_ohci_platform_remove(struct platform_device *dev)
+static int st_ohci_platform_remove(struct platform_device *dev)
 {
 	struct usb_hcd *hcd = platform_get_drvdata(dev);
 	struct usb_ohci_pdata *pdata = dev_get_platdata(&dev->dev);
@@ -247,6 +253,8 @@ static void st_ohci_platform_remove(struct platform_device *dev)
 
 	if (pdata == &ohci_platform_defaults)
 		dev->dev.platform_data = NULL;
+
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -298,7 +306,7 @@ MODULE_DEVICE_TABLE(of, st_ohci_platform_ids);
 
 static struct platform_driver ohci_platform_driver = {
 	.probe		= st_ohci_platform_probe,
-	.remove_new	= st_ohci_platform_remove,
+	.remove		= st_ohci_platform_remove,
 	.shutdown	= usb_hcd_platform_shutdown,
 	.driver		= {
 		.name	= "st-ohci",

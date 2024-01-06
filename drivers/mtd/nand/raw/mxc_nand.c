@@ -20,6 +20,7 @@
 #include <linux/irq.h>
 #include <linux/completion.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 
 #define DRIVER_NAME "mxc_nand"
 
@@ -1598,6 +1599,16 @@ static inline int is_imx25_nfc(struct mxc_nand_host *host)
 	return host->devtype_data == &imx25_nand_devtype_data;
 }
 
+static inline int is_imx51_nfc(struct mxc_nand_host *host)
+{
+	return host->devtype_data == &imx51_nand_devtype_data;
+}
+
+static inline int is_imx53_nfc(struct mxc_nand_host *host)
+{
+	return host->devtype_data == &imx53_nand_devtype_data;
+}
+
 static const struct of_device_id mxcnd_dt_ids[] = {
 	{ .compatible = "fsl,imx21-nand", .data = &imx21_nand_devtype_data, },
 	{ .compatible = "fsl,imx27-nand", .data = &imx27_nand_devtype_data, },
@@ -1695,6 +1706,7 @@ static int mxcnd_probe(struct platform_device *pdev)
 	struct nand_chip *this;
 	struct mtd_info *mtd;
 	struct mxc_nand_host *host;
+	struct resource *res;
 	int err = 0;
 
 	/* Allocate memory for MTD device structure and private data */
@@ -1738,15 +1750,17 @@ static int mxcnd_probe(struct platform_device *pdev)
 		this->options |= NAND_KEEP_TIMINGS;
 
 	if (host->devtype_data->needs_ip) {
-		host->regs_ip = devm_platform_ioremap_resource(pdev, 0);
+		res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+		host->regs_ip = devm_ioremap_resource(&pdev->dev, res);
 		if (IS_ERR(host->regs_ip))
 			return PTR_ERR(host->regs_ip);
 
-		host->base = devm_platform_ioremap_resource(pdev, 1);
+		res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
 	} else {
-		host->base = devm_platform_ioremap_resource(pdev, 0);
+		res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	}
 
+	host->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(host->base))
 		return PTR_ERR(host->base);
 
@@ -1817,7 +1831,7 @@ escan:
 	return err;
 }
 
-static void mxcnd_remove(struct platform_device *pdev)
+static int mxcnd_remove(struct platform_device *pdev)
 {
 	struct mxc_nand_host *host = platform_get_drvdata(pdev);
 	struct nand_chip *chip = &host->nand;
@@ -1828,6 +1842,8 @@ static void mxcnd_remove(struct platform_device *pdev)
 	nand_cleanup(chip);
 	if (host->clk_act)
 		clk_disable_unprepare(host->clk);
+
+	return 0;
 }
 
 static struct platform_driver mxcnd_driver = {
@@ -1836,7 +1852,7 @@ static struct platform_driver mxcnd_driver = {
 		   .of_match_table = mxcnd_dt_ids,
 	},
 	.probe = mxcnd_probe,
-	.remove_new = mxcnd_remove,
+	.remove = mxcnd_remove,
 };
 module_platform_driver(mxcnd_driver);
 

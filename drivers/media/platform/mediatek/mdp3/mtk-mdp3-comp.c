@@ -8,7 +8,6 @@
 #include <linux/of_platform.h>
 #include <linux/of_address.h>
 #include <linux/pm_runtime.h>
-#include "mtk-mdp3-cfg.h"
 #include "mtk-mdp3-comp.h"
 #include "mtk-mdp3-core.h"
 #include "mtk-mdp3-regs.h"
@@ -20,7 +19,6 @@
 #include "mdp_reg_wdma.h"
 
 static u32 mdp_comp_alias_id[MDP_COMP_TYPE_COUNT];
-static int p_id;
 
 static inline const struct mdp_platform_config *
 __get_plat_cfg(const struct mdp_comp_ctx *ctx)
@@ -34,18 +32,12 @@ __get_plat_cfg(const struct mdp_comp_ctx *ctx)
 static s64 get_comp_flag(const struct mdp_comp_ctx *ctx)
 {
 	const struct mdp_platform_config *mdp_cfg = __get_plat_cfg(ctx);
-	u32 rdma0, rsz1;
-
-	rdma0 = mdp_cfg_get_id_inner(ctx->comp->mdp_dev, MDP_COMP_RDMA0);
-	rsz1 = mdp_cfg_get_id_inner(ctx->comp->mdp_dev, MDP_COMP_RSZ1);
-	if (!rdma0 || !rsz1)
-		return MDP_COMP_NONE;
 
 	if (mdp_cfg && mdp_cfg->rdma_rsz1_sram_sharing)
-		if (ctx->comp->inner_id == rdma0)
-			return BIT(rdma0) | BIT(rsz1);
+		if (ctx->comp->id == MDP_COMP_RDMA0)
+			return BIT(MDP_COMP_RDMA0) | BIT(MDP_COMP_RSZ1);
 
-	return BIT(ctx->comp->inner_id);
+	return BIT(ctx->comp->id);
 }
 
 static int init_rdma(struct mdp_comp_ctx *ctx, struct mdp_cmdq_cmd *cmd)
@@ -53,17 +45,12 @@ static int init_rdma(struct mdp_comp_ctx *ctx, struct mdp_cmdq_cmd *cmd)
 	const struct mdp_platform_config *mdp_cfg = __get_plat_cfg(ctx);
 	phys_addr_t base = ctx->comp->reg_base;
 	u8 subsys_id = ctx->comp->subsys_id;
-	s32 rdma0;
-
-	rdma0 = mdp_cfg_get_id_inner(ctx->comp->mdp_dev, MDP_COMP_RDMA0);
-	if (!rdma0)
-		return -EINVAL;
 
 	if (mdp_cfg && mdp_cfg->rdma_support_10bit) {
 		struct mdp_comp *prz1 = ctx->comp->mdp_dev->comp[MDP_COMP_RSZ1];
 
 		/* Disable RSZ1 */
-		if (ctx->comp->inner_id == rdma0 && prz1)
+		if (ctx->comp->id == MDP_COMP_RDMA0 && prz1)
 			MM_REG_WRITE(cmd, subsys_id, prz1->reg_base, PRZ_ENABLE,
 				     0x0, BIT(0));
 	}
@@ -79,13 +66,13 @@ static int config_rdma_frame(struct mdp_comp_ctx *ctx,
 			     struct mdp_cmdq_cmd *cmd,
 			     const struct v4l2_rect *compose)
 {
+	const struct mdp_rdma_data *rdma = &ctx->param->rdma;
 	const struct mdp_platform_config *mdp_cfg = __get_plat_cfg(ctx);
 	u32 colorformat = ctx->input->buffer.format.colorformat;
 	bool block10bit = MDP_COLOR_IS_10BIT_PACKED(colorformat);
 	bool en_ufo = MDP_COLOR_IS_UFP(colorformat);
 	phys_addr_t base = ctx->comp->reg_base;
 	u8 subsys_id = ctx->comp->subsys_id;
-	u32 reg = 0;
 
 	if (mdp_cfg && mdp_cfg->rdma_support_10bit) {
 		if (block10bit)
@@ -103,78 +90,49 @@ static int config_rdma_frame(struct mdp_comp_ctx *ctx,
 		     0x00030071);
 
 	/* Setup source frame info */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.src_ctrl);
-	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_SRC_CON, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_SRC_CON, rdma->src_ctrl,
 		     0x03C8FE0F);
 
 	if (mdp_cfg)
 		if (mdp_cfg->rdma_support_10bit && en_ufo) {
 			/* Setup source buffer base */
-			if (CFG_CHECK(MT8183, p_id))
-				reg = CFG_COMP(MT8183, ctx->param, rdma.ufo_dec_y);
 			MM_REG_WRITE(cmd, subsys_id,
 				     base, MDP_RDMA_UFO_DEC_LENGTH_BASE_Y,
-				     reg, 0xFFFFFFFF);
-			if (CFG_CHECK(MT8183, p_id))
-				reg = CFG_COMP(MT8183, ctx->param, rdma.ufo_dec_c);
+				     rdma->ufo_dec_y, 0xFFFFFFFF);
 			MM_REG_WRITE(cmd, subsys_id,
 				     base, MDP_RDMA_UFO_DEC_LENGTH_BASE_C,
-				     reg, 0xFFFFFFFF);
+				     rdma->ufo_dec_c, 0xFFFFFFFF);
 			/* Set 10bit source frame pitch */
-			if (block10bit) {
-				if (CFG_CHECK(MT8183, p_id))
-					reg = CFG_COMP(MT8183, ctx->param, rdma.mf_bkgd_in_pxl);
+			if (block10bit)
 				MM_REG_WRITE(cmd, subsys_id,
 					     base, MDP_RDMA_MF_BKGD_SIZE_IN_PXL,
-					     reg, 0x001FFFFF);
-			}
+					     rdma->mf_bkgd_in_pxl, 0x001FFFFF);
 		}
 
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.control);
-	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_CON, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_CON, rdma->control,
 		     0x1110);
 	/* Setup source buffer base */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.iova[0]);
-	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_SRC_BASE_0, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_SRC_BASE_0, rdma->iova[0],
 		     0xFFFFFFFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.iova[1]);
-	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_SRC_BASE_1, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_SRC_BASE_1, rdma->iova[1],
 		     0xFFFFFFFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.iova[2]);
-	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_SRC_BASE_2, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_SRC_BASE_2, rdma->iova[2],
 		     0xFFFFFFFF);
 	/* Setup source buffer end */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.iova_end[0]);
 	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_SRC_END_0,
-		     reg, 0xFFFFFFFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.iova_end[1]);
+		     rdma->iova_end[0], 0xFFFFFFFF);
 	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_SRC_END_1,
-		     reg, 0xFFFFFFFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.iova_end[2]);
+		     rdma->iova_end[1], 0xFFFFFFFF);
 	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_SRC_END_2,
-		     reg, 0xFFFFFFFF);
+		     rdma->iova_end[2], 0xFFFFFFFF);
 	/* Setup source frame pitch */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.mf_bkgd);
 	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_MF_BKGD_SIZE_IN_BYTE,
-		     reg, 0x001FFFFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.sf_bkgd);
+		     rdma->mf_bkgd, 0x001FFFFF);
 	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_SF_BKGD_SIZE_IN_BYTE,
-		     reg, 0x001FFFFF);
+		     rdma->sf_bkgd, 0x001FFFFF);
 	/* Setup color transform */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.transform);
 	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_TRANSFORM_0,
-		     reg, 0x0F110000);
+		     rdma->transform, 0x0F110000);
 
 	return 0;
 }
@@ -182,67 +140,47 @@ static int config_rdma_frame(struct mdp_comp_ctx *ctx,
 static int config_rdma_subfrm(struct mdp_comp_ctx *ctx,
 			      struct mdp_cmdq_cmd *cmd, u32 index)
 {
+	const struct mdp_rdma_subfrm *subfrm = &ctx->param->rdma.subfrms[index];
+	const struct img_comp_subfrm *csf = &ctx->param->subfrms[index];
 	const struct mdp_platform_config *mdp_cfg = __get_plat_cfg(ctx);
 	u32 colorformat = ctx->input->buffer.format.colorformat;
 	bool block10bit = MDP_COLOR_IS_10BIT_PACKED(colorformat);
 	bool en_ufo = MDP_COLOR_IS_UFP(colorformat);
 	phys_addr_t base = ctx->comp->reg_base;
 	u8 subsys_id = ctx->comp->subsys_id;
-	u32 csf_l = 0, csf_r = 0;
-	u32 reg = 0;
 
 	/* Enable RDMA */
 	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_EN, BIT(0), BIT(0));
 
 	/* Set Y pixel offset */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.subfrms[index].offset[0]);
 	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_SRC_OFFSET_0,
-		     reg, 0xFFFFFFFF);
+		     subfrm->offset[0], 0xFFFFFFFF);
 
 	/* Set 10bit UFO mode */
-	if (mdp_cfg) {
-		if (mdp_cfg->rdma_support_10bit && block10bit && en_ufo) {
-			if (CFG_CHECK(MT8183, p_id))
-				reg = CFG_COMP(MT8183, ctx->param, rdma.subfrms[index].offset_0_p);
+	if (mdp_cfg)
+		if (mdp_cfg->rdma_support_10bit && block10bit && en_ufo)
 			MM_REG_WRITE(cmd, subsys_id, base,
 				     MDP_RDMA_SRC_OFFSET_0_P,
-				     reg, 0xFFFFFFFF);
-		}
-	}
+				     subfrm->offset_0_p, 0xFFFFFFFF);
 
 	/* Set U pixel offset */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.subfrms[index].offset[1]);
 	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_SRC_OFFSET_1,
-		     reg, 0xFFFFFFFF);
+		     subfrm->offset[1], 0xFFFFFFFF);
 	/* Set V pixel offset */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.subfrms[index].offset[2]);
 	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_SRC_OFFSET_2,
-		     reg, 0xFFFFFFFF);
+		     subfrm->offset[2], 0xFFFFFFFF);
 	/* Set source size */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.subfrms[index].src);
-	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_MF_SRC_SIZE, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_MF_SRC_SIZE, subfrm->src,
 		     0x1FFF1FFF);
 	/* Set target size */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.subfrms[index].clip);
 	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_MF_CLIP_SIZE,
-		     reg, 0x1FFF1FFF);
+		     subfrm->clip, 0x1FFF1FFF);
 	/* Set crop offset */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rdma.subfrms[index].clip_ofst);
 	MM_REG_WRITE(cmd, subsys_id, base, MDP_RDMA_MF_OFFSET_1,
-		     reg, 0x003F001F);
+		     subfrm->clip_ofst, 0x003F001F);
 
-	if (CFG_CHECK(MT8183, p_id)) {
-		csf_l = CFG_COMP(MT8183, ctx->param, subfrms[index].in.left);
-		csf_r = CFG_COMP(MT8183, ctx->param, subfrms[index].in.right);
-	}
 	if (mdp_cfg && mdp_cfg->rdma_upsample_repeat_only)
-		if ((csf_r - csf_l + 1) > 320)
+		if ((csf->in.right - csf->in.left + 1) > 320)
 			MM_REG_WRITE(cmd, subsys_id, base,
 				     MDP_RDMA_RESV_DUMMY_0, BIT(2), BIT(2));
 
@@ -290,97 +228,63 @@ static int config_rsz_frame(struct mdp_comp_ctx *ctx,
 			    struct mdp_cmdq_cmd *cmd,
 			    const struct v4l2_rect *compose)
 {
+	const struct mdp_rsz_data *rsz = &ctx->param->rsz;
 	phys_addr_t base = ctx->comp->reg_base;
 	u8 subsys_id = ctx->comp->subsys_id;
-	bool bypass = FALSE;
-	u32 reg = 0;
 
-	if (CFG_CHECK(MT8183, p_id))
-		bypass = CFG_COMP(MT8183, ctx->param, frame.bypass);
-
-	if (bypass) {
+	if (ctx->param->frame.bypass) {
 		/* Disable RSZ */
 		MM_REG_WRITE(cmd, subsys_id, base, PRZ_ENABLE, 0x0, BIT(0));
 		return 0;
 	}
 
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rsz.control1);
-	MM_REG_WRITE(cmd, subsys_id, base, PRZ_CONTROL_1, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, PRZ_CONTROL_1, rsz->control1,
 		     0x03FFFDF3);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rsz.control2);
-	MM_REG_WRITE(cmd, subsys_id, base, PRZ_CONTROL_2, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, PRZ_CONTROL_2, rsz->control2,
 		     0x0FFFC290);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rsz.coeff_step_x);
 	MM_REG_WRITE(cmd, subsys_id, base, PRZ_HORIZONTAL_COEFF_STEP,
-		     reg, 0x007FFFFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rsz.coeff_step_y);
+		     rsz->coeff_step_x, 0x007FFFFF);
 	MM_REG_WRITE(cmd, subsys_id, base, PRZ_VERTICAL_COEFF_STEP,
-		     reg, 0x007FFFFF);
+		     rsz->coeff_step_y, 0x007FFFFF);
 	return 0;
 }
 
 static int config_rsz_subfrm(struct mdp_comp_ctx *ctx,
 			     struct mdp_cmdq_cmd *cmd, u32 index)
 {
+	const struct mdp_rsz_subfrm *subfrm = &ctx->param->rsz.subfrms[index];
+	const struct img_comp_subfrm *csf = &ctx->param->subfrms[index];
 	const struct mdp_platform_config *mdp_cfg = __get_plat_cfg(ctx);
 	phys_addr_t base = ctx->comp->reg_base;
 	u8 subsys_id = ctx->comp->subsys_id;
-	u32 csf_l = 0, csf_r = 0;
-	u32 reg = 0;
 
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rsz.subfrms[index].control2);
-	MM_REG_WRITE(cmd, subsys_id, base, PRZ_CONTROL_2, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, PRZ_CONTROL_2, subfrm->control2,
 		     0x00003800);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rsz.subfrms[index].src);
-	MM_REG_WRITE(cmd, subsys_id, base, PRZ_INPUT_IMAGE, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, PRZ_INPUT_IMAGE, subfrm->src,
 		     0xFFFFFFFF);
 
-	if (CFG_CHECK(MT8183, p_id)) {
-		csf_l = CFG_COMP(MT8183, ctx->param, subfrms[index].in.left);
-		csf_r = CFG_COMP(MT8183, ctx->param, subfrms[index].in.right);
-	}
 	if (mdp_cfg && mdp_cfg->rsz_disable_dcm_small_sample)
-		if ((csf_r - csf_l + 1) <= 16)
+		if ((csf->in.right - csf->in.left + 1) <= 16)
 			MM_REG_WRITE(cmd, subsys_id, base, PRZ_CONTROL_1,
 				     BIT(27), BIT(27));
 
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, subfrms[index].luma.left);
 	MM_REG_WRITE(cmd, subsys_id, base, PRZ_LUMA_HORIZONTAL_INTEGER_OFFSET,
-		     reg, 0xFFFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, subfrms[index].luma.left_subpix);
+		     csf->luma.left, 0xFFFF);
 	MM_REG_WRITE(cmd, subsys_id,
 		     base, PRZ_LUMA_HORIZONTAL_SUBPIXEL_OFFSET,
-		     reg, 0x1FFFFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, subfrms[index].luma.top);
+		     csf->luma.left_subpix, 0x1FFFFF);
 	MM_REG_WRITE(cmd, subsys_id, base, PRZ_LUMA_VERTICAL_INTEGER_OFFSET,
-		     reg, 0xFFFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, subfrms[index].luma.top_subpix);
+		     csf->luma.top, 0xFFFF);
 	MM_REG_WRITE(cmd, subsys_id, base, PRZ_LUMA_VERTICAL_SUBPIXEL_OFFSET,
-		     reg, 0x1FFFFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, subfrms[index].chroma.left);
+		     csf->luma.top_subpix, 0x1FFFFF);
 	MM_REG_WRITE(cmd, subsys_id,
 		     base, PRZ_CHROMA_HORIZONTAL_INTEGER_OFFSET,
-		     reg, 0xFFFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, subfrms[index].chroma.left_subpix);
+		     csf->chroma.left, 0xFFFF);
 	MM_REG_WRITE(cmd, subsys_id,
 		     base, PRZ_CHROMA_HORIZONTAL_SUBPIXEL_OFFSET,
-		     reg, 0x1FFFFF);
+		     csf->chroma.left_subpix, 0x1FFFFF);
 
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, rsz.subfrms[index].clip);
-	MM_REG_WRITE(cmd, subsys_id, base, PRZ_OUTPUT_IMAGE, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, PRZ_OUTPUT_IMAGE, subfrm->clip,
 		     0xFFFFFFFF);
 
 	return 0;
@@ -392,16 +296,11 @@ static int advance_rsz_subfrm(struct mdp_comp_ctx *ctx,
 	const struct mdp_platform_config *mdp_cfg = __get_plat_cfg(ctx);
 
 	if (mdp_cfg && mdp_cfg->rsz_disable_dcm_small_sample) {
+		const struct img_comp_subfrm *csf = &ctx->param->subfrms[index];
 		phys_addr_t base = ctx->comp->reg_base;
 		u8 subsys_id = ctx->comp->subsys_id;
-		u32 csf_l = 0, csf_r = 0;
 
-		if (CFG_CHECK(MT8183, p_id)) {
-			csf_l = CFG_COMP(MT8183, ctx->param, subfrms[index].in.left);
-			csf_r = CFG_COMP(MT8183, ctx->param, subfrms[index].in.right);
-		}
-
-		if ((csf_r - csf_l + 1) <= 16)
+		if ((csf->in.right - csf->in.left + 1) <= 16)
 			MM_REG_WRITE(cmd, subsys_id, base, PRZ_CONTROL_1, 0x0,
 				     BIT(27));
 	}
@@ -434,47 +333,31 @@ static int config_wrot_frame(struct mdp_comp_ctx *ctx,
 			     struct mdp_cmdq_cmd *cmd,
 			     const struct v4l2_rect *compose)
 {
+	const struct mdp_wrot_data *wrot = &ctx->param->wrot;
 	const struct mdp_platform_config *mdp_cfg = __get_plat_cfg(ctx);
 	phys_addr_t base = ctx->comp->reg_base;
 	u8 subsys_id = ctx->comp->subsys_id;
-	u32 reg = 0;
 
 	/* Write frame base address */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wrot.iova[0]);
-	MM_REG_WRITE(cmd, subsys_id, base, VIDO_BASE_ADDR, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, VIDO_BASE_ADDR, wrot->iova[0],
 		     0xFFFFFFFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wrot.iova[1]);
-	MM_REG_WRITE(cmd, subsys_id, base, VIDO_BASE_ADDR_C, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, VIDO_BASE_ADDR_C, wrot->iova[1],
 		     0xFFFFFFFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wrot.iova[2]);
-	MM_REG_WRITE(cmd, subsys_id, base, VIDO_BASE_ADDR_V, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, VIDO_BASE_ADDR_V, wrot->iova[2],
 		     0xFFFFFFFF);
 	/* Write frame related registers */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wrot.control);
-	MM_REG_WRITE(cmd, subsys_id, base, VIDO_CTRL, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, VIDO_CTRL, wrot->control,
 		     0xF131510F);
 	/* Write frame Y pitch */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wrot.stride[0]);
-	MM_REG_WRITE(cmd, subsys_id, base, VIDO_STRIDE, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, VIDO_STRIDE, wrot->stride[0],
 		     0x0000FFFF);
 	/* Write frame UV pitch */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wrot.stride[1]);
-	MM_REG_WRITE(cmd, subsys_id, base, VIDO_STRIDE_C, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, VIDO_STRIDE_C, wrot->stride[1],
 		     0xFFFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wrot.stride[2]);
-	MM_REG_WRITE(cmd, subsys_id, base, VIDO_STRIDE_V, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, VIDO_STRIDE_V, wrot->stride[2],
 		     0xFFFF);
 	/* Write matrix control */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wrot.mat_ctrl);
-	MM_REG_WRITE(cmd, subsys_id, base, VIDO_MAT_CTRL, reg, 0xF3);
+	MM_REG_WRITE(cmd, subsys_id, base, VIDO_MAT_CTRL, wrot->mat_ctrl, 0xF3);
 
 	/* Set the fixed ALPHA as 0xFF */
 	MM_REG_WRITE(cmd, subsys_id, base, VIDO_DITHER, 0xFF000000,
@@ -482,18 +365,13 @@ static int config_wrot_frame(struct mdp_comp_ctx *ctx,
 	/* Set VIDO_EOL_SEL */
 	MM_REG_WRITE(cmd, subsys_id, base, VIDO_RSV_1, BIT(31), BIT(31));
 	/* Set VIDO_FIFO_TEST */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wrot.fifo_test);
-	if (reg != 0)
+	if (wrot->fifo_test != 0)
 		MM_REG_WRITE(cmd, subsys_id, base, VIDO_FIFO_TEST,
-			     reg, 0xFFF);
+			     wrot->fifo_test, 0xFFF);
 	/* Filter enable */
-	if (mdp_cfg && mdp_cfg->wrot_filter_constraint) {
-		if (CFG_CHECK(MT8183, p_id))
-			reg = CFG_COMP(MT8183, ctx->param, wrot.filter);
+	if (mdp_cfg && mdp_cfg->wrot_filter_constraint)
 		MM_REG_WRITE(cmd, subsys_id, base, VIDO_MAIN_BUF_SIZE,
-			     reg, 0x77);
-	}
+			     wrot->filter, 0x77);
 
 	return 0;
 }
@@ -501,44 +379,30 @@ static int config_wrot_frame(struct mdp_comp_ctx *ctx,
 static int config_wrot_subfrm(struct mdp_comp_ctx *ctx,
 			      struct mdp_cmdq_cmd *cmd, u32 index)
 {
+	const struct mdp_wrot_subfrm *subfrm = &ctx->param->wrot.subfrms[index];
 	phys_addr_t base = ctx->comp->reg_base;
 	u8 subsys_id = ctx->comp->subsys_id;
-	u32 reg = 0;
 
 	/* Write Y pixel offset */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wrot.subfrms[index].offset[0]);
 	MM_REG_WRITE(cmd, subsys_id, base, VIDO_OFST_ADDR,
-		     reg, 0x0FFFFFFF);
+		     subfrm->offset[0], 0x0FFFFFFF);
 	/* Write U pixel offset */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wrot.subfrms[index].offset[1]);
 	MM_REG_WRITE(cmd, subsys_id, base, VIDO_OFST_ADDR_C,
-		     reg, 0x0FFFFFFF);
+		     subfrm->offset[1], 0x0FFFFFFF);
 	/* Write V pixel offset */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wrot.subfrms[index].offset[2]);
 	MM_REG_WRITE(cmd, subsys_id, base, VIDO_OFST_ADDR_V,
-		     reg, 0x0FFFFFFF);
+		     subfrm->offset[2], 0x0FFFFFFF);
 	/* Write source size */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wrot.subfrms[index].src);
-	MM_REG_WRITE(cmd, subsys_id, base, VIDO_IN_SIZE, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, VIDO_IN_SIZE, subfrm->src,
 		     0x1FFF1FFF);
 	/* Write target size */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wrot.subfrms[index].clip);
-	MM_REG_WRITE(cmd, subsys_id, base, VIDO_TAR_SIZE, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, VIDO_TAR_SIZE, subfrm->clip,
 		     0x1FFF1FFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wrot.subfrms[index].clip_ofst);
-	MM_REG_WRITE(cmd, subsys_id, base, VIDO_CROP_OFST, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, VIDO_CROP_OFST, subfrm->clip_ofst,
 		     0x1FFF1FFF);
 
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wrot.subfrms[index].main_buf);
 	MM_REG_WRITE(cmd, subsys_id, base, VIDO_MAIN_BUF_SIZE,
-		     reg, 0x1FFF7F00);
+		     subfrm->main_buf, 0x1FFF7F00);
 
 	/* Enable WROT */
 	MM_REG_WRITE(cmd, subsys_id, base, VIDO_ROT_EN, BIT(0), BIT(0));
@@ -592,41 +456,29 @@ static int config_wdma_frame(struct mdp_comp_ctx *ctx,
 			     struct mdp_cmdq_cmd *cmd,
 			     const struct v4l2_rect *compose)
 {
+	const struct mdp_wdma_data *wdma = &ctx->param->wdma;
 	phys_addr_t base = ctx->comp->reg_base;
 	u8 subsys_id = ctx->comp->subsys_id;
-	u32 reg = 0;
 
 	MM_REG_WRITE(cmd, subsys_id, base, WDMA_BUF_CON2, 0x10101050,
 		     0xFFFFFFFF);
 
 	/* Setup frame information */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wdma.wdma_cfg);
-	MM_REG_WRITE(cmd, subsys_id, base, WDMA_CFG, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, WDMA_CFG, wdma->wdma_cfg,
 		     0x0F01B8F0);
 	/* Setup frame base address */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wdma.iova[0]);
-	MM_REG_WRITE(cmd, subsys_id, base, WDMA_DST_ADDR, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, WDMA_DST_ADDR,   wdma->iova[0],
 		     0xFFFFFFFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wdma.iova[1]);
-	MM_REG_WRITE(cmd, subsys_id, base, WDMA_DST_U_ADDR, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, WDMA_DST_U_ADDR, wdma->iova[1],
 		     0xFFFFFFFF);
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wdma.iova[2]);
-	MM_REG_WRITE(cmd, subsys_id, base, WDMA_DST_V_ADDR, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, WDMA_DST_V_ADDR, wdma->iova[2],
 		     0xFFFFFFFF);
 	/* Setup Y pitch */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wdma.w_in_byte);
 	MM_REG_WRITE(cmd, subsys_id, base, WDMA_DST_W_IN_BYTE,
-		     reg, 0x0000FFFF);
+		     wdma->w_in_byte, 0x0000FFFF);
 	/* Setup UV pitch */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wdma.uv_stride);
 	MM_REG_WRITE(cmd, subsys_id, base, WDMA_DST_UV_PITCH,
-		     reg, 0x0000FFFF);
+		     wdma->uv_stride, 0x0000FFFF);
 	/* Set the fixed ALPHA as 0xFF */
 	MM_REG_WRITE(cmd, subsys_id, base, WDMA_ALPHA, 0x800000FF,
 		     0x800000FF);
@@ -637,39 +489,27 @@ static int config_wdma_frame(struct mdp_comp_ctx *ctx,
 static int config_wdma_subfrm(struct mdp_comp_ctx *ctx,
 			      struct mdp_cmdq_cmd *cmd, u32 index)
 {
+	const struct mdp_wdma_subfrm *subfrm = &ctx->param->wdma.subfrms[index];
 	phys_addr_t base = ctx->comp->reg_base;
 	u8 subsys_id = ctx->comp->subsys_id;
-	u32 reg = 0;
 
 	/* Write Y pixel offset */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wdma.subfrms[index].offset[0]);
 	MM_REG_WRITE(cmd, subsys_id, base, WDMA_DST_ADDR_OFFSET,
-		     reg, 0x0FFFFFFF);
+		     subfrm->offset[0], 0x0FFFFFFF);
 	/* Write U pixel offset */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wdma.subfrms[index].offset[1]);
 	MM_REG_WRITE(cmd, subsys_id, base, WDMA_DST_U_ADDR_OFFSET,
-		     reg, 0x0FFFFFFF);
+		     subfrm->offset[1], 0x0FFFFFFF);
 	/* Write V pixel offset */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wdma.subfrms[index].offset[2]);
 	MM_REG_WRITE(cmd, subsys_id, base, WDMA_DST_V_ADDR_OFFSET,
-		     reg, 0x0FFFFFFF);
+		     subfrm->offset[2], 0x0FFFFFFF);
 	/* Write source size */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wdma.subfrms[index].src);
-	MM_REG_WRITE(cmd, subsys_id, base, WDMA_SRC_SIZE, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, WDMA_SRC_SIZE, subfrm->src,
 		     0x3FFF3FFF);
 	/* Write target size */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wdma.subfrms[index].clip);
-	MM_REG_WRITE(cmd, subsys_id, base, WDMA_CLIP_SIZE, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, WDMA_CLIP_SIZE, subfrm->clip,
 		     0x3FFF3FFF);
 	/* Write clip offset */
-	if (CFG_CHECK(MT8183, p_id))
-		reg = CFG_COMP(MT8183, ctx->param, wdma.subfrms[index].clip_ofst);
-	MM_REG_WRITE(cmd, subsys_id, base, WDMA_CLIP_COORD, reg,
+	MM_REG_WRITE(cmd, subsys_id, base, WDMA_CLIP_COORD, subfrm->clip_ofst,
 		     0x3FFF3FFF);
 
 	/* Enable WDMA */
@@ -712,21 +552,13 @@ static int init_ccorr(struct mdp_comp_ctx *ctx, struct mdp_cmdq_cmd *cmd)
 static int config_ccorr_subfrm(struct mdp_comp_ctx *ctx,
 			       struct mdp_cmdq_cmd *cmd, u32 index)
 {
+	const struct img_comp_subfrm *csf = &ctx->param->subfrms[index];
 	phys_addr_t base = ctx->comp->reg_base;
 	u8 subsys_id = ctx->comp->subsys_id;
-	u32 csf_l = 0, csf_r = 0;
-	u32 csf_t = 0, csf_b = 0;
 	u32 hsize, vsize;
 
-	if (CFG_CHECK(MT8183, p_id)) {
-		csf_l = CFG_COMP(MT8183, ctx->param, subfrms[index].in.left);
-		csf_r = CFG_COMP(MT8183, ctx->param, subfrms[index].in.right);
-		csf_t = CFG_COMP(MT8183, ctx->param, subfrms[index].in.top);
-		csf_b = CFG_COMP(MT8183, ctx->param, subfrms[index].in.bottom);
-	}
-
-	hsize = csf_r - csf_l + 1;
-	vsize = csf_b - csf_t + 1;
+	hsize = csf->in.right - csf->in.left + 1;
+	vsize = csf->in.bottom - csf->in.top + 1;
 	MM_REG_WRITE(cmd, subsys_id, base, MDP_CCORR_SIZE,
 		     (hsize << 16) + (vsize <<  0), 0x1FFF1FFF);
 	return 0;
@@ -746,7 +578,33 @@ static const struct mdp_comp_ops *mdp_comp_ops[MDP_COMP_TYPE_COUNT] = {
 	[MDP_COMP_TYPE_CCORR] =		&ccorr_ops,
 };
 
-static const struct of_device_id mdp_comp_dt_ids[] __maybe_unused = {
+struct mdp_comp_match {
+	enum mdp_comp_type	type;
+	u32			alias_id;
+};
+
+static const struct mdp_comp_match mdp_comp_matches[MDP_MAX_COMP_COUNT] = {
+	[MDP_COMP_WPEI] =	{ MDP_COMP_TYPE_WPEI, 0 },
+	[MDP_COMP_WPEO] =	{ MDP_COMP_TYPE_EXTO, 2 },
+	[MDP_COMP_WPEI2] =	{ MDP_COMP_TYPE_WPEI, 1 },
+	[MDP_COMP_WPEO2] =	{ MDP_COMP_TYPE_EXTO, 3 },
+	[MDP_COMP_ISP_IMGI] =	{ MDP_COMP_TYPE_IMGI, 0 },
+	[MDP_COMP_ISP_IMGO] =	{ MDP_COMP_TYPE_EXTO, 0 },
+	[MDP_COMP_ISP_IMG2O] =	{ MDP_COMP_TYPE_EXTO, 1 },
+
+	[MDP_COMP_CAMIN] =	{ MDP_COMP_TYPE_DL_PATH, 0 },
+	[MDP_COMP_CAMIN2] =	{ MDP_COMP_TYPE_DL_PATH, 1 },
+	[MDP_COMP_RDMA0] =	{ MDP_COMP_TYPE_RDMA, 0 },
+	[MDP_COMP_CCORR0] =	{ MDP_COMP_TYPE_CCORR, 0 },
+	[MDP_COMP_RSZ0] =	{ MDP_COMP_TYPE_RSZ, 0 },
+	[MDP_COMP_RSZ1] =	{ MDP_COMP_TYPE_RSZ, 1 },
+	[MDP_COMP_PATH0_SOUT] =	{ MDP_COMP_TYPE_PATH, 0 },
+	[MDP_COMP_PATH1_SOUT] =	{ MDP_COMP_TYPE_PATH, 1 },
+	[MDP_COMP_WROT0] =	{ MDP_COMP_TYPE_WROT, 0 },
+	[MDP_COMP_WDMA] =	{ MDP_COMP_TYPE_WDMA, 0 },
+};
+
+static const struct of_device_id mdp_comp_dt_ids[] = {
 	{
 		.compatible = "mediatek,mt8183-mdp3-rdma",
 		.data = (void *)MDP_COMP_TYPE_RDMA,
@@ -766,6 +624,32 @@ static const struct of_device_id mdp_comp_dt_ids[] __maybe_unused = {
 	{}
 };
 
+static const struct of_device_id mdp_sub_comp_dt_ids[] = {
+	{
+		.compatible = "mediatek,mt8183-mdp3-wdma",
+		.data = (void *)MDP_COMP_TYPE_PATH,
+	}, {
+		.compatible = "mediatek,mt8183-mdp3-wrot",
+		.data = (void *)MDP_COMP_TYPE_PATH,
+	},
+	{}
+};
+
+/* Used to describe the item order in MDP property */
+struct mdp_comp_info {
+	u32	clk_num;
+	u32	clk_ofst;
+	u32	dts_reg_ofst;
+};
+
+static const struct mdp_comp_info mdp_comp_dt_info[MDP_MAX_COMP_COUNT] = {
+	[MDP_COMP_RDMA0]	= {2, 0, 0},
+	[MDP_COMP_RSZ0]		= {1, 0, 0},
+	[MDP_COMP_WROT0]	= {1, 0, 0},
+	[MDP_COMP_WDMA]		= {1, 0, 0},
+	[MDP_COMP_CCORR0]	= {1, 0, 0},
+};
+
 static inline bool is_dma_capable(const enum mdp_comp_type type)
 {
 	return (type == MDP_COMP_TYPE_RDMA ||
@@ -782,13 +666,13 @@ static inline bool is_bypass_gce_event(const enum mdp_comp_type type)
 	return (type == MDP_COMP_TYPE_PATH);
 }
 
-static int mdp_comp_get_id(struct mdp_dev *mdp, enum mdp_comp_type type, u32 alias_id)
+static int mdp_comp_get_id(enum mdp_comp_type type, int alias_id)
 {
 	int i;
 
-	for (i = 0; i < mdp->mdp_data->comp_data_len; i++)
-		if (mdp->mdp_data->comp_data[i].match.type == type &&
-		    mdp->mdp_data->comp_data[i].match.alias_id == alias_id)
+	for (i = 0; i < ARRAY_SIZE(mdp_comp_matches); i++)
+		if (mdp_comp_matches[i].type == type &&
+		    mdp_comp_matches[i].alias_id == alias_id)
 			return i;
 	return -ENODEV;
 }
@@ -797,25 +681,24 @@ int mdp_comp_clock_on(struct device *dev, struct mdp_comp *comp)
 {
 	int i, ret;
 
-	/* Only DMA capable components need the pm control */
-	if (comp->comp_dev && is_dma_capable(comp->type)) {
+	if (comp->comp_dev) {
 		ret = pm_runtime_resume_and_get(comp->comp_dev);
 		if (ret < 0) {
 			dev_err(dev,
 				"Failed to get power, err %d. type:%d id:%d\n",
-				ret, comp->type, comp->inner_id);
+				ret, comp->type, comp->id);
 			return ret;
 		}
 	}
 
-	for (i = 0; i < comp->clk_num; i++) {
+	for (i = 0; i < ARRAY_SIZE(comp->clks); i++) {
 		if (IS_ERR_OR_NULL(comp->clks[i]))
 			continue;
 		ret = clk_prepare_enable(comp->clks[i]);
 		if (ret) {
 			dev_err(dev,
 				"Failed to enable clk %d. type:%d id:%d\n",
-				i, comp->type, comp->inner_id);
+				i, comp->type, comp->id);
 			goto err_revert;
 		}
 	}
@@ -828,7 +711,7 @@ err_revert:
 			continue;
 		clk_disable_unprepare(comp->clks[i]);
 	}
-	if (comp->comp_dev && is_dma_capable(comp->type))
+	if (comp->comp_dev)
 		pm_runtime_put_sync(comp->comp_dev);
 
 	return ret;
@@ -838,13 +721,13 @@ void mdp_comp_clock_off(struct device *dev, struct mdp_comp *comp)
 {
 	int i;
 
-	for (i = 0; i < comp->clk_num; i++) {
+	for (i = 0; i < ARRAY_SIZE(comp->clks); i++) {
 		if (IS_ERR_OR_NULL(comp->clks[i]))
 			continue;
 		clk_disable_unprepare(comp->clks[i]);
 	}
 
-	if (comp->comp_dev && is_dma_capable(comp->type))
+	if (comp->comp_dev)
 		pm_runtime_put(comp->comp_dev);
 }
 
@@ -869,8 +752,8 @@ void mdp_comp_clocks_off(struct device *dev, struct mdp_comp *comps, int num)
 		mdp_comp_clock_off(dev, &comps[i]);
 }
 
-static int mdp_get_subsys_id(struct mdp_dev *mdp, struct device *dev,
-			     struct device_node *node, struct mdp_comp *comp)
+static int mdp_get_subsys_id(struct device *dev, struct device_node *node,
+			     struct mdp_comp *comp)
 {
 	struct platform_device *comp_pdev;
 	struct cmdq_client_reg  cmdq_reg;
@@ -883,12 +766,12 @@ static int mdp_get_subsys_id(struct mdp_dev *mdp, struct device *dev,
 	comp_pdev = of_find_device_by_node(node);
 
 	if (!comp_pdev) {
-		dev_err(dev, "get comp_pdev fail! comp public id=%d, inner id=%d, type=%d\n",
-			comp->public_id, comp->inner_id, comp->type);
+		dev_err(dev, "get comp_pdev fail! comp id=%d type=%d\n",
+			comp->id, comp->type);
 		return -ENODEV;
 	}
 
-	index = mdp->mdp_data->comp_data[comp->public_id].info.dts_reg_ofst;
+	index = mdp_comp_dt_info[comp->id].dts_reg_ofst;
 	ret = cmdq_dev_get_client_reg(&comp_pdev->dev, &cmdq_reg, index);
 	if (ret != 0) {
 		dev_err(&comp_pdev->dev, "cmdq_dev_get_subsys fail!\n");
@@ -908,9 +791,8 @@ static void __mdp_comp_init(struct mdp_dev *mdp, struct device_node *node,
 {
 	struct resource res;
 	phys_addr_t base;
-	int index;
+	int index = mdp_comp_dt_info[comp->id].dts_reg_ofst;
 
-	index = mdp->mdp_data->comp_data[comp->public_id].info.dts_reg_ofst;
 	if (of_address_to_resource(node, index, &res) < 0)
 		base = 0L;
 	else
@@ -925,7 +807,7 @@ static int mdp_comp_init(struct mdp_dev *mdp, struct device_node *node,
 			 struct mdp_comp *comp, enum mtk_mdp_comp_id id)
 {
 	struct device *dev = &mdp->pdev->dev;
-	struct platform_device *pdev_c;
+	int clk_num;
 	int clk_ofst;
 	int i;
 	s32 event;
@@ -935,36 +817,22 @@ static int mdp_comp_init(struct mdp_dev *mdp, struct device_node *node,
 		return -EINVAL;
 	}
 
-	pdev_c = of_find_device_by_node(node);
-	if (!pdev_c) {
-		dev_warn(dev, "can't find platform device of node:%s\n",
-			 node->name);
-		return -ENODEV;
-	}
-
-	comp->comp_dev = &pdev_c->dev;
-	comp->public_id = id;
-	comp->type = mdp->mdp_data->comp_data[id].match.type;
-	comp->inner_id = mdp->mdp_data->comp_data[id].match.inner_id;
-	comp->alias_id = mdp->mdp_data->comp_data[id].match.alias_id;
+	comp->id = id;
+	comp->type = mdp_comp_matches[id].type;
+	comp->alias_id = mdp_comp_matches[id].alias_id;
 	comp->ops = mdp_comp_ops[comp->type];
 	__mdp_comp_init(mdp, node, comp);
 
-	comp->clk_num = mdp->mdp_data->comp_data[id].info.clk_num;
-	comp->clks = devm_kzalloc(dev, sizeof(struct clk *) * comp->clk_num,
-				  GFP_KERNEL);
-	if (!comp->clks)
-		return -ENOMEM;
+	clk_num = mdp_comp_dt_info[id].clk_num;
+	clk_ofst = mdp_comp_dt_info[id].clk_ofst;
 
-	clk_ofst = mdp->mdp_data->comp_data[id].info.clk_ofst;
-
-	for (i = 0; i < comp->clk_num; i++) {
+	for (i = 0; i < clk_num; i++) {
 		comp->clks[i] = of_clk_get(node, i + clk_ofst);
 		if (IS_ERR(comp->clks[i]))
 			break;
 	}
 
-	mdp_get_subsys_id(mdp, dev, node, comp);
+	mdp_get_subsys_id(dev, node, comp);
 
 	/* Set GCE SOF event */
 	if (is_bypass_gce_event(comp->type) ||
@@ -995,11 +863,6 @@ static void mdp_comp_deinit(struct mdp_comp *comp)
 	if (!comp)
 		return;
 
-	if (comp->comp_dev && comp->clks) {
-		devm_kfree(&comp->mdp_dev->pdev->dev, comp->clks);
-		comp->clks = NULL;
-	}
-
 	if (comp->regs)
 		iounmap(comp->regs);
 }
@@ -1027,8 +890,8 @@ static struct mdp_comp *mdp_comp_create(struct mdp_dev *mdp,
 	mdp->comp[id] = comp;
 	mdp->comp[id]->mdp_dev = mdp;
 
-	dev_dbg(dev, "%s type:%d alias:%d public id:%d inner id:%d base:%#x regs:%p\n",
-		dev->of_node->name, comp->type, comp->alias_id, id, comp->inner_id,
+	dev_dbg(dev, "%s type:%d alias:%d id:%d base:%#x regs:%p\n",
+		dev->of_node->name, comp->type, comp->alias_id, id,
 		(u32)comp->reg_base, comp->regs);
 	return comp;
 }
@@ -1037,7 +900,6 @@ static int mdp_comp_sub_create(struct mdp_dev *mdp)
 {
 	struct device *dev = &mdp->pdev->dev;
 	struct device_node *node, *parent;
-	int ret = 0;
 
 	parent = dev->of_node->parent;
 
@@ -1047,7 +909,7 @@ static int mdp_comp_sub_create(struct mdp_dev *mdp)
 		int id, alias_id;
 		struct mdp_comp *comp;
 
-		of_id = of_match_node(mdp->mdp_data->mdp_sub_comp_dt_ids, node);
+		of_id = of_match_node(mdp_sub_comp_dt_ids, node);
 		if (!of_id)
 			continue;
 		if (!of_device_is_available(node)) {
@@ -1058,27 +920,21 @@ static int mdp_comp_sub_create(struct mdp_dev *mdp)
 
 		type = (enum mdp_comp_type)(uintptr_t)of_id->data;
 		alias_id = mdp_comp_alias_id[type];
-		id = mdp_comp_get_id(mdp, type, alias_id);
+		id = mdp_comp_get_id(type, alias_id);
 		if (id < 0) {
 			dev_err(dev,
 				"Fail to get sub comp. id: type %d alias %d\n",
 				type, alias_id);
-			ret = -EINVAL;
-			goto err_free_node;
+			return -EINVAL;
 		}
 		mdp_comp_alias_id[type]++;
 
 		comp = mdp_comp_create(mdp, node, id);
-		if (IS_ERR(comp)) {
-			ret = PTR_ERR(comp);
-			goto err_free_node;
-		}
+		if (IS_ERR(comp))
+			return PTR_ERR(comp);
 	}
-	return ret;
 
-err_free_node:
-	of_node_put(node);
-	return ret;
+	return 0;
 }
 
 void mdp_comp_destroy(struct mdp_dev *mdp)
@@ -1087,8 +943,7 @@ void mdp_comp_destroy(struct mdp_dev *mdp)
 
 	for (i = 0; i < ARRAY_SIZE(mdp->comp); i++) {
 		if (mdp->comp[i]) {
-			if (is_dma_capable(mdp->comp[i]->type))
-				pm_runtime_disable(mdp->comp[i]->comp_dev);
+			pm_runtime_disable(mdp->comp[i]->comp_dev);
 			mdp_comp_deinit(mdp->comp[i]);
 			devm_kfree(mdp->comp[i]->comp_dev, mdp->comp[i]);
 			mdp->comp[i] = NULL;
@@ -1100,10 +955,10 @@ int mdp_comp_config(struct mdp_dev *mdp)
 {
 	struct device *dev = &mdp->pdev->dev;
 	struct device_node *node, *parent;
+	struct platform_device *pdev;
 	int ret;
 
 	memset(mdp_comp_alias_id, 0, sizeof(mdp_comp_alias_id));
-	p_id = mdp->mdp_data->mdp_plat_id;
 
 	parent = dev->of_node->parent;
 	/* Iterate over sibling MDP function blocks */
@@ -1125,7 +980,7 @@ int mdp_comp_config(struct mdp_dev *mdp)
 
 		type = (enum mdp_comp_type)(uintptr_t)of_id->data;
 		alias_id = mdp_comp_alias_id[type];
-		id = mdp_comp_get_id(mdp, type, alias_id);
+		id = mdp_comp_get_id(type, alias_id);
 		if (id < 0) {
 			dev_err(dev,
 				"Fail to get component id: type %d alias %d\n",
@@ -1137,13 +992,22 @@ int mdp_comp_config(struct mdp_dev *mdp)
 		comp = mdp_comp_create(mdp, node, id);
 		if (IS_ERR(comp)) {
 			ret = PTR_ERR(comp);
-			of_node_put(node);
 			goto err_init_comps;
 		}
 
 		/* Only DMA capable components need the pm control */
+		comp->comp_dev = NULL;
 		if (!is_dma_capable(comp->type))
 			continue;
+
+		pdev = of_find_device_by_node(node);
+		if (!pdev) {
+			dev_warn(dev, "can't find platform device of node:%s\n",
+				 node->name);
+			return -ENODEV;
+		}
+
+		comp->comp_dev = &pdev->dev;
 		pm_runtime_enable(comp->comp_dev);
 	}
 
@@ -1163,47 +1027,22 @@ int mdp_comp_ctx_config(struct mdp_dev *mdp, struct mdp_comp_ctx *ctx,
 			const struct img_ipi_frameparam *frame)
 {
 	struct device *dev = &mdp->pdev->dev;
-	enum mtk_mdp_comp_id public_id = MDP_COMP_NONE;
-	u32 arg;
-	int i, idx;
+	int i;
 
-	if (!param) {
-		dev_err(dev, "Invalid component param");
+	if (param->type < 0 || param->type >= MDP_MAX_COMP_COUNT) {
+		dev_err(dev, "Invalid component id %d", param->type);
 		return -EINVAL;
 	}
 
-	if (CFG_CHECK(MT8183, p_id))
-		arg = CFG_COMP(MT8183, param, type);
-	else
-		return -EINVAL;
-	public_id = mdp_cfg_get_id_public(mdp, arg);
-	if (public_id < 0) {
-		dev_err(dev, "Invalid component id %d", public_id);
-		return -EINVAL;
-	}
-
-	ctx->comp = mdp->comp[public_id];
+	ctx->comp = mdp->comp[param->type];
 	if (!ctx->comp) {
-		dev_err(dev, "Uninit component inner id %d", arg);
+		dev_err(dev, "Uninit component id %d", param->type);
 		return -EINVAL;
 	}
 
 	ctx->param = param;
-	if (CFG_CHECK(MT8183, p_id))
-		arg = CFG_COMP(MT8183, param, input);
-	else
-		return -EINVAL;
-	ctx->input = &frame->inputs[arg];
-	if (CFG_CHECK(MT8183, p_id))
-		idx = CFG_COMP(MT8183, param, num_outputs);
-	else
-		return -EINVAL;
-	for (i = 0; i < idx; i++) {
-		if (CFG_CHECK(MT8183, p_id))
-			arg = CFG_COMP(MT8183, param, outputs[i]);
-		else
-			return -EINVAL;
-		ctx->outputs[i] = &frame->outputs[arg];
-	}
+	ctx->input = &frame->inputs[param->input];
+	for (i = 0; i < param->num_outputs; i++)
+		ctx->outputs[i] = &frame->outputs[param->outputs[i]];
 	return 0;
 }

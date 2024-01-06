@@ -25,11 +25,11 @@
 #include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/slab.h>
 #include <linux/platform_data/i2c-omap.h>
 #include <linux/pm_runtime.h>
 #include <linux/pinctrl/consumer.h>
-#include <linux/property.h>
 
 /* I2C controller revisions */
 #define OMAP_I2C_OMAP1_REV_2		0x20
@@ -1358,6 +1358,7 @@ omap_i2c_probe(struct platform_device *pdev)
 	const struct omap_i2c_bus_platform_data *pdata =
 		dev_get_platdata(&pdev->dev);
 	struct device_node	*node = pdev->dev.of_node;
+	const struct of_device_id *match;
 	int irq;
 	int r;
 	u32 rev;
@@ -1375,10 +1376,11 @@ omap_i2c_probe(struct platform_device *pdev)
 	if (IS_ERR(omap->base))
 		return PTR_ERR(omap->base);
 
-	if (pdev->dev.of_node) {
+	match = of_match_device(of_match_ptr(omap_i2c_of_match), &pdev->dev);
+	if (match) {
 		u32 freq = I2C_MAX_STANDARD_MODE_FREQ;
 
-		pdata = device_get_match_data(&pdev->dev);
+		pdata = match->data;
 		omap->flags = pdata->flags;
 
 		of_property_read_u32(node, "clock-frequency", &freq);
@@ -1517,22 +1519,21 @@ err_disable_pm:
 	return r;
 }
 
-static void omap_i2c_remove(struct platform_device *pdev)
+static int omap_i2c_remove(struct platform_device *pdev)
 {
 	struct omap_i2c_dev	*omap = platform_get_drvdata(pdev);
 	int ret;
 
 	i2c_del_adapter(&omap->adapter);
-
-	ret = pm_runtime_get_sync(&pdev->dev);
+	ret = pm_runtime_resume_and_get(&pdev->dev);
 	if (ret < 0)
-		dev_err(omap->dev, "Failed to resume hardware, skip disable\n");
-	else
-		omap_i2c_write_reg(omap, OMAP_I2C_CON_REG, 0);
+		return ret;
 
+	omap_i2c_write_reg(omap, OMAP_I2C_CON_REG, 0);
 	pm_runtime_dont_use_autosuspend(&pdev->dev);
 	pm_runtime_put_sync(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
+	return 0;
 }
 
 static int __maybe_unused omap_i2c_runtime_suspend(struct device *dev)
@@ -1584,7 +1585,7 @@ static const struct dev_pm_ops omap_i2c_pm_ops = {
 
 static struct platform_driver omap_i2c_driver = {
 	.probe		= omap_i2c_probe,
-	.remove_new	= omap_i2c_remove,
+	.remove		= omap_i2c_remove,
 	.driver		= {
 		.name	= "omap_i2c",
 		.pm	= &omap_i2c_pm_ops,

@@ -800,13 +800,14 @@ static int read_capabilities(struct acpi_power_meter_resource *resource)
 			goto error;
 		}
 
-		*str = kmemdup_nul(element->string.pointer, element->string.length,
-				   GFP_KERNEL);
+		*str = kcalloc(element->string.length + 1, sizeof(u8),
+			       GFP_KERNEL);
 		if (!*str) {
 			res = -ENOMEM;
 			goto error;
 		}
 
+		strncpy(*str, element->string.pointer, element->string.length);
 		str++;
 	}
 
@@ -913,12 +914,12 @@ exit:
 	return res;
 }
 
-static void acpi_power_meter_remove(struct acpi_device *device)
+static int acpi_power_meter_remove(struct acpi_device *device)
 {
 	struct acpi_power_meter_resource *resource;
 
 	if (!device || !acpi_driver_data(device))
-		return;
+		return -EINVAL;
 
 	resource = acpi_driver_data(device);
 	hwmon_device_unregister(resource->hwmon_dev);
@@ -927,6 +928,7 @@ static void acpi_power_meter_remove(struct acpi_device *device)
 	free_capabilities(resource);
 
 	kfree(resource);
+	return 0;
 }
 
 static int acpi_power_meter_resume(struct device *dev)

@@ -15,6 +15,7 @@
 #include <linux/regmap.h>
 #include <linux/err.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
 #include <linux/mutex.h>
@@ -127,7 +128,7 @@ static const struct regmap_access_table tps65218_volatile_table = {
 static const struct regmap_config tps65218_regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 	.volatile_table = &tps65218_volatile_table,
 };
 
@@ -279,7 +280,8 @@ static int tps65218_voltage_set_uvlo(struct tps65218 *tps)
 	return 0;
 }
 
-static int tps65218_probe(struct i2c_client *client)
+static int tps65218_probe(struct i2c_client *client,
+				const struct i2c_device_id *ids)
 {
 	struct tps65218 *tps;
 	int ret;

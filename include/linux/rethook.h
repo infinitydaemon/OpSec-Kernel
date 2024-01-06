@@ -6,14 +6,15 @@
 #define _LINUX_RETHOOK_H
 
 #include <linux/compiler.h>
-#include <linux/objpool.h>
+#include <linux/freelist.h>
 #include <linux/kallsyms.h>
 #include <linux/llist.h>
 #include <linux/rcupdate.h>
+#include <linux/refcount.h>
 
 struct rethook_node;
 
-typedef void (*rethook_handler_t) (struct rethook_node *, void *, unsigned long, struct pt_regs *);
+typedef void (*rethook_handler_t) (struct rethook_node *, void *, struct pt_regs *);
 
 /**
  * struct rethook - The rethook management data structure.
@@ -33,13 +34,15 @@ struct rethook {
 	 * __rcu, instead of rethook_handler_t. But this must be same as
 	 * rethook_handler_t.
 	 */
-	void (__rcu *handler) (struct rethook_node *, void *, unsigned long, struct pt_regs *);
-	struct objpool_head	pool;
+	void (__rcu *handler) (struct rethook_node *, void *, struct pt_regs *);
+	struct freelist_head	pool;
+	refcount_t		ref;
 	struct rcu_head		rcu;
 };
 
 /**
  * struct rethook_node - The rethook shadow-stack entry node.
+ * @freelist: The freelist, linked to struct rethook::pool.
  * @rcu: The rcu_head for deferred freeing.
  * @llist: The llist, linked to a struct task_struct::rethooks.
  * @rethook: The pointer to the struct rethook.
@@ -50,16 +53,20 @@ struct rethook {
  * on each entry of the shadow stack.
  */
 struct rethook_node {
-	struct rcu_head		rcu;
+	union {
+		struct freelist_node freelist;
+		struct rcu_head      rcu;
+	};
 	struct llist_node	llist;
 	struct rethook		*rethook;
 	unsigned long		ret_addr;
 	unsigned long		frame;
 };
 
-struct rethook *rethook_alloc(void *data, rethook_handler_t handler, int size, int num);
+struct rethook *rethook_alloc(void *data, rethook_handler_t handler);
 void rethook_stop(struct rethook *rh);
 void rethook_free(struct rethook *rh);
+void rethook_add_node(struct rethook *rh, struct rethook_node *node);
 struct rethook_node *rethook_try_get(struct rethook *rh);
 void rethook_recycle(struct rethook_node *node);
 void rethook_hook(struct rethook_node *node, struct pt_regs *regs, bool mcount);
@@ -96,3 +103,4 @@ void rethook_flush_task(struct task_struct *tk);
 #endif
 
 #endif
+

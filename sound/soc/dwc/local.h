@@ -25,12 +25,7 @@
 #define RXFFR		0x014
 #define TXFFR		0x018
 
-/* Enable register fields */
-#define IER_TDM_SLOTS_SHIFT	8
-#define IER_FRAME_OFF_SHIFT	5
-#define IER_FRAME_OFF	BIT(5)
-#define IER_INTF_TYPE	BIT(1)
-#define IER_IEN		BIT(0)
+#define DMACR   0x200
 
 /* Interrupt status register fields */
 #define ISR_TXFO	BIT(5)
@@ -53,15 +48,6 @@
 #define TFCR(x)		(0x40 * x + 0x04C)
 #define RFF(x)		(0x40 * x + 0x050)
 #define TFF(x)		(0x40 * x + 0x054)
-#define RSLOT_TSLOT(x)	(0x4 * (x) + 0x224)
-
-/* Receive enable register fields */
-#define RER_RXSLOT_SHIFT	8
-#define RER_RXCHEN	BIT(0)
-
-/* Transmit enable register fields */
-#define TER_TXSLOT_SHIFT	8
-#define TER_TXCHEN	BIT(0)
 
 #define DMACR_DMAEN_TX		BIT(17)
 #define DMACR_DMAEN_RX		BIT(16)
@@ -79,12 +65,6 @@
 #define I2S_COMP_PARAM_1	0x01F4
 #define I2S_COMP_VERSION	0x01F8
 #define I2S_COMP_TYPE		0x01FC
-
-#define I2S_RRXDMA		0x01C4
-#define I2S_RTXDMA		0x01CC
-#define I2S_DMACR		0x0200
-#define I2S_DMAEN_RXBLOCK	(1 << 16)
-#define I2S_DMAEN_TXBLOCK	(1 << 17)
 
 /*
  * Component parameter register fields - define the I2S block's
@@ -122,19 +102,16 @@ union dw_i2s_snd_dma_data {
 struct dw_i2s_dev {
 	void __iomem *i2s_base;
 	struct clk *clk;
-	struct reset_control *reset;
 	int active;
 	unsigned int capability;
 	unsigned int quirks;
 	unsigned int i2s_reg_comp1;
 	unsigned int i2s_reg_comp2;
+	unsigned int bclk_ratio;
 	struct device *dev;
 	u32 ccr;
 	u32 xfer_resolution;
 	u32 fifo_th;
-	u32 l_reg;
-	u32 r_reg;
-	bool is_jh7110; /* Flag for StarFive JH7110 SoC */
 
 	/* data related to DMA transfers b/w i2s and DMAC */
 	union dw_i2s_snd_dma_data play_dma_data;
@@ -144,12 +121,6 @@ struct dw_i2s_dev {
 
 	/* data related to PIO transfers */
 	bool use_pio;
-
-	/* data related to TDM mode */
-	u32 tdm_slots;
-	u32 tdm_mask;
-	u32 frame_offset;
-
 	struct snd_pcm_substream __rcu *tx_substream;
 	struct snd_pcm_substream __rcu *rx_substream;
 	unsigned int (*tx_fn)(struct dw_i2s_dev *dev,

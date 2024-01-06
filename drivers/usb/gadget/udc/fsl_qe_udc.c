@@ -27,10 +27,9 @@
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/moduleparam.h>
-#include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
-#include <linux/platform_device.h>
+#include <linux/of_platform.h>
 #include <linux/dma-mapping.h>
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
@@ -1960,10 +1959,12 @@ static void ch9getstatus(struct qe_udc *udc, u8 request_type, u16 value,
 	} else if ((request_type & USB_RECIP_MASK) == USB_RECIP_ENDPOINT) {
 		/* Get endpoint status */
 		int pipe = index & USB_ENDPOINT_NUMBER_MASK;
+		struct qe_ep *target_ep;
+		u16 usep;
+
 		if (pipe >= USB_MAX_ENDPOINTS)
 			goto stall;
-		struct qe_ep *target_ep = &udc->eps[pipe];
-		u16 usep;
+		target_ep = &udc->eps[pipe];
 
 		/* stall if endpoint doesn't exist */
 		if (!target_ep->ep.desc)
@@ -2472,11 +2473,16 @@ static const struct of_device_id qe_udc_match[];
 static int qe_udc_probe(struct platform_device *ofdev)
 {
 	struct qe_udc *udc;
+	const struct of_device_id *match;
 	struct device_node *np = ofdev->dev.of_node;
 	struct qe_ep *ep;
 	unsigned int ret = 0;
 	unsigned int i;
 	const void *prop;
+
+	match = of_match_device(qe_udc_match, &ofdev->dev);
+	if (!match)
+		return -EINVAL;
 
 	prop = of_get_property(np, "mode", NULL);
 	if (!prop || strcmp(prop, "peripheral"))
@@ -2489,7 +2495,7 @@ static int qe_udc_probe(struct platform_device *ofdev)
 		return -ENOMEM;
 	}
 
-	udc->soc_type = (unsigned long)device_get_match_data(&ofdev->dev);
+	udc->soc_type = (unsigned long)match->data;
 	udc->usb_regs = of_iomap(np, 0);
 	if (!udc->usb_regs) {
 		ret = -ENOMEM;
@@ -2626,7 +2632,7 @@ static int qe_udc_resume(struct platform_device *dev)
 }
 #endif
 
-static void qe_udc_remove(struct platform_device *ofdev)
+static int qe_udc_remove(struct platform_device *ofdev)
 {
 	struct qe_udc *udc = platform_get_drvdata(ofdev);
 	struct qe_ep *ep;
@@ -2677,6 +2683,8 @@ static void qe_udc_remove(struct platform_device *ofdev)
 
 	/* wait for release() of gadget.dev to free udc */
 	wait_for_completion(&done);
+
+	return 0;
 }
 
 /*-------------------------------------------------------------------------*/
@@ -2704,7 +2712,7 @@ static struct platform_driver udc_driver = {
 		.of_match_table = qe_udc_match,
 	},
 	.probe          = qe_udc_probe,
-	.remove_new     = qe_udc_remove,
+	.remove         = qe_udc_remove,
 #ifdef CONFIG_PM
 	.suspend        = qe_udc_suspend,
 	.resume         = qe_udc_resume,

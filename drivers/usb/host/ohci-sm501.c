@@ -185,7 +185,7 @@ err0:
 	return retval;
 }
 
-static void ohci_hcd_sm501_drv_remove(struct platform_device *pdev)
+static int ohci_hcd_sm501_drv_remove(struct platform_device *pdev)
 {
 	struct usb_hcd *hcd = platform_get_drvdata(pdev);
 	struct resource	*mem;
@@ -195,12 +195,15 @@ static void ohci_hcd_sm501_drv_remove(struct platform_device *pdev)
 	release_mem_region(hcd->rsrc_start, hcd->rsrc_len);
 	usb_put_hcd(hcd);
 	mem = platform_get_resource(pdev, IORESOURCE_MEM, 1);
-	release_mem_region(mem->start, resource_size(mem));
+	if (mem)
+		release_mem_region(mem->start, resource_size(mem));
 
 	/* mask interrupts and disable power */
 
 	sm501_modify_reg(pdev->dev.parent, SM501_IRQ_MASK, 0, 1 << 6);
 	sm501_unit_power(pdev->dev.parent, SM501_GATE_USB_HOST, 0);
+
+	return 0;
 }
 
 /*-------------------------------------------------------------------------*/
@@ -252,7 +255,7 @@ static int ohci_sm501_resume(struct platform_device *pdev)
  */
 static struct platform_driver ohci_hcd_sm501_driver = {
 	.probe		= ohci_hcd_sm501_drv_probe,
-	.remove_new	= ohci_hcd_sm501_drv_remove,
+	.remove		= ohci_hcd_sm501_drv_remove,
 	.shutdown	= usb_hcd_platform_shutdown,
 	.suspend	= ohci_sm501_suspend,
 	.resume		= ohci_sm501_resume,

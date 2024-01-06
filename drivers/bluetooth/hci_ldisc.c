@@ -323,9 +323,9 @@ void hci_uart_set_flow_control(struct hci_uart *hu, bool enable)
 		/* Disable hardware flow control */
 		ktermios = tty->termios;
 		ktermios.c_cflag &= ~CRTSCTS;
-		tty_set_termios(tty, &ktermios);
+		status = tty_set_termios(tty, &ktermios);
 		BT_DBG("Disabling hardware flow control: %s",
-		       (tty->termios.c_cflag & CRTSCTS) ? "failed" : "success");
+		       status ? "failed" : "success");
 
 		/* Clear RTS to prevent the device from sending */
 		/* Most UARTs need OUT2 to enable interrupts */
@@ -357,9 +357,9 @@ void hci_uart_set_flow_control(struct hci_uart *hu, bool enable)
 		/* Re-enable hardware flow control */
 		ktermios = tty->termios;
 		ktermios.c_cflag |= CRTSCTS;
-		tty_set_termios(tty, &ktermios);
+		status = tty_set_termios(tty, &ktermios);
 		BT_DBG("Enabling hardware flow control: %s",
-		       !(tty->termios.c_cflag & CRTSCTS) ? "failed" : "success");
+		       status ? "failed" : "success");
 	}
 }
 
@@ -599,7 +599,7 @@ static void hci_uart_tty_wakeup(struct tty_struct *tty)
  * Return Value:    None
  */
 static void hci_uart_tty_receive(struct tty_struct *tty, const u8 *data,
-				 const u8 *flags, size_t count)
+				 const char *flags, int count)
 {
 	struct hci_uart *hu = tty->disc_data;
 
@@ -770,8 +770,7 @@ static int hci_uart_tty_ioctl(struct tty_struct *tty, unsigned int cmd,
 		break;
 
 	case HCIUARTGETPROTO:
-		if (test_bit(HCI_UART_PROTO_SET, &hu->flags) &&
-		    test_bit(HCI_UART_PROTO_READY, &hu->flags))
+		if (test_bit(HCI_UART_PROTO_SET, &hu->flags))
 			err = hu->proto->id;
 		else
 			err = -EUNATCH;
@@ -807,14 +806,20 @@ static int hci_uart_tty_ioctl(struct tty_struct *tty, unsigned int cmd,
  * We don't provide read/write/poll interface for user space.
  */
 static ssize_t hci_uart_tty_read(struct tty_struct *tty, struct file *file,
-				 u8 *buf, size_t nr, void **cookie,
-				 unsigned long offset)
+				 unsigned char *buf, size_t nr,
+				 void **cookie, unsigned long offset)
 {
 	return 0;
 }
 
 static ssize_t hci_uart_tty_write(struct tty_struct *tty, struct file *file,
-				  const u8 *data, size_t count)
+				  const unsigned char *data, size_t count)
+{
+	return 0;
+}
+
+static __poll_t hci_uart_tty_poll(struct tty_struct *tty,
+				      struct file *filp, poll_table *wait)
 {
 	return 0;
 }
@@ -829,6 +834,7 @@ static struct tty_ldisc_ops hci_uart_ldisc = {
 	.write		= hci_uart_tty_write,
 	.ioctl		= hci_uart_tty_ioctl,
 	.compat_ioctl	= hci_uart_tty_ioctl,
+	.poll		= hci_uart_tty_poll,
 	.receive_buf	= hci_uart_tty_receive,
 	.write_wakeup	= hci_uart_tty_wakeup,
 };

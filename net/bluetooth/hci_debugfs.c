@@ -22,7 +22,6 @@
 */
 
 #include <linux/debugfs.h>
-#include <linux/kstrtox.h>
 
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
@@ -190,7 +189,7 @@ static int uuids_show(struct seq_file *f, void *p)
 	}
 	hci_dev_unlock(hdev);
 
-	return 0;
+       return 0;
 }
 
 DEFINE_SHOW_ATTRIBUTE(uuids);
@@ -758,7 +757,7 @@ static ssize_t force_static_address_write(struct file *file,
 	bool enable;
 	int err;
 
-	if (hdev_is_powered(hdev))
+	if (test_bit(HCI_UP, &hdev->flags))
 		return -EBUSY;
 
 	err = kstrtobool_from_user(user_buf, count, &enable);
@@ -1153,7 +1152,7 @@ static ssize_t force_no_mitm_write(struct file *file,
 		return -EFAULT;
 
 	buf[buf_size] = '\0';
-	if (kstrtobool(buf, &enable))
+	if (strtobool(buf, &enable))
 		return -EINVAL;
 
 	if (enable == hci_dev_test_flag(hdev, HCI_FORCE_NO_MITM))

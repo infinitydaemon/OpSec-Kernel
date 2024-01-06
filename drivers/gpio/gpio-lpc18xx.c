@@ -14,6 +14,7 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
+#include <linux/of_gpio.h>
 #include <linux/of_irq.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/platform_device.h>
@@ -381,7 +382,7 @@ static int lpc18xx_gpio_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void lpc18xx_gpio_remove(struct platform_device *pdev)
+static int lpc18xx_gpio_remove(struct platform_device *pdev)
 {
 	struct lpc18xx_gpio_chip *gc = platform_get_drvdata(pdev);
 
@@ -389,6 +390,8 @@ static void lpc18xx_gpio_remove(struct platform_device *pdev)
 		irq_domain_remove(gc->pin_ic->domain);
 
 	clk_disable_unprepare(gc->clk);
+
+	return 0;
 }
 
 static const struct of_device_id lpc18xx_gpio_match[] = {
@@ -399,7 +402,7 @@ MODULE_DEVICE_TABLE(of, lpc18xx_gpio_match);
 
 static struct platform_driver lpc18xx_gpio_driver = {
 	.probe	= lpc18xx_gpio_probe,
-	.remove_new = lpc18xx_gpio_remove,
+	.remove	= lpc18xx_gpio_remove,
 	.driver	= {
 		.name		= "lpc18xx-gpio",
 		.of_match_table	= lpc18xx_gpio_match,

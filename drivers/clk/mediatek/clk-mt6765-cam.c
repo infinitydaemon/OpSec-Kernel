@@ -46,15 +46,14 @@ static const struct of_device_id of_match_clk_mt6765_cam[] = {
 		/* sentinel */
 	}
 };
-MODULE_DEVICE_TABLE(of, of_match_clk_mt6765_cam);
 
 static struct platform_driver clk_mt6765_cam_drv = {
 	.probe = mtk_clk_simple_probe,
-	.remove_new = mtk_clk_simple_remove,
+	.remove = mtk_clk_simple_remove,
 	.driver = {
 		.name = "clk-mt6765-cam",
 		.of_match_table = of_match_clk_mt6765_cam,
 	},
 };
-module_platform_driver(clk_mt6765_cam_drv);
-MODULE_LICENSE("GPL");
+
+builtin_platform_driver(clk_mt6765_cam_drv);

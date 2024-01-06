@@ -17,5 +17,6 @@ dlm-y :=			ast.o \
 				requestqueue.o \
 				user.o \
 				util.o 
+dlm-$(CONFIG_DLM_DEPRECATED_API) +=	netlink.o
 dlm-$(CONFIG_DLM_DEBUG) +=	debug_fs.o
 

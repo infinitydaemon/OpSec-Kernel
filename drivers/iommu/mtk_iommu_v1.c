@@ -270,9 +270,12 @@ static int mtk_iommu_v1_domain_finalise(struct mtk_iommu_v1_data *data)
 	return 0;
 }
 
-static struct iommu_domain *mtk_iommu_v1_domain_alloc_paging(struct device *dev)
+static struct iommu_domain *mtk_iommu_v1_domain_alloc(unsigned type)
 {
 	struct mtk_iommu_v1_domain *dom;
+
+	if (type != IOMMU_DOMAIN_UNMANAGED)
+		return NULL;
 
 	dom = kzalloc(sizeof(*dom), GFP_KERNEL);
 	if (!dom)
@@ -316,61 +319,52 @@ static int mtk_iommu_v1_attach_device(struct iommu_domain *domain, struct device
 	return 0;
 }
 
-static int mtk_iommu_v1_identity_attach(struct iommu_domain *identity_domain,
-					struct device *dev)
+static void mtk_iommu_v1_detach_device(struct iommu_domain *domain, struct device *dev)
 {
 	struct mtk_iommu_v1_data *data = dev_iommu_priv_get(dev);
 
 	mtk_iommu_v1_config(data, dev, false);
-	return 0;
 }
 
-static struct iommu_domain_ops mtk_iommu_v1_identity_ops = {
-	.attach_dev = mtk_iommu_v1_identity_attach,
-};
-
-static struct iommu_domain mtk_iommu_v1_identity_domain = {
-	.type = IOMMU_DOMAIN_IDENTITY,
-	.ops = &mtk_iommu_v1_identity_ops,
-};
-
 static int mtk_iommu_v1_map(struct iommu_domain *domain, unsigned long iova,
-			    phys_addr_t paddr, size_t pgsize, size_t pgcount,
-			    int prot, gfp_t gfp, size_t *mapped)
+			    phys_addr_t paddr, size_t size, int prot, gfp_t gfp)
 {
 	struct mtk_iommu_v1_domain *dom = to_mtk_domain(domain);
+	unsigned int page_num = size >> MT2701_IOMMU_PAGE_SHIFT;
 	unsigned long flags;
 	unsigned int i;
 	u32 *pgt_base_iova = dom->pgt_va + (iova  >> MT2701_IOMMU_PAGE_SHIFT);
 	u32 pabase = (u32)paddr;
+	int map_size = 0;
 
 	spin_lock_irqsave(&dom->pgtlock, flags);
-	for (i = 0; i < pgcount; i++) {
-		if (pgt_base_iova[i])
+	for (i = 0; i < page_num; i++) {
+		if (pgt_base_iova[i]) {
+			memset(pgt_base_iova, 0, i * sizeof(u32));
 			break;
+		}
 		pgt_base_iova[i] = pabase | F_DESC_VALID | F_DESC_NONSEC;
 		pabase += MT2701_IOMMU_PAGE_SIZE;
+		map_size += MT2701_IOMMU_PAGE_SIZE;
 	}
 
 	spin_unlock_irqrestore(&dom->pgtlock, flags);
 
-	*mapped = i * MT2701_IOMMU_PAGE_SIZE;
-	mtk_iommu_v1_tlb_flush_range(dom->data, iova, *mapped);
+	mtk_iommu_v1_tlb_flush_range(dom->data, iova, size);
 
-	return i == pgcount ? 0 : -EEXIST;
+	return map_size == size ? 0 : -EEXIST;
 }
 
 static size_t mtk_iommu_v1_unmap(struct iommu_domain *domain, unsigned long iova,
-				 size_t pgsize, size_t pgcount,
-				 struct iommu_iotlb_gather *gather)
+				 size_t size, struct iommu_iotlb_gather *gather)
 {
 	struct mtk_iommu_v1_domain *dom = to_mtk_domain(domain);
 	unsigned long flags;
 	u32 *pgt_base_iova = dom->pgt_va + (iova  >> MT2701_IOMMU_PAGE_SHIFT);
-	size_t size = pgcount * MT2701_IOMMU_PAGE_SIZE;
+	unsigned int page_num = size >> MT2701_IOMMU_PAGE_SHIFT;
 
 	spin_lock_irqsave(&dom->pgtlock, flags);
-	memset(pgt_base_iova, 0, pgcount * sizeof(u32));
+	memset(pgt_base_iova, 0, page_num * sizeof(u32));
 	spin_unlock_irqrestore(&dom->pgtlock, flags);
 
 	mtk_iommu_v1_tlb_flush_range(dom->data, iova, size);
@@ -447,6 +441,11 @@ static int mtk_iommu_v1_create_mapping(struct device *dev, struct of_phandle_arg
 	}
 
 	return 0;
+}
+
+static int mtk_iommu_v1_def_domain_type(struct device *dev)
+{
+	return IOMMU_DOMAIN_UNMANAGED;
 }
 
 static struct iommu_device *mtk_iommu_v1_probe_device(struct device *dev)
@@ -581,18 +580,19 @@ static int mtk_iommu_v1_hw_init(const struct mtk_iommu_v1_data *data)
 }
 
 static const struct iommu_ops mtk_iommu_v1_ops = {
-	.identity_domain = &mtk_iommu_v1_identity_domain,
-	.domain_alloc_paging = mtk_iommu_v1_domain_alloc_paging,
+	.domain_alloc	= mtk_iommu_v1_domain_alloc,
 	.probe_device	= mtk_iommu_v1_probe_device,
 	.probe_finalize = mtk_iommu_v1_probe_finalize,
 	.release_device	= mtk_iommu_v1_release_device,
+	.def_domain_type = mtk_iommu_v1_def_domain_type,
 	.device_group	= generic_device_group,
-	.pgsize_bitmap	= MT2701_IOMMU_PAGE_SIZE,
+	.pgsize_bitmap	= ~0UL << MT2701_IOMMU_PAGE_SHIFT,
 	.owner          = THIS_MODULE,
 	.default_domain_ops = &(const struct iommu_domain_ops) {
 		.attach_dev	= mtk_iommu_v1_attach_device,
-		.map_pages	= mtk_iommu_v1_map,
-		.unmap_pages	= mtk_iommu_v1_unmap,
+		.detach_dev	= mtk_iommu_v1_detach_device,
+		.map		= mtk_iommu_v1_map,
+		.unmap		= mtk_iommu_v1_unmap,
 		.iova_to_phys	= mtk_iommu_v1_iova_to_phys,
 		.free		= mtk_iommu_v1_domain_free,
 	}
@@ -705,7 +705,7 @@ out_clk_unprepare:
 	return ret;
 }
 
-static void mtk_iommu_v1_remove(struct platform_device *pdev)
+static int mtk_iommu_v1_remove(struct platform_device *pdev)
 {
 	struct mtk_iommu_v1_data *data = platform_get_drvdata(pdev);
 
@@ -715,6 +715,7 @@ static void mtk_iommu_v1_remove(struct platform_device *pdev)
 	clk_disable_unprepare(data->bclk);
 	devm_free_irq(&pdev->dev, data->irq, data);
 	component_master_del(&pdev->dev, &mtk_iommu_v1_com_ops);
+	return 0;
 }
 
 static int __maybe_unused mtk_iommu_v1_suspend(struct device *dev)
@@ -753,7 +754,7 @@ static const struct dev_pm_ops mtk_iommu_v1_pm_ops = {
 
 static struct platform_driver mtk_iommu_v1_driver = {
 	.probe	= mtk_iommu_v1_probe,
-	.remove_new = mtk_iommu_v1_remove,
+	.remove	= mtk_iommu_v1_remove,
 	.driver	= {
 		.name = "mtk-iommu-v1",
 		.of_match_table = mtk_iommu_v1_of_ids,

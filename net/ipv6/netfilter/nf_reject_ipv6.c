@@ -345,7 +345,6 @@ void nf_send_reset6(struct net *net, struct sock *sk, struct sk_buff *oldskb,
 	nf_reject_ip6_tcphdr_put(nskb, oldskb, otcph, otcplen);
 
 	nf_ct_attach(nskb, oldskb);
-	nf_ct_set_closing(skb_nfct(oldskb));
 
 #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
 	/* If we use ip6_local_out for bridged traffic, the MAC source on
@@ -413,4 +412,3 @@ void nf_send_unreach6(struct net *net, struct sk_buff *skb_in,
 EXPORT_SYMBOL_GPL(nf_send_unreach6);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("IPv6 packet rejection core");

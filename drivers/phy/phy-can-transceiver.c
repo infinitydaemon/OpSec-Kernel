@@ -5,7 +5,6 @@
  * Copyright (C) 2021 Texas Instruments Incorporated - https://www.ti.com
  *
  */
-#include <linux/of.h>
 #include<linux/phy/phy.h>
 #include<linux/platform_device.h>
 #include<linux/module.h>
@@ -83,10 +82,6 @@ static const struct of_device_id can_transceiver_phy_ids[] = {
 	},
 	{
 		.compatible = "ti,tcan1043",
-		.data = &tcan1043_drvdata
-	},
-	{
-		.compatible = "nxp,tjr1443",
 		.data = &tcan1043_drvdata
 	},
 	{ }

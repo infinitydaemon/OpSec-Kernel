@@ -325,7 +325,7 @@ ATTRIBUTE_GROUPS(megaraid_sdev);
 /*
  * Scsi host template for megaraid unified driver
  */
-static const struct scsi_host_template megaraid_template_g = {
+static struct scsi_host_template megaraid_template_g = {
 	.module				= THIS_MODULE,
 	.name				= "LSI Logic MegaRAID driver",
 	.proc_name			= "megaraid",
@@ -438,7 +438,7 @@ megaraid_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 
 
 	// set up PCI related soft state and other pre-known parameters
-	adapter->unique_id	= pci_dev_id(pdev);
+	adapter->unique_id	= pdev->bus->number << 8 | pdev->devfn;
 	adapter->irq		= pdev->irq;
 	adapter->pdev		= pdev;
 

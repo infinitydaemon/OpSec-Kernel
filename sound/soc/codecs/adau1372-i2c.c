@@ -30,7 +30,7 @@ static struct i2c_driver adau1372_i2c_driver = {
 	.driver = {
 		.name = "adau1372",
 	},
-	.probe = adau1372_i2c_probe,
+	.probe_new = adau1372_i2c_probe,
 	.id_table = adau1372_i2c_ids,
 };
 module_i2c_driver(adau1372_i2c_driver);

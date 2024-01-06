@@ -14,7 +14,7 @@
 /*
  * rtla_usage - print rtla usage
  */
-static void rtla_usage(int err)
+static void rtla_usage(void)
 {
 	int i;
 
@@ -26,7 +26,6 @@ static void rtla_usage(int err)
 		"",
 		"  commands:",
 		"     osnoise  - gives information about the operating system noise (osnoise)",
-		"     hwnoise  - gives information about hardware-related noise",
 		"     timerlat - measures the timer irq and thread latency",
 		"",
 		NULL,
@@ -34,7 +33,7 @@ static void rtla_usage(int err)
 
 	for (i = 0; msg[i]; i++)
 		fprintf(stderr, "%s\n", msg[i]);
-	exit(err);
+	exit(1);
 }
 
 /*
@@ -47,9 +46,6 @@ int run_command(int argc, char **argv, int start_position)
 {
 	if (strcmp(argv[start_position], "osnoise") == 0) {
 		osnoise_main(argc-start_position, &argv[start_position]);
-		goto ran;
-	} else if (strcmp(argv[start_position], "hwnoise") == 0) {
-		hwnoise_main(argc-start_position, &argv[start_position]);
 		goto ran;
 	} else if (strcmp(argv[start_position], "timerlat") == 0) {
 		timerlat_main(argc-start_position, &argv[start_position]);
@@ -74,9 +70,11 @@ int main(int argc, char *argv[])
 		goto usage;
 
 	if (strcmp(argv[1], "-h") == 0) {
-		rtla_usage(0);
+		rtla_usage();
+		exit(0);
 	} else if (strcmp(argv[1], "--help") == 0) {
-		rtla_usage(0);
+		rtla_usage();
+		exit(0);
 	}
 
 	retval = run_command(argc, argv, 1);
@@ -84,6 +82,6 @@ int main(int argc, char *argv[])
 		exit(0);
 
 usage:
-	rtla_usage(1);
+	rtla_usage();
 	exit(1);
 }

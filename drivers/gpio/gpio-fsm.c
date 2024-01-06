@@ -18,7 +18,6 @@
 #include <linux/gpio.h>
 #include <linux/gpio/driver.h>
 #include <linux/interrupt.h>
-#include <linux/kdev_t.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/sysfs.h>
@@ -920,6 +919,7 @@ ATTRIBUTE_GROUPS(gpio_fsm_class);
 
 static struct class gpio_fsm_class = {
 	.name =		MODULE_NAME,
+	.owner =	THIS_MODULE,
 
 	.class_groups = gpio_fsm_class_groups,
 };
@@ -929,7 +929,7 @@ static int gpio_fsm_probe(struct platform_device *pdev)
 	struct input_gpio_state *inp_state;
 	struct device *dev = &pdev->dev;
 	struct device *sysfs_dev;
-	struct device_node *np = dev_of_node(dev);
+	struct device_node *np = dev->of_node;
 	struct device_node *cp;
 	struct gpio_fsm *gf;
 	u32 debug = 0;
@@ -1090,6 +1090,7 @@ static int gpio_fsm_probe(struct platform_device *pdev)
 	gf->gc.parent = dev;
 	gf->gc.label = np->name;
 	gf->gc.owner = THIS_MODULE;
+	gf->gc.of_node = np;
 	gf->gc.base = -1;
 	gf->gc.ngpio = num_soft_gpios;
 

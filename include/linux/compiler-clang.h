@@ -5,14 +5,10 @@
 
 /* Compiler specific definitions for Clang compiler */
 
-/*
- * Clang prior to 17 is being silly and considers many __cleanup() variables
- * as unused (because they are, their sole purpose is to go out of scope).
- *
- * https://reviews.llvm.org/D152180
+/* same as gcc, this was present in clang-2.6 so we can assume it works
+ * with any version that can compile the kernel
  */
-#undef __cleanup
-#define __cleanup(func) __maybe_unused __attribute__((__cleanup__(func)))
+#define __UNIQUE_ID(prefix) __PASTE(__PASTE(__UNIQUE_ID_, prefix), __COUNTER__)
 
 /* all clang versions usable with the kernel support KASAN ABI version 5 */
 #define KASAN_ABI_VERSION 5

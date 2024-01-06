@@ -119,6 +119,7 @@ struct imx335_mode {
  * @vblank: Vertical blanking in lines
  * @cur_mode: Pointer to current selected sensor mode
  * @mutex: Mutex for serializing sensor controls
+ * @streaming: Flag indicating streaming state
  */
 struct imx335 {
 	struct device *dev;
@@ -139,6 +140,7 @@ struct imx335 {
 	u32 vblank;
 	const struct imx335_mode *cur_mode;
 	struct mutex mutex;
+	bool streaming;
 };
 
 static const s64 link_freq[] = {
@@ -703,6 +705,11 @@ static int imx335_set_stream(struct v4l2_subdev *sd, int enable)
 
 	mutex_lock(&imx335->mutex);
 
+	if (imx335->streaming == enable) {
+		mutex_unlock(&imx335->mutex);
+		return 0;
+	}
+
 	if (enable) {
 		ret = pm_runtime_resume_and_get(imx335->dev);
 		if (ret)
@@ -715,6 +722,8 @@ static int imx335_set_stream(struct v4l2_subdev *sd, int enable)
 		imx335_stop_streaming(imx335);
 		pm_runtime_put(imx335->dev);
 	}
+
+	imx335->streaming = enable;
 
 	mutex_unlock(&imx335->mutex);
 
@@ -1103,7 +1112,7 @@ static const struct of_device_id imx335_of_match[] = {
 MODULE_DEVICE_TABLE(of, imx335_of_match);
 
 static struct i2c_driver imx335_driver = {
-	.probe = imx335_probe,
+	.probe_new = imx335_probe,
 	.remove = imx335_remove,
 	.driver = {
 		.name = "imx335",

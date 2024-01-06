@@ -129,11 +129,6 @@ static int do_kexec_load(unsigned long entry, unsigned long nr_segments,
 	if (flags & KEXEC_PRESERVE_CONTEXT)
 		image->preserve_context = 1;
 
-#ifdef CONFIG_CRASH_HOTPLUG
-	if (flags & KEXEC_UPDATE_ELFCOREHDR)
-		image->update_elfcorehdr = 1;
-#endif
-
 	ret = machine_kexec_prepare(image);
 	if (ret)
 		goto out;
@@ -195,12 +190,10 @@ out_unlock:
 static inline int kexec_load_check(unsigned long nr_segments,
 				   unsigned long flags)
 {
-	int image_type = (flags & KEXEC_ON_CRASH) ?
-			 KEXEC_TYPE_CRASH : KEXEC_TYPE_DEFAULT;
 	int result;
 
 	/* We only trust the superuser with rebooting the system. */
-	if (!kexec_load_permitted(image_type))
+	if (!capable(CAP_SYS_BOOT) || kexec_load_disabled)
 		return -EPERM;
 
 	/* Permit LSMs and IMA to fail the kexec */

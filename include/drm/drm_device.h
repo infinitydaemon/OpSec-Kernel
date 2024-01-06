@@ -87,27 +87,11 @@ struct drm_device {
 	 */
 	void *dev_private;
 
-	/**
-	 * @primary:
-	 *
-	 * Primary node. Drivers should not interact with this
-	 * directly. debugfs interfaces can be registered with
-	 * drm_debugfs_add_file(), and sysfs should be directly added on the
-	 * hardware (and not character device node) struct device @dev.
-	 */
+	/** @primary: Primary node */
 	struct drm_minor *primary;
 
-	/**
-	 * @render:
-	 *
-	 * Render node. Drivers should not interact with this directly ever.
-	 * Drivers should not expose any additional interfaces in debugfs or
-	 * sysfs on this node.
-	 */
+	/** @render: Render node */
 	struct drm_minor *render;
-
-	/** @accel: Compute Acceleration node */
-	struct drm_minor *accel;
 
 	/**
 	 * @registered:
@@ -310,13 +294,6 @@ struct drm_device {
 	 * Set by drm_fb_helper_init() and cleared by drm_fb_helper_fini().
 	 */
 	struct drm_fb_helper *fb_helper;
-
-	/**
-	 * @debugfs_root:
-	 *
-	 * Root directory for debugfs files.
-	 */
-	struct dentry *debugfs_root;
 
 	/* Everything below here is for legacy driver, never use! */
 	/* private: */

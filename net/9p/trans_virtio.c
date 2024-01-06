@@ -22,6 +22,7 @@
 #include <linux/un.h>
 #include <linux/uaccess.h>
 #include <linux/inet.h>
+#include <linux/idr.h>
 #include <linux/file.h>
 #include <linux/highmem.h>
 #include <linux/slab.h>
@@ -501,8 +502,8 @@ req_retry_pinned:
 
 	if (in_pages) {
 		sgs[out_sgs + in_sgs++] = chan->sg + out + in;
-		pack_sg_list_p(chan->sg, out + in, VIRTQUEUE_NUM,
-			       in_pages, in_nr_pages, offs, inlen);
+		in += pack_sg_list_p(chan->sg, out + in, VIRTQUEUE_NUM,
+				     in_pages, in_nr_pages, offs, inlen);
 	}
 
 	BUG_ON(out_sgs + in_sgs > ARRAY_SIZE(sgs));

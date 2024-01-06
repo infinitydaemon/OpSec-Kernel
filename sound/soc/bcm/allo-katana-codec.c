@@ -313,7 +313,8 @@ const struct regmap_config katana_codec_regmap = {
 	.cache_type = REGCACHE_RBTREE,
 };
 
-static int allo_katana_component_probe(struct i2c_client *i2c)
+static int allo_katana_component_probe(struct i2c_client *i2c,
+			     const struct i2c_device_id *id)
 {
 	struct regmap *regmap;
 	struct regmap_config config = katana_codec_regmap;

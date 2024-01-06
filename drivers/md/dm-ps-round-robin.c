@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2003 Sistina Software.
  * Copyright (C) 2004-2005 Red Hat, Inc. All rights reserved.
@@ -21,11 +20,9 @@
 #define RR_MIN_IO     1
 #define RR_VERSION    "1.2.0"
 
-/*
- *---------------------------------------------------------------
+/*-----------------------------------------------------------------
  * Path-handling code, paths are held in lists
- *---------------------------------------------------------------
- */
+ *---------------------------------------------------------------*/
 struct path_info {
 	struct list_head list;
 	struct dm_path *path;
@@ -42,11 +39,10 @@ static void free_paths(struct list_head *paths)
 	}
 }
 
-/*
- *---------------------------------------------------------------
+/*-----------------------------------------------------------------
  * Round-robin selector
- *---------------------------------------------------------------
- */
+ *---------------------------------------------------------------*/
+
 struct selector {
 	struct list_head valid_paths;
 	struct list_head invalid_paths;
@@ -97,7 +93,7 @@ static int rr_status(struct path_selector *ps, struct dm_path *path,
 	if (!path)
 		DMEMIT("0 ");
 	else {
-		switch (type) {
+		switch(type) {
 		case STATUSTYPE_INFO:
 			break;
 		case STATUSTYPE_TABLE:

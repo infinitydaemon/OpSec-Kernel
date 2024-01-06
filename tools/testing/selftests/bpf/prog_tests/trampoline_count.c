@@ -2,6 +2,8 @@
 #define _GNU_SOURCE
 #include <test_progs.h>
 
+#define MAX_TRAMP_PROGS 38
+
 struct inst {
 	struct bpf_object *obj;
 	struct bpf_link   *link;
@@ -35,21 +37,14 @@ void serial_test_trampoline_count(void)
 {
 	char *file = "test_trampoline_count.bpf.o";
 	char *const progs[] = { "fentry_test", "fmod_ret_test", "fexit_test" };
-	int bpf_max_tramp_links, err, i, prog_fd;
+	struct inst inst[MAX_TRAMP_PROGS + 1] = {};
 	struct bpf_program *prog;
 	struct bpf_link *link;
-	struct inst *inst;
+	int prog_fd, err, i;
 	LIBBPF_OPTS(bpf_test_run_opts, opts);
 
-	bpf_max_tramp_links = get_bpf_max_tramp_links();
-	if (!ASSERT_GE(bpf_max_tramp_links, 1, "bpf_max_tramp_links"))
-		return;
-	inst = calloc(bpf_max_tramp_links + 1, sizeof(*inst));
-	if (!ASSERT_OK_PTR(inst, "inst"))
-		return;
-
 	/* attach 'allowed' trampoline programs */
-	for (i = 0; i < bpf_max_tramp_links; i++) {
+	for (i = 0; i < MAX_TRAMP_PROGS; i++) {
 		prog = load_prog(file, progs[i % ARRAY_SIZE(progs)], &inst[i]);
 		if (!prog)
 			goto cleanup;
@@ -79,7 +74,7 @@ void serial_test_trampoline_count(void)
 	if (!ASSERT_EQ(link, NULL, "ptr_is_null"))
 		goto cleanup;
 
-	/* and finally execute the probe */
+	/* and finaly execute the probe */
 	prog_fd = bpf_program__fd(prog);
 	if (!ASSERT_GE(prog_fd, 0, "bpf_program__fd"))
 		goto cleanup;
@@ -88,13 +83,12 @@ void serial_test_trampoline_count(void)
 	if (!ASSERT_OK(err, "bpf_prog_test_run_opts"))
 		goto cleanup;
 
-	ASSERT_EQ(opts.retval & 0xffff, 33, "bpf_modify_return_test.result");
-	ASSERT_EQ(opts.retval >> 16, 2, "bpf_modify_return_test.side_effect");
+	ASSERT_EQ(opts.retval & 0xffff, 4, "bpf_modify_return_test.result");
+	ASSERT_EQ(opts.retval >> 16, 1, "bpf_modify_return_test.side_effect");
 
 cleanup:
 	for (; i >= 0; i--) {
 		bpf_link__destroy(inst[i].link);
 		bpf_object__close(inst[i].obj);
 	}
-	free(inst);
 }

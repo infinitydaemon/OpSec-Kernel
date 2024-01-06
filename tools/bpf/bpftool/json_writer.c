@@ -75,7 +75,7 @@ static void jsonw_puts(json_writer_t *self, const char *str)
 			fputs("\\b", self->out);
 			break;
 		case '\\':
-			fputs("\\\\", self->out);
+			fputs("\\n", self->out);
 			break;
 		case '"':
 			fputs("\\\"", self->out);

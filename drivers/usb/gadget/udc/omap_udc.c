@@ -2036,7 +2036,12 @@ static irqreturn_t omap_udc_iso_irq(int irq, void *_dev)
 
 static inline int machine_without_vbus_sense(void)
 {
-	return  machine_is_omap_osk() || machine_is_sx1();
+	return machine_is_omap_innovator()
+		|| machine_is_omap_osk()
+		|| machine_is_omap_palmte()
+		|| machine_is_sx1()
+		/* No known omap7xx boards with vbus sense */
+		|| cpu_is_omap7xx();
 }
 
 static int omap_udc_start(struct usb_gadget *g,
@@ -2753,6 +2758,9 @@ static int omap_udc_probe(struct platform_device *pdev)
 	struct clk		*dc_clk = NULL;
 	struct clk		*hhc_clk = NULL;
 
+	if (cpu_is_omap7xx())
+		use_dma = 0;
+
 	/* NOTE:  "knows" the order of the resources! */
 	if (!request_mem_region(pdev->resource[0].start,
 			resource_size(&pdev->resource[0]),
@@ -2764,6 +2772,16 @@ static int omap_udc_probe(struct platform_device *pdev)
 	if (cpu_is_omap16xx()) {
 		dc_clk = clk_get(&pdev->dev, "usb_dc_ck");
 		hhc_clk = clk_get(&pdev->dev, "usb_hhc_ck");
+		BUG_ON(IS_ERR(dc_clk) || IS_ERR(hhc_clk));
+		/* can't use omap_udc_enable_clock yet */
+		clk_prepare_enable(dc_clk);
+		clk_prepare_enable(hhc_clk);
+		udelay(100);
+	}
+
+	if (cpu_is_omap7xx()) {
+		dc_clk = clk_get(&pdev->dev, "usb_dc_ck");
+		hhc_clk = clk_get(&pdev->dev, "l3_ocpi_ck");
 		BUG_ON(IS_ERR(dc_clk) || IS_ERR(hhc_clk));
 		/* can't use omap_udc_enable_clock yet */
 		clk_prepare_enable(dc_clk);
@@ -2895,7 +2913,7 @@ bad_on_1710:
 		goto cleanup1;
 	}
 #endif
-	if (cpu_is_omap16xx()) {
+	if (cpu_is_omap16xx() || cpu_is_omap7xx()) {
 		udc->dc_clk = dc_clk;
 		udc->hhc_clk = hhc_clk;
 		clk_disable(hhc_clk);
@@ -2914,7 +2932,7 @@ cleanup0:
 	if (!IS_ERR_OR_NULL(xceiv))
 		usb_put_phy(xceiv);
 
-	if (cpu_is_omap16xx()) {
+	if (cpu_is_omap16xx() || cpu_is_omap7xx()) {
 		clk_disable_unprepare(hhc_clk);
 		clk_disable_unprepare(dc_clk);
 		clk_put(hhc_clk);
@@ -2927,7 +2945,7 @@ cleanup0:
 	return status;
 }
 
-static void omap_udc_remove(struct platform_device *pdev)
+static int omap_udc_remove(struct platform_device *pdev)
 {
 	DECLARE_COMPLETION_ONSTACK(done);
 
@@ -2939,6 +2957,8 @@ static void omap_udc_remove(struct platform_device *pdev)
 
 	release_mem_region(pdev->resource[0].start,
 			   resource_size(&pdev->resource[0]));
+
+	return 0;
 }
 
 /* suspend/resume/wakeup from sysfs (echo > power/state) or when the
@@ -2983,7 +3003,7 @@ static int omap_udc_resume(struct platform_device *dev)
 
 static struct platform_driver udc_driver = {
 	.probe		= omap_udc_probe,
-	.remove_new	= omap_udc_remove,
+	.remove		= omap_udc_remove,
 	.suspend	= omap_udc_suspend,
 	.resume		= omap_udc_resume,
 	.driver		= {

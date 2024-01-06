@@ -34,7 +34,7 @@ struct mtd_blktrans_dev {
 	struct blk_mq_tag_set *tag_set;
 	spinlock_t queue_lock;
 	void *priv;
-	bool writable;
+	fmode_t file_mode;
 };
 
 struct mtd_blktrans_ops {

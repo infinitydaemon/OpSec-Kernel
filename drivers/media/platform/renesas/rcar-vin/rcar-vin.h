@@ -31,7 +31,6 @@
 /* Max number on VIN instances that can be in a system */
 #define RCAR_VIN_NUM 32
 
-struct rvin_dev;
 struct rvin_group;
 
 enum model_id {
@@ -106,7 +105,7 @@ struct rvin_video_format {
 
 /**
  * struct rvin_parallel_entity - Parallel video input endpoint descriptor
- * @asc:	async connection descriptor for async framework
+ * @asd:	sub-device descriptor for async framework
  * @subdev:	subdevice matched using async framework
  * @mbus_type:	media bus type
  * @bus:	media bus parallel configuration
@@ -115,7 +114,7 @@ struct rvin_video_format {
  *
  */
 struct rvin_parallel_entity {
-	struct v4l2_async_connection *asc;
+	struct v4l2_async_subdev *asd;
 	struct v4l2_subdev *subdev;
 
 	enum v4l2_mbus_type mbus_type;
@@ -156,7 +155,6 @@ struct rvin_group_route {
  * @max_height:		max input height the VIN supports
  * @routes:		list of possible routes from the CSI-2 recivers to
  *			all VINs. The list mush be NULL terminated.
- * @scaler:		Optional scaler
  */
 struct rvin_info {
 	enum model_id model;
@@ -167,7 +165,6 @@ struct rvin_info {
 	unsigned int max_width;
 	unsigned int max_height;
 	const struct rvin_group_route *routes;
-	void (*scaler)(struct rvin_dev *vin);
 };
 
 /**
@@ -206,7 +203,7 @@ struct rvin_info {
  *
  * @crop:		active cropping
  * @compose:		active composing
- * @scaler:		Optional scaler
+ * @src_rect:		active size of the video source
  * @std:		active video standard of the video source
  *
  * @alpha:		Alpha component to fill in for supported pixel formats
@@ -250,7 +247,7 @@ struct rvin_dev {
 
 	struct v4l2_rect crop;
 	struct v4l2_rect compose;
-	void (*scaler)(struct rvin_dev *vin);
+	struct v4l2_rect src_rect;
 	v4l2_std_id std;
 
 	unsigned int alpha;
@@ -272,10 +269,10 @@ struct rvin_dev {
  *
  * @lock:		protects the count, notifier, vin and csi members
  * @count:		number of enabled VIN instances found in DT
- * @notifier:		group notifier for CSI-2 async connections
+ * @notifier:		group notifier for CSI-2 async subdevices
  * @vin:		VIN instances which are part of the group
  * @link_setup:		Callback to create all links for the media graph
- * @remotes:		array of pairs of async connection and subdev pointers
+ * @remotes:		array of pairs of fwnode and subdev pointers
  *			to all remote subdevices.
  */
 struct rvin_group {
@@ -291,7 +288,7 @@ struct rvin_group {
 	int (*link_setup)(struct rvin_dev *vin);
 
 	struct {
-		struct v4l2_async_connection *asc;
+		struct v4l2_async_subdev *asd;
 		struct v4l2_subdev *subdev;
 	} remotes[RVIN_REMOTES_MAX];
 };
@@ -307,8 +304,6 @@ const struct rvin_video_format *rvin_format_from_pixel(struct rvin_dev *vin,
 
 
 /* Cropping, composing and scaling */
-void rvin_scaler_gen2(struct rvin_dev *vin);
-void rvin_scaler_gen3(struct rvin_dev *vin);
 void rvin_crop_scale_comp(struct rvin_dev *vin);
 
 int rvin_set_channel_routing(struct rvin_dev *vin, u8 chsel);

@@ -15,8 +15,8 @@
 #include <linux/io.h>
 #include <linux/irq.h>
 #include <linux/module.h>
-#include <linux/of.h>
-#include <linux/platform_device.h>
+#include <linux/of_device.h>
+#include <linux/of_platform.h>
 #include <linux/pm_runtime.h>
 #include <linux/slab.h>
 
@@ -68,6 +68,7 @@ struct xgpio_instance {
 	DECLARE_BITMAP(dir, 64);
 	spinlock_t gpio_lock;	/* For serializing operations */
 	int irq;
+	struct irq_chip irqchip;
 	DECLARE_BITMAP(enable, 64);
 	DECLARE_BITMAP(rising_edge, 64);
 	DECLARE_BITMAP(falling_edge, 64);
@@ -332,7 +333,7 @@ static int __maybe_unused xgpio_suspend(struct device *dev)
  *
  * Return: 0 always
  */
-static void xgpio_remove(struct platform_device *pdev)
+static int xgpio_remove(struct platform_device *pdev)
 {
 	struct xgpio_instance *gpio = platform_get_drvdata(pdev);
 
@@ -340,6 +341,8 @@ static void xgpio_remove(struct platform_device *pdev)
 	pm_runtime_put_noidle(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
 	clk_disable_unprepare(gpio->clk);
+
+	return 0;
 }
 
 /**
@@ -413,8 +416,6 @@ static void xgpio_irq_mask(struct irq_data *irq_data)
 		xgpio_writereg(chip->regs + XGPIO_IPIER_OFFSET, temp);
 	}
 	spin_unlock_irqrestore(&chip->gpio_lock, flags);
-
-	gpiochip_disable_irq(&chip->gc, irq_offset);
 }
 
 /**
@@ -429,8 +430,6 @@ static void xgpio_irq_unmask(struct irq_data *irq_data)
 	int bit = xgpio_to_bit(chip, irq_offset);
 	u32 old_enable = xgpio_get_value32(chip->enable, bit);
 	u32 mask = BIT(bit / 32), val;
-
-	gpiochip_enable_irq(&chip->gc, irq_offset);
 
 	spin_lock_irqsave(&chip->gpio_lock, flags);
 
@@ -545,16 +544,6 @@ static void xgpio_irqhandler(struct irq_desc *desc)
 	chained_irq_exit(irqchip, desc);
 }
 
-static const struct irq_chip xgpio_irq_chip = {
-	.name = "gpio-xilinx",
-	.irq_ack = xgpio_irq_ack,
-	.irq_mask = xgpio_irq_mask,
-	.irq_unmask = xgpio_irq_unmask,
-	.irq_set_type = xgpio_set_irq_type,
-	.flags = IRQCHIP_IMMUTABLE,
-	GPIOCHIP_IRQ_RESOURCE_HELPERS,
-};
-
 /**
  * xgpio_probe - Probe method for the GPIO device.
  * @pdev: pointer to the platform device
@@ -569,6 +558,7 @@ static int xgpio_probe(struct platform_device *pdev)
 	int status = 0;
 	struct device_node *np = pdev->dev.of_node;
 	u32 is_dual = 0;
+	u32 cells = 2;
 	u32 width[2];
 	u32 state[2];
 	u32 dir[2];
@@ -601,6 +591,15 @@ static int xgpio_probe(struct platform_device *pdev)
 
 	bitmap_from_arr32(chip->dir, dir, 64);
 
+	/* Update cells with gpio-cells value */
+	if (of_property_read_u32(np, "#gpio-cells", &cells))
+		dev_dbg(&pdev->dev, "Missing gpio-cells property\n");
+
+	if (cells != 2) {
+		dev_err(&pdev->dev, "#gpio-cells mismatch\n");
+		return -EINVAL;
+	}
+
 	/*
 	 * Check device node and parent device node for device width
 	 * and assume default width of 32
@@ -631,6 +630,7 @@ static int xgpio_probe(struct platform_device *pdev)
 	chip->gc.parent = &pdev->dev;
 	chip->gc.direction_input = xgpio_dir_in;
 	chip->gc.direction_output = xgpio_dir_out;
+	chip->gc.of_gpio_n_cells = cells;
 	chip->gc.get = xgpio_get;
 	chip->gc.set = xgpio_set;
 	chip->gc.request = xgpio_request;
@@ -664,6 +664,12 @@ static int xgpio_probe(struct platform_device *pdev)
 	if (chip->irq <= 0)
 		goto skip_irq;
 
+	chip->irqchip.name = "gpio-xilinx";
+	chip->irqchip.irq_ack = xgpio_irq_ack;
+	chip->irqchip.irq_mask = xgpio_irq_mask;
+	chip->irqchip.irq_unmask = xgpio_irq_unmask;
+	chip->irqchip.irq_set_type = xgpio_set_irq_type;
+
 	/* Disable per-channel interrupts */
 	xgpio_writereg(chip->regs + XGPIO_IPIER_OFFSET, 0);
 	/* Clear any existing per-channel interrupts */
@@ -673,7 +679,7 @@ static int xgpio_probe(struct platform_device *pdev)
 	xgpio_writereg(chip->regs + XGPIO_GIER_OFFSET, XGPIO_GIER_IE);
 
 	girq = &chip->gc.irq;
-	gpio_irq_chip_set_chip(girq, &xgpio_irq_chip);
+	girq->chip = &chip->irqchip;
 	girq->parent_handler = xgpio_irqhandler;
 	girq->num_parents = 1;
 	girq->parents = devm_kcalloc(&pdev->dev, 1,
@@ -713,7 +719,7 @@ MODULE_DEVICE_TABLE(of, xgpio_of_match);
 
 static struct platform_driver xgpio_plat_driver = {
 	.probe		= xgpio_probe,
-	.remove_new	= xgpio_remove,
+	.remove		= xgpio_remove,
 	.driver		= {
 			.name = "gpio-xilinx",
 			.of_match_table	= xgpio_of_match,

@@ -52,9 +52,9 @@ struct rockchip_pwm_data {
 	u32 enable_conf;
 };
 
-static inline struct rockchip_pwm_chip *to_rockchip_pwm_chip(struct pwm_chip *chip)
+static inline struct rockchip_pwm_chip *to_rockchip_pwm_chip(struct pwm_chip *c)
 {
-	return container_of(chip, struct rockchip_pwm_chip, chip);
+	return container_of(c, struct rockchip_pwm_chip, chip);
 }
 
 static int rockchip_pwm_get_state(struct pwm_chip *chip,
@@ -70,11 +70,11 @@ static int rockchip_pwm_get_state(struct pwm_chip *chip,
 
 	ret = clk_enable(pc->pclk);
 	if (ret)
-		return ret;
+		return 0;
 
 	ret = clk_enable(pc->clk);
 	if (ret)
-		return ret;
+		return 0;
 
 	clk_rate = clk_get_rate(pc->clk);
 
@@ -228,6 +228,7 @@ out:
 static const struct pwm_ops rockchip_pwm_ops = {
 	.get_state = rockchip_pwm_get_state,
 	.apply = rockchip_pwm_apply,
+	.owner = THIS_MODULE,
 };
 
 static const struct rockchip_pwm_data pwm_data_v1 = {
@@ -375,7 +376,7 @@ err_clk:
 	return ret;
 }
 
-static void rockchip_pwm_remove(struct platform_device *pdev)
+static int rockchip_pwm_remove(struct platform_device *pdev)
 {
 	struct rockchip_pwm_chip *pc = platform_get_drvdata(pdev);
 
@@ -383,6 +384,8 @@ static void rockchip_pwm_remove(struct platform_device *pdev)
 
 	clk_unprepare(pc->pclk);
 	clk_unprepare(pc->clk);
+
+	return 0;
 }
 
 static struct platform_driver rockchip_pwm_driver = {
@@ -391,7 +394,7 @@ static struct platform_driver rockchip_pwm_driver = {
 		.of_match_table = rockchip_pwm_dt_ids,
 	},
 	.probe = rockchip_pwm_probe,
-	.remove_new = rockchip_pwm_remove,
+	.remove = rockchip_pwm_remove,
 };
 module_platform_driver(rockchip_pwm_driver);
 

@@ -656,7 +656,8 @@ static void bd2802_unregister_led_classdev(struct bd2802_led *led)
 	led_classdev_unregister(&led->cdev_led1r);
 }
 
-static int bd2802_probe(struct i2c_client *client)
+static int bd2802_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct bd2802_led *led;
 	int ret, i;

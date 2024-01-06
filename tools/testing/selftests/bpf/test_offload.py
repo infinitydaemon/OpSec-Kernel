@@ -769,14 +769,12 @@ skip(ret != 0, "bpftool not installed")
 base_progs = progs
 _, base_maps = bpftool("map")
 base_map_names = [
-    'pid_iter.rodata', # created on each bpftool invocation
-    'libbpf_det_bind', # created on each bpftool invocation
+    'pid_iter.rodata' # created on each bpftool invocation
 ]
 
 # Check netdevsim
-if not os.path.isdir("/sys/bus/netdevsim/"):
-    ret, out = cmd("modprobe netdevsim", fail=False)
-    skip(ret != 0, "netdevsim module could not be loaded")
+ret, out = cmd("modprobe netdevsim", fail=False)
+skip(ret != 0, "netdevsim module could not be loaded")
 
 # Check debugfs
 _, out = cmd("mount")
@@ -1039,7 +1037,7 @@ try:
     offload = bpf_pinned("/sys/fs/bpf/offload")
     ret, _, err = sim.set_xdp(offload, "drv", fail=False, include_stderr=True)
     fail(ret == 0, "attached offloaded XDP program to drv")
-    check_extack(err, "Using offloaded program without HW_MODE flag is not supported.", args)
+    check_extack(err, "Using device-bound program without HW_MODE flag is not supported.", args)
     rm("/sys/fs/bpf/offload")
     sim.wait_for_flush()
 
@@ -1088,12 +1086,12 @@ try:
     ret, _, err = sim.set_xdp(pinned, "offload",
                               fail=False, include_stderr=True)
     fail(ret == 0, "Pinned program loaded for a different device accepted")
-    check_extack(err, "Program bound to different device.", args)
+    check_extack_nsim(err, "program bound to different dev.", args)
     simdev2.remove()
     ret, _, err = sim.set_xdp(pinned, "offload",
                               fail=False, include_stderr=True)
     fail(ret == 0, "Pinned program loaded for a removed device accepted")
-    check_extack(err, "Program bound to different device.", args)
+    check_extack_nsim(err, "xdpoffload of non-bound program.", args)
     rm(pin_file)
     bpftool_prog_list_wait(expected=0)
 
@@ -1334,12 +1332,12 @@ try:
     ret, _, err = simA.set_xdp(progB, "offload", force=True, JSON=False,
                                fail=False, include_stderr=True)
     fail(ret == 0, "cross-ASIC program allowed")
-    check_extack(err, "Program bound to different device.", args)
+    check_extack_nsim(err, "program bound to different dev.", args)
     for d in simdevB.nsims:
         ret, _, err = d.set_xdp(progA, "offload", force=True, JSON=False,
                                 fail=False, include_stderr=True)
         fail(ret == 0, "cross-ASIC program allowed")
-        check_extack(err, "Program bound to different device.", args)
+        check_extack_nsim(err, "program bound to different dev.", args)
 
     start_test("Test multi-dev ASIC cross-dev map reuse...")
 

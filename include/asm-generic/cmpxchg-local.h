@@ -26,16 +26,16 @@ static inline unsigned long __generic_cmpxchg_local(volatile void *ptr,
 	raw_local_irq_save(flags);
 	switch (size) {
 	case 1: prev = *(u8 *)ptr;
-		if (prev == (old & 0xffu))
-			*(u8 *)ptr = (new & 0xffu);
+		if (prev == old)
+			*(u8 *)ptr = (u8)new;
 		break;
 	case 2: prev = *(u16 *)ptr;
-		if (prev == (old & 0xffffu))
-			*(u16 *)ptr = (new & 0xffffu);
+		if (prev == old)
+			*(u16 *)ptr = (u16)new;
 		break;
 	case 4: prev = *(u32 *)ptr;
-		if (prev == (old & 0xffffffffffu))
-			*(u32 *)ptr = (new & 0xffffffffu);
+		if (prev == old)
+			*(u32 *)ptr = (u32)new;
 		break;
 	case 8: prev = *(u64 *)ptr;
 		if (prev == old)

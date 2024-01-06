@@ -487,6 +487,7 @@ snic_process_icmnd_cmpl_status(struct snic *snic,
 			       struct scsi_cmnd *sc)
 {
 	u8 scsi_stat = icmnd_cmpl->scsi_status;
+	u64 xfer_len = 0;
 	int ret = 0;
 
 	/* Mark the IO as complete */
@@ -495,11 +496,15 @@ snic_process_icmnd_cmpl_status(struct snic *snic,
 	if (likely(cmpl_stat == SNIC_STAT_IO_SUCCESS)) {
 		sc->result = (DID_OK << 16) | scsi_stat;
 
+		xfer_len = scsi_bufflen(sc);
+
 		/* Update SCSI Cmd with resid value */
 		scsi_set_resid(sc, le32_to_cpu(icmnd_cmpl->resid));
 
-		if (icmnd_cmpl->flags & SNIC_ICMND_CMPL_UNDR_RUN)
+		if (icmnd_cmpl->flags & SNIC_ICMND_CMPL_UNDR_RUN) {
+			xfer_len -= le32_to_cpu(icmnd_cmpl->resid);
 			atomic64_inc(&snic->s_stats.misc.io_under_run);
+		}
 
 		if (icmnd_cmpl->scsi_status == SAM_STAT_TASK_SET_FULL)
 			atomic64_inc(&snic->s_stats.misc.qfull);
@@ -1850,7 +1855,7 @@ snic_dr_clean_pending_req(struct snic *snic, struct scsi_cmnd *lr_sc)
 {
 	struct scsi_device *lr_sdev = lr_sc->device;
 	u32 tag = 0;
-	int ret;
+	int ret = FAILED;
 
 	for (tag = 0; tag < snic->max_tag_id; tag++) {
 		if (tag == snic_cmd_tag(lr_sc))
@@ -1859,6 +1864,7 @@ snic_dr_clean_pending_req(struct snic *snic, struct scsi_cmnd *lr_sc)
 		ret = snic_dr_clean_single_req(snic, tag, lr_sdev);
 		if (ret) {
 			SNIC_HOST_ERR(snic->shost, "clean_err:tag = %d\n", tag);
+
 			goto clean_err;
 		}
 	}
@@ -1866,19 +1872,24 @@ snic_dr_clean_pending_req(struct snic *snic, struct scsi_cmnd *lr_sc)
 	schedule_timeout(msecs_to_jiffies(100));
 
 	/* Walk through all the cmds and check abts status. */
-	if (snic_is_abts_pending(snic, lr_sc))
-		goto clean_err;
+	if (snic_is_abts_pending(snic, lr_sc)) {
+		ret = FAILED;
 
+		goto clean_err;
+	}
+
+	ret = 0;
 	SNIC_SCSI_DBG(snic->shost, "clean_pending_req: Success.\n");
 
-	return 0;
+	return ret;
 
 clean_err:
+	ret = FAILED;
 	SNIC_HOST_ERR(snic->shost,
 		      "Failed to Clean Pending IOs on %s device.\n",
 		      dev_name(&lr_sdev->sdev_gendev));
 
-	return FAILED;
+	return ret;
 
 } /* end of snic_dr_clean_pending_req */
 

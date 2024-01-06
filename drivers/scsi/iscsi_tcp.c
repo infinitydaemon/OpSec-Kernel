@@ -36,7 +36,6 @@
 #include <scsi/scsi.h>
 #include <scsi/scsi_transport_iscsi.h>
 #include <trace/events/iscsi.h>
-#include <trace/events/sock.h>
 
 #include "iscsi_tcp.h"
 
@@ -47,7 +46,7 @@ MODULE_DESCRIPTION("iSCSI/TCP data-path");
 MODULE_LICENSE("GPL");
 
 static struct scsi_transport_template *iscsi_sw_tcp_scsi_transport;
-static const struct scsi_host_template iscsi_sw_tcp_sht;
+static struct scsi_host_template iscsi_sw_tcp_sht;
 static struct iscsi_transport iscsi_sw_tcp_transport;
 
 static unsigned int iscsi_max_lun = ~0;
@@ -170,8 +169,6 @@ static void iscsi_sw_tcp_data_ready(struct sock *sk)
 	struct iscsi_sw_tcp_conn *tcp_sw_conn;
 	struct iscsi_tcp_conn *tcp_conn;
 	struct iscsi_conn *conn;
-
-	trace_sk_data_ready(sk);
 
 	read_lock_bh(&sk->sk_callback_lock);
 	conn = sk->sk_user_data;
@@ -301,32 +298,35 @@ static int iscsi_sw_tcp_xmit_segment(struct iscsi_tcp_conn *tcp_conn,
 
 	while (!iscsi_tcp_segment_done(tcp_conn, segment, 0, r)) {
 		struct scatterlist *sg;
-		struct msghdr msg = {};
-		struct bio_vec bv;
 		unsigned int offset, copy;
+		int flags = 0;
 
 		r = 0;
 		offset = segment->copied;
 		copy = segment->size - offset;
 
 		if (segment->total_copied + segment->size < segment->total_size)
-			msg.msg_flags |= MSG_MORE;
+			flags |= MSG_MORE | MSG_SENDPAGE_NOTLAST;
 
 		if (tcp_sw_conn->queue_recv)
-			msg.msg_flags |= MSG_DONTWAIT;
+			flags |= MSG_DONTWAIT;
 
+		/* Use sendpage if we can; else fall back to sendmsg */
 		if (!segment->data) {
-			if (!tcp_conn->iscsi_conn->datadgst_en)
-				msg.msg_flags |= MSG_SPLICE_PAGES;
 			sg = segment->sg;
 			offset += segment->sg_offset + sg->offset;
-			bvec_set_page(&bv, sg_page(sg), copy, offset);
+			r = tcp_sw_conn->sendpage(sk, sg_page(sg), offset,
+						  copy, flags);
 		} else {
-			bvec_set_virt(&bv, segment->data + offset, copy);
-		}
-		iov_iter_bvec(&msg.msg_iter, ITER_SOURCE, &bv, 1, copy);
+			struct msghdr msg = { .msg_flags = flags };
+			struct kvec iov = {
+				.iov_base = segment->data + offset,
+				.iov_len = copy
+			};
 
-		r = sock_sendmsg(sk, &msg);
+			r = kernel_sendmsg(sk, &msg, &iov, 1, copy);
+		}
+
 		if (r < 0) {
 			iscsi_tcp_segment_unmap(segment);
 			return r;
@@ -742,11 +742,11 @@ iscsi_sw_tcp_conn_bind(struct iscsi_cls_session *cls_session,
 	sk->sk_reuse = SK_CAN_REUSE;
 	sk->sk_sndtimeo = 15 * HZ; /* FIXME: make it configurable */
 	sk->sk_allocation = GFP_ATOMIC;
-	sk->sk_use_task_frag = false;
 	sk_set_memalloc(sk);
 	sock_no_linger(sk);
 
 	iscsi_sw_tcp_conn_set_callbacks(conn);
+	tcp_sw_conn->sendpage = tcp_sw_conn->sock->ops->sendpage;
 	/*
 	 * set receive state machine into initial state
 	 */
@@ -777,6 +777,8 @@ static int iscsi_sw_tcp_conn_set_param(struct iscsi_cls_conn *cls_conn,
 			return -ENOTCONN;
 		}
 		iscsi_set_param(cls_conn, param, buf, buflen);
+		tcp_sw_conn->sendpage = conn->datadgst_en ?
+			sock_no_sendpage : tcp_sw_conn->sock->ops->sendpage;
 		mutex_unlock(&tcp_sw_conn->sock_lock);
 		break;
 	case ISCSI_PARAM_MAX_R2T:
@@ -1069,7 +1071,7 @@ static int iscsi_sw_tcp_slave_configure(struct scsi_device *sdev)
 	return 0;
 }
 
-static const struct scsi_host_template iscsi_sw_tcp_sht = {
+static struct scsi_host_template iscsi_sw_tcp_sht = {
 	.module			= THIS_MODULE,
 	.name			= "iSCSI Initiator over TCP/IP",
 	.queuecommand           = iscsi_queuecommand,

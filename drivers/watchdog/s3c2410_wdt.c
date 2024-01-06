@@ -23,6 +23,7 @@
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/mfd/syscon.h>
 #include <linux/regmap.h>
 #include <linux/delay.h>
@@ -307,6 +308,11 @@ static inline unsigned int s3c2410wdt_max_timeout(struct s3c2410_wdt *wdt)
 				       / S3C2410_WTCON_MAXDIV);
 }
 
+static inline struct s3c2410_wdt *freq_to_wdt(struct notifier_block *nb)
+{
+	return container_of(nb, struct s3c2410_wdt, freq_transition);
+}
+
 static int s3c2410wdt_disable_wdt_reset(struct s3c2410_wdt *wdt, bool mask)
 {
 	const u32 mask_val = BIT(wdt->drv_data->mask_bit);
@@ -378,11 +384,10 @@ static int s3c2410wdt_enable(struct s3c2410_wdt *wdt, bool en)
 static int s3c2410wdt_keepalive(struct watchdog_device *wdd)
 {
 	struct s3c2410_wdt *wdt = watchdog_get_drvdata(wdd);
-	unsigned long flags;
 
-	spin_lock_irqsave(&wdt->lock, flags);
+	spin_lock(&wdt->lock);
 	writel(wdt->count, wdt->reg_base + S3C2410_WTCNT);
-	spin_unlock_irqrestore(&wdt->lock, flags);
+	spin_unlock(&wdt->lock);
 
 	return 0;
 }
@@ -399,11 +404,10 @@ static void __s3c2410wdt_stop(struct s3c2410_wdt *wdt)
 static int s3c2410wdt_stop(struct watchdog_device *wdd)
 {
 	struct s3c2410_wdt *wdt = watchdog_get_drvdata(wdd);
-	unsigned long flags;
 
-	spin_lock_irqsave(&wdt->lock, flags);
+	spin_lock(&wdt->lock);
 	__s3c2410wdt_stop(wdt);
-	spin_unlock_irqrestore(&wdt->lock, flags);
+	spin_unlock(&wdt->lock);
 
 	return 0;
 }
@@ -412,9 +416,8 @@ static int s3c2410wdt_start(struct watchdog_device *wdd)
 {
 	unsigned long wtcon;
 	struct s3c2410_wdt *wdt = watchdog_get_drvdata(wdd);
-	unsigned long flags;
 
-	spin_lock_irqsave(&wdt->lock, flags);
+	spin_lock(&wdt->lock);
 
 	__s3c2410wdt_stop(wdt);
 
@@ -435,9 +438,14 @@ static int s3c2410wdt_start(struct watchdog_device *wdd)
 	writel(wdt->count, wdt->reg_base + S3C2410_WTDAT);
 	writel(wdt->count, wdt->reg_base + S3C2410_WTCNT);
 	writel(wtcon, wdt->reg_base + S3C2410_WTCON);
-	spin_unlock_irqrestore(&wdt->lock, flags);
+	spin_unlock(&wdt->lock);
 
 	return 0;
+}
+
+static inline int s3c2410wdt_is_running(struct s3c2410_wdt *wdt)
+{
+	return readl(wdt->reg_base + S3C2410_WTCON) & S3C2410_WTCON_ENABLE;
 }
 
 static int s3c2410wdt_set_heartbeat(struct watchdog_device *wdd,
@@ -554,6 +562,73 @@ static irqreturn_t s3c2410wdt_irq(int irqno, void *param)
 	return IRQ_HANDLED;
 }
 
+#ifdef CONFIG_ARM_S3C24XX_CPUFREQ
+
+static int s3c2410wdt_cpufreq_transition(struct notifier_block *nb,
+					  unsigned long val, void *data)
+{
+	int ret;
+	struct s3c2410_wdt *wdt = freq_to_wdt(nb);
+
+	if (!s3c2410wdt_is_running(wdt))
+		goto done;
+
+	if (val == CPUFREQ_PRECHANGE) {
+		/* To ensure that over the change we don't cause the
+		 * watchdog to trigger, we perform an keep-alive if
+		 * the watchdog is running.
+		 */
+
+		s3c2410wdt_keepalive(&wdt->wdt_device);
+	} else if (val == CPUFREQ_POSTCHANGE) {
+		s3c2410wdt_stop(&wdt->wdt_device);
+
+		ret = s3c2410wdt_set_heartbeat(&wdt->wdt_device,
+						wdt->wdt_device.timeout);
+
+		if (ret >= 0)
+			s3c2410wdt_start(&wdt->wdt_device);
+		else
+			goto err;
+	}
+
+done:
+	return 0;
+
+ err:
+	dev_err(wdt->dev, "cannot set new value for timeout %d\n",
+				wdt->wdt_device.timeout);
+	return ret;
+}
+
+static inline int s3c2410wdt_cpufreq_register(struct s3c2410_wdt *wdt)
+{
+	wdt->freq_transition.notifier_call = s3c2410wdt_cpufreq_transition;
+
+	return cpufreq_register_notifier(&wdt->freq_transition,
+					 CPUFREQ_TRANSITION_NOTIFIER);
+}
+
+static inline void s3c2410wdt_cpufreq_deregister(struct s3c2410_wdt *wdt)
+{
+	wdt->freq_transition.notifier_call = s3c2410wdt_cpufreq_transition;
+
+	cpufreq_unregister_notifier(&wdt->freq_transition,
+				    CPUFREQ_TRANSITION_NOTIFIER);
+}
+
+#else
+
+static inline int s3c2410wdt_cpufreq_register(struct s3c2410_wdt *wdt)
+{
+	return 0;
+}
+
+static inline void s3c2410wdt_cpufreq_deregister(struct s3c2410_wdt *wdt)
+{
+}
+#endif
+
 static inline unsigned int s3c2410wdt_get_bootstatus(struct s3c2410_wdt *wdt)
 {
 	unsigned int rst_stat;
@@ -571,8 +646,8 @@ static inline unsigned int s3c2410wdt_get_bootstatus(struct s3c2410_wdt *wdt)
 	return 0;
 }
 
-static inline int
-s3c2410_get_wdt_drv_data(struct platform_device *pdev, struct s3c2410_wdt *wdt)
+static inline const struct s3c2410_wdt_variant *
+s3c2410_get_wdt_drv_data(struct platform_device *pdev)
 {
 	const struct s3c2410_wdt_variant *variant;
 	struct device *dev = &pdev->dev;
@@ -593,30 +668,26 @@ s3c2410_get_wdt_drv_data(struct platform_device *pdev, struct s3c2410_wdt *wdt)
 
 		err = of_property_read_u32(dev->of_node,
 					   "samsung,cluster-index", &index);
-		if (err)
-			return dev_err_probe(dev, -EINVAL, "failed to get cluster index\n");
+		if (err) {
+			dev_err(dev, "failed to get cluster index\n");
+			return NULL;
+		}
 
 		switch (index) {
 		case 0:
-			break;
+			return variant;
 		case 1:
-			variant = (variant == &drv_data_exynos850_cl0) ?
+			return (variant == &drv_data_exynos850_cl0) ?
 				&drv_data_exynos850_cl1 :
 				&drv_data_exynosautov9_cl1;
-			break;
 		default:
-			return dev_err_probe(dev, -EINVAL, "wrong cluster index: %u\n", index);
+			dev_err(dev, "wrong cluster index: %u\n", index);
+			return NULL;
 		}
 	}
 #endif
 
-	wdt->drv_data = variant;
-	return 0;
-}
-
-static void s3c2410wdt_wdt_disable_action(void *data)
-{
-	s3c2410wdt_enable(data, false);
+	return variant;
 }
 
 static int s3c2410wdt_probe(struct platform_device *pdev)
@@ -635,16 +706,17 @@ static int s3c2410wdt_probe(struct platform_device *pdev)
 	spin_lock_init(&wdt->lock);
 	wdt->wdt_device = s3c2410_wdd;
 
-	ret = s3c2410_get_wdt_drv_data(pdev, wdt);
-	if (ret)
-		return ret;
+	wdt->drv_data = s3c2410_get_wdt_drv_data(pdev);
+	if (!wdt->drv_data)
+		return -EINVAL;
 
 	if (wdt->drv_data->quirks & QUIRKS_HAVE_PMUREG) {
 		wdt->pmureg = syscon_regmap_lookup_by_phandle(dev->of_node,
 						"samsung,syscon-phandle");
-		if (IS_ERR(wdt->pmureg))
-			return dev_err_probe(dev, PTR_ERR(wdt->pmureg),
-					     "syscon regmap lookup failed.\n");
+		if (IS_ERR(wdt->pmureg)) {
+			dev_err(dev, "syscon regmap lookup failed.\n");
+			return PTR_ERR(wdt->pmureg);
+		}
 	}
 
 	wdt_irq = platform_get_irq(pdev, 0);
@@ -656,20 +728,44 @@ static int s3c2410wdt_probe(struct platform_device *pdev)
 	if (IS_ERR(wdt->reg_base))
 		return PTR_ERR(wdt->reg_base);
 
-	wdt->bus_clk = devm_clk_get_enabled(dev, "watchdog");
-	if (IS_ERR(wdt->bus_clk))
-		return dev_err_probe(dev, PTR_ERR(wdt->bus_clk), "failed to get bus clock\n");
+	wdt->bus_clk = devm_clk_get(dev, "watchdog");
+	if (IS_ERR(wdt->bus_clk)) {
+		dev_err(dev, "failed to find bus clock\n");
+		return PTR_ERR(wdt->bus_clk);
+	}
+
+	ret = clk_prepare_enable(wdt->bus_clk);
+	if (ret < 0) {
+		dev_err(dev, "failed to enable bus clock\n");
+		return ret;
+	}
 
 	/*
 	 * "watchdog_src" clock is optional; if it's not present -- just skip it
 	 * and use "watchdog" clock as both bus and source clock.
 	 */
-	wdt->src_clk = devm_clk_get_optional_enabled(dev, "watchdog_src");
-	if (IS_ERR(wdt->src_clk))
-		return dev_err_probe(dev, PTR_ERR(wdt->src_clk), "failed to get source clock\n");
+	wdt->src_clk = devm_clk_get_optional(dev, "watchdog_src");
+	if (IS_ERR(wdt->src_clk)) {
+		dev_err_probe(dev, PTR_ERR(wdt->src_clk),
+			      "failed to get source clock\n");
+		ret = PTR_ERR(wdt->src_clk);
+		goto err_bus_clk;
+	}
+
+	ret = clk_prepare_enable(wdt->src_clk);
+	if (ret) {
+		dev_err(dev, "failed to enable source clock\n");
+		goto err_bus_clk;
+	}
 
 	wdt->wdt_device.min_timeout = 1;
 	wdt->wdt_device.max_timeout = s3c2410wdt_max_timeout(wdt);
+
+	ret = s3c2410wdt_cpufreq_register(wdt);
+	if (ret < 0) {
+		dev_err(dev, "failed to register cpufreq\n");
+		goto err_src_clk;
+	}
 
 	watchdog_set_drvdata(&wdt->wdt_device, wdt);
 
@@ -682,17 +778,21 @@ static int s3c2410wdt_probe(struct platform_device *pdev)
 	if (ret) {
 		ret = s3c2410wdt_set_heartbeat(&wdt->wdt_device,
 					       S3C2410_WATCHDOG_DEFAULT_TIME);
-		if (ret == 0)
+		if (ret == 0) {
 			dev_warn(dev, "tmr_margin value out of range, default %d used\n",
 				 S3C2410_WATCHDOG_DEFAULT_TIME);
-		else
-			return dev_err_probe(dev, ret, "failed to use default timeout\n");
+		} else {
+			dev_err(dev, "failed to use default timeout\n");
+			goto err_cpufreq;
+		}
 	}
 
 	ret = devm_request_irq(dev, wdt_irq, s3c2410wdt_irq, 0,
 			       pdev->name, pdev);
-	if (ret != 0)
-		return dev_err_probe(dev, ret, "failed to install irq (%d)\n", ret);
+	if (ret != 0) {
+		dev_err(dev, "failed to install irq (%d)\n", ret);
+		goto err_cpufreq;
+	}
 
 	watchdog_set_nowayout(&wdt->wdt_device, nowayout);
 	watchdog_set_restart_priority(&wdt->wdt_device, 128);
@@ -715,17 +815,13 @@ static int s3c2410wdt_probe(struct platform_device *pdev)
 		s3c2410wdt_stop(&wdt->wdt_device);
 	}
 
-	ret = devm_watchdog_register_device(dev, &wdt->wdt_device);
+	ret = watchdog_register_device(&wdt->wdt_device);
 	if (ret)
-		return ret;
+		goto err_cpufreq;
 
 	ret = s3c2410wdt_enable(wdt, true);
 	if (ret < 0)
-		return ret;
-
-	ret = devm_add_action_or_reset(dev, s3c2410wdt_wdt_disable_action, wdt);
-	if (ret)
-		return ret;
+		goto err_unregister;
 
 	platform_set_drvdata(pdev, wdt);
 
@@ -737,6 +833,39 @@ static int s3c2410wdt_probe(struct platform_device *pdev)
 		 (wtcon & S3C2410_WTCON_ENABLE) ?  "" : "in",
 		 (wtcon & S3C2410_WTCON_RSTEN) ? "en" : "dis",
 		 (wtcon & S3C2410_WTCON_INTEN) ? "en" : "dis");
+
+	return 0;
+
+ err_unregister:
+	watchdog_unregister_device(&wdt->wdt_device);
+
+ err_cpufreq:
+	s3c2410wdt_cpufreq_deregister(wdt);
+
+ err_src_clk:
+	clk_disable_unprepare(wdt->src_clk);
+
+ err_bus_clk:
+	clk_disable_unprepare(wdt->bus_clk);
+
+	return ret;
+}
+
+static int s3c2410wdt_remove(struct platform_device *dev)
+{
+	int ret;
+	struct s3c2410_wdt *wdt = platform_get_drvdata(dev);
+
+	ret = s3c2410wdt_enable(wdt, false);
+	if (ret < 0)
+		return ret;
+
+	watchdog_unregister_device(&wdt->wdt_device);
+
+	s3c2410wdt_cpufreq_deregister(wdt);
+
+	clk_disable_unprepare(wdt->src_clk);
+	clk_disable_unprepare(wdt->bus_clk);
 
 	return 0;
 }
@@ -793,6 +922,7 @@ static DEFINE_SIMPLE_DEV_PM_OPS(s3c2410wdt_pm_ops,
 
 static struct platform_driver s3c2410wdt_driver = {
 	.probe		= s3c2410wdt_probe,
+	.remove		= s3c2410wdt_remove,
 	.shutdown	= s3c2410wdt_shutdown,
 	.id_table	= s3c2410_wdt_ids,
 	.driver		= {

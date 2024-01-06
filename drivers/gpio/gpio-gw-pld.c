@@ -67,7 +67,8 @@ static void gw_pld_set8(struct gpio_chip *gc, unsigned offset, int value)
 	gw_pld_output8(gc, offset, value);
 }
 
-static int gw_pld_probe(struct i2c_client *client)
+static int gw_pld_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
 	struct gw_pld *gw;

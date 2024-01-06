@@ -223,6 +223,11 @@ int ft_write_pending(struct se_cmd *se_cmd)
 	return 0;
 }
 
+int ft_get_cmd_state(struct se_cmd *se_cmd)
+{
+	return 0;
+}
+
 /*
  * FC sequence response handler for follow-on sequences (data) and aborts.
  */

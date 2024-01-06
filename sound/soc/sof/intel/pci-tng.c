@@ -140,7 +140,11 @@ struct snd_sof_dsp_ops sof_tng_ops = {
 	.run		= atom_run,
 	.reset		= atom_reset,
 
-	/* Register IO uses direct mmio */
+	/* Register IO */
+	.write		= sof_io_write,
+	.read		= sof_io_read,
+	.write64	= sof_io_write64,
+	.read64		= sof_io_read64,
 
 	/* Block IO */
 	.block_read	= sof_block_read,
@@ -208,16 +212,16 @@ static const struct sof_dev_desc tng_desc = {
 	.resindex_imr_base	= 0,
 	.irqindex_host_ipc	= -1,
 	.chip_info = &tng_chip_info,
-	.ipc_supported_mask	= BIT(SOF_IPC_TYPE_3),
-	.ipc_default		= SOF_IPC_TYPE_3,
+	.ipc_supported_mask	= BIT(SOF_IPC),
+	.ipc_default		= SOF_IPC,
 	.default_fw_path = {
-		[SOF_IPC_TYPE_3] = "intel/sof",
+		[SOF_IPC] = "intel/sof",
 	},
 	.default_tplg_path = {
-		[SOF_IPC_TYPE_3] = "intel/sof-tplg",
+		[SOF_IPC] = "intel/sof-tplg",
 	},
 	.default_fw_filename = {
-		[SOF_IPC_TYPE_3] = "sof-byt.ri",
+		[SOF_IPC] = "sof-byt.ri",
 	},
 	.nocodec_tplg_filename = "sof-byt.tplg",
 	.ops = &sof_tng_ops,
@@ -225,7 +229,8 @@ static const struct sof_dev_desc tng_desc = {
 
 /* PCI IDs */
 static const struct pci_device_id sof_pci_ids[] = {
-	{ PCI_DEVICE_DATA(INTEL, SST_TNG, &tng_desc) },
+	{ PCI_DEVICE(0x8086, 0x119a),
+		.driver_data = (unsigned long)&tng_desc},
 	{ 0, }
 };
 MODULE_DEVICE_TABLE(pci, sof_pci_ids);

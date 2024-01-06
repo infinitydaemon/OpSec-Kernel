@@ -12,10 +12,8 @@
 		     + __GNUC_PATCHLEVEL__)
 #endif
 
-#if __has_attribute(__fallthrough__)
-# define fallthrough                    __attribute__((__fallthrough__))
-#else
-# define fallthrough                    do {} while (0)  /* fallthrough */
+#if GCC_VERSION >= 70000 && !defined(__CHECKER__)
+# define __fallthrough __attribute__ ((fallthrough))
 #endif
 
 #if __has_attribute(__error__)

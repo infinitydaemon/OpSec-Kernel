@@ -735,7 +735,8 @@ out:
 	return IRQ_HANDLED;
 }
 
-static int opt3001_probe(struct i2c_client *client)
+static int opt3001_probe(struct i2c_client *client,
+		const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
 

@@ -201,7 +201,8 @@ static const struct of_device_id atlas_ezo_dt_ids[] = {
 };
 MODULE_DEVICE_TABLE(of, atlas_ezo_dt_ids);
 
-static int atlas_ezo_probe(struct i2c_client *client)
+static int atlas_ezo_probe(struct i2c_client *client,
+		       const struct i2c_device_id *id)
 {
 	const struct atlas_ezo_device *chip;
 	struct atlas_ezo_data *data;
@@ -211,7 +212,10 @@ static int atlas_ezo_probe(struct i2c_client *client)
 	if (!indio_dev)
 		return -ENOMEM;
 
-	chip = i2c_get_match_data(client);
+	if (dev_fwnode(&client->dev))
+		chip = device_get_match_data(&client->dev);
+	else
+		chip = (const struct atlas_ezo_device *)id->driver_data;
 	if (!chip)
 		return -EINVAL;
 

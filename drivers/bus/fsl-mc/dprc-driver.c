@@ -11,6 +11,7 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
+#include <linux/msi.h>
 #include <linux/fsl/mc.h>
 
 #include "fsl-mc-private.h"
@@ -841,14 +842,15 @@ EXPORT_SYMBOL_GPL(dprc_cleanup);
  * It tears down the interrupts that were configured for the DPRC device.
  * It destroys the interrupt pool associated with this MC bus.
  */
-static void dprc_remove(struct fsl_mc_device *mc_dev)
+static int dprc_remove(struct fsl_mc_device *mc_dev)
 {
 	struct fsl_mc_bus *mc_bus = to_fsl_mc_bus(mc_dev);
 
-	if (!mc_bus->irq_resources) {
-		dev_err(&mc_dev->dev, "No irq resources, so unbinding the device failed\n");
-		return;
-	}
+	if (!is_fsl_mc_bus_dprc(mc_dev))
+		return -EINVAL;
+
+	if (!mc_bus->irq_resources)
+		return -EINVAL;
 
 	if (dev_get_msi_domain(&mc_dev->dev))
 		dprc_teardown_irq(mc_dev);
@@ -858,6 +860,7 @@ static void dprc_remove(struct fsl_mc_device *mc_dev)
 	dprc_cleanup(mc_dev);
 
 	dev_info(&mc_dev->dev, "DPRC device unbound from driver");
+	return 0;
 }
 
 static const struct fsl_mc_device_id match_id_table[] = {

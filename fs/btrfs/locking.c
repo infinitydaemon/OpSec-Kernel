@@ -8,12 +8,10 @@
 #include <linux/spinlock.h>
 #include <linux/page-flags.h>
 #include <asm/bug.h>
-#include <trace/events/btrfs.h>
 #include "misc.h"
 #include "ctree.h"
 #include "extent_io.h"
 #include "locking.h"
-#include "accessors.h"
 
 /*
  * Lockdep class keys for extent_buffer->lock's in this root.  For a given
@@ -74,7 +72,6 @@ static struct btrfs_lockdep_keyset {
 	{ .id = BTRFS_UUID_TREE_OBJECTID,	DEFINE_NAME("uuid")	},
 	{ .id = BTRFS_FREE_SPACE_TREE_OBJECTID,	DEFINE_NAME("free-space") },
 	{ .id = BTRFS_BLOCK_GROUP_TREE_OBJECTID, DEFINE_NAME("block-group") },
-	{ .id = BTRFS_RAID_STRIPE_TREE_OBJECTID, DEFINE_NAME("raid-stripe") },
 	{ .id = 0,				DEFINE_NAME("tree")	},
 };
 
@@ -102,15 +99,6 @@ void btrfs_maybe_reset_lockdep_class(struct btrfs_root *root, struct extent_buff
 					       eb, btrfs_header_level(eb));
 }
 
-#endif
-
-#ifdef CONFIG_BTRFS_DEBUG
-static void btrfs_set_eb_lock_owner(struct extent_buffer *eb, pid_t owner)
-{
-	eb->lock_owner = owner;
-}
-#else
-static void btrfs_set_eb_lock_owner(struct extent_buffer *eb, pid_t owner) { }
 #endif
 
 /*
@@ -175,7 +163,7 @@ int btrfs_try_tree_read_lock(struct extent_buffer *eb)
 int btrfs_try_tree_write_lock(struct extent_buffer *eb)
 {
 	if (down_write_trylock(&eb->lock)) {
-		btrfs_set_eb_lock_owner(eb, current->pid);
+		eb->lock_owner = current->pid;
 		trace_btrfs_try_tree_write_lock(eb);
 		return 1;
 	}
@@ -192,8 +180,7 @@ void btrfs_tree_read_unlock(struct extent_buffer *eb)
 }
 
 /*
- * Lock eb for write.
- *
+ * __btrfs_tree_lock - lock eb for write
  * @eb:		the eb to lock
  * @nest:	the nesting to use for the lock
  *
@@ -208,7 +195,7 @@ void __btrfs_tree_lock(struct extent_buffer *eb, enum btrfs_lock_nesting nest)
 		start_ns = ktime_get_ns();
 
 	down_write_nested(&eb->lock, nest);
-	btrfs_set_eb_lock_owner(eb, current->pid);
+	eb->lock_owner = current->pid;
 	trace_btrfs_tree_lock(eb, start_ns);
 }
 
@@ -223,7 +210,7 @@ void btrfs_tree_lock(struct extent_buffer *eb)
 void btrfs_tree_unlock(struct extent_buffer *eb)
 {
 	trace_btrfs_tree_unlock(eb);
-	btrfs_set_eb_lock_owner(eb, 0);
+	eb->lock_owner = 0;
 	up_write(&eb->lock);
 }
 
@@ -338,12 +325,24 @@ struct extent_buffer *btrfs_try_read_lock_root_node(struct btrfs_root *root)
  * acquire the lock.
  */
 
-void btrfs_drew_lock_init(struct btrfs_drew_lock *lock)
+int btrfs_drew_lock_init(struct btrfs_drew_lock *lock)
 {
+	int ret;
+
+	ret = percpu_counter_init(&lock->writers, 0, GFP_KERNEL);
+	if (ret)
+		return ret;
+
 	atomic_set(&lock->readers, 0);
-	atomic_set(&lock->writers, 0);
 	init_waitqueue_head(&lock->pending_readers);
 	init_waitqueue_head(&lock->pending_writers);
+
+	return 0;
+}
+
+void btrfs_drew_lock_destroy(struct btrfs_drew_lock *lock)
+{
+	percpu_counter_destroy(&lock->writers);
 }
 
 /* Return true if acquisition is successful, false otherwise */
@@ -352,10 +351,10 @@ bool btrfs_drew_try_write_lock(struct btrfs_drew_lock *lock)
 	if (atomic_read(&lock->readers))
 		return false;
 
-	atomic_inc(&lock->writers);
+	percpu_counter_inc(&lock->writers);
 
 	/* Ensure writers count is updated before we check for pending readers */
-	smp_mb__after_atomic();
+	smp_mb();
 	if (atomic_read(&lock->readers)) {
 		btrfs_drew_write_unlock(lock);
 		return false;
@@ -375,7 +374,7 @@ void btrfs_drew_write_lock(struct btrfs_drew_lock *lock)
 
 void btrfs_drew_write_unlock(struct btrfs_drew_lock *lock)
 {
-	atomic_dec(&lock->writers);
+	percpu_counter_dec(&lock->writers);
 	cond_wake_up(&lock->pending_readers);
 }
 
@@ -391,7 +390,8 @@ void btrfs_drew_read_lock(struct btrfs_drew_lock *lock)
 	 */
 	smp_mb__after_atomic();
 
-	wait_event(lock->pending_readers, atomic_read(&lock->writers) == 0);
+	wait_event(lock->pending_readers,
+		   percpu_counter_sum(&lock->writers) == 0);
 }
 
 void btrfs_drew_read_unlock(struct btrfs_drew_lock *lock)

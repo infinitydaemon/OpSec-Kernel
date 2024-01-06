@@ -33,6 +33,9 @@
 #include <linux/err.h>
 #include "ubi.h"
 
+/* Number of physical eraseblocks reserved for atomic LEB change operation */
+#define EBA_RESERVED_PEBS 1
+
 /**
  * struct ubi_eba_entry - structure encoding a single LEB -> PEB association
  * @pnum: the physical eraseblock number attached to the LEB
@@ -58,7 +61,7 @@ struct ubi_eba_table {
 };
 
 /**
- * ubi_next_sqnum - get next sequence number.
+ * next_sqnum - get next sequence number.
  * @ubi: UBI device description object
  *
  * This function returns next sequence number to use, which is just the current

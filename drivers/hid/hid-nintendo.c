@@ -410,18 +410,6 @@ static const char * const joycon_player_led_names[] = {
 	LED_FUNCTION_PLAYER4,
 };
 #define JC_NUM_LEDS		ARRAY_SIZE(joycon_player_led_names)
-#define JC_NUM_LED_PATTERNS 8
-/* Taken from https://www.nintendo.com/my/support/qa/detail/33822 */
-static const enum led_brightness joycon_player_led_patterns[JC_NUM_LED_PATTERNS][JC_NUM_LEDS] = {
-	{ 1, 0, 0, 0 },
-	{ 1, 1, 0, 0 },
-	{ 1, 1, 1, 0 },
-	{ 1, 1, 1, 1 },
-	{ 1, 0, 0, 1 },
-	{ 1, 0, 1, 0 },
-	{ 1, 0, 1, 1 },
-	{ 0, 1, 1, 0 },
-};
 
 /* Each physical controller is associated with a joycon_ctlr struct */
 struct joycon_ctlr {
@@ -445,9 +433,7 @@ struct joycon_ctlr {
 	u8 usb_ack_match;
 	u8 subcmd_ack_match;
 	bool received_input_report;
-	unsigned int last_input_report_msecs;
 	unsigned int last_subcmd_sent_msecs;
-	unsigned int consecutive_valid_report_deltas;
 
 	/* factory calibration data */
 	struct joycon_stick_cal left_stick_cal_x;
@@ -557,54 +543,19 @@ static void joycon_wait_for_input_report(struct joycon_ctlr *ctlr)
  * Sending subcommands and/or rumble data at too high a rate can cause bluetooth
  * controller disconnections.
  */
-#define JC_INPUT_REPORT_MIN_DELTA	8
-#define JC_INPUT_REPORT_MAX_DELTA	17
-#define JC_SUBCMD_TX_OFFSET_MS		4
-#define JC_SUBCMD_VALID_DELTA_REQ	3
-#define JC_SUBCMD_RATE_MAX_ATTEMPTS	500
-#define JC_SUBCMD_RATE_LIMITER_USB_MS	20
-#define JC_SUBCMD_RATE_LIMITER_BT_MS	60
-#define JC_SUBCMD_RATE_LIMITER_MS(ctlr)	((ctlr)->hdev->bus == BUS_USB ? JC_SUBCMD_RATE_LIMITER_USB_MS : JC_SUBCMD_RATE_LIMITER_BT_MS)
 static void joycon_enforce_subcmd_rate(struct joycon_ctlr *ctlr)
 {
-	unsigned int current_ms;
-	unsigned long subcmd_delta;
-	int consecutive_valid_deltas = 0;
-	int attempts = 0;
-	unsigned long flags;
+	static const unsigned int max_subcmd_rate_ms = 25;
+	unsigned int current_ms = jiffies_to_msecs(jiffies);
+	unsigned int delta_ms = current_ms - ctlr->last_subcmd_sent_msecs;
 
-	if (unlikely(ctlr->ctlr_state != JOYCON_CTLR_STATE_READ))
-		return;
-
-	do {
+	while (delta_ms < max_subcmd_rate_ms &&
+	       ctlr->ctlr_state == JOYCON_CTLR_STATE_READ) {
 		joycon_wait_for_input_report(ctlr);
 		current_ms = jiffies_to_msecs(jiffies);
-		subcmd_delta = current_ms - ctlr->last_subcmd_sent_msecs;
-
-		spin_lock_irqsave(&ctlr->lock, flags);
-		consecutive_valid_deltas = ctlr->consecutive_valid_report_deltas;
-		spin_unlock_irqrestore(&ctlr->lock, flags);
-
-		attempts++;
-	} while ((consecutive_valid_deltas < JC_SUBCMD_VALID_DELTA_REQ ||
-		  subcmd_delta < JC_SUBCMD_RATE_LIMITER_MS(ctlr)) &&
-		 ctlr->ctlr_state == JOYCON_CTLR_STATE_READ &&
-		 attempts < JC_SUBCMD_RATE_MAX_ATTEMPTS);
-
-	if (attempts >= JC_SUBCMD_RATE_MAX_ATTEMPTS) {
-		hid_warn(ctlr->hdev, "%s: exceeded max attempts", __func__);
-		return;
+		delta_ms = current_ms - ctlr->last_subcmd_sent_msecs;
 	}
-
 	ctlr->last_subcmd_sent_msecs = current_ms;
-
-	/*
-	 * Wait a short time after receiving an input report before
-	 * transmitting. This should reduce odds of a TX coinciding with an RX.
-	 * Minimizing concurrent BT traffic with the controller seems to lower
-	 * the rate of disconnections.
-	 */
-	msleep(JC_SUBCMD_TX_OFFSET_MS);
 }
 
 static int joycon_hid_send_sync(struct joycon_ctlr *ctlr, u8 *data, size_t len,
@@ -709,25 +660,6 @@ static int joycon_set_player_leds(struct joycon_ctlr *ctlr, u8 flash, u8 on)
 
 	hid_dbg(ctlr->hdev, "setting player leds\n");
 	return joycon_send_subcmd(ctlr, req, 1, HZ/4);
-}
-
-static int joycon_set_home_led(struct joycon_ctlr *ctlr, enum led_brightness brightness)
-{
-	struct joycon_subcmd_request *req;
-	u8 buffer[sizeof(*req) + 5] = { 0 };
-	u8 *data;
-
-	req = (struct joycon_subcmd_request *)buffer;
-	req->subcmd_id = JC_SUBCMD_SET_HOME_LIGHT;
-	data = req->data;
-	data[0] = 0x01;
-	data[1] = brightness << 4;
-	data[2] = brightness | (brightness << 4);
-	data[3] = 0x11;
-	data[4] = 0x11;
-
-	hid_dbg(ctlr->hdev, "setting home led brightness\n");
-	return joycon_send_subcmd(ctlr, req, 5, HZ/4);
 }
 
 static int joycon_request_spi_flash_read(struct joycon_ctlr *ctlr,
@@ -1291,7 +1223,6 @@ static void joycon_parse_report(struct joycon_ctlr *ctlr,
 	u8 tmp;
 	u32 btns;
 	unsigned long msecs = jiffies_to_msecs(jiffies);
-	unsigned long report_delta_ms = msecs - ctlr->last_input_report_msecs;
 
 	spin_lock_irqsave(&ctlr->lock, flags);
 	if (IS_ENABLED(CONFIG_NINTENDO_FF) && rep->vibrator_report &&
@@ -1432,31 +1363,6 @@ static void joycon_parse_report(struct joycon_ctlr *ctlr,
 	}
 
 	input_sync(dev);
-
-	spin_lock_irqsave(&ctlr->lock, flags);
-	ctlr->last_input_report_msecs = msecs;
-	/*
-	 * Was this input report a reasonable time delta compared to the prior
-	 * report? We use this information to decide when a safe time is to send
-	 * rumble packets or subcommand packets.
-	 */
-	if (report_delta_ms >= JC_INPUT_REPORT_MIN_DELTA &&
-	    report_delta_ms <= JC_INPUT_REPORT_MAX_DELTA) {
-		if (ctlr->consecutive_valid_report_deltas < JC_SUBCMD_VALID_DELTA_REQ)
-			ctlr->consecutive_valid_report_deltas++;
-	} else {
-		ctlr->consecutive_valid_report_deltas = 0;
-	}
-	/*
-	 * Our consecutive valid report tracking is only relevant for
-	 * bluetooth-connected controllers. For USB devices, we're beholden to
-	 * USB's underlying polling rate anyway. Always set to the consecutive
-	 * delta requirement.
-	 */
-	if (ctlr->hdev->bus == BUS_USB)
-		ctlr->consecutive_valid_report_deltas = JC_SUBCMD_VALID_DELTA_REQ;
-
-	spin_unlock_irqrestore(&ctlr->lock, flags);
 
 	/*
 	 * Immediately after receiving a report is the most reliable time to
@@ -1621,7 +1527,6 @@ static int joycon_set_rumble(struct joycon_ctlr *ctlr, u16 amp_r, u16 amp_l,
 	u16 freq_l_low;
 	u16 freq_l_high;
 	unsigned long flags;
-	int next_rq_head;
 
 	spin_lock_irqsave(&ctlr->lock, flags);
 	freq_r_low = ctlr->rumble_rl_freq;
@@ -1642,21 +1547,8 @@ static int joycon_set_rumble(struct joycon_ctlr *ctlr, u16 amp_r, u16 amp_l,
 	joycon_encode_rumble(data, freq_l_low, freq_l_high, amp);
 
 	spin_lock_irqsave(&ctlr->lock, flags);
-
-	next_rq_head = ctlr->rumble_queue_head + 1;
-	if (next_rq_head >= JC_RUMBLE_QUEUE_SIZE)
-		next_rq_head = 0;
-
-	/* Did we overrun the circular buffer?
-	 * If so, be sure we keep the latest intended rumble state.
-	 */
-	if (next_rq_head == ctlr->rumble_queue_tail) {
-		hid_dbg(ctlr->hdev, "rumble queue is full");
-		/* overwrite the prior value at the end of the circular buf */
-		next_rq_head = ctlr->rumble_queue_head;
-	}
-
-	ctlr->rumble_queue_head = next_rq_head;
+	if (++ctlr->rumble_queue_head >= JC_RUMBLE_QUEUE_SIZE)
+		ctlr->rumble_queue_head = 0;
 	memcpy(ctlr->rumble_data[ctlr->rumble_queue_head], data,
 	       JC_RUMBLE_DATA_SIZE);
 
@@ -1871,7 +1763,6 @@ static int joycon_input_create(struct joycon_ctlr *ctlr)
 	return 0;
 }
 
-/* Because the subcommand sets all the leds at once, the brightness argument is ignored */
 static int joycon_player_led_brightness_set(struct led_classdev *led,
 					    enum led_brightness brightness)
 {
@@ -1881,6 +1772,7 @@ static int joycon_player_led_brightness_set(struct led_classdev *led,
 	int val = 0;
 	int i;
 	int ret;
+	int num;
 
 	ctlr = hid_get_drvdata(hdev);
 	if (!ctlr) {
@@ -1888,10 +1780,21 @@ static int joycon_player_led_brightness_set(struct led_classdev *led,
 		return -ENODEV;
 	}
 
-	for (i = 0; i < JC_NUM_LEDS; i++)
-		val |= ctlr->leds[i].brightness << i;
+	/* determine which player led this is */
+	for (num = 0; num < JC_NUM_LEDS; num++) {
+		if (&ctlr->leds[num] == led)
+			break;
+	}
+	if (num >= JC_NUM_LEDS)
+		return -EINVAL;
 
 	mutex_lock(&ctlr->output_mutex);
+	for (i = 0; i < JC_NUM_LEDS; i++) {
+		if (i == num)
+			val |= brightness << i;
+		else
+			val |= ctlr->leds[i].brightness << i;
+	}
 	ret = joycon_set_player_leds(ctlr, 0, val);
 	mutex_unlock(&ctlr->output_mutex);
 
@@ -1904,6 +1807,9 @@ static int joycon_home_led_brightness_set(struct led_classdev *led,
 	struct device *dev = led->dev->parent;
 	struct hid_device *hdev = to_hid_device(dev);
 	struct joycon_ctlr *ctlr;
+	struct joycon_subcmd_request *req;
+	u8 buffer[sizeof(*req) + 5] = { 0 };
+	u8 *data;
 	int ret;
 
 	ctlr = hid_get_drvdata(hdev);
@@ -1911,35 +1817,43 @@ static int joycon_home_led_brightness_set(struct led_classdev *led,
 		hid_err(hdev, "No controller data\n");
 		return -ENODEV;
 	}
+
+	req = (struct joycon_subcmd_request *)buffer;
+	req->subcmd_id = JC_SUBCMD_SET_HOME_LIGHT;
+	data = req->data;
+	data[0] = 0x01;
+	data[1] = brightness << 4;
+	data[2] = brightness | (brightness << 4);
+	data[3] = 0x11;
+	data[4] = 0x11;
+
+	hid_dbg(hdev, "setting home led brightness\n");
 	mutex_lock(&ctlr->output_mutex);
-	ret = joycon_set_home_led(ctlr, brightness);
+	ret = joycon_send_subcmd(ctlr, req, 5, HZ/4);
 	mutex_unlock(&ctlr->output_mutex);
+
 	return ret;
 }
 
-static DEFINE_SPINLOCK(joycon_input_num_spinlock);
+static DEFINE_MUTEX(joycon_input_num_mutex);
 static int joycon_leds_create(struct joycon_ctlr *ctlr)
 {
 	struct hid_device *hdev = ctlr->hdev;
 	struct device *dev = &hdev->dev;
 	const char *d_name = dev_name(dev);
 	struct led_classdev *led;
-	int led_val = 0;
 	char *name;
-	int ret;
+	int ret = 0;
 	int i;
-	unsigned long flags;
-	int player_led_pattern;
-	static int input_num;
+	static int input_num = 1;
 
-	/*
-	 * Set the player leds based on controller number
-	 * Because there is no standard concept of "player number", the pattern
-	 * number will simply increase by 1 every time a controller is connected.
-	 */
-	spin_lock_irqsave(&joycon_input_num_spinlock, flags);
-	player_led_pattern = input_num++ % JC_NUM_LED_PATTERNS;
-	spin_unlock_irqrestore(&joycon_input_num_spinlock, flags);
+	/* Set the default controller player leds based on controller number */
+	mutex_lock(&joycon_input_num_mutex);
+	mutex_lock(&ctlr->output_mutex);
+	ret = joycon_set_player_leds(ctlr, 0, 0xF >> (4 - input_num));
+	if (ret)
+		hid_warn(ctlr->hdev, "Failed to set leds; ret=%d\n", ret);
+	mutex_unlock(&ctlr->output_mutex);
 
 	/* configure the player LEDs */
 	for (i = 0; i < JC_NUM_LEDS; i++) {
@@ -1947,37 +1861,31 @@ static int joycon_leds_create(struct joycon_ctlr *ctlr)
 				      d_name,
 				      "green",
 				      joycon_player_led_names[i]);
-		if (!name)
+		if (!name) {
+			mutex_unlock(&joycon_input_num_mutex);
 			return -ENOMEM;
+		}
 
 		led = &ctlr->leds[i];
 		led->name = name;
-		led->brightness = joycon_player_led_patterns[player_led_pattern][i];
+		led->brightness = ((i + 1) <= input_num) ? 1 : 0;
 		led->max_brightness = 1;
 		led->brightness_set_blocking =
 					joycon_player_led_brightness_set;
 		led->flags = LED_CORE_SUSPENDRESUME | LED_HW_PLUGGABLE;
 
-		led_val |= joycon_player_led_patterns[player_led_pattern][i] << i;
-	}
-	mutex_lock(&ctlr->output_mutex);
-	ret = joycon_set_player_leds(ctlr, 0, led_val);
-	mutex_unlock(&ctlr->output_mutex);
-	if (ret) {
-		hid_warn(hdev, "Failed to set players LEDs, skipping registration; ret=%d\n", ret);
-		goto home_led;
-	}
-
-	for (i = 0; i < JC_NUM_LEDS; i++) {
-		led = &ctlr->leds[i];
 		ret = devm_led_classdev_register(&hdev->dev, led);
 		if (ret) {
-			hid_err(hdev, "Failed to register player %d LED; ret=%d\n", i + 1, ret);
+			hid_err(hdev, "Failed registering %s LED\n", led->name);
+			mutex_unlock(&joycon_input_num_mutex);
 			return ret;
 		}
 	}
 
-home_led:
+	if (++input_num > 4)
+		input_num = 1;
+	mutex_unlock(&joycon_input_num_mutex);
+
 	/* configure the home LED */
 	if (jc_type_has_right(ctlr)) {
 		name = devm_kasprintf(dev, GFP_KERNEL, "%s:%s:%s",
@@ -1993,20 +1901,16 @@ home_led:
 		led->max_brightness = 0xF;
 		led->brightness_set_blocking = joycon_home_led_brightness_set;
 		led->flags = LED_CORE_SUSPENDRESUME | LED_HW_PLUGGABLE;
-
-		/* Set the home LED to 0 as default state */
-		mutex_lock(&ctlr->output_mutex);
-		ret = joycon_set_home_led(ctlr, 0);
-		mutex_unlock(&ctlr->output_mutex);
-		if (ret) {
-			hid_warn(hdev, "Failed to set home LED, skipping registration; ret=%d\n", ret);
-			return 0;
-		}
-
 		ret = devm_led_classdev_register(&hdev->dev, led);
 		if (ret) {
-			hid_err(hdev, "Failed to register home LED; ret=%d\n", ret);
+			hid_err(hdev, "Failed registering home led\n");
 			return ret;
+		}
+		/* Set the home LED to 0 as default state */
+		ret = joycon_home_led_brightness_set(led, 0);
+		if (ret) {
+			hid_warn(hdev, "Failed to set home LED default, unregistering home LED");
+			devm_led_classdev_unregister(&hdev->dev, led);
 		}
 	}
 
@@ -2305,7 +2209,7 @@ static int nintendo_hid_probe(struct hid_device *hdev,
 
 	ctlr->hdev = hdev;
 	ctlr->ctlr_state = JOYCON_CTLR_STATE_INIT;
-	ctlr->rumble_queue_head = 0;
+	ctlr->rumble_queue_head = JC_RUMBLE_QUEUE_SIZE - 1;
 	ctlr->rumble_queue_tail = 0;
 	hid_set_drvdata(hdev, ctlr);
 	mutex_init(&ctlr->output_mutex);

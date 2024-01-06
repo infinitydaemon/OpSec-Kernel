@@ -187,7 +187,6 @@ static int mmap_events(synth_cb synth)
 		struct addr_location al;
 		struct thread *thread;
 
-		addr_location__init(&al);
 		thread = machine__findnew_thread(machine, getpid(), td->tid);
 
 		pr_debug("looking for map %p\n", td->map);
@@ -200,14 +199,13 @@ static int mmap_events(synth_cb synth)
 		if (!al.map) {
 			pr_debug("failed, couldn't find map\n");
 			err = -1;
-			addr_location__exit(&al);
 			break;
 		}
 
-		pr_debug("map %p, addr %" PRIx64 "\n", al.map, map__start(al.map));
-		addr_location__exit(&al);
+		pr_debug("map %p, addr %" PRIx64 "\n", al.map, al.map->start);
 	}
 
+	machine__delete_threads(machine);
 	machine__delete(machine);
 	return err;
 }

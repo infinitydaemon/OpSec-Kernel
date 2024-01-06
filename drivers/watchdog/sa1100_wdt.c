@@ -229,17 +229,19 @@ err:
 	return ret;
 }
 
-static void sa1100dog_remove(struct platform_device *pdev)
+static int sa1100dog_remove(struct platform_device *pdev)
 {
 	misc_deregister(&sa1100dog_miscdev);
 	clk_disable_unprepare(clk);
 	clk_put(clk);
+
+	return 0;
 }
 
 static struct platform_driver sa1100dog_driver = {
 	.driver.name = "sa1100_wdt",
 	.probe	  = sa1100dog_probe,
-	.remove_new	  = sa1100dog_remove,
+	.remove	  = sa1100dog_remove,
 };
 module_platform_driver(sa1100dog_driver);
 

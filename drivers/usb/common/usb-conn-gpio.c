@@ -271,7 +271,7 @@ put_role_sw:
 	return ret;
 }
 
-static void usb_conn_remove(struct platform_device *pdev)
+static int usb_conn_remove(struct platform_device *pdev)
 {
 	struct usb_conn_info *info = platform_get_drvdata(pdev);
 
@@ -281,6 +281,8 @@ static void usb_conn_remove(struct platform_device *pdev)
 		regulator_disable(info->vbus);
 
 	usb_role_switch_put(info->role_sw);
+
+	return 0;
 }
 
 static int __maybe_unused usb_conn_suspend(struct device *dev)
@@ -340,7 +342,7 @@ MODULE_DEVICE_TABLE(of, usb_conn_dt_match);
 
 static struct platform_driver usb_conn_driver = {
 	.probe		= usb_conn_probe,
-	.remove_new	= usb_conn_remove,
+	.remove		= usb_conn_remove,
 	.driver		= {
 		.name	= "usb-conn-gpio",
 		.pm	= &usb_conn_pm_ops,

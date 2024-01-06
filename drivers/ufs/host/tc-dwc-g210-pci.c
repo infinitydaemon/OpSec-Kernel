@@ -33,6 +33,15 @@ static struct ufs_hba_variant_ops tc_dwc_g210_pci_hba_vops = {
 };
 
 /**
+ * tc_dwc_g210_pci_shutdown - main function to put the controller in reset state
+ * @pdev: pointer to PCI device handle
+ */
+static void tc_dwc_g210_pci_shutdown(struct pci_dev *pdev)
+{
+	ufshcd_shutdown((struct ufs_hba *)pci_get_drvdata(pdev));
+}
+
+/**
  * tc_dwc_g210_pci_remove - de-allocate PCI/SCSI host and host memory space
  *		data structure memory
  * @pdev: pointer to PCI handle
@@ -51,7 +60,7 @@ static void tc_dwc_g210_pci_remove(struct pci_dev *pdev)
  * @pdev: pointer to PCI device handle
  * @id: PCI device id
  *
- * Return: 0 on success, non-zero value on failure.
+ * Returns 0 on success, non-zero value on failure
  */
 static int
 tc_dwc_g210_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
@@ -128,6 +137,7 @@ static struct pci_driver tc_dwc_g210_pci_driver = {
 	.id_table = tc_dwc_g210_pci_tbl,
 	.probe = tc_dwc_g210_pci_probe,
 	.remove = tc_dwc_g210_pci_remove,
+	.shutdown = tc_dwc_g210_pci_shutdown,
 	.driver = {
 		.pm = &tc_dwc_g210_pci_pm_ops
 	},

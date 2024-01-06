@@ -87,12 +87,15 @@ static int dove_get_temp(struct thermal_zone_device *thermal,
 			  int *temp)
 {
 	unsigned long reg;
-	struct dove_thermal_priv *priv = thermal_zone_device_priv(thermal);
+	struct dove_thermal_priv *priv = thermal->devdata;
 
 	/* Valid check */
 	reg = readl_relaxed(priv->control + PMU_TEMP_DIOD_CTRL1_REG);
-	if ((reg & PMU_TDC1_TEMP_VALID_MASK) == 0x0)
+	if ((reg & PMU_TDC1_TEMP_VALID_MASK) == 0x0) {
+		dev_err(&thermal->device,
+			"Temperature sensor reading not valid\n");
 		return -EIO;
+	}
 
 	/*
 	 * Calculate temperature. According to Marvell internal
@@ -119,17 +122,20 @@ static int dove_thermal_probe(struct platform_device *pdev)
 {
 	struct thermal_zone_device *thermal = NULL;
 	struct dove_thermal_priv *priv;
+	struct resource *res;
 	int ret;
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 
-	priv->sensor = devm_platform_get_and_ioremap_resource(pdev, 0, NULL);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	priv->sensor = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(priv->sensor))
 		return PTR_ERR(priv->sensor);
 
-	priv->control = devm_platform_get_and_ioremap_resource(pdev, 1, NULL);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	priv->control = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(priv->control))
 		return PTR_ERR(priv->control);
 
@@ -139,8 +145,8 @@ static int dove_thermal_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	thermal = thermal_tripless_zone_device_register("dove_thermal", priv,
-							&ops, NULL);
+	thermal = thermal_zone_device_register("dove_thermal", 0, 0,
+					       priv, &ops, NULL, 0, 0);
 	if (IS_ERR(thermal)) {
 		dev_err(&pdev->dev,
 			"Failed to register thermal zone device\n");
@@ -158,19 +164,21 @@ static int dove_thermal_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void dove_thermal_exit(struct platform_device *pdev)
+static int dove_thermal_exit(struct platform_device *pdev)
 {
 	struct thermal_zone_device *dove_thermal =
 		platform_get_drvdata(pdev);
 
 	thermal_zone_device_unregister(dove_thermal);
+
+	return 0;
 }
 
 MODULE_DEVICE_TABLE(of, dove_thermal_id_table);
 
 static struct platform_driver dove_thermal_driver = {
 	.probe = dove_thermal_probe,
-	.remove_new = dove_thermal_exit,
+	.remove = dove_thermal_exit,
 	.driver = {
 		.name = "dove_thermal",
 		.of_match_table = dove_thermal_id_table,

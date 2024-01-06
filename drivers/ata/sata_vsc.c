@@ -277,7 +277,7 @@ out:
 }
 
 
-static const struct scsi_host_template vsc_sata_sht = {
+static struct scsi_host_template vsc_sata_sht = {
 	ATA_BMDMA_SHT(DRV_NAME),
 };
 

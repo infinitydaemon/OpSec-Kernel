@@ -11,8 +11,6 @@
 #include <unistd.h>
 #include <assert.h>
 #include <sys/wait.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <linux/bpf.h>
@@ -22,8 +20,6 @@
 #include <bpf/libbpf.h>
 
 #define MAX_CNT 1000000
-#define DUMMY_IP "127.0.0.1"
-#define DUMMY_PORT 80
 
 static struct bpf_link *links[2];
 static struct bpf_object *obj;
@@ -39,8 +35,8 @@ static __u64 time_get_ns(void)
 
 static void test_task_rename(int cpu)
 {
-	char buf[] = "test\n";
 	__u64 start_time;
+	char buf[] = "test\n";
 	int i, fd;
 
 	fd = open("/proc/self/comm", O_WRONLY|O_TRUNC);
@@ -61,32 +57,26 @@ static void test_task_rename(int cpu)
 	close(fd);
 }
 
-static void test_fib_table_lookup(int cpu)
+static void test_urandom_read(int cpu)
 {
-	struct sockaddr_in addr;
-	char buf[] = "test\n";
 	__u64 start_time;
+	char buf[4];
 	int i, fd;
 
-	fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	fd = open("/dev/urandom", O_RDONLY);
 	if (fd < 0) {
-		printf("couldn't open socket\n");
+		printf("couldn't open /dev/urandom\n");
 		exit(1);
 	}
-	memset((char *)&addr, 0, sizeof(addr));
-	addr.sin_addr.s_addr = inet_addr(DUMMY_IP);
-	addr.sin_port = htons(DUMMY_PORT);
-	addr.sin_family = AF_INET;
 	start_time = time_get_ns();
 	for (i = 0; i < MAX_CNT; i++) {
-		if (sendto(fd, buf, strlen(buf), 0,
-			   (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-			printf("failed to start ping: %s\n", strerror(errno));
+		if (read(fd, buf, sizeof(buf)) < 0) {
+			printf("failed to read from /dev/urandom: %s\n", strerror(errno));
 			close(fd);
 			return;
 		}
 	}
-	printf("fib_table_lookup:%d: %lld events per sec\n",
+	printf("urandom_read:%d: %lld events per sec\n",
 	       cpu, MAX_CNT * 1000000000ll / (time_get_ns() - start_time));
 	close(fd);
 }
@@ -102,7 +92,7 @@ static void loop(int cpu, int flags)
 	if (flags & 1)
 		test_task_rename(cpu);
 	if (flags & 2)
-		test_fib_table_lookup(cpu);
+		test_urandom_read(cpu);
 }
 
 static void run_perf_test(int tasks, int flags)
@@ -189,7 +179,7 @@ int main(int argc, char **argv)
 
 	if (test_flags & 0xC) {
 		snprintf(filename, sizeof(filename),
-			 "%s_kprobe.bpf.o", argv[0]);
+			 "%s_kprobe_kern.o", argv[0]);
 
 		printf("w/KPROBE\n");
 		err = load_progs(filename);
@@ -201,7 +191,7 @@ int main(int argc, char **argv)
 
 	if (test_flags & 0x30) {
 		snprintf(filename, sizeof(filename),
-			 "%s_tp.bpf.o", argv[0]);
+			 "%s_tp_kern.o", argv[0]);
 		printf("w/TRACEPOINT\n");
 		err = load_progs(filename);
 		if (!err)
@@ -212,7 +202,7 @@ int main(int argc, char **argv)
 
 	if (test_flags & 0xC0) {
 		snprintf(filename, sizeof(filename),
-			 "%s_raw_tp.bpf.o", argv[0]);
+			 "%s_raw_tp_kern.o", argv[0]);
 		printf("w/RAW_TRACEPOINT\n");
 		err = load_progs(filename);
 		if (!err)

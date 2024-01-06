@@ -62,8 +62,8 @@ svc_rdma_get_rw_ctxt(struct svcxprt_rdma *rdma, unsigned int sges)
 	if (node) {
 		ctxt = llist_entry(node, struct svc_rdma_rw_ctxt, rw_node);
 	} else {
-		ctxt = kmalloc_node(struct_size(ctxt, rw_first_sgl, SG_CHUNK_SIZE),
-				    GFP_KERNEL, ibdev_to_node(rdma->sc_cm_id->device));
+		ctxt = kmalloc(struct_size(ctxt, rw_first_sgl, SG_CHUNK_SIZE),
+			       GFP_KERNEL);
 		if (!ctxt)
 			goto out_noctx;
 
@@ -84,7 +84,8 @@ out_noctx:
 	return NULL;
 }
 
-static void __svc_rdma_put_rw_ctxt(struct svc_rdma_rw_ctxt *ctxt,
+static void __svc_rdma_put_rw_ctxt(struct svcxprt_rdma *rdma,
+				   struct svc_rdma_rw_ctxt *ctxt,
 				   struct llist_head *list)
 {
 	sg_free_table_chained(&ctxt->rw_sg_table, SG_CHUNK_SIZE);
@@ -94,7 +95,7 @@ static void __svc_rdma_put_rw_ctxt(struct svc_rdma_rw_ctxt *ctxt,
 static void svc_rdma_put_rw_ctxt(struct svcxprt_rdma *rdma,
 				 struct svc_rdma_rw_ctxt *ctxt)
 {
-	__svc_rdma_put_rw_ctxt(ctxt, &rdma->sc_rw_ctxts);
+	__svc_rdma_put_rw_ctxt(rdma, ctxt, &rdma->sc_rw_ctxts);
 }
 
 /**
@@ -190,8 +191,6 @@ static void svc_rdma_cc_release(struct svc_rdma_chunk_ctxt *cc,
 	struct svc_rdma_rw_ctxt *ctxt;
 	LLIST_HEAD(free);
 
-	trace_svcrdma_cc_release(&cc->cc_cid, cc->cc_sqecount);
-
 	first = last = NULL;
 	while ((ctxt = svc_rdma_next_ctxt(&cc->cc_rwctxts)) != NULL) {
 		list_del(&ctxt->rw_list);
@@ -199,7 +198,7 @@ static void svc_rdma_cc_release(struct svc_rdma_chunk_ctxt *cc,
 		rdma_rw_ctx_destroy(&ctxt->rw_ctx, rdma->sc_qp,
 				    rdma->sc_port_num, ctxt->rw_sg_table.sgl,
 				    ctxt->rw_nents, dir);
-		__svc_rdma_put_rw_ctxt(ctxt, &free);
+		__svc_rdma_put_rw_ctxt(rdma, ctxt, &free);
 
 		ctxt->rw_node.next = first;
 		first = &ctxt->rw_node;
@@ -235,8 +234,7 @@ svc_rdma_write_info_alloc(struct svcxprt_rdma *rdma,
 {
 	struct svc_rdma_write_info *info;
 
-	info = kmalloc_node(sizeof(*info), GFP_KERNEL,
-			    ibdev_to_node(rdma->sc_cm_id->device));
+	info = kmalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return info;
 
@@ -306,8 +304,7 @@ svc_rdma_read_info_alloc(struct svcxprt_rdma *rdma)
 {
 	struct svc_rdma_read_info *info;
 
-	info = kmalloc_node(sizeof(*info), GFP_KERNEL,
-			    ibdev_to_node(rdma->sc_cm_id->device));
+	info = kmalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return info;
 
@@ -354,7 +351,8 @@ static void svc_rdma_wc_read_done(struct ib_cq *cq, struct ib_wc *wc)
 	return;
 }
 
-/*
+/* This function sleeps when the transport's Send Queue is congested.
+ *
  * Assumptions:
  * - If ib_post_send() succeeds, only one completion is expected,
  *   even if one or more WRs are flushed. This is true when posting
@@ -368,8 +366,6 @@ static int svc_rdma_post_chunk_ctxt(struct svc_rdma_chunk_ctxt *cc)
 	struct list_head *tmp;
 	struct ib_cqe *cqe;
 	int ret;
-
-	might_sleep();
 
 	if (cc->cc_sqecount > rdma->sc_sq_depth)
 		return -EINVAL;

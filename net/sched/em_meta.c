@@ -44,7 +44,7 @@
  * 	be provided for non-numeric types.
  *
  * 	Additionally, type dependent modifiers such as shift operators
- * 	or mask may be applied to extend the functionality. As of now,
+ * 	or mask may be applied to extend the functionaliy. As of now,
  * 	the variable length type supports shifting the byte string to
  * 	the right, eating up any number of octets and thus supporting
  * 	wildcard interface name comparisons such as "ppp%" matching
@@ -546,7 +546,7 @@ META_COLLECTOR(int_sk_prio)
 		*err = -1;
 		return;
 	}
-	dst->value = READ_ONCE(sk->sk_priority);
+	dst->value = sk->sk_priority;
 }
 
 META_COLLECTOR(int_sk_rcvlowat)

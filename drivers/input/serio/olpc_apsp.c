@@ -169,6 +169,7 @@ static int olpc_apsp_probe(struct platform_device *pdev)
 {
 	struct serio *kb_serio, *pad_serio;
 	struct olpc_apsp *priv;
+	struct resource *res;
 	int error;
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(struct olpc_apsp), GFP_KERNEL);
@@ -177,7 +178,8 @@ static int olpc_apsp_probe(struct platform_device *pdev)
 
 	priv->dev = &pdev->dev;
 
-	priv->base = devm_platform_get_and_ioremap_resource(pdev, 0, NULL);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	priv->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(priv->base)) {
 		dev_err(&pdev->dev, "Failed to map WTM registers\n");
 		return PTR_ERR(priv->base);
@@ -238,7 +240,7 @@ err_pad:
 	return error;
 }
 
-static void olpc_apsp_remove(struct platform_device *pdev)
+static int olpc_apsp_remove(struct platform_device *pdev)
 {
 	struct olpc_apsp *priv = platform_get_drvdata(pdev);
 
@@ -246,6 +248,8 @@ static void olpc_apsp_remove(struct platform_device *pdev)
 
 	serio_unregister_port(priv->kbio);
 	serio_unregister_port(priv->padio);
+
+	return 0;
 }
 
 static const struct of_device_id olpc_apsp_dt_ids[] = {
@@ -256,7 +260,7 @@ MODULE_DEVICE_TABLE(of, olpc_apsp_dt_ids);
 
 static struct platform_driver olpc_apsp_driver = {
 	.probe		= olpc_apsp_probe,
-	.remove_new	= olpc_apsp_remove,
+	.remove		= olpc_apsp_remove,
 	.driver		= {
 		.name	= "olpc-apsp",
 		.of_match_table = olpc_apsp_dt_ids,

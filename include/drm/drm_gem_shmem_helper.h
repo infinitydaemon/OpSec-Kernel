@@ -27,6 +27,11 @@ struct drm_gem_shmem_object {
 	struct drm_gem_object base;
 
 	/**
+	 * @pages_lock: Protects the page table and use count
+	 */
+	struct mutex pages_lock;
+
+	/**
 	 * @pages: Page table
 	 */
 	struct page **pages;
@@ -56,9 +61,28 @@ struct drm_gem_shmem_object {
 	struct list_head madv_list;
 
 	/**
+	 * @pages_mark_dirty_on_put:
+	 *
+	 * Mark pages as dirty when they are put.
+	 */
+	unsigned int pages_mark_dirty_on_put    : 1;
+
+	/**
+	 * @pages_mark_accessed_on_put:
+	 *
+	 * Mark pages as accessed when they are put.
+	 */
+	unsigned int pages_mark_accessed_on_put : 1;
+
+	/**
 	 * @sgt: Scatter/gather table for imported PRIME buffers
 	 */
 	struct sg_table *sgt;
+
+	/**
+	 * @vmap_lock: Protects the vmap address and use count
+	 */
+	struct mutex vmap_lock;
 
 	/**
 	 * @vaddr: Kernel virtual address of the backing memory
@@ -74,23 +98,9 @@ struct drm_gem_shmem_object {
 	unsigned int vmap_use_count;
 
 	/**
-	 * @pages_mark_dirty_on_put:
-	 *
-	 * Mark pages as dirty when they are put.
-	 */
-	bool pages_mark_dirty_on_put : 1;
-
-	/**
-	 * @pages_mark_accessed_on_put:
-	 *
-	 * Mark pages as accessed when they are put.
-	 */
-	bool pages_mark_accessed_on_put : 1;
-
-	/**
 	 * @map_wc: map object write-combined (instead of using shmem defaults).
 	 */
-	bool map_wc : 1;
+	bool map_wc;
 };
 
 #define to_drm_gem_shmem_obj(obj) \
@@ -99,6 +109,7 @@ struct drm_gem_shmem_object {
 struct drm_gem_shmem_object *drm_gem_shmem_create(struct drm_device *dev, size_t size);
 void drm_gem_shmem_free(struct drm_gem_shmem_object *shmem);
 
+int drm_gem_shmem_get_pages(struct drm_gem_shmem_object *shmem);
 void drm_gem_shmem_put_pages(struct drm_gem_shmem_object *shmem);
 int drm_gem_shmem_pin(struct drm_gem_shmem_object *shmem);
 void drm_gem_shmem_unpin(struct drm_gem_shmem_object *shmem);
@@ -117,7 +128,8 @@ static inline bool drm_gem_shmem_is_purgeable(struct drm_gem_shmem_object *shmem
 		!shmem->base.dma_buf && !shmem->base.import_attach;
 }
 
-void drm_gem_shmem_purge(struct drm_gem_shmem_object *shmem);
+void drm_gem_shmem_purge_locked(struct drm_gem_shmem_object *shmem);
+bool drm_gem_shmem_purge(struct drm_gem_shmem_object *shmem);
 
 struct sg_table *drm_gem_shmem_get_sg_table(struct drm_gem_shmem_object *shmem);
 struct sg_table *drm_gem_shmem_get_pages_sgt(struct drm_gem_shmem_object *shmem);
@@ -278,7 +290,10 @@ int drm_gem_shmem_dumb_create(struct drm_file *file, struct drm_device *dev,
  * the &drm_driver structure.
  */
 #define DRM_GEM_SHMEM_DRIVER_OPS \
+	.prime_handle_to_fd	= drm_gem_prime_handle_to_fd, \
+	.prime_fd_to_handle	= drm_gem_prime_fd_to_handle, \
 	.gem_prime_import_sg_table = drm_gem_shmem_prime_import_sg_table, \
-	.dumb_create		   = drm_gem_shmem_dumb_create
+	.gem_prime_mmap		= drm_gem_prime_mmap, \
+	.dumb_create		= drm_gem_shmem_dumb_create
 
 #endif /* __DRM_GEM_SHMEM_HELPER_H__ */

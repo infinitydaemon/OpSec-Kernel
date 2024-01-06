@@ -17,6 +17,7 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
+#include <linux/of_device.h>
 #include <linux/of_graph.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/platform_device.h>
@@ -400,7 +401,7 @@ static int fimc_md_parse_one_endpoint(struct fimc_md *fmd,
 	int index = fmd->num_sensors;
 	struct fimc_source_info *pd = &fmd->sensor[index].pdata;
 	struct device_node *rem, *np;
-	struct v4l2_async_connection *asd;
+	struct v4l2_async_subdev *asd;
 	struct v4l2_fwnode_endpoint endpoint = { .bus_type = 0 };
 	int ret;
 
@@ -465,7 +466,7 @@ static int fimc_md_parse_one_endpoint(struct fimc_md *fmd,
 
 	asd = v4l2_async_nf_add_fwnode_remote(&fmd->subdev_notifier,
 					      of_fwnode_handle(ep),
-					      struct v4l2_async_connection);
+					      struct v4l2_async_subdev);
 
 	of_node_put(ep);
 
@@ -1371,7 +1372,7 @@ err:
 
 static int subdev_notifier_bound(struct v4l2_async_notifier *notifier,
 				 struct v4l2_subdev *subdev,
-				 struct v4l2_async_connection *asd)
+				 struct v4l2_async_subdev *asd)
 {
 	struct fimc_md *fmd = notifier_to_fimc_md(notifier);
 	struct fimc_sensor_info *si = NULL;
@@ -1439,10 +1440,6 @@ static int fimc_md_probe(struct platform_device *pdev)
 	if (!fmd)
 		return -ENOMEM;
 
-	ret = of_platform_populate(dev->of_node, NULL, NULL, dev);
-	if (ret < 0)
-		return -ENOMEM;
-
 	spin_lock_init(&fmd->slock);
 	INIT_LIST_HEAD(&fmd->pipelines);
 	fmd->pdev = pdev;
@@ -1473,12 +1470,16 @@ static int fimc_md_probe(struct platform_device *pdev)
 		goto err_v4l2dev;
 
 	pinctrl = devm_pinctrl_get(dev);
-	if (IS_ERR(pinctrl))
-		dev_dbg(dev, "Failed to get pinctrl: %pe\n", pinctrl);
+	if (IS_ERR(pinctrl)) {
+		ret = PTR_ERR(pinctrl);
+		if (ret != -EPROBE_DEFER)
+			dev_err(dev, "Failed to get pinctrl: %d\n", ret);
+		goto err_clk;
+	}
 
 	platform_set_drvdata(pdev, fmd);
 
-	v4l2_async_nf_init(&fmd->subdev_notifier, &fmd->v4l2_dev);
+	v4l2_async_nf_init(&fmd->subdev_notifier);
 
 	ret = fimc_md_register_platform_entities(fmd, dev->of_node);
 	if (ret)
@@ -1506,7 +1507,8 @@ static int fimc_md_probe(struct platform_device *pdev)
 		fmd->subdev_notifier.ops = &subdev_notifier_ops;
 		fmd->num_sensors = 0;
 
-		ret = v4l2_async_nf_register(&fmd->subdev_notifier);
+		ret = v4l2_async_nf_register(&fmd->v4l2_dev,
+					     &fmd->subdev_notifier);
 		if (ret)
 			goto err_clk_p;
 	}
@@ -1530,12 +1532,12 @@ err_md:
 	return ret;
 }
 
-static void fimc_md_remove(struct platform_device *pdev)
+static int fimc_md_remove(struct platform_device *pdev)
 {
 	struct fimc_md *fmd = platform_get_drvdata(pdev);
 
 	if (!fmd)
-		return;
+		return 0;
 
 	fimc_md_unregister_clk_provider(fmd);
 	v4l2_async_nf_unregister(&fmd->subdev_notifier);
@@ -1548,6 +1550,8 @@ static void fimc_md_remove(struct platform_device *pdev)
 	media_device_unregister(&fmd->media_dev);
 	media_device_cleanup(&fmd->media_dev);
 	fimc_md_put_clocks(fmd);
+
+	return 0;
 }
 
 static const struct platform_device_id fimc_driver_ids[] __always_unused = {
@@ -1564,7 +1568,7 @@ MODULE_DEVICE_TABLE(of, fimc_md_of_match);
 
 static struct platform_driver fimc_md_driver = {
 	.probe		= fimc_md_probe,
-	.remove_new	= fimc_md_remove,
+	.remove		= fimc_md_remove,
 	.driver = {
 		.of_match_table = of_match_ptr(fimc_md_of_match),
 		.name		= "s5p-fimc-md",

@@ -1802,6 +1802,7 @@ static int mt_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	return 0;
 }
 
+#ifdef CONFIG_PM
 static int mt_suspend(struct hid_device *hdev, pm_message_t state)
 {
 	struct mt_device *td = hid_get_drvdata(hdev);
@@ -1835,6 +1836,7 @@ static int mt_resume(struct hid_device *hdev)
 
 	return 0;
 }
+#endif
 
 static void mt_remove(struct hid_device *hdev)
 {
@@ -2262,8 +2264,10 @@ static struct hid_driver mt_driver = {
 	.usage_table = mt_grabbed_usages,
 	.event = mt_event,
 	.report = mt_report,
-	.suspend = pm_ptr(mt_suspend),
-	.reset_resume = pm_ptr(mt_reset_resume),
-	.resume = pm_ptr(mt_resume),
+#ifdef CONFIG_PM
+	.suspend = mt_suspend,
+	.reset_resume = mt_reset_resume,
+	.resume = mt_resume,
+#endif
 };
 module_hid_driver(mt_driver);

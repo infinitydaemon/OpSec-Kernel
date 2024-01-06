@@ -48,7 +48,8 @@ static void rpisense_client_dev_register(struct rpisense *rpisense,
 	}
 }
 
-static int rpisense_probe(struct i2c_client *i2c)
+static int rpisense_probe(struct i2c_client *i2c,
+			       const struct i2c_device_id *id)
 {
 	int ret;
 	struct rpisense_js *rpisense_js;

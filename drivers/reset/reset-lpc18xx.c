@@ -139,6 +139,7 @@ static const struct reset_control_ops lpc18xx_rgu_ops = {
 static int lpc18xx_rgu_probe(struct platform_device *pdev)
 {
 	struct lpc18xx_rgu_data *rc;
+	struct resource *res;
 	u32 fcclk, firc;
 	int ret;
 
@@ -146,7 +147,8 @@ static int lpc18xx_rgu_probe(struct platform_device *pdev)
 	if (!rc)
 		return -ENOMEM;
 
-	rc->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	rc->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(rc->base))
 		return PTR_ERR(rc->base);
 
@@ -187,6 +189,8 @@ static int lpc18xx_rgu_probe(struct platform_device *pdev)
 	rc->rcdev.nr_resets = 64;
 	rc->rcdev.ops = &lpc18xx_rgu_ops;
 	rc->rcdev.of_node = pdev->dev.of_node;
+
+	platform_set_drvdata(pdev, rc);
 
 	ret = reset_controller_register(&rc->rcdev);
 	if (ret) {

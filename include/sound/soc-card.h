@@ -9,24 +9,9 @@
 #define __SOC_CARD_H
 
 enum snd_soc_card_subclass {
-	SND_SOC_CARD_CLASS_ROOT		= 0,
+	SND_SOC_CARD_CLASS_INIT		= 0,
 	SND_SOC_CARD_CLASS_RUNTIME	= 1,
 };
-
-static inline void snd_soc_card_mutex_lock_root(struct snd_soc_card *card)
-{
-	mutex_lock_nested(&card->mutex, SND_SOC_CARD_CLASS_ROOT);
-}
-
-static inline void snd_soc_card_mutex_lock(struct snd_soc_card *card)
-{
-	mutex_lock_nested(&card->mutex, SND_SOC_CARD_CLASS_RUNTIME);
-}
-
-static inline void snd_soc_card_mutex_unlock(struct snd_soc_card *card)
-{
-	mutex_unlock(&card->mutex);
-}
 
 struct snd_kcontrol *snd_soc_card_get_kcontrol(struct snd_soc_card *soc_card,
 					       const char *name);
@@ -115,8 +100,8 @@ struct snd_soc_dai *snd_soc_card_get_codec_dai(struct snd_soc_card *card,
 	struct snd_soc_pcm_runtime *rtd;
 
 	for_each_card_rtds(card, rtd) {
-		if (!strcmp(snd_soc_rtd_to_codec(rtd, 0)->name, dai_name))
-			return snd_soc_rtd_to_codec(rtd, 0);
+		if (!strcmp(asoc_rtd_to_codec(rtd, 0)->name, dai_name))
+			return asoc_rtd_to_codec(rtd, 0);
 	}
 
 	return NULL;

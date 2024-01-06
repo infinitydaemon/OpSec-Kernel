@@ -228,26 +228,32 @@ static vm_fault_t __dev_dax_pud_fault(struct dev_dax *dev_dax,
 }
 #endif /* !CONFIG_HAVE_ARCH_TRANSPARENT_HUGEPAGE_PUD */
 
-static vm_fault_t dev_dax_huge_fault(struct vm_fault *vmf, unsigned int order)
+static vm_fault_t dev_dax_huge_fault(struct vm_fault *vmf,
+		enum page_entry_size pe_size)
 {
 	struct file *filp = vmf->vma->vm_file;
 	vm_fault_t rc = VM_FAULT_SIGBUS;
 	int id;
 	struct dev_dax *dev_dax = filp->private_data;
 
-	dev_dbg(&dev_dax->dev, "%s: %s (%#lx - %#lx) order:%d\n", current->comm,
+	dev_dbg(&dev_dax->dev, "%s: %s (%#lx - %#lx) size = %d\n", current->comm,
 			(vmf->flags & FAULT_FLAG_WRITE) ? "write" : "read",
-			vmf->vma->vm_start, vmf->vma->vm_end, order);
+			vmf->vma->vm_start, vmf->vma->vm_end, pe_size);
 
 	id = dax_read_lock();
-	if (order == 0)
+	switch (pe_size) {
+	case PE_SIZE_PTE:
 		rc = __dev_dax_pte_fault(dev_dax, vmf);
-	else if (order == PMD_ORDER)
+		break;
+	case PE_SIZE_PMD:
 		rc = __dev_dax_pmd_fault(dev_dax, vmf);
-	else if (order == PUD_ORDER)
+		break;
+	case PE_SIZE_PUD:
 		rc = __dev_dax_pud_fault(dev_dax, vmf);
-	else
+		break;
+	default:
 		rc = VM_FAULT_SIGBUS;
+	}
 
 	dax_read_unlock(id);
 
@@ -256,7 +262,7 @@ static vm_fault_t dev_dax_huge_fault(struct vm_fault *vmf, unsigned int order)
 
 static vm_fault_t dev_dax_fault(struct vm_fault *vmf)
 {
-	return dev_dax_huge_fault(vmf, 0);
+	return dev_dax_huge_fault(vmf, PE_SIZE_PTE);
 }
 
 static int dev_dax_may_split(struct vm_area_struct *vma, unsigned long addr)
@@ -302,7 +308,7 @@ static int dax_mmap(struct file *filp, struct vm_area_struct *vma)
 		return rc;
 
 	vma->vm_ops = &dax_vm_ops;
-	vm_flags_set(vma, VM_HUGEPAGE);
+	vma->vm_flags |= VM_HUGEPAGE;
 	return 0;
 }
 
@@ -390,7 +396,7 @@ static void dev_dax_kill(void *dev_dax)
 	kill_dev_dax(dev_dax);
 }
 
-static int dev_dax_probe(struct dev_dax *dev_dax)
+int dev_dax_probe(struct dev_dax *dev_dax)
 {
 	struct dax_device *dax_dev = dev_dax->dax_dev;
 	struct device *dev = &dev_dax->dev;
@@ -465,10 +471,12 @@ static int dev_dax_probe(struct dev_dax *dev_dax)
 	run_dax(dax_dev);
 	return devm_add_action_or_reset(dev, dev_dax_kill, dev_dax);
 }
+EXPORT_SYMBOL_GPL(dev_dax_probe);
 
 static struct dax_device_driver device_dax_driver = {
 	.probe = dev_dax_probe,
-	.type = DAXDRV_DEVICE_TYPE,
+	/* all probe actions are unwound by devm, so .remove isn't necessary */
+	.match_always = 1,
 };
 
 static int __init dax_init(void)

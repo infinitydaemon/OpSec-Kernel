@@ -14,10 +14,9 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/io.h>
-#include <linux/firmware/qcom/qcom_scm.h>
+#include <linux/qcom_scm.h>
 
 #define QCOM_RMTFS_MEM_DEV_MAX	(MINORMASK + 1)
-#define NUM_MAX_VMIDS		2
 
 static dev_t qcom_rmtfs_mem_major;
 
@@ -31,7 +30,7 @@ struct qcom_rmtfs_mem {
 
 	unsigned int client_id;
 
-	u64 perms;
+	unsigned int perms;
 };
 
 static ssize_t qcom_rmtfs_mem_show(struct device *dev,
@@ -126,6 +125,7 @@ static int qcom_rmtfs_mem_release(struct inode *inode, struct file *filp)
 }
 
 static struct class rmtfs_class = {
+	.owner          = THIS_MODULE,
 	.name           = "rmtfs",
 };
 
@@ -171,13 +171,12 @@ static void qcom_rmtfs_mem_release_device(struct device *dev)
 static int qcom_rmtfs_mem_probe(struct platform_device *pdev)
 {
 	struct device_node *node = pdev->dev.of_node;
-	struct qcom_scm_vmperm perms[NUM_MAX_VMIDS + 1];
+	struct qcom_scm_vmperm perms[2];
 	struct reserved_mem *rmem;
 	struct qcom_rmtfs_mem *rmtfs_mem;
 	u32 client_id;
-	u32 vmid[NUM_MAX_VMIDS];
-	int num_vmids;
-	int ret, i;
+	u32 vmid;
+	int ret;
 
 	rmem = of_reserved_mem_lookup(node);
 	if (!rmem) {
@@ -199,15 +198,6 @@ static int qcom_rmtfs_mem_probe(struct platform_device *pdev)
 	rmtfs_mem->addr = rmem->base;
 	rmtfs_mem->client_id = client_id;
 	rmtfs_mem->size = rmem->size;
-
-	/*
-	 * If requested, discard the first and last 4k block in order to ensure
-	 * that the rmtfs region isn't adjacent to other protected regions.
-	 */
-	if (of_property_read_bool(node, "qcom,use-guard-pages")) {
-		rmtfs_mem->addr += SZ_4K;
-		rmtfs_mem->size -= 2 * SZ_4K;
-	}
 
 	device_initialize(&rmtfs_mem->dev);
 	rmtfs_mem->dev.parent = &pdev->dev;
@@ -236,22 +226,7 @@ static int qcom_rmtfs_mem_probe(struct platform_device *pdev)
 		goto put_device;
 	}
 
-	num_vmids = of_property_count_u32_elems(node, "qcom,vmid");
-	if (num_vmids == -EINVAL) {
-		/* qcom,vmid is optional */
-		num_vmids = 0;
-	} else if (num_vmids < 0) {
-		dev_err(&pdev->dev, "failed to count qcom,vmid elements: %d\n", num_vmids);
-		ret = num_vmids;
-		goto remove_cdev;
-	} else if (num_vmids > NUM_MAX_VMIDS) {
-		dev_warn(&pdev->dev,
-			 "too many VMIDs (%d) specified! Only mapping first %d entries\n",
-			 num_vmids, NUM_MAX_VMIDS);
-		num_vmids = NUM_MAX_VMIDS;
-	}
-
-	ret = of_property_read_u32_array(node, "qcom,vmid", vmid, num_vmids);
+	ret = of_property_read_u32(node, "qcom,vmid", &vmid);
 	if (ret < 0 && ret != -EINVAL) {
 		dev_err(&pdev->dev, "failed to parse qcom,vmid\n");
 		goto remove_cdev;
@@ -263,15 +238,12 @@ static int qcom_rmtfs_mem_probe(struct platform_device *pdev)
 
 		perms[0].vmid = QCOM_SCM_VMID_HLOS;
 		perms[0].perm = QCOM_SCM_PERM_RW;
-
-		for (i = 0; i < num_vmids; i++) {
-			perms[i + 1].vmid = vmid[i];
-			perms[i + 1].perm = QCOM_SCM_PERM_RW;
-		}
+		perms[1].vmid = vmid;
+		perms[1].perm = QCOM_SCM_PERM_RW;
 
 		rmtfs_mem->perms = BIT(QCOM_SCM_VMID_HLOS);
 		ret = qcom_scm_assign_mem(rmtfs_mem->addr, rmtfs_mem->size,
-					  &rmtfs_mem->perms, perms, num_vmids + 1);
+					  &rmtfs_mem->perms, perms, 2);
 		if (ret < 0) {
 			dev_err(&pdev->dev, "assign memory failed\n");
 			goto remove_cdev;
@@ -290,7 +262,7 @@ put_device:
 	return ret;
 }
 
-static void qcom_rmtfs_mem_remove(struct platform_device *pdev)
+static int qcom_rmtfs_mem_remove(struct platform_device *pdev)
 {
 	struct qcom_rmtfs_mem *rmtfs_mem = dev_get_drvdata(&pdev->dev);
 	struct qcom_scm_vmperm perm;
@@ -305,6 +277,8 @@ static void qcom_rmtfs_mem_remove(struct platform_device *pdev)
 
 	cdev_device_del(&rmtfs_mem->cdev, &rmtfs_mem->dev);
 	put_device(&rmtfs_mem->dev);
+
+	return 0;
 }
 
 static const struct of_device_id qcom_rmtfs_mem_of_match[] = {
@@ -315,7 +289,7 @@ MODULE_DEVICE_TABLE(of, qcom_rmtfs_mem_of_match);
 
 static struct platform_driver qcom_rmtfs_mem_driver = {
 	.probe = qcom_rmtfs_mem_probe,
-	.remove_new = qcom_rmtfs_mem_remove,
+	.remove = qcom_rmtfs_mem_remove,
 	.driver  = {
 		.name  = "qcom_rmtfs_mem",
 		.of_match_table = qcom_rmtfs_mem_of_match,

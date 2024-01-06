@@ -1690,10 +1690,6 @@ static int cs47l92_set_fll(struct snd_soc_component *component, int fll_id,
 	}
 }
 
-static const struct snd_soc_dai_ops cs47l92_dai_ops = {
-	.compress_new = snd_soc_new_compress,
-};
-
 static struct snd_soc_dai_driver cs47l92_dai[] = {
 	{
 		.name = "cs47l92-aif1",
@@ -1827,7 +1823,7 @@ static struct snd_soc_dai_driver cs47l92_dai[] = {
 			.rates = MADERA_RATES,
 			.formats = MADERA_FORMATS,
 		},
-		.ops = &cs47l92_dai_ops,
+		.compress_new = snd_soc_new_compress,
 	},
 	{
 		.name = "cs47l92-dsp-trace",
@@ -1850,12 +1846,12 @@ static int cs47l92_open(struct snd_soc_component *component,
 	struct madera *madera = priv->madera;
 	int n_adsp;
 
-	if (strcmp(snd_soc_rtd_to_codec(rtd, 0)->name, "cs47l92-dsp-trace") == 0) {
+	if (strcmp(asoc_rtd_to_codec(rtd, 0)->name, "cs47l92-dsp-trace") == 0) {
 		n_adsp = 0;
 	} else {
 		dev_err(madera->dev,
 			"No suitable compressed stream for DAI '%s'\n",
-			snd_soc_rtd_to_codec(rtd, 0)->name);
+			asoc_rtd_to_codec(rtd, 0)->name);
 		return -EINVAL;
 	}
 
@@ -2072,7 +2068,7 @@ error_core:
 	return ret;
 }
 
-static void cs47l92_remove(struct platform_device *pdev)
+static int cs47l92_remove(struct platform_device *pdev)
 {
 	struct cs47l92 *cs47l92 = platform_get_drvdata(pdev);
 
@@ -2085,6 +2081,8 @@ static void cs47l92_remove(struct platform_device *pdev)
 	madera_free_irq(cs47l92->core.madera, MADERA_IRQ_DSP_IRQ1, cs47l92);
 
 	madera_core_free(&cs47l92->core);
+
+	return 0;
 }
 
 static struct platform_driver cs47l92_codec_driver = {
@@ -2092,7 +2090,7 @@ static struct platform_driver cs47l92_codec_driver = {
 		.name = "cs47l92-codec",
 	},
 	.probe = &cs47l92_probe,
-	.remove_new = cs47l92_remove,
+	.remove = &cs47l92_remove,
 };
 
 module_platform_driver(cs47l92_codec_driver);

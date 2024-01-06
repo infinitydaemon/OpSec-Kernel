@@ -61,7 +61,6 @@
 #include <linux/module.h>
 #include <linux/dmapool.h>
 #include <linux/iopoll.h>
-#include <linux/property.h>
 
 #include "core.h"
 #include "gadget-export.h"
@@ -801,8 +800,7 @@ void cdns3_gadget_giveback(struct cdns3_endpoint *priv_ep,
 	if (request->status == -EINPROGRESS)
 		request->status = status;
 
-	if (likely(!(priv_req->flags & REQUEST_UNALIGNED)))
-		usb_gadget_unmap_request_by_dev(priv_dev->sysdev, request,
+	usb_gadget_unmap_request_by_dev(priv_dev->sysdev, request,
 					priv_ep->dir);
 
 	if ((priv_req->flags & REQUEST_UNALIGNED) &&
@@ -810,10 +808,10 @@ void cdns3_gadget_giveback(struct cdns3_endpoint *priv_ep,
 		/* Make DMA buffer CPU accessible */
 		dma_sync_single_for_cpu(priv_dev->sysdev,
 			priv_req->aligned_buf->dma,
-			request->actual,
+			priv_req->aligned_buf->size,
 			priv_req->aligned_buf->dir);
 		memcpy(request->buf, priv_req->aligned_buf->buf,
-		       request->actual);
+		       request->length);
 	}
 
 	priv_req->flags &= ~(REQUEST_PENDING | REQUEST_UNALIGNED);
@@ -2545,12 +2543,10 @@ static int __cdns3_gadget_ep_queue(struct usb_ep *ep,
 	if (ret < 0)
 		return ret;
 
-	if (likely(!(priv_req->flags & REQUEST_UNALIGNED))) {
-		ret = usb_gadget_map_request_by_dev(priv_dev->sysdev, request,
+	ret = usb_gadget_map_request_by_dev(priv_dev->sysdev, request,
 					    usb_endpoint_dir_in(ep->desc));
-		if (ret)
-			return ret;
-	}
+	if (ret)
+		return ret;
 
 	list_add_tail(&request->list, &priv_ep->deferred_req_list);
 

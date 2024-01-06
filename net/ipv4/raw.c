@@ -116,10 +116,10 @@ void raw_unhash_sk(struct sock *sk)
 }
 EXPORT_SYMBOL_GPL(raw_unhash_sk);
 
-bool raw_v4_match(struct net *net, const struct sock *sk, unsigned short num,
+bool raw_v4_match(struct net *net, struct sock *sk, unsigned short num,
 		  __be32 raddr, __be32 laddr, int dif, int sdif)
 {
-	const struct inet_sock *inet = inet_sk(sk);
+	struct inet_sock *inet = inet_sk(sk);
 
 	if (net_eq(sock_net(sk), net) && inet->inet_num == num	&&
 	    !(inet->inet_daddr && inet->inet_daddr != raddr) 	&&
@@ -203,9 +203,8 @@ static void raw_err(struct sock *sk, struct sk_buff *skb, u32 info)
 	struct inet_sock *inet = inet_sk(sk);
 	const int type = icmp_hdr(skb)->type;
 	const int code = icmp_hdr(skb)->code;
-	int harderr = 0;
-	bool recverr;
 	int err = 0;
+	int harderr = 0;
 
 	if (type == ICMP_DEST_UNREACH && code == ICMP_FRAG_NEEDED)
 		ipv4_sk_update_pmtu(skb, sk, info);
@@ -219,8 +218,7 @@ static void raw_err(struct sock *sk, struct sk_buff *skb, u32 info)
 	   2. Socket is connected (otherwise the error indication
 	      is useless without ip_recverr and error is hard.
 	 */
-	recverr = inet_test_bit(RECVERR, sk);
-	if (!recverr && sk->sk_state != TCP_ESTABLISHED)
+	if (!inet->recverr && sk->sk_state != TCP_ESTABLISHED)
 		return;
 
 	switch (type) {
@@ -239,7 +237,7 @@ static void raw_err(struct sock *sk, struct sk_buff *skb, u32 info)
 		if (code > NR_ICMP_UNREACH)
 			break;
 		if (code == ICMP_FRAG_NEEDED) {
-			harderr = READ_ONCE(inet->pmtudisc) != IP_PMTUDISC_DONT;
+			harderr = inet->pmtudisc != IP_PMTUDISC_DONT;
 			err = EMSGSIZE;
 		} else {
 			err = icmp_err_convert[code].errno;
@@ -247,16 +245,16 @@ static void raw_err(struct sock *sk, struct sk_buff *skb, u32 info)
 		}
 	}
 
-	if (recverr) {
+	if (inet->recverr) {
 		const struct iphdr *iph = (const struct iphdr *)skb->data;
 		u8 *payload = skb->data + (iph->ihl << 2);
 
-		if (inet_test_bit(HDRINCL, sk))
+		if (inet->hdrincl)
 			payload = skb->data;
 		ip_icmp_error(sk, skb, err, 0, info, payload);
 	}
 
-	if (recverr || harderr) {
+	if (inet->recverr || harderr) {
 		sk->sk_err = err;
 		sk_error_report(sk);
 	}
@@ -288,13 +286,11 @@ void raw_icmp_error(struct sk_buff *skb, int protocol, u32 info)
 
 static int raw_rcv_skb(struct sock *sk, struct sk_buff *skb)
 {
-	enum skb_drop_reason reason;
-
 	/* Charge it to the socket. */
 
 	ipv4_pktinfo_prepare(sk, skb);
-	if (sock_queue_rcv_skb_reason(sk, skb, &reason) < 0) {
-		kfree_skb_reason(skb, reason);
+	if (sock_queue_rcv_skb(sk, skb) < 0) {
+		kfree_skb(skb);
 		return NET_RX_DROP;
 	}
 
@@ -305,7 +301,7 @@ int raw_rcv(struct sock *sk, struct sk_buff *skb)
 {
 	if (!xfrm4_policy_check(sk, XFRM_POLICY_IN, skb)) {
 		atomic_inc(&sk->sk_drops);
-		kfree_skb_reason(skb, SKB_DROP_REASON_XFRM_POLICY);
+		kfree_skb(skb);
 		return NET_RX_DROP;
 	}
 	nf_reset_ct(skb);
@@ -415,7 +411,7 @@ error_free:
 	kfree_skb(skb);
 error:
 	IP_INC_STATS(net, IPSTATS_MIB_OUTDISCARDS);
-	if (err == -ENOBUFS && !inet_test_bit(RECVERR, sk))
+	if (err == -ENOBUFS && !inet->recverr)
 		err = 0;
 	return err;
 }
@@ -478,11 +474,11 @@ static int raw_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	struct ipcm_cookie ipc;
 	struct rtable *rt = NULL;
 	struct flowi4 fl4;
-	u8 tos, scope;
 	int free = 0;
 	__be32 daddr;
 	__be32 saddr;
-	int uc_index, err;
+	u8  tos;
+	int err;
 	struct ip_options_data opt_copy;
 	struct raw_frag_vec rfv;
 	int hdrincl;
@@ -491,8 +487,12 @@ static int raw_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	if (len > 0xFFFF)
 		goto out;
 
-	hdrincl = inet_test_bit(HDRINCL, sk);
-
+	/* hdrincl should be READ_ONCE(inet->hdrincl)
+	 * but READ_ONCE() doesn't work with bit fields.
+	 * Doing this indirectly yields the same result.
+	 */
+	hdrincl = inet->hdrincl;
+	hdrincl = READ_ONCE(hdrincl);
 	/*
 	 *	Check the flags.
 	 */
@@ -573,32 +573,33 @@ static int raw_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 			daddr = ipc.opt->opt.faddr;
 		}
 	}
-	tos = get_rttos(&ipc, inet);
-	scope = ip_sendmsg_scope(inet, &ipc, msg);
+	tos = get_rtconn_flags(&ipc, sk);
+	if (msg->msg_flags & MSG_DONTROUTE)
+		tos |= RTO_ONLINK;
 
-	uc_index = READ_ONCE(inet->uc_index);
 	if (ipv4_is_multicast(daddr)) {
 		if (!ipc.oif || netif_index_is_l3_master(sock_net(sk), ipc.oif))
-			ipc.oif = READ_ONCE(inet->mc_index);
+			ipc.oif = inet->mc_index;
 		if (!saddr)
-			saddr = READ_ONCE(inet->mc_addr);
+			saddr = inet->mc_addr;
 	} else if (!ipc.oif) {
-		ipc.oif = uc_index;
-	} else if (ipv4_is_lbcast(daddr) && uc_index) {
+		ipc.oif = inet->uc_index;
+	} else if (ipv4_is_lbcast(daddr) && inet->uc_index) {
 		/* oif is set, packet is to local broadcast
 		 * and uc_index is set. oif is most likely set
 		 * by sk_bound_dev_if. If uc_index != oif check if the
 		 * oif is an L3 master and uc_index is an L3 slave.
 		 * If so, we want to allow the send using the uc_index.
 		 */
-		if (ipc.oif != uc_index &&
+		if (ipc.oif != inet->uc_index &&
 		    ipc.oif == l3mdev_master_ifindex_by_index(sock_net(sk),
-							      uc_index)) {
-			ipc.oif = uc_index;
+							      inet->uc_index)) {
+			ipc.oif = inet->uc_index;
 		}
 	}
 
-	flowi4_init_output(&fl4, ipc.oif, ipc.sockc.mark, tos, scope,
+	flowi4_init_output(&fl4, ipc.oif, ipc.sockc.mark, tos,
+			   RT_SCOPE_UNIVERSE,
 			   hdrincl ? ipc.protocol : sk->sk_protocol,
 			   inet_sk_flowi_flags(sk) |
 			    (hdrincl ? FLOWI_FLAG_KNOWN_NH : 0),
@@ -644,7 +645,7 @@ back_from_confirm:
 			ip_flush_pending_frames(sk);
 		else if (!(msg->msg_flags & MSG_MORE)) {
 			err = ip_push_pending_frames(sk, &fl4);
-			if (err == -ENOBUFS && !inet_test_bit(RECVERR, sk))
+			if (err == -ENOBUFS && !inet->recverr)
 				err = 0;
 		}
 		release_sock(sk);
@@ -766,7 +767,7 @@ static int raw_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
 		memset(&sin->sin_zero, 0, sizeof(sin->sin_zero));
 		*addr_len = sizeof(*sin);
 	}
-	if (inet_cmsg_flags(inet))
+	if (inet->cmsg_flags)
 		ip_cmsg_recv(msg, skb);
 	if (flags & MSG_TRUNC)
 		copied = skb->len;
@@ -855,29 +856,29 @@ static int raw_getsockopt(struct sock *sk, int level, int optname,
 	return do_raw_getsockopt(sk, level, optname, optval, optlen);
 }
 
-static int raw_ioctl(struct sock *sk, int cmd, int *karg)
+static int raw_ioctl(struct sock *sk, int cmd, unsigned long arg)
 {
 	switch (cmd) {
 	case SIOCOUTQ: {
-		*karg = sk_wmem_alloc_get(sk);
-		return 0;
+		int amount = sk_wmem_alloc_get(sk);
+
+		return put_user(amount, (int __user *)arg);
 	}
 	case SIOCINQ: {
 		struct sk_buff *skb;
+		int amount = 0;
 
 		spin_lock_bh(&sk->sk_receive_queue.lock);
 		skb = skb_peek(&sk->sk_receive_queue);
 		if (skb)
-			*karg = skb->len;
-		else
-			*karg = 0;
+			amount = skb->len;
 		spin_unlock_bh(&sk->sk_receive_queue.lock);
-		return 0;
+		return put_user(amount, (int __user *)arg);
 	}
 
 	default:
 #ifdef CONFIG_IP_MROUTE
-		return ipmr_ioctl(sk, cmd, karg);
+		return ipmr_ioctl(sk, cmd, (void __user *)arg);
 #else
 		return -ENOIOCTLCMD;
 #endif

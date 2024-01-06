@@ -63,7 +63,7 @@ TRACE_EVENT(fib6_table_lookup,
 		}
 
 		if (res->nh && res->nh->fib_nh_dev) {
-			strscpy(__entry->name, res->nh->fib_nh_dev->name, IFNAMSIZ);
+			strlcpy(__entry->name, res->nh->fib_nh_dev->name, IFNAMSIZ);
 		} else {
 			strcpy(__entry->name, "-");
 		}

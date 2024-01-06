@@ -70,5 +70,7 @@
 #define SLAVE_QDSS_STM			48
 #define SLAVE_TCU			49
 
+#define MASTER_IPA_CORE			0
+#define SLAVE_IPA_CORE			1
 
 #endif

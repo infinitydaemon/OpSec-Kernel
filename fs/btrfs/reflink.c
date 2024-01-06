@@ -2,19 +2,13 @@
 
 #include <linux/blkdev.h>
 #include <linux/iversion.h>
-#include "ctree.h"
-#include "fs.h"
-#include "messages.h"
 #include "compression.h"
+#include "ctree.h"
 #include "delalloc-space.h"
 #include "disk-io.h"
 #include "reflink.h"
 #include "transaction.h"
 #include "subpage.h"
-#include "accessors.h"
-#include "file-item.h"
-#include "file.h"
-#include "super.h"
 
 #define BTRFS_MAX_DEDUPE_LEN	SZ_16M
 
@@ -25,11 +19,13 @@ static int clone_finish_inode_update(struct btrfs_trans_handle *trans,
 				     const u64 olen,
 				     int no_time_update)
 {
+	struct btrfs_root *root = BTRFS_I(inode)->root;
 	int ret;
 
 	inode_inc_iversion(inode);
 	if (!no_time_update) {
-		inode_set_mtime_to_ts(inode, inode_set_ctime_current(inode));
+		inode->i_mtime = current_time(inode);
+		inode->i_ctime = inode->i_mtime;
 	}
 	/*
 	 * We round up to the block size at eof when determining which
@@ -42,7 +38,7 @@ static int clone_finish_inode_update(struct btrfs_trans_handle *trans,
 		btrfs_inode_safe_disk_i_size_write(BTRFS_I(inode), 0);
 	}
 
-	ret = btrfs_update_inode(trans, BTRFS_I(inode));
+	ret = btrfs_update_inode(trans, root, BTRFS_I(inode));
 	if (ret) {
 		btrfs_abort_transaction(trans, ret);
 		btrfs_end_transaction(trans);
@@ -322,16 +318,16 @@ copy_to_page:
 	goto out;
 }
 
-/*
- * Clone a range from inode file to another.
+/**
+ * btrfs_clone() - clone a range from inode file to another
  *
- * @src:             Inode to clone from
- * @inode:           Inode to clone to
- * @off:             Offset within source to start clone from
- * @olen:            Original length, passed by user, of range to clone
- * @olen_aligned:    Block-aligned value of olen
- * @destoff:         Offset within @inode to start clone
- * @no_time_update:  Whether to update mtime/ctime on the target inode
+ * @src: Inode to clone from
+ * @inode: Inode to clone to
+ * @off: Offset within source to start clone from
+ * @olen: Original length, passed by user, of range to clone
+ * @olen_aligned: Block-aligned value of olen
+ * @destoff: Offset within @inode to start clone
+ * @no_time_update: Whether to update mtime/ctime on the target inode
  */
 static int btrfs_clone(struct inode *src, struct inode *inode,
 		       const u64 off, const u64 olen, const u64 olen_aligned,
@@ -891,7 +887,7 @@ loff_t btrfs_remap_file_range(struct file *src_file, loff_t off,
 		return -EINVAL;
 
 	if (same_inode) {
-		btrfs_inode_lock(BTRFS_I(src_inode), BTRFS_ILOCK_MMAP);
+		btrfs_inode_lock(src_inode, BTRFS_ILOCK_MMAP);
 	} else {
 		lock_two_nondirectories(src_inode, dst_inode);
 		btrfs_double_mmap_lock(src_inode, dst_inode);
@@ -909,7 +905,7 @@ loff_t btrfs_remap_file_range(struct file *src_file, loff_t off,
 
 out_unlock:
 	if (same_inode) {
-		btrfs_inode_unlock(BTRFS_I(src_inode), BTRFS_ILOCK_MMAP);
+		btrfs_inode_unlock(src_inode, BTRFS_ILOCK_MMAP);
 	} else {
 		btrfs_double_mmap_unlock(src_inode, dst_inode);
 		unlock_two_nondirectories(src_inode, dst_inode);

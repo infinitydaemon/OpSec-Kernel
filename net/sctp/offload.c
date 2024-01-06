@@ -22,7 +22,6 @@
 #include <net/sctp/sctp.h>
 #include <net/sctp/checksum.h>
 #include <net/protocol.h>
-#include <net/gso.h>
 
 static __le32 sctp_gso_make_checksum(struct sk_buff *skb)
 {

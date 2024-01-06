@@ -682,7 +682,8 @@ static const struct v4l2_subdev_ops ov9640_subdev_ops = {
 /*
  * i2c_driver function
  */
-static int ov9640_probe(struct i2c_client *client)
+static int ov9640_probe(struct i2c_client *client,
+			const struct i2c_device_id *did)
 {
 	struct ov9640_priv *priv;
 	int ret;

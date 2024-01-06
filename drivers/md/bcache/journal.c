@@ -723,11 +723,11 @@ static void journal_write_endio(struct bio *bio)
 	closure_put(&w->c->journal.io);
 }
 
-static CLOSURE_CALLBACK(journal_write);
+static void journal_write(struct closure *cl);
 
-static CLOSURE_CALLBACK(journal_write_done)
+static void journal_write_done(struct closure *cl)
 {
-	closure_type(j, struct journal, io);
+	struct journal *j = container_of(cl, struct journal, io);
 	struct journal_write *w = (j->cur == j->w)
 		? &j->w[1]
 		: &j->w[0];
@@ -736,19 +736,19 @@ static CLOSURE_CALLBACK(journal_write_done)
 	continue_at_nobarrier(cl, journal_write, bch_journal_wq);
 }
 
-static CLOSURE_CALLBACK(journal_write_unlock)
+static void journal_write_unlock(struct closure *cl)
 	__releases(&c->journal.lock)
 {
-	closure_type(c, struct cache_set, journal.io);
+	struct cache_set *c = container_of(cl, struct cache_set, journal.io);
 
 	c->journal.io_in_flight = 0;
 	spin_unlock(&c->journal.lock);
 }
 
-static CLOSURE_CALLBACK(journal_write_unlocked)
+static void journal_write_unlocked(struct closure *cl)
 	__releases(c->journal.lock)
 {
-	closure_type(c, struct cache_set, journal.io);
+	struct cache_set *c = container_of(cl, struct cache_set, journal.io);
 	struct cache *ca = c->cache;
 	struct journal_write *w = c->journal.cur;
 	struct bkey *k = &c->journal.key;
@@ -823,12 +823,12 @@ static CLOSURE_CALLBACK(journal_write_unlocked)
 	continue_at(cl, journal_write_done, NULL);
 }
 
-static CLOSURE_CALLBACK(journal_write)
+static void journal_write(struct closure *cl)
 {
-	closure_type(c, struct cache_set, journal.io);
+	struct cache_set *c = container_of(cl, struct cache_set, journal.io);
 
 	spin_lock(&c->journal.lock);
-	journal_write_unlocked(&cl->work);
+	journal_write_unlocked(cl);
 }
 
 static void journal_try_write(struct cache_set *c)

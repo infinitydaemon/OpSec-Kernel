@@ -219,15 +219,11 @@ void irq_init_generic_chip(struct irq_chip_generic *gc, const char *name,
 			   int num_ct, unsigned int irq_base,
 			   void __iomem *reg_base, irq_flow_handler_t handler)
 {
-	struct irq_chip_type *ct = gc->chip_types;
-	int i;
-
 	raw_spin_lock_init(&gc->lock);
 	gc->num_ct = num_ct;
 	gc->irq_base = irq_base;
 	gc->reg_base = reg_base;
-	for (i = 0; i < num_ct; i++)
-		ct[i].chip.name = name;
+	gc->chip_types->chip.name = name;
 	gc->chip_types->handler = handler;
 }
 

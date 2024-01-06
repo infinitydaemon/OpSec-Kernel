@@ -92,7 +92,8 @@ static int isp1301_phy_set_vbus(struct usb_phy *phy, int on)
 	return 0;
 }
 
-static int isp1301_probe(struct i2c_client *client)
+static int isp1301_probe(struct i2c_client *client,
+			 const struct i2c_device_id *i2c_id)
 {
 	struct isp1301 *isp;
 	struct usb_phy *phy;

@@ -1118,9 +1118,7 @@ static void ccdc_configure(struct isp_ccdc_device *ccdc)
 	struct v4l2_mbus_framefmt *format;
 	const struct v4l2_rect *crop;
 	const struct isp_format_info *fmt_info;
-	struct v4l2_subdev_format fmt_src = {
-		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
-	};
+	struct v4l2_subdev_format fmt_src;
 	unsigned int depth_out;
 	unsigned int depth_in = 0;
 	struct media_pad *pad;
@@ -1140,13 +1138,8 @@ static void ccdc_configure(struct isp_ccdc_device *ccdc)
 	if (ccdc->input == CCDC_INPUT_PARALLEL) {
 		struct v4l2_subdev *sd =
 			to_isp_pipeline(&ccdc->subdev.entity)->external;
-		struct isp_bus_cfg *bus_cfg;
 
-		bus_cfg = v4l2_subdev_to_bus_cfg(sd);
-		if (WARN_ON(!bus_cfg))
-			return;
-
-		parcfg = &bus_cfg->bus.parallel;
+		parcfg = &v4l2_subdev_to_bus_cfg(sd)->bus.parallel;
 		ccdc->bt656 = parcfg->bt656;
 	}
 
@@ -1157,6 +1150,7 @@ static void ccdc_configure(struct isp_ccdc_device *ccdc)
 	 * input format is a non-BT.656 YUV variant.
 	 */
 	fmt_src.pad = pad->index;
+	fmt_src.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 	if (!v4l2_subdev_call(sensor, pad, get_fmt, NULL, &fmt_src)) {
 		fmt_info = omap3isp_video_format_info(fmt_src.format.code);
 		depth_in = fmt_info->width;
@@ -2441,11 +2435,7 @@ static int ccdc_link_validate(struct v4l2_subdev *sd,
 	if (ccdc->input == CCDC_INPUT_PARALLEL) {
 		struct v4l2_subdev *sd =
 			media_entity_to_v4l2_subdev(link->source->entity);
-		struct isp_bus_cfg *bus_cfg;
-
-		bus_cfg = v4l2_subdev_to_bus_cfg(sd);
-		if (WARN_ON(!bus_cfg))
-			return -EPIPE;
+		struct isp_bus_cfg *bus_cfg = v4l2_subdev_to_bus_cfg(sd);
 
 		parallel_shift = bus_cfg->bus.parallel.data_lane_shift;
 	} else {

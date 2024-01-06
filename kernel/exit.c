@@ -68,13 +68,10 @@
 #include <linux/kprobes.h>
 #include <linux/rethook.h>
 #include <linux/sysfs.h>
-#include <linux/user_events.h>
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
 #include <asm/mmu_context.h>
-
-#include "exit.h"
 
 /*
  * The default value should be high enough to not crash a system that randomly
@@ -135,6 +132,7 @@ static void __unhash_process(struct task_struct *p, bool group_dead)
 		list_del_init(&p->sibling);
 		__this_cpu_dec(process_counts);
 	}
+	list_del_rcu(&p->thread_group);
 	list_del_rcu(&p->thread_node);
 }
 
@@ -412,10 +410,7 @@ static void coredump_task_exit(struct task_struct *tsk)
 	tsk->flags |= PF_POSTCOREDUMP;
 	core_state = tsk->signal->core_state;
 	spin_unlock_irq(&tsk->sighand->siglock);
-
-	/* The vhost_worker does not particpate in coredumps */
-	if (core_state &&
-	    ((tsk->flags & (PF_IO_WORKER | PF_USER_WORKER)) != PF_USER_WORKER)) {
+	if (core_state) {
 		struct core_thread self;
 
 		self.task = current;
@@ -540,8 +535,9 @@ static void exit_mm(void)
 	exit_mm_release(current, mm);
 	if (!mm)
 		return;
+	sync_mm_rss(mm);
 	mmap_read_lock(mm);
-	mmgrab_lazy_tlb(mm);
+	mmgrab(mm);
 	BUG_ON(mm != current->active_mm);
 	/* more a memory barrier than a real lock */
 	task_lock(current);
@@ -822,13 +818,15 @@ void __noreturn do_exit(long code)
 
 	coredump_task_exit(tsk);
 	ptrace_event(PTRACE_EVENT_EXIT, code);
-	user_events_exit(tsk);
 
 	validate_creds_for_do_exit(tsk);
 
 	io_uring_files_cancel();
 	exit_signals(tsk);  /* sets PF_EXITING */
 
+	/* sync mm's RSS info before statistics gathering */
+	if (tsk->mm)
+		sync_mm_rss(tsk->mm);
 	acct_update_integrals(tsk);
 	group_dead = atomic_dec_and_test(&tsk->signal->live);
 	if (group_dead) {
@@ -1033,6 +1031,26 @@ SYSCALL_DEFINE1(exit_group, int, error_code)
 	/* NOTREACHED */
 	return 0;
 }
+
+struct waitid_info {
+	pid_t pid;
+	uid_t uid;
+	int status;
+	int cause;
+};
+
+struct wait_opts {
+	enum pid_type		wo_type;
+	int			wo_flags;
+	struct pid		*wo_pid;
+
+	struct waitid_info	*wo_info;
+	int			wo_stat;
+	struct rusage		*wo_rusage;
+
+	wait_queue_entry_t		child_wait;
+	int			notask_error;
+};
 
 static int eligible_pid(struct wait_opts *wo, struct task_struct *p)
 {
@@ -1497,17 +1515,6 @@ static int ptrace_do_wait(struct wait_opts *wo, struct task_struct *tsk)
 	return 0;
 }
 
-bool pid_child_should_wake(struct wait_opts *wo, struct task_struct *p)
-{
-	if (!eligible_pid(wo, p))
-		return false;
-
-	if ((wo->wo_flags & __WNOTHREAD) && wo->child_wait.private != p->parent)
-		return false;
-
-	return true;
-}
-
 static int child_wait_callback(wait_queue_entry_t *wait, unsigned mode,
 				int sync, void *key)
 {
@@ -1515,10 +1522,13 @@ static int child_wait_callback(wait_queue_entry_t *wait, unsigned mode,
 						child_wait);
 	struct task_struct *p = key;
 
-	if (pid_child_should_wake(wo, p))
-		return default_wake_function(wait, mode, sync, key);
+	if (!eligible_pid(wo, p))
+		return 0;
 
-	return 0;
+	if ((wo->wo_flags & __WNOTHREAD) && wait->private != p->parent)
+		return 0;
+
+	return default_wake_function(wait, mode, sync, key);
 }
 
 void __wake_up_parent(struct task_struct *p, struct task_struct *parent)
@@ -1567,10 +1577,16 @@ static int do_wait_pid(struct wait_opts *wo)
 	return 0;
 }
 
-long __do_wait(struct wait_opts *wo)
+static long do_wait(struct wait_opts *wo)
 {
-	long retval;
+	int retval;
 
+	trace_sched_process_wait(wo->wo_pid);
+
+	init_waitqueue_func_entry(&wo->child_wait, child_wait_callback);
+	wo->child_wait.private = current;
+	add_wait_queue(&current->signal->wait_chldexit, &wo->child_wait);
+repeat:
 	/*
 	 * If there is nothing that can match our criteria, just get out.
 	 * We will clear ->notask_error to zero if we see any child that
@@ -1582,23 +1598,24 @@ long __do_wait(struct wait_opts *wo)
 	   (!wo->wo_pid || !pid_has_task(wo->wo_pid, wo->wo_type)))
 		goto notask;
 
+	set_current_state(TASK_INTERRUPTIBLE);
 	read_lock(&tasklist_lock);
 
 	if (wo->wo_type == PIDTYPE_PID) {
 		retval = do_wait_pid(wo);
 		if (retval)
-			return retval;
+			goto end;
 	} else {
 		struct task_struct *tsk = current;
 
 		do {
 			retval = do_wait_thread(wo, tsk);
 			if (retval)
-				return retval;
+				goto end;
 
 			retval = ptrace_do_wait(wo, tsk);
 			if (retval)
-				return retval;
+				goto end;
 
 			if (wo->wo_flags & __WNOTHREAD)
 				break;
@@ -1608,44 +1625,27 @@ long __do_wait(struct wait_opts *wo)
 
 notask:
 	retval = wo->notask_error;
-	if (!retval && !(wo->wo_flags & WNOHANG))
-		return -ERESTARTSYS;
-
-	return retval;
-}
-
-static long do_wait(struct wait_opts *wo)
-{
-	int retval;
-
-	trace_sched_process_wait(wo->wo_pid);
-
-	init_waitqueue_func_entry(&wo->child_wait, child_wait_callback);
-	wo->child_wait.private = current;
-	add_wait_queue(&current->signal->wait_chldexit, &wo->child_wait);
-
-	do {
-		set_current_state(TASK_INTERRUPTIBLE);
-		retval = __do_wait(wo);
-		if (retval != -ERESTARTSYS)
-			break;
-		if (signal_pending(current))
-			break;
-		schedule();
-	} while (1);
-
+	if (!retval && !(wo->wo_flags & WNOHANG)) {
+		retval = -ERESTARTSYS;
+		if (!signal_pending(current)) {
+			schedule();
+			goto repeat;
+		}
+	}
+end:
 	__set_current_state(TASK_RUNNING);
 	remove_wait_queue(&current->signal->wait_chldexit, &wo->child_wait);
 	return retval;
 }
 
-int kernel_waitid_prepare(struct wait_opts *wo, int which, pid_t upid,
-			  struct waitid_info *infop, int options,
-			  struct rusage *ru)
+static long kernel_waitid(int which, pid_t upid, struct waitid_info *infop,
+			  int options, struct rusage *ru)
 {
-	unsigned int f_flags = 0;
+	struct wait_opts wo;
 	struct pid *pid = NULL;
 	enum pid_type type;
+	long ret;
+	unsigned int f_flags = 0;
 
 	if (options & ~(WNOHANG|WNOWAIT|WEXITED|WSTOPPED|WCONTINUED|
 			__WNOTHREAD|__WCLONE|__WALL))
@@ -1688,32 +1688,19 @@ int kernel_waitid_prepare(struct wait_opts *wo, int which, pid_t upid,
 		return -EINVAL;
 	}
 
-	wo->wo_type	= type;
-	wo->wo_pid	= pid;
-	wo->wo_flags	= options;
-	wo->wo_info	= infop;
-	wo->wo_rusage	= ru;
+	wo.wo_type	= type;
+	wo.wo_pid	= pid;
+	wo.wo_flags	= options;
+	wo.wo_info	= infop;
+	wo.wo_rusage	= ru;
 	if (f_flags & O_NONBLOCK)
-		wo->wo_flags |= WNOHANG;
-
-	return 0;
-}
-
-static long kernel_waitid(int which, pid_t upid, struct waitid_info *infop,
-			  int options, struct rusage *ru)
-{
-	struct wait_opts wo;
-	long ret;
-
-	ret = kernel_waitid_prepare(&wo, which, upid, infop, options, ru);
-	if (ret)
-		return ret;
+		wo.wo_flags |= WNOHANG;
 
 	ret = do_wait(&wo);
-	if (!ret && !(options & WNOHANG) && (wo.wo_flags & WNOHANG))
+	if (!ret && !(options & WNOHANG) && (f_flags & O_NONBLOCK))
 		ret = -EAGAIN;
 
-	put_pid(wo.wo_pid);
+	put_pid(pid);
 	return ret;
 }
 
@@ -1918,14 +1905,7 @@ bool thread_group_exited(struct pid *pid)
 }
 EXPORT_SYMBOL(thread_group_exited);
 
-/*
- * This needs to be __function_aligned as GCC implicitly makes any
- * implementation of abort() cold and drops alignment specified by
- * -falign-functions=N.
- *
- * See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=88345#c11
- */
-__weak __function_aligned void abort(void)
+__weak void abort(void)
 {
 	BUG();
 

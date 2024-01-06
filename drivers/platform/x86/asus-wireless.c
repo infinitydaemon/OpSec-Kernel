@@ -148,11 +148,15 @@ static int asus_wireless_add(struct acpi_device *adev)
 	if (err)
 		return err;
 
-	id = acpi_match_acpi_device(device_ids, adev);
-	if (!id)
+	for (id = device_ids; id->id[0]; id++) {
+		if (!strcmp((char *) id->id, acpi_device_hid(adev))) {
+			data->hswc_params =
+				(const struct hswc_params *)id->driver_data;
+			break;
+		}
+	}
+	if (!data->hswc_params)
 		return 0;
-
-	data->hswc_params = (const struct hswc_params *)id->driver_data;
 
 	data->wq = create_singlethread_workqueue("asus_wireless_workqueue");
 	if (!data->wq)
@@ -171,7 +175,7 @@ static int asus_wireless_add(struct acpi_device *adev)
 	return err;
 }
 
-static void asus_wireless_remove(struct acpi_device *adev)
+static int asus_wireless_remove(struct acpi_device *adev)
 {
 	struct asus_wireless_data *data = acpi_driver_data(adev);
 
@@ -179,6 +183,7 @@ static void asus_wireless_remove(struct acpi_device *adev)
 		devm_led_classdev_unregister(&adev->dev, &data->led);
 		destroy_workqueue(data->wq);
 	}
+	return 0;
 }
 
 static struct acpi_driver asus_wireless_driver = {

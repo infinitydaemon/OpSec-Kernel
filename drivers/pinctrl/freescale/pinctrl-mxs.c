@@ -7,15 +7,12 @@
 #include <linux/io.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
-#include <linux/platform_device.h>
-#include <linux/seq_file.h>
-#include <linux/slab.h>
-
 #include <linux/pinctrl/machine.h>
 #include <linux/pinctrl/pinconf.h>
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/pinctrl/pinmux.h>
-
+#include <linux/platform_device.h>
+#include <linux/slab.h>
 #include "../core.h"
 #include "pinctrl-mxs.h"
 
@@ -269,9 +266,9 @@ static int mxs_pinconf_group_set(struct pinctrl_dev *pctldev,
 	for (n = 0; n < num_configs; n++) {
 		config = configs[n];
 
-		ma = PIN_CONFIG_TO_MA(config);
-		vol = PIN_CONFIG_TO_VOL(config);
-		pull = PIN_CONFIG_TO_PULL(config);
+		ma = CONFIG_TO_MA(config);
+		vol = CONFIG_TO_VOL(config);
+		pull = CONFIG_TO_PULL(config);
 
 		for (i = 0; i < g->npins; i++) {
 			bank = PINID_TO_BANK(g->pins[i]);
@@ -395,12 +392,6 @@ static int mxs_pinctrl_parse_group(struct platform_device *pdev,
 	return 0;
 }
 
-static bool is_mxs_gpio(struct device_node *child)
-{
-	return of_device_is_compatible(child, "fsl,imx23-gpio") ||
-	       of_device_is_compatible(child, "fsl,imx28-gpio");
-}
-
 static int mxs_pinctrl_probe_dt(struct platform_device *pdev,
 				struct mxs_pinctrl_data *d)
 {
@@ -408,6 +399,7 @@ static int mxs_pinctrl_probe_dt(struct platform_device *pdev,
 	struct device_node *np = pdev->dev.of_node;
 	struct device_node *child;
 	struct mxs_function *f;
+	const char *gpio_compat = "fsl,mxs-gpio";
 	const char *fn, *fnull = "";
 	int i = 0, idxf = 0, idxg = 0;
 	int ret;
@@ -422,7 +414,7 @@ static int mxs_pinctrl_probe_dt(struct platform_device *pdev,
 	/* Count total functions and groups */
 	fn = fnull;
 	for_each_child_of_node(np, child) {
-		if (is_mxs_gpio(child))
+		if (of_device_is_compatible(child, gpio_compat))
 			continue;
 		soc->ngroups++;
 		/* Skip pure pinconf node */
@@ -451,7 +443,7 @@ static int mxs_pinctrl_probe_dt(struct platform_device *pdev,
 	fn = fnull;
 	f = &soc->functions[idxf];
 	for_each_child_of_node(np, child) {
-		if (is_mxs_gpio(child))
+		if (of_device_is_compatible(child, gpio_compat))
 			continue;
 		if (of_property_read_u32(child, "reg", &val))
 			continue;
@@ -491,7 +483,7 @@ static int mxs_pinctrl_probe_dt(struct platform_device *pdev,
 	idxf = 0;
 	fn = fnull;
 	for_each_child_of_node(np, child) {
-		if (is_mxs_gpio(child))
+		if (of_device_is_compatible(child, gpio_compat))
 			continue;
 		if (of_property_read_u32(child, "reg", &val)) {
 			ret = mxs_pinctrl_parse_group(pdev, child,

@@ -11,7 +11,7 @@
 #include <linux/i2c.h>
 #include <linux/mutex.h>
 
-#include <linux/int_log.h>
+#include <media/dvb_math.h>
 #include <media/dvb_frontend.h>
 
 #include "dib9000.h"

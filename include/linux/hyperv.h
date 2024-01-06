@@ -348,7 +348,7 @@ struct vmtransfer_page_packet_header {
 	u8  sender_owns_set;
 	u8 reserved;
 	u32 range_cnt;
-	struct vmtransfer_page_range ranges[];
+	struct vmtransfer_page_range ranges[1];
 } __packed;
 
 struct vmgpadl_packet_header {
@@ -665,8 +665,8 @@ struct vmbus_channel_initiate_contact {
 		u64 interrupt_page;
 		struct {
 			u8	msg_sint;
-			u8	msg_vtl;
-			u8	reserved[6];
+			u8	padding1[3];
+			u32	padding2;
 		};
 	};
 	u64 monitor_page1;
@@ -969,7 +969,7 @@ struct vmbus_channel {
 	 * mechanism improves throughput by:
 	 *
 	 * A) Making the host more efficient - each time it wakes up,
-	 *    potentially it will process more number of packets. The
+	 *    potentially it will process morev number of packets. The
 	 *    monitor latency allows a batch to build up.
 	 * B) By deferring the hypercall to signal, we will also minimize
 	 *    the interrupts.
@@ -1239,6 +1239,9 @@ extern int vmbus_recvpacket_raw(struct vmbus_channel *channel,
 				     u32 *buffer_actual_len,
 				     u64 *requestid);
 
+
+extern void vmbus_ontimer(unsigned long data);
+
 /* Base driver object */
 struct hv_driver {
 	const char *name;
@@ -1270,7 +1273,7 @@ struct hv_driver {
 	} dynids;
 
 	int (*probe)(struct hv_device *, const struct hv_vmbus_device_id *);
-	void (*remove)(struct hv_device *dev);
+	int (*remove)(struct hv_device *);
 	void (*shutdown)(struct hv_device *);
 
 	int (*suspend)(struct hv_device *);
@@ -1306,7 +1309,10 @@ struct hv_device {
 };
 
 
-#define device_to_hv_device(d)	container_of_const(d, struct hv_device, device)
+static inline struct hv_device *device_to_hv_device(struct device *d)
+{
+	return container_of(d, struct hv_device, device);
+}
 
 static inline struct hv_driver *drv_to_hv_drv(struct device_driver *d)
 {

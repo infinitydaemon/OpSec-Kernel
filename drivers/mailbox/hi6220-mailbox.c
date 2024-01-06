@@ -15,7 +15,6 @@
 #include <linux/kfifo.h>
 #include <linux/mailbox_controller.h>
 #include <linux/module.h>
-#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 
@@ -326,7 +325,10 @@ static int hi6220_mbox_probe(struct platform_device *pdev)
 	writel(~0x0, ACK_INT_CLR_REG(mbox->ipc));
 
 	/* use interrupt for tx's ack */
-	mbox->tx_irq_mode = !of_property_read_bool(node, "hi6220,mbox-tx-noirq");
+	if (of_find_property(node, "hi6220,mbox-tx-noirq", NULL))
+		mbox->tx_irq_mode = false;
+	else
+		mbox->tx_irq_mode = true;
 
 	if (mbox->tx_irq_mode)
 		mbox->controller.txdone_irq = true;

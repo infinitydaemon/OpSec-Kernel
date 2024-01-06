@@ -274,7 +274,10 @@ static struct attribute *hycon_hy46xx_attrs[] = {
 	&hycon_hy46xx_attr_bootloader_version.dattr.attr,
 	NULL
 };
-ATTRIBUTE_GROUPS(hycon_hy46xx);
+
+static const struct attribute_group hycon_hy46xx_attr_group = {
+	.attrs = hycon_hy46xx_attrs,
+};
 
 static void hycon_hy46xx_get_defaults(struct device *dev, struct hycon_hy46xx_data *tsdata)
 {
@@ -436,7 +439,8 @@ static void hycon_hy46xx_disable_regulator(void *arg)
 	regulator_disable(data->vcc);
 }
 
-static int hycon_hy46xx_probe(struct i2c_client *client)
+static int hycon_hy46xx_probe(struct i2c_client *client,
+					 const struct i2c_device_id *id)
 {
 	struct hycon_hy46xx_data *tsdata;
 	struct input_dev *input;
@@ -532,6 +536,10 @@ static int hycon_hy46xx_probe(struct i2c_client *client)
 		return error;
 	}
 
+	error = devm_device_add_group(&client->dev, &hycon_hy46xx_attr_group);
+	if (error)
+		return error;
+
 	error = input_register_device(input);
 	if (error)
 		return error;
@@ -569,12 +577,11 @@ MODULE_DEVICE_TABLE(of, hycon_hy46xx_of_match);
 static struct i2c_driver hycon_hy46xx_driver = {
 	.driver = {
 		.name = "hycon_hy46xx",
-		.dev_groups = hycon_hy46xx_groups,
 		.of_match_table = hycon_hy46xx_of_match,
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 	},
 	.id_table = hycon_hy46xx_id,
-	.probe = hycon_hy46xx_probe,
+	.probe    = hycon_hy46xx_probe,
 };
 
 module_i2c_driver(hycon_hy46xx_driver);

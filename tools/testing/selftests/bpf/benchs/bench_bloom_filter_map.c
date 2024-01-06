@@ -107,9 +107,9 @@ const struct argp bench_bloom_map_argp = {
 
 static void validate(void)
 {
-	if (env.consumer_cnt != 0) {
+	if (env.consumer_cnt != 1) {
 		fprintf(stderr,
-			"The bloom filter benchmarks do not support consumer\n");
+			"The bloom filter benchmarks do not support multi-consumer use\n");
 		exit(1);
 	}
 }
@@ -421,12 +421,17 @@ static void measure(struct bench_res *res)
 	last_false_hits = total_false_hits;
 }
 
+static void *consumer(void *input)
+{
+	return NULL;
+}
+
 const struct bench bench_bloom_lookup = {
 	.name = "bloom-lookup",
-	.argp = &bench_bloom_map_argp,
 	.validate = validate,
 	.setup = bloom_lookup_setup,
 	.producer_thread = producer,
+	.consumer_thread = consumer,
 	.measure = measure,
 	.report_progress = hits_drops_report_progress,
 	.report_final = hits_drops_report_final,
@@ -434,10 +439,10 @@ const struct bench bench_bloom_lookup = {
 
 const struct bench bench_bloom_update = {
 	.name = "bloom-update",
-	.argp = &bench_bloom_map_argp,
 	.validate = validate,
 	.setup = bloom_update_setup,
 	.producer_thread = producer,
+	.consumer_thread = consumer,
 	.measure = measure,
 	.report_progress = hits_drops_report_progress,
 	.report_final = hits_drops_report_final,
@@ -445,10 +450,10 @@ const struct bench bench_bloom_update = {
 
 const struct bench bench_bloom_false_positive = {
 	.name = "bloom-false-positive",
-	.argp = &bench_bloom_map_argp,
 	.validate = validate,
 	.setup = false_positive_setup,
 	.producer_thread = producer,
+	.consumer_thread = consumer,
 	.measure = measure,
 	.report_progress = false_hits_report_progress,
 	.report_final = false_hits_report_final,
@@ -456,10 +461,10 @@ const struct bench bench_bloom_false_positive = {
 
 const struct bench bench_hashmap_without_bloom = {
 	.name = "hashmap-without-bloom",
-	.argp = &bench_bloom_map_argp,
 	.validate = validate,
 	.setup = hashmap_no_bloom_setup,
 	.producer_thread = producer,
+	.consumer_thread = consumer,
 	.measure = measure,
 	.report_progress = hits_drops_report_progress,
 	.report_final = hits_drops_report_final,
@@ -467,10 +472,10 @@ const struct bench bench_hashmap_without_bloom = {
 
 const struct bench bench_hashmap_with_bloom = {
 	.name = "hashmap-with-bloom",
-	.argp = &bench_bloom_map_argp,
 	.validate = validate,
 	.setup = hashmap_with_bloom_setup,
 	.producer_thread = producer,
+	.consumer_thread = consumer,
 	.measure = measure,
 	.report_progress = hits_drops_report_progress,
 	.report_final = hits_drops_report_final,

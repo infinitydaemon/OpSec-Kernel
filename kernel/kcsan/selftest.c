@@ -22,6 +22,13 @@
 
 #define ITERS_PER_TEST 2000
 
+/* Test requirements. */
+static bool __init test_requires(void)
+{
+	/* random should be initialized for the below tests */
+	return get_random_u32() + get_random_u32() != 0;
+}
+
 /*
  * Test watchpoint encode and decode: check that encoding some access's info,
  * and then subsequent decode preserves the access's info.
@@ -31,8 +38,8 @@ static bool __init test_encode_decode(void)
 	int i;
 
 	for (i = 0; i < ITERS_PER_TEST; ++i) {
-		size_t size = get_random_u32_inclusive(1, MAX_ENCODABLE_SIZE);
-		bool is_write = !!get_random_u32_below(2);
+		size_t size = prandom_u32_max(MAX_ENCODABLE_SIZE) + 1;
+		bool is_write = !!prandom_u32_max(2);
 		unsigned long verif_masked_addr;
 		long encoded_watchpoint;
 		bool verif_is_write;
@@ -227,9 +234,12 @@ static bool __init test_barrier(void)
 	KCSAN_CHECK_RW_BARRIER(arch_spin_unlock(&arch_spinlock));
 	spin_lock(&test_spinlock);
 	KCSAN_CHECK_RW_BARRIER(spin_unlock(&test_spinlock));
-	KCSAN_CHECK_RW_BARRIER(xor_unlock_is_negative_byte(1, &test_var));
-	KCSAN_CHECK_READ_BARRIER(xor_unlock_is_negative_byte(1, &test_var));
-	KCSAN_CHECK_WRITE_BARRIER(xor_unlock_is_negative_byte(1, &test_var));
+
+#ifdef clear_bit_unlock_is_negative_byte
+	KCSAN_CHECK_RW_BARRIER(clear_bit_unlock_is_negative_byte(0, &test_var));
+	KCSAN_CHECK_READ_BARRIER(clear_bit_unlock_is_negative_byte(0, &test_var));
+	KCSAN_CHECK_WRITE_BARRIER(clear_bit_unlock_is_negative_byte(0, &test_var));
+#endif
 	kcsan_nestable_atomic_end();
 
 	return ret;
@@ -249,6 +259,7 @@ static int __init kcsan_selftest(void)
 			pr_err("selftest: " #do_test " failed");               \
 	} while (0)
 
+	RUN_TEST(test_requires);
 	RUN_TEST(test_encode_decode);
 	RUN_TEST(test_matching_access);
 	RUN_TEST(test_barrier);

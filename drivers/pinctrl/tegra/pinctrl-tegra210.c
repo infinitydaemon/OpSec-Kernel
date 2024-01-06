@@ -1185,9 +1185,12 @@ enum tegra_mux {
 	TEGRA_MUX_VIMCLK2,
 };
 
-#define FUNCTION(fname) #fname
+#define FUNCTION(fname)					\
+	{						\
+		.name = #fname,				\
+	}
 
-static const char * const tegra210_functions[] = {
+static struct tegra_function tegra210_functions[] = {
 	FUNCTION(aud),
 	FUNCTION(bcl),
 	FUNCTION(blink),
@@ -1570,7 +1573,7 @@ static struct platform_driver tegra210_pinctrl_driver = {
 	.driver = {
 		.name = "tegra210-pinctrl",
 		.of_match_table = tegra210_pinctrl_of_match,
-		.pm = pm_sleep_ptr(&tegra_pinctrl_pm),
+		.pm = &tegra_pinctrl_pm,
 	},
 	.probe = tegra210_pinctrl_probe,
 };

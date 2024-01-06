@@ -35,7 +35,6 @@
 #include <linux/nfs_page.h>
 #include <linux/workqueue.h>
 
-struct nfs4_exception;
 struct nfs4_opendata;
 
 enum {
@@ -194,7 +193,7 @@ struct pnfs_commit_ops {
 	void (*recover_commit_reqs) (struct list_head *list,
 				     struct nfs_commit_info *cinfo);
 	struct nfs_page * (*search_commit_reqs)(struct nfs_commit_info *cinfo,
-						struct folio *folio);
+						struct page *page);
 };
 
 struct pnfs_layout_hdr {
@@ -246,9 +245,7 @@ extern size_t max_response_pages(struct nfs_server *server);
 extern int nfs4_proc_getdeviceinfo(struct nfs_server *server,
 				   struct pnfs_device *dev,
 				   const struct cred *cred);
-extern struct pnfs_layout_segment *
-nfs4_proc_layoutget(struct nfs4_layoutget *lgp,
-		    struct nfs4_exception *exception);
+extern struct pnfs_layout_segment* nfs4_proc_layoutget(struct nfs4_layoutget *lgp, long *timeout);
 extern int nfs4_proc_layoutreturn(struct nfs4_layoutreturn *lrp, bool sync);
 
 /* pnfs.c */
@@ -398,7 +395,7 @@ void pnfs_generic_rw_release(void *data);
 void pnfs_generic_recover_commit_reqs(struct list_head *dst,
 				      struct nfs_commit_info *cinfo);
 struct nfs_page *pnfs_generic_search_commit_reqs(struct nfs_commit_info *cinfo,
-						 struct folio *folio);
+						 struct page *page);
 int pnfs_generic_commit_pagelist(struct inode *inode,
 				 struct list_head *mds_pages,
 				 int how,
@@ -560,13 +557,13 @@ pnfs_recover_commit_reqs(struct list_head *head, struct nfs_commit_info *cinfo)
 
 static inline struct nfs_page *
 pnfs_search_commit_reqs(struct inode *inode, struct nfs_commit_info *cinfo,
-			struct folio *folio)
+			struct page *page)
 {
 	struct pnfs_ds_commit_info *fl_cinfo = cinfo->ds;
 
 	if (!fl_cinfo->ops || !fl_cinfo->ops->search_commit_reqs)
 		return NULL;
-	return fl_cinfo->ops->search_commit_reqs(cinfo, folio);
+	return fl_cinfo->ops->search_commit_reqs(cinfo, page);
 }
 
 /* Should the pNFS client commit and return the layout upon a setattr */
@@ -867,7 +864,7 @@ pnfs_recover_commit_reqs(struct list_head *head, struct nfs_commit_info *cinfo)
 
 static inline struct nfs_page *
 pnfs_search_commit_reqs(struct inode *inode, struct nfs_commit_info *cinfo,
-			struct folio *folio)
+			struct page *page)
 {
 	return NULL;
 }

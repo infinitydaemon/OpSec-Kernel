@@ -287,6 +287,11 @@ static int img_spdif_out_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
+static const struct snd_soc_dai_ops img_spdif_out_dai_ops = {
+	.trigger = img_spdif_out_trigger,
+	.hw_params = img_spdif_out_hw_params
+};
+
 static int img_spdif_out_dai_probe(struct snd_soc_dai *dai)
 {
 	struct img_spdif_out *spdif = snd_soc_dai_get_drvdata(dai);
@@ -299,13 +304,8 @@ static int img_spdif_out_dai_probe(struct snd_soc_dai *dai)
 	return 0;
 }
 
-static const struct snd_soc_dai_ops img_spdif_out_dai_ops = {
-	.probe		= img_spdif_out_dai_probe,
-	.trigger	= img_spdif_out_trigger,
-	.hw_params	= img_spdif_out_hw_params
-};
-
 static struct snd_soc_dai_driver img_spdif_out_dai = {
+	.probe = img_spdif_out_dai_probe,
 	.playback = {
 		.channels_min = 2,
 		.channels_max = 2,
@@ -402,11 +402,13 @@ err_pm_disable:
 	return ret;
 }
 
-static void img_spdif_out_dev_remove(struct platform_device *pdev)
+static int img_spdif_out_dev_remove(struct platform_device *pdev)
 {
 	pm_runtime_disable(&pdev->dev);
 	if (!pm_runtime_status_suspended(&pdev->dev))
 		img_spdif_out_runtime_suspend(&pdev->dev);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -468,7 +470,7 @@ static struct platform_driver img_spdif_out_driver = {
 		.pm = &img_spdif_out_pm_ops
 	},
 	.probe = img_spdif_out_probe,
-	.remove_new = img_spdif_out_dev_remove
+	.remove = img_spdif_out_dev_remove
 };
 module_platform_driver(img_spdif_out_driver);
 

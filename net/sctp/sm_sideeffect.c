@@ -984,7 +984,8 @@ static void sctp_cmd_process_operr(struct sctp_cmd_seq *cmds,
 		{
 			struct sctp_chunkhdr *unk_chunk_hdr;
 
-			unk_chunk_hdr = (struct sctp_chunkhdr *)(err_hdr + 1);
+			unk_chunk_hdr = (struct sctp_chunkhdr *)
+							err_hdr->variable;
 			switch (unk_chunk_hdr->type) {
 			/* ADDIP 4.1 A9) If the peer responds to an ASCONF with
 			 * an ERROR chunk reporting that it did not recognized

@@ -1,28 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0
-
-#include <linux/bitops.h>
-#include <linux/device.h>
 #include <linux/idr.h>
-#include <linux/init.h>
-#include <linux/interrupt.h>
-#include <linux/kdev_t.h>
-#include <linux/kstrtox.h>
-#include <linux/list.h>
 #include <linux/mutex.h>
-#include <linux/printk.h>
-#include <linux/slab.h>
-#include <linux/spinlock.h>
-#include <linux/string.h>
+#include <linux/device.h>
 #include <linux/sysfs.h>
-#include <linux/types.h>
-
 #include <linux/gpio/consumer.h>
 #include <linux/gpio/driver.h>
+#include <linux/interrupt.h>
+#include <linux/kdev_t.h>
+#include <linux/slab.h>
+#include <linux/ctype.h>
 
 #include "gpiolib.h"
 #include "gpiolib-sysfs.h"
-
-struct kernfs_node;
 
 #define GPIO_IRQF_TRIGGER_NONE		0
 #define GPIO_IRQF_TRIGGER_FALLING	BIT(0)
@@ -437,8 +426,8 @@ ATTRIBUTE_GROUPS(gpiochip);
  * /sys/class/gpio/unexport ... write-only
  *	integer N ... number of GPIO to unexport
  */
-static ssize_t export_store(const struct class *class,
-				const struct class_attribute *attr,
+static ssize_t export_store(struct class *class,
+				struct class_attribute *attr,
 				const char *buf, size_t len)
 {
 	long			gpio;
@@ -492,8 +481,8 @@ done:
 }
 static CLASS_ATTR_WO(export);
 
-static ssize_t unexport_store(const struct class *class,
-				const struct class_attribute *attr,
+static ssize_t unexport_store(struct class *class,
+				struct class_attribute *attr,
 				const char *buf, size_t len)
 {
 	long			gpio;
@@ -505,7 +494,7 @@ static ssize_t unexport_store(const struct class *class,
 		goto done;
 
 	desc = gpio_to_desc(gpio);
-	/* reject bogus commands (gpiod_unexport() ignores them) */
+	/* reject bogus commands (gpio_unexport ignores them) */
 	if (!desc) {
 		pr_warn("%s: invalid GPIO %ld\n", __func__, gpio);
 		return -EINVAL;
@@ -518,9 +507,8 @@ static ssize_t unexport_store(const struct class *class,
 	 * they may be undone on its behalf too.
 	 */
 	if (test_and_clear_bit(FLAG_SYSFS, &desc->flags)) {
-		gpiod_unexport(desc);
-		gpiod_free(desc);
 		status = 0;
+		gpiod_free(desc);
 	}
 done:
 	if (status)
@@ -538,6 +526,8 @@ ATTRIBUTE_GROUPS(gpio_class);
 
 static struct class gpio_class = {
 	.name =		"gpio",
+	.owner =	THIS_MODULE,
+
 	.class_groups = gpio_class_groups,
 };
 
@@ -569,7 +559,7 @@ int gpiod_export(struct gpio_desc *desc, bool direction_may_change)
 	int			offset;
 
 	/* can't export until sysfs is available ... */
-	if (!class_is_registered(&gpio_class)) {
+	if (!gpio_class.p) {
 		pr_debug("%s: called too early!\n", __func__);
 		return -ENOENT;
 	}
@@ -743,7 +733,7 @@ int gpiochip_sysfs_register(struct gpio_device *gdev)
 	 * register later, in gpiolib_sysfs_init() ... here we just
 	 * verify that _some_ field of gpio_class got initialized.
 	 */
-	if (!class_is_registered(&gpio_class))
+	if (!gpio_class.p)
 		return 0;
 
 	/*
@@ -785,10 +775,8 @@ void gpiochip_sysfs_unregister(struct gpio_device *gdev)
 	mutex_unlock(&sysfs_lock);
 
 	/* unregister gpiod class devices owned by sysfs */
-	for_each_gpio_desc_with_flag(chip, desc, FLAG_SYSFS) {
-		gpiod_unexport(desc);
+	for_each_gpio_desc_with_flag(chip, desc, FLAG_SYSFS)
 		gpiod_free(desc);
-	}
 }
 
 static int __init gpiolib_sysfs_init(void)
@@ -805,7 +793,7 @@ static int __init gpiolib_sysfs_init(void)
 	 * early (e.g. before the class_register above was called).
 	 *
 	 * We run before arch_initcall() so chip->dev nodes can have
-	 * registered, and so arch_initcall() can always gpiod_export().
+	 * registered, and so arch_initcall() can always gpio_export().
 	 */
 	spin_lock_irqsave(&gpio_lock, flags);
 	list_for_each_entry(gdev, &gpio_devices, list) {
@@ -817,7 +805,7 @@ static int __init gpiolib_sysfs_init(void)
 		 * gpiochip_sysfs_register() acquires a mutex. This is unsafe
 		 * and needs to be fixed.
 		 *
-		 * Also it would be nice to use gpio_device_find() here so we
+		 * Also it would be nice to use gpiochip_find() here so we
 		 * can keep gpio_chips local to gpiolib.c, but the yield of
 		 * gpio_lock prevents us from doing this.
 		 */

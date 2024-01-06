@@ -9,7 +9,7 @@
 #include <linux/delay.h>
 #include <linux/kthread.h>
 #include <linux/module.h>
-#include <linux/prandom.h>
+#include <linux/random.h>
 #include <linux/slab.h>
 #include <linux/ww_mutex.h>
 
@@ -386,19 +386,6 @@ struct stress {
 	int nlocks;
 };
 
-struct rnd_state rng;
-DEFINE_SPINLOCK(rng_lock);
-
-static inline u32 prandom_u32_below(u32 ceil)
-{
-	u32 ret;
-
-	spin_lock(&rng_lock);
-	ret = prandom_u32_state(&rng) % ceil;
-	spin_unlock(&rng_lock);
-	return ret;
-}
-
 static int *get_random_order(int count)
 {
 	int *order;
@@ -412,7 +399,7 @@ static int *get_random_order(int count)
 		order[n] = n;
 
 	for (n = count - 1; n > 1; n--) {
-		r = prandom_u32_below(n + 1);
+		r = prandom_u32_max(n + 1);
 		if (r != n) {
 			tmp = order[n];
 			order[n] = order[r];
@@ -465,18 +452,17 @@ retry:
 			ww_mutex_unlock(&locks[order[n]]);
 
 		if (err == -EDEADLK) {
-			if (!time_after(jiffies, stress->timeout)) {
-				ww_mutex_lock_slow(&locks[order[contended]], &ctx);
-				goto retry;
-			}
+			ww_mutex_lock_slow(&locks[order[contended]], &ctx);
+			goto retry;
 		}
 
-		ww_acquire_fini(&ctx);
 		if (err) {
 			pr_err_once("stress (%s) failed with %d\n",
 				    __func__, err);
 			break;
 		}
+
+		ww_acquire_fini(&ctx);
 	} while (!time_after(jiffies, stress->timeout));
 
 	kfree(order);
@@ -550,7 +536,7 @@ static void stress_one_work(struct work_struct *work)
 {
 	struct stress *stress = container_of(work, typeof(*stress), work);
 	const int nlocks = stress->nlocks;
-	struct ww_mutex *lock = stress->locks + get_random_u32_below(nlocks);
+	struct ww_mutex *lock = stress->locks + prandom_u32_max(nlocks);
 	int err;
 
 	do {
@@ -643,8 +629,6 @@ static int __init test_ww_mutex_init(void)
 
 	printk(KERN_INFO "Beginning ww mutex selftests\n");
 
-	prandom_seed_state(&rng, get_random_u64());
-
 	wq = alloc_workqueue("test-ww_mutex", WQ_UNBOUND, 0);
 	if (!wq)
 		return -ENOMEM;
@@ -679,7 +663,7 @@ static int __init test_ww_mutex_init(void)
 	if (ret)
 		return ret;
 
-	ret = stress(2047, hweight32(STRESS_ALL)*ncpus, STRESS_ALL);
+	ret = stress(4095, hweight32(STRESS_ALL)*ncpus, STRESS_ALL);
 	if (ret)
 		return ret;
 

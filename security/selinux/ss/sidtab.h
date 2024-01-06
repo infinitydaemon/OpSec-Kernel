@@ -3,7 +3,7 @@
  * A security identifier table (sidtab) is a lookup table
  * of security context structures indexed by SID value.
  *
- * Original author: Stephen Smalley, <stephen.smalley.work@gmail.com>
+ * Original author: Stephen Smalley, <sds@tycho.nsa.gov>
  * Author: Ondrej Mosnacek, <omosnacek@gmail.com>
  *
  * Copyright (C) 2018 Red Hat, Inc.
@@ -65,7 +65,8 @@ struct sidtab_isid_entry {
 };
 
 struct sidtab_convert_params {
-	struct convert_context_args *args;
+	int (*func)(struct context *oldc, struct context *newc, void *args, gfp_t gfp_flags);
+	void *args;
 	struct sidtab *target;
 };
 

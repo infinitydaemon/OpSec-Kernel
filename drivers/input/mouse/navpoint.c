@@ -295,7 +295,7 @@ err_free_gpio:
 	return error;
 }
 
-static void navpoint_remove(struct platform_device *pdev)
+static int navpoint_remove(struct platform_device *pdev)
 {
 	const struct navpoint_platform_data *pdata =
 					dev_get_platdata(&pdev->dev);
@@ -311,9 +311,11 @@ static void navpoint_remove(struct platform_device *pdev)
 
 	if (gpio_is_valid(pdata->gpio))
 		gpio_free(pdata->gpio);
+
+	return 0;
 }
 
-static int navpoint_suspend(struct device *dev)
+static int __maybe_unused navpoint_suspend(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct navpoint *navpoint = platform_get_drvdata(pdev);
@@ -327,7 +329,7 @@ static int navpoint_suspend(struct device *dev)
 	return 0;
 }
 
-static int navpoint_resume(struct device *dev)
+static int __maybe_unused navpoint_resume(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct navpoint *navpoint = platform_get_drvdata(pdev);
@@ -341,15 +343,14 @@ static int navpoint_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(navpoint_pm_ops,
-				navpoint_suspend, navpoint_resume);
+static SIMPLE_DEV_PM_OPS(navpoint_pm_ops, navpoint_suspend, navpoint_resume);
 
 static struct platform_driver navpoint_driver = {
 	.probe		= navpoint_probe,
-	.remove_new	= navpoint_remove,
+	.remove		= navpoint_remove,
 	.driver = {
 		.name	= "navpoint",
-		.pm	= pm_sleep_ptr(&navpoint_pm_ops),
+		.pm	= &navpoint_pm_ops,
 	},
 };
 

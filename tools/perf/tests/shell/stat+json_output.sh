@@ -23,31 +23,16 @@ then
 	fi
 fi
 
-stat_output=$(mktemp /tmp/__perf_test.stat_output.json.XXXXX)
-
-cleanup() {
-  rm -f "${stat_output}"
-
-  trap - EXIT TERM INT
-}
-
-trap_cleanup() {
-  cleanup
-  exit 1
-}
-trap trap_cleanup EXIT TERM INT
-
 # Return true if perf_event_paranoid is > $1 and not running as root.
 function ParanoidAndNotRoot()
 {
-	 [ "$(id -u)" != 0 ] && [ "$(cat /proc/sys/kernel/perf_event_paranoid)" -gt $1 ]
+	 [ $(id -u) != 0 ] && [ $(cat /proc/sys/kernel/perf_event_paranoid) -gt $1 ]
 }
 
 check_no_args()
 {
 	echo -n "Checking json output: no args "
-	perf stat -j -o "${stat_output}" true
-	$PYTHON $pythonchecker --no-args --file "${stat_output}"
+	perf stat -j true 2>&1 | $PYTHON $pythonchecker --no-args
 	echo "[Success]"
 }
 
@@ -59,29 +44,27 @@ check_system_wide()
 		echo "[Skip] paranoia and not root"
 		return
 	fi
-	perf stat -j -a -o "${stat_output}" true
-	$PYTHON $pythonchecker --system-wide --file "${stat_output}"
+	perf stat -j -a true 2>&1 | $PYTHON $pythonchecker --system-wide
 	echo "[Success]"
 }
 
 check_system_wide_no_aggr()
 {
-	echo -n "Checking json output: system wide no aggregation "
+	echo -n "Checking json output: system wide "
 	if ParanoidAndNotRoot 0
 	then
 		echo "[Skip] paranoia and not root"
 		return
 	fi
-	perf stat -j -A -a --no-merge -o "${stat_output}" true
-	$PYTHON $pythonchecker --system-wide-no-aggr --file "${stat_output}"
+	echo -n "Checking json output: system wide no aggregation "
+	perf stat -j -A -a --no-merge true 2>&1 | $PYTHON $pythonchecker --system-wide-no-aggr
 	echo "[Success]"
 }
 
 check_interval()
 {
 	echo -n "Checking json output: interval "
-	perf stat -j -I 1000 -o "${stat_output}" true
-	$PYTHON $pythonchecker --interval --file "${stat_output}"
+	perf stat -j -I 1000 true 2>&1 | $PYTHON $pythonchecker --interval
 	echo "[Success]"
 }
 
@@ -89,8 +72,7 @@ check_interval()
 check_event()
 {
 	echo -n "Checking json output: event "
-	perf stat -j -e cpu-clock -o "${stat_output}" true
-	$PYTHON $pythonchecker --event --file "${stat_output}"
+	perf stat -j -e cpu-clock true 2>&1 | $PYTHON $pythonchecker --event
 	echo "[Success]"
 }
 
@@ -102,8 +84,7 @@ check_per_core()
 		echo "[Skip] paranoia and not root"
 		return
 	fi
-	perf stat -j --per-core -a -o "${stat_output}" true
-	$PYTHON $pythonchecker --per-core --file "${stat_output}"
+	perf stat -j --per-core -a true 2>&1 | $PYTHON $pythonchecker --per-core
 	echo "[Success]"
 }
 
@@ -115,20 +96,7 @@ check_per_thread()
 		echo "[Skip] paranoia and not root"
 		return
 	fi
-	perf stat -j --per-thread -a -o "${stat_output}" true
-	$PYTHON $pythonchecker --per-thread --file "${stat_output}"
-	echo "[Success]"
-}
-
-check_per_cache_instance()
-{
-	echo -n "Checking json output: per cache_instance "
-	if ParanoidAndNotRoot 0
-	then
-		echo "[Skip] paranoia and not root"
-		return
-	fi
-	perf stat -j --per-cache -a true 2>&1 | $PYTHON $pythonchecker --per-cache
+	perf stat -j --per-thread -a true 2>&1 | $PYTHON $pythonchecker --per-thread
 	echo "[Success]"
 }
 
@@ -140,8 +108,7 @@ check_per_die()
 		echo "[Skip] paranoia and not root"
 		return
 	fi
-	perf stat -j --per-die -a -o "${stat_output}" true
-	$PYTHON $pythonchecker --per-die --file "${stat_output}"
+	perf stat -j --per-die -a true 2>&1 | $PYTHON $pythonchecker --per-die
 	echo "[Success]"
 }
 
@@ -153,8 +120,7 @@ check_per_node()
 		echo "[Skip] paranoia and not root"
 		return
 	fi
-	perf stat -j --per-node -a -o "${stat_output}" true
-	$PYTHON $pythonchecker --per-node --file "${stat_output}"
+	perf stat -j --per-node -a true 2>&1 | $PYTHON $pythonchecker --per-node
 	echo "[Success]"
 }
 
@@ -166,8 +132,7 @@ check_per_socket()
 		echo "[Skip] paranoia and not root"
 		return
 	fi
-	perf stat -j --per-socket -a -o "${stat_output}" true
-	$PYTHON $pythonchecker --per-socket --file "${stat_output}"
+	perf stat -j --per-socket -a true 2>&1 | $PYTHON $pythonchecker --per-socket
 	echo "[Success]"
 }
 
@@ -209,11 +174,9 @@ if [ $skip_test -ne 1 ]
 then
 	check_system_wide_no_aggr
 	check_per_core
-	check_per_cache_instance
 	check_per_die
 	check_per_socket
 else
 	echo "[Skip] Skipping tests for system_wide_no_aggr, per_core, per_die and per_socket since socket id exposed via topology is invalid"
 fi
-cleanup
 exit 0

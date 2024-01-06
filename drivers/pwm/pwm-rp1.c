@@ -122,6 +122,7 @@ static const struct pwm_ops rp1_pwm_ops = {
 	.request = rp1_pwm_request,
 	.free = rp1_pwm_free,
 	.apply = rp1_pwm_apply,
+	.owner = THIS_MODULE,
 };
 
 static int rp1_pwm_probe(struct platform_device *pdev)

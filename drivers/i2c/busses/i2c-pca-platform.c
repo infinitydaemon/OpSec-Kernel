@@ -22,6 +22,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/io.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 
 #include <asm/irq.h>
 
@@ -220,11 +221,13 @@ static int i2c_pca_pf_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void i2c_pca_pf_remove(struct platform_device *pdev)
+static int i2c_pca_pf_remove(struct platform_device *pdev)
 {
 	struct i2c_pca_pf_data *i2c = platform_get_drvdata(pdev);
 
 	i2c_del_adapter(&i2c->adap);
+
+	return 0;
 }
 
 #ifdef CONFIG_OF
@@ -238,7 +241,7 @@ MODULE_DEVICE_TABLE(of, i2c_pca_of_match_table);
 
 static struct platform_driver i2c_pca_pf_driver = {
 	.probe = i2c_pca_pf_probe,
-	.remove_new = i2c_pca_pf_remove,
+	.remove = i2c_pca_pf_remove,
 	.driver = {
 		.name = "i2c-pca-platform",
 		.of_match_table = of_match_ptr(i2c_pca_of_match_table),

@@ -9,7 +9,8 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/device.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
+#include <linux/of_platform.h>
 
 #include <sound/soc.h>
 
@@ -108,12 +109,14 @@ static int pcm030_fabric_probe(struct platform_device *op)
 
 }
 
-static void pcm030_fabric_remove(struct platform_device *op)
+static int pcm030_fabric_remove(struct platform_device *op)
 {
 	struct pcm030_audio_data *pdata = platform_get_drvdata(op);
 
 	snd_soc_unregister_card(pdata->card);
 	platform_device_unregister(pdata->codec_device);
+
+	return 0;
 }
 
 static const struct of_device_id pcm030_audio_match[] = {
@@ -124,7 +127,7 @@ MODULE_DEVICE_TABLE(of, pcm030_audio_match);
 
 static struct platform_driver pcm030_fabric_driver = {
 	.probe		= pcm030_fabric_probe,
-	.remove_new	= pcm030_fabric_remove,
+	.remove		= pcm030_fabric_remove,
 	.driver		= {
 		.name	= DRV_NAME,
 		.of_match_table    = pcm030_audio_match,

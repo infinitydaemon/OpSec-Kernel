@@ -29,7 +29,18 @@
 	}
 
 #define LKF_COMMUNITY(b, s, e, g)			\
-	INTEL_COMMUNITY_GPPS(b, s, e, g, LKF)
+	{						\
+		.barno = (b),				\
+		.padown_offset = LKF_PAD_OWN,		\
+		.padcfglock_offset = LKF_PADCFGLOCK,	\
+		.hostown_offset = LKF_HOSTSW_OWN,	\
+		.is_offset = LKF_GPI_IS,		\
+		.ie_offset = LKF_GPI_IE,		\
+		.pin_base = (s),			\
+		.npins = ((e) - (s) + 1),		\
+		.gpps = (g),				\
+		.ngpps = ARRAY_SIZE(g),			\
+	}
 
 /* Lakefield */
 static const struct pinctrl_pin_desc lkf_pins[] = {
@@ -362,4 +373,3 @@ module_platform_driver(lkf_pinctrl_driver);
 MODULE_AUTHOR("Andy Shevchenko <andriy.shevchenko@linux.intel.com>");
 MODULE_DESCRIPTION("Intel Lakefield PCH pinctrl/GPIO driver");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS(PINCTRL_INTEL);

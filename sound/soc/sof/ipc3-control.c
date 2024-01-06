@@ -12,8 +12,7 @@
 #include "ipc3-priv.h"
 
 /* IPC set()/get() for kcontrols. */
-static int sof_ipc3_set_get_kcontrol_data(struct snd_sof_control *scontrol,
-					  bool set, bool lock)
+static int sof_ipc3_set_get_kcontrol_data(struct snd_sof_control *scontrol, bool set)
 {
 	struct snd_sof_dev *sdev = snd_soc_component_get_drvdata(scontrol->scomp);
 	struct sof_ipc_ctrl_data *cdata = scontrol->ipc_control_data;
@@ -22,7 +21,6 @@ static int sof_ipc3_set_get_kcontrol_data(struct snd_sof_control *scontrol,
 	struct snd_sof_widget *swidget;
 	bool widget_found = false;
 	u32 ipc_cmd, msg_bytes;
-	int ret = 0;
 
 	list_for_each_entry(swidget, &sdev->widget_list, list) {
 		if (swidget->comp_id == scontrol->comp_id) {
@@ -37,18 +35,13 @@ static int sof_ipc3_set_get_kcontrol_data(struct snd_sof_control *scontrol,
 		return -EINVAL;
 	}
 
-	if (lock)
-		mutex_lock(&swidget->setup_mutex);
-	else
-		lockdep_assert_held(&swidget->setup_mutex);
-
 	/*
-	 * Volatile controls should always be part of static pipelines and the
-	 * widget use_count would always be > 0 in this case. For the others,
-	 * just return the cached value if the widget is not set up.
+	 * Volatile controls should always be part of static pipelines and the widget use_count
+	 * would always be > 0 in this case. For the others, just return the cached value if the
+	 * widget is not set up.
 	 */
 	if (!swidget->use_count)
-		goto unlock;
+		return 0;
 
 	/*
 	 * Select the IPC cmd and the ctrl_type based on the ctrl_cmd and the
@@ -88,43 +81,16 @@ static int sof_ipc3_set_get_kcontrol_data(struct snd_sof_control *scontrol,
 			     sizeof(struct sof_abi_hdr);
 		break;
 	default:
-		ret = -EINVAL;
-		goto unlock;
+		return -EINVAL;
 	}
 
 	cdata->rhdr.hdr.size = msg_bytes;
 	cdata->elems_remaining = 0;
 
-	ret = iops->set_get_data(sdev, cdata, cdata->rhdr.hdr.size, set);
-	if (!set)
-		goto unlock;
-
-	/* It is a set-data operation, and we have a backup that we can restore */
-	if (ret < 0) {
-		if (!scontrol->old_ipc_control_data)
-			goto unlock;
-		/*
-		 * Current ipc_control_data is not valid, we use the last known good
-		 * configuration
-		 */
-		memcpy(scontrol->ipc_control_data, scontrol->old_ipc_control_data,
-		       scontrol->max_size);
-		kfree(scontrol->old_ipc_control_data);
-		scontrol->old_ipc_control_data = NULL;
-		/* Send the last known good configuration to firmware */
-		ret = iops->set_get_data(sdev, cdata, cdata->rhdr.hdr.size, set);
-		if (ret < 0)
-			goto unlock;
-	}
-
-unlock:
-	if (lock)
-		mutex_unlock(&swidget->setup_mutex);
-
-	return ret;
+	return iops->set_get_data(sdev, cdata, cdata->rhdr.hdr.size, set);
 }
 
-static void sof_ipc3_refresh_control(struct snd_sof_control *scontrol)
+static void snd_sof_refresh_control(struct snd_sof_control *scontrol)
 {
 	struct sof_ipc_ctrl_data *cdata = scontrol->ipc_control_data;
 	struct snd_soc_component *scomp = scontrol->scomp;
@@ -142,7 +108,7 @@ static void sof_ipc3_refresh_control(struct snd_sof_control *scontrol)
 
 	/* refresh the component data from DSP */
 	scontrol->comp_data_dirty = false;
-	ret = sof_ipc3_set_get_kcontrol_data(scontrol, false, true);
+	ret = sof_ipc3_set_get_kcontrol_data(scontrol, false);
 	if (ret < 0) {
 		dev_err(scomp->dev, "Failed to get control data: %d\n", ret);
 
@@ -158,7 +124,7 @@ static int sof_ipc3_volume_get(struct snd_sof_control *scontrol,
 	unsigned int channels = scontrol->num_channels;
 	unsigned int i;
 
-	sof_ipc3_refresh_control(scontrol);
+	snd_sof_refresh_control(scontrol);
 
 	/* read back each channel */
 	for (i = 0; i < channels; i++)
@@ -190,7 +156,7 @@ static bool sof_ipc3_volume_put(struct snd_sof_control *scontrol,
 
 	/* notify DSP of mixer updates */
 	if (pm_runtime_active(scomp->dev)) {
-		int ret = sof_ipc3_set_get_kcontrol_data(scontrol, true, true);
+		int ret = sof_ipc3_set_get_kcontrol_data(scontrol, true);
 
 		if (ret < 0) {
 			dev_err(scomp->dev, "Failed to set mixer updates for %s\n",
@@ -209,7 +175,7 @@ static int sof_ipc3_switch_get(struct snd_sof_control *scontrol,
 	unsigned int channels = scontrol->num_channels;
 	unsigned int i;
 
-	sof_ipc3_refresh_control(scontrol);
+	snd_sof_refresh_control(scontrol);
 
 	/* read back each channel */
 	for (i = 0; i < channels; i++)
@@ -238,7 +204,7 @@ static bool sof_ipc3_switch_put(struct snd_sof_control *scontrol,
 
 	/* notify DSP of mixer updates */
 	if (pm_runtime_active(scomp->dev)) {
-		int ret = sof_ipc3_set_get_kcontrol_data(scontrol, true, true);
+		int ret = sof_ipc3_set_get_kcontrol_data(scontrol, true);
 
 		if (ret < 0) {
 			dev_err(scomp->dev, "Failed to set mixer updates for %s\n",
@@ -257,7 +223,7 @@ static int sof_ipc3_enum_get(struct snd_sof_control *scontrol,
 	unsigned int channels = scontrol->num_channels;
 	unsigned int i;
 
-	sof_ipc3_refresh_control(scontrol);
+	snd_sof_refresh_control(scontrol);
 
 	/* read back each channel */
 	for (i = 0; i < channels; i++)
@@ -286,7 +252,7 @@ static bool sof_ipc3_enum_put(struct snd_sof_control *scontrol,
 
 	/* notify DSP of enum updates */
 	if (pm_runtime_active(scomp->dev)) {
-		int ret = sof_ipc3_set_get_kcontrol_data(scontrol, true, true);
+		int ret = sof_ipc3_set_get_kcontrol_data(scontrol, true);
 
 		if (ret < 0) {
 			dev_err(scomp->dev, "Failed to set enum updates for %s\n",
@@ -306,7 +272,7 @@ static int sof_ipc3_bytes_get(struct snd_sof_control *scontrol,
 	struct sof_abi_hdr *data = cdata->data;
 	size_t size;
 
-	sof_ipc3_refresh_control(scontrol);
+	snd_sof_refresh_control(scontrol);
 
 	if (scontrol->max_size > sizeof(ucontrol->value.bytes.data)) {
 		dev_err_ratelimited(scomp->dev, "data max %zu exceeds ucontrol data array size\n",
@@ -358,7 +324,56 @@ static int sof_ipc3_bytes_put(struct snd_sof_control *scontrol,
 
 	/* notify DSP of byte control updates */
 	if (pm_runtime_active(scomp->dev))
-		return sof_ipc3_set_get_kcontrol_data(scontrol, true, true);
+		return sof_ipc3_set_get_kcontrol_data(scontrol, true);
+
+	return 0;
+}
+
+static int sof_ipc3_bytes_ext_get(struct snd_sof_control *scontrol,
+				  const unsigned int __user *binary_data, unsigned int size)
+{
+	struct snd_ctl_tlv __user *tlvd = (struct snd_ctl_tlv __user *)binary_data;
+	struct sof_ipc_ctrl_data *cdata = scontrol->ipc_control_data;
+	struct snd_soc_component *scomp = scontrol->scomp;
+	struct snd_ctl_tlv header;
+	size_t data_size;
+
+	snd_sof_refresh_control(scontrol);
+
+	/*
+	 * Decrement the limit by ext bytes header size to
+	 * ensure the user space buffer is not exceeded.
+	 */
+	if (size < sizeof(struct snd_ctl_tlv))
+		return -ENOSPC;
+
+	size -= sizeof(struct snd_ctl_tlv);
+
+	/* set the ABI header values */
+	cdata->data->magic = SOF_ABI_MAGIC;
+	cdata->data->abi = SOF_ABI_VERSION;
+
+	/* check data size doesn't exceed max coming from topology */
+	if (cdata->data->size > scontrol->max_size - sizeof(struct sof_abi_hdr)) {
+		dev_err_ratelimited(scomp->dev, "User data size %d exceeds max size %zu\n",
+				    cdata->data->size,
+				    scontrol->max_size - sizeof(struct sof_abi_hdr));
+		return -EINVAL;
+	}
+
+	data_size = cdata->data->size + sizeof(struct sof_abi_hdr);
+
+	/* make sure we don't exceed size provided by user space for data */
+	if (data_size > size)
+		return -ENOSPC;
+
+	header.numid = cdata->cmd;
+	header.length = data_size;
+	if (copy_to_user(tlvd, &header, sizeof(struct snd_ctl_tlv)))
+		return -EFAULT;
+
+	if (copy_to_user(tlvd->tlv, cdata->data, data_size))
+		return -EFAULT;
 
 	return 0;
 }
@@ -371,7 +386,6 @@ static int sof_ipc3_bytes_ext_put(struct snd_sof_control *scontrol,
 	struct sof_ipc_ctrl_data *cdata = scontrol->ipc_control_data;
 	struct snd_soc_component *scomp = scontrol->scomp;
 	struct snd_ctl_tlv header;
-	int ret = -EINVAL;
 
 	/*
 	 * The beginning of bytes data contains a header from where
@@ -402,63 +416,43 @@ static int sof_ipc3_bytes_ext_put(struct snd_sof_control *scontrol,
 		return -EINVAL;
 	}
 
-	if (!scontrol->old_ipc_control_data) {
-		/* Create a backup of the current, valid bytes control */
-		scontrol->old_ipc_control_data = kmemdup(scontrol->ipc_control_data,
-							 scontrol->max_size, GFP_KERNEL);
-		if (!scontrol->old_ipc_control_data)
-			return -ENOMEM;
-	}
-
-	if (copy_from_user(cdata->data, tlvd->tlv, header.length)) {
-		ret = -EFAULT;
-		goto err_restore;
-	}
+	if (copy_from_user(cdata->data, tlvd->tlv, header.length))
+		return -EFAULT;
 
 	if (cdata->data->magic != SOF_ABI_MAGIC) {
 		dev_err_ratelimited(scomp->dev, "Wrong ABI magic 0x%08x\n", cdata->data->magic);
-		goto err_restore;
+		return -EINVAL;
 	}
 
 	if (SOF_ABI_VERSION_INCOMPATIBLE(SOF_ABI_VERSION, cdata->data->abi)) {
 		dev_err_ratelimited(scomp->dev, "Incompatible ABI version 0x%08x\n",
 				    cdata->data->abi);
-		goto err_restore;
+		return -EINVAL;
 	}
 
 	/* be->max has been verified to be >= sizeof(struct sof_abi_hdr) */
 	if (cdata->data->size > scontrol->max_size - sizeof(struct sof_abi_hdr)) {
 		dev_err_ratelimited(scomp->dev, "Mismatch in ABI data size (truncated?)\n");
-		goto err_restore;
+		return -EINVAL;
 	}
 
 	/* notify DSP of byte control updates */
-	if (pm_runtime_active(scomp->dev)) {
-		/* Actually send the data to the DSP; this is an opportunity to validate the data */
-		return sof_ipc3_set_get_kcontrol_data(scontrol, true, true);
-	}
+	if (pm_runtime_active(scomp->dev))
+		return sof_ipc3_set_get_kcontrol_data(scontrol, true);
 
 	return 0;
-
-err_restore:
-	/* If we have an issue, we restore the old, valid bytes control data */
-	if (scontrol->old_ipc_control_data) {
-		memcpy(cdata->data, scontrol->old_ipc_control_data, scontrol->max_size);
-		kfree(scontrol->old_ipc_control_data);
-		scontrol->old_ipc_control_data = NULL;
-	}
-	return ret;
 }
 
-static int _sof_ipc3_bytes_ext_get(struct snd_sof_control *scontrol,
-				   const unsigned int __user *binary_data,
-				   unsigned int size, bool from_dsp)
+static int sof_ipc3_bytes_ext_volatile_get(struct snd_sof_control *scontrol,
+					   const unsigned int __user *binary_data,
+					   unsigned int size)
 {
 	struct snd_ctl_tlv __user *tlvd = (struct snd_ctl_tlv __user *)binary_data;
 	struct sof_ipc_ctrl_data *cdata = scontrol->ipc_control_data;
 	struct snd_soc_component *scomp = scontrol->scomp;
 	struct snd_ctl_tlv header;
 	size_t data_size;
+	int ret;
 
 	/*
 	 * Decrement the limit by ext bytes header size to
@@ -474,12 +468,9 @@ static int _sof_ipc3_bytes_ext_get(struct snd_sof_control *scontrol,
 	cdata->data->abi = SOF_ABI_VERSION;
 
 	/* get all the component data from DSP */
-	if (from_dsp) {
-		int ret = sof_ipc3_set_get_kcontrol_data(scontrol, false, true);
-
-		if (ret < 0)
-			return ret;
-	}
+	ret = sof_ipc3_set_get_kcontrol_data(scontrol, false);
+	if (ret < 0)
+		return ret;
 
 	/* check data size doesn't exceed max coming from topology */
 	if (cdata->data->size > scontrol->max_size - sizeof(struct sof_abi_hdr)) {
@@ -503,20 +494,7 @@ static int _sof_ipc3_bytes_ext_get(struct snd_sof_control *scontrol,
 	if (copy_to_user(tlvd->tlv, cdata->data, data_size))
 		return -EFAULT;
 
-	return 0;
-}
-
-static int sof_ipc3_bytes_ext_get(struct snd_sof_control *scontrol,
-				  const unsigned int __user *binary_data, unsigned int size)
-{
-	return _sof_ipc3_bytes_ext_get(scontrol, binary_data, size, false);
-}
-
-static int sof_ipc3_bytes_ext_volatile_get(struct snd_sof_control *scontrol,
-					   const unsigned int __user *binary_data,
-					   unsigned int size)
-{
-	return _sof_ipc3_bytes_ext_get(scontrol, binary_data, size, true);
+	return ret;
 }
 
 static void snd_sof_update_control(struct snd_sof_control *scontrol,
@@ -669,7 +647,7 @@ static int sof_ipc3_widget_kcontrol_setup(struct snd_sof_dev *sdev,
 	list_for_each_entry(scontrol, &sdev->kcontrol_list, list)
 		if (scontrol->comp_id == swidget->comp_id) {
 			/* set kcontrol data in DSP */
-			ret = sof_ipc3_set_get_kcontrol_data(scontrol, true, false);
+			ret = sof_ipc3_set_get_kcontrol_data(scontrol, true);
 			if (ret < 0) {
 				dev_err(sdev->dev,
 					"kcontrol %d set up failed for widget %s\n",
@@ -686,7 +664,7 @@ static int sof_ipc3_widget_kcontrol_setup(struct snd_sof_dev *sdev,
 			if (swidget->dynamic_pipeline_widget)
 				continue;
 
-			ret = sof_ipc3_set_get_kcontrol_data(scontrol, false, false);
+			ret = sof_ipc3_set_get_kcontrol_data(scontrol, false);
 			if (ret < 0)
 				dev_warn(sdev->dev,
 					 "kcontrol %d read failed for widget %s\n",

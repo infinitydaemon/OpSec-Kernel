@@ -3,6 +3,7 @@
 
 #include <linux/iopoll.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/spi-mem.h>
@@ -199,8 +200,8 @@ static ssize_t gxp_spi_write(struct gxp_spi_chip *chip, const struct spi_mem_op 
 
 static int do_gxp_exec_mem_op(struct spi_mem *mem, const struct spi_mem_op *op)
 {
-	struct gxp_spi *spifi = spi_controller_get_devdata(mem->spi->controller);
-	struct gxp_spi_chip *chip = &spifi->chips[spi_get_chipselect(mem->spi, 0)];
+	struct gxp_spi *spifi = spi_controller_get_devdata(mem->spi->master);
+	struct gxp_spi_chip *chip = &spifi->chips[mem->spi->chip_select];
 	int ret;
 
 	if (op->data.dir == SPI_MEM_DATA_IN) {
@@ -235,8 +236,8 @@ static const struct spi_controller_mem_ops gxp_spi_mem_ops = {
 
 static int gxp_spi_setup(struct spi_device *spi)
 {
-	struct gxp_spi *spifi = spi_controller_get_devdata(spi->controller);
-	unsigned int cs = spi_get_chipselect(spi, 0);
+	struct gxp_spi *spifi = spi_controller_get_devdata(spi->master);
+	unsigned int cs = spi->chip_select;
 	struct gxp_spi_chip *chip = &spifi->chips[cs];
 
 	chip->spifi = spifi;
@@ -257,7 +258,7 @@ static int gxp_spifi_probe(struct platform_device *pdev)
 
 	data = of_device_get_match_data(&pdev->dev);
 
-	ctlr = devm_spi_alloc_host(dev, sizeof(*spifi));
+	ctlr = devm_spi_alloc_master(dev, sizeof(*spifi));
 	if (!ctlr)
 		return -ENOMEM;
 

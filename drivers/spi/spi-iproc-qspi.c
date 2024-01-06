@@ -94,6 +94,7 @@ static int bcm_iproc_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct bcm_iproc_intc *priv;
 	struct bcm_qspi_soc_intc *soc_intc;
+	struct resource *res;
 
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -103,12 +104,14 @@ static int bcm_iproc_probe(struct platform_device *pdev)
 
 	spin_lock_init(&priv->soclock);
 
-	priv->int_reg = devm_platform_ioremap_resource_byname(pdev, "intr_regs");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "intr_regs");
+	priv->int_reg = devm_ioremap_resource(dev, res);
 	if (IS_ERR(priv->int_reg))
 		return PTR_ERR(priv->int_reg);
 
-	priv->int_status_reg = devm_platform_ioremap_resource_byname(pdev,
-								     "intr_status_reg");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+					   "intr_status_reg");
+	priv->int_status_reg = devm_ioremap_resource(dev, res);
 	if (IS_ERR(priv->int_status_reg))
 		return PTR_ERR(priv->int_status_reg);
 
@@ -124,9 +127,9 @@ static int bcm_iproc_probe(struct platform_device *pdev)
 	return bcm_qspi_probe(pdev, soc_intc);
 }
 
-static void bcm_iproc_remove(struct platform_device *pdev)
+static int bcm_iproc_remove(struct platform_device *pdev)
 {
-	bcm_qspi_remove(pdev);
+	return bcm_qspi_remove(pdev);
 }
 
 static const struct of_device_id bcm_iproc_of_match[] = {
@@ -138,7 +141,7 @@ MODULE_DEVICE_TABLE(of, bcm_iproc_of_match);
 
 static struct platform_driver bcm_iproc_driver = {
 	.probe			= bcm_iproc_probe,
-	.remove_new		= bcm_iproc_remove,
+	.remove			= bcm_iproc_remove,
 	.driver = {
 		.name		= "bcm_iproc",
 		.pm		= &bcm_qspi_pm_ops,

@@ -48,7 +48,6 @@ static int get_report_descriptor(int sensor_idx, u8 *rep_desc)
 		       sizeof(comp3_report_descriptor));
 		break;
 	case als_idx: /* ambient light sensor */
-	case ACS_IDX: /* ambient color sensor */
 		memset(rep_desc, 0, sizeof(als_report_descriptor));
 		memcpy(rep_desc, als_report_descriptor,
 		       sizeof(als_report_descriptor));
@@ -98,7 +97,6 @@ static u32 get_descr_sz(int sensor_idx, int descriptor_name)
 		}
 		break;
 	case als_idx:
-	case ACS_IDX: /* ambient color sensor */
 		switch (descriptor_name) {
 		case descr_size:
 			return sizeof(als_report_descriptor);
@@ -176,7 +174,6 @@ static u8 get_feature_report(int sensor_idx, int report_id, u8 *feature_report)
 		report_size = sizeof(magno_feature);
 		break;
 	case als_idx:  /* ambient light sensor */
-	case ACS_IDX: /* ambient color sensor */
 		get_common_features(&als_feature.common_property, report_id);
 		als_feature.als_change_sesnitivity = HID_DEFAULT_SENSITIVITY;
 		als_feature.als_sensitivity_min = HID_DEFAULT_MIN_VALUE;
@@ -248,7 +245,6 @@ static u8 get_input_report(u8 current_index, int sensor_idx, int report_id,
 		report_size = sizeof(magno_input);
 		break;
 	case als_idx: /* Als */
-	case ACS_IDX: /* ambient color sensor */
 		get_common_inputs(&als_input.common_property, report_id);
 		/* For ALS ,V2 Platforms uses C2P_MSG5 register instead of DRAM access method */
 		if (supported_input == V2_STATUS)
@@ -257,13 +253,6 @@ static u8 get_input_report(u8 current_index, int sensor_idx, int report_id,
 		else
 			als_input.illuminance_value =
 				(int)sensor_virt_addr[0] / AMD_SFH_FW_MULTIPLIER;
-
-		if (sensor_idx == ACS_IDX) {
-			als_input.light_color_temp = sensor_virt_addr[1];
-			als_input.chromaticity_x_value = sensor_virt_addr[2];
-			als_input.chromaticity_y_value = sensor_virt_addr[3];
-		}
-
 		report_size = sizeof(als_input);
 		memcpy(input_report, &als_input, sizeof(als_input));
 		break;

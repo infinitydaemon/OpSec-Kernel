@@ -293,16 +293,16 @@ static void btree_complete_write(struct btree *b, struct btree_write *w)
 	w->journal	= NULL;
 }
 
-static CLOSURE_CALLBACK(btree_node_write_unlock)
+static void btree_node_write_unlock(struct closure *cl)
 {
-	closure_type(b, struct btree, io);
+	struct btree *b = container_of(cl, struct btree, io);
 
 	up(&b->io_mutex);
 }
 
-static CLOSURE_CALLBACK(__btree_node_write_done)
+static void __btree_node_write_done(struct closure *cl)
 {
-	closure_type(b, struct btree, io);
+	struct btree *b = container_of(cl, struct btree, io);
 	struct btree_write *w = btree_prev_write(b);
 
 	bch_bbio_free(b->bio, b->c);
@@ -315,12 +315,12 @@ static CLOSURE_CALLBACK(__btree_node_write_done)
 	closure_return_with_destructor(cl, btree_node_write_unlock);
 }
 
-static CLOSURE_CALLBACK(btree_node_write_done)
+static void btree_node_write_done(struct closure *cl)
 {
-	closure_type(b, struct btree, io);
+	struct btree *b = container_of(cl, struct btree, io);
 
 	bio_free_pages(b->bio);
-	__btree_node_write_done(&cl->work);
+	__btree_node_write_done(cl);
 }
 
 static void btree_node_write_endio(struct bio *bio)
@@ -559,27 +559,6 @@ static void mca_data_alloc(struct btree *b, struct bkey *k, gfp_t gfp)
 	}
 }
 
-#define cmp_int(l, r)		((l > r) - (l < r))
-
-#ifdef CONFIG_PROVE_LOCKING
-static int btree_lock_cmp_fn(const struct lockdep_map *_a,
-			     const struct lockdep_map *_b)
-{
-	const struct btree *a = container_of(_a, struct btree, lock.dep_map);
-	const struct btree *b = container_of(_b, struct btree, lock.dep_map);
-
-	return -cmp_int(a->level, b->level) ?: bkey_cmp(&a->key, &b->key);
-}
-
-static void btree_lock_print_fn(const struct lockdep_map *map)
-{
-	const struct btree *b = container_of(map, struct btree, lock.dep_map);
-
-	printk(KERN_CONT " l=%u %llu:%llu", b->level,
-	       KEY_INODE(&b->key), KEY_OFFSET(&b->key));
-}
-#endif
-
 static struct btree *mca_bucket_alloc(struct cache_set *c,
 				      struct bkey *k, gfp_t gfp)
 {
@@ -593,7 +572,7 @@ static struct btree *mca_bucket_alloc(struct cache_set *c,
 		return NULL;
 
 	init_rwsem(&b->lock);
-	lock_set_cmp_fn(&b->lock, btree_lock_cmp_fn, btree_lock_print_fn);
+	lockdep_set_novalidate_class(&b->lock);
 	mutex_init(&b->write_lock);
 	lockdep_set_novalidate_class(&b->write_lock);
 	INIT_LIST_HEAD(&b->list);
@@ -667,7 +646,7 @@ out_unlock:
 static unsigned long bch_mca_scan(struct shrinker *shrink,
 				  struct shrink_control *sc)
 {
-	struct cache_set *c = shrink->private_data;
+	struct cache_set *c = container_of(shrink, struct cache_set, shrink);
 	struct btree *b, *t;
 	unsigned long i, nr = sc->nr_to_scan;
 	unsigned long freed = 0;
@@ -734,7 +713,7 @@ out:
 static unsigned long bch_mca_count(struct shrinker *shrink,
 				   struct shrink_control *sc)
 {
-	struct cache_set *c = shrink->private_data;
+	struct cache_set *c = container_of(shrink, struct cache_set, shrink);
 
 	if (c->shrinker_disabled)
 		return 0;
@@ -752,8 +731,8 @@ void bch_btree_cache_free(struct cache_set *c)
 
 	closure_init_stack(&cl);
 
-	if (c->shrink)
-		shrinker_free(c->shrink);
+	if (c->shrink.list.next)
+		unregister_shrinker(&c->shrink);
 
 	mutex_lock(&c->bucket_lock);
 
@@ -828,19 +807,14 @@ int bch_btree_cache_alloc(struct cache_set *c)
 		c->verify_data = NULL;
 #endif
 
-	c->shrink = shrinker_alloc(0, "md-bcache:%pU", c->set_uuid);
-	if (!c->shrink) {
-		pr_warn("bcache: %s: could not allocate shrinker\n", __func__);
-		return 0;
-	}
+	c->shrink.count_objects = bch_mca_count;
+	c->shrink.scan_objects = bch_mca_scan;
+	c->shrink.seeks = 4;
+	c->shrink.batch = c->btree_pages * 2;
 
-	c->shrink->count_objects = bch_mca_count;
-	c->shrink->scan_objects = bch_mca_scan;
-	c->shrink->seeks = 4;
-	c->shrink->batch = c->btree_pages * 2;
-	c->shrink->private_data = c;
-
-	shrinker_register(c->shrink);
+	if (register_shrinker(&c->shrink, "md-bcache:%pU", c->set_uuid))
+		pr_warn("bcache: %s: could not register shrinker\n",
+				__func__);
 
 	return 0;
 }

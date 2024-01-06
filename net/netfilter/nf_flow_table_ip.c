@@ -8,7 +8,6 @@
 #include <linux/ipv6.h>
 #include <linux/netdevice.h>
 #include <linux/if_ether.h>
-#include <net/gso.h>
 #include <net/ip.h>
 #include <net/ipv6.h>
 #include <net/ip6_route.h>
@@ -164,43 +163,38 @@ static void nf_flow_tuple_encap(struct sk_buff *skb,
 	}
 }
 
-struct nf_flowtable_ctx {
-	const struct net_device	*in;
-	u32			offset;
-	u32			hdrsize;
-};
-
-static int nf_flow_tuple_ip(struct nf_flowtable_ctx *ctx, struct sk_buff *skb,
-			    struct flow_offload_tuple *tuple)
+static int nf_flow_tuple_ip(struct sk_buff *skb, const struct net_device *dev,
+			    struct flow_offload_tuple *tuple, u32 *hdrsize,
+			    u32 offset)
 {
 	struct flow_ports *ports;
 	unsigned int thoff;
 	struct iphdr *iph;
 	u8 ipproto;
 
-	if (!pskb_may_pull(skb, sizeof(*iph) + ctx->offset))
+	if (!pskb_may_pull(skb, sizeof(*iph) + offset))
 		return -1;
 
-	iph = (struct iphdr *)(skb_network_header(skb) + ctx->offset);
+	iph = (struct iphdr *)(skb_network_header(skb) + offset);
 	thoff = (iph->ihl * 4);
 
 	if (ip_is_fragment(iph) ||
 	    unlikely(ip_has_options(thoff)))
 		return -1;
 
-	thoff += ctx->offset;
+	thoff += offset;
 
 	ipproto = iph->protocol;
 	switch (ipproto) {
 	case IPPROTO_TCP:
-		ctx->hdrsize = sizeof(struct tcphdr);
+		*hdrsize = sizeof(struct tcphdr);
 		break;
 	case IPPROTO_UDP:
-		ctx->hdrsize = sizeof(struct udphdr);
+		*hdrsize = sizeof(struct udphdr);
 		break;
 #ifdef CONFIG_NF_CT_PROTO_GRE
 	case IPPROTO_GRE:
-		ctx->hdrsize = sizeof(struct gre_base_hdr);
+		*hdrsize = sizeof(struct gre_base_hdr);
 		break;
 #endif
 	default:
@@ -210,7 +204,7 @@ static int nf_flow_tuple_ip(struct nf_flowtable_ctx *ctx, struct sk_buff *skb,
 	if (iph->ttl <= 1)
 		return -1;
 
-	if (!pskb_may_pull(skb, thoff + ctx->hdrsize))
+	if (!pskb_may_pull(skb, thoff + *hdrsize))
 		return -1;
 
 	switch (ipproto) {
@@ -230,13 +224,13 @@ static int nf_flow_tuple_ip(struct nf_flowtable_ctx *ctx, struct sk_buff *skb,
 	}
 	}
 
-	iph = (struct iphdr *)(skb_network_header(skb) + ctx->offset);
+	iph = (struct iphdr *)(skb_network_header(skb) + offset);
 
 	tuple->src_v4.s_addr	= iph->saddr;
 	tuple->dst_v4.s_addr	= iph->daddr;
 	tuple->l3proto		= AF_INET;
 	tuple->l4proto		= ipproto;
-	tuple->iifidx		= ctx->in->ifindex;
+	tuple->iifidx		= dev->ifindex;
 	nf_flow_tuple_encap(skb, tuple);
 
 	return 0;
@@ -342,56 +336,58 @@ static unsigned int nf_flow_queue_xmit(struct net *net, struct sk_buff *skb,
 	return NF_STOLEN;
 }
 
-static struct flow_offload_tuple_rhash *
-nf_flow_offload_lookup(struct nf_flowtable_ctx *ctx,
-		       struct nf_flowtable *flow_table, struct sk_buff *skb)
+unsigned int
+nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
+			const struct nf_hook_state *state)
 {
+	struct flow_offload_tuple_rhash *tuplehash;
+	struct nf_flowtable *flow_table = priv;
 	struct flow_offload_tuple tuple = {};
-
-	if (skb->protocol != htons(ETH_P_IP) &&
-	    !nf_flow_skb_encap_protocol(skb, htons(ETH_P_IP), &ctx->offset))
-		return NULL;
-
-	if (nf_flow_tuple_ip(ctx, skb, &tuple) < 0)
-		return NULL;
-
-	return flow_offload_lookup(flow_table, &tuple);
-}
-
-static int nf_flow_offload_forward(struct nf_flowtable_ctx *ctx,
-				   struct nf_flowtable *flow_table,
-				   struct flow_offload_tuple_rhash *tuplehash,
-				   struct sk_buff *skb)
-{
 	enum flow_offload_tuple_dir dir;
 	struct flow_offload *flow;
+	struct net_device *outdev;
+	u32 hdrsize, offset = 0;
 	unsigned int thoff, mtu;
+	struct rtable *rt;
 	struct iphdr *iph;
+	__be32 nexthop;
+	int ret;
+
+	if (skb->protocol != htons(ETH_P_IP) &&
+	    !nf_flow_skb_encap_protocol(skb, htons(ETH_P_IP), &offset))
+		return NF_ACCEPT;
+
+	if (nf_flow_tuple_ip(skb, state->in, &tuple, &hdrsize, offset) < 0)
+		return NF_ACCEPT;
+
+	tuplehash = flow_offload_lookup(flow_table, &tuple);
+	if (tuplehash == NULL)
+		return NF_ACCEPT;
 
 	dir = tuplehash->tuple.dir;
 	flow = container_of(tuplehash, struct flow_offload, tuplehash[dir]);
 
-	mtu = flow->tuplehash[dir].tuple.mtu + ctx->offset;
+	mtu = flow->tuplehash[dir].tuple.mtu + offset;
 	if (unlikely(nf_flow_exceeds_mtu(skb, mtu)))
-		return 0;
+		return NF_ACCEPT;
 
-	iph = (struct iphdr *)(skb_network_header(skb) + ctx->offset);
-	thoff = (iph->ihl * 4) + ctx->offset;
+	iph = (struct iphdr *)(skb_network_header(skb) + offset);
+	thoff = (iph->ihl * 4) + offset;
 	if (nf_flow_state_check(flow, iph->protocol, skb, thoff))
-		return 0;
+		return NF_ACCEPT;
 
 	if (!nf_flow_dst_check(&tuplehash->tuple)) {
 		flow_offload_teardown(flow);
-		return 0;
+		return NF_ACCEPT;
 	}
 
-	if (skb_try_make_writable(skb, thoff + ctx->hdrsize))
-		return -1;
+	if (skb_try_make_writable(skb, thoff + hdrsize))
+		return NF_DROP;
 
-	flow_offload_refresh(flow_table, flow, false);
+	flow_offload_refresh(flow_table, flow);
 
 	nf_flow_encap_pop(skb, tuplehash);
-	thoff -= ctx->offset;
+	thoff -= offset;
 
 	iph = ip_hdr(skb);
 	nf_flow_nat_ip(flow, skb, thoff, dir, iph);
@@ -402,35 +398,6 @@ static int nf_flow_offload_forward(struct nf_flowtable_ctx *ctx,
 	if (flow_table->flags & NF_FLOWTABLE_COUNTER)
 		nf_ct_acct_update(flow->ct, tuplehash->tuple.dir, skb->len);
 
-	return 1;
-}
-
-unsigned int
-nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
-			const struct nf_hook_state *state)
-{
-	struct flow_offload_tuple_rhash *tuplehash;
-	struct nf_flowtable *flow_table = priv;
-	enum flow_offload_tuple_dir dir;
-	struct nf_flowtable_ctx ctx = {
-		.in	= state->in,
-	};
-	struct flow_offload *flow;
-	struct net_device *outdev;
-	struct rtable *rt;
-	__be32 nexthop;
-	int ret;
-
-	tuplehash = nf_flow_offload_lookup(&ctx, flow_table, skb);
-	if (!tuplehash)
-		return NF_ACCEPT;
-
-	ret = nf_flow_offload_forward(&ctx, flow_table, tuplehash, skb);
-	if (ret < 0)
-		return NF_DROP;
-	else if (ret == 0)
-		return NF_ACCEPT;
-
 	if (unlikely(tuplehash->tuple.xmit_type == FLOW_OFFLOAD_XMIT_XFRM)) {
 		rt = (struct rtable *)tuplehash->tuple.dst_cache;
 		memset(skb->cb, 0, sizeof(struct inet_skb_parm));
@@ -438,9 +405,6 @@ nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
 		IPCB(skb)->flags = IPSKB_FORWARDED;
 		return nf_flow_xmit_xfrm(skb, state, &rt->dst);
 	}
-
-	dir = tuplehash->tuple.dir;
-	flow = container_of(tuplehash, struct flow_offload, tuplehash[dir]);
 
 	switch (tuplehash->tuple.xmit_type) {
 	case FLOW_OFFLOAD_XMIT_NEIGH:
@@ -456,10 +420,6 @@ nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
 		ret = nf_flow_queue_xmit(state->net, skb, tuplehash, ETH_P_IP);
 		if (ret == NF_DROP)
 			flow_offload_teardown(flow);
-		break;
-	default:
-		WARN_ON_ONCE(1);
-		ret = NF_DROP;
 		break;
 	}
 
@@ -571,31 +531,32 @@ static void nf_flow_nat_ipv6(const struct flow_offload *flow,
 	}
 }
 
-static int nf_flow_tuple_ipv6(struct nf_flowtable_ctx *ctx, struct sk_buff *skb,
-			      struct flow_offload_tuple *tuple)
+static int nf_flow_tuple_ipv6(struct sk_buff *skb, const struct net_device *dev,
+			      struct flow_offload_tuple *tuple, u32 *hdrsize,
+			      u32 offset)
 {
 	struct flow_ports *ports;
 	struct ipv6hdr *ip6h;
 	unsigned int thoff;
 	u8 nexthdr;
 
-	thoff = sizeof(*ip6h) + ctx->offset;
+	thoff = sizeof(*ip6h) + offset;
 	if (!pskb_may_pull(skb, thoff))
 		return -1;
 
-	ip6h = (struct ipv6hdr *)(skb_network_header(skb) + ctx->offset);
+	ip6h = (struct ipv6hdr *)(skb_network_header(skb) + offset);
 
 	nexthdr = ip6h->nexthdr;
 	switch (nexthdr) {
 	case IPPROTO_TCP:
-		ctx->hdrsize = sizeof(struct tcphdr);
+		*hdrsize = sizeof(struct tcphdr);
 		break;
 	case IPPROTO_UDP:
-		ctx->hdrsize = sizeof(struct udphdr);
+		*hdrsize = sizeof(struct udphdr);
 		break;
 #ifdef CONFIG_NF_CT_PROTO_GRE
 	case IPPROTO_GRE:
-		ctx->hdrsize = sizeof(struct gre_base_hdr);
+		*hdrsize = sizeof(struct gre_base_hdr);
 		break;
 #endif
 	default:
@@ -605,7 +566,7 @@ static int nf_flow_tuple_ipv6(struct nf_flowtable_ctx *ctx, struct sk_buff *skb,
 	if (ip6h->hop_limit <= 1)
 		return -1;
 
-	if (!pskb_may_pull(skb, thoff + ctx->hdrsize))
+	if (!pskb_may_pull(skb, thoff + *hdrsize))
 		return -1;
 
 	switch (nexthdr) {
@@ -625,49 +586,67 @@ static int nf_flow_tuple_ipv6(struct nf_flowtable_ctx *ctx, struct sk_buff *skb,
 	}
 	}
 
-	ip6h = (struct ipv6hdr *)(skb_network_header(skb) + ctx->offset);
+	ip6h = (struct ipv6hdr *)(skb_network_header(skb) + offset);
 
 	tuple->src_v6		= ip6h->saddr;
 	tuple->dst_v6		= ip6h->daddr;
 	tuple->l3proto		= AF_INET6;
 	tuple->l4proto		= nexthdr;
-	tuple->iifidx		= ctx->in->ifindex;
+	tuple->iifidx		= dev->ifindex;
 	nf_flow_tuple_encap(skb, tuple);
 
 	return 0;
 }
 
-static int nf_flow_offload_ipv6_forward(struct nf_flowtable_ctx *ctx,
-					struct nf_flowtable *flow_table,
-					struct flow_offload_tuple_rhash *tuplehash,
-					struct sk_buff *skb)
+unsigned int
+nf_flow_offload_ipv6_hook(void *priv, struct sk_buff *skb,
+			  const struct nf_hook_state *state)
 {
+	struct flow_offload_tuple_rhash *tuplehash;
+	struct nf_flowtable *flow_table = priv;
+	struct flow_offload_tuple tuple = {};
 	enum flow_offload_tuple_dir dir;
+	const struct in6_addr *nexthop;
 	struct flow_offload *flow;
+	struct net_device *outdev;
 	unsigned int thoff, mtu;
+	u32 hdrsize, offset = 0;
 	struct ipv6hdr *ip6h;
+	struct rt6_info *rt;
+	int ret;
+
+	if (skb->protocol != htons(ETH_P_IPV6) &&
+	    !nf_flow_skb_encap_protocol(skb, htons(ETH_P_IPV6), &offset))
+		return NF_ACCEPT;
+
+	if (nf_flow_tuple_ipv6(skb, state->in, &tuple, &hdrsize, offset) < 0)
+		return NF_ACCEPT;
+
+	tuplehash = flow_offload_lookup(flow_table, &tuple);
+	if (tuplehash == NULL)
+		return NF_ACCEPT;
 
 	dir = tuplehash->tuple.dir;
 	flow = container_of(tuplehash, struct flow_offload, tuplehash[dir]);
 
-	mtu = flow->tuplehash[dir].tuple.mtu + ctx->offset;
+	mtu = flow->tuplehash[dir].tuple.mtu + offset;
 	if (unlikely(nf_flow_exceeds_mtu(skb, mtu)))
-		return 0;
+		return NF_ACCEPT;
 
-	ip6h = (struct ipv6hdr *)(skb_network_header(skb) + ctx->offset);
-	thoff = sizeof(*ip6h) + ctx->offset;
+	ip6h = (struct ipv6hdr *)(skb_network_header(skb) + offset);
+	thoff = sizeof(*ip6h) + offset;
 	if (nf_flow_state_check(flow, ip6h->nexthdr, skb, thoff))
-		return 0;
+		return NF_ACCEPT;
 
 	if (!nf_flow_dst_check(&tuplehash->tuple)) {
 		flow_offload_teardown(flow);
-		return 0;
+		return NF_ACCEPT;
 	}
 
-	if (skb_try_make_writable(skb, thoff + ctx->hdrsize))
-		return -1;
+	if (skb_try_make_writable(skb, thoff + hdrsize))
+		return NF_DROP;
 
-	flow_offload_refresh(flow_table, flow, false);
+	flow_offload_refresh(flow_table, flow);
 
 	nf_flow_encap_pop(skb, tuplehash);
 
@@ -680,52 +659,6 @@ static int nf_flow_offload_ipv6_forward(struct nf_flowtable_ctx *ctx,
 	if (flow_table->flags & NF_FLOWTABLE_COUNTER)
 		nf_ct_acct_update(flow->ct, tuplehash->tuple.dir, skb->len);
 
-	return 1;
-}
-
-static struct flow_offload_tuple_rhash *
-nf_flow_offload_ipv6_lookup(struct nf_flowtable_ctx *ctx,
-			    struct nf_flowtable *flow_table,
-			    struct sk_buff *skb)
-{
-	struct flow_offload_tuple tuple = {};
-
-	if (skb->protocol != htons(ETH_P_IPV6) &&
-	    !nf_flow_skb_encap_protocol(skb, htons(ETH_P_IPV6), &ctx->offset))
-		return NULL;
-
-	if (nf_flow_tuple_ipv6(ctx, skb, &tuple) < 0)
-		return NULL;
-
-	return flow_offload_lookup(flow_table, &tuple);
-}
-
-unsigned int
-nf_flow_offload_ipv6_hook(void *priv, struct sk_buff *skb,
-			  const struct nf_hook_state *state)
-{
-	struct flow_offload_tuple_rhash *tuplehash;
-	struct nf_flowtable *flow_table = priv;
-	enum flow_offload_tuple_dir dir;
-	struct nf_flowtable_ctx ctx = {
-		.in	= state->in,
-	};
-	const struct in6_addr *nexthop;
-	struct flow_offload *flow;
-	struct net_device *outdev;
-	struct rt6_info *rt;
-	int ret;
-
-	tuplehash = nf_flow_offload_ipv6_lookup(&ctx, flow_table, skb);
-	if (tuplehash == NULL)
-		return NF_ACCEPT;
-
-	ret = nf_flow_offload_ipv6_forward(&ctx, flow_table, tuplehash, skb);
-	if (ret < 0)
-		return NF_DROP;
-	else if (ret == 0)
-		return NF_ACCEPT;
-
 	if (unlikely(tuplehash->tuple.xmit_type == FLOW_OFFLOAD_XMIT_XFRM)) {
 		rt = (struct rt6_info *)tuplehash->tuple.dst_cache;
 		memset(skb->cb, 0, sizeof(struct inet6_skb_parm));
@@ -733,9 +666,6 @@ nf_flow_offload_ipv6_hook(void *priv, struct sk_buff *skb,
 		IP6CB(skb)->flags = IP6SKB_FORWARDED;
 		return nf_flow_xmit_xfrm(skb, state, &rt->dst);
 	}
-
-	dir = tuplehash->tuple.dir;
-	flow = container_of(tuplehash, struct flow_offload, tuplehash[dir]);
 
 	switch (tuplehash->tuple.xmit_type) {
 	case FLOW_OFFLOAD_XMIT_NEIGH:
@@ -751,10 +681,6 @@ nf_flow_offload_ipv6_hook(void *priv, struct sk_buff *skb,
 		ret = nf_flow_queue_xmit(state->net, skb, tuplehash, ETH_P_IPV6);
 		if (ret == NF_DROP)
 			flow_offload_teardown(flow);
-		break;
-	default:
-		WARN_ON_ONCE(1);
-		ret = NF_DROP;
 		break;
 	}
 

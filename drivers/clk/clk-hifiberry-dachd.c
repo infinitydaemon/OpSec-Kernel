@@ -229,7 +229,8 @@ const struct regmap_config hifiberry_pll_regmap = {
 EXPORT_SYMBOL_GPL(hifiberry_pll_regmap);
 
 
-static int clk_hifiberry_dachd_i2c_probe(struct i2c_client *i2c)
+static int clk_hifiberry_dachd_i2c_probe(struct i2c_client *i2c,
+			     const struct i2c_device_id *id)
 {
 	struct clk_hifiberry_drvdata *hdclk;
 	int ret = 0;

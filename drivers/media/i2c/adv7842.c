@@ -3441,7 +3441,8 @@ static int adv7842_register_clients(struct v4l2_subdev *sd)
 	return 0;
 }
 
-static int adv7842_probe(struct i2c_client *client)
+static int adv7842_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct adv7842_state *state;
 	static const struct v4l2_dv_timings cea640x480 =

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2001-2002 Sistina Software (UK) Limited.
  * Copyright (C) 2006-2008 Red Hat GmbH
@@ -22,12 +21,10 @@
 
 #define DM_PREFETCH_CHUNKS		12
 
-/*
- *---------------------------------------------------------------
+/*-----------------------------------------------------------------
  * Persistent snapshots, by persistent we mean that the snapshot
  * will survive a reboot.
- *---------------------------------------------------------------
- */
+ *---------------------------------------------------------------*/
 
 /*
  * We need to store a record of which parts of the origin have
@@ -95,7 +92,7 @@ struct core_exception {
 };
 
 struct commit_callback {
-	void (*callback)(void *ref, int success);
+	void (*callback)(void *, int success);
 	void *context;
 };
 
@@ -276,7 +273,6 @@ static void skip_metadata(struct pstore *ps)
 {
 	uint32_t stride = ps->exceptions_per_area + 1;
 	chunk_t next_free = ps->next_free;
-
 	if (sector_div(next_free, stride) == NUM_SNAPSHOT_HDR_CHUNKS)
 		ps->next_free++;
 }
@@ -518,18 +514,15 @@ static int read_exceptions(struct pstore *ps,
 		if (unlikely(prefetch_area < ps->current_area))
 			prefetch_area = ps->current_area;
 
-		if (DM_PREFETCH_CHUNKS) {
-			do {
-				chunk_t pf_chunk = area_location(ps, prefetch_area);
-
-				if (unlikely(pf_chunk >= dm_bufio_get_device_size(client)))
-					break;
-				dm_bufio_prefetch(client, pf_chunk, 1);
-				prefetch_area++;
-				if (unlikely(!prefetch_area))
-					break;
-			} while (prefetch_area <= ps->current_area + DM_PREFETCH_CHUNKS);
-		}
+		if (DM_PREFETCH_CHUNKS) do {
+			chunk_t pf_chunk = area_location(ps, prefetch_area);
+			if (unlikely(pf_chunk >= dm_bufio_get_device_size(client)))
+				break;
+			dm_bufio_prefetch(client, pf_chunk, 1);
+			prefetch_area++;
+			if (unlikely(!prefetch_area))
+				break;
+		} while (prefetch_area <= ps->current_area + DM_PREFETCH_CHUNKS);
 
 		chunk = area_location(ps, ps->current_area);
 
@@ -567,7 +560,7 @@ ret_destroy_bufio:
 
 static struct pstore *get_info(struct dm_exception_store *store)
 {
-	return store->context;
+	return (struct pstore *) store->context;
 }
 
 static void persistent_usage(struct dm_exception_store *store,
@@ -696,7 +689,7 @@ static int persistent_prepare_exception(struct dm_exception_store *store,
 
 static void persistent_commit_exception(struct dm_exception_store *store,
 					struct dm_exception *e, int valid,
-					void (*callback)(void *, int success),
+					void (*callback) (void *, int success),
 					void *callback_context)
 {
 	unsigned int i;
@@ -880,7 +873,6 @@ static int persistent_ctr(struct dm_exception_store *store, char *options)
 
 	if (options) {
 		char overflow = toupper(options[0]);
-
 		if (overflow == 'O')
 			store->userspace_supports_overflow = true;
 		else {

@@ -18,6 +18,7 @@
 #include <linux/regulator/driver.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
+#include <linux/gpio.h>
 #include <linux/mfd/rohm-generic.h>
 #include <linux/mfd/rohm-bd71815.h>
 #include <linux/regulator/of_regulator.h>
@@ -200,10 +201,10 @@ static int buck12_set_hw_dvs_levels(struct device_node *np,
 
 	data = container_of(desc, struct bd71815_regulator, desc);
 
-	if (of_property_present(np, "rohm,dvs-run-voltage") ||
-	    of_property_present(np, "rohm,dvs-suspend-voltage") ||
-	    of_property_present(np, "rohm,dvs-lpsr-voltage") ||
-	    of_property_present(np, "rohm,dvs-snvs-voltage")) {
+	if (of_find_property(np, "rohm,dvs-run-voltage", NULL) ||
+	    of_find_property(np, "rohm,dvs-suspend-voltage", NULL) ||
+	    of_find_property(np, "rohm,dvs-lpsr-voltage", NULL) ||
+	    of_find_property(np, "rohm,dvs-snvs-voltage", NULL)) {
 		ret = regmap_read(cfg->regmap, desc->vsel_reg, &val);
 		if (ret)
 			return ret;
@@ -601,10 +602,12 @@ static int bd7181x_probe(struct platform_device *pdev)
 			config.ena_gpiod = NULL;
 
 		rdev = devm_regulator_register(&pdev->dev, desc, &config);
-		if (IS_ERR(rdev))
-			return dev_err_probe(&pdev->dev, PTR_ERR(rdev),
-					     "failed to register %s regulator\n",
-					     desc->name);
+		if (IS_ERR(rdev)) {
+			dev_err(&pdev->dev,
+				"failed to register %s regulator\n",
+				desc->name);
+			return PTR_ERR(rdev);
+		}
 	}
 	return 0;
 }
@@ -618,7 +621,6 @@ MODULE_DEVICE_TABLE(platform, bd7181x_pmic_id);
 static struct platform_driver bd7181x_regulator = {
 	.driver = {
 		.name = "bd7181x-pmic",
-		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 	},
 	.probe = bd7181x_probe,
 	.id_table = bd7181x_pmic_id,

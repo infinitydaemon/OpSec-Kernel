@@ -22,12 +22,6 @@ int set_syscall_user_dispatch(unsigned long mode, unsigned long offset,
 #define clear_syscall_work_syscall_user_dispatch(tsk) \
 	clear_task_syscall_work(tsk, SYSCALL_USER_DISPATCH)
 
-int syscall_user_dispatch_get_config(struct task_struct *task, unsigned long size,
-				     void __user *data);
-
-int syscall_user_dispatch_set_config(struct task_struct *task, unsigned long size,
-				     void __user *data);
-
 #else
 struct syscall_user_dispatch {};
 
@@ -39,18 +33,6 @@ static inline int set_syscall_user_dispatch(unsigned long mode, unsigned long of
 
 static inline void clear_syscall_work_syscall_user_dispatch(struct task_struct *tsk)
 {
-}
-
-static inline int syscall_user_dispatch_get_config(struct task_struct *task,
-						   unsigned long size, void __user *data)
-{
-	return -EINVAL;
-}
-
-static inline int syscall_user_dispatch_set_config(struct task_struct *task,
-						   unsigned long size, void __user *data)
-{
-	return -EINVAL;
 }
 
 #endif /* CONFIG_GENERIC_ENTRY */

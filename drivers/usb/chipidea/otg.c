@@ -130,11 +130,8 @@ enum ci_role ci_otg_role(struct ci_hdrc *ci)
 
 void ci_handle_vbus_change(struct ci_hdrc *ci)
 {
-	if (!ci->is_otg) {
-		if (ci->platdata->flags & CI_HDRC_FORCE_VBUS_ACTIVE_ALWAYS)
-			usb_gadget_vbus_connect(&ci->gadget);
+	if (!ci->is_otg)
 		return;
-	}
 
 	if (hw_read_otgsc(ci, OTGSC_BSV) && !ci->vbus_active)
 		usb_gadget_vbus_connect(&ci->gadget);
@@ -168,7 +165,7 @@ static int hw_wait_vbus_lower_bsv(struct ci_hdrc *ci)
 	return 0;
 }
 
-void ci_handle_id_switch(struct ci_hdrc *ci)
+static void ci_handle_id_switch(struct ci_hdrc *ci)
 {
 	enum ci_role role;
 

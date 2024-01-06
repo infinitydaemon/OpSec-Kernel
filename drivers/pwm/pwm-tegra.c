@@ -41,6 +41,7 @@
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/pm_opp.h>
 #include <linux/pwm.h>
 #include <linux/platform_device.h>
@@ -268,6 +269,7 @@ static int tegra_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 
 static const struct pwm_ops tegra_pwm_ops = {
 	.apply = tegra_pwm_apply,
+	.owner = THIS_MODULE,
 };
 
 static int tegra_pwm_probe(struct platform_device *pdev)
@@ -348,7 +350,7 @@ put_pm:
 	return ret;
 }
 
-static void tegra_pwm_remove(struct platform_device *pdev)
+static int tegra_pwm_remove(struct platform_device *pdev)
 {
 	struct tegra_pwm_chip *pc = platform_get_drvdata(pdev);
 
@@ -357,6 +359,8 @@ static void tegra_pwm_remove(struct platform_device *pdev)
 	reset_control_assert(pc->rst);
 
 	pm_runtime_force_suspend(&pdev->dev);
+
+	return 0;
 }
 
 static int __maybe_unused tegra_pwm_runtime_suspend(struct device *dev)
@@ -430,7 +434,7 @@ static struct platform_driver tegra_pwm_driver = {
 		.pm = &tegra_pwm_pm_ops,
 	},
 	.probe = tegra_pwm_probe,
-	.remove_new = tegra_pwm_remove,
+	.remove = tegra_pwm_remove,
 };
 
 module_platform_driver(tegra_pwm_driver);

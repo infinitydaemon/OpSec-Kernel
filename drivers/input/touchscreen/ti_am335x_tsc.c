@@ -25,6 +25,7 @@
 #include <linux/io.h>
 #include <linux/delay.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/sort.h>
 #include <linux/pm_wakeirq.h>
 
@@ -491,7 +492,7 @@ err_free_mem:
 	return err;
 }
 
-static void titsc_remove(struct platform_device *pdev)
+static int titsc_remove(struct platform_device *pdev)
 {
 	struct titsc *ts_dev = platform_get_drvdata(pdev);
 	u32 steps;
@@ -508,9 +509,10 @@ static void titsc_remove(struct platform_device *pdev)
 	input_unregister_device(ts_dev->input);
 
 	kfree(ts_dev);
+	return 0;
 }
 
-static int titsc_suspend(struct device *dev)
+static int __maybe_unused titsc_suspend(struct device *dev)
 {
 	struct titsc *ts_dev = dev_get_drvdata(dev);
 	unsigned int idle;
@@ -525,7 +527,7 @@ static int titsc_suspend(struct device *dev)
 	return 0;
 }
 
-static int titsc_resume(struct device *dev)
+static int __maybe_unused titsc_resume(struct device *dev)
 {
 	struct titsc *ts_dev = dev_get_drvdata(dev);
 
@@ -541,7 +543,7 @@ static int titsc_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(titsc_pm_ops, titsc_suspend, titsc_resume);
+static SIMPLE_DEV_PM_OPS(titsc_pm_ops, titsc_suspend, titsc_resume);
 
 static const struct of_device_id ti_tsc_dt_ids[] = {
 	{ .compatible = "ti,am3359-tsc", },
@@ -551,10 +553,10 @@ MODULE_DEVICE_TABLE(of, ti_tsc_dt_ids);
 
 static struct platform_driver ti_tsc_driver = {
 	.probe	= titsc_probe,
-	.remove_new = titsc_remove,
+	.remove	= titsc_remove,
 	.driver	= {
 		.name   = "TI-am335x-tsc",
-		.pm	= pm_sleep_ptr(&titsc_pm_ops),
+		.pm	= &titsc_pm_ops,
 		.of_match_table = ti_tsc_dt_ids,
 	},
 };

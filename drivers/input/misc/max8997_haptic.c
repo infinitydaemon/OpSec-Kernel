@@ -278,7 +278,8 @@ static int max8997_haptic_probe(struct platform_device *pdev)
 		break;
 
 	case MAX8997_EXTERNAL_MODE:
-		chip->pwm = pwm_get(&pdev->dev, NULL);
+		chip->pwm = pwm_request(haptic_pdata->pwm_channel_id,
+					"max8997-haptic");
 		if (IS_ERR(chip->pwm)) {
 			error = PTR_ERR(chip->pwm);
 			dev_err(&pdev->dev,
@@ -343,7 +344,7 @@ err_put_regulator:
 	regulator_put(chip->regulator);
 err_free_pwm:
 	if (chip->mode == MAX8997_EXTERNAL_MODE)
-		pwm_put(chip->pwm);
+		pwm_free(chip->pwm);
 err_free_mem:
 	input_free_device(input_dev);
 	kfree(chip);
@@ -351,7 +352,7 @@ err_free_mem:
 	return error;
 }
 
-static void max8997_haptic_remove(struct platform_device *pdev)
+static int max8997_haptic_remove(struct platform_device *pdev)
 {
 	struct max8997_haptic *chip = platform_get_drvdata(pdev);
 
@@ -359,12 +360,14 @@ static void max8997_haptic_remove(struct platform_device *pdev)
 	regulator_put(chip->regulator);
 
 	if (chip->mode == MAX8997_EXTERNAL_MODE)
-		pwm_put(chip->pwm);
+		pwm_free(chip->pwm);
 
 	kfree(chip);
+
+	return 0;
 }
 
-static int max8997_haptic_suspend(struct device *dev)
+static int __maybe_unused max8997_haptic_suspend(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct max8997_haptic *chip = platform_get_drvdata(pdev);
@@ -374,8 +377,7 @@ static int max8997_haptic_suspend(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(max8997_haptic_pm_ops,
-				max8997_haptic_suspend, NULL);
+static SIMPLE_DEV_PM_OPS(max8997_haptic_pm_ops, max8997_haptic_suspend, NULL);
 
 static const struct platform_device_id max8997_haptic_id[] = {
 	{ "max8997-haptic", 0 },
@@ -386,10 +388,10 @@ MODULE_DEVICE_TABLE(platform, max8997_haptic_id);
 static struct platform_driver max8997_haptic_driver = {
 	.driver	= {
 		.name	= "max8997-haptic",
-		.pm	= pm_sleep_ptr(&max8997_haptic_pm_ops),
+		.pm	= &max8997_haptic_pm_ops,
 	},
 	.probe		= max8997_haptic_probe,
-	.remove_new	= max8997_haptic_remove,
+	.remove		= max8997_haptic_remove,
 	.id_table	= max8997_haptic_id,
 };
 module_platform_driver(max8997_haptic_driver);

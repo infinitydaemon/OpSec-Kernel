@@ -302,9 +302,12 @@ static void __program_context(void __iomem *base, int ctx,
 	SET_M(base, ctx, 1);
 }
 
-static struct iommu_domain *msm_iommu_domain_alloc_paging(struct device *dev)
+static struct iommu_domain *msm_iommu_domain_alloc(unsigned type)
 {
 	struct msm_priv *priv;
+
+	if (type != IOMMU_DOMAIN_UNMANAGED)
+		return NULL;
 
 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -440,20 +443,15 @@ fail:
 	return ret;
 }
 
-static int msm_iommu_identity_attach(struct iommu_domain *identity_domain,
-				     struct device *dev)
+static void msm_iommu_detach_dev(struct iommu_domain *domain,
+				 struct device *dev)
 {
-	struct iommu_domain *domain = iommu_get_domain_for_dev(dev);
-	struct msm_priv *priv;
+	struct msm_priv *priv = to_msm_priv(domain);
 	unsigned long flags;
 	struct msm_iommu_dev *iommu;
 	struct msm_iommu_ctx_dev *master;
-	int ret = 0;
+	int ret;
 
-	if (domain == identity_domain || !domain)
-		return 0;
-
-	priv = to_msm_priv(domain);
 	free_io_pgtable_ops(priv->iop);
 
 	spin_lock_irqsave(&msm_iommu_lock, flags);
@@ -470,56 +468,41 @@ static int msm_iommu_identity_attach(struct iommu_domain *identity_domain,
 	}
 fail:
 	spin_unlock_irqrestore(&msm_iommu_lock, flags);
-	return ret;
 }
 
-static struct iommu_domain_ops msm_iommu_identity_ops = {
-	.attach_dev = msm_iommu_identity_attach,
-};
-
-static struct iommu_domain msm_iommu_identity_domain = {
-	.type = IOMMU_DOMAIN_IDENTITY,
-	.ops = &msm_iommu_identity_ops,
-};
-
 static int msm_iommu_map(struct iommu_domain *domain, unsigned long iova,
-			 phys_addr_t pa, size_t pgsize, size_t pgcount,
-			 int prot, gfp_t gfp, size_t *mapped)
+			 phys_addr_t pa, size_t len, int prot, gfp_t gfp)
 {
 	struct msm_priv *priv = to_msm_priv(domain);
 	unsigned long flags;
 	int ret;
 
 	spin_lock_irqsave(&priv->pgtlock, flags);
-	ret = priv->iop->map_pages(priv->iop, iova, pa, pgsize, pgcount, prot,
-				   GFP_ATOMIC, mapped);
+	ret = priv->iop->map(priv->iop, iova, pa, len, prot, GFP_ATOMIC);
 	spin_unlock_irqrestore(&priv->pgtlock, flags);
 
 	return ret;
 }
 
-static int msm_iommu_sync_map(struct iommu_domain *domain, unsigned long iova,
-			      size_t size)
+static void msm_iommu_sync_map(struct iommu_domain *domain, unsigned long iova,
+			       size_t size)
 {
 	struct msm_priv *priv = to_msm_priv(domain);
 
 	__flush_iotlb_range(iova, size, SZ_4K, false, priv);
-	return 0;
 }
 
 static size_t msm_iommu_unmap(struct iommu_domain *domain, unsigned long iova,
-			      size_t pgsize, size_t pgcount,
-			      struct iommu_iotlb_gather *gather)
+			      size_t len, struct iommu_iotlb_gather *gather)
 {
 	struct msm_priv *priv = to_msm_priv(domain);
 	unsigned long flags;
-	size_t ret;
 
 	spin_lock_irqsave(&priv->pgtlock, flags);
-	ret = priv->iop->unmap_pages(priv->iop, iova, pgsize, pgcount, gather);
+	len = priv->iop->unmap(priv->iop, iova, len, gather);
 	spin_unlock_irqrestore(&priv->pgtlock, flags);
 
-	return ret;
+	return len;
 }
 
 static phys_addr_t msm_iommu_iova_to_phys(struct iommu_domain *domain,
@@ -688,16 +671,16 @@ fail:
 }
 
 static struct iommu_ops msm_iommu_ops = {
-	.identity_domain = &msm_iommu_identity_domain,
-	.domain_alloc_paging = msm_iommu_domain_alloc_paging,
+	.domain_alloc = msm_iommu_domain_alloc,
 	.probe_device = msm_iommu_probe_device,
 	.device_group = generic_device_group,
 	.pgsize_bitmap = MSM_IOMMU_PGSIZES,
 	.of_xlate = qcom_iommu_of_xlate,
 	.default_domain_ops = &(const struct iommu_domain_ops) {
 		.attach_dev	= msm_iommu_attach_dev,
-		.map_pages	= msm_iommu_map,
-		.unmap_pages	= msm_iommu_unmap,
+		.detach_dev	= msm_iommu_detach_dev,
+		.map		= msm_iommu_map,
+		.unmap		= msm_iommu_unmap,
 		/*
 		 * Nothing is needed here, the barrier to guarantee
 		 * completion of the tlb sync operation is implicitly
@@ -824,12 +807,13 @@ static const struct of_device_id msm_iommu_dt_match[] = {
 	{}
 };
 
-static void msm_iommu_remove(struct platform_device *pdev)
+static int msm_iommu_remove(struct platform_device *pdev)
 {
 	struct msm_iommu_dev *iommu = platform_get_drvdata(pdev);
 
 	clk_unprepare(iommu->clk);
 	clk_unprepare(iommu->pclk);
+	return 0;
 }
 
 static struct platform_driver msm_iommu_driver = {
@@ -838,6 +822,6 @@ static struct platform_driver msm_iommu_driver = {
 		.of_match_table = msm_iommu_dt_match,
 	},
 	.probe		= msm_iommu_probe,
-	.remove_new	= msm_iommu_remove,
+	.remove		= msm_iommu_remove,
 };
 builtin_platform_driver(msm_iommu_driver);

@@ -12,7 +12,7 @@
 #include <linux/err.h>
 #include <linux/clk.h>
 #include <linux/pm_runtime.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
 
 /* EHRPWM registers and bits definitions */
 
@@ -437,6 +437,7 @@ static int ehrpwm_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 static const struct pwm_ops ehrpwm_pwm_ops = {
 	.free = ehrpwm_pwm_free,
 	.apply = ehrpwm_pwm_apply,
+	.owner = THIS_MODULE,
 };
 
 static const struct of_device_id ehrpwm_of_match[] = {
@@ -510,7 +511,7 @@ err_clk_unprepare:
 	return ret;
 }
 
-static void ehrpwm_pwm_remove(struct platform_device *pdev)
+static int ehrpwm_pwm_remove(struct platform_device *pdev)
 {
 	struct ehrpwm_pwm_chip *pc = platform_get_drvdata(pdev);
 
@@ -519,6 +520,8 @@ static void ehrpwm_pwm_remove(struct platform_device *pdev)
 	clk_unprepare(pc->tbclk);
 
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -601,7 +604,7 @@ static struct platform_driver ehrpwm_pwm_driver = {
 		.pm = &ehrpwm_pwm_pm_ops,
 	},
 	.probe = ehrpwm_pwm_probe,
-	.remove_new = ehrpwm_pwm_remove,
+	.remove = ehrpwm_pwm_remove,
 };
 module_platform_driver(ehrpwm_pwm_driver);
 

@@ -140,8 +140,9 @@ static int stm32_pwm_lp_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 
 	if (reenable) {
 		/* Start LP timer in continuous mode */
-		ret = regmap_set_bits(priv->regmap, STM32_LPTIM_CR,
-				      STM32_LPTIM_CNTSTRT);
+		ret = regmap_update_bits(priv->regmap, STM32_LPTIM_CR,
+					 STM32_LPTIM_CNTSTRT,
+					 STM32_LPTIM_CNTSTRT);
 		if (ret) {
 			regmap_write(priv->regmap, STM32_LPTIM_CR, 0);
 			goto err;
@@ -189,6 +190,7 @@ static int stm32_pwm_lp_get_state(struct pwm_chip *chip,
 }
 
 static const struct pwm_ops stm32_pwm_lp_ops = {
+	.owner = THIS_MODULE,
 	.apply = stm32_pwm_lp_apply,
 	.get_state = stm32_pwm_lp_get_state,
 };
@@ -251,7 +253,7 @@ static struct platform_driver stm32_pwm_lp_driver = {
 	.probe	= stm32_pwm_lp_probe,
 	.driver	= {
 		.name = "stm32-pwm-lp",
-		.of_match_table = stm32_pwm_lp_of_match,
+		.of_match_table = of_match_ptr(stm32_pwm_lp_of_match),
 		.pm = &stm32_pwm_lp_pm_ops,
 	},
 };

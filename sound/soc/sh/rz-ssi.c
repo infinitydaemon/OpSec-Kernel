@@ -10,6 +10,7 @@
 #include <linux/dmaengine.h>
 #include <linux/io.h>
 #include <linux/module.h>
+#include <linux/of_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/reset.h>
 #include <sound/soc.h>
@@ -108,7 +109,6 @@ struct rz_ssi_priv {
 	int irq_int;
 	int irq_tx;
 	int irq_rx;
-	int irq_rt;
 
 	spinlock_t lock;
 
@@ -157,9 +157,9 @@ static void rz_ssi_reg_mask_setl(struct rz_ssi_priv *priv, uint reg,
 static inline struct snd_soc_dai *
 rz_ssi_get_dai(struct snd_pcm_substream *substream)
 {
-	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
 
-	return snd_soc_rtd_to_cpu(rtd, 0);
+	return asoc_rtd_to_cpu(rtd, 0);
 }
 
 static inline bool rz_ssi_stream_is_play(struct rz_ssi_priv *ssi,
@@ -563,17 +563,6 @@ static irqreturn_t rz_ssi_interrupt(int irq, void *data)
 	if (irq == ssi->irq_rx) {
 		strm->transfer(ssi, &ssi->capture);
 		rz_ssi_reg_mask_setl(ssi, SSIFSR, SSIFSR_RDF, 0);
-	}
-
-	if (irq == ssi->irq_rt) {
-		struct snd_pcm_substream *substream = strm->substream;
-
-		if (rz_ssi_stream_is_play(ssi, substream)) {
-			strm->transfer(ssi, &ssi->playback);
-		} else {
-			strm->transfer(ssi, &ssi->capture);
-			rz_ssi_reg_mask_setl(ssi, SSIFSR, SSIFSR_RDF, 0);
-		}
 	}
 
 	return IRQ_HANDLED;
@@ -1004,39 +993,26 @@ static int rz_ssi_probe(struct platform_device *pdev)
 	if (!rz_ssi_is_dma_enabled(ssi)) {
 		/* Tx and Rx interrupts (pio only) */
 		ssi->irq_tx = platform_get_irq_byname(pdev, "dma_tx");
+		if (ssi->irq_tx < 0)
+			return ssi->irq_tx;
+
+		ret = devm_request_irq(&pdev->dev, ssi->irq_tx,
+				       &rz_ssi_interrupt, 0,
+				       dev_name(&pdev->dev), ssi);
+		if (ret < 0)
+			return dev_err_probe(&pdev->dev, ret,
+					     "irq request error (dma_tx)\n");
+
 		ssi->irq_rx = platform_get_irq_byname(pdev, "dma_rx");
-		if (ssi->irq_tx == -ENXIO && ssi->irq_rx == -ENXIO) {
-			ssi->irq_rt = platform_get_irq_byname(pdev, "dma_rt");
-			if (ssi->irq_rt < 0)
-				return ssi->irq_rt;
+		if (ssi->irq_rx < 0)
+			return ssi->irq_rx;
 
-			ret = devm_request_irq(&pdev->dev, ssi->irq_rt,
-					       &rz_ssi_interrupt, 0,
-					       dev_name(&pdev->dev), ssi);
-			if (ret < 0)
-				return dev_err_probe(&pdev->dev, ret,
-						"irq request error (dma_tx)\n");
-		} else {
-			if (ssi->irq_tx < 0)
-				return ssi->irq_tx;
-
-			if (ssi->irq_rx < 0)
-				return ssi->irq_rx;
-
-			ret = devm_request_irq(&pdev->dev, ssi->irq_tx,
-					       &rz_ssi_interrupt, 0,
-					       dev_name(&pdev->dev), ssi);
-			if (ret < 0)
-				return dev_err_probe(&pdev->dev, ret,
-						"irq request error (dma_tx)\n");
-
-			ret = devm_request_irq(&pdev->dev, ssi->irq_rx,
-					       &rz_ssi_interrupt, 0,
-					       dev_name(&pdev->dev), ssi);
-			if (ret < 0)
-				return dev_err_probe(&pdev->dev, ret,
-						"irq request error (dma_rx)\n");
-		}
+		ret = devm_request_irq(&pdev->dev, ssi->irq_rx,
+				       &rz_ssi_interrupt, 0,
+				       dev_name(&pdev->dev), ssi);
+		if (ret < 0)
+			return dev_err_probe(&pdev->dev, ret,
+					     "irq request error (dma_rx)\n");
 	}
 
 	ssi->rstc = devm_reset_control_get_exclusive(&pdev->dev, NULL);
@@ -1074,7 +1050,7 @@ err_reset:
 	return ret;
 }
 
-static void rz_ssi_remove(struct platform_device *pdev)
+static int rz_ssi_remove(struct platform_device *pdev)
 {
 	struct rz_ssi_priv *ssi = dev_get_drvdata(&pdev->dev);
 
@@ -1083,6 +1059,8 @@ static void rz_ssi_remove(struct platform_device *pdev)
 	pm_runtime_put(ssi->dev);
 	pm_runtime_disable(ssi->dev);
 	reset_control_assert(ssi->rstc);
+
+	return 0;
 }
 
 static const struct of_device_id rz_ssi_of_match[] = {
@@ -1097,7 +1075,7 @@ static struct platform_driver rz_ssi_driver = {
 		.of_match_table = rz_ssi_of_match,
 	},
 	.probe		= rz_ssi_probe,
-	.remove_new	= rz_ssi_remove,
+	.remove		= rz_ssi_remove,
 };
 
 module_platform_driver(rz_ssi_driver);

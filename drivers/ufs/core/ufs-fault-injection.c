@@ -54,7 +54,7 @@ static int ufs_fault_set(const char *val, const struct kernel_param *kp)
 	if (!setup_fault_attr(attr, (char *)val))
 		return -EINVAL;
 
-	strscpy(kp->arg, val, FAULT_INJ_STR_SIZE);
+	strlcpy(kp->arg, val, FAULT_INJ_STR_SIZE);
 
 	return 0;
 }

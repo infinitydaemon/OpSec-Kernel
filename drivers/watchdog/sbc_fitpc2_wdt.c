@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Watchdog driver for SBC-FITPC2 board
  *
@@ -6,6 +5,9 @@
  *
  * Adapted from the IXP2000 watchdog driver by Deepak Saxena.
  *
+ * This file is licensed under  the terms of the GNU General Public
+ * License version 2. This program is licensed "as is" without any
+ * warranty of any kind, whether express or implied.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME " WATCHDOG: " fmt

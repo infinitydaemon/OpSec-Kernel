@@ -292,7 +292,7 @@ static const struct regmap_config rt700_regmap = {
 	.max_register = 0x755800,
 	.reg_defaults = rt700_reg_defaults,
 	.num_reg_defaults = ARRAY_SIZE(rt700_reg_defaults),
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 	.use_single_read = true,
 	.use_single_write = true,
 	.reg_read = rt700_sdw_read,
@@ -315,6 +315,9 @@ static int rt700_update_status(struct sdw_slave *slave,
 {
 	struct rt700_priv *rt700 = dev_get_drvdata(&slave->dev);
 
+	/* Update the status */
+	rt700->status = status;
+
 	if (status == SDW_SLAVE_UNATTACHED)
 		rt700->hw_init = false;
 
@@ -322,7 +325,7 @@ static int rt700_update_status(struct sdw_slave *slave,
 	 * Perform initialization only if slave status is present and
 	 * hw_init flag is false
 	 */
-	if (rt700->hw_init || status != SDW_SLAVE_ATTACHED)
+	if (rt700->hw_init || rt700->status != SDW_SLAVE_ATTACHED)
 		return 0;
 
 	/* perform I/O transfers required for Slave initialization */
@@ -452,7 +455,9 @@ static int rt700_sdw_probe(struct sdw_slave *slave,
 	if (IS_ERR(regmap))
 		return PTR_ERR(regmap);
 
-	return rt700_init(&slave->dev, sdw_regmap, regmap, slave);
+	rt700_init(&slave->dev, sdw_regmap, regmap, slave);
+
+	return 0;
 }
 
 static int rt700_sdw_remove(struct sdw_slave *slave)
@@ -464,7 +469,8 @@ static int rt700_sdw_remove(struct sdw_slave *slave)
 		cancel_delayed_work_sync(&rt700->jack_btn_check_work);
 	}
 
-	pm_runtime_disable(&slave->dev);
+	if (rt700->first_hw_init)
+		pm_runtime_disable(&slave->dev);
 
 	return 0;
 }

@@ -866,8 +866,7 @@ STORE(__bch_cache_set)
 
 		sc.gfp_mask = GFP_KERNEL;
 		sc.nr_to_scan = strtoul_or_return(buf);
-		if (c->shrink)
-			c->shrink->scan_objects(c->shrink, &sc);
+		c->shrink.scan_objects(&c->shrink, &sc);
 	}
 
 	sysfs_strtoul_clamp(congested_read_threshold_us,
@@ -1112,25 +1111,26 @@ SHOW(__bch_cache)
 
 		vfree(p);
 
-		ret = sysfs_emit(buf,
-				 "Unused:		%zu%%\n"
-				 "Clean:		%zu%%\n"
-				 "Dirty:		%zu%%\n"
-				 "Metadata:	%zu%%\n"
-				 "Average:	%llu\n"
-				 "Sectors per Q:	%zu\n"
-				 "Quantiles:	[",
-				 unused * 100 / (size_t) ca->sb.nbuckets,
-				 available * 100 / (size_t) ca->sb.nbuckets,
-				 dirty * 100 / (size_t) ca->sb.nbuckets,
-				 meta * 100 / (size_t) ca->sb.nbuckets, sum,
-				 n * ca->sb.bucket_size / (ARRAY_SIZE(q) + 1));
+		ret = scnprintf(buf, PAGE_SIZE,
+				"Unused:		%zu%%\n"
+				"Clean:		%zu%%\n"
+				"Dirty:		%zu%%\n"
+				"Metadata:	%zu%%\n"
+				"Average:	%llu\n"
+				"Sectors per Q:	%zu\n"
+				"Quantiles:	[",
+				unused * 100 / (size_t) ca->sb.nbuckets,
+				available * 100 / (size_t) ca->sb.nbuckets,
+				dirty * 100 / (size_t) ca->sb.nbuckets,
+				meta * 100 / (size_t) ca->sb.nbuckets, sum,
+				n * ca->sb.bucket_size / (ARRAY_SIZE(q) + 1));
 
 		for (i = 0; i < ARRAY_SIZE(q); i++)
-			ret += sysfs_emit_at(buf, ret, "%u ", q[i]);
+			ret += scnprintf(buf + ret, PAGE_SIZE - ret,
+					 "%u ", q[i]);
 		ret--;
 
-		ret += sysfs_emit_at(buf, ret, "]\n");
+		ret += scnprintf(buf + ret, PAGE_SIZE - ret, "]\n");
 
 		return ret;
 	}

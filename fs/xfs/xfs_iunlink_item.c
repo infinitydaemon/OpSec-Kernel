@@ -168,7 +168,9 @@ xfs_iunlink_log_inode(
 	iup->ip = ip;
 	iup->next_agino = next_agino;
 	iup->old_agino = ip->i_next_unlinked;
-	iup->pag = xfs_perag_hold(pag);
+
+	atomic_inc(&pag->pag_ref);
+	iup->pag = pag;
 
 	xfs_trans_add_item(tp, &iup->item);
 	tp->t_flags |= XFS_TRANS_DIRTY;

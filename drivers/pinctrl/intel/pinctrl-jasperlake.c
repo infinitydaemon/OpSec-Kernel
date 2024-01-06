@@ -29,7 +29,18 @@
 	}
 
 #define JSL_COMMUNITY(b, s, e, g)			\
-	INTEL_COMMUNITY_GPPS(b, s, e, g, JSL)
+	{						\
+		.barno = (b),				\
+		.padown_offset = JSL_PAD_OWN,		\
+		.padcfglock_offset = JSL_PADCFGLOCK,	\
+		.hostown_offset = JSL_HOSTSW_OWN,	\
+		.is_offset = JSL_GPI_IS,		\
+		.ie_offset = JSL_GPI_IE,		\
+		.pin_base = (s),			\
+		.npins = ((e) - (s) + 1),		\
+		.gpps = (g),				\
+		.ngpps = ARRAY_SIZE(g),			\
+	}
 
 /* Jasper Lake */
 static const struct pinctrl_pin_desc jsl_pins[] = {
@@ -341,4 +352,3 @@ module_platform_driver(jsl_pinctrl_driver);
 MODULE_AUTHOR("Andy Shevchenko <andriy.shevchenko@linux.intel.com>");
 MODULE_DESCRIPTION("Intel Jasper Lake PCH pinctrl/GPIO driver");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS(PINCTRL_INTEL);

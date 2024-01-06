@@ -97,6 +97,7 @@ static DEFINE_MUTEX(comedi_subdevice_minor_table_lock);
 static struct comedi_subdevice
 *comedi_subdevice_minor_table[COMEDI_NUM_SUBDEVICE_MINORS];
 
+static struct class *comedi_class;
 static struct cdev comedi_cdev;
 
 static void comedi_device_init(struct comedi_device *dev)
@@ -184,6 +185,18 @@ static struct comedi_device *comedi_clear_board_minor(unsigned int minor)
 	comedi_board_minor_table[minor] = NULL;
 	mutex_unlock(&comedi_board_minor_table_lock);
 	return dev;
+}
+
+static void comedi_free_board_dev(struct comedi_device *dev)
+{
+	if (dev) {
+		comedi_device_cleanup(dev);
+		if (dev->class_dev) {
+			device_destroy(comedi_class,
+				       MKDEV(COMEDI_MAJOR, dev->minor));
+		}
+		comedi_dev_put(dev);
+	}
 }
 
 static struct comedi_subdevice *
@@ -597,23 +610,6 @@ static struct attribute *comedi_dev_attrs[] = {
 	NULL,
 };
 ATTRIBUTE_GROUPS(comedi_dev);
-
-static const struct class comedi_class = {
-	.name = "comedi",
-	.dev_groups = comedi_dev_groups,
-};
-
-static void comedi_free_board_dev(struct comedi_device *dev)
-{
-	if (dev) {
-		comedi_device_cleanup(dev);
-		if (dev->class_dev) {
-			device_destroy(&comedi_class,
-				       MKDEV(COMEDI_MAJOR, dev->minor));
-		}
-		comedi_dev_put(dev);
-	}
-}
 
 static void __comedi_clear_subdevice_runflags(struct comedi_subdevice *s,
 					      unsigned int bits)
@@ -1219,7 +1215,6 @@ static int check_insn_config_length(struct comedi_insn *insn,
 	case INSN_CONFIG_GET_CLOCK_SRC:
 	case INSN_CONFIG_SET_OTHER_SRC:
 	case INSN_CONFIG_GET_COUNTER_STATUS:
-	case INSN_CONFIG_GET_PWM_OUTPUT:
 	case INSN_CONFIG_PWM_SET_H_BRIDGE:
 	case INSN_CONFIG_PWM_GET_H_BRIDGE:
 	case INSN_CONFIG_GET_HARDWARE_BUFFER_SIZE:
@@ -3267,7 +3262,7 @@ struct comedi_device *comedi_alloc_board_minor(struct device *hardware_device)
 		return ERR_PTR(-EBUSY);
 	}
 	dev->minor = i;
-	csdev = device_create(&comedi_class, hardware_device,
+	csdev = device_create(comedi_class, hardware_device,
 			      MKDEV(COMEDI_MAJOR, i), NULL, "comedi%i", i);
 	if (!IS_ERR(csdev))
 		dev->class_dev = get_device(csdev);
@@ -3316,7 +3311,7 @@ int comedi_alloc_subdevice_minor(struct comedi_subdevice *s)
 	}
 	i += COMEDI_NUM_BOARD_MINORS;
 	s->minor = i;
-	csdev = device_create(&comedi_class, dev->class_dev,
+	csdev = device_create(comedi_class, dev->class_dev,
 			      MKDEV(COMEDI_MAJOR, i), NULL, "comedi%i_subd%i",
 			      dev->minor, s->index);
 	if (!IS_ERR(csdev))
@@ -3341,7 +3336,7 @@ void comedi_free_subdevice_minor(struct comedi_subdevice *s)
 		comedi_subdevice_minor_table[i] = NULL;
 	mutex_unlock(&comedi_subdevice_minor_table_lock);
 	if (s->class_dev) {
-		device_destroy(&comedi_class, MKDEV(COMEDI_MAJOR, s->minor));
+		device_destroy(comedi_class, MKDEV(COMEDI_MAJOR, s->minor));
 		s->class_dev = NULL;
 	}
 }
@@ -3387,11 +3382,14 @@ static int __init comedi_init(void)
 	if (retval)
 		goto out_unregister_chrdev_region;
 
-	retval = class_register(&comedi_class);
-	if (retval) {
+	comedi_class = class_create(THIS_MODULE, "comedi");
+	if (IS_ERR(comedi_class)) {
+		retval = PTR_ERR(comedi_class);
 		pr_err("failed to create class\n");
 		goto out_cdev_del;
 	}
+
+	comedi_class->dev_groups = comedi_dev_groups;
 
 	/* create devices files for legacy/manual use */
 	for (i = 0; i < comedi_num_legacy_minors; i++) {
@@ -3414,7 +3412,7 @@ static int __init comedi_init(void)
 
 out_cleanup_board_minors:
 	comedi_cleanup_board_minors();
-	class_unregister(&comedi_class);
+	class_destroy(comedi_class);
 out_cdev_del:
 	cdev_del(&comedi_cdev);
 out_unregister_chrdev_region:
@@ -3426,7 +3424,7 @@ module_init(comedi_init);
 static void __exit comedi_cleanup(void)
 {
 	comedi_cleanup_board_minors();
-	class_unregister(&comedi_class);
+	class_destroy(comedi_class);
 	cdev_del(&comedi_cdev);
 	unregister_chrdev_region(MKDEV(COMEDI_MAJOR, 0), COMEDI_NUM_MINORS);
 

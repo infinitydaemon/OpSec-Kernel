@@ -2,9 +2,8 @@
 // Copyright 2017-2020 NXP
 
 #include <linux/module.h>
-#include <linux/of.h>
+#include <linux/of_platform.h>
 #include <linux/of_reserved_mem.h>
-#include <linux/platform_device.h>
 #include <linux/i2c.h>
 #include <linux/of_gpio.h>
 #include <linux/slab.h>
@@ -35,7 +34,7 @@ static int imx_rpmsg_late_probe(struct snd_soc_card *card)
 	struct imx_rpmsg *data = snd_soc_card_get_drvdata(card);
 	struct snd_soc_pcm_runtime *rtd = list_first_entry(&card->rtd_list,
 							   struct snd_soc_pcm_runtime, list);
-	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
+	struct snd_soc_dai *codec_dai = asoc_rtd_to_codec(rtd, 0);
 	struct device *dev = card->dev;
 	int ret;
 
@@ -59,7 +58,6 @@ static int imx_rpmsg_probe(struct platform_device *pdev)
 	struct platform_device *rpmsg_pdev = to_platform_device(dev);
 	struct device_node *np = rpmsg_pdev->dev.of_node;
 	struct of_phandle_args args;
-	const char *platform_name;
 	struct imx_rpmsg *data;
 	int ret = 0;
 
@@ -101,11 +99,13 @@ static int imx_rpmsg_probe(struct platform_device *pdev)
 	/* Optional codec node */
 	ret = of_parse_phandle_with_fixed_args(np, "audio-codec", 0, 0, &args);
 	if (ret) {
-		*data->dai.codecs = snd_soc_dummy_dlc;
+		data->dai.codecs->dai_name = "snd-soc-dummy-dai";
+		data->dai.codecs->name = "snd-soc-dummy";
 	} else {
 		struct clk *clk;
 
-		ret = snd_soc_get_dlc(&args, data->dai.codecs);
+		data->dai.codecs->of_node = args.np;
+		ret = snd_soc_get_dai_name(&args, &data->dai.codecs->dai_name);
 		if (ret) {
 			dev_err(&pdev->dev, "Unable to get codec_dai_name\n");
 			goto fail;
@@ -117,10 +117,7 @@ static int imx_rpmsg_probe(struct platform_device *pdev)
 	}
 
 	data->dai.cpus->dai_name = dev_name(&rpmsg_pdev->dev);
-	if (!of_property_read_string(np, "fsl,rpmsg-channel-name", &platform_name))
-		data->dai.platforms->name = platform_name;
-	else
-		data->dai.platforms->name = "rpmsg-audio-channel";
+	data->dai.platforms->name = IMX_PCM_DRV_NAME;
 	data->dai.playback_only = true;
 	data->dai.capture_only = true;
 	data->card.num_links = 1;

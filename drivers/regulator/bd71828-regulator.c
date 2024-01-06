@@ -5,6 +5,7 @@
 
 #include <linux/delay.h>
 #include <linux/err.h>
+#include <linux/gpio.h>
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/mfd/rohm-bd71828.h>
@@ -749,20 +750,23 @@ static int bd71828_probe(struct platform_device *pdev)
 		rd = &bd71828_rdata[i];
 		rdev = devm_regulator_register(&pdev->dev,
 					       &rd->desc, &config);
-		if (IS_ERR(rdev))
-			return dev_err_probe(&pdev->dev, PTR_ERR(rdev),
-					     "failed to register %s regulator\n",
-					     rd->desc.name);
-
+		if (IS_ERR(rdev)) {
+			dev_err(&pdev->dev,
+				"failed to register %s regulator\n",
+				rd->desc.name);
+			return PTR_ERR(rdev);
+		}
 		for (j = 0; j < rd->reg_init_amnt; j++) {
 			ret = regmap_update_bits(config.regmap,
 						 rd->reg_inits[j].reg,
 						 rd->reg_inits[j].mask,
 						 rd->reg_inits[j].val);
-			if (ret)
-				return dev_err_probe(&pdev->dev, ret,
-						     "regulator %s init failed\n",
-						     rd->desc.name);
+			if (ret) {
+				dev_err(&pdev->dev,
+					"regulator %s init failed\n",
+					rd->desc.name);
+				return ret;
+			}
 		}
 	}
 	return 0;
@@ -770,8 +774,7 @@ static int bd71828_probe(struct platform_device *pdev)
 
 static struct platform_driver bd71828_regulator = {
 	.driver = {
-		.name = "bd71828-pmic",
-		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
+		.name = "bd71828-pmic"
 	},
 	.probe = bd71828_probe,
 };

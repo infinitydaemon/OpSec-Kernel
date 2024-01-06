@@ -161,12 +161,10 @@ static int i3c_hci_bus_init(struct i3c_master_controller *m)
 static void i3c_hci_bus_cleanup(struct i3c_master_controller *m)
 {
 	struct i3c_hci *hci = to_i3c_hci(m);
-	struct platform_device *pdev = to_platform_device(m->dev.parent);
 
 	DBG("");
 
 	reg_clear(HC_CONTROL, HC_CONTROL_BUS_ENABLE);
-	synchronize_irq(platform_get_irq(pdev, 0));
 	hci->io->cleanup(hci);
 	if (hci->cmd == &mipi_i3c_hci_cmd_v1)
 		mipi_i3c_hci_dat_v1.cleanup(hci);
@@ -174,7 +172,8 @@ static void i3c_hci_bus_cleanup(struct i3c_master_controller *m)
 
 void mipi_i3c_hci_resume(struct i3c_hci *hci)
 {
-	reg_set(HC_CONTROL, HC_CONTROL_RESUME);
+	/* the HC_CONTROL_RESUME bit is R/W1C so just read and write back */
+	reg_write(HC_CONTROL, reg_read(HC_CONTROL));
 }
 
 /* located here rather than pio.c because needed bits are in core reg space */
@@ -611,17 +610,17 @@ static int i3c_hci_init(struct i3c_hci *hci)
 	offset = FIELD_GET(DAT_TABLE_OFFSET, regval);
 	hci->DAT_regs = offset ? hci->base_regs + offset : NULL;
 	hci->DAT_entries = FIELD_GET(DAT_TABLE_SIZE, regval);
-	hci->DAT_entry_size = FIELD_GET(DAT_ENTRY_SIZE, regval) ? 0 : 8;
+	hci->DAT_entry_size = FIELD_GET(DAT_ENTRY_SIZE, regval);
 	dev_info(&hci->master.dev, "DAT: %u %u-bytes entries at offset %#x\n",
-		 hci->DAT_entries, hci->DAT_entry_size, offset);
+		 hci->DAT_entries, hci->DAT_entry_size * 4, offset);
 
 	regval = reg_read(DCT_SECTION);
 	offset = FIELD_GET(DCT_TABLE_OFFSET, regval);
 	hci->DCT_regs = offset ? hci->base_regs + offset : NULL;
 	hci->DCT_entries = FIELD_GET(DCT_TABLE_SIZE, regval);
-	hci->DCT_entry_size = FIELD_GET(DCT_ENTRY_SIZE, regval) ? 0 : 16;
+	hci->DCT_entry_size = FIELD_GET(DCT_ENTRY_SIZE, regval);
 	dev_info(&hci->master.dev, "DCT: %u %u-bytes entries at offset %#x\n",
-		 hci->DCT_entries, hci->DCT_entry_size, offset);
+		 hci->DCT_entries, hci->DCT_entry_size * 4, offset);
 
 	regval = reg_read(RING_HEADERS_SECTION);
 	offset = FIELD_GET(RING_HEADERS_OFFSET, regval);
@@ -766,11 +765,11 @@ static int i3c_hci_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void i3c_hci_remove(struct platform_device *pdev)
+static int i3c_hci_remove(struct platform_device *pdev)
 {
 	struct i3c_hci *hci = platform_get_drvdata(pdev);
 
-	i3c_master_unregister(&hci->master);
+	return i3c_master_unregister(&hci->master);
 }
 
 static const __maybe_unused struct of_device_id i3c_hci_of_match[] = {
@@ -781,14 +780,13 @@ MODULE_DEVICE_TABLE(of, i3c_hci_of_match);
 
 static struct platform_driver i3c_hci_driver = {
 	.probe = i3c_hci_probe,
-	.remove_new = i3c_hci_remove,
+	.remove = i3c_hci_remove,
 	.driver = {
 		.name = "mipi-i3c-hci",
 		.of_match_table = of_match_ptr(i3c_hci_of_match),
 	},
 };
 module_platform_driver(i3c_hci_driver);
-MODULE_ALIAS("platform:mipi-i3c-hci");
 
 MODULE_AUTHOR("Nicolas Pitre <npitre@baylibre.com>");
 MODULE_DESCRIPTION("MIPI I3C HCI driver");

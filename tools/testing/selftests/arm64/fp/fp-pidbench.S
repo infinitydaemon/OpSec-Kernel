@@ -31,6 +31,7 @@
 // Main program entry point
 .globl _start
 function _start
+_start:
 	puts	"Iterations per test: "
 	mov	x20, #10000
 	lsl	x20, x20, #8

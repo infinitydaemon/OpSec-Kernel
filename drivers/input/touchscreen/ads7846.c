@@ -24,8 +24,10 @@
 #include <linux/interrupt.h>
 #include <linux/slab.h>
 #include <linux/pm.h>
-#include <linux/property.h>
-#include <linux/gpio/consumer.h>
+#include <linux/of.h>
+#include <linux/of_gpio.h>
+#include <linux/of_device.h>
+#include <linux/gpio.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/ads7846.h>
 #include <linux/regulator/consumer.h>
@@ -137,7 +139,7 @@ struct ads7846 {
 	int			(*filter)(void *data, int data_idx, int *val);
 	void			*filter_data;
 	int			(*get_pendown_state)(void);
-	struct gpio_desc	*gpio_pendown;
+	int			gpio_pendown;
 
 	void			(*wait_for_sync)(void);
 };
@@ -220,7 +222,7 @@ static int get_pendown_state(struct ads7846 *ts)
 	if (ts->get_pendown_state)
 		return ts->get_pendown_state();
 
-	return gpiod_get_value(ts->gpio_pendown);
+	return !gpio_get_value(ts->gpio_pendown);
 }
 
 static void ads7846_report_pen_up(struct ads7846 *ts)
@@ -625,12 +627,15 @@ static ssize_t ads7846_disable_store(struct device *dev,
 
 static DEVICE_ATTR(disable, 0664, ads7846_disable_show, ads7846_disable_store);
 
-static struct attribute *ads784x_attrs[] = {
+static struct attribute *ads784x_attributes[] = {
 	&dev_attr_pen_down.attr,
 	&dev_attr_disable.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(ads784x);
+
+static const struct attribute_group ads784x_attr_group = {
+	.attrs = ads784x_attributes,
+};
 
 /*--------------------------------------------------------------------------*/
 
@@ -838,8 +843,14 @@ static void ads7846_report_state(struct ads7846 *ts)
 	if (x == MAX_12BIT)
 		x = 0;
 
-	if (ts->model == 7843 || ts->model == 7845) {
+	if (ts->model == 7843) {
 		Rt = ts->pressure_max / 2;
+	} else if (ts->model == 7845) {
+		if (get_pendown_state(ts))
+			Rt = ts->pressure_max / 2;
+		else
+			Rt = 0;
+		dev_vdbg(&ts->spi->dev, "x/y: %d/%d, PD %d\n", x, y, Rt);
 	} else if (likely(x && z1)) {
 		/* compute touch pressure resistance using equation #2 */
 		Rt = z2;
@@ -933,7 +944,7 @@ static irqreturn_t ads7846_irq(int irq, void *handle)
 	return IRQ_HANDLED;
 }
 
-static int ads7846_suspend(struct device *dev)
+static int __maybe_unused ads7846_suspend(struct device *dev)
 {
 	struct ads7846 *ts = dev_get_drvdata(dev);
 
@@ -955,7 +966,7 @@ static int ads7846_suspend(struct device *dev)
 	return 0;
 }
 
-static int ads7846_resume(struct device *dev)
+static int __maybe_unused ads7846_resume(struct device *dev)
 {
 	struct ads7846 *ts = dev_get_drvdata(dev);
 
@@ -977,12 +988,14 @@ static int ads7846_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(ads7846_pm, ads7846_suspend, ads7846_resume);
+static SIMPLE_DEV_PM_OPS(ads7846_pm, ads7846_suspend, ads7846_resume);
 
 static int ads7846_setup_pendown(struct spi_device *spi,
 				 struct ads7846 *ts,
 				 const struct ads7846_platform_data *pdata)
 {
+	int err;
+
 	/*
 	 * REVISIT when the irq can be triggered active-low, or if for some
 	 * reason the touchscreen isn't hooked up, we don't need to access
@@ -991,15 +1004,25 @@ static int ads7846_setup_pendown(struct spi_device *spi,
 
 	if (pdata->get_pendown_state) {
 		ts->get_pendown_state = pdata->get_pendown_state;
-	} else {
-		ts->gpio_pendown = gpiod_get(&spi->dev, "pendown", GPIOD_IN);
-		if (IS_ERR(ts->gpio_pendown)) {
-			dev_err(&spi->dev, "failed to request pendown GPIO\n");
-			return PTR_ERR(ts->gpio_pendown);
+	} else if (gpio_is_valid(pdata->gpio_pendown)) {
+
+		err = devm_gpio_request_one(&spi->dev, pdata->gpio_pendown,
+					    GPIOF_IN, "ads7846_pendown");
+		if (err) {
+			dev_err(&spi->dev,
+				"failed to request/setup pendown GPIO%d: %d\n",
+				pdata->gpio_pendown, err);
+			return err;
 		}
+
+		ts->gpio_pendown = pdata->gpio_pendown;
+
 		if (pdata->gpio_pendown_debounce)
-			gpiod_set_debounce(ts->gpio_pendown,
-					   pdata->gpio_pendown_debounce);
+			gpio_set_debounce(pdata->gpio_pendown,
+					  pdata->gpio_pendown_debounce);
+	} else {
+		dev_err(&spi->dev, "no get_pendown_state nor gpio_pendown?\n");
+		return -EINVAL;
 	}
 
 	return 0;
@@ -1043,9 +1066,6 @@ static int ads7846_setup_spi_msg(struct ads7846 *ts,
 		struct ads7846_buf_layout *l = &packet->l[cmd_idx];
 		unsigned int max_count;
 
-		if (cmd_idx == packet->cmds - 1)
-			cmd_idx = ADS7846_PWDOWN;
-
 		if (ads7846_cmd_need_settle(cmd_idx))
 			max_count = packet->count + packet->count_skip;
 		else
@@ -1082,12 +1102,7 @@ static int ads7846_setup_spi_msg(struct ads7846 *ts,
 
 	for (cmd_idx = 0; cmd_idx < packet->cmds; cmd_idx++) {
 		struct ads7846_buf_layout *l = &packet->l[cmd_idx];
-		u8 cmd;
-
-		if (cmd_idx == packet->cmds - 1)
-			cmd_idx = ADS7846_PWDOWN;
-
-		cmd = ads7846_get_cmd(cmd_idx, vref);
+		u8 cmd = ads7846_get_cmd(cmd_idx, vref);
 
 		for (b = 0; b < l->count; b++)
 			packet->tx[l->offset + b].cmd = cmd;
@@ -1101,6 +1116,7 @@ static int ads7846_setup_spi_msg(struct ads7846 *ts,
 	return 0;
 }
 
+#ifdef CONFIG_OF
 static const struct of_device_id ads7846_dt_ids[] = {
 	{ .compatible = "ti,tsc2046",	.data = (void *) 7846 },
 	{ .compatible = "ti,ads7843",	.data = (void *) 7843 },
@@ -1114,6 +1130,7 @@ MODULE_DEVICE_TABLE(of, ads7846_dt_ids);
 static const struct spi_device_id ads7846_spi_ids[] = {
 	{ "tsc2046", 0 },
 	{ "ads7843", 0 },
+	{ "ads7843", 0 },
 	{ "ads7845", 0 },
 	{ "ads7846", 0 },
 	{ "ads7873", 0 },
@@ -1121,60 +1138,82 @@ static const struct spi_device_id ads7846_spi_ids[] = {
 };
 MODULE_DEVICE_TABLE(spi, ads7846_spi_ids);
 
-static const struct ads7846_platform_data *ads7846_get_props(struct device *dev)
+static const struct ads7846_platform_data *ads7846_probe_dt(struct device *dev)
 {
 	struct ads7846_platform_data *pdata;
+	struct device_node *node = dev->of_node;
+	const struct of_device_id *match;
 	u32 value;
+
+	if (!node) {
+		dev_err(dev, "Device does not have associated DT data\n");
+		return ERR_PTR(-EINVAL);
+	}
+
+	match = of_match_device(ads7846_dt_ids, dev);
+	if (!match) {
+		dev_err(dev, "Unknown device model\n");
+		return ERR_PTR(-EINVAL);
+	}
 
 	pdata = devm_kzalloc(dev, sizeof(*pdata), GFP_KERNEL);
 	if (!pdata)
 		return ERR_PTR(-ENOMEM);
 
-	pdata->model = (uintptr_t)device_get_match_data(dev);
+	pdata->model = (unsigned long)match->data;
 
-	device_property_read_u16(dev, "ti,vref-delay-usecs",
-				 &pdata->vref_delay_usecs);
-	device_property_read_u16(dev, "ti,vref-mv", &pdata->vref_mv);
-	pdata->keep_vref_on = device_property_read_bool(dev, "ti,keep-vref-on");
+	of_property_read_u16(node, "ti,vref-delay-usecs",
+			     &pdata->vref_delay_usecs);
+	of_property_read_u16(node, "ti,vref-mv", &pdata->vref_mv);
+	pdata->keep_vref_on = of_property_read_bool(node, "ti,keep-vref-on");
 
-	pdata->swap_xy = device_property_read_bool(dev, "ti,swap-xy");
+	pdata->swap_xy = of_property_read_bool(node, "ti,swap-xy");
 
-	device_property_read_u16(dev, "ti,settle-delay-usec",
-				 &pdata->settle_delay_usecs);
-	device_property_read_u16(dev, "ti,penirq-recheck-delay-usecs",
-				 &pdata->penirq_recheck_delay_usecs);
+	of_property_read_u16(node, "ti,settle-delay-usec",
+			     &pdata->settle_delay_usecs);
+	of_property_read_u16(node, "ti,penirq-recheck-delay-usecs",
+			     &pdata->penirq_recheck_delay_usecs);
 
-	device_property_read_u16(dev, "ti,x-plate-ohms", &pdata->x_plate_ohms);
-	device_property_read_u16(dev, "ti,y-plate-ohms", &pdata->y_plate_ohms);
+	of_property_read_u16(node, "ti,x-plate-ohms", &pdata->x_plate_ohms);
+	of_property_read_u16(node, "ti,y-plate-ohms", &pdata->y_plate_ohms);
 
-	device_property_read_u16(dev, "ti,x-min", &pdata->x_min);
-	device_property_read_u16(dev, "ti,y-min", &pdata->y_min);
-	device_property_read_u16(dev, "ti,x-max", &pdata->x_max);
-	device_property_read_u16(dev, "ti,y-max", &pdata->y_max);
+	of_property_read_u16(node, "ti,x-min", &pdata->x_min);
+	of_property_read_u16(node, "ti,y-min", &pdata->y_min);
+	of_property_read_u16(node, "ti,x-max", &pdata->x_max);
+	of_property_read_u16(node, "ti,y-max", &pdata->y_max);
 
 	/*
 	 * touchscreen-max-pressure gets parsed during
 	 * touchscreen_parse_properties()
 	 */
-	device_property_read_u16(dev, "ti,pressure-min", &pdata->pressure_min);
-	if (!device_property_read_u32(dev, "touchscreen-min-pressure", &value))
+	of_property_read_u16(node, "ti,pressure-min", &pdata->pressure_min);
+	if (!of_property_read_u32(node, "touchscreen-min-pressure", &value))
 		pdata->pressure_min = (u16) value;
-	device_property_read_u16(dev, "ti,pressure-max", &pdata->pressure_max);
+	of_property_read_u16(node, "ti,pressure-max", &pdata->pressure_max);
 
-	device_property_read_u16(dev, "ti,debounce-max", &pdata->debounce_max);
-	if (!device_property_read_u32(dev, "touchscreen-average-samples", &value))
+	of_property_read_u16(node, "ti,debounce-max", &pdata->debounce_max);
+	if (!of_property_read_u32(node, "touchscreen-average-samples", &value))
 		pdata->debounce_max = (u16) value;
-	device_property_read_u16(dev, "ti,debounce-tol", &pdata->debounce_tol);
-	device_property_read_u16(dev, "ti,debounce-rep", &pdata->debounce_rep);
+	of_property_read_u16(node, "ti,debounce-tol", &pdata->debounce_tol);
+	of_property_read_u16(node, "ti,debounce-rep", &pdata->debounce_rep);
 
-	device_property_read_u32(dev, "ti,pendown-gpio-debounce",
+	of_property_read_u32(node, "ti,pendown-gpio-debounce",
 			     &pdata->gpio_pendown_debounce);
 
-	pdata->wakeup = device_property_read_bool(dev, "wakeup-source") ||
-			device_property_read_bool(dev, "linux,wakeup");
+	pdata->wakeup = of_property_read_bool(node, "wakeup-source") ||
+			of_property_read_bool(node, "linux,wakeup");
+
+	pdata->gpio_pendown = of_get_named_gpio(dev->of_node, "pendown-gpio", 0);
 
 	return pdata;
 }
+#else
+static const struct ads7846_platform_data *ads7846_probe_dt(struct device *dev)
+{
+	dev_err(dev, "no platform data defined\n");
+	return ERR_PTR(-EINVAL);
+}
+#endif
 
 static void ads7846_regulator_disable(void *regulator)
 {
@@ -1238,7 +1277,7 @@ static int ads7846_probe(struct spi_device *spi)
 
 	pdata = dev_get_platdata(dev);
 	if (!pdata) {
-		pdata = ads7846_get_props(dev);
+		pdata = ads7846_probe_dt(dev);
 		if (IS_ERR(pdata))
 			return PTR_ERR(pdata);
 	}
@@ -1288,9 +1327,8 @@ static int ads7846_probe(struct spi_device *spi)
 			pdata->y_min ? : 0,
 			pdata->y_max ? : MAX_12BIT,
 			0, 0);
-	if (ts->model != 7845)
-		input_set_abs_params(input_dev, ABS_PRESSURE,
-				pdata->pressure_min, pdata->pressure_max, 0, 0);
+	input_set_abs_params(input_dev, ABS_PRESSURE,
+			pdata->pressure_min, pdata->pressure_max, 0, 0);
 
 	/*
 	 * Parse common framework properties. Must be done here to ensure the
@@ -1364,6 +1402,10 @@ static int ads7846_probe(struct spi_device *spi)
 	else
 		(void) ads7846_read12_ser(dev, READ_12BIT_SER(vaux));
 
+	err = devm_device_add_group(dev, &ads784x_attr_group);
+	if (err)
+		return err;
+
 	err = input_register_device(input_dev);
 	if (err)
 		return err;
@@ -1389,10 +1431,9 @@ static void ads7846_remove(struct spi_device *spi)
 
 static struct spi_driver ads7846_driver = {
 	.driver = {
-		.name		= "ads7846",
-		.dev_groups	= ads784x_groups,
-		.pm		= pm_sleep_ptr(&ads7846_pm),
-		.of_match_table	= ads7846_dt_ids,
+		.name	= "ads7846",
+		.pm	= &ads7846_pm,
+		.of_match_table = of_match_ptr(ads7846_dt_ids),
 	},
 	.id_table	= ads7846_spi_ids,
 	.probe		= ads7846_probe,

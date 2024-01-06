@@ -917,9 +917,10 @@ static int pep_sock_enable(struct sock *sk, struct sockaddr *addr, int len)
 	return 0;
 }
 
-static int pep_ioctl(struct sock *sk, int cmd, int *karg)
+static int pep_ioctl(struct sock *sk, int cmd, unsigned long arg)
 {
 	struct pep_sock *pn = pep_sk(sk);
+	int answ;
 	int ret = -ENOIOCTLCMD;
 
 	switch (cmd) {
@@ -932,13 +933,13 @@ static int pep_ioctl(struct sock *sk, int cmd, int *karg)
 		lock_sock(sk);
 		if (sock_flag(sk, SOCK_URGINLINE) &&
 		    !skb_queue_empty(&pn->ctrlreq_queue))
-			*karg = skb_peek(&pn->ctrlreq_queue)->len;
+			answ = skb_peek(&pn->ctrlreq_queue)->len;
 		else if (!skb_queue_empty(&sk->sk_receive_queue))
-			*karg = skb_peek(&sk->sk_receive_queue)->len;
+			answ = skb_peek(&sk->sk_receive_queue)->len;
 		else
-			*karg = 0;
+			answ = 0;
 		release_sock(sk);
-		ret = 0;
+		ret = put_user(answ, (int __user *)arg);
 		break;
 
 	case SIOCPNENABLEPIPE:

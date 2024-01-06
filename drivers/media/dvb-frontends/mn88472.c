@@ -572,7 +572,8 @@ static struct dvb_frontend *mn88472_get_dvb_frontend(struct i2c_client *client)
 	return &dev->fe;
 }
 
-static int mn88472_probe(struct i2c_client *client)
+static int mn88472_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct mn88472_config *pdata = client->dev.platform_data;
 	struct mn88472_dev *dev;

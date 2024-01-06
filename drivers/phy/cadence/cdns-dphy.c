@@ -9,7 +9,8 @@
 #include <linux/io.h>
 #include <linux/iopoll.h>
 #include <linux/module.h>
-#include <linux/of.h>
+#include <linux/of_address.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/reset.h>
 
@@ -455,12 +456,14 @@ static int cdns_dphy_probe(struct platform_device *pdev)
 	return PTR_ERR_OR_ZERO(phy_provider);
 }
 
-static void cdns_dphy_remove(struct platform_device *pdev)
+static int cdns_dphy_remove(struct platform_device *pdev)
 {
 	struct cdns_dphy *dphy = dev_get_drvdata(&pdev->dev);
 
 	if (dphy->ops->remove)
 		dphy->ops->remove(dphy);
+
+	return 0;
 }
 
 static const struct of_device_id cdns_dphy_of_match[] = {
@@ -472,7 +475,7 @@ MODULE_DEVICE_TABLE(of, cdns_dphy_of_match);
 
 static struct platform_driver cdns_dphy_platform_driver = {
 	.probe		= cdns_dphy_probe,
-	.remove_new	= cdns_dphy_remove,
+	.remove		= cdns_dphy_remove,
 	.driver		= {
 		.name		= "cdns-mipi-dphy",
 		.of_match_table	= cdns_dphy_of_match,

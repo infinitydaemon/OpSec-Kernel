@@ -12,24 +12,27 @@ struct tty_buffer {
 		struct tty_buffer *next;
 		struct llist_node free;
 	};
-	unsigned int used;
-	unsigned int size;
-	unsigned int commit;
-	unsigned int lookahead;		/* Lazy update on recv, can become less than "read" */
-	unsigned int read;
-	bool flags;
+	int used;
+	int size;
+	int commit;
+	int lookahead;		/* Lazy update on recv, can become less than "read" */
+	int read;
+	int flags;
 	/* Data points here */
-	u8 data[] __aligned(sizeof(unsigned long));
+	unsigned long data[];
 };
 
-static inline u8 *char_buf_ptr(struct tty_buffer *b, unsigned int ofs)
+/* Values for .flags field of tty_buffer */
+#define TTYB_NORMAL	1	/* buffer has no flags buffer */
+
+static inline unsigned char *char_buf_ptr(struct tty_buffer *b, int ofs)
 {
-	return b->data + ofs;
+	return ((unsigned char *)b->data) + ofs;
 }
 
-static inline u8 *flag_buf_ptr(struct tty_buffer *b, unsigned int ofs)
+static inline char *flag_buf_ptr(struct tty_buffer *b, int ofs)
 {
-	return char_buf_ptr(b, ofs) + b->size;
+	return (char *)char_buf_ptr(b, ofs) + b->size;
 }
 
 struct tty_bufhead {

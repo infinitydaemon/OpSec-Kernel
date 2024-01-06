@@ -60,7 +60,7 @@ static int bells_set_bias_level(struct snd_soc_card *card,
 	int ret;
 
 	rtd = snd_soc_get_pcm_runtime(card, &card->dai_link[DAI_DSP_CODEC]);
-	codec_dai = snd_soc_rtd_to_codec(rtd, 0);
+	codec_dai = asoc_rtd_to_codec(rtd, 0);
 	component = codec_dai->component;
 
 	if (dapm->dev != codec_dai->dev)
@@ -106,7 +106,7 @@ static int bells_set_bias_level_post(struct snd_soc_card *card,
 	int ret;
 
 	rtd = snd_soc_get_pcm_runtime(card, &card->dai_link[DAI_DSP_CODEC]);
-	codec_dai = snd_soc_rtd_to_codec(rtd, 0);
+	codec_dai = asoc_rtd_to_codec(rtd, 0);
 	component = codec_dai->component;
 
 	if (dapm->dev != codec_dai->dev)
@@ -152,11 +152,11 @@ static int bells_late_probe(struct snd_soc_card *card)
 	int ret;
 
 	rtd = snd_soc_get_pcm_runtime(card, &card->dai_link[DAI_AP_DSP]);
-	wm0010 = snd_soc_rtd_to_codec(rtd, 0)->component;
+	wm0010 = asoc_rtd_to_codec(rtd, 0)->component;
 
 	rtd = snd_soc_get_pcm_runtime(card, &card->dai_link[DAI_DSP_CODEC]);
-	component = snd_soc_rtd_to_codec(rtd, 0)->component;
-	aif1_dai = snd_soc_rtd_to_codec(rtd, 0);
+	component = asoc_rtd_to_codec(rtd, 0)->component;
+	aif1_dai = asoc_rtd_to_codec(rtd, 0);
 
 	ret = snd_soc_component_set_sysclk(component, ARIZONA_CLK_SYSCLK,
 				       ARIZONA_CLK_SRC_FLL1,
@@ -195,7 +195,7 @@ static int bells_late_probe(struct snd_soc_card *card)
 	}
 
 	rtd = snd_soc_get_pcm_runtime(card, &card->dai_link[DAI_CODEC_CP]);
-	aif2_dai = snd_soc_rtd_to_cpu(rtd, 0);
+	aif2_dai = asoc_rtd_to_cpu(rtd, 0);
 
 	ret = snd_soc_dai_set_sysclk(aif2_dai, ARIZONA_CLK_ASYNCCLK, 0, 0);
 	if (ret != 0) {
@@ -207,8 +207,8 @@ static int bells_late_probe(struct snd_soc_card *card)
 		return 0;
 
 	rtd = snd_soc_get_pcm_runtime(card, &card->dai_link[DAI_CODEC_SUB]);
-	aif3_dai = snd_soc_rtd_to_cpu(rtd, 0);
-	wm9081_dai = snd_soc_rtd_to_codec(rtd, 0);
+	aif3_dai = asoc_rtd_to_cpu(rtd, 0);
+	wm9081_dai = asoc_rtd_to_codec(rtd, 0);
 
 	ret = snd_soc_dai_set_sysclk(aif3_dai, ARIZONA_CLK_SYSCLK, 0, 0);
 	if (ret != 0) {
@@ -264,8 +264,7 @@ static struct snd_soc_dai_link bells_dai_wm2200[] = {
 		.stream_name = "DSP-CODEC",
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
 				| SND_SOC_DAIFMT_CBM_CFM,
-		.c2c_params = &sub_params,
-		.num_c2c_params = 1,
+		.params = &sub_params,
 		.ignore_suspend = 1,
 		SND_SOC_DAILINK_REG(wm2200_dsp_codec),
 	},
@@ -301,8 +300,7 @@ static struct snd_soc_dai_link bells_dai_wm5102[] = {
 		.stream_name = "DSP-CODEC",
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
 				| SND_SOC_DAIFMT_CBM_CFM,
-		.c2c_params = &sub_params,
-		.num_c2c_params = 1,
+		.params = &sub_params,
 		.ignore_suspend = 1,
 		SND_SOC_DAILINK_REG(wm5102_dsp_codec),
 	},
@@ -312,8 +310,7 @@ static struct snd_soc_dai_link bells_dai_wm5102[] = {
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
 				| SND_SOC_DAIFMT_CBM_CFM,
 		.ignore_suspend = 1,
-		.c2c_params = &baseband_params,
-		.num_c2c_params = 1,
+		.params = &baseband_params,
 		SND_SOC_DAILINK_REG(wm5102_baseband),
 	},
 	{
@@ -322,8 +319,7 @@ static struct snd_soc_dai_link bells_dai_wm5102[] = {
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
 				| SND_SOC_DAIFMT_CBS_CFS,
 		.ignore_suspend = 1,
-		.c2c_params = &sub_params,
-		.num_c2c_params = 1,
+		.params = &sub_params,
 		SND_SOC_DAILINK_REG(wm5102_sub),
 	},
 };
@@ -359,8 +355,7 @@ static struct snd_soc_dai_link bells_dai_wm5110[] = {
 		.stream_name = "DSP-CODEC",
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
 				| SND_SOC_DAIFMT_CBM_CFM,
-		.c2c_params = &sub_params,
-		.num_c2c_params = 1,
+		.params = &sub_params,
 		.ignore_suspend = 1,
 		SND_SOC_DAILINK_REG(wm5110_dsp_codec),
 	},
@@ -370,8 +365,7 @@ static struct snd_soc_dai_link bells_dai_wm5110[] = {
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
 				| SND_SOC_DAIFMT_CBM_CFM,
 		.ignore_suspend = 1,
-		.c2c_params = &baseband_params,
-		.num_c2c_params = 1,
+		.params = &baseband_params,
 		SND_SOC_DAILINK_REG(wm5110_baseband),
 	},
 	{
@@ -380,8 +374,7 @@ static struct snd_soc_dai_link bells_dai_wm5110[] = {
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
 				| SND_SOC_DAIFMT_CBS_CFS,
 		.ignore_suspend = 1,
-		.c2c_params = &sub_params,
-		.num_c2c_params = 1,
+		.params = &sub_params,
 		SND_SOC_DAILINK_REG(wm5110_sub),
 	},
 };

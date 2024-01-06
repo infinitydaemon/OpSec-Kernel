@@ -26,7 +26,7 @@ struct special_entry {
 	unsigned char key; /* jump_label key */
 };
 
-static const struct special_entry entries[] = {
+struct special_entry entries[] = {
 	{
 		.sec = ".altinstructions",
 		.group = true,
@@ -62,10 +62,10 @@ static void reloc_to_sec_off(struct reloc *reloc, struct section **sec,
 			     unsigned long *off)
 {
 	*sec = reloc->sym->sec;
-	*off = reloc->sym->offset + reloc_addend(reloc);
+	*off = reloc->sym->offset + reloc->addend;
 }
 
-static int get_alt_entry(struct elf *elf, const struct special_entry *entry,
+static int get_alt_entry(struct elf *elf, struct special_entry *entry,
 			 struct section *sec, int idx,
 			 struct special_alt *alt)
 {
@@ -87,8 +87,7 @@ static int get_alt_entry(struct elf *elf, const struct special_entry *entry,
 	if (entry->feature) {
 		unsigned short feature;
 
-		feature = bswap_if_needed(elf,
-					  *(unsigned short *)(sec->data->d_buf +
+		feature = bswap_if_needed(*(unsigned short *)(sec->data->d_buf +
 							      offset +
 							      entry->feature));
 		arch_handle_alternative(feature, alt);
@@ -126,7 +125,7 @@ static int get_alt_entry(struct elf *elf, const struct special_entry *entry,
 				  sec, offset + entry->key);
 			return -1;
 		}
-		alt->key_addend = reloc_addend(key_reloc);
+		alt->key_addend = key_reloc->addend;
 	}
 
 	return 0;
@@ -139,7 +138,7 @@ static int get_alt_entry(struct elf *elf, const struct special_entry *entry,
  */
 int special_get_alts(struct elf *elf, struct list_head *alts)
 {
-	const struct special_entry *entry;
+	struct special_entry *entry;
 	struct section *sec;
 	unsigned int nr_entries;
 	struct special_alt *alt;

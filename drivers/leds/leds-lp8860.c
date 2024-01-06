@@ -15,6 +15,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
+#include <linux/of_gpio.h>
 #include <linux/gpio/consumer.h>
 #include <linux/slab.h>
 
@@ -249,7 +250,8 @@ static int lp8860_init(struct lp8860_led *led)
 		}
 	}
 
-	gpiod_direction_output(led->enable_gpio, 1);
+	if (led->enable_gpio)
+		gpiod_direction_output(led->enable_gpio, 1);
 
 	ret = lp8860_fault_check(led);
 	if (ret)
@@ -292,7 +294,8 @@ static int lp8860_init(struct lp8860_led *led)
 
 out:
 	if (ret)
-		gpiod_direction_output(led->enable_gpio, 0);
+		if (led->enable_gpio)
+			gpiod_direction_output(led->enable_gpio, 0);
 
 	if (led->regulator) {
 		ret = regulator_disable(led->regulator);
@@ -372,7 +375,8 @@ static const struct regmap_config lp8860_eeprom_regmap_config = {
 	.cache_type = REGCACHE_NONE,
 };
 
-static int lp8860_probe(struct i2c_client *client)
+static int lp8860_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	int ret;
 	struct lp8860_led *led;
@@ -446,7 +450,8 @@ static void lp8860_remove(struct i2c_client *client)
 	struct lp8860_led *led = i2c_get_clientdata(client);
 	int ret;
 
-	gpiod_direction_output(led->enable_gpio, 0);
+	if (led->enable_gpio)
+		gpiod_direction_output(led->enable_gpio, 0);
 
 	if (led->regulator) {
 		ret = regulator_disable(led->regulator);

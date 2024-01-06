@@ -118,13 +118,11 @@ static int internal_create_group(struct kobject *kobj, int update,
 	/* Updates may happen before the object has been instantiated */
 	if (unlikely(update && !kobj->sd))
 		return -EINVAL;
-
 	if (!grp->attrs && !grp->bin_attrs) {
-		pr_debug("sysfs: (bin_)attrs not set by subsystem for group: %s/%s, skipping\n",
-			 kobj->name, grp->name ?: "");
-		return 0;
+		WARN(1, "sysfs: (bin_)attrs not set by subsystem for group: %s/%s\n",
+			kobj->name, grp->name ?: "");
+		return -EINVAL;
 	}
-
 	kobject_get_ownership(kobj, &uid, &gid);
 	if (grp->name) {
 		if (update) {
@@ -144,10 +142,8 @@ static int internal_create_group(struct kobject *kobj, int update,
 				return PTR_ERR(kn);
 			}
 		}
-	} else {
+	} else
 		kn = kobj->sd;
-	}
-
 	kernfs_get(kn);
 	error = create_files(kn, kobj, uid, gid, grp, update);
 	if (error) {

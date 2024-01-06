@@ -362,11 +362,12 @@ static int mxc_rtc_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void mxc_rtc_remove(struct platform_device *pdev)
+static int mxc_rtc_remove(struct platform_device *pdev)
 {
 	struct mxc_rtc_data *pdata = platform_get_drvdata(pdev);
 
 	clk_disable_unprepare(pdata->clk);
+	return 0;
 }
 
 static const struct of_device_id mxc_ids[] = {
@@ -381,7 +382,7 @@ static struct platform_driver mxc_rtc_driver = {
 		.of_match_table = mxc_ids,
 	},
 	.probe = mxc_rtc_probe,
-	.remove_new = mxc_rtc_remove,
+	.remove = mxc_rtc_remove,
 };
 
 module_platform_driver(mxc_rtc_driver);

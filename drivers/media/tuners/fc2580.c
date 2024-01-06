@@ -506,7 +506,8 @@ static struct v4l2_subdev *fc2580_get_v4l2_subdev(struct i2c_client *client)
 		return NULL;
 }
 
-static int fc2580_probe(struct i2c_client *client)
+static int fc2580_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct fc2580_dev *dev;
 	struct fc2580_platform_data *pdata = client->dev.platform_data;

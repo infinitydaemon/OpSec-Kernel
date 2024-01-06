@@ -257,7 +257,8 @@ static irqreturn_t fsa9480_irq_handler(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static int fsa9480_probe(struct i2c_client *client)
+static int fsa9480_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct fsa9480_usbsw *info;
 	int ret;

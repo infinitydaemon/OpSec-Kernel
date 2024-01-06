@@ -34,18 +34,19 @@ fi
 shift
 
 # Pathnames:
-# T:	  /tmp/kvm-remote.sh.NNNNNN where "NNNNNN" is set by mktemp
-# resdir: /tmp/kvm-remote.sh.NNNNNN/res
-# rundir: /tmp/kvm-remote.sh.NNNNNN/res/$ds ("-remote" suffix)
+# T:	  /tmp/kvm-remote.sh.$$
+# resdir: /tmp/kvm-remote.sh.$$/res
+# rundir: /tmp/kvm-remote.sh.$$/res/$ds ("-remote" suffix)
 # oldrun: `pwd`/tools/testing/.../res/$otherds
 #
 # Pathname segments:
-# TD:	  kvm-remote.sh.NNNNNN
+# TD:	  kvm-remote.sh.$$
 # ds:	  yyyy.mm.dd-hh.mm.ss-remote
 
-T="`mktemp -d ${TMPDIR-/tmp}/kvm-remote.sh.XXXXXX`"
+TD=kvm-remote.sh.$$
+T=${TMPDIR-/tmp}/$TD
 trap 'rm -rf $T' 0
-TD="`basename "$T"`"
+mkdir $T
 
 resdir="$T/res"
 ds=`date +%Y.%m.%d-%H.%M.%S`-remote
@@ -137,20 +138,14 @@ chmod +x $T/bin/kvm-remote-*.sh
 # Check first to avoid the need for cleanup for system-name typos
 for i in $systems
 do
-	ssh -o BatchMode=yes $i getconf _NPROCESSORS_ONLN > $T/ssh.stdout 2> $T/ssh.stderr
+	ncpus="`ssh -o BatchMode=yes $i getconf _NPROCESSORS_ONLN 2> /dev/null`"
 	ret=$?
 	if test "$ret" -ne 0
 	then
-		echo "System $i unreachable ($ret), giving up." | tee -a "$oldrun/remote-log"
-		echo ' --- ssh stdout: vvv' | tee -a "$oldrun/remote-log"
-		cat $T/ssh.stdout | tee -a "$oldrun/remote-log"
-		echo ' --- ssh stdout: ^^^' | tee -a "$oldrun/remote-log"
-		echo ' --- ssh stderr: vvv' | tee -a "$oldrun/remote-log"
-		cat $T/ssh.stderr | tee -a "$oldrun/remote-log"
-		echo ' --- ssh stderr: ^^^' | tee -a "$oldrun/remote-log"
+		echo System $i unreachable, giving up. | tee -a "$oldrun/remote-log"
 		exit 4
 	fi
-	echo $i: `cat $T/ssh.stdout` CPUs " " `date` | tee -a "$oldrun/remote-log"
+	echo $i: $ncpus CPUs " " `date` | tee -a "$oldrun/remote-log"
 done
 
 # Download and expand the tarball on all systems.

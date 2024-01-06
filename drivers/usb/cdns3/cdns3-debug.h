@@ -107,7 +107,8 @@ static inline char *cdns3_decode_ep0_irq(char *str,
  * Prints out all TRBs in the endpoint ring, even those after the Link TRB.
  *.
  */
-static inline char *cdns3_dbg_ring(struct cdns3_endpoint *priv_ep, char *str)
+static inline char *cdns3_dbg_ring(struct cdns3_endpoint *priv_ep,
+				   struct cdns3_trb *ring, char *str)
 {
 	dma_addr_t addr = priv_ep->trb_pool_dma;
 	struct cdns3_trb *trb;
@@ -135,6 +136,9 @@ static inline char *cdns3_dbg_ring(struct cdns3_endpoint *priv_ep, char *str)
 		       "\t\tfree trbs: %d, CCS=%d, PCS=%d\n",
 		       priv_ep->free_trbs, priv_ep->ccs, priv_ep->pcs);
 
+	if (trb_per_sector > TRBS_PER_SEGMENT)
+		trb_per_sector = TRBS_PER_SEGMENT;
+
 	if (trb_per_sector > TRBS_PER_SEGMENT) {
 		sprintf(str + ret, "\t\tTransfer ring %d too big\n",
 			trb_per_sector);
@@ -142,7 +146,7 @@ static inline char *cdns3_dbg_ring(struct cdns3_endpoint *priv_ep, char *str)
 	}
 
 	for (i = 0; i < trb_per_sector; ++i) {
-		trb = &priv_ep->trb_pool[i];
+		trb = &ring[i];
 		ret += sprintf(str + ret,
 			"\t\t@%pad %08x %08x %08x\n", &addr,
 			le32_to_cpu(trb->buffer),

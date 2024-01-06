@@ -34,9 +34,9 @@ struct crystalcove_pwm {
 	struct regmap *regmap;
 };
 
-static inline struct crystalcove_pwm *to_crc_pwm(struct pwm_chip *chip)
+static inline struct crystalcove_pwm *to_crc_pwm(struct pwm_chip *pc)
 {
-	return container_of(chip, struct crystalcove_pwm, chip);
+	return container_of(pc, struct crystalcove_pwm, chip);
 }
 
 static int crc_pwm_calc_clk_div(int period_ns)
@@ -132,13 +132,13 @@ static int crc_pwm_get_state(struct pwm_chip *chip, struct pwm_device *pwm,
 	error = regmap_read(crc_pwm->regmap, PWM0_CLK_DIV, &clk_div_reg);
 	if (error) {
 		dev_err(dev, "Error reading PWM0_CLK_DIV %d\n", error);
-		return error;
+		return 0;
 	}
 
 	error = regmap_read(crc_pwm->regmap, PWM0_DUTY_CYCLE, &duty_cycle_reg);
 	if (error) {
 		dev_err(dev, "Error reading PWM0_DUTY_CYCLE %d\n", error);
-		return error;
+		return 0;
 	}
 
 	clk_div = (clk_div_reg & ~PWM_OUTPUT_ENABLE) + 1;
@@ -184,8 +184,5 @@ static struct platform_driver crystalcove_pwm_driver = {
 		.name = "crystal_cove_pwm",
 	},
 };
-module_platform_driver(crystalcove_pwm_driver);
 
-MODULE_ALIAS("platform:crystal_cove_pwm");
-MODULE_DESCRIPTION("Intel Crystalcove (CRC) PWM support");
-MODULE_LICENSE("GPL");
+builtin_platform_driver(crystalcove_pwm_driver);

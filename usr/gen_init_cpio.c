@@ -353,12 +353,6 @@ static int cpio_mkfile(const char *name, const char *location,
 		buf.st_mtime = 0xffffffff;
 	}
 
-	if (buf.st_mtime < 0) {
-		fprintf(stderr, "%s: Timestamp negative, clipping.\n",
-			location);
-		buf.st_mtime = 0;
-	}
-
 	if (buf.st_size > 0xffffffff) {
 		fprintf(stderr, "%s: Size exceeds maximum cpio file size\n",
 			location);
@@ -608,10 +602,10 @@ int main (int argc, char *argv[])
 	/*
 	 * Timestamps after 2106-02-07 06:28:15 UTC have an ascii hex time_t
 	 * representation that exceeds 8 chars and breaks the cpio header
-	 * specification. Negative timestamps similarly exceed 8 chars.
+	 * specification.
 	 */
-	if (default_mtime > 0xffffffff || default_mtime < 0) {
-		fprintf(stderr, "ERROR: Timestamp out of range for cpio format\n");
+	if (default_mtime > 0xffffffff) {
+		fprintf(stderr, "ERROR: Timestamp too large for cpio format\n");
 		exit(1);
 	}
 

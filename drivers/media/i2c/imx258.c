@@ -689,7 +689,6 @@ static const u32 codes[] = {
 	MEDIA_BUS_FMT_SGBRG10_1X10,
 	MEDIA_BUS_FMT_SBGGR10_1X10
 };
-
 static const char * const imx258_test_pattern_menu[] = {
 	"Disabled",
 	"Solid Colour",
@@ -901,6 +900,9 @@ struct imx258 {
 	 * Protect sensor module set pad format and start/stop streaming safely.
 	 */
 	struct mutex mutex;
+
+	/* Streaming on/off */
+	bool streaming;
 
 	struct clk *clk;
 	struct regulator_bulk_data supplies[IMX258_NUM_SUPPLIES];
@@ -1476,6 +1478,10 @@ static int imx258_set_stream(struct v4l2_subdev *sd, int enable)
 	int ret = 0;
 
 	mutex_lock(&imx258->mutex);
+	if (imx258->streaming == enable) {
+		mutex_unlock(&imx258->mutex);
+		return 0;
+	}
 
 	if (enable) {
 		ret = pm_runtime_resume_and_get(&client->dev);
@@ -1494,6 +1500,7 @@ static int imx258_set_stream(struct v4l2_subdev *sd, int enable)
 		pm_runtime_put(&client->dev);
 	}
 
+	imx258->streaming = enable;
 	mutex_unlock(&imx258->mutex);
 
 	return ret;
@@ -1503,6 +1510,37 @@ err_rpm_put:
 err_unlock:
 	mutex_unlock(&imx258->mutex);
 
+	return ret;
+}
+
+static int __maybe_unused imx258_suspend(struct device *dev)
+{
+	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+	struct imx258 *imx258 = to_imx258(sd);
+
+	if (imx258->streaming)
+		imx258_stop_streaming(imx258);
+
+	return 0;
+}
+
+static int __maybe_unused imx258_resume(struct device *dev)
+{
+	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+	struct imx258 *imx258 = to_imx258(sd);
+	int ret;
+
+	if (imx258->streaming) {
+		ret = imx258_start_streaming(imx258);
+		if (ret)
+			goto error;
+	}
+
+	return 0;
+
+error:
+	imx258_stop_streaming(imx258);
+	imx258->streaming = 0;
 	return ret;
 }
 
@@ -1565,7 +1603,7 @@ static int imx258_init_controls(struct imx258 *imx258)
 	int ret;
 
 	ctrl_hdlr = &imx258->ctrl_handler;
-	ret = v4l2_ctrl_handler_init(ctrl_hdlr, 13);
+	ret = v4l2_ctrl_handler_init(ctrl_hdlr, 12);
 	if (ret)
 		return ret;
 
@@ -1580,16 +1618,6 @@ static int imx258_init_controls(struct imx258 *imx258)
 
 	if (imx258->link_freq)
 		imx258->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
-
-	imx258->hflip = v4l2_ctrl_new_std(ctrl_hdlr, &imx258_ctrl_ops,
-					  V4L2_CID_HFLIP, 0, 1, 1, 1);
-	if (imx258->hflip)
-		imx258->hflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
-
-	imx258->vflip = v4l2_ctrl_new_std(ctrl_hdlr, &imx258_ctrl_ops,
-					  V4L2_CID_VFLIP, 0, 1, 1, 1);
-	if (imx258->vflip)
-		imx258->vflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
 
 	link_freq_cfgs = &imx258->link_freq_configs[0];
 	link_cfg = link_freq_cfgs[imx258->lane_mode_idx].link_cfg;
@@ -1644,21 +1672,31 @@ static int imx258_init_controls(struct imx258 *imx258)
 				ARRAY_SIZE(imx258_test_pattern_menu) - 1,
 				0, 0, imx258_test_pattern_menu);
 
+	ret = v4l2_fwnode_device_parse(&client->dev, &props);
+	if (ret)
+		goto error;
+	ret = v4l2_ctrl_new_fwnode_properties(ctrl_hdlr, &imx258_ctrl_ops,
+					      &props);
+	if (ret)
+		goto error;
+
+	imx258->hflip = v4l2_ctrl_new_std(ctrl_hdlr, &imx258_ctrl_ops,
+					  V4L2_CID_HFLIP, 0, 1, 1,
+					  props.rotation == 180 ? 1 : 0);
+	if (imx258->hflip)
+		imx258->hflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
+
+	imx258->vflip = v4l2_ctrl_new_std(ctrl_hdlr, &imx258_ctrl_ops,
+					  V4L2_CID_VFLIP, 0, 1, 1,
+					  props.rotation == 180 ? 1 : 0);
+	if (imx258->vflip)
+		imx258->vflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
 	if (ctrl_hdlr->error) {
 		ret = ctrl_hdlr->error;
 		dev_err(&client->dev, "%s control init failed (%d)\n",
 				__func__, ret);
 		goto error;
 	}
-
-	ret = v4l2_fwnode_device_parse(&client->dev, &props);
-	if (ret)
-		goto error;
-
-	ret = v4l2_ctrl_new_fwnode_properties(ctrl_hdlr, &imx258_ctrl_ops,
-					      &props);
-	if (ret)
-		goto error;
 
 	imx258->sd.ctrl_handler = ctrl_hdlr;
 
@@ -1859,6 +1897,7 @@ static void imx258_remove(struct i2c_client *client)
 }
 
 static const struct dev_pm_ops imx258_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(imx258_suspend, imx258_resume)
 	SET_RUNTIME_PM_OPS(imx258_power_off, imx258_power_on, NULL)
 };
 
@@ -1880,7 +1919,7 @@ static struct i2c_driver imx258_i2c_driver = {
 		.acpi_match_table = ACPI_PTR(imx258_acpi_ids),
 		.of_match_table	= imx258_dt_ids,
 	},
-	.probe = imx258_probe,
+	.probe_new = imx258_probe,
 	.remove = imx258_remove,
 };
 

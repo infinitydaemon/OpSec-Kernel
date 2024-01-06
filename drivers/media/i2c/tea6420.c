@@ -87,7 +87,8 @@ static const struct v4l2_subdev_ops tea6420_ops = {
 	.audio = &tea6420_audio_ops,
 };
 
-static int tea6420_probe(struct i2c_client *client)
+static int tea6420_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
 	struct v4l2_subdev *sd;
 	int err, i;

@@ -17,6 +17,7 @@
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/sh_dma.h>
@@ -1123,7 +1124,8 @@ static int flctl_probe(struct platform_device *pdev)
 	if (!flctl)
 		return -ENOMEM;
 
-	flctl->reg = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	flctl->reg = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(flctl->reg))
 		return PTR_ERR(flctl->reg);
 	flctl->fifo = res->start + 0x24; /* FLDTFIFO */
@@ -1201,7 +1203,7 @@ err_chip:
 	return ret;
 }
 
-static void flctl_remove(struct platform_device *pdev)
+static int flctl_remove(struct platform_device *pdev)
 {
 	struct sh_flctl *flctl = platform_get_drvdata(pdev);
 	struct nand_chip *chip = &flctl->chip;
@@ -1212,18 +1214,19 @@ static void flctl_remove(struct platform_device *pdev)
 	WARN_ON(ret);
 	nand_cleanup(chip);
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 static struct platform_driver flctl_driver = {
-	.probe		= flctl_probe,
-	.remove_new	= flctl_remove,
+	.remove		= flctl_remove,
 	.driver = {
 		.name	= "sh_flctl",
 		.of_match_table = of_flctl_match,
 	},
 };
 
-module_platform_driver(flctl_driver);
+module_platform_driver_probe(flctl_driver, flctl_probe);
 
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Yoshihiro Shimoda");

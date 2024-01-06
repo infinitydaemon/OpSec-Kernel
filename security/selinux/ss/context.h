@@ -11,7 +11,7 @@
  * security server and can be changed without affecting
  * clients of the security server.
  *
- * Author : Stephen Smalley, <stephen.smalley.work@gmail.com>
+ * Author : Stephen Smalley, <sds@tycho.nsa.gov>
  */
 #ifndef _SS_CONTEXT_H_
 #define _SS_CONTEXT_H_
@@ -167,8 +167,6 @@ static inline int context_cpy(struct context *dst, const struct context *src)
 	rc = mls_context_cpy(dst, src);
 	if (rc) {
 		kfree(dst->str);
-		dst->str = NULL;
-		dst->len = 0;
 		return rc;
 	}
 	return 0;

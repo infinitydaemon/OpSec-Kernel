@@ -9,7 +9,7 @@
  * Copyright 2007, Michael Wu <flamingice@sourmilk.net>
  * Copyright 2007-2010, Intel Corporation
  * Copyright 2017	Intel Deutschland GmbH
- * Copyright(c) 2020-2023 Intel Corporation
+ * Copyright(c) 2020-2022 Intel Corporation
  */
 
 #include <linux/ieee80211.h>
@@ -271,7 +271,6 @@ bool ieee80211_ht_cap_ie_to_sta_ht_cap(struct ieee80211_sub_if_data *sdata,
 	case NL80211_CHAN_WIDTH_80:
 	case NL80211_CHAN_WIDTH_80P80:
 	case NL80211_CHAN_WIDTH_160:
-	case NL80211_CHAN_WIDTH_320:
 		bw = ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40 ?
 				IEEE80211_STA_RX_BW_40 : IEEE80211_STA_RX_BW_20;
 		break;
@@ -317,16 +316,16 @@ void ieee80211_sta_tear_down_BA_sessions(struct sta_info *sta,
 {
 	int i;
 
-	lockdep_assert_wiphy(sta->local->hw.wiphy);
+	mutex_lock(&sta->ampdu_mlme.mtx);
+	for (i = 0; i <  IEEE80211_NUM_TIDS; i++)
+		___ieee80211_stop_rx_ba_session(sta, i, WLAN_BACK_RECIPIENT,
+						WLAN_REASON_QSTA_LEAVE_QBSS,
+						reason != AGG_STOP_DESTROY_STA &&
+						reason != AGG_STOP_PEER_REQUEST);
 
 	for (i = 0; i <  IEEE80211_NUM_TIDS; i++)
-		__ieee80211_stop_rx_ba_session(sta, i, WLAN_BACK_RECIPIENT,
-					       WLAN_REASON_QSTA_LEAVE_QBSS,
-					       reason != AGG_STOP_DESTROY_STA &&
-					       reason != AGG_STOP_PEER_REQUEST);
-
-	for (i = 0; i <  IEEE80211_NUM_TIDS; i++)
-		__ieee80211_stop_tx_ba_session(sta, i, reason);
+		___ieee80211_stop_tx_ba_session(sta, i, reason);
+	mutex_unlock(&sta->ampdu_mlme.mtx);
 
 	/*
 	 * In case the tear down is part of a reconfigure due to HW restart
@@ -334,8 +333,9 @@ void ieee80211_sta_tear_down_BA_sessions(struct sta_info *sta,
 	 * the BA session, so handle it to properly clean tid_tx data.
 	 */
 	if(reason == AGG_STOP_DESTROY_STA) {
-		wiphy_work_cancel(sta->local->hw.wiphy, &sta->ampdu_mlme.work);
+		cancel_work_sync(&sta->ampdu_mlme.work);
 
+		mutex_lock(&sta->ampdu_mlme.mtx);
 		for (i = 0; i < IEEE80211_NUM_TIDS; i++) {
 			struct tid_ampdu_tx *tid_tx =
 				rcu_dereference_protected_tid_tx(sta, i);
@@ -346,10 +346,11 @@ void ieee80211_sta_tear_down_BA_sessions(struct sta_info *sta,
 			if (test_and_clear_bit(HT_AGG_STATE_STOP_CB, &tid_tx->state))
 				ieee80211_stop_tx_ba_cb(sta, i, tid_tx);
 		}
+		mutex_unlock(&sta->ampdu_mlme.mtx);
 	}
 }
 
-void ieee80211_ba_session_work(struct wiphy *wiphy, struct wiphy_work *work)
+void ieee80211_ba_session_work(struct work_struct *work)
 {
 	struct sta_info *sta =
 		container_of(work, struct sta_info, ampdu_mlme.work);
@@ -357,33 +358,32 @@ void ieee80211_ba_session_work(struct wiphy *wiphy, struct wiphy_work *work)
 	bool blocked;
 	int tid;
 
-	lockdep_assert_wiphy(sta->local->hw.wiphy);
-
 	/* When this flag is set, new sessions should be blocked. */
 	blocked = test_sta_flag(sta, WLAN_STA_BLOCK_BA);
 
+	mutex_lock(&sta->ampdu_mlme.mtx);
 	for (tid = 0; tid < IEEE80211_NUM_TIDS; tid++) {
 		if (test_and_clear_bit(tid, sta->ampdu_mlme.tid_rx_timer_expired))
-			__ieee80211_stop_rx_ba_session(
+			___ieee80211_stop_rx_ba_session(
 				sta, tid, WLAN_BACK_RECIPIENT,
 				WLAN_REASON_QSTA_TIMEOUT, true);
 
 		if (test_and_clear_bit(tid,
 				       sta->ampdu_mlme.tid_rx_stop_requested))
-			__ieee80211_stop_rx_ba_session(
+			___ieee80211_stop_rx_ba_session(
 				sta, tid, WLAN_BACK_RECIPIENT,
 				WLAN_REASON_UNSPECIFIED, true);
 
 		if (!blocked &&
 		    test_and_clear_bit(tid,
 				       sta->ampdu_mlme.tid_rx_manage_offl))
-			__ieee80211_start_rx_ba_session(sta, 0, 0, 0, 1, tid,
-							IEEE80211_MAX_AMPDU_BUF_HT,
-							false, true, NULL);
+			___ieee80211_start_rx_ba_session(sta, 0, 0, 0, 1, tid,
+							 IEEE80211_MAX_AMPDU_BUF_HT,
+							 false, true, NULL);
 
 		if (test_and_clear_bit(tid + IEEE80211_NUM_TIDS,
 				       sta->ampdu_mlme.tid_rx_manage_offl))
-			__ieee80211_stop_rx_ba_session(
+			___ieee80211_stop_rx_ba_session(
 				sta, tid, WLAN_BACK_RECIPIENT,
 				0, false);
 
@@ -391,34 +391,42 @@ void ieee80211_ba_session_work(struct wiphy *wiphy, struct wiphy_work *work)
 
 		tid_tx = sta->ampdu_mlme.tid_start_tx[tid];
 		if (!blocked && tid_tx) {
-			struct txq_info *txqi = to_txq_info(sta->sta.txq[tid]);
-			struct ieee80211_sub_if_data *sdata =
-				vif_to_sdata(txqi->txq.vif);
-			struct fq *fq = &sdata->local->fq;
+			struct ieee80211_sub_if_data *sdata = sta->sdata;
+			struct ieee80211_local *local = sdata->local;
 
-			spin_lock_bh(&fq->lock);
+			if (local->ops->wake_tx_queue) {
+				struct txq_info *txqi =
+					to_txq_info(sta->sta.txq[tid]);
+				struct fq *fq = &local->fq;
 
-			/* Allow only frags to be dequeued */
-			set_bit(IEEE80211_TXQ_STOP, &txqi->flags);
+				spin_lock_bh(&fq->lock);
 
-			if (!skb_queue_empty(&txqi->frags)) {
-				/* Fragmented Tx is ongoing, wait for it to
-				 * finish. Reschedule worker to retry later.
-				 */
+				/* Allow only frags to be dequeued */
+				set_bit(IEEE80211_TXQ_STOP, &txqi->flags);
+
+				if (!skb_queue_empty(&txqi->frags)) {
+					/* Fragmented Tx is ongoing, wait for it
+					 * to finish. Reschedule worker to retry
+					 * later.
+					 */
+
+					spin_unlock_bh(&fq->lock);
+					spin_unlock_bh(&sta->lock);
+
+					/* Give the task working on the txq a
+					 * chance to send out the queued frags
+					 */
+					synchronize_net();
+
+					mutex_unlock(&sta->ampdu_mlme.mtx);
+
+					ieee80211_queue_work(&sdata->local->hw,
+							     work);
+					return;
+				}
 
 				spin_unlock_bh(&fq->lock);
-				spin_unlock_bh(&sta->lock);
-
-				/* Give the task working on the txq a chance
-				 * to send out the queued frags
-				 */
-				synchronize_net();
-
-				wiphy_work_queue(sdata->local->hw.wiphy, work);
-				return;
 			}
-
-			spin_unlock_bh(&fq->lock);
 
 			/*
 			 * Assign it over to the normal tid_tx array
@@ -446,11 +454,12 @@ void ieee80211_ba_session_work(struct wiphy *wiphy, struct wiphy_work *work)
 		    test_and_clear_bit(HT_AGG_STATE_START_CB, &tid_tx->state))
 			ieee80211_start_tx_ba_cb(sta, tid, tid_tx);
 		if (test_and_clear_bit(HT_AGG_STATE_WANT_STOP, &tid_tx->state))
-			__ieee80211_stop_tx_ba_session(sta, tid,
-						       AGG_STOP_LOCAL_REQUEST);
+			___ieee80211_stop_tx_ba_session(sta, tid,
+							AGG_STOP_LOCAL_REQUEST);
 		if (test_and_clear_bit(HT_AGG_STATE_STOP_CB, &tid_tx->state))
 			ieee80211_stop_tx_ba_cb(sta, tid, tid_tx);
 	}
+	mutex_unlock(&sta->ampdu_mlme.mtx);
 }
 
 void ieee80211_send_delba(struct ieee80211_sub_if_data *sdata,
@@ -535,13 +544,11 @@ ieee80211_smps_mode_to_smps_mode(enum ieee80211_smps_mode smps)
 
 int ieee80211_send_smps_action(struct ieee80211_sub_if_data *sdata,
 			       enum ieee80211_smps_mode smps, const u8 *da,
-			       const u8 *bssid, int link_id)
+			       const u8 *bssid)
 {
 	struct ieee80211_local *local = sdata->local;
 	struct sk_buff *skb;
 	struct ieee80211_mgmt *action_frame;
-	struct ieee80211_tx_info *info;
-	u8 status_link_id = link_id < 0 ? 0 : link_id;
 
 	/* 27 = header + category + action + smps mode */
 	skb = dev_alloc_skb(27 + local->hw.extra_tx_headroom);
@@ -561,7 +568,6 @@ int ieee80211_send_smps_action(struct ieee80211_sub_if_data *sdata,
 	case IEEE80211_SMPS_AUTOMATIC:
 	case IEEE80211_SMPS_NUM_MODES:
 		WARN_ON(1);
-		smps = IEEE80211_SMPS_OFF;
 		fallthrough;
 	case IEEE80211_SMPS_OFF:
 		action_frame->u.action.u.ht_smps.smps_control =
@@ -578,13 +584,8 @@ int ieee80211_send_smps_action(struct ieee80211_sub_if_data *sdata,
 	}
 
 	/* we'll do more on status of this frame */
-	info = IEEE80211_SKB_CB(skb);
-	info->flags |= IEEE80211_TX_CTL_REQ_TX_STATUS;
-	/* we have 12 bits, and need 6: link_id 4, smps 2 */
-	info->status_data = IEEE80211_STATUS_TYPE_SMPS |
-			    u16_encode_bits(status_link_id << 2 | smps,
-					    IEEE80211_STATUS_SUBDATA_MASK);
-	ieee80211_tx_skb_tid(sdata, skb, 7, link_id);
+	IEEE80211_SKB_CB(skb)->flags |= IEEE80211_TX_CTL_REQ_TX_STATUS;
+	ieee80211_tx_skb(sdata, skb);
 
 	return 0;
 }
@@ -607,8 +608,7 @@ void ieee80211_request_smps(struct ieee80211_vif *vif, unsigned int link_id,
 		goto out;
 
 	link->u.mgd.driver_smps_mode = smps_mode;
-	wiphy_work_queue(sdata->local->hw.wiphy,
-			 &link->u.mgd.request_smps_work);
+	ieee80211_queue_work(&sdata->local->hw, &link->u.mgd.request_smps_work);
 out:
 	rcu_read_unlock();
 }

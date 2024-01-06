@@ -461,7 +461,8 @@ static int afe4404_resume(struct device *dev)
 static DEFINE_SIMPLE_DEV_PM_OPS(afe4404_pm_ops, afe4404_suspend,
 				afe4404_resume);
 
-static int afe4404_probe(struct i2c_client *client)
+static int afe4404_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct iio_dev *indio_dev;
 	struct afe4404_data *afe;

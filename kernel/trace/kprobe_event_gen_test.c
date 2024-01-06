@@ -21,7 +21,7 @@
  * Then:
  *
  * # insmod kernel/trace/kprobe_event_gen_test.ko
- * # cat /sys/kernel/tracing/trace
+ * # cat /sys/kernel/debug/tracing/trace
  *
  * You should see many instances of the "gen_kprobe_test" and
  * "gen_kretprobe_test" events in the trace buffer.

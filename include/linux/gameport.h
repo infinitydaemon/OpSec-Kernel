@@ -5,6 +5,7 @@
 #ifndef _GAMEPORT_H
 #define _GAMEPORT_H
 
+#include <asm/io.h>
 #include <linux/types.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
@@ -63,7 +64,7 @@ struct gameport_driver {
 int gameport_open(struct gameport *gameport, struct gameport_driver *drv, int mode);
 void gameport_close(struct gameport *gameport);
 
-#if IS_REACHABLE(CONFIG_GAMEPORT)
+#if defined(CONFIG_GAMEPORT) || (defined(MODULE) && defined(CONFIG_GAMEPORT_MODULE))
 
 void __gameport_register_port(struct gameport *gameport, struct module *owner);
 /* use a define to avoid include chaining to get THIS_MODULE */
@@ -164,12 +165,18 @@ void gameport_unregister_driver(struct gameport_driver *drv);
 
 static inline void gameport_trigger(struct gameport *gameport)
 {
-	gameport->trigger(gameport);
+	if (gameport->trigger)
+		gameport->trigger(gameport);
+	else
+		outb(0xff, gameport->io);
 }
 
 static inline unsigned char gameport_read(struct gameport *gameport)
 {
-	return gameport->read(gameport);
+	if (gameport->read)
+		return gameport->read(gameport);
+	else
+		return inb(gameport->io);
 }
 
 static inline int gameport_cooked_read(struct gameport *gameport, int *axes, int *buttons)

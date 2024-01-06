@@ -4,24 +4,15 @@ eBPF sample programs
 This directory contains a test stubs, verifier test-suite and examples
 for using eBPF. The examples use libbpf from tools/lib/bpf.
 
-Note that the XDP-specific samples have been removed from this directory and
-moved to the xdp-tools repository: https://github.com/xdp-project/xdp-tools
-See the commit messages removing each tool from this directory for how to
-convert specific command invocations between the old samples and the utilities
-in xdp-tools.
-
 Build dependencies
 ==================
 
 Compiling requires having installed:
- * clang
- * llvm
- * pahole
+ * clang >= version 3.4.0
+ * llvm >= version 3.7.1
 
-Consult :ref:`Documentation/process/changes.rst <changes>` for the minimum
-version numbers required and how to update them. Note that LLVM's tool
-'llc' must support target 'bpf', list version and supported targets with
-command: ``llc --version``
+Note that LLVM's tool 'llc' must support target 'bpf', list version
+and supported targets with command: ``llc --version``
 
 Clean and configuration
 -----------------------
@@ -33,8 +24,7 @@ after some changes (on demand)::
  make -C samples/bpf clean
  make clean
 
-Configure kernel, defconfig for instance
-(see "tools/testing/selftests/bpf/config" for a reference config)::
+Configure kernel, defconfig for instance::
 
  make defconfig
 
@@ -47,8 +37,8 @@ user, simply call::
 
  make headers_install
 
-This will create a local "usr/include" directory in the git/build top
-level directory, that the make system will automatically pick up first.
+This will creates a local "usr/include" directory in the git/build top
+level directory, that the make system automatically pickup first.
 
 Compiling
 =========
@@ -97,7 +87,7 @@ Cross compiling samples
 -----------------------
 In order to cross-compile, say for arm64 targets, export CROSS_COMPILE and ARCH
 environment variables before calling make. But do this before clean,
-configuration and header install steps described above. This will direct make to
+cofiguration and header install steps described above. This will direct make to
 build samples for the cross target::
 
  export ARCH=arm64

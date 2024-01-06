@@ -377,11 +377,12 @@ int smc_wr_reg_send(struct smc_link *link, struct ib_mr *mr)
 	if (rc)
 		return rc;
 
-	percpu_ref_get(&link->wr_reg_refs);
+	atomic_inc(&link->wr_reg_refcnt);
 	rc = wait_event_interruptible_timeout(link->wr_reg_wait,
 					      (link->wr_reg_state != POSTED),
 					      SMC_WR_REG_MR_WAIT_TIME);
-	percpu_ref_put(&link->wr_reg_refs);
+	if (atomic_dec_and_test(&link->wr_reg_refcnt))
+		wake_up_all(&link->wr_reg_wait);
 	if (!rc) {
 		/* timeout - terminate link */
 		smcr_link_down_cond_sched(link);
@@ -646,10 +647,8 @@ void smc_wr_free_link(struct smc_link *lnk)
 	smc_wr_wakeup_tx_wait(lnk);
 
 	smc_wr_tx_wait_no_pending_sends(lnk);
-	percpu_ref_kill(&lnk->wr_reg_refs);
-	wait_for_completion(&lnk->reg_ref_comp);
-	percpu_ref_kill(&lnk->wr_tx_refs);
-	wait_for_completion(&lnk->tx_ref_comp);
+	wait_event(lnk->wr_reg_wait, (!atomic_read(&lnk->wr_reg_refcnt)));
+	wait_event(lnk->wr_tx_wait, (!atomic_read(&lnk->wr_tx_refcnt)));
 
 	if (lnk->wr_rx_dma_addr) {
 		ib_dma_unmap_single(ibdev, lnk->wr_rx_dma_addr,
@@ -848,20 +847,6 @@ void smc_wr_add_dev(struct smc_ib_device *smcibdev)
 	tasklet_setup(&smcibdev->send_tasklet, smc_wr_tx_tasklet_fn);
 }
 
-static void smcr_wr_tx_refs_free(struct percpu_ref *ref)
-{
-	struct smc_link *lnk = container_of(ref, struct smc_link, wr_tx_refs);
-
-	complete(&lnk->tx_ref_comp);
-}
-
-static void smcr_wr_reg_refs_free(struct percpu_ref *ref)
-{
-	struct smc_link *lnk = container_of(ref, struct smc_link, wr_reg_refs);
-
-	complete(&lnk->reg_ref_comp);
-}
-
 int smc_wr_create_link(struct smc_link *lnk)
 {
 	struct ib_device *ibdev = lnk->smcibdev->ibdev;
@@ -905,15 +890,9 @@ int smc_wr_create_link(struct smc_link *lnk)
 	smc_wr_init_sge(lnk);
 	bitmap_zero(lnk->wr_tx_mask, SMC_WR_BUF_CNT);
 	init_waitqueue_head(&lnk->wr_tx_wait);
-	rc = percpu_ref_init(&lnk->wr_tx_refs, smcr_wr_tx_refs_free, 0, GFP_KERNEL);
-	if (rc)
-		goto dma_unmap;
-	init_completion(&lnk->tx_ref_comp);
+	atomic_set(&lnk->wr_tx_refcnt, 0);
 	init_waitqueue_head(&lnk->wr_reg_wait);
-	rc = percpu_ref_init(&lnk->wr_reg_refs, smcr_wr_reg_refs_free, 0, GFP_KERNEL);
-	if (rc)
-		goto dma_unmap;
-	init_completion(&lnk->reg_ref_comp);
+	atomic_set(&lnk->wr_reg_refcnt, 0);
 	init_waitqueue_head(&lnk->wr_rx_empty_wait);
 	return rc;
 

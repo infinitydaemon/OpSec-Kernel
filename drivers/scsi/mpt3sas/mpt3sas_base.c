@@ -60,6 +60,7 @@
 #include <linux/ktime.h>
 #include <linux/kthread.h>
 #include <asm/page.h>        /* To get host page size per arch */
+#include <linux/aer.h>
 
 
 #include "mpt3sas_base.h"
@@ -139,7 +140,7 @@ static void
 _base_clear_outstanding_commands(struct MPT3SAS_ADAPTER *ioc);
 
 static u32
-_base_readl_ext_retry(const void __iomem *addr);
+_base_readl_ext_retry(const volatile void __iomem *addr);
 
 /**
  * mpt3sas_base_check_cmd_timeout - Function
@@ -204,7 +205,7 @@ module_param_call(mpt3sas_fwfault_debug, _scsih_set_fwfault_debug,
  * while reading the system interface register.
  */
 static inline u32
-_base_readl_aero(const void __iomem *addr)
+_base_readl_aero(const volatile void __iomem *addr)
 {
 	u32 i = 0, ret_val;
 
@@ -217,7 +218,7 @@ _base_readl_aero(const void __iomem *addr)
 }
 
 static u32
-_base_readl_ext_retry(const void __iomem *addr)
+_base_readl_ext_retry(const volatile void __iomem *addr)
 {
 	u32 i, ret_val;
 
@@ -231,7 +232,7 @@ _base_readl_ext_retry(const void __iomem *addr)
 }
 
 static inline u32
-_base_readl(const void __iomem *addr)
+_base_readl(const volatile void __iomem *addr)
 {
 	return readl(addr);
 }
@@ -3551,6 +3552,7 @@ mpt3sas_base_unmap_resources(struct MPT3SAS_ADAPTER *ioc)
 
 	if (pci_is_enabled(pdev)) {
 		pci_release_selected_regions(ioc->pdev, ioc->bars);
+		pci_disable_pcie_error_reporting(pdev);
 		pci_disable_device(pdev);
 	}
 }
@@ -3629,6 +3631,9 @@ mpt3sas_base_map_resources(struct MPT3SAS_ADAPTER *ioc)
 		r = -ENODEV;
 		goto out_fail;
 	}
+
+/* AER (Advanced Error Reporting) hooks */
+	pci_enable_pcie_error_reporting(pdev);
 
 	pci_set_master(pdev);
 
@@ -4773,15 +4778,21 @@ _base_display_ioc_capabilities(struct MPT3SAS_ADAPTER *ioc)
 	int i = 0;
 	char desc[17] = {0};
 	u32 iounit_pg1_flags;
+	u32 bios_version;
 
+	bios_version = le32_to_cpu(ioc->bios_pg3.BiosVersion);
 	strncpy(desc, ioc->manu_pg0.ChipName, 16);
-	ioc_info(ioc, "%s: FWVersion(%02d.%02d.%02d.%02d), ChipRevision(0x%02x)\n",
+	ioc_info(ioc, "%s: FWVersion(%02d.%02d.%02d.%02d), ChipRevision(0x%02x), BiosVersion(%02d.%02d.%02d.%02d)\n",
 		 desc,
 		 (ioc->facts.FWVersion.Word & 0xFF000000) >> 24,
 		 (ioc->facts.FWVersion.Word & 0x00FF0000) >> 16,
 		 (ioc->facts.FWVersion.Word & 0x0000FF00) >> 8,
 		 ioc->facts.FWVersion.Word & 0x000000FF,
-		 ioc->pdev->revision);
+		 ioc->pdev->revision,
+		 (bios_version & 0xFF000000) >> 24,
+		 (bios_version & 0x00FF0000) >> 16,
+		 (bios_version & 0x0000FF00) >> 8,
+		 bios_version & 0x000000FF);
 
 	_base_display_OEMs_branding(ioc);
 

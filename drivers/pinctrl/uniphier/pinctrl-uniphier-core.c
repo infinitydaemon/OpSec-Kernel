@@ -6,14 +6,12 @@
 #include <linux/list.h>
 #include <linux/mfd/syscon.h>
 #include <linux/of.h>
-#include <linux/platform_device.h>
-#include <linux/regmap.h>
-#include <linux/seq_file.h>
-
-#include <linux/pinctrl/pinconf-generic.h>
 #include <linux/pinctrl/pinconf.h>
+#include <linux/pinctrl/pinconf-generic.h>
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/pinctrl/pinmux.h>
+#include <linux/platform_device.h>
+#include <linux/regmap.h>
 
 #include "../core.h"
 #include "../pinctrl-utils.h"
@@ -31,7 +29,7 @@ struct uniphier_pinctrl_reg_region {
 	struct list_head node;
 	unsigned int base;
 	unsigned int nregs;
-	u32 vals[] __counted_by(nregs);
+	u32 vals[];
 };
 
 struct uniphier_pinctrl_priv {

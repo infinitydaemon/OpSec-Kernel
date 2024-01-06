@@ -69,7 +69,7 @@ static struct init_sccb *sclp_init_sccb;
 /* Number of console pages to allocate, used by sclp_con.c and sclp_vt220.c */
 int sclp_console_pages = SCLP_CONSOLE_PAGES;
 /* Flag to indicate if buffer pages are dropped on buffer full condition */
-bool sclp_console_drop = true;
+int sclp_console_drop = 1;
 /* Number of times the console dropped buffer pages */
 unsigned long sclp_console_full;
 
@@ -81,7 +81,7 @@ static inline void sclp_trace(int prio, char *id, u32 a, u64 b, bool err)
 	struct sclp_trace_entry e;
 
 	memset(&e, 0, sizeof(e));
-	strtomem(e.id, id);
+	strncpy(e.id, id, sizeof(e.id));
 	e.a = a;
 	e.b = b;
 	debug_event(&sclp_debug, prio, &e, sizeof(e));
@@ -195,7 +195,12 @@ __setup("sclp_con_pages=", sclp_setup_console_pages);
 
 static int __init sclp_setup_console_drop(char *str)
 {
-	return kstrtobool(str, &sclp_console_drop) == 0;
+	int drop, rc;
+
+	rc = kstrtoint(str, 0, &drop);
+	if (!rc)
+		sclp_console_drop = drop;
+	return 1;
 }
 
 __setup("sclp_con_drop=", sclp_setup_console_drop);
@@ -706,8 +711,8 @@ void
 sclp_sync_wait(void)
 {
 	unsigned long long old_tick;
-	struct ctlreg cr0, cr0_sync;
 	unsigned long flags;
+	unsigned long cr0, cr0_sync;
 	static u64 sync_count;
 	u64 timeout;
 	int irq_context;
@@ -732,10 +737,10 @@ sclp_sync_wait(void)
 	/* Enable service-signal interruption, disable timer interrupts */
 	old_tick = local_tick_disable();
 	trace_hardirqs_on();
-	local_ctl_store(0, &cr0);
-	cr0_sync.val = cr0.val & ~CR0_IRQ_SUBCLASS_MASK;
-	cr0_sync.val |= 1UL << (63 - 54);
-	local_ctl_load(0, &cr0_sync);
+	__ctl_store(cr0, 0, 0);
+	cr0_sync = cr0 & ~CR0_IRQ_SUBCLASS_MASK;
+	cr0_sync |= 1UL << (63 - 54);
+	__ctl_load(cr0_sync, 0, 0);
 	__arch_local_irq_stosm(0x01);
 	/* Loop until driver state indicates finished request */
 	while (sclp_running_state != sclp_running_state_idle) {
@@ -745,7 +750,7 @@ sclp_sync_wait(void)
 		cpu_relax();
 	}
 	local_irq_disable();
-	local_ctl_load(0, &cr0);
+	__ctl_load(cr0, 0, 0);
 	if (!irq_context)
 		_local_bh_enable();
 	local_tick_enable(old_tick);
@@ -1200,29 +1205,21 @@ static struct notifier_block sclp_reboot_notifier = {
 
 static ssize_t con_pages_show(struct device_driver *dev, char *buf)
 {
-	return sysfs_emit(buf, "%i\n", sclp_console_pages);
+	return sprintf(buf, "%i\n", sclp_console_pages);
 }
 
 static DRIVER_ATTR_RO(con_pages);
 
-static ssize_t con_drop_store(struct device_driver *dev, const char *buf, size_t count)
-{
-	int rc;
-
-	rc = kstrtobool(buf, &sclp_console_drop);
-	return rc ?: count;
-}
-
 static ssize_t con_drop_show(struct device_driver *dev, char *buf)
 {
-	return sysfs_emit(buf, "%i\n", sclp_console_drop);
+	return sprintf(buf, "%i\n", sclp_console_drop);
 }
 
-static DRIVER_ATTR_RW(con_drop);
+static DRIVER_ATTR_RO(con_drop);
 
 static ssize_t con_full_show(struct device_driver *dev, char *buf)
 {
-	return sysfs_emit(buf, "%lu\n", sclp_console_full);
+	return sprintf(buf, "%lu\n", sclp_console_full);
 }
 
 static DRIVER_ATTR_RO(con_full);

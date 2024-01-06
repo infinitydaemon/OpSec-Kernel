@@ -6,7 +6,6 @@
 //
 
 #include <linux/module.h>
-#include <linux/platform_data/x86/soc.h>
 #include <linux/platform_device.h>
 #include <sound/jack.h>
 #include <sound/pcm.h>
@@ -16,14 +15,13 @@
 #include <sound/soc-dapm.h>
 #include <uapi/linux/input-event-codes.h>
 #include "../../../codecs/da7219.h"
-#include "../utils.h"
+#include "../../../codecs/da7219-aad.h"
 
 #define DA7219_DAI_NAME		"da7219-hifi"
 
 static const struct snd_kcontrol_new card_controls[] = {
 	SOC_DAPM_PIN_SWITCH("Headphone Jack"),
 	SOC_DAPM_PIN_SWITCH("Headset Mic"),
-	SOC_DAPM_PIN_SWITCH("Line Out"),
 };
 
 static int platform_clock_control(struct snd_soc_dapm_widget *w,
@@ -57,7 +55,6 @@ static int platform_clock_control(struct snd_soc_dapm_widget *w,
 static const struct snd_soc_dapm_widget card_widgets[] = {
 	SND_SOC_DAPM_HP("Headphone Jack", NULL),
 	SND_SOC_DAPM_MIC("Headset Mic", NULL),
-	SND_SOC_DAPM_LINE("Line Out", NULL),
 	SND_SOC_DAPM_SUPPLY("Platform Clock", SND_SOC_NOPM, 0, 0, platform_clock_control,
 			    SND_SOC_DAPM_POST_PMD | SND_SOC_DAPM_PRE_PMU),
 };
@@ -71,40 +68,19 @@ static const struct snd_soc_dapm_route card_base_routes[] = {
 
 	{ "Headphone Jack", NULL, "Platform Clock" },
 	{ "Headset Mic", NULL, "Platform Clock" },
-	{ "Line Out", NULL, "Platform Clock" },
-};
-
-static const struct snd_soc_jack_pin card_headset_pins[] = {
-	{
-		.pin = "Headphone Jack",
-		.mask = SND_JACK_HEADPHONE,
-	},
-	{
-		.pin = "Headset Mic",
-		.mask = SND_JACK_MICROPHONE,
-	},
-	{
-		.pin = "Line Out",
-		.mask = SND_JACK_LINEOUT,
-	},
 };
 
 static int avs_da7219_codec_init(struct snd_soc_pcm_runtime *runtime)
 {
-	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(runtime, 0);
-	struct snd_soc_component *component = codec_dai->component;
+	struct snd_soc_component *component = asoc_rtd_to_codec(runtime, 0)->component;
 	struct snd_soc_card *card = runtime->card;
-	struct snd_soc_jack_pin *pins;
 	struct snd_soc_jack *jack;
-	int num_pins;
+	struct snd_soc_dai *codec_dai = asoc_rtd_to_codec(runtime, 0);
 	int clk_freq;
 	int ret;
 
 	jack = snd_soc_card_get_drvdata(card);
-	if (soc_intel_is_apl())
-		clk_freq = 19200000;
-	else /* kbl */
-		clk_freq = 24576000;
+	clk_freq = 19200000;
 
 	ret = snd_soc_dai_set_sysclk(codec_dai, DA7219_CLKSRC_MCLK, clk_freq, SND_SOC_CLOCK_IN);
 	if (ret) {
@@ -112,20 +88,14 @@ static int avs_da7219_codec_init(struct snd_soc_pcm_runtime *runtime)
 		return ret;
 	}
 
-	num_pins = ARRAY_SIZE(card_headset_pins);
-	pins = devm_kmemdup(card->dev, card_headset_pins, sizeof(*pins) * num_pins, GFP_KERNEL);
-	if (!pins)
-		return -ENOMEM;
-
 	/*
 	 * Headset buttons map to the google Reference headset.
 	 * These can be configured by userspace.
 	 */
-	ret = snd_soc_card_jack_new_pins(card, "Headset Jack",
-					 SND_JACK_HEADSET | SND_JACK_BTN_0 |
-					 SND_JACK_BTN_1 | SND_JACK_BTN_2 |
-					 SND_JACK_BTN_3 | SND_JACK_LINEOUT,
-					 jack, pins, num_pins);
+	ret = snd_soc_card_jack_new(card, "Headset Jack",
+				    SND_JACK_HEADSET | SND_JACK_BTN_0 |
+				    SND_JACK_BTN_1 | SND_JACK_BTN_2 |
+				    SND_JACK_BTN_3 | SND_JACK_LINEOUT, jack);
 	if (ret) {
 		dev_err(card->dev, "Headset Jack creation failed: %d\n", ret);
 		return ret;
@@ -136,12 +106,9 @@ static int avs_da7219_codec_init(struct snd_soc_pcm_runtime *runtime)
 	snd_jack_set_key(jack->jack, SND_JACK_BTN_2, KEY_VOLUMEDOWN);
 	snd_jack_set_key(jack->jack, SND_JACK_BTN_3, KEY_VOICECOMMAND);
 
-	return snd_soc_component_set_jack(component, jack, NULL);
-}
+	da7219_aad_jack_det(component, jack);
 
-static void avs_da7219_codec_exit(struct snd_soc_pcm_runtime *rtd)
-{
-	snd_soc_component_set_jack(snd_soc_rtd_to_codec(rtd, 0)->component, NULL, NULL);
+	return 0;
 }
 
 static int
@@ -165,7 +132,7 @@ avs_da7219_be_fixup(struct snd_soc_pcm_runtime *runrime, struct snd_pcm_hw_param
 }
 
 static int avs_create_dai_link(struct device *dev, const char *platform_name, int ssp_port,
-			       int tdm_slot, struct snd_soc_dai_link **dai_link)
+			       struct snd_soc_dai_link **dai_link)
 {
 	struct snd_soc_dai_link_component *platform;
 	struct snd_soc_dai_link *dl;
@@ -178,15 +145,12 @@ static int avs_create_dai_link(struct device *dev, const char *platform_name, in
 	platform->name = platform_name;
 
 	dl->name = devm_kasprintf(dev, GFP_KERNEL, "SSP%d-Codec", ssp_port);
-	dl->name = devm_kasprintf(dev, GFP_KERNEL,
-				  AVS_STRING_FMT("SSP", "-Codec", ssp_port, tdm_slot));
 	dl->cpus = devm_kzalloc(dev, sizeof(*dl->cpus), GFP_KERNEL);
 	dl->codecs = devm_kzalloc(dev, sizeof(*dl->codecs), GFP_KERNEL);
 	if (!dl->name || !dl->cpus || !dl->codecs)
 		return -ENOMEM;
 
-	dl->cpus->dai_name = devm_kasprintf(dev, GFP_KERNEL,
-					    AVS_STRING_FMT("SSP", " Pin", ssp_port, tdm_slot));
+	dl->cpus->dai_name = devm_kasprintf(dev, GFP_KERNEL, "SSP%d Pin", ssp_port);
 	dl->codecs->name = devm_kasprintf(dev, GFP_KERNEL, "i2c-DLGS7219:00");
 	dl->codecs->dai_name = devm_kasprintf(dev, GFP_KERNEL, DA7219_DAI_NAME);
 	if (!dl->cpus->dai_name || !dl->codecs->name || !dl->codecs->dai_name)
@@ -200,7 +164,6 @@ static int avs_create_dai_link(struct device *dev, const char *platform_name, in
 	dl->dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_CBS_CFS;
 	dl->be_hw_params_fixup = avs_da7219_be_fixup;
 	dl->init = avs_da7219_codec_init;
-	dl->exit = avs_da7219_codec_exit;
 	dl->nonatomic = 1;
 	dl->no_pcm = 1;
 	dl->dpcm_capture = 1;
@@ -211,41 +174,88 @@ static int avs_create_dai_link(struct device *dev, const char *platform_name, in
 	return 0;
 }
 
+static int avs_create_dapm_routes(struct device *dev, int ssp_port,
+				  struct snd_soc_dapm_route **routes, int *num_routes)
+{
+	struct snd_soc_dapm_route *dr;
+	const int num_base = ARRAY_SIZE(card_base_routes);
+	const int num_dr = num_base + 2;
+	int idx;
+
+	dr = devm_kcalloc(dev, num_dr, sizeof(*dr), GFP_KERNEL);
+	if (!dr)
+		return -ENOMEM;
+
+	memcpy(dr, card_base_routes, num_base * sizeof(*dr));
+
+	idx = num_base;
+	dr[idx].sink = devm_kasprintf(dev, GFP_KERNEL, "Playback");
+	dr[idx].source = devm_kasprintf(dev, GFP_KERNEL, "ssp%d Tx", ssp_port);
+	if (!dr[idx].sink || !dr[idx].source)
+		return -ENOMEM;
+
+	idx++;
+	dr[idx].sink = devm_kasprintf(dev, GFP_KERNEL, "ssp%d Rx", ssp_port);
+	dr[idx].source = devm_kasprintf(dev, GFP_KERNEL, "Capture");
+	if (!dr[idx].sink || !dr[idx].source)
+		return -ENOMEM;
+
+	*routes = dr;
+	*num_routes = num_dr;
+
+	return 0;
+}
+
+static int avs_card_set_jack(struct snd_soc_card *card, struct snd_soc_jack *jack)
+{
+	struct snd_soc_component *component;
+
+	for_each_card_components(card, component)
+		snd_soc_component_set_jack(component, jack, NULL);
+	return 0;
+}
+
+static int avs_card_remove(struct snd_soc_card *card)
+{
+	return avs_card_set_jack(card, NULL);
+}
+
 static int avs_card_suspend_pre(struct snd_soc_card *card)
 {
-	struct snd_soc_dai *codec_dai = snd_soc_card_get_codec_dai(card, DA7219_DAI_NAME);
-
-	return snd_soc_component_set_jack(codec_dai->component, NULL, NULL);
+	return avs_card_set_jack(card, NULL);
 }
 
 static int avs_card_resume_post(struct snd_soc_card *card)
 {
-	struct snd_soc_dai *codec_dai = snd_soc_card_get_codec_dai(card, DA7219_DAI_NAME);
 	struct snd_soc_jack *jack = snd_soc_card_get_drvdata(card);
 
-	return snd_soc_component_set_jack(codec_dai->component, jack, NULL);
+	return avs_card_set_jack(card, jack);
 }
 
 static int avs_da7219_probe(struct platform_device *pdev)
 {
+	struct snd_soc_dapm_route *routes;
 	struct snd_soc_dai_link *dai_link;
 	struct snd_soc_acpi_mach *mach;
 	struct snd_soc_card *card;
 	struct snd_soc_jack *jack;
 	struct device *dev = &pdev->dev;
 	const char *pname;
-	int ssp_port, tdm_slot, ret;
+	int num_routes, ssp_port, ret;
 
 	mach = dev_get_platdata(dev);
 	pname = mach->mach_params.platform;
+	ssp_port = __ffs(mach->mach_params.i2s_link_mask);
 
-	ret = avs_mach_get_ssp_tdm(dev, mach, &ssp_port, &tdm_slot);
-	if (ret)
-		return ret;
-
-	ret = avs_create_dai_link(dev, pname, ssp_port, tdm_slot, &dai_link);
+	ret = avs_create_dai_link(dev, pname, ssp_port, &dai_link);
 	if (ret) {
 		dev_err(dev, "Failed to create dai link: %d", ret);
+		return ret;
+	}
+
+	ret = avs_create_dapm_routes(dev, ssp_port, &routes, &num_routes);
+	if (ret) {
+		dev_err(dev, "Failed to create dapm routes: %d", ret);
 		return ret;
 	}
 
@@ -257,6 +267,7 @@ static int avs_da7219_probe(struct platform_device *pdev)
 	card->name = "avs_da7219";
 	card->dev = dev;
 	card->owner = THIS_MODULE;
+	card->remove = avs_card_remove;
 	card->suspend_pre = avs_card_suspend_pre;
 	card->resume_post = avs_card_resume_post;
 	card->dai_link = dai_link;
@@ -265,8 +276,8 @@ static int avs_da7219_probe(struct platform_device *pdev)
 	card->num_controls = ARRAY_SIZE(card_controls);
 	card->dapm_widgets = card_widgets;
 	card->num_dapm_widgets = ARRAY_SIZE(card_widgets);
-	card->dapm_routes = card_base_routes;
-	card->num_dapm_routes = ARRAY_SIZE(card_base_routes);
+	card->dapm_routes = routes;
+	card->num_dapm_routes = num_routes;
 	card->fully_routed = true;
 	snd_soc_card_set_drvdata(card, jack);
 

@@ -378,8 +378,9 @@ static int mchp_corei2c_probe(struct platform_device *pdev)
 		return PTR_ERR(idev->base);
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
-		return irq;
+	if (irq <= 0)
+		return dev_err_probe(&pdev->dev, -ENXIO,
+				     "invalid IRQ %d for I2C controller\n", irq);
 
 	idev->i2c_clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(idev->i2c_clk))
@@ -445,12 +446,14 @@ static int mchp_corei2c_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void mchp_corei2c_remove(struct platform_device *pdev)
+static int mchp_corei2c_remove(struct platform_device *pdev)
 {
 	struct mchp_corei2c_dev *idev = platform_get_drvdata(pdev);
 
 	clk_disable_unprepare(idev->i2c_clk);
 	i2c_del_adapter(&idev->adapter);
+
+	return 0;
 }
 
 static const struct of_device_id mchp_corei2c_of_match[] = {
@@ -462,7 +465,7 @@ MODULE_DEVICE_TABLE(of, mchp_corei2c_of_match);
 
 static struct platform_driver mchp_corei2c_driver = {
 	.probe = mchp_corei2c_probe,
-	.remove_new = mchp_corei2c_remove,
+	.remove = mchp_corei2c_remove,
 	.driver = {
 		.name = "microchip-corei2c",
 		.of_match_table = mchp_corei2c_of_match,

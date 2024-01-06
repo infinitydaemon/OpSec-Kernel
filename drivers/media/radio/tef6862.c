@@ -141,7 +141,8 @@ static const struct v4l2_subdev_ops tef6862_ops = {
  * concerning the addresses: i2c wants 7 bit (without the r/w bit), so '>>1'
  */
 
-static int tef6862_probe(struct i2c_client *client)
+static int tef6862_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct tef6862_state *state;
 	struct v4l2_subdev *sd;

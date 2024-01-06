@@ -592,11 +592,13 @@ err_unset_ahub:
 	return ret;
 }
 
-static void tegra30_ahub_remove(struct platform_device *pdev)
+static int tegra30_ahub_remove(struct platform_device *pdev)
 {
 	pm_runtime_disable(&pdev->dev);
 
 	ahub = NULL;
+
+	return 0;
 }
 
 static const struct dev_pm_ops tegra30_ahub_pm_ops = {
@@ -608,7 +610,7 @@ static const struct dev_pm_ops tegra30_ahub_pm_ops = {
 
 static struct platform_driver tegra30_ahub_driver = {
 	.probe = tegra30_ahub_probe,
-	.remove_new = tegra30_ahub_remove,
+	.remove = tegra30_ahub_remove,
 	.driver = {
 		.name = DRV_NAME,
 		.of_match_table = tegra30_ahub_of_match,

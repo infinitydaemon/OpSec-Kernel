@@ -53,12 +53,13 @@ struct route_info {
  */
 static inline int rt6_srcprefs2flags(unsigned int srcprefs)
 {
-	return (srcprefs & IPV6_PREFER_SRC_MASK) << 3;
+	/* No need to bitmask because srcprefs have only 3 bits. */
+	return srcprefs << 3;
 }
 
 static inline unsigned int rt6_flags2srcprefs(int flags)
 {
-	return (flags >> 3) & IPV6_PREFER_SRC_MASK;
+	return (flags >> 3) & 7;
 }
 
 static inline bool rt6_need_strict(const struct in6_addr *daddr)
@@ -83,6 +84,10 @@ struct dst_entry *ip6_route_input_lookup(struct net *net,
 					 struct flowi6 *fl6,
 					 const struct sk_buff *skb, int flags);
 
+struct dst_entry *ip6_route_output_flags_noref(struct net *net,
+					       const struct sock *sk,
+					       struct flowi6 *fl6, int flags);
+
 struct dst_entry *ip6_route_output_flags(struct net *net, const struct sock *sk,
 					 struct flowi6 *fl6, int flags);
 
@@ -99,7 +104,7 @@ static inline struct dst_entry *ip6_route_output(struct net *net,
 static inline void ip6_rt_put_flags(struct rt6_info *rt, int flags)
 {
 	if (!(flags & RT6_LOOKUP_F_DST_NOREF) ||
-	    !list_empty(&rt->dst.rt_uncached))
+	    !list_empty(&rt->rt6i_uncached))
 		ip6_rt_put(rt);
 }
 
@@ -155,7 +160,7 @@ void fib6_force_start_gc(struct net *net);
 
 struct fib6_info *addrconf_f6i_alloc(struct net *net, struct inet6_dev *idev,
 				     const struct in6_addr *addr, bool anycast,
-				     gfp_t gfp_flags, struct netlink_ext_ack *extack);
+				     gfp_t gfp_flags);
 
 struct rt6_info *ip6_dst_alloc(struct net *net, struct net_device *dev,
 			       int flags);
@@ -265,7 +270,7 @@ static inline unsigned int ip6_skb_dst_mtu(const struct sk_buff *skb)
 	const struct dst_entry *dst = skb_dst(skb);
 	unsigned int mtu;
 
-	if (np && READ_ONCE(np->pmtudisc) >= IPV6_PMTUDISC_PROBE) {
+	if (np && np->pmtudisc >= IPV6_PMTUDISC_PROBE) {
 		mtu = READ_ONCE(dst->dev->mtu);
 		mtu -= lwtunnel_headroom(dst->lwtstate, mtu);
 	} else {
@@ -276,18 +281,14 @@ static inline unsigned int ip6_skb_dst_mtu(const struct sk_buff *skb)
 
 static inline bool ip6_sk_accept_pmtu(const struct sock *sk)
 {
-	u8 pmtudisc = READ_ONCE(inet6_sk(sk)->pmtudisc);
-
-	return pmtudisc != IPV6_PMTUDISC_INTERFACE &&
-	       pmtudisc != IPV6_PMTUDISC_OMIT;
+	return inet6_sk(sk)->pmtudisc != IPV6_PMTUDISC_INTERFACE &&
+	       inet6_sk(sk)->pmtudisc != IPV6_PMTUDISC_OMIT;
 }
 
 static inline bool ip6_sk_ignore_df(const struct sock *sk)
 {
-	u8 pmtudisc = READ_ONCE(inet6_sk(sk)->pmtudisc);
-
-	return pmtudisc < IPV6_PMTUDISC_DO ||
-	       pmtudisc == IPV6_PMTUDISC_OMIT;
+	return inet6_sk(sk)->pmtudisc < IPV6_PMTUDISC_DO ||
+	       inet6_sk(sk)->pmtudisc == IPV6_PMTUDISC_OMIT;
 }
 
 static inline const struct in6_addr *rt6_nexthop(const struct rt6_info *rt,

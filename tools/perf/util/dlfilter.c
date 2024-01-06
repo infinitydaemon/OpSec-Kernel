@@ -10,8 +10,6 @@
 #include <subcmd/exec-cmd.h>
 #include <linux/zalloc.h>
 #include <linux/build_bug.h>
-#include <linux/kernel.h>
-#include <linux/string.h>
 
 #include "debug.h"
 #include "event.h"
@@ -31,7 +29,7 @@ static void al_to_d_al(struct addr_location *al, struct perf_dlfilter_al *d_al)
 
 	d_al->size = sizeof(*d_al);
 	if (al->map) {
-		struct dso *dso = map__dso(al->map);
+		struct dso *dso = al->map->dso;
 
 		if (symbol_conf.show_kernel_path && dso->long_name)
 			d_al->dso = dso->long_name;
@@ -52,10 +50,8 @@ static void al_to_d_al(struct addr_location *al, struct perf_dlfilter_al *d_al)
 		d_al->sym_end = sym->end;
 		if (al->addr < sym->end)
 			d_al->symoff = al->addr - sym->start;
-		else if (al->map)
-			d_al->symoff = al->addr - map__start(al->map) - sym->start;
 		else
-			d_al->symoff = 0;
+			d_al->symoff = al->addr - al->map->start - sym->start;
 		d_al->sym_binding = sym->binding;
 	} else {
 		d_al->sym = NULL;
@@ -67,7 +63,6 @@ static void al_to_d_al(struct addr_location *al, struct perf_dlfilter_al *d_al)
 	d_al->addr = al->addr;
 	d_al->comm = NULL;
 	d_al->filtered = 0;
-	d_al->priv = NULL;
 }
 
 static struct addr_location *get_al(struct dlfilter *d)
@@ -156,11 +151,6 @@ static char **dlfilter__args(void *ctx, int *dlargc)
 	return d->dlargv;
 }
 
-static bool has_priv(struct perf_dlfilter_al *d_al_p)
-{
-	return d_al_p->size >= offsetof(struct perf_dlfilter_al, priv) + sizeof(d_al_p->priv);
-}
-
 static __s32 dlfilter__resolve_address(void *ctx, __u64 address, struct perf_dlfilter_al *d_al_p)
 {
 	struct dlfilter *d = (struct dlfilter *)ctx;
@@ -176,7 +166,6 @@ static __s32 dlfilter__resolve_address(void *ctx, __u64 address, struct perf_dlf
 	if (!thread)
 		return -1;
 
-	addr_location__init(&al);
 	thread__find_symbol_fb(thread, d->sample->cpumode, address, &al);
 
 	al_to_d_al(&al, &d_al);
@@ -187,29 +176,7 @@ static __s32 dlfilter__resolve_address(void *ctx, __u64 address, struct perf_dlf
 	memcpy(d_al_p, &d_al, min((size_t)sz, sizeof(d_al)));
 	d_al_p->size = sz;
 
-	if (has_priv(d_al_p))
-		d_al_p->priv = memdup(&al, sizeof(al));
-	else /* Avoid leak for v0 API */
-		addr_location__exit(&al);
-
 	return 0;
-}
-
-static void dlfilter__al_cleanup(void *ctx __maybe_unused, struct perf_dlfilter_al *d_al_p)
-{
-	struct addr_location *al;
-
-	/* Ensure backward compatibility */
-	if (!has_priv(d_al_p) || !d_al_p->priv)
-		return;
-
-	al = d_al_p->priv;
-
-	d_al_p->priv = NULL;
-
-	addr_location__exit(al);
-
-	free(al);
 }
 
 static const __u8 *dlfilter__insn(void *ctx, __u32 *len)
@@ -230,12 +197,8 @@ static const __u8 *dlfilter__insn(void *ctx, __u32 *len)
 		if (!al->thread && machine__resolve(d->machine, al, d->sample) < 0)
 			return NULL;
 
-		if (thread__maps(al->thread)) {
-			struct machine *machine = maps__machine(thread__maps(al->thread));
-
-			if (machine)
-				script_fetch_insn(d->sample, al->thread, machine);
-		}
+		if (al->thread->maps && al->thread->maps->machine)
+			script_fetch_insn(d->sample, al->thread, al->thread->maps->machine);
 	}
 
 	if (!d->sample->insn_len)
@@ -253,7 +216,6 @@ static const char *dlfilter__srcline(void *ctx, __u32 *line_no)
 	unsigned int line = 0;
 	char *srcfile = NULL;
 	struct map *map;
-	struct dso *dso;
 	u64 addr;
 
 	if (!d->ctx_valid || !line_no)
@@ -265,10 +227,9 @@ static const char *dlfilter__srcline(void *ctx, __u32 *line_no)
 
 	map = al->map;
 	addr = al->addr;
-	dso = map ? map__dso(map) : NULL;
 
-	if (dso)
-		srcfile = get_srcline_split(dso, map__rip_2objdump(map, addr), &line);
+	if (map && map->dso)
+		srcfile = get_srcline_split(map->dso, map__rip_2objdump(map, addr), &line);
 
 	*line_no = line;
 	return srcfile;
@@ -284,22 +245,13 @@ static struct perf_event_attr *dlfilter__attr(void *ctx)
 	return &d->evsel->core.attr;
 }
 
-static __s32 code_read(__u64 ip, struct map *map, struct machine *machine, void *buf, __u32 len)
-{
-	u64 offset = map__map_ip(map, ip);
-
-	if (ip + len >= map__end(map))
-		len = map__end(map) - ip;
-
-	return dso__data_read_offset(map__dso(map), machine, offset, buf, len);
-}
-
 static __s32 dlfilter__object_code(void *ctx, __u64 ip, void *buf, __u32 len)
 {
 	struct dlfilter *d = (struct dlfilter *)ctx;
 	struct addr_location *al;
 	struct addr_location a;
-	__s32 ret;
+	struct map *map;
+	u64 offset;
 
 	if (!d->ctx_valid)
 		return -1;
@@ -308,18 +260,22 @@ static __s32 dlfilter__object_code(void *ctx, __u64 ip, void *buf, __u32 len)
 	if (!al)
 		return -1;
 
-	if (al->map && ip >= map__start(al->map) && ip < map__end(al->map) &&
-	    machine__kernel_ip(d->machine, ip) == machine__kernel_ip(d->machine, d->sample->ip))
-		return code_read(ip, al->map, d->machine, buf, len);
+	map = al->map;
 
-	addr_location__init(&a);
+	if (map && ip >= map->start && ip < map->end &&
+	    machine__kernel_ip(d->machine, ip) == machine__kernel_ip(d->machine, d->sample->ip))
+		goto have_map;
 
 	thread__find_map_fb(al->thread, d->sample->cpumode, ip, &a);
-	ret = a.map ? code_read(ip, a.map, d->machine, buf, len) : -1;
+	if (!a.map)
+		return -1;
 
-	addr_location__exit(&a);
-
-	return ret;
+	map = a.map;
+have_map:
+	offset = map->map_ip(map, ip);
+	if (ip + len >= map->end)
+		len = map->end - ip;
+	return dso__data_read_offset(map->dso, d->machine, offset, buf, len);
 }
 
 static const struct perf_dlfilter_fns perf_dlfilter_fns = {
@@ -327,7 +283,6 @@ static const struct perf_dlfilter_fns perf_dlfilter_fns = {
 	.resolve_addr    = dlfilter__resolve_addr,
 	.args            = dlfilter__args,
 	.resolve_address = dlfilter__resolve_address,
-	.al_cleanup      = dlfilter__al_cleanup,
 	.insn            = dlfilter__insn,
 	.srcline         = dlfilter__srcline,
 	.attr            = dlfilter__attr,
@@ -624,7 +579,7 @@ static void list_filters(const char *dirname)
 		if (!get_filter_desc(dirname, entry->d_name, &desc, &long_desc))
 			continue;
 		printf("  %-36s %s\n", entry->d_name, desc ? desc : "");
-		if (verbose > 0) {
+		if (verbose) {
 			char *p = long_desc;
 			char *line;
 

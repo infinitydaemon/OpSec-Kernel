@@ -468,8 +468,7 @@ nfssvc_encode_readlinkres(struct svc_rqst *rqstp, struct xdr_stream *xdr)
 	case nfs_ok:
 		if (xdr_stream_encode_u32(xdr, resp->len) < 0)
 			return false;
-		svcxdr_encode_opaque_pages(rqstp, xdr, &resp->page, 0,
-					   resp->len);
+		xdr_write_pages(xdr, &resp->page, 0, resp->len);
 		if (svc_encode_result_payload(rqstp, head->iov_len, resp->len) < 0)
 			return false;
 		break;
@@ -492,9 +491,8 @@ nfssvc_encode_readres(struct svc_rqst *rqstp, struct xdr_stream *xdr)
 			return false;
 		if (xdr_stream_encode_u32(xdr, resp->count) < 0)
 			return false;
-		svcxdr_encode_opaque_pages(rqstp, xdr, resp->pages,
-					   rqstp->rq_res.page_base,
-					   resp->count);
+		xdr_write_pages(xdr, resp->pages, rqstp->rq_res.page_base,
+				resp->count);
 		if (svc_encode_result_payload(rqstp, head->iov_len, resp->count) < 0)
 			return false;
 		break;
@@ -513,8 +511,7 @@ nfssvc_encode_readdirres(struct svc_rqst *rqstp, struct xdr_stream *xdr)
 		return false;
 	switch (resp->status) {
 	case nfs_ok:
-		svcxdr_encode_opaque_pages(rqstp, xdr, dirlist->pages, 0,
-					   dirlist->len);
+		xdr_write_pages(xdr, dirlist->pages, 0, dirlist->len);
 		/* no more entries */
 		if (xdr_stream_encode_item_absent(xdr) < 0)
 			return false;

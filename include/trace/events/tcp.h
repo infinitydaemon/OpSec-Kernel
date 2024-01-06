@@ -67,7 +67,7 @@ DECLARE_EVENT_CLASS(tcp_event_sk_skb,
 	),
 
 	TP_fast_assign(
-		const struct inet_sock *inet = inet_sk(sk);
+		struct inet_sock *inet = inet_sk(sk);
 		__be32 *p32;
 
 		__entry->skbaddr = skb;

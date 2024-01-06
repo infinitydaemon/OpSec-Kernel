@@ -221,9 +221,6 @@ struct iio_event_spec {
  * @extend_name:	Allows labeling of channel attributes with an
  *			informative name. Note this has no effect codes etc,
  *			unlike modifiers.
- *			This field is deprecated in favour of providing
- *			iio_info->read_label() to override the label, which
- *			unlike @extend_name does not affect sysfs filenames.
  * @datasheet_name:	A name used in in-kernel mapping of channels. It should
  *			correspond to the first name that the channel is referred
  *			to by in the datasheet (e.g. IND), or the nearest
@@ -384,11 +381,6 @@ s64 iio_get_time_ns(const struct iio_dev *indio_dev);
 
 #define INDIO_MAX_RAW_ELEMENTS		4
 
-struct iio_val_int_plus_micro {
-	int integer;
-	int micro;
-};
-
 struct iio_trigger; /* forward declaration */
 
 /**
@@ -427,8 +419,6 @@ struct iio_trigger; /* forward declaration */
  * @write_event_config:	set if the event is enabled.
  * @read_event_value:	read a configuration value associated with the event.
  * @write_event_value:	write a configuration value for the event.
- * @read_event_label:	function to request label name for a specified label,
- *			for better event identification.
  * @validate_trigger:	function to validate the trigger when the
  *			current trigger gets changed.
  * @update_scan_mode:	function to configure device and scan buffer when
@@ -513,12 +503,6 @@ struct iio_info {
 				 enum iio_event_direction dir,
 				 enum iio_event_info info, int val, int val2);
 
-	int (*read_event_label)(struct iio_dev *indio_dev,
-				struct iio_chan_spec const *chan,
-				enum iio_event_type type,
-				enum iio_event_direction dir,
-				char *label);
-
 	int (*validate_trigger)(struct iio_dev *indio_dev,
 				struct iio_trigger *trig);
 	int (*update_scan_mode)(struct iio_dev *indio_dev,
@@ -564,9 +548,9 @@ struct iio_buffer_setup_ops {
  *			and owner
  * @buffer:		[DRIVER] any buffer present
  * @scan_bytes:		[INTERN] num bytes captured to be fed to buffer demux
- * @available_scan_masks: [DRIVER] optional array of allowed bitmasks. Sort the
- *			   array in order of preference, the most preferred
- *			   masks first.
+ * @mlock:		[INTERN] lock used to prevent simultaneous device state
+ *			changes
+ * @available_scan_masks: [DRIVER] optional array of allowed bitmasks
  * @masklength:		[INTERN] the length of the mask established from
  *			channels
  * @active_scan_mask:	[INTERN] union of all scan masks requested by buffers
@@ -590,6 +574,7 @@ struct iio_dev {
 
 	struct iio_buffer		*buffer;
 	int				scan_bytes;
+	struct mutex			mlock;
 
 	const unsigned long		*available_scan_masks;
 	unsigned			masklength;
@@ -735,7 +720,7 @@ static inline void *iio_device_get_drvdata(const struct iio_dev *indio_dev)
  * must not share  cachelines with the rest of the structure, thus making
  * them safe for use with non-coherent DMA.
  */
-#define IIO_DMA_MINALIGN ARCH_DMA_MINALIGN
+#define IIO_DMA_MINALIGN ARCH_KMALLOC_MINALIGN
 struct iio_dev *iio_device_alloc(struct device *parent, int sizeof_priv);
 
 /* The information at the returned address is guaranteed to be cacheline aligned */

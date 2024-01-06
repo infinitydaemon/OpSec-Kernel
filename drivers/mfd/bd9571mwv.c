@@ -204,7 +204,8 @@ static int bd957x_identify(struct device *dev, struct regmap *regmap)
 	return 0;
 }
 
-static int bd9571mwv_probe(struct i2c_client *client)
+static int bd9571mwv_probe(struct i2c_client *client,
+			   const struct i2c_device_id *ids)
 {
 	const struct regmap_config *regmap_config;
 	const struct regmap_irq_chip *irq_chip;

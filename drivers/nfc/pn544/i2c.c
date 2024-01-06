@@ -866,7 +866,8 @@ static const struct acpi_gpio_mapping acpi_pn544_gpios[] = {
 	{ },
 };
 
-static int pn544_hci_i2c_probe(struct i2c_client *client)
+static int pn544_hci_i2c_probe(struct i2c_client *client,
+			       const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
 	struct pn544_i2c_phy *phy;

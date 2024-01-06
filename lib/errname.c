@@ -222,4 +222,3 @@ const char *errname(int err)
 
 	return err > 0 ? name + 1 : name;
 }
-EXPORT_SYMBOL(errname);

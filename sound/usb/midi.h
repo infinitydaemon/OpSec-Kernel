@@ -46,15 +46,14 @@ int __snd_usbmidi_create(struct snd_card *card,
 			 struct usb_interface *iface,
 			 struct list_head *midi_list,
 			 const struct snd_usb_audio_quirk *quirk,
-			 unsigned int usb_id,
-			 unsigned int *num_rawmidis);
+			 unsigned int usb_id);
 
 static inline int snd_usbmidi_create(struct snd_card *card,
 		       struct usb_interface *iface,
 		       struct list_head *midi_list,
 		       const struct snd_usb_audio_quirk *quirk)
 {
-	return __snd_usbmidi_create(card, iface, midi_list, quirk, 0, NULL);
+	return __snd_usbmidi_create(card, iface, midi_list, quirk, 0);
 }
 
 void snd_usbmidi_input_stop(struct list_head *p);

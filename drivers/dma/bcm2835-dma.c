@@ -1337,7 +1337,8 @@ static int bcm2835_dma_probe(struct platform_device *pdev)
 
 	dma_set_max_seg_size(&pdev->dev, 0x3FFFFFFF);
 
-	base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
@@ -1503,7 +1504,7 @@ err_no_dma:
 	return rc;
 }
 
-static void bcm2835_dma_remove(struct platform_device *pdev)
+static int bcm2835_dma_remove(struct platform_device *pdev)
 {
 	struct bcm2835_dmadev *od = platform_get_drvdata(pdev);
 
@@ -1517,11 +1518,13 @@ static void bcm2835_dma_remove(struct platform_device *pdev)
 		memcpy_chan = NULL;
 	}
 	bcm2835_dma_free(od);
+
+	return 0;
 }
 
 static struct platform_driver bcm2835_dma_driver = {
 	.probe	= bcm2835_dma_probe,
-	.remove_new = bcm2835_dma_remove,
+	.remove	= bcm2835_dma_remove,
 	.driver = {
 		.name = "bcm2835-dma",
 		.of_match_table = of_match_ptr(bcm2835_dma_of_match),

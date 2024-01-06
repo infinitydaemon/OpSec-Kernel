@@ -13,7 +13,6 @@
 #include <linux/printk.h>
 #include <linux/sched/debug.h>
 #include <linux/seq_file.h>
-#include <linux/sprintf.h>
 #include <linux/stacktrace.h>
 #include <linux/string.h>
 #include <trace/events/error_report.h>
@@ -26,6 +25,8 @@
 #ifndef ARCH_FUNC_PREFIX
 #define ARCH_FUNC_PREFIX ""
 #endif
+
+extern bool no_hash_pointers;
 
 /* Helper function to either print to a seq_file or to console. */
 __printf(2, 3)
@@ -167,7 +168,7 @@ static void print_diff_canary(unsigned long address, size_t bytes_to_show,
 
 	pr_cont("[");
 	for (cur = (const u8 *)address; cur < end; cur++) {
-		if (*cur == KFENCE_CANARY_PATTERN_U8(cur))
+		if (*cur == KFENCE_CANARY_PATTERN(cur))
 			pr_cont(" .");
 		else if (no_hash_pointers)
 			pr_cont(" 0x%02x", *cur);

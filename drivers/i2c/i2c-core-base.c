@@ -34,7 +34,6 @@
 #include <linux/of.h>
 #include <linux/of_irq.h>
 #include <linux/pinctrl/consumer.h>
-#include <linux/pinctrl/devinfo.h>
 #include <linux/pm_domain.h>
 #include <linux/pm_runtime.h>
 #include <linux/pm_wakeirq.h>
@@ -114,25 +113,6 @@ const struct i2c_device_id *i2c_match_id(const struct i2c_device_id *id,
 }
 EXPORT_SYMBOL_GPL(i2c_match_id);
 
-const void *i2c_get_match_data(const struct i2c_client *client)
-{
-	struct i2c_driver *driver = to_i2c_driver(client->dev.driver);
-	const struct i2c_device_id *match;
-	const void *data;
-
-	data = device_get_match_data(&client->dev);
-	if (!data) {
-		match = i2c_match_id(driver->id_table, client);
-		if (!match)
-			return NULL;
-
-		data = (const void *)match->driver_data;
-	}
-
-	return data;
-}
-EXPORT_SYMBOL(i2c_get_match_data);
-
 static int i2c_device_match(struct device *dev, struct device_driver *drv)
 {
 	struct i2c_client	*client = i2c_verify_client(dev);
@@ -156,9 +136,9 @@ static int i2c_device_match(struct device *dev, struct device_driver *drv)
 	return 0;
 }
 
-static int i2c_device_uevent(const struct device *dev, struct kobj_uevent_env *env)
+static int i2c_device_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
-	const struct i2c_client *client = to_i2c_client(dev);
+	struct i2c_client *client = to_i2c_client(dev);
 	int rc;
 
 	rc = of_device_uevent_modalias(dev, env);
@@ -302,9 +282,7 @@ static void i2c_gpio_init_pinctrl_recovery(struct i2c_adapter *adap)
 {
 	struct i2c_bus_recovery_info *bri = adap->bus_recovery_info;
 	struct device *dev = &adap->dev;
-	struct pinctrl *p = bri->pinctrl ?: dev_pinctrl(dev->parent);
-
-	bri->pinctrl = p;
+	struct pinctrl *p = bri->pinctrl;
 
 	/*
 	 * we can't change states without pinctrl, so remove the states if
@@ -580,8 +558,15 @@ static int i2c_device_probe(struct device *dev)
 		goto err_detach_pm_domain;
 	}
 
-	if (driver->probe)
-		status = driver->probe(client);
+	/*
+	 * When there are no more users of probe(),
+	 * rename probe_new to probe.
+	 */
+	if (driver->probe_new)
+		status = driver->probe_new(client);
+	else if (driver->probe)
+		status = driver->probe(client,
+				       i2c_match_id(driver->id_table, client));
 	else
 		status = -EINVAL;
 
@@ -1032,42 +1017,14 @@ void i2c_unregister_device(struct i2c_client *client)
 }
 EXPORT_SYMBOL_GPL(i2c_unregister_device);
 
-/**
- * i2c_find_device_by_fwnode() - find an i2c_client for the fwnode
- * @fwnode: &struct fwnode_handle corresponding to the &struct i2c_client
- *
- * Look up and return the &struct i2c_client corresponding to the @fwnode.
- * If no client can be found, or @fwnode is NULL, this returns NULL.
- *
- * The user must call put_device(&client->dev) once done with the i2c client.
- */
-struct i2c_client *i2c_find_device_by_fwnode(struct fwnode_handle *fwnode)
-{
-	struct i2c_client *client;
-	struct device *dev;
-
-	if (!fwnode)
-		return NULL;
-
-	dev = bus_find_device_by_fwnode(&i2c_bus_type, fwnode);
-	if (!dev)
-		return NULL;
-
-	client = i2c_verify_client(dev);
-	if (!client)
-		put_device(dev);
-
-	return client;
-}
-EXPORT_SYMBOL(i2c_find_device_by_fwnode);
-
 
 static const struct i2c_device_id dummy_id[] = {
 	{ "dummy", 0 },
 	{ },
 };
 
-static int dummy_probe(struct i2c_client *client)
+static int dummy_probe(struct i2c_client *client,
+		       const struct i2c_device_id *id)
 {
 	return 0;
 }
@@ -1194,11 +1151,9 @@ static void i2c_adapter_dev_release(struct device *dev)
 unsigned int i2c_adapter_depth(struct i2c_adapter *adapter)
 {
 	unsigned int depth = 0;
-	struct device *parent;
 
-	for (parent = adapter->dev.parent; parent; parent = parent->parent)
-		if (parent->type == &i2c_adapter_type)
-			depth++;
+	while ((adapter = i2c_parent_is_i2c_adapter(adapter)))
+		depth++;
 
 	WARN_ONCE(depth >= MAX_LOCKDEP_SUBCLASSES,
 		  "adapter depth exceeds lockdep subclass limit\n");
@@ -1812,75 +1767,6 @@ int devm_i2c_add_adapter(struct device *dev, struct i2c_adapter *adapter)
 }
 EXPORT_SYMBOL_GPL(devm_i2c_add_adapter);
 
-static int i2c_dev_or_parent_fwnode_match(struct device *dev, const void *data)
-{
-	if (dev_fwnode(dev) == data)
-		return 1;
-
-	if (dev->parent && dev_fwnode(dev->parent) == data)
-		return 1;
-
-	return 0;
-}
-
-/**
- * i2c_find_adapter_by_fwnode() - find an i2c_adapter for the fwnode
- * @fwnode: &struct fwnode_handle corresponding to the &struct i2c_adapter
- *
- * Look up and return the &struct i2c_adapter corresponding to the @fwnode.
- * If no adapter can be found, or @fwnode is NULL, this returns NULL.
- *
- * The user must call put_device(&adapter->dev) once done with the i2c adapter.
- */
-struct i2c_adapter *i2c_find_adapter_by_fwnode(struct fwnode_handle *fwnode)
-{
-	struct i2c_adapter *adapter;
-	struct device *dev;
-
-	if (!fwnode)
-		return NULL;
-
-	dev = bus_find_device(&i2c_bus_type, NULL, fwnode,
-			      i2c_dev_or_parent_fwnode_match);
-	if (!dev)
-		return NULL;
-
-	adapter = i2c_verify_adapter(dev);
-	if (!adapter)
-		put_device(dev);
-
-	return adapter;
-}
-EXPORT_SYMBOL(i2c_find_adapter_by_fwnode);
-
-/**
- * i2c_get_adapter_by_fwnode() - find an i2c_adapter for the fwnode
- * @fwnode: &struct fwnode_handle corresponding to the &struct i2c_adapter
- *
- * Look up and return the &struct i2c_adapter corresponding to the @fwnode,
- * and increment the adapter module's use count. If no adapter can be found,
- * or @fwnode is NULL, this returns NULL.
- *
- * The user must call i2c_put_adapter(adapter) once done with the i2c adapter.
- * Note that this is different from i2c_find_adapter_by_node().
- */
-struct i2c_adapter *i2c_get_adapter_by_fwnode(struct fwnode_handle *fwnode)
-{
-	struct i2c_adapter *adapter;
-
-	adapter = i2c_find_adapter_by_fwnode(fwnode);
-	if (!adapter)
-		return NULL;
-
-	if (!try_module_get(adapter->owner)) {
-		put_device(&adapter->dev);
-		adapter = NULL;
-	}
-
-	return adapter;
-}
-EXPORT_SYMBOL(i2c_get_adapter_by_fwnode);
-
 static void i2c_parse_timing(struct device *dev, char *prop_name, u32 *cur_val_p,
 			    u32 def_val, bool use_def)
 {
@@ -2355,20 +2241,6 @@ int i2c_get_device_id(const struct i2c_client *client,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(i2c_get_device_id);
-
-/**
- * i2c_client_get_device_id - get the driver match table entry of a device
- * @client: the device to query. The device must be bound to a driver
- *
- * Returns a pointer to the matching entry if found, NULL otherwise.
- */
-const struct i2c_device_id *i2c_client_get_device_id(const struct i2c_client *client)
-{
-	const struct i2c_driver *drv = to_i2c_driver(client->dev.driver);
-
-	return i2c_match_id(drv->id_table, client);
-}
-EXPORT_SYMBOL_GPL(i2c_client_get_device_id);
 
 /* ----------------------------------------------------
  * the i2c address scanning function

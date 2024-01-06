@@ -12,7 +12,6 @@
 #include <linux/clkdev.h>
 #include <linux/of.h>
 #include <linux/soc/pxa/smemc.h>
-#include <linux/clk/pxa.h>
 
 #include <dt-bindings/clock/pxa-clock.h>
 #include "clk-pxa.h"
@@ -100,7 +99,7 @@ unsigned int pxa27x_get_clk_frequency_khz(int info)
 	return (unsigned int)clks[0] / KHz;
 }
 
-static bool pxa27x_is_ppll_disabled(void)
+bool pxa27x_is_ppll_disabled(void)
 {
 	unsigned long ccsr = readl(clk_regs + CCSR);
 

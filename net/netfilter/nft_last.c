@@ -65,8 +65,7 @@ static void nft_last_eval(const struct nft_expr *expr,
 		WRITE_ONCE(last->set, 1);
 }
 
-static int nft_last_dump(struct sk_buff *skb,
-			 const struct nft_expr *expr, bool reset)
+static int nft_last_dump(struct sk_buff *skb, const struct nft_expr *expr)
 {
 	struct nft_last_priv *priv = nft_expr_priv(expr);
 	struct nft_last *last = priv->last;

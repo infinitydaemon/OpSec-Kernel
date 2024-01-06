@@ -40,8 +40,6 @@ enum ifs_status_err_code {
 	IFS_UNASSIGNED_ERROR_CODE		= 7,
 	IFS_EXCEED_NUMBER_OF_THREADS_CONCURRENT	= 8,
 	IFS_INTERRUPTED_DURING_EXECUTION	= 9,
-	IFS_UNASSIGNED_ERROR_CODE_0xA		= 0xA,
-	IFS_CORRUPTED_CHUNK		= 0xB,
 };
 
 static const char * const scan_test_status[] = {
@@ -57,8 +55,6 @@ static const char * const scan_test_status[] = {
 	[IFS_EXCEED_NUMBER_OF_THREADS_CONCURRENT] =
 	"Exceeded number of Logical Processors (LP) allowed to run Scan-At-Field concurrently",
 	[IFS_INTERRUPTED_DURING_EXECUTION] = "Interrupt occurred prior to SCAN start",
-	[IFS_UNASSIGNED_ERROR_CODE_0xA] = "Unassigned error code 0xA",
-	[IFS_CORRUPTED_CHUNK] = "Scan operation aborted due to corrupted image. Try reloading",
 };
 
 static void message_not_tested(struct device *dev, int cpu, union ifs_status status)
@@ -82,16 +78,14 @@ static void message_not_tested(struct device *dev, int cpu, union ifs_status sta
 
 static void message_fail(struct device *dev, int cpu, union ifs_status status)
 {
-	struct ifs_data *ifsd = ifs_get_data(dev);
-
 	/*
 	 * control_error is set when the microcode runs into a problem
 	 * loading the image from the reserved BIOS memory, or it has
 	 * been corrupted. Reloading the image may fix this issue.
 	 */
 	if (status.control_error) {
-		dev_err(dev, "CPU(s) %*pbl: could not execute from loaded scan image. Batch: %02x version: 0x%x\n",
-			cpumask_pr_args(cpu_smt_mask(cpu)), ifsd->cur_batch, ifsd->loaded_version);
+		dev_err(dev, "CPU(s) %*pbl: could not execute from loaded scan image\n",
+			cpumask_pr_args(cpu_smt_mask(cpu)));
 	}
 
 	/*
@@ -102,8 +96,8 @@ static void message_fail(struct device *dev, int cpu, union ifs_status status)
 	 * the core being tested.
 	 */
 	if (status.signature_error) {
-		dev_err(dev, "CPU(s) %*pbl: test signature incorrect. Batch: %02x version: 0x%x\n",
-			cpumask_pr_args(cpu_smt_mask(cpu)), ifsd->cur_batch, ifsd->loaded_version);
+		dev_err(dev, "CPU(s) %*pbl: test signature incorrect.\n",
+			cpumask_pr_args(cpu_smt_mask(cpu)));
 	}
 }
 
@@ -127,8 +121,6 @@ static bool can_restart(union ifs_status status)
 	case IFS_MISMATCH_ARGUMENTS_BETWEEN_THREADS:
 	case IFS_CORE_NOT_CAPABLE_CURRENTLY:
 	case IFS_UNASSIGNED_ERROR_CODE:
-	case IFS_UNASSIGNED_ERROR_CODE_0xA:
-	case IFS_CORRUPTED_CHUNK:
 		break;
 	}
 	return false;
@@ -177,31 +169,21 @@ static void ifs_test_core(int cpu, struct device *dev)
 	union ifs_status status;
 	unsigned long timeout;
 	struct ifs_data *ifsd;
-	int to_start, to_stop;
-	int status_chunk;
 	u64 msrvals[2];
 	int retries;
 
 	ifsd = ifs_get_data(dev);
 
-	activate.gen0.rsvd = 0;
+	activate.rsvd = 0;
 	activate.delay = IFS_THREAD_WAIT;
 	activate.sigmce = 0;
-	to_start = 0;
-	to_stop = ifsd->valid_chunks - 1;
-
-	if (ifsd->generation) {
-		activate.gen2.start = to_start;
-		activate.gen2.stop = to_stop;
-	} else {
-		activate.gen0.start = to_start;
-		activate.gen0.stop = to_stop;
-	}
+	activate.start = 0;
+	activate.stop = ifsd->valid_chunks - 1;
 
 	timeout = jiffies + HZ / 2;
 	retries = MAX_IFS_RETRIES;
 
-	while (to_start <= to_stop) {
+	while (activate.start <= activate.stop) {
 		if (time_after(jiffies, timeout)) {
 			status.error_code = IFS_SW_TIMEOUT;
 			break;
@@ -212,14 +194,13 @@ static void ifs_test_core(int cpu, struct device *dev)
 
 		status.data = msrvals[1];
 
-		trace_ifs_status(cpu, to_start, to_stop, status.data);
+		trace_ifs_status(cpu, activate, status);
 
 		/* Some cases can be retried, give up for others */
 		if (!can_restart(status))
 			break;
 
-		status_chunk = ifsd->generation ? status.gen2.chunk_num : status.gen0.chunk_num;
-		if (status_chunk == to_start) {
+		if (status.chunk_num == activate.start) {
 			/* Check for forward progress */
 			if (--retries == 0) {
 				if (status.error_code == IFS_NO_ERROR)
@@ -228,11 +209,7 @@ static void ifs_test_core(int cpu, struct device *dev)
 			}
 		} else {
 			retries = MAX_IFS_RETRIES;
-			if (ifsd->generation)
-				activate.gen2.start = status_chunk;
-			else
-				activate.gen0.start = status_chunk;
-			to_start = status_chunk;
+			activate.start = status.chunk_num;
 		}
 	}
 
@@ -250,117 +227,6 @@ static void ifs_test_core(int cpu, struct device *dev)
 	}
 }
 
-#define SPINUNIT 100 /* 100 nsec */
-static atomic_t array_cpus_out;
-
-/*
- * Simplified cpu sibling rendezvous loop based on microcode loader __wait_for_cpus()
- */
-static void wait_for_sibling_cpu(atomic_t *t, long long timeout)
-{
-	int cpu = smp_processor_id();
-	const struct cpumask *smt_mask = cpu_smt_mask(cpu);
-	int all_cpus = cpumask_weight(smt_mask);
-
-	atomic_inc(t);
-	while (atomic_read(t) < all_cpus) {
-		if (timeout < SPINUNIT)
-			return;
-		ndelay(SPINUNIT);
-		timeout -= SPINUNIT;
-		touch_nmi_watchdog();
-	}
-}
-
-static int do_array_test(void *data)
-{
-	union ifs_array *command = data;
-	int cpu = smp_processor_id();
-	int first;
-
-	/*
-	 * Only one logical CPU on a core needs to trigger the Array test via MSR write.
-	 */
-	first = cpumask_first(cpu_smt_mask(cpu));
-
-	if (cpu == first) {
-		wrmsrl(MSR_ARRAY_BIST, command->data);
-		/* Pass back the result of the test */
-		rdmsrl(MSR_ARRAY_BIST, command->data);
-	}
-
-	/* Tests complete faster if the sibling is spinning here */
-	wait_for_sibling_cpu(&array_cpus_out, NSEC_PER_SEC);
-
-	return 0;
-}
-
-static void ifs_array_test_core(int cpu, struct device *dev)
-{
-	union ifs_array command = {};
-	bool timed_out = false;
-	struct ifs_data *ifsd;
-	unsigned long timeout;
-
-	ifsd = ifs_get_data(dev);
-
-	command.array_bitmask = ~0U;
-	timeout = jiffies + HZ / 2;
-
-	do {
-		if (time_after(jiffies, timeout)) {
-			timed_out = true;
-			break;
-		}
-		atomic_set(&array_cpus_out, 0);
-		stop_core_cpuslocked(cpu, do_array_test, &command);
-
-		if (command.ctrl_result)
-			break;
-	} while (command.array_bitmask);
-
-	ifsd->scan_details = command.data;
-
-	if (command.ctrl_result)
-		ifsd->status = SCAN_TEST_FAIL;
-	else if (timed_out || command.array_bitmask)
-		ifsd->status = SCAN_NOT_TESTED;
-	else
-		ifsd->status = SCAN_TEST_PASS;
-}
-
-#define ARRAY_GEN1_TEST_ALL_ARRAYS	0x0ULL
-#define ARRAY_GEN1_STATUS_FAIL		0x1ULL
-
-static int do_array_test_gen1(void *status)
-{
-	int cpu = smp_processor_id();
-	int first;
-
-	first = cpumask_first(cpu_smt_mask(cpu));
-
-	if (cpu == first) {
-		wrmsrl(MSR_ARRAY_TRIGGER, ARRAY_GEN1_TEST_ALL_ARRAYS);
-		rdmsrl(MSR_ARRAY_STATUS, *((u64 *)status));
-	}
-
-	return 0;
-}
-
-static void ifs_array_test_gen1(int cpu, struct device *dev)
-{
-	struct ifs_data *ifsd = ifs_get_data(dev);
-	u64 status = 0;
-
-	stop_core_cpuslocked(cpu, do_array_test_gen1, &status);
-	ifsd->scan_details = status;
-
-	if (status & ARRAY_GEN1_STATUS_FAIL)
-		ifsd->status = SCAN_TEST_FAIL;
-	else
-		ifsd->status = SCAN_TEST_PASS;
-}
-
 /*
  * Initiate per core test. It wakes up work queue threads on the target cpu and
  * its sibling cpu. Once all sibling threads wake up, the scan test gets executed and
@@ -368,8 +234,6 @@ static void ifs_array_test_gen1(int cpu, struct device *dev)
  */
 int do_core_test(int cpu, struct device *dev)
 {
-	const struct ifs_test_caps *test = ifs_get_test_caps(dev);
-	struct ifs_data *ifsd = ifs_get_data(dev);
 	int ret = 0;
 
 	/* Prevent CPUs from being taken offline during the scan test */
@@ -381,22 +245,7 @@ int do_core_test(int cpu, struct device *dev)
 		goto out;
 	}
 
-	switch (test->test_num) {
-	case IFS_TYPE_SAF:
-		if (!ifsd->loaded)
-			ret = -EPERM;
-		else
-			ifs_test_core(cpu, dev);
-		break;
-	case IFS_TYPE_ARRAY_BIST:
-		if (ifsd->array_gen == ARRAY_GEN0)
-			ifs_array_test_core(cpu, dev);
-		else
-			ifs_array_test_gen1(cpu, dev);
-		break;
-	default:
-		ret = -EINVAL;
-	}
+	ifs_test_core(cpu, dev);
 out:
 	cpus_read_unlock();
 	return ret;

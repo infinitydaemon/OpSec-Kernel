@@ -11,6 +11,7 @@
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/pwm.h>
 #include <linux/slab.h>
@@ -182,14 +183,14 @@ static int mtk_disp_pwm_get_state(struct pwm_chip *chip,
 	err = clk_prepare_enable(mdp->clk_main);
 	if (err < 0) {
 		dev_err(chip->dev, "Can't enable mdp->clk_main: %pe\n", ERR_PTR(err));
-		return err;
+		return 0;
 	}
 
 	err = clk_prepare_enable(mdp->clk_mm);
 	if (err < 0) {
 		dev_err(chip->dev, "Can't enable mdp->clk_mm: %pe\n", ERR_PTR(err));
 		clk_disable_unprepare(mdp->clk_main);
-		return err;
+		return 0;
 	}
 
 	/*
@@ -227,6 +228,7 @@ static int mtk_disp_pwm_get_state(struct pwm_chip *chip,
 static const struct pwm_ops mtk_disp_pwm_ops = {
 	.apply = mtk_disp_pwm_apply,
 	.get_state = mtk_disp_pwm_get_state,
+	.owner = THIS_MODULE,
 };
 
 static int mtk_disp_pwm_probe(struct platform_device *pdev)
@@ -246,21 +248,32 @@ static int mtk_disp_pwm_probe(struct platform_device *pdev)
 
 	mdp->clk_main = devm_clk_get(&pdev->dev, "main");
 	if (IS_ERR(mdp->clk_main))
-		return dev_err_probe(&pdev->dev, PTR_ERR(mdp->clk_main),
-				     "Failed to get main clock\n");
+		return PTR_ERR(mdp->clk_main);
 
 	mdp->clk_mm = devm_clk_get(&pdev->dev, "mm");
 	if (IS_ERR(mdp->clk_mm))
-		return dev_err_probe(&pdev->dev, PTR_ERR(mdp->clk_mm),
-				     "Failed to get mm clock\n");
+		return PTR_ERR(mdp->clk_mm);
 
 	mdp->chip.dev = &pdev->dev;
 	mdp->chip.ops = &mtk_disp_pwm_ops;
 	mdp->chip.npwm = 1;
 
-	ret = devm_pwmchip_add(&pdev->dev, &mdp->chip);
-	if (ret < 0)
-		return dev_err_probe(&pdev->dev, ret, "pwmchip_add() failed\n");
+	ret = pwmchip_add(&mdp->chip);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "pwmchip_add() failed: %pe\n", ERR_PTR(ret));
+		return ret;
+	}
+
+	platform_set_drvdata(pdev, mdp);
+
+	return 0;
+}
+
+static int mtk_disp_pwm_remove(struct platform_device *pdev)
+{
+	struct mtk_disp_pwm *mdp = platform_get_drvdata(pdev);
+
+	pwmchip_remove(&mdp->chip);
 
 	return 0;
 }
@@ -310,6 +323,7 @@ static struct platform_driver mtk_disp_pwm_driver = {
 		.of_match_table = mtk_disp_pwm_of_match,
 	},
 	.probe = mtk_disp_pwm_probe,
+	.remove = mtk_disp_pwm_remove,
 };
 module_platform_driver(mtk_disp_pwm_driver);
 

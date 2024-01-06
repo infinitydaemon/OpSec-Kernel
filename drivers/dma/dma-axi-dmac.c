@@ -117,7 +117,7 @@ struct axi_dmac_desc {
 	unsigned int num_submitted;
 	unsigned int num_completed;
 	unsigned int num_sgs;
-	struct axi_dmac_sg sg[] __counted_by(num_sgs);
+	struct axi_dmac_sg sg[];
 };
 
 struct axi_dmac_chan {
@@ -484,10 +484,11 @@ static struct axi_dmac_desc *axi_dmac_alloc_desc(unsigned int num_sgs)
 	desc = kzalloc(struct_size(desc, sg, num_sgs), GFP_NOWAIT);
 	if (!desc)
 		return NULL;
-	desc->num_sgs = num_sgs;
 
 	for (i = 0; i < num_sgs; i++)
 		desc->sg[i].id = AXI_DMAC_SG_UNUSED;
+
+	desc->num_sgs = num_sgs;
 
 	return desc;
 }
@@ -909,6 +910,7 @@ static int axi_dmac_probe(struct platform_device *pdev)
 {
 	struct dma_device *dma_dev;
 	struct axi_dmac *dmac;
+	struct resource *res;
 	struct regmap *regmap;
 	unsigned int version;
 	int ret;
@@ -923,7 +925,8 @@ static int axi_dmac_probe(struct platform_device *pdev)
 	if (dmac->irq == 0)
 		return -EINVAL;
 
-	dmac->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	dmac->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(dmac->base))
 		return PTR_ERR(dmac->base);
 
@@ -962,6 +965,7 @@ static int axi_dmac_probe(struct platform_device *pdev)
 	dma_dev->device_terminate_all = axi_dmac_terminate_all;
 	dma_dev->device_synchronize = axi_dmac_synchronize;
 	dma_dev->dev = &pdev->dev;
+	dma_dev->chancnt = 1;
 	dma_dev->src_addr_widths = BIT(dmac->chan.src_width);
 	dma_dev->dst_addr_widths = BIT(dmac->chan.dest_width);
 	dma_dev->directions = BIT(dmac->chan.direction);
@@ -1028,7 +1032,7 @@ err_clk_disable:
 	return ret;
 }
 
-static void axi_dmac_remove(struct platform_device *pdev)
+static int axi_dmac_remove(struct platform_device *pdev)
 {
 	struct axi_dmac *dmac = platform_get_drvdata(pdev);
 
@@ -1037,6 +1041,8 @@ static void axi_dmac_remove(struct platform_device *pdev)
 	tasklet_kill(&dmac->chan.vchan.task);
 	dma_async_device_unregister(&dmac->dma_dev);
 	clk_disable_unprepare(dmac->clk);
+
+	return 0;
 }
 
 static const struct of_device_id axi_dmac_of_match_table[] = {
@@ -1051,7 +1057,7 @@ static struct platform_driver axi_dmac_driver = {
 		.of_match_table = axi_dmac_of_match_table,
 	},
 	.probe = axi_dmac_probe,
-	.remove_new = axi_dmac_remove,
+	.remove = axi_dmac_remove,
 };
 module_platform_driver(axi_dmac_driver);
 

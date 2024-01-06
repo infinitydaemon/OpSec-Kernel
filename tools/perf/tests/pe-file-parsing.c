@@ -34,7 +34,6 @@ static int run_dir(const char *d)
 	struct dso *dso;
 	struct symbol *sym;
 	int ret;
-	size_t idx;
 
 	scnprintf(filename, PATH_MAX, "%s/pe-file.exe", d);
 	ret = filename__read_build_id(filename, &bid);
@@ -62,7 +61,7 @@ static int run_dir(const char *d)
 	TEST_ASSERT_VAL("Failed to load symbols", ret == 0);
 
 	dso__sort_by_name(dso);
-	sym = dso__find_symbol_by_name(dso, "main", &idx);
+	sym = dso__find_symbol_by_name(dso, "main");
 	TEST_ASSERT_VAL("Failed to find main", sym);
 	dso__delete(dso);
 

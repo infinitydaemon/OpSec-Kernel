@@ -18,6 +18,7 @@ lib_dir=$(dirname $0)/../../../net/forwarding
 NUM_NETIFS=0
 source $lib_dir/lib.sh
 source $lib_dir/devlink_lib.sh
+source qos_lib.sh
 
 swp=$NETIF_NO_CABLE
 
@@ -370,7 +371,7 @@ test_tc_int_buf()
 	tc qdisc delete dev $swp root
 }
 
-bail_on_lldpad "configure DCB" "configure Qdiscs"
+bail_on_lldpad
 
 trap cleanup EXIT
 setup_wait

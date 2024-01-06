@@ -9,8 +9,7 @@
 
 #include <linux/kernel.h>
 #include <linux/platform_data/simplefb.h>
-
-struct screen_info;
+#include <linux/screen_info.h>
 
 enum {
 	M_I17,		/* 17-Inch iMac */

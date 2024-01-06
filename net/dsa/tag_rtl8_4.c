@@ -77,15 +77,12 @@
 #include <linux/bits.h>
 #include <linux/etherdevice.h>
 
-#include "tag.h"
+#include "dsa_priv.h"
 
 /* Protocols supported:
  *
  * 0x04 = RTL8365MB DSA protocol
  */
-
-#define RTL8_4_NAME			"rtl8_4"
-#define RTL8_4T_NAME			"rtl8_4t"
 
 #define RTL8_4_TAG_LEN			8
 
@@ -103,7 +100,7 @@
 static void rtl8_4_write_tag(struct sk_buff *skb, struct net_device *dev,
 			     void *tag)
 {
-	struct dsa_port *dp = dsa_user_to_port(dev);
+	struct dsa_port *dp = dsa_slave_to_port(dev);
 	__be16 tag16[RTL8_4_TAG_LEN / 2];
 
 	/* Set Realtek EtherType */
@@ -180,10 +177,10 @@ static int rtl8_4_read_tag(struct sk_buff *skb, struct net_device *dev,
 
 	/* Parse TX (switch->CPU) */
 	port = FIELD_GET(RTL8_4_TX, ntohs(tag16[3]));
-	skb->dev = dsa_conduit_find_user(dev, 0, port);
+	skb->dev = dsa_master_find_slave(dev, 0, port);
 	if (!skb->dev) {
 		dev_warn_ratelimited(&dev->dev,
-				     "could not find user for port %d\n",
+				     "could not find slave for port %d\n",
 				     port);
 		return -ENOENT;
 	}
@@ -237,7 +234,7 @@ static const struct dsa_device_ops rtl8_4_netdev_ops = {
 
 DSA_TAG_DRIVER(rtl8_4_netdev_ops);
 
-MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_RTL8_4, RTL8_4_NAME);
+MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_RTL8_4);
 
 /* Tail version */
 static const struct dsa_device_ops rtl8_4t_netdev_ops = {
@@ -250,7 +247,7 @@ static const struct dsa_device_ops rtl8_4t_netdev_ops = {
 
 DSA_TAG_DRIVER(rtl8_4t_netdev_ops);
 
-MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_RTL8_4T, RTL8_4T_NAME);
+MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_RTL8_4T);
 
 static struct dsa_tag_driver *dsa_tag_drivers[] = {
 	&DSA_TAG_DRIVER_NAME(rtl8_4_netdev_ops),

@@ -33,6 +33,7 @@ int dump_ksym(struct bpf_iter__ksym *ctx)
 	__u32 seq_num = ctx->meta->seq_num;
 	unsigned long value;
 	char type;
+	int ret;
 
 	if (!iter)
 		return 0;
@@ -59,7 +60,9 @@ int dump_ksym(struct bpf_iter__ksym *ctx)
 	} else {
 		BPF_SEQ_PRINTF(seq, "0x%llx %c %s ", value, type, iter->name);
 	}
-	if (!iter->pos_mod_end || iter->pos_mod_end > iter->pos)
+	if (!iter->pos_arch_end || iter->pos_arch_end > iter->pos)
+		BPF_SEQ_PRINTF(seq, "CORE ");
+	else if (!iter->pos_mod_end || iter->pos_mod_end > iter->pos)
 		BPF_SEQ_PRINTF(seq, "MOD ");
 	else if (!iter->pos_ftrace_mod_end || iter->pos_ftrace_mod_end > iter->pos)
 		BPF_SEQ_PRINTF(seq, "FTRACE_MOD ");

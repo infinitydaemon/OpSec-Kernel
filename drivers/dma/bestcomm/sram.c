@@ -38,7 +38,7 @@ int bcom_sram_init(struct device_node *sram_node, char *owner)
 {
 	int rv;
 	const u32 *regaddr_p;
-	struct resource res;
+	u64 regaddr64, size64;
 	unsigned int psize;
 
 	/* Create our state struct */
@@ -56,18 +56,21 @@ int bcom_sram_init(struct device_node *sram_node, char *owner)
 	}
 
 	/* Get address and size of the sram */
-	rv = of_address_to_resource(sram_node, 0, &res);
-	if (rv) {
+	regaddr_p = of_get_address(sram_node, 0, &size64, NULL);
+	if (!regaddr_p) {
 		printk(KERN_ERR "%s: bcom_sram_init: "
 			"Invalid device node !\n", owner);
+		rv = -EINVAL;
 		goto error_free;
 	}
 
-	bcom_sram->base_phys = res.start;
-	bcom_sram->size = resource_size(&res);
+	regaddr64 = of_translate_address(sram_node, regaddr_p);
+
+	bcom_sram->base_phys = (phys_addr_t) regaddr64;
+	bcom_sram->size = (unsigned int) size64;
 
 	/* Request region */
-	if (!request_mem_region(res.start, resource_size(&res), owner)) {
+	if (!request_mem_region(bcom_sram->base_phys, bcom_sram->size, owner)) {
 		printk(KERN_ERR "%s: bcom_sram_init: "
 			"Couldn't request region !\n", owner);
 		rv = -EBUSY;
@@ -76,7 +79,7 @@ int bcom_sram_init(struct device_node *sram_node, char *owner)
 
 	/* Map SRAM */
 		/* sram is not really __iomem */
-	bcom_sram->base_virt = (void *)ioremap(res.start, resource_size(&res));
+	bcom_sram->base_virt = (void*) ioremap(bcom_sram->base_phys, bcom_sram->size);
 
 	if (!bcom_sram->base_virt) {
 		printk(KERN_ERR "%s: bcom_sram_init: "
@@ -117,7 +120,7 @@ int bcom_sram_init(struct device_node *sram_node, char *owner)
 	return 0;
 
 error_release:
-	release_mem_region(res.start, resource_size(&res));
+	release_mem_region(bcom_sram->base_phys, bcom_sram->size);
 error_free:
 	kfree(bcom_sram);
 	bcom_sram = NULL;

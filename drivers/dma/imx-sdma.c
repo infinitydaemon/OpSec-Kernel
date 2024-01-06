@@ -31,6 +31,7 @@
 #include <linux/dmaengine.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
+#include <linux/of_device.h>
 #include <linux/of_dma.h>
 #include <linux/workqueue.h>
 
@@ -953,10 +954,7 @@ static irqreturn_t sdma_int_handler(int irq, void *dev_id)
 		desc = sdmac->desc;
 		if (desc) {
 			if (sdmac->flags & IMX_DMA_SG_LOOP) {
-				if (sdmac->peripheral_type != IMX_DMATYPE_HDMI)
-					sdma_update_channel_loop(sdmac);
-				else
-					vchan_cyclic_callback(&desc->vd);
+				sdma_update_channel_loop(sdmac);
 			} else {
 				mxc_sdma_handle_channel_normal(sdmac);
 				vchan_cookie_complete(&desc->vd);
@@ -1076,10 +1074,6 @@ static int sdma_get_pc(struct sdma_channel *sdmac,
 		per_2_emi = sdma->script_addrs->sai_2_mcu_addr;
 		emi_2_per = sdma->script_addrs->mcu_2_sai_addr;
 		break;
-	case IMX_DMATYPE_HDMI:
-		emi_2_per = sdma->script_addrs->hdmi_dma_addr;
-		sdmac->is_ram_script = true;
-		break;
 	default:
 		dev_err(sdma->dev, "Unsupported transfer type %d\n",
 			peripheral_type);
@@ -1131,16 +1125,11 @@ static int sdma_load_context(struct sdma_channel *sdmac)
 	/* Send by context the event mask,base address for peripheral
 	 * and watermark level
 	 */
-	if (sdmac->peripheral_type == IMX_DMATYPE_HDMI) {
-		context->gReg[4] = sdmac->per_addr;
-		context->gReg[6] = sdmac->shp_addr;
-	} else {
-		context->gReg[0] = sdmac->event_mask[1];
-		context->gReg[1] = sdmac->event_mask[0];
-		context->gReg[2] = sdmac->per_addr;
-		context->gReg[6] = sdmac->shp_addr;
-		context->gReg[7] = sdmac->watermark_level;
-	}
+	context->gReg[0] = sdmac->event_mask[1];
+	context->gReg[1] = sdmac->event_mask[0];
+	context->gReg[2] = sdmac->per_addr;
+	context->gReg[6] = sdmac->shp_addr;
+	context->gReg[7] = sdmac->watermark_level;
 
 	bd0->mode.command = C0_SETDM;
 	bd0->mode.status = BD_DONE | BD_WRAP | BD_EXTD;
@@ -1524,7 +1513,7 @@ static struct sdma_desc *sdma_transfer_init(struct sdma_channel *sdmac,
 	desc->sdmac = sdmac;
 	desc->num_bd = bds;
 
-	if (bds && sdma_alloc_bd(desc))
+	if (sdma_alloc_bd(desc))
 		goto err_desc_out;
 
 	/* No slave_config called in MEMCPY case, so do here */
@@ -1691,15 +1680,12 @@ static struct dma_async_tx_descriptor *sdma_prep_dma_cyclic(
 {
 	struct sdma_channel *sdmac = to_sdma_chan(chan);
 	struct sdma_engine *sdma = sdmac->sdma;
-	int num_periods = 0;
+	int num_periods = buf_len / period_len;
 	int channel = sdmac->channel;
 	int i = 0, buf = 0;
 	struct sdma_desc *desc;
 
 	dev_dbg(sdma->dev, "%s channel: %d\n", __func__, channel);
-
-	if (sdmac->peripheral_type != IMX_DMATYPE_HDMI)
-		num_periods = buf_len / period_len;
 
 	sdma_config_write(chan, &sdmac->slave_config, direction);
 
@@ -1716,9 +1702,6 @@ static struct dma_async_tx_descriptor *sdma_prep_dma_cyclic(
 				channel, period_len, SDMA_BD_MAX_CNT);
 		goto err_bd_out;
 	}
-
-	if (sdmac->peripheral_type == IMX_DMATYPE_HDMI)
-		return vchan_tx_prep(&sdmac->vc, &desc->vd, flags);
 
 	while (buf < buf_len) {
 		struct sdma_buffer_descriptor *bd = &desc->bd[i];
@@ -1780,10 +1763,6 @@ static int sdma_config_write(struct dma_chan *chan,
 		sdmac->watermark_level |= (dmaengine_cfg->dst_maxburst << 16) &
 			SDMA_WATERMARK_LEVEL_HWML;
 		sdmac->word_size = dmaengine_cfg->dst_addr_width;
-	} else if (sdmac->peripheral_type == IMX_DMATYPE_HDMI) {
-		sdmac->per_address = dmaengine_cfg->dst_addr;
-		sdmac->per_address2 = dmaengine_cfg->src_addr;
-		sdmac->watermark_level = 0;
 	} else {
 		sdmac->per_address = dmaengine_cfg->dst_addr;
 		sdmac->watermark_level = dmaengine_cfg->dst_maxburst *
@@ -2190,6 +2169,7 @@ static int sdma_probe(struct platform_device *pdev)
 	const char *fw_name;
 	int ret;
 	int irq;
+	struct resource *iores;
 	struct resource spba_res;
 	int i;
 	struct sdma_engine *sdma;
@@ -2212,7 +2192,8 @@ static int sdma_probe(struct platform_device *pdev)
 	if (irq < 0)
 		return irq;
 
-	sdma->regs = devm_platform_ioremap_resource(pdev, 0);
+	iores = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	sdma->regs = devm_ioremap_resource(&pdev->dev, iores);
 	if (IS_ERR(sdma->regs))
 		return PTR_ERR(sdma->regs);
 
@@ -2253,7 +2234,6 @@ static int sdma_probe(struct platform_device *pdev)
 	dma_cap_set(DMA_SLAVE, sdma->dma_device.cap_mask);
 	dma_cap_set(DMA_CYCLIC, sdma->dma_device.cap_mask);
 	dma_cap_set(DMA_MEMCPY, sdma->dma_device.cap_mask);
-	dma_cap_set(DMA_PRIVATE, sdma->dma_device.cap_mask);
 
 	INIT_LIST_HEAD(&sdma->dma_device.channels);
 	/* Initialize channel parameters */
@@ -2358,7 +2338,7 @@ err_clk:
 	return ret;
 }
 
-static void sdma_remove(struct platform_device *pdev)
+static int sdma_remove(struct platform_device *pdev)
 {
 	struct sdma_engine *sdma = platform_get_drvdata(pdev);
 	int i;
@@ -2377,6 +2357,7 @@ static void sdma_remove(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, NULL);
+	return 0;
 }
 
 static struct platform_driver sdma_driver = {
@@ -2384,7 +2365,7 @@ static struct platform_driver sdma_driver = {
 		.name	= "imx-sdma",
 		.of_match_table = sdma_dt_ids,
 	},
-	.remove_new	= sdma_remove,
+	.remove		= sdma_remove,
 	.probe		= sdma_probe,
 };
 

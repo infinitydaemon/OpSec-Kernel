@@ -12,7 +12,7 @@
 
 #include "cs35l41_hda.h"
 
-static int cs35l41_hda_i2c_probe(struct i2c_client *clt)
+static int cs35l41_hda_i2c_probe(struct i2c_client *clt, const struct i2c_device_id *id)
 {
 	const char *device_name;
 

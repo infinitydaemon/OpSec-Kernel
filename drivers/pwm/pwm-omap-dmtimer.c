@@ -311,6 +311,7 @@ unlock_mutex:
 
 static const struct pwm_ops pwm_omap_dmtimer_ops = {
 	.apply = pwm_omap_dmtimer_apply,
+	.owner = THIS_MODULE,
 };
 
 static int pwm_omap_dmtimer_probe(struct platform_device *pdev)
@@ -440,7 +441,7 @@ err_find_timer_pdev:
 	return ret;
 }
 
-static void pwm_omap_dmtimer_remove(struct platform_device *pdev)
+static int pwm_omap_dmtimer_remove(struct platform_device *pdev)
 {
 	struct pwm_omap_dmtimer_chip *omap = platform_get_drvdata(pdev);
 
@@ -454,6 +455,8 @@ static void pwm_omap_dmtimer_remove(struct platform_device *pdev)
 	put_device(&omap->dm_timer_pdev->dev);
 
 	mutex_destroy(&omap->mutex);
+
+	return 0;
 }
 
 static const struct of_device_id pwm_omap_dmtimer_of_match[] = {
@@ -465,10 +468,10 @@ MODULE_DEVICE_TABLE(of, pwm_omap_dmtimer_of_match);
 static struct platform_driver pwm_omap_dmtimer_driver = {
 	.driver = {
 		.name = "omap-dmtimer-pwm",
-		.of_match_table = pwm_omap_dmtimer_of_match,
+		.of_match_table = of_match_ptr(pwm_omap_dmtimer_of_match),
 	},
 	.probe = pwm_omap_dmtimer_probe,
-	.remove_new = pwm_omap_dmtimer_remove,
+	.remove	= pwm_omap_dmtimer_remove,
 };
 module_platform_driver(pwm_omap_dmtimer_driver);
 

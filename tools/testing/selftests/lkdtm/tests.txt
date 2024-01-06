@@ -1,5 +1,4 @@
 #PANIC
-#PANIC_STOP_IRQOFF Crashes entire system
 BUG kernel BUG at
 WARNING WARNING:
 WARNING_MESSAGE message trigger

@@ -275,7 +275,7 @@ static const char* l4proto_name(u16 proto)
 	return "unknown";
 }
 
-static void
+static unsigned int
 seq_print_acct(struct seq_file *s, const struct nf_conn *ct, int dir)
 {
 	struct nf_conn_acct *acct;
@@ -283,12 +283,14 @@ seq_print_acct(struct seq_file *s, const struct nf_conn *ct, int dir)
 
 	acct = nf_conn_acct_find(ct);
 	if (!acct)
-		return;
+		return 0;
 
 	counter = acct->counter;
 	seq_printf(s, "packets=%llu bytes=%llu ",
 		   (unsigned long long)atomic64_read(&counter[dir].packets),
 		   (unsigned long long)atomic64_read(&counter[dir].bytes));
+
+	return 0;
 }
 
 /* return 0 on success, 1 in case of error */
@@ -340,7 +342,8 @@ static int ct_seq_show(struct seq_file *s, void *v)
 	if (seq_has_overflowed(s))
 		goto release;
 
-	seq_print_acct(s, ct, IP_CT_DIR_ORIGINAL);
+	if (seq_print_acct(s, ct, IP_CT_DIR_ORIGINAL))
+		goto release;
 
 	if (!(test_bit(IPS_SEEN_REPLY_BIT, &ct->status)))
 		seq_puts(s, "[UNREPLIED] ");
@@ -349,7 +352,8 @@ static int ct_seq_show(struct seq_file *s, void *v)
 
 	ct_show_zone(s, ct, NF_CT_ZONE_DIR_REPL);
 
-	seq_print_acct(s, ct, IP_CT_DIR_REPLY);
+	if (seq_print_acct(s, ct, IP_CT_DIR_REPLY))
+		goto release;
 
 	if (test_bit(IPS_HW_OFFLOAD_BIT, &ct->status))
 		seq_puts(s, "[HW_OFFLOAD] ");
@@ -1106,9 +1110,7 @@ static int nf_conntrack_standalone_init_sysctl(struct net *net)
 		table[NF_SYSCTL_CT_BUCKETS].mode = 0444;
 	}
 
-	cnet->sysctl_header = register_net_sysctl_sz(net, "net/netfilter",
-						     table,
-						     ARRAY_SIZE(nf_ct_sysctl_table));
+	cnet->sysctl_header = register_net_sysctl(net, "net/netfilter", table);
 	if (!cnet->sysctl_header)
 		goto out_unregister_netfilter;
 

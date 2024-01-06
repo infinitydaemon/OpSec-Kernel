@@ -26,84 +26,14 @@
 
 #include "uvcvideo.h"
 
-static int uvc_control_add_xu_mapping(struct uvc_video_chain *chain,
-				      struct uvc_control_mapping *map,
-				      const struct uvc_xu_control_mapping *xmap)
-{
-	unsigned int i;
-	size_t size;
-	int ret;
-
-	/*
-	 * Prevent excessive memory consumption, as well as integer
-	 * overflows.
-	 */
-	if (xmap->menu_count == 0 ||
-	    xmap->menu_count > UVC_MAX_CONTROL_MENU_ENTRIES)
-		return -EINVAL;
-
-	map->menu_names = NULL;
-	map->menu_mapping = NULL;
-
-	map->menu_mask = GENMASK(xmap->menu_count - 1, 0);
-
-	size = xmap->menu_count * sizeof(*map->menu_mapping);
-	map->menu_mapping = kzalloc(size, GFP_KERNEL);
-	if (!map->menu_mapping) {
-		ret = -ENOMEM;
-		goto done;
-	}
-
-	for (i = 0; i < xmap->menu_count ; i++) {
-		if (copy_from_user((u32 *)&map->menu_mapping[i],
-				   &xmap->menu_info[i].value,
-				   sizeof(map->menu_mapping[i]))) {
-			ret = -EACCES;
-			goto done;
-		}
-	}
-
-	/*
-	 * Always use the standard naming if available, otherwise copy the
-	 * names supplied by userspace.
-	 */
-	if (!v4l2_ctrl_get_menu(map->id)) {
-		size = xmap->menu_count * sizeof(map->menu_names[0]);
-		map->menu_names = kzalloc(size, GFP_KERNEL);
-		if (!map->menu_names) {
-			ret = -ENOMEM;
-			goto done;
-		}
-
-		for (i = 0; i < xmap->menu_count ; i++) {
-			/* sizeof(names[i]) - 1: to take care of \0 */
-			if (copy_from_user((char *)map->menu_names[i],
-					   xmap->menu_info[i].name,
-					   sizeof(map->menu_names[i]) - 1)) {
-				ret = -EACCES;
-				goto done;
-			}
-		}
-	}
-
-	ret = uvc_ctrl_add_mapping(chain, map);
-
-done:
-	kfree(map->menu_names);
-	map->menu_names = NULL;
-	kfree(map->menu_mapping);
-	map->menu_mapping = NULL;
-
-	return ret;
-}
-
 /* ------------------------------------------------------------------------
  * UVC ioctls
  */
-static int uvc_ioctl_xu_ctrl_map(struct uvc_video_chain *chain,
-				 struct uvc_xu_control_mapping *xmap)
+static int uvc_ioctl_ctrl_map(struct uvc_video_chain *chain,
+	struct uvc_xu_control_mapping *xmap)
 {
 	struct uvc_control_mapping *map;
+	unsigned int size;
 	int ret;
 
 	map = kzalloc(sizeof(*map), GFP_KERNEL);
@@ -131,20 +61,39 @@ static int uvc_ioctl_xu_ctrl_map(struct uvc_video_chain *chain,
 	case V4L2_CTRL_TYPE_INTEGER:
 	case V4L2_CTRL_TYPE_BOOLEAN:
 	case V4L2_CTRL_TYPE_BUTTON:
-		ret = uvc_ctrl_add_mapping(chain, map);
 		break;
 
 	case V4L2_CTRL_TYPE_MENU:
-		ret = uvc_control_add_xu_mapping(chain, map, xmap);
+		/*
+		 * Prevent excessive memory consumption, as well as integer
+		 * overflows.
+		 */
+		if (xmap->menu_count == 0 ||
+		    xmap->menu_count > UVC_MAX_CONTROL_MENU_ENTRIES) {
+			ret = -EINVAL;
+			goto free_map;
+		}
+
+		size = xmap->menu_count * sizeof(*map->menu_info);
+		map->menu_info = memdup_user(xmap->menu_info, size);
+		if (IS_ERR(map->menu_info)) {
+			ret = PTR_ERR(map->menu_info);
+			goto free_map;
+		}
+
+		map->menu_mask = GENMASK(xmap->menu_count - 1, 0);
 		break;
 
 	default:
 		uvc_dbg(chain->dev, CONTROL,
 			"Unsupported V4L2 control type %u\n", xmap->v4l2_type);
 		ret = -ENOTTY;
-		break;
+		goto free_map;
 	}
 
+	ret = uvc_ctrl_add_mapping(chain, map);
+
+	kfree(map->menu_info);
 free_map:
 	kfree(map);
 
@@ -161,7 +110,7 @@ free_map:
  * the Video Probe and Commit negotiation, but some hardware don't implement
  * that feature.
  */
-static u32 uvc_try_frame_interval(const struct uvc_frame *frame, u32 interval)
+static u32 uvc_try_frame_interval(struct uvc_frame *frame, u32 interval)
 {
 	unsigned int i;
 
@@ -210,11 +159,10 @@ static u32 uvc_v4l2_get_bytesperline(const struct uvc_format *format,
 
 static int uvc_v4l2_try_format(struct uvc_streaming *stream,
 	struct v4l2_format *fmt, struct uvc_streaming_control *probe,
-	const struct uvc_format **uvc_format,
-	const struct uvc_frame **uvc_frame)
+	struct uvc_format **uvc_format, struct uvc_frame **uvc_frame)
 {
-	const struct uvc_format *format = NULL;
-	const struct uvc_frame *frame = NULL;
+	struct uvc_format *format = NULL;
+	struct uvc_frame *frame = NULL;
 	u16 rw, rh;
 	unsigned int d, maxd;
 	unsigned int i;
@@ -236,7 +184,7 @@ static int uvc_v4l2_try_format(struct uvc_streaming *stream,
 	 * format otherwise.
 	 */
 	for (i = 0; i < stream->nformats; ++i) {
-		format = &stream->formats[i];
+		format = &stream->format[i];
 		if (format->fcc == fmt->fmt.pix.pixelformat)
 			break;
 	}
@@ -256,14 +204,14 @@ static int uvc_v4l2_try_format(struct uvc_streaming *stream,
 	maxd = (unsigned int)-1;
 
 	for (i = 0; i < format->nframes; ++i) {
-		u16 w = format->frames[i].wWidth;
-		u16 h = format->frames[i].wHeight;
+		u16 w = format->frame[i].wWidth;
+		u16 h = format->frame[i].wHeight;
 
 		d = min(w, rw) * min(h, rh);
 		d = w*h + rw*rh - 2*d;
 		if (d < maxd) {
 			maxd = d;
-			frame = &format->frames[i];
+			frame = &format->frame[i];
 		}
 
 		if (maxd == 0)
@@ -320,8 +268,8 @@ static int uvc_v4l2_try_format(struct uvc_streaming *stream,
 	 * accepted the requested format as-is.
 	 */
 	for (i = 0; i < stream->nformats; ++i) {
-		if (probe->bFormatIndex == stream->formats[i].index) {
-			format = &stream->formats[i];
+		if (probe->bFormatIndex == stream->format[i].index) {
+			format = &stream->format[i];
 			break;
 		}
 	}
@@ -332,8 +280,8 @@ static int uvc_v4l2_try_format(struct uvc_streaming *stream,
 			probe->bFormatIndex);
 
 	for (i = 0; i < format->nframes; ++i) {
-		if (probe->bFrameIndex == format->frames[i].bFrameIndex) {
-			frame = &format->frames[i];
+		if (probe->bFrameIndex == format->frame[i].bFrameIndex) {
+			frame = &format->frame[i];
 			break;
 		}
 	}
@@ -364,8 +312,8 @@ static int uvc_v4l2_try_format(struct uvc_streaming *stream,
 static int uvc_v4l2_get_format(struct uvc_streaming *stream,
 	struct v4l2_format *fmt)
 {
-	const struct uvc_format *format;
-	const struct uvc_frame *frame;
+	struct uvc_format *format;
+	struct uvc_frame *frame;
 	int ret = 0;
 
 	if (fmt->type != stream->type)
@@ -399,8 +347,8 @@ static int uvc_v4l2_set_format(struct uvc_streaming *stream,
 	struct v4l2_format *fmt)
 {
 	struct uvc_streaming_control probe;
-	const struct uvc_format *format;
-	const struct uvc_frame *frame;
+	struct uvc_format *format;
+	struct uvc_frame *frame;
 	int ret;
 
 	if (fmt->type != stream->type)
@@ -466,8 +414,8 @@ static int uvc_v4l2_set_streamparm(struct uvc_streaming *stream,
 {
 	struct uvc_streaming_control probe;
 	struct v4l2_fract timeperframe;
-	const struct uvc_format *format;
-	const struct uvc_frame *frame;
+	struct uvc_format *format;
+	struct uvc_frame *frame;
 	u32 interval, maxd;
 	unsigned int i;
 	int ret;
@@ -502,19 +450,19 @@ static int uvc_v4l2_set_streamparm(struct uvc_streaming *stream,
 	for (i = 0; i < format->nframes && maxd != 0; i++) {
 		u32 d, ival;
 
-		if (&format->frames[i] == stream->cur_frame)
+		if (&format->frame[i] == stream->cur_frame)
 			continue;
 
-		if (format->frames[i].wWidth != stream->cur_frame->wWidth ||
-		    format->frames[i].wHeight != stream->cur_frame->wHeight)
+		if (format->frame[i].wWidth != stream->cur_frame->wWidth ||
+		    format->frame[i].wHeight != stream->cur_frame->wHeight)
 			continue;
 
-		ival = uvc_try_frame_interval(&format->frames[i], interval);
+		ival = uvc_try_frame_interval(&format->frame[i], interval);
 		d = abs((s32)ival - interval);
 		if (d >= maxd)
 			continue;
 
-		frame = &format->frames[i];
+		frame = &format->frame[i];
 		probe.bFrameIndex = frame->bFrameIndex;
 		probe.dwFrameInterval = ival;
 		maxd = d;
@@ -698,7 +646,7 @@ static int uvc_ioctl_querycap(struct file *file, void *fh,
 static int uvc_ioctl_enum_fmt(struct uvc_streaming *stream,
 			      struct v4l2_fmtdesc *fmt)
 {
-	const struct uvc_format *format;
+	struct uvc_format *format;
 	enum v4l2_buf_type type = fmt->type;
 	u32 index = fmt->index;
 
@@ -709,7 +657,7 @@ static int uvc_ioctl_enum_fmt(struct uvc_streaming *stream,
 	fmt->index = index;
 	fmt->type = type;
 
-	format = &stream->formats[fmt->index];
+	format = &stream->format[fmt->index];
 	fmt->flags = 0;
 	if (format->flags & UVC_FMT_FLAG_COMPRESSED)
 		fmt->flags |= V4L2_FMT_FLAG_COMPRESSED;
@@ -1250,15 +1198,15 @@ static int uvc_ioctl_enum_framesizes(struct file *file, void *fh,
 {
 	struct uvc_fh *handle = fh;
 	struct uvc_streaming *stream = handle->stream;
-	const struct uvc_format *format = NULL;
-	const struct uvc_frame *frame = NULL;
+	struct uvc_format *format = NULL;
+	struct uvc_frame *frame = NULL;
 	unsigned int index;
 	unsigned int i;
 
 	/* Look for the given pixel format */
 	for (i = 0; i < stream->nformats; i++) {
-		if (stream->formats[i].fcc == fsize->pixel_format) {
-			format = &stream->formats[i];
+		if (stream->format[i].fcc == fsize->pixel_format) {
+			format = &stream->format[i];
 			break;
 		}
 	}
@@ -1267,10 +1215,10 @@ static int uvc_ioctl_enum_framesizes(struct file *file, void *fh,
 
 	/* Skip duplicate frame sizes */
 	for (i = 0, index = 0; i < format->nframes; i++) {
-		if (frame && frame->wWidth == format->frames[i].wWidth &&
-		    frame->wHeight == format->frames[i].wHeight)
+		if (frame && frame->wWidth == format->frame[i].wWidth &&
+		    frame->wHeight == format->frame[i].wHeight)
 			continue;
-		frame = &format->frames[i];
+		frame = &format->frame[i];
 		if (index == fsize->index)
 			break;
 		index++;
@@ -1290,16 +1238,16 @@ static int uvc_ioctl_enum_frameintervals(struct file *file, void *fh,
 {
 	struct uvc_fh *handle = fh;
 	struct uvc_streaming *stream = handle->stream;
-	const struct uvc_format *format = NULL;
-	const struct uvc_frame *frame = NULL;
+	struct uvc_format *format = NULL;
+	struct uvc_frame *frame = NULL;
 	unsigned int nintervals;
 	unsigned int index;
 	unsigned int i;
 
 	/* Look for the given pixel format and frame size */
 	for (i = 0; i < stream->nformats; i++) {
-		if (stream->formats[i].fcc == fival->pixel_format) {
-			format = &stream->formats[i];
+		if (stream->format[i].fcc == fival->pixel_format) {
+			format = &stream->format[i];
 			break;
 		}
 	}
@@ -1308,9 +1256,9 @@ static int uvc_ioctl_enum_frameintervals(struct file *file, void *fh,
 
 	index = fival->index;
 	for (i = 0; i < format->nframes; i++) {
-		if (format->frames[i].wWidth == fival->width &&
-		    format->frames[i].wHeight == fival->height) {
-			frame = &format->frames[i];
+		if (format->frame[i].wWidth == fival->width &&
+		    format->frame[i].wHeight == fival->height) {
+			frame = &format->frame[i];
 			nintervals = frame->bFrameIntervalType ?: 1;
 			if (index < nintervals)
 				break;
@@ -1366,7 +1314,7 @@ static long uvc_ioctl_default(struct file *file, void *fh, bool valid_prio,
 	switch (cmd) {
 	/* Dynamic controls. */
 	case UVCIOC_CTRL_MAP:
-		return uvc_ioctl_xu_ctrl_map(chain, arg);
+		return uvc_ioctl_ctrl_map(chain, arg);
 
 	case UVCIOC_CTRL_QUERY:
 		return uvc_xu_ctrl_query(chain, arg);
@@ -1479,7 +1427,7 @@ static long uvc_v4l2_compat_ioctl32(struct file *file,
 		ret = uvc_v4l2_get_xu_mapping(&karg.xmap, up);
 		if (ret)
 			return ret;
-		ret = uvc_ioctl_xu_ctrl_map(handle->chain, &karg.xmap);
+		ret = uvc_ioctl_ctrl_map(handle->chain, &karg.xmap);
 		if (ret)
 			return ret;
 		ret = uvc_v4l2_put_xu_mapping(&karg.xmap, up);

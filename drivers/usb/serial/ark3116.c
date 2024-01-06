@@ -433,11 +433,10 @@ static int ark3116_tiocmset(struct tty_struct *tty,
 	return 0;
 }
 
-static int ark3116_break_ctl(struct tty_struct *tty, int break_state)
+static void ark3116_break_ctl(struct tty_struct *tty, int break_state)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct ark3116_private *priv = usb_get_serial_port_data(port);
-	int ret;
 
 	/* LCR is also used for other things: protect access */
 	mutex_lock(&priv->hw_lock);
@@ -447,11 +446,9 @@ static int ark3116_break_ctl(struct tty_struct *tty, int break_state)
 	else
 		priv->lcr &= ~UART_LCR_SBC;
 
-	ret = ark3116_write_reg(port->serial, UART_LCR, priv->lcr);
+	ark3116_write_reg(port->serial, UART_LCR, priv->lcr);
 
 	mutex_unlock(&priv->hw_lock);
-
-	return ret;
 }
 
 static void ark3116_update_msr(struct usb_serial_port *port, __u8 msr)

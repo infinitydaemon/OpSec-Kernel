@@ -7,7 +7,7 @@
 #include <linux/list.h>
 #include <linux/slab.h>
 
-#include "tag.h"
+#include "dsa_priv.h"
 
 /* To define the outgoing port and to discover the incoming port a regular
  * VLAN tag is used by the LAN9303. But its VID meaning is 'special':
@@ -29,8 +29,6 @@
  * VID bit 4 is used to specify if the STP port state should be overridden.
  * Required when no forwarding between the external ports should happen.
  */
-
-#define LAN9303_NAME "lan9303"
 
 #define LAN9303_TAG_LEN 4
 # define LAN9303_TAG_TX_USE_ALR BIT(3)
@@ -56,7 +54,7 @@ static int lan9303_xmit_use_arl(struct dsa_port *dp, u8 *dest_addr)
 
 static struct sk_buff *lan9303_xmit(struct sk_buff *skb, struct net_device *dev)
 {
-	struct dsa_port *dp = dsa_user_to_port(dev);
+	struct dsa_port *dp = dsa_slave_to_port(dev);
 	__be16 *lan9303_tag;
 	u16 tag;
 
@@ -99,7 +97,7 @@ static struct sk_buff *lan9303_rcv(struct sk_buff *skb, struct net_device *dev)
 
 	source_port = lan9303_tag1 & 0x3;
 
-	skb->dev = dsa_conduit_find_user(dev, 0, source_port);
+	skb->dev = dsa_master_find_slave(dev, 0, source_port);
 	if (!skb->dev) {
 		dev_warn_ratelimited(&dev->dev, "Dropping packet due to invalid source port\n");
 		return NULL;
@@ -112,7 +110,7 @@ static struct sk_buff *lan9303_rcv(struct sk_buff *skb, struct net_device *dev)
 }
 
 static const struct dsa_device_ops lan9303_netdev_ops = {
-	.name = LAN9303_NAME,
+	.name = "lan9303",
 	.proto	= DSA_TAG_PROTO_LAN9303,
 	.xmit = lan9303_xmit,
 	.rcv = lan9303_rcv,
@@ -120,6 +118,6 @@ static const struct dsa_device_ops lan9303_netdev_ops = {
 };
 
 MODULE_LICENSE("GPL");
-MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_LAN9303, LAN9303_NAME);
+MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_LAN9303);
 
 module_dsa_tag_driver(lan9303_netdev_ops);

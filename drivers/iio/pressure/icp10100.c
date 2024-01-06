@@ -530,7 +530,8 @@ static void icp10100_pm_disable(void *data)
 	pm_runtime_disable(dev);
 }
 
-static int icp10100_probe(struct i2c_client *client)
+static int icp10100_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
 	struct iio_dev *indio_dev;
 	struct icp10100_state *st;

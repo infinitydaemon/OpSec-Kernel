@@ -30,9 +30,6 @@ config IIO_CONFIGFS
 	  (e.g. software triggers). For more info see
 	  Documentation/iio/iio_configfs.rst.
 
-config IIO_GTS_HELPER
-	tristate
-
 config IIO_TRIGGER
 	bool "Enable triggered sampling support"
 	help

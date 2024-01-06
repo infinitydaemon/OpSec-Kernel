@@ -1144,13 +1144,15 @@ handle_pending:
 static int sun4i_dma_probe(struct platform_device *pdev)
 {
 	struct sun4i_dma_dev *priv;
+	struct resource *res;
 	int i, j, ret;
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 
-	priv->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	priv->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(priv->base))
 		return PTR_ERR(priv->base);
 
@@ -1271,7 +1273,7 @@ err_clk_disable:
 	return ret;
 }
 
-static void sun4i_dma_remove(struct platform_device *pdev)
+static int sun4i_dma_remove(struct platform_device *pdev)
 {
 	struct sun4i_dma_dev *priv = platform_get_drvdata(pdev);
 
@@ -1282,6 +1284,8 @@ static void sun4i_dma_remove(struct platform_device *pdev)
 	dma_async_device_unregister(&priv->slave);
 
 	clk_disable_unprepare(priv->clk);
+
+	return 0;
 }
 
 static const struct of_device_id sun4i_dma_match[] = {
@@ -1292,7 +1296,7 @@ MODULE_DEVICE_TABLE(of, sun4i_dma_match);
 
 static struct platform_driver sun4i_dma_driver = {
 	.probe	= sun4i_dma_probe,
-	.remove_new = sun4i_dma_remove,
+	.remove	= sun4i_dma_remove,
 	.driver	= {
 		.name		= "sun4i-dma",
 		.of_match_table	= sun4i_dma_match,

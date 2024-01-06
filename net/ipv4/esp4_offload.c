@@ -17,7 +17,6 @@
 #include <linux/err.h>
 #include <linux/module.h>
 #include <net/gro.h>
-#include <net/gso.h>
 #include <net/ip.h>
 #include <net/xfrm.h>
 #include <net/esp.h>
@@ -33,7 +32,6 @@ static struct sk_buff *esp4_gro_receive(struct list_head *head,
 	int offset = skb_gro_offset(skb);
 	struct xfrm_offload *xo;
 	struct xfrm_state *x;
-	int encap_type = 0;
 	__be32 seq;
 	__be32 spi;
 
@@ -71,9 +69,6 @@ static struct sk_buff *esp4_gro_receive(struct list_head *head,
 
 	xo->flags |= XFRM_GRO;
 
-	if (NAPI_GRO_CB(skb)->proto == IPPROTO_UDP)
-		encap_type = UDP_ENCAP_ESPINUDP;
-
 	XFRM_TUNNEL_SKB_CB(skb)->tunnel.ip4 = NULL;
 	XFRM_SPI_SKB_CB(skb)->family = AF_INET;
 	XFRM_SPI_SKB_CB(skb)->daddroff = offsetof(struct iphdr, daddr);
@@ -81,7 +76,7 @@ static struct sk_buff *esp4_gro_receive(struct list_head *head,
 
 	/* We don't need to handle errors from xfrm_input, it does all
 	 * the error handling and frees the resources on error. */
-	xfrm_input(skb, IPPROTO_ESP, spi, encap_type);
+	xfrm_input(skb, IPPROTO_ESP, spi, -2);
 
 	return ERR_PTR(-EINPROGRESS);
 out_reset:

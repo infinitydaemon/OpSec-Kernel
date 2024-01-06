@@ -8,8 +8,6 @@
  * Based on code by Dmitry Chernenkov.
  */
 
-#define pr_fmt(fmt) "kasan: " fmt
-
 #include <linux/gfp.h>
 #include <linux/hash.h>
 #include <linux/kernel.h>
@@ -101,6 +99,7 @@ static unsigned long quarantine_size;
 static DEFINE_RAW_SPINLOCK(quarantine_lock);
 DEFINE_STATIC_SRCU(remove_cache_srcu);
 
+#ifdef CONFIG_PREEMPT_RT
 struct cpu_shrink_qlist {
 	raw_spinlock_t lock;
 	struct qlist_head qlist;
@@ -109,6 +108,7 @@ struct cpu_shrink_qlist {
 static DEFINE_PER_CPU(struct cpu_shrink_qlist, shrink_qlist) = {
 	.lock = __RAW_SPIN_LOCK_UNLOCKED(shrink_qlist.lock),
 };
+#endif
 
 /* Maximum size of the global queue. */
 static unsigned long quarantine_max_size;
@@ -319,6 +319,16 @@ static void qlist_move_cache(struct qlist_head *from,
 	}
 }
 
+#ifndef CONFIG_PREEMPT_RT
+static void __per_cpu_remove_cache(struct qlist_head *q, void *arg)
+{
+	struct kmem_cache *cache = arg;
+	struct qlist_head to_free = QLIST_INIT;
+
+	qlist_move_cache(q, &to_free, cache);
+	qlist_free_all(&to_free, cache);
+}
+#else
 static void __per_cpu_remove_cache(struct qlist_head *q, void *arg)
 {
 	struct kmem_cache *cache = arg;
@@ -330,6 +340,7 @@ static void __per_cpu_remove_cache(struct qlist_head *q, void *arg)
 	qlist_move_cache(q, &sq->qlist, cache);
 	raw_spin_unlock_irqrestore(&sq->lock, flags);
 }
+#endif
 
 static void per_cpu_remove_cache(void *arg)
 {
@@ -351,8 +362,6 @@ void kasan_quarantine_remove_cache(struct kmem_cache *cache)
 {
 	unsigned long flags, i;
 	struct qlist_head to_free = QLIST_INIT;
-	int cpu;
-	struct cpu_shrink_qlist *sq;
 
 	/*
 	 * Must be careful to not miss any objects that are being moved from
@@ -363,13 +372,20 @@ void kasan_quarantine_remove_cache(struct kmem_cache *cache)
 	 */
 	on_each_cpu(per_cpu_remove_cache, cache, 1);
 
-	for_each_online_cpu(cpu) {
-		sq = per_cpu_ptr(&shrink_qlist, cpu);
-		raw_spin_lock_irqsave(&sq->lock, flags);
-		qlist_move_cache(&sq->qlist, &to_free, cache);
-		raw_spin_unlock_irqrestore(&sq->lock, flags);
+#ifdef CONFIG_PREEMPT_RT
+	{
+		int cpu;
+		struct cpu_shrink_qlist *sq;
+
+		for_each_online_cpu(cpu) {
+			sq = per_cpu_ptr(&shrink_qlist, cpu);
+			raw_spin_lock_irqsave(&sq->lock, flags);
+			qlist_move_cache(&sq->qlist, &to_free, cache);
+			raw_spin_unlock_irqrestore(&sq->lock, flags);
+		}
+		qlist_free_all(&to_free, cache);
 	}
-	qlist_free_all(&to_free, cache);
+#endif
 
 	raw_spin_lock_irqsave(&quarantine_lock, flags);
 	for (i = 0; i < QUARANTINE_BATCHES; i++) {
@@ -416,7 +432,7 @@ static int __init kasan_cpu_quarantine_init(void)
 	ret = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "mm/kasan:online",
 				kasan_cpu_online, kasan_cpu_offline);
 	if (ret < 0)
-		pr_err("cpu quarantine register failed [%d]\n", ret);
+		pr_err("kasan cpu quarantine register failed [%d]\n", ret);
 	return ret;
 }
 late_initcall(kasan_cpu_quarantine_init);

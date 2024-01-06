@@ -83,6 +83,9 @@ again:
 		if (is_huge_zero_page(page)) {
 			spin_unlock(ptl);
 			split_huge_pmd(vma, pmdp, addr);
+			if (pmd_trans_unstable(pmdp))
+				return migrate_vma_collect_skip(start, end,
+								walk);
 		} else {
 			int ret;
 
@@ -97,12 +100,16 @@ again:
 			if (ret)
 				return migrate_vma_collect_skip(start, end,
 								walk);
+			if (pmd_none(*pmdp))
+				return migrate_vma_collect_hole(start, end, -1,
+								walk);
 		}
 	}
 
+	if (unlikely(pmd_bad(*pmdp)))
+		return migrate_vma_collect_skip(start, end, walk);
+
 	ptep = pte_offset_map_lock(mm, pmdp, addr, &ptl);
-	if (!ptep)
-		goto again;
 	arch_enter_lazy_mmu_mode();
 
 	for (; addr < end; addr += PAGE_SIZE, ptep++) {
@@ -111,7 +118,7 @@ again:
 		swp_entry_t entry;
 		pte_t pte;
 
-		pte = ptep_get(ptep);
+		pte = *ptep;
 
 		if (pte_none(pte)) {
 			if (vma_is_anonymous(vma)) {
@@ -194,7 +201,7 @@ again:
 			bool anon_exclusive;
 			pte_t swp_pte;
 
-			flush_cache_page(vma, addr, pte_pfn(pte));
+			flush_cache_page(vma, addr, pte_pfn(*ptep));
 			anon_exclusive = PageAnon(page) && PageAnonExclusive(page);
 			if (anon_exclusive) {
 				pte = ptep_clear_flush(vma, addr, ptep);
@@ -279,7 +286,6 @@ next:
 static const struct mm_walk_ops migrate_vma_walk_ops = {
 	.pmd_entry		= migrate_vma_collect_pmd,
 	.pte_hole		= migrate_vma_collect_hole,
-	.walk_lock		= PGWALK_RDLOCK,
 };
 
 /*
@@ -300,7 +306,7 @@ static void migrate_vma_collect(struct migrate_vma *migrate)
 	 * private page mappings that won't be migrated.
 	 */
 	mmu_notifier_range_init_owner(&range, MMU_NOTIFY_MIGRATE, 0,
-		migrate->vma->vm_mm, migrate->start, migrate->end,
+		migrate->vma, migrate->vma->vm_mm, migrate->start, migrate->end,
 		migrate->pgmap_owner);
 	mmu_notifier_invalidate_range_start(&range);
 
@@ -377,12 +383,12 @@ static unsigned long migrate_device_unmap(unsigned long *src_pfns,
 		/* ZONE_DEVICE pages are not on LRU */
 		if (!is_zone_device_page(page)) {
 			if (!PageLRU(page) && allow_drain) {
-				/* Drain CPU's lru cache */
+				/* Drain CPU's pagevec */
 				lru_add_drain_all();
 				allow_drain = false;
 			}
 
-			if (!isolate_lru_page(page)) {
+			if (isolate_lru_page(page)) {
 				src_pfns[i] &= ~MIGRATE_PFN_MIGRATE;
 				restore++;
 				continue;
@@ -574,7 +580,6 @@ static void migrate_vma_insert_page(struct migrate_vma *migrate,
 	pud_t *pudp;
 	pmd_t *pmdp;
 	pte_t *ptep;
-	pte_t orig_pte;
 
 	/* Only allow populating anonymous memory */
 	if (!vma_is_anonymous(vma))
@@ -590,10 +595,27 @@ static void migrate_vma_insert_page(struct migrate_vma *migrate,
 	pmdp = pmd_alloc(mm, pudp, addr);
 	if (!pmdp)
 		goto abort;
+
 	if (pmd_trans_huge(*pmdp) || pmd_devmap(*pmdp))
 		goto abort;
+
+	/*
+	 * Use pte_alloc() instead of pte_alloc_map().  We can't run
+	 * pte_offset_map() on pmds where a huge pmd might be created
+	 * from a different thread.
+	 *
+	 * pte_alloc_map() is safe to use under mmap_write_lock(mm) or when
+	 * parallel threads are excluded by other means.
+	 *
+	 * Here we only have mmap_read_lock(mm).
+	 */
 	if (pte_alloc(mm, pmdp))
 		goto abort;
+
+	/* See the comment in pte_alloc_one_map() */
+	if (unlikely(pmd_trans_unstable(pmdp)))
+		goto abort;
+
 	if (unlikely(anon_vma_prepare(vma)))
 		goto abort;
 	if (mem_cgroup_charge(page_folio(page), vma->vm_mm, GFP_KERNEL))
@@ -624,24 +646,21 @@ static void migrate_vma_insert_page(struct migrate_vma *migrate,
 		}
 		entry = mk_pte(page, vma->vm_page_prot);
 		if (vma->vm_flags & VM_WRITE)
-			entry = pte_mkwrite(pte_mkdirty(entry), vma);
+			entry = pte_mkwrite(pte_mkdirty(entry));
 	}
 
 	ptep = pte_offset_map_lock(mm, pmdp, addr, &ptl);
-	if (!ptep)
-		goto abort;
-	orig_pte = ptep_get(ptep);
 
 	if (check_stable_address_space(mm))
 		goto unlock_abort;
 
-	if (pte_present(orig_pte)) {
-		unsigned long pfn = pte_pfn(orig_pte);
+	if (pte_present(*ptep)) {
+		unsigned long pfn = pte_pfn(*ptep);
 
 		if (!is_zero_pfn(pfn))
 			goto unlock_abort;
 		flush = true;
-	} else if (!pte_none(orig_pte))
+	} else if (!pte_none(*ptep))
 		goto unlock_abort;
 
 	/*
@@ -658,8 +677,8 @@ static void migrate_vma_insert_page(struct migrate_vma *migrate,
 	get_page(page);
 
 	if (flush) {
-		flush_cache_page(vma, addr, pte_pfn(orig_pte));
-		ptep_clear_flush(vma, addr, ptep);
+		flush_cache_page(vma, addr, pte_pfn(*ptep));
+		ptep_clear_flush_notify(vma, addr, ptep);
 		set_pte_at_notify(mm, addr, ptep, entry);
 		update_mmu_cache(vma, addr, ptep);
 	} else {
@@ -714,7 +733,7 @@ static void __migrate_device_pages(unsigned long *src_pfns,
 				notified = true;
 
 				mmu_notifier_range_init_owner(&range,
-					MMU_NOTIFY_MIGRATE, 0,
+					MMU_NOTIFY_MIGRATE, 0, migrate->vma,
 					migrate->vma->vm_mm, addr, migrate->end,
 					migrate->pgmap_owner);
 				mmu_notifier_invalidate_range_start(&range);
@@ -728,22 +747,13 @@ static void __migrate_device_pages(unsigned long *src_pfns,
 
 		if (is_device_private_page(newpage) ||
 		    is_device_coherent_page(newpage)) {
+			/*
+			 * For now only support anonymous memory migrating to
+			 * device private or coherent memory.
+			 */
 			if (mapping) {
-				struct folio *folio;
-
-				folio = page_folio(page);
-
-				/*
-				 * For now only support anonymous memory migrating to
-				 * device private or coherent memory.
-				 *
-				 * Try to get rid of swap cache if possible.
-				 */
-				if (!folio_test_anon(folio) ||
-				    !folio_free_swap(folio)) {
-					src_pfns[i] &= ~MIGRATE_PFN_MIGRATE;
-					continue;
-				}
+				src_pfns[i] &= ~MIGRATE_PFN_MIGRATE;
+				continue;
 			}
 		} else if (is_zone_device_page(newpage)) {
 			/*
@@ -764,8 +774,13 @@ static void __migrate_device_pages(unsigned long *src_pfns,
 			src_pfns[i] &= ~MIGRATE_PFN_MIGRATE;
 	}
 
+	/*
+	 * No need to double call mmu_notifier->invalidate_range() callback as
+	 * the above ptep_clear_flush_notify() inside migrate_vma_insert_page()
+	 * did already call it.
+	 */
 	if (notified)
-		mmu_notifier_invalidate_range_end(&range);
+		mmu_notifier_invalidate_range_only_end(&range);
 }
 
 /**

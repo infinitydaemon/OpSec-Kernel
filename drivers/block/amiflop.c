@@ -1532,7 +1532,7 @@ static int fd_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 	return 0;
 }
 
-static int fd_locked_ioctl(struct block_device *bdev, blk_mode_t mode,
+static int fd_locked_ioctl(struct block_device *bdev, fmode_t mode,
 		    unsigned int cmd, unsigned long param)
 {
 	struct amiga_floppy_struct *p = bdev->bd_disk->private_data;
@@ -1547,6 +1547,7 @@ static int fd_locked_ioctl(struct block_device *bdev, blk_mode_t mode,
 			rel_fdc();
 			return -EBUSY;
 		}
+		fsync_bdev(bdev);
 		if (fd_motor_on(drive) == 0) {
 			rel_fdc();
 			return -ENODEV;
@@ -1606,7 +1607,7 @@ static int fd_locked_ioctl(struct block_device *bdev, blk_mode_t mode,
 	return 0;
 }
 
-static int fd_ioctl(struct block_device *bdev, blk_mode_t mode,
+static int fd_ioctl(struct block_device *bdev, fmode_t mode,
 			     unsigned int cmd, unsigned long param)
 {
 	int ret;
@@ -1653,10 +1654,10 @@ static void fd_probe(int dev)
  * /dev/PS0 etc), and disallows simultaneous access to the same
  * drive with different device numbers.
  */
-static int floppy_open(struct gendisk *disk, blk_mode_t mode)
+static int floppy_open(struct block_device *bdev, fmode_t mode)
 {
-	int drive = disk->first_minor & 3;
-	int system = (disk->first_minor & 4) >> 2;
+	int drive = MINOR(bdev->bd_dev) & 3;
+	int system =  (MINOR(bdev->bd_dev) & 4) >> 2;
 	int old_dev;
 	unsigned long flags;
 
@@ -1672,9 +1673,10 @@ static int floppy_open(struct gendisk *disk, blk_mode_t mode)
 		mutex_unlock(&amiflop_mutex);
 		return -ENXIO;
 	}
-	if (mode & (BLK_OPEN_READ | BLK_OPEN_WRITE)) {
-		disk_check_media_change(disk);
-		if (mode & BLK_OPEN_WRITE) {
+
+	if (mode & (FMODE_READ|FMODE_WRITE)) {
+		bdev_check_media_change(bdev);
+		if (mode & FMODE_WRITE) {
 			int wrprot;
 
 			get_fdc(drive);
@@ -1689,6 +1691,7 @@ static int floppy_open(struct gendisk *disk, blk_mode_t mode)
 			}
 		}
 	}
+
 	local_irq_save(flags);
 	fd_ref[drive]++;
 	fd_device[drive] = system;
@@ -1706,7 +1709,7 @@ static int floppy_open(struct gendisk *disk, blk_mode_t mode)
 	return 0;
 }
 
-static void floppy_release(struct gendisk *disk)
+static void floppy_release(struct gendisk *disk, fmode_t mode)
 {
 	struct amiga_floppy_struct *p = disk->private_data;
 	int drive = p - unit;

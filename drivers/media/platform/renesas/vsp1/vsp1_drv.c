@@ -13,6 +13,7 @@
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/reset.h>
@@ -44,8 +45,7 @@
 
 static irqreturn_t vsp1_irq_handler(int irq, void *data)
 {
-	u32 mask = VI6_WPF_IRQ_STA_DFE | VI6_WPF_IRQ_STA_FRE |
-		   VI6_WPF_IRQ_STA_UND;
+	u32 mask = VI6_WPF_IRQ_STA_DFE | VI6_WPF_IRQ_STA_FRE;
 	struct vsp1_device *vsp1 = data;
 	irqreturn_t ret = IRQ_NONE;
 	unsigned int i;
@@ -59,14 +59,6 @@ static irqreturn_t vsp1_irq_handler(int irq, void *data)
 
 		status = vsp1_read(vsp1, VI6_WPF_IRQ_STA(i));
 		vsp1_write(vsp1, VI6_WPF_IRQ_STA(i), ~status & mask);
-
-		if ((status & VI6_WPF_IRQ_STA_UND) && wpf->entity.pipe) {
-			wpf->entity.pipe->underrun_count++;
-
-			dev_warn_ratelimited(vsp1->dev,
-				"Underrun occurred at WPF%u (total underruns %u)\n",
-				i, wpf->entity.pipe->underrun_count);
-		}
 
 		if (status & VI6_WPF_IRQ_STA_DFE) {
 			vsp1_pipeline_frame_end(wpf->entity.pipe);
@@ -826,9 +818,9 @@ static const struct vsp1_device_info vsp1_device_infos[] = {
 		.wpf_count = 2,
 		.num_bru_inputs = 5,
 	}, {
-		.version = VI6_IP_VERSION_MODEL_VSPD_GEN4,
+		.version = VI6_IP_VERSION_MODEL_VSPD_V3U,
 		.model = "VSP2-D",
-		.gen = 4,
+		.gen = 3,
 		.features = VSP1_HAS_BRU | VSP1_HAS_EXT_DL,
 		.lif_count = 1,
 		.rpf_count = 5,
@@ -985,7 +977,7 @@ done:
 	return ret;
 }
 
-static void vsp1_remove(struct platform_device *pdev)
+static int vsp1_remove(struct platform_device *pdev)
 {
 	struct vsp1_device *vsp1 = platform_get_drvdata(pdev);
 
@@ -993,6 +985,8 @@ static void vsp1_remove(struct platform_device *pdev)
 	rcar_fcp_put(vsp1->fcp);
 
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 static const struct of_device_id vsp1_of_match[] = {
@@ -1005,7 +999,7 @@ MODULE_DEVICE_TABLE(of, vsp1_of_match);
 
 static struct platform_driver vsp1_platform_driver = {
 	.probe		= vsp1_probe,
-	.remove_new	= vsp1_remove,
+	.remove		= vsp1_remove,
 	.driver		= {
 		.name	= "vsp1",
 		.pm	= &vsp1_pm_ops,

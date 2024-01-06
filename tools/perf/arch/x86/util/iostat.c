@@ -10,7 +10,6 @@
 #include <api/fs/fs.h>
 #include <linux/kernel.h>
 #include <linux/err.h>
-#include <linux/zalloc.h>
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
@@ -101,8 +100,8 @@ static void iio_root_ports_list_free(struct iio_root_ports_list *list)
 
 	if (list) {
 		for (idx = 0; idx < list->nr_entries; idx++)
-			zfree(&list->rps[idx]);
-		zfree(&list->rps);
+			free(list->rps[idx]);
+		free(list->rps);
 		free(list);
 	}
 }
@@ -391,7 +390,7 @@ void iostat_release(struct evlist *evlist)
 	evlist__for_each_entry(evlist, evsel) {
 		if (rp != evsel->priv) {
 			rp = evsel->priv;
-			zfree(&evsel->priv);
+			free(evsel->priv);
 		}
 	}
 }
@@ -450,7 +449,7 @@ void iostat_print_metric(struct perf_stat_config *config, struct evsel *evsel,
 
 void iostat_print_counters(struct evlist *evlist,
 			   struct perf_stat_config *config, struct timespec *ts,
-			   char *prefix, iostat_print_counter_t print_cnt_cb, void *arg)
+			   char *prefix, iostat_print_counter_t print_cnt_cb)
 {
 	void *perf_device = NULL;
 	struct evsel *counter = evlist__first(evlist);
@@ -465,7 +464,7 @@ void iostat_print_counters(struct evlist *evlist,
 			iostat_prefix(evlist, config, prefix, ts);
 			fprintf(config->output, "\n%s", prefix);
 		}
-		print_cnt_cb(config, counter, arg);
+		print_cnt_cb(config, counter, prefix);
 	}
 	fputc('\n', config->output);
 }

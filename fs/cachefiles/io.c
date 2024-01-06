@@ -259,7 +259,9 @@ static void cachefiles_write_complete(struct kiocb *iocb, long ret)
 
 	_enter("%ld", ret);
 
-	kiocb_end_write(iocb);
+	/* Tell lockdep we inherited freeze protection from submission thread */
+	__sb_writers_acquired(inode->i_sb, SB_FREEZE_WRITE);
+	__sb_end_write(inode->i_sb, SB_FREEZE_WRITE);
 
 	if (ret < 0)
 		trace_cachefiles_io_error(object, inode, ret,
@@ -284,6 +286,7 @@ int __cachefiles_write(struct cachefiles_object *object,
 {
 	struct cachefiles_cache *cache;
 	struct cachefiles_kiocb *ki;
+	struct inode *inode;
 	unsigned int old_nofs;
 	ssize_t ret;
 	size_t len = iov_iter_count(iter);
@@ -319,12 +322,19 @@ int __cachefiles_write(struct cachefiles_object *object,
 		ki->iocb.ki_complete = cachefiles_write_complete;
 	atomic_long_add(ki->b_writing, &cache->b_writing);
 
-	kiocb_start_write(&ki->iocb);
+	/* Open-code file_start_write here to grab freeze protection, which
+	 * will be released by another thread in aio_complete_rw().  Fool
+	 * lockdep by telling it the lock got released so that it doesn't
+	 * complain about the held lock when we return to userspace.
+	 */
+	inode = file_inode(file);
+	__sb_start_write(inode->i_sb, SB_FREEZE_WRITE);
+	__sb_writers_release(inode->i_sb, SB_FREEZE_WRITE);
 
 	get_file(ki->iocb.ki_filp);
 	cachefiles_grab_object(object, cachefiles_obj_get_ioreq);
 
-	trace_cachefiles_write(object, file_inode(file), ki->iocb.ki_pos, len);
+	trace_cachefiles_write(object, inode, ki->iocb.ki_pos, len);
 	old_nofs = memalloc_nofs_save();
 	ret = cachefiles_inject_write_error();
 	if (ret == 0)
@@ -375,35 +385,38 @@ static int cachefiles_write(struct netfs_cache_resources *cres,
 				  term_func, term_func_priv);
 }
 
-static inline enum netfs_io_source
-cachefiles_do_prepare_read(struct netfs_cache_resources *cres,
-			   loff_t start, size_t *_len, loff_t i_size,
-			   unsigned long *_flags, ino_t netfs_ino)
+/*
+ * Prepare a read operation, shortening it to a cached/uncached
+ * boundary as appropriate.
+ */
+static enum netfs_io_source cachefiles_prepare_read(struct netfs_io_subrequest *subreq,
+						      loff_t i_size)
 {
 	enum cachefiles_prepare_read_trace why;
-	struct cachefiles_object *object = NULL;
+	struct netfs_io_request *rreq = subreq->rreq;
+	struct netfs_cache_resources *cres = &rreq->cache_resources;
+	struct cachefiles_object *object;
 	struct cachefiles_cache *cache;
 	struct fscache_cookie *cookie = fscache_cres_cookie(cres);
 	const struct cred *saved_cred;
 	struct file *file = cachefiles_cres_file(cres);
 	enum netfs_io_source ret = NETFS_DOWNLOAD_FROM_SERVER;
-	size_t len = *_len;
 	loff_t off, to;
 	ino_t ino = file ? file_inode(file)->i_ino : 0;
 	int rc;
 
-	_enter("%zx @%llx/%llx", len, start, i_size);
+	_enter("%zx @%llx/%llx", subreq->len, subreq->start, i_size);
 
-	if (start >= i_size) {
+	if (subreq->start >= i_size) {
 		ret = NETFS_FILL_WITH_ZEROES;
 		why = cachefiles_trace_read_after_eof;
 		goto out_no_object;
 	}
 
 	if (test_bit(FSCACHE_COOKIE_NO_DATA_TO_READ, &cookie->flags)) {
-		__set_bit(NETFS_SREQ_COPY_TO_CACHE, _flags);
+		__set_bit(NETFS_SREQ_COPY_TO_CACHE, &subreq->flags);
 		why = cachefiles_trace_read_no_data;
-		if (!test_bit(NETFS_SREQ_ONDEMAND, _flags))
+		if (!test_bit(NETFS_SREQ_ONDEMAND, &subreq->flags))
 			goto out_no_object;
 	}
 
@@ -424,7 +437,7 @@ cachefiles_do_prepare_read(struct netfs_cache_resources *cres,
 retry:
 	off = cachefiles_inject_read_error();
 	if (off == 0)
-		off = vfs_llseek(file, start, SEEK_DATA);
+		off = vfs_llseek(file, subreq->start, SEEK_DATA);
 	if (off < 0 && off >= (loff_t)-MAX_ERRNO) {
 		if (off == (loff_t)-ENXIO) {
 			why = cachefiles_trace_read_seek_nxio;
@@ -436,22 +449,21 @@ retry:
 		goto out;
 	}
 
-	if (off >= start + len) {
+	if (off >= subreq->start + subreq->len) {
 		why = cachefiles_trace_read_found_hole;
 		goto download_and_store;
 	}
 
-	if (off > start) {
+	if (off > subreq->start) {
 		off = round_up(off, cache->bsize);
-		len = off - start;
-		*_len = len;
+		subreq->len = off - subreq->start;
 		why = cachefiles_trace_read_found_part;
 		goto download_and_store;
 	}
 
 	to = cachefiles_inject_read_error();
 	if (to == 0)
-		to = vfs_llseek(file, start, SEEK_HOLE);
+		to = vfs_llseek(file, subreq->start, SEEK_HOLE);
 	if (to < 0 && to >= (loff_t)-MAX_ERRNO) {
 		trace_cachefiles_io_error(object, file_inode(file), to,
 					  cachefiles_trace_seek_error);
@@ -459,13 +471,12 @@ retry:
 		goto out;
 	}
 
-	if (to < start + len) {
-		if (start + len >= i_size)
+	if (to < subreq->start + subreq->len) {
+		if (subreq->start + subreq->len >= i_size)
 			to = round_up(to, cache->bsize);
 		else
 			to = round_down(to, cache->bsize);
-		len = to - start;
-		*_len = len;
+		subreq->len = to - subreq->start;
 	}
 
 	why = cachefiles_trace_read_have_data;
@@ -473,11 +484,12 @@ retry:
 	goto out;
 
 download_and_store:
-	__set_bit(NETFS_SREQ_COPY_TO_CACHE, _flags);
-	if (test_bit(NETFS_SREQ_ONDEMAND, _flags)) {
-		rc = cachefiles_ondemand_read(object, start, len);
+	__set_bit(NETFS_SREQ_COPY_TO_CACHE, &subreq->flags);
+	if (test_bit(NETFS_SREQ_ONDEMAND, &subreq->flags)) {
+		rc = cachefiles_ondemand_read(object, subreq->start,
+					      subreq->len);
 		if (!rc) {
-			__clear_bit(NETFS_SREQ_ONDEMAND, _flags);
+			__clear_bit(NETFS_SREQ_ONDEMAND, &subreq->flags);
 			goto retry;
 		}
 		ret = NETFS_INVALID_READ;
@@ -485,32 +497,8 @@ download_and_store:
 out:
 	cachefiles_end_secure(cache, saved_cred);
 out_no_object:
-	trace_cachefiles_prep_read(object, start, len, *_flags, ret, why, ino, netfs_ino);
+	trace_cachefiles_prep_read(subreq, ret, why, ino);
 	return ret;
-}
-
-/*
- * Prepare a read operation, shortening it to a cached/uncached
- * boundary as appropriate.
- */
-static enum netfs_io_source cachefiles_prepare_read(struct netfs_io_subrequest *subreq,
-						    loff_t i_size)
-{
-	return cachefiles_do_prepare_read(&subreq->rreq->cache_resources,
-					  subreq->start, &subreq->len, i_size,
-					  &subreq->flags, subreq->rreq->inode->i_ino);
-}
-
-/*
- * Prepare an on-demand read operation, shortening it to a cached/uncached
- * boundary as appropriate.
- */
-static enum netfs_io_source
-cachefiles_prepare_ondemand_read(struct netfs_cache_resources *cres,
-				 loff_t start, size_t *_len, loff_t i_size,
-				 unsigned long *_flags, ino_t ino)
-{
-	return cachefiles_do_prepare_read(cres, start, _len, i_size, _flags, ino);
 }
 
 /*
@@ -633,7 +621,6 @@ static const struct netfs_cache_ops cachefiles_netfs_cache_ops = {
 	.write			= cachefiles_write,
 	.prepare_read		= cachefiles_prepare_read,
 	.prepare_write		= cachefiles_prepare_write,
-	.prepare_ondemand_read	= cachefiles_prepare_ondemand_read,
 	.query_occupancy	= cachefiles_query_occupancy,
 };
 

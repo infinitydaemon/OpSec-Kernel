@@ -14,7 +14,6 @@
 #include <linux/mutex.h>
 #include <linux/sched.h>
 #include <linux/sched/clock.h>
-#include <linux/sched/idle.h>
 #include <linux/notifier.h>
 #include <linux/pm_qos.h>
 #include <linux/cpu.h>
@@ -137,15 +136,13 @@ int cpuidle_find_deepest_state(struct cpuidle_driver *drv,
 }
 
 #ifdef CONFIG_SUSPEND
-static noinstr void enter_s2idle_proper(struct cpuidle_driver *drv,
-					 struct cpuidle_device *dev, int index)
+static void enter_s2idle_proper(struct cpuidle_driver *drv,
+				struct cpuidle_device *dev, int index)
 {
-	struct cpuidle_state *target_state = &drv->states[index];
 	ktime_t time_start, time_end;
+	struct cpuidle_state *target_state = &drv->states[index];
 
-	instrumentation_begin();
-
-	time_start = ns_to_ktime(local_clock_noinstr());
+	time_start = ns_to_ktime(local_clock());
 
 	tick_freeze();
 	/*
@@ -154,26 +151,20 @@ static noinstr void enter_s2idle_proper(struct cpuidle_driver *drv,
 	 * suspended is generally unsafe.
 	 */
 	stop_critical_timings();
-	if (!(target_state->flags & CPUIDLE_FLAG_RCU_IDLE)) {
-		ct_cpuidle_enter();
-		/* Annotate away the indirect call */
-		instrumentation_begin();
-	}
+	if (!(target_state->flags & CPUIDLE_FLAG_RCU_IDLE))
+		ct_idle_enter();
 	target_state->enter_s2idle(dev, drv, index);
 	if (WARN_ON_ONCE(!irqs_disabled()))
-		raw_local_irq_disable();
-	if (!(target_state->flags & CPUIDLE_FLAG_RCU_IDLE)) {
-		instrumentation_end();
-		ct_cpuidle_exit();
-	}
+		local_irq_disable();
+	if (!(target_state->flags & CPUIDLE_FLAG_RCU_IDLE))
+		ct_idle_exit();
 	tick_unfreeze();
 	start_critical_timings();
 
-	time_end = ns_to_ktime(local_clock_noinstr());
+	time_end = ns_to_ktime(local_clock());
 
 	dev->states_usage[index].s2idle_time += ktime_us_delta(time_end, time_start);
 	dev->states_usage[index].s2idle_usage++;
-	instrumentation_end();
 }
 
 /**
@@ -208,17 +199,14 @@ int cpuidle_enter_s2idle(struct cpuidle_driver *drv, struct cpuidle_device *dev)
  * @drv: cpuidle driver for this cpu
  * @index: index into the states table in @drv of the state to enter
  */
-noinstr int cpuidle_enter_state(struct cpuidle_device *dev,
-				 struct cpuidle_driver *drv,
-				 int index)
+int cpuidle_enter_state(struct cpuidle_device *dev, struct cpuidle_driver *drv,
+			int index)
 {
 	int entered_state;
 
 	struct cpuidle_state *target_state = &drv->states[index];
 	bool broadcast = !!(target_state->flags & CPUIDLE_FLAG_TIMER_STOP);
 	ktime_t time_start, time_end;
-
-	instrumentation_begin();
 
 	/*
 	 * Tell the time framework to switch to a broadcast timer because our
@@ -243,47 +231,29 @@ noinstr int cpuidle_enter_state(struct cpuidle_device *dev,
 	sched_idle_set_state(target_state);
 
 	trace_cpu_idle(index, dev->cpu);
-	time_start = ns_to_ktime(local_clock_noinstr());
+	time_start = ns_to_ktime(local_clock());
 
 	stop_critical_timings();
-	if (!(target_state->flags & CPUIDLE_FLAG_RCU_IDLE)) {
-		ct_cpuidle_enter();
-		/* Annotate away the indirect call */
-		instrumentation_begin();
-	}
-
-	/*
-	 * NOTE!!
-	 *
-	 * For cpuidle_state::enter() methods that do *NOT* set
-	 * CPUIDLE_FLAG_RCU_IDLE RCU will be disabled here and these functions
-	 * must be marked either noinstr or __cpuidle.
-	 *
-	 * For cpuidle_state::enter() methods that *DO* set
-	 * CPUIDLE_FLAG_RCU_IDLE this isn't required, but they must mark the
-	 * function calling ct_cpuidle_enter() as noinstr/__cpuidle and all
-	 * functions called within the RCU-idle region.
-	 */
+	if (!(target_state->flags & CPUIDLE_FLAG_RCU_IDLE))
+		ct_idle_enter();
 	entered_state = target_state->enter(dev, drv, index);
-
-	if (WARN_ONCE(!irqs_disabled(), "%ps leaked IRQ state", target_state->enter))
-		raw_local_irq_disable();
-
-	if (!(target_state->flags & CPUIDLE_FLAG_RCU_IDLE)) {
-		instrumentation_end();
-		ct_cpuidle_exit();
-	}
+	if (!(target_state->flags & CPUIDLE_FLAG_RCU_IDLE))
+		ct_idle_exit();
 	start_critical_timings();
 
 	sched_clock_idle_wakeup_event();
-	time_end = ns_to_ktime(local_clock_noinstr());
+	time_end = ns_to_ktime(local_clock());
 	trace_cpu_idle(PWR_EVENT_EXIT, dev->cpu);
 
 	/* The cpu is no longer idle or about to enter idle. */
 	sched_idle_set_state(NULL);
 
-	if (broadcast)
+	if (broadcast) {
+		if (WARN_ON_ONCE(!irqs_disabled()))
+			local_irq_disable();
+
 		tick_broadcast_exit();
+	}
 
 	if (!cpuidle_state_is_coupled(drv, index))
 		local_irq_enable();
@@ -334,8 +304,6 @@ noinstr int cpuidle_enter_state(struct cpuidle_device *dev,
 		dev->last_residency_ns = 0;
 		dev->states_usage[index].rejected++;
 	}
-
-	instrumentation_end();
 
 	return entered_state;
 }
@@ -426,7 +394,7 @@ void cpuidle_reflect(struct cpuidle_device *dev, int index)
  * @dev:   the cpuidle device
  *
  */
-__cpuidle u64 cpuidle_poll_time(struct cpuidle_driver *drv,
+u64 cpuidle_poll_time(struct cpuidle_driver *drv,
 		      struct cpuidle_device *dev)
 {
 	int i;
@@ -808,7 +776,7 @@ static int __init cpuidle_init(void)
 	if (cpuidle_disabled())
 		return -ENODEV;
 
-	return cpuidle_add_interface();
+	return cpuidle_add_interface(cpu_subsys.dev_root);
 }
 
 module_param(off, int, 0444);

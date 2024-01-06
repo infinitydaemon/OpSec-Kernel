@@ -11,9 +11,8 @@
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/module.h>
-#include <linux/of.h>
 #include <linux/of_dma.h>
-#include <linux/platform_device.h>
+#include <linux/of_platform.h>
 #include <linux/slab.h>
 #include <linux/clk.h>
 #include <linux/io-64-nonatomic-lo-hi.h>
@@ -891,6 +890,7 @@ static int zynqmp_dma_chan_probe(struct zynqmp_dma_device *zdev,
 			   struct platform_device *pdev)
 {
 	struct zynqmp_dma_chan *chan;
+	struct resource *res;
 	struct device_node *node = pdev->dev.of_node;
 	int err;
 
@@ -900,7 +900,8 @@ static int zynqmp_dma_chan_probe(struct zynqmp_dma_device *zdev,
 	chan->dev = zdev->dev;
 	chan->zdev = zdev;
 
-	chan->regs = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	chan->regs = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(chan->regs))
 		return PTR_ERR(chan->regs);
 
@@ -1061,11 +1062,7 @@ static int zynqmp_dma_probe(struct platform_device *pdev)
 	zdev->dev = &pdev->dev;
 	INIT_LIST_HEAD(&zdev->common.channels);
 
-	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(44));
-	if (ret) {
-		dev_err(&pdev->dev, "DMA not available for address range\n");
-		return ret;
-	}
+	dma_set_mask(&pdev->dev, DMA_BIT_MASK(44));
 	dma_cap_set(DMA_MEMCPY, zdev->common.cap_mask);
 
 	p = &zdev->common;
@@ -1147,7 +1144,7 @@ err_disable_pm:
  *
  * Return: Always '0'
  */
-static void zynqmp_dma_remove(struct platform_device *pdev)
+static int zynqmp_dma_remove(struct platform_device *pdev)
 {
 	struct zynqmp_dma_device *zdev = platform_get_drvdata(pdev);
 
@@ -1158,6 +1155,8 @@ static void zynqmp_dma_remove(struct platform_device *pdev)
 	pm_runtime_disable(zdev->dev);
 	if (!pm_runtime_enabled(zdev->dev))
 		zynqmp_dma_runtime_suspend(zdev->dev);
+
+	return 0;
 }
 
 static const struct of_device_id zynqmp_dma_of_match[] = {
@@ -1173,7 +1172,7 @@ static struct platform_driver zynqmp_dma_driver = {
 		.pm = &zynqmp_dma_dev_pm_ops,
 	},
 	.probe = zynqmp_dma_probe,
-	.remove_new = zynqmp_dma_remove,
+	.remove = zynqmp_dma_remove,
 };
 
 module_platform_driver(zynqmp_dma_driver);

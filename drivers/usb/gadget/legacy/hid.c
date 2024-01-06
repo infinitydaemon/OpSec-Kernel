@@ -133,11 +133,14 @@ static struct usb_configuration config_driver = {
 static int hid_bind(struct usb_composite_dev *cdev)
 {
 	struct usb_gadget *gadget = cdev->gadget;
+	struct list_head *tmp;
 	struct hidg_func_node *n = NULL, *m, *iter_n;
 	struct f_hid_opts *hid_opts;
-	int status, funcs;
+	int status, funcs = 0;
 
-	funcs = list_count_nodes(&hidg_func_list);
+	list_for_each(tmp, &hidg_func_list)
+		funcs++;
+
 	if (!funcs)
 		return -ENODEV;
 
@@ -237,7 +240,7 @@ static int hidg_plat_driver_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void hidg_plat_driver_remove(struct platform_device *pdev)
+static int hidg_plat_driver_remove(struct platform_device *pdev)
 {
 	struct hidg_func_node *e, *n;
 
@@ -245,6 +248,8 @@ static void hidg_plat_driver_remove(struct platform_device *pdev)
 		list_del(&e->node);
 		kfree(e);
 	}
+
+	return 0;
 }
 
 
@@ -261,7 +266,7 @@ static struct usb_composite_driver hidg_driver = {
 };
 
 static struct platform_driver hidg_plat_driver = {
-	.remove_new	= hidg_plat_driver_remove,
+	.remove		= hidg_plat_driver_remove,
 	.driver		= {
 		.name	= "hidg",
 	},

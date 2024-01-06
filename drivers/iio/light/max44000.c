@@ -523,7 +523,8 @@ out_unlock:
 	return IRQ_HANDLED;
 }
 
-static int max44000_probe(struct i2c_client *client)
+static int max44000_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
 	struct max44000_data *data;
 	struct iio_dev *indio_dev;

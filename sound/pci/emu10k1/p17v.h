@@ -2,11 +2,12 @@
 /*
  *  Copyright (c) by James Courtier-Dutton <James@superbug.demon.co.uk>
  *  Driver p17v chips
+ *  Version: 0.01
  */
 
 /******************************************************************************/
-/* Audigy2Value Tina (P17V) pointer-offset register set,                      */
-/* accessed through the PTR2 and DATA2 registers                              */
+/* Audigy2Value Tina (P17V) pointer-offset register set,
+ * accessed through the PTR20 and DATA24 registers  */
 /******************************************************************************/
 
 /* 00 - 07: Not used */

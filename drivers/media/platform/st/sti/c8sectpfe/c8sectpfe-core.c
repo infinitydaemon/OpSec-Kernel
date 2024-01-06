@@ -16,28 +16,24 @@
 #include <linux/dma-mapping.h>
 #include <linux/dvb/dmx.h>
 #include <linux/dvb/frontend.h>
-#include <linux/err.h>
 #include <linux/errno.h>
 #include <linux/firmware.h>
-#include <linux/gpio/consumer.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/of_gpio.h>
 #include <linux/of_platform.h>
-#include <linux/pinctrl/consumer.h>
-#include <linux/pinctrl/pinctrl.h>
 #include <linux/platform_device.h>
+#include <linux/usb.h>
 #include <linux/slab.h>
 #include <linux/time.h>
-#include <linux/usb.h>
 #include <linux/wait.h>
+#include <linux/pinctrl/pinctrl.h>
 
-#include "c8sectpfe-common.h"
 #include "c8sectpfe-core.h"
+#include "c8sectpfe-common.h"
 #include "c8sectpfe-debugfs.h"
-
 #include <media/dmxdev.h>
 #include <media/dvb_demux.h>
 #include <media/dvb_frontend.h>
@@ -137,7 +133,7 @@ static void channel_swdemux_tsklet(struct tasklet_struct *t)
 static int c8sectpfe_start_feed(struct dvb_demux_feed *dvbdmxfeed)
 {
 	struct dvb_demux *demux = dvbdmxfeed->demux;
-	struct stdemux *stdemux = demux->priv;
+	struct stdemux *stdemux = (struct stdemux *)demux->priv;
 	struct c8sectpfei *fei = stdemux->c8sectpfei;
 	struct channel_info *channel;
 	u32 tmp;
@@ -258,7 +254,7 @@ static int c8sectpfe_stop_feed(struct dvb_demux_feed *dvbdmxfeed)
 {
 
 	struct dvb_demux *demux = dvbdmxfeed->demux;
-	struct stdemux *stdemux = demux->priv;
+	struct stdemux *stdemux = (struct stdemux *)demux->priv;
 	struct c8sectpfei *fei = stdemux->c8sectpfei;
 	struct channel_info *channel;
 	int idlereq;
@@ -695,10 +691,16 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, fei);
 
-	fei->c8sectpfeclk = devm_clk_get_enabled(dev, "c8sectpfe");
+	fei->c8sectpfeclk = devm_clk_get(dev, "c8sectpfe");
 	if (IS_ERR(fei->c8sectpfeclk)) {
-		dev_err(dev, "Failed to enable c8sectpfe clock\n");
+		dev_err(dev, "c8sectpfe clk not found\n");
 		return PTR_ERR(fei->c8sectpfeclk);
+	}
+
+	ret = clk_prepare_enable(fei->c8sectpfeclk);
+	if (ret) {
+		dev_err(dev, "Failed to enable c8sectpfe clock\n");
+		return ret;
 	}
 
 	/* to save power disable all IP's (on by default) */
@@ -716,7 +718,7 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 			0, "c8sectpfe-idle-irq", fei);
 	if (ret) {
 		dev_err(dev, "Can't register c8sectpfe-idle-irq IRQ.\n");
-		return ret;
+		goto err_clk_disable;
 	}
 
 	ret = devm_request_irq(dev, fei->error_irq,
@@ -724,7 +726,7 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 				"c8sectpfe-error-irq", fei);
 	if (ret) {
 		dev_err(dev, "Can't register c8sectpfe-error-irq IRQ.\n");
-		return ret;
+		goto err_clk_disable;
 	}
 
 	fei->tsin_count = of_get_child_count(np);
@@ -733,14 +735,16 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 		fei->tsin_count > fei->hw_stats.num_ib) {
 
 		dev_err(dev, "More tsin declared than exist on SoC!\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto err_clk_disable;
 	}
 
 	fei->pinctrl = devm_pinctrl_get(dev);
 
 	if (IS_ERR(fei->pinctrl)) {
 		dev_err(dev, "Error getting tsin pins\n");
-		return PTR_ERR(fei->pinctrl);
+		ret = PTR_ERR(fei->pinctrl);
+		goto err_clk_disable;
 	}
 
 	for_each_child_of_node(np, child) {
@@ -806,23 +810,30 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 		}
 		of_node_put(i2c_bus);
 
-		/* Acquire reset GPIO and activate it */
-		tsin->rst_gpio = devm_fwnode_gpiod_get(dev,
-						       of_fwnode_handle(child),
-						       "reset", GPIOD_OUT_HIGH,
-						       "NIM reset");
-		ret = PTR_ERR_OR_ZERO(tsin->rst_gpio);
+		tsin->rst_gpio = of_get_named_gpio(child, "reset-gpios", 0);
+
+		ret = gpio_is_valid(tsin->rst_gpio);
+		if (!ret) {
+			dev_err(dev,
+				"reset gpio for tsin%d not valid (gpio=%d)\n",
+				tsin->tsin_id, tsin->rst_gpio);
+			ret = -EINVAL;
+			goto err_node_put;
+		}
+
+		ret = devm_gpio_request_one(dev, tsin->rst_gpio,
+					GPIOF_OUT_INIT_LOW, "NIM reset");
 		if (ret && ret != -EBUSY) {
-			dev_err(dev, "Can't request tsin%d reset gpio\n",
-				fei->channel_data[index]->tsin_id);
+			dev_err(dev, "Can't request tsin%d reset gpio\n"
+				, fei->channel_data[index]->tsin_id);
 			goto err_node_put;
 		}
 
 		if (!ret) {
-			/* wait for the chip to reset */
+			/* toggle reset lines */
+			gpio_direction_output(tsin->rst_gpio, 0);
 			usleep_range(3500, 5000);
-			/* release the reset line */
-			gpiod_set_value_cansleep(tsin->rst_gpio, 0);
+			gpio_direction_output(tsin->rst_gpio, 1);
 			usleep_range(3000, 5000);
 		}
 
@@ -851,7 +862,7 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 	if (ret) {
 		dev_err(dev, "c8sectpfe_tuner_register_frontend failed (%d)\n",
 			ret);
-		return ret;
+		goto err_clk_disable;
 	}
 
 	c8sectpfe_debugfs_init(fei);
@@ -860,10 +871,12 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 
 err_node_put:
 	of_node_put(child);
+err_clk_disable:
+	clk_disable_unprepare(fei->c8sectpfeclk);
 	return ret;
 }
 
-static void c8sectpfe_remove(struct platform_device *pdev)
+static int c8sectpfe_remove(struct platform_device *pdev)
 {
 	struct c8sectpfei *fei = platform_get_drvdata(pdev);
 	struct channel_info *channel;
@@ -893,6 +906,10 @@ static void c8sectpfe_remove(struct platform_device *pdev)
 
 	if (readl(fei->io + SYS_OTHER_CLKEN))
 		writel(0, fei->io + SYS_OTHER_CLKEN);
+
+	clk_disable_unprepare(fei->c8sectpfeclk);
+
+	return 0;
 }
 
 
@@ -1156,10 +1173,10 @@ MODULE_DEVICE_TABLE(of, c8sectpfe_match);
 static struct platform_driver c8sectpfe_driver = {
 	.driver = {
 		.name = "c8sectpfe",
-		.of_match_table = c8sectpfe_match,
+		.of_match_table = of_match_ptr(c8sectpfe_match),
 	},
 	.probe	= c8sectpfe_probe,
-	.remove_new = c8sectpfe_remove,
+	.remove	= c8sectpfe_remove,
 };
 
 module_platform_driver(c8sectpfe_driver);

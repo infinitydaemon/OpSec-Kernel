@@ -737,8 +737,7 @@ fail:
 }
 
 /* return non-zero on detection */
-static struct Scsi_Host *aha1542_hw_init(const struct scsi_host_template *tpnt,
-					 struct device *pdev, int indx)
+static struct Scsi_Host *aha1542_hw_init(struct scsi_host_template *tpnt, struct device *pdev, int indx)
 {
 	unsigned int base_io = io[indx];
 	struct Scsi_Host *sh;
@@ -1032,7 +1031,7 @@ static int aha1542_exit_cmd_priv(struct Scsi_Host *shost, struct scsi_cmnd *cmd)
 	return 0;
 }
 
-static const struct scsi_host_template driver_template = {
+static struct scsi_host_template driver_template = {
 	.module			= THIS_MODULE,
 	.proc_name		= "aha1542",
 	.name			= "Adaptec 1542",

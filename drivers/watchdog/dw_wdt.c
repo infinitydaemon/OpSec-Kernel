@@ -566,16 +566,22 @@ static int dw_wdt_drv_probe(struct platform_device *pdev)
 	 * to the common timer/bus clocks configuration, in which the very
 	 * first found clock supply both timer and APB signals.
 	 */
-	dw_wdt->clk = devm_clk_get_enabled(dev, "tclk");
+	dw_wdt->clk = devm_clk_get(dev, "tclk");
 	if (IS_ERR(dw_wdt->clk)) {
-		dw_wdt->clk = devm_clk_get_enabled(dev, NULL);
+		dw_wdt->clk = devm_clk_get(dev, NULL);
 		if (IS_ERR(dw_wdt->clk))
 			return PTR_ERR(dw_wdt->clk);
 	}
 
+	ret = clk_prepare_enable(dw_wdt->clk);
+	if (ret)
+		return ret;
+
 	dw_wdt->rate = clk_get_rate(dw_wdt->clk);
-	if (dw_wdt->rate == 0)
-		return -EINVAL;
+	if (dw_wdt->rate == 0) {
+		ret = -EINVAL;
+		goto out_disable_clk;
+	}
 
 	/*
 	 * Request APB clock if device is configured with async clocks mode.
@@ -584,13 +590,21 @@ static int dw_wdt_drv_probe(struct platform_device *pdev)
 	 * so the pclk phandle reference is left optional. If it couldn't be
 	 * found we consider the device configured in synchronous clocks mode.
 	 */
-	dw_wdt->pclk = devm_clk_get_optional_enabled(dev, "pclk");
-	if (IS_ERR(dw_wdt->pclk))
-		return PTR_ERR(dw_wdt->pclk);
+	dw_wdt->pclk = devm_clk_get_optional(dev, "pclk");
+	if (IS_ERR(dw_wdt->pclk)) {
+		ret = PTR_ERR(dw_wdt->pclk);
+		goto out_disable_clk;
+	}
+
+	ret = clk_prepare_enable(dw_wdt->pclk);
+	if (ret)
+		goto out_disable_clk;
 
 	dw_wdt->rst = devm_reset_control_get_optional_shared(&pdev->dev, NULL);
-	if (IS_ERR(dw_wdt->rst))
-		return PTR_ERR(dw_wdt->rst);
+	if (IS_ERR(dw_wdt->rst)) {
+		ret = PTR_ERR(dw_wdt->rst);
+		goto out_disable_pclk;
+	}
 
 	/* Enable normal reset without pre-timeout by default. */
 	dw_wdt_update_mode(dw_wdt, DW_WDT_RMOD_RESET);
@@ -607,12 +621,12 @@ static int dw_wdt_drv_probe(struct platform_device *pdev)
 				       IRQF_SHARED | IRQF_TRIGGER_RISING,
 				       pdev->name, dw_wdt);
 		if (ret)
-			return ret;
+			goto out_disable_pclk;
 
 		dw_wdt->wdd.info = &dw_wdt_pt_ident;
 	} else {
 		if (ret == -EPROBE_DEFER)
-			return ret;
+			goto out_disable_pclk;
 
 		dw_wdt->wdd.info = &dw_wdt_ident;
 	}
@@ -649,7 +663,6 @@ static int dw_wdt_drv_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, dw_wdt);
 
 	watchdog_set_restart_priority(wdd, 128);
-	watchdog_stop_on_reboot(wdd);
 
 	ret = watchdog_register_device(wdd);
 	if (ret)
@@ -661,10 +674,16 @@ static int dw_wdt_drv_probe(struct platform_device *pdev)
 
 out_assert_rst:
 	reset_control_assert(dw_wdt->rst);
+
+out_disable_pclk:
+	clk_disable_unprepare(dw_wdt->pclk);
+
+out_disable_clk:
+	clk_disable_unprepare(dw_wdt->clk);
 	return ret;
 }
 
-static void dw_wdt_drv_remove(struct platform_device *pdev)
+static int dw_wdt_drv_remove(struct platform_device *pdev)
 {
 	struct dw_wdt *dw_wdt = platform_get_drvdata(pdev);
 
@@ -672,6 +691,10 @@ static void dw_wdt_drv_remove(struct platform_device *pdev)
 
 	watchdog_unregister_device(&dw_wdt->wdd);
 	reset_control_assert(dw_wdt->rst);
+	clk_disable_unprepare(dw_wdt->pclk);
+	clk_disable_unprepare(dw_wdt->clk);
+
+	return 0;
 }
 
 #ifdef CONFIG_OF
@@ -684,7 +707,7 @@ MODULE_DEVICE_TABLE(of, dw_wdt_of_match);
 
 static struct platform_driver dw_wdt_driver = {
 	.probe		= dw_wdt_drv_probe,
-	.remove_new	= dw_wdt_drv_remove,
+	.remove		= dw_wdt_drv_remove,
 	.driver		= {
 		.name	= "dw_wdt",
 		.of_match_table = of_match_ptr(dw_wdt_of_match),

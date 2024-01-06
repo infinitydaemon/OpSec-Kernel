@@ -13,7 +13,7 @@
 #include <linux/interval_tree.h>
 #include <linux/iommu.h>
 #include <linux/module.h>
-#include <linux/of.h>
+#include <linux/of_platform.h>
 #include <linux/pci.h>
 #include <linux/virtio.h>
 #include <linux/virtio_config.h>
@@ -85,7 +85,7 @@ struct viommu_request {
 	void				*writeback;
 	unsigned int			write_offset;
 	unsigned int			len;
-	char				buf[] __counted_by(len);
+	char				buf[];
 };
 
 #define VIOMMU_FAULT_RESV_MASK		0xffffff00
@@ -230,7 +230,7 @@ static int __viommu_add_req(struct viommu_dev *viommu, void *buf, size_t len,
 	if (write_offset <= 0)
 		return -EINVAL;
 
-	req = kzalloc(struct_size(req, buf, len), GFP_ATOMIC);
+	req = kzalloc(sizeof(*req) + len, GFP_ATOMIC);
 	if (!req)
 		return -ENOMEM;
 
@@ -670,7 +670,7 @@ static int viommu_domain_finalise(struct viommu_endpoint *vdev,
 		dev_err(vdev->dev,
 			"granule 0x%lx larger than system page size 0x%lx\n",
 			viommu_page_size, PAGE_SIZE);
-		return -ENODEV;
+		return -EINVAL;
 	}
 
 	ret = ida_alloc_range(&viommu->domain_ids, viommu->first_domain,
@@ -697,7 +697,7 @@ static int viommu_domain_finalise(struct viommu_endpoint *vdev,
 		if (ret) {
 			ida_free(&viommu->domain_ids, vdomain->id);
 			vdomain->viommu = NULL;
-			return ret;
+			return -EOPNOTSUPP;
 		}
 	}
 
@@ -734,7 +734,8 @@ static int viommu_attach_dev(struct iommu_domain *domain, struct device *dev)
 		 */
 		ret = viommu_domain_finalise(vdev, domain);
 	} else if (vdomain->viommu != vdev->viommu) {
-		ret = -EINVAL;
+		dev_err(dev, "cannot attach to foreign vIOMMU\n");
+		ret = -EXDEV;
 	}
 	mutex_unlock(&vdomain->mutex);
 

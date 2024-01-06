@@ -17,6 +17,7 @@
 #include <linux/regmap.h>
 #include <linux/export.h>
 #include <linux/pm.h>
+#include <linux/pm_runtime.h>
 #include <sound/core.h>
 #include <sound/hdaudio.h>
 #include <sound/hda_regmap.h>
@@ -357,7 +358,7 @@ static const struct regmap_config hda_regmap_cfg = {
 	.writeable_reg = hda_writeable_reg,
 	.readable_reg = hda_readable_reg,
 	.volatile_reg = hda_volatile_reg,
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 	.reg_read = hda_reg_read,
 	.reg_write = hda_reg_write,
 	.use_single_read = true,
@@ -556,14 +557,17 @@ EXPORT_SYMBOL_GPL(snd_hdac_regmap_update_raw);
 static int reg_raw_update_once(struct hdac_device *codec, unsigned int reg,
 			       unsigned int mask, unsigned int val)
 {
-	int err = 0;
+	unsigned int orig;
+	int err;
 
 	if (!codec->regmap)
 		return reg_raw_update(codec, reg, mask, val);
 
 	mutex_lock(&codec->regmap_lock);
-	/* Discard any updates to already initialised registers. */
-	if (!regcache_reg_cached(codec->regmap, reg))
+	regcache_cache_only(codec->regmap, true);
+	err = regmap_read(codec->regmap, reg, &orig);
+	regcache_cache_only(codec->regmap, false);
+	if (err < 0)
 		err = regmap_update_bits(codec->regmap, reg, mask, val);
 	mutex_unlock(&codec->regmap_lock);
 	return err;

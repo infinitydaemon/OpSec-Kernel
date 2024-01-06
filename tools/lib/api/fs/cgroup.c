@@ -14,7 +14,7 @@ struct cgroupfs_cache_entry {
 };
 
 /* just cache last used one */
-static struct cgroupfs_cache_entry *cached;
+static struct cgroupfs_cache_entry cached;
 
 int cgroupfs_find_mountpoint(char *buf, size_t maxlen, const char *subsys)
 {
@@ -24,9 +24,9 @@ int cgroupfs_find_mountpoint(char *buf, size_t maxlen, const char *subsys)
 	char *p, *path;
 	char mountpoint[PATH_MAX];
 
-	if (cached && !strcmp(cached->subsys, subsys)) {
-		if (strlen(cached->mountpoint) < maxlen) {
-			strcpy(buf, cached->mountpoint);
+	if (!strcmp(cached.subsys, subsys)) {
+		if (strlen(cached.mountpoint) < maxlen) {
+			strcpy(buf, cached.mountpoint);
 			return 0;
 		}
 		return -1;
@@ -91,13 +91,8 @@ int cgroupfs_find_mountpoint(char *buf, size_t maxlen, const char *subsys)
 	free(line);
 	fclose(fp);
 
-	if (!cached)
-		cached = calloc(1, sizeof(*cached));
-
-	if (cached) {
-		strncpy(cached->subsys, subsys, sizeof(cached->subsys) - 1);
-		strcpy(cached->mountpoint, mountpoint);
-	}
+	strncpy(cached.subsys, subsys, sizeof(cached.subsys) - 1);
+	strcpy(cached.mountpoint, mountpoint);
 
 	if (mountpoint[0] && strlen(mountpoint) < maxlen) {
 		strcpy(buf, mountpoint);

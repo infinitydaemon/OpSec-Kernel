@@ -162,6 +162,8 @@ SEC("fentry/" SYS_PREFIX "sys_prctl")
 int test_user_ringbuf_protocol(void *ctx)
 {
 	long status = 0;
+	struct sample *sample = NULL;
+	struct bpf_dynptr ptr;
 
 	if (!is_test_process())
 		return 0;
@@ -181,6 +183,10 @@ int test_user_ringbuf_protocol(void *ctx)
 SEC("fentry/" SYS_PREFIX "sys_getpgid")
 int test_user_ringbuf(void *ctx)
 {
+	int status = 0;
+	struct sample *sample = NULL;
+	struct bpf_dynptr ptr;
+
 	if (!is_test_process())
 		return 0;
 
@@ -196,7 +202,7 @@ do_nothing_cb(struct bpf_dynptr *dynptr, void *context)
 	return 0;
 }
 
-SEC("fentry/" SYS_PREFIX "sys_prlimit64")
+SEC("fentry/" SYS_PREFIX "sys_getrlimit")
 int test_user_ringbuf_epoll(void *ctx)
 {
 	long num_samples;

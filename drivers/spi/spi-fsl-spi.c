@@ -88,7 +88,7 @@ static int fsl_spi_get_type(struct device *dev)
 
 static void fsl_spi_change_mode(struct spi_device *spi)
 {
-	struct mpc8xxx_spi *mspi = spi_controller_get_devdata(spi->controller);
+	struct mpc8xxx_spi *mspi = spi_master_get_devdata(spi->master);
 	struct spi_mpc8xxx_cs *cs = spi->controller_state;
 	struct fsl_spi_reg __iomem *reg_base = mspi->reg_base;
 	__be32 __iomem *mode = &reg_base->mode;
@@ -145,10 +145,10 @@ static void fsl_spi_grlib_set_shifts(u32 *rx_shift, u32 *tx_shift,
 	}
 }
 
-static void mspi_apply_cpu_mode_quirks(struct spi_mpc8xxx_cs *cs,
-				       struct spi_device *spi,
-				       struct mpc8xxx_spi *mpc8xxx_spi,
-				       int bits_per_word)
+static int mspi_apply_cpu_mode_quirks(struct spi_mpc8xxx_cs *cs,
+				struct spi_device *spi,
+				struct mpc8xxx_spi *mpc8xxx_spi,
+				int bits_per_word)
 {
 	cs->rx_shift = 0;
 	cs->tx_shift = 0;
@@ -161,7 +161,8 @@ static void mspi_apply_cpu_mode_quirks(struct spi_mpc8xxx_cs *cs,
 	} else if (bits_per_word <= 32) {
 		cs->get_rx = mpc8xxx_spi_rx_buf_u32;
 		cs->get_tx = mpc8xxx_spi_tx_buf_u32;
-	}
+	} else
+		return -EINVAL;
 
 	if (mpc8xxx_spi->set_shifts)
 		mpc8xxx_spi->set_shifts(&cs->rx_shift, &cs->tx_shift,
@@ -172,6 +173,8 @@ static void mspi_apply_cpu_mode_quirks(struct spi_mpc8xxx_cs *cs,
 	mpc8xxx_spi->tx_shift = cs->tx_shift;
 	mpc8xxx_spi->get_rx = cs->get_rx;
 	mpc8xxx_spi->get_tx = cs->get_tx;
+
+	return bits_per_word;
 }
 
 static int fsl_spi_setup_transfer(struct spi_device *spi,
@@ -183,7 +186,7 @@ static int fsl_spi_setup_transfer(struct spi_device *spi,
 	u32 hz = 0;
 	struct spi_mpc8xxx_cs	*cs = spi->controller_state;
 
-	mpc8xxx_spi = spi_controller_get_devdata(spi->controller);
+	mpc8xxx_spi = spi_master_get_devdata(spi->master);
 
 	if (t) {
 		bits_per_word = t->bits_per_word;
@@ -198,7 +201,12 @@ static int fsl_spi_setup_transfer(struct spi_device *spi,
 		hz = spi->max_speed_hz;
 
 	if (!(mpc8xxx_spi->flags & SPI_CPM_MODE))
-		mspi_apply_cpu_mode_quirks(cs, spi, mpc8xxx_spi, bits_per_word);
+		bits_per_word = mspi_apply_cpu_mode_quirks(cs, spi,
+							   mpc8xxx_spi,
+							   bits_per_word);
+
+	if (bits_per_word < 0)
+		return bits_per_word;
 
 	if (bits_per_word == 32)
 		bits_per_word = 0;
@@ -252,7 +260,7 @@ static int fsl_spi_cpu_bufs(struct mpc8xxx_spi *mspi,
 static int fsl_spi_bufs(struct spi_device *spi, struct spi_transfer *t,
 			    bool is_dma_mapped)
 {
-	struct mpc8xxx_spi *mpc8xxx_spi = spi_controller_get_devdata(spi->controller);
+	struct mpc8xxx_spi *mpc8xxx_spi = spi_master_get_devdata(spi->master);
 	struct fsl_spi_reg __iomem *reg_base;
 	unsigned int len = t->len;
 	u8 bits_per_word;
@@ -263,10 +271,18 @@ static int fsl_spi_bufs(struct spi_device *spi, struct spi_transfer *t,
 	if (t->bits_per_word)
 		bits_per_word = t->bits_per_word;
 
-	if (bits_per_word > 8)
+	if (bits_per_word > 8) {
+		/* invalid length? */
+		if (len & 1)
+			return -EINVAL;
 		len /= 2;
-	if (bits_per_word > 16)
+	}
+	if (bits_per_word > 16) {
+		/* invalid length? */
+		if (len & 1)
+			return -EINVAL;
 		len /= 2;
+	}
 
 	mpc8xxx_spi->tx = t->tx_buf;
 	mpc8xxx_spi->rx = t->rx_buf;
@@ -385,7 +401,7 @@ static int fsl_spi_setup(struct spi_device *spi)
 		spi_set_ctldata(spi, cs);
 		initial_setup = true;
 	}
-	mpc8xxx_spi = spi_controller_get_devdata(spi->controller);
+	mpc8xxx_spi = spi_master_get_devdata(spi->master);
 
 	reg_base = mpc8xxx_spi->reg_base;
 
@@ -479,10 +495,10 @@ static irqreturn_t fsl_spi_irq(s32 irq, void *context_data)
 
 static void fsl_spi_grlib_cs_control(struct spi_device *spi, bool on)
 {
-	struct mpc8xxx_spi *mpc8xxx_spi = spi_controller_get_devdata(spi->controller);
+	struct mpc8xxx_spi *mpc8xxx_spi = spi_master_get_devdata(spi->master);
 	struct fsl_spi_reg __iomem *reg_base = mpc8xxx_spi->reg_base;
 	u32 slvsel;
-	u16 cs = spi_get_chipselect(spi, 0);
+	u16 cs = spi->chip_select;
 
 	if (cs < mpc8xxx_spi->native_chipselects) {
 		slvsel = mpc8xxx_spi_read_reg(&reg_base->slvsel);
@@ -493,8 +509,8 @@ static void fsl_spi_grlib_cs_control(struct spi_device *spi, bool on)
 
 static void fsl_spi_grlib_probe(struct device *dev)
 {
-	struct spi_controller *host = dev_get_drvdata(dev);
-	struct mpc8xxx_spi *mpc8xxx_spi = spi_controller_get_devdata(host);
+	struct spi_master *master = dev_get_drvdata(dev);
+	struct mpc8xxx_spi *mpc8xxx_spi = spi_master_get_devdata(master);
 	struct fsl_spi_reg __iomem *reg_base = mpc8xxx_spi->reg_base;
 	int mbits;
 	u32 capabilities;
@@ -511,8 +527,8 @@ static void fsl_spi_grlib_probe(struct device *dev)
 		mpc8xxx_spi->native_chipselects = SPCAP_SSSZ(capabilities);
 		mpc8xxx_spi_write_reg(&reg_base->slvsel, 0xffffffff);
 	}
-	host->num_chipselect = mpc8xxx_spi->native_chipselects;
-	host->set_cs = fsl_spi_grlib_cs_control;
+	master->num_chipselect = mpc8xxx_spi->native_chipselects;
+	master->set_cs = fsl_spi_grlib_cs_control;
 }
 
 static void fsl_spi_cs_control(struct spi_device *spi, bool on)
@@ -526,35 +542,35 @@ static void fsl_spi_cs_control(struct spi_device *spi, bool on)
 	iowrite32be(on ? 0 : SPI_BOOT_SEL_BIT, pinfo->immr_spi_cs);
 }
 
-static struct spi_controller *fsl_spi_probe(struct device *dev,
+static struct spi_master *fsl_spi_probe(struct device *dev,
 		struct resource *mem, unsigned int irq)
 {
 	struct fsl_spi_platform_data *pdata = dev_get_platdata(dev);
-	struct spi_controller *host;
+	struct spi_master *master;
 	struct mpc8xxx_spi *mpc8xxx_spi;
 	struct fsl_spi_reg __iomem *reg_base;
 	u32 regval;
 	int ret = 0;
 
-	host = spi_alloc_host(dev, sizeof(struct mpc8xxx_spi));
-	if (host == NULL) {
+	master = spi_alloc_master(dev, sizeof(struct mpc8xxx_spi));
+	if (master == NULL) {
 		ret = -ENOMEM;
 		goto err;
 	}
 
-	dev_set_drvdata(dev, host);
+	dev_set_drvdata(dev, master);
 
 	mpc8xxx_spi_probe(dev, mem, irq);
 
-	host->setup = fsl_spi_setup;
-	host->cleanup = fsl_spi_cleanup;
-	host->prepare_message = fsl_spi_prepare_message;
-	host->transfer_one = fsl_spi_transfer_one;
-	host->unprepare_message = fsl_spi_unprepare_message;
-	host->use_gpio_descriptors = true;
-	host->set_cs = fsl_spi_cs_control;
+	master->setup = fsl_spi_setup;
+	master->cleanup = fsl_spi_cleanup;
+	master->prepare_message = fsl_spi_prepare_message;
+	master->transfer_one = fsl_spi_transfer_one;
+	master->unprepare_message = fsl_spi_unprepare_message;
+	master->use_gpio_descriptors = true;
+	master->set_cs = fsl_spi_cs_control;
 
-	mpc8xxx_spi = spi_controller_get_devdata(host);
+	mpc8xxx_spi = spi_master_get_devdata(master);
 	mpc8xxx_spi->max_bits_per_word = 32;
 	mpc8xxx_spi->type = fsl_spi_get_type(dev);
 
@@ -572,13 +588,13 @@ static struct spi_controller *fsl_spi_probe(struct device *dev,
 		fsl_spi_grlib_probe(dev);
 
 	if (mpc8xxx_spi->flags & SPI_CPM_MODE)
-		host->bits_per_word_mask =
+		master->bits_per_word_mask =
 			(SPI_BPW_RANGE_MASK(4, 8) | SPI_BPW_MASK(16) | SPI_BPW_MASK(32));
 	else
-		host->bits_per_word_mask =
+		master->bits_per_word_mask =
 			(SPI_BPW_RANGE_MASK(4, 16) | SPI_BPW_MASK(32));
 
-	host->bits_per_word_mask &=
+	master->bits_per_word_mask &=
 		SPI_BPW_RANGE_MASK(1, mpc8xxx_spi->max_bits_per_word);
 
 	if (mpc8xxx_spi->flags & SPI_QE_CPU_MODE)
@@ -615,19 +631,19 @@ static struct spi_controller *fsl_spi_probe(struct device *dev,
 
 	mpc8xxx_spi_write_reg(&reg_base->mode, regval);
 
-	ret = devm_spi_register_controller(dev, host);
+	ret = devm_spi_register_master(dev, master);
 	if (ret < 0)
 		goto err_probe;
 
 	dev_info(dev, "at 0x%p (irq = %d), %s mode\n", reg_base,
 		 mpc8xxx_spi->irq, mpc8xxx_spi_strmode(mpc8xxx_spi->flags));
 
-	return host;
+	return master;
 
 err_probe:
 	fsl_spi_cpm_free(mpc8xxx_spi);
 err_cpm_init:
-	spi_controller_put(host);
+	spi_master_put(master);
 err:
 	return ERR_PTR(ret);
 }
@@ -636,7 +652,7 @@ static int of_fsl_spi_probe(struct platform_device *ofdev)
 {
 	struct device *dev = &ofdev->dev;
 	struct device_node *np = ofdev->dev.of_node;
-	struct spi_controller *host;
+	struct spi_master *master;
 	struct resource mem;
 	int irq, type;
 	int ret;
@@ -689,9 +705,9 @@ static int of_fsl_spi_probe(struct platform_device *ofdev)
 		goto unmap_out;
 	}
 
-	host = fsl_spi_probe(dev, &mem, irq);
+	master = fsl_spi_probe(dev, &mem, irq);
 
-	return PTR_ERR_OR_ZERO(host);
+	return PTR_ERR_OR_ZERO(master);
 
 unmap_out:
 #if IS_ENABLED(CONFIG_FSL_SOC)
@@ -701,12 +717,13 @@ unmap_out:
 	return ret;
 }
 
-static void of_fsl_spi_remove(struct platform_device *ofdev)
+static int of_fsl_spi_remove(struct platform_device *ofdev)
 {
-	struct spi_controller *host = platform_get_drvdata(ofdev);
-	struct mpc8xxx_spi *mpc8xxx_spi = spi_controller_get_devdata(host);
+	struct spi_master *master = platform_get_drvdata(ofdev);
+	struct mpc8xxx_spi *mpc8xxx_spi = spi_master_get_devdata(master);
 
 	fsl_spi_cpm_free(mpc8xxx_spi);
+	return 0;
 }
 
 static struct platform_driver of_fsl_spi_driver = {
@@ -715,7 +732,7 @@ static struct platform_driver of_fsl_spi_driver = {
 		.of_match_table = of_fsl_spi_match,
 	},
 	.probe		= of_fsl_spi_probe,
-	.remove_new	= of_fsl_spi_remove,
+	.remove		= of_fsl_spi_remove,
 };
 
 #ifdef CONFIG_MPC832x_RDB
@@ -730,7 +747,7 @@ static int plat_mpc8xxx_spi_probe(struct platform_device *pdev)
 {
 	struct resource *mem;
 	int irq;
-	struct spi_controller *host;
+	struct spi_master *master;
 
 	if (!dev_get_platdata(&pdev->dev))
 		return -EINVAL;
@@ -740,25 +757,27 @@ static int plat_mpc8xxx_spi_probe(struct platform_device *pdev)
 		return -EINVAL;
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
-		return irq;
+	if (irq <= 0)
+		return -EINVAL;
 
-	host = fsl_spi_probe(&pdev->dev, mem, irq);
-	return PTR_ERR_OR_ZERO(host);
+	master = fsl_spi_probe(&pdev->dev, mem, irq);
+	return PTR_ERR_OR_ZERO(master);
 }
 
-static void plat_mpc8xxx_spi_remove(struct platform_device *pdev)
+static int plat_mpc8xxx_spi_remove(struct platform_device *pdev)
 {
-	struct spi_controller *host = platform_get_drvdata(pdev);
-	struct mpc8xxx_spi *mpc8xxx_spi = spi_controller_get_devdata(host);
+	struct spi_master *master = platform_get_drvdata(pdev);
+	struct mpc8xxx_spi *mpc8xxx_spi = spi_master_get_devdata(master);
 
 	fsl_spi_cpm_free(mpc8xxx_spi);
+
+	return 0;
 }
 
 MODULE_ALIAS("platform:mpc8xxx_spi");
 static struct platform_driver mpc8xxx_spi_driver = {
 	.probe = plat_mpc8xxx_spi_probe,
-	.remove_new = plat_mpc8xxx_spi_remove,
+	.remove = plat_mpc8xxx_spi_remove,
 	.driver = {
 		.name = "mpc8xxx_spi",
 	},

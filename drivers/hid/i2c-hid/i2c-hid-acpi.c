@@ -40,6 +40,11 @@ static const struct acpi_device_id i2c_hid_acpi_blacklist[] = {
 	 * ICN8505 controller, has a _CID of PNP0C50 but is not HID compatible.
 	 */
 	{ "CHPN0001" },
+	/*
+	 * The IDEA5002 ACPI device causes high interrupt usage and spurious
+	 * wakeups from suspend.
+	 */
+	{ "IDEA5002" },
 	{ }
 };
 
@@ -48,9 +53,8 @@ static guid_t i2c_hid_guid =
 	GUID_INIT(0x3CDFF6F7, 0x4267, 0x4555,
 		  0xAD, 0x05, 0xB3, 0x0A, 0x3D, 0x89, 0x38, 0xDE);
 
-static int i2c_hid_acpi_get_descriptor(struct i2c_hid_acpi *ihid_acpi)
+static int i2c_hid_acpi_get_descriptor(struct acpi_device *adev)
 {
-	struct acpi_device *adev = ihid_acpi->adev;
 	acpi_handle handle = acpi_device_handle(adev);
 	union acpi_object *obj;
 	u16 hid_descriptor_address;
@@ -82,22 +86,34 @@ static int i2c_hid_acpi_probe(struct i2c_client *client)
 {
 	struct device *dev = &client->dev;
 	struct i2c_hid_acpi *ihid_acpi;
+	struct acpi_device *adev;
 	u16 hid_descriptor_address;
 	int ret;
+
+	adev = ACPI_COMPANION(dev);
+	if (!adev) {
+		dev_err(&client->dev, "Error could not get ACPI device\n");
+		return -ENODEV;
+	}
 
 	ihid_acpi = devm_kzalloc(&client->dev, sizeof(*ihid_acpi), GFP_KERNEL);
 	if (!ihid_acpi)
 		return -ENOMEM;
 
-	ihid_acpi->adev = ACPI_COMPANION(dev);
+	ihid_acpi->adev = adev;
 	ihid_acpi->ops.shutdown_tail = i2c_hid_acpi_shutdown_tail;
 
-	ret = i2c_hid_acpi_get_descriptor(ihid_acpi);
+	ret = i2c_hid_acpi_get_descriptor(adev);
 	if (ret < 0)
 		return ret;
 	hid_descriptor_address = ret;
 
-	acpi_device_fix_up_power(ihid_acpi->adev);
+	acpi_device_fix_up_power(adev);
+
+	if (acpi_gbl_FADT.flags & ACPI_FADT_LOW_POWER_S0) {
+		device_set_wakeup_capable(dev, true);
+		device_set_wakeup_enable(dev, false);
+	}
 
 	return i2c_hid_core_probe(client, &ihid_acpi->ops,
 				  hid_descriptor_address, 0);
@@ -118,7 +134,7 @@ static struct i2c_driver i2c_hid_acpi_driver = {
 		.acpi_match_table = i2c_hid_acpi_match,
 	},
 
-	.probe		= i2c_hid_acpi_probe,
+	.probe_new	= i2c_hid_acpi_probe,
 	.remove		= i2c_hid_core_remove,
 	.shutdown	= i2c_hid_core_shutdown,
 };
