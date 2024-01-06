@@ -110,9 +110,6 @@ int mmc_regulator_set_ocr(struct mmc_host *mmc,
 	int			result = 0;
 	int			min_uV, max_uV;
 
-	if (IS_ERR(supply))
-		return 0;
-
 	if (vdd_bit) {
 		mmc_ocrbitnum_to_vdd(vdd_bit, &min_uV, &max_uV);
 

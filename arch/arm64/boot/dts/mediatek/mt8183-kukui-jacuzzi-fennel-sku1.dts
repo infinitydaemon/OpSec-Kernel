@@ -13,7 +13,7 @@
 
 	pwmleds {
 		compatible = "pwm-leds";
-		keyboard_backlight: led-0 {
+		keyboard_backlight: keyboard-backlight {
 			label = "cros_ec::kbd_backlight";
 			pwms = <&cros_ec_pwm 0>;
 			max-brightness = <1023>;

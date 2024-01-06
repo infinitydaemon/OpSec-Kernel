@@ -14,6 +14,7 @@
 
 struct dp_power_private {
 	struct dp_parser *parser;
+	struct platform_device *pdev;
 	struct device *dev;
 	struct drm_device *drm_dev;
 	struct clk *link_clk_src;
@@ -27,23 +28,32 @@ static int dp_power_clk_init(struct dp_power_private *power)
 {
 	int rc = 0;
 	struct dss_module_power *core, *ctrl, *stream;
-	struct device *dev = power->dev;
+	struct device *dev = &power->pdev->dev;
 
 	core = &power->parser->mp[DP_CORE_PM];
 	ctrl = &power->parser->mp[DP_CTRL_PM];
 	stream = &power->parser->mp[DP_STREAM_PM];
 
 	rc = devm_clk_bulk_get(dev, core->num_clk, core->clocks);
-	if (rc)
+	if (rc) {
+		DRM_ERROR("failed to get %s clk. err=%d\n",
+			dp_parser_pm_name(DP_CORE_PM), rc);
 		return rc;
+	}
 
 	rc = devm_clk_bulk_get(dev, ctrl->num_clk, ctrl->clocks);
-	if (rc)
+	if (rc) {
+		DRM_ERROR("failed to get %s clk. err=%d\n",
+			dp_parser_pm_name(DP_CTRL_PM), rc);
 		return -ENODEV;
+	}
 
 	rc = devm_clk_bulk_get(dev, stream->num_clk, stream->clocks);
-	if (rc)
+	if (rc) {
+		DRM_ERROR("failed to get %s clk. err=%d\n",
+			dp_parser_pm_name(DP_CTRL_PM), rc);
 		return -ENODEV;
+	}
 
 	return 0;
 }
@@ -111,9 +121,11 @@ int dp_power_clk_enable(struct dp_power *dp_power,
 			mp = &power->parser->mp[DP_CORE_PM];
 
 			rc = clk_bulk_prepare_enable(mp->num_clk, mp->clocks);
-			if (rc)
+			if (rc) {
+				DRM_ERROR("fail to enable clks: %s. err=%d\n",
+					dp_parser_pm_name(DP_CORE_PM), rc);
 				return rc;
-
+			}
 			dp_power->core_clks_on = true;
 		}
 	}
@@ -121,8 +133,10 @@ int dp_power_clk_enable(struct dp_power *dp_power,
 	mp = &power->parser->mp[pm_type];
 	if (enable) {
 		rc = clk_bulk_prepare_enable(mp->num_clk, mp->clocks);
-		if (rc)
+		if (rc) {
+			DRM_ERROR("failed to enable clks, err: %d\n", rc);
 			return rc;
+		}
 	} else {
 		clk_bulk_disable_unprepare(mp->num_clk, mp->clocks);
 	}
@@ -148,37 +162,63 @@ int dp_power_clk_enable(struct dp_power *dp_power,
 
 int dp_power_client_init(struct dp_power *dp_power)
 {
+	int rc = 0;
 	struct dp_power_private *power;
+
+	if (!dp_power) {
+		DRM_ERROR("invalid power data\n");
+		return -EINVAL;
+	}
 
 	power = container_of(dp_power, struct dp_power_private, dp_power);
 
-	pm_runtime_enable(power->dev);
+	pm_runtime_enable(&power->pdev->dev);
 
-	return dp_power_clk_init(power);
+	rc = dp_power_clk_init(power);
+	if (rc)
+		DRM_ERROR("failed to init clocks %d\n", rc);
+
+	return rc;
 }
 
 void dp_power_client_deinit(struct dp_power *dp_power)
 {
 	struct dp_power_private *power;
 
+	if (!dp_power) {
+		DRM_ERROR("invalid power data\n");
+		return;
+	}
+
 	power = container_of(dp_power, struct dp_power_private, dp_power);
 
-	pm_runtime_disable(power->dev);
+	pm_runtime_disable(&power->pdev->dev);
 }
 
-int dp_power_init(struct dp_power *dp_power)
+int dp_power_init(struct dp_power *dp_power, bool flip)
 {
 	int rc = 0;
 	struct dp_power_private *power = NULL;
 
+	if (!dp_power) {
+		DRM_ERROR("invalid power data\n");
+		return -EINVAL;
+	}
+
 	power = container_of(dp_power, struct dp_power_private, dp_power);
 
-	pm_runtime_get_sync(power->dev);
+	pm_runtime_get_sync(&power->pdev->dev);
 
 	rc = dp_power_clk_enable(dp_power, DP_CORE_PM, true);
-	if (rc)
-		pm_runtime_put_sync(power->dev);
+	if (rc) {
+		DRM_ERROR("failed to enable DP core clocks, %d\n", rc);
+		goto exit;
+	}
 
+	return 0;
+
+exit:
+	pm_runtime_put_sync(&power->pdev->dev);
 	return rc;
 }
 
@@ -189,7 +229,7 @@ int dp_power_deinit(struct dp_power *dp_power)
 	power = container_of(dp_power, struct dp_power_private, dp_power);
 
 	dp_power_clk_enable(dp_power, DP_CORE_PM, false);
-	pm_runtime_put_sync(power->dev);
+	pm_runtime_put_sync(&power->pdev->dev);
 	return 0;
 }
 
@@ -198,11 +238,17 @@ struct dp_power *dp_power_get(struct device *dev, struct dp_parser *parser)
 	struct dp_power_private *power;
 	struct dp_power *dp_power;
 
-	power = devm_kzalloc(dev, sizeof(*power), GFP_KERNEL);
+	if (!parser) {
+		DRM_ERROR("invalid input\n");
+		return ERR_PTR(-EINVAL);
+	}
+
+	power = devm_kzalloc(&parser->pdev->dev, sizeof(*power), GFP_KERNEL);
 	if (!power)
 		return ERR_PTR(-ENOMEM);
 
 	power->parser = parser;
+	power->pdev = parser->pdev;
 	power->dev = dev;
 
 	dp_power = &power->dp_power;

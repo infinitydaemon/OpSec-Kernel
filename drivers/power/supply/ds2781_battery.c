@@ -456,7 +456,7 @@ static ssize_t ds2781_get_pmod_enabled(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	return sysfs_emit(buf, "%d\n",
+	return sprintf(buf, "%d\n",
 		 !!(control_reg & DS2781_CONTROL_PMOD));
 }
 
@@ -509,7 +509,7 @@ static ssize_t ds2781_get_sense_resistor_value(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	ret = sysfs_emit(buf, "%d\n", sense_resistor);
+	ret = sprintf(buf, "%d\n", sense_resistor);
 	return ret;
 }
 
@@ -547,7 +547,7 @@ static ssize_t ds2781_get_rsgain_setting(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	return sysfs_emit(buf, "%d\n", rsgain);
+	return sprintf(buf, "%d\n", rsgain);
 }
 
 static ssize_t ds2781_set_rsgain_setting(struct device *dev,
@@ -590,7 +590,7 @@ static ssize_t ds2781_get_pio_pin(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	ret = sysfs_emit(buf, "%d\n", sfr & DS2781_SFR_PIOSC);
+	ret = sprintf(buf, "%d\n", sfr & DS2781_SFR_PIOSC);
 	return ret;
 }
 

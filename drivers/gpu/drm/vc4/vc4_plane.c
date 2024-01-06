@@ -673,7 +673,7 @@ static u32 __vc4_lbm_size(struct drm_plane_state *state)
 static unsigned int vc4_lbm_words_per_component(const struct drm_plane_state *state,
 						unsigned int channel)
 {
-	const struct vc4_plane_state *vc4_state = to_vc4_plane_state(state);
+	struct vc4_plane_state *vc4_state = to_vc4_plane_state(state);
 
 	switch (vc4_state->y_scaling[channel]) {
 	case VC4_SCALING_PPF:
@@ -691,7 +691,7 @@ static unsigned int vc4_lbm_components(const struct drm_plane_state *state,
 				       unsigned int channel)
 {
 	const struct drm_format_info *info = state->fb->format;
-	const struct vc4_plane_state *vc4_state = to_vc4_plane_state(state);
+	struct vc4_plane_state *vc4_state = to_vc4_plane_state(state);
 
 	if (vc4_state->y_scaling[channel] == VC4_SCALING_NONE)
 		return 0;
@@ -709,7 +709,7 @@ static unsigned int vc4_lbm_channel_size(const struct drm_plane_state *state,
 					 unsigned int channel)
 {
 	const struct drm_format_info *info = state->fb->format;
-	const struct vc4_plane_state *vc4_state = to_vc4_plane_state(state);
+	struct vc4_plane_state *vc4_state = to_vc4_plane_state(state);
 	unsigned int channels_scaled = 0;
 	unsigned int components, words, wpc;
 	unsigned int width, lines;
@@ -780,7 +780,7 @@ u32 vc4_lbm_size(struct drm_plane_state *state)
 static size_t vc6_upm_size(const struct drm_plane_state *state,
 			   unsigned int plane)
 {
-	const struct vc4_plane_state *vc4_state = to_vc4_plane_state(state);
+	struct vc4_plane_state *vc4_state = to_vc4_plane_state(state);
 	unsigned int stride = state->fb->pitches[plane];
 
 	/*
@@ -2055,7 +2055,8 @@ out:
 
 u32 vc4_plane_dlist_size(const struct drm_plane_state *state)
 {
-	const struct vc4_plane_state *vc4_state = to_vc4_plane_state(state);
+	const struct vc4_plane_state *vc4_state =
+		container_of(state, typeof(*vc4_state), base);
 
 	return vc4_state->dlist_count;
 }
@@ -2224,9 +2225,6 @@ static int vc4_prepare_fb(struct drm_plane *plane,
 
 	drm_gem_plane_helper_prepare_fb(plane, state);
 
-	if (plane->state->fb == state->fb)
-		return 0;
-
 	return vc4_bo_inc_usecnt(bo);
 }
 
@@ -2235,7 +2233,7 @@ static void vc4_cleanup_fb(struct drm_plane *plane,
 {
 	struct vc4_bo *bo;
 
-	if (plane->state->fb == state->fb || !state->fb)
+	if (!state->fb)
 		return;
 
 	bo = to_vc4_bo(&drm_fb_dma_get_gem_obj(state->fb, 0)->base);

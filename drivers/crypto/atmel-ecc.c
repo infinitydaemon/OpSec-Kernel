@@ -3,7 +3,7 @@
  * Microchip / Atmel ECC (I2C) driver.
  *
  * Copyright (c) 2017, Microchip Technology Inc.
- * Author: Tudor Ambarus
+ * Author: Tudor Ambarus <tudor.ambarus@microchip.com>
  */
 
 #include <linux/delay.h>
@@ -14,7 +14,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
 #include <linux/workqueue.h>
@@ -311,12 +311,13 @@ static struct kpp_alg atmel_ecdh_nist_p256 = {
 	},
 };
 
-static int atmel_ecc_probe(struct i2c_client *client)
+static int atmel_ecc_probe(struct i2c_client *client,
+			   const struct i2c_device_id *id)
 {
 	struct atmel_i2c_client_priv *i2c_priv;
 	int ret;
 
-	ret = atmel_i2c_probe(client);
+	ret = atmel_i2c_probe(client, id);
 	if (ret)
 		return ret;
 
@@ -410,6 +411,6 @@ static void __exit atmel_ecc_exit(void)
 module_init(atmel_ecc_init);
 module_exit(atmel_ecc_exit);
 
-MODULE_AUTHOR("Tudor Ambarus");
+MODULE_AUTHOR("Tudor Ambarus <tudor.ambarus@microchip.com>");
 MODULE_DESCRIPTION("Microchip / Atmel ECC (I2C) driver");
 MODULE_LICENSE("GPL v2");

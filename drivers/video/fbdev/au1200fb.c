@@ -1568,7 +1568,7 @@ static int au1200fb_init_fbinfo(struct au1200fb_device *fbdev)
 	fbi->fix.mmio_len = 0;
 	fbi->fix.accel = FB_ACCEL_NONE;
 
-	fbi->screen_buffer = fbdev->fb_mem;
+	fbi->screen_base = (char __iomem *) fbdev->fb_mem;
 
 	au1200fb_update_fbinfo(fbi);
 
@@ -1719,6 +1719,15 @@ static int au1200fb_drv_probe(struct platform_device *dev)
 		}
 
 		au1200fb_fb_set_par(fbi);
+
+#if !defined(CONFIG_FRAMEBUFFER_CONSOLE) && defined(CONFIG_LOGO)
+		if (plane == 0)
+			if (fb_prepare_logo(fbi, FB_ROTATE_UR)) {
+				/* Start display and show logo on boot */
+				fb_set_cmap(&fbi->cmap, fbi);
+				fb_show_logo(fbi, FB_ROTATE_UR);
+			}
+#endif
 	}
 
 	/* Now hook interrupt too */
@@ -1759,7 +1768,7 @@ failed:
 	return ret;
 }
 
-static void au1200fb_drv_remove(struct platform_device *dev)
+static int au1200fb_drv_remove(struct platform_device *dev)
 {
 	struct au1200fb_platdata *pd = platform_get_drvdata(dev);
 	struct fb_info *fbi;
@@ -1782,6 +1791,8 @@ static void au1200fb_drv_remove(struct platform_device *dev)
 	}
 
 	free_irq(platform_get_irq(dev, 0), (void *)dev);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -1832,7 +1843,7 @@ static struct platform_driver au1200fb_driver = {
 		.pm	= AU1200FB_PMOPS,
 	},
 	.probe		= au1200fb_drv_probe,
-	.remove_new	= au1200fb_drv_remove,
+	.remove		= au1200fb_drv_remove,
 };
 module_platform_driver(au1200fb_driver);
 

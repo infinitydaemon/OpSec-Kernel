@@ -38,7 +38,6 @@
 #include <linux/of_irq.h>
 #include <linux/of_net.h>
 #include <linux/of_mdio.h>
-#include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 
@@ -2940,9 +2939,9 @@ static int emac_init_config(struct emac_instance *dev)
 	}
 
 	/* Fixup some feature bits based on the device tree */
-	if (of_property_read_bool(np, "has-inverted-stacr-oc"))
+	if (of_get_property(np, "has-inverted-stacr-oc", NULL))
 		dev->features |= EMAC_FTR_STACR_OC_INVERT;
-	if (of_property_read_bool(np, "has-new-stacr-staopc"))
+	if (of_get_property(np, "has-new-stacr-staopc", NULL))
 		dev->features |= EMAC_FTR_HAS_NEW_STACR;
 
 	/* CAB lacks the appropriate properties */
@@ -3043,7 +3042,7 @@ static int emac_probe(struct platform_device *ofdev)
 	 * property here for now, but new flat device trees should set a
 	 * status property to "disabled" instead.
 	 */
-	if (of_property_read_bool(np, "unused") || !of_device_is_available(np))
+	if (of_get_property(np, "unused", NULL) || !of_device_is_available(np))
 		return -ENODEV;
 
 	/* Find ourselves in the bootlist if we are there */
@@ -3253,7 +3252,7 @@ static int emac_probe(struct platform_device *ofdev)
 	return err;
 }
 
-static void emac_remove(struct platform_device *ofdev)
+static int emac_remove(struct platform_device *ofdev)
 {
 	struct emac_instance *dev = platform_get_drvdata(ofdev);
 
@@ -3290,6 +3289,8 @@ static void emac_remove(struct platform_device *ofdev)
 		irq_dispose_mapping(dev->emac_irq);
 
 	free_netdev(dev->ndev);
+
+	return 0;
 }
 
 /* XXX Features in here should be replaced by properties... */
@@ -3317,7 +3318,7 @@ static struct platform_driver emac_driver = {
 		.of_match_table = emac_match,
 	},
 	.probe = emac_probe,
-	.remove_new = emac_remove,
+	.remove = emac_remove,
 };
 
 static void __init emac_make_bootlist(void)
@@ -3332,7 +3333,7 @@ static void __init emac_make_bootlist(void)
 
 		if (of_match_node(emac_match, np) == NULL)
 			continue;
-		if (of_property_read_bool(np, "unused"))
+		if (of_get_property(np, "unused", NULL))
 			continue;
 		idx = of_get_property(np, "cell-index", NULL);
 		if (idx == NULL)

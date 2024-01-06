@@ -742,7 +742,7 @@ void ipoib_flush_paths(struct net_device *dev)
 
 static void path_rec_completion(int status,
 				struct sa_path_rec *pathrec,
-				unsigned int num_prs, void *path_ptr)
+				int num_prs, void *path_ptr)
 {
 	struct ipoib_path *path = path_ptr;
 	struct net_device *dev = path->dev;
@@ -2005,7 +2005,8 @@ static void ipoib_ndo_uninit(struct net_device *dev)
 		priv->wq = NULL;
 	}
 
-	dev_put(priv->parent);
+	if (priv->parent)
+		dev_put(priv->parent);
 }
 
 static int ipoib_set_vf_link_state(struct net_device *dev, int vf, int link_state)

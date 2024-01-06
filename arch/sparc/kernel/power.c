@@ -9,8 +9,7 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/reboot.h>
-#include <linux/of.h>
-#include <linux/platform_device.h>
+#include <linux/of_device.h>
 
 #include <asm/prom.h>
 #include <asm/io.h>
@@ -29,7 +28,7 @@ static int has_button_interrupt(unsigned int irq, struct device_node *dp)
 {
 	if (irq == 0xffffffff)
 		return 0;
-	if (!of_property_read_bool(dp, "button"))
+	if (!of_find_property(dp, "button", NULL))
 		return 0;
 
 	return 1;

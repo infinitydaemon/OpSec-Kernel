@@ -183,7 +183,6 @@ void coprocessor_flush_release_all(struct thread_info *ti)
 void arch_cpu_idle(void)
 {
 	platform_idle();
-	raw_local_irq_disable();
 }
 
 /*

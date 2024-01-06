@@ -8,7 +8,7 @@
 #include <linux/component.h>
 #include <linux/debugfs.h>
 #include <linux/module.h>
-#include <linux/of.h>
+#include <linux/of_gpio.h>
 #include <linux/platform_device.h>
 
 #include <drm/drm_atomic_helper.h>
@@ -567,9 +567,10 @@ static int sti_dvo_probe(struct platform_device *pdev)
 	return component_add(&pdev->dev, &sti_dvo_ops);
 }
 
-static void sti_dvo_remove(struct platform_device *pdev)
+static int sti_dvo_remove(struct platform_device *pdev)
 {
 	component_del(&pdev->dev, &sti_dvo_ops);
+	return 0;
 }
 
 static const struct of_device_id dvo_of_match[] = {
@@ -585,7 +586,7 @@ struct platform_driver sti_dvo_driver = {
 		.of_match_table = dvo_of_match,
 	},
 	.probe = sti_dvo_probe,
-	.remove_new = sti_dvo_remove,
+	.remove = sti_dvo_remove,
 };
 
 MODULE_AUTHOR("Benjamin Gaignard <benjamin.gaignard@st.com>");

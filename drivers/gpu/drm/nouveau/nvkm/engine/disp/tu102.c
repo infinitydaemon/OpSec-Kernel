@@ -25,7 +25,6 @@
 #include "ior.h"
 
 #include <core/gpuobj.h>
-#include <subdev/gsp.h>
 #include <subdev/timer.h>
 
 #include <nvif/class.h>
@@ -89,8 +88,10 @@ tu102_sor = {
 	.state = gv100_sor_state,
 	.power = nv50_sor_power,
 	.clock = gf119_sor_clock,
-	.bl = &gt215_sor_bl,
-	.hdmi = &gv100_sor_hdmi,
+	.hdmi = {
+		.ctrl = gv100_sor_hdmi_ctrl,
+		.scdc = gm200_sor_hdmi_scdc,
+	},
 	.dp = &tu102_sor_dp,
 	.hda = &gv100_sor_hda,
 };
@@ -234,8 +235,5 @@ int
 tu102_disp_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
 	       struct nvkm_disp **pdisp)
 {
-	if (nvkm_gsp_rm(device->gsp))
-		return r535_disp_new(&tu102_disp, device, type, inst, pdisp);
-
 	return nvkm_disp_new_(&tu102_disp, device, type, inst, pdisp);
 }

@@ -42,8 +42,6 @@
 #include <linux/list.h>
 #include <linux/rcupdate.h>
 
-#include <drm/ttm/ttm_bo.h>
-
 /**
  * enum ttm_object_type
  *
@@ -308,13 +306,5 @@ extern int ttm_prime_handle_to_fd(struct ttm_object_file *tfile,
 
 #define ttm_prime_object_kfree(__obj, __prime)		\
 	kfree_rcu(__obj, __prime.base.rhead)
-
-static inline int ttm_bo_wait(struct ttm_buffer_object *bo, bool intr,
-			      bool no_wait)
-{
-	struct ttm_operation_ctx ctx = { intr, no_wait };
-
-	return ttm_bo_wait_ctx(bo, &ctx);
-}
 
 #endif

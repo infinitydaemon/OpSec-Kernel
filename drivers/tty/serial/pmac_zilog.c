@@ -246,9 +246,9 @@ static bool pmz_receive_chars(struct uart_pmac_port *uap)
 #endif /* USE_CTRL_O_SYSRQ */
 		if (uap->port.sysrq) {
 			int swallow;
-			uart_port_unlock(&uap->port);
+			spin_unlock(&uap->port.lock);
 			swallow = uart_handle_sysrq_char(&uap->port, ch);
-			uart_port_lock(&uap->port);
+			spin_lock(&uap->port.lock);
 			if (swallow)
 				goto next_char;
 		}
@@ -410,7 +410,8 @@ static void pmz_transmit_chars(struct uart_pmac_port *uap)
 	write_zsdata(uap, xmit->buf[xmit->tail]);
 	zssync(uap);
 
-	uart_xmit_advance(&uap->port, 1);
+	xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+	uap->port.icount.tx++;
 
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&uap->port);
@@ -435,7 +436,7 @@ static irqreturn_t pmz_interrupt(int irq, void *dev_id)
 	uap_a = pmz_get_port_A(uap);
 	uap_b = uap_a->mate;
 
-	uart_port_lock(&uap_a->port);
+	spin_lock(&uap_a->port.lock);
 	r3 = read_zsreg(uap_a, R3);
 
 	/* Channel A */
@@ -456,14 +457,14 @@ static irqreturn_t pmz_interrupt(int irq, void *dev_id)
 		rc = IRQ_HANDLED;
 	}
  skip_a:
-	uart_port_unlock(&uap_a->port);
+	spin_unlock(&uap_a->port.lock);
 	if (push)
 		tty_flip_buffer_push(&uap->port.state->port);
 
 	if (!uap_b)
 		goto out;
 
-	uart_port_lock(&uap_b->port);
+	spin_lock(&uap_b->port.lock);
 	push = false;
 	if (r3 & (CHBEXT | CHBTxIP | CHBRxIP)) {
 		if (!ZS_IS_OPEN(uap_b)) {
@@ -481,7 +482,7 @@ static irqreturn_t pmz_interrupt(int irq, void *dev_id)
 		rc = IRQ_HANDLED;
 	}
  skip_b:
-	uart_port_unlock(&uap_b->port);
+	spin_unlock(&uap_b->port.lock);
 	if (push)
 		tty_flip_buffer_push(&uap->port.state->port);
 
@@ -497,9 +498,9 @@ static inline u8 pmz_peek_status(struct uart_pmac_port *uap)
 	unsigned long flags;
 	u8 status;
 	
-	uart_port_lock_irqsave(&uap->port, &flags);
+	spin_lock_irqsave(&uap->port.lock, flags);
 	status = read_zsreg(uap, R0);
-	uart_port_unlock_irqrestore(&uap->port, flags);
+	spin_unlock_irqrestore(&uap->port.lock, flags);
 
 	return status;
 }
@@ -626,7 +627,8 @@ static void pmz_start_tx(struct uart_port *port)
 			return;
 		write_zsdata(uap, xmit->buf[xmit->tail]);
 		zssync(uap);
-		uart_xmit_advance(port, 1);
+		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+		port->icount.tx++;
 
 		if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 			uart_write_wakeup(&uap->port);
@@ -685,7 +687,7 @@ static void pmz_break_ctl(struct uart_port *port, int break_state)
 	else
 		clear_bits |= SND_BRK;
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	new_reg = (uap->curregs[R5] | set_bits) & ~clear_bits;
 	if (new_reg != uap->curregs[R5]) {
@@ -693,7 +695,7 @@ static void pmz_break_ctl(struct uart_port *port, int break_state)
 		write_zsreg(uap, R5, uap->curregs[R5]);
 	}
 
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 }
 
 #ifdef CONFIG_PPC_PMAC
@@ -865,18 +867,18 @@ static void pmz_irda_reset(struct uart_pmac_port *uap)
 {
 	unsigned long flags;
 
-	uart_port_lock_irqsave(&uap->port, &flags);
+	spin_lock_irqsave(&uap->port.lock, flags);
 	uap->curregs[R5] |= DTR;
 	write_zsreg(uap, R5, uap->curregs[R5]);
 	zssync(uap);
-	uart_port_unlock_irqrestore(&uap->port, flags);
+	spin_unlock_irqrestore(&uap->port.lock, flags);
 	msleep(110);
 
-	uart_port_lock_irqsave(&uap->port, &flags);
+	spin_lock_irqsave(&uap->port.lock, flags);
 	uap->curregs[R5] &= ~DTR;
 	write_zsreg(uap, R5, uap->curregs[R5]);
 	zssync(uap);
-	uart_port_unlock_irqrestore(&uap->port, flags);
+	spin_unlock_irqrestore(&uap->port.lock, flags);
 	msleep(10);
 }
 
@@ -896,9 +898,9 @@ static int pmz_startup(struct uart_port *port)
 	 * initialize the chip
 	 */
 	if (!ZS_IS_CONS(uap)) {
-		uart_port_lock_irqsave(port, &flags);
+		spin_lock_irqsave(&port->lock, flags);
 		pwr_delay = __pmz_startup(uap);
-		uart_port_unlock_irqrestore(port, flags);
+		spin_unlock_irqrestore(&port->lock, flags);
 	}	
 	sprintf(uap->irq_name, PMACZILOG_NAME"%d", uap->port.line);
 	if (request_irq(uap->port.irq, pmz_interrupt, IRQF_SHARED,
@@ -921,9 +923,9 @@ static int pmz_startup(struct uart_port *port)
 		pmz_irda_reset(uap);
 
 	/* Enable interrupt requests for the channel */
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 	pmz_interrupt_control(uap, 1);
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 	return 0;
 }
@@ -933,7 +935,7 @@ static void pmz_shutdown(struct uart_port *port)
 	struct uart_pmac_port *uap = to_pmz(port);
 	unsigned long flags;
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	/* Disable interrupt requests for the channel */
 	pmz_interrupt_control(uap, 0);
@@ -948,19 +950,19 @@ static void pmz_shutdown(struct uart_port *port)
 		pmz_maybe_update_regs(uap);
 	}
 
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 	/* Release interrupt handler */
 	free_irq(uap->port.irq, uap);
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	uap->flags &= ~PMACZILOG_FLAG_IS_OPEN;
 
 	if (!ZS_IS_CONS(uap))
 		pmz_set_scc_power(uap, 0);	/* Shut the chip down */
 
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 }
 
 /* Shared by TTY driver and serial console setup.  The port lock is held
@@ -1247,7 +1249,7 @@ static void pmz_set_termios(struct uart_port *port, struct ktermios *termios,
 	struct uart_pmac_port *uap = to_pmz(port);
 	unsigned long flags;
 
-	uart_port_lock_irqsave(port, &flags);	
+	spin_lock_irqsave(&port->lock, flags);	
 
 	/* Disable IRQs on the port */
 	pmz_interrupt_control(uap, 0);
@@ -1259,7 +1261,7 @@ static void pmz_set_termios(struct uart_port *port, struct ktermios *termios,
 	if (ZS_IS_OPEN(uap))
 		pmz_interrupt_control(uap, 1);
 
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 }
 
 static const char *pmz_type(struct uart_port *port)
@@ -1896,7 +1898,7 @@ static void pmz_console_write(struct console *con, const char *s, unsigned int c
 	struct uart_pmac_port *uap = &pmz_ports[con->index];
 	unsigned long flags;
 
-	uart_port_lock_irqsave(&uap->port, &flags);
+	spin_lock_irqsave(&uap->port.lock, flags);
 
 	/* Turn of interrupts and enable the transmitter. */
 	write_zsreg(uap, R1, uap->curregs[1] & ~TxINT_ENAB);
@@ -1908,7 +1910,7 @@ static void pmz_console_write(struct console *con, const char *s, unsigned int c
 	write_zsreg(uap, R1, uap->curregs[1]);
 	/* Don't disable the transmitter. */
 
-	uart_port_unlock_irqrestore(&uap->port, flags);
+	spin_unlock_irqrestore(&uap->port.lock, flags);
 }
 
 /*

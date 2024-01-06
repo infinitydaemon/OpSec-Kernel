@@ -11,7 +11,6 @@
 #include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/module.h>
-#include <linux/of.h>
 #include <linux/reset.h>
 #include <linux/slab.h>
 

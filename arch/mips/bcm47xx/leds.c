@@ -223,11 +223,6 @@ bcm47xx_leds_dlink_dir330[] __initconst = {
 /* Huawei */
 
 static const struct gpio_led
-bcm47xx_leds_huawei_b593u_12[] __initconst = {
-	BCM47XX_GPIO_LED(5, "blue", "wlan", 0, LEDS_GPIO_DEFSTATE_OFF),
-};
-
-static const struct gpio_led
 bcm47xx_leds_huawei_e970[] __initconst = {
 	BCM47XX_GPIO_LED(0, "unk", "wlan", 0, LEDS_GPIO_DEFSTATE_OFF),
 };
@@ -677,9 +672,6 @@ void __init bcm47xx_leds_register(void)
 		bcm47xx_set_pdata(bcm47xx_leds_dlink_dir330);
 		break;
 
-	case BCM47XX_BOARD_HUAWEI_B593U_12:
-		bcm47xx_set_pdata(bcm47xx_leds_huawei_b593u_12);
-		break;
 	case BCM47XX_BOARD_HUAWEI_E970:
 		bcm47xx_set_pdata(bcm47xx_leds_huawei_e970);
 		break;

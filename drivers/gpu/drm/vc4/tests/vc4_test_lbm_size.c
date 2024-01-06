@@ -273,7 +273,7 @@ static struct kunit_case vc4_lbm_size_tests[] = {
 
 static int vc4_lbm_size_test_init(struct kunit *test)
 {
-	struct drm_modeset_acquire_ctx *ctx;
+	struct drm_atomic_state *state;
 	struct vc4_lbm_size_priv *priv;
 	struct drm_device *drm;
 	struct vc4_dev *vc4;
@@ -289,19 +289,38 @@ static int vc4_lbm_size_test_init(struct kunit *test)
 	priv->file = drm_file_alloc(priv->vc4->base.primary);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, priv->file);
 
-	ctx = drm_kunit_helper_acquire_ctx_alloc(test);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, ctx);
+	drm_modeset_acquire_init(&priv->ctx, 0);
 
 	drm = &vc4->base;
-	priv->state = drm_kunit_helper_atomic_state_alloc(test, drm, ctx);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, priv->state);
+	state = drm_atomic_state_alloc(drm);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+
+	state->acquire_ctx = &priv->ctx;
+
+	priv->state = state;
 
 	return 0;
+}
+
+static void vc4_lbm_size_test_exit(struct kunit *test)
+{
+	struct vc4_lbm_size_priv *priv = test->priv;
+	struct vc4_dev *vc4 = priv->vc4;
+	struct drm_device *drm = &vc4->base;
+	struct drm_atomic_state *state = priv->state;
+
+	drm_atomic_state_put(state);
+	drm_modeset_drop_locks(&priv->ctx);
+	drm_modeset_acquire_fini(&priv->ctx);
+	drm_file_free(priv->file);
+	drm_dev_unregister(drm);
+	drm_kunit_helper_free_device(test, vc4->dev);
 }
 
 static struct kunit_suite vc4_lbm_size_test_suite = {
 	.name = "vc4-lbm-size",
 	.init = vc4_lbm_size_test_init,
+	.exit = vc4_lbm_size_test_exit,
 	.test_cases = vc4_lbm_size_tests,
 };
 

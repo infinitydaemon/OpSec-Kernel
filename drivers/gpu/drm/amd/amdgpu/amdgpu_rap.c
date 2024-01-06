@@ -116,6 +116,7 @@ static const struct file_operations amdgpu_rap_debugfs_ops = {
 
 void amdgpu_rap_debugfs_init(struct amdgpu_device *adev)
 {
+#if defined(CONFIG_DEBUG_FS)
 	struct drm_minor *minor = adev_to_drm(adev)->primary;
 
 	if (!adev->psp.rap_context.context.initialized)
@@ -123,4 +124,5 @@ void amdgpu_rap_debugfs_init(struct amdgpu_device *adev)
 
 	debugfs_create_file("rap_test", S_IWUSR, minor->debugfs_root,
 				adev, &amdgpu_rap_debugfs_ops);
+#endif
 }

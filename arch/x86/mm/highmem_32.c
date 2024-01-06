@@ -3,7 +3,6 @@
 #include <linux/export.h>
 #include <linux/swap.h> /* for totalram_pages */
 #include <linux/memblock.h>
-#include <asm/numa.h>
 
 void __init set_highmem_pages_init(void)
 {

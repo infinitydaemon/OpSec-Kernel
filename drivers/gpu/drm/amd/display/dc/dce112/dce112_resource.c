@@ -44,7 +44,7 @@
 #include "dce/dce_clock_source.h"
 
 #include "dce/dce_hwseq.h"
-#include "dce112/dce112_hwseq.h"
+#include "dce112/dce112_hw_sequencer.h"
 #include "dce/dce_abm.h"
 #include "dce/dce_dmcu.h"
 #include "dce/dce_aux.h"
@@ -427,10 +427,6 @@ static const struct dc_plane_cap plane_cap = {
 	},
 	64,
 	64
-};
-
-static const struct dc_debug_options debug_defaults = {
-		.enable_legacy_fast_update = true,
 };
 
 #define CTX  ctx
@@ -873,7 +869,7 @@ static enum dc_status build_mapped_resource(
 		struct dc_state *context,
 		struct dc_stream_state *stream)
 {
-	struct pipe_ctx *pipe_ctx = resource_get_otg_master_for_stream(&context->res_ctx, stream);
+	struct pipe_ctx *pipe_ctx = resource_get_head_pipe_for_stream(&context->res_ctx, stream);
 
 	if (!pipe_ctx)
 		return DC_ERROR_UNEXPECTED;
@@ -964,7 +960,7 @@ enum dc_status resource_map_phy_clock_resources(
 {
 
 	/* acquire new resources */
-	struct pipe_ctx *pipe_ctx = resource_get_otg_master_for_stream(
+	struct pipe_ctx *pipe_ctx = resource_get_head_pipe_for_stream(
 			&context->res_ctx, stream);
 
 	if (!pipe_ctx)
@@ -1245,7 +1241,6 @@ static bool dce112_resource_construct(
 	dc->caps.min_horizontal_blanking_period = 80;
 	dc->caps.dual_link_dvi = true;
 	dc->caps.extended_aux_timeout_support = false;
-	dc->debug = debug_defaults;
 
 	/*************************************************
 	 *  Create resources                             *

@@ -7,7 +7,6 @@
 
 #include <linux/atomic.h>
 #include <linux/io-pgtable.h>
-#include <linux/pm.h>
 #include <linux/regulator/consumer.h>
 #include <linux/spinlock.h>
 #include <drm/drm_device.h>
@@ -23,7 +22,7 @@ struct panfrost_job;
 struct panfrost_perfcnt;
 
 #define NUM_JOB_SLOTS 3
-#define MAX_PM_DOMAINS 5
+#define MAX_PM_DOMAINS 3
 
 struct panfrost_features {
 	u16 id;
@@ -107,7 +106,6 @@ struct panfrost_device {
 	struct list_head scheduled_jobs;
 
 	struct panfrost_perfcnt *perfcnt;
-	atomic_t profile_mode;
 
 	struct mutex sched_lock;
 
@@ -119,14 +117,9 @@ struct panfrost_device {
 
 	struct mutex shrinker_lock;
 	struct list_head shrinker_list;
-	struct shrinker *shrinker;
+	struct shrinker shrinker;
 
 	struct panfrost_devfreq pfdevfreq;
-
-	struct {
-		atomic_t use_count;
-		spinlock_t lock;
-	} cycle_counter;
 };
 
 struct panfrost_mmu {
@@ -141,19 +134,12 @@ struct panfrost_mmu {
 	struct list_head list;
 };
 
-struct panfrost_engine_usage {
-	unsigned long long elapsed_ns[NUM_JOB_SLOTS];
-	unsigned long long cycles[NUM_JOB_SLOTS];
-};
-
 struct panfrost_file_priv {
 	struct panfrost_device *pfdev;
 
 	struct drm_sched_entity sched_entity[NUM_JOB_SLOTS];
 
 	struct panfrost_mmu *mmu;
-
-	struct panfrost_engine_usage engine_usage;
 };
 
 static inline struct panfrost_device *to_panfrost_device(struct drm_device *ddev)
@@ -186,7 +172,8 @@ int panfrost_device_init(struct panfrost_device *pfdev);
 void panfrost_device_fini(struct panfrost_device *pfdev);
 void panfrost_device_reset(struct panfrost_device *pfdev);
 
-extern const struct dev_pm_ops panfrost_pm_ops;
+int panfrost_device_resume(struct device *dev);
+int panfrost_device_suspend(struct device *dev);
 
 enum drm_panfrost_exception_type {
 	DRM_PANFROST_EXCEPTION_OK = 0x00,

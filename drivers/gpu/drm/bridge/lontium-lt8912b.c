@@ -700,7 +700,8 @@ static int lt8912_put_dt(struct lt8912 *lt)
 	return 0;
 }
 
-static int lt8912_probe(struct i2c_client *client)
+static int lt8912_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	static struct lt8912 *lt;
 	int ret = 0;

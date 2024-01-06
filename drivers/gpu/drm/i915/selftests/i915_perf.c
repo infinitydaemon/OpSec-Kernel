@@ -28,7 +28,7 @@ alloc_empty_config(struct i915_perf *perf)
 	oa_config->perf = perf;
 	kref_init(&oa_config->ref);
 
-	strscpy(oa_config->uuid, TEST_OA_CONFIG_UUID, sizeof(oa_config->uuid));
+	strlcpy(oa_config->uuid, TEST_OA_CONFIG_UUID, sizeof(oa_config->uuid));
 
 	mutex_lock(&perf->metrics_lock);
 
@@ -102,12 +102,6 @@ test_stream(struct i915_perf *perf)
 		I915_OA_FORMAT_A32u40_A4u32_B8_C8 : I915_OA_FORMAT_C4_B8,
 	};
 	struct i915_perf_stream *stream;
-	struct intel_gt *gt;
-
-	if (!props.engine)
-		return NULL;
-
-	gt = props.engine->gt;
 
 	if (!oa_config)
 		return NULL;
@@ -122,12 +116,12 @@ test_stream(struct i915_perf *perf)
 
 	stream->perf = perf;
 
-	mutex_lock(&gt->perf.lock);
+	mutex_lock(&perf->lock);
 	if (i915_oa_stream_init(stream, &param, &props)) {
 		kfree(stream);
 		stream =  NULL;
 	}
-	mutex_unlock(&gt->perf.lock);
+	mutex_unlock(&perf->lock);
 
 	i915_oa_config_put(oa_config);
 
@@ -136,11 +130,11 @@ test_stream(struct i915_perf *perf)
 
 static void stream_destroy(struct i915_perf_stream *stream)
 {
-	struct intel_gt *gt = stream->engine->gt;
+	struct i915_perf *perf = stream->perf;
 
-	mutex_lock(&gt->perf.lock);
+	mutex_lock(&perf->lock);
 	i915_perf_destroy_locked(stream);
-	mutex_unlock(&gt->perf.lock);
+	mutex_unlock(&perf->lock);
 }
 
 static int live_sanitycheck(void *arg)
@@ -168,7 +162,7 @@ static int write_timestamp(struct i915_request *rq, int slot)
 		return PTR_ERR(cs);
 
 	len = 5;
-	if (GRAPHICS_VER(rq->i915) >= 8)
+	if (GRAPHICS_VER(rq->engine->i915) >= 8)
 		len++;
 
 	*cs++ = GFX_OP_PIPE_CONTROL(len);

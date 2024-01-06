@@ -999,7 +999,7 @@ nv10_gr_chan = {
 	} while (0)
 
 int
-nv10_gr_chan_new(struct nvkm_gr *base, struct nvkm_chan *fifoch,
+nv10_gr_chan_new(struct nvkm_gr *base, struct nvkm_fifo_chan *fifoch,
 		 const struct nvkm_oclass *oclass, struct nvkm_object **pobject)
 {
 	struct nv10_gr *gr = nv10_gr(base);
@@ -1011,7 +1011,7 @@ nv10_gr_chan_new(struct nvkm_gr *base, struct nvkm_chan *fifoch,
 		return -ENOMEM;
 	nvkm_object_ctor(&nv10_gr_chan, oclass, &chan->object);
 	chan->gr = gr;
-	chan->chid = fifoch->id;
+	chan->chid = fifoch->chid;
 	*pobject = &chan->object;
 
 	NV_WRITE_CTX(0x00400e88, 0x08000000);

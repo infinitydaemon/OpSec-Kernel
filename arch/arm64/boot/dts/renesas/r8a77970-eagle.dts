@@ -287,9 +287,6 @@
 };
 
 &pfc {
-	pinctrl-0 = <&scif_clk_pins>;
-	pinctrl-names = "default";
-
 	avb_pins: avb0 {
 		groups = "avb0_mdio", "avb0_rgmii", "avb0_txcrefclk";
 		function = "avb0";
@@ -318,11 +315,6 @@
 	scif0_pins: scif0 {
 		groups = "scif0_data";
 		function = "scif0";
-	};
-
-	scif_clk_pins: scif_clk {
-		groups = "scif_clk_b";
-		function = "scif_clk";
 	};
 };
 
@@ -398,8 +390,4 @@
 	pinctrl-names = "default";
 
 	status = "okay";
-};
-
-&scif_clk {
-	clock-frequency = <14745600>;
 };

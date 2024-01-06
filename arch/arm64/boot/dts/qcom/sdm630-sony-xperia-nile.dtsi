@@ -57,7 +57,7 @@
 		regulator-boot-on;
 	};
 
-	cam_vdig_imx300_219_vreg: cam-vdig-imx300-219-regulator {
+	cam_vdig_imx300_219_vreg: cam_vdig_imx300_219_vreg {
 		compatible = "regulator-fixed";
 		regulator-name = "cam_vdig_imx300_219_vreg";
 		startup-delay-us = <0>;
@@ -67,7 +67,7 @@
 		pinctrl-0 = <&cam_vdig_default>;
 	};
 
-	cam_vana_front_vreg: cam-vana-front-regulator {
+	cam_vana_front_vreg: cam_vana_front_vreg {
 		compatible = "regulator-fixed";
 		regulator-name = "cam_vana_front_vreg";
 		startup-delay-us = <0>;
@@ -77,7 +77,7 @@
 		pinctrl-0 = <&imx219_vana_default>;
 	};
 
-	cam_vana_rear_vreg: cam-vana-rear-regulator {
+	cam_vana_rear_vreg: cam_vana_rear_vreg {
 		compatible = "regulator-fixed";
 		regulator-name = "cam_vana_rear_vreg";
 		startup-delay-us = <0>;
@@ -112,7 +112,7 @@
 			gpios = <&pm660l_gpios 7 GPIO_ACTIVE_LOW>;
 			linux,input-type = <1>;
 			linux,code = <KEY_VOLUMEDOWN>;
-			wakeup-source;
+			gpio-key,wakeup;
 			debounce-interval = <15>;
 		};
 	};
@@ -133,13 +133,13 @@
 			status = "okay";
 		};
 
-		debug@ffb00000 {
+		debug_region@ffb00000 {
 			reg = <0x00 0xffb00000 0x00 0x100000>;
 			no-map;
 		};
 
-		cont_splash_mem: splash@9d400000 {
-			reg = <0 0x9d400000 0 (1920 * 1080 * 4)>;
+		removed_region@85800000 {
+			reg = <0x00 0x85800000 0x00 0x3700000>;
 			no-map;
 		};
 	};
@@ -150,12 +150,12 @@
 	 */
 	extcon_usb: extcon-usb {
 		compatible = "linux,extcon-usb-gpio";
-		id-gpios = <&tlmm 58 GPIO_ACTIVE_HIGH>;
+		id-gpio = <&tlmm 58 GPIO_ACTIVE_HIGH>;
 	};
 };
 
 &adsp_pil {
-	firmware-name = "qcom/sdm630/Sony/nile/adsp.mdt";
+	firmware-name = "adsp.mdt";
 };
 
 &blsp_i2c1 {
@@ -251,10 +251,6 @@
 	linux,code = <KEY_VOLUMEUP>;
 };
 
-&qhee_code {
-	reg = <0x00 0x85800000 0x00 0x3700000>;
-};
-
 &qusb2phy0 {
 	status = "okay";
 
@@ -264,7 +260,7 @@
 };
 
 &rpm_requests {
-	regulators-0 {
+	pm660l-regulators {
 		compatible = "qcom,rpm-pm660l-regulators";
 
 		vdd_s1-supply = <&vph_pwr>;
@@ -398,7 +394,7 @@
 		};
 	};
 
-	regulators-1 {
+	pm660-regulators {
 		compatible = "qcom,rpm-pm660-regulators";
 
 		vdd_s1-supply = <&vph_pwr>;
@@ -581,18 +577,16 @@
 };
 
 &sdc2_state_on {
-	sd-cd-pins {
+	sd-cd {
 		pins = "gpio54";
-		function = "gpio";
 		bias-pull-up;
 		drive-strength = <2>;
 	};
 };
 
 &sdc2_state_off {
-	sd-cd-pins {
+	sd-cd {
 		pins = "gpio54";
-		function = "gpio";
 		bias-disable;
 		drive-strength = <2>;
 	};
@@ -621,35 +615,33 @@
 &tlmm {
 	gpio-reserved-ranges = <8 4>;
 
-	ts_int_active: ts-int-active-state {
+	ts_int_active: ts-int-active {
 		pins = "gpio45";
-		function = "gpio";
 		drive-strength = <8>;
 		bias-pull-up;
 	};
 
-	ts_lcd_id_active: ts-lcd-id-active-state {
+	ts_lcd_id_active: ts-lcd-id-active {
 		pins = "gpio56";
-		function = "gpio";
 		drive-strength = <8>;
 		bias-disable;
 	};
 
-	imx300_vana_default: imx300-vana-default-state {
+	imx300_vana_default: imx300-vana-default {
 		pins = "gpio50";
 		function = "gpio";
 		bias-disable;
 		drive-strength = <2>;
 	};
 
-	imx219_vana_default: imx219-vana-default-state {
+	imx219_vana_default: imx219-vana-default {
 		pins = "gpio51";
 		function = "gpio";
 		bias-disable;
 		drive-strength = <2>;
 	};
 
-	cam_vdig_default: cam-vdig-default-state {
+	cam_vdig_default: cam-vdig-default {
 		pins = "gpio52";
 		function = "gpio";
 		bias-disable;

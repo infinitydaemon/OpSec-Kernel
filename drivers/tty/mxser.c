@@ -288,7 +288,7 @@ struct mxser_board {
 	enum mxser_must_hwid must_hwid;
 	speed_t max_baud;
 
-	struct mxser_port ports[] __counted_by(nports);
+	struct mxser_port ports[];
 };
 
 static DECLARE_BITMAP(mxser_boards, MXSER_BOARDS);
@@ -458,14 +458,13 @@ static void __mxser_stop_tx(struct mxser_port *info)
 	outb(info->IER, info->ioaddr + UART_IER);
 }
 
-static bool mxser_carrier_raised(struct tty_port *port)
+static int mxser_carrier_raised(struct tty_port *port)
 {
 	struct mxser_port *mp = container_of(port, struct mxser_port, port);
-
-	return inb(mp->ioaddr + UART_MSR) & UART_MSR_DCD;
+	return (inb(mp->ioaddr + UART_MSR) & UART_MSR_DCD)?1:0;
 }
 
-static void mxser_dtr_rts(struct tty_port *port, bool active)
+static void mxser_dtr_rts(struct tty_port *port, int on)
 {
 	struct mxser_port *mp = container_of(port, struct mxser_port, port);
 	unsigned long flags;
@@ -473,7 +472,7 @@ static void mxser_dtr_rts(struct tty_port *port, bool active)
 
 	spin_lock_irqsave(&mp->slock, flags);
 	mcr = inb(mp->ioaddr + UART_MCR);
-	if (active)
+	if (on)
 		mcr |= UART_MCR_DTR | UART_MCR_RTS;
 	else
 		mcr &= ~(UART_MCR_DTR | UART_MCR_RTS);
@@ -553,7 +552,7 @@ static void mxser_handle_cts(struct tty_struct *tty, struct mxser_port *info,
 
 	if (tty->hw_stopped) {
 		if (cts) {
-			tty->hw_stopped = false;
+			tty->hw_stopped = 0;
 
 			if (!mxser_16550A_or_MUST(info))
 				__mxser_start_tx(info);
@@ -563,7 +562,7 @@ static void mxser_handle_cts(struct tty_struct *tty, struct mxser_port *info,
 	} else if (cts)
 		return;
 
-	tty->hw_stopped = true;
+	tty->hw_stopped = 1;
 	if (!mxser_16550A_or_MUST(info))
 		__mxser_stop_tx(info);
 }
@@ -901,7 +900,7 @@ static void mxser_close(struct tty_struct *tty, struct file *filp)
 	tty_port_close(tty->port, tty, filp);
 }
 
-static ssize_t mxser_write(struct tty_struct *tty, const u8 *buf, size_t count)
+static int mxser_write(struct tty_struct *tty, const unsigned char *buf, int count)
 {
 	struct mxser_port *info = tty->driver_data;
 	unsigned long flags;
@@ -920,7 +919,7 @@ static ssize_t mxser_write(struct tty_struct *tty, const u8 *buf, size_t count)
 	return written;
 }
 
-static int mxser_put_char(struct tty_struct *tty, u8 ch)
+static int mxser_put_char(struct tty_struct *tty, unsigned char ch)
 {
 	struct mxser_port *info = tty->driver_data;
 	unsigned long flags;
@@ -1064,7 +1063,7 @@ static int mxser_set_serial_info(struct tty_struct *tty,
 	} else {
 		retval = mxser_activate(port, tty);
 		if (retval == 0)
-			tty_port_set_initialized(port, true);
+			tty_port_set_initialized(port, 1);
 	}
 	mutex_unlock(&port->mutex);
 	return retval;
@@ -1361,7 +1360,7 @@ static void mxser_set_termios(struct tty_struct *tty,
 	spin_unlock_irqrestore(&info->slock, flags);
 
 	if ((old_termios->c_cflag & CRTSCTS) && !C_CRTSCTS(tty)) {
-		tty->hw_stopped = false;
+		tty->hw_stopped = 0;
 		mxser_start(tty);
 	}
 

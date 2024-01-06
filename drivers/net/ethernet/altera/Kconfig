@@ -2,12 +2,9 @@
 config ALTERA_TSE
 	tristate "Altera Triple-Speed Ethernet MAC support"
 	depends on HAS_DMA
-	depends on HAS_IOMEM
 	select PHYLIB
 	select PHYLINK
-	select PCS_LYNX
-	select MDIO_REGMAP
-	select REGMAP_MMIO
+	select PCS_ALTERA_TSE
 	help
 	  This driver supports the Altera Triple-Speed (TSE) Ethernet MAC.
 

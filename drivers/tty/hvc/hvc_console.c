@@ -264,8 +264,8 @@ static void hvc_port_destruct(struct tty_port *port)
 
 static void hvc_check_console(int index)
 {
-	/* Already registered, bail out */
-	if (console_is_registered(&hvc_console))
+	/* Already enabled, bail out */
+	if (hvc_console.flags & CON_ENABLED)
 		return;
 
  	/* If this index is what the user requested, then register
@@ -376,7 +376,7 @@ static int hvc_open(struct tty_struct *tty, struct file * filp)
 		/* We are ready... raise DTR/RTS */
 		if (C_BAUD(tty))
 			if (hp->ops->dtr_rts)
-				hp->ops->dtr_rts(hp, true);
+				hp->ops->dtr_rts(hp, 1);
 		tty_port_set_initialized(&hp->port, true);
 	}
 
@@ -406,7 +406,7 @@ static void hvc_close(struct tty_struct *tty, struct file * filp)
 
 		if (C_HUPCL(tty))
 			if (hp->ops->dtr_rts)
-				hp->ops->dtr_rts(hp, false);
+				hp->ops->dtr_rts(hp, 0);
 
 		if (hp->ops->notifier_del)
 			hp->ops->notifier_del(hp, hp->data);
@@ -496,11 +496,11 @@ static int hvc_push(struct hvc_struct *hp)
 	return n;
 }
 
-static ssize_t hvc_write(struct tty_struct *tty, const u8 *buf, size_t count)
+static int hvc_write(struct tty_struct *tty, const unsigned char *buf, int count)
 {
 	struct hvc_struct *hp = tty->driver_data;
 	unsigned long flags;
-	size_t rsize, written = 0;
+	int rsize, written = 0;
 
 	/* This write was probably executed during a tty close. */
 	if (!hp)

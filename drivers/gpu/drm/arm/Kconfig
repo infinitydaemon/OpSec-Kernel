@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
 menu "ARM devices"
-	depends on DRM
 
 config DRM_HDLCD
 	tristate "ARM HDLCD"

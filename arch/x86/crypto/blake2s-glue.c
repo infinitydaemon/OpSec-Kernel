@@ -8,6 +8,7 @@
 #include <linux/types.h>
 #include <linux/jump_label.h>
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/sizes.h>
 
 #include <asm/cpufeature.h>
@@ -71,4 +72,6 @@ static int __init blake2s_mod_init(void)
 	return 0;
 }
 
-subsys_initcall(blake2s_mod_init);
+module_init(blake2s_mod_init);
+
+MODULE_LICENSE("GPL v2");

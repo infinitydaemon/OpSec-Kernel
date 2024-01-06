@@ -1,1 +1,1 @@
-#include "arm/broadcom/bcm2710-rpi-zero-2-w.dts"
+#include "../../../../arm/boot/dts/bcm2710-rpi-zero-2-w.dts"

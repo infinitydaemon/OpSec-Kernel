@@ -1106,8 +1106,9 @@ struct ipw_fw_error {	 /* XXX */
 	u32 config;
 	u32 elem_len;
 	u32 log_len;
+	struct ipw_error_elem *elem;
 	struct ipw_event *log;
-	struct ipw_error_elem elem[];
+	u8 payload[];
 } __packed;
 
 #ifdef CONFIG_IPW2200_PROMISCUOUS

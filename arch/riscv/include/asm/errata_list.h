@@ -6,15 +6,7 @@
 #define ASM_ERRATA_LIST_H
 
 #include <asm/alternative.h>
-#include <asm/csr.h>
-#include <asm/insn-def.h>
-#include <asm/hwcap.h>
 #include <asm/vendorid_list.h>
-
-#ifdef CONFIG_ERRATA_ANDES
-#define ERRATA_ANDESTECH_NO_IOCP	0
-#define ERRATA_ANDESTECH_NUMBER		1
-#endif
 
 #ifdef CONFIG_ERRATA_SIFIVE
 #define	ERRATA_SIFIVE_CIP_453 0
@@ -25,9 +17,12 @@
 #ifdef CONFIG_ERRATA_THEAD
 #define	ERRATA_THEAD_PBMT 0
 #define	ERRATA_THEAD_CMO 1
-#define	ERRATA_THEAD_PMU 2
-#define	ERRATA_THEAD_NUMBER 3
+#define	ERRATA_THEAD_NUMBER 2
 #endif
+
+#define	CPUFEATURE_SVPBMT 0
+#define	CPUFEATURE_ZICBOM 1
+#define	CPUFEATURE_NUMBER 2
 
 #ifdef __ASSEMBLY__
 
@@ -58,7 +53,7 @@ asm(ALTERNATIVE("sfence.vma %0", "sfence.vma", SIFIVE_VENDOR_ID,	\
 #define ALT_SVPBMT(_val, prot)						\
 asm(ALTERNATIVE_2("li %0, 0\t\nnop",					\
 		  "li %0, %1\t\nslli %0,%0,%3", 0,			\
-			RISCV_ISA_EXT_SVPBMT, CONFIG_RISCV_ISA_SVPBMT,	\
+			CPUFEATURE_SVPBMT, CONFIG_RISCV_ISA_SVPBMT,	\
 		  "li %0, %2\t\nslli %0,%0,%4", THEAD_VENDOR_ID,	\
 			ERRATA_THEAD_PBMT, CONFIG_ERRATA_THEAD_PBMT)	\
 		: "=r"(_val)						\
@@ -95,31 +90,31 @@ asm volatile(ALTERNATIVE(						\
 #endif
 
 /*
- * th.dcache.ipa rs1 (invalidate, physical address)
+ * dcache.ipa rs1 (invalidate, physical address)
  * | 31 - 25 | 24 - 20 | 19 - 15 | 14 - 12 | 11 - 7 | 6 - 0 |
  *   0000001    01010      rs1       000      00000  0001011
- * th.dache.iva rs1 (invalida, virtual address)
+ * dache.iva rs1 (invalida, virtual address)
  *   0000001    00110      rs1       000      00000  0001011
  *
- * th.dcache.cpa rs1 (clean, physical address)
+ * dcache.cpa rs1 (clean, physical address)
  * | 31 - 25 | 24 - 20 | 19 - 15 | 14 - 12 | 11 - 7 | 6 - 0 |
  *   0000001    01001      rs1       000      00000  0001011
- * th.dcache.cva rs1 (clean, virtual address)
+ * dcache.cva rs1 (clean, virtual address)
  *   0000001    00101      rs1       000      00000  0001011
  *
- * th.dcache.cipa rs1 (clean then invalidate, physical address)
+ * dcache.cipa rs1 (clean then invalidate, physical address)
  * | 31 - 25 | 24 - 20 | 19 - 15 | 14 - 12 | 11 - 7 | 6 - 0 |
  *   0000001    01011      rs1       000      00000  0001011
- * th.dcache.civa rs1 (... virtual address)
+ * dcache.civa rs1 (... virtual address)
  *   0000001    00111      rs1       000      00000  0001011
  *
- * th.sync.s (make sure all cache operations finished)
+ * sync.s (make sure all cache operations finished)
  * | 31 - 25 | 24 - 20 | 19 - 15 | 14 - 12 | 11 - 7 | 6 - 0 |
  *   0000000    11001     00000      000      00000  0001011
  */
-#define THEAD_INVAL_A0	".long 0x0265000b"
-#define THEAD_CLEAN_A0	".long 0x0255000b"
-#define THEAD_FLUSH_A0	".long 0x0275000b"
+#define THEAD_inval_A0	".long 0x0265000b"
+#define THEAD_clean_A0	".long 0x0255000b"
+#define THEAD_flush_A0	".long 0x0275000b"
 #define THEAD_SYNC_S	".long 0x0190000b"
 
 #define ALT_CMO_OP(_op, _start, _size, _cachesize)			\
@@ -128,11 +123,11 @@ asm volatile(ALTERNATIVE_2(						\
 	"mv a0, %1\n\t"							\
 	"j 2f\n\t"							\
 	"3:\n\t"							\
-	CBO_##_op(a0)							\
+	"cbo." __stringify(_op) " (a0)\n\t"				\
 	"add a0, a0, %0\n\t"						\
 	"2:\n\t"							\
 	"bltu a0, %2, 3b\n\t"						\
-	"nop", 0, RISCV_ISA_EXT_ZICBOM, CONFIG_RISCV_ISA_ZICBOM,	\
+	"nop", 0, CPUFEATURE_ZICBOM, CONFIG_RISCV_ISA_ZICBOM,		\
 	"mv a0, %1\n\t"							\
 	"j 2f\n\t"							\
 	"3:\n\t"							\
@@ -146,18 +141,6 @@ asm volatile(ALTERNATIVE_2(						\
 	    "r"((unsigned long)(_start) & ~((_cachesize) - 1UL)),	\
 	    "r"((unsigned long)(_start) + (_size))			\
 	: "a0")
-
-#define THEAD_C9XX_RV_IRQ_PMU			17
-#define THEAD_C9XX_CSR_SCOUNTEROF		0x5c5
-
-#define ALT_SBI_PMU_OVERFLOW(__ovl)					\
-asm volatile(ALTERNATIVE(						\
-	"csrr %0, " __stringify(CSR_SSCOUNTOVF),			\
-	"csrr %0, " __stringify(THEAD_C9XX_CSR_SCOUNTEROF),		\
-		THEAD_VENDOR_ID, ERRATA_THEAD_PMU,			\
-		CONFIG_ERRATA_THEAD_PMU)				\
-	: "=r" (__ovl) :						\
-	: "memory")
 
 #endif /* __ASSEMBLY__ */
 

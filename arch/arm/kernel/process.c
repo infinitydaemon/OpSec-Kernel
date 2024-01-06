@@ -78,6 +78,7 @@ void arch_cpu_idle(void)
 		arm_pm_idle();
 	else
 		cpu_do_idle();
+	raw_local_irq_enable();
 }
 
 void arch_cpu_idle_prepare(void)
@@ -222,6 +223,7 @@ void flush_thread(void)
 
 	flush_ptrace_hw_breakpoint(tsk);
 
+	memset(thread->used_cp, 0, sizeof(thread->used_cp));
 	memset(&tsk->thread.debug, 0, sizeof(struct debug_info));
 	memset(&thread->fpstate, 0, sizeof(union fp_state));
 
@@ -314,7 +316,7 @@ static int __init gate_vma_init(void)
 	gate_vma.vm_page_prot = PAGE_READONLY_EXEC;
 	gate_vma.vm_start = 0xffff0000;
 	gate_vma.vm_end	= 0xffff0000 + PAGE_SIZE;
-	vm_flags_init(&gate_vma, VM_READ | VM_EXEC | VM_MAYREAD | VM_MAYEXEC);
+	gate_vma.vm_flags = VM_READ | VM_EXEC | VM_MAYREAD | VM_MAYEXEC;
 	return 0;
 }
 arch_initcall(gate_vma_init);
@@ -369,7 +371,7 @@ static unsigned long sigpage_addr(const struct mm_struct *mm,
 
 	slots = ((last - first) >> PAGE_SHIFT) + 1;
 
-	offset = get_random_u32_below(slots);
+	offset = prandom_u32_max(slots);
 
 	addr = first + (offset << PAGE_SHIFT);
 

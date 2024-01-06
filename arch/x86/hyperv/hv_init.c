@@ -7,8 +7,6 @@
  * Author : K. Y. Srinivasan <kys@microsoft.com>
  */
 
-#define pr_fmt(fmt)  "Hyper-V: " fmt
-
 #include <linux/efi.h>
 #include <linux/types.h>
 #include <linux/bitfield.h>
@@ -22,7 +20,6 @@
 #include <asm/hyperv-tlfs.h>
 #include <asm/mshyperv.h>
 #include <asm/idtentry.h>
-#include <asm/set_memory.h>
 #include <linux/kexec.h>
 #include <linux/version.h>
 #include <linux/vmalloc.h>
@@ -34,6 +31,7 @@
 #include <linux/syscore_ops.h>
 #include <clocksource/hyperv_timer.h>
 #include <linux/highmem.h>
+#include <linux/swiotlb.h>
 
 int hyperv_init_cpuhp;
 u64 hv_current_partition_id = ~0ull;
@@ -56,7 +54,7 @@ static int hyperv_init_ghcb(void)
 	void *ghcb_va;
 	void **ghcb_base;
 
-	if (!ms_hyperv.paravisor_present || !hv_isolation_type_snp())
+	if (!hv_isolation_type_snp())
 		return 0;
 
 	if (!hv_ghcb_pg)
@@ -68,10 +66,7 @@ static int hyperv_init_ghcb(void)
 	 * memory boundary and map it here.
 	 */
 	rdmsrl(MSR_AMD64_SEV_ES_GHCB, ghcb_gpa);
-
-	/* Mask out vTOM bit. ioremap_cache() maps decrypted */
-	ghcb_gpa &= ~ms_hyperv.shared_gpa_boundary;
-	ghcb_va = (void *)ioremap_cache(ghcb_gpa, HV_HYP_PAGE_SIZE);
+	ghcb_va = memremap(ghcb_gpa, HV_HYP_PAGE_SIZE, MEMREMAP_WB);
 	if (!ghcb_va)
 		return -ENOMEM;
 
@@ -84,7 +79,7 @@ static int hyperv_init_ghcb(void)
 static int hv_cpu_init(unsigned int cpu)
 {
 	union hv_vp_assist_msr_contents msr = { 0 };
-	struct hv_vp_assist_page **hvp;
+	struct hv_vp_assist_page **hvp = &hv_vp_assist_page[cpu];
 	int ret;
 
 	ret = hv_common_cpu_init(cpu);
@@ -94,7 +89,6 @@ static int hv_cpu_init(unsigned int cpu)
 	if (!hv_vp_assist_page)
 		return 0;
 
-	hvp = &hv_vp_assist_page[cpu];
 	if (hv_root_partition) {
 		/*
 		 * For root partition we get the hypervisor provided VP assist
@@ -112,21 +106,8 @@ static int hv_cpu_init(unsigned int cpu)
 		 * in hv_cpu_die(), otherwise a CPU may not be stopped in the
 		 * case of CPU offlining and the VM will hang.
 		 */
-		if (!*hvp) {
+		if (!*hvp)
 			*hvp = __vmalloc(PAGE_SIZE, GFP_KERNEL | __GFP_ZERO);
-
-			/*
-			 * Hyper-V should never specify a VM that is a Confidential
-			 * VM and also running in the root partition. Root partition
-			 * is blocked to run in Confidential VM. So only decrypt assist
-			 * page in non-root partition here.
-			 */
-			if (*hvp && !ms_hyperv.paravisor_present && hv_isolation_type_snp()) {
-				WARN_ON_ONCE(set_memory_decrypted((unsigned long)(*hvp), 1));
-				memset(*hvp, 0, PAGE_SIZE);
-			}
-		}
-
 		if (*hvp)
 			msr.pfn = vmalloc_to_pfn(*hvp);
 
@@ -180,7 +161,7 @@ static inline bool hv_reenlightenment_available(void)
 
 DEFINE_IDTENTRY_SYSVEC(sysvec_hyperv_reenlightenment)
 {
-	apic_eoi();
+	ack_APIC_irq();
 	inc_irq_stat(irq_hv_reenlightenment_count);
 	schedule_delayed_work(&hv_reenlightenment_work, HZ/10);
 }
@@ -194,7 +175,7 @@ void set_hv_tscchange_cb(void (*cb)(void))
 	struct hv_tsc_emulation_control emu_ctrl = {.enabled = 1};
 
 	if (!hv_reenlightenment_available()) {
-		pr_warn("reenlightenment support is unavailable\n");
+		pr_warn("Hyper-V: reenlightenment support is unavailable\n");
 		return;
 	}
 
@@ -239,7 +220,7 @@ static int hv_cpu_die(unsigned int cpu)
 	if (hv_ghcb_pg) {
 		ghcb_va = (void **)this_cpu_ptr(hv_ghcb_pg);
 		if (*ghcb_va)
-			iounmap(*ghcb_va);
+			memunmap(*ghcb_va);
 		*ghcb_va = NULL;
 	}
 
@@ -413,40 +394,6 @@ static void __init hv_get_partition_id(void)
 	local_irq_restore(flags);
 }
 
-#if IS_ENABLED(CONFIG_HYPERV_VTL_MODE)
-static u8 __init get_vtl(void)
-{
-	u64 control = HV_HYPERCALL_REP_COMP_1 | HVCALL_GET_VP_REGISTERS;
-	struct hv_get_vp_registers_input *input;
-	struct hv_get_vp_registers_output *output;
-	unsigned long flags;
-	u64 ret;
-
-	local_irq_save(flags);
-	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
-	output = (struct hv_get_vp_registers_output *)input;
-
-	memset(input, 0, struct_size(input, element, 1));
-	input->header.partitionid = HV_PARTITION_ID_SELF;
-	input->header.vpindex = HV_VP_INDEX_SELF;
-	input->header.inputvtl = 0;
-	input->element[0].name0 = HV_X64_REGISTER_VSM_VP_STATUS;
-
-	ret = hv_do_hypercall(control, input, output);
-	if (hv_result_success(ret)) {
-		ret = output->as64.low & HV_X64_VTL_MASK;
-	} else {
-		pr_err("Failed to get VTL(error: %lld) exiting...\n", ret);
-		BUG();
-	}
-
-	local_irq_restore(flags);
-	return ret;
-}
-#else
-static inline u8 get_vtl(void) { return 0; }
-#endif
-
 /*
  * This function is to be invoked early in the boot sequence after the
  * hypervisor has been detected.
@@ -467,24 +414,14 @@ void __init hyperv_init(void)
 	if (hv_common_init())
 		return;
 
-	/*
-	 * The VP assist page is useless to a TDX guest: the only use we
-	 * would have for it is lazy EOI, which can not be used with TDX.
-	 */
-	if (hv_isolation_type_tdx())
-		hv_vp_assist_page = NULL;
-	else
-		hv_vp_assist_page = kcalloc(num_possible_cpus(),
-					    sizeof(*hv_vp_assist_page),
-					    GFP_KERNEL);
+	hv_vp_assist_page = kcalloc(num_possible_cpus(),
+				    sizeof(*hv_vp_assist_page), GFP_KERNEL);
 	if (!hv_vp_assist_page) {
 		ms_hyperv.hints &= ~HV_X64_ENLIGHTENED_VMCS_RECOMMENDED;
-
-		if (!hv_isolation_type_tdx())
-			goto common_free;
+		goto common_free;
 	}
 
-	if (ms_hyperv.paravisor_present && hv_isolation_type_snp()) {
+	if (hv_isolation_type_snp()) {
 		/* Negotiate GHCB Version. */
 		if (!hv_ghcb_negotiate_protocol())
 			hv_ghcb_terminate(SEV_TERM_SET_GEN,
@@ -495,7 +432,7 @@ void __init hyperv_init(void)
 			goto free_vp_assist_page;
 	}
 
-	cpuhp = cpuhp_setup_state(CPUHP_AP_HYPERV_ONLINE, "x86/hyperv_init:online",
+	cpuhp = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "x86/hyperv_init:online",
 				  hv_cpu_init, hv_cpu_die);
 	if (cpuhp < 0)
 		goto free_ghcb_page;
@@ -504,32 +441,12 @@ void __init hyperv_init(void)
 	 * Setup the hypercall page and enable hypercalls.
 	 * 1. Register the guest ID
 	 * 2. Enable the hypercall and register the hypercall page
-	 *
-	 * A TDX VM with no paravisor only uses TDX GHCI rather than hv_hypercall_pg:
-	 * when the hypercall input is a page, such a VM must pass a decrypted
-	 * page to Hyper-V, e.g. hv_post_message() uses the per-CPU page
-	 * hyperv_pcpu_input_arg, which is decrypted if no paravisor is present.
-	 *
-	 * A TDX VM with the paravisor uses hv_hypercall_pg for most hypercalls,
-	 * which are handled by the paravisor and the VM must use an encrypted
-	 * input page: in such a VM, the hyperv_pcpu_input_arg is encrypted and
-	 * used in the hypercalls, e.g. see hv_mark_gpa_visibility() and
-	 * hv_arch_irq_unmask(). Such a VM uses TDX GHCI for two hypercalls:
-	 * 1. HVCALL_SIGNAL_EVENT: see vmbus_set_event() and _hv_do_fast_hypercall8().
-	 * 2. HVCALL_POST_MESSAGE: the input page must be a decrypted page, i.e.
-	 * hv_post_message() in such a VM can't use the encrypted hyperv_pcpu_input_arg;
-	 * instead, hv_post_message() uses the post_msg_page, which is decrypted
-	 * in such a VM and is only used in such a VM.
 	 */
 	guest_id = hv_generate_guest_id(LINUX_VERSION_CODE);
 	wrmsrl(HV_X64_MSR_GUEST_OS_ID, guest_id);
 
-	/* With the paravisor, the VM must also write the ID via GHCB/GHCI */
-	hv_ivm_msr_write(HV_X64_MSR_GUEST_OS_ID, guest_id);
-
-	/* A TDX VM with no paravisor only uses TDX GHCI rather than hv_hypercall_pg */
-	if (hv_isolation_type_tdx() && !ms_hyperv.paravisor_present)
-		goto skip_hypercall_pg_init;
+	/* Hyper-V requires to write guest os id via ghcb in SNP IVM. */
+	hv_ghcb_msr_write(HV_X64_MSR_GUEST_OS_ID, guest_id);
 
 	hv_hypercall_pg = __vmalloc_node_range(PAGE_SIZE, 1, VMALLOC_START,
 			VMALLOC_END, GFP_KERNEL, PAGE_KERNEL_ROX,
@@ -563,14 +480,11 @@ void __init hyperv_init(void)
 		BUG_ON(!src);
 		memcpy_to_page(pg, 0, src, HV_HYP_PAGE_SIZE);
 		memunmap(src);
-
-		hv_remap_tsc_clocksource();
 	} else {
 		hypercall_msr.guest_physical_address = vmalloc_to_pfn(hv_hypercall_pg);
 		wrmsrl(HV_X64_MSR_HYPERCALL, hypercall_msr.as_uint64);
 	}
 
-skip_hypercall_pg_init:
 	/*
 	 * Some versions of Hyper-V that provide IBT in guest VMs have a bug
 	 * in that there's no ENDBR64 instruction at the entry to the
@@ -587,7 +501,7 @@ skip_hypercall_pg_init:
 	if (cpu_feature_enabled(X86_FEATURE_IBT) &&
 	    *(u32 *)hv_hypercall_pg != gen_endbr()) {
 		setup_clear_cpu_cap(X86_FEATURE_IBT);
-		pr_warn("Disabling IBT because of Hyper-V bug\n");
+		pr_warn("Hyper-V: Disabling IBT because of Hyper-V bug\n");
 	}
 #endif
 
@@ -626,17 +540,21 @@ skip_hypercall_pg_init:
 	/* Query the VMs extended capability once, so that it can be cached. */
 	hv_query_ext_cap(0);
 
-	/* Find the VTL */
-	ms_hyperv.vtl = get_vtl();
-
-	if (ms_hyperv.vtl > 0) /* non default VTL */
-		hv_vtl_early_init();
+#ifdef CONFIG_SWIOTLB
+	/*
+	 * Swiotlb bounce buffer needs to be mapped in extra address
+	 * space. Map function doesn't work in the early place and so
+	 * call swiotlb_update_mem_attributes() here.
+	 */
+	if (hv_is_isolation_supported())
+		swiotlb_update_mem_attributes();
+#endif
 
 	return;
 
 clean_guest_os_id:
 	wrmsrl(HV_X64_MSR_GUEST_OS_ID, 0);
-	hv_ivm_msr_write(HV_X64_MSR_GUEST_OS_ID, 0);
+	hv_ghcb_msr_write(HV_X64_MSR_GUEST_OS_ID, 0);
 	cpuhp_remove_state(cpuhp);
 free_ghcb_page:
 	free_percpu(hv_ghcb_pg);
@@ -657,7 +575,7 @@ void hyperv_cleanup(void)
 
 	/* Reset our OS id */
 	wrmsrl(HV_X64_MSR_GUEST_OS_ID, 0);
-	hv_ivm_msr_write(HV_X64_MSR_GUEST_OS_ID, 0);
+	hv_ghcb_msr_write(HV_X64_MSR_GUEST_OS_ID, 0);
 
 	/*
 	 * Reset hypercall page reference before reset the page,
@@ -720,9 +638,6 @@ bool hv_is_hyperv_initialized(void)
 	if (x86_hyper_type != X86_HYPER_MS_HYPERV)
 		return false;
 
-	/* A TDX VM with no paravisor uses TDX GHCI call rather than hv_hypercall_pg */
-	if (hv_isolation_type_tdx() && !ms_hyperv.paravisor_present)
-		return true;
 	/*
 	 * Verify that earlier initialization succeeded by checking
 	 * that the hypercall page is setup

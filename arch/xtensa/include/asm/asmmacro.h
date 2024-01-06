@@ -11,7 +11,6 @@
 #ifndef _XTENSA_ASMMACRO_H
 #define _XTENSA_ASMMACRO_H
 
-#include <asm-generic/export.h>
 #include <asm/core.h>
 
 /*

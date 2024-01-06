@@ -35,7 +35,6 @@
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_encoder.h>
 #include <drm/drm_fb_helper.h>
-#include <drm/drm_fbdev_generic.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem.h>
 #include <drm/drm_gem_atomic_helper.h>
@@ -195,6 +194,7 @@ static const struct drm_simple_display_pipe_funcs rp1vec_pipe_funcs = {
 	.enable	    = rp1vec_pipe_enable,
 	.update	    = rp1vec_pipe_update,
 	.disable    = rp1vec_pipe_disable,
+	.prepare_fb = drm_gem_simple_display_pipe_prepare_fb,
 	.enable_vblank	= rp1vec_pipe_enable_vblank,
 	.disable_vblank = rp1vec_pipe_disable_vblank,
 };
@@ -442,16 +442,17 @@ static int rp1vec_platform_probe(struct platform_device *pdev)
 		goto err_free_drm;
 	drm->mode_config.max_width  = 768;
 	drm->mode_config.max_height = 576;
+	drm->mode_config.fb_base    = 0;
 	drm->mode_config.preferred_depth = 32;
 	drm->mode_config.prefer_shadow	 = 0;
+	drm->mode_config.prefer_shadow_fbdev = 1;
 	//drm->mode_config.fbdev_use_iomem = false;
 	drm->mode_config.quirk_addfb_prefer_host_byte_order = true;
 	drm->mode_config.funcs = &rp1vec_mode_funcs;
 	drm_vblank_init(drm, 1);
 
-	ret = drm_mode_create_tv_properties_legacy(drm,
-						   ARRAY_SIZE(rp1vec_tvstd_names),
-						   rp1vec_tvstd_names);
+	ret = drm_mode_create_tv_properties(drm, ARRAY_SIZE(rp1vec_tvstd_names),
+					    rp1vec_tvstd_names);
 	if (ret)
 		goto err_free_drm;
 

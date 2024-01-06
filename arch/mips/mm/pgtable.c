@@ -10,14 +10,12 @@
 
 pgd_t *pgd_alloc(struct mm_struct *mm)
 {
-	pgd_t *init, *ret = NULL;
-	struct ptdesc *ptdesc = pagetable_alloc(GFP_KERNEL & ~__GFP_HIGHMEM,
-			PGD_TABLE_ORDER);
+	pgd_t *ret, *init;
 
-	if (ptdesc) {
-		ret = ptdesc_address(ptdesc);
+	ret = (pgd_t *) __get_free_pages(GFP_KERNEL, PGD_TABLE_ORDER);
+	if (ret) {
 		init = pgd_offset(&init_mm, 0UL);
-		pgd_init(ret);
+		pgd_init((unsigned long)ret);
 		memcpy(ret + USER_PTRS_PER_PGD, init + USER_PTRS_PER_PGD,
 		       (PTRS_PER_PGD - USER_PTRS_PER_PGD) * sizeof(pgd_t));
 	}

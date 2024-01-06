@@ -43,7 +43,6 @@ struct gud_device {
 	struct drm_framebuffer *fb;
 	struct drm_rect damage;
 	bool prev_flush_failed;
-	void *shadow_buf;
 };
 
 static inline struct gud_device *to_gud_device(struct drm_device *drm)

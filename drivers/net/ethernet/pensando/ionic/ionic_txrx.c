@@ -403,14 +403,6 @@ bool ionic_rx_service(struct ionic_cq *cq, struct ionic_cq_info *cq_info)
 	return true;
 }
 
-static inline void ionic_write_cmb_desc(struct ionic_queue *q,
-					void __iomem *cmb_desc,
-					void *desc)
-{
-	if (q_to_qcq(q)->flags & IONIC_QCQ_F_CMB_RINGS)
-		memcpy_toio(cmb_desc, desc, q->desc_size);
-}
-
 void ionic_rx_fill(struct ionic_queue *q)
 {
 	struct net_device *netdev = q->lif->netdev;
@@ -491,8 +483,6 @@ void ionic_rx_fill(struct ionic_queue *q)
 		desc->opcode = (nfrags > 1) ? IONIC_RXQ_DESC_OPCODE_SG :
 					      IONIC_RXQ_DESC_OPCODE_SIMPLE;
 		desc_info->nbufs = nfrags;
-
-		ionic_write_cmb_desc(q, desc_info->cmb_desc, desc);
 
 		ionic_rxq_post(q, false, ionic_rx_clean, NULL);
 	}
@@ -957,8 +947,7 @@ static int ionic_tx_tcp_pseudo_csum(struct sk_buff *skb)
 	return 0;
 }
 
-static void ionic_tx_tso_post(struct ionic_queue *q,
-			      struct ionic_desc_info *desc_info,
+static void ionic_tx_tso_post(struct ionic_queue *q, struct ionic_txq_desc *desc,
 			      struct sk_buff *skb,
 			      dma_addr_t addr, u8 nsge, u16 len,
 			      unsigned int hdrlen, unsigned int mss,
@@ -966,7 +955,6 @@ static void ionic_tx_tso_post(struct ionic_queue *q,
 			      u16 vlan_tci, bool has_vlan,
 			      bool start, bool done)
 {
-	struct ionic_txq_desc *desc = desc_info->desc;
 	u8 flags = 0;
 	u64 cmd;
 
@@ -981,8 +969,6 @@ static void ionic_tx_tso_post(struct ionic_queue *q,
 	desc->vlan_tci = cpu_to_le16(vlan_tci);
 	desc->hdr_len = cpu_to_le16(hdrlen);
 	desc->mss = cpu_to_le16(mss);
-
-	ionic_write_cmb_desc(q, desc_info->cmb_desc, desc);
 
 	if (start) {
 		skb_tx_timestamp(skb);
@@ -1027,12 +1013,8 @@ static int ionic_tx_tso(struct ionic_queue *q, struct sk_buff *skb)
 
 	len = skb->len;
 	mss = skb_shinfo(skb)->gso_size;
-	outer_csum = (skb_shinfo(skb)->gso_type & (SKB_GSO_GRE |
-						   SKB_GSO_GRE_CSUM |
-						   SKB_GSO_IPXIP4 |
-						   SKB_GSO_IPXIP6 |
-						   SKB_GSO_UDP_TUNNEL |
-						   SKB_GSO_UDP_TUNNEL_CSUM));
+	outer_csum = (skb_shinfo(skb)->gso_type & SKB_GSO_GRE_CSUM) ||
+		     (skb_shinfo(skb)->gso_type & SKB_GSO_UDP_TUNNEL_CSUM);
 	has_vlan = !!skb_vlan_tag_present(skb);
 	vlan_tci = skb_vlan_tag_get(skb);
 	encap = skb->encapsulation;
@@ -1102,7 +1084,7 @@ static int ionic_tx_tso(struct ionic_queue *q, struct sk_buff *skb)
 		seg_rem = min(tso_rem, mss);
 		done = (tso_rem == 0);
 		/* post descriptor */
-		ionic_tx_tso_post(q, desc_info, skb,
+		ionic_tx_tso_post(q, desc, skb,
 				  desc_addr, desc_nsge, desc_len,
 				  hdrlen, mss, outer_csum, vlan_tci, has_vlan,
 				  start, done);
@@ -1151,8 +1133,6 @@ static void ionic_tx_calc_csum(struct ionic_queue *q, struct sk_buff *skb,
 	desc->csum_start = cpu_to_le16(skb_checksum_start_offset(skb));
 	desc->csum_offset = cpu_to_le16(skb->csum_offset);
 
-	ionic_write_cmb_desc(q, desc_info->cmb_desc, desc);
-
 	if (skb_csum_is_sctp(skb))
 		stats->crc32_csum++;
 	else
@@ -1189,8 +1169,6 @@ static void ionic_tx_calc_no_csum(struct ionic_queue *q, struct sk_buff *skb,
 	}
 	desc->csum_start = 0;
 	desc->csum_offset = 0;
-
-	ionic_write_cmb_desc(q, desc_info->cmb_desc, desc);
 
 	stats->csum_none++;
 }
@@ -1243,84 +1221,25 @@ static int ionic_tx(struct ionic_queue *q, struct sk_buff *skb)
 static int ionic_tx_descs_needed(struct ionic_queue *q, struct sk_buff *skb)
 {
 	struct ionic_tx_stats *stats = q_to_tx_stats(q);
-	bool too_many_frags = false;
-	skb_frag_t *frag;
-	int desc_bufs;
-	int chunk_len;
-	int frag_rem;
-	int tso_rem;
-	int seg_rem;
-	bool encap;
-	int hdrlen;
 	int ndescs;
 	int err;
 
 	/* Each desc is mss long max, so a descriptor for each gso_seg */
-	if (skb_is_gso(skb)) {
+	if (skb_is_gso(skb))
 		ndescs = skb_shinfo(skb)->gso_segs;
-	} else {
+	else
 		ndescs = 1;
-		if (skb_shinfo(skb)->nr_frags > q->max_sg_elems) {
-			too_many_frags = true;
-			goto linearize;
-		}
-	}
 
-	/* If non-TSO, or no frags to check, we're done */
-	if (!skb_is_gso(skb) || !skb_shinfo(skb)->nr_frags)
+	/* If non-TSO, just need 1 desc and nr_frags sg elems */
+	if (skb_shinfo(skb)->nr_frags <= q->max_sg_elems)
 		return ndescs;
 
-	/* We need to scan the skb to be sure that none of the MTU sized
-	 * packets in the TSO will require more sgs per descriptor than we
-	 * can support.  We loop through the frags, add up the lengths for
-	 * a packet, and count the number of sgs used per packet.
-	 */
-	tso_rem = skb->len;
-	frag = skb_shinfo(skb)->frags;
-	encap = skb->encapsulation;
+	/* Too many frags, so linearize */
+	err = skb_linearize(skb);
+	if (err)
+		return err;
 
-	/* start with just hdr in first part of first descriptor */
-	if (encap)
-		hdrlen = skb_inner_tcp_all_headers(skb);
-	else
-		hdrlen = skb_tcp_all_headers(skb);
-	seg_rem = min_t(int, tso_rem, hdrlen + skb_shinfo(skb)->gso_size);
-	frag_rem = hdrlen;
-
-	while (tso_rem > 0) {
-		desc_bufs = 0;
-		while (seg_rem > 0) {
-			desc_bufs++;
-
-			/* We add the +1 because we can take buffers for one
-			 * more than we have SGs: one for the initial desc data
-			 * in addition to the SG segments that might follow.
-			 */
-			if (desc_bufs > q->max_sg_elems + 1) {
-				too_many_frags = true;
-				goto linearize;
-			}
-
-			if (frag_rem == 0) {
-				frag_rem = skb_frag_size(frag);
-				frag++;
-			}
-			chunk_len = min(frag_rem, seg_rem);
-			frag_rem -= chunk_len;
-			tso_rem -= chunk_len;
-			seg_rem -= chunk_len;
-		}
-
-		seg_rem = min_t(int, tso_rem, skb_shinfo(skb)->gso_size);
-	}
-
-linearize:
-	if (too_many_frags) {
-		err = skb_linearize(skb);
-		if (err)
-			return err;
-		stats->linearize++;
-	}
+	stats->linearize++;
 
 	return ndescs;
 }

@@ -6,7 +6,7 @@
 
 #include <linux/module.h>
 #include <linux/delay.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/power_supply.h>
 #include <linux/i2c.h>
@@ -525,7 +525,7 @@ static ssize_t charge_status_show(struct device *dev,
 		}
 	}
 
-	return sysfs_emit(buf, "%s\n", result);
+	return sprintf(buf, "%s\n", result);
 }
 static DEVICE_ATTR_RO(charge_status);
 
@@ -541,7 +541,7 @@ static ssize_t vbat_show(struct device *dev,
 	if (ret)
 		return ret;
 
-	return sysfs_emit(buf, "%d\n", val.intval);
+	return sprintf(buf, "%d\n", val.intval);
 }
 static DEVICE_ATTR_RO(vbat);
 
@@ -557,7 +557,7 @@ static ssize_t vbat_avg_show(struct device *dev,
 	if (ret)
 		return ret;
 
-	return sysfs_emit(buf, "%d\n", val.intval);
+	return sprintf(buf, "%d\n", val.intval);
 }
 static DEVICE_ATTR_RO(vbat_avg);
 
@@ -573,7 +573,7 @@ static ssize_t ibat_show(struct device *dev,
 	if (ret)
 		return ret;
 
-	return sysfs_emit(buf, "%d\n", val.intval);
+	return sprintf(buf, "%d\n", val.intval);
 }
 static DEVICE_ATTR_RO(ibat);
 
@@ -589,7 +589,7 @@ static ssize_t force_telemetry_show(struct device *dev,
 	if (ret)
 		return ret;
 
-	return sysfs_emit(buf, "%u\n", regval & BIT(2) ? 1 : 0);
+	return sprintf(buf, "%u\n", regval & BIT(2) ? 1 : 0);
 }
 
 static ssize_t force_telemetry_store(struct device *dev,
@@ -628,7 +628,7 @@ static ssize_t arm_ship_mode_show(struct device *dev,
 	if (ret)
 		return ret;
 
-	return sysfs_emit(buf, "%u\n",
+	return sprintf(buf, "%u\n",
 		regval == LTC4162L_ARM_SHIP_MODE_MAGIC ? 1 : 0);
 }
 
@@ -819,7 +819,8 @@ static void ltc4162l_clear_interrupts(struct ltc4162l_info *info)
 	regmap_write(info->regmap, LTC4162L_CHARGE_STATUS_ALERTS_REG, 0);
 }
 
-static int ltc4162l_probe(struct i2c_client *client)
+static int ltc4162l_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct i2c_adapter *adapter = client->adapter;
 	struct device *dev = &client->dev;
@@ -908,7 +909,7 @@ static const struct i2c_device_id ltc4162l_i2c_id_table[] = {
 };
 MODULE_DEVICE_TABLE(i2c, ltc4162l_i2c_id_table);
 
-static const struct of_device_id ltc4162l_of_match[] __maybe_unused = {
+static const struct of_device_id ltc4162l_of_match[] = {
 	{ .compatible = "lltc,ltc4162-l", },
 	{ },
 };

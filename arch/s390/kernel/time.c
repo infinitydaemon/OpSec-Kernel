@@ -102,11 +102,6 @@ void __init time_early_init(void)
 			((long) qui.old_leap * 4096000000L);
 }
 
-unsigned long long noinstr sched_clock_noinstr(void)
-{
-	return tod_to_ns(__get_tod_clock_monotonic());
-}
-
 /*
  * Scheduler clock - returns current time in nanosec units.
  */
@@ -173,10 +168,10 @@ void init_cpu_timer(void)
 	clockevents_register_device(cd);
 
 	/* Enable clock comparator timer interrupt. */
-	local_ctl_set_bit(0, CR0_CLOCK_COMPARATOR_SUBMASK_BIT);
+	__ctl_set_bit(0,11);
 
 	/* Always allow the timing alert external interrupt. */
-	local_ctl_set_bit(0, CR0_ETR_SUBMASK_BIT);
+	__ctl_set_bit(0, 4);
 }
 
 static void clock_comparator_interrupt(struct ext_code ext_code,
@@ -702,7 +697,7 @@ static void stp_work_fn(struct work_struct *work)
 
 	if (!check_sync_clock())
 		/*
-		 * There is a usable clock but the synchronization failed.
+		 * There is a usable clock but the synchonization failed.
 		 * Retry after a second.
 		 */
 		mod_timer(&stp_timer, jiffies + msecs_to_jiffies(MSEC_PER_SEC));

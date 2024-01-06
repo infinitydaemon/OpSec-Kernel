@@ -45,21 +45,7 @@ static u64 prefetch_disable_bits;
  */
 static unsigned int pseudo_lock_major;
 static unsigned long pseudo_lock_minor_avail = GENMASK(MINORBITS, 0);
-
-static char *pseudo_lock_devnode(const struct device *dev, umode_t *mode)
-{
-	const struct rdtgroup *rdtgrp;
-
-	rdtgrp = dev_get_drvdata(dev);
-	if (mode)
-		*mode = 0600;
-	return kasprintf(GFP_KERNEL, "pseudo_lock/%s", rdtgrp->kn->name);
-}
-
-static const struct class pseudo_lock_class = {
-	.name = "pseudo_lock",
-	.devnode = pseudo_lock_devnode,
-};
+static struct class *pseudo_lock_class;
 
 /**
  * get_prefetch_disable_bits - prefetch disable bits of supported platforms
@@ -491,7 +477,7 @@ static int pseudo_lock_fn(void *_rdtgrp)
 	 * pseudo-locked followed by reading of kernel memory to load it
 	 * into the cache.
 	 */
-	__wrmsr(MSR_IA32_PQR_ASSOC, rmid_p, rdtgrp->closid);
+	__wrmsr(IA32_PQR_ASSOC, rmid_p, rdtgrp->closid);
 	/*
 	 * Cache was flushed earlier. Now access kernel memory to read it
 	 * into cache region associated with just activated plr->closid.
@@ -527,7 +513,7 @@ static int pseudo_lock_fn(void *_rdtgrp)
 	 * Critical section end: restore closid with capacity bitmask that
 	 * does not overlap with pseudo-locked region.
 	 */
-	__wrmsr(MSR_IA32_PQR_ASSOC, rmid_p, closid_p);
+	__wrmsr(IA32_PQR_ASSOC, rmid_p, closid_p);
 
 	/* Re-enable the hardware prefetcher(s) */
 	wrmsrl(MSR_MISC_FEATURE_CONTROL, saved_msr);
@@ -1367,7 +1353,7 @@ int rdtgroup_pseudo_lock_create(struct rdtgroup *rdtgrp)
 					    &pseudo_measure_fops);
 	}
 
-	dev = device_create(&pseudo_lock_class, NULL,
+	dev = device_create(pseudo_lock_class, NULL,
 			    MKDEV(pseudo_lock_major, new_minor),
 			    rdtgrp, "%s", rdtgrp->kn->name);
 
@@ -1397,7 +1383,7 @@ int rdtgroup_pseudo_lock_create(struct rdtgroup *rdtgrp)
 	goto out;
 
 out_device:
-	device_destroy(&pseudo_lock_class, MKDEV(pseudo_lock_major, new_minor));
+	device_destroy(pseudo_lock_class, MKDEV(pseudo_lock_major, new_minor));
 out_debugfs:
 	debugfs_remove_recursive(plr->debugfs_dir);
 	pseudo_lock_minor_release(new_minor);
@@ -1438,7 +1424,7 @@ void rdtgroup_pseudo_lock_remove(struct rdtgroup *rdtgrp)
 
 	pseudo_lock_cstates_relax(plr);
 	debugfs_remove_recursive(rdtgrp->plr->debugfs_dir);
-	device_destroy(&pseudo_lock_class, MKDEV(pseudo_lock_major, plr->minor));
+	device_destroy(pseudo_lock_class, MKDEV(pseudo_lock_major, plr->minor));
 	pseudo_lock_minor_release(plr->minor);
 
 free:
@@ -1574,6 +1560,16 @@ static const struct file_operations pseudo_lock_dev_fops = {
 	.mmap =		pseudo_lock_dev_mmap,
 };
 
+static char *pseudo_lock_devnode(struct device *dev, umode_t *mode)
+{
+	struct rdtgroup *rdtgrp;
+
+	rdtgrp = dev_get_drvdata(dev);
+	if (mode)
+		*mode = 0600;
+	return kasprintf(GFP_KERNEL, "pseudo_lock/%s", rdtgrp->kn->name);
+}
+
 int rdt_pseudo_lock_init(void)
 {
 	int ret;
@@ -1584,18 +1580,21 @@ int rdt_pseudo_lock_init(void)
 
 	pseudo_lock_major = ret;
 
-	ret = class_register(&pseudo_lock_class);
-	if (ret) {
+	pseudo_lock_class = class_create(THIS_MODULE, "pseudo_lock");
+	if (IS_ERR(pseudo_lock_class)) {
+		ret = PTR_ERR(pseudo_lock_class);
 		unregister_chrdev(pseudo_lock_major, "pseudo_lock");
 		return ret;
 	}
 
+	pseudo_lock_class->devnode = pseudo_lock_devnode;
 	return 0;
 }
 
 void rdt_pseudo_lock_release(void)
 {
-	class_unregister(&pseudo_lock_class);
+	class_destroy(pseudo_lock_class);
+	pseudo_lock_class = NULL;
 	unregister_chrdev(pseudo_lock_major, "pseudo_lock");
 	pseudo_lock_major = 0;
 }

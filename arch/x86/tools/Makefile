@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 PHONY += posttest
 
-ifneq ($(findstring 1, $(KBUILD_VERBOSE)),)
+ifeq ($(KBUILD_VERBOSE),1)
   posttest_verbose = -v
 else
   posttest_verbose =

@@ -6,14 +6,14 @@
 #include <linux/clk.h>
 #include <linux/component.h>
 #include <linux/module.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
+#include <linux/of_irq.h>
 #include <linux/platform_device.h>
 #include <linux/soc/mediatek/mtk-cmdq.h>
 
 #include "mtk_disp_drv.h"
 #include "mtk_drm_crtc.h"
 #include "mtk_drm_ddp_comp.h"
-#include "mtk_drm_drv.h"
 
 #define DISP_CCORR_EN				0x0000
 #define CCORR_EN					BIT(0)
@@ -33,6 +33,11 @@ struct mtk_disp_ccorr_data {
 	u32 matrix_bits;
 };
 
+/**
+ * struct mtk_disp_ccorr - DISP_CCORR driver structure
+ * @ddp_comp - structure containing type enum and hardware resources
+ * @crtc - associated crtc to report irq events to
+ */
 struct mtk_disp_ccorr {
 	struct clk *clk;
 	void __iomem *regs;
@@ -189,9 +194,11 @@ static int mtk_disp_ccorr_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void mtk_disp_ccorr_remove(struct platform_device *pdev)
+static int mtk_disp_ccorr_remove(struct platform_device *pdev)
 {
 	component_del(&pdev->dev, &mtk_disp_ccorr_component_ops);
+
+	return 0;
 }
 
 static const struct mtk_disp_ccorr_data mt8183_ccorr_driver_data = {
@@ -213,7 +220,7 @@ MODULE_DEVICE_TABLE(of, mtk_disp_ccorr_driver_dt_match);
 
 struct platform_driver mtk_disp_ccorr_driver = {
 	.probe		= mtk_disp_ccorr_probe,
-	.remove_new	= mtk_disp_ccorr_remove,
+	.remove		= mtk_disp_ccorr_remove,
 	.driver		= {
 		.name	= "mediatek-disp-ccorr",
 		.owner	= THIS_MODULE,

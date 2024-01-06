@@ -11,6 +11,7 @@
 #include <linux/mmc/slot-gpio.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/of_irq.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
@@ -369,7 +370,7 @@ static int sdhci_omap_execute_tuning(struct mmc_host *mmc, u32 opcode)
 
 	/*
 	 * Stage 1: Search for a maximum pass window ignoring any
-	 * single point failures. If the tuning value ends up
+	 * any single point failures. If the tuning value ends up
 	 * near it, move away from it in stage 2 below
 	 */
 	while (phase_delay <= MAX_PHASE_DELAY) {
@@ -1393,7 +1394,7 @@ err_pltfm_free:
 	return ret;
 }
 
-static void sdhci_omap_remove(struct platform_device *pdev)
+static int sdhci_omap_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct sdhci_host *host = platform_get_drvdata(pdev);
@@ -1407,6 +1408,8 @@ static void sdhci_omap_remove(struct platform_device *pdev)
 	/* Ensure device gets disabled despite userspace sysfs config */
 	pm_runtime_force_suspend(dev);
 	sdhci_pltfm_free(pdev);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -1475,7 +1478,7 @@ static const struct dev_pm_ops sdhci_omap_dev_pm_ops = {
 
 static struct platform_driver sdhci_omap_driver = {
 	.probe = sdhci_omap_probe,
-	.remove_new = sdhci_omap_remove,
+	.remove = sdhci_omap_remove,
 	.driver = {
 		   .name = "sdhci-omap",
 		   .probe_type = PROBE_PREFER_ASYNCHRONOUS,

@@ -5,7 +5,6 @@
 /dts-v1/;
 
 #include "ipq8074.dtsi"
-#include <dt-bindings/gpio/gpio.h>
 
 / {
 	aliases {
@@ -40,12 +39,12 @@
 
 &pcie0 {
 	status = "okay";
-	perst-gpios = <&tlmm 58 GPIO_ACTIVE_LOW>;
+	perst-gpios = <&tlmm 58 0x1>;
 };
 
 &pcie1 {
 	status = "okay";
-	perst-gpios = <&tlmm 61 GPIO_ACTIVE_LOW>;
+	perst-gpios = <&tlmm 61 0x1>;
 };
 
 &pcie_qmp0 {

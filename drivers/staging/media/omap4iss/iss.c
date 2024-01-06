@@ -1323,13 +1323,15 @@ error:
 	return ret;
 }
 
-static void iss_remove(struct platform_device *pdev)
+static int iss_remove(struct platform_device *pdev)
 {
 	struct iss_device *iss = platform_get_drvdata(pdev);
 
 	iss_unregister_entities(iss);
 	media_entity_enum_cleanup(&iss->crashed);
 	iss_cleanup_modules(iss);
+
+	return 0;
 }
 
 static const struct platform_device_id omap4iss_id_table[] = {
@@ -1340,7 +1342,7 @@ MODULE_DEVICE_TABLE(platform, omap4iss_id_table);
 
 static struct platform_driver iss_driver = {
 	.probe		= iss_probe,
-	.remove_new	= iss_remove,
+	.remove		= iss_remove,
 	.id_table	= omap4iss_id_table,
 	.driver = {
 		.name	= "omap4iss",

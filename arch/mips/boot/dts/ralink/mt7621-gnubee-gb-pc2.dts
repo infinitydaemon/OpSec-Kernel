@@ -8,7 +8,7 @@
 
 / {
 	compatible = "gnubee,gb-pc2", "mediatek,mt7621-soc";
-	model = "GnuBee GB-PC2";
+	model = "GB-PC2";
 
 	memory@0 {
 		device_type = "memory";
@@ -33,33 +33,33 @@
 	gpio-leds {
 		compatible = "gpio-leds";
 
-		led-ethblack-green {
+		ethblack-green {
 			label = "green:ethblack";
 			gpios = <&gpio 3 GPIO_ACTIVE_LOW>;
 		};
 
-		led-ethblue-green {
+		ethblue-green {
 			label = "green:ethblue";
 			gpios = <&gpio 4 GPIO_ACTIVE_LOW>;
 		};
 
-		led-ethyellow-green {
+		ethyellow-green {
 			label = "green:ethyellow";
 			gpios = <&gpio 15 GPIO_ACTIVE_LOW>;
 		};
 
-		led-ethyellow-orange {
+		ethyellow-orange {
 			label = "orange:ethyellow";
 			gpios = <&gpio 13 GPIO_ACTIVE_LOW>;
 		};
 
-		led-power {
+		power {
 			label = "green:power";
 			gpios = <&gpio 6 GPIO_ACTIVE_LOW>;
 			linux,default-trigger = "default-on";
 		};
 
-		led-system {
+		system {
 			label = "green:system";
 			gpios = <&gpio 8 GPIO_ACTIVE_LOW>;
 			linux,default-trigger = "disk-activity";
@@ -112,17 +112,14 @@
 };
 
 &gmac1 {
-	phy-mode = "rgmii-rxid";
+	status = "okay";
 	phy-handle = <&ethphy5>;
-
-	fixed-link {
-		status = "disabled";
-	};
 };
 
 &mdio {
 	ethphy5: ethernet-phy@5 {
 		reg = <5>;
+		phy-mode = "rgmii-rxid";
 	};
 };
 
@@ -136,10 +133,6 @@
 		port@4 {
 			status = "okay";
 			label = "ethblue";
-		};
-
-		port@5 {
-			status = "disabled";
 		};
 	};
 };

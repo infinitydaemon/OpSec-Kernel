@@ -293,8 +293,9 @@ static int otx2vf_vfaf_mbox_init(struct otx2_nic *vf)
 	int err;
 
 	mbox->pfvf = vf;
-	vf->mbox_wq = alloc_ordered_workqueue("otx2_vfaf_mailbox",
-					      WQ_HIGHPRI | WQ_MEM_RECLAIM);
+	vf->mbox_wq = alloc_workqueue("otx2_vfaf_mailbox",
+				      WQ_UNBOUND | WQ_HIGHPRI |
+				      WQ_MEM_RECLAIM, 1);
 	if (!vf->mbox_wq)
 		return -ENOMEM;
 
@@ -759,7 +760,6 @@ static void otx2vf_remove(struct pci_dev *pdev)
 	otx2_ptp_destroy(vf);
 	otx2_mcam_flow_del(vf);
 	otx2_shutdown_tc(vf);
-	otx2_shutdown_qos(vf);
 	otx2vf_disable_mbox_intr(vf);
 	otx2_detach_resources(&vf->mbox);
 	free_percpu(vf->hw.lmt_info);

@@ -1416,11 +1416,13 @@ static struct fb_ops uvesafb_ops = {
 	.owner		= THIS_MODULE,
 	.fb_open	= uvesafb_open,
 	.fb_release	= uvesafb_release,
-	FB_DEFAULT_IOMEM_OPS,
 	.fb_setcolreg	= uvesafb_setcolreg,
 	.fb_setcmap	= uvesafb_setcmap,
 	.fb_pan_display	= uvesafb_pan_display,
 	.fb_blank	= uvesafb_blank,
+	.fb_fillrect	= cfb_fillrect,
+	.fb_copyarea	= cfb_copyarea,
+	.fb_imageblit	= cfb_imageblit,
 	.fb_check_var	= uvesafb_check_var,
 	.fb_set_par	= uvesafb_set_par,
 };
@@ -1506,7 +1508,8 @@ static void uvesafb_init_info(struct fb_info *info, struct vbe_mode_ib *mode)
 		par->ypan = 0;
 	}
 
-	info->flags = (par->ypan ? FBINFO_HWACCEL_YPAN : 0);
+	info->flags = FBINFO_FLAG_DEFAULT |
+			(par->ypan ? FBINFO_HWACCEL_YPAN : 0);
 
 	if (!par->ypan)
 		uvesafb_ops.fb_pan_display = NULL;
@@ -1577,7 +1580,7 @@ static ssize_t uvesafb_show_vendor(struct device *dev,
 	struct uvesafb_par *par = info->par;
 
 	if (par->vbe_ib.oem_vendor_name_ptr)
-		return sysfs_emit(buf, "%s\n", (char *)
+		return scnprintf(buf, PAGE_SIZE, "%s\n", (char *)
 			(&par->vbe_ib) + par->vbe_ib.oem_vendor_name_ptr);
 	else
 		return 0;
@@ -1592,7 +1595,7 @@ static ssize_t uvesafb_show_product_name(struct device *dev,
 	struct uvesafb_par *par = info->par;
 
 	if (par->vbe_ib.oem_product_name_ptr)
-		return sysfs_emit(buf, "%s\n", (char *)
+		return scnprintf(buf, PAGE_SIZE, "%s\n", (char *)
 			(&par->vbe_ib) + par->vbe_ib.oem_product_name_ptr);
 	else
 		return 0;
@@ -1607,7 +1610,7 @@ static ssize_t uvesafb_show_product_rev(struct device *dev,
 	struct uvesafb_par *par = info->par;
 
 	if (par->vbe_ib.oem_product_rev_ptr)
-		return sysfs_emit(buf, "%s\n", (char *)
+		return scnprintf(buf, PAGE_SIZE, "%s\n", (char *)
 			(&par->vbe_ib) + par->vbe_ib.oem_product_rev_ptr);
 	else
 		return 0;
@@ -1622,7 +1625,7 @@ static ssize_t uvesafb_show_oem_string(struct device *dev,
 	struct uvesafb_par *par = info->par;
 
 	if (par->vbe_ib.oem_string_ptr)
-		return sysfs_emit(buf, "%s\n",
+		return scnprintf(buf, PAGE_SIZE, "%s\n",
 			(char *)(&par->vbe_ib) + par->vbe_ib.oem_string_ptr);
 	else
 		return 0;
@@ -1636,7 +1639,7 @@ static ssize_t uvesafb_show_nocrtc(struct device *dev,
 	struct fb_info *info = dev_get_drvdata(dev);
 	struct uvesafb_par *par = info->par;
 
-	return sysfs_emit(buf, "%d\n", par->nocrtc);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", par->nocrtc);
 }
 
 static ssize_t uvesafb_store_nocrtc(struct device *dev,
@@ -1771,30 +1774,34 @@ out:
 	return err;
 }
 
-static void uvesafb_remove(struct platform_device *dev)
+static int uvesafb_remove(struct platform_device *dev)
 {
 	struct fb_info *info = platform_get_drvdata(dev);
-	struct uvesafb_par *par = info->par;
 
-	sysfs_remove_group(&dev->dev.kobj, &uvesafb_dev_attgrp);
-	unregister_framebuffer(info);
-	release_region(0x3c0, 32);
-	iounmap(info->screen_base);
-	arch_phys_wc_del(par->mtrr_handle);
-	release_mem_region(info->fix.smem_start, info->fix.smem_len);
-	fb_destroy_modedb(info->monspecs.modedb);
-	fb_dealloc_cmap(&info->cmap);
+	if (info) {
+		struct uvesafb_par *par = info->par;
 
-	kfree(par->vbe_modes);
-	kfree(par->vbe_state_orig);
-	kfree(par->vbe_state_saved);
+		sysfs_remove_group(&dev->dev.kobj, &uvesafb_dev_attgrp);
+		unregister_framebuffer(info);
+		release_region(0x3c0, 32);
+		iounmap(info->screen_base);
+		arch_phys_wc_del(par->mtrr_handle);
+		release_mem_region(info->fix.smem_start, info->fix.smem_len);
+		fb_destroy_modedb(info->monspecs.modedb);
+		fb_dealloc_cmap(&info->cmap);
 
-	framebuffer_release(info);
+		kfree(par->vbe_modes);
+		kfree(par->vbe_state_orig);
+		kfree(par->vbe_state_saved);
+
+		framebuffer_release(info);
+	}
+	return 0;
 }
 
 static struct platform_driver uvesafb_driver = {
 	.probe  = uvesafb_probe,
-	.remove_new = uvesafb_remove,
+	.remove = uvesafb_remove,
 	.driver = {
 		.name = "uvesafb",
 	},

@@ -34,7 +34,6 @@ SECTIONS
 		_text = .; 	/* Text */
 		*(.text)
 		*(.text.*)
-		*(.noinstr.text)
 		_etext = . ;
 	}
 	.rodata : {
@@ -43,13 +42,11 @@ SECTIONS
 		*(.rodata.*)
 		_erodata = . ;
 	}
-	.data :	ALIGN(0x1000) {
+	.data :	{
 		_data = . ;
 		*(.data)
 		*(.data.*)
-
-		/* Add 4 bytes of extra space for a CRC-32 checksum */
-		. = ALIGN(. + 4, 0x200);
+		*(.bss.efistub)
 		_edata = . ;
 	}
 	. = ALIGN(L1_CACHE_BYTES);

@@ -5,7 +5,6 @@
  *  Copyright (C) 2007 Ben. Herrenschmidt (benh@kernel.crashing.org), IBM Corp.
  */
 
-#include <linux/linkage.h>
 #include <linux/threads.h>
 #include <asm/reg.h>
 #include <asm/page.h>
@@ -67,7 +66,7 @@
 #define SPECIAL_EXC_LOAD(reg, name) \
 	ld	reg, (SPECIAL_EXC_##name * 8 + SPECIAL_EXC_FRAME_OFFS)(r1)
 
-SYM_CODE_START_LOCAL(special_reg_save)
+special_reg_save:
 	/*
 	 * We only need (or have stack space) to save this stuff if
 	 * we interrupted the kernel.
@@ -132,9 +131,8 @@ END_FTR_SECTION_IFSET(CPU_FTR_EMB_HV)
 	SPECIAL_EXC_STORE(r10,CSRR1)
 
 	blr
-SYM_CODE_END(special_reg_save)
 
-SYM_CODE_START_LOCAL(ret_from_level_except)
+ret_from_level_except:
 	ld	r3,_MSR(r1)
 	andi.	r3,r3,MSR_PR
 	beq	1f
@@ -208,7 +206,6 @@ END_FTR_SECTION_IFSET(CPU_FTR_EMB_HV)
 	mtxer	r11
 
 	blr
-SYM_CODE_END(ret_from_level_except)
 
 .macro ret_from_level srr0 srr1 paca_ex scratch
 	bl	ret_from_level_except
@@ -235,15 +232,13 @@ SYM_CODE_END(ret_from_level_except)
 	mfspr	r13,\scratch
 .endm
 
-SYM_CODE_START_LOCAL(ret_from_crit_except)
+ret_from_crit_except:
 	ret_from_level SPRN_CSRR0 SPRN_CSRR1 PACA_EXCRIT SPRN_SPRG_CRIT_SCRATCH
 	rfci
-SYM_CODE_END(ret_from_crit_except)
 
-SYM_CODE_START_LOCAL(ret_from_mc_except)
+ret_from_mc_except:
 	ret_from_level SPRN_MCSRR0 SPRN_MCSRR1 PACA_EXMC SPRN_SPRG_MC_SCRATCH
 	rfmci
-SYM_CODE_END(ret_from_mc_except)
 
 /* Exception prolog code for all exceptions */
 #define EXCEPTION_PROLOG(n, intnum, type, addition)	    		    \
@@ -363,6 +358,7 @@ SYM_CODE_END(ret_from_mc_except)
 	std	r14,PACA_EXMC+EX_R14(r13);				    \
 	std	r15,PACA_EXMC+EX_R15(r13)
 
+
 /* Core exception code for all exceptions except TLB misses. */
 #define EXCEPTION_COMMON_LVL(n, scratch, excf)				    \
 exc_##n##_common:							    \
@@ -395,11 +391,10 @@ exc_##n##_common:							    \
 	std	r10,_CCR(r1);		/* store orig CR in stackframe */   \
 	std	r9,GPR1(r1);		/* store stack frame back link */   \
 	std	r11,SOFTE(r1);		/* and save it to stackframe */     \
-	std	r12,STACK_INT_FRAME_MARKER(r1); /* mark the frame */	    \
+	std	r12,STACK_FRAME_OVERHEAD-16(r1); /* mark the frame */	    \
 	std	r3,_TRAP(r1);		/* set trap number		*/  \
 	std	r0,RESULT(r1);		/* clear regs->result */	    \
-	SAVE_NVGPRS(r1);						    \
-	SANITIZE_NVGPRS();		/* minimise speculation influence */
+	SAVE_NVGPRS(r1);
 
 #define EXCEPTION_COMMON(n) \
 	EXCEPTION_COMMON_LVL(n, SPRN_SPRG_GEN_SCRATCH, PACA_EXGEN)
@@ -460,7 +455,7 @@ exc_##n##_bad_stack:							    \
 	EXCEPTION_COMMON(trapnum)					\
 	ack(r8);							\
 	CHECK_NAPPING();						\
-	addi	r3,r1,STACK_INT_FRAME_REGS;				\
+	addi	r3,r1,STACK_FRAME_OVERHEAD;				\
 	bl	hdlr;							\
 	b	interrupt_return
 
@@ -509,7 +504,7 @@ __end_interrupts:
 	EXCEPTION_COMMON_CRIT(0x100)
 	bl	special_reg_save
 	CHECK_NAPPING();
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	unknown_nmi_exception
 	b	ret_from_crit_except
 
@@ -520,7 +515,7 @@ __end_interrupts:
 	EXCEPTION_COMMON_MC(0x000)
 	bl	special_reg_save
 	CHECK_NAPPING();
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	machine_check_exception
 	b	ret_from_mc_except
 
@@ -575,7 +570,7 @@ __end_interrupts:
 	std	r14,_ESR(r1)
 	ld	r14,PACA_EXGEN+EX_R14(r13)
 	EXCEPTION_COMMON(0x700)
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	program_check_exception
 	REST_NVGPRS(r1)
 	b	interrupt_return
@@ -591,7 +586,7 @@ __end_interrupts:
 	beq-	1f
 	bl	load_up_fpu
 	b	fast_interrupt_return
-1:	addi	r3,r1,STACK_INT_FRAME_REGS
+1:	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	kernel_fp_unavailable_exception
 	b	interrupt_return
 
@@ -611,7 +606,7 @@ BEGIN_FTR_SECTION
 1:
 END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 #endif
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	altivec_unavailable_exception
 	b	interrupt_return
 
@@ -621,7 +616,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 				BOOKE_INTERRUPT_ALTIVEC_ASSIST,
 				PROLOG_ADDITION_NONE)
 	EXCEPTION_COMMON(0x220)
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 #ifdef CONFIG_ALTIVEC
 BEGIN_FTR_SECTION
 	bl	altivec_assist_exception
@@ -648,7 +643,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 	EXCEPTION_COMMON_CRIT(0x9f0)
 	bl	special_reg_save
 	CHECK_NAPPING();
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 #ifdef CONFIG_BOOKE_WDT
 	bl	WatchdogException
 #else
@@ -669,7 +664,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 	NORMAL_EXCEPTION_PROLOG(0xf20, BOOKE_INTERRUPT_AP_UNAVAIL,
 				PROLOG_ADDITION_NONE)
 	EXCEPTION_COMMON(0xf20)
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	unknown_exception
 	b	interrupt_return
 
@@ -736,7 +731,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 	ld	r14,PACA_EXCRIT+EX_R14(r13)
 	ld	r15,PACA_EXCRIT+EX_R15(r13)
 	EXCEPTION_COMMON_CRIT(0xd00)
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	DebugException
 	REST_NVGPRS(r1)
 	b	interrupt_return
@@ -807,7 +802,7 @@ kernel_dbg_exc:
 	ld	r14,PACA_EXDBG+EX_R14(r13)
 	ld	r15,PACA_EXDBG+EX_R15(r13)
 	EXCEPTION_COMMON_DBG(0xd08)
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	DebugException
 	REST_NVGPRS(r1)
 	b	interrupt_return
@@ -817,7 +812,7 @@ kernel_dbg_exc:
 				PROLOG_ADDITION_NONE)
 	EXCEPTION_COMMON(0x260)
 	CHECK_NAPPING()
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	/*
 	 * XXX: Returning from performance_monitor_exception taken as a
 	 * soft-NMI (Linux irqs disabled) may be risky to use interrupt_return
@@ -839,7 +834,7 @@ kernel_dbg_exc:
 	EXCEPTION_COMMON_CRIT(0x2a0)
 	bl	special_reg_save
 	CHECK_NAPPING();
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	unknown_nmi_exception
 	b	ret_from_crit_except
 
@@ -851,7 +846,7 @@ kernel_dbg_exc:
 	GDBELL_EXCEPTION_PROLOG(0x2c0, BOOKE_INTERRUPT_GUEST_DBELL,
 			        PROLOG_ADDITION_NONE)
 	EXCEPTION_COMMON(0x2c0)
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	unknown_exception
 	b	interrupt_return
 
@@ -862,7 +857,7 @@ kernel_dbg_exc:
 	EXCEPTION_COMMON_CRIT(0x2e0)
 	bl	special_reg_save
 	CHECK_NAPPING();
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	unknown_nmi_exception
 	b	ret_from_crit_except
 
@@ -871,7 +866,7 @@ kernel_dbg_exc:
 	NORMAL_EXCEPTION_PROLOG(0x310, BOOKE_INTERRUPT_HV_SYSCALL,
 			        PROLOG_ADDITION_NONE)
 	EXCEPTION_COMMON(0x310)
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	unknown_exception
 	b	interrupt_return
 
@@ -880,7 +875,7 @@ kernel_dbg_exc:
 	NORMAL_EXCEPTION_PROLOG(0x320, BOOKE_INTERRUPT_HV_PRIV,
 			        PROLOG_ADDITION_NONE)
 	EXCEPTION_COMMON(0x320)
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	unknown_exception
 	b	interrupt_return
 
@@ -889,7 +884,7 @@ kernel_dbg_exc:
 	NORMAL_EXCEPTION_PROLOG(0x340, BOOKE_INTERRUPT_LRAT_ERROR,
 			        PROLOG_ADDITION_NONE)
 	EXCEPTION_COMMON(0x340)
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	unknown_exception
 	b	interrupt_return
 
@@ -983,22 +978,20 @@ masked_interrupt_book3e_0x2c0:
  * r14 and r15 containing the fault address and error code, with the
  * original values stashed away in the PACA
  */
-SYM_CODE_START_LOCAL(storage_fault_common)
-	addi	r3,r1,STACK_INT_FRAME_REGS
+storage_fault_common:
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	do_page_fault
 	b	interrupt_return
-SYM_CODE_END(storage_fault_common)
 
 /*
  * Alignment exception doesn't fit entirely in the 0x100 bytes so it
  * continues here.
  */
-SYM_CODE_START_LOCAL(alignment_more)
-	addi	r3,r1,STACK_INT_FRAME_REGS
+alignment_more:
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	alignment_exception
 	REST_NVGPRS(r1)
 	b	interrupt_return
-SYM_CODE_END(alignment_more)
 
 /*
  * Trampolines used when spotting a bad kernel stack pointer in
@@ -1037,7 +1030,8 @@ BAD_STACK_TRAMPOLINE(0xe00)
 BAD_STACK_TRAMPOLINE(0xf00)
 BAD_STACK_TRAMPOLINE(0xf20)
 
-_GLOBAL(bad_stack_book3e)
+	.globl	bad_stack_book3e
+bad_stack_book3e:
 	/* XXX: Needs to make SPRN_SPRG_GEN depend on exception type */
 	mfspr	r10,SPRN_SRR0;		  /* read SRR0 before touching stack */
 	ld	r1,PACAEMERGSP(r13)
@@ -1075,7 +1069,7 @@ _GLOBAL(bad_stack_book3e)
 	ZEROIZE_GPR(12)
 	std	r12,0(r11)
 	LOAD_PACA_TOC()
-1:	addi	r3,r1,STACK_INT_FRAME_REGS
+1:	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	kernel_bad_stack
 	b	1b
 
@@ -1291,7 +1285,8 @@ have_hes:
 	 * ever takes any parameters, the SCOM code must also be updated to
 	 * provide them.
 	 */
-_GLOBAL(a2_tlbinit_code_start)
+	.globl a2_tlbinit_code_start
+a2_tlbinit_code_start:
 
 	ori	r11,r3,MAS0_WQ_ALLWAYS
 	oris	r11,r11,MAS0_ESEL(3)@h /* Use way 3: workaround A2 erratum 376 */
@@ -1484,7 +1479,8 @@ _GLOBAL(book3e_secondary_thread_init)
 	mflr	r28
 	b	3b
 
-_GLOBAL(init_core_book3e)
+	.globl init_core_book3e
+init_core_book3e:
 	/* Establish the interrupt vector base */
 	tovirt(r2,r2)
 	LOAD_REG_ADDR(r3, interrupt_base_book3e)
@@ -1492,7 +1488,7 @@ _GLOBAL(init_core_book3e)
 	sync
 	blr
 
-SYM_CODE_START_LOCAL(init_thread_book3e)
+init_thread_book3e:
 	lis	r3,(SPRN_EPCR_ICM | SPRN_EPCR_GICM)@h
 	mtspr	SPRN_EPCR,r3
 
@@ -1506,7 +1502,6 @@ SYM_CODE_START_LOCAL(init_thread_book3e)
 	mtspr	SPRN_TSR,r3
 
 	blr
-SYM_CODE_END(init_thread_book3e)
 
 _GLOBAL(__setup_base_ivors)
 	SET_IVOR(0, 0x020) /* Critical Input */

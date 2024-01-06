@@ -30,4 +30,3 @@ CFLAGS_mei-trace.o = -I$(src)
 
 obj-$(CONFIG_INTEL_MEI_HDCP) += hdcp/
 obj-$(CONFIG_INTEL_MEI_PXP) += pxp/
-obj-$(CONFIG_INTEL_MEI_GSC_PROXY) += gsc_proxy/

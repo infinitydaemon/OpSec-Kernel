@@ -32,7 +32,6 @@
 #include <asm/iommu.h>
 #include <asm/tlb.h>
 #include <asm/cputable.h>
-#include <asm/papr-sysparm.h>
 #include <asm/udbg.h>
 #include <asm/smp.h>
 #include <asm/trace.h>
@@ -41,7 +40,6 @@
 #include <asm/kexec.h>
 #include <asm/fadump.h>
 #include <asm/dtl.h>
-#include <asm/vphn.h>
 
 #include "pseries.h"
 
@@ -192,9 +190,9 @@ static void free_dtl_buffers(unsigned long *time_limit)
 			continue;
 		kmem_cache_free(dtl_cache, pp->dispatch_log);
 		pp->dtl_ridx = 0;
-		pp->dispatch_log = NULL;
-		pp->dispatch_log_end = NULL;
-		pp->dtl_curr = NULL;
+		pp->dispatch_log = 0;
+		pp->dispatch_log_end = 0;
+		pp->dtl_curr = 0;
 
 		if (time_limit && time_after(jiffies, *time_limit)) {
 			cond_resched();
@@ -223,7 +221,7 @@ static void destroy_cpu_associativity(void)
 {
 	kfree(vcpu_associativity);
 	kfree(pcpu_associativity);
-	vcpu_associativity = pcpu_associativity = NULL;
+	vcpu_associativity = pcpu_associativity = 0;
 }
 
 static __be32 *__get_cpu_associativity(int cpu, __be32 *cpu_assoc, int flag)
@@ -1465,6 +1463,8 @@ static inline void __init check_lp_set_hblkrm(unsigned int lp,
 	}
 }
 
+#define SPLPAR_TLB_BIC_TOKEN		50
+
 /*
  * The size of the TLB Block Invalidate Characteristics is variable. But at the
  * maximum it will be the number of possible page sizes *2 + 10 bytes.
@@ -1475,24 +1475,42 @@ static inline void __init check_lp_set_hblkrm(unsigned int lp,
 
 void __init pseries_lpar_read_hblkrm_characteristics(void)
 {
-	static struct papr_sysparm_buf buf __initdata;
-	int len, idx, bpsize;
+	unsigned char local_buffer[SPLPAR_TLB_BIC_MAXLENGTH];
+	int call_status, len, idx, bpsize;
 
 	if (!firmware_has_feature(FW_FEATURE_BLOCK_REMOVE))
 		return;
 
-	if (papr_sysparm_get(PAPR_SYSPARM_TLB_BLOCK_INVALIDATE_ATTRS, &buf))
-		return;
+	spin_lock(&rtas_data_buf_lock);
+	memset(rtas_data_buf, 0, RTAS_DATA_BUF_SIZE);
+	call_status = rtas_call(rtas_token("ibm,get-system-parameter"), 3, 1,
+				NULL,
+				SPLPAR_TLB_BIC_TOKEN,
+				__pa(rtas_data_buf),
+				RTAS_DATA_BUF_SIZE);
+	memcpy(local_buffer, rtas_data_buf, SPLPAR_TLB_BIC_MAXLENGTH);
+	local_buffer[SPLPAR_TLB_BIC_MAXLENGTH - 1] = '\0';
+	spin_unlock(&rtas_data_buf_lock);
 
-	len = be16_to_cpu(buf.len);
+	if (call_status != 0) {
+		pr_warn("%s %s Error calling get-system-parameter (0x%x)\n",
+			__FILE__, __func__, call_status);
+		return;
+	}
+
+	/*
+	 * The first two (2) bytes of the data in the buffer are the length of
+	 * the returned data, not counting these first two (2) bytes.
+	 */
+	len = be16_to_cpu(*((u16 *)local_buffer)) + 2;
 	if (len > SPLPAR_TLB_BIC_MAXLENGTH) {
 		pr_warn("%s too large returned buffer %d", __func__, len);
 		return;
 	}
 
-	idx = 0;
+	idx = 2;
 	while (idx < len) {
-		u8 block_shift = buf.val[idx++];
+		u8 block_shift = local_buffer[idx++];
 		u32 block_size;
 		unsigned int npsize;
 
@@ -1501,9 +1519,9 @@ void __init pseries_lpar_read_hblkrm_characteristics(void)
 
 		block_size = 1 << block_shift;
 
-		for (npsize = buf.val[idx++];
+		for (npsize = local_buffer[idx++];
 		     npsize > 0 && idx < len; npsize--)
-			check_lp_set_hblkrm((unsigned int)buf.val[idx++],
+			check_lp_set_hblkrm((unsigned int) local_buffer[idx++],
 					    block_size);
 	}
 

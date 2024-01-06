@@ -4,7 +4,6 @@
  * Copyright (c) 2015-2016 HGST, a Western Digital Company.
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-#include <linux/kstrtox.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -15,10 +14,8 @@
 #ifdef CONFIG_NVME_TARGET_AUTH
 #include <linux/nvme-auth.h>
 #endif
-#include <linux/nvme-keyring.h>
 #include <crypto/hash.h>
 #include <crypto/kpp.h>
-#include <linux/nospec.h>
 
 #include "nvmet.h"
 
@@ -161,14 +158,10 @@ static const struct nvmet_type_name_map nvmet_addr_treq[] = {
 	{ NVMF_TREQ_NOT_REQUIRED,	"not required" },
 };
 
-static inline u8 nvmet_port_disc_addr_treq_mask(struct nvmet_port *port)
-{
-	return (port->disc_addr.treq & ~NVME_TREQ_SECURE_CHANNEL_MASK);
-}
-
 static ssize_t nvmet_addr_treq_show(struct config_item *item, char *page)
 {
-	u8 treq = nvmet_port_disc_addr_treq_secure_channel(to_nvmet_port(item));
+	u8 treq = to_nvmet_port(item)->disc_addr.treq &
+		NVME_TREQ_SECURE_CHANNEL_MASK;
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(nvmet_addr_treq); i++) {
@@ -184,7 +177,7 @@ static ssize_t nvmet_addr_treq_store(struct config_item *item,
 		const char *page, size_t count)
 {
 	struct nvmet_port *port = to_nvmet_port(item);
-	u8 treq = nvmet_port_disc_addr_treq_mask(port);
+	u8 treq = port->disc_addr.treq & ~NVME_TREQ_SECURE_CHANNEL_MASK;
 	int i;
 
 	if (nvmet_is_port_enabled(port, __func__))
@@ -199,20 +192,6 @@ static ssize_t nvmet_addr_treq_store(struct config_item *item,
 	return -EINVAL;
 
 found:
-	if (port->disc_addr.trtype == NVMF_TRTYPE_TCP &&
-	    port->disc_addr.tsas.tcp.sectype == NVMF_TCP_SECTYPE_TLS13) {
-		switch (nvmet_addr_treq[i].type) {
-		case NVMF_TREQ_NOT_SPECIFIED:
-			pr_debug("treq '%s' not allowed for TLS1.3\n",
-				 nvmet_addr_treq[i].name);
-			return -EINVAL;
-		case NVMF_TREQ_NOT_REQUIRED:
-			pr_warn("Allow non-TLS connections while TLS1.3 is enabled\n");
-			break;
-		default:
-			break;
-		}
-	}
 	treq |= nvmet_addr_treq[i].type;
 	port->disc_addr.treq = treq;
 	return count;
@@ -288,7 +267,7 @@ static ssize_t nvmet_param_pi_enable_store(struct config_item *item,
 	struct nvmet_port *port = to_nvmet_port(item);
 	bool val;
 
-	if (kstrtobool(page, &val))
+	if (strtobool(page, &val))
 		return -EINVAL;
 
 	if (nvmet_is_port_enabled(port, __func__))
@@ -323,11 +302,6 @@ static void nvmet_port_init_tsas_rdma(struct nvmet_port *port)
 	port->disc_addr.tsas.rdma.cms = NVMF_RDMA_CMS_RDMA_CM;
 }
 
-static void nvmet_port_init_tsas_tcp(struct nvmet_port *port, int sectype)
-{
-	port->disc_addr.tsas.tcp.sectype = sectype;
-}
-
 static ssize_t nvmet_addr_trtype_store(struct config_item *item,
 		const char *page, size_t count)
 {
@@ -350,98 +324,10 @@ found:
 	port->disc_addr.trtype = nvmet_transport[i].type;
 	if (port->disc_addr.trtype == NVMF_TRTYPE_RDMA)
 		nvmet_port_init_tsas_rdma(port);
-	else if (port->disc_addr.trtype == NVMF_TRTYPE_TCP)
-		nvmet_port_init_tsas_tcp(port, NVMF_TCP_SECTYPE_NONE);
 	return count;
 }
 
 CONFIGFS_ATTR(nvmet_, addr_trtype);
-
-static const struct nvmet_type_name_map nvmet_addr_tsas_tcp[] = {
-	{ NVMF_TCP_SECTYPE_NONE,	"none" },
-	{ NVMF_TCP_SECTYPE_TLS13,	"tls1.3" },
-};
-
-static const struct nvmet_type_name_map nvmet_addr_tsas_rdma[] = {
-	{ NVMF_RDMA_QPTYPE_CONNECTED,	"connected" },
-	{ NVMF_RDMA_QPTYPE_DATAGRAM,	"datagram"  },
-};
-
-static ssize_t nvmet_addr_tsas_show(struct config_item *item,
-		char *page)
-{
-	struct nvmet_port *port = to_nvmet_port(item);
-	int i;
-
-	if (port->disc_addr.trtype == NVMF_TRTYPE_TCP) {
-		for (i = 0; i < ARRAY_SIZE(nvmet_addr_tsas_tcp); i++) {
-			if (port->disc_addr.tsas.tcp.sectype == nvmet_addr_tsas_tcp[i].type)
-				return sprintf(page, "%s\n", nvmet_addr_tsas_tcp[i].name);
-		}
-	} else if (port->disc_addr.trtype == NVMF_TRTYPE_RDMA) {
-		for (i = 0; i < ARRAY_SIZE(nvmet_addr_tsas_rdma); i++) {
-			if (port->disc_addr.tsas.rdma.qptype == nvmet_addr_tsas_rdma[i].type)
-				return sprintf(page, "%s\n", nvmet_addr_tsas_rdma[i].name);
-		}
-	}
-	return sprintf(page, "reserved\n");
-}
-
-static ssize_t nvmet_addr_tsas_store(struct config_item *item,
-		const char *page, size_t count)
-{
-	struct nvmet_port *port = to_nvmet_port(item);
-	u8 treq = nvmet_port_disc_addr_treq_mask(port);
-	u8 sectype;
-	int i;
-
-	if (nvmet_is_port_enabled(port, __func__))
-		return -EACCES;
-
-	if (port->disc_addr.trtype != NVMF_TRTYPE_TCP)
-		return -EINVAL;
-
-	for (i = 0; i < ARRAY_SIZE(nvmet_addr_tsas_tcp); i++) {
-		if (sysfs_streq(page, nvmet_addr_tsas_tcp[i].name)) {
-			sectype = nvmet_addr_tsas_tcp[i].type;
-			goto found;
-		}
-	}
-
-	pr_err("Invalid value '%s' for tsas\n", page);
-	return -EINVAL;
-
-found:
-	if (sectype == NVMF_TCP_SECTYPE_TLS13) {
-		if (!IS_ENABLED(CONFIG_NVME_TARGET_TCP_TLS)) {
-			pr_err("TLS is not supported\n");
-			return -EINVAL;
-		}
-		if (!port->keyring) {
-			pr_err("TLS keyring not configured\n");
-			return -EINVAL;
-		}
-	}
-
-	nvmet_port_init_tsas_tcp(port, sectype);
-	/*
-	 * If TLS is enabled TREQ should be set to 'required' per default
-	 */
-	if (sectype == NVMF_TCP_SECTYPE_TLS13) {
-		u8 sc = nvmet_port_disc_addr_treq_secure_channel(port);
-
-		if (sc == NVMF_TREQ_NOT_SPECIFIED)
-			treq |= NVMF_TREQ_REQUIRED;
-		else
-			treq |= sc;
-	} else {
-		treq |= NVMF_TREQ_NOT_SPECIFIED;
-	}
-	port->disc_addr.treq = treq;
-	return count;
-}
-
-CONFIGFS_ATTR(nvmet_, addr_tsas);
 
 /*
  * Namespace structures & file operation functions below
@@ -622,7 +508,6 @@ static ssize_t nvmet_ns_ana_grpid_store(struct config_item *item,
 
 	down_write(&nvmet_ana_sem);
 	oldgrpid = ns->anagrpid;
-	newgrpid = array_index_nospec(newgrpid, NVMET_MAX_ANAGRPS);
 	nvmet_ana_group_enabled[newgrpid]++;
 	ns->anagrpid = newgrpid;
 	nvmet_ana_group_enabled[oldgrpid]--;
@@ -647,7 +532,7 @@ static ssize_t nvmet_ns_enable_store(struct config_item *item,
 	bool enable;
 	int ret = 0;
 
-	if (kstrtobool(page, &enable))
+	if (strtobool(page, &enable))
 		return -EINVAL;
 
 	if (enable)
@@ -671,7 +556,7 @@ static ssize_t nvmet_ns_buffered_io_store(struct config_item *item,
 	struct nvmet_ns *ns = to_nvmet_ns(item);
 	bool val;
 
-	if (kstrtobool(page, &val))
+	if (strtobool(page, &val))
 		return -EINVAL;
 
 	mutex_lock(&ns->subsys->lock);
@@ -694,7 +579,7 @@ static ssize_t nvmet_ns_revalidate_size_store(struct config_item *item,
 	struct nvmet_ns *ns = to_nvmet_ns(item);
 	bool val;
 
-	if (kstrtobool(page, &val))
+	if (strtobool(page, &val))
 		return -EINVAL;
 
 	if (!val)
@@ -843,7 +728,7 @@ static ssize_t nvmet_passthru_enable_store(struct config_item *item,
 	bool enable;
 	int ret = 0;
 
-	if (kstrtobool(page, &enable))
+	if (strtobool(page, &enable))
 		return -EINVAL;
 
 	if (enable)
@@ -1110,7 +995,7 @@ static ssize_t nvmet_subsys_attr_allow_any_host_store(struct config_item *item,
 	bool allow_any_host;
 	int ret = 0;
 
-	if (kstrtobool(page, &allow_any_host))
+	if (strtobool(page, &allow_any_host))
 		return -EINVAL;
 
 	down_write(&nvmet_config_sem);
@@ -1377,116 +1262,6 @@ static ssize_t nvmet_subsys_attr_model_store(struct config_item *item,
 }
 CONFIGFS_ATTR(nvmet_subsys_, attr_model);
 
-static ssize_t nvmet_subsys_attr_ieee_oui_show(struct config_item *item,
-					    char *page)
-{
-	struct nvmet_subsys *subsys = to_subsys(item);
-
-	return sysfs_emit(page, "0x%06x\n", subsys->ieee_oui);
-}
-
-static ssize_t nvmet_subsys_attr_ieee_oui_store_locked(struct nvmet_subsys *subsys,
-		const char *page, size_t count)
-{
-	uint32_t val = 0;
-	int ret;
-
-	if (subsys->subsys_discovered) {
-		pr_err("Can't set IEEE OUI. 0x%06x is already assigned\n",
-		      subsys->ieee_oui);
-		return -EINVAL;
-	}
-
-	ret = kstrtou32(page, 0, &val);
-	if (ret < 0)
-		return ret;
-
-	if (val >= 0x1000000)
-		return -EINVAL;
-
-	subsys->ieee_oui = val;
-
-	return count;
-}
-
-static ssize_t nvmet_subsys_attr_ieee_oui_store(struct config_item *item,
-					     const char *page, size_t count)
-{
-	struct nvmet_subsys *subsys = to_subsys(item);
-	ssize_t ret;
-
-	down_write(&nvmet_config_sem);
-	mutex_lock(&subsys->lock);
-	ret = nvmet_subsys_attr_ieee_oui_store_locked(subsys, page, count);
-	mutex_unlock(&subsys->lock);
-	up_write(&nvmet_config_sem);
-
-	return ret;
-}
-CONFIGFS_ATTR(nvmet_subsys_, attr_ieee_oui);
-
-static ssize_t nvmet_subsys_attr_firmware_show(struct config_item *item,
-					    char *page)
-{
-	struct nvmet_subsys *subsys = to_subsys(item);
-
-	return sysfs_emit(page, "%s\n", subsys->firmware_rev);
-}
-
-static ssize_t nvmet_subsys_attr_firmware_store_locked(struct nvmet_subsys *subsys,
-		const char *page, size_t count)
-{
-	int pos = 0, len;
-	char *val;
-
-	if (subsys->subsys_discovered) {
-		pr_err("Can't set firmware revision. %s is already assigned\n",
-		       subsys->firmware_rev);
-		return -EINVAL;
-	}
-
-	len = strcspn(page, "\n");
-	if (!len)
-		return -EINVAL;
-
-	if (len > NVMET_FR_MAX_SIZE) {
-		pr_err("Firmware revision size can not exceed %d Bytes\n",
-		       NVMET_FR_MAX_SIZE);
-		return -EINVAL;
-	}
-
-	for (pos = 0; pos < len; pos++) {
-		if (!nvmet_is_ascii(page[pos]))
-			return -EINVAL;
-	}
-
-	val = kmemdup_nul(page, len, GFP_KERNEL);
-	if (!val)
-		return -ENOMEM;
-
-	kfree(subsys->firmware_rev);
-
-	subsys->firmware_rev = val;
-
-	return count;
-}
-
-static ssize_t nvmet_subsys_attr_firmware_store(struct config_item *item,
-					     const char *page, size_t count)
-{
-	struct nvmet_subsys *subsys = to_subsys(item);
-	ssize_t ret;
-
-	down_write(&nvmet_config_sem);
-	mutex_lock(&subsys->lock);
-	ret = nvmet_subsys_attr_firmware_store_locked(subsys, page, count);
-	mutex_unlock(&subsys->lock);
-	up_write(&nvmet_config_sem);
-
-	return ret;
-}
-CONFIGFS_ATTR(nvmet_subsys_, attr_firmware);
-
 #ifdef CONFIG_BLK_DEV_INTEGRITY
 static ssize_t nvmet_subsys_attr_pi_enable_show(struct config_item *item,
 						char *page)
@@ -1500,7 +1275,7 @@ static ssize_t nvmet_subsys_attr_pi_enable_store(struct config_item *item,
 	struct nvmet_subsys *subsys = to_subsys(item);
 	bool pi_enable;
 
-	if (kstrtobool(page, &pi_enable))
+	if (strtobool(page, &pi_enable))
 		return -EINVAL;
 
 	subsys->pi_support = pi_enable;
@@ -1518,8 +1293,6 @@ static ssize_t nvmet_subsys_attr_qid_max_show(struct config_item *item,
 static ssize_t nvmet_subsys_attr_qid_max_store(struct config_item *item,
 					       const char *page, size_t cnt)
 {
-	struct nvmet_subsys *subsys = to_subsys(item);
-	struct nvmet_ctrl *ctrl;
 	u16 qid_max;
 
 	if (sscanf(page, "%hu\n", &qid_max) != 1)
@@ -1529,13 +1302,8 @@ static ssize_t nvmet_subsys_attr_qid_max_store(struct config_item *item,
 		return -EINVAL;
 
 	down_write(&nvmet_config_sem);
-	subsys->max_qid = qid_max;
-
-	/* Force reconnect */
-	list_for_each_entry(ctrl, &subsys->ctrls, subsys_entry)
-		ctrl->ops->delete_ctrl(ctrl);
+	to_subsys(item)->max_qid = qid_max;
 	up_write(&nvmet_config_sem);
-
 	return cnt;
 }
 CONFIGFS_ATTR(nvmet_subsys_, attr_qid_max);
@@ -1548,8 +1316,6 @@ static struct configfs_attribute *nvmet_subsys_attrs[] = {
 	&nvmet_subsys_attr_attr_cntlid_max,
 	&nvmet_subsys_attr_attr_model,
 	&nvmet_subsys_attr_attr_qid_max,
-	&nvmet_subsys_attr_attr_ieee_oui,
-	&nvmet_subsys_attr_attr_firmware,
 #ifdef CONFIG_BLK_DEV_INTEGRITY
 	&nvmet_subsys_attr_attr_pi_enable,
 #endif
@@ -1629,7 +1395,7 @@ static ssize_t nvmet_referral_enable_store(struct config_item *item,
 	struct nvmet_port *port = to_nvmet_port(item);
 	bool enable;
 
-	if (kstrtobool(page, &enable))
+	if (strtobool(page, &enable))
 		goto inval;
 
 	if (enable)
@@ -1814,7 +1580,6 @@ static struct config_group *nvmet_ana_groups_make_group(
 	grp->grpid = grpid;
 
 	down_write(&nvmet_ana_sem);
-	grpid = array_index_nospec(grpid, NVMET_MAX_ANAGRPS);
 	nvmet_ana_group_enabled[grpid]++;
 	up_write(&nvmet_ana_sem);
 
@@ -1846,7 +1611,6 @@ static void nvmet_port_release(struct config_item *item)
 	flush_workqueue(nvmet_wq);
 	list_del(&port->global_entry);
 
-	key_put(port->keyring);
 	kfree(port->ana_state);
 	kfree(port);
 }
@@ -1857,7 +1621,6 @@ static struct configfs_attribute *nvmet_port_attrs[] = {
 	&nvmet_attr_addr_traddr,
 	&nvmet_attr_addr_trsvcid,
 	&nvmet_attr_addr_trtype,
-	&nvmet_attr_addr_tsas,
 	&nvmet_attr_param_inline_data_size,
 #ifdef CONFIG_BLK_DEV_INTEGRITY
 	&nvmet_attr_param_pi_enable,
@@ -1894,14 +1657,6 @@ static struct config_group *nvmet_ports_make(struct config_group *group,
 	if (!port->ana_state) {
 		kfree(port);
 		return ERR_PTR(-ENOMEM);
-	}
-
-	if (IS_ENABLED(CONFIG_NVME_TARGET_TCP_TLS) && nvme_keyring_id()) {
-		port->keyring = key_lookup(nvme_keyring_id());
-		if (IS_ERR(port->keyring)) {
-			pr_warn("NVMe keyring not available, disabling TLS\n");
-			port->keyring = NULL;
-		}
 	}
 
 	for (i = 1; i <= NVMET_MAX_ANAGRPS; i++) {

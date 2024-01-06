@@ -6,13 +6,14 @@
  * Author: Kishon Vijay Abraham I <kishon@ti.com>
  */
 
-#include <linux/bitfield.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 
 #include "pcie-designware.h"
 #include <linux/pci-epc.h>
 #include <linux/pci-epf.h>
+
+#include "../../pci.h"
 
 void dw_pcie_ep_linkup(struct dw_pcie_ep *ep)
 {
@@ -53,35 +54,21 @@ static unsigned int dw_pcie_ep_func_select(struct dw_pcie_ep *ep, u8 func_no)
 	return func_offset;
 }
 
-static unsigned int dw_pcie_ep_get_dbi2_offset(struct dw_pcie_ep *ep, u8 func_no)
-{
-	unsigned int dbi2_offset = 0;
-
-	if (ep->ops->get_dbi2_offset)
-		dbi2_offset = ep->ops->get_dbi2_offset(ep, func_no);
-	else if (ep->ops->func_conf_select)     /* for backward compatibility */
-		dbi2_offset = ep->ops->func_conf_select(ep, func_no);
-
-	return dbi2_offset;
-}
-
 static void __dw_pcie_ep_reset_bar(struct dw_pcie *pci, u8 func_no,
 				   enum pci_barno bar, int flags)
 {
-	unsigned int func_offset, dbi2_offset;
+	u32 reg;
+	unsigned int func_offset = 0;
 	struct dw_pcie_ep *ep = &pci->ep;
-	u32 reg, reg_dbi2;
 
 	func_offset = dw_pcie_ep_func_select(ep, func_no);
-	dbi2_offset = dw_pcie_ep_get_dbi2_offset(ep, func_no);
 
 	reg = func_offset + PCI_BASE_ADDRESS_0 + (4 * bar);
-	reg_dbi2 = dbi2_offset + PCI_BASE_ADDRESS_0 + (4 * bar);
 	dw_pcie_dbi_ro_wr_en(pci);
-	dw_pcie_writel_dbi2(pci, reg_dbi2, 0x0);
+	dw_pcie_writel_dbi2(pci, reg, 0x0);
 	dw_pcie_writel_dbi(pci, reg, 0x0);
 	if (flags & PCI_BASE_ADDRESS_MEM_TYPE_64) {
-		dw_pcie_writel_dbi2(pci, reg_dbi2 + 4, 0x0);
+		dw_pcie_writel_dbi2(pci, reg + 4, 0x0);
 		dw_pcie_writel_dbi(pci, reg + 4, 0x0);
 	}
 	dw_pcie_dbi_ro_wr_dis(pci);
@@ -184,8 +171,8 @@ static int dw_pcie_ep_inbound_atu(struct dw_pcie_ep *ep, u8 func_no, int type,
 		return -EINVAL;
 	}
 
-	ret = dw_pcie_prog_ep_inbound_atu(pci, func_no, free_win, type,
-					  cpu_addr, bar);
+	ret = dw_pcie_prog_inbound_atu(pci, func_no, free_win, type,
+				       cpu_addr, bar);
 	if (ret < 0) {
 		dev_err(pci->dev, "Failed to program IB window\n");
 		return ret;
@@ -243,18 +230,16 @@ static int dw_pcie_ep_set_bar(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 {
 	struct dw_pcie_ep *ep = epc_get_drvdata(epc);
 	struct dw_pcie *pci = to_dw_pcie_from_ep(ep);
-	unsigned int func_offset, dbi2_offset;
 	enum pci_barno bar = epf_bar->barno;
 	size_t size = epf_bar->size;
 	int flags = epf_bar->flags;
-	u32 reg, reg_dbi2;
+	unsigned int func_offset = 0;
 	int ret, type;
+	u32 reg;
 
 	func_offset = dw_pcie_ep_func_select(ep, func_no);
-	dbi2_offset = dw_pcie_ep_get_dbi2_offset(ep, func_no);
 
 	reg = PCI_BASE_ADDRESS_0 + (4 * bar) + func_offset;
-	reg_dbi2 = PCI_BASE_ADDRESS_0 + (4 * bar) + dbi2_offset;
 
 	if (!(flags & PCI_BASE_ADDRESS_SPACE))
 		type = PCIE_ATU_TYPE_MEM;
@@ -270,11 +255,11 @@ static int dw_pcie_ep_set_bar(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 
 	dw_pcie_dbi_ro_wr_en(pci);
 
-	dw_pcie_writel_dbi2(pci, reg_dbi2, lower_32_bits(size - 1));
+	dw_pcie_writel_dbi2(pci, reg, lower_32_bits(size - 1));
 	dw_pcie_writel_dbi(pci, reg, flags);
 
 	if (flags & PCI_BASE_ADDRESS_MEM_TYPE_64) {
-		dw_pcie_writel_dbi2(pci, reg_dbi2 + 4, upper_32_bits(size - 1));
+		dw_pcie_writel_dbi2(pci, reg + 4, upper_32_bits(size - 1));
 		dw_pcie_writel_dbi(pci, reg + 4, 0);
 	}
 
@@ -351,7 +336,7 @@ static int dw_pcie_ep_get_msi(struct pci_epc *epc, u8 func_no, u8 vfunc_no)
 	if (!(val & PCI_MSI_FLAGS_ENABLE))
 		return -EINVAL;
 
-	val = FIELD_GET(PCI_MSI_FLAGS_QSIZE, val);
+	val = (val & PCI_MSI_FLAGS_QSIZE) >> 4;
 
 	return val;
 }
@@ -374,7 +359,7 @@ static int dw_pcie_ep_set_msi(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 	reg = ep_func->msi_cap + func_offset + PCI_MSI_FLAGS;
 	val = dw_pcie_readw_dbi(pci, reg);
 	val &= ~PCI_MSI_FLAGS_QMASK;
-	val |= FIELD_PREP(PCI_MSI_FLAGS_QMASK, interrupts);
+	val |= (interrupts << 1) & PCI_MSI_FLAGS_QMASK;
 	dw_pcie_dbi_ro_wr_en(pci);
 	dw_pcie_writew_dbi(pci, reg, val);
 	dw_pcie_dbi_ro_wr_dis(pci);
@@ -601,7 +586,7 @@ int dw_pcie_ep_raise_msix_irq(struct dw_pcie_ep *ep, u8 func_no,
 
 	reg = ep_func->msix_cap + func_offset + PCI_MSIX_TABLE;
 	tbl_offset = dw_pcie_readl_dbi(pci, reg);
-	bir = FIELD_GET(PCI_MSIX_TABLE_BIR, tbl_offset);
+	bir = (tbl_offset & PCI_MSIX_TABLE_BIR);
 	tbl_offset &= PCI_MSIX_TABLE_OFFSET;
 
 	msix_tbl = ep->epf_bar[bir]->addr + tbl_offset;
@@ -629,20 +614,13 @@ int dw_pcie_ep_raise_msix_irq(struct dw_pcie_ep *ep, u8 func_no,
 
 void dw_pcie_ep_exit(struct dw_pcie_ep *ep)
 {
-	struct dw_pcie *pci = to_dw_pcie_from_ep(ep);
 	struct pci_epc *epc = ep->epc;
-
-	dw_pcie_edma_remove(pci);
 
 	pci_epc_mem_free_addr(epc, ep->msi_mem_phys, ep->msi_mem,
 			      epc->mem->window.page_size);
 
 	pci_epc_mem_exit(epc);
-
-	if (ep->ops->deinit)
-		ep->ops->deinit(ep);
 }
-EXPORT_SYMBOL_GPL(dw_pcie_ep_exit);
 
 static unsigned int dw_pcie_ep_find_ext_capability(struct dw_pcie *pci, int cap)
 {
@@ -665,7 +643,7 @@ static unsigned int dw_pcie_ep_find_ext_capability(struct dw_pcie *pci, int cap)
 int dw_pcie_ep_init_complete(struct dw_pcie_ep *ep)
 {
 	struct dw_pcie *pci = to_dw_pcie_from_ep(ep);
-	unsigned int offset, ptm_cap_base;
+	unsigned int offset;
 	unsigned int nbars;
 	u8 hdr_type;
 	u32 reg;
@@ -681,7 +659,6 @@ int dw_pcie_ep_init_complete(struct dw_pcie_ep *ep)
 	}
 
 	offset = dw_pcie_ep_find_ext_capability(pci, PCI_EXT_CAP_ID_REBAR);
-	ptm_cap_base = dw_pcie_ep_find_ext_capability(pci, PCI_EXT_CAP_ID_PTM);
 
 	dw_pcie_dbi_ro_wr_en(pci);
 
@@ -692,22 +669,6 @@ int dw_pcie_ep_init_complete(struct dw_pcie_ep *ep)
 
 		for (i = 0; i < nbars; i++, offset += PCI_REBAR_CTRL)
 			dw_pcie_writel_dbi(pci, offset + PCI_REBAR_CAP, 0x0);
-	}
-
-	/*
-	 * PTM responder capability can be disabled only after disabling
-	 * PTM root capability.
-	 */
-	if (ptm_cap_base) {
-		dw_pcie_dbi_ro_wr_en(pci);
-		reg = dw_pcie_readl_dbi(pci, ptm_cap_base + PCI_PTM_CAP);
-		reg &= ~PCI_PTM_CAP_ROOT;
-		dw_pcie_writel_dbi(pci, ptm_cap_base + PCI_PTM_CAP, reg);
-
-		reg = dw_pcie_readl_dbi(pci, ptm_cap_base + PCI_PTM_CAP);
-		reg &= ~(PCI_PTM_CAP_RES | PCI_PTM_GRANULARITY_MASK);
-		dw_pcie_writel_dbi(pci, ptm_cap_base + PCI_PTM_CAP, reg);
-		dw_pcie_dbi_ro_wr_dis(pci);
 	}
 
 	dw_pcie_setup(pci);
@@ -733,9 +694,23 @@ int dw_pcie_ep_init(struct dw_pcie_ep *ep)
 
 	INIT_LIST_HEAD(&ep->func_list);
 
-	ret = dw_pcie_get_resources(pci);
-	if (ret)
-		return ret;
+	if (!pci->dbi_base) {
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dbi");
+		pci->dbi_base = devm_pci_remap_cfg_resource(dev, res);
+		if (IS_ERR(pci->dbi_base))
+			return PTR_ERR(pci->dbi_base);
+	}
+
+	if (!pci->dbi_base2) {
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dbi2");
+		if (!res) {
+			pci->dbi_base2 = pci->dbi_base + SZ_4K;
+		} else {
+			pci->dbi_base2 = devm_pci_remap_cfg_resource(dev, res);
+			if (IS_ERR(pci->dbi_base2))
+				return PTR_ERR(pci->dbi_base2);
+		}
+	}
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "addr_space");
 	if (!res)
@@ -743,9 +718,6 @@ int dw_pcie_ep_init(struct dw_pcie_ep *ep)
 
 	ep->phys_base = res->start;
 	ep->addr_size = resource_size(res);
-
-	if (ep->ops->pre_init)
-		ep->ops->pre_init(ep);
 
 	dw_pcie_version_detect(pci);
 
@@ -766,6 +738,9 @@ int dw_pcie_ep_init(struct dw_pcie_ep *ep)
 	if (!addr)
 		return -ENOMEM;
 	ep->outbound_addr = addr;
+
+	if (pci->link_gen < 1)
+		pci->link_gen = of_pci_get_max_link_speed(np);
 
 	epc = devm_pci_epc_create(dev, &epc_ops);
 	if (IS_ERR(epc)) {
@@ -801,7 +776,7 @@ int dw_pcie_ep_init(struct dw_pcie_ep *ep)
 			       ep->page_size);
 	if (ret < 0) {
 		dev_err(dev, "Failed to initialize address space\n");
-		goto err_ep_deinit;
+		return ret;
 	}
 
 	ep->msi_mem = pci_epc_mem_alloc_addr(epc, &ep->msi_mem_phys,
@@ -812,10 +787,6 @@ int dw_pcie_ep_init(struct dw_pcie_ep *ep)
 		goto err_exit_epc_mem;
 	}
 
-	ret = dw_pcie_edma_detect(pci);
-	if (ret)
-		goto err_free_epc_mem;
-
 	if (ep->ops->get_features) {
 		epc_features = ep->ops->get_features(ep);
 		if (epc_features->core_init_notifier)
@@ -824,12 +795,9 @@ int dw_pcie_ep_init(struct dw_pcie_ep *ep)
 
 	ret = dw_pcie_ep_init_complete(ep);
 	if (ret)
-		goto err_remove_edma;
+		goto err_free_epc_mem;
 
 	return 0;
-
-err_remove_edma:
-	dw_pcie_edma_remove(pci);
 
 err_free_epc_mem:
 	pci_epc_mem_free_addr(epc, ep->msi_mem_phys, ep->msi_mem,
@@ -837,10 +805,6 @@ err_free_epc_mem:
 
 err_exit_epc_mem:
 	pci_epc_mem_exit(epc);
-
-err_ep_deinit:
-	if (ep->ops->deinit)
-		ep->ops->deinit(ep);
 
 	return ret;
 }

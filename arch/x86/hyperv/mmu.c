@@ -52,19 +52,14 @@ static inline int fill_gva_list(u64 gva_list[], int offset,
 	return gva_n - offset;
 }
 
-static bool cpu_is_lazy(int cpu)
-{
-	return per_cpu(cpu_tlbstate_shared.is_lazy, cpu);
-}
-
 static void hyperv_flush_tlb_multi(const struct cpumask *cpus,
 				   const struct flush_tlb_info *info)
 {
 	int cpu, vcpu, gva_n, max_gvas;
+	struct hv_tlb_flush **flush_pcpu;
 	struct hv_tlb_flush *flush;
 	u64 status;
 	unsigned long flags;
-	bool do_lazy = !info->freed_tables;
 
 	trace_hyperv_mmu_flush_tlb_multi(cpus, info);
 
@@ -73,7 +68,10 @@ static void hyperv_flush_tlb_multi(const struct cpumask *cpus,
 
 	local_irq_save(flags);
 
-	flush = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	flush_pcpu = (struct hv_tlb_flush **)
+		     this_cpu_ptr(hyperv_pcpu_input_arg);
+
+	flush = *flush_pcpu;
 
 	if (unlikely(!flush)) {
 		local_irq_restore(flags);
@@ -114,8 +112,6 @@ static void hyperv_flush_tlb_multi(const struct cpumask *cpus,
 			goto do_ex_hypercall;
 
 		for_each_cpu(cpu, cpus) {
-			if (do_lazy && cpu_is_lazy(cpu))
-				continue;
 			vcpu = hv_cpu_number_to_vp_number(cpu);
 			if (vcpu == VP_INVAL) {
 				local_irq_restore(flags);
@@ -174,13 +170,17 @@ static u64 hyperv_flush_tlb_others_ex(const struct cpumask *cpus,
 				      const struct flush_tlb_info *info)
 {
 	int nr_bank = 0, max_gvas, gva_n;
+	struct hv_tlb_flush_ex **flush_pcpu;
 	struct hv_tlb_flush_ex *flush;
 	u64 status;
 
 	if (!(ms_hyperv.hints & HV_X64_EX_PROCESSOR_MASKS_RECOMMENDED))
 		return HV_STATUS_INVALID_PARAMETER;
 
-	flush = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	flush_pcpu = (struct hv_tlb_flush_ex **)
+		     this_cpu_ptr(hyperv_pcpu_input_arg);
+
+	flush = *flush_pcpu;
 
 	if (info->mm) {
 		/*
@@ -198,8 +198,7 @@ static u64 hyperv_flush_tlb_others_ex(const struct cpumask *cpus,
 	flush->hv_vp_set.valid_bank_mask = 0;
 
 	flush->hv_vp_set.format = HV_GENERIC_SET_SPARSE_4K;
-	nr_bank = cpumask_to_vpset_skip(&flush->hv_vp_set, cpus,
-			info->freed_tables ? NULL : cpu_is_lazy);
+	nr_bank = cpumask_to_vpset(&(flush->hv_vp_set), cpus);
 	if (nr_bank < 0)
 		return HV_STATUS_INVALID_PARAMETER;
 

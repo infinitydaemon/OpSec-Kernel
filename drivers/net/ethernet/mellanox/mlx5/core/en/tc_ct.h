@@ -25,12 +25,9 @@ struct nf_flowtable;
 struct mlx5_ct_attr {
 	u16 zone;
 	u16 ct_action;
+	struct mlx5_ct_flow *ct_flow;
 	struct nf_flowtable *nf_ft;
 	u32 ct_labels_id;
-	u32 act_miss_mapping;
-	u64 act_miss_cookie;
-	bool offloaded;
-	struct mlx5_ct_ft *ft;
 };
 
 #define zone_to_reg_ct {\
@@ -114,12 +111,15 @@ int mlx5_tc_ct_add_no_trk_match(struct mlx5_flow_spec *spec);
 int
 mlx5_tc_ct_parse_action(struct mlx5_tc_ct_priv *priv,
 			struct mlx5_flow_attr *attr,
+			struct mlx5e_tc_mod_hdr_acts *mod_acts,
 			const struct flow_action_entry *act,
 			struct netlink_ext_ack *extack);
 
-int
-mlx5_tc_ct_flow_offload(struct mlx5_tc_ct_priv *priv, struct mlx5_flow_attr *attr);
-
+struct mlx5_flow_handle *
+mlx5_tc_ct_flow_offload(struct mlx5_tc_ct_priv *priv,
+			struct mlx5_flow_spec *spec,
+			struct mlx5_flow_attr *attr,
+			struct mlx5e_tc_mod_hdr_acts *mod_hdr_acts);
 void
 mlx5_tc_ct_delete_flow(struct mlx5_tc_ct_priv *priv,
 		       struct mlx5_flow_attr *attr);
@@ -127,6 +127,10 @@ mlx5_tc_ct_delete_flow(struct mlx5_tc_ct_priv *priv,
 bool
 mlx5e_tc_ct_restore_flow(struct mlx5_tc_ct_priv *ct_priv,
 			 struct sk_buff *skb, u8 zone_restore_id);
+
+int
+mlx5_tc_ct_set_ct_clear_regs(struct mlx5_tc_ct_priv *priv,
+			     struct mlx5e_tc_mod_hdr_acts *mod_acts);
 
 #else /* CONFIG_MLX5_TC_CT */
 
@@ -170,8 +174,16 @@ mlx5_tc_ct_add_no_trk_match(struct mlx5_flow_spec *spec)
 }
 
 static inline int
+mlx5_tc_ct_set_ct_clear_regs(struct mlx5_tc_ct_priv *priv,
+			     struct mlx5e_tc_mod_hdr_acts *mod_acts)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int
 mlx5_tc_ct_parse_action(struct mlx5_tc_ct_priv *priv,
 			struct mlx5_flow_attr *attr,
+			struct mlx5e_tc_mod_hdr_acts *mod_acts,
 			const struct flow_action_entry *act,
 			struct netlink_ext_ack *extack)
 {
@@ -179,11 +191,13 @@ mlx5_tc_ct_parse_action(struct mlx5_tc_ct_priv *priv,
 	return -EOPNOTSUPP;
 }
 
-static inline int
+static inline struct mlx5_flow_handle *
 mlx5_tc_ct_flow_offload(struct mlx5_tc_ct_priv *priv,
-			struct mlx5_flow_attr *attr)
+			struct mlx5_flow_spec *spec,
+			struct mlx5_flow_attr *attr,
+			struct mlx5e_tc_mod_hdr_acts *mod_hdr_acts)
 {
-	return -EOPNOTSUPP;
+	return ERR_PTR(-EOPNOTSUPP);
 }
 
 static inline void

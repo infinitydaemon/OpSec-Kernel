@@ -17,7 +17,6 @@
 #include <linux/mm.h>
 #include <asm/processor.h>
 #include <asm/mmu_context.h>
-#include <asm/tlb.h>
 #include <asm/tlbflush.h>
 #include <asm/cacheflush.h>
 
@@ -180,7 +179,6 @@ static unsigned get_pte_for_vaddr(unsigned vaddr)
 	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *pte;
-	unsigned int pteval;
 
 	if (!mm)
 		mm = task->active_mm;
@@ -199,9 +197,7 @@ static unsigned get_pte_for_vaddr(unsigned vaddr)
 	pte = pte_offset_map(pmd, vaddr);
 	if (!pte)
 		return 0;
-	pteval = pte_val(*pte);
-	pte_unmap(pte);
-	return pteval;
+	return pte_val(*pte);
 }
 
 enum {

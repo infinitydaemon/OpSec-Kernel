@@ -24,12 +24,11 @@
  *
  */
 
+#include <linux/circ_buf.h>
 #include <linux/ctype.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 
-#include "i915_irq.h"
-#include "i915_reg.h"
 #include "intel_atomic.h"
 #include "intel_de.h"
 #include "intel_display_types.h"
@@ -72,18 +71,20 @@ static int i8xx_pipe_crc_ctl_reg(enum intel_pipe_crc_source *source,
 	return 0;
 }
 
-static void i9xx_pipe_crc_auto_source(struct drm_i915_private *dev_priv,
-				      enum pipe pipe,
-				      enum intel_pipe_crc_source *source)
+static int i9xx_pipe_crc_auto_source(struct drm_i915_private *dev_priv,
+				     enum pipe pipe,
+				     enum intel_pipe_crc_source *source)
 {
+	struct drm_device *dev = &dev_priv->drm;
 	struct intel_encoder *encoder;
 	struct intel_crtc *crtc;
 	struct intel_digital_port *dig_port;
+	int ret = 0;
 
 	*source = INTEL_PIPE_CRC_SOURCE_PIPE;
 
-	drm_modeset_lock_all(&dev_priv->drm);
-	for_each_intel_encoder(&dev_priv->drm, encoder) {
+	drm_modeset_lock_all(dev);
+	for_each_intel_encoder(dev, encoder) {
 		if (!encoder->base.crtc)
 			continue;
 
@@ -110,7 +111,7 @@ static void i9xx_pipe_crc_auto_source(struct drm_i915_private *dev_priv,
 				*source = INTEL_PIPE_CRC_SOURCE_DP_D;
 				break;
 			default:
-				drm_WARN(&dev_priv->drm, 1, "nonexisting DP port %c\n",
+				drm_WARN(dev, 1, "nonexisting DP port %c\n",
 					 port_name(dig_port->base.port));
 				break;
 			}
@@ -119,7 +120,9 @@ static void i9xx_pipe_crc_auto_source(struct drm_i915_private *dev_priv,
 			break;
 		}
 	}
-	drm_modeset_unlock_all(&dev_priv->drm);
+	drm_modeset_unlock_all(dev);
+
+	return ret;
 }
 
 static int vlv_pipe_crc_ctl_reg(struct drm_i915_private *dev_priv,
@@ -129,8 +132,11 @@ static int vlv_pipe_crc_ctl_reg(struct drm_i915_private *dev_priv,
 {
 	bool need_stable_symbols = false;
 
-	if (*source == INTEL_PIPE_CRC_SOURCE_AUTO)
-		i9xx_pipe_crc_auto_source(dev_priv, pipe, source);
+	if (*source == INTEL_PIPE_CRC_SOURCE_AUTO) {
+		int ret = i9xx_pipe_crc_auto_source(dev_priv, pipe, source);
+		if (ret)
+			return ret;
+	}
 
 	switch (*source) {
 	case INTEL_PIPE_CRC_SOURCE_PIPE:
@@ -194,8 +200,11 @@ static int i9xx_pipe_crc_ctl_reg(struct drm_i915_private *dev_priv,
 				 enum intel_pipe_crc_source *source,
 				 u32 *val)
 {
-	if (*source == INTEL_PIPE_CRC_SOURCE_AUTO)
-		i9xx_pipe_crc_auto_source(dev_priv, pipe, source);
+	if (*source == INTEL_PIPE_CRC_SOURCE_AUTO) {
+		int ret = i9xx_pipe_crc_auto_source(dev_priv, pipe, source);
+		if (ret)
+			return ret;
+	}
 
 	switch (*source) {
 	case INTEL_PIPE_CRC_SOURCE_PIPE:
@@ -293,7 +302,6 @@ intel_crtc_crc_setup_workarounds(struct intel_crtc *crtc, bool enable)
 	}
 
 	state->acquire_ctx = &ctx;
-	to_intel_atomic_state(state)->internal = true;
 
 retry:
 	pipe_config = intel_atomic_get_crtc_state(state, crtc);

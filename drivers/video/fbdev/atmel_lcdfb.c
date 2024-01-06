@@ -49,6 +49,7 @@ struct atmel_lcdfb_info {
 	struct clk		*lcdc_clk;
 
 	struct backlight_device	*backlight;
+	u8			bl_power;
 	u8			saved_lcdcon;
 
 	u32			pseudo_palette[16];
@@ -108,7 +109,22 @@ static u32 contrast_ctr = ATMEL_LCDC_PS_DIV8
 static int atmel_bl_update_status(struct backlight_device *bl)
 {
 	struct atmel_lcdfb_info *sinfo = bl_get_data(bl);
-	int			brightness = backlight_get_brightness(bl);
+	int			power = sinfo->bl_power;
+	int			brightness = bl->props.brightness;
+
+	/* REVISIT there may be a meaningful difference between
+	 * fb_blank and power ... there seem to be some cases
+	 * this doesn't handle correctly.
+	 */
+	if (bl->props.fb_blank != sinfo->bl_power)
+		power = bl->props.fb_blank;
+	else if (bl->props.power != sinfo->bl_power)
+		power = bl->props.power;
+
+	if (brightness < 0 && power == FB_BLANK_UNBLANK)
+		brightness = lcdc_readl(sinfo, ATMEL_LCDC_CONTRAST_VAL);
+	else if (power != FB_BLANK_UNBLANK)
+		brightness = 0;
 
 	lcdc_writel(sinfo, ATMEL_LCDC_CONTRAST_VAL, brightness);
 	if (contrast_ctr & ATMEL_LCDC_POL_POSITIVE)
@@ -116,6 +132,8 @@ static int atmel_bl_update_status(struct backlight_device *bl)
 			brightness ? contrast_ctr : 0);
 	else
 		lcdc_writel(sinfo, ATMEL_LCDC_CONTRAST_CTR, contrast_ctr);
+
+	bl->props.fb_blank = bl->props.power = sinfo->bl_power = power;
 
 	return 0;
 }
@@ -136,6 +154,8 @@ static void init_backlight(struct atmel_lcdfb_info *sinfo)
 {
 	struct backlight_properties props;
 	struct backlight_device	*bl;
+
+	sinfo->bl_power = FB_BLANK_UNBLANK;
 
 	if (sinfo->backlight)
 		return;
@@ -220,7 +240,7 @@ static inline void atmel_lcdfb_power_control(struct atmel_lcdfb_info *sinfo, int
 	}
 }
 
-static const struct fb_fix_screeninfo atmel_lcdfb_fix = {
+static const struct fb_fix_screeninfo atmel_lcdfb_fix __initconst = {
 	.type		= FB_TYPE_PACKED_PIXELS,
 	.visual		= FB_VISUAL_TRUECOLOR,
 	.xpanstep	= 0,
@@ -317,7 +337,7 @@ static inline void atmel_lcdfb_free_video_memory(struct atmel_lcdfb_info *sinfo)
 /**
  *	atmel_lcdfb_alloc_video_memory - Allocate framebuffer memory
  *	@sinfo: the frame buffer to allocate memory for
- *
+ * 	
  * 	This function is called only from the atmel_lcdfb_probe()
  * 	so no locking by fb_info->mm_lock around smem_len setting is needed.
  */
@@ -806,12 +826,14 @@ static int atmel_lcdfb_blank(int blank_mode, struct fb_info *info)
 
 static const struct fb_ops atmel_lcdfb_ops = {
 	.owner		= THIS_MODULE,
-	FB_DEFAULT_IOMEM_OPS,
 	.fb_check_var	= atmel_lcdfb_check_var,
 	.fb_set_par	= atmel_lcdfb_set_par,
 	.fb_setcolreg	= atmel_lcdfb_setcolreg,
 	.fb_blank	= atmel_lcdfb_blank,
 	.fb_pan_display	= atmel_lcdfb_pan_display,
+	.fb_fillrect	= cfb_fillrect,
+	.fb_copyarea	= cfb_copyarea,
+	.fb_imageblit	= cfb_imageblit,
 };
 
 static irqreturn_t atmel_lcdfb_interrupt(int irq, void *dev_id)
@@ -841,7 +863,7 @@ static void atmel_lcdfb_task(struct work_struct *work)
 	atmel_lcdfb_reset(sinfo);
 }
 
-static int atmel_lcdfb_init_fbinfo(struct atmel_lcdfb_info *sinfo)
+static int __init atmel_lcdfb_init_fbinfo(struct atmel_lcdfb_info *sinfo)
 {
 	struct fb_info *info = sinfo->info;
 	int ret = 0;
@@ -1017,7 +1039,7 @@ put_display_node:
 	return ret;
 }
 
-static int atmel_lcdfb_probe(struct platform_device *pdev)
+static int __init atmel_lcdfb_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct fb_info *info;
@@ -1057,7 +1079,7 @@ static int atmel_lcdfb_probe(struct platform_device *pdev)
 	if (IS_ERR(sinfo->reg_lcd))
 		sinfo->reg_lcd = NULL;
 
-	info->flags = FBINFO_PARTIAL_PAN_OK |
+	info->flags = FBINFO_DEFAULT | FBINFO_PARTIAL_PAN_OK |
 		      FBINFO_HWACCEL_YPAN;
 	info->pseudo_palette = sinfo->pseudo_palette;
 	info->fbops = &atmel_lcdfb_ops;
@@ -1223,14 +1245,14 @@ out:
 	return ret;
 }
 
-static void atmel_lcdfb_remove(struct platform_device *pdev)
+static int __exit atmel_lcdfb_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct fb_info *info = dev_get_drvdata(dev);
 	struct atmel_lcdfb_info *sinfo;
 
 	if (!info || !info->par)
-		return;
+		return 0;
 	sinfo = info->par;
 
 	cancel_work_sync(&sinfo->task);
@@ -1252,6 +1274,8 @@ static void atmel_lcdfb_remove(struct platform_device *pdev)
 	}
 
 	framebuffer_release(info);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -1299,16 +1323,16 @@ static int atmel_lcdfb_resume(struct platform_device *pdev)
 #endif
 
 static struct platform_driver atmel_lcdfb_driver = {
-	.probe		= atmel_lcdfb_probe,
-	.remove_new	= atmel_lcdfb_remove,
+	.remove		= __exit_p(atmel_lcdfb_remove),
 	.suspend	= atmel_lcdfb_suspend,
 	.resume		= atmel_lcdfb_resume,
 	.driver		= {
 		.name	= "atmel_lcdfb",
-		.of_match_table	= atmel_lcdfb_dt_ids,
+		.of_match_table	= of_match_ptr(atmel_lcdfb_dt_ids),
 	},
 };
-module_platform_driver(atmel_lcdfb_driver);
+
+module_platform_driver_probe(atmel_lcdfb_driver, atmel_lcdfb_probe);
 
 MODULE_DESCRIPTION("AT91 LCD Controller framebuffer driver");
 MODULE_AUTHOR("Nicolas Ferre <nicolas.ferre@atmel.com>");

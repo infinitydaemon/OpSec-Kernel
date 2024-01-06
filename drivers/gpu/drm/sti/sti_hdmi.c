@@ -266,7 +266,6 @@ static void hdmi_active_area(struct sti_hdmi *hdmi)
  */
 static void hdmi_config(struct sti_hdmi *hdmi)
 {
-	struct drm_connector *connector = hdmi->drm_connector;
 	u32 conf;
 
 	DRM_DEBUG_DRIVER("\n");
@@ -276,7 +275,7 @@ static void hdmi_config(struct sti_hdmi *hdmi)
 
 	/* Select encryption type and the framing mode */
 	conf |= HDMI_CFG_ESS_NOT_OESS;
-	if (connector->display_info.is_hdmi)
+	if (hdmi->hdmi_monitor)
 		conf |= HDMI_CFG_HDMI_NOT_DVI;
 
 	/* Set Hsync polarity */
@@ -986,14 +985,14 @@ static int sti_hdmi_connector_get_modes(struct drm_connector *connector)
 	if (!edid)
 		goto fail;
 
+	hdmi->hdmi_monitor = drm_detect_hdmi_monitor(edid);
+	DRM_DEBUG_KMS("%s : %dx%d cm\n",
+		      (hdmi->hdmi_monitor ? "hdmi monitor" : "dvi monitor"),
+		      edid->width_cm, edid->height_cm);
 	cec_notifier_set_phys_addr_from_edid(hdmi->notifier, edid);
 
 	count = drm_add_edid_modes(connector, edid);
 	drm_connector_update_edid_property(connector, edid);
-
-	DRM_DEBUG_KMS("%s : %dx%d cm\n",
-		      (connector->display_info.is_hdmi ? "hdmi monitor" : "dvi monitor"),
-		      edid->width_cm, edid->height_cm);
 
 	kfree(edid);
 	return count;
@@ -1472,7 +1471,7 @@ static int sti_hdmi_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void sti_hdmi_remove(struct platform_device *pdev)
+static int sti_hdmi_remove(struct platform_device *pdev)
 {
 	struct sti_hdmi *hdmi = dev_get_drvdata(&pdev->dev);
 
@@ -1480,6 +1479,8 @@ static void sti_hdmi_remove(struct platform_device *pdev)
 	if (hdmi->audio_pdev)
 		platform_device_unregister(hdmi->audio_pdev);
 	component_del(&pdev->dev, &sti_hdmi_ops);
+
+	return 0;
 }
 
 struct platform_driver sti_hdmi_driver = {
@@ -1489,7 +1490,7 @@ struct platform_driver sti_hdmi_driver = {
 		.of_match_table = hdmi_of_match,
 	},
 	.probe = sti_hdmi_probe,
-	.remove_new = sti_hdmi_remove,
+	.remove = sti_hdmi_remove,
 };
 
 MODULE_AUTHOR("Benjamin Gaignard <benjamin.gaignard@st.com>");

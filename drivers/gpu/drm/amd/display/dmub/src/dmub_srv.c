@@ -36,7 +36,6 @@
 #include "dmub_dcn315.h"
 #include "dmub_dcn316.h"
 #include "dmub_dcn32.h"
-#include "dmub_dcn35.h"
 #include "os_types.h"
 /*
  * Note: the DMUB service is standalone. No additional headers should be
@@ -78,9 +77,6 @@
 #define DMUB_CW6_BASE (0x66000000)
 
 #define DMUB_REGION5_BASE (0xA0000000)
-
-static struct dmub_srv_dcn32_regs dmub_srv_dcn32_regs;
-static struct dmub_srv_dcn35_regs dmub_srv_dcn35_regs;
 
 static inline uint32_t dmub_align(uint32_t val, uint32_t factor)
 {
@@ -196,9 +192,11 @@ static bool dmub_srv_hw_setup(struct dmub_srv *dmub, enum dmub_asic asic)
 
 		funcs->get_diagnostic_data = dmub_dcn20_get_diagnostic_data;
 
-		if (asic == DMUB_ASIC_DCN21)
+		if (asic == DMUB_ASIC_DCN21) {
 			dmub->regs = &dmub_srv_dcn21_regs;
 
+			funcs->is_phy_init = dmub_dcn21_is_phy_init;
+		}
 		if (asic == DMUB_ASIC_DCN30) {
 			dmub->regs = &dmub_srv_dcn30_regs;
 
@@ -259,7 +257,6 @@ static bool dmub_srv_hw_setup(struct dmub_srv *dmub, enum dmub_asic asic)
 		funcs->get_gpint_response = dmub_dcn31_get_gpint_response;
 		funcs->get_gpint_dataout = dmub_dcn31_get_gpint_dataout;
 		funcs->get_fw_status = dmub_dcn31_get_fw_boot_status;
-		funcs->get_fw_boot_option = dmub_dcn31_get_fw_boot_option;
 		funcs->enable_dmub_boot_options = dmub_dcn31_enable_dmub_boot_options;
 		funcs->skip_dmub_panel_power_sequence = dmub_dcn31_skip_dmub_panel_power_sequence;
 		//outbox0 call stacks
@@ -280,7 +277,6 @@ static bool dmub_srv_hw_setup(struct dmub_srv *dmub, enum dmub_asic asic)
 		funcs->send_inbox0_cmd = dmub_dcn32_send_inbox0_cmd;
 		funcs->clear_inbox0_ack_register = dmub_dcn32_clear_inbox0_ack_register;
 		funcs->read_inbox0_ack_register = dmub_dcn32_read_inbox0_ack_register;
-		funcs->subvp_save_surf_addr = dmub_dcn32_save_surf_addr;
 		funcs->reset = dmub_dcn32_reset;
 		funcs->reset_release = dmub_dcn32_reset_release;
 		funcs->backdoor_load = dmub_dcn32_backdoor_load;
@@ -309,51 +305,8 @@ static bool dmub_srv_hw_setup(struct dmub_srv *dmub, enum dmub_asic asic)
 		funcs->set_outbox0_rptr = dmub_dcn32_set_outbox0_rptr;
 		funcs->get_current_time = dmub_dcn32_get_current_time;
 		funcs->get_diagnostic_data = dmub_dcn32_get_diagnostic_data;
-		funcs->init_reg_offsets = dmub_srv_dcn32_regs_init;
 
 		break;
-
-	case DMUB_ASIC_DCN35:
-			dmub->regs_dcn35 = &dmub_srv_dcn35_regs;
-			funcs->configure_dmub_in_system_memory = dmub_dcn35_configure_dmub_in_system_memory;
-			funcs->send_inbox0_cmd = dmub_dcn35_send_inbox0_cmd;
-			funcs->clear_inbox0_ack_register = dmub_dcn35_clear_inbox0_ack_register;
-			funcs->read_inbox0_ack_register = dmub_dcn35_read_inbox0_ack_register;
-			funcs->reset = dmub_dcn35_reset;
-			funcs->reset_release = dmub_dcn35_reset_release;
-			funcs->backdoor_load = dmub_dcn35_backdoor_load;
-			funcs->backdoor_load_zfb_mode = dmub_dcn35_backdoor_load_zfb_mode;
-			funcs->setup_windows = dmub_dcn35_setup_windows;
-			funcs->setup_mailbox = dmub_dcn35_setup_mailbox;
-			funcs->get_inbox1_wptr = dmub_dcn35_get_inbox1_wptr;
-			funcs->get_inbox1_rptr = dmub_dcn35_get_inbox1_rptr;
-			funcs->set_inbox1_wptr = dmub_dcn35_set_inbox1_wptr;
-			funcs->setup_out_mailbox = dmub_dcn35_setup_out_mailbox;
-			funcs->get_outbox1_wptr = dmub_dcn35_get_outbox1_wptr;
-			funcs->set_outbox1_rptr = dmub_dcn35_set_outbox1_rptr;
-			funcs->is_supported = dmub_dcn35_is_supported;
-			funcs->is_hw_init = dmub_dcn35_is_hw_init;
-			funcs->set_gpint = dmub_dcn35_set_gpint;
-			funcs->is_gpint_acked = dmub_dcn35_is_gpint_acked;
-			funcs->get_gpint_response = dmub_dcn35_get_gpint_response;
-			funcs->get_gpint_dataout = dmub_dcn35_get_gpint_dataout;
-			funcs->get_fw_status = dmub_dcn35_get_fw_boot_status;
-			funcs->get_fw_boot_option = dmub_dcn35_get_fw_boot_option;
-			funcs->enable_dmub_boot_options = dmub_dcn35_enable_dmub_boot_options;
-			funcs->skip_dmub_panel_power_sequence = dmub_dcn35_skip_dmub_panel_power_sequence;
-			//outbox0 call stacks
-			funcs->setup_outbox0 = dmub_dcn35_setup_outbox0;
-			funcs->get_outbox0_wptr = dmub_dcn35_get_outbox0_wptr;
-			funcs->set_outbox0_rptr = dmub_dcn35_set_outbox0_rptr;
-
-			funcs->get_current_time = dmub_dcn35_get_current_time;
-			funcs->get_diagnostic_data = dmub_dcn35_get_diagnostic_data;
-
-			funcs->init_reg_offsets = dmub_srv_dcn35_regs_init;
-
-			funcs->is_hw_powered_up = dmub_dcn35_is_hw_powered_up;
-			funcs->should_detect = dmub_dcn35_should_detect;
-			break;
 
 	default:
 		return false;
@@ -624,8 +577,7 @@ enum dmub_status dmub_srv_hw_init(struct dmub_srv *dmub,
 		 * DMCUB when backdoor loading if the write from x86 hasn't been
 		 * flushed yet. This only occurs in backdoor loading.
 		 */
-		if (params->mem_access_type == DMUB_MEMORY_ACCESS_CPU)
-			dmub_flush_buffer_mem(inst_fb);
+		dmub_flush_buffer_mem(inst_fb);
 
 		if (params->fw_in_system_memory && dmub->hw_funcs.backdoor_load_zfb_mode)
 			dmub->hw_funcs.backdoor_load_zfb_mode(dmub, &cw0, &cw1);
@@ -705,11 +657,11 @@ enum dmub_status dmub_srv_hw_init(struct dmub_srv *dmub,
 	if (dmub->hw_funcs.enable_dmub_boot_options)
 		dmub->hw_funcs.enable_dmub_boot_options(dmub, params);
 
-	if (dmub->hw_funcs.skip_dmub_panel_power_sequence && !dmub->is_virtual)
+	if (dmub->hw_funcs.skip_dmub_panel_power_sequence)
 		dmub->hw_funcs.skip_dmub_panel_power_sequence(dmub,
 			params->skip_panel_power_sequence);
 
-	if (dmub->hw_funcs.reset_release && !dmub->is_virtual)
+	if (dmub->hw_funcs.reset_release)
 		dmub->hw_funcs.reset_release(dmub);
 
 	dmub->hw_init = true;
@@ -800,16 +752,7 @@ enum dmub_status dmub_srv_cmd_execute(struct dmub_srv *dmub)
 	return DMUB_STATUS_OK;
 }
 
-bool dmub_srv_is_hw_pwr_up(struct dmub_srv *dmub)
-{
-	if (!dmub->hw_funcs.is_hw_powered_up)
-		return true;
-
-	return dmub->hw_funcs.is_hw_powered_up(dmub) &&
-		dmub->hw_funcs.is_hw_init(dmub);
-}
-
-enum dmub_status dmub_srv_wait_for_hw_pwr_up(struct dmub_srv *dmub,
+enum dmub_status dmub_srv_wait_for_auto_load(struct dmub_srv *dmub,
 					     uint32_t timeout_us)
 {
 	uint32_t i;
@@ -818,7 +761,9 @@ enum dmub_status dmub_srv_wait_for_hw_pwr_up(struct dmub_srv *dmub,
 		return DMUB_STATUS_INVALID;
 
 	for (i = 0; i <= timeout_us; i += 100) {
-		if (dmub_srv_is_hw_pwr_up(dmub))
+		union dmub_fw_boot_status status = dmub->hw_funcs.get_fw_status(dmub);
+
+		if (status.bits.dal_fw && status.bits.mailbox_rdy)
 			return DMUB_STATUS_OK;
 
 		udelay(100);
@@ -827,25 +772,22 @@ enum dmub_status dmub_srv_wait_for_hw_pwr_up(struct dmub_srv *dmub,
 	return DMUB_STATUS_TIMEOUT;
 }
 
-enum dmub_status dmub_srv_wait_for_auto_load(struct dmub_srv *dmub,
-					     uint32_t timeout_us)
+enum dmub_status dmub_srv_wait_for_phy_init(struct dmub_srv *dmub,
+					    uint32_t timeout_us)
 {
-	uint32_t i;
-	bool hw_on = true;
+	uint32_t i = 0;
 
 	if (!dmub->hw_init)
 		return DMUB_STATUS_INVALID;
 
-	for (i = 0; i <= timeout_us; i += 100) {
-		union dmub_fw_boot_status status = dmub->hw_funcs.get_fw_status(dmub);
+	if (!dmub->hw_funcs.is_phy_init)
+		return DMUB_STATUS_OK;
 
-		if (dmub->hw_funcs.is_hw_powered_up)
-			hw_on = dmub->hw_funcs.is_hw_powered_up(dmub);
-
-		if (status.bits.dal_fw && status.bits.mailbox_rdy && hw_on)
+	for (i = 0; i <= timeout_us; i += 10) {
+		if (dmub->hw_funcs.is_phy_init(dmub))
 			return DMUB_STATUS_OK;
 
-		udelay(100);
+		udelay(10);
 	}
 
 	return DMUB_STATUS_TIMEOUT;
@@ -951,32 +893,6 @@ enum dmub_status dmub_srv_get_fw_boot_status(struct dmub_srv *dmub,
 
 	if (dmub->hw_funcs.get_fw_status)
 		*status = dmub->hw_funcs.get_fw_status(dmub);
-
-	return DMUB_STATUS_OK;
-}
-
-enum dmub_status dmub_srv_get_fw_boot_option(struct dmub_srv *dmub,
-					     union dmub_fw_boot_options *option)
-{
-	option->all = 0;
-
-	if (!dmub->sw_init)
-		return DMUB_STATUS_INVALID;
-
-	if (dmub->hw_funcs.get_fw_boot_option)
-		*option = dmub->hw_funcs.get_fw_boot_option(dmub);
-
-	return DMUB_STATUS_OK;
-}
-
-enum dmub_status dmub_srv_set_skip_panel_power_sequence(struct dmub_srv *dmub,
-					     bool skip)
-{
-	if (!dmub->sw_init)
-		return DMUB_STATUS_INVALID;
-
-	if (dmub->hw_funcs.skip_dmub_panel_power_sequence && !dmub->is_virtual)
-		dmub->hw_funcs.skip_dmub_panel_power_sequence(dmub, skip);
 
 	return DMUB_STATUS_OK;
 }
@@ -1090,13 +1006,4 @@ enum dmub_status dmub_srv_send_inbox0_cmd(struct dmub_srv *dmub,
 
 	dmub->hw_funcs.send_inbox0_cmd(dmub, data);
 	return DMUB_STATUS_OK;
-}
-
-void dmub_srv_subvp_save_surf_addr(struct dmub_srv *dmub, const struct dc_plane_address *addr, uint8_t subvp_index)
-{
-	if (dmub->hw_funcs.subvp_save_surf_addr) {
-		dmub->hw_funcs.subvp_save_surf_addr(dmub,
-				addr,
-				subvp_index);
-	}
 }

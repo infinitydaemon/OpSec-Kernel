@@ -38,7 +38,6 @@
 #include "cqhci.h"
 
 #include "sdhci.h"
-#include "sdhci-cqhci.h"
 #include "sdhci-pci.h"
 
 static void sdhci_pci_hw_reset(struct sdhci_host *host);
@@ -235,6 +234,14 @@ static void sdhci_pci_dumpregs(struct mmc_host *mmc)
 	sdhci_dumpregs(mmc_priv(mmc));
 }
 
+static void sdhci_cqhci_reset(struct sdhci_host *host, u8 mask)
+{
+	if ((host->mmc->caps2 & MMC_CAP2_CQE) && (mask & SDHCI_RESET_ALL) &&
+	    host->mmc->cqe_private)
+		cqhci_deactivate(host->mmc);
+	sdhci_reset(host, mask);
+}
+
 /*****************************************************************************\
  *                                                                           *
  * Hardware specific quirk handling                                          *
@@ -251,16 +258,13 @@ static int ricoh_probe(struct sdhci_pci_chip *chip)
 
 static int ricoh_mmc_probe_slot(struct sdhci_pci_slot *slot)
 {
-	u32 caps =
+	slot->host->caps =
 		FIELD_PREP(SDHCI_TIMEOUT_CLK_MASK, 0x21) |
 		FIELD_PREP(SDHCI_CLOCK_BASE_MASK, 0x21) |
 		SDHCI_TIMEOUT_CLK_UNIT |
 		SDHCI_CAN_VDD_330 |
 		SDHCI_CAN_DO_HISPD |
 		SDHCI_CAN_DO_SDMA;
-	u32 caps1 = 0;
-
-	__sdhci_read_caps(slot->host, NULL, &caps, &caps1);
 	return 0;
 }
 
@@ -289,7 +293,8 @@ static const struct sdhci_pci_fixes sdhci_ricoh_mmc = {
 #endif
 	.quirks		= SDHCI_QUIRK_32BIT_DMA_ADDR |
 			  SDHCI_QUIRK_CLOCK_BEFORE_RESET |
-			  SDHCI_QUIRK_NO_CARD_NO_RESET,
+			  SDHCI_QUIRK_NO_CARD_NO_RESET |
+			  SDHCI_QUIRK_MISSING_CAPS
 };
 
 static void ene_714_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
@@ -483,12 +488,11 @@ static int __intel_dsm(struct intel_host *intel_host, struct device *dev,
 	int err = 0;
 	size_t len;
 
-	obj = acpi_evaluate_dsm_typed(ACPI_HANDLE(dev), &intel_dsm_guid, 0, fn, NULL,
-				      ACPI_TYPE_BUFFER);
+	obj = acpi_evaluate_dsm(ACPI_HANDLE(dev), &intel_dsm_guid, 0, fn, NULL);
 	if (!obj)
 		return -EOPNOTSUPP;
 
-	if (obj->buffer.length < 1) {
+	if (obj->type != ACPI_TYPE_BUFFER || obj->buffer.length < 1) {
 		err = -EINVAL;
 		goto out;
 	}
@@ -699,7 +703,7 @@ static const struct sdhci_ops sdhci_intel_glk_ops = {
 	.set_power		= sdhci_intel_set_power,
 	.enable_dma		= sdhci_pci_enable_dma,
 	.set_bus_width		= sdhci_set_bus_width,
-	.reset			= sdhci_and_cqhci_reset,
+	.reset			= sdhci_cqhci_reset,
 	.set_uhs_signaling	= sdhci_intel_set_uhs_signaling,
 	.hw_reset		= sdhci_pci_hw_reset,
 	.irq			= sdhci_cqhci_irq,
@@ -1899,16 +1903,11 @@ static const struct pci_device_id pci_ids[] = {
 	SDHCI_PCI_DEVICE(O2, SDS1,     o2),
 	SDHCI_PCI_DEVICE(O2, SEABIRD0, o2),
 	SDHCI_PCI_DEVICE(O2, SEABIRD1, o2),
-	SDHCI_PCI_DEVICE(O2, GG8_9860, o2),
-	SDHCI_PCI_DEVICE(O2, GG8_9861, o2),
-	SDHCI_PCI_DEVICE(O2, GG8_9862, o2),
-	SDHCI_PCI_DEVICE(O2, GG8_9863, o2),
 	SDHCI_PCI_DEVICE(ARASAN, PHY_EMMC, arasan),
 	SDHCI_PCI_DEVICE(SYNOPSYS, DWC_MSHC, snps),
 	SDHCI_PCI_DEVICE(GLI, 9750, gl9750),
 	SDHCI_PCI_DEVICE(GLI, 9755, gl9755),
 	SDHCI_PCI_DEVICE(GLI, 9763E, gl9763e),
-	SDHCI_PCI_DEVICE(GLI, 9767, gl9767),
 	SDHCI_PCI_DEVICE_CLASS(AMD, SYSTEM_SDHCI, PCI_CLASS_MASK, amd),
 	/* Generic SD host controller */
 	{PCI_DEVICE_CLASS(SYSTEM_SDHCI, PCI_CLASS_MASK)},
@@ -2284,8 +2283,7 @@ static struct pci_driver sdhci_driver = {
 	.probe =	sdhci_pci_probe,
 	.remove =	sdhci_pci_remove,
 	.driver =	{
-		.pm =   &sdhci_pci_pm_ops,
-		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
+		.pm =   &sdhci_pci_pm_ops
 	},
 };
 

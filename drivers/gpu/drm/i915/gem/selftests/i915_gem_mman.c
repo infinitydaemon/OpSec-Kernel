@@ -8,7 +8,6 @@
 #include <linux/prime_numbers.h>
 
 #include "gem/i915_gem_internal.h"
-#include "gem/i915_gem_lmem.h"
 #include "gem/i915_gem_region.h"
 #include "gem/i915_gem_ttm.h"
 #include "gem/i915_gem_ttm_move.h"
@@ -17,7 +16,6 @@
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
 #include "gt/intel_migrate.h"
-#include "i915_reg.h"
 #include "i915_ttm_buddy_manager.h"
 
 #include "huge_gem_object.h"
@@ -97,11 +95,11 @@ static int check_partial_mapping(struct drm_i915_gem_object *obj,
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct i915_gtt_view view;
 	struct i915_vma *vma;
-	unsigned long offset;
 	unsigned long page;
 	u32 __iomem *io;
 	struct page *p;
 	unsigned int n;
+	u64 offset;
 	u32 *cpu;
 	int err;
 
@@ -158,7 +156,7 @@ static int check_partial_mapping(struct drm_i915_gem_object *obj,
 	cpu = kmap(p) + offset_in_page(offset);
 	drm_clflush_virt_range(cpu, sizeof(*cpu));
 	if (*cpu != (u32)page) {
-		pr_err("Partial view for %lu [%u] (offset=%llu, size=%u [%llu, row size %u], fence=%d, tiling=%d, stride=%d) misalignment, expected write to page (%lu + %u [0x%lx]) of 0x%x, found 0x%x\n",
+		pr_err("Partial view for %lu [%u] (offset=%llu, size=%u [%llu, row size %u], fence=%d, tiling=%d, stride=%d) misalignment, expected write to page (%llu + %u [0x%llx]) of 0x%x, found 0x%x\n",
 		       page, n,
 		       view.partial.offset,
 		       view.partial.size,
@@ -214,10 +212,10 @@ static int check_partial_mappings(struct drm_i915_gem_object *obj,
 	for_each_prime_number_from(page, 1, npages) {
 		struct i915_gtt_view view =
 			compute_partial_view(obj, page, MIN_CHUNK_PAGES);
-		unsigned long offset;
 		u32 __iomem *io;
 		struct page *p;
 		unsigned int n;
+		u64 offset;
 		u32 *cpu;
 
 		GEM_BUG_ON(view.partial.size > nreal);
@@ -254,7 +252,7 @@ static int check_partial_mappings(struct drm_i915_gem_object *obj,
 		cpu = kmap(p) + offset_in_page(offset);
 		drm_clflush_virt_range(cpu, sizeof(*cpu));
 		if (*cpu != (u32)page) {
-			pr_err("Partial view for %lu [%u] (offset=%llu, size=%u [%llu, row size %u], fence=%d, tiling=%d, stride=%d) misalignment, expected write to page (%lu + %u [0x%lx]) of 0x%x, found 0x%x\n",
+			pr_err("Partial view for %lu [%u] (offset=%llu, size=%u [%llu, row size %u], fence=%d, tiling=%d, stride=%d) misalignment, expected write to page (%llu + %u [0x%llx]) of 0x%x, found 0x%x\n",
 			       page, n,
 			       view.partial.offset,
 			       view.partial.size,
@@ -566,8 +564,10 @@ retry:
 			goto err_unpin;
 		}
 
-		err = i915_vma_move_to_active(vma, rq,
-					      EXEC_OBJECT_WRITE);
+		err = i915_request_await_object(rq, vma->obj, true);
+		if (err == 0)
+			err = i915_vma_move_to_active(vma, rq,
+						      EXEC_OBJECT_WRITE);
 
 		i915_request_add(rq);
 err_unpin:
@@ -1222,7 +1222,7 @@ static int __igt_mmap_migrate(struct intel_memory_region **placements,
 	}
 
 	err = intel_context_migrate_clear(to_gt(i915)->migrate.context, NULL,
-					  obj->mm.pages->sgl, obj->pat_index,
+					  obj->mm.pages->sgl, obj->cache_level,
 					  i915_gem_object_is_lmem(obj),
 					  expand32(POISON_INUSE), &rq);
 	i915_gem_object_unpin_pages(obj);
@@ -1607,9 +1607,11 @@ retry:
 			goto out_unpin;
 		}
 
-		err = i915_vma_move_to_active(vma, rq, 0);
+		err = i915_request_await_object(rq, vma->obj, false);
+		if (err == 0)
+			err = i915_vma_move_to_active(vma, rq, 0);
 
-		err = engine->emit_bb_start(rq, i915_vma_offset(vma), 0, 0);
+		err = engine->emit_bb_start(rq, vma->node.start, 0, 0);
 		i915_request_get(rq);
 		i915_request_add(rq);
 
@@ -1681,9 +1683,7 @@ static int igt_mmap_gpu(void *arg)
 
 static int check_present_pte(pte_t *pte, unsigned long addr, void *data)
 {
-	pte_t ptent = ptep_get(pte);
-
-	if (!pte_present(ptent) || pte_none(ptent)) {
+	if (!pte_present(*pte) || pte_none(*pte)) {
 		pr_err("missing PTE:%lx\n",
 		       (addr - (unsigned long)data) >> PAGE_SHIFT);
 		return -EINVAL;
@@ -1694,9 +1694,7 @@ static int check_present_pte(pte_t *pte, unsigned long addr, void *data)
 
 static int check_absent_pte(pte_t *pte, unsigned long addr, void *data)
 {
-	pte_t ptent = ptep_get(pte);
-
-	if (pte_present(ptent) && !pte_none(ptent)) {
+	if (pte_present(*pte) && !pte_none(*pte)) {
 		pr_err("present PTE:%lx; expected to be revoked\n",
 		       (addr - (unsigned long)data) >> PAGE_SHIFT);
 		return -EINVAL;

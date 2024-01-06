@@ -23,7 +23,6 @@
  * Author: Jani Nikula <jani.nikula@intel.com>
  */
 
-#include <linux/dmi.h>
 #include <linux/slab.h>
 
 #include <drm/drm_atomic_helper.h>
@@ -32,7 +31,6 @@
 #include <drm/drm_mipi_dsi.h>
 
 #include "i915_drv.h"
-#include "i915_reg.h"
 #include "intel_atomic.h"
 #include "intel_backlight.h"
 #include "intel_connector.h"
@@ -137,7 +135,7 @@ static ssize_t intel_dsi_host_transfer(struct mipi_dsi_host *host,
 	enum port port = intel_dsi_host->port;
 	struct mipi_dsi_packet packet;
 	ssize_t ret;
-	const u8 *header;
+	const u8 *header, *data;
 	i915_reg_t data_reg, ctrl_reg;
 	u32 data_mask, ctrl_mask;
 
@@ -146,6 +144,7 @@ static ssize_t intel_dsi_host_transfer(struct mipi_dsi_host *host,
 		return ret;
 
 	header = packet.header;
+	data = packet.payload;
 
 	if (msg->flags & MIPI_DSI_MSG_USE_LPM) {
 		data_reg = MIPI_LP_GEN_DATA(port);
@@ -280,7 +279,6 @@ static int intel_dsi_compute_config(struct intel_encoder *encoder,
 	int ret;
 
 	drm_dbg_kms(&dev_priv->drm, "\n");
-	pipe_config->sink_format = INTEL_OUTPUT_FORMAT_RGB;
 	pipe_config->output_format = INTEL_OUTPUT_FORMAT_RGB;
 
 	ret = intel_panel_compute_config(intel_connector, adjusted_mode);
@@ -332,23 +330,32 @@ static bool glk_dsi_enable_io(struct intel_encoder *encoder)
 	struct drm_i915_private *dev_priv = to_i915(encoder->base.dev);
 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(encoder);
 	enum port port;
+	u32 tmp;
 	bool cold_boot = false;
 
 	/* Set the MIPI mode
 	 * If MIPI_Mode is off, then writing to LP_Wake bit is not reflecting.
 	 * Power ON MIPI IO first and then write into IO reset and LP wake bits
 	 */
-	for_each_dsi_port(port, intel_dsi->ports)
-		intel_de_rmw(dev_priv, MIPI_CTRL(port), 0, GLK_MIPIIO_ENABLE);
+	for_each_dsi_port(port, intel_dsi->ports) {
+		tmp = intel_de_read(dev_priv, MIPI_CTRL(port));
+		intel_de_write(dev_priv, MIPI_CTRL(port),
+			       tmp | GLK_MIPIIO_ENABLE);
+	}
 
 	/* Put the IO into reset */
-	intel_de_rmw(dev_priv, MIPI_CTRL(PORT_A), GLK_MIPIIO_RESET_RELEASED, 0);
+	tmp = intel_de_read(dev_priv, MIPI_CTRL(PORT_A));
+	tmp &= ~GLK_MIPIIO_RESET_RELEASED;
+	intel_de_write(dev_priv, MIPI_CTRL(PORT_A), tmp);
 
 	/* Program LP Wake */
 	for_each_dsi_port(port, intel_dsi->ports) {
-		u32 tmp = intel_de_read(dev_priv, MIPI_DEVICE_READY(port));
-		intel_de_rmw(dev_priv, MIPI_CTRL(port),
-			     GLK_LP_WAKE, (tmp & DEVICE_READY) ? GLK_LP_WAKE : 0);
+		tmp = intel_de_read(dev_priv, MIPI_CTRL(port));
+		if (!(intel_de_read(dev_priv, MIPI_DEVICE_READY(port)) & DEVICE_READY))
+			tmp &= ~GLK_LP_WAKE;
+		else
+			tmp |= GLK_LP_WAKE;
+		intel_de_write(dev_priv, MIPI_CTRL(port), tmp);
 	}
 
 	/* Wait for Pwr ACK */
@@ -372,6 +379,7 @@ static void glk_dsi_device_ready(struct intel_encoder *encoder)
 	struct drm_i915_private *dev_priv = to_i915(encoder->base.dev);
 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(encoder);
 	enum port port;
+	u32 val;
 
 	/* Wait for MIPI PHY status bit to set */
 	for_each_dsi_port(port, intel_dsi->ports) {
@@ -381,18 +389,24 @@ static void glk_dsi_device_ready(struct intel_encoder *encoder)
 	}
 
 	/* Get IO out of reset */
-	intel_de_rmw(dev_priv, MIPI_CTRL(PORT_A), 0, GLK_MIPIIO_RESET_RELEASED);
+	val = intel_de_read(dev_priv, MIPI_CTRL(PORT_A));
+	intel_de_write(dev_priv, MIPI_CTRL(PORT_A),
+		       val | GLK_MIPIIO_RESET_RELEASED);
 
 	/* Get IO out of Low power state*/
 	for_each_dsi_port(port, intel_dsi->ports) {
 		if (!(intel_de_read(dev_priv, MIPI_DEVICE_READY(port)) & DEVICE_READY)) {
-			intel_de_rmw(dev_priv, MIPI_DEVICE_READY(port),
-				     ULPS_STATE_MASK, DEVICE_READY);
+			val = intel_de_read(dev_priv, MIPI_DEVICE_READY(port));
+			val &= ~ULPS_STATE_MASK;
+			val |= DEVICE_READY;
+			intel_de_write(dev_priv, MIPI_DEVICE_READY(port), val);
 			usleep_range(10, 15);
 		} else {
 			/* Enter ULPS */
-			intel_de_rmw(dev_priv, MIPI_DEVICE_READY(port),
-				     ULPS_STATE_MASK, ULPS_STATE_ENTER | DEVICE_READY);
+			val = intel_de_read(dev_priv, MIPI_DEVICE_READY(port));
+			val &= ~ULPS_STATE_MASK;
+			val |= (ULPS_STATE_ENTER | DEVICE_READY);
+			intel_de_write(dev_priv, MIPI_DEVICE_READY(port), val);
 
 			/* Wait for ULPS active */
 			if (intel_de_wait_for_clear(dev_priv, MIPI_CTRL(port),
@@ -400,15 +414,20 @@ static void glk_dsi_device_ready(struct intel_encoder *encoder)
 				drm_err(&dev_priv->drm, "ULPS not active\n");
 
 			/* Exit ULPS */
-			intel_de_rmw(dev_priv, MIPI_DEVICE_READY(port),
-				     ULPS_STATE_MASK, ULPS_STATE_EXIT | DEVICE_READY);
+			val = intel_de_read(dev_priv, MIPI_DEVICE_READY(port));
+			val &= ~ULPS_STATE_MASK;
+			val |= (ULPS_STATE_EXIT | DEVICE_READY);
+			intel_de_write(dev_priv, MIPI_DEVICE_READY(port), val);
 
 			/* Enter Normal Mode */
-			intel_de_rmw(dev_priv, MIPI_DEVICE_READY(port),
-				     ULPS_STATE_MASK,
-				     ULPS_STATE_NORMAL_OPERATION | DEVICE_READY);
+			val = intel_de_read(dev_priv, MIPI_DEVICE_READY(port));
+			val &= ~ULPS_STATE_MASK;
+			val |= (ULPS_STATE_NORMAL_OPERATION | DEVICE_READY);
+			intel_de_write(dev_priv, MIPI_DEVICE_READY(port), val);
 
-			intel_de_rmw(dev_priv, MIPI_CTRL(port), GLK_LP_WAKE, 0);
+			val = intel_de_read(dev_priv, MIPI_CTRL(port));
+			val &= ~GLK_LP_WAKE;
+			intel_de_write(dev_priv, MIPI_CTRL(port), val);
 		}
 	}
 
@@ -440,7 +459,9 @@ static void bxt_dsi_device_ready(struct intel_encoder *encoder)
 
 	/* Enable MIPI PHY transparent latch */
 	for_each_dsi_port(port, intel_dsi->ports) {
-		intel_de_rmw(dev_priv, BXT_MIPI_PORT_CTRL(port), 0, LP_OUTPUT_HOLD);
+		val = intel_de_read(dev_priv, BXT_MIPI_PORT_CTRL(port));
+		intel_de_write(dev_priv, BXT_MIPI_PORT_CTRL(port),
+			       val | LP_OUTPUT_HOLD);
 		usleep_range(2000, 2500);
 	}
 
@@ -460,6 +481,7 @@ static void vlv_dsi_device_ready(struct intel_encoder *encoder)
 	struct drm_i915_private *dev_priv = to_i915(encoder->base.dev);
 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(encoder);
 	enum port port;
+	u32 val;
 
 	drm_dbg_kms(&dev_priv->drm, "\n");
 
@@ -482,7 +504,9 @@ static void vlv_dsi_device_ready(struct intel_encoder *encoder)
 		 * Common bit for both MIPI Port A & MIPI Port C
 		 * No similar bit in MIPI Port C reg
 		 */
-		intel_de_rmw(dev_priv, MIPI_PORT_CTRL(PORT_A), 0, LP_OUTPUT_HOLD);
+		val = intel_de_read(dev_priv, MIPI_PORT_CTRL(PORT_A));
+		intel_de_write(dev_priv, MIPI_PORT_CTRL(PORT_A),
+			       val | LP_OUTPUT_HOLD);
 		usleep_range(1000, 1500);
 
 		intel_de_write(dev_priv, MIPI_DEVICE_READY(port),
@@ -512,11 +536,15 @@ static void glk_dsi_enter_low_power_mode(struct intel_encoder *encoder)
 	struct drm_i915_private *dev_priv = to_i915(encoder->base.dev);
 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(encoder);
 	enum port port;
+	u32 val;
 
 	/* Enter ULPS */
-	for_each_dsi_port(port, intel_dsi->ports)
-		intel_de_rmw(dev_priv, MIPI_DEVICE_READY(port),
-			     ULPS_STATE_MASK, ULPS_STATE_ENTER | DEVICE_READY);
+	for_each_dsi_port(port, intel_dsi->ports) {
+		val = intel_de_read(dev_priv, MIPI_DEVICE_READY(port));
+		val &= ~ULPS_STATE_MASK;
+		val |= (ULPS_STATE_ENTER | DEVICE_READY);
+		intel_de_write(dev_priv, MIPI_DEVICE_READY(port), val);
+	}
 
 	/* Wait for MIPI PHY status bit to unset */
 	for_each_dsi_port(port, intel_dsi->ports) {
@@ -539,9 +567,12 @@ static void glk_dsi_disable_mipi_io(struct intel_encoder *encoder)
 	struct drm_i915_private *dev_priv = to_i915(encoder->base.dev);
 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(encoder);
 	enum port port;
+	u32 tmp;
 
 	/* Put the IO into reset */
-	intel_de_rmw(dev_priv, MIPI_CTRL(PORT_A), GLK_MIPIIO_RESET_RELEASED, 0);
+	tmp = intel_de_read(dev_priv, MIPI_CTRL(PORT_A));
+	tmp &= ~GLK_MIPIIO_RESET_RELEASED;
+	intel_de_write(dev_priv, MIPI_CTRL(PORT_A), tmp);
 
 	/* Wait for MIPI PHY status bit to unset */
 	for_each_dsi_port(port, intel_dsi->ports) {
@@ -551,8 +582,11 @@ static void glk_dsi_disable_mipi_io(struct intel_encoder *encoder)
 	}
 
 	/* Clear MIPI mode */
-	for_each_dsi_port(port, intel_dsi->ports)
-		intel_de_rmw(dev_priv, MIPI_CTRL(port), GLK_MIPIIO_ENABLE, 0);
+	for_each_dsi_port(port, intel_dsi->ports) {
+		tmp = intel_de_read(dev_priv, MIPI_CTRL(port));
+		tmp &= ~GLK_MIPIIO_ENABLE;
+		intel_de_write(dev_priv, MIPI_CTRL(port), tmp);
+	}
 }
 
 static void glk_dsi_clear_device_ready(struct intel_encoder *encoder)
@@ -572,6 +606,7 @@ static void vlv_dsi_clear_device_ready(struct intel_encoder *encoder)
 		/* Common bit for both MIPI Port A & MIPI Port C on VLV/CHV */
 		i915_reg_t port_ctrl = IS_GEMINILAKE(dev_priv) || IS_BROXTON(dev_priv) ?
 			BXT_MIPI_PORT_CTRL(port) : MIPI_PORT_CTRL(PORT_A);
+		u32 val;
 
 		intel_de_write(dev_priv, MIPI_DEVICE_READY(port),
 			       DEVICE_READY | ULPS_STATE_ENTER);
@@ -595,7 +630,8 @@ static void vlv_dsi_clear_device_ready(struct intel_encoder *encoder)
 			drm_err(&dev_priv->drm, "DSI LP not going Low\n");
 
 		/* Disable MIPI PHY transparent latch */
-		intel_de_rmw(dev_priv, port_ctrl, LP_OUTPUT_HOLD, 0);
+		val = intel_de_read(dev_priv, port_ctrl);
+		intel_de_write(dev_priv, port_ctrl, val & ~LP_OUTPUT_HOLD);
 		usleep_range(1000, 1500);
 
 		intel_de_write(dev_priv, MIPI_DEVICE_READY(port), 0x00);
@@ -612,17 +648,23 @@ static void intel_dsi_port_enable(struct intel_encoder *encoder,
 	enum port port;
 
 	if (intel_dsi->dual_link == DSI_DUAL_LINK_FRONT_BACK) {
-		u32 temp = intel_dsi->pixel_overlap;
-
+		u32 temp;
 		if (IS_GEMINILAKE(dev_priv) || IS_BROXTON(dev_priv)) {
-			for_each_dsi_port(port, intel_dsi->ports)
-				intel_de_rmw(dev_priv, MIPI_CTRL(port),
-					     BXT_PIXEL_OVERLAP_CNT_MASK,
-					     temp << BXT_PIXEL_OVERLAP_CNT_SHIFT);
+			for_each_dsi_port(port, intel_dsi->ports) {
+				temp = intel_de_read(dev_priv,
+						     MIPI_CTRL(port));
+				temp &= ~BXT_PIXEL_OVERLAP_CNT_MASK |
+					intel_dsi->pixel_overlap <<
+					BXT_PIXEL_OVERLAP_CNT_SHIFT;
+				intel_de_write(dev_priv, MIPI_CTRL(port),
+					       temp);
+			}
 		} else {
-			intel_de_rmw(dev_priv, VLV_CHICKEN_3,
-				     PIXEL_OVERLAP_CNT_MASK,
-				     temp << PIXEL_OVERLAP_CNT_SHIFT);
+			temp = intel_de_read(dev_priv, VLV_CHICKEN_3);
+			temp &= ~PIXEL_OVERLAP_CNT_MASK |
+					intel_dsi->pixel_overlap <<
+					PIXEL_OVERLAP_CNT_SHIFT;
+			intel_de_write(dev_priv, VLV_CHICKEN_3, temp);
 		}
 	}
 
@@ -666,12 +708,28 @@ static void intel_dsi_port_disable(struct intel_encoder *encoder)
 	for_each_dsi_port(port, intel_dsi->ports) {
 		i915_reg_t port_ctrl = IS_GEMINILAKE(dev_priv) || IS_BROXTON(dev_priv) ?
 			BXT_MIPI_PORT_CTRL(port) : MIPI_PORT_CTRL(port);
+		u32 temp;
 
 		/* de-assert ip_tg_enable signal */
-		intel_de_rmw(dev_priv, port_ctrl, DPI_ENABLE, 0);
+		temp = intel_de_read(dev_priv, port_ctrl);
+		intel_de_write(dev_priv, port_ctrl, temp & ~DPI_ENABLE);
 		intel_de_posting_read(dev_priv, port_ctrl);
 	}
 }
+
+static void intel_dsi_wait_panel_power_cycle(struct intel_dsi *intel_dsi)
+{
+	ktime_t panel_power_on_time;
+	s64 panel_power_off_duration;
+
+	panel_power_on_time = ktime_get_boottime();
+	panel_power_off_duration = ktime_ms_delta(panel_power_on_time,
+						  intel_dsi->panel_power_off_time);
+
+	if (panel_power_off_duration < (s64)intel_dsi->panel_pwr_cycle_delay)
+		msleep(intel_dsi->panel_pwr_cycle_delay - panel_power_off_duration);
+}
+
 static void intel_dsi_prepare(struct intel_encoder *intel_encoder,
 			      const struct intel_crtc_state *pipe_config);
 static void intel_dsi_unprepare(struct intel_encoder *encoder);
@@ -727,6 +785,7 @@ static void intel_dsi_pre_enable(struct intel_atomic_state *state,
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
 	enum pipe pipe = crtc->pipe;
 	enum port port;
+	u32 val;
 	bool glk_cold_boot = false;
 
 	drm_dbg_kms(&dev_priv->drm, "\n");
@@ -749,7 +808,9 @@ static void intel_dsi_pre_enable(struct intel_atomic_state *state,
 
 	if (IS_BROXTON(dev_priv)) {
 		/* Add MIPI IO reset programming for modeset */
-		intel_de_rmw(dev_priv, BXT_P_CR_GT_DISP_PWRON, 0, MIPIO_RST_CTRL);
+		val = intel_de_read(dev_priv, BXT_P_CR_GT_DISP_PWRON);
+		intel_de_write(dev_priv, BXT_P_CR_GT_DISP_PWRON,
+			       val | MIPIO_RST_CTRL);
 
 		/* Power up DSI regulator */
 		intel_de_write(dev_priv, BXT_P_DSI_REGULATOR_CFG, STAP_SELECT);
@@ -757,9 +818,12 @@ static void intel_dsi_pre_enable(struct intel_atomic_state *state,
 	}
 
 	if (IS_VALLEYVIEW(dev_priv) || IS_CHERRYVIEW(dev_priv)) {
+		u32 val;
+
 		/* Disable DPOunit clock gating, can stall pipe */
-		intel_de_rmw(dev_priv, DSPCLK_GATE_D(dev_priv),
-			     0, DPOUNIT_CLOCK_GATE_DISABLE);
+		val = intel_de_read(dev_priv, DSPCLK_GATE_D(dev_priv));
+		val |= DPOUNIT_CLOCK_GATE_DISABLE;
+		intel_de_write(dev_priv, DSPCLK_GATE_D(dev_priv), val);
 	}
 
 	if (!IS_GEMINILAKE(dev_priv))
@@ -818,6 +882,8 @@ static void bxt_dsi_enable(struct intel_atomic_state *state,
 			   const struct intel_crtc_state *crtc_state,
 			   const struct drm_connector_state *conn_state)
 {
+	drm_WARN_ON(state->base.dev, crtc_state->has_pch_encoder);
+
 	intel_crtc_vblank_on(crtc_state);
 }
 
@@ -870,6 +936,7 @@ static void intel_dsi_post_disable(struct intel_atomic_state *state,
 	struct drm_i915_private *dev_priv = to_i915(encoder->base.dev);
 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(encoder);
 	enum port port;
+	u32 val;
 
 	drm_dbg_kms(&dev_priv->drm, "\n");
 
@@ -907,16 +974,21 @@ static void intel_dsi_post_disable(struct intel_atomic_state *state,
 			       HS_IO_CTRL_SELECT);
 
 		/* Add MIPI IO reset programming for modeset */
-		intel_de_rmw(dev_priv, BXT_P_CR_GT_DISP_PWRON, MIPIO_RST_CTRL, 0);
+		val = intel_de_read(dev_priv, BXT_P_CR_GT_DISP_PWRON);
+		intel_de_write(dev_priv, BXT_P_CR_GT_DISP_PWRON,
+			       val & ~MIPIO_RST_CTRL);
 	}
 
 	if (IS_GEMINILAKE(dev_priv) || IS_BROXTON(dev_priv)) {
 		bxt_dsi_pll_disable(encoder);
 	} else {
+		u32 val;
+
 		vlv_dsi_pll_disable(encoder);
 
-		intel_de_rmw(dev_priv, DSPCLK_GATE_D(dev_priv),
-			     DPOUNIT_CLOCK_GATE_DISABLE, 0);
+		val = intel_de_read(dev_priv, DSPCLK_GATE_D(dev_priv));
+		val &= ~DPOUNIT_CLOCK_GATE_DISABLE;
+		intel_de_write(dev_priv, DSPCLK_GATE_D(dev_priv), val);
 	}
 
 	/* Assert reset */
@@ -926,6 +998,13 @@ static void intel_dsi_post_disable(struct intel_atomic_state *state,
 	intel_dsi_vbt_exec_sequence(intel_dsi, MIPI_SEQ_POWER_OFF);
 
 	intel_dsi->panel_power_off_time = ktime_get_boottime();
+}
+
+static void intel_dsi_shutdown(struct intel_encoder *encoder)
+{
+	struct intel_dsi *intel_dsi = enc_to_intel_dsi(encoder);
+
+	intel_dsi_wait_panel_power_cycle(intel_dsi);
 }
 
 static bool intel_dsi_get_hw_state(struct intel_encoder *encoder,
@@ -966,7 +1045,7 @@ static bool intel_dsi_get_hw_state(struct intel_encoder *encoder,
 		 */
 		if ((IS_VALLEYVIEW(dev_priv) || IS_CHERRYVIEW(dev_priv)) &&
 		    port == PORT_C)
-			enabled = intel_de_read(dev_priv, TRANSCONF(PIPE_B)) & TRANSCONF_ENABLE;
+			enabled = intel_de_read(dev_priv, PIPECONF(PIPE_B)) & PIPECONF_ENABLE;
 
 		/* Try command mode if video mode not enabled */
 		if (!enabled) {
@@ -1017,7 +1096,7 @@ static void bxt_dsi_get_pipe_config(struct intel_encoder *encoder,
 	unsigned int lane_count = intel_dsi->lane_count;
 	unsigned int bpp, fmt;
 	enum port port;
-	u16 hactive, hfp, hsync, hbp, vfp, vsync;
+	u16 hactive, hfp, hsync, hbp, vfp, vsync, vbp;
 	u16 hfp_sw, hsync_sw, hbp_sw;
 	u16 crtc_htotal_sw, crtc_hsync_start_sw, crtc_hsync_end_sw,
 				crtc_hblank_start_sw, crtc_hblank_end_sw;
@@ -1038,7 +1117,7 @@ static void bxt_dsi_get_pipe_config(struct intel_encoder *encoder,
 	bpp = mipi_dsi_pixel_format_to_bpp(
 			pixel_format_from_register_bits(fmt));
 
-	pipe_config->pipe_bpp = bdw_get_pipe_misc_bpp(crtc);
+	pipe_config->pipe_bpp = bdw_get_pipemisc_bpp(crtc);
 
 	/* Enable Frame time stamo based scanline reporting */
 	pipe_config->mode_flags |=
@@ -1082,6 +1161,7 @@ static void bxt_dsi_get_pipe_config(struct intel_encoder *encoder,
 	/* vertical values are in terms of lines */
 	vfp = intel_de_read(dev_priv, MIPI_VFP_COUNT(port));
 	vsync = intel_de_read(dev_priv, MIPI_VSYNC_PADDING_COUNT(port));
+	vbp = intel_de_read(dev_priv, MIPI_VBP_COUNT(port));
 
 	adjusted_mode->crtc_htotal = hactive + hfp + hsync + hbp;
 	adjusted_mode->crtc_hsync_start = hfp + adjusted_mode->crtc_hdisplay;
@@ -1339,8 +1419,11 @@ static void intel_dsi_prepare(struct intel_encoder *intel_encoder,
 		} else if (IS_GEMINILAKE(dev_priv) || IS_BROXTON(dev_priv)) {
 			enum pipe pipe = crtc->pipe;
 
-			intel_de_rmw(dev_priv, MIPI_CTRL(port),
-				     BXT_PIPE_SELECT_MASK, BXT_PIPE_SELECT(pipe));
+			tmp = intel_de_read(dev_priv, MIPI_CTRL(port));
+			tmp &= ~BXT_PIPE_SELECT_MASK;
+
+			tmp |= BXT_PIPE_SELECT(pipe);
+			intel_de_write(dev_priv, MIPI_CTRL(port), tmp);
 		}
 
 		/* XXX: why here, why like this? handling in irq handler?! */
@@ -1509,6 +1592,7 @@ static void intel_dsi_unprepare(struct intel_encoder *encoder)
 	struct drm_i915_private *dev_priv = to_i915(encoder->base.dev);
 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(encoder);
 	enum port port;
+	u32 val;
 
 	if (IS_GEMINILAKE(dev_priv))
 		return;
@@ -1523,7 +1607,9 @@ static void intel_dsi_unprepare(struct intel_encoder *encoder)
 			vlv_dsi_reset_clocks(encoder, port);
 		intel_de_write(dev_priv, MIPI_EOT_DISABLE(port), CLOCKSTOP);
 
-		intel_de_rmw(dev_priv, MIPI_DSI_FUNC_PRG(port), VID_MODE_FORMAT_MASK, 0);
+		val = intel_de_read(dev_priv, MIPI_DSI_FUNC_PRG(port));
+		val &= ~VID_MODE_FORMAT_MASK;
+		intel_de_write(dev_priv, MIPI_DSI_FUNC_PRG(port), val);
 
 		intel_de_write(dev_priv, MIPI_DEVICE_READY(port), 0x1);
 	}
@@ -1577,10 +1663,19 @@ static const struct drm_connector_funcs intel_dsi_connector_funcs = {
 
 static void vlv_dsi_add_properties(struct intel_connector *connector)
 {
+	struct drm_i915_private *dev_priv = to_i915(connector->base.dev);
 	const struct drm_display_mode *fixed_mode =
 		intel_panel_preferred_fixed_mode(connector);
+	u32 allowed_scalers;
 
-	intel_attach_scaling_mode_property(&connector->base);
+	allowed_scalers = BIT(DRM_MODE_SCALE_ASPECT) | BIT(DRM_MODE_SCALE_FULLSCREEN);
+	if (!HAS_GMCH(dev_priv))
+		allowed_scalers |= BIT(DRM_MODE_SCALE_CENTER);
+
+	drm_connector_attach_scaling_mode_property(&connector->base,
+						   allowed_scalers);
+
+	connector->base.state->scaling_mode = DRM_MODE_SCALE_ASPECT;
 
 	drm_connector_set_panel_orientation_with_quirk(&connector->base,
 						       intel_dsi_get_panel_orientation(connector),
@@ -1761,135 +1856,15 @@ static void vlv_dphy_param_init(struct intel_dsi *intel_dsi)
 	intel_dsi_log_params(intel_dsi);
 }
 
-typedef void (*vlv_dsi_dmi_quirk_func)(struct intel_dsi *intel_dsi);
-
-/*
- * Vtotal is wrong on the Asus TF103C leading to the last line of the display
- * being shown as the first line. The factory installed Android has a hardcoded
- * modeline, causing it to not suffer from this BIOS bug.
- *
- * Original mode: "1280x800": 60 67700 1280 1312 1328 1376 800 808 812 820 0x8 0xa
- * Fixed    mode: "1280x800": 60 67700 1280 1312 1328 1376 800 808 812 816 0x8 0xa
- *
- * https://gitlab.freedesktop.org/drm/intel/-/issues/9381
- */
-static void vlv_dsi_asus_tf103c_mode_fixup(struct intel_dsi *intel_dsi)
-{
-	/* Cast away the const as we want to fixup the mode */
-	struct drm_display_mode *fixed_mode = (struct drm_display_mode *)
-		intel_panel_preferred_fixed_mode(intel_dsi->attached_connector);
-
-	if (fixed_mode->vtotal == 820)
-		fixed_mode->vtotal -= 4;
-}
-
-/*
- * On the Lenovo Yoga Tablet 2 830 / 1050 there are 2 problems:
- * 1. The I2C MIPI sequence elements reference bus 3. ACPI has I2C1 - I2C7
- *    which under Linux become bus 0 - 6. And the MIPI sequence reference
- *    to bus 3 is indented for I2C3 which is bus 2 under Linux.
- *
- *    Note mipi_exec_i2c() cannot just subtract 1 from the bus
- *    given in the I2C MIPI sequence element. Since on other
- *    devices the I2C bus-numbers used in the MIPI sequences do
- *    actually start at 0.
- *
- * 2. width_/height_mm contain a bogus 192mm x 120mm size. This is
- *    especially a problem on the 8" 830 version which uses a 10:16
- *    portrait screen where as the bogus size is 16:10.
- *
- * https://gitlab.freedesktop.org/drm/intel/-/issues/9379
- */
-static void vlv_dsi_lenovo_yoga_tab2_size_fixup(struct intel_dsi *intel_dsi)
-{
-	const struct drm_display_mode *fixed_mode =
-		intel_panel_preferred_fixed_mode(intel_dsi->attached_connector);
-	struct drm_display_info *info = &intel_dsi->attached_connector->base.display_info;
-
-	intel_dsi->i2c_bus_num = 2;
-
-	/*
-	 * The 10" 1050 uses a 1920x1200 landscape screen, where as the 8" 830
-	 * uses a 1200x1920 portrait screen.
-	 */
-	if (fixed_mode->hdisplay == 1920) {
-		info->width_mm = 216;
-		info->height_mm = 135;
-	} else {
-		info->width_mm = 107;
-		info->height_mm = 171;
-	}
-}
-
-/*
- * On the Lenovo Yoga Tab 3 Pro YT3-X90F there are 2 problems:
- * 1. i2c_acpi_find_adapter() picks the wrong adapter causing mipi_exec_i2c()
- *    to not work. Fix this by setting i2c_bus_num.
- * 2. There is no backlight off MIPI sequence, causing the backlight to stay on.
- *    Add a backlight off sequence mirroring the existing backlight on sequence.
- *
- * https://gitlab.freedesktop.org/drm/intel/-/issues/9380
- */
-static void vlv_dsi_lenovo_yoga_tab3_backlight_fixup(struct intel_dsi *intel_dsi)
-{
-	static const u8 backlight_off_sequence[16] = {
-		/* Header Seq-id 7, length after header 11 bytes */
-		0x07, 0x0b, 0x00, 0x00, 0x00,
-		/* MIPI_SEQ_ELEM_I2C bus 0 addr 0x2c reg 0x00 data-len 1 data 0x00 */
-		0x04, 0x08, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x01, 0x00,
-		/* MIPI_SEQ_ELEM_END */
-		0x00
-	};
-	struct intel_connector *connector = intel_dsi->attached_connector;
-
-	intel_dsi->i2c_bus_num = 0;
-	connector->panel.vbt.dsi.sequence[MIPI_SEQ_BACKLIGHT_OFF] = backlight_off_sequence;
-}
-
-static const struct dmi_system_id vlv_dsi_dmi_quirk_table[] = {
-	{
-		/* Asus Transformer Pad TF103C */
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "TF103C"),
-		},
-		.driver_data = (void *)vlv_dsi_asus_tf103c_mode_fixup,
-	},
-	{
-		/*
-		 * Lenovo Yoga Tablet 2 830F/L or 1050F/L (The 8" and 10"
-		 * Lenovo Yoga Tablet 2 use the same mainboard)
-		 */
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Intel Corp."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "VALLEYVIEW C0 PLATFORM"),
-			DMI_MATCH(DMI_BOARD_NAME, "BYT-T FFD8"),
-			/* Partial match on beginning of BIOS version */
-			DMI_MATCH(DMI_BIOS_VERSION, "BLADE_21"),
-		},
-		.driver_data = (void *)vlv_dsi_lenovo_yoga_tab2_size_fixup,
-	},
-	{
-		/* Lenovo Yoga Tab 3 Pro YT3-X90F */
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Intel Corporation"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "CHERRYVIEW D1 PLATFORM"),
-			DMI_MATCH(DMI_PRODUCT_VERSION, "Blade3-10A-001"),
-		},
-		.driver_data = (void *)vlv_dsi_lenovo_yoga_tab3_backlight_fixup,
-	},
-	{ }
-};
-
 void vlv_dsi_init(struct drm_i915_private *dev_priv)
 {
+	struct drm_device *dev = &dev_priv->drm;
 	struct intel_dsi *intel_dsi;
 	struct intel_encoder *intel_encoder;
 	struct drm_encoder *encoder;
 	struct intel_connector *intel_connector;
 	struct drm_connector *connector;
 	struct drm_display_mode *current_mode;
-	const struct dmi_system_id *dmi_id;
 	enum port port;
 	enum pipe pipe;
 
@@ -1920,7 +1895,7 @@ void vlv_dsi_init(struct drm_i915_private *dev_priv)
 
 	connector = &intel_connector->base;
 
-	drm_encoder_init(&dev_priv->drm, encoder, &intel_dsi_funcs, DRM_MODE_ENCODER_DSI,
+	drm_encoder_init(dev, encoder, &intel_dsi_funcs, DRM_MODE_ENCODER_DSI,
 			 "DSI %c", port_name(port));
 
 	intel_encoder->compute_config = intel_dsi_compute_config;
@@ -2003,33 +1978,27 @@ void vlv_dsi_init(struct drm_i915_private *dev_priv)
 	intel_dsi_vbt_gpio_init(intel_dsi,
 				intel_dsi_get_hw_state(intel_encoder, &pipe));
 
-	drm_connector_init(&dev_priv->drm, connector, &intel_dsi_connector_funcs,
+	drm_connector_init(dev, connector, &intel_dsi_connector_funcs,
 			   DRM_MODE_CONNECTOR_DSI);
 
 	drm_connector_helper_add(connector, &intel_dsi_connector_helper_funcs);
 
 	connector->display_info.subpixel_order = SubPixelHorizontalRGB; /*XXX*/
+	connector->interlace_allowed = false;
+	connector->doublescan_allowed = false;
 
 	intel_connector_attach_encoder(intel_connector, intel_encoder);
 
-	mutex_lock(&dev_priv->drm.mode_config.mutex);
+	mutex_lock(&dev->mode_config.mutex);
 	intel_panel_add_vbt_lfp_fixed_mode(intel_connector);
-	mutex_unlock(&dev_priv->drm.mode_config.mutex);
+	mutex_unlock(&dev->mode_config.mutex);
 
 	if (!intel_panel_preferred_fixed_mode(intel_connector)) {
 		drm_dbg_kms(&dev_priv->drm, "no fixed mode\n");
 		goto err_cleanup_connector;
 	}
 
-	dmi_id = dmi_first_match(vlv_dsi_dmi_quirk_table);
-	if (dmi_id) {
-		vlv_dsi_dmi_quirk_func quirk_func =
-			(vlv_dsi_dmi_quirk_func)dmi_id->driver_data;
-
-		quirk_func(intel_dsi);
-	}
-
-	intel_panel_init(intel_connector, NULL);
+	intel_panel_init(intel_connector);
 
 	intel_backlight_setup(intel_connector, INVALID_PIPE);
 

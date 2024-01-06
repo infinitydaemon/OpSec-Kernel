@@ -29,23 +29,11 @@
 
 static int acpi_early_node_map[NR_CPUS] __initdata = { NUMA_NO_NODE };
 
-/**
- * acpi_numa_get_nid - Get the NUMA node ID for a given CPU.
- * @cpu: CPU index
- *
- * Returns the NUMA node ID for the specified CPU.
- */
 int __init acpi_numa_get_nid(unsigned int cpu)
 {
 	return acpi_early_node_map[cpu];
 }
 
-/**
- * get_cpu_for_acpi_id - Get CPU index for a given ACPI processor UID.
- * @uid: ACPI processor UID
- *
- * Returns the CPU index corresponding to the ACPI processor UID.
- */
 static inline int get_cpu_for_acpi_id(u32 uid)
 {
 	int cpu;
@@ -57,14 +45,6 @@ static inline int get_cpu_for_acpi_id(u32 uid)
 	return -EINVAL;
 }
 
-/**
- * acpi_parse_gicc_pxm - Parse ACPI SRAT GICC affinity entries.
- * @header: ACPI SRAT GICC affinity entry header
- * @end: End address of the SRAT table
- *
- * Parses GICC affinity entries in the ACPI SRAT table and updates
- * the acpi_early_node_map array.
- */
 static int __init acpi_parse_gicc_pxm(union acpi_subtable_headers *header,
 				      const unsigned long end)
 {
@@ -84,6 +64,12 @@ static int __init acpi_parse_gicc_pxm(union acpi_subtable_headers *header,
 	pxm = pa->proximity_domain;
 	node = pxm_to_node(pxm);
 
+	/*
+	 * If we can't map the UID to a logical cpu this
+	 * means that the UID is not part of possible cpus
+	 * so we do not need a NUMA mapping for it, skip
+	 * the SRAT entry and keep parsing.
+	 */
 	cpu = get_cpu_for_acpi_id(pa->acpi_processor_uid);
 	if (cpu < 0)
 		return 0;
@@ -95,11 +81,6 @@ static int __init acpi_parse_gicc_pxm(union acpi_subtable_headers *header,
 	return 0;
 }
 
-/**
- * acpi_map_cpus_to_nodes - Map CPUs to NUMA nodes using ACPI SRAT table.
- *
- * Reads the ACPI SRAT table and maps CPUs to NUMA nodes.
- */
 void __init acpi_map_cpus_to_nodes(void)
 {
 	acpi_table_parse_entries(ACPI_SIG_SRAT, sizeof(struct acpi_table_srat),
@@ -107,12 +88,7 @@ void __init acpi_map_cpus_to_nodes(void)
 					    acpi_parse_gicc_pxm, 0);
 }
 
-/**
- * acpi_numa_gicc_affinity_init - Initialize ACPI NUMA GICC affinity.
- * @pa: ACPI SRAT GICC affinity entry
- *
- * Initializes ACPI NUMA GICC affinity information.
- */
+/* Callback for Proximity Domain -> ACPI processor UID mapping */
 void __init acpi_numa_gicc_affinity_init(struct acpi_srat_gicc_affinity *pa)
 {
 	int pxm, node;
@@ -141,3 +117,4 @@ void __init acpi_numa_gicc_affinity_init(struct acpi_srat_gicc_affinity *pa)
 
 	node_set(node, numa_nodes_parsed);
 }
+

@@ -68,23 +68,49 @@ static void _setup_dspp_ops(struct dpu_hw_dspp *c,
 		c->ops.setup_pcc = dpu_setup_dspp_pcc;
 }
 
-struct dpu_hw_dspp *dpu_hw_dspp_init(const struct dpu_dspp_cfg *cfg,
-			void __iomem *addr)
+static const struct dpu_dspp_cfg *_dspp_offset(enum dpu_dspp dspp,
+		const struct dpu_mdss_cfg *m,
+		void __iomem *addr,
+		struct dpu_hw_blk_reg_map *b)
+{
+	int i;
+
+	if (!m || !addr || !b)
+		return ERR_PTR(-EINVAL);
+
+	for (i = 0; i < m->dspp_count; i++) {
+		if (dspp == m->dspp[i].id) {
+			b->blk_addr = addr + m->dspp[i].base;
+			b->log_mask = DPU_DBG_MASK_DSPP;
+			return &m->dspp[i];
+		}
+	}
+
+	return ERR_PTR(-EINVAL);
+}
+
+struct dpu_hw_dspp *dpu_hw_dspp_init(enum dpu_dspp idx,
+			void __iomem *addr,
+			const struct dpu_mdss_cfg *m)
 {
 	struct dpu_hw_dspp *c;
+	const struct dpu_dspp_cfg *cfg;
 
-	if (!addr)
+	if (!addr || !m)
 		return ERR_PTR(-EINVAL);
 
 	c = kzalloc(sizeof(*c), GFP_KERNEL);
 	if (!c)
 		return ERR_PTR(-ENOMEM);
 
-	c->hw.blk_addr = addr + cfg->base;
-	c->hw.log_mask = DPU_DBG_MASK_DSPP;
+	cfg = _dspp_offset(idx, m, addr, &c->hw);
+	if (IS_ERR_OR_NULL(cfg)) {
+		kfree(c);
+		return ERR_PTR(-EINVAL);
+	}
 
 	/* Assign ops */
-	c->idx = cfg->id;
+	c->idx = idx;
 	c->cap = cfg;
 	_setup_dspp_ops(c, c->cap->features);
 

@@ -11,6 +11,7 @@
 
 #include <linux/acpi.h>
 #include <linux/of.h>
+#include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/tee_drv.h>
 #include <linux/tpm.h>
@@ -333,11 +334,11 @@ static int ftpm_tee_remove(struct device *dev)
 	return 0;
 }
 
-static void ftpm_plat_tee_remove(struct platform_device *pdev)
+static int ftpm_plat_tee_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 
-	ftpm_tee_remove(dev);
+	return ftpm_tee_remove(dev);
 }
 
 /**
@@ -366,7 +367,7 @@ static struct platform_driver ftpm_tee_plat_driver = {
 	},
 	.shutdown = ftpm_plat_tee_shutdown,
 	.probe = ftpm_plat_tee_probe,
-	.remove_new = ftpm_plat_tee_remove,
+	.remove = ftpm_plat_tee_remove,
 };
 
 /* UUID of the fTPM TA */

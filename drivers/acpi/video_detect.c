@@ -179,7 +179,6 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 		},
 	},
 	{
-	 /* https://bugs.launchpad.net/bugs/1000146 */
 	 .callback = video_detect_force_vendor,
 	 /* Asus X101CH */
 	 .matches = {
@@ -204,7 +203,6 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 		},
 	},
 	{
-	 /* https://bugs.launchpad.net/bugs/1000146 */
 	 .callback = video_detect_force_vendor,
 	 /* Asus 1015CX */
 	 .matches = {
@@ -237,6 +235,14 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 		DMI_MATCH(DMI_SYS_VENDOR, "SAMSUNG ELECTRONICS CO., LTD."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "NC210/NC110"),
 		DMI_MATCH(DMI_BOARD_NAME, "NC210/NC110"),
+		},
+	},
+	{
+	 .callback = video_detect_force_vendor,
+	 /* Xiaomi Mi Pad 2 */
+	 .matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Xiaomi Inc"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Mipad2"),
 		},
 	},
 
@@ -443,8 +449,8 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 		DMI_MATCH(DMI_PRODUCT_NAME, "530U4E/540U4E"),
 		},
 	},
+	/* https://bugs.launchpad.net/bugs/1894667 */
 	{
-	 /* https://bugs.launchpad.net/bugs/1894667 */
 	 .callback = video_detect_force_video,
 	 /* HP 635 Notebook */
 	 .matches = {
@@ -495,40 +501,6 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
 		DMI_MATCH(DMI_PRODUCT_NAME, "82BK"),
-		},
-	},
-	{
-	 .callback = video_detect_force_native,
-	 /* Lenovo ThinkPad X131e (3371 AMD version) */
-	 .matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
-		DMI_MATCH(DMI_PRODUCT_NAME, "3371"),
-		},
-	},
-	{
-	 .callback = video_detect_force_native,
-	 /* Apple iMac11,3 */
-	 .matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "Apple Inc."),
-		DMI_MATCH(DMI_PRODUCT_NAME, "iMac11,3"),
-		},
-	},
-	{
-	 /* https://gitlab.freedesktop.org/drm/amd/-/issues/1838 */
-	 .callback = video_detect_force_native,
-	 /* Apple iMac12,1 */
-	 .matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "Apple Inc."),
-		DMI_MATCH(DMI_PRODUCT_NAME, "iMac12,1"),
-		},
-	},
-	{
-	 /* https://gitlab.freedesktop.org/drm/amd/-/issues/2753 */
-	 .callback = video_detect_force_native,
-	 /* Apple iMac12,2 */
-	 .matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "Apple Inc."),
-		DMI_MATCH(DMI_PRODUCT_NAME, "iMac12,2"),
 		},
 	},
 	{
@@ -817,56 +789,6 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 		DMI_MATCH(DMI_PRODUCT_NAME, "Vostro 15 3535"),
 		},
 	},
-
-	/*
-	 * x86 android tablets which directly control the backlight through
-	 * an external backlight controller, typically TI's LP8557.
-	 * The backlight is directly controlled by the lp855x driver on these.
-	 * This setup means that neither i915's native nor acpi_video backlight
-	 * control works. Add a "vendor" quirk to disable both. Note these
-	 * devices do not use vendor control in the typical meaning of
-	 * vendor specific SMBIOS or ACPI calls being used.
-	 */
-	{
-	 .callback = video_detect_force_vendor,
-	 /* Lenovo Yoga Book X90F / X90L */
-	 .matches = {
-		DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Intel Corporation"),
-		DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "CHERRYVIEW D1 PLATFORM"),
-		DMI_EXACT_MATCH(DMI_PRODUCT_VERSION, "YETI-11"),
-		},
-	},
-	{
-	 .callback = video_detect_force_vendor,
-	 /*
-	  * Lenovo Yoga Tablet 2 830F/L or 1050F/L (The 8" and 10"
-	  * Lenovo Yoga Tablet 2 use the same mainboard)
-	  */
-	 .matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "Intel Corp."),
-		DMI_MATCH(DMI_PRODUCT_NAME, "VALLEYVIEW C0 PLATFORM"),
-		DMI_MATCH(DMI_BOARD_NAME, "BYT-T FFD8"),
-		/* Partial match on beginning of BIOS version */
-		DMI_MATCH(DMI_BIOS_VERSION, "BLADE_21"),
-		},
-	},
-	{
-	 .callback = video_detect_force_vendor,
-	 /* Lenovo Yoga Tab 3 Pro YT3-X90F */
-	 .matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "Intel Corporation"),
-		DMI_MATCH(DMI_PRODUCT_NAME, "CHERRYVIEW D1 PLATFORM"),
-		DMI_MATCH(DMI_PRODUCT_VERSION, "Blade3-10A-001"),
-		},
-	},
-	{
-	 .callback = video_detect_force_vendor,
-	 /* Xiaomi Mi Pad 2 */
-	 .matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "Xiaomi Inc"),
-		DMI_MATCH(DMI_PRODUCT_NAME, "Mipad2"),
-		},
-	},
 	{ },
 };
 
@@ -946,27 +868,6 @@ enum acpi_backlight_type __acpi_video_get_backlight_type(bool native, bool *auto
 	/* Use native if available */
 	if (native_available)
 		return acpi_backlight_native;
-
-	/*
-	 * The vendor specific BIOS interfaces are only necessary for
-	 * laptops from before ~2008.
-	 *
-	 * For laptops from ~2008 till ~2023 this point is never reached
-	 * because on those (video_caps & ACPI_VIDEO_BACKLIGHT) above is true.
-	 *
-	 * Laptops from after ~2023 no longer support ACPI_VIDEO_BACKLIGHT,
-	 * if this point is reached on those, this likely means that
-	 * the GPU kms driver which sets native_available has not loaded yet.
-	 *
-	 * Returning acpi_backlight_vendor in this case is known to sometimes
-	 * cause a non working vendor specific /sys/class/backlight device to
-	 * get registered.
-	 *
-	 * Return acpi_backlight_none on laptops with ACPI tables written
-	 * for Windows 8 (laptops from after ~2012) to avoid this problem.
-	 */
-	if (acpi_osi_is_win8())
-		return acpi_backlight_none;
 
 	/* No ACPI video/native (old hw), use vendor specific fw methods. */
 	return acpi_backlight_vendor;

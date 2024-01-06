@@ -86,6 +86,7 @@ SECTIONS
 		TEXT_TEXT
 		LOCK_TEXT
 		SCHED_TEXT
+		CPUIDLE_TEXT
 		KPROBES_TEXT
 		IRQENTRY_TEXT
 		SOFTIRQENTRY_TEXT
@@ -155,7 +156,6 @@ SECTIONS
 	}
 
 	/* End of data section */
-	. = ALIGN(PAGE_SIZE);
 	_edata = .;
 
 	/* BSS */

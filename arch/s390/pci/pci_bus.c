@@ -47,6 +47,11 @@ static int zpci_bus_prepare_device(struct zpci_dev *zdev)
 		rc = zpci_enable_device(zdev);
 		if (rc)
 			return rc;
+		rc = zpci_dma_init_device(zdev);
+		if (rc) {
+			zpci_disable_device(zdev);
+			return rc;
+		}
 	}
 
 	if (!zdev->has_resources) {
@@ -80,8 +85,9 @@ int zpci_bus_scan_device(struct zpci_dev *zdev)
 	if (!pdev)
 		return -ENODEV;
 
-	pci_lock_rescan_remove();
 	pci_bus_add_device(pdev);
+	pci_lock_rescan_remove();
+	pci_bus_add_devices(zdev->zbus->bus);
 	pci_unlock_rescan_remove();
 
 	return 0;
@@ -124,8 +130,11 @@ void zpci_bus_remove_device(struct zpci_dev *zdev, bool set_error)
  * @zbus: the zbus to be scanned
  *
  * Enables and scans all PCI functions on the bus making them available to the
- * common PCI code. If a PCI function fails to be initialized an error will be
- * returned but attempts will still be made for all other functions on the bus.
+ * common PCI code. If there is no function 0 on the zbus nothing is scanned. If
+ * a function does not have a slot yet because it was added to the zbus before
+ * function 0 the slot is created. If a PCI function fails to be initialized
+ * an error will be returned but attempts will still be made for all other
+ * functions on the bus.
  *
  * Return: 0 on success, an error value otherwise
  */
@@ -202,6 +211,7 @@ static int zpci_bus_create_pci_bus(struct zpci_bus *zbus, struct zpci_dev *fr, s
 	}
 
 	zbus->bus = bus;
+	pci_bus_add_devices(bus);
 
 	return 0;
 }

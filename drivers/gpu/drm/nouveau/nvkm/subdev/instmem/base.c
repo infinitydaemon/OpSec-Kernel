@@ -28,7 +28,7 @@
 /******************************************************************************
  * instmem object base implementation
  *****************************************************************************/
-void
+static void
 nvkm_instobj_load(struct nvkm_instobj *iobj)
 {
 	struct nvkm_memory *memory = &iobj->memory;
@@ -48,7 +48,7 @@ nvkm_instobj_load(struct nvkm_instobj *iobj)
 	iobj->suspend = NULL;
 }
 
-int
+static int
 nvkm_instobj_save(struct nvkm_instobj *iobj)
 {
 	struct nvkm_memory *memory = &iobj->memory;
@@ -90,25 +90,7 @@ nvkm_instobj_ctor(const struct nvkm_memory_func *func,
 }
 
 int
-nvkm_instobj_wrap(struct nvkm_device *device,
-		  struct nvkm_memory *memory, struct nvkm_memory **pmemory)
-{
-	struct nvkm_instmem *imem = device->imem;
-	int ret;
-
-	if (!imem->func->memory_wrap)
-		return -ENOSYS;
-
-	ret = imem->func->memory_wrap(imem, memory, pmemory);
-	if (ret)
-		return ret;
-
-	container_of(*pmemory, struct nvkm_instobj, memory)->preserve = true;
-	return 0;
-}
-
-int
-nvkm_instobj_new(struct nvkm_instmem *imem, u32 size, u32 align, bool zero, bool preserve,
+nvkm_instobj_new(struct nvkm_instmem *imem, u32 size, u32 align, bool zero,
 		 struct nvkm_memory **pmemory)
 {
 	struct nvkm_subdev *subdev = &imem->subdev;
@@ -136,7 +118,6 @@ nvkm_instobj_new(struct nvkm_instmem *imem, u32 size, u32 align, bool zero, bool
 		nvkm_done(memory);
 	}
 
-	container_of(memory, struct nvkm_instobj, memory)->preserve = preserve;
 done:
 	if (ret)
 		nvkm_memory_unref(&memory);
@@ -179,14 +160,22 @@ static int
 nvkm_instmem_fini(struct nvkm_subdev *subdev, bool suspend)
 {
 	struct nvkm_instmem *imem = nvkm_instmem(subdev);
-	int ret;
+	struct nvkm_instobj *iobj;
 
 	if (suspend) {
-		ret = imem->func->suspend(imem);
-		if (ret)
-			return ret;
+		list_for_each_entry(iobj, &imem->list, head) {
+			int ret = nvkm_instobj_save(iobj);
+			if (ret)
+				return ret;
+		}
 
-		imem->suspend = true;
+		nvkm_bar_bar2_fini(subdev->device);
+
+		list_for_each_entry(iobj, &imem->boot, head) {
+			int ret = nvkm_instobj_save(iobj);
+			if (ret)
+				return ret;
+		}
 	}
 
 	if (imem->func->fini)
@@ -199,16 +188,20 @@ static int
 nvkm_instmem_init(struct nvkm_subdev *subdev)
 {
 	struct nvkm_instmem *imem = nvkm_instmem(subdev);
+	struct nvkm_instobj *iobj;
 
-	if (imem->suspend) {
-		if (imem->func->resume)
-			imem->func->resume(imem);
-
-		imem->suspend = false;
-		return 0;
+	list_for_each_entry(iobj, &imem->boot, head) {
+		if (iobj->suspend)
+			nvkm_instobj_load(iobj);
 	}
 
 	nvkm_bar_bar2_init(subdev->device);
+
+	list_for_each_entry(iobj, &imem->list, head) {
+		if (iobj->suspend)
+			nvkm_instobj_load(iobj);
+	}
+
 	return 0;
 }
 

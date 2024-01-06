@@ -411,11 +411,16 @@ static int mlx5i_init_rx(struct mlx5e_priv *priv)
 	int err;
 
 	priv->fs = mlx5e_fs_init(priv->profile, mdev,
-				 !test_bit(MLX5E_STATE_DESTROYING, &priv->state),
-				 priv->dfs_root);
+				 !test_bit(MLX5E_STATE_DESTROYING, &priv->state));
 	if (!priv->fs) {
 		netdev_err(priv->netdev, "FS allocation failed\n");
 		return -ENOMEM;
+	}
+
+	priv->rx_res = mlx5e_rx_res_alloc();
+	if (!priv->rx_res) {
+		err = -ENOMEM;
+		goto err_free_fs;
 	}
 
 	mlx5e_create_q_counters(priv);
@@ -426,13 +431,12 @@ static int mlx5i_init_rx(struct mlx5e_priv *priv)
 		goto err_destroy_q_counters;
 	}
 
-	priv->rx_res = mlx5e_rx_res_create(priv->mdev, 0, priv->max_nch, priv->drop_rq.rqn,
-					   &priv->channels.params.packet_merge,
-					   priv->channels.params.num_channels);
-	if (IS_ERR(priv->rx_res)) {
-		err = PTR_ERR(priv->rx_res);
+	err = mlx5e_rx_res_init(priv->rx_res, priv->mdev, 0,
+				priv->max_nch, priv->drop_rq.rqn,
+				&priv->channels.params.packet_merge,
+				priv->channels.params.num_channels);
+	if (err)
 		goto err_close_drop_rq;
-	}
 
 	err = mlx5i_create_flow_steering(priv);
 	if (err)
@@ -442,11 +446,13 @@ static int mlx5i_init_rx(struct mlx5e_priv *priv)
 
 err_destroy_rx_res:
 	mlx5e_rx_res_destroy(priv->rx_res);
-	priv->rx_res = ERR_PTR(-EINVAL);
 err_close_drop_rq:
 	mlx5e_close_drop_rq(&priv->drop_rq);
 err_destroy_q_counters:
 	mlx5e_destroy_q_counters(priv);
+	mlx5e_rx_res_free(priv->rx_res);
+	priv->rx_res = NULL;
+err_free_fs:
 	mlx5e_fs_cleanup(priv->fs);
 	return err;
 }
@@ -455,9 +461,10 @@ static void mlx5i_cleanup_rx(struct mlx5e_priv *priv)
 {
 	mlx5i_destroy_flow_steering(priv);
 	mlx5e_rx_res_destroy(priv->rx_res);
-	priv->rx_res = ERR_PTR(-EINVAL);
 	mlx5e_close_drop_rq(&priv->drop_rq);
 	mlx5e_destroy_q_counters(priv);
+	mlx5e_rx_res_free(priv->rx_res);
+	priv->rx_res = NULL;
 	mlx5e_fs_cleanup(priv->fs);
 }
 
@@ -595,17 +602,12 @@ static int mlx5i_open(struct net_device *netdev)
 	if (err)
 		goto err_remove_fs_underlay_qp;
 
-	err = epriv->profile->update_rx(epriv);
-	if (err)
-		goto err_close_channels;
-
+	epriv->profile->update_rx(epriv);
 	mlx5e_activate_priv_channels(epriv);
 
 	mutex_unlock(&epriv->state_lock);
 	return 0;
 
-err_close_channels:
-	mlx5e_close_channels(&epriv->channels);
 err_remove_fs_underlay_qp:
 	mlx5_fs_remove_rx_underlay_qpn(mdev, ipriv->qpn);
 err_reset_qp:

@@ -24,11 +24,8 @@ tegra-drm-y := \
 	gr3d.o \
 	falcon.o \
 	vic.o \
-	nvdec.o \
-	riscv.o
+	nvdec.o
 
 tegra-drm-y += trace.o
-
-tegra-drm-$(CONFIG_DRM_FBDEV_EMULATION) += fbdev.o
 
 obj-$(CONFIG_DRM_TEGRA) += tegra-drm.o

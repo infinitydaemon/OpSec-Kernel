@@ -100,14 +100,13 @@ static inline bool req_gap_front_merge(struct request *req, struct bio *bio)
  * is defined as 'unsigned int', meantime it has to be aligned to with the
  * logical block size, which is the minimum accepted unit by hardware.
  */
-static unsigned int bio_allowed_max_sectors(const struct queue_limits *lim)
+static unsigned int bio_allowed_max_sectors(struct queue_limits *lim)
 {
 	return round_down(UINT_MAX, lim->logical_block_size) >> SECTOR_SHIFT;
 }
 
-static struct bio *bio_split_discard(struct bio *bio,
-				     const struct queue_limits *lim,
-				     unsigned *nsegs, struct bio_set *bs)
+static struct bio *bio_split_discard(struct bio *bio, struct queue_limits *lim,
+		unsigned *nsegs, struct bio_set *bs)
 {
 	unsigned int max_discard_sectors, granularity;
 	sector_t tmp;
@@ -147,8 +146,7 @@ static struct bio *bio_split_discard(struct bio *bio,
 }
 
 static struct bio *bio_split_write_zeroes(struct bio *bio,
-					  const struct queue_limits *lim,
-					  unsigned *nsegs, struct bio_set *bs)
+		struct queue_limits *lim, unsigned *nsegs, struct bio_set *bs)
 {
 	*nsegs = 0;
 	if (!lim->max_write_zeroes_sectors)
@@ -167,7 +165,7 @@ static struct bio *bio_split_write_zeroes(struct bio *bio,
  * aligned to a physical block boundary.
  */
 static inline unsigned get_max_io_size(struct bio *bio,
-				       const struct queue_limits *lim)
+		struct queue_limits *lim)
 {
 	unsigned pbs = lim->physical_block_size >> SECTOR_SHIFT;
 	unsigned lbs = lim->logical_block_size >> SECTOR_SHIFT;
@@ -186,15 +184,7 @@ static inline unsigned get_max_io_size(struct bio *bio,
 	return max_sectors & ~(lbs - 1);
 }
 
-/**
- * get_max_segment_size() - maximum number of bytes to add as a single segment
- * @lim: Request queue limits.
- * @start_page: See below.
- * @offset: Offset from @start_page where to add a segment.
- *
- * Returns the maximum number of bytes that can be added as a single segment.
- */
-static inline unsigned get_max_segment_size(const struct queue_limits *lim,
+static inline unsigned get_max_segment_size(struct queue_limits *lim,
 		struct page *start_page, unsigned long offset)
 {
 	unsigned long mask = lim->seg_boundary_mask;
@@ -202,10 +192,11 @@ static inline unsigned get_max_segment_size(const struct queue_limits *lim,
 	offset = mask & (page_to_phys(start_page) + offset);
 
 	/*
-	 * Prevent an overflow if mask = ULONG_MAX and offset = 0 by adding 1
-	 * after having calculated the minimum.
+	 * overflow may be triggered in case of zero page physical address
+	 * on 32bit arch, use queue's max segment size when that happens.
 	 */
-	return min(mask - offset, (unsigned long)lim->max_segment_size - 1) + 1;
+	return min_not_zero(mask - offset + 1,
+			(unsigned long)lim->max_segment_size);
 }
 
 /**
@@ -228,9 +219,9 @@ static inline unsigned get_max_segment_size(const struct queue_limits *lim,
  * *@nsegs segments and *@sectors sectors would make that bio unacceptable for
  * the block driver.
  */
-static bool bvec_split_segs(const struct queue_limits *lim,
-		const struct bio_vec *bv, unsigned *nsegs, unsigned *bytes,
-		unsigned max_segs, unsigned max_bytes)
+static bool bvec_split_segs(struct queue_limits *lim, const struct bio_vec *bv,
+		unsigned *nsegs, unsigned *bytes, unsigned max_segs,
+		unsigned max_bytes)
 {
 	unsigned max_len = min(max_bytes, UINT_MAX) - *bytes;
 	unsigned len = min(bv->bv_len, max_len);
@@ -276,7 +267,7 @@ static bool bvec_split_segs(const struct queue_limits *lim,
  * responsible for ensuring that @bs is only destroyed after processing of the
  * split bio has finished.
  */
-struct bio *bio_split_rw(struct bio *bio, const struct queue_limits *lim,
+static struct bio *bio_split_rw(struct bio *bio, struct queue_limits *lim,
 		unsigned *segs, struct bio_set *bs, unsigned max_bytes)
 {
 	struct bio_vec bv, bvprv, *bvprvp = NULL;
@@ -336,7 +327,6 @@ split:
 	bio_clear_polled(bio);
 	return bio_split(bio, bytes >> SECTOR_SHIFT, GFP_NOIO, bs);
 }
-EXPORT_SYMBOL_GPL(bio_split_rw);
 
 /**
  * __bio_split_to_limits - split a bio to fit the queue limits
@@ -351,9 +341,8 @@ EXPORT_SYMBOL_GPL(bio_split_rw);
  * The split bio is allocated from @q->bio_split, which is provided by the
  * block layer.
  */
-struct bio *__bio_split_to_limits(struct bio *bio,
-				  const struct queue_limits *lim,
-				  unsigned int *nr_segs)
+struct bio *__bio_split_to_limits(struct bio *bio, struct queue_limits *lim,
+		       unsigned int *nr_segs)
 {
 	struct bio_set *bs = &bio->bi_bdev->bd_disk->bio_split;
 	struct bio *split;
@@ -400,7 +389,7 @@ struct bio *__bio_split_to_limits(struct bio *bio,
  */
 struct bio *bio_split_to_limits(struct bio *bio)
 {
-	const struct queue_limits *lim = &bdev_get_queue(bio->bi_bdev)->limits;
+	struct queue_limits *lim = &bdev_get_queue(bio->bi_bdev)->limits;
 	unsigned int nr_segs;
 
 	if (bio_may_exceed_limits(bio, lim))
@@ -586,6 +575,13 @@ int __blk_rq_map_sg(struct request_queue *q, struct request *rq,
 	return nsegs;
 }
 EXPORT_SYMBOL(__blk_rq_map_sg);
+
+static inline unsigned int blk_rq_get_max_segments(struct request *rq)
+{
+	if (req_op(rq) == REQ_OP_DISCARD)
+		return queue_max_discard_segments(rq->q);
+	return queue_max_segments(rq->q);
+}
 
 static inline unsigned int blk_rq_get_max_sectors(struct request *rq,
 						  sector_t offset)

@@ -243,8 +243,7 @@ static struct rtable *ip4_route_output_gtp(struct flowi4 *fl4,
 	fl4->flowi4_oif		= sk->sk_bound_dev_if;
 	fl4->daddr		= daddr;
 	fl4->saddr		= saddr;
-	fl4->flowi4_tos		= ip_sock_rt_tos(sk);
-	fl4->flowi4_scope	= ip_sock_rt_scope(sk);
+	fl4->flowi4_tos		= RT_CONN_FLAGS(sk);
 	fl4->flowi4_proto	= sk->sk_protocol;
 
 	return ip_route_output_key(sock_net(sk), fl4);
@@ -630,7 +629,7 @@ static void __gtp_encap_destroy(struct sock *sk)
 			gtp->sk0 = NULL;
 		else
 			gtp->sk1u = NULL;
-		WRITE_ONCE(udp_sk(sk)->encap_type, 0);
+		udp_sk(sk)->encap_type = 0;
 		rcu_assign_sk_user_data(sk, NULL);
 		release_sock(sk);
 		sock_put(sk);
@@ -682,7 +681,7 @@ static int gtp_encap_recv(struct sock *sk, struct sk_buff *skb)
 
 	netdev_dbg(gtp->dev, "encap_recv sk=%p\n", sk);
 
-	switch (READ_ONCE(udp_sk(sk)->encap_type)) {
+	switch (udp_sk(sk)->encap_type) {
 	case UDP_ENCAP_GTP0:
 		netdev_dbg(gtp->dev, "received GTP0 packet\n");
 		ret = gtp0_udp_encap_recv(gtp, skb);

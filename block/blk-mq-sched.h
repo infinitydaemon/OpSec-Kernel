@@ -4,6 +4,7 @@
 
 #include "elevator.h"
 #include "blk-mq.h"
+#include "blk-mq-tag.h"
 
 #define MAX_SCHED_RQ (16 * BLKDEV_DEFAULT_RQ)
 
@@ -15,6 +16,12 @@ bool blk_mq_sched_try_insert_merge(struct request_queue *q, struct request *rq,
 				   struct list_head *free);
 void blk_mq_sched_mark_restart_hctx(struct blk_mq_hw_ctx *hctx);
 void __blk_mq_sched_restart(struct blk_mq_hw_ctx *hctx);
+
+void blk_mq_sched_insert_request(struct request *rq, bool at_head,
+				 bool run_queue, bool async);
+void blk_mq_sched_insert_requests(struct blk_mq_hw_ctx *hctx,
+				  struct blk_mq_ctx *ctx,
+				  struct list_head *list, bool run_queue_async);
 
 void blk_mq_sched_dispatch_requests(struct blk_mq_hw_ctx *hctx);
 
@@ -37,7 +44,7 @@ static inline bool
 blk_mq_sched_allow_merge(struct request_queue *q, struct request *rq,
 			 struct bio *bio)
 {
-	if (rq->rq_flags & RQF_USE_SCHED) {
+	if (rq->rq_flags & RQF_ELV) {
 		struct elevator_queue *e = q->elevator;
 
 		if (e->type->ops.allow_merge)
@@ -48,7 +55,7 @@ blk_mq_sched_allow_merge(struct request_queue *q, struct request *rq,
 
 static inline void blk_mq_sched_completed_request(struct request *rq, u64 now)
 {
-	if (rq->rq_flags & RQF_USE_SCHED) {
+	if (rq->rq_flags & RQF_ELV) {
 		struct elevator_queue *e = rq->q->elevator;
 
 		if (e->type->ops.completed_request)
@@ -58,11 +65,11 @@ static inline void blk_mq_sched_completed_request(struct request *rq, u64 now)
 
 static inline void blk_mq_sched_requeue_request(struct request *rq)
 {
-	if (rq->rq_flags & RQF_USE_SCHED) {
+	if (rq->rq_flags & RQF_ELV) {
 		struct request_queue *q = rq->q;
 		struct elevator_queue *e = q->elevator;
 
-		if (e->type->ops.requeue_request)
+		if ((rq->rq_flags & RQF_ELVPRIV) && e->type->ops.requeue_request)
 			e->type->ops.requeue_request(rq);
 	}
 }

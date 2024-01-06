@@ -22,7 +22,7 @@
 #include <linux/pfn.h>
 #include <linux/hardirq.h>
 #include <linux/gfp.h>
-#include <linux/hugetlb.h>
+#include <linux/initrd.h>
 #include <linux/mmzone.h>
 
 #include <asm/asm-offsets.h>
@@ -35,8 +35,33 @@
 #include <asm/pgalloc.h>
 #include <asm/tlb.h>
 
-unsigned long empty_zero_page[PAGE_SIZE / sizeof(unsigned long)] __page_aligned_bss;
+/*
+ * We have up to 8 empty zeroed pages so we can map one of the right colour
+ * when needed.	 Since page is never written to after the initialization we
+ * don't have to care about aliases on other CPUs.
+ */
+unsigned long empty_zero_page, zero_page_mask;
 EXPORT_SYMBOL(empty_zero_page);
+EXPORT_SYMBOL(zero_page_mask);
+
+void setup_zero_pages(void)
+{
+	unsigned int order, i;
+	struct page *page;
+
+	order = 0;
+
+	empty_zero_page = __get_free_pages(GFP_KERNEL | __GFP_ZERO, order);
+	if (!empty_zero_page)
+		panic("Oh boy, that early out of memory?");
+
+	page = virt_to_page((void *)empty_zero_page);
+	split_page(page, order);
+	for (i = 0; i < (1 << order); i++, page++)
+		mark_page_reserved(page);
+
+	zero_page_mask = ((PAGE_SIZE << order) - 1) & PAGE_MASK;
+}
 
 void copy_user_highpage(struct page *to, struct page *from,
 	unsigned long vaddr, struct vm_area_struct *vma)
@@ -81,6 +106,7 @@ void __init mem_init(void)
 	high_memory = (void *) __va(max_low_pfn << PAGE_SHIFT);
 
 	memblock_free_all();
+	setup_zero_pages();	/* Setup zeroed pages.  */
 }
 #endif /* !CONFIG_NUMA */
 
@@ -126,81 +152,43 @@ EXPORT_SYMBOL_GPL(memory_add_physaddr_to_nid);
 #endif
 #endif
 
-#ifdef CONFIG_SPARSEMEM_VMEMMAP
-void __meminit vmemmap_set_pmd(pmd_t *pmd, void *p, int node,
-			       unsigned long addr, unsigned long next)
+static pte_t *fixmap_pte(unsigned long addr)
 {
-	pmd_t entry;
-
-	entry = pfn_pmd(virt_to_pfn(p), PAGE_KERNEL);
-	pmd_val(entry) |= _PAGE_HUGE | _PAGE_HGLOBAL;
-	set_pmd_at(&init_mm, addr, pmd, entry);
-}
-
-int __meminit vmemmap_check_pmd(pmd_t *pmd, int node,
-				unsigned long addr, unsigned long next)
-{
-	int huge = pmd_val(*pmd) & _PAGE_HUGE;
-
-	if (huge)
-		vmemmap_verify((pte_t *)pmd, node, addr, next);
-
-	return huge;
-}
-
-int __meminit vmemmap_populate(unsigned long start, unsigned long end,
-			       int node, struct vmem_altmap *altmap)
-{
-#if CONFIG_PGTABLE_LEVELS == 2
-	return vmemmap_populate_basepages(start, end, node, NULL);
-#else
-	return vmemmap_populate_hugepages(start, end, node, NULL);
-#endif
-}
-
-#ifdef CONFIG_MEMORY_HOTPLUG
-void vmemmap_free(unsigned long start, unsigned long end, struct vmem_altmap *altmap)
-{
-}
-#endif
-#endif
-
-pte_t * __init populate_kernel_pte(unsigned long addr)
-{
-	pgd_t *pgd = pgd_offset_k(addr);
-	p4d_t *p4d = p4d_offset(pgd, addr);
+	pgd_t *pgd;
+	p4d_t *p4d;
 	pud_t *pud;
 	pmd_t *pmd;
 
-	if (p4d_none(*p4d)) {
-		pud = memblock_alloc(PAGE_SIZE, PAGE_SIZE);
-		if (!pud)
-			panic("%s: Failed to allocate memory\n", __func__);
-		p4d_populate(&init_mm, p4d, pud);
+	pgd = pgd_offset_k(addr);
+	p4d = p4d_offset(pgd, addr);
+
+	if (pgd_none(*pgd)) {
+		pud_t *new __maybe_unused;
+
+		new = memblock_alloc_low(PAGE_SIZE, PAGE_SIZE);
+		pgd_populate(&init_mm, pgd, new);
 #ifndef __PAGETABLE_PUD_FOLDED
-		pud_init(pud);
+		pud_init((unsigned long)new, (unsigned long)invalid_pmd_table);
 #endif
 	}
 
 	pud = pud_offset(p4d, addr);
 	if (pud_none(*pud)) {
-		pmd = memblock_alloc(PAGE_SIZE, PAGE_SIZE);
-		if (!pmd)
-			panic("%s: Failed to allocate memory\n", __func__);
-		pud_populate(&init_mm, pud, pmd);
+		pmd_t *new __maybe_unused;
+
+		new = memblock_alloc_low(PAGE_SIZE, PAGE_SIZE);
+		pud_populate(&init_mm, pud, new);
 #ifndef __PAGETABLE_PMD_FOLDED
-		pmd_init(pmd);
+		pmd_init((unsigned long)new, (unsigned long)invalid_pte_table);
 #endif
 	}
 
 	pmd = pmd_offset(pud, addr);
-	if (!pmd_present(*pmd)) {
-		pte_t *pte;
+	if (pmd_none(*pmd)) {
+		pte_t *new __maybe_unused;
 
-		pte = memblock_alloc(PAGE_SIZE, PAGE_SIZE);
-		if (!pte)
-			panic("%s: Failed to allocate memory\n", __func__);
-		pmd_populate_kernel(&init_mm, pmd, pte);
+		new = memblock_alloc_low(PAGE_SIZE, PAGE_SIZE);
+		pmd_populate_kernel(&init_mm, pmd, new);
 	}
 
 	return pte_offset_kernel(pmd, addr);
@@ -214,7 +202,7 @@ void __init __set_fixmap(enum fixed_addresses idx,
 
 	BUG_ON(idx <= FIX_HOLE || idx >= __end_of_fixed_addresses);
 
-	ptep = populate_kernel_pte(addr);
+	ptep = fixmap_pte(addr);
 	if (!pte_none(*ptep)) {
 		pte_ERROR(*ptep);
 		return;

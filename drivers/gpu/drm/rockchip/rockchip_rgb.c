@@ -22,11 +22,13 @@
 #include "rockchip_drm_vop.h"
 #include "rockchip_rgb.h"
 
+#define encoder_to_rgb(c) container_of(c, struct rockchip_rgb, encoder)
+
 struct rockchip_rgb {
 	struct device *dev;
 	struct drm_device *drm_dev;
 	struct drm_bridge *bridge;
-	struct rockchip_encoder encoder;
+	struct drm_encoder encoder;
 	struct drm_connector connector;
 	int output_mode;
 };
@@ -72,8 +74,7 @@ struct drm_encoder_helper_funcs rockchip_rgb_encoder_helper_funcs = {
 
 struct rockchip_rgb *rockchip_rgb_init(struct device *dev,
 				       struct drm_crtc *crtc,
-				       struct drm_device *drm_dev,
-				       int video_port)
+				       struct drm_device *drm_dev)
 {
 	struct rockchip_rgb *rgb;
 	struct drm_encoder *encoder;
@@ -91,7 +92,7 @@ struct rockchip_rgb *rockchip_rgb_init(struct device *dev,
 	rgb->dev = dev;
 	rgb->drm_dev = drm_dev;
 
-	port = of_graph_get_port_by_id(dev->of_node, video_port);
+	port = of_graph_get_port_by_id(dev->of_node, 0);
 	if (!port)
 		return ERR_PTR(-EINVAL);
 
@@ -104,8 +105,8 @@ struct rockchip_rgb *rockchip_rgb_init(struct device *dev,
 			continue;
 
 		child_count++;
-		ret = drm_of_find_panel_or_bridge(dev->of_node, video_port,
-						  endpoint_id, &panel, &bridge);
+		ret = drm_of_find_panel_or_bridge(dev->of_node, 0, endpoint_id,
+						  &panel, &bridge);
 		if (!ret) {
 			of_node_put(endpoint);
 			break;
@@ -124,7 +125,7 @@ struct rockchip_rgb *rockchip_rgb_init(struct device *dev,
 		return ERR_PTR(ret);
 	}
 
-	encoder = &rgb->encoder.encoder;
+	encoder = &rgb->encoder;
 	encoder->possible_crtcs = drm_crtc_mask(crtc);
 
 	ret = drm_simple_encoder_init(drm_dev, encoder, DRM_MODE_ENCODER_NONE);
@@ -160,8 +161,6 @@ struct rockchip_rgb *rockchip_rgb_init(struct device *dev,
 		goto err_free_encoder;
 	}
 
-	rgb->encoder.crtc_endpoint_id = endpoint_id;
-
 	ret = drm_connector_attach_encoder(connector, encoder);
 	if (ret < 0) {
 		DRM_DEV_ERROR(drm_dev->dev,
@@ -183,6 +182,6 @@ void rockchip_rgb_fini(struct rockchip_rgb *rgb)
 {
 	drm_panel_bridge_remove(rgb->bridge);
 	drm_connector_cleanup(&rgb->connector);
-	drm_encoder_cleanup(&rgb->encoder.encoder);
+	drm_encoder_cleanup(&rgb->encoder);
 }
 EXPORT_SYMBOL_GPL(rockchip_rgb_fini);

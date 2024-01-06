@@ -123,7 +123,7 @@ int ath11k_reg_update_chan_list(struct ath11k *ar, bool wait)
 			ar->state_11d = ATH11K_11D_IDLE;
 		}
 		ath11k_dbg(ar->ab, ATH11K_DBG_REG,
-			   "11d scan wait left time %d\n", left);
+			   "reg 11d scan wait left time %d\n", left);
 	}
 
 	if (wait &&
@@ -136,7 +136,7 @@ int ath11k_reg_update_chan_list(struct ath11k *ar, bool wait)
 				   "failed to receive hw scan complete: timed out\n");
 
 		ath11k_dbg(ar->ab, ATH11K_DBG_REG,
-			   "hw scan wait left time %d\n", left);
+			   "reg hw scan wait left time %d\n", left);
 	}
 
 	if (ar->state == ATH11K_STATE_RESTARTING)
@@ -348,16 +348,6 @@ static u32 ath11k_map_fw_reg_flags(u16 reg_flags)
 
 	if (reg_flags & REGULATORY_CHAN_NO_160MHZ)
 		flags |= NL80211_RRF_NO_160MHZ;
-
-	return flags;
-}
-
-static u32 ath11k_map_fw_phy_flags(u32 phy_flags)
-{
-	u32 flags = 0;
-
-	if (phy_flags & ATH11K_REG_PHY_BITMAP_NO11AX)
-		flags |= NL80211_RRF_NO_HE;
 
 	return flags;
 }
@@ -623,19 +613,13 @@ ath11k_reg_build_regd(struct ath11k_base *ab,
 {
 	struct ieee80211_regdomain *tmp_regd, *default_regd, *new_regd = NULL;
 	struct cur_reg_rule *reg_rule;
-	u8 i = 0, j = 0, k = 0;
+	u8 i = 0, j = 0;
 	u8 num_rules;
 	u16 max_bw;
 	u32 flags;
 	char alpha2[3];
 
-	num_rules = reg_info->num_5ghz_reg_rules + reg_info->num_2ghz_reg_rules;
-
-	/* FIXME: Currently taking reg rules for 6 GHz only from Indoor AP mode list.
-	 * This can be updated after complete 6 GHz regulatory support is added.
-	 */
-	if (reg_info->is_ext_reg_event)
-		num_rules += reg_info->num_6ghz_rules_ap[WMI_REG_INDOOR_AP];
+	num_rules = reg_info->num_5g_reg_rules + reg_info->num_2g_reg_rules;
 
 	if (!num_rules)
 		goto ret;
@@ -656,24 +640,24 @@ ath11k_reg_build_regd(struct ath11k_base *ab,
 	tmp_regd->dfs_region = ath11k_map_fw_dfs_region(reg_info->dfs_region);
 
 	ath11k_dbg(ab, ATH11K_DBG_REG,
-		   "Country %s, CFG Regdomain %s FW Regdomain %d, num_reg_rules %d\n",
+		   "\r\nCountry %s, CFG Regdomain %s FW Regdomain %d, num_reg_rules %d\n",
 		   alpha2, ath11k_reg_get_regdom_str(tmp_regd->dfs_region),
 		   reg_info->dfs_region, num_rules);
 	/* Update reg_rules[] below. Firmware is expected to
-	 * send these rules in order(2 GHz rules first and then 5 GHz)
+	 * send these rules in order(2G rules first and then 5G)
 	 */
 	for (; i < num_rules; i++) {
-		if (reg_info->num_2ghz_reg_rules &&
-		    (i < reg_info->num_2ghz_reg_rules)) {
-			reg_rule = reg_info->reg_rules_2ghz_ptr + i;
+		if (reg_info->num_2g_reg_rules &&
+		    (i < reg_info->num_2g_reg_rules)) {
+			reg_rule = reg_info->reg_rules_2g_ptr + i;
 			max_bw = min_t(u16, reg_rule->max_bw,
-				       reg_info->max_bw_2ghz);
+				       reg_info->max_bw_2g);
 			flags = 0;
-		} else if (reg_info->num_5ghz_reg_rules &&
-			   (j < reg_info->num_5ghz_reg_rules)) {
-			reg_rule = reg_info->reg_rules_5ghz_ptr + j++;
+		} else if (reg_info->num_5g_reg_rules &&
+			   (j < reg_info->num_5g_reg_rules)) {
+			reg_rule = reg_info->reg_rules_5g_ptr + j++;
 			max_bw = min_t(u16, reg_rule->max_bw,
-				       reg_info->max_bw_5ghz);
+				       reg_info->max_bw_5g);
 
 			/* FW doesn't pass NL80211_RRF_AUTO_BW flag for
 			 * BW Auto correction, we can enable this by default
@@ -682,20 +666,11 @@ ath11k_reg_build_regd(struct ath11k_base *ab,
 			 * per other BW rule flags we pass from here
 			 */
 			flags = NL80211_RRF_AUTO_BW;
-		} else if (reg_info->is_ext_reg_event &&
-			   reg_info->num_6ghz_rules_ap[WMI_REG_INDOOR_AP] &&
-			   (k < reg_info->num_6ghz_rules_ap[WMI_REG_INDOOR_AP])) {
-			reg_rule = reg_info->reg_rules_6ghz_ap_ptr[WMI_REG_INDOOR_AP] +
-				   k++;
-			max_bw = min_t(u16, reg_rule->max_bw,
-				       reg_info->max_bw_6ghz_ap[WMI_REG_INDOOR_AP]);
-			flags = NL80211_RRF_AUTO_BW;
 		} else {
 			break;
 		}
 
 		flags |= ath11k_map_fw_reg_flags(reg_rule->flags);
-		flags |= ath11k_map_fw_phy_flags(reg_info->phybitmap);
 
 		ath11k_reg_update_rule(tmp_regd->reg_rules + i,
 				       reg_rule->start_freq,
@@ -718,21 +693,12 @@ ath11k_reg_build_regd(struct ath11k_base *ab,
 			continue;
 		}
 
-		if (reg_info->is_ext_reg_event) {
-			ath11k_dbg(ab, ATH11K_DBG_REG,
-				   "\t%d. (%d - %d @ %d) (%d, %d) (%d ms) (FLAGS %d) (%d, %d)\n",
-				   i + 1, reg_rule->start_freq, reg_rule->end_freq,
-				   max_bw, reg_rule->ant_gain, reg_rule->reg_power,
-				   tmp_regd->reg_rules[i].dfs_cac_ms, flags,
-				   reg_rule->psd_flag, reg_rule->psd_eirp);
-		} else {
-			ath11k_dbg(ab, ATH11K_DBG_REG,
-				   "\t%d. (%d - %d @ %d) (%d, %d) (%d ms) (FLAGS %d)\n",
-				   i + 1, reg_rule->start_freq, reg_rule->end_freq,
-				   max_bw, reg_rule->ant_gain, reg_rule->reg_power,
-				   tmp_regd->reg_rules[i].dfs_cac_ms,
-				   flags);
-		}
+		ath11k_dbg(ab, ATH11K_DBG_REG,
+			   "\t%d. (%d - %d @ %d) (%d, %d) (%d ms) (FLAGS %d)\n",
+			   i + 1, reg_rule->start_freq, reg_rule->end_freq,
+			   max_bw, reg_rule->ant_gain, reg_rule->reg_power,
+			   tmp_regd->reg_rules[i].dfs_cac_ms,
+			   flags);
 	}
 
 	tmp_regd->n_reg_rules = i;

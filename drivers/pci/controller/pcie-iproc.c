@@ -18,6 +18,7 @@
 #include <linux/platform_device.h>
 #include <linux/of_address.h>
 #include <linux/of_pci.h>
+#include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/phy/phy.h>
 
@@ -783,7 +784,7 @@ static int iproc_pcie_check_link(struct iproc_pcie *pcie)
 
 	/* make sure we are not in EP mode */
 	iproc_pci_raw_config_read32(pcie, 0, PCI_HEADER_TYPE, 1, &hdr_type);
-	if ((hdr_type & PCI_HEADER_TYPE_MASK) != PCI_HEADER_TYPE_BRIDGE) {
+	if ((hdr_type & 0x7f) != PCI_HEADER_TYPE_BRIDGE) {
 		dev_err(dev, "in EP mode, hdr=%#02x\n", hdr_type);
 		return -EFAULT;
 	}
@@ -1537,7 +1538,7 @@ err_exit_phy:
 }
 EXPORT_SYMBOL(iproc_pcie_setup);
 
-void iproc_pcie_remove(struct iproc_pcie *pcie)
+int iproc_pcie_remove(struct iproc_pcie *pcie)
 {
 	struct pci_host_bridge *host = pci_host_bridge_from_priv(pcie);
 
@@ -1548,6 +1549,8 @@ void iproc_pcie_remove(struct iproc_pcie *pcie)
 
 	phy_power_off(pcie->phy);
 	phy_exit(pcie->phy);
+
+	return 0;
 }
 EXPORT_SYMBOL(iproc_pcie_remove);
 

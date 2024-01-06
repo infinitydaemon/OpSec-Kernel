@@ -31,9 +31,9 @@
 
 #include <drm/drm_aperture.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_crtc_helper.h>
 #include <drm/drm_drv.h>
-#include <drm/drm_fbdev_generic.h>
-#include <drm/drm_gem_shmem_helper.h>
+#include <drm/drm_gem_vram_helper.h>
 #include <drm/drm_module.h>
 #include <drm/drm_probe_helper.h>
 
@@ -63,7 +63,7 @@ static const struct drm_driver ast_driver = {
 	.minor = DRIVER_MINOR,
 	.patchlevel = DRIVER_PATCHLEVEL,
 
-	DRM_GEM_SHMEM_DRIVER_OPS
+	DRM_GEM_VRAM_DRIVER
 };
 
 /*
@@ -91,7 +91,7 @@ MODULE_DEVICE_TABLE(pci, ast_pciidlist);
 
 static int ast_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
-	struct ast_device *ast;
+	struct ast_private *ast;
 	struct drm_device *dev;
 	int ret;
 
@@ -123,11 +123,6 @@ static void ast_pci_remove(struct pci_dev *pdev)
 
 	drm_dev_unregister(dev);
 	drm_atomic_helper_shutdown(dev);
-}
-
-static void ast_pci_shutdown(struct pci_dev *pdev)
-{
-	drm_atomic_helper_shutdown(pci_get_drvdata(pdev));
 }
 
 static int ast_drm_freeze(struct drm_device *dev)
@@ -214,7 +209,6 @@ static struct pci_driver ast_pci_driver = {
 	.id_table = ast_pciidlist,
 	.probe = ast_pci_probe,
 	.remove = ast_pci_remove,
-	.shutdown = ast_pci_shutdown,
 	.driver.pm = &ast_pm_ops,
 };
 

@@ -6,16 +6,14 @@
 /delete-node/ &enet1_lpcg;
 /delete-node/ &fec2;
 
-/ {
+&conn_subsys {
 	conn_enet0_root_clk: clock-conn-enet0-root {
 		compatible = "fixed-clock";
 		#clock-cells = <0>;
 		clock-frequency = <250000000>;
 		clock-output-names = "conn_enet0_root_clk";
 	};
-};
 
-&conn_subsys {
 	eqos: ethernet@5b050000 {
 		compatible = "nxp,imx8dxl-dwmac-eqos", "snps,dwmac-5.10a";
 		reg = <0x5b050000 0x10000>;
@@ -36,7 +34,7 @@
 	};
 
 	usbotg2: usb@5b0e0000 {
-		compatible = "fsl,imx8dxl-usb", "fsl,imx7ulp-usb", "fsl,imx6ul-usb";
+		compatible = "fsl,imx8dxl-usb", "fsl,imx7ulp-usb";
 		reg = <0x5b0e0000 0x200>;
 		interrupt-parent = <&gic>;
 		interrupts = <GIC_SPI 166 IRQ_TYPE_LEVEL_HIGH>;
@@ -51,6 +49,7 @@
 		ahb-burst-config = <0x0>;
 		tx-burst-size-dword = <0x10>;
 		rx-burst-size-dword = <0x10>;
+		#stream-id-cells = <1>;
 		power-domains = <&pd IMX_SC_R_USB_1>;
 		status = "disabled";
 
@@ -64,11 +63,11 @@
 
 	usbmisc2: usbmisc@5b0e0200 {
 		#index-cells = <1>;
-		compatible = "fsl,imx7ulp-usbmisc", "fsl,imx7d-usbmisc", "fsl,imx6q-usbmisc";
+		compatible = "fsl,imx7ulp-usbmisc";
 		reg = <0x5b0e0200 0x200>;
 	};
 
-	usbphy2: usbphy@5b110000 {
+	usbphy2: usbphy@0x5b110000 {
 		compatible = "fsl,imx8dxl-usbphy", "fsl,imx7ulp-usbphy";
 		reg = <0x5b110000 0x1000>;
 		clocks = <&usb2_2_lpcg IMX_LPCG_CLK_7>;
@@ -118,7 +117,7 @@
 };
 
 &fec1 {
-	compatible = "fsl,imx8dxl-fec", "fsl,imx8qm-fec", "fsl,imx6sx-fec";
+	compatible = "fsl,imx8qm-fec";
 	interrupts = <GIC_SPI 160 IRQ_TYPE_LEVEL_HIGH>,
 		     <GIC_SPI 158 IRQ_TYPE_LEVEL_HIGH>,
 		     <GIC_SPI 159 IRQ_TYPE_LEVEL_HIGH>,
@@ -140,14 +139,4 @@
 &usdhc3 {
 	compatible = "fsl,imx8dxl-usdhc", "fsl,imx8qxp-usdhc";
 	interrupts = <GIC_SPI 140 IRQ_TYPE_LEVEL_HIGH>;
-};
-
-&usbotg1 {
-	interrupts = <GIC_SPI 169 IRQ_TYPE_LEVEL_HIGH>;
-	/*
-	 * usbotg1 and usbotg2 share one clock
-	 * scfw disable clock access and keep it always on
-	 * in case other core (M4) use one of these.
-	 */
-	clocks = <&clk_dummy>;
 };

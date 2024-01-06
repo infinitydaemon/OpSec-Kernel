@@ -1393,9 +1393,9 @@ static struct dm9000_plat_data *dm9000_parse_dt(struct device *dev)
 	if (!pdata)
 		return ERR_PTR(-ENOMEM);
 
-	if (of_property_read_bool(np, "davicom,ext-phy"))
+	if (of_find_property(np, "davicom,ext-phy", NULL))
 		pdata->flags |= DM9000_PLATF_EXT_PHY;
-	if (of_property_read_bool(np, "davicom,no-eeprom"))
+	if (of_find_property(np, "davicom,no-eeprom", NULL))
 		pdata->flags |= DM9000_PLATF_NO_EEPROM;
 
 	ret = of_get_mac_address(np, pdata->dev_addr);
@@ -1770,7 +1770,8 @@ static const struct dev_pm_ops dm9000_drv_pm_ops = {
 	.resume		= dm9000_drv_resume,
 };
 
-static void dm9000_drv_remove(struct platform_device *pdev)
+static int
+dm9000_drv_remove(struct platform_device *pdev)
 {
 	struct net_device *ndev = platform_get_drvdata(pdev);
 	struct board_info *dm = to_dm9000_board(ndev);
@@ -1782,6 +1783,7 @@ static void dm9000_drv_remove(struct platform_device *pdev)
 		regulator_disable(dm->power_supply);
 
 	dev_dbg(&pdev->dev, "released and freed device\n");
+	return 0;
 }
 
 #ifdef CONFIG_OF
@@ -1799,7 +1801,7 @@ static struct platform_driver dm9000_driver = {
 		.of_match_table = of_match_ptr(dm9000_of_matches),
 	},
 	.probe   = dm9000_probe,
-	.remove_new = dm9000_drv_remove,
+	.remove  = dm9000_drv_remove,
 };
 
 module_platform_driver(dm9000_driver);

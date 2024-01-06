@@ -146,7 +146,8 @@ static const struct tpm_class_ops i2c_atmel = {
 	.req_canceled = i2c_atmel_req_canceled,
 };
 
-static int i2c_atmel_probe(struct i2c_client *client)
+static int i2c_atmel_probe(struct i2c_client *client,
+			   const struct i2c_device_id *id)
 {
 	struct tpm_chip *chip;
 	struct device *dev = &client->dev;

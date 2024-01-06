@@ -72,7 +72,7 @@ static void kgd_program_sh_mem_settings(struct amdgpu_device *adev, uint32_t vmi
 					uint32_t sh_mem_config,
 					uint32_t sh_mem_ape1_base,
 					uint32_t sh_mem_ape1_limit,
-					uint32_t sh_mem_bases, uint32_t inst)
+					uint32_t sh_mem_bases)
 {
 	lock_srbm(adev, 0, 0, 0, vmid);
 
@@ -85,7 +85,7 @@ static void kgd_program_sh_mem_settings(struct amdgpu_device *adev, uint32_t vmi
 }
 
 static int kgd_set_pasid_vmid_mapping(struct amdgpu_device *adev, u32 pasid,
-					unsigned int vmid, uint32_t inst)
+					unsigned int vmid)
 {
 	/*
 	 * We have to assume that there is no outstanding mapping.
@@ -109,8 +109,7 @@ static int kgd_set_pasid_vmid_mapping(struct amdgpu_device *adev, u32 pasid,
 	return 0;
 }
 
-static int kgd_init_interrupts(struct amdgpu_device *adev, uint32_t pipe_id,
-				uint32_t inst)
+static int kgd_init_interrupts(struct amdgpu_device *adev, uint32_t pipe_id)
 {
 	uint32_t mec;
 	uint32_t pipe;
@@ -154,7 +153,7 @@ static inline struct vi_sdma_mqd *get_sdma_mqd(void *mqd)
 static int kgd_hqd_load(struct amdgpu_device *adev, void *mqd,
 			uint32_t pipe_id, uint32_t queue_id,
 			uint32_t __user *wptr, uint32_t wptr_shift,
-			uint32_t wptr_mask, struct mm_struct *mm, uint32_t inst)
+			uint32_t wptr_mask, struct mm_struct *mm)
 {
 	struct vi_mqd *m;
 	uint32_t *mqd_hqd;
@@ -227,7 +226,7 @@ static int kgd_hqd_load(struct amdgpu_device *adev, void *mqd,
 
 static int kgd_hqd_dump(struct amdgpu_device *adev,
 			uint32_t pipe_id, uint32_t queue_id,
-			uint32_t (**dump)[2], uint32_t *n_regs, uint32_t inst)
+			uint32_t (**dump)[2], uint32_t *n_regs)
 {
 	uint32_t i = 0, reg;
 #define HQD_N_REGS (54+4)
@@ -351,7 +350,7 @@ static int kgd_hqd_sdma_dump(struct amdgpu_device *adev,
 
 static bool kgd_hqd_is_occupied(struct amdgpu_device *adev,
 				uint64_t queue_address, uint32_t pipe_id,
-				uint32_t queue_id, uint32_t inst)
+				uint32_t queue_id)
 {
 	uint32_t act;
 	bool retval = false;
@@ -391,7 +390,7 @@ static bool kgd_hqd_sdma_is_occupied(struct amdgpu_device *adev, void *mqd)
 static int kgd_hqd_destroy(struct amdgpu_device *adev, void *mqd,
 				enum kfd_preempt_type reset_type,
 				unsigned int utimeout, uint32_t pipe_id,
-				uint32_t queue_id, uint32_t inst)
+				uint32_t queue_id)
 {
 	uint32_t temp;
 	enum hqd_dequeue_request_type type;
@@ -541,7 +540,7 @@ static bool get_atc_vmid_pasid_mapping_info(struct amdgpu_device *adev,
 
 static int kgd_wave_control_execute(struct amdgpu_device *adev,
 					uint32_t gfx_index_val,
-					uint32_t sq_cmd, uint32_t inst)
+					uint32_t sq_cmd)
 {
 	uint32_t data = 0;
 

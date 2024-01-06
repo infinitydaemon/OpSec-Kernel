@@ -374,7 +374,7 @@ fail_backlight:
 	return ret;
 }
 
-static void panel_remove(struct platform_device *pdev)
+static int panel_remove(struct platform_device *pdev)
 {
 	struct tilcdc_module *mod = dev_get_platdata(&pdev->dev);
 	struct panel_module *panel_mod = to_panel_module(mod);
@@ -387,6 +387,8 @@ static void panel_remove(struct platform_device *pdev)
 
 	tilcdc_module_cleanup(mod);
 	kfree(panel_mod->info);
+
+	return 0;
 }
 
 static const struct of_device_id panel_of_match[] = {
@@ -396,7 +398,7 @@ static const struct of_device_id panel_of_match[] = {
 
 static struct platform_driver panel_driver = {
 	.probe = panel_probe,
-	.remove_new = panel_remove,
+	.remove = panel_remove,
 	.driver = {
 		.name = "tilcdc-panel",
 		.of_match_table = panel_of_match,

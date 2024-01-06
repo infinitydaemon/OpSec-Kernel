@@ -462,7 +462,7 @@ nvkm_perfmon_mthd_query_domain(struct nvkm_perfmon *perfmon,
 
 		args->v0.id         = di;
 		args->v0.signal_nr  = nvkm_perfdom_count_perfsig(dom);
-		strscpy(args->v0.name, dom->name, sizeof(args->v0.name));
+		strncpy(args->v0.name, dom->name, sizeof(args->v0.name) - 1);
 
 		/* Currently only global counters (PCOUNTER) are implemented
 		 * but this will be different for local counters (MP). */
@@ -513,7 +513,8 @@ nvkm_perfmon_mthd_query_signal(struct nvkm_perfmon *perfmon,
 			snprintf(args->v0.name, sizeof(args->v0.name),
 				 "/%s/%02x", dom->name, si);
 		} else {
-			strscpy(args->v0.name, sig->name, sizeof(args->v0.name));
+			strncpy(args->v0.name, sig->name,
+				sizeof(args->v0.name) - 1);
 		}
 
 		args->v0.signal = si;
@@ -571,7 +572,7 @@ nvkm_perfmon_mthd_query_source(struct nvkm_perfmon *perfmon,
 
 		args->v0.source = sig->source[si];
 		args->v0.mask   = src->mask;
-		strscpy(args->v0.name, src->name, sizeof(args->v0.name));
+		strncpy(args->v0.name, src->name, sizeof(args->v0.name) - 1);
 	}
 
 	if (++si < source_nr) {

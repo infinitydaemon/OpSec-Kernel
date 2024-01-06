@@ -382,7 +382,7 @@ static int nearby_node(int apicid)
 #endif
 
 /*
- * Fix up topo::core_id for pre-F17h systems to be in the
+ * Fix up cpu_core_id for pre-F17h systems to be in the
  * [0 .. cores_per_node - 1] range. Not really needed but
  * kept so as not to break existing setups.
  */
@@ -394,7 +394,7 @@ static void legacy_fixup_core_id(struct cpuinfo_x86 *c)
 		return;
 
 	cus_per_node = c->x86_max_cores / nodes_per_socket;
-	c->topo.core_id %= cus_per_node;
+	c->cpu_core_id %= cus_per_node;
 }
 
 /*
@@ -405,6 +405,8 @@ static void legacy_fixup_core_id(struct cpuinfo_x86 *c)
  */
 static void amd_get_topology(struct cpuinfo_x86 *c)
 {
+	int cpu = smp_processor_id();
+
 	/* get information required for multi-node processors */
 	if (boot_cpu_has(X86_FEATURE_TOPOEXT)) {
 		int err;
@@ -412,13 +414,13 @@ static void amd_get_topology(struct cpuinfo_x86 *c)
 
 		cpuid(0x8000001e, &eax, &ebx, &ecx, &edx);
 
-		c->topo.die_id  = ecx & 0xff;
+		c->cpu_die_id  = ecx & 0xff;
 
 		if (c->x86 == 0x15)
-			c->topo.cu_id = ebx & 0xff;
+			c->cu_id = ebx & 0xff;
 
 		if (c->x86 >= 0x17) {
-			c->topo.core_id = ebx & 0xff;
+			c->cpu_core_id = ebx & 0xff;
 
 			if (smp_num_siblings > 1)
 				c->x86_max_cores /= smp_num_siblings;
@@ -432,14 +434,15 @@ static void amd_get_topology(struct cpuinfo_x86 *c)
 		if (!err)
 			c->x86_coreid_bits = get_count_order(c->x86_max_cores);
 
-		cacheinfo_amd_init_llc_id(c);
+		cacheinfo_amd_init_llc_id(c, cpu);
 
 	} else if (cpu_has(c, X86_FEATURE_NODEID_MSR)) {
 		u64 value;
 
 		rdmsrl(MSR_FAM10H_NODE_ID, value);
-		c->topo.die_id = value & 7;
-		c->topo.llc_id = c->topo.die_id;
+		c->cpu_die_id = value & 7;
+
+		per_cpu(cpu_llc_id, cpu) = c->cpu_die_id;
 	} else
 		return;
 
@@ -456,14 +459,15 @@ static void amd_get_topology(struct cpuinfo_x86 *c)
 static void amd_detect_cmp(struct cpuinfo_x86 *c)
 {
 	unsigned bits;
+	int cpu = smp_processor_id();
 
 	bits = c->x86_coreid_bits;
 	/* Low order bits define the core id (index of core in socket) */
-	c->topo.core_id = c->topo.initial_apicid & ((1 << bits)-1);
+	c->cpu_core_id = c->initial_apicid & ((1 << bits)-1);
 	/* Convert the initial APIC ID into the socket ID */
-	c->topo.pkg_id = c->topo.initial_apicid >> bits;
+	c->phys_proc_id = c->initial_apicid >> bits;
 	/* use socket ID also for last level cache */
-	c->topo.llc_id = c->topo.die_id = c->topo.pkg_id;
+	per_cpu(cpu_llc_id, cpu) = c->cpu_die_id = c->phys_proc_id;
 }
 
 u32 amd_get_nodes_per_socket(void)
@@ -477,11 +481,11 @@ static void srat_detect_node(struct cpuinfo_x86 *c)
 #ifdef CONFIG_NUMA
 	int cpu = smp_processor_id();
 	int node;
-	unsigned apicid = c->topo.apicid;
+	unsigned apicid = c->apicid;
 
 	node = numa_cpu_node(cpu);
 	if (node == NUMA_NO_NODE)
-		node = per_cpu_llc_id(cpu);
+		node = get_llc_id(cpu);
 
 	/*
 	 * On multi-fabric platform (e.g. Numascale NumaChip) a
@@ -511,7 +515,7 @@ static void srat_detect_node(struct cpuinfo_x86 *c)
 		 * through CPU mapping may alter the outcome, directly
 		 * access __apicid_to_node[].
 		 */
-		int ht_nodeid = c->topo.initial_apicid;
+		int ht_nodeid = c->initial_apicid;
 
 		if (__apicid_to_node[ht_nodeid] != NUMA_NO_NODE)
 			node = __apicid_to_node[ht_nodeid];
@@ -766,15 +770,6 @@ static void early_init_amd(struct cpuinfo_x86 *c)
 
 	if (cpu_has(c, X86_FEATURE_TOPOEXT))
 		smp_num_siblings = ((cpuid_ebx(0x8000001e) >> 8) & 0xff) + 1;
-
-	if (!cpu_has(c, X86_FEATURE_HYPERVISOR) && !cpu_has(c, X86_FEATURE_IBPB_BRTYPE)) {
-		if (c->x86 == 0x17 && boot_cpu_has(X86_FEATURE_AMD_IBPB))
-			setup_force_cpu_cap(X86_FEATURE_IBPB_BRTYPE);
-		else if (c->x86 >= 0x19 && !wrmsrl_safe(MSR_IA32_PRED_CMD, PRED_CMD_SBPB)) {
-			setup_force_cpu_cap(X86_FEATURE_IBPB_BRTYPE);
-			setup_force_cpu_cap(X86_FEATURE_SBPB);
-		}
-	}
 }
 
 static void init_amd_k8(struct cpuinfo_x86 *c)
@@ -1010,6 +1005,7 @@ static bool cpu_has_zenbleed_microcode(void)
 
 	default:
 		return false;
+		break;
 	}
 
 	if (boot_cpu_data.microcode < good_rev)
@@ -1039,8 +1035,6 @@ static void zenbleed_check(struct cpuinfo_x86 *c)
 
 static void init_amd(struct cpuinfo_x86 *c)
 {
-	u64 vm_cr;
-
 	early_init_amd(c);
 
 	/*
@@ -1052,12 +1046,8 @@ static void init_amd(struct cpuinfo_x86 *c)
 	if (c->x86 >= 0x10)
 		set_cpu_cap(c, X86_FEATURE_REP_GOOD);
 
-	/* AMD FSRM also implies FSRS */
-	if (cpu_has(c, X86_FEATURE_FSRM))
-		set_cpu_cap(c, X86_FEATURE_FSRS);
-
 	/* get apicid instead of initial apic id from cpuid */
-	c->topo.apicid = read_apic_id();
+	c->apicid = hard_smp_processor_id();
 
 	/* K6s reports MCEs but don't actually have all the MSRs */
 	if (c->x86 < 6)
@@ -1092,15 +1082,7 @@ static void init_amd(struct cpuinfo_x86 *c)
 
 	init_amd_cacheinfo(c);
 
-	if (cpu_has(c, X86_FEATURE_SVM)) {
-		rdmsrl(MSR_VM_CR, vm_cr);
-		if (vm_cr & SVM_VM_CR_SVM_DIS_MASK) {
-			pr_notice_once("SVM disabled (by BIOS) in MSR_VM_CR\n");
-			clear_cpu_cap(c, X86_FEATURE_SVM);
-		}
-	}
-
-	if (!cpu_has(c, X86_FEATURE_LFENCE_RDTSC) && cpu_has(c, X86_FEATURE_XMM2)) {
+	if (cpu_has(c, X86_FEATURE_XMM2)) {
 		/*
 		 * Use LFENCE for execution serialization.  On families which
 		 * don't have that MSR, LFENCE is already serializing.
@@ -1127,7 +1109,7 @@ static void init_amd(struct cpuinfo_x86 *c)
 			set_cpu_cap(c, X86_FEATURE_3DNOWPREFETCH);
 
 	/* AMD CPUs don't reset SS attributes on SYSRET, Xen does. */
-	if (!cpu_feature_enabled(X86_FEATURE_XENPV))
+	if (!cpu_has(c, X86_FEATURE_XENPV))
 		set_cpu_bug(c, X86_BUG_SYSRET_SS_ATTRS);
 
 	/*
@@ -1140,17 +1122,6 @@ static void init_amd(struct cpuinfo_x86 *c)
 		msr_set_bit(MSR_K7_HWCR, MSR_K7_HWCR_IRPERF_EN_BIT);
 
 	check_null_seg_clears_base(c);
-
-	/*
-	 * Make sure EFER[AIBRSE - Automatic IBRS Enable] is set. The APs are brought up
-	 * using the trampoline code and as part of it, MSR_EFER gets prepared there in
-	 * order to be replicated onto them. Regardless, set it here again, if not set,
-	 * to protect against any future refactoring/code reorganization which might
-	 * miss setting this important bit.
-	 */
-	if (spectre_v2_in_eibrs_mode(spectre_v2_enabled) &&
-	    cpu_has(c, X86_FEATURE_AUTOIBRS))
-		WARN_ON_ONCE(msr_set_bit(MSR_EFER, _EFER_AUTOIBRS));
 
 	zenbleed_check(c);
 
@@ -1257,43 +1228,24 @@ static const struct cpu_dev amd_cpu_dev = {
 
 cpu_dev_register(amd_cpu_dev);
 
-static DEFINE_PER_CPU_READ_MOSTLY(unsigned long[4], amd_dr_addr_mask);
-
-static unsigned int amd_msr_dr_addr_masks[] = {
-	MSR_F16H_DR0_ADDR_MASK,
-	MSR_F16H_DR1_ADDR_MASK,
-	MSR_F16H_DR1_ADDR_MASK + 1,
-	MSR_F16H_DR1_ADDR_MASK + 2
-};
-
-void amd_set_dr_addr_mask(unsigned long mask, unsigned int dr)
+void set_dr_addr_mask(unsigned long mask, int dr)
 {
-	int cpu = smp_processor_id();
-
-	if (!cpu_feature_enabled(X86_FEATURE_BPEXT))
+	if (!boot_cpu_has(X86_FEATURE_BPEXT))
 		return;
 
-	if (WARN_ON_ONCE(dr >= ARRAY_SIZE(amd_msr_dr_addr_masks)))
-		return;
-
-	if (per_cpu(amd_dr_addr_mask, cpu)[dr] == mask)
-		return;
-
-	wrmsr(amd_msr_dr_addr_masks[dr], mask, 0);
-	per_cpu(amd_dr_addr_mask, cpu)[dr] = mask;
+	switch (dr) {
+	case 0:
+		wrmsr(MSR_F16H_DR0_ADDR_MASK, mask, 0);
+		break;
+	case 1:
+	case 2:
+	case 3:
+		wrmsr(MSR_F16H_DR1_ADDR_MASK - 1 + dr, mask, 0);
+		break;
+	default:
+		break;
+	}
 }
-
-unsigned long amd_get_dr_addr_mask(unsigned int dr)
-{
-	if (!cpu_feature_enabled(X86_FEATURE_BPEXT))
-		return 0;
-
-	if (WARN_ON_ONCE(dr >= ARRAY_SIZE(amd_msr_dr_addr_masks)))
-		return 0;
-
-	return per_cpu(amd_dr_addr_mask[dr], smp_processor_id());
-}
-EXPORT_SYMBOL_GPL(amd_get_dr_addr_mask);
 
 u32 amd_get_highest_perf(void)
 {
@@ -1310,6 +1262,25 @@ u32 amd_get_highest_perf(void)
 	return 255;
 }
 EXPORT_SYMBOL_GPL(amd_get_highest_perf);
+
+bool cpu_has_ibpb_brtype_microcode(void)
+{
+	switch (boot_cpu_data.x86) {
+	/* Zen1/2 IBPB flushes branch type predictions too. */
+	case 0x17:
+		return boot_cpu_has(X86_FEATURE_AMD_IBPB);
+	case 0x19:
+		/* Poke the MSR bit on Zen3/4 to check its presence. */
+		if (!wrmsrl_safe(MSR_IA32_PRED_CMD, PRED_CMD_SBPB)) {
+			setup_force_cpu_cap(X86_FEATURE_SBPB);
+			return true;
+		} else {
+			return false;
+		}
+	default:
+		return false;
+	}
+}
 
 static void zenbleed_check_cpu(void *unused)
 {

@@ -532,10 +532,10 @@ static bool aq_add_rx_fragment(struct device *dev,
 					      buff_->rxdata.pg_off,
 					      buff_->len,
 					      DMA_FROM_DEVICE);
+		skb_frag_off_set(frag, buff_->rxdata.pg_off);
+		skb_frag_size_set(frag, buff_->len);
 		sinfo->xdp_frags_size += buff_->len;
-		skb_frag_fill_page_desc(frag, buff_->rxdata.page,
-					buff_->rxdata.pg_off,
-					buff_->len);
+		__skb_frag_set_page(frag, buff_->rxdata.page);
 
 		buff_->is_cleaned = 1;
 
@@ -938,11 +938,14 @@ void aq_ring_free(struct aq_ring_s *self)
 		return;
 
 	kfree(self->buff_ring);
+	self->buff_ring = NULL;
 
-	if (self->dx_ring)
+	if (self->dx_ring) {
 		dma_free_coherent(aq_nic_get_dev(self->aq_nic),
 				  self->size * self->dx_size, self->dx_ring,
 				  self->dx_ring_pa);
+		self->dx_ring = NULL;
+	}
 }
 
 unsigned int aq_ring_fill_stats_data(struct aq_ring_s *self, u64 *data)
@@ -954,7 +957,7 @@ unsigned int aq_ring_fill_stats_data(struct aq_ring_s *self, u64 *data)
 		/* This data should mimic aq_ethtool_queue_rx_stat_names structure */
 		do {
 			count = 0;
-			start = u64_stats_fetch_begin(&self->stats.rx.syncp);
+			start = u64_stats_fetch_begin_irq(&self->stats.rx.syncp);
 			data[count] = self->stats.rx.packets;
 			data[++count] = self->stats.rx.jumbo_packets;
 			data[++count] = self->stats.rx.lro_packets;
@@ -971,15 +974,15 @@ unsigned int aq_ring_fill_stats_data(struct aq_ring_s *self, u64 *data)
 			data[++count] = self->stats.rx.xdp_tx;
 			data[++count] = self->stats.rx.xdp_invalid;
 			data[++count] = self->stats.rx.xdp_redirect;
-		} while (u64_stats_fetch_retry(&self->stats.rx.syncp, start));
+		} while (u64_stats_fetch_retry_irq(&self->stats.rx.syncp, start));
 	} else {
 		/* This data should mimic aq_ethtool_queue_tx_stat_names structure */
 		do {
 			count = 0;
-			start = u64_stats_fetch_begin(&self->stats.tx.syncp);
+			start = u64_stats_fetch_begin_irq(&self->stats.tx.syncp);
 			data[count] = self->stats.tx.packets;
 			data[++count] = self->stats.tx.queue_restarts;
-		} while (u64_stats_fetch_retry(&self->stats.tx.syncp, start));
+		} while (u64_stats_fetch_retry_irq(&self->stats.tx.syncp, start));
 	}
 
 	return ++count;

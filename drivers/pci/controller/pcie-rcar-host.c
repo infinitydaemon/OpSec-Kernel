@@ -41,6 +41,21 @@ struct rcar_msi {
 	int irq2;
 };
 
+#ifdef CONFIG_ARM
+/*
+ * Here we keep a static copy of the remapped PCIe controller address.
+ * This is only used on aarch32 systems, all of which have one single
+ * PCIe controller, to provide quick access to the PCIe controller in
+ * the L1 link state fixup function, called from the ARM fault handler.
+ */
+static void __iomem *pcie_base;
+/*
+ * Static copy of PCIe device pointer, so we can check whether the
+ * device is runtime suspended or not.
+ */
+static struct device *pcie_dev;
+#endif
+
 /* Structure representing the PCIe interface */
 struct rcar_pcie_host {
 	struct rcar_pcie	pcie;
@@ -204,9 +219,9 @@ static int rcar_pcie_config_access(struct rcar_pcie_host *host,
 
 	/* Enable the configuration access */
 	if (pci_is_root_bus(bus->parent))
-		rcar_pci_write_reg(pcie, PCIECCTLR_CCIE | TYPE0, PCIECCTLR);
+		rcar_pci_write_reg(pcie, CONFIG_SEND_ENABLE | TYPE0, PCIECCTLR);
 	else
-		rcar_pci_write_reg(pcie, PCIECCTLR_CCIE | TYPE1, PCIECCTLR);
+		rcar_pci_write_reg(pcie, CONFIG_SEND_ENABLE | TYPE1, PCIECCTLR);
 
 	/* Check for errors */
 	if (rcar_pci_read_reg(pcie, PCIEERRFR) & UNSUPPORTED_REQUEST)
@@ -460,7 +475,7 @@ static int rcar_pcie_hw_init(struct rcar_pcie *pcie)
 	rcar_rmw32(pcie, REXPCAP(0), 0xff, PCI_CAP_ID_EXP);
 	rcar_rmw32(pcie, REXPCAP(PCI_EXP_FLAGS),
 		PCI_EXP_FLAGS_TYPE, PCI_EXP_TYPE_ROOT_PORT << 4);
-	rcar_rmw32(pcie, RCONF(PCI_HEADER_TYPE), PCI_HEADER_TYPE_MASK,
+	rcar_rmw32(pcie, RCONF(PCI_HEADER_TYPE), 0x7f,
 		PCI_HEADER_TYPE_BRIDGE);
 
 	/* Enable data link layer active state reporting */
@@ -669,7 +684,7 @@ static void rcar_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 }
 
 static struct irq_chip rcar_msi_bottom_chip = {
-	.name			= "R-Car MSI",
+	.name			= "Rcar MSI",
 	.irq_ack		= rcar_msi_irq_ack,
 	.irq_mask		= rcar_msi_irq_mask,
 	.irq_unmask		= rcar_msi_irq_unmask,
@@ -798,7 +813,7 @@ static int rcar_pcie_enable_msi(struct rcar_pcie_host *host)
 
 	/*
 	 * Setup MSI data target using RC base address address, which
-	 * is guaranteed to be in the low 32bit range on any R-Car HW.
+	 * is guaranteed to be in the low 32bit range on any RCar HW.
 	 */
 	rcar_pci_write_reg(pcie, lower_32_bits(res.start) | MSIFE, PCIEMSIALR);
 	rcar_pci_write_reg(pcie, upper_32_bits(res.start), PCIEMSIAUR);
@@ -863,6 +878,12 @@ static int rcar_pcie_get_resources(struct rcar_pcie_host *host)
 		goto err_irq2;
 	}
 	host->msi.irq2 = i;
+
+#ifdef CONFIG_ARM
+	/* Cache static copy for L1 link state fixup hook on aarch32 */
+	pcie_base = pcie->base;
+	pcie_dev = pcie->dev;
+#endif
 
 	return 0;
 

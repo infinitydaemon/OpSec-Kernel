@@ -13,7 +13,6 @@
 #include <linux/dma-buf.h>
 #include <linux/iommu.h>
 #include <linux/module.h>
-#include <linux/vmalloc.h>
 
 #include <drm/drm_drv.h>
 #include <drm/drm_prime.h>
@@ -85,7 +84,7 @@ static struct host1x_bo_mapping *tegra_bo_pin(struct device *dev, struct host1x_
 			goto free;
 		}
 
-		map->sgt = dma_buf_map_attachment_unlocked(map->attach, direction);
+		map->sgt = dma_buf_map_attachment(map->attach, direction);
 		if (IS_ERR(map->sgt)) {
 			dma_buf_detach(buf, map->attach);
 			err = PTR_ERR(map->sgt);
@@ -161,8 +160,7 @@ free:
 static void tegra_bo_unpin(struct host1x_bo_mapping *map)
 {
 	if (map->attach) {
-		dma_buf_unmap_attachment_unlocked(map->attach, map->sgt,
-						  map->direction);
+		dma_buf_unmap_attachment(map->attach, map->sgt, map->direction);
 		dma_buf_detach(map->attach->dmabuf, map->attach);
 	} else {
 		dma_unmap_sgtable(map->dev, map->sgt, map->direction, 0);
@@ -177,27 +175,18 @@ static void tegra_bo_unpin(struct host1x_bo_mapping *map)
 static void *tegra_bo_mmap(struct host1x_bo *bo)
 {
 	struct tegra_bo *obj = host1x_to_tegra_bo(bo);
-	struct iosys_map map = { 0 };
-	void *vaddr;
+	struct iosys_map map;
 	int ret;
 
-	if (obj->vaddr)
+	if (obj->vaddr) {
 		return obj->vaddr;
-
-	if (obj->gem.import_attach) {
-		ret = dma_buf_vmap_unlocked(obj->gem.import_attach->dmabuf, &map);
-		if (ret < 0)
-			return ERR_PTR(ret);
-
-		return map.vaddr;
+	} else if (obj->gem.import_attach) {
+		ret = dma_buf_vmap(obj->gem.import_attach->dmabuf, &map);
+		return ret ? NULL : map.vaddr;
+	} else {
+		return vmap(obj->pages, obj->num_pages, VM_MAP,
+			    pgprot_writecombine(PAGE_KERNEL));
 	}
-
-	vaddr = vmap(obj->pages, obj->num_pages, VM_MAP,
-		     pgprot_writecombine(PAGE_KERNEL));
-	if (!vaddr)
-		return ERR_PTR(-ENOMEM);
-
-	return vaddr;
 }
 
 static void tegra_bo_munmap(struct host1x_bo *bo, void *addr)
@@ -207,11 +196,10 @@ static void tegra_bo_munmap(struct host1x_bo *bo, void *addr)
 
 	if (obj->vaddr)
 		return;
-
-	if (obj->gem.import_attach)
-		return dma_buf_vunmap_unlocked(obj->gem.import_attach->dmabuf, &map);
-
-	vunmap(addr);
+	else if (obj->gem.import_attach)
+		dma_buf_vunmap(obj->gem.import_attach->dmabuf, &map);
+	else
+		vunmap(addr);
 }
 
 static struct host1x_bo *tegra_bo_get(struct host1x_bo *bo)
@@ -473,7 +461,7 @@ static struct tegra_bo *tegra_bo_import(struct drm_device *drm,
 
 	get_dma_buf(buf);
 
-	bo->sgt = dma_buf_map_attachment_unlocked(attach, DMA_TO_DEVICE);
+	bo->sgt = dma_buf_map_attachment(attach, DMA_TO_DEVICE);
 	if (IS_ERR(bo->sgt)) {
 		err = PTR_ERR(bo->sgt);
 		goto detach;
@@ -491,7 +479,7 @@ static struct tegra_bo *tegra_bo_import(struct drm_device *drm,
 
 detach:
 	if (!IS_ERR_OR_NULL(bo->sgt))
-		dma_buf_unmap_attachment_unlocked(attach, bo->sgt, DMA_TO_DEVICE);
+		dma_buf_unmap_attachment(attach, bo->sgt, DMA_TO_DEVICE);
 
 	dma_buf_detach(buf, attach);
 	dma_buf_put(buf);
@@ -520,8 +508,8 @@ void tegra_bo_free_object(struct drm_gem_object *gem)
 		tegra_bo_iommu_unmap(tegra, bo);
 
 	if (gem->import_attach) {
-		dma_buf_unmap_attachment_unlocked(gem->import_attach, bo->sgt,
-						  DMA_TO_DEVICE);
+		dma_buf_unmap_attachment(gem->import_attach, bo->sgt,
+					 DMA_TO_DEVICE);
 		drm_prime_gem_destroy(gem, NULL);
 	} else {
 		tegra_bo_free(gem->dev, bo);
@@ -585,7 +573,7 @@ int __tegra_gem_mmap(struct drm_gem_object *gem, struct vm_area_struct *vma)
 		 * and set the vm_pgoff (used as a fake buffer offset by DRM)
 		 * to 0 as we want to map the whole buffer.
 		 */
-		vm_flags_clear(vma, VM_PFNMAP);
+		vma->vm_flags &= ~VM_PFNMAP;
 		vma->vm_pgoff = 0;
 
 		err = dma_mmap_wc(gem->dev->dev, vma, bo->vaddr, bo->iova,
@@ -599,7 +587,8 @@ int __tegra_gem_mmap(struct drm_gem_object *gem, struct vm_area_struct *vma)
 	} else {
 		pgprot_t prot = vm_get_page_prot(vma->vm_flags);
 
-		vm_flags_mod(vma, VM_MIXEDMAP, VM_PFNMAP);
+		vma->vm_flags |= VM_MIXEDMAP;
+		vma->vm_flags &= ~VM_PFNMAP;
 
 		vma->vm_page_prot = pgprot_writecombine(prot);
 	}

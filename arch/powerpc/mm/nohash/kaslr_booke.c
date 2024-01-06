@@ -19,6 +19,7 @@
 #include <asm/cacheflush.h>
 #include <asm/kdump.h>
 #include <mm/mmu_decl.h>
+#include <generated/utsrelease.h>
 
 struct regions {
 	unsigned long pa_start;
@@ -178,7 +179,7 @@ static void __init get_crash_kernel(void *fdt, unsigned long size)
 	int ret;
 
 	ret = parse_crashkernel(boot_command_line, size, &crash_size,
-				&crash_base, NULL, NULL);
+				&crash_base);
 	if (ret != 0 || crash_size == 0)
 		return;
 	if (crash_base == 0)

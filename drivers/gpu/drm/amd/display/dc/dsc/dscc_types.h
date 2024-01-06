@@ -46,10 +46,7 @@ struct dsc_parameters {
 	uint32_t rc_buffer_model_size;
 };
 
-struct rc_params;
+int dscc_compute_dsc_parameters(const struct drm_dsc_config *pps, struct dsc_parameters *dsc_params);
 
-int dscc_compute_dsc_parameters(const struct drm_dsc_config *pps,
-		const struct rc_params *rc,
-		struct dsc_parameters *dsc_params);
 #endif
 

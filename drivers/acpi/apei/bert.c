@@ -23,7 +23,6 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/acpi.h>
-#include <linux/cper.h>
 #include <linux/io.h>
 
 #include "apei-internal.h"
@@ -34,7 +33,7 @@
 #define ACPI_BERT_PRINT_MAX_RECORDS 5
 #define ACPI_BERT_PRINT_MAX_LEN 1024
 
-static int bert_disable __initdata;
+static int bert_disable;
 
 /*
  * Print "all" the error records in the BERT table, but avoid huge spam to

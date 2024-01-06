@@ -10,8 +10,14 @@
 
 #include "dp_aux.h"
 #include "dp_link.h"
+#include "dp_hpd.h"
 
 struct edid;
+
+#define DPRX_EXTENDED_DPCD_FIELD	0x2200
+
+#define DP_DOWNSTREAM_PORTS		4
+#define DP_DOWNSTREAM_CAP_SIZE		4
 
 struct dp_display_mode {
 	struct drm_display_mode drm_mode;
@@ -28,27 +34,22 @@ struct dp_panel_in {
 	struct dp_catalog *catalog;
 };
 
-struct dp_panel_psr {
-	u8 version;
-	u8 capabilities;
-};
-
 struct dp_panel {
 	/* dpcd raw data */
-	u8 dpcd[DP_RECEIVER_CAP_SIZE];
-	u8 downstream_ports[DP_MAX_DOWNSTREAM_PORTS];
+	u8 dpcd[DP_RECEIVER_CAP_SIZE + 1];
+	u8 ds_cap_info[DP_DOWNSTREAM_PORTS * DP_DOWNSTREAM_CAP_SIZE];
+	u32 ds_port_cnt;
+	u32 dfp_present;
 
 	struct dp_link_info link_info;
 	struct drm_dp_desc desc;
 	struct edid *edid;
 	struct drm_connector *connector;
 	struct dp_display_mode dp_mode;
-	struct dp_panel_psr psr_cap;
 	bool video_test;
 
 	u32 vic;
 	u32 max_dp_lanes;
-	u32 max_dp_link_rate;
 
 	u32 max_bw_code;
 };

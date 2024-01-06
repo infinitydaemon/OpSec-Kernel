@@ -10,9 +10,8 @@
 
 #include <linux/component.h>
 #include <linux/mfd/syscon.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/of_graph.h>
-#include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/clk.h>
@@ -420,12 +419,14 @@ err_dp_remove:
 	return ret;
 }
 
-static void rockchip_dp_remove(struct platform_device *pdev)
+static int rockchip_dp_remove(struct platform_device *pdev)
 {
 	struct rockchip_dp_device *dp = platform_get_drvdata(pdev);
 
 	component_del(&pdev->dev, &rockchip_dp_component_ops);
 	analogix_dp_remove(dp->adp);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -480,7 +481,7 @@ MODULE_DEVICE_TABLE(of, rockchip_dp_dt_ids);
 
 struct platform_driver rockchip_dp_driver = {
 	.probe = rockchip_dp_probe,
-	.remove_new = rockchip_dp_remove,
+	.remove = rockchip_dp_remove,
 	.driver = {
 		   .name = "rockchip-dp",
 		   .pm = &rockchip_dp_pm_ops,

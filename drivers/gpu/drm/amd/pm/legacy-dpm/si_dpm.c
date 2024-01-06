@@ -6600,7 +6600,7 @@ static int si_dpm_get_fan_speed_pwm(void *handle,
 
 	tmp64 = (u64)duty * 255;
 	do_div(tmp64, duty100);
-	*speed = min_t(u32, tmp64, 255);
+	*speed = MIN((u32)tmp64, 255);
 
 	return 0;
 }
@@ -7685,13 +7685,20 @@ static int si_dpm_init_microcode(struct amdgpu_device *adev)
 	}
 
 	snprintf(fw_name, sizeof(fw_name), "amdgpu/%s_smc.bin", chip_name);
-	err = amdgpu_ucode_request(adev, &adev->pm.fw, fw_name);
+	err = request_firmware(&adev->pm.fw, fw_name, adev->dev);
+	if (err)
+		goto out;
+	err = amdgpu_ucode_validate(adev->pm.fw);
+
+out:
 	if (err) {
 		DRM_ERROR("si_smc: Failed to load firmware. err = %d\"%s\"\n",
 			  err, fw_name);
-		amdgpu_ucode_release(&adev->pm.fw);
+		release_firmware(adev->pm.fw);
+		adev->pm.fw = NULL;
 	}
 	return err;
+
 }
 
 static int si_dpm_sw_init(void *handle)

@@ -67,7 +67,7 @@ static acpi_status acpi_match_rc(acpi_handle handle, u32 lvl, void *context,
 	unsigned long long uid;
 	acpi_status status;
 
-	status = acpi_evaluate_integer(handle, METHOD_NAME__UID, NULL, &uid);
+	status = acpi_evaluate_integer(handle, "_UID", NULL, &uid);
 	if (ACPI_FAILURE(status) || uid != *segment)
 		return AE_CTRL_DEPTH;
 
@@ -1215,12 +1215,12 @@ void acpi_pci_add_bus(struct pci_bus *bus)
 	if (!pci_is_root_bus(bus))
 		return;
 
-	obj = acpi_evaluate_dsm_typed(ACPI_HANDLE(bus->bridge), &pci_acpi_dsm_guid, 3,
-				      DSM_PCI_POWER_ON_RESET_DELAY, NULL, ACPI_TYPE_INTEGER);
+	obj = acpi_evaluate_dsm(ACPI_HANDLE(bus->bridge), &pci_acpi_dsm_guid, 3,
+				DSM_PCI_POWER_ON_RESET_DELAY, NULL);
 	if (!obj)
 		return;
 
-	if (obj->integer.value == 1) {
+	if (obj->type == ACPI_TYPE_INTEGER && obj->integer.value == 1) {
 		bridge = pci_find_host_bridge(bus);
 		bridge->ignore_reset_delay = 1;
 	}
@@ -1376,13 +1376,12 @@ static void pci_acpi_optimize_delay(struct pci_dev *pdev,
 	if (bridge->ignore_reset_delay)
 		pdev->d3cold_delay = 0;
 
-	obj = acpi_evaluate_dsm_typed(handle, &pci_acpi_dsm_guid, 3,
-				      DSM_PCI_DEVICE_READINESS_DURATIONS, NULL,
-				      ACPI_TYPE_PACKAGE);
+	obj = acpi_evaluate_dsm(handle, &pci_acpi_dsm_guid, 3,
+				DSM_PCI_DEVICE_READINESS_DURATIONS, NULL);
 	if (!obj)
 		return;
 
-	if (obj->package.count == 5) {
+	if (obj->type == ACPI_TYPE_PACKAGE && obj->package.count == 5) {
 		elements = obj->package.elements;
 		if (elements[0].type == ACPI_TYPE_INTEGER) {
 			value = (int)elements[0].integer.value / 1000;

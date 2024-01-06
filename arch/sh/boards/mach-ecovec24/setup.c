@@ -386,7 +386,7 @@ static struct property_entry gpio_backlight_props[] = {
 };
 
 static struct gpio_backlight_platform_data gpio_backlight_data = {
-	.dev = &lcdc_device.dev,
+	.fbdev = &lcdc_device.dev,
 };
 
 static const struct platform_device_info gpio_backlight_device_info = {
@@ -881,7 +881,7 @@ static struct platform_device fsi_device = {
 	.resource	= fsi_resources,
 };
 
-static struct simple_util_info fsi_da7210_info = {
+static struct asoc_simple_card_info fsi_da7210_info = {
 	.name		= "DA7210",
 	.card		= "FSIB-DA7210",
 	.codec		= "da7210.0-001a",

@@ -17,17 +17,17 @@
 static int num_idle_cpus = 0;
 static DEFINE_RAW_SPINLOCK(cpuidle_lock);
 
-static __cpuidle int imx6q_enter_wait(struct cpuidle_device *dev,
-				      struct cpuidle_driver *drv, int index)
+static int imx6q_enter_wait(struct cpuidle_device *dev,
+			    struct cpuidle_driver *drv, int index)
 {
 	raw_spin_lock(&cpuidle_lock);
 	if (++num_idle_cpus == num_online_cpus())
 		imx6_set_lpm(WAIT_UNCLOCKED);
 	raw_spin_unlock(&cpuidle_lock);
 
-	ct_cpuidle_enter();
+	ct_idle_enter();
 	cpu_do_idle();
-	ct_cpuidle_exit();
+	ct_idle_exit();
 
 	raw_spin_lock(&cpuidle_lock);
 	if (num_idle_cpus-- == num_online_cpus())

@@ -954,4 +954,3 @@ struct bcm_ptp_private *bcm_ptp_probe(struct phy_device *phydev)
 EXPORT_SYMBOL_GPL(bcm_ptp_probe);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Broadcom PHY PTP driver");

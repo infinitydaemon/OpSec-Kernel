@@ -258,9 +258,10 @@ static int sti_compositor_probe(struct platform_device *pdev)
 	return component_add(&pdev->dev, &sti_compositor_ops);
 }
 
-static void sti_compositor_remove(struct platform_device *pdev)
+static int sti_compositor_remove(struct platform_device *pdev)
 {
 	component_del(&pdev->dev, &sti_compositor_ops);
+	return 0;
 }
 
 struct platform_driver sti_compositor_driver = {
@@ -269,7 +270,7 @@ struct platform_driver sti_compositor_driver = {
 		.of_match_table = compositor_of_match,
 	},
 	.probe = sti_compositor_probe,
-	.remove_new = sti_compositor_remove,
+	.remove = sti_compositor_remove,
 };
 
 MODULE_AUTHOR("Benjamin Gaignard <benjamin.gaignard@st.com>");

@@ -42,8 +42,6 @@
 #define ACPI_BATTERY_STATE_CHARGING	0x2
 #define ACPI_BATTERY_STATE_CRITICAL	0x4
 
-#define MAX_STRING_LENGTH	64
-
 MODULE_AUTHOR("Paul Diefenbaugh");
 MODULE_AUTHOR("Alexey Starikovskiy <astarikovskiy@suse.de>");
 MODULE_DESCRIPTION("ACPI Battery Driver");
@@ -120,10 +118,10 @@ struct acpi_battery {
 	int capacity_granularity_1;
 	int capacity_granularity_2;
 	int alarm;
-	char model_number[MAX_STRING_LENGTH];
-	char serial_number[MAX_STRING_LENGTH];
-	char type[MAX_STRING_LENGTH];
-	char oem_info[MAX_STRING_LENGTH];
+	char model_number[32];
+	char serial_number[32];
+	char type[32];
+	char oem_info[32];
 	int state;
 	int power_unit;
 	unsigned long flags;
@@ -439,25 +437,16 @@ static int extract_package(struct acpi_battery *battery,
 		element = &package->package.elements[i];
 		if (offsets[i].mode) {
 			u8 *ptr = (u8 *)battery + offsets[i].offset;
-			u32 len = MAX_STRING_LENGTH;
 
-			switch (element->type) {
-			case ACPI_TYPE_BUFFER:
-				if (len > element->buffer.length + 1)
-					len = element->buffer.length + 1;
-
-				fallthrough;
-			case ACPI_TYPE_STRING:
-				strscpy(ptr, element->string.pointer, len);
-
-				break;
-			case ACPI_TYPE_INTEGER:
-				strscpy(ptr, (u8 *)&element->integer.value, sizeof(u64) + 1);
-
-				break;
-			default:
+			if (element->type == ACPI_TYPE_STRING ||
+			    element->type == ACPI_TYPE_BUFFER)
+				strscpy(ptr, element->string.pointer, 32);
+			else if (element->type == ACPI_TYPE_INTEGER) {
+				strncpy(ptr, (u8 *)&element->integer.value,
+					sizeof(u64));
+				ptr[sizeof(u64)] = 0;
+			} else
 				*ptr = 0; /* don't have value */
-			}
 		} else {
 			int *x = (int *)((u8 *)battery + offsets[i].offset);
 			*x = (element->type == ACPI_TYPE_INTEGER) ?
@@ -707,8 +696,7 @@ static void __battery_hook_unregister(struct acpi_battery_hook *hook, int lock)
 	if (lock)
 		mutex_lock(&hook_mutex);
 	list_for_each_entry(battery, &acpi_battery_list, list) {
-		if (!hook->remove_battery(battery->bat, hook))
-			power_supply_changed(battery->bat);
+		hook->remove_battery(battery->bat);
 	}
 	list_del(&hook->list);
 	if (lock)
@@ -736,7 +724,7 @@ void battery_hook_register(struct acpi_battery_hook *hook)
 	 * its attributes.
 	 */
 	list_for_each_entry(battery, &acpi_battery_list, list) {
-		if (hook->add_battery(battery->bat, hook)) {
+		if (hook->add_battery(battery->bat)) {
 			/*
 			 * If a add-battery returns non-zero,
 			 * the registration of the extension has failed,
@@ -747,8 +735,6 @@ void battery_hook_register(struct acpi_battery_hook *hook)
 			__battery_hook_unregister(hook, 0);
 			goto end;
 		}
-
-		power_supply_changed(battery->bat);
 	}
 	pr_info("new extension: %s\n", hook->name);
 end:
@@ -776,7 +762,7 @@ static void battery_hook_add_battery(struct acpi_battery *battery)
 	 * during the battery module initialization.
 	 */
 	list_for_each_entry_safe(hook_node, tmp, &battery_hook_list, list) {
-		if (hook_node->add_battery(battery->bat, hook_node)) {
+		if (hook_node->add_battery(battery->bat)) {
 			/*
 			 * The notification of the extensions has failed, to
 			 * prevent further errors we will unload the extension.
@@ -799,7 +785,7 @@ static void battery_hook_remove_battery(struct acpi_battery *battery)
 	 * custom attributes from the battery.
 	 */
 	list_for_each_entry(hook, &battery_hook_list, list) {
-		hook->remove_battery(battery->bat, hook);
+		hook->remove_battery(battery->bat);
 	}
 	/* Then, just remove the battery from the list */
 	list_del(&battery->list);
@@ -1034,9 +1020,8 @@ static void acpi_battery_refresh(struct acpi_battery *battery)
 }
 
 /* Driver Interface */
-static void acpi_battery_notify(acpi_handle handle, u32 event, void *data)
+static void acpi_battery_notify(struct acpi_device *device, u32 event)
 {
-	struct acpi_device *device = data;
 	struct acpi_battery *battery = acpi_driver_data(device);
 	struct power_supply *old;
 
@@ -1213,44 +1198,30 @@ static int acpi_battery_add(struct acpi_device *device)
 
 	device_init_wakeup(&device->dev, 1);
 
-	result = acpi_dev_install_notify_handler(device, ACPI_ALL_NOTIFY,
-						 acpi_battery_notify, device);
-	if (result)
-		goto fail_pm;
+	return result;
 
-	return 0;
-
-fail_pm:
-	device_init_wakeup(&device->dev, 0);
-	unregister_pm_notifier(&battery->pm_nb);
 fail:
 	sysfs_remove_battery(battery);
 	mutex_destroy(&battery->lock);
 	mutex_destroy(&battery->sysfs_lock);
 	kfree(battery);
-
 	return result;
 }
 
-static void acpi_battery_remove(struct acpi_device *device)
+static int acpi_battery_remove(struct acpi_device *device)
 {
 	struct acpi_battery *battery = NULL;
 
 	if (!device || !acpi_driver_data(device))
-		return;
-
-	battery = acpi_driver_data(device);
-
-	acpi_dev_remove_notify_handler(device, ACPI_ALL_NOTIFY,
-				       acpi_battery_notify);
-
+		return -EINVAL;
 	device_init_wakeup(&device->dev, 0);
+	battery = acpi_driver_data(device);
 	unregister_pm_notifier(&battery->pm_nb);
 	sysfs_remove_battery(battery);
-
 	mutex_destroy(&battery->lock);
 	mutex_destroy(&battery->sysfs_lock);
 	kfree(battery);
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -1280,9 +1251,11 @@ static struct acpi_driver acpi_battery_driver = {
 	.name = "battery",
 	.class = ACPI_BATTERY_CLASS,
 	.ids = battery_device_ids,
+	.flags = ACPI_DRIVER_ALL_NOTIFY_EVENTS,
 	.ops = {
 		.add = acpi_battery_add,
 		.remove = acpi_battery_remove,
+		.notify = acpi_battery_notify,
 		},
 	.drv.pm = &acpi_battery_pm,
 };

@@ -27,8 +27,6 @@
 #include "dispnv04/hw.h"
 #include "nouveau_encoder.h"
 
-#include <subdev/gsp.h>
-
 #include <linux/io-mapping.h>
 #include <linux/firmware.h>
 
@@ -2089,18 +2087,15 @@ nouveau_bios_init(struct drm_device *dev)
 	int ret;
 
 	/* only relevant for PCI devices */
-	if (!dev_is_pci(dev->dev) ||
-	    nvkm_gsp_rm(nvxx_device(&drm->client.device)->gsp))
+	if (!dev_is_pci(dev->dev))
 		return 0;
 
 	if (!NVInitVBIOS(dev))
 		return -ENODEV;
 
-	if (drm->client.device.info.family < NV_DEVICE_INFO_V0_TESLA) {
-		ret = parse_dcb_table(dev, bios);
-		if (ret)
-			return ret;
-	}
+	ret = parse_dcb_table(dev, bios);
+	if (ret)
+		return ret;
 
 	if (!bios->major_version)	/* we don't run version 0 bios */
 		return 0;

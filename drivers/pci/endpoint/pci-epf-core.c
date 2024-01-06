@@ -21,6 +21,38 @@ static struct bus_type pci_epf_bus_type;
 static const struct device_type pci_epf_type;
 
 /**
+ * pci_epf_type_add_cfs() - Help function drivers to expose function specific
+ *                          attributes in configfs
+ * @epf: the EPF device that has to be configured using configfs
+ * @group: the parent configfs group (corresponding to entries in
+ *         pci_epf_device_id)
+ *
+ * Invoke to expose function specific attributes in configfs. If the function
+ * driver does not have anything to expose (attributes configured by user),
+ * return NULL.
+ */
+struct config_group *pci_epf_type_add_cfs(struct pci_epf *epf,
+					  struct config_group *group)
+{
+	struct config_group *epf_type_group;
+
+	if (!epf->driver) {
+		dev_err(&epf->dev, "epf device not bound to driver\n");
+		return NULL;
+	}
+
+	if (!epf->driver->ops->add_cfs)
+		return NULL;
+
+	mutex_lock(&epf->lock);
+	epf_type_group = epf->driver->ops->add_cfs(epf, group);
+	mutex_unlock(&epf->lock);
+
+	return epf_type_group;
+}
+EXPORT_SYMBOL_GPL(pci_epf_type_add_cfs);
+
+/**
  * pci_epf_unbind() - Notify the function driver that the binding between the
  *		      EPF device and EPC device has been lost
  * @epf: the EPF device which has lost the binding with the EPC device
@@ -461,16 +493,16 @@ static const struct device_type pci_epf_type = {
 	.release	= pci_epf_dev_release,
 };
 
-static const struct pci_epf_device_id *
+static int
 pci_epf_match_id(const struct pci_epf_device_id *id, const struct pci_epf *epf)
 {
 	while (id->name[0]) {
 		if (strcmp(epf->name, id->name) == 0)
-			return id;
+			return true;
 		id++;
 	}
 
-	return NULL;
+	return false;
 }
 
 static int pci_epf_device_match(struct device *dev, struct device_driver *drv)
@@ -479,7 +511,7 @@ static int pci_epf_device_match(struct device *dev, struct device_driver *drv)
 	struct pci_epf_driver *driver = to_pci_epf_driver(drv);
 
 	if (driver->id_table)
-		return !!pci_epf_match_id(driver->id_table, epf);
+		return pci_epf_match_id(driver->id_table, epf);
 
 	return !strcmp(epf->name, drv->name);
 }
@@ -494,7 +526,7 @@ static int pci_epf_device_probe(struct device *dev)
 
 	epf->driver = driver;
 
-	return driver->probe(epf, pci_epf_match_id(driver->id_table, epf));
+	return driver->probe(epf);
 }
 
 static void pci_epf_device_remove(struct device *dev)
@@ -536,3 +568,4 @@ module_exit(pci_epf_exit);
 
 MODULE_DESCRIPTION("PCI EPF Library");
 MODULE_AUTHOR("Kishon Vijay Abraham I <kishon@ti.com>");
+MODULE_LICENSE("GPL v2");

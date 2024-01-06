@@ -14,7 +14,6 @@
 
 #define	MAX_CFA_CODE			65536
 
-int bnxt_vf_reps_create(struct bnxt *bp);
 void bnxt_vf_reps_destroy(struct bnxt *bp);
 void bnxt_vf_reps_close(struct bnxt *bp);
 void bnxt_vf_reps_open(struct bnxt *bp);
@@ -37,11 +36,6 @@ int bnxt_dl_eswitch_mode_set(struct devlink *devlink, u16 mode,
 			     struct netlink_ext_ack *extack);
 
 #else
-
-static inline int bnxt_vf_reps_create(struct bnxt *bp)
-{
-	return 0;
-}
 
 static inline void bnxt_vf_reps_close(struct bnxt *bp)
 {

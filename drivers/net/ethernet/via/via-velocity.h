@@ -1383,7 +1383,7 @@ struct velocity_info {
 	struct device *dev;
 	struct pci_dev *pdev;
 	struct net_device *netdev;
-	bool no_eeprom;
+	int no_eeprom;
 
 	unsigned long active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
 	u8 ip_addr[4];

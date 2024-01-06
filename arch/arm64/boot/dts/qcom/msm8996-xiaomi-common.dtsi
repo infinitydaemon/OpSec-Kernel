@@ -3,6 +3,9 @@
  * Copyright (c) 2020, Yassine Oudjana <y.oudjana@protonmail.com>
  */
 
+/dts-v1/;
+
+#include "msm8996.dtsi"
 #include "pm8994.dtsi"
 #include "pmi8994.dtsi"
 #include <dt-bindings/input/input.h>
@@ -11,24 +14,28 @@
 #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
 
 / {
-	divclk1_cdc: divclk1 {
-		compatible = "gpio-gate-clock";
-		clocks = <&rpmcc RPM_SMD_DIV_CLK1>;
-		#clock-cells = <0>;
-		enable-gpios = <&pm8994_gpios 15 GPIO_ACTIVE_HIGH>;
+	clocks {
+		compatible = "simple-bus";
 
-		pinctrl-names = "default";
-		pinctrl-0 = <&divclk1_default>;
-	};
+		divclk1_cdc: divclk1 {
+			compatible = "gpio-gate-clock";
+			clocks = <&rpmcc RPM_SMD_DIV_CLK1>;
+			#clock-cells = <0>;
+			enable-gpios = <&pm8994_gpios 15 GPIO_ACTIVE_HIGH>;
 
-	divclk4: divclk4 {
-		compatible = "fixed-clock";
-		#clock-cells = <0>;
-		clock-frequency = <32768>;
-		clock-output-names = "divclk4";
+			pinctrl-names = "default";
+			pinctrl-0 = <&divclk1_default>;
+		};
 
-		pinctrl-names = "default";
-		pinctrl-0 = <&divclk4_pin_a>;
+		divclk4: divclk4 {
+			compatible = "fixed-clock";
+			#clock-cells = <0>;
+			clock-frequency = <32768>;
+			clock-output-names = "divclk4";
+
+			pinctrl-names = "default";
+			pinctrl-0 = <&divclk4_pin_a>;
+		};
 	};
 
 	gpio-keys {
@@ -115,7 +122,7 @@
 			no-map;
 
 			qcom,client-id = <1>;
-			qcom,vmid = <QCOM_SCM_VMID_MSS_MSA>;
+			qcom,vmid = <15>;
 		};
 
 		/delete-node/ mba@91500000;
@@ -185,9 +192,10 @@
 
 &blsp2_i2c2 {
 	status = "okay";
+	label = "NFC_I2C";
 	clock-frequency = <400000>;
 
-	nfc: nfc@28 {
+	nfc: pn548@28 {
 		compatible = "nxp,nxp-nci-i2c";
 
 		reg = <0x28>;
@@ -205,8 +213,9 @@
 
 &blsp2_i2c3 {
 	status = "okay";
+	label = "TYPEC_I2C";
 
-	typec: typec@47 {
+	typec: tusb320l@47 {
 		compatible = "ti,tusb320l";
 		reg = <0x47>;
 		interrupt-parent = <&tlmm>;
@@ -216,14 +225,14 @@
 
 &blsp2_i2c6 {
 	status = "okay";
-	/* MSM_TS */
+	label = "MSM_TS_I2C";
 };
 
 &blsp1_uart2 {
 	status = "okay";
 	label = "QCA_UART";
 
-	bluetooth: bluetooth {
+	bluetooth: qca6174a {
 		compatible = "qcom,qca6174-bt";
 
 		enable-gpios = <&pm8994_gpios 19 GPIO_ACTIVE_HIGH>;
@@ -231,15 +240,7 @@
 	};
 };
 
-&gpu {
-	status = "okay";
-};
-
-&mdss {
-	status = "okay";
-};
-
-&mdss_dsi0 {
+&dsi0 {
 	status = "okay";
 
 	vdd-supply = <&vreg_l2a_1p25>;
@@ -250,16 +251,24 @@
 	pinctrl-1 = <&mdss_dsi_sleep &mdss_te_sleep>;
 };
 
-&mdss_dsi0_out {
+&dsi0_out {
 	status = "okay";
 
 	data-lanes = <0 1 2 3>;
 };
 
-&mdss_dsi0_phy {
+&dsi0_phy {
 	status = "okay";
 
 	vcca-supply = <&vreg_l28a_0p925>;
+};
+
+&gpu {
+	status = "okay";
+};
+
+&mdss {
+	status = "okay";
 };
 
 &mmcc {
@@ -331,52 +340,6 @@
 	};
 };
 
-&slim_msm {
-	status = "okay";
-
-	slim@1 {
-		reg = <1>;
-		#address-cells = <2>;
-		#size-cells = <0>;
-
-		tasha_ifd: tas-ifd@0,0 {
-			compatible = "slim217,1a0";
-			reg = <0 0>;
-		};
-
-		wcd9335: codec@1,0 {
-			compatible = "slim217,1a0";
-			reg = <1 0>;
-
-			clock-names = "mclk", "slimbus";
-			clocks = <&divclk1_cdc>,
-				 <&rpmcc RPM_SMD_BB_CLK1>;
-			interrupt-parent = <&tlmm>;
-			interrupts = <54 IRQ_TYPE_LEVEL_HIGH>,
-				     <53 IRQ_TYPE_LEVEL_HIGH>;
-			interrupt-names = "intr1", "intr2";
-			interrupt-controller;
-			#interrupt-cells = <1>;
-
-			pinctrl-0 = <&cdc_reset_active &wcd_intr_default>;
-			pinctrl-names = "default";
-
-			reset-gpios = <&tlmm 64 GPIO_ACTIVE_LOW>;
-			slim-ifc-dev = <&tasha_ifd>;
-
-			#sound-dai-cells = <1>;
-
-			vdd-buck-supply = <&vreg_s4a_1p8>;
-			vdd-buck-sido-supply = <&vreg_s4a_1p8>;
-			vdd-rx-supply = <&vreg_s4a_1p8>;
-			vdd-tx-supply = <&vreg_s4a_1p8>;
-			vdd-vbat-supply = <&vph_pwr>;
-			vdd-micbias-supply = <&vph_pwr_bbyp>;
-			vdd-io-supply = <&vreg_s4a_1p8>;
-		};
-	};
-};
-
 &slpi_pil {
 	status = "okay";
 
@@ -417,7 +380,6 @@
 	vcc-supply = <&vreg_l20a_2p95>;
 	vccq-supply = <&vreg_l25a_1p2>;
 	vccq2-supply = <&vreg_s4a_1p8>;
-	vdd-hba-supply = <&vreg_l25a_1p2>;
 
 	vcc-max-microamp = <600000>;
 	vccq-max-microamp = <450000>;
@@ -429,14 +391,29 @@
 
 	vdda-phy-supply = <&vreg_l28a_0p925>;
 	vdda-pll-supply = <&vreg_l12a_1p8>;
+	vddp-ref-clk-supply = <&vreg_l25a_1p2>;
 };
 
 &venus {
 	status = "okay";
 };
 
+&wcd9335 {
+	clock-names = "mclk", "slimbus";
+	clocks = <&divclk1_cdc>,
+		 <&rpmcc RPM_SMD_BB_CLK1>;
+
+	vdd-buck-supply = <&vreg_s4a_1p8>;
+	vdd-buck-sido-supply = <&vreg_s4a_1p8>;
+	vdd-rx-supply = <&vreg_s4a_1p8>;
+	vdd-tx-supply = <&vreg_s4a_1p8>;
+	vdd-vbat-supply = <&vph_pwr>;
+	vdd-micbias-supply = <&vph_pwr_bbyp>;
+	vdd-io-supply = <&vreg_s4a_1p8>;
+};
+
 &rpm_requests {
-	regulators-0 {
+	pm8994-regulators {
 		compatible = "qcom,rpm-pm8994-regulators";
 
 		vdd_s1-supply = <&vph_pwr>;
@@ -621,7 +598,7 @@
 		};
 	};
 
-	regulators-1 {
+	pmi8994-regulators {
 		compatible = "qcom,rpm-pmi8994-regulators";
 
 		vdd_s1-supply = <&vph_pwr>;
@@ -717,35 +694,35 @@
 };
 
 &tlmm {
-	mdss_dsi_default: mdss-dsi-default-state {
+	mdss_dsi_default: mdss_dsi_default {
 		pins = "gpio8";
 		function = "gpio";
 		drive-strength = <8>;
 		bias-disable;
 	};
 
-	mdss_dsi_sleep: mdss-dsi-sleep-state {
+	mdss_dsi_sleep: mdss_dsi_sleep {
 		pins = "gpio8";
 		function = "gpio";
 		drive-strength = <2>;
 		bias-pull-down;
 	};
 
-	mdss_te_default: mdss-te-default-state {
+	mdss_te_default: mdss_te_default {
 		pins = "gpio10";
 		function = "mdp_vsync";
 		drive-strength = <2>;
 		bias-pull-down;
 	};
 
-	mdss_te_sleep: mdss-te-sleep-state {
+	mdss_te_sleep: mdss_te_sleep {
 		pins = "gpio10";
 		function = "mdp_vsync";
 		drive-strength = <2>;
 		bias-pull-down;
 	};
 
-	nfc_default: nfc-default-state {
+	nfc_default: nfc_default {
 		pins = "gpio12", "gpio21";
 		function = "gpio";
 		drive-strength = <16>;

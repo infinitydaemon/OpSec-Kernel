@@ -792,9 +792,10 @@ static int sti_hda_probe(struct platform_device *pdev)
 	return component_add(&pdev->dev, &sti_hda_ops);
 }
 
-static void sti_hda_remove(struct platform_device *pdev)
+static int sti_hda_remove(struct platform_device *pdev)
 {
 	component_del(&pdev->dev, &sti_hda_ops);
+	return 0;
 }
 
 static const struct of_device_id hda_of_match[] = {
@@ -811,7 +812,7 @@ struct platform_driver sti_hda_driver = {
 		.of_match_table = hda_of_match,
 	},
 	.probe = sti_hda_probe,
-	.remove_new = sti_hda_remove,
+	.remove = sti_hda_remove,
 };
 
 MODULE_AUTHOR("Benjamin Gaignard <benjamin.gaignard@st.com>");

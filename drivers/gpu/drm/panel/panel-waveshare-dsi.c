@@ -260,7 +260,8 @@ ws_panel_create_backlight(struct ws_panel *ts)
 					      &ws_panel_bl_ops, &props);
 }
 
-static int ws_panel_probe(struct i2c_client *i2c)
+static int ws_panel_probe(struct i2c_client *i2c,
+			  const struct i2c_device_id *id)
 {
 	struct device *dev = &i2c->dev;
 	struct ws_panel *ts;

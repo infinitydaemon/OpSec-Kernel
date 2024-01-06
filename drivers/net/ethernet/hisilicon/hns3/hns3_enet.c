@@ -13,14 +13,13 @@
 #include <linux/ipv6.h>
 #include <linux/module.h>
 #include <linux/pci.h>
+#include <linux/aer.h>
 #include <linux/skbuff.h>
 #include <linux/sctp.h>
 #include <net/gre.h>
 #include <net/gro.h>
 #include <net/ip6_checksum.h>
-#include <net/page_pool/helpers.h>
 #include <net/pkt_cls.h>
-#include <net/pkt_sched.h>
 #include <net/tcp.h>
 #include <net/vxlan.h>
 #include <net/geneve.h>
@@ -1041,7 +1040,7 @@ static void hns3_init_tx_spare_buffer(struct hns3_enet_ring *ring)
 		return;
 
 	order = get_order(alloc_size);
-	if (order > MAX_ORDER) {
+	if (order >= MAX_ORDER) {
 		if (net_ratelimit())
 			dev_warn(ring_to_dev(ring), "failed to allocate tx spare buffer, exceed to max order\n");
 		return;
@@ -2497,7 +2496,7 @@ static void hns3_fetch_stats(struct rtnl_link_stats64 *stats,
 	unsigned int start;
 
 	do {
-		start = u64_stats_fetch_begin(&ring->syncp);
+		start = u64_stats_fetch_begin_irq(&ring->syncp);
 		if (is_tx) {
 			stats->tx_bytes += ring->stats.tx_bytes;
 			stats->tx_packets += ring->stats.tx_pkts;
@@ -2531,7 +2530,7 @@ static void hns3_fetch_stats(struct rtnl_link_stats64 *stats,
 			stats->multicast += ring->stats.rx_multicast;
 			stats->rx_length_errors += ring->stats.err_pkt_len;
 		}
-	} while (u64_stats_fetch_retry(&ring->syncp, start));
+	} while (u64_stats_fetch_retry_irq(&ring->syncp, start));
 }
 
 static void hns3_nic_get_stats64(struct net_device *netdev,
@@ -2547,7 +2546,7 @@ static void hns3_nic_get_stats64(struct net_device *netdev,
 	if (test_bit(HNS3_NIC_STATE_DOWN, &priv->state))
 		return;
 
-	handle->ae_algo->ops->update_stats(handle);
+	handle->ae_algo->ops->update_stats(handle, &netdev->stats);
 
 	memset(&ring_total_stats, 0, sizeof(ring_total_stats));
 	for (idx = 0; idx < queue_num; idx++) {
@@ -4940,7 +4939,8 @@ static void hns3_put_ring_config(struct hns3_nic_priv *priv)
 static void hns3_alloc_page_pool(struct hns3_enet_ring *ring)
 {
 	struct page_pool_params pp_params = {
-		.flags = PP_FLAG_DMA_MAP | PP_FLAG_DMA_SYNC_DEV,
+		.flags = PP_FLAG_DMA_MAP | PP_FLAG_PAGE_FRAG |
+				PP_FLAG_DMA_SYNC_DEV,
 		.order = hns3_page_order(ring),
 		.pool_size = ring->desc_num * hns3_buf_size(ring) /
 				(PAGE_SIZE << hns3_page_order(ring)),

@@ -200,7 +200,7 @@ static int rpi_gpiomem_probe(struct platform_device *pdev)
 
 	/* Create sysfs entries */
 
-	priv->class = class_create(priv->name);
+	priv->class = class_create(THIS_MODULE, priv->name);
 	if (IS_ERR(priv->class)) {
 		err = PTR_ERR(priv->class);
 		goto failed_class_create;

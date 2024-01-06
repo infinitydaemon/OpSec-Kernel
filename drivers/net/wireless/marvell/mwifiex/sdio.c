@@ -263,7 +263,7 @@ static const struct mwifiex_sdio_card_reg mwifiex_reg_sd8887 = {
 				 0x68, 0x69, 0x6a},
 };
 
-static const struct mwifiex_sdio_card_reg mwifiex_reg_sd89xx = {
+static const struct mwifiex_sdio_card_reg mwifiex_reg_sd8987 = {
 	.start_rd_port = 0,
 	.start_wr_port = 0,
 	.base_0_reg = 0xF8,
@@ -394,22 +394,6 @@ static const struct mwifiex_sdio_device mwifiex_sdio_sd8977 = {
 	.can_ext_scan = true,
 };
 
-static const struct mwifiex_sdio_device mwifiex_sdio_sd8978 = {
-	.firmware_sdiouart = SD8978_SDIOUART_FW_NAME,
-	.reg = &mwifiex_reg_sd89xx,
-	.max_ports = 32,
-	.mp_agg_pkt_limit = 16,
-	.tx_buf_size = MWIFIEX_TX_DATA_BUF_SIZE_4K,
-	.mp_tx_agg_buf_size = MWIFIEX_MP_AGGR_BUF_SIZE_MAX,
-	.mp_rx_agg_buf_size = MWIFIEX_MP_AGGR_BUF_SIZE_MAX,
-	.supports_sdio_new_mode = true,
-	.has_control_mask = false,
-	.can_dump_fw = true,
-	.fw_dump_enh = true,
-	.can_auto_tdls = false,
-	.can_ext_scan = true,
-};
-
 static const struct mwifiex_sdio_device mwifiex_sdio_sd8997 = {
 	.firmware = SD8997_DEFAULT_FW_NAME,
 	.firmware_sdiouart = SD8997_SDIOUART_FW_NAME,
@@ -444,7 +428,7 @@ static const struct mwifiex_sdio_device mwifiex_sdio_sd8887 = {
 
 static const struct mwifiex_sdio_device mwifiex_sdio_sd8987 = {
 	.firmware = SD8987_DEFAULT_FW_NAME,
-	.reg = &mwifiex_reg_sd89xx,
+	.reg = &mwifiex_reg_sd8987,
 	.max_ports = 32,
 	.mp_agg_pkt_limit = 16,
 	.tx_buf_size = MWIFIEX_TX_DATA_BUF_SIZE_2K,
@@ -498,9 +482,7 @@ static struct memory_type_mapping mem_type_mapping_tbl[] = {
 static const struct of_device_id mwifiex_sdio_of_match_table[] __maybe_unused = {
 	{ .compatible = "marvell,sd8787" },
 	{ .compatible = "marvell,sd8897" },
-	{ .compatible = "marvell,sd8978" },
 	{ .compatible = "marvell,sd8997" },
-	{ .compatible = "nxp,iw416" },
 	{ }
 };
 
@@ -938,8 +920,6 @@ static const struct sdio_device_id mwifiex_ids[] = {
 		.driver_data = (unsigned long)&mwifiex_sdio_sd8801},
 	{SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, SDIO_DEVICE_ID_MARVELL_8977_WLAN),
 		.driver_data = (unsigned long)&mwifiex_sdio_sd8977},
-	{SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, SDIO_DEVICE_ID_MARVELL_8978_WLAN),
-		.driver_data = (unsigned long)&mwifiex_sdio_sd8978},
 	{SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, SDIO_DEVICE_ID_MARVELL_8987_WLAN),
 		.driver_data = (unsigned long)&mwifiex_sdio_sd8987},
 	{SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, SDIO_DEVICE_ID_MARVELL_8997_WLAN),
@@ -1083,17 +1063,17 @@ cont:
 		    "info: SDIO FUNC1 IO port: %#x\n", adapter->ioport);
 
 	/* Set Host interrupt reset to read to clear */
-	if (mwifiex_read_reg(adapter, card->reg->host_int_rsr_reg, &reg))
-		return -1;
-	if (mwifiex_write_reg(adapter, card->reg->host_int_rsr_reg,
-			      reg | card->reg->sdio_int_mask))
+	if (!mwifiex_read_reg(adapter, card->reg->host_int_rsr_reg, &reg))
+		mwifiex_write_reg(adapter, card->reg->host_int_rsr_reg,
+				  reg | card->reg->sdio_int_mask);
+	else
 		return -1;
 
 	/* Dnld/Upld ready set to auto reset */
-	if (mwifiex_read_reg(adapter, card->reg->card_misc_cfg_reg, &reg))
-		return -1;
-	if (mwifiex_write_reg(adapter, card->reg->card_misc_cfg_reg,
-			      reg | AUTO_RE_ENABLE_INT))
+	if (!mwifiex_read_reg(adapter, card->reg->card_misc_cfg_reg, &reg))
+		mwifiex_write_reg(adapter, card->reg->card_misc_cfg_reg,
+				  reg | AUTO_RE_ENABLE_INT);
+	else
 		return -1;
 
 	return 0;
@@ -1556,7 +1536,7 @@ done:
 }
 
 /*
- * This function decodes sdio aggregation pkt.
+ * This function decode sdio aggreation pkt.
  *
  * Based on the data block size and pkt_len,
  * skb data will be decoded to few packets.
@@ -2266,7 +2246,7 @@ static int mwifiex_host_to_card_mp_aggr(struct mwifiex_adapter *adapter,
 		ret = mwifiex_write_data_to_card(adapter, card->mpa_tx.buf,
 						 card->mpa_tx.buf_len, mport);
 
-		/* Save the last multi port tx aggregation info to debug log. */
+		/* Save the last multi port tx aggreagation info to debug log */
 		index = adapter->dbg.last_sdio_mp_index;
 		index = (index + 1) % MWIFIEX_DBG_SDIO_MP_NUM;
 		adapter->dbg.last_sdio_mp_index = index;
@@ -2525,8 +2505,7 @@ static int mwifiex_init_sdio(struct mwifiex_adapter *adapter)
 	mwifiex_read_reg(adapter, card->reg->host_int_status_reg, &sdio_ireg);
 
 	/* Get SDIO ioport */
-	if (mwifiex_init_sdio_ioport(adapter))
-		return -EIO;
+	mwifiex_init_sdio_ioport(adapter);
 
 	/* Initialize SDIO variables in card */
 	card->mp_rd_bitmap = 0;
@@ -2555,11 +2534,20 @@ static int mwifiex_init_sdio(struct mwifiex_adapter *adapter)
 	if (!card->mp_regs)
 		return -ENOMEM;
 
+	/* Allocate skb pointer buffers */
+	card->mpa_rx.skb_arr = kcalloc(card->mp_agg_pkt_limit, sizeof(void *),
+				       GFP_KERNEL);
+	if (!card->mpa_rx.skb_arr) {
+		kfree(card->mp_regs);
+		return -ENOMEM;
+	}
+
 	card->mpa_rx.len_arr = kcalloc(card->mp_agg_pkt_limit,
 				       sizeof(*card->mpa_rx.len_arr),
 				       GFP_KERNEL);
 	if (!card->mpa_rx.len_arr) {
 		kfree(card->mp_regs);
+		kfree(card->mpa_rx.skb_arr);
 		return -ENOMEM;
 	}
 
@@ -2614,6 +2602,7 @@ static void mwifiex_cleanup_sdio(struct mwifiex_adapter *adapter)
 	cancel_work_sync(&card->work);
 
 	kfree(card->mp_regs);
+	kfree(card->mpa_rx.skb_arr);
 	kfree(card->mpa_rx.len_arr);
 	kfree(card->mpa_tx.buf);
 	kfree(card->mpa_rx.buf);
@@ -3132,8 +3121,7 @@ static void mwifiex_sdio_up_dev(struct mwifiex_adapter *adapter)
 	 */
 	mwifiex_read_reg(adapter, card->reg->host_int_status_reg, &sdio_ireg);
 
-	if (mwifiex_init_sdio_ioport(adapter))
-		dev_err(&card->func->dev, "error enabling SDIO port\n");
+	mwifiex_init_sdio_ioport(adapter);
 }
 
 static struct mwifiex_if_ops sdio_ops = {
@@ -3176,7 +3164,6 @@ MODULE_FIRMWARE(SD8797_DEFAULT_FW_NAME);
 MODULE_FIRMWARE(SD8897_DEFAULT_FW_NAME);
 MODULE_FIRMWARE(SD8887_DEFAULT_FW_NAME);
 MODULE_FIRMWARE(SD8977_DEFAULT_FW_NAME);
-MODULE_FIRMWARE(SD8978_SDIOUART_FW_NAME);
 MODULE_FIRMWARE(SD8987_DEFAULT_FW_NAME);
 MODULE_FIRMWARE(SD8997_DEFAULT_FW_NAME);
 MODULE_FIRMWARE(SD8997_SDIOUART_FW_NAME);

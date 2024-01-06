@@ -269,7 +269,9 @@ static const struct vc_image_format *vc4_get_vc_image_fmt(u32 drm_format)
 /* Flag to denote that the firmware is giving multiple display callbacks */
 #define SMI_NEW 0xabcd0000
 
-struct vc4_fkms_crtc {
+#define vc4_crtc vc4_kms_crtc
+#define to_vc4_crtc to_vc4_kms_crtc
+struct vc4_crtc {
 	struct drm_crtc base;
 	struct drm_encoder *encoder;
 	struct drm_connector *connector;
@@ -281,9 +283,9 @@ struct vc4_fkms_crtc {
 	u32 display_type;
 };
 
-static inline struct vc4_fkms_crtc *to_vc4_fkms_crtc(struct drm_crtc *crtc)
+static inline struct vc4_crtc *to_vc4_crtc(struct drm_crtc *crtc)
 {
-	return container_of(crtc, struct vc4_fkms_crtc, base);
+	return container_of(crtc, struct vc4_crtc, base);
 }
 
 struct vc4_fkms_encoder {
@@ -928,10 +930,10 @@ static void vc4_crtc_mode_set_nofb(struct drm_crtc *crtc)
 {
 	struct drm_device *dev = crtc->dev;
 	struct vc4_dev *vc4 = to_vc4_dev(dev);
-	struct vc4_fkms_crtc *vc4_fkms_crtc = to_vc4_fkms_crtc(crtc);
+	struct vc4_crtc *vc4_crtc = to_vc4_crtc(crtc);
 	struct drm_display_mode *mode = &crtc->state->adjusted_mode;
 	struct vc4_fkms_encoder *vc4_encoder =
-					to_vc4_fkms_encoder(vc4_fkms_crtc->encoder);
+					to_vc4_fkms_encoder(vc4_crtc->encoder);
 	struct mailbox_set_mode mb = {
 		.tag1 = { RPI_FIRMWARE_SET_TIMING,
 			  sizeof(struct set_timings), 0},
@@ -939,20 +941,20 @@ static void vc4_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	union hdmi_infoframe frame;
 	int ret;
 
-	ret = drm_hdmi_avi_infoframe_from_display_mode(&frame.avi, vc4_fkms_crtc->connector, mode);
+	ret = drm_hdmi_avi_infoframe_from_display_mode(&frame.avi, vc4_crtc->connector, mode);
 	if (ret < 0) {
 		DRM_ERROR("couldn't fill AVI infoframe\n");
 		return;
 	}
 
 	DRM_DEBUG_KMS("Setting mode for display num %u mode name %s, clk %d, h(disp %d, start %d, end %d, total %d, skew %d) v(disp %d, start %d, end %d, total %d, scan %d), vrefresh %d, par %u, flags 0x%04x\n",
-		      vc4_fkms_crtc->display_number, mode->name, mode->clock,
+		      vc4_crtc->display_number, mode->name, mode->clock,
 		      mode->hdisplay, mode->hsync_start, mode->hsync_end,
 		      mode->htotal, mode->hskew, mode->vdisplay,
 		      mode->vsync_start, mode->vsync_end, mode->vtotal,
 		      mode->vscan, drm_mode_vrefresh(mode),
 		      mode->picture_aspect_ratio, mode->flags);
-	mb.timings.display = vc4_fkms_crtc->display_number;
+	mb.timings.display = vc4_crtc->display_number;
 
 	mb.timings.clock = mode->clock;
 	mb.timings.hdisplay = mode->hdisplay;
@@ -1002,7 +1004,7 @@ static void vc4_crtc_mode_set_nofb(struct drm_crtc *crtc)
 		mb.timings.flags |= TIMINGS_FLAGS_DVI;
 	} else {
 		struct vc4_fkms_connector_state *conn_state =
-			to_vc4_fkms_connector_state(vc4_fkms_crtc->connector->state);
+			to_vc4_fkms_connector_state(vc4_crtc->connector->state);
 
 		if (conn_state->broadcast_rgb == VC4_BROADCAST_RGB_AUTO) {
 			/* See CEA-861-E - 5.1 Default Encoding Parameters */
@@ -1080,7 +1082,7 @@ static void vc4_crtc_disable(struct drm_crtc *crtc,
 
 static void vc4_crtc_consume_event(struct drm_crtc *crtc)
 {
-	struct vc4_fkms_crtc *vc4_fkms_crtc = to_vc4_fkms_crtc(crtc);
+	struct vc4_crtc *vc4_crtc = to_vc4_crtc(crtc);
 	struct drm_device *dev = crtc->dev;
 	unsigned long flags;
 
@@ -1092,7 +1094,7 @@ static void vc4_crtc_consume_event(struct drm_crtc *crtc)
 	WARN_ON(drm_crtc_vblank_get(crtc) != 0);
 
 	spin_lock_irqsave(&dev->event_lock, flags);
-	vc4_fkms_crtc->event = crtc->state->event;
+	vc4_crtc->event = crtc->state->event;
 	crtc->state->event = NULL;
 	spin_unlock_irqrestore(&dev->event_lock, flags);
 }
@@ -1116,7 +1118,7 @@ static void vc4_crtc_enable(struct drm_crtc *crtc,
 static enum drm_mode_status
 vc4_crtc_mode_valid(struct drm_crtc *crtc, const struct drm_display_mode *mode)
 {
-	struct vc4_fkms_crtc *vc4_fkms_crtc = to_vc4_fkms_crtc(crtc);
+	struct vc4_crtc *vc4_crtc = to_vc4_crtc(crtc);
 	struct drm_device *dev = crtc->dev;
 	struct vc4_dev *vc4 = to_vc4_dev(dev);
 	struct vc4_fkms *fkms = vc4->fkms;
@@ -1137,7 +1139,7 @@ vc4_crtc_mode_valid(struct drm_crtc *crtc, const struct drm_display_mode *mode)
 	/* Limit the pixel clock based on the HDMI clock limits from the
 	 * firmware
 	 */
-	switch (vc4_fkms_crtc->display_number) {
+	switch (vc4_crtc->display_number) {
 	case 2:	/* HDMI0 */
 		if (fkms->cfg.max_pixel_clock[0] &&
 		    mode->clock > fkms->cfg.max_pixel_clock[0])
@@ -1154,7 +1156,7 @@ vc4_crtc_mode_valid(struct drm_crtc *crtc, const struct drm_display_mode *mode)
 	 * that would set them.
 	 */
 	if (fkms->revision >= BCM2711 &&
-	    (vc4_fkms_crtc->display_number == 2 || vc4_fkms_crtc->display_number == 7) &&
+	    (vc4_crtc->display_number == 2 || vc4_crtc->display_number == 7) &&
 	    !(mode->flags & DRM_MODE_FLAG_DBLCLK) &&
 	    ((mode->hdisplay |				/* active */
 	      (mode->hsync_start - mode->hdisplay) |	/* front porch */
@@ -1170,7 +1172,7 @@ vc4_crtc_mode_valid(struct drm_crtc *crtc, const struct drm_display_mode *mode)
 }
 
 static int vc4_fkms_crtc_atomic_check(struct drm_crtc *crtc,
-				 struct drm_atomic_state *state)
+				      struct drm_atomic_state *state)
 {
 	struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state,
 									  crtc);
@@ -1206,16 +1208,16 @@ static void vc4_crtc_atomic_flush(struct drm_crtc *crtc,
 		vc4_crtc_consume_event(crtc);
 }
 
-static void vc4_crtc_handle_page_flip(struct vc4_fkms_crtc *vc4_fkms_crtc)
+static void vc4_crtc_handle_page_flip(struct vc4_crtc *vc4_crtc)
 {
-	struct drm_crtc *crtc = &vc4_fkms_crtc->base;
+	struct drm_crtc *crtc = &vc4_crtc->base;
 	struct drm_device *dev = crtc->dev;
 	unsigned long flags;
 
 	spin_lock_irqsave(&dev->event_lock, flags);
-	if (vc4_fkms_crtc->event) {
-		drm_crtc_send_vblank_event(crtc, vc4_fkms_crtc->event);
-		vc4_fkms_crtc->event = NULL;
+	if (vc4_crtc->event) {
+		drm_crtc_send_vblank_event(crtc, vc4_crtc->event);
+		vc4_crtc->event = NULL;
 		drm_crtc_vblank_put(crtc);
 	}
 	spin_unlock_irqrestore(&dev->event_lock, flags);
@@ -1223,7 +1225,7 @@ static void vc4_crtc_handle_page_flip(struct vc4_fkms_crtc *vc4_fkms_crtc)
 
 static irqreturn_t vc4_crtc_irq_handler(int irq, void *data)
 {
-	struct vc4_fkms_crtc **crtc_list = data;
+	struct vc4_crtc **crtc_list = data;
 	int i;
 	u32 stat = readl(crtc_list[0]->regs + SMICS);
 	irqreturn_t ret = IRQ_NONE;
@@ -1273,7 +1275,7 @@ static irqreturn_t vc4_crtc_irq_handler(int irq, void *data)
 
 static irqreturn_t vc4_crtc2712_irq_handler(int irq, void *data)
 {
-	struct vc4_fkms_crtc **crtc_list = data;
+	struct vc4_crtc **crtc_list = data;
 	int i;
 
 	for (i = 0; crtc_list[i]; i++) {
@@ -1328,22 +1330,22 @@ vc4_fkms_crtc_reset(struct drm_crtc *crtc)
 
 static int vc4_fkms_enable_vblank(struct drm_crtc *crtc)
 {
-	struct vc4_fkms_crtc *vc4_fkms_crtc = to_vc4_fkms_crtc(crtc);
+	struct vc4_crtc *vc4_crtc = to_vc4_crtc(crtc);
 
 	DRM_DEBUG_KMS("[CRTC:%d] enable_vblank.\n",
 		      crtc->base.id);
-	vc4_fkms_crtc->vblank_enabled = true;
+	vc4_crtc->vblank_enabled = true;
 
 	return 0;
 }
 
 static void vc4_fkms_disable_vblank(struct drm_crtc *crtc)
 {
-	struct vc4_fkms_crtc *vc4_fkms_crtc = to_vc4_fkms_crtc(crtc);
+	struct vc4_crtc *vc4_crtc = to_vc4_crtc(crtc);
 
 	DRM_DEBUG_KMS("[CRTC:%d] disable_vblank.\n",
 		      crtc->base.id);
-	vc4_fkms_crtc->vblank_enabled = false;
+	vc4_crtc->vblank_enabled = false;
 }
 
 static const struct drm_crtc_funcs vc4_crtc_funcs = {
@@ -1660,7 +1662,7 @@ int vc4_connector_atomic_check(struct drm_connector *connector,
 static void vc4_hdmi_connector_reset(struct drm_connector *connector)
 {
 	drm_atomic_helper_connector_reset(connector);
-	drm_atomic_helper_connector_tv_margins_reset(connector);
+	drm_atomic_helper_connector_tv_reset(connector);
 }
 
 static const struct drm_connector_funcs vc4_fkms_connector_funcs = {
@@ -1835,10 +1837,10 @@ static const struct drm_encoder_helper_funcs vc4_fkms_encoder_helper_funcs = {
 
 static int vc4_fkms_create_screen(struct device *dev, struct drm_device *drm,
 				  int display_idx, int display_ref,
-				  struct vc4_fkms_crtc **ret_crtc)
+				  struct vc4_crtc **ret_crtc)
 {
 	struct vc4_dev *vc4 = to_vc4_dev(drm);
-	struct vc4_fkms_crtc *vc4_fkms_crtc;
+	struct vc4_crtc *vc4_crtc;
 	struct vc4_fkms_encoder *vc4_encoder;
 	struct drm_crtc *crtc;
 	struct drm_plane *destroy_plane, *temp;
@@ -1851,13 +1853,13 @@ static int vc4_fkms_create_screen(struct device *dev, struct drm_device *drm,
 	struct drm_plane *planes[PLANES_PER_CRTC];
 	int ret, i;
 
-	vc4_fkms_crtc = devm_kzalloc(dev, sizeof(*vc4_fkms_crtc), GFP_KERNEL);
-	if (!vc4_fkms_crtc)
+	vc4_crtc = devm_kzalloc(dev, sizeof(*vc4_crtc), GFP_KERNEL);
+	if (!vc4_crtc)
 		return -ENOMEM;
-	crtc = &vc4_fkms_crtc->base;
+	crtc = &vc4_crtc->base;
 
-	vc4_fkms_crtc->display_number = display_ref;
-	vc4_fkms_crtc->display_type = vc4_get_display_type(display_ref);
+	vc4_crtc->display_number = display_ref;
+	vc4_crtc->display_type = vc4_get_display_type(display_ref);
 
 	/* Blank the firmware provided framebuffer */
 	rpi_firmware_property_list(vc4->firmware, &blank, sizeof(blank));
@@ -1891,29 +1893,29 @@ static int vc4_fkms_create_screen(struct device *dev, struct drm_device *drm,
 	vc4_encoder = devm_kzalloc(dev, sizeof(*vc4_encoder), GFP_KERNEL);
 	if (!vc4_encoder)
 		return -ENOMEM;
-	vc4_fkms_crtc->encoder = &vc4_encoder->base;
+	vc4_crtc->encoder = &vc4_encoder->base;
 
 	vc4_encoder->display_num = display_ref;
 	vc4_encoder->base.possible_crtcs |= drm_crtc_mask(crtc);
 
 	drm_encoder_init(drm, &vc4_encoder->base, &vc4_fkms_encoder_funcs,
-			 vc4_fkms_crtc->display_type, NULL);
+			 vc4_crtc->display_type, NULL);
 	drm_encoder_helper_add(&vc4_encoder->base,
 			       &vc4_fkms_encoder_helper_funcs);
 
-	vc4_fkms_crtc->connector = vc4_fkms_connector_init(drm, &vc4_encoder->base,
-							   display_ref);
-	if (IS_ERR(vc4_fkms_crtc->connector)) {
-		ret = PTR_ERR(vc4_fkms_crtc->connector);
+	vc4_crtc->connector = vc4_fkms_connector_init(drm, &vc4_encoder->base,
+						      display_ref);
+	if (IS_ERR(vc4_crtc->connector)) {
+		ret = PTR_ERR(vc4_crtc->connector);
 		goto err_destroy_encoder;
 	}
 
-	*ret_crtc = vc4_fkms_crtc;
+	*ret_crtc = vc4_crtc;
 
 	return 0;
 
 err_destroy_encoder:
-	vc4_fkms_encoder_destroy(vc4_fkms_crtc->encoder);
+	vc4_fkms_encoder_destroy(vc4_crtc->encoder);
 	list_for_each_entry_safe(destroy_plane, temp,
 				 &drm->mode_config.plane_list, head) {
 		if (destroy_plane->possible_crtcs == 1 << drm_crtc_index(crtc))
@@ -1930,7 +1932,7 @@ static int vc4_fkms_bind(struct device *dev, struct device *master, void *data)
 	struct vc4_dev *vc4 = to_vc4_dev(drm);
 	struct device_node *firmware_node;
 	const struct of_device_id *match;
-	struct vc4_fkms_crtc **crtc_list;
+	struct vc4_crtc **crtc_list;
 	u32 num_displays, display_num;
 	struct vc4_fkms *fkms;
 	int ret;
@@ -2039,7 +2041,7 @@ static void vc4_fkms_unbind(struct device *dev, struct device *master,
 			    void *data)
 {
 	struct platform_device *pdev = to_platform_device(dev);
-	struct vc4_fkms_crtc **crtc_list = dev_get_drvdata(dev);
+	struct vc4_crtc **crtc_list = dev_get_drvdata(dev);
 	int i;
 
 	for (i = 0; crtc_list[i]; i++) {

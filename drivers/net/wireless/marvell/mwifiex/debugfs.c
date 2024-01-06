@@ -425,10 +425,7 @@ mwifiex_regrdwr_write(struct file *file,
 	if (IS_ERR(buf))
 		return PTR_ERR(buf);
 
-	if (sscanf(buf, "%u %x %x", &reg_type, &reg_offset, &reg_value) != 3) {
-		ret = -EINVAL;
-		goto done;
-	}
+	sscanf(buf, "%u %x %x", &reg_type, &reg_offset, &reg_value);
 
 	if (reg_type == 0 || reg_offset == 0) {
 		ret = -EINVAL;
@@ -694,10 +691,7 @@ mwifiex_rdeeprom_write(struct file *file,
 	if (IS_ERR(buf))
 		return PTR_ERR(buf);
 
-	if (sscanf(buf, "%d %d", &offset, &bytes) != 2) {
-		ret = -EINVAL;
-		goto done;
-	}
+	sscanf(buf, "%d %d", &offset, &bytes);
 
 	if (offset == -1 || bytes == -1) {
 		ret = -EINVAL;
@@ -885,7 +879,7 @@ mwifiex_timeshare_coex_write(struct file *file, const char __user *ubuf,
 	if (copy_from_user(&kbuf, ubuf, min_t(size_t, sizeof(kbuf) - 1, count)))
 		return -EFAULT;
 
-	if (kstrtobool(kbuf, &timeshare_coex))
+	if (strtobool(kbuf, &timeshare_coex))
 		return -EINVAL;
 
 	ret = mwifiex_send_cmd(priv, HostCmd_CMD_ROBUST_COEX,

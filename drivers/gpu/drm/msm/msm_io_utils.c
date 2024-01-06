@@ -6,7 +6,6 @@
  */
 
 #include <linux/interconnect.h>
-#include <linux/io.h>
 
 #include "msm_drv.h"
 

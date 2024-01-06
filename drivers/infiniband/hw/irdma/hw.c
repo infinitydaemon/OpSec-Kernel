@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
+// SPDX-License-Identifier: GPL-2.0 or Linux-OpenIB
 /* Copyright (c) 2015 - 2021 Intel Corporation */
 #include "main.h"
 
@@ -219,6 +219,7 @@ static void irdma_process_aeq(struct irdma_pci_f *rf)
 	struct irdma_aeqe_info *info = &aeinfo;
 	int ret;
 	struct irdma_qp *iwqp = NULL;
+	struct irdma_sc_cq *cq = NULL;
 	struct irdma_cq *iwcq = NULL;
 	struct irdma_sc_qp *qp = NULL;
 	struct irdma_qp_host_ctx_info *ctx_info = NULL;
@@ -339,18 +340,10 @@ static void irdma_process_aeq(struct irdma_pci_f *rf)
 			ibdev_err(&iwdev->ibdev,
 				  "Processing an iWARP related AE for CQ misc = 0x%04X\n",
 				  info->ae_id);
+			cq = (struct irdma_sc_cq *)(unsigned long)
+			     info->compl_ctx;
 
-			spin_lock_irqsave(&rf->cqtable_lock, flags);
-			iwcq = rf->cq_table[info->qp_cq_id];
-			if (!iwcq) {
-				spin_unlock_irqrestore(&rf->cqtable_lock,
-						       flags);
-				ibdev_dbg(to_ibdev(dev),
-					  "cq_id %d is already freed\n", info->qp_cq_id);
-				continue;
-			}
-			irdma_cq_add_ref(&iwcq->ibcq);
-			spin_unlock_irqrestore(&rf->cqtable_lock, flags);
+			iwcq = cq->back_cq;
 
 			if (iwcq->ibcq.event_handler) {
 				struct ib_event ibevent;
@@ -361,7 +354,6 @@ static void irdma_process_aeq(struct irdma_pci_f *rf)
 				iwcq->ibcq.event_handler(&ibevent,
 							 iwcq->ibcq.cq_context);
 			}
-			irdma_cq_rem_ref(&iwcq->ibcq);
 			break;
 		case IRDMA_AE_RESET_NOT_SENT:
 		case IRDMA_AE_LLP_DOUBT_REACHABILITY:
@@ -575,6 +567,7 @@ static void irdma_destroy_irq(struct irdma_pci_f *rf,
 /**
  * irdma_destroy_cqp  - destroy control qp
  * @rf: RDMA PCI function
+ * @free_hwcqp: 1 if hw cqp should be freed
  *
  * Issue destroy cqp request and
  * free the resources associated with the cqp
@@ -1111,19 +1104,14 @@ static int irdma_cfg_ceq_vector(struct irdma_pci_f *rf, struct irdma_ceq *iwceq,
 	int status;
 
 	if (rf->msix_shared && !ceq_id) {
-		snprintf(msix_vec->name, sizeof(msix_vec->name) - 1,
-			 "irdma-%s-AEQCEQ-0", dev_name(&rf->pcidev->dev));
 		tasklet_setup(&rf->dpc_tasklet, irdma_dpc);
 		status = request_irq(msix_vec->irq, irdma_irq_handler, 0,
-				     msix_vec->name, rf);
+				     "AEQCEQ", rf);
 	} else {
-		snprintf(msix_vec->name, sizeof(msix_vec->name) - 1,
-			 "irdma-%s-CEQ-%d",
-			 dev_name(&rf->pcidev->dev), ceq_id);
 		tasklet_setup(&iwceq->dpc_tasklet, irdma_ceq_dpc);
 
 		status = request_irq(msix_vec->irq, irdma_ceq_handler, 0,
-				     msix_vec->name, iwceq);
+				     "CEQ", iwceq);
 	}
 	cpumask_clear(&msix_vec->mask);
 	cpumask_set_cpu(msix_vec->cpu_affinity, &msix_vec->mask);
@@ -1152,11 +1140,9 @@ static int irdma_cfg_aeq_vector(struct irdma_pci_f *rf)
 	u32 ret = 0;
 
 	if (!rf->msix_shared) {
-		snprintf(msix_vec->name, sizeof(msix_vec->name) - 1,
-			 "irdma-%s-AEQ", dev_name(&rf->pcidev->dev));
 		tasklet_setup(&rf->dpc_tasklet, irdma_dpc);
 		ret = request_irq(msix_vec->irq, irdma_irq_handler, 0,
-				  msix_vec->name, rf);
+				  "irdma", rf);
 	}
 	if (ret) {
 		ibdev_dbg(&rf->iwdev->ibdev, "ERR: aeq irq config fail\n");
@@ -1565,7 +1551,7 @@ static void irdma_del_init_mem(struct irdma_pci_f *rf)
 
 	kfree(dev->hmc_info->sd_table.sd_entry);
 	dev->hmc_info->sd_table.sd_entry = NULL;
-	vfree(rf->mem_rsrc);
+	kfree(rf->mem_rsrc);
 	rf->mem_rsrc = NULL;
 	dma_free_coherent(rf->hw.device, rf->obj_mem.size, rf->obj_mem.va,
 			  rf->obj_mem.pa);
@@ -1928,8 +1914,8 @@ int irdma_ctrl_init_hw(struct irdma_pci_f *rf)
 			break;
 		rf->init_state = CEQ0_CREATED;
 		/* Handles processing of CQP completions */
-		rf->cqp_cmpl_wq =
-			alloc_ordered_workqueue("cqp_cmpl_wq", WQ_HIGHPRI);
+		rf->cqp_cmpl_wq = alloc_ordered_workqueue("cqp_cmpl_wq",
+						WQ_HIGHPRI | WQ_UNBOUND);
 		if (!rf->cqp_cmpl_wq) {
 			status = -ENOMEM;
 			break;
@@ -1961,12 +1947,10 @@ static void irdma_set_hw_rsrc(struct irdma_pci_f *rf)
 	rf->allocated_arps = &rf->allocated_mcgs[BITS_TO_LONGS(rf->max_mcg)];
 	rf->qp_table = (struct irdma_qp **)
 		(&rf->allocated_arps[BITS_TO_LONGS(rf->arp_table_size)]);
-	rf->cq_table = (struct irdma_cq **)(&rf->qp_table[rf->max_qp]);
 
 	spin_lock_init(&rf->rsrc_lock);
 	spin_lock_init(&rf->arp_lock);
 	spin_lock_init(&rf->qptable_lock);
-	spin_lock_init(&rf->cqtable_lock);
 	spin_lock_init(&rf->qh_list_lock);
 }
 
@@ -1987,7 +1971,6 @@ static u32 irdma_calc_mem_rsrc_size(struct irdma_pci_f *rf)
 	rsrc_size += sizeof(unsigned long) * BITS_TO_LONGS(rf->max_ah);
 	rsrc_size += sizeof(unsigned long) * BITS_TO_LONGS(rf->max_mcg);
 	rsrc_size += sizeof(struct irdma_qp **) * rf->max_qp;
-	rsrc_size += sizeof(struct irdma_cq **) * rf->max_cq;
 
 	return rsrc_size;
 }
@@ -2021,10 +2004,10 @@ u32 irdma_initialize_hw_rsrc(struct irdma_pci_f *rf)
 	rf->max_mcg = rf->max_qp;
 
 	rsrc_size = irdma_calc_mem_rsrc_size(rf);
-	rf->mem_rsrc = vzalloc(rsrc_size);
+	rf->mem_rsrc = kzalloc(rsrc_size, GFP_KERNEL);
 	if (!rf->mem_rsrc) {
 		ret = -ENOMEM;
-		goto mem_rsrc_vzalloc_fail;
+		goto mem_rsrc_kzalloc_fail;
 	}
 
 	rf->arp_table = (struct irdma_arp_entry *)rf->mem_rsrc;
@@ -2052,7 +2035,7 @@ u32 irdma_initialize_hw_rsrc(struct irdma_pci_f *rf)
 
 	return 0;
 
-mem_rsrc_vzalloc_fail:
+mem_rsrc_kzalloc_fail:
 	bitmap_free(rf->allocated_ws_nodes);
 	rf->allocated_ws_nodes = NULL;
 

@@ -205,7 +205,7 @@ static void __init node_irq_request(const char *compat, irq_handler_t errirq_han
 
 	for_each_compatible_node(np, NULL, compat) {
 		irq = irq_of_parse_and_map(np, 0);
-		if (!irq) {
+		if (irq == NO_IRQ) {
 			pr_err("device tree node %pOFn is missing a interrupt",
 			      np);
 			of_node_put(np);
@@ -313,4 +313,5 @@ define_machine(fsp2) {
 	.init_IRQ		= fsp2_irq_init,
 	.get_irq		= uic_get_irq,
 	.restart		= ppc4xx_reset_system,
+	.calibrate_decr		= generic_calibrate_decr,
 };

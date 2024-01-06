@@ -51,7 +51,6 @@
 #define MT7663_FIRMWARE_N9		"mediatek/mt7663_n9_rebb.bin"
 
 #define MT7615_EEPROM_SIZE		1024
-#define MT7663_EEPROM_SIZE		1536
 #define MT7615_TOKEN_SIZE		4096
 
 #define MT_FRAC_SCALE		12
@@ -125,6 +124,7 @@ struct mt7615_sta {
 
 	struct mt7615_vif *vif;
 
+	struct list_head poll_list;
 	u32 airtime_ac[8];
 
 	struct ieee80211_tx_rate rates[4];
@@ -245,6 +245,8 @@ struct mt7615_dev {
 	};
 
 	const struct mt76_bus_ops *bus_ops;
+	struct tasklet_struct irq_tasklet;
+
 	struct mt7615_phy phy;
 	u64 omac_mask;
 
@@ -260,6 +262,9 @@ struct mt7615_dev {
 	struct work_struct reset_work;
 	wait_queue_head_t reset_wait;
 	u32 reset_state;
+
+	struct list_head sta_poll_list;
+	spinlock_t sta_poll_lock;
 
 	struct {
 		u8 n_pulses;
@@ -371,12 +376,6 @@ int mt7615_mmio_probe(struct device *pdev, void __iomem *mem_base,
 		      int irq, const u32 *map);
 u32 mt7615_reg_map(struct mt7615_dev *dev, u32 addr);
 
-u32 mt7615_reg_map(struct mt7615_dev *dev, u32 addr);
-int mt7615_led_set_blink(struct led_classdev *led_cdev,
-			 unsigned long *delay_on,
-			 unsigned long *delay_off);
-void mt7615_led_set_brightness(struct led_classdev *led_cdev,
-			       enum led_brightness brightness);
 void mt7615_init_device(struct mt7615_dev *dev);
 int mt7615_register_device(struct mt7615_dev *dev);
 void mt7615_unregister_device(struct mt7615_dev *dev);
@@ -406,6 +405,13 @@ int mt7615_mcu_set_wmm(struct mt7615_dev *dev, u8 queue,
 void mt7615_mcu_rx_event(struct mt7615_dev *dev, struct sk_buff *skb);
 int mt7615_mcu_rdd_send_pattern(struct mt7615_dev *dev);
 int mt7615_mcu_fw_log_2_host(struct mt7615_dev *dev, u8 ctrl);
+
+static inline void mt7615_irq_enable(struct mt7615_dev *dev, u32 mask)
+{
+	mt76_set_irq_mask(&dev->mt76, 0, 0, mask);
+
+	tasklet_schedule(&dev->irq_tasklet);
+}
 
 static inline bool mt7615_firmware_offload(struct mt7615_dev *dev)
 {
@@ -463,12 +469,10 @@ void mt7615_init_work(struct mt7615_dev *dev);
 int mt7615_mcu_restart(struct mt76_dev *dev);
 void mt7615_update_channel(struct mt76_phy *mphy);
 bool mt7615_mac_wtbl_update(struct mt7615_dev *dev, int idx, u32 mask);
-void mt7615_mac_reset_counters(struct mt7615_phy *phy);
+void mt7615_mac_reset_counters(struct mt7615_dev *dev);
 void mt7615_mac_cca_stats_reset(struct mt7615_phy *phy);
 void mt7615_mac_set_scs(struct mt7615_phy *phy, bool enable);
 void mt7615_mac_enable_nf(struct mt7615_dev *dev, bool ext_phy);
-void mt7615_mac_enable_rtscts(struct mt7615_dev *dev,
-			      struct ieee80211_vif *vif, bool enable);
 void mt7615_mac_sta_poll(struct mt7615_dev *dev);
 int mt7615_mac_write_txwi(struct mt7615_dev *dev, __le32 *txwi,
 			  struct sk_buff *skb, struct mt76_wcid *wcid,
@@ -505,7 +509,8 @@ void mt7615_tx_worker(struct mt76_worker *w);
 void mt7615_tx_token_put(struct mt7615_dev *dev);
 bool mt7615_rx_check(struct mt76_dev *mdev, void *data, int len);
 void mt7615_queue_rx_skb(struct mt76_dev *mdev, enum mt76_rxq_id q,
-			 struct sk_buff *skb, u32 *info);
+			 struct sk_buff *skb);
+void mt7615_sta_ps(struct mt76_dev *mdev, struct ieee80211_sta *sta, bool ps);
 int mt7615_mac_sta_add(struct mt76_dev *mdev, struct ieee80211_vif *vif,
 		       struct ieee80211_sta *sta);
 void mt7615_mac_sta_remove(struct mt76_dev *mdev, struct ieee80211_vif *vif,

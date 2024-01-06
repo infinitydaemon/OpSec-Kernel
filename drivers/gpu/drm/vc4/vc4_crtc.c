@@ -31,8 +31,7 @@
 
 #include <linux/clk.h>
 #include <linux/component.h>
-#include <linux/of.h>
-#include <linux/platform_device.h>
+#include <linux/of_device.h>
 #include <linux/pm_runtime.h>
 
 #include <drm/drm_atomic.h>
@@ -1172,9 +1171,12 @@ int vc4_crtc_late_register(struct drm_crtc *crtc)
 	struct drm_device *drm = crtc->dev;
 	struct vc4_crtc *vc4_crtc = to_vc4_crtc(crtc);
 	const struct vc4_crtc_data *crtc_data = vc4_crtc_to_vc4_crtc_data(vc4_crtc);
+	int ret;
 
-	vc4_debugfs_add_regset32(drm, crtc_data->debugfs_name,
-				 &vc4_crtc->regset);
+	ret = vc4_debugfs_add_regset32(drm->primary, crtc_data->debugfs_name,
+				       &vc4_crtc->regset);
+	if (ret)
+		return ret;
 
 	return 0;
 }
@@ -1560,14 +1562,15 @@ static int vc4_crtc_dev_probe(struct platform_device *pdev)
 	return component_add(&pdev->dev, &vc4_crtc_ops);
 }
 
-static void vc4_crtc_dev_remove(struct platform_device *pdev)
+static int vc4_crtc_dev_remove(struct platform_device *pdev)
 {
 	component_del(&pdev->dev, &vc4_crtc_ops);
+	return 0;
 }
 
 struct platform_driver vc4_crtc_driver = {
 	.probe = vc4_crtc_dev_probe,
-	.remove_new = vc4_crtc_dev_remove,
+	.remove = vc4_crtc_dev_remove,
 	.driver = {
 		.name = "vc4_crtc",
 		.of_match_table = vc4_crtc_dt_match,

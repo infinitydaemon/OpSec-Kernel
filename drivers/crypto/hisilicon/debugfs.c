@@ -36,12 +36,6 @@ struct qm_dfx_item {
 	u32 offset;
 };
 
-struct qm_cmd_dump_item {
-	const char *cmd;
-	char *info_name;
-	int (*dump_fn)(struct hisi_qm *qm, char *cmd, char *info_name);
-};
-
 static struct qm_dfx_item qm_dfx_files[] = {
 	{"err_irq", offsetof(struct qm_dfx, err_irq_cnt)},
 	{"aeq_irq", offsetof(struct qm_dfx, aeq_irq_cnt)},
@@ -134,11 +128,11 @@ static void dump_show(struct hisi_qm *qm, void *info,
 	}
 }
 
-static int qm_sqc_dump(struct hisi_qm *qm, char *s, char *name)
+static int qm_sqc_dump(struct hisi_qm *qm, const char *s)
 {
 	struct device *dev = &qm->pdev->dev;
-	struct qm_sqc *sqc_curr;
-	struct qm_sqc sqc;
+	struct qm_sqc *sqc, *sqc_curr;
+	dma_addr_t sqc_dma;
 	u32 qp_id;
 	int ret;
 
@@ -151,29 +145,35 @@ static int qm_sqc_dump(struct hisi_qm *qm, char *s, char *name)
 		return -EINVAL;
 	}
 
-	ret = qm_set_and_get_xqc(qm, QM_MB_CMD_SQC, &sqc, qp_id, 1);
-	if (!ret) {
-		dump_show(qm, &sqc, sizeof(struct qm_sqc), name);
+	sqc = hisi_qm_ctx_alloc(qm, sizeof(*sqc), &sqc_dma);
+	if (IS_ERR(sqc))
+		return PTR_ERR(sqc);
 
-		return 0;
+	ret = hisi_qm_mb(qm, QM_MB_CMD_SQC, sqc_dma, qp_id, 1);
+	if (ret) {
+		down_read(&qm->qps_lock);
+		if (qm->sqc) {
+			sqc_curr = qm->sqc + qp_id;
+
+			dump_show(qm, sqc_curr, sizeof(*sqc), "SOFT SQC");
+		}
+		up_read(&qm->qps_lock);
+
+		goto free_ctx;
 	}
 
-	down_read(&qm->qps_lock);
-	if (qm->sqc) {
-		sqc_curr = qm->sqc + qp_id;
+	dump_show(qm, sqc, sizeof(*sqc), "SQC");
 
-		dump_show(qm, sqc_curr, sizeof(*sqc_curr), "SOFT SQC");
-	}
-	up_read(&qm->qps_lock);
-
+free_ctx:
+	hisi_qm_ctx_free(qm, sizeof(*sqc), sqc, &sqc_dma);
 	return 0;
 }
 
-static int qm_cqc_dump(struct hisi_qm *qm, char *s, char *name)
+static int qm_cqc_dump(struct hisi_qm *qm, const char *s)
 {
 	struct device *dev = &qm->pdev->dev;
-	struct qm_cqc *cqc_curr;
-	struct qm_cqc cqc;
+	struct qm_cqc *cqc, *cqc_curr;
+	dma_addr_t cqc_dma;
 	u32 qp_id;
 	int ret;
 
@@ -186,55 +186,55 @@ static int qm_cqc_dump(struct hisi_qm *qm, char *s, char *name)
 		return -EINVAL;
 	}
 
-	ret = qm_set_and_get_xqc(qm, QM_MB_CMD_CQC, &cqc, qp_id, 1);
-	if (!ret) {
-		dump_show(qm, &cqc, sizeof(struct qm_cqc), name);
+	cqc = hisi_qm_ctx_alloc(qm, sizeof(*cqc), &cqc_dma);
+	if (IS_ERR(cqc))
+		return PTR_ERR(cqc);
 
-		return 0;
+	ret = hisi_qm_mb(qm, QM_MB_CMD_CQC, cqc_dma, qp_id, 1);
+	if (ret) {
+		down_read(&qm->qps_lock);
+		if (qm->cqc) {
+			cqc_curr = qm->cqc + qp_id;
+
+			dump_show(qm, cqc_curr, sizeof(*cqc), "SOFT CQC");
+		}
+		up_read(&qm->qps_lock);
+
+		goto free_ctx;
 	}
 
-	down_read(&qm->qps_lock);
-	if (qm->cqc) {
-		cqc_curr = qm->cqc + qp_id;
+	dump_show(qm, cqc, sizeof(*cqc), "CQC");
 
-		dump_show(qm, cqc_curr, sizeof(*cqc_curr), "SOFT CQC");
-	}
-	up_read(&qm->qps_lock);
-
+free_ctx:
+	hisi_qm_ctx_free(qm, sizeof(*cqc), cqc, &cqc_dma);
 	return 0;
 }
 
-static int qm_eqc_aeqc_dump(struct hisi_qm *qm, char *s, char *name)
+static int qm_eqc_aeqc_dump(struct hisi_qm *qm, char *s, size_t size,
+			    int cmd, char *name)
 {
 	struct device *dev = &qm->pdev->dev;
-	struct qm_aeqc aeqc;
-	struct qm_eqc eqc;
-	size_t size;
+	dma_addr_t xeqc_dma;
 	void *xeqc;
 	int ret;
-	u8 cmd;
 
 	if (strsep(&s, " ")) {
 		dev_err(dev, "Please do not input extra characters!\n");
 		return -EINVAL;
 	}
 
-	if (!strcmp(name, "EQC")) {
-		cmd = QM_MB_CMD_EQC;
-		size = sizeof(struct qm_eqc);
-		xeqc = &eqc;
-	} else {
-		cmd = QM_MB_CMD_AEQC;
-		size = sizeof(struct qm_aeqc);
-		xeqc = &aeqc;
-	}
+	xeqc = hisi_qm_ctx_alloc(qm, size, &xeqc_dma);
+	if (IS_ERR(xeqc))
+		return PTR_ERR(xeqc);
 
-	ret = qm_set_and_get_xqc(qm, cmd, xeqc, 0, 1);
+	ret = hisi_qm_mb(qm, cmd, xeqc_dma, 0, 1);
 	if (ret)
-		return ret;
+		goto err_free_ctx;
 
 	dump_show(qm, xeqc, size, name);
 
+err_free_ctx:
+	hisi_qm_ctx_free(qm, size, xeqc, &xeqc_dma);
 	return ret;
 }
 
@@ -278,7 +278,7 @@ static int q_dump_param_parse(struct hisi_qm *qm, char *s,
 	return 0;
 }
 
-static int qm_sq_dump(struct hisi_qm *qm, char *s, char *name)
+static int qm_sq_dump(struct hisi_qm *qm, char *s)
 {
 	u16 sq_depth = qm->qp_array->cq_depth;
 	void *sqe, *sqe_curr;
@@ -300,14 +300,14 @@ static int qm_sq_dump(struct hisi_qm *qm, char *s, char *name)
 	memset(sqe_curr + qm->debug.sqe_mask_offset, QM_SQE_ADDR_MASK,
 	       qm->debug.sqe_mask_len);
 
-	dump_show(qm, sqe_curr, qm->sqe_size, name);
+	dump_show(qm, sqe_curr, qm->sqe_size, "SQE");
 
 	kfree(sqe);
 
 	return 0;
 }
 
-static int qm_cq_dump(struct hisi_qm *qm, char *s, char *name)
+static int qm_cq_dump(struct hisi_qm *qm, char *s)
 {
 	struct qm_cqe *cqe_curr;
 	struct hisi_qp *qp;
@@ -320,16 +320,15 @@ static int qm_cq_dump(struct hisi_qm *qm, char *s, char *name)
 
 	qp = &qm->qp_array[qp_id];
 	cqe_curr = qp->cqe + cqe_id;
-	dump_show(qm, cqe_curr, sizeof(struct qm_cqe), name);
+	dump_show(qm, cqe_curr, sizeof(struct qm_cqe), "CQE");
 
 	return 0;
 }
 
-static int qm_eq_aeq_dump(struct hisi_qm *qm, char *s, char *name)
+static int qm_eq_aeq_dump(struct hisi_qm *qm, const char *s,
+			  size_t size, char *name)
 {
 	struct device *dev = &qm->pdev->dev;
-	u16 xeq_depth;
-	size_t size;
 	void *xeqe;
 	u32 xeqe_id;
 	int ret;
@@ -341,16 +340,11 @@ static int qm_eq_aeq_dump(struct hisi_qm *qm, char *s, char *name)
 	if (ret)
 		return -EINVAL;
 
-	if (!strcmp(name, "EQE")) {
-		xeq_depth = qm->eq_depth;
-		size = sizeof(struct qm_eqe);
-	} else {
-		xeq_depth = qm->aeq_depth;
-		size = sizeof(struct qm_aeqe);
-	}
-
-	if (xeqe_id >= xeq_depth) {
-		dev_err(dev, "Please input eqe or aeqe num (0-%u)", xeq_depth - 1);
+	if (!strcmp(name, "EQE") && xeqe_id >= qm->eq_depth) {
+		dev_err(dev, "Please input eqe num (0-%u)", qm->eq_depth - 1);
+		return -EINVAL;
+	} else if (!strcmp(name, "AEQE") && xeqe_id >= qm->aeq_depth) {
+		dev_err(dev, "Please input aeqe num (0-%u)", qm->eq_depth - 1);
 		return -EINVAL;
 	}
 
@@ -394,47 +388,11 @@ static int qm_dbg_help(struct hisi_qm *qm, char *s)
 	return 0;
 }
 
-static const struct qm_cmd_dump_item qm_cmd_dump_table[] = {
-	{
-		.cmd = "sqc",
-		.info_name = "SQC",
-		.dump_fn = qm_sqc_dump,
-	}, {
-		.cmd = "cqc",
-		.info_name = "CQC",
-		.dump_fn = qm_cqc_dump,
-	}, {
-		.cmd = "eqc",
-		.info_name = "EQC",
-		.dump_fn = qm_eqc_aeqc_dump,
-	}, {
-		.cmd = "aeqc",
-		.info_name = "AEQC",
-		.dump_fn = qm_eqc_aeqc_dump,
-	}, {
-		.cmd = "sq",
-		.info_name = "SQE",
-		.dump_fn = qm_sq_dump,
-	}, {
-		.cmd = "cq",
-		.info_name = "CQE",
-		.dump_fn = qm_cq_dump,
-	}, {
-		.cmd = "eq",
-		.info_name = "EQE",
-		.dump_fn = qm_eq_aeq_dump,
-	}, {
-		.cmd = "aeq",
-		.info_name = "AEQE",
-		.dump_fn = qm_eq_aeq_dump,
-	},
-};
-
 static int qm_cmd_write_dump(struct hisi_qm *qm, const char *cmd_buf)
 {
 	struct device *dev = &qm->pdev->dev;
 	char *presult, *s, *s_tmp;
-	int table_size, i, ret;
+	int ret;
 
 	s = kstrdup(cmd_buf, GFP_KERNEL);
 	if (!s)
@@ -447,24 +405,31 @@ static int qm_cmd_write_dump(struct hisi_qm *qm, const char *cmd_buf)
 		goto err_buffer_free;
 	}
 
-	if (!strcmp(presult, "help")) {
+	if (!strcmp(presult, "sqc"))
+		ret = qm_sqc_dump(qm, s);
+	else if (!strcmp(presult, "cqc"))
+		ret = qm_cqc_dump(qm, s);
+	else if (!strcmp(presult, "eqc"))
+		ret = qm_eqc_aeqc_dump(qm, s, sizeof(struct qm_eqc),
+				       QM_MB_CMD_EQC, "EQC");
+	else if (!strcmp(presult, "aeqc"))
+		ret = qm_eqc_aeqc_dump(qm, s, sizeof(struct qm_aeqc),
+				       QM_MB_CMD_AEQC, "AEQC");
+	else if (!strcmp(presult, "sq"))
+		ret = qm_sq_dump(qm, s);
+	else if (!strcmp(presult, "cq"))
+		ret = qm_cq_dump(qm, s);
+	else if (!strcmp(presult, "eq"))
+		ret = qm_eq_aeq_dump(qm, s, sizeof(struct qm_eqe), "EQE");
+	else if (!strcmp(presult, "aeq"))
+		ret = qm_eq_aeq_dump(qm, s, sizeof(struct qm_aeqe), "AEQE");
+	else if (!strcmp(presult, "help"))
 		ret = qm_dbg_help(qm, s);
-		goto err_buffer_free;
-	}
-
-	table_size = ARRAY_SIZE(qm_cmd_dump_table);
-	for (i = 0; i < table_size; i++) {
-		if (!strcmp(presult, qm_cmd_dump_table[i].cmd)) {
-			ret = qm_cmd_dump_table[i].dump_fn(qm, s,
-				qm_cmd_dump_table[i].info_name);
-			break;
-		}
-	}
-
-	if (i == table_size) {
-		dev_info(dev, "Please echo help\n");
+	else
 		ret = -EINVAL;
-	}
+
+	if (ret)
+		dev_info(dev, "Please echo help\n");
 
 err_buffer_free:
 	kfree(s_tmp);

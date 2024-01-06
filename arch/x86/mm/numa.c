@@ -3,7 +3,6 @@
 #include <linux/acpi.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
-#include <linux/of.h>
 #include <linux/string.h>
 #include <linux/init.h>
 #include <linux/memblock.h>
@@ -58,7 +57,7 @@ s16 __apicid_to_node[MAX_LOCAL_APIC] = {
 
 int numa_cpu_node(int cpu)
 {
-	u32 apicid = early_per_cpu(x86_cpu_to_apicid, cpu);
+	int apicid = early_per_cpu(x86_cpu_to_apicid, cpu);
 
 	if (apicid != BAD_APICID)
 		return __apicid_to_node[apicid];
@@ -728,8 +727,6 @@ void __init x86_numa_init(void)
 		if (!numa_init(amd_numa_init))
 			return;
 #endif
-		if (acpi_disabled && !numa_init(of_numa_init))
-			return;
 	}
 
 	numa_init(dummy_numa_init);
@@ -783,7 +780,7 @@ void __init init_gi_nodes(void)
 void __init init_cpu_to_node(void)
 {
 	int cpu;
-	u32 *cpu_to_apicid = early_per_cpu_ptr(x86_cpu_to_apicid);
+	u16 *cpu_to_apicid = early_per_cpu_ptr(x86_cpu_to_apicid);
 
 	BUG_ON(cpu_to_apicid == NULL);
 

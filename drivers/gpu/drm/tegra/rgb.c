@@ -5,7 +5,6 @@
  */
 
 #include <linux/clk.h>
-#include <linux/of.h>
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_bridge_connector.h>
@@ -99,7 +98,6 @@ static void tegra_rgb_encoder_disable(struct drm_encoder *encoder)
 
 static void tegra_rgb_encoder_enable(struct drm_encoder *encoder)
 {
-	struct drm_display_mode *mode = &encoder->crtc->state->adjusted_mode;
 	struct tegra_output *output = encoder_to_output(encoder);
 	struct tegra_rgb *rgb = to_rgb(output);
 	u32 value;
@@ -109,19 +107,10 @@ static void tegra_rgb_encoder_enable(struct drm_encoder *encoder)
 	value = DE_SELECT_ACTIVE | DE_CONTROL_NORMAL;
 	tegra_dc_writel(rgb->dc, value, DC_DISP_DATA_ENABLE_OPTIONS);
 
-	/* configure H- and V-sync signal polarities */
+	/* XXX: parameterize? */
 	value = tegra_dc_readl(rgb->dc, DC_COM_PIN_OUTPUT_POLARITY(1));
-
-	if (mode->flags & DRM_MODE_FLAG_NHSYNC)
-		value |= LHS_OUTPUT_POLARITY_LOW;
-	else
-		value &= ~LHS_OUTPUT_POLARITY_LOW;
-
-	if (mode->flags & DRM_MODE_FLAG_NVSYNC)
-		value |= LVS_OUTPUT_POLARITY_LOW;
-	else
-		value &= ~LVS_OUTPUT_POLARITY_LOW;
-
+	value &= ~LVS_OUTPUT_POLARITY_LOW;
+	value &= ~LHS_OUTPUT_POLARITY_LOW;
 	tegra_dc_writel(rgb->dc, value, DC_COM_PIN_OUTPUT_POLARITY(1));
 
 	/* XXX: parameterize? */
@@ -261,12 +250,12 @@ int tegra_dc_rgb_probe(struct tegra_dc *dc)
 	return 0;
 }
 
-void tegra_dc_rgb_remove(struct tegra_dc *dc)
+int tegra_dc_rgb_remove(struct tegra_dc *dc)
 {
 	struct tegra_rgb *rgb;
 
 	if (!dc->rgb)
-		return;
+		return 0;
 
 	rgb = to_rgb(dc->rgb);
 	clk_put(rgb->pll_d2_out0);
@@ -274,6 +263,8 @@ void tegra_dc_rgb_remove(struct tegra_dc *dc)
 
 	tegra_output_remove(dc->rgb);
 	dc->rgb = NULL;
+
+	return 0;
 }
 
 int tegra_dc_rgb_init(struct drm_device *drm, struct tegra_dc *dc)

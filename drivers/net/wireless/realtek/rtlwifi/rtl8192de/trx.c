@@ -655,8 +655,9 @@ void rtl92de_tx_fill_desc(struct ieee80211_hw *hw,
 	rtl_dbg(rtlpriv, COMP_SEND, DBG_TRACE, "\n");
 }
 
-void rtl92de_tx_fill_cmddesc(struct ieee80211_hw *hw, u8 *pdesc8,
-			     struct sk_buff *skb)
+void rtl92de_tx_fill_cmddesc(struct ieee80211_hw *hw,
+			     u8 *pdesc8, bool firstseg,
+			     bool lastseg, struct sk_buff *skb)
 {
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 	struct rtl_pci *rtlpci = rtl_pcidev(rtl_pcipriv(hw));
@@ -664,7 +665,7 @@ void rtl92de_tx_fill_cmddesc(struct ieee80211_hw *hw, u8 *pdesc8,
 	struct rtl_hal *rtlhal = rtl_hal(rtlpriv);
 	u8 fw_queue = QSLT_BEACON;
 
-	struct ieee80211_hdr *hdr = rtl_get_hdr(skb);
+	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)(skb->data);
 	__le16 fc = hdr->frame_control;
 	__le32 *pdesc = (__le32 *)pdesc8;
 
@@ -677,7 +678,8 @@ void rtl92de_tx_fill_cmddesc(struct ieee80211_hw *hw, u8 *pdesc8,
 		return;
 	}
 	clear_pci_tx_desc_content(pdesc, TX_DESC_SIZE);
-	set_tx_desc_offset(pdesc, USB_HWDESC_HEADER_LEN);
+	if (firstseg)
+		set_tx_desc_offset(pdesc, USB_HWDESC_HEADER_LEN);
 	/* 5G have no CCK rate
 	 * Caution: The macros below are multi-line expansions.
 	 * The braces are needed no matter what checkpatch says

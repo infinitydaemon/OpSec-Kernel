@@ -807,6 +807,7 @@ int gbaudio_register_module(struct gbaudio_module_info *module)
 {
 	int ret;
 	struct snd_soc_component *comp;
+	struct snd_card *card;
 	struct gbaudio_jack *jack = NULL;
 
 	if (!gbcodec) {
@@ -815,20 +816,21 @@ int gbaudio_register_module(struct gbaudio_module_info *module)
 	}
 
 	comp = gbcodec->component;
+	card = comp->card->snd_card;
 
-	mutex_lock(&gbcodec->register_mutex);
+	down_write(&card->controls_rwsem);
 
 	if (module->num_dais) {
 		dev_err(gbcodec->dev,
 			"%d:DAIs not supported via gbcodec driver\n",
 			module->num_dais);
-		mutex_unlock(&gbcodec->register_mutex);
+		up_write(&card->controls_rwsem);
 		return -EINVAL;
 	}
 
 	ret = gbaudio_init_jack(module, comp->card);
 	if (ret) {
-		mutex_unlock(&gbcodec->register_mutex);
+		up_write(&card->controls_rwsem);
 		return ret;
 	}
 
@@ -865,7 +867,7 @@ int gbaudio_register_module(struct gbaudio_module_info *module)
 		ret = snd_soc_dapm_new_widgets(comp->card);
 	dev_dbg(comp->dev, "Registered %s module\n", module->name);
 
-	mutex_unlock(&gbcodec->register_mutex);
+	up_write(&card->controls_rwsem);
 	return ret;
 }
 EXPORT_SYMBOL(gbaudio_register_module);
@@ -933,12 +935,13 @@ static void gbaudio_codec_cleanup(struct gbaudio_module_info *module)
 void gbaudio_unregister_module(struct gbaudio_module_info *module)
 {
 	struct snd_soc_component *comp = gbcodec->component;
+	struct snd_card *card = comp->card->snd_card;
 	struct gbaudio_jack *jack, *n;
 	int mask;
 
 	dev_dbg(comp->dev, "Unregister %s module\n", module->name);
 
-	mutex_lock(&gbcodec->register_mutex);
+	down_write(&card->controls_rwsem);
 	mutex_lock(&gbcodec->lock);
 	gbaudio_codec_cleanup(module);
 	list_del(&module->list);
@@ -975,8 +978,10 @@ void gbaudio_unregister_module(struct gbaudio_module_info *module)
 		dev_dbg(comp->dev, "Removing %d controls\n",
 			module->num_controls);
 		/* release control semaphore */
+		up_write(&card->controls_rwsem);
 		gbaudio_remove_component_controls(comp, module->controls,
 						  module->num_controls);
+		down_write(&card->controls_rwsem);
 	}
 	if (module->dapm_widgets) {
 		dev_dbg(comp->dev, "Removing %d widgets\n",
@@ -987,7 +992,7 @@ void gbaudio_unregister_module(struct gbaudio_module_info *module)
 
 	dev_dbg(comp->dev, "Unregistered %s module\n", module->name);
 
-	mutex_unlock(&gbcodec->register_mutex);
+	up_write(&card->controls_rwsem);
 }
 EXPORT_SYMBOL(gbaudio_unregister_module);
 
@@ -1007,7 +1012,6 @@ static int gbcodec_probe(struct snd_soc_component *comp)
 	info->dev = comp->dev;
 	INIT_LIST_HEAD(&info->module_list);
 	mutex_init(&info->lock);
-	mutex_init(&info->register_mutex);
 	INIT_LIST_HEAD(&info->dai_list);
 
 	/* init dai_list used to maintain runtime stream info */
@@ -1071,6 +1075,11 @@ static int gbaudio_codec_probe(struct platform_device *pdev)
 			gbaudio_dai, ARRAY_SIZE(gbaudio_dai));
 }
 
+static int gbaudio_codec_remove(struct platform_device *pdev)
+{
+	return 0;
+}
+
 static const struct of_device_id greybus_asoc_machine_of_match[]  = {
 	{ .compatible = "toshiba,apb-dummy-codec", },
 	{},
@@ -1085,6 +1094,7 @@ static struct platform_driver gbaudio_codec_driver = {
 		.of_match_table = greybus_asoc_machine_of_match,
 	},
 	.probe = gbaudio_codec_probe,
+	.remove = gbaudio_codec_remove,
 };
 module_platform_driver(gbaudio_codec_driver);
 

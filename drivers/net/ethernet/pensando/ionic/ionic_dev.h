@@ -7,7 +7,6 @@
 #include <linux/atomic.h>
 #include <linux/mutex.h>
 #include <linux/workqueue.h>
-#include <linux/skbuff.h>
 
 #include "ionic_if.h"
 #include "ionic_regs.h"
@@ -131,8 +130,6 @@ static_assert(sizeof(struct ionic_vf_setattr_cmd) == 64);
 static_assert(sizeof(struct ionic_vf_setattr_comp) == 16);
 static_assert(sizeof(struct ionic_vf_getattr_cmd) == 64);
 static_assert(sizeof(struct ionic_vf_getattr_comp) == 16);
-static_assert(sizeof(struct ionic_vf_ctrl_cmd) == 64);
-static_assert(sizeof(struct ionic_vf_ctrl_comp) == 16);
 #endif /* __CHECKER__ */
 
 struct ionic_devinfo {
@@ -159,11 +156,6 @@ struct ionic_dev {
 
 	struct ionic_intr __iomem *intr_ctrl;
 	u64 __iomem *intr_status;
-
-	struct mutex cmb_inuse_lock; /* for cmb_inuse */
-	unsigned long *cmb_inuse;
-	dma_addr_t phy_cmb_pages;
-	u32 cmb_npages;
 
 	u32 port_info_sz;
 	struct ionic_port_info *port_info;
@@ -210,7 +202,6 @@ struct ionic_desc_info {
 		struct ionic_rxq_desc *rxq_desc;
 		struct ionic_admin_cmd *adminq_desc;
 	};
-	void __iomem *cmb_desc;
 	union {
 		void *sg_desc;
 		struct ionic_txq_sg_desc *txq_sg_desc;
@@ -218,7 +209,7 @@ struct ionic_desc_info {
 	};
 	unsigned int bytes;
 	unsigned int nbufs;
-	struct ionic_buf_info bufs[MAX_SKB_FRAGS + 1];
+	struct ionic_buf_info bufs[IONIC_MAX_FRAGS];
 	ionic_desc_cb cb;
 	void *cb_arg;
 };
@@ -249,14 +240,12 @@ struct ionic_queue {
 		struct ionic_rxq_desc *rxq;
 		struct ionic_admin_cmd *adminq;
 	};
-	void __iomem *cmb_base;
 	union {
 		void *sg_base;
 		struct ionic_txq_sg_desc *txq_sgl;
 		struct ionic_rxq_sg_desc *rxq_sgl;
 	};
 	dma_addr_t base_pa;
-	dma_addr_t cmb_base_pa;
 	dma_addr_t sg_base_pa;
 	unsigned int desc_size;
 	unsigned int sg_desc_size;
@@ -319,7 +308,6 @@ static inline bool ionic_q_has_space(struct ionic_queue *q, unsigned int want)
 
 void ionic_init_devinfo(struct ionic *ionic);
 int ionic_dev_setup(struct ionic *ionic);
-void ionic_dev_teardown(struct ionic *ionic);
 
 void ionic_dev_cmd_go(struct ionic_dev *idev, union ionic_dev_cmd *cmd);
 u8 ionic_dev_cmd_status(struct ionic_dev *idev);
@@ -345,7 +333,6 @@ int ionic_dev_cmd_vf_getattr(struct ionic *ionic, int vf, u8 attr,
 			     struct ionic_vf_getattr_comp *comp);
 void ionic_dev_cmd_queue_identify(struct ionic_dev *idev,
 				  u16 lif_type, u8 qtype, u8 qver);
-void ionic_vf_start(struct ionic *ionic);
 void ionic_dev_cmd_lif_identify(struct ionic_dev *idev, u8 type, u8 ver);
 void ionic_dev_cmd_lif_init(struct ionic_dev *idev, u16 lif_index,
 			    dma_addr_t addr);
@@ -354,9 +341,6 @@ void ionic_dev_cmd_adminq_init(struct ionic_dev *idev, struct ionic_qcq *qcq,
 			       u16 lif_index, u16 intr_index);
 
 int ionic_db_page_num(struct ionic_lif *lif, int pid);
-
-int ionic_get_cmb(struct ionic_lif *lif, u32 *pgid, phys_addr_t *pgaddr, int order);
-void ionic_put_cmb(struct ionic_lif *lif, u32 pgid, int order);
 
 int ionic_cq_init(struct ionic_lif *lif, struct ionic_cq *cq,
 		  struct ionic_intr_info *intr,
@@ -374,10 +358,10 @@ int ionic_q_init(struct ionic_lif *lif, struct ionic_dev *idev,
 		 unsigned int num_descs, size_t desc_size,
 		 size_t sg_desc_size, unsigned int pid);
 void ionic_q_map(struct ionic_queue *q, void *base, dma_addr_t base_pa);
-void ionic_q_cmb_map(struct ionic_queue *q, void __iomem *base, dma_addr_t base_pa);
 void ionic_q_sg_map(struct ionic_queue *q, void *base, dma_addr_t base_pa);
 void ionic_q_post(struct ionic_queue *q, bool ring_doorbell, ionic_desc_cb cb,
 		  void *cb_arg);
+void ionic_q_rewind(struct ionic_queue *q, struct ionic_desc_info *start);
 void ionic_q_service(struct ionic_queue *q, struct ionic_cq_info *cq_info,
 		     unsigned int stop_index);
 int ionic_heartbeat_check(struct ionic *ionic);

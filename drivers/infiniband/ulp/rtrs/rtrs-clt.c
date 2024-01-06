@@ -45,9 +45,7 @@ static struct rtrs_rdma_dev_pd dev_pd = {
 };
 
 static struct workqueue_struct *rtrs_wq;
-static const struct class rtrs_clt_dev_class = {
-	.name = "rtrs-client",
-};
+static struct class *rtrs_clt_dev_class;
 
 static inline bool rtrs_clt_is_connected(const struct rtrs_clt_sess *clt)
 {
@@ -775,18 +773,13 @@ rtrs_clt_get_next_path_or_null(struct list_head *head, struct rtrs_clt_path *clt
  * Related to @MP_POLICY_RR
  *
  * Locks:
- *    rcu_read_lock() must be held.
+ *    rcu_read_lock() must be hold.
  */
 static struct rtrs_clt_path *get_next_path_rr(struct path_it *it)
 {
 	struct rtrs_clt_path __rcu **ppcpu_path;
 	struct rtrs_clt_path *path;
 	struct rtrs_clt_sess *clt;
-
-	/*
-	 * Assert that rcu lock must be held
-	 */
-	RCU_LOCKDEP_WARN(!rcu_read_lock_held(), "no rcu read lock held");
 
 	clt = it->clt;
 
@@ -1071,8 +1064,10 @@ static int rtrs_map_sg_fr(struct rtrs_clt_io_req *req, size_t count)
 
 	/* Align the MR to a 4K page size to match the block virt boundary */
 	nr = ib_map_mr_sg(req->mr, req->sglist, count, NULL, SZ_4K);
-	if (nr != count)
-		return nr < 0 ? nr : -EINVAL;
+	if (nr < 0)
+		return nr;
+	if (nr < req->sg_cnt)
+		return -EINVAL;
 	ib_update_fast_reg_key(req->mr, ib_inc_rkey(req->mr->rkey));
 
 	return nr;
@@ -1522,7 +1517,7 @@ static void rtrs_clt_err_recovery_work(struct work_struct *work)
 	rtrs_clt_stop_and_destroy_conns(clt_path);
 	queue_delayed_work(rtrs_wq, &clt_path->reconnect_dwork,
 			   msecs_to_jiffies(delay_ms +
-					    get_random_u32_below(RTRS_RECONNECT_SEED)));
+					    prandom_u32_max(RTRS_RECONNECT_SEED)));
 }
 
 static struct rtrs_clt_path *alloc_path(struct rtrs_clt_sess *clt,
@@ -1717,6 +1712,7 @@ static int create_con_cq_qp(struct rtrs_clt_con *con)
 			return -ENOMEM;
 		con->queue_num = cq_num;
 	}
+	cq_num = max_send_wr + max_recv_wr;
 	cq_vector = con->cpu % clt_path->s.dev->ib_dev->num_comp_vectors;
 	if (con->c.cid >= clt_path->s.irq_con_num)
 		err = rtrs_cq_qp_create(&clt_path->s, &con->c, max_send_sge,
@@ -2704,7 +2700,7 @@ static struct rtrs_clt_sess *alloc_clt(const char *sessname, size_t paths_num,
 		return ERR_PTR(-ENOMEM);
 	}
 
-	clt->dev.class = &rtrs_clt_dev_class;
+	clt->dev.class = rtrs_clt_dev_class;
 	clt->dev.release = rtrs_clt_dev_release;
 	uuid_gen(&clt->paths_uuid);
 	INIT_LIST_HEAD_RCU(&clt->paths_list);
@@ -3157,17 +3153,16 @@ static const struct rtrs_rdma_dev_pd_ops dev_pd_ops = {
 
 static int __init rtrs_client_init(void)
 {
-	int ret = 0;
-
 	rtrs_rdma_dev_pd_init(0, &dev_pd);
-	ret = class_register(&rtrs_clt_dev_class);
-	if (ret) {
+
+	rtrs_clt_dev_class = class_create(THIS_MODULE, "rtrs-client");
+	if (IS_ERR(rtrs_clt_dev_class)) {
 		pr_err("Failed to create rtrs-client dev class\n");
-		return ret;
+		return PTR_ERR(rtrs_clt_dev_class);
 	}
 	rtrs_wq = alloc_workqueue("rtrs_client_wq", 0, 0);
 	if (!rtrs_wq) {
-		class_unregister(&rtrs_clt_dev_class);
+		class_destroy(rtrs_clt_dev_class);
 		return -ENOMEM;
 	}
 
@@ -3177,7 +3172,7 @@ static int __init rtrs_client_init(void)
 static void __exit rtrs_client_exit(void)
 {
 	destroy_workqueue(rtrs_wq);
-	class_unregister(&rtrs_clt_dev_class);
+	class_destroy(rtrs_clt_dev_class);
 	rtrs_rdma_dev_pd_deinit(&dev_pd);
 }
 

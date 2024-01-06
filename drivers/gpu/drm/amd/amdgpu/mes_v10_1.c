@@ -121,10 +121,6 @@ static int mes_v10_1_submit_pkt_and_poll_completion(struct amdgpu_mes *mes,
 	if (r < 1) {
 		DRM_ERROR("MES failed to response msg=%d\n",
 			  x_pkt->header.opcode);
-
-		while (halt_if_hws_hang)
-			schedule();
-
 		return -ETIMEDOUT;
 	}
 
@@ -149,7 +145,7 @@ static int mes_v10_1_add_hw_queue(struct amdgpu_mes *mes,
 {
 	struct amdgpu_device *adev = mes->adev;
 	union MESAPI__ADD_QUEUE mes_add_queue_pkt;
-	struct amdgpu_vmhub *hub = &adev->vmhub[AMDGPU_GFXHUB(0)];
+	struct amdgpu_vmhub *hub = &adev->vmhub[AMDGPU_GFXHUB_0];
 	uint32_t vm_cntx_cntl = hub->vm_cntx_cntl;
 
 	memset(&mes_add_queue_pkt, 0, sizeof(mes_add_queue_pkt));
@@ -558,7 +554,7 @@ static int mes_v10_1_load_microcode(struct amdgpu_device *adev,
 	WREG32_SOC15(GC, 0, mmCP_MES_MDBOUND_LO, 0x3FFFF);
 
 	/* invalidate ICACHE */
-	switch (amdgpu_ip_version(adev, GC_HWIP, 0)) {
+	switch (adev->ip_versions[GC_HWIP][0]) {
 	case IP_VERSION(10, 3, 0):
 		data = RREG32_SOC15(GC, 0, mmCP_MES_IC_OP_CNTL_Sienna_Cichlid);
 		break;
@@ -568,7 +564,7 @@ static int mes_v10_1_load_microcode(struct amdgpu_device *adev,
 	}
 	data = REG_SET_FIELD(data, CP_MES_IC_OP_CNTL, PRIME_ICACHE, 0);
 	data = REG_SET_FIELD(data, CP_MES_IC_OP_CNTL, INVALIDATE_CACHE, 1);
-	switch (amdgpu_ip_version(adev, GC_HWIP, 0)) {
+	switch (adev->ip_versions[GC_HWIP][0]) {
 	case IP_VERSION(10, 3, 0):
 		WREG32_SOC15(GC, 0, mmCP_MES_IC_OP_CNTL_Sienna_Cichlid, data);
 		break;
@@ -578,7 +574,7 @@ static int mes_v10_1_load_microcode(struct amdgpu_device *adev,
 	}
 
 	/* prime the ICACHE. */
-	switch (amdgpu_ip_version(adev, GC_HWIP, 0)) {
+	switch (adev->ip_versions[GC_HWIP][0]) {
 	case IP_VERSION(10, 3, 0):
 		data = RREG32_SOC15(GC, 0, mmCP_MES_IC_OP_CNTL_Sienna_Cichlid);
 		break;
@@ -587,7 +583,7 @@ static int mes_v10_1_load_microcode(struct amdgpu_device *adev,
 		break;
 	}
 	data = REG_SET_FIELD(data, CP_MES_IC_OP_CNTL, PRIME_ICACHE, 1);
-	switch (amdgpu_ip_version(adev, GC_HWIP, 0)) {
+	switch (adev->ip_versions[GC_HWIP][0]) {
 	case IP_VERSION(10, 3, 0):
 		WREG32_SOC15(GC, 0, mmCP_MES_IC_OP_CNTL_Sienna_Cichlid, data);
 		break;
@@ -631,8 +627,6 @@ static int mes_v10_1_mqd_init(struct amdgpu_ring *ring)
 	struct v10_compute_mqd *mqd = ring->mqd_ptr;
 	uint64_t hqd_gpu_addr, wb_gpu_addr, eop_base_addr;
 	uint32_t tmp;
-
-	memset(mqd, 0, sizeof(*mqd));
 
 	mqd->header = 0xC0310800;
 	mqd->compute_pipelinestat_enable = 0x00000001;
@@ -730,7 +724,6 @@ static int mes_v10_1_mqd_init(struct amdgpu_ring *ring)
 	/* offset: 184 - this is used for CP_HQD_GFX_CONTROL */
 	mqd->cp_hqd_suspend_cntl_stack_offset = tmp;
 
-	amdgpu_device_flush_hdp(ring->adev, NULL);
 	return 0;
 }
 
@@ -800,8 +793,8 @@ static void mes_v10_1_queue_init_register(struct amdgpu_ring *ring)
 
 static int mes_v10_1_kiq_enable_queue(struct amdgpu_device *adev)
 {
-	struct amdgpu_kiq *kiq = &adev->gfx.kiq[0];
-	struct amdgpu_ring *kiq_ring = &adev->gfx.kiq[0].ring;
+	struct amdgpu_kiq *kiq = &adev->gfx.kiq;
+	struct amdgpu_ring *kiq_ring = &adev->gfx.kiq.ring;
 	int r;
 
 	if (!kiq->pmf || !kiq->pmf->kiq_map_queues)
@@ -815,7 +808,13 @@ static int mes_v10_1_kiq_enable_queue(struct amdgpu_device *adev)
 
 	kiq->pmf->kiq_map_queues(kiq_ring, &adev->mes.ring);
 
-	return amdgpu_ring_test_helper(kiq_ring);
+	r = amdgpu_ring_test_ring(kiq_ring);
+	if (r) {
+		DRM_ERROR("kfq enable failed\n");
+		kiq_ring->sched.ready = false;
+	}
+
+	return r;
 }
 
 static int mes_v10_1_queue_init(struct amdgpu_device *adev)
@@ -860,9 +859,9 @@ static int mes_v10_1_kiq_ring_init(struct amdgpu_device *adev)
 {
 	struct amdgpu_ring *ring;
 
-	spin_lock_init(&adev->gfx.kiq[0].ring_lock);
+	spin_lock_init(&adev->gfx.kiq.ring_lock);
 
-	ring = &adev->gfx.kiq[0].ring;
+	ring = &adev->gfx.kiq.ring;
 
 	ring->me = 3;
 	ring->pipe = 1;
@@ -888,7 +887,7 @@ static int mes_v10_1_mqd_sw_init(struct amdgpu_device *adev,
 	struct amdgpu_ring *ring;
 
 	if (pipe == AMDGPU_MES_KIQ_PIPE)
-		ring = &adev->gfx.kiq[0].ring;
+		ring = &adev->gfx.kiq.ring;
 	else if (pipe == AMDGPU_MES_SCHED_PIPE)
 		ring = &adev->mes.ring;
 	else
@@ -898,7 +897,6 @@ static int mes_v10_1_mqd_sw_init(struct amdgpu_device *adev,
 		return 0;
 
 	r = amdgpu_bo_create_kernel(adev, mqd_size, PAGE_SIZE,
-				    AMDGPU_GEM_DOMAIN_VRAM |
 				    AMDGPU_GEM_DOMAIN_GTT, &ring->mqd_obj,
 				    &ring->mqd_gpu_addr, &ring->mqd_ptr);
 	if (r) {
@@ -909,12 +907,10 @@ static int mes_v10_1_mqd_sw_init(struct amdgpu_device *adev,
 
 	/* prepare MQD backup */
 	adev->mes.mqd_backup[pipe] = kmalloc(mqd_size, GFP_KERNEL);
-	if (!adev->mes.mqd_backup[pipe]) {
+	if (!adev->mes.mqd_backup[pipe])
 		dev_warn(adev->dev,
 			 "no memory to create MQD backup for ring %s\n",
 			 ring->name);
-		return -ENOMEM;
-	}
 
 	return 0;
 }
@@ -924,6 +920,7 @@ static int mes_v10_1_sw_init(void *handle)
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 	int pipe, r;
 
+	adev->mes.adev = adev;
 	adev->mes.funcs = &mes_v10_1_funcs;
 	adev->mes.kiq_hw_init = &mes_v10_1_kiq_hw_init;
 
@@ -974,15 +971,15 @@ static int mes_v10_1_sw_fini(void *handle)
 		amdgpu_ucode_release(&adev->mes.fw[pipe]);
 	}
 
-	amdgpu_bo_free_kernel(&adev->gfx.kiq[0].ring.mqd_obj,
-			      &adev->gfx.kiq[0].ring.mqd_gpu_addr,
-			      &adev->gfx.kiq[0].ring.mqd_ptr);
+	amdgpu_bo_free_kernel(&adev->gfx.kiq.ring.mqd_obj,
+			      &adev->gfx.kiq.ring.mqd_gpu_addr,
+			      &adev->gfx.kiq.ring.mqd_ptr);
 
 	amdgpu_bo_free_kernel(&adev->mes.ring.mqd_obj,
 			      &adev->mes.ring.mqd_gpu_addr,
 			      &adev->mes.ring.mqd_ptr);
 
-	amdgpu_ring_fini(&adev->gfx.kiq[0].ring);
+	amdgpu_ring_fini(&adev->gfx.kiq.ring);
 	amdgpu_ring_fini(&adev->mes.ring);
 
 	amdgpu_mes_fini(adev);
@@ -995,7 +992,7 @@ static void mes_v10_1_kiq_setting(struct amdgpu_ring *ring)
 	struct amdgpu_device *adev = ring->adev;
 
 	/* tell RLC which is KIQ queue */
-	switch (amdgpu_ip_version(adev, GC_HWIP, 0)) {
+	switch (adev->ip_versions[GC_HWIP][0]) {
 	case IP_VERSION(10, 3, 0):
 	case IP_VERSION(10, 3, 2):
 	case IP_VERSION(10, 3, 1):
@@ -1038,7 +1035,7 @@ static int mes_v10_1_kiq_hw_init(struct amdgpu_device *adev)
 
 	mes_v10_1_enable(adev, true);
 
-	mes_v10_1_kiq_setting(&adev->gfx.kiq[0].ring);
+	mes_v10_1_kiq_setting(&adev->gfx.kiq.ring);
 
 	r = mes_v10_1_queue_init(adev);
 	if (r)
@@ -1090,7 +1087,7 @@ static int mes_v10_1_hw_init(void *handle)
 	 * MES uses KIQ ring exclusively so driver cannot access KIQ ring
 	 * with MES enabled.
 	 */
-	adev->gfx.kiq[0].ring.sched.ready = false;
+	adev->gfx.kiq.ring.sched.ready = false;
 	adev->mes.ring.sched.ready = true;
 
 	return 0;

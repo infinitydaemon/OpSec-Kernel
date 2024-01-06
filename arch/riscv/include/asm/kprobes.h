@@ -40,15 +40,8 @@ void arch_remove_kprobe(struct kprobe *p);
 int kprobe_fault_handler(struct pt_regs *regs, unsigned int trapnr);
 bool kprobe_breakpoint_handler(struct pt_regs *regs);
 bool kprobe_single_step_handler(struct pt_regs *regs);
-#else
-static inline bool kprobe_breakpoint_handler(struct pt_regs *regs)
-{
-	return false;
-}
+void __kretprobe_trampoline(void);
+void __kprobes *trampoline_probe_handler(struct pt_regs *regs);
 
-static inline bool kprobe_single_step_handler(struct pt_regs *regs)
-{
-	return false;
-}
 #endif /* CONFIG_KPROBES */
 #endif /* _ASM_RISCV_KPROBES_H */

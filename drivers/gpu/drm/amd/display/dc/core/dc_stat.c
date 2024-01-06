@@ -35,15 +35,19 @@
  */
 
 /**
- *  dc_stat_get_dmub_notification
+ *****************************************************************************
+ *  Function: dc_stat_get_dmub_notification
  *
- * Calls dmub layer to retrieve dmub notification
+ *  @brief
+ *		Calls dmub layer to retrieve dmub notification
  *
- * @dc: dc structure
- * @notify: dmub notification structure
+ *  @param
+ *		[in] dc: dc structure
+ *		[in] notify: dmub notification structure
  *
- * Returns
+ *  @return
  *     None
+ *****************************************************************************
  */
 void dc_stat_get_dmub_notification(const struct dc *dc, struct dmub_notification *notify)
 {
@@ -61,7 +65,6 @@ void dc_stat_get_dmub_notification(const struct dc *dc, struct dmub_notification
 	/* For HPD/HPD RX, convert dpia port index into link index */
 	if (notify->type == DMUB_NOTIFICATION_HPD ||
 	    notify->type == DMUB_NOTIFICATION_HPD_IRQ ||
-		notify->type == DMUB_NOTIFICATION_DPIA_NOTIFICATION ||
 	    notify->type == DMUB_NOTIFICATION_SET_CONFIG_REPLY) {
 		notify->link_index =
 			get_link_index_from_dpia_port_index(dc, notify->link_index);
@@ -69,15 +72,19 @@ void dc_stat_get_dmub_notification(const struct dc *dc, struct dmub_notification
 }
 
 /**
- * dc_stat_get_dmub_dataout
+ *****************************************************************************
+ *  Function: dc_stat_get_dmub_dataout
  *
- * Calls dmub layer to retrieve dmub gpint dataout
+ *  @brief
+ *		Calls dmub layer to retrieve dmub gpint dataout
  *
- * @dc: dc structure
- * @dataout: dmub gpint dataout
+ *  @param
+ *		[in] dc: dc structure
+ *		[in] dataout: dmub gpint dataout
  *
- * Returns
+ *  @return
  *     None
+ *****************************************************************************
  */
 void dc_stat_get_dmub_dataout(const struct dc *dc, uint32_t *dataout)
 {

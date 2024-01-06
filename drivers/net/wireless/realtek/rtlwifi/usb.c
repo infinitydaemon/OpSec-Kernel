@@ -164,17 +164,13 @@ static void _usb_write_async(struct usb_device *udev, u32 addr, u32 val,
 	u16 wvalue;
 	u16 index;
 	__le32 data;
-	int ret;
 
 	request = REALTEK_USB_VENQT_CMD_REQ;
 	index = REALTEK_USB_VENQT_CMD_IDX; /* n/a */
 	wvalue = (u16)(addr&0x0000ffff);
 	data = cpu_to_le32(val);
-
-	ret = _usbctrl_vendorreq_async_write(udev, request, wvalue,
-					     index, &data, len);
-	if (ret < 0)
-		dev_err(&udev->dev, "error %d writing at 0x%x\n", ret, addr);
+	_usbctrl_vendorreq_async_write(udev, request, wvalue, index, &data,
+				       len);
 }
 
 static void _usb_write8_async(struct rtl_priv *rtlpriv, u32 addr, u8 val)
@@ -198,6 +194,28 @@ static void _usb_write32_async(struct rtl_priv *rtlpriv, u32 addr, u32 val)
 	_usb_write_async(to_usb_device(dev), addr, val, 4);
 }
 
+static void _usb_writen_sync(struct rtl_priv *rtlpriv, u32 addr, void *data,
+			     u16 len)
+{
+	struct device *dev = rtlpriv->io.dev;
+	struct usb_device *udev = to_usb_device(dev);
+	u8 request = REALTEK_USB_VENQT_CMD_REQ;
+	u8 reqtype =  REALTEK_USB_VENQT_WRITE;
+	u16 wvalue;
+	u16 index = REALTEK_USB_VENQT_CMD_IDX;
+	int pipe = usb_sndctrlpipe(udev, 0); /* write_out */
+	u8 *buffer;
+
+	wvalue = (u16)(addr & 0x0000ffff);
+	buffer = kmemdup(data, len, GFP_ATOMIC);
+	if (!buffer)
+		return;
+	usb_control_msg(udev, pipe, request, reqtype, wvalue,
+			index, buffer, len, 50);
+
+	kfree(buffer);
+}
+
 static void _rtl_usb_io_handler_init(struct device *dev,
 				     struct ieee80211_hw *hw)
 {
@@ -211,6 +229,7 @@ static void _rtl_usb_io_handler_init(struct device *dev,
 	rtlpriv->io.read8_sync		= _usb_read8_sync;
 	rtlpriv->io.read16_sync		= _usb_read16_sync;
 	rtlpriv->io.read32_sync		= _usb_read32_sync;
+	rtlpriv->io.writen_sync		= _usb_writen_sync;
 }
 
 static void _rtl_usb_io_handler_release(struct ieee80211_hw *hw)
@@ -414,7 +433,7 @@ static void _rtl_usb_rx_process_agg(struct ieee80211_hw *hw,
 	skb_pull(skb, RTL_RX_DESC_SIZE);
 	rtlpriv->cfg->ops->query_rx_desc(hw, &stats, &rx_status, rxdesc, skb);
 	skb_pull(skb, (stats.rx_drvinfo_size + stats.rx_bufshift));
-	hdr = rtl_get_hdr(skb);
+	hdr = (struct ieee80211_hdr *)(skb->data);
 	fc = hdr->frame_control;
 	if (!stats.crc) {
 		memcpy(IEEE80211_SKB_RXCB(skb), &rx_status, sizeof(rx_status));
@@ -456,7 +475,7 @@ static void _rtl_usb_rx_process_noagg(struct ieee80211_hw *hw,
 	skb_pull(skb, RTL_RX_DESC_SIZE);
 	rtlpriv->cfg->ops->query_rx_desc(hw, &stats, &rx_status, rxdesc, skb);
 	skb_pull(skb, (stats.rx_drvinfo_size + stats.rx_bufshift));
-	hdr = rtl_get_hdr(skb);
+	hdr = (struct ieee80211_hdr *)(skb->data);
 	fc = hdr->frame_control;
 	if (!stats.crc) {
 		memcpy(IEEE80211_SKB_RXCB(skb), &rx_status, sizeof(rx_status));
@@ -907,7 +926,7 @@ static void _rtl_usb_tx_preprocess(struct ieee80211_hw *hw,
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
 	struct rtl_tx_desc *pdesc = NULL;
 	struct rtl_tcb_desc tcb_desc;
-	struct ieee80211_hdr *hdr = rtl_get_hdr(skb);
+	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)(skb->data);
 	__le16 fc = hdr->frame_control;
 	u8 *pda_addr = hdr->addr1;
 
@@ -942,7 +961,7 @@ static int rtl_usb_tx(struct ieee80211_hw *hw,
 {
 	struct rtl_usb *rtlusb = rtl_usbdev(rtl_usbpriv(hw));
 	struct rtl_hal *rtlhal = rtl_hal(rtl_priv(hw));
-	struct ieee80211_hdr *hdr = rtl_get_hdr(skb);
+	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)(skb->data);
 	__le16 fc = hdr->frame_control;
 	u16 hw_queue;
 
@@ -1049,7 +1068,7 @@ int rtl_usb_probe(struct usb_interface *intf,
 		pr_err("Can't init_sw_vars\n");
 		goto error_out;
 	}
-	rtl_init_sw_leds(hw);
+	rtlpriv->cfg->ops->init_sw_leds(hw);
 
 	err = ieee80211_register_hw(hw);
 	if (err) {
@@ -1098,6 +1117,7 @@ void rtl_usb_disconnect(struct usb_interface *intf)
 	rtl_usb_deinit(hw);
 	rtl_deinit_core(hw);
 	kfree(rtlpriv->usb_data);
+	rtlpriv->cfg->ops->deinit_sw_leds(hw);
 	rtlpriv->cfg->ops->deinit_sw_vars(hw);
 	_rtl_usb_io_handler_release(hw);
 	usb_put_dev(rtlusb->udev);

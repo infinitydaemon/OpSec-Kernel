@@ -7,6 +7,7 @@
 
 #include <asm-generic/module.h>
 
+#ifdef CONFIG_ARM64_MODULE_PLTS
 struct mod_plt_sec {
 	int			plt_shndx;
 	int			plt_num_entries;
@@ -20,6 +21,7 @@ struct mod_arch_specific {
 	/* for CONFIG_DYNAMIC_FTRACE */
 	struct plt_entry	*ftrace_trampolines;
 };
+#endif
 
 u64 module_emit_plt_entry(struct module *mod, Elf64_Shdr *sechdrs,
 			  void *loc, const Elf64_Rela *rela,
@@ -27,6 +29,12 @@ u64 module_emit_plt_entry(struct module *mod, Elf64_Shdr *sechdrs,
 
 u64 module_emit_veneer_for_adrp(struct module *mod, Elf64_Shdr *sechdrs,
 				void *loc, u64 val);
+
+#ifdef CONFIG_RANDOMIZE_BASE
+extern u64 module_alloc_base;
+#else
+#define module_alloc_base	((u64)_etext - MODULES_VSIZE)
+#endif
 
 struct plt_entry {
 	/*
@@ -44,7 +52,8 @@ struct plt_entry {
 
 static inline bool is_forbidden_offset_for_adrp(void *place)
 {
-	return cpus_have_final_cap(ARM64_WORKAROUND_843419) &&
+	return IS_ENABLED(CONFIG_ARM64_ERRATUM_843419) &&
+	       cpus_have_const_cap(ARM64_WORKAROUND_843419) &&
 	       ((u64)place & 0xfff) >= 0xff8;
 }
 

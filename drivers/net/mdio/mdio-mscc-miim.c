@@ -109,6 +109,9 @@ static int mscc_miim_read(struct mii_bus *bus, int mii_id, int regnum)
 	u32 val;
 	int ret;
 
+	if (regnum & MII_ADDR_C45)
+		return -EOPNOTSUPP;
+
 	ret = mscc_miim_wait_pending(bus);
 	if (ret)
 		goto out;
@@ -151,6 +154,9 @@ static int mscc_miim_write(struct mii_bus *bus, int mii_id,
 {
 	struct mscc_miim_dev *miim = bus->priv;
 	int ret;
+
+	if (regnum & MII_ADDR_C45)
+		return -EOPNOTSUPP;
 
 	ret = mscc_miim_wait_pending(bus);
 	if (ret < 0)
@@ -335,13 +341,15 @@ out_disable_clk:
 	return ret;
 }
 
-static void mscc_miim_remove(struct platform_device *pdev)
+static int mscc_miim_remove(struct platform_device *pdev)
 {
 	struct mii_bus *bus = platform_get_drvdata(pdev);
 	struct mscc_miim_dev *miim = bus->priv;
 
 	clk_disable_unprepare(miim->clk);
 	mdiobus_unregister(bus);
+
+	return 0;
 }
 
 static const struct mscc_miim_info mscc_ocelot_miim_info = {
@@ -369,7 +377,7 @@ MODULE_DEVICE_TABLE(of, mscc_miim_match);
 
 static struct platform_driver mscc_miim_driver = {
 	.probe = mscc_miim_probe,
-	.remove_new = mscc_miim_remove,
+	.remove = mscc_miim_remove,
 	.driver = {
 		.name = "mscc-miim",
 		.of_match_table = mscc_miim_match,

@@ -167,8 +167,8 @@ void vc4_hvs_dump_state(struct vc4_hvs *hvs)
 
 static int vc4_hvs_debugfs_underrun(struct seq_file *m, void *data)
 {
-	struct drm_debugfs_entry *entry = m->private;
-	struct drm_device *dev = entry->dev;
+	struct drm_info_node *node = m->private;
+	struct drm_device *dev = node->minor->dev;
 	struct vc4_dev *vc4 = to_vc4_dev(dev);
 	struct drm_printer p = drm_seq_file_printer(m);
 
@@ -179,8 +179,8 @@ static int vc4_hvs_debugfs_underrun(struct seq_file *m, void *data)
 
 static int vc4_hvs_debugfs_dlist(struct seq_file *m, void *data)
 {
-	struct drm_debugfs_entry *entry = m->private;
-	struct drm_device *dev = entry->dev;
+	struct drm_info_node *node = m->private;
+	struct drm_device *dev = node->minor->dev;
 	struct vc4_dev *vc4 = to_vc4_dev(dev);
 	struct vc4_hvs *hvs = vc4->hvs;
 	struct drm_printer p = drm_seq_file_printer(m);
@@ -823,10 +823,28 @@ u8 vc4_hvs_get_fifo_frame_count(struct vc4_hvs *hvs, unsigned int fifo)
 	if (!drm_dev_enter(drm, &idx))
 		return 0;
 
-	if (vc4->gen >= VC4_GEN_6) {
+	switch (vc4->gen) {
+	case VC4_GEN_6:
 		field = VC4_GET_FIELD(HVS_READ(SCALER6_DISPX_STATUS(fifo)),
 				      SCALER6_DISPX_STATUS_FRCNT);
-	} else {
+		break;
+	case VC4_GEN_5:
+		switch (fifo) {
+		case 0:
+			field = VC4_GET_FIELD(HVS_READ(SCALER_DISPSTAT1),
+					      SCALER5_DISPSTAT1_FRCNT0);
+			break;
+		case 1:
+			field = VC4_GET_FIELD(HVS_READ(SCALER_DISPSTAT1),
+					      SCALER5_DISPSTAT1_FRCNT1);
+			break;
+		case 2:
+			field = VC4_GET_FIELD(HVS_READ(SCALER_DISPSTAT2),
+					      SCALER5_DISPSTAT2_FRCNT2);
+			break;
+		}
+		break;
+	case VC4_GEN_4:
 		switch (fifo) {
 		case 0:
 			field = VC4_GET_FIELD(HVS_READ(SCALER_DISPSTAT1),
@@ -841,6 +859,7 @@ u8 vc4_hvs_get_fifo_frame_count(struct vc4_hvs *hvs, unsigned int fifo)
 					      SCALER_DISPSTAT2_FRCNT2);
 			break;
 		}
+		break;
 	}
 
 	drm_dev_exit(idx);
@@ -1608,6 +1627,7 @@ int vc4_hvs_debugfs_init(struct drm_minor *minor)
 	struct drm_device *drm = minor->dev;
 	struct vc4_dev *vc4 = to_vc4_dev(drm);
 	struct vc4_hvs *hvs = vc4->hvs;
+	int ret;
 
 	if (vc4->firmware_kms)
 		return 0;
@@ -1620,20 +1640,31 @@ int vc4_hvs_debugfs_init(struct drm_minor *minor)
 				    minor->debugfs_root,
 				    &vc4->load_tracker_enabled);
 
-		drm_debugfs_add_file(drm, "hvs_gamma", vc5_hvs_debugfs_gamma,
+		vc4_debugfs_add_file(minor, "hvs_gamma", vc5_hvs_debugfs_gamma,
 				     NULL);
 	}
 
 	if (vc4->gen >= VC4_GEN_6)
-		drm_debugfs_add_file(drm, "hvs_dlists", vc6_hvs_debugfs_dlist, NULL);
+		ret = vc4_debugfs_add_file(minor, "hvs_dlists", vc6_hvs_debugfs_dlist, NULL);
 	else
-		drm_debugfs_add_file(drm, "hvs_dlists", vc4_hvs_debugfs_dlist, NULL);
+		ret = vc4_debugfs_add_file(minor, "hvs_dlists", vc4_hvs_debugfs_dlist, NULL);
+	if (ret)
+		return ret;
 
-	drm_debugfs_add_file(drm, "hvs_underrun", vc4_hvs_debugfs_underrun, NULL);
+	ret = vc4_debugfs_add_file(minor, "hvs_underrun",
+				   vc4_hvs_debugfs_underrun, NULL);
+	if (ret)
+		return ret;
 
-	drm_debugfs_add_file(drm, "hvs_dlist_allocs", vc4_hvs_debugfs_dlist_allocs, NULL);
+	ret = vc4_debugfs_add_file(minor, "hvs_dlist_allocs",
+				   vc4_hvs_debugfs_dlist_allocs, NULL);
+	if (ret)
+		return ret;
 
-	vc4_debugfs_add_regset32(drm, "hvs_regs", &hvs->regset);
+	ret = vc4_debugfs_add_regset32(minor, "hvs_regs",
+				       &hvs->regset);
+	if (ret)
+		return ret;
 
 	return 0;
 }
@@ -2226,9 +2257,10 @@ static int vc4_hvs_dev_probe(struct platform_device *pdev)
 	return component_add(&pdev->dev, &vc4_hvs_ops);
 }
 
-static void vc4_hvs_dev_remove(struct platform_device *pdev)
+static int vc4_hvs_dev_remove(struct platform_device *pdev)
 {
 	component_del(&pdev->dev, &vc4_hvs_ops);
+	return 0;
 }
 
 static const struct of_device_id vc4_hvs_dt_match[] = {
@@ -2240,7 +2272,7 @@ static const struct of_device_id vc4_hvs_dt_match[] = {
 
 struct platform_driver vc4_hvs_driver = {
 	.probe = vc4_hvs_dev_probe,
-	.remove_new = vc4_hvs_dev_remove,
+	.remove = vc4_hvs_dev_remove,
 	.driver = {
 		.name = "vc4_hvs",
 		.of_match_table = vc4_hvs_dt_match,

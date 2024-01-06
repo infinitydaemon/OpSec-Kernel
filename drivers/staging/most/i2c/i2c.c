@@ -44,10 +44,7 @@ struct hdm_i2c {
 	char name[64];
 };
 
-static inline struct hdm_i2c *to_hdm(struct most_interface *iface)
-{
-	return container_of(iface, struct hdm_i2c, most_iface);
-}
+#define to_hdm(iface) container_of(iface, struct hdm_i2c, most_iface)
 
 static irqreturn_t most_irq_handler(int, void *);
 static void pending_rx_work(struct work_struct *);
@@ -287,7 +284,7 @@ static irqreturn_t most_irq_handler(int irq, void *_dev)
  *
  * Register the i2c client device as a MOST interface
  */
-static int i2c_probe(struct i2c_client *client)
+static int i2c_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	struct hdm_i2c *dev;
 	int ret, i;

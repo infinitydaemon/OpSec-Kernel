@@ -89,7 +89,8 @@ struct atom_memory_info {
 
 #define MAX_AC_TIMING_ENTRIES 16
 
-struct atom_memory_clock_range_table {
+struct atom_memory_clock_range_table
+{
 	u8 num_entries;
 	u8 rsv[3];
 	u32 mclk[MAX_AC_TIMING_ENTRIES];
@@ -117,12 +118,14 @@ struct atom_mc_reg_table {
 
 #define MAX_VOLTAGE_ENTRIES 32
 
-struct atom_voltage_table_entry {
+struct atom_voltage_table_entry
+{
 	u16 value;
 	u32 smio_low;
 };
 
-struct atom_voltage_table {
+struct atom_voltage_table
+{
 	u32 count;
 	u32 mask_low;
 	u32 phase_delay;
@@ -214,6 +217,5 @@ int amdgpu_atombios_get_data_table(struct amdgpu_device *adev,
 
 void amdgpu_atombios_fini(struct amdgpu_device *adev);
 int amdgpu_atombios_init(struct amdgpu_device *adev);
-int amdgpu_atombios_sysfs_init(struct amdgpu_device *adev);
 
 #endif

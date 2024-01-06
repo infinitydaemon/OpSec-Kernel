@@ -4,7 +4,7 @@
  * Module Name: dswexec - Dispatcher method execution callbacks;
  *                        dispatch to interpreter.
  *
- * Copyright (C) 2000 - 2023, Intel Corp.
+ * Copyright (C) 2000 - 2022, Intel Corp.
  *
  *****************************************************************************/
 
@@ -389,11 +389,9 @@ acpi_status acpi_ds_exec_end_op(struct acpi_walk_state *walk_state)
 
 		/*
 		 * All opcodes require operand resolution, with the only exceptions
-		 * being the object_type and size_of operators as well as opcodes that
-		 * take no arguments.
+		 * being the object_type and size_of operators.
 		 */
-		if (!(walk_state->op_info->flags & AML_NO_OPERAND_RESOLVE) &&
-		    (walk_state->op_info->flags & AML_HAS_ARGS)) {
+		if (!(walk_state->op_info->flags & AML_NO_OPERAND_RESOLVE)) {
 
 			/* Resolve all operands */
 

@@ -7,10 +7,9 @@
  */
 
 #include <linux/list.h>
-#include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
-#include <linux/platform_device.h>
+#include <linux/of_platform.h>
 #include <linux/errno.h>
 #include <linux/err.h>
 #include <linux/export.h>
@@ -21,7 +20,7 @@
 
 #define MPIC_MSGR_REGISTERS_PER_BLOCK	4
 #define MPIC_MSGR_STRIDE		0x10
-#define MPIC_MSGR_MER_OFFSET		(0x100 / sizeof(u32))
+#define MPIC_MSGR_MER_OFFSET		0x100
 #define MSGR_INUSE			0
 #define MSGR_FREE			1
 
@@ -117,7 +116,7 @@ static unsigned int mpic_msgr_number_of_blocks(void)
 
 		for (;;) {
 			snprintf(buf, sizeof(buf), "mpic-msgr-block%d", count);
-			if (!of_property_present(aliases, buf))
+			if (!of_find_property(aliases, buf, NULL))
 				break;
 
 			count += 1;
@@ -235,7 +234,7 @@ static int mpic_msgr_probe(struct platform_device *dev)
 
 		reg_number = block_number * MPIC_MSGR_REGISTERS_PER_BLOCK + i;
 		msgr->base = msgr_block_addr + i * MPIC_MSGR_STRIDE;
-		msgr->mer = msgr->base + MPIC_MSGR_MER_OFFSET;
+		msgr->mer = (u32 *)((u8 *)msgr->base + MPIC_MSGR_MER_OFFSET);
 		msgr->in_use = MSGR_FREE;
 		msgr->num = i;
 		raw_spin_lock_init(&msgr->lock);

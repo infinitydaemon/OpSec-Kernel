@@ -8,9 +8,9 @@
  */
 #include <linux/cpu.h>
 #include <linux/interrupt.h>
-#include <linux/irqdomain.h>
 #include <linux/module.h>
 #include <linux/msi.h>
+#include <linux/of_irq.h>
 #include <linux/irqchip/chained_irq.h>
 #include <linux/pci.h>
 #include <linux/platform_device.h>
@@ -348,7 +348,7 @@ static void xgene_msi_isr(struct irq_desc *desc)
 
 static enum cpuhp_state pci_xgene_online;
 
-static void xgene_msi_remove(struct platform_device *pdev)
+static int xgene_msi_remove(struct platform_device *pdev)
 {
 	struct xgene_msi *msi = platform_get_drvdata(pdev);
 
@@ -362,6 +362,8 @@ static void xgene_msi_remove(struct platform_device *pdev)
 	msi->bitmap = NULL;
 
 	xgene_free_domains(msi);
+
+	return 0;
 }
 
 static int xgene_msi_hwirq_alloc(unsigned int cpu)
@@ -441,7 +443,8 @@ static int xgene_msi_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, xgene_msi);
 
-	xgene_msi->msi_regs = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	xgene_msi->msi_regs = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(xgene_msi->msi_regs)) {
 		rc = PTR_ERR(xgene_msi->msi_regs);
 		goto error;
@@ -518,7 +521,7 @@ static struct platform_driver xgene_msi_driver = {
 		.of_match_table = xgene_msi_match_table,
 	},
 	.probe = xgene_msi_probe,
-	.remove_new = xgene_msi_remove,
+	.remove = xgene_msi_remove,
 };
 
 static int __init xgene_pcie_msi_init(void)

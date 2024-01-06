@@ -215,9 +215,8 @@ static int max3100_sr(struct max3100_port *s, u16 tx, u16 *rx)
 
 static int max3100_handlerx(struct max3100_port *s, u16 rx)
 {
-	unsigned int status = 0;
+	unsigned int ch, flg, status = 0;
 	int ret = 0, cts;
-	u8 ch, flg;
 
 	if (rx & MAX3100_R && s->rx_enabled) {
 		dev_dbg(&s->spi->dev, "%s\n", __func__);
@@ -248,7 +247,7 @@ static int max3100_handlerx(struct max3100_port *s, u16 rx)
 	cts = (rx & MAX3100_CTS) > 0;
 	if (s->cts != cts) {
 		s->cts = cts;
-		uart_handle_cts_change(&s->port, cts);
+		uart_handle_cts_change(&s->port, cts ? TIOCM_CTS : 0);
 	}
 
 	return ret;
@@ -293,7 +292,9 @@ static void max3100_work(struct work_struct *w)
 			} else if (!uart_circ_empty(xmit) &&
 				   !uart_tx_stopped(&s->port)) {
 				tx = xmit->buf[xmit->tail];
-				uart_xmit_advance(&s->port, 1);
+				xmit->tail = (xmit->tail + 1) &
+					(UART_XMIT_SIZE - 1);
+				s->port.icount.tx++;
 			}
 			if (tx != 0xffff) {
 				max3100_calc_parity(s, &tx);

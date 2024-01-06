@@ -60,7 +60,7 @@ static volatile unsigned long *iommu_pte = (unsigned long *)SUN3X_IOMMU;
 
 #ifdef DEBUG
 /* code to print out a dvma mapping for debugging purposes */
-static void dvma_print (unsigned long dvma_addr)
+void dvma_print (unsigned long dvma_addr)
 {
 
 	unsigned long index;
@@ -125,7 +125,7 @@ inline int dvma_map_cpu(unsigned long kaddr,
 			do {
 				pr_debug("mapping %08lx phys to %08lx\n",
 					 __pa(kaddr), vaddr);
-				set_pte(pte, pfn_pte(virt_to_pfn((void *)kaddr),
+				set_pte(pte, pfn_pte(virt_to_pfn(kaddr),
 						     PAGE_KERNEL));
 				pte++;
 				kaddr += PAGE_SIZE;
@@ -143,7 +143,8 @@ inline int dvma_map_cpu(unsigned long kaddr,
 }
 
 
-int dvma_map_iommu(unsigned long kaddr, unsigned long baddr, int len)
+inline int dvma_map_iommu(unsigned long kaddr, unsigned long baddr,
+				 int len)
 {
 	unsigned long end, index;
 

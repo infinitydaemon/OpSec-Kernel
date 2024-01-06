@@ -32,7 +32,7 @@ struct vc4_dummy_output *vc4_dummy_output(struct kunit *test,
 	struct drm_encoder *enc;
 	int ret;
 
-	dummy_output = drmm_kzalloc(drm, sizeof(*dummy_output), GFP_KERNEL);
+	dummy_output = kunit_kzalloc(test, sizeof(*dummy_output), GFP_KERNEL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, dummy_output);
 	dummy_output->encoder.type = vc4_encoder_type;
 
@@ -81,7 +81,7 @@ vc4_mock_atomic_add_output(struct kunit *test,
 	crtc = vc4_find_crtc_for_encoder(test, encoder);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, crtc);
 
-	output = encoder_to_vc4_dummy_output(encoder);
+	output = container_of(encoder, struct vc4_dummy_output, encoder.base);
 	conn = &output->connector;
 	conn_state = drm_atomic_get_connector_state(state, conn);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, conn_state);
@@ -127,7 +127,7 @@ int vc4_mock_atomic_del_output(struct kunit *test,
 	ret = drm_atomic_set_mode_for_crtc(crtc_state, NULL);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 
-	output = encoder_to_vc4_dummy_output(encoder);
+	output = container_of(encoder, struct vc4_dummy_output, encoder.base);
 	conn = &output->connector;
 	conn_state = drm_atomic_get_connector_state(state, conn);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, conn_state);

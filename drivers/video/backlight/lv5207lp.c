@@ -67,7 +67,7 @@ static int lv5207lp_backlight_check_fb(struct backlight_device *backlight,
 {
 	struct lv5207lp *lv = bl_get_data(backlight);
 
-	return !lv->pdata->dev || lv->pdata->dev == info->device;
+	return lv->pdata->fbdev == NULL || lv->pdata->fbdev == info->device;
 }
 
 static const struct backlight_ops lv5207lp_backlight_ops = {
@@ -76,7 +76,8 @@ static const struct backlight_ops lv5207lp_backlight_ops = {
 	.check_fb	= lv5207lp_backlight_check_fb,
 };
 
-static int lv5207lp_probe(struct i2c_client *client)
+static int lv5207lp_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
 	struct lv5207lp_platform_data *pdata = dev_get_platdata(&client->dev);
 	struct backlight_device *backlight;

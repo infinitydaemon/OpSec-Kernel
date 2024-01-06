@@ -40,7 +40,7 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
-#include <linux/platform_device.h>
+#include <linux/of_platform.h>
 #include <linux/clk.h>
 
 #include <asm/mpc52xx.h>
@@ -1096,14 +1096,14 @@ static void
 mpc52xx_uart_break_ctl(struct uart_port *port, int ctl)
 {
 	unsigned long flags;
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	if (ctl == -1)
 		psc_ops->command(port, MPC52xx_PSC_START_BRK);
 	else
 		psc_ops->command(port, MPC52xx_PSC_STOP_BRK);
 
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 }
 
 static int
@@ -1214,7 +1214,7 @@ mpc52xx_uart_set_termios(struct uart_port *port, struct ktermios *new,
 	}
 
 	/* Get the lock */
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	/* Do our best to flush TX & RX, so we don't lose anything */
 	/* But we don't wait indefinitely ! */
@@ -1250,7 +1250,7 @@ mpc52xx_uart_set_termios(struct uart_port *port, struct ktermios *new,
 	psc_ops->command(port, MPC52xx_PSC_RX_ENABLE);
 
 	/* We're all set, release the lock */
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 }
 
 static const char *
@@ -1428,11 +1428,42 @@ mpc52xx_uart_int_rx_chars(struct uart_port *port)
 static inline bool
 mpc52xx_uart_int_tx_chars(struct uart_port *port)
 {
-	u8 ch;
+	struct circ_buf *xmit = &port->state->xmit;
 
-	return uart_port_tx(port, ch,
-		psc_ops->raw_tx_rdy(port),
-		psc_ops->write_char(port, ch));
+	/* Process out of band chars */
+	if (port->x_char) {
+		psc_ops->write_char(port, port->x_char);
+		port->icount.tx++;
+		port->x_char = 0;
+		return true;
+	}
+
+	/* Nothing to do ? */
+	if (uart_circ_empty(xmit) || uart_tx_stopped(port)) {
+		mpc52xx_uart_stop_tx(port);
+		return false;
+	}
+
+	/* Send chars */
+	while (psc_ops->raw_tx_rdy(port)) {
+		psc_ops->write_char(port, xmit->buf[xmit->tail]);
+		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+		port->icount.tx++;
+		if (uart_circ_empty(xmit))
+			break;
+	}
+
+	/* Wake up */
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
+		uart_write_wakeup(port);
+
+	/* Maybe we're done after all */
+	if (uart_circ_empty(xmit)) {
+		mpc52xx_uart_stop_tx(port);
+		return false;
+	}
+
+	return true;
 }
 
 static irqreturn_t
@@ -1477,11 +1508,11 @@ mpc52xx_uart_int(int irq, void *dev_id)
 	struct uart_port *port = dev_id;
 	irqreturn_t ret;
 
-	uart_port_lock(port);
+	spin_lock(&port->lock);
 
 	ret = psc_ops->handle_irq(port);
 
-	uart_port_unlock(port);
+	spin_unlock(&port->lock);
 
 	return ret;
 }

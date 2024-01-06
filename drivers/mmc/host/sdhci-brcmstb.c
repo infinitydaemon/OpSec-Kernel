@@ -484,7 +484,7 @@ static const struct brcmstb_match_priv match_priv_2712 = {
 	.ops = &sdhci_brcmstb_ops_2712,
 };
 
-static const struct of_device_id __maybe_unused sdhci_brcm_of_match[] = {
+static const struct of_device_id sdhci_brcm_of_match[] = {
 	{ .compatible = "brcm,bcm7425-sdhci", .data = &match_priv_7425 },
 	{ .compatible = "brcm,bcm7445-sdhci", .data = &match_priv_7445 },
 	{ .compatible = "brcm,bcm7216-sdhci", .data = &match_priv_7216 },
@@ -572,17 +572,23 @@ static int sdhci_brcmstb_probe(struct platform_device *pdev)
 
 	dev_dbg(&pdev->dev, "Probe found match for %s\n",  match->compatible);
 
-	clk = devm_clk_get_optional_enabled(&pdev->dev, NULL);
+	clk = devm_clk_get_optional(&pdev->dev, NULL);
 	if (IS_ERR(clk))
 		return dev_err_probe(&pdev->dev, PTR_ERR(clk),
-				     "Failed to get and enable clock from Device Tree\n");
+				     "Failed to get clock from Device Tree\n");
+
+	res = clk_prepare_enable(clk);
+	if (res)
+		return res;
 
 	memset(&brcmstb_pdata, 0, sizeof(brcmstb_pdata));
 	brcmstb_pdata.ops = match_priv->ops;
 	host = sdhci_pltfm_init(pdev, &brcmstb_pdata,
 				sizeof(struct sdhci_brcmstb_priv));
-	if (IS_ERR(host))
-		return PTR_ERR(host);
+	if (IS_ERR(host)) {
+		res = PTR_ERR(host);
+		goto err_clk;
+	}
 
 	pltfm_host = sdhci_priv(host);
 	priv = sdhci_pltfm_priv(pltfm_host);
@@ -597,7 +603,8 @@ static int sdhci_brcmstb_probe(struct platform_device *pdev)
 		priv->flags |= BRCMSTB_PRIV_FLAGS_HAS_SD_EXPRESS;
 
 	/* Map in the non-standard CFG registers */
-	priv->cfg_regs = devm_platform_get_and_ioremap_resource(pdev, 1, NULL);
+	iomem = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	priv->cfg_regs = devm_ioremap_resource(&pdev->dev, iomem);
 	if (IS_ERR(priv->cfg_regs)) {
 		res = PTR_ERR(priv->cfg_regs);
 		goto err;
@@ -673,11 +680,13 @@ static int sdhci_brcmstb_probe(struct platform_device *pdev)
 	 * will allow these modes to be specified by device tree
 	 * properties through mmc_of_parse().
 	 */
-	sdhci_read_caps(host);
+	host->caps = sdhci_readl(host, SDHCI_CAPABILITIES);
 	if (match_priv->flags & BRCMSTB_MATCH_FLAGS_NO_64BIT)
 		host->caps &= ~SDHCI_CAN_64BIT;
+	host->caps1 = sdhci_readl(host, SDHCI_CAPABILITIES_1);
 	host->caps1 &= ~(SDHCI_SUPPORT_SDR50 | SDHCI_SUPPORT_SDR104 |
 			 SDHCI_SUPPORT_DDR50);
+	host->quirks |= SDHCI_QUIRK_MISSING_CAPS;
 
 	if (match_priv->flags & BRCMSTB_MATCH_FLAGS_BROKEN_TIMEOUT)
 		host->quirks |= SDHCI_QUIRK_BROKEN_TIMEOUT_VAL;
@@ -720,7 +729,9 @@ add_host:
 
 err:
 	sdhci_pltfm_free(pdev);
+err_clk:
 	clk_disable_unprepare(base_clk);
+	clk_disable_unprepare(clk);
 	return res;
 }
 
@@ -779,7 +790,7 @@ static struct platform_driver sdhci_brcmstb_driver = {
 		.of_match_table = of_match_ptr(sdhci_brcm_of_match),
 	},
 	.probe		= sdhci_brcmstb_probe,
-	.remove_new	= sdhci_pltfm_remove,
+	.remove		= sdhci_pltfm_unregister,
 	.shutdown	= sdhci_brcmstb_shutdown,
 };
 

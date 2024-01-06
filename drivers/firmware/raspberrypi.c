@@ -10,7 +10,6 @@
 #include <linux/kref.h>
 #include <linux/mailbox_client.h>
 #include <linux/module.h>
-#include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/reboot.h>
@@ -405,8 +404,10 @@ static int rpi_firmware_probe(struct platform_device *pdev)
 	fw->chan = mbox_request_channel(&fw->cl, 0);
 	if (IS_ERR(fw->chan)) {
 		int ret = PTR_ERR(fw->chan);
+		if (ret != -EPROBE_DEFER)
+			dev_err(dev, "Failed to get mbox channel: %d\n", ret);
 		kfree(fw);
-		return dev_err_probe(dev, ret, "Failed to get mbox channel\n");
+		return ret;
 	}
 
 	init_completion(&fw->c);
@@ -495,7 +496,6 @@ EXPORT_SYMBOL_GPL(rpi_firmware_get);
 
 /**
  * devm_rpi_firmware_get - Get pointer to rpi_firmware structure.
- * @dev:              The firmware device structure
  * @firmware_node:    Pointer to the firmware Device Tree node.
  *
  * Returns NULL is the firmware device is not ready.

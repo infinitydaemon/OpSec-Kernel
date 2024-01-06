@@ -47,7 +47,6 @@
 
 #include "dcn10/dcn10_resource.h"
 
-#include "link.h"
 #include "dce/dce_abm.h"
 #include "dce/dce_audio.h"
 #include "dce/dce_aux.h"
@@ -74,8 +73,6 @@
 #include "nbio/nbio_7_4_offset.h"
 #include "amdgpu_socbb.h"
 
-#define DC_LOGGER \
-	dc->ctx->logger
 #define DC_LOGGER_INIT(logger)
 
 static const struct dc_debug_options debug_defaults_drv = {
@@ -97,16 +94,31 @@ static const struct dc_debug_options debug_defaults_drv = {
 		.dwb_fi_phase = -1, // -1 = disable,
 		.dmub_command_table = true,
 		.use_max_lb = true,
-		.exit_idle_opt_for_cursor_updates = true,
-		.enable_legacy_fast_update = false,
-		.using_dml2 = false,
+		.exit_idle_opt_for_cursor_updates = true
+};
+
+static const struct dc_debug_options debug_defaults_diags = {
+		.disable_dmcu = true,
+		.force_abm_enable = false,
+		.timing_trace = true,
+		.clock_trace = true,
+		.disable_dpp_power_gate = true,
+		.disable_hubp_power_gate = true,
+		.disable_clock_gate = true,
+		.disable_pplib_clock_request = true,
+		.disable_pplib_wm_range = true,
+		.disable_stutter = false,
+		.scl_reset_length10 = true,
+		.dwb_fi_phase = -1, // -1 = disable
+		.dmub_command_table = true,
+		.enable_tri_buf = true,
+		.use_max_lb = true
 };
 
 static const struct dc_panel_config panel_config_defaults = {
 		.psr = {
 			.disable_psr = false,
 			.disallow_psrsu = false,
-			.disallow_replay = false,
 		},
 };
 
@@ -134,6 +146,8 @@ static const struct resource_caps res_cap_dcn302 = {
 
 static const struct dc_plane_cap plane_cap = {
 		.type = DC_PLANE_TYPE_DCN_UNIVERSAL,
+		.blends_with_above = true,
+		.blends_with_below = true,
 		.per_pixel_alpha = true,
 		.pixel_format_support = {
 				.argb8888 = true,
@@ -169,6 +183,7 @@ static const struct dc_plane_cap plane_cap = {
 		mm ## reg_name
 
 /* DCN */
+#undef BASE_INNER
 #define BASE_INNER(seg) DCN_BASE__INST0_SEG ## seg
 
 #define BASE(seg) BASE_INNER(seg)
@@ -200,9 +215,6 @@ static const struct dc_plane_cap plane_cap = {
 #define SRII_DWB(reg_name, temp_name, block, id)\
 		.reg_name[id] = BASE(mm ## block ## id ## _ ## temp_name ## _BASE_IDX) + \
 		mm ## block ## id ## _ ## temp_name
-
-#define SF_DWB2(reg_name, block, id, field_name, post_fix)	\
-	.field_name = reg_name ## __ ## field_name ## post_fix
 
 #define SRII_MPC_RMU(reg_name, block, id)\
 		.RMU##_##reg_name[id] = BASE(mm ## block ## id ## _ ## reg_name ## _BASE_IDX) + \
@@ -452,7 +464,6 @@ static struct clock_source *dcn302_clock_source_create(struct dc_context *ctx, s
 		return &clk_src->base;
 	}
 
-	kfree(clk_src);
 	BREAK_TO_DEBUGGER();
 	return NULL;
 }
@@ -941,6 +952,13 @@ static const struct resource_create_funcs res_create_funcs = {
 		.create_hwseq = dcn302_hwseq_create,
 };
 
+static const struct resource_create_funcs res_create_maximus_funcs = {
+		.read_dce_straps = NULL,
+		.create_audio = NULL,
+		.create_stream_encoder = NULL,
+		.create_hwseq = dcn302_hwseq_create,
+};
+
 static bool is_soc_bounding_box_valid(struct dc *dc)
 {
 	uint32_t hw_internal_rev = dc->ctx->asic_id.hw_internal_rev;
@@ -1104,12 +1122,6 @@ static void dcn302_resource_destruct(struct resource_pool *pool)
 
 	if (pool->dccg != NULL)
 		dcn_dccg_destroy(&pool->dccg);
-
-	if (pool->oem_device != NULL) {
-		struct dc *dc = pool->oem_device->ctx->dc;
-
-		dc->link_srv->destroy_ddc_service(&pool->oem_device);
-	}
 }
 
 static void dcn302_destroy_resource_pool(struct resource_pool **pool)
@@ -1139,8 +1151,7 @@ static struct resource_funcs dcn302_res_pool_funcs = {
 		.calculate_wm_and_dlg = dcn30_calculate_wm_and_dlg,
 		.update_soc_for_wm_a = dcn30_update_soc_for_wm_a,
 		.populate_dml_pipes = dcn30_populate_dml_pipes_from_context,
-		.acquire_free_pipe_as_secondary_dpp_pipe = dcn20_acquire_free_pipe_for_layer,
-		.release_pipe = dcn20_release_pipe,
+		.acquire_idle_pipe_for_layer = dcn20_acquire_idle_pipe_for_layer,
 		.add_stream_to_ctx = dcn30_add_stream_to_ctx,
 		.add_dsc_to_stream_resource = dcn20_add_dsc_to_stream_resource,
 		.remove_stream_from_ctx = dcn20_remove_stream_from_ctx,
@@ -1202,7 +1213,6 @@ static bool dcn302_resource_construct(
 	int i;
 	struct dc_context *ctx = dc->ctx;
 	struct irq_service_init_data init_data;
-	struct ddc_service_init_data ddc_init_data = {0};
 
 	ctx->dc_bios->regs = &bios_regs;
 
@@ -1233,7 +1243,6 @@ static bool dcn302_resource_construct(
 	dc->caps.force_dp_tps4_for_cp2520 = true;
 	dc->caps.extended_aux_timeout_support = true;
 	dc->caps.dmcub_support = true;
-	dc->caps.max_v_total = (1 << 15) - 1;
 
 	/* Color pipeline capabilities */
 	dc->caps.color.dpp.dcn_arch = 1;
@@ -1269,8 +1278,6 @@ static bool dcn302_resource_construct(
 	dc->caps.color.mpc.ogam_rom_caps.hlg = 0;
 	dc->caps.color.mpc.ocsc = 1;
 
-	dc->caps.dp_hdmi21_pcon_support = true;
-
 	/* read VBIOS LTTPR caps */
 	if (ctx->dc_bios->funcs->get_lttpr_caps) {
 		enum bp_result bp_query_result;
@@ -1291,6 +1298,8 @@ static bool dcn302_resource_construct(
 
 	if (dc->ctx->dce_environment == DCE_ENV_PRODUCTION_DRV)
 		dc->debug = debug_defaults_drv;
+	else
+		dc->debug = debug_defaults_diags;
 
 	// Init the vm_helper
 	if (dc->vm_helper)
@@ -1469,7 +1478,8 @@ static bool dcn302_resource_construct(
 
 	/* Audio, Stream Encoders including HPO and virtual, MPC 3D LUTs */
 	if (!resource_construct(num_virtual_links, dc, pool,
-			&res_create_funcs))
+			(!IS_FPGA_MAXIMUS_DC(dc->ctx->dce_environment) ?
+					&res_create_funcs : &res_create_maximus_funcs)))
 		goto create_fail;
 
 	/* HW Sequencer and Plane caps */
@@ -1481,17 +1491,6 @@ static bool dcn302_resource_construct(
 		dc->caps.planes[i] = plane_cap;
 
 	dc->cap_funcs = cap_funcs;
-
-	if (dc->ctx->dc_bios->fw_info.oem_i2c_present) {
-		ddc_init_data.ctx = dc->ctx;
-		ddc_init_data.link = NULL;
-		ddc_init_data.id.id = dc->ctx->dc_bios->fw_info.oem_i2c_obj_id;
-		ddc_init_data.id.enum_id = 0;
-		ddc_init_data.id.type = OBJECT_TYPE_GENERIC;
-		pool->oem_device = dc->link_srv->create_ddc_service(&ddc_init_data);
-	} else {
-		pool->oem_device = NULL;
-	}
 
 	return true;
 

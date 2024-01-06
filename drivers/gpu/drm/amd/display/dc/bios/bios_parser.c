@@ -33,6 +33,7 @@
 #include "include/gpio_service_interface.h"
 #include "include/grph_object_ctrl_defs.h"
 #include "include/bios_parser_interface.h"
+#include "include/i2caux_interface.h"
 #include "include/logger_interface.h"
 
 #include "command_table.h"
@@ -96,7 +97,7 @@ struct dc_bios *bios_parser_create(
 	struct bp_init_data *init,
 	enum dce_version dce_version)
 {
-	struct bios_parser *bp;
+	struct bios_parser *bp = NULL;
 
 	bp = kzalloc(sizeof(struct bios_parser), GFP_KERNEL);
 	if (!bp)
@@ -137,9 +138,7 @@ static uint8_t get_number_of_objects(struct bios_parser *bp, uint32_t offset)
 
 	uint32_t object_table_offset = bp->object_info_tbl_offset + offset;
 
-	table = ((ATOM_OBJECT_TABLE *) bios_get_image(&bp->base,
-				object_table_offset,
-				struct_size(table, asObjects, 1)));
+	table = GET_IMAGE(ATOM_OBJECT_TABLE, object_table_offset);
 
 	if (!table)
 		return 0;
@@ -167,9 +166,8 @@ static struct graphics_object_id bios_parser_get_connector_id(
 	uint32_t connector_table_offset = bp->object_info_tbl_offset
 		+ le16_to_cpu(bp->object_info_tbl.v1_1->usConnectorObjectTableOffset);
 
-	ATOM_OBJECT_TABLE *tbl = ((ATOM_OBJECT_TABLE *) bios_get_image(&bp->base,
-				connector_table_offset,
-				struct_size(tbl, asObjects, 1)));
+	ATOM_OBJECT_TABLE *tbl =
+		GET_IMAGE(ATOM_OBJECT_TABLE, connector_table_offset);
 
 	if (!tbl) {
 		dm_error("Can't get connector table from atom bios.\n");
@@ -664,9 +662,8 @@ static enum bp_result get_ss_info_v3_1(
 	if (!DATA_TABLES(ASIC_InternalSS_Info))
 		return BP_RESULT_UNSUPPORTED;
 
-	ss_table_header_include = ((ATOM_ASIC_INTERNAL_SS_INFO_V3 *) bios_get_image(&bp->base,
-				DATA_TABLES(ASIC_InternalSS_Info),
-				struct_size(ss_table_header_include, asSpreadSpectrum, 1)));
+	ss_table_header_include = GET_IMAGE(ATOM_ASIC_INTERNAL_SS_INFO_V3,
+		DATA_TABLES(ASIC_InternalSS_Info));
 	table_size =
 		(le16_to_cpu(ss_table_header_include->sHeader.usStructureSize)
 				- sizeof(ATOM_COMMON_TABLE_HEADER))
@@ -1032,10 +1029,8 @@ static enum bp_result get_ss_info_from_internal_ss_info_tbl_V2_1(
 	if (!DATA_TABLES(ASIC_InternalSS_Info))
 		return result;
 
-	header = ((ATOM_ASIC_INTERNAL_SS_INFO_V2 *) bios_get_image(
-				&bp->base,
-				DATA_TABLES(ASIC_InternalSS_Info),
-				struct_size(header, asSpreadSpectrum, 1)));
+	header = GET_IMAGE(ATOM_ASIC_INTERNAL_SS_INFO_V2,
+		DATA_TABLES(ASIC_InternalSS_Info));
 
 	memset(info, 0, sizeof(struct spread_spectrum_info));
 
@@ -1714,10 +1709,8 @@ static uint32_t get_ss_entry_number_from_internal_ss_info_tbl_v2_1(
 	if (!DATA_TABLES(ASIC_InternalSS_Info))
 		return 0;
 
-	header_include = ((ATOM_ASIC_INTERNAL_SS_INFO_V2 *) bios_get_image(
-				&bp->base,
-				DATA_TABLES(ASIC_InternalSS_Info),
-				struct_size(header_include, asSpreadSpectrum, 1)));
+	header_include = GET_IMAGE(ATOM_ASIC_INTERNAL_SS_INFO_V2,
+			DATA_TABLES(ASIC_InternalSS_Info));
 
 	size = (le16_to_cpu(header_include->sHeader.usStructureSize)
 			- sizeof(ATOM_COMMON_TABLE_HEADER))
@@ -1753,9 +1746,8 @@ static uint32_t get_ss_entry_number_from_internal_ss_info_tbl_V3_1(
 	if (!DATA_TABLES(ASIC_InternalSS_Info))
 		return number;
 
-	header_include = ((ATOM_ASIC_INTERNAL_SS_INFO_V3 *) bios_get_image(&bp->base,
-				DATA_TABLES(ASIC_InternalSS_Info),
-				struct_size(header_include, asSpreadSpectrum, 1)));
+	header_include = GET_IMAGE(ATOM_ASIC_INTERNAL_SS_INFO_V3,
+			DATA_TABLES(ASIC_InternalSS_Info));
 	size = (le16_to_cpu(header_include->sHeader.usStructureSize) -
 			sizeof(ATOM_COMMON_TABLE_HEADER)) /
 					sizeof(ATOM_ASIC_SS_ASSIGNMENT_V3);
@@ -1797,13 +1789,11 @@ static enum bp_result bios_parser_get_gpio_pin_info(
 	if (!DATA_TABLES(GPIO_Pin_LUT))
 		return BP_RESULT_BADBIOSTABLE;
 
-	header = ((ATOM_GPIO_PIN_LUT *) bios_get_image(&bp->base,
-				DATA_TABLES(GPIO_Pin_LUT),
-				struct_size(header, asGPIO_Pin, 1)));
+	header = GET_IMAGE(ATOM_GPIO_PIN_LUT, DATA_TABLES(GPIO_Pin_LUT));
 	if (!header)
 		return BP_RESULT_BADBIOSTABLE;
 
-	if (sizeof(ATOM_COMMON_TABLE_HEADER) + struct_size(header, asGPIO_Pin, 1)
+	if (sizeof(ATOM_COMMON_TABLE_HEADER) + sizeof(ATOM_GPIO_PIN_LUT)
 			> le16_to_cpu(header->sHeader.usStructureSize))
 		return BP_RESULT_BADBIOSTABLE;
 
@@ -1988,8 +1978,7 @@ static ATOM_OBJECT *get_bios_object(struct bios_parser *bp,
 
 	offset += bp->object_info_tbl_offset;
 
-	tbl = ((ATOM_OBJECT_TABLE *) bios_get_image(&bp->base, offset,
-				struct_size(tbl, asObjects, 1)));
+	tbl = GET_IMAGE(ATOM_OBJECT_TABLE, offset);
 	if (!tbl)
 		return NULL;
 
@@ -2576,7 +2565,7 @@ static struct integrated_info *bios_parser_create_integrated_info(
 	struct dc_bios *dcb)
 {
 	struct bios_parser *bp = BP_FROM_DCB(dcb);
-	struct integrated_info *info;
+	struct integrated_info *info = NULL;
 
 	info = kzalloc(sizeof(struct integrated_info), GFP_KERNEL);
 
@@ -2593,10 +2582,11 @@ static struct integrated_info *bios_parser_create_integrated_info(
 	return NULL;
 }
 
-static enum bp_result update_slot_layout_info(struct dc_bios *dcb,
-					      unsigned int i,
-					      struct slot_layout_info *slot_layout_info,
-					      unsigned int record_offset)
+static enum bp_result update_slot_layout_info(
+	struct dc_bios *dcb,
+	unsigned int i,
+	struct slot_layout_info *slot_layout_info,
+	unsigned int record_offset)
 {
 	unsigned int j;
 	struct bios_parser *bp;
@@ -2610,7 +2600,8 @@ static enum bp_result update_slot_layout_info(struct dc_bios *dcb,
 
 	for (;;) {
 
-		record_header = GET_IMAGE(ATOM_COMMON_RECORD_HEADER, record_offset);
+		record_header = (ATOM_COMMON_RECORD_HEADER *)
+			GET_IMAGE(ATOM_COMMON_RECORD_HEADER, record_offset);
 		if (record_header == NULL) {
 			result = BP_RESULT_BADBIOSTABLE;
 			break;
@@ -2624,7 +2615,7 @@ static enum bp_result update_slot_layout_info(struct dc_bios *dcb,
 
 		if (record_header->ucRecordType ==
 			ATOM_BRACKET_LAYOUT_RECORD_TYPE &&
-			struct_size(record, asConnInfo, 1)
+			sizeof(ATOM_BRACKET_LAYOUT_RECORD)
 			<= record_header->ucRecordSize) {
 			record = (ATOM_BRACKET_LAYOUT_RECORD *)
 				(record_header);
@@ -2695,9 +2686,10 @@ static enum bp_result update_slot_layout_info(struct dc_bios *dcb,
 }
 
 
-static enum bp_result get_bracket_layout_record(struct dc_bios *dcb,
-						unsigned int bracket_layout_id,
-						struct slot_layout_info *slot_layout_info)
+static enum bp_result get_bracket_layout_record(
+	struct dc_bios *dcb,
+	unsigned int bracket_layout_id,
+	struct slot_layout_info *slot_layout_info)
 {
 	unsigned int i;
 	unsigned int record_offset;
@@ -2717,9 +2709,8 @@ static enum bp_result get_bracket_layout_record(struct dc_bios *dcb,
 
 	genericTableOffset = bp->object_info_tbl_offset +
 		bp->object_info_tbl.v1_3->usMiscObjectTableOffset;
-	object_table = ((ATOM_OBJECT_TABLE *) bios_get_image(&bp->base,
-				genericTableOffset,
-				struct_size(object_table, asObjects, 1)));
+	object_table = (ATOM_OBJECT_TABLE *)
+		GET_IMAGE(ATOM_OBJECT_TABLE, genericTableOffset);
 	if (!object_table)
 		return BP_RESULT_FAILURE;
 
@@ -2746,7 +2737,6 @@ static enum bp_result bios_get_board_layout_info(
 	struct board_layout_info *board_layout_info)
 {
 	unsigned int i;
-	struct bios_parser *bp;
 	enum bp_result record_result;
 
 	const unsigned int slot_index_to_vbios_id[MAX_BOARD_SLOTS] = {
@@ -2754,8 +2744,6 @@ static enum bp_result bios_get_board_layout_info(
 		GENERICOBJECT_BRACKET_LAYOUT_ENUM_ID2,
 		0, 0
 	};
-
-	bp = BP_FROM_DCB(dcb);
 
 	if (board_layout_info == NULL) {
 		DC_LOG_DETECTION_EDID_PARSER("Invalid board_layout_info\n");

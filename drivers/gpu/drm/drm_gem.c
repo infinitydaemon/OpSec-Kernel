@@ -164,27 +164,10 @@ void drm_gem_private_object_init(struct drm_device *dev,
 	if (!obj->resv)
 		obj->resv = &obj->_resv;
 
-	if (drm_core_check_feature(dev, DRIVER_GEM_GPUVA))
-		drm_gem_gpuva_init(obj);
-
 	drm_vma_node_reset(&obj->vma_node);
 	INIT_LIST_HEAD(&obj->lru_node);
 }
 EXPORT_SYMBOL(drm_gem_private_object_init);
-
-/**
- * drm_gem_private_object_fini - Finalize a failed drm_gem_object
- * @obj: drm_gem_object
- *
- * Uninitialize an already allocated GEM object when it initialized failed
- */
-void drm_gem_private_object_fini(struct drm_gem_object *obj)
-{
-	WARN_ON(obj->dma_buf);
-
-	dma_resv_fini(&obj->_resv);
-}
-EXPORT_SYMBOL(drm_gem_private_object_fini);
 
 /**
  * drm_gem_object_handle_free - release resources bound to userspace handles
@@ -338,6 +321,13 @@ out:
 	return ret;
 }
 EXPORT_SYMBOL_GPL(drm_gem_dumb_map_offset);
+
+int drm_gem_dumb_destroy(struct drm_file *file,
+			 struct drm_device *dev,
+			 u32 handle)
+{
+	return drm_gem_handle_delete(file, handle);
+}
 
 /**
  * drm_gem_handle_create_tail - internal functions to create a handle
@@ -499,13 +489,13 @@ int drm_gem_create_mmap_offset(struct drm_gem_object *obj)
 EXPORT_SYMBOL(drm_gem_create_mmap_offset);
 
 /*
- * Move folios to appropriate lru and release the folios, decrementing the
- * ref count of those folios.
+ * Move pages to appropriate lru and release the pagevec, decrementing the
+ * ref count of those pages.
  */
-static void drm_gem_check_release_batch(struct folio_batch *fbatch)
+static void drm_gem_check_release_pagevec(struct pagevec *pvec)
 {
-	check_move_unevictable_folios(fbatch);
-	__folio_batch_release(fbatch);
+	check_move_unevictable_pages(pvec);
+	__pagevec_release(pvec);
 	cond_resched();
 }
 
@@ -537,10 +527,10 @@ static void drm_gem_check_release_batch(struct folio_batch *fbatch)
 struct page **drm_gem_get_pages(struct drm_gem_object *obj)
 {
 	struct address_space *mapping;
-	struct page **pages;
-	struct folio *folio;
-	struct folio_batch fbatch;
-	long i, j, npages;
+	struct page *p, **pages;
+	struct pagevec pvec;
+	int i, npages;
+
 
 	if (WARN_ON(!obj->filp))
 		return ERR_PTR(-EINVAL);
@@ -562,16 +552,11 @@ struct page **drm_gem_get_pages(struct drm_gem_object *obj)
 
 	mapping_set_unevictable(mapping);
 
-	i = 0;
-	while (i < npages) {
-		long nr;
-		folio = shmem_read_folio_gfp(mapping, i,
-				mapping_gfp_mask(mapping));
-		if (IS_ERR(folio))
+	for (i = 0; i < npages; i++) {
+		p = shmem_read_mapping_page(mapping, i);
+		if (IS_ERR(p))
 			goto fail;
-		nr = min(npages - i, folio_nr_pages(folio));
-		for (j = 0; j < nr; j++, i++)
-			pages[i] = folio_file_page(folio, i);
+		pages[i] = p;
 
 		/* Make sure shmem keeps __GFP_DMA32 allocated pages in the
 		 * correct region during swapin. Note that this requires
@@ -579,26 +564,23 @@ struct page **drm_gem_get_pages(struct drm_gem_object *obj)
 		 * so shmem can relocate pages during swapin if required.
 		 */
 		BUG_ON(mapping_gfp_constraint(mapping, __GFP_DMA32) &&
-				(folio_pfn(folio) >= 0x00100000UL));
+				(page_to_pfn(p) >= 0x00100000UL));
 	}
 
 	return pages;
 
 fail:
 	mapping_clear_unevictable(mapping);
-	folio_batch_init(&fbatch);
-	j = 0;
-	while (j < i) {
-		struct folio *f = page_folio(pages[j]);
-		if (!folio_batch_add(&fbatch, f))
-			drm_gem_check_release_batch(&fbatch);
-		j += folio_nr_pages(f);
+	pagevec_init(&pvec);
+	while (i--) {
+		if (!pagevec_add(&pvec, pages[i]))
+			drm_gem_check_release_pagevec(&pvec);
 	}
-	if (fbatch.nr)
-		drm_gem_check_release_batch(&fbatch);
+	if (pagevec_count(&pvec))
+		drm_gem_check_release_pagevec(&pvec);
 
 	kvfree(pages);
-	return ERR_CAST(folio);
+	return ERR_CAST(p);
 }
 EXPORT_SYMBOL(drm_gem_get_pages);
 
@@ -614,7 +596,7 @@ void drm_gem_put_pages(struct drm_gem_object *obj, struct page **pages,
 {
 	int i, npages;
 	struct address_space *mapping;
-	struct folio_batch fbatch;
+	struct pagevec pvec;
 
 	mapping = file_inode(obj->filp)->i_mapping;
 	mapping_clear_unevictable(mapping);
@@ -627,27 +609,23 @@ void drm_gem_put_pages(struct drm_gem_object *obj, struct page **pages,
 
 	npages = obj->size >> PAGE_SHIFT;
 
-	folio_batch_init(&fbatch);
+	pagevec_init(&pvec);
 	for (i = 0; i < npages; i++) {
-		struct folio *folio;
-
 		if (!pages[i])
 			continue;
-		folio = page_folio(pages[i]);
 
 		if (dirty)
-			folio_mark_dirty(folio);
+			set_page_dirty(pages[i]);
 
 		if (accessed)
-			folio_mark_accessed(folio);
+			mark_page_accessed(pages[i]);
 
 		/* Undo the reference we took when populating the table */
-		if (!folio_batch_add(&fbatch, folio))
-			drm_gem_check_release_batch(&fbatch);
-		i += folio_nr_pages(folio) - 1;
+		if (!pagevec_add(&pvec, pages[i]))
+			drm_gem_check_release_pagevec(&pvec);
 	}
-	if (folio_batch_count(&fbatch))
-		drm_gem_check_release_batch(&fbatch);
+	if (pagevec_count(&pvec))
+		drm_gem_check_release_pagevec(&pvec);
 
 	kvfree(pages);
 }
@@ -952,11 +930,12 @@ drm_gem_release(struct drm_device *dev, struct drm_file *file_private)
 void
 drm_gem_object_release(struct drm_gem_object *obj)
 {
+	WARN_ON(obj->dma_buf);
+
 	if (obj->filp)
 		fput(obj->filp);
 
-	drm_gem_private_object_fini(obj);
-
+	dma_resv_fini(&obj->_resv);
 	drm_gem_free_mmap_offset(obj);
 	drm_gem_lru_remove(obj);
 }
@@ -1068,7 +1047,7 @@ int drm_gem_mmap_obj(struct drm_gem_object *obj, unsigned long obj_size,
 			goto err_drm_gem_object_put;
 		}
 
-		vm_flags_set(vma, VM_IO | VM_PFNMAP | VM_DONTEXPAND | VM_DONTDUMP);
+		vma->vm_flags |= VM_IO | VM_PFNMAP | VM_DONTEXPAND | VM_DONTDUMP;
 		vma->vm_page_prot = pgprot_writecombine(vm_get_page_prot(vma->vm_flags));
 		vma->vm_page_prot = pgprot_decrypted(vma->vm_page_prot);
 	}
@@ -1165,8 +1144,8 @@ int drm_gem_pin(struct drm_gem_object *obj)
 {
 	if (obj->funcs->pin)
 		return obj->funcs->pin(obj);
-
-	return 0;
+	else
+		return 0;
 }
 
 void drm_gem_unpin(struct drm_gem_object *obj)
@@ -1178,8 +1157,6 @@ void drm_gem_unpin(struct drm_gem_object *obj)
 int drm_gem_vmap(struct drm_gem_object *obj, struct iosys_map *map)
 {
 	int ret;
-
-	dma_resv_assert_held(obj->resv);
 
 	if (!obj->funcs->vmap)
 		return -EOPNOTSUPP;
@@ -1196,8 +1173,6 @@ EXPORT_SYMBOL(drm_gem_vmap);
 
 void drm_gem_vunmap(struct drm_gem_object *obj, struct iosys_map *map)
 {
-	dma_resv_assert_held(obj->resv);
-
 	if (iosys_map_is_null(map))
 		return;
 
@@ -1208,26 +1183,6 @@ void drm_gem_vunmap(struct drm_gem_object *obj, struct iosys_map *map)
 	iosys_map_clear(map);
 }
 EXPORT_SYMBOL(drm_gem_vunmap);
-
-int drm_gem_vmap_unlocked(struct drm_gem_object *obj, struct iosys_map *map)
-{
-	int ret;
-
-	dma_resv_lock(obj->resv, NULL);
-	ret = drm_gem_vmap(obj, map);
-	dma_resv_unlock(obj->resv);
-
-	return ret;
-}
-EXPORT_SYMBOL(drm_gem_vmap_unlocked);
-
-void drm_gem_vunmap_unlocked(struct drm_gem_object *obj, struct iosys_map *map)
-{
-	dma_resv_lock(obj->resv, NULL);
-	drm_gem_vunmap(obj, map);
-	dma_resv_unlock(obj->resv);
-}
-EXPORT_SYMBOL(drm_gem_vunmap_unlocked);
 
 /**
  * drm_gem_lock_reservations - Sets up the ww context and acquires
@@ -1352,15 +1307,7 @@ drm_gem_lru_remove(struct drm_gem_object *obj)
 }
 EXPORT_SYMBOL(drm_gem_lru_remove);
 
-/**
- * drm_gem_lru_move_tail_locked - move the object to the tail of the LRU
- *
- * Like &drm_gem_lru_move_tail but lru lock must be held
- *
- * @lru: The LRU to move the object into.
- * @obj: The GEM object to move into this LRU
- */
-void
+static void
 drm_gem_lru_move_tail_locked(struct drm_gem_lru *lru, struct drm_gem_object *obj)
 {
 	lockdep_assert_held_once(lru->lock);
@@ -1372,7 +1319,6 @@ drm_gem_lru_move_tail_locked(struct drm_gem_lru *lru, struct drm_gem_object *obj
 	list_add_tail(&obj->lru_node, &lru->list);
 	obj->lru = lru;
 }
-EXPORT_SYMBOL(drm_gem_lru_move_tail_locked);
 
 /**
  * drm_gem_lru_move_tail - move the object to the tail of the LRU
@@ -1488,21 +1434,3 @@ tail:
 	return freed;
 }
 EXPORT_SYMBOL(drm_gem_lru_scan);
-
-/**
- * drm_gem_evict - helper to evict backing pages for a GEM object
- * @obj: obj in question
- */
-int drm_gem_evict(struct drm_gem_object *obj)
-{
-	dma_resv_assert_held(obj->resv);
-
-	if (!dma_resv_test_signaled(obj->resv, DMA_RESV_USAGE_READ))
-		return -EBUSY;
-
-	if (obj->funcs->evict)
-		return obj->funcs->evict(obj);
-
-	return 0;
-}
-EXPORT_SYMBOL(drm_gem_evict);

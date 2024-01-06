@@ -29,8 +29,6 @@
 #include <linux/init.h>
 #include <linux/threads.h>
 #include <linux/pgtable.h>
-#include <linux/linkage.h>
-
 #include <asm/processor.h>
 #include <asm/page.h>
 #include <asm/mmu.h>
@@ -40,6 +38,7 @@
 #include <asm/asm-offsets.h>
 #include <asm/cache.h>
 #include <asm/ptrace.h>
+#include <asm/export.h>
 #include <asm/feature-fixups.h>
 #include "head_booke.h"
 
@@ -230,7 +229,7 @@ set_ivor:
 	lis	r1,init_thread_union@h
 	ori	r1,r1,init_thread_union@l
 	li	r0,0
-	stwu	r0,THREAD_SIZE-STACK_FRAME_MIN_SIZE(r1)
+	stwu	r0,THREAD_SIZE-STACK_FRAME_OVERHEAD(r1)
 
 #ifdef CONFIG_SMP
 	stw	r24, TASK_CPU(r2)
@@ -471,7 +470,7 @@ END_BTB_FLUSH_SECTION
 
 4:
 	/* Mask of required permission bits. Note that while we
-	 * do copy ESR:ST to _PAGE_WRITE position as trying to write
+	 * do copy ESR:ST to _PAGE_RW position as trying to write
 	 * to an RO page is pretty common, we don't do it with
 	 * _PAGE_DIRTY. We could do it, but it's a fairly rare
 	 * event so I'd rather take the overhead when it happens
@@ -485,10 +484,10 @@ END_BTB_FLUSH_SECTION
 	 */
 	mfspr	r12,SPRN_ESR
 #ifdef CONFIG_PTE_64BIT
-	li	r13,_PAGE_PRESENT|_PAGE_BAP_SR
+	li	r13,_PAGE_PRESENT
 	oris	r13,r13,_PAGE_ACCESSED@h
 #else
-	li	r13,_PAGE_PRESENT|_PAGE_READ|_PAGE_ACCESSED
+	li	r13,_PAGE_PRESENT|_PAGE_ACCESSED
 #endif
 	rlwimi	r13,r12,11,29,29
 
@@ -783,15 +782,15 @@ BEGIN_MMU_FTR_SECTION
 	mtspr	SPRN_MAS7, r10
 END_MMU_FTR_SECTION_IFSET(MMU_FTR_BIG_PHYS)
 #else
-	li	r10, (_PAGE_EXEC | _PAGE_READ)
+	li	r10, (_PAGE_EXEC | _PAGE_PRESENT)
 	mr	r13, r11
 	rlwimi	r10, r11, 31, 29, 29	/* extract _PAGE_DIRTY into SW */
 	and	r12, r11, r10
-	mcrf	cr0, cr5		/* Test for user page */
+	andi.	r10, r11, _PAGE_USER	/* Test for _PAGE_USER */
 	slwi	r10, r12, 1
 	or	r10, r10, r12
 	rlwinm	r10, r10, 0, ~_PAGE_EXEC	/* Clear SX on user pages */
-	isellt	r12, r10, r12
+	iseleq	r12, r12, r10
 	rlwimi	r13, r12, 0, 20, 31	/* Get RPN from PTE, merge w/ perms */
 	mtspr	SPRN_MAS3, r13
 #endif
@@ -863,7 +862,7 @@ _GLOBAL(load_up_spe)
  * SPE unavailable trap from kernel - print a message, but let
  * the task use SPE in the kernel until it returns to user mode.
  */
-SYM_FUNC_START_LOCAL(KernelSPE)
+KernelSPE:
 	lwz	r3,_MSR(r1)
 	oris	r3,r3,MSR_SPE@h
 	stw	r3,_MSR(r1)	/* enable use of SPE after return */
@@ -880,14 +879,13 @@ SYM_FUNC_START_LOCAL(KernelSPE)
 #endif
 	.align	4,0
 
-SYM_FUNC_END(KernelSPE)
 #endif /* CONFIG_SPE */
 
 /*
  * Translate the effec addr in r3 to phys addr. The phys addr will be put
  * into r3(higher 32bit) and r4(lower 32bit)
  */
-SYM_FUNC_START_LOCAL(get_phys_addr)
+get_phys_addr:
 	mfmsr	r8
 	mfspr	r9,SPRN_PID
 	rlwinm	r9,r9,16,0x3fff0000	/* turn PID into MAS6[SPID] */
@@ -909,7 +907,6 @@ SYM_FUNC_START_LOCAL(get_phys_addr)
 	mfspr	r3,SPRN_MAS7
 #endif
 	blr
-SYM_FUNC_END(get_phys_addr)
 
 /*
  * Global functions
@@ -975,10 +972,10 @@ _GLOBAL(__giveup_spe)
 	li	r4,THREAD_ACC
 	evstddx	evr6, r4, r3		/* save off accumulator */
 	beq	1f
-	lwz	r4,_MSR-STACK_INT_FRAME_REGS(r5)
+	lwz	r4,_MSR-STACK_FRAME_OVERHEAD(r5)
 	lis	r3,MSR_SPE@h
 	andc	r4,r4,r3		/* disable SPE for previous task */
-	stw	r4,_MSR-STACK_INT_FRAME_REGS(r5)
+	stw	r4,_MSR-STACK_FRAME_OVERHEAD(r5)
 1:
 	blr
 #endif /* CONFIG_SPE */
@@ -1047,7 +1044,7 @@ __secondary_start:
 	lwz	r1,TASK_STACK(r2)
 
 	/* stack */
-	addi	r1,r1,THREAD_SIZE-STACK_FRAME_MIN_SIZE
+	addi	r1,r1,THREAD_SIZE-STACK_FRAME_OVERHEAD
 	li	r0,0
 	stw	r0,0(r1)
 

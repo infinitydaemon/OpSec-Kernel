@@ -32,7 +32,6 @@
 
 #include "book3s_xics.h"
 #include "book3s_xive.h"
-#include "book3s_hv.h"
 
 /*
  * Hash page table alignment on newer cpus(CPU_FTR_ARCH_206)
@@ -183,13 +182,9 @@ EXPORT_SYMBOL_GPL(kvmppc_hwrng_present);
 
 long kvmppc_rm_h_random(struct kvm_vcpu *vcpu)
 {
-	unsigned long rand;
-
 	if (ppc_md.get_random_seed &&
-	    ppc_md.get_random_seed(&rand)) {
-		kvmppc_set_gpr(vcpu, 4, rand);
+	    ppc_md.get_random_seed(&vcpu->arch.regs.gpr[4]))
 		return H_SUCCESS;
-	}
 
 	return H_HARDWARE;
 }
@@ -411,7 +406,7 @@ static long kvmppc_read_one_intr(bool *again)
 		return 1;
 
 	/* see if a host IPI is pending */
-	host_ipi = READ_ONCE(local_paca->kvm_hstate.host_ipi);
+	host_ipi = local_paca->kvm_hstate.host_ipi;
 	if (host_ipi)
 		return 1;
 
@@ -471,7 +466,7 @@ static long kvmppc_read_one_intr(bool *again)
 		 * meantime. If it's clear, we bounce the interrupt to the
 		 * guest
 		 */
-		host_ipi = READ_ONCE(local_paca->kvm_hstate.host_ipi);
+		host_ipi = local_paca->kvm_hstate.host_ipi;
 		if (unlikely(host_ipi != 0)) {
 			/* We raced with the host,
 			 * we need to resend that IPI, bummer
@@ -515,7 +510,7 @@ void kvmppc_set_msr_hv(struct kvm_vcpu *vcpu, u64 msr)
 	 */
 	if ((msr & MSR_TS_MASK) == MSR_TS_MASK)
 		msr &= ~MSR_TS_MASK;
-	__kvmppc_set_msr_hv(vcpu, msr);
+	vcpu->arch.shregs.msr = msr;
 	kvmppc_end_cede(vcpu);
 }
 EXPORT_SYMBOL_GPL(kvmppc_set_msr_hv);
@@ -553,7 +548,7 @@ static void inject_interrupt(struct kvm_vcpu *vcpu, int vec, u64 srr1_flags)
 	kvmppc_set_srr0(vcpu, pc);
 	kvmppc_set_srr1(vcpu, (msr & SRR1_MSR_BITS) | srr1_flags);
 	kvmppc_set_pc(vcpu, new_pc);
-	__kvmppc_set_msr_hv(vcpu, new_msr);
+	vcpu->arch.shregs.msr = new_msr;
 }
 
 void kvmppc_inject_interrupt_hv(struct kvm_vcpu *vcpu, int vec, u64 srr1_flags)

@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
  * Copyright (c) 2018-2019 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/property.h>
 #include <linux/of_device.h>
 #include <linux/of.h>
 #include <linux/dma-mapping.h>
@@ -15,7 +14,6 @@
 #include "ahb.h"
 #include "debug.h"
 #include "hif.h"
-#include "qmi.h"
 #include <linux/remoteproc.h>
 #include "pcic.h"
 #include <linux/soc/qcom/smem.h>
@@ -33,9 +31,6 @@ static const struct of_device_id ath11k_ahb_of_match[] = {
 	},
 	{ .compatible = "qcom,wcn6750-wifi",
 	  .data = (void *)ATH11K_HW_WCN6750_HW10,
-	},
-	{ .compatible = "qcom,ipq5018-wifi",
-	  .data = (void *)ATH11K_HW_IPQ5018_HW10,
 	},
 	{ }
 };
@@ -272,42 +267,30 @@ static void ath11k_ahb_clearbit32(struct ath11k_base *ab, u8 bit, u32 offset)
 static void ath11k_ahb_ce_irq_enable(struct ath11k_base *ab, u16 ce_id)
 {
 	const struct ce_attr *ce_attr;
-	const struct ce_ie_addr *ce_ie_addr = ab->hw_params.ce_ie_addr;
-	u32 ie1_reg_addr, ie2_reg_addr, ie3_reg_addr;
-
-	ie1_reg_addr = ce_ie_addr->ie1_reg_addr + ATH11K_CE_OFFSET(ab);
-	ie2_reg_addr = ce_ie_addr->ie2_reg_addr + ATH11K_CE_OFFSET(ab);
-	ie3_reg_addr = ce_ie_addr->ie3_reg_addr + ATH11K_CE_OFFSET(ab);
 
 	ce_attr = &ab->hw_params.host_ce_config[ce_id];
 	if (ce_attr->src_nentries)
-		ath11k_ahb_setbit32(ab, ce_id, ie1_reg_addr);
+		ath11k_ahb_setbit32(ab, ce_id, CE_HOST_IE_ADDRESS);
 
 	if (ce_attr->dest_nentries) {
-		ath11k_ahb_setbit32(ab, ce_id, ie2_reg_addr);
+		ath11k_ahb_setbit32(ab, ce_id, CE_HOST_IE_2_ADDRESS);
 		ath11k_ahb_setbit32(ab, ce_id + CE_HOST_IE_3_SHIFT,
-				    ie3_reg_addr);
+				    CE_HOST_IE_3_ADDRESS);
 	}
 }
 
 static void ath11k_ahb_ce_irq_disable(struct ath11k_base *ab, u16 ce_id)
 {
 	const struct ce_attr *ce_attr;
-	const struct ce_ie_addr *ce_ie_addr = ab->hw_params.ce_ie_addr;
-	u32 ie1_reg_addr, ie2_reg_addr, ie3_reg_addr;
-
-	ie1_reg_addr = ce_ie_addr->ie1_reg_addr + ATH11K_CE_OFFSET(ab);
-	ie2_reg_addr = ce_ie_addr->ie2_reg_addr + ATH11K_CE_OFFSET(ab);
-	ie3_reg_addr = ce_ie_addr->ie3_reg_addr + ATH11K_CE_OFFSET(ab);
 
 	ce_attr = &ab->hw_params.host_ce_config[ce_id];
 	if (ce_attr->src_nentries)
-		ath11k_ahb_clearbit32(ab, ce_id, ie1_reg_addr);
+		ath11k_ahb_clearbit32(ab, ce_id, CE_HOST_IE_ADDRESS);
 
 	if (ce_attr->dest_nentries) {
-		ath11k_ahb_clearbit32(ab, ce_id, ie2_reg_addr);
+		ath11k_ahb_clearbit32(ab, ce_id, CE_HOST_IE_2_ADDRESS);
 		ath11k_ahb_clearbit32(ab, ce_id + CE_HOST_IE_3_SHIFT,
-				      ie3_reg_addr);
+				      CE_HOST_IE_3_ADDRESS);
 	}
 }
 
@@ -378,6 +361,7 @@ static void ath11k_ahb_ext_irq_enable(struct ath11k_base *ab)
 		struct ath11k_ext_irq_grp *irq_grp = &ab->ext_irq_grp[i];
 
 		if (!irq_grp->napi_enabled) {
+			dev_set_threaded(&irq_grp->napi_ndev, true);
 			napi_enable(&irq_grp->napi);
 			irq_grp->napi_enabled = true;
 		}
@@ -418,6 +402,32 @@ static void ath11k_ahb_power_down(struct ath11k_base *ab)
 	struct ath11k_ahb *ab_ahb = ath11k_ahb_priv(ab);
 
 	rproc_shutdown(ab_ahb->tgt_rproc);
+}
+
+static int ath11k_ahb_fwreset_from_cold_boot(struct ath11k_base *ab)
+{
+	int timeout;
+
+	if (ath11k_cold_boot_cal == 0 || ab->qmi.cal_done ||
+	    ab->hw_params.cold_boot_calib == 0 ||
+	    ab->hw_params.cbcal_restart_fw == 0)
+		return 0;
+
+	ath11k_dbg(ab, ATH11K_DBG_AHB, "wait for cold boot done\n");
+	timeout = wait_event_timeout(ab->qmi.cold_boot_waitq,
+				     (ab->qmi.cal_done  == 1),
+				     ATH11K_COLD_BOOT_FW_RESET_DELAY);
+	if (timeout <= 0) {
+		ath11k_cold_boot_cal = 0;
+		ath11k_warn(ab, "Coldboot Calibration failed timed out\n");
+	}
+
+	/* reset the firmware */
+	ath11k_ahb_power_down(ab);
+	ath11k_ahb_power_up(ab);
+
+	ath11k_dbg(ab, ATH11K_DBG_AHB, "exited from cold boot mode\n");
+	return 0;
 }
 
 static void ath11k_ahb_init_qmi_ce_config(struct ath11k_base *ab)
@@ -709,7 +719,7 @@ static int ath11k_ahb_hif_suspend(struct ath11k_base *ab)
 		return ret;
 	}
 
-	ath11k_dbg(ab, ATH11K_DBG_AHB, "device suspended\n");
+	ath11k_dbg(ab, ATH11K_DBG_AHB, "ahb device suspended\n");
 
 	return ret;
 }
@@ -752,7 +762,7 @@ static int ath11k_ahb_hif_resume(struct ath11k_base *ab)
 		return -ETIMEDOUT;
 	}
 
-	ath11k_dbg(ab, ATH11K_DBG_AHB, "device resumed\n");
+	ath11k_dbg(ab, ATH11K_DBG_AHB, "ahb device resumed\n");
 
 	return 0;
 }
@@ -1011,7 +1021,7 @@ static int ath11k_ahb_fw_resources_init(struct ath11k_base *ab)
 
 	ret = iommu_map(iommu_dom, ab_ahb->fw.msa_paddr,
 			ab_ahb->fw.msa_paddr, ab_ahb->fw.msa_size,
-			IOMMU_READ | IOMMU_WRITE, GFP_KERNEL);
+			IOMMU_READ | IOMMU_WRITE);
 	if (ret) {
 		ath11k_err(ab, "failed to map firmware region: %d\n", ret);
 		goto err_iommu_detach;
@@ -1019,7 +1029,7 @@ static int ath11k_ahb_fw_resources_init(struct ath11k_base *ab)
 
 	ret = iommu_map(iommu_dom, ab_ahb->fw.ce_paddr,
 			ab_ahb->fw.ce_paddr, ab_ahb->fw.ce_size,
-			IOMMU_READ | IOMMU_WRITE, GFP_KERNEL);
+			IOMMU_READ | IOMMU_WRITE);
 	if (ret) {
 		ath11k_err(ab, "failed to map firmware CE region: %d\n", ret);
 		goto err_iommu_unmap;
@@ -1085,17 +1095,23 @@ static int ath11k_ahb_fw_resource_deinit(struct ath11k_base *ab)
 static int ath11k_ahb_probe(struct platform_device *pdev)
 {
 	struct ath11k_base *ab;
+	const struct of_device_id *of_id;
 	const struct ath11k_hif_ops *hif_ops;
 	const struct ath11k_pci_ops *pci_ops;
 	enum ath11k_hw_rev hw_rev;
 	int ret;
 
-	hw_rev = (uintptr_t)device_get_match_data(&pdev->dev);
+	of_id = of_match_device(ath11k_ahb_of_match, &pdev->dev);
+	if (!of_id) {
+		dev_err(&pdev->dev, "failed to find matching device tree id\n");
+		return -EINVAL;
+	}
+
+	hw_rev = (enum ath11k_hw_rev)of_id->data;
 
 	switch (hw_rev) {
 	case ATH11K_HW_IPQ8074:
 	case ATH11K_HW_IPQ6018_HW10:
-	case ATH11K_HW_IPQ5018_HW10:
 		hif_ops = &ath11k_ahb_hif_ops_ipq8074;
 		pci_ops = NULL;
 		break;
@@ -1124,7 +1140,6 @@ static int ath11k_ahb_probe(struct platform_device *pdev)
 	ab->hif.ops = hif_ops;
 	ab->pdev = pdev;
 	ab->hw_rev = hw_rev;
-	ab->fw_mode = ATH11K_FIRMWARE_MODE_NORMAL;
 	platform_set_drvdata(pdev, ab);
 
 	ret = ath11k_pcic_register_pci_ops(ab, pci_ops);
@@ -1140,22 +1155,6 @@ static int ath11k_ahb_probe(struct platform_device *pdev)
 	ret = ath11k_ahb_setup_resources(ab);
 	if (ret)
 		goto err_core_free;
-
-	ab->mem_ce = ab->mem;
-
-	if (ab->hw_params.ce_remap) {
-		const struct ce_remap *ce_remap = ab->hw_params.ce_remap;
-		/* ce register space is moved out of wcss unlike ipq8074 or ipq6018
-		 * and the space is not contiguous, hence remapping the CE registers
-		 * to a new space for accessing them.
-		 */
-		ab->mem_ce = ioremap(ce_remap->base, ce_remap->size);
-		if (!ab->mem_ce) {
-			dev_err(&pdev->dev, "ce ioremap error\n");
-			ret = -ENOMEM;
-			goto err_core_free;
-		}
-	}
 
 	ret = ath11k_ahb_fw_resources_init(ab);
 	if (ret)
@@ -1195,7 +1194,7 @@ static int ath11k_ahb_probe(struct platform_device *pdev)
 		goto err_ce_free;
 	}
 
-	ath11k_qmi_fwreset_from_cold_boot(ab);
+	ath11k_ahb_fwreset_from_cold_boot(ab);
 
 	return 0;
 
@@ -1243,10 +1242,6 @@ static void ath11k_ahb_free_resources(struct ath11k_base *ab)
 	ath11k_ahb_release_smp2p_handle(ab);
 	ath11k_ahb_fw_resource_deinit(ab);
 	ath11k_ce_free_pipes(ab);
-
-	if (ab->hw_params.ce_remap)
-		iounmap(ab->mem_ce);
-
 	ath11k_core_free(ab);
 	platform_set_drvdata(pdev, NULL);
 }
@@ -1300,7 +1295,17 @@ static struct platform_driver ath11k_ahb_driver = {
 	.shutdown = ath11k_ahb_shutdown,
 };
 
-module_platform_driver(ath11k_ahb_driver);
+static int ath11k_ahb_init(void)
+{
+	return platform_driver_register(&ath11k_ahb_driver);
+}
+module_init(ath11k_ahb_init);
+
+static void ath11k_ahb_exit(void)
+{
+	platform_driver_unregister(&ath11k_ahb_driver);
+}
+module_exit(ath11k_ahb_exit);
 
 MODULE_DESCRIPTION("Driver support for Qualcomm Technologies 802.11ax WLAN AHB devices");
 MODULE_LICENSE("Dual BSD/GPL");

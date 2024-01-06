@@ -409,6 +409,9 @@ cam0_reg: &cam1_reg {
 	gpio = <&expgpio 5 GPIO_ACTIVE_HIGH>;
 };
 
+i2c_csi_dsi0: &i2c0 {
+};
+
 / {
 	__overrides__ {
 		audio = <&chosen>,"bootargs{on='snd_bcm2835.enable_hdmi=1',off='snd_bcm2835.enable_hdmi=0'}";
@@ -443,5 +446,7 @@ cam0_reg: &cam1_reg {
 		cam1_reg = <&cam1_reg>,"status";
 		cam1_reg_gpio = <&cam1_reg>,"gpio:4",
 				  <&cam1_reg>,"gpio:0=", <&gpio>;
+
+		pcie_tperst_clk_ms = <&pcie0>,"brcm,tperst-clk-ms:0";
 	};
 };

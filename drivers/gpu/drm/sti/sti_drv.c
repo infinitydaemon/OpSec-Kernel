@@ -8,15 +8,13 @@
 #include <linux/dma-mapping.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/of.h>
 #include <linux/of_platform.h>
-#include <linux/platform_device.h>
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_debugfs.h>
 #include <drm/drm_drv.h>
-#include <drm/drm_fbdev_dma.h>
+#include <drm/drm_fb_helper.h>
 #include <drm/drm_gem_dma_helper.h>
 #include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_of.h>
@@ -174,7 +172,6 @@ static void sti_cleanup(struct drm_device *ddev)
 	drm_atomic_helper_shutdown(ddev);
 	drm_mode_config_cleanup(ddev);
 	component_unbind_all(ddev->dev, ddev);
-	dev_set_drvdata(ddev->dev, NULL);
 	kfree(private);
 	ddev->dev_private = NULL;
 }
@@ -202,7 +199,7 @@ static int sti_bind(struct device *dev)
 
 	drm_mode_config_reset(ddev);
 
-	drm_fbdev_dma_setup(ddev, 32);
+	drm_fbdev_generic_setup(ddev, 32);
 
 	return 0;
 
@@ -249,14 +246,11 @@ static int sti_platform_probe(struct platform_device *pdev)
 	return component_master_add_with_match(dev, &sti_ops, match);
 }
 
-static void sti_platform_remove(struct platform_device *pdev)
+static int sti_platform_remove(struct platform_device *pdev)
 {
 	component_master_del(&pdev->dev, &sti_ops);
-}
 
-static void sti_platform_shutdown(struct platform_device *pdev)
-{
-	drm_atomic_helper_shutdown(platform_get_drvdata(pdev));
+	return 0;
 }
 
 static const struct of_device_id sti_dt_ids[] = {
@@ -267,8 +261,7 @@ MODULE_DEVICE_TABLE(of, sti_dt_ids);
 
 static struct platform_driver sti_platform_driver = {
 	.probe = sti_platform_probe,
-	.remove_new = sti_platform_remove,
-	.shutdown = sti_platform_shutdown,
+	.remove = sti_platform_remove,
 	.driver = {
 		.name = DRIVER_NAME,
 		.of_match_table = sti_dt_ids,

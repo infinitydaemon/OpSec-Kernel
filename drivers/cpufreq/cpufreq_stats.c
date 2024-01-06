@@ -128,23 +128,25 @@ static ssize_t show_trans_table(struct cpufreq_policy *policy, char *buf)
 	ssize_t len = 0;
 	int i, j, count;
 
-	len += sysfs_emit_at(buf, len, "   From  :    To\n");
-	len += sysfs_emit_at(buf, len, "         : ");
+	len += scnprintf(buf + len, PAGE_SIZE - len, "   From  :    To\n");
+	len += scnprintf(buf + len, PAGE_SIZE - len, "         : ");
 	for (i = 0; i < stats->state_num; i++) {
 		if (len >= PAGE_SIZE - 1)
 			break;
-		len += sysfs_emit_at(buf, len, "%9u ", stats->freq_table[i]);
+		len += scnprintf(buf + len, PAGE_SIZE - len, "%9u ",
+				stats->freq_table[i]);
 	}
 	if (len >= PAGE_SIZE - 1)
 		return PAGE_SIZE - 1;
 
-	len += sysfs_emit_at(buf, len, "\n");
+	len += scnprintf(buf + len, PAGE_SIZE - len, "\n");
 
 	for (i = 0; i < stats->state_num; i++) {
 		if (len >= PAGE_SIZE - 1)
 			break;
 
-		len += sysfs_emit_at(buf, len, "%9u: ", stats->freq_table[i]);
+		len += scnprintf(buf + len, PAGE_SIZE - len, "%9u: ",
+				stats->freq_table[i]);
 
 		for (j = 0; j < stats->state_num; j++) {
 			if (len >= PAGE_SIZE - 1)
@@ -155,11 +157,11 @@ static ssize_t show_trans_table(struct cpufreq_policy *policy, char *buf)
 			else
 				count = stats->trans_table[i * stats->max_state + j];
 
-			len += sysfs_emit_at(buf, len, "%9u ", count);
+			len += scnprintf(buf + len, PAGE_SIZE - len, "%9u ", count);
 		}
 		if (len >= PAGE_SIZE - 1)
 			break;
-		len += sysfs_emit_at(buf, len, "\n");
+		len += scnprintf(buf + len, PAGE_SIZE - len, "\n");
 	}
 
 	if (len >= PAGE_SIZE - 1) {
@@ -243,8 +245,7 @@ void cpufreq_stats_create_table(struct cpufreq_policy *policy)
 
 	/* Find valid-unique entries */
 	cpufreq_for_each_valid_entry(pos, policy->freq_table)
-		if (policy->freq_table_sorted != CPUFREQ_TABLE_UNSORTED ||
-		    freq_table_get_index(stats, pos->frequency) == -1)
+		if (freq_table_get_index(stats, pos->frequency) == -1)
 			stats->freq_table[i++] = pos->frequency;
 
 	stats->state_num = i;

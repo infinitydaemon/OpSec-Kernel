@@ -992,7 +992,7 @@ static int bcm2708_fb_register(struct bcm2708_fb *fb)
 	int ret;
 
 	fb->fb.fbops = &bcm2708_fb_ops;
-	fb->fb.flags = FBINFO_HWACCEL_COPYAREA;
+	fb->fb.flags = FBINFO_FLAG_DEFAULT | FBINFO_HWACCEL_COPYAREA;
 	fb->fb.pseudo_palette = fb->cmap;
 
 	strncpy(fb->fb.fix.id, bcm2708_name, sizeof(fb->fb.fix.id));

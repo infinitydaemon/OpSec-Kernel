@@ -63,7 +63,7 @@ static int otx2_qos_sq_aura_pool_init(struct otx2_nic *pfvf, int qidx)
 
 	/* Initialize pool context */
 	err = otx2_pool_init(pfvf, pool_id, stack_pages,
-			     num_sqbs, hw->sqb_size, AURA_NIX_SQ);
+			     num_sqbs, hw->sqb_size);
 	if (err)
 		goto aura_free;
 
@@ -217,22 +217,7 @@ static int otx2_qos_ctx_disable(struct otx2_nic *pfvf, u16 qidx, int aura_id)
 	return otx2_sync_mbox_msg(&pfvf->mbox);
 }
 
-int otx2_qos_get_qid(struct otx2_nic *pfvf)
-{
-	int qidx;
-
-	qidx = find_first_zero_bit(pfvf->qos.qos_sq_bmap,
-				   pfvf->hw.tc_tx_queues);
-
-	return qidx == pfvf->hw.tc_tx_queues ? -ENOSPC : qidx;
-}
-
-void otx2_qos_free_qid(struct otx2_nic *pfvf, int qidx)
-{
-	clear_bit(qidx, pfvf->qos.qos_sq_bmap);
-}
-
-int otx2_qos_enable_sq(struct otx2_nic *pfvf, int qidx)
+int otx2_qos_enable_sq(struct otx2_nic *pfvf, int qidx, u16 smq)
 {
 	struct otx2_hw *hw = &pfvf->hw;
 	int pool_id, sq_idx, err;
@@ -248,6 +233,7 @@ int otx2_qos_enable_sq(struct otx2_nic *pfvf, int qidx)
 		goto out;
 
 	pool_id = otx2_get_pool_idx(pfvf, AURA_NIX_SQ, sq_idx);
+	pfvf->qos.qid_to_sqmap[qidx] = smq;
 	err = otx2_sq_init(pfvf, sq_idx, pool_id);
 	if (err)
 		goto out;
@@ -256,7 +242,7 @@ out:
 	return err;
 }
 
-void otx2_qos_disable_sq(struct otx2_nic *pfvf, int qidx)
+void otx2_qos_disable_sq(struct otx2_nic *pfvf, int qidx, u16 mdq)
 {
 	struct otx2_qset *qset = &pfvf->qset;
 	struct otx2_hw *hw = &pfvf->hw;

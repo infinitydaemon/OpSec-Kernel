@@ -7,12 +7,11 @@
 
 #include <linux/types.h>
 
+#include "intel_display.h"
 #include "intel_display_power.h"
-#include "intel_dpio_phy.h"
 
 struct drm_i915_private;
-struct i915_power_well_ops;
-struct intel_encoder;
+struct i915_power_well;
 
 #define for_each_power_well(__dev_priv, __power_well)				\
 	for ((__power_well) = (__dev_priv)->display.power.domains.power_wells;	\
@@ -111,8 +110,6 @@ struct i915_power_well_desc {
 	 * Thunderbolt mode.
 	 */
 	u16 is_tc_tbt:1;
-	/* Enable timeout if greater than the default 1ms */
-	u16 enable_timeout;
 };
 
 struct i915_power_well {
@@ -176,6 +173,5 @@ extern const struct i915_power_well_ops icl_aux_power_well_ops;
 extern const struct i915_power_well_ops icl_ddi_power_well_ops;
 extern const struct i915_power_well_ops tgl_tc_cold_off_ops;
 extern const struct i915_power_well_ops xelpdp_aux_power_well_ops;
-extern const struct i915_power_well_ops xe2lpd_pica_power_well_ops;
 
 #endif

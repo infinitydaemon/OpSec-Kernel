@@ -45,6 +45,7 @@ static struct acpiphp_attention_info *attention_info;
 
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
+MODULE_LICENSE("GPL");
 MODULE_PARM_DESC(disable, "disable acpiphp driver");
 module_param_named(disable, acpiphp_disabled, bool, 0444);
 
@@ -78,7 +79,8 @@ int acpiphp_register_attention(struct acpiphp_attention_info *info)
 {
 	int retval = -EINVAL;
 
-	if (info && info->set_attn && info->get_attn && !attention_info) {
+	if (info && info->owner && info->set_attn &&
+			info->get_attn && !attention_info) {
 		retval = 0;
 		attention_info = info;
 	}

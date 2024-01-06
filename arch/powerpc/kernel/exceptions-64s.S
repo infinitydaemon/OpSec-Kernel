@@ -13,7 +13,6 @@
  *
  */
 
-#include <linux/linkage.h>
 #include <asm/hw_irq.h>
 #include <asm/exception-64s.h>
 #include <asm/ptrace.h>
@@ -112,7 +111,6 @@ name:
 #define ISTACK		.L_ISTACK_\name\()	/* Set regular kernel stack */
 #define __ISTACK(name)	.L_ISTACK_ ## name
 #define IKUAP		.L_IKUAP_\name\()	/* Do KUAP lock */
-#define IMSR_R12	.L_IMSR_R12_\name\()	/* Assumes MSR saved to r12 */
 
 #define INT_DEFINE_BEGIN(n)						\
 .macro int_define_ ## n name
@@ -177,9 +175,6 @@ do_define_int n
 	.endif
 	.ifndef IKUAP
 		IKUAP=1
-	.endif
-	.ifndef IMSR_R12
-		IMSR_R12=0
 	.endif
 .endm
 
@@ -507,7 +502,6 @@ DEFINE_FIXED_SYMBOL(\name\()_common_real, text)
 	std	r10,0(r1)		/* make stack chain pointer	*/
 	std	r0,GPR0(r1)		/* save r0 in stackframe	*/
 	std	r10,GPR1(r1)		/* save r1 in stackframe	*/
-	SANITIZE_GPR(0)
 
 	/* Mark our [H]SRRs valid for return */
 	li	r10,1
@@ -550,14 +544,8 @@ END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
 	std	r9,GPR11(r1)
 	std	r10,GPR12(r1)
 	std	r11,GPR13(r1)
-	.if !IMSR_R12
-	SANITIZE_GPRS(9, 12)
-	.else
-	SANITIZE_GPRS(9, 11)
-	.endif
 
 	SAVE_NVGPRS(r1)
-	SANITIZE_NVGPRS()
 
 	.if IDAR
 	.if IISIDE
@@ -589,8 +577,8 @@ BEGIN_FTR_SECTION
 END_FTR_SECTION_IFSET(CPU_FTR_CFAR)
 	ld	r10,IAREA+EX_CTR(r13)
 	std	r10,_CTR(r1)
-	SAVE_GPRS(2, 8, r1)		/* save r2 - r8 in stackframe   */
-	SANITIZE_GPRS(2, 8)
+	std	r2,GPR2(r1)		/* save r2 in stackframe	*/
+	SAVE_GPRS(3, 8, r1)		/* save r3 - r8 in stackframe   */
 	mflr	r9			/* Get LR, later save to stack	*/
 	LOAD_PACA_TOC()			/* get kernel TOC into r2	*/
 	std	r9,_LINK(r1)
@@ -603,7 +591,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_CFAR)
 	li	r10,0
 	LOAD_REG_IMMEDIATE(r11, STACK_FRAME_REGS_MARKER)
 	std	r10,RESULT(r1)		/* clear regs->result		*/
-	std	r11,STACK_INT_FRAME_MARKER(r1) /* mark the frame	*/
+	std	r11,STACK_FRAME_OVERHEAD-16(r1) /* mark the frame	*/
 .endm
 
 /*
@@ -708,7 +696,6 @@ END_FTR_SECTION_IFSET(CPU_FTR_CFAR)
 	mtlr	r9
 	ld	r9,_CCR(r1)
 	mtcr	r9
-	SANITIZE_RESTORE_NVGPRS()
 	REST_GPRS(2, 13, r1)
 	REST_GPR(0, r1)
 	/* restore original r1. */
@@ -893,7 +880,7 @@ __start_interrupts:
  *
  * Call convention:
  *
- * syscall register convention is in Documentation/arch/powerpc/syscall64-abi.rst
+ * syscall register convention is in Documentation/powerpc/syscall64-abi.rst
  */
 EXC_VIRT_BEGIN(system_call_vectored, 0x3000, 0x1000)
 	/* SCV 0 */
@@ -1074,8 +1061,8 @@ EXC_COMMON_BEGIN(system_reset_common)
 	subi	r1,r1,INT_FRAME_SIZE
 	__GEN_COMMON_BODY system_reset
 
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(system_reset_exception)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	system_reset_exception
 
 	/* Clear MSR_RI before setting SRR0 and SRR1. */
 	li	r9,0
@@ -1221,11 +1208,11 @@ EXC_COMMON_BEGIN(machine_check_early_common)
 BEGIN_FTR_SECTION
 	bl	enable_machine_check
 END_FTR_SECTION_IFSET(CPU_FTR_HVMODE)
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 BEGIN_FTR_SECTION
-	bl	CFUNC(machine_check_early_boot)
+	bl	machine_check_early_boot
 END_FTR_SECTION(0, 1)     // nop out after boot
-	bl	CFUNC(machine_check_early)
+	bl	machine_check_early
 	std	r3,RESULT(r1)	/* Save result */
 	ld	r12,_MSR(r1)
 
@@ -1286,7 +1273,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_HVMODE | CPU_FTR_ARCH_206)
 	 * Queue up the MCE event so that we can log it later, while
 	 * returning from kernel or opal call.
 	 */
-	bl	CFUNC(machine_check_queue_event)
+	bl	machine_check_queue_event
 	MACHINE_CHECK_HANDLER_WINDUP
 	RFI_TO_KERNEL
 
@@ -1311,8 +1298,8 @@ EXC_COMMON_BEGIN(machine_check_common)
 	 * save area: PACA_EXMC instead of PACA_EXGEN.
 	 */
 	GEN_COMMON machine_check
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(machine_check_exception_async)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	machine_check_exception_async
 	b	interrupt_return_srr
 
 
@@ -1322,7 +1309,7 @@ EXC_COMMON_BEGIN(machine_check_common)
  * done. Queue the event then call the idle code to do the wake up.
  */
 EXC_COMMON_BEGIN(machine_check_idle_common)
-	bl	CFUNC(machine_check_queue_event)
+	bl	machine_check_queue_event
 
 	/*
 	 * GPR-loss wakeups are relatively straightforward, because the
@@ -1361,7 +1348,7 @@ EXC_COMMON_BEGIN(unrecoverable_mce)
 BEGIN_FTR_SECTION
 	li	r10,0 /* clear MSR_RI */
 	mtmsrd	r10,1
-	bl	CFUNC(disable_machine_check)
+	bl	disable_machine_check
 END_FTR_SECTION_IFSET(CPU_FTR_HVMODE)
 	ld	r10,PACAKMSR(r13)
 	li	r3,MSR_ME
@@ -1377,15 +1364,15 @@ END_FTR_SECTION_IFSET(CPU_FTR_HVMODE)
 	 * This is the NMI version of the handler because we are called from
 	 * the early handler which is a true NMI.
 	 */
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(machine_check_exception)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	machine_check_exception
 
 	/*
 	 * We will not reach here. Even if we did, there is no way out.
 	 * Call unrecoverable_exception and die.
 	 */
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(unrecoverable_exception)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	unrecoverable_exception
 	b	.
 
 
@@ -1435,26 +1422,26 @@ EXC_VIRT_END(data_access, 0x4300, 0x80)
 EXC_COMMON_BEGIN(data_access_common)
 	GEN_COMMON data_access
 	ld	r4,_DSISR(r1)
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	andis.	r0,r4,DSISR_DABRMATCH@h
 	bne-	1f
 #ifdef CONFIG_PPC_64S_HASH_MMU
 BEGIN_MMU_FTR_SECTION
-	bl	CFUNC(do_hash_fault)
+	bl	do_hash_fault
 MMU_FTR_SECTION_ELSE
-	bl	CFUNC(do_page_fault)
+	bl	do_page_fault
 ALT_MMU_FTR_SECTION_END_IFCLR(MMU_FTR_TYPE_RADIX)
 #else
-	bl	CFUNC(do_page_fault)
+	bl	do_page_fault
 #endif
 	b	interrupt_return_srr
 
-1:	bl	CFUNC(do_break)
+1:	bl	do_break
 	/*
 	 * do_break() may have changed the NV GPRS while handling a breakpoint.
 	 * If so, we need to restore them with their updated values.
 	 */
-	HANDLER_RESTORE_NVGPRS()
+	REST_NVGPRS(r1)
 	b	interrupt_return_srr
 
 
@@ -1492,8 +1479,8 @@ EXC_COMMON_BEGIN(data_access_slb_common)
 #ifdef CONFIG_PPC_64S_HASH_MMU
 BEGIN_MMU_FTR_SECTION
 	/* HPT case, do SLB fault */
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(do_slb_fault)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	do_slb_fault
 	cmpdi	r3,0
 	bne-	1f
 	b	fast_interrupt_return_srr
@@ -1506,8 +1493,8 @@ ALT_MMU_FTR_SECTION_END_IFCLR(MMU_FTR_TYPE_RADIX)
 	li	r3,-EFAULT
 #endif
 	std	r3,RESULT(r1)
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(do_bad_segment_interrupt)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	do_bad_segment_interrupt
 	b	interrupt_return_srr
 
 
@@ -1538,15 +1525,15 @@ EXC_VIRT_BEGIN(instruction_access, 0x4400, 0x80)
 EXC_VIRT_END(instruction_access, 0x4400, 0x80)
 EXC_COMMON_BEGIN(instruction_access_common)
 	GEN_COMMON instruction_access
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 #ifdef CONFIG_PPC_64S_HASH_MMU
 BEGIN_MMU_FTR_SECTION
-	bl	CFUNC(do_hash_fault)
+	bl	do_hash_fault
 MMU_FTR_SECTION_ELSE
-	bl	CFUNC(do_page_fault)
+	bl	do_page_fault
 ALT_MMU_FTR_SECTION_END_IFCLR(MMU_FTR_TYPE_RADIX)
 #else
-	bl	CFUNC(do_page_fault)
+	bl	do_page_fault
 #endif
 	b	interrupt_return_srr
 
@@ -1580,8 +1567,8 @@ EXC_COMMON_BEGIN(instruction_access_slb_common)
 #ifdef CONFIG_PPC_64S_HASH_MMU
 BEGIN_MMU_FTR_SECTION
 	/* HPT case, do SLB fault */
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(do_slb_fault)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	do_slb_fault
 	cmpdi	r3,0
 	bne-	1f
 	b	fast_interrupt_return_srr
@@ -1594,8 +1581,8 @@ ALT_MMU_FTR_SECTION_END_IFCLR(MMU_FTR_TYPE_RADIX)
 	li	r3,-EFAULT
 #endif
 	std	r3,RESULT(r1)
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(do_bad_segment_interrupt)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	do_bad_segment_interrupt
 	b	interrupt_return_srr
 
 
@@ -1648,8 +1635,8 @@ EXC_VIRT_BEGIN(hardware_interrupt, 0x4500, 0x100)
 EXC_VIRT_END(hardware_interrupt, 0x4500, 0x100)
 EXC_COMMON_BEGIN(hardware_interrupt_common)
 	GEN_COMMON hardware_interrupt
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(do_IRQ)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	do_IRQ
 	BEGIN_FTR_SECTION
 	b	interrupt_return_hsrr
 	FTR_SECTION_ELSE
@@ -1678,9 +1665,9 @@ EXC_VIRT_BEGIN(alignment, 0x4600, 0x100)
 EXC_VIRT_END(alignment, 0x4600, 0x100)
 EXC_COMMON_BEGIN(alignment_common)
 	GEN_COMMON alignment
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(alignment_exception)
-	HANDLER_RESTORE_NVGPRS() /* instruction emulation may change GPRs */
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	alignment_exception
+	REST_NVGPRS(r1) /* instruction emulation may change GPRs */
 	b	interrupt_return_srr
 
 
@@ -1744,9 +1731,9 @@ EXC_COMMON_BEGIN(program_check_common)
 	__GEN_COMMON_BODY program_check
 
 .Ldo_program_check:
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(program_check_exception)
-	HANDLER_RESTORE_NVGPRS() /* instruction emulation may change GPRs */
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	program_check_exception
+	REST_NVGPRS(r1) /* instruction emulation may change GPRs */
 	b	interrupt_return_srr
 
 
@@ -1764,7 +1751,6 @@ INT_DEFINE_BEGIN(fp_unavailable)
 #ifdef CONFIG_KVM_BOOK3S_PR_POSSIBLE
 	IKVM_REAL=1
 #endif
-	IMSR_R12=1
 INT_DEFINE_END(fp_unavailable)
 
 EXC_REAL_BEGIN(fp_unavailable, 0x800, 0x100)
@@ -1776,8 +1762,8 @@ EXC_VIRT_END(fp_unavailable, 0x4800, 0x100)
 EXC_COMMON_BEGIN(fp_unavailable_common)
 	GEN_COMMON fp_unavailable
 	bne	1f			/* if from user, just load it up */
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(kernel_fp_unavailable_exception)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	kernel_fp_unavailable_exception
 0:	trap
 	EMIT_BUG_ENTRY 0b, __FILE__, __LINE__, 0
 1:
@@ -1790,12 +1776,12 @@ BEGIN_FTR_SECTION
 	bne-	2f
 END_FTR_SECTION_IFSET(CPU_FTR_TM)
 #endif
-	bl	CFUNC(load_up_fpu)
+	bl	load_up_fpu
 	b	fast_interrupt_return_srr
 #ifdef CONFIG_PPC_TRANSACTIONAL_MEM
 2:	/* User process was in a transaction */
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(fp_unavailable_tm)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	fp_unavailable_tm
 	b	interrupt_return_srr
 #endif
 
@@ -1838,8 +1824,8 @@ EXC_VIRT_BEGIN(decrementer, 0x4900, 0x80)
 EXC_VIRT_END(decrementer, 0x4900, 0x80)
 EXC_COMMON_BEGIN(decrementer_common)
 	GEN_COMMON decrementer
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(timer_interrupt)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	timer_interrupt
 	b	interrupt_return_srr
 
 
@@ -1923,11 +1909,11 @@ EXC_VIRT_BEGIN(doorbell_super, 0x4a00, 0x100)
 EXC_VIRT_END(doorbell_super, 0x4a00, 0x100)
 EXC_COMMON_BEGIN(doorbell_super_common)
 	GEN_COMMON doorbell_super
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 #ifdef CONFIG_PPC_DOORBELL
-	bl	CFUNC(doorbell_exception)
+	bl	doorbell_exception
 #else
-	bl	CFUNC(unknown_async_exception)
+	bl	unknown_async_exception
 #endif
 	b	interrupt_return_srr
 
@@ -1952,8 +1938,8 @@ EXC_VIRT_NONE(0x4b00, 0x100)
  * Call convention:
  *
  * syscall and hypercalls register conventions are documented in
- * Documentation/arch/powerpc/syscall64-abi.rst and
- * Documentation/arch/powerpc/papr_hcalls.rst respectively.
+ * Documentation/powerpc/syscall64-abi.rst and
+ * Documentation/powerpc/papr_hcalls.rst respectively.
  *
  * The intersection of volatile registers that don't contain possible
  * inputs is: cr0, xer, ctr. We may use these as scratch regs upon entry
@@ -2090,8 +2076,8 @@ EXC_VIRT_BEGIN(single_step, 0x4d00, 0x100)
 EXC_VIRT_END(single_step, 0x4d00, 0x100)
 EXC_COMMON_BEGIN(single_step_common)
 	GEN_COMMON single_step
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(single_step_exception)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	single_step_exception
 	b	interrupt_return_srr
 
 
@@ -2124,11 +2110,11 @@ EXC_VIRT_BEGIN(h_data_storage, 0x4e00, 0x20)
 EXC_VIRT_END(h_data_storage, 0x4e00, 0x20)
 EXC_COMMON_BEGIN(h_data_storage_common)
 	GEN_COMMON h_data_storage
-	addi    r3,r1,STACK_INT_FRAME_REGS
+	addi    r3,r1,STACK_FRAME_OVERHEAD
 BEGIN_MMU_FTR_SECTION
-	bl	CFUNC(do_bad_page_fault_segv)
+	bl      do_bad_page_fault_segv
 MMU_FTR_SECTION_ELSE
-	bl	CFUNC(unknown_exception)
+	bl      unknown_exception
 ALT_MMU_FTR_SECTION_END_IFSET(MMU_FTR_TYPE_RADIX)
 	b       interrupt_return_hsrr
 
@@ -2153,8 +2139,8 @@ EXC_VIRT_BEGIN(h_instr_storage, 0x4e20, 0x20)
 EXC_VIRT_END(h_instr_storage, 0x4e20, 0x20)
 EXC_COMMON_BEGIN(h_instr_storage_common)
 	GEN_COMMON h_instr_storage
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(unknown_exception)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	unknown_exception
 	b	interrupt_return_hsrr
 
 
@@ -2176,9 +2162,9 @@ EXC_VIRT_BEGIN(emulation_assist, 0x4e40, 0x20)
 EXC_VIRT_END(emulation_assist, 0x4e40, 0x20)
 EXC_COMMON_BEGIN(emulation_assist_common)
 	GEN_COMMON emulation_assist
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(emulation_assist_interrupt)
-	HANDLER_RESTORE_NVGPRS() /* instruction emulation may change GPRs */
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	emulation_assist_interrupt
+	REST_NVGPRS(r1) /* instruction emulation may change GPRs */
 	b	interrupt_return_hsrr
 
 
@@ -2236,8 +2222,8 @@ EXC_COMMON_BEGIN(hmi_exception_early_common)
 
 	__GEN_COMMON_BODY hmi_exception_early
 
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(hmi_exception_realmode)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	hmi_exception_realmode
 	cmpdi	cr0,r3,0
 	bne	1f
 
@@ -2254,8 +2240,8 @@ EXC_COMMON_BEGIN(hmi_exception_early_common)
 
 EXC_COMMON_BEGIN(hmi_exception_common)
 	GEN_COMMON hmi_exception
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(handle_hmi_exception)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	handle_hmi_exception
 	b	interrupt_return_hsrr
 
 
@@ -2288,11 +2274,11 @@ EXC_VIRT_BEGIN(h_doorbell, 0x4e80, 0x20)
 EXC_VIRT_END(h_doorbell, 0x4e80, 0x20)
 EXC_COMMON_BEGIN(h_doorbell_common)
 	GEN_COMMON h_doorbell
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 #ifdef CONFIG_PPC_DOORBELL
-	bl	CFUNC(doorbell_exception)
+	bl	doorbell_exception
 #else
-	bl	CFUNC(unknown_async_exception)
+	bl	unknown_async_exception
 #endif
 	b	interrupt_return_hsrr
 
@@ -2324,8 +2310,8 @@ EXC_VIRT_BEGIN(h_virt_irq, 0x4ea0, 0x20)
 EXC_VIRT_END(h_virt_irq, 0x4ea0, 0x20)
 EXC_COMMON_BEGIN(h_virt_irq_common)
 	GEN_COMMON h_virt_irq
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(do_IRQ)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	do_IRQ
 	b	interrupt_return_hsrr
 
 
@@ -2370,14 +2356,14 @@ EXC_VIRT_BEGIN(performance_monitor, 0x4f00, 0x20)
 EXC_VIRT_END(performance_monitor, 0x4f00, 0x20)
 EXC_COMMON_BEGIN(performance_monitor_common)
 	GEN_COMMON performance_monitor
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 	lbz	r4,PACAIRQSOFTMASK(r13)
 	cmpdi	r4,IRQS_ENABLED
 	bne	1f
-	bl	CFUNC(performance_monitor_exception_async)
+	bl	performance_monitor_exception_async
 	b	interrupt_return_srr
 1:
-	bl	CFUNC(performance_monitor_exception_nmi)
+	bl	performance_monitor_exception_nmi
 	/* Clear MSR_RI before setting SRR0 and SRR1. */
 	li	r9,0
 	mtmsrd	r9,1
@@ -2398,7 +2384,6 @@ INT_DEFINE_BEGIN(altivec_unavailable)
 #ifdef CONFIG_KVM_BOOK3S_PR_POSSIBLE
 	IKVM_REAL=1
 #endif
-	IMSR_R12=1
 INT_DEFINE_END(altivec_unavailable)
 
 EXC_REAL_BEGIN(altivec_unavailable, 0xf20, 0x20)
@@ -2421,19 +2406,19 @@ BEGIN_FTR_SECTION
 	bne-	2f
   END_FTR_SECTION_NESTED(CPU_FTR_TM, CPU_FTR_TM, 69)
 #endif
-	bl	CFUNC(load_up_altivec)
+	bl	load_up_altivec
 	b	fast_interrupt_return_srr
 #ifdef CONFIG_PPC_TRANSACTIONAL_MEM
 2:	/* User process was in a transaction */
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(altivec_unavailable_tm)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	altivec_unavailable_tm
 	b	interrupt_return_srr
 #endif
 1:
 END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 #endif
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(altivec_unavailable_exception)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	altivec_unavailable_exception
 	b	interrupt_return_srr
 
 
@@ -2448,7 +2433,6 @@ INT_DEFINE_BEGIN(vsx_unavailable)
 #ifdef CONFIG_KVM_BOOK3S_PR_POSSIBLE
 	IKVM_REAL=1
 #endif
-	IMSR_R12=1
 INT_DEFINE_END(vsx_unavailable)
 
 EXC_REAL_BEGIN(vsx_unavailable, 0xf40, 0x20)
@@ -2474,15 +2458,15 @@ BEGIN_FTR_SECTION
 	b	load_up_vsx
 #ifdef CONFIG_PPC_TRANSACTIONAL_MEM
 2:	/* User process was in a transaction */
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(vsx_unavailable_tm)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	vsx_unavailable_tm
 	b	interrupt_return_srr
 #endif
 1:
 END_FTR_SECTION_IFSET(CPU_FTR_VSX)
 #endif
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(vsx_unavailable_exception)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	vsx_unavailable_exception
 	b	interrupt_return_srr
 
 
@@ -2508,9 +2492,9 @@ EXC_VIRT_BEGIN(facility_unavailable, 0x4f60, 0x20)
 EXC_VIRT_END(facility_unavailable, 0x4f60, 0x20)
 EXC_COMMON_BEGIN(facility_unavailable_common)
 	GEN_COMMON facility_unavailable
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(facility_unavailable_exception)
-	HANDLER_RESTORE_NVGPRS() /* instruction emulation may change GPRs */
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	facility_unavailable_exception
+	REST_NVGPRS(r1) /* instruction emulation may change GPRs */
 	b	interrupt_return_srr
 
 
@@ -2536,10 +2520,9 @@ EXC_VIRT_BEGIN(h_facility_unavailable, 0x4f80, 0x20)
 EXC_VIRT_END(h_facility_unavailable, 0x4f80, 0x20)
 EXC_COMMON_BEGIN(h_facility_unavailable_common)
 	GEN_COMMON h_facility_unavailable
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(facility_unavailable_exception)
-	/* XXX Shouldn't be necessary in practice */
-	HANDLER_RESTORE_NVGPRS()
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	facility_unavailable_exception
+	REST_NVGPRS(r1) /* XXX Shouldn't be necessary in practice */
 	b	interrupt_return_hsrr
 
 
@@ -2567,8 +2550,8 @@ EXC_REAL_END(cbe_system_error, 0x1200, 0x100)
 EXC_VIRT_NONE(0x5200, 0x100)
 EXC_COMMON_BEGIN(cbe_system_error_common)
 	GEN_COMMON cbe_system_error
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(cbe_system_error_exception)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	cbe_system_error_exception
 	b	interrupt_return_hsrr
 
 #else /* CONFIG_CBE_RAS */
@@ -2598,8 +2581,8 @@ EXC_VIRT_BEGIN(instruction_breakpoint, 0x5300, 0x100)
 EXC_VIRT_END(instruction_breakpoint, 0x5300, 0x100)
 EXC_COMMON_BEGIN(instruction_breakpoint_common)
 	GEN_COMMON instruction_breakpoint
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(instruction_breakpoint_exception)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	instruction_breakpoint_exception
 	b	interrupt_return_srr
 
 
@@ -2720,8 +2703,8 @@ END_FTR_SECTION_IFSET(CPU_FTR_CFAR)
 
 EXC_COMMON_BEGIN(denorm_exception_common)
 	GEN_COMMON denorm_exception
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(unknown_exception)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	unknown_exception
 	b	interrupt_return_hsrr
 
 
@@ -2737,8 +2720,8 @@ EXC_REAL_END(cbe_maintenance, 0x1600, 0x100)
 EXC_VIRT_NONE(0x5600, 0x100)
 EXC_COMMON_BEGIN(cbe_maintenance_common)
 	GEN_COMMON cbe_maintenance
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(cbe_maintenance_exception)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	cbe_maintenance_exception
 	b	interrupt_return_hsrr
 
 #else /* CONFIG_CBE_RAS */
@@ -2762,12 +2745,12 @@ EXC_VIRT_BEGIN(altivec_assist, 0x5700, 0x100)
 EXC_VIRT_END(altivec_assist, 0x5700, 0x100)
 EXC_COMMON_BEGIN(altivec_assist_common)
 	GEN_COMMON altivec_assist
-	addi	r3,r1,STACK_INT_FRAME_REGS
+	addi	r3,r1,STACK_FRAME_OVERHEAD
 #ifdef CONFIG_ALTIVEC
-	bl	CFUNC(altivec_assist_exception)
-	HANDLER_RESTORE_NVGPRS() /* instruction emulation may change GPRs */
+	bl	altivec_assist_exception
+	REST_NVGPRS(r1) /* instruction emulation may change GPRs */
 #else
-	bl	CFUNC(unknown_exception)
+	bl	unknown_exception
 #endif
 	b	interrupt_return_srr
 
@@ -2784,8 +2767,8 @@ EXC_REAL_END(cbe_thermal, 0x1800, 0x100)
 EXC_VIRT_NONE(0x5800, 0x100)
 EXC_COMMON_BEGIN(cbe_thermal_common)
 	GEN_COMMON cbe_thermal
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(cbe_thermal_exception)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	cbe_thermal_exception
 	b	interrupt_return_hsrr
 
 #else /* CONFIG_CBE_RAS */
@@ -2817,8 +2800,8 @@ EXC_COMMON_BEGIN(soft_nmi_common)
 	subi	r1,r1,INT_FRAME_SIZE
 	__GEN_COMMON_BODY soft_nmi
 
-	addi	r3,r1,STACK_INT_FRAME_REGS
-	bl	CFUNC(soft_nmi_interrupt)
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	soft_nmi_interrupt
 
 	/* Clear MSR_RI before setting SRR0 and SRR1. */
 	li	r9,0
@@ -3141,7 +3124,7 @@ _GLOBAL(enable_machine_check)
 	blr
 
 /* MSR[RI] should be clear because this uses SRR[01] */
-SYM_FUNC_START_LOCAL(disable_machine_check)
+disable_machine_check:
 	mflr	r0
 	bcl	20,31,$+4
 0:	mflr	r3
@@ -3154,4 +3137,3 @@ SYM_FUNC_START_LOCAL(disable_machine_check)
 	RFI_TO_KERNEL
 1:	mtlr	r0
 	blr
-SYM_FUNC_END(disable_machine_check)

@@ -507,7 +507,10 @@ static int mlx5_lag_create_ttc_table(struct mlx5_lag *ldev)
 
 	mlx5_lag_set_outer_ttc_params(ldev, &ttc_params);
 	port_sel->outer.ttc = mlx5_create_ttc_table(dev, &ttc_params);
-	return PTR_ERR_OR_ZERO(port_sel->outer.ttc);
+	if (IS_ERR(port_sel->outer.ttc))
+		return PTR_ERR(port_sel->outer.ttc);
+
+	return 0;
 }
 
 static int mlx5_lag_create_inner_ttc_table(struct mlx5_lag *ldev)
@@ -518,7 +521,10 @@ static int mlx5_lag_create_inner_ttc_table(struct mlx5_lag *ldev)
 
 	mlx5_lag_set_inner_ttc_params(ldev, &ttc_params);
 	port_sel->inner.ttc = mlx5_create_inner_ttc_table(dev, &ttc_params);
-	return PTR_ERR_OR_ZERO(port_sel->inner.ttc);
+	if (IS_ERR(port_sel->inner.ttc))
+		return PTR_ERR(port_sel->inner.ttc);
+
+	return 0;
 }
 
 int mlx5_lag_port_sel_create(struct mlx5_lag *ldev,

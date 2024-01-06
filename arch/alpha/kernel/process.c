@@ -9,7 +9,6 @@
  * This file handles the architecture-dependent parts of process handling.
  */
 
-#include <linux/cpu.h>
 #include <linux/errno.h>
 #include <linux/module.h>
 #include <linux/sched.h>
@@ -58,12 +57,12 @@ EXPORT_SYMBOL(pm_power_off);
 void arch_cpu_idle(void)
 {
 	wtint(0);
+	raw_local_irq_enable();
 }
 
-void __noreturn arch_cpu_idle_dead(void)
+void arch_cpu_idle_dead(void)
 {
 	wtint(INT_MAX);
-	BUG();
 }
 #endif /* ALPHA_WTINT */
 
@@ -75,7 +74,7 @@ struct halt_info {
 static void
 common_shutdown_1(void *generic_ptr)
 {
-	struct halt_info *how = generic_ptr;
+	struct halt_info *how = (struct halt_info *)generic_ptr;
 	struct percpu_struct *cpup;
 	unsigned long *pflags, flags;
 	int cpuid = smp_processor_id();
@@ -135,7 +134,7 @@ common_shutdown_1(void *generic_ptr)
 #ifdef CONFIG_DUMMY_CONSOLE
 		/* If we've gotten here after SysRq-b, leave interrupt
 		   context before taking over the console. */
-		if (in_hardirq())
+		if (in_irq())
 			irq_exit();
 		/* This has the effect of resetting the VGA video origin.  */
 		console_lock();
@@ -245,7 +244,6 @@ int copy_thread(struct task_struct *p, const struct kernel_clone_args *args)
 	childstack = ((struct switch_stack *) childregs) - 1;
 	childti->pcb.ksp = (unsigned long) childstack;
 	childti->pcb.flags = 1;	/* set FEN, clear everything else */
-	childti->status |= TS_SAVED_FP | TS_RESTORE_FP;
 
 	if (unlikely(args->fn)) {
 		/* kernel thread */
@@ -255,7 +253,6 @@ int copy_thread(struct task_struct *p, const struct kernel_clone_args *args)
 		childstack->r9 = (unsigned long) args->fn;
 		childstack->r10 = (unsigned long) args->fn_arg;
 		childregs->hae = alpha_mv.hae_cache;
-		memset(childti->fp, '\0', sizeof(childti->fp));
 		childti->pcb.usp = 0;
 		return 0;
 	}
@@ -336,11 +333,14 @@ dump_elf_task(elf_greg_t *dest, struct task_struct *task)
 }
 EXPORT_SYMBOL(dump_elf_task);
 
-int elf_core_copy_task_fpregs(struct task_struct *t, elf_fpregset_t *fpu)
+int
+dump_elf_task_fp(elf_fpreg_t *dest, struct task_struct *task)
 {
-	memcpy(fpu, task_thread_info(t)->fp, 32 * 8);
+	struct switch_stack *sw = (struct switch_stack *)task_pt_regs(task) - 1;
+	memcpy(dest, sw->fp, 32 * 8);
 	return 1;
 }
+EXPORT_SYMBOL(dump_elf_task_fp);
 
 /*
  * Return saved PC of a blocked thread.  This assumes the frame

@@ -28,7 +28,6 @@
 #include <asm/xive.h>
 #include <asm/cpu_has_feature.h>
 #endif
-#include <asm/inst.h>
 
 /*
  * KVMPPC_INST_SW_BREAKPOINT is debug Instruction
@@ -85,8 +84,7 @@ extern int kvmppc_handle_vsx_store(struct kvm_vcpu *vcpu,
 				int is_default_endian);
 
 extern int kvmppc_load_last_inst(struct kvm_vcpu *vcpu,
-				 enum instruction_fetch_type type,
-				 unsigned long *inst);
+				 enum instruction_fetch_type type, u32 *inst);
 
 extern int kvmppc_ld(struct kvm_vcpu *vcpu, ulong *eaddr, int size, void *ptr,
 		     bool data);
@@ -120,6 +118,7 @@ extern int kvmppc_xlate(struct kvm_vcpu *vcpu, ulong eaddr,
 extern int kvmppc_core_vcpu_create(struct kvm_vcpu *vcpu);
 extern void kvmppc_core_vcpu_free(struct kvm_vcpu *vcpu);
 extern int kvmppc_core_vcpu_setup(struct kvm_vcpu *vcpu);
+extern int kvmppc_core_check_processor_compat(void);
 extern int kvmppc_core_vcpu_translate(struct kvm_vcpu *vcpu,
                                       struct kvm_translation *tr);
 
@@ -128,34 +127,25 @@ extern void kvmppc_core_vcpu_put(struct kvm_vcpu *vcpu);
 
 extern int kvmppc_core_prepare_to_enter(struct kvm_vcpu *vcpu);
 extern int kvmppc_core_pending_dec(struct kvm_vcpu *vcpu);
-
-extern void kvmppc_core_queue_machine_check(struct kvm_vcpu *vcpu,
-					    ulong srr1_flags);
+extern void kvmppc_core_queue_machine_check(struct kvm_vcpu *vcpu, ulong flags);
 extern void kvmppc_core_queue_syscall(struct kvm_vcpu *vcpu);
-extern void kvmppc_core_queue_program(struct kvm_vcpu *vcpu,
-				      ulong srr1_flags);
-extern void kvmppc_core_queue_fpunavail(struct kvm_vcpu *vcpu,
-					ulong srr1_flags);
-extern void kvmppc_core_queue_vec_unavail(struct kvm_vcpu *vcpu,
-					  ulong srr1_flags);
-extern void kvmppc_core_queue_vsx_unavail(struct kvm_vcpu *vcpu,
-					  ulong srr1_flags);
+extern void kvmppc_core_queue_program(struct kvm_vcpu *vcpu, ulong flags);
+extern void kvmppc_core_queue_fpunavail(struct kvm_vcpu *vcpu);
+extern void kvmppc_core_queue_vec_unavail(struct kvm_vcpu *vcpu);
+extern void kvmppc_core_queue_vsx_unavail(struct kvm_vcpu *vcpu);
 extern void kvmppc_core_queue_dec(struct kvm_vcpu *vcpu);
 extern void kvmppc_core_dequeue_dec(struct kvm_vcpu *vcpu);
 extern void kvmppc_core_queue_external(struct kvm_vcpu *vcpu,
                                        struct kvm_interrupt *irq);
 extern void kvmppc_core_dequeue_external(struct kvm_vcpu *vcpu);
-extern void kvmppc_core_queue_dtlb_miss(struct kvm_vcpu *vcpu,
-					ulong dear_flags,
+extern void kvmppc_core_queue_dtlb_miss(struct kvm_vcpu *vcpu, ulong dear_flags,
 					ulong esr_flags);
 extern void kvmppc_core_queue_data_storage(struct kvm_vcpu *vcpu,
-					   ulong srr1_flags,
-					   ulong dar,
-					   ulong dsisr);
+					   ulong dear_flags,
+					   ulong esr_flags);
 extern void kvmppc_core_queue_itlb_miss(struct kvm_vcpu *vcpu);
 extern void kvmppc_core_queue_inst_storage(struct kvm_vcpu *vcpu,
-					   ulong srr1_flags);
-
+					   ulong esr_flags);
 extern void kvmppc_core_flush_tlb(struct kvm_vcpu *vcpu);
 extern int kvmppc_core_check_requests(struct kvm_vcpu *vcpu);
 
@@ -167,7 +157,7 @@ extern void kvmppc_map_magic(struct kvm_vcpu *vcpu);
 
 extern int kvmppc_allocate_hpt(struct kvm_hpt_info *info, u32 order);
 extern void kvmppc_set_hpt(struct kvm *kvm, struct kvm_hpt_info *info);
-extern int kvmppc_alloc_reset_hpt(struct kvm *kvm, int order);
+extern long kvmppc_alloc_reset_hpt(struct kvm *kvm, int order);
 extern void kvmppc_free_hpt(struct kvm_hpt_info *info);
 extern void kvmppc_rmap_reset(struct kvm *kvm);
 extern void kvmppc_map_vrma(struct kvm_vcpu *vcpu,
@@ -181,7 +171,7 @@ extern int kvmppc_switch_mmu_to_hpt(struct kvm *kvm);
 extern int kvmppc_switch_mmu_to_radix(struct kvm *kvm);
 extern void kvmppc_setup_partition_table(struct kvm *kvm);
 
-extern int kvm_vm_ioctl_create_spapr_tce(struct kvm *kvm,
+extern long kvm_vm_ioctl_create_spapr_tce(struct kvm *kvm,
 				struct kvm_create_spapr_tce_64 *args);
 #define kvmppc_ioba_validate(stt, ioba, npages)                         \
 		(iommu_tce_check_ioba((stt)->page_shift, (stt)->offset, \
@@ -222,10 +212,10 @@ extern void kvmppc_bookehv_exit(void);
 extern int kvmppc_prepare_to_enter(struct kvm_vcpu *vcpu);
 
 extern int kvm_vm_ioctl_get_htab_fd(struct kvm *kvm, struct kvm_get_htab_fd *);
-extern int kvm_vm_ioctl_resize_hpt_prepare(struct kvm *kvm,
+extern long kvm_vm_ioctl_resize_hpt_prepare(struct kvm *kvm,
+					    struct kvm_ppc_resize_hpt *rhpt);
+extern long kvm_vm_ioctl_resize_hpt_commit(struct kvm *kvm,
 					   struct kvm_ppc_resize_hpt *rhpt);
-extern int kvm_vm_ioctl_resize_hpt_commit(struct kvm *kvm,
-					  struct kvm_ppc_resize_hpt *rhpt);
 
 int kvm_vcpu_ioctl_interrupt(struct kvm_vcpu *vcpu, struct kvm_interrupt *irq);
 
@@ -297,8 +287,8 @@ struct kvmppc_ops {
 	int (*emulate_mtspr)(struct kvm_vcpu *vcpu, int sprn, ulong spr_val);
 	int (*emulate_mfspr)(struct kvm_vcpu *vcpu, int sprn, ulong *spr_val);
 	void (*fast_vcpu_kick)(struct kvm_vcpu *vcpu);
-	int (*arch_vm_ioctl)(struct file *filp, unsigned int ioctl,
-			     unsigned long arg);
+	long (*arch_vm_ioctl)(struct file *filp, unsigned int ioctl,
+			      unsigned long arg);
 	int (*hcall_implemented)(unsigned long hcall);
 	int (*irq_bypass_add_producer)(struct irq_bypass_consumer *,
 				       struct irq_bypass_producer *);
@@ -326,7 +316,7 @@ extern struct kvmppc_ops *kvmppc_hv_ops;
 extern struct kvmppc_ops *kvmppc_pr_ops;
 
 static inline int kvmppc_get_last_inst(struct kvm_vcpu *vcpu,
-				enum instruction_fetch_type type, ppc_inst_t *inst)
+				enum instruction_fetch_type type, u32 *inst)
 {
 	int ret = EMULATE_DONE;
 	u32 fetched_inst;
@@ -337,30 +327,15 @@ static inline int kvmppc_get_last_inst(struct kvm_vcpu *vcpu,
 		ret = kvmppc_load_last_inst(vcpu, type, &vcpu->arch.last_inst);
 
 	/*  Write fetch_failed unswapped if the fetch failed */
-	if (ret != EMULATE_DONE) {
-		*inst = ppc_inst(KVM_INST_FETCH_FAILED);
-		return ret;
-	}
+	if (ret == EMULATE_DONE)
+		fetched_inst = kvmppc_need_byteswap(vcpu) ?
+				swab32(vcpu->arch.last_inst) :
+				vcpu->arch.last_inst;
+	else
+		fetched_inst = vcpu->arch.last_inst;
 
-#ifdef CONFIG_PPC64
-	/* Is this a prefixed instruction? */
-	if ((vcpu->arch.last_inst >> 32) != 0) {
-		u32 prefix = vcpu->arch.last_inst >> 32;
-		u32 suffix = vcpu->arch.last_inst;
-		if (kvmppc_need_byteswap(vcpu)) {
-			prefix = swab32(prefix);
-			suffix = swab32(suffix);
-		}
-		*inst = ppc_inst_prefix(prefix, suffix);
-		return EMULATE_DONE;
-	}
-#endif
-
-	fetched_inst = kvmppc_need_byteswap(vcpu) ?
-		swab32(vcpu->arch.last_inst) :
-		vcpu->arch.last_inst;
-	*inst = ppc_inst(fetched_inst);
-	return EMULATE_DONE;
+	*inst = fetched_inst;
+	return ret;
 }
 
 static inline bool is_kvmppc_hv_enabled(struct kvm *kvm)
@@ -548,12 +523,12 @@ static inline void kvmppc_set_host_ipi(int cpu)
 	 * pairs with the barrier in kvmppc_clear_host_ipi()
 	 */
 	smp_mb();
-	WRITE_ONCE(paca_ptrs[cpu]->kvm_hstate.host_ipi, 1);
+	paca_ptrs[cpu]->kvm_hstate.host_ipi = 1;
 }
 
 static inline void kvmppc_clear_host_ipi(int cpu)
 {
-	WRITE_ONCE(paca_ptrs[cpu]->kvm_hstate.host_ipi, 0);
+	paca_ptrs[cpu]->kvm_hstate.host_ipi = 0;
 	/*
 	 * order clearing of host_ipi flag vs. processing of IPI messages
 	 *
@@ -615,42 +590,6 @@ static inline bool kvmhv_on_pseries(void)
 {
 	return false;
 }
-
-#endif
-
-#ifndef CONFIG_PPC_BOOK3S
-
-static inline bool kvmhv_is_nestedv2(void)
-{
-	return false;
-}
-
-static inline bool kvmhv_is_nestedv1(void)
-{
-	return false;
-}
-
-static inline int kvmhv_nestedv2_reload_ptregs(struct kvm_vcpu *vcpu,
-					       struct pt_regs *regs)
-{
-	return 0;
-}
-static inline int kvmhv_nestedv2_mark_dirty_ptregs(struct kvm_vcpu *vcpu,
-						   struct pt_regs *regs)
-{
-	return 0;
-}
-
-static inline int kvmhv_nestedv2_mark_dirty(struct kvm_vcpu *vcpu, u16 iden)
-{
-	return 0;
-}
-
-static inline int kvmhv_nestedv2_cached_reload(struct kvm_vcpu *vcpu, u16 iden)
-{
-	return 0;
-}
-
 #endif
 
 #ifdef CONFIG_KVM_XICS
@@ -930,7 +869,7 @@ void kvmppc_init_lpid(unsigned long nr_lpids);
 
 static inline void kvmppc_mmu_flush_icache(kvm_pfn_t pfn)
 {
-	struct folio *folio;
+	struct page *page;
 	/*
 	 * We can only access pages that the kernel maps
 	 * as memory. Bail out for unmapped ones.
@@ -939,10 +878,10 @@ static inline void kvmppc_mmu_flush_icache(kvm_pfn_t pfn)
 		return;
 
 	/* Clear i-cache for new pages */
-	folio = page_folio(pfn_to_page(pfn));
-	if (!test_bit(PG_dcache_clean, &folio->flags)) {
-		flush_dcache_icache_folio(folio);
-		set_bit(PG_dcache_clean, &folio->flags);
+	page = pfn_to_page(pfn);
+	if (!test_bit(PG_dcache_clean, &page->flags)) {
+		flush_dcache_icache_page(page);
+		set_bit(PG_dcache_clean, &page->flags);
 	}
 }
 
@@ -963,85 +902,79 @@ static inline bool kvmppc_shared_big_endian(struct kvm_vcpu *vcpu)
 #endif
 }
 
-#define KVMPPC_BOOKE_HV_SPRNG_ACCESSOR_GET(reg, bookehv_spr)		\
+#define SPRNG_WRAPPER_GET(reg, bookehv_spr)				\
 static inline ulong kvmppc_get_##reg(struct kvm_vcpu *vcpu)		\
 {									\
 	return mfspr(bookehv_spr);					\
 }									\
 
-#define KVMPPC_BOOKE_HV_SPRNG_ACCESSOR_SET(reg, bookehv_spr)		\
+#define SPRNG_WRAPPER_SET(reg, bookehv_spr)				\
 static inline void kvmppc_set_##reg(struct kvm_vcpu *vcpu, ulong val)	\
 {									\
 	mtspr(bookehv_spr, val);						\
 }									\
 
-#define KVMPPC_VCPU_SHARED_REGS_ACCESSOR_GET(reg, size, iden)		\
+#define SHARED_WRAPPER_GET(reg, size)					\
 static inline u##size kvmppc_get_##reg(struct kvm_vcpu *vcpu)		\
 {									\
-	if (iden)							\
-		WARN_ON(kvmhv_nestedv2_cached_reload(vcpu, iden) < 0);	\
 	if (kvmppc_shared_big_endian(vcpu))				\
-		return be##size##_to_cpu((__be##size __force)vcpu->arch.shared->reg);	\
+	       return be##size##_to_cpu(vcpu->arch.shared->reg);	\
 	else								\
-		return le##size##_to_cpu((__le##size __force)vcpu->arch.shared->reg);	\
+	       return le##size##_to_cpu(vcpu->arch.shared->reg);	\
 }									\
 
-#define KVMPPC_VCPU_SHARED_REGS_ACCESSOR_SET(reg, size, iden)		\
+#define SHARED_WRAPPER_SET(reg, size)					\
 static inline void kvmppc_set_##reg(struct kvm_vcpu *vcpu, u##size val)	\
 {									\
 	if (kvmppc_shared_big_endian(vcpu))				\
-		vcpu->arch.shared->reg = (u##size __force)cpu_to_be##size(val);	\
+	       vcpu->arch.shared->reg = cpu_to_be##size(val);		\
 	else								\
-		vcpu->arch.shared->reg = (u##size __force)cpu_to_le##size(val);	\
-									\
-	if (iden)							\
-		kvmhv_nestedv2_mark_dirty(vcpu, iden);			\
+	       vcpu->arch.shared->reg = cpu_to_le##size(val);		\
 }									\
 
-#define KVMPPC_VCPU_SHARED_REGS_ACCESSOR(reg, size, iden)		\
-	KVMPPC_VCPU_SHARED_REGS_ACCESSOR_GET(reg, size, iden)		\
-	KVMPPC_VCPU_SHARED_REGS_ACCESSOR_SET(reg, size, iden)		\
+#define SHARED_WRAPPER(reg, size)					\
+	SHARED_WRAPPER_GET(reg, size)					\
+	SHARED_WRAPPER_SET(reg, size)					\
 
-#define KVMPPC_BOOKE_HV_SPRNG_ACCESSOR(reg, bookehv_spr)		\
-	KVMPPC_BOOKE_HV_SPRNG_ACCESSOR_GET(reg, bookehv_spr)		\
-	KVMPPC_BOOKE_HV_SPRNG_ACCESSOR_SET(reg, bookehv_spr)		\
+#define SPRNG_WRAPPER(reg, bookehv_spr)					\
+	SPRNG_WRAPPER_GET(reg, bookehv_spr)				\
+	SPRNG_WRAPPER_SET(reg, bookehv_spr)				\
 
 #ifdef CONFIG_KVM_BOOKE_HV
 
-#define KVMPPC_BOOKE_HV_SPRNG_OR_VCPU_SHARED_REGS_ACCESSOR(reg, size, bookehv_spr, iden)	\
-	KVMPPC_BOOKE_HV_SPRNG_ACCESSOR(reg, bookehv_spr)		\
+#define SHARED_SPRNG_WRAPPER(reg, size, bookehv_spr)			\
+	SPRNG_WRAPPER(reg, bookehv_spr)					\
 
 #else
 
-#define KVMPPC_BOOKE_HV_SPRNG_OR_VCPU_SHARED_REGS_ACCESSOR(reg, size, bookehv_spr, iden)	\
-	KVMPPC_VCPU_SHARED_REGS_ACCESSOR(reg, size, iden)		\
+#define SHARED_SPRNG_WRAPPER(reg, size, bookehv_spr)			\
+	SHARED_WRAPPER(reg, size)					\
 
 #endif
 
-KVMPPC_VCPU_SHARED_REGS_ACCESSOR(critical, 64, 0)
-KVMPPC_BOOKE_HV_SPRNG_OR_VCPU_SHARED_REGS_ACCESSOR(sprg0, 64, SPRN_GSPRG0, KVMPPC_GSID_SPRG0)
-KVMPPC_BOOKE_HV_SPRNG_OR_VCPU_SHARED_REGS_ACCESSOR(sprg1, 64, SPRN_GSPRG1, KVMPPC_GSID_SPRG1)
-KVMPPC_BOOKE_HV_SPRNG_OR_VCPU_SHARED_REGS_ACCESSOR(sprg2, 64, SPRN_GSPRG2, KVMPPC_GSID_SPRG2)
-KVMPPC_BOOKE_HV_SPRNG_OR_VCPU_SHARED_REGS_ACCESSOR(sprg3, 64, SPRN_GSPRG3, KVMPPC_GSID_SPRG3)
-KVMPPC_BOOKE_HV_SPRNG_OR_VCPU_SHARED_REGS_ACCESSOR(srr0, 64, SPRN_GSRR0, KVMPPC_GSID_SRR0)
-KVMPPC_BOOKE_HV_SPRNG_OR_VCPU_SHARED_REGS_ACCESSOR(srr1, 64, SPRN_GSRR1, KVMPPC_GSID_SRR1)
-KVMPPC_BOOKE_HV_SPRNG_OR_VCPU_SHARED_REGS_ACCESSOR(dar, 64, SPRN_GDEAR, KVMPPC_GSID_DAR)
-KVMPPC_BOOKE_HV_SPRNG_OR_VCPU_SHARED_REGS_ACCESSOR(esr, 64, SPRN_GESR, 0)
-KVMPPC_VCPU_SHARED_REGS_ACCESSOR_GET(msr, 64, KVMPPC_GSID_MSR)
+SHARED_WRAPPER(critical, 64)
+SHARED_SPRNG_WRAPPER(sprg0, 64, SPRN_GSPRG0)
+SHARED_SPRNG_WRAPPER(sprg1, 64, SPRN_GSPRG1)
+SHARED_SPRNG_WRAPPER(sprg2, 64, SPRN_GSPRG2)
+SHARED_SPRNG_WRAPPER(sprg3, 64, SPRN_GSPRG3)
+SHARED_SPRNG_WRAPPER(srr0, 64, SPRN_GSRR0)
+SHARED_SPRNG_WRAPPER(srr1, 64, SPRN_GSRR1)
+SHARED_SPRNG_WRAPPER(dar, 64, SPRN_GDEAR)
+SHARED_SPRNG_WRAPPER(esr, 64, SPRN_GESR)
+SHARED_WRAPPER_GET(msr, 64)
 static inline void kvmppc_set_msr_fast(struct kvm_vcpu *vcpu, u64 val)
 {
 	if (kvmppc_shared_big_endian(vcpu))
 	       vcpu->arch.shared->msr = cpu_to_be64(val);
 	else
 	       vcpu->arch.shared->msr = cpu_to_le64(val);
-	kvmhv_nestedv2_mark_dirty(vcpu, KVMPPC_GSID_MSR);
 }
-KVMPPC_VCPU_SHARED_REGS_ACCESSOR(dsisr, 32, KVMPPC_GSID_DSISR)
-KVMPPC_VCPU_SHARED_REGS_ACCESSOR(int_pending, 32, 0)
-KVMPPC_VCPU_SHARED_REGS_ACCESSOR(sprg4, 64, 0)
-KVMPPC_VCPU_SHARED_REGS_ACCESSOR(sprg5, 64, 0)
-KVMPPC_VCPU_SHARED_REGS_ACCESSOR(sprg6, 64, 0)
-KVMPPC_VCPU_SHARED_REGS_ACCESSOR(sprg7, 64, 0)
+SHARED_WRAPPER(dsisr, 32)
+SHARED_WRAPPER(int_pending, 32)
+SHARED_WRAPPER(sprg4, 64)
+SHARED_WRAPPER(sprg5, 64)
+SHARED_WRAPPER(sprg6, 64)
+SHARED_WRAPPER(sprg7, 64)
 
 static inline u32 kvmppc_get_sr(struct kvm_vcpu *vcpu, int nr)
 {
@@ -1080,18 +1013,6 @@ static inline void kvmppc_fix_ee_before_entry(void)
 	irq_soft_mask_set(IRQS_ENABLED);
 #endif
 }
-
-static inline void kvmppc_fix_ee_after_exit(void)
-{
-#ifdef CONFIG_PPC64
-	/* Only need to enable IRQs by hard enabling them after this */
-	local_paca->irq_happened = PACA_IRQ_HARD_DIS;
-	irq_soft_mask_set(IRQS_ALL_DISABLED);
-#endif
-
-	trace_hardirqs_off();
-}
-
 
 static inline ulong kvmppc_get_ea_indexed(struct kvm_vcpu *vcpu, int ra, int rb)
 {

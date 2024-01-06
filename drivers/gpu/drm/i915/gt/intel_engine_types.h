@@ -53,8 +53,6 @@ struct intel_gt;
 struct intel_ring;
 struct intel_uncore;
 struct intel_breadcrumbs;
-struct intel_engine_cs;
-struct i915_perf_group;
 
 typedef u32 intel_engine_mask_t;
 #define ALL_ENGINES ((intel_engine_mask_t)~0ul)
@@ -139,7 +137,6 @@ enum intel_engine_id {
 	CCS2,
 	CCS3,
 #define _CCS(n) (CCS0 + (n))
-	GSC0,
 	I915_NUM_ENGINES
 #define INVALID_ENGINE ((enum intel_engine_id)-1)
 };
@@ -290,7 +287,6 @@ struct intel_engine_execlists {
 	 */
 	u8 csb_head;
 
-	/* private: selftest */
 	I915_SELFTEST_DECLARE(struct st_preempt_hang preempt_hang;)
 };
 
@@ -345,18 +341,6 @@ struct intel_engine_guc_stats {
 	u64 start_gt_clk;
 };
 
-union intel_engine_tlb_inv_reg {
-	i915_reg_t	reg;
-	i915_mcr_reg_t	mcr_reg;
-};
-
-struct intel_engine_tlb_inv {
-	bool mcr;
-	union intel_engine_tlb_inv_reg reg;
-	u32 request;
-	u32 done;
-};
-
 struct intel_engine_cs {
 	struct drm_i915_private *i915;
 	struct intel_gt *gt;
@@ -388,8 +372,6 @@ struct intel_engine_cs {
 	u32 context_size;
 	u32 mmio_base;
 
-	struct intel_engine_tlb_inv tlb_inv;
-
 	/*
 	 * Some w/a require forcewake to be held (which prevents RC6) while
 	 * a particular engine is active. If so, we set fw_domain to which
@@ -402,15 +384,7 @@ struct intel_engine_cs {
 
 	unsigned long context_tag;
 
-	/*
-	 * The type evolves during initialization, see related comment for
-	 * struct drm_i915_private's uabi_engines member.
-	 */
-	union {
-		struct llist_node uabi_llist;
-		struct list_head uabi_list;
-		struct rb_node uabi_node;
-	};
+	struct rb_node uabi_node;
 
 	struct intel_sseu sseu;
 
@@ -424,9 +398,6 @@ struct intel_engine_cs {
 	struct llist_head barrier_tasks;
 
 	struct intel_context *kernel_context; /* pinned */
-	struct intel_context *bind_context; /* pinned, only for BCS0 */
-	/* mark the bind context's availability status */
-	bool bind_context_ready;
 
 	/**
 	 * pinned_contexts_list: List of pinned contexts. This list is only
@@ -632,14 +603,6 @@ struct intel_engine_cs {
 	} props, defaults;
 
 	I915_SELFTEST_DECLARE(struct fault_attr reset_timeout);
-
-	/*
-	 * The perf group maps to one OA unit which controls one OA buffer. All
-	 * reports corresponding to this engine will be reported to this OA
-	 * buffer. An engine will map to a single OA unit, but a single OA unit
-	 * can generate reports for multiple engines.
-	 */
-	struct i915_perf_group *oa_group;
 };
 
 static inline bool

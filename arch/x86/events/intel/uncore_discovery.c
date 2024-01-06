@@ -33,7 +33,7 @@ static int logical_die_id;
 
 static int get_device_die_id(struct pci_dev *dev)
 {
-	int node = pcibus_to_node(dev->bus);
+	int cpu, node = pcibus_to_node(dev->bus);
 
 	/*
 	 * If the NUMA info is not available, assume that the logical die id is
@@ -43,7 +43,19 @@ static int get_device_die_id(struct pci_dev *dev)
 	if (node < 0)
 		return logical_die_id++;
 
-	return uncore_device_to_die(dev);
+	for_each_cpu(cpu, cpumask_of_node(node)) {
+		struct cpuinfo_x86 *c = &cpu_data(cpu);
+
+		if (c->initialized && cpu_to_node(cpu) == node)
+			return c->logical_die_id;
+	}
+
+	/*
+	 * All CPUs of a node may be offlined. For this case,
+	 * the PCI and MMIO type of uncore blocks which are
+	 * enumerated by the device will be unavailable.
+	 */
+	return -1;
 }
 
 #define __node_2_type(cur)	\
@@ -202,25 +214,8 @@ free_box_offset:
 
 }
 
-static bool
-uncore_ignore_unit(struct uncore_unit_discovery *unit, int *ignore)
-{
-	int i;
-
-	if (!ignore)
-		return false;
-
-	for (i = 0; ignore[i] != UNCORE_IGNORE_END ; i++) {
-		if (unit->box_type == ignore[i])
-			return true;
-	}
-
-	return false;
-}
-
 static int parse_discovery_table(struct pci_dev *dev, int die,
-				 u32 bar_offset, bool *parsed,
-				 int *ignore)
+				 u32 bar_offset, bool *parsed)
 {
 	struct uncore_global_discovery global;
 	struct uncore_unit_discovery unit;
@@ -275,9 +270,6 @@ static int parse_discovery_table(struct pci_dev *dev, int die,
 		if (unit.access_type >= UNCORE_ACCESS_MAX)
 			continue;
 
-		if (uncore_ignore_unit(&unit, ignore))
-			continue;
-
 		uncore_insert_box_info(&unit, die, *parsed);
 	}
 
@@ -286,7 +278,7 @@ static int parse_discovery_table(struct pci_dev *dev, int die,
 	return 0;
 }
 
-bool intel_uncore_has_discovery_tables(int *ignore)
+bool intel_uncore_has_discovery_tables(void)
 {
 	u32 device, val, entry_id, bar_offset;
 	int die, dvsec = 0, ret = true;
@@ -322,7 +314,7 @@ bool intel_uncore_has_discovery_tables(int *ignore)
 			if (die < 0)
 				continue;
 
-			parse_discovery_table(dev, die, bar_offset, &parsed, ignore);
+			parse_discovery_table(dev, die, bar_offset, &parsed);
 		}
 	}
 

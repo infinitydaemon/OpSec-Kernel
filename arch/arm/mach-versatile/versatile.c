@@ -53,7 +53,7 @@
 
 static void __iomem *versatile_sys_base;
 
-static unsigned int mmc_status(struct device *dev)
+unsigned int mmc_status(struct device *dev)
 {
 	struct amba_device *adev = container_of(dev, struct amba_device, dev);
 	u32 mask;

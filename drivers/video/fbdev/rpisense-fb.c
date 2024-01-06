@@ -225,7 +225,7 @@ static int rpisense_fb_probe(struct platform_device *pdev)
 	info->fix = rpisense_fb_fix;
 	info->var = rpisense_fb_var;
 	info->fbdefio = &rpisense_fb_defio;
-	info->flags = FBINFO_VIRTFB;
+	info->flags = FBINFO_FLAG_DEFAULT | FBINFO_VIRTFB;
 	info->screen_base = rpisense_fb_param.vmem;
 	info->screen_size = rpisense_fb_param.vmemsize;
 	info->pseudo_palette = pseudo_palette;

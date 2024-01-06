@@ -129,7 +129,7 @@ static inline pte_t pte_mkold(pte_t pte)
 	return pte;
 }
 
-static inline pte_t pte_mkwrite_novma(pte_t pte)
+static inline pte_t pte_mkwrite(pte_t pte)
 {
 	pte_val(pte) |= _PAGE_WRITE;
 	return pte;
@@ -178,21 +178,14 @@ static inline void set_pte(pte_t *ptep, pte_t pteval)
 	*ptep = pteval;
 }
 
-static inline void set_ptes(struct mm_struct *mm, unsigned long addr,
-		pte_t *ptep, pte_t pte, unsigned int nr)
+static inline void set_pte_at(struct mm_struct *mm, unsigned long addr,
+			      pte_t *ptep, pte_t pteval)
 {
-	unsigned long paddr = (unsigned long)page_to_virt(pte_page(pte));
+	unsigned long paddr = (unsigned long)page_to_virt(pte_page(pteval));
 
-	flush_dcache_range(paddr, paddr + nr * PAGE_SIZE);
-	for (;;) {
-		set_pte(ptep, pte);
-		if (--nr == 0)
-			break;
-		ptep++;
-		pte_val(pte) += 1;
-	}
+	flush_dcache_range(paddr, paddr + PAGE_SIZE);
+	set_pte(ptep, pteval);
 }
-#define set_ptes set_ptes
 
 static inline int pmd_none(pmd_t pmd)
 {
@@ -209,7 +202,7 @@ static inline void pte_clear(struct mm_struct *mm,
 
 	pte_val(null) = (addr >> PAGE_SHIFT) & 0xf;
 
-	set_pte(ptep, null);
+	set_pte_at(mm, addr, ptep, null);
 }
 
 /*
@@ -239,51 +232,29 @@ static inline unsigned long pmd_page_vaddr(pmd_t pmd)
 		__FILE__, __LINE__, pgd_val(e))
 
 /*
- * Encode/decode swap entries and swap PTEs. Swap PTEs are all PTEs that
- * are !pte_none() && !pte_present().
+ * Encode and decode a swap entry (must be !pte_none(pte) && !pte_present(pte):
  *
- * Format of swap PTEs:
+ * 31 30 29 28 27 26 25 24 23 22 21 20 19 18 ...  1  0
+ *  0  0  0  0 type.  0  0  0  0  0  0 offset.........
  *
- *   3 3 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1
- *   1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
- *   E < type -> 0 0 0 0 0 0 <-------------- offset --------------->
+ * This gives us up to 2**2 = 4 swap files and 2**20 * 4K = 4G per swap file.
  *
- *   E is the exclusive marker that is not stored in swap entries.
- *
- * Note that the offset field is always non-zero if the swap type is 0, thus
- * !pte_none() is always true.
+ * Note that the offset field is always non-zero, thus !pte_none(pte) is always
+ * true.
  */
-#define __swp_type(swp)		(((swp).val >> 26) & 0x1f)
+#define __swp_type(swp)		(((swp).val >> 26) & 0x3)
 #define __swp_offset(swp)	((swp).val & 0xfffff)
-#define __swp_entry(type, off)	((swp_entry_t) { (((type) & 0x1f) << 26) \
+#define __swp_entry(type, off)	((swp_entry_t) { (((type) & 0x3) << 26) \
 						 | ((off) & 0xfffff) })
 #define __swp_entry_to_pte(swp)	((pte_t) { (swp).val })
 #define __pte_to_swp_entry(pte)	((swp_entry_t) { pte_val(pte) })
 
-static inline int pte_swp_exclusive(pte_t pte)
-{
-	return pte_val(pte) & _PAGE_SWP_EXCLUSIVE;
-}
-
-static inline pte_t pte_swp_mkexclusive(pte_t pte)
-{
-	pte_val(pte) |= _PAGE_SWP_EXCLUSIVE;
-	return pte;
-}
-
-static inline pte_t pte_swp_clear_exclusive(pte_t pte)
-{
-	pte_val(pte) &= ~_PAGE_SWP_EXCLUSIVE;
-	return pte;
-}
+#define kern_addr_valid(addr)		(1)
 
 extern void __init paging_init(void);
 extern void __init mmu_init(void);
 
-void update_mmu_cache_range(struct vm_fault *vmf, struct vm_area_struct *vma,
-		unsigned long address, pte_t *ptep, unsigned int nr);
-
-#define update_mmu_cache(vma, addr, ptep) \
-	update_mmu_cache_range(NULL, vma, addr, ptep, 1)
+extern void update_mmu_cache(struct vm_area_struct *vma,
+			     unsigned long address, pte_t *pte);
 
 #endif /* _ASM_NIOS2_PGTABLE_H */

@@ -45,7 +45,6 @@
 #include <asm/cacheflush.h>
 #include <asm/cp15.h>
 #include <asm/fiq.h>
-#include <asm/mach/irq.h>
 #include <asm/irq.h>
 #include <asm/traps.h>
 

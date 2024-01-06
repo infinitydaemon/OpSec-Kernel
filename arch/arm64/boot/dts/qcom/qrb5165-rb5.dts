@@ -9,7 +9,6 @@
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 #include <dt-bindings/sound/qcom,q6afe.h>
 #include <dt-bindings/sound/qcom,q6asm.h>
-#include <dt-bindings/usb/pd.h>
 #include "sm8250.dtsi"
 #include "pm8150.dtsi"
 #include "pm8150b.dtsi"
@@ -239,7 +238,7 @@
 };
 
 &apps_rsc {
-	regulators-0 {
+	pm8009-rpmh-regulators {
 		compatible = "qcom,pm8009-1-rpmh-regulators";
 		qcom,pmic-id = "f";
 
@@ -285,7 +284,7 @@
 		};
 	};
 
-	regulators-1 {
+	pm8150-rpmh-regulators {
 		compatible = "qcom,pm8150-rpmh-regulators";
 		qcom,pmic-id = "a";
 
@@ -418,7 +417,7 @@
 		};
 	};
 
-	regulators-2 {
+	pm8150l-rpmh-regulators {
 		compatible = "qcom,pm8150l-rpmh-regulators";
 		qcom,pmic-id = "c";
 
@@ -536,6 +535,30 @@
 	firmware-name = "qcom/sm8250/cdsp.mbn";
 };
 
+&dsi0 {
+	status = "okay";
+	vdda-supply = <&vreg_l9a_1p2>;
+
+#if 0
+	qcom,dual-dsi-mode;
+	qcom,master-dsi;
+#endif
+
+	ports {
+		port@1 {
+			endpoint {
+				remote-endpoint = <&lt9611_a>;
+				data-lanes = <0 1 2 3>;
+			};
+		};
+	};
+};
+
+&dsi0_phy {
+	status = "okay";
+	vdds-supply = <&vreg_l5a_0p88>;
+};
+
 &gmu {
 	status = "okay";
 };
@@ -581,7 +604,7 @@
 				reg = <0>;
 
 				lt9611_a: endpoint {
-					remote-endpoint = <&mdss_dsi0_out>;
+					remote-endpoint = <&dsi0_out>;
 				};
 			};
 
@@ -590,7 +613,7 @@
 				reg = <1>;
 
 				lt9611_b: endpoint {
-					remote-endpoint = <&mdss_dsi1_out>;
+					remote-endpoint = <&dsi1_out>;
 				};
 			};
 #endif
@@ -610,98 +633,27 @@
 /* LS-I2C1 */
 &i2c15 {
 	status = "okay";
-
-	typec-mux@1c {
-		compatible = "onnn,nb7vpq904m";
-		reg = <0x1c>;
-
-		vcc-supply = <&vreg_s4a_1p8>;
-
-		retimer-switch;
-		orientation-switch;
-
-		ports {
-			#address-cells = <1>;
-			#size-cells = <0>;
-
-			port@0 {
-				reg = <0>;
-
-				redriver_usb_con_ss: endpoint {
-					remote-endpoint = <&pm8150b_typec_mux_in>;
-				};
-			};
-
-			port@1 {
-				reg = <1>;
-
-				redriver_phy_con_ss: endpoint {
-					remote-endpoint = <&usb_1_qmpphy_out>;
-					data-lanes = <0 1 2 3>;
-				};
-			};
-
-			port@2 {
-				reg = <2>;
-
-				redriver_usb_con_sbu: endpoint {
-					remote-endpoint = <&pm8150b_typec_sbu_out>;
-				};
-			};
-		};
-	};
 };
 
 &mdss {
 	status = "okay";
 };
 
-&mdss_dp {
+&mdss_mdp {
 	status = "okay";
-};
-
-&mdss_dp_out {
-	data-lanes = <0 1>;
-	remote-endpoint = <&usb_1_qmpphy_dp_in>;
-};
-
-&mdss_dsi0 {
-	status = "okay";
-	vdda-supply = <&vreg_l9a_1p2>;
-
-#if 0
-	qcom,dual-dsi-mode;
-	qcom,master-dsi;
-#endif
-
-	ports {
-		port@1 {
-			endpoint {
-				remote-endpoint = <&lt9611_a>;
-				data-lanes = <0 1 2 3>;
-			};
-		};
-	};
-};
-
-&mdss_dsi0_phy {
-	status = "okay";
-	vdds-supply = <&vreg_l5a_0p88>;
 };
 
 &pm8150_adc {
-	channel@4c {
+	xo-therm@4c {
 		reg = <ADC5_XO_THERM_100K_PU>;
 		qcom,ratiometric;
 		qcom,hw-settle-time = <200>;
-		label = "xo_therm";
 	};
 
-	channel@4e {
+	wifi-therm@4e {
 		reg = <ADC5_AMUX_THM2_100K_PU>;
 		qcom,ratiometric;
 		qcom,hw-settle-time = <200>;
-		label = "wifi_therm";
 	};
 };
 
@@ -769,11 +721,10 @@
 };
 
 &pm8150b_adc {
-	channel@4f {
+	conn-therm@4f {
 		reg = <ADC5_AMUX_THM3_100K_PU>;
 		qcom,ratiometric;
 		qcom,hw-settle-time = <200>;
-		label = "conn_therm";
 	};
 };
 
@@ -805,18 +756,16 @@
 };
 
 &pm8150l_adc {
-	channel@4e {
+	skin-msm-therm@4e {
 		reg = <ADC5_AMUX_THM2_100K_PU>;
 		qcom,ratiometric;
 		qcom,hw-settle-time = <200>;
-		label = "skin_msm_therm";
 	};
 
-	channel@4f {
+	pm8150l-therm@4f {
 		reg = <ADC5_AMUX_THM3_100K_PU>;
 		qcom,ratiometric;
 		qcom,hw-settle-time = <200>;
-		label = "pm8150l_therm";
 	};
 };
 
@@ -918,7 +867,7 @@
 };
 
 &q6afedai {
-	dai@16 {
+	qi2s@16 {
 		reg = <PRIMARY_MI2S_RX>;
 		qcom,sd-lines = <0 1 2 3>;
 	};
@@ -926,7 +875,7 @@
 
 /* TERT I2S Uses 1 I2S SD Lines for audio on LT9611 HDMI Bridge */
 &q6afedai {
-	dai@20 {
+	qi2s@20 {
 		reg = <TERTIARY_MI2S_RX>;
 		qcom,sd-lines = <0>;
 	};
@@ -955,7 +904,7 @@
 	cd-gpios = <&tlmm 77 GPIO_ACTIVE_LOW>;
 	bus-width = <4>;
 	no-sdio;
-	no-mmc;
+	no-emmc;
 };
 
 &sound {
@@ -1058,21 +1007,19 @@
 };
 
 &swr0 {
-	status = "okay";
-
-	left_spkr: speaker@0,3 {
+	left_spkr: wsa8810-left{
 		compatible = "sdw10217211000";
 		reg = <0 3>;
-		powerdown-gpios = <&tlmm 130 GPIO_ACTIVE_LOW>;
+		powerdown-gpios = <&tlmm 130 GPIO_ACTIVE_HIGH>;
 		#thermal-sensor-cells = <0>;
 		sound-name-prefix = "SpkrLeft";
 		#sound-dai-cells = <0>;
 	};
 
-	right_spkr: speaker@0,4 {
+	right_spkr: wsa8810-right{
 		compatible = "sdw10217211000";
 		reg = <0 4>;
-		powerdown-gpios = <&tlmm 130 GPIO_ACTIVE_LOW>;
+		powerdown-gpios = <&tlmm 130 GPIO_ACTIVE_HIGH>;
 		#thermal-sensor-cells = <0>;
 		sound-name-prefix = "SpkrRight";
 		#sound-dai-cells = <0>;
@@ -1263,33 +1210,33 @@
 		"HST_WLAN_UART_TX",
 		"HST_WLAN_UART_RX";
 
-	lt9611_irq_pin: lt9611-irq-state {
+	lt9611_irq_pin: lt9611-irq {
 		pins = "gpio63";
 		function = "gpio";
 		bias-disable;
 	};
 
-	sdc2_default_state: sdc2-default-state {
-		clk-pins {
+	sdc2_default_state: sdc2-default {
+		clk {
 			pins = "sdc2_clk";
 			bias-disable;
 			drive-strength = <16>;
 		};
 
-		cmd-pins {
+		cmd {
 			pins = "sdc2_cmd";
 			bias-pull-up;
 			drive-strength = <10>;
 		};
 
-		data-pins {
+		data {
 			pins = "sdc2_data";
 			bias-pull-up;
 			drive-strength = <10>;
 		};
 	};
 
-	sdc2_card_det_n: sd-card-det-n-state {
+	sdc2_card_det_n: sd-card-det-n {
 		pins = "gpio77";
 		function = "gpio";
 		bias-pull-up;
@@ -1323,12 +1270,7 @@
 };
 
 &usb_1_dwc3 {
-	dr_mode = "otg";
-	usb-role-switch;
-};
-
-&usb_1_role_switch_out {
-	remote-endpoint = <&pm8150b_role_switch_in>;
+	dr_mode = "peripheral";
 };
 
 &usb_1_hsphy {
@@ -1344,11 +1286,6 @@
 
 	vdda-phy-supply = <&vreg_l9a_1p2>;
 	vdda-pll-supply = <&vreg_l18a_0p92>;
-	orientation-switch;
-};
-
-&usb_1_qmpphy_out {
-	remote-endpoint = <&redriver_phy_con_ss>;
 };
 
 &usb_2 {
@@ -1385,10 +1322,6 @@
 	status = "okay";
 };
 
-&wsamacro {
-	status = "okay";
-};
-
 /* PINCTRL - additions to nodes defined in sm8250.dtsi */
 &qup_spi0_cs_gpio {
 	drive-strength = <6>;
@@ -1398,67 +1331,4 @@
 &qup_spi0_data_clk {
 	drive-strength = <6>;
 	bias-disable;
-};
-
-&pm8150b_vbus {
-	regulator-min-microamp = <500000>;
-	regulator-max-microamp = <3000000>;
-	status = "okay";
-};
-
-&pm8150b_typec {
-	status = "okay";
-
-	vdd-pdphy-supply = <&vreg_l2a_3p1>;
-
-	connector {
-		compatible = "usb-c-connector";
-
-		power-role = "source";
-		data-role = "dual";
-		self-powered;
-
-		source-pdos = <PDO_FIXED(5000, 3000,
-					 PDO_FIXED_DUAL_ROLE |
-					 PDO_FIXED_USB_COMM |
-					 PDO_FIXED_DATA_SWAP)>;
-
-		altmodes {
-			displayport {
-				svid = <0xff01>;
-				vdo = <0x00001c46>;
-			};
-		};
-
-		ports {
-			#address-cells = <1>;
-			#size-cells = <0>;
-
-			port@0 {
-				reg = <0>;
-				pm8150b_role_switch_in: endpoint {
-					remote-endpoint = <&usb_1_role_switch_out>;
-				};
-			};
-
-			port@1 {
-				reg = <1>;
-				pm8150b_typec_mux_in: endpoint {
-					remote-endpoint = <&redriver_usb_con_ss>;
-				};
-			};
-
-			port@2 {
-				reg = <2>;
-
-				pm8150b_typec_sbu_out: endpoint {
-					remote-endpoint = <&redriver_usb_con_sbu>;
-				};
-			};
-		};
-	};
-};
-
-&usb_1_qmpphy_dp_in {
-	remote-endpoint = <&mdss_dp_out>;
 };

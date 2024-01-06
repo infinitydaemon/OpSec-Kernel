@@ -95,9 +95,12 @@ void intel_connector_destroy(struct drm_connector *connector)
 {
 	struct intel_connector *intel_connector = to_intel_connector(connector);
 
-	drm_edid_free(intel_connector->detect_edid);
+	kfree(intel_connector->detect_edid);
 
 	intel_hdcp_cleanup(intel_connector);
+
+	if (!IS_ERR_OR_NULL(intel_connector->edid))
+		kfree(intel_connector->edid);
 
 	intel_panel_fini(intel_connector);
 
@@ -176,15 +179,15 @@ enum pipe intel_connector_get_pipe(struct intel_connector *connector)
 /**
  * intel_connector_update_modes - update connector from edid
  * @connector: DRM connector device to use
- * @drm_edid: previously read EDID information
+ * @edid: previously read EDID information
  */
 int intel_connector_update_modes(struct drm_connector *connector,
-				 const struct drm_edid *drm_edid)
+				struct edid *edid)
 {
 	int ret;
 
-	drm_edid_connector_update(connector, drm_edid);
-	ret = drm_edid_connector_add_modes(connector);
+	drm_connector_update_edid_property(connector, edid);
+	ret = drm_add_edid_modes(connector, edid);
 
 	return ret;
 }
@@ -192,22 +195,22 @@ int intel_connector_update_modes(struct drm_connector *connector,
 /**
  * intel_ddc_get_modes - get modelist from monitor
  * @connector: DRM connector device to use
- * @ddc: DDC bus i2c adapter
+ * @adapter: i2c adapter
  *
  * Fetch the EDID information from @connector using the DDC bus.
  */
 int intel_ddc_get_modes(struct drm_connector *connector,
-			struct i2c_adapter *ddc)
+			struct i2c_adapter *adapter)
 {
-	const struct drm_edid *drm_edid;
+	struct edid *edid;
 	int ret;
 
-	drm_edid = drm_edid_read_ddc(connector, ddc);
-	if (!drm_edid)
+	edid = drm_get_edid(connector, adapter);
+	if (!edid)
 		return 0;
 
-	ret = intel_connector_update_modes(connector, drm_edid);
-	drm_edid_free(drm_edid);
+	ret = intel_connector_update_modes(connector, edid);
+	kfree(edid);
 
 	return ret;
 }
@@ -280,31 +283,13 @@ intel_attach_aspect_ratio_property(struct drm_connector *connector)
 void
 intel_attach_hdmi_colorspace_property(struct drm_connector *connector)
 {
-	if (!drm_mode_create_hdmi_colorspace_property(connector, 0))
+	if (!drm_mode_create_hdmi_colorspace_property(connector))
 		drm_connector_attach_colorspace_property(connector);
 }
 
 void
 intel_attach_dp_colorspace_property(struct drm_connector *connector)
 {
-	if (!drm_mode_create_dp_colorspace_property(connector, 0))
+	if (!drm_mode_create_dp_colorspace_property(connector))
 		drm_connector_attach_colorspace_property(connector);
-}
-
-void
-intel_attach_scaling_mode_property(struct drm_connector *connector)
-{
-	struct drm_i915_private *i915 = to_i915(connector->dev);
-	u32 scaling_modes;
-
-	scaling_modes = BIT(DRM_MODE_SCALE_ASPECT) |
-		BIT(DRM_MODE_SCALE_FULLSCREEN);
-
-	/* On GMCH platforms borders are only possible on the LVDS port */
-	if (!HAS_GMCH(i915) || connector->connector_type == DRM_MODE_CONNECTOR_LVDS)
-		scaling_modes |= BIT(DRM_MODE_SCALE_CENTER);
-
-	drm_connector_attach_scaling_mode_property(connector, scaling_modes);
-
-	connector->state->scaling_mode = DRM_MODE_SCALE_ASPECT;
 }

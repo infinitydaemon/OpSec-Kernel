@@ -25,13 +25,19 @@
 #define LED_CMD_REG_NONE 0		/* NULL == no addr for the cmd register */
 
 /* register_led_driver() */
-int register_led_driver(int model, unsigned long cmd_reg, unsigned long data_reg);
+int __init register_led_driver(int model, unsigned long cmd_reg, unsigned long data_reg);
+
+/* registers the LED regions for procfs */
+void __init register_led_regions(void);
 
 #ifdef CONFIG_CHASSIS_LCD_LED
 /* writes a string to the LCD display (if possible on this h/w) */
-void lcd_print(const char *str);
+int lcd_print(const char *str);
 #else
-#define lcd_print(str) do { } while (0)
+#define lcd_print(str)
 #endif
+
+/* main LED initialization function (uses PDC) */ 
+int __init led_init(void);
 
 #endif /* LED_H */

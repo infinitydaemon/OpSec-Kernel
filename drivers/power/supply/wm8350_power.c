@@ -176,7 +176,7 @@ static ssize_t charger_state_show(struct device *dev,
 		return 0;
 	}
 
-	return sysfs_emit(buf, "%s\n", charge);
+	return sprintf(buf, "%s\n", charge);
 }
 
 static DEVICE_ATTR_RO(charger_state);
@@ -579,7 +579,7 @@ battery_failed:
 	return ret;
 }
 
-static void wm8350_power_remove(struct platform_device *pdev)
+static int wm8350_power_remove(struct platform_device *pdev)
 {
 	struct wm8350 *wm8350 = platform_get_drvdata(pdev);
 	struct wm8350_power *power = &wm8350->power;
@@ -589,11 +589,12 @@ static void wm8350_power_remove(struct platform_device *pdev)
 	power_supply_unregister(power->battery);
 	power_supply_unregister(power->ac);
 	power_supply_unregister(power->usb);
+	return 0;
 }
 
 static struct platform_driver wm8350_power_driver = {
 	.probe = wm8350_power_probe,
-	.remove_new = wm8350_power_remove,
+	.remove = wm8350_power_remove,
 	.driver = {
 		.name = "wm8350-power",
 	},

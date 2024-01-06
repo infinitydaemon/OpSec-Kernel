@@ -8,7 +8,6 @@
 #include <asm/cpufeature.h>
 #include <asm/memory.h>
 #include <asm/pgtable-hwdef.h>
-#include <asm/pointer_auth.h>
 
 static inline u64 get_tcr_el1_t1sz(void);
 

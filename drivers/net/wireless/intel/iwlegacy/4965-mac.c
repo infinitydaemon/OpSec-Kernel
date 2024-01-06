@@ -4020,7 +4020,7 @@ il4965_hdl_alive(struct il_priv *il, struct il_rx_buf *rxb)
 
 	if (palive->ver_subtype == INITIALIZE_SUBTYPE) {
 		D_INFO("Initialization Alive received.\n");
-		memcpy(&il->card_alive_init, &pkt->u.raw,
+		memcpy(&il->card_alive_init, &pkt->u.alive_frame,
 		       sizeof(struct il_init_alive_resp));
 		pwork = &il->init_alive_start;
 	} else {
@@ -6122,7 +6122,7 @@ il4965_mac_channel_switch(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	if (il->ops->set_channel_switch(il, ch_switch)) {
 		clear_bit(S_CHANNEL_SWITCH_PENDING, &il->status);
 		il->switch_channel = 0;
-		ieee80211_chswitch_done(il->vif, false, 0);
+		ieee80211_chswitch_done(il->vif, false);
 	}
 
 out:
@@ -6308,7 +6308,6 @@ il4965_tx_queue_set_status(struct il_priv *il, struct il_tx_queue *txq,
 
 static const struct ieee80211_ops il4965_mac_ops = {
 	.tx = il4965_mac_tx,
-	.wake_tx_queue = ieee80211_handle_wake_tx_queue,
 	.start = il4965_mac_start,
 	.stop = il4965_mac_stop,
 	.add_interface = il_mac_add_interface,

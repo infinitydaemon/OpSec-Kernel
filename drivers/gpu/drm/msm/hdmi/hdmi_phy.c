@@ -3,8 +3,7 @@
  * Copyright (c) 2016, The Linux Foundation. All rights reserved.
  */
 
-#include <linux/of.h>
-#include <linux/platform_device.h>
+#include <linux/of_device.h>
 
 #include "hdmi.h"
 
@@ -177,9 +176,11 @@ static int msm_hdmi_phy_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void msm_hdmi_phy_remove(struct platform_device *pdev)
+static int msm_hdmi_phy_remove(struct platform_device *pdev)
 {
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 static const struct of_device_id msm_hdmi_phy_dt_match[] = {
@@ -198,7 +199,7 @@ static const struct of_device_id msm_hdmi_phy_dt_match[] = {
 
 static struct platform_driver msm_hdmi_phy_platform_driver = {
 	.probe      = msm_hdmi_phy_probe,
-	.remove_new = msm_hdmi_phy_remove,
+	.remove     = msm_hdmi_phy_remove,
 	.driver     = {
 		.name   = "msm_hdmi_phy",
 		.of_match_table = msm_hdmi_phy_dt_match,

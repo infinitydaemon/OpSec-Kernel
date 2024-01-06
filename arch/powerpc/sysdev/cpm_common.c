@@ -15,9 +15,11 @@
  */
 
 #include <linux/init.h>
+#include <linux/of_device.h>
 #include <linux/spinlock.h>
 #include <linux/export.h>
 #include <linux/of.h>
+#include <linux/of_address.h>
 #include <linux/slab.h>
 
 #include <asm/udbg.h>
@@ -29,7 +31,7 @@
 #include <mm/mmu_decl.h>
 
 #if defined(CONFIG_CPM2) || defined(CONFIG_8xx_GPIO)
-#include <linux/gpio/legacy-of-mm-gpiochip.h>
+#include <linux/of_gpio.h>
 #endif
 
 static int __init cpm_init(void)

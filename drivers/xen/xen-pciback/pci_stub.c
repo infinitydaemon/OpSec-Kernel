@@ -194,6 +194,8 @@ static struct pci_dev *pcistub_device_get_pci_dev(struct xen_pcibk_device *pdev,
 	struct pci_dev *pci_dev = NULL;
 	unsigned long flags;
 
+	pcistub_device_get(psdev);
+
 	spin_lock_irqsave(&psdev->lock, flags);
 	if (!psdev->pdev) {
 		psdev->pdev = pdev;
@@ -201,8 +203,8 @@ static struct pci_dev *pcistub_device_get_pci_dev(struct xen_pcibk_device *pdev,
 	}
 	spin_unlock_irqrestore(&psdev->lock, flags);
 
-	if (pci_dev)
-		pcistub_device_get(psdev);
+	if (!pci_dev)
+		pcistub_device_put(psdev);
 
 	return pci_dev;
 }

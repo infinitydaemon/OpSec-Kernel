@@ -733,7 +733,7 @@ err_remove_domain:
 	return err;
 }
 
-static void bridge_remove(struct platform_device *pdev)
+static int bridge_remove(struct platform_device *pdev)
 {
 	struct pci_bus *bus = platform_get_drvdata(pdev);
 	struct bridge_controller *bc = BRIDGE_CONTROLLER(bus);
@@ -745,11 +745,13 @@ static void bridge_remove(struct platform_device *pdev)
 	pci_stop_root_bus(bus);
 	pci_remove_root_bus(bus);
 	pci_unlock_rescan_remove();
+
+	return 0;
 }
 
 static struct platform_driver bridge_driver = {
-	.probe = bridge_probe,
-	.remove_new = bridge_remove,
+	.probe  = bridge_probe,
+	.remove = bridge_remove,
 	.driver = {
 		.name = "xtalk-bridge",
 	}

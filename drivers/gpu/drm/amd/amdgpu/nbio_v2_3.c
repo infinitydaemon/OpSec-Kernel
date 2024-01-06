@@ -346,7 +346,7 @@ static void nbio_v2_3_init_registers(struct amdgpu_device *adev)
 }
 
 #define NAVI10_PCIE__LC_L0S_INACTIVITY_DEFAULT		0x00000000 // off by default, no gains over L1
-#define NAVI10_PCIE__LC_L1_INACTIVITY_DEFAULT		0x0000000A // 1=1us, 9=1ms, 10=4ms
+#define NAVI10_PCIE__LC_L1_INACTIVITY_DEFAULT		0x00000009 // 1=1us, 9=1ms
 #define NAVI10_PCIE__LC_L1_INACTIVITY_TBT_DEFAULT	0x0000000E // 400ms
 
 static void nbio_v2_3_enable_aspm(struct amdgpu_device *adev,
@@ -537,7 +537,7 @@ static void nbio_v2_3_clear_doorbell_interrupt(struct amdgpu_device *adev)
 {
 	uint32_t reg, reg_data;
 
-	if (amdgpu_ip_version(adev, NBIO_HWIP, 0) != IP_VERSION(3, 3, 0))
+	if (adev->ip_versions[NBIO_HWIP][0] != IP_VERSION(3, 3, 0))
 		return;
 
 	reg = RREG32_SOC15(NBIO, 0, mmBIF_RB_CNTL);

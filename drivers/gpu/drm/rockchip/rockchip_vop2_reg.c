@@ -15,11 +15,7 @@
 
 #include "rockchip_drm_vop2.h"
 
-static const uint32_t formats_cluster[] = {
-	DRM_FORMAT_XRGB2101010,
-	DRM_FORMAT_ARGB2101010,
-	DRM_FORMAT_XBGR2101010,
-	DRM_FORMAT_ABGR2101010,
+static const uint32_t formats_win_full_10bit[] = {
 	DRM_FORMAT_XRGB8888,
 	DRM_FORMAT_ARGB8888,
 	DRM_FORMAT_XBGR8888,
@@ -28,13 +24,12 @@ static const uint32_t formats_cluster[] = {
 	DRM_FORMAT_BGR888,
 	DRM_FORMAT_RGB565,
 	DRM_FORMAT_BGR565,
-	DRM_FORMAT_YUV420_8BIT, /* yuv420_8bit non-Linear mode only */
-	DRM_FORMAT_YUV420_10BIT, /* yuv420_10bit non-Linear mode only */
-	DRM_FORMAT_YUYV, /* yuv422_8bit non-Linear mode only*/
-	DRM_FORMAT_Y210, /* yuv422_10bit non-Linear mode only */
+	DRM_FORMAT_NV12,
+	DRM_FORMAT_NV16,
+	DRM_FORMAT_NV24,
 };
 
-static const uint32_t formats_rk356x_esmart[] = {
+static const uint32_t formats_win_full_10bit_yuyv[] = {
 	DRM_FORMAT_XRGB8888,
 	DRM_FORMAT_ARGB8888,
 	DRM_FORMAT_XBGR8888,
@@ -43,18 +38,14 @@ static const uint32_t formats_rk356x_esmart[] = {
 	DRM_FORMAT_BGR888,
 	DRM_FORMAT_RGB565,
 	DRM_FORMAT_BGR565,
-	DRM_FORMAT_NV12, /* yuv420_8bit linear mode, 2 plane */
-	DRM_FORMAT_NV21, /* yuv420_8bit linear mode, 2 plane */
-	DRM_FORMAT_NV15, /* yuv420_10bit linear mode, 2 plane, no padding */
-	DRM_FORMAT_NV16, /* yuv422_8bit linear mode, 2 plane */
-	DRM_FORMAT_NV61, /* yuv422_8bit linear mode, 2 plane */
-	DRM_FORMAT_NV24, /* yuv444_8bit linear mode, 2 plane */
-	DRM_FORMAT_NV42, /* yuv444_8bit linear mode, 2 plane */
-	DRM_FORMAT_YVYU, /* yuv422_8bit[YVYU] linear mode */
-	DRM_FORMAT_VYUY, /* yuv422_8bit[VYUY] linear mode */
+	DRM_FORMAT_NV12,
+	DRM_FORMAT_NV16,
+	DRM_FORMAT_NV24,
+	DRM_FORMAT_YVYU,
+	DRM_FORMAT_VYUY,
 };
 
-static const uint32_t formats_smart[] = {
+static const uint32_t formats_win_lite[] = {
 	DRM_FORMAT_XRGB8888,
 	DRM_FORMAT_ARGB8888,
 	DRM_FORMAT_XBGR8888,
@@ -153,8 +144,8 @@ static const struct vop2_win_data rk3568_vop_win_data[] = {
 		.name = "Smart0-win0",
 		.phys_id = ROCKCHIP_VOP2_SMART0,
 		.base = 0x1c00,
-		.formats = formats_smart,
-		.nformats = ARRAY_SIZE(formats_smart),
+		.formats = formats_win_lite,
+		.nformats = ARRAY_SIZE(formats_win_lite),
 		.format_modifiers = format_modifiers,
 		.layer_sel_id = 3,
 		.supported_rotations = DRM_MODE_REFLECT_Y,
@@ -165,8 +156,8 @@ static const struct vop2_win_data rk3568_vop_win_data[] = {
 	}, {
 		.name = "Smart1-win0",
 		.phys_id = ROCKCHIP_VOP2_SMART1,
-		.formats = formats_smart,
-		.nformats = ARRAY_SIZE(formats_smart),
+		.formats = formats_win_lite,
+		.nformats = ARRAY_SIZE(formats_win_lite),
 		.format_modifiers = format_modifiers,
 		.base = 0x1e00,
 		.layer_sel_id = 7,
@@ -178,8 +169,8 @@ static const struct vop2_win_data rk3568_vop_win_data[] = {
 	}, {
 		.name = "Esmart1-win0",
 		.phys_id = ROCKCHIP_VOP2_ESMART1,
-		.formats = formats_rk356x_esmart,
-		.nformats = ARRAY_SIZE(formats_rk356x_esmart),
+		.formats = formats_win_full_10bit_yuyv,
+		.nformats = ARRAY_SIZE(formats_win_full_10bit_yuyv),
 		.format_modifiers = format_modifiers,
 		.base = 0x1a00,
 		.layer_sel_id = 6,
@@ -191,13 +182,13 @@ static const struct vop2_win_data rk3568_vop_win_data[] = {
 	}, {
 		.name = "Esmart0-win0",
 		.phys_id = ROCKCHIP_VOP2_ESMART0,
-		.formats = formats_rk356x_esmart,
-		.nformats = ARRAY_SIZE(formats_rk356x_esmart),
+		.formats = formats_win_full_10bit_yuyv,
+		.nformats = ARRAY_SIZE(formats_win_full_10bit_yuyv),
 		.format_modifiers = format_modifiers,
 		.base = 0x1800,
 		.layer_sel_id = 2,
 		.supported_rotations = DRM_MODE_REFLECT_Y,
-		.type = DRM_PLANE_TYPE_PRIMARY,
+		.type = DRM_PLANE_TYPE_OVERLAY,
 		.max_upscale_factor = 8,
 		.max_downscale_factor = 8,
 		.dly = { 20, 47, 41 },
@@ -205,8 +196,8 @@ static const struct vop2_win_data rk3568_vop_win_data[] = {
 		.name = "Cluster0-win0",
 		.phys_id = ROCKCHIP_VOP2_CLUSTER0,
 		.base = 0x1000,
-		.formats = formats_cluster,
-		.nformats = ARRAY_SIZE(formats_cluster),
+		.formats = formats_win_full_10bit,
+		.nformats = ARRAY_SIZE(formats_win_full_10bit),
 		.format_modifiers = format_modifiers_afbc,
 		.layer_sel_id = 0,
 		.supported_rotations = DRM_MODE_ROTATE_90 | DRM_MODE_ROTATE_270 |
@@ -220,8 +211,8 @@ static const struct vop2_win_data rk3568_vop_win_data[] = {
 		.name = "Cluster1-win0",
 		.phys_id = ROCKCHIP_VOP2_CLUSTER1,
 		.base = 0x1200,
-		.formats = formats_cluster,
-		.nformats = ARRAY_SIZE(formats_cluster),
+		.formats = formats_win_full_10bit,
+		.nformats = ARRAY_SIZE(formats_win_full_10bit),
 		.format_modifiers = format_modifiers_afbc,
 		.layer_sel_id = 1,
 		.supported_rotations = DRM_MODE_ROTATE_90 | DRM_MODE_ROTATE_270 |
@@ -273,16 +264,18 @@ static int vop2_probe(struct platform_device *pdev)
 	return component_add(dev, &vop2_component_ops);
 }
 
-static void vop2_remove(struct platform_device *pdev)
+static int vop2_remove(struct platform_device *pdev)
 {
 	component_del(&pdev->dev, &vop2_component_ops);
+
+	return 0;
 }
 
 struct platform_driver vop2_platform_driver = {
 	.probe = vop2_probe,
-	.remove_new = vop2_remove,
+	.remove = vop2_remove,
 	.driver = {
 		.name = "rockchip-vop2",
-		.of_match_table = vop2_dt_match,
+		.of_match_table = of_match_ptr(vop2_dt_match),
 	},
 };

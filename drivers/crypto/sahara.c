@@ -27,6 +27,7 @@
 #include <linux/kthread.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/spinlock.h>
 
@@ -1034,7 +1035,7 @@ static int sahara_sha_process(struct ahash_request *req)
 
 static int sahara_queue_manage(void *data)
 {
-	struct sahara_dev *dev = data;
+	struct sahara_dev *dev = (struct sahara_dev *)data;
 	struct crypto_async_request *async_req;
 	struct crypto_async_request *backlog;
 	int ret = 0;
@@ -1048,7 +1049,7 @@ static int sahara_queue_manage(void *data)
 		spin_unlock_bh(&dev->queue_spinlock);
 
 		if (backlog)
-			crypto_request_complete(backlog, -EINPROGRESS);
+			backlog->complete(backlog, -EINPROGRESS);
 
 		if (async_req) {
 			if (crypto_tfm_alg_type(async_req->tfm) ==
@@ -1064,7 +1065,7 @@ static int sahara_queue_manage(void *data)
 				ret = sahara_aes_process(req);
 			}
 
-			crypto_request_complete(async_req, ret);
+			async_req->complete(async_req, ret);
 
 			continue;
 		}
@@ -1269,7 +1270,7 @@ static struct ahash_alg sha_v4_algs[] = {
 
 static irqreturn_t sahara_irq_handler(int irq, void *data)
 {
-	struct sahara_dev *dev = data;
+	struct sahara_dev *dev = (struct sahara_dev *)data;
 	unsigned int stat = sahara_read(dev, SAHARA_REG_STATUS);
 	unsigned int err = sahara_read(dev, SAHARA_REG_ERRSTATUS);
 
@@ -1510,7 +1511,7 @@ clk_ipg_disable:
 	return err;
 }
 
-static void sahara_remove(struct platform_device *pdev)
+static int sahara_remove(struct platform_device *pdev)
 {
 	struct sahara_dev *dev = platform_get_drvdata(pdev);
 
@@ -1522,11 +1523,13 @@ static void sahara_remove(struct platform_device *pdev)
 	clk_disable_unprepare(dev->clk_ahb);
 
 	dev_ptr = NULL;
+
+	return 0;
 }
 
 static struct platform_driver sahara_driver = {
 	.probe		= sahara_probe,
-	.remove_new	= sahara_remove,
+	.remove		= sahara_remove,
 	.driver		= {
 		.name	= SAHARA_NAME,
 		.of_match_table = sahara_dt_ids,

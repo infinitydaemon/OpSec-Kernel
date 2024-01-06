@@ -213,10 +213,7 @@ struct csr_func {
 		    unsigned long wr_mask);
 };
 
-static const struct csr_func csr_funcs[] = {
-	KVM_RISCV_VCPU_AIA_CSR_FUNCS
-	KVM_RISCV_VCPU_HPMCOUNTER_CSR_FUNCS
-};
+static const struct csr_func csr_funcs[] = { };
 
 /**
  * kvm_riscv_vcpu_csr_return -- Handle CSR read/write after user space

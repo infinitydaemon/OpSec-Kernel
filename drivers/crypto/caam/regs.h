@@ -3,7 +3,7 @@
  * CAAM hardware register-level view
  *
  * Copyright 2008-2011 Freescale Semiconductor, Inc.
- * Copyright 2018, 2023 NXP
+ * Copyright 2018 NXP
  */
 
 #ifndef REGS_H
@@ -426,9 +426,6 @@ struct caam_perfmon {
 	u32 rsvd2;
 #define CSTA_PLEND		BIT(10)
 #define CSTA_ALT_PLEND		BIT(18)
-#define CSTA_MOO		GENMASK(9, 8)
-#define CSTA_MOO_SECURE	1
-#define CSTA_MOO_TRUSTED	2
 	u32 status;		/* CSTA - CAAM Status */
 	u64 rsvd3;
 
@@ -457,6 +454,12 @@ struct caam_perfmon {
 struct masterid {
 	u32 liodn_ms;	/* lock and make-trusted control bits */
 	u32 liodn_ls;	/* LIODN for non-sequence and seq access */
+};
+
+/* Partition ID for DMA configuration */
+struct partid {
+	u32 rsvd1;
+	u32 pidr;	/* partition ID, DECO */
 };
 
 /* RNGB test mode (replicated twice in some configurations) */
@@ -517,8 +520,6 @@ struct rng4tst {
 #define RTSDCTL_ENT_DLY_MASK (0xffff << RTSDCTL_ENT_DLY_SHIFT)
 #define RTSDCTL_ENT_DLY_MIN 3200
 #define RTSDCTL_ENT_DLY_MAX 12800
-#define RTSDCTL_SAMP_SIZE_MASK 0xffff
-#define RTSDCTL_SAMP_SIZE_VAL 512
 	u32 rtsdctl;		/* seed control register */
 	union {
 		u32 rtsblim;	/* PRGM=1: sparse bit limit register */
@@ -530,15 +531,7 @@ struct rng4tst {
 		u32 rtfrqmax;	/* PRGM=1: freq. count max. limit register */
 		u32 rtfrqcnt;	/* PRGM=0: freq. count register */
 	};
-	union {
-		u32 rtscmc;	/* statistical check run monobit count */
-		u32 rtscml;	/* statistical check run monobit limit */
-	};
-	union {
-		u32 rtscrc[6];	/* statistical check run length count */
-		u32 rtscrl[6];	/* statistical check run length limit */
-	};
-	u32 rsvd1[33];
+	u32 rsvd1[40];
 #define RDSTA_SKVT 0x80000000
 #define RDSTA_SKVN 0x40000000
 #define RDSTA_PR0 BIT(4)
@@ -584,7 +577,8 @@ struct caam_ctrl {
 	u32 deco_rsr;			/* DECORSR - Deco Request Source */
 	u32 rsvd11;
 	u32 deco_rq;			/* DECORR - DECO Request */
-	struct masterid deco_mid[16];	/* DECOxLIODNR - 1 per DECO */
+	struct partid deco_mid[5];	/* DECOxLIODNR - 1 per DECO */
+	u32 rsvd5[22];
 
 	/* DECO Availability/Reset Section			120-3ff */
 	u32 deco_avail;		/* DAR - DECO availability */

@@ -539,9 +539,8 @@ static void zs_receive_chars(struct zs_port *zport)
 	struct uart_port *uport = &zport->port;
 	struct zs_scc *scc = zport->scc;
 	struct uart_icount *icount;
-	unsigned int avail, status;
+	unsigned int avail, status, ch, flag;
 	int count;
-	u8 ch, flag;
 
 	for (count = 16; count; count--) {
 		spin_lock(&scc->zlock);
@@ -624,7 +623,8 @@ static void zs_raw_transmit_chars(struct zs_port *zport)
 
 	/* Send char.  */
 	write_zsdata(zport, xmit->buf[xmit->tail]);
-	uart_xmit_advance(&zport->port, 1);
+	xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+	zport->port.icount.tx++;
 
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&zport->port);

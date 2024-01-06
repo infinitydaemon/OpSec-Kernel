@@ -31,7 +31,7 @@
 #include <linux/slab.h>
 
 #include <linux/io.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
 
 #include "niu.h"
 
@@ -9271,7 +9271,7 @@ static int niu_get_of_props(struct niu *np)
 	if (model)
 		strcpy(np->vpd.model, model);
 
-	if (of_property_read_bool(dp, "hot-swappable-phy")) {
+	if (of_find_property(dp, "hot-swappable-phy", NULL)) {
 		np->flags |= (NIU_FLAGS_10G | NIU_FLAGS_FIBER |
 			NIU_FLAGS_HOTPLUG_PHY);
 	}
@@ -10132,7 +10132,7 @@ err_out:
 	return err;
 }
 
-static void niu_of_remove(struct platform_device *op)
+static int niu_of_remove(struct platform_device *op)
 {
 	struct net_device *dev = platform_get_drvdata(op);
 
@@ -10165,6 +10165,7 @@ static void niu_of_remove(struct platform_device *op)
 
 		free_netdev(dev);
 	}
+	return 0;
 }
 
 static const struct of_device_id niu_match[] = {
@@ -10182,7 +10183,7 @@ static struct platform_driver niu_of_driver = {
 		.of_match_table = niu_match,
 	},
 	.probe		= niu_of_probe,
-	.remove_new	= niu_of_remove,
+	.remove		= niu_of_remove,
 };
 
 #endif /* CONFIG_SPARC64 */

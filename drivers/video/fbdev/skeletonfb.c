@@ -716,7 +716,7 @@ static int xxxfb_probe(struct pci_dev *dev, const struct pci_device_id *ent)
      *
      * NOTE: These are for fbcon use only.
      */
-    info->flags = 0;
+    info->flags = FBINFO_DEFAULT;
 
 /********************* This stage is optional ******************************/
      /*
@@ -987,12 +987,7 @@ static int __init xxxfb_init(void)
 	 */
 #ifndef MODULE
 	char *option = NULL;
-#endif
 
-	if (fb_modesetting_disabled("xxxfb"))
-		return -ENODEV;
-
-#ifndef MODULE
 	if (fb_get_options("xxxfb", &option))
 		return -ENODEV;
 	xxxfb_setup(option);

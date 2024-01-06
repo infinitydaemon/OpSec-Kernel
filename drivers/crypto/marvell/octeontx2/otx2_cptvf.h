@@ -19,7 +19,6 @@ struct otx2_cptvf_dev {
 	struct otx2_mbox	pfvf_mbox;
 	struct work_struct	pfvf_mbox_work;
 	struct workqueue_struct *pfvf_mbox_wq;
-	int blkaddr;
 	void *bbuf_base;
 	unsigned long cap_flag;
 };

@@ -32,9 +32,6 @@ void dcn32_clk_mgr_construct(struct dc_context *ctx,
 		struct pp_smu_funcs *pp_smu,
 		struct dccg *dccg);
 
-void dcn32_update_clocks_update_dpp_dto(struct clk_mgr_internal *clk_mgr,
-		struct dc_state *context, bool safe_to_lower);
-
 void dcn32_clk_mgr_destroy(struct clk_mgr_internal *clk_mgr);
 
 

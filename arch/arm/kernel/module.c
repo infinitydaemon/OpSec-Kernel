@@ -169,7 +169,8 @@ apply_relocate(Elf32_Shdr *sechdrs, const char *strtab, unsigned int symindex,
 
 			offset = __mem_to_opcode_arm(*(u32 *)loc);
 			offset = (offset & 0x00ffffff) << 2;
-			offset = sign_extend32(offset, 25);
+			if (offset & 0x02000000)
+				offset -= 0x04000000;
 
 			offset += sym->st_value - loc;
 
@@ -235,7 +236,7 @@ apply_relocate(Elf32_Shdr *sechdrs, const char *strtab, unsigned int symindex,
 		case R_ARM_MOVT_PREL:
 			offset = tmp = __mem_to_opcode_arm(*(u32 *)loc);
 			offset = ((offset & 0xf0000) >> 4) | (offset & 0xfff);
-			offset = sign_extend32(offset, 15);
+			offset = (offset ^ 0x8000) - 0x8000;
 
 			offset += sym->st_value;
 			if (ELF32_R_TYPE(rel->r_info) == R_ARM_MOVT_PREL ||
@@ -343,7 +344,8 @@ apply_relocate(Elf32_Shdr *sechdrs, const char *strtab, unsigned int symindex,
 				((~(j2 ^ sign) & 1) << 22) |
 				((upper & 0x03ff) << 12) |
 				((lower & 0x07ff) << 1);
-			offset = sign_extend32(offset, 24);
+			if (offset & 0x01000000)
+				offset -= 0x02000000;
 			offset += sym->st_value - loc;
 
 			/*
@@ -399,7 +401,7 @@ apply_relocate(Elf32_Shdr *sechdrs, const char *strtab, unsigned int symindex,
 			offset = ((upper & 0x000f) << 12) |
 				((upper & 0x0400) << 1) |
 				((lower & 0x7000) >> 4) | (lower & 0x00ff);
-			offset = sign_extend32(offset, 15);
+			offset = (offset ^ 0x8000) - 0x8000;
 			offset += sym->st_value;
 
 			if (ELF32_R_TYPE(rel->r_info) == R_ARM_THM_MOVT_PREL ||

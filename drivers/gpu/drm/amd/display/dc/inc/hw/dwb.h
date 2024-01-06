@@ -53,7 +53,9 @@ enum dwb_source {
 /* DCN1.x, DCN2.x support 2 pipes */
 enum dwb_pipe {
 	dwb_pipe0 = 0,
+#if defined(CONFIG_DRM_AMD_DC_DCN)
 	dwb_pipe1,
+#endif
 	dwb_pipe_max_num,
 };
 
@@ -70,11 +72,14 @@ enum wbscl_coef_filter_type_sel {
 };
 
 
+#if defined(CONFIG_DRM_AMD_DC_DCN)
 enum dwb_boundary_mode {
 	DWBSCL_BOUNDARY_MODE_EDGE  = 0,
 	DWBSCL_BOUNDARY_MODE_BLACK = 1
 };
+#endif
 
+#if defined(CONFIG_DRM_AMD_DC_DCN)
 enum dwb_output_csc_mode {
 	DWB_OUTPUT_CSC_DISABLE = 0,
 	DWB_OUTPUT_CSC_COEF_A = 1,
@@ -127,6 +132,7 @@ struct dwb_efc_display_settings {
 	unsigned int	dwbOutputBlack;	// 0 - Normal, 1 - Output Black
 };
 
+#endif
 struct dwb_warmup_params {
 	bool	warmup_en;	/* false: normal mode, true: enable pattern generator */
 	bool	warmup_mode;	/* false: 420, true: 444 */
@@ -202,7 +208,7 @@ struct dwbc_funcs {
 		struct dwb_warmup_params *warmup_params);
 
 
-#if defined(CONFIG_DRM_AMD_DC_FP)
+#if defined(CONFIG_DRM_AMD_DC_DCN)
 
 	void (*dwb_program_output_csc)(
 		struct dwbc *dwbc,

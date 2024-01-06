@@ -45,38 +45,38 @@
 };
 
 &serial0 {
-	status = "okay";
+	status = "ok";
 };
 
 &sata1 {
-	status = "okay";
+	status = "ok";
 };
 
 &sata2 {
-	status = "okay";
+	status = "ok";
 };
 
 &sata3 {
-	status = "okay";
+	status = "ok";
 };
 
 &sgenet0 {
-	status = "okay";
+	status = "ok";
 };
 
 &xgenet1 {
-	status = "okay";
+	status = "ok";
 };
 
 &mmc0 {
-	status = "okay";
+	status = "ok";
 };
 
 &i2c4 {
 	rtc68: rtc@68 {
 		compatible = "dallas,ds1337";
 		reg = <0x68>;
-		status = "okay";
+		status = "ok";
 	};
 };
 

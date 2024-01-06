@@ -18,7 +18,7 @@
 #include <asm/hwrpb.h>
 #include <asm/io.h>
 
-#include <linux/stdarg.h>
+#include <stdarg.h>
 
 #include "ksize.h"
 

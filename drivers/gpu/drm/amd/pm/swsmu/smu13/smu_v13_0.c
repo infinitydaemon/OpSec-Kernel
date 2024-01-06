@@ -82,16 +82,13 @@ MODULE_FIRMWARE("amdgpu/smu_13_0_10.bin");
 #define PCIE_LC_SPEED_CNTL__LC_CURRENT_DATA_RATE_MASK 0xC000
 #define PCIE_LC_SPEED_CNTL__LC_CURRENT_DATA_RATE__SHIFT 0xE
 
-#define ENABLE_IMU_ARG_GFXOFF_ENABLE		1
-
 static const int link_width[] = {0, 1, 2, 4, 8, 12, 16};
-
-const int pmfw_decoded_link_speed[5] = {1, 2, 3, 4, 5};
-const int pmfw_decoded_link_width[7] = {0, 1, 2, 4, 8, 12, 16};
+static const int link_speed[] = {25, 50, 80, 160};
 
 int smu_v13_0_init_microcode(struct smu_context *smu)
 {
 	struct amdgpu_device *adev = smu->adev;
+	const char *chip_name;
 	char fw_name[30];
 	char ucode_prefix[30];
 	int err = 0;
@@ -103,11 +100,21 @@ int smu_v13_0_init_microcode(struct smu_context *smu)
 	if (amdgpu_sriov_vf(adev))
 		return 0;
 
-	amdgpu_ucode_ip_version_decode(adev, MP1_HWIP, ucode_prefix, sizeof(ucode_prefix));
+	switch (adev->ip_versions[MP1_HWIP][0]) {
+	case IP_VERSION(13, 0, 2):
+		chip_name = "aldebaran_smc";
+		break;
+	default:
+		amdgpu_ucode_ip_version_decode(adev, MP1_HWIP, ucode_prefix, sizeof(ucode_prefix));
+		chip_name = ucode_prefix;
+	}
 
-	snprintf(fw_name, sizeof(fw_name), "amdgpu/%s.bin", ucode_prefix);
+	snprintf(fw_name, sizeof(fw_name), "amdgpu/%s.bin", chip_name);
 
-	err = amdgpu_ucode_request(adev, &adev->pm.fw, fw_name);
+	err = request_firmware(&adev->pm.fw, fw_name, adev->dev);
+	if (err)
+		goto out;
+	err = amdgpu_ucode_validate(adev->pm.fw);
 	if (err)
 		goto out;
 
@@ -125,8 +132,12 @@ int smu_v13_0_init_microcode(struct smu_context *smu)
 	}
 
 out:
-	if (err)
-		amdgpu_ucode_release(&adev->pm.fw);
+	if (err) {
+		DRM_ERROR("smu_v13_0: Failed to load firmware \"%s\"\n",
+			  fw_name);
+		release_firmware(adev->pm.fw);
+		adev->pm.fw = NULL;
+	}
 	return err;
 }
 
@@ -134,7 +145,8 @@ void smu_v13_0_fini_microcode(struct smu_context *smu)
 {
 	struct amdgpu_device *adev = smu->adev;
 
-	amdgpu_ucode_release(&adev->pm.fw);
+	release_firmware(adev->pm.fw);
+	adev->pm.fw = NULL;
 	adev->pm.fw_version = 0;
 }
 
@@ -198,9 +210,9 @@ int smu_v13_0_init_pptable_microcode(struct smu_context *smu)
 	if (!adev->scpm_enabled)
 		return 0;
 
-	if ((amdgpu_ip_version(adev, MP1_HWIP, 0) == IP_VERSION(13, 0, 7)) ||
-	    (amdgpu_ip_version(adev, MP1_HWIP, 0) == IP_VERSION(13, 0, 0)) ||
-	    (amdgpu_ip_version(adev, MP1_HWIP, 0) == IP_VERSION(13, 0, 10)))
+	if ((adev->ip_versions[MP1_HWIP][0] == IP_VERSION(13, 0, 7)) ||
+	    (adev->ip_versions[MP1_HWIP][0] == IP_VERSION(13, 0, 0)) ||
+	    (adev->ip_versions[MP1_HWIP][0] == IP_VERSION(13, 0, 10)))
 		return 0;
 
 	/* override pptable_id from driver parameter */
@@ -236,7 +248,7 @@ int smu_v13_0_check_fw_status(struct smu_context *smu)
 	struct amdgpu_device *adev = smu->adev;
 	uint32_t mp1_fw_flags;
 
-	switch (amdgpu_ip_version(adev, MP1_HWIP, 0)) {
+	switch (adev->ip_versions[MP1_HWIP][0]) {
 	case IP_VERSION(13, 0, 4):
 	case IP_VERSION(13, 0, 11):
 		mp1_fw_flags = RREG32_PCIE(MP1_Public |
@@ -270,9 +282,40 @@ int smu_v13_0_check_fw_version(struct smu_context *smu)
 	smu_major = (smu_version >> 16) & 0xff;
 	smu_minor = (smu_version >> 8) & 0xff;
 	smu_debug = (smu_version >> 0) & 0xff;
-	if (smu->is_apu ||
-	    amdgpu_ip_version(adev, MP1_HWIP, 0) == IP_VERSION(13, 0, 6))
+	if (smu->is_apu)
 		adev->pm.fw_version = smu_version;
+
+	switch (adev->ip_versions[MP1_HWIP][0]) {
+	case IP_VERSION(13, 0, 2):
+		smu->smc_driver_if_version = SMU13_DRIVER_IF_VERSION_ALDE;
+		break;
+	case IP_VERSION(13, 0, 0):
+		smu->smc_driver_if_version = SMU13_DRIVER_IF_VERSION_SMU_V13_0_0_0;
+		break;
+	case IP_VERSION(13, 0, 10):
+		smu->smc_driver_if_version = SMU13_DRIVER_IF_VERSION_SMU_V13_0_0_10;
+		break;
+	case IP_VERSION(13, 0, 7):
+		smu->smc_driver_if_version = SMU13_DRIVER_IF_VERSION_SMU_V13_0_7;
+		break;
+	case IP_VERSION(13, 0, 1):
+	case IP_VERSION(13, 0, 3):
+	case IP_VERSION(13, 0, 8):
+		smu->smc_driver_if_version = SMU13_DRIVER_IF_VERSION_YELLOW_CARP;
+		break;
+	case IP_VERSION(13, 0, 4):
+	case IP_VERSION(13, 0, 11):
+		smu->smc_driver_if_version = SMU13_DRIVER_IF_VERSION_SMU_V13_0_4;
+		break;
+	case IP_VERSION(13, 0, 5):
+		smu->smc_driver_if_version = SMU13_DRIVER_IF_VERSION_SMU_V13_0_5;
+		break;
+	default:
+		dev_err(adev->dev, "smu unsupported IP version: 0x%x.\n",
+			adev->ip_versions[MP1_HWIP][0]);
+		smu->smc_driver_if_version = SMU13_DRIVER_IF_VERSION_INV;
+		break;
+	}
 
 	/* only for dGPU w/ SMU13*/
 	if (adev->pm.fw)
@@ -284,7 +327,7 @@ int smu_v13_0_check_fw_version(struct smu_context *smu)
 	 * to be backward compatible.
 	 * 2. New fw usually brings some optimizations. But that's visible
 	 * only on the paired driver.
-	 * Considering above, we just leave user a verbal message instead
+	 * Considering above, we just leave user a warning message instead
 	 * of halt driver loading.
 	 */
 	if (if_version != smu->smc_driver_if_version) {
@@ -292,7 +335,7 @@ int smu_v13_0_check_fw_version(struct smu_context *smu)
 			 "smu fw program = %d, smu fw version = 0x%08x (%d.%d.%d)\n",
 			 smu->smc_driver_if_version, if_version,
 			 smu_program, smu_version, smu_major, smu_minor, smu_debug);
-		dev_info(adev->dev, "SMU driver if version not matched\n");
+		dev_warn(adev->dev, "SMU driver if version not matched\n");
 	}
 
 	return ret;
@@ -468,26 +511,17 @@ int smu_v13_0_init_smc_tables(struct smu_context *smu)
 			ret = -ENOMEM;
 			goto err3_out;
 		}
-
-		smu_table->user_overdrive_table =
-			kzalloc(tables[SMU_TABLE_OVERDRIVE].size, GFP_KERNEL);
-		if (!smu_table->user_overdrive_table) {
-			ret = -ENOMEM;
-			goto err4_out;
-		}
 	}
 
 	smu_table->combo_pptable =
 		kzalloc(tables[SMU_TABLE_COMBO_PPTABLE].size, GFP_KERNEL);
 	if (!smu_table->combo_pptable) {
 		ret = -ENOMEM;
-		goto err5_out;
+		goto err4_out;
 	}
 
 	return 0;
 
-err5_out:
-	kfree(smu_table->user_overdrive_table);
 err4_out:
 	kfree(smu_table->boot_overdrive_table);
 err3_out:
@@ -507,14 +541,12 @@ int smu_v13_0_fini_smc_tables(struct smu_context *smu)
 
 	kfree(smu_table->gpu_metrics_table);
 	kfree(smu_table->combo_pptable);
-	kfree(smu_table->user_overdrive_table);
 	kfree(smu_table->boot_overdrive_table);
 	kfree(smu_table->overdrive_table);
 	kfree(smu_table->max_sustainable_clocks);
 	kfree(smu_table->driver_pptable);
 	smu_table->gpu_metrics_table = NULL;
 	smu_table->combo_pptable = NULL;
-	smu_table->user_overdrive_table = NULL;
 	smu_table->boot_overdrive_table = NULL;
 	smu_table->overdrive_table = NULL;
 	smu_table->max_sustainable_clocks = NULL;
@@ -804,7 +836,7 @@ int smu_v13_0_gfx_off_control(struct smu_context *smu, bool enable)
 	int ret = 0;
 	struct amdgpu_device *adev = smu->adev;
 
-	switch (amdgpu_ip_version(adev, MP1_HWIP, 0)) {
+	switch (adev->ip_versions[MP1_HWIP][0]) {
 	case IP_VERSION(13, 0, 0):
 	case IP_VERSION(13, 0, 1):
 	case IP_VERSION(13, 0, 3):
@@ -839,8 +871,12 @@ int smu_v13_0_notify_display_change(struct smu_context *smu)
 {
 	int ret = 0;
 
-	if (!amdgpu_device_has_dc_support(smu->adev))
-		ret = smu_cmn_send_smc_msg(smu, SMU_MSG_DALNotPresent, NULL);
+	if (!smu->pm_enabled)
+		return ret;
+
+	if (smu_cmn_feature_is_enabled(smu, SMU_FEATURE_DPM_UCLK_BIT) &&
+	    smu->adev->gmc.vram_type == AMDGPU_VRAM_TYPE_HBM)
+		ret = smu_cmn_send_smc_msg_with_param(smu, SMU_MSG_SetUclkFastSwitch, 1, NULL);
 
 	return ret;
 }
@@ -1118,7 +1154,7 @@ smu_v13_0_display_clock_voltage_request(struct smu_context *smu,
 
 		ret = smu_v13_0_set_hard_freq_limited_range(smu, clk_select, clk_freq, 0);
 
-		if (clk_select == SMU_UCLK)
+		if(clk_select == SMU_UCLK)
 			smu->hard_min_uclk_req_from_dal = clk_freq;
 	}
 
@@ -1172,7 +1208,7 @@ int smu_v13_0_set_fan_speed_pwm(struct smu_context *smu,
 	uint32_t duty100, duty;
 	uint64_t tmp64;
 
-	speed = min_t(uint32_t, speed, 255);
+	speed = MIN(speed, 255);
 
 	if (smu_v13_0_auto_fan_control(smu, 0))
 		return -EINVAL;
@@ -1434,7 +1470,8 @@ static int smu_v13_0_irq_process(struct amdgpu_device *adev,
 	return 0;
 }
 
-static const struct amdgpu_irq_src_funcs smu_v13_0_irq_funcs = {
+static const struct amdgpu_irq_src_funcs smu_v13_0_irq_funcs =
+{
 	.set = smu_v13_0_set_irq_state,
 	.process = smu_v13_0_irq_process,
 };
@@ -1782,7 +1819,7 @@ int smu_v13_0_set_performance_level(struct smu_context *smu,
 	 * Unset those settings for SMU 13.0.2. As soft limits settings
 	 * for those clock domains are not supported.
 	 */
-	if (amdgpu_ip_version(smu->adev, MP1_HWIP, 0) == IP_VERSION(13, 0, 2)) {
+	if (smu->adev->ip_versions[MP1_HWIP][0] == IP_VERSION(13, 0, 2)) {
 		mclk_min = mclk_max = 0;
 		socclk_min = socclk_max = 0;
 		vclk_min = vclk_max = 0;
@@ -1888,9 +1925,10 @@ int smu_v13_0_set_power_source(struct smu_context *smu,
 					       NULL);
 }
 
-int smu_v13_0_get_dpm_freq_by_index(struct smu_context *smu,
-				    enum smu_clk_type clk_type, uint16_t level,
-				    uint32_t *value)
+static int smu_v13_0_get_dpm_freq_by_index(struct smu_context *smu,
+					   enum smu_clk_type clk_type,
+					   uint16_t level,
+					   uint32_t *value)
 {
 	int ret = 0, clk_id = 0;
 	uint32_t param;
@@ -1929,7 +1967,7 @@ static int smu_v13_0_get_dpm_level_count(struct smu_context *smu,
 
 	ret = smu_v13_0_get_dpm_freq_by_index(smu, clk_type, 0xff, value);
 	/* SMU v13.0.2 FW returns 0 based max level, increment by one for it */
-	if ((amdgpu_ip_version(smu->adev, MP1_HWIP, 0) == IP_VERSION(13, 0, 2)) && (!ret && value))
+	if((smu->adev->ip_versions[MP1_HWIP][0] == IP_VERSION(13, 0, 2)) && (!ret && value))
 		++(*value);
 
 	return ret;
@@ -1989,7 +2027,7 @@ int smu_v13_0_set_single_dpm_table(struct smu_context *smu,
 		return ret;
 	}
 
-	if (amdgpu_ip_version(smu->adev, MP1_HWIP, 0) != IP_VERSION(13, 0, 2)) {
+	if (smu->adev->ip_versions[MP1_HWIP][0] != IP_VERSION(13, 0, 2)) {
 		ret = smu_v13_0_get_fine_grained_status(smu,
 							clk_type,
 							&single_dpm_table->is_fine_grained);
@@ -2019,6 +2057,45 @@ int smu_v13_0_set_single_dpm_table(struct smu_context *smu,
 	}
 
 	return 0;
+}
+
+int smu_v13_0_get_dpm_level_range(struct smu_context *smu,
+				  enum smu_clk_type clk_type,
+				  uint32_t *min_value,
+				  uint32_t *max_value)
+{
+	uint32_t level_count = 0;
+	int ret = 0;
+
+	if (!min_value && !max_value)
+		return -EINVAL;
+
+	if (min_value) {
+		/* by default, level 0 clock value as min value */
+		ret = smu_v13_0_get_dpm_freq_by_index(smu,
+						      clk_type,
+						      0,
+						      min_value);
+		if (ret)
+			return ret;
+	}
+
+	if (max_value) {
+		ret = smu_v13_0_get_dpm_level_count(smu,
+						    clk_type,
+						    &level_count);
+		if (ret)
+			return ret;
+
+		ret = smu_v13_0_get_dpm_freq_by_index(smu,
+						      clk_type,
+						      level_count - 1,
+						      max_value);
+		if (ret)
+			return ret;
+	}
+
+	return ret;
 }
 
 int smu_v13_0_get_current_pcie_link_width_level(struct smu_context *smu)
@@ -2202,23 +2279,10 @@ int smu_v13_0_gfx_ulv_control(struct smu_context *smu,
 int smu_v13_0_baco_set_armd3_sequence(struct smu_context *smu,
 				      enum smu_baco_seq baco_seq)
 {
-	struct smu_baco_context *smu_baco = &smu->smu_baco;
-	int ret;
-
-	ret = smu_cmn_send_smc_msg_with_param(smu,
-					      SMU_MSG_ArmD3,
-					      baco_seq,
-					      NULL);
-	if (ret)
-		return ret;
-
-	if (baco_seq == BACO_SEQ_BAMACO ||
-	    baco_seq == BACO_SEQ_BACO)
-		smu_baco->state = SMU_BACO_STATE_ENTER;
-	else
-		smu_baco->state = SMU_BACO_STATE_EXIT;
-
-	return 0;
+	return smu_cmn_send_smc_msg_with_param(smu,
+					       SMU_MSG_ArmD3,
+					       baco_seq,
+					       NULL);
 }
 
 bool smu_v13_0_baco_is_support(struct smu_context *smu)
@@ -2260,7 +2324,7 @@ int smu_v13_0_baco_set_state(struct smu_context *smu,
 	if (state == SMU_BACO_STATE_ENTER) {
 		ret = smu_cmn_send_smc_msg_with_param(smu,
 						      SMU_MSG_EnterBaco,
-						      (smu_baco->maco_support && amdgpu_runtime_pm != 1) ?
+						      smu_baco->maco_support ?
 						      BACO_SEQ_BAMACO : BACO_SEQ_BACO,
 						      NULL);
 	} else {
@@ -2304,17 +2368,11 @@ int smu_v13_0_baco_exit(struct smu_context *smu)
 int smu_v13_0_set_gfx_power_up_by_imu(struct smu_context *smu)
 {
 	uint16_t index;
-	struct amdgpu_device *adev = smu->adev;
-
-	if (adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) {
-		return smu_cmn_send_smc_msg_with_param(smu, SMU_MSG_EnableGfxImu,
-						       ENABLE_IMU_ARG_GFXOFF_ENABLE, NULL);
-	}
 
 	index = smu_cmn_to_asic_specific_index(smu, CMN2ASIC_MAPPING_MSG,
 					       SMU_MSG_EnableGfxImu);
-	return smu_cmn_send_msg_without_waiting(smu, index,
-						ENABLE_IMU_ARG_GFXOFF_ENABLE);
+	/* Param 1 to tell PMFW to enable GFXOFF feature */
+	return smu_cmn_send_msg_without_waiting(smu, index, 1);
 }
 
 int smu_v13_0_od_edit_dpm_table(struct smu_context *smu,
@@ -2438,10 +2496,7 @@ int smu_v13_0_update_pcie_parameters(struct smu_context *smu,
 	uint32_t smu_pcie_arg;
 	int ret, i;
 
-	if (!num_of_levels)
-		return 0;
-
-	if (!(smu->adev->pm.pp_feature & PP_PCIE_DPM_MASK)) {
+	if (!amdgpu_device_pcie_dynamic_switching_supported()) {
 		if (pcie_table->pcie_gen[num_of_levels - 1] < pcie_gen_cap)
 			pcie_gen_cap = pcie_table->pcie_gen[num_of_levels - 1];
 
@@ -2476,17 +2531,4 @@ int smu_v13_0_update_pcie_parameters(struct smu_context *smu,
 	}
 
 	return 0;
-}
-
-int smu_v13_0_disable_pmfw_state(struct smu_context *smu)
-{
-	int ret;
-	struct amdgpu_device *adev = smu->adev;
-
-	WREG32_PCIE(MP1_Public | (smnMP1_FIRMWARE_FLAGS & 0xffffffff), 0);
-
-	ret = RREG32_PCIE(MP1_Public |
-					   (smnMP1_FIRMWARE_FLAGS & 0xffffffff));
-
-	return ret == 0 ? 0 : -EINVAL;
 }

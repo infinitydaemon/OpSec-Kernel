@@ -166,7 +166,8 @@ static int erdma_cmdq_eq_init(struct erdma_dev *dev)
 	spin_lock_init(&eq->lock);
 	atomic64_set(&eq->event_num, 0);
 
-	eq->db = dev->func_bar + ERDMA_REGS_CEQ_DB_BASE_REG;
+	eq->db_addr =
+		(u64 __iomem *)(dev->func_bar + ERDMA_REGS_CEQ_DB_BASE_REG);
 	eq->db_record = (u64 *)(eq->qbuf + buf_size);
 
 	erdma_reg_write32(dev, ERDMA_REGS_CMDQ_EQ_ADDR_H_REG,
@@ -182,8 +183,9 @@ static int erdma_cmdq_eq_init(struct erdma_dev *dev)
 
 int erdma_cmdq_init(struct erdma_dev *dev)
 {
+	int err, i;
 	struct erdma_cmdq *cmdq = &dev->cmdq;
-	int err;
+	u32 sts, ctrl;
 
 	cmdq->max_outstandings = ERDMA_CMDQ_MAX_OUTSTANDING;
 	cmdq->use_event = false;
@@ -206,9 +208,33 @@ int erdma_cmdq_init(struct erdma_dev *dev)
 	if (err)
 		goto err_destroy_cq;
 
+	ctrl = FIELD_PREP(ERDMA_REG_DEV_CTRL_INIT_MASK, 1);
+	erdma_reg_write32(dev, ERDMA_REGS_DEV_CTRL_REG, ctrl);
+
+	for (i = 0; i < ERDMA_WAIT_DEV_DONE_CNT; i++) {
+		sts = erdma_reg_read32_filed(dev, ERDMA_REGS_DEV_ST_REG,
+					     ERDMA_REG_DEV_ST_INIT_DONE_MASK);
+		if (sts)
+			break;
+
+		msleep(ERDMA_REG_ACCESS_WAIT_MS);
+	}
+
+	if (i == ERDMA_WAIT_DEV_DONE_CNT) {
+		dev_err(&dev->pdev->dev, "wait init done failed.\n");
+		err = -ETIMEDOUT;
+		goto err_destroy_eq;
+	}
+
 	set_bit(ERDMA_CMDQ_STATE_OK_BIT, &cmdq->state);
 
 	return 0;
+
+err_destroy_eq:
+	dma_free_coherent(&dev->pdev->dev,
+			  (cmdq->eq.depth << EQE_SHIFT) +
+				  ERDMA_EXTRA_BUFFER_SIZE,
+			  cmdq->eq.qbuf, cmdq->eq.qbuf_dma_addr);
 
 err_destroy_cq:
 	dma_free_coherent(&dev->pdev->dev,
@@ -257,7 +283,7 @@ static void *get_next_valid_cmdq_cqe(struct erdma_cmdq *cmdq)
 	__be32 *cqe = get_queue_entry(cmdq->cq.qbuf, cmdq->cq.ci,
 				      cmdq->cq.depth, CQE_SHIFT);
 	u32 owner = FIELD_GET(ERDMA_CQE_HDR_OWNER_MASK,
-			      be32_to_cpu(READ_ONCE(*cqe)));
+			      __be32_to_cpu(READ_ONCE(*cqe)));
 
 	return owner ^ !!(cmdq->cq.ci & cmdq->cq.depth) ? cqe : NULL;
 }
@@ -293,6 +319,7 @@ static int erdma_poll_single_cmd_completion(struct erdma_cmdq *cmdq)
 	__be32 *cqe;
 	u16 ctx_id;
 	u64 *sqe;
+	int i;
 
 	cqe = get_next_valid_cmdq_cqe(cmdq);
 	if (!cqe)
@@ -301,8 +328,8 @@ static int erdma_poll_single_cmd_completion(struct erdma_cmdq *cmdq)
 	cmdq->cq.ci++;
 
 	dma_rmb();
-	hdr0 = be32_to_cpu(*cqe);
-	sqe_idx = be32_to_cpu(*(cqe + 1));
+	hdr0 = __be32_to_cpu(*cqe);
+	sqe_idx = __be32_to_cpu(*(cqe + 1));
 
 	sqe = get_queue_entry(cmdq->sq.qbuf, sqe_idx, cmdq->sq.depth,
 			      SQEBB_SHIFT);
@@ -314,8 +341,9 @@ static int erdma_poll_single_cmd_completion(struct erdma_cmdq *cmdq)
 	comp_wait->cmd_status = ERDMA_CMD_STATUS_FINISHED;
 	comp_wait->comp_status = FIELD_GET(ERDMA_CQE_HDR_SYNDROME_MASK, hdr0);
 	cmdq->sq.ci += cmdq->sq.wqebb_cnt;
-	/* Copy 16B comp data after cqe hdr to outer */
-	be32_to_cpu_array(comp_wait->comp_data, cqe + 2, 4);
+
+	for (i = 0; i < 4; i++)
+		comp_wait->comp_data[i] = __be32_to_cpu(*(cqe + 2 + i));
 
 	if (cmdq->use_event)
 		complete(&comp_wait->wait_event);

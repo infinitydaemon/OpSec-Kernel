@@ -327,7 +327,8 @@ static const struct tpm_tis_phy_ops tpm_i2c_phy_ops = {
 	.verify_crc = tpm_tis_i2c_verify_crc,
 };
 
-static int tpm_tis_i2c_probe(struct i2c_client *dev)
+static int tpm_tis_i2c_probe(struct i2c_client *dev,
+			     const struct i2c_device_id *id)
 {
 	struct tpm_tis_i2c_phy *phy;
 	const u8 crc_enable = 1;

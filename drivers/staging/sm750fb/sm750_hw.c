@@ -17,6 +17,7 @@
 #include <asm/mtrr.h>
 #endif
 #include <linux/platform_device.h>
+#include <linux/screen_info.h>
 #include <linux/sizes.h>
 
 #include "sm750.h"
@@ -305,7 +306,7 @@ int hw_sm750_crtc_setMode(struct lynxfb_crtc *crtc,
 		clock = SECONDARY_PLL;
 
 	pr_debug("Request pixel clock = %lu\n", modparm.pixel_clock);
-	ret = ddk750_set_mode_timing(&modparm, clock);
+	ret = ddk750_setModeTiming(&modparm, clock);
 	if (ret) {
 		pr_err("Set mode timing failed\n");
 		goto exit;

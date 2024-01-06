@@ -57,6 +57,10 @@ ipq8064_mdio_read(struct mii_bus *bus, int phy_addr, int reg_offset)
 	u32 ret_val;
 	int err;
 
+	/* Reject clause 45 */
+	if (reg_offset & MII_ADDR_C45)
+		return -EOPNOTSUPP;
+
 	miiaddr |= ((phy_addr << MII_ADDR_SHIFT) & MII_ADDR_MASK) |
 		   ((reg_offset << MII_REG_SHIFT) & MII_REG_MASK);
 
@@ -76,6 +80,10 @@ ipq8064_mdio_write(struct mii_bus *bus, int phy_addr, int reg_offset, u16 data)
 {
 	u32 miiaddr = MII_WRITE | MII_BUSY | MII_CLKRANGE_250_300M;
 	struct ipq8064_mdio *priv = bus->priv;
+
+	/* Reject clause 45 */
+	if (reg_offset & MII_ADDR_C45)
+		return -EOPNOTSUPP;
 
 	regmap_write(priv->base, MII_DATA_REG_ADDR, data);
 
@@ -147,11 +155,14 @@ ipq8064_mdio_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void ipq8064_mdio_remove(struct platform_device *pdev)
+static int
+ipq8064_mdio_remove(struct platform_device *pdev)
 {
 	struct mii_bus *bus = platform_get_drvdata(pdev);
 
 	mdiobus_unregister(bus);
+
+	return 0;
 }
 
 static const struct of_device_id ipq8064_mdio_dt_ids[] = {
@@ -162,7 +173,7 @@ MODULE_DEVICE_TABLE(of, ipq8064_mdio_dt_ids);
 
 static struct platform_driver ipq8064_mdio_driver = {
 	.probe = ipq8064_mdio_probe,
-	.remove_new = ipq8064_mdio_remove,
+	.remove = ipq8064_mdio_remove,
 	.driver = {
 		.name = "ipq8064-mdio",
 		.of_match_table = ipq8064_mdio_dt_ids,

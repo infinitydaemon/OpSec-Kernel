@@ -3,9 +3,7 @@
  * Copyright (C) 2017 SiFive
  */
 
-#include <linux/acpi.h>
 #include <linux/of.h>
-#include <asm/acpi.h>
 #include <asm/cacheflush.h>
 
 #ifdef CONFIG_SMP
@@ -21,7 +19,7 @@ void flush_icache_all(void)
 {
 	local_flush_icache_all();
 
-	if (IS_ENABLED(CONFIG_RISCV_SBI) && !riscv_use_ipi_for_rfence())
+	if (IS_ENABLED(CONFIG_RISCV_SBI))
 		sbi_remote_fence_i(NULL);
 	else
 		on_each_cpu(ipi_remote_fence_i, NULL, 1);
@@ -69,8 +67,7 @@ void flush_icache_mm(struct mm_struct *mm, bool local)
 		 * with flush_icache_deferred().
 		 */
 		smp_mb();
-	} else if (IS_ENABLED(CONFIG_RISCV_SBI) &&
-		   !riscv_use_ipi_for_rfence()) {
+	} else if (IS_ENABLED(CONFIG_RISCV_SBI)) {
 		sbi_remote_fence_i(&others);
 	} else {
 		on_each_cpu_mask(&others, ipi_remote_fence_i, NULL, 1);
@@ -84,11 +81,11 @@ void flush_icache_mm(struct mm_struct *mm, bool local)
 #ifdef CONFIG_MMU
 void flush_icache_pte(pte_t pte)
 {
-	struct folio *folio = page_folio(pte_page(pte));
+	struct page *page = pte_page(pte);
 
-	if (!test_bit(PG_dcache_clean, &folio->flags)) {
+	if (!test_bit(PG_dcache_clean, &page->flags)) {
 		flush_icache_all();
-		set_bit(PG_dcache_clean, &folio->flags);
+		set_bit(PG_dcache_clean, &page->flags);
 	}
 }
 #endif /* CONFIG_MMU */
@@ -96,59 +93,36 @@ void flush_icache_pte(pte_t pte)
 unsigned int riscv_cbom_block_size;
 EXPORT_SYMBOL_GPL(riscv_cbom_block_size);
 
-unsigned int riscv_cboz_block_size;
-EXPORT_SYMBOL_GPL(riscv_cboz_block_size);
-
-static void __init cbo_get_block_size(struct device_node *node,
-				      const char *name, u32 *block_size,
-				      unsigned long *first_hartid)
+void riscv_init_cbom_blocksize(void)
 {
-	unsigned long hartid;
-	u32 val;
-
-	if (riscv_of_processor_hartid(node, &hartid))
-		return;
-
-	if (of_property_read_u32(node, name, &val))
-		return;
-
-	if (!*block_size) {
-		*block_size = val;
-		*first_hartid = hartid;
-	} else if (*block_size != val) {
-		pr_warn("%s mismatched between harts %lu and %lu\n",
-			name, *first_hartid, hartid);
-	}
-}
-
-void __init riscv_init_cbo_blocksizes(void)
-{
-	unsigned long cbom_hartid, cboz_hartid;
-	u32 cbom_block_size = 0, cboz_block_size = 0;
 	struct device_node *node;
-	struct acpi_table_header *rhct;
-	acpi_status status;
+	unsigned long cbom_hartid;
+	u32 val, probed_block_size;
+	int ret;
 
-	if (acpi_disabled) {
-		for_each_of_cpu_node(node) {
-			/* set block-size for cbom and/or cboz extension if available */
-			cbo_get_block_size(node, "riscv,cbom-block-size",
-					   &cbom_block_size, &cbom_hartid);
-			cbo_get_block_size(node, "riscv,cboz-block-size",
-					   &cboz_block_size, &cboz_hartid);
+	probed_block_size = 0;
+	for_each_of_cpu_node(node) {
+		unsigned long hartid;
+
+		ret = riscv_of_processor_hartid(node, &hartid);
+		if (ret)
+			continue;
+
+		/* set block-size for cbom extension if available */
+		ret = of_property_read_u32(node, "riscv,cbom-block-size", &val);
+		if (ret)
+			continue;
+
+		if (!probed_block_size) {
+			probed_block_size = val;
+			cbom_hartid = hartid;
+		} else {
+			if (probed_block_size != val)
+				pr_warn("cbom-block-size mismatched between harts %lu and %lu\n",
+					cbom_hartid, hartid);
 		}
-	} else {
-		status = acpi_get_table(ACPI_SIG_RHCT, 0, &rhct);
-		if (ACPI_FAILURE(status))
-			return;
-
-		acpi_get_cbo_block_size(rhct, &cbom_block_size, &cboz_block_size, NULL);
-		acpi_put_table((struct acpi_table_header *)rhct);
 	}
 
-	if (cbom_block_size)
-		riscv_cbom_block_size = cbom_block_size;
-
-	if (cboz_block_size)
-		riscv_cboz_block_size = cboz_block_size;
+	if (probed_block_size)
+		riscv_cbom_block_size = probed_block_size;
 }

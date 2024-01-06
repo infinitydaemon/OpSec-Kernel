@@ -3,7 +3,7 @@
 # Makefile for s390-specific library files..
 #
 
-lib-y += delay.o string.o uaccess.o find.o spinlock.o tishift.o
+lib-y += delay.o string.o uaccess.o find.o spinlock.o
 obj-y += mem.o xor.o
 lib-$(CONFIG_KPROBES) += probes.o
 lib-$(CONFIG_UPROBES) += probes.o

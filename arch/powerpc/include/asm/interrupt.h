@@ -74,18 +74,17 @@
 #include <asm/kprobes.h>
 #include <asm/runlatch.h>
 
-#ifdef CONFIG_PPC_IRQ_SOFT_MASK_DEBUG
+#ifdef CONFIG_PPC64
 /*
  * WARN/BUG is handled with a program interrupt so minimise checks here to
  * avoid recursion and maximise the chance of getting the first oops handled.
  */
 #define INT_SOFT_MASK_BUG_ON(regs, cond)				\
 do {									\
-	if ((user_mode(regs) || (TRAP(regs) != INTERRUPT_PROGRAM)))	\
+	if (IS_ENABLED(CONFIG_PPC_IRQ_SOFT_MASK_DEBUG) &&		\
+	    (user_mode(regs) || (TRAP(regs) != INTERRUPT_PROGRAM)))	\
 		BUG_ON(cond);						\
 } while (0)
-#else
-#define INT_SOFT_MASK_BUG_ON(regs, cond)
 #endif
 
 #ifdef CONFIG_PPC_BOOK3S_64
@@ -152,8 +151,28 @@ static inline void booke_restore_dbcr0(void)
 
 static inline void interrupt_enter_prepare(struct pt_regs *regs)
 {
+#ifdef CONFIG_PPC32
+	if (!arch_irq_disabled_regs(regs))
+		trace_hardirqs_off();
+
+	if (user_mode(regs))
+		kuap_lock();
+	else
+		kuap_save_and_lock(regs);
+
+	if (user_mode(regs))
+		account_cpu_user_entry();
+#endif
+
 #ifdef CONFIG_PPC64
-	irq_soft_mask_set(IRQS_ALL_DISABLED);
+	bool trace_enable = false;
+
+	if (IS_ENABLED(CONFIG_TRACE_IRQFLAGS)) {
+		if (irq_soft_mask_set_return(IRQS_ALL_DISABLED) == IRQS_ENABLED)
+			trace_enable = true;
+	} else {
+		irq_soft_mask_set(IRQS_ALL_DISABLED);
+	}
 
 	/*
 	 * If the interrupt was taken with HARD_DIS clear, then enable MSR[EE].
@@ -169,10 +188,9 @@ static inline void interrupt_enter_prepare(struct pt_regs *regs)
 	} else {
 		__hard_RI_enable();
 	}
-	/* Enable MSR[RI] early, to support kernel SLB and hash faults */
-#endif
 
-	if (!arch_irq_disabled_regs(regs))
+	/* Do this when RI=1 because it can cause SLB faults */
+	if (trace_enable)
 		trace_hardirqs_off();
 
 	if (user_mode(regs)) {
@@ -197,6 +215,7 @@ static inline void interrupt_enter_prepare(struct pt_regs *regs)
 	}
 	INT_SOFT_MASK_BUG_ON(regs, !arch_irq_disabled_regs(regs) &&
 				   !(regs->msr & MSR_EE));
+#endif
 
 	booke_restore_dbcr0();
 }

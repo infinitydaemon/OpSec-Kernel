@@ -3,7 +3,6 @@
 
 #include <linux/platform_device.h>
 
-#include <linux/dma-mapping.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/module.h>
@@ -350,12 +349,6 @@ static int snd_bcm2835_alsa_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	int err;
 	u32 disable_headphones = 0;
-
-	err = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(32));
-	if (err) {
-		dev_err(dev, "dma_set_mask_and_coherent failed: %d\n", err);
-		return err;
-	}
 
 	if (num_channels <= 0 || num_channels > MAX_SUBSTREAMS) {
 		num_channels = MAX_SUBSTREAMS;

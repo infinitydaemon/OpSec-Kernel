@@ -26,9 +26,8 @@
 #include <linux/io-mapping.h>
 #include <linux/scatterlist.h>
 
-#include <drm/ttm/ttm_bo.h>
-#include <drm/ttm/ttm_placement.h>
 #include <drm/ttm/ttm_resource.h>
+#include <drm/ttm/ttm_bo_driver.h>
 
 /**
  * ttm_lru_bulk_move_init - initialize a bulk move structure
@@ -181,7 +180,7 @@ void ttm_resource_init(struct ttm_buffer_object *bo,
 	struct ttm_resource_manager *man;
 
 	res->start = 0;
-	res->size = bo->base.size;
+	res->num_pages = PFN_UP(bo->base.size);
 	res->mem_type = place->mem_type;
 	res->placement = place->flags;
 	res->bus.addr = NULL;
@@ -196,7 +195,7 @@ void ttm_resource_init(struct ttm_buffer_object *bo,
 		list_add_tail(&res->lru, &bo->bdev->pinned);
 	else
 		list_add_tail(&res->lru, &man->lru[bo->priority]);
-	man->usage += res->size;
+	man->usage += res->num_pages << PAGE_SHIFT;
 	spin_unlock(&bo->bdev->lru_lock);
 }
 EXPORT_SYMBOL(ttm_resource_init);
@@ -218,7 +217,7 @@ void ttm_resource_fini(struct ttm_resource_manager *man,
 
 	spin_lock(&bdev->lru_lock);
 	list_del_init(&res->lru);
-	man->usage -= res->size;
+	man->usage -= res->num_pages << PAGE_SHIFT;
 	spin_unlock(&bdev->lru_lock);
 }
 EXPORT_SYMBOL(ttm_resource_fini);
@@ -364,6 +363,7 @@ bool ttm_resource_compat(struct ttm_resource *res,
 
 	return false;
 }
+EXPORT_SYMBOL(ttm_resource_compat);
 
 void ttm_resource_set_bo(struct ttm_resource *res,
 			 struct ttm_buffer_object *bo)
@@ -668,15 +668,17 @@ ttm_kmap_iter_linear_io_init(struct ttm_kmap_iter_linear_io *iter_io,
 		iosys_map_set_vaddr(&iter_io->dmap, mem->bus.addr);
 		iter_io->needs_unmap = false;
 	} else {
+		size_t bus_size = (size_t)mem->num_pages << PAGE_SHIFT;
+
 		iter_io->needs_unmap = true;
 		memset(&iter_io->dmap, 0, sizeof(iter_io->dmap));
 		if (mem->bus.caching == ttm_write_combined)
 			iosys_map_set_vaddr_iomem(&iter_io->dmap,
 						  ioremap_wc(mem->bus.offset,
-							     mem->size));
+							     bus_size));
 		else if (mem->bus.caching == ttm_cached)
 			iosys_map_set_vaddr(&iter_io->dmap,
-					    memremap(mem->bus.offset, mem->size,
+					    memremap(mem->bus.offset, bus_size,
 						     MEMREMAP_WB |
 						     MEMREMAP_WT |
 						     MEMREMAP_WC));
@@ -685,7 +687,7 @@ ttm_kmap_iter_linear_io_init(struct ttm_kmap_iter_linear_io *iter_io,
 		if (iosys_map_is_null(&iter_io->dmap))
 			iosys_map_set_vaddr_iomem(&iter_io->dmap,
 						  ioremap(mem->bus.offset,
-							  mem->size));
+							  bus_size));
 
 		if (iosys_map_is_null(&iter_io->dmap)) {
 			ret = -ENOMEM;

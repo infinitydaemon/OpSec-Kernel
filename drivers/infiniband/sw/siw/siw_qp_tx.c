@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
+// SPDX-License-Identifier: GPL-2.0 or BSD-3-Clause
 
 /* Authors: Bernard Metzler <bmt@zurich.ibm.com> */
 /* Copyright (c) 2008-2019, IBM Corporation */
@@ -29,7 +29,7 @@ static struct page *siw_get_pblpage(struct siw_mem *mem, u64 addr, int *idx)
 	dma_addr_t paddr = siw_pbl_get_buffer(pbl, offset, NULL, idx);
 
 	if (paddr)
-		return ib_virt_dma_to_page(paddr);
+		return virt_to_page((void *)(uintptr_t)paddr);
 
 	return NULL;
 }
@@ -56,7 +56,8 @@ static int siw_try_1seg(struct siw_iwarp_tx *c_tx, void *paddr)
 
 		if (!mem->mem_obj) {
 			/* Kernel client using kva */
-			memcpy(paddr, ib_virt_dma_to_ptr(sge->laddr), bytes);
+			memcpy(paddr,
+			       (const void *)(uintptr_t)sge->laddr, bytes);
 		} else if (c_tx->in_syscall) {
 			if (copy_from_user(paddr, u64_to_user_ptr(sge->laddr),
 					   bytes))
@@ -312,7 +313,7 @@ static int siw_tx_ctrl(struct siw_iwarp_tx *c_tx, struct socket *s,
 }
 
 /*
- * 0copy TCP transmit interface: Use MSG_SPLICE_PAGES.
+ * 0copy TCP transmit interface: Use do_tcp_sendpages.
  *
  * Using sendpage to push page by page appears to be less efficient
  * than using sendmsg, even if data are copied.
@@ -323,26 +324,20 @@ static int siw_tx_ctrl(struct siw_iwarp_tx *c_tx, struct socket *s,
 static int siw_tcp_sendpages(struct socket *s, struct page **page, int offset,
 			     size_t size)
 {
-	struct bio_vec bvec;
-	struct msghdr msg = {
-		.msg_flags = (MSG_MORE | MSG_DONTWAIT | MSG_SPLICE_PAGES),
-	};
 	struct sock *sk = s->sk;
-	int i = 0, rv = 0, sent = 0;
+	int i = 0, rv = 0, sent = 0,
+	    flags = MSG_MORE | MSG_DONTWAIT | MSG_SENDPAGE_NOTLAST;
 
 	while (size) {
 		size_t bytes = min_t(size_t, PAGE_SIZE - offset, size);
 
 		if (size + offset <= PAGE_SIZE)
-			msg.msg_flags &= ~MSG_MORE;
+			flags = MSG_MORE | MSG_DONTWAIT;
 
 		tcp_rate_check_app_limited(sk);
-		bvec_set_page(&bvec, page[i], bytes, offset);
-		iov_iter_bvec(&msg.msg_iter, ITER_SOURCE, &bvec, 1, size);
-
 try_page_again:
 		lock_sock(sk);
-		rv = tcp_sendmsg_locked(sk, &msg, size);
+		rv = do_tcp_sendpages(sk, page[i], offset, bytes, flags);
 		release_sock(sk);
 
 		if (rv > 0) {
@@ -482,7 +477,7 @@ static int siw_tx_hdt(struct siw_iwarp_tx *c_tx, struct socket *s)
 			 * or memory region with assigned kernel buffer
 			 */
 			iov[seg].iov_base =
-				ib_virt_dma_to_ptr(sge->laddr + sge_off);
+				(void *)(uintptr_t)(sge->laddr + sge_off);
 			iov[seg].iov_len = sge_len;
 
 			if (do_crc)
@@ -542,13 +537,19 @@ static int siw_tx_hdt(struct siw_iwarp_tx *c_tx, struct socket *s)
 				 * Cast to an uintptr_t to preserve all 64 bits
 				 * in sge->laddr.
 				 */
-				u64 va = sge->laddr + sge_off;
+				uintptr_t va = (uintptr_t)(sge->laddr + sge_off);
 
-				page_array[seg] = ib_virt_dma_to_page(va);
+				/*
+				 * virt_to_page() takes a (void *) pointer
+				 * so cast to a (void *) meaning it will be 64
+				 * bits on a 64 bit platform and 32 bits on a
+				 * 32 bit platform.
+				 */
+				page_array[seg] = virt_to_page((void *)(va & PAGE_MASK));
 				if (do_crc)
 					crypto_shash_update(
 						c_tx->mpa_crc_hd,
-						ib_virt_dma_to_ptr(va),
+						(void *)va,
 						plen);
 			}
 
@@ -1208,45 +1209,10 @@ struct tx_task_t {
 
 static DEFINE_PER_CPU(struct tx_task_t, siw_tx_task_g);
 
-int siw_create_tx_threads(void)
+void siw_stop_tx_thread(int nr_cpu)
 {
-	int cpu, assigned = 0;
-
-	for_each_online_cpu(cpu) {
-		struct tx_task_t *tx_task;
-
-		/* Skip HT cores */
-		if (cpu % cpumask_weight(topology_sibling_cpumask(cpu)))
-			continue;
-
-		tx_task = &per_cpu(siw_tx_task_g, cpu);
-		init_llist_head(&tx_task->active);
-		init_waitqueue_head(&tx_task->waiting);
-
-		siw_tx_thread[cpu] =
-			kthread_run_on_cpu(siw_run_sq,
-					   (unsigned long *)(long)cpu,
-					   cpu, "siw_tx/%u");
-		if (IS_ERR(siw_tx_thread[cpu])) {
-			siw_tx_thread[cpu] = NULL;
-			continue;
-		}
-		assigned++;
-	}
-	return assigned;
-}
-
-void siw_stop_tx_threads(void)
-{
-	int cpu;
-
-	for_each_possible_cpu(cpu) {
-		if (siw_tx_thread[cpu]) {
-			kthread_stop(siw_tx_thread[cpu]);
-			wake_up(&per_cpu(siw_tx_task_g, cpu).waiting);
-			siw_tx_thread[cpu] = NULL;
-		}
-	}
+	kthread_stop(siw_tx_thread[nr_cpu]);
+	wake_up(&per_cpu(siw_tx_task_g, nr_cpu).waiting);
 }
 
 int siw_run_sq(void *data)
@@ -1255,6 +1221,9 @@ int siw_run_sq(void *data)
 	struct llist_node *active;
 	struct siw_qp *qp;
 	struct tx_task_t *tx_task = &per_cpu(siw_tx_task_g, nr_cpu);
+
+	init_llist_head(&tx_task->active);
+	init_waitqueue_head(&tx_task->waiting);
 
 	while (1) {
 		struct llist_node *fifo_list = NULL;
@@ -1271,7 +1240,13 @@ int siw_run_sq(void *data)
 		 * llist_del_all returns a list with newest entry first.
 		 * Re-order list for fairness among QP's.
 		 */
-		fifo_list = llist_reverse_order(active);
+		while (active) {
+			struct llist_node *tmp = active;
+
+			active = llist_next(active);
+			tmp->next = fifo_list;
+			fifo_list = tmp;
+		}
 		while (fifo_list) {
 			qp = container_of(fifo_list, struct siw_qp, tx_list);
 			fifo_list = llist_next(fifo_list);

@@ -16,10 +16,10 @@
 #include <video/imx-ipu-v3.h>
 #include "imx-media.h"
 
-static int imx_media_of_add_csi(struct imx_media_dev *imxmd,
-				struct device_node *csi_np)
+int imx_media_of_add_csi(struct imx_media_dev *imxmd,
+			 struct device_node *csi_np)
 {
-	struct v4l2_async_connection *asd;
+	struct v4l2_async_subdev *asd;
 	int ret = 0;
 
 	if (!of_device_is_available(csi_np)) {
@@ -31,7 +31,7 @@ static int imx_media_of_add_csi(struct imx_media_dev *imxmd,
 	/* add CSI fwnode to async notifier */
 	asd = v4l2_async_nf_add_fwnode(&imxmd->notifier,
 				       of_fwnode_handle(csi_np),
-				       struct v4l2_async_connection);
+				       struct v4l2_async_subdev);
 	if (IS_ERR(asd)) {
 		ret = PTR_ERR(asd);
 		if (ret == -EEXIST)
@@ -41,6 +41,7 @@ static int imx_media_of_add_csi(struct imx_media_dev *imxmd,
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(imx_media_of_add_csi);
 
 int imx_media_add_of_subdevs(struct imx_media_dev *imxmd,
 			     struct device_node *np)

@@ -81,7 +81,8 @@ nv31_mpeg_chan = {
 };
 
 int
-nv31_mpeg_chan_new(struct nvkm_chan *fifoch, const struct nvkm_oclass *oclass,
+nv31_mpeg_chan_new(struct nvkm_fifo_chan *fifoch,
+		   const struct nvkm_oclass *oclass,
 		   struct nvkm_object **pobject)
 {
 	struct nv31_mpeg *mpeg = nv31_mpeg(oclass->engine);
@@ -212,8 +213,8 @@ nv31_mpeg_intr(struct nvkm_engine *engine)
 
 	if (show) {
 		nvkm_error(subdev, "ch %d [%s] %08x %08x %08x %08x\n",
-			   mpeg->chan ? mpeg->chan->fifo->id : -1,
-			   mpeg->chan ? mpeg->chan->fifo->name :
+			   mpeg->chan ? mpeg->chan->fifo->chid : -1,
+			   mpeg->chan ? mpeg->chan->object.client->name :
 			   "unknown", stat, type, mthd, data);
 	}
 

@@ -162,7 +162,8 @@ static const struct power_supply_desc sbs_desc = {
 	.get_property = sbs_get_property,
 };
 
-static int sbs_probe(struct i2c_client *client)
+static int sbs_probe(struct i2c_client *client,
+		     const struct i2c_device_id *id)
 {
 	struct power_supply_config psy_cfg = {};
 	struct sbs_info *chip;

@@ -3,6 +3,7 @@
  * Copyright (c) 2016 Christoph Hellwig.
  */
 #include <linux/device.h>
+#include <linux/blk-mq.h>
 #include <linux/blk-mq-virtio.h>
 #include <linux/virtio_config.h>
 #include <linux/module.h>

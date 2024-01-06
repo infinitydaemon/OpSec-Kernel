@@ -695,7 +695,7 @@ static u32 sa1111_dma_mask[] = {
 /*
  * Configure the SA1111 shared memory controller.
  */
-static void
+void
 sa1111_configure_smc(struct sa1111 *sachip, int sdram, unsigned int drac,
 		     unsigned int cas_latency)
 {
@@ -785,6 +785,19 @@ sa1111_init_one_child(struct sa1111 *sachip, struct resource *parent,
 	return ret;
 }
 
+/**
+ *	sa1111_probe - probe for a single SA1111 chip.
+ *	@phys_addr: physical address of device.
+ *
+ *	Probe for a SA1111 chip.  This must be called
+ *	before any other SA1111-specific code.
+ *
+ *	Returns:
+ *	%-ENODEV	device not found.
+ *	%-EBUSY		physical address already marked in-use.
+ *	%-EINVAL	no platform data passed
+ *	%0		successful.
+ */
 static int __sa1111_probe(struct device *me, struct resource *mem, int irq)
 {
 	struct sa1111_platform_data *pd = me->platform_data;
@@ -1095,20 +1108,6 @@ static int sa1111_resume_noirq(struct device *dev)
 #define sa1111_resume_noirq  NULL
 #endif
 
-/**
- *	sa1111_probe - probe for a single SA1111 chip.
- *	@pdev: platform device.
- *
- *	Probe for a SA1111 chip.  This must be called
- *	before any other SA1111-specific code.
- *
- *	Returns:
- *	* %-ENODEV	- device not found.
- *	* %-ENOMEM	- memory allocation failure.
- *	* %-EBUSY	- physical address already marked in-use.
- *	* %-EINVAL	- no platform data passed
- *	* %0		- successful.
- */
 static int sa1111_probe(struct platform_device *pdev)
 {
 	struct resource *mem;
@@ -1124,7 +1123,7 @@ static int sa1111_probe(struct platform_device *pdev)
 	return __sa1111_probe(&pdev->dev, mem, irq);
 }
 
-static void sa1111_remove(struct platform_device *pdev)
+static int sa1111_remove(struct platform_device *pdev)
 {
 	struct sa1111 *sachip = platform_get_drvdata(pdev);
 
@@ -1136,6 +1135,8 @@ static void sa1111_remove(struct platform_device *pdev)
 		__sa1111_remove(sachip);
 		platform_set_drvdata(pdev, NULL);
 	}
+
+	return 0;
 }
 
 static struct dev_pm_ops sa1111_pm_ops = {
@@ -1154,7 +1155,7 @@ static struct dev_pm_ops sa1111_pm_ops = {
  */
 static struct platform_driver sa1111_device_driver = {
 	.probe		= sa1111_probe,
-	.remove_new	= sa1111_remove,
+	.remove		= sa1111_remove,
 	.driver		= {
 		.name	= "sa1111",
 		.pm	= &sa1111_pm_ops,

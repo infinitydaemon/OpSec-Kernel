@@ -343,12 +343,6 @@
 	};
 };
 
-&cros_ec {
-	keyboard-controller {
-		compatible = "google,cros-ec-keyb-switches";
-	};
-};
-
 &qca_wifi {
 	qcom,ath10k-calibration-variant = "LE_Krane";
 };

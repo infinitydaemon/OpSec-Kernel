@@ -40,9 +40,11 @@ extern void __handle_irq(struct irq_desc *desc, struct pt_regs *regs);
 
 extern void init_ISA_irqs(void);
 
+extern void __init init_IRQ(void);
+
 #ifdef CONFIG_X86_LOCAL_APIC
 void arch_trigger_cpumask_backtrace(const struct cpumask *mask,
-				    int exclude_cpu);
+				    bool exclude_self);
 
 #define arch_trigger_cpumask_backtrace arch_trigger_cpumask_backtrace
 #endif

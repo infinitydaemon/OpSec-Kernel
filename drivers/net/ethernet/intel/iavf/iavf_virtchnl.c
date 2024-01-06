@@ -3,6 +3,7 @@
 
 #include "iavf.h"
 #include "iavf_prototype.h"
+#include "iavf_client.h"
 
 /**
  * iavf_send_pf_msg
@@ -141,7 +142,6 @@ int iavf_send_vf_config_msg(struct iavf_adapter *adapter)
 	       VIRTCHNL_VF_OFFLOAD_RSS_PCTYPE_V2 |
 	       VIRTCHNL_VF_OFFLOAD_ENCAP |
 	       VIRTCHNL_VF_OFFLOAD_VLAN_V2 |
-	       VIRTCHNL_VF_OFFLOAD_CRC |
 	       VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM |
 	       VIRTCHNL_VF_OFFLOAD_REQ_QUEUES |
 	       VIRTCHNL_VF_OFFLOAD_ADQ |
@@ -215,7 +215,8 @@ int iavf_get_vf_config(struct iavf_adapter *adapter)
 	u16 len;
 	int err;
 
-	len = IAVF_VIRTCHNL_VF_RESOURCE_SIZE;
+	len = sizeof(struct virtchnl_vf_resource) +
+		IAVF_MAX_VF_VSI * sizeof(struct virtchnl_vsi_resource);
 	event.buf_len = len;
 	event.msg_buf = kzalloc(len, GFP_KERNEL);
 	if (!event.msg_buf)
@@ -283,7 +284,7 @@ void iavf_configure_queues(struct iavf_adapter *adapter)
 		return;
 	}
 	adapter->current_op = VIRTCHNL_OP_CONFIG_VSI_QUEUES;
-	len = virtchnl_struct_size(vqci, qpair, pairs);
+	len = struct_size(vqci, qpair, pairs);
 	vqci = kzalloc(len, GFP_KERNEL);
 	if (!vqci)
 		return;
@@ -312,9 +313,6 @@ void iavf_configure_queues(struct iavf_adapter *adapter)
 		vqpi->rxq.databuffer_size =
 			ALIGN(adapter->rx_rings[i].rx_buf_len,
 			      BIT_ULL(IAVF_RXQ_CTX_DBUFF_SHIFT));
-		if (CRC_OFFLOAD_ALLOWED(adapter))
-			vqpi->rxq.crc_disable = !!(adapter->netdev->features &
-						   NETIF_F_RXFCS);
 		vqpi++;
 	}
 
@@ -399,7 +397,7 @@ void iavf_map_queues(struct iavf_adapter *adapter)
 
 	q_vectors = adapter->num_msix_vectors - NONQ_VECS;
 
-	len = virtchnl_struct_size(vimi, vecmap, adapter->num_msix_vectors);
+	len = struct_size(vimi, vecmap, adapter->num_msix_vectors);
 	vimi = kzalloc(len, GFP_KERNEL);
 	if (!vimi)
 		return;
@@ -478,11 +476,13 @@ void iavf_add_ether_addrs(struct iavf_adapter *adapter)
 	}
 	adapter->current_op = VIRTCHNL_OP_ADD_ETH_ADDR;
 
-	len = virtchnl_struct_size(veal, list, count);
+	len = struct_size(veal, list, count);
 	if (len > IAVF_MAX_AQ_BUF_SIZE) {
 		dev_warn(&adapter->pdev->dev, "Too many add MAC changes in one request\n");
-		while (len > IAVF_MAX_AQ_BUF_SIZE)
-			len = virtchnl_struct_size(veal, list, --count);
+		count = (IAVF_MAX_AQ_BUF_SIZE -
+			 sizeof(struct virtchnl_ether_addr_list)) /
+			sizeof(struct virtchnl_ether_addr);
+		len = struct_size(veal, list, count);
 		more = true;
 	}
 
@@ -547,11 +547,13 @@ void iavf_del_ether_addrs(struct iavf_adapter *adapter)
 	}
 	adapter->current_op = VIRTCHNL_OP_DEL_ETH_ADDR;
 
-	len = virtchnl_struct_size(veal, list, count);
+	len = struct_size(veal, list, count);
 	if (len > IAVF_MAX_AQ_BUF_SIZE) {
 		dev_warn(&adapter->pdev->dev, "Too many delete MAC changes in one request\n");
-		while (len > IAVF_MAX_AQ_BUF_SIZE)
-			len = virtchnl_struct_size(veal, list, --count);
+		count = (IAVF_MAX_AQ_BUF_SIZE -
+			 sizeof(struct virtchnl_ether_addr_list)) /
+			sizeof(struct virtchnl_ether_addr);
+		len = struct_size(veal, list, count);
 		more = true;
 	}
 	veal = kzalloc(len, GFP_ATOMIC);
@@ -685,12 +687,12 @@ void iavf_add_vlans(struct iavf_adapter *adapter)
 
 		adapter->current_op = VIRTCHNL_OP_ADD_VLAN;
 
-		len = virtchnl_struct_size(vvfl, vlan_id, count);
+		len = sizeof(*vvfl) + (count * sizeof(u16));
 		if (len > IAVF_MAX_AQ_BUF_SIZE) {
 			dev_warn(&adapter->pdev->dev, "Too many add VLAN changes in one request\n");
-			while (len > IAVF_MAX_AQ_BUF_SIZE)
-				len = virtchnl_struct_size(vvfl, vlan_id,
-							   --count);
+			count = (IAVF_MAX_AQ_BUF_SIZE - sizeof(*vvfl)) /
+				sizeof(u16);
+			len = sizeof(*vvfl) + (count * sizeof(u16));
 			more = true;
 		}
 		vvfl = kzalloc(len, GFP_ATOMIC);
@@ -730,12 +732,15 @@ void iavf_add_vlans(struct iavf_adapter *adapter)
 			more = true;
 		}
 
-		len = virtchnl_struct_size(vvfl_v2, filters, count);
+		len = sizeof(*vvfl_v2) + ((count - 1) *
+					  sizeof(struct virtchnl_vlan_filter));
 		if (len > IAVF_MAX_AQ_BUF_SIZE) {
 			dev_warn(&adapter->pdev->dev, "Too many add VLAN changes in one request\n");
-			while (len > IAVF_MAX_AQ_BUF_SIZE)
-				len = virtchnl_struct_size(vvfl_v2, filters,
-							   --count);
+			count = (IAVF_MAX_AQ_BUF_SIZE - sizeof(*vvfl_v2)) /
+				sizeof(struct virtchnl_vlan_filter);
+			len = sizeof(*vvfl_v2) +
+				((count - 1) *
+				 sizeof(struct virtchnl_vlan_filter));
 			more = true;
 		}
 
@@ -833,12 +838,12 @@ void iavf_del_vlans(struct iavf_adapter *adapter)
 
 		adapter->current_op = VIRTCHNL_OP_DEL_VLAN;
 
-		len = virtchnl_struct_size(vvfl, vlan_id, count);
+		len = sizeof(*vvfl) + (count * sizeof(u16));
 		if (len > IAVF_MAX_AQ_BUF_SIZE) {
 			dev_warn(&adapter->pdev->dev, "Too many delete VLAN changes in one request\n");
-			while (len > IAVF_MAX_AQ_BUF_SIZE)
-				len = virtchnl_struct_size(vvfl, vlan_id,
-							   --count);
+			count = (IAVF_MAX_AQ_BUF_SIZE - sizeof(*vvfl)) /
+				sizeof(u16);
+			len = sizeof(*vvfl) + (count * sizeof(u16));
 			more = true;
 		}
 		vvfl = kzalloc(len, GFP_ATOMIC);
@@ -879,12 +884,16 @@ void iavf_del_vlans(struct iavf_adapter *adapter)
 
 		adapter->current_op = VIRTCHNL_OP_DEL_VLAN_V2;
 
-		len = virtchnl_struct_size(vvfl_v2, filters, count);
+		len = sizeof(*vvfl_v2) +
+			((count - 1) * sizeof(struct virtchnl_vlan_filter));
 		if (len > IAVF_MAX_AQ_BUF_SIZE) {
 			dev_warn(&adapter->pdev->dev, "Too many add VLAN changes in one request\n");
-			while (len > IAVF_MAX_AQ_BUF_SIZE)
-				len = virtchnl_struct_size(vvfl_v2, filters,
-							   --count);
+			count = (IAVF_MAX_AQ_BUF_SIZE -
+				 sizeof(*vvfl_v2)) /
+				sizeof(struct virtchnl_vlan_filter);
+			len = sizeof(*vvfl_v2) +
+				((count - 1) *
+				 sizeof(struct virtchnl_vlan_filter));
 			more = true;
 		}
 
@@ -1097,7 +1106,8 @@ void iavf_set_rss_key(struct iavf_adapter *adapter)
 			adapter->current_op);
 		return;
 	}
-	len = virtchnl_struct_size(vrk, key, adapter->rss_key_size);
+	len = sizeof(struct virtchnl_rss_key) +
+	      (adapter->rss_key_size * sizeof(u8)) - 1;
 	vrk = kzalloc(len, GFP_KERNEL);
 	if (!vrk)
 		return;
@@ -1128,7 +1138,8 @@ void iavf_set_rss_lut(struct iavf_adapter *adapter)
 			adapter->current_op);
 		return;
 	}
-	len = virtchnl_struct_size(vrl, lut, adapter->rss_lut_size);
+	len = sizeof(struct virtchnl_rss_lut) +
+	      (adapter->rss_lut_size * sizeof(u8)) - 1;
 	vrl = kzalloc(len, GFP_KERNEL);
 	if (!vrl)
 		return;
@@ -1377,6 +1388,8 @@ void iavf_disable_vlan_insertion_v2(struct iavf_adapter *adapter, u16 tpid)
 				  VIRTCHNL_OP_DISABLE_VLAN_INSERTION_V2);
 }
 
+#define IAVF_MAX_SPEED_STRLEN	13
+
 /**
  * iavf_print_link_message - print link up or down
  * @adapter: adapter structure
@@ -1393,6 +1406,10 @@ static void iavf_print_link_message(struct iavf_adapter *adapter)
 		netdev_info(netdev, "NIC Link is Down\n");
 		return;
 	}
+
+	speed = kzalloc(IAVF_MAX_SPEED_STRLEN, GFP_KERNEL);
+	if (!speed)
+		return;
 
 	if (ADV_LINK_SUPPORT(adapter)) {
 		link_speed_mbps = adapter->link_speed_mbps;
@@ -1431,17 +1448,17 @@ static void iavf_print_link_message(struct iavf_adapter *adapter)
 
 print_link_msg:
 	if (link_speed_mbps > SPEED_1000) {
-		if (link_speed_mbps == SPEED_2500) {
-			speed = kasprintf(GFP_KERNEL, "%s", "2.5 Gbps");
-		} else {
+		if (link_speed_mbps == SPEED_2500)
+			snprintf(speed, IAVF_MAX_SPEED_STRLEN, "2.5 Gbps");
+		else
 			/* convert to Gbps inline */
-			speed = kasprintf(GFP_KERNEL, "%d Gbps",
-					  link_speed_mbps / 1000);
-		}
+			snprintf(speed, IAVF_MAX_SPEED_STRLEN, "%d %s",
+				 link_speed_mbps / 1000, "Gbps");
 	} else if (link_speed_mbps == SPEED_UNKNOWN) {
-		speed = kasprintf(GFP_KERNEL, "%s", "Unknown Mbps");
+		snprintf(speed, IAVF_MAX_SPEED_STRLEN, "%s", "Unknown Mbps");
 	} else {
-		speed = kasprintf(GFP_KERNEL, "%d Mbps", link_speed_mbps);
+		snprintf(speed, IAVF_MAX_SPEED_STRLEN, "%d %s",
+			 link_speed_mbps, "Mbps");
 	}
 
 	netdev_info(netdev, "NIC Link is Up Speed is %s Full Duplex\n", speed);
@@ -1503,7 +1520,7 @@ void iavf_enable_channels(struct iavf_adapter *adapter)
 		return;
 	}
 
-	len = virtchnl_struct_size(vti, list, adapter->num_tc);
+	len = struct_size(vti, list, adapter->num_tc - 1);
 	vti = kzalloc(len, GFP_KERNEL);
 	if (!vti)
 		return;
@@ -1735,8 +1752,8 @@ void iavf_add_fdir_filter(struct iavf_adapter *adapter)
  **/
 void iavf_del_fdir_filter(struct iavf_adapter *adapter)
 {
+	struct virtchnl_fdir_del f = {};
 	struct iavf_fdir_fltr *fdir;
-	struct virtchnl_fdir_del f;
 	bool process_fltr = false;
 	int len;
 
@@ -1753,10 +1770,15 @@ void iavf_del_fdir_filter(struct iavf_adapter *adapter)
 	list_for_each_entry(fdir, &adapter->fdir_list_head, list) {
 		if (fdir->state == IAVF_FDIR_FLTR_DEL_REQUEST) {
 			process_fltr = true;
-			memset(&f, 0, len);
 			f.vsi_id = fdir->vc_add_msg.vsi_id;
 			f.flow_id = fdir->flow_id;
 			fdir->state = IAVF_FDIR_FLTR_DEL_PENDING;
+			break;
+		} else if (fdir->state == IAVF_FDIR_FLTR_DIS_REQUEST) {
+			process_fltr = true;
+			f.vsi_id = fdir->vc_add_msg.vsi_id;
+			f.flow_id = fdir->flow_id;
+			fdir->state = IAVF_FDIR_FLTR_DIS_PENDING;
 			break;
 		}
 	}
@@ -1899,6 +1921,48 @@ static void iavf_netdev_features_vlan_strip_set(struct net_device *netdev,
 		netdev->features |= NETIF_F_HW_VLAN_CTAG_RX;
 	else
 		netdev->features &= ~NETIF_F_HW_VLAN_CTAG_RX;
+}
+
+/**
+ * iavf_activate_fdir_filters - Reactivate all FDIR filters after a reset
+ * @adapter: private adapter structure
+ *
+ * Called after a reset to re-add all FDIR filters and delete some of them
+ * if they were pending to be deleted.
+ */
+static void iavf_activate_fdir_filters(struct iavf_adapter *adapter)
+{
+	struct iavf_fdir_fltr *f, *ftmp;
+	bool add_filters = false;
+
+	spin_lock_bh(&adapter->fdir_fltr_lock);
+	list_for_each_entry_safe(f, ftmp, &adapter->fdir_list_head, list) {
+		if (f->state == IAVF_FDIR_FLTR_ADD_REQUEST ||
+		    f->state == IAVF_FDIR_FLTR_ADD_PENDING ||
+		    f->state == IAVF_FDIR_FLTR_ACTIVE) {
+			/* All filters and requests have been removed in PF,
+			 * restore them
+			 */
+			f->state = IAVF_FDIR_FLTR_ADD_REQUEST;
+			add_filters = true;
+		} else if (f->state == IAVF_FDIR_FLTR_DIS_REQUEST ||
+			   f->state == IAVF_FDIR_FLTR_DIS_PENDING) {
+			/* Link down state, leave filters as inactive */
+			f->state = IAVF_FDIR_FLTR_INACTIVE;
+		} else if (f->state == IAVF_FDIR_FLTR_DEL_REQUEST ||
+			   f->state == IAVF_FDIR_FLTR_DEL_PENDING) {
+			/* Delete filters that were pending to be deleted, the
+			 * list on PF is already cleared after a reset
+			 */
+			list_del(&f->list);
+			kfree(f);
+			adapter->fdir_active_fltr--;
+		}
+	}
+	spin_unlock_bh(&adapter->fdir_fltr_lock);
+
+	if (add_filters)
+		adapter->aq_required |= IAVF_FLAG_AQ_ADD_FDIR_FILTER;
 }
 
 /**
@@ -2078,7 +2142,8 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 			spin_lock_bh(&adapter->fdir_fltr_lock);
 			list_for_each_entry(fdir, &adapter->fdir_list_head,
 					    list) {
-				if (fdir->state == IAVF_FDIR_FLTR_DEL_PENDING) {
+				if (fdir->state == IAVF_FDIR_FLTR_DEL_PENDING ||
+				    fdir->state == IAVF_FDIR_FLTR_DIS_PENDING) {
 					fdir->state = IAVF_FDIR_FLTR_ACTIVE;
 					dev_info(&adapter->pdev->dev, "Failed to del Flow Director filter, error %s\n",
 						 iavf_stat_str(&adapter->hw,
@@ -2179,8 +2244,9 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 		}
 		break;
 	case VIRTCHNL_OP_GET_VF_RESOURCES: {
-		u16 len = IAVF_VIRTCHNL_VF_RESOURCE_SIZE;
-
+		u16 len = sizeof(struct virtchnl_vf_resource) +
+			  IAVF_MAX_VF_VSI *
+			  sizeof(struct virtchnl_vsi_resource);
 		memcpy(adapter->vf_res, msg, min(msglen, len));
 		iavf_validate_num_queues(adapter);
 		iavf_vf_parse_hw_config(&adapter->hw, adapter->vf_res);
@@ -2213,6 +2279,8 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 		}
 
 		spin_unlock_bh(&adapter->mac_vlan_list_lock);
+
+		iavf_activate_fdir_filters(adapter);
 
 		iavf_parse_vf_resource_msg(adapter);
 
@@ -2308,6 +2376,19 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 		if (v_opcode != adapter->current_op)
 			return;
 		break;
+	case VIRTCHNL_OP_IWARP:
+		/* Gobble zero-length replies from the PF. They indicate that
+		 * a previous message was received OK, and the client doesn't
+		 * care about that.
+		 */
+		if (msglen && CLIENT_ENABLED(adapter))
+			iavf_notify_client_message(&adapter->vsi, msg, msglen);
+		break;
+
+	case VIRTCHNL_OP_CONFIG_IWARP_IRQ_MAP:
+		adapter->client_pending &=
+				~(BIT(VIRTCHNL_OP_CONFIG_IWARP_IRQ_MAP));
+		break;
 	case VIRTCHNL_OP_GET_RSS_HENA_CAPS: {
 		struct virtchnl_rss_hena *vrh = (struct virtchnl_rss_hena *)msg;
 
@@ -2390,7 +2471,9 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 		list_for_each_entry_safe(fdir, fdir_tmp, &adapter->fdir_list_head,
 					 list) {
 			if (fdir->state == IAVF_FDIR_FLTR_DEL_PENDING) {
-				if (del_fltr->status == VIRTCHNL_FDIR_SUCCESS) {
+				if (del_fltr->status == VIRTCHNL_FDIR_SUCCESS ||
+				    del_fltr->status ==
+				    VIRTCHNL_FDIR_FAILURE_RULE_NONEXIST) {
 					dev_info(&adapter->pdev->dev, "Flow Director filter with location %u is deleted\n",
 						 fdir->loc);
 					list_del(&fdir->list);
@@ -2399,6 +2482,17 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 				} else {
 					fdir->state = IAVF_FDIR_FLTR_ACTIVE;
 					dev_info(&adapter->pdev->dev, "Failed to delete Flow Director filter with status: %d\n",
+						 del_fltr->status);
+					iavf_print_fdir_fltr(adapter, fdir);
+				}
+			} else if (fdir->state == IAVF_FDIR_FLTR_DIS_PENDING) {
+				if (del_fltr->status == VIRTCHNL_FDIR_SUCCESS ||
+				    del_fltr->status ==
+				    VIRTCHNL_FDIR_FAILURE_RULE_NONEXIST) {
+					fdir->state = IAVF_FDIR_FLTR_INACTIVE;
+				} else {
+					fdir->state = IAVF_FDIR_FLTR_ACTIVE;
+					dev_info(&adapter->pdev->dev, "Failed to disable Flow Director filter with status: %d\n",
 						 del_fltr->status);
 					iavf_print_fdir_fltr(adapter, fdir);
 				}

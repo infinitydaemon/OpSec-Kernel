@@ -23,8 +23,8 @@
 #include <linux/types.h>
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
-#include <linux/of_address.h>
 #include <linux/of_irq.h>
+#include <linux/of_platform.h>
 #include <linux/slab.h>
 
 #include "fsl_rio.h"
@@ -359,7 +359,7 @@ out:
 	return IRQ_HANDLED;
 }
 
-static void msg_unit_error_handler(void)
+void msg_unit_error_handler(void)
 {
 
 	/*XXX: Error recovery is not implemented, we just clear errors */
@@ -1067,6 +1067,9 @@ int fsl_rio_setup_rmu(struct rio_mport *mport, struct device_node *node)
 	struct rio_priv *priv;
 	struct fsl_rmu *rmu;
 	u64 msg_start;
+	const u32 *msg_addr;
+	int mlen;
+	int aw;
 
 	if (!mport || !mport->priv)
 		return -EINVAL;
@@ -1083,12 +1086,16 @@ int fsl_rio_setup_rmu(struct rio_mport *mport, struct device_node *node)
 	if (!rmu)
 		return -ENOMEM;
 
-	if (of_property_read_reg(node, 0, &msg_start, NULL)) {
+	aw = of_n_addr_cells(node);
+	msg_addr = of_get_property(node, "reg", &mlen);
+	if (!msg_addr) {
 		pr_err("%pOF: unable to find 'reg' property of message-unit\n",
 			node);
 		kfree(rmu);
 		return -ENOMEM;
 	}
+	msg_start = of_read_number(msg_addr, aw);
+
 	rmu->msg_regs = (struct rio_msg_regs *)
 			(rmu_regs_win + (u32)msg_start);
 

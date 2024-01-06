@@ -11,7 +11,6 @@
 / {
 	model = "Qualcomm Technologies, Inc. MSM8998 v1 MTP";
 	compatible = "qcom,msm8998-mtp", "qcom,msm8998";
-	chassis-type = "handset";
 
 	qcom,board-id = <8 0>;
 
@@ -47,7 +46,7 @@
 };
 
 &blsp1_uart3_on {
-	rx-pins {
+	rx {
 		/delete-property/ bias-disable;
 		/*
 		 * Configure a pull-up on 45 (RX). This is needed to
@@ -58,7 +57,7 @@
 		bias-pull-up;
 	};
 
-	cts-pins {
+	cts {
 		/delete-property/ bias-disable;
 		/*
 		 * Configure a pull-down on 47 (CTS) to match the pull
@@ -125,11 +124,15 @@
 };
 
 &funnel4 {
-	/* FIXME: Figure out why clock late_initcall crashes the board with this enabled. */
+	// FIXME: Figure out why clock late_initcall crashes the board with
+	// this enabled.
+	// status = "okay";
 };
 
 &funnel5 {
-	/* FIXME: Figure out why clock late_initcall crashes the board with this enabled. */
+	// FIXME: Figure out why clock late_initcall crashes the board with
+	// this enabled.
+	// status = "okay";
 };
 
 &pcie0 {
@@ -165,7 +168,7 @@
 };
 
 &rpm_requests {
-	regulators-0 {
+	pm8998-regulators {
 		compatible = "qcom,rpm-pm8998-regulators";
 
 		vdd_s1-supply = <&vph_pwr>;
@@ -363,7 +366,7 @@
 
 	};
 
-	regulators-1 {
+	pmi8998-regulators {
 		compatible = "qcom,rpm-pmi8998-regulators";
 
 		vdd_bob-supply = <&vph_pwr>;
@@ -412,7 +415,6 @@
 	vcc-supply = <&vreg_l20a_2p95>;
 	vccq-supply = <&vreg_l26a_1p2>;
 	vccq2-supply = <&vreg_s4a_1p8>;
-	vdd-hba-supply = <&vreg_l26a_1p2>;
 	vcc-max-microamp = <750000>;
 	vccq-max-microamp = <560000>;
 	vccq2-max-microamp = <750000>;
@@ -422,6 +424,7 @@
 	status = "okay";
 	vdda-phy-supply = <&vreg_l1a_0p875>;
 	vdda-pll-supply = <&vreg_l2a_1p2>;
+	vddp-ref-clk-supply = <&vreg_l26a_1p2>;
 };
 
 &usb3 {

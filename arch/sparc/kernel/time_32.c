@@ -33,6 +33,7 @@
 #include <linux/ioport.h>
 #include <linux/profile.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 
 #include <asm/mc146818rtc.h>
@@ -276,7 +277,7 @@ static int clock_probe(struct platform_device *op)
 		return -ENODEV;
 
 	/* Only the primary RTC has an address property */
-	if (!of_property_present(dp, "address"))
+	if (!of_find_property(dp, "address", NULL))
 		return -ENODEV;
 
 	m48t59_rtc.resource = &op->resource[0];

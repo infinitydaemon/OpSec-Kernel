@@ -123,7 +123,9 @@ static void encoder_control_dmcub(
 		sizeof(cmd.digx_encoder_control.header);
 	cmd.digx_encoder_control.encoder_control.dig.stream_param = *dig;
 
-	dm_execute_dmub_cmd(dmcub->ctx, &cmd, DM_DMUB_WAIT_TYPE_WAIT);
+	dc_dmub_srv_cmd_queue(dmcub, &cmd);
+	dc_dmub_srv_cmd_execute(dmcub);
+	dc_dmub_srv_wait_idle(dmcub);
 }
 
 static enum bp_result encoder_control_digx_v1_5(
@@ -259,7 +261,9 @@ static void transmitter_control_dmcub(
 		sizeof(cmd.dig1_transmitter_control.header);
 	cmd.dig1_transmitter_control.transmitter_control.dig = *dig;
 
-	dm_execute_dmub_cmd(dmcub->ctx, &cmd, DM_DMUB_WAIT_TYPE_WAIT);
+	dc_dmub_srv_cmd_queue(dmcub, &cmd);
+	dc_dmub_srv_cmd_execute(dmcub);
+	dc_dmub_srv_wait_idle(dmcub);
 }
 
 static enum bp_result transmitter_control_v1_6(
@@ -321,7 +325,9 @@ static void transmitter_control_dmcub_v1_7(
 		sizeof(cmd.dig1_transmitter_control.header);
 	cmd.dig1_transmitter_control.transmitter_control.dig_v1_7 = *dig;
 
-	dm_execute_dmub_cmd(dmcub->ctx, &cmd, DM_DMUB_WAIT_TYPE_WAIT);
+	dc_dmub_srv_cmd_queue(dmcub, &cmd);
+	dc_dmub_srv_cmd_execute(dmcub);
+	dc_dmub_srv_wait_idle(dmcub);
 }
 
 static enum bp_result transmitter_control_v1_7(
@@ -429,7 +435,9 @@ static void set_pixel_clock_dmcub(
 		sizeof(cmd.set_pixel_clock.header);
 	cmd.set_pixel_clock.pixel_clock.clk = *clk;
 
-	dm_execute_dmub_cmd(dmcub->ctx, &cmd, DM_DMUB_WAIT_TYPE_WAIT);
+	dc_dmub_srv_cmd_queue(dmcub, &cmd);
+	dc_dmub_srv_cmd_execute(dmcub);
+	dc_dmub_srv_wait_idle(dmcub);
 }
 
 static enum bp_result set_pixel_clock_v7(
@@ -796,7 +804,9 @@ static void enable_disp_power_gating_dmcub(
 		sizeof(cmd.enable_disp_power_gating.header);
 	cmd.enable_disp_power_gating.power_gating.pwr = *pwr;
 
-	dm_execute_dmub_cmd(dmcub->ctx, &cmd, DM_DMUB_WAIT_TYPE_WAIT);
+	dc_dmub_srv_cmd_queue(dmcub, &cmd);
+	dc_dmub_srv_cmd_execute(dmcub);
+	dc_dmub_srv_wait_idle(dmcub);
 }
 
 static enum bp_result enable_disp_power_gating_v2_1(
@@ -976,8 +986,7 @@ static unsigned int get_smu_clock_info_v3_1(struct bios_parser *bp, uint8_t id)
 static enum bp_result enable_lvtma_control(
 	struct bios_parser *bp,
 	uint8_t uc_pwr_on,
-	uint8_t panel_instance,
-	uint8_t bypass_panel_control_wait);
+	uint8_t panel_instance);
 
 static void init_enable_lvtma_control(struct bios_parser *bp)
 {
@@ -989,8 +998,7 @@ static void init_enable_lvtma_control(struct bios_parser *bp)
 static void enable_lvtma_control_dmcub(
 	struct dc_dmub_srv *dmcub,
 	uint8_t uc_pwr_on,
-	uint8_t panel_instance,
-	uint8_t bypass_panel_control_wait)
+	uint8_t panel_instance)
 {
 
 	union dmub_rb_cmd cmd;
@@ -1004,16 +1012,16 @@ static void enable_lvtma_control_dmcub(
 			uc_pwr_on;
 	cmd.lvtma_control.data.panel_inst =
 			panel_instance;
-	cmd.lvtma_control.data.bypass_panel_control_wait =
-			bypass_panel_control_wait;
-	dm_execute_dmub_cmd(dmcub->ctx, &cmd, DM_DMUB_WAIT_TYPE_WAIT);
+	dc_dmub_srv_cmd_queue(dmcub, &cmd);
+	dc_dmub_srv_cmd_execute(dmcub);
+	dc_dmub_srv_wait_idle(dmcub);
+
 }
 
 static enum bp_result enable_lvtma_control(
 	struct bios_parser *bp,
 	uint8_t uc_pwr_on,
-	uint8_t panel_instance,
-	uint8_t bypass_panel_control_wait)
+	uint8_t panel_instance)
 {
 	enum bp_result result = BP_RESULT_FAILURE;
 
@@ -1021,8 +1029,7 @@ static enum bp_result enable_lvtma_control(
 	    bp->base.ctx->dc->debug.dmub_command_table) {
 		enable_lvtma_control_dmcub(bp->base.ctx->dmub_srv,
 				uc_pwr_on,
-				panel_instance,
-				bypass_panel_control_wait);
+				panel_instance);
 		return BP_RESULT_OK;
 	}
 	return result;

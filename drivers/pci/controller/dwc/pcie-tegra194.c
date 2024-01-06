@@ -15,13 +15,14 @@
 #include <linux/delay.h>
 #include <linux/gpio.h>
 #include <linux/gpio/consumer.h>
-#include <linux/interconnect.h>
 #include <linux/interrupt.h>
 #include <linux/iopoll.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/of_gpio.h>
+#include <linux/of_irq.h>
 #include <linux/of_pci.h>
 #include <linux/pci.h>
 #include <linux/phy/phy.h>
@@ -126,7 +127,7 @@
 
 #define APPL_LTR_MSG_1				0xC4
 #define LTR_MSG_REQ				BIT(15)
-#define LTR_NOSNOOP_MSG_REQ			BIT(31)
+#define LTR_MST_NO_SNOOP_SHIFT			16
 
 #define APPL_LTR_MSG_2				0xC8
 #define APPL_LTR_MSG_2_LTR_MSG_REQ_STATE	BIT(3)
@@ -288,8 +289,6 @@ struct tegra_pcie_dw {
 	struct gpio_desc *pex_refclk_sel_gpiod;
 	unsigned int pex_rst_irq;
 	int ep_state;
-	long link_status;
-	struct icc_path *icc_path;
 };
 
 static inline struct tegra_pcie_dw *to_tegra_pcie(struct dw_pcie *pci)
@@ -311,27 +310,6 @@ static inline u32 appl_readl(struct tegra_pcie_dw *pcie, const u32 reg)
 struct tegra_pcie_soc {
 	enum dw_pcie_device_mode mode;
 };
-
-static void tegra_pcie_icc_set(struct tegra_pcie_dw *pcie)
-{
-	struct dw_pcie *pci = &pcie->pci;
-	u32 val, speed, width;
-
-	val = dw_pcie_readw_dbi(pci, pcie->pcie_cap_base + PCI_EXP_LNKSTA);
-
-	speed = FIELD_GET(PCI_EXP_LNKSTA_CLS, val);
-	width = FIELD_GET(PCI_EXP_LNKSTA_NLW, val);
-
-	val = width * PCIE_SPEED2MBS_ENC(pcie_link_speed[speed]);
-
-	if (icc_set_bw(pcie->icc_path, Mbps_to_icc(val), 0))
-		dev_err(pcie->dev, "can't set bw[%u]\n", val);
-
-	if (speed >= ARRAY_SIZE(pcie_gen_freq))
-		speed = 0;
-
-	clk_set_rate(pcie->core_clk, pcie_gen_freq[speed]);
-}
 
 static void apply_bad_link_workaround(struct dw_pcie_rp *pp)
 {
@@ -473,14 +451,16 @@ static void pex_ep_event_hot_rst_done(struct tegra_pcie_dw *pcie)
 static irqreturn_t tegra_pcie_ep_irq_thread(int irq, void *arg)
 {
 	struct tegra_pcie_dw *pcie = arg;
-	struct dw_pcie_ep *ep = &pcie->pci.ep;
 	struct dw_pcie *pci = &pcie->pci;
-	u32 val;
+	u32 val, speed;
 
-	if (test_and_clear_bit(0, &pcie->link_status))
-		dw_pcie_ep_linkup(ep);
+	speed = dw_pcie_readw_dbi(pci, pcie->pcie_cap_base + PCI_EXP_LNKSTA) &
+		PCI_EXP_LNKSTA_CLS;
 
-	tegra_pcie_icc_set(pcie);
+	if (speed >= ARRAY_SIZE(pcie_gen_freq))
+		speed = 0;
+
+	clk_set_rate(pcie->core_clk, pcie_gen_freq[speed]);
 
 	if (pcie->of_data->has_ltr_req_fix)
 		return IRQ_HANDLED;
@@ -496,12 +476,8 @@ static irqreturn_t tegra_pcie_ep_irq_thread(int irq, void *arg)
 		ktime_t timeout;
 
 		/* 110us for both snoop and no-snoop */
-		val = FIELD_PREP(PCI_LTR_VALUE_MASK, 110) |
-		      FIELD_PREP(PCI_LTR_SCALE_MASK, 2) |
-		      LTR_MSG_REQ |
-		      FIELD_PREP(PCI_LTR_NOSNOOP_VALUE, 110) |
-		      FIELD_PREP(PCI_LTR_NOSNOOP_SCALE, 2) |
-		      LTR_NOSNOOP_MSG_REQ;
+		val = 110 | (2 << PCI_LTR_SCALE_SHIFT) | LTR_MSG_REQ;
+		val |= (val << LTR_MST_NO_SNOOP_SHIFT);
 		appl_writel(pcie, val, APPL_LTR_MSG_1);
 
 		/* Send LTR upstream */
@@ -528,6 +504,7 @@ static irqreturn_t tegra_pcie_ep_irq_thread(int irq, void *arg)
 static irqreturn_t tegra_pcie_ep_hard_irq(int irq, void *arg)
 {
 	struct tegra_pcie_dw *pcie = arg;
+	struct dw_pcie_ep *ep = &pcie->pci.ep;
 	int spurious = 1;
 	u32 status_l0, status_l1, link_status;
 
@@ -543,8 +520,7 @@ static irqreturn_t tegra_pcie_ep_hard_irq(int irq, void *arg)
 			link_status = appl_readl(pcie, APPL_LINK_STATUS);
 			if (link_status & APPL_LINK_STATUS_RDLH_LINK_UP) {
 				dev_dbg(pcie->dev, "Link is up with Host\n");
-				set_bit(0, &pcie->link_status);
-				return IRQ_WAKE_THREAD;
+				dw_pcie_ep_linkup(ep);
 			}
 		}
 
@@ -920,6 +896,12 @@ static int tegra_pcie_dw_host_init(struct dw_pcie_rp *pp)
 		AMBA_ERROR_RESPONSE_CRS_SHIFT);
 	dw_pcie_writel_dbi(pci, PORT_LOGIC_AMBA_ERROR_RESPONSE_DEFAULT, val);
 
+	/* Configure Max lane width from DT */
+	val = dw_pcie_readl_dbi(pci, pcie->pcie_cap_base + PCI_EXP_LNKCAP);
+	val &= ~PCI_EXP_LNKCAP_MLW;
+	val |= FIELD_PREP(PCI_EXP_LNKCAP_MLW, pcie->num_lanes);
+	dw_pcie_writel_dbi(pci, pcie->pcie_cap_base + PCI_EXP_LNKCAP, val);
+
 	/* Clear Slot Clock Configuration bit if SRNS configuration */
 	if (pcie->enable_srns) {
 		val_16 = dw_pcie_readw_dbi(pci, pcie->pcie_cap_base +
@@ -958,9 +940,9 @@ static int tegra_pcie_dw_host_init(struct dw_pcie_rp *pp)
 
 static int tegra_pcie_dw_start_link(struct dw_pcie *pci)
 {
+	u32 val, offset, speed, tmp;
 	struct tegra_pcie_dw *pcie = to_tegra_pcie(pci);
 	struct dw_pcie_rp *pp = &pci->pp;
-	u32 val, offset, tmp;
 	bool retry = true;
 
 	if (pcie->of_data->mode == DW_PCIE_EP_TYPE) {
@@ -1031,7 +1013,13 @@ retry_link:
 		goto retry_link;
 	}
 
-	tegra_pcie_icc_set(pcie);
+	speed = dw_pcie_readw_dbi(pci, pcie->pcie_cap_base + PCI_EXP_LNKSTA) &
+		PCI_EXP_LNKSTA_CLS;
+
+	if (speed >= ARRAY_SIZE(pcie_gen_freq))
+		speed = 0;
+
+	clk_set_rate(pcie->core_clk, pcie_gen_freq[speed]);
 
 	tegra_pcie_enable_interrupts(pp);
 
@@ -2230,14 +2218,6 @@ static int tegra_pcie_dw_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, pcie);
 
-	pcie->icc_path = devm_of_icc_get(&pdev->dev, "write");
-	ret = PTR_ERR_OR_ZERO(pcie->icc_path);
-	if (ret) {
-		tegra_bpmp_put(pcie->bpmp);
-		dev_err_probe(&pdev->dev, ret, "failed to get write interconnect\n");
-		return ret;
-	}
-
 	switch (pcie->of_data->mode) {
 	case DW_PCIE_RC_TYPE:
 		ret = devm_request_irq(dev, pp->irq, tegra_pcie_rp_irq_handler,
@@ -2282,13 +2262,13 @@ fail:
 	return ret;
 }
 
-static void tegra_pcie_dw_remove(struct platform_device *pdev)
+static int tegra_pcie_dw_remove(struct platform_device *pdev)
 {
 	struct tegra_pcie_dw *pcie = platform_get_drvdata(pdev);
 
 	if (pcie->of_data->mode == DW_PCIE_RC_TYPE) {
 		if (!pcie->link_state)
-			return;
+			return 0;
 
 		debugfs_remove_recursive(pcie->debugfs);
 		tegra_pcie_deinit_controller(pcie);
@@ -2302,6 +2282,8 @@ static void tegra_pcie_dw_remove(struct platform_device *pdev)
 	tegra_bpmp_put(pcie->bpmp);
 	if (pcie->pex_refclk_sel_gpiod)
 		gpiod_set_value(pcie->pex_refclk_sel_gpiod, 0);
+
+	return 0;
 }
 
 static int tegra_pcie_dw_suspend_late(struct device *dev)
@@ -2495,7 +2477,7 @@ static const struct dev_pm_ops tegra_pcie_dw_pm_ops = {
 
 static struct platform_driver tegra_pcie_dw_driver = {
 	.probe = tegra_pcie_dw_probe,
-	.remove_new = tegra_pcie_dw_remove,
+	.remove = tegra_pcie_dw_remove,
 	.shutdown = tegra_pcie_dw_shutdown,
 	.driver = {
 		.name	= "tegra194-pcie",

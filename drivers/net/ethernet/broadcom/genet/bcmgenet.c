@@ -123,6 +123,24 @@ static inline void dmadesc_set(struct bcmgenet_priv *priv,
 	dmadesc_set_length_status(priv, d, val);
 }
 
+static inline dma_addr_t dmadesc_get_addr(struct bcmgenet_priv *priv,
+					  void __iomem *d)
+{
+	dma_addr_t addr;
+
+	addr = bcmgenet_readl(d + DMA_DESC_ADDRESS_LO);
+
+	/* Register writes to GISB bus can take couple hundred nanoseconds
+	 * and are done for each packet, save these expensive writes unless
+	 * the platform is explicitly configured for 64-bits/LPAE.
+	 */
+#ifdef CONFIG_PHYS_ADDR_T_64BIT
+	if (priv->hw_params->flags & GENET_HAS_40BITS)
+		addr |= (u64)bcmgenet_readl(d + DMA_DESC_ADDRESS_HI) << 32;
+#endif
+	return addr;
+}
+
 #define GENET_VER_FMT	"%1d.%1d EPHY: 0x%04x"
 
 #define GENET_MSG_DEFAULT	(NETIF_MSG_DRV | NETIF_MSG_PROBE | \
@@ -1372,8 +1390,7 @@ static int bcmgenet_validate_flow(struct net_device *dev,
 	struct ethtool_usrip4_spec *l4_mask;
 	struct ethhdr *eth_mask;
 
-	if (cmd->fs.location >= MAX_NUM_OF_FS_RULES &&
-	    cmd->fs.location != RX_CLS_LOC_ANY) {
+	if (cmd->fs.location >= MAX_NUM_OF_FS_RULES) {
 		netdev_err(dev, "rxnfc: Invalid location (%d)\n",
 			   cmd->fs.location);
 		return -EINVAL;
@@ -1438,7 +1455,7 @@ static int bcmgenet_insert_flow(struct net_device *dev,
 {
 	struct bcmgenet_priv *priv = netdev_priv(dev);
 	struct bcmgenet_rxnfc_rule *loc_rule;
-	int err, i;
+	int err;
 
 	if (priv->hw_params->hfb_filter_size < 128) {
 		netdev_err(dev, "rxnfc: Not supported by this device\n");
@@ -1456,29 +1473,7 @@ static int bcmgenet_insert_flow(struct net_device *dev,
 	if (err)
 		return err;
 
-	if (cmd->fs.location == RX_CLS_LOC_ANY) {
-		list_for_each_entry(loc_rule, &priv->rxnfc_list, list) {
-			cmd->fs.location = loc_rule->fs.location;
-			err = memcmp(&loc_rule->fs, &cmd->fs,
-				     sizeof(struct ethtool_rx_flow_spec));
-			if (!err)
-				/* rule exists so return current location */
-				return 0;
-		}
-		for (i = 0; i < MAX_NUM_OF_FS_RULES; i++) {
-			loc_rule = &priv->rxnfc_rules[i];
-			if (loc_rule->state == BCMGENET_RXNFC_STATE_UNUSED) {
-				cmd->fs.location = i;
-				break;
-			}
-		}
-		if (i == MAX_NUM_OF_FS_RULES) {
-			cmd->fs.location = RX_CLS_LOC_ANY;
-			return -ENOSPC;
-		}
-	} else {
-		loc_rule = &priv->rxnfc_rules[cmd->fs.location];
-	}
+	loc_rule = &priv->rxnfc_rules[cmd->fs.location];
 	if (loc_rule->state == BCMGENET_RXNFC_STATE_ENABLED)
 		bcmgenet_hfb_disable_filter(priv, cmd->fs.location);
 	if (loc_rule->state != BCMGENET_RXNFC_STATE_UNUSED) {
@@ -1591,7 +1586,7 @@ static int bcmgenet_get_rxnfc(struct net_device *dev, struct ethtool_rxnfc *cmd,
 		break;
 	case ETHTOOL_GRXCLSRLCNT:
 		cmd->rule_cnt = bcmgenet_get_num_flows(priv);
-		cmd->data = MAX_NUM_OF_FS_RULES | RX_CLS_LOC_SPECIAL;
+		cmd->data = MAX_NUM_OF_FS_RULES;
 		break;
 	case ETHTOOL_GRXCLSRULE:
 		err = bcmgenet_get_flow(dev, cmd, cmd->fs.location);
@@ -2083,8 +2078,12 @@ static netdev_tx_t bcmgenet_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	spin_lock(&ring->lock);
 	if (ring->free_bds <= (nr_frags + 1)) {
-		if (!netif_tx_queue_stopped(txq))
+		if (!netif_tx_queue_stopped(txq)) {
 			netif_tx_stop_queue(txq);
+			netdev_err(dev,
+				   "%s: tx ring %d full when queue %d awake\n",
+				   __func__, index, ring->queue);
+		}
 		ret = NETDEV_TX_BUSY;
 		goto out;
 	}
@@ -3258,6 +3257,23 @@ static irqreturn_t bcmgenet_wol_isr(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+#ifdef CONFIG_NET_POLL_CONTROLLER
+static void bcmgenet_poll_controller(struct net_device *dev)
+{
+	struct bcmgenet_priv *priv = netdev_priv(dev);
+
+	/* Invoke the main RX/TX interrupt handler */
+	disable_irq(priv->irq0);
+	bcmgenet_isr0(priv->irq0, priv);
+	enable_irq(priv->irq0);
+
+	/* And the interrupt handler for RX/TX priority queues */
+	disable_irq(priv->irq1);
+	bcmgenet_isr1(priv->irq1, priv);
+	enable_irq(priv->irq1);
+}
+#endif
+
 static void bcmgenet_umac_reset(struct bcmgenet_priv *priv)
 {
 	u32 reg;
@@ -3733,6 +3749,9 @@ static const struct net_device_ops bcmgenet_netdev_ops = {
 	.ndo_set_mac_address	= bcmgenet_set_mac_addr,
 	.ndo_eth_ioctl		= phy_do_ioctl_running,
 	.ndo_set_features	= bcmgenet_set_features,
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	.ndo_poll_controller	= bcmgenet_poll_controller,
+#endif
 	.ndo_get_stats		= bcmgenet_get_stats,
 	.ndo_change_carrier	= bcmgenet_change_carrier,
 };
@@ -4177,7 +4196,7 @@ err:
 	return err;
 }
 
-static void bcmgenet_remove(struct platform_device *pdev)
+static int bcmgenet_remove(struct platform_device *pdev)
 {
 	struct bcmgenet_priv *priv = dev_to_priv(&pdev->dev);
 
@@ -4185,6 +4204,8 @@ static void bcmgenet_remove(struct platform_device *pdev)
 	unregister_netdev(priv->dev);
 	bcmgenet_mii_exit(priv->dev);
 	free_netdev(priv->dev);
+
+	return 0;
 }
 
 static void bcmgenet_shutdown(struct platform_device *pdev)
@@ -4363,7 +4384,7 @@ MODULE_DEVICE_TABLE(acpi, genet_acpi_match);
 
 static struct platform_driver bcmgenet_driver = {
 	.probe	= bcmgenet_probe,
-	.remove_new = bcmgenet_remove,
+	.remove	= bcmgenet_remove,
 	.shutdown = bcmgenet_shutdown,
 	.driver	= {
 		.name	= "bcmgenet",

@@ -9,8 +9,8 @@
 
 #include <linux/clk.h>
 #include <linux/component.h>
-#include <linux/mod_devicetable.h>
-#include <linux/platform_device.h>
+#include <linux/of_graph.h>
+#include <linux/of_platform.h>
 #include <linux/pm_runtime.h>
 
 #include <drm/drm_atomic.h>
@@ -172,11 +172,15 @@ struct vc4_txp {
 	void __iomem *regs;
 };
 
-#define encoder_to_vc4_txp(_encoder)					\
-	container_of_const(_encoder, struct vc4_txp, encoder.base)
+static inline struct vc4_txp *encoder_to_vc4_txp(struct drm_encoder *encoder)
+{
+	return container_of(encoder, struct vc4_txp, encoder.base);
+}
 
-#define connector_to_vc4_txp(_connector)				\
-	container_of_const(_connector, struct vc4_txp, connector.base)
+static inline struct vc4_txp *connector_to_vc4_txp(struct drm_connector *conn)
+{
+	return container_of(conn, struct vc4_txp, connector.base);
+}
 
 static const struct debugfs_reg32 txp_regs[] = {
 	VC4_REG32(TXP_DST_PTR),
@@ -636,9 +640,10 @@ static int vc4_txp_probe(struct platform_device *pdev)
 	return component_add(&pdev->dev, &vc4_txp_ops);
 }
 
-static void vc4_txp_remove(struct platform_device *pdev)
+static int vc4_txp_remove(struct platform_device *pdev)
 {
 	component_del(&pdev->dev, &vc4_txp_ops);
+	return 0;
 }
 
 static const struct of_device_id vc4_txp_dt_match[] = {
@@ -650,7 +655,7 @@ static const struct of_device_id vc4_txp_dt_match[] = {
 
 struct platform_driver vc4_txp_driver = {
 	.probe = vc4_txp_probe,
-	.remove_new = vc4_txp_remove,
+	.remove = vc4_txp_remove,
 	.driver = {
 		.name = "vc4_txp",
 		.of_match_table = vc4_txp_dt_match,

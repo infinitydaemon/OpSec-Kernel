@@ -21,131 +21,49 @@
  */
 #define nvkm_uconn(p) container_of((p), struct nvkm_conn, object)
 #include "conn.h"
-#include "outp.h"
 
-#include <core/client.h>
-#include <core/event.h>
 #include <subdev/gpio.h>
-#include <subdev/i2c.h>
 
 #include <nvif/if0011.h>
 
 static int
-nvkm_uconn_uevent_gsp(struct nvkm_object *object, u64 token, u32 bits)
+nvkm_uconn_mthd_hpd_status(struct nvkm_conn *conn, void *argv, u32 argc)
 {
-	union nvif_conn_event_args args;
-
-	args.v0.version = 0;
-	args.v0.types = 0;
-	if (bits & NVKM_DPYID_PLUG)
-		args.v0.types |= NVIF_CONN_EVENT_V0_PLUG;
-	if (bits & NVKM_DPYID_UNPLUG)
-		args.v0.types |= NVIF_CONN_EVENT_V0_UNPLUG;
-	if (bits & NVKM_DPYID_IRQ)
-		args.v0.types |= NVIF_CONN_EVENT_V0_IRQ;
-
-	return object->client->event(token, &args, sizeof(args.v0));
-}
-
-static int
-nvkm_uconn_uevent_aux(struct nvkm_object *object, u64 token, u32 bits)
-{
-	union nvif_conn_event_args args;
-
-	args.v0.version = 0;
-	args.v0.types = 0;
-	if (bits & NVKM_I2C_PLUG)
-		args.v0.types |= NVIF_CONN_EVENT_V0_PLUG;
-	if (bits & NVKM_I2C_UNPLUG)
-		args.v0.types |= NVIF_CONN_EVENT_V0_UNPLUG;
-	if (bits & NVKM_I2C_IRQ)
-		args.v0.types |= NVIF_CONN_EVENT_V0_IRQ;
-
-	return object->client->event(token, &args, sizeof(args.v0));
-}
-
-static int
-nvkm_uconn_uevent_gpio(struct nvkm_object *object, u64 token, u32 bits)
-{
-	union nvif_conn_event_args args;
-
-	args.v0.version = 0;
-	args.v0.types = 0;
-	if (bits & NVKM_GPIO_HI)
-		args.v0.types |= NVIF_CONN_EVENT_V0_PLUG;
-	if (bits & NVKM_GPIO_LO)
-		args.v0.types |= NVIF_CONN_EVENT_V0_UNPLUG;
-
-	return object->client->event(token, &args, sizeof(args.v0));
-}
-
-static bool
-nvkm_connector_is_dp_dms(u8 type)
-{
-	switch (type) {
-	case DCB_CONNECTOR_DMS59_DP0:
-	case DCB_CONNECTOR_DMS59_DP1:
-		return true;
-	default:
-		return false;
-	}
-}
-
-static int
-nvkm_uconn_uevent(struct nvkm_object *object, void *argv, u32 argc, struct nvkm_uevent *uevent)
-{
-	struct nvkm_conn *conn = nvkm_uconn(object);
-	struct nvkm_disp *disp = conn->disp;
-	struct nvkm_device *device = disp->engine.subdev.device;
-	struct nvkm_outp *outp;
-	union nvif_conn_event_args *args = argv;
-	u64 bits = 0;
-
-	if (!uevent) {
-		if (!disp->rm.client.gsp && conn->info.hpd == DCB_GPIO_UNUSED)
-			return -ENOSYS;
-		return 0;
-	}
+	struct nvkm_gpio *gpio = conn->disp->engine.subdev.device->gpio;
+	union nvif_conn_hpd_status_args *args = argv;
 
 	if (argc != sizeof(args->v0) || args->v0.version != 0)
 		return -ENOSYS;
 
-	list_for_each_entry(outp, &conn->disp->outps, head) {
-		if (outp->info.connector == conn->index)
-			break;
+	args->v0.support = gpio && conn->info.hpd != DCB_GPIO_UNUSED;
+	args->v0.present = 0;
+
+	if (args->v0.support) {
+		int ret = nvkm_gpio_get(gpio, 0, DCB_GPIO_UNUSED, conn->info.hpd);
+
+		if (WARN_ON(ret < 0)) {
+			args->v0.support = false;
+			return 0;
+		}
+
+		args->v0.present = ret;
 	}
 
-	if (&outp->head == &conn->disp->outps)
-		return -EINVAL;
+	return 0;
+}
 
-	if (disp->rm.client.gsp) {
-		if (args->v0.types & NVIF_CONN_EVENT_V0_PLUG  ) bits |= NVKM_DPYID_PLUG;
-		if (args->v0.types & NVIF_CONN_EVENT_V0_UNPLUG) bits |= NVKM_DPYID_UNPLUG;
-		if (args->v0.types & NVIF_CONN_EVENT_V0_IRQ   ) bits |= NVKM_DPYID_IRQ;
+static int
+nvkm_uconn_mthd(struct nvkm_object *object, u32 mthd, void *argv, u32 argc)
+{
+	struct nvkm_conn *conn = nvkm_uconn(object);
 
-		return nvkm_uevent_add(uevent, &disp->rm.event, outp->index, bits,
-				       nvkm_uconn_uevent_gsp);
+	switch (mthd) {
+	case NVIF_CONN_V0_HPD_STATUS: return nvkm_uconn_mthd_hpd_status(conn, argv, argc);
+	default:
+		break;
 	}
 
-	if (outp->dp.aux && !outp->info.location) {
-		if (args->v0.types & NVIF_CONN_EVENT_V0_PLUG  ) bits |= NVKM_I2C_PLUG;
-		if (args->v0.types & NVIF_CONN_EVENT_V0_UNPLUG) bits |= NVKM_I2C_UNPLUG;
-		if (args->v0.types & NVIF_CONN_EVENT_V0_IRQ   ) bits |= NVKM_I2C_IRQ;
-
-		return nvkm_uevent_add(uevent, &device->i2c->event, outp->dp.aux->id, bits,
-				       nvkm_uconn_uevent_aux);
-	}
-
-	if (args->v0.types & NVIF_CONN_EVENT_V0_PLUG  ) bits |= NVKM_GPIO_HI;
-	if (args->v0.types & NVIF_CONN_EVENT_V0_UNPLUG) bits |= NVKM_GPIO_LO;
-	if (args->v0.types & NVIF_CONN_EVENT_V0_IRQ) {
-		/* TODO: support DP IRQ on ANX9805 and remove this hack. */
-		if (!outp->info.location && !nvkm_connector_is_dp_dms(conn->info.type))
-			return -EINVAL;
-	}
-
-	return nvkm_uevent_add(uevent, &device->gpio->event, conn->info.hpd, bits,
-			       nvkm_uconn_uevent_gpio);
+	return -EINVAL;
 }
 
 static void *
@@ -163,7 +81,7 @@ nvkm_uconn_dtor(struct nvkm_object *object)
 static const struct nvkm_object_func
 nvkm_uconn = {
 	.dtor = nvkm_uconn_dtor,
-	.uevent = nvkm_uconn_uevent,
+	.mthd = nvkm_uconn_mthd,
 };
 
 int
@@ -190,32 +108,6 @@ nvkm_uconn_new(const struct nvkm_oclass *oclass, void *argv, u32 argc, struct nv
 	ret = -EBUSY;
 	spin_lock(&disp->client.lock);
 	if (!conn->object.func) {
-		switch (conn->info.type) {
-		case DCB_CONNECTOR_VGA      : args->v0.type = NVIF_CONN_V0_VGA; break;
-		case DCB_CONNECTOR_TV_0     :
-		case DCB_CONNECTOR_TV_1     :
-		case DCB_CONNECTOR_TV_3     : args->v0.type = NVIF_CONN_V0_TV; break;
-		case DCB_CONNECTOR_DMS59_0  :
-		case DCB_CONNECTOR_DMS59_1  :
-		case DCB_CONNECTOR_DVI_I    : args->v0.type = NVIF_CONN_V0_DVI_I; break;
-		case DCB_CONNECTOR_DVI_D    : args->v0.type = NVIF_CONN_V0_DVI_D; break;
-		case DCB_CONNECTOR_LVDS     : args->v0.type = NVIF_CONN_V0_LVDS; break;
-		case DCB_CONNECTOR_LVDS_SPWG: args->v0.type = NVIF_CONN_V0_LVDS_SPWG; break;
-		case DCB_CONNECTOR_DMS59_DP0:
-		case DCB_CONNECTOR_DMS59_DP1:
-		case DCB_CONNECTOR_DP       :
-		case DCB_CONNECTOR_mDP      :
-		case DCB_CONNECTOR_USB_C    : args->v0.type = NVIF_CONN_V0_DP; break;
-		case DCB_CONNECTOR_eDP      : args->v0.type = NVIF_CONN_V0_EDP; break;
-		case DCB_CONNECTOR_HDMI_0   :
-		case DCB_CONNECTOR_HDMI_1   :
-		case DCB_CONNECTOR_HDMI_C   : args->v0.type = NVIF_CONN_V0_HDMI; break;
-		default:
-			WARN_ON(1);
-			ret = -EINVAL;
-			break;
-		}
-
 		nvkm_object_ctor(&nvkm_uconn, oclass, &conn->object);
 		*pobject = &conn->object;
 		ret = 0;

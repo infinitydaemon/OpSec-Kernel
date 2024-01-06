@@ -47,7 +47,6 @@ void mlx5e_mod_hdr_tbl_init(struct mod_hdr_tbl *tbl)
 
 void mlx5e_mod_hdr_tbl_destroy(struct mod_hdr_tbl *tbl)
 {
-	WARN_ON(!hash_empty(tbl->hlist));
 	mutex_destroy(&tbl->lock);
 }
 

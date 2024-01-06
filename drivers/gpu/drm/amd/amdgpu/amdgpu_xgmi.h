@@ -44,7 +44,6 @@ struct amdgpu_hive_info {
 
 	struct amdgpu_reset_domain *reset_domain;
 	uint32_t device_remove_count;
-	atomic_t ras_recovery;
 };
 
 struct amdgpu_pcs_ras_field {
@@ -74,6 +73,5 @@ static inline bool amdgpu_xgmi_same_hive(struct amdgpu_device *adev,
 		adev->gmc.xgmi.hive_id &&
 		adev->gmc.xgmi.hive_id == bo_adev->gmc.xgmi.hive_id);
 }
-int amdgpu_xgmi_ras_sw_init(struct amdgpu_device *adev);
 
 #endif

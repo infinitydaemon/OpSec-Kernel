@@ -47,10 +47,6 @@
 #include <linux/kgdb.h>
 #include <linux/kprobes.h>
 
-#if defined(CONFIG_LIGHTWEIGHT_SPINLOCK_CHECK)
-#include <asm/spinlock.h>
-#endif
-
 #include "../math-emu/math-emu.h"	/* for handle_fpe() */
 
 static void parisc_show_stack(struct task_struct *task,
@@ -313,12 +309,6 @@ static void handle_break(struct pt_regs *regs)
 	}
 #endif
 
-#ifdef CONFIG_LIGHTWEIGHT_SPINLOCK_CHECK
-        if ((iir == SPINLOCK_BREAK_INSN) && !user_mode(regs)) {
-		die_if_kernel("Spinlock was trashed", regs, 1);
-	}
-#endif
-
 	if (unlikely(iir != GDB_BREAK_INSN))
 		parisc_printk_ratelimited(0, regs,
 			KERN_DEBUG "break %d,%d: pid=%d command='%s'\n",
@@ -335,7 +325,10 @@ static void default_trap(int code, struct pt_regs *regs)
 	show_regs(regs);
 }
 
-static void transfer_pim_to_trap_frame(struct pt_regs *regs)
+void (*cpu_lpmc) (int code, struct pt_regs *regs) __read_mostly = default_trap;
+
+
+void transfer_pim_to_trap_frame(struct pt_regs *regs)
 {
     register int i;
     extern unsigned int hpmc_pim_data[];
@@ -554,7 +547,7 @@ void notrace handle_interruption(int code, struct pt_regs *regs)
 		
 		flush_cache_all();
 		flush_tlb_all();
-		default_trap(code, regs);
+		cpu_lpmc(5, regs);
 		return;
 
 	case  PARISC_ITLB_TRAP:
@@ -797,13 +790,14 @@ void notrace handle_interruption(int code, struct pt_regs *regs)
 }
 
 
-static void __init initialize_ivt(const void *iva)
+void __init initialize_ivt(const void *iva)
 {
 	extern const u32 os_hpmc[];
 
 	int i;
 	u32 check = 0;
 	u32 *ivap;
+	u32 *hpmcp;
 	u32 instr;
 
 	if (strcmp((const char *)iva, "cows can fly"))
@@ -835,6 +829,8 @@ static void __init initialize_ivt(const void *iva)
 
 	/* Setup IVA and compute checksum for HPMC handler */
 	ivap[6] = (u32)__pa(os_hpmc);
+
+	hpmcp = (u32 *)os_hpmc;
 
 	for (i=0; i<8; i++)
 	    check += ivap[i];

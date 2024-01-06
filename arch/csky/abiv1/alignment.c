@@ -329,11 +329,25 @@ static struct ctl_table alignment_tbl[5] = {
 		.mode = 0666,
 		.proc_handler = &proc_dointvec
 	},
+	{}
+};
+
+static struct ctl_table sysctl_table[2] = {
+	{
+	 .procname = "csky_alignment",
+	 .mode = 0555,
+	 .child = alignment_tbl},
+	{}
+};
+
+static struct ctl_path sysctl_path[2] = {
+	{.procname = "csky"},
+	{}
 };
 
 static int __init csky_alignment_init(void)
 {
-	register_sysctl_init("csky/csky_alignment", alignment_tbl);
+	register_sysctl_paths(sysctl_path, sysctl_table);
 	return 0;
 }
 

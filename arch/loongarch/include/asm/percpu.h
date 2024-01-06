@@ -14,11 +14,7 @@
  * loaded. Tell the compiler this fact when using explicit relocs.
  */
 #if defined(MODULE) && defined(CONFIG_AS_HAS_EXPLICIT_RELOCS)
-# if __has_attribute(model)
-#  define PER_CPU_ATTRIBUTES __attribute__((model("extreme")))
-# else
-#  error compiler support for the model attribute is necessary when a recent assembler is used
-# endif
+#define PER_CPU_ATTRIBUTES    __attribute__((model("extreme")))
 #endif
 
 /* Use r21 for fast access */
@@ -40,13 +36,13 @@ static __always_inline unsigned long __percpu_##op(void *ptr,		\
 	switch (size) {							\
 	case 4:								\
 		__asm__ __volatile__(					\
-		"am"#asm_op".w"	" %[ret], %[val], %[ptr]	\n"	\
+		"am"#asm_op".w"	" %[ret], %[val], %[ptr]	\n"		\
 		: [ret] "=&r" (ret), [ptr] "+ZB"(*(u32 *)ptr)		\
 		: [val] "r" (val));					\
 		break;							\
 	case 8:								\
 		__asm__ __volatile__(					\
-		"am"#asm_op".d" " %[ret], %[val], %[ptr]	\n"	\
+		"am"#asm_op".d" " %[ret], %[val], %[ptr]	\n"		\
 		: [ret] "=&r" (ret), [ptr] "+ZB"(*(u64 *)ptr)		\
 		: [val] "r" (val));					\
 		break;							\
@@ -63,7 +59,7 @@ PERCPU_OP(and, and, &)
 PERCPU_OP(or, or, |)
 #undef PERCPU_OP
 
-static __always_inline unsigned long __percpu_read(void __percpu *ptr, int size)
+static __always_inline unsigned long __percpu_read(void *ptr, int size)
 {
 	unsigned long ret;
 
@@ -100,7 +96,7 @@ static __always_inline unsigned long __percpu_read(void __percpu *ptr, int size)
 	return ret;
 }
 
-static __always_inline void __percpu_write(void __percpu *ptr, unsigned long val, int size)
+static __always_inline void __percpu_write(void *ptr, unsigned long val, int size)
 {
 	switch (size) {
 	case 1:
@@ -132,7 +128,8 @@ static __always_inline void __percpu_write(void __percpu *ptr, unsigned long val
 	}
 }
 
-static __always_inline unsigned long __percpu_xchg(void *ptr, unsigned long val, int size)
+static __always_inline unsigned long __percpu_xchg(void *ptr, unsigned long val,
+						   int size)
 {
 	switch (size) {
 	case 1:

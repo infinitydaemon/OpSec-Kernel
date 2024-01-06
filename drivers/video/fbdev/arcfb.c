@@ -41,7 +41,6 @@
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
-#include <linux/io.h>
 #include <linux/fb.h>
 #include <linux/init.h>
 #include <linux/arcfb.h>
@@ -261,7 +260,7 @@ static void arcfb_lcd_update_page(struct arcfb_par *par, unsigned int upper,
 	ks108_set_yaddr(par, chipindex, upper/8);
 
 	linesize = par->info->var.xres/8;
-	src = (unsigned char *)par->info->screen_buffer + (left/8) +
+	src = (unsigned char __force *) par->info->screen_base + (left/8) +
 		(upper * linesize);
 	ks108_set_xaddr(par, chipindex, left);
 
@@ -452,9 +451,6 @@ static ssize_t arcfb_write(struct fb_info *info, const char __user *buf,
 	struct arcfb_par *par;
 	unsigned int xres;
 
-	if (!info->screen_buffer)
-		return -ENODEV;
-
 	p = *ppos;
 	par = info->par;
 	xres = info->var.xres;
@@ -472,7 +468,7 @@ static ssize_t arcfb_write(struct fb_info *info, const char __user *buf,
 	if (count) {
 		char *base_addr;
 
-		base_addr = info->screen_buffer;
+		base_addr = (char __force *)info->screen_base;
 		count -= copy_from_user(base_addr + p, buf, count);
 		*ppos += count;
 		err = -EFAULT;
@@ -529,7 +525,7 @@ static int arcfb_probe(struct platform_device *dev)
 	if (!info)
 		goto err_fb_alloc;
 
-	info->screen_buffer = videomemory;
+	info->screen_base = (char __iomem *)videomemory;
 	info->fbops = &arcfb_ops;
 
 	info->var = arcfb_var;
@@ -546,6 +542,7 @@ static int arcfb_probe(struct platform_device *dev)
 	par->c2io_addr = c2io_addr;
 	par->cslut[0] = 0x00;
 	par->cslut[1] = 0x06;
+	info->flags = FBINFO_FLAG_DEFAULT;
 	spin_lock_init(&par->lock);
 	if (irq) {
 		par->irq = irq;
@@ -593,7 +590,7 @@ err_fb_alloc:
 	return retval;
 }
 
-static void arcfb_remove(struct platform_device *dev)
+static int arcfb_remove(struct platform_device *dev)
 {
 	struct fb_info *info = platform_get_drvdata(dev);
 
@@ -601,14 +598,15 @@ static void arcfb_remove(struct platform_device *dev)
 		unregister_framebuffer(info);
 		if (irq)
 			free_irq(((struct arcfb_par *)(info->par))->irq, info);
-		vfree(info->screen_buffer);
+		vfree((void __force *)info->screen_base);
 		framebuffer_release(info);
 	}
+	return 0;
 }
 
 static struct platform_driver arcfb_driver = {
 	.probe	= arcfb_probe,
-	.remove_new = arcfb_remove,
+	.remove = arcfb_remove,
 	.driver	= {
 		.name	= "arcfb",
 	},

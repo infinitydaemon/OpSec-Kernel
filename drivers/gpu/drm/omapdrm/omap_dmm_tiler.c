@@ -723,7 +723,7 @@ bool dmm_is_available(void)
 	return omap_dmm ? true : false;
 }
 
-static void omap_dmm_remove(struct platform_device *dev)
+static int omap_dmm_remove(struct platform_device *dev)
 {
 	struct tiler_block *block, *_block;
 	int i;
@@ -763,6 +763,8 @@ static void omap_dmm_remove(struct platform_device *dev)
 		kfree(omap_dmm);
 		omap_dmm = NULL;
 	}
+
+	return 0;
 }
 
 static int omap_dmm_probe(struct platform_device *dev)
@@ -980,7 +982,8 @@ static int omap_dmm_probe(struct platform_device *dev)
 	return 0;
 
 fail:
-	omap_dmm_remove(dev);
+	if (omap_dmm_remove(dev))
+		dev_err(&dev->dev, "cleanup failed\n");
 	return ret;
 }
 
@@ -1210,7 +1213,7 @@ static const struct of_device_id dmm_of_match[] = {
 
 struct platform_driver omap_dmm_driver = {
 	.probe = omap_dmm_probe,
-	.remove_new = omap_dmm_remove,
+	.remove = omap_dmm_remove,
 	.driver = {
 		.owner = THIS_MODULE,
 		.name = DMM_DRIVER_NAME,

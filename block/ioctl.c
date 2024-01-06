@@ -84,7 +84,7 @@ static int compat_blkpg_ioctl(struct block_device *bdev,
 }
 #endif
 
-static int blk_ioctl_discard(struct block_device *bdev, blk_mode_t mode,
+static int blk_ioctl_discard(struct block_device *bdev, fmode_t mode,
 		unsigned long arg)
 {
 	uint64_t range[2];
@@ -92,7 +92,7 @@ static int blk_ioctl_discard(struct block_device *bdev, blk_mode_t mode,
 	struct inode *inode = bdev->bd_inode;
 	int err;
 
-	if (!(mode & BLK_OPEN_WRITE))
+	if (!(mode & FMODE_WRITE))
 		return -EBADF;
 
 	if (!bdev_max_discard_sectors(bdev))
@@ -122,14 +122,14 @@ fail:
 	return err;
 }
 
-static int blk_ioctl_secure_erase(struct block_device *bdev, blk_mode_t mode,
+static int blk_ioctl_secure_erase(struct block_device *bdev, fmode_t mode,
 		void __user *argp)
 {
 	uint64_t start, len;
 	uint64_t range[2];
 	int err;
 
-	if (!(mode & BLK_OPEN_WRITE))
+	if (!(mode & FMODE_WRITE))
 		return -EBADF;
 	if (!bdev_max_secure_erase_sectors(bdev))
 		return -EOPNOTSUPP;
@@ -153,7 +153,7 @@ static int blk_ioctl_secure_erase(struct block_device *bdev, blk_mode_t mode,
 }
 
 
-static int blk_ioctl_zeroout(struct block_device *bdev, blk_mode_t mode,
+static int blk_ioctl_zeroout(struct block_device *bdev, fmode_t mode,
 		unsigned long arg)
 {
 	uint64_t range[2];
@@ -161,7 +161,7 @@ static int blk_ioctl_zeroout(struct block_device *bdev, blk_mode_t mode,
 	struct inode *inode = bdev->bd_inode;
 	int err;
 
-	if (!(mode & BLK_OPEN_WRITE))
+	if (!(mode & FMODE_WRITE))
 		return -EBADF;
 
 	if (copy_from_user(range, (void __user *)arg, sizeof(range)))
@@ -242,7 +242,7 @@ static int compat_put_ulong(compat_ulong_t __user *argp, compat_ulong_t val)
  * drivers that implement only commands that are completely compatible
  * between 32-bit and 64-bit user space
  */
-int blkdev_compat_ptr_ioctl(struct block_device *bdev, blk_mode_t mode,
+int blkdev_compat_ptr_ioctl(struct block_device *bdev, fmode_t mode,
 			unsigned cmd, unsigned long arg)
 {
 	struct gendisk *disk = bdev->bd_disk;
@@ -256,28 +256,13 @@ int blkdev_compat_ptr_ioctl(struct block_device *bdev, blk_mode_t mode,
 EXPORT_SYMBOL(blkdev_compat_ptr_ioctl);
 #endif
 
-static bool blkdev_pr_allowed(struct block_device *bdev, blk_mode_t mode)
-{
-	/* no sense to make reservations for partitions */
-	if (bdev_is_partition(bdev))
-		return false;
-
-	if (capable(CAP_SYS_ADMIN))
-		return true;
-	/*
-	 * Only allow unprivileged reservations if the file descriptor is open
-	 * for writing.
-	 */
-	return mode & BLK_OPEN_WRITE;
-}
-
-static int blkdev_pr_register(struct block_device *bdev, blk_mode_t mode,
+static int blkdev_pr_register(struct block_device *bdev,
 		struct pr_registration __user *arg)
 {
 	const struct pr_ops *ops = bdev->bd_disk->fops->pr_ops;
 	struct pr_registration reg;
 
-	if (!blkdev_pr_allowed(bdev, mode))
+	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 	if (!ops || !ops->pr_register)
 		return -EOPNOTSUPP;
@@ -289,13 +274,13 @@ static int blkdev_pr_register(struct block_device *bdev, blk_mode_t mode,
 	return ops->pr_register(bdev, reg.old_key, reg.new_key, reg.flags);
 }
 
-static int blkdev_pr_reserve(struct block_device *bdev, blk_mode_t mode,
+static int blkdev_pr_reserve(struct block_device *bdev,
 		struct pr_reservation __user *arg)
 {
 	const struct pr_ops *ops = bdev->bd_disk->fops->pr_ops;
 	struct pr_reservation rsv;
 
-	if (!blkdev_pr_allowed(bdev, mode))
+	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 	if (!ops || !ops->pr_reserve)
 		return -EOPNOTSUPP;
@@ -307,13 +292,13 @@ static int blkdev_pr_reserve(struct block_device *bdev, blk_mode_t mode,
 	return ops->pr_reserve(bdev, rsv.key, rsv.type, rsv.flags);
 }
 
-static int blkdev_pr_release(struct block_device *bdev, blk_mode_t mode,
+static int blkdev_pr_release(struct block_device *bdev,
 		struct pr_reservation __user *arg)
 {
 	const struct pr_ops *ops = bdev->bd_disk->fops->pr_ops;
 	struct pr_reservation rsv;
 
-	if (!blkdev_pr_allowed(bdev, mode))
+	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 	if (!ops || !ops->pr_release)
 		return -EOPNOTSUPP;
@@ -325,13 +310,13 @@ static int blkdev_pr_release(struct block_device *bdev, blk_mode_t mode,
 	return ops->pr_release(bdev, rsv.key, rsv.type);
 }
 
-static int blkdev_pr_preempt(struct block_device *bdev, blk_mode_t mode,
+static int blkdev_pr_preempt(struct block_device *bdev,
 		struct pr_preempt __user *arg, bool abort)
 {
 	const struct pr_ops *ops = bdev->bd_disk->fops->pr_ops;
 	struct pr_preempt p;
 
-	if (!blkdev_pr_allowed(bdev, mode))
+	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 	if (!ops || !ops->pr_preempt)
 		return -EOPNOTSUPP;
@@ -343,13 +328,13 @@ static int blkdev_pr_preempt(struct block_device *bdev, blk_mode_t mode,
 	return ops->pr_preempt(bdev, p.old_key, p.new_key, p.type, abort);
 }
 
-static int blkdev_pr_clear(struct block_device *bdev, blk_mode_t mode,
+static int blkdev_pr_clear(struct block_device *bdev,
 		struct pr_clear __user *arg)
 {
 	const struct pr_ops *ops = bdev->bd_disk->fops->pr_ops;
 	struct pr_clear c;
 
-	if (!blkdev_pr_allowed(bdev, mode))
+	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 	if (!ops || !ops->pr_clear)
 		return -EOPNOTSUPP;
@@ -361,26 +346,18 @@ static int blkdev_pr_clear(struct block_device *bdev, blk_mode_t mode,
 	return ops->pr_clear(bdev, c.key);
 }
 
-static int blkdev_flushbuf(struct block_device *bdev, unsigned cmd,
-		unsigned long arg)
+static int blkdev_flushbuf(struct block_device *bdev, fmode_t mode,
+		unsigned cmd, unsigned long arg)
 {
 	if (!capable(CAP_SYS_ADMIN))
 		return -EACCES;
-
-	mutex_lock(&bdev->bd_holder_lock);
-	if (bdev->bd_holder_ops && bdev->bd_holder_ops->sync)
-		bdev->bd_holder_ops->sync(bdev);
-	else {
-		mutex_unlock(&bdev->bd_holder_lock);
-		sync_blockdev(bdev);
-	}
-
+	fsync_bdev(bdev);
 	invalidate_bdev(bdev);
 	return 0;
 }
 
-static int blkdev_roset(struct block_device *bdev, unsigned cmd,
-		unsigned long arg)
+static int blkdev_roset(struct block_device *bdev, fmode_t mode,
+		unsigned cmd, unsigned long arg)
 {
 	int ret, n;
 
@@ -464,11 +441,10 @@ static int compat_hdio_getgeo(struct block_device *bdev,
 #endif
 
 /* set the logical block size */
-static int blkdev_bszset(struct block_device *bdev, blk_mode_t mode,
+static int blkdev_bszset(struct block_device *bdev, fmode_t mode,
 		int __user *argp)
 {
 	int ret, n;
-	struct bdev_handle *handle;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EACCES;
@@ -477,14 +453,13 @@ static int blkdev_bszset(struct block_device *bdev, blk_mode_t mode,
 	if (get_user(n, argp))
 		return -EFAULT;
 
-	if (mode & BLK_OPEN_EXCL)
+	if (mode & FMODE_EXCL)
 		return set_blocksize(bdev, n);
 
-	handle = bdev_open_by_dev(bdev->bd_dev, mode, &bdev, NULL);
-	if (IS_ERR(handle))
+	if (IS_ERR(blkdev_get_by_dev(bdev->bd_dev, mode | FMODE_EXCL, &bdev)))
 		return -EBUSY;
 	ret = set_blocksize(bdev, n);
-	bdev_release(handle);
+	blkdev_put(bdev, mode | FMODE_EXCL);
 
 	return ret;
 }
@@ -494,7 +469,7 @@ static int blkdev_bszset(struct block_device *bdev, blk_mode_t mode,
  * user space. Note the separate arg/argp parameters that are needed
  * to deal with the compat_ptr() conversion.
  */
-static int blkdev_common_ioctl(struct block_device *bdev, blk_mode_t mode,
+static int blkdev_common_ioctl(struct block_device *bdev, fmode_t mode,
 			       unsigned int cmd, unsigned long arg,
 			       void __user *argp)
 {
@@ -502,9 +477,9 @@ static int blkdev_common_ioctl(struct block_device *bdev, blk_mode_t mode,
 
 	switch (cmd) {
 	case BLKFLSBUF:
-		return blkdev_flushbuf(bdev, cmd, arg);
+		return blkdev_flushbuf(bdev, mode, cmd, arg);
 	case BLKROSET:
-		return blkdev_roset(bdev, cmd, arg);
+		return blkdev_roset(bdev, mode, cmd, arg);
 	case BLKDISCARD:
 		return blk_ioctl_discard(bdev, mode, arg);
 	case BLKSECDISCARD:
@@ -514,7 +489,7 @@ static int blkdev_common_ioctl(struct block_device *bdev, blk_mode_t mode,
 	case BLKGETDISKSEQ:
 		return put_u64(argp, bdev->bd_disk->diskseq);
 	case BLKREPORTZONE:
-		return blkdev_report_zones_ioctl(bdev, cmd, arg);
+		return blkdev_report_zones_ioctl(bdev, mode, cmd, arg);
 	case BLKRESETZONE:
 	case BLKOPENZONE:
 	case BLKCLOSEZONE:
@@ -561,17 +536,17 @@ static int blkdev_common_ioctl(struct block_device *bdev, blk_mode_t mode,
 	case BLKTRACETEARDOWN:
 		return blk_trace_ioctl(bdev, cmd, argp);
 	case IOC_PR_REGISTER:
-		return blkdev_pr_register(bdev, mode, argp);
+		return blkdev_pr_register(bdev, argp);
 	case IOC_PR_RESERVE:
-		return blkdev_pr_reserve(bdev, mode, argp);
+		return blkdev_pr_reserve(bdev, argp);
 	case IOC_PR_RELEASE:
-		return blkdev_pr_release(bdev, mode, argp);
+		return blkdev_pr_release(bdev, argp);
 	case IOC_PR_PREEMPT:
-		return blkdev_pr_preempt(bdev, mode, argp, false);
+		return blkdev_pr_preempt(bdev, argp, false);
 	case IOC_PR_PREEMPT_ABORT:
-		return blkdev_pr_preempt(bdev, mode, argp, true);
+		return blkdev_pr_preempt(bdev, argp, true);
 	case IOC_PR_CLEAR:
-		return blkdev_pr_clear(bdev, mode, argp);
+		return blkdev_pr_clear(bdev, argp);
 	default:
 		return -ENOIOCTLCMD;
 	}
@@ -587,8 +562,17 @@ long blkdev_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
 	struct block_device *bdev = I_BDEV(file->f_mapping->host);
 	void __user *argp = (void __user *)arg;
-	blk_mode_t mode = file_to_blk_mode(file);
+	fmode_t mode = file->f_mode;
 	int ret;
+
+	/*
+	 * O_NDELAY can be altered using fcntl(.., F_SETFL, ..), so we have
+	 * to updated it before every ioctl.
+	 */
+	if (file->f_flags & O_NDELAY)
+		mode |= FMODE_NDELAY;
+	else
+		mode &= ~FMODE_NDELAY;
 
 	switch (cmd) {
 	/* These need separate implementations for the data structure */
@@ -648,7 +632,16 @@ long compat_blkdev_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 	void __user *argp = compat_ptr(arg);
 	struct block_device *bdev = I_BDEV(file->f_mapping->host);
 	struct gendisk *disk = bdev->bd_disk;
-	blk_mode_t mode = file_to_blk_mode(file);
+	fmode_t mode = file->f_mode;
+
+	/*
+	 * O_NDELAY can be altered using fcntl(.., F_SETFL, ..), so we have
+	 * to updated it before every ioctl.
+	 */
+	if (file->f_flags & O_NDELAY)
+		mode |= FMODE_NDELAY;
+	else
+		mode &= ~FMODE_NDELAY;
 
 	switch (cmd) {
 	/* These need separate implementations for the data structure */

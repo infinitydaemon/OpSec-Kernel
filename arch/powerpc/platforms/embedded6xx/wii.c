@@ -141,6 +141,9 @@ static void __init wii_pic_probe(void)
 
 static int __init wii_probe(void)
 {
+	if (!of_machine_is_compatible("nintendo,wii"))
+		return 0;
+
 	pm_power_off = wii_power_off;
 
 	ug_udbg_init();
@@ -161,20 +164,23 @@ static const struct of_device_id wii_of_bus[] = {
 
 static int __init wii_device_probe(void)
 {
+	if (!machine_is(wii))
+		return 0;
+
 	of_platform_populate(NULL, wii_of_bus, NULL, NULL);
 	return 0;
 }
-machine_device_initcall(wii, wii_device_probe);
+device_initcall(wii_device_probe);
 
 define_machine(wii) {
 	.name			= "wii",
-	.compatible		= "nintendo,wii",
 	.probe			= wii_probe,
 	.setup_arch		= wii_setup_arch,
 	.restart		= wii_restart,
 	.halt			= wii_halt,
 	.init_IRQ		= wii_pic_probe,
 	.get_irq		= flipper_pic_get_irq,
+	.calibrate_decr		= generic_calibrate_decr,
 	.progress		= udbg_progress,
 	.machine_shutdown	= wii_shutdown,
 };

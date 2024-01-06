@@ -25,7 +25,6 @@
 
 #include "spufs/spufs.h"
 #include "interrupt.h"
-#include "spu_priv1_mmio.h"
 
 struct device_node *spu_devnode(struct spu *spu)
 {
@@ -403,7 +402,7 @@ static int __init of_has_vicinity(void)
 	struct device_node *dn;
 
 	for_each_node_by_type(dn, "spe") {
-		if (of_property_present(dn, "vicinity"))  {
+		if (of_find_property(dn, "vicinity", NULL))  {
 			of_node_put(dn);
 			return 1;
 		}

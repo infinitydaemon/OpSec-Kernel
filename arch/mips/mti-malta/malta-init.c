@@ -289,6 +289,8 @@ mips_pci_controller:
 
 	if (!register_cps_smp_ops())
 		return;
+	if (!register_cmp_smp_ops())
+		return;
 	if (!register_vsmp_smp_ops())
 		return;
 	register_up_smp_ops();

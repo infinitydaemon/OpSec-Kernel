@@ -39,7 +39,6 @@
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_encoder.h>
 #include <drm/drm_fb_helper.h>
-#include <drm/drm_fbdev_generic.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem.h>
 #include <drm/drm_gem_framebuffer_helper.h>
@@ -218,6 +217,7 @@ static const struct drm_simple_display_pipe_funcs rp1dpi_pipe_funcs = {
 	.enable	    = rp1dpi_pipe_enable,
 	.update	    = rp1dpi_pipe_update,
 	.disable    = rp1dpi_pipe_disable,
+	.prepare_fb = drm_gem_simple_display_pipe_prepare_fb,
 	.enable_vblank	= rp1dpi_pipe_enable_vblank,
 	.disable_vblank = rp1dpi_pipe_disable_vblank,
 };
@@ -347,8 +347,10 @@ static int rp1dpi_platform_probe(struct platform_device *pdev)
 
 	drm->mode_config.max_width  = 4096;
 	drm->mode_config.max_height = 4096;
+	drm->mode_config.fb_base    = 0;
 	drm->mode_config.preferred_depth = 32;
 	drm->mode_config.prefer_shadow	 = 0;
+	drm->mode_config.prefer_shadow_fbdev = 1;
 	drm->mode_config.quirk_addfb_prefer_host_byte_order = true;
 	drm->mode_config.funcs = &rp1dpi_mode_funcs;
 	drm_vblank_init(drm, 1);

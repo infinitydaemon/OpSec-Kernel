@@ -21,6 +21,7 @@
 #include <linux/tty_flip.h>
 #include <linux/platform_device.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/dma-mapping.h>
 #include <linux/dmaengine.h>
 #include <linux/atmel_pdc.h>
@@ -551,23 +552,19 @@ static u_int atmel_get_mctrl(struct uart_port *port)
 static void atmel_stop_tx(struct uart_port *port)
 {
 	struct atmel_uart_port *atmel_port = to_atmel_uart_port(port);
-	bool is_pdc = atmel_use_pdc_tx(port);
-	bool is_dma = is_pdc || atmel_use_dma_tx(port);
 
-	if (is_pdc) {
+	if (atmel_use_pdc_tx(port)) {
 		/* disable PDC transmit */
 		atmel_uart_writel(port, ATMEL_PDC_PTCR, ATMEL_PDC_TXTDIS);
 	}
 
-	if (is_dma) {
-		/*
-		 * Disable the transmitter.
-		 * This is mandatory when DMA is used, otherwise the DMA buffer
-		 * is fully transmitted.
-		 */
-		atmel_uart_writel(port, ATMEL_US_CR, ATMEL_US_TXDIS);
-		atmel_port->tx_stopped = true;
-	}
+	/*
+	 * Disable the transmitter.
+	 * This is mandatory when DMA is used, otherwise the DMA buffer
+	 * is fully transmitted.
+	 */
+	atmel_uart_writel(port, ATMEL_US_CR, ATMEL_US_TXDIS);
+	atmel_port->tx_stopped = true;
 
 	/* Disable interrupts */
 	atmel_uart_writel(port, ATMEL_US_IDR, atmel_port->tx_done_mask);
@@ -575,6 +572,7 @@ static void atmel_stop_tx(struct uart_port *port)
 	if (atmel_uart_is_half_duplex(port))
 		if (!atomic_read(&atmel_port->tasklet_shutdown))
 			atmel_start_rx(port);
+
 }
 
 /*
@@ -583,31 +581,27 @@ static void atmel_stop_tx(struct uart_port *port)
 static void atmel_start_tx(struct uart_port *port)
 {
 	struct atmel_uart_port *atmel_port = to_atmel_uart_port(port);
-	bool is_pdc = atmel_use_pdc_tx(port);
-	bool is_dma = is_pdc || atmel_use_dma_tx(port);
 
-	if (is_pdc && (atmel_uart_readl(port, ATMEL_PDC_PTSR)
+	if (atmel_use_pdc_tx(port) && (atmel_uart_readl(port, ATMEL_PDC_PTSR)
 				       & ATMEL_PDC_TXTEN))
 		/* The transmitter is already running.  Yes, we
 		   really need this.*/
 		return;
 
-	if (is_dma && atmel_uart_is_half_duplex(port))
-		atmel_stop_rx(port);
+	if (atmel_use_pdc_tx(port) || atmel_use_dma_tx(port))
+		if (atmel_uart_is_half_duplex(port))
+			atmel_stop_rx(port);
 
-	if (is_pdc) {
+	if (atmel_use_pdc_tx(port))
 		/* re-enable PDC transmit */
 		atmel_uart_writel(port, ATMEL_PDC_PTCR, ATMEL_PDC_TXTEN);
-	}
 
 	/* Enable interrupts */
 	atmel_uart_writel(port, ATMEL_US_IER, atmel_port->tx_done_mask);
 
-	if (is_dma) {
-		/* re-enable the transmitter */
-		atmel_uart_writel(port, ATMEL_US_CR, ATMEL_US_TXEN);
-		atmel_port->tx_stopped = false;
-	}
+	/* re-enable the transmitter */
+	atmel_uart_writel(port, ATMEL_US_CR, ATMEL_US_TXEN);
+	atmel_port->tx_stopped = false;
 }
 
 /*
@@ -830,14 +824,30 @@ static void atmel_rx_chars(struct uart_port *port)
  */
 static void atmel_tx_chars(struct uart_port *port)
 {
+	struct circ_buf *xmit = &port->state->xmit;
 	struct atmel_uart_port *atmel_port = to_atmel_uart_port(port);
-	bool pending;
-	u8 ch;
 
-	pending = uart_port_tx(port, ch,
-		atmel_uart_readl(port, ATMEL_US_CSR) & ATMEL_US_TXRDY,
-		atmel_uart_write_char(port, ch));
-	if (pending) {
+	if (port->x_char &&
+	    (atmel_uart_readl(port, ATMEL_US_CSR) & ATMEL_US_TXRDY)) {
+		atmel_uart_write_char(port, port->x_char);
+		port->icount.tx++;
+		port->x_char = 0;
+	}
+	if (uart_circ_empty(xmit) || uart_tx_stopped(port))
+		return;
+
+	while (atmel_uart_readl(port, ATMEL_US_CSR) & ATMEL_US_TXRDY) {
+		atmel_uart_write_char(port, xmit->buf[xmit->tail]);
+		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+		port->icount.tx++;
+		if (uart_circ_empty(xmit))
+			break;
+	}
+
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
+		uart_write_wakeup(port);
+
+	if (!uart_circ_empty(xmit)) {
 		/* we still have characters to transmit, so we should continue
 		 * transmitting them when TX is ready, regardless of
 		 * mode or duplexity
@@ -861,11 +871,14 @@ static void atmel_complete_tx_dma(void *arg)
 	struct dma_chan *chan = atmel_port->chan_tx;
 	unsigned long flags;
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	if (chan)
 		dmaengine_terminate_all(chan);
-	uart_xmit_advance(port, atmel_port->tx_len);
+	xmit->tail += atmel_port->tx_len;
+	xmit->tail &= UART_XMIT_SIZE - 1;
+
+	port->icount.tx += atmel_port->tx_len;
 
 	spin_lock(&atmel_port->lock_tx);
 	async_tx_ack(atmel_port->desc_tx);
@@ -893,7 +906,7 @@ static void atmel_complete_tx_dma(void *arg)
 				  atmel_port->tx_done_mask);
 	}
 
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 }
 
 static void atmel_release_tx_dma(struct uart_port *port)
@@ -1458,7 +1471,11 @@ static void atmel_tx_pdc(struct uart_port *port)
 	/* nothing left to transmit? */
 	if (atmel_uart_readl(port, ATMEL_PDC_TCR))
 		return;
-	uart_xmit_advance(port, pdc->ofs);
+
+	xmit->tail += pdc->ofs;
+	xmit->tail &= UART_XMIT_SIZE - 1;
+
+	port->icount.tx += pdc->ofs;
 	pdc->ofs = 0;
 
 	/* more to transmit - setup next transfer */
@@ -1515,8 +1532,8 @@ static void atmel_rx_from_ring(struct uart_port *port)
 {
 	struct atmel_uart_port *atmel_port = to_atmel_uart_port(port);
 	struct circ_buf *ring = &atmel_port->rx_ring;
+	unsigned int flg;
 	unsigned int status;
-	u8 flg;
 
 	while (ring->head != ring->tail) {
 		struct atmel_uart_char c;
@@ -1711,9 +1728,9 @@ static void atmel_tasklet_rx_func(struct tasklet_struct *t)
 	struct uart_port *port = &atmel_port->uart;
 
 	/* The interrupt handler does not take the lock */
-	uart_port_lock(port);
+	spin_lock(&port->lock);
 	atmel_port->schedule_rx(port);
-	uart_port_unlock(port);
+	spin_unlock(&port->lock);
 }
 
 static void atmel_tasklet_tx_func(struct tasklet_struct *t)
@@ -1723,9 +1740,9 @@ static void atmel_tasklet_tx_func(struct tasklet_struct *t)
 	struct uart_port *port = &atmel_port->uart;
 
 	/* The interrupt handler does not take the lock */
-	uart_port_lock(port);
+	spin_lock(&port->lock);
 	atmel_port->schedule_tx(port);
-	uart_port_unlock(port);
+	spin_unlock(&port->lock);
 }
 
 static void atmel_init_property(struct atmel_uart_port *atmel_port,
@@ -2175,7 +2192,7 @@ static void atmel_set_termios(struct uart_port *port,
 	} else
 		mode |= ATMEL_US_PAR_NONE;
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	port->read_status_mask = ATMEL_US_OVRE;
 	if (termios->c_iflag & INPCK)
@@ -2377,22 +2394,22 @@ gclk_fail:
 	else
 		atmel_disable_ms(port);
 
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 }
 
 static void atmel_set_ldisc(struct uart_port *port, struct ktermios *termios)
 {
 	if (termios->c_line == N_PPS) {
 		port->flags |= UPF_HARDPPS_CD;
-		uart_port_lock_irq(port);
+		spin_lock_irq(&port->lock);
 		atmel_enable_ms(port);
-		uart_port_unlock_irq(port);
+		spin_unlock_irq(&port->lock);
 	} else {
 		port->flags &= ~UPF_HARDPPS_CD;
 		if (!UART_ENABLE_MS(port, termios->c_cflag)) {
-			uart_port_lock_irq(port);
+			spin_lock_irq(&port->lock);
 			atmel_disable_ms(port);
-			uart_port_unlock_irq(port);
+			spin_unlock_irq(&port->lock);
 		}
 	}
 }
@@ -3005,13 +3022,14 @@ static int atmel_serial_remove(struct platform_device *pdev)
 {
 	struct uart_port *port = platform_get_drvdata(pdev);
 	struct atmel_uart_port *atmel_port = to_atmel_uart_port(port);
+	int ret = 0;
 
 	tasklet_kill(&atmel_port->tasklet_rx);
 	tasklet_kill(&atmel_port->tasklet_tx);
 
 	device_init_wakeup(&pdev->dev, 0);
 
-	uart_remove_one_port(&atmel_uart, port);
+	ret = uart_remove_one_port(&atmel_uart, port);
 
 	kfree(atmel_port->rx_ring.buf);
 
@@ -3021,7 +3039,7 @@ static int atmel_serial_remove(struct platform_device *pdev)
 
 	pdev->dev.of_node = NULL;
 
-	return 0;
+	return ret;
 }
 
 static SIMPLE_DEV_PM_OPS(atmel_serial_pm_ops, atmel_serial_suspend,

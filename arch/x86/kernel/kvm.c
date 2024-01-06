@@ -291,7 +291,7 @@ DEFINE_IDTENTRY_SYSVEC(sysvec_kvm_asyncpf_interrupt)
 	struct pt_regs *old_regs = set_irq_regs(regs);
 	u32 token;
 
-	apic_eoi();
+	ack_APIC_irq();
 
 	inc_irq_stat(irq_hv_callback_count);
 
@@ -332,7 +332,7 @@ static void kvm_register_steal_time(void)
 
 static DEFINE_PER_CPU_DECRYPTED(unsigned long, kvm_apic_eoi) = KVM_PV_EOI_DISABLED;
 
-static notrace __maybe_unused void kvm_guest_apic_eoi_write(void)
+static notrace void kvm_guest_apic_eoi_write(u32 reg, u32 val)
 {
 	/**
 	 * This relies on __test_and_clear_bit to modify the memory
@@ -343,13 +343,13 @@ static notrace __maybe_unused void kvm_guest_apic_eoi_write(void)
 	 */
 	if (__test_and_clear_bit(KVM_PV_EOI_BIT, this_cpu_ptr(&kvm_apic_eoi)))
 		return;
-	apic_native_eoi();
+	apic->native_eoi_write(APIC_EOI, APIC_EOI_ACK);
 }
 
 static void kvm_guest_cpu_init(void)
 {
 	if (kvm_para_has_feature(KVM_FEATURE_ASYNC_PF_INT) && kvmapf) {
-		u64 pa;
+		u64 pa = slow_virt_to_phys(this_cpu_ptr(&apf_reason));
 
 		WARN_ON_ONCE(!static_branch_likely(&kvm_async_pf_enabled));
 
@@ -500,13 +500,13 @@ static bool pv_sched_yield_supported(void)
 static void __send_ipi_mask(const struct cpumask *mask, int vector)
 {
 	unsigned long flags;
-	int cpu, min = 0, max = 0;
+	int cpu, apic_id, icr;
+	int min = 0, max = 0;
 #ifdef CONFIG_X86_64
 	__uint128_t ipi_bitmap = 0;
 #else
 	u64 ipi_bitmap = 0;
 #endif
-	u32 apic_id, icr;
 	long ret;
 
 	if (cpumask_empty(mask))
@@ -622,10 +622,10 @@ late_initcall(setup_efi_kvm_sev_migration);
 /*
  * Set the IPI entry points
  */
-static __init void kvm_setup_pv_ipi(void)
+static void kvm_setup_pv_ipi(void)
 {
-	apic_update_callback(send_IPI_mask, kvm_send_ipi_mask);
-	apic_update_callback(send_IPI_mask_allbutself, kvm_send_ipi_mask_allbutself);
+	apic->send_IPI_mask = kvm_send_ipi_mask;
+	apic->send_IPI_mask_allbutself = kvm_send_ipi_mask_allbutself;
 	pr_info("setup PV IPIs\n");
 }
 
@@ -798,13 +798,19 @@ extern bool __raw_callee_save___kvm_vcpu_is_preempted(long);
  * Hand-optimize version for x86-64 to avoid 8 64-bit register saving and
  * restoring to/from the stack.
  */
-#define PV_VCPU_PREEMPTED_ASM						     \
- "movq   __per_cpu_offset(,%rdi,8), %rax\n\t"				     \
- "cmpb   $0, " __stringify(KVM_STEAL_TIME_preempted) "+steal_time(%rax)\n\t" \
- "setne  %al\n\t"
+asm(
+".pushsection .text;"
+".global __raw_callee_save___kvm_vcpu_is_preempted;"
+".type __raw_callee_save___kvm_vcpu_is_preempted, @function;"
+"__raw_callee_save___kvm_vcpu_is_preempted:"
+ASM_ENDBR
+"movq	__per_cpu_offset(,%rdi,8), %rax;"
+"cmpb	$0, " __stringify(KVM_STEAL_TIME_preempted) "+steal_time(%rax);"
+"setne	%al;"
+ASM_RET
+".size __raw_callee_save___kvm_vcpu_is_preempted, .-__raw_callee_save___kvm_vcpu_is_preempted;"
+".popsection");
 
-DEFINE_PARAVIRT_ASM(__raw_callee_save___kvm_vcpu_is_preempted,
-		    PV_VCPU_PREEMPTED_ASM, .text);
 #endif
 
 static void __init kvm_guest_init(void)
@@ -825,7 +831,7 @@ static void __init kvm_guest_init(void)
 	}
 
 	if (kvm_para_has_feature(KVM_FEATURE_PV_EOI))
-		apic_update_callback(eoi, kvm_guest_apic_eoi_write);
+		apic_set_eoi_write(kvm_guest_apic_eoi_write);
 
 	if (kvm_para_has_feature(KVM_FEATURE_ASYNC_PF_INT) && kvmapf) {
 		static_branch_enable(&kvm_async_pf_enabled);
@@ -1028,8 +1034,8 @@ arch_initcall(activate_jump_labels);
 /* Kick a cpu by its apicid. Used to wake up a halted vcpu */
 static void kvm_kick_cpu(int cpu)
 {
+	int apicid;
 	unsigned long flags = 0;
-	u32 apicid;
 
 	apicid = per_cpu(x86_cpu_to_apicid, cpu);
 	kvm_hypercall2(KVM_HC_KICK_CPU, flags, apicid);

@@ -294,11 +294,12 @@ static int fbtft_driver_probe_pdev(struct platform_device *pdev)           \
 	return fbtft_probe_common(_display, NULL, pdev, dt_ids);           \
 }                                                                          \
 									   \
-static void fbtft_driver_remove_pdev(struct platform_device *pdev)	   \
+static int fbtft_driver_remove_pdev(struct platform_device *pdev)          \
 {                                                                          \
 	struct fb_info *info = platform_get_drvdata(pdev);                 \
 									   \
 	fbtft_remove_common(&pdev->dev, info);                             \
+	return 0;                                                          \
 }                                                                          \
 									   \
 static const struct of_device_id dt_ids[] = {
@@ -333,7 +334,7 @@ static struct platform_driver fbtft_driver_platform_driver = {             \
 		.of_match_table = dt_ids,                                  \
 	},                                                                 \
 	.probe  = fbtft_driver_probe_pdev,                                 \
-	.remove_new = fbtft_driver_remove_pdev,				   \
+	.remove = fbtft_driver_remove_pdev,                                \
 };                                                                         \
 									   \
 static int __init fbtft_driver_module_init(void)                           \

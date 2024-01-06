@@ -5,9 +5,8 @@
 
 #include <linux/fs.h>
 #include <linux/debugfs.h>
-#include <linux/if_bridge.h>
+
 #include "i40e.h"
-#include "i40e_virtchnl_pf.h"
 
 static struct dentry *i40e_dbg_root;
 
@@ -1310,7 +1309,7 @@ static ssize_t i40e_dbg_command_write(struct file *filp,
 		ret = i40e_asq_send_command(&pf->hw, desc, NULL, 0, NULL);
 		if (!ret) {
 			dev_info(&pf->pdev->dev, "AQ command sent Status : Success\n");
-		} else if (ret == -EIO) {
+		} else if (ret == I40E_ERR_ADMIN_QUEUE_ERROR) {
 			dev_info(&pf->pdev->dev,
 				 "AQ command send failed Opcode %x AQ Error: %d\n",
 				 desc->opcode, pf->hw.aq.asq_last_status);
@@ -1371,7 +1370,7 @@ static ssize_t i40e_dbg_command_write(struct file *filp,
 					    buffer_len, NULL);
 		if (!ret) {
 			dev_info(&pf->pdev->dev, "AQ command sent Status : Success\n");
-		} else if (ret == -EIO) {
+		} else if (ret == I40E_ERR_ADMIN_QUEUE_ERROR) {
 			dev_info(&pf->pdev->dev,
 				 "AQ command send failed Opcode %x AQ Error: %d\n",
 				 desc->opcode, pf->hw.aq.asq_last_status);

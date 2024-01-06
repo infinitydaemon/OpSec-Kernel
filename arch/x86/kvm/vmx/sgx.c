@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
 /*  Copyright(c) 2021 Intel Corporation. */
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <asm/sgx.h>
 
@@ -29,14 +28,14 @@ static int sgx_get_encls_gva(struct kvm_vcpu *vcpu, unsigned long offset,
 
 	/* Skip vmcs.GUEST_DS retrieval for 64-bit mode to avoid VMREADs. */
 	*gva = offset;
-	if (!is_64_bit_mode(vcpu)) {
+	if (!is_long_mode(vcpu)) {
 		vmx_get_segment(vcpu, &s, VCPU_SREG_DS);
 		*gva += s.base;
 	}
 
 	if (!IS_ALIGNED(*gva, alignment)) {
 		fault = true;
-	} else if (likely(is_64_bit_mode(vcpu))) {
+	} else if (likely(is_long_mode(vcpu))) {
 		fault = is_noncanonical_address(*gva, vcpu);
 	} else {
 		*gva &= 0xffffffff;
@@ -165,24 +164,17 @@ static int __handle_encls_ecreate(struct kvm_vcpu *vcpu,
 	if (!vcpu->kvm->arch.sgx_provisioning_allowed &&
 	    (attributes & SGX_ATTR_PROVISIONKEY)) {
 		if (sgx_12_1->eax & SGX_ATTR_PROVISIONKEY)
-			pr_warn_once("SGX PROVISIONKEY advertised but not allowed\n");
+			pr_warn_once("KVM: SGX PROVISIONKEY advertised but not allowed\n");
 		kvm_inject_gp(vcpu, 0);
 		return 1;
 	}
 
-	/*
-	 * Enforce CPUID restrictions on MISCSELECT, ATTRIBUTES and XFRM.  Note
-	 * that the allowed XFRM (XFeature Request Mask) isn't strictly bound
-	 * by the supported XCR0.  FP+SSE *must* be set in XFRM, even if XSAVE
-	 * is unsupported, i.e. even if XCR0 itself is completely unsupported.
-	 */
+	/* Enforce CPUID restrictions on MISCSELECT, ATTRIBUTES and XFRM. */
 	if ((u32)miscselect & ~sgx_12_0->ebx ||
 	    (u32)attributes & ~sgx_12_1->eax ||
 	    (u32)(attributes >> 32) & ~sgx_12_1->ebx ||
 	    (u32)xfrm & ~sgx_12_1->ecx ||
-	    (u32)(xfrm >> 32) & ~sgx_12_1->edx ||
-	    xfrm & ~(vcpu->arch.guest_supported_xcr0 | XFEATURE_MASK_FPSSE) ||
-	    (xfrm & XFEATURE_MASK_FPSSE) != XFEATURE_MASK_FPSSE) {
+	    (u32)(xfrm >> 32) & ~sgx_12_1->edx) {
 		kvm_inject_gp(vcpu, 0);
 		return 1;
 	}
@@ -357,12 +349,11 @@ static int handle_encls_einit(struct kvm_vcpu *vcpu)
 
 static inline bool encls_leaf_enabled_in_guest(struct kvm_vcpu *vcpu, u32 leaf)
 {
-	/*
-	 * ENCLS generates a #UD if SGX1 isn't supported, i.e. this point will
-	 * be reached if and only if the SGX1 leafs are enabled.
-	 */
+	if (!enable_sgx || !guest_cpuid_has(vcpu, X86_FEATURE_SGX))
+		return false;
+
 	if (leaf >= ECREATE && leaf <= ETRACK)
-		return true;
+		return guest_cpuid_has(vcpu, X86_FEATURE_SGX1);
 
 	if (leaf >= EAUG && leaf <= EMODT)
 		return guest_cpuid_has(vcpu, X86_FEATURE_SGX2);
@@ -381,18 +372,16 @@ int handle_encls(struct kvm_vcpu *vcpu)
 {
 	u32 leaf = (u32)kvm_rax_read(vcpu);
 
-	if (!enable_sgx || !guest_cpuid_has(vcpu, X86_FEATURE_SGX) ||
-	    !guest_cpuid_has(vcpu, X86_FEATURE_SGX1)) {
+	if (!encls_leaf_enabled_in_guest(vcpu, leaf)) {
 		kvm_queue_exception(vcpu, UD_VECTOR);
-	} else if (!encls_leaf_enabled_in_guest(vcpu, leaf) ||
-		   !sgx_enabled_in_guest_bios(vcpu) || !is_paging(vcpu)) {
+	} else if (!sgx_enabled_in_guest_bios(vcpu)) {
 		kvm_inject_gp(vcpu, 0);
 	} else {
 		if (leaf == ECREATE)
 			return handle_encls_ecreate(vcpu);
 		if (leaf == EINIT)
 			return handle_encls_einit(vcpu);
-		WARN_ONCE(1, "unexpected exit on ENCLS[%u]", leaf);
+		WARN(1, "KVM: unexpected exit on ENCLS[%u]", leaf);
 		vcpu->run->exit_reason = KVM_EXIT_UNKNOWN;
 		vcpu->run->hw.hardware_exit_reason = EXIT_REASON_ENCLS;
 		return 0;

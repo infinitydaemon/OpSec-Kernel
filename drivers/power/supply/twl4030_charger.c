@@ -12,7 +12,6 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/err.h>
-#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/interrupt.h>
 #include <linux/mfd/twl.h>
@@ -727,9 +726,11 @@ twl4030_bci_mode_show(struct device *dev,
 
 	for (i = 0; i < ARRAY_SIZE(modes); i++)
 		if (mode == i)
-			len += sysfs_emit_at(buf, len, "[%s] ", modes[i]);
+			len += scnprintf(buf+len, PAGE_SIZE-len,
+					"[%s] ", modes[i]);
 		else
-			len += sysfs_emit_at(buf, len, "%s ", modes[i]);
+			len += scnprintf(buf+len, PAGE_SIZE-len,
+					"%s ", modes[i]);
 	buf[len-1] = '\n';
 	return len;
 }
@@ -1108,7 +1109,7 @@ static int twl4030_bci_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void twl4030_bci_remove(struct platform_device *pdev)
+static int twl4030_bci_remove(struct platform_device *pdev)
 {
 	struct twl4030_bci *bci = platform_get_drvdata(pdev);
 
@@ -1123,9 +1124,11 @@ static void twl4030_bci_remove(struct platform_device *pdev)
 			 TWL4030_INTERRUPTS_BCIIMR1A);
 	twl_i2c_write_u8(TWL4030_MODULE_INTERRUPTS, 0xff,
 			 TWL4030_INTERRUPTS_BCIIMR2A);
+
+	return 0;
 }
 
-static const struct of_device_id twl_bci_of_match[] __maybe_unused = {
+static const struct of_device_id twl_bci_of_match[] = {
 	{.compatible = "ti,twl4030-bci", },
 	{ }
 };
@@ -1133,7 +1136,7 @@ MODULE_DEVICE_TABLE(of, twl_bci_of_match);
 
 static struct platform_driver twl4030_bci_driver = {
 	.probe = twl4030_bci_probe,
-	.remove_new = twl4030_bci_remove,
+	.remove	= twl4030_bci_remove,
 	.driver	= {
 		.name	= "twl4030_bci",
 		.of_match_table = of_match_ptr(twl_bci_of_match),

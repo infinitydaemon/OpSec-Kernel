@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  Amiga Linux/m68k and Linux/PPC Zorro NS8390 Ethernet Driver
  *
@@ -7,6 +6,12 @@
  *  ---------------------------------------------------------------------------
  *
  *  This program is based on all the other NE2000 drivers for Linux
+ *
+ *  ---------------------------------------------------------------------------
+ *
+ *  This file is subject to the terms and conditions of the GNU General Public
+ *  License.  See the file COPYING in the main directory of the Linux
+ *  distribution for more details.
  *
  *  ---------------------------------------------------------------------------
  *

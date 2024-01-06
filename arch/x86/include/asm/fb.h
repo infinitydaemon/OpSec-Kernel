@@ -2,18 +2,21 @@
 #ifndef _ASM_X86_FB_H
 #define _ASM_X86_FB_H
 
+#include <linux/fb.h>
+#include <linux/fs.h>
 #include <asm/page.h>
 
-struct fb_info;
+static inline void fb_pgprotect(struct file *file, struct vm_area_struct *vma,
+				unsigned long off)
+{
+	unsigned long prot;
 
-pgprot_t pgprot_framebuffer(pgprot_t prot,
-			    unsigned long vm_start, unsigned long vm_end,
-			    unsigned long offset);
-#define pgprot_framebuffer pgprot_framebuffer
+	prot = pgprot_val(vma->vm_page_prot) & ~_PAGE_CACHE_MASK;
+	if (boot_cpu_data.x86 > 3)
+		pgprot_val(vma->vm_page_prot) =
+			prot | cachemode2protval(_PAGE_CACHE_MODE_UC_MINUS);
+}
 
-int fb_is_primary_device(struct fb_info *info);
-#define fb_is_primary_device fb_is_primary_device
-
-#include <asm-generic/fb.h>
+extern int fb_is_primary_device(struct fb_info *info);
 
 #endif /* _ASM_X86_FB_H */

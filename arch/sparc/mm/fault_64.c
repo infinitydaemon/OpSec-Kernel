@@ -99,7 +99,6 @@ static unsigned int get_user_insn(unsigned long tpc)
 	local_irq_disable();
 
 	pmdp = pmd_offset(pudp, tpc);
-again:
 	if (pmd_none(*pmdp) || unlikely(pmd_bad(*pmdp)))
 		goto out_irq_enable;
 
@@ -116,8 +115,6 @@ again:
 #endif
 	{
 		ptep = pte_offset_map(pmdp, tpc);
-		if (!ptep)
-			goto again;
 		pte = *ptep;
 		if (pte_present(pte)) {
 			pa  = (pte_pfn(pte) << PAGE_SHIFT);
@@ -428,13 +425,8 @@ good_area:
 
 	fault = handle_mm_fault(vma, address, flags, regs);
 
-	if (fault_signal_pending(fault, regs)) {
-		if (regs->tstate & TSTATE_PRIV) {
-			insn = get_fault_insn(regs, insn);
-			goto handle_kernel_fault;
-		}
+	if (fault_signal_pending(fault, regs))
 		goto exit_exception;
-	}
 
 	/* The fault is fully completed (including releasing mmap lock) */
 	if (fault & VM_FAULT_COMPLETED)

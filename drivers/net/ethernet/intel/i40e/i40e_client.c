@@ -6,6 +6,7 @@
 #include <linux/net/intel/i40e_client.h>
 
 #include "i40e.h"
+#include "i40e_prototype.h"
 
 static LIST_HEAD(i40e_devices);
 static DEFINE_MUTEX(i40e_device_mutex);
@@ -542,7 +543,7 @@ static int i40e_client_virtchnl_send(struct i40e_info *ldev,
 	struct i40e_hw *hw = &pf->hw;
 	int err;
 
-	err = i40e_aq_send_msg_to_vf(hw, vf_id, VIRTCHNL_OP_RDMA,
+	err = i40e_aq_send_msg_to_vf(hw, vf_id, VIRTCHNL_OP_IWARP,
 				     0, msg, len, NULL);
 	if (err)
 		dev_err(&pf->pdev->dev, "Unable to send iWarp message to VF, error %d, aq status %d\n",

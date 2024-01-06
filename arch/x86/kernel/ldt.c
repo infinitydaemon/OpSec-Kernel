@@ -367,10 +367,8 @@ static void unmap_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt)
 
 		va = (unsigned long)ldt_slot_va(ldt->slot) + offset;
 		ptep = get_locked_pte(mm, va, &ptl);
-		if (!WARN_ON_ONCE(!ptep)) {
-			pte_clear(mm, va, ptep);
-			pte_unmap_unlock(ptep, ptl);
-		}
+		pte_clear(mm, va, ptep);
+		pte_unmap_unlock(ptep, ptl);
 	}
 
 	va = (unsigned long)ldt_slot_va(ldt->slot);

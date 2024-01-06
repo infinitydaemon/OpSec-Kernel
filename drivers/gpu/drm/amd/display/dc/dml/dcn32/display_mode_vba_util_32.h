@@ -334,7 +334,6 @@ void dml32_CalculateSurfaceSizeInMall(
 		unsigned int NumberOfActiveSurfaces,
 		unsigned int MALLAllocatedForDCN,
 		enum dm_use_mall_for_static_screen_mode UseMALLForStaticScreen[],
-		enum dm_use_mall_for_pstate_change_mode UsesMALLForPStateChange[],
 		bool DCCEnable[],
 		bool ViewportStationary[],
 		unsigned int ViewportXStartY[],
@@ -359,8 +358,6 @@ void dml32_CalculateSurfaceSizeInMall(
 		unsigned int ReadBlockWidthC[],
 		unsigned int ReadBlockHeightY[],
 		unsigned int ReadBlockHeightC[],
-		unsigned int DCCMetaPitchY[],
-		unsigned int DCCMetaPitchC[],
 
 		/* Output */
 		unsigned int    SurfaceSizeInMALL[],
@@ -1096,12 +1093,9 @@ void dml32_CalculatePrefetchBandwithSupport(unsigned int NumberOfActiveSurfaces,
 		double UrgentBurstFactorLumaPre[],
 		double UrgentBurstFactorChromaPre[],
 		double UrgentBurstFactorCursorPre[],
-		double PrefetchBW[],
-		double VRatio[],
-		double MaxVRatioPre,
 
 		/* output */
-		double  *MaxPrefetchBandwidth,
+		double  *PrefetchBandwidth,
 		double  *FractionOfUrgentBandwidth,
 		bool *PrefetchBandwidthSupport);
 
@@ -1163,7 +1157,6 @@ bool dml32_CalculateDETSwathFillLatencyHiding(unsigned int NumberOfActiveSurface
 		double	PixelClock[],
 		double	VRatioY[],
 		double	VRatioC[],
-		enum dm_use_mall_for_pstate_change_mode UsesMALLForPStateChange[],
-		enum unbounded_requesting_policy UseUnboundedRequesting);
+		enum dm_use_mall_for_pstate_change_mode UsesMALLForPStateChange[DC__NUM_DPP__MAX]);
 
 #endif

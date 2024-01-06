@@ -76,19 +76,22 @@ struct dump_context {
 	loff_t offset;
 };
 
+extern int vchiq_arm_log_level;
+extern int vchiq_susp_log_level;
+
 extern spinlock_t msg_queue_spinlock;
 extern struct vchiq_state g_state;
 
 extern struct vchiq_state *
 vchiq_get_state(void);
 
-int
+enum vchiq_status
 vchiq_use_service(struct vchiq_instance *instance, unsigned int handle);
 
-extern int
+extern enum vchiq_status
 vchiq_release_service(struct vchiq_instance *instance, unsigned int handle);
 
-extern int
+extern enum vchiq_status
 vchiq_check_service(struct vchiq_service *service);
 
 extern void
@@ -134,7 +137,7 @@ static inline int vchiq_register_chrdev(struct device *parent) { return 0; }
 
 #endif /* IS_ENABLED(CONFIG_VCHIQ_CDEV) */
 
-extern int
+extern enum vchiq_status
 service_callback(struct vchiq_instance *vchiq_instance, enum vchiq_reason reason,
 		 struct vchiq_header *header, unsigned int handle, void *bulk_userdata);
 

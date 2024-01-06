@@ -22,7 +22,7 @@
 	fragment@102 {
 		target = <&cam_node>;
 		__dormant__ {
-			// No mono IMX327 is currently defined. Use IMX290.
+			// IMX327 mono is undefined in the binding - use imx290
 			compatible = "sony,imx290llr";
 		};
 	};
