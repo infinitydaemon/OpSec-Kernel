@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 6
 PATCHLEVEL = 6
-SUBLEVEL = 10
+SUBLEVEL = 20
 EXTRAVERSION = stable+
-NAME = Catnapped
+NAME = Dynasty Reveal
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
