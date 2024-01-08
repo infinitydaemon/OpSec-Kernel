@@ -41,10 +41,10 @@ sudo cp arch/arm64/boot/dts/overlays/README /boot/overlays/
 sudo cp arch/arm64/boot/Image.gz /boot/$KERNEL.img
 ```
 
-After the built kernel is installed, edit the boot config
+After the built kernel is installed, just reboot
 
 ```bash
-sudo nano /boot/config.txt
+sudo reboot
 ```
 
 In the first line, put kernel=NAME.img. Where NAME is the name of the kernel you specified from CONFIG_LOCALVERSION. The easiest way to find out the full name of kernel is by doing a "ls -l" under /boot directory.
