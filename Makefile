@@ -3,7 +3,7 @@ VERSION = 6
 PATCHLEVEL = 6
 SUBLEVEL = 21
 EXTRAVERSION = stable+
-NAME = Dynasty Reveal
+NAME = New Dynasty
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
