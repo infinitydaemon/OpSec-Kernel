@@ -26,7 +26,7 @@ Linux Kernel that was tuned and built as Brooklyn Supreme is now OpSec Kernel us
 The build instructions for SBC vary when compared to official kernel.org build instructions. Follow the steps to build the OpSec Kernel for your SBC on Debian based distros. If a menu driven config is required, you will need ncurses-development headers.
 
 ```bash
-sudo apt install git bc bison flex libssl-dev make
+sudo apt install git bc bison flex libssl-dev make libncurses-dev ( optional )
 git clone https://github.com/infinitydaemon/OpSec-Kernel.git
 cd OpSec-Kernel
 KERNEL=kernel8
