@@ -330,9 +330,9 @@ static const struct iio_info mcp3422_info = {
 	.attrs = &mcp3422_attribute_group,
 };
 
-static int mcp3422_probe(struct i2c_client *client,
-			 const struct i2c_device_id *id)
+static int mcp3422_probe(struct i2c_client *client)
 {
+	const struct i2c_device_id *id = i2c_client_get_device_id(client);
 	struct iio_dev *indio_dev;
 	struct mcp3422 *adc;
 	int err;
@@ -407,14 +407,7 @@ static const struct i2c_device_id mcp3422_id[] = {
 MODULE_DEVICE_TABLE(i2c, mcp3422_id);
 
 static const struct of_device_id mcp3422_of_match[] = {
-	{ .compatible = "microchip,mcp3421" },
-	{ .compatible = "microchip,mcp3422" },
-	{ .compatible = "microchip,mcp3423" },
-	{ .compatible = "microchip,mcp3424" },
-	{ .compatible = "microchip,mcp3425" },
-	{ .compatible = "microchip,mcp3426" },
-	{ .compatible = "microchip,mcp3427" },
-	{ .compatible = "microchip,mcp3428" },
+	{ .compatible = "mcp3422" },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, mcp3422_of_match);

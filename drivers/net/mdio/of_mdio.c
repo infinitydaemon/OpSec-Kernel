@@ -25,6 +25,7 @@
 
 MODULE_AUTHOR("Grant Likely <grant.likely@secretlab.ca>");
 MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("OpenFirmware MDIO bus (Ethernet PHY) accessors");
 
 /* Extract the clause 22 phy ID from the compatible string of the form
  * ethernet-phy-idAAAA.BBBB */
@@ -131,7 +132,7 @@ bool of_mdiobus_child_is_phy(struct device_node *child)
 		return true;
 	}
 
-	if (!of_find_property(child, "compatible", NULL))
+	if (!of_property_present(child, "compatible"))
 		return true;
 
 	return false;
@@ -205,7 +206,7 @@ int __of_mdiobus_register(struct mii_bus *mdio, struct device_node *np,
 	/* auto scan for PHYs with empty reg property */
 	for_each_available_child_of_node(np, child) {
 		/* Skip PHYs with reg property set */
-		if (of_find_property(child, "reg", NULL))
+		if (of_property_present(child, "reg"))
 			continue;
 
 		for (addr = 0; addr < PHY_MAX_ADDR; addr++) {

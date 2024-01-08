@@ -4,6 +4,8 @@
  *
  * Copyright 2016 Red Hat, Inc. and/or its affiliates.
  */
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/kvm_host.h>
 #include <linux/debugfs.h>
 #include "lapic.h"
@@ -180,6 +182,7 @@ static int kvm_mmu_rmaps_stat_release(struct inode *inode, struct file *file)
 }
 
 static const struct file_operations mmu_rmaps_stat_fops = {
+	.owner		= THIS_MODULE,
 	.open		= kvm_mmu_rmaps_stat_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,

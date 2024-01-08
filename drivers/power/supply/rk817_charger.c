@@ -835,19 +835,6 @@ rk817_read_or_set_full_charge_on_boot(struct rk817_charger *charger,
 		}
 	}
 
-	regmap_bulk_read(rk808->regmap, RK817_GAS_GAUGE_PWRON_VOL_H,
-			 bulk_reg, 2);
-	tmp = get_unaligned_be16(bulk_reg);
-	boot_voltage = (charger->voltage_k * tmp) + 1000 * charger->voltage_b;
-	regmap_bulk_read(rk808->regmap, RK817_GAS_GAUGE_Q_PRES_H3,
-			 bulk_reg, 4);
-	tmp = get_unaligned_be32(bulk_reg);
-	boot_charge_mah = ADC_TO_CHARGE_UAH(tmp, charger->res_div) / 1000;
-	regmap_bulk_read(rk808->regmap, RK817_GAS_GAUGE_OCV_VOL_H,
-			 bulk_reg, 2);
-	tmp = get_unaligned_be16(bulk_reg);
-	boot_voltage = (charger->voltage_k * tmp) + 1000 * charger->voltage_b;
-
 	/*
 	 * Now we have our full charge capacity and soc, init the columb
 	 * counter.
@@ -1156,7 +1143,7 @@ static int rk817_charger_probe(struct platform_device *pdev)
 					    &bat_info);
 	if (ret) {
 		return dev_err_probe(dev, ret,
-				     "Unable to get battery info: %d\n", ret);
+				     "Unable to get battery info\n");
 	}
 
 	if ((bat_info->charge_full_design_uah <= 0) ||
@@ -1220,11 +1207,24 @@ static int rk817_charger_probe(struct platform_device *pdev)
 	return 0;
 }
 
+static int __maybe_unused rk817_resume(struct device *dev)
+{
+
+	struct rk817_charger *charger = dev_get_drvdata(dev);
+
+	/* force an immediate update */
+	mod_delayed_work(system_wq, &charger->work, 0);
+
+	return 0;
+}
+
+static SIMPLE_DEV_PM_OPS(rk817_charger_pm, NULL, rk817_resume);
 
 static struct platform_driver rk817_charger_driver = {
 	.probe    = rk817_charger_probe,
 	.driver   = {
 		.name  = "rk817-charger",
+		.pm		= &rk817_charger_pm,
 	},
 };
 module_platform_driver(rk817_charger_driver);

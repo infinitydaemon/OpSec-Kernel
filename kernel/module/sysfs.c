@@ -143,7 +143,7 @@ static void remove_sect_attrs(struct module *mod)
 struct module_notes_attrs {
 	struct kobject *dir;
 	unsigned int notes;
-	struct bin_attribute attrs[];
+	struct bin_attribute attrs[] __counted_by(notes);
 };
 
 static ssize_t module_notes_read(struct file *filp, struct kobject *kobj,
@@ -340,7 +340,7 @@ static int mod_sysfs_init(struct module *mod)
 	int err;
 	struct kobject *kobj;
 
-	if (!module_sysfs_initialized) {
+	if (!module_kset) {
 		pr_err("%s: module sysfs not initialized\n", mod->name);
 		err = -EINVAL;
 		goto out;

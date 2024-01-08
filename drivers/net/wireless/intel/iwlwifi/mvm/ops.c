@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 /*
- * Copyright (C) 2012-2014, 2018-2020 Intel Corporation
+ * Copyright (C) 2012-2014, 2018-2023 Intel Corporation
  * Copyright (C) 2013-2015 Intel Mobile Communications GmbH
  * Copyright (C) 2016-2017 Intel Deutschland GmbH
  */
@@ -29,6 +29,7 @@
 #include "fw-api.h"
 #include "fw/acpi.h"
 #include "fw/uefi.h"
+#include "time-sync.h"
 
 #define DRV_DESCRIPTION	"The new Intel(R) wireless AGN driver for Linux"
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
@@ -92,6 +93,12 @@ static void iwl_mvm_nic_config(struct iwl_op_mode *op_mode)
 	radio_cfg_dash = (phy_config & FW_PHY_CFG_RADIO_DASH) >>
 			 FW_PHY_CFG_RADIO_DASH_POS;
 
+	IWL_DEBUG_INFO(mvm, "Radio type=0x%x-0x%x-0x%x\n", radio_cfg_type,
+		       radio_cfg_step, radio_cfg_dash);
+
+	if (mvm->trans->trans_cfg->device_family >= IWL_DEVICE_FAMILY_AX210)
+		return;
+
 	/* SKU control */
 	reg_val = CSR_HW_REV_STEP_DASH(mvm->trans->hw_rev);
 
@@ -126,9 +133,6 @@ static void iwl_mvm_nic_config(struct iwl_op_mode *op_mode)
 				CSR_HW_IF_CONFIG_REG_BIT_MAC_SI   |
 				CSR_HW_IF_CONFIG_REG_D3_DEBUG,
 				reg_val);
-
-	IWL_DEBUG_INFO(mvm, "Radio type=0x%x-0x%x-0x%x\n", radio_cfg_type,
-		       radio_cfg_step, radio_cfg_dash);
 
 	/*
 	 * W/A : NIC is stuck in a reset state after Early PCIe power off
@@ -188,8 +192,7 @@ static void iwl_mvm_rx_monitor_notif(struct iwl_mvm *mvm,
 	WARN_ON(!(sband->ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40));
 	sband->ht_cap.cap &= ~IEEE80211_HT_CAP_SUP_WIDTH_20_40;
 
-	he_cap = ieee80211_get_he_iftype_cap(sband,
-					     ieee80211_vif_type_p2p(vif));
+	he_cap = ieee80211_get_he_iftype_cap_vif(sband, vif);
 
 	if (he_cap) {
 		/* we know that ours is writable */
@@ -205,24 +208,37 @@ static void iwl_mvm_rx_monitor_notif(struct iwl_mvm *mvm,
 	ieee80211_disconnect(vif, true);
 }
 
-void iwl_mvm_apply_fw_smps_request(struct ieee80211_vif *vif)
+void iwl_mvm_update_link_smps(struct ieee80211_vif *vif,
+			      struct ieee80211_bss_conf *link_conf)
 {
 	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
 	struct iwl_mvm *mvm = mvmvif->mvm;
 	enum ieee80211_smps_mode mode = IEEE80211_SMPS_AUTOMATIC;
 
+	if (!link_conf)
+		return;
+
 	if (mvm->fw_static_smps_request &&
-	    vif->bss_conf.chandef.width == NL80211_CHAN_WIDTH_160 &&
-	    vif->bss_conf.he_support)
+	    link_conf->chandef.width == NL80211_CHAN_WIDTH_160 &&
+	    link_conf->he_support)
 		mode = IEEE80211_SMPS_STATIC;
 
-	iwl_mvm_update_smps(mvm, vif, IWL_MVM_SMPS_REQ_FW, mode);
+	iwl_mvm_update_smps(mvm, vif, IWL_MVM_SMPS_REQ_FW, mode,
+			    link_conf->link_id);
 }
 
 static void iwl_mvm_intf_dual_chain_req(void *data, u8 *mac,
 					struct ieee80211_vif *vif)
 {
-	iwl_mvm_apply_fw_smps_request(vif);
+	struct ieee80211_bss_conf *link_conf;
+	unsigned int link_id;
+
+	rcu_read_lock();
+
+	for_each_vif_active_link(vif, link_conf, link_id)
+		iwl_mvm_update_link_smps(vif, link_conf);
+
+	rcu_read_unlock();
 }
 
 static void iwl_mvm_rx_thermal_dual_chain_req(struct iwl_mvm *mvm,
@@ -305,6 +321,19 @@ static const struct iwl_rx_handlers iwl_mvm_rx_handlers[] = {
 			   RX_HANDLER_ASYNC_LOCKED),
 	RX_HANDLER_NO_SIZE(STATISTICS_NOTIFICATION, iwl_mvm_rx_statistics,
 			   RX_HANDLER_ASYNC_LOCKED),
+
+	RX_HANDLER_GRP(STATISTICS_GROUP, STATISTICS_OPER_NOTIF,
+		       iwl_mvm_handle_rx_system_oper_stats,
+		       RX_HANDLER_ASYNC_LOCKED,
+		       struct iwl_system_statistics_notif_oper),
+	RX_HANDLER_GRP(STATISTICS_GROUP, STATISTICS_OPER_PART1_NOTIF,
+		       iwl_mvm_handle_rx_system_oper_part1_stats,
+		       RX_HANDLER_ASYNC_LOCKED,
+		       struct iwl_system_statistics_part1_notif_oper),
+	RX_HANDLER_GRP(SYSTEM_GROUP, SYSTEM_STATISTICS_END_NOTIF,
+		       iwl_mvm_handle_rx_system_end_stats_notif,
+		       RX_HANDLER_ASYNC_LOCKED,
+		       struct iwl_system_statistics_end_notif),
 
 	RX_HANDLER(BA_WINDOW_STATUS_NOTIFICATION_ID,
 		   iwl_mvm_window_status_notif, RX_HANDLER_SYNC,
@@ -401,6 +430,18 @@ static const struct iwl_rx_handlers iwl_mvm_rx_handlers[] = {
 	RX_HANDLER_GRP(SYSTEM_GROUP, RFI_DEACTIVATE_NOTIF,
 		       iwl_rfi_deactivate_notif_handler, RX_HANDLER_ASYNC_UNLOCKED,
 		       struct iwl_rfi_deactivate_notif),
+
+	RX_HANDLER_GRP(LEGACY_GROUP,
+		       WNM_80211V_TIMING_MEASUREMENT_NOTIFICATION,
+		       iwl_mvm_time_sync_msmt_event, RX_HANDLER_SYNC,
+		       struct iwl_time_msmt_notify),
+	RX_HANDLER_GRP(LEGACY_GROUP,
+		       WNM_80211V_TIMING_MEASUREMENT_CONFIRM_NOTIFICATION,
+		       iwl_mvm_time_sync_msmt_confirm_event, RX_HANDLER_SYNC,
+		       struct iwl_time_msmt_cfm_notify),
+	RX_HANDLER_GRP(MAC_CONF_GROUP, ROC_NOTIF,
+		       iwl_mvm_rx_roc_notif, RX_HANDLER_SYNC,
+		       struct iwl_roc_notif),
 };
 #undef RX_HANDLER
 #undef RX_HANDLER_GRP
@@ -423,7 +464,6 @@ static const struct iwl_hcmd_names iwl_mvm_legacy_names[] = {
 	HCMD_NAME(ADD_STA_KEY),
 	HCMD_NAME(ADD_STA),
 	HCMD_NAME(REMOVE_STA),
-	HCMD_NAME(FW_GET_ITEM_CMD),
 	HCMD_NAME(TX_CMD),
 	HCMD_NAME(SCD_QUEUE_CFG),
 	HCMD_NAME(TXPATH_FLUSH),
@@ -446,6 +486,8 @@ static const struct iwl_hcmd_names iwl_mvm_legacy_names[] = {
 	HCMD_NAME(SCAN_OFFLOAD_PROFILES_QUERY_CMD),
 	HCMD_NAME(BT_COEX_UPDATE_REDUCED_TXP),
 	HCMD_NAME(BT_COEX_CI),
+	HCMD_NAME(WNM_80211V_TIMING_MEASUREMENT_NOTIFICATION),
+	HCMD_NAME(WNM_80211V_TIMING_MEASUREMENT_CONFIRM_NOTIFICATION),
 	HCMD_NAME(PHY_CONFIGURATION_CMD),
 	HCMD_NAME(CALIB_RES_NOTIF_PHY_DB),
 	HCMD_NAME(PHY_DB_CMD),
@@ -484,7 +526,6 @@ static const struct iwl_hcmd_names iwl_mvm_legacy_names[] = {
 	HCMD_NAME(REPLY_BEACON_FILTERING_CMD),
 	HCMD_NAME(D3_CONFIG_CMD),
 	HCMD_NAME(PROT_OFFLOAD_CONFIG_CMD),
-	HCMD_NAME(OFFLOADS_QUERY_CMD),
 	HCMD_NAME(MATCH_FOUND_NOTIFICATION),
 	HCMD_NAME(DTS_MEASUREMENT_NOTIFICATION),
 	HCMD_NAME(WOWLAN_PATTERNS),
@@ -509,6 +550,8 @@ static const struct iwl_hcmd_names iwl_mvm_system_names[] = {
 	HCMD_NAME(RFI_CONFIG_CMD),
 	HCMD_NAME(RFI_GET_FREQ_TABLE_CMD),
 	HCMD_NAME(SYSTEM_FEATURES_CONTROL_CMD),
+	HCMD_NAME(SYSTEM_STATISTICS_CMD),
+	HCMD_NAME(SYSTEM_STATISTICS_END_NOTIF),
 	HCMD_NAME(RFI_DEACTIVATE_NOTIF),
 };
 
@@ -518,6 +561,14 @@ static const struct iwl_hcmd_names iwl_mvm_system_names[] = {
 static const struct iwl_hcmd_names iwl_mvm_mac_conf_names[] = {
 	HCMD_NAME(CHANNEL_SWITCH_TIME_EVENT_CMD),
 	HCMD_NAME(SESSION_PROTECTION_CMD),
+	HCMD_NAME(MAC_CONFIG_CMD),
+	HCMD_NAME(LINK_CONFIG_CMD),
+	HCMD_NAME(STA_CONFIG_CMD),
+	HCMD_NAME(AUX_STA_CMD),
+	HCMD_NAME(STA_REMOVE_CMD),
+	HCMD_NAME(STA_DISABLE_TX_CMD),
+	HCMD_NAME(ROC_CMD),
+	HCMD_NAME(ROC_NOTIF),
 	HCMD_NAME(SESSION_PROTECTION_NOTIF),
 	HCMD_NAME(CHANNEL_SWITCH_START_NOTIF),
 };
@@ -547,11 +598,20 @@ static const struct iwl_hcmd_names iwl_mvm_data_path_names[] = {
 	HCMD_NAME(TLC_MNG_CONFIG_CMD),
 	HCMD_NAME(CHEST_COLLECTOR_FILTER_CONFIG_CMD),
 	HCMD_NAME(SCD_QUEUE_CONFIG_CMD),
+	HCMD_NAME(SEC_KEY_CMD),
 	HCMD_NAME(MONITOR_NOTIF),
 	HCMD_NAME(THERMAL_DUAL_CHAIN_REQUEST),
 	HCMD_NAME(STA_PM_NOTIF),
 	HCMD_NAME(MU_GROUP_MGMT_NOTIF),
 	HCMD_NAME(RX_QUEUES_NOTIFICATION),
+};
+
+/* Please keep this array *SORTED* by hex value.
+ * Access is done through binary search
+ */
+static const struct iwl_hcmd_names iwl_mvm_statistics_names[] = {
+	HCMD_NAME(STATISTICS_OPER_NOTIF),
+	HCMD_NAME(STATISTICS_OPER_PART1_NOTIF),
 };
 
 /* Please keep this array *SORTED* by hex value.
@@ -608,6 +668,7 @@ static const struct iwl_hcmd_arr iwl_mvm_groups[] = {
 	[PROT_OFFLOAD_GROUP] = HCMD_ARR(iwl_mvm_prot_offload_names),
 	[REGULATORY_AND_NVM_GROUP] =
 		HCMD_ARR(iwl_mvm_regulatory_and_nvm_names),
+	[STATISTICS_GROUP] = HCMD_ARR(iwl_mvm_statistics_names),
 };
 
 /* this forward declaration can avoid to export the function */
@@ -719,7 +780,10 @@ static int iwl_mvm_start_get_nvm(struct iwl_mvm *mvm)
 			 */
 			mvm->nvm_data =
 				iwl_parse_mei_nvm_data(trans, trans->cfg,
-						       mvm->mei_nvm_data, mvm->fw);
+						       mvm->mei_nvm_data,
+						       mvm->fw,
+						       mvm->set_tx_ant,
+						       mvm->set_rx_ant);
 			return 0;
 		}
 
@@ -757,6 +821,9 @@ get_nvm_from_fw:
 
 	if (ret)
 		IWL_ERR(mvm, "Failed to run INIT ucode: %d\n", ret);
+
+	/* no longer need this regardless of failure or not */
+	mvm->pldr_sync = false;
 
 	return ret;
 }
@@ -985,9 +1052,13 @@ static void iwl_mvm_me_conn_status(void *priv, const struct iwl_mei_conn_info *c
 		kfree_rcu(prev_conn_info, rcu_head);
 }
 
-static void iwl_mvm_mei_rfkill(void *priv, bool blocked)
+static void iwl_mvm_mei_rfkill(void *priv, bool blocked,
+			       bool csme_taking_ownership)
 {
 	struct iwl_mvm *mvm = priv;
+
+	if (blocked && !csme_taking_ownership)
+		return;
 
 	mvm->mei_rfkill_blocked = blocked;
 	if (!mvm->hw_registered)
@@ -1076,6 +1147,7 @@ iwl_op_mode_mvm_start(struct iwl_trans *trans, const struct iwl_cfg *cfg,
 	static const u8 no_reclaim_cmds[] = {
 		TX_CMD,
 	};
+	u32 max_agg;
 	size_t scan_size;
 	u32 min_backoff;
 	struct iwl_mvm_csme_conn_info *csme_conn_info __maybe_unused;
@@ -1093,16 +1165,22 @@ iwl_op_mode_mvm_start(struct iwl_trans *trans, const struct iwl_cfg *cfg,
 	 ********************************/
 	hw = ieee80211_alloc_hw(sizeof(struct iwl_op_mode) +
 				sizeof(struct iwl_mvm),
+				iwl_mvm_has_mld_api(fw) ? &iwl_mvm_mld_hw_ops :
 				&iwl_mvm_hw_ops);
 	if (!hw)
 		return NULL;
 
-	hw->max_rx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF_HE;
+	if (trans->trans_cfg->device_family >= IWL_DEVICE_FAMILY_BZ)
+		max_agg = 512;
+	else
+		max_agg = IEEE80211_MAX_AMPDU_BUF_HE;
+
+	hw->max_rx_aggregation_subframes = max_agg;
 
 	if (cfg->max_tx_agg_size)
 		hw->max_tx_aggregation_subframes = cfg->max_tx_agg_size;
 	else
-		hw->max_tx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF_HE;
+		hw->max_tx_aggregation_subframes = max_agg;
 
 	op_mode = hw->priv;
 
@@ -1118,6 +1196,7 @@ iwl_op_mode_mvm_start(struct iwl_trans *trans, const struct iwl_cfg *cfg,
 
 	iwl_mvm_get_acpi_tables(mvm);
 	iwl_uefi_get_sgom_table(trans, &mvm->fwrt);
+	iwl_uefi_get_step_table(trans);
 
 	mvm->init_status = 0;
 
@@ -1254,7 +1333,7 @@ iwl_op_mode_mvm_start(struct iwl_trans *trans, const struct iwl_cfg *cfg,
 
 	snprintf(mvm->hw->wiphy->fw_version,
 		 sizeof(mvm->hw->wiphy->fw_version),
-		 "%s", fw->fw_version);
+		 "%.31s", fw->fw_version);
 
 	trans_cfg.fw_reset_handshake = fw_has_capa(&mvm->fw->ucode_capa,
 						   IWL_UCODE_TLV_CAPA_FW_RESET_HANDSHAKE);
@@ -1266,6 +1345,8 @@ iwl_op_mode_mvm_start(struct iwl_trans *trans, const struct iwl_cfg *cfg,
 				      0);
 	mvm->sta_remove_requires_queue_remove =
 		trans_cfg.queue_alloc_cmd_ver > 0;
+
+	mvm->mld_api_is_used = iwl_mvm_has_mld_api(mvm->fw);
 
 	/* Configure transport layer */
 	iwl_trans_configure(mvm->trans, &trans_cfg);
@@ -1322,9 +1403,15 @@ iwl_op_mode_mvm_start(struct iwl_trans *trans, const struct iwl_cfg *cfg,
 	else
 		memset(&mvm->rx_stats, 0, sizeof(struct mvm_statistics_rx));
 
+	iwl_mvm_ftm_initiator_smooth_config(mvm);
+
+	iwl_mvm_init_time_sync(&mvm->time_sync);
+
 	mvm->debugfs_dir = dbgfs_dir;
 
 	mvm->mei_registered = !iwl_mei_register(mvm, &mei_ops);
+
+	iwl_mvm_mei_scan_filter_init(&mvm->mei_scan_filter);
 
 	if (iwl_mvm_start_get_nvm(mvm)) {
 		/*
@@ -1418,6 +1505,8 @@ static void iwl_op_mode_mvm_stop(struct iwl_op_mode *op_mode)
 
 	kfree(mvm->error_recovery_buf);
 	mvm->error_recovery_buf = NULL;
+
+	iwl_mvm_ptp_remove(mvm);
 
 	iwl_trans_op_mode_leave(mvm->trans);
 
@@ -1547,7 +1636,9 @@ static void iwl_mvm_rx_common(struct iwl_mvm *mvm,
 		if (rx_h->cmd_id != WIDE_ID(pkt->hdr.group_id, pkt->hdr.cmd))
 			continue;
 
-		if (unlikely(pkt_len < rx_h->min_size))
+		if (IWL_FW_CHECK(mvm, pkt_len < rx_h->min_size,
+				 "unexpected notification 0x%04x size %d, need %d\n",
+				 rx_h->cmd_id, pkt_len, rx_h->min_size))
 			return;
 
 		if (rx_h->context == RX_HANDLER_SYNC) {

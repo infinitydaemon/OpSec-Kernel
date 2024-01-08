@@ -189,8 +189,7 @@ static const struct regmap_irq max77843_muic_irq[] = {
 static const struct regmap_irq_chip max77843_muic_irq_chip = {
 	.name           = "max77843-muic",
 	.status_base    = MAX77843_MUIC_REG_INT1,
-	.mask_base      = MAX77843_MUIC_REG_INTMASK1,
-	.mask_invert    = true,
+	.unmask_base    = MAX77843_MUIC_REG_INTMASK1,
 	.num_regs       = 3,
 	.irqs           = max77843_muic_irq,
 	.num_irqs       = ARRAY_SIZE(max77843_muic_irq),
@@ -947,9 +946,16 @@ static const struct platform_device_id max77843_muic_id[] = {
 };
 MODULE_DEVICE_TABLE(platform, max77843_muic_id);
 
+static const struct of_device_id of_max77843_muic_dt_match[] = {
+	{ .compatible = "maxim,max77843-muic", },
+	{ /* sentinel */ },
+};
+MODULE_DEVICE_TABLE(of, of_max77843_muic_dt_match);
+
 static struct platform_driver max77843_muic_driver = {
 	.driver		= {
 		.name		= "max77843-muic",
+		.of_match_table = of_max77843_muic_dt_match,
 	},
 	.probe		= max77843_muic_probe,
 	.remove		= max77843_muic_remove,

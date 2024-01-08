@@ -63,7 +63,7 @@ static int ksz_spi_probe(struct spi_device *spi)
 	else
 		regmap_config = ksz9477_regmap_config;
 
-	for (i = 0; i < ARRAY_SIZE(ksz8795_regmap_config); i++) {
+	for (i = 0; i < __KSZ_NUM_REGMAPS; i++) {
 		rc = regmap_config[i];
 		rc.lock_arg = &dev->regmap_mutex;
 		rc.wr_table = chip->wr_table;
@@ -71,11 +71,9 @@ static int ksz_spi_probe(struct spi_device *spi)
 		dev->regmap[i] = devm_regmap_init_spi(spi, &rc);
 
 		if (IS_ERR(dev->regmap[i])) {
-			ret = PTR_ERR(dev->regmap[i]);
-			dev_err(&spi->dev,
-				"Failed to initialize regmap%i: %d\n",
-				regmap_config[i].val_bits, ret);
-			return ret;
+			return dev_err_probe(&spi->dev, PTR_ERR(dev->regmap[i]),
+					     "Failed to initialize regmap%i\n",
+					     regmap_config[i].val_bits);
 		}
 	}
 
@@ -116,10 +114,7 @@ static void ksz_spi_shutdown(struct spi_device *spi)
 	if (!dev)
 		return;
 
-	if (dev->dev_ops->reset)
-		dev->dev_ops->reset(dev);
-
-	dsa_switch_shutdown(dev->ds);
+	ksz_switch_shutdown(dev);
 
 	spi_set_drvdata(spi, NULL);
 }
@@ -163,7 +158,7 @@ static const struct of_device_id ksz_dt_ids[] = {
 	},
 	{
 		.compatible = "microchip,ksz9563",
-		.data = &ksz_switch_chips[KSZ9893]
+		.data = &ksz_switch_chips[KSZ9563]
 	},
 	{
 		.compatible = "microchip,ksz8563",

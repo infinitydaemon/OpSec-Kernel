@@ -10,7 +10,7 @@
 #include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/module.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/pwm.h>
 #include <linux/reset.h>
@@ -185,7 +185,6 @@ static const struct pwm_ops hibvt_pwm_ops = {
 	.get_state = hibvt_pwm_get_state,
 	.apply = hibvt_pwm_apply,
 
-	.owner = THIS_MODULE,
 };
 
 static int hibvt_pwm_probe(struct platform_device *pdev)
@@ -245,7 +244,7 @@ static int hibvt_pwm_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int hibvt_pwm_remove(struct platform_device *pdev)
+static void hibvt_pwm_remove(struct platform_device *pdev)
 {
 	struct hibvt_pwm_chip *pwm_chip;
 
@@ -258,8 +257,6 @@ static int hibvt_pwm_remove(struct platform_device *pdev)
 	reset_control_deassert(pwm_chip->rstc);
 
 	clk_disable_unprepare(pwm_chip->clk);
-
-	return 0;
 }
 
 static const struct of_device_id hibvt_pwm_of_match[] = {
@@ -281,7 +278,7 @@ static struct platform_driver hibvt_pwm_driver = {
 		.of_match_table = hibvt_pwm_of_match,
 	},
 	.probe = hibvt_pwm_probe,
-	.remove	= hibvt_pwm_remove,
+	.remove_new = hibvt_pwm_remove,
 };
 module_platform_driver(hibvt_pwm_driver);
 

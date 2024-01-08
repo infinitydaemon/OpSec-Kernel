@@ -609,20 +609,6 @@ static int lan78xx_alloc_tx_resources(struct lan78xx_net *dev)
 				      dev->n_tx_urbs, dev->tx_urb_size, dev);
 }
 
-/* TSO seems to be having some issue with Selective Acknowledge (SACK) that
- * results in lost data never being retransmitted.
- * Disable it by default now, but adds a module parameter to enable it for
- * debug purposes (the full cause is not currently understood).
- */
-static bool enable_tso;
-module_param(enable_tso, bool, 0644);
-MODULE_PARM_DESC(enable_tso, "Enables TCP segmentation offload");
-
-#define INT_URB_MICROFRAMES_PER_MS	8
-static int int_urb_interval_ms = 8;
-module_param(int_urb_interval_ms, int, 0);
-MODULE_PARM_DESC(int_urb_interval_ms, "Override usb interrupt urb interval");
-
 static int lan78xx_read_reg(struct lan78xx_net *dev, u32 index, u32 *data)
 {
 	u32 *buf;
@@ -1440,9 +1426,6 @@ static int lan78xx_link_reset(struct lan78xx_net *dev)
 	if (unlikely(ret < 0))
 		return ret;
 
-	/* Acknowledge any pending PHY interrupt, lest it be the last */
-	phy_read(phydev, LAN88XX_INT_STS);
-
 	mutex_lock(&phydev->lock);
 	phy_read_status(phydev);
 	link = phydev->link;
@@ -1775,7 +1758,7 @@ static void lan78xx_get_drvinfo(struct net_device *net,
 {
 	struct lan78xx_net *dev = netdev_priv(net);
 
-	strncpy(info->driver, DRIVER_NAME, sizeof(info->driver));
+	strscpy(info->driver, DRIVER_NAME, sizeof(info->driver));
 	usb_make_path(dev->udev, info->bus_info, sizeof(info->bus_info));
 }
 
@@ -1953,7 +1936,6 @@ static const struct ethtool_ops lan78xx_ethtool_ops = {
 	.set_link_ksettings = lan78xx_set_link_ksettings,
 	.get_regs_len	= lan78xx_get_regs_len,
 	.get_regs	= lan78xx_get_regs,
-	.get_ts_info    = ethtool_op_get_ts_info,
 };
 
 static void lan78xx_init_mac_address(struct lan78xx_net *dev)
@@ -2425,22 +2407,6 @@ static int lan78xx_phy_init(struct lan78xx_net *dev)
 	mii_adv = (u32)mii_advertise_flowctrl(dev->fc_request_control);
 	mii_adv_to_linkmode_adv_t(fc, mii_adv);
 	linkmode_or(phydev->advertising, fc, phydev->advertising);
-
-	if (of_property_read_bool(phydev->mdio.dev.of_node,
-				  "microchip,eee-enabled")) {
-		struct ethtool_eee edata;
-		memset(&edata, 0, sizeof(edata));
-		edata.cmd = ETHTOOL_SEEE;
-		edata.advertised = ADVERTISED_1000baseT_Full |
-				   ADVERTISED_100baseT_Full;
-		edata.eee_enabled = true;
-		edata.tx_lpi_enabled = true;
-		if (of_property_read_u32(dev->udev->dev.of_node,
-					 "microchip,tx-lpi-timer",
-					 &edata.tx_lpi_timer))
-			edata.tx_lpi_timer = 600; /* non-aggressive */
-		(void)lan78xx_set_eee(dev->net, &edata);
-	}
 
 	if (phydev->mdio.dev.of_node) {
 		u32 reg;
@@ -2915,11 +2881,6 @@ static int lan78xx_reset(struct lan78xx_net *dev)
 	int ret;
 	u32 buf;
 	u8 sig;
-	bool has_eeprom;
-	bool has_otp;
-
-	has_eeprom = !lan78xx_read_eeprom(dev, 0, 0, NULL);
-	has_otp = !lan78xx_read_otp(dev, 0, 0, NULL);
 
 	ret = lan78xx_read_reg(dev, HW_CFG, &buf);
 	if (ret < 0)
@@ -2983,10 +2944,6 @@ static int lan78xx_reset(struct lan78xx_net *dev)
 		return ret;
 
 	buf |= HW_CFG_MEF_;
-
-	/* If no valid EEPROM and no valid OTP, enable the LEDs by default */
-	if (!has_eeprom && !has_otp)
-	    buf |= HW_CFG_LED0_EN_ | HW_CFG_LED1_EN_;
 
 	ret = lan78xx_write_reg(dev, HW_CFG, buf);
 	if (ret < 0)
@@ -3086,9 +3043,6 @@ static int lan78xx_reset(struct lan78xx_net *dev)
 			buf |= MAC_CR_AUTO_DUPLEX_ | MAC_CR_AUTO_SPEED_;
 		}
 	}
-	/* If no valid EEPROM and no valid OTP, enable AUTO negotiation */
-	if (!has_eeprom && !has_otp)
-	    buf |= MAC_CR_AUTO_DUPLEX_ | MAC_CR_AUTO_SPEED_;
 	ret = lan78xx_write_reg(dev, MAC_CR, buf);
 	if (ret < 0)
 		return ret;
@@ -3485,14 +3439,8 @@ static int lan78xx_bind(struct lan78xx_net *dev, struct usb_interface *intf)
 	if (DEFAULT_RX_CSUM_ENABLE)
 		dev->net->features |= NETIF_F_RXCSUM;
 
-	if (DEFAULT_TSO_CSUM_ENABLE) {
-		dev->net->features |= NETIF_F_SG;
-		/* Use module parameter to control TCP segmentation offload as
-		 * it appears to cause issues.
-		 */
-		if (enable_tso)
-			dev->net->features |= NETIF_F_TSO | NETIF_F_TSO6;
-	}
+	if (DEFAULT_TSO_CSUM_ENABLE)
+		dev->net->features |= NETIF_F_TSO | NETIF_F_TSO6 | NETIF_F_SG;
 
 	if (DEFAULT_VLAN_RX_OFFLOAD)
 		dev->net->features |= NETIF_F_HW_VLAN_CTAG_RX;
@@ -4276,8 +4224,6 @@ static void lan78xx_disconnect(struct usb_interface *intf)
 	if (!dev)
 		return;
 
-	set_bit(EVENT_DEV_DISCONNECT, &dev->flags);
-
 	netif_napi_del(&dev->napi);
 
 	udev = interface_to_usbdev(intf);
@@ -4285,6 +4231,8 @@ static void lan78xx_disconnect(struct usb_interface *intf)
 
 	unregister_netdev(net);
 
+	timer_shutdown_sync(&dev->stat_monitor);
+	set_bit(EVENT_DEV_DISCONNECT, &dev->flags);
 	cancel_delayed_work_sync(&dev->wq);
 
 	phydev = net->phydev;
@@ -4298,9 +4246,6 @@ static void lan78xx_disconnect(struct usb_interface *intf)
 		fixed_phy_unregister(phydev);
 
 	usb_scuttle_anchored_urbs(&dev->deferred);
-
-	if (timer_pending(&dev->stat_monitor))
-		del_timer_sync(&dev->stat_monitor);
 
 	lan78xx_unbind(dev, intf);
 
@@ -4463,13 +4408,7 @@ static int lan78xx_probe(struct usb_interface *intf,
 	if (ret < 0)
 		goto out4;
 
-	if (int_urb_interval_ms <= 0)
-		period = ep_intr->desc.bInterval;
-	else
-		period = int_urb_interval_ms * INT_URB_MICROFRAMES_PER_MS;
-
-	netif_notice(dev, probe, netdev, "int urb period %d\n", period);
-
+	period = ep_intr->desc.bInterval;
 	maxp = usb_maxpacket(dev->udev, dev->pipe_intr);
 	buf = kmalloc(maxp, GFP_KERNEL);
 	if (!buf) {

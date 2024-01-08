@@ -15,8 +15,8 @@
 #include <linux/kernel.h>
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
-#include <linux/of_device.h>
 #include <linux/regmap.h>
 #include <linux/thermal.h>
 
@@ -33,7 +33,7 @@ struct bcm2711_thermal_priv {
 
 static int bcm2711_get_temp(struct thermal_zone_device *tz, int *temp)
 {
-	struct bcm2711_thermal_priv *priv = tz->devdata;
+	struct bcm2711_thermal_priv *priv = thermal_zone_device_priv(tz);
 	int slope = thermal_zone_get_slope(tz);
 	int offset = thermal_zone_get_offset(tz);
 	u32 val;
@@ -92,13 +92,12 @@ static int bcm2711_thermal_probe(struct platform_device *pdev)
 						&bcm2711_thermal_of_ops);
 	if (IS_ERR(thermal)) {
 		ret = PTR_ERR(thermal);
-		dev_err_probe(dev, ret, "could not register sensor: %d\n", ret);
+		dev_err(dev, "could not register sensor: %d\n", ret);
 		return ret;
 	}
 
 	priv->thermal = thermal;
 
-	thermal->tzp->no_hwmon = false;
 	return thermal_add_hwmon_sysfs(thermal);
 }
 

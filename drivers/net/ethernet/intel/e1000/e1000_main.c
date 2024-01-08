@@ -1014,7 +1014,7 @@ static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	netdev->watchdog_timeo = 5 * HZ;
 	netif_napi_add(netdev, &adapter->napi, e1000_clean);
 
-	strncpy(netdev->name, pci_name(pdev), sizeof(netdev->name) - 1);
+	strscpy(netdev->name, pci_name(pdev), sizeof(netdev->name));
 
 	adapter->bd_number = cards_found;
 
@@ -4229,8 +4229,6 @@ process_skb:
 				 */
 				p = buffer_info->rxbuf.page;
 				if (length <= copybreak) {
-					u8 *vaddr;
-
 					if (likely(!(netdev->features & NETIF_F_RXFCS)))
 						length -= 4;
 					skb = e1000_alloc_rx_skb(adapter,
@@ -4238,10 +4236,9 @@ process_skb:
 					if (!skb)
 						break;
 
-					vaddr = kmap_atomic(p);
-					memcpy(skb_tail_pointer(skb), vaddr,
-					       length);
-					kunmap_atomic(vaddr);
+					memcpy(skb_tail_pointer(skb),
+					       page_address(p), length);
+
 					/* re-use the page, so don't erase
 					 * buffer_info->rxbuf.page
 					 */

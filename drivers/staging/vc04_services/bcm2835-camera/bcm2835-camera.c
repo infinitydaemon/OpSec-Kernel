@@ -11,6 +11,7 @@
  *          Luke Diamand @ Broadcom
  */
 
+#include <linux/dma-mapping.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -24,13 +25,13 @@
 #include <media/v4l2-event.h>
 #include <media/v4l2-common.h>
 #include <linux/delay.h>
-#include <linux/platform_device.h>
 
-#include "mmal-common.h"
-#include "mmal-encodings.h"
-#include "mmal-vchiq.h"
-#include "mmal-msg.h"
-#include "mmal-parameters.h"
+#include "../interface/vchiq_arm/vchiq_bus.h"
+#include "../vchiq-mmal/mmal-common.h"
+#include "../vchiq-mmal/mmal-encodings.h"
+#include "../vchiq-mmal/mmal-vchiq.h"
+#include "../vchiq-mmal/mmal-msg.h"
+#include "../vchiq-mmal/mmal-parameters.h"
 #include "bcm2835-camera.h"
 
 #define MIN_WIDTH 32
@@ -87,21 +88,21 @@ static struct mmal_fmt formats[] = {
 		.depth = 12,
 		.mmal_component = COMP_CAMERA,
 		.ybbp = 1,
-		.remove_padding = 1,
+		.remove_padding = true,
 	}, {
 		.fourcc = V4L2_PIX_FMT_YUYV,
 		.mmal = MMAL_ENCODING_YUYV,
 		.depth = 16,
 		.mmal_component = COMP_CAMERA,
 		.ybbp = 2,
-		.remove_padding = 0,
+		.remove_padding = false,
 	}, {
 		.fourcc = V4L2_PIX_FMT_RGB24,
 		.mmal = MMAL_ENCODING_RGB24,
 		.depth = 24,
 		.mmal_component = COMP_CAMERA,
 		.ybbp = 3,
-		.remove_padding = 0,
+		.remove_padding = false,
 	}, {
 		.fourcc = V4L2_PIX_FMT_JPEG,
 		.flags = V4L2_FMT_FLAG_COMPRESSED,
@@ -109,7 +110,7 @@ static struct mmal_fmt formats[] = {
 		.depth = 8,
 		.mmal_component = COMP_IMAGE_ENCODE,
 		.ybbp = 0,
-		.remove_padding = 0,
+		.remove_padding = false,
 	}, {
 		.fourcc = V4L2_PIX_FMT_H264,
 		.flags = V4L2_FMT_FLAG_COMPRESSED,
@@ -117,7 +118,7 @@ static struct mmal_fmt formats[] = {
 		.depth = 8,
 		.mmal_component = COMP_VIDEO_ENCODE,
 		.ybbp = 0,
-		.remove_padding = 0,
+		.remove_padding = false,
 	}, {
 		.fourcc = V4L2_PIX_FMT_MJPEG,
 		.flags = V4L2_FMT_FLAG_COMPRESSED,
@@ -125,63 +126,63 @@ static struct mmal_fmt formats[] = {
 		.depth = 8,
 		.mmal_component = COMP_VIDEO_ENCODE,
 		.ybbp = 0,
-		.remove_padding = 0,
+		.remove_padding = false,
 	}, {
 		.fourcc = V4L2_PIX_FMT_YVYU,
 		.mmal = MMAL_ENCODING_YVYU,
 		.depth = 16,
 		.mmal_component = COMP_CAMERA,
 		.ybbp = 2,
-		.remove_padding = 0,
+		.remove_padding = false,
 	}, {
 		.fourcc = V4L2_PIX_FMT_VYUY,
 		.mmal = MMAL_ENCODING_VYUY,
 		.depth = 16,
 		.mmal_component = COMP_CAMERA,
 		.ybbp = 2,
-		.remove_padding = 0,
+		.remove_padding = false,
 	}, {
 		.fourcc = V4L2_PIX_FMT_UYVY,
 		.mmal = MMAL_ENCODING_UYVY,
 		.depth = 16,
 		.mmal_component = COMP_CAMERA,
 		.ybbp = 2,
-		.remove_padding = 0,
+		.remove_padding = false,
 	}, {
 		.fourcc = V4L2_PIX_FMT_NV12,
 		.mmal = MMAL_ENCODING_NV12,
 		.depth = 12,
 		.mmal_component = COMP_CAMERA,
 		.ybbp = 1,
-		.remove_padding = 1,
+		.remove_padding = true,
 	}, {
 		.fourcc = V4L2_PIX_FMT_BGR24,
 		.mmal = MMAL_ENCODING_BGR24,
 		.depth = 24,
 		.mmal_component = COMP_CAMERA,
 		.ybbp = 3,
-		.remove_padding = 0,
+		.remove_padding = false,
 	}, {
 		.fourcc = V4L2_PIX_FMT_YVU420,
 		.mmal = MMAL_ENCODING_YV12,
 		.depth = 12,
 		.mmal_component = COMP_CAMERA,
 		.ybbp = 1,
-		.remove_padding = 1,
+		.remove_padding = true,
 	}, {
 		.fourcc = V4L2_PIX_FMT_NV21,
 		.mmal = MMAL_ENCODING_NV21,
 		.depth = 12,
 		.mmal_component = COMP_CAMERA,
 		.ybbp = 1,
-		.remove_padding = 1,
+		.remove_padding = true,
 	}, {
-		.fourcc = V4L2_PIX_FMT_BGRX32,
+		.fourcc = V4L2_PIX_FMT_BGR32,
 		.mmal = MMAL_ENCODING_BGRA,
 		.depth = 32,
 		.mmal_component = COMP_CAMERA,
 		.ybbp = 4,
-		.remove_padding = 0,
+		.remove_padding = false,
 	},
 };
 
@@ -854,7 +855,7 @@ static int vidioc_enum_input(struct file *file, void *priv,
 		return -EINVAL;
 
 	inp->type = V4L2_INPUT_TYPE_CAMERA;
-	sprintf((char *)inp->name, "Camera %u", inp->index);
+	snprintf((char *)inp->name, sizeof(inp->name), "Camera %u", inp->index);
 	return 0;
 }
 
@@ -1147,7 +1148,7 @@ static int mmal_setup_components(struct bcm2835_mmal_dev *dev,
 	struct vchiq_mmal_port *port = NULL, *camera_port = NULL;
 	struct vchiq_mmal_component *encode_component = NULL;
 	struct mmal_fmt *mfmt = get_format(f);
-	u32 remove_padding;
+	bool remove_padding;
 
 	if (!mfmt)
 		return -EINVAL;
@@ -1449,7 +1450,6 @@ static const struct v4l2_ioctl_ops camera0_ioctl_ops = {
 	.vidioc_querybuf = vb2_ioctl_querybuf,
 	.vidioc_qbuf = vb2_ioctl_qbuf,
 	.vidioc_dqbuf = vb2_ioctl_dqbuf,
-	.vidioc_expbuf = vb2_ioctl_expbuf,
 	.vidioc_enum_framesizes = vidioc_enum_framesizes,
 	.vidioc_enum_frameintervals = vidioc_enum_frameintervals,
 	.vidioc_g_parm        = vidioc_g_parm,
@@ -1731,12 +1731,6 @@ static int mmal_init(struct bcm2835_mmal_dev *dev)
 					      MMAL_PARAMETER_MINIMISE_FRAGMENTATION,
 					      &enable,
 					      sizeof(enable));
-
-		/* Enable inserting headers into the first frame */
-		vchiq_mmal_port_parameter_set(dev->instance,
-					      &dev->component[COMP_VIDEO_ENCODE]->control,
-					      MMAL_PARAMETER_VIDEO_ENCODE_HEADERS_WITH_FRAME,
-					      &enable, sizeof(enable));
 	}
 	ret = bcm2835_mmal_set_all_camera_controls(dev);
 	if (ret < 0) {
@@ -1848,7 +1842,7 @@ static struct v4l2_format default_v4l2_format = {
 	.fmt.pix.sizeimage = 1024 * 768,
 };
 
-static int bcm2835_mmal_probe(struct platform_device *pdev)
+static int bcm2835_mmal_probe(struct vchiq_device *device)
 {
 	int ret;
 	struct bcm2835_mmal_dev *dev;
@@ -1858,6 +1852,12 @@ static int bcm2835_mmal_probe(struct platform_device *pdev)
 	struct vchiq_mmal_instance *instance;
 	unsigned int resolutions[MAX_BCM2835_CAMERAS][2];
 	int i;
+
+	ret = dma_set_mask_and_coherent(&device->dev, DMA_BIT_MASK(32));
+	if (ret) {
+		dev_err(&device->dev, "dma_set_mask_and_coherent failed: %d\n", ret);
+		return ret;
+	}
 
 	ret = vchiq_mmal_init(&instance);
 	if (ret < 0)
@@ -1903,7 +1903,7 @@ static int bcm2835_mmal_probe(struct platform_device *pdev)
 						       &camera_instance);
 		ret = v4l2_device_register(NULL, &dev->v4l2_dev);
 		if (ret) {
-			dev_err(&pdev->dev, "%s: could not register V4L2 device: %d\n",
+			dev_err(&device->dev, "%s: could not register V4L2 device: %d\n",
 				__func__, ret);
 			goto free_dev;
 		}
@@ -1929,7 +1929,7 @@ static int bcm2835_mmal_probe(struct platform_device *pdev)
 		q = &dev->capture.vb_vidq;
 		memset(q, 0, sizeof(*q));
 		q->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-		q->io_modes = VB2_MMAP | VB2_USERPTR | VB2_READ | VB2_DMABUF;
+		q->io_modes = VB2_MMAP | VB2_USERPTR | VB2_READ;
 		q->drv_priv = dev;
 		q->buf_struct_size = sizeof(struct vb2_mmal_buffer);
 		q->ops = &bcm2835_mmal_video_qops;
@@ -1983,7 +1983,7 @@ cleanup_mmal:
 	return ret;
 }
 
-static int bcm2835_mmal_remove(struct platform_device *pdev)
+static void bcm2835_mmal_remove(struct vchiq_device *device)
 {
 	int camera;
 	struct vchiq_mmal_instance *instance = gdev[0]->instance;
@@ -1993,21 +1993,25 @@ static int bcm2835_mmal_remove(struct platform_device *pdev)
 		gdev[camera] = NULL;
 	}
 	vchiq_mmal_finalise(instance);
-
-	return 0;
 }
 
-static struct platform_driver bcm2835_camera_driver = {
+static const struct vchiq_device_id device_id_table[] = {
+	{ .name = "bcm2835-camera" },
+	{}
+};
+MODULE_DEVICE_TABLE(vchiq, device_id_table);
+
+static struct vchiq_driver bcm2835_camera_driver = {
 	.probe		= bcm2835_mmal_probe,
 	.remove		= bcm2835_mmal_remove,
+	.id_table	= device_id_table,
 	.driver		= {
 		.name	= "bcm2835-camera",
 	},
 };
 
-module_platform_driver(bcm2835_camera_driver)
+module_vchiq_driver(bcm2835_camera_driver)
 
 MODULE_DESCRIPTION("Broadcom 2835 MMAL video capture");
 MODULE_AUTHOR("Vincent Sanders");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS("platform:bcm2835-camera");

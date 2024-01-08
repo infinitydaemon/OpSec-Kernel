@@ -128,7 +128,7 @@ static int pwm_imx27_get_state(struct pwm_chip *chip,
 
 	ret = pwm_imx27_clk_prepare_enable(imx);
 	if (ret < 0)
-		return 0;
+		return ret;
 
 	val = readl(imx->mmio_base + MX3_PWMCR);
 
@@ -296,7 +296,6 @@ static int pwm_imx27_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 static const struct pwm_ops pwm_imx27_ops = {
 	.apply = pwm_imx27_apply,
 	.get_state = pwm_imx27_get_state,
-	.owner = THIS_MODULE,
 };
 
 static const struct of_device_id pwm_imx27_dt_ids[] = {

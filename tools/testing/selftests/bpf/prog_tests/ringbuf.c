@@ -13,6 +13,7 @@
 #include <linux/perf_event.h>
 #include <linux/ring_buffer.h>
 #include "test_ringbuf.lskel.h"
+#include "test_ringbuf_map_key.lskel.h"
 
 #define EDONE 7777
 
@@ -58,6 +59,7 @@ static int process_sample(void *ctx, void *data, size_t len)
 	}
 }
 
+static struct test_ringbuf_map_key_lskel *skel_map_key;
 static struct test_ringbuf_lskel *skel;
 static struct ring_buffer *ringbuf;
 
@@ -81,7 +83,7 @@ static void *poll_thread(void *input)
 	return (void *)(long)ring_buffer__poll(ringbuf, timeout);
 }
 
-void test_ringbuf(void)
+static void ringbuf_subtest(void)
 {
 	const size_t rec_sz = BPF_RINGBUF_HDR_SZ + sizeof(struct sample);
 	pthread_t thread;
@@ -89,6 +91,9 @@ void test_ringbuf(void)
 	int err, cnt, rb_fd;
 	int page_size = getpagesize();
 	void *mmap_ptr, *tmp_ptr;
+	struct ring *ring;
+	int map_fd;
+	unsigned long avail_data, ring_size, cons_pos, prod_pos;
 
 	skel = test_ringbuf_lskel__open();
 	if (CHECK(!skel, "skel_open", "skeleton open failed\n"))
@@ -160,6 +165,13 @@ void test_ringbuf(void)
 
 	trigger_samples();
 
+	ring = ring_buffer__ring(ringbuf, 0);
+	if (!ASSERT_OK_PTR(ring, "ring_buffer__ring_idx_0"))
+		goto cleanup;
+
+	map_fd = ring__map_fd(ring);
+	ASSERT_EQ(map_fd, skel->maps.ringbuf.map_fd, "ring_map_fd");
+
 	/* 2 submitted + 1 discarded records */
 	CHECK(skel->bss->avail_data != 3 * rec_sz,
 	      "err_avail_size", "exp %ld, got %ld\n",
@@ -173,6 +185,18 @@ void test_ringbuf(void)
 	CHECK(skel->bss->prod_pos != 3 * rec_sz,
 	      "err_prod_pos", "exp %ld, got %ld\n",
 	      3L * rec_sz, skel->bss->prod_pos);
+
+	/* verify getting this data directly via the ring object yields the same
+	 * results
+	 */
+	avail_data = ring__avail_data_size(ring);
+	ASSERT_EQ(avail_data, 3 * rec_sz, "ring_avail_size");
+	ring_size = ring__size(ring);
+	ASSERT_EQ(ring_size, page_size, "ring_ring_size");
+	cons_pos = ring__consumer_pos(ring);
+	ASSERT_EQ(cons_pos, 0, "ring_cons_pos");
+	prod_pos = ring__producer_pos(ring);
+	ASSERT_EQ(prod_pos, 3 * rec_sz, "ring_prod_pos");
 
 	/* poll for samples */
 	err = ring_buffer__poll(ringbuf, -1);
@@ -280,6 +304,10 @@ void test_ringbuf(void)
 	err = ring_buffer__consume(ringbuf);
 	CHECK(err < 0, "rb_consume", "failed: %d\b", err);
 
+	/* also consume using ring__consume to make sure it works the same */
+	err = ring__consume(ring);
+	ASSERT_GE(err, 0, "ring_consume");
+
 	/* 3 rounds, 2 samples each */
 	cnt = atomic_xchg(&sample_cnt, 0);
 	CHECK(cnt != 6, "cnt", "exp %d samples, got %d\n", 6, cnt);
@@ -296,4 +324,66 @@ void test_ringbuf(void)
 cleanup:
 	ring_buffer__free(ringbuf);
 	test_ringbuf_lskel__destroy(skel);
+}
+
+static int process_map_key_sample(void *ctx, void *data, size_t len)
+{
+	struct sample *s;
+	int err, val;
+
+	s = data;
+	switch (s->seq) {
+	case 1:
+		ASSERT_EQ(s->value, 42, "sample_value");
+		err = bpf_map_lookup_elem(skel_map_key->maps.hash_map.map_fd,
+					  s, &val);
+		ASSERT_OK(err, "hash_map bpf_map_lookup_elem");
+		ASSERT_EQ(val, 1, "hash_map val");
+		return -EDONE;
+	default:
+		return 0;
+	}
+}
+
+static void ringbuf_map_key_subtest(void)
+{
+	int err;
+
+	skel_map_key = test_ringbuf_map_key_lskel__open();
+	if (!ASSERT_OK_PTR(skel_map_key, "test_ringbuf_map_key_lskel__open"))
+		return;
+
+	skel_map_key->maps.ringbuf.max_entries = getpagesize();
+	skel_map_key->bss->pid = getpid();
+
+	err = test_ringbuf_map_key_lskel__load(skel_map_key);
+	if (!ASSERT_OK(err, "test_ringbuf_map_key_lskel__load"))
+		goto cleanup;
+
+	ringbuf = ring_buffer__new(skel_map_key->maps.ringbuf.map_fd,
+				   process_map_key_sample, NULL, NULL);
+	if (!ASSERT_OK_PTR(ringbuf, "ring_buffer__new"))
+		goto cleanup;
+
+	err = test_ringbuf_map_key_lskel__attach(skel_map_key);
+	if (!ASSERT_OK(err, "test_ringbuf_map_key_lskel__attach"))
+		goto cleanup_ringbuf;
+
+	syscall(__NR_getpgid);
+	ASSERT_EQ(skel_map_key->bss->seq, 1, "skel_map_key->bss->seq");
+	err = ring_buffer__poll(ringbuf, -1);
+	ASSERT_EQ(err, -EDONE, "ring_buffer__poll");
+
+cleanup_ringbuf:
+	ring_buffer__free(ringbuf);
+cleanup:
+	test_ringbuf_map_key_lskel__destroy(skel_map_key);
+}
+
+void test_ringbuf(void)
+{
+	if (test__start_subtest("ringbuf"))
+		ringbuf_subtest();
+	if (test__start_subtest("ringbuf_map_key"))
+		ringbuf_map_key_subtest();
 }

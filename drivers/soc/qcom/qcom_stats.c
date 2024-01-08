@@ -211,16 +211,16 @@ static int qcom_stats_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, root);
 
+	device_set_pm_not_required(&pdev->dev);
+
 	return 0;
 }
 
-static int qcom_stats_remove(struct platform_device *pdev)
+static void qcom_stats_remove(struct platform_device *pdev)
 {
 	struct dentry *root = platform_get_drvdata(pdev);
 
 	debugfs_remove_recursive(root);
-
-	return 0;
 }
 
 static const struct stats_config rpm_data = {
@@ -270,7 +270,7 @@ MODULE_DEVICE_TABLE(of, qcom_stats_table);
 
 static struct platform_driver qcom_stats = {
 	.probe = qcom_stats_probe,
-	.remove = qcom_stats_remove,
+	.remove_new = qcom_stats_remove,
 	.driver = {
 		.name = "qcom_stats",
 		.of_match_table = qcom_stats_table,

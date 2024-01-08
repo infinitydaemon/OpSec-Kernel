@@ -135,8 +135,7 @@ static const struct iio_info veml6070_info = {
 	.read_raw = veml6070_read_raw,
 };
 
-static int veml6070_probe(struct i2c_client *client,
-			  const struct i2c_device_id *id)
+static int veml6070_probe(struct i2c_client *client)
 {
 	struct veml6070_data *data;
 	struct iio_dev *indio_dev;
@@ -195,18 +194,11 @@ static const struct i2c_device_id veml6070_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, veml6070_id);
 
-static const struct of_device_id veml6070_of_id[] = {
-	{ .compatible = "vishay,veml6070" },
-	{ }
-};
-MODULE_DEVICE_TABLE(of, veml6070_of_id);
-
 static struct i2c_driver veml6070_driver = {
 	.driver = {
 		.name   = VEML6070_DRV_NAME,
-		.of_match_table = veml6070_of_id,
 	},
-	.probe  = veml6070_probe,
+	.probe = veml6070_probe,
 	.remove  = veml6070_remove,
 	.id_table = veml6070_id,
 };

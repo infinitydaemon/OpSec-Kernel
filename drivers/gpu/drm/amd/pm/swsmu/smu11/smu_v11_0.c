@@ -79,10 +79,21 @@ MODULE_FIRMWARE("amdgpu/beige_goby_smc.bin");
 #define mmTHM_BACO_CNTL_ARCT			0xA7
 #define mmTHM_BACO_CNTL_ARCT_BASE_IDX		0
 
+static void smu_v11_0_poll_baco_exit(struct smu_context *smu)
+{
+	struct amdgpu_device *adev = smu->adev;
+	uint32_t data, loop = 0;
+
+	do {
+		usleep_range(1000, 1100);
+		data = RREG32_SOC15(THM, 0, mmTHM_BACO_CNTL);
+	} while ((data & 0x100) && (++loop < 100));
+}
+
 int smu_v11_0_init_microcode(struct smu_context *smu)
 {
 	struct amdgpu_device *adev = smu->adev;
-	const char *chip_name;
+	char ucode_prefix[30];
 	char fw_name[SMU_FW_NAME_LEN];
 	int err = 0;
 	const struct smc_firmware_header_v1_0 *hdr;
@@ -90,47 +101,15 @@ int smu_v11_0_init_microcode(struct smu_context *smu)
 	struct amdgpu_firmware_info *ucode = NULL;
 
 	if (amdgpu_sriov_vf(adev) &&
-	    ((adev->ip_versions[MP1_HWIP][0] == IP_VERSION(11, 0, 9)) ||
-	     (adev->ip_versions[MP1_HWIP][0] == IP_VERSION(11, 0, 7))))
+	    ((amdgpu_ip_version(adev, MP1_HWIP, 0) == IP_VERSION(11, 0, 9)) ||
+	     (amdgpu_ip_version(adev, MP1_HWIP, 0) == IP_VERSION(11, 0, 7))))
 		return 0;
 
-	switch (adev->ip_versions[MP1_HWIP][0]) {
-	case IP_VERSION(11, 0, 0):
-		chip_name = "navi10";
-		break;
-	case IP_VERSION(11, 0, 5):
-		chip_name = "navi14";
-		break;
-	case IP_VERSION(11, 0, 9):
-		chip_name = "navi12";
-		break;
-	case IP_VERSION(11, 0, 7):
-		chip_name = "sienna_cichlid";
-		break;
-	case IP_VERSION(11, 0, 11):
-		chip_name = "navy_flounder";
-		break;
-	case IP_VERSION(11, 0, 12):
-		chip_name = "dimgrey_cavefish";
-		break;
-	case IP_VERSION(11, 0, 13):
-		chip_name = "beige_goby";
-		break;
-	case IP_VERSION(11, 0, 2):
-		chip_name = "arcturus";
-		break;
-	default:
-		dev_err(adev->dev, "Unsupported IP version 0x%x\n",
-			adev->ip_versions[MP1_HWIP][0]);
-		return -EINVAL;
-	}
+	amdgpu_ucode_ip_version_decode(adev, MP1_HWIP, ucode_prefix, sizeof(ucode_prefix));
 
-	snprintf(fw_name, sizeof(fw_name), "amdgpu/%s_smc.bin", chip_name);
+	snprintf(fw_name, sizeof(fw_name), "amdgpu/%s.bin", ucode_prefix);
 
-	err = request_firmware(&adev->pm.fw, fw_name, adev->dev);
-	if (err)
-		goto out;
-	err = amdgpu_ucode_validate(adev->pm.fw);
+	err = amdgpu_ucode_request(adev, &adev->pm.fw, fw_name);
 	if (err)
 		goto out;
 
@@ -148,12 +127,8 @@ int smu_v11_0_init_microcode(struct smu_context *smu)
 	}
 
 out:
-	if (err) {
-		DRM_ERROR("smu_v11_0: Failed to load firmware \"%s\"\n",
-			  fw_name);
-		release_firmware(adev->pm.fw);
-		adev->pm.fw = NULL;
-	}
+	if (err)
+		amdgpu_ucode_release(&adev->pm.fw);
 	return err;
 }
 
@@ -161,8 +136,7 @@ void smu_v11_0_fini_microcode(struct smu_context *smu)
 {
 	struct amdgpu_device *adev = smu->adev;
 
-	release_firmware(adev->pm.fw);
-	adev->pm.fw = NULL;
+	amdgpu_ucode_release(&adev->pm.fw);
 	adev->pm.fw_version = 0;
 }
 
@@ -239,7 +213,7 @@ int smu_v11_0_check_fw_version(struct smu_context *smu)
 	if (smu->is_apu)
 		adev->pm.fw_version = smu_version;
 
-	switch (adev->ip_versions[MP1_HWIP][0]) {
+	switch (amdgpu_ip_version(adev, MP1_HWIP, 0)) {
 	case IP_VERSION(11, 0, 0):
 		smu->smc_driver_if_version = SMU11_DRIVER_IF_VERSION_NV10;
 		break;
@@ -272,7 +246,7 @@ int smu_v11_0_check_fw_version(struct smu_context *smu)
 		break;
 	default:
 		dev_err(smu->adev->dev, "smu unsupported IP version: 0x%x.\n",
-			adev->ip_versions[MP1_HWIP][0]);
+			amdgpu_ip_version(adev, MP1_HWIP, 0));
 		smu->smc_driver_if_version = SMU11_DRIVER_IF_VERSION_INV;
 		break;
 	}
@@ -282,7 +256,7 @@ int smu_v11_0_check_fw_version(struct smu_context *smu)
 	 * to be backward compatible.
 	 * 2. New fw usually brings some optimizations. But that's visible
 	 * only on the paired driver.
-	 * Considering above, we just leave user a warning message instead
+	 * Considering above, we just leave user a verbal message instead
 	 * of halt driver loading.
 	 */
 	if (if_version != smu->smc_driver_if_version) {
@@ -290,7 +264,7 @@ int smu_v11_0_check_fw_version(struct smu_context *smu)
 			"smu fw program = %d, version = 0x%08x (%d.%d.%d)\n",
 			smu->smc_driver_if_version, if_version,
 			smu_program, smu_version, smu_major, smu_minor, smu_debug);
-		dev_warn(smu->adev->dev, "SMU driver if version not matched\n");
+		dev_info(smu->adev->dev, "SMU driver if version not matched\n");
 	}
 
 	return ret;
@@ -500,9 +474,10 @@ int smu_v11_0_init_power(struct smu_context *smu)
 {
 	struct amdgpu_device *adev = smu->adev;
 	struct smu_power_context *smu_power = &smu->smu_power;
-	size_t size = adev->ip_versions[MP1_HWIP][0] == IP_VERSION(11, 5, 0) ?
-			sizeof(struct smu_11_5_power_context) :
-			sizeof(struct smu_11_0_power_context);
+	size_t size = amdgpu_ip_version(adev, MP1_HWIP, 0) ==
+				      IP_VERSION(11, 5, 0) ?
+			      sizeof(struct smu_11_5_power_context) :
+			      sizeof(struct smu_11_0_power_context);
 
 	smu_power->power_context = kzalloc(size, GFP_KERNEL);
 	if (!smu_power->power_context)
@@ -757,10 +732,10 @@ int smu_v11_0_init_display_count(struct smu_context *smu, uint32_t count)
 	/* Navy_Flounder/Dimgrey_Cavefish do not support to change
 	 * display num currently
 	 */
-	if (adev->ip_versions[MP1_HWIP][0] == IP_VERSION(11, 0, 11) ||
-	    adev->ip_versions[MP1_HWIP][0] == IP_VERSION(11, 5, 0) ||
-	    adev->ip_versions[MP1_HWIP][0] == IP_VERSION(11, 0, 12) ||
-	    adev->ip_versions[MP1_HWIP][0] == IP_VERSION(11, 0, 13))
+	if (amdgpu_ip_version(adev, MP1_HWIP, 0) == IP_VERSION(11, 0, 11) ||
+	    amdgpu_ip_version(adev, MP1_HWIP, 0) == IP_VERSION(11, 5, 0) ||
+	    amdgpu_ip_version(adev, MP1_HWIP, 0) == IP_VERSION(11, 0, 12) ||
+	    amdgpu_ip_version(adev, MP1_HWIP, 0) == IP_VERSION(11, 0, 13))
 		return 0;
 
 	return smu_cmn_send_smc_msg_with_param(smu,
@@ -1129,7 +1104,7 @@ int smu_v11_0_gfx_off_control(struct smu_context *smu, bool enable)
 	int ret = 0;
 	struct amdgpu_device *adev = smu->adev;
 
-	switch (adev->ip_versions[MP1_HWIP][0]) {
+	switch (amdgpu_ip_version(adev, MP1_HWIP, 0)) {
 	case IP_VERSION(11, 0, 0):
 	case IP_VERSION(11, 0, 5):
 	case IP_VERSION(11, 0, 9):
@@ -1199,7 +1174,7 @@ smu_v11_0_set_fan_speed_pwm(struct smu_context *smu, uint32_t speed)
 	uint32_t duty100, duty;
 	uint64_t tmp64;
 
-	speed = MIN(speed, 255);
+	speed = min_t(uint32_t, speed, 255);
 
 	duty100 = REG_GET_FIELD(RREG32_SOC15(THM, 0, mmCG_FDO_CTRL1),
 				CG_FDO_CTRL1, FMAX_DUTY100);
@@ -1274,7 +1249,7 @@ int smu_v11_0_get_fan_speed_pwm(struct smu_context *smu,
 
 	tmp64 = (uint64_t)duty * 255;
 	do_div(tmp64, duty100);
-	*speed = MIN((uint32_t)tmp64, 255);
+	*speed = min_t(uint32_t, tmp64, 255);
 
 	return 0;
 }
@@ -1617,7 +1592,7 @@ int smu_v11_0_baco_set_state(struct smu_context *smu, enum smu_baco_state state)
 		return 0;
 
 	if (state == SMU_BACO_STATE_ENTER) {
-		switch (adev->ip_versions[MP1_HWIP][0]) {
+		switch (amdgpu_ip_version(adev, MP1_HWIP, 0)) {
 		case IP_VERSION(11, 0, 7):
 		case IP_VERSION(11, 0, 11):
 		case IP_VERSION(11, 0, 12):
@@ -1636,7 +1611,8 @@ int smu_v11_0_baco_set_state(struct smu_context *smu, enum smu_baco_state state)
 		default:
 			if (!ras || !adev->ras_enabled ||
 			    adev->gmc.xgmi.pending_reset) {
-				if (adev->ip_versions[MP1_HWIP][0] == IP_VERSION(11, 0, 2)) {
+				if (amdgpu_ip_version(adev, MP1_HWIP, 0) ==
+				    IP_VERSION(11, 0, 2)) {
 					data = RREG32_SOC15(THM, 0, mmTHM_BACO_CNTL_ARCT);
 					data |= 0x80000000;
 					WREG32_SOC15(THM, 0, mmTHM_BACO_CNTL_ARCT, data);
@@ -1684,7 +1660,18 @@ int smu_v11_0_baco_enter(struct smu_context *smu)
 
 int smu_v11_0_baco_exit(struct smu_context *smu)
 {
-	return smu_v11_0_baco_set_state(smu, SMU_BACO_STATE_EXIT);
+	int ret;
+
+	ret = smu_v11_0_baco_set_state(smu, SMU_BACO_STATE_EXIT);
+	if (!ret) {
+		/*
+		 * Poll BACO exit status to ensure FW has completed
+		 * BACO exit process to avoid timing issues.
+		 */
+		smu_v11_0_poll_baco_exit(smu);
+	}
+
+	return ret;
 }
 
 int smu_v11_0_mode1_reset(struct smu_context *smu)
@@ -1909,7 +1896,7 @@ int smu_v11_0_set_performance_level(struct smu_context *smu,
 	 * Separate MCLK and SOCCLK soft min/max settings are not allowed
 	 * on Arcturus.
 	 */
-	if (adev->ip_versions[MP1_HWIP][0] == IP_VERSION(11, 0, 2)) {
+	if (amdgpu_ip_version(adev, MP1_HWIP, 0) == IP_VERSION(11, 0, 2)) {
 		mclk_min = mclk_max = 0;
 		socclk_min = socclk_max = 0;
 	}

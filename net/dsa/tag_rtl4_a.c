@@ -18,7 +18,9 @@
 #include <linux/etherdevice.h>
 #include <linux/bits.h>
 
-#include "dsa_priv.h"
+#include "tag.h"
+
+#define RTL4_A_NAME		"rtl4a"
 
 #define RTL4_A_HDR_LEN		4
 #define RTL4_A_ETHERTYPE	0x8899
@@ -34,7 +36,7 @@
 static struct sk_buff *rtl4a_tag_xmit(struct sk_buff *skb,
 				      struct net_device *dev)
 {
-	struct dsa_port *dp = dsa_slave_to_port(dev);
+	struct dsa_port *dp = dsa_user_to_port(dev);
 	__be16 *p;
 	u8 *tag;
 	u16 out;
@@ -95,9 +97,9 @@ static struct sk_buff *rtl4a_tag_rcv(struct sk_buff *skb,
 	}
 	port = protport & 0xff;
 
-	skb->dev = dsa_master_find_slave(dev, 0, port);
+	skb->dev = dsa_conduit_find_user(dev, 0, port);
 	if (!skb->dev) {
-		netdev_dbg(dev, "could not find slave for port %d\n", port);
+		netdev_dbg(dev, "could not find user for port %d\n", port);
 		return NULL;
 	}
 
@@ -112,7 +114,7 @@ static struct sk_buff *rtl4a_tag_rcv(struct sk_buff *skb,
 }
 
 static const struct dsa_device_ops rtl4a_netdev_ops = {
-	.name	= "rtl4a",
+	.name	= RTL4_A_NAME,
 	.proto	= DSA_TAG_PROTO_RTL4_A,
 	.xmit	= rtl4a_tag_xmit,
 	.rcv	= rtl4a_tag_rcv,
@@ -121,4 +123,4 @@ static const struct dsa_device_ops rtl4a_netdev_ops = {
 module_dsa_tag_driver(rtl4a_netdev_ops);
 
 MODULE_LICENSE("GPL");
-MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_RTL4_A);
+MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_RTL4_A, RTL4_A_NAME);

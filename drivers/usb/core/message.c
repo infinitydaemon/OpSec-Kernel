@@ -9,6 +9,7 @@
 #include <linux/pci.h>	/* for scatterlist macros */
 #include <linux/usb.h>
 #include <linux/module.h>
+#include <linux/of.h>
 #include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/timer.h>
@@ -1037,6 +1038,7 @@ char *usb_cache_string(struct usb_device *udev, int index)
 	}
 	return smallbuf;
 }
+EXPORT_SYMBOL_GPL(usb_cache_string);
 
 /*
  * usb_get_device_descriptor - read the device descriptor
@@ -1262,21 +1264,6 @@ static void remove_intf_ep_devs(struct usb_interface *intf)
 		usb_remove_ep_devs(&alt->endpoint[i]);
 	intf->ep_devs_created = 0;
 }
-
-void usb_fixup_endpoint(struct usb_device *dev, int epaddr, int interval)
-{
-	unsigned int epnum = epaddr & USB_ENDPOINT_NUMBER_MASK;
-	struct usb_host_endpoint *ep;
-
-	if (usb_endpoint_out(epaddr))
-		ep = dev->ep_out[epnum];
-	else
-		ep = dev->ep_in[epnum];
-
-	if (ep && usb_endpoint_xfer_int(&ep->desc))
-		usb_hcd_fixup_endpoint(dev, ep, interval);
-}
-EXPORT_SYMBOL_GPL(usb_fixup_endpoint);
 
 /**
  * usb_disable_endpoint -- Disable an endpoint by address
@@ -1828,11 +1815,11 @@ void usb_authorize_interface(struct usb_interface *intf)
 	}
 }
 
-static int usb_if_uevent(struct device *dev, struct kobj_uevent_env *env)
+static int usb_if_uevent(const struct device *dev, struct kobj_uevent_env *env)
 {
-	struct usb_device *usb_dev;
-	struct usb_interface *intf;
-	struct usb_host_interface *alt;
+	const struct usb_device *usb_dev;
+	const struct usb_interface *intf;
+	const struct usb_host_interface *alt;
 
 	intf = to_usb_interface(dev);
 	usb_dev = interface_to_usbdev(intf);
@@ -1917,6 +1904,45 @@ static void __usb_queue_reset_device(struct work_struct *ws)
 	usb_put_intf(iface);	/* Undo _get_ in usb_queue_reset_device() */
 }
 
+/*
+ * Internal function to set the wireless_status sysfs attribute
+ * See usb_set_wireless_status() for more details
+ */
+static void __usb_wireless_status_intf(struct work_struct *ws)
+{
+	struct usb_interface *iface =
+		container_of(ws, struct usb_interface, wireless_status_work);
+
+	device_lock(iface->dev.parent);
+	if (iface->sysfs_files_created)
+		usb_update_wireless_status_attr(iface);
+	device_unlock(iface->dev.parent);
+	usb_put_intf(iface);	/* Undo _get_ in usb_set_wireless_status() */
+}
+
+/**
+ * usb_set_wireless_status - sets the wireless_status struct member
+ * @iface: the interface to modify
+ * @status: the new wireless status
+ *
+ * Set the wireless_status struct member to the new value, and emit
+ * sysfs changes as necessary.
+ *
+ * Returns: 0 on success, -EALREADY if already set.
+ */
+int usb_set_wireless_status(struct usb_interface *iface,
+		enum usb_wireless_status status)
+{
+	if (iface->wireless_status == status)
+		return -EALREADY;
+
+	usb_get_intf(iface);
+	iface->wireless_status = status;
+	schedule_work(&iface->wireless_status_work);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(usb_set_wireless_status);
 
 /*
  * usb_set_configuration - Makes a particular device setting be current
@@ -2109,6 +2135,7 @@ free_interfaces:
 		intf->dev.type = &usb_if_device_type;
 		intf->dev.groups = usb_interface_groups;
 		INIT_WORK(&intf->reset_ws, __usb_queue_reset_device);
+		INIT_WORK(&intf->wireless_status_work, __usb_wireless_status_intf);
 		intf->minor = -1;
 		device_initialize(&intf->dev);
 		pm_runtime_no_callbacks(&intf->dev);
@@ -2150,85 +2177,6 @@ free_interfaces:
 	if (cp->string == NULL &&
 			!(dev->quirks & USB_QUIRK_CONFIG_INTF_STRINGS))
 		cp->string = usb_cache_string(dev, cp->desc.iConfiguration);
-/* Uncomment this define to enable the HS Electrical Test support */
-#define DWC_HS_ELECT_TST 1
-#ifdef DWC_HS_ELECT_TST
-		/* Here we implement the HS Electrical Test support. The
-		 * tester uses a vendor ID of 0x1A0A to indicate we should
-		 * run a special test sequence. The product ID tells us
-		 * which sequence to run. We invoke the test sequence by
-		 * sending a non-standard SetFeature command to our root
-		 * hub port. Our dwc_otg_hcd_hub_control() routine will
-		 * recognize the command and perform the desired test
-		 * sequence.
-		 */
-		if (dev->descriptor.idVendor == 0x1A0A) {
-			/* HSOTG Electrical Test */
-			dev_warn(&dev->dev, "VID from HSOTG Electrical Test Fixture\n");
-
-			if (dev->bus && dev->bus->root_hub) {
-				struct usb_device *hdev = dev->bus->root_hub;
-				dev_warn(&dev->dev, "Got PID 0x%x\n", dev->descriptor.idProduct);
-
-				switch (dev->descriptor.idProduct) {
-				case 0x0101:	/* TEST_SE0_NAK */
-					dev_warn(&dev->dev, "TEST_SE0_NAK\n");
-					usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
-							USB_REQ_SET_FEATURE, USB_RT_PORT,
-							USB_PORT_FEAT_TEST, 0x300, NULL, 0, HZ);
-					break;
-
-				case 0x0102:	/* TEST_J */
-					dev_warn(&dev->dev, "TEST_J\n");
-					usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
-							USB_REQ_SET_FEATURE, USB_RT_PORT,
-							USB_PORT_FEAT_TEST, 0x100, NULL, 0, HZ);
-					break;
-
-				case 0x0103:	/* TEST_K */
-					dev_warn(&dev->dev, "TEST_K\n");
-					usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
-							USB_REQ_SET_FEATURE, USB_RT_PORT,
-							USB_PORT_FEAT_TEST, 0x200, NULL, 0, HZ);
-					break;
-
-				case 0x0104:	/* TEST_PACKET */
-					dev_warn(&dev->dev, "TEST_PACKET\n");
-					usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
-							USB_REQ_SET_FEATURE, USB_RT_PORT,
-							USB_PORT_FEAT_TEST, 0x400, NULL, 0, HZ);
-					break;
-
-				case 0x0105:	/* TEST_FORCE_ENABLE */
-					dev_warn(&dev->dev, "TEST_FORCE_ENABLE\n");
-					usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
-							USB_REQ_SET_FEATURE, USB_RT_PORT,
-							USB_PORT_FEAT_TEST, 0x500, NULL, 0, HZ);
-					break;
-
-				case 0x0106:	/* HS_HOST_PORT_SUSPEND_RESUME */
-					dev_warn(&dev->dev, "HS_HOST_PORT_SUSPEND_RESUME\n");
-					usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
-							USB_REQ_SET_FEATURE, USB_RT_PORT,
-							USB_PORT_FEAT_TEST, 0x600, NULL, 0, 40 * HZ);
-					break;
-
-				case 0x0107:	/* SINGLE_STEP_GET_DEVICE_DESCRIPTOR setup */
-					dev_warn(&dev->dev, "SINGLE_STEP_GET_DEVICE_DESCRIPTOR setup\n");
-					usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
-							USB_REQ_SET_FEATURE, USB_RT_PORT,
-							USB_PORT_FEAT_TEST, 0x700, NULL, 0, 40 * HZ);
-					break;
-
-				case 0x0108:	/* SINGLE_STEP_GET_DEVICE_DESCRIPTOR execute */
-					dev_warn(&dev->dev, "SINGLE_STEP_GET_DEVICE_DESCRIPTOR execute\n");
-					usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
-							USB_REQ_SET_FEATURE, USB_RT_PORT,
-							USB_PORT_FEAT_TEST, 0x800, NULL, 0, 40 * HZ);
-				}
-			}
-		}
-#endif /* DWC_HS_ELECT_TST */
 
 	/* Now that the interfaces are installed, re-enable LPM. */
 	usb_unlocked_enable_lpm(dev);

@@ -8,13 +8,11 @@
 #include <linux/io.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/of_address.h>
-#include <linux/of_platform.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/printk.h>
 #include <linux/clk.h>
 #include <linux/reset.h>
-#include <linux/delay.h>
 
 #define RNG_CTRL	0x0
 #define RNG_STATUS	0x4
@@ -28,9 +26,6 @@
 #define RNG_WARMUP_COUNT 0x40000
 
 #define RNG_INT_OFF	0x1
-
-#define RNG_FIFO_WORDS	4
-#define RNG_US_PER_WORD	34 /* Tuned for throughput */
 
 struct bcm2835_rng_priv {
 	struct hwrng rng;
@@ -68,23 +63,19 @@ static inline void rng_writel(struct bcm2835_rng_priv *priv, u32 val,
 static int bcm2835_rng_read(struct hwrng *rng, void *buf, size_t max,
 			       bool wait)
 {
-	u32 retries = 1000000/(RNG_FIFO_WORDS * RNG_US_PER_WORD);
 	struct bcm2835_rng_priv *priv = to_rng_priv(rng);
 	u32 max_words = max / sizeof(u32);
 	u32 num_words, count;
 
-	num_words = rng_readl(priv, RNG_STATUS) >> 24;
-
-	while (!num_words) {
-		if (!wait || !retries)
+	while ((rng_readl(priv, RNG_STATUS) >> 24) == 0) {
+		if (!wait)
 			return 0;
-		retries--;
-		usleep_range((u32)RNG_US_PER_WORD,
-			     (u32)RNG_US_PER_WORD * RNG_FIFO_WORDS);
-		num_words = rng_readl(priv, RNG_STATUS) >> 24;
+		hwrng_yield(rng);
 	}
 
-	num_words = min(num_words, max_words);
+	num_words = rng_readl(priv, RNG_STATUS) >> 24;
+	if (num_words > max_words)
+		num_words = max_words;
 
 	for (count = 0; count < num_words; count++)
 		((u32 *)buf)[count] = rng_readl(priv, RNG_DATA);
@@ -114,10 +105,8 @@ static int bcm2835_rng_init(struct hwrng *rng)
 	}
 
 	/* set warm-up count & enable */
-	if (!(rng_readl(priv, RNG_CTRL) & RNG_RBGEN)) {
-		rng_writel(priv, RNG_WARMUP_COUNT, RNG_STATUS);
-		rng_writel(priv, RNG_RBGEN, RNG_CTRL);
-	}
+	rng_writel(priv, RNG_WARMUP_COUNT, RNG_STATUS);
+	rng_writel(priv, RNG_RBGEN, RNG_CTRL);
 
 	return ret;
 }
@@ -159,8 +148,6 @@ static int bcm2835_rng_probe(struct platform_device *pdev)
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
-
-	platform_set_drvdata(pdev, priv);
 
 	/* map peripheral */
 	priv->base = devm_platform_ioremap_resource(pdev, 0);

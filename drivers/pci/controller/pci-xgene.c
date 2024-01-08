@@ -14,7 +14,6 @@
 #include <linux/init.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
-#include <linux/of_irq.h>
 #include <linux/of_pci.h>
 #include <linux/pci.h>
 #include <linux/pci-acpi.h>
@@ -164,10 +163,11 @@ static int xgene_pcie_config_read32(struct pci_bus *bus, unsigned int devfn,
 				    int where, int size, u32 *val)
 {
 	struct xgene_pcie *port = pcie_bus_to_port(bus);
+	int ret;
 
-	if (pci_generic_config_read32(bus, devfn, where & ~0x3, 4, val) !=
-	    PCIBIOS_SUCCESSFUL)
-		return PCIBIOS_DEVICE_NOT_FOUND;
+	ret = pci_generic_config_read32(bus, devfn, where & ~0x3, 4, val);
+	if (ret != PCIBIOS_SUCCESSFUL)
+		return ret;
 
 	/*
 	 * The v1 controller has a bug in its Configuration Request Retry

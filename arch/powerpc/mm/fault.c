@@ -266,14 +266,15 @@ static bool access_error(bool is_write, bool is_exec, struct vm_area_struct *vma
 	}
 
 	/*
-	 * VM_READ, VM_WRITE and VM_EXEC all imply read permissions, as
-	 * defined in protection_map[].  Read faults can only be caused by
-	 * a PROT_NONE mapping, or with a PROT_EXEC-only mapping on Radix.
+	 * VM_READ, VM_WRITE and VM_EXEC may imply read permissions, as
+	 * defined in protection_map[].  In that case Read faults can only be
+	 * caused by a PROT_NONE mapping. However a non exec access on a
+	 * VM_EXEC only mapping is invalid anyway, so report it as such.
 	 */
 	if (unlikely(!vma_is_accessible(vma)))
 		return true;
 
-	if (unlikely(radix_enabled() && ((vma->vm_flags & VM_ACCESS_FLAGS) == VM_EXEC)))
+	if ((vma->vm_flags & VM_ACCESS_FLAGS) == VM_EXEC)
 		return true;
 
 	/*
@@ -469,6 +470,41 @@ static int ___do_page_fault(struct pt_regs *regs, unsigned long address,
 	if (is_exec)
 		flags |= FAULT_FLAG_INSTRUCTION;
 
+	if (!(flags & FAULT_FLAG_USER))
+		goto lock_mmap;
+
+	vma = lock_vma_under_rcu(mm, address);
+	if (!vma)
+		goto lock_mmap;
+
+	if (unlikely(access_pkey_error(is_write, is_exec,
+				       (error_code & DSISR_KEYFAULT), vma))) {
+		vma_end_read(vma);
+		goto lock_mmap;
+	}
+
+	if (unlikely(access_error(is_write, is_exec, vma))) {
+		vma_end_read(vma);
+		goto lock_mmap;
+	}
+
+	fault = handle_mm_fault(vma, address, flags | FAULT_FLAG_VMA_LOCK, regs);
+	if (!(fault & (VM_FAULT_RETRY | VM_FAULT_COMPLETED)))
+		vma_end_read(vma);
+
+	if (!(fault & VM_FAULT_RETRY)) {
+		count_vm_vma_lock_event(VMA_LOCK_SUCCESS);
+		goto done;
+	}
+	count_vm_vma_lock_event(VMA_LOCK_RETRY);
+	if (fault & VM_FAULT_MAJOR)
+		flags |= FAULT_FLAG_TRIED;
+
+	if (fault_signal_pending(fault, regs))
+		return user_mode(regs) ? 0 : SIGBUS;
+
+lock_mmap:
+
 	/* When running in the kernel we expect faults to occur only to
 	 * addresses in user space.  All other faults represent errors in the
 	 * kernel and should generate an OOPS.  Unfortunately, in the case of an
@@ -517,6 +553,7 @@ retry:
 
 	mmap_read_unlock(current->mm);
 
+done:
 	if (unlikely(fault & VM_FAULT_ERROR))
 		return mm_fault_error(regs, address, fault);
 

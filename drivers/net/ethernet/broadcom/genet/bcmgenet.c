@@ -67,12 +67,6 @@
 
 /* Forward declarations */
 static void bcmgenet_set_rx_mode(struct net_device *dev);
-static bool skip_umac_reset = false;
-module_param(skip_umac_reset, bool, 0444);
-MODULE_PARM_DESC(skip_umac_reset, "Skip UMAC reset step");
-static bool eee = true;
-module_param(eee, bool, 0444);
-MODULE_PARM_DESC(eee, "Enable EEE (default Y)");
 
 static inline void bcmgenet_writel(u32 value, void __iomem *offset)
 {
@@ -121,24 +115,6 @@ static inline void dmadesc_set(struct bcmgenet_priv *priv,
 {
 	dmadesc_set_addr(priv, d, addr);
 	dmadesc_set_length_status(priv, d, val);
-}
-
-static inline dma_addr_t dmadesc_get_addr(struct bcmgenet_priv *priv,
-					  void __iomem *d)
-{
-	dma_addr_t addr;
-
-	addr = bcmgenet_readl(d + DMA_DESC_ADDRESS_LO);
-
-	/* Register writes to GISB bus can take couple hundred nanoseconds
-	 * and are done for each packet, save these expensive writes unless
-	 * the platform is explicitly configured for 64-bits/LPAE.
-	 */
-#ifdef CONFIG_PHYS_ADDR_T_64BIT
-	if (priv->hw_params->flags & GENET_HAS_40BITS)
-		addr |= (u64)bcmgenet_readl(d + DMA_DESC_ADDRESS_HI) << 32;
-#endif
-	return addr;
 }
 
 #define GENET_VER_FMT	"%1d.%1d EPHY: 0x%04x"
@@ -1390,7 +1366,8 @@ static int bcmgenet_validate_flow(struct net_device *dev,
 	struct ethtool_usrip4_spec *l4_mask;
 	struct ethhdr *eth_mask;
 
-	if (cmd->fs.location >= MAX_NUM_OF_FS_RULES) {
+	if (cmd->fs.location >= MAX_NUM_OF_FS_RULES &&
+	    cmd->fs.location != RX_CLS_LOC_ANY) {
 		netdev_err(dev, "rxnfc: Invalid location (%d)\n",
 			   cmd->fs.location);
 		return -EINVAL;
@@ -1455,7 +1432,7 @@ static int bcmgenet_insert_flow(struct net_device *dev,
 {
 	struct bcmgenet_priv *priv = netdev_priv(dev);
 	struct bcmgenet_rxnfc_rule *loc_rule;
-	int err;
+	int err, i;
 
 	if (priv->hw_params->hfb_filter_size < 128) {
 		netdev_err(dev, "rxnfc: Not supported by this device\n");
@@ -1473,7 +1450,29 @@ static int bcmgenet_insert_flow(struct net_device *dev,
 	if (err)
 		return err;
 
-	loc_rule = &priv->rxnfc_rules[cmd->fs.location];
+	if (cmd->fs.location == RX_CLS_LOC_ANY) {
+		list_for_each_entry(loc_rule, &priv->rxnfc_list, list) {
+			cmd->fs.location = loc_rule->fs.location;
+			err = memcmp(&loc_rule->fs, &cmd->fs,
+				     sizeof(struct ethtool_rx_flow_spec));
+			if (!err)
+				/* rule exists so return current location */
+				return 0;
+		}
+		for (i = 0; i < MAX_NUM_OF_FS_RULES; i++) {
+			loc_rule = &priv->rxnfc_rules[i];
+			if (loc_rule->state == BCMGENET_RXNFC_STATE_UNUSED) {
+				cmd->fs.location = i;
+				break;
+			}
+		}
+		if (i == MAX_NUM_OF_FS_RULES) {
+			cmd->fs.location = RX_CLS_LOC_ANY;
+			return -ENOSPC;
+		}
+	} else {
+		loc_rule = &priv->rxnfc_rules[cmd->fs.location];
+	}
 	if (loc_rule->state == BCMGENET_RXNFC_STATE_ENABLED)
 		bcmgenet_hfb_disable_filter(priv, cmd->fs.location);
 	if (loc_rule->state != BCMGENET_RXNFC_STATE_UNUSED) {
@@ -1586,7 +1585,7 @@ static int bcmgenet_get_rxnfc(struct net_device *dev, struct ethtool_rxnfc *cmd,
 		break;
 	case ETHTOOL_GRXCLSRLCNT:
 		cmd->rule_cnt = bcmgenet_get_num_flows(priv);
-		cmd->data = MAX_NUM_OF_FS_RULES;
+		cmd->data = MAX_NUM_OF_FS_RULES | RX_CLS_LOC_SPECIAL;
 		break;
 	case ETHTOOL_GRXCLSRULE:
 		err = bcmgenet_get_flow(dev, cmd, cmd->fs.location);
@@ -2078,12 +2077,8 @@ static netdev_tx_t bcmgenet_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	spin_lock(&ring->lock);
 	if (ring->free_bds <= (nr_frags + 1)) {
-		if (!netif_tx_queue_stopped(txq)) {
+		if (!netif_tx_queue_stopped(txq))
 			netif_tx_stop_queue(txq);
-			netdev_err(dev,
-				   "%s: tx ring %d full when queue %d awake\n",
-				   __func__, index, ring->queue);
-		}
 		ret = NETDEV_TX_BUSY;
 		goto out;
 	}
@@ -2137,8 +2132,10 @@ static netdev_tx_t bcmgenet_xmit(struct sk_buff *skb, struct net_device *dev)
 		/* Note: if we ever change from DMA_TX_APPEND_CRC below we
 		 * will need to restore software padding of "runt" packets
 		 */
+		len_stat |= DMA_TX_APPEND_CRC;
+
 		if (!i) {
-			len_stat |= DMA_TX_APPEND_CRC | DMA_SOP;
+			len_stat |= DMA_SOP;
 			if (skb->ip_summed == CHECKSUM_PARTIAL)
 				len_stat |= DMA_TX_DO_CSUM;
 		}
@@ -2494,11 +2491,6 @@ static void reset_umac(struct bcmgenet_priv *priv)
 	bcmgenet_rbuf_ctrl_set(priv, 0);
 	udelay(10);
 
-	if (skip_umac_reset) {
-		pr_warn("Skipping UMAC reset\n");
-		return;
-	}
-
 	/* issue soft reset and disable MAC while updating its registers */
 	bcmgenet_umac_writel(priv, CMD_SW_RESET, UMAC_CMD);
 	udelay(2);
@@ -2668,7 +2660,7 @@ static void bcmgenet_init_tx_ring(struct bcmgenet_priv *priv,
 
 	bcmgenet_tdma_ring_writel(priv, index, 0, TDMA_PROD_INDEX);
 	bcmgenet_tdma_ring_writel(priv, index, 0, TDMA_CONS_INDEX);
-	bcmgenet_tdma_ring_writel(priv, index, 10, DMA_MBUF_DONE_THRESH);
+	bcmgenet_tdma_ring_writel(priv, index, 1, DMA_MBUF_DONE_THRESH);
 	/* Disable rate control for now */
 	bcmgenet_tdma_ring_writel(priv, index, flow_period_val,
 				  TDMA_FLOW_PERIOD);
@@ -3257,23 +3249,6 @@ static irqreturn_t bcmgenet_wol_isr(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-#ifdef CONFIG_NET_POLL_CONTROLLER
-static void bcmgenet_poll_controller(struct net_device *dev)
-{
-	struct bcmgenet_priv *priv = netdev_priv(dev);
-
-	/* Invoke the main RX/TX interrupt handler */
-	disable_irq(priv->irq0);
-	bcmgenet_isr0(priv->irq0, priv);
-	enable_irq(priv->irq0);
-
-	/* And the interrupt handler for RX/TX priority queues */
-	disable_irq(priv->irq1);
-	bcmgenet_isr1(priv->irq1, priv);
-	enable_irq(priv->irq1);
-}
-#endif
-
 static void bcmgenet_umac_reset(struct bcmgenet_priv *priv)
 {
 	u32 reg;
@@ -3307,7 +3282,7 @@ static void bcmgenet_get_hw_addr(struct bcmgenet_priv *priv,
 }
 
 /* Returns a reusable dma control register value */
-static u32 bcmgenet_dma_disable(struct bcmgenet_priv *priv, bool flush_rx)
+static u32 bcmgenet_dma_disable(struct bcmgenet_priv *priv)
 {
 	unsigned int i;
 	u32 reg;
@@ -3331,14 +3306,6 @@ static u32 bcmgenet_dma_disable(struct bcmgenet_priv *priv, bool flush_rx)
 	bcmgenet_umac_writel(priv, 1, UMAC_TX_FLUSH);
 	udelay(10);
 	bcmgenet_umac_writel(priv, 0, UMAC_TX_FLUSH);
-
-	if (flush_rx) {
-	    reg = bcmgenet_rbuf_ctrl_get(priv);
-	    bcmgenet_rbuf_ctrl_set(priv, reg | BIT(0));
-	    udelay(10);
-	    bcmgenet_rbuf_ctrl_set(priv, reg);
-	    udelay(10);
-	}
 
 	return dma_ctrl;
 }
@@ -3403,8 +3370,8 @@ static int bcmgenet_open(struct net_device *dev)
 
 	bcmgenet_set_hw_addr(priv, dev->dev_addr);
 
-	/* Disable RX/TX DMA and flush TX and RX queues */
-	dma_ctrl = bcmgenet_dma_disable(priv, true);
+	/* Disable RX/TX DMA and flush TX queues */
+	dma_ctrl = bcmgenet_dma_disable(priv);
 
 	/* Reinitialize TDMA and RDMA and SW housekeeping */
 	ret = bcmgenet_init_dma(priv);
@@ -3440,17 +3407,6 @@ static int bcmgenet_open(struct net_device *dev)
 	}
 
 	bcmgenet_phy_pause_set(dev, priv->rx_pause, priv->tx_pause);
-
-	if (!eee) {
-		struct ethtool_eee eee_data;
-
-		ret = bcmgenet_get_eee(dev, &eee_data);
-		if (ret == 0) {
-			eee_data.eee_enabled = 0;
-			bcmgenet_set_eee(dev, &eee_data);
-			netdev_warn(dev, "EEE disabled\n");
-		}
-	}
 
 	bcmgenet_netif_start(dev);
 
@@ -3749,9 +3705,6 @@ static const struct net_device_ops bcmgenet_netdev_ops = {
 	.ndo_set_mac_address	= bcmgenet_set_mac_addr,
 	.ndo_eth_ioctl		= phy_do_ioctl_running,
 	.ndo_set_features	= bcmgenet_set_features,
-#ifdef CONFIG_NET_POLL_CONTROLLER
-	.ndo_poll_controller	= bcmgenet_poll_controller,
-#endif
 	.ndo_get_stats		= bcmgenet_get_stats,
 	.ndo_change_carrier	= bcmgenet_change_carrier,
 };
@@ -4168,12 +4121,9 @@ static int bcmgenet_probe(struct platform_device *pdev)
 	netif_set_real_num_rx_queues(priv->dev, priv->hw_params->rx_queues + 1);
 
 	/* Set default coalescing parameters */
-	for (i = 0; i < priv->hw_params->rx_queues; i++) {
+	for (i = 0; i < priv->hw_params->rx_queues; i++)
 		priv->rx_rings[i].rx_max_coalesced_frames = 1;
-		priv->rx_rings[i].rx_coalesce_usecs = 50;
-	}
 	priv->rx_rings[DESC_INDEX].rx_max_coalesced_frames = 1;
-	priv->rx_rings[DESC_INDEX].rx_coalesce_usecs = 50;
 
 	/* libphy will determine the link state */
 	netif_carrier_off(dev);
@@ -4196,7 +4146,7 @@ err:
 	return err;
 }
 
-static int bcmgenet_remove(struct platform_device *pdev)
+static void bcmgenet_remove(struct platform_device *pdev)
 {
 	struct bcmgenet_priv *priv = dev_to_priv(&pdev->dev);
 
@@ -4204,8 +4154,6 @@ static int bcmgenet_remove(struct platform_device *pdev)
 	unregister_netdev(priv->dev);
 	bcmgenet_mii_exit(priv->dev);
 	free_netdev(priv->dev);
-
-	return 0;
 }
 
 static void bcmgenet_shutdown(struct platform_device *pdev)
@@ -4289,7 +4237,7 @@ static int bcmgenet_resume(struct device *d)
 			bcmgenet_hfb_create_rxnfc_filter(priv, rule);
 
 	/* Disable RX/TX DMA and flush TX queues */
-	dma_ctrl = bcmgenet_dma_disable(priv, false);
+	dma_ctrl = bcmgenet_dma_disable(priv);
 
 	/* Reinitialize TDMA and RDMA and SW housekeeping */
 	ret = bcmgenet_init_dma(priv);
@@ -4384,7 +4332,7 @@ MODULE_DEVICE_TABLE(acpi, genet_acpi_match);
 
 static struct platform_driver bcmgenet_driver = {
 	.probe	= bcmgenet_probe,
-	.remove	= bcmgenet_remove,
+	.remove_new = bcmgenet_remove,
 	.shutdown = bcmgenet_shutdown,
 	.driver	= {
 		.name	= "bcmgenet",

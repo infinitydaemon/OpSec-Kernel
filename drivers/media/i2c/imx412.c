@@ -127,7 +127,6 @@ static const char * const imx412_supply_names[] = {
  * @vblank: Vertical blanking in lines
  * @cur_mode: Pointer to current selected sensor mode
  * @mutex: Mutex for serializing sensor controls
- * @streaming: Flag indicating streaming state
  */
 struct imx412 {
 	struct device *dev;
@@ -149,7 +148,6 @@ struct imx412 {
 	u32 vblank;
 	const struct imx412_mode *cur_mode;
 	struct mutex mutex;
-	bool streaming;
 };
 
 static const s64 link_freq[] = {
@@ -857,11 +855,6 @@ static int imx412_set_stream(struct v4l2_subdev *sd, int enable)
 
 	mutex_lock(&imx412->mutex);
 
-	if (imx412->streaming == enable) {
-		mutex_unlock(&imx412->mutex);
-		return 0;
-	}
-
 	if (enable) {
 		ret = pm_runtime_resume_and_get(imx412->dev);
 		if (ret)
@@ -874,8 +867,6 @@ static int imx412_set_stream(struct v4l2_subdev *sd, int enable)
 		imx412_stop_streaming(imx412);
 		pm_runtime_put(imx412->dev);
 	}
-
-	imx412->streaming = enable;
 
 	mutex_unlock(&imx412->mutex);
 
@@ -1172,6 +1163,7 @@ static int imx412_init_controls(struct imx412 *imx412)
 static int imx412_probe(struct i2c_client *client)
 {
 	struct imx412 *imx412;
+	const char *name;
 	int ret;
 
 	imx412 = devm_kzalloc(&client->dev, sizeof(*imx412), GFP_KERNEL);
@@ -1179,6 +1171,9 @@ static int imx412_probe(struct i2c_client *client)
 		return -ENOMEM;
 
 	imx412->dev = &client->dev;
+	name = device_get_match_data(&client->dev);
+	if (!name)
+		return -ENODEV;
 
 	/* Initialize subdev */
 	v4l2_i2c_subdev_init(&imx412->sd, client, &imx412_subdev_ops);
@@ -1217,6 +1212,8 @@ static int imx412_probe(struct i2c_client *client)
 	/* Initialize subdev */
 	imx412->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	imx412->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
+
+	v4l2_i2c_subdev_set_name(&imx412->sd, client, name, NULL);
 
 	/* Initialize source pad */
 	imx412->pad.flags = MEDIA_PAD_FL_SOURCE;
@@ -1279,14 +1276,15 @@ static const struct dev_pm_ops imx412_pm_ops = {
 };
 
 static const struct of_device_id imx412_of_match[] = {
-	{ .compatible = "sony,imx412" },
+	{ .compatible = "sony,imx412", .data = "imx412" },
+	{ .compatible = "sony,imx577", .data = "imx577" },
 	{ }
 };
 
 MODULE_DEVICE_TABLE(of, imx412_of_match);
 
 static struct i2c_driver imx412_driver = {
-	.probe_new = imx412_probe,
+	.probe = imx412_probe,
 	.remove = imx412_remove,
 	.driver = {
 		.name = "imx412",

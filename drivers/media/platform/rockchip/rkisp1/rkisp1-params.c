@@ -715,7 +715,7 @@ static void rkisp1_aec_config_v12(struct rkisp1_params *params,
 	u32 exp_ctrl;
 	u32 block_hsize, block_vsize;
 	u32 wnd_num_idx = 1;
-	const u32 ae_wnd_num[] = { 5, 9, 15, 15 };
+	static const u32 ae_wnd_num[] = { 5, 9, 15, 15 };
 
 	/* avoid to override the old enable value */
 	exp_ctrl = rkisp1_read(params->rkisp1, RKISP1_CIF_ISP_EXP_CTRL);
@@ -812,7 +812,7 @@ static void rkisp1_hst_config_v10(struct rkisp1_params *params,
 								weight[2], weight[3]));
 
 	rkisp1_write(params->rkisp1, RKISP1_CIF_ISP_HIST_WEIGHT_44_V10,
-		     weight[0] & 0x1F);
+		     weight[0] & 0x1f);
 }
 
 static void rkisp1_hst_config_v12(struct rkisp1_params *params,
@@ -822,7 +822,7 @@ static void rkisp1_hst_config_v12(struct rkisp1_params *params,
 	u32 block_hsize, block_vsize;
 	u32 wnd_num_idx, hist_weight_num, hist_ctrl, value;
 	u8 weight15x15[RKISP1_CIF_ISP_HIST_WEIGHT_REG_SIZE_V12];
-	const u32 hist_wnd_num[] = { 5, 9, 15, 15 };
+	static const u32 hist_wnd_num[] = { 5, 9, 15, 15 };
 
 	/* now we just support 9x9 window */
 	wnd_num_idx = 1;
@@ -1726,7 +1726,7 @@ static const struct rkisp1_params_ops rkisp1_v10_params_ops = {
 	.afm_config = rkisp1_afm_config_v10,
 };
 
-static struct rkisp1_params_ops rkisp1_v12_params_ops = {
+static const struct rkisp1_params_ops rkisp1_v12_params_ops = {
 	.lsc_matrix_config = rkisp1_lsc_matrix_config_v12,
 	.goc_config = rkisp1_goc_config_v12,
 	.awb_meas_config = rkisp1_awb_meas_config_v12,

@@ -22,9 +22,6 @@ struct bcm2836_arm_irqchip_intc {
 
 static struct bcm2836_arm_irqchip_intc intc  __read_mostly;
 
-void __iomem *arm_local_intc;
-EXPORT_SYMBOL_GPL(arm_local_intc);
-
 static void bcm2836_arm_irqchip_mask_per_cpu_irq(unsigned int reg_offset,
 						 unsigned int bit,
 						 int cpu)
@@ -87,27 +84,6 @@ static void bcm2836_arm_irqchip_unmask_gpu_irq(struct irq_data *d)
 {
 }
 
-#ifdef CONFIG_ARM64
-
-void bcm2836_arm_irqchip_spin_gpu_irq(void)
-{
-	u32 i;
-	void __iomem *gpurouting = (intc.base + LOCAL_GPU_ROUTING);
-	u32 routing_val = readl(gpurouting);
-
-	for (i = 1; i <= 3; i++) {
-		u32 new_routing_val = (routing_val + i) & 3;
-
-		if (cpu_active(new_routing_val)) {
-			writel(new_routing_val, gpurouting);
-			return;
-		}
-	}
-}
-EXPORT_SYMBOL(bcm2836_arm_irqchip_spin_gpu_irq);
-
-#endif
-
 static struct irq_chip bcm2836_arm_irqchip_gpu = {
 	.name		= "bcm2836-gpu",
 	.irq_mask	= bcm2836_arm_irqchip_mask_gpu_irq,
@@ -152,7 +128,7 @@ static int bcm2836_map(struct irq_domain *d, unsigned int irq,
 	irq_set_percpu_devid(irq);
 	irq_domain_set_info(d, irq, hw, chip, d->host_data,
 			    handle_percpu_devid_irq, NULL, NULL);
-	irq_set_status_flags(irq, IRQ_NOAUTOEN | IRQ_TYPE_LEVEL_LOW);
+	irq_set_status_flags(irq, IRQ_NOAUTOEN);
 
 	return 0;
 }
@@ -292,10 +268,7 @@ static void __init bcm2836_arm_irqchip_smp_init(void)
 	ipi_domain->flags |= IRQ_DOMAIN_FLAG_IPI_SINGLE;
 	irq_domain_update_bus_token(ipi_domain, DOMAIN_BUS_IPI);
 
-	base_ipi = __irq_domain_alloc_irqs(ipi_domain, -1, BITS_PER_MBOX,
-					   NUMA_NO_NODE, NULL,
-					   false, NULL);
-
+	base_ipi = irq_domain_alloc_irqs(ipi_domain, BITS_PER_MBOX, NUMA_NO_NODE, NULL);
 	if (WARN_ON(!base_ipi))
 		return;
 
@@ -346,8 +319,6 @@ static int __init bcm2836_arm_irqchip_l1_intc_of_init(struct device_node *node,
 	if (!intc.base) {
 		panic("%pOF: unable to map local interrupt registers\n", node);
 	}
-
-	arm_local_intc = intc.base;
 
 	bcm2835_init_local_timer_frequency();
 

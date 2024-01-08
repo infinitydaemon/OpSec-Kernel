@@ -92,7 +92,6 @@ struct serial8250_config {
 #define UART_BUG_NOMSR	BIT(2)	/* UART has buggy MSR status bits (Au1x00) */
 #define UART_BUG_THRE	BIT(3)	/* UART has buggy THRE reassertion */
 #define UART_BUG_TXRACE	BIT(5)	/* UART Tx fails to set remote DR */
-#define UART_BUG_NOMSI	BIT(6)	/* UART has no modem status interrupt */
 
 
 #ifdef CONFIG_SERIAL_8250_SHARE_IRQ
@@ -167,18 +166,21 @@ static unsigned int __maybe_unused serial_icr_read(struct uart_8250_port *up,
 
 void serial8250_clear_and_reinit_fifos(struct uart_8250_port *p);
 
-static inline int serial_dl_read(struct uart_8250_port *up)
+static inline u32 serial_dl_read(struct uart_8250_port *up)
 {
 	return up->dl_read(up);
 }
 
-static inline void serial_dl_write(struct uart_8250_port *up, int value)
+static inline void serial_dl_write(struct uart_8250_port *up, u32 value)
 {
 	up->dl_write(up, value);
 }
 
 static inline bool serial8250_set_THRI(struct uart_8250_port *up)
 {
+	/* Port locked to synchronize UART_IER access against the console. */
+	lockdep_assert_held_once(&up->port.lock);
+
 	if (up->ier & UART_IER_THRI)
 		return false;
 	up->ier |= UART_IER_THRI;
@@ -188,6 +190,9 @@ static inline bool serial8250_set_THRI(struct uart_8250_port *up)
 
 static inline bool serial8250_clear_THRI(struct uart_8250_port *up)
 {
+	/* Port locked to synchronize UART_IER access against the console. */
+	lockdep_assert_held_once(&up->port.lock);
+
 	if (!(up->ier & UART_IER_THRI))
 		return false;
 	up->ier &= ~UART_IER_THRI;

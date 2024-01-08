@@ -36,9 +36,6 @@ struct l2tp_ip6_sock {
 	u32			conn_id;
 	u32			peer_conn_id;
 
-	/* ipv6_pinfo has to be the last member of l2tp_ip6_sock, see
-	 * inet6_sk_generic
-	 */
 	struct ipv6_pinfo	inet6;
 };
 
@@ -434,7 +431,7 @@ static int l2tp_ip6_getname(struct socket *sock, struct sockaddr *uaddr,
 			return -ENOTCONN;
 		lsa->l2tp_conn_id = lsk->peer_conn_id;
 		lsa->l2tp_addr = sk->sk_v6_daddr;
-		if (np->sndflow)
+		if (inet6_test_bit(SNDFLOW, sk))
 			lsa->l2tp_flowinfo = np->flow_label;
 	} else {
 		if (ipv6_addr_any(&sk->sk_v6_rcv_saddr))
@@ -531,7 +528,7 @@ static int l2tp_ip6_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 			return -EAFNOSUPPORT;
 
 		daddr = &lsa->l2tp_addr;
-		if (np->sndflow) {
+		if (inet6_test_bit(SNDFLOW, sk)) {
 			fl6.flowlabel = lsa->l2tp_flowinfo & IPV6_FLOWINFO_MASK;
 			if (fl6.flowlabel & IPV6_FLOWLABEL_MASK) {
 				flowlabel = fl6_sock_lookup(sk, fl6.flowlabel);
@@ -623,7 +620,7 @@ static int l2tp_ip6_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 		ipc6.hlimit = ip6_sk_dst_hoplimit(np, &fl6, dst);
 
 	if (ipc6.dontfrag < 0)
-		ipc6.dontfrag = np->dontfrag;
+		ipc6.dontfrag = inet6_test_bit(DONTFRAG, sk);
 
 	if (msg->msg_flags & MSG_CONFIRM)
 		goto do_confirm;
@@ -730,6 +727,7 @@ static struct proto l2tp_ip6_prot = {
 	.hash		   = l2tp_ip6_hash,
 	.unhash		   = l2tp_ip6_unhash,
 	.obj_size	   = sizeof(struct l2tp_ip6_sock),
+	.ipv6_pinfo_offset = offsetof(struct l2tp_ip6_sock, inet6),
 };
 
 static const struct proto_ops l2tp_ip6_ops = {
@@ -751,7 +749,6 @@ static const struct proto_ops l2tp_ip6_ops = {
 	.sendmsg	   = inet_sendmsg,
 	.recvmsg	   = sock_common_recvmsg,
 	.mmap		   = sock_no_mmap,
-	.sendpage	   = sock_no_sendpage,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	   = inet6_compat_ioctl,
 #endif

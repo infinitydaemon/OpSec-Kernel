@@ -102,7 +102,9 @@ void machine_shutdown(void)
  */
 void machine_halt(void)
 {
-	machine_power_off();
+	local_irq_disable();
+	smp_send_stop();
+	while (1);
 }
 
 /*

@@ -110,7 +110,7 @@ static inline struct tc358743_state *to_state(struct v4l2_subdev *sd)
 
 /* --------------- I2C --------------- */
 
-static int i2c_rd(struct v4l2_subdev *sd, u16 reg, u8 *values, u32 n)
+static void i2c_rd(struct v4l2_subdev *sd, u16 reg, u8 *values, u32 n)
 {
 	struct tc358743_state *state = to_state(sd);
 	struct i2c_client *client = state->i2c_client;
@@ -133,10 +133,9 @@ static int i2c_rd(struct v4l2_subdev *sd, u16 reg, u8 *values, u32 n)
 
 	err = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
 	if (err != ARRAY_SIZE(msgs)) {
-		v4l2_err(sd, "%s: reading register 0x%x from 0x%x failed\n",
-				__func__, reg, client->addr);
+		v4l2_err(sd, "%s: reading register 0x%x from 0x%x failed: %d\n",
+				__func__, reg, client->addr, err);
 	}
-	return err != ARRAY_SIZE(msgs);
 }
 
 static void i2c_wr(struct v4l2_subdev *sd, u16 reg, u8 *values, u32 n)
@@ -166,8 +165,8 @@ static void i2c_wr(struct v4l2_subdev *sd, u16 reg, u8 *values, u32 n)
 
 	err = i2c_transfer(client->adapter, &msg, 1);
 	if (err != 1) {
-		v4l2_err(sd, "%s: writing register 0x%x from 0x%x failed\n",
-				__func__, reg, client->addr);
+		v4l2_err(sd, "%s: writing register 0x%x from 0x%x failed: %d\n",
+				__func__, reg, client->addr, err);
 		return;
 	}
 
@@ -193,22 +192,13 @@ static void i2c_wr(struct v4l2_subdev *sd, u16 reg, u8 *values, u32 n)
 	}
 }
 
-static noinline u32 i2c_rdreg_err(struct v4l2_subdev *sd, u16 reg, u32 n,
-				  int *err)
+static noinline u32 i2c_rdreg(struct v4l2_subdev *sd, u16 reg, u32 n)
 {
-	int error;
 	__le32 val = 0;
 
-	error = i2c_rd(sd, reg, (u8 __force *)&val, n);
-	if (err)
-		*err = error;
+	i2c_rd(sd, reg, (u8 __force *)&val, n);
 
 	return le32_to_cpu(val);
-}
-
-static inline u32 i2c_rdreg(struct v4l2_subdev *sd, u16 reg, u32 n)
-{
-	return i2c_rdreg_err(sd, reg, n, NULL);
 }
 
 static noinline void i2c_wrreg(struct v4l2_subdev *sd, u16 reg, u32 val, u32 n)
@@ -237,13 +227,6 @@ static void i2c_wr8_and_or(struct v4l2_subdev *sd, u16 reg,
 static u16 i2c_rd16(struct v4l2_subdev *sd, u16 reg)
 {
 	return i2c_rdreg(sd, reg, 2);
-}
-
-static int i2c_rd16_err(struct v4l2_subdev *sd, u16 reg, u16 *value)
-{
-	int err;
-	*value = i2c_rdreg_err(sd, reg, 2, &err);
-	return err;
 }
 
 static void i2c_wr16(struct v4l2_subdev *sd, u16 reg, u16 val)
@@ -1668,23 +1651,12 @@ static int tc358743_enum_mbus_code(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static u32 tc358743_g_colorspace(u32 code)
-{
-	switch (code) {
-	case MEDIA_BUS_FMT_RGB888_1X24:
-		return V4L2_COLORSPACE_SRGB;
-	case MEDIA_BUS_FMT_UYVY8_1X16:
-		return V4L2_COLORSPACE_SMPTE170M;
-	default:
-		return 0;
-	}
-}
-
 static int tc358743_get_fmt(struct v4l2_subdev *sd,
 		struct v4l2_subdev_state *sd_state,
 		struct v4l2_subdev_format *format)
 {
 	struct tc358743_state *state = to_state(sd);
+	u8 vi_rep = i2c_rd8(sd, VI_REP);
 
 	if (format->pad != 0)
 		return -EINVAL;
@@ -1694,7 +1666,23 @@ static int tc358743_get_fmt(struct v4l2_subdev *sd,
 	format->format.height = state->timings.bt.height;
 	format->format.field = V4L2_FIELD_NONE;
 
-	format->format.colorspace = tc358743_g_colorspace(format->format.code);
+	switch (vi_rep & MASK_VOUT_COLOR_SEL) {
+	case MASK_VOUT_COLOR_RGB_FULL:
+	case MASK_VOUT_COLOR_RGB_LIMITED:
+		format->format.colorspace = V4L2_COLORSPACE_SRGB;
+		break;
+	case MASK_VOUT_COLOR_601_YCBCR_LIMITED:
+	case MASK_VOUT_COLOR_601_YCBCR_FULL:
+		format->format.colorspace = V4L2_COLORSPACE_SMPTE170M;
+		break;
+	case MASK_VOUT_COLOR_709_YCBCR_FULL:
+	case MASK_VOUT_COLOR_709_YCBCR_LIMITED:
+		format->format.colorspace = V4L2_COLORSPACE_REC709;
+		break;
+	default:
+		format->format.colorspace = 0;
+		break;
+	}
 
 	return 0;
 }
@@ -1708,13 +1696,18 @@ static int tc358743_set_fmt(struct v4l2_subdev *sd,
 	u32 code = format->format.code; /* is overwritten by get_fmt */
 	int ret = tc358743_get_fmt(sd, sd_state, format);
 
-	if (code == MEDIA_BUS_FMT_RGB888_1X24 ||
-	    code == MEDIA_BUS_FMT_UYVY8_1X16)
-		format->format.code = code;
-	format->format.colorspace = tc358743_g_colorspace(format->format.code);
+	format->format.code = code;
 
 	if (ret)
 		return ret;
+
+	switch (code) {
+	case MEDIA_BUS_FMT_RGB888_1X24:
+	case MEDIA_BUS_FMT_UYVY8_1X16:
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	if (format->which == V4L2_SUBDEV_FORMAT_TRY)
 		return 0;
@@ -1898,12 +1891,9 @@ static int tc358743_probe_of(struct tc358743_state *state)
 	int ret;
 
 	refclk = devm_clk_get(dev, "refclk");
-	if (IS_ERR(refclk)) {
-		if (PTR_ERR(refclk) != -EPROBE_DEFER)
-			dev_err(dev, "failed to get refclk: %ld\n",
-				PTR_ERR(refclk));
-		return PTR_ERR(refclk);
-	}
+	if (IS_ERR(refclk))
+		return dev_err_probe(dev, PTR_ERR(refclk),
+				     "failed to get refclk\n");
 
 	ep = of_graph_get_next_endpoint(dev->of_node, NULL);
 	if (!ep) {
@@ -1943,7 +1933,7 @@ static int tc358743_probe_of(struct tc358743_state *state)
 	state->pdata.ddc5v_delay = DDC5V_DELAY_100_MS;
 	state->pdata.enable_hdcp = false;
 	/* A FIFO level of 16 should be enough for 2-lane 720p60 at 594 MHz. */
-	state->pdata.fifo_level = 374;
+	state->pdata.fifo_level = 16;
 	/*
 	 * The PLL input clock is obtained by dividing refclk by pll_prd.
 	 * It must be between 6 MHz and 40 MHz, lower frequency is better.
@@ -1963,7 +1953,6 @@ static int tc358743_probe_of(struct tc358743_state *state)
 	/*
 	 * The CSI bps per lane must be between 62.5 Mbps and 1 Gbps.
 	 * The default is 594 Mbps for 4-lane 1080p60 or 2-lane 720p60.
-	 * 972 Mbps allows 1080P50 UYVY over 2-lane.
 	 */
 	bps_pr_lane = 2 * endpoint.link_frequencies[0];
 	if (bps_pr_lane < 62500000U || bps_pr_lane > 1000000000U) {
@@ -1977,42 +1966,23 @@ static int tc358743_probe_of(struct tc358743_state *state)
 			       state->pdata.refclk_hz * state->pdata.pll_prd;
 
 	/*
-	 * FIXME: These timings are from REF_02 for 594 or 972 Mbps per lane
-	 * (297 MHz or 486 MHz link frequency).
-	 * In principle it should be possible to calculate
+	 * FIXME: These timings are from REF_02 for 594 Mbps per lane (297 MHz
+	 * link frequency). In principle it should be possible to calculate
 	 * them based on link frequency and resolution.
 	 */
-	switch (bps_pr_lane) {
-	default:
+	if (bps_pr_lane != 594000000U)
 		dev_warn(dev, "untested bps per lane: %u bps\n", bps_pr_lane);
-		fallthrough;
-	case 594000000U:
-		state->pdata.lineinitcnt = 0xe80;
-		state->pdata.lptxtimecnt = 0x003;
-		/* tclk-preparecnt: 3, tclk-zerocnt: 20 */
-		state->pdata.tclk_headercnt = 0x1403;
-		state->pdata.tclk_trailcnt = 0x00;
-		/* ths-preparecnt: 3, ths-zerocnt: 1 */
-		state->pdata.ths_headercnt = 0x0103;
-		state->pdata.twakeup = 0x4882;
-		state->pdata.tclk_postcnt = 0x008;
-		state->pdata.ths_trailcnt = 0x2;
-		state->pdata.hstxvregcnt = 0;
-		break;
-	case 972000000U:
-		state->pdata.lineinitcnt = 0x1b58;
-		state->pdata.lptxtimecnt = 0x007;
-		/* tclk-preparecnt: 6, tclk-zerocnt: 40 */
-		state->pdata.tclk_headercnt = 0x2806;
-		state->pdata.tclk_trailcnt = 0x00;
-		/* ths-preparecnt: 6, ths-zerocnt: 8 */
-		state->pdata.ths_headercnt = 0x0806;
-		state->pdata.twakeup = 0x4268;
-		state->pdata.tclk_postcnt = 0x008;
-		state->pdata.ths_trailcnt = 0x5;
-		state->pdata.hstxvregcnt = 0;
-		break;
-	}
+	state->pdata.lineinitcnt = 0xe80;
+	state->pdata.lptxtimecnt = 0x003;
+	/* tclk-preparecnt: 3, tclk-zerocnt: 20 */
+	state->pdata.tclk_headercnt = 0x1403;
+	state->pdata.tclk_trailcnt = 0x00;
+	/* ths-preparecnt: 3, ths-zerocnt: 1 */
+	state->pdata.ths_headercnt = 0x0103;
+	state->pdata.twakeup = 0x4882;
+	state->pdata.tclk_postcnt = 0x008;
+	state->pdata.ths_trailcnt = 0x2;
+	state->pdata.hstxvregcnt = 0;
 
 	state->reset_gpio = devm_gpiod_get_optional(dev, "reset",
 						    GPIOD_OUT_LOW);
@@ -2051,7 +2021,6 @@ static int tc358743_probe(struct i2c_client *client)
 	struct tc358743_platform_data *pdata = client->dev.platform_data;
 	struct v4l2_subdev *sd;
 	u16 irq_mask = MASK_HDMI_MSK | MASK_CSI_MSK;
-	u16 chipid;
 	int err;
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA))
@@ -2083,8 +2052,7 @@ static int tc358743_probe(struct i2c_client *client)
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE | V4L2_SUBDEV_FL_HAS_EVENTS;
 
 	/* i2c access */
-	if (i2c_rd16_err(sd, CHIPID, &chipid) ||
-	    (chipid & MASK_CHIPID) != 0) {
+	if ((i2c_rd16(sd, CHIPID) & MASK_CHIPID) != 0) {
 		v4l2_info(sd, "not a TC358743 on address 0x%x\n",
 			  client->addr << 1);
 		return -ENODEV;
@@ -2238,7 +2206,7 @@ static struct i2c_driver tc358743_driver = {
 		.name = "tc358743",
 		.of_match_table = of_match_ptr(tc358743_of_match),
 	},
-	.probe_new = tc358743_probe,
+	.probe = tc358743_probe,
 	.remove = tc358743_remove,
 	.id_table = tc358743_id,
 };

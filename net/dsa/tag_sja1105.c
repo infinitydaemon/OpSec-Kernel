@@ -5,7 +5,12 @@
 #include <linux/dsa/sja1105.h>
 #include <linux/dsa/8021q.h>
 #include <linux/packing.h>
-#include "dsa_priv.h"
+
+#include "tag.h"
+#include "tag_8021q.h"
+
+#define SJA1105_NAME				"sja1105"
+#define SJA1110_NAME				"sja1110"
 
 /* Is this a TX or an RX header? */
 #define SJA1110_HEADER_HOST_TO_SWITCH		BIT(15)
@@ -152,7 +157,7 @@ static struct sk_buff *sja1105_defer_xmit(struct dsa_port *dp,
 		return NULL;
 
 	kthread_init_work(&xmit_work->work, xmit_work_fn);
-	/* Increase refcount so the kfree_skb in dsa_slave_xmit
+	/* Increase refcount so the kfree_skb in dsa_user_xmit
 	 * won't really free the packet.
 	 */
 	xmit_work->dp = dp;
@@ -205,7 +210,7 @@ static u16 sja1105_xmit_tpid(struct dsa_port *dp)
 static struct sk_buff *sja1105_imprecise_xmit(struct sk_buff *skb,
 					      struct net_device *netdev)
 {
-	struct dsa_port *dp = dsa_slave_to_port(netdev);
+	struct dsa_port *dp = dsa_user_to_port(netdev);
 	unsigned int bridge_num = dsa_port_bridge_num_get(dp);
 	struct net_device *br = dsa_port_bridge_dev_get(dp);
 	u16 tx_vid;
@@ -230,7 +235,7 @@ static struct sk_buff *sja1105_imprecise_xmit(struct sk_buff *skb,
 
 /* Transform untagged control packets into pvid-tagged control packets so that
  * all packets sent by this tagger are VLAN-tagged and we can configure the
- * switch to drop untagged packets coming from the DSA master.
+ * switch to drop untagged packets coming from the DSA conduit.
  */
 static struct sk_buff *sja1105_pvid_tag_control_pkt(struct dsa_port *dp,
 						    struct sk_buff *skb, u8 pcp)
@@ -248,7 +253,7 @@ static struct sk_buff *sja1105_pvid_tag_control_pkt(struct dsa_port *dp,
 			return NULL;
 	}
 
-	hdr = (struct vlan_ethhdr *)skb_mac_header(skb);
+	hdr = skb_vlan_eth_hdr(skb);
 
 	/* If skb is already VLAN-tagged, leave that VLAN ID in place */
 	if (hdr->h_vlan_proto == xmit_tpid)
@@ -261,7 +266,7 @@ static struct sk_buff *sja1105_pvid_tag_control_pkt(struct dsa_port *dp,
 static struct sk_buff *sja1105_xmit(struct sk_buff *skb,
 				    struct net_device *netdev)
 {
-	struct dsa_port *dp = dsa_slave_to_port(netdev);
+	struct dsa_port *dp = dsa_user_to_port(netdev);
 	u16 queue_mapping = skb_get_queue_mapping(skb);
 	u8 pcp = netdev_txq_to_tc(netdev, queue_mapping);
 	u16 tx_vid = dsa_tag_8021q_standalone_vid(dp);
@@ -289,7 +294,7 @@ static struct sk_buff *sja1110_xmit(struct sk_buff *skb,
 				    struct net_device *netdev)
 {
 	struct sk_buff *clone = SJA1105_SKB_CB(skb)->clone;
-	struct dsa_port *dp = dsa_slave_to_port(netdev);
+	struct dsa_port *dp = dsa_user_to_port(netdev);
 	u16 queue_mapping = skb_get_queue_mapping(skb);
 	u8 pcp = netdev_txq_to_tc(netdev, queue_mapping);
 	u16 tx_vid = dsa_tag_8021q_standalone_vid(dp);
@@ -378,7 +383,7 @@ static struct sk_buff
 	 * Buffer it until we get its meta frame.
 	 */
 	if (is_link_local) {
-		struct dsa_port *dp = dsa_slave_to_port(skb->dev);
+		struct dsa_port *dp = dsa_user_to_port(skb->dev);
 		struct sja1105_tagger_private *priv;
 		struct dsa_switch *ds = dp->ds;
 
@@ -391,7 +396,7 @@ static struct sk_buff
 		if (priv->stampable_skb) {
 			dev_err_ratelimited(ds->dev,
 					    "Expected meta frame, is %12llx "
-					    "in the DSA master multicast filter?\n",
+					    "in the DSA conduit multicast filter?\n",
 					    SJA1105_META_DMAC);
 			kfree_skb(priv->stampable_skb);
 		}
@@ -412,7 +417,7 @@ static struct sk_buff
 	 * frame, which serves no further purpose).
 	 */
 	} else if (is_meta) {
-		struct dsa_port *dp = dsa_slave_to_port(skb->dev);
+		struct dsa_port *dp = dsa_user_to_port(skb->dev);
 		struct sja1105_tagger_private *priv;
 		struct dsa_switch *ds = dp->ds;
 		struct sk_buff *stampable_skb;
@@ -474,7 +479,7 @@ static bool sja1110_skb_has_inband_control_extension(const struct sk_buff *skb)
 static void sja1105_vlan_rcv(struct sk_buff *skb, int *source_port,
 			     int *switch_id, int *vbid, u16 *vid)
 {
-	struct vlan_ethhdr *hdr = (struct vlan_ethhdr *)skb_mac_header(skb);
+	struct vlan_ethhdr *hdr = vlan_eth_hdr(skb);
 	u16 vlan_tci;
 
 	if (skb_vlan_tag_present(skb))
@@ -545,7 +550,7 @@ static struct sk_buff *sja1105_rcv(struct sk_buff *skb,
 	}
 
 	if (source_port != -1 && switch_id != -1)
-		skb->dev = dsa_master_find_slave(netdev, switch_id, source_port);
+		skb->dev = dsa_conduit_find_user(netdev, switch_id, source_port);
 	else if (vbid >= 1)
 		skb->dev = dsa_tag_8021q_find_port_by_vbid(netdev, vbid);
 	else
@@ -568,16 +573,16 @@ static struct sk_buff *sja1110_rcv_meta(struct sk_buff *skb, u16 rx_header)
 	int switch_id = SJA1110_RX_HEADER_SWITCH_ID(rx_header);
 	int n_ts = SJA1110_RX_HEADER_N_TS(rx_header);
 	struct sja1105_tagger_data *tagger_data;
-	struct net_device *master = skb->dev;
+	struct net_device *conduit = skb->dev;
 	struct dsa_port *cpu_dp;
 	struct dsa_switch *ds;
 	int i;
 
-	cpu_dp = master->dsa_ptr;
+	cpu_dp = conduit->dsa_ptr;
 	ds = dsa_switch_find(cpu_dp->dst->index, switch_id);
 	if (!ds) {
 		net_err_ratelimited("%s: cannot find switch id %d\n",
-				    master->name, switch_id);
+				    conduit->name, switch_id);
 		return NULL;
 	}
 
@@ -644,7 +649,7 @@ static struct sk_buff *sja1110_rcv_inband_control_extension(struct sk_buff *skb,
 
 		/* skb->len counts from skb->data, while start_of_padding
 		 * counts from the destination MAC address. Right now skb->data
-		 * is still as set by the DSA master, so to trim away the
+		 * is still as set by the DSA conduit, so to trim away the
 		 * padding and trailer we need to account for the fact that
 		 * skb->data points to skb_mac_header(skb) + ETH_HLEN.
 		 */
@@ -693,7 +698,7 @@ static struct sk_buff *sja1110_rcv(struct sk_buff *skb,
 	else if (source_port == -1 || switch_id == -1)
 		skb->dev = dsa_find_designated_bridge_port_by_vid(netdev, vid);
 	else
-		skb->dev = dsa_master_find_slave(netdev, switch_id, source_port);
+		skb->dev = dsa_conduit_find_user(netdev, switch_id, source_port);
 	if (!skb->dev) {
 		netdev_warn(netdev, "Couldn't decode source port\n");
 		return NULL;
@@ -765,7 +770,7 @@ static int sja1105_connect(struct dsa_switch *ds)
 }
 
 static const struct dsa_device_ops sja1105_netdev_ops = {
-	.name = "sja1105",
+	.name = SJA1105_NAME,
 	.proto = DSA_TAG_PROTO_SJA1105,
 	.xmit = sja1105_xmit,
 	.rcv = sja1105_rcv,
@@ -773,14 +778,14 @@ static const struct dsa_device_ops sja1105_netdev_ops = {
 	.disconnect = sja1105_disconnect,
 	.needed_headroom = VLAN_HLEN,
 	.flow_dissect = sja1105_flow_dissect,
-	.promisc_on_master = true,
+	.promisc_on_conduit = true,
 };
 
 DSA_TAG_DRIVER(sja1105_netdev_ops);
-MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_SJA1105);
+MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_SJA1105, SJA1105_NAME);
 
 static const struct dsa_device_ops sja1110_netdev_ops = {
-	.name = "sja1110",
+	.name = SJA1110_NAME,
 	.proto = DSA_TAG_PROTO_SJA1110,
 	.xmit = sja1110_xmit,
 	.rcv = sja1110_rcv,
@@ -792,7 +797,7 @@ static const struct dsa_device_ops sja1110_netdev_ops = {
 };
 
 DSA_TAG_DRIVER(sja1110_netdev_ops);
-MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_SJA1110);
+MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_SJA1110, SJA1110_NAME);
 
 static struct dsa_tag_driver *sja1105_tag_driver_array[] = {
 	&DSA_TAG_DRIVER_NAME(sja1105_netdev_ops),

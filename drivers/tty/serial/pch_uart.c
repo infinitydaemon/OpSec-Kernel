@@ -742,15 +742,12 @@ static void pch_dma_tx_complete(void *arg)
 {
 	struct eg20t_port *priv = arg;
 	struct uart_port *port = &priv->port;
-	struct circ_buf *xmit = &port->state->xmit;
 	struct scatterlist *sg = priv->sg_tx_p;
 	int i;
 
-	for (i = 0; i < priv->nent; i++, sg++) {
-		xmit->tail += sg_dma_len(sg);
-		port->icount.tx += sg_dma_len(sg);
-	}
-	xmit->tail &= UART_XMIT_SIZE - 1;
+	for (i = 0; i < priv->nent; i++, sg++)
+		uart_xmit_advance(port, sg_dma_len(sg));
+
 	async_tx_ack(priv->desc_tx);
 	dma_unmap_sg(port->dev, priv->sg_tx_p, priv->orig_nent, DMA_TO_DEVICE);
 	priv->tx_dma_use = 0;
@@ -847,8 +844,7 @@ static unsigned int handle_tx(struct eg20t_port *priv)
 
 	while (!uart_tx_stopped(port) && !uart_circ_empty(xmit) && fifo_size) {
 		iowrite8(xmit->buf[xmit->tail], priv->membase + PCH_UART_THR);
-		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
-		port->icount.tx++;
+		uart_xmit_advance(port, 1);
 		fifo_size--;
 		tx_empty = 0;
 	}
@@ -1351,7 +1347,7 @@ static void pch_uart_set_termios(struct uart_port *port,
 	baud = uart_get_baud_rate(port, termios, old, 0, port->uartclk / 16);
 
 	spin_lock_irqsave(&priv->lock, flags);
-	spin_lock(&port->lock);
+	uart_port_lock(port);
 
 	uart_update_timeout(port, termios->c_cflag, baud);
 	rtn = pch_uart_hal_set_line(priv, baud, parity, bits, stb);
@@ -1364,7 +1360,7 @@ static void pch_uart_set_termios(struct uart_port *port,
 		tty_termios_encode_baud_rate(termios, baud, baud);
 
 out:
-	spin_unlock(&port->lock);
+	uart_port_unlock(port);
 	spin_unlock_irqrestore(&priv->lock, flags);
 }
 
@@ -1585,10 +1581,10 @@ pch_console_write(struct console *co, const char *s, unsigned int count)
 		port_locked = 0;
 	} else if (oops_in_progress) {
 		priv_locked = spin_trylock(&priv->lock);
-		port_locked = spin_trylock(&priv->port.lock);
+		port_locked = uart_port_trylock(&priv->port);
 	} else {
 		spin_lock(&priv->lock);
-		spin_lock(&priv->port.lock);
+		uart_port_lock(&priv->port);
 	}
 
 	/*
@@ -1608,7 +1604,7 @@ pch_console_write(struct console *co, const char *s, unsigned int count)
 	iowrite8(ier, priv->membase + UART_IER);
 
 	if (port_locked)
-		spin_unlock(&priv->port.lock);
+		uart_port_unlock(&priv->port);
 	if (priv_locked)
 		spin_unlock(&priv->lock);
 	local_irq_restore(flags);

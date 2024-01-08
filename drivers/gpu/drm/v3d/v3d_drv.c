@@ -22,11 +22,7 @@
 #include <linux/reset.h>
 
 #include <drm/drm_drv.h>
-#include <drm/drm_fb_helper.h>
 #include <drm/drm_managed.h>
-
-#include <soc/bcm2835/raspberrypi-firmware.h>
-
 #include <uapi/drm/v3d_drm.h>
 
 #include "v3d_drv.h"
@@ -175,10 +171,7 @@ static const struct drm_driver v3d_drm_driver = {
 #endif
 
 	.gem_create_object = v3d_create_object,
-	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
-	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
 	.gem_prime_import_sg_table = v3d_prime_import_sg_table,
-	.gem_prime_mmap = drm_gem_prime_mmap,
 
 	.ioctls = v3d_drm_ioctls,
 	.num_ioctls = ARRAY_SIZE(v3d_drm_ioctls),
@@ -193,7 +186,6 @@ static const struct drm_driver v3d_drm_driver = {
 };
 
 static const struct of_device_id v3d_of_match[] = {
-	{ .compatible = "brcm,2712-v3d" },
 	{ .compatible = "brcm,2711-v3d" },
 	{ .compatible = "brcm,7268-v3d" },
 	{ .compatible = "brcm,7278-v3d" },
@@ -211,8 +203,6 @@ map_regs(struct v3d_dev *v3d, void __iomem **regs, const char *name)
 static int v3d_platform_drm_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct rpi_firmware *firmware;
-	struct device_node *node;
 	struct drm_device *drm;
 	struct v3d_dev *v3d;
 	int ret;
@@ -266,34 +256,6 @@ static int v3d_platform_drm_probe(struct platform_device *pdev)
 		}
 	}
 
-	v3d->clk = devm_clk_get(dev, NULL);
-	if (IS_ERR_OR_NULL(v3d->clk)) {
-		if (PTR_ERR(v3d->clk) != -EPROBE_DEFER)
-			dev_err(dev, "Failed to get clock (%ld)\n", PTR_ERR(v3d->clk));
-		return PTR_ERR(v3d->clk);
-	}
-
-	node = rpi_firmware_find_node();
-	if (!node)
-		return -EINVAL;
-
-	firmware = rpi_firmware_get(node);
-	of_node_put(node);
-	if (!firmware)
-		return -EPROBE_DEFER;
-
-	v3d->clk_up_rate = rpi_firmware_clk_get_max_rate(firmware,
-							 RPI_FIRMWARE_V3D_CLK_ID);
-	rpi_firmware_put(firmware);
-
-	/* For downclocking, drop it to the minimum frequency we can get from
-	 * the CPRMAN clock generator dividing off our parent.  The divider is
-	 * 4 bits, but ask for just higher than that so that rounding doesn't
-	 * make cprman reject our rate.
-	 */
-	v3d->clk_down_rate =
-		(clk_get_rate(clk_get_parent(v3d->clk)) / (1 << 4)) + 10000;
-
 	if (v3d->ver < 41) {
 		ret = map_regs(v3d, &v3d->gca_regs, "gca");
 		if (ret)
@@ -319,9 +281,6 @@ static int v3d_platform_drm_probe(struct platform_device *pdev)
 	if (ret)
 		goto irq_disable;
 
-	ret = clk_set_min_rate(v3d->clk, v3d->clk_down_rate);
-	WARN_ON_ONCE(ret != 0);
-
 	return 0;
 
 irq_disable:
@@ -333,7 +292,7 @@ dma_free:
 	return ret;
 }
 
-static int v3d_platform_drm_remove(struct platform_device *pdev)
+static void v3d_platform_drm_remove(struct platform_device *pdev)
 {
 	struct drm_device *drm = platform_get_drvdata(pdev);
 	struct v3d_dev *v3d = to_v3d_dev(drm);
@@ -344,13 +303,11 @@ static int v3d_platform_drm_remove(struct platform_device *pdev)
 
 	dma_free_wc(v3d->drm.dev, 4096, v3d->mmu_scratch,
 		    v3d->mmu_scratch_paddr);
-
-	return 0;
 }
 
 static struct platform_driver v3d_platform_driver = {
 	.probe		= v3d_platform_drm_probe,
-	.remove		= v3d_platform_drm_remove,
+	.remove_new	= v3d_platform_drm_remove,
 	.driver		= {
 		.name	= "v3d",
 		.of_match_table = v3d_of_match,

@@ -145,14 +145,12 @@ static int fjes_acpi_add(struct acpi_device *device)
 	return 0;
 }
 
-static int fjes_acpi_remove(struct acpi_device *device)
+static void fjes_acpi_remove(struct acpi_device *device)
 {
 	struct platform_device *plat_dev;
 
 	plat_dev = (struct platform_device *)acpi_driver_data(device);
 	platform_device_unregister(plat_dev);
-
-	return 0;
 }
 
 static struct acpi_driver fjes_acpi_driver = {
@@ -1032,7 +1030,7 @@ static int fjes_poll(struct napi_struct *napi, int budget)
 		}
 
 		if (((long)jiffies - (long)adapter->rx_last_jiffies) < 3) {
-			napi_reschedule(napi);
+			napi_schedule(napi);
 		} else {
 			spin_lock(&hw->rx_status_lock);
 			for (epidx = 0; epidx < hw->max_epid; epidx++) {

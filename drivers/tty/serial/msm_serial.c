@@ -444,7 +444,7 @@ static void msm_complete_tx_dma(void *args)
 	unsigned int count;
 	u32 val;
 
-	spin_lock_irqsave(&port->lock, flags);
+	uart_port_lock_irqsave(port, &flags);
 
 	/* Already stopped */
 	if (!dma->count)
@@ -464,11 +464,8 @@ static void msm_complete_tx_dma(void *args)
 	}
 
 	count = dma->count - state.residue;
-	port->icount.tx += count;
+	uart_xmit_advance(port, count);
 	dma->count = 0;
-
-	xmit->tail += count;
-	xmit->tail &= UART_XMIT_SIZE - 1;
 
 	/* Restore "Tx FIFO below watermark" interrupt */
 	msm_port->imr |= MSM_UART_IMR_TXLEV;
@@ -479,7 +476,7 @@ static void msm_complete_tx_dma(void *args)
 
 	msm_handle_tx(port);
 done:
-	spin_unlock_irqrestore(&port->lock, flags);
+	uart_port_unlock_irqrestore(port, flags);
 }
 
 static int msm_handle_tx_dma(struct msm_port *msm_port, unsigned int count)
@@ -552,7 +549,7 @@ static void msm_complete_rx_dma(void *args)
 	unsigned long flags;
 	u32 val;
 
-	spin_lock_irqsave(&port->lock, flags);
+	uart_port_lock_irqsave(port, &flags);
 
 	/* Already stopped */
 	if (!dma->count)
@@ -590,16 +587,16 @@ static void msm_complete_rx_dma(void *args)
 		if (!(port->read_status_mask & MSM_UART_SR_RX_BREAK))
 			flag = TTY_NORMAL;
 
-		spin_unlock_irqrestore(&port->lock, flags);
+		uart_port_unlock_irqrestore(port, flags);
 		sysrq = uart_handle_sysrq_char(port, dma->virt[i]);
-		spin_lock_irqsave(&port->lock, flags);
+		uart_port_lock_irqsave(port, &flags);
 		if (!sysrq)
 			tty_insert_flip_char(tport, dma->virt[i], flag);
 	}
 
 	msm_start_rx_dma(msm_port);
 done:
-	spin_unlock_irqrestore(&port->lock, flags);
+	uart_port_unlock_irqrestore(port, flags);
 
 	if (count)
 		tty_flip_buffer_push(tport);
@@ -765,9 +762,9 @@ static void msm_handle_rx_dm(struct uart_port *port, unsigned int misr)
 			if (!(port->read_status_mask & MSM_UART_SR_RX_BREAK))
 				flag = TTY_NORMAL;
 
-			spin_unlock(&port->lock);
+			uart_port_unlock(port);
 			sysrq = uart_handle_sysrq_char(port, buf[i]);
-			spin_lock(&port->lock);
+			uart_port_lock(port);
 			if (!sysrq)
 				tty_insert_flip_char(tport, buf[i], flag);
 		}
@@ -819,7 +816,7 @@ static void msm_handle_rx(struct uart_port *port)
 			port->icount.rx++;
 		}
 
-		/* Mask conditions we're ignorning. */
+		/* Mask conditions we're ignoring. */
 		sr &= port->read_status_mask;
 
 		if (sr & MSM_UART_SR_RX_BREAK)
@@ -827,9 +824,9 @@ static void msm_handle_rx(struct uart_port *port)
 		else if (sr & MSM_UART_SR_PAR_FRAME_ERR)
 			flag = TTY_FRAME;
 
-		spin_unlock(&port->lock);
+		uart_port_unlock(port);
 		sysrq = uart_handle_sysrq_char(port, c);
-		spin_lock(&port->lock);
+		uart_port_lock(port);
 		if (!sysrq)
 			tty_insert_flip_char(tport, c, flag);
 	}
@@ -866,13 +863,11 @@ static void msm_handle_tx_pio(struct uart_port *port, unsigned int tx_count)
 		else
 			num_chars = 1;
 
-		for (i = 0; i < num_chars; i++) {
+		for (i = 0; i < num_chars; i++)
 			buf[i] = xmit->buf[xmit->tail + i];
-			port->icount.tx++;
-		}
 
 		iowrite32_rep(tf, buf, 1);
-		xmit->tail = (xmit->tail + num_chars) & (UART_XMIT_SIZE - 1);
+		uart_xmit_advance(port, num_chars);
 		tf_pointer += num_chars;
 	}
 
@@ -956,7 +951,7 @@ static irqreturn_t msm_uart_irq(int irq, void *dev_id)
 	unsigned int misr;
 	u32 val;
 
-	spin_lock_irqsave(&port->lock, flags);
+	uart_port_lock_irqsave(port, &flags);
 	misr = msm_read(port, MSM_UART_MISR);
 	msm_write(port, 0, MSM_UART_IMR); /* disable interrupt */
 
@@ -988,7 +983,7 @@ static irqreturn_t msm_uart_irq(int irq, void *dev_id)
 		msm_handle_delta_cts(port);
 
 	msm_write(port, msm_port->imr, MSM_UART_IMR); /* restore interrupt */
-	spin_unlock_irqrestore(&port->lock, flags);
+	uart_port_unlock_irqrestore(port, flags);
 
 	return IRQ_HANDLED;
 }
@@ -1125,6 +1120,7 @@ msm_find_best_baud(struct uart_port *port, unsigned int baud,
 
 static int msm_set_baud_rate(struct uart_port *port, unsigned int baud,
 			     unsigned long *saved_flags)
+	__must_hold(&port->lock)
 {
 	unsigned int rxstale, watermark, mask;
 	struct msm_port *msm_port = to_msm_port(port);
@@ -1132,13 +1128,13 @@ static int msm_set_baud_rate(struct uart_port *port, unsigned int baud,
 	unsigned long flags, rate;
 
 	flags = *saved_flags;
-	spin_unlock_irqrestore(&port->lock, flags);
+	uart_port_unlock_irqrestore(port, flags);
 
 	entry = msm_find_best_baud(port, baud, &rate);
 	clk_set_rate(msm_port->clk, rate);
 	baud = rate / 16 / entry->divisor;
 
-	spin_lock_irqsave(&port->lock, flags);
+	uart_port_lock_irqsave(port, &flags);
 	*saved_flags = flags;
 	port->uartclk = rate;
 
@@ -1270,7 +1266,7 @@ static void msm_set_termios(struct uart_port *port, struct ktermios *termios,
 	unsigned long flags;
 	unsigned int baud, mr;
 
-	spin_lock_irqsave(&port->lock, flags);
+	uart_port_lock_irqsave(port, &flags);
 
 	if (dma->chan) /* Terminate if any */
 		msm_stop_dma(port, dma);
@@ -1342,7 +1338,7 @@ static void msm_set_termios(struct uart_port *port, struct ktermios *termios,
 	/* Try to use DMA */
 	msm_start_rx_dma(msm_port);
 
-	spin_unlock_irqrestore(&port->lock, flags);
+	uart_port_unlock_irqrestore(port, flags);
 }
 
 static const char *msm_type(struct uart_port *port)
@@ -1624,9 +1620,9 @@ static void __msm_console_write(struct uart_port *port, const char *s,
 	if (port->sysrq)
 		locked = 0;
 	else if (oops_in_progress)
-		locked = spin_trylock(&port->lock);
+		locked = uart_port_trylock(port);
 	else
-		spin_lock(&port->lock);
+		uart_port_lock(port);
 
 	if (is_uartdm)
 		msm_reset_dm_count(port, count);
@@ -1665,7 +1661,7 @@ static void __msm_console_write(struct uart_port *port, const char *s,
 	}
 
 	if (locked)
-		spin_unlock(&port->lock);
+		uart_port_unlock(port);
 
 	local_irq_restore(flags);
 }

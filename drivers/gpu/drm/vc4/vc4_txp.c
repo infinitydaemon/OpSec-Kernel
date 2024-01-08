@@ -9,8 +9,8 @@
 
 #include <linux/clk.h>
 #include <linux/component.h>
-#include <linux/of_graph.h>
-#include <linux/of_platform.h>
+#include <linux/mod_devicetable.h>
+#include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 
 #include <drm/drm_atomic.h>
@@ -145,9 +145,6 @@
 /* Number of lines received and committed to memory. */
 #define TXP_PROGRESS		0x10
 
-#define TXP_DST_PTR_HIGH_MOPLET	0x1c
-#define TXP_DST_PTR_HIGH_MOP	0x24
-
 #define TXP_READ(offset)								\
 	({										\
 		kunit_fail_current_test("Accessing a register in a unit test!\n");	\
@@ -162,7 +159,6 @@
 
 struct vc4_txp {
 	struct vc4_crtc	base;
-	const struct vc4_txp_data *data;
 
 	struct platform_device *pdev;
 
@@ -172,15 +168,11 @@ struct vc4_txp {
 	void __iomem *regs;
 };
 
-static inline struct vc4_txp *encoder_to_vc4_txp(struct drm_encoder *encoder)
-{
-	return container_of(encoder, struct vc4_txp, encoder.base);
-}
+#define encoder_to_vc4_txp(_encoder)					\
+	container_of_const(_encoder, struct vc4_txp, encoder.base)
 
-static inline struct vc4_txp *connector_to_vc4_txp(struct drm_connector *conn)
-{
-	return container_of(conn, struct vc4_txp, connector.base);
-}
+#define connector_to_vc4_txp(_connector)				\
+	container_of_const(_connector, struct vc4_txp, connector.base)
 
 static const struct debugfs_reg32 txp_regs[] = {
 	VC4_REG32(TXP_DST_PTR),
@@ -294,13 +286,9 @@ static void vc4_txp_connector_atomic_commit(struct drm_connector *conn,
 	struct drm_connector_state *conn_state = drm_atomic_get_new_connector_state(state,
 										    conn);
 	struct vc4_txp *txp = connector_to_vc4_txp(conn);
-	const struct vc4_txp_data *txp_data = txp->data;
 	struct drm_gem_dma_object *gem;
 	struct drm_display_mode *mode;
 	struct drm_framebuffer *fb;
-	unsigned int hdisplay;
-	unsigned int vdisplay;
-	dma_addr_t addr;
 	u32 ctrl;
 	int idx;
 	int i;
@@ -320,10 +308,8 @@ static void vc4_txp_connector_atomic_commit(struct drm_connector *conn,
 		return;
 
 	ctrl = TXP_GO | TXP_EI |
+	       VC4_SET_FIELD(0xf, TXP_BYTE_ENABLE) |
 	       VC4_SET_FIELD(txp_fmts[i], TXP_FORMAT);
-
-	if (txp_data->has_byte_enable)
-		ctrl |= VC4_SET_FIELD(0xf, TXP_BYTE_ENABLE);
 
 	if (fb->format->has_alpha)
 		ctrl |= TXP_ALPHA_ENABLE;
@@ -338,25 +324,11 @@ static void vc4_txp_connector_atomic_commit(struct drm_connector *conn,
 		return;
 
 	gem = drm_fb_dma_get_gem_obj(fb, 0);
-	addr = gem->dma_addr + fb->offsets[0];
-
-	TXP_WRITE(TXP_DST_PTR, lower_32_bits(addr));
-
-	if (txp_data->supports_40bit_addresses)
-		TXP_WRITE(txp_data->high_addr_ptr_reg, upper_32_bits(addr) & 0xff);
-
+	TXP_WRITE(TXP_DST_PTR, gem->dma_addr + fb->offsets[0]);
 	TXP_WRITE(TXP_DST_PITCH, fb->pitches[0]);
-
-	hdisplay = mode->hdisplay ?: 1;
-	vdisplay = mode->vdisplay ?: 1;
-	if (txp_data->size_minus_one) {
-		hdisplay -= 1;
-		vdisplay -= 1;
-	}
-
 	TXP_WRITE(TXP_DIM,
-		  VC4_SET_FIELD(hdisplay, TXP_WIDTH) |
-		  VC4_SET_FIELD(vdisplay, TXP_HEIGHT));
+		  VC4_SET_FIELD(mode->hdisplay, TXP_WIDTH) |
+		  VC4_SET_FIELD(mode->vdisplay, TXP_HEIGHT));
 
 	TXP_WRITE(TXP_DST_CTRL, ctrl);
 
@@ -390,7 +362,6 @@ static const struct drm_connector_funcs vc4_txp_connector_funcs = {
 static void vc4_txp_encoder_disable(struct drm_encoder *encoder)
 {
 	struct drm_device *drm = encoder->dev;
-	struct vc4_dev *vc4 = to_vc4_dev(drm);
 	struct vc4_txp *txp = encoder_to_vc4_txp(encoder);
 	int idx;
 
@@ -409,8 +380,7 @@ static void vc4_txp_encoder_disable(struct drm_encoder *encoder)
 		WARN_ON(TXP_READ(TXP_DST_CTRL) & TXP_BUSY);
 	}
 
-	if (vc4->gen < VC4_GEN_6)
-		TXP_WRITE(TXP_DST_CTRL, TXP_POWERDOWN);
+	TXP_WRITE(TXP_DST_CTRL, TXP_POWERDOWN);
 
 	drm_dev_exit(idx);
 }
@@ -514,49 +484,17 @@ static irqreturn_t vc4_txp_interrupt(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-const struct vc4_txp_data bcm2712_mop_data = {
-	.base = {
-		.name = "mop",
-		.debugfs_name = "mop_regs",
-		.hvs_available_channels = BIT(2),
-		.hvs_output = 2,
-	},
-	.encoder_type = VC4_ENCODER_TYPE_TXP0,
-	.high_addr_ptr_reg = TXP_DST_PTR_HIGH_MOP,
-	.has_byte_enable = true,
-	.size_minus_one = true,
-	.supports_40bit_addresses = true,
-};
-
-const struct vc4_txp_data bcm2712_moplet_data = {
-	.base = {
-		.name = "moplet",
-		.debugfs_name = "moplet_regs",
-		.hvs_available_channels = BIT(1),
-		.hvs_output = 4,
-	},
-	.encoder_type = VC4_ENCODER_TYPE_TXP1,
-	.high_addr_ptr_reg = TXP_DST_PTR_HIGH_MOPLET,
-	.size_minus_one = true,
-	.supports_40bit_addresses = true,
-};
-
-const struct vc4_txp_data bcm2835_txp_data = {
-	.base = {
-		.name = "txp",
-		.debugfs_name = "txp_regs",
-		.hvs_available_channels = BIT(2),
-		.hvs_output = 2,
-	},
-	.encoder_type = VC4_ENCODER_TYPE_TXP0,
-	.has_byte_enable = true,
+const struct vc4_crtc_data vc4_txp_crtc_data = {
+	.name = "txp",
+	.debugfs_name = "txp_regs",
+	.hvs_available_channels = BIT(2),
+	.hvs_output = 2,
 };
 
 static int vc4_txp_bind(struct device *dev, struct device *master, void *data)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct drm_device *drm = dev_get_drvdata(master);
-	const struct vc4_txp_data *txp_data;
 	struct vc4_encoder *vc4_encoder;
 	struct drm_encoder *encoder;
 	struct vc4_crtc *vc4_crtc;
@@ -571,11 +509,6 @@ static int vc4_txp_bind(struct device *dev, struct device *master, void *data)
 	if (!txp)
 		return -ENOMEM;
 
-	txp_data = of_device_get_match_data(dev);
-	if (!txp_data)
-		return -ENODEV;
-
-	txp->data = txp_data;
 	txp->pdev = pdev;
 	txp->regs = vc4_ioremap_regs(pdev, 0);
 	if (IS_ERR(txp->regs))
@@ -586,13 +519,13 @@ static int vc4_txp_bind(struct device *dev, struct device *master, void *data)
 	vc4_crtc->regset.regs = txp_regs;
 	vc4_crtc->regset.nregs = ARRAY_SIZE(txp_regs);
 
-	ret = vc4_crtc_init(drm, pdev, vc4_crtc, &txp_data->base,
+	ret = vc4_crtc_init(drm, pdev, vc4_crtc, &vc4_txp_crtc_data,
 			    &vc4_txp_crtc_funcs, &vc4_txp_crtc_helper_funcs, true);
 	if (ret)
 		return ret;
 
 	vc4_encoder = &txp->encoder;
-	txp->encoder.type = txp_data->encoder_type;
+	txp->encoder.type = VC4_ENCODER_TYPE_TXP;
 
 	encoder = &vc4_encoder->base;
 	encoder->possible_crtcs = drm_crtc_mask(&vc4_crtc->base);
@@ -640,22 +573,19 @@ static int vc4_txp_probe(struct platform_device *pdev)
 	return component_add(&pdev->dev, &vc4_txp_ops);
 }
 
-static int vc4_txp_remove(struct platform_device *pdev)
+static void vc4_txp_remove(struct platform_device *pdev)
 {
 	component_del(&pdev->dev, &vc4_txp_ops);
-	return 0;
 }
 
 static const struct of_device_id vc4_txp_dt_match[] = {
-	{ .compatible = "brcm,bcm2712-mop", .data = &bcm2712_mop_data },
-	{ .compatible = "brcm,bcm2712-moplet", .data = &bcm2712_moplet_data },
-	{ .compatible = "brcm,bcm2835-txp", .data = &bcm2835_txp_data },
+	{ .compatible = "brcm,bcm2835-txp" },
 	{ /* sentinel */ },
 };
 
 struct platform_driver vc4_txp_driver = {
 	.probe = vc4_txp_probe,
-	.remove = vc4_txp_remove,
+	.remove_new = vc4_txp_remove,
 	.driver = {
 		.name = "vc4_txp",
 		.of_match_table = vc4_txp_dt_match,

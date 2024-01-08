@@ -2,14 +2,15 @@
 #ifndef _MM_SWAP_H
 #define _MM_SWAP_H
 
+struct mempolicy;
+
 #ifdef CONFIG_SWAP
 #include <linux/blk_types.h> /* for bio_end_io_t */
 
 /* linux/mm/page_io.c */
 int sio_pool_init(void);
 struct swap_iocb;
-int swap_readpage(struct page *page, bool do_poll,
-		  struct swap_iocb **plug);
+void swap_readpage(struct page *page, bool do_poll, struct swap_iocb **plug);
 void __swap_read_unplug(struct swap_iocb *plug);
 static inline void swap_read_unplug(struct swap_iocb *plug)
 {
@@ -18,7 +19,7 @@ static inline void swap_read_unplug(struct swap_iocb *plug)
 }
 void swap_write_unplug(struct swap_iocb *sio);
 int swap_writepage(struct page *page, struct writeback_control *wbc);
-int __swap_writepage(struct page *page, struct writeback_control *wbc);
+void __swap_writepage(struct page *page, struct writeback_control *wbc);
 
 /* linux/mm/swap_state.c */
 /* One swap address space for each 64M swap space */
@@ -41,19 +42,18 @@ void clear_shadow_from_swap_cache(int type, unsigned long begin,
 				  unsigned long end);
 struct folio *swap_cache_get_folio(swp_entry_t entry,
 		struct vm_area_struct *vma, unsigned long addr);
-struct page *find_get_incore_page(struct address_space *mapping, pgoff_t index);
+struct folio *filemap_get_incore_folio(struct address_space *mapping,
+		pgoff_t index);
 
 struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 				   struct vm_area_struct *vma,
 				   unsigned long addr,
-				   bool do_poll,
 				   struct swap_iocb **plug);
 struct page *__read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
-				     struct vm_area_struct *vma,
-				     unsigned long addr,
+				     struct mempolicy *mpol, pgoff_t ilx,
 				     bool *new_page_allocated);
 struct page *swap_cluster_readahead(swp_entry_t entry, gfp_t flag,
-				    struct vm_fault *vmf);
+				    struct mempolicy *mpol, pgoff_t ilx);
 struct page *swapin_readahead(swp_entry_t entry, gfp_t flag,
 			      struct vm_fault *vmf);
 
@@ -63,10 +63,9 @@ static inline unsigned int folio_swap_flags(struct folio *folio)
 }
 #else /* CONFIG_SWAP */
 struct swap_iocb;
-static inline int swap_readpage(struct page *page, bool do_poll,
-				struct swap_iocb **plug)
+static inline void swap_readpage(struct page *page, bool do_poll,
+		struct swap_iocb **plug)
 {
-	return 0;
 }
 static inline void swap_write_unplug(struct swap_iocb *sio)
 {
@@ -82,7 +81,7 @@ static inline void show_swap_cache_info(void)
 }
 
 static inline struct page *swap_cluster_readahead(swp_entry_t entry,
-				gfp_t gfp_mask, struct vm_fault *vmf)
+			gfp_t gfp_mask, struct mempolicy *mpol, pgoff_t ilx)
 {
 	return NULL;
 }
@@ -105,9 +104,10 @@ static inline struct folio *swap_cache_get_folio(swp_entry_t entry,
 }
 
 static inline
-struct page *find_get_incore_page(struct address_space *mapping, pgoff_t index)
+struct folio *filemap_get_incore_folio(struct address_space *mapping,
+		pgoff_t index)
 {
-	return find_get_page(mapping, index);
+	return filemap_get_folio(mapping, index);
 }
 
 static inline bool add_to_swap(struct folio *folio)

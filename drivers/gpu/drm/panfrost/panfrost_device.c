@@ -6,6 +6,7 @@
 #include <linux/reset.h>
 #include <linux/platform_device.h>
 #include <linux/pm_domain.h>
+#include <linux/pm_runtime.h>
 #include <linux/regulator/consumer.h>
 
 #include "panfrost_device.h"
@@ -206,6 +207,8 @@ int panfrost_device_init(struct panfrost_device *pfdev)
 
 	spin_lock_init(&pfdev->as_lock);
 
+	spin_lock_init(&pfdev->cycle_counter.lock);
+
 	err = panfrost_clk_init(pfdev);
 	if (err) {
 		dev_err(pfdev->dev, "clk init failed %d\n", err);
@@ -400,8 +403,7 @@ void panfrost_device_reset(struct panfrost_device *pfdev)
 	panfrost_job_enable_interrupts(pfdev);
 }
 
-#ifdef CONFIG_PM
-int panfrost_device_resume(struct device *dev)
+static int panfrost_device_resume(struct device *dev)
 {
 	struct panfrost_device *pfdev = dev_get_drvdata(dev);
 
@@ -411,7 +413,7 @@ int panfrost_device_resume(struct device *dev)
 	return 0;
 }
 
-int panfrost_device_suspend(struct device *dev)
+static int panfrost_device_suspend(struct device *dev)
 {
 	struct panfrost_device *pfdev = dev_get_drvdata(dev);
 
@@ -423,4 +425,6 @@ int panfrost_device_suspend(struct device *dev)
 
 	return 0;
 }
-#endif
+
+EXPORT_GPL_RUNTIME_DEV_PM_OPS(panfrost_pm_ops, panfrost_device_suspend,
+			      panfrost_device_resume, NULL);

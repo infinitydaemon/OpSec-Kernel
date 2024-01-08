@@ -18,7 +18,7 @@
 
 #include "../virt-dma.h"
 
-#define DMAC_MAX_CHANNELS	16
+#define DMAC_MAX_CHANNELS	32
 #define DMAC_MAX_MASTERS	2
 #define DMAC_MAX_BLK_SIZE	0x200000
 
@@ -32,9 +32,8 @@ struct dw_axi_dma_hcfg {
 	u32	axi_rw_burst_len;
 	/* Register map for DMAX_NUM_CHANNELS <= 8 */
 	bool	reg_map_8_channels;
-	/* Register map for DMAX_NUM_CHANNELS > 8 || DMAX_NUM_HS_IF > 16*/
-	bool	reg_map_cfg2;
 	bool	restrict_axi_burst_len;
+	bool	use_cfg2;
 };
 
 struct axi_dma_chan {
@@ -102,7 +101,6 @@ struct axi_dma_desc {
 
 	struct virt_dma_desc		vd;
 	struct axi_dma_chan		*chan;
-	u32				hw_desc_count;
 	u32				completed_blocks;
 	u32				length;
 	u32				period_len;
@@ -223,6 +221,10 @@ static inline struct axi_dma_chan *dchan_to_axi_dma_chan(struct dma_chan *dchan)
 
 /* DMAC_CHEN2 */
 #define DMAC_CHAN_EN2_WE_SHIFT		16
+
+/* DMAC CHAN BLOCKS */
+#define DMAC_CHAN_BLOCK_SHIFT		32
+#define DMAC_CHAN_16			16
 
 /* DMAC_CHSUSP */
 #define DMAC_CHAN_SUSP2_SHIFT		0

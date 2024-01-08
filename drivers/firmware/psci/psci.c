@@ -167,7 +167,8 @@ int psci_set_osi_mode(bool enable)
 
 	err = invoke_psci_fn(PSCI_1_0_FN_SET_SUSPEND_MODE, suspend_mode, 0, 0);
 	if (err < 0)
-		pr_warn("failed to set %s mode: %d\n", enable ? "OSI" : "PC", err);
+		pr_info(FW_BUG "failed to set %s mode: %d\n",
+				enable ? "OSI" : "PC", err);
 	return psci_to_linux_errno(err);
 }
 
@@ -314,14 +315,7 @@ static int psci_sys_reset(struct notifier_block *nb, unsigned long action,
 		 * reset_type[30:0] = 0 (SYSTEM_WARM_RESET)
 		 * cookie = 0 (ignored by the implementation)
 		 */
-		// Allow extra arguments separated by spaces after
-		// the partition number.
-		unsigned long val;
-		u8 partition = 0;
-
-		if (data && sscanf(data, "%lu", &val) == 1 && val < 63)
-			partition = val;
-		invoke_psci_fn(PSCI_FN_NATIVE(1_1, SYSTEM_RESET2), 0, partition, 0);
+		invoke_psci_fn(PSCI_FN_NATIVE(1_1, SYSTEM_RESET2), 0, 0, 0);
 	} else {
 		invoke_psci_fn(PSCI_0_2_FN_SYSTEM_RESET, 0, 0, 0);
 	}
@@ -479,11 +473,22 @@ int psci_cpu_suspend_enter(u32 state)
 	if (!psci_power_state_loses_context(state)) {
 		struct arm_cpuidle_irq_context context;
 
+		ct_cpuidle_enter();
 		arm_cpuidle_save_irq_context(&context);
 		ret = psci_ops.cpu_suspend(state, 0);
 		arm_cpuidle_restore_irq_context(&context);
+		ct_cpuidle_exit();
 	} else {
+		/*
+		 * ARM64 cpu_suspend() wants to do ct_cpuidle_*() itself.
+		 */
+		if (!IS_ENABLED(CONFIG_ARM64))
+			ct_cpuidle_enter();
+
 		ret = cpu_suspend(state, psci_suspend_finisher);
+
+		if (!IS_ENABLED(CONFIG_ARM64))
+			ct_cpuidle_exit();
 	}
 
 	return ret;

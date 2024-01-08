@@ -22,6 +22,7 @@
 #include <net/devlink.h>
 #include <net/switchdev.h>
 
+struct dsa_8021q_context;
 struct tc_action;
 struct phy_device;
 struct fixed_phy_status;
@@ -101,26 +102,12 @@ struct dsa_device_ops {
 	const char *name;
 	enum dsa_tag_protocol proto;
 	/* Some tagging protocols either mangle or shift the destination MAC
-	 * address, in which case the DSA master would drop packets on ingress
+	 * address, in which case the DSA conduit would drop packets on ingress
 	 * if what it understands out of the destination MAC address is not in
 	 * its RX filter.
 	 */
-	bool promisc_on_master;
+	bool promisc_on_conduit;
 };
-
-/* This structure defines the control interfaces that are overlayed by the
- * DSA layer on top of the DSA CPU/management net_device instance. This is
- * used by the core net_device layer while calling various net_device_ops
- * function pointers.
- */
-struct dsa_netdevice_ops {
-	int (*ndo_eth_ioctl)(struct net_device *dev, struct ifreq *ifr,
-			     int cmd);
-};
-
-#define DSA_TAG_DRIVER_ALIAS "dsa_tag-"
-#define MODULE_ALIAS_DSA_TAG_DRIVER(__proto)				\
-	MODULE_ALIAS(DSA_TAG_DRIVER_ALIAS __stringify(__proto##_VALUE))
 
 struct dsa_lag {
 	struct net_device *dev;
@@ -249,12 +236,12 @@ struct dsa_bridge {
 };
 
 struct dsa_port {
-	/* A CPU port is physically connected to a master device.
-	 * A user port exposed to userspace has a slave device.
+	/* A CPU port is physically connected to a conduit device. A user port
+	 * exposes a network device to user-space, called 'user' here.
 	 */
 	union {
-		struct net_device *master;
-		struct net_device *slave;
+		struct net_device *conduit;
+		struct net_device *user;
 	};
 
 	/* Copy of the tagging protocol operations, for quicker access
@@ -262,7 +249,7 @@ struct dsa_port {
 	 */
 	const struct dsa_device_ops *tag_ops;
 
-	/* Copies for faster access in master receive hot path */
+	/* Copies for faster access in conduit receive hot path */
 	struct dsa_switch_tree *dst;
 	struct sk_buff *(*rcv)(struct sk_buff *skb, struct net_device *dev);
 
@@ -294,9 +281,9 @@ struct dsa_port {
 
 	u8			lag_tx_enabled:1;
 
-	/* Master state bits, valid only on CPU ports */
-	u8			master_admin_up:1;
-	u8			master_oper_up:1;
+	/* conduit state bits, valid only on CPU ports */
+	u8			conduit_admin_up:1;
+	u8			conduit_oper_up:1;
 
 	/* Valid only on user ports */
 	u8			cpu_port_in_lag:1;
@@ -316,14 +303,9 @@ struct dsa_port {
 	struct list_head list;
 
 	/*
-	 * Original copy of the master netdev ethtool_ops
+	 * Original copy of the conduit netdev ethtool_ops
 	 */
 	const struct ethtool_ops *orig_ethtool_ops;
-
-	/*
-	 * Original copy of the master netdev net_device_ops
-	 */
-	const struct dsa_netdevice_ops *netdev_ops;
 
 	/* List of MAC addresses that must be forwarded on this port.
 	 * These are only valid on CPU ports and DSA links.
@@ -332,9 +314,17 @@ struct dsa_port {
 	struct list_head	fdbs;
 	struct list_head	mdbs;
 
-	/* List of VLANs that CPU and DSA ports are members of. */
 	struct mutex		vlans_lock;
-	struct list_head	vlans;
+	union {
+		/* List of VLANs that CPU and DSA ports are members of.
+		 * Access to this is serialized by the sleepable @vlans_lock.
+		 */
+		struct list_head	vlans;
+		/* List of VLANs that user ports are members of.
+		 * Access to this is serialized by netif_addr_lock_bh().
+		 */
+		struct list_head	user_vlans;
+	};
 };
 
 /* TODO: ideally DSA ports would have a single dp->link_dp member,
@@ -462,10 +452,10 @@ struct dsa_switch {
 	const struct dsa_switch_ops	*ops;
 
 	/*
-	 * Slave mii_bus and devices for the individual ports.
+	 * User mii_bus and devices for the individual ports.
 	 */
 	u32			phys_mii_mask;
-	struct mii_bus		*slave_mii_bus;
+	struct mii_bus		*user_mii_bus;
 
 	/* Ageing Time limits in msecs */
 	unsigned int ageing_time_min;
@@ -530,10 +520,10 @@ static inline bool dsa_port_is_unused(struct dsa_port *dp)
 	return dp->type == DSA_PORT_TYPE_UNUSED;
 }
 
-static inline bool dsa_port_master_is_operational(struct dsa_port *dp)
+static inline bool dsa_port_conduit_is_operational(struct dsa_port *dp)
 {
-	return dsa_port_is_cpu(dp) && dp->master_admin_up &&
-	       dp->master_oper_up;
+	return dsa_port_is_cpu(dp) && dp->conduit_admin_up &&
+	       dp->conduit_oper_up;
 }
 
 static inline bool dsa_is_unused_port(struct dsa_switch *ds, int p)
@@ -723,12 +713,12 @@ static inline bool dsa_port_offloads_lag(struct dsa_port *dp,
 	return dsa_port_lag_dev_get(dp) == lag->dev;
 }
 
-static inline struct net_device *dsa_port_to_master(const struct dsa_port *dp)
+static inline struct net_device *dsa_port_to_conduit(const struct dsa_port *dp)
 {
 	if (dp->cpu_port_in_lag)
 		return dsa_port_lag_dev_get(dp->cpu_dp);
 
-	return dp->cpu_dp->master;
+	return dp->cpu_dp->conduit;
 }
 
 static inline
@@ -742,7 +732,7 @@ struct net_device *dsa_port_to_bridge_port(const struct dsa_port *dp)
 	else if (dp->hsr_dev)
 		return dp->hsr_dev;
 
-	return dp->slave;
+	return dp->user;
 }
 
 static inline struct net_device *
@@ -844,9 +834,9 @@ struct dsa_switch_ops {
 	int	(*connect_tag_protocol)(struct dsa_switch *ds,
 					enum dsa_tag_protocol proto);
 
-	int	(*port_change_master)(struct dsa_switch *ds, int port,
-				      struct net_device *master,
-				      struct netlink_ext_ack *extack);
+	int	(*port_change_conduit)(struct dsa_switch *ds, int port,
+				       struct net_device *conduit,
+				       struct netlink_ext_ack *extack);
 
 	/* Optional switch-wide initialization and destruction methods */
 	int	(*setup)(struct dsa_switch *ds);
@@ -880,18 +870,18 @@ struct dsa_switch_ops {
 	 */
 	void	(*phylink_get_caps)(struct dsa_switch *ds, int port,
 				    struct phylink_config *config);
-	void	(*phylink_validate)(struct dsa_switch *ds, int port,
-				    unsigned long *supported,
-				    struct phylink_link_state *state);
 	struct phylink_pcs *(*phylink_mac_select_pcs)(struct dsa_switch *ds,
 						      int port,
 						      phy_interface_t iface);
-	int	(*phylink_mac_link_state)(struct dsa_switch *ds, int port,
-					  struct phylink_link_state *state);
+	int	(*phylink_mac_prepare)(struct dsa_switch *ds, int port,
+				       unsigned int mode,
+				       phy_interface_t interface);
 	void	(*phylink_mac_config)(struct dsa_switch *ds, int port,
 				      unsigned int mode,
 				      const struct phylink_link_state *state);
-	void	(*phylink_mac_an_restart)(struct dsa_switch *ds, int port);
+	int	(*phylink_mac_finish)(struct dsa_switch *ds, int port,
+				      unsigned int mode,
+				      phy_interface_t interface);
 	void	(*phylink_mac_link_down)(struct dsa_switch *ds, int port,
 					 unsigned int mode,
 					 phy_interface_t interface);
@@ -944,6 +934,17 @@ struct dsa_switch_ops {
 			       struct ethtool_ts_info *ts);
 
 	/*
+	 * ethtool MAC merge layer
+	 */
+	int	(*get_mm)(struct dsa_switch *ds, int port,
+			  struct ethtool_mm_state *state);
+	int	(*set_mm)(struct dsa_switch *ds, int port,
+			  struct ethtool_mm_cfg *cfg,
+			  struct netlink_ext_ack *extack);
+	void	(*get_mm_stats)(struct dsa_switch *ds, int port,
+				struct ethtool_mm_stats *stats);
+
+	/*
 	 * DCB ops
 	 */
 	int	(*port_get_default_prio)(struct dsa_switch *ds, int port);
@@ -967,6 +968,24 @@ struct dsa_switch_ops {
 	int	(*port_enable)(struct dsa_switch *ds, int port,
 			       struct phy_device *phy);
 	void	(*port_disable)(struct dsa_switch *ds, int port);
+
+
+	/*
+	 * Notification for MAC address changes on user ports. Drivers can
+	 * currently only veto operations. They should not use the method to
+	 * program the hardware, since the operation is not rolled back in case
+	 * of other errors.
+	 */
+	int	(*port_set_mac_address)(struct dsa_switch *ds, int port,
+					const unsigned char *addr);
+
+	/*
+	 * Compatibility between device trees defining multiple CPU ports and
+	 * drivers which are not OK to use by default the numerically smallest
+	 * CPU port of a switch for its local ports. This can return NULL,
+	 * meaning "don't know/don't care".
+	 */
+	struct dsa_port *(*preferred_default_local_cpu_port)(struct dsa_switch *ds);
 
 	/*
 	 * Port's MAC EEE settings
@@ -1189,7 +1208,8 @@ struct dsa_switch_ops {
 	 * HSR integration
 	 */
 	int	(*port_hsr_join)(struct dsa_switch *ds, int port,
-				 struct net_device *hsr);
+				 struct net_device *hsr,
+				 struct netlink_ext_ack *extack);
 	int	(*port_hsr_leave)(struct dsa_switch *ds, int port,
 				  struct net_device *hsr);
 
@@ -1213,11 +1233,11 @@ struct dsa_switch_ops {
 	int	(*tag_8021q_vlan_del)(struct dsa_switch *ds, int port, u16 vid);
 
 	/*
-	 * DSA master tracking operations
+	 * DSA conduit tracking operations
 	 */
-	void	(*master_state_change)(struct dsa_switch *ds,
-				       const struct net_device *master,
-				       bool operational);
+	void	(*conduit_state_change)(struct dsa_switch *ds,
+					const struct net_device *conduit,
+					bool operational);
 };
 
 #define DSA_DEVLINK_PARAM_DRIVER(_id, _name, _type, _cmodes)		\
@@ -1292,8 +1312,6 @@ struct dsa_switch_driver {
 	const struct dsa_switch_ops *ops;
 };
 
-struct net_device *dsa_dev_to_net_device(struct device *dev);
-
 bool dsa_fdb_present_in_other_db(struct dsa_switch *ds, int port,
 				 const unsigned char *addr, u16 vid,
 				 struct dsa_db db);
@@ -1336,42 +1354,6 @@ static inline void dsa_tag_generic_flow_dissect(const struct sk_buff *skb,
 #endif
 }
 
-#if IS_ENABLED(CONFIG_NET_DSA)
-static inline int __dsa_netdevice_ops_check(struct net_device *dev)
-{
-	int err = -EOPNOTSUPP;
-
-	if (!dev->dsa_ptr)
-		return err;
-
-	if (!dev->dsa_ptr->netdev_ops)
-		return err;
-
-	return 0;
-}
-
-static inline int dsa_ndo_eth_ioctl(struct net_device *dev, struct ifreq *ifr,
-				    int cmd)
-{
-	const struct dsa_netdevice_ops *ops;
-	int err;
-
-	err = __dsa_netdevice_ops_check(dev);
-	if (err)
-		return err;
-
-	ops = dev->dsa_ptr->netdev_ops;
-
-	return ops->ndo_eth_ioctl(dev, ifr, cmd);
-}
-#else
-static inline int dsa_ndo_eth_ioctl(struct net_device *dev, struct ifreq *ifr,
-				    int cmd)
-{
-	return -EOPNOTSUPP;
-}
-#endif
-
 void dsa_unregister_switch(struct dsa_switch *ds);
 int dsa_register_switch(struct dsa_switch *ds);
 void dsa_switch_shutdown(struct dsa_switch *ds);
@@ -1392,9 +1374,9 @@ static inline int dsa_switch_resume(struct dsa_switch *ds)
 #endif /* CONFIG_PM_SLEEP */
 
 #if IS_ENABLED(CONFIG_NET_DSA)
-bool dsa_slave_dev_check(const struct net_device *dev);
+bool dsa_user_dev_check(const struct net_device *dev);
 #else
-static inline bool dsa_slave_dev_check(const struct net_device *dev)
+static inline bool dsa_user_dev_check(const struct net_device *dev)
 {
 	return false;
 }
@@ -1403,70 +1385,4 @@ static inline bool dsa_slave_dev_check(const struct net_device *dev)
 netdev_tx_t dsa_enqueue_skb(struct sk_buff *skb, struct net_device *dev);
 void dsa_port_phylink_mac_change(struct dsa_switch *ds, int port, bool up);
 
-struct dsa_tag_driver {
-	const struct dsa_device_ops *ops;
-	struct list_head list;
-	struct module *owner;
-};
-
-void dsa_tag_drivers_register(struct dsa_tag_driver *dsa_tag_driver_array[],
-			      unsigned int count,
-			      struct module *owner);
-void dsa_tag_drivers_unregister(struct dsa_tag_driver *dsa_tag_driver_array[],
-				unsigned int count);
-
-#define dsa_tag_driver_module_drivers(__dsa_tag_drivers_array, __count)	\
-static int __init dsa_tag_driver_module_init(void)			\
-{									\
-	dsa_tag_drivers_register(__dsa_tag_drivers_array, __count,	\
-				 THIS_MODULE);				\
-	return 0;							\
-}									\
-module_init(dsa_tag_driver_module_init);				\
-									\
-static void __exit dsa_tag_driver_module_exit(void)			\
-{									\
-	dsa_tag_drivers_unregister(__dsa_tag_drivers_array, __count);	\
-}									\
-module_exit(dsa_tag_driver_module_exit)
-
-/**
- * module_dsa_tag_drivers() - Helper macro for registering DSA tag
- * drivers
- * @__ops_array: Array of tag driver structures
- *
- * Helper macro for DSA tag drivers which do not do anything special
- * in module init/exit. Each module may only use this macro once, and
- * calling it replaces module_init() and module_exit().
- */
-#define module_dsa_tag_drivers(__ops_array)				\
-dsa_tag_driver_module_drivers(__ops_array, ARRAY_SIZE(__ops_array))
-
-#define DSA_TAG_DRIVER_NAME(__ops) dsa_tag_driver ## _ ## __ops
-
-/* Create a static structure we can build a linked list of dsa_tag
- * drivers
- */
-#define DSA_TAG_DRIVER(__ops)						\
-static struct dsa_tag_driver DSA_TAG_DRIVER_NAME(__ops) = {		\
-	.ops = &__ops,							\
-}
-
-/**
- * module_dsa_tag_driver() - Helper macro for registering a single DSA tag
- * driver
- * @__ops: Single tag driver structures
- *
- * Helper macro for DSA tag drivers which do not do anything special
- * in module init/exit. Each module may only use this macro once, and
- * calling it replaces module_init() and module_exit().
- */
-#define module_dsa_tag_driver(__ops)					\
-DSA_TAG_DRIVER(__ops);							\
-									\
-static struct dsa_tag_driver *dsa_tag_driver_array[] =	{		\
-	&DSA_TAG_DRIVER_NAME(__ops)					\
-};									\
-module_dsa_tag_drivers(dsa_tag_driver_array)
 #endif
-

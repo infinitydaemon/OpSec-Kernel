@@ -57,6 +57,9 @@ static struct mptcp_sock *build_msk(struct kunit *test)
 	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, msk);
 	refcount_set(&((struct sock *)msk)->sk_refcnt, 1);
 	sock_net_set((struct sock *)msk, &init_net);
+
+	/* be sure the token helpers can dereference sk->sk_prot */
+	((struct sock *)msk)->sk_prot = &tcp_prot;
 	return msk;
 }
 
@@ -140,3 +143,4 @@ static struct kunit_suite mptcp_token_suite = {
 kunit_test_suite(mptcp_token_suite);
 
 MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("KUnit tests for MPTCP Token");

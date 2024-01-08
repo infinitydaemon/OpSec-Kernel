@@ -30,6 +30,7 @@
 #include <linux/init.h>
 #include <linux/io.h>
 #include <linux/module.h>
+#include <linux/of_address.h>
 #include <linux/slab.h>
 
 #include <sound/core.h>
@@ -736,7 +737,19 @@ static void bcm2835_i2s_shutdown(struct snd_pcm_substream *substream,
 	bcm2835_i2s_stop_clock(dev);
 }
 
+static int bcm2835_i2s_dai_probe(struct snd_soc_dai *dai)
+{
+	struct bcm2835_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
+
+	snd_soc_dai_init_dma_data(dai,
+				  &dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK],
+				  &dev->dma_data[SNDRV_PCM_STREAM_CAPTURE]);
+
+	return 0;
+}
+
 static const struct snd_soc_dai_ops bcm2835_i2s_dai_ops = {
+	.probe		= bcm2835_i2s_dai_probe,
 	.startup	= bcm2835_i2s_startup,
 	.shutdown	= bcm2835_i2s_shutdown,
 	.prepare	= bcm2835_i2s_prepare,
@@ -747,20 +760,8 @@ static const struct snd_soc_dai_ops bcm2835_i2s_dai_ops = {
 	.set_tdm_slot	= bcm2835_i2s_set_dai_tdm_slot,
 };
 
-static int bcm2835_i2s_dai_probe(struct snd_soc_dai *dai)
-{
-	struct bcm2835_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
-
-	snd_soc_dai_init_dma_data(dai,
-			&dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK],
-			&dev->dma_data[SNDRV_PCM_STREAM_CAPTURE]);
-
-	return 0;
-}
-
 static struct snd_soc_dai_driver bcm2835_i2s_dai = {
 	.name	= "bcm2835-i2s",
-	.probe	= bcm2835_i2s_dai_probe,
 	.playback = {
 		.channels_min = 2,
 		.channels_max = 2,
@@ -829,7 +830,8 @@ static int bcm2835_i2s_probe(struct platform_device *pdev)
 	struct bcm2835_i2s_dev *dev;
 	int ret;
 	void __iomem *base;
-	struct resource *res;
+	const __be32 *addr;
+	dma_addr_t dma_base;
 
 	dev = devm_kzalloc(&pdev->dev, sizeof(*dev),
 			   GFP_KERNEL);
@@ -844,7 +846,7 @@ static int bcm2835_i2s_probe(struct platform_device *pdev)
 				     "could not get clk\n");
 
 	/* Request ioarea */
-	base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+	base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
@@ -853,11 +855,19 @@ static int bcm2835_i2s_probe(struct platform_device *pdev)
 	if (IS_ERR(dev->i2s_regmap))
 		return PTR_ERR(dev->i2s_regmap);
 
+	/* Set the DMA address - we have to parse DT ourselves */
+	addr = of_get_address(pdev->dev.of_node, 0, NULL, NULL);
+	if (!addr) {
+		dev_err(&pdev->dev, "could not get DMA-register address\n");
+		return -EINVAL;
+	}
+	dma_base = be32_to_cpup(addr);
+
 	dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK].addr =
-		res->start + BCM2835_I2S_FIFO_A_REG;
+		dma_base + BCM2835_I2S_FIFO_A_REG;
 
 	dev->dma_data[SNDRV_PCM_STREAM_CAPTURE].addr =
-		res->start + BCM2835_I2S_FIFO_A_REG;
+		dma_base + BCM2835_I2S_FIFO_A_REG;
 
 	/* Set the bus width */
 	dev->dma_data[SNDRV_PCM_STREAM_PLAYBACK].addr_width =

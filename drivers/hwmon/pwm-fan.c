@@ -12,7 +12,6 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
-#include <linux/of_address.h>
 #include <linux/platform_device.h>
 #include <linux/pwm.h>
 #include <linux/regulator/consumer.h>
@@ -52,9 +51,6 @@ struct pwm_fan_ctx {
 	ktime_t sample_start;
 	struct timer_list rpm_timer;
 
-	void __iomem *rpm_regbase;
-	unsigned int rpm_offset;
-
 	unsigned int pwm_value;
 	unsigned int pwm_fan_state;
 	unsigned int pwm_fan_max_state;
@@ -63,10 +59,6 @@ struct pwm_fan_ctx {
 
 	struct hwmon_chip_info info;
 	struct hwmon_channel_info fan_channel;
-};
-
-static const u32 rpm_reg_channel_config[] = {
-	HWMON_F_INPUT, 0
 };
 
 /* This handler assumes self resetting edge triggered interrupt. */
@@ -343,10 +335,7 @@ static int pwm_fan_read(struct device *dev, enum hwmon_sensor_types type,
 		}
 		return -EOPNOTSUPP;
 	case hwmon_fan:
-		if (ctx->rpm_regbase)
-			*val = (long)readl(ctx->rpm_regbase + ctx->rpm_offset);
-		else
-			*val = ctx->tachs[channel].rpm;
+		*val = ctx->tachs[channel].rpm;
 		return 0;
 
 	default:
@@ -438,7 +427,7 @@ static int pwm_fan_of_get_cooling_data(struct device *dev,
 	struct device_node *np = dev->of_node;
 	int num, i, ret;
 
-	if (!of_find_property(np, "cooling-levels", NULL))
+	if (!of_property_present(np, "cooling-levels"))
 		return 0;
 
 	ret = of_property_count_u32_elems(np, "cooling-levels");
@@ -481,7 +470,6 @@ static void pwm_fan_cleanup(void *__ctx)
 	/* Switch off everything */
 	ctx->enable_mode = pwm_disable_reg_disable;
 	pwm_fan_power_off(ctx);
-	iounmap(ctx->rpm_regbase);
 }
 
 static int pwm_fan_probe(struct platform_device *pdev)
@@ -520,6 +508,14 @@ static int pwm_fan_probe(struct platform_device *pdev)
 	pwm_init_state(ctx->pwm, &ctx->pwm_state);
 
 	/*
+	 * PWM fans are controlled solely by the duty cycle of the PWM signal,
+	 * they do not care about the exact timing. Thus set usage_power to true
+	 * to allow less flexible hardware to work as a PWM source for fan
+	 * control.
+	 */
+	ctx->pwm_state.usage_power = true;
+
+	/*
 	 * set_pwm assumes that MAX_PWM * (period - 1) fits into an unsigned
 	 * long. Check this here to prevent the fan running at a too low
 	 * frequency.
@@ -546,23 +542,10 @@ static int pwm_fan_probe(struct platform_device *pdev)
 		return ret;
 
 	ctx->tach_count = platform_irq_count(pdev);
-	if (ctx->tach_count == 0) {
-		struct device_node *rpm_node;
-
-		rpm_node = of_parse_phandle(dev->of_node, "rpm-regmap", 0);
-		if (rpm_node)
-			ctx->rpm_regbase = of_iomap(rpm_node, 0);
-	}
-
 	if (ctx->tach_count < 0)
 		return dev_err_probe(dev, ctx->tach_count,
 				     "Could not get number of fan tachometer inputs\n");
-	if (IS_ERR(ctx->rpm_regbase))
-		return dev_err_probe(dev, PTR_ERR(ctx->rpm_regbase),
-				     "Could not get rpm reg\n");
-
-	dev_dbg(dev, "%d fan tachometer inputs, %d rpm regmap\n", ctx->tach_count,
-		!!ctx->rpm_regbase);
+	dev_dbg(dev, "%d fan tachometer inputs\n", ctx->tach_count);
 
 	if (ctx->tach_count) {
 		channel_count++;	/* We also have a FAN channel. */
@@ -579,24 +562,12 @@ static int pwm_fan_probe(struct platform_device *pdev)
 		if (!fan_channel_config)
 			return -ENOMEM;
 		ctx->fan_channel.config = fan_channel_config;
-	} else if (ctx->rpm_regbase) {
-		channel_count++;	/* We also have a FAN channel. */
-		ctx->fan_channel.type = hwmon_fan;
-		ctx->fan_channel.config = rpm_reg_channel_config;
-
-		if (of_property_read_u32(pdev->dev.of_node, "rpm-offset", &ctx->rpm_offset)) {
-			dev_err(&pdev->dev, "unable to read 'rpm-offset'");
-			ret = -EINVAL;
-			goto error;
-		}
 	}
 
 	channels = devm_kcalloc(dev, channel_count + 1,
 				sizeof(struct hwmon_channel_info *), GFP_KERNEL);
-	if (!channels) {
-		ret = -ENOMEM;
-		goto error;
-	}
+	if (!channels)
+		return -ENOMEM;
 
 	channels[0] = HWMON_CHANNEL_INFO(pwm, HWMON_PWM_INPUT | HWMON_PWM_ENABLE);
 
@@ -639,8 +610,6 @@ static int pwm_fan_probe(struct platform_device *pdev)
 		mod_timer(&ctx->rpm_timer, jiffies + HZ);
 
 		channels[1] = &ctx->fan_channel;
-	} else if (ctx->rpm_regbase) {
-		channels[1] = &ctx->fan_channel;
 	}
 
 	ctx->info.ops = &pwm_fan_hwmon_ops;
@@ -650,13 +619,12 @@ static int pwm_fan_probe(struct platform_device *pdev)
 						     ctx, &ctx->info, NULL);
 	if (IS_ERR(hwmon)) {
 		dev_err(dev, "Failed to register hwmon device\n");
-		ret = PTR_ERR(hwmon);
-		goto error;
+		return PTR_ERR(hwmon);
 	}
 
 	ret = pwm_fan_of_get_cooling_data(dev, ctx);
 	if (ret)
-		goto error;
+		return ret;
 
 	ctx->pwm_fan_state = ctx->pwm_fan_max_state;
 	if (IS_ENABLED(CONFIG_THERMAL)) {
@@ -667,17 +635,12 @@ static int pwm_fan_probe(struct platform_device *pdev)
 			dev_err(dev,
 				"Failed to register pwm-fan as cooling device: %d\n",
 				ret);
-			goto error;
+			return ret;
 		}
 		ctx->cdev = cdev;
 	}
 
 	return 0;
-
-error:
-	if (ctx->rpm_regbase)
-		iounmap(ctx->rpm_regbase);
-	return ret;
 }
 
 static void pwm_fan_shutdown(struct platform_device *pdev)

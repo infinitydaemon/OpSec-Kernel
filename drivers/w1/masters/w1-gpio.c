@@ -30,7 +30,7 @@ static u8 w1_gpio_set_pullup(void *data, int delay)
 			 * This will OVERRIDE open drain emulation and force-pull
 			 * the line high for some time.
 			 */
-			gpiod_direction_output_raw(pdata->gpiod, 1);
+			gpiod_set_raw_value(pdata->gpiod, 1);
 			msleep(pdata->pullup_duration);
 			/*
 			 * This will simply set the line as input since we are doing
@@ -87,7 +87,7 @@ static int w1_gpio_probe(struct platform_device *pdev)
 		 * driver it high/low like we are in full control of the line and
 		 * open drain will happen transparently.
 		 */
-		if (of_get_property(np, "linux,open-drain", NULL))
+		if (of_property_present(np, "linux,open-drain"))
 			gflags = GPIOD_OUT_LOW;
 
 		pdev->dev.platform_data = pdata;
@@ -101,10 +101,8 @@ static int w1_gpio_probe(struct platform_device *pdev)
 
 	master = devm_kzalloc(dev, sizeof(struct w1_bus_master),
 			GFP_KERNEL);
-	if (!master) {
-		dev_err(dev, "Out of memory\n");
+	if (!master)
 		return -ENOMEM;
-	}
 
 	pdata->gpiod = devm_gpiod_get_index(dev, NULL, 0, gflags);
 	if (IS_ERR(pdata->gpiod)) {

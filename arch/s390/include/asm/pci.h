@@ -117,7 +117,9 @@ struct zpci_bus {
 struct zpci_dev {
 	struct zpci_bus *zbus;
 	struct list_head entry;		/* list of all zpci_devices, needed for hotplug, etc. */
+	struct list_head iommu_list;
 	struct kref kref;
+	struct rcu_head rcu;
 	struct hotplug_slot hotplug_slot;
 
 	enum zpci_state state;
@@ -155,15 +157,7 @@ struct zpci_dev {
 
 	/* DMA stuff */
 	unsigned long	*dma_table;
-	spinlock_t	dma_table_lock;
 	int		tlb_refresh;
-
-	spinlock_t	iommu_bitmap_lock;
-	unsigned long	*iommu_bitmap;
-	unsigned long	*lazy_bitmap;
-	unsigned long	iommu_size;
-	unsigned long	iommu_pages;
-	unsigned int	next_bit;
 
 	struct iommu_device iommu_dev;  /* IOMMU core handle */
 
@@ -179,10 +173,6 @@ struct zpci_dev {
 	struct zpci_fmb *fmb;
 	u16		fmb_update;	/* update interval */
 	u16		fmb_length;
-	/* software counters */
-	atomic64_t allocated_pages;
-	atomic64_t mapped_pages;
-	atomic64_t unmapped_pages;
 
 	u8		version;
 	enum pci_bus_speed max_bus_speed;
@@ -220,7 +210,7 @@ void zpci_device_reserved(struct zpci_dev *zdev);
 bool zpci_is_device_configured(struct zpci_dev *zdev);
 
 int zpci_hot_reset_device(struct zpci_dev *zdev);
-int zpci_register_ioat(struct zpci_dev *, u8, u64, u64, u64);
+int zpci_register_ioat(struct zpci_dev *, u8, u64, u64, u64, u8 *);
 int zpci_unregister_ioat(struct zpci_dev *, u8);
 void zpci_remove_reserved_devices(void);
 void zpci_update_fh(struct zpci_dev *zdev, u32 fh);

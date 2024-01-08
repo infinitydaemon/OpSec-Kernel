@@ -269,7 +269,7 @@ static ssize_t update_interval_show(struct device *dev,
 				    struct device_attribute *da, char *buf)
 {
 	struct ds1621_data *data = dev_get_drvdata(dev);
-	return scnprintf(buf, PAGE_SIZE, "%hu\n", data->update_interval);
+	return sysfs_emit(buf, "%hu\n", data->update_interval);
 }
 
 static ssize_t update_interval_store(struct device *dev,
@@ -378,23 +378,13 @@ static const struct i2c_device_id ds1621_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, ds1621_id);
 
-static const struct of_device_id ds1621_of_ids[] = {
-	{ .compatible = "dallas,ds1621", },
-	{ .compatible = "dallas,ds1625", },
-	{ .compatible = "dallas,ds1631", },
-	{ .compatible = "dallas,ds1721", },
-	{ .compatible = "dallas,ds1731", },
-	{ }
-};
-MODULE_DEVICE_TABLE(of, ds1621_of_ids);
-
 /* This is the driver that will be inserted */
 static struct i2c_driver ds1621_driver = {
 	.class		= I2C_CLASS_HWMON,
 	.driver = {
 		.name	= "ds1621",
 	},
-	.probe_new	= ds1621_probe,
+	.probe		= ds1621_probe,
 	.id_table	= ds1621_id,
 };
 

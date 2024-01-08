@@ -48,6 +48,7 @@
 #include <linux/aperture.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/screen_info.h>
 #include <linux/vmalloc.h>
 #include <linux/init.h>
 #include <linux/completion.h>
@@ -58,7 +59,6 @@
 #include <linux/console.h>
 
 #include <linux/hyperv.h>
-
 
 /* Hyper-V Synthetic Video Protocol definitions and structures */
 #define MAX_VMBUS_PKT_SIZE 0x4000
@@ -848,57 +848,37 @@ static int hvfb_blank(int blank, struct fb_info *info)
 	return 1;	/* get fb_blank to set the colormap to all black */
 }
 
-static void hvfb_cfb_fillrect(struct fb_info *p,
-			      const struct fb_fillrect *rect)
+static void hvfb_ops_damage_range(struct fb_info *info, off_t off, size_t len)
 {
-	struct hvfb_par *par = p->par;
-
-	cfb_fillrect(p, rect);
-	if (par->synchronous_fb)
-		synthvid_update(p, 0, 0, INT_MAX, INT_MAX);
-	else
-		hvfb_ondemand_refresh_throttle(par, rect->dx, rect->dy,
-					       rect->width, rect->height);
+	/* TODO: implement damage handling */
 }
 
-static void hvfb_cfb_copyarea(struct fb_info *p,
-			      const struct fb_copyarea *area)
+static void hvfb_ops_damage_area(struct fb_info *info, u32 x, u32 y, u32 width, u32 height)
 {
-	struct hvfb_par *par = p->par;
+	struct hvfb_par *par = info->par;
 
-	cfb_copyarea(p, area);
 	if (par->synchronous_fb)
-		synthvid_update(p, 0, 0, INT_MAX, INT_MAX);
+		synthvid_update(info, 0, 0, INT_MAX, INT_MAX);
 	else
-		hvfb_ondemand_refresh_throttle(par, area->dx, area->dy,
-					       area->width, area->height);
+		hvfb_ondemand_refresh_throttle(par, x, y, width, height);
 }
 
-static void hvfb_cfb_imageblit(struct fb_info *p,
-			       const struct fb_image *image)
-{
-	struct hvfb_par *par = p->par;
-
-	cfb_imageblit(p, image);
-	if (par->synchronous_fb)
-		synthvid_update(p, 0, 0, INT_MAX, INT_MAX);
-	else
-		hvfb_ondemand_refresh_throttle(par, image->dx, image->dy,
-					       image->width, image->height);
-}
+/*
+ * TODO: GEN1 codepaths allocate from system or DMA-able memory. Fix the
+ *       driver to use the _SYSMEM_ or _DMAMEM_ helpers in these cases.
+ */
+FB_GEN_DEFAULT_DEFERRED_IOMEM_OPS(hvfb_ops,
+				  hvfb_ops_damage_range,
+				  hvfb_ops_damage_area)
 
 static const struct fb_ops hvfb_ops = {
 	.owner = THIS_MODULE,
+	FB_DEFAULT_DEFERRED_OPS(hvfb_ops),
 	.fb_check_var = hvfb_check_var,
 	.fb_set_par = hvfb_set_par,
 	.fb_setcolreg = hvfb_setcolreg,
-	.fb_fillrect = hvfb_cfb_fillrect,
-	.fb_copyarea = hvfb_cfb_copyarea,
-	.fb_imageblit = hvfb_cfb_imageblit,
 	.fb_blank = hvfb_blank,
-	.fb_mmap = fb_deferred_io_mmap,
 };
-
 
 /* Get options from kernel paramenter "video=" */
 static void hvfb_get_option(struct fb_info *info)
@@ -947,7 +927,7 @@ static phys_addr_t hvfb_get_phymem(struct hv_device *hdev,
 	if (request_size == 0)
 		return -1;
 
-	if (order < MAX_ORDER) {
+	if (order <= MAX_ORDER) {
 		/* Call alloc_pages if the size is less than 2^MAX_ORDER */
 		page = alloc_pages(GFP_KERNEL | __GFP_ZERO, order);
 		if (!page)
@@ -978,7 +958,7 @@ static void hvfb_release_phymem(struct hv_device *hdev,
 {
 	unsigned int order = get_order(size);
 
-	if (order < MAX_ORDER)
+	if (order <= MAX_ORDER)
 		__free_pages(pfn_to_page(paddr >> PAGE_SHIFT), order);
 	else
 		dma_free_coherent(&hdev->device,
@@ -1030,9 +1010,11 @@ static int hvfb_getmem(struct hv_device *hdev, struct fb_info *info)
 			goto getmem_done;
 		}
 		pr_info("Unable to allocate enough contiguous physical memory on Gen 1 VM. Using MMIO instead.\n");
-	} else {
+	} else if (IS_ENABLED(CONFIG_SYSFB)) {
 		base = screen_info.lfb_base;
 		size = screen_info.lfb_size;
+	} else {
+		goto err1;
 	}
 
 	/*
@@ -1074,15 +1056,15 @@ static int hvfb_getmem(struct hv_device *hdev, struct fb_info *info)
 	info->screen_size = dio_fb_size;
 
 getmem_done:
-	aperture_remove_conflicting_devices(base, size, false, KBUILD_MODNAME);
+	aperture_remove_conflicting_devices(base, size, KBUILD_MODNAME);
 
-	if (gen2vm) {
+	if (!gen2vm) {
+		pci_dev_put(pdev);
+	} else if (IS_ENABLED(CONFIG_SYSFB)) {
 		/* framebuffer is reallocated, clear screen_info to avoid misuse from kexec */
 		screen_info.lfb_size = 0;
 		screen_info.lfb_base = 0;
 		screen_info.orig_video_isVGA = 0;
-	} else {
-		pci_dev_put(pdev);
 	}
 
 	return 0;
@@ -1159,8 +1141,6 @@ static int hvfb_probe(struct hv_device *hdev,
 	}
 
 	/* Set up fb_info */
-	info->flags = FBINFO_DEFAULT;
-
 	info->var.xres_virtual = info->var.xres = screen_width;
 	info->var.yres_virtual = info->var.yres = screen_height;
 	info->var.bits_per_pixel = screen_depth;
@@ -1209,7 +1189,15 @@ static int hvfb_probe(struct hv_device *hdev,
 	par->fb_ready = true;
 
 	par->synchronous_fb = false;
+
+	/*
+	 * We need to be sure this panic notifier runs _before_ the
+	 * vmbus disconnect, so order it by priority. It must execute
+	 * before the function hv_panic_vmbus_unload() [drivers/hv/vmbus_drv.c],
+	 * which is almost at the end of list, with priority = INT_MIN + 1.
+	 */
 	par->hvfb_panic_nb.notifier_call = hvfb_on_panic;
+	par->hvfb_panic_nb.priority = INT_MIN + 10,
 	atomic_notifier_chain_register(&panic_notifier_list,
 				       &par->hvfb_panic_nb);
 
@@ -1227,8 +1215,7 @@ error1:
 	return ret;
 }
 
-
-static int hvfb_remove(struct hv_device *hdev)
+static void hvfb_remove(struct hv_device *hdev)
 {
 	struct fb_info *info = hv_get_drvdata(hdev);
 	struct hvfb_par *par = info->par;
@@ -1249,8 +1236,6 @@ static int hvfb_remove(struct hv_device *hdev)
 
 	hvfb_putmem(hdev, info);
 	framebuffer_release(info);
-
-	return 0;
 }
 
 static int hvfb_suspend(struct hv_device *hdev)
@@ -1363,6 +1348,9 @@ static struct pci_driver hvfb_pci_stub_driver = {
 static int __init hvfb_drv_init(void)
 {
 	int ret;
+
+	if (fb_modesetting_disabled("hyper_fb"))
+		return -ENODEV;
 
 	ret = vmbus_driver_register(&hvfb_drv);
 	if (ret != 0)

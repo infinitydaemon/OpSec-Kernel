@@ -113,43 +113,29 @@ struct mipi_dsi_host *of_find_mipi_dsi_host_by_node(struct device_node *node);
 
 /* DSI mode flags */
 
-/* Video mode display.
- * Not set denotes a command mode display.
- */
+/* video mode */
 #define MIPI_DSI_MODE_VIDEO		BIT(0)
-/* Video burst mode.
- * Link frequency to be configured via platform configuration.
- * This should always be set in conjunction with MIPI_DSI_MODE_VIDEO.
- * (DSI spec V1.1 8.11.4)
- */
+/* video burst mode */
 #define MIPI_DSI_MODE_VIDEO_BURST	BIT(1)
-/* Video pulse mode.
- * Not set denotes sync event mode. (DSI spec V1.1 8.11.2)
- */
+/* video pulse mode */
 #define MIPI_DSI_MODE_VIDEO_SYNC_PULSE	BIT(2)
-/* Enable auto vertical count mode */
+/* enable auto vertical count mode */
 #define MIPI_DSI_MODE_VIDEO_AUTO_VERT	BIT(3)
-/* Enable hsync-end packets in vsync-pulse and v-porch area */
+/* enable hsync-end packets in vsync-pulse and v-porch area */
 #define MIPI_DSI_MODE_VIDEO_HSE		BIT(4)
-/* Transmit NULL packets or LP mode during hfront-porch area.
- * Not set denotes sending a blanking packet instead. (DSI spec V1.1 8.11.1)
- */
+/* disable hfront-porch area */
 #define MIPI_DSI_MODE_VIDEO_NO_HFP	BIT(5)
-/* Transmit NULL packets or LP mode during hback-porch area.
- * Not set denotes sending a blanking packet instead. (DSI spec V1.1 8.11.1)
- */
+/* disable hback-porch area */
 #define MIPI_DSI_MODE_VIDEO_NO_HBP	BIT(6)
-/* Transmit NULL packets or LP mode during hsync-active area.
- * Not set denotes sending a blanking packet instead. (DSI spec V1.1 8.11.1)
- */
+/* disable hsync-active area */
 #define MIPI_DSI_MODE_VIDEO_NO_HSA	BIT(7)
-/* Flush display FIFO on vsync pulse */
+/* flush display FIFO on vsync pulse */
 #define MIPI_DSI_MODE_VSYNC_FLUSH	BIT(8)
-/* Disable EoT packets in HS mode. (DSI spec V1.1 8.1)  */
+/* disable EoT packets in HS mode */
 #define MIPI_DSI_MODE_NO_EOT_PACKET	BIT(9)
-/* Device supports non-continuous clock behavior (DSI spec V1.1 5.6.1) */
+/* device supports non-continuous clock behavior (DSI spec 5.6.1) */
 #define MIPI_DSI_CLOCK_NON_CONTINUOUS	BIT(10)
-/* Transmit data in low power */
+/* transmit data in low power */
 #define MIPI_DSI_MODE_LPM		BIT(11)
 /* transmit data ending at the same time for all lanes within one hsync */
 #define MIPI_DSI_HS_PKT_END_ALIGNED	BIT(12)
@@ -211,10 +197,7 @@ struct mipi_dsi_device {
 
 #define MIPI_DSI_MODULE_PREFIX "mipi-dsi:"
 
-static inline struct mipi_dsi_device *to_mipi_dsi_device(struct device *dev)
-{
-	return container_of(dev, struct mipi_dsi_device, dev);
-}
+#define to_mipi_dsi_device(__dev)	container_of_const(__dev, struct mipi_dsi_device, dev)
 
 /**
  * mipi_dsi_pixel_format_to_bpp - obtain the number of bits per pixel for any
@@ -316,20 +299,41 @@ int mipi_dsi_dcs_get_display_brightness_large(struct mipi_dsi_device *dsi,
 					     u16 *brightness);
 
 /**
+ * mipi_dsi_generic_write_seq - transmit data using a generic write packet
+ * @dsi: DSI peripheral device
+ * @seq: buffer containing the payload
+ */
+#define mipi_dsi_generic_write_seq(dsi, seq...)                                \
+	do {                                                                   \
+		static const u8 d[] = { seq };                                 \
+		struct device *dev = &dsi->dev;                                \
+		int ret;                                                       \
+		ret = mipi_dsi_generic_write(dsi, d, ARRAY_SIZE(d));           \
+		if (ret < 0) {                                                 \
+			dev_err_ratelimited(dev, "transmit data failed: %d\n", \
+					    ret);                              \
+			return ret;                                            \
+		}                                                              \
+	} while (0)
+
+/**
  * mipi_dsi_dcs_write_seq - transmit a DCS command with payload
  * @dsi: DSI peripheral device
  * @cmd: Command
  * @seq: buffer containing data to be transmitted
  */
-#define mipi_dsi_dcs_write_seq(dsi, cmd, seq...) do {				\
-		static const u8 d[] = { cmd, seq };				\
-		struct device *dev = &dsi->dev;	\
-		int ret;						\
-		ret = mipi_dsi_dcs_write_buffer(dsi, d, ARRAY_SIZE(d));	\
-		if (ret < 0) {						\
-			dev_err_ratelimited(dev, "sending command %#02x failed: %d\n", cmd, ret); \
-			return ret;						\
-		}						\
+#define mipi_dsi_dcs_write_seq(dsi, cmd, seq...)                           \
+	do {                                                               \
+		static const u8 d[] = { cmd, seq };                        \
+		struct device *dev = &dsi->dev;                            \
+		int ret;                                                   \
+		ret = mipi_dsi_dcs_write_buffer(dsi, d, ARRAY_SIZE(d));    \
+		if (ret < 0) {                                             \
+			dev_err_ratelimited(                               \
+				dev, "sending command %#02x failed: %d\n", \
+				cmd, ret);                                 \
+			return ret;                                        \
+		}                                                          \
 	} while (0)
 
 /**

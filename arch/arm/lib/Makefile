@@ -7,8 +7,8 @@
 
 lib-y		:= changebit.o csumipv6.o csumpartial.o               \
 		   csumpartialcopy.o csumpartialcopyuser.o clearbit.o \
-		   delay.o delay-loop.o findbit.o memchr.o            \
-		   setbit.o                                           \
+		   delay.o delay-loop.o findbit.o memchr.o memcpy.o   \
+		   memmove.o memset.o setbit.o                        \
 		   strchr.o strrchr.o                                 \
 		   testchangebit.o testclearbit.o testsetbit.o        \
 		   ashldi3.o ashrdi3.o lshrdi3.o muldi3.o             \
@@ -25,16 +25,6 @@ else
   lib-y	+= backtrace.o
 endif
 
-# Choose optimised implementations for Raspberry Pi
-ifeq ($(CONFIG_BCM2835_FAST_MEMCPY),y)
-  CFLAGS_uaccess_with_memcpy.o += -DCOPY_FROM_USER_THRESHOLD=1600
-  CFLAGS_uaccess_with_memcpy.o += -DCOPY_TO_USER_THRESHOLD=672
-  obj-$(CONFIG_MODULES) += exports_rpi.o
-  lib-y        += memcpy_rpi.o memmove_rpi.o memset_rpi.o memcmp_rpi.o
-else
-  lib-y        += memcpy.o memmove.o memset.o
-endif
-
 # using lib_ here won't override already available weak symbols
 obj-$(CONFIG_UACCESS_WITH_MEMCPY) += uaccess_with_memcpy.o
 
@@ -46,10 +36,6 @@ else
   lib-y	+= io-readsw-armv4.o io-writesw-armv4.o
 endif
 
-ifeq ($(CONFIG_ARCH_RPC),y)
-  AFLAGS_delay-loop.o		+= -march=armv4
-endif
-
 $(obj)/csumpartialcopy.o:	$(obj)/csumpartialcopygeneric.S
 $(obj)/csumpartialcopyuser.o:	$(obj)/csumpartialcopygeneric.S
 
@@ -58,3 +44,5 @@ ifeq ($(CONFIG_KERNEL_MODE_NEON),y)
   CFLAGS_xor-neon.o		+= $(NEON_FLAGS)
   obj-$(CONFIG_XOR_BLOCKS)	+= xor-neon.o
 endif
+
+obj-$(CONFIG_FUNCTION_ERROR_INJECTION) += error-inject.o

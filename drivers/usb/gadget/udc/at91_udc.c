@@ -1628,10 +1628,7 @@ static int at91rm9200_udc_init(struct at91_udc *udc)
 
 static void at91rm9200_udc_pullup(struct at91_udc *udc, int is_on)
 {
-	if (is_on)
-		gpiod_set_value(udc->board.pullup_pin, 1);
-	else
-		gpiod_set_value(udc->board.pullup_pin, 0);
+	gpiod_set_value(udc->board.pullup_pin, is_on);
 }
 
 static const struct at91_udc_caps at91rm9200_udc_caps = {
@@ -2003,6 +2000,7 @@ static int at91udc_resume(struct platform_device *pdev)
 #endif
 
 static struct platform_driver at91_udc_driver = {
+	.probe		= at91udc_probe,
 	.remove		= at91udc_remove,
 	.shutdown	= at91udc_shutdown,
 	.suspend	= at91udc_suspend,
@@ -2013,7 +2011,7 @@ static struct platform_driver at91_udc_driver = {
 	},
 };
 
-module_platform_driver_probe(at91_udc_driver, at91udc_probe);
+module_platform_driver(at91_udc_driver);
 
 MODULE_DESCRIPTION("AT91 udc driver");
 MODULE_AUTHOR("Thomas Rathbone, David Brownell");

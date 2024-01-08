@@ -287,7 +287,7 @@ err2:
 	return -EINVAL;
 }
 
-static int omap_kp_remove(struct platform_device *pdev)
+static void omap_kp_remove(struct platform_device *pdev)
 {
 	struct omap_kp *omap_kp = platform_get_drvdata(pdev);
 
@@ -296,20 +296,18 @@ static int omap_kp_remove(struct platform_device *pdev)
 	omap_writew(1, OMAP1_MPUIO_BASE + OMAP_MPUIO_KBD_MASKIT);
 	free_irq(omap_kp->irq, omap_kp);
 
-	del_timer_sync(&omap_kp->timer);
+	timer_shutdown_sync(&omap_kp->timer);
 	tasklet_kill(&kp_tasklet);
 
 	/* unregister everything */
 	input_unregister_device(omap_kp->input);
 
 	kfree(omap_kp);
-
-	return 0;
 }
 
 static struct platform_driver omap_kp_driver = {
 	.probe		= omap_kp_probe,
-	.remove		= omap_kp_remove,
+	.remove_new	= omap_kp_remove,
 	.driver		= {
 		.name	= "omap-keypad",
 	},

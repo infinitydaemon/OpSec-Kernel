@@ -301,10 +301,9 @@ static void __v4l2_m2m_try_queue(struct v4l2_m2m_dev *m2m_dev,
 
 	dprintk("Trying to schedule a job for m2m_ctx: %p\n", m2m_ctx);
 
-	if (!(m2m_ctx->out_q_ctx.q.streaming &&
-	      m2m_ctx->cap_q_ctx.q.streaming) &&
-	    !(m2m_ctx->out_q_ctx.buffered && m2m_ctx->out_q_ctx.q.streaming)) {
-		dprintk("Streaming needs to be on for both queues, or buffered and OUTPUT streaming\n");
+	if (!m2m_ctx->out_q_ctx.q.streaming
+	    || !m2m_ctx->cap_q_ctx.q.streaming) {
+		dprintk("Streaming needs to be on for both queues\n");
 		return;
 	}
 
@@ -493,6 +492,8 @@ void v4l2_m2m_job_finish(struct v4l2_m2m_dev *m2m_dev,
 	 * holding capture buffers. Those should use
 	 * v4l2_m2m_buf_done_and_job_finish() instead.
 	 */
+	WARN_ON(m2m_ctx->out_q_ctx.q.subsystem_flags &
+		VB2_V4L2_FL_SUPPORTS_M2M_HOLD_CAPTURE_BUF);
 	spin_lock_irqsave(&m2m_dev->job_spinlock, flags);
 	schedule_next = _v4l2_m2m_job_finish(m2m_dev, m2m_ctx);
 	spin_unlock_irqrestore(&m2m_dev->job_spinlock, flags);
@@ -921,9 +922,9 @@ static __poll_t v4l2_m2m_poll_for_data(struct file *file,
 	 * means either in driver already or waiting for driver to claim it
 	 * and start processing.
 	 */
-	if ((!src_q->streaming || src_q->error ||
+	if ((!vb2_is_streaming(src_q) || src_q->error ||
 	     list_empty(&src_q->queued_list)) &&
-	    (!dst_q->streaming || dst_q->error ||
+	    (!vb2_is_streaming(dst_q) || dst_q->error ||
 	     (list_empty(&dst_q->queued_list) && !dst_q->last_buffer_dequeued)))
 		return EPOLLERR;
 

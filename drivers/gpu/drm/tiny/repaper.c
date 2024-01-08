@@ -26,7 +26,7 @@
 #include <drm/drm_damage_helper.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_fb_dma_helper.h>
-#include <drm/drm_fb_helper.h>
+#include <drm/drm_fbdev_generic.h>
 #include <drm/drm_format_helper.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem_atomic_helper.h>
@@ -949,7 +949,7 @@ static int repaper_probe(struct spi_device *spi)
 
 	match = device_get_match_data(dev);
 	if (match) {
-		model = (enum repaper_model)match;
+		model = (enum repaper_model)(uintptr_t)match;
 	} else {
 		spi_id = spi_get_device_id(spi);
 		model = (enum repaper_model)spi_id->driver_data;

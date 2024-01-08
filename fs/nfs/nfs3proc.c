@@ -543,9 +543,10 @@ out:
 }
 
 static int
-nfs3_proc_symlink(struct inode *dir, struct dentry *dentry, struct page *page,
+nfs3_proc_symlink(struct inode *dir, struct dentry *dentry, struct folio *folio,
 		  unsigned int len, struct iattr *sattr)
 {
+	struct page *page = &folio->page;
 	struct nfs3_createdata *data;
 	struct dentry *d_alias;
 	int status = -ENOMEM;
@@ -998,7 +999,7 @@ static const struct inode_operations nfs3_dir_inode_operations = {
 	.setattr	= nfs_setattr,
 #ifdef CONFIG_NFS_V3_ACL
 	.listxattr	= nfs3_listxattr,
-	.get_acl	= nfs3_get_acl,
+	.get_inode_acl	= nfs3_get_acl,
 	.set_acl	= nfs3_set_acl,
 #endif
 };
@@ -1009,7 +1010,7 @@ static const struct inode_operations nfs3_file_inode_operations = {
 	.setattr	= nfs_setattr,
 #ifdef CONFIG_NFS_V3_ACL
 	.listxattr	= nfs3_listxattr,
-	.get_acl	= nfs3_get_acl,
+	.get_inode_acl	= nfs3_get_acl,
 	.set_acl	= nfs3_set_acl,
 #endif
 };
