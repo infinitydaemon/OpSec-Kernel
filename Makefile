@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 6
-PATCHLEVEL = 6
-SUBLEVEL = 21
-EXTRAVERSION = stable+
-NAME = New Dynasty
+PATCHLEVEL = 7
+SUBLEVEL = 1
+EXTRAVERSION = rc2
+NAME = Rattle Monkey
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
