@@ -5,7 +5,7 @@ class CWD_OpSec():
     
   def __init__(self):
     self.name = "cwd";
-    self.current.release = "new dynasty";
+    self.current.release = "Rattle Monkey";
     self.username = "cwdsystems";
     self.location = "KyrgzRepublic";
     self.protonmail = "@cwdsystems";
