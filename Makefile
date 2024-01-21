@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 6
 PATCHLEVEL = 7
-SUBLEVEL = 1
+SUBLEVEL = 12
 EXTRAVERSION = rc2
 NAME = Rattle Monkey
 
