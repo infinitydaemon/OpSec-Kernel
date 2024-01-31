@@ -330,6 +330,9 @@ lookup_protocol:
 	if (INET_PROTOSW_REUSE & answer_flags)
 		sk->sk_reuse = SK_CAN_REUSE;
 
+	if (INET_PROTOSW_ICSK & answer_flags)
+		inet_init_csk_locks(sk);
+
 	inet = inet_sk(sk);
 	inet_assign_bit(IS_ICSK, sk, INET_PROTOSW_ICSK & answer_flags);
 
@@ -1848,9 +1851,7 @@ static __net_init int inet_init_net(struct net *net)
 	/*
 	 * Set defaults for local port range
 	 */
-	seqlock_init(&net->ipv4.ip_local_ports.lock);
-	net->ipv4.ip_local_ports.range[0] =  32768;
-	net->ipv4.ip_local_ports.range[1] =  60999;
+	net->ipv4.ip_local_ports.range = 60999u << 16 | 32768u;
 
 	seqlock_init(&net->ipv4.ping_group_range.lock);
 	/*

@@ -384,6 +384,12 @@ static int pmif_spmi_write_cmd(struct spmi_controller *ctrl, u8 opc, u8 sid,
 	u32 data, wdata, cmd;
 	unsigned long flags;
 
+	/* Check for argument validation. */
+	if (unlikely(sid & ~0xf)) {
+		dev_err(&ctrl->dev, "exceed the max slv id\n");
+		return -EINVAL;
+	}
+
 	if (len > 4) {
 		dev_err(&ctrl->dev, "pmif supports 1..4 bytes per trans, but:%zu requested", len);
 
@@ -447,44 +453,39 @@ static int mtk_spmi_probe(struct platform_device *pdev)
 	int err, i;
 	u32 chan_offset;
 
-	ctrl = spmi_controller_alloc(&pdev->dev, sizeof(*arb));
-	if (!ctrl)
-		return -ENOMEM;
+	ctrl = devm_spmi_controller_alloc(&pdev->dev, sizeof(*arb));
+	if (IS_ERR(ctrl))
+		return PTR_ERR(ctrl);
 
 	arb = spmi_controller_get_drvdata(ctrl);
 	arb->data = device_get_match_data(&pdev->dev);
 	if (!arb->data) {
-		err = -EINVAL;
 		dev_err(&pdev->dev, "Cannot get drv_data\n");
-		goto err_put_ctrl;
+		return -EINVAL;
 	}
 
 	arb->base = devm_platform_ioremap_resource_byname(pdev, "pmif");
-	if (IS_ERR(arb->base)) {
-		err = PTR_ERR(arb->base);
-		goto err_put_ctrl;
-	}
+	if (IS_ERR(arb->base))
+		return PTR_ERR(arb->base);
 
 	arb->spmimst_base = devm_platform_ioremap_resource_byname(pdev, "spmimst");
-	if (IS_ERR(arb->spmimst_base)) {
-		err = PTR_ERR(arb->spmimst_base);
-		goto err_put_ctrl;
-	}
+	if (IS_ERR(arb->spmimst_base))
+		return PTR_ERR(arb->spmimst_base);
 
 	arb->nclks = ARRAY_SIZE(pmif_clock_names);
 	for (i = 0; i < arb->nclks; i++)
 		arb->clks[i].id = pmif_clock_names[i];
 
-	err = devm_clk_bulk_get(&pdev->dev, arb->nclks, arb->clks);
+	err = clk_bulk_get(&pdev->dev, arb->nclks, arb->clks);
 	if (err) {
 		dev_err(&pdev->dev, "Failed to get clocks: %d\n", err);
-		goto err_put_ctrl;
+		return err;
 	}
 
 	err = clk_bulk_prepare_enable(arb->nclks, arb->clks);
 	if (err) {
 		dev_err(&pdev->dev, "Failed to enable clocks: %d\n", err);
-		goto err_put_ctrl;
+		goto err_put_clks;
 	}
 
 	ctrl->cmd = pmif_arb_cmd;
@@ -510,8 +511,8 @@ static int mtk_spmi_probe(struct platform_device *pdev)
 
 err_domain_remove:
 	clk_bulk_disable_unprepare(arb->nclks, arb->clks);
-err_put_ctrl:
-	spmi_controller_put(ctrl);
+err_put_clks:
+	clk_bulk_put(arb->nclks, arb->clks);
 	return err;
 }
 
@@ -520,9 +521,9 @@ static void mtk_spmi_remove(struct platform_device *pdev)
 	struct spmi_controller *ctrl = platform_get_drvdata(pdev);
 	struct pmif *arb = spmi_controller_get_drvdata(ctrl);
 
-	clk_bulk_disable_unprepare(arb->nclks, arb->clks);
 	spmi_controller_remove(ctrl);
-	spmi_controller_put(ctrl);
+	clk_bulk_disable_unprepare(arb->nclks, arb->clks);
+	clk_bulk_put(arb->nclks, arb->clks);
 }
 
 static const struct of_device_id mtk_spmi_match_table[] = {
