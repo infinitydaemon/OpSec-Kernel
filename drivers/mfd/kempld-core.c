@@ -535,7 +535,7 @@ static int kempld_probe(struct platform_device *pdev)
 	return kempld_detect_device(pld);
 }
 
-static void kempld_remove(struct platform_device *pdev)
+static int kempld_remove(struct platform_device *pdev)
 {
 	struct kempld_device_data *pld = platform_get_drvdata(pdev);
 	const struct kempld_platform_data *pdata = dev_get_platdata(pld->dev);
@@ -544,6 +544,8 @@ static void kempld_remove(struct platform_device *pdev)
 
 	mfd_remove_devices(&pdev->dev);
 	pdata->release_hardware_mutex(pld);
+
+	return 0;
 }
 
 #ifdef CONFIG_ACPI
@@ -561,7 +563,7 @@ static struct platform_driver kempld_driver = {
 		.acpi_match_table = ACPI_PTR(kempld_acpi_table),
 	},
 	.probe		= kempld_probe,
-	.remove_new	= kempld_remove,
+	.remove		= kempld_remove,
 };
 
 static const struct dmi_system_id kempld_dmi_table[] __initconst = {

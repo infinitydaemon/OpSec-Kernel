@@ -1712,7 +1712,7 @@ err_remove_genpd:
 	return ret;
 }
 
-static void cpr_remove(struct platform_device *pdev)
+static int cpr_remove(struct platform_device *pdev)
 {
 	struct cpr_drv *drv = platform_get_drvdata(pdev);
 
@@ -1725,6 +1725,8 @@ static void cpr_remove(struct platform_device *pdev)
 	pm_genpd_remove(&drv->pd);
 
 	debugfs_remove_recursive(drv->debugfs);
+
+	return 0;
 }
 
 static const struct of_device_id cpr_match_table[] = {
@@ -1735,7 +1737,7 @@ MODULE_DEVICE_TABLE(of, cpr_match_table);
 
 static struct platform_driver cpr_driver = {
 	.probe		= cpr_probe,
-	.remove_new	= cpr_remove,
+	.remove		= cpr_remove,
 	.driver		= {
 		.name	= "qcom-cpr",
 		.of_match_table = cpr_match_table,

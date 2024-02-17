@@ -334,7 +334,7 @@ struct link {
 	 */
 	struct delayed_work watchdog_work;
 	unsigned int watchdog_interval;
-	unsigned int watchdog;
+	bool watchdog_disabled;
 
 	/*
 	 * Work structure for scheduling periodic AGC adjustments.
@@ -925,9 +925,6 @@ struct rt2x00_dev {
 	 * Beacon interval.
 	 */
 	u16 beacon_int;
-
-	/* Rx/Tx DMA busy watchdog counter */
-	u16 rxdma_busy, txdma_busy;
 
 	/**
 	 * Timestamp of last received beacon

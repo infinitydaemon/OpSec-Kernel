@@ -210,6 +210,11 @@ struct ctl_table_root {
 	int (*permissions)(struct ctl_table_header *head, struct ctl_table *table);
 };
 
+/* struct ctl_path describes where in the hierarchy a table is added */
+struct ctl_path {
+	const char *procname;
+};
+
 #define register_sysctl(path, table)	\
 	register_sysctl_sz(path, table, ARRAY_SIZE(table))
 
@@ -249,6 +254,8 @@ extern int pwrsw_enabled;
 extern int unaligned_enabled;
 extern int unaligned_dump_stack;
 extern int no_unaligned_warning;
+
+#define SYSCTL_PERM_EMPTY_DIR	(1 << 0)
 
 #else /* CONFIG_SYSCTL */
 

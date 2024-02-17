@@ -52,13 +52,13 @@ static inline void cfs_se_util_change(struct sched_avg *avg)
 		return;
 
 	/* Avoid store if the flag has been already reset */
-	enqueued = avg->util_est;
+	enqueued = avg->util_est.enqueued;
 	if (!(enqueued & UTIL_AVG_UNCHANGED))
 		return;
 
 	/* Reset flag to report util_avg has been updated */
 	enqueued &= ~UTIL_AVG_UNCHANGED;
-	WRITE_ONCE(avg->util_est, enqueued);
+	WRITE_ONCE(avg->util_est.enqueued, enqueued);
 }
 
 static inline u64 rq_clock_pelt(struct rq *rq)

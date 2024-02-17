@@ -1803,6 +1803,5 @@ static struct usb_driver ar5523_driver = {
 
 module_usb_driver(ar5523_driver);
 
-MODULE_DESCRIPTION("Atheros AR5523 wireless driver");
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_FIRMWARE(AR5523_FIRMWARE_FILE);

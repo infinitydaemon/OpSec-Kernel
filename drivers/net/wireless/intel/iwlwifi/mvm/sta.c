@@ -2550,7 +2550,7 @@ int iwl_mvm_add_mcast_sta(struct iwl_mvm *mvm, struct ieee80211_vif *vif)
 
 	if (WARN_ON(vif->type != NL80211_IFTYPE_AP &&
 		    vif->type != NL80211_IFTYPE_ADHOC))
-		return -EOPNOTSUPP;
+		return -ENOTSUPP;
 
 	/*
 	 * In IBSS, ieee80211_check_queues() sets the cab_queue to be
@@ -3234,7 +3234,7 @@ int iwl_mvm_sta_tx_agg_oper(struct iwl_mvm *mvm, struct ieee80211_vif *vif,
 		 * should be updated as well.
 		 */
 		if (buf_size < IWL_FRAME_LIMIT)
-			return -EOPNOTSUPP;
+			return -ENOTSUPP;
 
 		ret = iwl_mvm_sta_tx_agg(mvm, sta, tid, queue, true);
 		if (ret)
@@ -4111,8 +4111,10 @@ void iwl_mvm_sta_modify_sleep_tx_count(struct iwl_mvm *mvm,
 	}
 
 	/* block the Tx queues until the FW updated the sleep Tx count */
+	iwl_trans_block_txq_ptrs(mvm->trans, true);
+
 	ret = iwl_mvm_send_cmd_pdu(mvm, ADD_STA,
-				   CMD_ASYNC | CMD_BLOCK_TXQS,
+				   CMD_ASYNC | CMD_WANT_ASYNC_CALLBACK,
 				   iwl_mvm_add_sta_cmd_size(mvm), &cmd);
 	if (ret)
 		IWL_ERR(mvm, "Failed to send ADD_STA command (%d)\n", ret);
@@ -4150,8 +4152,7 @@ void iwl_mvm_sta_modify_disable_tx(struct iwl_mvm *mvm,
 	int ret;
 
 	if (mvm->mld_api_is_used) {
-		if (!iwl_mvm_has_no_host_disable_tx(mvm))
-			iwl_mvm_mld_sta_modify_disable_tx(mvm, mvmsta, disable);
+		iwl_mvm_mld_sta_modify_disable_tx(mvm, mvmsta, disable);
 		return;
 	}
 
@@ -4168,8 +4169,7 @@ void iwl_mvm_sta_modify_disable_tx_ap(struct iwl_mvm *mvm,
 	struct iwl_mvm_sta *mvm_sta = iwl_mvm_sta_from_mac80211(sta);
 
 	if (mvm->mld_api_is_used) {
-		if (!iwl_mvm_has_no_host_disable_tx(mvm))
-			iwl_mvm_mld_sta_modify_disable_tx_ap(mvm, sta, disable);
+		iwl_mvm_mld_sta_modify_disable_tx_ap(mvm, sta, disable);
 		return;
 	}
 
@@ -4224,9 +4224,7 @@ void iwl_mvm_modify_all_sta_disable_tx(struct iwl_mvm *mvm,
 	int i;
 
 	if (mvm->mld_api_is_used) {
-		if (!iwl_mvm_has_no_host_disable_tx(mvm))
-			iwl_mvm_mld_modify_all_sta_disable_tx(mvm, mvmvif,
-							      disable);
+		iwl_mvm_mld_modify_all_sta_disable_tx(mvm, mvmvif, disable);
 		return;
 	}
 

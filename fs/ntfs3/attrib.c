@@ -886,7 +886,7 @@ int attr_data_get_block(struct ntfs_inode *ni, CLST vcn, CLST clen, CLST *lcn,
 	struct runs_tree *run = &ni->file.run;
 	struct ntfs_sb_info *sbi;
 	u8 cluster_bits;
-	struct ATTRIB *attr, *attr_b;
+	struct ATTRIB *attr = NULL, *attr_b;
 	struct ATTR_LIST_ENTRY *le, *le_b;
 	struct mft_inode *mi, *mi_b;
 	CLST hint, svcn, to_alloc, evcn1, next_svcn, asize, end, vcn0, alen;
@@ -904,8 +904,12 @@ int attr_data_get_block(struct ntfs_inode *ni, CLST vcn, CLST clen, CLST *lcn,
 		*len = 0;
 	up_read(&ni->file.run_lock);
 
-	if (*len && (*lcn != SPARSE_LCN || !new))
-		return 0; /* Fast normal way without allocation. */
+	if (*len) {
+		if (*lcn != SPARSE_LCN || !new)
+			return 0; /* Fast normal way without allocation. */
+		else if (clen > *len)
+			clen = *len;
+	}
 
 	/* No cluster in cache or we need to allocate cluster in hole. */
 	sbi = ni->mi.sbi;
@@ -913,17 +917,6 @@ int attr_data_get_block(struct ntfs_inode *ni, CLST vcn, CLST clen, CLST *lcn,
 
 	ni_lock(ni);
 	down_write(&ni->file.run_lock);
-
-	/* Repeat the code above (under write lock). */
-	if (!run_lookup_entry(run, vcn, lcn, len, NULL))
-		*len = 0;
-
-	if (*len) {
-		if (*lcn != SPARSE_LCN || !new)
-			goto out; /* normal way without allocation. */
-		if (clen > *len)
-			clen = *len;
-	}
 
 	le_b = NULL;
 	attr_b = ni_find_attr(ni, NULL, &le_b, ATTR_DATA, NULL, 0, NULL, &mi_b);
@@ -1743,10 +1736,8 @@ repack:
 			le_b = NULL;
 			attr_b = ni_find_attr(ni, NULL, &le_b, ATTR_DATA, NULL,
 					      0, NULL, &mi_b);
-			if (!attr_b) {
-				err = -ENOENT;
-				goto out;
-			}
+			if (!attr_b)
+				return -ENOENT;
 
 			attr = attr_b;
 			le = le_b;
@@ -1827,15 +1818,13 @@ ins_ext:
 ok:
 	run_truncate_around(run, vcn);
 out:
-	if (attr_b) {
-		if (new_valid > data_size)
-			new_valid = data_size;
+	if (new_valid > data_size)
+		new_valid = data_size;
 
-		valid_size = le64_to_cpu(attr_b->nres.valid_size);
-		if (new_valid != valid_size) {
-			attr_b->nres.valid_size = cpu_to_le64(valid_size);
-			mi_b->dirty = true;
-		}
+	valid_size = le64_to_cpu(attr_b->nres.valid_size);
+	if (new_valid != valid_size) {
+		attr_b->nres.valid_size = cpu_to_le64(valid_size);
+		mi_b->dirty = true;
 	}
 
 	return err;
@@ -2084,7 +2073,7 @@ next_attr:
 
 	/* Update inode size. */
 	ni->i_valid = valid_size;
-	i_size_write(&ni->vfs_inode, data_size);
+	ni->vfs_inode.i_size = data_size;
 	inode_set_bytes(&ni->vfs_inode, total_size);
 	ni->ni_flags |= NI_FLAG_UPDATE_PARENT;
 	mark_inode_dirty(&ni->vfs_inode);
@@ -2499,7 +2488,7 @@ int attr_insert_range(struct ntfs_inode *ni, u64 vbo, u64 bytes)
 	mi_b->dirty = true;
 
 done:
-	i_size_write(&ni->vfs_inode, ni->vfs_inode.i_size + bytes);
+	ni->vfs_inode.i_size += bytes;
 	ni->ni_flags |= NI_FLAG_UPDATE_PARENT;
 	mark_inode_dirty(&ni->vfs_inode);
 

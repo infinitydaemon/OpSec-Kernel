@@ -12,10 +12,8 @@
 #include "xfs_log_format.h"
 #include "xfs_inode.h"
 #include "xfs_symlink.h"
-#include "xfs_health.h"
 #include "scrub/scrub.h"
 #include "scrub/common.h"
-#include "scrub/health.h"
 
 /* Set us up to scrub a symbolic link. */
 int
@@ -43,37 +41,29 @@ xchk_symlink(
 
 	if (!S_ISLNK(VFS_I(ip)->i_mode))
 		return -ENOENT;
-
-	if (xchk_file_looks_zapped(sc, XFS_SICK_INO_SYMLINK_ZAPPED)) {
-		xchk_fblock_set_corrupt(sc, XFS_DATA_FORK, 0);
-		return 0;
-	}
-
 	ifp = xfs_ifork_ptr(ip, XFS_DATA_FORK);
 	len = ip->i_disk_size;
 
 	/* Plausible size? */
 	if (len > XFS_SYMLINK_MAXLEN || len <= 0) {
 		xchk_fblock_set_corrupt(sc, XFS_DATA_FORK, 0);
-		return 0;
+		goto out;
 	}
 
 	/* Inline symlink? */
 	if (ifp->if_format == XFS_DINODE_FMT_LOCAL) {
 		if (len > xfs_inode_data_fork_size(ip) ||
-		    len > strnlen(ifp->if_data, xfs_inode_data_fork_size(ip)))
+		    len > strnlen(ifp->if_u1.if_data, xfs_inode_data_fork_size(ip)))
 			xchk_fblock_set_corrupt(sc, XFS_DATA_FORK, 0);
-		return 0;
+		goto out;
 	}
 
 	/* Remote symlink; must read the contents. */
 	error = xfs_readlink_bmap_ilocked(sc->ip, sc->buf);
 	if (!xchk_fblock_process_error(sc, XFS_DATA_FORK, 0, &error))
-		return error;
+		goto out;
 	if (strnlen(sc->buf, XFS_SYMLINK_MAXLEN) < len)
 		xchk_fblock_set_corrupt(sc, XFS_DATA_FORK, 0);
-
-	/* If a remote symlink is clean, it is clearly not zapped. */
-	xchk_mark_healthy_if_clean(sc, XFS_SICK_INO_SYMLINK_ZAPPED);
-	return 0;
+out:
+	return error;
 }

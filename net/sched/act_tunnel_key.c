@@ -401,7 +401,7 @@ static int tunnel_key_init(struct net *net, struct nlattr *nla,
 		return err;
 	exists = err;
 	if (exists && bind)
-		return ACT_P_BOUND;
+		return 0;
 
 	switch (parm->t_action) {
 	case TCA_TUNNEL_KEY_ACT_RELEASE:

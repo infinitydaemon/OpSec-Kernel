@@ -12,7 +12,6 @@ k3-psil-lib-objs := k3-psil.o \
 		    k3-psil-j721s2.o \
 		    k3-psil-am62.o \
 		    k3-psil-am62a.o \
-		    k3-psil-j784s4.o \
-		    k3-psil-am62p.o
+		    k3-psil-j784s4.o
 obj-$(CONFIG_TI_K3_PSIL) += k3-psil-lib.o
 obj-$(CONFIG_TI_DMA_CROSSBAR) += dma-crossbar.o

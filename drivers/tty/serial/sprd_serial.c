@@ -1076,7 +1076,7 @@ static struct uart_driver sprd_uart_driver = {
 	.cons = SPRD_CONSOLE,
 };
 
-static void sprd_remove(struct platform_device *dev)
+static int sprd_remove(struct platform_device *dev)
 {
 	struct sprd_uart_port *sup = platform_get_drvdata(dev);
 
@@ -1089,6 +1089,8 @@ static void sprd_remove(struct platform_device *dev)
 
 	if (!sprd_ports_num)
 		uart_unregister_driver(&sprd_uart_driver);
+
+	return 0;
 }
 
 static bool sprd_uart_is_console(struct uart_port *uport)
@@ -1255,7 +1257,7 @@ MODULE_DEVICE_TABLE(of, serial_ids);
 
 static struct platform_driver sprd_platform_driver = {
 	.probe		= sprd_probe,
-	.remove_new	= sprd_remove,
+	.remove		= sprd_remove,
 	.driver		= {
 		.name	= "sprd_serial",
 		.of_match_table = serial_ids,

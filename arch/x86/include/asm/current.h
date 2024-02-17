@@ -2,7 +2,6 @@
 #ifndef _ASM_X86_CURRENT_H
 #define _ASM_X86_CURRENT_H
 
-#include <linux/build_bug.h>
 #include <linux/compiler.h>
 
 #ifndef __ASSEMBLY__

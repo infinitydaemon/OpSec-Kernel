@@ -308,6 +308,7 @@ static inline void __iomem *ioremap(unsigned long port, unsigned long size)
 }
 
 #define ioremap_wc ioremap
+#define ioremap_uc ioremap
 
 static inline void iounmap(volatile void __iomem *addr)
 {
@@ -649,6 +650,12 @@ extern void outsl (unsigned long port, const void *src, unsigned long count);
 # endif
 #endif
 #define RTC_ALWAYS_BCD	0
+
+/*
+ * Convert a physical pointer to a virtual kernel pointer for /dev/mem
+ * access
+ */
+#define xlate_dev_mem_ptr(p)	__va(p)
 
 /*
  * These get provided from <asm-generic/iomap.h> since alpha does not

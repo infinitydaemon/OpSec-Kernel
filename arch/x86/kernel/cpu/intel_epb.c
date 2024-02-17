@@ -237,4 +237,4 @@ err_out_online:
 	cpuhp_remove_state(CPUHP_AP_X86_INTEL_EPB_ONLINE);
 	return ret;
 }
-late_initcall(intel_epb_init);
+subsys_initcall(intel_epb_init);

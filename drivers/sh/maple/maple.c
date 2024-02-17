@@ -59,7 +59,6 @@ struct maple_device_specify {
 static bool checked[MAPLE_PORTS];
 static bool empty[MAPLE_PORTS];
 static struct maple_device *baseunits[MAPLE_PORTS];
-static const struct bus_type maple_bus_type;
 
 /**
  * maple_driver_register - register a maple driver
@@ -774,10 +773,11 @@ static struct maple_driver maple_unsupported_device = {
 /*
  * maple_bus_type - core maple bus structure
  */
-static const struct bus_type maple_bus_type = {
+struct bus_type maple_bus_type = {
 	.name = "maple",
 	.match = maple_match_bus_driver,
 };
+EXPORT_SYMBOL_GPL(maple_bus_type);
 
 static struct device maple_bus = {
 	.init_name = "maple",

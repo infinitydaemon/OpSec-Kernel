@@ -525,42 +525,19 @@ bool cpu_is_hotpluggable(unsigned int cpu)
 EXPORT_SYMBOL_GPL(cpu_is_hotpluggable);
 
 #ifdef CONFIG_GENERIC_CPU_DEVICES
-DEFINE_PER_CPU(struct cpu, cpu_devices);
-
-bool __weak arch_cpu_is_hotpluggable(int cpu)
-{
-	return false;
-}
-
-int __weak arch_register_cpu(int cpu)
-{
-	struct cpu *c = &per_cpu(cpu_devices, cpu);
-
-	c->hotpluggable = arch_cpu_is_hotpluggable(cpu);
-
-	return register_cpu(c, cpu);
-}
-
-#ifdef CONFIG_HOTPLUG_CPU
-void __weak arch_unregister_cpu(int num)
-{
-	unregister_cpu(&per_cpu(cpu_devices, num));
-}
-#endif /* CONFIG_HOTPLUG_CPU */
-#endif /* CONFIG_GENERIC_CPU_DEVICES */
+static DEFINE_PER_CPU(struct cpu, cpu_devices);
+#endif
 
 static void __init cpu_dev_register_generic(void)
 {
-	int i, ret;
+#ifdef CONFIG_GENERIC_CPU_DEVICES
+	int i;
 
-	if (!IS_ENABLED(CONFIG_GENERIC_CPU_DEVICES))
-		return;
-
-	for_each_present_cpu(i) {
-		ret = arch_register_cpu(i);
-		if (ret)
-			pr_warn("register_cpu %d failed (%d)\n", i, ret);
+	for_each_possible_cpu(i) {
+		if (register_cpu(&per_cpu(cpu_devices, i), i))
+			panic("Failed to register CPU device");
 	}
+#endif
 }
 
 #ifdef CONFIG_GENERIC_CPU_VULNERABILITIES

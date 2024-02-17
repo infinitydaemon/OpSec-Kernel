@@ -77,7 +77,7 @@ static int tcf_police_init(struct net *net, struct nlattr *nla,
 		return err;
 	exists = err;
 	if (exists && bind)
-		return ACT_P_BOUND;
+		return 0;
 
 	if (!exists) {
 		ret = tcf_idr_create(tn, index, NULL, a,

@@ -1581,7 +1581,7 @@ static int brcmf_usb_reset_device(struct device *dev, void *notused)
 
 void brcmf_usb_exit(void)
 {
-	struct device_driver *drv = &brcmf_usbdrvr.driver;
+	struct device_driver *drv = &brcmf_usbdrvr.drvwrap.driver;
 	int ret;
 
 	brcmf_dbg(USB, "Enter\n");

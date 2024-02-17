@@ -3,8 +3,6 @@
  * BIOS32 and PCI BIOS handling.
  */
 
-#include <linux/bits.h>
-#include <linux/bitfield.h>
 #include <linux/pci.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -31,18 +29,7 @@
 #define PCIBIOS_HW_TYPE1_SPEC		0x10
 #define PCIBIOS_HW_TYPE2_SPEC		0x20
 
-/*
- * Returned in EAX:
- * - AH: return code
- */
-#define PCIBIOS_RETURN_CODE			GENMASK(15, 8)
-
 int pcibios_enabled;
-
-static u8 pcibios_get_return_code(u32 eax)
-{
-	return FIELD_GET(PCIBIOS_RETURN_CODE, eax);
-}
 
 /* According to the BIOS specification at:
  * http://members.datafast.net.au/dft0802/specs/bios21.pdf, we could
@@ -167,7 +154,7 @@ static int __init check_pcibios(void)
 			: "memory");
 		local_irq_restore(flags);
 
-		status = pcibios_get_return_code(eax);
+		status = (eax >> 8) & 0xff;
 		hw_mech = eax & 0xff;
 		major_ver = (ebx >> 8) & 0xff;
 		minor_ver = ebx & 0xff;
@@ -240,7 +227,7 @@ static int pci_bios_read(unsigned int seg, unsigned int bus,
 
 	raw_spin_unlock_irqrestore(&pci_config_lock, flags);
 
-	return pcibios_get_return_code(result);
+	return (int)((result & 0xff00) >> 8);
 }
 
 static int pci_bios_write(unsigned int seg, unsigned int bus,
@@ -282,7 +269,7 @@ static int pci_bios_write(unsigned int seg, unsigned int bus,
 
 	raw_spin_unlock_irqrestore(&pci_config_lock, flags);
 
-	return pcibios_get_return_code(result);
+	return (int)((result & 0xff00) >> 8);
 }
 
 
@@ -398,10 +385,9 @@ struct irq_routing_table * pcibios_get_irq_routing_table(void)
 		  "m" (opt)
 		: "memory");
 	DBG("OK  ret=%d, size=%d, map=%x\n", ret, opt.size, map);
-	ret = pcibios_get_return_code(ret);
-	if (ret) {
-		printk(KERN_ERR "PCI: Error %02x when fetching IRQ routing table.\n", ret);
-	} else if (opt.size) {
+	if (ret & 0xff00)
+		printk(KERN_ERR "PCI: Error %02x when fetching IRQ routing table.\n", (ret >> 8) & 0xff);
+	else if (opt.size) {
 		rt = kmalloc(sizeof(struct irq_routing_table) + opt.size, GFP_KERNEL);
 		if (rt) {
 			memset(rt, 0, sizeof(struct irq_routing_table));
@@ -429,7 +415,7 @@ int pcibios_set_irq_routing(struct pci_dev *dev, int pin, int irq)
 		  "b" ((dev->bus->number << 8) | dev->devfn),
 		  "c" ((irq << 8) | (pin + 10)),
 		  "S" (&pci_indirect));
-	return pcibios_get_return_code(ret) == PCIBIOS_SUCCESSFUL;
+	return !(ret & 0xff00);
 }
 EXPORT_SYMBOL(pcibios_set_irq_routing);
 

@@ -2,9 +2,9 @@
 #ifndef _ASM_MMIOWB_H
 #define _ASM_MMIOWB_H
 
-#include <asm/barrier.h>
+#include <asm/io.h>
 
-#define mmiowb()	wmb()
+#define mmiowb()	iobarrier_w()
 
 #include <asm-generic/mmiowb.h>
 

@@ -166,7 +166,7 @@ static struct bio *do_mpage_readpage(struct mpage_readpage_args *args)
 	sector_t block_in_file;
 	sector_t last_block;
 	sector_t last_block_in_file;
-	sector_t first_block;
+	sector_t blocks[MAX_BUF_PER_PAGE];
 	unsigned page_block;
 	unsigned first_hole = blocks_per_page;
 	struct block_device *bdev = NULL;
@@ -205,7 +205,6 @@ static struct bio *do_mpage_readpage(struct mpage_readpage_args *args)
 		unsigned map_offset = block_in_file - args->first_logical_block;
 		unsigned last = nblocks - map_offset;
 
-		first_block = map_bh->b_blocknr + map_offset;
 		for (relative_block = 0; ; relative_block++) {
 			if (relative_block == last) {
 				clear_buffer_mapped(map_bh);
@@ -213,6 +212,8 @@ static struct bio *do_mpage_readpage(struct mpage_readpage_args *args)
 			}
 			if (page_block == blocks_per_page)
 				break;
+			blocks[page_block] = map_bh->b_blocknr + map_offset +
+						relative_block;
 			page_block++;
 			block_in_file++;
 		}
@@ -258,9 +259,7 @@ static struct bio *do_mpage_readpage(struct mpage_readpage_args *args)
 			goto confused;		/* hole -> non-hole */
 
 		/* Contiguous blocks? */
-		if (!page_block)
-			first_block = map_bh->b_blocknr;
-		else if (first_block + page_block != map_bh->b_blocknr)
+		if (page_block && blocks[page_block-1] != map_bh->b_blocknr-1)
 			goto confused;
 		nblocks = map_bh->b_size >> blkbits;
 		for (relative_block = 0; ; relative_block++) {
@@ -269,6 +268,7 @@ static struct bio *do_mpage_readpage(struct mpage_readpage_args *args)
 				break;
 			} else if (page_block == blocks_per_page)
 				break;
+			blocks[page_block] = map_bh->b_blocknr+relative_block;
 			page_block++;
 			block_in_file++;
 		}
@@ -289,7 +289,7 @@ static struct bio *do_mpage_readpage(struct mpage_readpage_args *args)
 	/*
 	 * This folio will go to BIO.  Do we need to send this BIO off first?
 	 */
-	if (args->bio && (args->last_block_in_bio != first_block - 1))
+	if (args->bio && (args->last_block_in_bio != blocks[0] - 1))
 		args->bio = mpage_bio_submit_read(args->bio);
 
 alloc_new:
@@ -298,7 +298,7 @@ alloc_new:
 				      gfp);
 		if (args->bio == NULL)
 			goto confused;
-		args->bio->bi_iter.bi_sector = first_block << (blkbits - 9);
+		args->bio->bi_iter.bi_sector = blocks[0] << (blkbits - 9);
 	}
 
 	length = first_hole << blkbits;
@@ -313,7 +313,7 @@ alloc_new:
 	    (first_hole != blocks_per_page))
 		args->bio = mpage_bio_submit_read(args->bio);
 	else
-		args->last_block_in_bio = first_block + blocks_per_page - 1;
+		args->last_block_in_bio = blocks[blocks_per_page - 1];
 out:
 	return args->bio;
 
@@ -430,13 +430,13 @@ struct mpage_data {
  * We have our BIO, so we can now mark the buffers clean.  Make
  * sure to only clean buffers which we know we'll be writing.
  */
-static void clean_buffers(struct folio *folio, unsigned first_unmapped)
+static void clean_buffers(struct page *page, unsigned first_unmapped)
 {
 	unsigned buffer_counter = 0;
-	struct buffer_head *bh, *head = folio_buffers(folio);
-
-	if (!head)
+	struct buffer_head *bh, *head;
+	if (!page_has_buffers(page))
 		return;
+	head = page_buffers(page);
 	bh = head;
 
 	do {
@@ -451,8 +451,18 @@ static void clean_buffers(struct folio *folio, unsigned first_unmapped)
 	 * read_folio would fail to serialize with the bh and it would read from
 	 * disk before we reach the platter.
 	 */
-	if (buffer_heads_over_limit && folio_test_uptodate(folio))
-		try_to_free_buffers(folio);
+	if (buffer_heads_over_limit && PageUptodate(page))
+		try_to_free_buffers(page_folio(page));
+}
+
+/*
+ * For situations where we want to clean all buffers attached to a page.
+ * We don't need to calculate how many buffers are attached to the page,
+ * we just need to specify a number larger than the maximum number of buffers.
+ */
+void clean_page_buffers(struct page *page)
+{
+	clean_buffers(page, ~0U);
 }
 
 static int __mpage_writepage(struct folio *folio, struct writeback_control *wbc,
@@ -466,7 +476,7 @@ static int __mpage_writepage(struct folio *folio, struct writeback_control *wbc,
 	const unsigned blocks_per_page = PAGE_SIZE >> blkbits;
 	sector_t last_block;
 	sector_t block_in_file;
-	sector_t first_block;
+	sector_t blocks[MAX_BUF_PER_PAGE];
 	unsigned page_block;
 	unsigned first_unmapped = blocks_per_page;
 	struct block_device *bdev = NULL;
@@ -504,12 +514,10 @@ static int __mpage_writepage(struct folio *folio, struct writeback_control *wbc,
 			if (!buffer_dirty(bh) || !buffer_uptodate(bh))
 				goto confused;
 			if (page_block) {
-				if (bh->b_blocknr != first_block + page_block)
+				if (bh->b_blocknr != blocks[page_block-1] + 1)
 					goto confused;
-			} else {
-				first_block = bh->b_blocknr;
 			}
-			page_block++;
+			blocks[page_block++] = bh->b_blocknr;
 			boundary = buffer_boundary(bh);
 			if (boundary) {
 				boundary_block = bh->b_blocknr;
@@ -558,12 +566,10 @@ static int __mpage_writepage(struct folio *folio, struct writeback_control *wbc,
 			boundary_bdev = map_bh.b_bdev;
 		}
 		if (page_block) {
-			if (map_bh.b_blocknr != first_block + page_block)
+			if (map_bh.b_blocknr != blocks[page_block-1] + 1)
 				goto confused;
-		} else {
-			first_block = map_bh.b_blocknr;
 		}
-		page_block++;
+		blocks[page_block++] = map_bh.b_blocknr;
 		boundary = buffer_boundary(&map_bh);
 		bdev = map_bh.b_bdev;
 		if (block_in_file == last_block)
@@ -595,7 +601,7 @@ page_is_mapped:
 	/*
 	 * This page will go to BIO.  Do we need to send this BIO off first?
 	 */
-	if (bio && mpd->last_block_in_bio != first_block - 1)
+	if (bio && mpd->last_block_in_bio != blocks[0] - 1)
 		bio = mpage_bio_submit_write(bio);
 
 alloc_new:
@@ -603,7 +609,7 @@ alloc_new:
 		bio = bio_alloc(bdev, BIO_MAX_VECS,
 				REQ_OP_WRITE | wbc_to_write_flags(wbc),
 				GFP_NOFS);
-		bio->bi_iter.bi_sector = first_block << (blkbits - 9);
+		bio->bi_iter.bi_sector = blocks[0] << (blkbits - 9);
 		wbc_init_bio(wbc, bio);
 	}
 
@@ -619,7 +625,7 @@ alloc_new:
 		goto alloc_new;
 	}
 
-	clean_buffers(folio, first_unmapped);
+	clean_buffers(&folio->page, first_unmapped);
 
 	BUG_ON(folio_test_writeback(folio));
 	folio_start_writeback(folio);
@@ -631,7 +637,7 @@ alloc_new:
 					boundary_block, 1 << blkbits);
 		}
 	} else {
-		mpd->last_block_in_bio = first_block + blocks_per_page - 1;
+		mpd->last_block_in_bio = blocks[blocks_per_page - 1];
 	}
 	goto out;
 
@@ -642,7 +648,7 @@ confused:
 	/*
 	 * The caller has a ref on the inode, so *mapping is stable
 	 */
-	ret = block_write_full_folio(folio, wbc, mpd->get_block);
+	ret = block_write_full_page(&folio->page, mpd->get_block, wbc);
 	mapping_set_error(mapping, ret);
 out:
 	mpd->bio = bio;

@@ -8,7 +8,6 @@
 
 #include <linux/rcupdate.h>
 #include <linux/completion.h>
-#include <linux/sched.h>
 
 /*
  * Structure allowing asynchronous waiting on RCU.
@@ -55,14 +54,5 @@ do {									\
  */
 #define synchronize_rcu_mult(...) \
 	_wait_rcu_gp(IS_ENABLED(CONFIG_TINY_RCU), __VA_ARGS__)
-
-static inline void cond_resched_rcu(void)
-{
-#if defined(CONFIG_DEBUG_ATOMIC_SLEEP) || !defined(CONFIG_PREEMPT_RCU)
-	rcu_read_unlock();
-	cond_resched();
-	rcu_read_lock();
-#endif
-}
 
 #endif /* _LINUX_SCHED_RCUPDATE_WAIT_H */

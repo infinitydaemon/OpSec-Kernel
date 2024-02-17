@@ -16,7 +16,6 @@
 #include <linux/kthread.h>
 #include <linux/module.h>
 #include <linux/rcupdate.h>
-#include <linux/rcupdate_wait.h>
 #include <linux/rhashtable.h>
 #include <linux/slab.h>
 #include <linux/sched.h>

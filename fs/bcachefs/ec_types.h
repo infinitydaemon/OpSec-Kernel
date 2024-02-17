@@ -5,7 +5,7 @@
 #include "bcachefs_format.h"
 
 struct bch_replicas_padded {
-	struct bch_replicas_entry_v1	e;
+	struct bch_replicas_entry	e;
 	u8				pad[BCH_BKEY_PTRS_MAX];
 };
 

@@ -20,14 +20,14 @@
 #include <linux/list.h>
 
 /**
- * struct access_coordinate - generic performance coordinates container
+ * struct node_hmem_attrs - heterogeneous memory performance attributes
  *
  * @read_bandwidth:	Read bandwidth in MB/s
  * @write_bandwidth:	Write bandwidth in MB/s
  * @read_latency:	Read latency in nanoseconds
  * @write_latency:	Write latency in nanoseconds
  */
-struct access_coordinate {
+struct node_hmem_attrs {
 	unsigned int read_bandwidth;
 	unsigned int write_bandwidth;
 	unsigned int read_latency;
@@ -65,7 +65,7 @@ struct node_cache_attrs {
 
 #ifdef CONFIG_HMEM_REPORTING
 void node_add_cache(unsigned int nid, struct node_cache_attrs *cache_attrs);
-void node_set_perf_attrs(unsigned int nid, struct access_coordinate *coord,
+void node_set_perf_attrs(unsigned int nid, struct node_hmem_attrs *hmem_attrs,
 			 unsigned access);
 #else
 static inline void node_add_cache(unsigned int nid,
@@ -74,7 +74,7 @@ static inline void node_add_cache(unsigned int nid,
 }
 
 static inline void node_set_perf_attrs(unsigned int nid,
-				       struct access_coordinate *coord,
+				       struct node_hmem_attrs *hmem_attrs,
 				       unsigned access)
 {
 }

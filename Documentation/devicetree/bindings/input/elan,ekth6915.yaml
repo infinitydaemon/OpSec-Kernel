@@ -18,9 +18,8 @@ allOf:
 
 properties:
   compatible:
-    enum:
-      - elan,ekth6915
-      - ilitek,ili2901
+    items:
+      - const: elan,ekth6915
 
   reg:
     const: 0x10

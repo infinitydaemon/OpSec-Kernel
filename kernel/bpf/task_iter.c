@@ -70,13 +70,15 @@ static struct task_struct *task_group_seq_get_next(struct bpf_iter_seq_task_comm
 		return NULL;
 
 retry:
-	task = __next_thread(task);
-	if (!task)
-		return NULL;
+	task = next_thread(task);
 
 	next_tid = __task_pid_nr_ns(task, PIDTYPE_PID, common->ns);
-	if (!next_tid)
-		goto retry;
+	if (!next_tid || next_tid == common->pid) {
+		/* Run out of tasks of a process.  The tasks of a
+		 * thread_group are linked as circular linked list.
+		 */
+		return NULL;
+	}
 
 	if (skip_if_dup_files && task->files == task->group_leader->files)
 		goto retry;
@@ -978,6 +980,7 @@ __bpf_kfunc int bpf_iter_task_new(struct bpf_iter_task *it,
 	BUILD_BUG_ON(__alignof__(struct bpf_iter_task_kern) !=
 					__alignof__(struct bpf_iter_task));
 
+	kit->task = kit->pos = NULL;
 	switch (flags) {
 	case BPF_TASK_ITER_ALL_THREADS:
 	case BPF_TASK_ITER_ALL_PROCS:
@@ -1014,16 +1017,20 @@ __bpf_kfunc struct task_struct *bpf_iter_task_next(struct bpf_iter_task *it)
 	if (flags == BPF_TASK_ITER_ALL_PROCS)
 		goto get_next_task;
 
-	kit->pos = __next_thread(kit->pos);
-	if (kit->pos || flags == BPF_TASK_ITER_PROC_THREADS)
+	kit->pos = next_thread(kit->pos);
+	if (kit->pos == kit->task) {
+		if (flags == BPF_TASK_ITER_PROC_THREADS) {
+			kit->pos = NULL;
+			return pos;
+		}
+	} else
 		return pos;
 
 get_next_task:
-	kit->task = next_task(kit->task);
-	if (kit->task == &init_task)
+	kit->pos = next_task(kit->pos);
+	kit->task = kit->pos;
+	if (kit->pos == &init_task)
 		kit->pos = NULL;
-	else
-		kit->pos = kit->task;
 
 	return pos;
 }

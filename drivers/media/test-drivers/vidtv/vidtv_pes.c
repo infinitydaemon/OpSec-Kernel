@@ -14,7 +14,6 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ":%s, %d: " fmt, __func__, __LINE__
 
 #include <linux/types.h>
-#include <linux/math64.h>
 #include <linux/printk.h>
 #include <linux/ratelimit.h>
 

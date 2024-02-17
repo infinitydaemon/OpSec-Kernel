@@ -485,7 +485,7 @@ int ieee80211_ibss_csa_beacon(struct ieee80211_sub_if_data *sdata,
 				ifibss->ssid_len, IEEE80211_BSS_TYPE_IBSS,
 				IEEE80211_PRIVACY(ifibss->privacy));
 
-	if (unlikely(!cbss))
+	if (WARN_ON(!cbss))
 		return -EINVAL;
 
 	rcu_read_lock();

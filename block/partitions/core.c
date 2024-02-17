@@ -305,10 +305,18 @@ static struct block_device *add_partition(struct gendisk *disk, int partno,
 	 * Partitions are not supported on zoned block devices that are used as
 	 * such.
 	 */
-	if (bdev_is_zoned(disk->part0)) {
+	switch (disk->queue->limits.zoned) {
+	case BLK_ZONED_HM:
 		pr_warn("%s: partitions not supported on host managed zoned block device\n",
 			disk->disk_name);
 		return ERR_PTR(-ENXIO);
+	case BLK_ZONED_HA:
+		pr_info("%s: disabling host aware zoned block device support due to partitions\n",
+			disk->disk_name);
+		disk_set_zoned(disk, BLK_ZONED_NONE);
+		break;
+	case BLK_ZONED_NONE:
+		break;
 	}
 
 	if (xa_load(&disk->part_tbl, partno))
@@ -567,8 +575,8 @@ static bool blk_add_partition(struct gendisk *disk,
 	part = add_partition(disk, p, from, size, state->parts[p].flags,
 			     &state->parts[p].info);
 	if (IS_ERR(part) && PTR_ERR(part) != -ENXIO) {
-		printk(KERN_ERR " %s: p%d could not be added: %pe\n",
-		       disk->disk_name, p, part);
+		printk(KERN_ERR " %s: p%d could not be added: %ld\n",
+		       disk->disk_name, p, -PTR_ERR(part));
 		return true;
 	}
 
@@ -610,7 +618,7 @@ static int blk_add_partitions(struct gendisk *disk)
 	/*
 	 * Partitions are not supported on host managed zoned block devices.
 	 */
-	if (bdev_is_zoned(disk->part0)) {
+	if (disk->queue->limits.zoned == BLK_ZONED_HM) {
 		pr_warn("%s: ignoring partition table on host managed zoned block device\n",
 			disk->disk_name);
 		ret = 0;

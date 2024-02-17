@@ -59,10 +59,11 @@ fail_unmap:
 	return error;
 }
 
-static void rmobile_reset_remove(struct platform_device *pdev)
+static int rmobile_reset_remove(struct platform_device *pdev)
 {
 	unregister_restart_handler(&rmobile_reset_nb);
 	iounmap(sysc_base2);
+	return 0;
 }
 
 static const struct of_device_id rmobile_reset_of_match[] = {
@@ -73,7 +74,7 @@ MODULE_DEVICE_TABLE(of, rmobile_reset_of_match);
 
 static struct platform_driver rmobile_reset_driver = {
 	.probe = rmobile_reset_probe,
-	.remove_new = rmobile_reset_remove,
+	.remove = rmobile_reset_remove,
 	.driver = {
 		.name = "rmobile_reset",
 		.of_match_table = rmobile_reset_of_match,

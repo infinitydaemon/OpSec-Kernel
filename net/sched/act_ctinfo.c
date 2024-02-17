@@ -221,7 +221,7 @@ static int tcf_ctinfo_init(struct net *net, struct nlattr *nla,
 		ret = ACT_P_CREATED;
 	} else if (err > 0) {
 		if (bind) /* don't override defaults */
-			return ACT_P_BOUND;
+			return 0;
 		if (!(flags & TCA_ACT_FLAGS_REPLACE)) {
 			tcf_idr_release(*a, bind);
 			return -EEXIST;

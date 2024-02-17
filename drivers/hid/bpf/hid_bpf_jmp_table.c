@@ -196,7 +196,6 @@ static void __hid_bpf_do_release_prog(int map_fd, unsigned int idx)
 static void hid_bpf_release_progs(struct work_struct *work)
 {
 	int i, j, n, map_fd = -1;
-	bool hdev_destroyed;
 
 	if (!jmp_table.map)
 		return;
@@ -221,12 +220,6 @@ static void hid_bpf_release_progs(struct work_struct *work)
 		if (entry->hdev) {
 			hdev = entry->hdev;
 			type = entry->type;
-			/*
-			 * hdev is still valid, even if we are called after hid_destroy_device():
-			 * when hid_bpf_attach() gets called, it takes a ref on the dev through
-			 * bus_find_device()
-			 */
-			hdev_destroyed = hdev->bpf.destroyed;
 
 			hid_bpf_populate_hdev(hdev, type);
 
@@ -239,19 +232,12 @@ static void hid_bpf_release_progs(struct work_struct *work)
 				if (test_bit(next->idx, jmp_table.enabled))
 					continue;
 
-				if (next->hdev == hdev && next->type == type) {
-					/*
-					 * clear the hdev reference and decrement the device ref
-					 * that was taken during bus_find_device() while calling
-					 * hid_bpf_attach()
-					 */
+				if (next->hdev == hdev && next->type == type)
 					next->hdev = NULL;
-					put_device(&hdev->dev);
-				}
 			}
 
-			/* if type was rdesc fixup and the device is not gone, reconnect device */
-			if (type == HID_BPF_PROG_TYPE_RDESC_FIXUP && !hdev_destroyed)
+			/* if type was rdesc fixup, reconnect device */
+			if (type == HID_BPF_PROG_TYPE_RDESC_FIXUP)
 				hid_bpf_reconnect(hdev);
 		}
 	}
@@ -347,10 +333,15 @@ static int hid_bpf_insert_prog(int prog_fd, struct bpf_prog *prog)
 	return err;
 }
 
-int hid_bpf_get_prog_attach_type(struct bpf_prog *prog)
+int hid_bpf_get_prog_attach_type(int prog_fd)
 {
-	int prog_type = HID_BPF_PROG_TYPE_UNDEF;
+	struct bpf_prog *prog = NULL;
 	int i;
+	int prog_type = HID_BPF_PROG_TYPE_UNDEF;
+
+	prog = bpf_prog_get(prog_fd);
+	if (IS_ERR(prog))
+		return PTR_ERR(prog);
 
 	for (i = 0; i < HID_BPF_PROG_TYPE_MAX; i++) {
 		if (hid_bpf_btf_ids[i] == prog->aux->attach_btf_id) {
@@ -358,6 +349,8 @@ int hid_bpf_get_prog_attach_type(struct bpf_prog *prog)
 			break;
 		}
 	}
+
+	bpf_prog_put(prog);
 
 	return prog_type;
 }
@@ -395,12 +388,18 @@ static const struct bpf_link_ops hid_bpf_link_lops = {
 /* called from syscall */
 noinline int
 __hid_bpf_attach_prog(struct hid_device *hdev, enum hid_bpf_prog_type prog_type,
-		      int prog_fd, struct bpf_prog *prog, __u32 flags)
+		      int prog_fd, __u32 flags)
 {
 	struct bpf_link_primer link_primer;
 	struct hid_bpf_link *link;
+	struct bpf_prog *prog = NULL;
 	struct hid_bpf_prog_entry *prog_entry;
 	int cnt, err = -EINVAL, prog_table_idx = -1;
+
+	/* take a ref on the prog itself */
+	prog = bpf_prog_get(prog_fd);
+	if (IS_ERR(prog))
+		return PTR_ERR(prog);
 
 	mutex_lock(&hid_bpf_attach_lock);
 
@@ -468,6 +467,7 @@ __hid_bpf_attach_prog(struct hid_device *hdev, enum hid_bpf_prog_type prog_type,
  err_unlock:
 	mutex_unlock(&hid_bpf_attach_lock);
 
+	bpf_prog_put(prog);
 	kfree(link);
 
 	return err;

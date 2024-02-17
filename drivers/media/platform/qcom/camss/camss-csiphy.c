@@ -312,7 +312,7 @@ static int csiphy_set_stream(struct v4l2_subdev *sd, int enable)
 /*
  * __csiphy_get_format - Get pointer to format structure
  * @csiphy: CSIPHY device
- * @sd_state: V4L2 subdev state
+ * @cfg: V4L2 subdev pad configuration
  * @pad: pad from which format is requested
  * @which: TRY or ACTIVE format
  *
@@ -325,7 +325,8 @@ __csiphy_get_format(struct csiphy_device *csiphy,
 		    enum v4l2_subdev_format_whence which)
 {
 	if (which == V4L2_SUBDEV_FORMAT_TRY)
-		return v4l2_subdev_state_get_format(sd_state, pad);
+		return v4l2_subdev_get_try_format(&csiphy->subdev, sd_state,
+						  pad);
 
 	return &csiphy->fmt[pad];
 }
@@ -333,7 +334,7 @@ __csiphy_get_format(struct csiphy_device *csiphy,
 /*
  * csiphy_try_format - Handle try format by pad subdev method
  * @csiphy: CSIPHY device
- * @sd_state: V4L2 subdev state
+ * @cfg: V4L2 subdev pad configuration
  * @pad: pad on which format is requested
  * @fmt: pointer to v4l2 format structure
  * @which: wanted subdev format
@@ -380,7 +381,7 @@ static void csiphy_try_format(struct csiphy_device *csiphy,
 /*
  * csiphy_enum_mbus_code - Handle pixel format enumeration
  * @sd: CSIPHY V4L2 subdevice
- * @sd_state: V4L2 subdev state
+ * @cfg: V4L2 subdev pad configuration
  * @code: pointer to v4l2_subdev_mbus_code_enum structure
  * return -EINVAL or zero on success
  */
@@ -413,7 +414,7 @@ static int csiphy_enum_mbus_code(struct v4l2_subdev *sd,
 /*
  * csiphy_enum_frame_size - Handle frame size enumeration
  * @sd: CSIPHY V4L2 subdevice
- * @sd_state: V4L2 subdev state
+ * @cfg: V4L2 subdev pad configuration
  * @fse: pointer to v4l2_subdev_frame_size_enum structure
  * return -EINVAL or zero on success
  */
@@ -450,7 +451,7 @@ static int csiphy_enum_frame_size(struct v4l2_subdev *sd,
 /*
  * csiphy_get_format - Handle get format by pads subdev method
  * @sd: CSIPHY V4L2 subdevice
- * @sd_state: V4L2 subdev state
+ * @cfg: V4L2 subdev pad configuration
  * @fmt: pointer to v4l2 subdev format structure
  *
  * Return -EINVAL or zero on success
@@ -474,7 +475,7 @@ static int csiphy_get_format(struct v4l2_subdev *sd,
 /*
  * csiphy_set_format - Handle set format by pads subdev method
  * @sd: CSIPHY V4L2 subdevice
- * @sd_state: V4L2 subdev state
+ * @cfg: V4L2 subdev pad configuration
  * @fmt: pointer to v4l2 subdev format structure
  *
  * Return -EINVAL or zero on success

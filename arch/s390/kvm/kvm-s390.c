@@ -563,6 +563,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_ENABLE_CAP:
 	case KVM_CAP_S390_CSS_SUPPORT:
 	case KVM_CAP_IOEVENTFD:
+	case KVM_CAP_DEVICE_CTRL:
 	case KVM_CAP_S390_IRQCHIP:
 	case KVM_CAP_VM_ATTRIBUTES:
 	case KVM_CAP_MP_STATE:
@@ -617,7 +618,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 		r = MACHINE_HAS_ESOP;
 		break;
 	case KVM_CAP_S390_VECTOR_REGISTERS:
-		r = test_facility(129);
+		r = MACHINE_HAS_VX;
 		break;
 	case KVM_CAP_S390_RI:
 		r = test_facility(64);
@@ -766,7 +767,7 @@ int kvm_vm_ioctl_enable_cap(struct kvm *kvm, struct kvm_enable_cap *cap)
 		mutex_lock(&kvm->lock);
 		if (kvm->created_vcpus) {
 			r = -EBUSY;
-		} else if (cpu_has_vx()) {
+		} else if (MACHINE_HAS_VX) {
 			set_kvm_facility(kvm->arch.model.fac_mask, 129);
 			set_kvm_facility(kvm->arch.model.fac_list, 129);
 			if (test_facility(134)) {
@@ -3961,9 +3962,9 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 	if (test_kvm_facility(vcpu->kvm, 156))
 		vcpu->run->kvm_valid_regs |= KVM_SYNC_ETOKEN;
 	/* fprs can be synchronized via vrs, even if the guest has no vx. With
-	 * cpu_has_vx(), (load|store)_fpu_regs() will work with vrs format.
+	 * MACHINE_HAS_VX, (load|store)_fpu_regs() will work with vrs format.
 	 */
-	if (cpu_has_vx())
+	if (MACHINE_HAS_VX)
 		vcpu->run->kvm_valid_regs |= KVM_SYNC_VRS;
 	else
 		vcpu->run->kvm_valid_regs |= KVM_SYNC_FPRS;
@@ -4316,7 +4317,7 @@ int kvm_arch_vcpu_ioctl_set_fpu(struct kvm_vcpu *vcpu, struct kvm_fpu *fpu)
 	vcpu_load(vcpu);
 
 	vcpu->run->s.regs.fpc = fpu->fpc;
-	if (cpu_has_vx())
+	if (MACHINE_HAS_VX)
 		convert_fp_to_vx((__vector128 *) vcpu->run->s.regs.vrs,
 				 (freg_t *) fpu->fprs);
 	else
@@ -4330,7 +4331,9 @@ int kvm_arch_vcpu_ioctl_get_fpu(struct kvm_vcpu *vcpu, struct kvm_fpu *fpu)
 {
 	vcpu_load(vcpu);
 
-	if (cpu_has_vx())
+	/* make sure we have the latest values */
+	save_fpu_regs();
+	if (MACHINE_HAS_VX)
 		convert_vx_to_fp((freg_t *) fpu->fprs,
 				 (__vector128 *) vcpu->run->s.regs.vrs);
 	else
@@ -4955,11 +4958,14 @@ static void sync_regs(struct kvm_vcpu *vcpu)
 	save_fpu_regs();
 	vcpu->arch.host_fpregs.fpc = current->thread.fpu.fpc;
 	vcpu->arch.host_fpregs.regs = current->thread.fpu.regs;
-	if (cpu_has_vx())
+	if (MACHINE_HAS_VX)
 		current->thread.fpu.regs = vcpu->run->s.regs.vrs;
 	else
 		current->thread.fpu.regs = vcpu->run->s.regs.fprs;
 	current->thread.fpu.fpc = vcpu->run->s.regs.fpc;
+	if (test_fp_ctl(current->thread.fpu.fpc))
+		/* User space provided an invalid FPC, let's clear it */
+		current->thread.fpu.fpc = 0;
 
 	/* Sync fmt2 only data */
 	if (likely(!kvm_s390_pv_cpu_is_protected(vcpu))) {
@@ -5134,7 +5140,7 @@ int kvm_s390_store_status_unloaded(struct kvm_vcpu *vcpu, unsigned long gpa)
 		gpa -= __LC_FPREGS_SAVE_AREA;
 
 	/* manually convert vector registers if necessary */
-	if (cpu_has_vx()) {
+	if (MACHINE_HAS_VX) {
 		convert_vx_to_fp(fprs, (__vector128 *) vcpu->run->s.regs.vrs);
 		rc = write_guest_abs(vcpu, gpa + __LC_FPREGS_SAVE_AREA,
 				     fprs, 128);

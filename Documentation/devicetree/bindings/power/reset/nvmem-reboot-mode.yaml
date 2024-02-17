@@ -28,15 +28,17 @@ properties:
     items:
       - const: reboot-mode
 
-allOf:
-  - $ref: reboot-mode.yaml#
+patternProperties:
+  "^mode-.+":
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Vendor-specific mode value written to the mode register
 
 required:
   - compatible
   - nvmem-cells
   - nvmem-cell-names
 
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

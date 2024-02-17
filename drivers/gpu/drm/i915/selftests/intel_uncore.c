@@ -24,8 +24,6 @@
 
 #include "../i915_selftest.h"
 
-#include "gt/intel_gt.h"
-
 static int intel_fw_table_check(const struct intel_forcewake_range *ranges,
 				unsigned int num_ranges,
 				bool is_watertight)

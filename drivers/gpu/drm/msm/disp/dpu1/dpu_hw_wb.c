@@ -3,8 +3,6 @@
   * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved
   */
 
-#include <drm/drm_managed.h>
-
 #include "dpu_hw_mdss.h"
 #include "dpu_hwio.h"
 #include "dpu_hw_catalog.h"
@@ -213,17 +211,15 @@ static void _setup_wb_ops(struct dpu_hw_wb_ops *ops,
 		ops->setup_clk_force_ctrl = dpu_hw_wb_setup_clk_force_ctrl;
 }
 
-struct dpu_hw_wb *dpu_hw_wb_init(struct drm_device *dev,
-				 const struct dpu_wb_cfg *cfg,
-				 void __iomem *addr,
-				 const struct dpu_mdss_version *mdss_rev)
+struct dpu_hw_wb *dpu_hw_wb_init(const struct dpu_wb_cfg *cfg,
+		void __iomem *addr, const struct dpu_mdss_version *mdss_rev)
 {
 	struct dpu_hw_wb *c;
 
 	if (!addr)
 		return ERR_PTR(-EINVAL);
 
-	c = drmm_kzalloc(dev, sizeof(*c), GFP_KERNEL);
+	c = kzalloc(sizeof(*c), GFP_KERNEL);
 	if (!c)
 		return ERR_PTR(-ENOMEM);
 
@@ -236,4 +232,9 @@ struct dpu_hw_wb *dpu_hw_wb_init(struct drm_device *dev,
 	_setup_wb_ops(&c->ops, c->caps->features, mdss_rev);
 
 	return c;
+}
+
+void dpu_hw_wb_destroy(struct dpu_hw_wb *hw_wb)
+{
+	kfree(hw_wb);
 }

@@ -1131,6 +1131,7 @@ static int expr_compare_type(enum expr_type t1, enum expr_type t2)
 	default:
 		return -1;
 	}
+	printf("[%dgt%d?]", t1, t2);
 	return 0;
 }
 

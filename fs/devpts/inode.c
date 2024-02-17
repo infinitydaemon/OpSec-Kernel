@@ -69,6 +69,7 @@ static struct ctl_table pty_table[] = {
 		.data		= &pty_count,
 		.proc_handler	= proc_dointvec,
 	},
+	{}
 };
 
 struct pts_mount_opts {

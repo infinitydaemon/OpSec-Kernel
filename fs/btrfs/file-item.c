@@ -59,7 +59,7 @@ void btrfs_inode_safe_disk_i_size_write(struct btrfs_inode *inode, u64 new_i_siz
 		goto out_unlock;
 	}
 
-	ret = find_contiguous_extent_bit(inode->file_extent_tree, 0, &start,
+	ret = find_contiguous_extent_bit(&inode->file_extent_tree, 0, &start,
 					 &end, EXTENT_DIRTY);
 	if (!ret && start == 0)
 		i_size = min(i_size, end + 1);
@@ -94,7 +94,7 @@ int btrfs_inode_set_file_extent_range(struct btrfs_inode *inode, u64 start,
 
 	if (btrfs_fs_incompat(inode->root->fs_info, NO_HOLES))
 		return 0;
-	return set_extent_bit(inode->file_extent_tree, start, start + len - 1,
+	return set_extent_bit(&inode->file_extent_tree, start, start + len - 1,
 			      EXTENT_DIRTY, NULL);
 }
 
@@ -123,7 +123,7 @@ int btrfs_inode_clear_file_extent_range(struct btrfs_inode *inode, u64 start,
 
 	if (btrfs_fs_incompat(inode->root->fs_info, NO_HOLES))
 		return 0;
-	return clear_extent_bit(inode->file_extent_tree, start,
+	return clear_extent_bit(&inode->file_extent_tree, start,
 				start + len - 1, EXTENT_DIRTY, NULL);
 }
 
@@ -1294,7 +1294,8 @@ void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 			return;
 		}
 		if (compress_type != BTRFS_COMPRESS_NONE) {
-			extent_map_set_compression(em, compress_type);
+			set_bit(EXTENT_FLAG_COMPRESSED, &em->flags);
+			em->compress_type = compress_type;
 			em->block_start = bytenr;
 			em->block_len = em->orig_block_len;
 		} else {
@@ -1302,7 +1303,7 @@ void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 			em->block_start = bytenr;
 			em->block_len = em->len;
 			if (type == BTRFS_FILE_EXTENT_PREALLOC)
-				em->flags |= EXTENT_FLAG_PREALLOC;
+				set_bit(EXTENT_FLAG_PREALLOC, &em->flags);
 		}
 	} else if (type == BTRFS_FILE_EXTENT_INLINE) {
 		em->block_start = EXTENT_MAP_INLINE;
@@ -1314,7 +1315,9 @@ void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 		 */
 		em->orig_start = EXTENT_MAP_HOLE;
 		em->block_len = (u64)-1;
-		extent_map_set_compression(em, compress_type);
+		em->compress_type = compress_type;
+		if (compress_type != BTRFS_COMPRESS_NONE)
+			set_bit(EXTENT_FLAG_COMPRESSED, &em->flags);
 	} else {
 		btrfs_err(fs_info,
 			  "unknown file extent item type %d, inode %llu, offset %llu, "

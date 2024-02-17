@@ -4,8 +4,6 @@
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
-#include <drm/drm_managed.h>
-
 #include "dpu_kms.h"
 #include "dpu_hw_catalog.h"
 #include "dpu_hwio.h"
@@ -158,9 +156,8 @@ static void _setup_mixer_ops(struct dpu_hw_lm_ops *ops,
 	ops->collect_misr = dpu_hw_lm_collect_misr;
 }
 
-struct dpu_hw_mixer *dpu_hw_lm_init(struct drm_device *dev,
-				    const struct dpu_lm_cfg *cfg,
-				    void __iomem *addr)
+struct dpu_hw_mixer *dpu_hw_lm_init(const struct dpu_lm_cfg *cfg,
+		void __iomem *addr)
 {
 	struct dpu_hw_mixer *c;
 
@@ -169,7 +166,7 @@ struct dpu_hw_mixer *dpu_hw_lm_init(struct drm_device *dev,
 		return NULL;
 	}
 
-	c = drmm_kzalloc(dev, sizeof(*c), GFP_KERNEL);
+	c = kzalloc(sizeof(*c), GFP_KERNEL);
 	if (!c)
 		return ERR_PTR(-ENOMEM);
 
@@ -182,4 +179,9 @@ struct dpu_hw_mixer *dpu_hw_lm_init(struct drm_device *dev,
 	_setup_mixer_ops(&c->ops, c->cap->features);
 
 	return c;
+}
+
+void dpu_hw_lm_destroy(struct dpu_hw_mixer *lm)
+{
+	kfree(lm);
 }

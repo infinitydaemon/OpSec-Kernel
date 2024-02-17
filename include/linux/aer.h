@@ -19,10 +19,10 @@
 struct pci_dev;
 
 struct aer_header_log_regs {
-	u32 dw0;
-	u32 dw1;
-	u32 dw2;
-	u32 dw3;
+	unsigned int dw0;
+	unsigned int dw1;
+	unsigned int dw2;
+	unsigned int dw3;
 };
 
 struct aer_capability_regs {

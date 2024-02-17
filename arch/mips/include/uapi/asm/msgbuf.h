@@ -62,7 +62,7 @@ struct msqid64_ds {
 	unsigned long  __unused5;
 };
 #else
-#warning no endianness set
+#warning no endianess set
 #endif
 
 #endif /* _ASM_MSGBUF_H */

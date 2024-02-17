@@ -157,7 +157,8 @@ static s32 e1000_init_nvm_params_82571(struct e1000_hw *hw)
 		fallthrough;
 	default:
 		nvm->type = e1000_nvm_eeprom_spi;
-		size = (u16)FIELD_GET(E1000_EECD_SIZE_EX_MASK, eecd);
+		size = (u16)((eecd & E1000_EECD_SIZE_EX_MASK) >>
+			     E1000_EECD_SIZE_EX_SHIFT);
 		/* Added to a constant, "size" becomes the left-shift value
 		 * for setting word_size.
 		 */

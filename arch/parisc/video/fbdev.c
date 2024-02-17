@@ -21,6 +21,6 @@ int fb_is_primary_device(struct fb_info *info)
 		return true;
 
 	/* return true if it's the default built-in framebuffer driver */
-	return (sti->dev == info->device);
+	return (sti->info == info);
 }
 EXPORT_SYMBOL(fb_is_primary_device);

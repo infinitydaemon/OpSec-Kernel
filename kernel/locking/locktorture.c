@@ -124,7 +124,7 @@ struct call_rcu_chain {
 	struct rcu_head crc_rh;
 	bool crc_stop;
 };
-struct call_rcu_chain *call_rcu_chain_list;
+struct call_rcu_chain *call_rcu_chain;
 
 /* Forward reference. */
 static void lock_torture_cleanup(void);
@@ -1074,12 +1074,12 @@ static int call_rcu_chain_init(void)
 
 	if (call_rcu_chains <= 0)
 		return 0;
-	call_rcu_chain_list = kcalloc(call_rcu_chains, sizeof(*call_rcu_chain_list), GFP_KERNEL);
-	if (!call_rcu_chain_list)
+	call_rcu_chain = kcalloc(call_rcu_chains, sizeof(*call_rcu_chain), GFP_KERNEL);
+	if (!call_rcu_chain)
 		return -ENOMEM;
 	for (i = 0; i < call_rcu_chains; i++) {
-		call_rcu_chain_list[i].crc_stop = false;
-		call_rcu(&call_rcu_chain_list[i].crc_rh, call_rcu_chain_cb);
+		call_rcu_chain[i].crc_stop = false;
+		call_rcu(&call_rcu_chain[i].crc_rh, call_rcu_chain_cb);
 	}
 	return 0;
 }
@@ -1089,13 +1089,13 @@ static void call_rcu_chain_cleanup(void)
 {
 	int i;
 
-	if (!call_rcu_chain_list)
+	if (!call_rcu_chain)
 		return;
 	for (i = 0; i < call_rcu_chains; i++)
-		smp_store_release(&call_rcu_chain_list[i].crc_stop, true);
+		smp_store_release(&call_rcu_chain[i].crc_stop, true);
 	rcu_barrier();
-	kfree(call_rcu_chain_list);
-	call_rcu_chain_list = NULL;
+	kfree(call_rcu_chain);
+	call_rcu_chain = NULL;
 }
 
 static void lock_torture_cleanup(void)

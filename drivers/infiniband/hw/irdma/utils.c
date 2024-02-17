@@ -1393,12 +1393,17 @@ int irdma_ieq_check_mpacrc(struct shash_desc *desc, void *addr, u32 len,
 			   u32 val)
 {
 	u32 crc = 0;
+	int ret;
+	int ret_code = 0;
 
-	crypto_shash_digest(desc, addr, len, (u8 *)&crc);
+	crypto_shash_init(desc);
+	ret = crypto_shash_update(desc, addr, len);
+	if (!ret)
+		crypto_shash_final(desc, (u8 *)&crc);
 	if (crc != val)
-		return -EINVAL;
+		ret_code = -EINVAL;
 
-	return 0;
+	return ret_code;
 }
 
 /**

@@ -8,6 +8,7 @@ title: MediaTek DISP_PWM Controller
 
 maintainers:
   - Jitao Shi <jitao.shi@mediatek.com>
+  - Xinlei Lee <xinlei.lee@mediatek.com>
 
 allOf:
   - $ref: pwm.yaml#

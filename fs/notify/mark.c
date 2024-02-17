@@ -537,7 +537,8 @@ int fsnotify_compare_groups(struct fsnotify_group *a, struct fsnotify_group *b)
 }
 
 static int fsnotify_attach_connector_to_object(fsnotify_connp_t *connp,
-					       unsigned int obj_type)
+					       unsigned int obj_type,
+					       __kernel_fsid_t *fsid)
 {
 	struct fsnotify_mark_connector *conn;
 
@@ -549,7 +550,14 @@ static int fsnotify_attach_connector_to_object(fsnotify_connp_t *connp,
 	conn->flags = 0;
 	conn->type = obj_type;
 	conn->obj = connp;
-	conn->flags = 0;
+	/* Cache fsid of filesystem containing the object */
+	if (fsid) {
+		conn->fsid = *fsid;
+		conn->flags = FSNOTIFY_CONN_FLAG_HAS_FSID;
+	} else {
+		conn->fsid.val[0] = conn->fsid.val[1] = 0;
+		conn->flags = 0;
+	}
 	fsnotify_get_sb_connectors(conn);
 
 	/*
@@ -600,7 +608,8 @@ out:
  */
 static int fsnotify_add_mark_list(struct fsnotify_mark *mark,
 				  fsnotify_connp_t *connp,
-				  unsigned int obj_type, int add_flags)
+				  unsigned int obj_type,
+				  int add_flags, __kernel_fsid_t *fsid)
 {
 	struct fsnotify_mark *lmark, *last = NULL;
 	struct fsnotify_mark_connector *conn;
@@ -610,15 +619,41 @@ static int fsnotify_add_mark_list(struct fsnotify_mark *mark,
 	if (WARN_ON(!fsnotify_valid_obj_type(obj_type)))
 		return -EINVAL;
 
+	/* Backend is expected to check for zero fsid (e.g. tmpfs) */
+	if (fsid && WARN_ON_ONCE(!fsid->val[0] && !fsid->val[1]))
+		return -ENODEV;
+
 restart:
 	spin_lock(&mark->lock);
 	conn = fsnotify_grab_connector(connp);
 	if (!conn) {
 		spin_unlock(&mark->lock);
-		err = fsnotify_attach_connector_to_object(connp, obj_type);
+		err = fsnotify_attach_connector_to_object(connp, obj_type,
+							  fsid);
 		if (err)
 			return err;
 		goto restart;
+	} else if (fsid && !(conn->flags & FSNOTIFY_CONN_FLAG_HAS_FSID)) {
+		conn->fsid = *fsid;
+		/* Pairs with smp_rmb() in fanotify_get_fsid() */
+		smp_wmb();
+		conn->flags |= FSNOTIFY_CONN_FLAG_HAS_FSID;
+	} else if (fsid && (conn->flags & FSNOTIFY_CONN_FLAG_HAS_FSID) &&
+		   (fsid->val[0] != conn->fsid.val[0] ||
+		    fsid->val[1] != conn->fsid.val[1])) {
+		/*
+		 * Backend is expected to check for non uniform fsid
+		 * (e.g. btrfs), but maybe we missed something?
+		 * Only allow setting conn->fsid once to non zero fsid.
+		 * inotify and non-fid fanotify groups do not set nor test
+		 * conn->fsid.
+		 */
+		pr_warn_ratelimited("%s: fsid mismatch on object of type %u: "
+				    "%x.%x != %x.%x\n", __func__, conn->type,
+				    fsid->val[0], fsid->val[1],
+				    conn->fsid.val[0], conn->fsid.val[1]);
+		err = -EXDEV;
+		goto out_err;
 	}
 
 	/* is mark the first mark? */
@@ -668,7 +703,7 @@ out_err:
  */
 int fsnotify_add_mark_locked(struct fsnotify_mark *mark,
 			     fsnotify_connp_t *connp, unsigned int obj_type,
-			     int add_flags)
+			     int add_flags, __kernel_fsid_t *fsid)
 {
 	struct fsnotify_group *group = mark->group;
 	int ret = 0;
@@ -688,7 +723,7 @@ int fsnotify_add_mark_locked(struct fsnotify_mark *mark,
 	fsnotify_get_mark(mark); /* for g_list */
 	spin_unlock(&mark->lock);
 
-	ret = fsnotify_add_mark_list(mark, connp, obj_type, add_flags);
+	ret = fsnotify_add_mark_list(mark, connp, obj_type, add_flags, fsid);
 	if (ret)
 		goto err;
 
@@ -707,13 +742,14 @@ err:
 }
 
 int fsnotify_add_mark(struct fsnotify_mark *mark, fsnotify_connp_t *connp,
-		      unsigned int obj_type, int add_flags)
+		      unsigned int obj_type, int add_flags,
+		      __kernel_fsid_t *fsid)
 {
 	int ret;
 	struct fsnotify_group *group = mark->group;
 
 	fsnotify_group_lock(group);
-	ret = fsnotify_add_mark_locked(mark, connp, obj_type, add_flags);
+	ret = fsnotify_add_mark_locked(mark, connp, obj_type, add_flags, fsid);
 	fsnotify_group_unlock(group);
 	return ret;
 }

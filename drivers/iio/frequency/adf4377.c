@@ -870,6 +870,7 @@ static const struct iio_chan_spec adf4377_channels[] = {
 static int adf4377_properties_parse(struct adf4377_state *st)
 {
 	struct spi_device *spi = st->spi;
+	const char *str;
 	int ret;
 
 	st->clkin = devm_clk_get_enabled(&spi->dev, "ref_in");
@@ -895,13 +896,16 @@ static int adf4377_properties_parse(struct adf4377_state *st)
 		return dev_err_probe(&spi->dev, PTR_ERR(st->gpio_enclk2),
 				     "failed to get the CE GPIO\n");
 
-	ret = device_property_match_property_string(&spi->dev, "adi,muxout-select",
-						    adf4377_muxout_modes,
-						    ARRAY_SIZE(adf4377_muxout_modes));
-	if (ret >= 0)
-		st->muxout_select = ret;
-	else
+	ret = device_property_read_string(&spi->dev, "adi,muxout-select", &str);
+	if (ret) {
 		st->muxout_select = ADF4377_MUXOUT_HIGH_Z;
+	} else {
+		ret = match_string(adf4377_muxout_modes, ARRAY_SIZE(adf4377_muxout_modes), str);
+		if (ret < 0)
+			return ret;
+
+		st->muxout_select = ret;
+	}
 
 	return 0;
 }

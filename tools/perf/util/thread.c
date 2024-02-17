@@ -345,36 +345,38 @@ int thread__insert_map(struct thread *thread, struct map *map)
 	if (ret)
 		return ret;
 
-	return maps__fixup_overlap_and_insert(thread__maps(thread), map);
+	maps__fixup_overlappings(thread__maps(thread), map, stderr);
+	return maps__insert(thread__maps(thread), map);
 }
 
-struct thread__prepare_access_maps_cb_args {
-	int err;
-	struct maps *maps;
-};
-
-static int thread__prepare_access_maps_cb(struct map *map, void *data)
+static int __thread__prepare_access(struct thread *thread)
 {
 	bool initialized = false;
-	struct thread__prepare_access_maps_cb_args *args = data;
+	int err = 0;
+	struct maps *maps = thread__maps(thread);
+	struct map_rb_node *rb_node;
 
-	args->err = unwind__prepare_access(args->maps, map, &initialized);
+	down_read(maps__lock(maps));
 
-	return (args->err || initialized) ? 1 : 0;
+	maps__for_each_entry(maps, rb_node) {
+		err = unwind__prepare_access(thread__maps(thread), rb_node->map, &initialized);
+		if (err || initialized)
+			break;
+	}
+
+	up_read(maps__lock(maps));
+
+	return err;
 }
 
 static int thread__prepare_access(struct thread *thread)
 {
-	struct thread__prepare_access_maps_cb_args args = {
-		.err = 0,
-	};
+	int err = 0;
 
-	if (dwarf_callchain_users) {
-		args.maps = thread__maps(thread);
-		maps__for_each_map(thread__maps(thread), thread__prepare_access_maps_cb, &args);
-	}
+	if (dwarf_callchain_users)
+		err = __thread__prepare_access(thread);
 
-	return args.err;
+	return err;
 }
 
 static int thread__clone_maps(struct thread *thread, struct thread *parent, bool do_maps_clone)
@@ -383,14 +385,14 @@ static int thread__clone_maps(struct thread *thread, struct thread *parent, bool
 	if (thread__pid(thread) == thread__pid(parent))
 		return thread__prepare_access(thread);
 
-	if (RC_CHK_EQUAL(thread__maps(thread), thread__maps(parent))) {
+	if (thread__maps(thread) == thread__maps(parent)) {
 		pr_debug("broken map groups on thread %d/%d parent %d/%d\n",
 			 thread__pid(thread), thread__tid(thread),
 			 thread__pid(parent), thread__tid(parent));
 		return 0;
 	}
 	/* But this one is new process, copy maps. */
-	return do_maps_clone ? maps__copy_from(thread__maps(thread), thread__maps(parent)) : 0;
+	return do_maps_clone ? maps__clone(thread, thread__maps(parent)) : 0;
 }
 
 int thread__fork(struct thread *thread, struct thread *parent, u64 timestamp, bool do_maps_clone)

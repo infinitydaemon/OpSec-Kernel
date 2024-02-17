@@ -32,6 +32,7 @@
 		compatible = "dmic-codec";
 		num-channels = <2>;
 		wakeup-delay-ms = <50>;
+		status = "okay";
 		sound-name-prefix = "MIC";
 	};
 

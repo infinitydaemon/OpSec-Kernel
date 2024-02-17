@@ -5,12 +5,11 @@
 #include "defines.h"
 
 /*
- * Data buffer spanning two pages that will be placed first in the .data
- * segment via the linker script. Even if not used internally the second page
- * is needed by external test manipulating page permissions, so mark
- * encl_buffer as "used" to make sure it is entirely preserved by the compiler.
+ * Data buffer spanning two pages that will be placed first in .data
+ * segment. Even if not used internally the second page is needed by
+ * external test manipulating page permissions.
  */
-static uint8_t __used __section(".data.encl_buffer") encl_buffer[8192] = { 1 };
+static uint8_t encl_buffer[8192] = { 1 };
 
 enum sgx_enclu_function {
 	EACCEPT = 0x5,
@@ -122,41 +121,21 @@ static void do_encl_op_nop(void *_op)
 
 }
 
-/*
- * Symbol placed at the start of the enclave image by the linker script.
- * Declare this extern symbol with visibility "hidden" to ensure the compiler
- * does not access it through the GOT and generates position-independent
- * addressing as __encl_base(%rip), so we can get the actual enclave base
- * during runtime.
- */
-extern const uint8_t __attribute__((visibility("hidden"))) __encl_base;
-
-typedef void (*encl_op_t)(void *);
-static const encl_op_t encl_op_array[ENCL_OP_MAX] = {
-	do_encl_op_put_to_buf,
-	do_encl_op_get_from_buf,
-	do_encl_op_put_to_addr,
-	do_encl_op_get_from_addr,
-	do_encl_op_nop,
-	do_encl_eaccept,
-	do_encl_emodpe,
-	do_encl_init_tcs_page,
-};
-
 void encl_body(void *rdi,  void *rsi)
 {
-	struct encl_op_header *header = (struct encl_op_header *)rdi;
-	encl_op_t op;
+	const void (*encl_op_array[ENCL_OP_MAX])(void *) = {
+		do_encl_op_put_to_buf,
+		do_encl_op_get_from_buf,
+		do_encl_op_put_to_addr,
+		do_encl_op_get_from_addr,
+		do_encl_op_nop,
+		do_encl_eaccept,
+		do_encl_emodpe,
+		do_encl_init_tcs_page,
+	};
 
-	if (header->type >= ENCL_OP_MAX)
-		return;
+	struct encl_op_header *op = (struct encl_op_header *)rdi;
 
-	/*
-	 * The enclave base address needs to be added, as this call site
-	 * *cannot be* made rip-relative by the compiler, or fixed up by
-	 * any other possible means.
-	 */
-	op = ((uint64_t)&__encl_base) + encl_op_array[header->type];
-
-	(*op)(header);
+	if (op->type < ENCL_OP_MAX)
+		(*encl_op_array[op->type])(op);
 }

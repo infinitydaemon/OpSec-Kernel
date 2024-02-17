@@ -76,12 +76,15 @@ static int svc_rdma_bc_sendto(struct svcxprt_rdma *rdma,
 			      struct rpc_rqst *rqst,
 			      struct svc_rdma_send_ctxt *sctxt)
 {
-	struct svc_rdma_pcl empty_pcl;
+	struct svc_rdma_recv_ctxt *rctxt;
 	int ret;
 
-	pcl_init(&empty_pcl);
-	ret = svc_rdma_map_reply_msg(rdma, sctxt, &empty_pcl, &empty_pcl,
-				     &rqst->rq_snd_buf);
+	rctxt = svc_rdma_recv_ctxt_get(rdma);
+	if (!rctxt)
+		return -EIO;
+
+	ret = svc_rdma_map_reply_msg(rdma, sctxt, rctxt, &rqst->rq_snd_buf);
+	svc_rdma_recv_ctxt_put(rdma, rctxt);
 	if (ret < 0)
 		return -EIO;
 

@@ -134,10 +134,6 @@ xfs_growfs_data_private(
 	if (delta < 0 && nagcount < 2)
 		return -EINVAL;
 
-	/* No work to do */
-	if (delta == 0)
-		return 0;
-
 	oagcount = mp->m_sb.sb_agcount;
 	/* allocate the new per-ag structures */
 	if (nagcount > oagcount) {
@@ -157,7 +153,7 @@ xfs_growfs_data_private(
 		error = xfs_trans_alloc(mp, &M_RES(mp)->tr_growdata, -delta, 0,
 				0, &tp);
 	if (error)
-		goto out_free_unused_perag;
+		return error;
 
 	last_pag = xfs_perag_get(mp, oagcount - 1);
 	if (delta > 0) {
@@ -231,9 +227,6 @@ xfs_growfs_data_private(
 
 out_trans_cancel:
 	xfs_trans_cancel(tp);
-out_free_unused_perag:
-	if (nagcount > oagcount)
-		xfs_free_unused_perag_range(mp, oagcount, nagcount);
 	return error;
 }
 
@@ -351,19 +344,58 @@ xfs_growfs_log(
 }
 
 /*
+ * exported through ioctl XFS_IOC_FSCOUNTS
+ */
+
+void
+xfs_fs_counts(
+	xfs_mount_t		*mp,
+	xfs_fsop_counts_t	*cnt)
+{
+	cnt->allocino = percpu_counter_read_positive(&mp->m_icount);
+	cnt->freeino = percpu_counter_read_positive(&mp->m_ifree);
+	cnt->freedata = percpu_counter_read_positive(&mp->m_fdblocks) -
+						xfs_fdblocks_unavailable(mp);
+	cnt->freertx = percpu_counter_read_positive(&mp->m_frextents);
+}
+
+/*
+ * exported through ioctl XFS_IOC_SET_RESBLKS & XFS_IOC_GET_RESBLKS
+ *
+ * xfs_reserve_blocks is called to set m_resblks
+ * in the in-core mount table. The number of unused reserved blocks
+ * is kept in m_resblks_avail.
+ *
  * Reserve the requested number of blocks if available. Otherwise return
  * as many as possible to satisfy the request. The actual number
- * reserved are returned in outval.
+ * reserved are returned in outval
+ *
+ * A null inval pointer indicates that only the current reserved blocks
+ * available  should  be returned no settings are changed.
  */
+
 int
 xfs_reserve_blocks(
-	struct xfs_mount	*mp,
-	uint64_t		request)
+	xfs_mount_t             *mp,
+	uint64_t              *inval,
+	xfs_fsop_resblks_t      *outval)
 {
 	int64_t			lcounter, delta;
 	int64_t			fdblks_delta = 0;
+	uint64_t		request;
 	int64_t			free;
 	int			error = 0;
+
+	/* If inval is null, report current values and return */
+	if (inval == (uint64_t *)NULL) {
+		if (!outval)
+			return -EINVAL;
+		outval->resblks = mp->m_resblks;
+		outval->resblks_avail = mp->m_resblks_avail;
+		return 0;
+	}
+
+	request = *inval;
 
 	/*
 	 * With per-cpu counters, this becomes an interesting problem. we need
@@ -434,6 +466,11 @@ xfs_reserve_blocks(
 		spin_lock(&mp->m_sb_lock);
 	}
 out:
+	if (outval) {
+		outval->resblks = mp->m_resblks;
+		outval->resblks_avail = mp->m_resblks_avail;
+	}
+
 	spin_unlock(&mp->m_sb_lock);
 	return error;
 }
@@ -445,9 +482,9 @@ xfs_fs_goingdown(
 {
 	switch (inflags) {
 	case XFS_FSOP_GOING_FLAGS_DEFAULT: {
-		if (!bdev_freeze(mp->m_super->s_bdev)) {
+		if (!freeze_bdev(mp->m_super->s_bdev)) {
 			xfs_force_shutdown(mp, SHUTDOWN_FORCE_UMOUNT);
-			bdev_thaw(mp->m_super->s_bdev);
+			thaw_bdev(mp->m_super->s_bdev);
 		}
 		break;
 	}

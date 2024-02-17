@@ -154,9 +154,10 @@ s32 e1000e_read_phy_reg_mdic(struct e1000_hw *hw, u32 offset, u16 *data)
 		e_dbg("MDI Read PHY Reg Address %d Error\n", offset);
 		return -E1000_ERR_PHY;
 	}
-	if (FIELD_GET(E1000_MDIC_REG_MASK, mdic) != offset) {
+	if (((mdic & E1000_MDIC_REG_MASK) >> E1000_MDIC_REG_SHIFT) != offset) {
 		e_dbg("MDI Read offset error - requested %d, returned %d\n",
-		      offset, FIELD_GET(E1000_MDIC_REG_MASK, mdic));
+		      offset,
+		      (mdic & E1000_MDIC_REG_MASK) >> E1000_MDIC_REG_SHIFT);
 		return -E1000_ERR_PHY;
 	}
 	*data = (u16)mdic;
@@ -166,6 +167,7 @@ s32 e1000e_read_phy_reg_mdic(struct e1000_hw *hw, u32 offset, u16 *data)
 	 */
 	if (hw->mac.type == e1000_pch2lan)
 		udelay(100);
+
 	return 0;
 }
 
@@ -216,9 +218,10 @@ s32 e1000e_write_phy_reg_mdic(struct e1000_hw *hw, u32 offset, u16 data)
 		e_dbg("MDI Write PHY Red Address %d Error\n", offset);
 		return -E1000_ERR_PHY;
 	}
-	if (FIELD_GET(E1000_MDIC_REG_MASK, mdic) != offset) {
+	if (((mdic & E1000_MDIC_REG_MASK) >> E1000_MDIC_REG_SHIFT) != offset) {
 		e_dbg("MDI Write offset error - requested %d, returned %d\n",
-		      offset, FIELD_GET(E1000_MDIC_REG_MASK, mdic));
+		      offset,
+		      (mdic & E1000_MDIC_REG_MASK) >> E1000_MDIC_REG_SHIFT);
 		return -E1000_ERR_PHY;
 	}
 
@@ -460,8 +463,8 @@ static s32 __e1000_read_kmrn_reg(struct e1000_hw *hw, u32 offset, u16 *data,
 			return ret_val;
 	}
 
-	kmrnctrlsta = FIELD_PREP(E1000_KMRNCTRLSTA_OFFSET, offset) |
-		      E1000_KMRNCTRLSTA_REN;
+	kmrnctrlsta = ((offset << E1000_KMRNCTRLSTA_OFFSET_SHIFT) &
+		       E1000_KMRNCTRLSTA_OFFSET) | E1000_KMRNCTRLSTA_REN;
 	ew32(KMRNCTRLSTA, kmrnctrlsta);
 	e1e_flush();
 
@@ -533,7 +536,8 @@ static s32 __e1000_write_kmrn_reg(struct e1000_hw *hw, u32 offset, u16 data,
 			return ret_val;
 	}
 
-	kmrnctrlsta = FIELD_PREP(E1000_KMRNCTRLSTA_OFFSET, offset) | data;
+	kmrnctrlsta = ((offset << E1000_KMRNCTRLSTA_OFFSET_SHIFT) &
+		       E1000_KMRNCTRLSTA_OFFSET) | data;
 	ew32(KMRNCTRLSTA, kmrnctrlsta);
 	e1e_flush();
 
@@ -1789,7 +1793,8 @@ s32 e1000e_get_cable_length_m88(struct e1000_hw *hw)
 	if (ret_val)
 		return ret_val;
 
-	index = FIELD_GET(M88E1000_PSSR_CABLE_LENGTH, phy_data);
+	index = ((phy_data & M88E1000_PSSR_CABLE_LENGTH) >>
+		 M88E1000_PSSR_CABLE_LENGTH_SHIFT);
 
 	if (index >= M88E1000_CABLE_LENGTH_TABLE_SIZE - 1)
 		return -E1000_ERR_PHY;
@@ -3229,7 +3234,8 @@ s32 e1000_get_cable_length_82577(struct e1000_hw *hw)
 	if (ret_val)
 		return ret_val;
 
-	length = FIELD_GET(I82577_DSTATUS_CABLE_LENGTH, phy_data);
+	length = ((phy_data & I82577_DSTATUS_CABLE_LENGTH) >>
+		  I82577_DSTATUS_CABLE_LENGTH_SHIFT);
 
 	if (length == E1000_CABLE_LENGTH_UNDEFINED)
 		return -E1000_ERR_PHY;

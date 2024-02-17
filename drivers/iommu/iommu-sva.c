@@ -12,42 +12,32 @@
 static DEFINE_MUTEX(iommu_sva_lock);
 
 /* Allocate a PASID for the mm within range (inclusive) */
-static struct iommu_mm_data *iommu_alloc_mm_data(struct mm_struct *mm, struct device *dev)
+static int iommu_sva_alloc_pasid(struct mm_struct *mm, struct device *dev)
 {
-	struct iommu_mm_data *iommu_mm;
 	ioasid_t pasid;
-
-	lockdep_assert_held(&iommu_sva_lock);
+	int ret = 0;
 
 	if (!arch_pgtable_dma_compat(mm))
-		return ERR_PTR(-EBUSY);
+		return -EBUSY;
 
-	iommu_mm = mm->iommu_mm;
+	mutex_lock(&iommu_sva_lock);
 	/* Is a PASID already associated with this mm? */
-	if (iommu_mm) {
-		if (iommu_mm->pasid >= dev->iommu->max_pasids)
-			return ERR_PTR(-EOVERFLOW);
-		return iommu_mm;
+	if (mm_valid_pasid(mm)) {
+		if (mm->pasid >= dev->iommu->max_pasids)
+			ret = -EOVERFLOW;
+		goto out;
 	}
-
-	iommu_mm = kzalloc(sizeof(struct iommu_mm_data), GFP_KERNEL);
-	if (!iommu_mm)
-		return ERR_PTR(-ENOMEM);
 
 	pasid = iommu_alloc_global_pasid(dev);
 	if (pasid == IOMMU_PASID_INVALID) {
-		kfree(iommu_mm);
-		return ERR_PTR(-ENOSPC);
+		ret = -ENOSPC;
+		goto out;
 	}
-	iommu_mm->pasid = pasid;
-	INIT_LIST_HEAD(&iommu_mm->sva_domains);
-	/*
-	 * Make sure the write to mm->iommu_mm is not reordered in front of
-	 * initialization to iommu_mm fields. If it does, readers may see a
-	 * valid iommu_mm with uninitialized values.
-	 */
-	smp_store_release(&mm->iommu_mm, iommu_mm);
-	return iommu_mm;
+	mm->pasid = pasid;
+	ret = 0;
+out:
+	mutex_unlock(&iommu_sva_lock);
+	return ret;
 }
 
 /**
@@ -68,60 +58,57 @@ static struct iommu_mm_data *iommu_alloc_mm_data(struct mm_struct *mm, struct de
  */
 struct iommu_sva *iommu_sva_bind_device(struct device *dev, struct mm_struct *mm)
 {
-	struct iommu_mm_data *iommu_mm;
 	struct iommu_domain *domain;
 	struct iommu_sva *handle;
 	int ret;
 
-	mutex_lock(&iommu_sva_lock);
-
 	/* Allocate mm->pasid if necessary. */
-	iommu_mm = iommu_alloc_mm_data(mm, dev);
-	if (IS_ERR(iommu_mm)) {
-		ret = PTR_ERR(iommu_mm);
-		goto out_unlock;
-	}
+	ret = iommu_sva_alloc_pasid(mm, dev);
+	if (ret)
+		return ERR_PTR(ret);
 
 	handle = kzalloc(sizeof(*handle), GFP_KERNEL);
-	if (!handle) {
-		ret = -ENOMEM;
+	if (!handle)
+		return ERR_PTR(-ENOMEM);
+
+	mutex_lock(&iommu_sva_lock);
+	/* Search for an existing domain. */
+	domain = iommu_get_domain_for_dev_pasid(dev, mm->pasid,
+						IOMMU_DOMAIN_SVA);
+	if (IS_ERR(domain)) {
+		ret = PTR_ERR(domain);
 		goto out_unlock;
 	}
 
-	/* Search for an existing domain. */
-	list_for_each_entry(domain, &mm->iommu_mm->sva_domains, next) {
-		ret = iommu_attach_device_pasid(domain, dev, iommu_mm->pasid);
-		if (!ret) {
-			domain->users++;
-			goto out;
-		}
+	if (domain) {
+		domain->users++;
+		goto out;
 	}
 
 	/* Allocate a new domain and set it on device pasid. */
 	domain = iommu_sva_domain_alloc(dev, mm);
 	if (!domain) {
 		ret = -ENOMEM;
-		goto out_free_handle;
+		goto out_unlock;
 	}
 
-	ret = iommu_attach_device_pasid(domain, dev, iommu_mm->pasid);
+	ret = iommu_attach_device_pasid(domain, dev, mm->pasid);
 	if (ret)
 		goto out_free_domain;
 	domain->users = 1;
-	list_add(&domain->next, &mm->iommu_mm->sva_domains);
-
 out:
 	mutex_unlock(&iommu_sva_lock);
 	handle->dev = dev;
 	handle->domain = domain;
+
 	return handle;
 
 out_free_domain:
 	iommu_domain_free(domain);
-out_free_handle:
-	kfree(handle);
 out_unlock:
 	mutex_unlock(&iommu_sva_lock);
+	kfree(handle);
+
 	return ERR_PTR(ret);
 }
 EXPORT_SYMBOL_GPL(iommu_sva_bind_device);
@@ -137,13 +124,12 @@ EXPORT_SYMBOL_GPL(iommu_sva_bind_device);
 void iommu_sva_unbind_device(struct iommu_sva *handle)
 {
 	struct iommu_domain *domain = handle->domain;
-	struct iommu_mm_data *iommu_mm = domain->mm->iommu_mm;
+	ioasid_t pasid = domain->mm->pasid;
 	struct device *dev = handle->dev;
 
 	mutex_lock(&iommu_sva_lock);
-	iommu_detach_device_pasid(domain, dev, iommu_mm->pasid);
 	if (--domain->users == 0) {
-		list_del(&domain->next);
+		iommu_detach_device_pasid(domain, dev, pasid);
 		iommu_domain_free(domain);
 	}
 	mutex_unlock(&iommu_sva_lock);
@@ -155,7 +141,7 @@ u32 iommu_sva_get_pasid(struct iommu_sva *handle)
 {
 	struct iommu_domain *domain = handle->domain;
 
-	return mm_get_enqcmd_pasid(domain->mm);
+	return domain->mm->pasid;
 }
 EXPORT_SYMBOL_GPL(iommu_sva_get_pasid);
 
@@ -219,11 +205,8 @@ out_put_mm:
 
 void mm_pasid_drop(struct mm_struct *mm)
 {
-	struct iommu_mm_data *iommu_mm = mm->iommu_mm;
-
-	if (!iommu_mm)
+	if (likely(!mm_valid_pasid(mm)))
 		return;
 
-	iommu_free_global_pasid(iommu_mm->pasid);
-	kfree(iommu_mm);
+	iommu_free_global_pasid(mm->pasid);
 }

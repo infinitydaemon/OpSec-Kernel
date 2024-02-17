@@ -335,5 +335,4 @@ static struct dsa_tag_driver *dsa_tag_driver_array[] =	{
 
 module_dsa_tag_drivers(dsa_tag_driver_array);
 
-MODULE_DESCRIPTION("DSA tag driver for Broadcom switches using in-frame headers");
 MODULE_LICENSE("GPL");

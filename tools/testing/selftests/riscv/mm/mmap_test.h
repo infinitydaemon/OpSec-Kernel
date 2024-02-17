@@ -18,8 +18,6 @@ struct addresses {
 	int *on_56_addr;
 };
 
-// Only works on 64 bit
-#if __riscv_xlen == 64
 static inline void do_mmaps(struct addresses *mmap_addresses)
 {
 	/*
@@ -52,7 +50,6 @@ static inline void do_mmaps(struct addresses *mmap_addresses)
 	mmap_addresses->on_56_addr =
 		mmap(on_56_bits, 5 * sizeof(int), prot, flags, 0, 0);
 }
-#endif /* __riscv_xlen == 64 */
 
 static inline int memory_layout(void)
 {

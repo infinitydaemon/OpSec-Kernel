@@ -29,7 +29,6 @@
 #include <linux/pci.h>
 
 #include <drm/drm_crtc_helper.h>
-#include <drm/drm_edid.h>
 #include <drm/drm_file.h>
 #include <drm/drm_modeset_helper_vtables.h>
 #include <drm/radeon_drm.h>

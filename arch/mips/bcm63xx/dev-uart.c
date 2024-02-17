@@ -10,7 +10,6 @@
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
 #include <bcm63xx_cpu.h>
-#include <bcm63xx_dev_uart.h>
 
 static struct resource uart0_resources[] = {
 	{

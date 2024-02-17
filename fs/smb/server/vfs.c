@@ -49,10 +49,6 @@ static void ksmbd_vfs_inherit_owner(struct ksmbd_work *work,
 
 /**
  * ksmbd_vfs_lock_parent() - lock parent dentry if it is stable
- * @parent: parent dentry
- * @child: child dentry
- *
- * Returns: %0 on success, %-ENOENT if the parent dentry is not stable
  */
 int ksmbd_vfs_lock_parent(struct dentry *parent, struct dentry *child)
 {
@@ -364,7 +360,7 @@ out:
 /**
  * ksmbd_vfs_read() - vfs helper for smb file read
  * @work:	smb work
- * @fp:		ksmbd file pointer
+ * @fid:	file id of open file
  * @count:	read byte count
  * @pos:	file pos
  * @rbuf:	read data buffer
@@ -478,7 +474,7 @@ out:
 /**
  * ksmbd_vfs_write() - vfs helper for smb file write
  * @work:	work
- * @fp:		ksmbd file pointer
+ * @fid:	file id of open file
  * @buf:	buf containing data for writing
  * @count:	read byte count
  * @pos:	file pos
@@ -549,8 +545,10 @@ out:
 
 /**
  * ksmbd_vfs_getattr() - vfs helper for smb getattr
- * @path:	path of dentry
- * @stat:	pointer to returned kernel stat structure
+ * @work:	work
+ * @fid:	file id of open file
+ * @attrs:	inode attributes
+ *
  * Return:	0 on success, otherwise error
  */
 int ksmbd_vfs_getattr(const struct path *path, struct kstat *stat)
@@ -567,7 +565,6 @@ int ksmbd_vfs_getattr(const struct path *path, struct kstat *stat)
  * ksmbd_vfs_fsync() - vfs helper for smb fsync
  * @work:	work
  * @fid:	file id of open file
- * @p_id:	persistent file id
  *
  * Return:	0 on success, otherwise error
  */
@@ -590,8 +587,7 @@ int ksmbd_vfs_fsync(struct ksmbd_work *work, u64 fid, u64 p_id)
 
 /**
  * ksmbd_vfs_remove_file() - vfs helper for smb rmdir or unlink
- * @work:	work
- * @path:	path of dentry
+ * @name:	directory or file name that is relative to share
  *
  * Return:	0 on success, otherwise error
  */
@@ -627,7 +623,6 @@ out_err:
 
 /**
  * ksmbd_vfs_link() - vfs helper for creating smb hardlink
- * @work:	work
  * @oldname:	source file name
  * @newname:	hardlink name that is relative to share
  *
@@ -720,10 +715,6 @@ retry:
 		goto out2;
 
 	trap = lock_rename_child(old_child, new_path.dentry);
-	if (IS_ERR(trap)) {
-		err = PTR_ERR(trap);
-		goto out_drop_write;
-	}
 
 	old_parent = dget(old_child->d_parent);
 	if (d_unhashed(old_child)) {
@@ -786,7 +777,6 @@ out4:
 out3:
 	dput(old_parent);
 	unlock_rename(old_parent, new_path.dentry);
-out_drop_write:
 	mnt_drop_write(old_path->mnt);
 out2:
 	path_put(&new_path);
@@ -805,7 +795,7 @@ revert_fsids:
 /**
  * ksmbd_vfs_truncate() - vfs helper for smb file truncate
  * @work:	work
- * @fp:		ksmbd file pointer
+ * @fid:	file id of old file
  * @size:	truncate to given size
  *
  * Return:	0 on success, otherwise error
@@ -848,6 +838,7 @@ int ksmbd_vfs_truncate(struct ksmbd_work *work,
  * ksmbd_vfs_listxattr() - vfs helper for smb list extended attributes
  * @dentry:	dentry of file for listing xattrs
  * @list:	destination buffer
+ * @size:	destination buffer length
  *
  * Return:	xattr list length on success, otherwise error
  */
@@ -956,7 +947,7 @@ int ksmbd_vfs_setxattr(struct mnt_idmap *idmap,
 /**
  * ksmbd_vfs_set_fadvise() - convert smb IO caching options to linux options
  * @filp:	file pointer for IO
- * @option:	smb IO options
+ * @options:	smb IO options
  */
 void ksmbd_vfs_set_fadvise(struct file *filp, __le32 option)
 {
@@ -1168,7 +1159,6 @@ static bool __caseless_lookup(struct dir_context *ctx, const char *name,
  * @dir:	path info
  * @name:	filename to lookup
  * @namelen:	filename length
- * @um:		&struct unicode_map to use
  *
  * Return:	0 on success, otherwise error
  */
@@ -1199,7 +1189,6 @@ static int ksmbd_vfs_lookup_in_dir(const struct path *dir, char *name,
 
 /**
  * ksmbd_vfs_kern_path_locked() - lookup a file and get path info
- * @work:	work
  * @name:		file path that is relative to share
  * @flags:		lookup flags
  * @parent_path:	if lookup succeed, return parent_path info
@@ -1647,8 +1636,6 @@ int ksmbd_vfs_get_dos_attrib_xattr(struct mnt_idmap *idmap,
  * ksmbd_vfs_init_kstat() - convert unix stat information to smb stat format
  * @p:          destination buffer
  * @ksmbd_kstat:      ksmbd kstat wrapper
- *
- * Returns: pointer to the converted &struct file_directory_info
  */
 void *ksmbd_vfs_init_kstat(char **p, struct ksmbd_kstat *ksmbd_kstat)
 {

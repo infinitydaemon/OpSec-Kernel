@@ -3,7 +3,7 @@
  * Copyright © 2019 Intel Corporation
  */
 
-#include <linux/math.h>
+#include <linux/util_macros.h>
 
 #include "i915_reg.h"
 #include "intel_ddi.h"

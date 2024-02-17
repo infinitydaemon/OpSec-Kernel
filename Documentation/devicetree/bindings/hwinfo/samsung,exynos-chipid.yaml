@@ -11,21 +11,9 @@ maintainers:
 
 properties:
   compatible:
-    oneOf:
-      - enum:
-          - samsung,exynos4210-chipid
-          - samsung,exynos850-chipid
-      - items:
-          - enum:
-              - samsung,exynos5433-chipid
-              - samsung,exynos7-chipid
-          - const: samsung,exynos4210-chipid
-      - items:
-          - enum:
-              - samsung,exynos7885-chipid
-              - samsung,exynosautov9-chipid
-              - samsung,exynosautov920-chipid
-          - const: samsung,exynos850-chipid
+    enum:
+      - samsung,exynos4210-chipid
+      - samsung,exynos850-chipid
 
   reg:
     maxItems: 1

@@ -424,7 +424,10 @@ out_unlock:
 	mutex_unlock(&st->lock);
 
 	/* sleep maximum required time */
-	sleep = max(sleep_sensor, sleep_temp);
+	if (sleep_sensor > sleep_temp)
+		sleep = sleep_sensor;
+	else
+		sleep = sleep_temp;
 	if (sleep)
 		msleep(sleep);
 

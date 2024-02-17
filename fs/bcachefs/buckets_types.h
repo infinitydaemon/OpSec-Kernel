@@ -33,6 +33,8 @@ struct bucket_gens {
 };
 
 struct bch_dev_usage {
+	u64			buckets_ec;
+
 	struct {
 		u64		buckets;
 		u64		sectors; /* _compressed_ sectors: */
@@ -45,18 +47,23 @@ struct bch_dev_usage {
 	}			d[BCH_DATA_NR];
 };
 
-struct bch_fs_usage_base {
+struct bch_fs_usage {
+	/* all fields are in units of 512 byte sectors: */
 	u64			hidden;
 	u64			btree;
 	u64			data;
 	u64			cached;
 	u64			reserved;
 	u64			nr_inodes;
-};
 
-struct bch_fs_usage {
-	/* all fields are in units of 512 byte sectors: */
-	struct bch_fs_usage_base b;
+	/* XXX: add stats for compression ratio */
+#if 0
+	u64			uncompressed;
+	u64			compressed;
+#endif
+
+	/* broken out: */
+
 	u64			persistent_reserved[BCH_REPLICAS_MAX];
 	u64			replicas[];
 };

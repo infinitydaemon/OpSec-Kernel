@@ -1051,12 +1051,10 @@ static int hl_device_eq_heartbeat_check(struct hl_device *hdev)
 	if (!prop->cpucp_info.eq_health_check_supported)
 		return 0;
 
-	if (hdev->eq_heartbeat_received) {
+	if (hdev->eq_heartbeat_received)
 		hdev->eq_heartbeat_received = false;
-	} else {
-		dev_err(hdev->dev, "EQ heartbeat event was not received!\n");
+	else
 		return -EIO;
-	}
 
 	return 0;
 }
@@ -2040,7 +2038,7 @@ device_reset:
 	if (ctx)
 		hl_ctx_put(ctx);
 
-	return hl_device_reset(hdev, flags | HL_DRV_RESET_HARD);
+	return hl_device_reset(hdev, flags);
 }
 
 static void hl_notifier_event_send(struct hl_notifier_event *notifier_event, u64 event_mask)
@@ -2049,7 +2047,7 @@ static void hl_notifier_event_send(struct hl_notifier_event *notifier_event, u64
 	notifier_event->events_mask |= event_mask;
 
 	if (notifier_event->eventfd)
-		eventfd_signal(notifier_event->eventfd);
+		eventfd_signal(notifier_event->eventfd, 1);
 
 	mutex_unlock(&notifier_event->lock);
 }

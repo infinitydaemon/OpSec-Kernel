@@ -7,20 +7,15 @@
 #include <linux/types.h>
 
 #ifdef CONFIG_SCSI_UFS_FAULT_INJECTION
-void ufs_fault_inject_hba_init(struct ufs_hba *hba);
-bool ufs_trigger_eh(struct ufs_hba *hba);
-bool ufs_fail_completion(struct ufs_hba *hba);
+bool ufs_trigger_eh(void);
+bool ufs_fail_completion(void);
 #else
-static inline void ufs_fault_inject_hba_init(struct ufs_hba *hba)
-{
-}
-
-static inline bool ufs_trigger_eh(struct ufs_hba *hba)
+static inline bool ufs_trigger_eh(void)
 {
 	return false;
 }
 
-static inline bool ufs_fail_completion(struct ufs_hba *hba)
+static inline bool ufs_fail_completion(void)
 {
 	return false;
 }

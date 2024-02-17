@@ -234,7 +234,5 @@ int cnp_core_init(struct pmc_dev *pmcdev)
 	if (ret)
 		return ret;
 
-	pmc_core_get_low_power_modes(pmcdev);
-
 	return 0;
 }

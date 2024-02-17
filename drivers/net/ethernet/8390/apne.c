@@ -610,5 +610,4 @@ static int init_pcmcia(void)
 	return 1;
 }
 
-MODULE_DESCRIPTION("National Semiconductor 8390 Amiga PCMCIA ethernet driver");
 MODULE_LICENSE("GPL");

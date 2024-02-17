@@ -360,8 +360,7 @@ static long long remap_region(struct config c, unsigned int threshold_mb,
 			      char pattern_seed)
 {
 	void *addr, *src_addr, *dest_addr, *dest_preamble_addr;
-	int d;
-	unsigned long long t;
+	unsigned long long i;
 	struct timespec t_start = {0, 0}, t_end = {0, 0};
 	long long  start_ns, end_ns, align_mask, ret, offset;
 	unsigned long long threshold;
@@ -379,8 +378,8 @@ static long long remap_region(struct config c, unsigned int threshold_mb,
 
 	/* Set byte pattern for source block. */
 	srand(pattern_seed);
-	for (t = 0; t < threshold; t++)
-		memset((char *) src_addr + t, (char) rand(), 1);
+	for (i = 0; i < threshold; i++)
+		memset((char *) src_addr + i, (char) rand(), 1);
 
 	/* Mask to zero out lower bits of address for alignment */
 	align_mask = ~(c.dest_alignment - 1);
@@ -421,8 +420,8 @@ static long long remap_region(struct config c, unsigned int threshold_mb,
 
 		/* Set byte pattern for the dest preamble block. */
 		srand(pattern_seed);
-		for (d = 0; d < c.dest_preamble_size; d++)
-			memset((char *) dest_preamble_addr + d, (char) rand(), 1);
+		for (i = 0; i < c.dest_preamble_size; i++)
+			memset((char *) dest_preamble_addr + i, (char) rand(), 1);
 	}
 
 	clock_gettime(CLOCK_MONOTONIC, &t_start);
@@ -438,14 +437,14 @@ static long long remap_region(struct config c, unsigned int threshold_mb,
 
 	/* Verify byte pattern after remapping */
 	srand(pattern_seed);
-	for (t = 0; t < threshold; t++) {
+	for (i = 0; i < threshold; i++) {
 		char c = (char) rand();
 
-		if (((char *) dest_addr)[t] != c) {
+		if (((char *) dest_addr)[i] != c) {
 			ksft_print_msg("Data after remap doesn't match at offset %llu\n",
-				       t);
+				       i);
 			ksft_print_msg("Expected: %#x\t Got: %#x\n", c & 0xff,
-					((char *) dest_addr)[t] & 0xff);
+					((char *) dest_addr)[i] & 0xff);
 			ret = -1;
 			goto clean_up_dest;
 		}
@@ -454,14 +453,14 @@ static long long remap_region(struct config c, unsigned int threshold_mb,
 	/* Verify the dest preamble byte pattern after remapping */
 	if (c.dest_preamble_size) {
 		srand(pattern_seed);
-		for (d = 0; d < c.dest_preamble_size; d++) {
+		for (i = 0; i < c.dest_preamble_size; i++) {
 			char c = (char) rand();
 
-			if (((char *) dest_preamble_addr)[d] != c) {
+			if (((char *) dest_preamble_addr)[i] != c) {
 				ksft_print_msg("Preamble data after remap doesn't match at offset %d\n",
-					       d);
+					       i);
 				ksft_print_msg("Expected: %#x\t Got: %#x\n", c & 0xff,
-					       ((char *) dest_preamble_addr)[d] & 0xff);
+					       ((char *) dest_preamble_addr)[i] & 0xff);
 				ret = -1;
 				goto clean_up_dest;
 			}

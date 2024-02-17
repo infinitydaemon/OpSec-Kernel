@@ -7,7 +7,6 @@
  */
 #include <linux/bitfield.h>
 #include <linux/bits.h>
-#include <linux/cleanup.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/err.h>
@@ -317,37 +316,47 @@ static int mcp3911_read_raw(struct iio_dev *indio_dev,
 			    int *val2, long mask)
 {
 	struct mcp3911 *adc = iio_priv(indio_dev);
-	int ret;
+	int ret = -EINVAL;
 
-	guard(mutex)(&adc->lock);
+	mutex_lock(&adc->lock);
 	switch (mask) {
 	case IIO_CHAN_INFO_RAW:
 		ret = mcp3911_read(adc,
 				   MCP3911_CHANNEL(channel->channel), val, 3);
 		if (ret)
-			return ret;
+			goto out;
 
 		*val = sign_extend32(*val, 23);
-		return IIO_VAL_INT;
+
+		ret = IIO_VAL_INT;
+		break;
+
 	case IIO_CHAN_INFO_OFFSET:
+
 		ret = adc->chip->get_offset(adc, channel->channel, val);
 		if (ret)
-			return ret;
+			goto out;
 
-		return IIO_VAL_INT;
+		ret = IIO_VAL_INT;
+		break;
 	case IIO_CHAN_INFO_OVERSAMPLING_RATIO:
 		ret = adc->chip->get_osr(adc, val);
 		if (ret)
-			return ret;
+			goto out;
 
-		return IIO_VAL_INT;
+		ret = IIO_VAL_INT;
+		break;
+
 	case IIO_CHAN_INFO_SCALE:
 		*val = mcp3911_scale_table[ilog2(adc->gain[channel->channel])][0];
 		*val2 = mcp3911_scale_table[ilog2(adc->gain[channel->channel])][1];
-		return IIO_VAL_INT_PLUS_NANO;
-	default:
-		return -EINVAL;
+		ret = IIO_VAL_INT_PLUS_NANO;
+		break;
 	}
+
+out:
+	mutex_unlock(&adc->lock);
+	return ret;
 }
 
 static int mcp3911_write_raw(struct iio_dev *indio_dev,
@@ -355,8 +364,9 @@ static int mcp3911_write_raw(struct iio_dev *indio_dev,
 			     int val2, long mask)
 {
 	struct mcp3911 *adc = iio_priv(indio_dev);
+	int ret = -EINVAL;
 
-	guard(mutex)(&adc->lock);
+	mutex_lock(&adc->lock);
 	switch (mask) {
 	case IIO_CHAN_INFO_SCALE:
 		for (int i = 0; i < MCP3911_NUM_SCALES; i++) {
@@ -364,25 +374,32 @@ static int mcp3911_write_raw(struct iio_dev *indio_dev,
 			    val2 == mcp3911_scale_table[i][1]) {
 
 				adc->gain[channel->channel] = BIT(i);
-				return adc->chip->set_scale(adc, channel->channel, i);
+				ret = adc->chip->set_scale(adc, channel->channel, i);
 			}
 		}
-		return -EINVAL;
+		break;
 	case IIO_CHAN_INFO_OFFSET:
-		if (val2 != 0)
-			return -EINVAL;
+		if (val2 != 0) {
+			ret = -EINVAL;
+			goto out;
+		}
 
-		return adc->chip->set_offset(adc, channel->channel, val);
+		ret = adc->chip->set_offset(adc, channel->channel, val);
+		break;
+
 	case IIO_CHAN_INFO_OVERSAMPLING_RATIO:
 		for (int i = 0; i < ARRAY_SIZE(mcp3911_osr_table); i++) {
 			if (val == mcp3911_osr_table[i]) {
-				return adc->chip->set_osr(adc, i);
+				ret = adc->chip->set_osr(adc, i);
+				break;
 			}
 		}
-		return -EINVAL;
-	default:
-		return -EINVAL;
+		break;
 	}
+
+out:
+	mutex_unlock(&adc->lock);
+	return ret;
 }
 
 static int mcp3911_calc_scale_table(struct mcp3911 *adc)
@@ -515,7 +532,7 @@ static irqreturn_t mcp3911_trigger_handler(int irq, void *p)
 	int i = 0;
 	int ret;
 
-	guard(mutex)(&adc->lock);
+	mutex_lock(&adc->lock);
 	adc->tx_buf = MCP3911_REG_READ(MCP3911_CHANNEL(0), adc->dev_addr);
 	ret = spi_sync_transfer(adc->spi, xfer, ARRAY_SIZE(xfer));
 	if (ret < 0) {
@@ -532,6 +549,7 @@ static irqreturn_t mcp3911_trigger_handler(int irq, void *p)
 	iio_push_to_buffers_with_timestamp(indio_dev, &adc->scan,
 					   iio_get_time_ns(indio_dev));
 out:
+	mutex_unlock(&adc->lock);
 	iio_trigger_notify_done(indio_dev->trig);
 
 	return IRQ_HANDLED;

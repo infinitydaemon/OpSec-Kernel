@@ -2,8 +2,6 @@
 #ifndef _BCACHEFS_SB_MEMBERS_H
 #define _BCACHEFS_SB_MEMBERS_H
 
-#include "darray.h"
-
 extern char * const bch2_member_error_strs[];
 
 static inline struct bch_member *
@@ -49,18 +47,23 @@ static inline unsigned dev_mask_nr(const struct bch_devs_mask *devs)
 static inline bool bch2_dev_list_has_dev(struct bch_devs_list devs,
 					 unsigned dev)
 {
-	darray_for_each(devs, i)
-		if (*i == dev)
+	unsigned i;
+
+	for (i = 0; i < devs.nr; i++)
+		if (devs.devs[i] == dev)
 			return true;
+
 	return false;
 }
 
 static inline void bch2_dev_list_drop_dev(struct bch_devs_list *devs,
 					  unsigned dev)
 {
-	darray_for_each(*devs, i)
-		if (*i == dev) {
-			darray_remove_item(devs, i);
+	unsigned i;
+
+	for (i = 0; i < devs->nr; i++)
+		if (devs->devs[i] == dev) {
+			array_remove_item(devs->devs, devs->nr, i);
 			return;
 		}
 }
@@ -69,48 +72,40 @@ static inline void bch2_dev_list_add_dev(struct bch_devs_list *devs,
 					 unsigned dev)
 {
 	if (!bch2_dev_list_has_dev(*devs, dev)) {
-		BUG_ON(devs->nr >= ARRAY_SIZE(devs->data));
-		devs->data[devs->nr++] = dev;
+		BUG_ON(devs->nr >= ARRAY_SIZE(devs->devs));
+		devs->devs[devs->nr++] = dev;
 	}
 }
 
 static inline struct bch_devs_list bch2_dev_list_single(unsigned dev)
 {
-	return (struct bch_devs_list) { .nr = 1, .data[0] = dev };
+	return (struct bch_devs_list) { .nr = 1, .devs[0] = dev };
 }
 
-static inline struct bch_dev *__bch2_next_dev_idx(struct bch_fs *c, unsigned idx,
-						  const struct bch_devs_mask *mask)
+static inline struct bch_dev *__bch2_next_dev(struct bch_fs *c, unsigned *iter,
+					      const struct bch_devs_mask *mask)
 {
 	struct bch_dev *ca = NULL;
 
-	while ((idx = mask
-		? find_next_bit(mask->d, c->sb.nr_devices, idx)
-		: idx) < c->sb.nr_devices &&
-	       !(ca = rcu_dereference_check(c->devs[idx],
+	while ((*iter = mask
+		? find_next_bit(mask->d, c->sb.nr_devices, *iter)
+		: *iter) < c->sb.nr_devices &&
+	       !(ca = rcu_dereference_check(c->devs[*iter],
 					    lockdep_is_held(&c->state_lock))))
-		idx++;
+		(*iter)++;
 
 	return ca;
 }
 
-static inline struct bch_dev *__bch2_next_dev(struct bch_fs *c, struct bch_dev *ca,
-					      const struct bch_devs_mask *mask)
-{
-	return __bch2_next_dev_idx(c, ca ? ca->dev_idx + 1 : 0, mask);
-}
+#define for_each_member_device_rcu(ca, c, iter, mask)			\
+	for ((iter) = 0; ((ca) = __bch2_next_dev((c), &(iter), mask)); (iter)++)
 
-#define for_each_member_device_rcu(_c, _ca, _mask)			\
-	for (struct bch_dev *_ca = NULL;				\
-	     (_ca = __bch2_next_dev((_c), _ca, (_mask)));)
-
-static inline struct bch_dev *bch2_get_next_dev(struct bch_fs *c, struct bch_dev *ca)
+static inline struct bch_dev *bch2_get_next_dev(struct bch_fs *c, unsigned *iter)
 {
-	if (ca)
-		percpu_ref_put(&ca->ref);
+	struct bch_dev *ca;
 
 	rcu_read_lock();
-	if ((ca = __bch2_next_dev(c, ca, NULL)))
+	if ((ca = __bch2_next_dev(c, iter, NULL)))
 		percpu_ref_get(&ca->ref);
 	rcu_read_unlock();
 
@@ -120,42 +115,41 @@ static inline struct bch_dev *bch2_get_next_dev(struct bch_fs *c, struct bch_dev
 /*
  * If you break early, you must drop your ref on the current device
  */
-#define __for_each_member_device(_c, _ca)				\
-	for (;	(_ca = bch2_get_next_dev(_c, _ca));)
-
-#define for_each_member_device(_c, _ca)					\
-	for (struct bch_dev *_ca = NULL;				\
-	     (_ca = bch2_get_next_dev(_c, _ca));)
+#define for_each_member_device(ca, c, iter)				\
+	for ((iter) = 0;						\
+	     (ca = bch2_get_next_dev(c, &(iter)));			\
+	     percpu_ref_put(&ca->ref), (iter)++)
 
 static inline struct bch_dev *bch2_get_next_online_dev(struct bch_fs *c,
-						       struct bch_dev *ca,
-						       unsigned state_mask)
+						      unsigned *iter,
+						      int state_mask)
 {
-	if (ca)
-		percpu_ref_put(&ca->io_ref);
+	struct bch_dev *ca;
 
 	rcu_read_lock();
-	while ((ca = __bch2_next_dev(c, ca, NULL)) &&
+	while ((ca = __bch2_next_dev(c, iter, NULL)) &&
 	       (!((1 << ca->mi.state) & state_mask) ||
 		!percpu_ref_tryget(&ca->io_ref)))
-		;
+		(*iter)++;
 	rcu_read_unlock();
 
 	return ca;
 }
 
-#define __for_each_online_member(_c, _ca, state_mask)			\
-	for (struct bch_dev *_ca = NULL;				\
-	     (_ca = bch2_get_next_online_dev(_c, _ca, state_mask));)
+#define __for_each_online_member(ca, c, iter, state_mask)		\
+	for ((iter) = 0;						\
+	     (ca = bch2_get_next_online_dev(c, &(iter), state_mask));	\
+	     percpu_ref_put(&ca->io_ref), (iter)++)
 
-#define for_each_online_member(c, ca)					\
-	__for_each_online_member(c, ca, ~0)
+#define for_each_online_member(ca, c, iter)				\
+	__for_each_online_member(ca, c, iter, ~0)
 
-#define for_each_rw_member(c, ca)					\
-	__for_each_online_member(c, ca, BIT(BCH_MEMBER_STATE_rw))
+#define for_each_rw_member(ca, c, iter)					\
+	__for_each_online_member(ca, c, iter, 1 << BCH_MEMBER_STATE_rw)
 
-#define for_each_readable_member(c, ca)				\
-	__for_each_online_member(c, ca,	BIT( BCH_MEMBER_STATE_rw)|BIT(BCH_MEMBER_STATE_ro))
+#define for_each_readable_member(ca, c, iter)				\
+	__for_each_online_member(ca, c, iter,				\
+		(1 << BCH_MEMBER_STATE_rw)|(1 << BCH_MEMBER_STATE_ro))
 
 /*
  * If a key exists that references a device, the device won't be going away and
@@ -181,9 +175,11 @@ static inline struct bch_dev *bch_dev_locked(struct bch_fs *c, unsigned idx)
 static inline struct bch_devs_mask bch2_online_devs(struct bch_fs *c)
 {
 	struct bch_devs_mask devs;
+	struct bch_dev *ca;
+	unsigned i;
 
 	memset(&devs, 0, sizeof(devs));
-	for_each_online_member(c, ca)
+	for_each_online_member(ca, c, i)
 		__set_bit(ca->dev_idx, devs.d);
 	return devs;
 }

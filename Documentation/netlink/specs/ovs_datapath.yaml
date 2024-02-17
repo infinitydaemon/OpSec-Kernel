@@ -20,7 +20,6 @@ definitions:
     name: user-features
     type: flags
     name-prefix: ovs-dp-f-
-    enum-name:
     entries:
       -
         name: unaligned
@@ -143,6 +142,7 @@ operations:
       do:
         request:
           attributes:
+            - dp-ifindex
             - name
             - upcall-pid
             - user-features
@@ -154,6 +154,7 @@ operations:
       do:
         request:
           attributes:
+            - dp-ifindex
             - name
 
 mcast-groups:

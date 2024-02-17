@@ -193,10 +193,6 @@ static void mdiobus_release(struct device *d)
 	     bus->state != MDIOBUS_ALLOCATED,
 	     "%s: not in RELEASED or ALLOCATED state\n",
 	     bus->id);
-
-	if (bus->state == MDIOBUS_RELEASED)
-		fwnode_handle_put(dev_fwnode(d));
-
 	kfree(bus);
 }
 
@@ -510,7 +506,7 @@ static int mdiobus_create_device(struct mii_bus *bus,
 	if (IS_ERR(mdiodev))
 		return -ENODEV;
 
-	strscpy(mdiodev->modalias, bi->modalias,
+	strncpy(mdiodev->modalias, bi->modalias,
 		sizeof(mdiodev->modalias));
 	mdiodev->bus_match = mdio_device_bus_match;
 	mdiodev->dev.platform_data = (void *)bi->platform_data;
@@ -687,15 +683,6 @@ int __mdiobus_register(struct mii_bus *bus, struct module *owner)
 	bus->dev.class = &mdio_bus_class;
 	bus->dev.groups = NULL;
 	dev_set_name(&bus->dev, "%s", bus->id);
-
-	/* If the bus state is allocated, we're registering a fresh bus
-	 * that may have a fwnode associated with it. Grab a reference
-	 * to the fwnode. This will be dropped when the bus is released.
-	 * If the bus was set to unregistered, it means that the bus was
-	 * previously registered, and we've already grabbed a reference.
-	 */
-	if (bus->state == MDIOBUS_ALLOCATED)
-		fwnode_handle_get(dev_fwnode(&bus->dev));
 
 	/* We need to set state to MDIOBUS_UNREGISTERED to correctly release
 	 * the device in mdiobus_free()

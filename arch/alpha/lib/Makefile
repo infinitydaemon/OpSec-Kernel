@@ -4,6 +4,7 @@
 #
 
 asflags-y := $(KBUILD_CFLAGS)
+ccflags-y := -Werror
 
 # Many of these routines have implementations tuned for ev6.
 # Choose them iff we're targeting ev6 specifically.

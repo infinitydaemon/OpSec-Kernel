@@ -27,7 +27,6 @@
 #include "octeon_network.h"
 
 MODULE_AUTHOR("Cavium Networks, <support@cavium.com>");
-MODULE_DESCRIPTION("Cavium LiquidIO Intelligent Server Adapter Core");
 MODULE_LICENSE("GPL");
 
 /* OOM task polling interval */

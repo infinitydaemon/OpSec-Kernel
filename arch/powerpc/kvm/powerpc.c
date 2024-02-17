@@ -528,6 +528,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_ENABLE_CAP:
 	case KVM_CAP_ONE_REG:
 	case KVM_CAP_IOEVENTFD:
+	case KVM_CAP_DEVICE_CTRL:
 	case KVM_CAP_IMMEDIATE_EXIT:
 	case KVM_CAP_SET_GUEST_DEBUG:
 		r = 1;
@@ -577,7 +578,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 		break;
 #endif
 
-#ifdef CONFIG_HAVE_KVM_IRQCHIP
+#ifdef CONFIG_HAVE_KVM_IRQFD
 	case KVM_CAP_IRQFD_RESAMPLE:
 		r = !xive_enabled();
 		break;
@@ -631,8 +632,13 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 		break;
 #endif
 	case KVM_CAP_SYNC_MMU:
-		BUILD_BUG_ON(!IS_ENABLED(CONFIG_KVM_GENERIC_MMU_NOTIFIER));
+#ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
+		r = hv_enabled;
+#elif defined(KVM_ARCH_WANT_MMU_NOTIFIER)
 		r = 1;
+#else
+		r = 0;
+#endif
 		break;
 #ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
 	case KVM_CAP_PPC_HTAB_FD:

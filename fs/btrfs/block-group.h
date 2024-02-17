@@ -5,8 +5,6 @@
 
 #include "free-space-cache.h"
 
-struct btrfs_chunk_map;
-
 enum btrfs_disk_cache_state {
 	BTRFS_DC_WRITTEN,
 	BTRFS_DC_ERROR,
@@ -245,7 +243,7 @@ struct btrfs_block_group {
 	u64 zone_unusable;
 	u64 zone_capacity;
 	u64 meta_write_pointer;
-	struct btrfs_chunk_map *physical_map;
+	struct map_lookup *physical_map;
 	struct list_head active_bg_list;
 	struct work_struct zone_finish_work;
 	struct extent_buffer *last_eb;
@@ -299,7 +297,7 @@ struct btrfs_trans_handle *btrfs_start_trans_remove_block_group(
 				struct btrfs_fs_info *fs_info,
 				const u64 chunk_offset);
 int btrfs_remove_block_group(struct btrfs_trans_handle *trans,
-			     struct btrfs_chunk_map *map);
+			     u64 group_start, struct extent_map *em);
 void btrfs_delete_unused_bgs(struct btrfs_fs_info *fs_info);
 void btrfs_mark_bg_unused(struct btrfs_block_group *bg);
 void btrfs_reclaim_bgs_work(struct work_struct *work);

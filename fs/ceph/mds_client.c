@@ -1089,7 +1089,7 @@ void ceph_mdsc_release_request(struct kref *kref)
 	struct ceph_mds_request *req = container_of(kref,
 						    struct ceph_mds_request,
 						    r_kref);
-	ceph_mdsc_release_dir_caps_async(req);
+	ceph_mdsc_release_dir_caps_no_check(req);
 	destroy_reply_info(&req->r_reply_info);
 	if (req->r_request)
 		ceph_msg_put(req->r_request);
@@ -1534,8 +1534,7 @@ static int encode_metric_spec(void **p, void *end)
  * session message, specialization for CEPH_SESSION_REQUEST_OPEN
  * to include additional client metadata fields.
  */
-static struct ceph_msg *
-create_session_full_msg(struct ceph_mds_client *mdsc, int op, u64 seq)
+static struct ceph_msg *create_session_open_msg(struct ceph_mds_client *mdsc, u64 seq)
 {
 	struct ceph_msg *msg;
 	struct ceph_mds_session_head *h;
@@ -1579,9 +1578,6 @@ create_session_full_msg(struct ceph_mds_client *mdsc, int op, u64 seq)
 		size = METRIC_BYTES(count);
 	extra_bytes += 2 + 4 + 4 + size;
 
-	/* flags, mds auth caps and oldest_client_tid */
-	extra_bytes += 4 + 4 + 8;
-
 	/* Allocate the message */
 	msg = ceph_msg_new(CEPH_MSG_CLIENT_SESSION, sizeof(*h) + extra_bytes,
 			   GFP_NOFS, false);
@@ -1593,16 +1589,16 @@ create_session_full_msg(struct ceph_mds_client *mdsc, int op, u64 seq)
 	end = p + msg->front.iov_len;
 
 	h = p;
-	h->op = cpu_to_le32(op);
+	h->op = cpu_to_le32(CEPH_SESSION_REQUEST_OPEN);
 	h->seq = cpu_to_le64(seq);
 
 	/*
 	 * Serialize client metadata into waiting buffer space, using
 	 * the format that userspace expects for map<string, string>
 	 *
-	 * ClientSession messages with metadata are v7
+	 * ClientSession messages with metadata are v4
 	 */
-	msg->hdr.version = cpu_to_le16(7);
+	msg->hdr.version = cpu_to_le16(4);
 	msg->hdr.compat_version = cpu_to_le16(1);
 
 	/* The write pointer, following the session_head structure */
@@ -1638,15 +1634,6 @@ create_session_full_msg(struct ceph_mds_client *mdsc, int op, u64 seq)
 		return ERR_PTR(ret);
 	}
 
-	/* version == 5, flags */
-	ceph_encode_32(&p, 0);
-
-	/* version == 6, mds auth caps */
-	ceph_encode_32(&p, 0);
-
-	/* version == 7, oldest_client_tid */
-	ceph_encode_64(&p, mdsc->oldest_tid);
-
 	msg->front.iov_len = p - msg->front.iov_base;
 	msg->hdr.front_len = cpu_to_le32(msg->front.iov_len);
 
@@ -1676,8 +1663,7 @@ static int __open_session(struct ceph_mds_client *mdsc,
 	session->s_renew_requested = jiffies;
 
 	/* send connect message */
-	msg = create_session_full_msg(mdsc, CEPH_SESSION_REQUEST_OPEN,
-				      session->s_seq);
+	msg = create_session_open_msg(mdsc, session->s_seq);
 	if (IS_ERR(msg))
 		return PTR_ERR(msg);
 	ceph_con_send(&session->s_con, msg);
@@ -2042,10 +2028,10 @@ static int send_renew_caps(struct ceph_mds_client *mdsc,
 
 	doutc(cl, "to mds%d (%s)\n", session->s_mds,
 	      ceph_mds_state_name(state));
-	msg = create_session_full_msg(mdsc, CEPH_SESSION_REQUEST_RENEWCAPS,
+	msg = ceph_create_session_msg(CEPH_SESSION_REQUEST_RENEWCAPS,
 				      ++session->s_renew_seq);
-	if (IS_ERR(msg))
-		return PTR_ERR(msg);
+	if (!msg)
+		return -ENOMEM;
 	ceph_con_send(&session->s_con, msg);
 	return 0;
 }
@@ -2142,7 +2128,7 @@ static bool drop_negative_children(struct dentry *dentry)
 		goto out;
 
 	spin_lock(&dentry->d_lock);
-	hlist_for_each_entry(child, &dentry->d_children, d_sib) {
+	list_for_each_entry(child, &dentry->d_subdirs, d_child) {
 		if (d_really_is_positive(child)) {
 			all_negative = false;
 			break;
@@ -4261,7 +4247,7 @@ void ceph_mdsc_release_dir_caps(struct ceph_mds_request *req)
 	}
 }
 
-void ceph_mdsc_release_dir_caps_async(struct ceph_mds_request *req)
+void ceph_mdsc_release_dir_caps_no_check(struct ceph_mds_request *req)
 {
 	struct ceph_client *cl = req->r_mdsc->fsc->client;
 	int dcaps;
@@ -4269,7 +4255,8 @@ void ceph_mdsc_release_dir_caps_async(struct ceph_mds_request *req)
 	dcaps = xchg(&req->r_dir_caps, 0);
 	if (dcaps) {
 		doutc(cl, "releasing r_dir_caps=%s\n", ceph_cap_string(dcaps));
-		ceph_put_cap_refs_async(ceph_inode(req->r_parent), dcaps);
+		ceph_put_cap_refs_no_check_caps(ceph_inode(req->r_parent),
+						dcaps);
 	}
 }
 
@@ -4305,7 +4292,7 @@ static void replay_unsafe_requests(struct ceph_mds_client *mdsc,
 		if (req->r_session->s_mds != session->s_mds)
 			continue;
 
-		ceph_mdsc_release_dir_caps_async(req);
+		ceph_mdsc_release_dir_caps_no_check(req);
 
 		__send_request(session, req, true);
 	}
@@ -5883,8 +5870,7 @@ static void mds_peer_reset(struct ceph_connection *con)
 
 	pr_warn_client(mdsc->fsc->client, "mds%d closed our session\n",
 		       s->s_mds);
-	if (READ_ONCE(mdsc->fsc->mount_state) != CEPH_MOUNT_FENCE_IO &&
-	    ceph_mdsmap_get_state(mdsc->mdsmap, s->s_mds) >= CEPH_MDS_STATE_RECONNECT)
+	if (READ_ONCE(mdsc->fsc->mount_state) != CEPH_MOUNT_FENCE_IO)
 		send_mds_reconnect(mdsc, s);
 }
 

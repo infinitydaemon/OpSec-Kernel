@@ -890,7 +890,6 @@ subsys_initcall(atm_init);
 
 module_exit(atm_exit);
 
-MODULE_DESCRIPTION("Asynchronous Transfer Mode (ATM) networking core");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_NETPROTO(PF_ATMPVC);
 MODULE_ALIAS_NETPROTO(PF_ATMSVC);

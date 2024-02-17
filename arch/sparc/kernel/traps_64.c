@@ -9,7 +9,6 @@
  * I like traps on v9, :))))
  */
 
-#include <linux/cpu.h>
 #include <linux/extable.h>
 #include <linux/sched/mm.h>
 #include <linux/sched/debug.h>
@@ -898,7 +897,7 @@ void __init cheetah_ecache_flush_init(void)
 
 	/* Now allocate error trap reporting scoreboard. */
 	sz = NR_CPUS * (2 * sizeof(struct cheetah_err_info));
-	for (order = 0; order < NR_PAGE_ORDERS; order++) {
+	for (order = 0; order <= MAX_ORDER; order++) {
 		if ((PAGE_SIZE << order) >= sz)
 			break;
 	}

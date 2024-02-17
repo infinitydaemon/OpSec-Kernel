@@ -21,7 +21,7 @@
 #include <linux/swap.h>
 #include <linux/slab.h>
 
-static const struct bus_type node_subsys = {
+static struct bus_type node_subsys = {
 	.name = "node",
 	.dev_name = "node",
 };
@@ -74,14 +74,14 @@ static BIN_ATTR_RO(cpulist, CPULIST_FILE_MAX_BYTES);
  * @dev:	Device for this memory access class
  * @list_node:	List element in the node's access list
  * @access:	The access class rank
- * @coord:	Heterogeneous memory performance coordinates
+ * @hmem_attrs: Heterogeneous memory performance attributes
  */
 struct node_access_nodes {
 	struct device		dev;
 	struct list_head	list_node;
 	unsigned int		access;
 #ifdef CONFIG_HMEM_REPORTING
-	struct access_coordinate	coord;
+	struct node_hmem_attrs	hmem_attrs;
 #endif
 };
 #define to_access_nodes(dev) container_of(dev, struct node_access_nodes, dev)
@@ -167,7 +167,7 @@ static ssize_t property##_show(struct device *dev,			\
 			   char *buf)					\
 {									\
 	return sysfs_emit(buf, "%u\n",					\
-			  to_access_nodes(dev)->coord.property);	\
+			  to_access_nodes(dev)->hmem_attrs.property);	\
 }									\
 static DEVICE_ATTR_RO(property)
 
@@ -187,10 +187,10 @@ static struct attribute *access_attrs[] = {
 /**
  * node_set_perf_attrs - Set the performance values for given access class
  * @nid: Node identifier to be set
- * @coord: Heterogeneous memory performance coordinates
+ * @hmem_attrs: Heterogeneous memory performance attributes
  * @access: The access class the for the given attributes
  */
-void node_set_perf_attrs(unsigned int nid, struct access_coordinate *coord,
+void node_set_perf_attrs(unsigned int nid, struct node_hmem_attrs *hmem_attrs,
 			 unsigned int access)
 {
 	struct node_access_nodes *c;
@@ -205,7 +205,7 @@ void node_set_perf_attrs(unsigned int nid, struct access_coordinate *coord,
 	if (!c)
 		return;
 
-	c->coord = *coord;
+	c->hmem_attrs = *hmem_attrs;
 	for (i = 0; access_attrs[i] != NULL; i++) {
 		if (sysfs_add_file_to_group(&c->dev.kobj, access_attrs[i],
 					    "initiators")) {

@@ -5030,9 +5030,8 @@ static int  mvneta_config_rss(struct mvneta_port *pp)
 	return 0;
 }
 
-static int mvneta_ethtool_set_rxfh(struct net_device *dev,
-				   struct ethtool_rxfh_param *rxfh,
-				   struct netlink_ext_ack *extack)
+static int mvneta_ethtool_set_rxfh(struct net_device *dev, const u32 *indir,
+				   const u8 *key, const u8 hfunc)
 {
 	struct mvneta_port *pp = netdev_priv(dev);
 
@@ -5043,21 +5042,20 @@ static int mvneta_ethtool_set_rxfh(struct net_device *dev,
 	/* We require at least one supported parameter to be changed
 	 * and no change in any of the unsupported parameters
 	 */
-	if (rxfh->key ||
-	    (rxfh->hfunc != ETH_RSS_HASH_NO_CHANGE &&
-	     rxfh->hfunc != ETH_RSS_HASH_TOP))
+	if (key ||
+	    (hfunc != ETH_RSS_HASH_NO_CHANGE && hfunc != ETH_RSS_HASH_TOP))
 		return -EOPNOTSUPP;
 
-	if (!rxfh->indir)
+	if (!indir)
 		return 0;
 
-	memcpy(pp->indir, rxfh->indir, MVNETA_RSS_LU_TABLE_SIZE);
+	memcpy(pp->indir, indir, MVNETA_RSS_LU_TABLE_SIZE);
 
 	return mvneta_config_rss(pp);
 }
 
-static int mvneta_ethtool_get_rxfh(struct net_device *dev,
-				   struct ethtool_rxfh_param *rxfh)
+static int mvneta_ethtool_get_rxfh(struct net_device *dev, u32 *indir, u8 *key,
+				   u8 *hfunc)
 {
 	struct mvneta_port *pp = netdev_priv(dev);
 
@@ -5065,12 +5063,13 @@ static int mvneta_ethtool_get_rxfh(struct net_device *dev,
 	if (pp->neta_armada3700)
 		return -EOPNOTSUPP;
 
-	rxfh->hfunc = ETH_RSS_HASH_TOP;
+	if (hfunc)
+		*hfunc = ETH_RSS_HASH_TOP;
 
-	if (!rxfh->indir)
+	if (!indir)
 		return 0;
 
-	memcpy(rxfh->indir, pp->indir, MVNETA_RSS_LU_TABLE_SIZE);
+	memcpy(indir, pp->indir, MVNETA_RSS_LU_TABLE_SIZE);
 
 	return 0;
 }

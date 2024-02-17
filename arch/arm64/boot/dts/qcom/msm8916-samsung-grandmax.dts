@@ -49,10 +49,6 @@
 	status = "disabled";
 };
 
-&sound {
-	model = "samsung-gmax"; /* No secondary microphone */
-};
-
 &tlmm {
 	gpio_leds_default: gpio-led-default-state {
 		pins = "gpio60";

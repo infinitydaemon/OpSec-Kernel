@@ -54,6 +54,7 @@
 #define LTC2991_VCC_CH_NR		0
 
 struct ltc2991_state {
+	struct device		*dev;
 	struct regmap		*regmap;
 	u32			r_sense_uohm[LTC2991_MAX_CHANNEL];
 	bool			temp_en[LTC2991_MAX_CHANNEL];
@@ -282,19 +283,19 @@ static const struct regmap_config ltc2991_regmap_config = {
 	.max_register = 0x1D,
 };
 
-static int ltc2991_init(struct ltc2991_state *st, struct device *dev)
+static int ltc2991_init(struct ltc2991_state *st)
 {
 	struct fwnode_handle *child;
 	int ret;
 	u32 val, addr;
 	u8 v5_v8_reg_data = 0, v1_v4_reg_data = 0;
 
-	ret = devm_regulator_get_enable(dev, "vcc");
+	ret = devm_regulator_get_enable(st->dev, "vcc");
 	if (ret)
-		return dev_err_probe(dev, ret,
+		return dev_err_probe(st->dev, ret,
 				     "failed to enable regulator\n");
 
-	device_for_each_child_node(dev, child) {
+	device_for_each_child_node(st->dev, child) {
 		ret = fwnode_property_read_u32(child, "reg", &addr);
 		if (ret < 0) {
 			fwnode_handle_put(child);
@@ -311,7 +312,7 @@ static int ltc2991_init(struct ltc2991_state *st, struct device *dev)
 					       &val);
 		if (!ret) {
 			if (!val)
-				return dev_err_probe(dev, -EINVAL,
+				return dev_err_probe(st->dev, -EINVAL,
 						     "shunt resistor value cannot be zero\n");
 
 			st->r_sense_uohm[addr] = val;
@@ -360,18 +361,18 @@ static int ltc2991_init(struct ltc2991_state *st, struct device *dev)
 
 	ret = regmap_write(st->regmap, LTC2991_V5_V8_CTRL, v5_v8_reg_data);
 	if (ret)
-		return dev_err_probe(dev, ret,
+		return dev_err_probe(st->dev, ret,
 				     "Error: Failed to set V5-V8 CTRL reg.\n");
 
 	ret = regmap_write(st->regmap, LTC2991_V1_V4_CTRL, v1_v4_reg_data);
 	if (ret)
-		return dev_err_probe(dev, ret,
+		return dev_err_probe(st->dev, ret,
 				     "Error: Failed to set V1-V4 CTRL reg.\n");
 
 	ret = regmap_write(st->regmap, LTC2991_PWM_TH_LSB_T_INT,
 			   LTC2991_REPEAT_ACQ_EN);
 	if (ret)
-		return dev_err_probe(dev, ret,
+		return dev_err_probe(st->dev, ret,
 				     "Error: Failed to set continuous mode.\n");
 
 	/* Enable all channels and trigger conversions */
@@ -391,11 +392,12 @@ static int ltc2991_i2c_probe(struct i2c_client *client)
 	if (!st)
 		return -ENOMEM;
 
+	st->dev = &client->dev;
 	st->regmap = devm_regmap_init_i2c(client, &ltc2991_regmap_config);
 	if (IS_ERR(st->regmap))
 		return PTR_ERR(st->regmap);
 
-	ret = ltc2991_init(st, &client->dev);
+	ret = ltc2991_init(st);
 	if (ret)
 		return ret;
 

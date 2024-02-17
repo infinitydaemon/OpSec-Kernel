@@ -50,41 +50,39 @@ static char *cmd_to_str(unsigned long cmd)
 void *gup_thread(void *data)
 {
 	struct gup_test gup = *(struct gup_test *)data;
-	int i, status;
+	int i;
 
 	/* Only report timing information on the *_BENCHMARK commands: */
 	if ((cmd == PIN_FAST_BENCHMARK) || (cmd == GUP_FAST_BENCHMARK) ||
 	     (cmd == PIN_LONGTERM_BENCHMARK)) {
 		for (i = 0; i < repeats; i++) {
 			gup.size = size;
-			status = ioctl(gup_fd, cmd, &gup);
-			if (status)
-				break;
+			if (ioctl(gup_fd, cmd, &gup))
+				perror("ioctl"), exit(1);
 
 			pthread_mutex_lock(&print_mutex);
-			ksft_print_msg("%s: Time: get:%lld put:%lld us",
-				       cmd_to_str(cmd), gup.get_delta_usec,
-				       gup.put_delta_usec);
+			printf("%s: Time: get:%lld put:%lld us",
+			       cmd_to_str(cmd), gup.get_delta_usec,
+			       gup.put_delta_usec);
 			if (gup.size != size)
-				ksft_print_msg(", truncated (size: %lld)", gup.size);
-			ksft_print_msg("\n");
+				printf(", truncated (size: %lld)", gup.size);
+			printf("\n");
 			pthread_mutex_unlock(&print_mutex);
 		}
 	} else {
 		gup.size = size;
-		status = ioctl(gup_fd, cmd, &gup);
-		if (status)
-			goto return_;
+		if (ioctl(gup_fd, cmd, &gup)) {
+			perror("ioctl");
+			exit(1);
+		}
 
 		pthread_mutex_lock(&print_mutex);
-		ksft_print_msg("%s: done\n", cmd_to_str(cmd));
+		printf("%s: done\n", cmd_to_str(cmd));
 		if (gup.size != size)
-			ksft_print_msg("Truncated (size: %lld)\n", gup.size);
+			printf("Truncated (size: %lld)\n", gup.size);
 		pthread_mutex_unlock(&print_mutex);
 	}
 
-return_:
-	ksft_test_result(!status, "ioctl status %d\n", status);
 	return NULL;
 }
 
@@ -172,7 +170,7 @@ int main(int argc, char **argv)
 			touch = 1;
 			break;
 		default:
-			ksft_exit_fail_msg("Wrong argument\n");
+			return -1;
 		}
 	}
 
@@ -200,12 +198,11 @@ int main(int argc, char **argv)
 		}
 	}
 
-	ksft_print_header();
-	ksft_set_plan(nthreads);
-
 	filed = open(file, O_RDWR|O_CREAT);
-	if (filed < 0)
-		ksft_exit_fail_msg("Unable to open %s: %s\n", file, strerror(errno));
+	if (filed < 0) {
+		perror("open");
+		exit(filed);
+	}
 
 	gup.nr_pages_per_call = nr_pages;
 	if (write)
@@ -216,24 +213,27 @@ int main(int argc, char **argv)
 		switch (errno) {
 		case EACCES:
 			if (getuid())
-				ksft_print_msg("Please run this test as root\n");
+				printf("Please run this test as root\n");
 			break;
 		case ENOENT:
-			if (opendir("/sys/kernel/debug") == NULL)
-				ksft_print_msg("mount debugfs at /sys/kernel/debug\n");
-			ksft_print_msg("check if CONFIG_GUP_TEST is enabled in kernel config\n");
+			if (opendir("/sys/kernel/debug") == NULL) {
+				printf("mount debugfs at /sys/kernel/debug\n");
+				break;
+			}
+			printf("check if CONFIG_GUP_TEST is enabled in kernel config\n");
 			break;
 		default:
-			ksft_print_msg("failed to open %s: %s\n", GUP_TEST_FILE, strerror(errno));
+			perror("failed to open " GUP_TEST_FILE);
 			break;
 		}
-		ksft_test_result_skip("Please run this test as root\n");
-		return ksft_exit_pass();
+		exit(KSFT_SKIP);
 	}
 
 	p = mmap(NULL, size, PROT_READ | PROT_WRITE, flags, filed, 0);
-	if (p == MAP_FAILED)
-		ksft_exit_fail_msg("mmap: %s\n", strerror(errno));
+	if (p == MAP_FAILED) {
+		perror("mmap");
+		exit(1);
+	}
 	gup.addr = (unsigned long)p;
 
 	if (thp == 1)
@@ -264,8 +264,7 @@ int main(int argc, char **argv)
 		ret = pthread_join(tid[i], NULL);
 		assert(ret == 0);
 	}
-
 	free(tid);
 
-	return ksft_exit_pass();
+	return 0;
 }

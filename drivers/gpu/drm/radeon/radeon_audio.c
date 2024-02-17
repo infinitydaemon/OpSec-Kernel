@@ -26,8 +26,6 @@
 #include <linux/component.h>
 
 #include <drm/drm_crtc.h>
-#include <drm/drm_eld.h>
-#include <drm/drm_edid.h>
 #include "dce6_afmt.h"
 #include "evergreen_hdmi.h"
 #include "radeon.h"

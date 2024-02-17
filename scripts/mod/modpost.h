@@ -194,10 +194,10 @@ void *sym_get_data(const struct elf_info *info, const Elf_Sym *sym);
 enum loglevel {
 	LOG_WARN,
 	LOG_ERROR,
+	LOG_FATAL
 };
 
-void __attribute__((format(printf, 2, 3)))
-modpost_log(enum loglevel loglevel, const char *fmt, ...);
+void modpost_log(enum loglevel loglevel, const char *fmt, ...);
 
 /*
  * warn - show the given message, then let modpost continue running, still
@@ -214,4 +214,4 @@ modpost_log(enum loglevel loglevel, const char *fmt, ...);
  */
 #define warn(fmt, args...)	modpost_log(LOG_WARN, fmt, ##args)
 #define error(fmt, args...)	modpost_log(LOG_ERROR, fmt, ##args)
-#define fatal(fmt, args...)	do { error(fmt, ##args); exit(1); } while (1)
+#define fatal(fmt, args...)	modpost_log(LOG_FATAL, fmt, ##args)

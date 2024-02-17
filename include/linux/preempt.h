@@ -9,7 +9,7 @@
 
 #include <linux/linkage.h>
 #include <linux/cleanup.h>
-#include <linux/types.h>
+#include <linux/list.h>
 
 /*
  * We put the hardirq and softirq counter into the preemption
@@ -360,9 +360,7 @@ void preempt_notifier_unregister(struct preempt_notifier *notifier);
 static inline void preempt_notifier_init(struct preempt_notifier *notifier,
 				     struct preempt_ops *ops)
 {
-	/* INIT_HLIST_NODE() open coded, to avoid dependency on list.h */
-	notifier->link.next = NULL;
-	notifier->link.pprev = NULL;
+	INIT_HLIST_NODE(&notifier->link);
 	notifier->ops = ops;
 }
 

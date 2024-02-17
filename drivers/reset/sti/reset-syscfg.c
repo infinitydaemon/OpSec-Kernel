@@ -7,11 +7,10 @@
  */
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
-#include <linux/property.h>
 #include <linux/module.h>
 #include <linux/err.h>
 #include <linux/types.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/regmap.h>
 #include <linux/mfd/syscon.h>
 
@@ -184,14 +183,14 @@ static int syscfg_reset_controller_register(struct device *dev,
 int syscfg_reset_probe(struct platform_device *pdev)
 {
 	struct device *dev = pdev ? &pdev->dev : NULL;
-	const void *data;
+	const struct of_device_id *match;
 
 	if (!dev || !dev->driver)
 		return -ENODEV;
 
-	data = device_get_match_data(&pdev->dev);
-	if (!data)
+	match = of_match_device(dev->driver->of_match_table, dev);
+	if (!match || !match->data)
 		return -EINVAL;
 
-	return syscfg_reset_controller_register(dev, data);
+	return syscfg_reset_controller_register(dev, match->data);
 }

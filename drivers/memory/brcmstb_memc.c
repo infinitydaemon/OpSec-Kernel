@@ -152,11 +152,13 @@ static int brcmstb_memc_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void brcmstb_memc_remove(struct platform_device *pdev)
+static int brcmstb_memc_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 
 	sysfs_remove_group(&dev->kobj, &dev_attr_group);
+
+	return 0;
 }
 
 enum brcmstb_memc_hwtype {
@@ -282,7 +284,7 @@ static DEFINE_SIMPLE_DEV_PM_OPS(brcmstb_memc_pm_ops, brcmstb_memc_suspend,
 
 static struct platform_driver brcmstb_memc_driver = {
 	.probe = brcmstb_memc_probe,
-	.remove_new = brcmstb_memc_remove,
+	.remove = brcmstb_memc_remove,
 	.driver = {
 		.name		= "brcmstb_memc",
 		.of_match_table	= brcmstb_memc_of_match,

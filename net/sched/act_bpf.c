@@ -318,7 +318,7 @@ static int tcf_bpf_init(struct net *net, struct nlattr *nla,
 	} else if (ret > 0) {
 		/* Don't override defaults. */
 		if (bind)
-			return ACT_P_BOUND;
+			return 0;
 
 		if (!(flags & TCA_ACT_FLAGS_REPLACE)) {
 			tcf_idr_release(*act, bind);

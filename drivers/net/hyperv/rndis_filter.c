@@ -21,6 +21,7 @@
 #include <linux/rtnetlink.h>
 #include <linux/ucs2_string.h>
 #include <linux/string.h>
+#include <linux/slab.h>
 
 #include "hyperv_net.h"
 #include "netvsc_trace.h"

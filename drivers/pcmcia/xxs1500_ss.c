@@ -301,7 +301,7 @@ out0:
 	return ret;
 }
 
-static void xxs1500_pcmcia_remove(struct platform_device *pdev)
+static int xxs1500_pcmcia_remove(struct platform_device *pdev)
 {
 	struct xxs1500_pcmcia_sock *sock = platform_get_drvdata(pdev);
 
@@ -309,6 +309,8 @@ static void xxs1500_pcmcia_remove(struct platform_device *pdev)
 	free_irq(gpio_to_irq(GPIO_CDA), sock);
 	iounmap((void *)(sock->virt_io + (u32)mips_io_port_base));
 	kfree(sock);
+
+	return 0;
 }
 
 static struct platform_driver xxs1500_pcmcia_socket_driver = {
@@ -316,7 +318,7 @@ static struct platform_driver xxs1500_pcmcia_socket_driver = {
 		.name	= "xxs1500_pcmcia",
 	},
 	.probe		= xxs1500_pcmcia_probe,
-	.remove_new	= xxs1500_pcmcia_remove,
+	.remove		= xxs1500_pcmcia_remove,
 };
 
 module_platform_driver(xxs1500_pcmcia_socket_driver);

@@ -24,7 +24,6 @@
 #include "scrub/common.h"
 #include "scrub/btree.h"
 #include "scrub/bitmap.h"
-#include "scrub/agb_bitmap.h"
 
 /*
  * Set us up to scrub reverse mapping btrees.

@@ -11,11 +11,13 @@
 #ifndef __ASM_SMP_H
 #define __ASM_SMP_H
 
-#include <linux/compiler.h>
+#include <linux/bitops.h>
 #include <linux/linkage.h>
+#include <linux/smp.h>
 #include <linux/threads.h>
 #include <linux/cpumask.h>
 
+#include <linux/atomic.h>
 #include <asm/smp-ops.h>
 
 extern int smp_num_siblings;
@@ -60,8 +62,6 @@ extern unsigned int smp_max_threads __initdata;
 extern asmlinkage void smp_bootstrap(void);
 
 extern void calculate_cpu_foreign_map(void);
-
-asmlinkage void start_secondary(void);
 
 /*
  * this function sends a 'reschedule' IPI to another CPU.

@@ -287,9 +287,6 @@ void ionic_debugfs_add_lif(struct ionic_lif *lif)
 
 void ionic_debugfs_del_lif(struct ionic_lif *lif)
 {
-	if (!lif->dentry)
-		return;
-
 	debugfs_remove_recursive(lif->dentry);
 	lif->dentry = NULL;
 }

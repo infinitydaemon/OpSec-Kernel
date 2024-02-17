@@ -17,6 +17,9 @@ struct dpll_pin;
 struct dpll_device_ops {
 	int (*mode_get)(const struct dpll_device *dpll, void *dpll_priv,
 			enum dpll_mode *mode, struct netlink_ext_ack *extack);
+	bool (*mode_supported)(const struct dpll_device *dpll, void *dpll_priv,
+			       const enum dpll_mode mode,
+			       struct netlink_ext_ack *extack);
 	int (*lock_status_get)(const struct dpll_device *dpll, void *dpll_priv,
 			       enum dpll_lock_status *status,
 			       struct netlink_ext_ack *extack);
@@ -77,9 +80,6 @@ struct dpll_pin_ops {
 				const struct dpll_device *dpll, void *dpll_priv,
 				const s32 phase_adjust,
 				struct netlink_ext_ack *extack);
-	int (*ffo_get)(const struct dpll_pin *pin, void *pin_priv,
-		       const struct dpll_device *dpll, void *dpll_priv,
-		       s64 *ffo, struct netlink_ext_ack *extack);
 };
 
 struct dpll_pin_frequency {

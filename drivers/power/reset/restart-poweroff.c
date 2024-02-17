@@ -33,10 +33,12 @@ static int restart_poweroff_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void restart_poweroff_remove(struct platform_device *pdev)
+static int restart_poweroff_remove(struct platform_device *pdev)
 {
 	if (pm_power_off == &restart_poweroff_do_poweroff)
 		pm_power_off = NULL;
+
+	return 0;
 }
 
 static const struct of_device_id of_restart_poweroff_match[] = {
@@ -47,7 +49,7 @@ MODULE_DEVICE_TABLE(of, of_restart_poweroff_match);
 
 static struct platform_driver restart_poweroff_driver = {
 	.probe = restart_poweroff_probe,
-	.remove_new = restart_poweroff_remove,
+	.remove = restart_poweroff_remove,
 	.driver = {
 		.name = "poweroff-restart",
 		.of_match_table = of_restart_poweroff_match,

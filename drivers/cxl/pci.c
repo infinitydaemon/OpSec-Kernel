@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Copyright(c) 2020 Intel Corporation. All rights reserved. */
-#include <asm-generic/unaligned.h>
 #include <linux/io-64-nonatomic-lo-hi.h>
 #include <linux/moduleparam.h>
 #include <linux/module.h>
@@ -382,7 +381,7 @@ static int cxl_pci_mbox_send(struct cxl_memdev_state *mds,
 	return rc;
 }
 
-static int cxl_pci_setup_mailbox(struct cxl_memdev_state *mds, bool irq_avail)
+static int cxl_pci_setup_mailbox(struct cxl_memdev_state *mds)
 {
 	struct cxl_dev_state *cxlds = &mds->cxlds;
 	const int cap = readl(cxlds->regs.mbox + CXLDEV_MBOX_CAPS_OFFSET);
@@ -441,7 +440,7 @@ static int cxl_pci_setup_mailbox(struct cxl_memdev_state *mds, bool irq_avail)
 	INIT_DELAYED_WORK(&mds->security.poll_dwork, cxl_mbox_sanitize_work);
 
 	/* background command interrupts are optional */
-	if (!(cap & CXLDEV_MBOX_CAP_BG_CMD_IRQ) || !irq_avail)
+	if (!(cap & CXLDEV_MBOX_CAP_BG_CMD_IRQ))
 		return 0;
 
 	msgnum = FIELD_GET(CXLDEV_MBOX_CAP_IRQ_MSGNUM_MASK, cap);
@@ -588,7 +587,7 @@ static int cxl_mem_alloc_event_buf(struct cxl_memdev_state *mds)
 	return devm_add_action_or_reset(mds->cxlds.dev, free_event_buf, buf);
 }
 
-static bool cxl_alloc_irq_vectors(struct pci_dev *pdev)
+static int cxl_alloc_irq_vectors(struct pci_dev *pdev)
 {
 	int nvecs;
 
@@ -605,9 +604,9 @@ static bool cxl_alloc_irq_vectors(struct pci_dev *pdev)
 				      PCI_IRQ_MSIX | PCI_IRQ_MSI);
 	if (nvecs < 1) {
 		dev_dbg(&pdev->dev, "Failed to alloc irq vectors: %d\n", nvecs);
-		return false;
+		return -ENXIO;
 	}
-	return true;
+	return 0;
 }
 
 static irqreturn_t cxl_event_thread(int irq, void *id)
@@ -743,7 +742,7 @@ static bool cxl_event_int_is_fw(u8 setting)
 }
 
 static int cxl_event_config(struct pci_host_bridge *host_bridge,
-			    struct cxl_memdev_state *mds, bool irq_avail)
+			    struct cxl_memdev_state *mds)
 {
 	struct cxl_event_interrupt_policy policy;
 	int rc;
@@ -754,11 +753,6 @@ static int cxl_event_config(struct pci_host_bridge *host_bridge,
 	 */
 	if (!host_bridge->native_cxl_error)
 		return 0;
-
-	if (!irq_avail) {
-		dev_info(mds->cxlds.dev, "No interrupt support, disable event processing.\n");
-		return 0;
-	}
 
 	rc = cxl_mem_alloc_event_buf(mds);
 	if (rc)
@@ -794,7 +788,6 @@ static int cxl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	struct cxl_register_map map;
 	struct cxl_memdev *cxlmd;
 	int i, rc, pmu_count;
-	bool irq_avail;
 
 	/*
 	 * Double check the anonymous union trickery in struct cxl_regs
@@ -852,9 +845,11 @@ static int cxl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	else
 		dev_warn(&pdev->dev, "Media not active (%d)\n", rc);
 
-	irq_avail = cxl_alloc_irq_vectors(pdev);
+	rc = cxl_alloc_irq_vectors(pdev);
+	if (rc)
+		return rc;
 
-	rc = cxl_pci_setup_mailbox(mds, irq_avail);
+	rc = cxl_pci_setup_mailbox(mds);
 	if (rc)
 		return rc;
 
@@ -913,7 +908,7 @@ static int cxl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		}
 	}
 
-	rc = cxl_event_config(host_bridge, mds, irq_avail);
+	rc = cxl_event_config(host_bridge, mds);
 	if (rc)
 		return rc;
 
@@ -974,61 +969,6 @@ static struct pci_driver cxl_pci_driver = {
 	},
 };
 
-#define CXL_EVENT_HDR_FLAGS_REC_SEVERITY GENMASK(1, 0)
-static void cxl_cper_event_call(enum cxl_event_type ev_type,
-				struct cxl_cper_event_rec *rec)
-{
-	struct cper_cxl_event_devid *device_id = &rec->hdr.device_id;
-	struct pci_dev *pdev __free(pci_dev_put) = NULL;
-	enum cxl_event_log_type log_type;
-	struct cxl_dev_state *cxlds;
-	unsigned int devfn;
-	u32 hdr_flags;
-
-	devfn = PCI_DEVFN(device_id->device_num, device_id->func_num);
-	pdev = pci_get_domain_bus_and_slot(device_id->segment_num,
-					   device_id->bus_num, devfn);
-	if (!pdev)
-		return;
-
-	guard(pci_dev)(pdev);
-	if (pdev->driver != &cxl_pci_driver)
-		return;
-
-	cxlds = pci_get_drvdata(pdev);
-	if (!cxlds)
-		return;
-
-	/* Fabricate a log type */
-	hdr_flags = get_unaligned_le24(rec->event.generic.hdr.flags);
-	log_type = FIELD_GET(CXL_EVENT_HDR_FLAGS_REC_SEVERITY, hdr_flags);
-
-	cxl_event_trace_record(cxlds->cxlmd, log_type, ev_type,
-			       &uuid_null, &rec->event);
-}
-
-static int __init cxl_pci_driver_init(void)
-{
-	int rc;
-
-	rc = cxl_cper_register_callback(cxl_cper_event_call);
-	if (rc)
-		return rc;
-
-	rc = pci_register_driver(&cxl_pci_driver);
-	if (rc)
-		cxl_cper_unregister_callback(cxl_cper_event_call);
-
-	return rc;
-}
-
-static void __exit cxl_pci_driver_exit(void)
-{
-	pci_unregister_driver(&cxl_pci_driver);
-	cxl_cper_unregister_callback(cxl_cper_event_call);
-}
-
-module_init(cxl_pci_driver_init);
-module_exit(cxl_pci_driver_exit);
 MODULE_LICENSE("GPL v2");
+module_pci_driver(cxl_pci_driver);
 MODULE_IMPORT_NS(CXL);

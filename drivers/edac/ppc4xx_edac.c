@@ -1329,7 +1329,8 @@ static int ppc4xx_edac_probe(struct platform_device *op)
  *
  * Unconditionally returns 0.
  */
-static void ppc4xx_edac_remove(struct platform_device *op)
+static int
+ppc4xx_edac_remove(struct platform_device *op)
 {
 	struct mem_ctl_info *mci = dev_get_drvdata(&op->dev);
 	struct ppc4xx_edac_pdata *pdata = mci->pvt_info;
@@ -1343,6 +1344,8 @@ static void ppc4xx_edac_remove(struct platform_device *op)
 
 	edac_mc_del_mc(mci->pdev);
 	edac_mc_free(mci);
+
+	return 0;
 }
 
 /**
@@ -1376,7 +1379,7 @@ ppc4xx_edac_opstate_init(void)
 
 static struct platform_driver ppc4xx_edac_driver = {
 	.probe			= ppc4xx_edac_probe,
-	.remove_new		= ppc4xx_edac_remove,
+	.remove			= ppc4xx_edac_remove,
 	.driver = {
 		.name = PPC4XX_EDAC_MODULE_NAME,
 		.of_match_table = ppc4xx_edac_match,

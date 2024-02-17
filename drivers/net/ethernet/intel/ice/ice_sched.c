@@ -1387,7 +1387,8 @@ void ice_sched_get_psm_clk_freq(struct ice_hw *hw)
 	u32 val, clk_src;
 
 	val = rd32(hw, GLGEN_CLKSTAT_SRC);
-	clk_src = FIELD_GET(GLGEN_CLKSTAT_SRC_PSM_CLK_SRC_M, val);
+	clk_src = (val & GLGEN_CLKSTAT_SRC_PSM_CLK_SRC_M) >>
+		GLGEN_CLKSTAT_SRC_PSM_CLK_SRC_S;
 
 #define PSM_CLK_SRC_367_MHZ 0x0
 #define PSM_CLK_SRC_416_MHZ 0x1

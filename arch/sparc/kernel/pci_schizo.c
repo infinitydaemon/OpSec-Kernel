@@ -11,10 +11,7 @@
 #include <linux/slab.h>
 #include <linux/export.h>
 #include <linux/interrupt.h>
-#include <linux/of.h>
-#include <linux/of_platform.h>
-#include <linux/platform_device.h>
-#include <linux/property.h>
+#include <linux/of_device.h>
 #include <linux/numa.h>
 
 #include <asm/iommu.h>
@@ -1462,13 +1459,15 @@ out_err:
 	return err;
 }
 
+static const struct of_device_id schizo_match[];
 static int schizo_probe(struct platform_device *op)
 {
-	unsigned long chip_type = (unsigned long)device_get_match_data(&op->dev);
+	const struct of_device_id *match;
 
-	if (!chip_type)
+	match = of_match_device(schizo_match, &op->dev);
+	if (!match)
 		return -EINVAL;
-	return __schizo_init(op, chip_type);
+	return __schizo_init(op, (unsigned long)match->data);
 }
 
 /* The ordering of this table is very important.  Some Tomatillo

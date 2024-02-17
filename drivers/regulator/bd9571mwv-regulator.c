@@ -260,9 +260,10 @@ static const struct dev_pm_ops bd9571mwv_pm  = {
 	SET_SYSTEM_SLEEP_PM_OPS(bd9571mwv_suspend, bd9571mwv_resume)
 };
 
-static void bd9571mwv_regulator_remove(struct platform_device *pdev)
+static int bd9571mwv_regulator_remove(struct platform_device *pdev)
 {
 	device_remove_file(&pdev->dev, &dev_attr_backup_mode);
+	return 0;
 }
 #define DEV_PM_OPS	&bd9571mwv_pm
 #else
@@ -356,7 +357,7 @@ static struct platform_driver bd9571mwv_regulator_driver = {
 		.pm = DEV_PM_OPS,
 	},
 	.probe = bd9571mwv_regulator_probe,
-	.remove_new = bd9571mwv_regulator_remove,
+	.remove = bd9571mwv_regulator_remove,
 	.id_table = bd9571mwv_regulator_id_table,
 };
 module_platform_driver(bd9571mwv_regulator_driver);

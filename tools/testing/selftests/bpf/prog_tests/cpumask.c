@@ -18,7 +18,6 @@ static const char * const cpumask_success_testcases[] = {
 	"test_insert_leave",
 	"test_insert_remove_release",
 	"test_global_mask_rcu",
-	"test_cpumask_weight",
 };
 
 static void verify_success(const char *prog_name)

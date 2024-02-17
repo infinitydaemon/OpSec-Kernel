@@ -79,6 +79,8 @@ static int bch2_dev_usrdata_drop_key(struct btree_trans *trans,
 static int bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
 {
 	struct btree_trans *trans = bch2_trans_get(c);
+	struct btree_iter iter;
+	struct bkey_s_c k;
 	enum btree_id id;
 	int ret = 0;
 
@@ -88,7 +90,7 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
 
 		ret = for_each_btree_key_commit(trans, iter, id, POS_MIN,
 				BTREE_ITER_PREFETCH|BTREE_ITER_ALL_SNAPSHOTS, k,
-				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+				NULL, NULL, BTREE_INSERT_NOFAIL,
 			bch2_dev_usrdata_drop_key(trans, &iter, k, dev_idx, flags));
 		if (ret)
 			break;
@@ -143,9 +145,10 @@ retry:
 				continue;
 			}
 
-			bch_err_msg(c, ret, "updating btree node key");
-			if (ret)
+			if (ret) {
+				bch_err_msg(c, ret, "updating btree node key");
 				break;
+			}
 next:
 			bch2_btree_iter_next_node(&iter);
 		}

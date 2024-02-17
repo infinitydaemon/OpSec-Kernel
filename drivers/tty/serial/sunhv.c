@@ -595,7 +595,7 @@ out_free_port:
 	return err;
 }
 
-static void hv_remove(struct platform_device *dev)
+static int hv_remove(struct platform_device *dev)
 {
 	struct uart_port *port = platform_get_drvdata(dev);
 
@@ -608,6 +608,8 @@ static void hv_remove(struct platform_device *dev)
 	kfree(con_write_page);
 	kfree(port);
 	sunhv_port = NULL;
+
+	return 0;
 }
 
 static const struct of_device_id hv_match[] = {
@@ -628,7 +630,7 @@ static struct platform_driver hv_driver = {
 		.of_match_table = hv_match,
 	},
 	.probe		= hv_probe,
-	.remove_new	= hv_remove,
+	.remove		= hv_remove,
 };
 
 static int __init sunhv_init(void)

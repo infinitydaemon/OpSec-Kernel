@@ -1350,7 +1350,8 @@ void hda_dsp_remove(struct snd_sof_dev *sdev)
 
 	if (!sdev->dspless_mode_selected) {
 		/* disable DSP IRQ */
-		hda_dsp_ctrl_ppcap_int_enable(sdev, false);
+		snd_sof_dsp_update_bits(sdev, HDA_DSP_PP_BAR, SOF_HDA_REG_PP_PPCTL,
+					SOF_HDA_PPCTL_PIE, 0);
 	}
 
 	/* disable CIE and GIE interrupts */
@@ -1365,7 +1366,8 @@ void hda_dsp_remove(struct snd_sof_dev *sdev)
 		chip->power_down_dsp(sdev);
 
 	/* disable DSP */
-	hda_dsp_ctrl_ppcap_enable(sdev, false);
+	snd_sof_dsp_update_bits(sdev, HDA_DSP_PP_BAR, SOF_HDA_REG_PP_PPCTL,
+				SOF_HDA_PPCTL_GPROCEN, 0);
 
 skip_disable_dsp:
 	free_irq(sdev->ipc_irq, sdev);

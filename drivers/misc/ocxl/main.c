@@ -7,7 +7,7 @@
 
 static int __init init_ocxl(void)
 {
-	int rc;
+	int rc = 0;
 
 	if (!tlbie_capable)
 		return -EINVAL;

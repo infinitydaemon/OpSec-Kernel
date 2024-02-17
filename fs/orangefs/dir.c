@@ -58,10 +58,10 @@ struct orangefs_dir {
  * first part of the part list.
  */
 
-static int do_readdir(struct orangefs_dir *od, struct inode *inode,
+static int do_readdir(struct orangefs_inode_s *oi,
+    struct orangefs_dir *od, struct dentry *dentry,
     struct orangefs_kernel_op_s *op)
 {
-	struct orangefs_inode_s *oi = ORANGEFS_I(inode);
 	struct orangefs_readdir_response_s *resp;
 	int bufi, r;
 
@@ -87,7 +87,7 @@ again:
 	op->upcall.req.readdir.buf_index = bufi;
 
 	r = service_operation(op, "orangefs_readdir",
-	    get_interruptible_flag(inode));
+	    get_interruptible_flag(dentry->d_inode));
 
 	orangefs_readdir_index_put(bufi);
 
@@ -158,7 +158,8 @@ static int parse_readdir(struct orangefs_dir *od,
 	return 0;
 }
 
-static int orangefs_dir_more(struct orangefs_dir *od, struct inode *inode)
+static int orangefs_dir_more(struct orangefs_inode_s *oi,
+    struct orangefs_dir *od, struct dentry *dentry)
 {
 	struct orangefs_kernel_op_s *op;
 	int r;
@@ -168,7 +169,7 @@ static int orangefs_dir_more(struct orangefs_dir *od, struct inode *inode)
 		od->error = -ENOMEM;
 		return -ENOMEM;
 	}
-	r = do_readdir(od, inode, op);
+	r = do_readdir(oi, od, dentry, op);
 	if (r) {
 		od->error = r;
 		goto out;
@@ -237,7 +238,9 @@ next:
 	return 1;
 }
 
-static int orangefs_dir_fill(struct orangefs_dir *od, struct dir_context *ctx)
+static int orangefs_dir_fill(struct orangefs_inode_s *oi,
+    struct orangefs_dir *od, struct dentry *dentry,
+    struct dir_context *ctx)
 {
 	struct orangefs_dir_part *part;
 	size_t count;
@@ -301,9 +304,14 @@ static loff_t orangefs_dir_llseek(struct file *file, loff_t offset,
 static int orangefs_dir_iterate(struct file *file,
     struct dir_context *ctx)
 {
-	struct orangefs_dir *od = file->private_data;
-	struct inode *inode = file_inode(file);
+	struct orangefs_inode_s *oi;
+	struct orangefs_dir *od;
+	struct dentry *dentry;
 	int r;
+
+	dentry = file->f_path.dentry;
+	oi = ORANGEFS_I(dentry->d_inode);
+	od = file->private_data;
 
 	if (od->error)
 		return od->error;
@@ -334,7 +342,7 @@ static int orangefs_dir_iterate(struct file *file,
 	 */
 	while (od->token != ORANGEFS_ITERATE_END &&
 	    ctx->pos > od->end) {
-		r = orangefs_dir_more(od, inode);
+		r = orangefs_dir_more(oi, od, dentry);
 		if (r)
 			return r;
 	}
@@ -343,17 +351,17 @@ static int orangefs_dir_iterate(struct file *file,
 
 	/* Then try to fill if there's any left in the buffer. */
 	if (ctx->pos < od->end) {
-		r = orangefs_dir_fill(od, ctx);
+		r = orangefs_dir_fill(oi, od, dentry, ctx);
 		if (r)
 			return r;
 	}
 
 	/* Finally get some more and try to fill. */
 	if (od->token != ORANGEFS_ITERATE_END) {
-		r = orangefs_dir_more(od, inode);
+		r = orangefs_dir_more(oi, od, dentry);
 		if (r)
 			return r;
-		r = orangefs_dir_fill(od, ctx);
+		r = orangefs_dir_fill(oi, od, dentry, ctx);
 	}
 
 	return r;

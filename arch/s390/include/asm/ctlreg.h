@@ -141,26 +141,22 @@ static __always_inline void local_ctl_store(unsigned int cr, struct ctlreg *reg)
 		: [cr] "i" (cr));
 }
 
-static __always_inline struct ctlreg local_ctl_set_bit(unsigned int cr, unsigned int bit)
+static __always_inline void local_ctl_set_bit(unsigned int cr, unsigned int bit)
 {
-	struct ctlreg new, old;
+	struct ctlreg reg;
 
-	local_ctl_store(cr, &old);
-	new = old;
-	new.val |= 1UL << bit;
-	local_ctl_load(cr, &new);
-	return old;
+	local_ctl_store(cr, &reg);
+	reg.val |= 1UL << bit;
+	local_ctl_load(cr, &reg);
 }
 
-static __always_inline struct ctlreg local_ctl_clear_bit(unsigned int cr, unsigned int bit)
+static __always_inline void local_ctl_clear_bit(unsigned int cr, unsigned int bit)
 {
-	struct ctlreg new, old;
+	struct ctlreg reg;
 
-	local_ctl_store(cr, &old);
-	new = old;
-	new.val &= ~(1UL << bit);
-	local_ctl_load(cr, &new);
-	return old;
+	local_ctl_store(cr, &reg);
+	reg.val &= ~(1UL << bit);
+	local_ctl_load(cr, &reg);
 }
 
 struct lowcore;

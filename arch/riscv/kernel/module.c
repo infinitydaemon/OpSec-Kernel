@@ -783,7 +783,6 @@ int apply_relocate_add(Elf_Shdr *sechdrs, const char *strtab,
 	Elf_Sym *sym;
 	void *location;
 	unsigned int i, type;
-	unsigned int j_idx = 0;
 	Elf_Addr v;
 	int res;
 	unsigned int num_relocations = sechdrs[relsec].sh_size / sizeof(*rel);
@@ -834,10 +833,9 @@ int apply_relocate_add(Elf_Shdr *sechdrs, const char *strtab,
 		v = sym->st_value + rel[i].r_addend;
 
 		if (type == R_RISCV_PCREL_LO12_I || type == R_RISCV_PCREL_LO12_S) {
-			unsigned int j = j_idx;
-			bool found = false;
+			unsigned int j;
 
-			do {
+			for (j = 0; j < sechdrs[relsec].sh_size / sizeof(*rel); j++) {
 				unsigned long hi20_loc =
 					sechdrs[sechdrs[relsec].sh_info].sh_addr
 					+ rel[j].r_offset;
@@ -866,26 +864,16 @@ int apply_relocate_add(Elf_Shdr *sechdrs, const char *strtab,
 					hi20 = (offset + 0x800) & 0xfffff000;
 					lo12 = offset - hi20;
 					v = lo12;
-					found = true;
 
 					break;
 				}
-
-				j++;
-				if (j > sechdrs[relsec].sh_size / sizeof(*rel))
-					j = 0;
-
-			} while (j_idx != j);
-
-			if (!found) {
+			}
+			if (j == sechdrs[relsec].sh_size / sizeof(*rel)) {
 				pr_err(
 				  "%s: Can not find HI20 relocation information\n",
 				  me->name);
 				return -EINVAL;
 			}
-
-			/* Record the previous j-loop end index */
-			j_idx = j;
 		}
 
 		if (reloc_handlers[type].accumulate_handler)

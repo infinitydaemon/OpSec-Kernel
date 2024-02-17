@@ -16,27 +16,27 @@ static void nsleep()
 
 void test_vmlinux(void)
 {
-	int err;
+	int duration = 0, err;
 	struct test_vmlinux* skel;
 	struct test_vmlinux__bss *bss;
 
 	skel = test_vmlinux__open_and_load();
-	if (!ASSERT_OK_PTR(skel, "test_vmlinux__open_and_load"))
+	if (CHECK(!skel, "skel_open", "failed to open skeleton\n"))
 		return;
 	bss = skel->bss;
 
 	err = test_vmlinux__attach(skel);
-	if (!ASSERT_OK(err, "test_vmlinux__attach"))
+	if (CHECK(err, "skel_attach", "skeleton attach failed: %d\n", err))
 		goto cleanup;
 
 	/* trigger everything */
 	nsleep();
 
-	ASSERT_TRUE(bss->tp_called, "tp");
-	ASSERT_TRUE(bss->raw_tp_called, "raw_tp");
-	ASSERT_TRUE(bss->tp_btf_called, "tp_btf");
-	ASSERT_TRUE(bss->kprobe_called, "kprobe");
-	ASSERT_TRUE(bss->fentry_called, "fentry");
+	CHECK(!bss->tp_called, "tp", "not called\n");
+	CHECK(!bss->raw_tp_called, "raw_tp", "not called\n");
+	CHECK(!bss->tp_btf_called, "tp_btf", "not called\n");
+	CHECK(!bss->kprobe_called, "kprobe", "not called\n");
+	CHECK(!bss->fentry_called, "fentry", "not called\n");
 
 cleanup:
 	test_vmlinux__destroy(skel);

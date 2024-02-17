@@ -1555,7 +1555,7 @@ static int live_lrc_isolation(void *arg)
 	return err;
 }
 
-static int wabb_ctx_submit_req(struct intel_context *ce)
+static int indirect_ctx_submit_req(struct intel_context *ce)
 {
 	struct i915_request *rq;
 	int err = 0;
@@ -1579,8 +1579,7 @@ static int wabb_ctx_submit_req(struct intel_context *ce)
 #define CTX_BB_CANARY_INDEX  (CTX_BB_CANARY_OFFSET / sizeof(u32))
 
 static u32 *
-emit_wabb_ctx_canary(const struct intel_context *ce,
-		     u32 *cs, bool per_ctx)
+emit_indirect_ctx_bb_canary(const struct intel_context *ce, u32 *cs)
 {
 	*cs++ = MI_STORE_REGISTER_MEM_GEN8 |
 		MI_SRM_LRM_GLOBAL_GTT |
@@ -1588,43 +1587,26 @@ emit_wabb_ctx_canary(const struct intel_context *ce,
 	*cs++ = i915_mmio_reg_offset(RING_START(0));
 	*cs++ = i915_ggtt_offset(ce->state) +
 		context_wa_bb_offset(ce) +
-		CTX_BB_CANARY_OFFSET +
-		(per_ctx ? PAGE_SIZE : 0);
+		CTX_BB_CANARY_OFFSET;
 	*cs++ = 0;
 
 	return cs;
 }
 
-static u32 *
-emit_indirect_ctx_bb_canary(const struct intel_context *ce, u32 *cs)
-{
-	return emit_wabb_ctx_canary(ce, cs, false);
-}
-
-static u32 *
-emit_per_ctx_bb_canary(const struct intel_context *ce, u32 *cs)
-{
-	return emit_wabb_ctx_canary(ce, cs, true);
-}
-
 static void
-wabb_ctx_setup(struct intel_context *ce, bool per_ctx)
+indirect_ctx_bb_setup(struct intel_context *ce)
 {
-	u32 *cs = context_wabb(ce, per_ctx);
+	u32 *cs = context_indirect_bb(ce);
 
 	cs[CTX_BB_CANARY_INDEX] = 0xdeadf00d;
 
-	if (per_ctx)
-		setup_per_ctx_bb(ce, ce->engine, emit_per_ctx_bb_canary);
-	else
-		setup_indirect_ctx_bb(ce, ce->engine, emit_indirect_ctx_bb_canary);
+	setup_indirect_ctx_bb(ce, ce->engine, emit_indirect_ctx_bb_canary);
 }
 
-static bool check_ring_start(struct intel_context *ce, bool per_ctx)
+static bool check_ring_start(struct intel_context *ce)
 {
 	const u32 * const ctx_bb = (void *)(ce->lrc_reg_state) -
-		LRC_STATE_OFFSET + context_wa_bb_offset(ce) +
-		(per_ctx ? PAGE_SIZE : 0);
+		LRC_STATE_OFFSET + context_wa_bb_offset(ce);
 
 	if (ctx_bb[CTX_BB_CANARY_INDEX] == ce->lrc_reg_state[CTX_RING_START])
 		return true;
@@ -1636,21 +1618,21 @@ static bool check_ring_start(struct intel_context *ce, bool per_ctx)
 	return false;
 }
 
-static int wabb_ctx_check(struct intel_context *ce, bool per_ctx)
+static int indirect_ctx_bb_check(struct intel_context *ce)
 {
 	int err;
 
-	err = wabb_ctx_submit_req(ce);
+	err = indirect_ctx_submit_req(ce);
 	if (err)
 		return err;
 
-	if (!check_ring_start(ce, per_ctx))
+	if (!check_ring_start(ce))
 		return -EINVAL;
 
 	return 0;
 }
 
-static int __lrc_wabb_ctx(struct intel_engine_cs *engine, bool per_ctx)
+static int __live_lrc_indirect_ctx_bb(struct intel_engine_cs *engine)
 {
 	struct intel_context *a, *b;
 	int err;
@@ -1685,14 +1667,14 @@ static int __lrc_wabb_ctx(struct intel_engine_cs *engine, bool per_ctx)
 	 * As ring start is restored apriori of starting the indirect ctx bb and
 	 * as it will be different for each context, it fits to this purpose.
 	 */
-	wabb_ctx_setup(a, per_ctx);
-	wabb_ctx_setup(b, per_ctx);
+	indirect_ctx_bb_setup(a);
+	indirect_ctx_bb_setup(b);
 
-	err = wabb_ctx_check(a, per_ctx);
+	err = indirect_ctx_bb_check(a);
 	if (err)
 		goto unpin_b;
 
-	err = wabb_ctx_check(b, per_ctx);
+	err = indirect_ctx_bb_check(b);
 
 unpin_b:
 	intel_context_unpin(b);
@@ -1706,7 +1688,7 @@ put_a:
 	return err;
 }
 
-static int lrc_wabb_ctx(void *arg, bool per_ctx)
+static int live_lrc_indirect_ctx_bb(void *arg)
 {
 	struct intel_gt *gt = arg;
 	struct intel_engine_cs *engine;
@@ -1715,7 +1697,7 @@ static int lrc_wabb_ctx(void *arg, bool per_ctx)
 
 	for_each_engine(engine, gt, id) {
 		intel_engine_pm_get(engine);
-		err = __lrc_wabb_ctx(engine, per_ctx);
+		err = __live_lrc_indirect_ctx_bb(engine);
 		intel_engine_pm_put(engine);
 
 		if (igt_flush_test(gt->i915))
@@ -1726,16 +1708,6 @@ static int lrc_wabb_ctx(void *arg, bool per_ctx)
 	}
 
 	return err;
-}
-
-static int live_lrc_indirect_ctx_bb(void *arg)
-{
-	return lrc_wabb_ctx(arg, false);
-}
-
-static int live_lrc_per_ctx_bb(void *arg)
-{
-	return lrc_wabb_ctx(arg, true);
 }
 
 static void garbage_reset(struct intel_engine_cs *engine,
@@ -1975,7 +1947,6 @@ int intel_lrc_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(live_lrc_garbage),
 		SUBTEST(live_pphwsp_runtime),
 		SUBTEST(live_lrc_indirect_ctx_bb),
-		SUBTEST(live_lrc_per_ctx_bb),
 	};
 
 	if (!HAS_LOGICAL_RING_CONTEXTS(i915))

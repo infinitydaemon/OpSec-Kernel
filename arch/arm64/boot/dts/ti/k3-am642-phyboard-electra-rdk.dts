@@ -264,7 +264,6 @@
 };
 
 &sdhci1 {
-	status = "okay";
 	vmmc-supply = <&vcc_3v3_mmc>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_mmc1_pins_default>;

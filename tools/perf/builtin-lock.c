@@ -2285,10 +2285,8 @@ setup_args:
 		else
 			ev_name = strdup(contention_tracepoints[j].name);
 
-		if (!ev_name) {
-			free(rec_argv);
+		if (!ev_name)
 			return -ENOMEM;
-		}
 
 		rec_argv[i++] = "-e";
 		rec_argv[i++] = ev_name;

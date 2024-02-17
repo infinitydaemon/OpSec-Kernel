@@ -52,8 +52,6 @@ atomic_t __kexec_lock = ATOMIC_INIT(0);
 /* Flag to indicate we are going to kexec a new kernel */
 bool kexec_in_progress = false;
 
-bool kexec_file_dbg_print;
-
 int kexec_should_crash(struct task_struct *p)
 {
 	/*
@@ -278,8 +276,8 @@ int kimage_is_destination_range(struct kimage *image,
 		unsigned long mstart, mend;
 
 		mstart = image->segment[i].mem;
-		mend = mstart + image->segment[i].memsz - 1;
-		if ((end >= mstart) && (start <= mend))
+		mend = mstart + image->segment[i].memsz;
+		if ((end > mstart) && (start < mend))
 			return 1;
 	}
 
@@ -372,7 +370,7 @@ static struct page *kimage_alloc_normal_control_pages(struct kimage *image,
 		pfn   = page_to_boot_pfn(pages);
 		epfn  = pfn + count;
 		addr  = pfn << PAGE_SHIFT;
-		eaddr = (epfn << PAGE_SHIFT) - 1;
+		eaddr = epfn << PAGE_SHIFT;
 		if ((epfn >= (KEXEC_CONTROL_MEMORY_LIMIT >> PAGE_SHIFT)) ||
 			      kimage_is_destination_range(image, addr, eaddr)) {
 			list_add(&pages->lru, &extra_pages);
@@ -432,7 +430,7 @@ static struct page *kimage_alloc_crash_control_pages(struct kimage *image,
 
 	pages = NULL;
 	size = (1 << order) << PAGE_SHIFT;
-	hole_start = ALIGN(image->control_page, size);
+	hole_start = (image->control_page + (size - 1)) & ~(size - 1);
 	hole_end   = hole_start + size - 1;
 	while (hole_end <= crashk_res.end) {
 		unsigned long i;
@@ -449,7 +447,7 @@ static struct page *kimage_alloc_crash_control_pages(struct kimage *image,
 			mend   = mstart + image->segment[i].memsz - 1;
 			if ((hole_end >= mstart) && (hole_start <= mend)) {
 				/* Advance the hole to the end of the segment */
-				hole_start = ALIGN(mend, size);
+				hole_start = (mend + (size - 1)) & ~(size - 1);
 				hole_end   = hole_start + size - 1;
 				break;
 			}
@@ -457,7 +455,7 @@ static struct page *kimage_alloc_crash_control_pages(struct kimage *image,
 		/* If I don't overlap any segments I have found my hole! */
 		if (i == image->nr_segments) {
 			pages = pfn_to_page(hole_start >> PAGE_SHIFT);
-			image->control_page = hole_end + 1;
+			image->control_page = hole_end;
 			break;
 		}
 	}
@@ -718,7 +716,7 @@ static struct page *kimage_alloc_page(struct kimage *image,
 
 		/* If the page is not a destination page use it */
 		if (!kimage_is_destination_range(image, addr,
-						  addr + PAGE_SIZE - 1))
+						  addr + PAGE_SIZE))
 			break;
 
 		/*
@@ -1065,10 +1063,9 @@ __bpf_kfunc void crash_kexec(struct pt_regs *regs)
 	 * panic().  Otherwise parallel calls of panic() and crash_kexec()
 	 * may stop each other.  To exclude them, we use panic_cpu here too.
 	 */
-	old_cpu = PANIC_CPU_INVALID;
 	this_cpu = raw_smp_processor_id();
-
-	if (atomic_try_cmpxchg(&panic_cpu, &old_cpu, this_cpu)) {
+	old_cpu = atomic_cmpxchg(&panic_cpu, PANIC_CPU_INVALID, this_cpu);
+	if (old_cpu == PANIC_CPU_INVALID) {
 		/* This is the 1st CPU which comes here, so go ahead. */
 		__crash_kexec(regs);
 

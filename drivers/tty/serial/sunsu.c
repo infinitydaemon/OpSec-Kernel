@@ -1515,7 +1515,7 @@ out_unmap:
 	return err;
 }
 
-static void su_remove(struct platform_device *op)
+static int su_remove(struct platform_device *op)
 {
 	struct uart_sunsu_port *up = platform_get_drvdata(op);
 	bool kbdms = false;
@@ -1536,6 +1536,8 @@ static void su_remove(struct platform_device *op)
 
 	if (kbdms)
 		kfree(up);
+
+	return 0;
 }
 
 static const struct of_device_id su_match[] = {
@@ -1563,7 +1565,7 @@ static struct platform_driver su_driver = {
 		.of_match_table = su_match,
 	},
 	.probe		= su_probe,
-	.remove_new	= su_remove,
+	.remove		= su_remove,
 };
 
 static int __init sunsu_init(void)

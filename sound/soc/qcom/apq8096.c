@@ -142,4 +142,4 @@ static struct platform_driver msm_snd_apq8096_driver = {
 module_platform_driver(msm_snd_apq8096_driver);
 MODULE_AUTHOR("Srinivas Kandagatla <srinivas.kandagatla@linaro.org");
 MODULE_DESCRIPTION("APQ8096 ASoC Machine Driver");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");

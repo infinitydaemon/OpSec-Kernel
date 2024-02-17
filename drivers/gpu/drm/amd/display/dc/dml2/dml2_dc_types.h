@@ -38,6 +38,5 @@
 #include "core_types.h"
 #include "dsc.h"
 #include "clk_mgr.h"
-#include "dc_state_priv.h"
 
 #endif //__DML2_DC_TYPES_H__

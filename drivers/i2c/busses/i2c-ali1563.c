@@ -390,7 +390,7 @@ static const struct i2c_algorithm ali1563_algorithm = {
 
 static struct i2c_adapter ali1563_adapter = {
 	.owner	= THIS_MODULE,
-	.class	= I2C_CLASS_HWMON,
+	.class	= I2C_CLASS_HWMON | I2C_CLASS_SPD,
 	.algo	= &ali1563_algorithm,
 };
 

@@ -1204,7 +1204,8 @@ struct sock *netlink_getsockbyfilp(struct file *filp)
 	return sock;
 }
 
-struct sk_buff *netlink_alloc_large_skb(unsigned int size, int broadcast)
+static struct sk_buff *netlink_alloc_large_skb(unsigned int size,
+					       int broadcast)
 {
 	struct sk_buff *skb;
 	void *data;
@@ -1519,7 +1520,8 @@ out:
 int netlink_broadcast_filtered(struct sock *ssk, struct sk_buff *skb,
 			       u32 portid,
 			       u32 group, gfp_t allocation,
-			       netlink_filter_fn filter,
+			       int (*filter)(struct sock *dsk,
+					     struct sk_buff *skb, void *data),
 			       void *filter_data)
 {
 	struct net *net = sock_net(ssk);

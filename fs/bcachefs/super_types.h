@@ -4,7 +4,6 @@
 
 struct bch_sb_handle {
 	struct bch_sb		*sb;
-	struct bdev_handle	*bdev_handle;
 	struct block_device	*bdev;
 	char			*sb_name;
 	struct bio		*bio;
@@ -23,7 +22,7 @@ struct bch_devs_mask {
 
 struct bch_devs_list {
 	u8			nr;
-	u8			data[BCH_BKEY_PTRS_MAX];
+	u8			devs[BCH_BKEY_PTRS_MAX];
 };
 
 struct bch_member_cpu {

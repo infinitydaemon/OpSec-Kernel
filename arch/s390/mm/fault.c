@@ -280,6 +280,7 @@ static void do_sigbus(struct pt_regs *regs)
 static void do_exception(struct pt_regs *regs, int access)
 {
 	struct vm_area_struct *vma;
+	struct task_struct *tsk;
 	unsigned long address;
 	struct mm_struct *mm;
 	enum fault_type type;
@@ -288,6 +289,7 @@ static void do_exception(struct pt_regs *regs, int access)
 	vm_fault_t fault;
 	bool is_write;
 
+	tsk = current;
 	/*
 	 * The instruction that caused the program check has
 	 * been nullified. Don't signal single step via SIGTRAP.
@@ -295,7 +297,7 @@ static void do_exception(struct pt_regs *regs, int access)
 	clear_thread_flag(TIF_PER_TRAP);
 	if (kprobe_page_fault(regs, 14))
 		return;
-	mm = current->mm;
+	mm = tsk->mm;
 	address = get_fault_address(regs);
 	is_write = fault_is_write(regs);
 	type = get_fault_type(regs);

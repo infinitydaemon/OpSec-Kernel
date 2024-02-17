@@ -23,6 +23,18 @@ properties:
   interrupts:
     maxItems: 1
 
+  interrupt-controller: true
+  '#interrupt-cells': true
+  gpio-controller: true
+  '#gpio-cells': true
+  gpio-ranges: true
+
+required:
+  - compatible
+  - reg
+
+additionalProperties: false
+
 patternProperties:
   "-state$":
     oneOf:
@@ -61,12 +73,6 @@ $defs:
 
     required:
       - pins
-
-required:
-  - compatible
-  - reg
-
-unevaluatedProperties: false
 
 examples:
   - |

@@ -32,8 +32,6 @@ SUB_DIRS = alignment		\
 	   vphn         \
 	   math		\
 	   papr_attributes	\
-	   papr_vpd		\
-	   papr_sysparm		\
 	   ptrace	\
 	   security	\
 	   mce

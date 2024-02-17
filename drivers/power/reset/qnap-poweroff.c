@@ -111,14 +111,15 @@ static int qnap_power_off_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void qnap_power_off_remove(struct platform_device *pdev)
+static int qnap_power_off_remove(struct platform_device *pdev)
 {
 	pm_power_off = NULL;
+	return 0;
 }
 
 static struct platform_driver qnap_power_off_driver = {
 	.probe	= qnap_power_off_probe,
-	.remove_new = qnap_power_off_remove,
+	.remove	= qnap_power_off_remove,
 	.driver	= {
 		.name	= "qnap_power_off",
 		.of_match_table = of_match_ptr(qnap_power_off_of_match_table),

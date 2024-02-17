@@ -89,7 +89,6 @@ void pud_init(void *addr)
 }
 #endif
 
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
 pmd_t mk_pmd(struct page *page, pgprot_t prot)
 {
 	pmd_t pmd;
@@ -104,7 +103,6 @@ void set_pmd_at(struct mm_struct *mm, unsigned long addr,
 {
 	*pmdp = pmd;
 }
-#endif
 
 void __init pagetable_init(void)
 {

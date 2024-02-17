@@ -22,7 +22,7 @@ int dump_task(struct bpf_iter__task *ctx)
 		return 0;
 	}
 
-	if (task->pid != (pid_t)tid)
+	if (task->pid != tid)
 		num_unknown_tid++;
 	else
 		num_known_tid++;

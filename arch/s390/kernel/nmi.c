@@ -32,7 +32,6 @@
 #include <asm/asm-offsets.h>
 #include <asm/pai.h>
 #include <asm/vx-insn.h>
-#include <asm/fpu/api.h>
 
 struct mcck_struct {
 	unsigned int kill_task : 1;
@@ -46,7 +45,7 @@ static DEFINE_PER_CPU(struct mcck_struct, cpu_mcck);
 
 static inline int nmi_needs_mcesa(void)
 {
-	return cpu_has_vx() || MACHINE_HAS_GS;
+	return MACHINE_HAS_VX || MACHINE_HAS_GS;
 }
 
 /*
@@ -160,17 +159,16 @@ NOKPROBE_SYMBOL(s390_handle_damage);
 void s390_handle_mcck(void)
 {
 	struct mcck_struct mcck;
-	unsigned long mflags;
 
 	/*
 	 * Disable machine checks and get the current state of accumulated
 	 * machine checks. Afterwards delete the old state and enable machine
 	 * checks again.
 	 */
-	local_mcck_save(mflags);
+	local_mcck_disable();
 	mcck = *this_cpu_ptr(&cpu_mcck);
 	memset(this_cpu_ptr(&cpu_mcck), 0, sizeof(mcck));
-	local_mcck_restore(mflags);
+	local_mcck_enable();
 
 	if (mcck.channel_report)
 		crw_handle_channel_report();
@@ -236,7 +234,7 @@ static int notrace s390_validate_registers(union mci mci)
 	}
 
 	mcesa = __va(S390_lowcore.mcesad & MCESA_ORIGIN_MASK);
-	if (!cpu_has_vx()) {
+	if (!MACHINE_HAS_VX) {
 		/* Validate floating point registers */
 		asm volatile(
 			"	ld	0,0(%0)\n"

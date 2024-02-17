@@ -104,7 +104,7 @@ static int snirm710_probe(struct platform_device *dev)
 	return -ENODEV;
 }
 
-static void snirm710_driver_remove(struct platform_device *dev)
+static int snirm710_driver_remove(struct platform_device *dev)
 {
 	struct Scsi_Host *host = dev_get_drvdata(&dev->dev);
 	struct NCR_700_Host_Parameters *hostdata =
@@ -115,11 +115,13 @@ static void snirm710_driver_remove(struct platform_device *dev)
 	free_irq(host->irq, host);
 	iounmap(hostdata->base);
 	kfree(hostdata);
+
+	return 0;
 }
 
 static struct platform_driver snirm710_driver = {
 	.probe	= snirm710_probe,
-	.remove_new = snirm710_driver_remove,
+	.remove	= snirm710_driver_remove,
 	.driver	= {
 		.name	= "snirm_53c710",
 	},

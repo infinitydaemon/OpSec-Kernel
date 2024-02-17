@@ -1729,11 +1729,9 @@ static int default_bdl_pos_adj(struct azx *chip)
 	/* some exceptions: Atoms seem problematic with value 1 */
 	if (chip->pci->vendor == PCI_VENDOR_ID_INTEL) {
 		switch (chip->pci->device) {
-		case PCI_DEVICE_ID_INTEL_HDA_BYT:
-		case PCI_DEVICE_ID_INTEL_HDA_BSW:
+		case 0x0f04: /* Baytrail */
+		case 0x2284: /* Braswell */
 			return 32;
-		case PCI_DEVICE_ID_INTEL_HDA_APL:
-			return 64;
 		}
 	}
 

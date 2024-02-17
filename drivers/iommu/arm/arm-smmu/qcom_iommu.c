@@ -79,6 +79,16 @@ static struct qcom_iommu_domain *to_qcom_iommu_domain(struct iommu_domain *dom)
 
 static const struct iommu_ops qcom_iommu_ops;
 
+static struct qcom_iommu_dev * to_iommu(struct device *dev)
+{
+	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
+
+	if (!fwspec || fwspec->ops != &qcom_iommu_ops)
+		return NULL;
+
+	return dev_iommu_priv_get(dev);
+}
+
 static struct qcom_iommu_ctx * to_ctx(struct qcom_iommu_domain *d, unsigned asid)
 {
 	struct qcom_iommu_dev *qcom_iommu = d->iommu;
@@ -362,7 +372,7 @@ static void qcom_iommu_domain_free(struct iommu_domain *domain)
 
 static int qcom_iommu_attach_dev(struct iommu_domain *domain, struct device *dev)
 {
-	struct qcom_iommu_dev *qcom_iommu = dev_iommu_priv_get(dev);
+	struct qcom_iommu_dev *qcom_iommu = to_iommu(dev);
 	struct qcom_iommu_domain *qcom_domain = to_qcom_iommu_domain(domain);
 	int ret;
 
@@ -394,7 +404,7 @@ static int qcom_iommu_identity_attach(struct iommu_domain *identity_domain,
 	struct iommu_domain *domain = iommu_get_domain_for_dev(dev);
 	struct qcom_iommu_domain *qcom_domain;
 	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
-	struct qcom_iommu_dev *qcom_iommu = dev_iommu_priv_get(dev);
+	struct qcom_iommu_dev *qcom_iommu = to_iommu(dev);
 	unsigned int i;
 
 	if (domain == identity_domain || !domain)
@@ -525,7 +535,7 @@ static bool qcom_iommu_capable(struct device *dev, enum iommu_cap cap)
 
 static struct iommu_device *qcom_iommu_probe_device(struct device *dev)
 {
-	struct qcom_iommu_dev *qcom_iommu = dev_iommu_priv_get(dev);
+	struct qcom_iommu_dev *qcom_iommu = to_iommu(dev);
 	struct device_link *link;
 
 	if (!qcom_iommu)
@@ -890,16 +900,8 @@ static void qcom_iommu_device_remove(struct platform_device *pdev)
 static int __maybe_unused qcom_iommu_resume(struct device *dev)
 {
 	struct qcom_iommu_dev *qcom_iommu = dev_get_drvdata(dev);
-	int ret;
 
-	ret = clk_bulk_prepare_enable(CLK_NUM, qcom_iommu->clks);
-	if (ret < 0)
-		return ret;
-
-	if (dev->pm_domain)
-		return qcom_scm_restore_sec_cfg(qcom_iommu->sec_id, 0);
-
-	return ret;
+	return clk_bulk_prepare_enable(CLK_NUM, qcom_iommu->clks);
 }
 
 static int __maybe_unused qcom_iommu_suspend(struct device *dev)

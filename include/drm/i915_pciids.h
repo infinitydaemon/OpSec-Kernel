@@ -738,8 +738,7 @@
 	INTEL_DG2_G12_IDS(info)
 
 #define INTEL_ATS_M150_IDS(info) \
-	INTEL_VGA_DEVICE(0x56C0, info), \
-	INTEL_VGA_DEVICE(0x56C2, info)
+	INTEL_VGA_DEVICE(0x56C0, info)
 
 #define INTEL_ATS_M75_IDS(info) \
 	INTEL_VGA_DEVICE(0x56C1, info)

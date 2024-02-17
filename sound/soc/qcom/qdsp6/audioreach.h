@@ -158,6 +158,8 @@ struct param_id_enc_bitrate_param {
 
 #define MEDIA_FMT_ID_PCM	0x09001000
 #define MEDIA_FMT_ID_MP3	0x09001009
+#define PCM_CHANNEL_L		1
+#define PCM_CHANNEL_R		2
 #define SAMPLE_RATE_48K		48000
 #define BIT_WIDTH_16		16
 

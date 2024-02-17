@@ -176,7 +176,8 @@ static int sp_reset_probe(struct platform_device *pdev)
 	if (!reset)
 		return -ENOMEM;
 
-	reset->base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	reset->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(reset->base))
 		return PTR_ERR(reset->base);
 

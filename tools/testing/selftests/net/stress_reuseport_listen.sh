@@ -2,18 +2,18 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2022 Meta Platforms, Inc. and affiliates.
 
-source lib.sh
+NS='stress_reuseport_listen_ns'
 NR_FILES=24100
 SAVED_NR_FILES=$(ulimit -n)
 
 setup() {
-	setup_ns NS
+	ip netns add $NS
 	ip netns exec $NS sysctl -q -w net.ipv6.ip_nonlocal_bind=1
 	ulimit -n $NR_FILES
 }
 
 cleanup() {
-	cleanup_ns $NS
+	ip netns del $NS
 	ulimit -n $SAVED_NR_FILES
 }
 

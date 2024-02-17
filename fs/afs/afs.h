@@ -165,8 +165,7 @@ struct afs_status_cb {
  * AFS volume synchronisation information
  */
 struct afs_volsync {
-	time64_t		creation;	/* Volume creation time (or TIME64_MIN) */
-	time64_t		update;		/* Volume update time (or TIME64_MIN) */
+	time64_t		creation;	/* volume creation time */
 };
 
 /*

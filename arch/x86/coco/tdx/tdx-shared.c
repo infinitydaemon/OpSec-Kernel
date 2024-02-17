@@ -22,13 +22,13 @@ static unsigned long try_accept_one(phys_addr_t start, unsigned long len,
 	 */
 	switch (pg_level) {
 	case PG_LEVEL_4K:
-		page_size = TDX_PS_4K;
+		page_size = 0;
 		break;
 	case PG_LEVEL_2M:
-		page_size = TDX_PS_2M;
+		page_size = 1;
 		break;
 	case PG_LEVEL_1G:
-		page_size = TDX_PS_1G;
+		page_size = 2;
 		break;
 	default:
 		return 0;

@@ -13,9 +13,6 @@
 #include "protocols.h"
 #include "notify.h"
 
-/* Updated only after ALL the mandatory features for that version are merged */
-#define SCMI_PROTOCOL_SUPPORTED_VERSION		0x30000
-
 enum scmi_power_protocol_cmd {
 	POWER_DOMAIN_ATTRIBUTES = 0x3,
 	POWER_STATE_SET = 0x4,
@@ -136,7 +133,7 @@ scmi_power_domain_attributes_get(const struct scmi_protocol_handle *ph,
 	if (!ret && PROTOCOL_REV_MAJOR(version) >= 0x3 &&
 	    SUPPORTS_EXTENDED_NAMES(flags)) {
 		ph->hops->extended_name_get(ph, POWER_DOMAIN_NAME_GET,
-					    domain, NULL, dom_info->name,
+					    domain, dom_info->name,
 					    SCMI_MAX_STR_SIZE);
 	}
 
@@ -331,7 +328,7 @@ static int scmi_power_protocol_init(const struct scmi_protocol_handle *ph)
 
 	pinfo->version = version;
 
-	return ph->set_priv(ph, pinfo, version);
+	return ph->set_priv(ph, pinfo);
 }
 
 static const struct scmi_protocol scmi_power = {
@@ -340,7 +337,6 @@ static const struct scmi_protocol scmi_power = {
 	.instance_init = &scmi_power_protocol_init,
 	.ops = &power_proto_ops,
 	.events = &power_protocol_events,
-	.supported_version = SCMI_PROTOCOL_SUPPORTED_VERSION,
 };
 
 DEFINE_SCMI_PROTOCOL_REGISTER_UNREGISTER(power, scmi_power)

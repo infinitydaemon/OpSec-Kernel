@@ -620,7 +620,6 @@ enum snd_soc_trigger_order {
 struct snd_soc_pcm_stream {
 	const char *stream_name;
 	u64 formats;			/* SNDRV_PCM_FMTBIT_* */
-	u32 subformats;			/* for S32_LE format, SNDRV_PCM_SUBFMTBIT_* */
 	unsigned int rates;		/* SNDRV_PCM_RATE_* */
 	unsigned int rate_min;		/* min rate */
 	unsigned int rate_max;		/* max rate */
@@ -656,45 +655,8 @@ struct snd_soc_dai_link_component {
 	struct of_phandle_args *dai_args;
 };
 
-/*
- * [dai_link->ch_maps Image sample]
- *
- *-------------------------
- * CPU0 <---> Codec0
- *
- * ch-map[0].cpu = 0	ch-map[0].codec = 0
- *
- *-------------------------
- * CPU0 <---> Codec0
- * CPU1 <---> Codec1
- * CPU2 <---> Codec2
- *
- * ch-map[0].cpu = 0	ch-map[0].codec = 0
- * ch-map[1].cpu = 1	ch-map[1].codec = 1
- * ch-map[2].cpu = 2	ch-map[2].codec = 2
- *
- *-------------------------
- * CPU0 <---> Codec0
- * CPU1 <-+-> Codec1
- * CPU2 <-/
- *
- * ch-map[0].cpu = 0	ch-map[0].codec = 0
- * ch-map[1].cpu = 1	ch-map[1].codec = 1
- * ch-map[2].cpu = 2	ch-map[2].codec = 1
- *
- *-------------------------
- * CPU0 <---> Codec0
- * CPU1 <-+-> Codec1
- *	  \-> Codec2
- *
- * ch-map[0].cpu = 0	ch-map[0].codec = 0
- * ch-map[1].cpu = 1	ch-map[1].codec = 1
- * ch-map[2].cpu = 1	ch-map[2].codec = 2
- *
- */
-struct snd_soc_dai_link_ch_map {
-	unsigned int cpu;
-	unsigned int codec;
+struct snd_soc_dai_link_codec_ch_map {
+	unsigned int connected_cpu_id;
 	unsigned int ch_mask;
 };
 
@@ -726,9 +688,7 @@ struct snd_soc_dai_link {
 	struct snd_soc_dai_link_component *codecs;
 	unsigned int num_codecs;
 
-	/* num_ch_maps = max(num_cpu, num_codecs) */
-	struct snd_soc_dai_link_ch_map *ch_maps;
-
+	struct snd_soc_dai_link_codec_ch_map *codec_ch_maps;
 	/*
 	 * You MAY specify the link's platform/PCM/DMA driver, either by
 	 * device name, or by DT/OF node, but not both. Some forms of link
@@ -815,10 +775,6 @@ struct snd_soc_dai_link {
 #endif
 };
 
-static inline int snd_soc_link_num_ch_map(struct snd_soc_dai_link *link) {
-	return max(link->num_cpus, link->num_codecs);
-}
-
 static inline struct snd_soc_dai_link_component*
 snd_soc_link_to_cpu(struct snd_soc_dai_link *link, int n) {
 	return &(link)->cpus[n];
@@ -850,12 +806,6 @@ snd_soc_link_to_platform(struct snd_soc_dai_link *link, int n) {
 	for ((i) = 0;							\
 	     ((i) < link->num_cpus) &&					\
 		     ((cpu) = snd_soc_link_to_cpu(link, i));		\
-	     (i)++)
-
-#define for_each_link_ch_maps(link, i, ch_map)			\
-	for ((i) = 0;						\
-	     ((i) < snd_soc_link_num_ch_map(link) &&		\
-		      ((ch_map) = link->ch_maps + i));		\
 	     (i)++)
 
 /*
@@ -939,7 +889,7 @@ snd_soc_link_to_platform(struct snd_soc_dai_link *link, int n) {
 #define COMP_PLATFORM(_name)		{ .name = _name }
 #define COMP_AUX(_name)			{ .name = _name }
 #define COMP_CODEC_CONF(_name)		{ .name = _name }
-#define COMP_DUMMY()			/* see snd_soc_fill_dummy_dai() */
+#define COMP_DUMMY()			{ .name = "snd-soc-dummy", .dai_name = "snd-soc-dummy-dai", }
 
 extern struct snd_soc_dai_link_component null_dailink_component[0];
 extern struct snd_soc_dai_link_component snd_soc_dummy_dlc;
@@ -1213,7 +1163,6 @@ struct snd_soc_pcm_runtime {
 	     ((i) < (rtd)->dai_link->num_cpus + (rtd)->dai_link->num_codecs) &&	\
 		     ((dai) = (rtd)->dais[i]);				\
 	     (i)++)
-#define for_each_rtd_ch_maps(rtd, i, ch_maps) for_each_link_ch_maps(rtd->dai_link, i, ch_maps)
 
 void snd_soc_close_delayed_work(struct snd_soc_pcm_runtime *rtd);
 

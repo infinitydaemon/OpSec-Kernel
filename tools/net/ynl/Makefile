@@ -4,8 +4,6 @@ SUBDIRS = lib generated samples
 
 all: $(SUBDIRS)
 
-samples: | lib generated
-
 $(SUBDIRS):
 	@if [ -f "$@/Makefile" ] ; then \
 		$(MAKE) -C $@ ; \

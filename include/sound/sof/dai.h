@@ -88,7 +88,6 @@ enum sof_ipc_dai_type {
 	SOF_DAI_AMD_HS,			/**< Amd HS */
 	SOF_DAI_AMD_SP_VIRTUAL,		/**< AMD ACP SP VIRTUAL */
 	SOF_DAI_AMD_HS_VIRTUAL,		/**< AMD ACP HS VIRTUAL */
-	SOF_DAI_IMX_MICFIL,		/** < i.MX MICFIL PDM */
 };
 
 /* general purpose DAI configuration */
@@ -118,7 +117,6 @@ struct sof_ipc_dai_config {
 		struct sof_ipc_dai_acpdmic_params acpdmic;
 		struct sof_ipc_dai_acp_params acphs;
 		struct sof_ipc_dai_mtk_afe_params afe;
-		struct sof_ipc_dai_micfil_params micfil;
 	};
 } __packed;
 

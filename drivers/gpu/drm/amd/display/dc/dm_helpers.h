@@ -103,16 +103,10 @@ enum act_return_status dm_helpers_dp_mst_poll_for_allocation_change_trigger(
 /*
  * Sends ALLOCATE_PAYLOAD message.
  */
-void dm_helpers_dp_mst_send_payload_allocation(
+bool dm_helpers_dp_mst_send_payload_allocation(
 		struct dc_context *ctx,
-		const struct dc_stream_state *stream);
-
-/*
- * Update mst manager relevant variables
- */
-void dm_helpers_dp_mst_update_mst_mgr_for_deallocation(
-		struct dc_context *ctx,
-		const struct dc_stream_state *stream);
+		const struct dc_stream_state *stream,
+		bool enable);
 
 bool dm_helpers_dp_mst_start_top_mgr(
 		struct dc_context *ctx,

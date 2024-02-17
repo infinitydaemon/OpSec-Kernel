@@ -91,19 +91,11 @@
 	};
 
 	cpu_opp_table: opp-table-cpu {
-		compatible = "operating-points-v2-kryo-cpu";
+		compatible = "operating-points-v2";
 		opp-shared;
-		nvmem-cells = <&cpu_speed_bin>;
 
-		opp-1100000000 {
-			opp-hz = /bits/ 64 <1100000000>;
-			opp-supported-hw = <0x7>;
-			clock-latency-ns = <200000>;
-		};
-
-		opp-1500000000 {
-			opp-hz = /bits/ 64 <1500000000>;
-			opp-supported-hw = <0x3>;
+		opp-1488000000 {
+			opp-hz = /bits/ 64 <1488000000>;
 			clock-latency-ns = <200000>;
 		};
 	};
@@ -171,11 +163,6 @@
 			reg = <0x000a4000 0x721>;
 			#address-cells = <1>;
 			#size-cells = <1>;
-
-			cpu_speed_bin: cpu-speed-bin@1d {
-				reg = <0x1d 0x2>;
-				bits = <7 2>;
-			};
 		};
 
 		rng: rng@e3000 {
@@ -403,8 +390,8 @@
 				     "qcom,ipq6018-apcs-apps-global";
 			reg = <0x0b111000 0x1000>;
 			#clock-cells = <1>;
-			clocks = <&a53pll>, <&xo_board>, <&gcc GPLL0>;
-			clock-names = "pll", "xo", "gpll0";
+			clocks = <&a53pll>, <&xo_board>;
+			clock-names = "pll", "xo";
 			#mbox-cells = <1>;
 		};
 

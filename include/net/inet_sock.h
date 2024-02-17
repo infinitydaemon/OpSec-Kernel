@@ -234,7 +234,10 @@ struct inet_sock {
 	int			uc_index;
 	int			mc_index;
 	__be32			mc_addr;
-	u32			local_port_range;	/* high << 16 | low */
+	struct {
+		__u16 lo;
+		__u16 hi;
+	}			local_port_range;
 
 	struct ip_mc_socklist __rcu	*mc_list;
 	struct inet_cork_full	cork;

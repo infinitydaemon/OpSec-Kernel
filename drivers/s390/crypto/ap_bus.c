@@ -357,12 +357,13 @@ EXPORT_SYMBOL(ap_test_config_ctrl_domain);
  *	   -1 invalid APQN, TAPQ error or AP queue status which
  *	      indicates there is no APQN.
  */
-static int ap_queue_info(ap_qid_t qid, struct ap_tapq_hwinfo *hwinfo,
-			 bool *decfg, bool *cstop)
+static int ap_queue_info(ap_qid_t qid, int *q_type, unsigned int *q_fac,
+			 int *q_depth, int *q_ml, bool *q_decfg, bool *q_cstop)
 {
 	struct ap_queue_status status;
+	struct ap_tapq_gr2 tapq_info;
 
-	hwinfo->value = 0;
+	tapq_info.value = 0;
 
 	/* make sure we don't run into a specifiation exception */
 	if (AP_QID_CARD(qid) > ap_max_adapter_id ||
@@ -370,7 +371,7 @@ static int ap_queue_info(ap_qid_t qid, struct ap_tapq_hwinfo *hwinfo,
 		return -1;
 
 	/* call TAPQ on this APQN */
-	status = ap_test_queue(qid, ap_apft_available(), hwinfo);
+	status = ap_test_queue(qid, ap_apft_available(), &tapq_info);
 
 	switch (status.response_code) {
 	case AP_RESPONSE_NORMAL:
@@ -388,11 +389,15 @@ static int ap_queue_info(ap_qid_t qid, struct ap_tapq_hwinfo *hwinfo,
 	}
 
 	/* There should be at least one of the mode bits set */
-	if (WARN_ON_ONCE(!hwinfo->value))
+	if (WARN_ON_ONCE(!tapq_info.value))
 		return 0;
 
-	*decfg = status.response_code == AP_RESPONSE_DECONFIGURED;
-	*cstop = status.response_code == AP_RESPONSE_CHECKSTOPPED;
+	*q_type = tapq_info.at;
+	*q_fac = tapq_info.fac;
+	*q_depth = tapq_info.qd;
+	*q_ml = tapq_info.ml;
+	*q_decfg = status.response_code == AP_RESPONSE_DECONFIGURED;
+	*q_cstop = status.response_code == AP_RESPONSE_CHECKSTOPPED;
 
 	return 1;
 }
@@ -637,11 +642,11 @@ static int ap_uevent(const struct device *dev, struct kobj_uevent_env *env)
 			return rc;
 
 		/* Add MODE=<accel|cca|ep11> */
-		if (ac->hwinfo.accel)
+		if (ap_test_bit(&ac->functions, AP_FUNC_ACCEL))
 			rc = add_uevent_var(env, "MODE=accel");
-		else if (ac->hwinfo.cca)
+		else if (ap_test_bit(&ac->functions, AP_FUNC_COPRO))
 			rc = add_uevent_var(env, "MODE=cca");
-		else if (ac->hwinfo.ep11)
+		else if (ap_test_bit(&ac->functions, AP_FUNC_EP11))
 			rc = add_uevent_var(env, "MODE=ep11");
 		if (rc)
 			return rc;
@@ -649,11 +654,11 @@ static int ap_uevent(const struct device *dev, struct kobj_uevent_env *env)
 		struct ap_queue *aq = to_ap_queue(&ap_dev->device);
 
 		/* Add MODE=<accel|cca|ep11> */
-		if (aq->card->hwinfo.accel)
+		if (ap_test_bit(&aq->card->functions, AP_FUNC_ACCEL))
 			rc = add_uevent_var(env, "MODE=accel");
-		else if (aq->card->hwinfo.cca)
+		else if (ap_test_bit(&aq->card->functions, AP_FUNC_COPRO))
 			rc = add_uevent_var(env, "MODE=cca");
-		else if (aq->card->hwinfo.ep11)
+		else if (ap_test_bit(&aq->card->functions, AP_FUNC_EP11))
 			rc = add_uevent_var(env, "MODE=ep11");
 		if (rc)
 			return rc;
@@ -1794,12 +1799,12 @@ static inline void ap_scan_rm_card_dev_and_queue_devs(struct ap_card *ac)
  */
 static inline void ap_scan_domains(struct ap_card *ac)
 {
-	struct ap_tapq_hwinfo hwinfo;
+	int rc, dom, depth, type, ml;
 	bool decfg, chkstop;
 	struct ap_queue *aq;
 	struct device *dev;
+	unsigned int func;
 	ap_qid_t qid;
-	int rc, dom;
 
 	/*
 	 * Go through the configuration for the domains and compare them
@@ -1822,7 +1827,8 @@ static inline void ap_scan_domains(struct ap_card *ac)
 			goto put_dev_and_continue;
 		}
 		/* domain is valid, get info from this APQN */
-		rc = ap_queue_info(qid, &hwinfo, &decfg, &chkstop);
+		rc = ap_queue_info(qid, &type, &func, &depth,
+				   &ml, &decfg, &chkstop);
 		switch (rc) {
 		case -1:
 			if (dev) {
@@ -1847,7 +1853,6 @@ static inline void ap_scan_domains(struct ap_card *ac)
 			aq->card = ac;
 			aq->config = !decfg;
 			aq->chkstop = chkstop;
-			aq->se_bstate = hwinfo.bs;
 			dev = &aq->ap_dev.device;
 			dev->bus = &ap_bus_type;
 			dev->parent = &ac->ap_dev.device;
@@ -1877,8 +1882,6 @@ static inline void ap_scan_domains(struct ap_card *ac)
 		}
 		/* handle state changes on already existing queue device */
 		spin_lock_bh(&aq->lock);
-		/* SE bind state */
-		aq->se_bstate = hwinfo.bs;
 		/* checkstop state */
 		if (chkstop && !aq->chkstop) {
 			/* checkstop on */
@@ -1952,11 +1955,11 @@ put_dev_and_continue:
  */
 static inline void ap_scan_adapter(int ap)
 {
-	struct ap_tapq_hwinfo hwinfo;
-	int rc, dom, comp_type;
+	int rc, dom, depth, type, comp_type, ml;
 	bool decfg, chkstop;
 	struct ap_card *ac;
 	struct device *dev;
+	unsigned int func;
 	ap_qid_t qid;
 
 	/* Is there currently a card device for this adapter ? */
@@ -1986,7 +1989,8 @@ static inline void ap_scan_adapter(int ap)
 	for (dom = 0; dom <= ap_max_domain_id; dom++)
 		if (ap_test_config_usage_domain(dom)) {
 			qid = AP_MKQID(ap, dom);
-			if (ap_queue_info(qid, &hwinfo, &decfg, &chkstop) > 0)
+			if (ap_queue_info(qid, &type, &func, &depth,
+					  &ml, &decfg, &chkstop) > 0)
 				break;
 		}
 	if (dom > ap_max_domain_id) {
@@ -2002,7 +2006,7 @@ static inline void ap_scan_adapter(int ap)
 		}
 		return;
 	}
-	if (!hwinfo.at) {
+	if (!type) {
 		/* No apdater type info available, an unusable adapter */
 		if (ac) {
 			AP_DBF_INFO("%s(%d) no valid type (0) info, rm card and queue devs\n",
@@ -2015,18 +2019,18 @@ static inline void ap_scan_adapter(int ap)
 		}
 		return;
 	}
-	hwinfo.value &= TAPQ_CARD_HWINFO_MASK; /* filter card specific hwinfo */
 	if (ac) {
 		/* Check APQN against existing card device for changes */
-		if (ac->hwinfo.at != hwinfo.at) {
+		if (ac->raw_hwtype != type) {
 			AP_DBF_INFO("%s(%d) hwtype %d changed, rm card and queue devs\n",
-				    __func__, ap, hwinfo.at);
+				    __func__, ap, type);
 			ap_scan_rm_card_dev_and_queue_devs(ac);
 			put_device(dev);
 			ac = NULL;
-		} else if (ac->hwinfo.fac != hwinfo.fac) {
+		} else if ((ac->functions & TAPQ_CARD_FUNC_CMP_MASK) !=
+			   (func & TAPQ_CARD_FUNC_CMP_MASK)) {
 			AP_DBF_INFO("%s(%d) functions 0x%08x changed, rm card and queue devs\n",
-				    __func__, ap, hwinfo.fac);
+				    __func__, ap, func);
 			ap_scan_rm_card_dev_and_queue_devs(ac);
 			put_device(dev);
 			ac = NULL;
@@ -2060,13 +2064,13 @@ static inline void ap_scan_adapter(int ap)
 
 	if (!ac) {
 		/* Build a new card device */
-		comp_type = ap_get_compatible_type(qid, hwinfo.at, hwinfo.fac);
+		comp_type = ap_get_compatible_type(qid, type, func);
 		if (!comp_type) {
 			AP_DBF_WARN("%s(%d) type %d, can't get compatibility type\n",
-				    __func__, ap, hwinfo.at);
+				    __func__, ap, type);
 			return;
 		}
-		ac = ap_card_create(ap, hwinfo, comp_type);
+		ac = ap_card_create(ap, depth, type, comp_type, func, ml);
 		if (!ac) {
 			AP_DBF_WARN("%s(%d) ap_card_create() failed\n",
 				    __func__, ap);
@@ -2097,13 +2101,13 @@ static inline void ap_scan_adapter(int ap)
 		get_device(dev);
 		if (decfg)
 			AP_DBF_INFO("%s(%d) new (decfg) card dev type=%d func=0x%08x created\n",
-				    __func__, ap, hwinfo.at, hwinfo.fac);
+				    __func__, ap, type, func);
 		else if (chkstop)
 			AP_DBF_INFO("%s(%d) new (chkstop) card dev type=%d func=0x%08x created\n",
-				    __func__, ap, hwinfo.at, hwinfo.fac);
+				    __func__, ap, type, func);
 		else
 			AP_DBF_INFO("%s(%d) new card dev type=%d func=0x%08x created\n",
-				    __func__, ap, hwinfo.at, hwinfo.fac);
+				    __func__, ap, type, func);
 	}
 
 	/* Verify the domains and the queue devices for this card */

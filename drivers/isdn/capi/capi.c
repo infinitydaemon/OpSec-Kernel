@@ -1231,9 +1231,9 @@ static void capinc_tty_hangup(struct tty_struct *tty)
 	tty_port_hangup(&mp->port);
 }
 
-static void capinc_tty_send_xchar(struct tty_struct *tty, u8 ch)
+static void capinc_tty_send_xchar(struct tty_struct *tty, char ch)
 {
-	pr_debug("capinc_tty_send_xchar(%u)\n", ch);
+	pr_debug("capinc_tty_send_xchar(%d)\n", ch);
 }
 
 static const struct tty_operations capinc_ops = {

@@ -141,9 +141,9 @@ struct bnxt_qplib_crsbe {
 /* Allocate 1 per QP for async error notification for now */
 #define BNXT_QPLIB_CREQE_MAX_CNT	(64 * 1024)
 #define BNXT_QPLIB_CREQE_UNITS		16	/* 16-Bytes per prod unit */
-#define CREQ_CMP_VALID(hdr, pass)			\
+#define CREQ_CMP_VALID(hdr, raw_cons, cp_bit)			\
 	(!!((hdr)->v & CREQ_BASE_V) ==				\
-	   !((pass) & BNXT_QPLIB_FLAG_EPOCH_CONS_MASK))
+	   !((raw_cons) & (cp_bit)))
 #define CREQ_ENTRY_POLL_BUDGET		0x100
 
 /* HWQ */

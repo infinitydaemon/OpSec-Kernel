@@ -123,15 +123,16 @@ static int sru_enum_frame_size(struct v4l2_subdev *subdev,
 			       struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct vsp1_sru *sru = to_sru(subdev);
-	struct v4l2_subdev_state *state;
+	struct v4l2_subdev_state *config;
 	struct v4l2_mbus_framefmt *format;
 	int ret = 0;
 
-	state = vsp1_entity_get_state(&sru->entity, sd_state, fse->which);
-	if (!state)
+	config = vsp1_entity_get_pad_config(&sru->entity, sd_state,
+					    fse->which);
+	if (!config)
 		return -EINVAL;
 
-	format = vsp1_entity_get_pad_format(&sru->entity, state, SRU_PAD_SINK);
+	format = vsp1_entity_get_pad_format(&sru->entity, config, SRU_PAD_SINK);
 
 	mutex_lock(&sru->entity.lock);
 
@@ -220,30 +221,31 @@ static int sru_set_format(struct v4l2_subdev *subdev,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct vsp1_sru *sru = to_sru(subdev);
-	struct v4l2_subdev_state *state;
+	struct v4l2_subdev_state *config;
 	struct v4l2_mbus_framefmt *format;
 	int ret = 0;
 
 	mutex_lock(&sru->entity.lock);
 
-	state = vsp1_entity_get_state(&sru->entity, sd_state, fmt->which);
-	if (!state) {
+	config = vsp1_entity_get_pad_config(&sru->entity, sd_state,
+					    fmt->which);
+	if (!config) {
 		ret = -EINVAL;
 		goto done;
 	}
 
-	sru_try_format(sru, state, fmt->pad, &fmt->format);
+	sru_try_format(sru, config, fmt->pad, &fmt->format);
 
-	format = vsp1_entity_get_pad_format(&sru->entity, state, fmt->pad);
+	format = vsp1_entity_get_pad_format(&sru->entity, config, fmt->pad);
 	*format = fmt->format;
 
 	if (fmt->pad == SRU_PAD_SINK) {
 		/* Propagate the format to the source pad. */
-		format = vsp1_entity_get_pad_format(&sru->entity, state,
+		format = vsp1_entity_get_pad_format(&sru->entity, config,
 						    SRU_PAD_SOURCE);
 		*format = fmt->format;
 
-		sru_try_format(sru, state, SRU_PAD_SOURCE, format);
+		sru_try_format(sru, config, SRU_PAD_SOURCE, format);
 	}
 
 done:
@@ -252,6 +254,7 @@ done:
 }
 
 static const struct v4l2_subdev_pad_ops sru_pad_ops = {
+	.init_cfg = vsp1_entity_init_cfg,
 	.enum_mbus_code = sru_enum_mbus_code,
 	.enum_frame_size = sru_enum_frame_size,
 	.get_fmt = vsp1_subdev_get_pad_format,
@@ -277,9 +280,9 @@ static void sru_configure_stream(struct vsp1_entity *entity,
 	struct v4l2_mbus_framefmt *output;
 	u32 ctrl0;
 
-	input = vsp1_entity_get_pad_format(&sru->entity, sru->entity.state,
+	input = vsp1_entity_get_pad_format(&sru->entity, sru->entity.config,
 					   SRU_PAD_SINK);
-	output = vsp1_entity_get_pad_format(&sru->entity, sru->entity.state,
+	output = vsp1_entity_get_pad_format(&sru->entity, sru->entity.config,
 					    SRU_PAD_SOURCE);
 
 	if (input->code == MEDIA_BUS_FMT_ARGB8888_1X32)
@@ -307,9 +310,9 @@ static unsigned int sru_max_width(struct vsp1_entity *entity,
 	struct v4l2_mbus_framefmt *input;
 	struct v4l2_mbus_framefmt *output;
 
-	input = vsp1_entity_get_pad_format(&sru->entity, sru->entity.state,
+	input = vsp1_entity_get_pad_format(&sru->entity, sru->entity.config,
 					   SRU_PAD_SINK);
-	output = vsp1_entity_get_pad_format(&sru->entity, sru->entity.state,
+	output = vsp1_entity_get_pad_format(&sru->entity, sru->entity.config,
 					    SRU_PAD_SOURCE);
 
 	/*
@@ -333,9 +336,9 @@ static void sru_partition(struct vsp1_entity *entity,
 	struct v4l2_mbus_framefmt *input;
 	struct v4l2_mbus_framefmt *output;
 
-	input = vsp1_entity_get_pad_format(&sru->entity, sru->entity.state,
+	input = vsp1_entity_get_pad_format(&sru->entity, sru->entity.config,
 					   SRU_PAD_SINK);
-	output = vsp1_entity_get_pad_format(&sru->entity, sru->entity.state,
+	output = vsp1_entity_get_pad_format(&sru->entity, sru->entity.config,
 					    SRU_PAD_SOURCE);
 
 	/* Adapt if SRUx2 is enabled. */

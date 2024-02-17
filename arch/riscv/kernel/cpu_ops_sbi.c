@@ -79,7 +79,23 @@ static int sbi_cpu_start(unsigned int cpuid, struct task_struct *tidle)
 	return sbi_hsm_hart_start(hartid, boot_addr, hsm_data);
 }
 
+static int sbi_cpu_prepare(unsigned int cpuid)
+{
+	if (!cpu_ops_sbi.cpu_start) {
+		pr_err("cpu start method not defined for CPU [%d]\n", cpuid);
+		return -ENODEV;
+	}
+	return 0;
+}
+
 #ifdef CONFIG_HOTPLUG_CPU
+static int sbi_cpu_disable(unsigned int cpuid)
+{
+	if (!cpu_ops_sbi.cpu_stop)
+		return -EOPNOTSUPP;
+	return 0;
+}
+
 static void sbi_cpu_stop(void)
 {
 	int ret;
@@ -102,8 +118,11 @@ static int sbi_cpu_is_stopped(unsigned int cpuid)
 #endif
 
 const struct cpu_operations cpu_ops_sbi = {
+	.name		= "sbi",
+	.cpu_prepare	= sbi_cpu_prepare,
 	.cpu_start	= sbi_cpu_start,
 #ifdef CONFIG_HOTPLUG_CPU
+	.cpu_disable	= sbi_cpu_disable,
 	.cpu_stop	= sbi_cpu_stop,
 	.cpu_is_stopped	= sbi_cpu_is_stopped,
 #endif

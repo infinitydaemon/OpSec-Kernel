@@ -14,7 +14,6 @@
 #include <linux/unistd.h>
 #include <linux/err.h>
 #include <linux/ipc_namespace.h>
-#include <linux/pid.h>
 
 /*
  * The IPC ID contains 2 separate numbers - index and sequence number.

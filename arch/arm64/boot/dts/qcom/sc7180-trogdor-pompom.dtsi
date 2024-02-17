@@ -141,7 +141,7 @@ ap_ts_pen_1v8: &i2c4 {
 };
 
 &panel {
-	compatible = "edp-panel";
+	compatible = "kingdisplay,kd116n21-30nv-a010";
 };
 
 &pen_insert {

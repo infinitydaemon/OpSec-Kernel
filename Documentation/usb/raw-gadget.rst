@@ -81,6 +81,9 @@ feature must be kept in the implementation.
 Potential future improvements
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+- Report more events (suspend, resume, etc.) through
+  ``USB_RAW_IOCTL_EVENT_FETCH``.
+
 - Support ``O_NONBLOCK`` I/O. This would be another mode of operation, where
   Raw Gadget would not wait until the completion of each USB request.
 

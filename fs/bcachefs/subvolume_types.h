@@ -20,11 +20,7 @@ struct snapshot_t {
 };
 
 struct snapshot_table {
-#ifndef RUST_BINDGEN
 	DECLARE_FLEX_ARRAY(struct snapshot_t, s);
-#else
-	struct snapshot_t	s[0];
-#endif
 };
 
 typedef struct {

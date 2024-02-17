@@ -21,7 +21,7 @@ int test_cpumap(int argc, char **argv)
 
 	libperf_init(libperf_print);
 
-	cpus = perf_cpu_map__new_any_cpu();
+	cpus = perf_cpu_map__dummy_new();
 	if (!cpus)
 		return -1;
 
@@ -29,7 +29,7 @@ int test_cpumap(int argc, char **argv)
 	perf_cpu_map__put(cpus);
 	perf_cpu_map__put(cpus);
 
-	cpus = perf_cpu_map__new_online_cpus();
+	cpus = perf_cpu_map__default_new();
 	if (!cpus)
 		return -1;
 

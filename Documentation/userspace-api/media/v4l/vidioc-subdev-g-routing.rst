@@ -72,7 +72,7 @@ On a successful ``VIDIOC_SUBDEV_G_ROUTING`` call the driver updates the
 
     * - __u32
       - ``which``
-      - Routing table to be accessed, from enum
+      - Format to modified, from enum
         :ref:`v4l2_subdev_format_whence <v4l2-subdev-format-whence>`.
     * - struct :c:type:`v4l2_subdev_route`
       - ``routes[]``
@@ -140,9 +140,8 @@ ENOSPC
    all the available routes the subdevice exposes.
 
 EINVAL
-   The sink or source pad identifiers reference a non-existing pad or reference
-   pads of different types (ie. the sink_pad identifiers refers to a source
-   pad), or the ``which`` field has an unsupported value.
+   The sink or source pad identifiers reference a non-existing pad, or reference
+   pads of different types (ie. the sink_pad identifiers refers to a source pad).
 
 E2BIG
    The application provided ``num_routes`` for ``VIDIOC_SUBDEV_S_ROUTING`` is

@@ -103,8 +103,7 @@ void convert_float_matrix(
 
 static uint32_t find_gcd(uint32_t a, uint32_t b)
 {
-	uint32_t remainder;
-
+	uint32_t remainder = 0;
 	while (b != 0) {
 		remainder = a % b;
 		a = b;

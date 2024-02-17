@@ -235,5 +235,6 @@
 
 /* Verdin UART_2 */
 &wkup_uart0 {
-	status = "okay";
+	/* FIXME: WKUP UART0 is used by DM firmware */
+	status = "reserved";
 };

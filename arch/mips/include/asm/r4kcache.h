@@ -24,10 +24,6 @@
 #include <asm/mmzone.h>
 #include <asm/unroll.h>
 
-extern void r5k_sc_init(void);
-extern void rm7k_sc_init(void);
-extern int mips_sc_init(void);
-
 extern void (*r4k_blast_dcache)(void);
 extern void (*r4k_blast_icache)(void);
 

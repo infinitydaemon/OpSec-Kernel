@@ -5,14 +5,16 @@
 # garp to the router. Router accepts or ignores based on its arp_accept
 # or accept_untracked_na configuration.
 
-source lib.sh
-
 TESTS="arp ndisc"
 
+ROUTER_NS="ns-router"
+ROUTER_NS_V6="ns-router-v6"
 ROUTER_INTF="veth-router"
 ROUTER_ADDR="10.0.10.1"
 ROUTER_ADDR_V6="2001:db8:abcd:0012::1"
 
+HOST_NS="ns-host"
+HOST_NS_V6="ns-host-v6"
 HOST_INTF="veth-host"
 HOST_ADDR="10.0.10.2"
 HOST_ADDR_V6="2001:db8:abcd:0012::2"
@@ -21,11 +23,13 @@ SUBNET_WIDTH=24
 PREFIX_WIDTH_V6=64
 
 cleanup() {
-	cleanup_ns ${HOST_NS} ${ROUTER_NS}
+	ip netns del ${HOST_NS}
+	ip netns del ${ROUTER_NS}
 }
 
 cleanup_v6() {
-	cleanup_ns ${HOST_NS_V6} ${ROUTER_NS_V6}
+	ip netns del ${HOST_NS_V6}
+	ip netns del ${ROUTER_NS_V6}
 }
 
 setup() {
@@ -33,7 +37,8 @@ setup() {
 	local arp_accept=$1
 
 	# Set up two namespaces
-	setup_ns HOST_NS ROUTER_NS
+	ip netns add ${ROUTER_NS}
+	ip netns add ${HOST_NS}
 
 	# Set up interfaces veth0 and veth1, which are pairs in separate
 	# namespaces. veth0 is veth-router, veth1 is veth-host.
@@ -67,7 +72,8 @@ setup_v6() {
 	local accept_untracked_na=$1
 
 	# Set up two namespaces
-	setup_ns HOST_NS_V6 ROUTER_NS_V6
+	ip netns add ${ROUTER_NS_V6}
+	ip netns add ${HOST_NS_V6}
 
 	# Set up interfaces veth0 and veth1, which are pairs in separate
 	# namespaces. veth0 is veth-router, veth1 is veth-host.

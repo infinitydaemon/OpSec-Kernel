@@ -11,10 +11,7 @@
 #include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/of_address.h>
-#include <linux/of.h>
-#include <linux/of_platform.h>
-#include <linux/platform_device.h>
-#include <linux/property.h>
+#include <linux/of_device.h>
 #include <linux/mfd/syscon.h>
 #include <linux/mfd/syscon/imx6q-iomuxc-gpr.h>
 #include <linux/regmap.h>
@@ -205,7 +202,9 @@ static int weim_timing_setup(struct device *dev, struct device_node *np,
 
 static int weim_parse_dt(struct platform_device *pdev)
 {
-	const struct imx_weim_devtype *devtype = device_get_match_data(&pdev->dev);
+	const struct of_device_id *of_id = of_match_device(weim_id_table,
+							   &pdev->dev);
+	const struct imx_weim_devtype *devtype = of_id->data;
 	int ret = 0, have_child = 0;
 	struct device_node *child;
 	struct weim_priv *priv;

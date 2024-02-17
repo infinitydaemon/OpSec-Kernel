@@ -47,8 +47,9 @@ user_service_free(void *userdata)
 
 static void close_delivered(struct user_service *user_service)
 {
-	dev_dbg(user_service->service->state->dev,
-		"arm: (handle=%x)\n", user_service->service->handle);
+	vchiq_log_debug(user_service->service->state->dev, VCHIQ_ARM,
+			"%s(handle=%x)",
+			__func__, user_service->service->handle);
 
 	if (user_service->close_pending) {
 		/* Allow the underlying service to be culled */
@@ -234,7 +235,8 @@ static int vchiq_ioc_dequeue_message(struct vchiq_instance *instance,
 			spin_unlock(&msg_queue_spinlock);
 			DEBUG_TRACE(DEQUEUE_MESSAGE_LINE);
 			if (wait_for_completion_interruptible(&user_service->insert_event)) {
-				dev_dbg(service->state->dev, "arm: DEQUEUE_MESSAGE interrupted\n");
+				vchiq_log_debug(service->state->dev, VCHIQ_ARM,
+						"DEQUEUE_MESSAGE interrupted");
 				ret = -EINTR;
 				break;
 			}
@@ -269,9 +271,9 @@ static int vchiq_ioc_dequeue_message(struct vchiq_instance *instance,
 			ret = -EFAULT;
 		}
 	} else {
-		dev_err(service->state->dev,
-			"arm: header %pK: bufsize %x < size %x\n",
-			header, args->bufsize, header->size);
+		vchiq_log_error(service->state->dev, VCHIQ_ARM,
+				"header %pK: bufsize %x < size %x",
+				header, args->bufsize, header->size);
 		WARN(1, "invalid size\n");
 		ret = -EMSGSIZE;
 	}
@@ -316,13 +318,13 @@ static int vchiq_irq_queue_bulk_tx_rx(struct vchiq_instance *instance,
 		}
 		mutex_unlock(&instance->bulk_waiter_list_mutex);
 		if (!waiter) {
-			dev_err(service->state->dev,
-				"arm: no bulk_waiter found for pid %d\n", current->pid);
+			vchiq_log_error(service->state->dev, VCHIQ_ARM,
+					"no bulk_waiter found for pid %d", current->pid);
 			ret = -ESRCH;
 			goto out;
 		}
-		dev_dbg(service->state->dev, "arm: found bulk_waiter %pK for pid %d\n",
-			waiter, current->pid);
+		vchiq_log_debug(service->state->dev, VCHIQ_ARM,
+				"found bulk_waiter %pK for pid %d", waiter, current->pid);
 		userdata = &waiter->bulk_waiter;
 	} else {
 		userdata = args->userdata;
@@ -353,8 +355,8 @@ static int vchiq_irq_queue_bulk_tx_rx(struct vchiq_instance *instance,
 		mutex_lock(&instance->bulk_waiter_list_mutex);
 		list_add(&waiter->list, &instance->bulk_waiter_list);
 		mutex_unlock(&instance->bulk_waiter_list_mutex);
-		dev_dbg(service->state->dev, "arm: saved bulk_waiter %pK for pid %d\n",
-			waiter, current->pid);
+		vchiq_log_debug(service->state->dev, VCHIQ_ARM,
+				"saved bulk_waiter %pK for pid %d", waiter, current->pid);
 
 		ret = put_user(mode_waiting, mode);
 	}
@@ -453,7 +455,8 @@ static int vchiq_ioc_await_completion(struct vchiq_instance *instance,
 		mutex_lock(&instance->completion_mutex);
 		if (rc) {
 			DEBUG_TRACE(AWAIT_COMPLETION_LINE);
-			dev_dbg(instance->state->dev, "arm: AWAIT_COMPLETION interrupted\n");
+			vchiq_log_debug(instance->state->dev, VCHIQ_ARM,
+					"AWAIT_COMPLETION interrupted");
 			ret = -EINTR;
 			goto out;
 		}
@@ -498,10 +501,10 @@ static int vchiq_ioc_await_completion(struct vchiq_instance *instance,
 			msglen = header->size + sizeof(struct vchiq_header);
 			/* This must be a VCHIQ-style service */
 			if (args->msgbufsize < msglen) {
-				dev_err(service->state->dev,
-					"arm: header %pK: msgbufsize %x < msglen %x\n",
-					header, args->msgbufsize, msglen);
-				WARN(1, "invalid message size\n");
+				vchiq_log_error(service->state->dev, VCHIQ_ARM,
+						"header %pK: msgbufsize %x < msglen %x",
+						header, args->msgbufsize, msglen);
+						WARN(1, "invalid message size\n");
 				if (ret == 0)
 					ret = -EMSGSIZE;
 				break;
@@ -579,9 +582,10 @@ vchiq_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	long ret = 0;
 	int i, rc;
 
-	dev_dbg(instance->state->dev, "arm: instance %pK, cmd %s, arg %lx\n", instance,
-		((_IOC_TYPE(cmd) == VCHIQ_IOC_MAGIC) && (_IOC_NR(cmd) <= VCHIQ_IOC_MAX)) ?
-		ioctl_names[_IOC_NR(cmd)] : "<invalid>", arg);
+	vchiq_log_trace(instance->state->dev, VCHIQ_ARM,
+			"%s - instance %pK, cmd %s, arg %lx", __func__, instance,
+			((_IOC_TYPE(cmd) == VCHIQ_IOC_MAGIC) && (_IOC_NR(cmd) <= VCHIQ_IOC_MAX)) ?
+			ioctl_names[_IOC_NR(cmd)] : "<invalid>", arg);
 
 	switch (cmd) {
 	case VCHIQ_IOC_SHUTDOWN:
@@ -614,9 +618,9 @@ vchiq_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		}
 		rc = mutex_lock_killable(&instance->state->mutex);
 		if (rc) {
-			dev_err(instance->state->dev,
-				"arm: vchiq: connect: could not lock mutex for state %d: %d\n",
-				instance->state->id, rc);
+			vchiq_log_error(instance->state->dev, VCHIQ_ARM,
+					"vchiq: connect: could not lock mutex for state %d: %d",
+					instance->state->id, rc);
 			ret = -EINTR;
 			break;
 		}
@@ -626,8 +630,8 @@ vchiq_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		if (!status)
 			instance->connected = 1;
 		else
-			dev_err(instance->state->dev,
-				"arm: vchiq: could not connect: %d\n", status);
+			vchiq_log_error(instance->state->dev, VCHIQ_ARM,
+					"vchiq: could not connect: %d", status);
 		break;
 
 	case VCHIQ_IOC_CREATE_SERVICE: {
@@ -696,13 +700,13 @@ vchiq_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 				vchiq_use_service_internal(service) :
 				vchiq_release_service_internal(service);
 			if (ret) {
-				dev_err(instance->state->dev,
-					"suspend: cmd %s returned error %ld for service %p4cc:%03d\n",
-					(cmd == VCHIQ_IOC_USE_SERVICE) ?
-					"VCHIQ_IOC_USE_SERVICE" :
-					"VCHIQ_IOC_RELEASE_SERVICE",
-					ret, &service->base.fourcc,
-					service->client_id);
+				vchiq_log_error(instance->state->dev, VCHIQ_SUSPEND,
+						"%s: cmd %s returned error %ld for service %p4cc:%03d",
+						__func__, (cmd == VCHIQ_IOC_USE_SERVICE) ?
+						"VCHIQ_IOC_USE_SERVICE" :
+						"VCHIQ_IOC_RELEASE_SERVICE",
+						ret, &service->base.fourcc,
+						service->client_id);
 			}
 		} else {
 			ret = -EINVAL;
@@ -864,15 +868,15 @@ vchiq_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	}
 
 	if (!status && (ret < 0) && (ret != -EINTR) && (ret != -EWOULDBLOCK)) {
-		dev_dbg(instance->state->dev,
-			"arm: ioctl instance %pK, cmd %s -> status %d, %ld\n",
-			instance, (_IOC_NR(cmd) <= VCHIQ_IOC_MAX) ?
-			ioctl_names[_IOC_NR(cmd)] : "<invalid>", status, ret);
+		vchiq_log_debug(instance->state->dev, VCHIQ_ARM,
+				"  ioctl instance %pK, cmd %s -> status %d, %ld",
+				instance, (_IOC_NR(cmd) <= VCHIQ_IOC_MAX) ?
+				ioctl_names[_IOC_NR(cmd)] : "<invalid>", status, ret);
 	} else {
-		dev_dbg(instance->state->dev,
-			"arm: ioctl instance %pK, cmd %s -> status %d\n, %ld\n",
-			instance, (_IOC_NR(cmd) <= VCHIQ_IOC_MAX) ?
-			ioctl_names[_IOC_NR(cmd)] : "<invalid>", status, ret);
+		vchiq_log_trace(instance->state->dev, VCHIQ_ARM,
+				"  ioctl instance %pK, cmd %s -> status %d, %ld",
+				instance, (_IOC_NR(cmd) <= VCHIQ_IOC_MAX) ?
+				ioctl_names[_IOC_NR(cmd)] : "<invalid>", status, ret);
 	}
 
 	return ret;
@@ -1166,10 +1170,11 @@ static int vchiq_open(struct inode *inode, struct file *file)
 	struct vchiq_state *state = vchiq_get_state();
 	struct vchiq_instance *instance;
 
-	dev_dbg(state->dev, "arm: vchiq open\n");
+	vchiq_log_debug(state->dev, VCHIQ_ARM, "vchiq_open");
 
 	if (!state) {
-		dev_err(state->dev, "arm: vchiq has no connection to VideoCore\n");
+		vchiq_log_error(state->dev, VCHIQ_ARM,
+				"vchiq has no connection to VideoCore");
 		return -ENOTCONN;
 	}
 
@@ -1201,7 +1206,8 @@ static int vchiq_release(struct inode *inode, struct file *file)
 	int ret = 0;
 	int i;
 
-	dev_dbg(state->dev, "arm: instance=%p\n", instance);
+	vchiq_log_debug(state->dev, VCHIQ_ARM, "%s: instance=%lx", __func__,
+			(unsigned long)instance);
 
 	if (!state) {
 		ret = -EPERM;
@@ -1300,6 +1306,26 @@ out:
 	return ret;
 }
 
+static ssize_t
+vchiq_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
+{
+	struct dump_context context;
+	int err;
+
+	context.buf = buf;
+	context.actual = 0;
+	context.space = count;
+	context.offset = *ppos;
+
+	err = vchiq_dump_state(&context, &g_state);
+	if (err)
+		return err;
+
+	*ppos += context.actual;
+
+	return context.actual;
+}
+
 static const struct file_operations
 vchiq_fops = {
 	.owner = THIS_MODULE,
@@ -1309,6 +1335,7 @@ vchiq_fops = {
 #endif
 	.open = vchiq_open,
 	.release = vchiq_release,
+	.read = vchiq_read
 };
 
 static struct miscdevice vchiq_miscdev = {

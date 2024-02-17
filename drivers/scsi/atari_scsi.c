@@ -865,7 +865,7 @@ fail_alloc:
 	return error;
 }
 
-static void __exit atari_scsi_remove(struct platform_device *pdev)
+static int __exit atari_scsi_remove(struct platform_device *pdev)
 {
 	struct Scsi_Host *instance = platform_get_drvdata(pdev);
 
@@ -876,10 +876,11 @@ static void __exit atari_scsi_remove(struct platform_device *pdev)
 	scsi_host_put(instance);
 	if (atari_dma_buffer)
 		atari_stram_free(atari_dma_buffer);
+	return 0;
 }
 
 static struct platform_driver atari_scsi_driver = {
-	.remove_new = __exit_p(atari_scsi_remove),
+	.remove = __exit_p(atari_scsi_remove),
 	.driver = {
 		.name	= DRV_MODULE_NAME,
 	},

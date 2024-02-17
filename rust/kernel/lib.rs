@@ -14,7 +14,6 @@
 #![no_std]
 #![feature(allocator_api)]
 #![feature(coerce_unsized)]
-#![feature(const_maybe_uninit_zeroed)]
 #![feature(dispatch_from_dyn)]
 #![feature(new_uninit)]
 #![feature(offset_of)]
@@ -39,8 +38,6 @@ pub mod init;
 pub mod ioctl;
 #[cfg(CONFIG_KUNIT)]
 pub mod kunit;
-#[cfg(CONFIG_NET)]
-pub mod net;
 pub mod prelude;
 pub mod print;
 mod static_assert;

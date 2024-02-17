@@ -5847,6 +5847,8 @@ static inline void convert_extent_map(struct ceph_sparse_read *sr)
 }
 #endif
 
+#define MAX_EXTENTS 4096
+
 static int osd_sparse_read(struct ceph_connection *con,
 			   struct ceph_msg_data_cursor *cursor,
 			   char **pbuf)
@@ -5854,8 +5856,8 @@ static int osd_sparse_read(struct ceph_connection *con,
 	struct ceph_osd *o = con->private;
 	struct ceph_sparse_read *sr = &o->o_sparse_read;
 	u32 count = sr->sr_count;
-	u64 eoff, elen, len = 0;
-	int i, ret;
+	u64 eoff, elen;
+	int ret;
 
 	switch (sr->sr_state) {
 	case CEPH_SPARSE_READ_HDR:
@@ -5877,16 +5879,23 @@ next_op:
 
 		if (count > 0) {
 			if (!sr->sr_extent || count > sr->sr_ext_len) {
+				/*
+				 * Apply a hard cap to the number of extents.
+				 * If we have more, assume something is wrong.
+				 */
+				if (count > MAX_EXTENTS) {
+					dout("%s: OSD returned 0x%x extents in a single reply!\n",
+					     __func__, count);
+					return -EREMOTEIO;
+				}
+
 				/* no extent array provided, or too short */
 				kfree(sr->sr_extent);
 				sr->sr_extent = kmalloc_array(count,
 							      sizeof(*sr->sr_extent),
 							      GFP_NOIO);
-				if (!sr->sr_extent) {
-					pr_err("%s: failed to allocate %u extents\n",
-					       __func__, count);
+				if (!sr->sr_extent)
 					return -ENOMEM;
-				}
 				sr->sr_ext_len = count;
 			}
 			ret = count * sizeof(*sr->sr_extent);
@@ -5900,20 +5909,8 @@ next_op:
 		convert_extent_map(sr);
 		ret = sizeof(sr->sr_datalen);
 		*pbuf = (char *)&sr->sr_datalen;
-		sr->sr_state = CEPH_SPARSE_READ_DATA_PRE;
-		break;
-	case CEPH_SPARSE_READ_DATA_PRE:
-		/* Convert sr_datalen to host-endian */
-		sr->sr_datalen = le32_to_cpu((__force __le32)sr->sr_datalen);
-		for (i = 0; i < count; i++)
-			len += sr->sr_extent[i].len;
-		if (sr->sr_datalen != len) {
-			pr_warn_ratelimited("data len %u != extent len %llu\n",
-					    sr->sr_datalen, len);
-			return -EREMOTEIO;
-		}
 		sr->sr_state = CEPH_SPARSE_READ_DATA;
-		fallthrough;
+		break;
 	case CEPH_SPARSE_READ_DATA:
 		if (sr->sr_index >= count) {
 			sr->sr_state = CEPH_SPARSE_READ_HDR;

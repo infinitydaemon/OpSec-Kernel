@@ -40,6 +40,7 @@
 #include "blk-stat.h"
 #include "blk-mq-sched.h"
 #include "blk-rq-qos.h"
+#include "blk-ioprio.h"
 
 static DEFINE_PER_CPU(struct llist_head, blk_cpu_done);
 static DEFINE_PER_CPU(call_single_data_t, blk_cpu_csd);
@@ -771,16 +772,11 @@ static void req_bio_endio(struct request *rq, struct bio *bio,
 		/*
 		 * Partial zone append completions cannot be supported as the
 		 * BIO fragments may end up not being written sequentially.
-		 * For such case, force the completed nbytes to be equal to
-		 * the BIO size so that bio_advance() sets the BIO remaining
-		 * size to 0 and we end up calling bio_endio() before returning.
 		 */
-		if (bio->bi_iter.bi_size != nbytes) {
+		if (bio->bi_iter.bi_size != nbytes)
 			bio->bi_status = BLK_STS_IOERR;
-			nbytes = bio->bi_iter.bi_size;
-		} else {
+		else
 			bio->bi_iter.bi_sector = rq->__sector;
-		}
 	}
 
 	bio_advance(bio, nbytes);
@@ -1252,8 +1248,7 @@ void blk_mq_start_request(struct request *rq)
 
 	trace_block_rq_issue(rq);
 
-	if (test_bit(QUEUE_FLAG_STATS, &q->queue_flags) &&
-	    !blk_rq_is_passthrough(rq)) {
+	if (test_bit(QUEUE_FLAG_STATS, &q->queue_flags)) {
 		rq->io_start_time_ns = ktime_get_ns();
 		rq->stats_sectors = blk_rq_sectors(rq);
 		rq->rq_flags |= RQF_STATS;
@@ -2911,11 +2906,8 @@ static struct request *blk_mq_get_new_requests(struct request_queue *q,
 	return NULL;
 }
 
-/*
- * Check if we can use the passed on request for submitting the passed in bio,
- * and remove it from the request list if it can be used.
- */
-static bool blk_mq_use_cached_rq(struct request *rq, struct blk_plug *plug,
+/* return true if this @rq can be used for @bio */
+static bool blk_mq_can_use_cached_rq(struct request *rq, struct blk_plug *plug,
 		struct bio *bio)
 {
 	enum hctx_type type = blk_mq_get_hctx_type(bio->bi_opf);
@@ -2943,6 +2935,14 @@ static bool blk_mq_use_cached_rq(struct request *rq, struct blk_plug *plug,
 	return true;
 }
 
+static void bio_set_ioprio(struct bio *bio)
+{
+	/* Nobody set ioprio so far? Initialize it based on task's nice value */
+	if (IOPRIO_PRIO_CLASS(bio->bi_ioprio) == IOPRIO_CLASS_NONE)
+		bio->bi_ioprio = get_current_ioprio();
+	blkcg_set_ioprio(bio);
+}
+
 /**
  * blk_mq_submit_bio - Create and send a request to block device.
  * @bio: Bio pointer.
@@ -2967,6 +2967,7 @@ void blk_mq_submit_bio(struct bio *bio)
 	blk_status_t ret;
 
 	bio = blk_queue_bounce(bio, q);
+	bio_set_ioprio(bio);
 
 	if (plug) {
 		rq = rq_list_peek(&plug->cached_rq);
@@ -2983,7 +2984,7 @@ void blk_mq_submit_bio(struct bio *bio)
 			return;
 		if (blk_mq_attempt_bio_merge(q, bio, nr_segs))
 			return;
-		if (blk_mq_use_cached_rq(rq, plug, bio))
+		if (blk_mq_can_use_cached_rq(rq, plug, bio))
 			goto done;
 		percpu_ref_get(&q->q_usage_counter);
 	} else {

@@ -17,8 +17,6 @@
 #include <acpi/processor.h>
 #include <linux/uaccess.h>
 
-#include "internal.h"
-
 #ifdef CONFIG_CPU_FREQ
 
 /* If a passive cooling situation is detected, primarily CPUfreq is used, as it
@@ -28,21 +26,12 @@
  */
 
 #define CPUFREQ_THERMAL_MIN_STEP 0
+#define CPUFREQ_THERMAL_MAX_STEP 3
 
-static int cpufreq_thermal_max_step __read_mostly = 3;
+static DEFINE_PER_CPU(unsigned int, cpufreq_thermal_reduction_pctg);
 
-/*
- * Minimum throttle percentage for processor_thermal cooling device.
- * The processor_thermal driver uses it to calculate the percentage amount by
- * which cpu frequency must be reduced for each cooling state. This is also used
- * to calculate the maximum number of throttling steps or cooling states.
- */
-static int cpufreq_thermal_reduction_pctg __read_mostly = 20;
-
-static DEFINE_PER_CPU(unsigned int, cpufreq_thermal_reduction_step);
-
-#define reduction_step(cpu) \
-	per_cpu(cpufreq_thermal_reduction_step, phys_package_first_cpu(cpu))
+#define reduction_pctg(cpu) \
+	per_cpu(cpufreq_thermal_reduction_pctg, phys_package_first_cpu(cpu))
 
 /*
  * Emulate "per package data" using per cpu data (which should really be
@@ -82,7 +71,7 @@ static int cpufreq_get_max_state(unsigned int cpu)
 	if (!cpu_has_cpufreq(cpu))
 		return 0;
 
-	return cpufreq_thermal_max_step;
+	return CPUFREQ_THERMAL_MAX_STEP;
 }
 
 static int cpufreq_get_cur_state(unsigned int cpu)
@@ -90,7 +79,7 @@ static int cpufreq_get_cur_state(unsigned int cpu)
 	if (!cpu_has_cpufreq(cpu))
 		return 0;
 
-	return reduction_step(cpu);
+	return reduction_pctg(cpu);
 }
 
 static int cpufreq_set_cur_state(unsigned int cpu, int state)
@@ -103,7 +92,7 @@ static int cpufreq_set_cur_state(unsigned int cpu, int state)
 	if (!cpu_has_cpufreq(cpu))
 		return 0;
 
-	reduction_step(cpu) = state;
+	reduction_pctg(cpu) = state;
 
 	/*
 	 * Update all the CPUs in the same package because they all
@@ -124,8 +113,7 @@ static int cpufreq_set_cur_state(unsigned int cpu, int state)
 		if (!policy)
 			return -EINVAL;
 
-		max_freq = (policy->cpuinfo.max_freq *
-			    (100 - reduction_step(i) * cpufreq_thermal_reduction_pctg)) / 100;
+		max_freq = (policy->cpuinfo.max_freq * (100 - reduction_pctg(i) * 20)) / 100;
 
 		cpufreq_cpu_put(policy);
 
@@ -138,28 +126,9 @@ static int cpufreq_set_cur_state(unsigned int cpu, int state)
 	return 0;
 }
 
-static void acpi_thermal_cpufreq_config(void)
-{
-	int cpufreq_pctg = acpi_arch_thermal_cpufreq_pctg();
-
-	if (!cpufreq_pctg)
-		return;
-
-	cpufreq_thermal_reduction_pctg = cpufreq_pctg;
-
-	/*
-	 * Derive the MAX_STEP from minimum throttle percentage so that the reduction
-	 * percentage doesn't end up becoming negative. Also, cap the MAX_STEP so that
-	 * the CPU performance doesn't become 0.
-	 */
-	cpufreq_thermal_max_step = (100 / cpufreq_pctg) - 2;
-}
-
 void acpi_thermal_cpufreq_init(struct cpufreq_policy *policy)
 {
 	unsigned int cpu;
-
-	acpi_thermal_cpufreq_config();
 
 	for_each_cpu(cpu, policy->related_cpus) {
 		struct acpi_processor *pr = per_cpu(processors, cpu);
@@ -221,7 +190,7 @@ static int acpi_processor_max_state(struct acpi_processor *pr)
 
 	/*
 	 * There exists four states according to
-	 * cpufreq_thermal_reduction_step. 0, 1, 2, 3
+	 * cpufreq_thermal_reduction_pctg. 0, 1, 2, 3
 	 */
 	max_state += cpufreq_get_max_state(pr->id);
 	if (pr->flags.throttling)

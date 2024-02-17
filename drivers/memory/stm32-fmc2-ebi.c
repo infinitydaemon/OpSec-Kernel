@@ -1146,7 +1146,7 @@ err_release:
 	return ret;
 }
 
-static void stm32_fmc2_ebi_remove(struct platform_device *pdev)
+static int stm32_fmc2_ebi_remove(struct platform_device *pdev)
 {
 	struct stm32_fmc2_ebi *ebi = platform_get_drvdata(pdev);
 
@@ -1154,6 +1154,8 @@ static void stm32_fmc2_ebi_remove(struct platform_device *pdev)
 	stm32_fmc2_ebi_disable_banks(ebi);
 	stm32_fmc2_ebi_disable(ebi);
 	clk_disable_unprepare(ebi->clk);
+
+	return 0;
 }
 
 static int __maybe_unused stm32_fmc2_ebi_suspend(struct device *dev)
@@ -1195,7 +1197,7 @@ MODULE_DEVICE_TABLE(of, stm32_fmc2_ebi_match);
 
 static struct platform_driver stm32_fmc2_ebi_driver = {
 	.probe	= stm32_fmc2_ebi_probe,
-	.remove_new = stm32_fmc2_ebi_remove,
+	.remove	= stm32_fmc2_ebi_remove,
 	.driver	= {
 		.name = "stm32_fmc2_ebi",
 		.of_match_table = stm32_fmc2_ebi_match,

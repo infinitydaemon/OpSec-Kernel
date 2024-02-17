@@ -24,7 +24,7 @@ void __kernel_fpu_begin(struct kernel_fpu *state, u32 flags)
 		/* Save floating point control */
 		asm volatile("stfpc %0" : "=Q" (state->fpc));
 
-	if (!cpu_has_vx()) {
+	if (!MACHINE_HAS_VX) {
 		if (flags & KERNEL_VXR_V0V7) {
 			/* Save floating-point registers */
 			asm volatile("std 0,%0" : "=Q" (state->fprs[0]));
@@ -106,7 +106,7 @@ void __kernel_fpu_end(struct kernel_fpu *state, u32 flags)
 		/* Restore floating-point controls */
 		asm volatile("lfpc %0" : : "Q" (state->fpc));
 
-	if (!cpu_has_vx()) {
+	if (!MACHINE_HAS_VX) {
 		if (flags & KERNEL_VXR_V0V7) {
 			/* Restore floating-point registers */
 			asm volatile("ld 0,%0" : : "Q" (state->fprs[0]));
@@ -177,11 +177,11 @@ EXPORT_SYMBOL(__kernel_fpu_end);
 
 void __load_fpu_regs(void)
 {
-	unsigned long *regs = current->thread.fpu.regs;
 	struct fpu *state = &current->thread.fpu;
+	unsigned long *regs = current->thread.fpu.regs;
 
-	sfpc_safe(state->fpc);
-	if (likely(cpu_has_vx())) {
+	asm volatile("lfpc %0" : : "Q" (state->fpc));
+	if (likely(MACHINE_HAS_VX)) {
 		asm volatile("lgr	1,%0\n"
 			     "VLM	0,15,0,1\n"
 			     "VLM	16,31,256,1\n"
@@ -208,6 +208,7 @@ void __load_fpu_regs(void)
 	}
 	clear_cpu_flag(CIF_FPU);
 }
+EXPORT_SYMBOL(__load_fpu_regs);
 
 void load_fpu_regs(void)
 {
@@ -231,7 +232,7 @@ void save_fpu_regs(void)
 	regs = current->thread.fpu.regs;
 
 	asm volatile("stfpc %0" : "=Q" (state->fpc));
-	if (likely(cpu_has_vx())) {
+	if (likely(MACHINE_HAS_VX)) {
 		asm volatile("lgr	1,%0\n"
 			     "VSTM	0,15,0,1\n"
 			     "VSTM	16,31,256,1\n"

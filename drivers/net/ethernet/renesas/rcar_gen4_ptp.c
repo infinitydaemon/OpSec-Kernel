@@ -14,7 +14,7 @@
 #include "rcar_gen4_ptp.h"
 #define ptp_to_priv(ptp)	container_of(ptp, struct rcar_gen4_ptp_private, info)
 
-static const struct rcar_gen4_ptp_reg_offset gen4_offs = {
+static const struct rcar_gen4_ptp_reg_offset s4_offs = {
 	.enable = PTPTMEC,
 	.disable = PTPTMDC,
 	.increment = PTPTIVC0,
@@ -130,42 +130,25 @@ static struct ptp_clock_info rcar_gen4_ptp_info = {
 	.enable = rcar_gen4_ptp_enable,
 };
 
-static int rcar_gen4_ptp_set_offs(struct rcar_gen4_ptp_private *ptp_priv,
-				  enum rcar_gen4_ptp_reg_layout layout)
+static void rcar_gen4_ptp_set_offs(struct rcar_gen4_ptp_private *ptp_priv,
+				   enum rcar_gen4_ptp_reg_layout layout)
 {
-	if (layout != RCAR_GEN4_PTP_REG_LAYOUT)
-		return -EINVAL;
+	WARN_ON(layout != RCAR_GEN4_PTP_REG_LAYOUT_S4);
 
-	ptp_priv->offs = &gen4_offs;
-
-	return 0;
-}
-
-static s64 rcar_gen4_ptp_rate_to_increment(u32 rate)
-{
-	/* Timer increment in ns.
-	 * bit[31:27] - integer
-	 * bit[26:0]  - decimal
-	 * increment[ns] = perid[ns] * 2^27 => (1ns * 2^27) / rate[hz]
-	 */
-	return div_s64(1000000000LL << 27, rate);
+	ptp_priv->offs = &s4_offs;
 }
 
 int rcar_gen4_ptp_register(struct rcar_gen4_ptp_private *ptp_priv,
-			   enum rcar_gen4_ptp_reg_layout layout, u32 rate)
+			   enum rcar_gen4_ptp_reg_layout layout, u32 clock)
 {
-	int ret;
-
 	if (ptp_priv->initialized)
 		return 0;
 
 	spin_lock_init(&ptp_priv->lock);
 
-	ret = rcar_gen4_ptp_set_offs(ptp_priv, layout);
-	if (ret)
-		return ret;
+	rcar_gen4_ptp_set_offs(ptp_priv, layout);
 
-	ptp_priv->default_addend = rcar_gen4_ptp_rate_to_increment(rate);
+	ptp_priv->default_addend = clock;
 	iowrite32(ptp_priv->default_addend, ptp_priv->addr + ptp_priv->offs->increment);
 	ptp_priv->clock = ptp_clock_register(&ptp_priv->info, NULL);
 	if (IS_ERR(ptp_priv->clock))
@@ -176,7 +159,6 @@ int rcar_gen4_ptp_register(struct rcar_gen4_ptp_private *ptp_priv,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(rcar_gen4_ptp_register);
 
 int rcar_gen4_ptp_unregister(struct rcar_gen4_ptp_private *ptp_priv)
 {
@@ -184,7 +166,6 @@ int rcar_gen4_ptp_unregister(struct rcar_gen4_ptp_private *ptp_priv)
 
 	return ptp_clock_unregister(ptp_priv->clock);
 }
-EXPORT_SYMBOL_GPL(rcar_gen4_ptp_unregister);
 
 struct rcar_gen4_ptp_private *rcar_gen4_ptp_alloc(struct platform_device *pdev)
 {
@@ -198,8 +179,3 @@ struct rcar_gen4_ptp_private *rcar_gen4_ptp_alloc(struct platform_device *pdev)
 
 	return ptp;
 }
-EXPORT_SYMBOL_GPL(rcar_gen4_ptp_alloc);
-
-MODULE_AUTHOR("Yoshihiro Shimoda");
-MODULE_DESCRIPTION("Renesas R-Car Gen4 gPTP driver");
-MODULE_LICENSE("GPL");

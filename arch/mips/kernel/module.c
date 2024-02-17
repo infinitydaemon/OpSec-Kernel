@@ -20,7 +20,8 @@
 #include <linux/kernel.h>
 #include <linux/spinlock.h>
 #include <linux/jump_label.h>
-#include <asm/jump_label.h>
+
+extern void jump_label_apply_nops(struct module *mod);
 
 struct mips_hi16 {
 	struct mips_hi16 *next;

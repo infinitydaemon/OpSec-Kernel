@@ -31,7 +31,6 @@
 #include "basics/dc_common.h"
 #include "resource.h"
 #include "dc_dmub_srv.h"
-#include "dc_state_priv.h"
 
 #define NUM_ELEMENTS(a) (sizeof(a) / sizeof((a)[0]))
 
@@ -426,130 +425,45 @@ void get_hdr_visual_confirm_color(
 }
 
 void get_subvp_visual_confirm_color(
-		struct pipe_ctx *pipe_ctx,
-		struct tg_color *color)
-{
-	uint32_t color_value = MAX_TG_COLOR_VALUE;
-	if (pipe_ctx) {
-		switch (pipe_ctx->p_state_type) {
-		case P_STATE_SUB_VP:
-			color->color_r_cr = color_value;
-			color->color_g_y  = 0;
-			color->color_b_cb = 0;
-			break;
-		case P_STATE_DRR_SUB_VP:
-			color->color_r_cr = 0;
-			color->color_g_y  = color_value;
-			color->color_b_cb = 0;
-			break;
-		case P_STATE_V_BLANK_SUB_VP:
-			color->color_r_cr = 0;
-			color->color_g_y  = 0;
-			color->color_b_cb = color_value;
-			break;
-		default:
-			break;
-		}
-	}
-}
-
-void get_mclk_switch_visual_confirm_color(
-		struct pipe_ctx *pipe_ctx,
-		struct tg_color *color)
-{
-	uint32_t color_value = MAX_TG_COLOR_VALUE;
-
-	if (pipe_ctx) {
-		switch (pipe_ctx->p_state_type) {
-		case P_STATE_V_BLANK:
-			color->color_r_cr = color_value;
-			color->color_g_y = color_value;
-			color->color_b_cb = 0;
-			break;
-		case P_STATE_FPO:
-			color->color_r_cr = 0;
-			color->color_g_y  = color_value;
-			color->color_b_cb = color_value;
-			break;
-		case P_STATE_V_ACTIVE:
-			color->color_r_cr = color_value;
-			color->color_g_y  = 0;
-			color->color_b_cb = color_value;
-			break;
-		case P_STATE_SUB_VP:
-			color->color_r_cr = color_value;
-			color->color_g_y  = 0;
-			color->color_b_cb = 0;
-			break;
-		case P_STATE_DRR_SUB_VP:
-			color->color_r_cr = 0;
-			color->color_g_y  = color_value;
-			color->color_b_cb = 0;
-			break;
-		case P_STATE_V_BLANK_SUB_VP:
-			color->color_r_cr = 0;
-			color->color_g_y  = 0;
-			color->color_b_cb = color_value;
-			break;
-		default:
-			break;
-		}
-	}
-}
-
-void set_p_state_switch_method(
 		struct dc *dc,
 		struct dc_state *context,
-		struct pipe_ctx *pipe_ctx)
+		struct pipe_ctx *pipe_ctx,
+		struct tg_color *color)
 {
-	struct vba_vars_st *vba = &context->bw_ctx.dml.vba;
-	bool enable_subvp;
+	uint32_t color_value = MAX_TG_COLOR_VALUE;
+	bool enable_subvp = false;
+	int i;
 
-	if (!dc->ctx || !dc->ctx->dmub_srv || !pipe_ctx || !vba || !context)
+	if (!dc->ctx || !dc->ctx->dmub_srv || !pipe_ctx || !context)
 		return;
 
-	if (vba->DRAMClockChangeSupport[vba->VoltageLevel][vba->maxMpcComb] !=
-			dm_dram_clock_change_unsupported) {
-		/* MCLK switching is supported */
-		if (!pipe_ctx->has_vactive_margin) {
-			/* In Vblank - yellow */
-			pipe_ctx->p_state_type = P_STATE_V_BLANK;
+	for (i = 0; i < dc->res_pool->pipe_count; i++) {
+		struct pipe_ctx *pipe = &context->res_ctx.pipe_ctx[i];
 
-			if (context->bw_ctx.bw.dcn.clk.fw_based_mclk_switching) {
-				/* FPO + Vblank - cyan */
-				pipe_ctx->p_state_type = P_STATE_FPO;
-			}
+		if (pipe->stream && pipe->stream->mall_stream_config.paired_stream &&
+		    pipe->stream->mall_stream_config.type == SUBVP_MAIN) {
+			/* SubVP enable - red */
+			color->color_g_y = 0;
+			color->color_b_cb = 0;
+			color->color_r_cr = color_value;
+			enable_subvp = true;
+
+			if (pipe_ctx->stream == pipe->stream)
+				return;
+			break;
+		}
+	}
+
+	if (enable_subvp && pipe_ctx->stream->mall_stream_config.type == SUBVP_NONE) {
+		color->color_r_cr = 0;
+		if (pipe_ctx->stream->allow_freesync == 1) {
+			/* SubVP enable and DRR on - green */
+			color->color_b_cb = 0;
+			color->color_g_y = color_value;
 		} else {
-			/* In Vactive - pink */
-			pipe_ctx->p_state_type = P_STATE_V_ACTIVE;
-		}
-
-		/* SubVP */
-		enable_subvp = false;
-
-		for (int i = 0; i < dc->res_pool->pipe_count; i++) {
-			struct pipe_ctx *pipe = &context->res_ctx.pipe_ctx[i];
-
-			if (pipe->stream && dc_state_get_paired_subvp_stream(context, pipe->stream) &&
-					dc_state_get_pipe_subvp_type(context, pipe) == SUBVP_MAIN) {
-				/* SubVP enable - red */
-				pipe_ctx->p_state_type = P_STATE_SUB_VP;
-				enable_subvp = true;
-
-				if (pipe_ctx->stream == pipe->stream)
-					return;
-				break;
-			}
-		}
-
-		if (enable_subvp && dc_state_get_pipe_subvp_type(context, pipe_ctx) == SUBVP_NONE) {
-			if (pipe_ctx->stream->allow_freesync == 1) {
-				/* SubVP enable and DRR on - green */
-				pipe_ctx->p_state_type = P_STATE_DRR_SUB_VP;
-			} else {
-				/* SubVP enable and No DRR - blue */
-				pipe_ctx->p_state_type = P_STATE_V_BLANK_SUB_VP;
-			}
+			/* SubVP enable and No DRR - blue */
+			color->color_g_y = 0;
+			color->color_b_cb = color_value;
 		}
 	}
 }
@@ -559,8 +473,7 @@ void hwss_build_fast_sequence(struct dc *dc,
 		unsigned int dmub_cmd_count,
 		struct block_sequence block_sequence[],
 		int *num_steps,
-		struct pipe_ctx *pipe_ctx,
-		struct dc_stream_status *stream_status)
+		struct pipe_ctx *pipe_ctx)
 {
 	struct dc_plane_state *plane = pipe_ctx->plane_state;
 	struct dc_stream_state *stream = pipe_ctx->stream;
@@ -577,8 +490,7 @@ void hwss_build_fast_sequence(struct dc *dc,
 	if (dc->hwss.subvp_pipe_control_lock_fast) {
 		block_sequence[*num_steps].params.subvp_pipe_control_lock_fast_params.dc = dc;
 		block_sequence[*num_steps].params.subvp_pipe_control_lock_fast_params.lock = true;
-		block_sequence[*num_steps].params.subvp_pipe_control_lock_fast_params.subvp_immediate_flip =
-				plane->flip_immediate && stream_status->mall_stream_config.type == SUBVP_MAIN;
+		block_sequence[*num_steps].params.subvp_pipe_control_lock_fast_params.pipe_ctx = pipe_ctx;
 		block_sequence[*num_steps].func = DMUB_SUBVP_PIPE_CONTROL_LOCK_FAST;
 		(*num_steps)++;
 	}
@@ -617,7 +529,7 @@ void hwss_build_fast_sequence(struct dc *dc,
 			}
 			if (dc->hwss.update_plane_addr && current_mpc_pipe->plane_state->update_flags.bits.addr_update) {
 				if (resource_is_pipe_type(current_mpc_pipe, OTG_MASTER) &&
-						stream_status->mall_stream_config.type == SUBVP_MAIN) {
+						current_mpc_pipe->stream->mall_stream_config.type == SUBVP_MAIN) {
 					block_sequence[*num_steps].params.subvp_save_surf_addr.dc_dmub_srv = dc->ctx->dmub_srv;
 					block_sequence[*num_steps].params.subvp_save_surf_addr.addr = &current_mpc_pipe->plane_state->address;
 					block_sequence[*num_steps].params.subvp_save_surf_addr.subvp_index = current_mpc_pipe->subvp_index;
@@ -700,8 +612,7 @@ void hwss_build_fast_sequence(struct dc *dc,
 	if (dc->hwss.subvp_pipe_control_lock_fast) {
 		block_sequence[*num_steps].params.subvp_pipe_control_lock_fast_params.dc = dc;
 		block_sequence[*num_steps].params.subvp_pipe_control_lock_fast_params.lock = false;
-		block_sequence[*num_steps].params.subvp_pipe_control_lock_fast_params.subvp_immediate_flip =
-				plane->flip_immediate && stream_status->mall_stream_config.type == SUBVP_MAIN;
+		block_sequence[*num_steps].params.subvp_pipe_control_lock_fast_params.pipe_ctx = pipe_ctx;
 		block_sequence[*num_steps].func = DMUB_SUBVP_PIPE_CONTROL_LOCK_FAST;
 		(*num_steps)++;
 	}
@@ -899,6 +810,42 @@ void hwss_subvp_save_surf_addr(union block_sequence_params *params)
 	uint8_t subvp_index = params->subvp_save_surf_addr.subvp_index;
 
 	dc_dmub_srv_subvp_save_surf_addr(dc_dmub_srv, addr, subvp_index);
+}
+
+void get_mclk_switch_visual_confirm_color(
+		struct dc *dc,
+		struct dc_state *context,
+		struct pipe_ctx *pipe_ctx,
+		struct tg_color *color)
+{
+	uint32_t color_value = MAX_TG_COLOR_VALUE;
+	struct vba_vars_st *vba = &context->bw_ctx.dml.vba;
+
+	if (!dc->ctx || !dc->ctx->dmub_srv || !pipe_ctx || !vba || !context)
+		return;
+
+	if (vba->DRAMClockChangeSupport[vba->VoltageLevel][vba->maxMpcComb] !=
+			dm_dram_clock_change_unsupported) {
+		/* MCLK switching is supported */
+		if (!pipe_ctx->has_vactive_margin) {
+			/* In Vblank - yellow */
+			color->color_r_cr = color_value;
+			color->color_g_y = color_value;
+
+			if (context->bw_ctx.bw.dcn.clk.fw_based_mclk_switching) {
+				/* FPO + Vblank - cyan */
+				color->color_r_cr = 0;
+				color->color_g_y  = color_value;
+				color->color_b_cb = color_value;
+			}
+		} else {
+			/* In Vactive - pink */
+			color->color_r_cr = color_value;
+			color->color_b_cb = color_value;
+		}
+		/* SubVP */
+		get_subvp_visual_confirm_color(dc, context, pipe_ctx, color);
+	}
 }
 
 void get_surface_tile_visual_confirm_color(

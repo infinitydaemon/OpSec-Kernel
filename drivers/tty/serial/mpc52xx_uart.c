@@ -1765,12 +1765,15 @@ static int mpc52xx_uart_of_probe(struct platform_device *op)
 	return 0;
 }
 
-static void mpc52xx_uart_of_remove(struct platform_device *op)
+static int
+mpc52xx_uart_of_remove(struct platform_device *op)
 {
 	struct uart_port *port = platform_get_drvdata(op);
 
 	if (port)
 		uart_remove_one_port(&mpc52xx_uart_driver, port);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -1843,7 +1846,7 @@ MODULE_DEVICE_TABLE(of, mpc52xx_uart_of_match);
 
 static struct platform_driver mpc52xx_uart_of_driver = {
 	.probe		= mpc52xx_uart_of_probe,
-	.remove_new	= mpc52xx_uart_of_remove,
+	.remove		= mpc52xx_uart_of_remove,
 #ifdef CONFIG_PM
 	.suspend	= mpc52xx_uart_of_suspend,
 	.resume		= mpc52xx_uart_of_resume,

@@ -207,8 +207,7 @@ static struct inode *nfs_layout_find_inode(struct nfs_client *clp,
  * Enforce RFC5661 section 12.5.5.2.1. (Layout Recall and Return Sequencing)
  */
 static u32 pnfs_check_callback_stateid(struct pnfs_layout_hdr *lo,
-					const nfs4_stateid *new,
-					struct cb_process_state *cps)
+					const nfs4_stateid *new)
 {
 	u32 oldseq, newseq;
 
@@ -222,29 +221,28 @@ static u32 pnfs_check_callback_stateid(struct pnfs_layout_hdr *lo,
 
 	newseq = be32_to_cpu(new->seqid);
 	/* Are we already in a layout recall situation? */
-	if (test_bit(NFS_LAYOUT_RETURN, &lo->plh_flags))
-		return NFS4ERR_DELAY;
+	if (test_bit(NFS_LAYOUT_RETURN_REQUESTED, &lo->plh_flags) &&
+	    lo->plh_return_seq != 0) {
+		if (newseq < lo->plh_return_seq)
+			return NFS4ERR_OLD_STATEID;
+		if (newseq > lo->plh_return_seq)
+			return NFS4ERR_DELAY;
+		goto out;
+	}
 
-	/*
-	 * Check that the stateid matches what we think it should be.
-	 * Note that if the server sent us a list of referring calls,
-	 * and we know that those have completed, then we trust the
-	 * stateid argument is correct.
-	 */
+	/* Check that the stateid matches what we think it should be. */
 	oldseq = be32_to_cpu(lo->plh_stateid.seqid);
-	if (newseq > oldseq + 1 && !cps->referring_calls)
+	if (newseq > oldseq + 1)
 		return NFS4ERR_DELAY;
-
 	/* Crazy server! */
 	if (newseq <= oldseq)
 		return NFS4ERR_OLD_STATEID;
-
+out:
 	return NFS_OK;
 }
 
 static u32 initiate_file_draining(struct nfs_client *clp,
-				  struct cb_layoutrecallargs *args,
-				  struct cb_process_state *cps)
+				  struct cb_layoutrecallargs *args)
 {
 	struct inode *ino;
 	struct pnfs_layout_hdr *lo;
@@ -268,7 +266,7 @@ static u32 initiate_file_draining(struct nfs_client *clp,
 		goto out;
 	}
 	pnfs_get_layout_hdr(lo);
-	rv = pnfs_check_callback_stateid(lo, &args->cbl_stateid, cps);
+	rv = pnfs_check_callback_stateid(lo, &args->cbl_stateid);
 	if (rv != NFS_OK)
 		goto unlock;
 
@@ -328,11 +326,10 @@ static u32 initiate_bulk_draining(struct nfs_client *clp,
 }
 
 static u32 do_callback_layoutrecall(struct nfs_client *clp,
-				    struct cb_layoutrecallargs *args,
-				    struct cb_process_state *cps)
+				    struct cb_layoutrecallargs *args)
 {
 	if (args->cbl_recall_type == RETURN_FILE)
-		return initiate_file_draining(clp, args, cps);
+		return initiate_file_draining(clp, args);
 	return initiate_bulk_draining(clp, args);
 }
 
@@ -343,12 +340,11 @@ __be32 nfs4_callback_layoutrecall(void *argp, void *resp,
 	u32 res = NFS4ERR_OP_NOT_IN_SESSION;
 
 	if (cps->clp)
-		res = do_callback_layoutrecall(cps->clp, args, cps);
+		res = do_callback_layoutrecall(cps->clp, args);
 	return cpu_to_be32(res);
 }
 
-static void pnfs_recall_all_layouts(struct nfs_client *clp,
-				    struct cb_process_state *cps)
+static void pnfs_recall_all_layouts(struct nfs_client *clp)
 {
 	struct cb_layoutrecallargs args;
 
@@ -356,7 +352,7 @@ static void pnfs_recall_all_layouts(struct nfs_client *clp,
 	memset(&args, 0, sizeof(args));
 	args.cbl_recall_type = RETURN_ALL;
 	/* FIXME we ignore errors, what should we do? */
-	do_callback_layoutrecall(clp, &args, cps);
+	do_callback_layoutrecall(clp, &args);
 }
 
 __be32 nfs4_callback_devicenotify(void *argp, void *resp,
@@ -454,7 +450,6 @@ static int referring_call_exists(struct nfs_client *clp,
 	__acquires(lock)
 {
 	int status = 0;
-	int found = 0;
 	int i, j;
 	struct nfs4_session *session;
 	struct nfs4_slot_table *tbl;
@@ -483,12 +478,11 @@ static int referring_call_exists(struct nfs_client *clp,
 			spin_lock(lock);
 			if (status)
 				goto out;
-			found++;
 		}
 	}
 
 out:
-	return status < 0 ? status : found;
+	return status;
 }
 
 __be32 nfs4_callback_sequence(void *argp, void *resp,
@@ -499,7 +493,6 @@ __be32 nfs4_callback_sequence(void *argp, void *resp,
 	struct nfs4_slot_table *tbl;
 	struct nfs4_slot *slot;
 	struct nfs_client *clp;
-	int ret;
 	int i;
 	__be32 status = htonl(NFS4ERR_BADSESSION);
 
@@ -559,13 +552,11 @@ __be32 nfs4_callback_sequence(void *argp, void *resp,
 	 * related callback was received before the response to the original
 	 * call.
 	 */
-	ret = referring_call_exists(clp, args->csa_nrclists, args->csa_rclists,
-				    &tbl->slot_tbl_lock);
-	if (ret < 0) {
+	if (referring_call_exists(clp, args->csa_nrclists, args->csa_rclists,
+				&tbl->slot_tbl_lock) < 0) {
 		status = htonl(NFS4ERR_DELAY);
 		goto out_unlock;
 	}
-	cps->referring_calls = ret;
 
 	/*
 	 * RFC5661 20.9.3
@@ -626,7 +617,7 @@ __be32 nfs4_callback_recallany(void *argp, void *resp,
 		nfs_expire_unused_delegation_types(cps->clp, flags);
 
 	if (args->craa_type_mask & BIT(RCA4_TYPE_MASK_FILE_LAYOUT))
-		pnfs_recall_all_layouts(cps->clp, cps);
+		pnfs_recall_all_layouts(cps->clp);
 
 	if (args->craa_type_mask & BIT(PNFS_FF_RCA4_TYPE_MASK_READ)) {
 		set_bit(NFS4CLNT_RECALL_ANY_LAYOUT_READ, &cps->clp->cl_state);

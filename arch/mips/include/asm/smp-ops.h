@@ -13,6 +13,8 @@
 
 #include <linux/errno.h>
 
+#include <asm/mips-cps.h>
+
 #ifdef CONFIG_SMP
 
 #include <linux/cpumask.h>

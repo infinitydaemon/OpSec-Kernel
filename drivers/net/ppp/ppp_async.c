@@ -537,7 +537,7 @@ ppp_async_encode(struct asyncppp *ap)
 	proto = get_unaligned_be16(data);
 
 	/*
-	 * LCP packets with code values between 1 (configure-request)
+	 * LCP packets with code values between 1 (configure-reqest)
 	 * and 7 (code-reject) must be sent as though no options
 	 * had been negotiated.
 	 */

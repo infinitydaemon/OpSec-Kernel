@@ -222,7 +222,6 @@ static void test_attach_api_fails(void)
 		"bpf_fentry_test2",
 	};
 	__u64 cookies[2];
-	int saved_error;
 
 	addrs[0] = ksym_get_addr("bpf_fentry_test1");
 	addrs[1] = ksym_get_addr("bpf_fentry_test2");
@@ -239,11 +238,10 @@ static void test_attach_api_fails(void)
 	/* fail_1 - pattern and opts NULL */
 	link = bpf_program__attach_kprobe_multi_opts(skel->progs.test_kprobe_manual,
 						     NULL, NULL);
-	saved_error = -errno;
 	if (!ASSERT_ERR_PTR(link, "fail_1"))
 		goto cleanup;
 
-	if (!ASSERT_EQ(saved_error, -EINVAL, "fail_1_error"))
+	if (!ASSERT_EQ(libbpf_get_error(link), -EINVAL, "fail_1_error"))
 		goto cleanup;
 
 	/* fail_2 - both addrs and syms set */
@@ -254,11 +252,10 @@ static void test_attach_api_fails(void)
 
 	link = bpf_program__attach_kprobe_multi_opts(skel->progs.test_kprobe_manual,
 						     NULL, &opts);
-	saved_error = -errno;
 	if (!ASSERT_ERR_PTR(link, "fail_2"))
 		goto cleanup;
 
-	if (!ASSERT_EQ(saved_error, -EINVAL, "fail_2_error"))
+	if (!ASSERT_EQ(libbpf_get_error(link), -EINVAL, "fail_2_error"))
 		goto cleanup;
 
 	/* fail_3 - pattern and addrs set */
@@ -269,11 +266,10 @@ static void test_attach_api_fails(void)
 
 	link = bpf_program__attach_kprobe_multi_opts(skel->progs.test_kprobe_manual,
 						     "ksys_*", &opts);
-	saved_error = -errno;
 	if (!ASSERT_ERR_PTR(link, "fail_3"))
 		goto cleanup;
 
-	if (!ASSERT_EQ(saved_error, -EINVAL, "fail_3_error"))
+	if (!ASSERT_EQ(libbpf_get_error(link), -EINVAL, "fail_3_error"))
 		goto cleanup;
 
 	/* fail_4 - pattern and cnt set */
@@ -284,11 +280,10 @@ static void test_attach_api_fails(void)
 
 	link = bpf_program__attach_kprobe_multi_opts(skel->progs.test_kprobe_manual,
 						     "ksys_*", &opts);
-	saved_error = -errno;
 	if (!ASSERT_ERR_PTR(link, "fail_4"))
 		goto cleanup;
 
-	if (!ASSERT_EQ(saved_error, -EINVAL, "fail_4_error"))
+	if (!ASSERT_EQ(libbpf_get_error(link), -EINVAL, "fail_4_error"))
 		goto cleanup;
 
 	/* fail_5 - pattern and cookies */
@@ -299,26 +294,10 @@ static void test_attach_api_fails(void)
 
 	link = bpf_program__attach_kprobe_multi_opts(skel->progs.test_kprobe_manual,
 						     "ksys_*", &opts);
-	saved_error = -errno;
 	if (!ASSERT_ERR_PTR(link, "fail_5"))
 		goto cleanup;
 
-	if (!ASSERT_EQ(saved_error, -EINVAL, "fail_5_error"))
-		goto cleanup;
-
-	/* fail_6 - abnormal cnt */
-	opts.addrs = (const unsigned long *) addrs;
-	opts.syms = NULL;
-	opts.cnt = INT_MAX;
-	opts.cookies = NULL;
-
-	link = bpf_program__attach_kprobe_multi_opts(skel->progs.test_kprobe_manual,
-						     NULL, &opts);
-	saved_error = -errno;
-	if (!ASSERT_ERR_PTR(link, "fail_6"))
-		goto cleanup;
-
-	if (!ASSERT_EQ(saved_error, -E2BIG, "fail_6_error"))
+	if (!ASSERT_EQ(libbpf_get_error(link), -EINVAL, "fail_5_error"))
 		goto cleanup;
 
 cleanup:

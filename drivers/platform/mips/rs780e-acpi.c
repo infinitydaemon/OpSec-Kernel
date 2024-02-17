@@ -32,25 +32,29 @@ static u8 pmio_read_index(u16 index, u8 reg)
 	return inb(index + 1);
 }
 
-static void pm_iowrite(u8 reg, u8 value)
+void pm_iowrite(u8 reg, u8 value)
 {
 	pmio_write_index(PM_INDEX, reg, value);
 }
+EXPORT_SYMBOL(pm_iowrite);
 
-static u8 pm_ioread(u8 reg)
+u8 pm_ioread(u8 reg)
 {
 	return pmio_read_index(PM_INDEX, reg);
 }
+EXPORT_SYMBOL(pm_ioread);
 
-static void pm2_iowrite(u8 reg, u8 value)
+void pm2_iowrite(u8 reg, u8 value)
 {
 	pmio_write_index(PM2_INDEX, reg, value);
 }
+EXPORT_SYMBOL(pm2_iowrite);
 
-static u8 pm2_ioread(u8 reg)
+u8 pm2_ioread(u8 reg)
 {
 	return pmio_read_index(PM2_INDEX, reg);
 }
+EXPORT_SYMBOL(pm2_ioread);
 
 static void acpi_hw_clear_status(void)
 {

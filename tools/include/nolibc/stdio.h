@@ -212,7 +212,7 @@ char *fgets(char *s, int size, FILE *stream)
  *  - %s
  *  - unknown modifiers are ignored.
  */
-static __attribute__((unused, format(printf, 2, 0)))
+static __attribute__((unused))
 int vfprintf(FILE *stream, const char *fmt, va_list args)
 {
 	char escape, lpref, c;
@@ -318,7 +318,7 @@ int vfprintf(FILE *stream, const char *fmt, va_list args)
 	return written;
 }
 
-static __attribute__((unused, format(printf, 1, 0)))
+static __attribute__((unused))
 int vprintf(const char *fmt, va_list args)
 {
 	return vfprintf(stdout, fmt, args);

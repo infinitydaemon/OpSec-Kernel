@@ -8,7 +8,7 @@ Dynamic DMA mapping Guide
 
 This is a guide to device driver writers on how to use the DMA API
 with example pseudo-code.  For a concise description of the API, see
-Documentation/core-api/dma-api.rst.
+DMA-API.txt.
 
 CPU and DMA addresses
 =====================

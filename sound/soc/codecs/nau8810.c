@@ -169,7 +169,6 @@ static int nau8810_eq_get(struct snd_kcontrol *kcontrol,
 	struct soc_bytes_ext *params = (void *)kcontrol->private_value;
 	int i, reg, reg_val;
 	u16 *val;
-	__be16 tmp;
 
 	val = (u16 *)ucontrol->value.bytes.data;
 	reg = NAU8810_REG_EQ1;
@@ -178,8 +177,8 @@ static int nau8810_eq_get(struct snd_kcontrol *kcontrol,
 		/* conversion of 16-bit integers between native CPU format
 		 * and big endian format
 		 */
-		tmp = cpu_to_be16(reg_val);
-		memcpy(val + i, &tmp, sizeof(tmp));
+		reg_val = cpu_to_be16(reg_val);
+		memcpy(val + i, &reg_val, sizeof(reg_val));
 	}
 
 	return 0;
@@ -202,7 +201,6 @@ static int nau8810_eq_put(struct snd_kcontrol *kcontrol,
 	void *data;
 	u16 *val, value;
 	int i, reg, ret;
-	__be16 *tmp;
 
 	data = kmemdup(ucontrol->value.bytes.data,
 		params->max, GFP_KERNEL | GFP_DMA);
@@ -215,8 +213,7 @@ static int nau8810_eq_put(struct snd_kcontrol *kcontrol,
 		/* conversion of 16-bit integers between native CPU format
 		 * and big endian format
 		 */
-		tmp = (__be16 *)(val + i);
-		value = be16_to_cpup(tmp);
+		value = be16_to_cpu(*(val + i));
 		ret = regmap_write(nau8810->regmap, reg + i, value);
 		if (ret) {
 			dev_err(component->dev, "EQ configuration fail, register: %x ret: %d\n",

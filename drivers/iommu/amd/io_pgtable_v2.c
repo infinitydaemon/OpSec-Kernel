@@ -244,6 +244,7 @@ static int iommu_v2_map_pages(struct io_pgtable_ops *ops, unsigned long iova,
 	unsigned long mapped_size = 0;
 	unsigned long o_iova = iova;
 	size_t size = pgcount << __ffs(pgsize);
+	int count = 0;
 	int ret = 0;
 	bool updated = false;
 
@@ -264,14 +265,19 @@ static int iommu_v2_map_pages(struct io_pgtable_ops *ops, unsigned long iova,
 
 		*pte = set_pte_attr(paddr, map_size, prot);
 
+		count++;
 		iova += map_size;
 		paddr += map_size;
 		mapped_size += map_size;
 	}
 
 out:
-	if (updated)
-		amd_iommu_domain_flush_pages(pdom, o_iova, size);
+	if (updated) {
+		if (count > 1)
+			amd_iommu_flush_tlb(&pdom->domain, 0);
+		else
+			amd_iommu_flush_page(&pdom->domain, 0, o_iova);
+	}
 
 	if (mapped)
 		*mapped += mapped_size;

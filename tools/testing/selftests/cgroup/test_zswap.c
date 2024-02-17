@@ -50,9 +50,9 @@ static int get_zswap_stored_pages(size_t *value)
 	return read_int("/sys/kernel/debug/zswap/stored_pages", value);
 }
 
-static int get_cg_wb_count(const char *cg)
+static int get_zswap_written_back_pages(size_t *value)
 {
-	return cg_read_key_long(cg, "memory.stat", "zswp_wb");
+	return read_int("/sys/kernel/debug/zswap/written_back_pages", value);
 }
 
 static long get_zswpout(const char *cgroup)
@@ -71,24 +71,6 @@ static int allocate_bytes(const char *cgroup, void *arg)
 		mem[i] = 'a';
 	free(mem);
 	return 0;
-}
-
-static char *setup_test_group_1M(const char *root, const char *name)
-{
-	char *group_name = cg_name(root, name);
-
-	if (!group_name)
-		return NULL;
-	if (cg_create(group_name))
-		goto fail;
-	if (cg_write(group_name, "memory.max", "1M")) {
-		cg_destroy(group_name);
-		goto fail;
-	}
-	return group_name;
-fail:
-	free(group_name);
-	return NULL;
 }
 
 /*
@@ -135,51 +117,43 @@ out:
 
 /*
  * When trying to store a memcg page in zswap, if the memcg hits its memory
- * limit in zswap, writeback should affect only the zswapped pages of that
- * memcg.
+ * limit in zswap, writeback should not be triggered.
+ *
+ * This was fixed with commit 0bdf0efa180a("zswap: do not shrink if cgroup may
+ * not zswap"). Needs to be revised when a per memcg writeback mechanism is
+ * implemented.
  */
 static int test_no_invasive_cgroup_shrink(const char *root)
 {
+	size_t written_back_before, written_back_after;
 	int ret = KSFT_FAIL;
-	size_t control_allocation_size = MB(10);
-	char *control_allocation, *wb_group = NULL, *control_group = NULL;
+	char *test_group;
 
 	/* Set up */
-	wb_group = setup_test_group_1M(root, "per_memcg_wb_test1");
-	if (!wb_group)
-		return KSFT_FAIL;
-	if (cg_write(wb_group, "memory.zswap.max", "10K"))
+	test_group = cg_name(root, "no_shrink_test");
+	if (!test_group)
 		goto out;
-	control_group = setup_test_group_1M(root, "per_memcg_wb_test2");
-	if (!control_group)
+	if (cg_create(test_group))
 		goto out;
-
-	/* Push some test_group2 memory into zswap */
-	if (cg_enter_current(control_group))
+	if (cg_write(test_group, "memory.max", "1M"))
 		goto out;
-	control_allocation = malloc(control_allocation_size);
-	for (int i = 0; i < control_allocation_size; i += 4095)
-		control_allocation[i] = 'a';
-	if (cg_read_key_long(control_group, "memory.stat", "zswapped") < 1)
+	if (cg_write(test_group, "memory.zswap.max", "10K"))
+		goto out;
+	if (get_zswap_written_back_pages(&written_back_before))
 		goto out;
 
-	/* Allocate 10x memory.max to push wb_group memory into zswap and trigger wb */
-	if (cg_run(wb_group, allocate_bytes, (void *)MB(10)))
+	/* Allocate 10x memory.max to push memory into zswap */
+	if (cg_run(test_group, allocate_bytes, (void *)MB(10)))
 		goto out;
 
-	/* Verify that only zswapped memory from gwb_group has been written back */
-	if (get_cg_wb_count(wb_group) > 0 && get_cg_wb_count(control_group) == 0)
+	/* Verify that no writeback happened because of the memcg allocation */
+	if (get_zswap_written_back_pages(&written_back_after))
+		goto out;
+	if (written_back_after == written_back_before)
 		ret = KSFT_PASS;
 out:
-	cg_enter_current(root);
-	if (control_group) {
-		cg_destroy(control_group);
-		free(control_group);
-	}
-	cg_destroy(wb_group);
-	free(wb_group);
-	if (control_allocation)
-		free(control_allocation);
+	cg_destroy(test_group);
+	free(test_group);
 	return ret;
 }
 

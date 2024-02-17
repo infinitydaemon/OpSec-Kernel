@@ -207,6 +207,5 @@ DECLARE_WORKLOAD(brstack);
 DECLARE_WORKLOAD(datasym);
 
 extern const char *dso_to_test;
-extern const char *test_objdump_path;
 
 #endif /* TESTS_H */

@@ -259,6 +259,7 @@ static int brcmstb_pwm_probe(struct platform_device *pdev)
 	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int brcmstb_pwm_suspend(struct device *dev)
 {
 	struct brcmstb_pwm *p = dev_get_drvdata(dev);
@@ -274,16 +275,17 @@ static int brcmstb_pwm_resume(struct device *dev)
 
 	return clk_prepare_enable(p->clk);
 }
+#endif
 
-static DEFINE_SIMPLE_DEV_PM_OPS(brcmstb_pwm_pm_ops, brcmstb_pwm_suspend,
-				brcmstb_pwm_resume);
+static SIMPLE_DEV_PM_OPS(brcmstb_pwm_pm_ops, brcmstb_pwm_suspend,
+			 brcmstb_pwm_resume);
 
 static struct platform_driver brcmstb_pwm_driver = {
 	.probe = brcmstb_pwm_probe,
 	.driver = {
 		.name = "pwm-brcmstb",
 		.of_match_table = brcmstb_pwm_of_match,
-		.pm = pm_ptr(&brcmstb_pwm_pm_ops),
+		.pm = &brcmstb_pwm_pm_ops,
 	},
 };
 module_platform_driver(brcmstb_pwm_driver);

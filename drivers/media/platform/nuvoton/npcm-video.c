@@ -26,6 +26,7 @@
 #include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/sched.h>
+#include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/v4l2-controls.h>
 #include <linux/videodev2.h>
@@ -119,7 +120,7 @@ struct npcm_video {
 	struct mutex video_lock; /* v4l2 and videobuf2 lock */
 
 	struct list_head buffers;
-	struct mutex buffer_lock; /* buffer list lock */
+	spinlock_t lock; /* buffer list lock */
 	unsigned long flags;
 	unsigned int sequence;
 
@@ -392,7 +393,7 @@ static void npcm_video_free_diff_table(struct npcm_video *video)
 	struct rect_list *tmp;
 	unsigned int i;
 
-	for (i = 0; i < vb2_get_num_buffers(&video->queue); i++) {
+	for (i = 0; i < video->queue.num_buffers; i++) {
 		head = &video->list[i];
 		list_for_each_safe(pos, nx, head) {
 			tmp = list_entry(pos, struct rect_list, list);
@@ -781,6 +782,7 @@ static int npcm_video_start_frame(struct npcm_video *video)
 {
 	struct npcm_video_buffer *buf;
 	struct regmap *vcd = video->vcd_regmap;
+	unsigned long flags;
 	unsigned int val;
 	int ret;
 
@@ -796,17 +798,17 @@ static int npcm_video_start_frame(struct npcm_video *video)
 		return -EBUSY;
 	}
 
-	mutex_lock(&video->buffer_lock);
+	spin_lock_irqsave(&video->lock, flags);
 	buf = list_first_entry_or_null(&video->buffers,
 				       struct npcm_video_buffer, link);
 	if (!buf) {
-		mutex_unlock(&video->buffer_lock);
+		spin_unlock_irqrestore(&video->lock, flags);
 		dev_dbg(video->dev, "No empty buffers; skip capture frame\n");
 		return 0;
 	}
 
 	set_bit(VIDEO_CAPTURING, &video->flags);
-	mutex_unlock(&video->buffer_lock);
+	spin_unlock_irqrestore(&video->lock, flags);
 
 	npcm_video_vcd_state_machine_reset(video);
 
@@ -832,13 +834,14 @@ static void npcm_video_bufs_done(struct npcm_video *video,
 				 enum vb2_buffer_state state)
 {
 	struct npcm_video_buffer *buf;
+	unsigned long flags;
 
-	mutex_lock(&video->buffer_lock);
+	spin_lock_irqsave(&video->lock, flags);
 	list_for_each_entry(buf, &video->buffers, link)
 		vb2_buffer_done(&buf->vb.vb2_buf, state);
 
 	INIT_LIST_HEAD(&video->buffers);
-	mutex_unlock(&video->buffer_lock);
+	spin_unlock_irqrestore(&video->lock, flags);
 }
 
 static void npcm_video_get_diff_rect(struct npcm_video *video, unsigned int index)
@@ -1068,12 +1071,12 @@ static irqreturn_t npcm_video_irq(int irq, void *arg)
 
 	if (status & VCD_STAT_DONE) {
 		regmap_write(vcd, VCD_INTE, 0);
-		mutex_lock(&video->buffer_lock);
+		spin_lock(&video->lock);
 		clear_bit(VIDEO_CAPTURING, &video->flags);
 		buf = list_first_entry_or_null(&video->buffers,
 					       struct npcm_video_buffer, link);
 		if (!buf) {
-			mutex_unlock(&video->buffer_lock);
+			spin_unlock(&video->lock);
 			return IRQ_NONE;
 		}
 
@@ -1090,7 +1093,7 @@ static irqreturn_t npcm_video_irq(int irq, void *arg)
 			size = npcm_video_hextile(video, index, dma_addr, addr);
 			break;
 		default:
-			mutex_unlock(&video->buffer_lock);
+			spin_unlock(&video->lock);
 			return IRQ_NONE;
 		}
 
@@ -1101,7 +1104,7 @@ static irqreturn_t npcm_video_irq(int irq, void *arg)
 
 		vb2_buffer_done(&buf->vb.vb2_buf, VB2_BUF_STATE_DONE);
 		list_del(&buf->link);
-		mutex_unlock(&video->buffer_lock);
+		spin_unlock(&video->lock);
 
 		if (npcm_video_start_frame(video))
 			dev_err(video->dev, "Failed to capture next frame\n");
@@ -1505,12 +1508,13 @@ static void npcm_video_buf_queue(struct vb2_buffer *vb)
 	struct npcm_video *video = vb2_get_drv_priv(vb->vb2_queue);
 	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
 	struct npcm_video_buffer *nvb = to_npcm_video_buffer(vbuf);
+	unsigned long flags;
 	bool empty;
 
-	mutex_lock(&video->buffer_lock);
+	spin_lock_irqsave(&video->lock, flags);
 	empty = list_empty(&video->buffers);
 	list_add_tail(&nvb->link, &video->buffers);
-	mutex_unlock(&video->buffer_lock);
+	spin_unlock_irqrestore(&video->lock, flags);
 
 	if (test_bit(VIDEO_STREAMING, &video->flags) &&
 	    !test_bit(VIDEO_CAPTURING, &video->flags) && empty) {
@@ -1612,7 +1616,7 @@ static int npcm_video_setup_video(struct npcm_video *video)
 	vbq->drv_priv = video;
 	vbq->buf_struct_size = sizeof(struct npcm_video_buffer);
 	vbq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
-	vbq->min_queued_buffers = 3;
+	vbq->min_buffers_needed = 3;
 
 	rc = vb2_queue_init(vbq);
 	if (rc) {
@@ -1740,8 +1744,8 @@ static int npcm_video_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	video->dev = &pdev->dev;
+	spin_lock_init(&video->lock);
 	mutex_init(&video->video_lock);
-	mutex_init(&video->buffer_lock);
 	INIT_LIST_HEAD(&video->buffers);
 
 	regs = devm_platform_ioremap_resource(pdev, 0);

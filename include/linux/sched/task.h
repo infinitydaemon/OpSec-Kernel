@@ -7,8 +7,6 @@
  * functionality:
  */
 
-#include <linux/rcupdate.h>
-#include <linux/refcount.h>
 #include <linux/sched.h>
 #include <linux/uaccess.h>
 
@@ -227,7 +225,5 @@ static inline void task_unlock(struct task_struct *p)
 {
 	spin_unlock(&p->alloc_lock);
 }
-
-DEFINE_GUARD(task_lock, struct task_struct *, task_lock(_T), task_unlock(_T))
 
 #endif /* _LINUX_SCHED_TASK_H */

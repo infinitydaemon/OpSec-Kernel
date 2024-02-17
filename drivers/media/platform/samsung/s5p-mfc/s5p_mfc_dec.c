@@ -57,20 +57,6 @@ static struct s5p_mfc_fmt formats[] = {
 		.versions	= MFC_V6PLUS_BITS,
 	},
 	{
-		.fourcc         = V4L2_PIX_FMT_YUV420M,
-		.codec_mode     = S5P_MFC_CODEC_NONE,
-		.type           = MFC_FMT_RAW,
-		.num_planes     = 3,
-		.versions       = MFC_V12_BIT,
-	},
-	{
-		.fourcc         = V4L2_PIX_FMT_YVU420M,
-		.codec_mode     = S5P_MFC_CODEC_NONE,
-		.type           = MFC_FMT_RAW,
-		.num_planes     = 3,
-		.versions       = MFC_V12_BIT
-	},
-	{
 		.fourcc		= V4L2_PIX_FMT_H264,
 		.codec_mode	= S5P_MFC_CODEC_H264_DEC,
 		.type		= MFC_FMT_DEC,
@@ -160,7 +146,7 @@ static struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_FIMV_CODEC_HEVC_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V10PLUS_BITS,
+		.versions	= MFC_V10_BIT,
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION |
 				  V4L2_FMT_FLAG_CONTINUOUS_BYTESTREAM,
 	},
@@ -169,7 +155,7 @@ static struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_FIMV_CODEC_VP9_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V10PLUS_BITS,
+		.versions	= MFC_V10_BIT,
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION,
 	},
 };
@@ -369,19 +355,14 @@ static int vidioc_g_fmt(struct file *file, void *priv, struct v4l2_format *f)
 		pix_mp->width = ctx->buf_width;
 		pix_mp->height = ctx->buf_height;
 		pix_mp->field = V4L2_FIELD_NONE;
-		pix_mp->num_planes = ctx->dst_fmt->num_planes;
+		pix_mp->num_planes = 2;
 		/* Set pixelformat to the format in which MFC
 		   outputs the decoded frame */
 		pix_mp->pixelformat = ctx->dst_fmt->fourcc;
-		pix_mp->plane_fmt[0].bytesperline = ctx->stride[0];
+		pix_mp->plane_fmt[0].bytesperline = ctx->buf_width;
 		pix_mp->plane_fmt[0].sizeimage = ctx->luma_size;
-		pix_mp->plane_fmt[1].bytesperline = ctx->stride[1];
+		pix_mp->plane_fmt[1].bytesperline = ctx->buf_width;
 		pix_mp->plane_fmt[1].sizeimage = ctx->chroma_size;
-		if (ctx->dst_fmt->fourcc == V4L2_PIX_FMT_YUV420M || ctx->dst_fmt->fourcc ==
-				V4L2_PIX_FMT_YVU420M) {
-			pix_mp->plane_fmt[2].bytesperline = ctx->stride[2];
-			pix_mp->plane_fmt[2].sizeimage = ctx->chroma_size_1;
-		}
 	} else if (f->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		/* This is run on OUTPUT
 		   The buffer contains compressed image
@@ -939,7 +920,6 @@ static int s5p_mfc_queue_setup(struct vb2_queue *vq,
 {
 	struct s5p_mfc_ctx *ctx = fh_to_ctx(vq->drv_priv);
 	struct s5p_mfc_dev *dev = ctx->dev;
-	const struct v4l2_format_info *format;
 
 	/* Video output for decoding (source)
 	 * this can be set after getting an instance */
@@ -956,13 +936,7 @@ static int s5p_mfc_queue_setup(struct vb2_queue *vq,
 	} else if (ctx->state == MFCINST_HEAD_PARSED &&
 		   vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		/* Output plane count is 2 - one for Y and one for CbCr */
-		format = v4l2_format_info(ctx->dst_fmt->fourcc);
-		if (!format) {
-			mfc_err("invalid format\n");
-			return -EINVAL;
-		}
-		*plane_count = format->comp_planes;
-
+		*plane_count = 2;
 		/* Setup buffer count */
 		if (*buf_count < ctx->pb_count)
 			*buf_count = ctx->pb_count;
@@ -981,18 +955,14 @@ static int s5p_mfc_queue_setup(struct vb2_queue *vq,
 	    vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		psize[0] = ctx->luma_size;
 		psize[1] = ctx->chroma_size;
-		if (ctx->dst_fmt->fourcc == V4L2_PIX_FMT_YUV420M || ctx->dst_fmt->fourcc ==
-				V4L2_PIX_FMT_YVU420M)
-			psize[2] = ctx->chroma_size_1;
+
 		if (IS_MFCV6_PLUS(dev))
 			alloc_devs[0] = ctx->dev->mem_dev[BANK_L_CTX];
 		else
 			alloc_devs[0] = ctx->dev->mem_dev[BANK_R_CTX];
 		alloc_devs[1] = ctx->dev->mem_dev[BANK_L_CTX];
-		if (ctx->dst_fmt->fourcc == V4L2_PIX_FMT_YUV420M || ctx->dst_fmt->fourcc ==
-				V4L2_PIX_FMT_YVU420M)
-			alloc_devs[2] = ctx->dev->mem_dev[BANK_L_CTX];
-	} else if (vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE && ctx->state == MFCINST_INIT) {
+	} else if (vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE &&
+		   ctx->state == MFCINST_INIT) {
 		psize[0] = ctx->dec_src_buf_size;
 		alloc_devs[0] = ctx->dev->mem_dev[BANK_L_CTX];
 	} else {
@@ -1024,24 +994,12 @@ static int s5p_mfc_buf_init(struct vb2_buffer *vb)
 			mfc_err("Plane buffer (CAPTURE) is too small\n");
 			return -EINVAL;
 		}
-		if (ctx->dst_fmt->fourcc == V4L2_PIX_FMT_YUV420M || ctx->dst_fmt->fourcc ==
-				V4L2_PIX_FMT_YVU420M) {
-			if (vb2_plane_size(vb, 2) < ctx->chroma_size_1) {
-				mfc_err("Plane buffer (CAPTURE) is too small\n");
-				return -EINVAL;
-			}
-		}
 		i = vb->index;
 		ctx->dst_bufs[i].b = vbuf;
 		ctx->dst_bufs[i].cookie.raw.luma =
 					vb2_dma_contig_plane_dma_addr(vb, 0);
 		ctx->dst_bufs[i].cookie.raw.chroma =
 					vb2_dma_contig_plane_dma_addr(vb, 1);
-		if (ctx->dst_fmt->fourcc == V4L2_PIX_FMT_YUV420M || ctx->dst_fmt->fourcc ==
-				V4L2_PIX_FMT_YVU420M) {
-			ctx->dst_bufs[i].cookie.raw.chroma_1 =
-					vb2_dma_contig_plane_dma_addr(vb, 2);
-		}
 		ctx->dst_bufs_cnt++;
 	} else if (vq->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		if (IS_ERR_OR_NULL(ERR_PTR(

@@ -302,15 +302,9 @@ static int virtio_dev_probe(struct device *_d)
 	if (err)
 		goto err;
 
-	if (dev->config->create_avq) {
-		err = dev->config->create_avq(dev);
-		if (err)
-			goto err;
-	}
-
 	err = drv->probe(dev);
 	if (err)
-		goto err_probe;
+		goto err;
 
 	/* If probe didn't do it, mark device DRIVER_OK ourselves. */
 	if (!(dev->config->get_status(dev) & VIRTIO_CONFIG_S_DRIVER_OK))
@@ -322,10 +316,6 @@ static int virtio_dev_probe(struct device *_d)
 	virtio_config_enable(dev);
 
 	return 0;
-
-err_probe:
-	if (dev->config->destroy_avq)
-		dev->config->destroy_avq(dev);
 err:
 	virtio_add_status(dev, VIRTIO_CONFIG_S_FAILED);
 	return err;
@@ -340,9 +330,6 @@ static void virtio_dev_remove(struct device *_d)
 	virtio_config_disable(dev);
 
 	drv->remove(dev);
-
-	if (dev->config->destroy_avq)
-		dev->config->destroy_avq(dev);
 
 	/* Driver should have reset device. */
 	WARN_ON_ONCE(dev->config->get_status(dev));
@@ -502,20 +489,13 @@ EXPORT_SYMBOL_GPL(unregister_virtio_device);
 int virtio_device_freeze(struct virtio_device *dev)
 {
 	struct virtio_driver *drv = drv_to_virtio(dev->dev.driver);
-	int ret;
 
 	virtio_config_disable(dev);
 
 	dev->failed = dev->config->get_status(dev) & VIRTIO_CONFIG_S_FAILED;
 
-	if (drv && drv->freeze) {
-		ret = drv->freeze(dev);
-		if (ret)
-			return ret;
-	}
-
-	if (dev->config->destroy_avq)
-		dev->config->destroy_avq(dev);
+	if (drv && drv->freeze)
+		return drv->freeze(dev);
 
 	return 0;
 }
@@ -552,16 +532,10 @@ int virtio_device_restore(struct virtio_device *dev)
 	if (ret)
 		goto err;
 
-	if (dev->config->create_avq) {
-		ret = dev->config->create_avq(dev);
-		if (ret)
-			goto err;
-	}
-
 	if (drv->restore) {
 		ret = drv->restore(dev);
 		if (ret)
-			goto err_restore;
+			goto err;
 	}
 
 	/* If restore didn't do it, mark device DRIVER_OK ourselves. */
@@ -572,9 +546,6 @@ int virtio_device_restore(struct virtio_device *dev)
 
 	return 0;
 
-err_restore:
-	if (dev->config->destroy_avq)
-		dev->config->destroy_avq(dev);
 err:
 	virtio_add_status(dev, VIRTIO_CONFIG_S_FAILED);
 	return ret;

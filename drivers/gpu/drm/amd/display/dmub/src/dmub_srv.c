@@ -64,7 +64,7 @@
 
 
 /* Default scratch mem size. */
-#define DMUB_SCRATCH_MEM_SIZE (1024)
+#define DMUB_SCRATCH_MEM_SIZE (256)
 
 /* Number of windows in use. */
 #define DMUB_NUM_WINDOWS (DMUB_WINDOW_TOTAL)
@@ -768,7 +768,7 @@ enum dmub_status dmub_srv_cmd_queue(struct dmub_srv *dmub,
 		return DMUB_STATUS_INVALID;
 
 	if (dmub->power_state != DMUB_POWER_STATE_D0)
-		return DMUB_STATUS_POWER_STATE_D3;
+		return DMUB_STATUS_INVALID;
 
 	if (dmub->inbox1_rb.rptr > dmub->inbox1_rb.capacity ||
 	    dmub->inbox1_rb.wrpt > dmub->inbox1_rb.capacity) {
@@ -789,7 +789,7 @@ enum dmub_status dmub_srv_cmd_execute(struct dmub_srv *dmub)
 		return DMUB_STATUS_INVALID;
 
 	if (dmub->power_state != DMUB_POWER_STATE_D0)
-		return DMUB_STATUS_POWER_STATE_D3;
+		return DMUB_STATUS_INVALID;
 
 	/**
 	 * Read back all the queued commands to ensure that they've

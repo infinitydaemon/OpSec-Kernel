@@ -548,7 +548,7 @@ static int tcf_ife_init(struct net *net, struct nlattr *nla,
 	exists = err;
 	if (exists && bind) {
 		kfree(p);
-		return ACT_P_BOUND;
+		return 0;
 	}
 
 	if (!exists) {

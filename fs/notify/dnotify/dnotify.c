@@ -29,6 +29,7 @@ static struct ctl_table dnotify_sysctls[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},
+	{}
 };
 static void __init dnotify_sysctl_init(void)
 {

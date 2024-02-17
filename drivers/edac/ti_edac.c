@@ -312,17 +312,19 @@ err:
 	return ret;
 }
 
-static void ti_edac_remove(struct platform_device *pdev)
+static int ti_edac_remove(struct platform_device *pdev)
 {
 	struct mem_ctl_info *mci = platform_get_drvdata(pdev);
 
 	edac_mc_del_mc(&pdev->dev);
 	edac_mc_free(mci);
+
+	return 0;
 }
 
 static struct platform_driver ti_edac_driver = {
 	.probe = ti_edac_probe,
-	.remove_new = ti_edac_remove,
+	.remove = ti_edac_remove,
 	.driver = {
 		   .name = EDAC_MOD_NAME,
 		   .of_match_table = ti_edac_of_match,

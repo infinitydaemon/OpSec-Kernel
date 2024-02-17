@@ -5,8 +5,6 @@
 
 #include "adf_cfg_strings.h"
 
-struct adf_accel_dev;
-
 enum adf_services {
 	SVC_CY = 0,
 	SVC_CY2,
@@ -22,7 +20,5 @@ enum adf_services {
 };
 
 extern const char *const adf_cfg_services[SVC_COUNT];
-
-int adf_get_service_enabled(struct adf_accel_dev *accel_dev);
 
 #endif

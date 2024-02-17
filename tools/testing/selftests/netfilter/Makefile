@@ -14,7 +14,6 @@ HOSTPKG_CONFIG := pkg-config
 CFLAGS += $(shell $(HOSTPKG_CONFIG) --cflags libmnl 2>/dev/null)
 LDLIBS += $(shell $(HOSTPKG_CONFIG) --libs libmnl 2>/dev/null || echo -lmnl)
 
-TEST_GEN_FILES =  nf-queue connect_close audit_logread sctp_collision \
-	conntrack_dump_flush
+TEST_GEN_FILES =  nf-queue connect_close audit_logread sctp_collision
 
 include ../lib.mk

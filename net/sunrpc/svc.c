@@ -463,6 +463,7 @@ __svc_create(struct svc_program *prog, unsigned int bufsize, int npools,
 		return NULL;
 	serv->sv_name      = prog->pg_name;
 	serv->sv_program   = prog;
+	kref_init(&serv->sv_refcnt);
 	serv->sv_stats     = prog->pg_stats;
 	if (bufsize > RPCSVC_MAXPAYLOAD)
 		bufsize = RPCSVC_MAXPAYLOAD;
@@ -563,12 +564,10 @@ EXPORT_SYMBOL_GPL(svc_create_pooled);
  * protect sv_permsocks and sv_tempsocks.
  */
 void
-svc_destroy(struct svc_serv **servp)
+svc_destroy(struct kref *ref)
 {
-	struct svc_serv *serv = *servp;
+	struct svc_serv *serv = container_of(ref, struct svc_serv, sv_refcnt);
 	unsigned int i;
-
-	*servp = NULL;
 
 	dprintk("svc: svc_destroy(%s)\n", serv->sv_program->pg_name);
 	timer_shutdown_sync(&serv->sv_temptimer);
@@ -676,6 +675,7 @@ svc_prepare_thread(struct svc_serv *serv, struct svc_pool *pool, int node)
 	if (!rqstp)
 		return ERR_PTR(-ENOMEM);
 
+	svc_get(serv);
 	spin_lock_bh(&serv->sv_lock);
 	serv->sv_nrthreads += 1;
 	spin_unlock_bh(&serv->sv_lock);
@@ -935,6 +935,11 @@ svc_exit_thread(struct svc_rqst *rqstp)
 
 	svc_rqst_free(rqstp);
 
+	svc_put(serv);
+	/* That svc_put() cannot be the last, because the thread
+	 * waiting for SP_VICTIM_REMAINS to clear must hold
+	 * a reference. So it is still safe to access pool.
+	 */
 	clear_and_wake_up_bit(SP_VICTIM_REMAINS, &pool->sp_flags);
 }
 EXPORT_SYMBOL_GPL(svc_exit_thread);
@@ -1300,6 +1305,8 @@ svc_process_common(struct svc_rqst *rqstp)
 	int			rc;
 	__be32			*p;
 
+	/* Will be turned off by GSS integrity and privacy services */
+	set_bit(RQ_SPLICE_OK, &rqstp->rq_flags);
 	/* Will be turned off only when NFSv4 Sessions are used */
 	set_bit(RQ_USEDEFERRAL, &rqstp->rq_flags);
 	clear_bit(RQ_DROPME, &rqstp->rq_flags);
@@ -1550,7 +1557,6 @@ void svc_process_bc(struct rpc_rqst *req, struct svc_rqst *rqstp)
 {
 	struct rpc_task *task;
 	int proc_error;
-	struct rpc_timeout timeout;
 
 	/* Build the svc_rqst used by the common processing routine */
 	rqstp->rq_xid = req->rq_xid;
@@ -1596,16 +1602,8 @@ void svc_process_bc(struct rpc_rqst *req, struct svc_rqst *rqstp)
 		return;
 	}
 	/* Finally, send the reply synchronously */
-	if (rqstp->bc_to_initval > 0) {
-		timeout.to_initval = rqstp->bc_to_initval;
-		timeout.to_retries = rqstp->bc_to_retries;
-	} else {
-		timeout.to_initval = req->rq_xprt->timeout->to_initval;
-		timeout.to_retries = req->rq_xprt->timeout->to_retries;
-	}
 	memcpy(&req->rq_snd_buf, &rqstp->rq_res, sizeof(req->rq_snd_buf));
-	task = rpc_run_bc_task(req, &timeout);
-
+	task = rpc_run_bc_task(req);
 	if (IS_ERR(task))
 		return;
 

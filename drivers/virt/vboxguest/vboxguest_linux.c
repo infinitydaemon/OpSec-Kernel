@@ -81,11 +81,10 @@ static int vbg_misc_device_user_open(struct inode *inode, struct file *filp)
 }
 
 /**
- * vbg_misc_device_close - Close device.
+ * Close device.
+ * Return: 0 on success, negated errno on failure.
  * @inode:		Pointer to inode info structure.
  * @filp:		Associated file pointer.
- *
- * Return: %0 on success, negated errno on failure.
  */
 static int vbg_misc_device_close(struct inode *inode, struct file *filp)
 {
@@ -95,12 +94,11 @@ static int vbg_misc_device_close(struct inode *inode, struct file *filp)
 }
 
 /**
- * vbg_misc_device_ioctl - Device I/O Control entry point.
+ * Device I/O Control entry point.
+ * Return: 0 on success, negated errno on failure.
  * @filp:		Associated file pointer.
  * @req:		The request specified to ioctl().
  * @arg:		The argument specified to ioctl().
- *
- * Return: %0 on success, negated errno on failure.
  */
 static long vbg_misc_device_ioctl(struct file *filp, unsigned int req,
 				  unsigned long arg)
@@ -175,7 +173,7 @@ out:
 	return ret;
 }
 
-/* The file_operations structures. */
+/** The file_operations structures. */
 static const struct file_operations vbg_misc_device_fops = {
 	.owner			= THIS_MODULE,
 	.open			= vbg_misc_device_open,
@@ -195,7 +193,7 @@ static const struct file_operations vbg_misc_device_user_fops = {
 #endif
 };
 
-/*
+/**
  * Called when the input device is first opened.
  *
  * Sets up absolute mouse reporting.
@@ -208,7 +206,7 @@ static int vbg_input_open(struct input_dev *input)
 	return vbg_core_set_mouse_status(gdev, feat);
 }
 
-/*
+/**
  * Called if all open handles to the input device are closed.
  *
  * Disables absolute reporting.
@@ -220,7 +218,7 @@ static void vbg_input_close(struct input_dev *input)
 	vbg_core_set_mouse_status(gdev, 0);
 }
 
-/*
+/**
  * Creates the kernel input device.
  *
  * Return: 0 on success, negated errno on failure.
@@ -279,7 +277,7 @@ static struct attribute *vbg_pci_attrs[] = {
 };
 ATTRIBUTE_GROUPS(vbg_pci);
 
-/*
+/**
  * Does the PCI detection and init of the device.
  *
  * Return: 0 on success, negated errno on failure.
@@ -455,7 +453,7 @@ void vbg_put_gdev(struct vbg_dev *gdev)
 }
 EXPORT_SYMBOL(vbg_put_gdev);
 
-/*
+/**
  * Callback for mouse events.
  *
  * This is called at the end of the ISR, after leaving the event spinlock, if

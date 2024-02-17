@@ -37,7 +37,7 @@ The Slab Cache
 .. kernel-doc:: include/linux/slab.h
    :internal:
 
-.. kernel-doc:: mm/slub.c
+.. kernel-doc:: mm/slab.c
    :export:
 
 .. kernel-doc:: mm/slab_common.c

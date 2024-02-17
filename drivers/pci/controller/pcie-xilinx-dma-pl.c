@@ -684,8 +684,10 @@ static int xilinx_request_msi_irq(struct pl_dma_pcie *port)
 	int ret;
 
 	port->msi.irq_msi0 = platform_get_irq_byname(pdev, "msi0");
-	if (port->msi.irq_msi0 <= 0)
+	if (port->msi.irq_msi0 <= 0) {
+		dev_err(dev, "Unable to find msi0 IRQ line\n");
 		return port->msi.irq_msi0;
+	}
 
 	ret = devm_request_irq(dev, port->msi.irq_msi0, xilinx_pl_dma_pcie_msi_handler_low,
 			       IRQF_SHARED | IRQF_NO_THREAD, "xlnx-pcie-dma-pl",
@@ -696,8 +698,10 @@ static int xilinx_request_msi_irq(struct pl_dma_pcie *port)
 	}
 
 	port->msi.irq_msi1 = platform_get_irq_byname(pdev, "msi1");
-	if (port->msi.irq_msi1 <= 0)
+	if (port->msi.irq_msi1 <= 0) {
+		dev_err(dev, "Unable to find msi1 IRQ line\n");
 		return port->msi.irq_msi1;
+	}
 
 	ret = devm_request_irq(dev, port->msi.irq_msi1, xilinx_pl_dma_pcie_msi_handler_high,
 			       IRQF_SHARED | IRQF_NO_THREAD, "xlnx-pcie-dma-pl",

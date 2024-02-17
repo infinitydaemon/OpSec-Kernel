@@ -252,23 +252,38 @@ static void __init arch_reserve_vmcore(void)
 #endif
 }
 
-static void __init arch_reserve_crashkernel(void)
+/* 2MB alignment for crash kernel regions */
+#define CRASH_ALIGN	SZ_2M
+#define CRASH_ADDR_MAX	SZ_4G
+
+static void __init arch_parse_crashkernel(void)
 {
+#ifdef CONFIG_KEXEC
 	int ret;
-	unsigned long long low_size = 0;
+	unsigned long long total_mem;
 	unsigned long long crash_base, crash_size;
-	char *cmdline = boot_command_line;
-	bool high = false;
 
-	if (!IS_ENABLED(CONFIG_KEXEC_CORE))
+	total_mem = memblock_phys_mem_size();
+	ret = parse_crashkernel(boot_command_line, total_mem,
+				&crash_size, &crash_base,
+				NULL, NULL);
+	if (ret < 0 || crash_size <= 0)
 		return;
 
-	ret = parse_crashkernel(cmdline, memblock_phys_mem_size(),
-				&crash_size, &crash_base, &low_size, &high);
-	if (ret)
+	if (crash_base <= 0) {
+		crash_base = memblock_phys_alloc_range(crash_size, CRASH_ALIGN, CRASH_ALIGN, CRASH_ADDR_MAX);
+		if (!crash_base) {
+			pr_warn("crashkernel reservation failed - No suitable area found.\n");
+			return;
+		}
+	} else if (!memblock_phys_alloc_range(crash_size, CRASH_ALIGN, crash_base, crash_base + crash_size)) {
+		pr_warn("Invalid memory region reserved for crash kernel\n");
 		return;
+	}
 
-	reserve_crashkernel_generic(cmdline, crash_size, crash_base, low_size, high);
+	crashk_res.start = crash_base;
+	crashk_res.end	 = crash_base + crash_size - 1;
+#endif
 }
 
 static void __init fdt_setup(void)
@@ -280,12 +295,8 @@ static void __init fdt_setup(void)
 	if (acpi_os_get_root_pointer())
 		return;
 
-	/* Prefer to use built-in dtb, checking its legality first. */
-	if (!fdt_check_header(__dtb_start))
-		fdt_pointer = __dtb_start;
-	else
-		fdt_pointer = efi_fdt_pointer(); /* Fallback to firmware dtb */
-
+	/* Look for a device tree configuration table entry */
+	fdt_pointer = efi_fdt_pointer();
 	if (!fdt_pointer || fdt_check_header(fdt_pointer))
 		return;
 
@@ -319,9 +330,7 @@ static void __init bootcmdline_init(char **cmdline_p)
 		if (boot_command_line[0])
 			strlcat(boot_command_line, " ", COMMAND_LINE_SIZE);
 
-		if (!strstr(boot_command_line, init_command_line))
-			strlcat(boot_command_line, init_command_line, COMMAND_LINE_SIZE);
-
+		strlcat(boot_command_line, init_command_line, COMMAND_LINE_SIZE);
 		goto out;
 	}
 #endif
@@ -348,7 +357,7 @@ out:
 void __init platform_init(void)
 {
 	arch_reserve_vmcore();
-	arch_reserve_crashkernel();
+	arch_parse_crashkernel();
 
 #ifdef CONFIG_ACPI_TABLE_UPGRADE
 	acpi_table_upgrade();
@@ -458,6 +467,15 @@ static void __init resource_init(void)
 		request_resource(res, &data_resource);
 		request_resource(res, &bss_resource);
 	}
+
+#ifdef CONFIG_KEXEC
+	if (crashk_res.start < crashk_res.end) {
+		insert_resource(&iomem_resource, &crashk_res);
+		pr_info("Reserving %ldMB of memory at %ldMB for crashkernel\n",
+			(unsigned long)((crashk_res.end - crashk_res.start + 1) >> 20),
+			(unsigned long)(crashk_res.start  >> 20));
+	}
+#endif
 }
 
 static int __init add_legacy_isa_io(struct fwnode_handle *fwnode,

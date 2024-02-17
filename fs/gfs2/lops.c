@@ -391,15 +391,22 @@ static void gfs2_log_write_page(struct gfs2_sbd *sdp, struct page *page)
  * Simply unlock the pages in the bio. The main thread will wait on them and
  * process them in order as necessary.
  */
+
 static void gfs2_end_log_read(struct bio *bio)
 {
-	int error = blk_status_to_errno(bio->bi_status);
-	struct folio_iter fi;
+	struct page *page;
+	struct bio_vec *bvec;
+	struct bvec_iter_all iter_all;
 
-	bio_for_each_folio_all(fi, bio) {
-		/* We're abusing wb_err to get the error to gfs2_find_jhead */
-		filemap_set_wb_err(fi.folio->mapping, error);
-		folio_end_read(fi.folio, !error);
+	bio_for_each_segment_all(bvec, bio, iter_all) {
+		page = bvec->bv_page;
+		if (bio->bi_status) {
+			int err = blk_status_to_errno(bio->bi_status);
+
+			SetPageError(page);
+			mapping_set_error(page->mapping, err);
+		}
+		unlock_page(page);
 	}
 
 	bio_put(bio);
@@ -468,7 +475,7 @@ static void gfs2_jhead_process_page(struct gfs2_jdesc *jd, unsigned long index,
 	folio = filemap_get_folio(jd->jd_inode->i_mapping, index);
 
 	folio_wait_locked(folio);
-	if (!folio_test_uptodate(folio))
+	if (folio_test_error(folio))
 		*done = true;
 
 	if (!*done)

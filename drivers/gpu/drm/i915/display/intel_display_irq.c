@@ -340,15 +340,18 @@ static void flip_done_handler(struct drm_i915_private *i915,
 			      enum pipe pipe)
 {
 	struct intel_crtc *crtc = intel_crtc_for_pipe(i915, pipe);
+	struct drm_crtc_state *crtc_state = crtc->base.state;
+	struct drm_pending_vblank_event *e = crtc_state->event;
+	struct drm_device *dev = &i915->drm;
+	unsigned long irqflags;
 
-	spin_lock(&i915->drm.event_lock);
+	spin_lock_irqsave(&dev->event_lock, irqflags);
 
-	if (crtc->flip_done_event) {
-		drm_crtc_send_vblank_event(&crtc->base, crtc->flip_done_event);
-		crtc->flip_done_event = NULL;
-	}
+	crtc_state->event = NULL;
 
-	spin_unlock(&i915->drm.event_lock);
+	drm_crtc_send_vblank_event(&crtc->base, e);
+
+	spin_unlock_irqrestore(&dev->event_lock, irqflags);
 }
 
 static void hsw_pipe_crc_irq_handler(struct drm_i915_private *dev_priv,
@@ -893,7 +896,7 @@ gen8_de_misc_irq_handler(struct drm_i915_private *dev_priv, u32 iir)
 	}
 
 	if (!found)
-		drm_err(&dev_priv->drm, "Unexpected DE Misc interrupt: 0x%08x\n", iir);
+		drm_err(&dev_priv->drm, "Unexpected DE Misc interrupt\n");
 }
 
 static void gen11_dsi_te_interrupt_handler(struct drm_i915_private *dev_priv,
@@ -1650,7 +1653,7 @@ void gen8_de_irq_postinstall(struct drm_i915_private *dev_priv)
 	else if (HAS_PCH_SPLIT(dev_priv))
 		ibx_irq_postinstall(dev_priv);
 
-	if (DISPLAY_VER(dev_priv) < 11)
+	if (DISPLAY_VER(dev_priv) <= 10)
 		de_misc_masked |= GEN8_DE_MISC_GSE;
 
 	if (IS_GEMINILAKE(dev_priv) || IS_BROXTON(dev_priv))

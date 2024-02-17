@@ -777,11 +777,13 @@ static int rpcif_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void rpcif_remove(struct platform_device *pdev)
+static int rpcif_remove(struct platform_device *pdev)
 {
 	struct rpcif_priv *rpc = platform_get_drvdata(pdev);
 
 	platform_device_unregister(rpc->vdev);
+
+	return 0;
 }
 
 static const struct of_device_id rpcif_of_match[] = {
@@ -795,7 +797,7 @@ MODULE_DEVICE_TABLE(of, rpcif_of_match);
 
 static struct platform_driver rpcif_driver = {
 	.probe	= rpcif_probe,
-	.remove_new = rpcif_remove,
+	.remove	= rpcif_remove,
 	.driver = {
 		.name =	"rpc-if",
 		.of_match_table = rpcif_of_match,

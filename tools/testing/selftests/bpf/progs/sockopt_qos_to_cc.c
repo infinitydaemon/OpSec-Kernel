@@ -9,7 +9,7 @@
 
 char _license[] SEC("license") = "GPL";
 
-__s32 page_size = 0;
+__u32 page_size = 0;
 
 SEC("cgroup/setsockopt")
 int sockopt_qos_to_cc(struct bpf_sockopt *ctx)

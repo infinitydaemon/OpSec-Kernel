@@ -3669,8 +3669,10 @@ static int pktgen_thread_worker(void *arg)
 		if (unlikely(!pkt_dev && t->control == 0)) {
 			if (t->net->pktgen_exiting)
 				break;
-			wait_event_freezable_timeout(t->queue,
-						     t->control != 0, HZ / 10);
+			wait_event_interruptible_timeout(t->queue,
+							 t->control != 0,
+							 HZ/10);
+			try_to_freeze();
 			continue;
 		}
 

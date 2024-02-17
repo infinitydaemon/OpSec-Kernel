@@ -19,7 +19,6 @@
 #include <linux/export.h>
 #include <linux/kcov.h>
 #include <linux/bitops.h>
-#include <kunit/visibility.h>
 #include <net/mac80211.h>
 #include <net/ieee80211_radiotap.h>
 #include <asm/unaligned.h>
@@ -567,8 +566,7 @@ ieee80211_add_rx_radiotap_header(struct ieee80211_local *local,
 
 	if (local->hw.radiotap_timestamp.units_pos >= 0) {
 		u16 accuracy = 0;
-		u8 flags;
-		u64 ts;
+		u8 flags = IEEE80211_RADIOTAP_TIMESTAMP_FLAG_32BIT;
 
 		rthdr->it_present |=
 			cpu_to_le32(BIT(IEEE80211_RADIOTAP_TIMESTAMP));
@@ -577,15 +575,7 @@ ieee80211_add_rx_radiotap_header(struct ieee80211_local *local,
 		while ((pos - (u8 *)rthdr) & 7)
 			pos++;
 
-		if (status->flag & RX_FLAG_MACTIME_IS_RTAP_TS64) {
-			flags = IEEE80211_RADIOTAP_TIMESTAMP_FLAG_64BIT;
-			ts = status->mactime;
-		} else {
-			flags = IEEE80211_RADIOTAP_TIMESTAMP_FLAG_32BIT;
-			ts = status->device_timestamp;
-		}
-
-		put_unaligned_le64(ts, pos);
+		put_unaligned_le64(status->device_timestamp, pos);
 		pos += sizeof(u64);
 
 		if (local->hw.radiotap_timestamp.accuracy >= 0) {
@@ -930,7 +920,7 @@ static void ieee80211_parse_qos(struct ieee80211_rx_data *rx)
  * Drivers always need to pass packets that are aligned to two-byte boundaries
  * to the stack.
  *
- * Additionally, they should, if possible, align the payload data in a way that
+ * Additionally, should, if possible, align the payload data in a way that
  * guarantees that the contained IP header is aligned to a four-byte
  * boundary. In the case of regular frames, this simply means aligning the
  * payload to a four-byte boundary (because either the IP header is directly
@@ -946,7 +936,7 @@ static void ieee80211_parse_qos(struct ieee80211_rx_data *rx)
  * subframe to a length that is a multiple of four.
  *
  * Padding like Atheros hardware adds which is between the 802.11 header and
- * the payload is not supported; the driver is required to move the 802.11
+ * the payload is not supported, the driver is required to move the 802.11
  * header to be directly in front of the payload in that case.
  */
 static void ieee80211_verify_alignment(struct ieee80211_rx_data *rx)
@@ -2415,7 +2405,7 @@ static int ieee80211_drop_unencrypted(struct ieee80211_rx_data *rx, __le16 fc)
 	return 0;
 }
 
-VISIBLE_IF_MAC80211_KUNIT ieee80211_rx_result
+static ieee80211_rx_result
 ieee80211_drop_unencrypted_mgmt(struct ieee80211_rx_data *rx)
 {
 	struct ieee80211_rx_status *status = IEEE80211_SKB_RXCB(rx->skb);
@@ -2494,7 +2484,6 @@ ieee80211_drop_unencrypted_mgmt(struct ieee80211_rx_data *rx)
 
 	return RX_CONTINUE;
 }
-EXPORT_SYMBOL_IF_MAC80211_KUNIT(ieee80211_drop_unencrypted_mgmt);
 
 static ieee80211_rx_result
 __ieee80211_data_to_8023(struct ieee80211_rx_data *rx, bool *port_control)

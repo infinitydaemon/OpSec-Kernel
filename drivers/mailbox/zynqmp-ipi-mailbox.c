@@ -81,6 +81,7 @@ struct zynqmp_ipi_mchan {
  * @remote_id:            remote IPI agent ID
  * @mbox:                 mailbox Controller
  * @mchans:               array for channels, tx channel and rx channel.
+ * @irq:                  IPI agent interrupt ID
  */
 struct zynqmp_ipi_mbox {
 	struct zynqmp_ipi_pdata *pdata;
@@ -687,17 +688,19 @@ free_mbox_dev:
 	return ret;
 }
 
-static void zynqmp_ipi_remove(struct platform_device *pdev)
+static int zynqmp_ipi_remove(struct platform_device *pdev)
 {
 	struct zynqmp_ipi_pdata *pdata;
 
 	pdata = platform_get_drvdata(pdev);
 	zynqmp_ipi_free_mboxes(pdata);
+
+	return 0;
 }
 
 static struct platform_driver zynqmp_ipi_driver = {
 	.probe = zynqmp_ipi_probe,
-	.remove_new = zynqmp_ipi_remove,
+	.remove = zynqmp_ipi_remove,
 	.driver = {
 		   .name = "zynqmp-ipi",
 		   .of_match_table = of_match_ptr(zynqmp_ipi_of_match),

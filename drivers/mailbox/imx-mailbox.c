@@ -903,11 +903,13 @@ disable_runtime_pm:
 	return ret;
 }
 
-static void imx_mu_remove(struct platform_device *pdev)
+static int imx_mu_remove(struct platform_device *pdev)
 {
 	struct imx_mu_priv *priv = platform_get_drvdata(pdev);
 
 	pm_runtime_disable(priv->dev);
+
+	return 0;
 }
 
 static const struct imx_mu_dcfg imx_mu_cfg_imx6sx = {
@@ -1068,7 +1070,7 @@ static const struct dev_pm_ops imx_mu_pm_ops = {
 
 static struct platform_driver imx_mu_driver = {
 	.probe		= imx_mu_probe,
-	.remove_new	= imx_mu_remove,
+	.remove		= imx_mu_remove,
 	.driver = {
 		.name	= "imx_mu",
 		.of_match_table = imx_mu_dt_ids,

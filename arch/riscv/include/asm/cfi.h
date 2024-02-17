@@ -7,9 +7,8 @@
  *
  * Copyright (C) 2023 Google LLC
  */
-#include <linux/bug.h>
 
-struct pt_regs;
+#include <linux/cfi.h>
 
 #ifdef CONFIG_CFI_CLANG
 enum bug_trap_type handle_cfi_failure(struct pt_regs *regs);

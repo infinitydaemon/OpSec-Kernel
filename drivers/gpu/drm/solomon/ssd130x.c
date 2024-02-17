@@ -319,7 +319,7 @@ static int ssd130x_pwm_enable(struct ssd130x_device *ssd130x)
 
 	pwm_init_state(ssd130x->pwm, &pwmstate);
 	pwm_set_relative_duty_cycle(&pwmstate, 50, 100);
-	pwm_apply_might_sleep(ssd130x->pwm, &pwmstate);
+	pwm_apply_state(ssd130x->pwm, &pwmstate);
 
 	/* Enable the PWM */
 	pwm_enable(ssd130x->pwm);
@@ -808,8 +808,7 @@ static void ssd132x_clear_screen(struct ssd130x_device *ssd130x, u8 *data_array)
 static int ssd130x_fb_blit_rect(struct drm_framebuffer *fb,
 				const struct iosys_map *vmap,
 				struct drm_rect *rect,
-				u8 *buf, u8 *data_array,
-				struct drm_format_conv_state *fmtcnv_state)
+				u8 *buf, u8 *data_array)
 {
 	struct ssd130x_device *ssd130x = drm_to_ssd130x(fb->dev);
 	struct iosys_map dst;
@@ -827,7 +826,7 @@ static int ssd130x_fb_blit_rect(struct drm_framebuffer *fb,
 		return ret;
 
 	iosys_map_set_vaddr(&dst, buf);
-	drm_fb_xrgb8888_to_mono(&dst, &dst_pitch, vmap, fb, rect, fmtcnv_state);
+	drm_fb_xrgb8888_to_mono(&dst, &dst_pitch, vmap, fb, rect);
 
 	drm_gem_fb_end_cpu_access(fb, DMA_FROM_DEVICE);
 
@@ -839,8 +838,7 @@ static int ssd130x_fb_blit_rect(struct drm_framebuffer *fb,
 static int ssd132x_fb_blit_rect(struct drm_framebuffer *fb,
 				const struct iosys_map *vmap,
 				struct drm_rect *rect, u8 *buf,
-				u8 *data_array,
-				struct drm_format_conv_state *fmtcnv_state)
+				u8 *data_array)
 {
 	struct ssd130x_device *ssd130x = drm_to_ssd130x(fb->dev);
 	unsigned int dst_pitch = drm_rect_width(rect);
@@ -857,7 +855,7 @@ static int ssd132x_fb_blit_rect(struct drm_framebuffer *fb,
 		return ret;
 
 	iosys_map_set_vaddr(&dst, buf);
-	drm_fb_xrgb8888_to_gray8(&dst, &dst_pitch, vmap, fb, rect, fmtcnv_state);
+	drm_fb_xrgb8888_to_gray8(&dst, &dst_pitch, vmap, fb, rect);
 
 	drm_gem_fb_end_cpu_access(fb, DMA_FROM_DEVICE);
 
@@ -873,7 +871,6 @@ static int ssd130x_primary_plane_atomic_check(struct drm_plane *plane,
 	struct ssd130x_device *ssd130x = drm_to_ssd130x(drm);
 	struct drm_plane_state *plane_state = drm_atomic_get_new_plane_state(state, plane);
 	struct ssd130x_plane_state *ssd130x_state = to_ssd130x_plane_state(plane_state);
-	struct drm_shadow_plane_state *shadow_plane_state = &ssd130x_state->base;
 	struct drm_crtc *crtc = plane_state->crtc;
 	struct drm_crtc_state *crtc_state = NULL;
 	const struct drm_format_info *fi;
@@ -898,16 +895,6 @@ static int ssd130x_primary_plane_atomic_check(struct drm_plane *plane,
 
 	pitch = drm_format_info_min_pitch(fi, 0, ssd130x->width);
 
-	if (plane_state->fb->format != fi) {
-		void *buf;
-
-		/* format conversion necessary; reserve buffer */
-		buf = drm_format_conv_state_reserve(&shadow_plane_state->fmtcnv_state,
-						    pitch, GFP_KERNEL);
-		if (!buf)
-			return -ENOMEM;
-	}
-
 	ssd130x_state->buffer = kcalloc(pitch, ssd130x->height, GFP_KERNEL);
 	if (!ssd130x_state->buffer)
 		return -ENOMEM;
@@ -922,7 +909,6 @@ static int ssd132x_primary_plane_atomic_check(struct drm_plane *plane,
 	struct ssd130x_device *ssd130x = drm_to_ssd130x(drm);
 	struct drm_plane_state *plane_state = drm_atomic_get_new_plane_state(state, plane);
 	struct ssd130x_plane_state *ssd130x_state = to_ssd130x_plane_state(plane_state);
-	struct drm_shadow_plane_state *shadow_plane_state = &ssd130x_state->base;
 	struct drm_crtc *crtc = plane_state->crtc;
 	struct drm_crtc_state *crtc_state = NULL;
 	const struct drm_format_info *fi;
@@ -946,16 +932,6 @@ static int ssd132x_primary_plane_atomic_check(struct drm_plane *plane,
 		return -EINVAL;
 
 	pitch = drm_format_info_min_pitch(fi, 0, ssd130x->width);
-
-	if (plane_state->fb->format != fi) {
-		void *buf;
-
-		/* format conversion necessary; reserve buffer */
-		buf = drm_format_conv_state_reserve(&shadow_plane_state->fmtcnv_state,
-						    pitch, GFP_KERNEL);
-		if (!buf)
-			return -ENOMEM;
-	}
 
 	ssd130x_state->buffer = kcalloc(pitch, ssd130x->height, GFP_KERNEL);
 	if (!ssd130x_state->buffer)
@@ -992,8 +968,7 @@ static void ssd130x_primary_plane_atomic_update(struct drm_plane *plane,
 
 		ssd130x_fb_blit_rect(fb, &shadow_plane_state->data[0], &dst_clip,
 				     ssd130x_plane_state->buffer,
-				     ssd130x_crtc_state->data_array,
-				     &shadow_plane_state->fmtcnv_state);
+				     ssd130x_crtc_state->data_array);
 	}
 
 	drm_dev_exit(idx);
@@ -1027,8 +1002,7 @@ static void ssd132x_primary_plane_atomic_update(struct drm_plane *plane,
 
 		ssd132x_fb_blit_rect(fb, &shadow_plane_state->data[0], &dst_clip,
 				     ssd130x_plane_state->buffer,
-				     ssd130x_crtc_state->data_array,
-				     &shadow_plane_state->fmtcnv_state);
+				     ssd130x_crtc_state->data_array);
 	}
 
 	drm_dev_exit(idx);

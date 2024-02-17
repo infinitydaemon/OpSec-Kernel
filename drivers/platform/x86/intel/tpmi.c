@@ -171,6 +171,19 @@ struct tpmi_feature_state {
 } __packed;
 
 /*
+ * List of supported TMPI IDs.
+ * Some TMPI IDs are not used by Linux, so the numbers are not consecutive.
+ */
+enum intel_tpmi_id {
+	TPMI_ID_RAPL = 0, /* Running Average Power Limit */
+	TPMI_ID_PEM = 1, /* Power and Perf excursion Monitor */
+	TPMI_ID_UNCORE = 2, /* Uncore Frequency Scaling */
+	TPMI_ID_SST = 5, /* Speed Select Technology */
+	TPMI_CONTROL_ID = 0x80, /* Special ID for getting feature status */
+	TPMI_INFO_ID = 0x81, /* Special ID for PCI BDF and Package ID information */
+};
+
+/*
  * The size from hardware is in u32 units. This size is from a trusted hardware,
  * but better to verify for pre silicon platforms. Set size to 0, when invalid.
  */
@@ -332,8 +345,8 @@ err_unlock:
 	return ret;
 }
 
-int tpmi_get_feature_status(struct auxiliary_device *auxdev,
-			    int feature_id, bool *read_blocked, bool *write_blocked)
+int tpmi_get_feature_status(struct auxiliary_device *auxdev, int feature_id,
+			    int *locked, int *disabled)
 {
 	struct intel_vsec_device *intel_vsec_dev = dev_to_ivdev(auxdev->dev.parent);
 	struct intel_tpmi_info *tpmi_info = auxiliary_get_drvdata(&intel_vsec_dev->auxdev);
@@ -344,8 +357,8 @@ int tpmi_get_feature_status(struct auxiliary_device *auxdev,
 	if (ret)
 		return ret;
 
-	*read_blocked = feature_state.read_blocked;
-	*write_blocked = feature_state.write_blocked;
+	*locked = feature_state.locked;
+	*disabled = !feature_state.enabled;
 
 	return 0;
 }
@@ -585,21 +598,9 @@ static int tpmi_create_device(struct intel_tpmi_info *tpmi_info,
 	struct intel_vsec_device *vsec_dev = tpmi_info->vsec_dev;
 	char feature_id_name[TPMI_FEATURE_NAME_LEN];
 	struct intel_vsec_device *feature_vsec_dev;
-	struct tpmi_feature_state feature_state;
 	struct resource *res, *tmp;
 	const char *name;
-	int i, ret;
-
-	ret = tpmi_read_feature_status(tpmi_info, pfs->pfs_header.tpmi_id, &feature_state);
-	if (ret)
-		return ret;
-
-	/*
-	 * If not enabled, continue to look at other features in the PFS, so return -EOPNOTSUPP.
-	 * This will not cause failure of loading of this driver.
-	 */
-	if (!feature_state.enabled)
-		return -EOPNOTSUPP;
+	int i;
 
 	name = intel_tpmi_name(pfs->pfs_header.tpmi_id);
 	if (!name)

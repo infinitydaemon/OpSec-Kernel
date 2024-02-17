@@ -997,8 +997,8 @@ static void add_link_files(struct ieee80211_link_data *link,
 	}
 }
 
-static void ieee80211_debugfs_add_netdev(struct ieee80211_sub_if_data *sdata,
-					 bool mld_vif)
+void ieee80211_debugfs_add_netdev(struct ieee80211_sub_if_data *sdata,
+				  bool mld_vif)
 {
 	char buf[10+IFNAMSIZ];
 

@@ -385,8 +385,6 @@ extern bool parameq(const char *name1, const char *name2);
  */
 extern bool parameqn(const char *name1, const char *name2, size_t n);
 
-typedef int (*parse_unknown_fn)(char *param, char *val, const char *doing, void *arg);
-
 /* Called on module insert or kernel boot */
 extern char *parse_args(const char *name,
 		      char *args,
@@ -394,7 +392,9 @@ extern char *parse_args(const char *name,
 		      unsigned num,
 		      s16 level_min,
 		      s16 level_max,
-		      void *arg, parse_unknown_fn unknown);
+		      void *arg,
+		      int (*unknown)(char *param, char *val,
+				     const char *doing, void *arg));
 
 /* Called by module remove. */
 #ifdef CONFIG_SYSFS

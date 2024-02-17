@@ -795,7 +795,7 @@ static int meson_uart_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void meson_uart_remove(struct platform_device *pdev)
+static int meson_uart_remove(struct platform_device *pdev)
 {
 	struct uart_driver *uart_driver;
 	struct uart_port *port;
@@ -807,10 +807,12 @@ static void meson_uart_remove(struct platform_device *pdev)
 
 	for (int id = 0; id < AML_UART_PORT_NUM; id++)
 		if (meson_ports[id])
-			return;
+			return 0;
 
 	/* No more available uart ports, unregister uart driver */
 	uart_unregister_driver(uart_driver);
+
+	return 0;
 }
 
 static struct meson_uart_data meson_g12a_uart_data = {
@@ -850,7 +852,7 @@ MODULE_DEVICE_TABLE(of, meson_uart_dt_match);
 
 static  struct platform_driver meson_uart_platform_driver = {
 	.probe		= meson_uart_probe,
-	.remove_new	= meson_uart_remove,
+	.remove		= meson_uart_remove,
 	.driver		= {
 		.name		= "meson_uart",
 		.of_match_table	= meson_uart_dt_match,

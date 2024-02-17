@@ -302,7 +302,9 @@ void ice_fdir_rem_adq_chnl(struct ice_hw *hw, u16 vsi_idx)
 			continue;
 
 		for (tun = 0; tun < ICE_FD_HW_SEG_MAX; tun++) {
-			u64 prof_id = prof->prof_id[tun];
+			u64 prof_id;
+
+			prof_id = flow + tun * ICE_FLTR_PTYPE_MAX;
 
 			for (i = 0; i < prof->cnt; i++) {
 				if (prof->vsi_h[i] != vsi_idx)
@@ -360,9 +362,10 @@ ice_fdir_erase_flow_from_hw(struct ice_hw *hw, enum ice_block blk, int flow)
 		return;
 
 	for (tun = 0; tun < ICE_FD_HW_SEG_MAX; tun++) {
-		u64 prof_id = prof->prof_id[tun];
+		u64 prof_id;
 		int j;
 
+		prof_id = flow + tun * ICE_FLTR_PTYPE_MAX;
 		for (j = 0; j < prof->cnt; j++) {
 			u16 vsi_num;
 
@@ -436,12 +439,14 @@ void ice_fdir_replay_flows(struct ice_hw *hw)
 		for (tun = 0; tun < ICE_FD_HW_SEG_MAX; tun++) {
 			struct ice_flow_prof *hw_prof;
 			struct ice_fd_hw_prof *prof;
+			u64 prof_id;
 			int j;
 
 			prof = hw->fdir_prof[flow];
-			ice_flow_add_prof(hw, ICE_BLK_FD, ICE_FLOW_RX,
+			prof_id = flow + tun * ICE_FLTR_PTYPE_MAX;
+			ice_flow_add_prof(hw, ICE_BLK_FD, ICE_FLOW_RX, prof_id,
 					  prof->fdir_seg[tun], TNL_SEG_CNT(tun),
-					  false, &hw_prof);
+					  &hw_prof);
 			for (j = 0; j < prof->cnt; j++) {
 				enum ice_flow_priority prio;
 				u64 entry_h = 0;
@@ -449,7 +454,7 @@ void ice_fdir_replay_flows(struct ice_hw *hw)
 
 				prio = ICE_FLOW_PRIO_NORMAL;
 				err = ice_flow_add_entry(hw, ICE_BLK_FD,
-							 hw_prof->id,
+							 prof_id,
 							 prof->vsi_h[0],
 							 prof->vsi_h[j],
 							 prio, prof->fdir_seg,
@@ -459,7 +464,6 @@ void ice_fdir_replay_flows(struct ice_hw *hw)
 						flow);
 					continue;
 				}
-				prof->prof_id[tun] = hw_prof->id;
 				prof->entry_h[j][tun] = entry_h;
 			}
 		}
@@ -503,7 +507,8 @@ ice_parse_rx_flow_user_data(struct ethtool_rx_flow_spec *fsp,
 		return -EINVAL;
 
 	data->flex_word = value & ICE_USERDEF_FLEX_WORD_M;
-	data->flex_offset = FIELD_GET(ICE_USERDEF_FLEX_OFFS_M, value);
+	data->flex_offset = (value & ICE_USERDEF_FLEX_OFFS_M) >>
+			     ICE_USERDEF_FLEX_OFFS_S;
 	if (data->flex_offset > ICE_USERDEF_FLEX_MAX_OFFS_VAL)
 		return -EINVAL;
 
@@ -633,6 +638,7 @@ ice_fdir_set_hw_fltr_rule(struct ice_pf *pf, struct ice_flow_seg_info *seg,
 	u64 entry1_h = 0;
 	u64 entry2_h = 0;
 	bool del_last;
+	u64 prof_id;
 	int err;
 	int idx;
 
@@ -662,7 +668,7 @@ ice_fdir_set_hw_fltr_rule(struct ice_pf *pf, struct ice_flow_seg_info *seg,
 		 * then return error.
 		 */
 		if (hw->fdir_fltr_cnt[flow]) {
-			dev_err(dev, "Failed to add filter. Flow director filters on each port must have the same input set.\n");
+			dev_err(dev, "Failed to add filter.  Flow director filters on each port must have the same input set.\n");
 			return -EINVAL;
 		}
 
@@ -680,23 +686,23 @@ ice_fdir_set_hw_fltr_rule(struct ice_pf *pf, struct ice_flow_seg_info *seg,
 	 * That is the final parameters are 1 header (segment), no
 	 * actions (NULL) and zero actions 0.
 	 */
-	err = ice_flow_add_prof(hw, ICE_BLK_FD, ICE_FLOW_RX, seg,
-				TNL_SEG_CNT(tun), false, &prof);
+	prof_id = flow + tun * ICE_FLTR_PTYPE_MAX;
+	err = ice_flow_add_prof(hw, ICE_BLK_FD, ICE_FLOW_RX, prof_id, seg,
+				TNL_SEG_CNT(tun), &prof);
 	if (err)
 		return err;
-	err = ice_flow_add_entry(hw, ICE_BLK_FD, prof->id, main_vsi->idx,
+	err = ice_flow_add_entry(hw, ICE_BLK_FD, prof_id, main_vsi->idx,
 				 main_vsi->idx, ICE_FLOW_PRIO_NORMAL,
 				 seg, &entry1_h);
 	if (err)
 		goto err_prof;
-	err = ice_flow_add_entry(hw, ICE_BLK_FD, prof->id, main_vsi->idx,
+	err = ice_flow_add_entry(hw, ICE_BLK_FD, prof_id, main_vsi->idx,
 				 ctrl_vsi->idx, ICE_FLOW_PRIO_NORMAL,
 				 seg, &entry2_h);
 	if (err)
 		goto err_entry;
 
 	hw_prof->fdir_seg[tun] = seg;
-	hw_prof->prof_id[tun] = prof->id;
 	hw_prof->entry_h[0][tun] = entry1_h;
 	hw_prof->entry_h[1][tun] = entry2_h;
 	hw_prof->vsi_h[0] = main_vsi->idx;
@@ -713,7 +719,7 @@ ice_fdir_set_hw_fltr_rule(struct ice_pf *pf, struct ice_flow_seg_info *seg,
 
 		entry1_h = 0;
 		vsi_h = main_vsi->tc_map_vsi[idx]->idx;
-		err = ice_flow_add_entry(hw, ICE_BLK_FD, prof->id,
+		err = ice_flow_add_entry(hw, ICE_BLK_FD, prof_id,
 					 main_vsi->idx, vsi_h,
 					 ICE_FLOW_PRIO_NORMAL, seg,
 					 &entry1_h);
@@ -750,7 +756,7 @@ err_unroll:
 
 		if (!hw_prof->entry_h[idx][tun])
 			continue;
-		ice_rem_prof_id_flow(hw, ICE_BLK_FD, vsi_num, prof->id);
+		ice_rem_prof_id_flow(hw, ICE_BLK_FD, vsi_num, prof_id);
 		ice_flow_rem_entry(hw, ICE_BLK_FD, hw_prof->entry_h[idx][tun]);
 		hw_prof->entry_h[idx][tun] = 0;
 		if (del_last)
@@ -760,11 +766,11 @@ err_unroll:
 		hw_prof->cnt = 0;
 err_entry:
 	ice_rem_prof_id_flow(hw, ICE_BLK_FD,
-			     ice_get_hw_vsi_num(hw, main_vsi->idx), prof->id);
+			     ice_get_hw_vsi_num(hw, main_vsi->idx), prof_id);
 	ice_flow_rem_entry(hw, ICE_BLK_FD, entry1_h);
 err_prof:
-	ice_flow_rem_prof(hw, ICE_BLK_FD, prof->id);
-	dev_err(dev, "Failed to add filter. Flow director filters on each port must have the same input set.\n");
+	ice_flow_rem_prof(hw, ICE_BLK_FD, prof_id);
+	dev_err(dev, "Failed to add filter.  Flow director filters on each port must have the same input set.\n");
 
 	return err;
 }
@@ -1847,7 +1853,6 @@ int ice_add_fdir_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 	struct ice_pf *pf;
 	struct ice_hw *hw;
 	int fltrs_needed;
-	u32 max_location;
 	u16 tunnel_port;
 	int ret;
 
@@ -1879,10 +1884,8 @@ int ice_add_fdir_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 	if (ret)
 		return ret;
 
-	max_location = ice_get_fdir_cnt_all(hw);
-	if (fsp->location >= max_location) {
-		dev_err(dev, "Failed to add filter. The number of ntuple filters or provided location exceed max %d.\n",
-			max_location);
+	if (fsp->location >= ice_get_fdir_cnt_all(hw)) {
+		dev_err(dev, "Failed to add filter.  The maximum number of flow director filters has been reached.\n");
 		return -ENOSPC;
 	}
 
@@ -1890,7 +1893,7 @@ int ice_add_fdir_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 	fltrs_needed = ice_get_open_tunnel_port(hw, &tunnel_port, TNL_ALL) ? 2 : 1;
 	if (!ice_fdir_find_fltr_by_idx(hw, fsp->location) &&
 	    ice_fdir_num_avail_fltr(hw, pf->vsi[vsi->idx]) < fltrs_needed) {
-		dev_err(dev, "Failed to add filter. The maximum number of flow director filters has been reached.\n");
+		dev_err(dev, "Failed to add filter.  The maximum number of flow director filters has been reached.\n");
 		return -ENOSPC;
 	}
 

@@ -352,24 +352,18 @@ const struct bpf_link_ops bpf_struct_ops_link_lops = {
 int bpf_struct_ops_prepare_trampoline(struct bpf_tramp_links *tlinks,
 				      struct bpf_tramp_link *link,
 				      const struct btf_func_model *model,
-				      void *stub_func, void *image, void *image_end)
+				      void *image, void *image_end)
 {
-	u32 flags = BPF_TRAMP_F_INDIRECT;
-	int size;
+	u32 flags;
 
 	tlinks[BPF_TRAMP_FENTRY].links[0] = link;
 	tlinks[BPF_TRAMP_FENTRY].nr_links = 1;
-
-	if (model->ret_size > 0)
-		flags |= BPF_TRAMP_F_RET_FENTRY_RET;
-
-	size = arch_bpf_trampoline_size(model, flags, tlinks, NULL);
-	if (size < 0)
-		return size;
-	if (size > (unsigned long)image_end - (unsigned long)image)
-		return -E2BIG;
+	/* BPF_TRAMP_F_RET_FENTRY_RET is only used by bpf_struct_ops,
+	 * and it must be used alone.
+	 */
+	flags = model->ret_size > 0 ? BPF_TRAMP_F_RET_FENTRY_RET : 0;
 	return arch_prepare_bpf_trampoline(NULL, image, image_end,
-					   model, flags, tlinks, stub_func);
+					   model, flags, tlinks, NULL);
 }
 
 static long bpf_struct_ops_map_update_elem(struct bpf_map *map, void *key,
@@ -503,12 +497,11 @@ static long bpf_struct_ops_map_update_elem(struct bpf_map *map, void *key,
 
 		err = bpf_struct_ops_prepare_trampoline(tlinks, link,
 							&st_ops->func_models[i],
-							*(void **)(st_ops->cfi_stubs + moff),
 							image, image_end);
 		if (err < 0)
 			goto reset_unlock;
 
-		*(void **)(kdata + moff) = image + cfi_get_offset();
+		*(void **)(kdata + moff) = image;
 		image += err;
 
 		/* put prog_id to udata */
@@ -522,7 +515,7 @@ static long bpf_struct_ops_map_update_elem(struct bpf_map *map, void *key,
 			if (err)
 				goto reset_unlock;
 		}
-		arch_protect_bpf_trampoline(st_map->image, PAGE_SIZE);
+		set_memory_rox((long)st_map->image, 1);
 		/* Let bpf_link handle registration & unregistration.
 		 *
 		 * Pair with smp_load_acquire() during lookup_elem().
@@ -531,7 +524,7 @@ static long bpf_struct_ops_map_update_elem(struct bpf_map *map, void *key,
 		goto unlock;
 	}
 
-	arch_protect_bpf_trampoline(st_map->image, PAGE_SIZE);
+	set_memory_rox((long)st_map->image, 1);
 	err = st_ops->reg(kdata);
 	if (likely(!err)) {
 		/* This refcnt increment on the map here after
@@ -554,7 +547,8 @@ static long bpf_struct_ops_map_update_elem(struct bpf_map *map, void *key,
 	 * there was a race in registering the struct_ops (under the same name) to
 	 * a sub-system through different struct_ops's maps.
 	 */
-	arch_unprotect_bpf_trampoline(st_map->image, PAGE_SIZE);
+	set_memory_nx((long)st_map->image, 1);
+	set_memory_rw((long)st_map->image, 1);
 
 reset_unlock:
 	bpf_struct_ops_map_put_progs(st_map);
@@ -622,7 +616,7 @@ static void __bpf_struct_ops_map_free(struct bpf_map *map)
 		bpf_struct_ops_map_put_progs(st_map);
 	bpf_map_area_free(st_map->links);
 	if (st_map->image) {
-		arch_free_bpf_trampoline(st_map->image, PAGE_SIZE);
+		bpf_jit_free_exec(st_map->image);
 		bpf_jit_uncharge_modmem(PAGE_SIZE);
 	}
 	bpf_map_area_free(st_map->uvalue);
@@ -697,7 +691,7 @@ static struct bpf_map *bpf_struct_ops_map_alloc(union bpf_attr *attr)
 		return ERR_PTR(ret);
 	}
 
-	st_map->image = arch_alloc_bpf_trampoline(PAGE_SIZE);
+	st_map->image = bpf_jit_alloc_exec(PAGE_SIZE);
 	if (!st_map->image) {
 		/* __bpf_struct_ops_map_free() uses st_map->image as flag
 		 * for "charged or not". In this case, we need to unchange
@@ -717,6 +711,7 @@ static struct bpf_map *bpf_struct_ops_map_alloc(union bpf_attr *attr)
 	}
 
 	mutex_init(&st_map->lock);
+	set_vm_flush_reset_perms(st_map->image);
 	bpf_map_init_from_attr(map, attr);
 
 	return map;

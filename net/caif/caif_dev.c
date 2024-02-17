@@ -27,7 +27,6 @@
 #include <net/caif/cfcnfg.h>
 #include <net/caif/cfserl.h>
 
-MODULE_DESCRIPTION("ST-Ericsson CAIF modem protocol support");
 MODULE_LICENSE("GPL");
 
 /* Used for local tracking of the CAIF net devices */

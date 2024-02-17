@@ -10,9 +10,6 @@ maintainers:
   - zhanghongchen <zhanghongchen@loongson.cn>
   - Yinbo Zhu <zhuyinbo@loongson.cn>
 
-allOf:
-  - $ref: /schemas/thermal/thermal-sensor.yaml#
-
 properties:
   compatible:
     oneOf:
@@ -29,16 +26,12 @@ properties:
   interrupts:
     maxItems: 1
 
-  '#thermal-sensor-cells':
-    const: 1
-
 required:
   - compatible
   - reg
   - interrupts
-  - '#thermal-sensor-cells'
 
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |
@@ -48,5 +41,4 @@ examples:
         reg = <0x1fe01500 0x30>;
         interrupt-parent = <&liointc0>;
         interrupts = <7 IRQ_TYPE_LEVEL_LOW>;
-        #thermal-sensor-cells = <1>;
     };

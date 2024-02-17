@@ -863,7 +863,7 @@ static void scpi_free_channels(void *data)
 		mbox_free_channel(info->channels[i].chan);
 }
 
-static void scpi_remove(struct platform_device *pdev)
+static int scpi_remove(struct platform_device *pdev)
 {
 	int i;
 	struct scpi_drvinfo *info = platform_get_drvdata(pdev);
@@ -874,6 +874,8 @@ static void scpi_remove(struct platform_device *pdev)
 		kfree(info->dvfs[i]->opps);
 		kfree(info->dvfs[i]);
 	}
+
+	return 0;
 }
 
 #define MAX_SCPI_XFERS		10
@@ -1046,7 +1048,7 @@ static struct platform_driver scpi_driver = {
 		.dev_groups = versions_groups,
 	},
 	.probe = scpi_probe,
-	.remove_new = scpi_remove,
+	.remove = scpi_remove,
 };
 module_platform_driver(scpi_driver);
 

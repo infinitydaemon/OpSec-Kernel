@@ -331,6 +331,9 @@ void intel_atomic_state_free(struct drm_atomic_state *_state)
 
 	drm_atomic_state_default_release(&state->base);
 	kfree(state->global_objs);
+
+	i915_sw_fence_fini(&state->commit_ready);
+
 	kfree(state);
 }
 

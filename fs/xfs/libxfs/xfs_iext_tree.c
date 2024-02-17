@@ -158,7 +158,7 @@ static void *
 xfs_iext_find_first_leaf(
 	struct xfs_ifork	*ifp)
 {
-	struct xfs_iext_node	*node = ifp->if_data;
+	struct xfs_iext_node	*node = ifp->if_u1.if_root;
 	int			height;
 
 	if (!ifp->if_height)
@@ -176,7 +176,7 @@ static void *
 xfs_iext_find_last_leaf(
 	struct xfs_ifork	*ifp)
 {
-	struct xfs_iext_node	*node = ifp->if_data;
+	struct xfs_iext_node	*node = ifp->if_u1.if_root;
 	int			height, i;
 
 	if (!ifp->if_height)
@@ -306,7 +306,7 @@ xfs_iext_find_level(
 	xfs_fileoff_t		offset,
 	int			level)
 {
-	struct xfs_iext_node	*node = ifp->if_data;
+	struct xfs_iext_node	*node = ifp->if_u1.if_root;
 	int			height, i;
 
 	if (!ifp->if_height)
@@ -402,12 +402,12 @@ xfs_iext_grow(
 	int			i;
 
 	if (ifp->if_height == 1) {
-		struct xfs_iext_leaf *prev = ifp->if_data;
+		struct xfs_iext_leaf *prev = ifp->if_u1.if_root;
 
 		node->keys[0] = xfs_iext_leaf_key(prev, 0);
 		node->ptrs[0] = prev;
 	} else  {
-		struct xfs_iext_node *prev = ifp->if_data;
+		struct xfs_iext_node *prev = ifp->if_u1.if_root;
 
 		ASSERT(ifp->if_height > 1);
 
@@ -418,7 +418,7 @@ xfs_iext_grow(
 	for (i = 1; i < KEYS_PER_NODE; i++)
 		node->keys[i] = XFS_IEXT_KEY_INVALID;
 
-	ifp->if_data = node;
+	ifp->if_u1.if_root = node;
 	ifp->if_height++;
 }
 
@@ -430,7 +430,7 @@ xfs_iext_update_node(
 	int			level,
 	void			*ptr)
 {
-	struct xfs_iext_node	*node = ifp->if_data;
+	struct xfs_iext_node	*node = ifp->if_u1.if_root;
 	int			height, i;
 
 	for (height = ifp->if_height; height > level; height--) {
@@ -583,11 +583,11 @@ xfs_iext_alloc_root(
 {
 	ASSERT(ifp->if_bytes == 0);
 
-	ifp->if_data = kmem_zalloc(sizeof(struct xfs_iext_rec), KM_NOFS);
+	ifp->if_u1.if_root = kmem_zalloc(sizeof(struct xfs_iext_rec), KM_NOFS);
 	ifp->if_height = 1;
 
 	/* now that we have a node step into it */
-	cur->leaf = ifp->if_data;
+	cur->leaf = ifp->if_u1.if_root;
 	cur->pos = 0;
 }
 
@@ -603,9 +603,9 @@ xfs_iext_realloc_root(
 	if (new_size / sizeof(struct xfs_iext_rec) == RECS_PER_LEAF)
 		new_size = NODE_SIZE;
 
-	new = krealloc(ifp->if_data, new_size, GFP_NOFS | __GFP_NOFAIL);
+	new = krealloc(ifp->if_u1.if_root, new_size, GFP_NOFS | __GFP_NOFAIL);
 	memset(new + ifp->if_bytes, 0, new_size - ifp->if_bytes);
-	ifp->if_data = new;
+	ifp->if_u1.if_root = new;
 	cur->leaf = new;
 }
 
@@ -622,11 +622,13 @@ static inline void xfs_iext_inc_seq(struct xfs_ifork *ifp)
 }
 
 void
-xfs_iext_insert_raw(
-	struct xfs_ifork	*ifp,
+xfs_iext_insert(
+	struct xfs_inode	*ip,
 	struct xfs_iext_cursor	*cur,
-	struct xfs_bmbt_irec	*irec)
+	struct xfs_bmbt_irec	*irec,
+	int			state)
 {
+	struct xfs_ifork	*ifp = xfs_iext_state_to_fork(ip, state);
 	xfs_fileoff_t		offset = irec->br_startoff;
 	struct xfs_iext_leaf	*new = NULL;
 	int			nr_entries, i;
@@ -660,21 +662,10 @@ xfs_iext_insert_raw(
 	xfs_iext_set(cur_rec(cur), irec);
 	ifp->if_bytes += sizeof(struct xfs_iext_rec);
 
+	trace_xfs_iext_insert(ip, cur, state, _RET_IP_);
+
 	if (new)
 		xfs_iext_insert_node(ifp, xfs_iext_leaf_key(new, 0), new, 2);
-}
-
-void
-xfs_iext_insert(
-	struct xfs_inode	*ip,
-	struct xfs_iext_cursor	*cur,
-	struct xfs_bmbt_irec	*irec,
-	int			state)
-{
-	struct xfs_ifork	*ifp = xfs_iext_state_to_fork(ip, state);
-
-	xfs_iext_insert_raw(ifp, cur, irec);
-	trace_xfs_iext_insert(ip, cur, state, _RET_IP_);
 }
 
 static struct xfs_iext_node *
@@ -786,8 +777,8 @@ again:
 		 * If we are at the root and only one entry is left we can just
 		 * free this node and update the root pointer.
 		 */
-		ASSERT(node == ifp->if_data);
-		ifp->if_data = node->ptrs[0];
+		ASSERT(node == ifp->if_u1.if_root);
+		ifp->if_u1.if_root = node->ptrs[0];
 		ifp->if_height--;
 		kmem_free(node);
 	}
@@ -863,8 +854,8 @@ xfs_iext_free_last_leaf(
 	struct xfs_ifork	*ifp)
 {
 	ifp->if_height--;
-	kmem_free(ifp->if_data);
-	ifp->if_data = NULL;
+	kmem_free(ifp->if_u1.if_root);
+	ifp->if_u1.if_root = NULL;
 }
 
 void
@@ -881,7 +872,7 @@ xfs_iext_remove(
 	trace_xfs_iext_remove(ip, cur, state, _RET_IP_);
 
 	ASSERT(ifp->if_height > 0);
-	ASSERT(ifp->if_data != NULL);
+	ASSERT(ifp->if_u1.if_root != NULL);
 	ASSERT(xfs_iext_valid(ifp, cur));
 
 	xfs_iext_inc_seq(ifp);
@@ -1051,9 +1042,9 @@ void
 xfs_iext_destroy(
 	struct xfs_ifork	*ifp)
 {
-	xfs_iext_destroy_node(ifp->if_data, ifp->if_height);
+	xfs_iext_destroy_node(ifp->if_u1.if_root, ifp->if_height);
 
 	ifp->if_bytes = 0;
 	ifp->if_height = 0;
-	ifp->if_data = NULL;
+	ifp->if_u1.if_root = NULL;
 }

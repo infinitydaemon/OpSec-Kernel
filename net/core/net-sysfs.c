@@ -193,22 +193,11 @@ static ssize_t carrier_show(struct device *dev,
 			    struct device_attribute *attr, char *buf)
 {
 	struct net_device *netdev = to_net_dev(dev);
-	int ret = -EINVAL;
 
-	if (!rtnl_trylock())
-		return restart_syscall();
+	if (netif_running(netdev))
+		return sysfs_emit(buf, fmt_dec, !!netif_carrier_ok(netdev));
 
-	if (netif_running(netdev)) {
-		/* Synchronize carrier state with link watch,
-		 * see also rtnl_getlink().
-		 */
-		linkwatch_sync_dev(netdev);
-
-		ret = sysfs_emit(buf, fmt_dec, !!netif_carrier_ok(netdev));
-	}
-	rtnl_unlock();
-
-	return ret;
+	return -EINVAL;
 }
 static DEVICE_ATTR_RW(carrier);
 

@@ -780,17 +780,19 @@ static int rda_uart_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void rda_uart_remove(struct platform_device *pdev)
+static int rda_uart_remove(struct platform_device *pdev)
 {
 	struct rda_uart_port *rda_port = platform_get_drvdata(pdev);
 
 	uart_remove_one_port(&rda_uart_driver, &rda_port->port);
 	rda_uart_ports[pdev->id] = NULL;
+
+	return 0;
 }
 
 static struct platform_driver rda_uart_platform_driver = {
 	.probe = rda_uart_probe,
-	.remove_new = rda_uart_remove,
+	.remove = rda_uart_remove,
 	.driver = {
 		.name = "rda-uart",
 		.of_match_table = rda_uart_dt_matches,

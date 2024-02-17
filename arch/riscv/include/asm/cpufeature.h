@@ -59,8 +59,6 @@ struct riscv_isa_ext_data {
 	const unsigned int id;
 	const char *name;
 	const char *property;
-	const unsigned int *subset_ext_ids;
-	const unsigned int subset_ext_size;
 };
 
 extern const struct riscv_isa_ext_data riscv_isa_ext[];
@@ -69,7 +67,7 @@ extern bool riscv_isa_fallback;
 
 unsigned long riscv_isa_extension_base(const unsigned long *isa_bitmap);
 
-bool __riscv_isa_extension_available(const unsigned long *isa_bitmap, unsigned int bit);
+bool __riscv_isa_extension_available(const unsigned long *isa_bitmap, int bit);
 #define riscv_isa_extension_available(isa_bitmap, ext)	\
 	__riscv_isa_extension_available(isa_bitmap, RISCV_ISA_EXT_##ext)
 
@@ -80,7 +78,7 @@ riscv_has_extension_likely(const unsigned long ext)
 			   "ext must be < RISCV_ISA_EXT_MAX");
 
 	if (IS_ENABLED(CONFIG_RISCV_ALTERNATIVE)) {
-		asm goto(
+		asm_volatile_goto(
 		ALTERNATIVE("j	%l[l_no]", "nop", 0, %[ext], 1)
 		:
 		: [ext] "i" (ext)
@@ -103,7 +101,7 @@ riscv_has_extension_unlikely(const unsigned long ext)
 			   "ext must be < RISCV_ISA_EXT_MAX");
 
 	if (IS_ENABLED(CONFIG_RISCV_ALTERNATIVE)) {
-		asm goto(
+		asm_volatile_goto(
 		ALTERNATIVE("nop", "j	%l[l_yes]", 0, %[ext], 1)
 		:
 		: [ext] "i" (ext)
@@ -134,7 +132,5 @@ static __always_inline bool riscv_cpu_has_extension_unlikely(int cpu, const unsi
 
 	return __riscv_isa_extension_available(hart_isa[cpu].isa, ext);
 }
-
-DECLARE_STATIC_KEY_FALSE(fast_misaligned_access_speed_key);
 
 #endif

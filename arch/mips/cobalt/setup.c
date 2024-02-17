@@ -23,6 +23,9 @@
 
 #include <cobalt.h>
 
+extern void cobalt_machine_restart(char *command);
+extern void cobalt_machine_halt(void);
+
 const char *get_system_type(void)
 {
 	switch (cobalt_board_id) {

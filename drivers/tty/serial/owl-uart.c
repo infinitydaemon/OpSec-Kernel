@@ -725,18 +725,20 @@ static int owl_uart_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void owl_uart_remove(struct platform_device *pdev)
+static int owl_uart_remove(struct platform_device *pdev)
 {
 	struct owl_uart_port *owl_port = platform_get_drvdata(pdev);
 
 	uart_remove_one_port(&owl_uart_driver, &owl_port->port);
 	owl_uart_ports[pdev->id] = NULL;
 	clk_disable_unprepare(owl_port->clk);
+
+	return 0;
 }
 
 static struct platform_driver owl_uart_platform_driver = {
 	.probe = owl_uart_probe,
-	.remove_new = owl_uart_remove,
+	.remove = owl_uart_remove,
 	.driver = {
 		.name = "owl-uart",
 		.of_match_table = owl_uart_dt_matches,

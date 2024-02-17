@@ -12,9 +12,6 @@
 #include "protocols.h"
 #include "notify.h"
 
-/* Updated only after ALL the mandatory features for that version are merged */
-#define SCMI_PROTOCOL_SUPPORTED_VERSION		0x20000
-
 enum scmi_clock_protocol_cmd {
 	CLOCK_ATTRIBUTES = 0x3,
 	CLOCK_DESCRIBE_RATES = 0x4,
@@ -321,7 +318,7 @@ static int scmi_clock_attributes_get(const struct scmi_protocol_handle *ph,
 	if (!ret && PROTOCOL_REV_MAJOR(version) >= 0x2) {
 		if (SUPPORTS_EXTENDED_NAMES(attributes))
 			ph->hops->extended_name_get(ph, CLOCK_NAME_GET, clk_id,
-						    NULL, clk->name,
+						    clk->name,
 						    SCMI_MAX_STR_SIZE);
 
 		if (SUPPORTS_RATE_CHANGED_NOTIF(attributes))
@@ -963,7 +960,7 @@ static int scmi_clock_protocol_init(const struct scmi_protocol_handle *ph)
 	}
 
 	cinfo->version = version;
-	return ph->set_priv(ph, cinfo, version);
+	return ph->set_priv(ph, cinfo);
 }
 
 static const struct scmi_protocol scmi_clock = {
@@ -972,7 +969,6 @@ static const struct scmi_protocol scmi_clock = {
 	.instance_init = &scmi_clock_protocol_init,
 	.ops = &clk_proto_ops,
 	.events = &clk_protocol_events,
-	.supported_version = SCMI_PROTOCOL_SUPPORTED_VERSION,
 };
 
 DEFINE_SCMI_PROTOCOL_REGISTER_UNREGISTER(clock, scmi_clock)

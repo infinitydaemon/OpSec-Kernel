@@ -69,7 +69,7 @@ err:
 
 int bch2_set_rebalance_needs_scan(struct bch_fs *c, u64 inum)
 {
-	int ret = bch2_trans_do(c, NULL, NULL, BCH_TRANS_COMMIT_no_enospc|BCH_TRANS_COMMIT_lazy_rw,
+	int ret = bch2_trans_do(c, NULL, NULL, BTREE_INSERT_NOFAIL|BTREE_INSERT_LAZY_RW,
 			    __bch2_set_rebalance_needs_scan(trans, inum));
 	rebalance_wakeup(c);
 	return ret;
@@ -125,7 +125,7 @@ static int bch2_bkey_clear_needs_rebalance(struct btree_trans *trans,
 
 	extent_entry_drop(bkey_i_to_s(n),
 			  (void *) bch2_bkey_rebalance_opts(bkey_i_to_s_c(n)));
-	return bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
+	return bch2_trans_commit(trans, NULL, NULL, BTREE_INSERT_NOFAIL);
 }
 
 static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
@@ -169,20 +169,6 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 		if (ret)
 			return bkey_s_c_err(ret);
 		return bkey_s_c_null;
-	}
-
-	if (trace_rebalance_extent_enabled()) {
-		struct printbuf buf = PRINTBUF;
-
-		prt_str(&buf, "target=");
-		bch2_target_to_text(&buf, c, r->target);
-		prt_str(&buf, " compression=");
-		bch2_compression_opt_to_text(&buf, r->compression);
-		prt_str(&buf, " ");
-		bch2_bkey_val_to_text(&buf, c, k);
-
-		trace_rebalance_extent(c, buf.buf);
-		printbuf_exit(&buf);
 	}
 
 	return k;
@@ -253,12 +239,13 @@ static bool rebalance_pred(struct bch_fs *c, void *arg,
 
 	if (k.k->p.inode) {
 		target		= io_opts->background_target;
-		compression	= background_compression(*io_opts);
+		compression	= io_opts->background_compression ?: io_opts->compression;
 	} else {
 		const struct bch_extent_rebalance *r = bch2_bkey_rebalance_opts(k);
 
 		target		= r ? r->target : io_opts->background_target;
-		compression	= r ? r->compression : background_compression(*io_opts);
+		compression	= r ? r->compression :
+			(io_opts->background_compression ?: io_opts->compression);
 	}
 
 	data_opts->rewrite_ptrs		= bch2_bkey_ptrs_need_rebalance(c, k, target, compression);
@@ -286,7 +273,7 @@ static int do_rebalance_scan(struct moving_context *ctxt, u64 inum, u64 cookie)
 	r->state = BCH_REBALANCE_scanning;
 
 	ret = __bch2_move_data(ctxt, r->scan_start, r->scan_end, rebalance_pred, NULL) ?:
-		commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+		commit_do(trans, NULL, NULL, BTREE_INSERT_NOFAIL,
 			  bch2_clear_rebalance_needs_scan(trans, inum, cookie));
 
 	bch2_move_stats_exit(&r->scan_stats, trans->c);
@@ -384,6 +371,7 @@ static int bch2_rebalance_thread(void *arg)
 	struct bch_fs *c = arg;
 	struct bch_fs_rebalance *r = &c->rebalance;
 	struct moving_context ctxt;
+	int ret;
 
 	set_freezable();
 
@@ -391,7 +379,8 @@ static int bch2_rebalance_thread(void *arg)
 			      writepoint_ptr(&c->rebalance_write_point),
 			      true);
 
-	while (!kthread_should_stop() && !do_rebalance(&ctxt))
+	while (!kthread_should_stop() &&
+	       !(ret = do_rebalance(&ctxt)))
 		;
 
 	bch2_moving_ctxt_exit(&ctxt);
@@ -467,9 +456,10 @@ int bch2_rebalance_start(struct bch_fs *c)
 
 	p = kthread_create(bch2_rebalance_thread, c, "bch-rebalance/%s", c->name);
 	ret = PTR_ERR_OR_ZERO(p);
-	bch_err_msg(c, ret, "creating rebalance thread");
-	if (ret)
+	if (ret) {
+		bch_err_msg(c, ret, "creating rebalance thread");
 		return ret;
+	}
 
 	get_task_struct(p);
 	rcu_assign_pointer(c->rebalance.thread, p);

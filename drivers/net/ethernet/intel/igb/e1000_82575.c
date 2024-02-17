@@ -222,7 +222,8 @@ static s32 igb_init_phy_params_82575(struct e1000_hw *hw)
 	}
 
 	/* set lan id */
-	hw->bus.func = FIELD_GET(E1000_STATUS_FUNC_MASK, rd32(E1000_STATUS));
+	hw->bus.func = (rd32(E1000_STATUS) & E1000_STATUS_FUNC_MASK) >>
+			E1000_STATUS_FUNC_SHIFT;
 
 	/* Set phy->phy_addr and phy->id. */
 	ret_val = igb_get_phy_id_82575(hw);
@@ -261,8 +262,8 @@ static s32 igb_init_phy_params_82575(struct e1000_hw *hw)
 			if (ret_val)
 				goto out;
 
-			data = FIELD_GET(E1000_M88E1112_MAC_CTRL_1_MODE_MASK,
-					 data);
+			data = (data & E1000_M88E1112_MAC_CTRL_1_MODE_MASK) >>
+			       E1000_M88E1112_MAC_CTRL_1_MODE_SHIFT;
 			if (data == E1000_M88E1112_AUTO_COPPER_SGMII ||
 			    data == E1000_M88E1112_AUTO_COPPER_BASEX)
 				hw->mac.ops.check_for_link =
@@ -329,7 +330,8 @@ static s32 igb_init_nvm_params_82575(struct e1000_hw *hw)
 	u32 eecd = rd32(E1000_EECD);
 	u16 size;
 
-	size = FIELD_GET(E1000_EECD_SIZE_EX_MASK, eecd);
+	size = (u16)((eecd & E1000_EECD_SIZE_EX_MASK) >>
+		     E1000_EECD_SIZE_EX_SHIFT);
 
 	/* Added to a constant, "size" becomes the left-shift value
 	 * for setting word_size.
@@ -2796,7 +2798,7 @@ static s32 igb_get_thermal_sensor_data_generic(struct e1000_hw *hw)
 		return 0;
 
 	hw->nvm.ops.read(hw, ets_offset, 1, &ets_cfg);
-	if (FIELD_GET(NVM_ETS_TYPE_MASK, ets_cfg)
+	if (((ets_cfg & NVM_ETS_TYPE_MASK) >> NVM_ETS_TYPE_SHIFT)
 	    != NVM_ETS_TYPE_EMC)
 		return E1000_NOT_IMPLEMENTED;
 
@@ -2806,8 +2808,10 @@ static s32 igb_get_thermal_sensor_data_generic(struct e1000_hw *hw)
 
 	for (i = 1; i < num_sensors; i++) {
 		hw->nvm.ops.read(hw, (ets_offset + i), 1, &ets_sensor);
-		sensor_index = FIELD_GET(NVM_ETS_DATA_INDEX_MASK, ets_sensor);
-		sensor_location = FIELD_GET(NVM_ETS_DATA_LOC_MASK, ets_sensor);
+		sensor_index = ((ets_sensor & NVM_ETS_DATA_INDEX_MASK) >>
+				NVM_ETS_DATA_INDEX_SHIFT);
+		sensor_location = ((ets_sensor & NVM_ETS_DATA_LOC_MASK) >>
+				   NVM_ETS_DATA_LOC_SHIFT);
 
 		if (sensor_location != 0)
 			hw->phy.ops.read_i2c_byte(hw,
@@ -2855,17 +2859,20 @@ static s32 igb_init_thermal_sensor_thresh_generic(struct e1000_hw *hw)
 		return 0;
 
 	hw->nvm.ops.read(hw, ets_offset, 1, &ets_cfg);
-	if (FIELD_GET(NVM_ETS_TYPE_MASK, ets_cfg)
+	if (((ets_cfg & NVM_ETS_TYPE_MASK) >> NVM_ETS_TYPE_SHIFT)
 	    != NVM_ETS_TYPE_EMC)
 		return E1000_NOT_IMPLEMENTED;
 
-	low_thresh_delta = FIELD_GET(NVM_ETS_LTHRES_DELTA_MASK, ets_cfg);
+	low_thresh_delta = ((ets_cfg & NVM_ETS_LTHRES_DELTA_MASK) >>
+			    NVM_ETS_LTHRES_DELTA_SHIFT);
 	num_sensors = (ets_cfg & NVM_ETS_NUM_SENSORS_MASK);
 
 	for (i = 1; i <= num_sensors; i++) {
 		hw->nvm.ops.read(hw, (ets_offset + i), 1, &ets_sensor);
-		sensor_index = FIELD_GET(NVM_ETS_DATA_INDEX_MASK, ets_sensor);
-		sensor_location = FIELD_GET(NVM_ETS_DATA_LOC_MASK, ets_sensor);
+		sensor_index = ((ets_sensor & NVM_ETS_DATA_INDEX_MASK) >>
+				NVM_ETS_DATA_INDEX_SHIFT);
+		sensor_location = ((ets_sensor & NVM_ETS_DATA_LOC_MASK) >>
+				   NVM_ETS_DATA_LOC_SHIFT);
 		therm_limit = ets_sensor & NVM_ETS_DATA_HTHRESH_MASK;
 
 		hw->phy.ops.write_i2c_byte(hw,

@@ -17,7 +17,6 @@
 #include <linux/usb/typec.h>
 #include <linux/usb/typec_altmode.h>
 #include <linux/usb/role.h>
-#include <linux/irq.h>
 
 #define TUSB320_REG8				0x8
 #define TUSB320_REG8_CURRENT_MODE_ADVERTISE	GENMASK(7, 6)
@@ -516,8 +515,6 @@ static int tusb320_probe(struct i2c_client *client)
 	const void *match_data;
 	unsigned int revision;
 	int ret;
-	u32 irq_trigger_type = IRQF_TRIGGER_FALLING;
-	struct irq_data *irq_d;
 
 	priv = devm_kzalloc(&client->dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -571,13 +568,9 @@ static int tusb320_probe(struct i2c_client *client)
 		 */
 		tusb320_state_update_handler(priv, true);
 
-	irq_d = irq_get_irq_data(client->irq);
-	if (irq_d)
-		irq_trigger_type = irqd_get_trigger_type(irq_d);
-
 	ret = devm_request_threaded_irq(priv->dev, client->irq, NULL,
 					tusb320_irq_handler,
-					IRQF_ONESHOT | irq_trigger_type,
+					IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
 					client->name, priv);
 	if (ret)
 		tusb320_typec_remove(priv);

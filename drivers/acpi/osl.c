@@ -544,7 +544,11 @@ acpi_os_predefined_override(const struct acpi_predefined_names *init_val,
 
 static irqreturn_t acpi_irq(int irq, void *dev_id)
 {
-	if ((*acpi_irq_handler)(acpi_irq_context)) {
+	u32 handled;
+
+	handled = (*acpi_irq_handler) (acpi_irq_context);
+
+	if (handled) {
 		acpi_irq_handled++;
 		return IRQ_HANDLED;
 	} else {
@@ -578,8 +582,7 @@ acpi_os_install_interrupt_handler(u32 gsi, acpi_osd_handler handler,
 
 	acpi_irq_handler = handler;
 	acpi_irq_context = context;
-	if (request_threaded_irq(irq, NULL, acpi_irq, IRQF_SHARED | IRQF_ONESHOT,
-			         "acpi", acpi_irq)) {
+	if (request_irq(irq, acpi_irq, IRQF_SHARED, "acpi", acpi_irq)) {
 		pr_err("SCI (IRQ%d) allocation failed\n", irq);
 		acpi_irq_handler = NULL;
 		return AE_NOT_ACQUIRED;
@@ -1060,7 +1063,9 @@ int __init acpi_debugger_init(void)
 acpi_status acpi_os_execute(acpi_execute_type type,
 			    acpi_osd_exec_callback function, void *context)
 {
+	acpi_status status = AE_OK;
 	struct acpi_os_dpc *dpc;
+	struct workqueue_struct *queue;
 	int ret;
 
 	ACPI_DEBUG_PRINT((ACPI_DB_EXEC,
@@ -1071,9 +1076,9 @@ acpi_status acpi_os_execute(acpi_execute_type type,
 		ret = acpi_debugger_create_thread(function, context);
 		if (ret) {
 			pr_err("Kernel thread creation failed\n");
-			return AE_ERROR;
+			status = AE_ERROR;
 		}
-		return AE_OK;
+		goto out_thread;
 	}
 
 	/*
@@ -1091,41 +1096,43 @@ acpi_status acpi_os_execute(acpi_execute_type type,
 
 	dpc->function = function;
 	dpc->context = context;
-	INIT_WORK(&dpc->work, acpi_os_execute_deferred);
 
 	/*
 	 * To prevent lockdep from complaining unnecessarily, make sure that
 	 * there is a different static lockdep key for each workqueue by using
 	 * INIT_WORK() for each of them separately.
 	 */
-	switch (type) {
-	case OSL_NOTIFY_HANDLER:
-		ret = queue_work(kacpi_notify_wq, &dpc->work);
-		break;
-	case OSL_GPE_HANDLER:
-		/*
-		 * On some machines, a software-initiated SMI causes corruption
-		 * unless the SMI runs on CPU 0.  An SMI can be initiated by
-		 * any AML, but typically it's done in GPE-related methods that
-		 * are run via workqueues, so we can avoid the known corruption
-		 * cases by always queueing on CPU 0.
-		 */
-		ret = queue_work_on(0, kacpid_wq, &dpc->work);
-		break;
-	default:
+	if (type == OSL_NOTIFY_HANDLER) {
+		queue = kacpi_notify_wq;
+		INIT_WORK(&dpc->work, acpi_os_execute_deferred);
+	} else if (type == OSL_GPE_HANDLER) {
+		queue = kacpid_wq;
+		INIT_WORK(&dpc->work, acpi_os_execute_deferred);
+	} else {
 		pr_err("Unsupported os_execute type %d.\n", type);
-		goto err;
+		status = AE_ERROR;
 	}
+
+	if (ACPI_FAILURE(status))
+		goto err_workqueue;
+
+	/*
+	 * On some machines, a software-initiated SMI causes corruption unless
+	 * the SMI runs on CPU 0.  An SMI can be initiated by any AML, but
+	 * typically it's done in GPE-related methods that are run via
+	 * workqueues, so we can avoid the known corruption cases by always
+	 * queueing on CPU 0.
+	 */
+	ret = queue_work_on(0, queue, &dpc->work);
 	if (!ret) {
 		pr_err("Unable to queue work\n");
-		goto err;
+		status = AE_ERROR;
 	}
-
-	return AE_OK;
-
-err:
-	kfree(dpc);
-	return AE_ERROR;
+err_workqueue:
+	if (ACPI_FAILURE(status))
+		kfree(dpc);
+out_thread:
+	return status;
 }
 EXPORT_SYMBOL(acpi_os_execute);
 
@@ -1515,18 +1522,20 @@ void acpi_os_delete_lock(acpi_spinlock handle)
 acpi_cpu_flags acpi_os_acquire_lock(acpi_spinlock lockp)
 	__acquires(lockp)
 {
-	spin_lock(lockp);
-	return 0;
+	acpi_cpu_flags flags;
+
+	spin_lock_irqsave(lockp, flags);
+	return flags;
 }
 
 /*
  * Release a spinlock. See above.
  */
 
-void acpi_os_release_lock(acpi_spinlock lockp, acpi_cpu_flags not_used)
+void acpi_os_release_lock(acpi_spinlock lockp, acpi_cpu_flags flags)
 	__releases(lockp)
 {
-	spin_unlock(lockp);
+	spin_unlock_irqrestore(lockp, flags);
 }
 
 #ifndef ACPI_USE_LOCAL_CACHE
@@ -1663,7 +1672,7 @@ acpi_status __init acpi_os_initialize(void)
 acpi_status __init acpi_os_initialize1(void)
 {
 	kacpid_wq = alloc_workqueue("kacpid", 0, 1);
-	kacpi_notify_wq = alloc_workqueue("kacpi_notify", 0, 0);
+	kacpi_notify_wq = alloc_workqueue("kacpi_notify", 0, 1);
 	kacpi_hotplug_wq = alloc_ordered_workqueue("kacpi_hotplug", 0);
 	BUG_ON(!kacpid_wq);
 	BUG_ON(!kacpi_notify_wq);

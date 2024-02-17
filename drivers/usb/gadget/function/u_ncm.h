@@ -31,8 +31,6 @@ struct f_ncm_opts {
 	 */
 	struct mutex			lock;
 	int				refcnt;
-
-	u16				max_segment_size;
 };
 
 #endif /* U_NCM_H */

@@ -1010,7 +1010,7 @@ out:
 	return res;
 }
 
-static void cpc925_remove(struct platform_device *pdev)
+static int cpc925_remove(struct platform_device *pdev)
 {
 	struct mem_ctl_info *mci = platform_get_drvdata(pdev);
 
@@ -1023,11 +1023,13 @@ static void cpc925_remove(struct platform_device *pdev)
 
 	edac_mc_del_mc(&pdev->dev);
 	edac_mc_free(mci);
+
+	return 0;
 }
 
 static struct platform_driver cpc925_edac_driver = {
 	.probe = cpc925_probe,
-	.remove_new = cpc925_remove,
+	.remove = cpc925_remove,
 	.driver = {
 		   .name = "cpc925_edac",
 	}

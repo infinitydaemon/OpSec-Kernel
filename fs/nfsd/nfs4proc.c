@@ -970,11 +970,8 @@ nfsd4_read(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	 * To ensure proper ordering, we therefore turn off zero copy if
 	 * the client wants us to do more in this compound:
 	 */
-	if (!nfsd4_last_compound_op(rqstp)) {
-		struct nfsd4_compoundargs *argp = rqstp->rq_argp;
-
-		argp->splice_ok = false;
-	}
+	if (!nfsd4_last_compound_op(rqstp))
+		clear_bit(RQ_SPLICE_OK, &rqstp->rq_flags);
 
 	/* check stateid */
 	status = nfs4_preprocess_stateid_op(rqstp, cstate, &cstate->current_fh,

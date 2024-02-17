@@ -309,31 +309,11 @@ static inline int ntfs_filldir(struct ntfs_sb_info *sbi, struct ntfs_inode *ni,
 		return 0;
 	}
 
-	/*
-	 * NTFS: symlinks are "dir + reparse" or "file + reparse"
-	 * Unfortunately reparse attribute is used for many purposes (several dozens).
-	 * It is not possible here to know is this name symlink or not.
-	 * To get exactly the type of name we should to open inode (read mft).
-	 * getattr for opened file (fstat) correctly returns symlink.
-	 */
-	dt_type = (fname->dup.fa & FILE_ATTRIBUTE_DIRECTORY) ? DT_DIR : DT_REG;
-
-	/*
-	 * It is not reliable to detect the type of name using duplicated information
-	 * stored in parent directory.
-	 * The only correct way to get the type of name - read MFT record and find ATTR_STD.
-	 * The code below is not good idea.
-	 * It does additional locks/reads just to get the type of name.
-	 * Should we use additional mount option to enable branch below?
-	 */
-	if ((fname->dup.fa & FILE_ATTRIBUTE_REPARSE_POINT) &&
-	    ino != ni->mi.rno) {
-		struct inode *inode = ntfs_iget5(sbi->sb, &e->ref, NULL);
-		if (!IS_ERR_OR_NULL(inode)) {
-			dt_type = fs_umode_to_dtype(inode->i_mode);
-			iput(inode);
-		}
-	}
+	/* NTFS: symlinks are "dir + reparse" or "file + reparse" */
+	if (fname->dup.fa & FILE_ATTRIBUTE_REPARSE_POINT)
+		dt_type = DT_LNK;
+	else
+		dt_type = (fname->dup.fa & FILE_ATTRIBUTE_DIRECTORY) ? DT_DIR : DT_REG;
 
 	return !dir_emit(ctx, (s8 *)name, name_len, ino, dt_type);
 }
@@ -515,9 +495,11 @@ static int ntfs_dir_count(struct inode *dir, bool *is_empty, size_t *dirs,
 	struct INDEX_HDR *hdr;
 	const struct ATTR_FILE_NAME *fname;
 	u32 e_size, off, end;
+	u64 vbo = 0;
 	size_t drs = 0, fles = 0, bit = 0;
+	loff_t i_size = ni->vfs_inode.i_size;
 	struct indx_node *node = NULL;
-	size_t max_indx = i_size_read(&ni->vfs_inode) >> ni->dir.index_bits;
+	u8 index_bits = ni->dir.index_bits;
 
 	if (is_empty)
 		*is_empty = true;
@@ -536,10 +518,8 @@ static int ntfs_dir_count(struct inode *dir, bool *is_empty, size_t *dirs,
 			e = Add2Ptr(hdr, off);
 			e_size = le16_to_cpu(e->size);
 			if (e_size < sizeof(struct NTFS_DE) ||
-			    off + e_size > end) {
-				/* Looks like corruption. */
+			    off + e_size > end)
 				break;
-			}
 
 			if (de_is_last(e))
 				break;
@@ -563,7 +543,7 @@ static int ntfs_dir_count(struct inode *dir, bool *is_empty, size_t *dirs,
 				fles += 1;
 		}
 
-		if (bit >= max_indx)
+		if (vbo >= i_size)
 			goto out;
 
 		err = indx_used_bit(&ni->dir, ni, &bit);
@@ -573,7 +553,8 @@ static int ntfs_dir_count(struct inode *dir, bool *is_empty, size_t *dirs,
 		if (bit == MINUS_ONE_T)
 			goto out;
 
-		if (bit >= max_indx)
+		vbo = (u64)bit << index_bits;
+		if (vbo >= i_size)
 			goto out;
 
 		err = indx_read(&ni->dir, ni, bit << ni->dir.idx2vbn_bits,
@@ -583,6 +564,7 @@ static int ntfs_dir_count(struct inode *dir, bool *is_empty, size_t *dirs,
 
 		hdr = &node->index->ihdr;
 		bit += 1;
+		vbo = (u64)bit << ni->dir.idx2vbn_bits;
 	}
 
 out:
@@ -611,9 +593,5 @@ const struct file_operations ntfs_dir_operations = {
 	.iterate_shared	= ntfs_readdir,
 	.fsync		= generic_file_fsync,
 	.open		= ntfs_file_open,
-	.unlocked_ioctl = ntfs_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl   = ntfs_compat_ioctl,
-#endif
 };
 // clang-format on

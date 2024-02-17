@@ -198,7 +198,6 @@ properties:
       - qcom,kryo660
       - qcom,kryo685
       - qcom,kryo780
-      - qcom,oryon
       - qcom,scorpion
 
   enable-method:

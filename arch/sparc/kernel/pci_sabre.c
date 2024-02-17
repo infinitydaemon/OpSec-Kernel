@@ -13,10 +13,7 @@
 #include <linux/export.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
-#include <linux/of.h>
-#include <linux/of_platform.h>
-#include <linux/platform_device.h>
-#include <linux/property.h>
+#include <linux/of_device.h>
 
 #include <asm/apb.h>
 #include <asm/iommu.h>
@@ -459,6 +456,7 @@ static void sabre_pbm_init(struct pci_pbm_info *pbm,
 static const struct of_device_id sabre_match[];
 static int sabre_probe(struct platform_device *op)
 {
+	const struct of_device_id *match;
 	const struct linux_prom64_registers *pr_regs;
 	struct device_node *dp = op->dev.of_node;
 	struct pci_pbm_info *pbm;
@@ -468,7 +466,8 @@ static int sabre_probe(struct platform_device *op)
 	const u32 *vdma;
 	u64 clear_irq;
 
-	hummingbird_p = (uintptr_t)device_get_match_data(&op->dev);
+	match = of_match_device(sabre_match, &op->dev);
+	hummingbird_p = match && (match->data != NULL);
 	if (!hummingbird_p) {
 		struct device_node *cpu_dp;
 

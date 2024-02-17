@@ -63,7 +63,6 @@ int efivars_register(struct efivars *efivars,
 		     const struct efivar_operations *ops)
 {
 	int rv;
-	int event;
 
 	if (down_interruptible(&efivars_lock))
 		return -EINTR;
@@ -77,13 +76,6 @@ int efivars_register(struct efivars *efivars,
 	efivars->ops = ops;
 
 	__efivars = efivars;
-
-	if (efivar_supports_writes())
-		event = EFIVAR_OPS_RDWR;
-	else
-		event = EFIVAR_OPS_RDONLY;
-
-	blocking_notifier_call_chain(&efivar_ops_nh, event, NULL);
 
 	pr_info("Registered efivars operations\n");
 	rv = 0;

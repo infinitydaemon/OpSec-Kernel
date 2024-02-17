@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright 2015, Cyril Bur, IBM Corp.
- * Copyright 2023, Michael Ellerman, IBM Corp.
  *
  * This test attempts to see if the FPU registers change across preemption.
- * There is no way to be sure preemption happened so this test just uses many
- * threads and a long wait. As such, a successful test doesn't mean much but
- * a failure is bad.
+ * Two things should be noted here a) The check_fpu function in asm only checks
+ * the non volatile registers as it is reused from the syscall test b) There is
+ * no way to be sure preemption happened so this test just uses many threads
+ * and a long wait. As such, a successful test doesn't mean much but a failure
+ * is bad.
  */
 
 #include <stdio.h>
@@ -19,10 +20,9 @@
 #include <pthread.h>
 
 #include "utils.h"
-#include "fpu.h"
 
 /* Time to wait for workers to get preempted (seconds) */
-#define PREEMPT_TIME 60
+#define PREEMPT_TIME 20
 /*
  * Factor by which to multiply number of online CPUs for total number of
  * worker threads
@@ -30,7 +30,9 @@
 #define THREAD_FACTOR 8
 
 
-__thread double darray[32];
+__thread double darray[] = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0,
+		     1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0,
+		     2.1};
 
 int threads_starting;
 int running;
@@ -40,9 +42,12 @@ extern int preempt_fpu(double *darray, int *threads_starting, int *running);
 void *preempt_fpu_c(void *p)
 {
 	long rc;
+	int i;
 
 	srand(pthread_self());
-	randomise_darray(darray, ARRAY_SIZE(darray));
+	for (i = 0; i < 21; i++)
+		darray[i] = rand();
+
 	rc = preempt_fpu(darray, &threads_starting, &running);
 
 	return (void *)rc;

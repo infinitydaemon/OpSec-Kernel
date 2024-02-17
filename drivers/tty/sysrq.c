@@ -1150,29 +1150,16 @@ EXPORT_SYMBOL(unregister_sysrq_key);
 #ifdef CONFIG_PROC_FS
 /*
  * writing 'C' to /proc/sysrq-trigger is like sysrq-C
- * Normally, only the first character written is processed.
- * However, if the first character is an underscore,
- * all characters are processed.
  */
 static ssize_t write_sysrq_trigger(struct file *file, const char __user *buf,
 				   size_t count, loff_t *ppos)
 {
-	bool bulk = false;
-	size_t i;
-
-	for (i = 0; i < count; i++) {
+	if (count) {
 		char c;
 
-		if (get_user(c, buf + i))
+		if (get_user(c, buf))
 			return -EFAULT;
-
-		if (c == '_')
-			bulk = true;
-		else
-			__handle_sysrq(c, false);
-
-		if (!bulk)
-			break;
+		__handle_sysrq(c, false);
 	}
 
 	return count;

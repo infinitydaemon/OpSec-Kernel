@@ -58,7 +58,7 @@ static const struct hv_ops hvc_opal_raw_ops = {
 	.notifier_hangup = notifier_hangup_irq,
 };
 
-static ssize_t hvc_opal_hvsi_get_chars(uint32_t vtermno, u8 *buf, size_t count)
+static int hvc_opal_hvsi_get_chars(uint32_t vtermno, char *buf, int count)
 {
 	struct hvc_opal_priv *pv = hvc_opal_privs[vtermno];
 
@@ -68,8 +68,7 @@ static ssize_t hvc_opal_hvsi_get_chars(uint32_t vtermno, u8 *buf, size_t count)
 	return hvsilib_get_chars(&pv->hvsi, buf, count);
 }
 
-static ssize_t hvc_opal_hvsi_put_chars(uint32_t vtermno, const u8 *buf,
-				       size_t count)
+static int hvc_opal_hvsi_put_chars(uint32_t vtermno, const char *buf, int count)
 {
 	struct hvc_opal_priv *pv = hvc_opal_privs[vtermno];
 
@@ -233,21 +232,24 @@ static int hvc_opal_probe(struct platform_device *dev)
 	return 0;
 }
 
-static void hvc_opal_remove(struct platform_device *dev)
+static int hvc_opal_remove(struct platform_device *dev)
 {
 	struct hvc_struct *hp = dev_get_drvdata(&dev->dev);
-	int termno;
+	int rc, termno;
 
 	termno = hp->vtermno;
-	hvc_remove(hp);
-	if (hvc_opal_privs[termno] != &hvc_opal_boot_priv)
-		kfree(hvc_opal_privs[termno]);
-	hvc_opal_privs[termno] = NULL;
+	rc = hvc_remove(hp);
+	if (rc == 0) {
+		if (hvc_opal_privs[termno] != &hvc_opal_boot_priv)
+			kfree(hvc_opal_privs[termno]);
+		hvc_opal_privs[termno] = NULL;
+	}
+	return rc;
 }
 
 static struct platform_driver hvc_opal_driver = {
 	.probe		= hvc_opal_probe,
-	.remove_new	= hvc_opal_remove,
+	.remove		= hvc_opal_remove,
 	.driver		= {
 		.name	= hvc_opal_name,
 		.of_match_table	= hvc_opal_match,

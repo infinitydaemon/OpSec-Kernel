@@ -148,10 +148,16 @@ out:
 
 static void css_sch_todo(struct work_struct *work);
 
-static void css_sch_create_locks(struct subchannel *sch)
+static int css_sch_create_locks(struct subchannel *sch)
 {
-	spin_lock_init(&sch->lock);
+	sch->lock = kmalloc(sizeof(*sch->lock), GFP_KERNEL);
+	if (!sch->lock)
+		return -ENOMEM;
+
+	spin_lock_init(sch->lock);
 	mutex_init(&sch->reg_mutex);
+
+	return 0;
 }
 
 static void css_subchannel_release(struct device *dev)
@@ -161,6 +167,7 @@ static void css_subchannel_release(struct device *dev)
 	sch->config.intparm = 0;
 	cio_commit_config(sch);
 	kfree(sch->driver_override);
+	kfree(sch->lock);
 	kfree(sch);
 }
 
@@ -212,7 +219,9 @@ struct subchannel *css_alloc_subchannel(struct subchannel_id schid,
 	sch->schib = *schib;
 	sch->st = schib->pmcw.st;
 
-	css_sch_create_locks(sch);
+	ret = css_sch_create_locks(sch);
+	if (ret)
+		goto err;
 
 	INIT_WORK(&sch->todo_work, css_sch_todo);
 	sch->dev.release = &css_subchannel_release;
@@ -224,17 +233,19 @@ struct subchannel *css_alloc_subchannel(struct subchannel_id schid,
 	 */
 	ret = dma_set_coherent_mask(&sch->dev, DMA_BIT_MASK(31));
 	if (ret)
-		goto err;
+		goto err_lock;
 	/*
 	 * But we don't have such restrictions imposed on the stuff that
 	 * is handled by the streaming API.
 	 */
 	ret = dma_set_mask(&sch->dev, DMA_BIT_MASK(64));
 	if (ret)
-		goto err;
+		goto err_lock;
 
 	return sch;
 
+err_lock:
+	kfree(sch->lock);
 err:
 	kfree(sch);
 	return ERR_PTR(ret);
@@ -593,12 +604,12 @@ static void css_sch_todo(struct work_struct *work)
 
 	sch = container_of(work, struct subchannel, todo_work);
 	/* Find out todo. */
-	spin_lock_irq(&sch->lock);
+	spin_lock_irq(sch->lock);
 	todo = sch->todo;
 	CIO_MSG_EVENT(4, "sch_todo: sch=0.%x.%04x, todo=%d\n", sch->schid.ssid,
 		      sch->schid.sch_no, todo);
 	sch->todo = SCH_TODO_NOTHING;
-	spin_unlock_irq(&sch->lock);
+	spin_unlock_irq(sch->lock);
 	/* Perform todo. */
 	switch (todo) {
 	case SCH_TODO_NOTHING:
@@ -606,9 +617,9 @@ static void css_sch_todo(struct work_struct *work)
 	case SCH_TODO_EVAL:
 		ret = css_evaluate_known_subchannel(sch, 1);
 		if (ret == -EAGAIN) {
-			spin_lock_irq(&sch->lock);
+			spin_lock_irq(sch->lock);
 			css_sched_sch_todo(sch, todo);
-			spin_unlock_irq(&sch->lock);
+			spin_unlock_irq(sch->lock);
 		}
 		break;
 	case SCH_TODO_UNREG:
@@ -1017,7 +1028,12 @@ static int __init setup_css(int nr)
 	css->pseudo_subchannel->dev.parent = &css->device;
 	css->pseudo_subchannel->dev.release = css_subchannel_release;
 	mutex_init(&css->pseudo_subchannel->reg_mutex);
-	css_sch_create_locks(css->pseudo_subchannel);
+	ret = css_sch_create_locks(css->pseudo_subchannel);
+	if (ret) {
+		kfree(css->pseudo_subchannel);
+		device_unregister(&css->device);
+		goto out_err;
+	}
 
 	dev_set_name(&css->pseudo_subchannel->dev, "defunct");
 	ret = device_register(&css->pseudo_subchannel->dev);

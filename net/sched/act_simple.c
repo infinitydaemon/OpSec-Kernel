@@ -118,7 +118,7 @@ static int tcf_simp_init(struct net *net, struct nlattr *nla,
 		return err;
 	exists = err;
 	if (exists && bind)
-		return ACT_P_BOUND;
+		return 0;
 
 	if (tb[TCA_DEF_DATA] == NULL) {
 		if (exists)

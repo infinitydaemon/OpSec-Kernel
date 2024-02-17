@@ -1904,10 +1904,11 @@ static int etnaviv_gpu_platform_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void etnaviv_gpu_platform_remove(struct platform_device *pdev)
+static int etnaviv_gpu_platform_remove(struct platform_device *pdev)
 {
 	component_del(&pdev->dev, &gpu_ops);
 	pm_runtime_disable(&pdev->dev);
+	return 0;
 }
 
 static int etnaviv_gpu_rpm_suspend(struct device *dev)
@@ -1916,7 +1917,7 @@ static int etnaviv_gpu_rpm_suspend(struct device *dev)
 	u32 idle, mask;
 
 	/* If there are any jobs in the HW queue, we're not idle */
-	if (atomic_read(&gpu->sched.credit_count))
+	if (atomic_read(&gpu->sched.hw_rq_count))
 		return -EBUSY;
 
 	/* Check whether the hardware (except FE and MC) is idle */
@@ -1969,6 +1970,6 @@ struct platform_driver etnaviv_gpu_driver = {
 		.of_match_table = etnaviv_gpu_match,
 	},
 	.probe = etnaviv_gpu_platform_probe,
-	.remove_new = etnaviv_gpu_platform_remove,
+	.remove = etnaviv_gpu_platform_remove,
 	.id_table = gpu_ids,
 };

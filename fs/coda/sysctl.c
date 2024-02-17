@@ -36,6 +36,7 @@ static struct ctl_table coda_table[] = {
 		.mode		= 0600,
 		.proc_handler	= proc_dointvec
 	},
+	{}
 };
 
 void coda_sysctl_init(void)

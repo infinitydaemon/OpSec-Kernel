@@ -8,18 +8,13 @@
  *          Mika Westerberg <mika.westerberg@linux.intel.com>
  */
 
-#include <linux/device.h>
-#include <linux/gfp_types.h>
-#include <linux/mod_devicetable.h>
+#include <linux/ioport.h>
+#include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/pci.h>
-#include <linux/pm.h>
 #include <linux/pm_runtime.h>
 #include <linux/property.h>
-
 #include <linux/pxa2xx_ssp.h>
-
-#include <asm/errno.h>
 
 #include "intel-lpss.h"
 
@@ -35,7 +30,6 @@ static const struct pci_device_id ignore_resource_conflicts_ids[] = {
 static int intel_lpss_pci_probe(struct pci_dev *pdev,
 				const struct pci_device_id *id)
 {
-	const struct intel_lpss_platform_info *data = (void *)id->driver_data;
 	struct intel_lpss_platform_info *info;
 	int ret;
 
@@ -43,17 +37,13 @@ static int intel_lpss_pci_probe(struct pci_dev *pdev,
 	if (ret)
 		return ret;
 
-	ret = pci_alloc_irq_vectors(pdev, 1, 1, PCI_IRQ_LEGACY);
-	if (ret < 0)
-		return ret;
-
-	info = devm_kmemdup(&pdev->dev, data, sizeof(*info), GFP_KERNEL);
+	info = devm_kmemdup(&pdev->dev, (void *)id->driver_data, sizeof(*info),
+			    GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
-	/* No need to check mem and irq here as intel_lpss_probe() does it for us */
-	info->mem = pci_resource_n(pdev, 0);
-	info->irq = pci_irq_vector(pdev, 0);
+	info->mem = &pdev->resource[0];
+	info->irq = pdev->irq;
 
 	if (pci_match_id(ignore_resource_conflicts_ids, pdev))
 		info->ignore_resource_conflicts = true;
@@ -81,6 +71,8 @@ static void intel_lpss_pci_remove(struct pci_dev *pdev)
 
 	intel_lpss_remove(&pdev->dev);
 }
+
+static INTEL_LPSS_PM_OPS(intel_lpss_pci_pm_ops);
 
 static const struct property_entry spt_spi_properties[] = {
 	PROPERTY_ENTRY_U32("intel,spi-pxa2xx-type", LPSS_SPT_SSP),
@@ -592,7 +584,7 @@ static struct pci_driver intel_lpss_pci_driver = {
 	.probe = intel_lpss_pci_probe,
 	.remove = intel_lpss_pci_remove,
 	.driver = {
-		.pm = pm_ptr(&intel_lpss_pm_ops),
+		.pm = &intel_lpss_pci_pm_ops,
 	},
 };
 
@@ -602,4 +594,3 @@ MODULE_AUTHOR("Andy Shevchenko <andriy.shevchenko@linux.intel.com>");
 MODULE_AUTHOR("Mika Westerberg <mika.westerberg@linux.intel.com>");
 MODULE_DESCRIPTION("Intel LPSS PCI driver");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS(INTEL_LPSS);

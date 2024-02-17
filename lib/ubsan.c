@@ -204,8 +204,8 @@ static void ubsan_prologue(struct source_location *loc, const char *reason)
 {
 	current->in_ubsan++;
 
-	pr_warn(CUT_HERE);
-
+	pr_err("========================================"
+		"========================================\n");
 	pr_err("UBSAN: %s in %s:%d:%d\n", reason, loc->file_name,
 		loc->line & LINE_MASK, loc->column & COLUMN_MASK);
 
@@ -215,7 +215,8 @@ static void ubsan_prologue(struct source_location *loc, const char *reason)
 static void ubsan_epilogue(void)
 {
 	dump_stack();
-	pr_warn("---[ end trace ]---\n");
+	pr_err("========================================"
+		"========================================\n");
 
 	current->in_ubsan--;
 

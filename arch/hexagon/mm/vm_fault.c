@@ -12,7 +12,6 @@
  */
 
 #include <asm/traps.h>
-#include <asm/vm_fault.h>
 #include <linux/uaccess.h>
 #include <linux/mm.h>
 #include <linux/sched/signal.h>
@@ -34,7 +33,7 @@
 /*
  * Canonical page fault handler
  */
-static void do_page_fault(unsigned long address, long cause, struct pt_regs *regs)
+void do_page_fault(unsigned long address, long cause, struct pt_regs *regs)
 {
 	struct vm_area_struct *vma;
 	struct mm_struct *mm = current->mm;

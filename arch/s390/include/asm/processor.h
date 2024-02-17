@@ -184,7 +184,11 @@ struct thread_struct {
 	struct gs_cb *gs_cb;			/* Current guarded storage cb */
 	struct gs_cb *gs_bc_cb;			/* Broadcast guarded storage cb */
 	struct pgm_tdb trap_tdb;		/* Transaction abort diagnose block */
-	struct fpu fpu;				/* FP and VX register save area */
+	/*
+	 * Warning: 'fpu' is dynamically-sized. It *MUST* be at
+	 * the end.
+	 */
+	struct fpu fpu;			/* FP and VX register save area */
 };
 
 /* Flag to disable transactions. */
@@ -327,36 +331,14 @@ static inline unsigned long __extract_psw(void)
 	return (((unsigned long) reg1) << 32) | ((unsigned long) reg2);
 }
 
-static inline unsigned long __local_mcck_save(void)
+static inline void local_mcck_enable(void)
 {
-	unsigned long mask = __extract_psw();
-
-	__load_psw_mask(mask & ~PSW_MASK_MCHECK);
-	return mask & PSW_MASK_MCHECK;
-}
-
-#define local_mcck_save(mflags)			\
-do {						\
-	typecheck(unsigned long, mflags);	\
-	mflags = __local_mcck_save();		\
-} while (0)
-
-static inline void local_mcck_restore(unsigned long mflags)
-{
-	unsigned long mask = __extract_psw();
-
-	mask &= ~PSW_MASK_MCHECK;
-	__load_psw_mask(mask | mflags);
+	__load_psw_mask(__extract_psw() | PSW_MASK_MCHECK);
 }
 
 static inline void local_mcck_disable(void)
 {
-	__local_mcck_save();
-}
-
-static inline void local_mcck_enable(void)
-{
-	__load_psw_mask(__extract_psw() | PSW_MASK_MCHECK);
+	__load_psw_mask(__extract_psw() & ~PSW_MASK_MCHECK);
 }
 
 /*

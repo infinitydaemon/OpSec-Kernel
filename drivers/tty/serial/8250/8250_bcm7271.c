@@ -1121,7 +1121,7 @@ release_dma:
 	return ret;
 }
 
-static void brcmuart_remove(struct platform_device *pdev)
+static int brcmuart_remove(struct platform_device *pdev)
 {
 	struct brcmuart_priv *priv = platform_get_drvdata(pdev);
 
@@ -1131,6 +1131,7 @@ static void brcmuart_remove(struct platform_device *pdev)
 	brcmuart_free_bufs(&pdev->dev, priv);
 	if (priv->dma_enabled)
 		brcmuart_arbitration(priv, 0);
+	return 0;
 }
 
 static int __maybe_unused brcmuart_suspend(struct device *dev)
@@ -1206,7 +1207,7 @@ static struct platform_driver brcmuart_platform_driver = {
 		.of_match_table = brcmuart_dt_ids,
 	},
 	.probe		= brcmuart_probe,
-	.remove_new	= brcmuart_remove,
+	.remove		= brcmuart_remove,
 };
 
 static int __init brcmuart_init(void)

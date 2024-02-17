@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause-Clear */
 /*
  * Copyright (c) 2018-2019 The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef ATH11K_HTC_H
@@ -151,7 +150,10 @@ struct ath11k_htc_credit_report {
 
 struct ath11k_htc_record {
 	struct ath11k_htc_record_hdr hdr;
-	struct ath11k_htc_credit_report credit_report[];
+	union {
+		struct ath11k_htc_credit_report credit_report[0];
+		u8 pauload[0];
+	};
 } __packed __aligned(4);
 
 enum ath11k_htc_svc_gid {

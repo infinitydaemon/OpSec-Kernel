@@ -650,8 +650,7 @@ static unsigned long do_h_register_vpa(struct kvm_vcpu *vcpu,
 	return err;
 }
 
-static void kvmppc_update_vpa(struct kvm_vcpu *vcpu, struct kvmppc_vpa *vpap,
-			       struct kvmppc_vpa *old_vpap)
+static void kvmppc_update_vpa(struct kvm_vcpu *vcpu, struct kvmppc_vpa *vpap)
 {
 	struct kvm *kvm = vcpu->kvm;
 	void *va;
@@ -691,8 +690,9 @@ static void kvmppc_update_vpa(struct kvm_vcpu *vcpu, struct kvmppc_vpa *vpap,
 		kvmppc_unpin_guest_page(kvm, va, gpa, false);
 		va = NULL;
 	}
-	*old_vpap = *vpap;
-
+	if (vpap->pinned_addr)
+		kvmppc_unpin_guest_page(kvm, vpap->pinned_addr, vpap->gpa,
+					vpap->dirty);
 	vpap->gpa = gpa;
 	vpap->pinned_addr = va;
 	vpap->dirty = false;
@@ -702,9 +702,6 @@ static void kvmppc_update_vpa(struct kvm_vcpu *vcpu, struct kvmppc_vpa *vpap,
 
 static void kvmppc_update_vpas(struct kvm_vcpu *vcpu)
 {
-	struct kvm *kvm = vcpu->kvm;
-	struct kvmppc_vpa old_vpa = { 0 };
-
 	if (!(vcpu->arch.vpa.update_pending ||
 	      vcpu->arch.slb_shadow.update_pending ||
 	      vcpu->arch.dtl.update_pending))
@@ -712,34 +709,17 @@ static void kvmppc_update_vpas(struct kvm_vcpu *vcpu)
 
 	spin_lock(&vcpu->arch.vpa_update_lock);
 	if (vcpu->arch.vpa.update_pending) {
-		kvmppc_update_vpa(vcpu, &vcpu->arch.vpa, &old_vpa);
-		if (old_vpa.pinned_addr) {
-			if (kvmhv_is_nestedv2())
-				kvmhv_nestedv2_set_vpa(vcpu, ~0ull);
-			kvmppc_unpin_guest_page(kvm, old_vpa.pinned_addr, old_vpa.gpa,
-						old_vpa.dirty);
-		}
-		if (vcpu->arch.vpa.pinned_addr) {
+		kvmppc_update_vpa(vcpu, &vcpu->arch.vpa);
+		if (vcpu->arch.vpa.pinned_addr)
 			init_vpa(vcpu, vcpu->arch.vpa.pinned_addr);
-			if (kvmhv_is_nestedv2())
-				kvmhv_nestedv2_set_vpa(vcpu, __pa(vcpu->arch.vpa.pinned_addr));
-		}
 	}
 	if (vcpu->arch.dtl.update_pending) {
-		kvmppc_update_vpa(vcpu, &vcpu->arch.dtl, &old_vpa);
-		if (old_vpa.pinned_addr)
-			kvmppc_unpin_guest_page(kvm, old_vpa.pinned_addr, old_vpa.gpa,
-						old_vpa.dirty);
+		kvmppc_update_vpa(vcpu, &vcpu->arch.dtl);
 		vcpu->arch.dtl_ptr = vcpu->arch.dtl.pinned_addr;
 		vcpu->arch.dtl_index = 0;
 	}
-	if (vcpu->arch.slb_shadow.update_pending) {
-		kvmppc_update_vpa(vcpu, &vcpu->arch.slb_shadow, &old_vpa);
-		if (old_vpa.pinned_addr)
-			kvmppc_unpin_guest_page(kvm, old_vpa.pinned_addr, old_vpa.gpa,
-						old_vpa.dirty);
-	}
-
+	if (vcpu->arch.slb_shadow.update_pending)
+		kvmppc_update_vpa(vcpu, &vcpu->arch.slb_shadow);
 	spin_unlock(&vcpu->arch.vpa_update_lock);
 }
 
@@ -1617,7 +1597,7 @@ static int kvmppc_handle_exit_hv(struct kvm_vcpu *vcpu,
 	 * That can happen due to a bug, or due to a machine check
 	 * occurring at just the wrong time.
 	 */
-	if (!kvmhv_is_nestedv2() && (__kvmppc_get_msr_hv(vcpu) & MSR_HV)) {
+	if (__kvmppc_get_msr_hv(vcpu) & MSR_HV) {
 		printk(KERN_EMERG "KVM trap in HV mode!\n");
 		printk(KERN_EMERG "trap=0x%x | pc=0x%lx | msr=0x%llx\n",
 			vcpu->arch.trap, kvmppc_get_pc(vcpu),
@@ -1708,7 +1688,7 @@ static int kvmppc_handle_exit_hv(struct kvm_vcpu *vcpu,
 	{
 		int i;
 
-		if (!kvmhv_is_nestedv2() && unlikely(__kvmppc_get_msr_hv(vcpu) & MSR_PR)) {
+		if (unlikely(__kvmppc_get_msr_hv(vcpu) & MSR_PR)) {
 			/*
 			 * Guest userspace executed sc 1. This can only be
 			 * reached by the P9 path because the old path
@@ -4104,8 +4084,6 @@ static int kvmhv_vcpu_entry_nestedv2(struct kvm_vcpu *vcpu, u64 time_limit,
 	if (rc < 0)
 		return -EINVAL;
 
-	kvmppc_gse_put_u64(io->vcpu_run_input, KVMPPC_GSID_LPCR, lpcr);
-
 	accumulate_time(vcpu, &vcpu->arch.in_guest);
 	rc = plpar_guest_run_vcpu(0, vcpu->kvm->arch.lpid, vcpu->vcpu_id,
 				  &trap, &i);
@@ -4834,7 +4812,7 @@ int kvmhv_run_single_vcpu(struct kvm_vcpu *vcpu, u64 time_limit,
 	 * entering a nested guest in which case the decrementer is now owned
 	 * by L2 and the L1 decrementer is provided in hdec_expires
 	 */
-	if (!kvmhv_is_nestedv2() && kvmppc_core_pending_dec(vcpu) &&
+	if (kvmppc_core_pending_dec(vcpu) &&
 			((tb < kvmppc_dec_expires_host_tb(vcpu)) ||
 			 (trap == BOOK3S_INTERRUPT_SYSCALL &&
 			  kvmppc_get_gpr(vcpu, 3) == H_ENTER_NESTED)))
@@ -4977,7 +4955,7 @@ static int kvmppc_vcpu_run_hv(struct kvm_vcpu *vcpu)
 		if (run->exit_reason == KVM_EXIT_PAPR_HCALL) {
 			accumulate_time(vcpu, &vcpu->arch.hcall);
 
-			if (!kvmhv_is_nestedv2() && WARN_ON_ONCE(__kvmppc_get_msr_hv(vcpu) & MSR_PR)) {
+			if (WARN_ON_ONCE(__kvmppc_get_msr_hv(vcpu) & MSR_PR)) {
 				/*
 				 * These should have been caught reflected
 				 * into the guest by now. Final sanity check:
@@ -5719,12 +5697,10 @@ static void kvmppc_core_destroy_vm_hv(struct kvm *kvm)
 			kvmhv_set_ptbl_entry(kvm->arch.lpid, 0, 0);
 	}
 
-	if (kvmhv_is_nestedv2()) {
-		kvmhv_flush_lpid(kvm->arch.lpid);
+	if (kvmhv_is_nestedv2())
 		plpar_guest_delete(0, kvm->arch.lpid);
-	} else {
+	else
 		kvmppc_free_lpid(kvm->arch.lpid);
-	}
 
 	kvmppc_free_pimap(kvm);
 }
@@ -6240,7 +6216,7 @@ static int kvmhv_svm_off(struct kvm *kvm)
 	}
 
 	srcu_idx = srcu_read_lock(&kvm->srcu);
-	for (i = 0; i < kvm_arch_nr_memslot_as_ids(kvm); i++) {
+	for (i = 0; i < KVM_ADDRESS_SPACE_NUM; i++) {
 		struct kvm_memory_slot *memslot;
 		struct kvm_memslots *slots = __kvm_memslots(kvm, i);
 		int bkt;

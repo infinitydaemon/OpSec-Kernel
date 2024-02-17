@@ -503,7 +503,7 @@ void kvmhv_nested_exit(void)
 	}
 }
 
-void kvmhv_flush_lpid(u64 lpid)
+static void kvmhv_flush_lpid(u64 lpid)
 {
 	long rc;
 

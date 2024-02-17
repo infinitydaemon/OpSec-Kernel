@@ -26,7 +26,8 @@
 #include <asm/ip32/mace.h>
 #include <asm/ip32/ip32_ints.h>
 
-#include "ip32-common.h"
+extern void ip32_be_init(void);
+extern void crime_init(void);
 
 #ifdef CONFIG_SGI_O2MACE_ETH
 /*

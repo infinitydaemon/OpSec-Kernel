@@ -218,7 +218,7 @@ static int pcf50633_adc_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void pcf50633_adc_remove(struct platform_device *pdev)
+static int pcf50633_adc_remove(struct platform_device *pdev)
 {
 	struct pcf50633_adc *adc = platform_get_drvdata(pdev);
 	int i, head;
@@ -236,6 +236,8 @@ static void pcf50633_adc_remove(struct platform_device *pdev)
 		kfree(adc->queue[i]);
 
 	mutex_unlock(&adc->queue_mutex);
+
+	return 0;
 }
 
 static struct platform_driver pcf50633_adc_driver = {
@@ -243,7 +245,7 @@ static struct platform_driver pcf50633_adc_driver = {
 		.name = "pcf50633-adc",
 	},
 	.probe = pcf50633_adc_probe,
-	.remove_new = pcf50633_adc_remove,
+	.remove = pcf50633_adc_remove,
 };
 
 module_platform_driver(pcf50633_adc_driver);

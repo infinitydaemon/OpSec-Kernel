@@ -82,18 +82,20 @@ EXPORT_SYMBOL(get_thermal_instance);
  */
 int __thermal_zone_get_temp(struct thermal_zone_device *tz, int *temp)
 {
-	const struct thermal_trip *trip;
-	int crit_temp = INT_MAX;
 	int ret = -EINVAL;
+	int count;
+	int crit_temp = INT_MAX;
+	struct thermal_trip trip;
 
 	lockdep_assert_held(&tz->lock);
 
 	ret = tz->ops->get_temp(tz, temp);
 
 	if (IS_ENABLED(CONFIG_THERMAL_EMULATION) && tz->emul_temperature) {
-		for_each_trip(tz, trip) {
-			if (trip->type == THERMAL_TRIP_CRITICAL) {
-				crit_temp = trip->temperature;
+		for (count = 0; count < tz->num_trips; count++) {
+			ret = __thermal_zone_get_trip(tz, count, &trip);
+			if (!ret && trip.type == THERMAL_TRIP_CRITICAL) {
+				crit_temp = trip.temperature;
 				break;
 			}
 		}
@@ -137,7 +139,10 @@ int thermal_zone_get_temp(struct thermal_zone_device *tz, int *temp)
 		goto unlock;
 	}
 
-	ret = __thermal_zone_get_temp(tz, temp);
+	if (device_is_registered(&tz->device))
+		ret = __thermal_zone_get_temp(tz, temp);
+	else
+		ret = -ENODEV;
 
 unlock:
 	mutex_unlock(&tz->lock);
@@ -146,23 +151,14 @@ unlock:
 }
 EXPORT_SYMBOL_GPL(thermal_zone_get_temp);
 
-static int thermal_cdev_set_cur_state(struct thermal_cooling_device *cdev, int state)
+static void thermal_cdev_set_cur_state(struct thermal_cooling_device *cdev,
+				       int target)
 {
-	int ret;
+	if (cdev->ops->set_cur_state(cdev, target))
+		return;
 
-	/*
-	 * No check is needed for the ops->set_cur_state as the
-	 * registering function checked the ops are correctly set
-	 */
-	ret = cdev->ops->set_cur_state(cdev, state);
-	if (ret)
-		return ret;
-
-	thermal_notify_cdev_state_update(cdev, state);
-	thermal_cooling_device_stats_update(cdev, state);
-	thermal_debug_cdev_state_update(cdev, state);
-
-	return 0;
+	thermal_notify_cdev_state_update(cdev->id, target);
+	thermal_cooling_device_stats_update(cdev, target);
 }
 
 void __thermal_cdev_update(struct thermal_cooling_device *cdev)

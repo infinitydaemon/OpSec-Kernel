@@ -361,14 +361,15 @@ __ipipeif_get_format(struct iss_ipipeif_device *ipipeif,
 		     enum v4l2_subdev_format_whence which)
 {
 	if (which == V4L2_SUBDEV_FORMAT_TRY)
-		return v4l2_subdev_state_get_format(sd_state, pad);
+		return v4l2_subdev_get_try_format(&ipipeif->subdev, sd_state,
+						  pad);
 	return &ipipeif->formats[pad];
 }
 
 /*
  * ipipeif_try_format - Try video format on a pad
  * @ipipeif: ISS IPIPEIF device
- * @sd_state: V4L2 subdev state
+ * @cfg: V4L2 subdev pad config
  * @pad: Pad number
  * @fmt: Format
  */
@@ -439,7 +440,7 @@ ipipeif_try_format(struct iss_ipipeif_device *ipipeif,
 /*
  * ipipeif_enum_mbus_code - Handle pixel format enumeration
  * @sd     : pointer to v4l2 subdev structure
- * @sd_state: V4L2 subdev state
+ * @cfg    : V4L2 subdev pad config
  * @code   : pointer to v4l2_subdev_mbus_code_enum structure
  * return -EINVAL or zero on success
  */
@@ -511,7 +512,7 @@ static int ipipeif_enum_frame_size(struct v4l2_subdev *sd,
 /*
  * ipipeif_get_format - Retrieve the video format on a pad
  * @sd : ISP IPIPEIF V4L2 subdevice
- * @sd_state: V4L2 subdev state
+ * @cfg: V4L2 subdev pad config
  * @fmt: Format
  *
  * Return 0 on success or -EINVAL if the pad is invalid or doesn't correspond
@@ -535,7 +536,7 @@ static int ipipeif_get_format(struct v4l2_subdev *sd,
 /*
  * ipipeif_set_format - Set the video format on a pad
  * @sd : ISP IPIPEIF V4L2 subdevice
- * @sd_state: V4L2 subdev state
+ * @cfg: V4L2 subdev pad config
  * @fmt: Format
  *
  * Return 0 on success or -EINVAL if the pad is invalid or doesn't correspond

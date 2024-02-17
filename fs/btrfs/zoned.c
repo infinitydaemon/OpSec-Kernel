@@ -578,12 +578,26 @@ int btrfs_get_dev_zone_info(struct btrfs_device *device, bool populate_cache)
 
 	kvfree(zones);
 
-	if (bdev_is_zoned(bdev)) {
+	switch (bdev_zoned_model(bdev)) {
+	case BLK_ZONED_HM:
 		model = "host-managed zoned";
 		emulated = "";
-	} else {
+		break;
+	case BLK_ZONED_HA:
+		model = "host-aware zoned";
+		emulated = "";
+		break;
+	case BLK_ZONED_NONE:
 		model = "regular";
 		emulated = "emulated ";
+		break;
+	default:
+		/* Just in case */
+		btrfs_err_in_rcu(fs_info, "zoned: unsupported model %d on %s",
+				 bdev_zoned_model(bdev),
+				 rcu_str_deref(device->name));
+		ret = -EOPNOTSUPP;
+		goto out_free_zone_info;
 	}
 
 	btrfs_info_in_rcu(fs_info,
@@ -595,7 +609,9 @@ int btrfs_get_dev_zone_info(struct btrfs_device *device, bool populate_cache)
 
 out:
 	kvfree(zones);
+out_free_zone_info:
 	btrfs_destroy_dev_zone_info(device);
+
 	return ret;
 }
 
@@ -672,7 +688,8 @@ static int btrfs_check_for_zoned_device(struct btrfs_fs_info *fs_info)
 	struct btrfs_device *device;
 
 	list_for_each_entry(device, &fs_info->fs_devices->devices, dev_list) {
-		if (device->bdev && bdev_is_zoned(device->bdev)) {
+		if (device->bdev &&
+		    bdev_zoned_model(device->bdev) == BLK_ZONED_HM) {
 			btrfs_err(fs_info,
 				"zoned: mode not enabled but zoned device found: %pg",
 				device->bdev);
@@ -764,7 +781,7 @@ int btrfs_check_zoned_mode(struct btrfs_fs_info *fs_info)
 	 * Check mount options here, because we might change fs_info->zoned
 	 * from fs_info->zone_size.
 	 */
-	ret = btrfs_check_mountopts_zoned(fs_info, &fs_info->mount_opt);
+	ret = btrfs_check_mountopts_zoned(fs_info);
 	if (ret)
 		return ret;
 
@@ -772,7 +789,7 @@ int btrfs_check_zoned_mode(struct btrfs_fs_info *fs_info)
 	return 0;
 }
 
-int btrfs_check_mountopts_zoned(struct btrfs_fs_info *info, unsigned long *mount_opt)
+int btrfs_check_mountopts_zoned(struct btrfs_fs_info *info)
 {
 	if (!btrfs_is_zoned(info))
 		return 0;
@@ -781,21 +798,18 @@ int btrfs_check_mountopts_zoned(struct btrfs_fs_info *info, unsigned long *mount
 	 * Space cache writing is not COWed. Disable that to avoid write errors
 	 * in sequential zones.
 	 */
-	if (btrfs_raw_test_opt(*mount_opt, SPACE_CACHE)) {
+	if (btrfs_test_opt(info, SPACE_CACHE)) {
 		btrfs_err(info, "zoned: space cache v1 is not supported");
 		return -EINVAL;
 	}
 
-	if (btrfs_raw_test_opt(*mount_opt, NODATACOW)) {
+	if (btrfs_test_opt(info, NODATACOW)) {
 		btrfs_err(info, "zoned: NODATACOW not supported");
 		return -EINVAL;
 	}
 
-	if (btrfs_raw_test_opt(*mount_opt, DISCARD_ASYNC)) {
-		btrfs_info(info,
-			   "zoned: async discard ignored and disabled for zoned mode");
-		btrfs_clear_opt(*mount_opt, DISCARD_ASYNC);
-	}
+	btrfs_clear_and_info(info, DISCARD_ASYNC,
+			"zoned: async discard ignored and disabled for zoned mode");
 
 	return 0;
 }
@@ -1276,7 +1290,7 @@ struct zone_info {
 
 static int btrfs_load_zone_info(struct btrfs_fs_info *fs_info, int zone_idx,
 				struct zone_info *info, unsigned long *active,
-				struct btrfs_chunk_map *map)
+				struct map_lookup *map)
 {
 	struct btrfs_dev_replace *dev_replace = &fs_info->dev_replace;
 	struct btrfs_device *device = map->stripes[zone_idx].dev;
@@ -1379,7 +1393,7 @@ static int btrfs_load_block_group_single(struct btrfs_block_group *bg,
 }
 
 static int btrfs_load_block_group_dup(struct btrfs_block_group *bg,
-				      struct btrfs_chunk_map *map,
+				      struct map_lookup *map,
 				      struct zone_info *zone_info,
 				      unsigned long *active)
 {
@@ -1421,7 +1435,7 @@ static int btrfs_load_block_group_dup(struct btrfs_block_group *bg,
 }
 
 static int btrfs_load_block_group_raid1(struct btrfs_block_group *bg,
-					struct btrfs_chunk_map *map,
+					struct map_lookup *map,
 					struct zone_info *zone_info,
 					unsigned long *active)
 {
@@ -1469,7 +1483,7 @@ static int btrfs_load_block_group_raid1(struct btrfs_block_group *bg,
 }
 
 static int btrfs_load_block_group_raid0(struct btrfs_block_group *bg,
-					struct btrfs_chunk_map *map,
+					struct map_lookup *map,
 					struct zone_info *zone_info,
 					unsigned long *active)
 {
@@ -1501,7 +1515,7 @@ static int btrfs_load_block_group_raid0(struct btrfs_block_group *bg,
 }
 
 static int btrfs_load_block_group_raid10(struct btrfs_block_group *bg,
-					 struct btrfs_chunk_map *map,
+					 struct map_lookup *map,
 					 struct zone_info *zone_info,
 					 unsigned long *active)
 {
@@ -1538,7 +1552,9 @@ static int btrfs_load_block_group_raid10(struct btrfs_block_group *bg,
 int btrfs_load_block_group_zone_info(struct btrfs_block_group *cache, bool new)
 {
 	struct btrfs_fs_info *fs_info = cache->fs_info;
-	struct btrfs_chunk_map *map;
+	struct extent_map_tree *em_tree = &fs_info->mapping_tree;
+	struct extent_map *em;
+	struct map_lookup *map;
 	u64 logical = cache->start;
 	u64 length = cache->length;
 	struct zone_info *zone_info = NULL;
@@ -1559,11 +1575,17 @@ int btrfs_load_block_group_zone_info(struct btrfs_block_group *cache, bool new)
 		return -EIO;
 	}
 
-	map = btrfs_find_chunk_map(fs_info, logical, length);
-	if (!map)
+	/* Get the chunk mapping */
+	read_lock(&em_tree->lock);
+	em = lookup_extent_mapping(em_tree, logical, length);
+	read_unlock(&em_tree->lock);
+
+	if (!em)
 		return -EINVAL;
 
-	cache->physical_map = btrfs_clone_chunk_map(map, GFP_NOFS);
+	map = em->map_lookup;
+
+	cache->physical_map = kmemdup(map, map_lookup_size(map->num_stripes), GFP_NOFS);
 	if (!cache->physical_map) {
 		ret = -ENOMEM;
 		goto out;
@@ -1665,11 +1687,12 @@ out:
 			spin_unlock(&fs_info->zone_active_bgs_lock);
 		}
 	} else {
-		btrfs_free_chunk_map(cache->physical_map);
+		kfree(cache->physical_map);
 		cache->physical_map = NULL;
 	}
 	bitmap_free(active);
 	kfree(zone_info);
+	free_extent_map(em);
 
 	return ret;
 }
@@ -1690,6 +1713,22 @@ void btrfs_calc_zone_unusable(struct btrfs_block_group *cache)
 	cache->cached = BTRFS_CACHE_FINISHED;
 	cache->free_space_ctl->free_space = free;
 	cache->zone_unusable = unusable;
+}
+
+void btrfs_redirty_list_add(struct btrfs_transaction *trans,
+			    struct extent_buffer *eb)
+{
+	if (!btrfs_is_zoned(eb->fs_info) ||
+	    btrfs_header_flag(eb, BTRFS_HEADER_FLAG_WRITTEN))
+		return;
+
+	ASSERT(!test_bit(EXTENT_BUFFER_DIRTY, &eb->bflags));
+
+	memzero_extent_buffer(eb, 0, eb->len);
+	set_bit(EXTENT_BUFFER_NO_CHECK, &eb->bflags);
+	set_extent_buffer_dirty(eb);
+	set_extent_bit(&trans->dirty_pages, eb->start, eb->start + eb->len - 1,
+			EXTENT_DIRTY, NULL);
 }
 
 bool btrfs_use_zone_append(struct btrfs_bio *bbio)
@@ -2043,7 +2082,7 @@ int btrfs_sync_zone_write_pointer(struct btrfs_device *tgt_dev, u64 logical,
 bool btrfs_zone_activate(struct btrfs_block_group *block_group)
 {
 	struct btrfs_fs_info *fs_info = block_group->fs_info;
-	struct btrfs_chunk_map *map;
+	struct map_lookup *map;
 	struct btrfs_device *device;
 	u64 physical;
 	const bool is_data = (block_group->flags & BTRFS_BLOCK_GROUP_DATA);
@@ -2151,7 +2190,7 @@ static void wait_eb_writebacks(struct btrfs_block_group *block_group)
 static int do_zone_finish(struct btrfs_block_group *block_group, bool fully_written)
 {
 	struct btrfs_fs_info *fs_info = block_group->fs_info;
-	struct btrfs_chunk_map *map;
+	struct map_lookup *map;
 	const bool is_metadata = (block_group->flags &
 			(BTRFS_BLOCK_GROUP_METADATA | BTRFS_BLOCK_GROUP_SYSTEM));
 	int ret = 0;
@@ -2600,7 +2639,7 @@ void btrfs_check_active_zone_reservation(struct btrfs_fs_info *fs_info)
 	/* Release reservation for currently active block groups. */
 	spin_lock(&fs_info->zone_active_bgs_lock);
 	list_for_each_entry(block_group, &fs_info->zone_active_bgs, active_bg_list) {
-		struct btrfs_chunk_map *map = block_group->physical_map;
+		struct map_lookup *map = block_group->physical_map;
 
 		if (!(block_group->flags &
 		      (BTRFS_BLOCK_GROUP_METADATA | BTRFS_BLOCK_GROUP_SYSTEM)))

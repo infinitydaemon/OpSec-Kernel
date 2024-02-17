@@ -208,12 +208,10 @@ out:
 
 /**
  * ksmbd_auth_ntlmv2() - NTLMv2 authentication handler
- * @conn:		connection
- * @sess:		session of connection
+ * @sess:	session of connection
  * @ntlmv2:		NTLMv2 challenge response
  * @blen:		NTLMv2 blob length
  * @domain_name:	domain name
- * @cryptkey:		session crypto key
  *
  * Return:	0 on success, error number on error
  */
@@ -296,8 +294,7 @@ out:
  * ksmbd_decode_ntlmssp_auth_blob() - helper function to construct
  * authenticate blob
  * @authblob:	authenticate blob source pointer
- * @blob_len:	length of the @authblob message
- * @conn:	connection
+ * @usr:	user details
  * @sess:	session of connection
  *
  * Return:	0 on success, error number on error
@@ -379,8 +376,8 @@ int ksmbd_decode_ntlmssp_auth_blob(struct authenticate_message *authblob,
  * ksmbd_decode_ntlmssp_neg_blob() - helper function to construct
  * negotiate blob
  * @negblob: negotiate blob source pointer
- * @blob_len:	length of the @authblob message
- * @conn:	connection
+ * @rsp:     response header pointer to be updated
+ * @sess:    session of connection
  *
  */
 int ksmbd_decode_ntlmssp_neg_blob(struct negotiate_message *negblob,
@@ -406,7 +403,8 @@ int ksmbd_decode_ntlmssp_neg_blob(struct negotiate_message *negblob,
  * ksmbd_build_ntlmssp_challenge_blob() - helper function to construct
  * challenge blob
  * @chgblob: challenge blob source pointer to initialize
- * @conn:	connection
+ * @rsp:     response header pointer to be updated
+ * @sess:    session of connection
  *
  */
 unsigned int

@@ -6,7 +6,6 @@
 #include <linux/sched.h>
 #include <linux/task_work.h>
 #include <linux/memcontrol.h>
-#include <linux/rseq.h>
 #include <linux/blk-cgroup.h>
 
 /**

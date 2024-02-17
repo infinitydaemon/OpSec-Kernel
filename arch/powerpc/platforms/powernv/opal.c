@@ -424,7 +424,7 @@ static int __init opal_message_init(struct device_node *opal_node)
 	return 0;
 }
 
-ssize_t opal_get_chars(uint32_t vtermno, u8 *buf, size_t count)
+int opal_get_chars(uint32_t vtermno, char *buf, int count)
 {
 	s64 rc;
 	__be64 evt, len;
@@ -441,11 +441,10 @@ ssize_t opal_get_chars(uint32_t vtermno, u8 *buf, size_t count)
 	return 0;
 }
 
-static ssize_t __opal_put_chars(uint32_t vtermno, const u8 *data,
-				size_t total_len, bool atomic)
+static int __opal_put_chars(uint32_t vtermno, const char *data, int total_len, bool atomic)
 {
 	unsigned long flags = 0 /* shut up gcc */;
-	ssize_t written;
+	int written;
 	__be64 olen;
 	s64 rc;
 
@@ -485,7 +484,7 @@ static ssize_t __opal_put_chars(uint32_t vtermno, const u8 *data,
 		if (atomic) {
 			/* Should not happen */
 			pr_warn("atomic console write returned partial "
-				"len=%zu written=%zd\n", total_len, written);
+				"len=%d written=%d\n", total_len, written);
 		}
 		if (!written)
 			written = -EAGAIN;
@@ -498,7 +497,7 @@ out:
 	return written;
 }
 
-ssize_t opal_put_chars(uint32_t vtermno, const u8 *data, size_t total_len)
+int opal_put_chars(uint32_t vtermno, const char *data, int total_len)
 {
 	return __opal_put_chars(vtermno, data, total_len, false);
 }
@@ -509,8 +508,7 @@ ssize_t opal_put_chars(uint32_t vtermno, const u8 *data, size_t total_len)
  * true at the moment because console space can race with OPAL's console
  * writes.
  */
-ssize_t opal_put_chars_atomic(uint32_t vtermno, const u8 *data,
-			      size_t total_len)
+int opal_put_chars_atomic(uint32_t vtermno, const char *data, int total_len)
 {
 	return __opal_put_chars(vtermno, data, total_len, true);
 }

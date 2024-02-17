@@ -2524,9 +2524,8 @@ nfsd4_decode_compound(struct nfsd4_compoundargs *argp)
 	svc_reserve(argp->rqstp, max_reply + readbytes);
 	argp->rqstp->rq_cachetype = cachethis ? RC_REPLBUFF : RC_NOCACHE;
 
-	argp->splice_ok = nfsd_read_splice_ok(argp->rqstp);
 	if (readcount > 1 || max_reply > PAGE_SIZE - auth_slack)
-		argp->splice_ok = false;
+		clear_bit(RQ_SPLICE_OK, &argp->rqstp->rq_flags);
 
 	return true;
 }
@@ -4376,13 +4375,12 @@ static __be32
 nfsd4_encode_read(struct nfsd4_compoundres *resp, __be32 nfserr,
 		  union nfsd4_op_u *u)
 {
-	struct nfsd4_compoundargs *argp = resp->rqstp->rq_argp;
 	struct nfsd4_read *read = &u->read;
-	struct xdr_stream *xdr = resp->xdr;
-	int starting_len = xdr->buf->len;
-	bool splice_ok = argp->splice_ok;
+	bool splice_ok = test_bit(RQ_SPLICE_OK, &resp->rqstp->rq_flags);
 	unsigned long maxcount;
+	struct xdr_stream *xdr = resp->xdr;
 	struct file *file;
+	int starting_len = xdr->buf->len;
 	__be32 *p;
 
 	if (nfserr)
@@ -5203,10 +5201,9 @@ static __be32
 nfsd4_encode_read_plus_data(struct nfsd4_compoundres *resp,
 			    struct nfsd4_read *read)
 {
-	struct nfsd4_compoundargs *argp = resp->rqstp->rq_argp;
+	bool splice_ok = test_bit(RQ_SPLICE_OK, &resp->rqstp->rq_flags);
 	struct file *file = read->rd_nf->nf_file;
 	struct xdr_stream *xdr = resp->xdr;
-	bool splice_ok = argp->splice_ok;
 	unsigned long maxcount;
 	__be32 nfserr, *p;
 

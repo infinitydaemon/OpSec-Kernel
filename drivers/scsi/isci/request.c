@@ -738,7 +738,8 @@ static enum sci_status sci_io_request_construct_basic_ssp(struct isci_request *i
 	return SCI_SUCCESS;
 }
 
-void sci_task_request_construct_ssp(struct isci_request *ireq)
+enum sci_status sci_task_request_construct_ssp(
+	struct isci_request *ireq)
 {
 	/* Construct the SSP Task SCU Task Context */
 	scu_ssp_task_request_construct_task_context(ireq);
@@ -747,6 +748,8 @@ void sci_task_request_construct_ssp(struct isci_request *ireq)
 	sci_task_request_build_ssp_task_iu(ireq);
 
 	sci_change_state(&ireq->sm, SCI_REQ_CONSTRUCTED);
+
+	return SCI_SUCCESS;
 }
 
 static enum sci_status sci_io_request_construct_basic_sata(struct isci_request *ireq)

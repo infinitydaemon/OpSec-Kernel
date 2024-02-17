@@ -266,7 +266,7 @@ free_tx:
 	return err;
 }
 
-static void tegra_tcu_remove(struct platform_device *pdev)
+static int tegra_tcu_remove(struct platform_device *pdev)
 {
 	struct tegra_tcu *tcu = platform_get_drvdata(pdev);
 
@@ -277,6 +277,8 @@ static void tegra_tcu_remove(struct platform_device *pdev)
 	uart_remove_one_port(&tcu->driver, &tcu->port);
 	uart_unregister_driver(&tcu->driver);
 	mbox_free_channel(tcu->tx);
+
+	return 0;
 }
 
 static const struct of_device_id tegra_tcu_match[] = {
@@ -291,7 +293,7 @@ static struct platform_driver tegra_tcu_driver = {
 		.of_match_table = tegra_tcu_match,
 	},
 	.probe = tegra_tcu_probe,
-	.remove_new = tegra_tcu_remove,
+	.remove = tegra_tcu_remove,
 };
 module_platform_driver(tegra_tcu_driver);
 

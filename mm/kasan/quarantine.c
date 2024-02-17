@@ -143,9 +143,11 @@ static void *qlink_to_object(struct qlist_node *qlink, struct kmem_cache *cache)
 static void qlink_free(struct qlist_node *qlink, struct kmem_cache *cache)
 {
 	void *object = qlink_to_object(qlink, cache);
-	struct kasan_free_meta *free_meta = kasan_get_free_meta(cache, object);
+	struct kasan_free_meta *meta = kasan_get_free_meta(cache, object);
+	unsigned long flags;
 
-	kasan_release_object_meta(cache, object);
+	if (IS_ENABLED(CONFIG_SLAB))
+		local_irq_save(flags);
 
 	/*
 	 * If init_on_free is enabled and KASAN's free metadata is stored in
@@ -155,9 +157,18 @@ static void qlink_free(struct qlist_node *qlink, struct kmem_cache *cache)
 	 */
 	if (slab_want_init_on_free(cache) &&
 	    cache->kasan_info.free_meta_offset == 0)
-		memzero_explicit(free_meta, sizeof(*free_meta));
+		memzero_explicit(meta, sizeof(*meta));
+
+	/*
+	 * As the object now gets freed from the quarantine, assume that its
+	 * free track is no longer valid.
+	 */
+	*(u8 *)kasan_mem_to_shadow(object) = KASAN_SLAB_FREE;
 
 	___cache_free(cache, object, _THIS_IP_);
+
+	if (IS_ENABLED(CONFIG_SLAB))
+		local_irq_restore(flags);
 }
 
 static void qlist_free_all(struct qlist_head *q, struct kmem_cache *cache)

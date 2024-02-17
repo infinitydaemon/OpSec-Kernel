@@ -23,12 +23,10 @@
 
 #include <trace/events/page_pool.h>
 
-#include "page_pool_priv.h"
-
 #define DEFER_TIME (msecs_to_jiffies(1000))
 #define DEFER_WARN_INTERVAL (60 * HZ)
 
-#define BIAS_MAX	(LONG_MAX >> 1)
+#define BIAS_MAX	LONG_MAX
 
 #ifdef CONFIG_PAGE_POOL_STATS
 /* alloc_stat_inc is intended to be used in softirq context */
@@ -71,7 +69,7 @@ static const char pp_stats[][ETH_GSTRING_LEN] = {
  * is passed to this API which is filled in. The caller can then report
  * those stats to the user (perhaps via ethtool, debugfs, etc.).
  */
-bool page_pool_get_stats(const struct page_pool *pool,
+bool page_pool_get_stats(struct page_pool *pool,
 			 struct page_pool_stats *stats)
 {
 	int cpu = 0;
@@ -175,8 +173,7 @@ static int page_pool_init(struct page_pool *pool,
 {
 	unsigned int ring_qsize = 1024; /* Default */
 
-	memcpy(&pool->p, &params->fast, sizeof(pool->p));
-	memcpy(&pool->slow, &params->slow, sizeof(pool->slow));
+	memcpy(&pool->p, params, sizeof(pool->p));
 
 	/* Validate only known flags were used */
 	if (pool->p.flags & ~(PP_FLAG_ALL))
@@ -214,8 +211,6 @@ static int page_pool_init(struct page_pool *pool,
 		 */
 	}
 
-	pool->has_init_callback = !!pool->slow.init_callback;
-
 #ifdef CONFIG_PAGE_POOL_STATS
 	pool->recycle_stats = alloc_percpu(struct page_pool_recycle_stats);
 	if (!pool->recycle_stats)
@@ -240,18 +235,6 @@ static int page_pool_init(struct page_pool *pool,
 	return 0;
 }
 
-static void page_pool_uninit(struct page_pool *pool)
-{
-	ptr_ring_cleanup(&pool->ring, NULL);
-
-	if (pool->p.flags & PP_FLAG_DMA_MAP)
-		put_device(pool->p.dev);
-
-#ifdef CONFIG_PAGE_POOL_STATS
-	free_percpu(pool->recycle_stats);
-#endif
-}
-
 /**
  * page_pool_create() - create a page pool.
  * @params: parameters, see struct page_pool_params
@@ -266,21 +249,13 @@ struct page_pool *page_pool_create(const struct page_pool_params *params)
 		return ERR_PTR(-ENOMEM);
 
 	err = page_pool_init(pool, params);
-	if (err < 0)
-		goto err_free;
-
-	err = page_pool_list(pool);
-	if (err)
-		goto err_uninit;
+	if (err < 0) {
+		pr_warn("%s() gave up with errno %d\n", __func__, err);
+		kfree(pool);
+		return ERR_PTR(err);
+	}
 
 	return pool;
-
-err_uninit:
-	page_pool_uninit(pool);
-err_free:
-	pr_warn("%s() gave up with errno %d\n", __func__, err);
-	kfree(pool);
-	return ERR_PTR(err);
 }
 EXPORT_SYMBOL(page_pool_create);
 
@@ -413,8 +388,8 @@ static void page_pool_set_pp_info(struct page_pool *pool,
 	 * the overhead is negligible.
 	 */
 	page_pool_fragment_page(page, 1);
-	if (pool->has_init_callback)
-		pool->slow.init_callback(page, pool->slow.init_arg);
+	if (pool->p.init_callback)
+		pool->p.init_callback(page, pool->p.init_arg);
 }
 
 static void page_pool_clear_pp_info(struct page *page)
@@ -529,7 +504,7 @@ EXPORT_SYMBOL(page_pool_alloc_pages);
  */
 #define _distance(a, b)	(s32)((a) - (b))
 
-s32 page_pool_inflight(const struct page_pool *pool, bool strict)
+static s32 page_pool_inflight(struct page_pool *pool)
 {
 	u32 release_cnt = atomic_read(&pool->pages_state_release_cnt);
 	u32 hold_cnt = READ_ONCE(pool->pages_state_hold_cnt);
@@ -537,27 +512,27 @@ s32 page_pool_inflight(const struct page_pool *pool, bool strict)
 
 	inflight = _distance(hold_cnt, release_cnt);
 
-	if (strict) {
-		trace_page_pool_release(pool, inflight, hold_cnt, release_cnt);
-		WARN(inflight < 0, "Negative(%d) inflight packet-pages",
-		     inflight);
-	} else {
-		inflight = max(0, inflight);
-	}
+	trace_page_pool_release(pool, inflight, hold_cnt, release_cnt);
+	WARN(inflight < 0, "Negative(%d) inflight packet-pages", inflight);
 
 	return inflight;
 }
 
-static __always_inline
-void __page_pool_release_page_dma(struct page_pool *pool, struct page *page)
+/* Disconnects a page (from a page_pool).  API users can have a need
+ * to disconnect a page (from a page_pool), to allow it to be used as
+ * a regular page (that will eventually be returned to the normal
+ * page-allocator via put_page).
+ */
+static void page_pool_return_page(struct page_pool *pool, struct page *page)
 {
 	dma_addr_t dma;
+	int count;
 
 	if (!(pool->p.flags & PP_FLAG_DMA_MAP))
 		/* Always account for inflight pages, even if we didn't
 		 * map them
 		 */
-		return;
+		goto skip_dma_unmap;
 
 	dma = page_pool_get_dma_addr(page);
 
@@ -566,19 +541,7 @@ void __page_pool_release_page_dma(struct page_pool *pool, struct page *page)
 			     PAGE_SIZE << pool->p.order, pool->p.dma_dir,
 			     DMA_ATTR_SKIP_CPU_SYNC | DMA_ATTR_WEAK_ORDERING);
 	page_pool_set_dma_addr(page, 0);
-}
-
-/* Disconnects a page (from a page_pool).  API users can have a need
- * to disconnect a page (from a page_pool), to allow it to be used as
- * a regular page (that will eventually be returned to the normal
- * page-allocator via put_page).
- */
-void page_pool_return_page(struct page_pool *pool, struct page *page)
-{
-	int count;
-
-	__page_pool_release_page_dma(pool, page);
-
+skip_dma_unmap:
 	page_pool_clear_pp_info(page);
 
 	/* This may be the last page returned, releasing the pool, so
@@ -684,8 +647,8 @@ __page_pool_put_page(struct page_pool *pool, struct page *page,
 	return NULL;
 }
 
-void page_pool_put_unrefed_page(struct page_pool *pool, struct page *page,
-				unsigned int dma_sync_size, bool allow_direct)
+void page_pool_put_defragged_page(struct page_pool *pool, struct page *page,
+				  unsigned int dma_sync_size, bool allow_direct)
 {
 	page = __page_pool_put_page(pool, page, dma_sync_size, allow_direct);
 	if (page && !page_pool_recycle_in_ring(pool, page)) {
@@ -694,7 +657,7 @@ void page_pool_put_unrefed_page(struct page_pool *pool, struct page *page,
 		page_pool_return_page(pool, page);
 	}
 }
-EXPORT_SYMBOL(page_pool_put_unrefed_page);
+EXPORT_SYMBOL(page_pool_put_defragged_page);
 
 /**
  * page_pool_put_page_bulk() - release references on multiple pages
@@ -721,7 +684,7 @@ void page_pool_put_page_bulk(struct page_pool *pool, void **data,
 		struct page *page = virt_to_head_page(data[i]);
 
 		/* It is not the last user for the page frag case */
-		if (!page_pool_is_last_ref(page))
+		if (!page_pool_is_last_frag(page))
 			continue;
 
 		page = __page_pool_put_page(pool, page, -1, false);
@@ -763,7 +726,7 @@ static struct page *page_pool_drain_frag(struct page_pool *pool,
 	long drain_count = BIAS_MAX - pool->frag_users;
 
 	/* Some user is still using the page frag */
-	if (likely(page_pool_unref_page(page, drain_count)))
+	if (likely(page_pool_defrag_page(page, drain_count)))
 		return NULL;
 
 	if (page_ref_count(page) == 1 && !page_is_pfmemalloc(page)) {
@@ -784,7 +747,7 @@ static void page_pool_free_frag(struct page_pool *pool)
 
 	pool->frag_page = NULL;
 
-	if (!page || page_pool_unref_page(page, drain_count))
+	if (!page || page_pool_defrag_page(page, drain_count))
 		return;
 
 	page_pool_return_page(pool, page);
@@ -855,8 +818,14 @@ static void __page_pool_destroy(struct page_pool *pool)
 	if (pool->disconnect)
 		pool->disconnect(pool);
 
-	page_pool_unlist(pool);
-	page_pool_uninit(pool);
+	ptr_ring_cleanup(&pool->ring, NULL);
+
+	if (pool->p.flags & PP_FLAG_DMA_MAP)
+		put_device(pool->p.dev);
+
+#ifdef CONFIG_PAGE_POOL_STATS
+	free_percpu(pool->recycle_stats);
+#endif
 	kfree(pool);
 }
 
@@ -893,7 +862,7 @@ static int page_pool_release(struct page_pool *pool)
 	int inflight;
 
 	page_pool_scrub(pool);
-	inflight = page_pool_inflight(pool, true);
+	inflight = page_pool_inflight(pool);
 	if (!inflight)
 		__page_pool_destroy(pool);
 
@@ -904,21 +873,18 @@ static void page_pool_release_retry(struct work_struct *wq)
 {
 	struct delayed_work *dwq = to_delayed_work(wq);
 	struct page_pool *pool = container_of(dwq, typeof(*pool), release_dw);
-	void *netdev;
 	int inflight;
 
 	inflight = page_pool_release(pool);
 	if (!inflight)
 		return;
 
-	/* Periodic warning for page pools the user can't see */
-	netdev = READ_ONCE(pool->slow.netdev);
-	if (time_after_eq(jiffies, pool->defer_warn) &&
-	    (!netdev || netdev == NET_PTR_POISON)) {
+	/* Periodic warning */
+	if (time_after_eq(jiffies, pool->defer_warn)) {
 		int sec = (s32)((u32)jiffies - (u32)pool->defer_start) / HZ;
 
-		pr_warn("%s() stalled pool shutdown: id %u, %d inflight %d sec\n",
-			__func__, pool->user.id, inflight, sec);
+		pr_warn("%s() stalled pool shutdown %d inflight %d sec\n",
+			__func__, inflight, sec);
 		pool->defer_warn = jiffies + DEFER_WARN_INTERVAL;
 	}
 
@@ -963,7 +929,6 @@ void page_pool_destroy(struct page_pool *pool)
 	if (!page_pool_release(pool))
 		return;
 
-	page_pool_detached(pool);
 	pool->defer_start = jiffies;
 	pool->defer_warn  = jiffies + DEFER_WARN_INTERVAL;
 

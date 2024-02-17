@@ -994,7 +994,7 @@ e_unmap:
 	return ret;
 }
 
-static void __exit sev_guest_remove(struct platform_device *pdev)
+static int __exit sev_guest_remove(struct platform_device *pdev)
 {
 	struct snp_guest_dev *snp_dev = platform_get_drvdata(pdev);
 
@@ -1003,6 +1003,8 @@ static void __exit sev_guest_remove(struct platform_device *pdev)
 	free_shared_pages(snp_dev->request, sizeof(struct snp_guest_msg));
 	deinit_crypto(snp_dev->crypto);
 	misc_deregister(&snp_dev->misc);
+
+	return 0;
 }
 
 /*
@@ -1011,7 +1013,7 @@ static void __exit sev_guest_remove(struct platform_device *pdev)
  * with the SEV-SNP support, it is named "sev-guest".
  */
 static struct platform_driver sev_guest_driver = {
-	.remove_new	= __exit_p(sev_guest_remove),
+	.remove		= __exit_p(sev_guest_remove),
 	.driver		= {
 		.name = "sev-guest",
 	},

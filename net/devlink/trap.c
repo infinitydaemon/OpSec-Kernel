@@ -1173,8 +1173,7 @@ devlink_trap_group_notify(struct devlink *devlink,
 
 	WARN_ON_ONCE(cmd != DEVLINK_CMD_TRAP_GROUP_NEW &&
 		     cmd != DEVLINK_CMD_TRAP_GROUP_DEL);
-
-	if (!devl_is_registered(devlink) || !devlink_nl_notify_need(devlink))
+	if (!xa_get_mark(&devlinks, devlink->index, DEVLINK_REGISTERED))
 		return;
 
 	msg = nlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
@@ -1188,7 +1187,8 @@ devlink_trap_group_notify(struct devlink *devlink,
 		return;
 	}
 
-	devlink_nl_notify_send(devlink, msg);
+	genlmsg_multicast_netns(&devlink_nl_family, devlink_net(devlink),
+				msg, 0, DEVLINK_MCGRP_CONFIG, GFP_KERNEL);
 }
 
 void devlink_trap_groups_notify_register(struct devlink *devlink)
@@ -1234,8 +1234,7 @@ static void devlink_trap_notify(struct devlink *devlink,
 
 	WARN_ON_ONCE(cmd != DEVLINK_CMD_TRAP_NEW &&
 		     cmd != DEVLINK_CMD_TRAP_DEL);
-
-	if (!devl_is_registered(devlink) || !devlink_nl_notify_need(devlink))
+	if (!xa_get_mark(&devlinks, devlink->index, DEVLINK_REGISTERED))
 		return;
 
 	msg = nlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
@@ -1248,7 +1247,8 @@ static void devlink_trap_notify(struct devlink *devlink,
 		return;
 	}
 
-	devlink_nl_notify_send(devlink, msg);
+	genlmsg_multicast_netns(&devlink_nl_family, devlink_net(devlink),
+				msg, 0, DEVLINK_MCGRP_CONFIG, GFP_KERNEL);
 }
 
 void devlink_traps_notify_register(struct devlink *devlink)
@@ -1710,8 +1710,7 @@ devlink_trap_policer_notify(struct devlink *devlink,
 
 	WARN_ON_ONCE(cmd != DEVLINK_CMD_TRAP_POLICER_NEW &&
 		     cmd != DEVLINK_CMD_TRAP_POLICER_DEL);
-
-	if (!devl_is_registered(devlink) || !devlink_nl_notify_need(devlink))
+	if (!xa_get_mark(&devlinks, devlink->index, DEVLINK_REGISTERED))
 		return;
 
 	msg = nlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
@@ -1725,7 +1724,8 @@ devlink_trap_policer_notify(struct devlink *devlink,
 		return;
 	}
 
-	devlink_nl_notify_send(devlink, msg);
+	genlmsg_multicast_netns(&devlink_nl_family, devlink_net(devlink),
+				msg, 0, DEVLINK_MCGRP_CONFIG, GFP_KERNEL);
 }
 
 void devlink_trap_policers_notify_register(struct devlink *devlink)

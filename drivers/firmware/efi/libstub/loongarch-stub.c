@@ -8,10 +8,10 @@
 #include <asm/efi.h>
 #include <asm/addrspace.h>
 #include "efistub.h"
-#include "loongarch-stub.h"
 
 extern int kernel_asize;
 extern int kernel_fsize;
+extern int kernel_offset;
 extern int kernel_entry;
 
 efi_status_t handle_kernel_image(unsigned long *image_addr,
@@ -24,7 +24,7 @@ efi_status_t handle_kernel_image(unsigned long *image_addr,
 	efi_status_t status;
 	unsigned long kernel_addr = 0;
 
-	kernel_addr = (unsigned long)image->image_base;
+	kernel_addr = (unsigned long)&kernel_offset - kernel_offset;
 
 	status = efi_relocate_kernel(&kernel_addr, kernel_fsize, kernel_asize,
 		     EFI_KIMG_PREFERRED_ADDRESS, efi_get_kimg_min_align(), 0x0);
@@ -35,10 +35,9 @@ efi_status_t handle_kernel_image(unsigned long *image_addr,
 	return status;
 }
 
-unsigned long kernel_entry_address(unsigned long kernel_addr,
-		efi_loaded_image_t *image)
+unsigned long kernel_entry_address(unsigned long kernel_addr)
 {
-	unsigned long base = (unsigned long)image->image_base;
+	unsigned long base = (unsigned long)&kernel_offset - kernel_offset;
 
 	return (unsigned long)&kernel_entry - base + kernel_addr;
 }

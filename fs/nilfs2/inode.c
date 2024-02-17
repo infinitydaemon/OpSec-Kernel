@@ -175,8 +175,7 @@ static int nilfs_writepages(struct address_space *mapping,
 
 static int nilfs_writepage(struct page *page, struct writeback_control *wbc)
 {
-	struct folio *folio = page_folio(page);
-	struct inode *inode = folio->mapping->host;
+	struct inode *inode = page->mapping->host;
 	int err;
 
 	if (sb_rdonly(inode->i_sb)) {
@@ -186,13 +185,13 @@ static int nilfs_writepage(struct page *page, struct writeback_control *wbc)
 		 * have dirty pages that try to be flushed in background.
 		 * So, here we simply discard this dirty page.
 		 */
-		nilfs_clear_folio_dirty(folio, false);
-		folio_unlock(folio);
+		nilfs_clear_dirty_page(page, false);
+		unlock_page(page);
 		return -EROFS;
 	}
 
-	folio_redirty_for_writepage(wbc, folio);
-	folio_unlock(folio);
+	redirty_page_for_writepage(wbc, page);
+	unlock_page(page);
 
 	if (wbc->sync_mode == WB_SYNC_ALL) {
 		err = nilfs_construct_segment(inode->i_sb);
@@ -215,7 +214,7 @@ static bool nilfs_dirty_folio(struct address_space *mapping,
 	/*
 	 * The page may not be locked, eg if called from try_to_unmap_one()
 	 */
-	spin_lock(&mapping->i_private_lock);
+	spin_lock(&mapping->private_lock);
 	head = folio_buffers(folio);
 	if (head) {
 		struct buffer_head *bh = head;
@@ -231,7 +230,7 @@ static bool nilfs_dirty_folio(struct address_space *mapping,
 	} else if (ret) {
 		nr_dirty = 1 << (folio_shift(folio) - inode->i_blkbits);
 	}
-	spin_unlock(&mapping->i_private_lock);
+	spin_unlock(&mapping->private_lock);
 
 	if (nr_dirty)
 		nilfs_set_file_dirty(inode, nr_dirty);

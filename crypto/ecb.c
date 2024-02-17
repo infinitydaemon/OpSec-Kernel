@@ -32,24 +32,22 @@ static int crypto_ecb_crypt(struct crypto_cipher *cipher, const u8 *src,
 }
 
 static int crypto_ecb_encrypt2(struct crypto_lskcipher *tfm, const u8 *src,
-			       u8 *dst, unsigned len, u8 *iv, u32 flags)
+			       u8 *dst, unsigned len, u8 *iv, bool final)
 {
 	struct crypto_cipher **ctx = crypto_lskcipher_ctx(tfm);
 	struct crypto_cipher *cipher = *ctx;
 
-	return crypto_ecb_crypt(cipher, src, dst, len,
-				flags & CRYPTO_LSKCIPHER_FLAG_FINAL,
+	return crypto_ecb_crypt(cipher, src, dst, len, final,
 				crypto_cipher_alg(cipher)->cia_encrypt);
 }
 
 static int crypto_ecb_decrypt2(struct crypto_lskcipher *tfm, const u8 *src,
-			       u8 *dst, unsigned len, u8 *iv, u32 flags)
+			       u8 *dst, unsigned len, u8 *iv, bool final)
 {
 	struct crypto_cipher **ctx = crypto_lskcipher_ctx(tfm);
 	struct crypto_cipher *cipher = *ctx;
 
-	return crypto_ecb_crypt(cipher, src, dst, len,
-				flags & CRYPTO_LSKCIPHER_FLAG_FINAL,
+	return crypto_ecb_crypt(cipher, src, dst, len, final,
 				crypto_cipher_alg(cipher)->cia_decrypt);
 }
 

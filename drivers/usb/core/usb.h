@@ -175,7 +175,13 @@ static inline int is_root_hub(struct usb_device *udev)
 	return (udev->parent == NULL);
 }
 
-extern bool is_usb_device_driver(const struct device_driver *drv);
+/* Do the same for device drivers and interface drivers. */
+
+static inline int is_usb_device_driver(struct device_driver *drv)
+{
+	return container_of(drv, struct usbdrv_wrap, driver)->
+			for_devices;
+}
 
 /* for labeling diagnostics */
 extern const char *usbcore_name;

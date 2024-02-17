@@ -4,7 +4,7 @@
 
 :Original: :ref:`Documentation/process/management-style.rst <managementstyle>`
 :Translator: Alex Shi <alex.shi@linux.alibaba.com>
-             Hu Haowen <2023002089@link.tyut.edu.cn>
+             Hu Haowen <src.res.211@gmail.com>
 
 .. _tw_managementstyle:
 

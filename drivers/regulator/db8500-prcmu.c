@@ -469,9 +469,11 @@ static int db8500_regulator_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void db8500_regulator_remove(struct platform_device *pdev)
+static int db8500_regulator_remove(struct platform_device *pdev)
 {
 	ux500_regulator_debug_exit();
+
+	return 0;
 }
 
 static struct platform_driver db8500_regulator_driver = {
@@ -480,7 +482,7 @@ static struct platform_driver db8500_regulator_driver = {
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 	},
 	.probe = db8500_regulator_probe,
-	.remove_new = db8500_regulator_remove,
+	.remove = db8500_regulator_remove,
 };
 
 static int __init db8500_regulator_init(void)

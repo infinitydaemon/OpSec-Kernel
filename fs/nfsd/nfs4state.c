@@ -4945,8 +4945,10 @@ nfsd_break_deleg_cb(struct file_lock *fl)
 	 */
 	fl->fl_break_time = 0;
 
+	spin_lock(&fp->fi_lock);
 	fp->fi_had_conflict = true;
 	nfsd_break_one_deleg(dp);
+	spin_unlock(&fp->fi_lock);
 	return false;
 }
 
@@ -5555,13 +5557,12 @@ nfs4_set_delegation(struct nfsd4_open *open, struct nfs4_ol_stateid *stp,
 	if (status)
 		goto out_unlock;
 
-	status = -EAGAIN;
-	if (fp->fi_had_conflict)
-		goto out_unlock;
-
 	spin_lock(&state_lock);
 	spin_lock(&fp->fi_lock);
-	status = hash_delegation_locked(dp, fp);
+	if (fp->fi_had_conflict)
+		status = -EAGAIN;
+	else
+		status = hash_delegation_locked(dp, fp);
 	spin_unlock(&fp->fi_lock);
 	spin_unlock(&state_lock);
 
@@ -6574,7 +6575,7 @@ unlock:
 	spin_unlock(&nn->s2s_cp_lock);
 	if (!state)
 		return nfserr_bad_stateid;
-	if (!clp)
+	if (!clp && state)
 		*cps = state;
 	return 0;
 }

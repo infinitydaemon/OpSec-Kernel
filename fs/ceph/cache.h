@@ -43,19 +43,38 @@ static inline void ceph_fscache_resize(struct inode *inode, loff_t to)
 	}
 }
 
-static inline int ceph_fscache_unpin_writeback(struct inode *inode,
+static inline void ceph_fscache_unpin_writeback(struct inode *inode,
 						struct writeback_control *wbc)
 {
-	return netfs_unpin_writeback(inode, wbc);
+	fscache_unpin_writeback(wbc, ceph_fscache_cookie(ceph_inode(inode)));
 }
 
-#define ceph_fscache_dirty_folio netfs_dirty_folio
+static inline int ceph_fscache_dirty_folio(struct address_space *mapping,
+		struct folio *folio)
+{
+	struct ceph_inode_info *ci = ceph_inode(mapping->host);
+
+	return fscache_dirty_folio(mapping, folio, ceph_fscache_cookie(ci));
+}
+
+static inline int ceph_begin_cache_operation(struct netfs_io_request *rreq)
+{
+	struct fscache_cookie *cookie = ceph_fscache_cookie(ceph_inode(rreq->inode));
+
+	return fscache_begin_read_operation(&rreq->cache_resources, cookie);
+}
 
 static inline bool ceph_is_cache_enabled(struct inode *inode)
 {
 	return fscache_cookie_enabled(ceph_fscache_cookie(ceph_inode(inode)));
 }
 
+static inline void ceph_fscache_note_page_release(struct inode *inode)
+{
+	struct ceph_inode_info *ci = ceph_inode(inode);
+
+	fscache_note_page_release(ceph_fscache_cookie(ci));
+}
 #else /* CONFIG_CEPH_FSCACHE */
 static inline int ceph_fscache_register_fs(struct ceph_fs_client* fsc,
 					   struct fs_context *fc)
@@ -100,17 +119,29 @@ static inline void ceph_fscache_resize(struct inode *inode, loff_t to)
 {
 }
 
-static inline int ceph_fscache_unpin_writeback(struct inode *inode,
-					       struct writeback_control *wbc)
+static inline void ceph_fscache_unpin_writeback(struct inode *inode,
+						struct writeback_control *wbc)
 {
-	return 0;
 }
 
-#define ceph_fscache_dirty_folio filemap_dirty_folio
+static inline int ceph_fscache_dirty_folio(struct address_space *mapping,
+		struct folio *folio)
+{
+	return filemap_dirty_folio(mapping, folio);
+}
 
 static inline bool ceph_is_cache_enabled(struct inode *inode)
 {
 	return false;
+}
+
+static inline int ceph_begin_cache_operation(struct netfs_io_request *rreq)
+{
+	return -ENOBUFS;
+}
+
+static inline void ceph_fscache_note_page_release(struct inode *inode)
+{
 }
 #endif /* CONFIG_CEPH_FSCACHE */
 

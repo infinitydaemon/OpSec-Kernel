@@ -24,6 +24,7 @@
 #include "chan.h"
 #include "chid.h"
 #include "cgrp.h"
+#include "chid.h"
 #include "runl.h"
 #include "priv.h"
 

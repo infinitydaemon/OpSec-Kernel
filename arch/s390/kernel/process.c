@@ -89,7 +89,7 @@ int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
 	 */
 	save_fpu_regs();
 
-	*dst = *src;
+	memcpy(dst, src, arch_task_struct_size);
 	dst->thread.fpu.regs = dst->thread.fpu.fprs;
 
 	/*

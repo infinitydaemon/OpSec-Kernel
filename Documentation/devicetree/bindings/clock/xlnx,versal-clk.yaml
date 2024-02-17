@@ -31,11 +31,11 @@ properties:
   clocks:
     description: List of clock specifiers which are external input
       clocks to the given clock controller.
-    minItems: 2
+    minItems: 3
     maxItems: 8
 
   clock-names:
-    minItems: 2
+    minItems: 3
     maxItems: 8
 
 required:
@@ -59,33 +59,14 @@ allOf:
         clocks:
           items:
             - description: reference clock
-            - description: alternate reference clock for programmable logic
-
-        clock-names:
-          items:
-            - const: ref
-            - const: pl_alt_ref
-
-  - if:
-      properties:
-        compatible:
-          contains:
-            enum:
-              - xlnx,versal-net-clk
-
-    then:
-      properties:
-        clocks:
-          items:
-            - description: reference clock
-            - description: alternate reference clock for programmable logic
             - description: alternate reference clock
+            - description: alternate reference clock for programmable logic
 
         clock-names:
           items:
             - const: ref
-            - const: pl_alt_ref
             - const: alt_ref
+            - const: pl_alt_ref
 
   - if:
       properties:
@@ -129,8 +110,8 @@ examples:
         versal_clk: clock-controller {
           #clock-cells = <1>;
           compatible = "xlnx,versal-clk";
-          clocks = <&ref>,  <&pl_alt_ref>;
-          clock-names = "ref", "pl_alt_ref";
+          clocks = <&ref>, <&alt_ref>, <&pl_alt_ref>;
+          clock-names = "ref", "alt_ref", "pl_alt_ref";
         };
       };
     };

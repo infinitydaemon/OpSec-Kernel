@@ -1438,7 +1438,7 @@ err_out:
 }
 
 /* fjes_remove - Device Removal Routine */
-static void fjes_remove(struct platform_device *plat_dev)
+static int fjes_remove(struct platform_device *plat_dev)
 {
 	struct net_device *netdev = dev_get_drvdata(&plat_dev->dev);
 	struct fjes_adapter *adapter = netdev_priv(netdev);
@@ -1462,6 +1462,8 @@ static void fjes_remove(struct platform_device *plat_dev)
 	netif_napi_del(&adapter->napi);
 
 	free_netdev(netdev);
+
+	return 0;
 }
 
 static struct platform_driver fjes_driver = {
@@ -1469,7 +1471,7 @@ static struct platform_driver fjes_driver = {
 		.name = DRV_NAME,
 	},
 	.probe = fjes_probe,
-	.remove_new = fjes_remove,
+	.remove = fjes_remove,
 };
 
 static acpi_status

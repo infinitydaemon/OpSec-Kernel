@@ -156,7 +156,7 @@ static void __uart_start(struct uart_state *state)
 	 * enabled, serial_port_runtime_resume() calls start_tx() again
 	 * after enabling the device.
 	 */
-	if (pm_runtime_active(&port_dev->dev))
+	if (!pm_runtime_enabled(port->dev) || pm_runtime_active(port->dev))
 		port->ops->start_tx(port);
 	pm_runtime_mark_last_busy(&port_dev->dev);
 	pm_runtime_put_autosuspend(&port_dev->dev);
@@ -410,10 +410,11 @@ void
 uart_update_timeout(struct uart_port *port, unsigned int cflag,
 		    unsigned int baud)
 {
-	u64 temp = tty_get_frame_size(cflag);
+	unsigned int size = tty_get_frame_size(cflag);
+	u64 frame_time;
 
-	temp *= NSEC_PER_SEC;
-	port->frame_time = (unsigned int)DIV64_U64_ROUND_UP(temp, baud);
+	frame_time = (u64)size * NSEC_PER_SEC;
+	port->frame_time = DIV64_U64_ROUND_UP(frame_time, baud);
 }
 EXPORT_SYMBOL(uart_update_timeout);
 
@@ -686,7 +687,7 @@ EXPORT_SYMBOL_GPL(uart_xchar_out);
  * This function is used to send a high-priority XON/XOFF character to
  * the device
  */
-static void uart_send_xchar(struct tty_struct *tty, u8 ch)
+static void uart_send_xchar(struct tty_struct *tty, char ch)
 {
 	struct uart_state *state = tty->driver_data;
 	struct uart_port *port;
@@ -1084,8 +1085,8 @@ static int uart_tiocmget(struct tty_struct *tty)
 		goto out;
 
 	if (!tty_io_error(tty)) {
-		uart_port_lock_irq(uport);
 		result = uport->mctrl;
+		uart_port_lock_irq(uport);
 		result |= uport->ops->get_mctrl(uport);
 		uart_port_unlock_irq(uport);
 	}
@@ -1367,12 +1368,6 @@ static void uart_sanitize_serial_rs485(struct uart_port *port, struct serial_rs4
 
 	if (!(rs485->flags & SER_RS485_ENABLED)) {
 		memset(rs485, 0, sizeof(*rs485));
-		return;
-	}
-
-	/* Clear other RS485 flags but SER_RS485_TERMINATE_BUS and return if enabling RS422 */
-	if (rs485->flags & SER_RS485_MODE_RS422) {
-		rs485->flags &= (SER_RS485_ENABLED | SER_RS485_MODE_RS422 | SER_RS485_TERMINATE_BUS);
 		return;
 	}
 
@@ -2377,7 +2372,7 @@ int uart_suspend_port(struct uart_driver *drv, struct uart_port *uport)
 
 	mutex_lock(&port->mutex);
 
-	tty_dev = device_find_child(&uport->port_dev->dev, &match, serial_match_port);
+	tty_dev = device_find_child(uport->dev, &match, serial_match_port);
 	if (tty_dev && device_may_wakeup(tty_dev)) {
 		enable_irq_wake(uport->irq);
 		put_device(tty_dev);
@@ -2458,7 +2453,7 @@ int uart_resume_port(struct uart_driver *drv, struct uart_port *uport)
 
 	mutex_lock(&port->mutex);
 
-	tty_dev = device_find_child(&uport->port_dev->dev, &match, serial_match_port);
+	tty_dev = device_find_child(uport->dev, &match, serial_match_port);
 	if (!uport->suspended && device_may_wakeup(tty_dev)) {
 		if (irqd_is_wakeup_set(irq_get_irq_data((uport->irq))))
 			disable_irq_wake(uport->irq);
@@ -2668,8 +2663,7 @@ static int uart_poll_init(struct tty_driver *driver, int line, char *options)
 	mutex_lock(&tport->mutex);
 
 	port = uart_port_check(state);
-	if (!port || port->type == PORT_UNKNOWN ||
-	    !(port->ops->poll_get_char && port->ops->poll_put_char)) {
+	if (!port || !(port->ops->poll_get_char && port->ops->poll_put_char)) {
 		ret = -1;
 		goto out;
 	}
@@ -3189,8 +3183,7 @@ static int serial_core_add_one_port(struct uart_driver *drv, struct uart_port *u
 	 * setserial to be used to alter this port's parameters.
 	 */
 	tty_dev = tty_port_register_device_attr_serdev(port, drv->tty_driver,
-			uport->line, uport->dev, &uport->port_dev->dev, port,
-			uport->tty_groups);
+			uport->line, uport->dev, port, uport->tty_groups);
 	if (!IS_ERR(tty_dev)) {
 		device_set_wakeup_capable(tty_dev, 1);
 	} else {

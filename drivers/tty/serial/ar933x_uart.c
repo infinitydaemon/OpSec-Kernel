@@ -818,7 +818,7 @@ err_disable_clk:
 	return ret;
 }
 
-static void ar933x_uart_remove(struct platform_device *pdev)
+static int ar933x_uart_remove(struct platform_device *pdev)
 {
 	struct ar933x_uart_port *up;
 
@@ -828,6 +828,8 @@ static void ar933x_uart_remove(struct platform_device *pdev)
 		uart_remove_one_port(&ar933x_uart_driver, &up->port);
 		clk_disable_unprepare(up->clk);
 	}
+
+	return 0;
 }
 
 #ifdef CONFIG_OF
@@ -840,7 +842,7 @@ MODULE_DEVICE_TABLE(of, ar933x_uart_of_ids);
 
 static struct platform_driver ar933x_uart_platform_driver = {
 	.probe		= ar933x_uart_probe,
-	.remove_new	= ar933x_uart_remove,
+	.remove		= ar933x_uart_remove,
 	.driver		= {
 		.name		= DRIVER_NAME,
 		.of_match_table = of_match_ptr(ar933x_uart_of_ids),

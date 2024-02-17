@@ -1314,8 +1314,8 @@ void rtw_debugfs_init(struct rtw_dev *rtwdev)
 
 #ifdef CONFIG_RTW88_DEBUG
 
-void rtw_dbg(struct rtw_dev *rtwdev, enum rtw_debug_mask mask,
-	     const char *fmt, ...)
+void __rtw_dbg(struct rtw_dev *rtwdev, enum rtw_debug_mask mask,
+	       const char *fmt, ...)
 {
 	struct va_format vaf = {
 		.fmt = fmt,
@@ -1330,6 +1330,6 @@ void rtw_dbg(struct rtw_dev *rtwdev, enum rtw_debug_mask mask,
 
 	va_end(args);
 }
-EXPORT_SYMBOL(rtw_dbg);
+EXPORT_SYMBOL(__rtw_dbg);
 
 #endif /* CONFIG_RTW88_DEBUG */

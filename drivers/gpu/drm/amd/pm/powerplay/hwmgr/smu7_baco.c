@@ -33,20 +33,21 @@
 #include "smu/smu_7_1_2_d.h"
 #include "smu/smu_7_1_2_sh_mask.h"
 
-bool smu7_baco_get_capability(struct pp_hwmgr *hwmgr)
+int smu7_baco_get_capability(struct pp_hwmgr *hwmgr, bool *cap)
 {
 	struct amdgpu_device *adev = (struct amdgpu_device *)(hwmgr->adev);
 	uint32_t reg;
 
+	*cap = false;
 	if (!phm_cap_enabled(hwmgr->platform_descriptor.platformCaps, PHM_PlatformCaps_BACO))
 		return 0;
 
 	reg = RREG32(mmCC_BIF_BX_FUSESTRAP0);
 
 	if (reg & CC_BIF_BX_FUSESTRAP0__STRAP_BIF_PX_CAPABLE_MASK)
-		return true;
+		*cap = true;
 
-	return false;
+	return 0;
 }
 
 int smu7_baco_get_state(struct pp_hwmgr *hwmgr, enum BACO_STATE *state)

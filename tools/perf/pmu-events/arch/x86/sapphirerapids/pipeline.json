@@ -505,7 +505,7 @@
         "UMask": "0x1"
     },
     {
-        "BriefDescription": "Bubble cycles of BAClear (Unknown Branch).",
+        "BriefDescription": "INT_MISC.UNKNOWN_BRANCH_CYCLES",
         "EventCode": "0xad",
         "EventName": "INT_MISC.UNKNOWN_BRANCH_CYCLES",
         "MSRIndex": "0x3F7",

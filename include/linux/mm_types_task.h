@@ -9,6 +9,9 @@
  */
 
 #include <linux/types.h>
+#include <linux/threads.h>
+#include <linux/atomic.h>
+#include <linux/cpumask.h>
 
 #include <asm/page.h>
 
@@ -32,8 +35,6 @@ enum {
 	MM_SHMEMPAGES,	/* Resident shared memory pages */
 	NR_MM_COUNTERS
 };
-
-struct page;
 
 struct page_frag {
 	struct page *page;

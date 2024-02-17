@@ -897,41 +897,40 @@ static u32 ixgbevf_get_rxfh_key_size(struct net_device *netdev)
 	return IXGBEVF_RSS_HASH_KEY_SIZE;
 }
 
-static int ixgbevf_get_rxfh(struct net_device *netdev,
-			    struct ethtool_rxfh_param *rxfh)
+static int ixgbevf_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key,
+			    u8 *hfunc)
 {
 	struct ixgbevf_adapter *adapter = netdev_priv(netdev);
 	int err = 0;
 
-	rxfh->hfunc = ETH_RSS_HASH_TOP;
+	if (hfunc)
+		*hfunc = ETH_RSS_HASH_TOP;
 
 	if (adapter->hw.mac.type >= ixgbe_mac_X550_vf) {
-		if (rxfh->key)
-			memcpy(rxfh->key, adapter->rss_key,
+		if (key)
+			memcpy(key, adapter->rss_key,
 			       ixgbevf_get_rxfh_key_size(netdev));
 
-		if (rxfh->indir) {
+		if (indir) {
 			int i;
 
 			for (i = 0; i < IXGBEVF_X550_VFRETA_SIZE; i++)
-				rxfh->indir[i] = adapter->rss_indir_tbl[i];
+				indir[i] = adapter->rss_indir_tbl[i];
 		}
 	} else {
 		/* If neither indirection table nor hash key was requested
 		 *  - just return a success avoiding taking any locks.
 		 */
-		if (!rxfh->indir && !rxfh->key)
+		if (!indir && !key)
 			return 0;
 
 		spin_lock_bh(&adapter->mbx_lock);
-		if (rxfh->indir)
-			err = ixgbevf_get_reta_locked(&adapter->hw,
-						      rxfh->indir,
+		if (indir)
+			err = ixgbevf_get_reta_locked(&adapter->hw, indir,
 						      adapter->num_rx_queues);
 
-		if (!err && rxfh->key)
-			err = ixgbevf_get_rss_key_locked(&adapter->hw,
-							 rxfh->key);
+		if (!err && key)
+			err = ixgbevf_get_rss_key_locked(&adapter->hw, key);
 
 		spin_unlock_bh(&adapter->mbx_lock);
 	}

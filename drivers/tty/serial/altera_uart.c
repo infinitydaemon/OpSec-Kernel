@@ -305,7 +305,7 @@ static int altera_uart_startup(struct uart_port *port)
 		int ret;
 
 		ret = request_irq(port->irq, altera_uart_interrupt, 0,
-				dev_name(port->dev), port);
+				DRV_NAME, port);
 		if (ret) {
 			pr_err(DRV_NAME ": unable to attach Altera UART %d "
 			       "interrupt vector=%d\n", port->line, port->irq);
@@ -595,7 +595,7 @@ static int altera_uart_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void altera_uart_remove(struct platform_device *pdev)
+static int altera_uart_remove(struct platform_device *pdev)
 {
 	struct uart_port *port = platform_get_drvdata(pdev);
 
@@ -604,6 +604,8 @@ static void altera_uart_remove(struct platform_device *pdev)
 		port->mapbase = 0;
 		iounmap(port->membase);
 	}
+
+	return 0;
 }
 
 #ifdef CONFIG_OF
@@ -617,7 +619,7 @@ MODULE_DEVICE_TABLE(of, altera_uart_match);
 
 static struct platform_driver altera_uart_platform_driver = {
 	.probe	= altera_uart_probe,
-	.remove_new = altera_uart_remove,
+	.remove	= altera_uart_remove,
 	.driver	= {
 		.name		= DRV_NAME,
 		.of_match_table	= of_match_ptr(altera_uart_match),

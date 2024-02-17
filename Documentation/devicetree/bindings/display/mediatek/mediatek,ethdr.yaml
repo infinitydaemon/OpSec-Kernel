@@ -23,11 +23,7 @@ description:
 
 properties:
   compatible:
-    oneOf:
-      - const: mediatek,mt8195-disp-ethdr
-      - items:
-          - const: mediatek,mt8188-disp-ethdr
-          - const: mediatek,mt8195-disp-ethdr
+    const: mediatek,mt8195-disp-ethdr
 
   reg:
     maxItems: 7

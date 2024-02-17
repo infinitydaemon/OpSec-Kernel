@@ -28,7 +28,6 @@
 
 static struct spi_device *g_spi;
 
-MODULE_DESCRIPTION("Slic Maxim DS26522 driver");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Zhao Qiang<B45475@freescale.com>");
 

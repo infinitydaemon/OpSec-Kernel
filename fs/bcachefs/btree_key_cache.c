@@ -630,7 +630,7 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 	if (ret)
 		goto out;
 
-	ck = (void *) btree_iter_path(trans, &c_iter)->l[0].b;
+	ck = (void *) c_iter.path->l[0].b;
 	if (!ck)
 		goto out;
 
@@ -645,29 +645,22 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 	if (journal_seq && ck->journal.seq != journal_seq)
 		goto out;
 
-	trans->journal_res.seq = ck->journal.seq;
-
 	/*
-	 * If we're at the end of the journal, we really want to free up space
-	 * in the journal right away - we don't want to pin that old journal
-	 * sequence number with a new btree node write, we want to re-journal
-	 * the update
+	 * Since journal reclaim depends on us making progress here, and the
+	 * allocator/copygc depend on journal reclaim making progress, we need
+	 * to be using alloc reserves:
 	 */
-	if (ck->journal.seq == journal_last_seq(j))
-		commit_flags |= BCH_WATERMARK_reclaim;
-
-	if (ck->journal.seq != journal_last_seq(j) ||
-	    j->watermark == BCH_WATERMARK_stripe)
-		commit_flags |= BCH_TRANS_COMMIT_no_journal_res;
-
 	ret   = bch2_btree_iter_traverse(&b_iter) ?:
 		bch2_trans_update(trans, &b_iter, ck->k,
 				  BTREE_UPDATE_KEY_CACHE_RECLAIM|
 				  BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE|
 				  BTREE_TRIGGER_NORUN) ?:
 		bch2_trans_commit(trans, NULL, NULL,
-				  BCH_TRANS_COMMIT_no_check_rw|
-				  BCH_TRANS_COMMIT_no_enospc|
+				  BTREE_INSERT_NOCHECK_RW|
+				  BTREE_INSERT_NOFAIL|
+				  (ck->journal.seq == journal_last_seq(j)
+				   ? BCH_WATERMARK_reclaim
+				   : 0)|
 				  commit_flags);
 
 	bch2_fs_fatal_err_on(ret &&
@@ -680,8 +673,7 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 
 	bch2_journal_pin_drop(j, &ck->journal);
 
-	struct btree_path *path = btree_iter_path(trans, &c_iter);
-	BUG_ON(!btree_node_locked(path, 0));
+	BUG_ON(!btree_node_locked(c_iter.path, 0));
 
 	if (!evict) {
 		if (test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
@@ -690,20 +682,19 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 		}
 	} else {
 		struct btree_path *path2;
-		unsigned i;
 evict:
-		trans_for_each_path(trans, path2, i)
-			if (path2 != path)
+		trans_for_each_path(trans, path2)
+			if (path2 != c_iter.path)
 				__bch2_btree_path_unlock(trans, path2);
 
-		bch2_btree_node_lock_write_nofail(trans, path, &ck->c);
+		bch2_btree_node_lock_write_nofail(trans, c_iter.path, &ck->c);
 
 		if (test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
 			clear_bit(BKEY_CACHED_DIRTY, &ck->flags);
 			atomic_long_dec(&c->btree_key_cache.nr_dirty);
 		}
 
-		mark_btree_node_locked_noreset(path, 0, BTREE_NODE_UNLOCKED);
+		mark_btree_node_locked_noreset(c_iter.path, 0, BTREE_NODE_UNLOCKED);
 		bkey_cached_evict(&c->btree_key_cache, ck);
 		bkey_cached_free_fast(&c->btree_key_cache, ck);
 	}
@@ -741,9 +732,9 @@ int bch2_btree_key_cache_journal_flush(struct journal *j,
 	}
 	six_unlock_read(&ck->c.lock);
 
-	ret = lockrestart_do(trans,
+	ret = commit_do(trans, NULL, NULL, 0,
 		btree_key_cache_flush_pos(trans, key, seq,
-				BCH_TRANS_COMMIT_journal_reclaim, false));
+				BTREE_INSERT_JOURNAL_RECLAIM, false));
 unlock:
 	srcu_read_unlock(&c->btree_trans_barrier, srcu_idx);
 
@@ -751,12 +742,28 @@ unlock:
 	return ret;
 }
 
+/*
+ * Flush and evict a key from the key cache:
+ */
+int bch2_btree_key_cache_flush(struct btree_trans *trans,
+			       enum btree_id id, struct bpos pos)
+{
+	struct bch_fs *c = trans->c;
+	struct bkey_cached_key key = { id, pos };
+
+	/* Fastpath - assume it won't be found: */
+	if (!bch2_btree_key_cache_find(c, id, pos))
+		return 0;
+
+	return btree_key_cache_flush_pos(trans, key, 0, 0, true);
+}
+
 bool bch2_btree_insert_key_cached(struct btree_trans *trans,
 				  unsigned flags,
 				  struct btree_insert_entry *insert_entry)
 {
 	struct bch_fs *c = trans->c;
-	struct bkey_cached *ck = (void *) (trans->paths + insert_entry->path)->l[0].b;
+	struct bkey_cached *ck = (void *) insert_entry->path->l[0].b;
 	struct bkey_i *insert = insert_entry->k;
 	bool kick_reclaim = false;
 
@@ -766,7 +773,7 @@ bool bch2_btree_insert_key_cached(struct btree_trans *trans,
 	ck->valid = true;
 
 	if (!test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
-		EBUG_ON(test_bit(BCH_FS_clean_shutdown, &c->flags));
+		EBUG_ON(test_bit(BCH_FS_CLEAN_SHUTDOWN, &c->flags));
 		set_bit(BKEY_CACHED_DIRTY, &ck->flags);
 		atomic_long_inc(&c->btree_key_cache.nr_dirty);
 
@@ -993,7 +1000,7 @@ void bch2_fs_btree_key_cache_exit(struct btree_key_cache *bc)
 
 	if (atomic_long_read(&bc->nr_dirty) &&
 	    !bch2_journal_error(&c->journal) &&
-	    test_bit(BCH_FS_was_rw, &c->flags))
+	    test_bit(BCH_FS_WAS_RW, &c->flags))
 		panic("btree key cache shutdown error: nr_dirty nonzero (%li)\n",
 		      atomic_long_read(&bc->nr_dirty));
 

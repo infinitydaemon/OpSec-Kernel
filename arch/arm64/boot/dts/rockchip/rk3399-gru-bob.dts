@@ -70,7 +70,7 @@
 &spi0 {
 	status = "okay";
 
-	tpm@0 {
+	cr50@0 {
 		compatible = "google,cr50";
 		reg = <0>;
 		interrupt-parent = <&gpio0>;

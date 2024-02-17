@@ -413,22 +413,6 @@ static const unsigned long *iio_scan_mask_match(const unsigned long *av_masks,
 {
 	if (bitmap_empty(mask, masklength))
 		return NULL;
-	/*
-	 * The condition here do not handle multi-long masks correctly.
-	 * It only checks the first long to be zero, and will use such mask
-	 * as a terminator even if there was bits set after the first long.
-	 *
-	 * Correct check would require using:
-	 * while (!bitmap_empty(av_masks, masklength))
-	 * instead. This is potentially hazardous because the
-	 * avaliable_scan_masks is a zero terminated array of longs - and
-	 * using the proper bitmap_empty() check for multi-long wide masks
-	 * would require the array to be terminated with multiple zero longs -
-	 * which is not such an usual pattern.
-	 *
-	 * As writing of this no multi-long wide masks were found in-tree, so
-	 * the simple while (*av_masks) check is working.
-	 */
 	while (*av_masks) {
 		if (strict) {
 			if (bitmap_equal(mask, av_masks, masklength))
@@ -616,7 +600,7 @@ static int iio_buffer_add_channel_sysfs(struct iio_dev *indio_dev,
 				     &iio_show_fixed_type,
 				     NULL,
 				     0,
-				     IIO_SEPARATE,
+				     0,
 				     &indio_dev->dev,
 				     buffer,
 				     &buffer->buffer_attr_list);
@@ -629,7 +613,7 @@ static int iio_buffer_add_channel_sysfs(struct iio_dev *indio_dev,
 					     &iio_scan_el_show,
 					     &iio_scan_el_store,
 					     chan->scan_index,
-					     IIO_SEPARATE,
+					     0,
 					     &indio_dev->dev,
 					     buffer,
 					     &buffer->buffer_attr_list);
@@ -639,7 +623,7 @@ static int iio_buffer_add_channel_sysfs(struct iio_dev *indio_dev,
 					     &iio_scan_el_ts_show,
 					     &iio_scan_el_ts_store,
 					     chan->scan_index,
-					     IIO_SEPARATE,
+					     0,
 					     &indio_dev->dev,
 					     buffer,
 					     &buffer->buffer_attr_list);

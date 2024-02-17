@@ -153,9 +153,12 @@ static int __build_mock(struct kunit *test, struct drm_device *drm,
 	return 0;
 }
 
-KUNIT_DEFINE_ACTION_WRAPPER(kunit_action_drm_dev_unregister,
-			    drm_dev_unregister,
-			    struct drm_device *);
+static void kunit_action_drm_dev_unregister(void *ptr)
+{
+	struct drm_device *drm = ptr;
+
+	drm_dev_unregister(drm);
+}
 
 static struct vc4_dev *__mock_device(struct kunit *test, bool is_vc5)
 {

@@ -389,18 +389,21 @@ out_unlock:
 /* Note: Because we don't support holes, our allocation has
  * already happened (allocation writes zeros to the file data)
  * so we don't have to worry about ordered writes in
- * ocfs2_writepages.
+ * ocfs2_writepage.
  *
- * ->writepages is called during the process of invalidating the page cache
+ * ->writepage is called during the process of invalidating the page cache
  * during blocked lock processing.  It can't block on any cluster locks
  * to during block mapping.  It's relying on the fact that the block
  * mapping can't have disappeared under the dirty pages that it is
  * being asked to write back.
  */
-static int ocfs2_writepages(struct address_space *mapping,
-		struct writeback_control *wbc)
+static int ocfs2_writepage(struct page *page, struct writeback_control *wbc)
 {
-	return mpage_writepages(mapping, wbc, ocfs2_get_block);
+	trace_ocfs2_writepage(
+		(unsigned long long)OCFS2_I(page->mapping->host)->ip_blkno,
+		page->index);
+
+	return block_write_full_page(page, ocfs2_get_block, wbc);
 }
 
 /* Taken from ext3. We don't necessarily need the full blown
@@ -2468,7 +2471,7 @@ const struct address_space_operations ocfs2_aops = {
 	.dirty_folio		= block_dirty_folio,
 	.read_folio		= ocfs2_read_folio,
 	.readahead		= ocfs2_readahead,
-	.writepages		= ocfs2_writepages,
+	.writepage		= ocfs2_writepage,
 	.write_begin		= ocfs2_write_begin,
 	.write_end		= ocfs2_write_end,
 	.bmap			= ocfs2_bmap,
@@ -2477,5 +2480,5 @@ const struct address_space_operations ocfs2_aops = {
 	.release_folio		= ocfs2_release_folio,
 	.migrate_folio		= buffer_migrate_folio,
 	.is_partially_uptodate	= block_is_partially_uptodate,
-	.error_remove_folio	= generic_error_remove_folio,
+	.error_remove_page	= generic_error_remove_page,
 };

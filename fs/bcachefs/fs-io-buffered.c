@@ -52,20 +52,26 @@ struct readpages_iter {
 static int readpages_iter_init(struct readpages_iter *iter,
 			       struct readahead_control *ractl)
 {
-	struct folio *folio;
+	struct folio **fi;
+	int ret;
 
-	*iter = (struct readpages_iter) { ractl->mapping };
+	memset(iter, 0, sizeof(*iter));
 
-	while ((folio = __readahead_folio(ractl))) {
-		if (!bch2_folio_create(folio, GFP_KERNEL) ||
-		    darray_push(&iter->folios, folio)) {
-			bch2_folio_release(folio);
-			ractl->_nr_pages += folio_nr_pages(folio);
-			ractl->_index -= folio_nr_pages(folio);
-			return iter->folios.nr ? 0 : -ENOMEM;
-		}
+	iter->mapping = ractl->mapping;
 
-		folio_put(folio);
+	ret = bch2_filemap_get_contig_folios_d(iter->mapping,
+				ractl->_index << PAGE_SHIFT,
+				(ractl->_index + ractl->_nr_pages) << PAGE_SHIFT,
+				0, mapping_gfp_mask(iter->mapping),
+				&iter->folios);
+	if (ret)
+		return ret;
+
+	darray_for_each(iter->folios, fi) {
+		ractl->_nr_pages -= 1U << folio_order(*fi);
+		__bch2_folio_create(*fi, __GFP_NOFAIL|GFP_KERNEL);
+		folio_put(*fi);
+		folio_put(*fi);
 	}
 
 	return 0;
@@ -267,12 +273,12 @@ void bch2_readahead(struct readahead_control *ractl)
 	struct btree_trans *trans = bch2_trans_get(c);
 	struct folio *folio;
 	struct readpages_iter readpages_iter;
+	int ret;
 
 	bch2_inode_opts_get(&opts, c, &inode->ei_inode);
 
-	int ret = readpages_iter_init(&readpages_iter, ractl);
-	if (ret)
-		return;
+	ret = readpages_iter_init(&readpages_iter, ractl);
+	BUG_ON(ret);
 
 	bch2_pagecache_add_get(inode);
 
@@ -632,7 +638,7 @@ do_io:
 		/* Check for writing past i_size: */
 		WARN_ONCE((bio_end_sector(&w->io->op.wbio.bio) << 9) >
 			  round_up(i_size, block_bytes(c)) &&
-			  !test_bit(BCH_FS_emergency_ro, &c->flags),
+			  !test_bit(BCH_FS_EMERGENCY_RO, &c->flags),
 			  "writing past i_size: %llu > %llu (unrounded %llu)\n",
 			  bio_end_sector(&w->io->op.wbio.bio) << 9,
 			  round_up(i_size, block_bytes(c)),
@@ -820,7 +826,7 @@ static int __bch2_buffered_write(struct bch_inode_info *inode,
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch2_folio_reservation res;
 	folios fs;
-	struct folio *f;
+	struct folio **fi, *f;
 	unsigned copied = 0, f_offset, f_copied;
 	u64 end = pos + len, f_pos, f_len;
 	loff_t last_folio_pos = inode->v.i_size;

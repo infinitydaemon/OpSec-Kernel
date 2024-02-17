@@ -105,67 +105,61 @@ struct intel_guc {
 	 */
 	struct {
 		/**
-		 * @submission_state.lock: protects everything in
-		 * submission_state, ce->guc_id.id, and ce->guc_id.ref
-		 * when transitioning in and out of zero
+		 * @lock: protects everything in submission_state,
+		 * ce->guc_id.id, and ce->guc_id.ref when transitioning in and
+		 * out of zero
 		 */
 		spinlock_t lock;
 		/**
-		 * @submission_state.guc_ids: used to allocate new
-		 * guc_ids, single-lrc
+		 * @guc_ids: used to allocate new guc_ids, single-lrc
 		 */
 		struct ida guc_ids;
 		/**
-		 * @submission_state.num_guc_ids: Number of guc_ids, selftest
-		 * feature to be able to reduce this number while testing.
+		 * @num_guc_ids: Number of guc_ids, selftest feature to be able
+		 * to reduce this number while testing.
 		 */
 		int num_guc_ids;
 		/**
-		 * @submission_state.guc_ids_bitmap: used to allocate
-		 * new guc_ids, multi-lrc
+		 * @guc_ids_bitmap: used to allocate new guc_ids, multi-lrc
 		 */
 		unsigned long *guc_ids_bitmap;
 		/**
-		 * @submission_state.guc_id_list: list of intel_context
-		 * with valid guc_ids but no refs
+		 * @guc_id_list: list of intel_context with valid guc_ids but no
+		 * refs
 		 */
 		struct list_head guc_id_list;
 		/**
-		 * @submission_state.guc_ids_in_use: Number single-lrc
-		 * guc_ids in use
+		 * @guc_ids_in_use: Number single-lrc guc_ids in use
 		 */
 		unsigned int guc_ids_in_use;
 		/**
-		 * @submission_state.destroyed_contexts: list of contexts
-		 * waiting to be destroyed (deregistered with the GuC)
+		 * @destroyed_contexts: list of contexts waiting to be destroyed
+		 * (deregistered with the GuC)
 		 */
 		struct list_head destroyed_contexts;
 		/**
-		 * @submission_state.destroyed_worker: worker to deregister
-		 * contexts, need as we need to take a GT PM reference and
-		 * can't from destroy function as it might be in an atomic
-		 * context (no sleeping)
+		 * @destroyed_worker: worker to deregister contexts, need as we
+		 * need to take a GT PM reference and can't from destroy
+		 * function as it might be in an atomic context (no sleeping)
 		 */
 		struct work_struct destroyed_worker;
 		/**
-		 * @submission_state.reset_fail_worker: worker to trigger
-		 * a GT reset after an engine reset fails
+		 * @reset_fail_worker: worker to trigger a GT reset after an
+		 * engine reset fails
 		 */
 		struct work_struct reset_fail_worker;
 		/**
-		 * @submission_state.reset_fail_mask: mask of engines that
-		 * failed to reset
+		 * @reset_fail_mask: mask of engines that failed to reset
 		 */
 		intel_engine_mask_t reset_fail_mask;
 		/**
-		 * @submission_state.sched_disable_delay_ms: schedule
-		 * disable delay, in ms, for contexts
+		 * @sched_disable_delay_ms: schedule disable delay, in ms, for
+		 * contexts
 		 */
 		unsigned int sched_disable_delay_ms;
 		/**
-		 * @submission_state.sched_disable_gucid_threshold:
-		 * threshold of min remaining available guc_ids before
-		 * we start bypassing the schedule disable delay
+		 * @sched_disable_gucid_threshold: threshold of min remaining available
+		 * guc_ids before we start bypassing the schedule disable delay
 		 */
 		unsigned int sched_disable_gucid_threshold;
 	} submission_state;
@@ -249,40 +243,37 @@ struct intel_guc {
 	 */
 	struct {
 		/**
-		 * @timestamp.lock: Lock protecting the below fields and
-		 * the engine stats.
+		 * @lock: Lock protecting the below fields and the engine stats.
 		 */
 		spinlock_t lock;
 
 		/**
-		 * @timestamp.gt_stamp: 64-bit extended value of the GT
-		 * timestamp.
+		 * @gt_stamp: 64 bit extended value of the GT timestamp.
 		 */
 		u64 gt_stamp;
 
 		/**
-		 * @timestamp.ping_delay: Period for polling the GT
-		 * timestamp for overflow.
+		 * @ping_delay: Period for polling the GT timestamp for
+		 * overflow.
 		 */
 		unsigned long ping_delay;
 
 		/**
-		 * @timestamp.work: Periodic work to adjust GT timestamp,
-		 * engine and context usage for overflows.
+		 * @work: Periodic work to adjust GT timestamp, engine and
+		 * context usage for overflows.
 		 */
 		struct delayed_work work;
 
 		/**
-		 * @timestamp.shift: Right shift value for the gpm timestamp
+		 * @shift: Right shift value for the gpm timestamp
 		 */
 		u32 shift;
 
 		/**
-		 * @timestamp.last_stat_jiffies: jiffies at last actual
-		 * stats collection time. We use this timestamp to ensure
-		 * we don't oversample the stats because runtime power
-		 * management events can trigger stats collection at much
-		 * higher rates than required.
+		 * @last_stat_jiffies: jiffies at last actual stats collection time
+		 * We use this timestamp to ensure we don't oversample the
+		 * stats because runtime power management events can trigger
+		 * stats collection at much higher rates than required.
 		 */
 		unsigned long last_stat_jiffies;
 	} timestamp;
@@ -306,10 +297,6 @@ struct intel_guc {
 	 * @number_guc_id_stolen: The number of guc_ids that have been stolen
 	 */
 	int number_guc_id_stolen;
-	/**
-	 * @fast_response_selftest: Backdoor to CT handler for fast response selftest
-	 */
-	u32 fast_response_selftest;
 #endif
 };
 

@@ -1364,7 +1364,7 @@ void rpcrdma_post_recvs(struct rpcrdma_xprt *r_xprt, int needed, bool temp)
 		}
 
 		rep->rr_cid.ci_queue_id = ep->re_attr.recv_cq->res.id;
-		trace_xprtrdma_post_recv(&rep->rr_cid);
+		trace_xprtrdma_post_recv(rep);
 		rep->rr_recv_wr.next = wr;
 		wr = &rep->rr_recv_wr;
 		--needed;

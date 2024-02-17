@@ -31,7 +31,6 @@
 #include <linux/seq_file.h>
 #include <linux/jhash.h>
 #include <linux/random.h>
-#include <linux/rcupdate_wait.h>
 
 #include <net/net_namespace.h>
 #include <net/ip_vs.h>

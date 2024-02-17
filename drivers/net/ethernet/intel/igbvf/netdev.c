@@ -273,8 +273,9 @@ static bool igbvf_clean_rx_irq(struct igbvf_adapter *adapter,
 		 * that case, it fills the header buffer and spills the rest
 		 * into the page.
 		 */
-		hlen = le16_get_bits(rx_desc->wb.lower.lo_dword.hs_rss.hdr_info,
-				     E1000_RXDADV_HDRBUFLEN_MASK);
+		hlen = (le16_to_cpu(rx_desc->wb.lower.lo_dword.hs_rss.hdr_info)
+		       & E1000_RXDADV_HDRBUFLEN_MASK) >>
+		       E1000_RXDADV_HDRBUFLEN_SHIFT;
 		if (hlen > adapter->rx_ps_hdr_size)
 			hlen = adapter->rx_ps_hdr_size;
 

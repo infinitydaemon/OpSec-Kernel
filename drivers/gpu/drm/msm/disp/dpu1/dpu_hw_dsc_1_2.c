@@ -4,8 +4,6 @@
  * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved
  */
 
-#include <drm/drm_managed.h>
-
 #include <drm/display/drm_dsc_helper.h>
 
 #include "dpu_kms.h"
@@ -369,13 +367,12 @@ static void _setup_dcs_ops_1_2(struct dpu_hw_dsc_ops *ops,
 	ops->dsc_bind_pingpong_blk = dpu_hw_dsc_bind_pingpong_blk_1_2;
 }
 
-struct dpu_hw_dsc *dpu_hw_dsc_init_1_2(struct drm_device *dev,
-				       const struct dpu_dsc_cfg *cfg,
+struct dpu_hw_dsc *dpu_hw_dsc_init_1_2(const struct dpu_dsc_cfg *cfg,
 				       void __iomem *addr)
 {
 	struct dpu_hw_dsc *c;
 
-	c = drmm_kzalloc(dev, sizeof(*c), GFP_KERNEL);
+	c = kzalloc(sizeof(*c), GFP_KERNEL);
 	if (!c)
 		return ERR_PTR(-ENOMEM);
 

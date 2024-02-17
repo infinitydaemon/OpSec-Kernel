@@ -7,7 +7,7 @@
 
 #include <linux/ftrace.h>
 #include <linux/module.h>
-#include <linux/io.h>
+#include <asm-generic/io.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/rwmmio.h>

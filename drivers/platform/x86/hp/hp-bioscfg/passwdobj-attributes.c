@@ -7,6 +7,7 @@
  */
 
 #include "bioscfg.h"
+#include <asm-generic/posix_types.h>
 
 GET_INSTANCE_ID(password);
 /*

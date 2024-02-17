@@ -19,7 +19,6 @@
 #include <asm/mipsmtregs.h>
 #include <asm/r4kcache.h>
 #include <asm/cacheflush.h>
-#include <asm/mips_mt.h>
 
 int vpelimit;
 

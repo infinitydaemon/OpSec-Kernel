@@ -471,15 +471,10 @@ void nilfs_sufile_do_free(struct inode *sufile, __u64 segnum,
 		kunmap_atomic(kaddr);
 		return;
 	}
-	if (unlikely(nilfs_segment_usage_error(su)))
-		nilfs_warn(sufile->i_sb, "free segment %llu marked in error",
-			   (unsigned long long)segnum);
+	WARN_ON(nilfs_segment_usage_error(su));
+	WARN_ON(!nilfs_segment_usage_dirty(su));
 
 	sudirty = nilfs_segment_usage_dirty(su);
-	if (unlikely(!sudirty))
-		nilfs_warn(sufile->i_sb, "free unallocated segment %llu",
-			   (unsigned long long)segnum);
-
 	nilfs_segment_usage_set_clean(su);
 	kunmap_atomic(kaddr);
 	mark_buffer_dirty(su_bh);

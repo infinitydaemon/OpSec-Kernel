@@ -251,8 +251,7 @@ annotate.*::
 		addr2line binary to use for file names and line numbers.
 
 	annotate.objdump::
-		objdump binary to use for disassembly and annotations,
-		including in the 'perf test' command.
+		objdump binary to use for disassembly and annotations.
 
 	annotate.disassembler_style::
 		Use this to change the default disassembler style to some other value
@@ -722,6 +721,7 @@ session-<NAME>.*::
 
 		Defines new record session for daemon. The value is record's
 		command line without the 'record' keyword.
+
 
 SEE ALSO
 --------

@@ -5,8 +5,6 @@
 # Check that flush works as expected with all the supported arguments and verify
 # some combinations of arguments.
 
-source lib.sh
-
 FLUSH_BY_STATE_TESTS="
 	vxlan_test_flush_by_permanent
 	vxlan_test_flush_by_nopermanent
@@ -741,9 +739,10 @@ bridge_vxlan_test_flush()
 
 setup()
 {
-	setup_ns NS
-	IP="ip -netns ${NS}"
-	BRIDGE="bridge -netns ${NS}"
+	IP="ip -netns ns1"
+	BRIDGE="bridge -netns ns1"
+
+	ip netns add ns1
 
 	$IP link add name vx10 type vxlan id 1000 dstport "$VXPORT"
 	$IP link add name vx20 type vxlan id 2000 dstport "$VXPORT"
@@ -760,7 +759,7 @@ cleanup()
 	$IP link del dev vx20
 	$IP link del dev vx10
 
-	cleanup_ns ${NS}
+	ip netns del ns1
 }
 
 ################################################################################

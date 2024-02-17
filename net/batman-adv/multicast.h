@@ -11,7 +11,6 @@
 
 #include <linux/netlink.h>
 #include <linux/skbuff.h>
-#include <linux/types.h>
 
 /**
  * enum batadv_forw_mode - the way a packet should be forwarded as
@@ -29,12 +28,6 @@ enum batadv_forw_mode {
 	 */
 	BATADV_FORW_UCASTS,
 
-	/**
-	 * @BATADV_FORW_MCAST: forward the packet to some nodes via a
-	 *  batman-adv multicast packet
-	 */
-	BATADV_FORW_MCAST,
-
 	/** @BATADV_FORW_NONE: don't forward, drop it */
 	BATADV_FORW_NONE,
 };
@@ -43,7 +36,7 @@ enum batadv_forw_mode {
 
 enum batadv_forw_mode
 batadv_mcast_forw_mode(struct batadv_priv *bat_priv, struct sk_buff *skb,
-		       unsigned short vid, int *is_routable);
+		       int *is_routable);
 
 int batadv_mcast_forw_send(struct batadv_priv *bat_priv, struct sk_buff *skb,
 			   unsigned short vid, int is_routable);
@@ -59,23 +52,11 @@ void batadv_mcast_free(struct batadv_priv *bat_priv);
 
 void batadv_mcast_purge_orig(struct batadv_orig_node *orig_node);
 
-/* multicast_forw.c */
-
-int batadv_mcast_forw_tracker_tvlv_handler(struct batadv_priv *bat_priv,
-					   struct sk_buff *skb);
-
-unsigned int batadv_mcast_forw_packet_hdrlen(unsigned int num_dests);
-
-bool batadv_mcast_forw_push(struct batadv_priv *bat_priv, struct sk_buff *skb,
-			    unsigned short vid, int is_routable, int count);
-
-int batadv_mcast_forw_mcsend(struct batadv_priv *bat_priv, struct sk_buff *skb);
-
 #else
 
 static inline enum batadv_forw_mode
 batadv_mcast_forw_mode(struct batadv_priv *bat_priv, struct sk_buff *skb,
-		       unsigned short vid, int *is_routable)
+		       int *is_routable)
 {
 	return BATADV_FORW_BCAST;
 }
@@ -111,13 +92,6 @@ static inline void batadv_mcast_free(struct batadv_priv *bat_priv)
 
 static inline void batadv_mcast_purge_orig(struct batadv_orig_node *orig_node)
 {
-}
-
-static inline int batadv_mcast_forw_mcsend(struct batadv_priv *bat_priv,
-					   struct sk_buff *skb)
-{
-	kfree_skb(skb);
-	return NET_XMIT_DROP;
 }
 
 #endif /* CONFIG_BATMAN_ADV_MCAST */

@@ -11,7 +11,6 @@
 
 /dts-v1/;
 
-#include "k3-am654.dtsi"
 #include "k3-am65-iot2050-common.dtsi"
 
 / {
@@ -44,7 +43,6 @@
 
 /* eMMC */
 &sdhci0 {
-	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_mmc0_pins_default>;
 	bus-width = <8>;

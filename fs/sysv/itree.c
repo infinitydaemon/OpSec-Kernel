@@ -8,7 +8,6 @@
 
 #include <linux/buffer_head.h>
 #include <linux/mount.h>
-#include <linux/mpage.h>
 #include <linux/string.h>
 #include "sysv.h"
 
@@ -457,10 +456,9 @@ int sysv_getattr(struct mnt_idmap *idmap, const struct path *path,
 	return 0;
 }
 
-static int sysv_writepages(struct address_space *mapping,
-		struct writeback_control *wbc)
+static int sysv_writepage(struct page *page, struct writeback_control *wbc)
 {
-	return mpage_writepages(mapping, wbc, get_block);
+	return block_write_full_page(page,get_block,wbc);
 }
 
 static int sysv_read_folio(struct file *file, struct folio *folio)
@@ -505,9 +503,8 @@ const struct address_space_operations sysv_aops = {
 	.dirty_folio = block_dirty_folio,
 	.invalidate_folio = block_invalidate_folio,
 	.read_folio = sysv_read_folio,
-	.writepages = sysv_writepages,
+	.writepage = sysv_writepage,
 	.write_begin = sysv_write_begin,
 	.write_end = generic_write_end,
-	.migrate_folio = buffer_migrate_folio,
 	.bmap = sysv_bmap
 };

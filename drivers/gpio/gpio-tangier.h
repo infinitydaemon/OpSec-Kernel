@@ -13,7 +13,6 @@
 #define _GPIO_TANGIER_H_
 
 #include <linux/gpio/driver.h>
-#include <linux/pm.h>
 #include <linux/spinlock_types.h>
 #include <linux/types.h>
 
@@ -112,6 +111,7 @@ struct tng_gpio {
 
 int devm_tng_gpio_probe(struct device *dev, struct tng_gpio *gpio);
 
-extern const struct dev_pm_ops tng_gpio_pm_ops;
+int tng_gpio_suspend(struct device *dev);
+int tng_gpio_resume(struct device *dev);
 
 #endif /* _GPIO_TANGIER_H_ */

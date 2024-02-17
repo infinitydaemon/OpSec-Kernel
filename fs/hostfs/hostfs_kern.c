@@ -637,8 +637,12 @@ static struct dentry *hostfs_lookup(struct inode *ino, struct dentry *dentry,
 
 	inode = hostfs_iget(ino->i_sb, name);
 	__putname(name);
-	if (inode == ERR_PTR(-ENOENT))
-		inode = NULL;
+	if (IS_ERR(inode)) {
+		if (PTR_ERR(inode) == -ENOENT)
+			inode = NULL;
+		else
+			return ERR_CAST(inode);
+	}
 
 	return d_splice_alias(inode, dentry);
 }

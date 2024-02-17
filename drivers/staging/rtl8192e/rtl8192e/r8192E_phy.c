@@ -671,16 +671,16 @@ static void _rtl92e_phy_switch_channel_work_item(struct net_device *dev)
 	_rtl92e_phy_switch_channel(dev, priv->chan);
 }
 
-void rtl92e_set_channel(struct net_device *dev, u8 channel)
+u8 rtl92e_set_channel(struct net_device *dev, u8 channel)
 {
 	struct r8192_priv *priv = rtllib_priv(dev);
 
 	if (!priv->up) {
 		netdev_err(dev, "%s(): Driver is not initialized\n", __func__);
-		return;
+		return false;
 	}
 	if (priv->sw_chnl_in_progress)
-		return;
+		return false;
 
 	switch (priv->rtllib->mode) {
 	case WIRELESS_MODE_B:
@@ -688,7 +688,7 @@ void rtl92e_set_channel(struct net_device *dev, u8 channel)
 			netdev_warn(dev,
 				    "Channel %d not available in 802.11b.\n",
 				    channel);
-			return;
+			return false;
 		}
 		break;
 	case WIRELESS_MODE_G:
@@ -697,7 +697,7 @@ void rtl92e_set_channel(struct net_device *dev, u8 channel)
 			netdev_warn(dev,
 				    "Channel %d not available in 802.11g.\n",
 				    channel);
-			return;
+			return false;
 		}
 		break;
 	}
@@ -714,7 +714,7 @@ void rtl92e_set_channel(struct net_device *dev, u8 channel)
 	if (priv->up)
 		_rtl92e_phy_switch_channel_work_item(dev);
 	priv->sw_chnl_in_progress = false;
-	return;
+	return true;
 }
 
 static void _rtl92e_cck_tx_power_track_bw_switch_tssi(struct net_device *dev)

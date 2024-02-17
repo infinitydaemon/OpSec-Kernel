@@ -775,7 +775,7 @@ static struct extent_map *defrag_lookup_extent(struct inode *inode, u64 start,
 	 * this em, as either we don't care about the generation, or the
 	 * merged extent map will be rejected anyway.
 	 */
-	if (em && (em->flags & EXTENT_FLAG_MERGED) &&
+	if (em && test_bit(EXTENT_FLAG_MERGED, &em->flags) &&
 	    newer_than && em->generation >= newer_than) {
 		free_extent_map(em);
 		em = NULL;
@@ -802,7 +802,7 @@ static struct extent_map *defrag_lookup_extent(struct inode *inode, u64 start,
 static u32 get_extent_max_capacity(const struct btrfs_fs_info *fs_info,
 				   const struct extent_map *em)
 {
-	if (extent_map_is_compressed(em))
+	if (test_bit(EXTENT_FLAG_COMPRESSED, &em->flags))
 		return BTRFS_MAX_COMPRESSED;
 	return fs_info->max_extent_size;
 }
@@ -828,7 +828,7 @@ static bool defrag_check_next_extent(struct inode *inode, struct extent_map *em,
 	/* No more em or hole */
 	if (!next || next->block_start >= EXTENT_MAP_LAST_BYTE)
 		goto out;
-	if (next->flags & EXTENT_FLAG_PREALLOC)
+	if (test_bit(EXTENT_FLAG_PREALLOC, &next->flags))
 		goto out;
 	/*
 	 * If the next extent is at its max capacity, defragging current extent
@@ -996,9 +996,10 @@ static int defrag_collect_targets(struct btrfs_inode *inode,
 		    em->len <= inode->root->fs_info->max_inline)
 			goto next;
 
-		/* Skip holes and preallocated extents. */
+		/* Skip hole/delalloc/preallocated extents */
 		if (em->block_start == EXTENT_MAP_HOLE ||
-		    (em->flags & EXTENT_FLAG_PREALLOC))
+		    em->block_start == EXTENT_MAP_DELALLOC ||
+		    test_bit(EXTENT_FLAG_PREALLOC, &em->flags))
 			goto next;
 
 		/* Skip older extent */
@@ -1189,7 +1190,7 @@ static int defrag_one_locked_target(struct btrfs_inode *inode,
 	/* Update the page status */
 	for (i = start_index - first_index; i <= last_index - first_index; i++) {
 		ClearPageChecked(pages[i]);
-		btrfs_folio_clamp_set_dirty(fs_info, page_folio(pages[i]), start, len);
+		btrfs_page_clamp_set_dirty(fs_info, pages[i], start, len);
 	}
 	btrfs_delalloc_release_extents(inode, len);
 	extent_changeset_free(data_reserved);

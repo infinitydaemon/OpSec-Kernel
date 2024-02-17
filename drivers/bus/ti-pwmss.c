@@ -33,9 +33,10 @@ static int pwmss_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void pwmss_remove(struct platform_device *pdev)
+static int pwmss_remove(struct platform_device *pdev)
 {
 	pm_runtime_disable(&pdev->dev);
+	return 0;
 }
 
 static struct platform_driver pwmss_driver = {
@@ -44,7 +45,7 @@ static struct platform_driver pwmss_driver = {
 		.of_match_table	= pwmss_of_match,
 	},
 	.probe	= pwmss_probe,
-	.remove_new = pwmss_remove,
+	.remove	= pwmss_remove,
 };
 
 module_platform_driver(pwmss_driver);

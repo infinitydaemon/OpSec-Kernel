@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0
 obj-y += vsyscall.o vsyscall-syscall.o vsyscall-syms.o
 
-$(obj)/vsyscall-syscall.o: $(obj)/vsyscall-trapa.so
+$(obj)/vsyscall-syscall.o: \
+	$(foreach F,trapa,$(obj)/vsyscall-$F.so)
 
 # Teach kbuild about targets
-targets += vsyscall-trapa.o vsyscall-traps.so
+targets += $(foreach F,trapa,vsyscall-$F.o vsyscall-$F.so)
 targets += vsyscall-note.o vsyscall.lds vsyscall-dummy.o
 
 # The DSO images are built using a special linker script

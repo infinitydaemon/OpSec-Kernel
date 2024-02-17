@@ -293,6 +293,13 @@ int agp_add_bridge(struct agp_bridge_data *bridge)
 	}
 
 	if (list_empty(&agp_bridges)) {
+		error = agp_frontend_initialize();
+		if (error) {
+			dev_info(&bridge->dev->dev,
+				 "agp_frontend_initialize() failed\n");
+			goto frontend_err;
+		}
+
 		dev_info(&bridge->dev->dev, "AGP aperture is %dM @ 0x%lx\n",
 			 bridge->driver->fetch_size(), bridge->gart_bus_addr);
 
@@ -301,6 +308,8 @@ int agp_add_bridge(struct agp_bridge_data *bridge)
 	list_add(&bridge->list, &agp_bridges);
 	return 0;
 
+frontend_err:
+	agp_backend_cleanup(bridge);
 err_out:
 	module_put(bridge->driver->owner);
 err_put_bridge:
@@ -314,6 +323,8 @@ void agp_remove_bridge(struct agp_bridge_data *bridge)
 {
 	agp_backend_cleanup(bridge);
 	list_del(&bridge->list);
+	if (list_empty(&agp_bridges))
+		agp_frontend_cleanup();
 	module_put(bridge->driver->owner);
 }
 EXPORT_SYMBOL_GPL(agp_remove_bridge);

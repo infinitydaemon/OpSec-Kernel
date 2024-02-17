@@ -91,7 +91,7 @@ static int bch2_bucket_is_movable(struct btree_trans *trans,
 
 	a = bch2_alloc_to_v4(k, &_a);
 	b->k.gen	= a->gen;
-	b->sectors	= bch2_bucket_sectors_dirty(*a);
+	b->sectors	= a->dirty_sectors;
 
 	ret = data_type_movable(a->data_type) &&
 		a->fragmentation_lru &&
@@ -145,21 +145,20 @@ static int bch2_copygc_get_buckets(struct moving_context *ctxt,
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
+	struct btree_iter iter;
+	struct bkey_s_c k;
 	size_t nr_to_get = max_t(size_t, 16U, buckets_in_flight->nr / 4);
 	size_t saw = 0, in_flight = 0, not_movable = 0, sectors = 0;
 	int ret;
 
 	move_buckets_wait(ctxt, buckets_in_flight, false);
 
-	ret = bch2_btree_write_buffer_tryflush(trans);
-	if (bch2_err_matches(ret, EROFS))
-		return ret;
-
-	if (bch2_fs_fatal_err_on(ret, c, "%s: error %s from bch2_btree_write_buffer_tryflush()",
+	ret = bch2_btree_write_buffer_flush(trans);
+	if (bch2_fs_fatal_err_on(ret, c, "%s: error %s from bch2_btree_write_buffer_flush()",
 				 __func__, bch2_err_str(ret)))
 		return ret;
 
-	ret = for_each_btree_key_upto(trans, iter, BTREE_ID_lru,
+	ret = for_each_btree_key2_upto(trans, iter, BTREE_ID_lru,
 				  lru_pos(BCH_LRU_FRAGMENTATION_START, 0, 0),
 				  lru_pos(BCH_LRU_FRAGMENTATION_START, U64_MAX, LRU_TIME_MAX),
 				  0, k, ({
@@ -168,23 +167,15 @@ static int bch2_copygc_get_buckets(struct moving_context *ctxt,
 
 		saw++;
 
-		ret2 = bch2_bucket_is_movable(trans, &b, lru_pos_time(k.k->p));
-		if (ret2 < 0)
-			goto err;
-
-		if (!ret2)
+		if (!bch2_bucket_is_movable(trans, &b, lru_pos_time(k.k->p)))
 			not_movable++;
 		else if (bucket_in_flight(buckets_in_flight, b.k))
 			in_flight++;
 		else {
-			ret2 = darray_push(buckets, b);
-			if (ret2)
-				goto err;
-			sectors += b.sectors;
+			ret2 = darray_push(buckets, b) ?: buckets->nr >= nr_to_get;
+			if (ret2 >= 0)
+				sectors += b.sectors;
 		}
-
-		ret2 = buckets->nr >= nr_to_get;
-err:
 		ret2;
 	}));
 
@@ -207,6 +198,7 @@ static int bch2_copygc(struct moving_context *ctxt,
 	};
 	move_buckets buckets = { 0 };
 	struct move_bucket_in_flight *f;
+	struct move_bucket *i;
 	u64 moved = atomic64_read(&ctxt->stats->sectors_moved);
 	int ret = 0;
 
@@ -229,7 +221,7 @@ static int bch2_copygc(struct moving_context *ctxt,
 			break;
 		}
 
-		ret = bch2_evacuate_bucket(ctxt, f, f->bucket.k.bucket,
+		ret = __bch2_evacuate_bucket(ctxt, f, f->bucket.k.bucket,
 					     f->bucket.k.gen, data_opts);
 		if (ret)
 			goto err;
@@ -267,16 +259,19 @@ err:
  */
 unsigned long bch2_copygc_wait_amount(struct bch_fs *c)
 {
+	struct bch_dev *ca;
+	unsigned dev_idx;
 	s64 wait = S64_MAX, fragmented_allowed, fragmented;
+	unsigned i;
 
-	for_each_rw_member(c, ca) {
+	for_each_rw_member(ca, c, dev_idx) {
 		struct bch_dev_usage usage = bch2_dev_usage_read(ca);
 
 		fragmented_allowed = ((__dev_buckets_available(ca, usage, BCH_WATERMARK_stripe) *
 				       ca->mi.bucket_size) >> 1);
 		fragmented = 0;
 
-		for (unsigned i = 0; i < BCH_DATA_NR; i++)
+		for (i = 0; i < BCH_DATA_NR; i++)
 			if (data_type_movable(i))
 				fragmented += usage.d[i].fragmented;
 
@@ -318,9 +313,9 @@ static int bch2_copygc_thread(void *arg)
 	if (!buckets)
 		return -ENOMEM;
 	ret = rhashtable_init(&buckets->table, &bch_move_bucket_params);
-	bch_err_msg(c, ret, "allocating copygc buckets in flight");
 	if (ret) {
 		kfree(buckets);
+		bch_err_msg(c, ret, "allocating copygc buckets in flight");
 		return ret;
 	}
 
@@ -339,8 +334,7 @@ static int bch2_copygc_thread(void *arg)
 
 		if (!c->copy_gc_enabled) {
 			move_buckets_wait(&ctxt, buckets, true);
-			kthread_wait_freezable(c->copy_gc_enabled ||
-					       kthread_should_stop());
+			kthread_wait_freezable(c->copy_gc_enabled);
 		}
 
 		if (unlikely(freezing(current))) {
@@ -417,9 +411,10 @@ int bch2_copygc_start(struct bch_fs *c)
 
 	t = kthread_create(bch2_copygc_thread, c, "bch-copygc/%s", c->name);
 	ret = PTR_ERR_OR_ZERO(t);
-	bch_err_msg(c, ret, "creating copygc thread");
-	if (ret)
+	if (ret) {
+		bch_err_msg(c, ret, "creating copygc thread");
 		return ret;
+	}
 
 	get_task_struct(t);
 

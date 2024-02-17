@@ -2700,12 +2700,11 @@ int cifs_query_reparse_point(const unsigned int xid,
 			     u32 *tag, struct kvec *rsp,
 			     int *rsp_buftype)
 {
-	struct reparse_data_buffer *buf;
 	struct cifs_open_parms oparms;
 	TRANSACT_IOCTL_REQ *io_req = NULL;
 	TRANSACT_IOCTL_RSP *io_rsp = NULL;
 	struct cifs_fid fid;
-	__u32 data_offset, data_count, len;
+	__u32 data_offset, data_count;
 	__u8 *start, *end;
 	int io_rsp_len;
 	int oplock = 0;
@@ -2775,16 +2774,7 @@ int cifs_query_reparse_point(const unsigned int xid,
 		goto error;
 	}
 
-	data_count = le16_to_cpu(io_rsp->ByteCount);
-	buf = (struct reparse_data_buffer *)start;
-	len = sizeof(*buf);
-	if (data_count < len ||
-	    data_count < le16_to_cpu(buf->ReparseDataLength) + len) {
-		rc = -EIO;
-		goto error;
-	}
-
-	*tag = le32_to_cpu(buf->ReparseTag);
+	*tag = le32_to_cpu(((struct reparse_data_buffer *)start)->ReparseTag);
 	rsp->iov_base = io_rsp;
 	rsp->iov_len = io_rsp_len;
 	*rsp_buftype = CIFS_LARGE_BUFFER;

@@ -364,6 +364,8 @@ nfsd_reply_cache_scan(struct shrinker *shrink, struct shrink_control *sc)
 		if (freed > sc->nr_to_scan)
 			break;
 	}
+
+	trace_nfsd_drc_gc(nn, freed);
 	return freed;
 }
 
@@ -506,6 +508,7 @@ int nfsd_cache_lookup(struct svc_rqst *rqstp, unsigned int start,
 	__wsum			csum;
 	struct nfsd_drc_bucket	*b;
 	int type = rqstp->rq_cachetype;
+	unsigned long freed;
 	LIST_HEAD(dispose);
 	int rtn = RC_DOIT;
 
@@ -535,7 +538,8 @@ int nfsd_cache_lookup(struct svc_rqst *rqstp, unsigned int start,
 	nfsd_prune_bucket_locked(nn, b, 3, &dispose);
 	spin_unlock(&b->cache_lock);
 
-	nfsd_cacherep_dispose(&dispose);
+	freed = nfsd_cacherep_dispose(&dispose);
+	trace_nfsd_drc_gc(nn, freed);
 
 	nfsd_stats_rc_misses_inc();
 	atomic_inc(&nn->num_drc_entries);

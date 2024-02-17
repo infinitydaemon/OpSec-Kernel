@@ -107,6 +107,9 @@ err:
 
 static int test_iterate(struct bch_fs *c, u64 nr)
 {
+	struct btree_trans *trans = bch2_trans_get(c);
+	struct btree_iter iter = { NULL };
+	struct bkey_s_c k;
 	u64 i;
 	int ret = 0;
 
@@ -124,43 +127,49 @@ static int test_iterate(struct bch_fs *c, u64 nr)
 		ret = bch2_btree_insert(c, BTREE_ID_xattrs, &ck.k_i, NULL, 0);
 		bch_err_msg(c, ret, "insert error");
 		if (ret)
-			return ret;
+			goto err;
 	}
 
 	pr_info("iterating forwards");
+
 	i = 0;
 
-	ret = bch2_trans_run(c,
-		for_each_btree_key_upto(trans, iter, BTREE_ID_xattrs,
-					SPOS(0, 0, U32_MAX), POS(0, U64_MAX),
-					0, k, ({
-			BUG_ON(k.k->p.offset != i++);
-			0;
-		})));
+	ret = for_each_btree_key2_upto(trans, iter, BTREE_ID_xattrs,
+				  SPOS(0, 0, U32_MAX), POS(0, U64_MAX),
+				  0, k, ({
+		BUG_ON(k.k->p.offset != i++);
+		0;
+	}));
 	bch_err_msg(c, ret, "error iterating forwards");
 	if (ret)
-		return ret;
+		goto err;
 
 	BUG_ON(i != nr);
 
 	pr_info("iterating backwards");
 
-	ret = bch2_trans_run(c,
-		for_each_btree_key_reverse(trans, iter, BTREE_ID_xattrs,
-				SPOS(0, U64_MAX, U32_MAX), 0, k, ({
+	ret = for_each_btree_key_reverse(trans, iter, BTREE_ID_xattrs,
+					 SPOS(0, U64_MAX, U32_MAX), 0, k,
+		({
 			BUG_ON(k.k->p.offset != --i);
 			0;
-		})));
+		}));
 	bch_err_msg(c, ret, "error iterating backwards");
 	if (ret)
-		return ret;
+		goto err;
 
 	BUG_ON(i);
-	return 0;
+err:
+	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_put(trans);
+	return ret;
 }
 
 static int test_iterate_extents(struct bch_fs *c, u64 nr)
 {
+	struct btree_trans *trans = bch2_trans_get(c);
+	struct btree_iter iter = { NULL };
+	struct bkey_s_c k;
 	u64 i;
 	int ret = 0;
 
@@ -179,45 +188,51 @@ static int test_iterate_extents(struct bch_fs *c, u64 nr)
 		ret = bch2_btree_insert(c, BTREE_ID_extents, &ck.k_i, NULL, 0);
 		bch_err_msg(c, ret, "insert error");
 		if (ret)
-			return ret;
+			goto err;
 	}
 
 	pr_info("iterating forwards");
+
 	i = 0;
 
-	ret = bch2_trans_run(c,
-		for_each_btree_key_upto(trans, iter, BTREE_ID_extents,
-					SPOS(0, 0, U32_MAX), POS(0, U64_MAX),
-					0, k, ({
-			BUG_ON(bkey_start_offset(k.k) != i);
-			i = k.k->p.offset;
-			0;
-		})));
+	ret = for_each_btree_key2_upto(trans, iter, BTREE_ID_extents,
+				  SPOS(0, 0, U32_MAX), POS(0, U64_MAX),
+				  0, k, ({
+		BUG_ON(bkey_start_offset(k.k) != i);
+		i = k.k->p.offset;
+		0;
+	}));
 	bch_err_msg(c, ret, "error iterating forwards");
 	if (ret)
-		return ret;
+		goto err;
 
 	BUG_ON(i != nr);
 
 	pr_info("iterating backwards");
 
-	ret = bch2_trans_run(c,
-		for_each_btree_key_reverse(trans, iter, BTREE_ID_extents,
-				SPOS(0, U64_MAX, U32_MAX), 0, k, ({
+	ret = for_each_btree_key_reverse(trans, iter, BTREE_ID_extents,
+					 SPOS(0, U64_MAX, U32_MAX), 0, k,
+		({
 			BUG_ON(k.k->p.offset != i);
 			i = bkey_start_offset(k.k);
 			0;
-		})));
+		}));
 	bch_err_msg(c, ret, "error iterating backwards");
 	if (ret)
-		return ret;
+		goto err;
 
 	BUG_ON(i);
-	return 0;
+err:
+	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_put(trans);
+	return ret;
 }
 
 static int test_iterate_slots(struct bch_fs *c, u64 nr)
 {
+	struct btree_trans *trans = bch2_trans_get(c);
+	struct btree_iter iter = { NULL };
+	struct bkey_s_c k;
 	u64 i;
 	int ret = 0;
 
@@ -235,48 +250,57 @@ static int test_iterate_slots(struct bch_fs *c, u64 nr)
 		ret = bch2_btree_insert(c, BTREE_ID_xattrs, &ck.k_i, NULL, 0);
 		bch_err_msg(c, ret, "insert error");
 		if (ret)
-			return ret;
+			goto err;
 	}
 
 	pr_info("iterating forwards");
+
 	i = 0;
 
-	ret = bch2_trans_run(c,
-		for_each_btree_key_upto(trans, iter, BTREE_ID_xattrs,
-					  SPOS(0, 0, U32_MAX), POS(0, U64_MAX),
-					  0, k, ({
-			BUG_ON(k.k->p.offset != i);
-			i += 2;
-			0;
-		})));
+	ret = for_each_btree_key2_upto(trans, iter, BTREE_ID_xattrs,
+				  SPOS(0, 0, U32_MAX), POS(0, U64_MAX),
+				  0, k, ({
+		BUG_ON(k.k->p.offset != i);
+		i += 2;
+		0;
+	}));
 	bch_err_msg(c, ret, "error iterating forwards");
 	if (ret)
-		return ret;
+		goto err;
 
 	BUG_ON(i != nr * 2);
 
 	pr_info("iterating forwards by slots");
+
 	i = 0;
 
-	ret = bch2_trans_run(c,
-		for_each_btree_key_upto(trans, iter, BTREE_ID_xattrs,
-					SPOS(0, 0, U32_MAX), POS(0, U64_MAX),
-					BTREE_ITER_SLOTS, k, ({
-			if (i >= nr * 2)
-				break;
+	ret = for_each_btree_key2_upto(trans, iter, BTREE_ID_xattrs,
+				  SPOS(0, 0, U32_MAX), POS(0, U64_MAX),
+				  BTREE_ITER_SLOTS, k, ({
+		if (i >= nr * 2)
+			break;
 
-			BUG_ON(k.k->p.offset != i);
-			BUG_ON(bkey_deleted(k.k) != (i & 1));
+		BUG_ON(k.k->p.offset != i);
+		BUG_ON(bkey_deleted(k.k) != (i & 1));
 
-			i++;
-			0;
-		})));
-	bch_err_msg(c, ret, "error iterating forwards by slots");
+		i++;
+		0;
+	}));
+	if (ret < 0) {
+		bch_err_msg(c, ret, "error iterating forwards by slots");
+		goto err;
+	}
+	ret = 0;
+err:
+	bch2_trans_put(trans);
 	return ret;
 }
 
 static int test_iterate_slots_extents(struct bch_fs *c, u64 nr)
 {
+	struct btree_trans *trans = bch2_trans_get(c);
+	struct btree_iter iter = { NULL };
+	struct bkey_s_c k;
 	u64 i;
 	int ret = 0;
 
@@ -295,45 +319,50 @@ static int test_iterate_slots_extents(struct bch_fs *c, u64 nr)
 		ret = bch2_btree_insert(c, BTREE_ID_extents, &ck.k_i, NULL, 0);
 		bch_err_msg(c, ret, "insert error");
 		if (ret)
-			return ret;
+			goto err;
 	}
 
 	pr_info("iterating forwards");
+
 	i = 0;
 
-	ret = bch2_trans_run(c,
-		for_each_btree_key_upto(trans, iter, BTREE_ID_extents,
-					SPOS(0, 0, U32_MAX), POS(0, U64_MAX),
-					0, k, ({
-			BUG_ON(bkey_start_offset(k.k) != i + 8);
-			BUG_ON(k.k->size != 8);
-			i += 16;
-			0;
-		})));
+	ret = for_each_btree_key2_upto(trans, iter, BTREE_ID_extents,
+				  SPOS(0, 0, U32_MAX), POS(0, U64_MAX),
+				  0, k, ({
+		BUG_ON(bkey_start_offset(k.k) != i + 8);
+		BUG_ON(k.k->size != 8);
+		i += 16;
+		0;
+	}));
 	bch_err_msg(c, ret, "error iterating forwards");
 	if (ret)
-		return ret;
+		goto err;
 
 	BUG_ON(i != nr);
 
 	pr_info("iterating forwards by slots");
+
 	i = 0;
 
-	ret = bch2_trans_run(c,
-		for_each_btree_key_upto(trans, iter, BTREE_ID_extents,
-					SPOS(0, 0, U32_MAX), POS(0, U64_MAX),
-					BTREE_ITER_SLOTS, k, ({
-			if (i == nr)
-				break;
-			BUG_ON(bkey_deleted(k.k) != !(i % 16));
+	ret = for_each_btree_key2_upto(trans, iter, BTREE_ID_extents,
+				 SPOS(0, 0, U32_MAX), POS(0, U64_MAX),
+				 BTREE_ITER_SLOTS, k, ({
+		if (i == nr)
+			break;
+		BUG_ON(bkey_deleted(k.k) != !(i % 16));
 
-			BUG_ON(bkey_start_offset(k.k) != i);
-			BUG_ON(k.k->size != 8);
-			i = k.k->p.offset;
-			0;
-		})));
+		BUG_ON(bkey_start_offset(k.k) != i);
+		BUG_ON(k.k->size != 8);
+		i = k.k->p.offset;
+		0;
+	}));
 	bch_err_msg(c, ret, "error iterating forwards by slots");
-	return ret;
+	if (ret)
+		goto err;
+	ret = 0;
+err:
+	bch2_trans_put(trans);
+	return 0;
 }
 
 /*
@@ -707,6 +736,8 @@ static int rand_delete(struct bch_fs *c, u64 nr)
 
 static int seq_insert(struct bch_fs *c, u64 nr)
 {
+	struct btree_iter iter;
+	struct bkey_s_c k;
 	struct bkey_i_cookie insert;
 
 	bkey_cookie_init(&insert.k_i);
@@ -725,8 +756,11 @@ static int seq_insert(struct bch_fs *c, u64 nr)
 
 static int seq_lookup(struct bch_fs *c, u64 nr)
 {
+	struct btree_iter iter;
+	struct bkey_s_c k;
+
 	return bch2_trans_run(c,
-		for_each_btree_key_upto(trans, iter, BTREE_ID_xattrs,
+		for_each_btree_key2_upto(trans, iter, BTREE_ID_xattrs,
 				  SPOS(0, 0, U32_MAX), POS(0, U64_MAX),
 				  0, k,
 		0));
@@ -734,6 +768,9 @@ static int seq_lookup(struct bch_fs *c, u64 nr)
 
 static int seq_overwrite(struct bch_fs *c, u64 nr)
 {
+	struct btree_iter iter;
+	struct bkey_s_c k;
+
 	return bch2_trans_run(c,
 		for_each_btree_key_commit(trans, iter, BTREE_ID_xattrs,
 					SPOS(0, 0, U32_MAX),

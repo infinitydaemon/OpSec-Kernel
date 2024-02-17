@@ -104,16 +104,15 @@ EXPORT_SYMBOL(dcache_dir_close);
  * If no such element exists, NULL is returned.
  */
 static struct dentry *scan_positives(struct dentry *cursor,
-					struct hlist_node **p,
+					struct list_head *p,
 					loff_t count,
 					struct dentry *last)
 {
 	struct dentry *dentry = cursor->d_parent, *found = NULL;
 
 	spin_lock(&dentry->d_lock);
-	while (*p) {
-		struct dentry *d = hlist_entry(*p, struct dentry, d_sib);
-		p = &d->d_sib.next;
+	while ((p = p->next) != &dentry->d_subdirs) {
+		struct dentry *d = list_entry(p, struct dentry, d_child);
 		// we must at least skip cursors, to avoid livelocks
 		if (d->d_flags & DCACHE_DENTRY_CURSOR)
 			continue;
@@ -127,10 +126,8 @@ static struct dentry *scan_positives(struct dentry *cursor,
 			count = 1;
 		}
 		if (need_resched()) {
-			if (!hlist_unhashed(&cursor->d_sib))
-				__hlist_del(&cursor->d_sib);
-			hlist_add_behind(&cursor->d_sib, &d->d_sib);
-			p = &cursor->d_sib.next;
+			list_move(&cursor->d_child, p);
+			p = &cursor->d_child;
 			spin_unlock(&dentry->d_lock);
 			cond_resched();
 			spin_lock(&dentry->d_lock);
@@ -162,12 +159,13 @@ loff_t dcache_dir_lseek(struct file *file, loff_t offset, int whence)
 		inode_lock_shared(dentry->d_inode);
 
 		if (offset > 2)
-			to = scan_positives(cursor, &dentry->d_children.first,
+			to = scan_positives(cursor, &dentry->d_subdirs,
 					    offset - 2, NULL);
 		spin_lock(&dentry->d_lock);
-		hlist_del_init(&cursor->d_sib);
 		if (to)
-			hlist_add_behind(&cursor->d_sib, &to->d_sib);
+			list_move(&cursor->d_child, &to->d_child);
+		else
+			list_del_init(&cursor->d_child);
 		spin_unlock(&dentry->d_lock);
 		dput(to);
 
@@ -189,16 +187,19 @@ int dcache_readdir(struct file *file, struct dir_context *ctx)
 {
 	struct dentry *dentry = file->f_path.dentry;
 	struct dentry *cursor = file->private_data;
+	struct list_head *anchor = &dentry->d_subdirs;
 	struct dentry *next = NULL;
-	struct hlist_node **p;
+	struct list_head *p;
 
 	if (!dir_emit_dots(file, ctx))
 		return 0;
 
 	if (ctx->pos == 2)
-		p = &dentry->d_children.first;
+		p = anchor;
+	else if (!list_empty(&cursor->d_child))
+		p = &cursor->d_child;
 	else
-		p = &cursor->d_sib.next;
+		return 0;
 
 	while ((next = scan_positives(cursor, p, 1, next)) != NULL) {
 		if (!dir_emit(ctx, next->d_name.name, next->d_name.len,
@@ -206,12 +207,13 @@ int dcache_readdir(struct file *file, struct dir_context *ctx)
 			      fs_umode_to_dtype(d_inode(next)->i_mode)))
 			break;
 		ctx->pos++;
-		p = &next->d_sib.next;
+		p = &next->d_child;
 	}
 	spin_lock(&dentry->d_lock);
-	hlist_del_init(&cursor->d_sib);
 	if (next)
-		hlist_add_before(&cursor->d_sib, &next->d_sib);
+		list_move_tail(&cursor->d_child, &next->d_child);
+	else
+		list_del_init(&cursor->d_child);
 	spin_unlock(&dentry->d_lock);
 	dput(next);
 
@@ -498,11 +500,12 @@ const struct file_operations simple_offset_dir_operations = {
 
 static struct dentry *find_next_child(struct dentry *parent, struct dentry *prev)
 {
-	struct dentry *child = NULL, *d;
+	struct dentry *child = NULL;
+	struct list_head *p = prev ? &prev->d_child : &parent->d_subdirs;
 
 	spin_lock(&parent->d_lock);
-	d = prev ? d_next_sibling(prev) : d_first_child(parent);
-	hlist_for_each_entry_from(d, d_sib) {
+	while ((p = p->next) != &parent->d_subdirs) {
+		struct dentry *d = container_of(p, struct dentry, d_child);
 		if (simple_positive(d)) {
 			spin_lock_nested(&d->d_lock, DENTRY_D_LOCK_NESTED);
 			if (simple_positive(d))
@@ -663,7 +666,7 @@ int simple_empty(struct dentry *dentry)
 	int ret = 0;
 
 	spin_lock(&dentry->d_lock);
-	hlist_for_each_entry(child, &dentry->d_children, d_sib) {
+	list_for_each_entry(child, &dentry->d_subdirs, d_child) {
 		spin_lock_nested(&child->d_lock, DENTRY_D_LOCK_NESTED);
 		if (simple_positive(child)) {
 			spin_unlock(&child->d_lock);
@@ -917,6 +920,7 @@ int simple_fill_super(struct super_block *s, unsigned long magic,
 		      const struct tree_descr *files)
 {
 	struct inode *inode;
+	struct dentry *root;
 	struct dentry *dentry;
 	int i;
 
@@ -939,8 +943,8 @@ int simple_fill_super(struct super_block *s, unsigned long magic,
 	inode->i_op = &simple_dir_inode_operations;
 	inode->i_fop = &simple_dir_operations;
 	set_nlink(inode, 2);
-	s->s_root = d_make_root(inode);
-	if (!s->s_root)
+	root = d_make_root(inode);
+	if (!root)
 		return -ENOMEM;
 	for (i = 0; !files->name || files->name[0]; i++, files++) {
 		if (!files->name)
@@ -952,13 +956,13 @@ int simple_fill_super(struct super_block *s, unsigned long magic,
 				"with an index of 1!\n", __func__,
 				s->s_type->name);
 
-		dentry = d_alloc_name(s->s_root, files->name);
+		dentry = d_alloc_name(root, files->name);
 		if (!dentry)
-			return -ENOMEM;
+			goto out;
 		inode = new_inode(s);
 		if (!inode) {
 			dput(dentry);
-			return -ENOMEM;
+			goto out;
 		}
 		inode->i_mode = S_IFREG | files->mode;
 		simple_inode_init_ts(inode);
@@ -966,7 +970,13 @@ int simple_fill_super(struct super_block *s, unsigned long magic,
 		inode->i_ino = i;
 		d_add(dentry, inode);
 	}
+	s->s_root = root;
 	return 0;
+out:
+	d_genocide(root);
+	shrink_dcache_parent(root);
+	dput(root);
+	return -ENOMEM;
 }
 EXPORT_SYMBOL(simple_fill_super);
 

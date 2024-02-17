@@ -2318,5 +2318,4 @@ static int __init eni_init(void)
 module_init(eni_init);
 /* @@@ since exit routine not defined, this module can not be unloaded */
 
-MODULE_DESCRIPTION("Efficient Networks ENI155P ATM NIC driver");
 MODULE_LICENSE("GPL");

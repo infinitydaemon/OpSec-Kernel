@@ -158,8 +158,8 @@ static void k3_dsp_rproc_kick(struct rproc *rproc, int vqid)
 	/* send the index of the triggered virtqueue in the mailbox payload */
 	ret = mbox_send_message(kproc->mbox, (void *)msg);
 	if (ret < 0)
-		dev_err(dev, "failed to send mailbox message (%pe)\n",
-			ERR_PTR(ret));
+		dev_err(dev, "failed to send mailbox message, status = %d\n",
+			ret);
 }
 
 /* Put the DSP processor into reset */
@@ -170,7 +170,7 @@ static int k3_dsp_rproc_reset(struct k3_dsp_rproc *kproc)
 
 	ret = reset_control_assert(kproc->reset);
 	if (ret) {
-		dev_err(dev, "local-reset assert failed (%pe)\n", ERR_PTR(ret));
+		dev_err(dev, "local-reset assert failed, ret = %d\n", ret);
 		return ret;
 	}
 
@@ -180,7 +180,7 @@ static int k3_dsp_rproc_reset(struct k3_dsp_rproc *kproc)
 	ret = kproc->ti_sci->ops.dev_ops.put_device(kproc->ti_sci,
 						    kproc->ti_sci_id);
 	if (ret) {
-		dev_err(dev, "module-reset assert failed (%pe)\n", ERR_PTR(ret));
+		dev_err(dev, "module-reset assert failed, ret = %d\n", ret);
 		if (reset_control_deassert(kproc->reset))
 			dev_warn(dev, "local-reset deassert back failed\n");
 	}
@@ -200,14 +200,14 @@ static int k3_dsp_rproc_release(struct k3_dsp_rproc *kproc)
 	ret = kproc->ti_sci->ops.dev_ops.get_device(kproc->ti_sci,
 						    kproc->ti_sci_id);
 	if (ret) {
-		dev_err(dev, "module-reset deassert failed (%pe)\n", ERR_PTR(ret));
+		dev_err(dev, "module-reset deassert failed, ret = %d\n", ret);
 		return ret;
 	}
 
 lreset:
 	ret = reset_control_deassert(kproc->reset);
 	if (ret) {
-		dev_err(dev, "local-reset deassert failed, (%pe)\n", ERR_PTR(ret));
+		dev_err(dev, "local-reset deassert failed, ret = %d\n", ret);
 		if (kproc->ti_sci->ops.dev_ops.put_device(kproc->ti_sci,
 							  kproc->ti_sci_id))
 			dev_warn(dev, "module-reset assert back failed\n");
@@ -246,7 +246,7 @@ static int k3_dsp_rproc_request_mbox(struct rproc *rproc)
 	 */
 	ret = mbox_send_message(kproc->mbox, (void *)RP_MBOX_ECHO_REQUEST);
 	if (ret < 0) {
-		dev_err(dev, "mbox_send_message failed (%pe)\n", ERR_PTR(ret));
+		dev_err(dev, "mbox_send_message failed: %d\n", ret);
 		mbox_free_channel(kproc->mbox);
 		return ret;
 	}
@@ -272,8 +272,8 @@ static int k3_dsp_rproc_prepare(struct rproc *rproc)
 	ret = kproc->ti_sci->ops.dev_ops.get_device(kproc->ti_sci,
 						    kproc->ti_sci_id);
 	if (ret)
-		dev_err(dev, "module-reset deassert failed, cannot enable internal RAM loading (%pe)\n",
-			ERR_PTR(ret));
+		dev_err(dev, "module-reset deassert failed, cannot enable internal RAM loading, ret = %d\n",
+			ret);
 
 	return ret;
 }
@@ -296,7 +296,7 @@ static int k3_dsp_rproc_unprepare(struct rproc *rproc)
 	ret = kproc->ti_sci->ops.dev_ops.put_device(kproc->ti_sci,
 						    kproc->ti_sci_id);
 	if (ret)
-		dev_err(dev, "module-reset assert failed (%pe)\n", ERR_PTR(ret));
+		dev_err(dev, "module-reset assert failed, ret = %d\n", ret);
 
 	return ret;
 }
@@ -561,9 +561,9 @@ static int k3_dsp_reserved_mem_init(struct k3_dsp_rproc *kproc)
 
 	num_rmems = of_property_count_elems_of_size(np, "memory-region",
 						    sizeof(phandle));
-	if (num_rmems < 0) {
-		dev_err(dev, "device does not reserved memory regions (%pe)\n",
-			ERR_PTR(num_rmems));
+	if (num_rmems <= 0) {
+		dev_err(dev, "device does not reserved memory regions, ret = %d\n",
+			num_rmems);
 		return -EINVAL;
 	}
 	if (num_rmems < 2) {
@@ -575,8 +575,8 @@ static int k3_dsp_reserved_mem_init(struct k3_dsp_rproc *kproc)
 	/* use reserved memory region 0 for vring DMA allocations */
 	ret = of_reserved_mem_device_init_by_idx(dev, np, 0);
 	if (ret) {
-		dev_err(dev, "device cannot initialize DMA pool (%pe)\n",
-			ERR_PTR(ret));
+		dev_err(dev, "device cannot initialize DMA pool, ret = %d\n",
+			ret);
 		return ret;
 	}
 
@@ -687,8 +687,11 @@ static int k3_dsp_rproc_probe(struct platform_device *pdev)
 		return -ENODEV;
 
 	ret = rproc_of_parse_firmware(dev, 0, &fw_name);
-	if (ret)
-		return dev_err_probe(dev, ret, "failed to parse firmware-name property\n");
+	if (ret) {
+		dev_err(dev, "failed to parse firmware-name property, ret = %d\n",
+			ret);
+		return ret;
+	}
 
 	rproc = rproc_alloc(dev, dev_name(dev), &k3_dsp_rproc_ops, fw_name,
 			    sizeof(*kproc));
@@ -708,35 +711,39 @@ static int k3_dsp_rproc_probe(struct platform_device *pdev)
 
 	kproc->ti_sci = ti_sci_get_by_phandle(np, "ti,sci");
 	if (IS_ERR(kproc->ti_sci)) {
-		ret = dev_err_probe(dev, PTR_ERR(kproc->ti_sci),
-				    "failed to get ti-sci handle\n");
+		ret = PTR_ERR(kproc->ti_sci);
+		if (ret != -EPROBE_DEFER) {
+			dev_err(dev, "failed to get ti-sci handle, ret = %d\n",
+				ret);
+		}
 		kproc->ti_sci = NULL;
 		goto free_rproc;
 	}
 
 	ret = of_property_read_u32(np, "ti,sci-dev-id", &kproc->ti_sci_id);
 	if (ret) {
-		dev_err_probe(dev, ret, "missing 'ti,sci-dev-id' property\n");
+		dev_err(dev, "missing 'ti,sci-dev-id' property\n");
 		goto put_sci;
 	}
 
 	kproc->reset = devm_reset_control_get_exclusive(dev, NULL);
 	if (IS_ERR(kproc->reset)) {
-		ret = dev_err_probe(dev, PTR_ERR(kproc->reset),
-				    "failed to get reset\n");
+		ret = PTR_ERR(kproc->reset);
+		dev_err(dev, "failed to get reset, status = %d\n", ret);
 		goto put_sci;
 	}
 
 	kproc->tsp = k3_dsp_rproc_of_get_tsp(dev, kproc->ti_sci);
 	if (IS_ERR(kproc->tsp)) {
-		ret = dev_err_probe(dev, PTR_ERR(kproc->tsp),
-				    "failed to construct ti-sci proc control\n");
+		dev_err(dev, "failed to construct ti-sci proc control, ret = %d\n",
+			ret);
+		ret = PTR_ERR(kproc->tsp);
 		goto put_sci;
 	}
 
 	ret = ti_sci_proc_request(kproc->tsp);
 	if (ret < 0) {
-		dev_err_probe(dev, ret, "ti_sci_proc_request failed\n");
+		dev_err(dev, "ti_sci_proc_request failed, ret = %d\n", ret);
 		goto free_tsp;
 	}
 
@@ -746,14 +753,15 @@ static int k3_dsp_rproc_probe(struct platform_device *pdev)
 
 	ret = k3_dsp_reserved_mem_init(kproc);
 	if (ret) {
-		dev_err_probe(dev, ret, "reserved memory init failed\n");
+		dev_err(dev, "reserved memory init failed, ret = %d\n", ret);
 		goto release_tsp;
 	}
 
 	ret = kproc->ti_sci->ops.dev_ops.is_on(kproc->ti_sci, kproc->ti_sci_id,
 					       NULL, &p_state);
 	if (ret) {
-		dev_err_probe(dev, ret, "failed to get initial state, mode cannot be determined\n");
+		dev_err(dev, "failed to get initial state, mode cannot be determined, ret = %d\n",
+			ret);
 		goto release_mem;
 	}
 
@@ -779,7 +787,8 @@ static int k3_dsp_rproc_probe(struct platform_device *pdev)
 		if (data->uses_lreset) {
 			ret = reset_control_status(kproc->reset);
 			if (ret < 0) {
-				dev_err_probe(dev, ret, "failed to get reset status\n");
+				dev_err(dev, "failed to get reset status, status = %d\n",
+					ret);
 				goto release_mem;
 			} else if (ret == 0) {
 				dev_warn(dev, "local reset is deasserted for device\n");
@@ -790,7 +799,8 @@ static int k3_dsp_rproc_probe(struct platform_device *pdev)
 
 	ret = rproc_add(rproc);
 	if (ret) {
-		dev_err_probe(dev, ret, "failed to add register device with remoteproc core\n");
+		dev_err(dev, "failed to add register device with remoteproc core, status = %d\n",
+			ret);
 		goto release_mem;
 	}
 
@@ -803,19 +813,19 @@ release_mem:
 release_tsp:
 	ret1 = ti_sci_proc_release(kproc->tsp);
 	if (ret1)
-		dev_err(dev, "failed to release proc (%pe)\n", ERR_PTR(ret1));
+		dev_err(dev, "failed to release proc, ret = %d\n", ret1);
 free_tsp:
 	kfree(kproc->tsp);
 put_sci:
 	ret1 = ti_sci_put_handle(kproc->ti_sci);
 	if (ret1)
-		dev_err(dev, "failed to put ti_sci handle (%pe)\n", ERR_PTR(ret1));
+		dev_err(dev, "failed to put ti_sci handle, ret = %d\n", ret1);
 free_rproc:
 	rproc_free(rproc);
 	return ret;
 }
 
-static void k3_dsp_rproc_remove(struct platform_device *pdev)
+static int k3_dsp_rproc_remove(struct platform_device *pdev)
 {
 	struct k3_dsp_rproc *kproc = platform_get_drvdata(pdev);
 	struct rproc *rproc = kproc->rproc;
@@ -825,9 +835,8 @@ static void k3_dsp_rproc_remove(struct platform_device *pdev)
 	if (rproc->state == RPROC_ATTACHED) {
 		ret = rproc_detach(rproc);
 		if (ret) {
-			/* Note this error path leaks resources */
-			dev_err(dev, "failed to detach proc (%pe)\n", ERR_PTR(ret));
-			return;
+			dev_err(dev, "failed to detach proc, ret = %d\n", ret);
+			return ret;
 		}
 	}
 
@@ -835,16 +844,18 @@ static void k3_dsp_rproc_remove(struct platform_device *pdev)
 
 	ret = ti_sci_proc_release(kproc->tsp);
 	if (ret)
-		dev_err(dev, "failed to release proc (%pe)\n", ERR_PTR(ret));
+		dev_err(dev, "failed to release proc, ret = %d\n", ret);
 
 	kfree(kproc->tsp);
 
 	ret = ti_sci_put_handle(kproc->ti_sci);
 	if (ret)
-		dev_err(dev, "failed to put ti_sci handle (%pe)\n", ERR_PTR(ret));
+		dev_err(dev, "failed to put ti_sci handle, ret = %d\n", ret);
 
 	k3_dsp_reserved_mem_exit(kproc);
 	rproc_free(kproc->rproc);
+
+	return 0;
 }
 
 static const struct k3_dsp_mem_data c66_mems[] = {
@@ -895,7 +906,7 @@ MODULE_DEVICE_TABLE(of, k3_dsp_of_match);
 
 static struct platform_driver k3_dsp_rproc_driver = {
 	.probe	= k3_dsp_rproc_probe,
-	.remove_new = k3_dsp_rproc_remove,
+	.remove	= k3_dsp_rproc_remove,
 	.driver	= {
 		.name = "k3-dsp-rproc",
 		.of_match_table = k3_dsp_of_match,

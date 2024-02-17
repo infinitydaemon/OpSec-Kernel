@@ -2,7 +2,7 @@
 /*
  * DAMON Debugfs Interface
  *
- * Author: SeongJae Park <sj@kernel.org>
+ * Author: SeongJae Park <sjpark@amazon.de>
  */
 
 #define pr_fmt(fmt) "damon-dbgfs: " fmt

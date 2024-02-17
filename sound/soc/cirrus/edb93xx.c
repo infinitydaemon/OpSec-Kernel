@@ -11,6 +11,7 @@
  */
 
 #include <linux/platform_device.h>
+#include <linux/gpio.h>
 #include <linux/module.h>
 #include <linux/soc/cirrus/ep93xx.h>
 #include <sound/core.h>

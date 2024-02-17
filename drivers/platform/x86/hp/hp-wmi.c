@@ -1478,7 +1478,7 @@ static int __init hp_wmi_bios_setup(struct platform_device *device)
 	return 0;
 }
 
-static void __exit hp_wmi_bios_remove(struct platform_device *device)
+static int __exit hp_wmi_bios_remove(struct platform_device *device)
 {
 	int i;
 
@@ -1502,6 +1502,8 @@ static void __exit hp_wmi_bios_remove(struct platform_device *device)
 
 	if (platform_profile_support)
 		platform_profile_remove();
+
+	return 0;
 }
 
 static int hp_wmi_resume_handler(struct device *device)
@@ -1558,7 +1560,7 @@ static struct platform_driver hp_wmi_driver __refdata = {
 		.pm = &hp_wmi_pm_ops,
 		.dev_groups = hp_wmi_groups,
 	},
-	.remove_new = __exit_p(hp_wmi_bios_remove),
+	.remove = __exit_p(hp_wmi_bios_remove),
 };
 
 static umode_t hp_wmi_hwmon_is_visible(const void *data,

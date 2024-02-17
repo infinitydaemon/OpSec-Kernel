@@ -26,9 +26,5 @@ static inline unsigned long ftrace_call_adjust(unsigned long addr)
 
 struct dyn_arch_ftrace {
 };
-
-void prepare_ftrace_return(unsigned long *parent, unsigned long self_addr,
-			   unsigned long frame_pointer);
-
 #endif /* !__ASSEMBLY__ */
 #endif /* __ASM_CSKY_FTRACE_H */

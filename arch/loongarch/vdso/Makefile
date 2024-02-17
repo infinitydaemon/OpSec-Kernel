@@ -2,7 +2,6 @@
 # Objects to go into the VDSO.
 
 KASAN_SANITIZE := n
-UBSAN_SANITIZE := n
 KCOV_INSTRUMENT := n
 
 # Include the generic Makefile to check the built vdso.

@@ -86,7 +86,6 @@ enum dmub_status {
 	DMUB_STATUS_TIMEOUT,
 	DMUB_STATUS_INVALID,
 	DMUB_STATUS_HW_FAILURE,
-	DMUB_STATUS_POWER_STATE_D3
 };
 
 /* enum dmub_asic - dmub asic identifier */

@@ -105,8 +105,6 @@ properties:
     description:
       Interrupt signaling a critical under-voltage event.
 
-  system-critical-regulator: true
-
 required:
   - compatible
   - regulator-name

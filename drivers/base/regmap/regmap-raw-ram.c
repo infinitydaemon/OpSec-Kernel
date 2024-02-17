@@ -41,15 +41,10 @@ static int regmap_raw_ram_gather_write(void *context,
 		return -EINVAL;
 
 	r = decode_reg(data->reg_endian, reg);
-	if (data->noinc_reg && data->noinc_reg(data, r)) {
-		memcpy(&our_buf[r], val + val_len - 2, 2);
-		data->written[r] = true;
-	} else {
-		memcpy(&our_buf[r], val, val_len);
+	memcpy(&our_buf[r], val, val_len);
 
-		for (i = 0; i < val_len / 2; i++)
-			data->written[r + i] = true;
-	}
+	for (i = 0; i < val_len / 2; i++)
+		data->written[r + i] = true;
 	
 	return 0;
 }
@@ -75,16 +70,10 @@ static int regmap_raw_ram_read(void *context,
 		return -EINVAL;
 
 	r = decode_reg(data->reg_endian, reg);
-	if (data->noinc_reg && data->noinc_reg(data, r)) {
-		for (i = 0; i < val_len; i += 2)
-			memcpy(val + i, &our_buf[r], 2);
-		data->read[r] = true;
-	} else {
-		memcpy(val, &our_buf[r], val_len);
+	memcpy(val, &our_buf[r], val_len);
 
-		for (i = 0; i < val_len / 2; i++)
-			data->read[r + i] = true;
-	}
+	for (i = 0; i < val_len / 2; i++)
+		data->read[r + i] = true;
 
 	return 0;
 }
@@ -122,12 +111,12 @@ struct regmap *__regmap_init_raw_ram(const struct regmap_config *config,
 		return ERR_PTR(-EINVAL);
 	}
 
-	data->read = kcalloc(config->max_register + 1, sizeof(bool),
+	data->read = kcalloc(sizeof(bool), config->max_register + 1,
 			     GFP_KERNEL);
 	if (!data->read)
 		return ERR_PTR(-ENOMEM);
 
-	data->written = kcalloc(config->max_register + 1, sizeof(bool),
+	data->written = kcalloc(sizeof(bool), config->max_register + 1,
 				GFP_KERNEL);
 	if (!data->written)
 		return ERR_PTR(-ENOMEM);

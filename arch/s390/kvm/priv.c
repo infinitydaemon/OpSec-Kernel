@@ -676,12 +676,8 @@ static int handle_pqap(struct kvm_vcpu *vcpu)
 	if (vcpu->kvm->arch.crypto.pqap_hook) {
 		pqap_hook = *vcpu->kvm->arch.crypto.pqap_hook;
 		ret = pqap_hook(vcpu);
-		if (!ret) {
-			if (vcpu->run->s.regs.gprs[1] & 0x00ff0000)
-				kvm_s390_set_psw_cc(vcpu, 3);
-			else
-				kvm_s390_set_psw_cc(vcpu, 0);
-		}
+		if (!ret && vcpu->run->s.regs.gprs[1] & 0x00ff0000)
+			kvm_s390_set_psw_cc(vcpu, 3);
 		up_read(&vcpu->kvm->arch.crypto.pqap_hook_rwsem);
 		return ret;
 	}

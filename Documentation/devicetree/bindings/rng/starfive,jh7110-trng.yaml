@@ -11,11 +11,7 @@ maintainers:
 
 properties:
   compatible:
-    oneOf:
-      - items:
-          - const: starfive,jh8100-trng
-          - const: starfive,jh7110-trng
-      - const: starfive,jh7110-trng
+    const: starfive,jh7110-trng
 
   reg:
     maxItems: 1

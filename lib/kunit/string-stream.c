@@ -173,7 +173,7 @@ void string_stream_destroy(struct string_stream *stream)
 {
 	KUNIT_STATIC_STUB_REDIRECT(string_stream_destroy, stream);
 
-	if (IS_ERR_OR_NULL(stream))
+	if (!stream)
 		return;
 
 	string_stream_clear(stream);

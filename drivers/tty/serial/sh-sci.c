@@ -1558,9 +1558,10 @@ static struct dma_chan *sci_request_dma_chan(struct uart_port *port,
 	struct dma_slave_config cfg;
 	int ret;
 
-	chan = dma_request_chan(port->dev, dir == DMA_MEM_TO_DEV ? "tx" : "rx");
-	if (IS_ERR(chan)) {
-		dev_dbg(port->dev, "dma_request_chan failed\n");
+	chan = dma_request_slave_channel(port->dev,
+					 dir == DMA_MEM_TO_DEV ? "tx" : "rx");
+	if (!chan) {
+		dev_dbg(port->dev, "dma_request_slave_channel failed\n");
 		return NULL;
 	}
 
@@ -3189,7 +3190,7 @@ static struct uart_driver sci_uart_driver = {
 	.cons		= SCI_CONSOLE,
 };
 
-static void sci_remove(struct platform_device *dev)
+static int sci_remove(struct platform_device *dev)
 {
 	struct sci_port *port = platform_get_drvdata(dev);
 	unsigned int type = port->port.type;	/* uart_remove_... clears it */
@@ -3203,6 +3204,8 @@ static void sci_remove(struct platform_device *dev)
 		device_remove_file(&dev->dev, &dev_attr_rx_fifo_trigger);
 	if (type == PORT_SCIFA || type == PORT_SCIFB || type == PORT_HSCIF)
 		device_remove_file(&dev->dev, &dev_attr_rx_fifo_timeout);
+
+	return 0;
 }
 
 
@@ -3467,7 +3470,7 @@ static SIMPLE_DEV_PM_OPS(sci_dev_pm_ops, sci_suspend, sci_resume);
 
 static struct platform_driver sci_driver = {
 	.probe		= sci_probe,
-	.remove_new	= sci_remove,
+	.remove		= sci_remove,
 	.driver		= {
 		.name	= "sh-sci",
 		.pm	= &sci_dev_pm_ops,

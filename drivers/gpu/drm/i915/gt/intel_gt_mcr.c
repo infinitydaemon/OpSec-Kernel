@@ -388,7 +388,8 @@ void intel_gt_mcr_lock(struct intel_gt *gt, unsigned long *flags)
 		 * registers.  This wakeref will be released in the unlock
 		 * routine.
 		 *
-		 * Wa_22018931422
+		 * This is expected to become a formally documented/numbered
+		 * workaround soon.
 		 */
 		intel_uncore_forcewake_get(gt->uncore, FORCEWAKE_GT);
 

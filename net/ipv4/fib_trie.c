@@ -52,7 +52,6 @@
 #include <linux/if_arp.h>
 #include <linux/proc_fs.h>
 #include <linux/rcupdate.h>
-#include <linux/rcupdate_wait.h>
 #include <linux/skbuff.h>
 #include <linux/netlink.h>
 #include <linux/init.h>

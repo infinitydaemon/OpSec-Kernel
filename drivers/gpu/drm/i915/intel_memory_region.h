@@ -80,7 +80,6 @@ struct intel_memory_region {
 	u16 instance;
 	enum intel_region_id id;
 	char name[16];
-	char uabi_name[16];
 	bool private; /* not for userspace */
 
 	struct {

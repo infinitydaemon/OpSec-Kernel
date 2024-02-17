@@ -345,10 +345,7 @@ optmem_max
 ----------
 
 Maximum ancillary buffer size allowed per socket. Ancillary data is a sequence
-of struct cmsghdr structures with appended data. TCP tx zerocopy also uses
-optmem_max as a limit for its internal structures.
-
-Default : 128 KB
+of struct cmsghdr structures with appended data.
 
 fb_tunnels_only_for_init_net
 ----------------------------

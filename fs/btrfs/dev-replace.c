@@ -550,7 +550,8 @@ bool btrfs_finish_block_group_to_copy(struct btrfs_device *srcdev,
 				      u64 physical)
 {
 	struct btrfs_fs_info *fs_info = cache->fs_info;
-	struct btrfs_chunk_map *map;
+	struct extent_map *em;
+	struct map_lookup *map;
 	u64 chunk_offset = cache->start;
 	int num_extents, cur_extent;
 	int i;
@@ -566,8 +567,9 @@ bool btrfs_finish_block_group_to_copy(struct btrfs_device *srcdev,
 	}
 	spin_unlock(&cache->lock);
 
-	map = btrfs_get_chunk_map(fs_info, chunk_offset, 1);
-	ASSERT(!IS_ERR(map));
+	em = btrfs_get_chunk_map(fs_info, chunk_offset, 1);
+	ASSERT(!IS_ERR(em));
+	map = em->map_lookup;
 
 	num_extents = 0;
 	cur_extent = 0;
@@ -581,7 +583,7 @@ bool btrfs_finish_block_group_to_copy(struct btrfs_device *srcdev,
 			cur_extent = i;
 	}
 
-	btrfs_free_chunk_map(map);
+	free_extent_map(em);
 
 	if (num_extents > 1 && cur_extent < num_extents - 1) {
 		/*
@@ -810,23 +812,25 @@ static void btrfs_dev_replace_update_device_in_mapping_tree(
 						struct btrfs_device *srcdev,
 						struct btrfs_device *tgtdev)
 {
+	struct extent_map_tree *em_tree = &fs_info->mapping_tree;
+	struct extent_map *em;
+	struct map_lookup *map;
 	u64 start = 0;
 	int i;
 
-	write_lock(&fs_info->mapping_tree_lock);
+	write_lock(&em_tree->lock);
 	do {
-		struct btrfs_chunk_map *map;
-
-		map = btrfs_find_chunk_map_nolock(fs_info, start, U64_MAX);
-		if (!map)
+		em = lookup_extent_mapping(em_tree, start, (u64)-1);
+		if (!em)
 			break;
+		map = em->map_lookup;
 		for (i = 0; i < map->num_stripes; i++)
 			if (srcdev == map->stripes[i].dev)
 				map->stripes[i].dev = tgtdev;
-		start = map->start + map->chunk_len;
-		btrfs_free_chunk_map(map);
+		start = em->start + em->len;
+		free_extent_map(em);
 	} while (start);
-	write_unlock(&fs_info->mapping_tree_lock);
+	write_unlock(&em_tree->lock);
 }
 
 static int btrfs_dev_replace_finishing(struct btrfs_fs_info *fs_info,

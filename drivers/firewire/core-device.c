@@ -31,8 +31,6 @@
 
 #include "core.h"
 
-#define ROOT_DIR_OFFSET	5
-
 void fw_csr_iterator_init(struct fw_csr_iterator *ci, const u32 *p)
 {
 	ci->p = p + 1;
@@ -48,22 +46,6 @@ int fw_csr_iterator_next(struct fw_csr_iterator *ci, int *key, int *value)
 	return ci->p++ < ci->end;
 }
 EXPORT_SYMBOL(fw_csr_iterator_next);
-
-static const u32 *search_directory(const u32 *directory, int search_key)
-{
-	struct fw_csr_iterator ci;
-	int key, value;
-
-	search_key |= CSR_DIRECTORY;
-
-	fw_csr_iterator_init(&ci, directory);
-	while (fw_csr_iterator_next(&ci, &key, &value)) {
-		if (key == search_key)
-			return ci.p - 1 + value;
-	}
-
-	return NULL;
-}
 
 static const u32 *search_leaf(const u32 *directory, int search_key)
 {
@@ -118,9 +100,10 @@ static int textual_leaf_to_string(const u32 *block, char *buf, size_t size)
  * @buf:	where to put the string
  * @size:	size of @buf, in bytes
  *
- * The string is taken from a minimal ASCII text descriptor leaf just after the entry with the
- * @key. The string is zero-terminated. An overlong string is silently truncated such that it
- * and the zero byte fit into @size.
+ * The string is taken from a minimal ASCII text descriptor leaf after
+ * the immediate entry with @key.  The string is zero-terminated.
+ * An overlong string is silently truncated such that it and the
+ * zero byte fit into @size.
  *
  * Returns strlen(buf) or a negative error code.
  */
@@ -152,25 +135,8 @@ static void get_ids(const u32 *directory, int *id)
 
 static void get_modalias_ids(const struct fw_unit *unit, int *id)
 {
-	const u32 *root_directory = &fw_parent_device(unit)->config_rom[ROOT_DIR_OFFSET];
-	const u32 *directories[] = {NULL, NULL, NULL};
-	const u32 *vendor_directory;
-	int i;
-
-	directories[0] = root_directory;
-
-	// Legacy layout of configuration ROM described in Annex 1 of 'Configuration ROM for AV/C
-	// Devices 1.0 (December 12, 2000, 1394 Trading Association, TA Document 1999027)'.
-	vendor_directory = search_directory(root_directory, CSR_VENDOR);
-	if (!vendor_directory) {
-		directories[1] = unit->directory;
-	} else {
-		directories[1] = vendor_directory;
-		directories[2] = unit->directory;
-	}
-
-	for (i = 0; i < ARRAY_SIZE(directories) && !!directories[i]; ++i)
-		get_ids(directories[i], id);
+	get_ids(&fw_parent_device(unit)->config_rom[5], id);
+	get_ids(unit->directory, id);
 }
 
 static bool match_ids(const struct ieee1394_device_id *id_table, int *id)
@@ -205,7 +171,7 @@ static const struct ieee1394_device_id *unit_match(struct device *dev,
 	return NULL;
 }
 
-static bool is_fw_unit(const struct device *dev);
+static bool is_fw_unit(struct device *dev);
 
 static int fw_unit_match(struct device *dev, struct device_driver *drv)
 {
@@ -253,7 +219,7 @@ static int fw_unit_uevent(const struct device *dev, struct kobj_uevent_env *env)
 	return 0;
 }
 
-const struct bus_type fw_bus_type = {
+struct bus_type fw_bus_type = {
 	.name = "firewire",
 	.match = fw_unit_match,
 	.probe = fw_unit_probe,
@@ -285,44 +251,27 @@ static ssize_t show_immediate(struct device *dev,
 	struct config_rom_attribute *attr =
 		container_of(dattr, struct config_rom_attribute, attr);
 	struct fw_csr_iterator ci;
-	const u32 *directories[] = {NULL, NULL};
-	int i, value = -1;
+	const u32 *dir;
+	int key, value, ret = -ENOENT;
 
 	down_read(&fw_device_rwsem);
 
-	if (is_fw_unit(dev)) {
-		directories[0] = fw_unit(dev)->directory;
-	} else {
-		const u32 *root_directory = fw_device(dev)->config_rom + ROOT_DIR_OFFSET;
-		const u32 *vendor_directory = search_directory(root_directory, CSR_VENDOR);
+	if (is_fw_unit(dev))
+		dir = fw_unit(dev)->directory;
+	else
+		dir = fw_device(dev)->config_rom + 5;
 
-		if (!vendor_directory) {
-			directories[0] = root_directory;
-		} else {
-			// Legacy layout of configuration ROM described in Annex 1 of
-			// 'Configuration ROM for AV/C Devices 1.0 (December 12, 2000, 1394 Trading
-			// Association, TA Document 1999027)'.
-			directories[0] = vendor_directory;
-			directories[1] = root_directory;
+	fw_csr_iterator_init(&ci, dir);
+	while (fw_csr_iterator_next(&ci, &key, &value))
+		if (attr->key == key) {
+			ret = snprintf(buf, buf ? PAGE_SIZE : 0,
+				       "0x%06x\n", value);
+			break;
 		}
-	}
-
-	for (i = 0; i < ARRAY_SIZE(directories) && !!directories[i]; ++i) {
-		int key, val;
-
-		fw_csr_iterator_init(&ci, directories[i]);
-		while (fw_csr_iterator_next(&ci, &key, &val)) {
-			if (attr->key == key)
-				value = val;
-		}
-	}
 
 	up_read(&fw_device_rwsem);
 
-	if (value < 0)
-		return -ENOENT;
-
-	return snprintf(buf, buf ? PAGE_SIZE : 0, "0x%06x\n", value);
+	return ret;
 }
 
 #define IMMEDIATE_ATTR(name, key)				\
@@ -333,29 +282,17 @@ static ssize_t show_text_leaf(struct device *dev,
 {
 	struct config_rom_attribute *attr =
 		container_of(dattr, struct config_rom_attribute, attr);
-	const u32 *directories[] = {NULL, NULL};
+	const u32 *dir;
 	size_t bufsize;
 	char dummy_buf[2];
-	int i, ret = -ENOENT;
+	int ret;
 
 	down_read(&fw_device_rwsem);
 
-	if (is_fw_unit(dev)) {
-		directories[0] = fw_unit(dev)->directory;
-	} else {
-		const u32 *root_directory = fw_device(dev)->config_rom + ROOT_DIR_OFFSET;
-		const u32 *vendor_directory = search_directory(root_directory, CSR_VENDOR);
-
-		if (!vendor_directory) {
-			directories[0] = root_directory;
-		} else {
-			// Legacy layout of configuration ROM described in Annex 1 of
-			// 'Configuration ROM for AV/C Devices 1.0 (December 12, 2000, 1394
-			// Trading Association, TA Document 1999027)'.
-			directories[0] = root_directory;
-			directories[1] = vendor_directory;
-		}
-	}
+	if (is_fw_unit(dev))
+		dir = fw_unit(dev)->directory;
+	else
+		dir = fw_device(dev)->config_rom + 5;
 
 	if (buf) {
 		bufsize = PAGE_SIZE - 1;
@@ -364,21 +301,7 @@ static ssize_t show_text_leaf(struct device *dev,
 		bufsize = 1;
 	}
 
-	for (i = 0; i < ARRAY_SIZE(directories) && !!directories[i]; ++i) {
-		int result = fw_csr_string(directories[i], attr->key, buf, bufsize);
-		// Detected.
-		if (result >= 0) {
-			ret = result;
-		} else if (i == 0 && attr->key == CSR_VENDOR) {
-			// Sony DVMC-DA1 has configuration ROM such that the descriptor leaf entry
-			// in the root directory follows to the directory entry for vendor ID
-			// instead of the immediate value for vendor ID.
-			result = fw_csr_string(directories[i], CSR_DIRECTORY | attr->key, buf,
-					       bufsize);
-			if (result >= 0)
-				ret = result;
-		}
-	}
+	ret = fw_csr_string(dir, attr->key, buf, bufsize);
 
 	if (ret >= 0) {
 		/* Strip trailing whitespace and add newline. */
@@ -523,7 +446,7 @@ static ssize_t units_show(struct device *dev,
 	int key, value, i = 0;
 
 	down_read(&fw_device_rwsem);
-	fw_csr_iterator_init(&ci, &device->config_rom[ROOT_DIR_OFFSET]);
+	fw_csr_iterator_init(&ci, &device->config_rom[5]);
 	while (fw_csr_iterator_next(&ci, &key, &value)) {
 		if (key != (CSR_UNIT | CSR_DIRECTORY))
 			continue;
@@ -756,7 +679,7 @@ static struct device_type fw_unit_type = {
 	.release	= fw_unit_release,
 };
 
-static bool is_fw_unit(const struct device *dev)
+static bool is_fw_unit(struct device *dev)
 {
 	return dev->type == &fw_unit_type;
 }
@@ -768,7 +691,7 @@ static void create_units(struct fw_device *device)
 	int key, value, i;
 
 	i = 0;
-	fw_csr_iterator_init(&ci, &device->config_rom[ROOT_DIR_OFFSET]);
+	fw_csr_iterator_init(&ci, &device->config_rom[5]);
 	while (fw_csr_iterator_next(&ci, &key, &value)) {
 		if (key != (CSR_UNIT | CSR_DIRECTORY))
 			continue;
@@ -912,7 +835,7 @@ static struct device_type fw_device_type = {
 	.release = fw_device_release,
 };
 
-static bool is_fw_device(const struct device *dev)
+static bool is_fw_device(struct device *dev)
 {
 	return dev->type == &fw_device_type;
 }
@@ -1385,7 +1308,3 @@ void fw_node_event(struct fw_card *card, struct fw_node *node, int event)
 		break;
 	}
 }
-
-#ifdef CONFIG_FIREWIRE_KUNIT_DEVICE_ATTRIBUTE_TEST
-#include "device-attribute-test.c"
-#endif

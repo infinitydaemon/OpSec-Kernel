@@ -3022,7 +3022,8 @@ static int dma_convert_to_hda_format(struct hda_codec *codec,
 {
 	unsigned int format_val;
 
-	format_val = snd_hdac_stream_format(channels, 32, sample_rate);
+	format_val = snd_hdac_calc_stream_format(sample_rate,
+				channels, SNDRV_PCM_FORMAT_S32_LE, 32, 0);
 
 	if (hda_format)
 		*hda_format = (unsigned short)format_val;

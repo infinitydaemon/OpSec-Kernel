@@ -34,6 +34,7 @@
 #include <linux/ctype.h>
 
 #include "rtllib.h"
+#include "dot11d.h"
 
 static void rtllib_rx_mgt(struct rtllib_device *ieee, struct sk_buff *skb,
 			  struct rtllib_rx_stats *stats);
@@ -411,19 +412,19 @@ static bool AddReorderEntry(struct rx_ts_record *ts,
 	while (pList->next != &ts->rx_pending_pkt_list) {
 		if (SN_LESS(pReorderEntry->SeqNum, ((struct rx_reorder_entry *)
 		    list_entry(pList->next, struct rx_reorder_entry,
-		    list))->SeqNum))
+		    List))->SeqNum))
 			pList = pList->next;
 		else if (SN_EQUAL(pReorderEntry->SeqNum,
 			((struct rx_reorder_entry *)list_entry(pList->next,
-			struct rx_reorder_entry, list))->SeqNum))
+			struct rx_reorder_entry, List))->SeqNum))
 			return false;
 		else
 			break;
 	}
-	pReorderEntry->list.next = pList->next;
-	pReorderEntry->list.next->prev = &pReorderEntry->list;
-	pReorderEntry->list.prev = pList;
-	pList->next = &pReorderEntry->list;
+	pReorderEntry->List.next = pList->next;
+	pReorderEntry->List.next->prev = &pReorderEntry->List;
+	pReorderEntry->List.prev = pList;
+	pList->next = &pReorderEntry->List;
 
 	return true;
 }
@@ -504,15 +505,15 @@ void rtllib_FlushRxTsPendingPkts(struct rtllib_device *ieee,
 
 		pRxReorderEntry = (struct rx_reorder_entry *)
 				  list_entry(ts->rx_pending_pkt_list.prev,
-					     struct rx_reorder_entry, list);
+					     struct rx_reorder_entry, List);
 		netdev_dbg(ieee->dev, "%s(): Indicate SeqNum %d!\n", __func__,
 			   pRxReorderEntry->SeqNum);
-		list_del_init(&pRxReorderEntry->list);
+		list_del_init(&pRxReorderEntry->List);
 
 		ieee->RfdArray[RfdCnt] = pRxReorderEntry->prxb;
 
 		RfdCnt = RfdCnt + 1;
-		list_add_tail(&pRxReorderEntry->list,
+		list_add_tail(&pRxReorderEntry->List,
 			      &ieee->RxReorder_Unused_List);
 	}
 	rtllib_indicate_packets(ieee, ieee->RfdArray, RfdCnt);
@@ -601,8 +602,8 @@ static void RxReorderIndicatePacket(struct rtllib_device *ieee,
 		if (!list_empty(&ieee->RxReorder_Unused_List)) {
 			pReorderEntry = (struct rx_reorder_entry *)
 					list_entry(ieee->RxReorder_Unused_List.next,
-					struct rx_reorder_entry, list);
-			list_del_init(&pReorderEntry->list);
+					struct rx_reorder_entry, List);
+			list_del_init(&pReorderEntry->List);
 
 			/* Make a reorder entry and insert
 			 * into a the packet list.
@@ -617,7 +618,7 @@ static void RxReorderIndicatePacket(struct rtllib_device *ieee,
 					   "%s(): Duplicate packet is dropped. IndicateSeq: %d, NewSeq: %d\n",
 					   __func__, ts->rx_indicate_seq,
 					   SeqNum);
-				list_add_tail(&pReorderEntry->list,
+				list_add_tail(&pReorderEntry->List,
 					      &ieee->RxReorder_Unused_List);
 
 				for (i = 0; i < prxb->nr_subframes; i++)
@@ -657,7 +658,7 @@ static void RxReorderIndicatePacket(struct rtllib_device *ieee,
 		pReorderEntry = (struct rx_reorder_entry *)
 					list_entry(ts->rx_pending_pkt_list.prev,
 						   struct rx_reorder_entry,
-						   list);
+						   List);
 		if (SN_LESS(pReorderEntry->SeqNum, ts->rx_indicate_seq) ||
 		    SN_EQUAL(pReorderEntry->SeqNum, ts->rx_indicate_seq)) {
 			/* This protect struct buffer from overflow. */
@@ -669,7 +670,7 @@ static void RxReorderIndicatePacket(struct rtllib_device *ieee,
 				break;
 			}
 
-			list_del_init(&pReorderEntry->list);
+			list_del_init(&pReorderEntry->List);
 
 			if (SN_EQUAL(pReorderEntry->SeqNum, ts->rx_indicate_seq))
 				ts->rx_indicate_seq = (ts->rx_indicate_seq + 1) %
@@ -680,7 +681,7 @@ static void RxReorderIndicatePacket(struct rtllib_device *ieee,
 				   __func__, pReorderEntry->SeqNum);
 			index++;
 
-			list_add_tail(&pReorderEntry->list,
+			list_add_tail(&pReorderEntry->List,
 				      &ieee->RxReorder_Unused_List);
 		} else {
 			bPktInBuf = true;
@@ -730,7 +731,7 @@ static u8 parse_subframe(struct rtllib_device *ieee, struct sk_buff *skb,
 
 	u16		LLCOffset = sizeof(struct ieee80211_hdr_3addr);
 	u16		ChkLength;
-	bool		is_aggregate_frame = false;
+	bool		bIsAggregateFrame = false;
 	u16		nSubframe_Length;
 	u8		nPadding_Length = 0;
 	u16		SeqNum = 0;
@@ -739,7 +740,7 @@ static u8 parse_subframe(struct rtllib_device *ieee, struct sk_buff *skb,
 	SeqNum = WLAN_GET_SEQ_SEQ(le16_to_cpu(hdr->seq_ctrl));
 	if ((RTLLIB_QOS_HAS_SEQ(fc)) &&
 	   (((union frameqos *)(skb->data + RTLLIB_3ADDR_LEN))->field.reserved))
-		is_aggregate_frame = true;
+		bIsAggregateFrame = true;
 
 	if (RTLLIB_QOS_HAS_SEQ(fc))
 		LLCOffset += 2;
@@ -752,8 +753,8 @@ static u8 parse_subframe(struct rtllib_device *ieee, struct sk_buff *skb,
 		return 0;
 
 	skb_pull(skb, LLCOffset);
-	ieee->is_aggregate_frame = is_aggregate_frame;
-	if (!is_aggregate_frame) {
+	ieee->bIsAggregateFrame = bIsAggregateFrame;
+	if (!bIsAggregateFrame) {
 		rxb->nr_subframes = 1;
 
 		/* altered by clark 3/30/2010
@@ -857,7 +858,7 @@ static size_t rtllib_rx_get_hdrlen(struct rtllib_device *ieee,
 	size_t hdrlen;
 
 	hdrlen = rtllib_get_hdrlen(fc);
-	if (ht_c_check(ieee, skb->data)) {
+	if (HTCCheck(ieee, skb->data)) {
 		if (net_ratelimit())
 			netdev_info(ieee->dev, "%s: find HTCControl!\n",
 				    __func__);
@@ -1150,7 +1151,7 @@ static void rtllib_rx_check_leave_lps(struct rtllib_device *ieee, u8 unicast,
 	if (unicast) {
 		if (ieee->link_state == MAC80211_LINKED) {
 			if (((ieee->link_detect_info.NumRxUnicastOkInPeriod +
-			    ieee->link_detect_info.num_tx_ok_in_period) > 8) ||
+			    ieee->link_detect_info.NumTxOkInPeriod) > 8) ||
 			    (ieee->link_detect_info.NumRxUnicastOkInPeriod > 2)) {
 				ieee->leisure_ps_leave(ieee->dev);
 			}
@@ -1285,7 +1286,7 @@ static int rtllib_rx_InfraAdhoc(struct rtllib_device *ieee, struct sk_buff *skb,
 
 	/* Update statstics for AP roaming */
 	ieee->link_detect_info.NumRecvDataInPeriod++;
-	ieee->link_detect_info.num_rx_ok_in_period++;
+	ieee->link_detect_info.NumRxOkInPeriod++;
 
 	/* Data frame - extract src/dst addresses */
 	rtllib_rx_extract_addr(ieee, hdr, dst, src, bssid);
@@ -1358,7 +1359,7 @@ static int rtllib_rx_InfraAdhoc(struct rtllib_device *ieee, struct sk_buff *skb,
 	/* Update WAPI PN */
 
 	/* Check if leave LPS */
-	if (ieee->is_aggregate_frame)
+	if (ieee->bIsAggregateFrame)
 		nr_subframes = rxb->nr_subframes;
 	else
 		nr_subframes = 1;
@@ -1401,7 +1402,7 @@ static int rtllib_rx_Monitor(struct rtllib_device *ieee, struct sk_buff *skb,
 		return 0;
 	}
 
-	if (ht_c_check(ieee, skb->data)) {
+	if (HTCCheck(ieee, skb->data)) {
 		if (net_ratelimit())
 			netdev_info(ieee->dev, "%s: Find HTCControl!\n",
 				    __func__);
@@ -1659,6 +1660,35 @@ static const char *get_info_element_string(u16 id)
 		return "QOS_PARAMETER";
 	default:
 		return "UNKNOWN";
+	}
+}
+
+static inline void rtllib_extract_country_ie(
+	struct rtllib_device *ieee,
+	struct rtllib_info_element *info_element,
+	struct rtllib_network *network,
+	u8 *addr2)
+{
+	if (IS_DOT11D_ENABLE(ieee)) {
+		if (info_element->len != 0) {
+			memcpy(network->CountryIeBuf, info_element->data,
+			       info_element->len);
+			network->CountryIeLen = info_element->len;
+
+			if (!IS_COUNTRY_IE_VALID(ieee)) {
+				if (rtllib_act_scanning(ieee, false) &&
+				    ieee->FirstIe_InScan)
+					netdev_info(ieee->dev,
+						    "Received beacon CountryIE, SSID: <%s>\n",
+						    network->ssid);
+				dot11d_update_country(ieee, addr2,
+						       info_element->len,
+						       info_element->data);
+			}
+		}
+
+		if (IS_EQUAL_CIE_SRC(ieee, addr2))
+			UPDATE_CIE_WATCHDOG(ieee);
 	}
 }
 
@@ -2116,6 +2146,8 @@ int rtllib_parse_info_param(struct rtllib_device *ieee,
 		case MFIE_TYPE_COUNTRY:
 			netdev_dbg(ieee->dev, "MFIE_TYPE_COUNTRY: %d bytes\n",
 				   info_element->len);
+			rtllib_extract_country_ie(ieee, info_element, network,
+						  network->bssid);
 			break;
 /* TODO */
 		default:
@@ -2189,7 +2221,7 @@ static inline int rtllib_network_init(
 	network->RSSI = stats->SignalStrength;
 	network->CountryIeLen = 0;
 	memset(network->CountryIeBuf, 0, MAX_IE_LEN);
-	ht_initialize_bss_desc(&network->bssht);
+	HTInitializeBssDesc(&network->bssht);
 	network->flags |= NETWORK_HAS_CCK;
 
 	network->wpa_ie_len = 0;

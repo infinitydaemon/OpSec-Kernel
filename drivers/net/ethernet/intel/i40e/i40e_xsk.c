@@ -477,7 +477,8 @@ int i40e_clean_rx_irq_zc(struct i40e_ring *rx_ring, int budget)
 			continue;
 		}
 
-		size = FIELD_GET(I40E_RXD_QW1_LENGTH_PBUF_MASK, qword);
+		size = (qword & I40E_RXD_QW1_LENGTH_PBUF_MASK) >>
+		       I40E_RXD_QW1_LENGTH_PBUF_SHIFT;
 		if (!size)
 			break;
 

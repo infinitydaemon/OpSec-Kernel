@@ -13,133 +13,62 @@ from hidtools.util import BusType
 import libevdev
 import logging
 import pytest
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Tuple
 
 logger = logging.getLogger("hidtools.test.tablet")
-
-
-class BtnTouch(Enum):
-    """Represents whether the BTN_TOUCH event is set to True or False"""
-
-    DOWN = True
-    UP = False
-
-
-class ToolType(Enum):
-    PEN = libevdev.EV_KEY.BTN_TOOL_PEN
-    RUBBER = libevdev.EV_KEY.BTN_TOOL_RUBBER
-
-
-class BtnPressed(Enum):
-    """Represents whether a button is pressed on the stylus"""
-
-    PRIMARY_PRESSED = libevdev.EV_KEY.BTN_STYLUS
-    SECONDARY_PRESSED = libevdev.EV_KEY.BTN_STYLUS2
 
 
 class PenState(Enum):
     """Pen states according to Microsoft reference:
     https://docs.microsoft.com/en-us/windows-hardware/design/component-guidelines/windows-pen-states
-
-    We extend it with the various buttons when we need to check them.
     """
 
-    PEN_IS_OUT_OF_RANGE = BtnTouch.UP, None, None
-    PEN_IS_IN_RANGE = BtnTouch.UP, ToolType.PEN, None
-    PEN_IS_IN_RANGE_WITH_BUTTON = BtnTouch.UP, ToolType.PEN, BtnPressed.PRIMARY_PRESSED
-    PEN_IS_IN_RANGE_WITH_SECOND_BUTTON = (
-        BtnTouch.UP,
-        ToolType.PEN,
-        BtnPressed.SECONDARY_PRESSED,
-    )
-    PEN_IS_IN_CONTACT = BtnTouch.DOWN, ToolType.PEN, None
-    PEN_IS_IN_CONTACT_WITH_BUTTON = (
-        BtnTouch.DOWN,
-        ToolType.PEN,
-        BtnPressed.PRIMARY_PRESSED,
-    )
-    PEN_IS_IN_CONTACT_WITH_SECOND_BUTTON = (
-        BtnTouch.DOWN,
-        ToolType.PEN,
-        BtnPressed.SECONDARY_PRESSED,
-    )
-    PEN_IS_IN_RANGE_WITH_ERASING_INTENT = BtnTouch.UP, ToolType.RUBBER, None
-    PEN_IS_IN_RANGE_WITH_ERASING_INTENT_WITH_BUTTON = (
-        BtnTouch.UP,
-        ToolType.RUBBER,
-        BtnPressed.PRIMARY_PRESSED,
-    )
-    PEN_IS_IN_RANGE_WITH_ERASING_INTENT_WITH_SECOND_BUTTON = (
-        BtnTouch.UP,
-        ToolType.RUBBER,
-        BtnPressed.SECONDARY_PRESSED,
-    )
-    PEN_IS_ERASING = BtnTouch.DOWN, ToolType.RUBBER, None
-    PEN_IS_ERASING_WITH_BUTTON = (
-        BtnTouch.DOWN,
-        ToolType.RUBBER,
-        BtnPressed.PRIMARY_PRESSED,
-    )
-    PEN_IS_ERASING_WITH_SECOND_BUTTON = (
-        BtnTouch.DOWN,
-        ToolType.RUBBER,
-        BtnPressed.SECONDARY_PRESSED,
-    )
+    PEN_IS_OUT_OF_RANGE = (False, None)
+    PEN_IS_IN_RANGE = (False, libevdev.EV_KEY.BTN_TOOL_PEN)
+    PEN_IS_IN_CONTACT = (True, libevdev.EV_KEY.BTN_TOOL_PEN)
+    PEN_IS_IN_RANGE_WITH_ERASING_INTENT = (False, libevdev.EV_KEY.BTN_TOOL_RUBBER)
+    PEN_IS_ERASING = (True, libevdev.EV_KEY.BTN_TOOL_RUBBER)
 
-    def __init__(self, touch: BtnTouch, tool: Optional[ToolType], button: Optional[BtnPressed]):
-        self.touch = touch  # type: ignore
-        self.tool = tool  # type: ignore
-        self.button = button  # type: ignore
+    def __init__(self, touch, tool):
+        self.touch = touch
+        self.tool = tool
 
     @classmethod
     def from_evdev(cls, evdev) -> "PenState":
-        touch = BtnTouch(evdev.value[libevdev.EV_KEY.BTN_TOUCH])
+        touch = bool(evdev.value[libevdev.EV_KEY.BTN_TOUCH])
         tool = None
-        button = None
         if (
             evdev.value[libevdev.EV_KEY.BTN_TOOL_RUBBER]
             and not evdev.value[libevdev.EV_KEY.BTN_TOOL_PEN]
         ):
-            tool = ToolType(libevdev.EV_KEY.BTN_TOOL_RUBBER)
+            tool = libevdev.EV_KEY.BTN_TOOL_RUBBER
         elif (
             evdev.value[libevdev.EV_KEY.BTN_TOOL_PEN]
             and not evdev.value[libevdev.EV_KEY.BTN_TOOL_RUBBER]
         ):
-            tool = ToolType(libevdev.EV_KEY.BTN_TOOL_PEN)
+            tool = libevdev.EV_KEY.BTN_TOOL_PEN
         elif (
             evdev.value[libevdev.EV_KEY.BTN_TOOL_PEN]
             or evdev.value[libevdev.EV_KEY.BTN_TOOL_RUBBER]
         ):
             raise ValueError("2 tools are not allowed")
 
-        # we take only the highest button in account
-        for b in [libevdev.EV_KEY.BTN_STYLUS, libevdev.EV_KEY.BTN_STYLUS2]:
-            if bool(evdev.value[b]):
-                button = BtnPressed(b)
+        return cls((touch, tool))
 
-        # the kernel tends to insert an EV_SYN once removing the tool, so
-        # the button will be released after
-        if tool is None:
-            button = None
-
-        return cls((touch, tool, button))  # type: ignore
-
-    def apply(self, events: List[libevdev.InputEvent], strict: bool) -> "PenState":
+    def apply(self, events) -> "PenState":
         if libevdev.EV_SYN.SYN_REPORT in events:
             raise ValueError("EV_SYN is in the event sequence")
         touch = self.touch
         touch_found = False
         tool = self.tool
         tool_found = False
-        button = self.button
-        button_found = False
 
         for ev in events:
             if ev == libevdev.InputEvent(libevdev.EV_KEY.BTN_TOUCH):
                 if touch_found:
                     raise ValueError(f"duplicated BTN_TOUCH in {events}")
                 touch_found = True
-                touch = BtnTouch(ev.value)
+                touch = bool(ev.value)
             elif ev in (
                 libevdev.InputEvent(libevdev.EV_KEY.BTN_TOOL_PEN),
                 libevdev.InputEvent(libevdev.EV_KEY.BTN_TOOL_RUBBER),
@@ -147,113 +76,19 @@ class PenState(Enum):
                 if tool_found:
                     raise ValueError(f"duplicated BTN_TOOL_* in {events}")
                 tool_found = True
-                tool = ToolType(ev.code) if ev.value else None
-            elif ev in (
-                libevdev.InputEvent(libevdev.EV_KEY.BTN_STYLUS),
-                libevdev.InputEvent(libevdev.EV_KEY.BTN_STYLUS2),
-            ):
-                if button_found:
-                    raise ValueError(f"duplicated BTN_STYLUS* in {events}")
-                button_found = True
-                button = BtnPressed(ev.code) if ev.value else None
+                if ev.value:
+                    tool = ev.code
+                else:
+                    tool = None
 
-        # the kernel tends to insert an EV_SYN once removing the tool, so
-        # the button will be released after
-        if tool is None:
-            button = None
-
-        new_state = PenState((touch, tool, button))  # type: ignore
-        if strict:
-            assert (
-                new_state in self.valid_transitions()
-            ), f"moving from {self} to {new_state} is forbidden"
-        else:
-            assert (
-                new_state in self.historically_tolerated_transitions()
-            ), f"moving from {self} to {new_state} is forbidden"
+        new_state = PenState((touch, tool))
+        assert (
+            new_state in self.valid_transitions()
+        ), f"moving from {self} to {new_state} is forbidden"
 
         return new_state
 
     def valid_transitions(self) -> Tuple["PenState", ...]:
-        """Following the state machine in the URL above.
-
-        Note that those transitions are from the evdev point of view, not HID"""
-        if self == PenState.PEN_IS_OUT_OF_RANGE:
-            return (
-                PenState.PEN_IS_OUT_OF_RANGE,
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_IN_RANGE_WITH_BUTTON,
-                PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_IN_RANGE_WITH_ERASING_INTENT,
-                PenState.PEN_IS_IN_CONTACT,
-                PenState.PEN_IS_IN_CONTACT_WITH_BUTTON,
-                PenState.PEN_IS_IN_CONTACT_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_ERASING,
-            )
-
-        if self == PenState.PEN_IS_IN_RANGE:
-            return (
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_IN_RANGE_WITH_BUTTON,
-                PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_OUT_OF_RANGE,
-                PenState.PEN_IS_IN_CONTACT,
-            )
-
-        if self == PenState.PEN_IS_IN_CONTACT:
-            return (
-                PenState.PEN_IS_IN_CONTACT,
-                PenState.PEN_IS_IN_CONTACT_WITH_BUTTON,
-                PenState.PEN_IS_IN_CONTACT_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_IN_RANGE,
-            )
-
-        if self == PenState.PEN_IS_IN_RANGE_WITH_ERASING_INTENT:
-            return (
-                PenState.PEN_IS_IN_RANGE_WITH_ERASING_INTENT,
-                PenState.PEN_IS_OUT_OF_RANGE,
-                PenState.PEN_IS_ERASING,
-            )
-
-        if self == PenState.PEN_IS_ERASING:
-            return (
-                PenState.PEN_IS_ERASING,
-                PenState.PEN_IS_IN_RANGE_WITH_ERASING_INTENT,
-            )
-
-        if self == PenState.PEN_IS_IN_RANGE_WITH_BUTTON:
-            return (
-                PenState.PEN_IS_IN_RANGE_WITH_BUTTON,
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_OUT_OF_RANGE,
-                PenState.PEN_IS_IN_CONTACT_WITH_BUTTON,
-            )
-
-        if self == PenState.PEN_IS_IN_CONTACT_WITH_BUTTON:
-            return (
-                PenState.PEN_IS_IN_CONTACT_WITH_BUTTON,
-                PenState.PEN_IS_IN_CONTACT,
-                PenState.PEN_IS_IN_RANGE_WITH_BUTTON,
-            )
-
-        if self == PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON:
-            return (
-                PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_OUT_OF_RANGE,
-                PenState.PEN_IS_IN_CONTACT_WITH_SECOND_BUTTON,
-            )
-
-        if self == PenState.PEN_IS_IN_CONTACT_WITH_SECOND_BUTTON:
-            return (
-                PenState.PEN_IS_IN_CONTACT_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_IN_CONTACT,
-                PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON,
-            )
-
-        return tuple()
-
-    def historically_tolerated_transitions(self) -> Tuple["PenState", ...]:
         """Following the state machine in the URL above, with a couple of addition
         for skipping the in-range state, due to historical reasons.
 
@@ -262,20 +97,14 @@ class PenState(Enum):
             return (
                 PenState.PEN_IS_OUT_OF_RANGE,
                 PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_IN_RANGE_WITH_BUTTON,
-                PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON,
                 PenState.PEN_IS_IN_RANGE_WITH_ERASING_INTENT,
                 PenState.PEN_IS_IN_CONTACT,
-                PenState.PEN_IS_IN_CONTACT_WITH_BUTTON,
-                PenState.PEN_IS_IN_CONTACT_WITH_SECOND_BUTTON,
                 PenState.PEN_IS_ERASING,
             )
 
         if self == PenState.PEN_IS_IN_RANGE:
             return (
                 PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_IN_RANGE_WITH_BUTTON,
-                PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON,
                 PenState.PEN_IS_OUT_OF_RANGE,
                 PenState.PEN_IS_IN_CONTACT,
             )
@@ -283,8 +112,6 @@ class PenState(Enum):
         if self == PenState.PEN_IS_IN_CONTACT:
             return (
                 PenState.PEN_IS_IN_CONTACT,
-                PenState.PEN_IS_IN_CONTACT_WITH_BUTTON,
-                PenState.PEN_IS_IN_CONTACT_WITH_SECOND_BUTTON,
                 PenState.PEN_IS_IN_RANGE,
                 PenState.PEN_IS_OUT_OF_RANGE,
             )
@@ -303,42 +130,110 @@ class PenState(Enum):
                 PenState.PEN_IS_OUT_OF_RANGE,
             )
 
-        if self == PenState.PEN_IS_IN_RANGE_WITH_BUTTON:
-            return (
-                PenState.PEN_IS_IN_RANGE_WITH_BUTTON,
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_OUT_OF_RANGE,
-                PenState.PEN_IS_IN_CONTACT_WITH_BUTTON,
-            )
-
-        if self == PenState.PEN_IS_IN_CONTACT_WITH_BUTTON:
-            return (
-                PenState.PEN_IS_IN_CONTACT_WITH_BUTTON,
-                PenState.PEN_IS_IN_CONTACT,
-                PenState.PEN_IS_IN_RANGE_WITH_BUTTON,
-                PenState.PEN_IS_OUT_OF_RANGE,
-            )
-
-        if self == PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON:
-            return (
-                PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_OUT_OF_RANGE,
-                PenState.PEN_IS_IN_CONTACT_WITH_SECOND_BUTTON,
-            )
-
-        if self == PenState.PEN_IS_IN_CONTACT_WITH_SECOND_BUTTON:
-            return (
-                PenState.PEN_IS_IN_CONTACT_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_IN_CONTACT,
-                PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_OUT_OF_RANGE,
-            )
-
         return tuple()
 
+
+class Data(object):
+    pass
+
+
+class Pen(object):
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.tipswitch = False
+        self.tippressure = 15
+        self.azimuth = 0
+        self.inrange = False
+        self.width = 10
+        self.height = 10
+        self.barrelswitch = False
+        self.invert = False
+        self.eraser = False
+        self.x_tilt = 0
+        self.y_tilt = 0
+        self.twist = 0
+        self._old_values = None
+        self.current_state = None
+
+    def _restore(self):
+        if self._old_values is not None:
+            for i in [
+                "x",
+                "y",
+                "tippressure",
+                "azimuth",
+                "width",
+                "height",
+                "twist",
+                "x_tilt",
+                "y_tilt",
+            ]:
+                setattr(self, i, getattr(self._old_values, i))
+
+    def move_to(self, state):
+        # fill in the previous values
+        if self.current_state == PenState.PEN_IS_OUT_OF_RANGE:
+            self._restore()
+
+        print(f"\n  *** pen is moving to {state} ***")
+
+        if state == PenState.PEN_IS_OUT_OF_RANGE:
+            self._old_values = copy.copy(self)
+            self.x = 0
+            self.y = 0
+            self.tipswitch = False
+            self.tippressure = 0
+            self.azimuth = 0
+            self.inrange = False
+            self.width = 0
+            self.height = 0
+            self.invert = False
+            self.eraser = False
+            self.x_tilt = 0
+            self.y_tilt = 0
+            self.twist = 0
+        elif state == PenState.PEN_IS_IN_RANGE:
+            self.tipswitch = False
+            self.inrange = True
+            self.invert = False
+            self.eraser = False
+        elif state == PenState.PEN_IS_IN_CONTACT:
+            self.tipswitch = True
+            self.inrange = True
+            self.invert = False
+            self.eraser = False
+        elif state == PenState.PEN_IS_IN_RANGE_WITH_ERASING_INTENT:
+            self.tipswitch = False
+            self.inrange = True
+            self.invert = True
+            self.eraser = False
+        elif state == PenState.PEN_IS_ERASING:
+            self.tipswitch = False
+            self.inrange = True
+            self.invert = True
+            self.eraser = True
+
+        self.current_state = state
+
+    def __assert_axis(self, evdev, axis, value):
+        if (
+            axis == libevdev.EV_KEY.BTN_TOOL_RUBBER
+            and evdev.value[libevdev.EV_KEY.BTN_TOOL_RUBBER] is None
+        ):
+            return
+
+        assert (
+            evdev.value[axis] == value
+        ), f"assert evdev.value[{axis}] ({evdev.value[axis]}) != {value}"
+
+    def assert_expected_input_events(self, evdev):
+        assert evdev.value[libevdev.EV_ABS.ABS_X] == self.x
+        assert evdev.value[libevdev.EV_ABS.ABS_Y] == self.y
+        assert self.current_state == PenState.from_evdev(evdev)
+
     @staticmethod
-    def legal_transitions() -> Dict[str, Tuple["PenState", ...]]:
+    def legal_transitions() -> Dict[str, Tuple[PenState, ...]]:
         """This is the first half of the Windows Pen Implementation state machine:
         we don't have Invert nor Erase bits, so just move in/out-of-range or proximity.
         https://docs.microsoft.com/en-us/windows-hardware/design/component-guidelines/windows-pen-states
@@ -364,7 +259,7 @@ class PenState(Enum):
         }
 
     @staticmethod
-    def legal_transitions_with_invert() -> Dict[str, Tuple["PenState", ...]]:
+    def legal_transitions_with_invert() -> Dict[str, Tuple[PenState, ...]]:
         """This is the second half of the Windows Pen Implementation state machine:
         we now have Invert and Erase bits, so move in/out or proximity with the intend
         to erase.
@@ -402,106 +297,7 @@ class PenState(Enum):
         }
 
     @staticmethod
-    def legal_transitions_with_primary_button() -> Dict[str, Tuple["PenState", ...]]:
-        """We revisit the Windows Pen Implementation state machine:
-        we now have a primary button.
-        """
-        return {
-            "hover-button": (PenState.PEN_IS_IN_RANGE_WITH_BUTTON,),
-            "hover-button -> out-of-range": (
-                PenState.PEN_IS_IN_RANGE_WITH_BUTTON,
-                PenState.PEN_IS_OUT_OF_RANGE,
-            ),
-            "in-range -> button-press": (
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_IN_RANGE_WITH_BUTTON,
-            ),
-            "in-range -> button-press -> button-release": (
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_IN_RANGE_WITH_BUTTON,
-                PenState.PEN_IS_IN_RANGE,
-            ),
-            "in-range -> touch -> button-press -> button-release": (
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_IN_CONTACT,
-                PenState.PEN_IS_IN_CONTACT_WITH_BUTTON,
-                PenState.PEN_IS_IN_CONTACT,
-            ),
-            "in-range -> touch -> button-press -> release -> button-release": (
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_IN_CONTACT,
-                PenState.PEN_IS_IN_CONTACT_WITH_BUTTON,
-                PenState.PEN_IS_IN_RANGE_WITH_BUTTON,
-                PenState.PEN_IS_IN_RANGE,
-            ),
-            "in-range -> button-press -> touch -> release -> button-release": (
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_IN_RANGE_WITH_BUTTON,
-                PenState.PEN_IS_IN_CONTACT_WITH_BUTTON,
-                PenState.PEN_IS_IN_RANGE_WITH_BUTTON,
-                PenState.PEN_IS_IN_RANGE,
-            ),
-            "in-range -> button-press -> touch -> button-release -> release": (
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_IN_RANGE_WITH_BUTTON,
-                PenState.PEN_IS_IN_CONTACT_WITH_BUTTON,
-                PenState.PEN_IS_IN_CONTACT,
-                PenState.PEN_IS_IN_RANGE,
-            ),
-        }
-
-    @staticmethod
-    def legal_transitions_with_secondary_button() -> Dict[str, Tuple["PenState", ...]]:
-        """We revisit the Windows Pen Implementation state machine:
-        we now have a secondary button.
-        Note: we don't looks for 2 buttons interactions.
-        """
-        return {
-            "hover-button": (PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON,),
-            "hover-button -> out-of-range": (
-                PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_OUT_OF_RANGE,
-            ),
-            "in-range -> button-press": (
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON,
-            ),
-            "in-range -> button-press -> button-release": (
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_IN_RANGE,
-            ),
-            "in-range -> touch -> button-press -> button-release": (
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_IN_CONTACT,
-                PenState.PEN_IS_IN_CONTACT_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_IN_CONTACT,
-            ),
-            "in-range -> touch -> button-press -> release -> button-release": (
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_IN_CONTACT,
-                PenState.PEN_IS_IN_CONTACT_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_IN_RANGE,
-            ),
-            "in-range -> button-press -> touch -> release -> button-release": (
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_IN_CONTACT_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_IN_RANGE,
-            ),
-            "in-range -> button-press -> touch -> button-release -> release": (
-                PenState.PEN_IS_IN_RANGE,
-                PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_IN_CONTACT_WITH_SECOND_BUTTON,
-                PenState.PEN_IS_IN_CONTACT,
-                PenState.PEN_IS_IN_RANGE,
-            ),
-        }
-
-    @staticmethod
-    def tolerated_transitions() -> Dict[str, Tuple["PenState", ...]]:
+    def tolerated_transitions() -> Dict[str, Tuple[PenState, ...]]:
         """This is not adhering to the Windows Pen Implementation state machine
         but we should expect the kernel to behave properly, mostly for historical
         reasons."""
@@ -514,7 +310,7 @@ class PenState(Enum):
         }
 
     @staticmethod
-    def tolerated_transitions_with_invert() -> Dict[str, Tuple["PenState", ...]]:
+    def tolerated_transitions_with_invert() -> Dict[str, Tuple[PenState, ...]]:
         """This is the second half of the Windows Pen Implementation state machine:
         we now have Invert and Erase bits, so move in/out or proximity with the intend
         to erase.
@@ -529,7 +325,7 @@ class PenState(Enum):
         }
 
     @staticmethod
-    def broken_transitions() -> Dict[str, Tuple["PenState", ...]]:
+    def broken_transitions() -> Dict[str, Tuple[PenState, ...]]:
         """Those tests are definitely not part of the Windows specification.
         However, a half broken device might export those transitions.
         For example, a pen that has the eraser button might wobble between
@@ -567,61 +363,6 @@ class PenState(Enum):
         }
 
 
-class Pen(object):
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-        self.tipswitch = False
-        self.tippressure = 15
-        self.azimuth = 0
-        self.inrange = False
-        self.width = 10
-        self.height = 10
-        self.barrelswitch = False
-        self.secondarybarrelswitch = False
-        self.invert = False
-        self.eraser = False
-        self.xtilt = 1
-        self.ytilt = 1
-        self.twist = 1
-        self._old_values = None
-        self.current_state = None
-
-    def restore(self):
-        if self._old_values is not None:
-            for i in [
-                "x",
-                "y",
-                "tippressure",
-                "azimuth",
-                "width",
-                "height",
-                "twist",
-                "xtilt",
-                "ytilt",
-            ]:
-                setattr(self, i, getattr(self._old_values, i))
-
-    def backup(self):
-        self._old_values = copy.copy(self)
-
-    def __assert_axis(self, evdev, axis, value):
-        if (
-            axis == libevdev.EV_KEY.BTN_TOOL_RUBBER
-            and evdev.value[libevdev.EV_KEY.BTN_TOOL_RUBBER] is None
-        ):
-            return
-
-        assert (
-            evdev.value[axis] == value
-        ), f"assert evdev.value[{axis}] ({evdev.value[axis]}) != {value}"
-
-    def assert_expected_input_events(self, evdev):
-        assert evdev.value[libevdev.EV_ABS.ABS_X] == self.x
-        assert evdev.value[libevdev.EV_ABS.ABS_Y] == self.y
-        assert self.current_state == PenState.from_evdev(evdev)
-
-
 class PenDigitizer(base.UHIDTestDevice):
     def __init__(
         self,
@@ -646,89 +387,6 @@ class PenDigitizer(base.UHIDTestDevice):
                 if self.physical not in physicals and None not in physicals:
                     continue
                 self.fields = [f.usage_name for f in r]
-
-    def move_to(self, pen, state):
-        # fill in the previous values
-        if pen.current_state == PenState.PEN_IS_OUT_OF_RANGE:
-            pen.restore()
-
-        print(f"\n  *** pen is moving to {state} ***")
-
-        if state == PenState.PEN_IS_OUT_OF_RANGE:
-            pen.backup()
-            pen.x = 0
-            pen.y = 0
-            pen.tipswitch = False
-            pen.tippressure = 0
-            pen.azimuth = 0
-            pen.inrange = False
-            pen.width = 0
-            pen.height = 0
-            pen.invert = False
-            pen.eraser = False
-            pen.xtilt = 0
-            pen.ytilt = 0
-            pen.twist = 0
-            pen.barrelswitch = False
-            pen.secondarybarrelswitch = False
-        elif state == PenState.PEN_IS_IN_RANGE:
-            pen.tipswitch = False
-            pen.inrange = True
-            pen.invert = False
-            pen.eraser = False
-            pen.barrelswitch = False
-            pen.secondarybarrelswitch = False
-        elif state == PenState.PEN_IS_IN_CONTACT:
-            pen.tipswitch = True
-            pen.inrange = True
-            pen.invert = False
-            pen.eraser = False
-            pen.barrelswitch = False
-            pen.secondarybarrelswitch = False
-        elif state == PenState.PEN_IS_IN_RANGE_WITH_BUTTON:
-            pen.tipswitch = False
-            pen.inrange = True
-            pen.invert = False
-            pen.eraser = False
-            pen.barrelswitch = True
-            pen.secondarybarrelswitch = False
-        elif state == PenState.PEN_IS_IN_CONTACT_WITH_BUTTON:
-            pen.tipswitch = True
-            pen.inrange = True
-            pen.invert = False
-            pen.eraser = False
-            pen.barrelswitch = True
-            pen.secondarybarrelswitch = False
-        elif state == PenState.PEN_IS_IN_RANGE_WITH_SECOND_BUTTON:
-            pen.tipswitch = False
-            pen.inrange = True
-            pen.invert = False
-            pen.eraser = False
-            pen.barrelswitch = False
-            pen.secondarybarrelswitch = True
-        elif state == PenState.PEN_IS_IN_CONTACT_WITH_SECOND_BUTTON:
-            pen.tipswitch = True
-            pen.inrange = True
-            pen.invert = False
-            pen.eraser = False
-            pen.barrelswitch = False
-            pen.secondarybarrelswitch = True
-        elif state == PenState.PEN_IS_IN_RANGE_WITH_ERASING_INTENT:
-            pen.tipswitch = False
-            pen.inrange = True
-            pen.invert = True
-            pen.eraser = False
-            pen.barrelswitch = False
-            pen.secondarybarrelswitch = False
-        elif state == PenState.PEN_IS_ERASING:
-            pen.tipswitch = False
-            pen.inrange = True
-            pen.invert = False
-            pen.eraser = True
-            pen.barrelswitch = False
-            pen.secondarybarrelswitch = False
-
-        pen.current_state = state
 
     def event(self, pen):
         rs = []
@@ -777,13 +435,9 @@ class BaseTest:
             self.debug_reports(r, uhdev, events)
             return events
 
-        def validate_transitions(
-            self, from_state, pen, evdev, events, allow_intermediate_states
-        ):
+        def validate_transitions(self, from_state, pen, evdev, events):
             # check that the final state is correct
             pen.assert_expected_input_events(evdev)
-
-            state = from_state
 
             # check that the transitions are valid
             sync_events = []
@@ -794,12 +448,12 @@ class BaseTest:
                 events = events[idx + 1 :]
 
                 # now check for a valid transition
-                state = state.apply(sync_events, not allow_intermediate_states)
+                from_state = from_state.apply(sync_events)
 
             if events:
-                state = state.apply(sync_events, not allow_intermediate_states)
+                from_state = from_state.apply(sync_events)
 
-        def _test_states(self, state_list, scribble, allow_intermediate_states):
+        def _test_states(self, state_list, scribble):
             """Internal method to test against a list of
             transition between states.
             state_list is a list of PenState objects
@@ -812,11 +466,9 @@ class BaseTest:
             cur_state = PenState.PEN_IS_OUT_OF_RANGE
 
             p = Pen(50, 60)
-            uhdev.move_to(p, PenState.PEN_IS_OUT_OF_RANGE)
+            p.move_to(PenState.PEN_IS_OUT_OF_RANGE)
             events = self.post(uhdev, p)
-            self.validate_transitions(
-                cur_state, p, evdev, events, allow_intermediate_states
-            )
+            self.validate_transitions(cur_state, p, evdev, events)
 
             cur_state = p.current_state
 
@@ -825,77 +477,38 @@ class BaseTest:
                     p.x += 1
                     p.y -= 1
                     events = self.post(uhdev, p)
-                    self.validate_transitions(
-                        cur_state, p, evdev, events, allow_intermediate_states
-                    )
+                    self.validate_transitions(cur_state, p, evdev, events)
                     assert len(events) >= 3  # X, Y, SYN
-                uhdev.move_to(p, state)
+                p.move_to(state)
                 if scribble and state != PenState.PEN_IS_OUT_OF_RANGE:
                     p.x += 1
                     p.y -= 1
                 events = self.post(uhdev, p)
-                self.validate_transitions(
-                    cur_state, p, evdev, events, allow_intermediate_states
-                )
+                self.validate_transitions(cur_state, p, evdev, events)
                 cur_state = p.current_state
 
         @pytest.mark.parametrize("scribble", [True, False], ids=["scribble", "static"])
         @pytest.mark.parametrize(
             "state_list",
-            [pytest.param(v, id=k) for k, v in PenState.legal_transitions().items()],
+            [pytest.param(v, id=k) for k, v in Pen.legal_transitions().items()],
         )
         def test_valid_pen_states(self, state_list, scribble):
             """This is the first half of the Windows Pen Implementation state machine:
             we don't have Invert nor Erase bits, so just move in/out-of-range or proximity.
             https://docs.microsoft.com/en-us/windows-hardware/design/component-guidelines/windows-pen-states
             """
-            self._test_states(state_list, scribble, allow_intermediate_states=False)
+            self._test_states(state_list, scribble)
 
         @pytest.mark.parametrize("scribble", [True, False], ids=["scribble", "static"])
         @pytest.mark.parametrize(
             "state_list",
-            [
-                pytest.param(v, id=k)
-                for k, v in PenState.tolerated_transitions().items()
-            ],
+            [pytest.param(v, id=k) for k, v in Pen.tolerated_transitions().items()],
         )
         def test_tolerated_pen_states(self, state_list, scribble):
             """This is not adhering to the Windows Pen Implementation state machine
             but we should expect the kernel to behave properly, mostly for historical
             reasons."""
-            self._test_states(state_list, scribble, allow_intermediate_states=True)
-
-        @pytest.mark.skip_if_uhdev(
-            lambda uhdev: "Barrel Switch" not in uhdev.fields,
-            "Device not compatible, missing Barrel Switch usage",
-        )
-        @pytest.mark.parametrize("scribble", [True, False], ids=["scribble", "static"])
-        @pytest.mark.parametrize(
-            "state_list",
-            [
-                pytest.param(v, id=k)
-                for k, v in PenState.legal_transitions_with_primary_button().items()
-            ],
-        )
-        def test_valid_primary_button_pen_states(self, state_list, scribble):
-            """Rework the transition state machine by adding the primary button."""
-            self._test_states(state_list, scribble, allow_intermediate_states=False)
-
-        @pytest.mark.skip_if_uhdev(
-            lambda uhdev: "Secondary Barrel Switch" not in uhdev.fields,
-            "Device not compatible, missing Secondary Barrel Switch usage",
-        )
-        @pytest.mark.parametrize("scribble", [True, False], ids=["scribble", "static"])
-        @pytest.mark.parametrize(
-            "state_list",
-            [
-                pytest.param(v, id=k)
-                for k, v in PenState.legal_transitions_with_secondary_button().items()
-            ],
-        )
-        def test_valid_secondary_button_pen_states(self, state_list, scribble):
-            """Rework the transition state machine by adding the secondary button."""
-            self._test_states(state_list, scribble, allow_intermediate_states=False)
+            self._test_states(state_list, scribble)
 
         @pytest.mark.skip_if_uhdev(
             lambda uhdev: "Invert" not in uhdev.fields,
@@ -906,7 +519,7 @@ class BaseTest:
             "state_list",
             [
                 pytest.param(v, id=k)
-                for k, v in PenState.legal_transitions_with_invert().items()
+                for k, v in Pen.legal_transitions_with_invert().items()
             ],
         )
         def test_valid_invert_pen_states(self, state_list, scribble):
@@ -915,7 +528,7 @@ class BaseTest:
             to erase.
             https://docs.microsoft.com/en-us/windows-hardware/design/component-guidelines/windows-pen-states
             """
-            self._test_states(state_list, scribble, allow_intermediate_states=False)
+            self._test_states(state_list, scribble)
 
         @pytest.mark.skip_if_uhdev(
             lambda uhdev: "Invert" not in uhdev.fields,
@@ -926,7 +539,7 @@ class BaseTest:
             "state_list",
             [
                 pytest.param(v, id=k)
-                for k, v in PenState.tolerated_transitions_with_invert().items()
+                for k, v in Pen.tolerated_transitions_with_invert().items()
             ],
         )
         def test_tolerated_invert_pen_states(self, state_list, scribble):
@@ -935,7 +548,7 @@ class BaseTest:
             to erase.
             https://docs.microsoft.com/en-us/windows-hardware/design/component-guidelines/windows-pen-states
             """
-            self._test_states(state_list, scribble, allow_intermediate_states=True)
+            self._test_states(state_list, scribble)
 
         @pytest.mark.skip_if_uhdev(
             lambda uhdev: "Invert" not in uhdev.fields,
@@ -944,7 +557,7 @@ class BaseTest:
         @pytest.mark.parametrize("scribble", [True, False], ids=["scribble", "static"])
         @pytest.mark.parametrize(
             "state_list",
-            [pytest.param(v, id=k) for k, v in PenState.broken_transitions().items()],
+            [pytest.param(v, id=k) for k, v in Pen.broken_transitions().items()],
         )
         def test_tolerated_broken_pen_states(self, state_list, scribble):
             """Those tests are definitely not part of the Windows specification.
@@ -952,7 +565,102 @@ class BaseTest:
             For example, a pen that has the eraser button might wobble between
             touching and erasing if the tablet doesn't enforce the Windows
             state machine."""
-            self._test_states(state_list, scribble, allow_intermediate_states=True)
+            self._test_states(state_list, scribble)
+
+        @pytest.mark.skip_if_uhdev(
+            lambda uhdev: "Barrel Switch" not in uhdev.fields,
+            "Device not compatible, missing Barrel Switch usage",
+        )
+        def test_primary_button(self):
+            """Primary button (stylus) pressed, reports as pressed even while hovering.
+            Actual reporting from the device: hid=TIPSWITCH,BARRELSWITCH,INRANGE (code=TOUCH,STYLUS,PEN):
+              { 0, 0, 1 } <- hover
+              { 0, 1, 1 } <- primary button pressed
+              { 0, 1, 1 } <- liftoff
+              { 0, 0, 0 } <- leaves
+            """
+
+            uhdev = self.uhdev
+            evdev = uhdev.get_evdev()
+
+            p = Pen(50, 60)
+            p.inrange = True
+            events = self.post(uhdev, p)
+            assert libevdev.InputEvent(libevdev.EV_KEY.BTN_TOOL_PEN, 1) in events
+            assert evdev.value[libevdev.EV_ABS.ABS_X] == 50
+            assert evdev.value[libevdev.EV_ABS.ABS_Y] == 60
+            assert not evdev.value[libevdev.EV_KEY.BTN_STYLUS]
+
+            p.barrelswitch = True
+            events = self.post(uhdev, p)
+            assert libevdev.InputEvent(libevdev.EV_KEY.BTN_STYLUS, 1) in events
+
+            p.x += 1
+            p.y -= 1
+            events = self.post(uhdev, p)
+            assert len(events) == 3  # X, Y, SYN
+            assert libevdev.InputEvent(libevdev.EV_ABS.ABS_X, 51) in events
+            assert libevdev.InputEvent(libevdev.EV_ABS.ABS_Y, 59) in events
+
+            p.barrelswitch = False
+            events = self.post(uhdev, p)
+            assert libevdev.InputEvent(libevdev.EV_KEY.BTN_STYLUS, 0) in events
+
+            p.inrange = False
+            events = self.post(uhdev, p)
+            assert libevdev.InputEvent(libevdev.EV_KEY.BTN_TOOL_PEN, 0) in events
+
+        @pytest.mark.skip_if_uhdev(
+            lambda uhdev: "Barrel Switch" not in uhdev.fields,
+            "Device not compatible, missing Barrel Switch usage",
+        )
+        def test_contact_primary_button(self):
+            """Primary button (stylus) pressed, reports as pressed even while hovering.
+            Actual reporting from the device: hid=TIPSWITCH,BARRELSWITCH,INRANGE (code=TOUCH,STYLUS,PEN):
+              { 0, 0, 1 } <- hover
+              { 0, 1, 1 } <- primary button pressed
+              { 1, 1, 1 } <- touch-down
+              { 1, 1, 1 } <- still touch, scribble on the screen
+              { 0, 1, 1 } <- liftoff
+              { 0, 0, 0 } <- leaves
+            """
+
+            uhdev = self.uhdev
+            evdev = uhdev.get_evdev()
+
+            p = Pen(50, 60)
+            p.inrange = True
+            events = self.post(uhdev, p)
+            assert libevdev.InputEvent(libevdev.EV_KEY.BTN_TOOL_PEN, 1) in events
+            assert evdev.value[libevdev.EV_ABS.ABS_X] == 50
+            assert evdev.value[libevdev.EV_ABS.ABS_Y] == 60
+            assert not evdev.value[libevdev.EV_KEY.BTN_STYLUS]
+
+            p.barrelswitch = True
+            events = self.post(uhdev, p)
+            assert libevdev.InputEvent(libevdev.EV_KEY.BTN_STYLUS, 1) in events
+
+            p.tipswitch = True
+            events = self.post(uhdev, p)
+            assert libevdev.InputEvent(libevdev.EV_KEY.BTN_TOUCH, 1) in events
+            assert evdev.value[libevdev.EV_KEY.BTN_STYLUS]
+
+            p.x += 1
+            p.y -= 1
+            events = self.post(uhdev, p)
+            assert len(events) == 3  # X, Y, SYN
+            assert libevdev.InputEvent(libevdev.EV_ABS.ABS_X, 51) in events
+            assert libevdev.InputEvent(libevdev.EV_ABS.ABS_Y, 59) in events
+
+            p.tipswitch = False
+            events = self.post(uhdev, p)
+            assert libevdev.InputEvent(libevdev.EV_KEY.BTN_TOUCH, 0) in events
+
+            p.barrelswitch = False
+            p.inrange = False
+            events = self.post(uhdev, p)
+            assert libevdev.InputEvent(libevdev.EV_KEY.BTN_TOOL_PEN, 0) in events
+            assert libevdev.InputEvent(libevdev.EV_KEY.BTN_STYLUS, 0) in events
 
 
 class GXTP_pen(PenDigitizer):

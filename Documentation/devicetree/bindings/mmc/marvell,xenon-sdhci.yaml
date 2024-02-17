@@ -27,9 +27,7 @@ properties:
           - marvell,armada-ap806-sdhci
 
       - items:
-          - enum:
-              - marvell,armada-ap807-sdhci
-              - marvell,ac5-sdhci
+          - const: marvell,armada-ap807-sdhci
           - const: marvell,armada-ap806-sdhci
 
       - items:

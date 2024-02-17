@@ -13,7 +13,6 @@
 #define pr_fmt(fmt) "pinctrl core: " fmt
 
 #include <linux/array_size.h>
-#include <linux/cleanup.h>
 #include <linux/debugfs.h>
 #include <linux/device.h>
 #include <linux/err.h>
@@ -24,13 +23,16 @@
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 
-#include <linux/gpio.h>
 #include <linux/gpio/driver.h>
 
 #include <linux/pinctrl/consumer.h>
 #include <linux/pinctrl/devinfo.h>
 #include <linux/pinctrl/machine.h>
 #include <linux/pinctrl/pinctrl.h>
+
+#ifdef CONFIG_GPIOLIB
+#include "../gpio/gpiolib.h"
+#endif
 
 #include "core.h"
 #include "devicetree.h"
@@ -143,7 +145,7 @@ struct pinctrl_dev *get_pinctrl_dev_from_of_node(struct device_node *np)
  */
 int pin_get_from_name(struct pinctrl_dev *pctldev, const char *name)
 {
-	unsigned int i, pin;
+	unsigned i, pin;
 
 	/* The pin number can be retrived from the pin controller descriptor */
 	for (i = 0; i < pctldev->desc->npins; i++) {
@@ -164,7 +166,7 @@ int pin_get_from_name(struct pinctrl_dev *pctldev, const char *name)
  * @pctldev: the pin control device to lookup the pin on
  * @pin: pin number/id to look up
  */
-const char *pin_get_name(struct pinctrl_dev *pctldev, const unsigned int pin)
+const char *pin_get_name(struct pinctrl_dev *pctldev, const unsigned pin)
 {
 	const struct pin_desc *desc;
 
@@ -182,7 +184,7 @@ EXPORT_SYMBOL_GPL(pin_get_name);
 /* Deletes a range of pin descriptors */
 static void pinctrl_free_pindescs(struct pinctrl_dev *pctldev,
 				  const struct pinctrl_pin_desc *pins,
-				  unsigned int num_pins)
+				  unsigned num_pins)
 {
 	int i;
 
@@ -250,9 +252,9 @@ failed:
 
 static int pinctrl_register_pins(struct pinctrl_dev *pctldev,
 				 const struct pinctrl_pin_desc *pins,
-				 unsigned int num_descs)
+				 unsigned num_descs)
 {
-	unsigned int i;
+	unsigned i;
 	int ret = 0;
 
 	for (i = 0; i < num_descs; i++) {
@@ -426,7 +428,7 @@ EXPORT_SYMBOL_GPL(pinctrl_add_gpio_range);
 
 void pinctrl_add_gpio_ranges(struct pinctrl_dev *pctldev,
 			     struct pinctrl_gpio_range *ranges,
-			     unsigned int nranges)
+			     unsigned nranges)
 {
 	int i;
 
@@ -457,7 +459,7 @@ struct pinctrl_dev *pinctrl_find_and_add_gpio_range(const char *devname,
 EXPORT_SYMBOL_GPL(pinctrl_find_and_add_gpio_range);
 
 int pinctrl_get_group_pins(struct pinctrl_dev *pctldev, const char *pin_group,
-			   const unsigned int **pins, unsigned int *num_pins)
+				const unsigned **pins, unsigned *num_pins)
 {
 	const struct pinctrl_ops *pctlops = pctldev->desc->pctlops;
 	int gs;
@@ -557,7 +559,7 @@ const char *pinctrl_generic_get_group_name(struct pinctrl_dev *pctldev,
 	if (!group)
 		return NULL;
 
-	return group->grp.name;
+	return group->name;
 }
 EXPORT_SYMBOL_GPL(pinctrl_generic_get_group_name);
 
@@ -583,8 +585,8 @@ int pinctrl_generic_get_group_pins(struct pinctrl_dev *pctldev,
 		return -EINVAL;
 	}
 
-	*pins = group->grp.pins;
-	*num_pins = group->grp.npins;
+	*pins = group->pins;
+	*num_pins = group->num_pins;
 
 	return 0;
 }
@@ -640,7 +642,7 @@ static int pinctrl_generic_group_name_to_selector(struct pinctrl_dev *pctldev,
  * Note that the caller must take care of locking.
  */
 int pinctrl_generic_add_group(struct pinctrl_dev *pctldev, const char *name,
-			      const unsigned int *pins, int num_pins, void *data)
+			      int *pins, int num_pins, void *data)
 {
 	struct group_desc *group;
 	int selector, error;
@@ -658,7 +660,10 @@ int pinctrl_generic_add_group(struct pinctrl_dev *pctldev, const char *name,
 	if (!group)
 		return -ENOMEM;
 
-	*group = PINCTRL_GROUP_DESC(name, pins, num_pins, data);
+	group->name = name;
+	group->pins = pins;
+	group->num_pins = num_pins;
+	group->data = data;
 
 	error = radix_tree_insert(&pctldev->pin_group_tree, selector, group);
 	if (error)
@@ -729,8 +734,8 @@ int pinctrl_get_group_selector(struct pinctrl_dev *pctldev,
 			       const char *pin_group)
 {
 	const struct pinctrl_ops *pctlops = pctldev->desc->pctlops;
-	unsigned int ngroups = pctlops->get_groups_count(pctldev);
-	unsigned int group_selector = 0;
+	unsigned ngroups = pctlops->get_groups_count(pctldev);
+	unsigned group_selector = 0;
 
 	while (group_selector < ngroups) {
 		const char *gname = pctlops->get_group_name(pctldev,
@@ -1427,7 +1432,7 @@ EXPORT_SYMBOL_GPL(devm_pinctrl_put);
  * @num_maps: the number of maps in the mapping table
  */
 int pinctrl_register_mappings(const struct pinctrl_map *maps,
-			      unsigned int num_maps)
+			      unsigned num_maps)
 {
 	int i, ret;
 	struct pinctrl_maps *maps_node;
@@ -1642,10 +1647,10 @@ static int pinctrl_pins_show(struct seq_file *s, void *what)
 {
 	struct pinctrl_dev *pctldev = s->private;
 	const struct pinctrl_ops *ops = pctldev->desc->pctlops;
-	unsigned int i, pin;
+	unsigned i, pin;
 #ifdef CONFIG_GPIOLIB
-	struct gpio_device *gdev __free(gpio_device_put) = NULL;
 	struct pinctrl_gpio_range *range;
+	struct gpio_chip *chip;
 	int gpio_num;
 #endif
 
@@ -1680,11 +1685,11 @@ static int pinctrl_pins_show(struct seq_file *s, void *what)
 			 * we need to get rid of the range->base eventually and
 			 * get the descriptor directly from the gpio_chip.
 			 */
-			gdev = gpiod_to_gpio_device(gpio_to_desc(gpio_num));
-		if (gdev)
-			seq_printf(s, "%u:%s ",
-				   gpio_num - gpio_device_get_base(gdev),
-				   gpio_device_get_label(gdev));
+			chip = gpiod_to_chip(gpio_to_desc(gpio_num));
+		else
+			chip = NULL;
+		if (chip)
+			seq_printf(s, "%u:%s ", gpio_num - chip->gpiodev->base, chip->label);
 		else
 			seq_puts(s, "0:? ");
 #endif
@@ -1706,7 +1711,7 @@ static int pinctrl_groups_show(struct seq_file *s, void *what)
 {
 	struct pinctrl_dev *pctldev = s->private;
 	const struct pinctrl_ops *ops = pctldev->desc->pctlops;
-	unsigned int ngroups, selector = 0;
+	unsigned ngroups, selector = 0;
 
 	mutex_lock(&pctldev->mutex);
 
@@ -1714,8 +1719,8 @@ static int pinctrl_groups_show(struct seq_file *s, void *what)
 
 	seq_puts(s, "registered pin groups:\n");
 	while (selector < ngroups) {
-		const unsigned int *pins = NULL;
-		unsigned int num_pins = 0;
+		const unsigned *pins = NULL;
+		unsigned num_pins = 0;
 		const char *gname = ops->get_group_name(pctldev, selector);
 		const char *pname;
 		int ret = 0;

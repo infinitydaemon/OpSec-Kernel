@@ -75,7 +75,7 @@ int snd_ac97_reset(struct snd_ac97 *ac97, bool try_warm, unsigned int id,
 }
 EXPORT_SYMBOL_GPL(snd_ac97_reset);
 
-const struct bus_type ac97_bus_type = {
+struct bus_type ac97_bus_type = {
 	.name		= "ac97",
 };
 

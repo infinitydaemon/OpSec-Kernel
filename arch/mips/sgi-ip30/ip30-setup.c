@@ -14,7 +14,6 @@
 #include <linux/percpu.h>
 #include <linux/memblock.h>
 
-#include <asm/bootinfo.h>
 #include <asm/smp-ops.h>
 #include <asm/sgialib.h>
 #include <asm/time.h>

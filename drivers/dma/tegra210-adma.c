@@ -153,7 +153,6 @@ struct tegra_adma {
 	void __iomem			*base_addr;
 	struct clk			*ahub_clk;
 	unsigned int			nr_channels;
-	unsigned long			*dma_chan_mask;
 	unsigned long			rx_requests_reserved;
 	unsigned long			tx_requests_reserved;
 
@@ -742,10 +741,6 @@ static int __maybe_unused tegra_adma_runtime_suspend(struct device *dev)
 
 	for (i = 0; i < tdma->nr_channels; i++) {
 		tdc = &tdma->channels[i];
-		/* skip for reserved channels */
-		if (!tdc->tdma)
-			continue;
-
 		ch_reg = &tdc->ch_regs;
 		ch_reg->cmd = tdma_ch_read(tdc, ADMA_CH_CMD);
 		/* skip if channel is not active */
@@ -784,9 +779,6 @@ static int __maybe_unused tegra_adma_runtime_resume(struct device *dev)
 
 	for (i = 0; i < tdma->nr_channels; i++) {
 		tdc = &tdma->channels[i];
-		/* skip for reserved channels */
-		if (!tdc->tdma)
-			continue;
 		ch_reg = &tdc->ch_regs;
 		/* skip if channel was not active earlier */
 		if (!ch_reg->cmd)
@@ -875,30 +867,9 @@ static int tegra_adma_probe(struct platform_device *pdev)
 		return PTR_ERR(tdma->ahub_clk);
 	}
 
-	tdma->dma_chan_mask = devm_kzalloc(&pdev->dev,
-					   BITS_TO_LONGS(tdma->nr_channels) * sizeof(unsigned long),
-					   GFP_KERNEL);
-	if (!tdma->dma_chan_mask)
-		return -ENOMEM;
-
-	/* Enable all channels by default */
-	bitmap_fill(tdma->dma_chan_mask, tdma->nr_channels);
-
-	ret = of_property_read_u32_array(pdev->dev.of_node, "dma-channel-mask",
-					 (u32 *)tdma->dma_chan_mask,
-					 BITS_TO_U32(tdma->nr_channels));
-	if (ret < 0 && (ret != -EINVAL)) {
-		dev_err(&pdev->dev, "dma-channel-mask is not complete.\n");
-		return ret;
-	}
-
 	INIT_LIST_HEAD(&tdma->dma_dev.channels);
 	for (i = 0; i < tdma->nr_channels; i++) {
 		struct tegra_adma_chan *tdc = &tdma->channels[i];
-
-		/* skip for reserved channels */
-		if (!test_bit(i, tdma->dma_chan_mask))
-			continue;
 
 		tdc->chan_addr = tdma->base_addr + cdata->ch_base_offset
 				 + (cdata->ch_reg_size * i);
@@ -986,10 +957,8 @@ static void tegra_adma_remove(struct platform_device *pdev)
 	of_dma_controller_free(pdev->dev.of_node);
 	dma_async_device_unregister(&tdma->dma_dev);
 
-	for (i = 0; i < tdma->nr_channels; ++i) {
-		if (tdma->channels[i].irq)
-			irq_dispose_mapping(tdma->channels[i].irq);
-	}
+	for (i = 0; i < tdma->nr_channels; ++i)
+		irq_dispose_mapping(tdma->channels[i].irq);
 
 	pm_runtime_disable(&pdev->dev);
 }

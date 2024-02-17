@@ -65,7 +65,7 @@ static void rs_poll(struct timer_list *unused)
 	struct tty_port *port = &serial_port;
 	int i = 0;
 	int rd = 1;
-	u8 c;
+	unsigned char c;
 
 	while (simc_poll(0)) {
 		rd = simc_read(0, &c, 1);

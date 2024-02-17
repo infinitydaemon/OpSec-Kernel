@@ -198,14 +198,13 @@ static inline void gfs2_withdraw_delayed(struct gfs2_sbd *sdp)
 }
 
 /**
- * gfs2_withdrawing_or_withdrawn - test whether the file system is withdrawing
- *                                 or withdrawn
+ * gfs2_withdrawn - test whether the file system is withdrawing or withdrawn
  * @sdp: the superblock
  */
-static inline bool gfs2_withdrawing_or_withdrawn(struct gfs2_sbd *sdp)
+static inline bool gfs2_withdrawn(struct gfs2_sbd *sdp)
 {
-	return unlikely(test_bit(SDF_WITHDRAWN, &sdp->sd_flags) ||
-			test_bit(SDF_WITHDRAWING, &sdp->sd_flags));
+	return test_bit(SDF_WITHDRAWN, &sdp->sd_flags) ||
+		test_bit(SDF_WITHDRAWING, &sdp->sd_flags);
 }
 
 /**
@@ -214,13 +213,13 @@ static inline bool gfs2_withdrawing_or_withdrawn(struct gfs2_sbd *sdp)
  */
 static inline bool gfs2_withdrawing(struct gfs2_sbd *sdp)
 {
-	return unlikely(test_bit(SDF_WITHDRAWING, &sdp->sd_flags) &&
-			!test_bit(SDF_WITHDRAWN, &sdp->sd_flags));
+	return test_bit(SDF_WITHDRAWING, &sdp->sd_flags) &&
+	       !test_bit(SDF_WITHDRAWN, &sdp->sd_flags);
 }
 
 static inline bool gfs2_withdraw_in_prog(struct gfs2_sbd *sdp)
 {
-	return unlikely(test_bit(SDF_WITHDRAW_IN_PROG, &sdp->sd_flags));
+	return test_bit(SDF_WITHDRAW_IN_PROG, &sdp->sd_flags);
 }
 
 #define gfs2_tune_get(sdp, field) \

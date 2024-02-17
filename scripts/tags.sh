@@ -3,7 +3,7 @@
 # Generate tags or cscope files
 # Usage tags.sh <mode>
 #
-# mode may be any of: tags, gtags, TAGS, cscope
+# mode may be any of: tags, TAGS, cscope
 #
 # Uses the following environment variables:
 # SUBARCH, SRCARCH, srctree
@@ -50,7 +50,7 @@ fi
 find_arch_sources()
 {
 	for i in $archincludedir; do
-		local prune="$prune ( -path $i ) -prune -o"
+		prune="$prune -wholename $i -prune -o"
 	done
 	find ${tree}arch/$1 $ignore $prune -name "$2" -not -type l -print;
 }
@@ -58,7 +58,7 @@ find_arch_sources()
 # find sources in arch/$1/include
 find_arch_include_sources()
 {
-	local include=$(find ${tree}arch/$1/ -name include -type d -print);
+	include=$(find ${tree}arch/$1/ -name include -type d -print);
 	if [ -n "$include" ]; then
 		archincludedir="$archincludedir $include"
 		find $include $ignore -name "$2" -not -type l -print;
@@ -81,16 +81,21 @@ find_other_sources()
 	       -name "$1" -not -type l -print;
 }
 
+find_sources()
+{
+	find_arch_sources $1 "$2"
+}
+
 all_sources()
 {
 	find_arch_include_sources ${SRCARCH} '*.[chS]'
-	if [ -n "$archinclude" ]; then
+	if [ ! -z "$archinclude" ]; then
 		find_arch_include_sources $archinclude '*.[chS]'
 	fi
 	find_include_sources '*.[chS]'
 	for arch in $ALLSOURCE_ARCHS
 	do
-		find_arch_sources $arch '*.[chS]'
+		find_sources $arch '*.[chS]'
 	done
 	find_other_sources '*.[chS]'
 }
@@ -120,7 +125,7 @@ all_kconfigs()
 	find ${tree}arch/ -maxdepth 1 $ignore \
 	       -name "Kconfig*" -not -type l -print;
 	for arch in $ALLSOURCE_ARCHS; do
-		find_arch_sources $arch 'Kconfig*'
+		find_sources $arch 'Kconfig*'
 	done
 	find_other_sources 'Kconfig*'
 }

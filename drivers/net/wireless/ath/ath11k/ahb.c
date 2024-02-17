@@ -1251,7 +1251,7 @@ static void ath11k_ahb_free_resources(struct ath11k_base *ab)
 	platform_set_drvdata(pdev, NULL);
 }
 
-static void ath11k_ahb_remove(struct platform_device *pdev)
+static int ath11k_ahb_remove(struct platform_device *pdev)
 {
 	struct ath11k_base *ab = platform_get_drvdata(pdev);
 
@@ -1267,6 +1267,8 @@ static void ath11k_ahb_remove(struct platform_device *pdev)
 
 qmi_fail:
 	ath11k_ahb_free_resources(ab);
+
+	return 0;
 }
 
 static void ath11k_ahb_shutdown(struct platform_device *pdev)
@@ -1294,7 +1296,7 @@ static struct platform_driver ath11k_ahb_driver = {
 		.of_match_table = ath11k_ahb_of_match,
 	},
 	.probe  = ath11k_ahb_probe,
-	.remove_new = ath11k_ahb_remove,
+	.remove = ath11k_ahb_remove,
 	.shutdown = ath11k_ahb_shutdown,
 };
 

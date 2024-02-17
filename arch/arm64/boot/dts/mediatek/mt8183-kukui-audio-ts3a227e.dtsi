@@ -11,7 +11,8 @@
 		pinctrl-0 = <&ts3a227e_pins>;
 		compatible = "ti,ts3a227e";
 		reg = <0x3b>;
-		interrupts-extended = <&pio 157 IRQ_TYPE_LEVEL_LOW>;
+		interrupt-parent = <&pio>;
+		interrupts = <157 IRQ_TYPE_LEVEL_LOW>;
 		status = "okay";
 	};
 };

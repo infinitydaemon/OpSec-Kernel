@@ -1172,8 +1172,11 @@ static int vntb_epf_peer_db_set(struct ntb_dev *ndev, u64 db_bits)
 	func_no = ntb->epf->func_no;
 	vfunc_no = ntb->epf->vfunc_no;
 
-	ret = pci_epc_raise_irq(ntb->epf->epc, func_no, vfunc_no,
-				PCI_IRQ_MSI, interrupt_num + 1);
+	ret = pci_epc_raise_irq(ntb->epf->epc,
+				func_no,
+				vfunc_no,
+				PCI_EPC_IRQ_MSI,
+				interrupt_num + 1);
 	if (ret)
 		dev_err(&ntb->ntb.dev, "Failed to raise IRQ\n");
 
@@ -1384,7 +1387,7 @@ static void epf_ntb_unbind(struct pci_epf *epf)
 }
 
 // EPF driver probe
-static const struct pci_epf_ops epf_ntb_ops = {
+static struct pci_epf_ops epf_ntb_ops = {
 	.bind   = epf_ntb_bind,
 	.unbind = epf_ntb_unbind,
 	.add_cfs = epf_ntb_add_cfs,

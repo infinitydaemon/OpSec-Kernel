@@ -100,7 +100,6 @@ static int hugetlbfs_file_mmap(struct file *file, struct vm_area_struct *vma)
 	loff_t len, vma_len;
 	int ret;
 	struct hstate *h = hstate_file(file);
-	vm_flags_t vm_flags;
 
 	/*
 	 * vma address alignment (but not the pgoff alignment) has
@@ -142,20 +141,10 @@ static int hugetlbfs_file_mmap(struct file *file, struct vm_area_struct *vma)
 	file_accessed(file);
 
 	ret = -ENOMEM;
-
-	vm_flags = vma->vm_flags;
-	/*
-	 * for SHM_HUGETLB, the pages are reserved in the shmget() call so skip
-	 * reserving here. Note: only for SHM hugetlbfs file, the inode
-	 * flag S_PRIVATE is set.
-	 */
-	if (inode->i_flags & S_PRIVATE)
-		vm_flags |= VM_NORESERVE;
-
 	if (!hugetlb_reserve_pages(inode,
 				vma->vm_pgoff >> huge_page_order(h),
 				len >> huge_page_shift(h), vma,
-				vm_flags))
+				vma->vm_flags))
 		goto out;
 
 	ret = 0;
@@ -351,7 +340,7 @@ static ssize_t hugetlbfs_read_iter(struct kiocb *iocb, struct iov_iter *to)
 		} else {
 			folio_unlock(folio);
 
-			if (!folio_test_hwpoison(folio))
+			if (!folio_test_has_hwpoisoned(folio))
 				want = nr;
 			else {
 				/*
@@ -697,7 +686,7 @@ static void hugetlbfs_evict_inode(struct inode *inode)
 	 * at inode creation time.  If this is a device special inode,
 	 * i_mapping may not point to the original address space.
 	 */
-	resv_map = (struct resv_map *)(&inode->i_data)->i_private_data;
+	resv_map = (struct resv_map *)(&inode->i_data)->private_data;
 	/* Only regular and link inodes have associated reserve maps */
 	if (resv_map)
 		resv_map_release(&resv_map->refs);
@@ -1011,7 +1000,7 @@ static struct inode *hugetlbfs_get_inode(struct super_block *sb,
 				&hugetlbfs_i_mmap_rwsem_key);
 		inode->i_mapping->a_ops = &hugetlbfs_aops;
 		simple_inode_init_ts(inode);
-		inode->i_mapping->i_private_data = resv_map;
+		inode->i_mapping->private_data = resv_map;
 		info->seals = F_SEAL_SEAL;
 		switch (mode & S_IFMT) {
 		default:
@@ -1140,8 +1129,8 @@ static int hugetlbfs_migrate_folio(struct address_space *mapping,
 #define hugetlbfs_migrate_folio NULL
 #endif
 
-static int hugetlbfs_error_remove_folio(struct address_space *mapping,
-				struct folio *folio)
+static int hugetlbfs_error_remove_page(struct address_space *mapping,
+				struct page *page)
 {
 	return 0;
 }
@@ -1288,7 +1277,7 @@ static const struct address_space_operations hugetlbfs_aops = {
 	.write_end	= hugetlbfs_write_end,
 	.dirty_folio	= noop_dirty_folio,
 	.migrate_folio  = hugetlbfs_migrate_folio,
-	.error_remove_folio	= hugetlbfs_error_remove_folio,
+	.error_remove_page	= hugetlbfs_error_remove_page,
 };
 
 
@@ -1365,7 +1354,6 @@ static int hugetlbfs_parse_param(struct fs_context *fc, struct fs_parameter *par
 {
 	struct hugetlbfs_fs_context *ctx = fc->fs_private;
 	struct fs_parse_result result;
-	struct hstate *h;
 	char *rest;
 	unsigned long ps;
 	int opt;
@@ -1410,12 +1398,11 @@ static int hugetlbfs_parse_param(struct fs_context *fc, struct fs_parameter *par
 
 	case Opt_pagesize:
 		ps = memparse(param->string, &rest);
-		h = size_to_hstate(ps);
-		if (!h) {
+		ctx->hstate = size_to_hstate(ps);
+		if (!ctx->hstate) {
 			pr_err("Unsupported page size %lu MB\n", ps / SZ_1M);
 			return -EINVAL;
 		}
-		ctx->hstate = h;
 		return 0;
 
 	case Opt_min_size:

@@ -162,6 +162,7 @@ _GLOBAL(ftrace_regs_caller)
 .globl ftrace_regs_call
 ftrace_regs_call:
 	bl	ftrace_stub
+	nop
 	ftrace_regs_exit 1
 
 _GLOBAL(ftrace_caller)
@@ -170,6 +171,7 @@ _GLOBAL(ftrace_caller)
 .globl ftrace_call
 ftrace_call:
 	bl	ftrace_stub
+	nop
 	ftrace_regs_exit 0
 
 _GLOBAL(ftrace_stub)

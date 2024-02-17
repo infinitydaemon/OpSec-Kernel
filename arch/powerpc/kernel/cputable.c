@@ -20,9 +20,9 @@
 #include <asm/setup.h>
 #include <asm/cpu_setup.h>
 
-static struct cpu_spec the_cpu_spec __ro_after_init;
+static struct cpu_spec the_cpu_spec __read_mostly;
 
-struct cpu_spec *cur_cpu_spec __ro_after_init = NULL;
+struct cpu_spec* cur_cpu_spec __read_mostly = NULL;
 EXPORT_SYMBOL(cur_cpu_spec);
 
 /* The platform string corresponding to the real PVR */

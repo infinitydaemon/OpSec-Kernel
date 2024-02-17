@@ -425,7 +425,7 @@ void __mptcp_sync_state(struct sock *sk, int state)
 
 	__mptcp_propagate_sndbuf(sk, msk->first);
 	if (sk->sk_state == TCP_SYN_SENT) {
-		mptcp_set_state(sk, state);
+		inet_sk_state_store(sk, state);
 		sk->sk_state_change(sk);
 	}
 }

@@ -125,7 +125,7 @@ struct page {
 			struct page_pool *pp;
 			unsigned long _pp_mapping_pad;
 			unsigned long dma_addr;
-			atomic_long_t pp_ref_count;
+			atomic_long_t pp_frag_count;
 		};
 		struct {	/* Tail pages of compound page */
 			unsigned long compound_head;	/* Bit zero is set */
@@ -401,11 +401,11 @@ FOLIO_MATCH(compound_head, _head_2a);
  * @pmd_huge_pte:     Protected by ptdesc->ptl, used for THPs.
  * @__page_mapping:   Aliases with page->mapping. Unused for page tables.
  * @pt_mm:            Used for x86 pgds.
- * @pt_frag_refcount: For fragmented page table tracking. Powerpc only.
+ * @pt_frag_refcount: For fragmented page table tracking. Powerpc and s390 only.
  * @_pt_pad_2:        Padding to ensure proper alignment.
  * @ptl:              Lock for the page table.
  * @__page_type:      Same as page->page_type. Unused for page tables.
- * @__page_refcount:  Same as page refcount.
+ * @_refcount:        Same as page refcount. Used for s390 page tables.
  * @pt_memcg_data:    Memcg data. Tracked for page tables here.
  *
  * This struct overlays struct page for now. Do not modify without a good
@@ -438,7 +438,7 @@ struct ptdesc {
 #endif
 	};
 	unsigned int __page_type;
-	atomic_t __page_refcount;
+	atomic_t _refcount;
 #ifdef CONFIG_MEMCG
 	unsigned long pt_memcg_data;
 #endif
@@ -452,7 +452,7 @@ TABLE_MATCH(compound_head, _pt_pad_1);
 TABLE_MATCH(mapping, __page_mapping);
 TABLE_MATCH(rcu_head, pt_rcu_head);
 TABLE_MATCH(page_type, __page_type);
-TABLE_MATCH(_refcount, __page_refcount);
+TABLE_MATCH(_refcount, _refcount);
 #ifdef CONFIG_MEMCG
 TABLE_MATCH(memcg_data, pt_memcg_data);
 #endif
@@ -730,7 +730,6 @@ struct mm_cid {
 #endif
 
 struct kioctx_table;
-struct iommu_mm_data;
 struct mm_struct {
 	struct {
 		/*
@@ -942,8 +941,8 @@ struct mm_struct {
 #endif
 		struct work_struct async_put_work;
 
-#ifdef CONFIG_IOMMU_MM_DATA
-		struct iommu_mm_data *iommu_mm;
+#ifdef CONFIG_IOMMU_SVA
+		u32 pasid;
 #endif
 #ifdef CONFIG_KSM
 		/*
@@ -962,7 +961,7 @@ struct mm_struct {
 		 */
 		unsigned long ksm_zero_pages;
 #endif /* CONFIG_KSM */
-#ifdef CONFIG_LRU_GEN_WALKS_MMU
+#ifdef CONFIG_LRU_GEN
 		struct {
 			/* this mm_struct is on lru_gen_mm_list */
 			struct list_head list;
@@ -977,7 +976,7 @@ struct mm_struct {
 			struct mem_cgroup *memcg;
 #endif
 		} lru_gen;
-#endif /* CONFIG_LRU_GEN_WALKS_MMU */
+#endif /* CONFIG_LRU_GEN */
 	} __randomize_layout;
 
 	/*
@@ -1015,13 +1014,11 @@ struct lru_gen_mm_list {
 	spinlock_t lock;
 };
 
-#endif /* CONFIG_LRU_GEN */
-
-#ifdef CONFIG_LRU_GEN_WALKS_MMU
-
 void lru_gen_add_mm(struct mm_struct *mm);
 void lru_gen_del_mm(struct mm_struct *mm);
+#ifdef CONFIG_MEMCG
 void lru_gen_migrate_mm(struct mm_struct *mm);
+#endif
 
 static inline void lru_gen_init_mm(struct mm_struct *mm)
 {
@@ -1042,7 +1039,7 @@ static inline void lru_gen_use_mm(struct mm_struct *mm)
 	WRITE_ONCE(mm->lru_gen.bitmap, -1);
 }
 
-#else /* !CONFIG_LRU_GEN_WALKS_MMU */
+#else /* !CONFIG_LRU_GEN */
 
 static inline void lru_gen_add_mm(struct mm_struct *mm)
 {
@@ -1052,9 +1049,11 @@ static inline void lru_gen_del_mm(struct mm_struct *mm)
 {
 }
 
+#ifdef CONFIG_MEMCG
 static inline void lru_gen_migrate_mm(struct mm_struct *mm)
 {
 }
+#endif
 
 static inline void lru_gen_init_mm(struct mm_struct *mm)
 {
@@ -1064,7 +1063,7 @@ static inline void lru_gen_use_mm(struct mm_struct *mm)
 {
 }
 
-#endif /* CONFIG_LRU_GEN_WALKS_MMU */
+#endif /* CONFIG_LRU_GEN */
 
 struct vma_iterator {
 	struct ma_state mas;
@@ -1075,8 +1074,7 @@ struct vma_iterator {
 		.mas = {						\
 			.tree = &(__mm)->mm_mt,				\
 			.index = __addr,				\
-			.node = NULL,					\
-			.status = ma_start,				\
+			.node = MAS_START,				\
 		},							\
 	}
 

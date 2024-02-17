@@ -76,6 +76,16 @@ static inline int ap_test_bit(unsigned int *ptr, unsigned int nr)
 #define AP_DEVICE_TYPE_CEX8	14
 
 /*
+ * Known function facilities
+ */
+#define AP_FUNC_MEX4K 1
+#define AP_FUNC_CRT4K 2
+#define AP_FUNC_COPRO 3
+#define AP_FUNC_ACCEL 4
+#define AP_FUNC_EP11  5
+#define AP_FUNC_APXA  6
+
+/*
  * AP queue state machine states
  */
 enum ap_sm_state {
@@ -172,7 +182,9 @@ struct ap_device {
 
 struct ap_card {
 	struct ap_device ap_dev;
-	struct ap_tapq_hwinfo hwinfo;	/* TAPQ GR2 content */
+	int raw_hwtype;			/* AP raw hardware type. */
+	unsigned int functions;		/* TAPQ GR2 upper 32 facility bits */
+	int queue_depth;		/* AP queue depth.*/
 	int id;				/* AP card number. */
 	unsigned int maxmsgsize;	/* AP msg limit for this card */
 	bool config;			/* configured state */
@@ -180,7 +192,7 @@ struct ap_card {
 	atomic64_t total_request_count;	/* # requests ever for this AP device.*/
 };
 
-#define TAPQ_CARD_HWINFO_MASK 0xFEFF0000FFFF0F0FUL
+#define TAPQ_CARD_FUNC_CMP_MASK 0xFFFF0000
 #define ASSOC_IDX_INVALID 0x10000
 
 #define to_ap_card(x) container_of((x), struct ap_card, ap_dev.device)
@@ -194,7 +206,7 @@ struct ap_queue {
 	bool config;			/* configured state */
 	bool chkstop;			/* checkstop state */
 	ap_qid_t qid;			/* AP queue id. */
-	unsigned int se_bstate;		/* SE bind state (BS) */
+	bool se_bound;			/* SE bound state */
 	unsigned int assoc_idx;		/* SE association index */
 	int queue_count;		/* # messages currently on AP queue. */
 	int pendingq_count;		/* # requests on pendingq list. */
@@ -278,8 +290,8 @@ void ap_queue_remove(struct ap_queue *aq);
 void ap_queue_init_state(struct ap_queue *aq);
 void _ap_queue_init_state(struct ap_queue *aq);
 
-struct ap_card *ap_card_create(int id, struct ap_tapq_hwinfo info,
-			       int comp_type);
+struct ap_card *ap_card_create(int id, int queue_depth, int raw_type,
+			       int comp_type, unsigned int functions, int ml);
 
 #define APMASKSIZE (BITS_TO_LONGS(AP_DEVICES) * sizeof(unsigned long))
 #define AQMASKSIZE (BITS_TO_LONGS(AP_DOMAINS) * sizeof(unsigned long))

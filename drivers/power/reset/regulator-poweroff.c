@@ -52,10 +52,12 @@ static int regulator_poweroff_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void regulator_poweroff_remove(struct platform_device *pdev)
+static int regulator_poweroff_remove(__maybe_unused struct platform_device *pdev)
 {
 	if (pm_power_off == &regulator_poweroff_do_poweroff)
 		pm_power_off = NULL;
+
+	return 0;
 }
 
 static const struct of_device_id of_regulator_poweroff_match[] = {
@@ -66,7 +68,7 @@ MODULE_DEVICE_TABLE(of, of_regulator_poweroff_match);
 
 static struct platform_driver regulator_poweroff_driver = {
 	.probe = regulator_poweroff_probe,
-	.remove_new = regulator_poweroff_remove,
+	.remove = regulator_poweroff_remove,
 	.driver = {
 		.name = "poweroff-regulator",
 		.of_match_table = of_regulator_poweroff_match,

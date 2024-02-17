@@ -128,8 +128,7 @@
 		ranges = <0 0 0 0x18000000>;
 
 		chipid@10000000 {
-			compatible = "samsung,exynos7-chipid",
-				     "samsung,exynos4210-chipid";
+			compatible = "samsung,exynos4210-chipid";
 			reg = <0x10000000 0x100>;
 		};
 
@@ -280,7 +279,7 @@
 		};
 
 		serial_0: serial@13630000 {
-			compatible = "samsung,exynos7-uart", "samsung,exynos4210-uart";
+			compatible = "samsung,exynos4210-uart";
 			reg = <0x13630000 0x100>;
 			interrupts = <GIC_SPI 440 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&clock_peric0 PCLK_UART0>,
@@ -290,7 +289,7 @@
 		};
 
 		serial_1: serial@14c20000 {
-			compatible = "samsung,exynos7-uart", "samsung,exynos4210-uart";
+			compatible = "samsung,exynos4210-uart";
 			reg = <0x14c20000 0x100>;
 			interrupts = <GIC_SPI 456 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&clock_peric1 PCLK_UART1>,
@@ -300,7 +299,7 @@
 		};
 
 		serial_2: serial@14c30000 {
-			compatible = "samsung,exynos7-uart", "samsung,exynos4210-uart";
+			compatible = "samsung,exynos4210-uart";
 			reg = <0x14c30000 0x100>;
 			interrupts = <GIC_SPI 457 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&clock_peric1 PCLK_UART2>,
@@ -310,7 +309,7 @@
 		};
 
 		serial_3: serial@14c40000 {
-			compatible = "samsung,exynos7-uart", "samsung,exynos4210-uart";
+			compatible = "samsung,exynos4210-uart";
 			reg = <0x14c40000 0x100>;
 			interrupts = <GIC_SPI 458 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&clock_peric1 PCLK_UART3>,
@@ -540,7 +539,7 @@
 		};
 
 		rtc: rtc@10590000 {
-			compatible = "samsung,exynos7-rtc", "samsung,s3c6410-rtc";
+			compatible = "samsung,s3c6410-rtc";
 			reg = <0x10590000 0x100>;
 			interrupts = <GIC_SPI 355 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 356 IRQ_TYPE_LEVEL_HIGH>;
@@ -560,8 +559,7 @@
 		};
 
 		gpu: gpu@14ac0000 {
-			compatible = "samsung,exynos7-mali",
-				     "samsung,exynos5433-mali", "arm,mali-t760";
+			compatible = "samsung,exynos5433-mali", "arm,mali-t760";
 			reg = <0x14ac0000 0x5000>;
 			interrupts = <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 242 IRQ_TYPE_LEVEL_HIGH>,
@@ -621,7 +619,7 @@
 		};
 
 		pwm: pwm@136c0000 {
-			compatible = "samsung,exynos7-pwm", "samsung,exynos4210-pwm";
+			compatible = "samsung,exynos4210-pwm";
 			reg = <0x136c0000 0x100>;
 			interrupts = <GIC_SPI 449 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 450 IRQ_TYPE_LEVEL_HIGH>,

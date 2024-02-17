@@ -12,7 +12,6 @@
 #include <linux/falloc.h>
 #include <linux/iversion.h>
 #include <linux/ktime.h>
-#include <linux/splice.h>
 
 #include "super.h"
 #include "mds_client.h"
@@ -1029,7 +1028,6 @@ ssize_t __ceph_sync_read(struct inode *inode, loff_t *ki_pos,
 		struct ceph_osd_req_op *op;
 		u64 read_off = off;
 		u64 read_len = len;
-		int extent_cnt;
 
 		/* determine new offset/length if encrypted */
 		ceph_fscrypt_adjust_off_and_len(inode, &read_off, &read_len);
@@ -1069,8 +1067,7 @@ ssize_t __ceph_sync_read(struct inode *inode, loff_t *ki_pos,
 
 		op = &req->r_ops[0];
 		if (sparse) {
-			extent_cnt = __ceph_sparse_read_ext_count(inode, read_len);
-			ret = ceph_alloc_sparse_ext_map(op, extent_cnt);
+			ret = ceph_alloc_sparse_ext_map(op);
 			if (ret) {
 				ceph_osdc_put_request(req);
 				break;
@@ -1467,7 +1464,6 @@ ceph_direct_read_write(struct kiocb *iocb, struct iov_iter *iter,
 		ssize_t len;
 		struct ceph_osd_req_op *op;
 		int readop = sparse ? CEPH_OSD_OP_SPARSE_READ : CEPH_OSD_OP_READ;
-		int extent_cnt;
 
 		if (write)
 			size = min_t(u64, size, fsc->mount_options->wsize);
@@ -1531,8 +1527,7 @@ ceph_direct_read_write(struct kiocb *iocb, struct iov_iter *iter,
 		osd_req_op_extent_osd_data_bvecs(req, 0, bvecs, num_pages, len);
 		op = &req->r_ops[0];
 		if (sparse) {
-			extent_cnt = __ceph_sparse_read_ext_count(inode, size);
-			ret = ceph_alloc_sparse_ext_map(op, extent_cnt);
+			ret = ceph_alloc_sparse_ext_map(op);
 			if (ret) {
 				ceph_osdc_put_request(req);
 				break;
@@ -3015,8 +3010,8 @@ static ssize_t __ceph_copy_file_range(struct file *src_file, loff_t src_off,
 		 * {read,write}_iter, which will get caps again.
 		 */
 		put_rd_wr_caps(src_ci, src_got, dst_ci, dst_got);
-		ret = splice_file_range(src_file, &src_off, dst_file, &dst_off,
-					src_objlen);
+		ret = do_splice_direct(src_file, &src_off, dst_file,
+				       &dst_off, src_objlen, flags);
 		/* Abort on short copies or on error */
 		if (ret < (long)src_objlen) {
 			doutc(cl, "Failed partial copy (%zd)\n", ret);
@@ -3070,8 +3065,8 @@ out_caps:
 	 */
 	if (len && (len < src_ci->i_layout.object_size)) {
 		doutc(cl, "Final partial copy of %zu bytes\n", len);
-		bytes = splice_file_range(src_file, &src_off, dst_file,
-					  &dst_off, len);
+		bytes = do_splice_direct(src_file, &src_off, dst_file,
+					 &dst_off, len, flags);
 		if (bytes > 0)
 			ret += bytes;
 		else
@@ -3094,8 +3089,8 @@ static ssize_t ceph_copy_file_range(struct file *src_file, loff_t src_off,
 				     len, flags);
 
 	if (ret == -EOPNOTSUPP || ret == -EXDEV)
-		ret = splice_copy_file_range(src_file, src_off, dst_file,
-					     dst_off, len);
+		ret = generic_copy_file_range(src_file, src_off, dst_file,
+					      dst_off, len, flags);
 	return ret;
 }
 

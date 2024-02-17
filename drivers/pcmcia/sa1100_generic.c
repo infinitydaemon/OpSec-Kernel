@@ -158,18 +158,20 @@ static int sa11x0_drv_pcmcia_probe(struct platform_device *pdev)
 	return sa11xx_drv_pcmcia_add_one(skt);
 }
 
-static void sa11x0_drv_pcmcia_remove(struct platform_device *dev)
+static int sa11x0_drv_pcmcia_remove(struct platform_device *dev)
 {
 	struct soc_pcmcia_socket *skt;
 
 	if (dev->id == -1) {
 		sa11x0_drv_pcmcia_legacy_remove(dev);
-		return;
+		return 0;
 	}
 
 	skt = platform_get_drvdata(dev);
 
 	soc_pcmcia_remove_one(skt);
+
+	return 0;
 }
 
 static struct platform_driver sa11x0_pcmcia_driver = {
@@ -177,7 +179,7 @@ static struct platform_driver sa11x0_pcmcia_driver = {
 		.name		= "sa11x0-pcmcia",
 	},
 	.probe		= sa11x0_drv_pcmcia_probe,
-	.remove_new	= sa11x0_drv_pcmcia_remove,
+	.remove		= sa11x0_drv_pcmcia_remove,
 };
 
 /* sa11x0_pcmcia_init()

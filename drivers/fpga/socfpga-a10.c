@@ -517,13 +517,15 @@ static int socfpga_a10_fpga_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void socfpga_a10_fpga_remove(struct platform_device *pdev)
+static int socfpga_a10_fpga_remove(struct platform_device *pdev)
 {
 	struct fpga_manager *mgr = platform_get_drvdata(pdev);
 	struct a10_fpga_priv *priv = mgr->priv;
 
 	fpga_mgr_unregister(mgr);
 	clk_disable_unprepare(priv->clk);
+
+	return 0;
 }
 
 static const struct of_device_id socfpga_a10_fpga_of_match[] = {
@@ -535,7 +537,7 @@ MODULE_DEVICE_TABLE(of, socfpga_a10_fpga_of_match);
 
 static struct platform_driver socfpga_a10_fpga_driver = {
 	.probe = socfpga_a10_fpga_probe,
-	.remove_new = socfpga_a10_fpga_remove,
+	.remove = socfpga_a10_fpga_remove,
 	.driver = {
 		.name	= "socfpga_a10_fpga_manager",
 		.of_match_table = socfpga_a10_fpga_of_match,

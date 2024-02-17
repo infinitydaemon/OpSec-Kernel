@@ -18,10 +18,6 @@ config VALIDATE_FS_PARSER
 config FS_IOMAP
 	bool
 
-# Stackable filesystems
-config FS_STACK
-	bool
-
 config BUFFER_HEAD
 	bool
 
@@ -144,6 +140,7 @@ source "fs/overlayfs/Kconfig"
 menu "Caches"
 
 source "fs/netfs/Kconfig"
+source "fs/fscache/Kconfig"
 source "fs/cachefiles/Kconfig"
 
 endmenu
@@ -257,7 +254,7 @@ config TMPFS_QUOTA
 config ARCH_SUPPORTS_HUGETLBFS
 	def_bool n
 
-menuconfig HUGETLBFS
+config HUGETLBFS
 	bool "HugeTLB file system support"
 	depends on X86 || SPARC64 || ARCH_SUPPORTS_HUGETLBFS || BROKEN
 	depends on (SYSFS || SYSCTL)
@@ -269,17 +266,6 @@ menuconfig HUGETLBFS
 
 	  If unsure, say N.
 
-if HUGETLBFS
-config HUGETLB_PAGE_OPTIMIZE_VMEMMAP_DEFAULT_ON
-	bool "HugeTLB Vmemmap Optimization (HVO) defaults to on"
-	default n
-	depends on HUGETLB_PAGE_OPTIMIZE_VMEMMAP
-	help
-	  The HugeTLB Vmemmap Optimization (HVO) defaults to off. Say Y here to
-	  enable HVO by default. It can be disabled via hugetlb_free_vmemmap=off
-	  (boot command line) or hugetlb_optimize_vmemmap (sysctl).
-endif # HUGETLBFS
-
 config HUGETLB_PAGE
 	def_bool HUGETLBFS
 	select XARRAY_MULTI
@@ -288,6 +274,15 @@ config HUGETLB_PAGE_OPTIMIZE_VMEMMAP
 	def_bool HUGETLB_PAGE
 	depends on ARCH_WANT_OPTIMIZE_HUGETLB_VMEMMAP
 	depends on SPARSEMEM_VMEMMAP
+
+config HUGETLB_PAGE_OPTIMIZE_VMEMMAP_DEFAULT_ON
+	bool "HugeTLB Vmemmap Optimization (HVO) defaults to on"
+	default n
+	depends on HUGETLB_PAGE_OPTIMIZE_VMEMMAP
+	help
+	  The HugeTLB VmemmapvOptimization (HVO) defaults to off. Say Y here to
+	  enable HVO by default. It can be disabled via hugetlb_free_vmemmap=off
+	  (boot command line) or hugetlb_optimize_vmemmap (sysctl).
 
 config ARCH_HAS_GIGANTIC_PAGE
 	bool

@@ -59,14 +59,6 @@ struct sys_off_handler {
 };
 
 /*
- * This variable is used to indicate if a halt was initiated instead of a
- * reboot when the reboot call was invoked with LINUX_REBOOT_CMD_POWER_OFF, but
- * the system cannot be powered off. This allowes kernel_halt() to notify users
- * of that.
- */
-static bool poweroff_fallback_to_halt;
-
-/*
  * Temporary stub that prevents linkage failure while we're in process
  * of removing all uses of legacy pm_power_off() around the kernel.
  */
@@ -305,10 +297,7 @@ void kernel_halt(void)
 	kernel_shutdown_prepare(SYSTEM_HALT);
 	migrate_to_reboot_cpu();
 	syscore_shutdown();
-	if (poweroff_fallback_to_halt)
-		pr_emerg("Power off not available: System halted instead\n");
-	else
-		pr_emerg("System halted\n");
+	pr_emerg("System halted\n");
 	kmsg_dump(KMSG_DUMP_SHUTDOWN);
 	machine_halt();
 }
@@ -743,10 +732,8 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 	/* Instead of trying to make the power_off code look like
 	 * halt when pm_power_off is not set do it the easy way.
 	 */
-	if ((cmd == LINUX_REBOOT_CMD_POWER_OFF) && !kernel_can_power_off()) {
-		poweroff_fallback_to_halt = true;
+	if ((cmd == LINUX_REBOOT_CMD_POWER_OFF) && !kernel_can_power_off())
 		cmd = LINUX_REBOOT_CMD_HALT;
-	}
 
 	mutex_lock(&system_transition_mutex);
 	switch (cmd) {
@@ -970,24 +957,21 @@ static void hw_failure_emergency_poweroff(int poweroff_delay_ms)
 }
 
 /**
- * __hw_protection_shutdown - Trigger an emergency system shutdown or reboot
+ * hw_protection_shutdown - Trigger an emergency system poweroff
  *
- * @reason:		Reason of emergency shutdown or reboot to be printed.
- * @ms_until_forced:	Time to wait for orderly shutdown or reboot before
- *			triggering it. Negative value disables the forced
- *			shutdown or reboot.
- * @shutdown:		If true, indicates that a shutdown will happen
- *			after the critical tempeature is reached.
- *			If false, indicates that a reboot will happen
- *			after the critical tempeature is reached.
+ * @reason:		Reason of emergency shutdown to be printed.
+ * @ms_until_forced:	Time to wait for orderly shutdown before tiggering a
+ *			forced shudown. Negative value disables the forced
+ *			shutdown.
  *
- * Initiate an emergency system shutdown or reboot in order to protect
- * hardware from further damage. Usage examples include a thermal protection.
- * NOTE: The request is ignored if protection shutdown or reboot is already
- * pending even if the previous request has given a large timeout for forced
- * shutdown/reboot.
+ * Initiate an emergency system shutdown in order to protect hardware from
+ * further damage. Usage examples include a thermal protection or a voltage or
+ * current regulator failures.
+ * NOTE: The request is ignored if protection shutdown is already pending even
+ * if the previous request has given a large timeout for forced shutdown.
+ * Can be called from any context.
  */
-void __hw_protection_shutdown(const char *reason, int ms_until_forced, bool shutdown)
+void hw_protection_shutdown(const char *reason, int ms_until_forced)
 {
 	static atomic_t allow_proceed = ATOMIC_INIT(1);
 
@@ -1002,12 +986,9 @@ void __hw_protection_shutdown(const char *reason, int ms_until_forced, bool shut
 	 * orderly_poweroff failure
 	 */
 	hw_failure_emergency_poweroff(ms_until_forced);
-	if (shutdown)
-		orderly_poweroff(true);
-	else
-		orderly_reboot();
+	orderly_poweroff(true);
 }
-EXPORT_SYMBOL_GPL(__hw_protection_shutdown);
+EXPORT_SYMBOL_GPL(hw_protection_shutdown);
 
 static int __init reboot_setup(char *str)
 {

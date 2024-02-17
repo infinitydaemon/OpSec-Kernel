@@ -82,6 +82,14 @@ for my $fh ($H, $LH) {
 	print $fh "/* $license */\n$copyright$note\n";
 }
 
+sub bit_def($) {
+	my $bit = shift @_;
+
+	return "BIT($bit)" if defined $kernel;
+	return "(1U << $bit)" if $bit =~ /^[a-zA-Z0-9_]+$/;
+	return "(1U << ($bit))";
+}
+
 print $H <<EOF
 #ifndef __${uc_header}__
 #define __${uc_header}__
@@ -89,63 +97,23 @@ print $H <<EOF
 EOF
   ;
 
+print $H "#include <linux/bits.h>\n\n" if defined $kernel;
+
 print $H <<EOF
-#include <linux/bits.h>
-
-#include <media/v4l2-cci.h>
-
+#define CCS_FL_BASE		16
 EOF
-	if defined $kernel;
+  ;
 
-print $H "#define CCS_FL_BASE		" .
-    (defined $kernel ? "CCI_REG_PRIVATE_SHIFT" : 16) . "\n";
-
-my $flag = -1;
-my $all_flags;
-
-sub bit_def($) {
-	my $bit = shift @_;
-
-	if (defined $kernel) {
-		return "BIT$bit" if $bit =~ /^\(.*\)$/;
-		return "BIT($bit)";
-	}
-	return "(1U << $bit)";
-}
-
-sub flag_str($$) {
-	my ($flag, $check) = @_;
-
-	$$flag++;
-
-	my $flag_str = !$$flag ? "CCS_FL_BASE" : "(CCS_FL_BASE + $$flag)";
-
-	$flag_str = bit_def($flag_str);
-
-	$$check .= " | " if defined $$check;
-
-	$$check .= $flag_str;
-
-	return $flag_str;
-}
-
-if (! defined $kernel) {
-	print $H "#define CCS_FL_16BIT		" . flag_str(\$flag, \$all_flags) . "\n";
-	print $H "#define CCS_FL_32BIT		" . flag_str(\$flag, \$all_flags) . "\n";
-}
-
-print $H "#define CCS_FL_FLOAT_IREAL	" . flag_str(\$flag, \$all_flags) . "\n";
-print $H "#define CCS_FL_IREAL		" . flag_str(\$flag, \$all_flags) . "\n";
-print $H "#define CCS_BUILD_BUG \\
-	BUILD_BUG_ON(~CCI_REG_PRIVATE_MASK & ($all_flags))\n"
-    if defined $kernel;
+print $H "#define CCS_FL_16BIT		" . bit_def("CCS_FL_BASE") . "\n";
+print $H "#define CCS_FL_32BIT		" . bit_def("CCS_FL_BASE + 1") . "\n";
+print $H "#define CCS_FL_FLOAT_IREAL	" . bit_def("CCS_FL_BASE + 2") . "\n";
+print $H "#define CCS_FL_IREAL		" . bit_def("CCS_FL_BASE + 3") . "\n";
 
 print $H <<EOF
-
 #define CCS_R_ADDR(r)		((r) & 0xffff)
 
 EOF
-    if ! defined $kernel;
+  ;
 
 print $A <<EOF
 #include <stdint.h>
@@ -221,12 +189,12 @@ sub tabconv($) {
 	return (join "\n", @l) . "\n";
 }
 
-sub elem_bits(@) {
+sub elem_size(@) {
 	my @flags = @_;
 
-	return 16 if grep /^16$/, @flags;
-	return 32 if grep /^32$/, @flags;
-	return 8;
+	return 2 if grep /^16$/, @flags;
+	return 4 if grep /^32$/, @flags;
+	return 1;
 }
 
 sub arr_size($) {
@@ -328,12 +296,8 @@ while (<$R>) {
 
 			next if $#{$this{args}} + 1 != scalar keys %{$this{argparams}};
 
-			my $reg_formula = "$this{addr}";
+			my $reg_formula = "($this{addr}";
 			my $lim_formula;
-
-			chop $reg_formula;
-
-			$reg_formula = "(" . $reg_formula if $this{flagstring} ne "";
 
 			foreach my $arg (@{$this{args}}) {
 				my $d = $h->{$arg}->{discontig};
@@ -351,13 +315,11 @@ while (<$R>) {
 				$lim_formula .= (defined $lim_formula ? " + " : "") . "($arg)$times";
 			}
 
-			$reg_formula .= ")";
+			$reg_formula .= ")\n";
 			$lim_formula =~ s/^\(([a-z0-9]+)\)$/$1/i;
 
 			print $H tabconv sprintf("#define %-62s %s", "CCS_R_" . (uc $this{name}) .
-						 $this{arglist}, $reg_formula .
-						 (($this{flagstring} eq "") ? "" :
-						  " | " . $this{flagstring} . ")") . "\n");
+			  $this{arglist}, $reg_formula);
 
 			print $H tabconv $hdr_data;
 			undef $hdr_data;
@@ -407,23 +369,16 @@ while (<$R>) {
 	$name =~ s/[,\.-]/_/g;
 
 	my $flagstring = "";
-	my $bits = elem_bits(@flags);
-	if (! defined $kernel) {
-		$flagstring .= "| CCS_FL_16BIT " if $bits == 16;
-		$flagstring .= "| CCS_FL_32BIT " if $bits == 32;
-	}
+	my $size = elem_size(@flags);
+	$flagstring .= "| CCS_FL_16BIT " if $size eq "2";
+	$flagstring .= "| CCS_FL_32BIT " if $size eq "4";
 	$flagstring .= "| CCS_FL_FLOAT_IREAL " if grep /^float_ireal$/, @flags;
 	$flagstring .= "| CCS_FL_IREAL " if grep /^ireal$/, @flags;
 	$flagstring =~ s/^\| //;
 	$flagstring =~ s/ $//;
 	$flagstring = "($flagstring)" if $flagstring =~ /\|/;
 	my $base_addr = $addr;
-	$addr = "CCI_REG$bits($addr)" if defined $kernel;
-
-	if ($flagstring ne "" && !@$args) {
-		$addr = "($addr | $flagstring)";
-		$flagstring = "";
-	}
+	$addr = "($addr | $flagstring)" if $flagstring ne "";
 
 	my $arglist = @$args ? "(" . (join ", ", @$args) . ")" : "";
 	$hdr_data .= sprintf "#define %-62s %s\n", "CCS_R_" . (uc $name), $addr
@@ -433,12 +388,11 @@ while (<$R>) {
 
 	%this = ( name => $name,
 		  addr => $addr,
-		  flagstring => $flagstring,
 		  base_addr => $base_addr,
 		  argparams => {},
 		  args => $args,
 		  arglist => $arglist,
-		  elsize => $bits / 8,
+		  elsize => $size,
 		);
 
 	if (!@$args) {

@@ -356,7 +356,7 @@ static int tcf_gate_init(struct net *net, struct nlattr *nla,
 		return err;
 
 	if (err && bind)
-		return ACT_P_BOUND;
+		return 0;
 
 	if (!err) {
 		ret = tcf_idr_create_from_flags(tn, index, est, a,

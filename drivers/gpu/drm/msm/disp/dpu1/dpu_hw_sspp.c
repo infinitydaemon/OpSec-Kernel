@@ -11,7 +11,6 @@
 #include "msm_mdss.h"
 
 #include <drm/drm_file.h>
-#include <drm/drm_managed.h>
 
 #define DPU_FETCH_CONFIG_RESET_VALUE   0x00000087
 
@@ -396,6 +395,15 @@ static void _dpu_hw_sspp_setup_scaler3(struct dpu_hw_sspp *ctx,
 			format);
 }
 
+static u32 _dpu_hw_sspp_get_scaler3_ver(struct dpu_hw_sspp *ctx)
+{
+	if (!ctx)
+		return 0;
+
+	return dpu_hw_get_scaler3_ver(&ctx->hw,
+				      ctx->cap->sblk->scaler_blk.base);
+}
+
 /*
  * dpu_hw_sspp_setup_rects()
  */
@@ -606,8 +614,12 @@ static void _setup_layer_ops(struct dpu_hw_sspp *c,
 		test_bit(DPU_SSPP_SMART_DMA_V2, &c->cap->features))
 		c->ops.setup_multirect = dpu_hw_sspp_setup_multirect;
 
-	if (test_bit(DPU_SSPP_SCALER_QSEED3_COMPATIBLE, &features))
+	if (test_bit(DPU_SSPP_SCALER_QSEED3, &features) ||
+			test_bit(DPU_SSPP_SCALER_QSEED3LITE, &features) ||
+			test_bit(DPU_SSPP_SCALER_QSEED4, &features)) {
 		c->ops.setup_scaler = _dpu_hw_sspp_setup_scaler3;
+		c->ops.get_scaler_ver = _dpu_hw_sspp_get_scaler3_ver;
+	}
 
 	if (test_bit(DPU_SSPP_CDP, &features))
 		c->ops.setup_cdp = dpu_hw_sspp_setup_cdp;
@@ -642,7 +654,10 @@ int _dpu_hw_sspp_init_debugfs(struct dpu_hw_sspp *hw_pipe, struct dpu_kms *kms,
 			cfg->len,
 			kms);
 
-	if (sblk->scaler_blk.len)
+	if (cfg->features & BIT(DPU_SSPP_SCALER_QSEED3) ||
+			cfg->features & BIT(DPU_SSPP_SCALER_QSEED3LITE) ||
+			cfg->features & BIT(DPU_SSPP_SCALER_QSEED2) ||
+			cfg->features & BIT(DPU_SSPP_SCALER_QSEED4))
 		dpu_debugfs_create_regset32("scaler_blk", 0400,
 				debugfs_root,
 				sblk->scaler_blk.base + cfg->base,
@@ -670,18 +685,16 @@ int _dpu_hw_sspp_init_debugfs(struct dpu_hw_sspp *hw_pipe, struct dpu_kms *kms,
 }
 #endif
 
-struct dpu_hw_sspp *dpu_hw_sspp_init(struct drm_device *dev,
-				     const struct dpu_sspp_cfg *cfg,
-				     void __iomem *addr,
-				     const struct msm_mdss_data *mdss_data,
-				     const struct dpu_mdss_version *mdss_rev)
+struct dpu_hw_sspp *dpu_hw_sspp_init(const struct dpu_sspp_cfg *cfg,
+		void __iomem *addr, const struct msm_mdss_data *mdss_data,
+		const struct dpu_mdss_version *mdss_rev)
 {
 	struct dpu_hw_sspp *hw_pipe;
 
 	if (!addr)
 		return ERR_PTR(-EINVAL);
 
-	hw_pipe = drmm_kzalloc(dev, sizeof(*hw_pipe), GFP_KERNEL);
+	hw_pipe = kzalloc(sizeof(*hw_pipe), GFP_KERNEL);
 	if (!hw_pipe)
 		return ERR_PTR(-ENOMEM);
 
@@ -696,3 +709,9 @@ struct dpu_hw_sspp *dpu_hw_sspp_init(struct drm_device *dev,
 
 	return hw_pipe;
 }
+
+void dpu_hw_sspp_destroy(struct dpu_hw_sspp *ctx)
+{
+	kfree(ctx);
+}
+

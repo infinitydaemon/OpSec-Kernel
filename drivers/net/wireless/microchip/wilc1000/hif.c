@@ -144,19 +144,18 @@ static int handle_scan_done(struct wilc_vif *vif, enum scan_event evt)
 
 	scan_req = &hif_drv->usr_scan_req;
 	if (scan_req->scan_result) {
-		scan_req->scan_result(evt, NULL, scan_req->priv);
+		scan_req->scan_result(evt, NULL, scan_req->arg);
 		scan_req->scan_result = NULL;
 	}
 
 	return result;
 }
 
-int wilc_scan(struct wilc_vif *vif, u8 scan_source,
-	      u8 scan_type, u8 *ch_freq_list,
+int wilc_scan(struct wilc_vif *vif, u8 scan_source, u8 scan_type,
+	      u8 *ch_freq_list, u8 ch_list_len,
 	      void (*scan_result_fn)(enum scan_event,
-				     struct wilc_rcvd_net_info *,
-				     struct wilc_priv *),
-	      struct cfg80211_scan_request *request)
+				     struct wilc_rcvd_net_info *, void *),
+	      void *user_arg, struct cfg80211_scan_request *request)
 {
 	int result = 0;
 	struct wid wid_list[WILC_SCAN_WID_LIST_SIZE];
@@ -165,7 +164,6 @@ int wilc_scan(struct wilc_vif *vif, u8 scan_source,
 	u8 *buffer;
 	u8 valuesize = 0;
 	u8 *search_ssid_vals = NULL;
-	const u8 ch_list_len = request->n_channels;
 	struct host_if_drv *hif_drv = vif->hif_drv;
 
 	if (hif_drv->hif_state >= HOST_IF_SCANNING &&
@@ -251,7 +249,7 @@ int wilc_scan(struct wilc_vif *vif, u8 scan_source,
 	index++;
 
 	hif_drv->usr_scan_req.scan_result = scan_result_fn;
-	hif_drv->usr_scan_req.priv = &vif->priv;
+	hif_drv->usr_scan_req.arg = user_arg;
 
 	result = wilc_send_config_pkt(vif, WILC_SET_CFG, wid_list, index);
 	if (result) {
@@ -350,7 +348,7 @@ static void handle_connect_timeout(struct work_struct *work)
 	if (hif_drv->conn_info.conn_result) {
 		hif_drv->conn_info.conn_result(CONN_DISCONN_EVENT_CONN_RESP,
 					       WILC_MAC_STATUS_DISCONNECTED,
-					       hif_drv->conn_info.priv);
+					       hif_drv->conn_info.arg);
 
 	} else {
 		netdev_err(vif->ndev, "%s: conn_result is NULL\n", __func__);
@@ -373,9 +371,8 @@ out:
 	kfree(msg);
 }
 
-struct wilc_join_bss_param *
-wilc_parse_join_bss_param(struct cfg80211_bss *bss,
-			  struct cfg80211_crypto_settings *crypto)
+void *wilc_parse_join_bss_param(struct cfg80211_bss *bss,
+				struct cfg80211_crypto_settings *crypto)
 {
 	struct wilc_join_bss_param *param;
 	struct ieee80211_p2p_noa_attr noa_attr;
@@ -548,7 +545,7 @@ static void handle_rcvd_ntwrk_info(struct work_struct *work)
 
 	if (scan_req->scan_result)
 		scan_req->scan_result(SCAN_EVENT_NETWORK_FOUND, rcvd_info,
-				      scan_req->priv);
+				      scan_req->arg);
 
 done:
 	kfree(rcvd_info->mgmt);
@@ -630,7 +627,7 @@ static inline void host_int_parse_assoc_resp_info(struct wilc_vif *vif,
 
 	del_timer(&hif_drv->connect_timer);
 	conn_info->conn_result(CONN_DISCONN_EVENT_CONN_RESP, mac_status,
-			       hif_drv->conn_info.priv);
+			       hif_drv->conn_info.arg);
 
 	if (mac_status == WILC_MAC_STATUS_CONNECTED &&
 	    conn_info->status == WLAN_STATUS_SUCCESS) {
@@ -660,7 +657,7 @@ void wilc_handle_disconnect(struct wilc_vif *vif)
 
 	if (hif_drv->conn_info.conn_result)
 		hif_drv->conn_info.conn_result(CONN_DISCONN_EVENT_DISCONN_NOTIF,
-					       0, hif_drv->conn_info.priv);
+					       0, hif_drv->conn_info.arg);
 
 	eth_zero_addr(hif_drv->assoc_bssid);
 
@@ -732,7 +729,7 @@ int wilc_disconnect(struct wilc_vif *vif)
 
 	if (scan_req->scan_result) {
 		del_timer(&hif_drv->scan_timer);
-		scan_req->scan_result(SCAN_EVENT_ABORTED, NULL, scan_req->priv);
+		scan_req->scan_result(SCAN_EVENT_ABORTED, NULL, scan_req->arg);
 		scan_req->scan_result = NULL;
 	}
 
@@ -742,7 +739,7 @@ int wilc_disconnect(struct wilc_vif *vif)
 			del_timer(&hif_drv->connect_timer);
 
 		conn_info->conn_result(CONN_DISCONN_EVENT_DISCONN_NOTIF, 0,
-				       conn_info->priv);
+				       conn_info->arg);
 	} else {
 		netdev_err(vif->ndev, "%s: conn_result is NULL\n", __func__);
 	}
@@ -881,7 +878,7 @@ static int handle_remain_on_chan(struct wilc_vif *vif,
 	if (result)
 		return -EBUSY;
 
-	hif_drv->remain_on_ch.vif = hif_remain_ch->vif;
+	hif_drv->remain_on_ch.arg = hif_remain_ch->arg;
 	hif_drv->remain_on_ch.expired = hif_remain_ch->expired;
 	hif_drv->remain_on_ch.ch = hif_remain_ch->ch;
 	hif_drv->remain_on_ch.cookie = hif_remain_ch->cookie;
@@ -918,7 +915,7 @@ static int wilc_handle_roc_expired(struct wilc_vif *vif, u64 cookie)
 		}
 
 		if (hif_drv->remain_on_ch.expired) {
-			hif_drv->remain_on_ch.expired(hif_drv->remain_on_ch.vif,
+			hif_drv->remain_on_ch.expired(hif_drv->remain_on_ch.arg,
 						      cookie);
 		}
 	} else {
@@ -1541,7 +1538,7 @@ int wilc_deinit(struct wilc_vif *vif)
 
 	if (hif_drv->usr_scan_req.scan_result) {
 		hif_drv->usr_scan_req.scan_result(SCAN_EVENT_ABORTED, NULL,
-						  hif_drv->usr_scan_req.priv);
+						  hif_drv->usr_scan_req.arg);
 		hif_drv->usr_scan_req.scan_result = NULL;
 	}
 
@@ -1672,15 +1669,18 @@ void wilc_scan_complete_received(struct wilc *wilc, u8 *buffer, u32 length)
 	}
 }
 
-int wilc_remain_on_channel(struct wilc_vif *vif, u64 cookie, u16 chan,
-			   void (*expired)(struct wilc_vif *, u64))
+int wilc_remain_on_channel(struct wilc_vif *vif, u64 cookie,
+			   u32 duration, u16 chan,
+			   void (*expired)(void *, u64),
+			   void *user_arg)
 {
 	struct wilc_remain_ch roc;
 	int result;
 
 	roc.ch = chan;
 	roc.expired = expired;
-	roc.vif = vif;
+	roc.arg = user_arg;
+	roc.duration = duration;
 	roc.cookie = cookie;
 	result = handle_remain_on_chan(vif, &roc);
 	if (result)

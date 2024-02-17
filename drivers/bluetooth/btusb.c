@@ -550,8 +550,6 @@ static const struct usb_device_id quirks_table[] = {
 						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x13d3, 0x3571), .driver_info = BTUSB_REALTEK |
 						     BTUSB_WIDEBAND_SPEECH },
-	{ USB_DEVICE(0x13d3, 0x3572), .driver_info = BTUSB_REALTEK |
-						     BTUSB_WIDEBAND_SPEECH },
 
 	/* Realtek Bluetooth devices */
 	{ USB_VENDOR_AND_INTERFACE_INFO(0x0bda, 0xe0, 0x01, 0x01),
@@ -4631,10 +4629,6 @@ static int btusb_suspend(struct usb_interface *intf, pm_message_t message)
 
 	BT_DBG("intf %p", intf);
 
-	/* Don't suspend if there are connections */
-	if (hci_conn_count(data->hdev))
-		return -EBUSY;
-
 	if (data->suspend_count++)
 		return 0;
 
@@ -4796,8 +4790,10 @@ static struct usb_driver btusb_driver = {
 	.disable_hub_initiated_lpm = 1,
 
 #ifdef CONFIG_DEV_COREDUMP
-	.driver = {
-		.coredump = btusb_coredump,
+	.drvwrap = {
+		.driver = {
+			.coredump = btusb_coredump,
+		},
 	},
 #endif
 };

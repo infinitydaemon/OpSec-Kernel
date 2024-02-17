@@ -9,9 +9,6 @@ title: Xilinx LogiCORE Partial Reconfig Decoupler/AXI shutdown manager Softcore
 maintainers:
   - Nava kishore Manne <nava.kishore.manne@amd.com>
 
-allOf:
-  - $ref: fpga-bridge.yaml#
-
 description: |
   The Xilinx LogiCORE Partial Reconfig(PR) Decoupler manages one or more
   decouplers/fpga bridges. The controller can decouple/disable the bridges
@@ -54,7 +51,7 @@ required:
   - clocks
   - clock-names
 
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

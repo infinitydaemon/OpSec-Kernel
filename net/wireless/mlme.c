@@ -22,7 +22,7 @@
 
 
 void cfg80211_rx_assoc_resp(struct net_device *dev,
-			    const struct cfg80211_rx_assoc_resp_data *data)
+			    struct cfg80211_rx_assoc_resp_data *data)
 {
 	struct wireless_dev *wdev = dev->ieee80211_ptr;
 	struct wiphy *wiphy = wdev->wiphy;

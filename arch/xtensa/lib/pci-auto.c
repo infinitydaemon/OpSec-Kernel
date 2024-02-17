@@ -11,7 +11,6 @@
  * Based on work from Matt Porter <mporter@mvista.com>
  */
 
-#include <linux/bitfield.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/pci.h>
@@ -223,11 +222,10 @@ pciauto_postscan_setup_bridge(struct pci_dev *dev, int current_bus, int sub_bus,
 
 int __init pciauto_bus_scan(struct pci_controller *pci_ctrl, int current_bus)
 {
-	int sub_bus, pci_devfn, pci_class, cmdstat;
+	int sub_bus, pci_devfn, pci_class, cmdstat, found_multi=0;
 	unsigned short vid;
 	unsigned char header_type;
 	struct pci_dev *dev = &pciauto_dev;
-	bool found_multi = false;
 
 	pciauto_dev.bus = &pciauto_bus;
 	pciauto_dev.sysdata = pci_ctrl;
@@ -263,11 +261,11 @@ int __init pciauto_bus_scan(struct pci_controller *pci_ctrl, int current_bus)
 			continue;
 
 		if (!PCI_FUNC(pci_devfn))
-			found_multi = FIELD_GET(PCI_HEADER_TYPE_MFD, header_type);
+			found_multi = header_type & 0x80;
 		pci_read_config_word(dev, PCI_VENDOR_ID, &vid);
 
 		if (vid == 0xffff || vid == 0x0000) {
-			found_multi = false;
+			found_multi = 0;
 			continue;
 		}
 

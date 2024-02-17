@@ -1038,12 +1038,13 @@ static int iavf_replace_primary_mac(struct iavf_adapter *adapter,
 	 */
 	new_f->is_primary = true;
 	new_f->add = true;
+	adapter->aq_required |= IAVF_FLAG_AQ_ADD_MAC_FILTER;
 	ether_addr_copy(hw->mac.addr, new_mac);
 
 	spin_unlock_bh(&adapter->mac_vlan_list_lock);
 
 	/* schedule the watchdog task to immediately process the request */
-	iavf_schedule_aq_request(adapter, IAVF_FLAG_AQ_ADD_MAC_FILTER);
+	mod_delayed_work(adapter->wq, &adapter->watchdog_task, 0);
 	return 0;
 }
 
@@ -1262,7 +1263,8 @@ static void iavf_up_complete(struct iavf_adapter *adapter)
 
 	iavf_napi_enable_all(adapter);
 
-	iavf_schedule_aq_request(adapter, IAVF_FLAG_AQ_ENABLE_QUEUES);
+	adapter->aq_required |= IAVF_FLAG_AQ_ENABLE_QUEUES;
+	mod_delayed_work(adapter->wq, &adapter->watchdog_task, 0);
 }
 
 /**
@@ -1418,7 +1420,8 @@ void iavf_down(struct iavf_adapter *adapter)
 			adapter->aq_required |= IAVF_FLAG_AQ_DEL_ADV_RSS_CFG;
 	}
 
-	iavf_schedule_aq_request(adapter, IAVF_FLAG_AQ_DISABLE_QUEUES);
+	adapter->aq_required |= IAVF_FLAG_AQ_DISABLE_QUEUES;
+	mod_delayed_work(adapter->wq, &adapter->watchdog_task, 0);
 }
 
 /**
@@ -2147,10 +2150,6 @@ static int iavf_process_aq_command(struct iavf_adapter *adapter)
 		iavf_set_rss_lut(adapter);
 		return 0;
 	}
-	if (adapter->aq_required & IAVF_FLAG_AQ_SET_RSS_HFUNC) {
-		iavf_set_rss_hfunc(adapter);
-		return 0;
-	}
 
 	if (adapter->aq_required & IAVF_FLAG_AQ_CONFIGURE_PROMISC_MODE) {
 		iavf_set_promiscuous(adapter);
@@ -2319,8 +2318,10 @@ iavf_set_vlan_offload_features(struct iavf_adapter *adapter,
 		}
 	}
 
-	if (aq_required)
-		iavf_schedule_aq_request(adapter, aq_required);
+	if (aq_required) {
+		adapter->aq_required |= aq_required;
+		mod_delayed_work(adapter->wq, &adapter->watchdog_task, 0);
+	}
 }
 
 /**
@@ -3233,7 +3234,7 @@ static void iavf_adminq_task(struct work_struct *work)
 		goto freedom;
 
 	/* check for error indications */
-	val = rd32(hw, IAVF_VF_ARQLEN1);
+	val = rd32(hw, hw->aq.arq.len);
 	if (val == 0xdeadbeef || val == 0xffffffff) /* device in reset */
 		goto freedom;
 	oldval = val;
@@ -3250,9 +3251,9 @@ static void iavf_adminq_task(struct work_struct *work)
 		val &= ~IAVF_VF_ARQLEN1_ARQCRIT_MASK;
 	}
 	if (oldval != val)
-		wr32(hw, IAVF_VF_ARQLEN1, val);
+		wr32(hw, hw->aq.arq.len, val);
 
-	val = rd32(hw, IAVF_VF_ATQLEN1);
+	val = rd32(hw, hw->aq.asq.len);
 	oldval = val;
 	if (val & IAVF_VF_ATQLEN1_ATQVFE_MASK) {
 		dev_info(&adapter->pdev->dev, "ASQ VF Error detected\n");
@@ -3267,7 +3268,7 @@ static void iavf_adminq_task(struct work_struct *work)
 		val &= ~IAVF_VF_ATQLEN1_ATQCRIT_MASK;
 	}
 	if (oldval != val)
-		wr32(hw, IAVF_VF_ATQLEN1, val);
+		wr32(hw, hw->aq.asq.len, val);
 
 freedom:
 	kfree(event.msg_buf);

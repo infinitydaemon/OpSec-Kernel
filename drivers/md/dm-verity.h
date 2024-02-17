@@ -83,6 +83,7 @@ struct dm_verity_io {
 	struct bvec_iter iter;
 
 	struct work_struct work;
+	struct tasklet_struct tasklet;
 
 	/*
 	 * Three variably-size fields follow this struct:

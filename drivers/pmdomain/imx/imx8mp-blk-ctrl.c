@@ -760,7 +760,7 @@ cleanup_pds:
 	return ret;
 }
 
-static void imx8mp_blk_ctrl_remove(struct platform_device *pdev)
+static int imx8mp_blk_ctrl_remove(struct platform_device *pdev)
 {
 	struct imx8mp_blk_ctrl *bc = dev_get_drvdata(&pdev->dev);
 	int i;
@@ -777,6 +777,8 @@ static void imx8mp_blk_ctrl_remove(struct platform_device *pdev)
 	dev_pm_genpd_remove_notifier(bc->bus_power_dev);
 
 	dev_pm_domain_detach(bc->bus_power_dev, true);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -854,7 +856,7 @@ MODULE_DEVICE_TABLE(of, imx8mp_blk_ctrl_of_match);
 
 static struct platform_driver imx8mp_blk_ctrl_driver = {
 	.probe = imx8mp_blk_ctrl_probe,
-	.remove_new = imx8mp_blk_ctrl_remove,
+	.remove = imx8mp_blk_ctrl_remove,
 	.driver = {
 		.name = "imx8mp-blk-ctrl",
 		.pm = &imx8mp_blk_ctrl_pm_ops,

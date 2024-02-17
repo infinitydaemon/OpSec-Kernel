@@ -1370,29 +1370,28 @@ static u32 qede_get_rxfh_key_size(struct net_device *dev)
 	return sizeof(edev->rss_key);
 }
 
-static int qede_get_rxfh(struct net_device *dev,
-			 struct ethtool_rxfh_param *rxfh)
+static int qede_get_rxfh(struct net_device *dev, u32 *indir, u8 *key, u8 *hfunc)
 {
 	struct qede_dev *edev = netdev_priv(dev);
 	int i;
 
-	rxfh->hfunc = ETH_RSS_HASH_TOP;
+	if (hfunc)
+		*hfunc = ETH_RSS_HASH_TOP;
 
-	if (!rxfh->indir)
+	if (!indir)
 		return 0;
 
 	for (i = 0; i < QED_RSS_IND_TABLE_SIZE; i++)
-		rxfh->indir[i] = edev->rss_ind_table[i];
+		indir[i] = edev->rss_ind_table[i];
 
-	if (rxfh->key)
-		memcpy(rxfh->key, edev->rss_key, qede_get_rxfh_key_size(dev));
+	if (key)
+		memcpy(key, edev->rss_key, qede_get_rxfh_key_size(dev));
 
 	return 0;
 }
 
-static int qede_set_rxfh(struct net_device *dev,
-			 struct ethtool_rxfh_param *rxfh,
-			 struct netlink_ext_ack *extack)
+static int qede_set_rxfh(struct net_device *dev, const u32 *indir,
+			 const u8 *key, const u8 hfunc)
 {
 	struct qed_update_vport_params *vport_update_params;
 	struct qede_dev *edev = netdev_priv(dev);
@@ -1404,21 +1403,20 @@ static int qede_set_rxfh(struct net_device *dev,
 		return -EOPNOTSUPP;
 	}
 
-	if (rxfh->hfunc != ETH_RSS_HASH_NO_CHANGE &&
-	    rxfh->hfunc != ETH_RSS_HASH_TOP)
+	if (hfunc != ETH_RSS_HASH_NO_CHANGE && hfunc != ETH_RSS_HASH_TOP)
 		return -EOPNOTSUPP;
 
-	if (!rxfh->indir && !rxfh->key)
+	if (!indir && !key)
 		return 0;
 
-	if (rxfh->indir) {
+	if (indir) {
 		for (i = 0; i < QED_RSS_IND_TABLE_SIZE; i++)
-			edev->rss_ind_table[i] = rxfh->indir[i];
+			edev->rss_ind_table[i] = indir[i];
 		edev->rss_params_inited |= QEDE_RSS_INDIR_INITED;
 	}
 
-	if (rxfh->key) {
-		memcpy(&edev->rss_key, rxfh->key, qede_get_rxfh_key_size(dev));
+	if (key) {
+		memcpy(&edev->rss_key, key, qede_get_rxfh_key_size(dev));
 		edev->rss_params_inited |= QEDE_RSS_KEY_INITED;
 	}
 

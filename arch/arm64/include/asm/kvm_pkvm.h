@@ -56,11 +56,10 @@ static inline unsigned long hyp_vm_table_pages(void)
 
 static inline unsigned long __hyp_pgtable_max_pages(unsigned long nr_pages)
 {
-	unsigned long total = 0;
-	int i;
+	unsigned long total = 0, i;
 
 	/* Provision the worst case scenario */
-	for (i = KVM_PGTABLE_FIRST_LEVEL; i <= KVM_PGTABLE_LAST_LEVEL; i++) {
+	for (i = 0; i < KVM_PGTABLE_MAX_LEVELS; i++) {
 		nr_pages = DIV_ROUND_UP(nr_pages, PTRS_PER_PTE);
 		total += nr_pages;
 	}

@@ -248,43 +248,28 @@ static void ice_vf_pre_vsi_rebuild(struct ice_vf *vf)
 }
 
 /**
- * ice_vf_reconfig_vsi - Reconfigure a VF VSI with the device
- * @vf: VF to reconfigure the VSI for
+ * ice_vf_recreate_vsi - Release and re-create the VF's VSI
+ * @vf: VF to recreate the VSI for
  *
- * This is called when a single VF is being reset (i.e. VVF, VFLR, host VF
- * configuration change, etc).
+ * This is only called when a single VF is being reset (i.e. VVF, VFLR, host
+ * VF configuration change, etc)
  *
- * It brings the VSI down and then reconfigures it with the hardware.
+ * It releases and then re-creates a new VSI.
  */
-int ice_vf_reconfig_vsi(struct ice_vf *vf)
+static int ice_vf_recreate_vsi(struct ice_vf *vf)
 {
-	struct ice_vsi *vsi = ice_get_vf_vsi(vf);
-	struct ice_vsi_cfg_params params = {};
 	struct ice_pf *pf = vf->pf;
 	int err;
 
-	if (WARN_ON(!vsi))
-		return -EINVAL;
+	ice_vf_vsi_release(vf);
 
-	params = ice_vsi_to_params(vsi);
-	params.flags = ICE_VSI_FLAG_NO_INIT;
-
-	ice_vsi_decfg(vsi);
-	ice_fltr_remove_all(vsi);
-
-	err = ice_vsi_cfg(vsi, &params);
+	err = vf->vf_ops->create_vsi(vf);
 	if (err) {
 		dev_err(ice_pf_to_dev(pf),
-			"Failed to reconfigure the VF%u's VSI, error %d\n",
+			"Failed to recreate the VF%u's VSI, error %d\n",
 			vf->vf_id, err);
 		return err;
 	}
-
-	/* Update the lan_vsi_num field since it might have been changed. The
-	 * PF lan_vsi_idx number remains the same so we don't need to change
-	 * that.
-	 */
-	vf->lan_vsi_num = vsi->vsi_num;
 
 	return 0;
 }
@@ -775,7 +760,6 @@ void ice_reset_all_vfs(struct ice_pf *pf)
 	ice_for_each_vf(pf, bkt, vf) {
 		mutex_lock(&vf->cfg_lock);
 
-		ice_eswitch_detach(pf, vf);
 		vf->driver_caps = 0;
 		ice_vc_set_default_allowlist(vf);
 
@@ -791,10 +775,12 @@ void ice_reset_all_vfs(struct ice_pf *pf)
 		ice_vf_rebuild_vsi(vf);
 		ice_vf_post_vsi_rebuild(vf);
 
-		ice_eswitch_attach(pf, vf);
-
 		mutex_unlock(&vf->cfg_lock);
 	}
+
+	if (ice_is_eswitch_mode_switchdev(pf))
+		if (ice_eswitch_rebuild(pf))
+			dev_warn(dev, "eswitch rebuild failed\n");
 
 	ice_flush(hw);
 	clear_bit(ICE_VF_DIS, pf->state);
@@ -943,7 +929,7 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 
 	ice_vf_pre_vsi_rebuild(vf);
 
-	if (ice_vf_reconfig_vsi(vf)) {
+	if (ice_vf_recreate_vsi(vf)) {
 		dev_err(dev, "Failed to release and setup the VF%u's VSI\n",
 			vf->vf_id);
 		err = -EFAULT;
@@ -957,7 +943,7 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 		goto out_unlock;
 	}
 
-	ice_eswitch_update_repr(vf->repr_id, vsi);
+	ice_eswitch_update_repr(vsi);
 
 	/* if the VF has been reset allow it to come up again */
 	ice_mbx_clear_malvf(&vf->mbx_info);

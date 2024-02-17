@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <sys/prctl.h>
 #include <unistd.h>
+#include <asm/hwprobe.h>
 #include <errno.h>
 #include <sys/wait.h>
 
-#include "../hwprobe/hwprobe.h"
 #include "../../kselftest.h"
+
+/*
+ * Rather than relying on having a new enough libc to define this, just do it
+ * ourselves.  This way we don't need to be coupled to a new-enough libc to
+ * contain the call.
+ */
+long riscv_hwprobe(struct riscv_hwprobe *pairs, size_t pair_count,
+		   size_t cpu_count, unsigned long *cpus, unsigned int flags);
 
 #define NEXT_PROGRAM "./vstate_exec_nolibc"
 static int launch_test(int test_inherit)
@@ -60,7 +68,7 @@ int test_and_compare_child(long provided, long expected, int inherit)
 	}
 	rc = launch_test(inherit);
 	if (rc != expected) {
-		ksft_test_result_fail("Test failed, check %d != %ld\n", rc,
+		ksft_test_result_fail("Test failed, check %d != %d\n", rc,
 				      expected);
 		return -2;
 	}
@@ -79,7 +87,7 @@ int main(void)
 	pair.key = RISCV_HWPROBE_KEY_IMA_EXT_0;
 	rc = riscv_hwprobe(&pair, 1, 0, NULL, 0);
 	if (rc < 0) {
-		ksft_test_result_fail("hwprobe() failed with %ld\n", rc);
+		ksft_test_result_fail("hwprobe() failed with %d\n", rc);
 		return -1;
 	}
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /* NXP C45 PHY driver
- * Copyright 2021-2023 NXP
+ * Copyright (C) 2021 NXP
  * Author: Radu Pirea <radu-nicolae.pirea@oss.nxp.com>
  */
 
@@ -14,9 +14,8 @@
 #include <linux/processor.h>
 #include <linux/property.h>
 #include <linux/ptp_classify.h>
+#include <linux/ptp_clock_kernel.h>
 #include <linux/net_tstamp.h>
-
-#include "nxp-c45-tja11xx.h"
 
 #define PHY_ID_TJA_1103			0x001BB010
 #define PHY_ID_TJA_1120			0x001BB031
@@ -76,11 +75,9 @@
 #define PORT_CONTROL_EN			BIT(14)
 
 #define VEND1_PORT_ABILITIES		0x8046
-#define MACSEC_ABILITY			BIT(5)
 #define PTP_ABILITY			BIT(3)
 
 #define VEND1_PORT_FUNC_IRQ_EN		0x807A
-#define MACSEC_IRQS			BIT(5)
 #define PTP_IRQS			BIT(3)
 
 #define VEND1_PTP_IRQ_ACK		0x9008
@@ -151,6 +148,7 @@
 
 #define TS_SEC_MASK			GENMASK(1, 0)
 
+#define VEND1_PORT_FUNC_ENABLES		0x8048
 #define PTP_ENABLE			BIT(3)
 #define PHY_TEST_ENABLE			BIT(0)
 
@@ -281,6 +279,25 @@ struct nxp_c45_phy_data {
 	void (*ptp_enable)(struct phy_device *phydev, bool enable);
 	void (*nmi_handler)(struct phy_device *phydev,
 			    irqreturn_t *irq_status);
+};
+
+struct nxp_c45_phy {
+	const struct nxp_c45_phy_data *phy_data;
+	struct phy_device *phydev;
+	struct mii_timestamper mii_ts;
+	struct ptp_clock *ptp_clock;
+	struct ptp_clock_info caps;
+	struct sk_buff_head tx_queue;
+	struct sk_buff_head rx_queue;
+	/* used to access the PTP registers atomic */
+	struct mutex ptp_lock;
+	int hwts_tx;
+	int hwts_rx;
+	u32 tx_delay;
+	u32 rx_delay;
+	struct timespec64 extts_ts;
+	int extts_index;
+	bool extts;
 };
 
 static const
@@ -1005,21 +1022,24 @@ static bool nxp_c45_rxtstamp(struct mii_timestamper *mii_ts,
 }
 
 static int nxp_c45_hwtstamp(struct mii_timestamper *mii_ts,
-			    struct kernel_hwtstamp_config *cfg,
-			    struct netlink_ext_ack *extack)
+			    struct ifreq *ifreq)
 {
 	struct nxp_c45_phy *priv = container_of(mii_ts, struct nxp_c45_phy,
 						mii_ts);
 	struct phy_device *phydev = priv->phydev;
 	const struct nxp_c45_phy_data *data;
+	struct hwtstamp_config cfg;
 
-	if (cfg->tx_type < 0 || cfg->tx_type > HWTSTAMP_TX_ON)
+	if (copy_from_user(&cfg, ifreq->ifr_data, sizeof(cfg)))
+		return -EFAULT;
+
+	if (cfg.tx_type < 0 || cfg.tx_type > HWTSTAMP_TX_ON)
 		return -ERANGE;
 
 	data = nxp_c45_get_data(phydev);
-	priv->hwts_tx = cfg->tx_type;
+	priv->hwts_tx = cfg.tx_type;
 
-	switch (cfg->rx_filter) {
+	switch (cfg.rx_filter) {
 	case HWTSTAMP_FILTER_NONE:
 		priv->hwts_rx = 0;
 		break;
@@ -1027,7 +1047,7 @@ static int nxp_c45_hwtstamp(struct mii_timestamper *mii_ts,
 	case HWTSTAMP_FILTER_PTP_V2_L2_SYNC:
 	case HWTSTAMP_FILTER_PTP_V2_L2_DELAY_REQ:
 		priv->hwts_rx = 1;
-		cfg->rx_filter = HWTSTAMP_FILTER_PTP_V2_L2_EVENT;
+		cfg.rx_filter = HWTSTAMP_FILTER_PTP_V2_L2_EVENT;
 		break;
 	default:
 		return -ERANGE;
@@ -1054,7 +1074,7 @@ static int nxp_c45_hwtstamp(struct mii_timestamper *mii_ts,
 		nxp_c45_clear_reg_field(phydev, &data->regmap->irq_egr_ts_en);
 
 nxp_c45_no_ptp_irq:
-	return 0;
+	return copy_to_user(ifreq->ifr_data, &cfg, sizeof(cfg)) ? -EFAULT : 0;
 }
 
 static int nxp_c45_ts_info(struct mii_timestamper *mii_ts,
@@ -1198,25 +1218,12 @@ static int nxp_c45_start_op(struct phy_device *phydev)
 
 static int nxp_c45_config_intr(struct phy_device *phydev)
 {
-	int ret;
-
-	if (phydev->interrupts == PHY_INTERRUPT_ENABLED) {
-		ret = phy_set_bits_mmd(phydev, MDIO_MMD_VEND1,
-				       VEND1_PORT_FUNC_IRQ_EN, MACSEC_IRQS);
-		if (ret)
-			return ret;
-
+	if (phydev->interrupts == PHY_INTERRUPT_ENABLED)
 		return phy_set_bits_mmd(phydev, MDIO_MMD_VEND1,
 					VEND1_PHY_IRQ_EN, PHY_IRQ_LINK_EVENT);
-	}
-
-	ret = phy_clear_bits_mmd(phydev, MDIO_MMD_VEND1,
-				 VEND1_PORT_FUNC_IRQ_EN, MACSEC_IRQS);
-	if (ret)
-		return ret;
-
-	return phy_clear_bits_mmd(phydev, MDIO_MMD_VEND1,
-				  VEND1_PHY_IRQ_EN, PHY_IRQ_LINK_EVENT);
+	else
+		return phy_clear_bits_mmd(phydev, MDIO_MMD_VEND1,
+					  VEND1_PHY_IRQ_EN, PHY_IRQ_LINK_EVENT);
 }
 
 static int tja1103_config_intr(struct phy_device *phydev)
@@ -1282,7 +1289,6 @@ static irqreturn_t nxp_c45_handle_interrupt(struct phy_device *phydev)
 	}
 
 	data->nmi_handler(phydev, &ret);
-	nxp_c45_handle_macsec_interrupt(phydev, &ret);
 
 	return ret;
 }
@@ -1608,9 +1614,6 @@ static int nxp_c45_config_init(struct phy_device *phydev)
 
 	nxp_c45_counters_enable(phydev);
 	nxp_c45_ptp_init(phydev);
-	ret = nxp_c45_macsec_config_init(phydev);
-	if (ret)
-		return ret;
 
 	return nxp_c45_start_op(phydev);
 }
@@ -1626,9 +1629,7 @@ static int nxp_c45_get_features(struct phy_device *phydev)
 static int nxp_c45_probe(struct phy_device *phydev)
 {
 	struct nxp_c45_phy *priv;
-	bool macsec_ability;
-	int phy_abilities;
-	bool ptp_ability;
+	int ptp_ability;
 	int ret = 0;
 
 	priv = devm_kzalloc(&phydev->mdio.dev, sizeof(*priv), GFP_KERNEL);
@@ -1644,9 +1645,9 @@ static int nxp_c45_probe(struct phy_device *phydev)
 
 	mutex_init(&priv->ptp_lock);
 
-	phy_abilities = phy_read_mmd(phydev, MDIO_MMD_VEND1,
-				     VEND1_PORT_ABILITIES);
-	ptp_ability = !!(phy_abilities & PTP_ABILITY);
+	ptp_ability = phy_read_mmd(phydev, MDIO_MMD_VEND1,
+				   VEND1_PORT_ABILITIES);
+	ptp_ability = !!(ptp_ability & PTP_ABILITY);
 	if (!ptp_ability) {
 		phydev_dbg(phydev, "the phy does not support PTP");
 		goto no_ptp_support;
@@ -1665,20 +1666,6 @@ static int nxp_c45_probe(struct phy_device *phydev)
 	}
 
 no_ptp_support:
-	macsec_ability = !!(phy_abilities & MACSEC_ABILITY);
-	if (!macsec_ability) {
-		phydev_info(phydev, "the phy does not support MACsec\n");
-		goto no_macsec_support;
-	}
-
-	if (IS_ENABLED(CONFIG_MACSEC)) {
-		ret = nxp_c45_macsec_probe(phydev);
-		phydev_dbg(phydev, "MACsec support enabled.");
-	} else {
-		phydev_dbg(phydev, "MACsec support not enabled even if the phy supports it");
-	}
-
-no_macsec_support:
 
 	return ret;
 }
@@ -1692,7 +1679,6 @@ static void nxp_c45_remove(struct phy_device *phydev)
 
 	skb_queue_purge(&priv->tx_queue);
 	skb_queue_purge(&priv->rx_queue);
-	nxp_c45_macsec_remove(phydev);
 }
 
 static void tja1103_counters_enable(struct phy_device *phydev)

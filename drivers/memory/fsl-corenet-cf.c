@@ -223,7 +223,7 @@ static int ccf_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void ccf_remove(struct platform_device *pdev)
+static int ccf_remove(struct platform_device *pdev)
 {
 	struct ccf_private *ccf = dev_get_drvdata(&pdev->dev);
 
@@ -241,6 +241,8 @@ static void ccf_remove(struct platform_device *pdev)
 		iowrite32be(0, &ccf->err_regs->errinten);
 		break;
 	}
+
+	return 0;
 }
 
 static struct platform_driver ccf_driver = {
@@ -249,7 +251,7 @@ static struct platform_driver ccf_driver = {
 		.of_match_table = ccf_matches,
 	},
 	.probe = ccf_probe,
-	.remove_new = ccf_remove,
+	.remove = ccf_remove,
 };
 
 module_platform_driver(ccf_driver);

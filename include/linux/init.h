@@ -179,13 +179,6 @@ extern void (*late_time_init)(void);
 
 extern bool initcall_debug;
 
-#ifdef MODULE
-extern struct module __this_module;
-#define THIS_MODULE (&__this_module)
-#else
-#define THIS_MODULE ((struct module *)0)
-#endif
-
 #endif
   
 #ifndef MODULE
