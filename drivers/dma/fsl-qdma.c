@@ -568,10 +568,9 @@ static struct fsl_qdma_queue
 					      status_size,
 					      &status_head->bus_addr,
 					      GFP_KERNEL);
-	if (!status_head->cq) {
-		devm_kfree(&pdev->dev, status_head);
+	if (!status_head->cq)
 		return NULL;
-	}
+
 	status_head->n_cq = status_size;
 	status_head->virt_head = status_head->cq;
 	status_head->virt_tail = status_head->cq;
@@ -805,7 +804,7 @@ fsl_qdma_irq_init(struct platform_device *pdev,
 	int i;
 	int cpu;
 	int ret;
-	char irq_name[20];
+	char irq_name[32];
 
 	fsl_qdma->error_irq =
 		platform_get_irq_byname(pdev, "qdma-error");

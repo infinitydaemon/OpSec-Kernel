@@ -2528,11 +2528,12 @@ static void wacom_wac_pen_report(struct hid_device *hdev,
 	struct input_dev *input = wacom_wac->pen_input;
 	bool range = wacom_wac->hid_data.inrange_state;
 	bool sense = wacom_wac->hid_data.sense_state;
+	bool entering_range = !wacom_wac->tool[0] && range;
 
 	if (wacom_wac->is_invalid_bt_frame)
 		return;
 
-	if (!wacom_wac->tool[0] && range) { /* first in range */
+	if (entering_range) { /* first in range */
 		/* Going into range select tool */
 		if (wacom_wac->hid_data.invert_state)
 			wacom_wac->tool[0] = BTN_TOOL_RUBBER;
@@ -2574,13 +2575,29 @@ static void wacom_wac_pen_report(struct hid_device *hdev,
 				wacom_wac->hid_data.tipswitch);
 		input_report_key(input, wacom_wac->tool[0], sense);
 		if (wacom_wac->serial[0]) {
-			input_event(input, EV_MSC, MSC_SERIAL, wacom_wac->serial[0]);
+			/*
+			 * xf86-input-wacom does not accept a serial number
+			 * of '0'. Report the low 32 bits if possible, but
+			 * if they are zero, report the upper ones instead.
+			 */
+			__u32 serial_lo = wacom_wac->serial[0] & 0xFFFFFFFFu;
+			__u32 serial_hi = wacom_wac->serial[0] >> 32;
+			input_event(input, EV_MSC, MSC_SERIAL, (int)(serial_lo ? serial_lo : serial_hi));
 			input_report_abs(input, ABS_MISC, sense ? id : 0);
 		}
 
 		wacom_wac->hid_data.tipswitch = false;
 
 		input_sync(input);
+	}
+
+	/* Handle AES battery timeout behavior */
+	if (wacom_wac->features.quirks & WACOM_QUIRK_AESPEN) {
+		if (entering_range)
+			cancel_delayed_work(&wacom->aes_battery_work);
+		if (!sense)
+			schedule_delayed_work(&wacom->aes_battery_work,
+					      msecs_to_jiffies(WACOM_AES_BATTERY_TIMEOUT));
 	}
 
 	if (!sense) {
