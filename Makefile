@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 6
-PATCHLEVEL = 7
-SUBLEVEL = 14
-EXTRAVERSION = rc6
-NAME = Rattle Monkey
+PATCHLEVEL = 8
+SUBLEVEL = 01
+EXTRAVERSION = rc1
+NAME = The Dark Hadou
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
