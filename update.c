@@ -1,3 +1,5 @@
+# W.I.P for kernel update. This disregards the apt updates needed to upgrade the kernel releases. include
+
 #include <iostream>
 #include <curl/curl.h>
 #include <rapidjson/document.h>
