@@ -29,8 +29,12 @@ The build instructions for SBC vary when compared to official kernel.org build i
 sudo apt install git bc bison flex libssl-dev make libncurses-dev ( optional )
 git clone https://github.com/infinitydaemon/OpSec-Kernel.git
 cd OpSec-Kernel
+- For PRI4
 KERNEL=kernel8
 make bcm2711_defconfig
+- FOR RPI5
+KERNEL=kernel_2712
+make bcm2712_defconfig
 edit the .config file and put a different name and build version for your kernel as :
 CONFIG_LOCALVERSION="-OpSec-XXX" , where XXX is the current release version
 make -j4 Image.gz modules dtbs
