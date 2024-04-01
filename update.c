@@ -1,4 +1,4 @@
-# W.I.P for kernel update. This disregards the apt updates needed to upgrade the kernel releases. include
+# W.I.P for kernel update. This disregards the apt updates needed to upgrade the kernel releases.
 
 #include <iostream>
 #include <curl/curl.h>
