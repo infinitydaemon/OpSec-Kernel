@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 6
 PATCHLEVEL = 9
-SUBLEVEL = 02
+SUBLEVEL = 9
 EXTRAVERSION = 
-NAME = 
+NAME = The Dark Hadou
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
