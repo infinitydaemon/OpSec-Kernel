@@ -5,7 +5,7 @@ class CWD_OpSec():
     
   def __init__(self):
     self.name = "cwd";
-    self.current.release = "The Dark Hadou";
+    self.current.release = "The Dark Hadou for ARM";
     self.username = "cwdsystems";
     self.location = "KyrgzRepublic";
     self.protonmail = "@cwdsystems";
