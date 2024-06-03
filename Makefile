@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 6
 PATCHLEVEL = 9
-SUBLEVEL = 9
+SUBLEVEL = 3
 EXTRAVERSION = 
 NAME = The Dark Hadou
 
