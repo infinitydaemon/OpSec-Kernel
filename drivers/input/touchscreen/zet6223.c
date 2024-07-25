@@ -25,6 +25,8 @@
 struct zet6223_ts {
 	struct i2c_client *client;
 	struct input_dev *input;
+	struct regulator *vcc;
+	struct regulator *vio;
 	struct touchscreen_properties prop;
 	struct regulator_bulk_data supplies[2];
 	u16 max_x;
@@ -236,7 +238,7 @@ static const struct of_device_id zet6223_of_match[] = {
 MODULE_DEVICE_TABLE(of, zet6223_of_match);
 
 static const struct i2c_device_id zet6223_id[] = {
-	{ "zet6223" },
+	{ "zet6223", 0},
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, zet6223_id);

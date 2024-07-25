@@ -328,7 +328,7 @@ static int dw_pcie_msi_host_init(struct dw_pcie_rp *pp)
 	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
 	struct device *dev = pci->dev;
 	struct platform_device *pdev = to_platform_device(dev);
-	u64 *msi_vaddr = NULL;
+	u64 *msi_vaddr;
 	int ret;
 	u32 ctrl, num_ctrls;
 
@@ -379,20 +379,15 @@ static int dw_pcie_msi_host_init(struct dw_pcie_rp *pp)
 	 * memory.
 	 */
 	ret = dma_set_coherent_mask(dev, DMA_BIT_MASK(32));
-	if (!ret)
-		msi_vaddr = dmam_alloc_coherent(dev, sizeof(u64), &pp->msi_data,
-						GFP_KERNEL);
+	if (ret)
+		dev_warn(dev, "Failed to set DMA mask to 32-bit. Devices with only 32-bit MSI support may not work properly\n");
 
+	msi_vaddr = dmam_alloc_coherent(dev, sizeof(u64), &pp->msi_data,
+					GFP_KERNEL);
 	if (!msi_vaddr) {
-		dev_warn(dev, "Failed to allocate 32-bit MSI address\n");
-		dma_set_coherent_mask(dev, DMA_BIT_MASK(64));
-		msi_vaddr = dmam_alloc_coherent(dev, sizeof(u64), &pp->msi_data,
-						GFP_KERNEL);
-		if (!msi_vaddr) {
-			dev_err(dev, "Failed to allocate MSI address\n");
-			dw_pcie_free_msi(pp);
-			return -ENOMEM;
-		}
+		dev_err(dev, "Failed to alloc and map MSI data\n");
+		dw_pcie_free_msi(pp);
+		return -ENOMEM;
 	}
 
 	return 0;
@@ -446,14 +441,14 @@ int dw_pcie_host_init(struct dw_pcie_rp *pp)
 	bridge->ops = &dw_pcie_ops;
 	bridge->child_ops = &dw_child_pcie_ops;
 
-	if (pp->ops->init) {
-		ret = pp->ops->init(pp);
+	if (pp->ops->host_init) {
+		ret = pp->ops->host_init(pp);
 		if (ret)
 			return ret;
 	}
 
 	if (pci_msi_enabled()) {
-		pp->has_msi_ctrl = !(pp->ops->msi_init ||
+		pp->has_msi_ctrl = !(pp->ops->msi_host_init ||
 				     of_property_read_bool(np, "msi-parent") ||
 				     of_property_read_bool(np, "msi-map"));
 
@@ -469,8 +464,8 @@ int dw_pcie_host_init(struct dw_pcie_rp *pp)
 			goto err_deinit_host;
 		}
 
-		if (pp->ops->msi_init) {
-			ret = pp->ops->msi_init(pp);
+		if (pp->ops->msi_host_init) {
+			ret = pp->ops->msi_host_init(pp);
 			if (ret < 0)
 				goto err_deinit_host;
 		} else if (pp->has_msi_ctrl) {
@@ -507,9 +502,6 @@ int dw_pcie_host_init(struct dw_pcie_rp *pp)
 	if (ret)
 		goto err_stop_link;
 
-	if (pp->ops->post_init)
-		pp->ops->post_init(pp);
-
 	return 0;
 
 err_stop_link:
@@ -523,8 +515,8 @@ err_free_msi:
 		dw_pcie_free_msi(pp);
 
 err_deinit_host:
-	if (pp->ops->deinit)
-		pp->ops->deinit(pp);
+	if (pp->ops->host_deinit)
+		pp->ops->host_deinit(pp);
 
 	return ret;
 }
@@ -544,8 +536,8 @@ void dw_pcie_host_deinit(struct dw_pcie_rp *pp)
 	if (pp->has_msi_ctrl)
 		dw_pcie_free_msi(pp);
 
-	if (pp->ops->deinit)
-		pp->ops->deinit(pp);
+	if (pp->ops->host_deinit)
+		pp->ops->host_deinit(pp);
 }
 EXPORT_SYMBOL_GPL(dw_pcie_host_deinit);
 
@@ -847,8 +839,8 @@ int dw_pcie_suspend_noirq(struct dw_pcie *pci)
 		return ret;
 	}
 
-	if (pci->pp.ops->deinit)
-		pci->pp.ops->deinit(&pci->pp);
+	if (pci->pp.ops->host_deinit)
+		pci->pp.ops->host_deinit(&pci->pp);
 
 	pci->suspended = true;
 
@@ -865,8 +857,8 @@ int dw_pcie_resume_noirq(struct dw_pcie *pci)
 
 	pci->suspended = false;
 
-	if (pci->pp.ops->init) {
-		ret = pci->pp.ops->init(&pci->pp);
+	if (pci->pp.ops->host_init) {
+		ret = pci->pp.ops->host_init(&pci->pp);
 		if (ret) {
 			dev_err(pci->dev, "Host init failed: %d\n", ret);
 			return ret;

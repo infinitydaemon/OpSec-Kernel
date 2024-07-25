@@ -19,7 +19,7 @@ sysdef := $(sysprf)/syscall.tbl
 systbl := $(sysprf)/mksyscalltbl
 
 # Create output directory if not already present
-$(shell [ -d '$(out)' ] || mkdir -p '$(out)')
+_dummy := $(shell [ -d '$(out)' ] || mkdir -p '$(out)')
 
 $(header64): $(sysdef) $(systbl)
 	$(Q)$(SHELL) '$(systbl)' '64' $(sysdef) > $@

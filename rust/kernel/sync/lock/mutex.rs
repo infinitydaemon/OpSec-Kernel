@@ -4,6 +4,8 @@
 //!
 //! This module allows Rust code to use the kernel's `struct mutex`.
 
+use crate::bindings;
+
 /// Creates a [`Mutex`] initialiser with the given name and a newly-created lock class.
 ///
 /// It uses the name if one is given, otherwise it generates one based on the file name and line
@@ -15,7 +17,6 @@ macro_rules! new_mutex {
             $inner, $crate::optional_name!($($name)?), $crate::static_lock_class!())
     };
 }
-pub use new_mutex;
 
 /// A mutual exclusion primitive.
 ///
@@ -34,7 +35,7 @@ pub use new_mutex;
 /// contains an inner struct (`Inner`) that is protected by a mutex.
 ///
 /// ```
-/// use kernel::sync::{new_mutex, Mutex};
+/// use kernel::{init::InPlaceInit, init::PinInit, new_mutex, pin_init, sync::Mutex};
 ///
 /// struct Inner {
 ///     a: u32,
@@ -58,7 +59,7 @@ pub use new_mutex;
 /// }
 ///
 /// // Allocate a boxed `Example`.
-/// let e = Box::pin_init(Example::new(), GFP_KERNEL)?;
+/// let e = Box::pin_init(Example::new())?;
 /// assert_eq!(e.c, 10);
 /// assert_eq!(e.d.lock().a, 20);
 /// assert_eq!(e.d.lock().b, 30);
@@ -83,7 +84,7 @@ pub use new_mutex;
 /// }
 /// ```
 ///
-/// [`struct mutex`]: srctree/include/linux/mutex.h
+/// [`struct mutex`]: ../../../../include/linux/mutex.h
 pub type Mutex<T> = super::Lock<T, MutexBackend>;
 
 /// A kernel `struct mutex` lock backend.

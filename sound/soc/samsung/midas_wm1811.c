@@ -10,6 +10,8 @@
 #include <linux/mfd/wm8994/registers.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
+#include <linux/of_gpio.h>
 #include <linux/regulator/consumer.h>
 #include <sound/jack.h>
 #include <sound/soc.h>
@@ -51,8 +53,8 @@ static int midas_start_fll1(struct snd_soc_pcm_runtime *rtd, unsigned int rate)
 {
 	struct snd_soc_card *card = rtd->card;
 	struct midas_priv *priv = snd_soc_card_get_drvdata(card);
-	struct snd_soc_dai *aif1_dai = snd_soc_rtd_to_codec(rtd, 0);
-	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *aif1_dai = asoc_rtd_to_codec(rtd, 0);
+	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
 	int ret;
 
 	if (!rate)
@@ -103,7 +105,7 @@ static int midas_stop_fll1(struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_soc_card *card = rtd->card;
 	struct midas_priv *priv = snd_soc_card_get_drvdata(card);
-	struct snd_soc_dai *aif1_dai = snd_soc_rtd_to_codec(rtd, 0);
+	struct snd_soc_dai *aif1_dai = asoc_rtd_to_codec(rtd, 0);
 	int ret;
 
 	ret = snd_soc_dai_set_sysclk(aif1_dai, WM8994_SYSCLK_MCLK2,
@@ -127,7 +129,7 @@ static int midas_stop_fll1(struct snd_soc_pcm_runtime *rtd)
 static int midas_aif1_hw_params(struct snd_pcm_substream *substream,
 				struct snd_pcm_hw_params *params)
 {
-	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+	struct snd_soc_pcm_runtime *rtd	= substream->private_data;
 	unsigned int pll_out;
 
 	/* AIF1CLK should be at least 3MHz for "optimal performance" */
@@ -282,7 +284,7 @@ static int midas_set_bias_level(struct snd_soc_card *card,
 {
 	struct snd_soc_pcm_runtime *rtd = snd_soc_get_pcm_runtime(card,
 						  &card->dai_link[0]);
-	struct snd_soc_dai *aif1_dai = snd_soc_rtd_to_codec(rtd, 0);
+	struct snd_soc_dai *aif1_dai = asoc_rtd_to_codec(rtd, 0);
 
 	if (dapm->dev != aif1_dai->dev)
 		return 0;
@@ -303,7 +305,7 @@ static int midas_late_probe(struct snd_soc_card *card)
 {
 	struct snd_soc_pcm_runtime *rtd = snd_soc_get_pcm_runtime(card,
 							&card->dai_link[0]);
-	struct snd_soc_dai *aif1_dai = snd_soc_rtd_to_codec(rtd, 0);
+	struct snd_soc_dai *aif1_dai = asoc_rtd_to_codec(rtd, 0);
 	struct midas_priv *priv = snd_soc_card_get_drvdata(card);
 	int ret;
 

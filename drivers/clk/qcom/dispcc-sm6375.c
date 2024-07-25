@@ -594,7 +594,17 @@ static struct platform_driver disp_cc_sm6375_driver = {
 	},
 };
 
-module_platform_driver(disp_cc_sm6375_driver);
+static int __init disp_cc_sm6375_init(void)
+{
+	return platform_driver_register(&disp_cc_sm6375_driver);
+}
+subsys_initcall(disp_cc_sm6375_init);
+
+static void __exit disp_cc_sm6375_exit(void)
+{
+	platform_driver_unregister(&disp_cc_sm6375_driver);
+}
+module_exit(disp_cc_sm6375_exit);
 
 MODULE_DESCRIPTION("QTI DISPCC SM6375 Driver");
 MODULE_LICENSE("GPL");

@@ -1234,6 +1234,9 @@ static int ena_com_create_io_sq(struct ena_com_dev *ena_dev,
 		(uintptr_t)cmd_completion.sq_doorbell_offset);
 
 	if (io_sq->mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_DEV) {
+		io_sq->header_addr = (u8 __iomem *)((uintptr_t)ena_dev->mem_bar
+				+ cmd_completion.llq_headers_offset);
+
 		io_sq->desc_addr.pbuf_dev_addr =
 			(u8 __iomem *)((uintptr_t)ena_dev->mem_bar +
 			cmd_completion.llq_descriptors_offset);
@@ -1374,6 +1377,11 @@ int ena_com_create_io_cq(struct ena_com_dev *ena_dev,
 
 	io_cq->unmask_reg = (u32 __iomem *)((uintptr_t)ena_dev->reg_bar +
 		cmd_completion.cq_interrupt_unmask_register_offset);
+
+	if (cmd_completion.cq_head_db_register_offset)
+		io_cq->cq_head_db_reg =
+			(u32 __iomem *)((uintptr_t)ena_dev->reg_bar +
+			cmd_completion.cq_head_db_register_offset);
 
 	if (cmd_completion.numa_node_register_offset)
 		io_cq->numa_node_cfg_reg =

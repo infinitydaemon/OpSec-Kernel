@@ -16,7 +16,6 @@
 #include <linux/kthread.h>
 #include <linux/module.h>
 #include <linux/rcupdate.h>
-#include <linux/rcupdate_wait.h>
 #include <linux/rhashtable.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
@@ -811,5 +810,4 @@ static void __exit test_rht_exit(void)
 module_init(test_rht_init);
 module_exit(test_rht_exit);
 
-MODULE_DESCRIPTION("Resizable, Scalable, Concurrent Hash Table test module");
 MODULE_LICENSE("GPL v2");

@@ -18,7 +18,6 @@
 #include <linux/radix-tree.h>
 #include <linux/atomic.h>
 #include <asm/sections.h>
-#include <asm/ctlreg.h>
 #include <asm/bug.h>
 #include <asm/page.h>
 #include <asm/uv.h>
@@ -26,7 +25,7 @@
 extern pgd_t swapper_pg_dir[];
 extern pgd_t invalid_pg_dir[];
 extern void paging_init(void);
-extern struct ctlreg s390_invalid_asce;
+extern unsigned long s390_invalid_asce;
 
 enum {
 	PG_DIRECT_MAP_4K = 0,
@@ -106,12 +105,6 @@ static inline int is_module_addr(void *addr)
 		return 0;
 	return 1;
 }
-
-#ifdef CONFIG_RANDOMIZE_BASE
-#define KASLR_LEN	(1UL << 31)
-#else
-#define KASLR_LEN	0UL
-#endif
 
 /*
  * A 64 bit pagetable entry of S390 has following format:
@@ -268,14 +261,12 @@ static inline int is_module_addr(void *addr)
 #define _REGION3_ENTRY		(_REGION_ENTRY_TYPE_R3 | _REGION_ENTRY_LENGTH)
 #define _REGION3_ENTRY_EMPTY	(_REGION_ENTRY_TYPE_R3 | _REGION_ENTRY_INVALID)
 
-#define _REGION3_ENTRY_HARDWARE_BITS		0xfffffffffffff6ffUL
-#define _REGION3_ENTRY_HARDWARE_BITS_LARGE	0xffffffff8001073cUL
 #define _REGION3_ENTRY_ORIGIN_LARGE ~0x7fffffffUL /* large page address	     */
 #define _REGION3_ENTRY_DIRTY	0x2000	/* SW region dirty bit */
 #define _REGION3_ENTRY_YOUNG	0x1000	/* SW region young bit */
 #define _REGION3_ENTRY_LARGE	0x0400	/* RTTE-format control, large page  */
-#define _REGION3_ENTRY_WRITE	0x0002	/* SW region write bit */
-#define _REGION3_ENTRY_READ	0x0001	/* SW region read bit */
+#define _REGION3_ENTRY_READ	0x0002	/* SW region read bit */
+#define _REGION3_ENTRY_WRITE	0x0001	/* SW region write bit */
 
 #ifdef CONFIG_MEM_SOFT_DIRTY
 #define _REGION3_ENTRY_SOFT_DIRTY 0x4000 /* SW region soft dirty bit */
@@ -286,9 +277,9 @@ static inline int is_module_addr(void *addr)
 #define _REGION_ENTRY_BITS	 0xfffffffffffff22fUL
 
 /* Bits in the segment table entry */
-#define _SEGMENT_ENTRY_BITS			0xfffffffffffffe3fUL
-#define _SEGMENT_ENTRY_HARDWARE_BITS		0xfffffffffffffe3cUL
-#define _SEGMENT_ENTRY_HARDWARE_BITS_LARGE	0xfffffffffff1073cUL
+#define _SEGMENT_ENTRY_BITS			0xfffffffffffffe33UL
+#define _SEGMENT_ENTRY_HARDWARE_BITS		0xfffffffffffffe30UL
+#define _SEGMENT_ENTRY_HARDWARE_BITS_LARGE	0xfffffffffff00730UL
 #define _SEGMENT_ENTRY_ORIGIN_LARGE ~0xfffffUL /* large page address	    */
 #define _SEGMENT_ENTRY_ORIGIN	~0x7ffUL/* page table origin		    */
 #define _SEGMENT_ENTRY_PROTECT	0x200	/* segment protection bit	    */
@@ -723,23 +714,23 @@ static inline int pud_none(pud_t pud)
 	return pud_val(pud) == _REGION3_ENTRY_EMPTY;
 }
 
-#define pud_leaf pud_leaf
-static inline bool pud_leaf(pud_t pud)
+#define pud_leaf	pud_large
+static inline int pud_large(pud_t pud)
 {
 	if ((pud_val(pud) & _REGION_ENTRY_TYPE_MASK) != _REGION_ENTRY_TYPE_R3)
 		return 0;
 	return !!(pud_val(pud) & _REGION3_ENTRY_LARGE);
 }
 
-#define pmd_leaf pmd_leaf
-static inline bool pmd_leaf(pmd_t pmd)
+#define pmd_leaf	pmd_large
+static inline int pmd_large(pmd_t pmd)
 {
 	return (pmd_val(pmd) & _SEGMENT_ENTRY_LARGE) != 0;
 }
 
 static inline int pmd_bad(pmd_t pmd)
 {
-	if ((pmd_val(pmd) & _SEGMENT_ENTRY_TYPE_MASK) > 0 || pmd_leaf(pmd))
+	if ((pmd_val(pmd) & _SEGMENT_ENTRY_TYPE_MASK) > 0 || pmd_large(pmd))
 		return 1;
 	return (pmd_val(pmd) & ~_SEGMENT_ENTRY_BITS) != 0;
 }
@@ -788,7 +779,6 @@ static inline int pud_write(pud_t pud)
 	return (pud_val(pud) & _REGION3_ENTRY_WRITE) != 0;
 }
 
-#define pmd_dirty pmd_dirty
 static inline int pmd_dirty(pmd_t pmd)
 {
 	return (pmd_val(pmd) & _SEGMENT_ENTRY_DIRTY) != 0;
@@ -838,8 +828,8 @@ static inline int pte_protnone(pte_t pte)
 
 static inline int pmd_protnone(pmd_t pmd)
 {
-	/* pmd_leaf(pmd) implies pmd_present(pmd) */
-	return pmd_leaf(pmd) && !(pmd_val(pmd) & _SEGMENT_ENTRY_READ);
+	/* pmd_large(pmd) implies pmd_present(pmd) */
+	return pmd_large(pmd) && !(pmd_val(pmd) & _SEGMENT_ENTRY_READ);
 }
 #endif
 
@@ -1334,8 +1324,6 @@ pgprot_t pgprot_writecombine(pgprot_t prot);
 #define pgprot_writethrough	pgprot_writethrough
 pgprot_t pgprot_writethrough(pgprot_t prot);
 
-#define PFN_PTE_SHIFT		PAGE_SHIFT
-
 /*
  * Set multiple PTEs to consecutive pages with a single call.  All PTEs
  * are within the same folio, PMD and VMA.
@@ -1403,7 +1391,7 @@ static inline unsigned long pmd_deref(pmd_t pmd)
 	unsigned long origin_mask;
 
 	origin_mask = _SEGMENT_ENTRY_ORIGIN;
-	if (pmd_leaf(pmd))
+	if (pmd_large(pmd))
 		origin_mask = _SEGMENT_ENTRY_ORIGIN_LARGE;
 	return (unsigned long)__va(pmd_val(pmd) & origin_mask);
 }
@@ -1423,7 +1411,6 @@ static inline unsigned long pud_deref(pud_t pud)
 	return (unsigned long)__va(pud_val(pud) & origin_mask);
 }
 
-#define pud_pfn pud_pfn
 static inline unsigned long pud_pfn(pud_t pud)
 {
 	return __pa(pud_deref(pud)) >> PAGE_SHIFT;

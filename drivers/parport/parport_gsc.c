@@ -392,7 +392,7 @@ static struct parisc_driver parport_driver __refdata = {
 	.remove		= __exit_p(parport_remove_chip),
 };
 
-static int parport_gsc_init(void)
+int parport_gsc_init(void)
 {
 	return register_parisc_driver(&parport_driver);
 }

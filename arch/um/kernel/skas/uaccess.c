@@ -236,9 +236,7 @@ EXPORT_SYMBOL(strnlen_user);
  *			  argument and comparison of the previous
  *			  futex value with another constant.
  *
- * @op:		operation to execute
- * @oparg:	argument to operation
- * @oval:	old value at uaddr
+ * @encoded_op:	encoded operation to execute
  * @uaddr:	pointer to user space address
  *
  * Return:

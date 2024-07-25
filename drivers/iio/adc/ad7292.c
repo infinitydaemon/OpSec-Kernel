@@ -8,8 +8,7 @@
 #include <linux/bitfield.h>
 #include <linux/device.h>
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
-#include <linux/property.h>
+#include <linux/of.h>
 #include <linux/regulator/consumer.h>
 #include <linux/spi/spi.h>
 
@@ -261,6 +260,7 @@ static int ad7292_probe(struct spi_device *spi)
 {
 	struct ad7292_state *st;
 	struct iio_dev *indio_dev;
+	struct device_node *child;
 	bool diff_channels = false;
 	int ret;
 
@@ -305,11 +305,12 @@ static int ad7292_probe(struct spi_device *spi)
 	indio_dev->modes = INDIO_DIRECT_MODE;
 	indio_dev->info = &ad7292_info;
 
-	device_for_each_child_node_scoped(&spi->dev, child) {
-		diff_channels = fwnode_property_read_bool(child,
-							  "diff-channels");
-		if (diff_channels)
+	for_each_available_child_of_node(spi->dev.of_node, child) {
+		diff_channels = of_property_read_bool(child, "diff-channels");
+		if (diff_channels) {
+			of_node_put(child);
 			break;
+		}
 	}
 
 	if (diff_channels) {

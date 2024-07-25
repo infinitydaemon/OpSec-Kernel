@@ -288,10 +288,10 @@ struct i915_perf_stream {
 		struct i915_vma *vma;
 		u8 *vaddr;
 		u32 last_ctx_id;
+		int size_exponent;
 
 		/**
-		 * @oa_buffer.ptr_lock: Locks reads and writes to all
-		 * head/tail state
+		 * @ptr_lock: Locks reads and writes to all head/tail state
 		 *
 		 * Consider: the head and tail pointer state needs to be read
 		 * consistently from a hrtimer callback (atomic context) and
@@ -313,8 +313,7 @@ struct i915_perf_stream {
 		spinlock_t ptr_lock;
 
 		/**
-		 * @oa_buffer.head: Although we can always read back
-		 * the head pointer register,
+		 * @head: Although we can always read back the head pointer register,
 		 * we prefer to avoid trusting the HW state, just to avoid any
 		 * risk that some hardware condition could * somehow bump the
 		 * head pointer unpredictably and cause us to forward the wrong
@@ -323,8 +322,7 @@ struct i915_perf_stream {
 		u32 head;
 
 		/**
-		 * @oa_buffer.tail: The last verified tail that can be
-		 * read by userspace.
+		 * @tail: The last verified tail that can be read by userspace.
 		 */
 		u32 tail;
 	} oa_buffer;
@@ -340,6 +338,12 @@ struct i915_perf_stream {
 	 * buffer should be checked for available data.
 	 */
 	u64 poll_oa_period;
+
+	/**
+	 * @override_gucrc: GuC RC has been overridden for the perf stream,
+	 * and we need to restore the default configuration on release.
+	 */
+	bool override_gucrc;
 };
 
 /**

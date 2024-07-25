@@ -10,7 +10,6 @@
 #include <linux/ctype.h>
 #include <linux/debugfs.h>
 #include <linux/fs.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/platform_data/wilco-ec.h>
 #include <linux/platform_device.h>
@@ -261,28 +260,24 @@ static int wilco_ec_debugfs_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void wilco_ec_debugfs_remove(struct platform_device *pdev)
+static int wilco_ec_debugfs_remove(struct platform_device *pdev)
 {
 	debugfs_remove_recursive(debug_info->dir);
-}
 
-static const struct platform_device_id wilco_ec_debugfs_id[] = {
-	{ DRV_NAME, 0 },
-	{}
-};
-MODULE_DEVICE_TABLE(platform, wilco_ec_debugfs_id);
+	return 0;
+}
 
 static struct platform_driver wilco_ec_debugfs_driver = {
 	.driver = {
 		.name = DRV_NAME,
 	},
 	.probe = wilco_ec_debugfs_probe,
-	.remove_new = wilco_ec_debugfs_remove,
-	.id_table = wilco_ec_debugfs_id,
+	.remove = wilco_ec_debugfs_remove,
 };
 
 module_platform_driver(wilco_ec_debugfs_driver);
 
+MODULE_ALIAS("platform:" DRV_NAME);
 MODULE_AUTHOR("Nick Crews <ncrews@chromium.org>");
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("Wilco EC debugfs driver");

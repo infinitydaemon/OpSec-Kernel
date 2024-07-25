@@ -9,19 +9,25 @@ int blkg_rwstat_init(struct blkg_rwstat *rwstat, gfp_t gfp)
 {
 	int i, ret;
 
-	ret = percpu_counter_init_many(rwstat->cpu_cnt, 0, gfp, BLKG_RWSTAT_NR);
-	if (ret)
-		return ret;
-
-	for (i = 0; i < BLKG_RWSTAT_NR; i++)
+	for (i = 0; i < BLKG_RWSTAT_NR; i++) {
+		ret = percpu_counter_init(&rwstat->cpu_cnt[i], 0, gfp);
+		if (ret) {
+			while (--i >= 0)
+				percpu_counter_destroy(&rwstat->cpu_cnt[i]);
+			return ret;
+		}
 		atomic64_set(&rwstat->aux_cnt[i], 0);
+	}
 	return 0;
 }
 EXPORT_SYMBOL_GPL(blkg_rwstat_init);
 
 void blkg_rwstat_exit(struct blkg_rwstat *rwstat)
 {
-	percpu_counter_destroy_many(rwstat->cpu_cnt, BLKG_RWSTAT_NR);
+	int i;
+
+	for (i = 0; i < BLKG_RWSTAT_NR; i++)
+		percpu_counter_destroy(&rwstat->cpu_cnt[i]);
 }
 EXPORT_SYMBOL_GPL(blkg_rwstat_exit);
 

@@ -13,55 +13,26 @@
 #include "internal.h"
 #include "afs_fs.h"
 
-static void afs_free_addrlist(struct rcu_head *rcu)
-{
-	struct afs_addr_list *alist = container_of(rcu, struct afs_addr_list, rcu);
-	unsigned int i;
-
-	for (i = 0; i < alist->nr_addrs; i++)
-		rxrpc_kernel_put_peer(alist->addrs[i].peer);
-	trace_afs_alist(alist->debug_id, refcount_read(&alist->usage), afs_alist_trace_free);
-	kfree(alist);
-}
-
 /*
  * Release an address list.
  */
-void afs_put_addrlist(struct afs_addr_list *alist, enum afs_alist_trace reason)
+void afs_put_addrlist(struct afs_addr_list *alist)
 {
-	unsigned int debug_id;
-	bool dead;
-	int r;
-
-	if (!alist)
-		return;
-	debug_id = alist->debug_id;
-	dead = __refcount_dec_and_test(&alist->usage, &r);
-	trace_afs_alist(debug_id, r - 1, reason);
-	if (dead)
-		call_rcu(&alist->rcu, afs_free_addrlist);
-}
-
-struct afs_addr_list *afs_get_addrlist(struct afs_addr_list *alist, enum afs_alist_trace reason)
-{
-	int r;
-
-	if (alist) {
-		__refcount_inc(&alist->usage, &r);
-		trace_afs_alist(alist->debug_id, r + 1, reason);
-	}
-	return alist;
+	if (alist && refcount_dec_and_test(&alist->usage))
+		kfree_rcu(alist, rcu);
 }
 
 /*
  * Allocate an address list.
  */
-struct afs_addr_list *afs_alloc_addrlist(unsigned int nr)
+struct afs_addr_list *afs_alloc_addrlist(unsigned int nr,
+					 unsigned short service,
+					 unsigned short port)
 {
 	struct afs_addr_list *alist;
-	static atomic_t debug_id;
+	unsigned int i;
 
-	_enter("%u", nr);
+	_enter("%u,%u,%u", nr, service, port);
 
 	if (nr > AFS_MAX_ADDRESSES)
 		nr = AFS_MAX_ADDRESSES;
@@ -72,8 +43,17 @@ struct afs_addr_list *afs_alloc_addrlist(unsigned int nr)
 
 	refcount_set(&alist->usage, 1);
 	alist->max_addrs = nr;
-	alist->debug_id = atomic_inc_return(&debug_id);
-	trace_afs_alist(alist->debug_id, 1, afs_alist_trace_alloc);
+
+	for (i = 0; i < nr; i++) {
+		struct sockaddr_rxrpc *srx = &alist->addrs[i];
+		srx->srx_family			= AF_RXRPC;
+		srx->srx_service		= service;
+		srx->transport_type		= SOCK_DGRAM;
+		srx->transport_len		= sizeof(srx->transport.sin6);
+		srx->transport.sin6.sin6_family	= AF_INET6;
+		srx->transport.sin6.sin6_port	= htons(port);
+	}
+
 	return alist;
 }
 
@@ -146,7 +126,7 @@ struct afs_vlserver_list *afs_parse_text_addrs(struct afs_net *net,
 	if (!vllist->servers[0].server)
 		goto error_vl;
 
-	alist = afs_alloc_addrlist(nr);
+	alist = afs_alloc_addrlist(nr, service, AFS_VL_PORT);
 	if (!alist)
 		goto error;
 
@@ -217,11 +197,9 @@ struct afs_vlserver_list *afs_parse_text_addrs(struct afs_net *net,
 		}
 
 		if (family == AF_INET)
-			ret = afs_merge_fs_addr4(net, alist, x[0], xport);
+			afs_merge_fs_addr4(alist, x[0], xport);
 		else
-			ret = afs_merge_fs_addr6(net, alist, x, xport);
-		if (ret < 0)
-			goto error;
+			afs_merge_fs_addr6(alist, x, xport);
 
 	} while (p < end);
 
@@ -238,11 +216,24 @@ bad_address:
 	       problem, p - text, (int)len, (int)len, text);
 	ret = -EINVAL;
 error:
-	afs_put_addrlist(alist, afs_alist_trace_put_parse_error);
+	afs_put_addrlist(alist);
 error_vl:
 	afs_put_vlserverlist(net, vllist);
 	return ERR_PTR(ret);
 }
+
+/*
+ * Compare old and new address lists to see if there's been any change.
+ * - How to do this in better than O(Nlog(N)) time?
+ *   - We don't really want to sort the address list, but would rather take the
+ *     list as we got it so as not to undo record rotation by the DNS server.
+ */
+#if 0
+static int afs_cmp_addr_list(const struct afs_addr_list *a1,
+			     const struct afs_addr_list *a2)
+{
+}
+#endif
 
 /*
  * Perform a DNS query for VL servers and build a up an address list.
@@ -280,33 +271,25 @@ struct afs_vlserver_list *afs_dns_query(struct afs_cell *cell, time64_t *_expiry
 /*
  * Merge an IPv4 entry into a fileserver address list.
  */
-int afs_merge_fs_addr4(struct afs_net *net, struct afs_addr_list *alist,
-		       __be32 xdr, u16 port)
+void afs_merge_fs_addr4(struct afs_addr_list *alist, __be32 xdr, u16 port)
 {
-	struct sockaddr_rxrpc srx;
-	struct rxrpc_peer *peer;
+	struct sockaddr_rxrpc *srx;
+	u32 addr = ntohl(xdr);
 	int i;
 
 	if (alist->nr_addrs >= alist->max_addrs)
-		return 0;
-
-	srx.srx_family = AF_RXRPC;
-	srx.transport_type = SOCK_DGRAM;
-	srx.transport_len = sizeof(srx.transport.sin);
-	srx.transport.sin.sin_family = AF_INET;
-	srx.transport.sin.sin_port = htons(port);
-	srx.transport.sin.sin_addr.s_addr = xdr;
-
-	peer = rxrpc_kernel_lookup_peer(net->socket, &srx, GFP_KERNEL);
-	if (!peer)
-		return -ENOMEM;
+		return;
 
 	for (i = 0; i < alist->nr_ipv4; i++) {
-		if (peer == alist->addrs[i].peer) {
-			rxrpc_kernel_put_peer(peer);
-			return 0;
-		}
-		if (peer <= alist->addrs[i].peer)
+		struct sockaddr_in *a = &alist->addrs[i].transport.sin;
+		u32 a_addr = ntohl(a->sin_addr.s_addr);
+		u16 a_port = ntohs(a->sin_port);
+
+		if (addr == a_addr && port == a_port)
+			return;
+		if (addr == a_addr && port < a_port)
+			break;
+		if (addr < a_addr)
 			break;
 	}
 
@@ -315,42 +298,38 @@ int afs_merge_fs_addr4(struct afs_net *net, struct afs_addr_list *alist,
 			alist->addrs + i,
 			sizeof(alist->addrs[0]) * (alist->nr_addrs - i));
 
-	alist->addrs[i].peer = peer;
+	srx = &alist->addrs[i];
+	srx->srx_family = AF_RXRPC;
+	srx->transport_type = SOCK_DGRAM;
+	srx->transport_len = sizeof(srx->transport.sin);
+	srx->transport.sin.sin_family = AF_INET;
+	srx->transport.sin.sin_port = htons(port);
+	srx->transport.sin.sin_addr.s_addr = xdr;
 	alist->nr_ipv4++;
 	alist->nr_addrs++;
-	return 0;
 }
 
 /*
  * Merge an IPv6 entry into a fileserver address list.
  */
-int afs_merge_fs_addr6(struct afs_net *net, struct afs_addr_list *alist,
-		       __be32 *xdr, u16 port)
+void afs_merge_fs_addr6(struct afs_addr_list *alist, __be32 *xdr, u16 port)
 {
-	struct sockaddr_rxrpc srx;
-	struct rxrpc_peer *peer;
-	int i;
+	struct sockaddr_rxrpc *srx;
+	int i, diff;
 
 	if (alist->nr_addrs >= alist->max_addrs)
-		return 0;
-
-	srx.srx_family = AF_RXRPC;
-	srx.transport_type = SOCK_DGRAM;
-	srx.transport_len = sizeof(srx.transport.sin6);
-	srx.transport.sin6.sin6_family = AF_INET6;
-	srx.transport.sin6.sin6_port = htons(port);
-	memcpy(&srx.transport.sin6.sin6_addr, xdr, 16);
-
-	peer = rxrpc_kernel_lookup_peer(net->socket, &srx, GFP_KERNEL);
-	if (!peer)
-		return -ENOMEM;
+		return;
 
 	for (i = alist->nr_ipv4; i < alist->nr_addrs; i++) {
-		if (peer == alist->addrs[i].peer) {
-			rxrpc_kernel_put_peer(peer);
-			return 0;
-		}
-		if (peer <= alist->addrs[i].peer)
+		struct sockaddr_in6 *a = &alist->addrs[i].transport.sin6;
+		u16 a_port = ntohs(a->sin6_port);
+
+		diff = memcmp(xdr, &a->sin6_addr, 16);
+		if (diff == 0 && port == a_port)
+			return;
+		if (diff == 0 && port < a_port)
+			break;
+		if (diff < 0)
 			break;
 	}
 
@@ -358,7 +337,68 @@ int afs_merge_fs_addr6(struct afs_net *net, struct afs_addr_list *alist,
 		memmove(alist->addrs + i + 1,
 			alist->addrs + i,
 			sizeof(alist->addrs[0]) * (alist->nr_addrs - i));
-	alist->addrs[i].peer = peer;
+
+	srx = &alist->addrs[i];
+	srx->srx_family = AF_RXRPC;
+	srx->transport_type = SOCK_DGRAM;
+	srx->transport_len = sizeof(srx->transport.sin6);
+	srx->transport.sin6.sin6_family = AF_INET6;
+	srx->transport.sin6.sin6_port = htons(port);
+	memcpy(&srx->transport.sin6.sin6_addr, xdr, 16);
 	alist->nr_addrs++;
-	return 0;
+}
+
+/*
+ * Get an address to try.
+ */
+bool afs_iterate_addresses(struct afs_addr_cursor *ac)
+{
+	unsigned long set, failed;
+	int index;
+
+	if (!ac->alist)
+		return false;
+
+	set = ac->alist->responded;
+	failed = ac->alist->failed;
+	_enter("%lx-%lx-%lx,%d", set, failed, ac->tried, ac->index);
+
+	ac->nr_iterations++;
+
+	set &= ~(failed | ac->tried);
+
+	if (!set)
+		return false;
+
+	index = READ_ONCE(ac->alist->preferred);
+	if (test_bit(index, &set))
+		goto selected;
+
+	index = __ffs(set);
+
+selected:
+	ac->index = index;
+	set_bit(index, &ac->tried);
+	ac->responded = false;
+	return true;
+}
+
+/*
+ * Release an address list cursor.
+ */
+int afs_end_cursor(struct afs_addr_cursor *ac)
+{
+	struct afs_addr_list *alist;
+
+	alist = ac->alist;
+	if (alist) {
+		if (ac->responded &&
+		    ac->index != alist->preferred &&
+		    test_bit(ac->alist->preferred, &ac->tried))
+			WRITE_ONCE(alist->preferred, ac->index);
+		afs_put_addrlist(alist);
+		ac->alist = NULL;
+	}
+
+	return ac->error;
 }

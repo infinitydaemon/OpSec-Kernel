@@ -137,11 +137,6 @@ uint32_t dc_bandwidth_in_kbps_from_timing(
 	if (link_encoding == DC_LINK_ENCODING_DP_128b_132b)
 		kbps = apply_128b_132b_stream_overhead(timing, kbps);
 
-	if (link_encoding == DC_LINK_ENCODING_HDMI_FRL &&
-			timing->vic == 0 && timing->hdmi_vic == 0 &&
-			timing->frl_uncompressed_video_bandwidth_in_kbps != 0)
-		kbps = timing->frl_uncompressed_video_bandwidth_in_kbps;
-
 	return kbps;
 }
 
@@ -336,9 +331,8 @@ bool dc_dsc_parse_dsc_dpcd(const struct dc *dc,
 		int buff_block_size;
 		int buff_size;
 
-		if (!dsc_buff_block_size_from_dpcd(
-				dpcd_dsc_basic_data[DP_DSC_RC_BUF_BLK_SIZE - DP_DSC_SUPPORT] & 0x03,
-				&buff_block_size))
+		if (!dsc_buff_block_size_from_dpcd(dpcd_dsc_basic_data[DP_DSC_RC_BUF_BLK_SIZE - DP_DSC_SUPPORT],
+										   &buff_block_size))
 			return false;
 
 		buff_size = dpcd_dsc_basic_data[DP_DSC_RC_BUF_SIZE - DP_DSC_SUPPORT] + 1;
@@ -363,15 +357,10 @@ bool dc_dsc_parse_dsc_dpcd(const struct dc *dc,
 
 	{
 		int dpcd_throughput = dpcd_dsc_basic_data[DP_DSC_PEAK_THROUGHPUT - DP_DSC_SUPPORT];
-		int dsc_throughput_granular_delta;
-
-		dsc_throughput_granular_delta = dpcd_dsc_basic_data[DP_DSC_RC_BUF_BLK_SIZE - DP_DSC_SUPPORT] >> 3;
-		dsc_throughput_granular_delta *= 2;
 
 		if (!dsc_throughput_from_dpcd(dpcd_throughput & DP_DSC_THROUGHPUT_MODE_0_MASK,
 									  &dsc_sink_caps->throughput_mode_0_mps))
 			return false;
-		dsc_sink_caps->throughput_mode_0_mps += dsc_throughput_granular_delta;
 
 		dpcd_throughput = (dpcd_throughput & DP_DSC_THROUGHPUT_MODE_1_MASK) >> DP_DSC_THROUGHPUT_MODE_1_SHIFT;
 		if (!dsc_throughput_from_dpcd(dpcd_throughput, &dsc_sink_caps->throughput_mode_1_mps))
@@ -458,7 +447,7 @@ bool dc_dsc_compute_bandwidth_range(
 	bool is_dsc_possible = false;
 	struct dsc_enc_caps dsc_enc_caps;
 	struct dsc_enc_caps dsc_common_caps;
-	struct dc_dsc_config config = {0};
+	struct dc_dsc_config config;
 	struct dc_dsc_config_options options = {0};
 
 	options.dsc_min_slice_height_override = dsc_min_slice_height_override;
@@ -523,11 +512,6 @@ static bool intersect_dsc_caps(
 		dsc_sink_caps->slice_caps1.bits.NUM_SLICES_4 && dsc_enc_caps->slice_caps.bits.NUM_SLICES_4;
 	dsc_common_caps->slice_caps.bits.NUM_SLICES_8 =
 		dsc_sink_caps->slice_caps1.bits.NUM_SLICES_8 && dsc_enc_caps->slice_caps.bits.NUM_SLICES_8;
-	dsc_common_caps->slice_caps.bits.NUM_SLICES_12 =
-		dsc_sink_caps->slice_caps1.bits.NUM_SLICES_12 && dsc_enc_caps->slice_caps.bits.NUM_SLICES_12;
-	dsc_common_caps->slice_caps.bits.NUM_SLICES_16 =
-		dsc_sink_caps->slice_caps2.bits.NUM_SLICES_16 && dsc_enc_caps->slice_caps.bits.NUM_SLICES_16;
-
 	if (!dsc_common_caps->slice_caps.raw)
 		return false;
 
@@ -719,12 +703,6 @@ static int get_available_dsc_slices(union dsc_enc_slice_caps slice_caps, int *av
 	if (slice_caps.bits.NUM_SLICES_8)
 		available_slices[idx++] = 8;
 
-	if (slice_caps.bits.NUM_SLICES_12)
-		available_slices[idx++] = 12;
-
-	if (slice_caps.bits.NUM_SLICES_16)
-		available_slices[idx++] = 16;
-
 	return idx;
 }
 
@@ -868,9 +846,9 @@ static bool setup_dsc_config(
 		struct dc_dsc_config *dsc_cfg)
 {
 	struct dsc_enc_caps dsc_common_caps;
-	int max_slices_h = 0;
-	int min_slices_h = 0;
-	int num_slices_h = 0;
+	int max_slices_h;
+	int min_slices_h;
+	int num_slices_h;
 	int pic_width;
 	int slice_width;
 	int target_bpp;

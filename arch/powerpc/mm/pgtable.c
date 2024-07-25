@@ -46,13 +46,13 @@ static inline int is_exec_fault(void)
  * and we avoid _PAGE_SPECIAL and cache inhibited pte. We also only do that
  * on userspace PTEs
  */
-static inline int pte_looks_normal(pte_t pte, unsigned long addr)
+static inline int pte_looks_normal(pte_t pte)
 {
 
 	if (pte_present(pte) && !pte_special(pte)) {
 		if (pte_ci(pte))
 			return 0;
-		if (!is_kernel_addr(addr))
+		if (pte_user(pte))
 			return 1;
 	}
 	return 0;
@@ -79,11 +79,11 @@ static struct folio *maybe_pte_to_folio(pte_t pte)
  * support falls into the same category.
  */
 
-static pte_t set_pte_filter_hash(pte_t pte, unsigned long addr)
+static pte_t set_pte_filter_hash(pte_t pte)
 {
 	pte = __pte(pte_val(pte) & ~_PAGE_HPTEFLAGS);
-	if (pte_looks_normal(pte, addr) && !(cpu_has_feature(CPU_FTR_COHERENT_ICACHE) ||
-					     cpu_has_feature(CPU_FTR_NOEXECUTE))) {
+	if (pte_looks_normal(pte) && !(cpu_has_feature(CPU_FTR_COHERENT_ICACHE) ||
+				       cpu_has_feature(CPU_FTR_NOEXECUTE))) {
 		struct folio *folio = maybe_pte_to_folio(pte);
 		if (!folio)
 			return pte;
@@ -97,7 +97,7 @@ static pte_t set_pte_filter_hash(pte_t pte, unsigned long addr)
 
 #else /* CONFIG_PPC_BOOK3S */
 
-static pte_t set_pte_filter_hash(pte_t pte, unsigned long addr) { return pte; }
+static pte_t set_pte_filter_hash(pte_t pte) { return pte; }
 
 #endif /* CONFIG_PPC_BOOK3S */
 
@@ -107,7 +107,7 @@ static pte_t set_pte_filter_hash(pte_t pte, unsigned long addr) { return pte; }
  *
  * This is also called once for the folio. So only work with folio->flags here.
  */
-static inline pte_t set_pte_filter(pte_t pte, unsigned long addr)
+static inline pte_t set_pte_filter(pte_t pte)
 {
 	struct folio *folio;
 
@@ -115,10 +115,10 @@ static inline pte_t set_pte_filter(pte_t pte, unsigned long addr)
 		return pte;
 
 	if (mmu_has_feature(MMU_FTR_HPTE_TABLE))
-		return set_pte_filter_hash(pte, addr);
+		return set_pte_filter_hash(pte);
 
 	/* No exec permission in the first place, move on */
-	if (!pte_exec(pte) || !pte_looks_normal(pte, addr))
+	if (!pte_exec(pte) || !pte_looks_normal(pte))
 		return pte;
 
 	/* If you set _PAGE_EXEC on weird pages you're on your own */
@@ -198,7 +198,7 @@ void set_ptes(struct mm_struct *mm, unsigned long addr, pte_t *ptep,
 	 * is called. Filter the pte value and use the filtered value
 	 * to setup all the ptes in the range.
 	 */
-	pte = set_pte_filter(pte, addr);
+	pte = set_pte_filter(pte);
 
 	/*
 	 * We don't need to call arch_enter/leave_lazy_mmu_mode()
@@ -220,7 +220,10 @@ void set_ptes(struct mm_struct *mm, unsigned long addr, pte_t *ptep,
 			break;
 		ptep++;
 		addr += PAGE_SIZE;
-		pte = pte_next_pfn(pte);
+		/*
+		 * increment the pfn.
+		 */
+		pte = pfn_pte(pte_pfn(pte) + 1, pte_pgprot((pte)));
 	}
 }
 
@@ -311,7 +314,7 @@ void set_huge_pte_at(struct mm_struct *mm, unsigned long addr, pte_t *ptep,
 	 */
 	VM_WARN_ON(pte_hw_valid(*ptep) && !pte_protnone(*ptep));
 
-	pte = set_pte_filter(pte, addr);
+	pte = set_pte_filter(pte);
 
 	val = pte_val(pte);
 
@@ -410,7 +413,7 @@ pte_t *__find_linux_pte(pgd_t *pgdir, unsigned long ea,
 	if (p4d_none(p4d))
 		return NULL;
 
-	if (p4d_leaf(p4d)) {
+	if (p4d_is_leaf(p4d)) {
 		ret_pte = (pte_t *)p4dp;
 		goto out;
 	}
@@ -432,7 +435,7 @@ pte_t *__find_linux_pte(pgd_t *pgdir, unsigned long ea,
 	if (pud_none(pud))
 		return NULL;
 
-	if (pud_leaf(pud)) {
+	if (pud_is_leaf(pud)) {
 		ret_pte = (pte_t *)pudp;
 		goto out;
 	}
@@ -471,7 +474,7 @@ pte_t *__find_linux_pte(pgd_t *pgdir, unsigned long ea,
 		goto out;
 	}
 
-	if (pmd_leaf(pmd)) {
+	if (pmd_is_leaf(pmd)) {
 		ret_pte = (pte_t *)pmdp;
 		goto out;
 	}
@@ -502,7 +505,7 @@ const pgprot_t protection_map[16] = {
 	[VM_READ]					= PAGE_READONLY,
 	[VM_WRITE]					= PAGE_COPY,
 	[VM_WRITE | VM_READ]				= PAGE_COPY,
-	[VM_EXEC]					= PAGE_EXECONLY_X,
+	[VM_EXEC]					= PAGE_READONLY_X,
 	[VM_EXEC | VM_READ]				= PAGE_READONLY_X,
 	[VM_EXEC | VM_WRITE]				= PAGE_COPY_X,
 	[VM_EXEC | VM_WRITE | VM_READ]			= PAGE_COPY_X,
@@ -510,7 +513,7 @@ const pgprot_t protection_map[16] = {
 	[VM_SHARED | VM_READ]				= PAGE_READONLY,
 	[VM_SHARED | VM_WRITE]				= PAGE_SHARED,
 	[VM_SHARED | VM_WRITE | VM_READ]		= PAGE_SHARED,
-	[VM_SHARED | VM_EXEC]				= PAGE_EXECONLY_X,
+	[VM_SHARED | VM_EXEC]				= PAGE_READONLY_X,
 	[VM_SHARED | VM_EXEC | VM_READ]			= PAGE_READONLY_X,
 	[VM_SHARED | VM_EXEC | VM_WRITE]		= PAGE_SHARED_X,
 	[VM_SHARED | VM_EXEC | VM_WRITE | VM_READ]	= PAGE_SHARED_X

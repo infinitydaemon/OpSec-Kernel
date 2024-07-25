@@ -13,7 +13,6 @@
 #include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/timer.h>
-#include <linux/hrtimer.h>
 
 #define MAX_PATTERNS		1024
 /*
@@ -21,12 +20,6 @@
  * every 50 milliseconds.
  */
 #define UPDATE_INTERVAL		50
-
-enum pattern_type {
-	PATTERN_TYPE_SW, /* Use standard timer for software pattern */
-	PATTERN_TYPE_HR, /* Use hrtimer for software pattern */
-	PATTERN_TYPE_HW, /* Hardware pattern */
-};
 
 struct pattern_trig_data {
 	struct led_classdev *led_cdev;
@@ -39,9 +32,8 @@ struct pattern_trig_data {
 	int last_repeat;
 	int delta_t;
 	bool is_indefinite;
-	enum pattern_type type;
+	bool is_hw_pattern;
 	struct timer_list timer;
-	struct hrtimer hrtimer;
 };
 
 static void pattern_trig_update_patterns(struct pattern_trig_data *data)
@@ -79,35 +71,10 @@ static int pattern_trig_compute_brightness(struct pattern_trig_data *data)
 		return data->curr->brightness - step_brightness;
 }
 
-static void pattern_trig_timer_start(struct pattern_trig_data *data)
+static void pattern_trig_timer_function(struct timer_list *t)
 {
-	if (data->type == PATTERN_TYPE_HR) {
-		hrtimer_start(&data->hrtimer, ns_to_ktime(0), HRTIMER_MODE_REL);
-	} else {
-		data->timer.expires = jiffies;
-		add_timer(&data->timer);
-	}
-}
+	struct pattern_trig_data *data = from_timer(data, t, timer);
 
-static void pattern_trig_timer_cancel(struct pattern_trig_data *data)
-{
-	if (data->type == PATTERN_TYPE_HR)
-		hrtimer_cancel(&data->hrtimer);
-	else
-		del_timer_sync(&data->timer);
-}
-
-static void pattern_trig_timer_restart(struct pattern_trig_data *data,
-				       unsigned long interval)
-{
-	if (data->type == PATTERN_TYPE_HR)
-		hrtimer_forward_now(&data->hrtimer, ms_to_ktime(interval));
-	else
-		mod_timer(&data->timer, jiffies + msecs_to_jiffies(interval));
-}
-
-static void pattern_trig_timer_common_function(struct pattern_trig_data *data)
-{
 	for (;;) {
 		if (!data->is_indefinite && !data->repeat)
 			break;
@@ -116,7 +83,8 @@ static void pattern_trig_timer_common_function(struct pattern_trig_data *data)
 			/* Step change of brightness */
 			led_set_brightness(data->led_cdev,
 					   data->curr->brightness);
-			pattern_trig_timer_restart(data, data->curr->delta_t);
+			mod_timer(&data->timer,
+				  jiffies + msecs_to_jiffies(data->curr->delta_t));
 			if (!data->next->delta_t) {
 				/* Skip the tuple with zero duration */
 				pattern_trig_update_patterns(data);
@@ -138,7 +106,8 @@ static void pattern_trig_timer_common_function(struct pattern_trig_data *data)
 
 			led_set_brightness(data->led_cdev,
 					   pattern_trig_compute_brightness(data));
-			pattern_trig_timer_restart(data, UPDATE_INTERVAL);
+			mod_timer(&data->timer,
+				  jiffies + msecs_to_jiffies(UPDATE_INTERVAL));
 
 			/* Accumulate the gradual dimming time */
 			data->delta_t += UPDATE_INTERVAL;
@@ -148,25 +117,6 @@ static void pattern_trig_timer_common_function(struct pattern_trig_data *data)
 	}
 }
 
-static void pattern_trig_timer_function(struct timer_list *t)
-{
-	struct pattern_trig_data *data = from_timer(data, t, timer);
-
-	return pattern_trig_timer_common_function(data);
-}
-
-static enum hrtimer_restart pattern_trig_hrtimer_function(struct hrtimer *t)
-{
-	struct pattern_trig_data *data =
-		container_of(t, struct pattern_trig_data, hrtimer);
-
-	pattern_trig_timer_common_function(data);
-	if (!data->is_indefinite && !data->repeat)
-		return HRTIMER_NORESTART;
-
-	return HRTIMER_RESTART;
-}
-
 static int pattern_trig_start_pattern(struct led_classdev *led_cdev)
 {
 	struct pattern_trig_data *data = led_cdev->trigger_data;
@@ -174,7 +124,7 @@ static int pattern_trig_start_pattern(struct led_classdev *led_cdev)
 	if (!data->npatterns)
 		return 0;
 
-	if (data->type == PATTERN_TYPE_HW) {
+	if (data->is_hw_pattern) {
 		return led_cdev->pattern_set(led_cdev, data->patterns,
 					     data->npatterns, data->repeat);
 	}
@@ -186,7 +136,8 @@ static int pattern_trig_start_pattern(struct led_classdev *led_cdev)
 	data->delta_t = 0;
 	data->curr = data->patterns;
 	data->next = data->patterns + 1;
-	pattern_trig_timer_start(data);
+	data->timer.expires = jiffies;
+	add_timer(&data->timer);
 
 	return 0;
 }
@@ -224,9 +175,9 @@ static ssize_t repeat_store(struct device *dev, struct device_attribute *attr,
 
 	mutex_lock(&data->lock);
 
-	pattern_trig_timer_cancel(data);
+	del_timer_sync(&data->timer);
 
-	if (data->type == PATTERN_TYPE_HW)
+	if (data->is_hw_pattern)
 		led_cdev->pattern_clear(led_cdev);
 
 	data->last_repeat = data->repeat = res;
@@ -245,14 +196,14 @@ static ssize_t repeat_store(struct device *dev, struct device_attribute *attr,
 static DEVICE_ATTR_RW(repeat);
 
 static ssize_t pattern_trig_show_patterns(struct pattern_trig_data *data,
-					  char *buf, enum pattern_type type)
+					  char *buf, bool hw_pattern)
 {
 	ssize_t count = 0;
 	int i;
 
 	mutex_lock(&data->lock);
 
-	if (!data->npatterns || data->type != type)
+	if (!data->npatterns || (data->is_hw_pattern ^ hw_pattern))
 		goto out;
 
 	for (i = 0; i < data->npatterns; i++) {
@@ -309,19 +260,19 @@ static int pattern_trig_store_patterns_int(struct pattern_trig_data *data,
 
 static ssize_t pattern_trig_store_patterns(struct led_classdev *led_cdev,
 					   const char *buf, const u32 *buf_int,
-					   size_t count, enum pattern_type type)
+					   size_t count, bool hw_pattern)
 {
 	struct pattern_trig_data *data = led_cdev->trigger_data;
 	int err = 0;
 
 	mutex_lock(&data->lock);
 
-	pattern_trig_timer_cancel(data);
+	del_timer_sync(&data->timer);
 
-	if (data->type == PATTERN_TYPE_HW)
+	if (data->is_hw_pattern)
 		led_cdev->pattern_clear(led_cdev);
 
-	data->type = type;
+	data->is_hw_pattern = hw_pattern;
 	data->npatterns = 0;
 
 	if (buf)
@@ -346,7 +297,7 @@ static ssize_t pattern_show(struct device *dev, struct device_attribute *attr,
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
 	struct pattern_trig_data *data = led_cdev->trigger_data;
 
-	return pattern_trig_show_patterns(data, buf, PATTERN_TYPE_SW);
+	return pattern_trig_show_patterns(data, buf, false);
 }
 
 static ssize_t pattern_store(struct device *dev, struct device_attribute *attr,
@@ -354,8 +305,7 @@ static ssize_t pattern_store(struct device *dev, struct device_attribute *attr,
 {
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
 
-	return pattern_trig_store_patterns(led_cdev, buf, NULL, count,
-					   PATTERN_TYPE_SW);
+	return pattern_trig_store_patterns(led_cdev, buf, NULL, count, false);
 }
 
 static DEVICE_ATTR_RW(pattern);
@@ -366,7 +316,7 @@ static ssize_t hw_pattern_show(struct device *dev,
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
 	struct pattern_trig_data *data = led_cdev->trigger_data;
 
-	return pattern_trig_show_patterns(data, buf, PATTERN_TYPE_HW);
+	return pattern_trig_show_patterns(data, buf, true);
 }
 
 static ssize_t hw_pattern_store(struct device *dev,
@@ -375,32 +325,10 @@ static ssize_t hw_pattern_store(struct device *dev,
 {
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
 
-	return pattern_trig_store_patterns(led_cdev, buf, NULL, count,
-					   PATTERN_TYPE_HW);
+	return pattern_trig_store_patterns(led_cdev, buf, NULL, count, true);
 }
 
 static DEVICE_ATTR_RW(hw_pattern);
-
-static ssize_t hr_pattern_show(struct device *dev,
-			       struct device_attribute *attr, char *buf)
-{
-	struct led_classdev *led_cdev = dev_get_drvdata(dev);
-	struct pattern_trig_data *data = led_cdev->trigger_data;
-
-	return pattern_trig_show_patterns(data, buf, PATTERN_TYPE_HR);
-}
-
-static ssize_t hr_pattern_store(struct device *dev,
-				struct device_attribute *attr,
-				const char *buf, size_t count)
-{
-	struct led_classdev *led_cdev = dev_get_drvdata(dev);
-
-	return pattern_trig_store_patterns(led_cdev, buf, NULL, count,
-					   PATTERN_TYPE_HR);
-}
-
-static DEVICE_ATTR_RW(hr_pattern);
 
 static umode_t pattern_trig_attrs_mode(struct kobject *kobj,
 				       struct attribute *attr, int index)
@@ -409,8 +337,6 @@ static umode_t pattern_trig_attrs_mode(struct kobject *kobj,
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
 
 	if (attr == &dev_attr_repeat.attr || attr == &dev_attr_pattern.attr)
-		return attr->mode;
-	else if (attr == &dev_attr_hr_pattern.attr)
 		return attr->mode;
 	else if (attr == &dev_attr_hw_pattern.attr && led_cdev->pattern_set)
 		return attr->mode;
@@ -421,7 +347,6 @@ static umode_t pattern_trig_attrs_mode(struct kobject *kobj,
 static struct attribute *pattern_trig_attrs[] = {
 	&dev_attr_pattern.attr,
 	&dev_attr_hw_pattern.attr,
-	&dev_attr_hr_pattern.attr,
 	&dev_attr_repeat.attr,
 	NULL
 };
@@ -451,8 +376,7 @@ static void pattern_init(struct led_classdev *led_cdev)
 		goto out;
 	}
 
-	err = pattern_trig_store_patterns(led_cdev, NULL, pattern, size,
-					  PATTERN_TYPE_SW);
+	err = pattern_trig_store_patterns(led_cdev, NULL, pattern, size, false);
 	if (err < 0)
 		dev_warn(led_cdev->dev,
 			 "Pattern initialization failed with error %d\n", err);
@@ -476,15 +400,12 @@ static int pattern_trig_activate(struct led_classdev *led_cdev)
 		led_cdev->pattern_clear = NULL;
 	}
 
-	data->type = PATTERN_TYPE_SW;
 	data->is_indefinite = true;
 	data->last_repeat = -1;
 	mutex_init(&data->lock);
 	data->led_cdev = led_cdev;
 	led_set_trigger_data(led_cdev, data);
 	timer_setup(&data->timer, pattern_trig_timer_function, 0);
-	hrtimer_init(&data->hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	data->hrtimer.function = pattern_trig_hrtimer_function;
 	led_cdev->activated = true;
 
 	if (led_cdev->flags & LED_INIT_DEFAULT_TRIGGER) {
@@ -510,7 +431,6 @@ static void pattern_trig_deactivate(struct led_classdev *led_cdev)
 		led_cdev->pattern_clear(led_cdev);
 
 	timer_shutdown_sync(&data->timer);
-	hrtimer_cancel(&data->hrtimer);
 
 	led_set_brightness(led_cdev, LED_OFF);
 	kfree(data);

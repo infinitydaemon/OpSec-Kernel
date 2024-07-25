@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0
 
-/* Copyright (C) 2021-2024 Linaro Ltd. */
+/* Copyright (C) 2021 Linaro Ltd. */
 
-#include <linux/array_size.h>
 #include <linux/log2.h>
 
+#include "../gsi.h"
 #include "../ipa_data.h"
 #include "../ipa_endpoint.h"
 #include "../ipa_mem.h"
-#include "../ipa_version.h"
 
 /** enum ipa_resource_type - IPA resource types for an SoC having IPA v4.5 */
 enum ipa_resource_type {

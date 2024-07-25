@@ -642,13 +642,11 @@ static void determine_valid_ioctls(struct video_device *vdev)
 		SET_VALID_IOCTL(ops, VIDIOC_TRY_DECODER_CMD, vidioc_try_decoder_cmd);
 		SET_VALID_IOCTL(ops, VIDIOC_ENUM_FRAMESIZES, vidioc_enum_framesizes);
 		SET_VALID_IOCTL(ops, VIDIOC_ENUM_FRAMEINTERVALS, vidioc_enum_frameintervals);
-		if (ops->vidioc_g_selection &&
-		    !test_bit(_IOC_NR(VIDIOC_G_SELECTION), vdev->valid_ioctls)) {
+		if (ops->vidioc_g_selection) {
 			__set_bit(_IOC_NR(VIDIOC_G_CROP), valid_ioctls);
 			__set_bit(_IOC_NR(VIDIOC_CROPCAP), valid_ioctls);
 		}
-		if (ops->vidioc_s_selection &&
-		    !test_bit(_IOC_NR(VIDIOC_S_SELECTION), vdev->valid_ioctls))
+		if (ops->vidioc_s_selection)
 			__set_bit(_IOC_NR(VIDIOC_S_CROP), valid_ioctls);
 		SET_VALID_IOCTL(ops, VIDIOC_G_SELECTION, vidioc_g_selection);
 		SET_VALID_IOCTL(ops, VIDIOC_S_SELECTION, vidioc_s_selection);
@@ -722,9 +720,6 @@ static void determine_valid_ioctls(struct video_device *vdev)
 		SET_VALID_IOCTL(ops, VIDIOC_PREPARE_BUF, vidioc_prepare_buf);
 		SET_VALID_IOCTL(ops, VIDIOC_STREAMON, vidioc_streamon);
 		SET_VALID_IOCTL(ops, VIDIOC_STREAMOFF, vidioc_streamoff);
-		/* VIDIOC_CREATE_BUFS support is mandatory to enable VIDIOC_REMOVE_BUFS */
-		if (ops->vidioc_create_bufs)
-			SET_VALID_IOCTL(ops, VIDIOC_REMOVE_BUFS, vidioc_remove_bufs);
 	}
 
 	if (is_vid || is_vbi || is_meta) {

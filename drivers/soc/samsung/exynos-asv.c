@@ -11,7 +11,6 @@
 
 #include <linux/cpu.h>
 #include <linux/device.h>
-#include <linux/energy_model.h>
 #include <linux/errno.h>
 #include <linux/of.h>
 #include <linux/pm_opp.h>
@@ -98,16 +97,9 @@ static int exynos_asv_update_opps(struct exynos_asv *asv)
 			last_opp_table = opp_table;
 
 			ret = exynos_asv_update_cpu_opps(asv, cpu);
-			if (!ret) {
-				/*
-				 * Update EM power values since OPP
-				 * voltage values may have changed.
-				 */
-				em_dev_update_chip_binning(cpu);
-			} else {
+			if (ret < 0)
 				dev_err(asv->dev, "Couldn't udate OPPs for cpu%d\n",
 					cpuid);
-			}
 		}
 
 		dev_pm_opp_put_opp_table(opp_table);

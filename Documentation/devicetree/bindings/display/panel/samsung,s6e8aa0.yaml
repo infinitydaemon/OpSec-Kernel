@@ -16,9 +16,7 @@ properties:
   compatible:
     const: samsung,s6e8aa0
 
-  reg:
-    maxItems: 1
-
+  reg: true
   reset-gpios: true
   display-timings: true
 

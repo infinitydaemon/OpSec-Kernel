@@ -244,7 +244,7 @@ static const char * const irq_type_names[] = {
 	[IRQ_TYPE_LEVEL_LOW] = "level-low",
 };
 
-static bool persist_gpio_outputs;
+static bool persist_gpio_outputs = true;
 module_param(persist_gpio_outputs, bool, 0644);
 MODULE_PARM_DESC(persist_gpio_outputs, "Enable GPIO_OUT persistence when pin is freed");
 
@@ -424,14 +424,31 @@ static void bcm2835_gpio_irq_handle_bank(struct bcm2835_pinctrl *pc,
 	unsigned long events;
 	unsigned offset;
 	unsigned gpio;
+	u32 levs, levs2;
 
 	events = bcm2835_gpio_rd(pc, GPEDS0 + bank * 4);
+	levs = bcm2835_gpio_rd(pc, GPLEV0 + bank * 4);
 	events &= mask;
 	events &= pc->enabled_irq_map[bank];
+	bcm2835_gpio_wr(pc, GPEDS0 + bank * 4, events);
+
+retry:
 	for_each_set_bit(offset, &events, 32) {
 		gpio = (32 * bank) + offset;
 		generic_handle_domain_irq(pc->gpio_chip.irq.domain,
 					  gpio);
+	}
+	events = bcm2835_gpio_rd(pc, GPEDS0 + bank * 4);
+	levs2 = bcm2835_gpio_rd(pc, GPLEV0 + bank * 4);
+
+	events |= levs2 & ~levs & bcm2835_gpio_rd(pc, GPREN0 + bank * 4);
+	events |= ~levs2 & levs & bcm2835_gpio_rd(pc, GPFEN0 + bank * 4);
+	events &= mask;
+	events &= pc->enabled_irq_map[bank];
+	if (events) {
+		bcm2835_gpio_wr(pc, GPEDS0 + bank * 4, events);
+		levs = levs2;
+		goto retry;
 	}
 }
 
@@ -672,11 +689,7 @@ static int bcm2835_gpio_irq_set_type(struct irq_data *data, unsigned int type)
 
 static void bcm2835_gpio_irq_ack(struct irq_data *data)
 {
-	struct gpio_chip *chip = irq_data_get_irq_chip_data(data);
-	struct bcm2835_pinctrl *pc = gpiochip_get_data(chip);
-	unsigned gpio = irqd_to_hwirq(data);
-
-	bcm2835_gpio_set_bit(pc, GPEDS0, gpio);
+	/* Nothing to do - the main interrupt handler includes the ACK */
 }
 
 static int bcm2835_gpio_irq_set_wake(struct irq_data *data, unsigned int on)
@@ -1011,27 +1024,8 @@ static const struct pinmux_ops bcm2835_pmx_ops = {
 static int bcm2835_pinconf_get(struct pinctrl_dev *pctldev,
 			unsigned pin, unsigned long *config)
 {
-	enum pin_config_param param = pinconf_to_config_param(*config);
-	struct bcm2835_pinctrl *pc = pinctrl_dev_get_drvdata(pctldev);
-	enum bcm2835_fsel fsel = bcm2835_pinctrl_fsel_get(pc, pin);
-	u32 val;
-
-	/* No way to read back bias config in HW */
-
-	switch (param) {
-	case PIN_CONFIG_OUTPUT:
-		if (fsel != BCM2835_FSEL_GPIO_OUT)
-			return -EINVAL;
-
-		val = bcm2835_gpio_get_bit(pc, GPLEV0, pin);
-		*config = pinconf_to_config_packed(param, val);
-		break;
-
-	default:
-		return -ENOTSUPP;
-	}
-
-	return 0;
+	/* No way to read back config in HW */
+	return -ENOTSUPP;
 }
 
 static void bcm2835_pull_config_set(struct bcm2835_pinctrl *pc,
@@ -1106,45 +1100,6 @@ static const struct pinconf_ops bcm2835_pinconf_ops = {
 	.pin_config_set = bcm2835_pinconf_set,
 };
 
-static int bcm2711_pinconf_get(struct pinctrl_dev *pctldev, unsigned pin,
-			       unsigned long *config)
-{
-	struct bcm2835_pinctrl *pc = pinctrl_dev_get_drvdata(pctldev);
-	enum pin_config_param param = pinconf_to_config_param(*config);
-	u32 offset, shift, val;
-
-	offset = PUD_2711_REG_OFFSET(pin);
-	shift = PUD_2711_REG_SHIFT(pin);
-	val = bcm2835_gpio_rd(pc, GP_GPIO_PUP_PDN_CNTRL_REG0 + (offset * 4));
-
-	switch (param) {
-	case PIN_CONFIG_BIAS_DISABLE:
-		if (((val >> shift) & PUD_2711_MASK) != BCM2711_PULL_NONE)
-			return -EINVAL;
-
-		break;
-
-	case PIN_CONFIG_BIAS_PULL_UP:
-		if (((val >> shift) & PUD_2711_MASK) != BCM2711_PULL_UP)
-			return -EINVAL;
-
-		*config = pinconf_to_config_packed(param, 50000);
-		break;
-
-	case PIN_CONFIG_BIAS_PULL_DOWN:
-		if (((val >> shift) & PUD_2711_MASK) != BCM2711_PULL_DOWN)
-			return -EINVAL;
-
-		*config = pinconf_to_config_packed(param, 50000);
-		break;
-
-	default:
-		return bcm2835_pinconf_get(pctldev, pin, config);
-	}
-
-	return 0;
-}
-
 static void bcm2711_pull_config_set(struct bcm2835_pinctrl *pc,
 				    unsigned int pin, unsigned int arg)
 {
@@ -1212,7 +1167,7 @@ static int bcm2711_pinconf_set(struct pinctrl_dev *pctldev,
 
 static const struct pinconf_ops bcm2711_pinconf_ops = {
 	.is_generic = true,
-	.pin_config_get = bcm2711_pinconf_get,
+	.pin_config_get = bcm2835_pinconf_get,
 	.pin_config_set = bcm2711_pinconf_set,
 };
 
@@ -1421,7 +1376,7 @@ static int bcm2835_pinctrl_probe(struct platform_device *pdev)
 	girq->default_type = IRQ_TYPE_NONE;
 	girq->handler = handle_level_irq;
 
-	err = gpiochip_add_data(&pc->gpio_chip, pc);
+	err = devm_gpiochip_add_data(dev, &pc->gpio_chip, pc);
 	if (err) {
 		dev_err(dev, "could not add GPIO chip\n");
 		goto out_remove;

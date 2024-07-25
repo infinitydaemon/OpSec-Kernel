@@ -111,7 +111,6 @@ mtk_flow_get_wdma_info(struct net_device *dev, const u8 *addr, struct mtk_wdma_i
 	info->queue = path->mtk_wdma.queue;
 	info->bss = path->mtk_wdma.bss;
 	info->wcid = path->mtk_wdma.wcid;
-	info->amsdu = path->mtk_wdma.amsdu;
 
 	return 0;
 }
@@ -175,7 +174,7 @@ mtk_flow_get_dsa_port(struct net_device **dev)
 	if (dp->cpu_dp->tag_ops->proto != DSA_TAG_PROTO_MTK)
 		return -ENODEV;
 
-	*dev = dsa_port_to_conduit(dp);
+	*dev = dsa_port_to_master(dp);
 
 	return dp->index;
 #else
@@ -193,17 +192,14 @@ mtk_flow_set_output_device(struct mtk_eth *eth, struct mtk_foe_entry *foe,
 
 	if (mtk_flow_get_wdma_info(dev, dest_mac, &info) == 0) {
 		mtk_foe_entry_set_wdma(eth, foe, info.wdma_idx, info.queue,
-				       info.bss, info.wcid, info.amsdu);
+				       info.bss, info.wcid);
 		if (mtk_is_netsys_v2_or_greater(eth)) {
 			switch (info.wdma_idx) {
 			case 0:
-				pse_port = PSE_WDMA0_PORT;
+				pse_port = 8;
 				break;
 			case 1:
-				pse_port = PSE_WDMA1_PORT;
-				break;
-			case 2:
-				pse_port = PSE_WDMA2_PORT;
+				pse_port = 9;
 				break;
 			default:
 				return -EINVAL;
@@ -273,10 +269,6 @@ mtk_flow_offload_replace(struct mtk_eth *eth, struct flow_cls_offload *f,
 
 		flow_rule_match_control(rule, &match);
 		addr_type = match.key->addr_type;
-
-		if (flow_rule_has_control_flags(match.mask->flags,
-						f->common.extack))
-			return -EOPNOTSUPP;
 	} else {
 		return -EOPNOTSUPP;
 	}

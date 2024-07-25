@@ -44,7 +44,7 @@ struct tree_mod_elem {
 /*
  * Pull a new tree mod seq number for our operation.
  */
-static u64 btrfs_inc_tree_mod_seq(struct btrfs_fs_info *fs_info)
+static inline u64 btrfs_inc_tree_mod_seq(struct btrfs_fs_info *fs_info)
 {
 	return atomic64_inc_return(&fs_info->tree_mod_seq);
 }
@@ -170,7 +170,8 @@ static noinline int tree_mod_log_insert(struct btrfs_fs_info *fs_info,
  * this until all tree mod log insertions are recorded in the rb tree and then
  * write unlock fs_info::tree_mod_log_lock.
  */
-static bool tree_mod_dont_log(struct btrfs_fs_info *fs_info, struct extent_buffer *eb)
+static inline bool tree_mod_dont_log(struct btrfs_fs_info *fs_info,
+				    struct extent_buffer *eb)
 {
 	if (!test_bit(BTRFS_FS_TREE_MOD_LOG_USERS, &fs_info->flags))
 		return true;
@@ -187,7 +188,7 @@ static bool tree_mod_dont_log(struct btrfs_fs_info *fs_info, struct extent_buffe
 }
 
 /* Similar to tree_mod_dont_log, but doesn't acquire any locks. */
-static bool tree_mod_need_log(const struct btrfs_fs_info *fs_info,
+static inline bool tree_mod_need_log(const struct btrfs_fs_info *fs_info,
 				    struct extent_buffer *eb)
 {
 	if (!test_bit(BTRFS_FS_TREE_MOD_LOG_USERS, &fs_info->flags))
@@ -366,9 +367,9 @@ free_tms:
 	return ret;
 }
 
-static int tree_mod_log_free_eb(struct btrfs_fs_info *fs_info,
-				struct tree_mod_elem **tm_list,
-				int nritems)
+static inline int tree_mod_log_free_eb(struct btrfs_fs_info *fs_info,
+				       struct tree_mod_elem **tm_list,
+				       int nritems)
 {
 	int i, j;
 	int ret;
@@ -1004,7 +1005,7 @@ struct extent_buffer *btrfs_get_old_root(struct btrfs_root *root, u64 time_seq)
 		free_extent_buffer(eb_root);
 
 		check.level = level;
-		check.owner_root = btrfs_root_id(root);
+		check.owner_root = root->root_key.objectid;
 
 		old = read_tree_block(fs_info, logical, &check);
 		if (WARN_ON(IS_ERR(old) || !extent_buffer_uptodate(old))) {

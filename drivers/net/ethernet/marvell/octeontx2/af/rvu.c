@@ -156,7 +156,7 @@ int rvu_alloc_rsrc_contig(struct rsrc_bmap *rsrc, int nrsrc)
 	return start;
 }
 
-void rvu_free_rsrc_contig(struct rsrc_bmap *rsrc, int nrsrc, int start)
+static void rvu_free_rsrc_contig(struct rsrc_bmap *rsrc, int nrsrc, int start)
 {
 	if (!rsrc->bmap)
 		return;
@@ -817,8 +817,6 @@ static int rvu_fwdata_init(struct rvu *rvu)
 	err = cgx_get_fwdata_base(&fwdbase);
 	if (err)
 		goto fail;
-
-	BUILD_BUG_ON(offsetof(struct rvu_fwdata, cgx_fw_data) > FWDATA_CGX_LMAC_OFFSET);
 	rvu->fwdata = ioremap_wc(fwdbase, sizeof(struct rvu_fwdata));
 	if (!rvu->fwdata)
 		goto fail;
@@ -936,9 +934,6 @@ static int rvu_setup_hw_resources(struct rvu *rvu)
 	hw->total_pfs = (cfg >> 32) & 0xFF;
 	hw->total_vfs = (cfg >> 20) & 0xFFF;
 	hw->max_vfs_per_pf = (cfg >> 40) & 0xFF;
-
-	if (!is_rvu_otx2(rvu))
-		rvu_apr_block_cn10k_init(rvu);
 
 	/* Init NPA LF's bitmap */
 	block = &hw->block[BLKADDR_NPA];
@@ -1486,7 +1481,7 @@ int rvu_get_nix_blkaddr(struct rvu *rvu, u16 pcifunc)
 	/* All CGX mapped PFs are set with assigned NIX block during init */
 	if (is_pf_cgxmapped(rvu, rvu_get_pf(pcifunc))) {
 		blkaddr = pf->nix_blkaddr;
-	} else if (is_lbk_vf(rvu, pcifunc)) {
+	} else if (is_afvf(pcifunc)) {
 		vf = pcifunc - 1;
 		/* Assign NIX based on VF number. All even numbered VFs get
 		 * NIX0 and odd numbered gets NIX1
@@ -1643,7 +1638,7 @@ static int rvu_check_rsrc_availability(struct rvu *rvu,
 		if (req->ssow > block->lf.max) {
 			dev_err(&rvu->pdev->dev,
 				"Func 0x%x: Invalid SSOW req, %d > max %d\n",
-				 pcifunc, req->sso, block->lf.max);
+				 pcifunc, req->ssow, block->lf.max);
 			return -EINVAL;
 		}
 		mappedlfs = rvu_get_rsrc_mapcount(pfvf, block->addr);
@@ -2036,7 +2031,7 @@ int rvu_mbox_handler_set_vf_perm(struct rvu *rvu, struct set_vf_perm *req,
 	u16 target;
 
 	/* Only PF can add VF permissions */
-	if ((pcifunc & RVU_PFVF_FUNC_MASK) || is_lbk_vf(rvu, pcifunc))
+	if ((pcifunc & RVU_PFVF_FUNC_MASK) || is_afvf(pcifunc))
 		return -EOPNOTSUPP;
 
 	target = (pcifunc & ~RVU_PFVF_FUNC_MASK) | (req->vf + 1);
@@ -2638,13 +2633,6 @@ static void __rvu_flr_handler(struct rvu *rvu, u16 pcifunc)
 	 * 2. Flush and reset SSO/SSOW
 	 * 3. Cleanup pools (NPA)
 	 */
-
-	/* Free allocated BPIDs */
-	rvu_nix_flr_free_bpids(rvu, pcifunc);
-
-	/* Free multicast/mirror node associated with the 'pcifunc' */
-	rvu_nix_mcast_flr_free_entries(rvu, pcifunc);
-
 	rvu_blklf_teardown(rvu, pcifunc, BLKADDR_NIX0);
 	rvu_blklf_teardown(rvu, pcifunc, BLKADDR_NIX1);
 	rvu_blklf_teardown(rvu, pcifunc, BLKADDR_CPT0);
@@ -3175,19 +3163,12 @@ static int rvu_enable_sriov(struct rvu *rvu)
 {
 	struct pci_dev *pdev = rvu->pdev;
 	int err, chans, vfs;
-	int pos = 0;
 
 	if (!rvu_afvf_msix_vectors_num_ok(rvu)) {
 		dev_warn(&pdev->dev,
 			 "Skipping SRIOV enablement since not enough IRQs are available\n");
 		return 0;
 	}
-
-	/* Get RVU VFs device id */
-	pos = pci_find_ext_capability(pdev, PCI_EXT_CAP_ID_SRIOV);
-	if (!pos)
-		return 0;
-	pci_read_config_word(pdev, pos + PCI_SRIOV_VF_DID, &rvu->vf_devid);
 
 	chans = rvu_get_num_lbk_chans();
 	if (chans < 0)

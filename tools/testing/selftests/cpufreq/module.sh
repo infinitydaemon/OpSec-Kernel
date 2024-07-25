@@ -24,14 +24,16 @@ test_basic_insmod_rmmod()
 	# insert module
 	insmod $1
 	if [ $? != 0 ]; then
-		ktap_exit_fail_msg "Insmod $1 failed\n"
+		printf "Insmod $1 failed\n"
+		exit;
 	fi
 
 	printf "Removing $1 module\n"
 	# remove module
 	rmmod $1
 	if [ $? != 0 ]; then
-		ktap_exit_fail_msg "rmmod $1 failed\n"
+		printf "rmmod $1 failed\n"
+		exit;
 	fi
 
 	printf "\n"

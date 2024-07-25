@@ -30,6 +30,8 @@
 #include <asm/mpc85xx.h>
 #include <sysdev/fsl_soc.h>
 
+#define DRV_NAME "mpc-i2c"
+
 #define MPC_I2C_CLOCK_LEGACY   0
 #define MPC_I2C_CLOCK_PRESERVE (~0U)
 
@@ -304,12 +306,13 @@ static void mpc_i2c_setup_512x(struct device_node *node,
 					 struct mpc_i2c *i2c,
 					 u32 clock)
 {
+	struct device_node *node_ctrl;
 	void __iomem *ctrl;
 	u32 idx;
 
 	/* Enable I2C interrupts for mpc5121 */
-	struct device_node *node_ctrl __free(device_node) =
-		of_find_compatible_node(NULL, NULL, "fsl,mpc5121-i2c-ctrl");
+	node_ctrl = of_find_compatible_node(NULL, NULL,
+					    "fsl,mpc5121-i2c-ctrl");
 	if (node_ctrl) {
 		ctrl = of_iomap(node_ctrl, 0);
 		if (ctrl) {
@@ -320,6 +323,7 @@ static void mpc_i2c_setup_512x(struct device_node *node,
 			setbits32(ctrl, 1 << (24 + idx * 2));
 			iounmap(ctrl);
 		}
+		of_node_put(node_ctrl);
 	}
 
 	/* The clock setup for the 52xx works also fine for the 512x */
@@ -356,11 +360,11 @@ static const struct mpc_i2c_divider mpc_i2c_dividers_8xxx[] = {
 
 static u32 mpc_i2c_get_sec_cfg_8xxx(void)
 {
+	struct device_node *node;
 	u32 __iomem *reg;
 	u32 val = 0;
 
-	struct device_node *node __free(device_node) =
-		of_find_node_by_name(NULL, "global-utilities");
+	node = of_find_node_by_name(NULL, "global-utilities");
 	if (node) {
 		const u32 *prop = of_get_property(node, "reg", NULL);
 		if (prop) {
@@ -381,6 +385,7 @@ static u32 mpc_i2c_get_sec_cfg_8xxx(void)
 			iounmap(reg);
 		}
 	}
+	of_node_put(node);
 
 	return val;
 }
@@ -839,14 +844,14 @@ static int fsl_i2c_probe(struct platform_device *op)
 			mpc_i2c_setup_8xxx(op->dev.of_node, i2c, clock);
 	}
 
-	/* Sadly, we have to support two deprecated bindings here */
+	/*
+	 * "fsl,timeout" has been marked as deprecated and, to maintain
+	 * backward compatibility, we will only look for it if
+	 * "i2c-scl-clk-low-timeout-us" is not present.
+	 */
 	result = of_property_read_u32(op->dev.of_node,
-				      "i2c-transfer-timeout-us",
+				      "i2c-scl-clk-low-timeout-us",
 				      &mpc_ops.timeout);
-	if (result == -EINVAL)
-		result = of_property_read_u32(op->dev.of_node,
-					      "i2c-scl-clk-low-timeout-us",
-					      &mpc_ops.timeout);
 	if (result == -EINVAL)
 		result = of_property_read_u32(op->dev.of_node,
 					      "fsl,timeout", &mpc_ops.timeout);
@@ -955,7 +960,7 @@ static struct platform_driver mpc_i2c_driver = {
 	.probe		= fsl_i2c_probe,
 	.remove_new	= fsl_i2c_remove,
 	.driver = {
-		.name = "mpc-i2c",
+		.name = DRV_NAME,
 		.of_match_table = mpc_i2c_of_match,
 		.pm = &mpc_i2c_pm_ops,
 	},

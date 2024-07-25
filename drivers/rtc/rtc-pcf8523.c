@@ -100,6 +100,7 @@ static int pcf8523_rtc_read_time(struct device *dev, struct rtc_time *tm)
 {
 	struct pcf8523 *pcf8523 = dev_get_drvdata(dev);
 	u8 regs[10];
+	u32 value;
 	int err;
 
 	err = regmap_bulk_read(pcf8523->regmap, PCF8523_REG_CONTROL1, regs,
@@ -109,6 +110,33 @@ static int pcf8523_rtc_read_time(struct device *dev, struct rtc_time *tm)
 
 	if ((regs[0] & PCF8523_CONTROL1_STOP) || (regs[3] & PCF8523_SECONDS_OS))
 		return -EINVAL;
+
+	if (regs[0] & PCF8523_SECONDS_OS) {
+		/*
+		 * If the oscillator was stopped, try to clear the flag. Upon
+		 * power-up the flag is always set, but if we cannot clear it
+		 * the oscillator isn't running properly for some reason. The
+		 * sensible thing therefore is to return an error, signalling
+		 * that the clock cannot be assumed to be correct.
+		 */
+
+		regs[0] &= ~PCF8523_SECONDS_OS;
+
+		err = regmap_write(pcf8523->regmap, PCF8523_REG_SECONDS,
+				   regs[0]);
+		if (err < 0)
+			return err;
+
+		err = regmap_read(pcf8523->regmap, PCF8523_REG_SECONDS,
+				  &value);
+		if (err < 0)
+			return err;
+
+		if (value & PCF8523_SECONDS_OS)
+			return -EAGAIN;
+
+		regs[0] = value;
+	}
 
 	tm->tm_sec = bcd2bin(regs[3] & 0x7f);
 	tm->tm_min = bcd2bin(regs[4] & 0x7f);
@@ -370,30 +398,6 @@ static int pcf8523_rtc_set_offset(struct device *dev, long offset)
 	return regmap_write(pcf8523->regmap, PCF8523_REG_OFFSET, value);
 }
 
-#ifdef CONFIG_PM_SLEEP
-static int pcf8523_suspend(struct device *dev)
-{
-	struct i2c_client *client = to_i2c_client(dev);
-
-	if (client->irq > 0 && device_may_wakeup(dev))
-		enable_irq_wake(client->irq);
-
-	return 0;
-}
-
-static int pcf8523_resume(struct device *dev)
-{
-	struct i2c_client *client = to_i2c_client(dev);
-
-	if (client->irq > 0 && device_may_wakeup(dev))
-		disable_irq_wake(client->irq);
-
-	return 0;
-}
-#endif
-
-static SIMPLE_DEV_PM_OPS(pcf8523_pm, pcf8523_suspend, pcf8523_resume);
-
 static const struct rtc_class_ops pcf8523_rtc_ops = {
 	.read_time = pcf8523_rtc_read_time,
 	.set_time = pcf8523_rtc_set_time,
@@ -511,7 +515,6 @@ static struct i2c_driver pcf8523_driver = {
 	.driver = {
 		.name = "rtc-pcf8523",
 		.of_match_table = pcf8523_of_match,
-		.pm = &pcf8523_pm,
 	},
 	.probe = pcf8523_probe,
 	.id_table = pcf8523_id,

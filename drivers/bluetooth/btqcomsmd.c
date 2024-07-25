@@ -197,7 +197,7 @@ destroy_acl_channel:
 	return ret;
 }
 
-static void btqcomsmd_remove(struct platform_device *pdev)
+static int btqcomsmd_remove(struct platform_device *pdev)
 {
 	struct btqcomsmd *btq = platform_get_drvdata(pdev);
 
@@ -206,6 +206,8 @@ static void btqcomsmd_remove(struct platform_device *pdev)
 
 	rpmsg_destroy_ept(btq->cmd_channel);
 	rpmsg_destroy_ept(btq->acl_channel);
+
+	return 0;
 }
 
 static const struct of_device_id btqcomsmd_of_match[] = {
@@ -216,7 +218,7 @@ MODULE_DEVICE_TABLE(of, btqcomsmd_of_match);
 
 static struct platform_driver btqcomsmd_driver = {
 	.probe = btqcomsmd_probe,
-	.remove_new = btqcomsmd_remove,
+	.remove = btqcomsmd_remove,
 	.driver  = {
 		.name  = "btqcomsmd",
 		.of_match_table = btqcomsmd_of_match,

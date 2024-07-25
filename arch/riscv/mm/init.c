@@ -24,12 +24,12 @@
 #include <linux/elf.h>
 #endif
 #include <linux/kfence.h>
-#include <linux/execmem.h>
 
 #include <asm/fixmap.h>
 #include <asm/io.h>
 #include <asm/numa.h>
 #include <asm/pgtable.h>
+#include <asm/ptdump.h>
 #include <asm/sections.h>
 #include <asm/soc.h>
 #include <asm/tlbflush.h>
@@ -49,12 +49,10 @@ u64 satp_mode __ro_after_init = SATP_MODE_32;
 #endif
 EXPORT_SYMBOL(satp_mode);
 
-#ifdef CONFIG_64BIT
-bool pgtable_l4_enabled __ro_after_init = !IS_ENABLED(CONFIG_XIP_KERNEL);
-bool pgtable_l5_enabled __ro_after_init = !IS_ENABLED(CONFIG_XIP_KERNEL);
+bool pgtable_l4_enabled = IS_ENABLED(CONFIG_64BIT) && !IS_ENABLED(CONFIG_XIP_KERNEL);
+bool pgtable_l5_enabled = IS_ENABLED(CONFIG_64BIT) && !IS_ENABLED(CONFIG_XIP_KERNEL);
 EXPORT_SYMBOL(pgtable_l4_enabled);
 EXPORT_SYMBOL(pgtable_l5_enabled);
-#endif
 
 phys_addr_t phys_ram_base __ro_after_init;
 EXPORT_SYMBOL(phys_ram_base);
@@ -67,7 +65,7 @@ extern char _start[];
 void *_dtb_early_va __initdata;
 uintptr_t _dtb_early_pa __initdata;
 
-phys_addr_t dma32_phys_limit __initdata;
+static phys_addr_t dma32_phys_limit __initdata;
 
 static void __init zone_sizes_init(void)
 {
@@ -162,25 +160,11 @@ static void print_vm_layout(void) { }
 
 void __init mem_init(void)
 {
-	bool swiotlb = max_pfn > PFN_DOWN(dma32_phys_limit);
 #ifdef CONFIG_FLATMEM
 	BUG_ON(!mem_map);
 #endif /* CONFIG_FLATMEM */
 
-	if (IS_ENABLED(CONFIG_DMA_BOUNCE_UNALIGNED_KMALLOC) && !swiotlb &&
-	    dma_cache_alignment != 1) {
-		/*
-		 * If no bouncing needed for ZONE_DMA, allocate 1MB swiotlb
-		 * buffer per 1GB of RAM for kmalloc() bouncing on
-		 * non-coherent platforms.
-		 */
-		unsigned long size =
-			DIV_ROUND_UP(memblock_phys_mem_size(), 1024);
-		swiotlb_adjust_size(min(swiotlb_size_or_default(), size));
-		swiotlb = true;
-	}
-
-	swiotlb_init(swiotlb, SWIOTLB_VERBOSE);
+	swiotlb_init(max_pfn > PFN_DOWN(dma32_phys_limit), SWIOTLB_VERBOSE);
 	memblock_free_all();
 
 	print_vm_layout();
@@ -741,6 +725,8 @@ void mark_rodata_ro(void)
 	if (IS_ENABLED(CONFIG_64BIT))
 		set_kernel_memory(lm_alias(__start_rodata), lm_alias(_data),
 				  set_memory_ro);
+
+	debug_checkwx();
 }
 #else
 static __init pgprot_t pgprot_from_va(uintptr_t va)
@@ -782,11 +768,6 @@ static int __init print_no5lvl(char *p)
 	return 0;
 }
 early_param("no5lvl", print_no5lvl);
-
-static void __init set_mmap_rnd_bits_max(void)
-{
-	mmap_rnd_bits_max = MMAP_VA_BITS - PAGE_SHIFT - 3;
-}
 
 /*
  * There is a simple way to determine if 4-level is supported by the
@@ -1102,7 +1083,6 @@ asmlinkage void __init setup_vm(uintptr_t dtb_pa)
 
 #if defined(CONFIG_64BIT) && !defined(CONFIG_XIP_KERNEL)
 	set_satp_mode(dtb_pa);
-	set_mmap_rnd_bits_max();
 #endif
 
 	/*
@@ -1365,6 +1345,28 @@ static inline void setup_vm_final(void)
 }
 #endif /* CONFIG_MMU */
 
+/* Reserve 128M low memory by default for swiotlb buffer */
+#define DEFAULT_CRASH_KERNEL_LOW_SIZE	(128UL << 20)
+
+static int __init reserve_crashkernel_low(unsigned long long low_size)
+{
+	unsigned long long low_base;
+
+	low_base = memblock_phys_alloc_range(low_size, PMD_SIZE, 0, dma32_phys_limit);
+	if (!low_base) {
+		pr_err("cannot allocate crashkernel low memory (size:0x%llx).\n", low_size);
+		return -ENOMEM;
+	}
+
+	pr_info("crashkernel low memory reserved: 0x%016llx - 0x%016llx (%lld MB)\n",
+		low_base, low_base + low_size, low_size >> 20);
+
+	crashk_low_res.start = low_base;
+	crashk_low_res.end = low_base + low_size - 1;
+
+	return 0;
+}
+
 /*
  * reserve_crashkernel() - reserves memory for crash kernel
  *
@@ -1372,25 +1374,122 @@ static inline void setup_vm_final(void)
  * line parameter. The memory reserved is used by dump capture kernel when
  * primary kernel is crashing.
  */
-static void __init arch_reserve_crashkernel(void)
+static void __init reserve_crashkernel(void)
 {
-	unsigned long long low_size = 0;
-	unsigned long long crash_base, crash_size;
+	unsigned long long crash_base = 0;
+	unsigned long long crash_size = 0;
+	unsigned long long crash_low_size = 0;
+	unsigned long search_start = memblock_start_of_DRAM();
+	unsigned long search_end = (unsigned long)dma32_phys_limit;
 	char *cmdline = boot_command_line;
+	bool fixed_base = false;
 	bool high = false;
-	int ret;
 
-	if (!IS_ENABLED(CONFIG_CRASH_RESERVE))
+	int ret = 0;
+
+	if (!IS_ENABLED(CONFIG_KEXEC_CORE))
 		return;
+	/*
+	 * Don't reserve a region for a crash kernel on a crash kernel
+	 * since it doesn't make much sense and we have limited memory
+	 * resources.
+	 */
+	if (is_kdump_kernel()) {
+		pr_info("crashkernel: ignoring reservation request\n");
+		return;
+	}
 
 	ret = parse_crashkernel(cmdline, memblock_phys_mem_size(),
-				&crash_size, &crash_base,
-				&low_size, &high);
-	if (ret)
-		return;
+				&crash_size, &crash_base);
+	if (ret == -ENOENT) {
+		/* Fallback to crashkernel=X,[high,low] */
+		ret = parse_crashkernel_high(cmdline, 0, &crash_size, &crash_base);
+		if (ret || !crash_size)
+			return;
 
-	reserve_crashkernel_generic(cmdline, crash_size, crash_base,
-				    low_size, high);
+		/*
+		 * crashkernel=Y,low is valid only when crashkernel=X,high
+		 * is passed.
+		 */
+		ret = parse_crashkernel_low(cmdline, 0, &crash_low_size, &crash_base);
+		if (ret == -ENOENT)
+			crash_low_size = DEFAULT_CRASH_KERNEL_LOW_SIZE;
+		else if (ret)
+			return;
+
+		search_start = (unsigned long)dma32_phys_limit;
+		search_end = memblock_end_of_DRAM();
+		high = true;
+	} else if (ret || !crash_size) {
+		/* Invalid argument value specified */
+		return;
+	}
+
+	crash_size = PAGE_ALIGN(crash_size);
+
+	if (crash_base) {
+		fixed_base = true;
+		search_start = crash_base;
+		search_end = crash_base + crash_size;
+	}
+
+	/*
+	 * Current riscv boot protocol requires 2MB alignment for
+	 * RV64 and 4MB alignment for RV32 (hugepage size)
+	 *
+	 * Try to alloc from 32bit addressible physical memory so that
+	 * swiotlb can work on the crash kernel.
+	 */
+	crash_base = memblock_phys_alloc_range(crash_size, PMD_SIZE,
+					       search_start, search_end);
+	if (crash_base == 0) {
+		/*
+		 * For crashkernel=size[KMG]@offset[KMG], print out failure
+		 * message if can't reserve the specified region.
+		 */
+		if (fixed_base) {
+			pr_warn("crashkernel: allocating failed with given size@offset\n");
+			return;
+		}
+
+		if (high) {
+			/*
+			 * For crashkernel=size[KMG],high, if the first attempt was
+			 * for high memory, fall back to low memory.
+			 */
+			search_start = memblock_start_of_DRAM();
+			search_end = (unsigned long)dma32_phys_limit;
+		} else {
+			/*
+			 * For crashkernel=size[KMG], if the first attempt was for
+			 * low memory, fall back to high memory, the minimum required
+			 * low memory will be reserved later.
+			 */
+			search_start = (unsigned long)dma32_phys_limit;
+			search_end = memblock_end_of_DRAM();
+			crash_low_size = DEFAULT_CRASH_KERNEL_LOW_SIZE;
+		}
+
+		crash_base = memblock_phys_alloc_range(crash_size, PMD_SIZE,
+						       search_start, search_end);
+		if (crash_base == 0) {
+			pr_warn("crashkernel: couldn't allocate %lldKB\n",
+				crash_size >> 10);
+			return;
+		}
+	}
+
+	if ((crash_base >= dma32_phys_limit) && crash_low_size &&
+	     reserve_crashkernel_low(crash_low_size)) {
+		memblock_phys_free(crash_base, crash_size);
+		return;
+	}
+
+	pr_info("crashkernel: reserved 0x%016llx - 0x%016llx (%lld MB)\n",
+		crash_base, crash_base + crash_size, crash_size >> 20);
+
+	crashk_res.start = crash_base;
+	crashk_res.end = crash_base + crash_size - 1;
 }
 
 void __init paging_init(void)
@@ -1412,34 +1511,15 @@ void __init misc_mem_init(void)
 	local_flush_tlb_kernel_range(VMEMMAP_START, VMEMMAP_END);
 #endif
 	zone_sizes_init();
-	arch_reserve_crashkernel();
+	reserve_crashkernel();
 	memblock_dump_all();
 }
 
 #ifdef CONFIG_SPARSEMEM_VMEMMAP
-void __meminit vmemmap_set_pmd(pmd_t *pmd, void *p, int node,
-			       unsigned long addr, unsigned long next)
-{
-	pmd_set_huge(pmd, virt_to_phys(p), PAGE_KERNEL);
-}
-
-int __meminit vmemmap_check_pmd(pmd_t *pmdp, int node,
-				unsigned long addr, unsigned long next)
-{
-	vmemmap_verify((pte_t *)pmdp, node, addr, next);
-	return 1;
-}
-
 int __meminit vmemmap_populate(unsigned long start, unsigned long end, int node,
 			       struct vmem_altmap *altmap)
 {
-	/*
-	 * Note that SPARSEMEM_VMEMMAP is only selected for rv64 and that we
-	 * can't use hugepage mappings for 2-level page table because in case of
-	 * memory hotplug, we are not able to update all the page tables with
-	 * the new PMDs.
-	 */
-	return vmemmap_populate_hugepages(start, end, node, NULL);
+	return vmemmap_populate_basepages(start, end, node, NULL);
 }
 #endif
 
@@ -1500,37 +1580,3 @@ void __init pgtable_cache_init(void)
 		preallocate_pgd_pages_range(MODULES_VADDR, MODULES_END, "bpf/modules");
 }
 #endif
-
-#ifdef CONFIG_EXECMEM
-#ifdef CONFIG_MMU
-static struct execmem_info execmem_info __ro_after_init;
-
-struct execmem_info __init *execmem_arch_setup(void)
-{
-	execmem_info = (struct execmem_info){
-		.ranges = {
-			[EXECMEM_DEFAULT] = {
-				.start	= MODULES_VADDR,
-				.end	= MODULES_END,
-				.pgprot	= PAGE_KERNEL,
-				.alignment = 1,
-			},
-			[EXECMEM_KPROBES] = {
-				.start	= VMALLOC_START,
-				.end	= VMALLOC_END,
-				.pgprot	= PAGE_KERNEL_READ_EXEC,
-				.alignment = 1,
-			},
-			[EXECMEM_BPF] = {
-				.start	= BPF_JIT_REGION_START,
-				.end	= BPF_JIT_REGION_END,
-				.pgprot	= PAGE_KERNEL,
-				.alignment = PAGE_SIZE,
-			},
-		},
-	};
-
-	return &execmem_info;
-}
-#endif /* CONFIG_MMU */
-#endif /* CONFIG_EXECMEM */

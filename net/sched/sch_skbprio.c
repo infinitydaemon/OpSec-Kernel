@@ -79,9 +79,7 @@ static int skbprio_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	prio = min(skb->priority, max_priority);
 
 	qdisc = &q->qdiscs[prio];
-
-	/* sch->limit can change under us from skbprio_change() */
-	if (sch->q.qlen < READ_ONCE(sch->limit)) {
+	if (sch->q.qlen < sch->limit) {
 		__skb_queue_tail(qdisc, skb);
 		qdisc_qstats_backlog_inc(sch, skb);
 		q->qstats[prio].backlog += qdisc_pkt_len(skb);
@@ -174,7 +172,7 @@ static int skbprio_change(struct Qdisc *sch, struct nlattr *opt,
 	if (opt->nla_len != nla_attr_size(sizeof(*ctl)))
 		return -EINVAL;
 
-	WRITE_ONCE(sch->limit, ctl->limit);
+	sch->limit = ctl->limit;
 	return 0;
 }
 
@@ -202,7 +200,7 @@ static int skbprio_dump(struct Qdisc *sch, struct sk_buff *skb)
 {
 	struct tc_skbprio_qopt opt;
 
-	opt.limit = READ_ONCE(sch->limit);
+	opt.limit = sch->limit;
 
 	if (nla_put(skb, TCA_OPTIONS, sizeof(opt), &opt))
 		return -1;
@@ -294,7 +292,6 @@ static struct Qdisc_ops skbprio_qdisc_ops __read_mostly = {
 	.destroy	=	skbprio_destroy,
 	.owner		=	THIS_MODULE,
 };
-MODULE_ALIAS_NET_SCH("skbprio");
 
 static int __init skbprio_module_init(void)
 {
@@ -310,4 +307,3 @@ module_init(skbprio_module_init)
 module_exit(skbprio_module_exit)
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("SKB priority based scheduling qdisc");

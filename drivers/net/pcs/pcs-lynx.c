@@ -61,10 +61,11 @@ static void lynx_pcs_get_state_usxgmii(struct mdio_device *pcs,
 static void lynx_pcs_get_state_2500basex(struct mdio_device *pcs,
 					 struct phylink_link_state *state)
 {
-	int bmsr;
+	int bmsr, lpa;
 
 	bmsr = mdiodev_read(pcs, MII_BMSR);
-	if (bmsr < 0) {
+	lpa = mdiodev_read(pcs, MII_LPA);
+	if (bmsr < 0 || lpa < 0) {
 		state->link = false;
 		return;
 	}
@@ -397,5 +398,4 @@ void lynx_pcs_destroy(struct phylink_pcs *pcs)
 }
 EXPORT_SYMBOL(lynx_pcs_destroy);
 
-MODULE_DESCRIPTION("NXP Lynx PCS phylink library");
 MODULE_LICENSE("Dual BSD/GPL");

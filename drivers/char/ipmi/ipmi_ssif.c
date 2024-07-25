@@ -1945,7 +1945,7 @@ static int new_ssif_client(int addr, char *adapter_name,
 		}
 	}
 
-	strscpy(addr_info->binfo.type, DEVICE_NAME,
+	strncpy(addr_info->binfo.type, DEVICE_NAME,
 		sizeof(addr_info->binfo.type));
 	addr_info->binfo.addr = addr;
 	addr_info->binfo.platform_data = addr_info;
@@ -2071,7 +2071,7 @@ static int ssif_platform_probe(struct platform_device *dev)
 	return dmi_ipmi_probe(dev);
 }
 
-static void ssif_platform_remove(struct platform_device *dev)
+static int ssif_platform_remove(struct platform_device *dev)
 {
 	struct ssif_addr_info *addr_info = dev_get_drvdata(&dev->dev);
 
@@ -2079,6 +2079,7 @@ static void ssif_platform_remove(struct platform_device *dev)
 	list_del(&addr_info->link);
 	kfree(addr_info);
 	mutex_unlock(&ssif_infos_mutex);
+	return 0;
 }
 
 static const struct platform_device_id ssif_plat_ids[] = {
@@ -2091,7 +2092,7 @@ static struct platform_driver ipmi_driver = {
 		.name = DEVICE_NAME,
 	},
 	.probe		= ssif_platform_probe,
-	.remove_new	= ssif_platform_remove,
+	.remove		= ssif_platform_remove,
 	.id_table       = ssif_plat_ids
 };
 

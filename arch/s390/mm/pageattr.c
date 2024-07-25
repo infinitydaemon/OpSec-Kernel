@@ -75,7 +75,7 @@ static void pgt_set(unsigned long *old, unsigned long new, unsigned long addr,
 			break;
 		}
 		table = (unsigned long *)((unsigned long)old & mask);
-		crdte(*old, new, table, dtt, addr, S390_lowcore.kernel_asce.val);
+		crdte(*old, new, table, dtt, addr, S390_lowcore.kernel_asce);
 	} else if (MACHINE_HAS_IDTE) {
 		cspg(old, *old, new);
 	} else {
@@ -185,7 +185,7 @@ static int walk_pmd_level(pud_t *pudp, unsigned long addr, unsigned long end,
 		if (pmd_none(*pmdp))
 			return -EINVAL;
 		next = pmd_addr_end(addr, end);
-		if (pmd_leaf(*pmdp)) {
+		if (pmd_large(*pmdp)) {
 			need_split  = !!(flags & SET_MEMORY_4K);
 			need_split |= !!(addr & ~PMD_MASK);
 			need_split |= !!(addr + PMD_SIZE > next);

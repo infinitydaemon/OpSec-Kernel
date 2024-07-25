@@ -27,11 +27,11 @@ static inline pte_t huge_ptep_clear_flush(struct vm_area_struct *vma,
 	return *ptep;
 }
 
-static inline void arch_clear_hugetlb_flags(struct folio *folio)
+static inline void arch_clear_hugepage_flags(struct page *page)
 {
-	clear_bit(PG_dcache_clean, &folio->flags);
+	clear_bit(PG_dcache_clean, &page->flags);
 }
-#define arch_clear_hugetlb_flags arch_clear_hugetlb_flags
+#define arch_clear_hugepage_flags arch_clear_hugepage_flags
 
 #include <asm-generic/hugetlb.h>
 

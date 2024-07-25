@@ -159,7 +159,5 @@ on_error:
 	if (pidfd >= 0)
 		close(pidfd);
 
-	if (ret)
-		ksft_exit_fail();
-	ksft_exit_pass();
+	return !ret ? ksft_exit_pass() : ksft_exit_fail();
 }

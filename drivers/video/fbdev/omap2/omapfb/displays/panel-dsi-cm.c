@@ -356,7 +356,11 @@ static int dsicm_bl_update_status(struct backlight_device *dev)
 
 static int dsicm_bl_get_intensity(struct backlight_device *dev)
 {
-	return backlight_get_brightness(dev);
+	if (dev->props.fb_blank == FB_BLANK_UNBLANK &&
+			dev->props.power == FB_BLANK_UNBLANK)
+		return dev->props.brightness;
+
+	return 0;
 }
 
 static const struct backlight_ops dsicm_bl_ops = {
@@ -1215,6 +1219,7 @@ static int dsicm_probe(struct platform_device *pdev)
 
 		ddata->bldev = bldev;
 
+		bldev->props.fb_blank = FB_BLANK_UNBLANK;
 		bldev->props.power = FB_BLANK_UNBLANK;
 		bldev->props.brightness = 255;
 
@@ -1236,7 +1241,7 @@ err_reg:
 	return r;
 }
 
-static void dsicm_remove(struct platform_device *pdev)
+static int __exit dsicm_remove(struct platform_device *pdev)
 {
 	struct panel_drv_data *ddata = platform_get_drvdata(pdev);
 	struct omap_dss_device *dssdev = &ddata->dssdev;
@@ -1264,6 +1269,8 @@ static void dsicm_remove(struct platform_device *pdev)
 
 	/* reset, to be sure that the panel is in a valid state */
 	dsicm_hw_reset(ddata);
+
+	return 0;
 }
 
 static const struct of_device_id dsicm_of_match[] = {
@@ -1275,10 +1282,11 @@ MODULE_DEVICE_TABLE(of, dsicm_of_match);
 
 static struct platform_driver dsicm_driver = {
 	.probe = dsicm_probe,
-	.remove_new = dsicm_remove,
+	.remove = __exit_p(dsicm_remove),
 	.driver = {
 		.name = "panel-dsi-cm",
 		.of_match_table = dsicm_of_match,
+		.suppress_bind_attrs = true,
 	},
 };
 

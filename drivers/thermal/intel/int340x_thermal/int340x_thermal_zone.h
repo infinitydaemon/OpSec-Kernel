@@ -20,8 +20,10 @@ struct active_trip {
 
 struct int34x_thermal_zone {
 	struct acpi_device *adev;
+	struct thermal_trip *trips;
 	int aux_trip_nr;
 	struct thermal_zone_device *zone;
+	struct thermal_zone_device_ops *ops;
 	void *priv_data;
 	struct acpi_lpat_conversion_table *lpat_table;
 };

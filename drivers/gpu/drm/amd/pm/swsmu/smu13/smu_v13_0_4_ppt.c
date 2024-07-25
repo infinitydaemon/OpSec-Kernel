@@ -330,7 +330,7 @@ static int smu_v13_0_4_get_smu_metrics_data(struct smu_context *smu,
 		*value = metrics->GfxActivity / 100;
 		break;
 	case METRICS_AVERAGE_VCNACTIVITY:
-		*value = metrics->UvdActivity / 100;
+		*value = metrics->UvdActivity;
 		break;
 	case METRICS_AVERAGE_SOCKETPOWER:
 		*value = (metrics->AverageSocketPower << 8) / 1000;
@@ -582,12 +582,6 @@ static int smu_v13_0_4_read_sensor(struct smu_context *smu,
 		ret = smu_v13_0_4_get_smu_metrics_data(smu,
 						       METRICS_AVERAGE_GFXACTIVITY,
 						       (uint32_t *)data);
-		*size = 4;
-		break;
-	case AMDGPU_PP_SENSOR_VCN_LOAD:
-		ret = smu_v13_0_4_get_smu_metrics_data(smu,
-							METRICS_AVERAGE_VCNACTIVITY,
-							(uint32_t *)data);
 		*size = 4;
 		break;
 	case AMDGPU_PP_SENSOR_GPU_AVG_POWER:
@@ -1162,7 +1156,7 @@ void smu_v13_0_4_set_ppt_funcs(struct smu_context *smu)
 	smu->smc_driver_if_version = SMU13_0_4_DRIVER_IF_VERSION;
 	smu->is_apu = true;
 
-	if (amdgpu_ip_version(adev, MP1_HWIP, 0) == IP_VERSION(13, 0, 4))
+	if (adev->ip_versions[MP1_HWIP][0] == IP_VERSION(13, 0, 4))
 		smu_v13_0_4_set_smu_mailbox_registers(smu);
 	else
 		smu_v13_0_set_smu_mailbox_registers(smu);

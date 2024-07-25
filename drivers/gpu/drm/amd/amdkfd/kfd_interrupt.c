@@ -104,8 +104,6 @@ void kfd_interrupt_exit(struct kfd_node *node)
 	 */
 	flush_workqueue(node->ih_wq);
 
-	destroy_workqueue(node->ih_wq);
-
 	kfifo_free(&node->ih_fifo);
 }
 

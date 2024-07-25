@@ -72,7 +72,7 @@ static const int stts751_intervals[] = {
 };
 
 static const struct i2c_device_id stts751_id[] = {
-	{ "stts751" },
+	{ "stts751", 0 },
 	{ }
 };
 
@@ -91,6 +91,7 @@ struct stts751_priv {
 	int event_max, event_min;
 	int therm;
 	int hyst;
+	bool smbus_timeout;
 	int temp;
 	unsigned long last_update, last_alert_update;
 	u8 config;

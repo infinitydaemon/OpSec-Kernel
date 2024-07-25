@@ -676,10 +676,6 @@
     "EventCode": "0xac",
     "BriefDescription": "Average sampled latency when data is sourced from DRAM in the same NUMA node.",
     "UMask": "0x01",
-    "EnAllCores": "0x1",
-    "EnAllSlices": "0x1",
-    "SliceId": "0x3",
-    "ThreadMask": "0x3",
     "Unit": "L3PMC"
   },
   {
@@ -687,10 +683,6 @@
     "EventCode": "0xac",
     "BriefDescription": "Average sampled latency when data is sourced from DRAM in a different NUMA node.",
     "UMask": "0x02",
-    "EnAllCores": "0x1",
-    "EnAllSlices": "0x1",
-    "SliceId": "0x3",
-    "ThreadMask": "0x3",
     "Unit": "L3PMC"
   },
   {
@@ -698,10 +690,6 @@
     "EventCode": "0xac",
     "BriefDescription": "Average sampled latency when data is sourced from another CCX's cache when the address was in the same NUMA node.",
     "UMask": "0x04",
-    "EnAllCores": "0x1",
-    "EnAllSlices": "0x1",
-    "SliceId": "0x3",
-    "ThreadMask": "0x3",
     "Unit": "L3PMC"
   },
   {
@@ -709,10 +697,6 @@
     "EventCode": "0xac",
     "BriefDescription": "Average sampled latency when data is sourced from another CCX's cache when the address was in a different NUMA node.",
     "UMask": "0x08",
-    "EnAllCores": "0x1",
-    "EnAllSlices": "0x1",
-    "SliceId": "0x3",
-    "ThreadMask": "0x3",
     "Unit": "L3PMC"
   },
   {
@@ -720,10 +704,6 @@
     "EventCode": "0xac",
     "BriefDescription": "Average sampled latency when data is sourced from extension memory (CXL) in the same NUMA node.",
     "UMask": "0x10",
-    "EnAllCores": "0x1",
-    "EnAllSlices": "0x1",
-    "SliceId": "0x3",
-    "ThreadMask": "0x3",
     "Unit": "L3PMC"
   },
   {
@@ -731,10 +711,6 @@
     "EventCode": "0xac",
     "BriefDescription": "Average sampled latency when data is sourced from extension memory (CXL) in a different NUMA node.",
     "UMask": "0x20",
-    "EnAllCores": "0x1",
-    "EnAllSlices": "0x1",
-    "SliceId": "0x3",
-    "ThreadMask": "0x3",
     "Unit": "L3PMC"
   },
   {
@@ -742,10 +718,6 @@
     "EventCode": "0xac",
     "BriefDescription": "Average sampled latency from all data sources.",
     "UMask": "0x3f",
-    "EnAllCores": "0x1",
-    "EnAllSlices": "0x1",
-    "SliceId": "0x3",
-    "ThreadMask": "0x3",
     "Unit": "L3PMC"
   },
   {
@@ -753,10 +725,6 @@
     "EventCode": "0xad",
     "BriefDescription": "L3 cache fill requests sourced from DRAM in the same NUMA node.",
     "UMask": "0x01",
-    "EnAllCores": "0x1",
-    "EnAllSlices": "0x1",
-    "SliceId": "0x3",
-    "ThreadMask": "0x3",
     "Unit": "L3PMC"
   },
   {
@@ -764,10 +732,6 @@
     "EventCode": "0xad",
     "BriefDescription": "L3 cache fill requests sourced from DRAM in a different NUMA node.",
     "UMask": "0x02",
-    "EnAllCores": "0x1",
-    "EnAllSlices": "0x1",
-    "SliceId": "0x3",
-    "ThreadMask": "0x3",
     "Unit": "L3PMC"
   },
   {
@@ -775,10 +739,6 @@
     "EventCode": "0xad",
     "BriefDescription": "L3 cache fill requests sourced from another CCX's cache when the address was in the same NUMA node.",
     "UMask": "0x04",
-    "EnAllCores": "0x1",
-    "EnAllSlices": "0x1",
-    "SliceId": "0x3",
-    "ThreadMask": "0x3",
     "Unit": "L3PMC"
   },
   {
@@ -786,10 +746,6 @@
     "EventCode": "0xad",
     "BriefDescription": "L3 cache fill requests sourced from another CCX's cache when the address was in a different NUMA node.",
     "UMask": "0x08",
-    "EnAllCores": "0x1",
-    "EnAllSlices": "0x1",
-    "SliceId": "0x3",
-    "ThreadMask": "0x3",
     "Unit": "L3PMC"
   },
   {
@@ -797,10 +753,6 @@
     "EventCode": "0xad",
     "BriefDescription": "L3 cache fill requests sourced from extension memory (CXL) in the same NUMA node.",
     "UMask": "0x10",
-    "EnAllCores": "0x1",
-    "EnAllSlices": "0x1",
-    "SliceId": "0x3",
-    "ThreadMask": "0x3",
     "Unit": "L3PMC"
   },
   {
@@ -808,10 +760,6 @@
     "EventCode": "0xad",
     "BriefDescription": "L3 cache fill requests sourced from extension memory (CXL) in a different NUMA node.",
     "UMask": "0x20",
-    "EnAllCores": "0x1",
-    "EnAllSlices": "0x1",
-    "SliceId": "0x3",
-    "ThreadMask": "0x3",
     "Unit": "L3PMC"
   },
   {
@@ -819,10 +767,6 @@
     "EventCode": "0xad",
     "BriefDescription": "L3 cache fill requests sourced from all data sources.",
     "UMask": "0x3f",
-    "EnAllCores": "0x1",
-    "EnAllSlices": "0x1",
-    "SliceId": "0x3",
-    "ThreadMask": "0x3",
     "Unit": "L3PMC"
   }
 ]

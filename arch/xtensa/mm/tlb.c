@@ -256,13 +256,12 @@ static int check_tlb_entry(unsigned w, unsigned e, bool dtlb)
 					dtlb ? 'D' : 'I', w, e, r0, r1, pte);
 			if (pte == 0 || !pte_present(__pte(pte))) {
 				struct page *p = pfn_to_page(r1 >> PAGE_SHIFT);
-				struct folio *f = page_folio(p);
-
-				pr_err("folio refcount: %d, mapcount: %d\n",
-					folio_ref_count(f), folio_mapcount(f));
-				if (!folio_ref_count(f))
+				pr_err("page refcount: %d, mapcount: %d\n",
+						page_count(p),
+						page_mapcount(p));
+				if (!page_count(p))
 					rc |= TLB_INSANE;
-				else if (folio_mapped(f))
+				else if (page_mapcount(p))
 					rc |= TLB_SUSPICIOUS;
 			} else {
 				rc |= TLB_INSANE;

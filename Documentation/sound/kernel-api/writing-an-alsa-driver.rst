@@ -3864,16 +3864,14 @@ corresponding destructor.
 
 And next, set suspend/resume callbacks to the pci_driver::
 
-  static DEFINE_SIMPLE_DEV_PM_OPS(snd_my_pm_ops, mychip_suspend, mychip_resume);
+  static SIMPLE_DEV_PM_OPS(snd_my_pm_ops, mychip_suspend, mychip_resume);
 
   static struct pci_driver driver = {
           .name = KBUILD_MODNAME,
           .id_table = snd_my_ids,
           .probe = snd_my_probe,
           .remove = snd_my_remove,
-          .driver = {
-                  .pm = &snd_my_pm_ops,
-          },
+          .driver.pm = &snd_my_pm_ops,
   };
 
 Module Parameters
@@ -3976,7 +3974,7 @@ Driver with A Single Source File
 
    Suppose you have a file xyz.c. Add the following two lines::
 
-     snd-xyz-y := xyz.o
+     snd-xyz-objs := xyz.o
      obj-$(CONFIG_SND_XYZ) += snd-xyz.o
 
 2. Create the Kconfig entry
@@ -4019,7 +4017,7 @@ located in the new subdirectory, sound/pci/xyz.
 
 2. Under the directory ``sound/pci/xyz``, create a Makefile::
 
-         snd-xyz-y := xyz.o abc.o def.o
+         snd-xyz-objs := xyz.o abc.o def.o
          obj-$(CONFIG_SND_XYZ) += snd-xyz.o
 
 3. Create the Kconfig entry

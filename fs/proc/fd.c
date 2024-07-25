@@ -39,8 +39,10 @@ static int seq_show(struct seq_file *m, void *v)
 		spin_lock(&files->file_lock);
 		file = files_lookup_fd_locked(files, fd);
 		if (file) {
+			struct fdtable *fdt = files_fdtable(files);
+
 			f_flags = file->f_flags;
-			if (close_on_exec(fd, files))
+			if (close_on_exec(fd, fdt))
 				f_flags |= O_CLOEXEC;
 
 			get_file(file);
@@ -117,12 +119,10 @@ static bool tid_fd_mode(struct task_struct *task, unsigned fd, fmode_t *mode)
 	struct file *file;
 
 	rcu_read_lock();
-	file = task_lookup_fdget_rcu(task, fd);
-	rcu_read_unlock();
-	if (file) {
+	file = task_lookup_fd_rcu(task, fd);
+	if (file)
 		*mode = file->f_mode;
-		fput(file);
-	}
+	rcu_read_unlock();
 	return !!file;
 }
 
@@ -265,13 +265,12 @@ static int proc_readfd_common(struct file *file, struct dir_context *ctx,
 		char name[10 + 1];
 		unsigned int len;
 
-		f = task_lookup_next_fdget_rcu(p, &fd);
+		f = task_lookup_next_fd_rcu(p, &fd);
 		ctx->pos = fd + 2LL;
 		if (!f)
 			break;
 		data.mode = f->f_mode;
 		rcu_read_unlock();
-		fput(f);
 		data.fd = fd;
 
 		len = snprintf(name, sizeof(name), "%u", fd);

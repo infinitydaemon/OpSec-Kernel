@@ -68,23 +68,15 @@ gm200_sor_dp = {
 };
 
 void
-gm200_sor_hdmi_scdc(struct nvkm_ior *ior, u32 khz, bool support, bool scrambling,
-		    bool scrambling_low_rates)
+gm200_sor_hdmi_scdc(struct nvkm_ior *ior, u8 scdc)
 {
 	struct nvkm_device *device = ior->disp->engine.subdev.device;
 	const u32 soff = nv50_ior_base(ior);
-	u32 ctrl = 0;
-
-	ior->tmds.high_speed = khz > 340000;
-
-	if (support && scrambling) {
-		if (ior->tmds.high_speed)
-			ctrl |= 0x00000002;
-		if (ior->tmds.high_speed || scrambling_low_rates)
-			ctrl |= 0x00000001;
-	}
+	const u32 ctrl = scdc & 0x3;
 
 	nvkm_mask(device, 0x61c5bc + soff, 0x00000003, ctrl);
+
+	ior->tmds.high_speed = !!(scdc & 0x2);
 }
 
 const struct nvkm_ior_func_hdmi
@@ -147,7 +139,6 @@ gm200_sor = {
 	.state = gf119_sor_state,
 	.power = nv50_sor_power,
 	.clock = gf119_sor_clock,
-	.bl = &gt215_sor_bl,
 	.hdmi = &gm200_sor_hdmi,
 	.dp = &gm200_sor_dp,
 	.hda = &gf119_sor_hda,

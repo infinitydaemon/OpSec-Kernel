@@ -64,13 +64,16 @@ static int send_midi_event(struct seq_oss_devinfo *dp, struct snd_seq_event *ev,
 int
 snd_seq_oss_midi_lookup_ports(int client)
 {
-	struct snd_seq_client_info *clinfo __free(kfree) = NULL;
-	struct snd_seq_port_info *pinfo __free(kfree) = NULL;
+	struct snd_seq_client_info *clinfo;
+	struct snd_seq_port_info *pinfo;
 
 	clinfo = kzalloc(sizeof(*clinfo), GFP_KERNEL);
 	pinfo = kzalloc(sizeof(*pinfo), GFP_KERNEL);
-	if (!clinfo || !pinfo)
+	if (! clinfo || ! pinfo) {
+		kfree(clinfo);
+		kfree(pinfo);
 		return -ENOMEM;
+	}
 	clinfo->client = -1;
 	while (snd_seq_kernel_client_ctl(client, SNDRV_SEQ_IOCTL_QUERY_NEXT_CLIENT, clinfo) == 0) {
 		if (clinfo->client == client)
@@ -80,6 +83,8 @@ snd_seq_oss_midi_lookup_ports(int client)
 		while (snd_seq_kernel_client_ctl(client, SNDRV_SEQ_IOCTL_QUERY_NEXT_PORT, pinfo) == 0)
 			snd_seq_oss_midi_check_new_port(pinfo);
 	}
+	kfree(clinfo);
+	kfree(pinfo);
 	return 0;
 }
 

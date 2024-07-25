@@ -105,31 +105,31 @@
 		linux,code = <6>;
 	};
 
-	key-a {
+	key-A {
 		keypad,row = <2>;
 		keypad,column = <6>;
 		linux,code = <30>;
 	};
 
-	key-b {
+	key-B {
 		keypad,row = <2>;
 		keypad,column = <7>;
 		linux,code = <48>;
 	};
 
-	key-c {
+	key-C {
 		keypad,row = <0>;
 		keypad,column = <5>;
 		linux,code = <46>;
 	};
 
-	key-d {
+	key-D {
 		keypad,row = <2>;
 		keypad,column = <5>;
 		linux,code = <32>;
 	};
 
-	key-e {
+	key-E {
 		keypad,row = <0>;
 		keypad,column = <7>;
 		linux,code = <18>;

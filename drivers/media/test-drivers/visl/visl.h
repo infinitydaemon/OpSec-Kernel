@@ -85,7 +85,6 @@ extern unsigned int visl_dprintk_nframes;
 extern bool keep_bitstream_buffers;
 extern int bitstream_trace_frame_start;
 extern unsigned int bitstream_trace_nframes;
-extern bool tpg_verbose;
 
 #define frame_dprintk(dev, current, fmt, arg...) \
 	do { \
@@ -128,7 +127,6 @@ enum visl_codec {
 	VISL_CODEC_VP9,
 	VISL_CODEC_H264,
 	VISL_CODEC_HEVC,
-	VISL_CODEC_AV1,
 };
 
 struct visl_blob {

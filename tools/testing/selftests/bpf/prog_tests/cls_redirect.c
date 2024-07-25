@@ -10,7 +10,6 @@
 #include <netinet/tcp.h>
 
 #include <test_progs.h>
-#include "network_helpers.h"
 
 #include "progs/test_cls_redirect.h"
 #include "test_cls_redirect.skel.h"
@@ -35,6 +34,39 @@ struct tuple {
 	struct addr_port src;
 	struct addr_port dst;
 };
+
+static int start_server(const struct sockaddr *addr, socklen_t len, int type)
+{
+	int fd = socket(addr->sa_family, type, 0);
+	if (CHECK_FAIL(fd == -1))
+		return -1;
+	if (CHECK_FAIL(bind(fd, addr, len) == -1))
+		goto err;
+	if (type == SOCK_STREAM && CHECK_FAIL(listen(fd, 128) == -1))
+		goto err;
+
+	return fd;
+
+err:
+	close(fd);
+	return -1;
+}
+
+static int connect_to_server(const struct sockaddr *addr, socklen_t len,
+			     int type)
+{
+	int fd = socket(addr->sa_family, type, 0);
+	if (CHECK_FAIL(fd == -1))
+		return -1;
+	if (CHECK_FAIL(connect(fd, addr, len)))
+		goto err;
+
+	return fd;
+
+err:
+	close(fd);
+	return -1;
+}
 
 static bool fill_addr_port(const struct sockaddr *sa, struct addr_port *ap)
 {
@@ -66,14 +98,14 @@ static bool set_up_conn(const struct sockaddr *addr, socklen_t len, int type,
 	socklen_t slen = sizeof(ss);
 	struct sockaddr *sa = (struct sockaddr *)&ss;
 
-	*server = start_server_addr(type, (struct sockaddr_storage *)addr, len, NULL);
+	*server = start_server(addr, len, type);
 	if (*server < 0)
 		return false;
 
 	if (CHECK_FAIL(getsockname(*server, sa, &slen)))
 		goto close_server;
 
-	*conn = connect_to_addr(type, (struct sockaddr_storage *)sa, slen, NULL);
+	*conn = connect_to_server(sa, slen, type);
 	if (*conn < 0)
 		goto close_server;
 

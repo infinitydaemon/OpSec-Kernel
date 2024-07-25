@@ -528,9 +528,9 @@ replaced by copy-on-write) part of the underlying shmem object out on swap.
 does not take into account swapped out page of underlying shmem objects.
 "Locked" indicates whether the mapping is locked in memory or not.
 
-"THPeligible" indicates whether the mapping is eligible for allocating
-naturally aligned THP pages of any currently enabled size. 1 if true, 0
-otherwise.
+"THPeligible" indicates whether the mapping is eligible for allocating THP
+pages as well as the THP is PMD mappable or not - 1 if true, 0 otherwise.
+It just shows the current status.
 
 "VmFlags" field deserves a separate description. This member represents the
 kernel flags associated with the particular virtual memory area in two letter
@@ -688,17 +688,10 @@ files are there, and which are missing.
  ============ ===============================================================
  File         Content
  ============ ===============================================================
- allocinfo    Memory allocations profiling information
  apm          Advanced power management info
- bootconfig   Kernel command line obtained from boot config,
- 	      and, if there were kernel parameters from the
-	      boot loader, a "# Parameters from bootloader:"
-	      line followed by a line containing those
-	      parameters prefixed by "# ".			(5.5)
  buddyinfo    Kernel memory allocator information (see text)	(2.5)
  bus          Directory containing bus specific information
- cmdline      Kernel command line, both from bootloader and embedded
-              in the kernel image
+ cmdline      Kernel command line
  cpuinfo      Info about the CPU
  devices      Available devices (block and character)
  dma          Used DMS channels
@@ -954,35 +947,6 @@ also be allocatable although a lot of filesystem metadata may have to be
 reclaimed to achieve this.
 
 
-allocinfo
-~~~~~~~~~
-
-Provides information about memory allocations at all locations in the code
-base. Each allocation in the code is identified by its source file, line
-number, module (if originates from a loadable module) and the function calling
-the allocation. The number of bytes allocated and number of calls at each
-location are reported. The first line indicates the version of the file, the
-second line is the header listing fields in the file.
-
-Example output.
-
-::
-
-    > tail -n +3 /proc/allocinfo | sort -rn
-   127664128    31168 mm/page_ext.c:270 func:alloc_page_ext
-    56373248     4737 mm/slub.c:2259 func:alloc_slab_page
-    14880768     3633 mm/readahead.c:247 func:page_cache_ra_unbounded
-    14417920     3520 mm/mm_init.c:2530 func:alloc_large_system_hash
-    13377536      234 block/blk-mq.c:3421 func:blk_mq_alloc_rqs
-    11718656     2861 mm/filemap.c:1919 func:__filemap_get_folio
-     9192960     2800 kernel/fork.c:307 func:alloc_thread_stack_node
-     4206592        4 net/netfilter/nf_conntrack_core.c:2567 func:nf_ct_alloc_hashtable
-     4136960     1010 drivers/staging/ctagmod/ctagmod.c:20 [ctagmod] func:ctagmod_start
-     3940352      962 mm/memory.c:4214 func:alloc_anon_folio
-     2894464    22613 fs/kernfs/dir.c:615 func:__kernfs_new_node
-     ...
-
-
 meminfo
 ~~~~~~~
 
@@ -1140,8 +1104,8 @@ KernelStack
 PageTables
               Memory consumed by userspace page tables
 SecPageTables
-              Memory consumed by secondary page tables, this currently includes
-              KVM mmu and IOMMU allocations on x86 and arm64.
+              Memory consumed by secondary page tables, this currently
+              currently includes KVM mmu allocations on x86 and arm64.
 NFS_Unstable
               Always zero. Previous counted pages which had been written to
               the server, but has not been committed to stable storage.
@@ -1929,8 +1893,8 @@ For more information on mount propagation see:
 These files provide a method to access a task's comm value. It also allows for
 a task to set its own or one of its thread siblings comm value. The comm value
 is limited in size compared to the cmdline value, so writing anything longer
-then the kernel's TASK_COMM_LEN (currently 16 chars, including the NUL
-terminator) will result in a truncated comm value.
+then the kernel's TASK_COMM_LEN (currently 16 chars) will result in a truncated
+comm value.
 
 
 3.7	/proc/<pid>/task/<tid>/children - Information about task children

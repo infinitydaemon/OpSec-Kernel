@@ -49,7 +49,6 @@ static const struct ena_stats ena_stats_global_strings[] = {
 	ENA_STAT_GLOBAL_ENTRY(interface_up),
 	ENA_STAT_GLOBAL_ENTRY(interface_down),
 	ENA_STAT_GLOBAL_ENTRY(admin_q_pause),
-	ENA_STAT_GLOBAL_ENTRY(reset_fail),
 };
 
 static const struct ena_stats ena_stats_eni_strings[] = {
@@ -264,14 +263,17 @@ static void ena_queue_strings(struct ena_adapter *adapter, u8 **data)
 					ena_stats->name);
 		}
 
-		/* In XDP there isn't an RX queue counterpart */
-		if (is_xdp)
-			continue;
+		if (!is_xdp) {
+			/* RX stats, in XDP there isn't a RX queue
+			 * counterpart
+			 */
+			for (j = 0; j < ENA_STATS_ARRAY_RX; j++) {
+				ena_stats = &ena_stats_rx_strings[j];
 
-		for (j = 0; j < ENA_STATS_ARRAY_RX; j++) {
-			ena_stats = &ena_stats_rx_strings[j];
-
-			ethtool_sprintf(data, "queue_%u_rx_%s", i, ena_stats->name);
+				ethtool_sprintf(data,
+						"queue_%u_rx_%s", i,
+						ena_stats->name);
+			}
 		}
 	}
 }
@@ -298,13 +300,13 @@ static void ena_get_strings(struct ena_adapter *adapter,
 
 	for (i = 0; i < ENA_STATS_ARRAY_GLOBAL; i++) {
 		ena_stats = &ena_stats_global_strings[i];
-		ethtool_puts(&data, ena_stats->name);
+		ethtool_sprintf(&data, ena_stats->name);
 	}
 
 	if (eni_stats_needed) {
 		for (i = 0; i < ENA_STATS_ARRAY_ENI(adapter); i++) {
 			ena_stats = &ena_stats_eni_strings[i];
-			ethtool_puts(&data, ena_stats->name);
+			ethtool_sprintf(&data, ena_stats->name);
 		}
 	}
 
@@ -460,18 +462,10 @@ static void ena_get_drvinfo(struct net_device *dev,
 			    struct ethtool_drvinfo *info)
 {
 	struct ena_adapter *adapter = netdev_priv(dev);
-	ssize_t ret = 0;
 
-	ret = strscpy(info->driver, DRV_MODULE_NAME, sizeof(info->driver));
-	if (ret < 0)
-		netif_dbg(adapter, drv, dev,
-			  "module name will be truncated, status = %zd\n", ret);
-
-	ret = strscpy(info->bus_info, pci_name(adapter->pdev),
-		      sizeof(info->bus_info));
-	if (ret < 0)
-		netif_dbg(adapter, drv, dev,
-			  "bus info will be truncated, status = %zd\n", ret);
+	strscpy(info->driver, DRV_MODULE_NAME, sizeof(info->driver));
+	strscpy(info->bus_info, pci_name(adapter->pdev),
+		sizeof(info->bus_info));
 }
 
 static void ena_get_ringparam(struct net_device *netdev,
@@ -809,15 +803,15 @@ static int ena_indirection_table_get(struct ena_adapter *adapter, u32 *indir)
 	return rc;
 }
 
-static int ena_get_rxfh(struct net_device *netdev,
-			struct ethtool_rxfh_param *rxfh)
+static int ena_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key,
+			u8 *hfunc)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 	enum ena_admin_hash_functions ena_func;
 	u8 func;
 	int rc;
 
-	rc = ena_indirection_table_get(adapter, rxfh->indir);
+	rc = ena_indirection_table_get(adapter, indir);
 	if (rc)
 		return rc;
 
@@ -832,7 +826,7 @@ static int ena_get_rxfh(struct net_device *netdev,
 		return rc;
 	}
 
-	rc = ena_com_get_hash_key(adapter->ena_dev, rxfh->key);
+	rc = ena_com_get_hash_key(adapter->ena_dev, key);
 	if (rc)
 		return rc;
 
@@ -849,27 +843,27 @@ static int ena_get_rxfh(struct net_device *netdev,
 		return -EOPNOTSUPP;
 	}
 
-	rxfh->hfunc = func;
+	if (hfunc)
+		*hfunc = func;
 
 	return 0;
 }
 
-static int ena_set_rxfh(struct net_device *netdev,
-			struct ethtool_rxfh_param *rxfh,
-			struct netlink_ext_ack *extack)
+static int ena_set_rxfh(struct net_device *netdev, const u32 *indir,
+			const u8 *key, const u8 hfunc)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
 	enum ena_admin_hash_functions func = 0;
 	int rc;
 
-	if (rxfh->indir) {
-		rc = ena_indirection_table_set(adapter, rxfh->indir);
+	if (indir) {
+		rc = ena_indirection_table_set(adapter, indir);
 		if (rc)
 			return rc;
 	}
 
-	switch (rxfh->hfunc) {
+	switch (hfunc) {
 	case ETH_RSS_HASH_NO_CHANGE:
 		func = ena_com_get_current_hash_function(ena_dev);
 		break;
@@ -881,12 +875,12 @@ static int ena_set_rxfh(struct net_device *netdev,
 		break;
 	default:
 		netif_err(adapter, drv, netdev, "Unsupported hfunc %d\n",
-			  rxfh->hfunc);
+			  hfunc);
 		return -EOPNOTSUPP;
 	}
 
-	if (rxfh->key || func) {
-		rc = ena_com_fill_hash_function(ena_dev, func, rxfh->key,
+	if (key || func) {
+		rc = ena_com_fill_hash_function(ena_dev, func, key,
 						ENA_HASH_KEY_SIZE,
 						0xFFFFFFFF);
 		if (unlikely(rc)) {

@@ -18,7 +18,7 @@
 #include <linux/ksm.h>
 #include <linux/mman.h>
 #include <linux/pgtable.h>
-#include <asm/page-states.h>
+
 #include <asm/pgalloc.h>
 #include <asm/gmap.h>
 #include <asm/page.h>
@@ -33,7 +33,7 @@ static struct page *gmap_alloc_crst(void)
 	page = alloc_pages(GFP_KERNEL_ACCOUNT, CRST_ALLOC_ORDER);
 	if (!page)
 		return NULL;
-	__arch_set_page_dat(page_to_virt(page), 1UL << CRST_ALLOC_ORDER);
+	arch_set_page_dat(page, CRST_ALLOC_ORDER);
 	return page;
 }
 
@@ -206,11 +206,9 @@ static void gmap_free(struct gmap *gmap)
 
 	/* Free additional data for a shadow gmap */
 	if (gmap_is_shadow(gmap)) {
-		struct ptdesc *ptdesc, *n;
-
 		/* Free all page tables. */
-		list_for_each_entry_safe(ptdesc, n, &gmap->pt_list, pt_list)
-			page_table_free_pgste(ptdesc);
+		list_for_each_entry_safe(page, next, &gmap->pt_list, lru)
+			page_table_free_pgste(page);
 		gmap_rmap_radix_tree_free(&gmap->host_to_rmap);
 		/* Release reference to the parent */
 		gmap_put(gmap->parent);
@@ -603,7 +601,7 @@ int __gmap_link(struct gmap *gmap, unsigned long gaddr, unsigned long vmaddr)
 	pmd = pmd_offset(pud, vmaddr);
 	VM_BUG_ON(pmd_none(*pmd));
 	/* Are we allowed to use huge pages? */
-	if (pmd_leaf(*pmd) && !gmap->mm->context.allow_gmap_hpage_1m)
+	if (pmd_large(*pmd) && !gmap->mm->context.allow_gmap_hpage_1m)
 		return -EFAULT;
 	/* Link gmap segment table entry location to page table. */
 	rc = radix_tree_preload(GFP_KERNEL_ACCOUNT);
@@ -615,7 +613,7 @@ int __gmap_link(struct gmap *gmap, unsigned long gaddr, unsigned long vmaddr)
 		rc = radix_tree_insert(&gmap->host_to_guest,
 				       vmaddr >> PMD_SHIFT, table);
 		if (!rc) {
-			if (pmd_leaf(*pmd)) {
+			if (pmd_large(*pmd)) {
 				*table = (pmd_val(*pmd) &
 					  _SEGMENT_ENTRY_HARDWARE_BITS_LARGE)
 					| _SEGMENT_ENTRY_GMAP_UC;
@@ -945,7 +943,7 @@ static inline pmd_t *gmap_pmd_op_walk(struct gmap *gmap, unsigned long gaddr)
 	}
 
 	/* 4k page table entries are locked via the pte (pte_alloc_map_lock). */
-	if (!pmd_leaf(*pmdp))
+	if (!pmd_large(*pmdp))
 		spin_unlock(&gmap->guest_table_lock);
 	return pmdp;
 }
@@ -957,7 +955,7 @@ static inline pmd_t *gmap_pmd_op_walk(struct gmap *gmap, unsigned long gaddr)
  */
 static inline void gmap_pmd_op_end(struct gmap *gmap, pmd_t *pmdp)
 {
-	if (pmd_leaf(*pmdp))
+	if (pmd_large(*pmdp))
 		spin_unlock(&gmap->guest_table_lock);
 }
 
@@ -1068,7 +1066,7 @@ static int gmap_protect_range(struct gmap *gmap, unsigned long gaddr,
 		rc = -EAGAIN;
 		pmdp = gmap_pmd_op_walk(gmap, gaddr);
 		if (pmdp) {
-			if (!pmd_leaf(*pmdp)) {
+			if (!pmd_large(*pmdp)) {
 				rc = gmap_protect_pte(gmap, gaddr, pmdp, prot,
 						      bits);
 				if (!rc) {
@@ -1350,7 +1348,7 @@ static void gmap_unshadow_pgt(struct gmap *sg, unsigned long raddr)
 {
 	unsigned long *ste;
 	phys_addr_t sto, pgt;
-	struct ptdesc *ptdesc;
+	struct page *page;
 
 	BUG_ON(!gmap_is_shadow(sg));
 	ste = gmap_table_walk(sg, raddr, 1); /* get segment pointer */
@@ -1363,9 +1361,9 @@ static void gmap_unshadow_pgt(struct gmap *sg, unsigned long raddr)
 	*ste = _SEGMENT_ENTRY_EMPTY;
 	__gmap_unshadow_pgt(sg, raddr, __va(pgt));
 	/* Free page table */
-	ptdesc = page_ptdesc(phys_to_page(pgt));
-	list_del(&ptdesc->pt_list);
-	page_table_free_pgste(ptdesc);
+	page = phys_to_page(pgt);
+	list_del(&page->lru);
+	page_table_free_pgste(page);
 }
 
 /**
@@ -1379,7 +1377,7 @@ static void gmap_unshadow_pgt(struct gmap *sg, unsigned long raddr)
 static void __gmap_unshadow_sgt(struct gmap *sg, unsigned long raddr,
 				unsigned long *sgt)
 {
-	struct ptdesc *ptdesc;
+	struct page *page;
 	phys_addr_t pgt;
 	int i;
 
@@ -1391,9 +1389,9 @@ static void __gmap_unshadow_sgt(struct gmap *sg, unsigned long raddr,
 		sgt[i] = _SEGMENT_ENTRY_EMPTY;
 		__gmap_unshadow_pgt(sg, raddr, __va(pgt));
 		/* Free page table */
-		ptdesc = page_ptdesc(phys_to_page(pgt));
-		list_del(&ptdesc->pt_list);
-		page_table_free_pgste(ptdesc);
+		page = phys_to_page(pgt);
+		list_del(&page->lru);
+		page_table_free_pgste(page);
 	}
 }
 
@@ -2060,19 +2058,19 @@ int gmap_shadow_pgt(struct gmap *sg, unsigned long saddr, unsigned long pgt,
 {
 	unsigned long raddr, origin;
 	unsigned long *table;
-	struct ptdesc *ptdesc;
+	struct page *page;
 	phys_addr_t s_pgt;
 	int rc;
 
 	BUG_ON(!gmap_is_shadow(sg) || (pgt & _SEGMENT_ENTRY_LARGE));
 	/* Allocate a shadow page table */
-	ptdesc = page_table_alloc_pgste(sg->mm);
-	if (!ptdesc)
+	page = page_table_alloc_pgste(sg->mm);
+	if (!page)
 		return -ENOMEM;
-	ptdesc->pt_index = pgt & _SEGMENT_ENTRY_ORIGIN;
+	page->index = pgt & _SEGMENT_ENTRY_ORIGIN;
 	if (fake)
-		ptdesc->pt_index |= GMAP_SHADOW_FAKE_TABLE;
-	s_pgt = page_to_phys(ptdesc_page(ptdesc));
+		page->index |= GMAP_SHADOW_FAKE_TABLE;
+	s_pgt = page_to_phys(page);
 	/* Install shadow page table */
 	spin_lock(&sg->guest_table_lock);
 	table = gmap_table_walk(sg, saddr, 1); /* get segment pointer */
@@ -2090,7 +2088,7 @@ int gmap_shadow_pgt(struct gmap *sg, unsigned long saddr, unsigned long pgt,
 	/* mark as invalid as long as the parent table is not protected */
 	*table = (unsigned long) s_pgt | _SEGMENT_ENTRY |
 		 (pgt & _SEGMENT_ENTRY_PROTECT) | _SEGMENT_ENTRY_INVALID;
-	list_add(&ptdesc->pt_list, &sg->pt_list);
+	list_add(&page->lru, &sg->pt_list);
 	if (fake) {
 		/* nothing to protect for fake tables */
 		*table &= ~_SEGMENT_ENTRY_INVALID;
@@ -2116,7 +2114,7 @@ int gmap_shadow_pgt(struct gmap *sg, unsigned long saddr, unsigned long pgt,
 	return rc;
 out_free:
 	spin_unlock(&sg->guest_table_lock);
-	page_table_free_pgste(ptdesc);
+	page_table_free_pgste(page);
 	return rc;
 
 }
@@ -2500,7 +2498,7 @@ void gmap_sync_dirty_log_pmd(struct gmap *gmap, unsigned long bitmap[4],
 	if (!pmdp)
 		return;
 
-	if (pmd_leaf(*pmdp)) {
+	if (pmd_large(*pmdp)) {
 		if (gmap_test_and_clear_dirty_pmd(gmap, pmdp, gaddr))
 			bitmap_fill(bitmap, _PAGE_ENTRIES);
 	} else {

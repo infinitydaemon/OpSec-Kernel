@@ -206,6 +206,8 @@ static struct ctl_table xfs_table[] = {
 		.extra2		= &xfs_params.stats_clear.max
 	},
 #endif /* CONFIG_PROC_FS */
+
+	{}
 };
 
 int

@@ -136,16 +136,20 @@ static void lpc32xx_hsuart_console_write(struct console *co, const char *s,
 	int locked = 1;
 
 	touch_nmi_watchdog();
-	if (oops_in_progress)
-		locked = uart_port_trylock_irqsave(&up->port, &flags);
+	local_irq_save(flags);
+	if (up->port.sysrq)
+		locked = 0;
+	else if (oops_in_progress)
+		locked = spin_trylock(&up->port.lock);
 	else
-		uart_port_lock_irqsave(&up->port, &flags);
+		spin_lock(&up->port.lock);
 
 	uart_console_write(&up->port, s, count, lpc32xx_hsuart_console_putchar);
 	wait_for_xmit_empty(&up->port);
 
 	if (locked)
-		uart_port_unlock_irqrestore(&up->port, flags);
+		spin_unlock(&up->port.lock);
+	local_irq_restore(flags);
 }
 
 static int __init lpc32xx_hsuart_console_setup(struct console *co,
@@ -229,6 +233,8 @@ static unsigned int __serial_get_clock_div(unsigned long uartclk,
 
 		hsu_rate++;
 	}
+	if (hsu_rate > 0xFF)
+		hsu_rate = 0xFF;
 
 	return goodrate;
 }
@@ -262,8 +268,7 @@ static void __serial_lpc32xx_rx(struct uart_port *port)
 			tty_insert_flip_char(tport, 0, TTY_FRAME);
 		}
 
-		if (!uart_prepare_sysrq_char(port, tmp & 0xff))
-			tty_insert_flip_char(tport, (tmp & 0xFF), flag);
+		tty_insert_flip_char(tport, (tmp & 0xFF), flag);
 
 		tmp = readl(LPC32XX_HSUART_FIFO(port->membase));
 	}
@@ -293,7 +298,7 @@ static irqreturn_t serial_lpc32xx_interrupt(int irq, void *dev_id)
 	struct tty_port *tport = &port->state->port;
 	u32 status;
 
-	uart_port_lock(port);
+	spin_lock(&port->lock);
 
 	/* Read UART status and clear latched interrupts */
 	status = readl(LPC32XX_HSUART_IIR(port->membase));
@@ -328,7 +333,7 @@ static irqreturn_t serial_lpc32xx_interrupt(int irq, void *dev_id)
 		__serial_lpc32xx_tx(port);
 	}
 
-	uart_unlock_and_check_sysrq(port);
+	spin_unlock(&port->lock);
 
 	return IRQ_HANDLED;
 }
@@ -399,14 +404,14 @@ static void serial_lpc32xx_break_ctl(struct uart_port *port,
 	unsigned long flags;
 	u32 tmp;
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 	tmp = readl(LPC32XX_HSUART_CTRL(port->membase));
 	if (break_state != 0)
 		tmp |= LPC32XX_HSU_BREAK;
 	else
 		tmp &= ~LPC32XX_HSU_BREAK;
 	writel(tmp, LPC32XX_HSUART_CTRL(port->membase));
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 }
 
 /* port->lock is not held.  */
@@ -416,7 +421,7 @@ static int serial_lpc32xx_startup(struct uart_port *port)
 	unsigned long flags;
 	u32 tmp;
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	__serial_uart_flush(port);
 
@@ -436,7 +441,7 @@ static int serial_lpc32xx_startup(struct uart_port *port)
 
 	lpc32xx_loopback_set(port->mapbase, 0); /* get out of loopback mode */
 
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 	retval = request_irq(port->irq, serial_lpc32xx_interrupt,
 			     0, MODNAME, port);
@@ -453,7 +458,7 @@ static void serial_lpc32xx_shutdown(struct uart_port *port)
 	u32 tmp;
 	unsigned long flags;
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	tmp = LPC32XX_HSU_TX_TL8B | LPC32XX_HSU_RX_TL32B |
 		LPC32XX_HSU_OFFSET(20) | LPC32XX_HSU_TMO_INACT_4B;
@@ -461,7 +466,7 @@ static void serial_lpc32xx_shutdown(struct uart_port *port)
 
 	lpc32xx_loopback_set(port->mapbase, 1); /* go to loopback mode */
 
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 	free_irq(port->irq, port);
 }
@@ -486,7 +491,7 @@ static void serial_lpc32xx_set_termios(struct uart_port *port,
 
 	quot = __serial_get_clock_div(port->uartclk, baud);
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	/* Ignore characters? */
 	tmp = readl(LPC32XX_HSUART_CTRL(port->membase));
@@ -500,7 +505,7 @@ static void serial_lpc32xx_set_termios(struct uart_port *port,
 
 	uart_update_timeout(port, termios->c_cflag, baud);
 
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 	/* Don't rewrite B0 */
 	if (tty_termios_baud_rate(termios))
@@ -654,11 +659,13 @@ static int serial_hs_lpc32xx_probe(struct platform_device *pdev)
 /*
  * Remove serial ports registered against a platform device.
  */
-static void serial_hs_lpc32xx_remove(struct platform_device *pdev)
+static int serial_hs_lpc32xx_remove(struct platform_device *pdev)
 {
 	struct lpc32xx_hsuart_port *p = platform_get_drvdata(pdev);
 
 	uart_remove_one_port(&lpc32xx_hs_reg, &p->port);
+
+	return 0;
 }
 
 
@@ -695,7 +702,7 @@ MODULE_DEVICE_TABLE(of, serial_hs_lpc32xx_dt_ids);
 
 static struct platform_driver serial_hs_lpc32xx_driver = {
 	.probe		= serial_hs_lpc32xx_probe,
-	.remove_new	= serial_hs_lpc32xx_remove,
+	.remove		= serial_hs_lpc32xx_remove,
 	.suspend	= serial_hs_lpc32xx_suspend,
 	.resume		= serial_hs_lpc32xx_resume,
 	.driver		= {

@@ -36,14 +36,15 @@ static int simatic_ipc_leds_gpio_elkhartlake_probe(struct platform_device *pdev)
 					   NULL);
 }
 
-static void simatic_ipc_leds_gpio_elkhartlake_remove(struct platform_device *pdev)
+static int simatic_ipc_leds_gpio_elkhartlake_remove(struct platform_device *pdev)
 {
-	simatic_ipc_leds_gpio_remove(pdev, &simatic_ipc_led_gpio_table, NULL);
+	return simatic_ipc_leds_gpio_remove(pdev, &simatic_ipc_led_gpio_table,
+					    NULL);
 }
 
 static struct platform_driver simatic_ipc_led_gpio_elkhartlake_driver = {
 	.probe = simatic_ipc_leds_gpio_elkhartlake_probe,
-	.remove_new = simatic_ipc_leds_gpio_elkhartlake_remove,
+	.remove = simatic_ipc_leds_gpio_elkhartlake_remove,
 	.driver = {
 		.name = KBUILD_MODNAME,
 	},

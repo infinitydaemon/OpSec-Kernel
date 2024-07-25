@@ -77,8 +77,6 @@ patternProperties:
       reg:
         maxItems: 1
 
-      dma-coherent: true
-
       iommus:
         minItems: 1
         maxItems: 3

@@ -450,8 +450,8 @@ static void update_perf_cpu_limits(void)
 
 static bool perf_rotate_context(struct perf_cpu_pmu_context *cpc);
 
-int perf_event_max_sample_rate_handler(struct ctl_table *table, int write,
-				       void *buffer, size_t *lenp, loff_t *ppos)
+int perf_proc_update_handler(struct ctl_table *table, int write,
+		void *buffer, size_t *lenp, loff_t *ppos)
 {
 	int ret;
 	int perf_cpu = sysctl_perf_cpu_time_max_percent;
@@ -2302,10 +2302,8 @@ event_sched_out(struct perf_event *event, struct perf_event_context *ctx)
 
 	if (!is_software_event(event))
 		cpc->active_oncpu--;
-	if (event->attr.freq && event->attr.sample_freq) {
+	if (event->attr.freq && event->attr.sample_freq)
 		ctx->nr_freq--;
-		epc->nr_freq--;
-	}
 	if (event->attr.exclusive || !cpc->active_oncpu)
 		cpc->exclusive = 0;
 
@@ -2560,10 +2558,9 @@ event_sched_in(struct perf_event *event, struct perf_event_context *ctx)
 
 	if (!is_software_event(event))
 		cpc->active_oncpu++;
-	if (event->attr.freq && event->attr.sample_freq) {
+	if (event->attr.freq && event->attr.sample_freq)
 		ctx->nr_freq++;
-		epc->nr_freq++;
-	}
+
 	if (event->attr.exclusive)
 		cpc->exclusive = 1;
 
@@ -4126,14 +4123,30 @@ static void perf_adjust_period(struct perf_event *event, u64 nsec, u64 count, bo
 	}
 }
 
-static void perf_adjust_freq_unthr_events(struct list_head *event_list)
+/*
+ * combine freq adjustment with unthrottling to avoid two passes over the
+ * events. At the same time, make sure, having freq events does not change
+ * the rate of unthrottling as that would introduce bias.
+ */
+static void
+perf_adjust_freq_unthr_context(struct perf_event_context *ctx, bool unthrottle)
 {
 	struct perf_event *event;
 	struct hw_perf_event *hwc;
 	u64 now, period = TICK_NSEC;
 	s64 delta;
 
-	list_for_each_entry(event, event_list, active_list) {
+	/*
+	 * only need to iterate over all events iff:
+	 * - context have events in frequency mode (needs freq adjust)
+	 * - there are events to unthrottle on this cpu
+	 */
+	if (!(ctx->nr_freq || unthrottle))
+		return;
+
+	raw_spin_lock(&ctx->lock);
+
+	list_for_each_entry_rcu(event, &ctx->event_list, event_entry) {
 		if (event->state != PERF_EVENT_STATE_ACTIVE)
 			continue;
 
@@ -4141,17 +4154,18 @@ static void perf_adjust_freq_unthr_events(struct list_head *event_list)
 		if (!event_filter_match(event))
 			continue;
 
+		perf_pmu_disable(event->pmu);
+
 		hwc = &event->hw;
 
 		if (hwc->interrupts == MAX_INTERRUPTS) {
 			hwc->interrupts = 0;
 			perf_log_throttle(event, 1);
-			if (!event->attr.freq || !event->attr.sample_freq)
-				event->pmu->start(event, 0);
+			event->pmu->start(event, 0);
 		}
 
 		if (!event->attr.freq || !event->attr.sample_freq)
-			continue;
+			goto next;
 
 		/*
 		 * stop the event and update event->count
@@ -4173,41 +4187,8 @@ static void perf_adjust_freq_unthr_events(struct list_head *event_list)
 			perf_adjust_period(event, period, delta, false);
 
 		event->pmu->start(event, delta > 0 ? PERF_EF_RELOAD : 0);
-	}
-}
-
-/*
- * combine freq adjustment with unthrottling to avoid two passes over the
- * events. At the same time, make sure, having freq events does not change
- * the rate of unthrottling as that would introduce bias.
- */
-static void
-perf_adjust_freq_unthr_context(struct perf_event_context *ctx, bool unthrottle)
-{
-	struct perf_event_pmu_context *pmu_ctx;
-
-	/*
-	 * only need to iterate over all events iff:
-	 * - context have events in frequency mode (needs freq adjust)
-	 * - there are events to unthrottle on this cpu
-	 */
-	if (!(ctx->nr_freq || unthrottle))
-		return;
-
-	raw_spin_lock(&ctx->lock);
-
-	list_for_each_entry(pmu_ctx, &ctx->pmu_ctx_list, pmu_ctx_entry) {
-		if (!(pmu_ctx->nr_freq || unthrottle))
-			continue;
-		if (!perf_pmu_ctx_is_active(pmu_ctx))
-			continue;
-		if (pmu_ctx->pmu->capabilities & PERF_PMU_CAP_NO_INTERRUPT)
-			continue;
-
-		perf_pmu_disable(pmu_ctx->pmu);
-		perf_adjust_freq_unthr_events(&pmu_ctx->pinned_active);
-		perf_adjust_freq_unthr_events(&pmu_ctx->flexible_active);
-		perf_pmu_enable(pmu_ctx->pmu);
+	next:
+		perf_pmu_enable(event->pmu);
 	}
 
 	raw_spin_unlock(&ctx->lock);
@@ -4476,9 +4457,6 @@ static int __perf_event_read_cpu(struct perf_event *event, int event_cpu)
 {
 	u16 local_pkg, event_pkg;
 
-	if ((unsigned)event_cpu >= nr_cpu_ids)
-		return event_cpu;
-
 	if (event->group_caps & PERF_EV_CAP_READ_ACTIVE_PKG) {
 		int local_cpu = smp_processor_id();
 
@@ -4581,8 +4559,6 @@ int perf_event_read_local(struct perf_event *event, u64 *value,
 			  u64 *enabled, u64 *running)
 {
 	unsigned long flags;
-	int event_oncpu;
-	int event_cpu;
 	int ret = 0;
 
 	/*
@@ -4607,22 +4583,15 @@ int perf_event_read_local(struct perf_event *event, u64 *value,
 		goto out;
 	}
 
-	/*
-	 * Get the event CPU numbers, and adjust them to local if the event is
-	 * a per-package event that can be read locally
-	 */
-	event_oncpu = __perf_event_read_cpu(event, event->oncpu);
-	event_cpu = __perf_event_read_cpu(event, event->cpu);
-
 	/* If this is a per-CPU event, it must be for this CPU */
 	if (!(event->attach_state & PERF_ATTACH_TASK) &&
-	    event_cpu != smp_processor_id()) {
+	    event->cpu != smp_processor_id()) {
 		ret = -EINVAL;
 		goto out;
 	}
 
 	/* If this is a pinned event it must be running on this CPU */
-	if (event->attr.pinned && event_oncpu != smp_processor_id()) {
+	if (event->attr.pinned && event->oncpu != smp_processor_id()) {
 		ret = -EBUSY;
 		goto out;
 	}
@@ -4632,7 +4601,7 @@ int perf_event_read_local(struct perf_event *event, u64 *value,
 	 * or local to this CPU. Furthermore it means its ACTIVE (otherwise
 	 * oncpu == -1).
 	 */
-	if (event_oncpu == smp_processor_id())
+	if (event->oncpu == smp_processor_id())
 		event->pmu->read(event);
 
 	*value = local64_read(&event->count);
@@ -6716,6 +6685,14 @@ static const struct file_operations perf_fops = {
  * to user-space before waking everybody up.
  */
 
+static inline struct fasync_struct **perf_event_fasync(struct perf_event *event)
+{
+	/* only the parent has fasync state */
+	if (event->parent)
+		event = event->parent;
+	return &event->fasync;
+}
+
 void perf_event_wakeup(struct perf_event *event)
 {
 	ring_buffer_wakeup(event);
@@ -7421,14 +7398,6 @@ void perf_output_sample(struct perf_output_handle *handle,
 			if (branch_sample_hw_index(event))
 				perf_output_put(handle, data->br_stack->hw_idx);
 			perf_output_copy(handle, data->br_stack->entries, size);
-			/*
-			 * Add the extension space which is appended
-			 * right after the struct perf_branch_stack.
-			 */
-			if (data->br_stack_cntr) {
-				size = data->br_stack->nr * sizeof(u64);
-				perf_output_copy(handle, data->br_stack_cntr, size);
-			}
 		} else {
 			/*
 			 * we always store at least the value of nr
@@ -7563,7 +7532,7 @@ static u64 perf_get_pgtable_size(struct mm_struct *mm, unsigned long addr)
 {
 	u64 size = 0;
 
-#ifdef CONFIG_HAVE_GUP_FAST
+#ifdef CONFIG_HAVE_FAST_GUP
 	pgd_t *pgdp, pgd;
 	p4d_t *p4dp, p4d;
 	pud_t *pudp, pud;
@@ -7611,7 +7580,7 @@ again:
 	if (pte_present(pte))
 		size = pte_leaf_size(pte);
 	pte_unmap(ptep);
-#endif /* CONFIG_HAVE_GUP_FAST */
+#endif /* CONFIG_HAVE_FAST_GUP */
 
 	return size;
 }
@@ -9326,6 +9295,10 @@ void perf_event_bpf_event(struct bpf_prog *prog,
 {
 	struct perf_bpf_event bpf_event;
 
+	if (type <= PERF_BPF_EVENT_UNKNOWN ||
+	    type >= PERF_BPF_EVENT_MAX)
+		return;
+
 	switch (type) {
 	case PERF_BPF_EVENT_PROG_LOAD:
 	case PERF_BPF_EVENT_PROG_UNLOAD:
@@ -9333,7 +9306,7 @@ void perf_event_bpf_event(struct bpf_prog *prog,
 			perf_event_bpf_emit_ksymbols(prog, type);
 		break;
 	default:
-		return;
+		break;
 	}
 
 	if (!atomic_read(&nr_bpf_events))
@@ -9568,100 +9541,6 @@ static inline bool sample_is_allowed(struct perf_event *event, struct pt_regs *r
 	return true;
 }
 
-#ifdef CONFIG_BPF_SYSCALL
-static int bpf_overflow_handler(struct perf_event *event,
-				struct perf_sample_data *data,
-				struct pt_regs *regs)
-{
-	struct bpf_perf_event_data_kern ctx = {
-		.data = data,
-		.event = event,
-	};
-	struct bpf_prog *prog;
-	int ret = 0;
-
-	ctx.regs = perf_arch_bpf_user_pt_regs(regs);
-	if (unlikely(__this_cpu_inc_return(bpf_prog_active) != 1))
-		goto out;
-	rcu_read_lock();
-	prog = READ_ONCE(event->prog);
-	if (prog) {
-		perf_prepare_sample(data, event, regs);
-		ret = bpf_prog_run(prog, &ctx);
-	}
-	rcu_read_unlock();
-out:
-	__this_cpu_dec(bpf_prog_active);
-
-	return ret;
-}
-
-static inline int perf_event_set_bpf_handler(struct perf_event *event,
-					     struct bpf_prog *prog,
-					     u64 bpf_cookie)
-{
-	if (event->overflow_handler_context)
-		/* hw breakpoint or kernel counter */
-		return -EINVAL;
-
-	if (event->prog)
-		return -EEXIST;
-
-	if (prog->type != BPF_PROG_TYPE_PERF_EVENT)
-		return -EINVAL;
-
-	if (event->attr.precise_ip &&
-	    prog->call_get_stack &&
-	    (!(event->attr.sample_type & PERF_SAMPLE_CALLCHAIN) ||
-	     event->attr.exclude_callchain_kernel ||
-	     event->attr.exclude_callchain_user)) {
-		/*
-		 * On perf_event with precise_ip, calling bpf_get_stack()
-		 * may trigger unwinder warnings and occasional crashes.
-		 * bpf_get_[stack|stackid] works around this issue by using
-		 * callchain attached to perf_sample_data. If the
-		 * perf_event does not full (kernel and user) callchain
-		 * attached to perf_sample_data, do not allow attaching BPF
-		 * program that calls bpf_get_[stack|stackid].
-		 */
-		return -EPROTO;
-	}
-
-	event->prog = prog;
-	event->bpf_cookie = bpf_cookie;
-	return 0;
-}
-
-static inline void perf_event_free_bpf_handler(struct perf_event *event)
-{
-	struct bpf_prog *prog = event->prog;
-
-	if (!prog)
-		return;
-
-	event->prog = NULL;
-	bpf_prog_put(prog);
-}
-#else
-static inline int bpf_overflow_handler(struct perf_event *event,
-				       struct perf_sample_data *data,
-				       struct pt_regs *regs)
-{
-	return 1;
-}
-
-static inline int perf_event_set_bpf_handler(struct perf_event *event,
-					     struct bpf_prog *prog,
-					     u64 bpf_cookie)
-{
-	return -EOPNOTSUPP;
-}
-
-static inline void perf_event_free_bpf_handler(struct perf_event *event)
-{
-}
-#endif
-
 /*
  * Generic event overflow handling, sampling.
  */
@@ -9681,9 +9560,6 @@ static int __perf_event_overflow(struct perf_event *event,
 		return 0;
 
 	ret = __perf_event_account_interrupt(event, throttle);
-
-	if (event->prog && !bpf_overflow_handler(event, data, regs))
-		return ret;
 
 	/*
 	 * XXX event_limit might not quite work as expected on inherited
@@ -10543,6 +10419,97 @@ static void perf_event_free_filter(struct perf_event *event)
 	ftrace_profile_free_filter(event);
 }
 
+#ifdef CONFIG_BPF_SYSCALL
+static void bpf_overflow_handler(struct perf_event *event,
+				 struct perf_sample_data *data,
+				 struct pt_regs *regs)
+{
+	struct bpf_perf_event_data_kern ctx = {
+		.data = data,
+		.event = event,
+	};
+	struct bpf_prog *prog;
+	int ret = 0;
+
+	ctx.regs = perf_arch_bpf_user_pt_regs(regs);
+	if (unlikely(__this_cpu_inc_return(bpf_prog_active) != 1))
+		goto out;
+	rcu_read_lock();
+	prog = READ_ONCE(event->prog);
+	if (prog) {
+		perf_prepare_sample(data, event, regs);
+		ret = bpf_prog_run(prog, &ctx);
+	}
+	rcu_read_unlock();
+out:
+	__this_cpu_dec(bpf_prog_active);
+	if (!ret)
+		return;
+
+	event->orig_overflow_handler(event, data, regs);
+}
+
+static int perf_event_set_bpf_handler(struct perf_event *event,
+				      struct bpf_prog *prog,
+				      u64 bpf_cookie)
+{
+	if (event->overflow_handler_context)
+		/* hw breakpoint or kernel counter */
+		return -EINVAL;
+
+	if (event->prog)
+		return -EEXIST;
+
+	if (prog->type != BPF_PROG_TYPE_PERF_EVENT)
+		return -EINVAL;
+
+	if (event->attr.precise_ip &&
+	    prog->call_get_stack &&
+	    (!(event->attr.sample_type & PERF_SAMPLE_CALLCHAIN) ||
+	     event->attr.exclude_callchain_kernel ||
+	     event->attr.exclude_callchain_user)) {
+		/*
+		 * On perf_event with precise_ip, calling bpf_get_stack()
+		 * may trigger unwinder warnings and occasional crashes.
+		 * bpf_get_[stack|stackid] works around this issue by using
+		 * callchain attached to perf_sample_data. If the
+		 * perf_event does not full (kernel and user) callchain
+		 * attached to perf_sample_data, do not allow attaching BPF
+		 * program that calls bpf_get_[stack|stackid].
+		 */
+		return -EPROTO;
+	}
+
+	event->prog = prog;
+	event->bpf_cookie = bpf_cookie;
+	event->orig_overflow_handler = READ_ONCE(event->overflow_handler);
+	WRITE_ONCE(event->overflow_handler, bpf_overflow_handler);
+	return 0;
+}
+
+static void perf_event_free_bpf_handler(struct perf_event *event)
+{
+	struct bpf_prog *prog = event->prog;
+
+	if (!prog)
+		return;
+
+	WRITE_ONCE(event->overflow_handler, event->orig_overflow_handler);
+	event->prog = NULL;
+	bpf_prog_put(prog);
+}
+#else
+static int perf_event_set_bpf_handler(struct perf_event *event,
+				      struct bpf_prog *prog,
+				      u64 bpf_cookie)
+{
+	return -EOPNOTSUPP;
+}
+static void perf_event_free_bpf_handler(struct perf_event *event)
+{
+}
+#endif
+
 /*
  * returns true if the event is a tracepoint, or a kprobe/upprobe created
  * with perf_event_open()
@@ -10583,7 +10550,7 @@ int perf_event_set_bpf_prog(struct perf_event *event, struct bpf_prog *prog,
 	    (is_syscall_tp && prog->type != BPF_PROG_TYPE_TRACEPOINT))
 		return -EINVAL;
 
-	if (prog->type == BPF_PROG_TYPE_KPROBE && prog->sleepable && !is_uprobe)
+	if (prog->type == BPF_PROG_TYPE_KPROBE && prog->aux->sleepable && !is_uprobe)
 		/* only uprobe programs are allowed to be sleepable */
 		return -EINVAL;
 
@@ -12001,11 +11968,13 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 		overflow_handler = parent_event->overflow_handler;
 		context = parent_event->overflow_handler_context;
 #if defined(CONFIG_BPF_SYSCALL) && defined(CONFIG_EVENT_TRACING)
-		if (parent_event->prog) {
+		if (overflow_handler == bpf_overflow_handler) {
 			struct bpf_prog *prog = parent_event->prog;
 
 			bpf_prog_inc(prog);
 			event->prog = prog;
+			event->orig_overflow_handler =
+				parent_event->orig_overflow_handler;
 		}
 #endif
 	}

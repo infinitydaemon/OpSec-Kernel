@@ -11,7 +11,6 @@
 
 #include <linux/types.h>
 #include <asm/css_chars.h>
-#include <asm/dma-types.h>
 #include <asm/cio.h>
 
 /**
@@ -54,7 +53,7 @@ struct cmd_scsw {
 	__u32 fctl : 3;
 	__u32 actl : 7;
 	__u32 stctl : 5;
-	dma32_t cpa;
+	__u32 cpa;
 	__u32 dstat : 8;
 	__u32 cstat : 8;
 	__u32 count : 16;
@@ -94,7 +93,7 @@ struct tm_scsw {
 	u32 fctl:3;
 	u32 actl:7;
 	u32 stctl:5;
-	dma32_t tcw;
+	u32 tcw;
 	u32 dstat:8;
 	u32 cstat:8;
 	u32 fcxs:8;
@@ -126,7 +125,7 @@ struct eadm_scsw {
 	u32 fctl:3;
 	u32 actl:7;
 	u32 stctl:5;
-	dma32_t aob;
+	u32 aob;
 	u32 dstat:8;
 	u32 cstat:8;
 	u32:16;

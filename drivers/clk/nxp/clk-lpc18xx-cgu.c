@@ -250,6 +250,7 @@ static struct lpc18xx_cgu_base_clk lpc18xx_cgu_base_clks[] = {
 struct lpc18xx_pll {
 	struct		clk_hw hw;
 	void __iomem	*reg;
+	spinlock_t	*lock;
 	u8		flags;
 };
 

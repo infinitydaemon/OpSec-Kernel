@@ -27,8 +27,8 @@ properties:
     const: 1
 
   power-domains:
-    minItems: 10
-    maxItems: 10
+    minItems: 8
+    maxItems: 8
 
   power-domain-names:
     items:
@@ -40,12 +40,10 @@ properties:
       - const: trng
       - const: hdmi-tx
       - const: hdmi-tx-phy
-      - const: hdcp
-      - const: hrv
 
   clocks:
-    minItems: 5
-    maxItems: 5
+    minItems: 4
+    maxItems: 4
 
   clock-names:
     items:
@@ -53,7 +51,6 @@ properties:
       - const: axi
       - const: ref_266m
       - const: ref_24m
-      - const: fdcc
 
   interconnects:
     maxItems: 3
@@ -85,15 +82,12 @@ examples:
         clocks = <&clk IMX8MP_CLK_HDMI_APB>,
                  <&clk IMX8MP_CLK_HDMI_ROOT>,
                  <&clk IMX8MP_CLK_HDMI_REF_266M>,
-                 <&clk IMX8MP_CLK_HDMI_24M>,
-                 <&clk IMX8MP_CLK_HDMI_FDCC_TST>;
-        clock-names = "apb", "axi", "ref_266m", "ref_24m", "fdcc";
+                 <&clk IMX8MP_CLK_HDMI_24M>;
+        clock-names = "apb", "axi", "ref_266m", "ref_24m";
         power-domains = <&pgc_hdmimix>, <&pgc_hdmimix>, <&pgc_hdmimix>,
                         <&pgc_hdmimix>, <&pgc_hdmimix>, <&pgc_hdmimix>,
-                        <&pgc_hdmimix>, <&pgc_hdmi_phy>,
-                        <&pgc_hdmimix>, <&pgc_hdmimix>;
+                        <&pgc_hdmimix>, <&pgc_hdmi_phy>;
         power-domain-names = "bus", "irqsteer", "lcdif", "pai", "pvi", "trng",
-                             "hdmi-tx", "hdmi-tx-phy",
-                             "hdcp", "hrv";
+                             "hdmi-tx", "hdmi-tx-phy";
         #power-domain-cells = <1>;
     };

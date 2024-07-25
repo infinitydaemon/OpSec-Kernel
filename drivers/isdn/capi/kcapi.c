@@ -732,7 +732,7 @@ u16 capi20_get_manufacturer(u32 contr, u8 buf[CAPI_MANUFACTURER_LEN])
 	u16 ret;
 
 	if (contr == 0) {
-		strscpy_pad(buf, capi_manufakturer, CAPI_MANUFACTURER_LEN);
+		strncpy(buf, capi_manufakturer, CAPI_MANUFACTURER_LEN);
 		return CAPI_NOERROR;
 	}
 
@@ -740,7 +740,7 @@ u16 capi20_get_manufacturer(u32 contr, u8 buf[CAPI_MANUFACTURER_LEN])
 
 	ctr = get_capi_ctr_by_nr(contr);
 	if (ctr && ctr->state == CAPI_CTR_RUNNING) {
-		strscpy_pad(buf, ctr->manu, CAPI_MANUFACTURER_LEN);
+		strncpy(buf, ctr->manu, CAPI_MANUFACTURER_LEN);
 		ret = CAPI_NOERROR;
 	} else
 		ret = CAPI_REGNOTINSTALLED;
@@ -917,16 +917,13 @@ int __init kcapi_init(void)
 		return err;
 	}
 
-	if (IS_ENABLED(CONFIG_PROC_FS))
-		kcapi_proc_init();
-
+	kcapi_proc_init();
 	return 0;
 }
 
 void kcapi_exit(void)
 {
-	if (IS_ENABLED(CONFIG_PROC_FS))
-		kcapi_proc_exit();
+	kcapi_proc_exit();
 
 	cdebug_exit();
 	destroy_workqueue(kcapi_wq);

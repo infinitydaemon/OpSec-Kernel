@@ -2,11 +2,9 @@
 // Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
 // Copyright (c) 2018, Linaro Limited
 
-#include <dt-bindings/sound/qcom,q6asm.h>
 #include <linux/init.h>
 #include <linux/err.h>
 #include <linux/module.h>
-#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <sound/soc.h>
@@ -16,6 +14,7 @@
 #include <sound/compress_driver.h>
 #include <asm/dma.h>
 #include <linux/dma-mapping.h>
+#include <linux/of_device.h>
 #include <sound/pcm_params.h>
 #include "q6asm.h"
 #include "q6routing.h"
@@ -103,7 +102,7 @@ static const struct snd_pcm_hardware q6asm_dai_hardware_capture = {
 	.fifo_size =            0,
 };
 
-static const struct snd_pcm_hardware q6asm_dai_hardware_playback = {
+static struct snd_pcm_hardware q6asm_dai_hardware_playback = {
 	.info =                 (SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_BATCH |
 				SNDRV_PCM_INFO_BLOCK_TRANSFER |
 				SNDRV_PCM_INFO_MMAP_VALID |

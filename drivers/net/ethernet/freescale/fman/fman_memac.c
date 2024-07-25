@@ -267,6 +267,7 @@ struct memac_cfg {
 	bool reset_on_init;
 	bool pause_ignore;
 	bool promiscuous_mode_enable;
+	struct fixed_phy_status *fixed_link;
 	u16 max_frame_length;
 	u16 pause_quanta;
 	u32 tx_ipg_length;
@@ -617,17 +618,18 @@ static int memac_accept_rx_pause_frames(struct fman_mac *memac, bool en)
 	return 0;
 }
 
-static unsigned long memac_get_caps(struct phylink_config *config,
-				    phy_interface_t interface)
+static void memac_validate(struct phylink_config *config,
+			   unsigned long *supported,
+			   struct phylink_link_state *state)
 {
 	struct fman_mac *memac = fman_config_to_mac(config)->fman_mac;
 	unsigned long caps = config->mac_capabilities;
 
-	if (phy_interface_mode_is_rgmii(interface) &&
+	if (phy_interface_mode_is_rgmii(state->interface) &&
 	    memac->rgmii_no_half_duplex)
 		caps &= ~(MAC_10HD | MAC_100HD);
 
-	return caps;
+	phylink_validate_mask_caps(supported, state, caps);
 }
 
 /**
@@ -774,7 +776,7 @@ static void memac_link_down(struct phylink_config *config, unsigned int mode,
 }
 
 static const struct phylink_mac_ops memac_mac_ops = {
-	.mac_get_caps = memac_get_caps,
+	.validate = memac_validate,
 	.mac_select_pcs = memac_select_pcs,
 	.mac_prepare = memac_prepare,
 	.mac_config = memac_mac_config,

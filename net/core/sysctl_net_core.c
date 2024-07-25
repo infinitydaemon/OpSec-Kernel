@@ -23,9 +23,6 @@
 #include <net/net_ratelimit.h>
 #include <net/busy_poll.h>
 #include <net/pkt_sched.h>
-#include <net/hotdata.h>
-#include <net/proto_memory.h>
-#include <net/rps.h>
 
 #include "dev.h"
 
@@ -141,8 +138,7 @@ static int rps_sock_flow_sysctl(struct ctl_table *table, int write,
 
 	mutex_lock(&sock_flow_mutex);
 
-	orig_sock_table = rcu_dereference_protected(
-					net_hotdata.rps_sock_flow_table,
+	orig_sock_table = rcu_dereference_protected(rps_sock_flow_table,
 					lockdep_is_held(&sock_flow_mutex));
 	size = orig_size = orig_sock_table ? orig_sock_table->mask + 1 : 0;
 
@@ -163,8 +159,7 @@ static int rps_sock_flow_sysctl(struct ctl_table *table, int write,
 					mutex_unlock(&sock_flow_mutex);
 					return -ENOMEM;
 				}
-				net_hotdata.rps_cpu_mask =
-					roundup_pow_of_two(nr_cpu_ids) - 1;
+				rps_cpu_mask = roundup_pow_of_two(nr_cpu_ids) - 1;
 				sock_table->mask = size - 1;
 			} else
 				sock_table = orig_sock_table;
@@ -175,8 +170,7 @@ static int rps_sock_flow_sysctl(struct ctl_table *table, int write,
 			sock_table = NULL;
 
 		if (sock_table != orig_sock_table) {
-			rcu_assign_pointer(net_hotdata.rps_sock_flow_table,
-					   sock_table);
+			rcu_assign_pointer(rps_sock_flow_table, sock_table);
 			if (sock_table) {
 				static_branch_inc(&rps_needed);
 				static_branch_inc(&rfs_needed);
@@ -306,8 +300,8 @@ static int proc_do_dev_weight(struct ctl_table *table, int write,
 	ret = proc_dointvec(table, write, buffer, lenp, ppos);
 	if (!ret && write) {
 		weight = READ_ONCE(weight_p);
-		WRITE_ONCE(net_hotdata.dev_rx_weight, weight * dev_weight_rx_bias);
-		WRITE_ONCE(net_hotdata.dev_tx_weight, weight * dev_weight_tx_bias);
+		WRITE_ONCE(dev_rx_weight, weight * dev_weight_rx_bias);
+		WRITE_ONCE(dev_tx_weight, weight * dev_weight_tx_bias);
 	}
 	mutex_unlock(&dev_weight_mutex);
 
@@ -416,7 +410,7 @@ static struct ctl_table net_core_table[] = {
 	},
 	{
 		.procname	= "mem_pcpu_rsv",
-		.data		= &net_hotdata.sysctl_mem_pcpu_rsv,
+		.data		= &sysctl_mem_pcpu_rsv,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
@@ -445,7 +439,7 @@ static struct ctl_table net_core_table[] = {
 	},
 	{
 		.procname	= "netdev_max_backlog",
-		.data		= &net_hotdata.max_backlog,
+		.data		= &netdev_max_backlog,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
@@ -504,7 +498,7 @@ static struct ctl_table net_core_table[] = {
 #endif
 	{
 		.procname	= "netdev_tstamp_prequeue",
-		.data		= &net_hotdata.tstamp_prequeue,
+		.data		= &netdev_tstamp_prequeue,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
@@ -522,6 +516,13 @@ static struct ctl_table net_core_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "optmem_max",
+		.data		= &sysctl_optmem_max,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec
 	},
 	{
 		.procname	= "tstamp_allow_data",
@@ -582,7 +583,7 @@ static struct ctl_table net_core_table[] = {
 #endif
 	{
 		.procname	= "netdev_budget",
-		.data		= &net_hotdata.netdev_budget,
+		.data		= &netdev_budget,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
@@ -596,7 +597,7 @@ static struct ctl_table net_core_table[] = {
 	},
 	{
 		.procname	= "max_skb_frags",
-		.data		= &net_hotdata.sysctl_max_skb_frags,
+		.data		= &sysctl_max_skb_frags,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
@@ -605,7 +606,7 @@ static struct ctl_table net_core_table[] = {
 	},
 	{
 		.procname	= "netdev_budget_usecs",
-		.data		= &net_hotdata.netdev_budget_usecs,
+		.data		= &netdev_budget_usecs,
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
@@ -638,7 +639,7 @@ static struct ctl_table net_core_table[] = {
 	},
 	{
 		.procname	= "gro_normal_batch",
-		.data		= &net_hotdata.gro_normal_batch,
+		.data		= &gro_normal_batch,
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
@@ -655,12 +656,13 @@ static struct ctl_table net_core_table[] = {
 	},
 	{
 		.procname	= "skb_defer_max",
-		.data		= &net_hotdata.sysctl_skb_defer_max,
+		.data		= &sysctl_skb_defer_max,
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= SYSCTL_ZERO,
 	},
+	{ }
 };
 
 static struct ctl_table netns_core_table[] = {
@@ -681,14 +683,6 @@ static struct ctl_table netns_core_table[] = {
 		.proc_handler	= proc_dointvec_minmax
 	},
 	{
-		.procname	= "optmem_max",
-		.data		= &init_net.core.sysctl_optmem_max,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.extra1		= SYSCTL_ZERO,
-		.proc_handler	= proc_dointvec_minmax
-	},
-	{
 		.procname	= "txrehash",
 		.data		= &init_net.core.sysctl_txrehash,
 		.maxlen		= sizeof(u8),
@@ -697,6 +691,7 @@ static struct ctl_table netns_core_table[] = {
 		.extra2		= SYSCTL_ONE,
 		.proc_handler	= proc_dou8vec_minmax,
 	},
+	{ }
 };
 
 static int __init fb_tunnels_only_for_init_net_sysctl_setup(char *str)
@@ -714,21 +709,20 @@ __setup("fb_tunnels=", fb_tunnels_only_for_init_net_sysctl_setup);
 
 static __net_init int sysctl_core_net_init(struct net *net)
 {
-	size_t table_size = ARRAY_SIZE(netns_core_table);
-	struct ctl_table *tbl;
+	struct ctl_table *tbl, *tmp;
 
 	tbl = netns_core_table;
 	if (!net_eq(net, &init_net)) {
-		int i;
 		tbl = kmemdup(tbl, sizeof(netns_core_table), GFP_KERNEL);
 		if (tbl == NULL)
 			goto err_dup;
 
-		for (i = 0; i < table_size; ++i)
-			tbl[i].data += (char *)net - (char *)&init_net;
+		for (tmp = tbl; tmp->procname; tmp++)
+			tmp->data += (char *)net - (char *)&init_net;
 	}
 
-	net->core.sysctl_hdr = register_net_sysctl_sz(net, "net/core", tbl, table_size);
+	net->core.sysctl_hdr = register_net_sysctl_sz(net, "net/core", tbl,
+						      ARRAY_SIZE(netns_core_table));
 	if (net->core.sysctl_hdr == NULL)
 		goto err_reg;
 
@@ -743,7 +737,7 @@ err_dup:
 
 static __net_exit void sysctl_core_net_exit(struct net *net)
 {
-	const struct ctl_table *tbl;
+	struct ctl_table *tbl;
 
 	tbl = net->core.sysctl_hdr->ctl_table_arg;
 	unregister_net_sysctl_table(net->core.sysctl_hdr);

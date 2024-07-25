@@ -243,9 +243,13 @@ To reduce its OS jitter, do any of the following:
 3.	Do any of the following needed to avoid jitter that your
 	application cannot tolerate:
 
-	a.	Avoid using oprofile, thus avoiding OS jitter from
+	a.	Build your kernel with CONFIG_SLUB=y rather than
+		CONFIG_SLAB=y, thus avoiding the slab allocator's periodic
+		use of each CPU's workqueues to run its cache_reap()
+		function.
+	b.	Avoid using oprofile, thus avoiding OS jitter from
 		wq_sync_buffer().
-	b.	Limit your CPU frequency so that a CPU-frequency
+	c.	Limit your CPU frequency so that a CPU-frequency
 		governor is not required, possibly enlisting the aid of
 		special heatsinks or other cooling technologies.  If done
 		correctly, and if you CPU architecture permits, you should
@@ -255,7 +259,7 @@ To reduce its OS jitter, do any of the following:
 
 		WARNING:  Please check your CPU specifications to
 		make sure that this is safe on your particular system.
-	c.	As of v3.18, Christoph Lameter's on-demand vmstat workers
+	d.	As of v3.18, Christoph Lameter's on-demand vmstat workers
 		commit prevents OS jitter due to vmstat_update() on
 		CONFIG_SMP=y systems.  Before v3.18, is not possible
 		to entirely get rid of the OS jitter, but you can
@@ -270,7 +274,7 @@ To reduce its OS jitter, do any of the following:
 		(based on an earlier one from Gilad Ben-Yossef) that
 		reduces or even eliminates vmstat overhead for some
 		workloads at https://lore.kernel.org/r/00000140e9dfd6bd-40db3d4f-c1be-434f-8132-7820f81bb586-000000@email.amazonses.com.
-	d.	If running on high-end powerpc servers, build with
+	e.	If running on high-end powerpc servers, build with
 		CONFIG_PPC_RTAS_DAEMON=n.  This prevents the RTAS
 		daemon from running on each CPU every second or so.
 		(This will require editing Kconfig files and will defeat
@@ -278,12 +282,12 @@ To reduce its OS jitter, do any of the following:
 		due to the rtas_event_scan() function.
 		WARNING:  Please check your CPU specifications to
 		make sure that this is safe on your particular system.
-	e.	If running on Cell Processor, build your kernel with
+	f.	If running on Cell Processor, build your kernel with
 		CBE_CPUFREQ_SPU_GOVERNOR=n to avoid OS jitter from
 		spu_gov_work().
 		WARNING:  Please check your CPU specifications to
 		make sure that this is safe on your particular system.
-	f.	If running on PowerMAC, build your kernel with
+	g.	If running on PowerMAC, build your kernel with
 		CONFIG_PMAC_RACKMETER=n to disable the CPU-meter,
 		avoiding OS jitter from rackmeter_do_timer().
 

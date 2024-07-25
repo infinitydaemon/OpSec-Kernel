@@ -32,7 +32,7 @@
 #include <linux/inet_diag.h>
 #include <linux/sock_diag.h>
 
-static const struct inet_diag_handler __rcu **inet_diag_table;
+static const struct inet_diag_handler **inet_diag_table;
 
 struct inet_diag_entry {
 	const __be32 *saddr;
@@ -48,28 +48,28 @@ struct inet_diag_entry {
 #endif
 };
 
+static DEFINE_MUTEX(inet_diag_table_mutex);
+
 static const struct inet_diag_handler *inet_diag_lock_handler(int proto)
 {
-	const struct inet_diag_handler *handler;
-
-	if (proto < 0 || proto >= IPPROTO_MAX)
-		return NULL;
+	if (proto < 0 || proto >= IPPROTO_MAX) {
+		mutex_lock(&inet_diag_table_mutex);
+		return ERR_PTR(-ENOENT);
+	}
 
 	if (!READ_ONCE(inet_diag_table[proto]))
 		sock_load_diag_module(AF_INET, proto);
 
-	rcu_read_lock();
-	handler = rcu_dereference(inet_diag_table[proto]);
-	if (handler && !try_module_get(handler->owner))
-		handler = NULL;
-	rcu_read_unlock();
+	mutex_lock(&inet_diag_table_mutex);
+	if (!inet_diag_table[proto])
+		return ERR_PTR(-ENOENT);
 
-	return handler;
+	return inet_diag_table[proto];
 }
 
 static void inet_diag_unlock_handler(const struct inet_diag_handler *handler)
 {
-	module_put(handler->owner);
+	mutex_unlock(&inet_diag_table_mutex);
 }
 
 void inet_diag_msg_common_fill(struct inet_diag_msg *r, struct sock *sk)
@@ -104,12 +104,9 @@ static size_t inet_sk_attr_size(struct sock *sk,
 	const struct inet_diag_handler *handler;
 	size_t aux = 0;
 
-	rcu_read_lock();
-	handler = rcu_dereference(inet_diag_table[req->sdiag_protocol]);
-	DEBUG_NET_WARN_ON_ONCE(!handler);
+	handler = inet_diag_table[req->sdiag_protocol];
 	if (handler && handler->idiag_get_aux_size)
 		aux = handler->idiag_get_aux_size(sk, net_admin);
-	rcu_read_unlock();
 
 	return	  nla_total_size(sizeof(struct tcp_info))
 		+ nla_total_size(sizeof(struct inet_diag_msg))
@@ -137,7 +134,7 @@ int inet_diag_msg_attrs_fill(struct sock *sk, struct sk_buff *skb,
 	 * hence this needs to be included regardless of socket family.
 	 */
 	if (ext & (1 << (INET_DIAG_TOS - 1)))
-		if (nla_put_u8(skb, INET_DIAG_TOS, READ_ONCE(inet->tos)) < 0)
+		if (nla_put_u8(skb, INET_DIAG_TOS, inet->tos) < 0)
 			goto errout;
 
 #if IS_ENABLED(CONFIG_IPV6)
@@ -168,7 +165,7 @@ int inet_diag_msg_attrs_fill(struct sock *sk, struct sk_buff *skb,
 		 * For cgroup2 classid is always zero.
 		 */
 		if (!classid)
-			classid = READ_ONCE(sk->sk_priority);
+			classid = sk->sk_priority;
 
 		if (nla_put_u32(skb, INET_DIAG_CLASS_ID, classid))
 			goto errout;
@@ -247,16 +244,10 @@ int inet_sk_diag_fill(struct sock *sk, struct inet_connection_sock *icsk,
 	struct nlmsghdr  *nlh;
 	struct nlattr *attr;
 	void *info = NULL;
-	int protocol;
 
 	cb_data = cb->data;
-	protocol = inet_diag_get_protocol(req, cb_data);
-
-	/* inet_diag_lock_handler() made sure inet_diag_table[] is stable. */
-	handler = rcu_dereference_protected(inet_diag_table[protocol], 1);
-	DEBUG_NET_WARN_ON_ONCE(!handler);
-	if (!handler)
-		return -ENXIO;
+	handler = inet_diag_table[inet_diag_get_protocol(req, cb_data)];
+	BUG_ON(!handler);
 
 	nlh = nlmsg_put(skb, NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq,
 			cb->nlh->nlmsg_type, sizeof(*r), nlmsg_flags);
@@ -614,10 +605,9 @@ static int inet_diag_cmd_exact(int cmd, struct sk_buff *in_skb,
 	protocol = inet_diag_get_protocol(req, &dump_data);
 
 	handler = inet_diag_lock_handler(protocol);
-	if (!handler)
-		return -ENOENT;
-
-	if (cmd == SOCK_DIAG_BY_FAMILY) {
+	if (IS_ERR(handler)) {
+		err = PTR_ERR(handler);
+	} else if (cmd == SOCK_DIAG_BY_FAMILY) {
 		struct netlink_callback cb = {
 			.nlh = nlh,
 			.skb = in_skb,
@@ -1045,10 +1035,6 @@ void inet_diag_dump_icsk(struct inet_hashinfo *hashinfo, struct sk_buff *skb,
 			num = 0;
 			ilb = &hashinfo->lhash2[i];
 
-			if (hlist_nulls_empty(&ilb->nulls_head)) {
-				s_num = 0;
-				continue;
-			}
 			spin_lock(&ilb->lock);
 			sk_nulls_for_each(sk, node, &ilb->nulls_head) {
 				struct inet_sock *inet = inet_sk(sk);
@@ -1091,98 +1077,10 @@ skip_listen_ht:
 		s_i = num = s_num = 0;
 	}
 
-/* Process a maximum of SKARR_SZ sockets at a time when walking hash buckets
- * with bh disabled.
- */
-#define SKARR_SZ 16
-
-	/* Dump bound but inactive (not listening, connecting, etc.) sockets */
-	if (cb->args[0] == 1) {
-		if (!(idiag_states & TCPF_BOUND_INACTIVE))
-			goto skip_bind_ht;
-
-		for (i = s_i; i < hashinfo->bhash_size; i++) {
-			struct inet_bind_hashbucket *ibb;
-			struct inet_bind2_bucket *tb2;
-			struct sock *sk_arr[SKARR_SZ];
-			int num_arr[SKARR_SZ];
-			int idx, accum, res;
-
-resume_bind_walk:
-			num = 0;
-			accum = 0;
-			ibb = &hashinfo->bhash2[i];
-
-			if (hlist_empty(&ibb->chain)) {
-				s_num = 0;
-				continue;
-			}
-			spin_lock_bh(&ibb->lock);
-			inet_bind_bucket_for_each(tb2, &ibb->chain) {
-				if (!net_eq(ib2_net(tb2), net))
-					continue;
-
-				sk_for_each_bound(sk, &tb2->owners) {
-					struct inet_sock *inet = inet_sk(sk);
-
-					if (num < s_num)
-						goto next_bind;
-
-					if (sk->sk_state != TCP_CLOSE ||
-					    !inet->inet_num)
-						goto next_bind;
-
-					if (r->sdiag_family != AF_UNSPEC &&
-					    r->sdiag_family != sk->sk_family)
-						goto next_bind;
-
-					if (!inet_diag_bc_sk(bc, sk))
-						goto next_bind;
-
-					sock_hold(sk);
-					num_arr[accum] = num;
-					sk_arr[accum] = sk;
-					if (++accum == SKARR_SZ)
-						goto pause_bind_walk;
-next_bind:
-					num++;
-				}
-			}
-pause_bind_walk:
-			spin_unlock_bh(&ibb->lock);
-
-			res = 0;
-			for (idx = 0; idx < accum; idx++) {
-				if (res >= 0) {
-					res = inet_sk_diag_fill(sk_arr[idx],
-								NULL, skb, cb,
-								r, NLM_F_MULTI,
-								net_admin);
-					if (res < 0)
-						num = num_arr[idx];
-				}
-				sock_put(sk_arr[idx]);
-			}
-			if (res < 0)
-				goto done;
-
-			cond_resched();
-
-			if (accum == SKARR_SZ) {
-				s_num = num + 1;
-				goto resume_bind_walk;
-			}
-
-			s_num = 0;
-		}
-skip_bind_ht:
-		cb->args[0] = 2;
-		s_i = num = s_num = 0;
-	}
-
 	if (!(idiag_states & ~TCPF_LISTEN))
 		goto out;
 
+#define SKARR_SZ 16
 	for (i = s_i; i <= hashinfo->ehash_mask; i++) {
 		struct inet_ehash_bucket *head = &hashinfo->ehash[i];
 		spinlock_t *lock = inet_ehash_lockp(hashinfo, i);
@@ -1277,12 +1175,12 @@ static int __inet_diag_dump(struct sk_buff *skb, struct netlink_callback *cb,
 again:
 	prev_min_dump_alloc = cb->min_dump_alloc;
 	handler = inet_diag_lock_handler(protocol);
-	if (handler) {
+	if (!IS_ERR(handler))
 		handler->dump(skb, cb, r);
-		inet_diag_unlock_handler(handler);
-	} else {
-		err = -ENOENT;
-	}
+	else
+		err = PTR_ERR(handler);
+	inet_diag_unlock_handler(handler);
+
 	/* The skb is not large enough to fit one sk info and
 	 * inet_sk_diag_fill() has requested for a larger skb.
 	 */
@@ -1383,6 +1281,7 @@ static int inet_diag_dump_compat(struct sk_buff *skb,
 	req.sdiag_family = AF_UNSPEC; /* compatibility */
 	req.sdiag_protocol = inet_diag_type2proto(cb->nlh->nlmsg_type);
 	req.idiag_ext = rc->idiag_ext;
+	req.pad = 0;
 	req.idiag_states = rc->idiag_states;
 	req.id = rc->id;
 
@@ -1398,6 +1297,7 @@ static int inet_diag_get_exact_compat(struct sk_buff *in_skb,
 	req.sdiag_family = rc->idiag_family;
 	req.sdiag_protocol = inet_diag_type2proto(nlh->nlmsg_type);
 	req.idiag_ext = rc->idiag_ext;
+	req.pad = 0;
 	req.idiag_states = rc->idiag_states;
 	req.id = rc->id;
 
@@ -1475,9 +1375,10 @@ int inet_diag_handler_get_info(struct sk_buff *skb, struct sock *sk)
 	}
 
 	handler = inet_diag_lock_handler(sk->sk_protocol);
-	if (!handler) {
+	if (IS_ERR(handler)) {
+		inet_diag_unlock_handler(handler);
 		nlmsg_cancel(skb, nlh);
-		return -ENOENT;
+		return PTR_ERR(handler);
 	}
 
 	attr = handler->idiag_info_size
@@ -1496,7 +1397,6 @@ int inet_diag_handler_get_info(struct sk_buff *skb, struct sock *sk)
 }
 
 static const struct sock_diag_handler inet_diag_handler = {
-	.owner = THIS_MODULE,
 	.family = AF_INET,
 	.dump = inet_diag_handler_cmd,
 	.get_info = inet_diag_handler_get_info,
@@ -1504,7 +1404,6 @@ static const struct sock_diag_handler inet_diag_handler = {
 };
 
 static const struct sock_diag_handler inet6_diag_handler = {
-	.owner = THIS_MODULE,
 	.family = AF_INET6,
 	.dump = inet_diag_handler_cmd,
 	.get_info = inet_diag_handler_get_info,
@@ -1514,12 +1413,20 @@ static const struct sock_diag_handler inet6_diag_handler = {
 int inet_diag_register(const struct inet_diag_handler *h)
 {
 	const __u16 type = h->idiag_type;
+	int err = -EINVAL;
 
 	if (type >= IPPROTO_MAX)
-		return -EINVAL;
+		goto out;
 
-	return !cmpxchg((const struct inet_diag_handler **)&inet_diag_table[type],
-			NULL, h) ? 0 : -EEXIST;
+	mutex_lock(&inet_diag_table_mutex);
+	err = -EEXIST;
+	if (!inet_diag_table[type]) {
+		WRITE_ONCE(inet_diag_table[type], h);
+		err = 0;
+	}
+	mutex_unlock(&inet_diag_table_mutex);
+out:
+	return err;
 }
 EXPORT_SYMBOL_GPL(inet_diag_register);
 
@@ -1530,15 +1437,11 @@ void inet_diag_unregister(const struct inet_diag_handler *h)
 	if (type >= IPPROTO_MAX)
 		return;
 
-	xchg((const struct inet_diag_handler **)&inet_diag_table[type],
-	     NULL);
+	mutex_lock(&inet_diag_table_mutex);
+	WRITE_ONCE(inet_diag_table[type], NULL);
+	mutex_unlock(&inet_diag_table_mutex);
 }
 EXPORT_SYMBOL_GPL(inet_diag_unregister);
-
-static const struct sock_diag_inet_compat inet_diag_compat = {
-	.owner	= THIS_MODULE,
-	.fn	= inet_diag_rcv_msg_compat,
-};
 
 static int __init inet_diag_init(void)
 {
@@ -1558,7 +1461,7 @@ static int __init inet_diag_init(void)
 	if (err)
 		goto out_free_inet;
 
-	sock_diag_register_inet_compat(&inet_diag_compat);
+	sock_diag_register_inet_compat(inet_diag_rcv_msg_compat);
 out:
 	return err;
 
@@ -1573,13 +1476,12 @@ static void __exit inet_diag_exit(void)
 {
 	sock_diag_unregister(&inet6_diag_handler);
 	sock_diag_unregister(&inet_diag_handler);
-	sock_diag_unregister_inet_compat(&inet_diag_compat);
+	sock_diag_unregister_inet_compat(inet_diag_rcv_msg_compat);
 	kfree(inet_diag_table);
 }
 
 module_init(inet_diag_init);
 module_exit(inet_diag_exit);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("INET/INET6: socket monitoring via SOCK_DIAG");
 MODULE_ALIAS_NET_PF_PROTO_TYPE(PF_NETLINK, NETLINK_SOCK_DIAG, 2 /* AF_INET */);
 MODULE_ALIAS_NET_PF_PROTO_TYPE(PF_NETLINK, NETLINK_SOCK_DIAG, 10 /* AF_INET6 */);

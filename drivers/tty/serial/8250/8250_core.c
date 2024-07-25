@@ -15,7 +15,6 @@
  */
 
 #include <linux/acpi.h>
-#include <linux/cleanup.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/ioport.h>
@@ -41,8 +40,6 @@
 #endif
 
 #include <asm/irq.h>
-
-#include "../serial_base.h"	/* For serial_base_add_isa_preferred_console() */
 
 #include "8250.h"
 
@@ -256,13 +253,25 @@ static void serial8250_timeout(struct timer_list *t)
 	mod_timer(&up->timer, jiffies + uart_poll_timeout(&up->port));
 }
 
+static void serial8250_cts_poll_timeout(struct timer_list *t)
+{
+	struct uart_8250_port *up = from_timer(up, t, timer);
+	unsigned long flags;
+
+	spin_lock_irqsave(&up->port.lock, flags);
+	serial8250_modem_status(up);
+	spin_unlock_irqrestore(&up->port.lock, flags);
+	if (up->port.hw_stopped)
+		mod_timer(&up->timer, jiffies + 1);
+}
+
 static void serial8250_backup_timeout(struct timer_list *t)
 {
 	struct uart_8250_port *up = from_timer(up, t, timer);
 	unsigned int iir, ier = 0, lsr;
 	unsigned long flags;
 
-	uart_port_lock_irqsave(&up->port, &flags);
+	spin_lock_irqsave(&up->port.lock, flags);
 
 	/*
 	 * Must disable interrupts or else we risk racing with the interrupt
@@ -283,8 +292,7 @@ static void serial8250_backup_timeout(struct timer_list *t)
 	 */
 	lsr = serial_lsr_in(up);
 	if ((iir & UART_IIR_NO_INT) && (up->ier & UART_IER_THRI) &&
-	    (!kfifo_is_empty(&up->port.state->port.xmit_fifo) ||
-	     up->port.x_char) &&
+	    (!uart_circ_empty(&up->port.state->xmit) || up->port.x_char) &&
 	    (lsr & UART_LSR_THRE)) {
 		iir &= ~(UART_IIR_ID | UART_IIR_NO_INT);
 		iir |= UART_IIR_THRI;
@@ -296,7 +304,7 @@ static void serial8250_backup_timeout(struct timer_list *t)
 	if (up->port.irq)
 		serial_out(up, UART_IER, ier);
 
-	uart_port_unlock_irqrestore(&up->port, flags);
+	spin_unlock_irqrestore(&up->port.lock, flags);
 
 	/* Standard timer interval plus 0.2s to keep the port running */
 	mod_timer(&up->timer,
@@ -318,6 +326,9 @@ static void univ8250_setup_timer(struct uart_8250_port *up)
 		mod_timer(&up->timer, jiffies +
 			  uart_poll_timeout(port) + HZ / 5);
 	}
+
+	if (up->bugs & UART_BUG_NOMSI)
+		up->timer.function = serial8250_cts_poll_timeout;
 
 	/*
 	 * If the "interrupt" for this port doesn't correspond with any
@@ -512,6 +523,10 @@ static struct uart_8250_port *serial8250_setup_port(int index)
 
 	up->ops = &univ8250_driver_ops;
 
+	if (IS_ENABLED(CONFIG_ALPHA_JENSEN) ||
+	    (IS_ENABLED(CONFIG_ALPHA_GENERIC) && alpha_jensen()))
+		up->port.set_mctrl = alpha_jensen_set_mctrl;
+
 	serial8250_set_defaults(up);
 
 	return up;
@@ -563,8 +578,6 @@ static void __init serial8250_isa_init_ports(void)
 		port->irqflags |= irqflag;
 		if (serial8250_isa_config != NULL)
 			serial8250_isa_config(i, &up->port, &up->capabilities);
-
-		serial_base_add_isa_preferred_console(serial8250_reg.dev_name, i);
 	}
 }
 
@@ -613,7 +626,7 @@ static int univ8250_console_setup(struct console *co, char *options)
 	 * if so, search for the first available port that does have
 	 * console support.
 	 */
-	if (co->index < 0 || co->index >= UART_NR)
+	if (co->index >= UART_NR)
 		co->index = 0;
 
 	/*
@@ -885,7 +898,7 @@ static int serial8250_probe(struct platform_device *dev)
 /*
  * Remove serial ports registered against a platform device.
  */
-static void serial8250_remove(struct platform_device *dev)
+static int serial8250_remove(struct platform_device *dev)
 {
 	int i;
 
@@ -895,6 +908,7 @@ static void serial8250_remove(struct platform_device *dev)
 		if (up->port.dev == &dev->dev)
 			serial8250_unregister_port(i);
 	}
+	return 0;
 }
 
 static int serial8250_suspend(struct platform_device *dev, pm_message_t state)
@@ -927,7 +941,7 @@ static int serial8250_resume(struct platform_device *dev)
 
 static struct platform_driver serial8250_isa_driver = {
 	.probe		= serial8250_probe,
-	.remove_new	= serial8250_remove,
+	.remove		= serial8250_remove,
 	.suspend	= serial8250_suspend,
 	.resume		= serial8250_resume,
 	.driver		= {
@@ -993,11 +1007,11 @@ static void serial_8250_overrun_backoff_work(struct work_struct *work)
 	struct uart_port *port = &up->port;
 	unsigned long flags;
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 	up->ier |= UART_IER_RLSI | UART_IER_RDI;
 	up->port.read_status_mask |= UART_LSR_DR;
 	serial_out(up, UART_IER, up->ier);
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 }
 
 /**
@@ -1195,9 +1209,9 @@ void serial8250_unregister_port(int line)
 	if (uart->em485) {
 		unsigned long flags;
 
-		uart_port_lock_irqsave(&uart->port, &flags);
+		spin_lock_irqsave(&uart->port.lock, flags);
 		serial8250_em485_destroy(uart);
-		uart_port_unlock_irqrestore(&uart->port, flags);
+		spin_unlock_irqrestore(&uart->port.lock, flags);
 	}
 
 	uart_remove_one_port(&serial8250_reg, &uart->port);

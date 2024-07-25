@@ -101,6 +101,11 @@ static int bcm54210e_config_init(struct phy_device *phydev)
 	return 0;
 }
 
+static int bcm54213pe_config_init(struct phy_device *phydev)
+{
+	return bcm54210e_config_init(phydev);
+}
+
 static int bcm54612e_config_init(struct phy_device *phydev)
 {
 	int reg;
@@ -272,7 +277,8 @@ static void bcm54xx_adjust_rxrefclk(struct phy_device *phydev)
 	    BRCM_PHY_MODEL(phydev) != PHY_ID_BCM50610M &&
 	    BRCM_PHY_MODEL(phydev) != PHY_ID_BCM54210E &&
 	    BRCM_PHY_MODEL(phydev) != PHY_ID_BCM54810 &&
-	    BRCM_PHY_MODEL(phydev) != PHY_ID_BCM54811)
+	    BRCM_PHY_MODEL(phydev) != PHY_ID_BCM54811 &&
+	    BRCM_PHY_MODEL(phydev) != PHY_ID_BCM54213PE)
 		return;
 
 	val = bcm_phy_read_shadow(phydev, BCM54XX_SHD_SCR3);
@@ -350,6 +356,9 @@ static void bcm54xx_ptp_config_init(struct phy_device *phydev)
 static int bcm54xx_config_init(struct phy_device *phydev)
 {
 	int reg, err, val;
+	u32 led_modes[] = {BCM_LED_MULTICOLOR_LINK_ACT,
+			   BCM_LED_MULTICOLOR_LINK};
+	struct device_node *np = phydev->mdio.dev.of_node;
 
 	reg = phy_read(phydev, MII_BCM54XX_ECR);
 	if (reg < 0)
@@ -374,6 +383,9 @@ static int bcm54xx_config_init(struct phy_device *phydev)
 	    (phydev->dev_flags & PHY_BRCM_CLEAR_RGMII_MODE))
 		bcm_phy_write_shadow(phydev, BCM54XX_SHD_RGMII_MODE, 0);
 
+	if (of_property_read_bool(np, "brcm,powerdown-enable"))
+		phydev->dev_flags |= PHY_BRCM_AUTO_PWRDWN_ENABLE;
+
 	bcm54xx_adjust_rxrefclk(phydev);
 
 	switch (BRCM_PHY_MODEL(phydev)) {
@@ -386,6 +398,9 @@ static int bcm54xx_config_init(struct phy_device *phydev)
 		break;
 	case PHY_ID_BCM54612E:
 		err = bcm54612e_config_init(phydev);
+		break;
+	case PHY_ID_BCM54213PE:
+		err = bcm54213pe_config_init(phydev);
 		break;
 	case PHY_ID_BCM54616S:
 		err = bcm54616s_config_init(phydev);
@@ -405,10 +420,10 @@ static int bcm54xx_config_init(struct phy_device *phydev)
 
 	bcm54xx_phydsp_config(phydev);
 
+	of_property_read_u32_array(np, "led-modes", led_modes, 2);
+
 	/* For non-SFP setups, encode link speed into LED1 and LED3 pair
 	 * (green/amber).
-	 * Also flash these two LEDs on activity. This means configuring
-	 * them for MULTICOLOR and encoding link/activity into them.
 	 * Don't do this for devices on an SFP module, since some of these
 	 * use the LED outputs to control the SFP LOS signal, and changing
 	 * these settings will cause LOS to malfunction.
@@ -417,10 +432,15 @@ static int bcm54xx_config_init(struct phy_device *phydev)
 		val = BCM54XX_SHD_LEDS1_LED1(BCM_LED_SRC_MULTICOLOR1) |
 			BCM54XX_SHD_LEDS1_LED3(BCM_LED_SRC_MULTICOLOR1);
 		bcm_phy_write_shadow(phydev, BCM54XX_SHD_LEDS1, val);
+		/* BCM54210PE controls two extra LEDs with the next register.
+		 * Make them shadow the first pair of LEDs - useful on CM4 which
+		 * uses LED3 for ETH_LEDY instead of LED1.
+		 */
+		bcm_phy_write_shadow(phydev, BCM54XX_SHD_LEDS1 + 1, val);
 
 		val = BCM_LED_MULTICOLOR_IN_PHASE |
-			BCM54XX_SHD_LEDS1_LED1(BCM_LED_MULTICOLOR_LINK_ACT) |
-			BCM54XX_SHD_LEDS1_LED3(BCM_LED_MULTICOLOR_LINK_ACT);
+			BCM54XX_SHD_LEDS1_LED1(led_modes[0]) |
+			BCM54XX_SHD_LEDS1_LED3(led_modes[1]);
 		bcm_phy_write_exp(phydev, BCM_EXP_MULTICOLOR, val);
 	}
 
@@ -665,11 +685,10 @@ static int bcm54616s_config_aneg(struct phy_device *phydev)
 static int bcm54616s_read_status(struct phy_device *phydev)
 {
 	struct bcm54616s_phy_priv *priv = phydev->priv;
-	bool changed;
 	int err;
 
 	if (priv->mode_1000bx_en)
-		err = genphy_c37_read_status(phydev, &changed);
+		err = genphy_c37_read_status(phydev);
 	else
 		err = genphy_read_status(phydev);
 
@@ -705,21 +724,16 @@ static int brcm_fet_config_init(struct phy_device *phydev)
 	if (err < 0 && err != -EIO)
 		return err;
 
-	/* Read to clear status bits */
 	reg = phy_read(phydev, MII_BRCM_FET_INTREG);
 	if (reg < 0)
 		return reg;
 
 	/* Unmask events we are interested in and mask interrupts globally. */
-	if (phydev->phy_id == PHY_ID_BCM5221)
-		reg = MII_BRCM_FET_IR_ENABLE |
-		      MII_BRCM_FET_IR_MASK;
-	else
-		reg = MII_BRCM_FET_IR_DUPLEX_EN |
-		      MII_BRCM_FET_IR_SPEED_EN |
-		      MII_BRCM_FET_IR_LINK_EN |
-		      MII_BRCM_FET_IR_ENABLE |
-		      MII_BRCM_FET_IR_MASK;
+	reg = MII_BRCM_FET_IR_DUPLEX_EN |
+	      MII_BRCM_FET_IR_SPEED_EN |
+	      MII_BRCM_FET_IR_LINK_EN |
+	      MII_BRCM_FET_IR_ENABLE |
+	      MII_BRCM_FET_IR_MASK;
 
 	err = phy_write(phydev, MII_BRCM_FET_INTREG, reg);
 	if (err < 0)
@@ -732,48 +746,41 @@ static int brcm_fet_config_init(struct phy_device *phydev)
 
 	reg = brcmtest | MII_BRCM_FET_BT_SRE;
 
-	phy_lock_mdio_bus(phydev);
-
-	err = __phy_write(phydev, MII_BRCM_FET_BRCMTEST, reg);
-	if (err < 0) {
-		phy_unlock_mdio_bus(phydev);
+	err = phy_write(phydev, MII_BRCM_FET_BRCMTEST, reg);
+	if (err < 0)
 		return err;
+
+	/* Set the LED mode */
+	reg = phy_read(phydev, MII_BRCM_FET_SHDW_AUXMODE4);
+	if (reg < 0) {
+		err = reg;
+		goto done;
 	}
 
-	if (phydev->phy_id != PHY_ID_BCM5221) {
-		/* Set the LED mode */
-		reg = __phy_read(phydev, MII_BRCM_FET_SHDW_AUXMODE4);
-		if (reg < 0) {
-			err = reg;
-			goto done;
-		}
+	reg &= ~MII_BRCM_FET_SHDW_AM4_LED_MASK;
+	reg |= MII_BRCM_FET_SHDW_AM4_LED_MODE1;
 
-		err = __phy_modify(phydev, MII_BRCM_FET_SHDW_AUXMODE4,
-				   MII_BRCM_FET_SHDW_AM4_LED_MASK,
-				   MII_BRCM_FET_SHDW_AM4_LED_MODE1);
-		if (err < 0)
-			goto done;
+	err = phy_write(phydev, MII_BRCM_FET_SHDW_AUXMODE4, reg);
+	if (err < 0)
+		goto done;
 
-		/* Enable auto MDIX */
-		err = __phy_set_bits(phydev, MII_BRCM_FET_SHDW_MISCCTRL,
-				     MII_BRCM_FET_SHDW_MC_FAME);
-		if (err < 0)
-			goto done;
-	}
+	/* Enable auto MDIX */
+	err = phy_set_bits(phydev, MII_BRCM_FET_SHDW_MISCCTRL,
+			   MII_BRCM_FET_SHDW_MC_FAME);
+	if (err < 0)
+		goto done;
 
 	if (phydev->dev_flags & PHY_BRCM_AUTO_PWRDWN_ENABLE) {
 		/* Enable auto power down */
-		err = __phy_set_bits(phydev, MII_BRCM_FET_SHDW_AUXSTAT2,
-				     MII_BRCM_FET_SHDW_AS2_APDE);
+		err = phy_set_bits(phydev, MII_BRCM_FET_SHDW_AUXSTAT2,
+				   MII_BRCM_FET_SHDW_AS2_APDE);
 	}
 
 done:
 	/* Disable shadow register access */
-	err2 = __phy_write(phydev, MII_BRCM_FET_BRCMTEST, brcmtest);
+	err2 = phy_write(phydev, MII_BRCM_FET_BRCMTEST, brcmtest);
 	if (!err)
 		err = err2;
-
-	phy_unlock_mdio_bus(phydev);
 
 	return err;
 }
@@ -853,84 +860,21 @@ static int brcm_fet_suspend(struct phy_device *phydev)
 
 	reg = brcmtest | MII_BRCM_FET_BT_SRE;
 
-	phy_lock_mdio_bus(phydev);
-
-	err = __phy_write(phydev, MII_BRCM_FET_BRCMTEST, reg);
-	if (err < 0) {
-		phy_unlock_mdio_bus(phydev);
+	err = phy_write(phydev, MII_BRCM_FET_BRCMTEST, reg);
+	if (err < 0)
 		return err;
-	}
 
-	if (phydev->phy_id == PHY_ID_BCM5221)
-		/* Force Low Power Mode with clock enabled */
-		reg = BCM5221_SHDW_AM4_EN_CLK_LPM | BCM5221_SHDW_AM4_FORCE_LPM;
-	else
-		/* Set standby mode */
-		reg = MII_BRCM_FET_SHDW_AM4_STANDBY;
-
-	err = __phy_set_bits(phydev, MII_BRCM_FET_SHDW_AUXMODE4, reg);
+	/* Set standby mode */
+	err = phy_modify(phydev, MII_BRCM_FET_SHDW_AUXMODE4,
+			 MII_BRCM_FET_SHDW_AM4_STANDBY,
+			 MII_BRCM_FET_SHDW_AM4_STANDBY);
 
 	/* Disable shadow register access */
-	err2 = __phy_write(phydev, MII_BRCM_FET_BRCMTEST, brcmtest);
+	err2 = phy_write(phydev, MII_BRCM_FET_BRCMTEST, brcmtest);
 	if (!err)
 		err = err2;
 
-	phy_unlock_mdio_bus(phydev);
-
 	return err;
-}
-
-static int bcm5221_config_aneg(struct phy_device *phydev)
-{
-	int ret, val;
-
-	ret = genphy_config_aneg(phydev);
-	if (ret)
-		return ret;
-
-	switch (phydev->mdix_ctrl) {
-	case ETH_TP_MDI:
-		val = BCM5221_AEGSR_MDIX_DIS;
-		break;
-	case ETH_TP_MDI_X:
-		val = BCM5221_AEGSR_MDIX_DIS | BCM5221_AEGSR_MDIX_MAN_SWAP;
-		break;
-	case ETH_TP_MDI_AUTO:
-		val = 0;
-		break;
-	default:
-		return 0;
-	}
-
-	return phy_modify(phydev, BCM5221_AEGSR, BCM5221_AEGSR_MDIX_MAN_SWAP |
-						 BCM5221_AEGSR_MDIX_DIS,
-						 val);
-}
-
-static int bcm5221_read_status(struct phy_device *phydev)
-{
-	int ret;
-
-	/* Read MDIX status */
-	ret = phy_read(phydev, BCM5221_AEGSR);
-	if (ret < 0)
-		return ret;
-
-	if (ret & BCM5221_AEGSR_MDIX_DIS) {
-		if (ret & BCM5221_AEGSR_MDIX_MAN_SWAP)
-			phydev->mdix_ctrl = ETH_TP_MDI_X;
-		else
-			phydev->mdix_ctrl = ETH_TP_MDI;
-	} else {
-		phydev->mdix_ctrl = ETH_TP_MDI_AUTO;
-	}
-
-	if (ret & BCM5221_AEGSR_MDIX_STATUS)
-		phydev->mdix = ETH_TP_MDI_X;
-	else
-		phydev->mdix = ETH_TP_MDI;
-
-	return genphy_read_status(phydev);
 }
 
 static void bcm54xx_phy_get_wol(struct phy_device *phydev,
@@ -1091,7 +1035,7 @@ static struct phy_driver broadcom_drivers[] = {
 	.link_change_notify	= bcm54xx_link_change_notify,
 }, {
 	.phy_id		= PHY_ID_BCM54210E,
-	.phy_id_mask	= 0xfffffff0,
+	.phy_id_mask	= 0xffffffff,
 	.name		= "Broadcom BCM54210E",
 	/* PHY_GBIT_FEATURES */
 	.flags		= PHY_ALWAYS_CALL_SUSPEND,
@@ -1108,6 +1052,19 @@ static struct phy_driver broadcom_drivers[] = {
 	.get_wol	= bcm54xx_phy_get_wol,
 	.set_wol	= bcm54xx_phy_set_wol,
 	.led_brightness_set	= bcm_phy_led_brightness_set,
+}, {
+	.phy_id		= PHY_ID_BCM54213PE,
+	.phy_id_mask	= 0xffffffff,
+	.name		= "Broadcom BCM54213PE",
+	/* PHY_GBIT_FEATURES */
+	.get_sset_count	= bcm_phy_get_sset_count,
+	.get_strings	= bcm_phy_get_strings,
+	.get_stats	= bcm54xx_get_stats,
+	.probe		= bcm54xx_phy_probe,
+	.config_init	= bcm54xx_config_init,
+	.config_intr	= bcm_phy_config_intr,
+	.suspend	= bcm54xx_suspend,
+	.resume		= bcm54xx_resume,
 }, {
 	.phy_id		= PHY_ID_BCM5461,
 	.phy_id_mask	= 0xfffffff0,
@@ -1136,8 +1093,6 @@ static struct phy_driver broadcom_drivers[] = {
 	.handle_interrupt = bcm_phy_handle_interrupt,
 	.link_change_notify	= bcm54xx_link_change_notify,
 	.led_brightness_set	= bcm_phy_led_brightness_set,
-	.suspend	= bcm54xx_suspend,
-	.resume		= bcm54xx_resume,
 }, {
 	.phy_id		= PHY_ID_BCM54616S,
 	.phy_id_mask	= 0xfffffff0,
@@ -1300,18 +1255,6 @@ static struct phy_driver broadcom_drivers[] = {
 	.suspend	= brcm_fet_suspend,
 	.resume		= brcm_fet_config_init,
 }, {
-	.phy_id		= PHY_ID_BCM5221,
-	.phy_id_mask	= 0xfffffff0,
-	.name		= "Broadcom BCM5221",
-	/* PHY_BASIC_FEATURES */
-	.config_init	= brcm_fet_config_init,
-	.config_intr	= brcm_fet_config_intr,
-	.handle_interrupt = brcm_fet_handle_interrupt,
-	.suspend	= brcm_fet_suspend,
-	.resume		= brcm_fet_config_init,
-	.config_aneg	= bcm5221_config_aneg,
-	.read_status	= bcm5221_read_status,
-}, {
 	.phy_id		= PHY_ID_BCM5395,
 	.phy_id_mask	= 0xfffffff0,
 	.name		= "Broadcom BCM5395",
@@ -1373,7 +1316,8 @@ module_phy_driver(broadcom_drivers);
 static struct mdio_device_id __maybe_unused broadcom_tbl[] = {
 	{ PHY_ID_BCM5411, 0xfffffff0 },
 	{ PHY_ID_BCM5421, 0xfffffff0 },
-	{ PHY_ID_BCM54210E, 0xfffffff0 },
+	{ PHY_ID_BCM54210E, 0xffffffff },
+	{ PHY_ID_BCM54213PE, 0xffffffff },
 	{ PHY_ID_BCM5461, 0xfffffff0 },
 	{ PHY_ID_BCM54612E, 0xfffffff0 },
 	{ PHY_ID_BCM54616S, 0xfffffff0 },
@@ -1386,7 +1330,6 @@ static struct mdio_device_id __maybe_unused broadcom_tbl[] = {
 	{ PHY_ID_BCM50610M, 0xfffffff0 },
 	{ PHY_ID_BCM57780, 0xfffffff0 },
 	{ PHY_ID_BCMAC131, 0xfffffff0 },
-	{ PHY_ID_BCM5221, 0xfffffff0 },
 	{ PHY_ID_BCM5241, 0xfffffff0 },
 	{ PHY_ID_BCM5395, 0xfffffff0 },
 	{ PHY_ID_BCM53125, 0xfffffff0 },

@@ -19,7 +19,7 @@
 struct mmc_gpio {
 	struct gpio_desc *ro_gpio;
 	struct gpio_desc *cd_gpio;
-	irq_handler_t cd_gpio_isr;
+	irqreturn_t (*cd_gpio_isr)(int irq, void *dev_id);
 	char *ro_label;
 	char *cd_label;
 	u32 cd_debounce_delay_ms;
@@ -162,7 +162,8 @@ EXPORT_SYMBOL(mmc_gpio_set_cd_wake);
 /* Register an alternate interrupt service routine for
  * the card-detect GPIO.
  */
-void mmc_gpio_set_cd_isr(struct mmc_host *host, irq_handler_t isr)
+void mmc_gpio_set_cd_isr(struct mmc_host *host,
+			 irqreturn_t (*isr)(int irq, void *dev_id))
 {
 	struct mmc_gpio *ctx = host->slot.handler_priv;
 

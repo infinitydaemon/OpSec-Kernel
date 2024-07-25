@@ -8,7 +8,7 @@
 #include "spectrum_ipip.h"
 #include "reg.h"
 
-struct ip_tunnel_parm_kern
+struct ip_tunnel_parm
 mlxsw_sp_ipip_netdev_parms4(const struct net_device *ol_dev)
 {
 	struct ip_tunnel *tun = netdev_priv(ol_dev);
@@ -24,29 +24,27 @@ mlxsw_sp_ipip_netdev_parms6(const struct net_device *ol_dev)
 	return tun->parms;
 }
 
-static bool
-mlxsw_sp_ipip_parms4_has_ikey(const struct ip_tunnel_parm_kern *parms)
+static bool mlxsw_sp_ipip_parms4_has_ikey(const struct ip_tunnel_parm *parms)
 {
-	return test_bit(IP_TUNNEL_KEY_BIT, parms->i_flags);
+	return !!(parms->i_flags & TUNNEL_KEY);
 }
 
 static bool mlxsw_sp_ipip_parms6_has_ikey(const struct __ip6_tnl_parm *parms)
 {
-	return test_bit(IP_TUNNEL_KEY_BIT, parms->i_flags);
+	return !!(parms->i_flags & TUNNEL_KEY);
 }
 
-static bool
-mlxsw_sp_ipip_parms4_has_okey(const struct ip_tunnel_parm_kern *parms)
+static bool mlxsw_sp_ipip_parms4_has_okey(const struct ip_tunnel_parm *parms)
 {
-	return test_bit(IP_TUNNEL_KEY_BIT, parms->o_flags);
+	return !!(parms->o_flags & TUNNEL_KEY);
 }
 
 static bool mlxsw_sp_ipip_parms6_has_okey(const struct __ip6_tnl_parm *parms)
 {
-	return test_bit(IP_TUNNEL_KEY_BIT, parms->o_flags);
+	return !!(parms->o_flags & TUNNEL_KEY);
 }
 
-static u32 mlxsw_sp_ipip_parms4_ikey(const struct ip_tunnel_parm_kern *parms)
+static u32 mlxsw_sp_ipip_parms4_ikey(const struct ip_tunnel_parm *parms)
 {
 	return mlxsw_sp_ipip_parms4_has_ikey(parms) ?
 		be32_to_cpu(parms->i_key) : 0;
@@ -58,7 +56,7 @@ static u32 mlxsw_sp_ipip_parms6_ikey(const struct __ip6_tnl_parm *parms)
 		be32_to_cpu(parms->i_key) : 0;
 }
 
-static u32 mlxsw_sp_ipip_parms4_okey(const struct ip_tunnel_parm_kern *parms)
+static u32 mlxsw_sp_ipip_parms4_okey(const struct ip_tunnel_parm *parms)
 {
 	return mlxsw_sp_ipip_parms4_has_okey(parms) ?
 		be32_to_cpu(parms->o_key) : 0;
@@ -71,7 +69,7 @@ static u32 mlxsw_sp_ipip_parms6_okey(const struct __ip6_tnl_parm *parms)
 }
 
 static union mlxsw_sp_l3addr
-mlxsw_sp_ipip_parms4_saddr(const struct ip_tunnel_parm_kern *parms)
+mlxsw_sp_ipip_parms4_saddr(const struct ip_tunnel_parm *parms)
 {
 	return (union mlxsw_sp_l3addr) { .addr4 = parms->iph.saddr };
 }
@@ -83,7 +81,7 @@ mlxsw_sp_ipip_parms6_saddr(const struct __ip6_tnl_parm *parms)
 }
 
 static union mlxsw_sp_l3addr
-mlxsw_sp_ipip_parms4_daddr(const struct ip_tunnel_parm_kern *parms)
+mlxsw_sp_ipip_parms4_daddr(const struct ip_tunnel_parm *parms)
 {
 	return (union mlxsw_sp_l3addr) { .addr4 = parms->iph.daddr };
 }
@@ -98,7 +96,7 @@ union mlxsw_sp_l3addr
 mlxsw_sp_ipip_netdev_saddr(enum mlxsw_sp_l3proto proto,
 			   const struct net_device *ol_dev)
 {
-	struct ip_tunnel_parm_kern parms4;
+	struct ip_tunnel_parm parms4;
 	struct __ip6_tnl_parm parms6;
 
 	switch (proto) {
@@ -117,9 +115,7 @@ mlxsw_sp_ipip_netdev_saddr(enum mlxsw_sp_l3proto proto,
 static __be32 mlxsw_sp_ipip_netdev_daddr4(const struct net_device *ol_dev)
 {
 
-	struct ip_tunnel_parm_kern parms4;
-
-	parms4 = mlxsw_sp_ipip_netdev_parms4(ol_dev);
+	struct ip_tunnel_parm parms4 = mlxsw_sp_ipip_netdev_parms4(ol_dev);
 
 	return mlxsw_sp_ipip_parms4_daddr(&parms4).addr4;
 }
@@ -128,7 +124,7 @@ static union mlxsw_sp_l3addr
 mlxsw_sp_ipip_netdev_daddr(enum mlxsw_sp_l3proto proto,
 			   const struct net_device *ol_dev)
 {
-	struct ip_tunnel_parm_kern parms4;
+	struct ip_tunnel_parm parms4;
 	struct __ip6_tnl_parm parms6;
 
 	switch (proto) {
@@ -154,7 +150,7 @@ bool mlxsw_sp_l3addr_is_zero(union mlxsw_sp_l3addr addr)
 static struct mlxsw_sp_ipip_parms
 mlxsw_sp_ipip_netdev_parms_init_gre4(const struct net_device *ol_dev)
 {
-	struct ip_tunnel_parm_kern parms = mlxsw_sp_ipip_netdev_parms4(ol_dev);
+	struct ip_tunnel_parm parms = mlxsw_sp_ipip_netdev_parms4(ol_dev);
 
 	return (struct mlxsw_sp_ipip_parms) {
 		.proto = MLXSW_SP_L3_PROTO_IPV4,
@@ -191,8 +187,8 @@ mlxsw_sp_ipip_decap_config_gre4(struct mlxsw_sp *mlxsw_sp,
 {
 	u16 rif_index = mlxsw_sp_ipip_lb_rif_index(ipip_entry->ol_lb);
 	u16 ul_rif_id = mlxsw_sp_ipip_lb_ul_rif_id(ipip_entry->ol_lb);
-	struct ip_tunnel_parm_kern parms;
 	char rtdp_pl[MLXSW_REG_RTDP_LEN];
+	struct ip_tunnel_parm parms;
 	unsigned int type_check;
 	bool has_ikey;
 	u32 daddr4;
@@ -242,15 +238,12 @@ static bool mlxsw_sp_ipip_can_offload_gre4(const struct mlxsw_sp *mlxsw_sp,
 					   const struct net_device *ol_dev)
 {
 	struct ip_tunnel *tunnel = netdev_priv(ol_dev);
+	__be16 okflags = TUNNEL_KEY; /* We can't offload any other features. */
 	bool inherit_ttl = tunnel->parms.iph.ttl == 0;
 	bool inherit_tos = tunnel->parms.iph.tos & 0x1;
-	IP_TUNNEL_DECLARE_FLAGS(okflags) = { };
 
-	/* We can't offload any other features. */
-	__set_bit(IP_TUNNEL_KEY_BIT, okflags);
-
-	return ip_tunnel_flags_subset(tunnel->parms.i_flags, okflags) &&
-	       ip_tunnel_flags_subset(tunnel->parms.o_flags, okflags) &&
+	return (tunnel->parms.i_flags & ~okflags) == 0 &&
+	       (tunnel->parms.o_flags & ~okflags) == 0 &&
 	       inherit_ttl && inherit_tos &&
 	       mlxsw_sp_ipip_tunnel_complete(MLXSW_SP_L3_PROTO_IPV4, ol_dev);
 }
@@ -259,7 +252,7 @@ static struct mlxsw_sp_rif_ipip_lb_config
 mlxsw_sp_ipip_ol_loopback_config_gre4(struct mlxsw_sp *mlxsw_sp,
 				      const struct net_device *ol_dev)
 {
-	struct ip_tunnel_parm_kern parms = mlxsw_sp_ipip_netdev_parms4(ol_dev);
+	struct ip_tunnel_parm parms = mlxsw_sp_ipip_netdev_parms4(ol_dev);
 	enum mlxsw_reg_ritr_loopback_ipip_type lb_ipipt;
 
 	lb_ipipt = mlxsw_sp_ipip_parms4_has_okey(&parms) ?
@@ -446,13 +439,10 @@ static bool mlxsw_sp_ipip_can_offload_gre6(const struct mlxsw_sp *mlxsw_sp,
 	struct __ip6_tnl_parm tparm = mlxsw_sp_ipip_netdev_parms6(ol_dev);
 	bool inherit_tos = tparm.flags & IP6_TNL_F_USE_ORIG_TCLASS;
 	bool inherit_ttl = tparm.hop_limit == 0;
-	IP_TUNNEL_DECLARE_FLAGS(okflags) = { };
+	__be16 okflags = TUNNEL_KEY; /* We can't offload any other features. */
 
-	/* We can't offload any other features. */
-	__set_bit(IP_TUNNEL_KEY_BIT, okflags);
-
-	return ip_tunnel_flags_subset(tparm.i_flags, okflags) &&
-	       ip_tunnel_flags_subset(tparm.o_flags, okflags) &&
+	return (tparm.i_flags & ~okflags) == 0 &&
+	       (tparm.o_flags & ~okflags) == 0 &&
 	       inherit_ttl && inherit_tos &&
 	       mlxsw_sp_ipip_tunnel_complete(MLXSW_SP_L3_PROTO_IPV6, ol_dev);
 }

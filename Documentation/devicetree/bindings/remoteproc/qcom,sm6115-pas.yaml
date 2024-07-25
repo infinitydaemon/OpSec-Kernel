@@ -47,7 +47,7 @@ properties:
   smd-edge: false
 
   firmware-name:
-    maxItems: 1
+    $ref: /schemas/types.yaml#/definitions/string
     description: Firmware name for the Hexagon core
 
 required:

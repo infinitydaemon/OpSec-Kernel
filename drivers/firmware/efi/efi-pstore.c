@@ -14,42 +14,15 @@ static unsigned int record_size = 1024;
 module_param(record_size, uint, 0444);
 MODULE_PARM_DESC(record_size, "size of each pstore UEFI var (in bytes, min/default=1024)");
 
+static bool efivars_pstore_disable =
+	IS_ENABLED(CONFIG_EFI_VARS_PSTORE_DEFAULT_DISABLE);
+
+module_param_named(pstore_disable, efivars_pstore_disable, bool, 0644);
+
 #define PSTORE_EFI_ATTRIBUTES \
 	(EFI_VARIABLE_NON_VOLATILE | \
 	 EFI_VARIABLE_BOOTSERVICE_ACCESS | \
 	 EFI_VARIABLE_RUNTIME_ACCESS)
-
-static bool pstore_disable = IS_ENABLED(CONFIG_EFI_VARS_PSTORE_DEFAULT_DISABLE);
-
-static int efivars_pstore_init(void);
-static void efivars_pstore_exit(void);
-
-static int efi_pstore_disable_set(const char *val, const struct kernel_param *kp)
-{
-	int err;
-	bool old_pstore_disable = pstore_disable;
-
-	err = param_set_bool(val, kp);
-	if (err)
-		return err;
-
-	if (old_pstore_disable != pstore_disable) {
-		if (pstore_disable)
-			efivars_pstore_exit();
-		else
-			efivars_pstore_init();
-	}
-
-	return 0;
-}
-
-static const struct kernel_param_ops pstore_disable_ops = {
-	.set	= efi_pstore_disable_set,
-	.get	= param_get_bool,
-};
-
-module_param_cb(pstore_disable, &pstore_disable_ops, &pstore_disable, 0644);
-__MODULE_PARM_TYPE(pstore_disable, "bool");
 
 static int efi_pstore_open(struct pstore_info *psi)
 {
@@ -136,7 +109,7 @@ static int efi_pstore_read_func(struct pstore_record *record,
 				     &size, record->buf);
 	if (status != EFI_SUCCESS) {
 		kfree(record->buf);
-		return efi_status_to_err(status);
+		return -EIO;
 	}
 
 	/*
@@ -162,15 +135,7 @@ static ssize_t efi_pstore_read(struct pstore_record *record)
 	efi_status_t status;
 
 	for (;;) {
-		/*
-		 * A small set of old UEFI implementations reject sizes
-		 * above a certain threshold, the lowest seen in the wild
-		 * is 512.
-		 *
-		 * TODO: Commonize with the iteration implementation in
-		 *       fs/efivarfs to keep all the quirks in one place.
-		 */
-		varname_size = 512;
+		varname_size = 1024;
 
 		/*
 		 * If this is the first read() call in the pstore enumeration,
@@ -189,7 +154,7 @@ static ssize_t efi_pstore_read(struct pstore_record *record)
 			return 0;
 
 		if (status != EFI_SUCCESS)
-			return efi_status_to_err(status);
+			return -EIO;
 
 		/* skip variables that don't concern us */
 		if (efi_guidcmp(guid, LINUX_EFI_CRASH_GUID))
@@ -227,7 +192,7 @@ static int efi_pstore_write(struct pstore_record *record)
 					    record->size, record->psi->buf,
 					    true);
 	efivar_unlock();
-	return efi_status_to_err(status);
+	return status == EFI_SUCCESS ? 0 : -EIO;
 };
 
 static int efi_pstore_erase(struct pstore_record *record)
@@ -238,7 +203,7 @@ static int efi_pstore_erase(struct pstore_record *record)
 				     PSTORE_EFI_ATTRIBUTES, 0, NULL);
 
 	if (status != EFI_SUCCESS && status != EFI_NOT_FOUND)
-		return efi_status_to_err(status);
+		return -EIO;
 	return 0;
 }
 
@@ -253,12 +218,12 @@ static struct pstore_info efi_pstore_info = {
 	.erase		= efi_pstore_erase,
 };
 
-static int efivars_pstore_init(void)
+static __init int efivars_pstore_init(void)
 {
 	if (!efivar_supports_writes())
 		return 0;
 
-	if (pstore_disable)
+	if (efivars_pstore_disable)
 		return 0;
 
 	/*
@@ -285,7 +250,7 @@ static int efivars_pstore_init(void)
 	return 0;
 }
 
-static void efivars_pstore_exit(void)
+static __exit void efivars_pstore_exit(void)
 {
 	if (!efi_pstore_info.bufsize)
 		return;

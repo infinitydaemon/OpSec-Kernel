@@ -6,9 +6,9 @@
 #define CREATE_TRACE_POINTS
 #include <asm/msr-trace.h>
 
-struct msr __percpu *msrs_alloc(void)
+struct msr *msrs_alloc(void)
 {
-	struct msr __percpu *msrs = NULL;
+	struct msr *msrs = NULL;
 
 	msrs = alloc_percpu(struct msr);
 	if (!msrs) {
@@ -20,7 +20,7 @@ struct msr __percpu *msrs_alloc(void)
 }
 EXPORT_SYMBOL(msrs_alloc);
 
-void msrs_free(struct msr __percpu *msrs)
+void msrs_free(struct msr *msrs)
 {
 	free_percpu(msrs);
 }

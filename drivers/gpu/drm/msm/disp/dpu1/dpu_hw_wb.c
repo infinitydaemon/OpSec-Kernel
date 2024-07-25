@@ -3,8 +3,6 @@
   * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved
   */
 
-#include <drm/drm_managed.h>
-
 #include "dpu_hw_mdss.h"
 #include "dpu_hwio.h"
 #include "dpu_hw_catalog.h"
@@ -45,7 +43,6 @@
 #define WB_MUX                                0x150
 #define WB_CROP_CTRL                          0x154
 #define WB_CROP_OFFSET                        0x158
-#define WB_CLK_CTRL                           0x178
 #define WB_CSC_BASE                           0x260
 #define WB_DST_ADDR_SW_STATUS                 0x2B0
 #define WB_CDP_CNTL                           0x2B4
@@ -67,7 +64,7 @@ static void dpu_hw_wb_setup_format(struct dpu_hw_wb *ctx,
 		struct dpu_hw_wb_cfg *data)
 {
 	struct dpu_hw_blk_reg_map *c = &ctx->hw;
-	const struct msm_format *fmt = data->dest.format;
+	const struct dpu_format *fmt = data->dest.format;
 	u32 dst_format, pattern, ystride0, ystride1, outsize, chroma_samp;
 	u32 write_config = 0;
 	u32 opmode = 0;
@@ -76,20 +73,20 @@ static void dpu_hw_wb_setup_format(struct dpu_hw_wb *ctx,
 	chroma_samp = fmt->chroma_sample;
 
 	dst_format = (chroma_samp << 23) |
-		(fmt->fetch_type << 19) |
-		(fmt->bpc_a << 6) |
-		(fmt->bpc_r_cr << 4) |
-		(fmt->bpc_b_cb << 2) |
-		(fmt->bpc_g_y << 0);
+		(fmt->fetch_planes << 19) |
+		(fmt->bits[C3_ALPHA] << 6) |
+		(fmt->bits[C2_R_Cr] << 4) |
+		(fmt->bits[C1_B_Cb] << 2) |
+		(fmt->bits[C0_G_Y] << 0);
 
-	if (fmt->bpc_a || fmt->alpha_enable) {
+	if (fmt->bits[C3_ALPHA] || fmt->alpha_enable) {
 		dst_format |= BIT(8); /* DSTC3_EN */
 		if (!fmt->alpha_enable ||
 			!(ctx->caps->features & BIT(DPU_WB_PIPE_ALPHA)))
 			dst_format |= BIT(14); /* DST_ALPHA_X */
 	}
 
-	if (MSM_FORMAT_IS_YUV(fmt))
+	if (DPU_FORMAT_IS_YUV(fmt))
 		dst_format |= BIT(15);
 
 	pattern = (fmt->element[3] << 24) |
@@ -97,8 +94,8 @@ static void dpu_hw_wb_setup_format(struct dpu_hw_wb *ctx,
 		(fmt->element[1] << 8)  |
 		(fmt->element[0] << 0);
 
-	dst_format |= ((fmt->flags & MSM_FORMAT_FLAG_UNPACK_ALIGN_MSB ? 1 : 0) << 18) |
-		((fmt->flags & MSM_FORMAT_FLAG_UNPACK_TIGHT ? 1 : 0) << 17) |
+	dst_format |= (fmt->unpack_align_msb << 18) |
+		(fmt->unpack_tight << 17) |
 		((fmt->unpack_count - 1) << 12) |
 		((fmt->bpp - 1) << 9);
 
@@ -149,7 +146,7 @@ static void dpu_hw_wb_setup_qos_lut(struct dpu_hw_wb *ctx,
 }
 
 static void dpu_hw_wb_setup_cdp(struct dpu_hw_wb *ctx,
-				const struct msm_format *fmt,
+				const struct dpu_format *fmt,
 				bool enable)
 {
 	if (!ctx)
@@ -181,18 +178,8 @@ static void dpu_hw_wb_bind_pingpong_blk(
 	DPU_REG_WRITE(c, WB_MUX, mux_cfg);
 }
 
-static bool dpu_hw_wb_setup_clk_force_ctrl(struct dpu_hw_wb *ctx, bool enable)
-{
-	static const struct dpu_clk_ctrl_reg wb_clk_ctrl = {
-		.reg_off = WB_CLK_CTRL,
-		.bit_off = 0
-	};
-
-	return dpu_hw_clk_force_ctrl(&ctx->hw, &wb_clk_ctrl, enable);
-}
-
 static void _setup_wb_ops(struct dpu_hw_wb_ops *ops,
-		unsigned long features, const struct dpu_mdss_version *mdss_rev)
+		unsigned long features)
 {
 	ops->setup_outaddress = dpu_hw_wb_setup_outaddress;
 	ops->setup_outformat = dpu_hw_wb_setup_format;
@@ -208,22 +195,17 @@ static void _setup_wb_ops(struct dpu_hw_wb_ops *ops,
 
 	if (test_bit(DPU_WB_INPUT_CTRL, &features))
 		ops->bind_pingpong_blk = dpu_hw_wb_bind_pingpong_blk;
-
-	if (mdss_rev->core_major_ver >= 9)
-		ops->setup_clk_force_ctrl = dpu_hw_wb_setup_clk_force_ctrl;
 }
 
-struct dpu_hw_wb *dpu_hw_wb_init(struct drm_device *dev,
-				 const struct dpu_wb_cfg *cfg,
-				 void __iomem *addr,
-				 const struct dpu_mdss_version *mdss_rev)
+struct dpu_hw_wb *dpu_hw_wb_init(const struct dpu_wb_cfg *cfg,
+		void __iomem *addr)
 {
 	struct dpu_hw_wb *c;
 
 	if (!addr)
 		return ERR_PTR(-EINVAL);
 
-	c = drmm_kzalloc(dev, sizeof(*c), GFP_KERNEL);
+	c = kzalloc(sizeof(*c), GFP_KERNEL);
 	if (!c)
 		return ERR_PTR(-ENOMEM);
 
@@ -233,7 +215,12 @@ struct dpu_hw_wb *dpu_hw_wb_init(struct drm_device *dev,
 	/* Assign ops */
 	c->idx = cfg->id;
 	c->caps = cfg;
-	_setup_wb_ops(&c->ops, c->caps->features, mdss_rev);
+	_setup_wb_ops(&c->ops, c->caps->features);
 
 	return c;
+}
+
+void dpu_hw_wb_destroy(struct dpu_hw_wb *hw_wb)
+{
+	kfree(hw_wb);
 }

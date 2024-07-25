@@ -46,7 +46,7 @@
 
 struct ib_pkey_cache {
 	int             table_len;
-	u16             table[] __counted_by(table_len);
+	u16             table[];
 };
 
 struct ib_update_work {

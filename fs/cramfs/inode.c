@@ -133,8 +133,8 @@ static struct inode *get_cramfs_inode(struct super_block *sb,
 	}
 
 	/* Struct copy intentional */
-	inode_set_mtime_to_ts(inode,
-			      inode_set_atime_to_ts(inode, inode_set_ctime_to_ts(inode, zerotime)));
+	inode->i_mtime = inode->i_atime = inode_set_ctime_to_ts(inode,
+								zerotime);
 	/* inode->i_nlink is left 1 - arguably wrong for directories,
 	   but it's the best we can do without reading the directory
 	   contents.  1 yields the right result in GNU find, even
@@ -183,7 +183,7 @@ static int next_buffer;
 static void *cramfs_blkdev_read(struct super_block *sb, unsigned int offset,
 				unsigned int len)
 {
-	struct address_space *mapping = sb->s_bdev->bd_mapping;
+	struct address_space *mapping = sb->s_bdev->bd_inode->i_mapping;
 	struct file_ra_state ra = {};
 	struct page *pages[BLKS_PER_BUF];
 	unsigned i, blocknr, buffer;
@@ -495,7 +495,7 @@ static void cramfs_kill_sb(struct super_block *sb)
 		sb->s_mtd = NULL;
 	} else if (IS_ENABLED(CONFIG_CRAMFS_BLOCKDEV) && sb->s_bdev) {
 		sync_blockdev(sb->s_bdev);
-		bdev_fput(sb->s_bdev_file);
+		blkdev_put(sb->s_bdev, sb);
 	}
 	kfree(sbi);
 }

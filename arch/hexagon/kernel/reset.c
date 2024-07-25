@@ -3,7 +3,6 @@
  * Copyright (c) 2010-2011, The Linux Foundation. All rights reserved.
  */
 
-#include <linux/reboot.h>
 #include <linux/smp.h>
 #include <asm/hexagon_vm.h>
 

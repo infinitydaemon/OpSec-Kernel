@@ -6,7 +6,6 @@
 
 set -e
 
-# shellcheck source=lib/stat_output.sh
 . "$(dirname $0)"/lib/stat_output.sh
 
 csv_sep=@
@@ -42,7 +41,6 @@ function commachecker()
 	;; "--per-socket")	exp=8
 	;; "--per-node")	exp=8
 	;; "--per-die")		exp=8
-	;; "--per-cluster")	exp=8
 	;; "--per-cache")	exp=8
 	esac
 
@@ -80,7 +78,6 @@ then
 	check_system_wide_no_aggr "CSV" "$perf_cmd"
 	check_per_core "CSV" "$perf_cmd"
 	check_per_cache_instance "CSV" "$perf_cmd"
-	check_per_cluster "CSV" "$perf_cmd"
 	check_per_die "CSV" "$perf_cmd"
 	check_per_socket "CSV" "$perf_cmd"
 else

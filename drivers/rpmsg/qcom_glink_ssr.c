@@ -154,7 +154,6 @@ static const struct rpmsg_device_id qcom_glink_ssr_match[] = {
 	{ "glink_ssr" },
 	{}
 };
-MODULE_DEVICE_TABLE(rpmsg, qcom_glink_ssr_match);
 
 static struct rpmsg_driver qcom_glink_ssr_driver = {
 	.probe = qcom_glink_ssr_probe,

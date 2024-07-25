@@ -2585,7 +2585,6 @@ static struct dma_pl330_desc *pluck_desc(struct list_head *pool,
 
 		desc->status = PREP;
 		desc->txd.callback = NULL;
-		desc->txd.callback_result = NULL;
 	}
 
 	spin_unlock_irqrestore(lock, flags);
@@ -3262,6 +3261,7 @@ MODULE_DEVICE_TABLE(amba, pl330_ids);
 
 static struct amba_driver pl330_driver = {
 	.drv = {
+		.owner = THIS_MODULE,
 		.name = "dma-pl330",
 		.pm = &pl330_pm,
 	},

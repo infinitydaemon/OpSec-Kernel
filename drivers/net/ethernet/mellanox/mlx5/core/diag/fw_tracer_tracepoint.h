@@ -55,11 +55,12 @@ TRACE_EVENT(mlx5_fw,
 	),
 
 	TP_fast_assign(
-		__assign_str(dev_name);
+		__assign_str(dev_name,
+			     dev_name(tracer->dev->device));
 		__entry->trace_timestamp = trace_timestamp;
 		__entry->lost = lost;
 		__entry->event_id = event_id;
-		__assign_str(msg);
+		__assign_str(msg, msg);
 	),
 
 	TP_printk("%s [0x%llx] %d [0x%x] %s",

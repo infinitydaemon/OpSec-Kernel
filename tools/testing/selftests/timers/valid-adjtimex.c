@@ -320,10 +320,10 @@ int validate_set_offset(void)
 int main(int argc, char **argv)
 {
 	if (validate_freq())
-		ksft_exit_fail();
+		return ksft_exit_fail();
 
 	if (validate_set_offset())
-		ksft_exit_fail();
+		return ksft_exit_fail();
 
-	ksft_exit_pass();
+	return ksft_exit_pass();
 }

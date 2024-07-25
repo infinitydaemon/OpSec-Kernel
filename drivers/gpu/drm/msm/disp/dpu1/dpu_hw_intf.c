@@ -12,8 +12,6 @@
 
 #include <linux/iopoll.h>
 
-#include <drm/drm_managed.h>
-
 #define INTF_TIMING_ENGINE_EN           0x000
 #define INTF_CONFIG                     0x004
 #define INTF_HSYNC_CTL                  0x008
@@ -96,11 +94,11 @@
 #define INTF_CFG2_DCE_DATA_COMPRESS     BIT(12)
 
 
-static void dpu_hw_intf_setup_timing_engine(struct dpu_hw_intf *intf,
+static void dpu_hw_intf_setup_timing_engine(struct dpu_hw_intf *ctx,
 		const struct dpu_hw_intf_timing_params *p,
-		const struct msm_format *fmt)
+		const struct dpu_format *fmt)
 {
-	struct dpu_hw_blk_reg_map *c = &intf->hw;
+	struct dpu_hw_blk_reg_map *c = &ctx->hw;
 	u32 hsync_period, vsync_period;
 	u32 display_v_start, display_v_end;
 	u32 hsync_start_x, hsync_end_x;
@@ -118,7 +116,7 @@ static void dpu_hw_intf_setup_timing_engine(struct dpu_hw_intf *intf,
 	/* read interface_cfg */
 	intf_cfg = DPU_REG_READ(c, INTF_CONFIG);
 
-	if (intf->cap->type == INTF_DP)
+	if (ctx->cap->type == INTF_DP)
 		dp_intf = true;
 
 	hsync_period = p->hsync_pulse_width + p->h_back_porch + p->width +
@@ -194,16 +192,16 @@ static void dpu_hw_intf_setup_timing_engine(struct dpu_hw_intf *intf,
 		(p->vsync_polarity << 1) | /* VSYNC Polarity */
 		(p->hsync_polarity << 0);  /* HSYNC Polarity */
 
-	if (!MSM_FORMAT_IS_YUV(fmt))
-		panel_format = (fmt->bpc_g_y |
-				(fmt->bpc_b_cb << 2) |
-				(fmt->bpc_r_cr << 4) |
+	if (!DPU_FORMAT_IS_YUV(fmt))
+		panel_format = (fmt->bits[C0_G_Y] |
+				(fmt->bits[C1_B_Cb] << 2) |
+				(fmt->bits[C2_R_Cr] << 4) |
 				(0x21 << 8));
 	else
 		/* Interface treats all the pixel data in RGB888 format */
-		panel_format = (BPC8 |
-				(BPC8 << 2) |
-				(BPC8 << 4) |
+		panel_format = (COLOR_8BIT |
+				(COLOR_8BIT << 2) |
+				(COLOR_8BIT << 4) |
 				(0x21 << 8));
 
 	DPU_REG_WRITE(c, INTF_HSYNC_CTL, hsync_ctl);
@@ -223,7 +221,7 @@ static void dpu_hw_intf_setup_timing_engine(struct dpu_hw_intf *intf,
 	DPU_REG_WRITE(c, INTF_FRAME_LINE_COUNT_EN, 0x3);
 	DPU_REG_WRITE(c, INTF_CONFIG, intf_cfg);
 	DPU_REG_WRITE(c, INTF_PANEL_FORMAT, panel_format);
-	if (intf->cap->features & BIT(DPU_DATA_HCTL_EN)) {
+	if (ctx->cap->features & BIT(DPU_DATA_HCTL_EN)) {
 		/*
 		 * DATA_HCTL_EN controls data timing which can be different from
 		 * video timing. It is recommended to enable it for all cases, except
@@ -518,24 +516,44 @@ static void dpu_hw_intf_disable_autorefresh(struct dpu_hw_intf *intf,
 
 }
 
-static void dpu_hw_intf_program_intf_cmd_cfg(struct dpu_hw_intf *intf,
+static void dpu_hw_intf_program_intf_cmd_cfg(struct dpu_hw_intf *ctx,
 					     struct dpu_hw_intf_cmd_mode_cfg *cmd_mode_cfg)
 {
-	u32 intf_cfg2 = DPU_REG_READ(&intf->hw, INTF_CONFIG2);
+	u32 intf_cfg2 = DPU_REG_READ(&ctx->hw, INTF_CONFIG2);
 
 	if (cmd_mode_cfg->data_compress)
 		intf_cfg2 |= INTF_CFG2_DCE_DATA_COMPRESS;
 
-	if (cmd_mode_cfg->wide_bus_en)
-		intf_cfg2 |= INTF_CFG2_DATABUS_WIDEN;
-
-	DPU_REG_WRITE(&intf->hw, INTF_CONFIG2, intf_cfg2);
+	DPU_REG_WRITE(&ctx->hw, INTF_CONFIG2, intf_cfg2);
 }
 
-struct dpu_hw_intf *dpu_hw_intf_init(struct drm_device *dev,
-				     const struct dpu_intf_cfg *cfg,
-				     void __iomem *addr,
-				     const struct dpu_mdss_version *mdss_rev)
+static void _setup_intf_ops(struct dpu_hw_intf_ops *ops,
+		unsigned long cap, const struct dpu_mdss_version *mdss_rev)
+{
+	ops->setup_timing_gen = dpu_hw_intf_setup_timing_engine;
+	ops->setup_prg_fetch  = dpu_hw_intf_setup_prg_fetch;
+	ops->get_status = dpu_hw_intf_get_status;
+	ops->enable_timing = dpu_hw_intf_enable_timing_engine;
+	ops->get_line_count = dpu_hw_intf_get_line_count;
+	if (cap & BIT(DPU_INTF_INPUT_CTRL))
+		ops->bind_pingpong_blk = dpu_hw_intf_bind_pingpong_blk;
+	ops->setup_misr = dpu_hw_intf_setup_misr;
+	ops->collect_misr = dpu_hw_intf_collect_misr;
+
+	if (cap & BIT(DPU_INTF_TE)) {
+		ops->enable_tearcheck = dpu_hw_intf_enable_te;
+		ops->disable_tearcheck = dpu_hw_intf_disable_te;
+		ops->connect_external_te = dpu_hw_intf_connect_external_te;
+		ops->vsync_sel = dpu_hw_intf_vsync_sel;
+		ops->disable_autorefresh = dpu_hw_intf_disable_autorefresh;
+	}
+
+	if (mdss_rev->core_major_ver >= 7)
+		ops->program_intf_cmd_cfg = dpu_hw_intf_program_intf_cmd_cfg;
+}
+
+struct dpu_hw_intf *dpu_hw_intf_init(const struct dpu_intf_cfg *cfg,
+		void __iomem *addr, const struct dpu_mdss_version *mdss_rev)
 {
 	struct dpu_hw_intf *c;
 
@@ -544,7 +562,7 @@ struct dpu_hw_intf *dpu_hw_intf_init(struct drm_device *dev,
 		return NULL;
 	}
 
-	c = drmm_kzalloc(dev, sizeof(*c), GFP_KERNEL);
+	c = kzalloc(sizeof(*c), GFP_KERNEL);
 	if (!c)
 		return ERR_PTR(-ENOMEM);
 
@@ -556,35 +574,13 @@ struct dpu_hw_intf *dpu_hw_intf_init(struct drm_device *dev,
 	 */
 	c->idx = cfg->id;
 	c->cap = cfg;
-
-	c->ops.setup_timing_gen = dpu_hw_intf_setup_timing_engine;
-	c->ops.setup_prg_fetch  = dpu_hw_intf_setup_prg_fetch;
-	c->ops.get_status = dpu_hw_intf_get_status;
-	c->ops.enable_timing = dpu_hw_intf_enable_timing_engine;
-	c->ops.get_line_count = dpu_hw_intf_get_line_count;
-	c->ops.setup_misr = dpu_hw_intf_setup_misr;
-	c->ops.collect_misr = dpu_hw_intf_collect_misr;
-
-	if (cfg->features & BIT(DPU_INTF_INPUT_CTRL))
-		c->ops.bind_pingpong_blk = dpu_hw_intf_bind_pingpong_blk;
-
-	/* INTF TE is only for DSI interfaces */
-	if (mdss_rev->core_major_ver >= 5 && cfg->type == INTF_DSI) {
-		WARN_ON(!cfg->intr_tear_rd_ptr);
-
-		c->ops.enable_tearcheck = dpu_hw_intf_enable_te;
-		c->ops.disable_tearcheck = dpu_hw_intf_disable_te;
-		c->ops.connect_external_te = dpu_hw_intf_connect_external_te;
-		c->ops.vsync_sel = dpu_hw_intf_vsync_sel;
-		c->ops.disable_autorefresh = dpu_hw_intf_disable_autorefresh;
-	}
-
-	/* Technically, INTF_CONFIG2 is present for DPU 5.0+, but
-	 * we can configure it for DPU 7.0+ since the wide bus and DSC flags
-	 * would not be set for DPU < 7.0 anyways
-	 */
-	if (mdss_rev->core_major_ver >= 7)
-		c->ops.program_intf_cmd_cfg = dpu_hw_intf_program_intf_cmd_cfg;
+	_setup_intf_ops(&c->ops, c->cap->features, mdss_rev);
 
 	return c;
 }
+
+void dpu_hw_intf_destroy(struct dpu_hw_intf *intf)
+{
+	kfree(intf);
+}
+

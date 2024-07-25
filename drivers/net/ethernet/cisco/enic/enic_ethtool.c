@@ -568,32 +568,31 @@ static u32 enic_get_rxfh_key_size(struct net_device *netdev)
 	return ENIC_RSS_LEN;
 }
 
-static int enic_get_rxfh(struct net_device *netdev,
-			 struct ethtool_rxfh_param *rxfh)
+static int enic_get_rxfh(struct net_device *netdev, u32 *indir, u8 *hkey,
+			 u8 *hfunc)
 {
 	struct enic *enic = netdev_priv(netdev);
 
-	if (rxfh->key)
-		memcpy(rxfh->key, enic->rss_key, ENIC_RSS_LEN);
+	if (hkey)
+		memcpy(hkey, enic->rss_key, ENIC_RSS_LEN);
 
-	rxfh->hfunc = ETH_RSS_HASH_TOP;
+	if (hfunc)
+		*hfunc = ETH_RSS_HASH_TOP;
 
 	return 0;
 }
 
-static int enic_set_rxfh(struct net_device *netdev,
-			 struct ethtool_rxfh_param *rxfh,
-			 struct netlink_ext_ack *extack)
+static int enic_set_rxfh(struct net_device *netdev, const u32 *indir,
+			 const u8 *hkey, const u8 hfunc)
 {
 	struct enic *enic = netdev_priv(netdev);
 
-	if (rxfh->indir ||
-	    (rxfh->hfunc != ETH_RSS_HASH_NO_CHANGE &&
-	     rxfh->hfunc != ETH_RSS_HASH_TOP))
+	if ((hfunc != ETH_RSS_HASH_NO_CHANGE && hfunc != ETH_RSS_HASH_TOP) ||
+	    indir)
 		return -EINVAL;
 
-	if (rxfh->key)
-		memcpy(enic->rss_key, rxfh->key, ENIC_RSS_LEN);
+	if (hkey)
+		memcpy(enic->rss_key, hkey, ENIC_RSS_LEN);
 
 	return __enic_set_rsskey(enic);
 }

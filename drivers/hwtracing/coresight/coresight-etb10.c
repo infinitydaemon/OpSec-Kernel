@@ -76,6 +76,7 @@ DEFINE_CORESIGHT_DEVLIST(etb_devs, "etb");
  * @pid:	Process ID of the process being monitored by the session
  *		that is using this component.
  * @buf:	area of memory where ETB buffer content gets sent.
+ * @mode:	this ETB is being used.
  * @buffer_depth: size of @buf.
  * @trigger_cntr: amount of words to store after a trigger.
  */
@@ -88,6 +89,7 @@ struct etb_drvdata {
 	local_t			reading;
 	pid_t			pid;
 	u8			*buf;
+	u32			mode;
 	u32			buffer_depth;
 	u32			trigger_cntr;
 };
@@ -148,20 +150,20 @@ static int etb_enable_sysfs(struct coresight_device *csdev)
 	spin_lock_irqsave(&drvdata->spinlock, flags);
 
 	/* Don't messup with perf sessions. */
-	if (coresight_get_mode(csdev) == CS_MODE_PERF) {
+	if (drvdata->mode == CS_MODE_PERF) {
 		ret = -EBUSY;
 		goto out;
 	}
 
-	if (coresight_get_mode(csdev) == CS_MODE_DISABLED) {
+	if (drvdata->mode == CS_MODE_DISABLED) {
 		ret = etb_enable_hw(drvdata);
 		if (ret)
 			goto out;
 
-		coresight_set_mode(csdev, CS_MODE_SYSFS);
+		drvdata->mode = CS_MODE_SYSFS;
 	}
 
-	csdev->refcnt++;
+	atomic_inc(&csdev->refcnt);
 out:
 	spin_unlock_irqrestore(&drvdata->spinlock, flags);
 	return ret;
@@ -179,7 +181,7 @@ static int etb_enable_perf(struct coresight_device *csdev, void *data)
 	spin_lock_irqsave(&drvdata->spinlock, flags);
 
 	/* No need to continue if the component is already in used by sysFS. */
-	if (coresight_get_mode(drvdata->csdev) == CS_MODE_SYSFS) {
+	if (drvdata->mode == CS_MODE_SYSFS) {
 		ret = -EBUSY;
 		goto out;
 	}
@@ -197,7 +199,7 @@ static int etb_enable_perf(struct coresight_device *csdev, void *data)
 	 * use for this session.
 	 */
 	if (drvdata->pid == pid) {
-		csdev->refcnt++;
+		atomic_inc(&csdev->refcnt);
 		goto out;
 	}
 
@@ -214,8 +216,8 @@ static int etb_enable_perf(struct coresight_device *csdev, void *data)
 	if (!ret) {
 		/* Associate with monitored process. */
 		drvdata->pid = pid;
-		coresight_set_mode(drvdata->csdev, CS_MODE_PERF);
-		csdev->refcnt++;
+		drvdata->mode = CS_MODE_PERF;
+		atomic_inc(&csdev->refcnt);
 	}
 
 out:
@@ -354,18 +356,17 @@ static int etb_disable(struct coresight_device *csdev)
 
 	spin_lock_irqsave(&drvdata->spinlock, flags);
 
-	csdev->refcnt--;
-	if (csdev->refcnt) {
+	if (atomic_dec_return(&csdev->refcnt)) {
 		spin_unlock_irqrestore(&drvdata->spinlock, flags);
 		return -EBUSY;
 	}
 
 	/* Complain if we (somehow) got out of sync */
-	WARN_ON_ONCE(coresight_get_mode(csdev) == CS_MODE_DISABLED);
+	WARN_ON_ONCE(drvdata->mode == CS_MODE_DISABLED);
 	etb_disable_hw(drvdata);
 	/* Dissociate from monitored process. */
 	drvdata->pid = -1;
-	coresight_set_mode(csdev, CS_MODE_DISABLED);
+	drvdata->mode = CS_MODE_DISABLED;
 	spin_unlock_irqrestore(&drvdata->spinlock, flags);
 
 	dev_dbg(&csdev->dev, "ETB disabled\n");
@@ -446,7 +447,7 @@ static unsigned long etb_update_buffer(struct coresight_device *csdev,
 	spin_lock_irqsave(&drvdata->spinlock, flags);
 
 	/* Don't do anything if another tracer is using this sink */
-	if (csdev->refcnt != 1)
+	if (atomic_read(&csdev->refcnt) != 1)
 		goto out;
 
 	__etb_disable_hw(drvdata);
@@ -588,7 +589,7 @@ static void etb_dump(struct etb_drvdata *drvdata)
 	unsigned long flags;
 
 	spin_lock_irqsave(&drvdata->spinlock, flags);
-	if (coresight_get_mode(drvdata->csdev) == CS_MODE_SYSFS) {
+	if (drvdata->mode == CS_MODE_SYSFS) {
 		__etb_disable_hw(drvdata);
 		etb_dump_hw(drvdata);
 		__etb_enable_hw(drvdata);
@@ -836,7 +837,7 @@ static const struct amba_id etb_ids[] = {
 		.id	= 0x000bb907,
 		.mask	= 0x000fffff,
 	},
-	{ 0, 0, NULL },
+	{ 0, 0},
 };
 
 MODULE_DEVICE_TABLE(amba, etb_ids);
@@ -844,6 +845,7 @@ MODULE_DEVICE_TABLE(amba, etb_ids);
 static struct amba_driver etb_driver = {
 	.drv = {
 		.name	= "coresight-etb10",
+		.owner	= THIS_MODULE,
 		.pm	= &etb_dev_pm_ops,
 		.suppress_bind_attrs = true,
 

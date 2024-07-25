@@ -1,3 +1,2 @@
 # SPDX-License-Identifier: GPL-2.0-only
-
-obj-y	+= video-common.o
+obj-$(CONFIG_FB_CORE)		+= fbdev.o

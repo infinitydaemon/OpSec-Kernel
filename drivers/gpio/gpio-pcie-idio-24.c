@@ -267,7 +267,7 @@ static int idio_24_reg_mask_xlate(struct gpio_regmap *const gpio, const unsigned
 	case IDIO_24_CONTROL_REG:
 		/* We can only set direction for TTL/CMOS lines */
 		if (offset < 48)
-			return -ENOTSUPP;
+			return -EOPNOTSUPP;
 
 		*reg = IDIO_24_CONTROL_REG;
 		*mask = CONTROL_REG_OUT_MODE;

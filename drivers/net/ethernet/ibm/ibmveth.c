@@ -1432,7 +1432,7 @@ static int ibmveth_poll(struct napi_struct *napi, int budget)
 		BUG_ON(lpar_rc != H_SUCCESS);
 
 		if (ibmveth_rxq_pending_buffer(adapter) &&
-		    napi_schedule(napi)) {
+		    napi_reschedule(napi)) {
 			lpar_rc = h_vio_signal(adapter->vdev->unit_address,
 					       VIO_IRQ_DISABLE);
 		}
@@ -1537,7 +1537,7 @@ static int ibmveth_change_mtu(struct net_device *dev, int new_mtu)
 		adapter->rx_buff_pool[i].active = 1;
 
 		if (new_mtu_oh <= adapter->rx_buff_pool[i].buff_size) {
-			WRITE_ONCE(dev->mtu, new_mtu);
+			dev->mtu = new_mtu;
 			vio_cmo_set_dev_desired(viodev,
 						ibmveth_get_desired_dma
 						(viodev));

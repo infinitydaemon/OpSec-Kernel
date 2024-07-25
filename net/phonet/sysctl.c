@@ -81,6 +81,7 @@ static struct ctl_table phonet_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_local_port_range,
 	},
+	{ }
 };
 
 int __init phonet_sysctl_init(void)

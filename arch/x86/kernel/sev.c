@@ -61,25 +61,6 @@
 #define AP_INIT_CR0_DEFAULT		0x60000010
 #define AP_INIT_MXCSR_DEFAULT		0x1f80
 
-static const char * const sev_status_feat_names[] = {
-	[MSR_AMD64_SEV_ENABLED_BIT]		= "SEV",
-	[MSR_AMD64_SEV_ES_ENABLED_BIT]		= "SEV-ES",
-	[MSR_AMD64_SEV_SNP_ENABLED_BIT]		= "SEV-SNP",
-	[MSR_AMD64_SNP_VTOM_BIT]		= "vTom",
-	[MSR_AMD64_SNP_REFLECT_VC_BIT]		= "ReflectVC",
-	[MSR_AMD64_SNP_RESTRICTED_INJ_BIT]	= "RI",
-	[MSR_AMD64_SNP_ALT_INJ_BIT]		= "AI",
-	[MSR_AMD64_SNP_DEBUG_SWAP_BIT]		= "DebugSwap",
-	[MSR_AMD64_SNP_PREVENT_HOST_IBS_BIT]	= "NoHostIBS",
-	[MSR_AMD64_SNP_BTB_ISOLATION_BIT]	= "BTBIsol",
-	[MSR_AMD64_SNP_VMPL_SSS_BIT]		= "VmplSSS",
-	[MSR_AMD64_SNP_SECURE_TSC_BIT]		= "SecureTSC",
-	[MSR_AMD64_SNP_VMGEXIT_PARAM_BIT]	= "VMGExitParam",
-	[MSR_AMD64_SNP_IBS_VIRT_BIT]		= "IBSVirt",
-	[MSR_AMD64_SNP_VMSA_REG_PROT_BIT]	= "VMSARegProt",
-	[MSR_AMD64_SNP_SMT_PROT_BIT]		= "SMTProt",
-};
-
 /* For early boot hypervisor communication in SEV-ES enabled guests */
 static struct ghcb boot_ghcb_page __bss_decrypted __aligned(PAGE_SIZE);
 
@@ -648,7 +629,7 @@ static u64 __init get_secrets_page(void)
 
 static u64 __init get_snp_jump_table_addr(void)
 {
-	struct snp_secrets_page *secrets;
+	struct snp_secrets_page_layout *layout;
 	void __iomem *mem;
 	u64 pa, addr;
 
@@ -662,9 +643,9 @@ static u64 __init get_snp_jump_table_addr(void)
 		return 0;
 	}
 
-	secrets = (__force struct snp_secrets_page *)mem;
+	layout = (__force struct snp_secrets_page_layout *)mem;
 
-	addr = secrets->os_area.ap_jump_table_pa;
+	addr = layout->os_area.ap_jump_table_pa;
 	iounmap(mem);
 
 	return addr;
@@ -938,7 +919,7 @@ static int snp_set_vmsa(void *va, bool vmsa)
 #define INIT_LDTR_ATTRIBS	(SVM_SELECTOR_P_MASK | 2)
 #define INIT_TR_ATTRIBS		(SVM_SELECTOR_P_MASK | 3)
 
-static void *snp_alloc_vmsa_page(int cpu)
+static void *snp_alloc_vmsa_page(void)
 {
 	struct page *p;
 
@@ -950,7 +931,7 @@ static void *snp_alloc_vmsa_page(int cpu)
 	 *
 	 * Allocate an 8k page which is also 8k-aligned.
 	 */
-	p = alloc_pages_node(cpu_to_node(cpu), GFP_KERNEL_ACCOUNT | __GFP_ZERO, 1);
+	p = alloc_pages(GFP_KERNEL_ACCOUNT | __GFP_ZERO, 1);
 	if (!p)
 		return NULL;
 
@@ -973,7 +954,7 @@ static void snp_cleanup_vmsa(struct sev_es_save_area *vmsa)
 		free_page((unsigned long)vmsa);
 }
 
-static int wakeup_cpu_via_vmgexit(u32 apic_id, unsigned long start_ip)
+static int wakeup_cpu_via_vmgexit(int apic_id, unsigned long start_ip)
 {
 	struct sev_es_save_area *cur_vmsa, *vmsa;
 	struct ghcb_state state;
@@ -1019,7 +1000,7 @@ static int wakeup_cpu_via_vmgexit(u32 apic_id, unsigned long start_ip)
 	 * #VMEXIT of that vCPU would wipe out all of the settings being done
 	 * here.
 	 */
-	vmsa = (struct sev_es_save_area *)snp_alloc_vmsa_page(cpu);
+	vmsa = (struct sev_es_save_area *)snp_alloc_vmsa_page();
 	if (!vmsa)
 		return -ENOMEM;
 
@@ -1341,7 +1322,7 @@ static void __init alloc_runtime_data(int cpu)
 {
 	struct sev_es_runtime_data *data;
 
-	data = memblock_alloc_node(sizeof(*data), PAGE_SIZE, cpu_to_node(cpu));
+	data = memblock_alloc(sizeof(*data), PAGE_SIZE);
 	if (!data)
 		panic("Can't allocate SEV-ES runtime data");
 
@@ -1759,10 +1740,7 @@ static enum es_result vc_handle_exitcode(struct es_em_ctxt *ctxt,
 					 struct ghcb *ghcb,
 					 unsigned long exit_code)
 {
-	enum es_result result = vc_check_opcode_bytes(ctxt, exit_code);
-
-	if (result != ES_OK)
-		return result;
+	enum es_result result;
 
 	switch (exit_code) {
 	case SVM_EXIT_READ_DR7:
@@ -2283,19 +2261,3 @@ static int __init snp_init_platform_device(void)
 	return 0;
 }
 device_initcall(snp_init_platform_device);
-
-void sev_show_status(void)
-{
-	int i;
-
-	pr_info("Status: ");
-	for (i = 0; i < MSR_AMD64_SNP_RESV_BIT; i++) {
-		if (sev_status & BIT_ULL(i)) {
-			if (!sev_status_feat_names[i])
-				continue;
-
-			pr_cont("%s ", sev_status_feat_names[i]);
-		}
-	}
-	pr_cont("\n");
-}

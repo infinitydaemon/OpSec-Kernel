@@ -9,16 +9,13 @@
 #include "xfs_format.h"
 #include "xfs_trans_resv.h"
 #include "xfs_mount.h"
-#include "xfs_log_format.h"
-#include "xfs_trans.h"
 #include "xfs_btree.h"
 #include "xfs_alloc.h"
 #include "xfs_rmap.h"
-#include "xfs_ag.h"
 #include "scrub/scrub.h"
 #include "scrub/common.h"
 #include "scrub/btree.h"
-#include "scrub/repair.h"
+#include "xfs_ag.h"
 
 /*
  * Set us up to scrub free space btrees.
@@ -27,19 +24,10 @@ int
 xchk_setup_ag_allocbt(
 	struct xfs_scrub	*sc)
 {
-	int			error;
-
 	if (xchk_need_intent_drain(sc))
 		xchk_fsgates_enable(sc, XCHK_FSGATES_DRAIN);
 
-	error = xchk_setup_ag_btree(sc, false);
-	if (error)
-		return error;
-
-	if (xchk_could_repair(sc))
-		return xrep_setup_ag_allocbt(sc);
-
-	return 0;
+	return xchk_setup_ag_btree(sc, false);
 }
 
 /* Free space btree scrubber. */
@@ -139,7 +127,7 @@ xchk_allocbt_rec(
 	struct xchk_alloc	*ca = bs->private;
 
 	xfs_alloc_btrec_to_irec(rec, &irec);
-	if (xfs_alloc_check_irec(bs->cur->bc_ag.pag, &irec) != NULL) {
+	if (xfs_alloc_check_irec(bs->cur, &irec) != NULL) {
 		xchk_btree_set_corrupt(bs->sc, bs->cur, 0);
 		return 0;
 	}
@@ -150,27 +138,31 @@ xchk_allocbt_rec(
 	return 0;
 }
 
-/* Scrub one of the freespace btrees for some AG. */
-int
+/* Scrub the freespace btrees for some AG. */
+STATIC int
 xchk_allocbt(
-	struct xfs_scrub	*sc)
+	struct xfs_scrub	*sc,
+	xfs_btnum_t		which)
 {
 	struct xchk_alloc	ca = { };
 	struct xfs_btree_cur	*cur;
 
-	switch (sc->sm->sm_type) {
-	case XFS_SCRUB_TYPE_BNOBT:
-		cur = sc->sa.bno_cur;
-		break;
-	case XFS_SCRUB_TYPE_CNTBT:
-		cur = sc->sa.cnt_cur;
-		break;
-	default:
-		ASSERT(0);
-		return -EIO;
-	}
-
+	cur = which == XFS_BTNUM_BNO ? sc->sa.bno_cur : sc->sa.cnt_cur;
 	return xchk_btree(sc, cur, xchk_allocbt_rec, &XFS_RMAP_OINFO_AG, &ca);
+}
+
+int
+xchk_bnobt(
+	struct xfs_scrub	*sc)
+{
+	return xchk_allocbt(sc, XFS_BTNUM_BNO);
+}
+
+int
+xchk_cntbt(
+	struct xfs_scrub	*sc)
+{
+	return xchk_allocbt(sc, XFS_BTNUM_CNT);
 }
 
 /* xref check that the extent is not free */

@@ -75,11 +75,11 @@ extern struct ap_matrix_dev *matrix_dev;
  */
 struct ap_matrix {
 	unsigned long apm_max;
-	DECLARE_BITMAP(apm, AP_DEVICES);
+	DECLARE_BITMAP(apm, 256);
 	unsigned long aqm_max;
-	DECLARE_BITMAP(aqm, AP_DOMAINS);
+	DECLARE_BITMAP(aqm, 256);
 	unsigned long adm_max;
-	DECLARE_BITMAP(adm, AP_DOMAINS);
+	DECLARE_BITMAP(adm, 256);
 };
 
 /**

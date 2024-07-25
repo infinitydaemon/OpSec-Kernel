@@ -431,10 +431,6 @@ static int jpeg_v4_0_start_sriov(struct amdgpu_device *adev)
 	end.cmd_header.command_type =
 		MMSCH_COMMAND__END;
 
-	size = sizeof(struct mmsch_v4_0_init_header);
-	table_loc = (uint32_t *)table->cpu_addr;
-	memcpy(&header, (void *)table_loc, size);
-
 	header.version = MMSCH_VERSION;
 	header.total_size = RREG32_SOC15(VCN, 0, regMMSCH_VF_CTX_SIZE);
 
@@ -471,9 +467,6 @@ static int jpeg_v4_0_start_sriov(struct amdgpu_device *adev)
 	size = sizeof(struct mmsch_v4_0_init_header);
 	table_loc = (uint32_t *)table->cpu_addr;
 	memcpy((void *)table_loc, &header, size);
-
-	/* Perform HDP flush before writing to MMSCH registers */
-	amdgpu_device_flush_hdp(adev, NULL);
 
 	/* message MMSCH (in VCN[0]) to initialize this client
 	 * 1, write to mmsch_vf_ctx_addr_lo/hi register with GPU mc addr
@@ -522,11 +515,8 @@ static int jpeg_v4_0_start_sriov(struct amdgpu_device *adev)
 			return -EBUSY;
 		}
 	}
-	if (resp != expected && resp != MMSCH_VF_MAILBOX_RESP__INCOMPLETE
-			&& init_status != MMSCH_VF_ENGINE_STATUS__PASS) {
+	if (resp != expected && resp != MMSCH_VF_MAILBOX_RESP__INCOMPLETE && init_status != MMSCH_VF_ENGINE_STATUS__PASS)
 		DRM_ERROR("MMSCH init status is incorrect! readback=0x%08x, header init status for jpeg: %x\n", resp, init_status);
-		return -EINVAL;
-	}
 
 	return 0;
 
@@ -674,6 +664,14 @@ static int jpeg_v4_0_set_powergating_state(void *handle,
 	return ret;
 }
 
+static int jpeg_v4_0_set_interrupt_state(struct amdgpu_device *adev,
+					struct amdgpu_irq_src *source,
+					unsigned type,
+					enum amdgpu_interrupt_state state)
+{
+	return 0;
+}
+
 static int jpeg_v4_0_set_ras_interrupt_state(struct amdgpu_device *adev,
 					struct amdgpu_irq_src *source,
 					unsigned int type,
@@ -719,8 +717,6 @@ static const struct amd_ip_funcs jpeg_v4_0_ip_funcs = {
 	.post_soft_reset = NULL,
 	.set_clockgating_state = jpeg_v4_0_set_clockgating_state,
 	.set_powergating_state = jpeg_v4_0_set_powergating_state,
-	.dump_ip_state = NULL,
-	.print_ip_state = NULL,
 };
 
 static const struct amdgpu_ring_funcs jpeg_v4_0_dec_ring_vm_funcs = {
@@ -759,6 +755,7 @@ static void jpeg_v4_0_set_dec_ring_funcs(struct amdgpu_device *adev)
 }
 
 static const struct amdgpu_irq_src_funcs jpeg_v4_0_irq_funcs = {
+	.set = jpeg_v4_0_set_interrupt_state,
 	.process = jpeg_v4_0_process_interrupt,
 };
 
@@ -834,7 +831,7 @@ static struct amdgpu_jpeg_ras jpeg_v4_0_ras = {
 
 static void jpeg_v4_0_set_ras_funcs(struct amdgpu_device *adev)
 {
-	switch (amdgpu_ip_version(adev, JPEG_HWIP, 0)) {
+	switch (adev->ip_versions[JPEG_HWIP][0]) {
 	case IP_VERSION(4, 0, 0):
 		adev->jpeg.ras = &jpeg_v4_0_ras;
 		break;

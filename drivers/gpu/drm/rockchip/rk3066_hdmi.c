@@ -4,7 +4,6 @@
  *    Zheng Yang <zhengyang@rock-chips.com>
  */
 
-#include <drm/drm_atomic.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_of.h>
 #include <drm/drm_probe_helper.h>
@@ -18,6 +17,7 @@
 #include "rk3066_hdmi.h"
 
 #include "rockchip_drm_drv.h"
+#include "rockchip_drm_vop.h"
 
 #define DEFAULT_PLLA_RATE 30000000
 
@@ -55,6 +55,7 @@ struct rk3066_hdmi {
 	unsigned int tmdsclk;
 
 	struct hdmi_data_info hdmi_data;
+	struct drm_display_mode previous_mode;
 };
 
 static struct rk3066_hdmi *encoder_to_rk3066_hdmi(struct drm_encoder *encoder)
@@ -386,21 +387,21 @@ static int rk3066_hdmi_setup(struct rk3066_hdmi *hdmi,
 	return 0;
 }
 
-static void rk3066_hdmi_encoder_enable(struct drm_encoder *encoder,
-				       struct drm_atomic_state *state)
+static void
+rk3066_hdmi_encoder_mode_set(struct drm_encoder *encoder,
+			     struct drm_display_mode *mode,
+			     struct drm_display_mode *adj_mode)
 {
 	struct rk3066_hdmi *hdmi = encoder_to_rk3066_hdmi(encoder);
-	struct drm_connector_state *conn_state;
-	struct drm_crtc_state *crtc_state;
+
+	/* Store the display mode for plugin/DPMS poweron events. */
+	drm_mode_copy(&hdmi->previous_mode, adj_mode);
+}
+
+static void rk3066_hdmi_encoder_enable(struct drm_encoder *encoder)
+{
+	struct rk3066_hdmi *hdmi = encoder_to_rk3066_hdmi(encoder);
 	int mux, val;
-
-	conn_state = drm_atomic_get_new_connector_state(state, &hdmi->connector);
-	if (WARN_ON(!conn_state))
-		return;
-
-	crtc_state = drm_atomic_get_new_crtc_state(state, conn_state->crtc);
-	if (WARN_ON(!crtc_state))
-		return;
 
 	mux = drm_of_encoder_active_endpoint_id(hdmi->dev->of_node, encoder);
 	if (mux)
@@ -413,11 +414,10 @@ static void rk3066_hdmi_encoder_enable(struct drm_encoder *encoder,
 	DRM_DEV_DEBUG(hdmi->dev, "hdmi encoder enable select: vop%s\n",
 		      (mux) ? "1" : "0");
 
-	rk3066_hdmi_setup(hdmi, &crtc_state->adjusted_mode);
+	rk3066_hdmi_setup(hdmi, &hdmi->previous_mode);
 }
 
-static void rk3066_hdmi_encoder_disable(struct drm_encoder *encoder,
-					struct drm_atomic_state *state)
+static void rk3066_hdmi_encoder_disable(struct drm_encoder *encoder)
 {
 	struct rk3066_hdmi *hdmi = encoder_to_rk3066_hdmi(encoder);
 
@@ -432,6 +432,14 @@ static void rk3066_hdmi_encoder_disable(struct drm_encoder *encoder,
 		usleep_range(500, 510);
 	}
 	rk3066_hdmi_set_power_mode(hdmi, HDMI_SYS_POWER_MODE_A);
+}
+
+static bool
+rk3066_hdmi_encoder_mode_fixup(struct drm_encoder *encoder,
+			       const struct drm_display_mode *mode,
+			       struct drm_display_mode *adj_mode)
+{
+	return true;
 }
 
 static int
@@ -449,9 +457,11 @@ rk3066_hdmi_encoder_atomic_check(struct drm_encoder *encoder,
 
 static const
 struct drm_encoder_helper_funcs rk3066_hdmi_encoder_helper_funcs = {
-	.atomic_check   = rk3066_hdmi_encoder_atomic_check,
-	.atomic_enable  = rk3066_hdmi_encoder_enable,
-	.atomic_disable = rk3066_hdmi_encoder_disable,
+	.enable       = rk3066_hdmi_encoder_enable,
+	.disable      = rk3066_hdmi_encoder_disable,
+	.mode_fixup   = rk3066_hdmi_encoder_mode_fixup,
+	.mode_set     = rk3066_hdmi_encoder_mode_set,
+	.atomic_check = rk3066_hdmi_encoder_atomic_check,
 };
 
 static enum drm_connector_status
@@ -466,16 +476,18 @@ rk3066_hdmi_connector_detect(struct drm_connector *connector, bool force)
 static int rk3066_hdmi_connector_get_modes(struct drm_connector *connector)
 {
 	struct rk3066_hdmi *hdmi = connector_to_rk3066_hdmi(connector);
-	const struct drm_edid *drm_edid;
+	struct edid *edid;
 	int ret = 0;
 
 	if (!hdmi->ddc)
 		return 0;
 
-	drm_edid = drm_edid_read_ddc(connector, hdmi->ddc);
-	drm_edid_connector_update(connector, drm_edid);
-	ret = drm_edid_connector_add_modes(connector);
-	drm_edid_free(drm_edid);
+	edid = drm_get_edid(connector, hdmi->ddc);
+	if (edid) {
+		drm_connector_update_edid_property(connector, edid);
+		ret = drm_add_edid_modes(connector, edid);
+		kfree(edid);
+	}
 
 	return ret;
 }
@@ -713,6 +725,7 @@ static struct i2c_adapter *rk3066_hdmi_i2c_adapter(struct rk3066_hdmi *hdmi)
 	init_completion(&i2c->cmpltn);
 
 	adap = &i2c->adap;
+	adap->class = I2C_CLASS_DDC;
 	adap->owner = THIS_MODULE;
 	adap->dev.parent = hdmi->dev;
 	adap->dev.of_node = hdmi->dev->of_node;

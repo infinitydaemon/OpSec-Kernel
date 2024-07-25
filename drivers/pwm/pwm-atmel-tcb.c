@@ -47,6 +47,7 @@ struct atmel_tcb_channel {
 };
 
 struct atmel_tcb_pwm_chip {
+	struct pwm_chip chip;
 	spinlock_t lock;
 	u8 channel;
 	u8 width;
@@ -62,7 +63,7 @@ static const u8 atmel_tcb_divisors[] = { 2, 8, 32, 128, 0, };
 
 static inline struct atmel_tcb_pwm_chip *to_tcb_chip(struct pwm_chip *chip)
 {
-	return pwmchip_get_drvdata(chip);
+	return container_of(chip, struct atmel_tcb_pwm_chip, chip);
 }
 
 static int atmel_tcb_pwm_request(struct pwm_chip *chip,
@@ -326,7 +327,7 @@ static int atmel_tcb_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
 	if ((atcbpwm && atcbpwm->duty > 0 &&
 			atcbpwm->duty != atcbpwm->period) &&
 		(atcbpwm->div != i || atcbpwm->period != period)) {
-		dev_err(pwmchip_parent(chip),
+		dev_err(chip->dev,
 			"failed to configure period_ns: PWM group already configured with a different value\n");
 		return -EINVAL;
 	}
@@ -363,6 +364,7 @@ static const struct pwm_ops atmel_tcb_pwm_ops = {
 	.request = atmel_tcb_pwm_request,
 	.free = atmel_tcb_pwm_free,
 	.apply = atmel_tcb_pwm_apply,
+	.owner = THIS_MODULE,
 };
 
 static struct atmel_tcb_config tcb_rm9200_config = {
@@ -387,7 +389,6 @@ static const struct of_device_id atmel_tcb_of_match[] = {
 
 static int atmel_tcb_pwm_probe(struct platform_device *pdev)
 {
-	struct pwm_chip *chip;
 	const struct of_device_id *match;
 	struct atmel_tcb_pwm_chip *tcbpwm;
 	const struct atmel_tcb_config *config;
@@ -396,10 +397,9 @@ static int atmel_tcb_pwm_probe(struct platform_device *pdev)
 	int err;
 	int channel;
 
-	chip = devm_pwmchip_alloc(&pdev->dev, NPWM, sizeof(*tcbpwm));
-	if (IS_ERR(chip))
-		return PTR_ERR(chip);
-	tcbpwm = to_tcb_chip(chip);
+	tcbpwm = devm_kzalloc(&pdev->dev, sizeof(*tcbpwm), GFP_KERNEL);
+	if (tcbpwm == NULL)
+		return -ENOMEM;
 
 	err = of_property_read_u32(np, "reg", &channel);
 	if (err < 0) {
@@ -437,7 +437,9 @@ static int atmel_tcb_pwm_probe(struct platform_device *pdev)
 		}
 	}
 
-	chip->ops = &atmel_tcb_pwm_ops;
+	tcbpwm->chip.dev = &pdev->dev;
+	tcbpwm->chip.ops = &atmel_tcb_pwm_ops;
+	tcbpwm->chip.npwm = NPWM;
 	tcbpwm->channel = channel;
 	tcbpwm->width = config->counter_width;
 
@@ -447,11 +449,11 @@ static int atmel_tcb_pwm_probe(struct platform_device *pdev)
 
 	spin_lock_init(&tcbpwm->lock);
 
-	err = pwmchip_add(chip);
+	err = pwmchip_add(&tcbpwm->chip);
 	if (err < 0)
 		goto err_disable_clk;
 
-	platform_set_drvdata(pdev, chip);
+	platform_set_drvdata(pdev, tcbpwm);
 
 	return 0;
 
@@ -472,10 +474,9 @@ err_slow_clk:
 
 static void atmel_tcb_pwm_remove(struct platform_device *pdev)
 {
-	struct pwm_chip *chip = platform_get_drvdata(pdev);
-	struct atmel_tcb_pwm_chip *tcbpwm = to_tcb_chip(chip);
+	struct atmel_tcb_pwm_chip *tcbpwm = platform_get_drvdata(pdev);
 
-	pwmchip_remove(chip);
+	pwmchip_remove(&tcbpwm->chip);
 
 	clk_disable_unprepare(tcbpwm->slow_clk);
 	clk_put(tcbpwm->gclk);
@@ -489,10 +490,10 @@ static const struct of_device_id atmel_tcb_pwm_dt_ids[] = {
 };
 MODULE_DEVICE_TABLE(of, atmel_tcb_pwm_dt_ids);
 
+#ifdef CONFIG_PM_SLEEP
 static int atmel_tcb_pwm_suspend(struct device *dev)
 {
-	struct pwm_chip *chip = dev_get_drvdata(dev);
-	struct atmel_tcb_pwm_chip *tcbpwm = to_tcb_chip(chip);
+	struct atmel_tcb_pwm_chip *tcbpwm = dev_get_drvdata(dev);
 	struct atmel_tcb_channel *chan = &tcbpwm->bkup;
 	unsigned int channel = tcbpwm->channel;
 
@@ -506,8 +507,7 @@ static int atmel_tcb_pwm_suspend(struct device *dev)
 
 static int atmel_tcb_pwm_resume(struct device *dev)
 {
-	struct pwm_chip *chip = dev_get_drvdata(dev);
-	struct atmel_tcb_pwm_chip *tcbpwm = to_tcb_chip(chip);
+	struct atmel_tcb_pwm_chip *tcbpwm = dev_get_drvdata(dev);
 	struct atmel_tcb_channel *chan = &tcbpwm->bkup;
 	unsigned int channel = tcbpwm->channel;
 
@@ -523,15 +523,16 @@ static int atmel_tcb_pwm_resume(struct device *dev)
 
 	return 0;
 }
+#endif
 
-static DEFINE_SIMPLE_DEV_PM_OPS(atmel_tcb_pwm_pm_ops, atmel_tcb_pwm_suspend,
-				atmel_tcb_pwm_resume);
+static SIMPLE_DEV_PM_OPS(atmel_tcb_pwm_pm_ops, atmel_tcb_pwm_suspend,
+			 atmel_tcb_pwm_resume);
 
 static struct platform_driver atmel_tcb_pwm_driver = {
 	.driver = {
 		.name = "atmel-tcb-pwm",
 		.of_match_table = atmel_tcb_pwm_dt_ids,
-		.pm = pm_ptr(&atmel_tcb_pwm_pm_ops),
+		.pm = &atmel_tcb_pwm_pm_ops,
 	},
 	.probe = atmel_tcb_pwm_probe,
 	.remove_new = atmel_tcb_pwm_remove,

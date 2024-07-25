@@ -255,31 +255,29 @@ static int init_srcu_struct_fields(struct srcu_struct *ssp, bool is_static)
 	ssp->srcu_sup->sda_is_static = is_static;
 	if (!is_static)
 		ssp->sda = alloc_percpu(struct srcu_data);
-	if (!ssp->sda)
-		goto err_free_sup;
+	if (!ssp->sda) {
+		if (!is_static)
+			kfree(ssp->srcu_sup);
+		return -ENOMEM;
+	}
 	init_srcu_struct_data(ssp);
 	ssp->srcu_sup->srcu_gp_seq_needed_exp = 0;
 	ssp->srcu_sup->srcu_last_gp_end = ktime_get_mono_fast_ns();
 	if (READ_ONCE(ssp->srcu_sup->srcu_size_state) == SRCU_SIZE_SMALL && SRCU_SIZING_IS_INIT()) {
-		if (!init_srcu_struct_nodes(ssp, GFP_ATOMIC))
-			goto err_free_sda;
-		WRITE_ONCE(ssp->srcu_sup->srcu_size_state, SRCU_SIZE_BIG);
+		if (!init_srcu_struct_nodes(ssp, GFP_ATOMIC)) {
+			if (!ssp->srcu_sup->sda_is_static) {
+				free_percpu(ssp->sda);
+				ssp->sda = NULL;
+				kfree(ssp->srcu_sup);
+				return -ENOMEM;
+			}
+		} else {
+			WRITE_ONCE(ssp->srcu_sup->srcu_size_state, SRCU_SIZE_BIG);
+		}
 	}
 	ssp->srcu_sup->srcu_ssp = ssp;
 	smp_store_release(&ssp->srcu_sup->srcu_gp_seq_needed, 0); /* Init done. */
 	return 0;
-
-err_free_sda:
-	if (!is_static) {
-		free_percpu(ssp->sda);
-		ssp->sda = NULL;
-	}
-err_free_sup:
-	if (!is_static) {
-		kfree(ssp->srcu_sup);
-		ssp->srcu_sup = NULL;
-	}
-	return -ENOMEM;
 }
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
@@ -772,10 +770,20 @@ EXPORT_SYMBOL_GPL(__srcu_read_unlock_nmisafe);
  */
 static void srcu_gp_start(struct srcu_struct *ssp)
 {
+	struct srcu_data *sdp;
 	int state;
 
+	if (smp_load_acquire(&ssp->srcu_sup->srcu_size_state) < SRCU_SIZE_WAIT_BARRIER)
+		sdp = per_cpu_ptr(ssp->sda, get_boot_cpu_id());
+	else
+		sdp = this_cpu_ptr(ssp->sda);
 	lockdep_assert_held(&ACCESS_PRIVATE(ssp->srcu_sup, lock));
 	WARN_ON_ONCE(ULONG_CMP_GE(ssp->srcu_sup->srcu_gp_seq, ssp->srcu_sup->srcu_gp_seq_needed));
+	spin_lock_rcu_node(sdp);  /* Interrupts already disabled. */
+	rcu_segcblist_advance(&sdp->srcu_cblist,
+			      rcu_seq_current(&ssp->srcu_sup->srcu_gp_seq));
+	WARN_ON_ONCE(!rcu_segcblist_segempty(&sdp->srcu_cblist, RCU_NEXT_TAIL));
+	spin_unlock_rcu_node(sdp);  /* Interrupts remain disabled. */
 	WRITE_ONCE(ssp->srcu_sup->srcu_gp_start, jiffies);
 	WRITE_ONCE(ssp->srcu_sup->srcu_n_exp_nodelay, 0);
 	smp_mb(); /* Order prior store to ->srcu_gp_seq_needed vs. GP start. */
@@ -1234,20 +1242,11 @@ static unsigned long srcu_gp_start_if_needed(struct srcu_struct *ssp,
 	if (rhp)
 		rcu_segcblist_enqueue(&sdp->srcu_cblist, rhp);
 	/*
-	 * It's crucial to capture the snapshot 's' for acceleration before
-	 * reading the current gp_seq that is used for advancing. This is
-	 * essential because if the acceleration snapshot is taken after a
-	 * failed advancement attempt, there's a risk that a grace period may
-	 * conclude and a new one may start in the interim. If the snapshot is
-	 * captured after this sequence of events, the acceleration snapshot 's'
-	 * could be excessively advanced, leading to acceleration failure.
-	 * In such a scenario, an 'acceleration leak' can occur, where new
-	 * callbacks become indefinitely stuck in the RCU_NEXT_TAIL segment.
-	 * Also note that encountering advancing failures is a normal
-	 * occurrence when the grace period for RCU_WAIT_TAIL is in progress.
+	 * The snapshot for acceleration must be taken _before_ the read of the
+	 * current gp sequence used for advancing, otherwise advancing may fail
+	 * and acceleration may then fail too.
 	 *
-	 * To see this, consider the following events which occur if
-	 * rcu_seq_snap() were to be called after advance:
+	 * This could happen if:
 	 *
 	 *  1) The RCU_WAIT_TAIL segment has callbacks (gp_num = X + 4) and the
 	 *     RCU_NEXT_READY_TAIL also has callbacks (gp_num = X + 8).
@@ -1270,18 +1269,9 @@ static unsigned long srcu_gp_start_if_needed(struct srcu_struct *ssp,
 	 *     period (gp_num = X + 8). So acceleration fails.
 	 */
 	s = rcu_seq_snap(&ssp->srcu_sup->srcu_gp_seq);
-	if (rhp) {
-		rcu_segcblist_advance(&sdp->srcu_cblist,
-				      rcu_seq_current(&ssp->srcu_sup->srcu_gp_seq));
-		/*
-		 * Acceleration can never fail because the base current gp_seq
-		 * used for acceleration is <= the value of gp_seq used for
-		 * advancing. This means that RCU_NEXT_TAIL segment will
-		 * always be able to be emptied by the acceleration into the
-		 * RCU_NEXT_READY_TAIL or RCU_WAIT_TAIL segments.
-		 */
-		WARN_ON_ONCE(!rcu_segcblist_accelerate(&sdp->srcu_cblist, s));
-	}
+	rcu_segcblist_advance(&sdp->srcu_cblist,
+			      rcu_seq_current(&ssp->srcu_sup->srcu_gp_seq));
+	WARN_ON_ONCE(!rcu_segcblist_accelerate(&sdp->srcu_cblist, s) && rhp);
 	if (ULONG_CMP_LT(sdp->srcu_gp_seq_needed, s)) {
 		sdp->srcu_gp_seq_needed = s;
 		needgp = true;
@@ -1731,11 +1721,6 @@ static void srcu_invoke_callbacks(struct work_struct *work)
 	WARN_ON_ONCE(!rcu_segcblist_segempty(&sdp->srcu_cblist, RCU_NEXT_TAIL));
 	rcu_segcblist_advance(&sdp->srcu_cblist,
 			      rcu_seq_current(&ssp->srcu_sup->srcu_gp_seq));
-	/*
-	 * Although this function is theoretically re-entrant, concurrent
-	 * callbacks invocation is disallowed to avoid executing an SRCU barrier
-	 * too early.
-	 */
 	if (sdp->srcu_cblist_invoking ||
 	    !rcu_segcblist_ready_cbs(&sdp->srcu_cblist)) {
 		spin_unlock_irq_rcu_node(sdp);
@@ -1750,7 +1735,6 @@ static void srcu_invoke_callbacks(struct work_struct *work)
 	rhp = rcu_cblist_dequeue(&ready_cbs);
 	for (; rhp != NULL; rhp = rcu_cblist_dequeue(&ready_cbs)) {
 		debug_rcu_head_unqueue(rhp);
-		debug_rcu_head_callback(rhp);
 		local_bh_disable();
 		rhp->func(rhp);
 		local_bh_enable();
@@ -1766,7 +1750,6 @@ static void srcu_invoke_callbacks(struct work_struct *work)
 	sdp->srcu_cblist_invoking = false;
 	more = rcu_segcblist_ready_cbs(&sdp->srcu_cblist);
 	spin_unlock_irq_rcu_node(sdp);
-	/* An SRCU barrier or callbacks from previous nesting work pending */
 	if (more)
 		srcu_schedule_cbs_sdp(sdp, 0);
 }
@@ -1826,9 +1809,12 @@ static void process_srcu(struct work_struct *work)
 	srcu_reschedule(ssp, curdelay);
 }
 
-void srcutorture_get_gp_data(struct srcu_struct *ssp, int *flags,
+void srcutorture_get_gp_data(enum rcutorture_type test_type,
+			     struct srcu_struct *ssp, int *flags,
 			     unsigned long *gp_seq)
 {
+	if (test_type != SRCU_FLAVOR)
+		return;
 	*flags = 0;
 	*gp_seq = rcu_seq_current(&ssp->srcu_sup->srcu_gp_seq);
 }

@@ -95,6 +95,7 @@ static const struct dev_pm_ops sr_pm_ops = {
 static struct scsi_driver sr_template = {
 	.gendrv = {
 		.name   	= "sr",
+		.owner		= THIS_MODULE,
 		.probe		= sr_probe,
 		.remove		= sr_remove,
 		.pm		= &sr_pm_ops,
@@ -176,8 +177,7 @@ static unsigned int sr_get_events(struct scsi_device *sdev)
 
 	result = scsi_execute_cmd(sdev, cmd, REQ_OP_DRV_IN, buf, sizeof(buf),
 				  SR_TIMEOUT, MAX_RETRIES, &exec_args);
-	if (result > 0 && scsi_sense_valid(&sshdr) &&
-	    sshdr.sense_key == UNIT_ATTENTION)
+	if (scsi_sense_valid(&sshdr) && sshdr.sense_key == UNIT_ATTENTION)
 		return DISK_EVENT_MEDIA_CHANGE;
 
 	if (result || be16_to_cpu(eh->data_len) < sizeof(*med))
@@ -716,29 +716,27 @@ fail:
 
 static void get_sectorsize(struct scsi_cd *cd)
 {
-	static const u8 cmd[10] = { READ_CAPACITY };
-	unsigned char buffer[8] = { };
-	int the_result;
+	unsigned char cmd[10];
+	unsigned char buffer[8];
+	int the_result, retries = 3;
 	int sector_size;
 	struct request_queue *queue;
-	struct scsi_failure failure_defs[] = {
-		{
-			.result = SCMD_FAILURE_RESULT_ANY,
-			.allowed = 3,
-		},
-		{}
-	};
-	struct scsi_failures failures = {
-		.failure_definitions = failure_defs,
-	};
-	const struct scsi_exec_args exec_args = {
-		.failures = &failures,
-	};
 
-	/* Do the command and wait.. */
-	the_result = scsi_execute_cmd(cd->device, cmd, REQ_OP_DRV_IN, buffer,
-				      sizeof(buffer), SR_TIMEOUT, MAX_RETRIES,
-				      &exec_args);
+	do {
+		cmd[0] = READ_CAPACITY;
+		memset((void *) &cmd[1], 0, 9);
+		memset(buffer, 0, sizeof(buffer));
+
+		/* Do the command and wait.. */
+		the_result = scsi_execute_cmd(cd->device, cmd, REQ_OP_DRV_IN,
+					      buffer, sizeof(buffer),
+					      SR_TIMEOUT, MAX_RETRIES, NULL);
+
+		retries--;
+
+	} while (the_result && retries);
+
+
 	if (the_result) {
 		cd->capacity = 0x1fffff;
 		sector_size = 2048;	/* A guess, just in case */

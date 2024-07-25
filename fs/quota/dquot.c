@@ -410,7 +410,7 @@ static inline int mark_all_dquot_dirty(struct dquot __rcu * const *dquots)
 		if (dquot)
 			/* Even in case of error we have to continue */
 			ret = mark_dquot_dirty(dquot);
-		if (!err && ret < 0)
+		if (!err)
 			err = ret;
 	}
 	return err;
@@ -805,6 +805,12 @@ dqcache_shrink_count(struct shrinker *shrink, struct shrink_control *sc)
 	percpu_counter_read_positive(&dqstats.counter[DQST_FREE_DQUOTS]));
 }
 
+static struct shrinker dqcache_shrinker = {
+	.count_objects = dqcache_shrink_count,
+	.scan_objects = dqcache_shrink_scan,
+	.seeks = DEFAULT_SEEKS,
+};
+
 /*
  * Safely release dquot and put reference to dquot.
  */
@@ -877,7 +883,10 @@ void dqput(struct dquot *dquot)
 	}
 
 	/* Need to release dquot? */
-	WARN_ON_ONCE(!list_empty(&dquot->dq_free));
+#ifdef CONFIG_QUOTA_DEBUG
+	/* sanity check */
+	BUG_ON(!list_empty(&dquot->dq_free));
+#endif
 	put_releasing_dquots(dquot);
 	atomic_dec(&dquot->dq_count);
 	spin_unlock(&dq_list_lock);
@@ -986,8 +995,9 @@ we_slept:
 	 * smp_mb__before_atomic() in dquot_acquire().
 	 */
 	smp_rmb();
-	/* Has somebody invalidated entry under us? */
-	WARN_ON_ONCE(hlist_unhashed(&dquot->dq_hash));
+#ifdef CONFIG_QUOTA_DEBUG
+	BUG_ON(!dquot->dq_sb);	/* Has somebody invalidated entry under us? */
+#endif
 out:
 	if (empty)
 		do_destroy_dquot(empty);
@@ -1737,7 +1747,7 @@ int __dquot_alloc_space(struct inode *inode, qsize_t number, int flags)
 
 	if (reserve)
 		goto out_flush_warn;
-	ret = mark_all_dquot_dirty(dquots);
+	mark_all_dquot_dirty(dquots);
 out_flush_warn:
 	srcu_read_unlock(&dquot_srcu, index);
 	flush_warnings(warn);
@@ -1786,7 +1796,7 @@ int dquot_alloc_inode(struct inode *inode)
 warn_put_all:
 	spin_unlock(&inode->i_lock);
 	if (ret == 0)
-		ret = mark_all_dquot_dirty(dquots);
+		mark_all_dquot_dirty(dquots);
 	srcu_read_unlock(&dquot_srcu, index);
 	flush_warnings(warn);
 	return ret;
@@ -1796,7 +1806,7 @@ EXPORT_SYMBOL(dquot_alloc_inode);
 /*
  * Convert in-memory reserved quotas to real consumed quotas
  */
-void dquot_claim_space_nodirty(struct inode *inode, qsize_t number)
+int dquot_claim_space_nodirty(struct inode *inode, qsize_t number)
 {
 	struct dquot __rcu **dquots;
 	struct dquot *dquot;
@@ -1807,7 +1817,7 @@ void dquot_claim_space_nodirty(struct inode *inode, qsize_t number)
 		*inode_reserved_space(inode) -= number;
 		__inode_add_bytes(inode, number);
 		spin_unlock(&inode->i_lock);
-		return;
+		return 0;
 	}
 
 	dquots = i_dquot(inode);
@@ -1831,7 +1841,7 @@ void dquot_claim_space_nodirty(struct inode *inode, qsize_t number)
 	spin_unlock(&inode->i_lock);
 	mark_all_dquot_dirty(dquots);
 	srcu_read_unlock(&dquot_srcu, index);
-	return;
+	return 0;
 }
 EXPORT_SYMBOL(dquot_claim_space_nodirty);
 
@@ -1990,7 +2000,7 @@ int __dquot_transfer(struct inode *inode, struct dquot **transfer_to)
 	qsize_t inode_usage = 1;
 	struct dquot __rcu **dquots;
 	struct dquot *transfer_from[MAXQUOTAS] = {};
-	int cnt, index, ret = 0, err;
+	int cnt, index, ret = 0;
 	char is_valid[MAXQUOTAS] = {};
 	struct dquot_warn warn_to[MAXQUOTAS];
 	struct dquot_warn warn_from_inodes[MAXQUOTAS];
@@ -2087,12 +2097,8 @@ int __dquot_transfer(struct inode *inode, struct dquot **transfer_to)
 	 * mark_all_dquot_dirty().
 	 */
 	index = srcu_read_lock(&dquot_srcu);
-	err = mark_all_dquot_dirty((struct dquot __rcu **)transfer_from);
-	if (err < 0)
-		ret = err;
-	err = mark_all_dquot_dirty((struct dquot __rcu **)transfer_to);
-	if (err < 0)
-		ret = err;
+	mark_all_dquot_dirty((struct dquot __rcu **)transfer_from);
+	mark_all_dquot_dirty((struct dquot __rcu **)transfer_to);
 	srcu_read_unlock(&dquot_srcu, index);
 
 	flush_warnings(warn_to);
@@ -2102,7 +2108,7 @@ int __dquot_transfer(struct inode *inode, struct dquot **transfer_to)
 	for (cnt = 0; cnt < MAXQUOTAS; cnt++)
 		if (is_valid[cnt])
 			transfer_to[cnt] = transfer_from[cnt];
-	return ret;
+	return 0;
 over_quota:
 	/* Back out changes we already did */
 	for (cnt--; cnt >= 0; cnt--) {
@@ -2415,8 +2421,7 @@ int dquot_load_quota_sb(struct super_block *sb, int type, int format_id,
 	lockdep_assert_held_write(&sb->s_umount);
 
 	/* Just unsuspend quotas? */
-	if (WARN_ON_ONCE(flags & DQUOT_SUSPENDED))
-		return -EINVAL;
+	BUG_ON(flags & DQUOT_SUSPENDED);
 
 	if (!fmt)
 		return -ESRCH;
@@ -2730,7 +2735,6 @@ static int do_set_dqblk(struct dquot *dquot, struct qc_dqblk *di)
 	struct mem_dqblk *dm = &dquot->dq_dqb;
 	int check_blim = 0, check_ilim = 0;
 	struct mem_dqinfo *dqi = &sb_dqopt(dquot->dq_sb)->info[dquot->dq_id.type];
-	int ret;
 
 	if (di->d_fieldmask & ~VFS_QC_MASK)
 		return -EINVAL;
@@ -2812,9 +2816,8 @@ static int do_set_dqblk(struct dquot *dquot, struct qc_dqblk *di)
 	else
 		set_bit(DQ_FAKE_B, &dquot->dq_flags);
 	spin_unlock(&dquot->dq_dqb_lock);
-	ret = mark_dquot_dirty(dquot);
-	if (ret < 0)
-		return ret;
+	mark_dquot_dirty(dquot);
+
 	return 0;
 }
 
@@ -2999,13 +3002,13 @@ static struct ctl_table fs_dqstats_table[] = {
 		.proc_handler	= proc_dointvec,
 	},
 #endif
+	{ },
 };
 
 static int __init dquot_init(void)
 {
 	int i, ret;
 	unsigned long nr_hash, order;
-	struct shrinker *dqcache_shrinker;
 
 	printk(KERN_NOTICE "VFS: Disk quotas %s\n", __DQUOT_VERSION__);
 
@@ -3014,7 +3017,7 @@ static int __init dquot_init(void)
 	dquot_cachep = kmem_cache_create("dquot",
 			sizeof(struct dquot), sizeof(unsigned long) * 4,
 			(SLAB_HWCACHE_ALIGN|SLAB_RECLAIM_ACCOUNT|
-				SLAB_PANIC),
+				SLAB_MEM_SPREAD|SLAB_PANIC),
 			NULL);
 
 	order = 0;
@@ -3022,10 +3025,11 @@ static int __init dquot_init(void)
 	if (!dquot_hash)
 		panic("Cannot create dquot hash table");
 
-	ret = percpu_counter_init_many(dqstats.counter, 0, GFP_KERNEL,
-				       _DQST_DQSTAT_LAST);
-	if (ret)
-		panic("Cannot create dquot stat counters");
+	for (i = 0; i < _DQST_DQSTAT_LAST; i++) {
+		ret = percpu_counter_init(&dqstats.counter[i], 0, GFP_KERNEL);
+		if (ret)
+			panic("Cannot create dquot stat counters");
+	}
 
 	/* Find power-of-two hlist_heads which can fit into allocation */
 	nr_hash = (1UL << order) * PAGE_SIZE / sizeof(struct hlist_head);
@@ -3039,14 +3043,8 @@ static int __init dquot_init(void)
 	pr_info("VFS: Dquot-cache hash table entries: %ld (order %ld,"
 		" %ld bytes)\n", nr_hash, order, (PAGE_SIZE << order));
 
-	dqcache_shrinker = shrinker_alloc(0, "dquota-cache");
-	if (!dqcache_shrinker)
-		panic("Cannot allocate dquot shrinker");
-
-	dqcache_shrinker->count_objects = dqcache_shrink_count;
-	dqcache_shrinker->scan_objects = dqcache_shrink_scan;
-
-	shrinker_register(dqcache_shrinker);
+	if (register_shrinker(&dqcache_shrinker, "dquota-cache"))
+		panic("Cannot register dquot shrinker");
 
 	return 0;
 }

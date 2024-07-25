@@ -32,7 +32,7 @@ The ``nfp`` driver reports the following versions
      - Description
    * - ``board.id``
      - fixed
-     - Identifier of the board design
+     - Part number identifying the board design
    * - ``board.rev``
      - fixed
      - Revision of the board design
@@ -42,9 +42,6 @@ The ``nfp`` driver reports the following versions
    * - ``board.model``
      - fixed
      - Model name of the board design
-   * - ``board.part_number``
-     - fixed
-     - Part number of the board and its components
    * - ``fw.bundle_id``
      - stored, running
      - Firmware bundle id

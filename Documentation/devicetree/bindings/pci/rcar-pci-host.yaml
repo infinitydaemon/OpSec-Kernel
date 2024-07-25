@@ -12,7 +12,7 @@ maintainers:
   - Yoshihiro Shimoda <yoshihiro.shimoda.uh@renesas.com>
 
 allOf:
-  - $ref: /schemas/pci/pci-host-bridge.yaml#
+  - $ref: pci-bus.yaml#
 
 properties:
   compatible:

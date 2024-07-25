@@ -551,7 +551,8 @@ int mv88e6390_g1_rmu_disable(struct mv88e6xxx_chip *chip)
 int mv88e6390_g1_stats_set_histogram(struct mv88e6xxx_chip *chip)
 {
 	return mv88e6xxx_g1_ctl2_mask(chip, MV88E6390_G1_CTL2_HIST_MODE_MASK,
-				      MV88E6390_G1_CTL2_HIST_MODE_RX);
+				      MV88E6390_G1_CTL2_HIST_MODE_RX |
+				      MV88E6390_G1_CTL2_HIST_MODE_TX);
 }
 
 int mv88e6xxx_g1_set_device_number(struct mv88e6xxx_chip *chip, int index)
@@ -579,7 +580,7 @@ int mv88e6095_g1_stats_set_histogram(struct mv88e6xxx_chip *chip)
 	if (err)
 		return err;
 
-	val |= MV88E6XXX_G1_STATS_OP_HIST_RX;
+	val |= MV88E6XXX_G1_STATS_OP_HIST_RX_TX;
 
 	err = mv88e6xxx_g1_write(chip, MV88E6XXX_G1_STATS_OP, val);
 
@@ -594,7 +595,7 @@ int mv88e6xxx_g1_stats_snapshot(struct mv88e6xxx_chip *chip, int port)
 	err = mv88e6xxx_g1_write(chip, MV88E6XXX_G1_STATS_OP,
 				 MV88E6XXX_G1_STATS_OP_BUSY |
 				 MV88E6XXX_G1_STATS_OP_CAPTURE_PORT |
-				 MV88E6XXX_G1_STATS_OP_HIST_RX | port);
+				 MV88E6XXX_G1_STATS_OP_HIST_RX_TX | port);
 	if (err)
 		return err;
 

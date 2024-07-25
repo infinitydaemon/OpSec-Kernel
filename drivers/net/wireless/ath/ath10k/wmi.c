@@ -3,7 +3,6 @@
  * Copyright (c) 2005-2011 Atheros Communications Inc.
  * Copyright (c) 2011-2017 Qualcomm Atheros, Inc.
  * Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/skbuff.h>
@@ -3904,8 +3903,8 @@ void ath10k_wmi_event_host_swba(struct ath10k *ar, struct sk_buff *skb)
 		 * actual channel switch is done
 		 */
 		if (arvif->vif->bss_conf.csa_active &&
-		    ieee80211_beacon_cntdwn_is_complete(arvif->vif, 0)) {
-			ieee80211_csa_finish(arvif->vif, 0);
+		    ieee80211_beacon_cntdwn_is_complete(arvif->vif)) {
+			ieee80211_csa_finish(arvif->vif);
 			continue;
 		}
 
@@ -6947,14 +6946,14 @@ void ath10k_wmi_put_start_scan_common(struct wmi_start_scan_common *cmn,
 }
 
 static void
-ath10k_wmi_put_start_scan_tlvs(u8 *tlvs,
+ath10k_wmi_put_start_scan_tlvs(struct wmi_start_scan_tlvs *tlvs,
 			       const struct wmi_start_scan_arg *arg)
 {
 	struct wmi_ie_data *ie;
 	struct wmi_chan_list *channels;
 	struct wmi_ssid_list *ssids;
 	struct wmi_bssid_list *bssids;
-	void *ptr = tlvs;
+	void *ptr = tlvs->tlvs;
 	int i;
 
 	if (arg->n_channels) {
@@ -7032,7 +7031,7 @@ ath10k_wmi_op_gen_start_scan(struct ath10k *ar,
 	cmd = (struct wmi_start_scan_cmd *)skb->data;
 
 	ath10k_wmi_put_start_scan_common(&cmd->common, arg);
-	ath10k_wmi_put_start_scan_tlvs(cmd->tlvs, arg);
+	ath10k_wmi_put_start_scan_tlvs(&cmd->tlvs, arg);
 
 	cmd->burst_duration_ms = __cpu_to_le32(0);
 
@@ -7061,7 +7060,7 @@ ath10k_wmi_10x_op_gen_start_scan(struct ath10k *ar,
 	cmd = (struct wmi_10x_start_scan_cmd *)skb->data;
 
 	ath10k_wmi_put_start_scan_common(&cmd->common, arg);
-	ath10k_wmi_put_start_scan_tlvs(cmd->tlvs, arg);
+	ath10k_wmi_put_start_scan_tlvs(&cmd->tlvs, arg);
 
 	ath10k_dbg(ar, ATH10K_DBG_WMI, "wmi 10x start scan\n");
 	return skb;
@@ -8753,9 +8752,9 @@ int ath10k_wmi_op_get_vdev_subtype(struct ath10k *ar,
 		return WMI_VDEV_SUBTYPE_LEGACY_PROXY_STA;
 	case WMI_VDEV_SUBTYPE_MESH_11S:
 	case WMI_VDEV_SUBTYPE_MESH_NON_11S:
-		return -EOPNOTSUPP;
+		return -ENOTSUPP;
 	}
-	return -EOPNOTSUPP;
+	return -ENOTSUPP;
 }
 
 static int ath10k_wmi_10_2_4_op_get_vdev_subtype(struct ath10k *ar,
@@ -8775,9 +8774,9 @@ static int ath10k_wmi_10_2_4_op_get_vdev_subtype(struct ath10k *ar,
 	case WMI_VDEV_SUBTYPE_MESH_11S:
 		return WMI_VDEV_SUBTYPE_10_2_4_MESH_11S;
 	case WMI_VDEV_SUBTYPE_MESH_NON_11S:
-		return -EOPNOTSUPP;
+		return -ENOTSUPP;
 	}
-	return -EOPNOTSUPP;
+	return -ENOTSUPP;
 }
 
 static int ath10k_wmi_10_4_op_get_vdev_subtype(struct ath10k *ar,
@@ -8799,7 +8798,7 @@ static int ath10k_wmi_10_4_op_get_vdev_subtype(struct ath10k *ar,
 	case WMI_VDEV_SUBTYPE_MESH_NON_11S:
 		return WMI_VDEV_SUBTYPE_10_4_MESH_NON_11S;
 	}
-	return -EOPNOTSUPP;
+	return -ENOTSUPP;
 }
 
 static struct sk_buff *
@@ -8937,6 +8936,8 @@ ath10k_wmi_10_4_gen_tdls_peer_update(struct ath10k *ar,
 	skb = ath10k_wmi_alloc_skb(ar, len);
 	if (!skb)
 		return ERR_PTR(-ENOMEM);
+
+	memset(skb->data, 0, sizeof(*cmd));
 
 	cmd = (struct wmi_10_4_tdls_peer_update_cmd *)skb->data;
 	cmd->vdev_id = __cpu_to_le32(arg->vdev_id);

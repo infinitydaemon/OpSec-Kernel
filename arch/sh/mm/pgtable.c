@@ -2,14 +2,12 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 
-#include <asm/pgalloc.h>
-
 static struct kmem_cache *pgd_cachep;
 #if PAGETABLE_LEVELS > 2
 static struct kmem_cache *pmd_cachep;
 #endif
 
-static void pgd_ctor(void *x)
+void pgd_ctor(void *x)
 {
 	pgd_t *pgd = x;
 

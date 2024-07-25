@@ -10,9 +10,6 @@ struct tcp_rtt_storage {
 	__u32 delivered;
 	__u32 delivered_ce;
 	__u32 icsk_retransmits;
-
-	__u32 mrtt_us;	/* args[0] */
-	__u32 srtt;	/* args[1] */
 };
 
 struct {
@@ -57,9 +54,6 @@ int _sockops(struct bpf_sock_ops *ctx)
 	storage->delivered = tcp_sk->delivered;
 	storage->delivered_ce = tcp_sk->delivered_ce;
 	storage->icsk_retransmits = tcp_sk->icsk_retransmits;
-
-	storage->mrtt_us = ctx->args[0];
-	storage->srtt = ctx->args[1];
 
 	return 1;
 }

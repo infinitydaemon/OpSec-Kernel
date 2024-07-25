@@ -115,7 +115,7 @@ allOf:
       required:
         - reg
 
-unevaluatedProperties: false
+unevaluatedProperties: true
 
 examples:
   - |

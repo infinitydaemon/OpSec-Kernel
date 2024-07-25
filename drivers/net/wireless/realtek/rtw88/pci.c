@@ -729,8 +729,7 @@ static void __pci_flush_queue(struct rtw_dev *rtwdev, u8 pci_q, bool drop)
 	}
 
 	if (!drop)
-		rtw_dbg(rtwdev, RTW_DBG_UNEXP,
-			"timed out to flush pci tx ring[%d]\n", pci_q);
+		rtw_warn(rtwdev, "timed out to flush pci tx ring[%d]\n", pci_q);
 }
 
 static void __rtw_pci_flush_queues(struct rtw_dev *rtwdev, u32 pci_queues,
@@ -1451,7 +1450,6 @@ static void rtw_pci_phy_cfg(struct rtw_dev *rtwdev)
 {
 	struct rtw_pci *rtwpci = (struct rtw_pci *)rtwdev->priv;
 	const struct rtw_chip_info *chip = rtwdev->chip;
-	struct rtw_efuse *efuse = &rtwdev->efuse;
 	struct pci_dev *pdev = rtwpci->pdev;
 	const struct rtw_intf_phy_para *para;
 	u16 cut;
@@ -1500,9 +1498,6 @@ static void rtw_pci_phy_cfg(struct rtw_dev *rtwdev)
 			rtw_err(rtwdev, "failed to set PCI cap, ret = %d\n",
 				ret);
 	}
-
-	if (chip->id == RTW_CHIP_TYPE_8822C && efuse->rfe_option == 5)
-		rtw_write32_mask(rtwdev, REG_ANAPARSW_MAC_0, BIT_CF_L_V2, 0x1);
 }
 
 static int __maybe_unused rtw_pci_suspend(struct device *dev)
@@ -1613,7 +1608,7 @@ static struct rtw_hci_ops rtw_pci_ops = {
 
 static int rtw_pci_request_irq(struct rtw_dev *rtwdev, struct pci_dev *pdev)
 {
-	unsigned int flags = PCI_IRQ_INTX;
+	unsigned int flags = PCI_IRQ_LEGACY;
 	int ret;
 
 	if (!rtw_disable_msi)

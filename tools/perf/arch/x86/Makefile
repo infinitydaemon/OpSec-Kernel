@@ -17,7 +17,7 @@ sys       := $(srctree)/tools/perf/arch/x86/entry/syscalls
 systbl    := $(sys)/syscalltbl.sh
 
 # Create output directory if not already present
-$(shell [ -d '$(out)' ] || mkdir -p '$(out)')
+_dummy := $(shell [ -d '$(out)' ] || mkdir -p '$(out)')
 
 $(header): $(sys)/syscall_64.tbl $(systbl)
 	$(Q)$(SHELL) '$(systbl)' $(sys)/syscall_64.tbl 'x86_64' > $@

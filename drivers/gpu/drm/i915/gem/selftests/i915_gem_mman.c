@@ -630,14 +630,14 @@ static bool assert_mmap_offset(struct drm_i915_private *i915,
 static void disable_retire_worker(struct drm_i915_private *i915)
 {
 	i915_gem_driver_unregister__shrinker(i915);
-	intel_gt_pm_get_untracked(to_gt(i915));
+	intel_gt_pm_get(to_gt(i915));
 	cancel_delayed_work_sync(&to_gt(i915)->requests.retire_work);
 }
 
 static void restore_retire_worker(struct drm_i915_private *i915)
 {
 	igt_flush_test(i915);
-	intel_gt_pm_put_untracked(to_gt(i915));
+	intel_gt_pm_put(to_gt(i915));
 	i915_gem_driver_register__shrinker(i915);
 }
 
@@ -778,7 +778,6 @@ err_obj:
 
 static int gtt_set(struct drm_i915_gem_object *obj)
 {
-	intel_wakeref_t wakeref;
 	struct i915_vma *vma;
 	void __iomem *map;
 	int err = 0;
@@ -787,7 +786,7 @@ static int gtt_set(struct drm_i915_gem_object *obj)
 	if (IS_ERR(vma))
 		return PTR_ERR(vma);
 
-	wakeref = intel_gt_pm_get(vma->vm->gt);
+	intel_gt_pm_get(vma->vm->gt);
 	map = i915_vma_pin_iomap(vma);
 	i915_vma_unpin(vma);
 	if (IS_ERR(map)) {
@@ -799,13 +798,12 @@ static int gtt_set(struct drm_i915_gem_object *obj)
 	i915_vma_unpin_iomap(vma);
 
 out:
-	intel_gt_pm_put(vma->vm->gt, wakeref);
+	intel_gt_pm_put(vma->vm->gt);
 	return err;
 }
 
 static int gtt_check(struct drm_i915_gem_object *obj)
 {
-	intel_wakeref_t wakeref;
 	struct i915_vma *vma;
 	void __iomem *map;
 	int err = 0;
@@ -814,7 +812,7 @@ static int gtt_check(struct drm_i915_gem_object *obj)
 	if (IS_ERR(vma))
 		return PTR_ERR(vma);
 
-	wakeref = intel_gt_pm_get(vma->vm->gt);
+	intel_gt_pm_get(vma->vm->gt);
 	map = i915_vma_pin_iomap(vma);
 	i915_vma_unpin(vma);
 	if (IS_ERR(map)) {
@@ -830,7 +828,7 @@ static int gtt_check(struct drm_i915_gem_object *obj)
 	i915_vma_unpin_iomap(vma);
 
 out:
-	intel_gt_pm_put(vma->vm->gt, wakeref);
+	intel_gt_pm_put(vma->vm->gt);
 	return err;
 }
 
@@ -1054,7 +1052,7 @@ static int igt_fill_mappable(struct intel_memory_region *mr,
 	int err;
 
 	total = 0;
-	size = resource_size(&mr->io);
+	size = mr->io_size;
 	do {
 		struct drm_i915_gem_object *obj;
 
@@ -1315,28 +1313,28 @@ static int igt_mmap_migrate(void *arg)
 		struct intel_memory_region *mixed[] = { mr, system };
 		struct intel_memory_region *single[] = { mr };
 		struct ttm_resource_manager *man = mr->region_private;
-		struct resource saved_io;
+		resource_size_t saved_io_size;
 		int err;
 
 		if (mr->private)
 			continue;
 
-		if (!resource_size(&mr->io))
+		if (!mr->io_size)
 			continue;
 
 		/*
 		 * For testing purposes let's force small BAR, if not already
 		 * present.
 		 */
-		saved_io = mr->io;
-		if (resource_size(&mr->io) == mr->total) {
-			resource_size_t io_size = resource_size(&mr->io);
+		saved_io_size = mr->io_size;
+		if (mr->io_size == mr->total) {
+			resource_size_t io_size = mr->io_size;
 
 			io_size = rounddown_pow_of_two(io_size >> 1);
 			if (io_size < PAGE_SIZE)
 				continue;
 
-			mr->io = DEFINE_RES_MEM(mr->io.start, io_size);
+			mr->io_size = io_size;
 			i915_ttm_buddy_man_force_visible_size(man,
 							      io_size >> PAGE_SHIFT);
 		}
@@ -1396,9 +1394,9 @@ static int igt_mmap_migrate(void *arg)
 					 IGT_MMAP_MIGRATE_FAIL_GPU |
 					 IGT_MMAP_MIGRATE_UNFAULTABLE);
 out_io_size:
-		mr->io = saved_io;
+		mr->io_size = saved_io_size;
 		i915_ttm_buddy_man_force_visible_size(man,
-						      resource_size(&mr->io) >> PAGE_SHIFT);
+						      mr->io_size >> PAGE_SHIFT);
 		if (err)
 			return err;
 	}

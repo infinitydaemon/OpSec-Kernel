@@ -23,7 +23,7 @@
 #include <os.h>
 #include <poll.h>
 
-static struct pollfd kernel_pollfd;
+struct pollfd kernel_pollfd;
 
 int start_io_thread(unsigned long sp, int *fd_out)
 {

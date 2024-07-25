@@ -2150,7 +2150,6 @@ static struct Qdisc_ops htb_qdisc_ops __read_mostly = {
 	.dump		=	htb_dump,
 	.owner		=	THIS_MODULE,
 };
-MODULE_ALIAS_NET_SCH("htb");
 
 static int __init htb_module_init(void)
 {
@@ -2164,4 +2163,3 @@ static void __exit htb_module_exit(void)
 module_init(htb_module_init)
 module_exit(htb_module_exit)
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Hierarchical Token Bucket scheduler");

@@ -8,14 +8,11 @@
 /*
  * User space memory access functions
  */
-#include <linux/kernel.h>
 #include <linux/string.h>
 #include <asm/page.h>
 #include <asm/domain.h>
 #include <asm/unaligned.h>
 #include <asm/unified.h>
-#include <asm/pgtable.h>
-#include <asm/proc-fns.h>
 #include <asm/compiler.h>
 
 #include <asm/extable.h>
@@ -26,10 +23,9 @@
  * perform such accesses (eg, via list poison values) which could then
  * be exploited for priviledge escalation.
  */
-#if defined(CONFIG_CPU_SW_DOMAIN_PAN)
-
 static __always_inline unsigned int uaccess_save_and_enable(void)
 {
+#ifdef CONFIG_CPU_SW_DOMAIN_PAN
 	unsigned int old_domain = get_domain();
 
 	/* Set the current domain access to permit user accesses */
@@ -37,48 +33,18 @@ static __always_inline unsigned int uaccess_save_and_enable(void)
 		   domain_val(DOMAIN_USER, DOMAIN_CLIENT));
 
 	return old_domain;
+#else
+	return 0;
+#endif
 }
 
 static __always_inline void uaccess_restore(unsigned int flags)
 {
+#ifdef CONFIG_CPU_SW_DOMAIN_PAN
 	/* Restore the user access mask */
 	set_domain(flags);
-}
-
-#elif defined(CONFIG_CPU_TTBR0_PAN)
-
-static __always_inline unsigned int uaccess_save_and_enable(void)
-{
-	unsigned int old_ttbcr = cpu_get_ttbcr();
-
-	/*
-	 * Enable TTBR0 page table walks (T0SZ = 0, EDP0 = 0) and ASID from
-	 * TTBR0 (A1 = 0).
-	 */
-	cpu_set_ttbcr(old_ttbcr & ~(TTBCR_A1 | TTBCR_EPD0 | TTBCR_T0SZ_MASK));
-	isb();
-
-	return old_ttbcr;
-}
-
-static inline void uaccess_restore(unsigned int flags)
-{
-	cpu_set_ttbcr(flags);
-	isb();
-}
-
-#else
-
-static inline unsigned int uaccess_save_and_enable(void)
-{
-	return 0;
-}
-
-static inline void uaccess_restore(unsigned int flags)
-{
-}
-
 #endif
+}
 
 /*
  * These two are intentionally not defined anywhere - if the kernel
@@ -143,6 +109,16 @@ extern int __get_user_64t_1(void *);
 extern int __get_user_64t_2(void *);
 extern int __get_user_64t_4(void *);
 
+#define __GUP_CLOBBER_1	"lr", "cc"
+#ifdef CONFIG_CPU_USE_DOMAINS
+#define __GUP_CLOBBER_2	"ip", "lr", "cc"
+#else
+#define __GUP_CLOBBER_2 "lr", "cc"
+#endif
+#define __GUP_CLOBBER_4	"lr", "cc"
+#define __GUP_CLOBBER_32t_8 "lr", "cc"
+#define __GUP_CLOBBER_8	"lr", "cc"
+
 #define __get_user_x(__r2, __p, __e, __l, __s)				\
 	   __asm__ __volatile__ (					\
 		__asmeq("%0", "r0") __asmeq("%1", "r2")			\
@@ -150,7 +126,7 @@ extern int __get_user_64t_4(void *);
 		"bl	__get_user_" #__s				\
 		: "=&r" (__e), "=r" (__r2)				\
 		: "0" (__p), "r" (__l)					\
-		: "ip", "lr", "cc")
+		: __GUP_CLOBBER_##__s)
 
 /* narrowing a double-word get into a single 32bit word register: */
 #ifdef __ARMEB__
@@ -172,7 +148,7 @@ extern int __get_user_64t_4(void *);
 		"bl	__get_user_64t_" #__s				\
 		: "=&r" (__e), "=r" (__r2)				\
 		: "0" (__p), "r" (__l)					\
-		: "ip", "lr", "cc")
+		: __GUP_CLOBBER_##__s)
 #else
 #define __get_user_x_64t __get_user_x
 #endif
@@ -532,6 +508,9 @@ do {									\
 #ifdef CONFIG_MMU
 extern unsigned long __must_check
 arm_copy_from_user(void *to, const void __user *from, unsigned long n);
+
+extern unsigned long __must_check
+__copy_from_user_std(void *to, const void __user *from, unsigned long n);
 
 static inline unsigned long __must_check
 raw_copy_from_user(void *to, const void __user *from, unsigned long n)

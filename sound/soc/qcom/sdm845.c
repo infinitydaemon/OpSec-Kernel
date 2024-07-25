@@ -3,9 +3,9 @@
  * Copyright (c) 2018, The Linux Foundation. All rights reserved.
  */
 
-#include <dt-bindings/sound/qcom,q6afe.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/of_device.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
@@ -625,4 +625,4 @@ static struct platform_driver sdm845_snd_driver = {
 module_platform_driver(sdm845_snd_driver);
 
 MODULE_DESCRIPTION("sdm845 ASoC Machine Driver");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");

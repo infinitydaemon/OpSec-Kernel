@@ -91,6 +91,11 @@ properties:
         - description: range upper bound
         - description: adjustment (in permyriad, i.e. 0.01%)
 
+allOf:
+  - $ref: serial.yaml
+
+unevaluatedProperties: false
+
 required:
   - compatible
   - reg
@@ -100,11 +105,6 @@ required:
   - reset-names
   - dmas
   - dma-names
-
-allOf:
-  - $ref: serial.yaml
-
-unevaluatedProperties: false
 
 examples:
   - |

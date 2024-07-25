@@ -23,6 +23,7 @@ struct sofef00_panel {
 	struct regulator *supply;
 	struct gpio_desc *reset_gpio;
 	const struct drm_display_mode *mode;
+	bool prepared;
 };
 
 static inline
@@ -112,6 +113,9 @@ static int sofef00_panel_prepare(struct drm_panel *panel)
 	struct device *dev = &ctx->dsi->dev;
 	int ret;
 
+	if (ctx->prepared)
+		return 0;
+
 	ret = regulator_enable(ctx->supply);
 	if (ret < 0) {
 		dev_err(dev, "Failed to enable regulator: %d\n", ret);
@@ -127,6 +131,7 @@ static int sofef00_panel_prepare(struct drm_panel *panel)
 		return ret;
 	}
 
+	ctx->prepared = true;
 	return 0;
 }
 
@@ -136,12 +141,16 @@ static int sofef00_panel_unprepare(struct drm_panel *panel)
 	struct device *dev = &ctx->dsi->dev;
 	int ret;
 
+	if (!ctx->prepared)
+		return 0;
+
 	ret = sofef00_panel_off(ctx);
 	if (ret < 0)
 		dev_err(dev, "Failed to un-initialize panel: %d\n", ret);
 
 	regulator_disable(ctx->supply);
 
+	ctx->prepared = false;
 	return 0;
 }
 

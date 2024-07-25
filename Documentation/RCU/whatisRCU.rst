@@ -59,8 +59,8 @@ experiment with should focus on Section 2.  People who prefer to start
 with example uses should focus on Sections 3 and 4.  People who need to
 understand the RCU implementation should focus on Section 5, then dive
 into the kernel source code.  People who reason best by analogy should
-focus on Section 6 and 7.  Section 8 serves as an index to the docbook
-API documentation, and Section 9 is the traditional answer key.
+focus on Section 6.  Section 7 serves as an index to the docbook API
+documentation, and Section 8 is the traditional answer key.
 
 So, start with the section that makes the most sense to you and your
 preferred method of learning.  If you need to know everything about
@@ -172,25 +172,14 @@ rcu_read_lock()
 	critical section.  Reference counts may be used in conjunction
 	with RCU to maintain longer-term references to data structures.
 
-	Note that anything that disables bottom halves, preemption,
-	or interrupts also enters an RCU read-side critical section.
-	Acquiring a spinlock also enters an RCU read-side critical
-	sections, even for spinlocks that do not disable preemption,
-	as is the case in kernels built with CONFIG_PREEMPT_RT=y.
-	Sleeplocks do *not* enter RCU read-side critical sections.
-
 rcu_read_unlock()
 ^^^^^^^^^^^^^^^^^
 	void rcu_read_unlock(void);
 
 	This temporal primitives is used by a reader to inform the
 	reclaimer that the reader is exiting an RCU read-side critical
-	section.  Anything that enables bottom halves, preemption,
-	or interrupts also exits an RCU read-side critical section.
-	Releasing a spinlock also exits an RCU read-side critical section.
-
-	Note that RCU read-side critical sections may be nested and/or
-	overlapping.
+	section.  Note that RCU read-side critical sections may be nested
+	and/or overlapping.
 
 synchronize_rcu()
 ^^^^^^^^^^^^^^^^^
@@ -427,7 +416,7 @@ their assorted primitives.
 
 This section shows a simple use of the core RCU API to protect a
 global pointer to a dynamically allocated structure.  More-typical
-uses of RCU may be found in listRCU.rst and NMI-RCU.rst.
+uses of RCU may be found in listRCU.rst, arrayRCU.rst, and NMI-RCU.rst.
 ::
 
 	struct foo {
@@ -510,8 +499,8 @@ So, to sum up:
 	data item.
 
 See checklist.rst for additional rules to follow when using RCU.
-And again, more-typical uses of RCU may be found in listRCU.rst
-and NMI-RCU.rst.
+And again, more-typical uses of RCU may be found in listRCU.rst,
+arrayRCU.rst, and NMI-RCU.rst.
 
 .. _4_whatisRCU:
 
@@ -963,8 +952,8 @@ unfortunately any spinlock in a ``SLAB_TYPESAFE_BY_RCU`` object must be
 initialized after each and every call to kmem_cache_alloc(), which renders
 reference-free spinlock acquisition completely unsafe.  Therefore, when
 using ``SLAB_TYPESAFE_BY_RCU``, make proper use of a reference counter.
-(Those willing to initialize their locks in a kmem_cache constructor
-may also use locking, including cache-friendly sequence locking.)
+(Those willing to use a kmem_cache constructor may also use locking,
+including cache-friendly sequence locking.)
 
 With traditional reference counting -- such as that implemented by the
 kref library in Linux -- there is typically code that runs when the last

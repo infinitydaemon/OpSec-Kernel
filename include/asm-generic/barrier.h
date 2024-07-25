@@ -193,6 +193,7 @@ do {									\
 #ifndef smp_store_release
 #define smp_store_release(p, v)						\
 do {									\
+	compiletime_assert_atomic_type(*p);				\
 	barrier();							\
 	WRITE_ONCE(*p, v);						\
 } while (0)
@@ -202,6 +203,7 @@ do {									\
 #define smp_load_acquire(p)						\
 ({									\
 	__unqual_scalar_typeof(*p) ___p1 = READ_ONCE(*p);		\
+	compiletime_assert_atomic_type(*p);				\
 	barrier();							\
 	(typeof(*p))___p1;						\
 })

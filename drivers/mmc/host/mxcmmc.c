@@ -266,18 +266,11 @@ static inline void buffer_swap32(u32 *buf, int len)
 
 static void mxcmci_swap_buffers(struct mmc_data *data)
 {
-	struct sg_mapping_iter sgm;
-	u32 *buf;
+	struct scatterlist *sg;
+	int i;
 
-	sg_miter_start(&sgm, data->sg, data->sg_len,
-		       SG_MITER_TO_SG | SG_MITER_FROM_SG);
-
-	while (sg_miter_next(&sgm)) {
-		buf = sgm.addr;
-		buffer_swap32(buf, sgm.length);
-	}
-
-	sg_miter_stop(&sgm);
+	for_each_sg(data->sg, sg, data->sg_len, i)
+		buffer_swap32(sg_virt(sg), sg->length);
 }
 #else
 static inline void mxcmci_swap_buffers(struct mmc_data *data) {}
@@ -533,9 +526,10 @@ static int mxcmci_poll_status(struct mxcmci_host *host, u32 mask)
 	} while (1);
 }
 
-static int mxcmci_pull(struct mxcmci_host *host, u32 *buf, int bytes)
+static int mxcmci_pull(struct mxcmci_host *host, void *_buf, int bytes)
 {
 	unsigned int stat;
+	u32 *buf = _buf;
 
 	while (bytes > 3) {
 		stat = mxcmci_poll_status(host,
@@ -561,9 +555,10 @@ static int mxcmci_pull(struct mxcmci_host *host, u32 *buf, int bytes)
 	return 0;
 }
 
-static int mxcmci_push(struct mxcmci_host *host, u32 *buf, int bytes)
+static int mxcmci_push(struct mxcmci_host *host, void *_buf, int bytes)
 {
 	unsigned int stat;
+	u32 *buf = _buf;
 
 	while (bytes > 3) {
 		stat = mxcmci_poll_status(host, STATUS_BUF_WRITE_RDY);
@@ -591,39 +586,31 @@ static int mxcmci_push(struct mxcmci_host *host, u32 *buf, int bytes)
 static int mxcmci_transfer_data(struct mxcmci_host *host)
 {
 	struct mmc_data *data = host->req->data;
-	struct sg_mapping_iter sgm;
-	int stat;
-	u32 *buf;
+	struct scatterlist *sg;
+	int stat, i;
 
 	host->data = data;
 	host->datasize = 0;
-	sg_miter_start(&sgm, data->sg, data->sg_len,
-		       (data->flags & MMC_DATA_READ) ? SG_MITER_TO_SG : SG_MITER_FROM_SG);
 
 	if (data->flags & MMC_DATA_READ) {
-		while (sg_miter_next(&sgm)) {
-			buf = sgm.addr;
-			stat = mxcmci_pull(host, buf, sgm.length);
+		for_each_sg(data->sg, sg, data->sg_len, i) {
+			stat = mxcmci_pull(host, sg_virt(sg), sg->length);
 			if (stat)
-				goto transfer_error;
-			host->datasize += sgm.length;
+				return stat;
+			host->datasize += sg->length;
 		}
 	} else {
-		while (sg_miter_next(&sgm)) {
-			buf = sgm.addr;
-			stat = mxcmci_push(host, buf, sgm.length);
+		for_each_sg(data->sg, sg, data->sg_len, i) {
+			stat = mxcmci_push(host, sg_virt(sg), sg->length);
 			if (stat)
-				goto transfer_error;
-			host->datasize += sgm.length;
+				return stat;
+			host->datasize += sg->length;
 		}
 		stat = mxcmci_poll_status(host, STATUS_WRITE_OP_DONE);
 		if (stat)
-			goto transfer_error;
+			return stat;
 	}
-
-transfer_error:
-	sg_miter_stop(&sgm);
-	return stat;
+	return 0;
 }
 
 static void mxcmci_datawork(struct work_struct *work)

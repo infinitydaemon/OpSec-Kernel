@@ -14,7 +14,7 @@ static const struct snd_soc_acpi_codecs essx_83x6 = {
 	.codecs = { "ESSX8316", "ESSX8326", "ESSX8336"},
 };
 
-static const struct snd_soc_acpi_codecs mx98373_spk = {
+static const struct snd_soc_acpi_codecs jsl_7219_98373_codecs = {
 	.num_codecs = 1,
 	.codecs = {"MX98373"}
 };
@@ -52,42 +52,40 @@ static const struct snd_soc_acpi_codecs rt5682_rt5682s_hp = {
 struct snd_soc_acpi_mach snd_soc_acpi_intel_jsl_machines[] = {
 	{
 		.id = "DLGS7219",
-		.drv_name = "jsl_da7219_def",
-		.machine_quirk = snd_soc_acpi_codec_list,
-		.quirk_data = &mx98373_spk,
+		.drv_name = "sof_da7219_mx98373",
 		.sof_tplg_filename = "sof-jsl-da7219.tplg",
+		.machine_quirk = snd_soc_acpi_codec_list,
+		.quirk_data = &jsl_7219_98373_codecs,
 	},
 	{
 		.id = "DLGS7219",
-		.drv_name = "jsl_da7219_def",
-		.machine_quirk = snd_soc_acpi_codec_list,
-		.quirk_data = &mx98360a_spk,
+		.drv_name = "sof_da7219_mx98360a",
 		.sof_tplg_filename = "sof-jsl-da7219-mx98360a.tplg",
 	},
 	{
 		.comp_ids = &rt5682_rt5682s_hp,
-		.drv_name = "jsl_rt5682_def",
+		.drv_name = "jsl_rt5682_rt1015",
 		.machine_quirk = snd_soc_acpi_codec_list,
 		.quirk_data = &rt1015_spk,
 		.sof_tplg_filename = "sof-jsl-rt5682-rt1015.tplg",
 	},
 	{
 		.comp_ids = &rt5682_rt5682s_hp,
-		.drv_name = "jsl_rt5682_def",
+		.drv_name = "jsl_rt5682_rt1015p",
 		.machine_quirk = snd_soc_acpi_codec_list,
 		.quirk_data = &rt1015p_spk,
 		.sof_tplg_filename = "sof-jsl-rt5682-rt1015.tplg",
 	},
 	{
 		.comp_ids = &rt5682_rt5682s_hp,
-		.drv_name = "jsl_rt5682_def",
+		.drv_name = "jsl_rt5682_mx98360",
 		.machine_quirk = snd_soc_acpi_codec_list,
 		.quirk_data = &mx98360a_spk,
 		.sof_tplg_filename = "sof-jsl-rt5682-mx98360a.tplg",
 	},
 	{
 		.comp_ids = &rt5682_rt5682s_hp,
-		.drv_name = "jsl_rt5682_def",
+		.drv_name = "jsl_rt5682",
 		.sof_tplg_filename = "sof-jsl-rt5682.tplg",
 	},
 	{
@@ -107,7 +105,7 @@ struct snd_soc_acpi_mach snd_soc_acpi_intel_jsl_machines[] = {
 	},
 	{
 		.id = "10EC5650",
-		.drv_name = "jsl_rt5682_def",
+		.drv_name = "jsl_rt5650",
 		.machine_quirk = snd_soc_acpi_codec_list,
 		.quirk_data = &rt5650_spk,
 		.sof_tplg_filename = "sof-jsl-rt5650.tplg",

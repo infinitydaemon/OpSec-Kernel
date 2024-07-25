@@ -44,7 +44,6 @@
 #include <linux/kthread.h>
 #include <linux/init.h>
 #include <linux/mmu_notifier.h>
-#include <linux/cred.h>
 
 #include <asm/tlb.h>
 #include "internal.h"
@@ -400,11 +399,10 @@ static int dump_task(struct task_struct *p, void *arg)
 		return 0;
 	}
 
-	pr_info("[%7d] %5d %5d %8lu %8lu %8lu %8lu %9lu %8ld %8lu         %5hd %s\n",
+	pr_info("[%7d] %5d %5d %8lu %8lu %8ld %8lu         %5hd %s\n",
 		task->pid, from_kuid(&init_user_ns, task_uid(task)),
 		task->tgid, task->mm->total_vm, get_mm_rss(task->mm),
-		get_mm_counter(task->mm, MM_ANONPAGES), get_mm_counter(task->mm, MM_FILEPAGES),
-		get_mm_counter(task->mm, MM_SHMEMPAGES), mm_pgtables_bytes(task->mm),
+		mm_pgtables_bytes(task->mm),
 		get_mm_counter(task->mm, MM_SWAPENTS),
 		task->signal->oom_score_adj, task->comm);
 	task_unlock(task);
@@ -425,7 +423,7 @@ static int dump_task(struct task_struct *p, void *arg)
 static void dump_tasks(struct oom_control *oc)
 {
 	pr_info("Tasks state (memory values in pages):\n");
-	pr_info("[  pid  ]   uid  tgid total_vm      rss rss_anon rss_file rss_shmem pgtables_bytes swapents oom_score_adj name\n");
+	pr_info("[  pid  ]   uid  tgid total_vm      rss pgtables_bytes swapents oom_score_adj name\n");
 
 	if (is_memcg_oom(oc))
 		mem_cgroup_scan_tasks(oc->memcg, dump_task, oc);
@@ -439,7 +437,7 @@ static void dump_tasks(struct oom_control *oc)
 	}
 }
 
-static void dump_oom_victim(struct oom_control *oc, struct task_struct *victim)
+static void dump_oom_summary(struct oom_control *oc, struct task_struct *victim)
 {
 	/* one line summary of the oom killer context. */
 	pr_info("oom-kill:constraint=%s,nodemask=%*pbl",
@@ -451,7 +449,7 @@ static void dump_oom_victim(struct oom_control *oc, struct task_struct *victim)
 		from_kuid(&init_user_ns, task_uid(victim)));
 }
 
-static void dump_header(struct oom_control *oc)
+static void dump_header(struct oom_control *oc, struct task_struct *p)
 {
 	pr_warn("%s invoked oom-killer: gfp_mask=%#x(%pGg), order=%d, oom_score_adj=%hd\n",
 		current->comm, oc->gfp_mask, &oc->gfp_mask, oc->order,
@@ -469,6 +467,8 @@ static void dump_header(struct oom_control *oc)
 	}
 	if (sysctl_oom_dump_tasks)
 		dump_tasks(oc);
+	if (p)
+		dump_oom_summary(oc, p);
 }
 
 /*
@@ -724,6 +724,7 @@ static struct ctl_table vm_oom_kill_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},
+	{}
 };
 #endif
 
@@ -754,7 +755,6 @@ static inline void queue_oom_reaper(struct task_struct *tsk)
  */
 static void mark_oom_victim(struct task_struct *tsk)
 {
-	const struct cred *cred;
 	struct mm_struct *mm = tsk->mm;
 
 	WARN_ON(oom_killer_disabled);
@@ -774,9 +774,7 @@ static void mark_oom_victim(struct task_struct *tsk)
 	 */
 	__thaw_task(tsk);
 	atomic_inc(&oom_victims);
-	cred = get_task_cred(tsk);
-	trace_mark_victim(tsk, cred->uid.val);
-	put_cred(cred);
+	trace_mark_victim(tsk->pid);
 }
 
 /**
@@ -1031,10 +1029,8 @@ static void oom_kill_process(struct oom_control *oc, const char *message)
 	}
 	task_unlock(victim);
 
-	if (__ratelimit(&oom_rs)) {
-		dump_header(oc);
-		dump_oom_victim(oc, victim);
-	}
+	if (__ratelimit(&oom_rs))
+		dump_header(oc, victim);
 
 	/*
 	 * Do we need to kill the entire memory cgroup?
@@ -1076,7 +1072,7 @@ static void check_panic_on_oom(struct oom_control *oc)
 	/* Do not panic for oom kills triggered by sysrq */
 	if (is_sysrq_oom(oc))
 		return;
-	dump_header(oc);
+	dump_header(oc, NULL);
 	panic("Out of memory: %s panic_on_oom is enabled\n",
 		sysctl_panic_on_oom == 2 ? "compulsory" : "system-wide");
 }
@@ -1159,7 +1155,7 @@ bool out_of_memory(struct oom_control *oc)
 	select_bad_process(oc);
 	/* Found nothing?!?! */
 	if (!oc->chosen) {
-		dump_header(oc);
+		dump_header(oc, NULL);
 		pr_warn("Out of memory and no killable processes...\n");
 		/*
 		 * If we got here due to an actual allocation at the

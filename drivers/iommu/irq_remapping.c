@@ -24,8 +24,6 @@ int no_x2apic_optout;
 
 int disable_irq_post = 0;
 
-bool enable_posted_msi __ro_after_init;
-
 static int disable_irq_remap;
 static struct irq_remap_ops *remap_ops;
 
@@ -72,8 +70,7 @@ static __init int setup_irqremap(char *str)
 			no_x2apic_optout = 1;
 		else if (!strncmp(str, "nopost", 6))
 			disable_irq_post = 1;
-		else if (IS_ENABLED(CONFIG_X86_POSTED_MSI) && !strncmp(str, "posted_msi", 10))
-			enable_posted_msi = true;
+
 		str += strcspn(str, ",");
 		while (*str == ',')
 			str++;
@@ -154,10 +151,7 @@ int __init irq_remap_enable_fault_handling(void)
 	if (!remap_ops->enable_faulting)
 		return -ENODEV;
 
-	cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "dmar:enable_fault_handling",
-			  remap_ops->enable_faulting, NULL);
-
-	return remap_ops->enable_faulting(smp_processor_id());
+	return remap_ops->enable_faulting();
 }
 
 void panic_if_irq_remap(const char *msg)

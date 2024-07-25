@@ -160,7 +160,8 @@
  */
 #define ROCKCHIP_SPI_MAX_TRANLEN		0xffff
 
-#define ROCKCHIP_SPI_MAX_NATIVE_CS_NUM		2
+/* 2 for native cs, 2 for cs-gpio */
+#define ROCKCHIP_SPI_MAX_CS_NUM			4
 #define ROCKCHIP_SPI_VER2_TYPE1			0x05EC0002
 #define ROCKCHIP_SPI_VER2_TYPE2			0x00110002
 
@@ -190,6 +191,8 @@ struct rockchip_spi {
 
 	u8 n_bytes;
 	u8 rsd;
+
+	bool cs_asserted[ROCKCHIP_SPI_MAX_CS_NUM];
 
 	bool target_abort;
 	bool cs_inactive; /* spi target tansmition stop when cs inactive */
@@ -242,6 +245,10 @@ static void rockchip_spi_set_cs(struct spi_device *spi, bool enable)
 	struct rockchip_spi *rs = spi_controller_get_devdata(ctlr);
 	bool cs_asserted = spi->mode & SPI_CS_HIGH ? enable : !enable;
 
+	/* Return immediately for no-op */
+	if (cs_asserted == rs->cs_asserted[spi_get_chipselect(spi, 0)])
+		return;
+
 	if (cs_asserted) {
 		/* Keep things powered as long as CS is asserted */
 		pm_runtime_get_sync(rs->dev);
@@ -261,6 +268,8 @@ static void rockchip_spi_set_cs(struct spi_device *spi, bool enable)
 		/* Drop reference from when we first asserted CS */
 		pm_runtime_put(rs->dev);
 	}
+
+	rs->cs_asserted[spi_get_chipselect(spi, 0)] = cs_asserted;
 }
 
 static void rockchip_spi_handle_err(struct spi_controller *ctlr,
@@ -773,30 +782,42 @@ static int rockchip_spi_probe(struct platform_device *pdev)
 		goto err_put_ctlr;
 	}
 
-	rs->apb_pclk = devm_clk_get_enabled(&pdev->dev, "apb_pclk");
+	rs->apb_pclk = devm_clk_get(&pdev->dev, "apb_pclk");
 	if (IS_ERR(rs->apb_pclk)) {
 		dev_err(&pdev->dev, "Failed to get apb_pclk\n");
 		ret = PTR_ERR(rs->apb_pclk);
 		goto err_put_ctlr;
 	}
 
-	rs->spiclk = devm_clk_get_enabled(&pdev->dev, "spiclk");
+	rs->spiclk = devm_clk_get(&pdev->dev, "spiclk");
 	if (IS_ERR(rs->spiclk)) {
 		dev_err(&pdev->dev, "Failed to get spi_pclk\n");
 		ret = PTR_ERR(rs->spiclk);
 		goto err_put_ctlr;
 	}
 
+	ret = clk_prepare_enable(rs->apb_pclk);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Failed to enable apb_pclk\n");
+		goto err_put_ctlr;
+	}
+
+	ret = clk_prepare_enable(rs->spiclk);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Failed to enable spi_clk\n");
+		goto err_disable_apbclk;
+	}
+
 	spi_enable_chip(rs, false);
 
 	ret = platform_get_irq(pdev, 0);
 	if (ret < 0)
-		goto err_put_ctlr;
+		goto err_disable_spiclk;
 
 	ret = devm_request_threaded_irq(&pdev->dev, ret, rockchip_spi_isr, NULL,
 			IRQF_ONESHOT, dev_name(&pdev->dev), ctlr);
 	if (ret)
-		goto err_put_ctlr;
+		goto err_disable_spiclk;
 
 	rs->dev = &pdev->dev;
 	rs->freq = clk_get_rate(rs->spiclk);
@@ -822,7 +843,7 @@ static int rockchip_spi_probe(struct platform_device *pdev)
 	if (!rs->fifo_len) {
 		dev_err(&pdev->dev, "Failed to get fifo length\n");
 		ret = -EINVAL;
-		goto err_put_ctlr;
+		goto err_disable_spiclk;
 	}
 
 	pm_runtime_set_autosuspend_delay(&pdev->dev, ROCKCHIP_AUTOSUSPEND_TIMEOUT);
@@ -838,7 +859,7 @@ static int rockchip_spi_probe(struct platform_device *pdev)
 		ctlr->target_abort = rockchip_spi_target_abort;
 	} else {
 		ctlr->flags = SPI_CONTROLLER_GPIO_SS;
-		ctlr->max_native_cs = ROCKCHIP_SPI_MAX_NATIVE_CS_NUM;
+		ctlr->max_native_cs = ROCKCHIP_SPI_MAX_CS_NUM;
 		/*
 		 * rk spi0 has two native cs, spi1..5 one cs only
 		 * if num-cs is missing in the dts, default to 1
@@ -916,6 +937,10 @@ err_free_dma_tx:
 		dma_release_channel(ctlr->dma_tx);
 err_disable_pm_runtime:
 	pm_runtime_disable(&pdev->dev);
+err_disable_spiclk:
+	clk_disable_unprepare(rs->spiclk);
+err_disable_apbclk:
+	clk_disable_unprepare(rs->apb_pclk);
 err_put_ctlr:
 	spi_controller_put(ctlr);
 
@@ -925,8 +950,12 @@ err_put_ctlr:
 static void rockchip_spi_remove(struct platform_device *pdev)
 {
 	struct spi_controller *ctlr = spi_controller_get(platform_get_drvdata(pdev));
+	struct rockchip_spi *rs = spi_controller_get_devdata(ctlr);
 
 	pm_runtime_get_sync(&pdev->dev);
+
+	clk_disable_unprepare(rs->spiclk);
+	clk_disable_unprepare(rs->apb_pclk);
 
 	pm_runtime_put_noidle(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);

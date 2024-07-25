@@ -308,6 +308,8 @@ static void cik_sdma_gfx_stop(struct amdgpu_device *adev)
 	u32 rb_cntl;
 	int i;
 
+	amdgpu_sdma_unset_buffer_funcs_helper(adev);
+
 	for (i = 0; i < adev->sdma.num_instances; i++) {
 		rb_cntl = RREG32(mmSDMA0_GFX_RB_CNTL + sdma_offsets[i]);
 		rb_cntl &= ~SDMA0_GFX_RB_CNTL__RB_ENABLE_MASK;
@@ -496,6 +498,9 @@ static int cik_sdma_gfx_resume(struct amdgpu_device *adev)
 		r = amdgpu_ring_test_helper(ring);
 		if (r)
 			return r;
+
+		if (adev->mman.buffer_funcs_ring == ring)
+			amdgpu_ttm_set_buffer_funcs_status(adev, true);
 	}
 
 	return 0;
@@ -920,13 +925,8 @@ static void cik_enable_sdma_mgls(struct amdgpu_device *adev,
 static int cik_sdma_early_init(void *handle)
 {
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
-	int r;
 
 	adev->sdma.num_instances = SDMA_MAX_INSTANCE;
-
-	r = cik_sdma_init_microcode(adev);
-	if (r)
-		return r;
 
 	cik_sdma_set_ring_funcs(adev);
 	cik_sdma_set_irq_funcs(adev);
@@ -941,6 +941,12 @@ static int cik_sdma_sw_init(void *handle)
 	struct amdgpu_ring *ring;
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 	int r, i;
+
+	r = cik_sdma_init_microcode(adev);
+	if (r) {
+		DRM_ERROR("Failed to load sdma firmware!\n");
+		return r;
+	}
 
 	/* SDMA trap event */
 	r = amdgpu_irq_add_id(adev, AMDGPU_IRQ_CLIENTID_LEGACY, 224,
@@ -1228,8 +1234,6 @@ static const struct amd_ip_funcs cik_sdma_ip_funcs = {
 	.soft_reset = cik_sdma_soft_reset,
 	.set_clockgating_state = cik_sdma_set_clockgating_state,
 	.set_powergating_state = cik_sdma_set_powergating_state,
-	.dump_ip_state = NULL,
-	.print_ip_state = NULL,
 };
 
 static const struct amdgpu_ring_funcs cik_sdma_ring_funcs = {
@@ -1292,7 +1296,7 @@ static void cik_sdma_set_irq_funcs(struct amdgpu_device *adev)
  * @src_offset: src GPU address
  * @dst_offset: dst GPU address
  * @byte_count: number of bytes to xfer
- * @copy_flags: unused
+ * @tmz: is this a secure operation
  *
  * Copy GPU buffers using the DMA engine (CIK).
  * Used by the amdgpu ttm implementation to move pages if
@@ -1302,7 +1306,7 @@ static void cik_sdma_emit_copy_buffer(struct amdgpu_ib *ib,
 				      uint64_t src_offset,
 				      uint64_t dst_offset,
 				      uint32_t byte_count,
-				      uint32_t copy_flags)
+				      bool tmz)
 {
 	ib->ptr[ib->length_dw++] = SDMA_PACKET(SDMA_OPCODE_COPY, SDMA_COPY_SUB_OPCODE_LINEAR, 0);
 	ib->ptr[ib->length_dw++] = byte_count;

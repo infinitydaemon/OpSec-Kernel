@@ -234,7 +234,7 @@ static int ltrf216a_read_data(struct ltrf216a_data *data, u8 addr)
 static int ltrf216a_get_lux(struct ltrf216a_data *data)
 {
 	int ret, greendata;
-	u64 lux;
+	u64 lux, div;
 
 	ret = ltrf216a_set_power_state(data, true);
 	if (ret)
@@ -246,9 +246,10 @@ static int ltrf216a_get_lux(struct ltrf216a_data *data)
 
 	ltrf216a_set_power_state(data, false);
 
-	lux = greendata * 45 * LTRF216A_WIN_FAC;
+	lux = greendata * 45 * LTRF216A_WIN_FAC * 100;
+	div = data->als_gain_fac * data->int_time_fac * 100;
 
-	return lux;
+	return div_u64(lux, div);
 }
 
 static int ltrf216a_read_raw(struct iio_dev *indio_dev,
@@ -278,8 +279,7 @@ static int ltrf216a_read_raw(struct iio_dev *indio_dev,
 		if (ret < 0)
 			return ret;
 		*val = ret;
-		*val2 = data->als_gain_fac * data->int_time_fac;
-		return IIO_VAL_FRACTIONAL;
+		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_INT_TIME:
 		mutex_lock(&data->lock);
 		ret = ltrf216a_get_int_time(data, val, val2);

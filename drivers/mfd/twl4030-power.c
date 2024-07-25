@@ -27,8 +27,8 @@
 #include <linux/pm.h>
 #include <linux/mfd/twl.h>
 #include <linux/platform_device.h>
-#include <linux/property.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 
 #include <asm/mach-types.h>
 
@@ -686,9 +686,6 @@ static bool twl4030_power_use_poweroff(const struct twl4030_power_data *pdata,
 	if (of_property_read_bool(node, "ti,use_poweroff"))
 		return true;
 
-	if (of_device_is_system_power_controller(node->parent))
-		return true;
-
 	return false;
 }
 
@@ -886,6 +883,7 @@ static int twl4030_power_probe(struct platform_device *pdev)
 {
 	const struct twl4030_power_data *pdata = dev_get_platdata(&pdev->dev);
 	struct device_node *node = pdev->dev.of_node;
+	const struct of_device_id *match;
 	int err = 0;
 	int err2 = 0;
 	u8 val;
@@ -906,8 +904,10 @@ static int twl4030_power_probe(struct platform_device *pdev)
 		return err;
 	}
 
-	if (node)
-		pdata = device_get_match_data(&pdev->dev);
+	match = of_match_device(of_match_ptr(twl4030_power_of_match),
+				&pdev->dev);
+	if (match && match->data)
+		pdata = match->data;
 
 	if (pdata) {
 		err = twl4030_power_configure_scripts(pdata);

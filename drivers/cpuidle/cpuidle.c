@@ -237,7 +237,7 @@ noinstr int cpuidle_enter_state(struct cpuidle_device *dev,
 	}
 
 	if (target_state->flags & CPUIDLE_FLAG_TLB_FLUSHED)
-		leave_mm();
+		leave_mm(dev->cpu);
 
 	/* Take note of the planned idle state. */
 	sched_idle_set_state(target_state);

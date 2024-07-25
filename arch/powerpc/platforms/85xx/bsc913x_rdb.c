@@ -15,7 +15,7 @@
 
 #include "mpc85xx.h"
 
-static void __init bsc913x_rdb_pic_init(void)
+void __init bsc913x_rdb_pic_init(void)
 {
 	struct mpic *mpic = mpic_alloc(NULL, 0, MPIC_BIG_ENDIAN |
 	  MPIC_SINGLE_DEST_CPU,

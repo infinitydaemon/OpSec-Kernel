@@ -26,7 +26,6 @@
  *          Jerome Glisse
  */
 
-#include <linux/debugfs.h>
 #include <linux/iosys-map.h>
 #include <linux/pci.h>
 

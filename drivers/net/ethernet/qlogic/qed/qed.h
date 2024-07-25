@@ -662,6 +662,8 @@ struct qed_hwfn {
 };
 
 struct pci_params {
+	int		pm_cap;
+
 	unsigned long	mem_start;
 	unsigned long	mem_end;
 	unsigned int	irq;

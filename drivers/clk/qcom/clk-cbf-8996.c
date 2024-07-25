@@ -41,6 +41,17 @@ enum {
 
 #define CBF_PLL_OFFSET 0xf000
 
+static const u8 cbf_pll_regs[PLL_OFF_MAX_REGS] = {
+	[PLL_OFF_L_VAL] = 0x08,
+	[PLL_OFF_ALPHA_VAL] = 0x10,
+	[PLL_OFF_USER_CTL] = 0x18,
+	[PLL_OFF_CONFIG_CTL] = 0x20,
+	[PLL_OFF_CONFIG_CTL_U] = 0x24,
+	[PLL_OFF_TEST_CTL] = 0x30,
+	[PLL_OFF_TEST_CTL_U] = 0x34,
+	[PLL_OFF_STATUS] = 0x28,
+};
+
 static struct alpha_pll_config cbfpll_config = {
 	.l = 72,
 	.config_ctl_val = 0x200d4828,
@@ -56,7 +67,7 @@ static struct alpha_pll_config cbfpll_config = {
 
 static struct clk_alpha_pll cbf_pll = {
 	.offset = CBF_PLL_OFFSET,
-	.regs = clk_alpha_pll_regs[CLK_ALPHA_PLL_TYPE_HUAYRA_APSS],
+	.regs = cbf_pll_regs,
 	.flags = SUPPORTS_DYNAMIC_UPDATE | SUPPORTS_FSM_MODE,
 	.clkr.hw.init = &(struct clk_init_data){
 		.name = "cbf_pll",
@@ -239,11 +250,13 @@ static int qcom_msm8996_cbf_icc_register(struct platform_device *pdev, struct cl
 	return 0;
 }
 
-static void qcom_msm8996_cbf_icc_remove(struct platform_device *pdev)
+static int qcom_msm8996_cbf_icc_remove(struct platform_device *pdev)
 {
 	struct icc_provider *provider = platform_get_drvdata(pdev);
 
 	icc_clk_unregister(provider);
+
+	return 0;
 }
 #define qcom_msm8996_cbf_icc_sync_state icc_sync_state
 #else
@@ -253,7 +266,7 @@ static int qcom_msm8996_cbf_icc_register(struct platform_device *pdev,  struct c
 
 	return 0;
 }
-#define qcom_msm8996_cbf_icc_remove(pdev) { }
+#define qcom_msm8996_cbf_icc_remove(pdev) (0)
 #define qcom_msm8996_cbf_icc_sync_state NULL
 #endif
 
@@ -327,9 +340,9 @@ static int qcom_msm8996_cbf_probe(struct platform_device *pdev)
 	return qcom_msm8996_cbf_icc_register(pdev, &cbf_mux.clkr.hw);
 }
 
-static void qcom_msm8996_cbf_remove(struct platform_device *pdev)
+static int qcom_msm8996_cbf_remove(struct platform_device *pdev)
 {
-	qcom_msm8996_cbf_icc_remove(pdev);
+	return qcom_msm8996_cbf_icc_remove(pdev);
 }
 
 static const struct of_device_id qcom_msm8996_cbf_match_table[] = {
@@ -341,7 +354,7 @@ MODULE_DEVICE_TABLE(of, qcom_msm8996_cbf_match_table);
 
 static struct platform_driver qcom_msm8996_cbf_driver = {
 	.probe = qcom_msm8996_cbf_probe,
-	.remove_new = qcom_msm8996_cbf_remove,
+	.remove = qcom_msm8996_cbf_remove,
 	.driver = {
 		.name = "qcom-msm8996-cbf",
 		.of_match_table = qcom_msm8996_cbf_match_table,

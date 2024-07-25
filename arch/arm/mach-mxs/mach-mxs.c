@@ -356,9 +356,7 @@ static int __init mxs_restart_init(void)
 {
 	struct device_node *np;
 
-	np = of_find_compatible_node(NULL, NULL, "fsl,imx23-clkctrl");
-	if (!np)
-		np = of_find_compatible_node(NULL, NULL, "fsl,imx28-clkctrl");
+	np = of_find_compatible_node(NULL, NULL, "fsl,clkctrl");
 	reset_addr = of_iomap(np, 0);
 	if (!reset_addr)
 		return -ENODEV;

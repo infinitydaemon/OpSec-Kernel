@@ -19,9 +19,7 @@ description:
 properties:
   compatible:
     items:
-      - enum:
-          - sprd,ums512-glbregs
-          - sprd,ums9620-glbregs
+      - const: sprd,ums512-glbregs
       - const: syscon
       - const: simple-mfd
 

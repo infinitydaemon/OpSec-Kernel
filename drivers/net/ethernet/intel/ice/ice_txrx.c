@@ -552,22 +552,19 @@ ice_rx_frame_truesize(struct ice_rx_ring *rx_ring, const unsigned int size)
  * @xdp_prog: XDP program to run
  * @xdp_ring: ring to be used for XDP_TX action
  * @rx_buf: Rx buffer to store the XDP action
- * @eop_desc: Last descriptor in packet to read metadata from
  *
  * Returns any of ICE_XDP_{PASS, CONSUMED, TX, REDIR}
  */
 static void
 ice_run_xdp(struct ice_rx_ring *rx_ring, struct xdp_buff *xdp,
 	    struct bpf_prog *xdp_prog, struct ice_tx_ring *xdp_ring,
-	    struct ice_rx_buf *rx_buf, union ice_32b_rx_flex_desc *eop_desc)
+	    struct ice_rx_buf *rx_buf)
 {
 	unsigned int ret = ICE_XDP_PASS;
 	u32 act;
 
 	if (!xdp_prog)
 		goto exit;
-
-	ice_xdp_meta_set_desc(xdp, eop_desc);
 
 	act = bpf_prog_run_xdp(xdp_prog, xdp);
 	switch (act) {
@@ -1051,7 +1048,8 @@ ice_construct_skb(struct ice_rx_ring *rx_ring, struct xdp_buff *xdp)
 	}
 
 	/* allocate a skb to store the frags */
-	skb = napi_alloc_skb(&rx_ring->q_vector->napi, ICE_RX_HDR_SIZE);
+	skb = __napi_alloc_skb(&rx_ring->q_vector->napi, ICE_RX_HDR_SIZE,
+			       GFP_ATOMIC | __GFP_NOWARN);
 	if (unlikely(!skb))
 		return NULL;
 
@@ -1178,7 +1176,8 @@ int ice_clean_rx_irq(struct ice_rx_ring *rx_ring, int budget)
 		struct sk_buff *skb;
 		unsigned int size;
 		u16 stat_err_bits;
-		u16 vlan_tci;
+		u16 vlan_tag = 0;
+		u16 rx_ptype;
 
 		/* get the Rx desc from Rx ring based on 'next_to_clean' */
 		rx_desc = ICE_RX_DESC(rx_ring, ntc);
@@ -1238,7 +1237,7 @@ int ice_clean_rx_irq(struct ice_rx_ring *rx_ring, int budget)
 		if (ice_is_non_eop(rx_ring, rx_desc))
 			continue;
 
-		ice_run_xdp(rx_ring, xdp, xdp_prog, xdp_ring, rx_buf, rx_desc);
+		ice_run_xdp(rx_ring, xdp, xdp_prog, xdp_ring, rx_buf);
 		if (rx_buf->act == ICE_XDP_PASS)
 			goto construct_skb;
 		total_rx_bytes += xdp_get_buff_len(xdp);
@@ -1276,7 +1275,7 @@ construct_skb:
 			continue;
 		}
 
-		vlan_tci = ice_get_vlan_tci(rx_desc);
+		vlan_tag = ice_get_vlan_tag_from_rx_desc(rx_desc);
 
 		/* pad the skb if needed, to make a valid ethernet frame */
 		if (eth_skb_pad(skb))
@@ -1286,11 +1285,14 @@ construct_skb:
 		total_rx_bytes += skb->len;
 
 		/* populate checksum, VLAN, and protocol */
-		ice_process_skb_fields(rx_ring, rx_desc, skb);
+		rx_ptype = le16_to_cpu(rx_desc->wb.ptype_flex_flags0) &
+			ICE_RX_FLEX_DESC_PTYPE_M;
+
+		ice_process_skb_fields(rx_ring, rx_desc, skb, rx_ptype);
 
 		ice_trace(clean_rx_irq_indicate, rx_ring, rx_desc, skb);
 		/* send completed skb up the stack */
-		ice_receive_skb(rx_ring, skb, vlan_tci);
+		ice_receive_skb(rx_ring, skb, vlan_tag);
 
 		/* update budget accounting */
 		total_rx_pkts++;
@@ -1491,9 +1493,9 @@ static void ice_set_wb_on_itr(struct ice_q_vector *q_vector)
 	 * be static in non-adaptive mode (user configured)
 	 */
 	wr32(&vsi->back->hw, GLINT_DYN_CTL(q_vector->reg_idx),
-	     FIELD_PREP(GLINT_DYN_CTL_ITR_INDX_M, ICE_ITR_NONE) |
-	     FIELD_PREP(GLINT_DYN_CTL_INTENA_MSK_M, 1) |
-	     FIELD_PREP(GLINT_DYN_CTL_WB_ON_ITR_M, 1));
+	     ((ICE_ITR_NONE << GLINT_DYN_CTL_ITR_INDX_S) &
+	      GLINT_DYN_CTL_ITR_INDX_M) | GLINT_DYN_CTL_INTENA_MSK_M |
+	     GLINT_DYN_CTL_WB_ON_ITR_M);
 
 	q_vector->wb_on_itr = true;
 }
@@ -2301,6 +2303,9 @@ ice_tstamp(struct ice_tx_ring *tx_ring, struct sk_buff *skb,
 
 	/* only timestamp the outbound packet if the user has requested it */
 	if (likely(!(skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP)))
+		return;
+
+	if (!tx_ring->ptp_tx)
 		return;
 
 	/* Tx timestamps cannot be sampled when doing TSO */

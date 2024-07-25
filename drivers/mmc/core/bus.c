@@ -214,7 +214,7 @@ static const struct dev_pm_ops mmc_bus_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(mmc_bus_suspend, mmc_bus_resume)
 };
 
-static const struct bus_type mmc_bus_type = {
+static struct bus_type mmc_bus_type = {
 	.name		= "mmc",
 	.dev_groups	= mmc_dev_groups,
 	.uevent		= mmc_bus_uevent,
@@ -264,6 +264,8 @@ static void mmc_release_card(struct device *dev)
 
 	sdio_free_common_cis(card);
 
+	kfree(card->ext_reg_buf);
+
 	kfree(card->info);
 
 	kfree(card);
@@ -272,7 +274,7 @@ static void mmc_release_card(struct device *dev)
 /*
  * Allocate and initialise a new MMC card structure.
  */
-struct mmc_card *mmc_alloc_card(struct mmc_host *host, const struct device_type *type)
+struct mmc_card *mmc_alloc_card(struct mmc_host *host, struct device_type *type)
 {
 	struct mmc_card *card;
 

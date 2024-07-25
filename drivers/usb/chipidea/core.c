@@ -890,7 +890,7 @@ struct platform_device *ci_hdrc_add_device(struct device *dev,
 	if (ret)
 		return ERR_PTR(ret);
 
-	id = ida_alloc(&ci_ida, GFP_KERNEL);
+	id = ida_simple_get(&ci_ida, 0, 0, GFP_KERNEL);
 	if (id < 0)
 		return ERR_PTR(id);
 
@@ -920,7 +920,7 @@ struct platform_device *ci_hdrc_add_device(struct device *dev,
 err:
 	platform_device_put(pdev);
 put_id:
-	ida_free(&ci_ida, id);
+	ida_simple_remove(&ci_ida, id);
 	return ERR_PTR(ret);
 }
 EXPORT_SYMBOL_GPL(ci_hdrc_add_device);
@@ -929,7 +929,7 @@ void ci_hdrc_remove_device(struct platform_device *pdev)
 {
 	int id = pdev->id;
 	platform_device_unregister(pdev);
-	ida_free(&ci_ida, id);
+	ida_simple_remove(&ci_ida, id);
 }
 EXPORT_SYMBOL_GPL(ci_hdrc_remove_device);
 
@@ -1084,6 +1084,10 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
+	ret = ci_ulpi_init(ci);
+	if (ret)
+		return ret;
+
 	if (ci->platdata->phy) {
 		ci->phy = ci->platdata->phy;
 	} else if (ci->platdata->usb_phy) {
@@ -1137,10 +1141,6 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 		dev_err(dev, "unable to init phy: %d\n", ret);
 		goto ulpi_exit;
 	}
-
-	ret = ci_ulpi_init(ci);
-	if (ret)
-		return ret;
 
 	ci->hw_bank.phys = res->start;
 

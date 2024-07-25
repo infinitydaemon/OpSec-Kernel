@@ -642,7 +642,7 @@ static int gl518_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id gl518_id[] = {
-	{ "gl518sm" },
+	{ "gl518sm", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, gl518_id);

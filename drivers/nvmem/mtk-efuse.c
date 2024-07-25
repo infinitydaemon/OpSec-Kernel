@@ -45,8 +45,9 @@ static int mtk_efuse_gpu_speedbin_pp(void *context, const char *id, int index,
 	return 0;
 }
 
-static void mtk_efuse_fixup_dt_cell_info(struct nvmem_device *nvmem,
-					 struct nvmem_cell_info *cell)
+static void mtk_efuse_fixup_cell_info(struct nvmem_device *nvmem,
+				      struct nvmem_layout *layout,
+				      struct nvmem_cell_info *cell)
 {
 	size_t sz = strlen(cell->name);
 
@@ -60,6 +61,10 @@ static void mtk_efuse_fixup_dt_cell_info(struct nvmem_device *nvmem,
 		cell->read_post_process = mtk_efuse_gpu_speedbin_pp;
 }
 
+static struct nvmem_layout mtk_efuse_layout = {
+	.fixup_cell_info = mtk_efuse_fixup_cell_info,
+};
+
 static int mtk_efuse_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -68,7 +73,6 @@ static int mtk_efuse_probe(struct platform_device *pdev)
 	struct nvmem_config econfig = {};
 	struct mtk_efuse_priv *priv;
 	const struct mtk_efuse_pdata *pdata;
-	struct platform_device *socinfo;
 
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -87,18 +91,10 @@ static int mtk_efuse_probe(struct platform_device *pdev)
 	econfig.priv = priv;
 	econfig.dev = dev;
 	if (pdata->uses_post_processing)
-		econfig.fixup_dt_cell_info = &mtk_efuse_fixup_dt_cell_info;
+		econfig.layout = &mtk_efuse_layout;
 	nvmem = devm_nvmem_register(dev, &econfig);
-	if (IS_ERR(nvmem))
-		return PTR_ERR(nvmem);
 
-	socinfo = platform_device_register_data(&pdev->dev, "mtk-socinfo",
-						PLATFORM_DEVID_AUTO, NULL, 0);
-	if (IS_ERR(socinfo))
-		dev_info(dev, "MediaTek SoC Information will be unavailable\n");
-
-	platform_set_drvdata(pdev, socinfo);
-	return 0;
+	return PTR_ERR_OR_ZERO(nvmem);
 }
 
 static const struct mtk_efuse_pdata mtk_mt8186_efuse_pdata = {
@@ -117,17 +113,8 @@ static const struct of_device_id mtk_efuse_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, mtk_efuse_of_match);
 
-static void mtk_efuse_remove(struct platform_device *pdev)
-{
-	struct platform_device *socinfo = platform_get_drvdata(pdev);
-
-	if (!IS_ERR_OR_NULL(socinfo))
-		platform_device_unregister(socinfo);
-}
-
 static struct platform_driver mtk_efuse_driver = {
 	.probe = mtk_efuse_probe,
-	.remove_new = mtk_efuse_remove,
 	.driver = {
 		.name = "mediatek,efuse",
 		.of_match_table = mtk_efuse_of_match,

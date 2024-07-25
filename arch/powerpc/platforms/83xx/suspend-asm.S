@@ -68,8 +68,7 @@ _GLOBAL(mpc83xx_enter_deep_sleep)
 
 	mfspr	r5, SPRN_HID0
 	mfspr	r6, SPRN_HID1
-	/* FIXME: Should this use SPRN_HID2_G2_LE? */
-	mfspr	r7, SPRN_HID2_750FX
+	mfspr	r7, SPRN_HID2
 
 	stw	r5, SS_HID+0(r3)
 	stw	r6, SS_HID+4(r3)
@@ -397,8 +396,7 @@ mpc83xx_deep_resume:
 
 	mtspr	SPRN_HID0, r5
 	mtspr	SPRN_HID1, r6
-	/* FIXME: Should this use SPRN_HID2_G2_LE? */
-	mtspr	SPRN_HID2_750FX, r7
+	mtspr	SPRN_HID2, r7
 
 	lwz	r4, SS_IABR+0(r3)
 	lwz	r5, SS_IABR+4(r3)

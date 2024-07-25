@@ -20,8 +20,6 @@
 /* IPG is in core_clk cycles */
 #define MII_RT_TX_IPG_100M	0x17
 #define MII_RT_TX_IPG_1G	0xb
-#define MII_RT_TX_IPG_100M_SR1	0x166
-#define MII_RT_TX_IPG_1G_SR1	0x1a
 
 #define	ICSSG_QUEUES_MAX		64
 #define	ICSSG_QUEUE_OFFSET		0xd00
@@ -204,29 +202,23 @@ void icssg_config_ipg(struct prueth_emac *emac)
 {
 	struct prueth *prueth = emac->prueth;
 	int slice = prueth_emac_slice(emac);
-	u32 ipg;
 
 	switch (emac->speed) {
 	case SPEED_1000:
-		ipg = emac->is_sr1 ? MII_RT_TX_IPG_1G_SR1 : MII_RT_TX_IPG_1G;
+		icssg_mii_update_ipg(prueth->mii_rt, slice, MII_RT_TX_IPG_1G);
 		break;
 	case SPEED_100:
-		ipg = emac->is_sr1 ? MII_RT_TX_IPG_100M_SR1 : MII_RT_TX_IPG_100M;
+		icssg_mii_update_ipg(prueth->mii_rt, slice, MII_RT_TX_IPG_100M);
 		break;
 	case SPEED_10:
-		/* Firmware hardcodes IPG for SR1.0 */
-		if (emac->is_sr1)
-			return;
 		/* IPG for 10M is same as 100M */
-		ipg = MII_RT_TX_IPG_100M;
+		icssg_mii_update_ipg(prueth->mii_rt, slice, MII_RT_TX_IPG_100M);
 		break;
 	default:
 		/* Other links speeds not supported */
 		netdev_err(emac->ndev, "Unsupported link speed\n");
 		return;
 	}
-
-	icssg_mii_update_ipg(prueth->mii_rt, slice, ipg);
 }
 
 static void emac_r30_cmd_init(struct prueth_emac *emac)
@@ -441,17 +433,6 @@ int emac_set_port_state(struct prueth_emac *emac,
 	return ret;
 }
 
-void icssg_config_half_duplex(struct prueth_emac *emac)
-{
-	u32 val;
-
-	if (!emac->half_duplex)
-		return;
-
-	val = get_random_u32();
-	writel(val, emac->dram.va + HD_RAND_SEED_OFFSET);
-}
-
 void icssg_config_set_speed(struct prueth_emac *emac)
 {
 	u8 fw_speed;
@@ -471,9 +452,6 @@ void icssg_config_set_speed(struct prueth_emac *emac)
 		netdev_err(emac->ndev, "Unsupported link speed\n");
 		return;
 	}
-
-	if (emac->duplex == DUPLEX_HALF)
-		fw_speed |= FW_LINK_SPEED_HD;
 
 	writeb(fw_speed, emac->dram.va + PORT_LINK_SPEED_OFFSET);
 }

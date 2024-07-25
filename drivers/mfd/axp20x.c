@@ -22,8 +22,7 @@
 #include <linux/mfd/axp20x.h>
 #include <linux/mfd/core.h>
 #include <linux/module.h>
-#include <linux/of.h>
-#include <linux/property.h>
+#include <linux/of_device.h>
 #include <linux/reboot.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
@@ -42,7 +41,6 @@ static const char * const axp20x_model_names[] = {
 	"AXP223",
 	"AXP288",
 	"AXP313a",
-	"AXP717",
 	"AXP803",
 	"AXP806",
 	"AXP809",
@@ -208,25 +206,6 @@ static const struct regmap_access_table axp313a_volatile_table = {
 	.n_yes_ranges = ARRAY_SIZE(axp313a_volatile_ranges),
 };
 
-static const struct regmap_range axp717_writeable_ranges[] = {
-	regmap_reg_range(AXP717_IRQ0_EN, AXP717_IRQ4_EN),
-	regmap_reg_range(AXP717_DCDC_OUTPUT_CONTROL, AXP717_CPUSLDO_CONTROL),
-};
-
-static const struct regmap_range axp717_volatile_ranges[] = {
-	regmap_reg_range(AXP717_IRQ0_STATE, AXP717_IRQ4_STATE),
-};
-
-static const struct regmap_access_table axp717_writeable_table = {
-	.yes_ranges = axp717_writeable_ranges,
-	.n_yes_ranges = ARRAY_SIZE(axp717_writeable_ranges),
-};
-
-static const struct regmap_access_table axp717_volatile_table = {
-	.yes_ranges = axp717_volatile_ranges,
-	.n_yes_ranges = ARRAY_SIZE(axp717_volatile_ranges),
-};
-
 static const struct regmap_range axp806_volatile_ranges[] = {
 	regmap_reg_range(AXP20X_IRQ1_STATE, AXP20X_IRQ2_STATE),
 };
@@ -337,11 +316,6 @@ static const struct resource axp313a_pek_resources[] = {
 	DEFINE_RES_IRQ_NAMED(AXP313A_IRQ_PEK_FAL_EDGE, "PEK_DBF"),
 };
 
-static const struct resource axp717_pek_resources[] = {
-	DEFINE_RES_IRQ_NAMED(AXP717_IRQ_PEK_RIS_EDGE, "PEK_DBR"),
-	DEFINE_RES_IRQ_NAMED(AXP717_IRQ_PEK_FAL_EDGE, "PEK_DBF"),
-};
-
 static const struct resource axp803_pek_resources[] = {
 	DEFINE_RES_IRQ_NAMED(AXP803_IRQ_PEK_RIS_EDGE, "PEK_DBR"),
 	DEFINE_RES_IRQ_NAMED(AXP803_IRQ_PEK_FAL_EDGE, "PEK_DBF"),
@@ -377,7 +351,7 @@ static const struct regmap_config axp192_regmap_config = {
 	.wr_table	= &axp192_writeable_table,
 	.volatile_table	= &axp192_volatile_table,
 	.max_register	= AXP20X_CC_CTRL,
-	.cache_type	= REGCACHE_MAPLE,
+	.cache_type	= REGCACHE_RBTREE,
 };
 
 static const struct regmap_config axp20x_regmap_config = {
@@ -413,16 +387,7 @@ static const struct regmap_config axp313a_regmap_config = {
 	.wr_table = &axp313a_writeable_table,
 	.volatile_table = &axp313a_volatile_table,
 	.max_register = AXP313A_IRQ_STATE,
-	.cache_type = REGCACHE_MAPLE,
-};
-
-static const struct regmap_config axp717_regmap_config = {
-	.reg_bits = 8,
-	.val_bits = 8,
-	.wr_table = &axp717_writeable_table,
-	.volatile_table = &axp717_volatile_table,
-	.max_register = AXP717_CPUSLDO_CONTROL,
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 };
 
 static const struct regmap_config axp806_regmap_config = {
@@ -623,40 +588,6 @@ static const struct regmap_irq axp313a_regmap_irqs[] = {
 	INIT_REGMAP_IRQ(AXP313A, DIE_TEMP_HIGH,		0, 0),
 };
 
-static const struct regmap_irq axp717_regmap_irqs[] = {
-	INIT_REGMAP_IRQ(AXP717, SOC_DROP_LVL2,		0, 7),
-	INIT_REGMAP_IRQ(AXP717, SOC_DROP_LVL1,		0, 6),
-	INIT_REGMAP_IRQ(AXP717, GAUGE_NEW_SOC,		0, 4),
-	INIT_REGMAP_IRQ(AXP717, BOOST_OVER_V,		0, 2),
-	INIT_REGMAP_IRQ(AXP717, VBUS_OVER_V,		0, 1),
-	INIT_REGMAP_IRQ(AXP717, VBUS_FAULT,		0, 0),
-	INIT_REGMAP_IRQ(AXP717, VBUS_PLUGIN,		1, 7),
-	INIT_REGMAP_IRQ(AXP717, VBUS_REMOVAL,		1, 6),
-	INIT_REGMAP_IRQ(AXP717, BATT_PLUGIN,		1, 5),
-	INIT_REGMAP_IRQ(AXP717, BATT_REMOVAL,		1, 4),
-	INIT_REGMAP_IRQ(AXP717, PEK_SHORT,		1, 3),
-	INIT_REGMAP_IRQ(AXP717, PEK_LONG,		1, 2),
-	INIT_REGMAP_IRQ(AXP717, PEK_FAL_EDGE,		1, 1),
-	INIT_REGMAP_IRQ(AXP717, PEK_RIS_EDGE,		1, 0),
-	INIT_REGMAP_IRQ(AXP717, WDOG_EXPIRE,		2, 7),
-	INIT_REGMAP_IRQ(AXP717, LDO_OVER_CURR,		2, 6),
-	INIT_REGMAP_IRQ(AXP717, BATT_OVER_CURR,		2, 5),
-	INIT_REGMAP_IRQ(AXP717, CHARG_DONE,		2, 4),
-	INIT_REGMAP_IRQ(AXP717, CHARG,			2, 3),
-	INIT_REGMAP_IRQ(AXP717, DIE_TEMP_HIGH,		2, 2),
-	INIT_REGMAP_IRQ(AXP717, CHARG_TIMER,		2, 1),
-	INIT_REGMAP_IRQ(AXP717, BATT_OVER_V,		2, 0),
-	INIT_REGMAP_IRQ(AXP717, BC_USB_DONE,		3, 7),
-	INIT_REGMAP_IRQ(AXP717, BC_USB_CHNG,		3, 6),
-	INIT_REGMAP_IRQ(AXP717, BATT_QUIT_TEMP_HIGH,	3, 4),
-	INIT_REGMAP_IRQ(AXP717, BATT_CHG_TEMP_HIGH,	3, 3),
-	INIT_REGMAP_IRQ(AXP717, BATT_CHG_TEMP_LOW,	3, 2),
-	INIT_REGMAP_IRQ(AXP717, BATT_ACT_TEMP_HIGH,	3, 1),
-	INIT_REGMAP_IRQ(AXP717, BATT_ACT_TEMP_LOW,	3, 0),
-	INIT_REGMAP_IRQ(AXP717, TYPEC_REMOVE,		4, 6),
-	INIT_REGMAP_IRQ(AXP717, TYPEC_PLUGIN,		4, 5),
-};
-
 static const struct regmap_irq axp803_regmap_irqs[] = {
 	INIT_REGMAP_IRQ(AXP803, ACIN_OVER_V,		0, 7),
 	INIT_REGMAP_IRQ(AXP803, ACIN_PLUGIN,		0, 6),
@@ -844,17 +775,6 @@ static const struct regmap_irq_chip axp313a_regmap_irq_chip = {
 	.num_regs		= 1,
 };
 
-static const struct regmap_irq_chip axp717_regmap_irq_chip = {
-	.name			= "axp717_irq_chip",
-	.status_base		= AXP717_IRQ0_STATE,
-	.ack_base		= AXP717_IRQ0_STATE,
-	.unmask_base		= AXP717_IRQ0_EN,
-	.init_ack_masked	= true,
-	.irqs			= axp717_regmap_irqs,
-	.num_irqs		= ARRAY_SIZE(axp717_regmap_irqs),
-	.num_regs		= 5,
-};
-
 static const struct regmap_irq_chip axp803_regmap_irq_chip = {
 	.name			= "axp803",
 	.status_base		= AXP20X_IRQ1_STATE,
@@ -1018,11 +938,6 @@ static const struct mfd_cell axp152_cells[] = {
 static struct mfd_cell axp313a_cells[] = {
 	MFD_CELL_NAME("axp20x-regulator"),
 	MFD_CELL_RES("axp313a-pek", axp313a_pek_resources),
-};
-
-static struct mfd_cell axp717_cells[] = {
-	MFD_CELL_NAME("axp20x-regulator"),
-	MFD_CELL_RES("axp20x-pek", axp717_pek_resources),
 };
 
 static const struct resource axp288_adc_resources[] = {
@@ -1216,10 +1131,25 @@ static int axp20x_power_off(struct sys_off_data *data)
 int axp20x_match_device(struct axp20x_dev *axp20x)
 {
 	struct device *dev = axp20x->dev;
-	const struct mfd_cell *cells_no_irq = NULL;
-	int nr_cells_no_irq = 0;
+	const struct acpi_device_id *acpi_id;
+	const struct of_device_id *of_id;
 
-	axp20x->variant = (long)device_get_match_data(dev);
+	if (dev->of_node) {
+		of_id = of_match_device(dev->driver->of_match_table, dev);
+		if (!of_id) {
+			dev_err(dev, "Unable to match OF ID\n");
+			return -ENODEV;
+		}
+		axp20x->variant = (long)of_id->data;
+	} else {
+		acpi_id = acpi_match_device(dev->driver->acpi_match_table, dev);
+		if (!acpi_id || !acpi_id->driver_data) {
+			dev_err(dev, "Unable to match ACPI ID and data\n");
+			return -ENODEV;
+		}
+		axp20x->variant = (long)acpi_id->driver_data;
+	}
+
 	switch (axp20x->variant) {
 	case AXP152_ID:
 		axp20x->nr_cells = ARRAY_SIZE(axp152_cells);
@@ -1265,12 +1195,6 @@ int axp20x_match_device(struct axp20x_dev *axp20x)
 		axp20x->regmap_cfg = &axp313a_regmap_config;
 		axp20x->regmap_irq_chip = &axp313a_regmap_irq_chip;
 		break;
-	case AXP717_ID:
-		axp20x->nr_cells = ARRAY_SIZE(axp717_cells);
-		axp20x->cells = axp717_cells;
-		axp20x->regmap_cfg = &axp717_regmap_config;
-		axp20x->regmap_irq_chip = &axp717_regmap_irq_chip;
-		break;
 	case AXP803_ID:
 		axp20x->nr_cells = ARRAY_SIZE(axp803_cells);
 		axp20x->cells = axp803_cells;
@@ -1283,15 +1207,14 @@ int axp20x_match_device(struct axp20x_dev *axp20x)
 		 * if there is no interrupt line.
 		 */
 		if (of_property_read_bool(axp20x->dev->of_node,
-					  "x-powers,self-working-mode")) {
+					  "x-powers,self-working-mode") &&
+		    axp20x->irq > 0) {
 			axp20x->nr_cells = ARRAY_SIZE(axp806_self_working_cells);
 			axp20x->cells = axp806_self_working_cells;
 		} else {
 			axp20x->nr_cells = ARRAY_SIZE(axp806_cells);
 			axp20x->cells = axp806_cells;
 		}
-		nr_cells_no_irq = ARRAY_SIZE(axp806_cells);
-		cells_no_irq = axp806_cells;
 		axp20x->regmap_cfg = &axp806_regmap_config;
 		axp20x->regmap_irq_chip = &axp806_regmap_irq_chip;
 		break;
@@ -1315,8 +1238,24 @@ int axp20x_match_device(struct axp20x_dev *axp20x)
 		axp20x->regmap_irq_chip = &axp803_regmap_irq_chip;
 		break;
 	case AXP15060_ID:
-		axp20x->nr_cells = ARRAY_SIZE(axp15060_cells);
-		axp20x->cells = axp15060_cells;
+		/*
+		 * Don't register the power key part if there is no interrupt
+		 * line.
+		 *
+		 * Since most use cases of AXP PMICs are Allwinner SOCs, board
+		 * designers follow Allwinner's reference design and connects
+		 * IRQ line to SOC, there's no need for those variants to deal
+		 * with cases that IRQ isn't connected. However, AXP15660 is
+		 * used by some other vendors' SOCs that didn't connect IRQ
+		 * line, we need to deal with this case.
+		 */
+		if (axp20x->irq > 0) {
+			axp20x->nr_cells = ARRAY_SIZE(axp15060_cells);
+			axp20x->cells = axp15060_cells;
+		} else {
+			axp20x->nr_cells = ARRAY_SIZE(axp_regulator_only_cells);
+			axp20x->cells = axp_regulator_only_cells;
+		}
 		axp20x->regmap_cfg = &axp15060_regmap_config;
 		axp20x->regmap_irq_chip = &axp15060_regmap_irq_chip;
 		break;
@@ -1324,23 +1263,6 @@ int axp20x_match_device(struct axp20x_dev *axp20x)
 		dev_err(dev, "unsupported AXP20X ID %lu\n", axp20x->variant);
 		return -EINVAL;
 	}
-
-	/*
-	 * Use an alternative cell array when no interrupt line is connected,
-	 * since IRQs are required by some drivers.
-	 * The default is the safe "regulator-only", as this works fine without
-	 * an interrupt specified.
-	 */
-	if (axp20x->irq <= 0) {
-		if (cells_no_irq) {
-			axp20x->nr_cells = nr_cells_no_irq;
-			axp20x->cells = cells_no_irq;
-		} else {
-			axp20x->nr_cells = ARRAY_SIZE(axp_regulator_only_cells);
-			axp20x->cells = axp_regulator_only_cells;
-		}
-	}
-
 	dev_info(dev, "AXP20x variant %s found\n",
 		 axp20x_model_names[axp20x->variant]);
 

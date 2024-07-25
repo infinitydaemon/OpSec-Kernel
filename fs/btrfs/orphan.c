@@ -4,6 +4,7 @@
  */
 
 #include "ctree.h"
+#include "disk-io.h"
 #include "orphan.h"
 
 int btrfs_insert_orphan_item(struct btrfs_trans_handle *trans,

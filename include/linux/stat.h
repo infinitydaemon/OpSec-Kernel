@@ -53,7 +53,6 @@ struct kstat {
 	u32		dio_mem_align;
 	u32		dio_offset_align;
 	u64		change_cookie;
-	u64		subvol;
 };
 
 /* These definitions are internal to the kernel for now. Mainly used by nfsd. */

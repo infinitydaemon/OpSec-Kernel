@@ -492,7 +492,7 @@ static int ixgbe_set_vf_lpe(struct ixgbe_adapter *adapter, u32 max_frame, u32 vf
 		struct net_device *dev = adapter->netdev;
 		int pf_max_frame = dev->mtu + ETH_HLEN;
 		u32 reg_offset, vf_shift, vfre;
-		int err = 0;
+		s32 err = 0;
 
 #ifdef CONFIG_FCOE
 		if (dev->features & NETIF_F_FCOE_MTU)
@@ -639,11 +639,12 @@ static int ixgbe_set_vf_macvlan(struct ixgbe_adapter *adapter,
 				int vf, int index, unsigned char *mac_addr)
 {
 	struct vf_macvlans *entry;
-	bool found = false;
+	struct list_head *pos;
 	int retval = 0;
 
 	if (index <= 1) {
-		list_for_each_entry(entry, &adapter->vf_mvs.l, l) {
+		list_for_each(pos, &adapter->vf_mvs.l) {
+			entry = list_entry(pos, struct vf_macvlans, l);
 			if (entry->vf == vf) {
 				entry->vf = -1;
 				entry->free = true;
@@ -661,22 +662,23 @@ static int ixgbe_set_vf_macvlan(struct ixgbe_adapter *adapter,
 	if (!index)
 		return 0;
 
-	list_for_each_entry(entry, &adapter->vf_mvs.l, l) {
-		if (entry->free) {
-			found = true;
+	entry = NULL;
+
+	list_for_each(pos, &adapter->vf_mvs.l) {
+		entry = list_entry(pos, struct vf_macvlans, l);
+		if (entry->free)
 			break;
-		}
 	}
 
 	/*
 	 * If we traversed the entire list and didn't find a free entry
-	 * then we're out of space on the RAR table.  It's also possible
-	 * for the &adapter->vf_mvs.l list to be empty because the original
-	 * memory allocation for the list failed, which is not fatal but does
-	 * mean we can't support VF requests for MACVLAN because we couldn't
-	 * allocate memory for the list management required.
+	 * then we're out of space on the RAR table.  Also entry may
+	 * be NULL because the original memory allocation for the list
+	 * failed, which is not fatal but does mean we can't support
+	 * VF requests for MACVLAN because we couldn't allocate
+	 * memory for the list management required.
 	 */
-	if (!found)
+	if (!entry || !entry->free)
 		return -ENOSPC;
 
 	retval = ixgbe_add_mac_filter(adapter, mac_addr, vf);
@@ -775,7 +777,7 @@ static void ixgbe_vf_clear_mbx(struct ixgbe_adapter *adapter, u32 vf)
 static int ixgbe_set_vf_mac(struct ixgbe_adapter *adapter,
 			    int vf, unsigned char *mac_addr)
 {
-	int retval;
+	s32 retval;
 
 	ixgbe_del_mac_filter(adapter, adapter->vfinfo[vf].vf_mac_addresses, vf);
 	retval = ixgbe_add_mac_filter(adapter, mac_addr, vf);
@@ -1254,7 +1256,7 @@ static int ixgbe_rcv_msg_from_vf(struct ixgbe_adapter *adapter, u32 vf)
 	u32 mbx_size = IXGBE_VFMAILBOX_SIZE;
 	u32 msgbuf[IXGBE_VFMAILBOX_SIZE];
 	struct ixgbe_hw *hw = &adapter->hw;
-	int retval;
+	s32 retval;
 
 	retval = ixgbe_read_mbx(hw, msgbuf, mbx_size, vf);
 
@@ -1418,7 +1420,7 @@ void ixgbe_set_all_vfs(struct ixgbe_adapter *adapter)
 int ixgbe_ndo_set_vf_mac(struct net_device *netdev, int vf, u8 *mac)
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
-	int retval;
+	s32 retval;
 
 	if (vf >= adapter->num_vfs)
 		return -EINVAL;
@@ -1847,6 +1849,5 @@ int ixgbe_ndo_get_vf_config(struct net_device *netdev,
 	ivi->spoofchk = adapter->vfinfo[vf].spoofchk_enabled;
 	ivi->rss_query_en = adapter->vfinfo[vf].rss_query_enabled;
 	ivi->trusted = adapter->vfinfo[vf].trusted;
-	ivi->linkstate = adapter->vfinfo[vf].link_state;
 	return 0;
 }

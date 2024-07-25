@@ -31,7 +31,6 @@ properties:
               - ti,omap3-padconf
               - ti,omap4-padconf
               - ti,omap5-padconf
-              - ti,j7200-padconf
           - const: pinctrl-single
 
   reg:

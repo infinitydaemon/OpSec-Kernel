@@ -5,6 +5,9 @@
  * Copyright (C) 2018, Red Hat, Inc.
  * Copyright (C) 2019-2022 Google LLC
  */
+
+#define _GNU_SOURCE /* for pipe2 */
+
 #include <inttypes.h>
 #include <time.h>
 #include <pthread.h>
@@ -14,27 +17,17 @@
 
 typedef int (*uffd_handler_t)(int uffd_mode, int uffd, struct uffd_msg *msg);
 
-struct uffd_reader_args {
+struct uffd_desc {
 	int uffd_mode;
 	int uffd;
+	int pipefds[2];
 	useconds_t delay;
 	uffd_handler_t handler;
-	/* Holds the read end of the pipe for killing the reader. */
-	int pipe;
-};
-
-struct uffd_desc {
-	int uffd;
-	uint64_t num_readers;
-	/* Holds the write ends of the pipes for killing the readers. */
-	int *pipefds;
-	pthread_t *readers;
-	struct uffd_reader_args *reader_args;
+	pthread_t thread;
 };
 
 struct uffd_desc *uffd_setup_demand_paging(int uffd_mode, useconds_t delay,
 					   void *hva, uint64_t len,
-					   uint64_t num_readers,
 					   uffd_handler_t handler);
 
 void uffd_stop_demand_paging(struct uffd_desc *uffd);

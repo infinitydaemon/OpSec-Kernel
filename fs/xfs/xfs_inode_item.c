@@ -19,7 +19,6 @@
 #include "xfs_log.h"
 #include "xfs_log_priv.h"
 #include "xfs_error.h"
-#include "xfs_rtbitmap.h"
 
 #include <linux/iversion.h>
 
@@ -108,7 +107,7 @@ xfs_inode_item_precommit(
 	 */
 	if ((ip->i_diflags & XFS_DIFLAG_RTINHERIT) &&
 	    (ip->i_diflags & XFS_DIFLAG_EXTSZINHERIT) &&
-	    xfs_extlen_to_rtxmod(ip->i_mount, ip->i_extsize) > 0) {
+	    (ip->i_extsize % ip->i_mount->m_sb.sb_rextsize) > 0) {
 		ip->i_diflags &= ~(XFS_DIFLAG_EXTSIZE |
 				   XFS_DIFLAG_EXTSZINHERIT);
 		ip->i_extsize = 0;
@@ -352,10 +351,11 @@ xfs_inode_item_format_data_fork(
 			~(XFS_ILOG_DEXT | XFS_ILOG_DBROOT | XFS_ILOG_DEV);
 		if ((iip->ili_fields & XFS_ILOG_DDATA) &&
 		    ip->i_df.if_bytes > 0) {
-			ASSERT(ip->i_df.if_data != NULL);
+			ASSERT(ip->i_df.if_u1.if_data != NULL);
 			ASSERT(ip->i_disk_size > 0);
 			xlog_copy_iovec(lv, vecp, XLOG_REG_TYPE_ILOCAL,
-					ip->i_df.if_data, ip->i_df.if_bytes);
+					ip->i_df.if_u1.if_data,
+					ip->i_df.if_bytes);
 			ilf->ilf_dsize = (unsigned)ip->i_df.if_bytes;
 			ilf->ilf_size++;
 		} else {
@@ -430,9 +430,10 @@ xfs_inode_item_format_attr_fork(
 
 		if ((iip->ili_fields & XFS_ILOG_ADATA) &&
 		    ip->i_af.if_bytes > 0) {
-			ASSERT(ip->i_af.if_data != NULL);
+			ASSERT(ip->i_af.if_u1.if_data != NULL);
 			xlog_copy_iovec(lv, vecp, XLOG_REG_TYPE_IATTR_LOCAL,
-					ip->i_af.if_data, ip->i_af.if_bytes);
+					ip->i_af.if_u1.if_data,
+					ip->i_af.if_bytes);
 			ilf->ilf_asize = (unsigned)ip->i_af.if_bytes;
 			ilf->ilf_size++;
 		} else {
@@ -525,8 +526,8 @@ xfs_inode_to_log_dinode(
 	to->di_projid_hi = ip->i_projid >> 16;
 
 	memset(to->di_pad3, 0, sizeof(to->di_pad3));
-	to->di_atime = xfs_inode_to_log_dinode_ts(ip, inode_get_atime(inode));
-	to->di_mtime = xfs_inode_to_log_dinode_ts(ip, inode_get_mtime(inode));
+	to->di_atime = xfs_inode_to_log_dinode_ts(ip, inode->i_atime);
+	to->di_mtime = xfs_inode_to_log_dinode_ts(ip, inode->i_mtime);
 	to->di_ctime = xfs_inode_to_log_dinode_ts(ip, inode_get_ctime(inode));
 	to->di_nlink = inode->i_nlink;
 	to->di_gen = inode->i_generation;
@@ -650,7 +651,7 @@ xfs_inode_item_pin(
 {
 	struct xfs_inode	*ip = INODE_ITEM(lip)->ili_inode;
 
-	xfs_assert_ilocked(ip, XFS_ILOCK_EXCL);
+	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
 	ASSERT(lip->li_buf);
 
 	trace_xfs_inode_pin(ip, _RET_IP_);
@@ -756,7 +757,7 @@ xfs_inode_item_release(
 	unsigned short		lock_flags;
 
 	ASSERT(ip->i_itemp != NULL);
-	xfs_assert_ilocked(ip, XFS_ILOCK_EXCL);
+	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
 
 	lock_flags = iip->ili_lock_flags;
 	iip->ili_lock_flags = 0;
@@ -856,7 +857,7 @@ xfs_inode_item_destroy(
 	ASSERT(iip->ili_item.li_buf == NULL);
 
 	ip->i_itemp = NULL;
-	kvfree(iip->ili_item.li_lv_shadow);
+	kmem_free(iip->ili_item.li_lv_shadow);
 	kmem_cache_free(xfs_ili_cache, iip);
 }
 

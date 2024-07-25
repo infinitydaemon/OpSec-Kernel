@@ -27,8 +27,6 @@
  *          Christian König
  */
 
-#include <linux/debugfs.h>
-
 #include <drm/drm_file.h>
 
 #include "radeon.h"

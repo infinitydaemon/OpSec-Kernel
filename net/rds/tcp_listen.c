@@ -105,10 +105,6 @@ int rds_tcp_accept_one(struct socket *sock)
 	int conn_state;
 	struct rds_conn_path *cp;
 	struct in6_addr *my_addr, *peer_addr;
-	struct proto_accept_arg arg = {
-		.flags = O_NONBLOCK,
-		.kern = true,
-	};
 #if !IS_ENABLED(CONFIG_IPV6)
 	struct in6_addr saddr, daddr;
 #endif
@@ -123,7 +119,7 @@ int rds_tcp_accept_one(struct socket *sock)
 	if (ret)
 		goto out;
 
-	ret = sock->ops->accept(sock, new_sock, &arg);
+	ret = sock->ops->accept(sock, new_sock, O_NONBLOCK, true);
 	if (ret < 0)
 		goto out;
 
@@ -169,7 +165,7 @@ int rds_tcp_accept_one(struct socket *sock)
 		struct ipv6_pinfo *inet6;
 
 		inet6 = inet6_sk(new_sock->sk);
-		dev_if = READ_ONCE(inet6->mcast_oif);
+		dev_if = inet6->mcast_oif;
 	} else {
 		dev_if = new_sock->sk->sk_bound_dev_if;
 	}

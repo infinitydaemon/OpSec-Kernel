@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Rockchip RK805/RK808/RK816/RK817/RK818 Core (I2C) driver
+ * Rockchip RK808/RK818 Core (I2C) driver
  *
  * Copyright (c) 2014, Fuzhou Rockchip Electronics Co., Ltd
  * Copyright (C) 2016 PHYTEC Messtechnik GmbH
@@ -49,35 +49,6 @@ static bool rk808_is_volatile_reg(struct device *dev, unsigned int reg)
 	return false;
 }
 
-static bool rk816_is_volatile_reg(struct device *dev, unsigned int reg)
-{
-	/*
-	 * Technically the ROUND_30s bit makes RTC_CTRL_REG volatile, but
-	 * we don't use that feature.  It's better to cache.
-	 */
-
-	switch (reg) {
-	case RK808_SECONDS_REG ... RK808_WEEKS_REG:
-	case RK808_RTC_STATUS_REG:
-	case RK808_VB_MON_REG:
-	case RK808_THERMAL_REG:
-	case RK816_DCDC_EN_REG1:
-	case RK816_DCDC_EN_REG2:
-	case RK816_INT_STS_REG1:
-	case RK816_INT_STS_REG2:
-	case RK816_INT_STS_REG3:
-	case RK808_DEVCTRL_REG:
-	case RK816_SUP_STS_REG:
-	case RK816_GGSTS_REG:
-	case RK816_ZERO_CUR_ADC_REGH:
-	case RK816_ZERO_CUR_ADC_REGL:
-	case RK816_GASCNT_REG(0) ... RK816_BAT_VOL_REGL:
-		return true;
-	}
-
-	return false;
-}
-
 static bool rk817_is_volatile_reg(struct device *dev, unsigned int reg)
 {
 	/*
@@ -109,7 +80,7 @@ static const struct regmap_config rk818_regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
 	.max_register = RK818_USB_CTRL_REG,
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 	.volatile_reg = rk808_is_volatile_reg,
 };
 
@@ -117,7 +88,7 @@ static const struct regmap_config rk805_regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
 	.max_register = RK805_OFF_SOURCE_REG,
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 	.volatile_reg = rk808_is_volatile_reg,
 };
 
@@ -125,16 +96,8 @@ static const struct regmap_config rk808_regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
 	.max_register = RK808_IO_POL_REG,
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 	.volatile_reg = rk808_is_volatile_reg,
-};
-
-static const struct regmap_config rk816_regmap_config = {
-	.reg_bits = 8,
-	.val_bits = 8,
-	.max_register = RK816_DATA_REG(18),
-	.cache_type = REGCACHE_MAPLE,
-	.volatile_reg = rk816_is_volatile_reg,
 };
 
 static const struct regmap_config rk817_regmap_config = {
@@ -158,11 +121,6 @@ static const struct rk8xx_i2c_platform_data rk808_data = {
 static const struct rk8xx_i2c_platform_data rk809_data = {
 	.regmap_cfg = &rk817_regmap_config,
 	.variant = RK809_ID,
-};
-
-static const struct rk8xx_i2c_platform_data rk816_data = {
-	.regmap_cfg = &rk816_regmap_config,
-	.variant = RK816_ID,
 };
 
 static const struct rk8xx_i2c_platform_data rk817_data = {
@@ -203,7 +161,6 @@ static const struct of_device_id rk8xx_i2c_of_match[] = {
 	{ .compatible = "rockchip,rk805", .data = &rk805_data },
 	{ .compatible = "rockchip,rk808", .data = &rk808_data },
 	{ .compatible = "rockchip,rk809", .data = &rk809_data },
-	{ .compatible = "rockchip,rk816", .data = &rk816_data },
 	{ .compatible = "rockchip,rk817", .data = &rk817_data },
 	{ .compatible = "rockchip,rk818", .data = &rk818_data },
 	{ },

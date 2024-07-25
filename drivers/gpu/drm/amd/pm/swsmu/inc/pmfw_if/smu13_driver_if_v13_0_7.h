@@ -1605,8 +1605,7 @@ typedef struct {
 #define TABLE_I2C_COMMANDS            9
 #define TABLE_DRIVER_INFO             10
 #define TABLE_ECCINFO                 11
-#define TABLE_WIFIBAND                12
-#define TABLE_COUNT                   13
+#define TABLE_COUNT                   12
 
 //IH Interupt ID
 #define IH_INTERRUPT_ID_TO_DRIVER                   0xFE

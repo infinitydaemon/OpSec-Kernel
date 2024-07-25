@@ -52,8 +52,10 @@ struct insn_emulation {
 	int min;
 	int max;
 
-	/* sysctl for this emulation */
-	struct ctl_table sysctl;
+	/*
+	 * sysctl for this emulation + a sentinal entry.
+	 */
+	struct ctl_table sysctl[2];
 };
 
 #define ARM_OPCODE_CONDTEST_FAIL   0
@@ -462,9 +464,6 @@ static int run_all_insn_set_hw_mode(unsigned int cpu)
 	for (int i = 0; i < ARRAY_SIZE(insn_emulations); i++) {
 		struct insn_emulation *insn = insn_emulations[i];
 		bool enable = READ_ONCE(insn->current_mode) == INSN_HW;
-		if (insn->status == INSN_UNAVAILABLE)
-			continue;
-
 		if (insn->set_hw_mode && insn->set_hw_mode(enable)) {
 			pr_warn("CPU[%u] cannot support the emulation of %s",
 				cpu, insn->name);
@@ -540,9 +539,14 @@ static void __init register_insn_emulation(struct insn_emulation *insn)
 
 	switch (insn->status) {
 	case INSN_DEPRECATED:
+#if 0
 		insn->current_mode = INSN_EMULATE;
 		/* Disable the HW mode if it was turned on at early boot time */
 		run_all_cpu_set_hw_mode(insn, false);
+#else
+		insn->current_mode = INSN_HW;
+		run_all_cpu_set_hw_mode(insn, true);
+#endif
 		insn->max = INSN_HW;
 		break;
 	case INSN_OBSOLETE:
@@ -559,7 +563,7 @@ static void __init register_insn_emulation(struct insn_emulation *insn)
 	update_insn_emulation_mode(insn, INSN_UNDEF);
 
 	if (insn->status != INSN_UNAVAILABLE) {
-		sysctl = &insn->sysctl;
+		sysctl = &insn->sysctl[0];
 
 		sysctl->mode = 0644;
 		sysctl->maxlen = sizeof(int);

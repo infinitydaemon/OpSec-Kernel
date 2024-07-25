@@ -130,7 +130,7 @@ static int gfs2_dir_write_stuffed(struct gfs2_inode *ip, const char *buf,
 	memcpy(dibh->b_data + offset + sizeof(struct gfs2_dinode), buf, size);
 	if (ip->i_inode.i_size < offset + size)
 		i_size_write(&ip->i_inode, offset + size);
-	inode_set_mtime_to_ts(&ip->i_inode, inode_set_ctime_current(&ip->i_inode));
+	ip->i_inode.i_mtime = inode_set_ctime_current(&ip->i_inode);
 	gfs2_dinode_out(ip, dibh->b_data);
 
 	brelse(dibh);
@@ -227,7 +227,7 @@ out:
 
 	if (ip->i_inode.i_size < offset + copied)
 		i_size_write(&ip->i_inode, offset + copied);
-	inode_set_mtime_to_ts(&ip->i_inode, inode_set_ctime_current(&ip->i_inode));
+	ip->i_inode.i_mtime = inode_set_ctime_current(&ip->i_inode);
 
 	gfs2_trans_add_meta(ip->i_gl, dibh);
 	gfs2_dinode_out(ip, dibh->b_data);
@@ -562,18 +562,15 @@ static struct gfs2_dirent *gfs2_dirent_scan(struct inode *inode, void *buf,
 	int ret = 0;
 
 	ret = gfs2_dirent_offset(GFS2_SB(inode), buf);
-	if (ret < 0) {
-		gfs2_consist_inode(GFS2_I(inode));
-		return ERR_PTR(-EIO);
-	}
+	if (ret < 0)
+		goto consist_inode;
+
 	offset = ret;
 	prev = NULL;
 	dent = buf + offset;
 	size = be16_to_cpu(dent->de_rec_len);
-	if (gfs2_check_dirent(GFS2_SB(inode), dent, offset, size, len, 1)) {
-		gfs2_consist_inode(GFS2_I(inode));
-		return ERR_PTR(-EIO);
-	}
+	if (gfs2_check_dirent(GFS2_SB(inode), dent, offset, size, len, 1))
+		goto consist_inode;
 	do {
 		ret = scan(dent, name, opaque);
 		if (ret)
@@ -585,10 +582,8 @@ static struct gfs2_dirent *gfs2_dirent_scan(struct inode *inode, void *buf,
 		dent = buf + offset;
 		size = be16_to_cpu(dent->de_rec_len);
 		if (gfs2_check_dirent(GFS2_SB(inode), dent, offset, size,
-				      len, 0)) {
-			gfs2_consist_inode(GFS2_I(inode));
-			return ERR_PTR(-EIO);
-		}
+				      len, 0))
+			goto consist_inode;
 	} while(1);
 
 	switch(ret) {
@@ -602,6 +597,10 @@ static struct gfs2_dirent *gfs2_dirent_scan(struct inode *inode, void *buf,
 		BUG_ON(ret > 0);
 		return ERR_PTR(ret);
 	}
+
+consist_inode:
+	gfs2_consist_inode(GFS2_I(inode));
+	return ERR_PTR(-EIO);
 }
 
 static int dirent_check_reclen(struct gfs2_inode *dip,
@@ -610,16 +609,14 @@ static int dirent_check_reclen(struct gfs2_inode *dip,
 	const void *ptr = d;
 	u16 rec_len = be16_to_cpu(d->de_rec_len);
 
-	if (unlikely(rec_len < sizeof(struct gfs2_dirent))) {
-		gfs2_consist_inode(dip);
-		return -EIO;
-	}
+	if (unlikely(rec_len < sizeof(struct gfs2_dirent)))
+		goto broken;
 	ptr += rec_len;
 	if (ptr < end_p)
 		return rec_len;
 	if (ptr == end_p)
 		return -ENOENT;
-
+broken:
 	gfs2_consist_inode(dip);
 	return -EIO;
 }
@@ -1828,7 +1825,7 @@ int gfs2_dir_add(struct inode *inode, const struct qstr *name,
 			da->bh = NULL;
 			brelse(bh);
 			ip->i_entries++;
-			inode_set_mtime_to_ts(&ip->i_inode, tv);
+			ip->i_inode.i_mtime = tv;
 			if (S_ISDIR(nip->i_inode.i_mode))
 				inc_nlink(&ip->i_inode);
 			mark_inode_dirty(inode);
@@ -1914,7 +1911,7 @@ int gfs2_dir_del(struct gfs2_inode *dip, const struct dentry *dentry)
 	if (!dip->i_entries)
 		gfs2_consist_inode(dip);
 	dip->i_entries--;
-	inode_set_mtime_to_ts(&dip->i_inode, tv);
+	dip->i_inode.i_mtime =  tv;
 	if (d_is_dir(dentry))
 		drop_nlink(&dip->i_inode);
 	mark_inode_dirty(&dip->i_inode);
@@ -1955,7 +1952,7 @@ int gfs2_dir_mvino(struct gfs2_inode *dip, const struct qstr *filename,
 	dent->de_type = cpu_to_be16(new_type);
 	brelse(bh);
 
-	inode_set_mtime_to_ts(&dip->i_inode, inode_set_ctime_current(&dip->i_inode));
+	dip->i_inode.i_mtime = inode_set_ctime_current(&dip->i_inode);
 	mark_inode_dirty_sync(&dip->i_inode);
 	return 0;
 }

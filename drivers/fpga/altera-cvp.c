@@ -72,6 +72,7 @@ static bool altera_cvp_chkcfg;
 struct cvp_priv;
 
 struct altera_cvp_conf {
+	struct fpga_manager	*mgr;
 	struct pci_dev		*pci_dev;
 	void __iomem		*map;
 	void			(*write_data)(struct altera_cvp_conf *conf,

@@ -77,7 +77,7 @@ struct imx8_acm_priv {
 static const struct clk_parent_data imx8qm_aud_clk_sels[] = {
 	{ .fw_name = "aud_rec_clk0_lpcg_clk" },
 	{ .fw_name = "aud_rec_clk1_lpcg_clk" },
-	{ .fw_name = "dummy" },
+	{ .fw_name = "mlb_clk" },
 	{ .fw_name = "hdmi_rx_mclk" },
 	{ .fw_name = "ext_aud_mclk0" },
 	{ .fw_name = "ext_aud_mclk1" },
@@ -103,7 +103,7 @@ static const struct clk_parent_data imx8qm_aud_clk_sels[] = {
 static const struct clk_parent_data imx8qm_mclk_out_sels[] = {
 	{ .fw_name = "aud_rec_clk0_lpcg_clk" },
 	{ .fw_name = "aud_rec_clk1_lpcg_clk" },
-	{ .fw_name = "dummy" },
+	{ .fw_name = "mlb_clk" },
 	{ .fw_name = "hdmi_rx_mclk" },
 	{ .fw_name = "spdif0_rx" },
 	{ .fw_name = "spdif1_rx" },
@@ -122,7 +122,7 @@ static const struct clk_parent_data imx8qm_asrc_mux_clk_sels[] = {
 	{ .fw_name = "sai4_rx_bclk" },
 	{ .fw_name = "sai5_tx_bclk" },
 	{ .index = -1 },
-	{ .fw_name = "dummy" },
+	{ .fw_name = "mlb_clk" },
 
 };
 
@@ -310,18 +310,20 @@ detach_pm:
  * @dev: deivice pointer
  * @dev_pm: multi power domain for device
  */
-static void clk_imx_acm_detach_pm_domains(struct device *dev,
-					  struct clk_imx_acm_pm_domains *dev_pm)
+static int clk_imx_acm_detach_pm_domains(struct device *dev,
+					 struct clk_imx_acm_pm_domains *dev_pm)
 {
 	int i;
 
 	if (dev_pm->num_domains <= 1)
-		return;
+		return 0;
 
 	for (i = 0; i < dev_pm->num_domains; i++) {
 		device_link_del(dev_pm->pd_dev_link[i]);
 		dev_pm_domain_detach(dev_pm->pd_dev[i], false);
 	}
+
+	return 0;
 }
 
 static int imx8_acm_clk_probe(struct platform_device *pdev)
@@ -372,10 +374,11 @@ static int imx8_acm_clk_probe(struct platform_device *pdev)
 										0, NULL, NULL);
 		if (IS_ERR(hws[sels[i].clkid])) {
 			ret = PTR_ERR(hws[sels[i].clkid]);
-			imx_check_clk_hws(hws, IMX_ADMA_ACM_CLK_END);
 			goto err_clk_register;
 		}
 	}
+
+	imx_check_clk_hws(hws, IMX_ADMA_ACM_CLK_END);
 
 	ret = devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get, clk_hw_data);
 	if (ret < 0) {
@@ -394,13 +397,15 @@ err_clk_register:
 	return ret;
 }
 
-static void imx8_acm_clk_remove(struct platform_device *pdev)
+static int imx8_acm_clk_remove(struct platform_device *pdev)
 {
 	struct imx8_acm_priv *priv = dev_get_drvdata(&pdev->dev);
 
 	pm_runtime_disable(&pdev->dev);
 
 	clk_imx_acm_detach_pm_domains(&pdev->dev, &priv->dev_pm);
+
+	return 0;
 }
 
 static const struct imx8_acm_soc_data imx8qm_acm_data = {
@@ -468,7 +473,7 @@ static struct platform_driver imx8_acm_clk_driver = {
 		.pm = &imx8_acm_pm_ops,
 	},
 	.probe = imx8_acm_clk_probe,
-	.remove_new = imx8_acm_clk_remove,
+	.remove = imx8_acm_clk_remove,
 };
 module_platform_driver(imx8_acm_clk_driver);
 

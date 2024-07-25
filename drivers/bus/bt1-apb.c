@@ -22,6 +22,7 @@
 #include <linux/clk.h>
 #include <linux/reset.h>
 #include <linux/time64.h>
+#include <linux/clk.h>
 #include <linux/sysfs.h>
 
 #define APB_EHB_ISR			0x00

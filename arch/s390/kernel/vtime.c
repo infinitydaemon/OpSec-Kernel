@@ -33,6 +33,14 @@ static DEFINE_PER_CPU(u64, mt_scaling_mult) = { 1 };
 static DEFINE_PER_CPU(u64, mt_scaling_div) = { 1 };
 static DEFINE_PER_CPU(u64, mt_scaling_jiffies);
 
+static inline u64 get_vtimer(void)
+{
+	u64 timer;
+
+	asm volatile("stpt %0" : "=Q" (timer));
+	return timer;
+}
+
 static inline void set_vtimer(u64 expires)
 {
 	u64 timer;
@@ -215,7 +223,7 @@ static u64 vtime_delta(void)
 {
 	u64 timer = S390_lowcore.last_update_timer;
 
-	S390_lowcore.last_update_timer = get_cpu_timer();
+	S390_lowcore.last_update_timer = get_vtimer();
 
 	return timer - S390_lowcore.last_update_timer;
 }

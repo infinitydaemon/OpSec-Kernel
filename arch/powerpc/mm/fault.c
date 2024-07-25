@@ -71,26 +71,23 @@ static noinline int bad_area_nosemaphore(struct pt_regs *regs, unsigned long add
 	return __bad_area_nosemaphore(regs, address, SEGV_MAPERR);
 }
 
-static int __bad_area(struct pt_regs *regs, unsigned long address, int si_code,
-		      struct mm_struct *mm, struct vm_area_struct *vma)
+static int __bad_area(struct pt_regs *regs, unsigned long address, int si_code)
 {
+	struct mm_struct *mm = current->mm;
 
 	/*
 	 * Something tried to access memory that isn't in our memory map..
 	 * Fix it, but check if it's kernel or user first..
 	 */
-	if (mm)
-		mmap_read_unlock(mm);
-	else
-		vma_end_read(vma);
+	mmap_read_unlock(mm);
 
 	return __bad_area_nosemaphore(regs, address, si_code);
 }
 
 static noinline int bad_access_pkey(struct pt_regs *regs, unsigned long address,
-				    struct mm_struct *mm,
 				    struct vm_area_struct *vma)
 {
+	struct mm_struct *mm = current->mm;
 	int pkey;
 
 	/*
@@ -112,10 +109,7 @@ static noinline int bad_access_pkey(struct pt_regs *regs, unsigned long address,
 	 */
 	pkey = vma_pkey(vma);
 
-	if (mm)
-		mmap_read_unlock(mm);
-	else
-		vma_end_read(vma);
+	mmap_read_unlock(mm);
 
 	/*
 	 * If we are in kernel mode, bail out with a SEGV, this will
@@ -130,10 +124,9 @@ static noinline int bad_access_pkey(struct pt_regs *regs, unsigned long address,
 	return 0;
 }
 
-static noinline int bad_access(struct pt_regs *regs, unsigned long address,
-			       struct mm_struct *mm, struct vm_area_struct *vma)
+static noinline int bad_access(struct pt_regs *regs, unsigned long address)
 {
-	return __bad_area(regs, address, SEGV_ACCERR, mm, vma);
+	return __bad_area(regs, address, SEGV_ACCERR);
 }
 
 static int do_sigbus(struct pt_regs *regs, unsigned long address,
@@ -273,15 +266,14 @@ static bool access_error(bool is_write, bool is_exec, struct vm_area_struct *vma
 	}
 
 	/*
-	 * VM_READ, VM_WRITE and VM_EXEC may imply read permissions, as
-	 * defined in protection_map[].  In that case Read faults can only be
-	 * caused by a PROT_NONE mapping. However a non exec access on a
-	 * VM_EXEC only mapping is invalid anyway, so report it as such.
+	 * VM_READ, VM_WRITE and VM_EXEC all imply read permissions, as
+	 * defined in protection_map[].  Read faults can only be caused by
+	 * a PROT_NONE mapping, or with a PROT_EXEC-only mapping on Radix.
 	 */
 	if (unlikely(!vma_is_accessible(vma)))
 		return true;
 
-	if ((vma->vm_flags & VM_ACCESS_FLAGS) == VM_EXEC)
+	if (unlikely(radix_enabled() && ((vma->vm_flags & VM_ACCESS_FLAGS) == VM_EXEC)))
 		return true;
 
 	/*
@@ -486,13 +478,13 @@ static int ___do_page_fault(struct pt_regs *regs, unsigned long address,
 
 	if (unlikely(access_pkey_error(is_write, is_exec,
 				       (error_code & DSISR_KEYFAULT), vma))) {
-		count_vm_vma_lock_event(VMA_LOCK_SUCCESS);
-		return bad_access_pkey(regs, address, NULL, vma);
+		vma_end_read(vma);
+		goto lock_mmap;
 	}
 
 	if (unlikely(access_error(is_write, is_exec, vma))) {
-		count_vm_vma_lock_event(VMA_LOCK_SUCCESS);
-		return bad_access(regs, address, NULL, vma);
+		vma_end_read(vma);
+		goto lock_mmap;
 	}
 
 	fault = handle_mm_fault(vma, address, flags | FAULT_FLAG_VMA_LOCK, regs);
@@ -504,8 +496,6 @@ static int ___do_page_fault(struct pt_regs *regs, unsigned long address,
 		goto done;
 	}
 	count_vm_vma_lock_event(VMA_LOCK_RETRY);
-	if (fault & VM_FAULT_MAJOR)
-		flags |= FAULT_FLAG_TRIED;
 
 	if (fault_signal_pending(fault, regs))
 		return user_mode(regs) ? 0 : SIGBUS;
@@ -528,10 +518,10 @@ retry:
 
 	if (unlikely(access_pkey_error(is_write, is_exec,
 				       (error_code & DSISR_KEYFAULT), vma)))
-		return bad_access_pkey(regs, address, mm, vma);
+		return bad_access_pkey(regs, address, vma);
 
 	if (unlikely(access_error(is_write, is_exec, vma)))
-		return bad_access(regs, address, mm, vma);
+		return bad_access(regs, address);
 
 	/*
 	 * If for any reason at all we couldn't handle the fault,

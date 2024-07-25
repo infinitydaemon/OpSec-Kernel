@@ -1373,14 +1373,6 @@ static int set_powered(struct sock *sk, struct hci_dev *hdev, void *data,
 
 	hci_dev_lock(hdev);
 
-	if (!cp->val) {
-		if (hci_dev_test_flag(hdev, HCI_POWERING_DOWN)) {
-			err = mgmt_cmd_status(sk, hdev->id, MGMT_OP_SET_POWERED,
-					      MGMT_STATUS_BUSY);
-			goto failed;
-		}
-	}
-
 	if (pending_find(MGMT_OP_SET_POWERED, hdev)) {
 		err = mgmt_cmd_status(sk, hdev->id, MGMT_OP_SET_POWERED,
 				      MGMT_STATUS_BUSY);
@@ -1695,7 +1687,8 @@ static void mgmt_set_connectable_complete(struct hci_dev *hdev, void *data,
 	new_settings(hdev, cmd->sk);
 
 done:
-	mgmt_pending_remove(cmd);
+	if (cmd)
+		mgmt_pending_remove(cmd);
 
 	hci_dev_unlock(hdev);
 }
@@ -3441,8 +3434,7 @@ static int pair_device(struct sock *sk, struct hci_dev *hdev, void *data,
 
 	if (cp->addr.type == BDADDR_BREDR) {
 		conn = hci_connect_acl(hdev, &cp->addr.bdaddr, sec_level,
-				       auth_type, CONN_REASON_PAIR_DEVICE,
-				       HCI_ACL_CONN_TIMEOUT);
+				       auth_type, CONN_REASON_PAIR_DEVICE);
 	} else {
 		u8 addr_type = le_addr_type(cp->addr.type);
 		struct hci_conn_params *p;
@@ -8765,7 +8757,8 @@ static void add_ext_adv_params_complete(struct hci_dev *hdev, void *data,
 	}
 
 unlock:
-	mgmt_pending_free(cmd);
+	if (cmd)
+		mgmt_pending_free(cmd);
 
 	hci_dev_unlock(hdev);
 }
@@ -9668,9 +9661,6 @@ bool mgmt_powering_down(struct hci_dev *hdev)
 	struct mgmt_pending_cmd *cmd;
 	struct mgmt_mode *cp;
 
-	if (hci_dev_test_flag(hdev, HCI_POWERING_DOWN))
-		return true;
-
 	cmd = pending_find(MGMT_OP_SET_POWERED, hdev);
 	if (!cmd)
 		return false;
@@ -9978,9 +9968,6 @@ void mgmt_set_local_name_complete(struct hci_dev *hdev, u8 *name, u8 status)
 		/* If this is a HCI command related to powering on the
 		 * HCI dev don't send any mgmt signals.
 		 */
-		if (hci_dev_test_flag(hdev, HCI_POWERING_DOWN))
-			return;
-
 		if (pending_find(MGMT_OP_SET_POWERED, hdev))
 			return;
 	}
@@ -10057,6 +10044,21 @@ static bool eir_has_uuids(u8 *eir, u16 eir_len, u16 uuid_count, u8 (*uuids)[16])
 	return false;
 }
 
+static void restart_le_scan(struct hci_dev *hdev)
+{
+	/* If controller is not scanning we are done. */
+	if (!hci_dev_test_flag(hdev, HCI_LE_SCAN))
+		return;
+
+	if (time_after(jiffies + DISCOV_LE_RESTART_DELAY,
+		       hdev->discovery.scan_start +
+		       hdev->discovery.scan_duration))
+		return;
+
+	queue_delayed_work(hdev->req_workqueue, &hdev->le_scan_restart,
+			   DISCOV_LE_RESTART_DELAY);
+}
+
 static bool is_filter_match(struct hci_dev *hdev, s8 rssi, u8 *eir,
 			    u16 eir_len, u8 *scan_rsp, u8 scan_rsp_len)
 {
@@ -10091,6 +10093,8 @@ static bool is_filter_match(struct hci_dev *hdev, s8 rssi, u8 *eir,
 	 * scanning to ensure updated result with updated RSSI values.
 	 */
 	if (test_bit(HCI_QUIRK_STRICT_DUPLICATE_FILTER, &hdev->quirks)) {
+		restart_le_scan(hdev);
+
 		/* Validate RSSI value against the RSSI threshold once more. */
 		if (hdev->discovery.rssi != HCI_RSSI_INVALID &&
 		    rssi < hdev->discovery.rssi)

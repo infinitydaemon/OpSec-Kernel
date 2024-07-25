@@ -295,9 +295,9 @@ static bool variable_is_present(efi_char16_t *variable_name, efi_guid_t *vendor,
 	unsigned long strsize1, strsize2;
 	bool found = false;
 
-	strsize1 = ucs2_strsize(variable_name, EFI_VAR_NAME_LEN);
+	strsize1 = ucs2_strsize(variable_name, 1024);
 	list_for_each_entry_safe(entry, n, head, list) {
-		strsize2 = ucs2_strsize(entry->var.VariableName, EFI_VAR_NAME_LEN);
+		strsize2 = ucs2_strsize(entry->var.VariableName, 1024);
 		if (strsize1 == strsize2 &&
 			!memcmp(variable_name, &(entry->var.VariableName),
 				strsize2) &&
@@ -361,6 +361,7 @@ static void dup_variable_bug(efi_char16_t *str16, efi_guid_t *vendor_guid,
  * efivar_init - build the initial list of EFI variables
  * @func: callback function to invoke for every variable
  * @data: function-specific data to pass to @func
+ * @duplicates: error if we encounter duplicates on @head?
  * @head: initialised head of variable list
  *
  * Get every EFI variable from the firmware and invoke @func. @func
@@ -368,9 +369,8 @@ static void dup_variable_bug(efi_char16_t *str16, efi_guid_t *vendor_guid,
  *
  * Returns 0 on success, or a kernel error code on failure.
  */
-int efivar_init(int (*func)(efi_char16_t *, efi_guid_t, unsigned long, void *,
-			    struct list_head *),
-		void *data, struct list_head *head)
+int efivar_init(int (*func)(efi_char16_t *, efi_guid_t, unsigned long, void *),
+		void *data, bool duplicates, struct list_head *head)
 {
 	unsigned long variable_name_size = 512;
 	efi_char16_t *variable_name;
@@ -396,7 +396,6 @@ int efivar_init(int (*func)(efi_char16_t *, efi_guid_t, unsigned long, void *,
 
 	do {
 		variable_name_size = 512;
-		BUILD_BUG_ON(EFI_VAR_NAME_LEN < 512);
 
 		status = efivar_get_next_variable(&variable_name_size,
 						  variable_name,
@@ -414,14 +413,15 @@ int efivar_init(int (*func)(efi_char16_t *, efi_guid_t, unsigned long, void *,
 			 * we'll ever see a different variable name,
 			 * and may end up looping here forever.
 			 */
-			if (variable_is_present(variable_name, &vendor_guid,
+			if (duplicates &&
+			    variable_is_present(variable_name, &vendor_guid,
 						head)) {
 				dup_variable_bug(variable_name, &vendor_guid,
 						 variable_name_size);
 				status = EFI_NOT_FOUND;
 			} else {
 				err = func(variable_name, vendor_guid,
-					   variable_name_size, data, head);
+					   variable_name_size, data);
 				if (err)
 					status = EFI_NOT_FOUND;
 			}

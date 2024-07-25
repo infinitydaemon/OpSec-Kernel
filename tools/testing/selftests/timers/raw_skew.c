@@ -137,11 +137,11 @@ int main(int argc, char **argv)
 		if (tx1.offset || tx2.offset ||
 		    tx1.freq != tx2.freq || tx1.tick != tx2.tick) {
 			printf("	[SKIP]\n");
-			ksft_exit_skip("The clock was adjusted externally. Shutdown NTPd or other time sync daemons\n");
+			return ksft_exit_skip("The clock was adjusted externally. Shutdown NTPd or other time sync daemons\n");
 		}
 		printf("	[FAILED]\n");
-		ksft_exit_fail();
+		return ksft_exit_fail();
 	}
 	printf("	[OK]\n");
-	ksft_exit_pass();
+	return  ksft_exit_pass();
 }

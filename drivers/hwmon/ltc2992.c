@@ -875,14 +875,8 @@ static int ltc2992_parse_dt(struct ltc2992_state *st)
 		}
 
 		ret = fwnode_property_read_u32(child, "shunt-resistor-micro-ohms", &val);
-		if (!ret) {
-			if (!val) {
-				fwnode_handle_put(child);
-				return dev_err_probe(&st->client->dev, -EINVAL,
-						     "shunt resistor value cannot be zero\n");
-			}
+		if (!ret)
 			st->r_sense_uohm[addr] = val;
-		}
 	}
 
 	return 0;
@@ -924,7 +918,7 @@ static const struct of_device_id ltc2992_of_match[] = {
 MODULE_DEVICE_TABLE(of, ltc2992_of_match);
 
 static const struct i2c_device_id ltc2992_i2c_id[] = {
-	{"ltc2992"},
+	{"ltc2992", 0},
 	{}
 };
 MODULE_DEVICE_TABLE(i2c, ltc2992_i2c_id);

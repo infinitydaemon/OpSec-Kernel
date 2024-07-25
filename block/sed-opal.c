@@ -18,7 +18,6 @@
 #include <linux/uaccess.h>
 #include <uapi/linux/sed-opal.h>
 #include <linux/sed-opal.h>
-#include <linux/sed-opal-key.h>
 #include <linux/string.h>
 #include <linux/kdev_t.h>
 #include <linux/key.h>
@@ -314,7 +313,7 @@ static int read_sed_opal_key(const char *key_name, u_char *buffer, int buflen)
 			      &key_type_user, key_name, true);
 
 	if (IS_ERR(kref))
-		ret = PTR_ERR(kref);
+		return PTR_ERR(kref);
 
 	key = key_ref_to_ptr(kref);
 	down_read(&key->sem);
@@ -1212,7 +1211,7 @@ static int cmd_start(struct opal_dev *dev, const u8 *uid, const u8 *method)
 static int start_opal_session_cont(struct opal_dev *dev)
 {
 	u32 hsn, tsn;
-	int error;
+	int error = 0;
 
 	error = parse_and_check_status(dev);
 	if (error)
@@ -1354,7 +1353,7 @@ static int get_active_key_cont(struct opal_dev *dev)
 {
 	const char *activekey;
 	size_t keylen;
-	int error;
+	int error = 0;
 
 	error = parse_and_check_status(dev);
 	if (error)
@@ -2157,7 +2156,7 @@ static int lock_unlock_locking_range(struct opal_dev *dev, void *data)
 	u8 lr_buffer[OPAL_UID_LENGTH];
 	struct opal_lock_unlock *lkul = data;
 	u8 read_locked = 1, write_locked = 1;
-	int err;
+	int err = 0;
 
 	if (build_locking_range(lr_buffer, sizeof(lr_buffer),
 				lkul->session.opal_key.lr) < 0)
@@ -2580,7 +2579,7 @@ static int opal_get_discv(struct opal_dev *dev, struct opal_discovery *discv)
 	const struct opal_step discovery0_step = {
 		opal_discovery0, discv
 	};
-	int ret;
+	int ret = 0;
 
 	mutex_lock(&dev->dev_lock);
 	setup_opal_dev(dev);
@@ -3023,13 +3022,7 @@ static int opal_set_new_pw(struct opal_dev *dev, struct opal_new_pw *opal_pw)
 	if (ret)
 		return ret;
 
-	/* update keyring and key store with new password */
-	ret = sed_write_key(OPAL_AUTH_KEY,
-			    opal_pw->new_user_pw.opal_key.key,
-			    opal_pw->new_user_pw.opal_key.key_len);
-	if (ret != -EOPNOTSUPP)
-		pr_warn("error updating SED key: %d\n", ret);
-
+	/* update keyring with new password */
 	ret = update_sed_opal_key(OPAL_AUTH_KEY,
 				  opal_pw->new_user_pw.opal_key.key,
 				  opal_pw->new_user_pw.opal_key.key_len);
@@ -3069,7 +3062,7 @@ bool opal_unlock_from_suspend(struct opal_dev *dev)
 {
 	struct opal_suspend_data *suspend;
 	bool was_failure = false;
-	int ret;
+	int ret = 0;
 
 	if (!dev)
 		return false;
@@ -3112,9 +3105,10 @@ static int opal_read_table(struct opal_dev *dev,
 		{ read_table_data, rw_tbl },
 		{ end_opal_session, }
 	};
+	int ret = 0;
 
 	if (!rw_tbl->size)
-		return 0;
+		return ret;
 
 	return execute_steps(dev, read_table_steps,
 			     ARRAY_SIZE(read_table_steps));
@@ -3128,9 +3122,10 @@ static int opal_write_table(struct opal_dev *dev,
 		{ write_table_data, rw_tbl },
 		{ end_opal_session, }
 	};
+	int ret = 0;
 
 	if (!rw_tbl->size)
-		return 0;
+		return ret;
 
 	return execute_steps(dev, write_table_steps,
 			     ARRAY_SIZE(write_table_steps));
@@ -3300,8 +3295,6 @@ EXPORT_SYMBOL_GPL(sed_ioctl);
 static int __init sed_opal_init(void)
 {
 	struct key *kr;
-	char init_sed_key[OPAL_KEY_MAX];
-	int keylen = OPAL_KEY_MAX - 1;
 
 	kr = keyring_alloc(".sed_opal",
 			   GLOBAL_ROOT_UID, GLOBAL_ROOT_GID, current_cred(),
@@ -3314,11 +3307,6 @@ static int __init sed_opal_init(void)
 
 	sed_opal_keyring = kr;
 
-	if (sed_read_key(OPAL_AUTH_KEY, init_sed_key, &keylen) < 0) {
-		memset(init_sed_key, '\0', sizeof(init_sed_key));
-		keylen = OPAL_KEY_MAX - 1;
-	}
-
-	return update_sed_opal_key(OPAL_AUTH_KEY, init_sed_key, keylen);
+	return 0;
 }
 late_initcall(sed_opal_init);

@@ -7,6 +7,7 @@
  *  Copyright (C) 1999  Niibe Yutaka
  *  Copyright (C) 2002 - 2010 Paul Mundt
  */
+#include <linux/screen_info.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
 #include <linux/initrd.h>
@@ -67,6 +68,10 @@ EXPORT_SYMBOL(cpu_data);
  */
 struct sh_machine_vector sh_mv = { .mv_name = "generic", };
 EXPORT_SYMBOL(sh_mv);
+
+#ifdef CONFIG_VT
+struct screen_info screen_info;
+#endif
 
 extern int root_mountflags;
 
@@ -220,7 +225,7 @@ void __init __add_active_range(unsigned int nid, unsigned long start_pfn,
 	request_resource(res, &code_resource);
 	request_resource(res, &data_resource);
 	request_resource(res, &bss_resource);
-#ifdef CONFIG_CRASH_RESERVE
+#ifdef CONFIG_KEXEC
 	request_resource(res, &crashk_res);
 #endif
 

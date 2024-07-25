@@ -503,6 +503,7 @@ struct sxgbe_priv_data {
 	bool tx_path_in_lpi_mode;
 	int lpi_irq;
 	int eee_enabled;
+	int eee_active;
 	int tx_lpi_timer;
 };
 

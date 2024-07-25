@@ -76,8 +76,7 @@ static void addpair(int fp, int un)
 int main(int argc, char *argv[])
 {
   FILE *ctbl;
-  const char *tblname, *rel_tblname;
-  const char *abs_srctree;
+  char *tblname;
   char buffer[65536];
   int fontlen;
   int i, nuni, nent;
@@ -101,16 +100,6 @@ int main(int argc, char *argv[])
 	  exit(EX_NOINPUT);
 	}
     }
-
-  abs_srctree = getenv("abs_srctree");
-  if (abs_srctree && !strncmp(abs_srctree, tblname, strlen(abs_srctree)))
-    {
-      rel_tblname = tblname + strlen(abs_srctree);
-      while (*rel_tblname == '/')
-	++rel_tblname;
-    }
-  else
-    rel_tblname = tblname;
 
   /* For now we assume the default font is always 256 characters. */
   fontlen = 256;
@@ -264,7 +253,7 @@ int main(int argc, char *argv[])
 #include <linux/types.h>\n\
 \n\
 u8 dfont_unicount[%d] = \n\
-{\n\t", rel_tblname, fontlen);
+{\n\t", argv[1], fontlen);
 
   for ( i = 0 ; i < fontlen ; i++ )
     {

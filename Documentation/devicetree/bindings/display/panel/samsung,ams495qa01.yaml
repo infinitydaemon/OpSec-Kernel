@@ -11,15 +11,12 @@ maintainers:
 
 allOf:
   - $ref: panel-common.yaml#
-  - $ref: /schemas/spi/spi-peripheral-props.yaml#
 
 properties:
   compatible:
     const: samsung,ams495qa01
 
-  reg:
-    maxItems: 1
-
+  reg: true
   reset-gpios:
     description: reset gpio, must be GPIO_ACTIVE_LOW
   elvdd-supply:

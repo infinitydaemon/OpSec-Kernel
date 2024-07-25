@@ -130,8 +130,6 @@ static void blk_flush_restore_request(struct request *rq)
 	 * original @rq->bio.  Restore it.
 	 */
 	rq->bio = rq->biotail;
-	if (rq->bio)
-		rq->__sector = rq->bio->bi_iter.bi_sector;
 
 	/* make @rq a normal request */
 	rq->rq_flags &= ~RQF_FLUSH_SEQ;
@@ -145,7 +143,7 @@ static void blk_account_io_flush(struct request *rq)
 	part_stat_lock();
 	part_stat_inc(part, ios[STAT_FLUSH]);
 	part_stat_add(part, nsecs[STAT_FLUSH],
-		      blk_time_get_ns() - rq->start_time_ns);
+		      ktime_get_ns() - rq->start_time_ns);
 	part_stat_unlock();
 }
 
@@ -185,7 +183,7 @@ static void blk_flush_complete_seq(struct request *rq,
 		/* queue for flush */
 		if (list_empty(pending))
 			fq->flush_pending_since = jiffies;
-		list_move_tail(&rq->queuelist, pending);
+		list_add_tail(&rq->queuelist, pending);
 		break;
 
 	case REQ_FSEQ_DATA:
@@ -263,6 +261,7 @@ static enum rq_end_io_ret flush_end_io(struct request *flush_rq,
 		unsigned int seq = blk_flush_cur_seq(rq);
 
 		BUG_ON(seq != REQ_FSEQ_PREFLUSH && seq != REQ_FSEQ_POSTFLUSH);
+		list_del_init(&rq->queuelist);
 		blk_flush_complete_seq(rq, fq, seq, error);
 	}
 
@@ -325,9 +324,16 @@ static void blk_kick_flush(struct request_queue *q, struct blk_flush_queue *fq,
 	flush_rq->mq_ctx = first_rq->mq_ctx;
 	flush_rq->mq_hctx = first_rq->mq_hctx;
 
-	if (!q->elevator)
+	if (!q->elevator) {
 		flush_rq->tag = first_rq->tag;
-	else
+
+		/*
+		 * We borrow data request's driver tag, so have to mark
+		 * this flush request as INFLIGHT for avoiding double
+		 * account of this driver tag
+		 */
+		flush_rq->rq_flags |= RQF_MQ_INFLIGHT;
+	} else
 		flush_rq->internal_tag = first_rq->internal_tag;
 
 	flush_rq->cmd_flags = REQ_OP_FLUSH | REQ_PREFLUSH;

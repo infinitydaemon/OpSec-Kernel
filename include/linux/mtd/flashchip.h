@@ -13,7 +13,6 @@
  */
 #include <linux/sched.h>
 #include <linux/mutex.h>
-#include <linux/wait.h>
 
 typedef enum {
 	FL_READY,

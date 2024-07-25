@@ -22,6 +22,7 @@
 #ifndef _EDAC_DEVICE_H_
 #define _EDAC_DEVICE_H_
 
+#include <linux/completion.h>
 #include <linux/device.h>
 #include <linux/edac.h>
 #include <linux/kobject.h>
@@ -94,13 +95,22 @@ struct edac_dev_sysfs_attribute {
  *
  *	used in leaf 'block' nodes for adding controls/attributes
  *
- *	each block in each instance of the containing control structure can
- *	have an array of the following. The show function will be filled in
- *	with the show function in the low level driver.
+ *	each block in each instance of the containing control structure
+ *	can have an array of the following. The show and store functions
+ *	will be filled in with the show/store function in the
+ *	low level driver.
+ *
+ *	The 'value' field will be the actual value field used for
+ *	counting
  */
 struct edac_dev_sysfs_block_attribute {
 	struct attribute attr;
 	ssize_t (*show)(struct kobject *, struct attribute *, char *);
+	ssize_t (*store)(struct kobject *, struct attribute *,
+			const char *, size_t);
+	struct edac_device_block *block;
+
+	unsigned int value;
 };
 
 /* device block control structure */
@@ -166,7 +176,7 @@ struct edac_device_ctl_info {
 	struct edac_dev_sysfs_attribute *sysfs_attributes;
 
 	/* pointer to main 'edac' subsys in sysfs */
-	const struct bus_type *edac_subsys;
+	struct bus_type *edac_subsys;
 
 	/* the internal state of this controller instance */
 	int op_state;
@@ -190,6 +200,8 @@ struct edac_device_ctl_info {
 
 	unsigned long start_time;	/* edac_device load start time (jiffies) */
 
+	struct completion removal_complete;
+
 	/* sysfs top name under 'edac' directory
 	 * and instance name:
 	 *      cpu/cpu0/...
@@ -205,6 +217,7 @@ struct edac_device_ctl_info {
 	u32 nr_instances;
 	struct edac_device_instance *instances;
 	struct edac_device_block *blocks;
+	struct edac_dev_sysfs_block_attribute *attribs;
 
 	/* Event counters for the this whole EDAC Device */
 	struct edac_device_counter counters;
@@ -232,6 +245,8 @@ extern struct edac_device_ctl_info *edac_device_alloc_ctl_info(
 		char *edac_device_name, unsigned nr_instances,
 		char *edac_block_name, unsigned nr_blocks,
 		unsigned offset_value,
+		struct edac_dev_sysfs_block_attribute *block_attributes,
+		unsigned nr_attribs,
 		int device_index);
 
 /* The offset value can be:
@@ -341,6 +356,7 @@ static inline void __edac_device_free_ctl_info(struct edac_device_ctl_info *ci)
 {
 	if (ci) {
 		kfree(ci->pvt_info);
+		kfree(ci->attribs);
 		kfree(ci->blocks);
 		kfree(ci->instances);
 		kfree(ci);

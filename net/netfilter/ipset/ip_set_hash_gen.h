@@ -5,7 +5,6 @@
 #define _IP_SET_HASH_GEN_H
 
 #include <linux/rcupdate.h>
-#include <linux/rcupdate_wait.h>
 #include <linux/jhash.h>
 #include <linux/types.h>
 #include <linux/netfilter/nfnetlink.h>

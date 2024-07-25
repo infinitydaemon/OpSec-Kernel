@@ -10,6 +10,5 @@
 #define PWRC_G12A_VPU_ID		0
 #define PWRC_G12A_ETH_ID		1
 #define PWRC_G12A_NNA_ID		2
-#define PWRC_G12A_ISP_ID		3
 
 #endif

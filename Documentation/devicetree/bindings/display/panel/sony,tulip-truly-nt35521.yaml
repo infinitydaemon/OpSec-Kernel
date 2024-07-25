@@ -21,8 +21,7 @@ properties:
   compatible:
     const: sony,tulip-truly-nt35521
 
-  reg:
-    maxItems: 1
+  reg: true
 
   positive5-supply:
     description: Positive 5V supply

@@ -24,7 +24,6 @@
 #define __AMD_SHARED_H__
 
 #include <drm/amd_asic_type.h>
-#include <drm/drm_print.h>
 
 
 #define AMD_MAX_USEC_TIMEOUT		1000000  /* 1000 ms */
@@ -84,8 +83,6 @@ enum amd_apu_flags {
 * @AMD_IP_BLOCK_TYPE_VCN: Video Core/Codec Next
 * @AMD_IP_BLOCK_TYPE_MES: Micro-Engine Scheduler
 * @AMD_IP_BLOCK_TYPE_JPEG: JPEG Engine
-* @AMD_IP_BLOCK_TYPE_VPE: Video Processing Engine
-* @AMD_IP_BLOCK_TYPE_UMSCH_MM: User Mode Schduler for Multimedia
 * @AMD_IP_BLOCK_TYPE_NUM: Total number of IP block types
 */
 enum amd_ip_block_type {
@@ -103,8 +100,6 @@ enum amd_ip_block_type {
 	AMD_IP_BLOCK_TYPE_VCN,
 	AMD_IP_BLOCK_TYPE_MES,
 	AMD_IP_BLOCK_TYPE_JPEG,
-	AMD_IP_BLOCK_TYPE_VPE,
-	AMD_IP_BLOCK_TYPE_UMSCH_MM,
 	AMD_IP_BLOCK_TYPE_NUM,
 };
 
@@ -175,7 +170,6 @@ enum amd_powergating_state {
 #define AMD_PG_SUPPORT_ATHUB			(1 << 16)
 #define AMD_PG_SUPPORT_JPEG			(1 << 17)
 #define AMD_PG_SUPPORT_IH_SRAM_PG		(1 << 18)
-#define AMD_PG_SUPPORT_JPEG_DPG		(1 << 19)
 
 /**
  * enum PP_FEATURE_MASK - Used to mask power play features.
@@ -246,7 +240,6 @@ enum DC_FEATURE_MASK {
 	DC_DISABLE_LTTPR_DP2_0 = (1 << 6), //0x40, disabled by default
 	DC_PSR_ALLOW_SMU_OPT = (1 << 7), //0x80, disabled by default
 	DC_PSR_ALLOW_MULTI_DISP_OPT = (1 << 8), //0x100, disabled by default
-	DC_REPLAY_MASK = (1 << 9), //0x200, disabled by default for dcn < 3.1.4
 };
 
 enum DC_DEBUG_MASK {
@@ -258,10 +251,6 @@ enum DC_DEBUG_MASK {
 	DC_FORCE_SUBVP_MCLK_SWITCH = 0x20,
 	DC_DISABLE_MPO = 0x40,
 	DC_ENABLE_DPIA_TRACE = 0x80,
-	DC_ENABLE_DML2 = 0x100,
-	DC_DISABLE_PSR_SU = 0x200,
-	DC_DISABLE_REPLAY = 0x400,
-	DC_DISABLE_IPS = 0x800,
 };
 
 enum amd_dpm_forced_level;
@@ -278,8 +267,6 @@ enum amd_dpm_forced_level;
  * @hw_init: sets up the hw state
  * @hw_fini: tears down the hw state
  * @late_fini: final cleanup
- * @prepare_suspend: handle IP specific changes to prepare for suspend
- *                   (such as allocating any required memory)
  * @suspend: handles IP specific hw/sw changes for suspend
  * @resume: handles IP specific hw/sw changes for resume
  * @is_idle: returns current IP block idle status
@@ -322,8 +309,6 @@ struct amd_ip_funcs {
 	int (*set_powergating_state)(void *handle,
 				     enum amd_powergating_state state);
 	void (*get_clockgating_state)(void *handle, u64 *flags);
-	void (*dump_ip_state)(void *handle);
-	void (*print_ip_state)(void *handle, struct drm_printer *p);
 };
 
 

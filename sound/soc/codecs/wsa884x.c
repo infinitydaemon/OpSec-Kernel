@@ -13,7 +13,6 @@
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
-#include <linux/reset.h>
 #include <linux/slab.h>
 #include <linux/soundwire/sdw.h>
 #include <linux/soundwire/sdw_registers.h>
@@ -700,7 +699,6 @@ struct wsa884x_priv {
 	struct sdw_stream_runtime *sruntime;
 	struct sdw_port_config port_config[WSA884X_MAX_SWR_PORTS];
 	struct gpio_desc *sd_n;
-	struct reset_control *sd_reset;
 	bool port_prepared[WSA884X_MAX_SWR_PORTS];
 	bool port_enable[WSA884X_MAX_SWR_PORTS];
 	unsigned int variant;
@@ -1656,9 +1654,15 @@ static int wsa884x_spkr_event(struct snd_soc_dapm_widget *w,
 		snd_soc_component_write_field(component, WSA884X_PDM_WD_CTL,
 					      WSA884X_PDM_WD_CTL_PDM_WD_EN_MASK,
 					      0x1);
+		snd_soc_component_write_field(component, WSA884X_PA_FSM_EN,
+					      WSA884X_PA_FSM_EN_GLOBAL_PA_EN_MASK,
+					      0x1);
 
 		break;
 	case SND_SOC_DAPM_PRE_PMD:
+		snd_soc_component_write_field(component, WSA884X_PA_FSM_EN,
+					      WSA884X_PA_FSM_EN_GLOBAL_PA_EN_MASK,
+					      0x0);
 		snd_soc_component_write_field(component, WSA884X_PDM_WD_CTL,
 					      WSA884X_PDM_WD_CTL_PDM_WD_EN_MASK,
 					      0x0);
@@ -1782,7 +1786,6 @@ static const struct snd_soc_dai_ops wsa884x_dai_ops = {
 	.hw_free = wsa884x_hw_free,
 	.mute_stream = wsa884x_mute_stream,
 	.set_stream = wsa884x_set_stream,
-	.mute_unmute_on_trigger = true,
 };
 
 static struct snd_soc_dai_driver wsa884x_dais[] = {
@@ -1801,48 +1804,14 @@ static struct snd_soc_dai_driver wsa884x_dais[] = {
 	},
 };
 
-static void wsa884x_reset_powerdown(void *data)
+static void wsa884x_gpio_powerdown(void *data)
 {
-	struct wsa884x_priv *wsa884x = data;
-
-	if (wsa884x->sd_reset)
-		reset_control_assert(wsa884x->sd_reset);
-	else
-		gpiod_direction_output(wsa884x->sd_n, 1);
-}
-
-static void wsa884x_reset_deassert(struct wsa884x_priv *wsa884x)
-{
-	if (wsa884x->sd_reset)
-		reset_control_deassert(wsa884x->sd_reset);
-	else
-		gpiod_direction_output(wsa884x->sd_n, 0);
+	gpiod_direction_output(data, 1);
 }
 
 static void wsa884x_regulator_disable(void *data)
 {
 	regulator_bulk_disable(WSA884X_SUPPLIES_NUM, data);
-}
-
-static int wsa884x_get_reset(struct device *dev, struct wsa884x_priv *wsa884x)
-{
-	wsa884x->sd_reset = devm_reset_control_get_optional_shared(dev, NULL);
-	if (IS_ERR(wsa884x->sd_reset))
-		return dev_err_probe(dev, PTR_ERR(wsa884x->sd_reset),
-				     "Failed to get reset\n");
-	else if (wsa884x->sd_reset)
-		return 0;
-	/*
-	 * else: NULL, so use the backwards compatible way for powerdown-gpios,
-	 * which does not handle sharing GPIO properly.
-	 */
-	wsa884x->sd_n = devm_gpiod_get_optional(dev, "powerdown",
-						GPIOD_OUT_HIGH);
-	if (IS_ERR(wsa884x->sd_n))
-		return dev_err_probe(dev, PTR_ERR(wsa884x->sd_n),
-				     "Shutdown Control GPIO not found\n");
-
-	return 0;
 }
 
 static int wsa884x_probe(struct sdw_slave *pdev,
@@ -1874,9 +1843,11 @@ static int wsa884x_probe(struct sdw_slave *pdev,
 	if (ret)
 		return ret;
 
-	ret = wsa884x_get_reset(dev, wsa884x);
-	if (ret)
-		return ret;
+	wsa884x->sd_n = devm_gpiod_get_optional(dev, "powerdown",
+						GPIOD_OUT_HIGH);
+	if (IS_ERR(wsa884x->sd_n))
+		return dev_err_probe(dev, PTR_ERR(wsa884x->sd_n),
+				     "Shutdown Control GPIO not found\n");
 
 	dev_set_drvdata(dev, wsa884x);
 	wsa884x->slave = pdev;
@@ -1892,8 +1863,9 @@ static int wsa884x_probe(struct sdw_slave *pdev,
 	pdev->prop.sink_dpn_prop = wsa884x_sink_dpn_prop;
 	pdev->prop.scp_int1_mask = SDW_SCP_INT1_BUS_CLASH | SDW_SCP_INT1_PARITY;
 
-	wsa884x_reset_deassert(wsa884x);
-	ret = devm_add_action_or_reset(dev, wsa884x_reset_powerdown, wsa884x);
+	/* Bring out of reset */
+	gpiod_direction_output(wsa884x->sd_n, 0);
+	ret = devm_add_action_or_reset(dev, wsa884x_gpio_powerdown, wsa884x->sd_n);
 	if (ret)
 		return ret;
 

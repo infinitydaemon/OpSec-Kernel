@@ -267,13 +267,12 @@ static int panfrost_ioctl_submit(struct drm_device *dev, void *data,
 	job->requirements = args->requirements;
 	job->flush_id = panfrost_gpu_get_latest_flush_id(pfdev);
 	job->mmu = file_priv->mmu;
-	job->engine_usage = &file_priv->engine_usage;
 
 	slot = panfrost_job_get_slot(job);
 
 	ret = drm_sched_job_init(&job->base,
 				 &file_priv->sched_entity[slot],
-				 1, NULL);
+				 NULL);
 	if (ret)
 		goto out_put_job;
 
@@ -524,60 +523,7 @@ static const struct drm_ioctl_desc panfrost_drm_driver_ioctls[] = {
 	PANFROST_IOCTL(MADVISE,		madvise,	DRM_RENDER_ALLOW),
 };
 
-static void panfrost_gpu_show_fdinfo(struct panfrost_device *pfdev,
-				     struct panfrost_file_priv *panfrost_priv,
-				     struct drm_printer *p)
-{
-	int i;
-
-	/*
-	 * IMPORTANT NOTE: drm-cycles and drm-engine measurements are not
-	 * accurate, as they only provide a rough estimation of the number of
-	 * GPU cycles and CPU time spent in a given context. This is due to two
-	 * different factors:
-	 * - Firstly, we must consider the time the CPU and then the kernel
-	 *   takes to process the GPU interrupt, which means additional time and
-	 *   GPU cycles will be added in excess to the real figure.
-	 * - Secondly, the pipelining done by the Job Manager (2 job slots per
-	 *   engine) implies there is no way to know exactly how much time each
-	 *   job spent on the GPU.
-	 */
-
-	static const char * const engine_names[] = {
-		"fragment", "vertex-tiler", "compute-only"
-	};
-
-	BUILD_BUG_ON(ARRAY_SIZE(engine_names) != NUM_JOB_SLOTS);
-
-	for (i = 0; i < NUM_JOB_SLOTS - 1; i++) {
-		if (pfdev->profile_mode) {
-			drm_printf(p, "drm-engine-%s:\t%llu ns\n",
-				   engine_names[i], panfrost_priv->engine_usage.elapsed_ns[i]);
-			drm_printf(p, "drm-cycles-%s:\t%llu\n",
-				   engine_names[i], panfrost_priv->engine_usage.cycles[i]);
-		}
-		drm_printf(p, "drm-maxfreq-%s:\t%lu Hz\n",
-			   engine_names[i], pfdev->pfdevfreq.fast_rate);
-		drm_printf(p, "drm-curfreq-%s:\t%lu Hz\n",
-			   engine_names[i], pfdev->pfdevfreq.current_frequency);
-	}
-}
-
-static void panfrost_show_fdinfo(struct drm_printer *p, struct drm_file *file)
-{
-	struct drm_device *dev = file->minor->dev;
-	struct panfrost_device *pfdev = dev->dev_private;
-
-	panfrost_gpu_show_fdinfo(pfdev, file->driver_priv, p);
-
-	drm_show_memory_stats(p, file);
-}
-
-static const struct file_operations panfrost_drm_driver_fops = {
-	.owner = THIS_MODULE,
-	DRM_GEM_FOPS,
-	.show_fdinfo = drm_show_fdinfo,
-};
+DEFINE_DRM_GEM_FOPS(panfrost_drm_driver_fops);
 
 /*
  * Panfrost driver version:
@@ -589,7 +535,6 @@ static const struct drm_driver panfrost_drm_driver = {
 	.driver_features	= DRIVER_RENDER | DRIVER_GEM | DRIVER_SYNCOBJ,
 	.open			= panfrost_open,
 	.postclose		= panfrost_postclose,
-	.show_fdinfo		= panfrost_show_fdinfo,
 	.ioctls			= panfrost_drm_driver_ioctls,
 	.num_ioctls		= ARRAY_SIZE(panfrost_drm_driver_ioctls),
 	.fops			= &panfrost_drm_driver_fops,
@@ -656,14 +601,10 @@ static int panfrost_probe(struct platform_device *pdev)
 	if (err < 0)
 		goto err_out1;
 
-	err = panfrost_gem_shrinker_init(ddev);
-	if (err)
-		goto err_out2;
+	panfrost_gem_shrinker_init(ddev);
 
 	return 0;
 
-err_out2:
-	drm_dev_unregister(ddev);
 err_out1:
 	pm_runtime_disable(pfdev->dev);
 	panfrost_device_fini(pfdev);
@@ -688,40 +629,6 @@ static void panfrost_remove(struct platform_device *pdev)
 
 	drm_dev_put(ddev);
 }
-
-static ssize_t profiling_show(struct device *dev,
-			      struct device_attribute *attr, char *buf)
-{
-	struct panfrost_device *pfdev = dev_get_drvdata(dev);
-
-	return sysfs_emit(buf, "%d\n", pfdev->profile_mode);
-}
-
-static ssize_t profiling_store(struct device *dev,
-			       struct device_attribute *attr,
-			       const char *buf, size_t len)
-{
-	struct panfrost_device *pfdev = dev_get_drvdata(dev);
-	bool value;
-	int err;
-
-	err = kstrtobool(buf, &value);
-	if (err)
-		return err;
-
-	pfdev->profile_mode = value;
-
-	return len;
-}
-
-static DEVICE_ATTR_RW(profiling);
-
-static struct attribute *panfrost_attrs[] = {
-	&dev_attr_profiling.attr,
-	NULL,
-};
-
-ATTRIBUTE_GROUPS(panfrost);
 
 /*
  * The OPP core wants the supply names to be NULL terminated, but we need the
@@ -765,7 +672,6 @@ static const struct panfrost_compatible mediatek_mt8183_b_data = {
 	.supply_names = mediatek_mt8183_b_supplies,
 	.num_pm_domains = ARRAY_SIZE(mediatek_mt8183_pm_domains),
 	.pm_domain_names = mediatek_mt8183_pm_domains,
-	.pm_features = BIT(GPU_PM_CLK_DIS) | BIT(GPU_PM_VREG_OFF),
 };
 
 static const char * const mediatek_mt8186_pm_domains[] = { "core0", "core1" };
@@ -774,7 +680,6 @@ static const struct panfrost_compatible mediatek_mt8186_data = {
 	.supply_names = mediatek_mt8183_b_supplies,
 	.num_pm_domains = ARRAY_SIZE(mediatek_mt8186_pm_domains),
 	.pm_domain_names = mediatek_mt8186_pm_domains,
-	.pm_features = BIT(GPU_PM_CLK_DIS) | BIT(GPU_PM_VREG_OFF),
 };
 
 static const char * const mediatek_mt8192_supplies[] = { "mali", NULL };
@@ -785,7 +690,6 @@ static const struct panfrost_compatible mediatek_mt8192_data = {
 	.supply_names = mediatek_mt8192_supplies,
 	.num_pm_domains = ARRAY_SIZE(mediatek_mt8192_pm_domains),
 	.pm_domain_names = mediatek_mt8192_pm_domains,
-	.pm_features = BIT(GPU_PM_CLK_DIS) | BIT(GPU_PM_VREG_OFF),
 };
 
 static const struct of_device_id dt_match[] = {
@@ -820,7 +724,6 @@ static struct platform_driver panfrost_driver = {
 		.name	= "panfrost",
 		.pm	= pm_ptr(&panfrost_pm_ops),
 		.of_match_table = dt_match,
-		.dev_groups = panfrost_groups,
 	},
 };
 module_platform_driver(panfrost_driver);

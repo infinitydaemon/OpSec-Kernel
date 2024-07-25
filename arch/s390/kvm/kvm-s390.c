@@ -33,19 +33,19 @@
 #include <linux/pgtable.h>
 #include <linux/mmu_notifier.h>
 
-#include <asm/access-regs.h>
 #include <asm/asm-offsets.h>
 #include <asm/lowcore.h>
 #include <asm/stp.h>
 #include <asm/gmap.h>
 #include <asm/nmi.h>
+#include <asm/switch_to.h>
 #include <asm/isc.h>
 #include <asm/sclp.h>
 #include <asm/cpacf.h>
 #include <asm/timex.h>
-#include <asm/fpu.h>
 #include <asm/ap.h>
 #include <asm/uv.h>
+#include <asm/fpu/api.h>
 #include "kvm-s390.h"
 #include "gaccess.h"
 #include "pci.h"
@@ -132,6 +132,7 @@ const struct _kvm_stats_desc kvm_vcpu_stats_desc[] = {
 	STATS_DESC_COUNTER(VCPU, instruction_io_other),
 	STATS_DESC_COUNTER(VCPU, instruction_lpsw),
 	STATS_DESC_COUNTER(VCPU, instruction_lpswe),
+	STATS_DESC_COUNTER(VCPU, instruction_lpswey),
 	STATS_DESC_COUNTER(VCPU, instruction_pfmf),
 	STATS_DESC_COUNTER(VCPU, instruction_ptff),
 	STATS_DESC_COUNTER(VCPU, instruction_sck),
@@ -563,6 +564,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_ENABLE_CAP:
 	case KVM_CAP_S390_CSS_SUPPORT:
 	case KVM_CAP_IOEVENTFD:
+	case KVM_CAP_DEVICE_CTRL:
 	case KVM_CAP_S390_IRQCHIP:
 	case KVM_CAP_VM_ATTRIBUTES:
 	case KVM_CAP_MP_STATE:
@@ -587,7 +589,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 		break;
 	case KVM_CAP_S390_HPAGE_1M:
 		r = 0;
-		if (hpage && !(kvm && kvm_is_ucontrol(kvm)))
+		if (hpage && !kvm_is_ucontrol(kvm))
 			r = 1;
 		break;
 	case KVM_CAP_S390_MEM_OP:
@@ -617,7 +619,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 		r = MACHINE_HAS_ESOP;
 		break;
 	case KVM_CAP_S390_VECTOR_REGISTERS:
-		r = test_facility(129);
+		r = MACHINE_HAS_VX;
 		break;
 	case KVM_CAP_S390_RI:
 		r = test_facility(64);
@@ -766,7 +768,7 @@ int kvm_vm_ioctl_enable_cap(struct kvm *kvm, struct kvm_enable_cap *cap)
 		mutex_lock(&kvm->lock);
 		if (kvm->created_vcpus) {
 			r = -EBUSY;
-		} else if (cpu_has_vx()) {
+		} else if (MACHINE_HAS_VX) {
 			set_kvm_facility(kvm->arch.model.fac_mask, 129);
 			set_kvm_facility(kvm->arch.model.fac_list, 129);
 			if (test_facility(134)) {
@@ -2876,7 +2878,7 @@ static int kvm_s390_vm_mem_op_abs(struct kvm *kvm, struct kvm_s390_mem_op *mop)
 
 	srcu_idx = srcu_read_lock(&kvm->srcu);
 
-	if (!kvm_is_gpa_in_memslot(kvm, mop->gaddr)) {
+	if (kvm_is_error_gpa(kvm, mop->gaddr)) {
 		r = PGM_ADDRESSING;
 		goto out_unlock;
 	}
@@ -2938,7 +2940,7 @@ static int kvm_s390_vm_mem_op_cmpxchg(struct kvm *kvm, struct kvm_s390_mem_op *m
 
 	srcu_idx = srcu_read_lock(&kvm->srcu);
 
-	if (!kvm_is_gpa_in_memslot(kvm, mop->gaddr)) {
+	if (kvm_is_error_gpa(kvm, mop->gaddr)) {
 		r = PGM_ADDRESSING;
 		goto out_unlock;
 	}
@@ -3151,7 +3153,7 @@ static int kvm_s390_apxa_installed(void)
  */
 static void kvm_s390_set_crycb_format(struct kvm *kvm)
 {
-	kvm->arch.crypto.crycbd = virt_to_phys(kvm->arch.crypto.crycb);
+	kvm->arch.crypto.crycbd = (__u32)(unsigned long) kvm->arch.crypto.crycb;
 
 	/* Clear the CRYCB format bits - i.e., set format 0 by default */
 	kvm->arch.crypto.crycbd &= ~(CRYCB_FORMAT_MASK);
@@ -3949,7 +3951,6 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 				    KVM_SYNC_ARCH0 |
 				    KVM_SYNC_PFAULT |
 				    KVM_SYNC_DIAG318;
-	vcpu->arch.acrs_loaded = false;
 	kvm_s390_set_prefix(vcpu, 0);
 	if (test_kvm_facility(vcpu->kvm, 64))
 		vcpu->run->kvm_valid_regs |= KVM_SYNC_RICCB;
@@ -3960,9 +3961,9 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 	if (test_kvm_facility(vcpu->kvm, 156))
 		vcpu->run->kvm_valid_regs |= KVM_SYNC_ETOKEN;
 	/* fprs can be synchronized via vrs, even if the guest has no vx. With
-	 * cpu_has_vx(), (load|store)_fpu_regs() will work with vrs format.
+	 * MACHINE_HAS_VX, (load|store)_fpu_regs() will work with vrs format.
 	 */
-	if (cpu_has_vx())
+	if (MACHINE_HAS_VX)
 		vcpu->run->kvm_valid_regs |= KVM_SYNC_VRS;
 	else
 		vcpu->run->kvm_valid_regs |= KVM_SYNC_FPRS;
@@ -4057,8 +4058,6 @@ static void kvm_gmap_notifier(struct gmap *gmap, unsigned long start,
 	struct kvm_vcpu *vcpu;
 	unsigned long prefix;
 	unsigned long i;
-
-	trace_kvm_s390_gmap_notifier(start, end, gmap_is_shadow(gmap));
 
 	if (gmap_is_shadow(gmap))
 		return;
@@ -4315,7 +4314,7 @@ int kvm_arch_vcpu_ioctl_set_fpu(struct kvm_vcpu *vcpu, struct kvm_fpu *fpu)
 	vcpu_load(vcpu);
 
 	vcpu->run->s.regs.fpc = fpu->fpc;
-	if (cpu_has_vx())
+	if (MACHINE_HAS_VX)
 		convert_fp_to_vx((__vector128 *) vcpu->run->s.regs.vrs,
 				 (freg_t *) fpu->fprs);
 	else
@@ -4329,7 +4328,9 @@ int kvm_arch_vcpu_ioctl_get_fpu(struct kvm_vcpu *vcpu, struct kvm_fpu *fpu)
 {
 	vcpu_load(vcpu);
 
-	if (cpu_has_vx())
+	/* make sure we have the latest values */
+	save_fpu_regs();
+	if (MACHINE_HAS_VX)
 		convert_vx_to_fp((freg_t *) fpu->fprs,
 				 (__vector128 *) vcpu->run->s.regs.vrs);
 	else
@@ -4828,6 +4829,8 @@ static int __vcpu_run(struct kvm_vcpu *vcpu)
 			       vcpu->run->s.regs.gprs,
 			       sizeof(sie_page->pv_grregs));
 		}
+		if (test_cpu_flag(CIF_FPU))
+			load_fpu_regs();
 		exit_reason = sie64a(vcpu->arch.sie_block,
 				     vcpu->run->s.regs.gprs);
 		if (kvm_s390_pv_cpu_is_protected(vcpu)) {
@@ -4916,7 +4919,7 @@ static void sync_regs_fmt2(struct kvm_vcpu *vcpu)
 	}
 	if (MACHINE_HAS_GS) {
 		preempt_disable();
-		local_ctl_set_bit(2, CR2_GUARDED_STORAGE_BIT);
+		__ctl_set_bit(2, 4);
 		if (current->thread.gs_cb) {
 			vcpu->arch.host_gscb = current->thread.gs_cb;
 			save_gs_cb(vcpu->arch.host_gscb);
@@ -4948,8 +4951,19 @@ static void sync_regs(struct kvm_vcpu *vcpu)
 	}
 	save_access_regs(vcpu->arch.host_acrs);
 	restore_access_regs(vcpu->run->s.regs.acrs);
-	vcpu->arch.acrs_loaded = true;
-	kvm_s390_fpu_load(vcpu->run);
+	/* save host (userspace) fprs/vrs */
+	save_fpu_regs();
+	vcpu->arch.host_fpregs.fpc = current->thread.fpu.fpc;
+	vcpu->arch.host_fpregs.regs = current->thread.fpu.regs;
+	if (MACHINE_HAS_VX)
+		current->thread.fpu.regs = vcpu->run->s.regs.vrs;
+	else
+		current->thread.fpu.regs = vcpu->run->s.regs.fprs;
+	current->thread.fpu.fpc = vcpu->run->s.regs.fpc;
+	if (test_fp_ctl(current->thread.fpu.fpc))
+		/* User space provided an invalid FPC, let's clear it */
+		current->thread.fpu.fpc = 0;
+
 	/* Sync fmt2 only data */
 	if (likely(!kvm_s390_pv_cpu_is_protected(vcpu))) {
 		sync_regs_fmt2(vcpu);
@@ -4982,13 +4996,13 @@ static void store_regs_fmt2(struct kvm_vcpu *vcpu)
 	kvm_run->s.regs.diag318 = vcpu->arch.diag318_info.val;
 	if (MACHINE_HAS_GS) {
 		preempt_disable();
-		local_ctl_set_bit(2, CR2_GUARDED_STORAGE_BIT);
+		__ctl_set_bit(2, 4);
 		if (vcpu->arch.gs_enabled)
 			save_gs_cb(current->thread.gs_cb);
 		current->thread.gs_cb = vcpu->arch.host_gscb;
 		restore_gs_cb(vcpu->arch.host_gscb);
 		if (!vcpu->arch.host_gscb)
-			local_ctl_clear_bit(2, CR2_GUARDED_STORAGE_BIT);
+			__ctl_clear_bit(2, 4);
 		vcpu->arch.host_gscb = NULL;
 		preempt_enable();
 	}
@@ -5010,8 +5024,12 @@ static void store_regs(struct kvm_vcpu *vcpu)
 	kvm_run->s.regs.pfc = vcpu->arch.pfault_compare;
 	save_access_regs(vcpu->run->s.regs.acrs);
 	restore_access_regs(vcpu->arch.host_acrs);
-	vcpu->arch.acrs_loaded = false;
-	kvm_s390_fpu_store(vcpu->run);
+	/* Save guest register state */
+	save_fpu_regs();
+	vcpu->run->s.regs.fpc = current->thread.fpu.fpc;
+	/* Restore will be done lazily at return */
+	current->thread.fpu.fpc = vcpu->arch.host_fpregs.fpc;
+	current->thread.fpu.regs = vcpu->arch.host_fpregs.regs;
 	if (likely(!kvm_s390_pv_cpu_is_protected(vcpu)))
 		store_regs_fmt2(vcpu);
 }
@@ -5019,7 +5037,6 @@ static void store_regs(struct kvm_vcpu *vcpu)
 int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 {
 	struct kvm_run *kvm_run = vcpu->run;
-	DECLARE_KERNEL_FPU_ONSTACK32(fpu);
 	int rc;
 
 	/*
@@ -5061,7 +5078,6 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 		goto out;
 	}
 
-	kernel_fpu_begin(&fpu, KERNEL_FPC | KERNEL_VXR);
 	sync_regs(vcpu);
 	enable_cpu_timer_accounting(vcpu);
 
@@ -5085,7 +5101,6 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 
 	disable_cpu_timer_accounting(vcpu);
 	store_regs(vcpu);
-	kernel_fpu_end(&fpu, KERNEL_FPC | KERNEL_VXR);
 
 	kvm_sigset_deactivate(vcpu);
 
@@ -5122,7 +5137,7 @@ int kvm_s390_store_status_unloaded(struct kvm_vcpu *vcpu, unsigned long gpa)
 		gpa -= __LC_FPREGS_SAVE_AREA;
 
 	/* manually convert vector registers if necessary */
-	if (cpu_has_vx()) {
+	if (MACHINE_HAS_VX) {
 		convert_vx_to_fp(fprs, (__vector128 *) vcpu->run->s.regs.vrs);
 		rc = write_guest_abs(vcpu, gpa + __LC_FPREGS_SAVE_AREA,
 				     fprs, 128);
@@ -5160,7 +5175,8 @@ int kvm_s390_vcpu_store_status(struct kvm_vcpu *vcpu, unsigned long addr)
 	 * switch in the run ioctl. Let's update our copies before we save
 	 * it into the save area
 	 */
-	kvm_s390_fpu_store(vcpu->run);
+	save_fpu_regs();
+	vcpu->run->s.regs.fpc = current->thread.fpu.fpc;
 	save_access_regs(vcpu->run->s.regs.acrs);
 
 	return kvm_s390_store_status_unloaded(vcpu, addr);

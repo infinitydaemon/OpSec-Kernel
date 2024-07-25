@@ -19,7 +19,7 @@
 #include <linux/regulator/consumer.h>
 #include <linux/regulator/machine.h>
 #include <linux/pm_runtime.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/of_irq.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
@@ -1198,7 +1198,7 @@ static const struct of_device_id cs35l34_of_match[] = {
 MODULE_DEVICE_TABLE(of, cs35l34_of_match);
 
 static const struct i2c_device_id cs35l34_id[] = {
-	{"cs35l34"},
+	{"cs35l34", 0},
 	{}
 };
 MODULE_DEVICE_TABLE(i2c, cs35l34_id);

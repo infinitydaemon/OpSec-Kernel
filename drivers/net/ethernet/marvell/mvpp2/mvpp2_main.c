@@ -1375,7 +1375,7 @@ static int mvpp2_bm_update_mtu(struct net_device *dev, int mtu)
 	}
 
 out_set:
-	WRITE_ONCE(dev->mtu, mtu);
+	dev->mtu = mtu;
 	dev->wanted_features = dev->features;
 
 	netdev_update_features(dev);
@@ -1538,21 +1538,10 @@ static void mvpp22_gop_init_rgmii(struct mvpp2_port *port)
 	regmap_write(priv->sysctrl_base, GENCONF_PORT_CTRL0, val);
 
 	regmap_read(priv->sysctrl_base, GENCONF_CTRL0, &val);
-	if (port->gop_id == 2) {
+	if (port->gop_id == 2)
 		val |= GENCONF_CTRL0_PORT2_RGMII;
-	} else if (port->gop_id == 3) {
+	else if (port->gop_id == 3)
 		val |= GENCONF_CTRL0_PORT3_RGMII_MII;
-
-		/* According to the specification, GENCONF_CTRL0_PORT3_RGMII
-		 * should be set to 1 for RGMII and 0 for MII. However, tests
-		 * show that it is the other way around. This is also what
-		 * U-Boot does for mvpp2, so it is assumed to be correct.
-		 */
-		if (port->phy_interface == PHY_INTERFACE_MODE_MII)
-			val |= GENCONF_CTRL0_PORT3_RGMII;
-		else
-			val &= ~GENCONF_CTRL0_PORT3_RGMII;
-	}
 	regmap_write(priv->sysctrl_base, GENCONF_CTRL0, val);
 }
 
@@ -1651,7 +1640,6 @@ static int mvpp22_gop_init(struct mvpp2_port *port, phy_interface_t interface)
 		return 0;
 
 	switch (interface) {
-	case PHY_INTERFACE_MODE_MII:
 	case PHY_INTERFACE_MODE_RGMII:
 	case PHY_INTERFACE_MODE_RGMII_ID:
 	case PHY_INTERFACE_MODE_RGMII_RXID:
@@ -3434,13 +3422,12 @@ static void mvpp2_isr_handle_ptp(struct mvpp2_port *port)
 		mvpp2_isr_handle_ptp_queue(port, 1);
 }
 
-static void mvpp2_isr_handle_link(struct mvpp2_port *port,
-				  struct phylink_pcs *pcs, bool link)
+static void mvpp2_isr_handle_link(struct mvpp2_port *port, bool link)
 {
 	struct net_device *dev = port->dev;
 
 	if (port->phylink) {
-		phylink_pcs_change(pcs, link);
+		phylink_mac_change(port->phylink, link);
 		return;
 	}
 
@@ -3473,7 +3460,7 @@ static void mvpp2_isr_handle_xlg(struct mvpp2_port *port)
 	if (val & MVPP22_XLG_INT_STAT_LINK) {
 		val = readl(port->base + MVPP22_XLG_STATUS);
 		link = (val & MVPP22_XLG_STATUS_LINK_UP);
-		mvpp2_isr_handle_link(port, &port->pcs_xlg, link);
+		mvpp2_isr_handle_link(port, link);
 	}
 }
 
@@ -3489,7 +3476,7 @@ static void mvpp2_isr_handle_gmac_internal(struct mvpp2_port *port)
 		if (val & MVPP22_GMAC_INT_STAT_LINK) {
 			val = readl(port->base + MVPP2_GMAC_STATUS0);
 			link = (val & MVPP2_GMAC_STATUS0_LINK_UP);
-			mvpp2_isr_handle_link(port, &port->pcs_gmac, link);
+			mvpp2_isr_handle_link(port, link);
 		}
 	}
 }
@@ -4014,7 +4001,10 @@ static int mvpp2_rx(struct mvpp2_port *port, struct napi_struct *napi,
 			}
 		}
 
-		skb = build_skb(data, frag_size);
+		if (frag_size)
+			skb = build_skb(data, frag_size);
+		else
+			skb = slab_build_skb(data);
 		if (!skb) {
 			netdev_warn(port->dev, "skb build failed\n");
 			goto err_drop_frame;
@@ -4065,7 +4055,7 @@ err_drop_frame:
 	}
 
 	if (xdp_ret & MVPP2_XDP_REDIR)
-		xdp_do_flush();
+		xdp_do_flush_map();
 
 	if (ps.rx_packets) {
 		struct mvpp2_pcpu_stats *stats = this_cpu_ptr(port->stats);
@@ -5672,11 +5662,49 @@ static u32 mvpp2_ethtool_get_rxfh_indir_size(struct net_device *dev)
 	return mvpp22_rss_is_supported(port) ? MVPP22_RSS_TABLE_ENTRIES : 0;
 }
 
-static int mvpp2_ethtool_get_rxfh(struct net_device *dev,
-				  struct ethtool_rxfh_param *rxfh)
+static int mvpp2_ethtool_get_rxfh(struct net_device *dev, u32 *indir, u8 *key,
+				  u8 *hfunc)
 {
 	struct mvpp2_port *port = netdev_priv(dev);
-	u32 rss_context = rxfh->rss_context;
+	int ret = 0;
+
+	if (!mvpp22_rss_is_supported(port))
+		return -EOPNOTSUPP;
+
+	if (indir)
+		ret = mvpp22_port_rss_ctx_indir_get(port, 0, indir);
+
+	if (hfunc)
+		*hfunc = ETH_RSS_HASH_CRC32;
+
+	return ret;
+}
+
+static int mvpp2_ethtool_set_rxfh(struct net_device *dev, const u32 *indir,
+				  const u8 *key, const u8 hfunc)
+{
+	struct mvpp2_port *port = netdev_priv(dev);
+	int ret = 0;
+
+	if (!mvpp22_rss_is_supported(port))
+		return -EOPNOTSUPP;
+
+	if (hfunc != ETH_RSS_HASH_NO_CHANGE && hfunc != ETH_RSS_HASH_CRC32)
+		return -EOPNOTSUPP;
+
+	if (key)
+		return -EOPNOTSUPP;
+
+	if (indir)
+		ret = mvpp22_port_rss_ctx_indir_set(port, 0, indir);
+
+	return ret;
+}
+
+static int mvpp2_ethtool_get_rxfh_context(struct net_device *dev, u32 *indir,
+					  u8 *key, u8 *hfunc, u32 rss_context)
+{
+	struct mvpp2_port *port = netdev_priv(dev);
 	int ret = 0;
 
 	if (!mvpp22_rss_is_supported(port))
@@ -5684,34 +5712,33 @@ static int mvpp2_ethtool_get_rxfh(struct net_device *dev,
 	if (rss_context >= MVPP22_N_RSS_TABLES)
 		return -EINVAL;
 
-	rxfh->hfunc = ETH_RSS_HASH_CRC32;
+	if (hfunc)
+		*hfunc = ETH_RSS_HASH_CRC32;
 
-	if (rxfh->indir)
-		ret = mvpp22_port_rss_ctx_indir_get(port, rss_context,
-						    rxfh->indir);
+	if (indir)
+		ret = mvpp22_port_rss_ctx_indir_get(port, rss_context, indir);
 
 	return ret;
 }
 
-static int mvpp2_ethtool_set_rxfh(struct net_device *dev,
-				  struct ethtool_rxfh_param *rxfh,
-				  struct netlink_ext_ack *extack)
+static int mvpp2_ethtool_set_rxfh_context(struct net_device *dev,
+					  const u32 *indir, const u8 *key,
+					  const u8 hfunc, u32 *rss_context,
+					  bool delete)
 {
 	struct mvpp2_port *port = netdev_priv(dev);
-	u32 *rss_context = &rxfh->rss_context;
-	int ret = 0;
+	int ret;
 
 	if (!mvpp22_rss_is_supported(port))
 		return -EOPNOTSUPP;
 
-	if (rxfh->hfunc != ETH_RSS_HASH_NO_CHANGE &&
-	    rxfh->hfunc != ETH_RSS_HASH_CRC32)
+	if (hfunc != ETH_RSS_HASH_NO_CHANGE && hfunc != ETH_RSS_HASH_CRC32)
 		return -EOPNOTSUPP;
 
-	if (rxfh->key)
+	if (key)
 		return -EOPNOTSUPP;
 
-	if (*rss_context && rxfh->rss_delete)
+	if (delete)
 		return mvpp22_port_rss_ctx_delete(port, *rss_context);
 
 	if (*rss_context == ETH_RXFH_CONTEXT_ALLOC) {
@@ -5720,13 +5747,8 @@ static int mvpp2_ethtool_set_rxfh(struct net_device *dev,
 			return ret;
 	}
 
-	if (rxfh->indir)
-		ret = mvpp22_port_rss_ctx_indir_set(port, *rss_context,
-						    rxfh->indir);
-
-	return ret;
+	return mvpp22_port_rss_ctx_indir_set(port, *rss_context, indir);
 }
-
 /* Device ops */
 
 static const struct net_device_ops mvpp2_netdev_ops = {
@@ -5746,7 +5768,6 @@ static const struct net_device_ops mvpp2_netdev_ops = {
 };
 
 static const struct ethtool_ops mvpp2_eth_tool_ops = {
-	.cap_rss_ctx_supported	= true,
 	.supported_coalesce_params = ETHTOOL_COALESCE_USECS |
 				     ETHTOOL_COALESCE_MAX_FRAMES,
 	.nway_reset		= mvpp2_ethtool_nway_reset,
@@ -5769,6 +5790,8 @@ static const struct ethtool_ops mvpp2_eth_tool_ops = {
 	.get_rxfh_indir_size	= mvpp2_ethtool_get_rxfh_indir_size,
 	.get_rxfh		= mvpp2_ethtool_get_rxfh,
 	.set_rxfh		= mvpp2_ethtool_set_rxfh,
+	.get_rxfh_context	= mvpp2_ethtool_get_rxfh_context,
+	.set_rxfh_context	= mvpp2_ethtool_set_rxfh_context,
 };
 
 /* Used for PPv2.1, or PPv2.2 with the old Device Tree binding that
@@ -5836,7 +5859,7 @@ static int mvpp2_multi_queue_vectors_init(struct mvpp2_port *port,
 			v->type = MVPP2_QUEUE_VECTOR_SHARED;
 
 			if (port->flags & MVPP2_F_DT_COMPAT)
-				strscpy(irqname, "rx-shared", sizeof(irqname));
+				strncpy(irqname, "rx-shared", sizeof(irqname));
 		}
 
 		if (port_node)
@@ -6903,7 +6926,7 @@ static int mvpp2_port_probe(struct platform_device *pdev,
 	dev->min_mtu = ETH_MIN_MTU;
 	/* 9704 == 9728 - 20 and rounding to 8 */
 	dev->max_mtu = MVPP2_BM_JUMBO_PKT_SIZE;
-	device_set_node(&dev->dev, port_fwnode);
+	dev->dev.of_node = port_node;
 
 	port->pcs_gmac.ops = &mvpp2_phylink_gmac_pcs_ops;
 	port->pcs_gmac.neg_mode = true;
@@ -6953,11 +6976,8 @@ static int mvpp2_port_probe(struct platform_device *pdev,
 					MAC_10000FD;
 		}
 
-		if (mvpp2_port_supports_rgmii(port)) {
+		if (mvpp2_port_supports_rgmii(port))
 			phy_interface_set_rgmii(port->phylink_config.supported_interfaces);
-			__set_bit(PHY_INTERFACE_MODE_MII,
-				  port->phylink_config.supported_interfaces);
-		}
 
 		if (comphy) {
 			/* If a COMPHY is present, we can support any of the
@@ -7670,7 +7690,7 @@ err_pp_clk:
 	return err;
 }
 
-static void mvpp2_remove(struct platform_device *pdev)
+static int mvpp2_remove(struct platform_device *pdev)
 {
 	struct mvpp2 *priv = platform_get_drvdata(pdev);
 	struct fwnode_handle *fwnode = pdev->dev.fwnode;
@@ -7708,13 +7728,15 @@ static void mvpp2_remove(struct platform_device *pdev)
 	}
 
 	if (is_acpi_node(port_fwnode))
-		return;
+		return 0;
 
 	clk_disable_unprepare(priv->axi_clk);
 	clk_disable_unprepare(priv->mg_core_clk);
 	clk_disable_unprepare(priv->mg_clk);
 	clk_disable_unprepare(priv->pp_clk);
 	clk_disable_unprepare(priv->gop_clk);
+
+	return 0;
 }
 
 static const struct of_device_id mvpp2_match[] = {
@@ -7740,7 +7762,7 @@ MODULE_DEVICE_TABLE(acpi, mvpp2_acpi_match);
 
 static struct platform_driver mvpp2_driver = {
 	.probe = mvpp2_probe,
-	.remove_new = mvpp2_remove,
+	.remove = mvpp2_remove,
 	.driver = {
 		.name = MVPP2_DRIVER_NAME,
 		.of_match_table = mvpp2_match,

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * budget-core.ko: base-driver for the SAA7146 based Budget DVB cards
+ * budget-core.c: driver for the SAA7146 based Budget DVB cards
  *
  * Compiled from various sources by Michael Hunold <michael@mihu.de>
  *
@@ -34,7 +34,6 @@
 #define BUFFER_WARNING_WAIT	(30*HZ)
 
 int budget_debug;
-EXPORT_SYMBOL_GPL(budget_debug);
 static int dma_buffer_size = TS_MIN_BUFSIZE_K;
 module_param_named(debug, budget_debug, int, 0644);
 module_param_named(bufsize, dma_buffer_size, int, 0444);
@@ -81,7 +80,7 @@ static int start_ts_capture(struct budget *budget)
 	 *      Pitch: 188, NumBytes3: 188, NumLines3: 1024
 	 */
 
-	switch (budget->card->type) {
+	switch(budget->card->type) {
 	case BUDGET_FS_ACTIVY:
 		saa7146_write(dev, DD1_INIT, 0x04000000);
 		saa7146_write(dev, MC2, (MASK_09 | MASK_25));
@@ -209,7 +208,7 @@ static void vpeirq(struct tasklet_struct *t)
 		budget->buffer_warnings++;
 
 	if (budget->buffer_warnings && time_after(jiffies, budget->buffer_warning_time)) {
-		pr_warn("%s %s: used %d times >80%% of buffer (%u bytes now)\n",
+		printk("%s %s: used %d times >80%% of buffer (%u bytes now)\n",
 			budget->dev->name, __func__, budget->buffer_warnings, count);
 		budget->buffer_warning_time = jiffies + BUFFER_WARNING_WAIT;
 		budget->buffer_warnings = 0;
@@ -260,7 +259,6 @@ int ttpci_budget_debiread(struct budget *budget, u32 config, int addr, int count
 	return ttpci_budget_debiread_nolock(budget, config, addr,
 					    count, nobusyloop);
 }
-EXPORT_SYMBOL_GPL(ttpci_budget_debiread);
 
 static int ttpci_budget_debiwrite_nolock(struct budget *budget, u32 config,
 		int addr, int count, u32 value, int nobusyloop)
@@ -301,7 +299,6 @@ int ttpci_budget_debiwrite(struct budget *budget, u32 config, int addr,
 	return ttpci_budget_debiwrite_nolock(budget, config, addr,
 					     count, value, nobusyloop);
 }
-EXPORT_SYMBOL_GPL(ttpci_budget_debiwrite);
 
 
 /****************************************************************************
@@ -426,7 +423,7 @@ int ttpci_budget_init(struct budget *budget, struct saa7146_dev *dev,
 	budget->card = bi;
 	budget->dev = (struct saa7146_dev *) dev;
 
-	switch (budget->card->type) {
+	switch(budget->card->type) {
 	case BUDGET_FS_ACTIVY:
 		budget->buffer_width = TS_WIDTH_ACTIVY;
 		max_bufsize = TS_MAX_BUFSIZE_K_ACTIVY;
@@ -473,7 +470,7 @@ int ttpci_budget_init(struct budget *budget, struct saa7146_dev *dev,
 		budget->dev->name,
 		budget->buffer_size > budget->buffer_width * budget->buffer_height ? "odd/even" : "single",
 		budget->buffer_width, budget->buffer_height);
-	pr_info("%s: dma buffer size %u\n", budget->dev->name, budget->buffer_size);
+	printk("%s: dma buffer size %u\n", budget->dev->name, budget->buffer_size);
 
 	ret = dvb_register_adapter(&budget->dvb_adapter, budget->card->name,
 				   owner, &budget->dev->pci->dev, adapter_nums);
@@ -494,10 +491,8 @@ int ttpci_budget_init(struct budget *budget, struct saa7146_dev *dev,
 	spin_lock_init(&budget->feedlock);
 	spin_lock_init(&budget->debilock);
 
-	/*
-	 * the Siemens DVB needs this if you want to have the i2c chips
-	 * get recognized before the main driver is loaded
-	 */
+	/* the Siemens DVB needs this if you want to have the i2c chips
+	   get recognized before the main driver is loaded */
 	if (bi->type != BUDGET_FS_ACTIVY)
 		saa7146_write(dev, GPIO_CTRL, 0x500000);	/* GPIO 3 = 1 */
 
@@ -516,7 +511,7 @@ int ttpci_budget_init(struct budget *budget, struct saa7146_dev *dev,
 	ttpci_eeprom_parse_mac(&budget->i2c_adap, budget->dvb_adapter.proposed_mac);
 
 	budget->grabbing = saa7146_vmalloc_build_pgtable(dev->pci, budget->buffer_size, &budget->pt);
-	if (budget->grabbing == NULL) {
+	if (NULL == budget->grabbing) {
 		ret = -ENOMEM;
 		goto err_del_i2c;
 	}
@@ -531,8 +526,7 @@ int ttpci_budget_init(struct budget *budget, struct saa7146_dev *dev,
 	if (bi->type != BUDGET_FS_ACTIVY)
 		saa7146_setgpio(dev, 2, SAA7146_GPIO_OUTHI);
 
-	ret = budget_register(budget);
-	if (ret == 0)
+	if ((ret = budget_register(budget)) == 0)
 		return 0; /* Everything OK */
 
 	/* An error occurred, cleanup resources */
@@ -546,7 +540,6 @@ err_dvb_unregister:
 
 	return ret;
 }
-EXPORT_SYMBOL_GPL(ttpci_budget_init);
 
 void ttpci_budget_init_hooks(struct budget *budget)
 {
@@ -555,7 +548,6 @@ void ttpci_budget_init_hooks(struct budget *budget)
 		budget->dvb_frontend->ops.read_status = budget_read_fe_status;
 	}
 }
-EXPORT_SYMBOL_GPL(ttpci_budget_init_hooks);
 
 int ttpci_budget_deinit(struct budget *budget)
 {
@@ -575,9 +567,8 @@ int ttpci_budget_deinit(struct budget *budget)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(ttpci_budget_deinit);
 
-void ttpci_budget_irq10_handler(struct saa7146_dev *dev, u32 *isr)
+void ttpci_budget_irq10_handler(struct saa7146_dev *dev, u32 * isr)
 {
 	struct budget *budget = dev->ext_priv;
 
@@ -586,7 +577,6 @@ void ttpci_budget_irq10_handler(struct saa7146_dev *dev, u32 *isr)
 	if (*isr & MASK_10)
 		tasklet_schedule(&budget->vpe_tasklet);
 }
-EXPORT_SYMBOL_GPL(ttpci_budget_irq10_handler);
 
 void ttpci_budget_set_video_port(struct saa7146_dev *dev, int video_port)
 {
@@ -600,6 +590,14 @@ void ttpci_budget_set_video_port(struct saa7146_dev *dev, int video_port)
 	}
 	spin_unlock(&budget->feedlock);
 }
+
+EXPORT_SYMBOL_GPL(ttpci_budget_debiread);
+EXPORT_SYMBOL_GPL(ttpci_budget_debiwrite);
+EXPORT_SYMBOL_GPL(ttpci_budget_init);
+EXPORT_SYMBOL_GPL(ttpci_budget_init_hooks);
+EXPORT_SYMBOL_GPL(ttpci_budget_deinit);
+EXPORT_SYMBOL_GPL(ttpci_budget_irq10_handler);
 EXPORT_SYMBOL_GPL(ttpci_budget_set_video_port);
+EXPORT_SYMBOL_GPL(budget_debug);
 
 MODULE_LICENSE("GPL");

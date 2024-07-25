@@ -45,7 +45,6 @@ static bool lan966x_tc_is_known_etype(struct vcap_tc_flower_parse_usage *st,
 static int
 lan966x_tc_flower_handler_control_usage(struct vcap_tc_flower_parse_usage *st)
 {
-	struct netlink_ext_ack *extack = st->fco->common.extack;
 	struct flow_match_control match;
 	int err = 0;
 
@@ -60,7 +59,7 @@ lan966x_tc_flower_handler_control_usage(struct vcap_tc_flower_parse_usage *st)
 						    VCAP_KF_L3_FRAGMENT,
 						    VCAP_BIT_0);
 		if (err)
-			goto bad_frag_out;
+			goto out;
 	}
 
 	if (match.mask->flags & FLOW_DIS_FIRST_FRAG) {
@@ -73,20 +72,15 @@ lan966x_tc_flower_handler_control_usage(struct vcap_tc_flower_parse_usage *st)
 						    VCAP_KF_L3_FRAG_OFS_GT0,
 						    VCAP_BIT_1);
 		if (err)
-			goto bad_frag_out;
+			goto out;
 	}
-
-	if (!flow_rule_is_supp_control_flags(FLOW_DIS_IS_FRAGMENT |
-					     FLOW_DIS_FIRST_FRAG,
-					     match.mask->flags, extack))
-		return -EOPNOTSUPP;
 
 	st->used_keys |= BIT_ULL(FLOW_DISSECTOR_KEY_CONTROL);
 
 	return err;
 
-bad_frag_out:
-	NL_SET_ERR_MSG_MOD(extack, "ip_frag parse error");
+out:
+	NL_SET_ERR_MSG_MOD(st->fco->common.extack, "ip_frag parse error");
 	return err;
 }
 

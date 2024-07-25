@@ -11,6 +11,14 @@ config MFD_CORE
 	select IRQ_DOMAIN
 	default n
 
+config MFD_RPISENSE_CORE
+	tristate "Raspberry Pi Sense HAT core functions"
+	depends on I2C
+	select MFD_CORE
+	help
+	  This is the core driver for the Raspberry Pi Sense HAT. This provides
+	  the necessary functions to communicate with the hardware.
+
 config MFD_CS5535
 	tristate "AMD CS5535 and CS5536 southbridge core functions"
 	select MFD_CORE
@@ -292,7 +300,7 @@ config MFD_MADERA_SPI
 
 config MFD_MAX5970
 	tristate "Maxim 5970/5978 power switch and monitor"
-	depends on I2C && OF
+	depends on (I2C && OF)
 	select MFD_SIMPLE_MFD_I2C
 	help
 	  This driver controls a Maxim 5970/5978 switch via I2C bus.
@@ -458,7 +466,7 @@ config MFD_EXYNOS_LPASS
 
 config MFD_GATEWORKS_GSC
 	tristate "Gateworks System Controller"
-	depends on I2C && OF
+	depends on (I2C && OF)
 	select MFD_CORE
 	select REGMAP_I2C
 	select REGMAP_IRQ
@@ -473,7 +481,7 @@ config MFD_GATEWORKS_GSC
 
 config MFD_MC13XXX
 	tristate
-	depends on SPI_MASTER || I2C
+	depends on (SPI_MASTER || I2C)
 	select MFD_CORE
 	select REGMAP_IRQ
 	help
@@ -1109,7 +1117,7 @@ config PCF50633_GPIO
 
 config MFD_PM8XXX
 	tristate "Qualcomm PM8xxx PMIC chips driver"
-	depends on ARM || HEXAGON || COMPILE_TEST
+	depends on (ARM || HEXAGON || COMPILE_TEST)
 	select IRQ_DOMAIN_HIERARCHY
 	select MFD_CORE
 	select REGMAP
@@ -1161,6 +1169,16 @@ config MFD_SY7636A
 
 	  To enable support for building sub-devices as modules,
 	  choose M here.
+
+config MFD_RASPBERRYPI_POE_HAT
+	tristate "Raspberry Pi PoE HAT MFD"
+	depends on I2C
+	select MFD_SIMPLE_MFD_I2C
+	help
+	  This module supports the PWM fan controller found on the Raspberry Pi
+	  POE and POE+ HAT boards, and the power supply driver on the POE+ HAT.
+	  (Functionally it relies on MFD_SIMPLE_MFD_I2C to provide the framework
+	  that loads the child drivers).
 
 config MFD_RDC321X
 	tristate "RDC R-321x southbridge"
@@ -1225,7 +1243,7 @@ config MFD_RK8XX
 	select MFD_CORE
 
 config MFD_RK8XX_I2C
-	tristate "Rockchip RK805/RK808/RK809/RK816/RK817/RK818 Power Management Chip"
+	tristate "Rockchip RK805/RK808/RK809/RK817/RK818 Power Management Chip"
 	depends on I2C && OF
 	select MFD_CORE
 	select REGMAP_I2C
@@ -1233,7 +1251,7 @@ config MFD_RK8XX_I2C
 	select MFD_RK8XX
 	help
 	  If you say yes here you get support for the RK805, RK808, RK809,
-	  RK816, RK817 and RK818 Power Management chips.
+	  RK817 and RK818 Power Management chips.
 	  This driver provides common support for accessing the device
 	  through I2C interface. The device supports multiple sub-devices
 	  including interrupts, RTC, LDO & DCDC regulators, and onkey.
@@ -1418,7 +1436,7 @@ config MFD_DB8500_PRCMU
 
 config MFD_STMPE
 	bool "STMicroelectronics STMPE"
-	depends on I2C=y || SPI_MASTER=y
+	depends on (I2C=y || SPI_MASTER=y)
 	depends on OF
 	select MFD_CORE
 	help
@@ -1773,7 +1791,6 @@ config TWL4030_CORE
 	bool "TI TWL4030/TWL5030/TWL6030/TPS659x0 Support"
 	depends on I2C=y
 	select IRQ_DOMAIN
-	select MFD_CORE
 	select REGMAP_I2C
 	help
 	  Say yes here if you have TWL4030 / TWL6030 family chip on your board.
@@ -2116,7 +2133,7 @@ config MFD_STM32_TIMERS
 
 config MFD_STPMIC1
 	tristate "Support for STPMIC1 PMIC"
-	depends on I2C=y && OF
+	depends on (I2C=y && OF)
 	select REGMAP_I2C
 	select REGMAP_IRQ
 	select MFD_CORE
@@ -2257,7 +2274,7 @@ config MFD_VEXPRESS_SYSREG
 config RAVE_SP_CORE
 	tristate "RAVE SP MCU core driver"
 	depends on SERIAL_DEV_BUS
-	select CRC_ITU_T
+	select CRC_CCITT
 	help
 	  Select this to get support for the Supervisory Processor
 	  device found on several devices in RAVE line of hardware.
@@ -2305,6 +2322,17 @@ config MFD_INTEL_M10_BMC_PMCI
 	  This driver provides common support for accessing the device,
 	  additional drivers must be enabled in order to use the functionality
 	  of the device.
+
+config MFD_RP1
+	tristate "RP1 MFD driver"
+	depends on PCI
+	select MFD_CORE
+	help
+	  Support for the RP1 peripheral chip.
+
+	  This driver provides support for the Raspberry Pi RP1 peripheral chip.
+	  It is responsible for enabling the Device Tree node once the PCIe endpoint
+	  has been configured, and handling interrupts.
 
 config MFD_RSMU_I2C
 	tristate "Renesas Synchronization Management Unit with I2C"

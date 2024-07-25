@@ -116,12 +116,6 @@ struct host1x_info {
 	 * the display driver disables VBLANK increments.
 	 */
 	bool reserve_vblank_syncpts;
-	/*
-	 * On Tegra186, secure world applications may require access to
-	 * host1x during suspend/resume. To allow this, we need to leave
-	 * host1x not in reset.
-	 */
-	bool skip_reset_assert;
 };
 
 struct host1x {
@@ -130,8 +124,7 @@ struct host1x {
 	void __iomem *regs;
 	void __iomem *hv_regs; /* hypervisor region */
 	void __iomem *common_regs;
-	int syncpt_irqs[8];
-	int num_syncpt_irqs;
+	int syncpt_irq;
 	struct host1x_syncpt *syncpt;
 	struct host1x_syncpt_base *bases;
 	struct device *dev;

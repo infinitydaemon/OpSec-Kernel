@@ -20,7 +20,6 @@ int get_root_cgroup(void);
 int create_and_get_cgroup(const char *relative_path);
 void remove_cgroup(const char *relative_path);
 unsigned long long get_cgroup_id(const char *relative_path);
-int get_cgroup1_hierarchy_id(const char *subsys_name);
 
 int join_cgroup(const char *relative_path);
 int join_root_cgroup(void);
@@ -30,10 +29,8 @@ int setup_cgroup_environment(void);
 void cleanup_cgroup_environment(void);
 
 /* cgroupv1 related */
-int set_classid(void);
+int set_classid(unsigned int id);
 int join_classid(void);
-unsigned long long get_classid_cgroup_id(void);
-int open_classid(void);
 
 int setup_classid_environment(void);
 void cleanup_classid_environment(void);

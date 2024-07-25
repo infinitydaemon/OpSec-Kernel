@@ -205,7 +205,7 @@ static int otm3225a_get_power(struct lcd_device *ld)
 	return dd->power;
 }
 
-static const struct lcd_ops otm3225a_ops = {
+static struct lcd_ops otm3225a_ops = {
 	.set_power = otm3225a_set_power,
 	.get_power = otm3225a_get_power,
 };
@@ -239,6 +239,7 @@ static int otm3225a_probe(struct spi_device *spi)
 static struct spi_driver otm3225a_driver = {
 	.driver = {
 		.name = "otm3225a",
+		.owner = THIS_MODULE,
 	},
 	.probe = otm3225a_probe,
 };

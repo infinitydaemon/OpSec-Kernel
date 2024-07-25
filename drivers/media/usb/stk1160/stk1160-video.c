@@ -130,7 +130,10 @@ void stk1160_copy_video(struct stk1160 *dev, u8 *src, int len)
 	dst += linesdone * bytesperline * 2 + lineoff;
 
 	/* Copy the remaining of current line */
-	lencopy = min(remain, bytesperline - lineoff);
+	if (remain < (bytesperline - lineoff))
+		lencopy = remain;
+	else
+		lencopy = bytesperline - lineoff;
 
 	/*
 	 * Check if we have enough space left in the buffer.
@@ -175,7 +178,10 @@ void stk1160_copy_video(struct stk1160 *dev, u8 *src, int len)
 		src += lencopy;
 
 		/* Copy one line at a time */
-		lencopy = min(remain, bytesperline);
+		if (remain < bytesperline)
+			lencopy = remain;
+		else
+			lencopy = bytesperline;
 
 		/*
 		 * Check if we have enough space left in the buffer.

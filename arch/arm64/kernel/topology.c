@@ -82,12 +82,7 @@ int __init parse_acpi_topology(void)
 #undef pr_fmt
 #define pr_fmt(fmt) "AMU: " fmt
 
-/*
- * Ensure that amu_scale_freq_tick() will return SCHED_CAPACITY_SCALE until
- * the CPU capacity and its associated frequency have been correctly
- * initialized.
- */
-static DEFINE_PER_CPU_READ_MOSTLY(unsigned long, arch_max_freq_scale) =  1UL << (2 * SCHED_CAPACITY_SHIFT);
+static DEFINE_PER_CPU_READ_MOSTLY(unsigned long, arch_max_freq_scale);
 static DEFINE_PER_CPU(u64, arch_const_cycles_prev);
 static DEFINE_PER_CPU(u64, arch_core_cycles_prev);
 static cpumask_var_t amu_fie_cpus;
@@ -117,14 +112,14 @@ static inline bool freq_counters_valid(int cpu)
 	return true;
 }
 
-void freq_inv_set_max_ratio(int cpu, u64 max_rate)
+static int freq_inv_set_max_ratio(int cpu, u64 max_rate, u64 ref_rate)
 {
-	u64 ratio, ref_rate = arch_timer_get_rate();
+	u64 ratio;
 
 	if (unlikely(!max_rate || !ref_rate)) {
-		WARN_ONCE(1, "CPU%d: invalid maximum or reference frequency.\n",
+		pr_debug("CPU%d: invalid maximum or reference frequency.\n",
 			 cpu);
-		return;
+		return -EINVAL;
 	}
 
 	/*
@@ -144,10 +139,12 @@ void freq_inv_set_max_ratio(int cpu, u64 max_rate)
 	ratio = div64_u64(ratio, max_rate);
 	if (!ratio) {
 		WARN_ONCE(1, "Reference frequency too low.\n");
-		return;
+		return -EINVAL;
 	}
 
-	WRITE_ONCE(per_cpu(arch_max_freq_scale, cpu), (unsigned long)ratio);
+	per_cpu(arch_max_freq_scale, cpu) = (unsigned long)ratio;
+
+	return 0;
 }
 
 static void amu_scale_freq_tick(void)
@@ -198,7 +195,10 @@ static void amu_fie_setup(const struct cpumask *cpus)
 		return;
 
 	for_each_cpu(cpu, cpus) {
-		if (!freq_counters_valid(cpu))
+		if (!freq_counters_valid(cpu) ||
+		    freq_inv_set_max_ratio(cpu,
+					   cpufreq_get_hw_max_freq(cpu) * 1000ULL,
+					   arch_timer_get_rate()))
 			return;
 	}
 

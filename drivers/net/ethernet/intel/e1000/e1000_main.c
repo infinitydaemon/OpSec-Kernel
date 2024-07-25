@@ -149,8 +149,8 @@ static int e1000_vlan_rx_kill_vid(struct net_device *netdev,
 				  __be16 proto, u16 vid);
 static void e1000_restore_vlan(struct e1000_adapter *adapter);
 
-static int e1000_suspend(struct device *dev);
-static int e1000_resume(struct device *dev);
+static int __maybe_unused e1000_suspend(struct device *dev);
+static int __maybe_unused e1000_resume(struct device *dev);
 static void e1000_shutdown(struct pci_dev *pdev);
 
 #ifdef CONFIG_NET_POLL_CONTROLLER
@@ -175,14 +175,16 @@ static const struct pci_error_handlers e1000_err_handler = {
 	.resume = e1000_io_resume,
 };
 
-static DEFINE_SIMPLE_DEV_PM_OPS(e1000_pm_ops, e1000_suspend, e1000_resume);
+static SIMPLE_DEV_PM_OPS(e1000_pm_ops, e1000_suspend, e1000_resume);
 
 static struct pci_driver e1000_driver = {
 	.name     = e1000_driver_name,
 	.id_table = e1000_pci_tbl,
 	.probe    = e1000_probe,
 	.remove   = e1000_remove,
-	.driver.pm = pm_sleep_ptr(&e1000_pm_ops),
+	.driver = {
+		.pm = &e1000_pm_ops,
+	},
 	.shutdown = e1000_shutdown,
 	.err_handler = &e1000_err_handler
 };
@@ -1012,7 +1014,7 @@ static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	netdev->watchdog_timeo = 5 * HZ;
 	netif_napi_add(netdev, &adapter->napi, e1000_clean);
 
-	strscpy(netdev->name, pci_name(pdev), sizeof(netdev->name));
+	strncpy(netdev->name, pci_name(pdev), sizeof(netdev->name) - 1);
 
 	adapter->bd_number = cards_found;
 
@@ -3569,7 +3571,7 @@ static int e1000_change_mtu(struct net_device *netdev, int new_mtu)
 
 	netdev_dbg(netdev, "changing MTU from %d to %d\n",
 		   netdev->mtu, new_mtu);
-	WRITE_ONCE(netdev->mtu, new_mtu);
+	netdev->mtu = new_mtu;
 
 	if (netif_running(netdev))
 		e1000_up(adapter);
@@ -5133,7 +5135,7 @@ static int __e1000_shutdown(struct pci_dev *pdev, bool *enable_wake)
 	return 0;
 }
 
-static int e1000_suspend(struct device *dev)
+static int __maybe_unused e1000_suspend(struct device *dev)
 {
 	int retval;
 	struct pci_dev *pdev = to_pci_dev(dev);
@@ -5145,7 +5147,7 @@ static int e1000_suspend(struct device *dev)
 	return retval;
 }
 
-static int e1000_resume(struct device *dev)
+static int __maybe_unused e1000_resume(struct device *dev)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
 	struct net_device *netdev = pci_get_drvdata(pdev);

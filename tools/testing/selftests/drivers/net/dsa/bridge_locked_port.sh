@@ -1,1 +1,1 @@
-run_net_forwarding_test.sh
+../../../net/forwarding/bridge_locked_port.sh

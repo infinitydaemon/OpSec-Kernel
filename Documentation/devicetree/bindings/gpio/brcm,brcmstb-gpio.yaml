@@ -62,8 +62,6 @@ properties:
 
   interrupt-controller: true
 
-  gpio-ranges: true
-
   wakeup-source:
     type: boolean
     description: >
@@ -74,7 +72,7 @@ required:
   - reg
   - gpio-controller
   - "#gpio-cells"
-  - brcm,gpio-bank-widths
+  - "brcm,gpio-bank-widths"
 
 additionalProperties: false
 
@@ -90,7 +88,6 @@ examples:
         interrupt-parent = <&irq0_intc>;
         interrupts = <0x6>;
         brcm,gpio-bank-widths = <32 32 32 24>;
-        gpio-ranges = <&pinctrl 0 0 120>;
     };
 
     upg_gio_aon: gpio@f04172c0 {

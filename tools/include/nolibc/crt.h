@@ -13,23 +13,12 @@ const unsigned long *_auxv __attribute__((weak));
 static void __stack_chk_init(void);
 static void exit(int);
 
-extern void (*const __preinit_array_start[])(void) __attribute__((weak));
-extern void (*const __preinit_array_end[])(void) __attribute__((weak));
-
-extern void (*const __init_array_start[])(void) __attribute__((weak));
-extern void (*const __init_array_end[])(void) __attribute__((weak));
-
-extern void (*const __fini_array_start[])(void) __attribute__((weak));
-extern void (*const __fini_array_end[])(void) __attribute__((weak));
-
 __attribute__((weak))
 void _start_c(long *sp)
 {
 	long argc;
 	char **argv;
 	char **envp;
-	int exitcode;
-	void (* const *func)(void);
 	const unsigned long *auxv;
 	/* silence potential warning: conflicting types for 'main' */
 	int _nolibc_main(int, char **, char **) __asm__ ("main");
@@ -66,18 +55,8 @@ void _start_c(long *sp)
 		;
 	_auxv = auxv;
 
-	for (func = __preinit_array_start; func < __preinit_array_end; func++)
-		(*func)();
-	for (func = __init_array_start; func < __init_array_end; func++)
-		(*func)();
-
 	/* go to application */
-	exitcode = _nolibc_main(argc, argv, envp);
-
-	for (func = __fini_array_end; func > __fini_array_start;)
-		(*--func)();
-
-	exit(exitcode);
+	exit(_nolibc_main(argc, argv, envp));
 }
 
 #endif /* _NOLIBC_CRT_H */

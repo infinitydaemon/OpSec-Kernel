@@ -702,7 +702,7 @@ static void valleyview_irq_reset(struct drm_i915_private *dev_priv)
 	gen5_gt_irq_reset(to_gt(dev_priv));
 
 	spin_lock_irq(&dev_priv->irq_lock);
-	if (dev_priv->display.irq.display_irqs_enabled)
+	if (dev_priv->display_irqs_enabled)
 		vlv_display_irq_reset(dev_priv);
 	spin_unlock_irq(&dev_priv->irq_lock);
 }
@@ -751,8 +751,6 @@ static void dg1_irq_reset(struct drm_i915_private *dev_priv)
 
 	GEN3_IRQ_RESET(uncore, GEN11_GU_MISC_);
 	GEN3_IRQ_RESET(uncore, GEN8_PCU_);
-
-	intel_uncore_write(uncore, GEN11_GFX_MSTR_IRQ, ~0);
 }
 
 static void cherryview_irq_reset(struct drm_i915_private *dev_priv)
@@ -767,7 +765,7 @@ static void cherryview_irq_reset(struct drm_i915_private *dev_priv)
 	GEN3_IRQ_RESET(uncore, GEN8_PCU_);
 
 	spin_lock_irq(&dev_priv->irq_lock);
-	if (dev_priv->display.irq.display_irqs_enabled)
+	if (dev_priv->display_irqs_enabled)
 		vlv_display_irq_reset(dev_priv);
 	spin_unlock_irq(&dev_priv->irq_lock);
 }
@@ -784,7 +782,7 @@ static void valleyview_irq_postinstall(struct drm_i915_private *dev_priv)
 	gen5_gt_irq_postinstall(to_gt(dev_priv));
 
 	spin_lock_irq(&dev_priv->irq_lock);
-	if (dev_priv->display.irq.display_irqs_enabled)
+	if (dev_priv->display_irqs_enabled)
 		vlv_display_irq_postinstall(dev_priv);
 	spin_unlock_irq(&dev_priv->irq_lock);
 
@@ -838,7 +836,7 @@ static void cherryview_irq_postinstall(struct drm_i915_private *dev_priv)
 	gen8_gt_irq_postinstall(to_gt(dev_priv));
 
 	spin_lock_irq(&dev_priv->irq_lock);
-	if (dev_priv->display.irq.display_irqs_enabled)
+	if (dev_priv->display_irqs_enabled)
 		vlv_display_irq_postinstall(dev_priv);
 	spin_unlock_irq(&dev_priv->irq_lock);
 

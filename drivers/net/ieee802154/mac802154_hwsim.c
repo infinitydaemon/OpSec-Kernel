@@ -1035,7 +1035,7 @@ err_slave:
 	return err;
 }
 
-static void hwsim_remove(struct platform_device *pdev)
+static int hwsim_remove(struct platform_device *pdev)
 {
 	struct hwsim_phy *phy, *tmp;
 
@@ -1043,11 +1043,13 @@ static void hwsim_remove(struct platform_device *pdev)
 	list_for_each_entry_safe(phy, tmp, &hwsim_phys, list)
 		hwsim_del(phy);
 	mutex_unlock(&hwsim_phys_lock);
+
+	return 0;
 }
 
 static struct platform_driver mac802154hwsim_driver = {
 	.probe = hwsim_probe,
-	.remove_new = hwsim_remove,
+	.remove = hwsim_remove,
 	.driver = {
 			.name = "mac802154_hwsim",
 	},

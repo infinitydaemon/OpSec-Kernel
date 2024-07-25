@@ -63,7 +63,7 @@ static int sdhci_pci_init_wakeup(struct sdhci_pci_chip *chip)
 	if ((pm_flags & MMC_PM_KEEP_POWER) && (pm_flags & MMC_PM_WAKE_SDIO_IRQ))
 		return device_wakeup_enable(&chip->pdev->dev);
 	else if (!cap_cd_wake)
-		device_wakeup_disable(&chip->pdev->dev);
+		return device_wakeup_disable(&chip->pdev->dev);
 
 	return 0;
 }
@@ -483,12 +483,11 @@ static int __intel_dsm(struct intel_host *intel_host, struct device *dev,
 	int err = 0;
 	size_t len;
 
-	obj = acpi_evaluate_dsm_typed(ACPI_HANDLE(dev), &intel_dsm_guid, 0, fn, NULL,
-				      ACPI_TYPE_BUFFER);
+	obj = acpi_evaluate_dsm(ACPI_HANDLE(dev), &intel_dsm_guid, 0, fn, NULL);
 	if (!obj)
 		return -EOPNOTSUPP;
 
-	if (obj->buffer.length < 1) {
+	if (obj->type != ACPI_TYPE_BUFFER || obj->buffer.length < 1) {
 		err = -EINVAL;
 		goto out;
 	}
@@ -1326,7 +1325,7 @@ static int jmicron_pmos(struct sdhci_pci_chip *chip, int on)
 
 	ret = pci_read_config_byte(chip->pdev, 0xAE, &scratch);
 	if (ret)
-		return ret;
+		goto fail;
 
 	/*
 	 * Turn PMOS on [bit 0], set over current detection to 2.4 V
@@ -1337,7 +1336,10 @@ static int jmicron_pmos(struct sdhci_pci_chip *chip, int on)
 	else
 		scratch &= ~0x47;
 
-	return pci_write_config_byte(chip->pdev, 0xAE, scratch);
+	ret = pci_write_config_byte(chip->pdev, 0xAE, scratch);
+
+fail:
+	return pcibios_err_to_errno(ret);
 }
 
 static int jmicron_probe(struct sdhci_pci_chip *chip)
@@ -2202,7 +2204,7 @@ static int sdhci_pci_probe(struct pci_dev *pdev,
 
 	ret = pci_read_config_byte(pdev, PCI_SLOT_INFO, &slots);
 	if (ret)
-		return ret;
+		return pcibios_err_to_errno(ret);
 
 	slots = PCI_SLOT_INFO_SLOTS(slots) + 1;
 	dev_dbg(&pdev->dev, "found %d slot(s)\n", slots);
@@ -2211,7 +2213,7 @@ static int sdhci_pci_probe(struct pci_dev *pdev,
 
 	ret = pci_read_config_byte(pdev, PCI_SLOT_INFO, &first_bar);
 	if (ret)
-		return ret;
+		return pcibios_err_to_errno(ret);
 
 	first_bar &= PCI_SLOT_INFO_FIRST_BAR_MASK;
 

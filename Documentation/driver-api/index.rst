@@ -9,141 +9,111 @@ of device drivers.  This document is an only somewhat organized collection
 of some of those interfaces — it will hopefully get better over time!  The
 available subsections can be seen below.
 
+.. class:: toc-title
 
-General information for driver authors
-======================================
-
-This section contains documentation that should, at some point or other, be
-of interest to most developers working on device drivers.
+	   Table of contents
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
 
-   basics
    driver-model/index
-   device_link
+   basics
    infrastructure
    ioctl
-   pm/index
-
-Useful support libraries
-========================
-
-This section contains documentation that should, at some point or other, be
-of interest to most developers working on device drivers.
-
-.. toctree::
-   :maxdepth: 1
-
    early-userspace/index
-   connector
-   device-io
-   devfreq
-   dma-buf
-   component
-   io-mapping
-   io_ordering
-   uio-howto
-   vfio-mediated-device
-   vfio
-   vfio-pci-device-specific-driver-acceptance
-
-Bus-level documentation
-=======================
-
-.. toctree::
-   :maxdepth: 1
-
-   auxiliary_bus
-   cxl/index
-   eisa
-   firewire
-   i3c/index
-   isa
-   men-chameleon-bus
-   pci/index
-   rapidio/index
-   slimbus
-   usb/index
-   virtio/index
-   vme
-   w1
-   xillybus
-
-
-Subsystem-specific APIs
-=======================
-
-.. toctree::
-   :maxdepth: 1
-
-   80211/index
-   acpi/index
-   backlight/lp855x-driver.rst
+   pm/index
    clk
-   console
-   crypto/index
-   dmaengine/index
-   dpll
-   edac
-   firmware/index
-   fpga/index
-   frame-buffer
-   aperture
-   generic-counter
-   gpio/index
-   hsi
-   hte/index
-   i2c
-   iio/index
-   infiniband
-   input
-   interconnect
-   ipmb
-   ipmi
-   libata
-   mailbox
-   md/index
-   media/index
-   mei/index
-   memory-devices/index
+   device-io
+   dma-buf
+   device_link
+   component
    message-based
-   misc_devices
-   miscellaneous
-   mmc/index
-   mtd/index
-   mtdnand
-   nfc/index
-   ntb
-   nvdimm/index
-   nvmem
-   parport-lowlevel
-   phy/index
-   pin-control
-   pldmfw/index
-   pps
-   ptp
-   pwm
+   infiniband
+   aperture
+   frame-buffer
    regulator
    reset
-   rfkill
-   s390-drivers
+   iio/index
+   input
+   usb/index
+   firewire
+   pci/index
+   cxl/index
+   spi
+   i2c
+   ipmb
+   ipmi
+   i3c/index
+   interconnect
+   devfreq
+   hsi
+   edac
    scsi
+   libata
+   target
+   mailbox
+   mtdnand
+   miscellaneous
+   mei/index
+   mtd/index
+   mmc/index
+   nvdimm/index
+   w1
+   rapidio/index
+   s390-drivers
+   vme
+   80211/index
+   uio-howto
+   firmware/index
+   pin-control
+   gpio/index
+   md/index
+   media/index
+   misc_devices
+   nfc/index
+   dmaengine/index
+   slimbus
+   soundwire/index
+   thermal/index
+   fpga/index
+   acpi/index
+   auxiliary_bus
+   backlight/lp855x-driver.rst
+   connector
+   console
+   dcdbas
+   eisa
+   isa
+   isapnp
+   io-mapping
+   io_ordering
+   generic-counter
+   memory-devices/index
+   men-chameleon-bus
+   ntb
+   nvmem
+   parport-lowlevel
+   pps
+   ptp
+   phy/index
+   pwm
+   pldmfw/index
+   rfkill
    serial/index
    sm501
-   soundwire/index
-   spi
    surface_aggregator/index
    switchtec
    sync_file
-   target
-   tee
-   thermal/index
    tty/index
-   wbrf
-   wmi
+   vfio-mediated-device
+   vfio
+   vfio-pci-device-specific-driver-acceptance
+   virtio/index
    xilinx/index
+   xillybus
    zorro
+   hte/index
+   wmi
 
 .. only::  subproject and html
 

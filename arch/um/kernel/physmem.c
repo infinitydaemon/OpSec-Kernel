@@ -12,7 +12,6 @@
 #include <as-layout.h>
 #include <init.h>
 #include <kern.h>
-#include <kern_util.h>
 #include <mem_user.h>
 #include <os.h>
 
@@ -161,6 +160,8 @@ __uml_setup("mem=", uml_mem_setup,
 "    be more, and the excess, if it's ever used, will just be swapped out.\n"
 "	Example: mem=64M\n\n"
 );
+
+extern int __init parse_iomem(char *str, int *add);
 
 __uml_setup("iomem=", parse_iomem,
 "iomem=<name>,<file>\n"

@@ -5,9 +5,7 @@
 
 #include <linux/kernel.h>
 #include <linux/edac.h>
-#include <linux/of.h>
-#include <linux/of_device.h>
-#include <linux/platform_device.h>
+#include <linux/of_platform.h>
 
 #include <asm/hardware/cache-l2x0.h>
 #include <asm/hardware/cache-aurora-l2.h>
@@ -353,18 +351,20 @@ static int axp_mc_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void axp_mc_remove(struct platform_device *pdev)
+static int axp_mc_remove(struct platform_device *pdev)
 {
 	struct mem_ctl_info *mci = platform_get_drvdata(pdev);
 
 	edac_mc_del_mc(&pdev->dev);
 	edac_mc_free(mci);
 	platform_set_drvdata(pdev, NULL);
+
+	return 0;
 }
 
 static struct platform_driver axp_mc_driver = {
 	.probe = axp_mc_probe,
-	.remove_new = axp_mc_remove,
+	.remove = axp_mc_remove,
 	.driver = {
 		.name = "armada_xp_mc_edac",
 		.of_match_table = of_match_ptr(axp_mc_of_match),
@@ -523,7 +523,7 @@ static int aurora_l2_probe(struct platform_device *pdev)
 		dev_warn(&pdev->dev, "data ECC is not enabled\n");
 
 	dci = edac_device_alloc_ctl_info(sizeof(*drvdata),
-					 "cpu", 1, "L", 1, 2, 0);
+					 "cpu", 1, "L", 1, 2, NULL, 0, 0);
 	if (!dci)
 		return -ENOMEM;
 
@@ -564,7 +564,7 @@ static int aurora_l2_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void aurora_l2_remove(struct platform_device *pdev)
+static int aurora_l2_remove(struct platform_device *pdev)
 {
 	struct edac_device_ctl_info *dci = platform_get_drvdata(pdev);
 #ifdef CONFIG_EDAC_DEBUG
@@ -575,11 +575,13 @@ static void aurora_l2_remove(struct platform_device *pdev)
 	edac_device_del_device(&pdev->dev);
 	edac_device_free_ctl_info(dci);
 	platform_set_drvdata(pdev, NULL);
+
+	return 0;
 }
 
 static struct platform_driver aurora_l2_driver = {
 	.probe = aurora_l2_probe,
-	.remove_new = aurora_l2_remove,
+	.remove = aurora_l2_remove,
 	.driver = {
 		.name = "aurora_l2_edac",
 		.of_match_table = of_match_ptr(aurora_l2_of_match),

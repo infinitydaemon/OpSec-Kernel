@@ -604,8 +604,10 @@ static int find_over_exposure(int brightness)
 	MaxAllowableOverExposure = FLICKER_MAX_EXPOSURE - brightness -
 				   FLICKER_BRIGHTNESS_CONSTANT;
 
-	OverExposure = min(MaxAllowableOverExposure,
-			   FLICKER_ALLOWABLE_OVER_EXPOSURE);
+	if (MaxAllowableOverExposure < FLICKER_ALLOWABLE_OVER_EXPOSURE)
+		OverExposure = MaxAllowableOverExposure;
+	else
+		OverExposure = FLICKER_ALLOWABLE_OVER_EXPOSURE;
 
 	return OverExposure;
 }

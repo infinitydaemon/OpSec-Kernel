@@ -108,9 +108,7 @@ static int amdgpu_vm_cpu_update(struct amdgpu_vm_update_params *p,
 static int amdgpu_vm_cpu_commit(struct amdgpu_vm_update_params *p,
 				struct dma_fence **fence)
 {
-	if (p->needs_flush)
-		atomic64_inc(&p->vm->tlb_seq);
-
+	/* Flush HDP */
 	mb();
 	amdgpu_device_flush_hdp(p->adev, NULL);
 	return 0;

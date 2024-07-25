@@ -55,6 +55,8 @@ static int mpls_xmit(struct sk_buff *skb)
 	out_dev = dst->dev;
 	net = dev_net(out_dev);
 
+	skb_orphan(skb);
+
 	if (!mpls_output_possible(out_dev) ||
 	    !dst->lwtstate || skb_warn_if_lro(skb))
 		goto drop;
@@ -81,7 +83,7 @@ static int mpls_xmit(struct sk_buff *skb)
 			ttl = net->mpls.default_ttl;
 		else
 			ttl = ip_hdr(skb)->ttl;
-		rt = dst_rtable(dst);
+		rt = (struct rtable *)dst;
 	} else if (dst->ops->family == AF_INET6) {
 		if (tun_encap_info->ttl_propagate == MPLS_TTL_PROP_DISABLED)
 			ttl = tun_encap_info->default_ttl;
@@ -90,7 +92,7 @@ static int mpls_xmit(struct sk_buff *skb)
 			ttl = net->mpls.default_ttl;
 		else
 			ttl = ipv6_hdr(skb)->hop_limit;
-		rt6 = dst_rt6_info(dst);
+		rt6 = (struct rt6_info *)dst;
 	} else {
 		goto drop;
 	}

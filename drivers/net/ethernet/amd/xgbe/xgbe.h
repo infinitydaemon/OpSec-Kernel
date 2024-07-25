@@ -495,7 +495,7 @@ struct xgbe_ring {
  * a DMA channel.
  */
 struct xgbe_channel {
-	char name[20];
+	char name[16];
 
 	/* Address of private data area for device */
 	struct xgbe_prv_data *pdata;

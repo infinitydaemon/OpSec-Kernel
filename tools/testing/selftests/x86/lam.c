@@ -817,7 +817,7 @@ static void run_test(struct testcases *test, int count)
 
 		/* return 3 is not support LA57, the case should be skipped */
 		if (ret == 3) {
-			ksft_test_result_skip("%s", t->msg);
+			ksft_test_result_skip(t->msg);
 			continue;
 		}
 
@@ -826,7 +826,7 @@ static void run_test(struct testcases *test, int count)
 		else
 			ret = !(t->expected);
 
-		ksft_test_result(ret, "%s", t->msg);
+		ksft_test_result(ret, t->msg);
 	}
 }
 
@@ -1183,7 +1183,7 @@ int main(int argc, char **argv)
 
 	if (!cpu_has_lam()) {
 		ksft_print_msg("Unsupported LAM feature!\n");
-		return KSFT_SKIP;
+		return -1;
 	}
 
 	while ((c = getopt(argc, argv, "ht:")) != -1) {
@@ -1237,5 +1237,5 @@ int main(int argc, char **argv)
 
 	ksft_set_plan(tests_cnt);
 
-	ksft_exit_pass();
+	return ksft_exit_pass();
 }

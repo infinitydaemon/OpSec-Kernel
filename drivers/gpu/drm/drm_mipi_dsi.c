@@ -89,7 +89,7 @@ static const struct dev_pm_ops mipi_dsi_device_pm_ops = {
 	.restore = pm_generic_restore,
 };
 
-static const struct bus_type mipi_dsi_bus_type = {
+static struct bus_type mipi_dsi_bus_type = {
 	.name = "mipi-dsi",
 	.match = mipi_dsi_device_match,
 	.uevent = mipi_dsi_uevent,
@@ -645,43 +645,6 @@ int mipi_dsi_set_maximum_return_packet_size(struct mipi_dsi_device *dsi,
 EXPORT_SYMBOL(mipi_dsi_set_maximum_return_packet_size);
 
 /**
- * mipi_dsi_compression_mode_ext() - enable/disable DSC on the peripheral
- * @dsi: DSI peripheral device
- * @enable: Whether to enable or disable the DSC
- * @algo: Selected compression algorithm
- * @pps_selector: Select PPS from the table of pre-stored or uploaded PPS entries
- *
- * Enable or disable Display Stream Compression on the peripheral.
- *
- * Return: 0 on success or a negative error code on failure.
- */
-int mipi_dsi_compression_mode_ext(struct mipi_dsi_device *dsi, bool enable,
-				  enum mipi_dsi_compression_algo algo,
-				  unsigned int pps_selector)
-{
-	u8 tx[2] = { };
-	struct mipi_dsi_msg msg = {
-		.channel = dsi->channel,
-		.type = MIPI_DSI_COMPRESSION_MODE,
-		.tx_len = sizeof(tx),
-		.tx_buf = tx,
-	};
-	int ret;
-
-	if (algo > 3 || pps_selector > 3)
-		return -EINVAL;
-
-	tx[0] = (enable << 0) |
-		(algo << 1) |
-		(pps_selector << 4);
-
-	ret = mipi_dsi_device_transfer(dsi, &msg);
-
-	return (ret < 0) ? ret : 0;
-}
-EXPORT_SYMBOL(mipi_dsi_compression_mode_ext);
-
-/**
  * mipi_dsi_compression_mode() - enable/disable DSC on the peripheral
  * @dsi: DSI peripheral device
  * @enable: Whether to enable or disable the DSC
@@ -693,7 +656,17 @@ EXPORT_SYMBOL(mipi_dsi_compression_mode_ext);
  */
 int mipi_dsi_compression_mode(struct mipi_dsi_device *dsi, bool enable)
 {
-	return mipi_dsi_compression_mode_ext(dsi, enable, MIPI_DSI_COMPRESSION_DSC, 0);
+	/* Note: Needs updating for non-default PPS or algorithm */
+	u8 tx[2] = { enable << 0, 0 };
+	struct mipi_dsi_msg msg = {
+		.channel = dsi->channel,
+		.type = MIPI_DSI_COMPRESSION_MODE,
+		.tx_len = sizeof(tx),
+		.tx_buf = tx,
+	};
+	int ret = mipi_dsi_device_transfer(dsi, &msg);
+
+	return (ret < 0) ? ret : 0;
 }
 EXPORT_SYMBOL(mipi_dsi_compression_mode);
 

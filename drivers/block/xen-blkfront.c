@@ -941,35 +941,39 @@ static const struct blk_mq_ops blkfront_mq_ops = {
 	.complete = blkif_complete_rq,
 };
 
-static void blkif_set_queue_limits(const struct blkfront_info *info,
-		struct queue_limits *lim)
+static void blkif_set_queue_limits(struct blkfront_info *info)
 {
+	struct request_queue *rq = info->rq;
+	struct gendisk *gd = info->gd;
 	unsigned int segments = info->max_indirect_segments ? :
 				BLKIF_MAX_SEGMENTS_PER_REQUEST;
 
+	blk_queue_flag_set(QUEUE_FLAG_VIRT, rq);
+
 	if (info->feature_discard) {
-		lim->max_hw_discard_sectors = UINT_MAX;
-		if (info->discard_granularity)
-			lim->discard_granularity = info->discard_granularity;
-		lim->discard_alignment = info->discard_alignment;
+		blk_queue_max_discard_sectors(rq, get_capacity(gd));
+		rq->limits.discard_granularity = info->discard_granularity ?:
+						 info->physical_sector_size;
+		rq->limits.discard_alignment = info->discard_alignment;
 		if (info->feature_secdiscard)
-			lim->max_secure_erase_sectors = UINT_MAX;
+			blk_queue_max_secure_erase_sectors(rq,
+							   get_capacity(gd));
 	}
 
 	/* Hard sector size and max sectors impersonate the equiv. hardware. */
-	lim->logical_block_size = info->sector_size;
-	lim->physical_block_size = info->physical_sector_size;
-	lim->max_hw_sectors = (segments * XEN_PAGE_SIZE) / 512;
+	blk_queue_logical_block_size(rq, info->sector_size);
+	blk_queue_physical_block_size(rq, info->physical_sector_size);
+	blk_queue_max_hw_sectors(rq, (segments * XEN_PAGE_SIZE) / 512);
 
 	/* Each segment in a request is up to an aligned page in size. */
-	lim->seg_boundary_mask = PAGE_SIZE - 1;
-	lim->max_segment_size = PAGE_SIZE;
+	blk_queue_segment_boundary(rq, PAGE_SIZE - 1);
+	blk_queue_max_segment_size(rq, PAGE_SIZE);
 
 	/* Ensure a merged request will fit in a single I/O ring slot. */
-	lim->max_segments = segments / GRANTS_PER_PSEG;
+	blk_queue_max_segments(rq, segments / GRANTS_PER_PSEG);
 
 	/* Make sure buffer addresses are sector-aligned. */
-	lim->dma_alignment = 511;
+	blk_queue_dma_alignment(rq, 511);
 }
 
 static const char *flush_info(struct blkfront_info *info)
@@ -1066,7 +1070,6 @@ static int xlvbd_alloc_gendisk(blkif_sector_t capacity,
 		struct blkfront_info *info, u16 sector_size,
 		unsigned int physical_sector_size)
 {
-	struct queue_limits lim = {};
 	struct gendisk *gd;
 	int nr_minors = 1;
 	int err;
@@ -1133,13 +1136,11 @@ static int xlvbd_alloc_gendisk(blkif_sector_t capacity,
 	if (err)
 		goto out_release_minors;
 
-	blkif_set_queue_limits(info, &lim);
-	gd = blk_mq_alloc_disk(&info->tag_set, &lim, info);
+	gd = blk_mq_alloc_disk(&info->tag_set, info);
 	if (IS_ERR(gd)) {
 		err = PTR_ERR(gd);
 		goto out_free_tag_set;
 	}
-	blk_queue_flag_set(QUEUE_FLAG_VIRT, gd->queue);
 
 	strcpy(gd->disk_name, DEV_NAME);
 	ptr = encode_disk_name(gd->disk_name + sizeof(DEV_NAME) - 1, offset);
@@ -1161,6 +1162,7 @@ static int xlvbd_alloc_gendisk(blkif_sector_t capacity,
 	info->gd = gd;
 	info->sector_size = sector_size;
 	info->physical_sector_size = physical_sector_size;
+	blkif_set_queue_limits(info);
 
 	xlvbd_flush(info);
 
@@ -2004,19 +2006,18 @@ static int blkfront_probe(struct xenbus_device *dev,
 
 static int blkif_recover(struct blkfront_info *info)
 {
-	struct queue_limits lim;
 	unsigned int r_index;
 	struct request *req, *n;
 	int rc;
 	struct bio *bio;
+	unsigned int segs;
 	struct blkfront_ring_info *rinfo;
 
-	lim = queue_limits_start_update(info->rq);
 	blkfront_gather_backend_features(info);
-	blkif_set_queue_limits(info, &lim);
-	rc = queue_limits_commit_update(info->rq, &lim);
-	if (rc)
-		return rc;
+	/* Reset limits changed by blk_mq_update_nr_hw_queues(). */
+	blkif_set_queue_limits(info);
+	segs = info->max_indirect_segments ? : BLKIF_MAX_SEGMENTS_PER_REQUEST;
+	blk_queue_max_segments(info->rq, segs / GRANTS_PER_PSEG);
 
 	for_each_rinfo(info, rinfo, r_index) {
 		rc = blkfront_setup_indirect(rinfo);
@@ -2036,9 +2037,7 @@ static int blkif_recover(struct blkfront_info *info)
 	list_for_each_entry_safe(req, n, &info->requests, queuelist) {
 		/* Requeue pending requests (flush or discard) */
 		list_del_init(&req->queuelist);
-		BUG_ON(req->nr_phys_segments >
-		       (info->max_indirect_segments ? :
-			BLKIF_MAX_SEGMENTS_PER_REQUEST));
+		BUG_ON(req->nr_phys_segments > segs);
 		blk_mq_requeue_request(req, false);
 	}
 	blk_mq_start_stopped_hw_queues(info->rq, true);

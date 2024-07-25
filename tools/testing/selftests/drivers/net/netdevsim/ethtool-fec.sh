@@ -8,20 +8,16 @@ NSIM_NETDEV=$(make_netdev)
 
 set -o pipefail
 
-# Since commit 2b3ddcb35357 ("ethtool: fec: Change the prompt ...")
-# in ethtool CLI the Configured lines start with Supported/Configured.
-configured=$($ETHTOOL --show-fec $NSIM_NETDEV | tail -2 | head -1 | cut -d' ' -f1)
-
 # netdevsim starts out with None/None
 s=$($ETHTOOL --show-fec $NSIM_NETDEV | tail -2)
-check $? "$s" "$configured FEC encodings: None
+check $? "$s" "Configured FEC encodings: None
 Active FEC encoding: None"
 
 # Test Auto
 $ETHTOOL --set-fec $NSIM_NETDEV encoding auto
 check $?
 s=$($ETHTOOL --show-fec $NSIM_NETDEV | tail -2)
-check $? "$s" "$configured FEC encodings: Auto
+check $? "$s" "Configured FEC encodings: Auto
 Active FEC encoding: Off"
 
 # Test case in-sensitivity
@@ -29,7 +25,7 @@ for o in off Off OFF; do
     $ETHTOOL --set-fec $NSIM_NETDEV encoding $o
     check $?
     s=$($ETHTOOL --show-fec $NSIM_NETDEV | tail -2)
-    check $? "$s" "$configured FEC encodings: Off
+    check $? "$s" "Configured FEC encodings: Off
 Active FEC encoding: Off"
 done
 
@@ -37,7 +33,7 @@ for o in BaseR baser BAser; do
     $ETHTOOL --set-fec $NSIM_NETDEV encoding $o
     check $?
     s=$($ETHTOOL --show-fec $NSIM_NETDEV | tail -2)
-    check $? "$s" "$configured FEC encodings: BaseR
+    check $? "$s" "Configured FEC encodings: BaseR
 Active FEC encoding: BaseR"
 done
 
@@ -45,21 +41,21 @@ for o in llrs rs; do
     $ETHTOOL --set-fec $NSIM_NETDEV encoding $o
     check $?
     s=$($ETHTOOL --show-fec $NSIM_NETDEV | tail -2)
-    check $? "$s" "$configured FEC encodings: ${o^^}
+    check $? "$s" "Configured FEC encodings: ${o^^}
 Active FEC encoding: ${o^^}"
 done
 
-# Test multiple bits
+# Test mutliple bits
 $ETHTOOL --set-fec $NSIM_NETDEV encoding rs llrs
 check $?
 s=$($ETHTOOL --show-fec $NSIM_NETDEV | tail -2)
-check $? "$s" "$configured FEC encodings: RS LLRS
+check $? "$s" "Configured FEC encodings: RS LLRS
 Active FEC encoding: LLRS"
 
 $ETHTOOL --set-fec $NSIM_NETDEV encoding rs off auto
 check $?
 s=$($ETHTOOL --show-fec $NSIM_NETDEV | tail -2)
-check $? "$s" "$configured FEC encodings: Auto Off RS
+check $? "$s" "Configured FEC encodings: Auto Off RS
 Active FEC encoding: RS"
 
 # Make sure other link modes are rejected

@@ -300,9 +300,7 @@ int nvec_write_sync(struct nvec_chip *nvec,
 {
 	mutex_lock(&nvec->sync_write_mutex);
 
-	if (msg != NULL)
-		*msg = NULL;
-
+	*msg = NULL;
 	nvec->sync_write_pending = (data[1] << 8) + data[0];
 
 	if (nvec_write_async(nvec, data, size) < 0) {
@@ -322,10 +320,7 @@ int nvec_write_sync(struct nvec_chip *nvec,
 
 	dev_dbg(nvec->dev, "nvec_sync_write: pong!\n");
 
-	if (msg != NULL)
-		*msg = nvec->last_sync_msg;
-	else
-		nvec_msg_free(nvec, nvec->last_sync_msg);
+	*msg = nvec->last_sync_msg;
 
 	mutex_unlock(&nvec->sync_write_mutex);
 
@@ -714,11 +709,10 @@ static irqreturn_t nvec_interrupt(int irq, void *dev)
 		status & RNW ? " RNW" : "");
 
 	/*
-	 * TODO: replace the udelay with a read back after each writel above
-	 * in order to work around a hardware issue, see i2c-tegra.c
+	 * TODO: A correct fix needs to be found for this.
 	 *
-	 * Unfortunately, this change causes an initialisation issue with the
-	 * touchpad, which needs to be fixed first.
+	 * We experience less incomplete messages with this delay than without
+	 * it, but we don't know why. Help is appreciated.
 	 */
 	udelay(100);
 

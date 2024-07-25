@@ -884,7 +884,7 @@ static int cfg80211_rtw_add_key(struct wiphy *wiphy, struct net_device *ndev,
 		goto addkey_end;
 	}
 
-	strscpy(param->u.crypt.alg, alg_name);
+	strncpy((char *)param->u.crypt.alg, alg_name, IEEE_CRYPT_ALG_NAME_LEN);
 
 	if (!mac_addr || is_broadcast_ether_addr(mac_addr))
 		param->u.crypt.set_tx = 0; /* for wpa/wpa2 group key */
@@ -1259,7 +1259,8 @@ static int cfg80211_rtw_scan(struct wiphy *wiphy
 		goto check_need_indicate_scan_done;
 	}
 
-	ssid = kcalloc(RTW_SSID_SCAN_AMOUNT, sizeof(*ssid), GFP_KERNEL);
+	ssid = kzalloc(RTW_SSID_SCAN_AMOUNT * sizeof(struct ndis_802_11_ssid),
+		       GFP_KERNEL);
 	if (!ssid) {
 		ret = -ENOMEM;
 		goto check_need_indicate_scan_done;
@@ -2143,7 +2144,8 @@ static int rtw_cfg80211_add_monitor_if(struct adapter *padapter, char *name, str
 	}
 
 	mon_ndev->type = ARPHRD_IEEE80211_RADIOTAP;
-	strscpy(mon_ndev->name, name);
+	strncpy(mon_ndev->name, name, IFNAMSIZ);
+	mon_ndev->name[IFNAMSIZ - 1] = 0;
 	mon_ndev->needs_free_netdev = true;
 	mon_ndev->priv_destructor = rtw_ndev_destructor;
 
@@ -2315,14 +2317,13 @@ static int cfg80211_rtw_start_ap(struct wiphy *wiphy, struct net_device *ndev,
 	return ret;
 }
 
-static int cfg80211_rtw_change_beacon(struct wiphy *wiphy, struct net_device *ndev,
-		struct cfg80211_ap_update *info)
+static int cfg80211_rtw_change_beacon(struct wiphy *wiphy,
+				      struct net_device *ndev,
+				      struct cfg80211_beacon_data *info)
 {
 	struct adapter *adapter = rtw_netdev_priv(ndev);
 
-	return rtw_add_beacon(adapter, info->beacon.head,
-			      info->beacon.head_len, info->beacon.tail,
-			      info->beacon.tail_len);
+	return rtw_add_beacon(adapter, info->head, info->head_len, info->tail, info->tail_len);
 }
 
 static int cfg80211_rtw_stop_ap(struct wiphy *wiphy, struct net_device *ndev,

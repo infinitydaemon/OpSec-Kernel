@@ -96,7 +96,6 @@
 #define DSIM_MFLUSH_VS			BIT(29)
 /* This flag is valid only for exynos3250/3472/5260/5430 */
 #define DSIM_CLKLANE_STOP		BIT(30)
-#define DSIM_NON_CONTINUOUS_CLKLANE	BIT(31)
 
 /* DSIM_ESCMODE */
 #define DSIM_TX_TRIGGER_RST		BIT(4)
@@ -411,8 +410,6 @@ static const struct samsung_dsim_driver_data exynos3_dsi_driver_data = {
 	.num_bits_resol = 11,
 	.pll_p_offset = 13,
 	.reg_values = reg_values,
-	.pll_fin_min = 6,
-	.pll_fin_max = 12,
 	.m_min = 41,
 	.m_max = 125,
 	.min_freq = 500,
@@ -430,8 +427,6 @@ static const struct samsung_dsim_driver_data exynos4_dsi_driver_data = {
 	.num_bits_resol = 11,
 	.pll_p_offset = 13,
 	.reg_values = reg_values,
-	.pll_fin_min = 6,
-	.pll_fin_max = 12,
 	.m_min = 41,
 	.m_max = 125,
 	.min_freq = 500,
@@ -447,8 +442,6 @@ static const struct samsung_dsim_driver_data exynos5_dsi_driver_data = {
 	.num_bits_resol = 11,
 	.pll_p_offset = 13,
 	.reg_values = reg_values,
-	.pll_fin_min = 6,
-	.pll_fin_max = 12,
 	.m_min = 41,
 	.m_max = 125,
 	.min_freq = 500,
@@ -464,8 +457,6 @@ static const struct samsung_dsim_driver_data exynos5433_dsi_driver_data = {
 	.num_bits_resol = 12,
 	.pll_p_offset = 13,
 	.reg_values = exynos5433_reg_values,
-	.pll_fin_min = 6,
-	.pll_fin_max = 12,
 	.m_min = 41,
 	.m_max = 125,
 	.min_freq = 500,
@@ -481,8 +472,6 @@ static const struct samsung_dsim_driver_data exynos5422_dsi_driver_data = {
 	.num_bits_resol = 12,
 	.pll_p_offset = 13,
 	.reg_values = exynos5422_reg_values,
-	.pll_fin_min = 6,
-	.pll_fin_max = 12,
 	.m_min = 41,
 	.m_max = 125,
 	.min_freq = 500,
@@ -502,8 +491,6 @@ static const struct samsung_dsim_driver_data imx8mm_dsi_driver_data = {
 	 */
 	.pll_p_offset = 14,
 	.reg_values = imx8mm_dsim_reg_values,
-	.pll_fin_min = 2,
-	.pll_fin_max = 30,
 	.m_min = 64,
 	.m_max = 1023,
 	.min_freq = 1050,
@@ -627,23 +614,7 @@ static unsigned long samsung_dsim_set_pll(struct samsung_dsim *dsi,
 	u16 m;
 	u32 reg;
 
-	if (dsi->pll_clk) {
-		/*
-		 * Ensure that the reference clock is generated with a power of
-		 * two divider from its parent, but close to the PLLs upper
-		 * limit.
-		 */
-		fin = clk_get_rate(clk_get_parent(dsi->pll_clk));
-		while (fin > driver_data->pll_fin_max * MHZ)
-			fin /= 2;
-		clk_set_rate(dsi->pll_clk, fin);
-
-		fin = clk_get_rate(dsi->pll_clk);
-	} else {
-		fin = dsi->pll_clk_rate;
-	}
-	dev_dbg(dsi->dev, "PLL ref clock freq %lu\n", fin);
-
+	fin = dsi->pll_clk_rate;
 	fout = samsung_dsim_pll_find_pms(dsi, fin, freq, &p, &m, &s);
 	if (!fout) {
 		dev_err(dsi->dev,
@@ -946,12 +917,8 @@ static int samsung_dsim_init_link(struct samsung_dsim *dsi)
 	 * power consumption.
 	 */
 	if (driver_data->has_clklane_stop &&
-	    dsi->mode_flags & MIPI_DSI_CLOCK_NON_CONTINUOUS) {
-		if (!samsung_dsim_hw_is_exynos(dsi->plat_data->hw_type))
-			reg |= DSIM_NON_CONTINUOUS_CLKLANE;
-
+	    dsi->mode_flags & MIPI_DSI_CLOCK_NON_CONTINUOUS)
 		reg |= DSIM_CLKLANE_STOP;
-	}
 	samsung_dsim_write(dsi, DSIM_CONFIG_REG, reg);
 
 	lanes_mask = BIT(dsi->lanes) - 1;
@@ -989,12 +956,10 @@ static void samsung_dsim_set_display_mode(struct samsung_dsim *dsi)
 	u32 reg;
 
 	if (dsi->mode_flags & MIPI_DSI_MODE_VIDEO) {
-		u64 byte_clk = dsi->hs_clock / 8;
-		u64 pix_clk = m->clock * 1000;
-
-		int hfp = DIV64_U64_ROUND_UP((m->hsync_start - m->hdisplay) * byte_clk, pix_clk);
-		int hbp = DIV64_U64_ROUND_UP((m->htotal - m->hsync_end) * byte_clk, pix_clk);
-		int hsa = DIV64_U64_ROUND_UP((m->hsync_end - m->hsync_start) * byte_clk, pix_clk);
+		int byte_clk_khz = dsi->hs_clock / 1000 / 8;
+		int hfp = (m->hsync_start - m->hdisplay) * byte_clk_khz / m->clock;
+		int hbp = (m->htotal - m->hsync_end) * byte_clk_khz / m->clock;
+		int hsa = (m->hsync_end - m->hsync_start) * byte_clk_khz / m->clock;
 
 		/* remove packet overhead when possible */
 		hfp = max(hfp - 6, 0);
@@ -1503,7 +1468,6 @@ static void samsung_dsim_atomic_disable(struct drm_bridge *bridge,
 	if (!(dsi->state & DSIM_STATE_ENABLED))
 		return;
 
-	samsung_dsim_set_display_enable(dsi, false);
 	dsi->state &= ~DSIM_STATE_VIDOUT_AVAILABLE;
 }
 
@@ -1511,6 +1475,8 @@ static void samsung_dsim_atomic_post_disable(struct drm_bridge *bridge,
 					     struct drm_bridge_state *old_bridge_state)
 {
 	struct samsung_dsim *dsi = bridge_to_dsi(bridge);
+
+	samsung_dsim_set_display_enable(dsi, false);
 
 	dsi->state &= ~DSIM_STATE_ENABLED;
 	pm_runtime_put_sync(dsi->dev);
@@ -1734,10 +1700,7 @@ of_find_panel_or_bridge:
 		return ret;
 	}
 
-	DRM_DEV_INFO(dev, "Attached %s device (lanes:%d bpp:%d mode-flags:0x%lx)\n",
-		     device->name, device->lanes,
-		     mipi_dsi_pixel_format_to_bpp(device->format),
-		     device->mode_flags);
+	DRM_DEV_INFO(dev, "Attached %s device\n", device->name);
 
 	drm_bridge_add(&dsi->bridge);
 
@@ -1842,15 +1805,18 @@ static int samsung_dsim_parse_dt(struct samsung_dsim *dsi)
 	u32 lane_polarities[5] = { 0 };
 	struct device_node *endpoint;
 	int i, nr_lanes, ret;
+	struct clk *pll_clk;
 
 	ret = samsung_dsim_of_read_u32(node, "samsung,pll-clock-frequency",
 				       &dsi->pll_clk_rate, 1);
 	/* If it doesn't exist, read it from the clock instead of failing */
 	if (ret < 0) {
 		dev_dbg(dev, "Using sclk_mipi for pll clock frequency\n");
-		dsi->pll_clk = devm_clk_get(dev, "sclk_mipi");
-		if (IS_ERR(dsi->pll_clk))
-			return PTR_ERR(dsi->pll_clk);
+		pll_clk = devm_clk_get(dev, "sclk_mipi");
+		if (!IS_ERR(pll_clk))
+			dsi->pll_clk_rate = clk_get_rate(pll_clk);
+		else
+			return PTR_ERR(pll_clk);
 	}
 
 	/* If it doesn't exist, use pixel clock instead of failing */
@@ -1996,11 +1962,11 @@ int samsung_dsim_probe(struct platform_device *pdev)
 	else
 		dsi->bridge.timings = &samsung_dsim_bridge_timings_de_high;
 
-	if (dsi->plat_data->host_ops && dsi->plat_data->host_ops->register_host) {
+	if (dsi->plat_data->host_ops && dsi->plat_data->host_ops->register_host)
 		ret = dsi->plat_data->host_ops->register_host(dsi);
-		if (ret)
-			goto err_disable_runtime;
-	}
+
+	if (ret)
+		goto err_disable_runtime;
 
 	return 0;
 
@@ -2011,7 +1977,7 @@ err_disable_runtime:
 }
 EXPORT_SYMBOL_GPL(samsung_dsim_probe);
 
-void samsung_dsim_remove(struct platform_device *pdev)
+int samsung_dsim_remove(struct platform_device *pdev)
 {
 	struct samsung_dsim *dsi = platform_get_drvdata(pdev);
 
@@ -2019,6 +1985,8 @@ void samsung_dsim_remove(struct platform_device *pdev)
 
 	if (dsi->plat_data->host_ops && dsi->plat_data->host_ops->unregister_host)
 		dsi->plat_data->host_ops->unregister_host(dsi);
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(samsung_dsim_remove);
 
@@ -2118,7 +2086,7 @@ MODULE_DEVICE_TABLE(of, samsung_dsim_of_match);
 
 static struct platform_driver samsung_dsim_driver = {
 	.probe = samsung_dsim_probe,
-	.remove_new = samsung_dsim_remove,
+	.remove = samsung_dsim_remove,
 	.driver = {
 		   .name = "samsung-dsim",
 		   .pm = &samsung_dsim_pm_ops,

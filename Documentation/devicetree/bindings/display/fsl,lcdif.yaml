@@ -51,10 +51,7 @@ properties:
     minItems: 1
 
   interrupts:
-    items:
-      - description: LCDIF DMA interrupt
-      - description: LCDIF Error interrupt
-    minItems: 1
+    maxItems: 1
 
   power-domains:
     maxItems: 1
@@ -123,16 +120,10 @@ allOf:
   - if:
       properties:
         compatible:
-          const: fsl,imx6sx-lcdif
-    then:
-      required:
-        - power-domains
-  - if:
-      properties:
-        compatible:
           contains:
             enum:
               - fsl,imx6sl-lcdif
+              - fsl,imx6sx-lcdif
               - fsl,imx8mm-lcdif
               - fsl,imx8mn-lcdif
               - fsl,imx8mp-lcdif
@@ -140,21 +131,6 @@ allOf:
     then:
       required:
         - power-domains
-  - if:
-      properties:
-        compatible:
-          contains:
-            enum:
-              - fsl,imx23-lcdif
-    then:
-      properties:
-        interrupts:
-          minItems: 2
-          maxItems: 2
-    else:
-      properties:
-        interrupts:
-          maxItems: 1
 
 examples:
   - |

@@ -66,7 +66,7 @@ static inline void proc_free_inum(unsigned int inum) {}
 
 static inline int ns_alloc_inum(struct ns_common *ns)
 {
-	WRITE_ONCE(ns->stashed, NULL);
+	atomic_long_set(&ns->stashed, 0);
 	return proc_alloc_inum(&ns->inum);
 }
 

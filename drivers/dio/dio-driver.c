@@ -123,7 +123,7 @@ static int dio_bus_match(struct device *dev, struct device_driver *drv)
 }
 
 
-const struct bus_type dio_bus_type = {
+struct bus_type dio_bus_type = {
 	.name	= "dio",
 	.match	= dio_bus_match,
 	.probe	= dio_device_probe,

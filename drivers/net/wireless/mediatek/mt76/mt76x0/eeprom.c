@@ -342,5 +342,4 @@ int mt76x0_eeprom_init(struct mt76x02_dev *dev)
 	return 0;
 }
 
-MODULE_DESCRIPTION("MediaTek MT76x EEPROM helpers");
 MODULE_LICENSE("Dual BSD/GPL");

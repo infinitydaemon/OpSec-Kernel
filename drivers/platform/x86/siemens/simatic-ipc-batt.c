@@ -146,9 +146,10 @@ static const struct hwmon_chip_info simatic_ipc_batt_chip_info = {
 	.info = simatic_ipc_batt_info,
 };
 
-void simatic_ipc_batt_remove(struct platform_device *pdev, struct gpiod_lookup_table *table)
+int simatic_ipc_batt_remove(struct platform_device *pdev, struct gpiod_lookup_table *table)
 {
 	gpiod_remove_lookup_table(table);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(simatic_ipc_batt_remove);
 
@@ -227,9 +228,9 @@ out:
 }
 EXPORT_SYMBOL_GPL(simatic_ipc_batt_probe);
 
-static void simatic_ipc_batt_io_remove(struct platform_device *pdev)
+static int simatic_ipc_batt_io_remove(struct platform_device *pdev)
 {
-	simatic_ipc_batt_remove(pdev, NULL);
+	return simatic_ipc_batt_remove(pdev, NULL);
 }
 
 static int simatic_ipc_batt_io_probe(struct platform_device *pdev)
@@ -239,7 +240,7 @@ static int simatic_ipc_batt_io_probe(struct platform_device *pdev)
 
 static struct platform_driver simatic_ipc_batt_driver = {
 	.probe = simatic_ipc_batt_io_probe,
-	.remove_new = simatic_ipc_batt_io_remove,
+	.remove = simatic_ipc_batt_io_remove,
 	.driver = {
 		.name = KBUILD_MODNAME,
 	},

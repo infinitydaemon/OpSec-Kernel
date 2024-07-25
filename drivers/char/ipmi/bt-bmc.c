@@ -459,13 +459,14 @@ static int bt_bmc_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void bt_bmc_remove(struct platform_device *pdev)
+static int bt_bmc_remove(struct platform_device *pdev)
 {
 	struct bt_bmc *bt_bmc = dev_get_drvdata(&pdev->dev);
 
 	misc_deregister(&bt_bmc->miscdev);
 	if (bt_bmc->irq < 0)
 		del_timer_sync(&bt_bmc->poll_timer);
+	return 0;
 }
 
 static const struct of_device_id bt_bmc_match[] = {
@@ -481,7 +482,7 @@ static struct platform_driver bt_bmc_driver = {
 		.of_match_table = bt_bmc_match,
 	},
 	.probe = bt_bmc_probe,
-	.remove_new = bt_bmc_remove,
+	.remove = bt_bmc_remove,
 };
 
 module_platform_driver(bt_bmc_driver);

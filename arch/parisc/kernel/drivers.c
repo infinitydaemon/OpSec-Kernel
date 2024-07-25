@@ -618,7 +618,7 @@ static struct attribute *parisc_device_attrs[] = {
 };
 ATTRIBUTE_GROUPS(parisc_device);
 
-const struct bus_type parisc_bus_type = {
+struct bus_type parisc_bus_type = {
 	.name = "parisc",
 	.match = parisc_generic_match,
 	.uevent = parisc_uevent,
@@ -742,7 +742,7 @@ parse_tree_node(struct device *parent, int index, struct hardware_path *modpath)
 	};
 
 	if (device_for_each_child(parent, &recurse_data, descend_children))
-		{ /* nothing */ }
+		{ /* nothing */ };
 
 	return d.dev;
 }
@@ -927,8 +927,8 @@ static __init void qemu_header(void)
 
 	#define p ((unsigned long *)&boot_cpu_data.pdc.model)
 	pr_info("#define PARISC_PDC_MODEL 0x%lx, 0x%lx, 0x%lx, "
-		"0x%lx, 0x%lx, 0x%lx, 0x%lx, 0x%lx, 0x%lx, 0x%lx\n\n",
-		p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9]);
+		"0x%lx, 0x%lx, 0x%lx, 0x%lx, 0x%lx, 0x%lx\n\n",
+		p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8]);
 	#undef p
 
 	pr_info("#define PARISC_PDC_VERSION 0x%04lx\n\n",

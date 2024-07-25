@@ -7,13 +7,11 @@
  *
  * Author: Anshuman Khandual <anshuman.khandual@arm.com>
  */
-#include <linux/acpi.h>
 #include <linux/coresight.h>
 #include <linux/device.h>
 #include <linux/irq.h>
 #include <linux/kernel.h>
 #include <linux/of.h>
-#include <linux/perf/arm_pmu.h>
 #include <linux/platform_device.h>
 #include <linux/smp.h>
 

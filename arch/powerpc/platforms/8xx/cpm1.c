@@ -40,7 +40,6 @@
 #include <asm/io.h>
 #include <asm/rheap.h>
 #include <asm/cpm.h>
-#include <asm/fixmap.h>
 
 #include <sysdev/fsl_soc.h>
 

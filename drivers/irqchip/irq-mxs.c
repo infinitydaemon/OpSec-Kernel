@@ -130,7 +130,7 @@ static struct irq_chip asm9260_icoll_chip = {
 		 IRQCHIP_SKIP_SET_WAKE,
 };
 
-static void __exception_irq_entry icoll_handle_irq(struct pt_regs *regs)
+asmlinkage void __exception_irq_entry icoll_handle_irq(struct pt_regs *regs)
 {
 	u32 irqnr;
 

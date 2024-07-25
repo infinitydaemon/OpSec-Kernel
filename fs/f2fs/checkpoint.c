@@ -154,47 +154,49 @@ static bool __is_bitmap_valid(struct f2fs_sb_info *sbi, block_t blkaddr,
 	if (unlikely(f2fs_cp_error(sbi)))
 		return exist;
 
-	if ((exist && type == DATA_GENERIC_ENHANCE_UPDATE) ||
-		(!exist && type == DATA_GENERIC_ENHANCE))
-		goto out_err;
-	if (!exist && type != DATA_GENERIC_ENHANCE_UPDATE)
-		goto out_handle;
-	return exist;
+	if (exist && type == DATA_GENERIC_ENHANCE_UPDATE) {
+		f2fs_err(sbi, "Inconsistent error blkaddr:%u, sit bitmap:%d",
+			 blkaddr, exist);
+		set_sbi_flag(sbi, SBI_NEED_FSCK);
+		return exist;
+	}
 
-out_err:
-	f2fs_err(sbi, "Inconsistent error blkaddr:%u, sit bitmap:%d",
-		 blkaddr, exist);
-	set_sbi_flag(sbi, SBI_NEED_FSCK);
-	dump_stack();
-out_handle:
-	f2fs_handle_error(sbi, ERROR_INVALID_BLKADDR);
+	if (!exist && type == DATA_GENERIC_ENHANCE) {
+		f2fs_err(sbi, "Inconsistent error blkaddr:%u, sit bitmap:%d",
+			 blkaddr, exist);
+		set_sbi_flag(sbi, SBI_NEED_FSCK);
+		dump_stack();
+	}
 	return exist;
 }
 
-static bool __f2fs_is_valid_blkaddr(struct f2fs_sb_info *sbi,
+bool f2fs_is_valid_blkaddr(struct f2fs_sb_info *sbi,
 					block_t blkaddr, int type)
 {
+	if (time_to_inject(sbi, FAULT_BLKADDR))
+		return false;
+
 	switch (type) {
 	case META_NAT:
 		break;
 	case META_SIT:
 		if (unlikely(blkaddr >= SIT_BLK_CNT(sbi)))
-			goto check_only;
+			return false;
 		break;
 	case META_SSA:
 		if (unlikely(blkaddr >= MAIN_BLKADDR(sbi) ||
 			blkaddr < SM_I(sbi)->ssa_blkaddr))
-			goto check_only;
+			return false;
 		break;
 	case META_CP:
 		if (unlikely(blkaddr >= SIT_I(sbi)->sit_base_addr ||
 			blkaddr < __start_cp_addr(sbi)))
-			goto check_only;
+			return false;
 		break;
 	case META_POR:
 		if (unlikely(blkaddr >= MAX_BLKADDR(sbi) ||
 			blkaddr < MAIN_BLKADDR(sbi)))
-			goto check_only;
+			return false;
 		break;
 	case DATA_GENERIC:
 	case DATA_GENERIC_ENHANCE:
@@ -211,7 +213,7 @@ static bool __f2fs_is_valid_blkaddr(struct f2fs_sb_info *sbi,
 				  blkaddr);
 			set_sbi_flag(sbi, SBI_NEED_FSCK);
 			dump_stack();
-			goto err;
+			return false;
 		} else {
 			return __is_bitmap_valid(sbi, blkaddr, type);
 		}
@@ -219,31 +221,13 @@ static bool __f2fs_is_valid_blkaddr(struct f2fs_sb_info *sbi,
 	case META_GENERIC:
 		if (unlikely(blkaddr < SEG0_BLKADDR(sbi) ||
 			blkaddr >= MAIN_BLKADDR(sbi)))
-			goto err;
+			return false;
 		break;
 	default:
 		BUG();
 	}
 
 	return true;
-err:
-	f2fs_handle_error(sbi, ERROR_INVALID_BLKADDR);
-check_only:
-	return false;
-}
-
-bool f2fs_is_valid_blkaddr(struct f2fs_sb_info *sbi,
-					block_t blkaddr, int type)
-{
-	if (time_to_inject(sbi, FAULT_BLKADDR_VALIDITY))
-		return false;
-	return __f2fs_is_valid_blkaddr(sbi, blkaddr, type);
-}
-
-bool f2fs_is_valid_blkaddr_raw(struct f2fs_sb_info *sbi,
-					block_t blkaddr, int type)
-{
-	return __f2fs_is_valid_blkaddr(sbi, blkaddr, type);
 }
 
 /*
@@ -346,7 +330,7 @@ static int __f2fs_write_meta_page(struct page *page,
 {
 	struct f2fs_sb_info *sbi = F2FS_P_SB(page);
 
-	trace_f2fs_writepage(page_folio(page), META);
+	trace_f2fs_writepage(page, META);
 
 	if (unlikely(f2fs_cp_error(sbi))) {
 		if (is_sbi_flag_set(sbi, SBI_IS_CLOSE)) {
@@ -493,7 +477,7 @@ stop:
 static bool f2fs_dirty_meta_folio(struct address_space *mapping,
 		struct folio *folio)
 {
-	trace_f2fs_set_page_dirty(folio, META);
+	trace_f2fs_set_page_dirty(&folio->page, META);
 
 	if (!folio_test_uptodate(folio))
 		folio_mark_uptodate(folio);

@@ -158,18 +158,6 @@
 #define  CPUCFG48_VFPU_CG		BIT(2)
 #define  CPUCFG48_RAM_CG		BIT(3)
 
-/*
- * CPUCFG index area: 0x40000000 -- 0x400000ff
- * SW emulation for KVM hypervirsor
- */
-#define CPUCFG_KVM_BASE			0x40000000
-#define CPUCFG_KVM_SIZE			0x100
-
-#define CPUCFG_KVM_SIG			(CPUCFG_KVM_BASE + 0)
-#define  KVM_SIGNATURE			"KVM\0"
-#define CPUCFG_KVM_FEATURE		(CPUCFG_KVM_BASE + 4)
-#define  KVM_FEATURE_IPI		BIT(1)
-
 #ifndef __ASSEMBLY__
 
 /* CSR */
@@ -238,7 +226,6 @@
 #define LOONGARCH_CSR_ECFG		0x4	/* Exception config */
 #define  CSR_ECFG_VS_SHIFT		16
 #define  CSR_ECFG_VS_WIDTH		3
-#define  CSR_ECFG_VS_SHIFT_END		(CSR_ECFG_VS_SHIFT + CSR_ECFG_VS_WIDTH - 1)
 #define  CSR_ECFG_VS			(_ULCAST_(0x7) << CSR_ECFG_VS_SHIFT)
 #define  CSR_ECFG_IM_SHIFT		0
 #define  CSR_ECFG_IM_WIDTH		14
@@ -327,14 +314,13 @@
 #define  CSR_TLBLO1_V			(_ULCAST_(0x1) << CSR_TLBLO1_V_SHIFT)
 
 #define LOONGARCH_CSR_GTLBC		0x15	/* Guest TLB control */
-#define  CSR_GTLBC_TGID_SHIFT		16
-#define  CSR_GTLBC_TGID_WIDTH		8
-#define  CSR_GTLBC_TGID_SHIFT_END	(CSR_GTLBC_TGID_SHIFT + CSR_GTLBC_TGID_WIDTH - 1)
-#define  CSR_GTLBC_TGID			(_ULCAST_(0xff) << CSR_GTLBC_TGID_SHIFT)
+#define  CSR_GTLBC_RID_SHIFT		16
+#define  CSR_GTLBC_RID_WIDTH		8
+#define  CSR_GTLBC_RID			(_ULCAST_(0xff) << CSR_GTLBC_RID_SHIFT)
 #define  CSR_GTLBC_TOTI_SHIFT		13
 #define  CSR_GTLBC_TOTI			(_ULCAST_(0x1) << CSR_GTLBC_TOTI_SHIFT)
-#define  CSR_GTLBC_USETGID_SHIFT	12
-#define  CSR_GTLBC_USETGID		(_ULCAST_(0x1) << CSR_GTLBC_USETGID_SHIFT)
+#define  CSR_GTLBC_USERID_SHIFT		12
+#define  CSR_GTLBC_USERID		(_ULCAST_(0x1) << CSR_GTLBC_USERID_SHIFT)
 #define  CSR_GTLBC_GMTLBSZ_SHIFT	0
 #define  CSR_GTLBC_GMTLBSZ_WIDTH	6
 #define  CSR_GTLBC_GMTLBSZ		(_ULCAST_(0x3f) << CSR_GTLBC_GMTLBSZ_SHIFT)
@@ -489,7 +475,6 @@
 #define LOONGARCH_CSR_GSTAT		0x50	/* Guest status */
 #define  CSR_GSTAT_GID_SHIFT		16
 #define  CSR_GSTAT_GID_WIDTH		8
-#define  CSR_GSTAT_GID_SHIFT_END	(CSR_GSTAT_GID_SHIFT + CSR_GSTAT_GID_WIDTH - 1)
 #define  CSR_GSTAT_GID			(_ULCAST_(0xff) << CSR_GSTAT_GID_SHIFT)
 #define  CSR_GSTAT_GIDBIT_SHIFT		4
 #define  CSR_GSTAT_GIDBIT_WIDTH		6
@@ -540,12 +525,6 @@
 #define  CSR_GCFG_MATC_GUEST		(_ULCAST_(0x0) << CSR_GCFG_MATC_SHITF)
 #define  CSR_GCFG_MATC_ROOT		(_ULCAST_(0x1) << CSR_GCFG_MATC_SHITF)
 #define  CSR_GCFG_MATC_NEST		(_ULCAST_(0x2) << CSR_GCFG_MATC_SHITF)
-#define  CSR_GCFG_MATP_NEST_SHIFT	2
-#define  CSR_GCFG_MATP_NEST		(_ULCAST_(0x1) << CSR_GCFG_MATP_NEST_SHIFT)
-#define  CSR_GCFG_MATP_ROOT_SHIFT	1
-#define  CSR_GCFG_MATP_ROOT		(_ULCAST_(0x1) << CSR_GCFG_MATP_ROOT_SHIFT)
-#define  CSR_GCFG_MATP_GUEST_SHIFT	0
-#define  CSR_GCFG_MATP_GUEST		(_ULCAST_(0x1) << CSR_GCFG_MATP_GUEST_SHIFT)
 
 #define LOONGARCH_CSR_GINTC		0x52	/* Guest interrupt control */
 #define  CSR_GINTC_HC_SHIFT		16
@@ -1110,11 +1089,12 @@
 
 static __always_inline u64 drdtime(void)
 {
+	int rID = 0;
 	u64 val = 0;
 
 	__asm__ __volatile__(
-		"rdtime.d %0, $zero\n\t"
-		: "=r"(val)
+		"rdtime.d %0, %1 \n\t"
+		: "=r"(val), "=r"(rID)
 		:
 		);
 	return val;

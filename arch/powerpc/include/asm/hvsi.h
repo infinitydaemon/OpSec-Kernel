@@ -64,7 +64,7 @@ struct hvsi_priv {
 	unsigned int	inbuf_len;	/* data in input buffer */
 	unsigned char	inbuf[HVSI_INBUF_SIZE];
 	unsigned int	inbuf_cur;	/* Cursor in input buffer */
-	size_t		inbuf_pktlen;	/* packet length from cursor */
+	unsigned int	inbuf_pktlen;	/* packet length from cursor */
 	atomic_t	seqno;		/* packet sequence number */
 	unsigned int	opened:1;	/* driver opened */
 	unsigned int	established:1;	/* protocol established */
@@ -72,26 +72,24 @@ struct hvsi_priv {
 	unsigned int	mctrl_update:1;	/* modem control updated */
 	unsigned short	mctrl;		/* modem control */
 	struct tty_struct *tty;		/* tty structure */
-	ssize_t (*get_chars)(uint32_t termno, u8 *buf, size_t count);
-	ssize_t (*put_chars)(uint32_t termno, const u8 *buf, size_t count);
+	int (*get_chars)(uint32_t termno, char *buf, int count);
+	int (*put_chars)(uint32_t termno, const char *buf, int count);
 	uint32_t	termno;
 };
 
 /* hvsi lib functions */
 struct hvc_struct;
 extern void hvsilib_init(struct hvsi_priv *pv,
-			 ssize_t (*get_chars)(uint32_t termno, u8 *buf,
-					      size_t count),
-			 ssize_t (*put_chars)(uint32_t termno, const u8 *buf,
-					      size_t count),
+			 int (*get_chars)(uint32_t termno, char *buf, int count),
+			 int (*put_chars)(uint32_t termno, const char *buf,
+					  int count),
 			 int termno, int is_console);
 extern int hvsilib_open(struct hvsi_priv *pv, struct hvc_struct *hp);
 extern void hvsilib_close(struct hvsi_priv *pv, struct hvc_struct *hp);
 extern int hvsilib_read_mctrl(struct hvsi_priv *pv);
 extern int hvsilib_write_mctrl(struct hvsi_priv *pv, int dtr);
 extern void hvsilib_establish(struct hvsi_priv *pv);
-extern ssize_t hvsilib_get_chars(struct hvsi_priv *pv, u8 *buf, size_t count);
-extern ssize_t hvsilib_put_chars(struct hvsi_priv *pv, const u8 *buf,
-				 size_t count);
+extern int hvsilib_get_chars(struct hvsi_priv *pv, char *buf, int count);
+extern int hvsilib_put_chars(struct hvsi_priv *pv, const char *buf, int count);
 
 #endif /* _HVSI_H */

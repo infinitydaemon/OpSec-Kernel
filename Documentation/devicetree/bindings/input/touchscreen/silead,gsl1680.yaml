@@ -31,7 +31,7 @@ properties:
     maxItems: 1
 
   firmware-name:
-    maxItems: 1
+    $ref: /schemas/types.yaml#/definitions/string
     description: >
       File basename for board specific firmware
 

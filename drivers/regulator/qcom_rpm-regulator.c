@@ -937,6 +937,7 @@ MODULE_DEVICE_TABLE(of, rpm_of_match);
 static int rpm_reg_probe(struct platform_device *pdev)
 {
 	const struct rpm_regulator_data *reg;
+	const struct of_device_id *match;
 	struct regulator_config config = { };
 	struct regulator_dev *rdev;
 	struct qcom_rpm_reg *vreg;
@@ -948,13 +949,13 @@ static int rpm_reg_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	reg = device_get_match_data(&pdev->dev);
-	if (!reg) {
+	match = of_match_device(rpm_of_match, &pdev->dev);
+	if (!match) {
 		dev_err(&pdev->dev, "failed to match device\n");
 		return -ENODEV;
 	}
 
-	for (; reg->name; reg++) {
+	for (reg = match->data; reg->name; reg++) {
 		vreg = devm_kmemdup(&pdev->dev, reg->template, sizeof(*vreg), GFP_KERNEL);
 		if (!vreg)
 			return -ENOMEM;

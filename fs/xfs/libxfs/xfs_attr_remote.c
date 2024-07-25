@@ -22,7 +22,6 @@
 #include "xfs_attr_remote.h"
 #include "xfs_trace.h"
 #include "xfs_error.h"
-#include "xfs_health.h"
 
 #define ATTR_RMTVALUE_MAPSIZE	1	/* # of map entries at once */
 
@@ -43,32 +42,19 @@
  * the logging system and therefore never have a log item.
  */
 
-/* How many bytes can be stored in a remote value buffer? */
-inline unsigned int
-xfs_attr3_rmt_buf_space(
-	struct xfs_mount	*mp)
-{
-	unsigned int		blocksize = mp->m_attr_geo->blksize;
-
-	if (xfs_has_crc(mp))
-		return blocksize - sizeof(struct xfs_attr3_rmt_hdr);
-
-	return blocksize;
-}
-
-/* Compute number of fsblocks needed to store a remote attr value */
-unsigned int
+/*
+ * Each contiguous block has a header, so it is not just a simple attribute
+ * length to FSB conversion.
+ */
+int
 xfs_attr3_rmt_blocks(
-	struct xfs_mount	*mp,
-	unsigned int		attrlen)
+	struct xfs_mount *mp,
+	int		attrlen)
 {
-	/*
-	 * Each contiguous block has a header, so it is not just a simple
-	 * attribute length to FSB conversion.
-	 */
-	if (xfs_has_crc(mp))
-		return howmany(attrlen, xfs_attr3_rmt_buf_space(mp));
-
+	if (xfs_has_crc(mp)) {
+		int buflen = XFS_ATTR3_RMT_BUF_SPACE(mp, mp->m_sb.sb_blocksize);
+		return (attrlen + buflen - 1) / buflen;
+	}
 	return XFS_B_TO_FSB(mp, attrlen);
 }
 
@@ -105,6 +91,7 @@ xfs_attr3_rmt_verify(
 	struct xfs_mount	*mp,
 	struct xfs_buf		*bp,
 	void			*ptr,
+	int			fsbsize,
 	xfs_daddr_t		bno)
 {
 	struct xfs_attr3_rmt_hdr *rmt = ptr;
@@ -115,7 +102,7 @@ xfs_attr3_rmt_verify(
 		return __this_address;
 	if (be64_to_cpu(rmt->rm_blkno) != bno)
 		return __this_address;
-	if (be32_to_cpu(rmt->rm_bytes) > mp->m_attr_geo->blksize - sizeof(*rmt))
+	if (be32_to_cpu(rmt->rm_bytes) > fsbsize - sizeof(*rmt))
 		return __this_address;
 	if (be32_to_cpu(rmt->rm_offset) +
 				be32_to_cpu(rmt->rm_bytes) > XFS_XATTR_SIZE_MAX)
@@ -134,9 +121,9 @@ __xfs_attr3_rmt_read_verify(
 {
 	struct xfs_mount *mp = bp->b_mount;
 	char		*ptr;
-	unsigned int	len;
+	int		len;
 	xfs_daddr_t	bno;
-	unsigned int	blksize = mp->m_attr_geo->blksize;
+	int		blksize = mp->m_attr_geo->blksize;
 
 	/* no verification of non-crc buffers */
 	if (!xfs_has_crc(mp))
@@ -153,7 +140,7 @@ __xfs_attr3_rmt_read_verify(
 			*failaddr = __this_address;
 			return -EFSBADCRC;
 		}
-		*failaddr = xfs_attr3_rmt_verify(mp, bp, ptr, bno);
+		*failaddr = xfs_attr3_rmt_verify(mp, bp, ptr, blksize, bno);
 		if (*failaddr)
 			return -EFSCORRUPTED;
 		len -= blksize;
@@ -198,7 +185,7 @@ xfs_attr3_rmt_write_verify(
 {
 	struct xfs_mount *mp = bp->b_mount;
 	xfs_failaddr_t	fa;
-	unsigned int	blksize = mp->m_attr_geo->blksize;
+	int		blksize = mp->m_attr_geo->blksize;
 	char		*ptr;
 	int		len;
 	xfs_daddr_t	bno;
@@ -215,7 +202,7 @@ xfs_attr3_rmt_write_verify(
 	while (len > 0) {
 		struct xfs_attr3_rmt_hdr *rmt = (struct xfs_attr3_rmt_hdr *)ptr;
 
-		fa = xfs_attr3_rmt_verify(mp, bp, ptr, bno);
+		fa = xfs_attr3_rmt_verify(mp, bp, ptr, blksize, bno);
 		if (fa) {
 			xfs_verifier_error(bp, -EFSCORRUPTED, fa);
 			return;
@@ -289,34 +276,32 @@ xfs_attr3_rmt_hdr_set(
  */
 STATIC int
 xfs_attr_rmtval_copyout(
-	struct xfs_mount	*mp,
-	struct xfs_buf		*bp,
-	struct xfs_inode	*dp,
-	xfs_ino_t		owner,
-	unsigned int		*offset,
-	unsigned int		*valuelen,
-	uint8_t			**dst)
+	struct xfs_mount *mp,
+	struct xfs_buf	*bp,
+	xfs_ino_t	ino,
+	int		*offset,
+	int		*valuelen,
+	uint8_t		**dst)
 {
-	char			*src = bp->b_addr;
-	xfs_daddr_t		bno = xfs_buf_daddr(bp);
-	unsigned int		len = BBTOB(bp->b_length);
-	unsigned int		blksize = mp->m_attr_geo->blksize;
+	char		*src = bp->b_addr;
+	xfs_daddr_t	bno = xfs_buf_daddr(bp);
+	int		len = BBTOB(bp->b_length);
+	int		blksize = mp->m_attr_geo->blksize;
 
 	ASSERT(len >= blksize);
 
 	while (len > 0 && *valuelen > 0) {
-		unsigned int hdr_size = 0;
-		unsigned int byte_cnt = xfs_attr3_rmt_buf_space(mp);
+		int hdr_size = 0;
+		int byte_cnt = XFS_ATTR3_RMT_BUF_SPACE(mp, blksize);
 
 		byte_cnt = min(*valuelen, byte_cnt);
 
 		if (xfs_has_crc(mp)) {
-			if (xfs_attr3_rmt_hdr_ok(src, owner, *offset,
+			if (xfs_attr3_rmt_hdr_ok(src, ino, *offset,
 						  byte_cnt, bno)) {
 				xfs_alert(mp,
 "remote attribute header mismatch bno/off/len/owner (0x%llx/0x%x/Ox%x/0x%llx)",
-					bno, *offset, byte_cnt, owner);
-				xfs_dirattr_mark_sick(dp, XFS_ATTR_FORK);
+					bno, *offset, byte_cnt, ino);
 				return -EFSCORRUPTED;
 			}
 			hdr_size = sizeof(struct xfs_attr3_rmt_hdr);
@@ -342,20 +327,20 @@ xfs_attr_rmtval_copyin(
 	struct xfs_mount *mp,
 	struct xfs_buf	*bp,
 	xfs_ino_t	ino,
-	unsigned int	*offset,
-	unsigned int	*valuelen,
+	int		*offset,
+	int		*valuelen,
 	uint8_t		**src)
 {
 	char		*dst = bp->b_addr;
 	xfs_daddr_t	bno = xfs_buf_daddr(bp);
-	unsigned int	len = BBTOB(bp->b_length);
-	unsigned int	blksize = mp->m_attr_geo->blksize;
+	int		len = BBTOB(bp->b_length);
+	int		blksize = mp->m_attr_geo->blksize;
 
 	ASSERT(len >= blksize);
 
 	while (len > 0 && *valuelen > 0) {
-		unsigned int hdr_size;
-		unsigned int byte_cnt = xfs_attr3_rmt_buf_space(mp);
+		int hdr_size;
+		int byte_cnt = XFS_ATTR3_RMT_BUF_SPACE(mp, blksize);
 
 		byte_cnt = min(*valuelen, byte_cnt);
 		hdr_size = xfs_attr3_rmt_hdr_set(mp, dst, ino, *offset,
@@ -401,12 +386,12 @@ xfs_attr_rmtval_get(
 	struct xfs_buf		*bp;
 	xfs_dablk_t		lblkno = args->rmtblkno;
 	uint8_t			*dst = args->value;
-	unsigned int		valuelen;
+	int			valuelen;
 	int			nmap;
 	int			error;
-	unsigned int		blkcnt = args->rmtblkcnt;
+	int			blkcnt = args->rmtblkcnt;
 	int			i;
-	unsigned int		offset = 0;
+	int			offset = 0;
 
 	trace_xfs_attr_rmtval_get(args);
 
@@ -433,13 +418,12 @@ xfs_attr_rmtval_get(
 			dblkcnt = XFS_FSB_TO_BB(mp, map[i].br_blockcount);
 			error = xfs_buf_read(mp->m_ddev_targp, dblkno, dblkcnt,
 					0, &bp, &xfs_attr3_rmt_buf_ops);
-			if (xfs_metadata_is_sick(error))
-				xfs_dirattr_mark_sick(args->dp, XFS_ATTR_FORK);
 			if (error)
 				return error;
 
-			error = xfs_attr_rmtval_copyout(mp, bp, args->dp,
-					args->owner, &offset, &valuelen, &dst);
+			error = xfs_attr_rmtval_copyout(mp, bp, args->dp->i_ino,
+							&offset, &valuelen,
+							&dst);
 			xfs_buf_relse(bp);
 			if (error)
 				return error;
@@ -464,7 +448,7 @@ xfs_attr_rmt_find_hole(
 	struct xfs_inode	*dp = args->dp;
 	struct xfs_mount	*mp = dp->i_mount;
 	int			error;
-	unsigned int		blkcnt;
+	int			blkcnt;
 	xfs_fileoff_t		lfileoff = 0;
 
 	/*
@@ -493,11 +477,11 @@ xfs_attr_rmtval_set_value(
 	struct xfs_bmbt_irec	map;
 	xfs_dablk_t		lblkno;
 	uint8_t			*src = args->value;
-	unsigned int		blkcnt;
-	unsigned int		valuelen;
+	int			blkcnt;
+	int			valuelen;
 	int			nmap;
 	int			error;
-	unsigned int		offset = 0;
+	int			offset = 0;
 
 	/*
 	 * Roll through the "value", copying the attribute value to the
@@ -533,8 +517,8 @@ xfs_attr_rmtval_set_value(
 			return error;
 		bp->b_ops = &xfs_attr3_rmt_buf_ops;
 
-		xfs_attr_rmtval_copyin(mp, bp, args->owner, &offset, &valuelen,
-				&src);
+		xfs_attr_rmtval_copyin(mp, bp, args->dp->i_ino, &offset,
+				       &valuelen, &src);
 
 		error = xfs_bwrite(bp);	/* GROT: NOTE: synchronous write */
 		xfs_buf_relse(bp);
@@ -561,13 +545,11 @@ xfs_attr_rmtval_stale(
 	struct xfs_buf		*bp;
 	int			error;
 
-	xfs_assert_ilocked(ip, XFS_ILOCK_EXCL);
+	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
 
 	if (XFS_IS_CORRUPT(mp, map->br_startblock == DELAYSTARTBLOCK) ||
-	    XFS_IS_CORRUPT(mp, map->br_startblock == HOLESTARTBLOCK)) {
-		xfs_bmap_mark_sick(ip, XFS_ATTR_FORK);
+	    XFS_IS_CORRUPT(mp, map->br_startblock == HOLESTARTBLOCK))
 		return -EFSCORRUPTED;
-	}
 
 	error = xfs_buf_incore(mp->m_ddev_targp,
 			XFS_FSB_TO_DADDR(mp, map->br_startblock),
@@ -637,6 +619,7 @@ xfs_attr_rmtval_set_blk(
 	if (error)
 		return error;
 
+	ASSERT(nmap == 1);
 	ASSERT((map->br_startblock != DELAYSTARTBLOCK) &&
 	       (map->br_startblock != HOLESTARTBLOCK));
 
@@ -656,7 +639,7 @@ xfs_attr_rmtval_invalidate(
 	struct xfs_da_args	*args)
 {
 	xfs_dablk_t		lblkno;
-	unsigned int		blkcnt;
+	int			blkcnt;
 	int			error;
 
 	/*
@@ -676,10 +659,8 @@ xfs_attr_rmtval_invalidate(
 				       blkcnt, &map, &nmap, XFS_BMAPI_ATTRFORK);
 		if (error)
 			return error;
-		if (XFS_IS_CORRUPT(args->dp->i_mount, nmap != 1)) {
-			xfs_bmap_mark_sick(args->dp, XFS_ATTR_FORK);
+		if (XFS_IS_CORRUPT(args->dp->i_mount, nmap != 1))
 			return -EFSCORRUPTED;
-		}
 		error = xfs_attr_rmtval_stale(args->dp, &map, XBF_TRYLOCK);
 		if (error)
 			return error;

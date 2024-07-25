@@ -355,9 +355,11 @@ static int g12_ddr_pmu_probe(struct platform_device *pdev)
 	return meson_ddr_pmu_create(pdev);
 }
 
-static void g12_ddr_pmu_remove(struct platform_device *pdev)
+static int g12_ddr_pmu_remove(struct platform_device *pdev)
 {
 	meson_ddr_pmu_remove(pdev);
+
+	return 0;
 }
 
 static const struct of_device_id meson_ddr_pmu_dt_match[] = {
@@ -375,11 +377,10 @@ static const struct of_device_id meson_ddr_pmu_dt_match[] = {
 	},
 	{}
 };
-MODULE_DEVICE_TABLE(of, meson_ddr_pmu_dt_match);
 
 static struct platform_driver g12_ddr_pmu_driver = {
 	.probe = g12_ddr_pmu_probe,
-	.remove_new = g12_ddr_pmu_remove,
+	.remove = g12_ddr_pmu_remove,
 
 	.driver = {
 		.name = "meson-g12-ddr-pmu",

@@ -10,7 +10,6 @@
  * - Alternative access techniques?
  */
 #include <linux/anon_inodes.h>
-#include <linux/cleanup.h>
 #include <linux/kernel.h>
 #include <linux/export.h>
 #include <linux/device.h>
@@ -414,22 +413,6 @@ static const unsigned long *iio_scan_mask_match(const unsigned long *av_masks,
 {
 	if (bitmap_empty(mask, masklength))
 		return NULL;
-	/*
-	 * The condition here do not handle multi-long masks correctly.
-	 * It only checks the first long to be zero, and will use such mask
-	 * as a terminator even if there was bits set after the first long.
-	 *
-	 * Correct check would require using:
-	 * while (!bitmap_empty(av_masks, masklength))
-	 * instead. This is potentially hazardous because the
-	 * avaliable_scan_masks is a zero terminated array of longs - and
-	 * using the proper bitmap_empty() check for multi-long wide masks
-	 * would require the array to be terminated with multiple zero longs -
-	 * which is not such an usual pattern.
-	 *
-	 * As writing of this no multi-long wide masks were found in-tree, so
-	 * the simple while (*av_masks) check is working.
-	 */
 	while (*av_masks) {
 		if (strict) {
 			if (bitmap_equal(mask, av_masks, masklength))
@@ -534,26 +517,28 @@ static ssize_t iio_scan_el_store(struct device *dev,
 	ret = kstrtobool(buf, &state);
 	if (ret < 0)
 		return ret;
-
-	guard(mutex)(&iio_dev_opaque->mlock);
-	if (iio_buffer_is_active(buffer))
-		return -EBUSY;
-
+	mutex_lock(&iio_dev_opaque->mlock);
+	if (iio_buffer_is_active(buffer)) {
+		ret = -EBUSY;
+		goto error_ret;
+	}
 	ret = iio_scan_mask_query(indio_dev, buffer, this_attr->address);
 	if (ret < 0)
-		return ret;
-
-	if (state && ret)
-		return len;
-
-	if (state)
-		ret = iio_scan_mask_set(indio_dev, buffer, this_attr->address);
-	else
+		goto error_ret;
+	if (!state && ret) {
 		ret = iio_scan_mask_clear(buffer, this_attr->address);
-	if (ret)
-		return ret;
+		if (ret)
+			goto error_ret;
+	} else if (state && !ret) {
+		ret = iio_scan_mask_set(indio_dev, buffer, this_attr->address);
+		if (ret)
+			goto error_ret;
+	}
 
-	return len;
+error_ret:
+	mutex_unlock(&iio_dev_opaque->mlock);
+
+	return ret < 0 ? ret : len;
 }
 
 static ssize_t iio_scan_el_ts_show(struct device *dev,
@@ -580,13 +565,16 @@ static ssize_t iio_scan_el_ts_store(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	guard(mutex)(&iio_dev_opaque->mlock);
-	if (iio_buffer_is_active(buffer))
-		return -EBUSY;
-
+	mutex_lock(&iio_dev_opaque->mlock);
+	if (iio_buffer_is_active(buffer)) {
+		ret = -EBUSY;
+		goto error_ret;
+	}
 	buffer->scan_timestamp = state;
+error_ret:
+	mutex_unlock(&iio_dev_opaque->mlock);
 
-	return len;
+	return ret ? ret : len;
 }
 
 static int iio_buffer_add_channel_sysfs(struct iio_dev *indio_dev,
@@ -612,7 +600,7 @@ static int iio_buffer_add_channel_sysfs(struct iio_dev *indio_dev,
 				     &iio_show_fixed_type,
 				     NULL,
 				     0,
-				     IIO_SEPARATE,
+				     0,
 				     &indio_dev->dev,
 				     buffer,
 				     &buffer->buffer_attr_list);
@@ -625,7 +613,7 @@ static int iio_buffer_add_channel_sysfs(struct iio_dev *indio_dev,
 					     &iio_scan_el_show,
 					     &iio_scan_el_store,
 					     chan->scan_index,
-					     IIO_SEPARATE,
+					     0,
 					     &indio_dev->dev,
 					     buffer,
 					     &buffer->buffer_attr_list);
@@ -635,7 +623,7 @@ static int iio_buffer_add_channel_sysfs(struct iio_dev *indio_dev,
 					     &iio_scan_el_ts_show,
 					     &iio_scan_el_ts_store,
 					     chan->scan_index,
-					     IIO_SEPARATE,
+					     0,
 					     &indio_dev->dev,
 					     buffer,
 					     &buffer->buffer_attr_list);
@@ -670,16 +658,21 @@ static ssize_t length_store(struct device *dev, struct device_attribute *attr,
 	if (val == buffer->length)
 		return len;
 
-	guard(mutex)(&iio_dev_opaque->mlock);
-	if (iio_buffer_is_active(buffer))
-		return -EBUSY;
-
-	buffer->access->set_length(buffer, val);
-
+	mutex_lock(&iio_dev_opaque->mlock);
+	if (iio_buffer_is_active(buffer)) {
+		ret = -EBUSY;
+	} else {
+		buffer->access->set_length(buffer, val);
+		ret = 0;
+	}
+	if (ret)
+		goto out;
 	if (buffer->length && buffer->length < buffer->watermark)
 		buffer->watermark = buffer->length;
+out:
+	mutex_unlock(&iio_dev_opaque->mlock);
 
-	return len;
+	return ret ? ret : len;
 }
 
 static ssize_t enable_show(struct device *dev, struct device_attribute *attr,
@@ -1259,6 +1252,7 @@ int iio_update_buffers(struct iio_dev *indio_dev,
 		       struct iio_buffer *remove_buffer)
 {
 	struct iio_dev_opaque *iio_dev_opaque = to_iio_dev_opaque(indio_dev);
+	int ret;
 
 	if (insert_buffer == remove_buffer)
 		return 0;
@@ -1267,8 +1261,8 @@ int iio_update_buffers(struct iio_dev *indio_dev,
 	    insert_buffer->direction == IIO_BUFFER_DIRECTION_OUT)
 		return -EINVAL;
 
-	guard(mutex)(&iio_dev_opaque->info_exist_lock);
-	guard(mutex)(&iio_dev_opaque->mlock);
+	mutex_lock(&iio_dev_opaque->info_exist_lock);
+	mutex_lock(&iio_dev_opaque->mlock);
 
 	if (insert_buffer && iio_buffer_is_active(insert_buffer))
 		insert_buffer = NULL;
@@ -1276,13 +1270,23 @@ int iio_update_buffers(struct iio_dev *indio_dev,
 	if (remove_buffer && !iio_buffer_is_active(remove_buffer))
 		remove_buffer = NULL;
 
-	if (!insert_buffer && !remove_buffer)
-		return 0;
+	if (!insert_buffer && !remove_buffer) {
+		ret = 0;
+		goto out_unlock;
+	}
 
-	if (!indio_dev->info)
-		return -ENODEV;
+	if (!indio_dev->info) {
+		ret = -ENODEV;
+		goto out_unlock;
+	}
 
-	return __iio_update_buffers(indio_dev, insert_buffer, remove_buffer);
+	ret = __iio_update_buffers(indio_dev, insert_buffer, remove_buffer);
+
+out_unlock:
+	mutex_unlock(&iio_dev_opaque->mlock);
+	mutex_unlock(&iio_dev_opaque->info_exist_lock);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(iio_update_buffers);
 
@@ -1306,22 +1310,22 @@ static ssize_t enable_store(struct device *dev, struct device_attribute *attr,
 	if (ret < 0)
 		return ret;
 
-	guard(mutex)(&iio_dev_opaque->mlock);
+	mutex_lock(&iio_dev_opaque->mlock);
 
 	/* Find out if it is in the list */
 	inlist = iio_buffer_is_active(buffer);
 	/* Already in desired state */
 	if (inlist == requested_state)
-		return len;
+		goto done;
 
 	if (requested_state)
 		ret = __iio_update_buffers(indio_dev, buffer, NULL);
 	else
 		ret = __iio_update_buffers(indio_dev, NULL, buffer);
-	if (ret)
-		return ret;
 
-	return len;
+done:
+	mutex_unlock(&iio_dev_opaque->mlock);
+	return (ret < 0) ? ret : len;
 }
 
 static ssize_t watermark_show(struct device *dev, struct device_attribute *attr,
@@ -1348,17 +1352,23 @@ static ssize_t watermark_store(struct device *dev,
 	if (!val)
 		return -EINVAL;
 
-	guard(mutex)(&iio_dev_opaque->mlock);
+	mutex_lock(&iio_dev_opaque->mlock);
 
-	if (val > buffer->length)
-		return -EINVAL;
+	if (val > buffer->length) {
+		ret = -EINVAL;
+		goto out;
+	}
 
-	if (iio_buffer_is_active(buffer))
-		return -EBUSY;
+	if (iio_buffer_is_active(buffer)) {
+		ret = -EBUSY;
+		goto out;
+	}
 
 	buffer->watermark = val;
+out:
+	mutex_unlock(&iio_dev_opaque->mlock);
 
-	return len;
+	return ret ? ret : len;
 }
 
 static ssize_t data_available_show(struct device *dev,
@@ -1744,7 +1754,7 @@ int iio_buffers_alloc_sysfs_and_mask(struct iio_dev *indio_dev)
 
 	channels = indio_dev->channels;
 	if (channels) {
-		int ml = 0;
+		int ml = indio_dev->masklength;
 
 		for (i = 0; i < indio_dev->num_channels; i++)
 			ml = max(ml, channels[i].scan_index + 1);

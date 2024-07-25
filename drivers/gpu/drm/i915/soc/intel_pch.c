@@ -140,6 +140,11 @@ intel_pch_type(const struct drm_i915_private *dev_priv, unsigned short id)
 		drm_WARN_ON(&dev_priv->drm, !IS_ALDERLAKE_S(dev_priv) &&
 			    !IS_ALDERLAKE_P(dev_priv));
 		return PCH_ADP;
+	case INTEL_PCH_MTP_DEVICE_ID_TYPE:
+	case INTEL_PCH_MTP2_DEVICE_ID_TYPE:
+		drm_dbg_kms(&dev_priv->drm, "Found Meteor Lake PCH\n");
+		drm_WARN_ON(&dev_priv->drm, !IS_METEORLAKE(dev_priv));
+		return PCH_MTP;
 	default:
 		return PCH_NONE;
 	}
@@ -168,7 +173,9 @@ intel_virt_detect_pch(const struct drm_i915_private *dev_priv,
 	 * make an educated guess as to which PCH is really there.
 	 */
 
-	if (IS_ALDERLAKE_S(dev_priv) || IS_ALDERLAKE_P(dev_priv))
+	if (IS_METEORLAKE(dev_priv))
+		id = INTEL_PCH_MTP_DEVICE_ID_TYPE;
+	else if (IS_ALDERLAKE_S(dev_priv) || IS_ALDERLAKE_P(dev_priv))
 		id = INTEL_PCH_ADP_DEVICE_ID_TYPE;
 	else if (IS_TIGERLAKE(dev_priv) || IS_ROCKETLAKE(dev_priv))
 		id = INTEL_PCH_TGP_DEVICE_ID_TYPE;
@@ -211,25 +218,12 @@ void intel_detect_pch(struct drm_i915_private *dev_priv)
 	unsigned short id;
 	enum intel_pch pch_type;
 
-	/*
-	 * South display engine on the same PCI device: just assign the fake
-	 * PCH.
-	 */
-	if (DISPLAY_VER(dev_priv) >= 20) {
-		dev_priv->pch_type = PCH_LNL;
-		return;
-	} else if (IS_METEORLAKE(dev_priv)) {
-		/*
-		 * Both north display and south display are on the SoC die.
-		 * The real PCH is uninvolved in display.
-		 */
-		dev_priv->pch_type = PCH_MTL;
+	/* DG1 has south engine display on the same PCI device */
+	if (IS_DG1(dev_priv)) {
+		dev_priv->pch_type = PCH_DG1;
 		return;
 	} else if (IS_DG2(dev_priv)) {
 		dev_priv->pch_type = PCH_DG2;
-		return;
-	} else if (IS_DG1(dev_priv)) {
-		dev_priv->pch_type = PCH_DG1;
 		return;
 	}
 

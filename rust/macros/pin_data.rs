@@ -10,7 +10,6 @@ pub(crate) fn pin_data(args: TokenStream, input: TokenStream) -> TokenStream {
     let (
         Generics {
             impl_generics,
-            decl_generics,
             ty_generics,
         },
         rest,
@@ -77,7 +76,6 @@ pub(crate) fn pin_data(args: TokenStream, input: TokenStream) -> TokenStream {
         @sig(#(#rest)*),
         @impl_generics(#(#impl_generics)*),
         @ty_generics(#(#ty_generics)*),
-        @decl_generics(#(#decl_generics)*),
         @body(#last),
     });
     quoted.extend(errs);

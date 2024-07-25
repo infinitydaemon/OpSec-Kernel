@@ -34,13 +34,13 @@ static ssize_t fb_read(struct file *file, char __user *buf, size_t count, loff_t
 	if (!info)
 		return -ENODEV;
 
-	if (fb_WARN_ON_ONCE(info, !info->fbops->fb_read))
-		return -EINVAL;
-
 	if (info->state != FBINFO_STATE_RUNNING)
 		return -EPERM;
 
-	return info->fbops->fb_read(info, buf, count, ppos);
+	if (info->fbops->fb_read)
+		return info->fbops->fb_read(info, buf, count, ppos);
+
+	return fb_io_read(info, buf, count, ppos);
 }
 
 static ssize_t fb_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
@@ -50,13 +50,37 @@ static ssize_t fb_write(struct file *file, const char __user *buf, size_t count,
 	if (!info)
 		return -ENODEV;
 
-	if (fb_WARN_ON_ONCE(info, !info->fbops->fb_write))
-		return -EINVAL;
-
 	if (info->state != FBINFO_STATE_RUNNING)
 		return -EPERM;
 
-	return info->fbops->fb_write(info, buf, count, ppos);
+	if (info->fbops->fb_write)
+		return info->fbops->fb_write(info, buf, count, ppos);
+
+	return fb_io_write(info, buf, count, ppos);
+}
+
+static int fb_copyarea_user(struct fb_info *info,
+			    struct fb_copyarea *copy)
+{
+	int ret = 0;
+	lock_fb_info(info);
+	if (copy->dx >= info->var.xres ||
+	    copy->sx >= info->var.xres ||
+	    copy->width > info->var.xres ||
+	    copy->dy >= info->var.yres ||
+	    copy->sy >= info->var.yres ||
+	    copy->height > info->var.yres ||
+	    copy->dx + copy->width > info->var.xres ||
+	    copy->sx + copy->width > info->var.xres ||
+	    copy->dy + copy->height > info->var.yres ||
+	    copy->sy + copy->height > info->var.yres) {
+		ret = -EINVAL;
+		goto out;
+	}
+	info->fbops->fb_copyarea(info, copy);
+out:
+	unlock_fb_info(info);
+	return ret;
 }
 
 static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
@@ -67,6 +91,7 @@ static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
 	struct fb_fix_screeninfo fix;
 	struct fb_cmap cmap_from;
 	struct fb_cmap_user cmap;
+	struct fb_copyarea copy;
 	void __user *argp = (void __user *)arg;
 	long ret = 0;
 
@@ -148,6 +173,15 @@ static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
 		unlock_fb_info(info);
 		console_unlock();
 		break;
+	case FBIOCOPYAREA:
+		if (info->flags & FBINFO_HWACCEL_COPYAREA) {
+			/* only provide this ioctl if it is accelerated */
+			if (copy_from_user(&copy, argp, sizeof(copy)))
+				return -EFAULT;
+			ret = fb_copyarea_user(info, &copy);
+			break;
+		}
+	fallthrough;
 	default:
 		lock_fb_info(info);
 		fb = info->fbops;
@@ -287,6 +321,7 @@ static long fb_compat_ioctl(struct file *file, unsigned int cmd,
 	case FBIOPAN_DISPLAY:
 	case FBIOGET_CON2FBMAP:
 	case FBIOPUT_CON2FBMAP:
+	case FBIOCOPYAREA:
 		arg = (unsigned long) compat_ptr(arg);
 		fallthrough;
 	case FBIOBLANK:
@@ -314,19 +349,60 @@ static long fb_compat_ioctl(struct file *file, unsigned int cmd,
 static int fb_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	struct fb_info *info = file_fb_info(file);
-	int res;
+	unsigned long mmio_pgoff;
+	unsigned long start;
+	u32 len;
 
 	if (!info)
 		return -ENODEV;
-
-	if (fb_WARN_ON_ONCE(info, !info->fbops->fb_mmap))
-		return -ENODEV;
-
 	mutex_lock(&info->mm_lock);
-	res = info->fbops->fb_mmap(info, vma);
+
+	if (info->fbops->fb_mmap) {
+		int res;
+
+		/*
+		 * The framebuffer needs to be accessed decrypted, be sure
+		 * SME protection is removed ahead of the call
+		 */
+		vma->vm_page_prot = pgprot_decrypted(vma->vm_page_prot);
+		res = info->fbops->fb_mmap(info, vma);
+		mutex_unlock(&info->mm_lock);
+		return res;
+#if IS_ENABLED(CONFIG_FB_DEFERRED_IO)
+	} else if (info->fbdefio) {
+		/*
+		 * FB deferred I/O wants you to handle mmap in your drivers. At a
+		 * minimum, point struct fb_ops.fb_mmap to fb_deferred_io_mmap().
+		 */
+		dev_warn_once(info->dev, "fbdev mmap not set up for deferred I/O.\n");
+		mutex_unlock(&info->mm_lock);
+		return -ENODEV;
+#endif
+	}
+
+	/*
+	 * Ugh. This can be either the frame buffer mapping, or
+	 * if pgoff points past it, the mmio mapping.
+	 */
+	start = info->fix.smem_start;
+	len = info->fix.smem_len;
+	mmio_pgoff = PAGE_ALIGN((start & ~PAGE_MASK) + len) >> PAGE_SHIFT;
+	if (vma->vm_pgoff >= mmio_pgoff) {
+		if (info->var.accel_flags) {
+			mutex_unlock(&info->mm_lock);
+			return -EINVAL;
+		}
+
+		vma->vm_pgoff -= mmio_pgoff;
+		start = info->fix.mmio_start;
+		len = info->fix.mmio_len;
+	}
 	mutex_unlock(&info->mm_lock);
 
-	return res;
+	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
+	fb_pgprotect(file, vma, start);
+
+	return vm_iomap_memory(vma, start, len);
 }
 
 static int fb_open(struct inode *inode, struct file *file)

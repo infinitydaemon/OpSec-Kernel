@@ -23,10 +23,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/string.h>
-#include <linux/cpufeature.h>
-#include <linux/bug.h>
-#include <linux/build_bug.h>
 #include <asm/fpu/api.h>
 
 #include "i915_memcpy.h"

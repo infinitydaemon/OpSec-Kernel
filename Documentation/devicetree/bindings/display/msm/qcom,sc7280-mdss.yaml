@@ -36,36 +36,26 @@ properties:
     maxItems: 1
 
   interconnects:
-    items:
-      - description: Interconnect path from mdp0 port to the data bus
-      - description: Interconnect path from CPU to the reg bus
+    maxItems: 1
 
   interconnect-names:
-    items:
-      - const: mdp0-mem
-      - const: cpu-cfg
+    maxItems: 1
 
 patternProperties:
   "^display-controller@[0-9a-f]+$":
     type: object
-    additionalProperties: true
-
     properties:
       compatible:
         const: qcom,sc7280-dpu
 
   "^displayport-controller@[0-9a-f]+$":
     type: object
-    additionalProperties: true
-
     properties:
       compatible:
         const: qcom,sc7280-dp
 
   "^dsi@[0-9a-f]+$":
     type: object
-    additionalProperties: true
-
     properties:
       compatible:
         items:
@@ -74,16 +64,12 @@ patternProperties:
 
   "^edp@[0-9a-f]+$":
     type: object
-    additionalProperties: true
-
     properties:
       compatible:
         const: qcom,sc7280-edp
 
   "^phy@[0-9a-f]+$":
     type: object
-    additionalProperties: true
-
     properties:
       compatible:
         enum:
@@ -122,10 +108,8 @@ examples:
         interrupt-controller;
         #interrupt-cells = <1>;
 
-        interconnects = <&mmss_noc MASTER_MDP0 &mc_virt SLAVE_EBI1>,
-                        <&gem_noc MASTER_APPSS_PROC &cnoc2 SLAVE_DISPLAY_CFG>;
-        interconnect-names = "mdp0-mem",
-                             "cpu-cfg";
+        interconnects = <&mmss_noc MASTER_MDP0 &mc_virt SLAVE_EBI1>;
+        interconnect-names = "mdp0-mem";
 
         iommus = <&apps_smmu 0x900 0x402>;
         ranges;

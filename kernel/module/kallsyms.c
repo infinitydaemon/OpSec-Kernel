@@ -348,7 +348,7 @@ const char *module_address_lookup(unsigned long addr,
 	}
 	/* Make a copy in here where it's safe */
 	if (ret) {
-		strscpy(namebuf, ret, KSYM_NAME_LEN);
+		strncpy(namebuf, ret, KSYM_NAME_LEN - 1);
 		ret = namebuf;
 	}
 	preempt_enable();

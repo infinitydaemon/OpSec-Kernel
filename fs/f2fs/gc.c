@@ -46,8 +46,8 @@ static int gc_thread_func(void *data)
 	do {
 		bool sync_mode, foreground = false;
 
-		wait_event_freezable_timeout(*wq,
-				kthread_should_stop() ||
+		wait_event_interruptible_timeout(*wq,
+				kthread_should_stop() || freezing(current) ||
 				waitqueue_active(fggc_wq) ||
 				gc_th->gc_wake,
 				msecs_to_jiffies(wait_ms));
@@ -59,7 +59,7 @@ static int gc_thread_func(void *data)
 		if (gc_th->gc_wake)
 			gc_th->gc_wake = false;
 
-		if (f2fs_readonly(sbi->sb)) {
+		if (try_to_freeze() || f2fs_readonly(sbi->sb)) {
 			stat_other_skip_bggc_count(sbi);
 			continue;
 		}
@@ -301,7 +301,7 @@ static unsigned int get_max_cost(struct f2fs_sb_info *sbi,
 
 	/* LFS */
 	if (p->gc_mode == GC_GREEDY)
-		return SEGS_TO_BLKS(sbi, 2 * p->ofs_unit);
+		return 2 * BLKS_PER_SEG(sbi) * p->ofs_unit;
 	else if (p->gc_mode == GC_CB)
 		return UINT_MAX;
 	else if (p->gc_mode == GC_AT)
@@ -348,7 +348,7 @@ static unsigned int get_cb_cost(struct f2fs_sb_info *sbi, unsigned int segno)
 	mtime = div_u64(mtime, usable_segs_per_sec);
 	vblocks = div_u64(vblocks, usable_segs_per_sec);
 
-	u = BLKS_TO_SEGS(sbi, vblocks * 100);
+	u = (vblocks * 100) >> sbi->log_blocks_per_seg;
 
 	/* Handle if the system time has changed by the user */
 	if (mtime < sit_i->min_mtime)
@@ -1195,6 +1195,7 @@ static int ra_data_block(struct inode *inode, pgoff_t index)
 		if (unlikely(!f2fs_is_valid_blkaddr(sbi, dn.data_blkaddr,
 						DATA_GENERIC_ENHANCE_READ))) {
 			err = -EFSCORRUPTED;
+			f2fs_handle_error(sbi, ERROR_INVALID_BLKADDR);
 			goto put_page;
 		}
 		goto got_it;
@@ -1213,6 +1214,7 @@ static int ra_data_block(struct inode *inode, pgoff_t index)
 	if (unlikely(!f2fs_is_valid_blkaddr(sbi, dn.data_blkaddr,
 						DATA_GENERIC_ENHANCE))) {
 		err = -EFSCORRUPTED;
+		f2fs_handle_error(sbi, ERROR_INVALID_BLKADDR);
 		goto put_page;
 	}
 got_it:
@@ -1359,13 +1361,8 @@ static int move_data_block(struct inode *inode, block_t bidx,
 	set_summary(&sum, dn.nid, dn.ofs_in_node, ni.version);
 
 	/* allocate block address */
-	err = f2fs_allocate_data_block(fio.sbi, NULL, fio.old_blkaddr, &newaddr,
+	f2fs_allocate_data_block(fio.sbi, NULL, fio.old_blkaddr, &newaddr,
 				&sum, type, NULL);
-	if (err) {
-		f2fs_put_page(mpage, 1);
-		/* filesystem should shutdown, no need to recovery block */
-		goto up_out;
-	}
 
 	fio.encrypted_page = f2fs_pagecache_get_page(META_MAPPING(fio.sbi),
 				newaddr, FGP_LOCK | FGP_CREAT, GFP_NOFS);
@@ -1434,7 +1431,7 @@ static int move_data_page(struct inode *inode, block_t bidx, int gc_type,
 		goto out;
 
 	if (gc_type == BG_GC) {
-		if (folio_test_writeback(page_folio(page))) {
+		if (PageWriteback(page)) {
 			err = -EAGAIN;
 			goto out;
 		}
@@ -1864,9 +1861,6 @@ retry:
 
 	seg_freed = do_garbage_collect(sbi, segno, &gc_list, gc_type,
 				gc_control->should_migrate_blocks);
-	if (seg_freed < 0)
-		goto stop;
-
 	total_freed += seg_freed;
 
 	if (seg_freed == f2fs_usable_segs_in_sec(sbi, segno)) {
@@ -1989,9 +1983,6 @@ int f2fs_gc_range(struct f2fs_sb_info *sbi,
 	unsigned int segno;
 	unsigned int gc_secs = dry_run_sections;
 
-	if (unlikely(f2fs_cp_error(sbi)))
-		return -EIO;
-
 	for (segno = start_seg; segno <= end_seg; segno += SEGS_PER_SEC(sbi)) {
 		struct gc_inode_list gc_list = {
 			.ilist = LIST_HEAD_INIT(gc_list.ilist),
@@ -2040,11 +2031,8 @@ static int free_segment_range(struct f2fs_sb_info *sbi,
 	mutex_unlock(&DIRTY_I(sbi)->seglist_lock);
 
 	/* Move out cursegs from the target range */
-	for (type = CURSEG_HOT_DATA; type < NR_CURSEG_PERSIST_TYPE; type++) {
-		err = f2fs_allocate_segment_for_resize(sbi, type, start, end);
-		if (err)
-			goto out;
-	}
+	for (type = CURSEG_HOT_DATA; type < NR_CURSEG_PERSIST_TYPE; type++)
+		f2fs_allocate_segment_for_resize(sbi, type, start, end);
 
 	/* do GC to move out valid blocks in the range */
 	err = f2fs_gc_range(sbi, start, end, dry_run, 0);
@@ -2087,7 +2075,7 @@ static void update_sb_metadata(struct f2fs_sb_info *sbi, int secs)
 	raw_sb->segment_count = cpu_to_le32(segment_count + segs);
 	raw_sb->segment_count_main = cpu_to_le32(segment_count_main + segs);
 	raw_sb->block_count = cpu_to_le64(block_count +
-			(long long)SEGS_TO_BLKS(sbi, segs));
+			(long long)(segs << sbi->log_blocks_per_seg));
 	if (f2fs_is_multi_device(sbi)) {
 		int last_dev = sbi->s_ndevs - 1;
 		int dev_segs =
@@ -2103,7 +2091,7 @@ static void update_sb_metadata(struct f2fs_sb_info *sbi, int secs)
 static void update_fs_metadata(struct f2fs_sb_info *sbi, int secs)
 {
 	int segs = secs * SEGS_PER_SEC(sbi);
-	long long blks = SEGS_TO_BLKS(sbi, segs);
+	long long blks = (long long)segs << sbi->log_blocks_per_seg;
 	long long user_block_count =
 				le64_to_cpu(F2FS_CKPT(sbi)->user_block_count);
 
@@ -2145,7 +2133,7 @@ int f2fs_resize_fs(struct file *filp, __u64 block_count)
 		int last_dev = sbi->s_ndevs - 1;
 		__u64 last_segs = FDEV(last_dev).total_segments;
 
-		if (block_count + SEGS_TO_BLKS(sbi, last_segs) <=
+		if (block_count + (last_segs << sbi->log_blocks_per_seg) <=
 								old_block_count)
 			return -EINVAL;
 	}

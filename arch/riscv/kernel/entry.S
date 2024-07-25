@@ -9,7 +9,6 @@
 
 #include <asm/asm.h>
 #include <asm/csr.h>
-#include <asm/scs.h>
 #include <asm/unistd.h>
 #include <asm/page.h>
 #include <asm/thread_info.h>
@@ -26,9 +25,9 @@ SYM_CODE_START(handle_exception)
 	 * register will contain 0, and we should continue on the current TP.
 	 */
 	csrrw tp, CSR_SCRATCH, tp
-	bnez tp, .Lsave_context
+	bnez tp, _save_context
 
-.Lrestore_kernel_tpsp:
+_restore_kernel_tpsp:
 	csrr tp, CSR_SCRATCH
 	REG_S sp, TASK_TI_KERNEL_SP(tp)
 
@@ -40,7 +39,7 @@ SYM_CODE_START(handle_exception)
 	REG_L sp, TASK_TI_KERNEL_SP(tp)
 #endif
 
-.Lsave_context:
+_save_context:
 	REG_S sp, TASK_TI_USER_SP(tp)
 	REG_L sp, TASK_TI_KERNEL_SP(tp)
 	addi sp, sp, -(PT_SIZE_ON_STACK)
@@ -78,15 +77,10 @@ SYM_CODE_START(handle_exception)
 	csrw CSR_SCRATCH, x0
 
 	/* Load the global pointer */
-	load_global_pointer
-
-	/* Load the kernel shadow call stack pointer if coming from userspace */
-	scs_load_current_if_task_changed s5
-
-#ifdef CONFIG_RISCV_ISA_V_PREEMPTIVE
-	move a0, sp
-	call riscv_v_context_nesting_start
-#endif
+.option push
+.option norelax
+	la gp, __global_pointer$
+.option pop
 	move a0, sp /* pt_regs */
 	la ra, ret_from_exception
 
@@ -111,7 +105,6 @@ SYM_CODE_START(handle_exception)
 1:
 	tail do_trap_unknown
 SYM_CODE_END(handle_exception)
-ASM_NOKPROBE(handle_exception)
 
 /*
  * The ret_from_exception must be called with interrupt disabled. Here is the
@@ -134,19 +127,12 @@ SYM_CODE_START_NOALIGN(ret_from_exception)
 	addi s0, sp, PT_SIZE_ON_STACK
 	REG_S s0, TASK_TI_KERNEL_SP(tp)
 
-	/* Save the kernel shadow call stack pointer */
-	scs_save_current
-
 	/*
 	 * Save TP into the scratch register , so we can find the kernel data
 	 * structures again.
 	 */
 	csrw CSR_SCRATCH, tp
 1:
-#ifdef CONFIG_RISCV_ISA_V_PREEMPTIVE
-	move a0, sp
-	call riscv_v_context_nesting_end
-#endif
 	REG_L a0, PT_STATUS(sp)
 	/*
 	 * The current load reservation is effectively part of the processor's
@@ -185,7 +171,6 @@ SYM_CODE_START_NOALIGN(ret_from_exception)
 	sret
 #endif
 SYM_CODE_END(ret_from_exception)
-ASM_NOKPROBE(ret_from_exception)
 
 #ifdef CONFIG_VMAP_STACK
 SYM_CODE_START_LOCAL(handle_kernel_stack_overflow)
@@ -221,7 +206,6 @@ SYM_CODE_START_LOCAL(handle_kernel_stack_overflow)
 	move a0, sp
 	tail handle_bad_stack
 SYM_CODE_END(handle_kernel_stack_overflow)
-ASM_NOKPROBE(handle_kernel_stack_overflow)
 #endif
 
 SYM_CODE_START(ret_from_fork)
@@ -235,43 +219,6 @@ SYM_CODE_START(ret_from_fork)
 	la ra, ret_from_exception
 	tail syscall_exit_to_user_mode
 SYM_CODE_END(ret_from_fork)
-
-#ifdef CONFIG_IRQ_STACKS
-/*
- * void call_on_irq_stack(struct pt_regs *regs,
- * 		          void (*func)(struct pt_regs *));
- *
- * Calls func(regs) using the per-CPU IRQ stack.
- */
-SYM_FUNC_START(call_on_irq_stack)
-	/* Create a frame record to save ra and s0 (fp) */
-	addi	sp, sp, -STACKFRAME_SIZE_ON_STACK
-	REG_S	ra, STACKFRAME_RA(sp)
-	REG_S	s0, STACKFRAME_FP(sp)
-	addi	s0, sp, STACKFRAME_SIZE_ON_STACK
-
-	/* Switch to the per-CPU shadow call stack */
-	scs_save_current
-	scs_load_irq_stack t0
-
-	/* Switch to the per-CPU IRQ stack and call the handler */
-	load_per_cpu t0, irq_stack_ptr, t1
-	li	t1, IRQ_STACK_SIZE
-	add	sp, t0, t1
-	jalr	a1
-
-	/* Switch back to the thread shadow call stack */
-	scs_load_current
-
-	/* Switch back to the thread stack and restore ra and s0 */
-	addi	sp, s0, -STACKFRAME_SIZE_ON_STACK
-	REG_L	ra, STACKFRAME_RA(sp)
-	REG_L	s0, STACKFRAME_FP(sp)
-	addi	sp, sp, STACKFRAME_SIZE_ON_STACK
-
-	ret
-SYM_FUNC_END(call_on_irq_stack)
-#endif /* CONFIG_IRQ_STACKS */
 
 /*
  * Integer register context switch
@@ -302,8 +249,6 @@ SYM_FUNC_START(__switch_to)
 	REG_S s9,  TASK_THREAD_S9_RA(a3)
 	REG_S s10, TASK_THREAD_S10_RA(a3)
 	REG_S s11, TASK_THREAD_S11_RA(a3)
-	/* Save the kernel shadow call stack pointer */
-	scs_save_current
 	/* Restore context from next->thread */
 	REG_L ra,  TASK_THREAD_RA_RA(a4)
 	REG_L sp,  TASK_THREAD_SP_RA(a4)
@@ -321,8 +266,6 @@ SYM_FUNC_START(__switch_to)
 	REG_L s11, TASK_THREAD_S11_RA(a4)
 	/* The offset of thread_info in task_struct is zero. */
 	move tp, a1
-	/* Switch to the next shadow call stack */
-	scs_load_current
 	ret
 SYM_FUNC_END(__switch_to)
 
@@ -333,7 +276,7 @@ SYM_FUNC_END(__switch_to)
 	.section ".rodata"
 	.align LGREG
 	/* Exception vector table */
-SYM_DATA_START_LOCAL(excp_vect_table)
+SYM_CODE_START(excp_vect_table)
 	RISCV_PTR do_trap_insn_misaligned
 	ALT_INSN_FAULT(RISCV_PTR do_trap_insn_fault)
 	RISCV_PTR do_trap_insn_illegal
@@ -351,11 +294,12 @@ SYM_DATA_START_LOCAL(excp_vect_table)
 	RISCV_PTR do_page_fault   /* load page fault */
 	RISCV_PTR do_trap_unknown
 	RISCV_PTR do_page_fault   /* store page fault */
-SYM_DATA_END_LABEL(excp_vect_table, SYM_L_LOCAL, excp_vect_table_end)
+excp_vect_table_end:
+SYM_CODE_END(excp_vect_table)
 
 #ifndef CONFIG_MMU
-SYM_DATA_START(__user_rt_sigreturn)
+SYM_CODE_START(__user_rt_sigreturn)
 	li a7, __NR_rt_sigreturn
 	ecall
-SYM_DATA_END(__user_rt_sigreturn)
+SYM_CODE_END(__user_rt_sigreturn)
 #endif

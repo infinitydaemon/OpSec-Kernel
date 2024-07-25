@@ -46,7 +46,8 @@
 
 #define SCLK_MIN_DEEPSLEEP_FREQ     1350
 
-static const struct si_cac_config_reg cac_weights_tahiti[] = {
+static const struct si_cac_config_reg cac_weights_tahiti[] =
+{
 	{ 0x0, 0x0000ffff, 0, 0xc, SISLANDS_CACCONFIG_CGIND },
 	{ 0x0, 0xffff0000, 16, 0x0, SISLANDS_CACCONFIG_CGIND },
 	{ 0x1, 0x0000ffff, 0, 0x101, SISLANDS_CACCONFIG_CGIND },
@@ -110,7 +111,8 @@ static const struct si_cac_config_reg cac_weights_tahiti[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_cac_config_reg lcac_tahiti[] = {
+static const struct si_cac_config_reg lcac_tahiti[] =
+{
 	{ 0x143, 0x0001fffe, 1, 0x3, SISLANDS_CACCONFIG_CGIND },
 	{ 0x143, 0x00000001, 0, 0x1, SISLANDS_CACCONFIG_CGIND },
 	{ 0x146, 0x0001fffe, 1, 0x3, SISLANDS_CACCONFIG_CGIND },
@@ -201,11 +203,13 @@ static const struct si_cac_config_reg lcac_tahiti[] = {
 
 };
 
-static const struct si_cac_config_reg cac_override_tahiti[] = {
+static const struct si_cac_config_reg cac_override_tahiti[] =
+{
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_powertune_data powertune_data_tahiti = {
+static const struct si_powertune_data powertune_data_tahiti =
+{
 	((1 << 16) | 27027),
 	6,
 	0,
@@ -235,7 +239,8 @@ static const struct si_powertune_data powertune_data_tahiti = {
 	true
 };
 
-static const struct si_dte_data dte_data_tahiti = {
+static const struct si_dte_data dte_data_tahiti =
+{
 	{ 1159409, 0, 0, 0, 0 },
 	{ 777, 0, 0, 0, 0 },
 	2,
@@ -252,7 +257,8 @@ static const struct si_dte_data dte_data_tahiti = {
 	false
 };
 
-static const struct si_dte_data dte_data_tahiti_pro = {
+static const struct si_dte_data dte_data_tahiti_pro =
+{
 	{ 0x1E8480, 0x3D0900, 0x989680, 0x2625A00, 0x0 },
 	{ 0x0, 0x0, 0x0, 0x0, 0x0 },
 	5,
@@ -269,7 +275,8 @@ static const struct si_dte_data dte_data_tahiti_pro = {
 	true
 };
 
-static const struct si_dte_data dte_data_new_zealand = {
+static const struct si_dte_data dte_data_new_zealand =
+{
 	{ 0x1E8480, 0x3D0900, 0x989680, 0x2625A00, 0 },
 	{ 0x29B, 0x3E9, 0x537, 0x7D2, 0 },
 	0x5,
@@ -286,7 +293,8 @@ static const struct si_dte_data dte_data_new_zealand = {
 	true
 };
 
-static const struct si_dte_data dte_data_aruba_pro = {
+static const struct si_dte_data dte_data_aruba_pro =
+{
 	{ 0x1E8480, 0x3D0900, 0x989680, 0x2625A00, 0x0 },
 	{ 0x0, 0x0, 0x0, 0x0, 0x0 },
 	5,
@@ -303,7 +311,8 @@ static const struct si_dte_data dte_data_aruba_pro = {
 	true
 };
 
-static const struct si_dte_data dte_data_malta = {
+static const struct si_dte_data dte_data_malta =
+{
 	{ 0x1E8480, 0x3D0900, 0x989680, 0x2625A00, 0x0 },
 	{ 0x0, 0x0, 0x0, 0x0, 0x0 },
 	5,
@@ -320,7 +329,8 @@ static const struct si_dte_data dte_data_malta = {
 	true
 };
 
-static struct si_cac_config_reg cac_weights_pitcairn[] = {
+static struct si_cac_config_reg cac_weights_pitcairn[] =
+{
 	{ 0x0, 0x0000ffff, 0, 0x8a, SISLANDS_CACCONFIG_CGIND },
 	{ 0x0, 0xffff0000, 16, 0x0, SISLANDS_CACCONFIG_CGIND },
 	{ 0x1, 0x0000ffff, 0, 0x0, SISLANDS_CACCONFIG_CGIND },
@@ -384,7 +394,8 @@ static struct si_cac_config_reg cac_weights_pitcairn[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_cac_config_reg lcac_pitcairn[] = {
+static const struct si_cac_config_reg lcac_pitcairn[] =
+{
 	{ 0x98, 0x0001fffe, 1, 0x2, SISLANDS_CACCONFIG_CGIND },
 	{ 0x98, 0x00000001, 0, 0x1, SISLANDS_CACCONFIG_CGIND },
 	{ 0x104, 0x0001fffe, 1, 0x2, SISLANDS_CACCONFIG_CGIND },
@@ -474,11 +485,13 @@ static const struct si_cac_config_reg lcac_pitcairn[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_cac_config_reg cac_override_pitcairn[] = {
+static const struct si_cac_config_reg cac_override_pitcairn[] =
+{
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_powertune_data powertune_data_pitcairn = {
+static const struct si_powertune_data powertune_data_pitcairn =
+{
 	((1 << 16) | 27027),
 	5,
 	0,
@@ -508,7 +521,8 @@ static const struct si_powertune_data powertune_data_pitcairn = {
 	true
 };
 
-static const struct si_dte_data dte_data_pitcairn = {
+static const struct si_dte_data dte_data_pitcairn =
+{
 	{ 0, 0, 0, 0, 0 },
 	{ 0, 0, 0, 0, 0 },
 	0,
@@ -525,7 +539,8 @@ static const struct si_dte_data dte_data_pitcairn = {
 	false
 };
 
-static const struct si_dte_data dte_data_curacao_xt = {
+static const struct si_dte_data dte_data_curacao_xt =
+{
 	{ 0x1E8480, 0x3D0900, 0x989680, 0x2625A00, 0x0 },
 	{ 0x0, 0x0, 0x0, 0x0, 0x0 },
 	5,
@@ -542,7 +557,8 @@ static const struct si_dte_data dte_data_curacao_xt = {
 	true
 };
 
-static const struct si_dte_data dte_data_curacao_pro = {
+static const struct si_dte_data dte_data_curacao_pro =
+{
 	{ 0x1E8480, 0x3D0900, 0x989680, 0x2625A00, 0x0 },
 	{ 0x0, 0x0, 0x0, 0x0, 0x0 },
 	5,
@@ -559,7 +575,8 @@ static const struct si_dte_data dte_data_curacao_pro = {
 	true
 };
 
-static const struct si_dte_data dte_data_neptune_xt = {
+static const struct si_dte_data dte_data_neptune_xt =
+{
 	{ 0x1E8480, 0x3D0900, 0x989680, 0x2625A00, 0x0 },
 	{ 0x0, 0x0, 0x0, 0x0, 0x0 },
 	5,
@@ -576,7 +593,8 @@ static const struct si_dte_data dte_data_neptune_xt = {
 	true
 };
 
-static const struct si_cac_config_reg cac_weights_chelsea_pro[] = {
+static const struct si_cac_config_reg cac_weights_chelsea_pro[] =
+{
 	{ 0x0, 0x0000ffff, 0, 0x82, SISLANDS_CACCONFIG_CGIND },
 	{ 0x0, 0xffff0000, 16, 0x4F, SISLANDS_CACCONFIG_CGIND },
 	{ 0x1, 0x0000ffff, 0, 0x153, SISLANDS_CACCONFIG_CGIND },
@@ -640,7 +658,8 @@ static const struct si_cac_config_reg cac_weights_chelsea_pro[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_cac_config_reg cac_weights_chelsea_xt[] = {
+static const struct si_cac_config_reg cac_weights_chelsea_xt[] =
+{
 	{ 0x0, 0x0000ffff, 0, 0x82, SISLANDS_CACCONFIG_CGIND },
 	{ 0x0, 0xffff0000, 16, 0x4F, SISLANDS_CACCONFIG_CGIND },
 	{ 0x1, 0x0000ffff, 0, 0x153, SISLANDS_CACCONFIG_CGIND },
@@ -704,7 +723,8 @@ static const struct si_cac_config_reg cac_weights_chelsea_xt[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_cac_config_reg cac_weights_heathrow[] = {
+static const struct si_cac_config_reg cac_weights_heathrow[] =
+{
 	{ 0x0, 0x0000ffff, 0, 0x82, SISLANDS_CACCONFIG_CGIND },
 	{ 0x0, 0xffff0000, 16, 0x4F, SISLANDS_CACCONFIG_CGIND },
 	{ 0x1, 0x0000ffff, 0, 0x153, SISLANDS_CACCONFIG_CGIND },
@@ -768,7 +788,8 @@ static const struct si_cac_config_reg cac_weights_heathrow[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_cac_config_reg cac_weights_cape_verde_pro[] = {
+static const struct si_cac_config_reg cac_weights_cape_verde_pro[] =
+{
 	{ 0x0, 0x0000ffff, 0, 0x82, SISLANDS_CACCONFIG_CGIND },
 	{ 0x0, 0xffff0000, 16, 0x4F, SISLANDS_CACCONFIG_CGIND },
 	{ 0x1, 0x0000ffff, 0, 0x153, SISLANDS_CACCONFIG_CGIND },
@@ -832,7 +853,8 @@ static const struct si_cac_config_reg cac_weights_cape_verde_pro[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_cac_config_reg cac_weights_cape_verde[] = {
+static const struct si_cac_config_reg cac_weights_cape_verde[] =
+{
 	{ 0x0, 0x0000ffff, 0, 0x82, SISLANDS_CACCONFIG_CGIND },
 	{ 0x0, 0xffff0000, 16, 0x4F, SISLANDS_CACCONFIG_CGIND },
 	{ 0x1, 0x0000ffff, 0, 0x153, SISLANDS_CACCONFIG_CGIND },
@@ -896,7 +918,8 @@ static const struct si_cac_config_reg cac_weights_cape_verde[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_cac_config_reg lcac_cape_verde[] = {
+static const struct si_cac_config_reg lcac_cape_verde[] =
+{
 	{ 0x98, 0x0001fffe, 1, 0x2, SISLANDS_CACCONFIG_CGIND },
 	{ 0x98, 0x00000001, 0, 0x1, SISLANDS_CACCONFIG_CGIND },
 	{ 0x104, 0x0001fffe, 1, 0x2, SISLANDS_CACCONFIG_CGIND },
@@ -954,11 +977,13 @@ static const struct si_cac_config_reg lcac_cape_verde[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_cac_config_reg cac_override_cape_verde[] = {
+static const struct si_cac_config_reg cac_override_cape_verde[] =
+{
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_powertune_data powertune_data_cape_verde = {
+static const struct si_powertune_data powertune_data_cape_verde =
+{
 	((1 << 16) | 0x6993),
 	5,
 	0,
@@ -988,7 +1013,8 @@ static const struct si_powertune_data powertune_data_cape_verde = {
 	true
 };
 
-static const struct si_dte_data dte_data_cape_verde = {
+static const struct si_dte_data dte_data_cape_verde =
+{
 	{ 0, 0, 0, 0, 0 },
 	{ 0, 0, 0, 0, 0 },
 	0,
@@ -1005,7 +1031,8 @@ static const struct si_dte_data dte_data_cape_verde = {
 	false
 };
 
-static const struct si_dte_data dte_data_venus_xtx = {
+static const struct si_dte_data dte_data_venus_xtx =
+{
 	{ 0x1E8480, 0x3D0900, 0x989680, 0x2625A00, 0x0 },
 	{ 0x71C, 0xAAB, 0xE39, 0x11C7, 0x0 },
 	5,
@@ -1022,7 +1049,8 @@ static const struct si_dte_data dte_data_venus_xtx = {
 	true
 };
 
-static const struct si_dte_data dte_data_venus_xt = {
+static const struct si_dte_data dte_data_venus_xt =
+{
 	{ 0x1E8480, 0x3D0900, 0x989680, 0x2625A00, 0x0 },
 	{ 0xBDA, 0x11C7, 0x17B4, 0x1DA1, 0x0 },
 	5,
@@ -1039,7 +1067,8 @@ static const struct si_dte_data dte_data_venus_xt = {
 	true
 };
 
-static const struct si_dte_data dte_data_venus_pro = {
+static const struct si_dte_data dte_data_venus_pro =
+{
 	{  0x1E8480, 0x3D0900, 0x989680, 0x2625A00, 0x0 },
 	{ 0x11C7, 0x1AAB, 0x238E, 0x2C72, 0x0 },
 	5,
@@ -1056,7 +1085,8 @@ static const struct si_dte_data dte_data_venus_pro = {
 	true
 };
 
-static struct si_cac_config_reg cac_weights_oland[] = {
+static struct si_cac_config_reg cac_weights_oland[] =
+{
 	{ 0x0, 0x0000ffff, 0, 0x82, SISLANDS_CACCONFIG_CGIND },
 	{ 0x0, 0xffff0000, 16, 0x4F, SISLANDS_CACCONFIG_CGIND },
 	{ 0x1, 0x0000ffff, 0, 0x153, SISLANDS_CACCONFIG_CGIND },
@@ -1120,7 +1150,8 @@ static struct si_cac_config_reg cac_weights_oland[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_cac_config_reg cac_weights_mars_pro[] = {
+static const struct si_cac_config_reg cac_weights_mars_pro[] =
+{
 	{ 0x0, 0x0000ffff, 0, 0x43, SISLANDS_CACCONFIG_CGIND },
 	{ 0x0, 0xffff0000, 16, 0x29, SISLANDS_CACCONFIG_CGIND },
 	{ 0x1, 0x0000ffff, 0, 0xAF, SISLANDS_CACCONFIG_CGIND },
@@ -1184,7 +1215,8 @@ static const struct si_cac_config_reg cac_weights_mars_pro[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_cac_config_reg cac_weights_mars_xt[] = {
+static const struct si_cac_config_reg cac_weights_mars_xt[] =
+{
 	{ 0x0, 0x0000ffff, 0, 0x43, SISLANDS_CACCONFIG_CGIND },
 	{ 0x0, 0xffff0000, 16, 0x29, SISLANDS_CACCONFIG_CGIND },
 	{ 0x1, 0x0000ffff, 0, 0xAF, SISLANDS_CACCONFIG_CGIND },
@@ -1248,7 +1280,8 @@ static const struct si_cac_config_reg cac_weights_mars_xt[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_cac_config_reg cac_weights_oland_pro[] = {
+static const struct si_cac_config_reg cac_weights_oland_pro[] =
+{
 	{ 0x0, 0x0000ffff, 0, 0x43, SISLANDS_CACCONFIG_CGIND },
 	{ 0x0, 0xffff0000, 16, 0x29, SISLANDS_CACCONFIG_CGIND },
 	{ 0x1, 0x0000ffff, 0, 0xAF, SISLANDS_CACCONFIG_CGIND },
@@ -1312,7 +1345,8 @@ static const struct si_cac_config_reg cac_weights_oland_pro[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_cac_config_reg cac_weights_oland_xt[] = {
+static const struct si_cac_config_reg cac_weights_oland_xt[] =
+{
 	{ 0x0, 0x0000ffff, 0, 0x43, SISLANDS_CACCONFIG_CGIND },
 	{ 0x0, 0xffff0000, 16, 0x29, SISLANDS_CACCONFIG_CGIND },
 	{ 0x1, 0x0000ffff, 0, 0xAF, SISLANDS_CACCONFIG_CGIND },
@@ -1376,7 +1410,8 @@ static const struct si_cac_config_reg cac_weights_oland_xt[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_cac_config_reg lcac_oland[] = {
+static const struct si_cac_config_reg lcac_oland[] =
+{
 	{ 0x98, 0x0001fffe, 1, 0x2, SISLANDS_CACCONFIG_CGIND },
 	{ 0x98, 0x00000001, 0, 0x1, SISLANDS_CACCONFIG_CGIND },
 	{ 0x104, 0x0001fffe, 1, 0x2, SISLANDS_CACCONFIG_CGIND },
@@ -1422,7 +1457,8 @@ static const struct si_cac_config_reg lcac_oland[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_cac_config_reg lcac_mars_pro[] = {
+static const struct si_cac_config_reg lcac_mars_pro[] =
+{
 	{ 0x98, 0x0001fffe, 1, 0x2, SISLANDS_CACCONFIG_CGIND },
 	{ 0x98, 0x00000001, 0, 0x1, SISLANDS_CACCONFIG_CGIND },
 	{ 0x104, 0x0001fffe, 1, 0x2, SISLANDS_CACCONFIG_CGIND },
@@ -1468,11 +1504,13 @@ static const struct si_cac_config_reg lcac_mars_pro[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_cac_config_reg cac_override_oland[] = {
+static const struct si_cac_config_reg cac_override_oland[] =
+{
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_powertune_data powertune_data_oland = {
+static const struct si_powertune_data powertune_data_oland =
+{
 	((1 << 16) | 0x6993),
 	5,
 	0,
@@ -1502,7 +1540,8 @@ static const struct si_powertune_data powertune_data_oland = {
 	true
 };
 
-static const struct si_powertune_data powertune_data_mars_pro = {
+static const struct si_powertune_data powertune_data_mars_pro =
+{
 	((1 << 16) | 0x6993),
 	5,
 	0,
@@ -1532,7 +1571,8 @@ static const struct si_powertune_data powertune_data_mars_pro = {
 	true
 };
 
-static const struct si_dte_data dte_data_oland = {
+static const struct si_dte_data dte_data_oland =
+{
 	{ 0, 0, 0, 0, 0 },
 	{ 0, 0, 0, 0, 0 },
 	0,
@@ -1549,7 +1589,8 @@ static const struct si_dte_data dte_data_oland = {
 	false
 };
 
-static const struct si_dte_data dte_data_mars_pro = {
+static const struct si_dte_data dte_data_mars_pro =
+{
 	{ 0x1E8480, 0x3D0900, 0x989680, 0x2625A00, 0x0 },
 	{ 0x0, 0x0, 0x0, 0x0, 0x0 },
 	5,
@@ -1566,7 +1607,8 @@ static const struct si_dte_data dte_data_mars_pro = {
 	true
 };
 
-static const struct si_dte_data dte_data_sun_xt = {
+static const struct si_dte_data dte_data_sun_xt =
+{
 	{ 0x1E8480, 0x3D0900, 0x989680, 0x2625A00, 0x0 },
 	{ 0x0, 0x0, 0x0, 0x0, 0x0 },
 	5,
@@ -1584,7 +1626,8 @@ static const struct si_dte_data dte_data_sun_xt = {
 };
 
 
-static const struct si_cac_config_reg cac_weights_hainan[] = {
+static const struct si_cac_config_reg cac_weights_hainan[] =
+{
 	{ 0x0, 0x0000ffff, 0, 0x2d9, SISLANDS_CACCONFIG_CGIND },
 	{ 0x0, 0xffff0000, 16, 0x22b, SISLANDS_CACCONFIG_CGIND },
 	{ 0x1, 0x0000ffff, 0, 0x21c, SISLANDS_CACCONFIG_CGIND },
@@ -1648,7 +1691,8 @@ static const struct si_cac_config_reg cac_weights_hainan[] = {
 	{ 0xFFFFFFFF }
 };
 
-static const struct si_powertune_data powertune_data_hainan = {
+static const struct si_powertune_data powertune_data_hainan =
+{
 	((1 << 16) | 0x6993),
 	5,
 	0,

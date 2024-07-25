@@ -308,13 +308,15 @@ static int hppa_led_generic_probe(struct platform_device *pdev,
 	return 0;
 }
 
-static void platform_led_remove(struct platform_device *pdev)
+static int platform_led_remove(struct platform_device *pdev)
 {
 	struct hppa_drvdata *p = platform_get_drvdata(pdev);
 	int i;
 
 	for (i = 0; i < NUM_LEDS_PER_BOARD; i++)
 		led_classdev_unregister(&p->leds[i].led_cdev);
+
+	return 0;
 }
 
 static struct led_type mainboard_led_types[NUM_LEDS_PER_BOARD] = {
@@ -369,7 +371,7 @@ MODULE_ALIAS("platform:platform-leds");
 
 static struct platform_driver hppa_mainboard_led_driver = {
 	.probe		= platform_led_probe,
-	.remove_new	= platform_led_remove,
+	.remove		= platform_led_remove,
 	.driver		= {
 		.name	= "platform-leds",
 	},

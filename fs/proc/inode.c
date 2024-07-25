@@ -30,6 +30,7 @@
 
 static void proc_evict_inode(struct inode *inode)
 {
+	struct proc_dir_entry *de;
 	struct ctl_table_header *head;
 	struct proc_inode *ei = PROC_I(inode);
 
@@ -37,8 +38,17 @@ static void proc_evict_inode(struct inode *inode)
 	clear_inode(inode);
 
 	/* Stop tracking associated processes */
-	if (ei->pid)
+	if (ei->pid) {
 		proc_pid_evict_inode(ei);
+		ei->pid = NULL;
+	}
+
+	/* Let go of any associated proc directory entry */
+	de = ei->pde;
+	if (de) {
+		pde_put(de);
+		ei->pde = NULL;
+	}
 
 	head = ei->sysctl;
 	if (head) {
@@ -70,13 +80,6 @@ static struct inode *proc_alloc_inode(struct super_block *sb)
 
 static void proc_free_inode(struct inode *inode)
 {
-	struct proc_inode *ei = PROC_I(inode);
-
-	if (ei->pid)
-		put_pid(ei->pid);
-	/* Let go of any associated proc directory entry */
-	if (ei->pde)
-		pde_put(ei->pde);
 	kmem_cache_free(proc_inode_cachep, PROC_I(inode));
 }
 
@@ -92,7 +95,7 @@ void __init proc_init_kmemcache(void)
 	proc_inode_cachep = kmem_cache_create("proc_inode_cache",
 					     sizeof(struct proc_inode),
 					     0, (SLAB_RECLAIM_ACCOUNT|
-						SLAB_ACCOUNT|
+						SLAB_MEM_SPREAD|SLAB_ACCOUNT|
 						SLAB_PANIC),
 					     init_once);
 	pde_opener_cache =
@@ -107,15 +110,18 @@ void __init proc_init_kmemcache(void)
 
 void proc_invalidate_siblings_dcache(struct hlist_head *inodes, spinlock_t *lock)
 {
+	struct inode *inode;
+	struct proc_inode *ei;
 	struct hlist_node *node;
 	struct super_block *old_sb = NULL;
 
 	rcu_read_lock();
-	while ((node = hlist_first_rcu(inodes))) {
-		struct proc_inode *ei = hlist_entry(node, struct proc_inode, sibling_inodes);
+	for (;;) {
 		struct super_block *sb;
-		struct inode *inode;
-
+		node = hlist_first_rcu(inodes);
+		if (!node)
+			break;
+		ei = hlist_entry(node, struct proc_inode, sibling_inodes);
 		spin_lock(lock);
 		hlist_del_init_rcu(&ei->sibling_inodes);
 		spin_unlock(lock);
@@ -451,13 +457,15 @@ pde_get_unmapped_area(struct proc_dir_entry *pde, struct file *file, unsigned lo
 			   unsigned long len, unsigned long pgoff,
 			   unsigned long flags)
 {
-	if (pde->proc_ops->proc_get_unmapped_area)
-		return pde->proc_ops->proc_get_unmapped_area(file, orig_addr, len, pgoff, flags);
+	typeof_member(struct proc_ops, proc_get_unmapped_area) get_area;
 
+	get_area = pde->proc_ops->proc_get_unmapped_area;
 #ifdef CONFIG_MMU
-	return mm_get_unmapped_area(current->mm, file, orig_addr, len, pgoff, flags);
+	if (!get_area)
+		get_area = current->mm->get_unmapped_area;
 #endif
-
+	if (get_area)
+		return get_area(file, orig_addr, len, pgoff, flags);
 	return orig_addr;
 }
 
@@ -652,7 +660,7 @@ struct inode *proc_get_inode(struct super_block *sb, struct proc_dir_entry *de)
 
 	inode->i_private = de->data;
 	inode->i_ino = de->low_ino;
-	simple_inode_init_ts(inode);
+	inode->i_mtime = inode->i_atime = inode_set_ctime_current(inode);
 	PROC_I(inode)->pde = de;
 	if (is_empty_pde(de)) {
 		make_empty_dir_inode(inode);

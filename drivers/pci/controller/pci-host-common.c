@@ -85,7 +85,7 @@ int pci_host_common_probe(struct platform_device *pdev)
 }
 EXPORT_SYMBOL_GPL(pci_host_common_probe);
 
-void pci_host_common_remove(struct platform_device *pdev)
+int pci_host_common_remove(struct platform_device *pdev)
 {
 	struct pci_host_bridge *bridge = platform_get_drvdata(pdev);
 
@@ -93,6 +93,8 @@ void pci_host_common_remove(struct platform_device *pdev)
 	pci_stop_root_bus(bridge->bus);
 	pci_remove_root_bus(bridge->bus);
 	pci_unlock_rescan_remove();
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(pci_host_common_remove);
 

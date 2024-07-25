@@ -39,7 +39,7 @@ static struct kobj_attribute _name##_attr = __ATTR_RW(_name)
 static ssize_t uevent_seqnum_show(struct kobject *kobj,
 				  struct kobj_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "%llu\n", (u64)atomic64_read(&uevent_seqnum));
+	return sysfs_emit(buf, "%llu\n", (unsigned long long)uevent_seqnum);
 }
 KERNEL_ATTR_RO(uevent_seqnum);
 
@@ -120,7 +120,6 @@ static ssize_t kexec_loaded_show(struct kobject *kobj,
 }
 KERNEL_ATTR_RO(kexec_loaded);
 
-#ifdef CONFIG_CRASH_DUMP
 static ssize_t kexec_crash_loaded_show(struct kobject *kobj,
 				       struct kobj_attribute *attr, char *buf)
 {
@@ -153,10 +152,9 @@ static ssize_t kexec_crash_size_store(struct kobject *kobj,
 }
 KERNEL_ATTR_RW(kexec_crash_size);
 
-#endif /* CONFIG_CRASH_DUMP*/
 #endif /* CONFIG_KEXEC_CORE */
 
-#ifdef CONFIG_VMCORE_INFO
+#ifdef CONFIG_CRASH_CORE
 
 static ssize_t vmcoreinfo_show(struct kobject *kobj,
 			       struct kobj_attribute *attr, char *buf)
@@ -179,7 +177,7 @@ KERNEL_ATTR_RO(crash_elfcorehdr_size);
 
 #endif
 
-#endif /* CONFIG_VMCORE_INFO */
+#endif /* CONFIG_CRASH_CORE */
 
 /* whether file capabilities are enabled */
 static ssize_t fscaps_show(struct kobject *kobj,
@@ -228,8 +226,8 @@ KERNEL_ATTR_RW(rcu_normal);
 /*
  * Make /sys/kernel/notes give the raw contents of our kernel .notes section.
  */
-extern const void __start_notes;
-extern const void __stop_notes;
+extern const void __start_notes __weak;
+extern const void __stop_notes __weak;
 #define	notes_size (&__stop_notes - &__start_notes)
 
 static ssize_t notes_read(struct file *filp, struct kobject *kobj,
@@ -264,12 +262,10 @@ static struct attribute * kernel_attrs[] = {
 #endif
 #ifdef CONFIG_KEXEC_CORE
 	&kexec_loaded_attr.attr,
-#ifdef CONFIG_CRASH_DUMP
 	&kexec_crash_loaded_attr.attr,
 	&kexec_crash_size_attr.attr,
 #endif
-#endif
-#ifdef CONFIG_VMCORE_INFO
+#ifdef CONFIG_CRASH_CORE
 	&vmcoreinfo_attr.attr,
 #ifdef CONFIG_CRASH_HOTPLUG
 	&crash_elfcorehdr_size_attr.attr,

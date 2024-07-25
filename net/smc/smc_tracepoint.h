@@ -60,7 +60,7 @@ DECLARE_EVENT_CLASS(smc_msg_event,
 				   __entry->smc = smc;
 				   __entry->net_cookie = sock_net(sk)->net_cookie;
 				   __entry->len = len;
-				   __assign_str(name);
+				   __assign_str(name, smc->conn.lnk->ibname);
 		    ),
 
 		    TP_printk("smc=%p net=%llu len=%zu dev=%s",
@@ -104,7 +104,7 @@ TRACE_EVENT(smcr_link_down,
 			   __entry->lgr = lgr;
 			   __entry->net_cookie = lgr->net->net_cookie;
 			   __entry->state = lnk->state;
-			   __assign_str(name);
+			   __assign_str(name, lnk->ibname);
 			   __entry->location = location;
 	    ),
 

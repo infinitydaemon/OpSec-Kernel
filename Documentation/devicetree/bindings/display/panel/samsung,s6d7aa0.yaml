@@ -24,8 +24,7 @@ properties:
           - samsung,ltl101at01
       - const: samsung,s6d7aa0
 
-  reg:
-    maxItems: 1
+  reg: true
 
   backlight:
     description:

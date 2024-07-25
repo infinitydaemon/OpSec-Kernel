@@ -24,7 +24,6 @@
 #include "xfs_ialloc.h"
 #include "xfs_ag.h"
 #include "xfs_log_priv.h"
-#include "xfs_health.h"
 
 #include <linux/iversion.h>
 
@@ -416,9 +415,6 @@ xfs_iget_check_free_state(
 			xfs_warn(ip->i_mount,
 "Corruption detected! Free inode 0x%llx not marked free! (mode 0x%x)",
 				ip->i_ino, VFS_I(ip)->i_mode);
-			xfs_agno_mark_sick(ip->i_mount,
-					XFS_INO_TO_AGNO(ip->i_mount, ip->i_ino),
-					XFS_SICK_AG_INOBT);
 			return -EFSCORRUPTED;
 		}
 
@@ -426,9 +422,6 @@ xfs_iget_check_free_state(
 			xfs_warn(ip->i_mount,
 "Corruption detected! Free inode 0x%llx has blocks allocated!",
 				ip->i_ino);
-			xfs_agno_mark_sick(ip->i_mount,
-					XFS_INO_TO_AGNO(ip->i_mount, ip->i_ino),
-					XFS_SICK_AG_INOBT);
 			return -EFSCORRUPTED;
 		}
 		return 0;
@@ -613,6 +606,7 @@ xfs_iget_cache_miss(
 	struct xfs_inode	*ip;
 	int			error;
 	xfs_agino_t		agino = XFS_INO_TO_AGINO(mp, ino);
+	int			iflags;
 
 	ip = xfs_inode_alloc(mp, ino);
 	if (!ip)
@@ -646,8 +640,6 @@ xfs_iget_cache_miss(
 				xfs_buf_offset(bp, ip->i_imap.im_boffset));
 		if (!error)
 			xfs_buf_set_ref(bp, XFS_INO_REF);
-		else
-			xfs_inode_mark_sick(ip, XFS_SICK_INO_CORE);
 		xfs_trans_brelse(tp, bp);
 
 		if (error)
@@ -667,9 +659,10 @@ xfs_iget_cache_miss(
 	/*
 	 * Preload the radix tree so we can insert safely under the
 	 * write spinlock. Note that we cannot sleep inside the preload
-	 * region.
+	 * region. Since we can be called from transaction context, don't
+	 * recurse into the file system.
 	 */
-	if (radix_tree_preload(GFP_KERNEL | __GFP_NOLOCKDEP)) {
+	if (radix_tree_preload(GFP_NOFS)) {
 		error = -EAGAIN;
 		goto out_destroy;
 	}
@@ -692,12 +685,13 @@ xfs_iget_cache_miss(
 	 * memory barrier that ensures this detection works correctly at lookup
 	 * time.
 	 */
+	iflags = XFS_INEW;
 	if (flags & XFS_IGET_DONTCACHE)
 		d_mark_dontcache(VFS_I(ip));
 	ip->i_udquot = NULL;
 	ip->i_gdquot = NULL;
 	ip->i_pdquot = NULL;
-	xfs_iflags_set(ip, XFS_INEW);
+	xfs_iflags_set(ip, iflags);
 
 	/* insert the new inode */
 	spin_lock(&pag->pag_ici_lock);
@@ -2173,7 +2167,8 @@ xfs_inodegc_shrinker_count(
 	struct shrinker		*shrink,
 	struct shrink_control	*sc)
 {
-	struct xfs_mount	*mp = shrink->private_data;
+	struct xfs_mount	*mp = container_of(shrink, struct xfs_mount,
+						   m_inodegc_shrinker);
 	struct xfs_inodegc	*gc;
 	int			cpu;
 
@@ -2194,7 +2189,8 @@ xfs_inodegc_shrinker_scan(
 	struct shrinker		*shrink,
 	struct shrink_control	*sc)
 {
-	struct xfs_mount	*mp = shrink->private_data;
+	struct xfs_mount	*mp = container_of(shrink, struct xfs_mount,
+						   m_inodegc_shrinker);
 	struct xfs_inodegc	*gc;
 	int			cpu;
 	bool			no_items = true;
@@ -2230,19 +2226,13 @@ int
 xfs_inodegc_register_shrinker(
 	struct xfs_mount	*mp)
 {
-	mp->m_inodegc_shrinker = shrinker_alloc(SHRINKER_NONSLAB,
-						"xfs-inodegc:%s",
-						mp->m_super->s_id);
-	if (!mp->m_inodegc_shrinker)
-		return -ENOMEM;
+	struct shrinker		*shrink = &mp->m_inodegc_shrinker;
 
-	mp->m_inodegc_shrinker->count_objects = xfs_inodegc_shrinker_count;
-	mp->m_inodegc_shrinker->scan_objects = xfs_inodegc_shrinker_scan;
-	mp->m_inodegc_shrinker->seeks = 0;
-	mp->m_inodegc_shrinker->batch = XFS_INODEGC_SHRINKER_BATCH;
-	mp->m_inodegc_shrinker->private_data = mp;
+	shrink->count_objects = xfs_inodegc_shrinker_count;
+	shrink->scan_objects = xfs_inodegc_shrinker_scan;
+	shrink->seeks = 0;
+	shrink->flags = SHRINKER_NONSLAB;
+	shrink->batch = XFS_INODEGC_SHRINKER_BATCH;
 
-	shrinker_register(mp->m_inodegc_shrinker);
-
-	return 0;
+	return register_shrinker(shrink, "xfs-inodegc:%s", mp->m_super->s_id);
 }

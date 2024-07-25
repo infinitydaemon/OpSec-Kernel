@@ -52,14 +52,11 @@ out:
 
 static int tegra124_cpufreq_probe(struct platform_device *pdev)
 {
-	struct device_node *np __free(device_node) = of_cpu_device_node_get(0);
 	struct tegra124_cpufreq_priv *priv;
+	struct device_node *np;
 	struct device *cpu_dev;
 	struct platform_device_info cpufreq_dt_devinfo = {};
 	int ret;
-
-	if (!np)
-		return -ENODEV;
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -69,9 +66,15 @@ static int tegra124_cpufreq_probe(struct platform_device *pdev)
 	if (!cpu_dev)
 		return -ENODEV;
 
+	np = of_cpu_device_node_get(0);
+	if (!np)
+		return -ENODEV;
+
 	priv->cpu_clk = of_clk_get_by_name(np, "cpu_g");
-	if (IS_ERR(priv->cpu_clk))
-		return PTR_ERR(priv->cpu_clk);
+	if (IS_ERR(priv->cpu_clk)) {
+		ret = PTR_ERR(priv->cpu_clk);
+		goto out_put_np;
+	}
 
 	priv->dfll_clk = of_clk_get_by_name(np, "dfll");
 	if (IS_ERR(priv->dfll_clk)) {
@@ -107,6 +110,8 @@ static int tegra124_cpufreq_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, priv);
 
+	of_node_put(np);
+
 	return 0;
 
 out_put_pllp_clk:
@@ -117,6 +122,8 @@ out_put_dfll_clk:
 	clk_put(priv->dfll_clk);
 out_put_cpu_clk:
 	clk_put(priv->cpu_clk);
+out_put_np:
+	of_node_put(np);
 
 	return ret;
 }

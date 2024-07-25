@@ -1258,11 +1258,13 @@ static int mixer_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void mixer_remove(struct platform_device *pdev)
+static int mixer_remove(struct platform_device *pdev)
 {
 	pm_runtime_disable(&pdev->dev);
 
 	component_del(&pdev->dev, &mixer_component_ops);
+
+	return 0;
 }
 
 static int __maybe_unused exynos_mixer_suspend(struct device *dev)
@@ -1331,9 +1333,10 @@ static const struct dev_pm_ops exynos_mixer_pm_ops = {
 struct platform_driver mixer_driver = {
 	.driver = {
 		.name = "exynos-mixer",
+		.owner = THIS_MODULE,
 		.pm = &exynos_mixer_pm_ops,
 		.of_match_table = mixer_match_types,
 	},
 	.probe = mixer_probe,
-	.remove_new = mixer_remove,
+	.remove = mixer_remove,
 };

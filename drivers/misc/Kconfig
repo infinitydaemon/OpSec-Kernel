@@ -9,6 +9,14 @@ config SENSORS_LIS3LV02D
 	tristate
 	depends on INPUT
 
+config BCM2835_SMI
+	tristate "Broadcom 283x Secondary Memory Interface driver"
+	depends on ARCH_BCM2835
+	default m
+	help
+		Driver for enabling and using Broadcom's Secondary/Slow Memory Interface.
+		Appears as /dev/bcm2835_smi. For ioctl interface see drivers/misc/bcm2835_smi.h
+
 config AD525X_DPOT
 	tristate "Analog Devices Digital Potentiometers"
 	depends on (I2C || SPI) && SYSFS
@@ -166,7 +174,7 @@ config ENCLOSURE_SERVICES
 config SGI_XP
 	tristate "Support communication between SGI SSIs"
 	depends on NET
-	depends on X86_UV && SMP
+	depends on (IA64_SGI_UV || X86_UV) && SMP
 	depends on X86_64 || BROKEN
 	select SGI_GRU if X86_64 && SMP
 	help
@@ -293,21 +301,21 @@ config SGI_GRU
 	depends on X86_UV && SMP
 	select MMU_NOTIFIER
 	help
-	  The GRU is a hardware resource located in the system chipset. The GRU
-	  contains memory that can be mmapped into the user address space.
-	  This memory is used to communicate with the GRU to perform functions
-	  such as load/store, scatter/gather, bcopy, AMOs, etc.  The GRU is
-	  directly accessed by user instructions using user virtual addresses.
-	  GRU instructions (ex., bcopy) use user virtual addresses for operands.
+	The GRU is a hardware resource located in the system chipset. The GRU
+	contains memory that can be mmapped into the user address space. This memory is
+	used to communicate with the GRU to perform functions such as load/store,
+	scatter/gather, bcopy, AMOs, etc.  The GRU is directly accessed by user
+	instructions using user virtual addresses. GRU instructions (ex., bcopy) use
+	user virtual addresses for operands.
 
-	  If you are not running on a SGI UV system, say N.
+	If you are not running on a SGI UV system, say N.
 
 config SGI_GRU_DEBUG
 	bool  "SGI GRU driver debug"
 	depends on SGI_GRU
 	help
-	  This option enables additional debugging code for the SGI GRU driver.
-	  If you are unsure, say N.
+	This option enables additional debugging code for the SGI GRU driver.
+	If you are unsure, say N.
 
 config APDS9802ALS
 	tristate "Medfield Avago APDS9802 ALS Sensor module"
@@ -428,6 +436,7 @@ config LATTICE_ECP3_CONFIG
 	tristate "Lattice ECP3 FPGA bitstream configuration via SPI"
 	depends on SPI && SYSFS
 	select FW_LOADER
+	default	n
 	help
 	  This option enables support for bitstream configuration (programming
 	  or loading) of the Lattice ECP3 FPGA family via SPI.
@@ -505,18 +514,6 @@ config OPEN_DICE
 
 	  If unsure, say N.
 
-config NTSYNC
-	tristate "NT synchronization primitive emulation"
-	depends on BROKEN
-	help
-	  This module provides kernel support for emulation of Windows NT
-	  synchronization primitives. It is not a hardware driver.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called ntsync.
-
-	  If unsure, say N.
-
 config VCPU_STALL_DETECTOR
 	tristate "Guest vCPU stall detector"
 	depends on OF && HAS_IOMEM
@@ -572,18 +569,6 @@ config TPS6594_PFSM
 
 	  This driver can also be built as a module.  If so, the module
 	  will be called tps6594-pfsm.
-
-config NSM
-	tristate "Nitro (Enclaves) Security Module support"
-	depends on VIRTIO
-	select HW_RANDOM
-	help
-	  This driver provides support for the Nitro Security Module
-	  in AWS EC2 Nitro based Enclaves. The driver exposes a /dev/nsm
-	  device user space can use to communicate with the hypervisor.
-
-	  To compile this driver as a module, choose M here.
-	  The module will be called nsm.
 
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"

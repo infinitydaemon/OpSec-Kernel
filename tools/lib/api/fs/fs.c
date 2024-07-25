@@ -16,7 +16,6 @@
 #include <sys/mount.h>
 
 #include "fs.h"
-#include "../io.h"
 #include "debug-internal.h"
 
 #define _STR(x) #x
@@ -345,24 +344,53 @@ int filename__read_ull(const char *filename, unsigned long long *value)
 	return filename__read_ull_base(filename, value, 0);
 }
 
+#define STRERR_BUFSIZE  128     /* For the buffer size of strerror_r */
+
 int filename__read_str(const char *filename, char **buf, size_t *sizep)
 {
-	struct io io;
-	char bf[128];
-	int err;
+	size_t size = 0, alloc_size = 0;
+	void *bf = NULL, *nbf;
+	int fd, n, err = 0;
+	char sbuf[STRERR_BUFSIZE];
 
-	io.fd = open(filename, O_RDONLY);
-	if (io.fd < 0)
+	fd = open(filename, O_RDONLY);
+	if (fd < 0)
 		return -errno;
-	io__init(&io, io.fd, bf, sizeof(bf));
-	*buf = NULL;
-	err = io__getdelim(&io, buf, sizep, /*delim=*/-1);
-	if (err < 0) {
-		free(*buf);
-		*buf = NULL;
+
+	do {
+		if (size == alloc_size) {
+			alloc_size += BUFSIZ;
+			nbf = realloc(bf, alloc_size);
+			if (!nbf) {
+				err = -ENOMEM;
+				break;
+			}
+
+			bf = nbf;
+		}
+
+		n = read(fd, bf + size, alloc_size - size);
+		if (n < 0) {
+			if (size) {
+				pr_warn("read failed %d: %s\n", errno,
+					strerror_r(errno, sbuf, sizeof(sbuf)));
+				err = 0;
+			} else
+				err = -errno;
+
+			break;
+		}
+
+		size += n;
+	} while (n > 0);
+
+	if (!err) {
+		*sizep = size;
+		*buf   = bf;
 	} else
-		err = 0;
-	close(io.fd);
+		free(bf);
+
+	close(fd);
 	return err;
 }
 
@@ -447,22 +475,15 @@ int sysfs__read_str(const char *entry, char **buf, size_t *sizep)
 
 int sysfs__read_bool(const char *entry, bool *value)
 {
-	struct io io;
-	char bf[16];
-	int ret = 0;
-	char path[PATH_MAX];
-	const char *sysfs = sysfs__mountpoint();
+	char *buf;
+	size_t size;
+	int ret;
 
-	if (!sysfs)
-		return -1;
+	ret = sysfs__read_str(entry, &buf, &size);
+	if (ret < 0)
+		return ret;
 
-	snprintf(path, sizeof(path), "%s/%s", sysfs, entry);
-	io.fd = open(path, O_RDONLY);
-	if (io.fd < 0)
-		return -errno;
-
-	io__init(&io, io.fd, bf, sizeof(bf));
-	switch (io__get_char(&io)) {
+	switch (buf[0]) {
 	case '1':
 	case 'y':
 	case 'Y':
@@ -476,7 +497,8 @@ int sysfs__read_bool(const char *entry, bool *value)
 	default:
 		ret = -1;
 	}
-	close(io.fd);
+
+	free(buf);
 
 	return ret;
 }

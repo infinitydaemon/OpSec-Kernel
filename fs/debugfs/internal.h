@@ -7,7 +7,6 @@
 
 #ifndef _DEBUGFS_INTERNAL_H_
 #define _DEBUGFS_INTERNAL_H_
-#include <linux/list.h>
 
 struct file_operations;
 
@@ -24,10 +23,6 @@ struct debugfs_fsdata {
 		struct {
 			refcount_t active_users;
 			struct completion active_users_drained;
-
-			/* protect cancellations */
-			struct mutex cancellations_mtx;
-			struct list_head cancellations;
 		};
 	};
 };

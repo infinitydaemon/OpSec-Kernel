@@ -17,11 +17,9 @@
 #include <linux/pci.h>
 #include <rdma/ib_verbs.h>
 #include <net/genetlink.h>
-#include <net/smc.h>
 
 #include "smc.h"
 #include "smc_ib.h"
-#include "smc_clc.h"
 
 #define SMC_RMBS_PER_LGR_MAX	255	/* max. # of RMBs per link group */
 #define SMC_CONN_PER_LGR_MIN	16	/* min. # of connections per link group */
@@ -357,7 +355,7 @@ struct smc_link_group {
 						/* max links can be added in lgr */
 		};
 		struct { /* SMC-D */
-			struct smcd_gid		peer_gid;
+			u64			peer_gid;
 						/* Peer GID (remote) */
 			struct smcd_dev		*smcd;
 						/* ISM device for VLAN reg. */
@@ -394,11 +392,6 @@ struct smc_init_info_smcrv2 {
 	struct smc_gidlist	gidlist;
 };
 
-#define SMC_MAX_V2_ISM_DEVS	SMCD_CLC_MAX_V2_GID_ENTRIES
-				/* max # of proposed non-native ISM devices,
-				 * which can't exceed the max # of CHID-GID
-				 * entries in CLC proposal SMC-Dv2 extension.
-				 */
 struct smc_init_info {
 	u8			is_smcd;
 	u8			smc_type_v1;
@@ -408,7 +401,6 @@ struct smc_init_info {
 	u8			max_links;
 	u8			first_contact_peer;
 	u8			first_contact_local;
-	u16			feature_mask;
 	unsigned short		vlan_id;
 	u32			rc;
 	u8			negotiated_eid[SMC_MAX_EID_LEN];
@@ -424,9 +416,9 @@ struct smc_init_info {
 	u32			ib_clcqpn;
 	struct smc_init_info_smcrv2 smcrv2;
 	/* SMC-D */
-	struct smcd_gid		ism_peer_gid[SMC_MAX_V2_ISM_DEVS + 1];
-	struct smcd_dev		*ism_dev[SMC_MAX_V2_ISM_DEVS + 1];
-	u16			ism_chid[SMC_MAX_V2_ISM_DEVS + 1];
+	u64			ism_peer_gid[SMC_MAX_ISM_DEVS + 1];
+	struct smcd_dev		*ism_dev[SMC_MAX_ISM_DEVS + 1];
+	u16			ism_chid[SMC_MAX_ISM_DEVS + 1];
 	u8			ism_offered_cnt; /* # of ISM devices offered */
 	u8			ism_selected;    /* index of selected ISM dev*/
 	u8			smcd_version;
@@ -552,12 +544,11 @@ void smc_lgr_hold(struct smc_link_group *lgr);
 void smc_lgr_put(struct smc_link_group *lgr);
 void smcr_port_add(struct smc_ib_device *smcibdev, u8 ibport);
 void smcr_port_err(struct smc_ib_device *smcibdev, u8 ibport);
-void smc_smcd_terminate(struct smcd_dev *dev, struct smcd_gid *peer_gid,
+void smc_smcd_terminate(struct smcd_dev *dev, u64 peer_gid,
 			unsigned short vlan);
 void smc_smcd_terminate_all(struct smcd_dev *dev);
 void smc_smcr_terminate_all(struct smc_ib_device *smcibdev);
 int smc_buf_create(struct smc_sock *smc, bool is_smcd);
-int smcd_buf_attach(struct smc_sock *smc);
 int smc_uncompress_bufsize(u8 compressed);
 int smc_rmb_rtoken_handling(struct smc_connection *conn, struct smc_link *link,
 			    struct smc_clc_msg_accept_confirm *clc);

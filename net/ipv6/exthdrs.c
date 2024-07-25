@@ -50,7 +50,6 @@
 #endif
 #include <net/rpl.h>
 #include <linux/ioam6.h>
-#include <linux/ioam6_genl.h>
 #include <net/ioam6.h>
 #include <net/dst_metadata.h>
 
@@ -379,8 +378,9 @@ static int ipv6_srh_rcv(struct sk_buff *skb)
 
 	idev = __in6_dev_get(skb->dev);
 
-	accept_seg6 = min(READ_ONCE(net->ipv6.devconf_all->seg6_enabled),
-			  READ_ONCE(idev->cnf.seg6_enabled));
+	accept_seg6 = net->ipv6.devconf_all->seg6_enabled;
+	if (accept_seg6 > idev->cnf.seg6_enabled)
+		accept_seg6 = idev->cnf.seg6_enabled;
 
 	if (!accept_seg6) {
 		kfree_skb(skb);
@@ -654,13 +654,10 @@ static int ipv6_rthdr_rcv(struct sk_buff *skb)
 	struct ipv6_rt_hdr *hdr;
 	struct rt0_hdr *rthdr;
 	struct net *net = dev_net(skb->dev);
-	int accept_source_route;
+	int accept_source_route = net->ipv6.devconf_all->accept_source_route;
 
-	accept_source_route = READ_ONCE(net->ipv6.devconf_all->accept_source_route);
-
-	if (idev)
-		accept_source_route = min(accept_source_route,
-					  READ_ONCE(idev->cnf.accept_source_route));
+	if (idev && accept_source_route > idev->cnf.accept_source_route)
+		accept_source_route = idev->cnf.accept_source_route;
 
 	if (!pskb_may_pull(skb, skb_transport_offset(skb) + 8) ||
 	    !pskb_may_pull(skb, (skb_transport_offset(skb) +
@@ -804,7 +801,7 @@ looped_back:
 
 	ip6_route_input(skb);
 	if (skb_dst(skb)->error) {
-		skb_push(skb, -skb_network_offset(skb));
+		skb_push(skb, skb->data - skb_network_header(skb));
 		dst_input(skb);
 		return -1;
 	}
@@ -821,7 +818,7 @@ looped_back:
 		goto looped_back;
 	}
 
-	skb_push(skb, -skb_network_offset(skb));
+	skb_push(skb, skb->data - skb_network_header(skb));
 	dst_input(skb);
 	return -1;
 
@@ -883,6 +880,14 @@ void ipv6_exthdrs_exit(void)
   Hop-by-hop options.
  **********************************/
 
+/*
+ * Note: we cannot rely on skb_dst(skb) before we assign it in ip6_route_input().
+ */
+static inline struct net *ipv6_skb_net(struct sk_buff *skb)
+{
+	return skb_dst(skb) ? dev_net(skb_dst(skb)->dev) : dev_net(skb->dev);
+}
+
 /* Router Alert as of RFC 2711 */
 
 static bool ipv6_hop_ra(struct sk_buff *skb, int optoff)
@@ -913,7 +918,7 @@ static bool ipv6_hop_ioam(struct sk_buff *skb, int optoff)
 		goto drop;
 
 	/* Ignore if IOAM is not enabled on ingress */
-	if (!READ_ONCE(__in6_dev_get(skb->dev)->cnf.ioam6_enabled))
+	if (!__in6_dev_get(skb->dev)->cnf.ioam6_enabled)
 		goto ignore;
 
 	/* Truncated Option header */
@@ -933,7 +938,7 @@ static bool ipv6_hop_ioam(struct sk_buff *skb, int optoff)
 			goto drop;
 
 		/* Ignore if the IOAM namespace is unknown */
-		ns = ioam6_namespace(dev_net(skb->dev), trace->namespace_id);
+		ns = ioam6_namespace(ipv6_skb_net(skb), trace->namespace_id);
 		if (!ns)
 			goto ignore;
 
@@ -949,9 +954,6 @@ static bool ipv6_hop_ioam(struct sk_buff *skb, int optoff)
 						   + optoff + sizeof(*hdr));
 
 		ioam6_fill_trace_data(skb, ns, trace, true);
-
-		ioam6_event(IOAM6_EVENT_TRACE, dev_net(skb->dev),
-			    GFP_ATOMIC, (void *)trace, hdr->opt_len - 2);
 		break;
 	default:
 		break;

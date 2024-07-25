@@ -7,7 +7,7 @@ $schema: http://devicetree.org/meta-schemas/core.yaml#
 title: Qualcomm Krait Processor Sub-system (KPSS) Watchdog timer
 
 maintainers:
-  - Rajendra Nayak <quic_rjendra@quicinc.com>
+  - Sai Prakash Ranjan <saiprakash.ranjan@codeaurora.org>
 
 properties:
   $nodename:
@@ -21,8 +21,6 @@ properties:
               - qcom,apss-wdt-ipq5018
               - qcom,apss-wdt-ipq5332
               - qcom,apss-wdt-ipq9574
-              - qcom,apss-wdt-msm8226
-              - qcom,apss-wdt-msm8974
               - qcom,apss-wdt-msm8994
               - qcom,apss-wdt-qcm2290
               - qcom,apss-wdt-qcs404
@@ -123,7 +121,7 @@ examples:
         compatible = "qcom,apss-wdt-sm8150", "qcom,kpss-wdt";
         reg = <0x17c10000 0x1000>;
         clocks = <&sleep_clk>;
-        interrupts = <GIC_SPI 0 IRQ_TYPE_EDGE_RISING>;
+        interrupts = <GIC_SPI 0 IRQ_TYPE_LEVEL_HIGH>;
         timeout-sec = <10>;
     };
 

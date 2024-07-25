@@ -2,7 +2,7 @@
 /*
  * Common Primitives for DAMON Modules
  *
- * Author: SeongJae Park <sj@kernel.org>
+ * Author: SeongJae Park <sjpark@amazon.de>
  */
 
 #include <linux/damon.h>

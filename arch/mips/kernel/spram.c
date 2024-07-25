@@ -12,7 +12,6 @@
 #include <asm/mipsregs.h>
 #include <asm/r4kcache.h>
 #include <asm/hazards.h>
-#include <asm/spram.h>
 
 /*
  * These definitions are correct for the 24K/34K/74K SPRAM sample

@@ -1079,27 +1079,30 @@ int tipc_nl_bearer_add(struct sk_buff *skb, struct genl_info *info)
 	rtnl_lock();
 	b = tipc_bearer_find(net, name);
 	if (!b) {
+		rtnl_unlock();
 		NL_SET_ERR_MSG(info->extack, "Bearer not found");
-		err = -EINVAL;
-		goto out;
+		return -EINVAL;
 	}
 
 #ifdef CONFIG_TIPC_MEDIA_UDP
 	if (attrs[TIPC_NLA_BEARER_UDP_OPTS]) {
 		if (b->media->type_id != TIPC_MEDIA_TYPE_UDP) {
+			rtnl_unlock();
 			NL_SET_ERR_MSG(info->extack, "UDP option is unsupported");
-			err = -EINVAL;
-			goto out;
+			return -EINVAL;
 		}
 
 		err = tipc_udp_nl_bearer_add(b,
 					     attrs[TIPC_NLA_BEARER_UDP_OPTS]);
+		if (err) {
+			rtnl_unlock();
+			return err;
+		}
 	}
 #endif
-out:
 	rtnl_unlock();
 
-	return err;
+	return 0;
 }
 
 int __tipc_nl_bearer_set(struct sk_buff *skb, struct genl_info *info)

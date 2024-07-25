@@ -13,6 +13,7 @@ struct lima_ctx {
 	struct kref refcnt;
 	struct lima_device *dev;
 	struct lima_sched_context context[lima_pipe_num];
+	atomic_t guilty;
 
 	/* debug info */
 	char pname[TASK_COMM_LEN];

@@ -139,6 +139,7 @@ static int meson_audio_arb_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	const struct meson_audio_arb_match_data *data;
 	struct meson_audio_arb_data *arb;
+	struct resource *res;
 	int ret;
 
 	data = of_device_get_match_data(dev);
@@ -154,7 +155,8 @@ static int meson_audio_arb_probe(struct platform_device *pdev)
 	if (IS_ERR(arb->clk))
 		return dev_err_probe(dev, PTR_ERR(arb->clk), "failed to get clock\n");
 
-	arb->regs = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	arb->regs = devm_ioremap_resource(dev, res);
 	if (IS_ERR(arb->regs))
 		return PTR_ERR(arb->regs);
 

@@ -14,7 +14,7 @@
 
 struct raw3270;
 struct raw3270_view;
-extern const struct class class3270;
+extern struct class *class3270;
 
 /* 3270 CCW request */
 struct raw3270_request {

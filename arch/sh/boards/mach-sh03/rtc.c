@@ -120,7 +120,7 @@ static int set_rtc_mmss(struct rtc_time *tm)
 	return retval;
 }
 
-static int sh03_rtc_settimeofday(struct device *dev, struct rtc_time *tm)
+int sh03_rtc_settimeofday(struct device *dev, struct rtc_time *tm)
 {
 	return set_rtc_mmss(tm);
 }

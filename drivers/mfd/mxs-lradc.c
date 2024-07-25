@@ -16,8 +16,8 @@
 #include <linux/mfd/mxs-lradc.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
-#include <linux/property.h>
 #include <linux/slab.h>
 
 #define ADC_CELL		0
@@ -125,6 +125,7 @@ MODULE_DEVICE_TABLE(of, mxs_lradc_dt_ids);
 
 static int mxs_lradc_probe(struct platform_device *pdev)
 {
+	const struct of_device_id *of_id;
 	struct device *dev = &pdev->dev;
 	struct device_node *node = dev->of_node;
 	struct mxs_lradc *lradc;
@@ -137,7 +138,11 @@ static int mxs_lradc_probe(struct platform_device *pdev)
 	if (!lradc)
 		return -ENOMEM;
 
-	lradc->soc = (enum mxs_lradc_id)device_get_match_data(&pdev->dev);
+	of_id = of_match_device(mxs_lradc_dt_ids, &pdev->dev);
+	if (!of_id)
+		return -EINVAL;
+
+	lradc->soc = (uintptr_t)of_id->data;
 
 	lradc->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(lradc->clk)) {
@@ -230,11 +235,13 @@ err_clk:
 	return ret;
 }
 
-static void mxs_lradc_remove(struct platform_device *pdev)
+static int mxs_lradc_remove(struct platform_device *pdev)
 {
 	struct mxs_lradc *lradc = platform_get_drvdata(pdev);
 
 	clk_disable_unprepare(lradc->clk);
+
+	return 0;
 }
 
 static struct platform_driver mxs_lradc_driver = {
@@ -243,7 +250,7 @@ static struct platform_driver mxs_lradc_driver = {
 		.of_match_table = mxs_lradc_dt_ids,
 	},
 	.probe = mxs_lradc_probe,
-	.remove_new = mxs_lradc_remove,
+	.remove = mxs_lradc_remove,
 };
 module_platform_driver(mxs_lradc_driver);
 

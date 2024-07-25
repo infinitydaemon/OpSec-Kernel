@@ -117,7 +117,7 @@ static int align_shift_alloc_test(void)
 	int i;
 
 	for (i = 0; i < BITS_PER_LONG; i++) {
-		align = 1UL << i;
+		align = ((unsigned long) 1) << i;
 
 		ptr = __vmalloc_node(PAGE_SIZE, align, GFP_KERNEL|__GFP_ZERO, 0,
 				__builtin_return_address(0));
@@ -501,7 +501,7 @@ static int test_func(void *private)
 }
 
 static int
-init_test_configuration(void)
+init_test_configurtion(void)
 {
 	/*
 	 * A maximum number of workers is defined as hard-coded
@@ -531,7 +531,7 @@ static void do_concurrent_test(void)
 	/*
 	 * Set some basic configurations plus sanity check.
 	 */
-	ret = init_test_configuration();
+	ret = init_test_configurtion();
 	if (ret < 0)
 		return;
 
@@ -600,7 +600,12 @@ static int vmalloc_test_init(void)
 	return -EAGAIN; /* Fail will directly unload the module */
 }
 
+static void vmalloc_test_exit(void)
+{
+}
+
 module_init(vmalloc_test_init)
+module_exit(vmalloc_test_exit)
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Uladzislau Rezki");

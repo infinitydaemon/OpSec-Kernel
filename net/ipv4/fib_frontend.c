@@ -916,8 +916,7 @@ int ip_valid_fib_dump_req(struct net *net, const struct nlmsghdr *nlh,
 	struct rtmsg *rtm;
 	int err, i;
 
-	if (filter->rtnl_held)
-		ASSERT_RTNL();
+	ASSERT_RTNL();
 
 	if (nlh->nlmsg_len < nlmsg_msg_size(sizeof(*rtm))) {
 		NL_SET_ERR_MSG(extack, "Invalid header for FIB dump request");
@@ -962,10 +961,7 @@ int ip_valid_fib_dump_req(struct net *net, const struct nlmsghdr *nlh,
 			break;
 		case RTA_OIF:
 			ifindex = nla_get_u32(tb[i]);
-			if (filter->rtnl_held)
-				filter->dev = __dev_get_by_index(net, ifindex);
-			else
-				filter->dev = dev_get_by_index_rcu(net, ifindex);
+			filter->dev = __dev_get_by_index(net, ifindex);
 			if (!filter->dev)
 				return -ENODEV;
 			break;
@@ -987,24 +983,20 @@ EXPORT_SYMBOL_GPL(ip_valid_fib_dump_req);
 
 static int inet_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 {
-	struct fib_dump_filter filter = {
-		.dump_routes = true,
-		.dump_exceptions = true,
-		.rtnl_held = false,
-	};
+	struct fib_dump_filter filter = { .dump_routes = true,
+					  .dump_exceptions = true };
 	const struct nlmsghdr *nlh = cb->nlh;
 	struct net *net = sock_net(skb->sk);
 	unsigned int h, s_h;
 	unsigned int e = 0, s_e;
 	struct fib_table *tb;
 	struct hlist_head *head;
-	int dumped = 0, err = 0;
+	int dumped = 0, err;
 
-	rcu_read_lock();
 	if (cb->strict_check) {
 		err = ip_valid_fib_dump_req(net, nlh, &filter, cb);
 		if (err < 0)
-			goto unlock;
+			return err;
 	} else if (nlmsg_len(nlh) >= sizeof(struct rtmsg)) {
 		struct rtmsg *rtm = nlmsg_data(nlh);
 
@@ -1013,26 +1005,29 @@ static int inet_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 
 	/* ipv4 does not use prefix flag */
 	if (filter.flags & RTM_F_PREFIX)
-		goto unlock;
+		return skb->len;
 
 	if (filter.table_id) {
 		tb = fib_get_table(net, filter.table_id);
 		if (!tb) {
 			if (rtnl_msg_family(cb->nlh) != PF_INET)
-				goto unlock;
+				return skb->len;
 
 			NL_SET_ERR_MSG(cb->extack, "ipv4: FIB table does not exist");
-			err = -ENOENT;
-			goto unlock;
+			return -ENOENT;
 		}
+
+		rcu_read_lock();
 		err = fib_table_dump(tb, skb, cb, &filter);
-		goto unlock;
+		rcu_read_unlock();
+		return skb->len ? : err;
 	}
 
 	s_h = cb->args[0];
 	s_e = cb->args[1];
 
-	err = 0;
+	rcu_read_lock();
+
 	for (h = s_h; h < FIB_TABLE_HASHSZ; h++, s_e = 0) {
 		e = 0;
 		head = &net->ipv4.fib_table_hash[h];
@@ -1043,20 +1038,25 @@ static int inet_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 				memset(&cb->args[2], 0, sizeof(cb->args) -
 						 2 * sizeof(cb->args[0]));
 			err = fib_table_dump(tb, skb, cb, &filter);
-			if (err < 0)
-				goto out;
+			if (err < 0) {
+				if (likely(skb->len))
+					goto out;
+
+				goto out_err;
+			}
 			dumped = 1;
 next:
 			e++;
 		}
 	}
 out:
+	err = skb->len;
+out_err:
+	rcu_read_unlock();
 
 	cb->args[1] = e;
 	cb->args[0] = h;
 
-unlock:
-	rcu_read_unlock();
 	return err;
 }
 
@@ -1659,6 +1659,5 @@ void __init ip_fib_init(void)
 
 	rtnl_register(PF_INET, RTM_NEWROUTE, inet_rtm_newroute, NULL, 0);
 	rtnl_register(PF_INET, RTM_DELROUTE, inet_rtm_delroute, NULL, 0);
-	rtnl_register(PF_INET, RTM_GETROUTE, NULL, inet_dump_fib,
-		      RTNL_FLAG_DUMP_UNLOCKED | RTNL_FLAG_DUMP_SPLIT_NLM_DONE);
+	rtnl_register(PF_INET, RTM_GETROUTE, NULL, inet_dump_fib, 0);
 }

@@ -4,7 +4,6 @@
 
 #include <linux/thread_info.h>
 #include <asm/nospec-branch.h>
-#include <asm/msr.h>
 
 /*
  * On VMENTER we must preserve whatever view of the SPEC_CTRL MSR
@@ -77,16 +76,6 @@ static inline u64 ssbd_tif_to_amd_ls_cfg(u64 tifn)
 	return (tifn & _TIF_SSBD) ? x86_amd_ls_cfg_ssbd_mask : 0ULL;
 }
 
-/*
- * This can be used in noinstr functions & should only be called in bare
- * metal context.
- */
-static __always_inline void __update_spec_ctrl(u64 val)
-{
-	__this_cpu_write(x86_spec_ctrl_current, val);
-	native_wrmsrl(MSR_IA32_SPEC_CTRL, val);
-}
-
 #ifdef CONFIG_SMP
 extern void speculative_store_bypass_ht_init(void);
 #else
@@ -95,7 +84,5 @@ static inline void speculative_store_bypass_ht_init(void) { }
 
 extern void speculation_ctrl_update(unsigned long tif);
 extern void speculation_ctrl_update_current(void);
-
-extern bool itlb_multihit_kvm_mitigation;
 
 #endif

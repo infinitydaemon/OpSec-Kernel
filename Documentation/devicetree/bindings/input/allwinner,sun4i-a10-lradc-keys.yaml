@@ -49,6 +49,7 @@ patternProperties:
     $ref: input.yaml#
     properties:
       label:
+        $ref: /schemas/types.yaml#/definitions/string
         description: Descriptive name of the key
 
       linux,code: true

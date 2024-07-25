@@ -102,7 +102,7 @@ xfs_fs_encode_fh(
 	return fileid_type;
 }
 
-struct inode *
+STATIC struct inode *
 xfs_nfs_get_inode(
 	struct super_block	*sb,
 	u64			ino,
@@ -160,7 +160,7 @@ xfs_nfs_get_inode(
 		}
 	}
 
-	if (VFS_I(ip)->i_generation != generation || IS_PRIVATE(VFS_I(ip))) {
+	if (VFS_I(ip)->i_generation != generation) {
 		xfs_irele(ip);
 		return ERR_PTR(-ESTALE);
 	}

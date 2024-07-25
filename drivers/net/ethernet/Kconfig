@@ -15,6 +15,9 @@ if ETHERNET
 config MDIO
 	tristate
 
+config SUNGEM_PHY
+	tristate
+
 source "drivers/net/ethernet/3com/Kconfig"
 source "drivers/net/ethernet/actions/Kconfig"
 source "drivers/net/ethernet/adaptec/Kconfig"

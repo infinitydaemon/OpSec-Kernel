@@ -9,7 +9,7 @@
 #include <dt-bindings/soc/qcom,apr.h>
 #include <dt-bindings/soc/qcom,gpr.h>
 
-extern const struct bus_type aprbus;
+extern struct bus_type aprbus;
 
 #define APR_HDR_LEN(hdr_len) ((hdr_len)/4)
 

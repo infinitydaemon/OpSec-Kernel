@@ -35,12 +35,12 @@ static enum hrtimer_restart snd_hrtimer_callback(struct hrtimer *hrt)
 	unsigned long ticks;
 	enum hrtimer_restart ret = HRTIMER_NORESTART;
 
-	scoped_guard(spinlock, &t->lock) {
-		if (!t->running)
-			return HRTIMER_NORESTART; /* fast path */
-		stime->in_callback = true;
-		ticks = t->sticks;
-	}
+	spin_lock(&t->lock);
+	if (!t->running)
+		goto out; /* fast path */
+	stime->in_callback = true;
+	ticks = t->sticks;
+	spin_unlock(&t->lock);
 
 	/* calculate the drift */
 	delta = ktime_sub(hrt->base->get_time(), hrtimer_get_expires(hrt));
@@ -49,13 +49,15 @@ static enum hrtimer_restart snd_hrtimer_callback(struct hrtimer *hrt)
 
 	snd_timer_interrupt(stime->timer, ticks);
 
-	guard(spinlock)(&t->lock);
+	spin_lock(&t->lock);
 	if (t->running) {
 		hrtimer_add_expires_ns(hrt, t->sticks * resolution);
 		ret = HRTIMER_RESTART;
 	}
 
 	stime->in_callback = false;
+ out:
+	spin_unlock(&t->lock);
 	return ret;
 }
 
@@ -78,10 +80,10 @@ static int snd_hrtimer_close(struct snd_timer *t)
 	struct snd_hrtimer *stime = t->private_data;
 
 	if (stime) {
-		scoped_guard(spinlock_irq, &t->lock) {
-			t->running = 0; /* just to be sure */
-			stime->in_callback = 1; /* skip start/stop */
-		}
+		spin_lock_irq(&t->lock);
+		t->running = 0; /* just to be sure */
+		stime->in_callback = 1; /* skip start/stop */
+		spin_unlock_irq(&t->lock);
 
 		hrtimer_cancel(&stime->hrt);
 		kfree(stime);

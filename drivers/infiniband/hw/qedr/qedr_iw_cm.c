@@ -447,8 +447,7 @@ qedr_addr4_resolve(struct qedr_dev *dev,
 	struct rtable *rt = NULL;
 	int rc = 0;
 
-	rt = ip_route_output(&init_net, dst_ip, src_ip, 0, 0,
-			     RT_SCOPE_UNIVERSE);
+	rt = ip_route_output(&init_net, dst_ip, src_ip, 0, 0);
 	if (IS_ERR(rt)) {
 		DP_ERR(dev, "ip_route_output returned error\n");
 		return -EINVAL;

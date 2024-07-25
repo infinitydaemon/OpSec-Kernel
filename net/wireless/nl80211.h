@@ -60,7 +60,7 @@ void nl80211_send_rx_auth(struct cfg80211_registered_device *rdev,
 			  const u8 *buf, size_t len, gfp_t gfp);
 void nl80211_send_rx_assoc(struct cfg80211_registered_device *rdev,
 			   struct net_device *netdev,
-			   const struct cfg80211_rx_assoc_resp_data *data);
+			   struct cfg80211_rx_assoc_resp *data);
 void nl80211_send_deauth(struct cfg80211_registered_device *rdev,
 			 struct net_device *netdev,
 			 const u8 *buf, size_t len,
@@ -82,11 +82,8 @@ void nl80211_send_connect_result(struct cfg80211_registered_device *rdev,
 void nl80211_send_roamed(struct cfg80211_registered_device *rdev,
 			 struct net_device *netdev,
 			 struct cfg80211_roam_info *info, gfp_t gfp);
-/* For STA/GC, indicate port authorized with AP/GO bssid.
- * For GO/AP, use peer GC/STA mac_addr.
- */
 void nl80211_send_port_authorized(struct cfg80211_registered_device *rdev,
-				  struct net_device *netdev, const u8 *peer_addr,
+				  struct net_device *netdev, const u8 *bssid,
 				  const u8 *td_bitmap, u8 td_bitmap_len);
 void nl80211_send_disconnected(struct cfg80211_registered_device *rdev,
 			       struct net_device *netdev, u16 reason,

@@ -56,7 +56,7 @@ static struct mlx5e_ipsec_pol_entry *to_ipsec_pol_entry(struct xfrm_policy *x)
 	return (struct mlx5e_ipsec_pol_entry *)x->xdo.offload_handle;
 }
 
-static void mlx5e_ipsec_handle_sw_limits(struct work_struct *_work)
+static void mlx5e_ipsec_handle_tx_limit(struct work_struct *_work)
 {
 	struct mlx5e_ipsec_dwork *dwork =
 		container_of(_work, struct mlx5e_ipsec_dwork, dwork.work);
@@ -520,15 +520,9 @@ static int mlx5e_xfrm_validate_state(struct mlx5_core_dev *mdev,
 			return -EINVAL;
 		}
 
-		if (x->lft.soft_byte_limit >= x->lft.hard_byte_limit &&
-		    x->lft.hard_byte_limit != XFRM_INF) {
-			/* XFRM stack doesn't prevent such configuration :(. */
-			NL_SET_ERR_MSG_MOD(extack, "Hard byte limit must be greater than soft one");
-			return -EINVAL;
-		}
-
-		if (!x->lft.soft_byte_limit || !x->lft.hard_byte_limit) {
-			NL_SET_ERR_MSG_MOD(extack, "Soft/hard byte limits can't be 0");
+		if (x->lft.hard_byte_limit != XFRM_INF ||
+		    x->lft.soft_byte_limit != XFRM_INF) {
+			NL_SET_ERR_MSG_MOD(extack, "Device doesn't support limits in bytes");
 			return -EINVAL;
 		}
 
@@ -664,10 +658,11 @@ static int mlx5e_ipsec_create_dwork(struct mlx5e_ipsec_sa_entry *sa_entry)
 	if (x->xso.type != XFRM_DEV_OFFLOAD_PACKET)
 		return 0;
 
+	if (x->xso.dir != XFRM_DEV_OFFLOAD_OUT)
+		return 0;
+
 	if (x->lft.soft_packet_limit == XFRM_INF &&
-	    x->lft.hard_packet_limit == XFRM_INF &&
-	    x->lft.soft_byte_limit == XFRM_INF &&
-	    x->lft.hard_byte_limit == XFRM_INF)
+	    x->lft.hard_packet_limit == XFRM_INF)
 		return 0;
 
 	dwork = kzalloc(sizeof(*dwork), GFP_KERNEL);
@@ -675,7 +670,7 @@ static int mlx5e_ipsec_create_dwork(struct mlx5e_ipsec_sa_entry *sa_entry)
 		return -ENOMEM;
 
 	dwork->sa_entry = sa_entry;
-	INIT_DELAYED_WORK(&dwork->dwork, mlx5e_ipsec_handle_sw_limits);
+	INIT_DELAYED_WORK(&dwork->dwork, mlx5e_ipsec_handle_tx_limit);
 	sa_entry->dwork = dwork;
 	return 0;
 }
@@ -889,7 +884,6 @@ void mlx5e_ipsec_init(struct mlx5e_priv *priv)
 
 	xa_init_flags(&ipsec->sadb, XA_FLAGS_ALLOC);
 	ipsec->mdev = priv->mdev;
-	init_completion(&ipsec->comp);
 	ipsec->wq = alloc_workqueue("mlx5e_ipsec: %s", WQ_UNBOUND, 0,
 				    priv->netdev->name);
 	if (!ipsec->wq)
@@ -910,7 +904,7 @@ void mlx5e_ipsec_init(struct mlx5e_priv *priv)
 	}
 
 	ipsec->is_uplink_rep = mlx5e_is_uplink_rep(priv);
-	ret = mlx5e_accel_ipsec_fs_init(ipsec, &priv->devcom);
+	ret = mlx5e_accel_ipsec_fs_init(ipsec);
 	if (ret)
 		goto err_fs_init;
 
@@ -984,41 +978,21 @@ static void mlx5e_xfrm_advance_esn_state(struct xfrm_state *x)
 	queue_work(sa_entry->ipsec->wq, &work->work);
 }
 
-static void mlx5e_xfrm_update_stats(struct xfrm_state *x)
+static void mlx5e_xfrm_update_curlft(struct xfrm_state *x)
 {
 	struct mlx5e_ipsec_sa_entry *sa_entry = to_ipsec_sa_entry(x);
 	struct mlx5e_ipsec_rule *ipsec_rule = &sa_entry->ipsec_rule;
-	struct net *net = dev_net(x->xso.dev);
 	u64 packets, bytes, lastuse;
 
 	lockdep_assert(lockdep_is_held(&x->lock) ||
-		       lockdep_is_held(&dev_net(x->xso.real_dev)->xfrm.xfrm_cfg_mutex) ||
-		       lockdep_is_held(&dev_net(x->xso.real_dev)->xfrm.xfrm_state_lock));
+		       lockdep_is_held(&dev_net(x->xso.real_dev)->xfrm.xfrm_cfg_mutex));
 
 	if (x->xso.flags & XFRM_DEV_OFFLOAD_FLAG_ACQ)
-		return;
-
-	if (sa_entry->attrs.dir == XFRM_DEV_OFFLOAD_IN) {
-		mlx5_fc_query_cached(ipsec_rule->auth.fc, &bytes, &packets, &lastuse);
-		x->stats.integrity_failed += packets;
-		XFRM_ADD_STATS(net, LINUX_MIB_XFRMINSTATEPROTOERROR, packets);
-
-		mlx5_fc_query_cached(ipsec_rule->trailer.fc, &bytes, &packets, &lastuse);
-		XFRM_ADD_STATS(net, LINUX_MIB_XFRMINHDRERROR, packets);
-	}
-
-	if (x->xso.type != XFRM_DEV_OFFLOAD_PACKET)
 		return;
 
 	mlx5_fc_query_cached(ipsec_rule->fc, &bytes, &packets, &lastuse);
 	x->curlft.packets += packets;
 	x->curlft.bytes += bytes;
-
-	if (sa_entry->attrs.dir == XFRM_DEV_OFFLOAD_IN) {
-		mlx5_fc_query_cached(ipsec_rule->replay.fc, &bytes, &packets, &lastuse);
-		x->stats.replay += packets;
-		XFRM_ADD_STATS(net, LINUX_MIB_XFRMINSTATESEQERROR, packets);
-	}
 }
 
 static int mlx5e_xfrm_validate_policy(struct mlx5_core_dev *mdev,
@@ -1176,7 +1150,7 @@ static const struct xfrmdev_ops mlx5e_ipsec_xfrmdev_ops = {
 	.xdo_dev_offload_ok	= mlx5e_ipsec_offload_ok,
 	.xdo_dev_state_advance_esn = mlx5e_xfrm_advance_esn_state,
 
-	.xdo_dev_state_update_stats = mlx5e_xfrm_update_stats,
+	.xdo_dev_state_update_curlft = mlx5e_xfrm_update_curlft,
 	.xdo_dev_policy_add = mlx5e_xfrm_add_policy,
 	.xdo_dev_policy_delete = mlx5e_xfrm_del_policy,
 	.xdo_dev_policy_free = mlx5e_xfrm_free_policy,

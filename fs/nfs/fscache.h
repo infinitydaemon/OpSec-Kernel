@@ -80,9 +80,7 @@ static inline void nfs_netfs_put(struct nfs_netfs_io_data *netfs)
 }
 static inline void nfs_netfs_inode_init(struct nfs_inode *nfsi)
 {
-	netfs_inode_init(&nfsi->netfs, &nfs_netfs_ops, false);
-	/* [DEPRECATED] Use PG_private_2 to mark folio being written to the cache. */
-	__set_bit(NETFS_ICTX_USE_PGPRIV2, &nfsi->netfs.flags);
+	netfs_inode_init(&nfsi->netfs, &nfs_netfs_ops);
 }
 extern void nfs_netfs_initiate_read(struct nfs_pgio_header *hdr);
 extern void nfs_netfs_read_completion(struct nfs_pgio_header *hdr);
@@ -103,10 +101,10 @@ extern int nfs_netfs_read_folio(struct file *file, struct folio *folio);
 
 static inline bool nfs_fscache_release_folio(struct folio *folio, gfp_t gfp)
 {
-	if (folio_test_private_2(folio)) { /* [DEPRECATED] */
+	if (folio_test_fscache(folio)) {
 		if (current_is_kswapd() || !(gfp & __GFP_FS))
 			return false;
-		folio_wait_private_2(folio);
+		folio_wait_fscache(folio);
 	}
 	fscache_note_page_release(netfs_i_cookie(netfs_inode(folio->mapping->host)));
 	return true;
@@ -116,8 +114,8 @@ static inline void nfs_fscache_update_auxdata(struct nfs_fscache_inode_auxdata *
 					      struct inode *inode)
 {
 	memset(auxdata, 0, sizeof(*auxdata));
-	auxdata->mtime_sec  = inode_get_mtime(inode).tv_sec;
-	auxdata->mtime_nsec = inode_get_mtime(inode).tv_nsec;
+	auxdata->mtime_sec  = inode->i_mtime.tv_sec;
+	auxdata->mtime_nsec = inode->i_mtime.tv_nsec;
 	auxdata->ctime_sec  = inode_get_ctime(inode).tv_sec;
 	auxdata->ctime_nsec = inode_get_ctime(inode).tv_nsec;
 

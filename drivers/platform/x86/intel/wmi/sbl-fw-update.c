@@ -25,14 +25,19 @@
 
 static int get_fwu_request(struct device *dev, u32 *out)
 {
+	struct acpi_buffer result = {ACPI_ALLOCATE_BUFFER, NULL};
 	union acpi_object *obj;
+	acpi_status status;
 
-	obj = wmidev_block_query(to_wmi_device(dev), 0);
-	if (!obj)
+	status = wmi_query_block(INTEL_WMI_SBL_GUID, 0, &result);
+	if (ACPI_FAILURE(status)) {
+		dev_err(dev, "wmi_query_block failed\n");
 		return -ENODEV;
+	}
 
-	if (obj->type != ACPI_TYPE_INTEGER) {
-		dev_warn(dev, "wmidev_block_query returned invalid value\n");
+	obj = (union acpi_object *)result.pointer;
+	if (!obj || obj->type != ACPI_TYPE_INTEGER) {
+		dev_warn(dev, "wmi_query_block returned invalid value\n");
 		kfree(obj);
 		return -EINVAL;
 	}
@@ -53,9 +58,9 @@ static int set_fwu_request(struct device *dev, u32 in)
 	input.length = sizeof(u32);
 	input.pointer = &value;
 
-	status = wmidev_block_set(to_wmi_device(dev), 0, &input);
+	status = wmi_set_block(INTEL_WMI_SBL_GUID, 0, &input);
 	if (ACPI_FAILURE(status)) {
-		dev_err(dev, "wmidev_block_set failed\n");
+		dev_err(dev, "wmi_set_block failed\n");
 		return -ENODEV;
 	}
 
@@ -131,7 +136,6 @@ static struct wmi_driver intel_wmi_sbl_fw_update_driver = {
 	.probe = intel_wmi_sbl_fw_update_probe,
 	.remove = intel_wmi_sbl_fw_update_remove,
 	.id_table = intel_wmi_sbl_id_table,
-	.no_singleton = true,
 };
 module_wmi_driver(intel_wmi_sbl_fw_update_driver);
 

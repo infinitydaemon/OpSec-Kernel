@@ -3394,7 +3394,7 @@ static const struct snd_soc_dai_ops wcd938x_sdw_dai_ops = {
 };
 
 static struct snd_soc_dai_driver wcd938x_dais[] = {
-	[AIF1_PB] = {
+	[0] = {
 		.name = "wcd938x-sdw-rx",
 		.playback = {
 			.stream_name = "WCD AIF1 Playback",
@@ -3407,7 +3407,7 @@ static struct snd_soc_dai_driver wcd938x_dais[] = {
 		},
 		.ops = &wcd938x_sdw_dai_ops,
 	},
-	[AIF1_CAP] = {
+	[1] = {
 		.name = "wcd938x-sdw-tx",
 		.capture = {
 			.stream_name = "WCD AIF1 Capture",
@@ -3587,8 +3587,10 @@ static int wcd938x_probe(struct platform_device *pdev)
 	mutex_init(&wcd938x->micb_lock);
 
 	ret = wcd938x_populate_dt_data(wcd938x, dev);
-	if (ret)
+	if (ret) {
+		dev_err(dev, "%s: Fail to obtain platform data\n", __func__);
 		return ret;
+	}
 
 	ret = wcd938x_add_slave_components(wcd938x, dev, &match);
 	if (ret)

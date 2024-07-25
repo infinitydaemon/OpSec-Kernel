@@ -87,7 +87,7 @@ int main(void)
 		tv.tv_usec = 0;
 		if (settimeofday(&tv, NULL)) {
 			printf("Error: You're likely not running with proper (ie: root) permissions\n");
-			ksft_exit_fail();
+			return ksft_exit_fail();
 		}
 		tx.modes = 0;
 		adjtimex(&tx);
@@ -104,5 +104,5 @@ int main(void)
 		fflush(stdout);
 	}
 	printf("[OK]\n");
-	ksft_exit_pass();
+	return ksft_exit_pass();
 }

@@ -2,6 +2,6 @@
 # DIM Dynamic Interrupt Moderation library
 #
 
-obj-$(CONFIG_DIMLIB) += dimlib.o
+obj-$(CONFIG_DIMLIB) += dim.o
 
-dimlib-objs := dim.o net_dim.o rdma_dim.o
+dim-y := dim.o net_dim.o rdma_dim.o

@@ -1,23 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0
 
 /* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
- * Copyright (C) 2019-2024 Linaro Ltd.
+ * Copyright (C) 2019-2023 Linaro Ltd.
  */
 
-#include <linux/bitfield.h>
-#include <linux/bits.h>
-#include <linux/device.h>
-#include <linux/dma-direction.h>
 #include <linux/types.h>
+#include <linux/device.h>
+#include <linux/slab.h>
+#include <linux/bitfield.h>
+#include <linux/dma-direction.h>
 
 #include "gsi.h"
 #include "gsi_trans.h"
 #include "ipa.h"
-#include "ipa_cmd.h"
 #include "ipa_endpoint.h"
-#include "ipa_mem.h"
-#include "ipa_reg.h"
 #include "ipa_table.h"
+#include "ipa_cmd.h"
+#include "ipa_mem.h"
 
 /**
  * DOC:  IPA Immediate Commands
@@ -175,7 +174,7 @@ bool ipa_cmd_table_init_valid(struct ipa *ipa, const struct ipa_mem *mem,
 	u32 offset_max = field_max(IP_FLTRT_FLAGS_NHASH_ADDR_FMASK);
 	u32 size_max = field_max(IP_FLTRT_FLAGS_NHASH_SIZE_FMASK);
 	const char *table = route ? "route" : "filter";
-	struct device *dev = ipa->dev;
+	struct device *dev = &ipa->pdev->dev;
 	u32 size;
 
 	size = route ? ipa->route_count : ipa->filter_count + 1;
@@ -205,7 +204,7 @@ bool ipa_cmd_table_init_valid(struct ipa *ipa, const struct ipa_mem *mem,
 /* Validate the memory region that holds headers */
 static bool ipa_cmd_header_init_local_valid(struct ipa *ipa)
 {
-	struct device *dev = ipa->dev;
+	struct device *dev = &ipa->pdev->dev;
 	const struct ipa_mem *mem;
 	u32 offset_max;
 	u32 size_max;
@@ -257,7 +256,7 @@ static bool ipa_cmd_register_write_offset_valid(struct ipa *ipa,
 						const char *name, u32 offset)
 {
 	struct ipa_cmd_register_write *payload;
-	struct device *dev = ipa->dev;
+	struct device *dev = &ipa->pdev->dev;
 	u32 offset_max;
 	u32 bit_count;
 

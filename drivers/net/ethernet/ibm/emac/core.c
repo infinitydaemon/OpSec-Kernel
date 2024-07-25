@@ -1098,7 +1098,7 @@ static int emac_resize_rx_ring(struct emac_instance *dev, int new_mtu)
 		/* This is to prevent starting RX channel in emac_rx_enable() */
 		set_bit(MAL_COMMAC_RX_STOPPED, &dev->commac.flags);
 
-		WRITE_ONCE(dev->ndev->mtu, new_mtu);
+		dev->ndev->mtu = new_mtu;
 		emac_full_tx_reset(dev);
 	}
 
@@ -1130,7 +1130,7 @@ static int emac_change_mtu(struct net_device *ndev, int new_mtu)
 	}
 
 	if (!ret) {
-		WRITE_ONCE(ndev->mtu, new_mtu);
+		ndev->mtu = new_mtu;
 		dev->rx_skb_size = emac_rx_skb_size(new_mtu);
 		dev->rx_sync_size = emac_rx_sync_size(new_mtu);
 	}
@@ -3253,7 +3253,7 @@ static int emac_probe(struct platform_device *ofdev)
 	return err;
 }
 
-static void emac_remove(struct platform_device *ofdev)
+static int emac_remove(struct platform_device *ofdev)
 {
 	struct emac_instance *dev = platform_get_drvdata(ofdev);
 
@@ -3290,6 +3290,8 @@ static void emac_remove(struct platform_device *ofdev)
 		irq_dispose_mapping(dev->emac_irq);
 
 	free_netdev(dev->ndev);
+
+	return 0;
 }
 
 /* XXX Features in here should be replaced by properties... */
@@ -3317,7 +3319,7 @@ static struct platform_driver emac_driver = {
 		.of_match_table = emac_match,
 	},
 	.probe = emac_probe,
-	.remove_new = emac_remove,
+	.remove = emac_remove,
 };
 
 static void __init emac_make_bootlist(void)

@@ -672,7 +672,7 @@ struct fec_enet_private {
 	unsigned int itr_clk_rate;
 
 	/* tx lpi eee mode */
-	struct ethtool_keee eee;
+	struct ethtool_eee eee;
 	unsigned int clk_ref_rate;
 
 	/* ptp clock period in ns*/

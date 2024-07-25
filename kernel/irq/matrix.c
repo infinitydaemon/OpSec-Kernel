@@ -8,6 +8,8 @@
 #include <linux/cpu.h>
 #include <linux/irq.h>
 
+#define IRQ_MATRIX_SIZE	(BITS_TO_LONGS(IRQ_MATRIX_BITS))
+
 struct cpumap {
 	unsigned int		available;
 	unsigned int		allocated;
@@ -15,8 +17,8 @@ struct cpumap {
 	unsigned int		managed_allocated;
 	bool			initialized;
 	bool			online;
-	unsigned long		*managed_map;
-	unsigned long		alloc_map[];
+	unsigned long		alloc_map[IRQ_MATRIX_SIZE];
+	unsigned long		managed_map[IRQ_MATRIX_SIZE];
 };
 
 struct irq_matrix {
@@ -30,8 +32,8 @@ struct irq_matrix {
 	unsigned int		total_allocated;
 	unsigned int		online_maps;
 	struct cpumap __percpu	*maps;
-	unsigned long		*system_map;
-	unsigned long		scratch_map[];
+	unsigned long		scratch_map[IRQ_MATRIX_SIZE];
+	unsigned long		system_map[IRQ_MATRIX_SIZE];
 };
 
 #define CREATE_TRACE_POINTS
@@ -48,32 +50,24 @@ __init struct irq_matrix *irq_alloc_matrix(unsigned int matrix_bits,
 					   unsigned int alloc_start,
 					   unsigned int alloc_end)
 {
-	unsigned int cpu, matrix_size = BITS_TO_LONGS(matrix_bits);
 	struct irq_matrix *m;
 
-	m = kzalloc(struct_size(m, scratch_map, matrix_size * 2), GFP_KERNEL);
-	if (!m)
+	if (matrix_bits > IRQ_MATRIX_BITS)
 		return NULL;
 
-	m->system_map = &m->scratch_map[matrix_size];
+	m = kzalloc(sizeof(*m), GFP_KERNEL);
+	if (!m)
+		return NULL;
 
 	m->matrix_bits = matrix_bits;
 	m->alloc_start = alloc_start;
 	m->alloc_end = alloc_end;
 	m->alloc_size = alloc_end - alloc_start;
-	m->maps = __alloc_percpu(struct_size(m->maps, alloc_map, matrix_size * 2),
-				 __alignof__(*m->maps));
+	m->maps = alloc_percpu(*m->maps);
 	if (!m->maps) {
 		kfree(m);
 		return NULL;
 	}
-
-	for_each_possible_cpu(cpu) {
-		struct cpumap *cm = per_cpu_ptr(m->maps, cpu);
-
-		cm->managed_map = &cm->alloc_map[matrix_size];
-	}
-
 	return m;
 }
 

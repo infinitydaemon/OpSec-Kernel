@@ -247,10 +247,12 @@ enum mei_ext_hdr_type {
  * struct mei_ext_hdr - extend header descriptor (TLV)
  * @type: enum mei_ext_hdr_type
  * @length: length excluding descriptor
+ * @data: the extended header payload
  */
 struct mei_ext_hdr {
 	u8 type;
 	u8 length;
+	u8 data[];
 } __packed;
 
 /**
@@ -427,7 +429,7 @@ struct mei_bus_message {
 } __packed;
 
 /**
- * struct mei_hbm_cl_cmd - client specific host bus command
+ * struct hbm_cl_cmd - client specific host bus command
  *	CONNECT, DISCONNECT, and FlOW CONTROL
  *
  * @hbm_cmd: bus message command header
@@ -731,7 +733,7 @@ struct hbm_dma_setup_response {
 } __packed;
 
 /**
- * struct hbm_dma_ring_ctrl - dma ring control block
+ * struct mei_dma_ring_ctrl - dma ring control block
  *
  * @hbuf_wr_idx: host circular buffer write index in slots
  * @reserved1: reserved for alignment
@@ -804,8 +806,8 @@ struct hbm_client_dma_map_request {
 } __packed;
 
 /**
- * struct hbm_client_dma_unmap_request - client dma unmap request
- *        from the host to the firmware
+ * struct hbm_client_dma_unmap_request
+ *    client dma unmap request from the host to the firmware
  *
  * @hbm_cmd: bus message command header
  * @status: unmap status
@@ -820,8 +822,8 @@ struct hbm_client_dma_unmap_request {
 } __packed;
 
 /**
- * struct hbm_client_dma_response - client dma unmap response
- *        from the firmware to the host
+ * struct hbm_client_dma_response
+ *   client dma unmap response from the firmware to the host
  *
  * @hbm_cmd: bus message command header
  * @status: command status

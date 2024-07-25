@@ -31,10 +31,7 @@ struct ioctl_gntalloc_alloc_gref {
 	__u64 index;
 	/* The grant references of the newly created grant, one per page */
 	/* Variable size, depending on count */
-	union {
-		__u32 gref_ids[1];
-		__DECLARE_FLEX_ARRAY(__u32, gref_ids_flex);
-	};
+	__u32 gref_ids[1];
 };
 
 #define GNTALLOC_FLAG_WRITABLE 1

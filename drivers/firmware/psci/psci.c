@@ -315,7 +315,14 @@ static int psci_sys_reset(struct notifier_block *nb, unsigned long action,
 		 * reset_type[30:0] = 0 (SYSTEM_WARM_RESET)
 		 * cookie = 0 (ignored by the implementation)
 		 */
-		invoke_psci_fn(PSCI_FN_NATIVE(1_1, SYSTEM_RESET2), 0, 0, 0);
+		// Allow extra arguments separated by spaces after
+		// the partition number.
+		unsigned long val;
+		u8 partition = 0;
+
+		if (data && sscanf(data, "%lu", &val) == 1 && val < 63)
+			partition = val;
+		invoke_psci_fn(PSCI_FN_NATIVE(1_1, SYSTEM_RESET2), 0, partition, 0);
 	} else {
 		invoke_psci_fn(PSCI_0_2_FN_SYSTEM_RESET, 0, 0, 0);
 	}
@@ -497,10 +504,12 @@ int psci_cpu_suspend_enter(u32 state)
 
 static int psci_system_suspend(unsigned long unused)
 {
+	int err;
 	phys_addr_t pa_cpu_resume = __pa_symbol(cpu_resume);
 
-	return invoke_psci_fn(PSCI_FN_NATIVE(1_0, SYSTEM_SUSPEND),
+	err = invoke_psci_fn(PSCI_FN_NATIVE(1_0, SYSTEM_SUSPEND),
 			      pa_cpu_resume, 0, 0);
+	return psci_to_linux_errno(err);
 }
 
 static int psci_system_suspend_enter(suspend_state_t state)

@@ -681,6 +681,11 @@ void mdp5_ctlm_hw_reset(struct mdp5_ctl_manager *ctl_mgr)
 	}
 }
 
+void mdp5_ctlm_destroy(struct mdp5_ctl_manager *ctl_mgr)
+{
+	kfree(ctl_mgr);
+}
+
 struct mdp5_ctl_manager *mdp5_ctlm_init(struct drm_device *dev,
 		void __iomem *mmio_base, struct mdp5_cfg_handler *cfg_hnd)
 {
@@ -692,16 +697,18 @@ struct mdp5_ctl_manager *mdp5_ctlm_init(struct drm_device *dev,
 	unsigned long flags;
 	int c, ret;
 
-	ctl_mgr = devm_kzalloc(dev->dev, sizeof(*ctl_mgr), GFP_KERNEL);
+	ctl_mgr = kzalloc(sizeof(*ctl_mgr), GFP_KERNEL);
 	if (!ctl_mgr) {
 		DRM_DEV_ERROR(dev->dev, "failed to allocate CTL manager\n");
-		return ERR_PTR(-ENOMEM);
+		ret = -ENOMEM;
+		goto fail;
 	}
 
 	if (WARN_ON(ctl_cfg->count > MAX_CTL)) {
 		DRM_DEV_ERROR(dev->dev, "Increase static pool size to at least %d\n",
 				ctl_cfg->count);
-		return ERR_PTR(-ENOSPC);
+		ret = -ENOSPC;
+		goto fail;
 	}
 
 	/* initialize the CTL manager: */
@@ -720,7 +727,7 @@ struct mdp5_ctl_manager *mdp5_ctlm_init(struct drm_device *dev,
 			DRM_DEV_ERROR(dev->dev, "CTL_%d: base is null!\n", c);
 			ret = -EINVAL;
 			spin_unlock_irqrestore(&ctl_mgr->pool_lock, flags);
-			return ERR_PTR(ret);
+			goto fail;
 		}
 		ctl->ctlm = ctl_mgr;
 		ctl->id = c;
@@ -748,4 +755,10 @@ struct mdp5_ctl_manager *mdp5_ctlm_init(struct drm_device *dev,
 	DBG("Pool of %d CTLs created.", ctl_mgr->nctl);
 
 	return ctl_mgr;
+
+fail:
+	if (ctl_mgr)
+		mdp5_ctlm_destroy(ctl_mgr);
+
+	return ERR_PTR(ret);
 }

@@ -24,7 +24,6 @@
 #include <linux/nodemask.h>	/* for node_online_map */
 #include <linux/pagemap.h>	/* for release_pages */
 #include <linux/compat.h>
-#include <linux/execmem.h>
 
 #include <asm/pgalloc.h>
 #include <asm/tlb.h>
@@ -34,7 +33,6 @@
 #include <asm/msgbuf.h>
 #include <asm/sparsemem.h>
 #include <asm/asm-offsets.h>
-#include <asm/shmbuf.h>
 
 extern int  data_start;
 extern void parisc_kernel_start(void);	/* Kernel entry point in head.S */
@@ -482,7 +480,7 @@ void free_initmem(void)
 	/* finally dump all the instructions which were cached, since the
 	 * pages are no-longer executable */
 	flush_icache_range(init_begin, init_end);
-
+	
 	free_initmem_default(POISON_FREE_INITMEM);
 
 	/* set up a new led state on systems shipped LED State panel */
@@ -993,23 +991,3 @@ static const pgprot_t protection_map[16] = {
 	[VM_SHARED | VM_EXEC | VM_WRITE | VM_READ]	= PAGE_RWX
 };
 DECLARE_VM_GET_PAGE_PROT
-
-#ifdef CONFIG_EXECMEM
-static struct execmem_info execmem_info __ro_after_init;
-
-struct execmem_info __init *execmem_arch_setup(void)
-{
-	execmem_info = (struct execmem_info){
-		.ranges = {
-			[EXECMEM_DEFAULT] = {
-				.start	= VMALLOC_START,
-				.end	= VMALLOC_END,
-				.pgprot	= PAGE_KERNEL_RWX,
-				.alignment = 1,
-			},
-		},
-	};
-
-	return &execmem_info;
-}
-#endif /* CONFIG_EXECMEM */

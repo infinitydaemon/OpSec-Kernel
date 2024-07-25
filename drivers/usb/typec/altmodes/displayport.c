@@ -50,17 +50,13 @@ enum {
 enum dp_state {
 	DP_STATE_IDLE,
 	DP_STATE_ENTER,
-	DP_STATE_ENTER_PRIME,
 	DP_STATE_UPDATE,
 	DP_STATE_CONFIGURE,
-	DP_STATE_CONFIGURE_PRIME,
 	DP_STATE_EXIT,
-	DP_STATE_EXIT_PRIME,
 };
 
 struct dp_altmode {
 	struct typec_displayport_data data;
-	struct typec_displayport_data data_prime;
 
 	enum dp_state state;
 	bool hpd;
@@ -71,7 +67,6 @@ struct dp_altmode {
 	struct typec_altmode *alt;
 	const struct typec_altmode *port;
 	struct fwnode_handle *connector_fwnode;
-	struct typec_altmode *plug_prime;
 };
 
 static int dp_altmode_notify(struct dp_altmode *dp)
@@ -91,11 +86,8 @@ static int dp_altmode_notify(struct dp_altmode *dp)
 
 static int dp_altmode_configure(struct dp_altmode *dp, u8 con)
 {
+	u32 conf = DP_CONF_SIGNALING_DP; /* Only DP signaling supported */
 	u8 pin_assign = 0;
-	u32 conf;
-
-	/* DP Signalling */
-	conf = (dp->data.conf & DP_CONF_SIGNALLING_MASK) >> DP_CONF_SIGNALLING_SHIFT;
 
 	switch (con) {
 	case DP_STATUS_CON_DISABLED:
@@ -104,18 +96,12 @@ static int dp_altmode_configure(struct dp_altmode *dp, u8 con)
 		conf |= DP_CONF_UFP_U_AS_DFP_D;
 		pin_assign = DP_CAP_UFP_D_PIN_ASSIGN(dp->alt->vdo) &
 			     DP_CAP_DFP_D_PIN_ASSIGN(dp->port->vdo);
-		/* Account for active cable capabilities */
-		if (dp->plug_prime)
-			pin_assign &= DP_CAP_DFP_D_PIN_ASSIGN(dp->plug_prime->vdo);
 		break;
 	case DP_STATUS_CON_UFP_D:
 	case DP_STATUS_CON_BOTH: /* NOTE: First acting as DP source */
 		conf |= DP_CONF_UFP_U_AS_UFP_D;
 		pin_assign = DP_CAP_PIN_ASSIGN_UFP_D(dp->alt->vdo) &
 				 DP_CAP_PIN_ASSIGN_DFP_D(dp->port->vdo);
-		/* Account for active cable capabilities */
-		if (dp->plug_prime)
-			pin_assign &= DP_CAP_UFP_D_PIN_ASSIGN(dp->plug_prime->vdo);
 		break;
 	default:
 		break;
@@ -141,8 +127,6 @@ static int dp_altmode_configure(struct dp_altmode *dp, u8 con)
 	}
 
 	dp->data.conf = conf;
-	if (dp->plug_prime)
-		dp->data_prime.conf = conf;
 
 	return 0;
 }
@@ -156,27 +140,24 @@ static int dp_altmode_status_update(struct dp_altmode *dp)
 
 	if (configured && (dp->data.status & DP_STATUS_SWITCH_TO_USB)) {
 		dp->data.conf = 0;
-		dp->data_prime.conf = 0;
-		dp->state = dp->plug_prime ? DP_STATE_CONFIGURE_PRIME :
-					     DP_STATE_CONFIGURE;
+		dp->state = DP_STATE_CONFIGURE;
 	} else if (dp->data.status & DP_STATUS_EXIT_DP_MODE) {
 		dp->state = DP_STATE_EXIT;
 	} else if (!(con & DP_CONF_CURRENTLY(dp->data.conf))) {
 		ret = dp_altmode_configure(dp, con);
 		if (!ret) {
-			dp->state = dp->plug_prime ? DP_STATE_CONFIGURE_PRIME :
-						     DP_STATE_CONFIGURE;
+			dp->state = DP_STATE_CONFIGURE;
 			if (dp->hpd != hpd) {
 				dp->hpd = hpd;
 				dp->pending_hpd = true;
 			}
 		}
 	} else {
-		drm_connector_oob_hotplug_event(dp->connector_fwnode,
-						hpd ? connector_status_connected :
-						      connector_status_disconnected);
-		dp->hpd = hpd;
-		sysfs_notify(&dp->alt->dev.kobj, "displayport", "hpd");
+		if (dp->hpd != hpd) {
+			drm_connector_oob_hotplug_event(dp->connector_fwnode);
+			dp->hpd = hpd;
+			sysfs_notify(&dp->alt->dev.kobj, "displayport", "hpd");
+		}
 	}
 
 	return ret;
@@ -192,8 +173,7 @@ static int dp_altmode_configured(struct dp_altmode *dp)
 	 * configuration is complete to signal HPD.
 	 */
 	if (dp->pending_hpd) {
-		drm_connector_oob_hotplug_event(dp->connector_fwnode,
-						connector_status_connected);
+		drm_connector_oob_hotplug_event(dp->connector_fwnode);
 		sysfs_notify(&dp->alt->dev.kobj, "displayport", "hpd");
 		dp->pending_hpd = false;
 	}
@@ -225,19 +205,6 @@ static int dp_altmode_configure_vdm(struct dp_altmode *dp, u32 conf)
 	return ret;
 }
 
-static int dp_altmode_configure_vdm_cable(struct dp_altmode *dp, u32 conf)
-{
-	int svdm_version = typec_altmode_get_cable_svdm_version(dp->plug_prime);
-	u32 header;
-
-	if (svdm_version < 0)
-		return svdm_version;
-
-	header = DP_HEADER(dp, svdm_version, DP_CMD_CONFIGURE);
-
-	return typec_cable_altmode_vdm(dp->plug_prime, TYPEC_PLUG_SOP_P, header, &conf, 2);
-}
-
 static void dp_altmode_work(struct work_struct *work)
 {
 	struct dp_altmode *dp = container_of(work, struct dp_altmode, work);
@@ -253,19 +220,6 @@ static void dp_altmode_work(struct work_struct *work)
 		ret = typec_altmode_enter(dp->alt, NULL);
 		if (ret && ret != -EBUSY)
 			dev_err(&dp->alt->dev, "failed to enter mode\n");
-		break;
-	case DP_STATE_ENTER_PRIME:
-		ret = typec_cable_altmode_enter(dp->alt, TYPEC_PLUG_SOP_P, NULL);
-		/*
-		 * If we fail to enter Alt Mode on SOP', then we should drop the
-		 * plug from the driver and attempt to run the driver without
-		 * it.
-		 */
-		if (ret && ret != -EBUSY) {
-			dev_err(&dp->alt->dev, "plug failed to enter mode\n");
-			dp->state = DP_STATE_ENTER;
-			goto disable_prime;
-		}
 		break;
 	case DP_STATE_UPDATE:
 		svdm_version = typec_altmode_get_svdm_version(dp->alt);
@@ -285,23 +239,9 @@ static void dp_altmode_work(struct work_struct *work)
 			dev_err(&dp->alt->dev,
 				"unable to send Configure command (%d)\n", ret);
 		break;
-	case DP_STATE_CONFIGURE_PRIME:
-		ret = dp_altmode_configure_vdm_cable(dp, dp->data_prime.conf);
-		if (ret) {
-			dev_err(&dp->plug_prime->dev,
-				"unable to send Configure command (%d)\n",
-				ret);
-			dp->state = DP_STATE_CONFIGURE;
-			goto disable_prime;
-		}
-		break;
 	case DP_STATE_EXIT:
 		if (typec_altmode_exit(dp->alt))
 			dev_err(&dp->alt->dev, "Exit Mode Failed!\n");
-		break;
-	case DP_STATE_EXIT_PRIME:
-		if (typec_cable_altmode_exit(dp->plug_prime, TYPEC_PLUG_SOP_P))
-			dev_err(&dp->plug_prime->dev, "Exit Mode Failed!\n");
 		break;
 	default:
 		break;
@@ -309,13 +249,6 @@ static void dp_altmode_work(struct work_struct *work)
 
 	dp->state = DP_STATE_IDLE;
 
-	mutex_unlock(&dp->lock);
-	return;
-
-disable_prime:
-	typec_altmode_put_plug(dp->plug_prime);
-	dp->plug_prime = NULL;
-	schedule_work(&dp->work);
 	mutex_unlock(&dp->lock);
 }
 
@@ -372,13 +305,10 @@ static int dp_altmode_vdm(struct typec_altmode *alt,
 			dp->data.status = 0;
 			dp->data.conf = 0;
 			if (dp->hpd) {
-				drm_connector_oob_hotplug_event(dp->connector_fwnode,
-								connector_status_disconnected);
+				drm_connector_oob_hotplug_event(dp->connector_fwnode);
 				dp->hpd = false;
 				sysfs_notify(&dp->alt->dev.kobj, "displayport", "hpd");
 			}
-			if (dp->plug_prime)
-				dp->state = DP_STATE_EXIT_PRIME;
 			break;
 		case DP_CMD_STATUS_UPDATE:
 			dp->data.status = *vdo;
@@ -413,94 +343,16 @@ err_unlock:
 	return ret;
 }
 
-static int dp_cable_altmode_vdm(struct typec_altmode *alt, enum typec_plug_index sop,
-				const u32 hdr, const u32 *vdo, int count)
-{
-	struct dp_altmode *dp = typec_altmode_get_drvdata(alt);
-	int cmd_type = PD_VDO_CMDT(hdr);
-	int cmd = PD_VDO_CMD(hdr);
-	int ret = 0;
-
-	mutex_lock(&dp->lock);
-
-	if (dp->state != DP_STATE_IDLE) {
-		ret = -EBUSY;
-		goto err_unlock;
-	}
-
-	switch (cmd_type) {
-	case CMDT_RSP_ACK:
-		switch (cmd) {
-		case CMD_ENTER_MODE:
-			typec_altmode_update_active(dp->plug_prime, true);
-			dp->state = DP_STATE_ENTER;
-			break;
-		case CMD_EXIT_MODE:
-			dp->data_prime.status = 0;
-			dp->data_prime.conf = 0;
-			typec_altmode_update_active(dp->plug_prime, false);
-			break;
-		case DP_CMD_CONFIGURE:
-			dp->state = DP_STATE_CONFIGURE;
-			break;
-		default:
-			break;
-		}
-		break;
-	case CMDT_RSP_NAK:
-		switch (cmd) {
-		case DP_CMD_CONFIGURE:
-			dp->data_prime.conf = 0;
-			/* Attempt to configure on SOP, drop plug */
-			typec_altmode_put_plug(dp->plug_prime);
-			dp->plug_prime = NULL;
-			dp->state = DP_STATE_CONFIGURE;
-			break;
-		default:
-			break;
-		}
-		break;
-	default:
-		break;
-	}
-
-	if (dp->state != DP_STATE_IDLE)
-		schedule_work(&dp->work);
-
-err_unlock:
-	mutex_unlock(&dp->lock);
-	return ret;
-}
-
 static int dp_altmode_activate(struct typec_altmode *alt, int activate)
 {
-	struct dp_altmode *dp = typec_altmode_get_drvdata(alt);
-	int ret;
-
-	if (activate) {
-		if (dp->plug_prime) {
-			ret = typec_cable_altmode_enter(alt, TYPEC_PLUG_SOP_P, NULL);
-			if (ret < 0) {
-				typec_altmode_put_plug(dp->plug_prime);
-				dp->plug_prime = NULL;
-			} else {
-				return ret;
-			}
-		}
-		return typec_altmode_enter(alt, NULL);
-	} else {
-		return typec_altmode_exit(alt);
-	}
+	return activate ? typec_altmode_enter(alt, NULL) :
+			  typec_altmode_exit(alt);
 }
 
 static const struct typec_altmode_ops dp_altmode_ops = {
 	.attention = dp_altmode_attention,
 	.vdm = dp_altmode_vdm,
 	.activate = dp_altmode_activate,
-};
-
-static const struct typec_cable_ops dp_cable_ops = {
-	.vdm = dp_cable_altmode_vdm,
 };
 
 static const char * const configurations[] = {
@@ -644,7 +496,6 @@ pin_assignment_store(struct device *dev, struct device_attribute *attr,
 
 	/* Only send Configure command if a configuration has been set */
 	if (dp->alt->active && DP_CONF_CURRENTLY(dp->data.conf)) {
-		/* todo: send manual configure over SOP'*/
 		ret = dp_altmode_configure_vdm(dp, conf);
 		if (ret)
 			goto out_unlock;
@@ -723,7 +574,6 @@ static const struct attribute_group *displayport_groups[] = {
 int dp_altmode_probe(struct typec_altmode *alt)
 {
 	const struct typec_altmode *port = typec_altmode_get_partner(alt);
-	struct typec_altmode *plug = typec_altmode_get_plug(alt, TYPEC_PLUG_SOP_P);
 	struct fwnode_handle *fwnode;
 	struct dp_altmode *dp;
 
@@ -748,13 +598,6 @@ int dp_altmode_probe(struct typec_altmode *alt)
 	alt->desc = "DisplayPort";
 	alt->ops = &dp_altmode_ops;
 
-	if (plug) {
-		plug->desc = "Displayport";
-		plug->cable_ops = &dp_cable_ops;
-	}
-
-	dp->plug_prime = plug;
-
 	fwnode = dev_fwnode(alt->dev.parent->parent); /* typec_port fwnode */
 	if (fwnode_property_present(fwnode, "displayport"))
 		dp->connector_fwnode = fwnode_find_reference(fwnode, "displayport", 0);
@@ -764,10 +607,8 @@ int dp_altmode_probe(struct typec_altmode *alt)
 		dp->connector_fwnode = NULL;
 
 	typec_altmode_set_drvdata(alt, dp);
-	if (plug)
-		typec_altmode_set_drvdata(plug, dp);
 
-	dp->state = plug ? DP_STATE_ENTER_PRIME : DP_STATE_ENTER;
+	dp->state = DP_STATE_ENTER;
 	schedule_work(&dp->work);
 
 	return 0;
@@ -779,11 +620,10 @@ void dp_altmode_remove(struct typec_altmode *alt)
 	struct dp_altmode *dp = typec_altmode_get_drvdata(alt);
 
 	cancel_work_sync(&dp->work);
-	typec_altmode_put_plug(dp->plug_prime);
 
 	if (dp->connector_fwnode) {
-		drm_connector_oob_hotplug_event(dp->connector_fwnode,
-						connector_status_disconnected);
+		if (dp->hpd)
+			drm_connector_oob_hotplug_event(dp->connector_fwnode);
 
 		fwnode_handle_put(dp->connector_fwnode);
 	}
@@ -802,6 +642,7 @@ static struct typec_altmode_driver dp_altmode_driver = {
 	.remove = dp_altmode_remove,
 	.driver = {
 		.name = "typec_displayport",
+		.owner = THIS_MODULE,
 		.dev_groups = displayport_groups,
 	},
 };

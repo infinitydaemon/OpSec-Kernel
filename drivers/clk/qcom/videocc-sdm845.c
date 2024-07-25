@@ -340,6 +340,16 @@ static struct platform_driver video_cc_sdm845_driver = {
 	},
 };
 
-module_platform_driver(video_cc_sdm845_driver);
+static int __init video_cc_sdm845_init(void)
+{
+	return platform_driver_register(&video_cc_sdm845_driver);
+}
+subsys_initcall(video_cc_sdm845_init);
+
+static void __exit video_cc_sdm845_exit(void)
+{
+	platform_driver_unregister(&video_cc_sdm845_driver);
+}
+module_exit(video_cc_sdm845_exit);
 
 MODULE_LICENSE("GPL v2");

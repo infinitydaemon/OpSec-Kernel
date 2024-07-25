@@ -56,7 +56,7 @@ struct cr0014114 {
 	struct spi_device	*spi;
 	u8			*buf;
 	unsigned long		delay;
-	struct cr0014114_led	leds[] __counted_by(count);
+	struct cr0014114_led	leds[];
 };
 
 static void cr0014114_calc_crc(u8 *buf, const size_t len)

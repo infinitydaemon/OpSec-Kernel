@@ -24,7 +24,6 @@
 #include <linux/of_net.h>
 #include <linux/cpu.h>
 #include <net/netdev_rx_queue.h>
-#include <net/rps.h>
 
 #include "dev.h"
 #include "net-sysfs.h"
@@ -35,10 +34,10 @@ static const char fmt_dec[] = "%d\n";
 static const char fmt_ulong[] = "%lu\n";
 static const char fmt_u64[] = "%llu\n";
 
-/* Caller holds RTNL or RCU */
+/* Caller holds RTNL or dev_base_lock */
 static inline int dev_isalive(const struct net_device *dev)
 {
-	return READ_ONCE(dev->reg_state) <= NETREG_REGISTERED;
+	return dev->reg_state <= NETREG_REGISTERED;
 }
 
 /* use same locking rules as GIF* ioctl's */
@@ -49,10 +48,10 @@ static ssize_t netdev_show(const struct device *dev,
 	struct net_device *ndev = to_net_dev(dev);
 	ssize_t ret = -EINVAL;
 
-	rcu_read_lock();
+	read_lock(&dev_base_lock);
 	if (dev_isalive(ndev))
 		ret = (*format)(ndev, buf);
-	rcu_read_unlock();
+	read_unlock(&dev_base_lock);
 
 	return ret;
 }
@@ -61,7 +60,7 @@ static ssize_t netdev_show(const struct device *dev,
 #define NETDEVICE_SHOW(field, format_string)				\
 static ssize_t format_##field(const struct net_device *dev, char *buf)	\
 {									\
-	return sysfs_emit(buf, format_string, READ_ONCE(dev->field));		\
+	return sysfs_emit(buf, format_string, dev->field);		\
 }									\
 static ssize_t field##_show(struct device *dev,				\
 			    struct device_attribute *attr, char *buf)	\
@@ -126,7 +125,7 @@ static DEVICE_ATTR_RO(iflink);
 
 static ssize_t format_name_assign_type(const struct net_device *dev, char *buf)
 {
-	return sysfs_emit(buf, fmt_dec, READ_ONCE(dev->name_assign_type));
+	return sysfs_emit(buf, fmt_dec, dev->name_assign_type);
 }
 
 static ssize_t name_assign_type_show(struct device *dev,
@@ -136,28 +135,24 @@ static ssize_t name_assign_type_show(struct device *dev,
 	struct net_device *ndev = to_net_dev(dev);
 	ssize_t ret = -EINVAL;
 
-	if (READ_ONCE(ndev->name_assign_type) != NET_NAME_UNKNOWN)
+	if (ndev->name_assign_type != NET_NAME_UNKNOWN)
 		ret = netdev_show(dev, attr, buf, format_name_assign_type);
 
 	return ret;
 }
 static DEVICE_ATTR_RO(name_assign_type);
 
-/* use same locking rules as GIFHWADDR ioctl's (dev_get_mac_address()) */
+/* use same locking rules as GIFHWADDR ioctl's */
 static ssize_t address_show(struct device *dev, struct device_attribute *attr,
 			    char *buf)
 {
 	struct net_device *ndev = to_net_dev(dev);
 	ssize_t ret = -EINVAL;
 
-	down_read(&dev_addr_sem);
-
-	rcu_read_lock();
+	read_lock(&dev_base_lock);
 	if (dev_isalive(ndev))
 		ret = sysfs_format_mac(buf, ndev->dev_addr, ndev->addr_len);
-	rcu_read_unlock();
-
-	up_read(&dev_addr_sem);
+	read_unlock(&dev_base_lock);
 	return ret;
 }
 static DEVICE_ATTR_RO(address);
@@ -166,13 +161,10 @@ static ssize_t broadcast_show(struct device *dev,
 			      struct device_attribute *attr, char *buf)
 {
 	struct net_device *ndev = to_net_dev(dev);
-	int ret = -EINVAL;
 
-	rcu_read_lock();
 	if (dev_isalive(ndev))
-		ret = sysfs_format_mac(buf, ndev->broadcast, ndev->addr_len);
-	rcu_read_unlock();
-	return ret;
+		return sysfs_format_mac(buf, ndev->broadcast, ndev->addr_len);
+	return -EINVAL;
 }
 static DEVICE_ATTR_RO(broadcast);
 
@@ -201,22 +193,11 @@ static ssize_t carrier_show(struct device *dev,
 			    struct device_attribute *attr, char *buf)
 {
 	struct net_device *netdev = to_net_dev(dev);
-	int ret = -EINVAL;
 
-	if (!rtnl_trylock())
-		return restart_syscall();
+	if (netif_running(netdev))
+		return sysfs_emit(buf, fmt_dec, !!netif_carrier_ok(netdev));
 
-	if (netif_running(netdev)) {
-		/* Synchronize carrier state with link watch,
-		 * see also rtnl_getlink().
-		 */
-		linkwatch_sync_dev(netdev);
-
-		ret = sysfs_emit(buf, fmt_dec, !!netif_carrier_ok(netdev));
-	}
-	rtnl_unlock();
-
-	return ret;
+	return -EINVAL;
 }
 static DEVICE_ATTR_RW(carrier);
 
@@ -605,13 +586,13 @@ static ssize_t threaded_show(struct device *dev,
 	struct net_device *netdev = to_net_dev(dev);
 	ssize_t ret = -EINVAL;
 
-	rcu_read_lock();
+	if (!rtnl_trylock())
+		return restart_syscall();
 
 	if (dev_isalive(netdev))
-		ret = sysfs_emit(buf, fmt_dec, READ_ONCE(netdev->threaded));
+		ret = sysfs_emit(buf, fmt_dec, netdev->threaded);
 
-	rcu_read_unlock();
-
+	rtnl_unlock();
 	return ret;
 }
 
@@ -686,14 +667,14 @@ static ssize_t netstat_show(const struct device *d,
 	WARN_ON(offset > sizeof(struct rtnl_link_stats64) ||
 		offset % sizeof(u64) != 0);
 
-	rcu_read_lock();
+	read_lock(&dev_base_lock);
 	if (dev_isalive(dev)) {
 		struct rtnl_link_stats64 temp;
 		const struct rtnl_link_stats64 *stats = dev_get_stats(dev, &temp);
 
 		ret = sysfs_emit(buf, fmt_u64, *(u64 *)(((u8 *)stats) + offset));
 	}
-	rcu_read_unlock();
+	read_unlock(&dev_base_lock);
 	return ret;
 }
 
@@ -1415,65 +1396,6 @@ static struct netdev_queue_attribute bql_hold_time_attribute __ro_after_init
 	= __ATTR(hold_time, 0644,
 		 bql_show_hold_time, bql_set_hold_time);
 
-static ssize_t bql_show_stall_thrs(struct netdev_queue *queue, char *buf)
-{
-	struct dql *dql = &queue->dql;
-
-	return sysfs_emit(buf, "%u\n", jiffies_to_msecs(dql->stall_thrs));
-}
-
-static ssize_t bql_set_stall_thrs(struct netdev_queue *queue,
-				  const char *buf, size_t len)
-{
-	struct dql *dql = &queue->dql;
-	unsigned int value;
-	int err;
-
-	err = kstrtouint(buf, 10, &value);
-	if (err < 0)
-		return err;
-
-	value = msecs_to_jiffies(value);
-	if (value && (value < 4 || value > 4 / 2 * BITS_PER_LONG))
-		return -ERANGE;
-
-	if (!dql->stall_thrs && value)
-		dql->last_reap = jiffies;
-	/* Force last_reap to be live */
-	smp_wmb();
-	dql->stall_thrs = value;
-
-	return len;
-}
-
-static struct netdev_queue_attribute bql_stall_thrs_attribute __ro_after_init =
-	__ATTR(stall_thrs, 0644, bql_show_stall_thrs, bql_set_stall_thrs);
-
-static ssize_t bql_show_stall_max(struct netdev_queue *queue, char *buf)
-{
-	return sysfs_emit(buf, "%u\n", READ_ONCE(queue->dql.stall_max));
-}
-
-static ssize_t bql_set_stall_max(struct netdev_queue *queue,
-				 const char *buf, size_t len)
-{
-	WRITE_ONCE(queue->dql.stall_max, 0);
-	return len;
-}
-
-static struct netdev_queue_attribute bql_stall_max_attribute __ro_after_init =
-	__ATTR(stall_max, 0644, bql_show_stall_max, bql_set_stall_max);
-
-static ssize_t bql_show_stall_cnt(struct netdev_queue *queue, char *buf)
-{
-	struct dql *dql = &queue->dql;
-
-	return sysfs_emit(buf, "%lu\n", dql->stall_cnt);
-}
-
-static struct netdev_queue_attribute bql_stall_cnt_attribute __ro_after_init =
-	__ATTR(stall_cnt, 0444, bql_show_stall_cnt, NULL);
-
 static ssize_t bql_show_inflight(struct netdev_queue *queue,
 				 char *buf)
 {
@@ -1512,9 +1434,6 @@ static struct attribute *dql_attrs[] __ro_after_init = {
 	&bql_limit_min_attribute.attr,
 	&bql_hold_time_attribute.attr,
 	&bql_inflight_attribute.attr,
-	&bql_stall_thrs_attribute.attr,
-	&bql_stall_cnt_attribute.attr,
-	&bql_stall_max_attribute.attr,
 	NULL
 };
 
@@ -1522,9 +1441,6 @@ static const struct attribute_group dql_group = {
 	.name  = "byte_queue_limits",
 	.attrs  = dql_attrs,
 };
-#else
-/* Fake declaration, all the code using it should be dead */
-extern const struct attribute_group dql_group;
 #endif /* CONFIG_BQL */
 
 #ifdef CONFIG_XPS
@@ -1762,15 +1678,6 @@ static const struct kobj_type netdev_queue_ktype = {
 	.get_ownership = netdev_queue_get_ownership,
 };
 
-static bool netdev_uses_bql(const struct net_device *dev)
-{
-	if (dev->features & NETIF_F_LLTX ||
-	    dev->priv_flags & IFF_NO_QUEUE)
-		return false;
-
-	return IS_ENABLED(CONFIG_BQL);
-}
-
 static int netdev_queue_add_kobject(struct net_device *dev, int index)
 {
 	struct netdev_queue *queue = dev->_tx + index;
@@ -1788,11 +1695,11 @@ static int netdev_queue_add_kobject(struct net_device *dev, int index)
 	if (error)
 		goto err;
 
-	if (netdev_uses_bql(dev)) {
-		error = sysfs_create_group(kobj, &dql_group);
-		if (error)
-			goto err;
-	}
+#ifdef CONFIG_BQL
+	error = sysfs_create_group(kobj, &dql_group);
+	if (error)
+		goto err;
+#endif
 
 	kobject_uevent(kobj, KOBJ_ADD);
 	return 0;
@@ -1813,9 +1720,9 @@ static int tx_queue_change_owner(struct net_device *ndev, int index,
 	if (error)
 		return error;
 
-	if (netdev_uses_bql(ndev))
-		error = sysfs_group_change_owner(kobj, &dql_group, kuid, kgid);
-
+#ifdef CONFIG_BQL
+	error = sysfs_group_change_owner(kobj, &dql_group, kuid, kgid);
+#endif
 	return error;
 }
 #endif /* CONFIG_SYSFS */
@@ -1847,10 +1754,9 @@ netdev_queue_update_kobjects(struct net_device *dev, int old_num, int new_num)
 
 		if (!refcount_read(&dev_net(dev)->ns.count))
 			queue->kobj.uevent_suppress = 1;
-
-		if (netdev_uses_bql(dev))
-			sysfs_remove_group(&queue->kobj, &dql_group);
-
+#ifdef CONFIG_BQL
+		sysfs_remove_group(&queue->kobj, &dql_group);
+#endif
 		kobject_put(&queue->kobj);
 	}
 
@@ -2046,7 +1952,7 @@ static void net_get_ownership(const struct device *d, kuid_t *uid, kgid_t *gid)
 	net_ns_get_ownership(net, uid, gid);
 }
 
-static const struct class net_class = {
+static struct class net_class __ro_after_init = {
 	.name = "net",
 	.dev_release = netdev_release,
 	.dev_groups = net_class_groups,

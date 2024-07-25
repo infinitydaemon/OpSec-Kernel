@@ -3,8 +3,7 @@
 #
 include ../scripts/Makefile.include
 
-BUILD_TARGETS=page-types slabinfo page_owner_sort
-INSTALL_TARGETS = $(BUILD_TARGETS) thpmaps
+TARGETS=page-types slabinfo page_owner_sort
 
 LIB_DIR = ../lib/api
 LIBS = $(LIB_DIR)/libapi.a
@@ -12,9 +11,9 @@ LIBS = $(LIB_DIR)/libapi.a
 CFLAGS += -Wall -Wextra -I../lib/ -pthread
 LDFLAGS += $(LIBS) -pthread
 
-all: $(BUILD_TARGETS)
+all: $(TARGETS)
 
-$(BUILD_TARGETS): $(LIBS)
+$(TARGETS): $(LIBS)
 
 $(LIBS):
 	make -C $(LIB_DIR)
@@ -30,4 +29,4 @@ sbindir ?= /usr/sbin
 
 install: all
 	install -d $(DESTDIR)$(sbindir)
-	install -m 755 -p $(INSTALL_TARGETS) $(DESTDIR)$(sbindir)
+	install -m 755 -p $(TARGETS) $(DESTDIR)$(sbindir)

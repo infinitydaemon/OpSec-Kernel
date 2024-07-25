@@ -47,7 +47,7 @@ __xchk_btree_process_error(
 		*error = 0;
 		fallthrough;
 	default:
-		if (cur->bc_ops->type == XFS_BTREE_TYPE_INODE)
+		if (cur->bc_flags & XFS_BTREE_ROOT_IN_INODE)
 			trace_xchk_ifork_btree_op_error(sc, cur, level,
 					*error, ret_ip);
 		else
@@ -91,7 +91,7 @@ __xchk_btree_set_corrupt(
 {
 	sc->sm->sm_flags |= errflag;
 
-	if (cur->bc_ops->type == XFS_BTREE_TYPE_INODE)
+	if (cur->bc_flags & XFS_BTREE_ROOT_IN_INODE)
 		trace_xchk_ifork_btree_error(sc, cur, level,
 				ret_ip);
 	else
@@ -168,7 +168,7 @@ xchk_btree_rec(
 	if (xfs_btree_keycmp_lt(cur, &key, keyp))
 		xchk_btree_set_corrupt(bs->sc, cur, 1);
 
-	if (!(cur->bc_ops->geom_flags & XFS_BTGEO_OVERLAPPING))
+	if (!(cur->bc_flags & XFS_BTREE_OVERLAPPING))
 		return;
 
 	/* Is high_key(rec) no larger than the parent high key? */
@@ -215,7 +215,7 @@ xchk_btree_key(
 	if (xfs_btree_keycmp_lt(cur, key, keyp))
 		xchk_btree_set_corrupt(bs->sc, cur, level);
 
-	if (!(cur->bc_ops->geom_flags & XFS_BTGEO_OVERLAPPING))
+	if (!(cur->bc_flags & XFS_BTREE_OVERLAPPING))
 		return;
 
 	/* Is this block's high key no larger than the parent high key? */
@@ -236,18 +236,22 @@ xchk_btree_ptr_ok(
 	int			level,
 	union xfs_btree_ptr	*ptr)
 {
+	bool			res;
+
 	/* A btree rooted in an inode has no block pointer to the root. */
-	if (bs->cur->bc_ops->type == XFS_BTREE_TYPE_INODE &&
+	if ((bs->cur->bc_flags & XFS_BTREE_ROOT_IN_INODE) &&
 	    level == bs->cur->bc_nlevels)
 		return true;
 
 	/* Otherwise, check the pointers. */
-	if (__xfs_btree_check_ptr(bs->cur, ptr, 0, level)) {
+	if (bs->cur->bc_flags & XFS_BTREE_LONG_PTRS)
+		res = xfs_btree_check_lptr(bs->cur, be64_to_cpu(ptr->l), level);
+	else
+		res = xfs_btree_check_sptr(bs->cur, be32_to_cpu(ptr->s), level);
+	if (!res)
 		xchk_btree_set_corrupt(bs->sc, bs->cur, level);
-		return false;
-	}
 
-	return true;
+	return res;
 }
 
 /* Check that a btree block's sibling matches what we expect it. */
@@ -370,12 +374,14 @@ xchk_btree_check_block_owner(
 {
 	xfs_agnumber_t		agno;
 	xfs_agblock_t		agbno;
+	xfs_btnum_t		btnum;
 	bool			init_sa;
 	int			error = 0;
 
 	if (!bs->cur)
 		return 0;
 
+	btnum = bs->cur->bc_btnum;
 	agno = xfs_daddr_to_agno(bs->cur->bc_mp, daddr);
 	agbno = xfs_daddr_to_agbno(bs->cur->bc_mp, daddr);
 
@@ -384,7 +390,7 @@ xchk_btree_check_block_owner(
 	 * sc->sa so that we can check for the presence of an ownership record
 	 * in the rmap btree for the AG containing the block.
 	 */
-	init_sa = bs->cur->bc_ops->type != XFS_BTREE_TYPE_AG;
+	init_sa = bs->cur->bc_flags & XFS_BTREE_ROOT_IN_INODE;
 	if (init_sa) {
 		error = xchk_ag_init_existing(bs->sc, agno, &bs->sc->sa);
 		if (!xchk_btree_xref_process_error(bs->sc, bs->cur,
@@ -398,11 +404,11 @@ xchk_btree_check_block_owner(
 	 * have to nullify it (to shut down further block owner checks) if
 	 * self-xref encounters problems.
 	 */
-	if (!bs->sc->sa.bno_cur && xfs_btree_is_bno(bs->cur->bc_ops))
+	if (!bs->sc->sa.bno_cur && btnum == XFS_BTNUM_BNO)
 		bs->cur = NULL;
 
 	xchk_xref_is_only_owned_by(bs->sc, agbno, 1, bs->oinfo);
-	if (!bs->sc->sa.rmap_cur && xfs_btree_is_rmap(bs->cur->bc_ops))
+	if (!bs->sc->sa.rmap_cur && btnum == XFS_BTNUM_RMAP)
 		bs->cur = NULL;
 
 out_free:
@@ -428,7 +434,7 @@ xchk_btree_check_owner(
 	 * up.
 	 */
 	if (bp == NULL) {
-		if (cur->bc_ops->type != XFS_BTREE_TYPE_INODE)
+		if (!(cur->bc_flags & XFS_BTREE_ROOT_IN_INODE))
 			xchk_btree_set_corrupt(bs->sc, bs->cur, level);
 		return 0;
 	}
@@ -441,7 +447,7 @@ xchk_btree_check_owner(
 	 * duplicate cursors.  Therefore, save the buffer daddr for
 	 * later scanning.
 	 */
-	if (xfs_btree_is_bno(cur->bc_ops) || xfs_btree_is_rmap(cur->bc_ops)) {
+	if (cur->bc_btnum == XFS_BTNUM_BNO || cur->bc_btnum == XFS_BTNUM_RMAP) {
 		struct check_owner	*co;
 
 		co = kmalloc(sizeof(struct check_owner), XCHK_GFP_FLAGS);
@@ -474,7 +480,7 @@ xchk_btree_check_iroot_minrecs(
 	 * existing filesystems, so instead we disable the check for data fork
 	 * bmap btrees when there's an attr fork.
 	 */
-	if (xfs_btree_is_bmap(bs->cur->bc_ops) &&
+	if (bs->cur->bc_btnum == XFS_BTNUM_BMAP &&
 	    bs->cur->bc_ino.whichfork == XFS_DATA_FORK &&
 	    xfs_inode_has_attr_fork(bs->sc->ip))
 		return false;
@@ -507,7 +513,7 @@ xchk_btree_check_minrecs(
 	 * child block might be less than the standard minrecs, but that's ok
 	 * provided that there's only one direct child of the root.
 	 */
-	if (cur->bc_ops->type == XFS_BTREE_TYPE_INODE &&
+	if ((cur->bc_flags & XFS_BTREE_ROOT_IN_INODE) &&
 	    level == cur->bc_nlevels - 2) {
 		struct xfs_btree_block	*root_block;
 		struct xfs_buf		*root_bp;
@@ -561,7 +567,7 @@ xchk_btree_block_check_keys(
 		return;
 	}
 
-	if (!(cur->bc_ops->geom_flags & XFS_BTGEO_OVERLAPPING))
+	if (!(cur->bc_flags & XFS_BTREE_OVERLAPPING))
 		return;
 
 	/* Make sure the high key of this block matches the parent. */
@@ -584,6 +590,7 @@ xchk_btree_get_block(
 	struct xfs_btree_block	**pblock,
 	struct xfs_buf		**pbp)
 {
+	xfs_failaddr_t		failed_at;
 	int			error;
 
 	*pblock = NULL;
@@ -595,7 +602,13 @@ xchk_btree_get_block(
 		return error;
 
 	xfs_btree_get_block(bs->cur, level, pbp);
-	if (__xfs_btree_check_block(bs->cur, *pblock, level, *pbp)) {
+	if (bs->cur->bc_flags & XFS_BTREE_LONG_PTRS)
+		failed_at = __xfs_btree_check_lblock(bs->cur, *pblock,
+				level, *pbp);
+	else
+		failed_at = __xfs_btree_check_sblock(bs->cur, *pblock,
+				 level, *pbp);
+	if (failed_at) {
 		xchk_btree_set_corrupt(bs->sc, bs->cur, level);
 		return 0;
 	}
@@ -656,7 +669,7 @@ xchk_btree_block_keys(
 	if (xfs_btree_keycmp_ne(cur, &block_keys, parent_keys))
 		xchk_btree_set_corrupt(bs->sc, cur, 1);
 
-	if (!(cur->bc_ops->geom_flags & XFS_BTGEO_OVERLAPPING))
+	if (!(cur->bc_flags & XFS_BTREE_OVERLAPPING))
 		return;
 
 	/* Get high keys */
@@ -720,7 +733,7 @@ xchk_btree(
 	 * error codes for us.
 	 */
 	level = cur->bc_nlevels - 1;
-	xfs_btree_init_ptr_from_cur(cur, &ptr);
+	cur->bc_ops->init_ptr_from_cur(cur, &ptr);
 	if (!xchk_btree_ptr_ok(bs, cur->bc_nlevels, &ptr))
 		goto out;
 	error = xchk_btree_get_block(bs, level, &ptr, &block, &bp);

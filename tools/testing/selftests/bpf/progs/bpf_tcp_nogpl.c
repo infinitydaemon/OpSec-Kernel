@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0
 
-#include "bpf_tracing_net.h"
+#include <linux/bpf.h>
+#include <linux/types.h>
+#include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
+#include "bpf_tcp_helpers.h"
 
 char _license[] SEC("license") = "X";
 
-SEC("struct_ops")
-void BPF_PROG(nogpltcp_init, struct sock *sk)
+void BPF_STRUCT_OPS(nogpltcp_init, struct sock *sk)
 {
 }
 

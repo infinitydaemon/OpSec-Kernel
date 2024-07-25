@@ -12,6 +12,7 @@
 #include <linux/pwm.h>
 
 struct clps711x_chip {
+	struct pwm_chip chip;
 	void __iomem *pmpcon;
 	struct clk *clk;
 	spinlock_t lock;
@@ -19,7 +20,7 @@ struct clps711x_chip {
 
 static inline struct clps711x_chip *to_clps711x_chip(struct pwm_chip *chip)
 {
-	return pwmchip_get_drvdata(chip);
+	return container_of(chip, struct clps711x_chip, chip);
 }
 
 static int clps711x_pwm_request(struct pwm_chip *chip, struct pwm_device *pwm)
@@ -71,17 +72,25 @@ static int clps711x_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 static const struct pwm_ops clps711x_pwm_ops = {
 	.request = clps711x_pwm_request,
 	.apply = clps711x_pwm_apply,
+	.owner = THIS_MODULE,
 };
+
+static struct pwm_device *clps711x_pwm_xlate(struct pwm_chip *chip,
+					     const struct of_phandle_args *args)
+{
+	if (args->args[0] >= chip->npwm)
+		return ERR_PTR(-EINVAL);
+
+	return pwm_request_from_chip(chip, args->args[0], NULL);
+}
 
 static int clps711x_pwm_probe(struct platform_device *pdev)
 {
-	struct pwm_chip *chip;
 	struct clps711x_chip *priv;
 
-	chip = devm_pwmchip_alloc(&pdev->dev, 2, sizeof(*priv));
-	if (IS_ERR(chip))
-		return PTR_ERR(chip);
-	priv = to_clps711x_chip(chip);
+	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
 
 	priv->pmpcon = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(priv->pmpcon))
@@ -91,11 +100,15 @@ static int clps711x_pwm_probe(struct platform_device *pdev)
 	if (IS_ERR(priv->clk))
 		return PTR_ERR(priv->clk);
 
-	chip->ops = &clps711x_pwm_ops;
+	priv->chip.ops = &clps711x_pwm_ops;
+	priv->chip.dev = &pdev->dev;
+	priv->chip.npwm = 2;
+	priv->chip.of_xlate = clps711x_pwm_xlate;
+	priv->chip.of_pwm_n_cells = 1;
 
 	spin_lock_init(&priv->lock);
 
-	return devm_pwmchip_add(&pdev->dev, chip);
+	return devm_pwmchip_add(&pdev->dev, &priv->chip);
 }
 
 static const struct of_device_id __maybe_unused clps711x_pwm_dt_ids[] = {

@@ -53,14 +53,19 @@ static ssize_t b43_attr_interfmode_show(struct device *dev,
 
 	switch (wldev->phy.g->interfmode) {
 	case B43_INTERFMODE_NONE:
-		count = sysfs_emit(buf, "0 (No Interference Mitigation)\n");
+		count =
+		    snprintf(buf, PAGE_SIZE,
+			     "0 (No Interference Mitigation)\n");
 		break;
 	case B43_INTERFMODE_NONWLAN:
-		count = sysfs_emit(buf,
-				   "1 (Non-WLAN Interference Mitigation)\n");
+		count =
+		    snprintf(buf, PAGE_SIZE,
+			     "1 (Non-WLAN Interference Mitigation)\n");
 		break;
 	case B43_INTERFMODE_MANUALWLAN:
-		count = sysfs_emit(buf, "2 (WLAN Interference Mitigation)\n");
+		count =
+		    snprintf(buf, PAGE_SIZE,
+			     "2 (WLAN Interference Mitigation)\n");
 		break;
 	default:
 		B43_WARN_ON(1);

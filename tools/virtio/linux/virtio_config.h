@@ -1,6 +1,4 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#ifndef LINUX_VIRTIO_CONFIG_H
-#define LINUX_VIRTIO_CONFIG_H
 #include <linux/virtio_byteorder.h>
 #include <linux/virtio.h>
 #include <uapi/linux/virtio_config.h>
@@ -97,5 +95,3 @@ static inline __virtio64 cpu_to_virtio64(struct virtio_device *vdev, u64 val)
 {
 	return __cpu_to_virtio64(virtio_is_little_endian(vdev), val);
 }
-
-#endif

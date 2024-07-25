@@ -291,7 +291,7 @@ int arch_decode_instruction(struct objtool_file *file, const struct section *sec
 		switch (modrm_reg & 7) {
 		case 5:
 			imm = -imm;
-			fallthrough;
+			/* fallthrough */
 		case 0:
 			/* add/sub imm, %rsp */
 			ADD_OP(op) {
@@ -375,7 +375,7 @@ int arch_decode_instruction(struct objtool_file *file, const struct section *sec
 			break;
 		}
 
-		fallthrough;
+		/* fallthrough */
 	case 0x88:
 		if (!rex_w)
 			break;
@@ -509,20 +509,11 @@ int arch_decode_instruction(struct objtool_file *file, const struct section *sec
 
 		if (op2 == 0x01) {
 
-			switch (insn_last_prefix_id(&ins)) {
-			case INAT_PFX_REPE:
-			case INAT_PFX_REPNE:
-				if (modrm == 0xca)
-					/* eretu/erets */
-					insn->type = INSN_CONTEXT_SWITCH;
-				break;
-			default:
-				if (modrm == 0xca)
-					insn->type = INSN_CLAC;
-				else if (modrm == 0xcb)
-					insn->type = INSN_STAC;
-				break;
-			}
+			if (modrm == 0xca)
+				insn->type = INSN_CLAC;
+			else if (modrm == 0xcb)
+				insn->type = INSN_STAC;
+
 		} else if (op2 >= 0x80 && op2 <= 0x8f) {
 
 			insn->type = INSN_JUMP_CONDITIONAL;
@@ -665,7 +656,7 @@ int arch_decode_instruction(struct objtool_file *file, const struct section *sec
 			break;
 		}
 
-		fallthrough;
+		/* fallthrough */
 
 	case 0xca: /* retf */
 	case 0xcb: /* retf */

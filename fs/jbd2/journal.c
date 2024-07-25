@@ -1289,7 +1289,7 @@ static int jbd2_min_tag_size(void)
 static unsigned long jbd2_journal_shrink_scan(struct shrinker *shrink,
 					      struct shrink_control *sc)
 {
-	journal_t *journal = shrink->private_data;
+	journal_t *journal = container_of(shrink, journal_t, j_shrinker);
 	unsigned long nr_to_scan = sc->nr_to_scan;
 	unsigned long nr_shrunk;
 	unsigned long count;
@@ -1315,7 +1315,7 @@ static unsigned long jbd2_journal_shrink_scan(struct shrinker *shrink,
 static unsigned long jbd2_journal_shrink_count(struct shrinker *shrink,
 					       struct shrink_control *sc)
 {
-	journal_t *journal = shrink->private_data;
+	journal_t *journal = container_of(shrink, journal_t, j_shrinker);
 	unsigned long count;
 
 	count = percpu_counter_read_positive(&journal->j_checkpoint_jh_count);
@@ -1534,7 +1534,6 @@ static journal_t *journal_init_common(struct block_device *bdev,
 	journal->j_fs_dev = fs_dev;
 	journal->j_blk_offset = start;
 	journal->j_total_len = len;
-	jbd2_init_fs_dev_write_error(journal);
 
 	err = journal_load_superblock(journal);
 	if (err)
@@ -1588,21 +1587,14 @@ static journal_t *journal_init_common(struct block_device *bdev,
 		goto err_cleanup;
 
 	journal->j_shrink_transaction = NULL;
-
-	journal->j_shrinker = shrinker_alloc(0, "jbd2-journal:(%u:%u)",
-					     MAJOR(bdev->bd_dev),
-					     MINOR(bdev->bd_dev));
-	if (!journal->j_shrinker) {
-		err = -ENOMEM;
+	journal->j_shrinker.scan_objects = jbd2_journal_shrink_scan;
+	journal->j_shrinker.count_objects = jbd2_journal_shrink_count;
+	journal->j_shrinker.seeks = DEFAULT_SEEKS;
+	journal->j_shrinker.batch = journal->j_max_transaction_buffers;
+	err = register_shrinker(&journal->j_shrinker, "jbd2-journal:(%u:%u)",
+				MAJOR(bdev->bd_dev), MINOR(bdev->bd_dev));
+	if (err)
 		goto err_cleanup;
-	}
-
-	journal->j_shrinker->scan_objects = jbd2_journal_shrink_scan;
-	journal->j_shrinker->count_objects = jbd2_journal_shrink_count;
-	journal->j_shrinker->batch = journal->j_max_transaction_buffers;
-	journal->j_shrinker->private_data = journal;
-
-	shrinker_register(journal->j_shrinker);
 
 	return journal;
 
@@ -1862,7 +1854,7 @@ int jbd2_journal_update_sb_log_tail(journal_t *journal, tid_t tail_tid,
 
 	if (is_journal_aborted(journal))
 		return -EIO;
-	if (jbd2_check_fs_dev_write_error(journal)) {
+	if (test_bit(JBD2_CHECKPOINT_IO_ERROR, &journal->j_atomic_flags)) {
 		jbd2_journal_abort(journal, -EIO);
 		return -EIO;
 	}
@@ -2009,7 +2001,7 @@ static int __jbd2_journal_erase(journal_t *journal, unsigned int flags)
 		byte_count = (block_stop - block_start + 1) *
 				journal->j_blocksize;
 
-		truncate_inode_pages_range(journal->j_dev->bd_mapping,
+		truncate_inode_pages_range(journal->j_dev->bd_inode->i_mapping,
 				byte_start, byte_stop);
 
 		if (flags & JBD2_JOURNAL_FLUSH_DISCARD) {
@@ -2160,12 +2152,12 @@ int jbd2_journal_destroy(journal_t *journal)
 
 	/*
 	 * OK, all checkpoint transactions have been checked, now check the
-	 * writeback errseq of fs dev and abort the journal if some buffer
-	 * failed to write back to the original location, otherwise the
-	 * filesystem may become inconsistent.
+	 * write out io error flag and abort the journal if some buffer failed
+	 * to write back to the original location, otherwise the filesystem
+	 * may become inconsistent.
 	 */
 	if (!is_journal_aborted(journal) &&
-	    jbd2_check_fs_dev_write_error(journal))
+	    test_bit(JBD2_CHECKPOINT_IO_ERROR, &journal->j_atomic_flags))
 		jbd2_journal_abort(journal, -EIO);
 
 	if (journal->j_sb_buffer) {
@@ -2184,9 +2176,9 @@ int jbd2_journal_destroy(journal_t *journal)
 		brelse(journal->j_sb_buffer);
 	}
 
-	if (journal->j_shrinker) {
+	if (journal->j_shrinker.flags & SHRINKER_REGISTERED) {
 		percpu_counter_destroy(&journal->j_checkpoint_jh_count);
-		shrinker_free(journal->j_shrinker);
+		unregister_shrinker(&journal->j_shrinker);
 	}
 	if (journal->j_proc_entry)
 		jbd2_stats_proc_exit(journal);

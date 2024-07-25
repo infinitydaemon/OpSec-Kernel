@@ -263,12 +263,9 @@ uvc_function_setup(struct usb_function *f, const struct usb_ctrlrequest *ctrl)
 	return 0;
 }
 
-void uvc_function_setup_continue(struct uvc_device *uvc, int disable_ep)
+void uvc_function_setup_continue(struct uvc_device *uvc)
 {
 	struct usb_composite_dev *cdev = uvc->func.config->cdev;
-
-	if (disable_ep && uvc->video.ep)
-		usb_ep_disable(uvc->video.ep);
 
 	usb_composite_setup_continue(cdev);
 }
@@ -340,11 +337,15 @@ uvc_function_set_alt(struct usb_function *f, unsigned interface, unsigned alt)
 		if (uvc->state != UVC_STATE_STREAMING)
 			return 0;
 
+		if (uvc->video.ep)
+			usb_ep_disable(uvc->video.ep);
+
 		memset(&v4l2_event, 0, sizeof(v4l2_event));
 		v4l2_event.type = UVC_EVENT_STREAMOFF;
 		v4l2_event_queue(&uvc->vdev, &v4l2_event);
 
-		return USB_GADGET_DELAYED_STATUS;
+		uvc->state = UVC_STATE_CONNECTED;
+		return 0;
 
 	case 1:
 		if (uvc->state != UVC_STATE_CONNECTED)
@@ -515,7 +516,6 @@ uvc_copy_descriptors(struct uvc_device *uvc, enum usb_device_speed speed)
 	void *mem;
 
 	switch (speed) {
-	case USB_SPEED_SUPER_PLUS:
 	case USB_SPEED_SUPER:
 		uvc_control_desc = uvc->desc.ss_control;
 		uvc_streaming_cls = uvc->desc.ss_streaming;
@@ -564,8 +564,7 @@ uvc_copy_descriptors(struct uvc_device *uvc, enum usb_device_speed speed)
 		bytes += uvc_interrupt_ep.bLength + uvc_interrupt_cs_ep.bLength;
 		n_desc += 2;
 
-		if (speed == USB_SPEED_SUPER ||
-		    speed == USB_SPEED_SUPER_PLUS) {
+		if (speed == USB_SPEED_SUPER) {
 			bytes += uvc_ss_interrupt_comp.bLength;
 			n_desc += 1;
 		}
@@ -620,8 +619,7 @@ uvc_copy_descriptors(struct uvc_device *uvc, enum usb_device_speed speed)
 
 	if (uvc->enable_interrupt_ep) {
 		UVC_COPY_DESCRIPTOR(mem, dst, &uvc_interrupt_ep);
-		if (speed == USB_SPEED_SUPER ||
-		    speed == USB_SPEED_SUPER_PLUS)
+		if (speed == USB_SPEED_SUPER)
 			UVC_COPY_DESCRIPTOR(mem, dst, &uvc_ss_interrupt_comp);
 
 		UVC_COPY_DESCRIPTOR(mem, dst, &uvc_interrupt_cs_ep);
@@ -810,13 +808,6 @@ uvc_function_bind(struct usb_configuration *c, struct usb_function *f)
 	if (IS_ERR(f->ss_descriptors)) {
 		ret = PTR_ERR(f->ss_descriptors);
 		f->ss_descriptors = NULL;
-		goto error;
-	}
-
-	f->ssp_descriptors = uvc_copy_descriptors(uvc, USB_SPEED_SUPER_PLUS);
-	if (IS_ERR(f->ssp_descriptors)) {
-		ret = PTR_ERR(f->ssp_descriptors);
-		f->ssp_descriptors = NULL;
 		goto error;
 	}
 

@@ -3,14 +3,12 @@
  * Common place for both 32- and 64-bit entry routines.
  */
 
-#include <linux/export.h>
 #include <linux/linkage.h>
+#include <asm/export.h>
 #include <asm/msr-index.h>
 #include <asm/unwind_hints.h>
 #include <asm/segment.h>
 #include <asm/cache.h>
-
-#include "calling.h"
 
 .pushsection .noinstr.text, "ax"
 
@@ -45,4 +43,3 @@ EXPORT_SYMBOL_GPL(mds_verw_sel);
 
 .popsection
 
-THUNK warn_thunk_thunk, __warn_thunk

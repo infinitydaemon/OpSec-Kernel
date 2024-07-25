@@ -4,7 +4,8 @@
 
 #include <linux/const.h>
 
-#define PAGE_SHIFT   CONFIG_PAGE_SHIFT
+#define PAGE_SHIFT   13
+
 #define PAGE_SIZE    (_AC(1,UL) << PAGE_SHIFT)
 #define PAGE_MASK    (~(PAGE_SIZE-1))
 

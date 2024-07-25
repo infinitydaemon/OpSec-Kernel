@@ -310,7 +310,7 @@ static ssize_t xilinx_dpdma_debugfs_desc_done_irq_read(char *buf)
 
 	out_str_len = strlen(XILINX_DPDMA_DEBUGFS_UINT16_MAX_STR);
 	out_str_len = min_t(size_t, XILINX_DPDMA_DEBUGFS_READ_MAX_SIZE,
-			    out_str_len + 1);
+			    out_str_len);
 	snprintf(buf, out_str_len, "%d",
 		 dpdma_debugfs.xilinx_dpdma_irq_done_count);
 
@@ -1043,8 +1043,9 @@ static int xilinx_dpdma_chan_stop(struct xilinx_dpdma_chan *chan)
 static void xilinx_dpdma_chan_done_irq(struct xilinx_dpdma_chan *chan)
 {
 	struct xilinx_dpdma_tx_desc *active;
+	unsigned long flags;
 
-	spin_lock(&chan->lock);
+	spin_lock_irqsave(&chan->lock, flags);
 
 	xilinx_dpdma_debugfs_desc_done_irq(chan);
 
@@ -1056,7 +1057,7 @@ static void xilinx_dpdma_chan_done_irq(struct xilinx_dpdma_chan *chan)
 			 "chan%u: DONE IRQ with no active descriptor!\n",
 			 chan->id);
 
-	spin_unlock(&chan->lock);
+	spin_unlock_irqrestore(&chan->lock, flags);
 }
 
 /**
@@ -1071,9 +1072,10 @@ static void xilinx_dpdma_chan_vsync_irq(struct  xilinx_dpdma_chan *chan)
 {
 	struct xilinx_dpdma_tx_desc *pending;
 	struct xilinx_dpdma_sw_desc *sw_desc;
+	unsigned long flags;
 	u32 desc_id;
 
-	spin_lock(&chan->lock);
+	spin_lock_irqsave(&chan->lock, flags);
 
 	pending = chan->desc.pending;
 	if (!chan->running || !pending)
@@ -1106,7 +1108,7 @@ static void xilinx_dpdma_chan_vsync_irq(struct  xilinx_dpdma_chan *chan)
 	spin_unlock(&chan->vchan.lock);
 
 out:
-	spin_unlock(&chan->lock);
+	spin_unlock_irqrestore(&chan->lock, flags);
 }
 
 /**
@@ -1741,7 +1743,7 @@ error:
 	return ret;
 }
 
-static void xilinx_dpdma_remove(struct platform_device *pdev)
+static int xilinx_dpdma_remove(struct platform_device *pdev)
 {
 	struct xilinx_dpdma_device *xdev = platform_get_drvdata(pdev);
 	unsigned int i;
@@ -1756,6 +1758,8 @@ static void xilinx_dpdma_remove(struct platform_device *pdev)
 
 	for (i = 0; i < ARRAY_SIZE(xdev->chan); i++)
 		xilinx_dpdma_chan_remove(xdev->chan[i]);
+
+	return 0;
 }
 
 static const struct of_device_id xilinx_dpdma_of_match[] = {
@@ -1766,7 +1770,7 @@ MODULE_DEVICE_TABLE(of, xilinx_dpdma_of_match);
 
 static struct platform_driver xilinx_dpdma_driver = {
 	.probe			= xilinx_dpdma_probe,
-	.remove_new		= xilinx_dpdma_remove,
+	.remove			= xilinx_dpdma_remove,
 	.driver			= {
 		.name		= "xilinx-zynqmp-dpdma",
 		.of_match_table	= xilinx_dpdma_of_match,

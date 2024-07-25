@@ -139,34 +139,6 @@ int riscv_of_parent_hartid(struct device_node *node, unsigned long *hartid)
 	return -1;
 }
 
-unsigned long __init riscv_get_marchid(void)
-{
-	struct riscv_cpuinfo *ci = this_cpu_ptr(&riscv_cpuinfo);
-
-#if IS_ENABLED(CONFIG_RISCV_SBI)
-	ci->marchid = sbi_spec_is_0_1() ? 0 : sbi_get_marchid();
-#elif IS_ENABLED(CONFIG_RISCV_M_MODE)
-	ci->marchid = csr_read(CSR_MARCHID);
-#else
-	ci->marchid = 0;
-#endif
-	return ci->marchid;
-}
-
-unsigned long __init riscv_get_mvendorid(void)
-{
-	struct riscv_cpuinfo *ci = this_cpu_ptr(&riscv_cpuinfo);
-
-#if IS_ENABLED(CONFIG_RISCV_SBI)
-	ci->mvendorid = sbi_spec_is_0_1() ? 0 : sbi_get_mvendorid();
-#elif IS_ENABLED(CONFIG_RISCV_M_MODE)
-	ci->mvendorid = csr_read(CSR_MVENDORID);
-#else
-	ci->mvendorid = 0;
-#endif
-	return ci->mvendorid;
-}
-
 DEFINE_PER_CPU(struct riscv_cpuinfo, riscv_cpuinfo);
 
 unsigned long riscv_cached_mvendorid(unsigned int cpu_id)
@@ -198,16 +170,12 @@ static int riscv_cpuinfo_starting(unsigned int cpu)
 	struct riscv_cpuinfo *ci = this_cpu_ptr(&riscv_cpuinfo);
 
 #if IS_ENABLED(CONFIG_RISCV_SBI)
-	if (!ci->mvendorid)
-		ci->mvendorid = sbi_spec_is_0_1() ? 0 : sbi_get_mvendorid();
-	if (!ci->marchid)
-		ci->marchid = sbi_spec_is_0_1() ? 0 : sbi_get_marchid();
+	ci->mvendorid = sbi_spec_is_0_1() ? 0 : sbi_get_mvendorid();
+	ci->marchid = sbi_spec_is_0_1() ? 0 : sbi_get_marchid();
 	ci->mimpid = sbi_spec_is_0_1() ? 0 : sbi_get_mimpid();
 #elif IS_ENABLED(CONFIG_RISCV_M_MODE)
-	if (!ci->mvendorid)
-		ci->mvendorid = csr_read(CSR_MVENDORID);
-	if (!ci->marchid)
-		ci->marchid = csr_read(CSR_MARCHID);
+	ci->mvendorid = csr_read(CSR_MVENDORID);
+	ci->marchid = csr_read(CSR_MARCHID);
 	ci->mimpid = csr_read(CSR_MIMPID);
 #else
 	ci->mvendorid = 0;
@@ -235,8 +203,9 @@ arch_initcall(riscv_cpuinfo_init);
 
 #ifdef CONFIG_PROC_FS
 
-static void print_isa(struct seq_file *f, const unsigned long *isa_bitmap)
+static void print_isa(struct seq_file *f)
 {
+	seq_puts(f, "isa\t\t: ");
 
 	if (IS_ENABLED(CONFIG_32BIT))
 		seq_write(f, "rv32", 4);
@@ -244,7 +213,7 @@ static void print_isa(struct seq_file *f, const unsigned long *isa_bitmap)
 		seq_write(f, "rv64", 4);
 
 	for (int i = 0; i < riscv_isa_ext_count; i++) {
-		if (!__riscv_isa_extension_available(isa_bitmap, riscv_isa_ext[i].id))
+		if (!__riscv_isa_extension_available(NULL, riscv_isa_ext[i].id))
 			continue;
 
 		/* Only multi-letter extensions are split by underscores */
@@ -308,15 +277,7 @@ static int c_show(struct seq_file *m, void *v)
 
 	seq_printf(m, "processor\t: %lu\n", cpu_id);
 	seq_printf(m, "hart\t\t: %lu\n", cpuid_to_hartid_map(cpu_id));
-
-	/*
-	 * For historical raisins, the isa: line is limited to the lowest common
-	 * denominator of extensions supported across all harts. A true list of
-	 * extensions supported on this hart is printed later in the hart isa:
-	 * line.
-	 */
-	seq_puts(m, "isa\t\t: ");
-	print_isa(m, NULL);
+	print_isa(m);
 	print_mmu(m);
 
 	if (acpi_disabled) {
@@ -332,13 +293,6 @@ static int c_show(struct seq_file *m, void *v)
 	seq_printf(m, "mvendorid\t: 0x%lx\n", ci->mvendorid);
 	seq_printf(m, "marchid\t\t: 0x%lx\n", ci->marchid);
 	seq_printf(m, "mimpid\t\t: 0x%lx\n", ci->mimpid);
-
-	/*
-	 * Print the ISA extensions specific to this hart, which may show
-	 * additional extensions not present across all harts.
-	 */
-	seq_puts(m, "hart isa\t: ");
-	print_isa(m, hart_isa[cpu_id].isa);
 	seq_puts(m, "\n");
 
 	return 0;

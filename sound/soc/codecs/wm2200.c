@@ -14,7 +14,7 @@
 #include <linux/pm.h>
 #include <linux/firmware.h>
 #include <linux/gcd.h>
-#include <linux/gpio/consumer.h>
+#include <linux/gpio.h>
 #include <linux/i2c.h>
 #include <linux/pm_runtime.h>
 #include <linux/regulator/consumer.h>
@@ -79,8 +79,6 @@ struct wm2200_priv {
 	struct snd_soc_component *component;
 	struct wm2200_pdata pdata;
 	struct regulator_bulk_data core_supplies[WM2200_NUM_CORE_SUPPLIES];
-	struct gpio_desc *ldo_ena;
-	struct gpio_desc *reset;
 
 	struct completion fll_lock;
 	int fll_fout;
@@ -977,10 +975,9 @@ static const struct reg_sequence wm2200_reva_patch[] = {
 
 static int wm2200_reset(struct wm2200_priv *wm2200)
 {
-	if (wm2200->reset) {
-		/* Descriptor flagged active low, so this will be inverted */
-		gpiod_set_value_cansleep(wm2200->reset, 1);
-		gpiod_set_value_cansleep(wm2200->reset, 0);
+	if (wm2200->pdata.reset) {
+		gpio_set_value_cansleep(wm2200->pdata.reset, 0);
+		gpio_set_value_cansleep(wm2200->pdata.reset, 1);
 
 		return 0;
 	} else {
@@ -2249,28 +2246,28 @@ static int wm2200_i2c_probe(struct i2c_client *i2c)
 		return ret;
 	}
 
-	wm2200->ldo_ena = devm_gpiod_get_optional(&i2c->dev, "wlf,ldo1ena",
-						  GPIOD_OUT_HIGH);
-	if (IS_ERR(wm2200->ldo_ena)) {
-		ret = PTR_ERR(wm2200->ldo_ena);
-		dev_err(&i2c->dev, "Failed to request LDOENA GPIO %d\n",
-			ret);
-		goto err_enable;
-	}
-	if (wm2200->ldo_ena) {
-		gpiod_set_consumer_name(wm2200->ldo_ena, "WM2200 LDOENA");
+	if (wm2200->pdata.ldo_ena) {
+		ret = devm_gpio_request_one(&i2c->dev, wm2200->pdata.ldo_ena,
+					    GPIOF_OUT_INIT_HIGH,
+					    "WM2200 LDOENA");
+		if (ret < 0) {
+			dev_err(&i2c->dev, "Failed to request LDOENA %d: %d\n",
+				wm2200->pdata.ldo_ena, ret);
+			goto err_enable;
+		}
 		msleep(2);
 	}
 
-	wm2200->reset = devm_gpiod_get_optional(&i2c->dev, "reset",
-						GPIOD_OUT_LOW);
-	if (IS_ERR(wm2200->reset)) {
-		ret = PTR_ERR(wm2200->reset);
-		dev_err(&i2c->dev, "Failed to request RESET GPIO %d\n",
-			ret);
-		goto err_ldo;
+	if (wm2200->pdata.reset) {
+		ret = devm_gpio_request_one(&i2c->dev, wm2200->pdata.reset,
+					    GPIOF_OUT_INIT_HIGH,
+					    "WM2200 /RESET");
+		if (ret < 0) {
+			dev_err(&i2c->dev, "Failed to request /RESET %d: %d\n",
+				wm2200->pdata.reset, ret);
+			goto err_ldo;
+		}
 	}
-	gpiod_set_consumer_name(wm2200->reset, "WM2200 /RESET");
 
 	ret = regmap_read(wm2200->regmap, WM2200_SOFTWARE_RESET, &reg);
 	if (ret < 0) {
@@ -2406,9 +2403,11 @@ err_pm_runtime:
 	if (i2c->irq)
 		free_irq(i2c->irq, wm2200);
 err_reset:
-	gpiod_set_value_cansleep(wm2200->reset, 1);
+	if (wm2200->pdata.reset)
+		gpio_set_value_cansleep(wm2200->pdata.reset, 0);
 err_ldo:
-	gpiod_set_value_cansleep(wm2200->ldo_ena, 0);
+	if (wm2200->pdata.ldo_ena)
+		gpio_set_value_cansleep(wm2200->pdata.ldo_ena, 0);
 err_enable:
 	regulator_bulk_disable(ARRAY_SIZE(wm2200->core_supplies),
 			       wm2200->core_supplies);
@@ -2422,9 +2421,10 @@ static void wm2200_i2c_remove(struct i2c_client *i2c)
 	pm_runtime_disable(&i2c->dev);
 	if (i2c->irq)
 		free_irq(i2c->irq, wm2200);
-	/* Assert RESET, disable LDO */
-	gpiod_set_value_cansleep(wm2200->reset, 1);
-	gpiod_set_value_cansleep(wm2200->ldo_ena, 0);
+	if (wm2200->pdata.reset)
+		gpio_set_value_cansleep(wm2200->pdata.reset, 0);
+	if (wm2200->pdata.ldo_ena)
+		gpio_set_value_cansleep(wm2200->pdata.ldo_ena, 0);
 	regulator_bulk_disable(ARRAY_SIZE(wm2200->core_supplies),
 			       wm2200->core_supplies);
 }
@@ -2436,7 +2436,8 @@ static int wm2200_runtime_suspend(struct device *dev)
 
 	regcache_cache_only(wm2200->regmap, true);
 	regcache_mark_dirty(wm2200->regmap);
-	gpiod_set_value_cansleep(wm2200->ldo_ena, 0);
+	if (wm2200->pdata.ldo_ena)
+		gpio_set_value_cansleep(wm2200->pdata.ldo_ena, 0);
 	regulator_bulk_disable(ARRAY_SIZE(wm2200->core_supplies),
 			       wm2200->core_supplies);
 
@@ -2456,8 +2457,8 @@ static int wm2200_runtime_resume(struct device *dev)
 		return ret;
 	}
 
-	if (wm2200->ldo_ena) {
-		gpiod_set_value_cansleep(wm2200->ldo_ena, 1);
+	if (wm2200->pdata.ldo_ena) {
+		gpio_set_value_cansleep(wm2200->pdata.ldo_ena, 1);
 		msleep(2);
 	}
 
@@ -2474,7 +2475,7 @@ static const struct dev_pm_ops wm2200_pm = {
 };
 
 static const struct i2c_device_id wm2200_i2c_id[] = {
-	{ "wm2200" },
+	{ "wm2200", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, wm2200_i2c_id);

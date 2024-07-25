@@ -16,10 +16,11 @@
  * GNU General Public License for more details.
  */
 
-#include <linux/bits.h>
-#include <linux/delay.h>
-#include <linux/init.h>
 #include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/init.h>
+#include <linux/gpio.h>
+#include <linux/delay.h>
 
 #include "fbtft.h"
 

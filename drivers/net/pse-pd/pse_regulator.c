@@ -24,39 +24,35 @@ static struct pse_reg_priv *to_pse_reg(struct pse_controller_dev *pcdev)
 }
 
 static int
-pse_reg_pi_enable(struct pse_controller_dev *pcdev, int id)
+pse_reg_ethtool_set_config(struct pse_controller_dev *pcdev, unsigned long id,
+			   struct netlink_ext_ack *extack,
+			   const struct pse_control_config *config)
 {
 	struct pse_reg_priv *priv = to_pse_reg(pcdev);
 	int ret;
 
-	ret = regulator_enable(priv->ps);
+	if (priv->admin_state == config->admin_cotrol)
+		return 0;
+
+	switch (config->admin_cotrol) {
+	case ETHTOOL_PODL_PSE_ADMIN_STATE_ENABLED:
+		ret = regulator_enable(priv->ps);
+		break;
+	case ETHTOOL_PODL_PSE_ADMIN_STATE_DISABLED:
+		ret = regulator_disable(priv->ps);
+		break;
+	default:
+		dev_err(pcdev->dev, "Unknown admin state %i\n",
+			config->admin_cotrol);
+		ret = -ENOTSUPP;
+	}
+
 	if (ret)
 		return ret;
 
-	priv->admin_state = ETHTOOL_PODL_PSE_ADMIN_STATE_ENABLED;
+	priv->admin_state = config->admin_cotrol;
+
 	return 0;
-}
-
-static int
-pse_reg_pi_disable(struct pse_controller_dev *pcdev, int id)
-{
-	struct pse_reg_priv *priv = to_pse_reg(pcdev);
-	int ret;
-
-	ret = regulator_disable(priv->ps);
-	if (ret)
-		return ret;
-
-	priv->admin_state = ETHTOOL_PODL_PSE_ADMIN_STATE_DISABLED;
-	return 0;
-}
-
-static int
-pse_reg_pi_is_enabled(struct pse_controller_dev *pcdev, int id)
-{
-	struct pse_reg_priv *priv = to_pse_reg(pcdev);
-
-	return regulator_is_enabled(priv->ps);
 }
 
 static int
@@ -84,9 +80,7 @@ pse_reg_ethtool_get_status(struct pse_controller_dev *pcdev, unsigned long id,
 
 static const struct pse_controller_ops pse_reg_ops = {
 	.ethtool_get_status = pse_reg_ethtool_get_status,
-	.pi_enable = pse_reg_pi_enable,
-	.pi_is_enabled = pse_reg_pi_is_enabled,
-	.pi_disable = pse_reg_pi_disable,
+	.ethtool_set_config = pse_reg_ethtool_set_config,
 };
 
 static int
@@ -122,7 +116,6 @@ pse_reg_probe(struct platform_device *pdev)
 	priv->pcdev.owner = THIS_MODULE;
 	priv->pcdev.ops = &pse_reg_ops;
 	priv->pcdev.dev = dev;
-	priv->pcdev.types = ETHTOOL_PSE_PODL;
 	ret = devm_pse_controller_register(dev, &priv->pcdev);
 	if (ret) {
 		dev_err(dev, "failed to register PSE controller (%pe)\n",

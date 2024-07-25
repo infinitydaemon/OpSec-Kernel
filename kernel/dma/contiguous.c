@@ -37,6 +37,12 @@
 
 #define pr_fmt(fmt) "cma: " fmt
 
+#ifdef CONFIG_CMA_DEBUG
+#ifndef DEBUG
+#  define DEBUG
+#endif
+#endif
+
 #include <asm/page.h>
 
 #include <linux/memblock.h>

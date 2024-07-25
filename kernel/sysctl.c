@@ -1710,9 +1710,9 @@ static struct ctl_table kern_table[] = {
 	{
 		.procname	= "ftrace_dump_on_oops",
 		.data		= &ftrace_dump_on_oops,
-		.maxlen		= MAX_TRACER_SIZE,
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dostring,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname	= "traceoff_on_warning",
@@ -1939,6 +1939,15 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= proc_dointvec,
 	},
 #endif
+#ifdef CONFIG_IA64
+	{
+		.procname	= "unaligned-dump-stack",
+		.data		= &unaligned_dump_stack,
+		.maxlen		= sizeof (int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+#endif
 #ifdef CONFIG_RT_MUTEXES
 	{
 		.procname	= "max_lock_depth",
@@ -1974,7 +1983,7 @@ static struct ctl_table kern_table[] = {
 		.data		= &sysctl_perf_event_sample_rate,
 		.maxlen		= sizeof(sysctl_perf_event_sample_rate),
 		.mode		= 0644,
-		.proc_handler	= perf_event_max_sample_rate_handler,
+		.proc_handler	= perf_proc_update_handler,
 		.extra1		= SYSCTL_ONE,
 	},
 	{
@@ -2034,6 +2043,7 @@ static struct ctl_table kern_table[] = {
 		.extra2		= SYSCTL_INT_MAX,
 	},
 #endif
+	{ }
 };
 
 static struct ctl_table vm_table[] = {
@@ -2239,6 +2249,7 @@ static struct ctl_table vm_table[] = {
 		.extra2		= (void *)&mmap_rnd_compat_bits_max,
 	},
 #endif
+	{ }
 };
 
 int __init sysctl_init_bases(void)

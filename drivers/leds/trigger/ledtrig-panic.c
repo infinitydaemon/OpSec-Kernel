@@ -21,15 +21,24 @@ static struct led_trigger *trigger;
  */
 static void led_trigger_set_panic(struct led_classdev *led_cdev)
 {
-	if (led_cdev->trigger)
-		list_del(&led_cdev->trig_list);
-	list_add_tail(&led_cdev->trig_list, &trigger->led_cdevs);
+	struct led_trigger *trig;
 
-	/* Avoid the delayed blink path */
-	led_cdev->blink_delay_on = 0;
-	led_cdev->blink_delay_off = 0;
+	list_for_each_entry(trig, &trigger_list, next_trig) {
+		if (strcmp("panic", trig->name))
+			continue;
+		if (led_cdev->trigger)
+			list_del(&led_cdev->trig_list);
+		list_add_tail(&led_cdev->trig_list, &trig->led_cdevs);
 
-	led_cdev->trigger = trigger;
+		/* Avoid the delayed blink path */
+		led_cdev->blink_delay_on = 0;
+		led_cdev->blink_delay_off = 0;
+
+		led_cdev->trigger = trig;
+		if (trig->activate)
+			trig->activate(led_cdev);
+		break;
+	}
 }
 
 static int led_trigger_panic_notifier(struct notifier_block *nb,

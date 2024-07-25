@@ -3,7 +3,7 @@
 # Makefile for ALSA
 #
 
-snd-harmony-y := harmony.o
+snd-harmony-objs := harmony.o
 
 # Toplevel Module Dependency
 obj-$(CONFIG_SND_HARMONY) += snd-harmony.o

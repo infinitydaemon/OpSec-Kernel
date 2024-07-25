@@ -19,9 +19,8 @@
 #include <sound/pcm.h>
 #include <sound/soc.h>
 #include <sound/compress_driver.h>
-
+#include <asm/intel-mid.h>
 #include <asm/platform_sst_audio.h>
-
 #include "../sst-mfld-platform.h"
 #include "sst.h"
 

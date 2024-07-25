@@ -61,9 +61,17 @@ static const char * const board[] __initconst = {
 	NULL
 };
 
+/*
+ * Called very early, MMU is off, device-tree isn't unflattened
+ */
+static int __init mpc837x_rdb_probe(void)
+{
+	return of_device_compatible_match(of_root, board);
+}
+
 define_machine(mpc837x_rdb) {
 	.name			= "MPC837x RDB/WLAN",
-	.compatibles		= board,
+	.probe			= mpc837x_rdb_probe,
 	.setup_arch		= mpc837x_rdb_setup_arch,
 	.discover_phbs  	= mpc83xx_setup_pci,
 	.init_IRQ		= mpc83xx_ipic_init_IRQ,

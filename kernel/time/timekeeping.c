@@ -237,9 +237,7 @@ static void timekeeping_check_update(struct timekeeper *tk, u64 offset)
 	}
 }
 
-static inline u64 timekeeping_cycles_to_ns(const struct tk_read_base *tkr, u64 cycles);
-
-static inline u64 timekeeping_debug_get_ns(const struct tk_read_base *tkr)
+static inline u64 timekeeping_get_delta(const struct tk_read_base *tkr)
 {
 	struct timekeeper *tk = &tk_core.timekeeper;
 	u64 now, last, mask, max, delta;
@@ -266,23 +264,34 @@ static inline u64 timekeeping_debug_get_ns(const struct tk_read_base *tkr)
 	 * Try to catch underflows by checking if we are seeing small
 	 * mask-relative negative values.
 	 */
-	if (unlikely((~delta & mask) < (mask >> 3)))
+	if (unlikely((~delta & mask) < (mask >> 3))) {
 		tk->underflow_seen = 1;
+		delta = 0;
+	}
 
-	/* Check for multiplication overflows */
-	if (unlikely(delta > max))
+	/* Cap delta value to the max_cycles values to avoid mult overflows */
+	if (unlikely(delta > max)) {
 		tk->overflow_seen = 1;
+		delta = tkr->clock->max_cycles;
+	}
 
-	/* timekeeping_cycles_to_ns() handles both under and overflow */
-	return timekeeping_cycles_to_ns(tkr, now);
+	return delta;
 }
 #else
 static inline void timekeeping_check_update(struct timekeeper *tk, u64 offset)
 {
 }
-static inline u64 timekeeping_debug_get_ns(const struct tk_read_base *tkr)
+static inline u64 timekeeping_get_delta(const struct tk_read_base *tkr)
 {
-	BUG();
+	u64 cycle_now, delta;
+
+	/* read clocksource */
+	cycle_now = tk_clock_read(tkr);
+
+	/* calculate the delta since the last update_wall_time */
+	delta = clocksource_delta(cycle_now, tkr->cycle_last, tkr->mask);
+
+	return delta;
 }
 #endif
 
@@ -361,46 +370,32 @@ static void tk_setup_internals(struct timekeeper *tk, struct clocksource *clock)
 }
 
 /* Timekeeper helper functions. */
-static noinline u64 delta_to_ns_safe(const struct tk_read_base *tkr, u64 delta)
+
+static inline u64 timekeeping_delta_to_ns(const struct tk_read_base *tkr, u64 delta)
 {
-	return mul_u64_u32_add_u64_shr(delta, tkr->mult, tkr->xtime_nsec, tkr->shift);
-}
+	u64 nsec;
 
-static inline u64 timekeeping_cycles_to_ns(const struct tk_read_base *tkr, u64 cycles)
-{
-	/* Calculate the delta since the last update_wall_time() */
-	u64 mask = tkr->mask, delta = (cycles - tkr->cycle_last) & mask;
+	nsec = delta * tkr->mult + tkr->xtime_nsec;
+	nsec >>= tkr->shift;
 
-	/*
-	 * This detects both negative motion and the case where the delta
-	 * overflows the multiplication with tkr->mult.
-	 */
-	if (unlikely(delta > tkr->clock->max_cycles)) {
-		/*
-		 * Handle clocksource inconsistency between CPUs to prevent
-		 * time from going backwards by checking for the MSB of the
-		 * mask being set in the delta.
-		 */
-		if (delta & ~(mask >> 1))
-			return tkr->xtime_nsec >> tkr->shift;
-
-		return delta_to_ns_safe(tkr, delta);
-	}
-
-	return ((delta * tkr->mult) + tkr->xtime_nsec) >> tkr->shift;
-}
-
-static __always_inline u64 __timekeeping_get_ns(const struct tk_read_base *tkr)
-{
-	return timekeeping_cycles_to_ns(tkr, tk_clock_read(tkr));
+	return nsec;
 }
 
 static inline u64 timekeeping_get_ns(const struct tk_read_base *tkr)
 {
-	if (IS_ENABLED(CONFIG_DEBUG_TIMEKEEPING))
-		return timekeeping_debug_get_ns(tkr);
+	u64 delta;
 
-	return __timekeeping_get_ns(tkr);
+	delta = timekeeping_get_delta(tkr);
+	return timekeeping_delta_to_ns(tkr, delta);
+}
+
+static inline u64 timekeeping_cycles_to_ns(const struct tk_read_base *tkr, u64 cycles)
+{
+	u64 delta;
+
+	/* calculate the delta since the last update_wall_time */
+	delta = clocksource_delta(cycles, tkr->cycle_last, tkr->mask);
+	return timekeeping_delta_to_ns(tkr, delta);
 }
 
 /**
@@ -436,6 +431,14 @@ static void update_fast_timekeeper(const struct tk_read_base *tkr,
 	memcpy(base + 1, base, sizeof(*base));
 }
 
+static __always_inline u64 fast_tk_get_delta_ns(struct tk_read_base *tkr)
+{
+	u64 delta, cycles = tk_clock_read(tkr);
+
+	delta = clocksource_delta(cycles, tkr->cycle_last, tkr->mask);
+	return timekeeping_delta_to_ns(tkr, delta);
+}
+
 static __always_inline u64 __ktime_get_fast_ns(struct tk_fast *tkf)
 {
 	struct tk_read_base *tkr;
@@ -446,7 +449,7 @@ static __always_inline u64 __ktime_get_fast_ns(struct tk_fast *tkf)
 		seq = raw_read_seqcount_latch(&tkf->seq);
 		tkr = tkf->base + (seq & 0x01);
 		now = ktime_to_ns(tkr->base);
-		now += __timekeeping_get_ns(tkr);
+		now += fast_tk_get_delta_ns(tkr);
 	} while (raw_read_seqcount_latch_retry(&tkf->seq, seq));
 
 	return now;
@@ -562,7 +565,7 @@ static __always_inline u64 __ktime_get_real_fast(struct tk_fast *tkf, u64 *mono)
 		tkr = tkf->base + (seq & 0x01);
 		basem = ktime_to_ns(tkr->base);
 		baser = ktime_to_ns(tkr->base_real);
-		delta = __timekeeping_get_ns(tkr);
+		delta = fast_tk_get_delta_ns(tkr);
 	} while (raw_read_seqcount_latch_retry(&tkf->seq, seq));
 
 	if (mono)
@@ -797,15 +800,10 @@ static void timekeeping_forward_now(struct timekeeper *tk)
 	tk->tkr_mono.cycle_last = cycle_now;
 	tk->tkr_raw.cycle_last  = cycle_now;
 
-	while (delta > 0) {
-		u64 max = tk->tkr_mono.clock->max_cycles;
-		u64 incr = delta < max ? delta : max;
+	tk->tkr_mono.xtime_nsec += delta * tk->tkr_mono.mult;
+	tk->tkr_raw.xtime_nsec += delta * tk->tkr_raw.mult;
 
-		tk->tkr_mono.xtime_nsec += incr * tk->tkr_mono.mult;
-		tk->tkr_raw.xtime_nsec += incr * tk->tkr_raw.mult;
-		tk_normalize_xtime(tk);
-		delta -= incr;
-	}
+	tk_normalize_xtime(tk);
 }
 
 /**
@@ -1236,12 +1234,11 @@ int get_device_system_crosststamp(int (*get_time_fn)
 			return ret;
 
 		/*
-		 * Verify that the clocksource ID associated with the captured
-		 * system counter value is the same as for the currently
-		 * installed timekeeper clocksource
+		 * Verify that the clocksource associated with the captured
+		 * system counter value is the same as the currently installed
+		 * timekeeper clocksource
 		 */
-		if (system_counterval.cs_id == CSID_GENERIC ||
-		    tk->tkr_mono.clock->id != system_counterval.cs_id)
+		if (tk->tkr_mono.clock != system_counterval.cs)
 			return -ENODEV;
 		cycles = system_counterval.cycles;
 

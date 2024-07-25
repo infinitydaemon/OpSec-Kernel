@@ -1258,8 +1258,8 @@ static int mlx4_en_check_rxfh_func(struct net_device *dev, u8 hfunc)
 	return -EINVAL;
 }
 
-static int mlx4_en_get_rxfh(struct net_device *dev,
-			    struct ethtool_rxfh_param *rxfh)
+static int mlx4_en_get_rxfh(struct net_device *dev, u32 *ring_index, u8 *key,
+			    u8 *hfunc)
 {
 	struct mlx4_en_priv *priv = netdev_priv(dev);
 	u32 n = mlx4_en_get_rxfh_indir_size(dev);
@@ -1269,19 +1269,19 @@ static int mlx4_en_get_rxfh(struct net_device *dev,
 	rss_rings = rounddown_pow_of_two(rss_rings);
 
 	for (i = 0; i < n; i++) {
-		if (!rxfh->indir)
+		if (!ring_index)
 			break;
-		rxfh->indir[i] = i % rss_rings;
+		ring_index[i] = i % rss_rings;
 	}
-	if (rxfh->key)
-		memcpy(rxfh->key, priv->rss_key, MLX4_EN_RSS_KEY_SIZE);
-	rxfh->hfunc = priv->rss_hash_fn;
+	if (key)
+		memcpy(key, priv->rss_key, MLX4_EN_RSS_KEY_SIZE);
+	if (hfunc)
+		*hfunc = priv->rss_hash_fn;
 	return 0;
 }
 
-static int mlx4_en_set_rxfh(struct net_device *dev,
-			    struct ethtool_rxfh_param *rxfh,
-			    struct netlink_ext_ack *extack)
+static int mlx4_en_set_rxfh(struct net_device *dev, const u32 *ring_index,
+			    const u8 *key, const u8 hfunc)
 {
 	struct mlx4_en_priv *priv = netdev_priv(dev);
 	u32 n = mlx4_en_get_rxfh_indir_size(dev);
@@ -1295,12 +1295,12 @@ static int mlx4_en_set_rxfh(struct net_device *dev,
 	 * between rings
 	 */
 	for (i = 0; i < n; i++) {
-		if (!rxfh->indir)
+		if (!ring_index)
 			break;
-		if (i > 0 && !rxfh->indir[i] && !rss_rings)
+		if (i > 0 && !ring_index[i] && !rss_rings)
 			rss_rings = i;
 
-		if (rxfh->indir[i] != (i % (rss_rings ?: n)))
+		if (ring_index[i] != (i % (rss_rings ?: n)))
 			return -EINVAL;
 	}
 
@@ -1311,8 +1311,8 @@ static int mlx4_en_set_rxfh(struct net_device *dev,
 	if (!is_power_of_2(rss_rings))
 		return -EINVAL;
 
-	if (rxfh->hfunc != ETH_RSS_HASH_NO_CHANGE) {
-		err = mlx4_en_check_rxfh_func(dev, rxfh->hfunc);
+	if (hfunc != ETH_RSS_HASH_NO_CHANGE) {
+		err = mlx4_en_check_rxfh_func(dev, hfunc);
 		if (err)
 			return err;
 	}
@@ -1323,12 +1323,12 @@ static int mlx4_en_set_rxfh(struct net_device *dev,
 		mlx4_en_stop_port(dev, 1);
 	}
 
-	if (rxfh->indir)
+	if (ring_index)
 		priv->prof->rss_rings = rss_rings;
-	if (rxfh->key)
-		memcpy(priv->rss_key, rxfh->key, MLX4_EN_RSS_KEY_SIZE);
-	if (rxfh->hfunc !=  ETH_RSS_HASH_NO_CHANGE)
-		priv->rss_hash_fn = rxfh->hfunc;
+	if (key)
+		memcpy(priv->rss_key, key, MLX4_EN_RSS_KEY_SIZE);
+	if (hfunc !=  ETH_RSS_HASH_NO_CHANGE)
+		priv->rss_hash_fn = hfunc;
 
 	if (port_up) {
 		err = mlx4_en_start_port(dev);

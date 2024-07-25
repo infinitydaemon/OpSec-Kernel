@@ -26,15 +26,17 @@
 
 /**
  * struct crystalcove_pwm - Crystal Cove PWM controller
+ * @chip: the abstract pwm_chip structure.
  * @regmap: the regmap from the parent device.
  */
 struct crystalcove_pwm {
+	struct pwm_chip chip;
 	struct regmap *regmap;
 };
 
 static inline struct crystalcove_pwm *to_crc_pwm(struct pwm_chip *chip)
 {
-	return pwmchip_get_drvdata(chip);
+	return container_of(chip, struct crystalcove_pwm, chip);
 }
 
 static int crc_pwm_calc_clk_div(int period_ns)
@@ -53,7 +55,7 @@ static int crc_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 			 const struct pwm_state *state)
 {
 	struct crystalcove_pwm *crc_pwm = to_crc_pwm(chip);
-	struct device *dev = pwmchip_parent(chip);
+	struct device *dev = crc_pwm->chip.dev;
 	int err;
 
 	if (state->period > PWM_MAX_PERIOD_NS) {
@@ -123,7 +125,7 @@ static int crc_pwm_get_state(struct pwm_chip *chip, struct pwm_device *pwm,
 			     struct pwm_state *state)
 {
 	struct crystalcove_pwm *crc_pwm = to_crc_pwm(chip);
-	struct device *dev = pwmchip_parent(chip);
+	struct device *dev = crc_pwm->chip.dev;
 	unsigned int clk_div, clk_div_reg, duty_cycle_reg;
 	int error;
 
@@ -158,22 +160,22 @@ static const struct pwm_ops crc_pwm_ops = {
 
 static int crystalcove_pwm_probe(struct platform_device *pdev)
 {
-	struct pwm_chip *chip;
-	struct crystalcove_pwm *crc_pwm;
+	struct crystalcove_pwm *pwm;
 	struct device *dev = pdev->dev.parent;
 	struct intel_soc_pmic *pmic = dev_get_drvdata(dev);
 
-	chip = devm_pwmchip_alloc(&pdev->dev, 1, sizeof(*crc_pwm));
-	if (IS_ERR(chip))
-		return PTR_ERR(chip);
-	crc_pwm = to_crc_pwm(chip);
+	pwm = devm_kzalloc(&pdev->dev, sizeof(*pwm), GFP_KERNEL);
+	if (!pwm)
+		return -ENOMEM;
 
-	chip->ops = &crc_pwm_ops;
+	pwm->chip.dev = &pdev->dev;
+	pwm->chip.ops = &crc_pwm_ops;
+	pwm->chip.npwm = 1;
 
 	/* get the PMIC regmap */
-	crc_pwm->regmap = pmic->regmap;
+	pwm->regmap = pmic->regmap;
 
-	return devm_pwmchip_add(&pdev->dev, chip);
+	return devm_pwmchip_add(&pdev->dev, &pwm->chip);
 }
 
 static struct platform_driver crystalcove_pwm_driver = {
@@ -182,8 +184,5 @@ static struct platform_driver crystalcove_pwm_driver = {
 		.name = "crystal_cove_pwm",
 	},
 };
-module_platform_driver(crystalcove_pwm_driver);
 
-MODULE_ALIAS("platform:crystal_cove_pwm");
-MODULE_DESCRIPTION("Intel Crystalcove (CRC) PWM support");
-MODULE_LICENSE("GPL");
+builtin_platform_driver(crystalcove_pwm_driver);

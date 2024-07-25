@@ -21,9 +21,8 @@
 
 #include "kernfs-internal.h"
 
-struct kmem_cache *kernfs_node_cache __ro_after_init;
-struct kmem_cache *kernfs_iattrs_cache __ro_after_init;
-struct kernfs_global_locks *kernfs_locks __ro_after_init;
+struct kmem_cache *kernfs_node_cache, *kernfs_iattrs_cache;
+struct kernfs_global_locks *kernfs_locks;
 
 static int kernfs_sop_show_options(struct seq_file *sf, struct dentry *dentry)
 {
@@ -125,6 +124,9 @@ static struct dentry *__kernfs_fh_to_dentry(struct super_block *sb,
 
 	inode = kernfs_get_inode(sb, kn);
 	kernfs_put(kn);
+	if (!inode)
+		return ERR_PTR(-ESTALE);
+
 	return d_obtain_alias(inode);
 }
 
@@ -206,7 +208,7 @@ struct dentry *kernfs_node_dentry(struct kernfs_node *kn,
 				  struct super_block *sb)
 {
 	struct dentry *dentry;
-	struct kernfs_node *knparent;
+	struct kernfs_node *knparent = NULL;
 
 	BUG_ON(sb->s_op != &kernfs_sops);
 
@@ -263,7 +265,7 @@ static int kernfs_fill_super(struct super_block *sb, struct kernfs_fs_context *k
 	sb->s_time_gran = 1;
 
 	/* sysfs dentries and inodes don't require IO to create */
-	sb->s_shrink->seeks = 0;
+	sb->s_shrink.seeks = 0;
 
 	/* get root inode, initialize and unlock it */
 	down_read(&kf_root->kernfs_rwsem);
@@ -358,9 +360,7 @@ int kernfs_get_tree(struct fs_context *fc)
 		}
 		sb->s_flags |= SB_ACTIVE;
 
-		uuid_t uuid;
-		uuid_gen(&uuid);
-		super_set_uuid(sb, uuid.b, sizeof(uuid));
+		uuid_gen(&sb->s_uuid);
 
 		down_write(&root->kernfs_supers_rwsem);
 		list_add(&info->node, &info->root->supers);

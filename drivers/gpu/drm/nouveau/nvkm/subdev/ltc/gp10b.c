@@ -28,14 +28,19 @@ static void
 gp10b_ltc_init(struct nvkm_ltc *ltc)
 {
 	struct nvkm_device *device = ltc->subdev.device;
-	u32 sid;
+	struct iommu_fwspec *spec;
 
 	nvkm_wr32(device, 0x17e27c, ltc->ltc_nr);
 	nvkm_wr32(device, 0x17e000, ltc->ltc_nr);
 	nvkm_wr32(device, 0x100800, ltc->ltc_nr);
 
-	if (tegra_dev_iommu_get_stream_id(device->dev, &sid))
+	spec = dev_iommu_fwspec_get(device->dev);
+	if (spec) {
+		u32 sid = spec->ids[0] & 0xffff;
+
+		/* stream ID */
 		nvkm_wr32(device, 0x160000, sid << 2);
+	}
 }
 
 static const struct nvkm_ltc_func

@@ -113,7 +113,7 @@ void set_pmd_at(struct mm_struct *mm, unsigned long addr,
 
 	WARN_ON(pte_hw_valid(pmd_pte(*pmdp)) && !pte_protnone(pmd_pte(*pmdp)));
 	assert_spin_locked(pmd_lockptr(mm, pmdp));
-	WARN_ON(!(pmd_leaf(pmd)));
+	WARN_ON(!(pmd_large(pmd)));
 #endif
 	trace_hugepage_set_pmd(addr, pmd_val(pmd));
 	return set_pte_at(mm, addr, pmdp_ptep(pmdp), pmd_pte(pmd));
@@ -638,10 +638,12 @@ pgprot_t vm_get_page_prot(unsigned long vm_flags)
 	unsigned long prot;
 
 	/* Radix supports execute-only, but protection_map maps X -> RX */
-	if (!radix_enabled() && ((vm_flags & VM_ACCESS_FLAGS) == VM_EXEC))
-		vm_flags |= VM_READ;
-
-	prot = pgprot_val(protection_map[vm_flags & (VM_ACCESS_FLAGS | VM_SHARED)]);
+	if (radix_enabled() && ((vm_flags & VM_ACCESS_FLAGS) == VM_EXEC)) {
+		prot = pgprot_val(PAGE_EXECONLY);
+	} else {
+		prot = pgprot_val(protection_map[vm_flags &
+						 (VM_ACCESS_FLAGS | VM_SHARED)]);
+	}
 
 	if (vm_flags & VM_SAO)
 		prot |= _PAGE_SAO;

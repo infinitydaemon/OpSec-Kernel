@@ -8,13 +8,18 @@
 
 #include <linux/inet.h>
 #include <linux/kernel.h>
+#include <net/tcp.h>
 #include <net/inet_common.h>
 #include <net/netns/generic.h>
 #include <net/mptcp.h>
+#include <net/genetlink.h>
+#include <uapi/linux/mptcp.h>
 
 #include "protocol.h"
 #include "mib.h"
-#include "mptcp_pm_gen.h"
+
+/* forward declaration */
+static struct genl_family mptcp_genl_family;
 
 static int pm_nl_pernet_id;
 
@@ -500,12 +505,15 @@ __lookup_addr_by_id(struct pm_nl_pernet *pernet, unsigned int id)
 }
 
 static struct mptcp_pm_addr_entry *
-__lookup_addr(struct pm_nl_pernet *pernet, const struct mptcp_addr_info *info)
+__lookup_addr(struct pm_nl_pernet *pernet, const struct mptcp_addr_info *info,
+	      bool lookup_by_id)
 {
 	struct mptcp_pm_addr_entry *entry;
 
 	list_for_each_entry(entry, &pernet->local_addr_list, list) {
-		if (mptcp_addresses_equal(&entry->addr, info, entry->addr.port))
+		if ((!lookup_by_id &&
+		     mptcp_addresses_equal(&entry->addr, info, entry->addr.port)) ||
+		    (lookup_by_id && entry->addr.id == info->id))
 			return entry;
 	}
 	return NULL;
@@ -535,7 +543,7 @@ static void mptcp_pm_create_subflow_or_signal_addr(struct mptcp_sock *msk)
 
 		mptcp_local_address((struct sock_common *)msk->first, &mpc_addr);
 		rcu_read_lock();
-		entry = __lookup_addr(pernet, &mpc_addr);
+		entry = __lookup_addr(pernet, &mpc_addr, false);
 		if (entry) {
 			__clear_bit(entry->addr.id, msk->pm.id_avail_bitmap);
 			msk->mpc_endpoint_id = entry->addr.id;
@@ -677,6 +685,7 @@ static void mptcp_pm_nl_add_addr_received(struct mptcp_sock *msk)
 	unsigned int add_addr_accept_max;
 	struct mptcp_addr_info remote;
 	unsigned int subflows_max;
+	bool sf_created = false;
 	int i, nr;
 
 	add_addr_accept_max = mptcp_pm_get_add_addr_accept_max(msk);
@@ -704,15 +713,18 @@ static void mptcp_pm_nl_add_addr_received(struct mptcp_sock *msk)
 	if (nr == 0)
 		return;
 
-	msk->pm.add_addr_accepted++;
-	if (msk->pm.add_addr_accepted >= add_addr_accept_max ||
-	    msk->pm.subflows >= subflows_max)
-		WRITE_ONCE(msk->pm.accept_addr, false);
-
 	spin_unlock_bh(&msk->pm.lock);
 	for (i = 0; i < nr; i++)
-		__mptcp_subflow_connect(sk, &addrs[i], &remote);
+		if (__mptcp_subflow_connect(sk, &addrs[i], &remote) == 0)
+			sf_created = true;
 	spin_lock_bh(&msk->pm.lock);
+
+	if (sf_created) {
+		msk->pm.add_addr_accepted++;
+		if (msk->pm.add_addr_accepted >= add_addr_accept_max ||
+		    msk->pm.subflows >= subflows_max)
+			WRITE_ONCE(msk->pm.accept_addr, false);
+	}
 }
 
 void mptcp_pm_nl_addr_send_ack(struct mptcp_sock *msk)
@@ -814,10 +826,13 @@ static void mptcp_pm_nl_rm_addr_or_subflow(struct mptcp_sock *msk,
 			spin_lock_bh(&msk->pm.lock);
 
 			removed = true;
-			__MPTCP_INC_STATS(sock_net(sk), rm_type);
+			if (rm_type == MPTCP_MIB_RMSUBFLOW)
+				__MPTCP_INC_STATS(sock_net(sk), rm_type);
 		}
 		if (rm_type == MPTCP_MIB_RMSUBFLOW)
 			__set_bit(rm_id ? rm_id : msk->mpc_endpoint_id, msk->pm.id_avail_bitmap);
+		else if (rm_type == MPTCP_MIB_RMADDR)
+			__MPTCP_INC_STATS(sock_net(sk), rm_type);
 		if (!removed)
 			continue;
 
@@ -1101,8 +1116,31 @@ int mptcp_pm_nl_get_local_id(struct mptcp_sock *msk, struct mptcp_addr_info *skc
 static const struct genl_multicast_group mptcp_pm_mcgrps[] = {
 	[MPTCP_PM_CMD_GRP_OFFSET]	= { .name = MPTCP_PM_CMD_GRP_NAME, },
 	[MPTCP_PM_EV_GRP_OFFSET]        = { .name = MPTCP_PM_EV_GRP_NAME,
-					    .flags = GENL_MCAST_CAP_NET_ADMIN,
+					    .flags = GENL_UNS_ADMIN_PERM,
 					  },
+};
+
+static const struct nla_policy
+mptcp_pm_addr_policy[MPTCP_PM_ADDR_ATTR_MAX + 1] = {
+	[MPTCP_PM_ADDR_ATTR_FAMILY]	= { .type	= NLA_U16,	},
+	[MPTCP_PM_ADDR_ATTR_ID]		= { .type	= NLA_U8,	},
+	[MPTCP_PM_ADDR_ATTR_ADDR4]	= { .type	= NLA_U32,	},
+	[MPTCP_PM_ADDR_ATTR_ADDR6]	=
+		NLA_POLICY_EXACT_LEN(sizeof(struct in6_addr)),
+	[MPTCP_PM_ADDR_ATTR_PORT]	= { .type	= NLA_U16	},
+	[MPTCP_PM_ADDR_ATTR_FLAGS]	= { .type	= NLA_U32	},
+	[MPTCP_PM_ADDR_ATTR_IF_IDX]     = { .type	= NLA_S32	},
+};
+
+static const struct nla_policy mptcp_pm_policy[MPTCP_PM_ATTR_MAX + 1] = {
+	[MPTCP_PM_ATTR_ADDR]		=
+					NLA_POLICY_NESTED(mptcp_pm_addr_policy),
+	[MPTCP_PM_ATTR_RCV_ADD_ADDRS]	= { .type	= NLA_U32,	},
+	[MPTCP_PM_ATTR_SUBFLOWS]	= { .type	= NLA_U32,	},
+	[MPTCP_PM_ATTR_TOKEN]		= { .type	= NLA_U32,	},
+	[MPTCP_PM_ATTR_LOC_ID]		= { .type	= NLA_U8,	},
+	[MPTCP_PM_ATTR_ADDR_REMOTE]	=
+					NLA_POLICY_NESTED(mptcp_pm_addr_policy),
 };
 
 void mptcp_pm_nl_subflow_chk_stale(const struct mptcp_sock *msk, struct sock *ssk)
@@ -1166,7 +1204,7 @@ static int mptcp_pm_parse_pm_addr_attr(struct nlattr *tb[],
 
 	/* no validation needed - was already done via nested policy */
 	err = nla_parse_nested_deprecated(tb, MPTCP_PM_ADDR_ATTR_MAX, attr,
-					  mptcp_pm_address_nl_policy, info->extack);
+					  mptcp_pm_addr_policy, info->extack);
 	if (err)
 		return err;
 
@@ -1287,15 +1325,15 @@ static bool mptcp_pm_has_addr_attr_id(const struct nlattr *attr,
 	struct nlattr *tb[MPTCP_PM_ADDR_ATTR_MAX + 1];
 
 	if (!nla_parse_nested_deprecated(tb, MPTCP_PM_ADDR_ATTR_MAX, attr,
-					 mptcp_pm_address_nl_policy, info->extack) &&
+					 mptcp_pm_addr_policy, info->extack) &&
 	    tb[MPTCP_PM_ADDR_ATTR_ID])
 		return true;
 	return false;
 }
 
-int mptcp_pm_nl_add_addr_doit(struct sk_buff *skb, struct genl_info *info)
+static int mptcp_nl_cmd_add_addr(struct sk_buff *skb, struct genl_info *info)
 {
-	struct nlattr *attr = info->attrs[MPTCP_PM_ENDPOINT_ADDR];
+	struct nlattr *attr = info->attrs[MPTCP_PM_ATTR_ADDR];
 	struct pm_nl_pernet *pernet = genl_info_pm_nl(info);
 	struct mptcp_pm_addr_entry addr, *entry;
 	int ret;
@@ -1475,9 +1513,9 @@ next:
 	return 0;
 }
 
-int mptcp_pm_nl_del_addr_doit(struct sk_buff *skb, struct genl_info *info)
+static int mptcp_nl_cmd_del_addr(struct sk_buff *skb, struct genl_info *info)
 {
-	struct nlattr *attr = info->attrs[MPTCP_PM_ENDPOINT_ADDR];
+	struct nlattr *attr = info->attrs[MPTCP_PM_ATTR_ADDR];
 	struct pm_nl_pernet *pernet = genl_info_pm_nl(info);
 	struct mptcp_pm_addr_entry addr, *entry;
 	unsigned int addr_max;
@@ -1542,8 +1580,8 @@ void mptcp_pm_remove_addrs(struct mptcp_sock *msk, struct list_head *rm_list)
 	}
 }
 
-static void mptcp_pm_remove_addrs_and_subflows(struct mptcp_sock *msk,
-					       struct list_head *rm_list)
+void mptcp_pm_remove_addrs_and_subflows(struct mptcp_sock *msk,
+					struct list_head *rm_list)
 {
 	struct mptcp_rm_list alist = { .nr = 0 }, slist = { .nr = 0 };
 	struct mptcp_pm_addr_entry *entry;
@@ -1611,7 +1649,7 @@ static void __reset_counters(struct pm_nl_pernet *pernet)
 	pernet->addrs = 0;
 }
 
-int mptcp_pm_nl_flush_addrs_doit(struct sk_buff *skb, struct genl_info *info)
+static int mptcp_nl_cmd_flush_addrs(struct sk_buff *skb, struct genl_info *info)
 {
 	struct pm_nl_pernet *pernet = genl_info_pm_nl(info);
 	LIST_HEAD(free_list);
@@ -1628,8 +1666,8 @@ int mptcp_pm_nl_flush_addrs_doit(struct sk_buff *skb, struct genl_info *info)
 	return 0;
 }
 
-int mptcp_nl_fill_addr(struct sk_buff *skb,
-		       struct mptcp_pm_addr_entry *entry)
+static int mptcp_nl_fill_addr(struct sk_buff *skb,
+			      struct mptcp_pm_addr_entry *entry)
 {
 	struct mptcp_addr_info *addr = &entry->addr;
 	struct nlattr *attr;
@@ -1667,9 +1705,9 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
-int mptcp_pm_nl_get_addr(struct sk_buff *skb, struct genl_info *info)
+static int mptcp_nl_cmd_get_addr(struct sk_buff *skb, struct genl_info *info)
 {
-	struct nlattr *attr = info->attrs[MPTCP_PM_ENDPOINT_ADDR];
+	struct nlattr *attr = info->attrs[MPTCP_PM_ATTR_ADDR];
 	struct pm_nl_pernet *pernet = genl_info_pm_nl(info);
 	struct mptcp_pm_addr_entry addr, *entry;
 	struct sk_buff *msg;
@@ -1717,13 +1755,8 @@ fail:
 	return ret;
 }
 
-int mptcp_pm_nl_get_addr_doit(struct sk_buff *skb, struct genl_info *info)
-{
-	return mptcp_pm_get_addr(skb, info);
-}
-
-int mptcp_pm_nl_dump_addr(struct sk_buff *msg,
-			  struct netlink_callback *cb)
+static int mptcp_nl_cmd_dump_addrs(struct sk_buff *msg,
+				   struct netlink_callback *cb)
 {
 	struct net *net = sock_net(msg->sk);
 	struct mptcp_pm_addr_entry *entry;
@@ -1765,12 +1798,6 @@ int mptcp_pm_nl_dump_addr(struct sk_buff *msg,
 	return msg->len;
 }
 
-int mptcp_pm_nl_get_addr_dumpit(struct sk_buff *msg,
-				struct netlink_callback *cb)
-{
-	return mptcp_pm_dump_addr(msg, cb);
-}
-
 static int parse_limit(struct genl_info *info, int id, unsigned int *limit)
 {
 	struct nlattr *attr = info->attrs[id];
@@ -1786,7 +1813,8 @@ static int parse_limit(struct genl_info *info, int id, unsigned int *limit)
 	return 0;
 }
 
-int mptcp_pm_nl_set_limits_doit(struct sk_buff *skb, struct genl_info *info)
+static int
+mptcp_nl_cmd_set_limits(struct sk_buff *skb, struct genl_info *info)
 {
 	struct pm_nl_pernet *pernet = genl_info_pm_nl(info);
 	unsigned int rcv_addrs, subflows;
@@ -1811,7 +1839,8 @@ unlock:
 	return ret;
 }
 
-int mptcp_pm_nl_get_limits_doit(struct sk_buff *skb, struct genl_info *info)
+static int
+mptcp_nl_cmd_get_limits(struct sk_buff *skb, struct genl_info *info)
 {
 	struct pm_nl_pernet *pernet = genl_info_pm_nl(info);
 	struct sk_buff *msg;
@@ -1885,63 +1914,66 @@ next:
 	return ret;
 }
 
-int mptcp_pm_nl_set_flags(struct sk_buff *skb, struct genl_info *info)
+int mptcp_pm_nl_set_flags(struct net *net, struct mptcp_pm_addr_entry *addr, u8 bkup)
 {
-	struct mptcp_pm_addr_entry addr = { .addr = { .family = AF_UNSPEC }, };
-	struct nlattr *attr = info->attrs[MPTCP_PM_ATTR_ADDR];
+	struct pm_nl_pernet *pernet = pm_nl_get_pernet(net);
 	u8 changed, mask = MPTCP_PM_ADDR_FLAG_BACKUP |
 			   MPTCP_PM_ADDR_FLAG_FULLMESH;
-	struct net *net = sock_net(skb->sk);
 	struct mptcp_pm_addr_entry *entry;
-	struct pm_nl_pernet *pernet;
 	u8 lookup_by_id = 0;
+
+	if (addr->addr.family == AF_UNSPEC) {
+		lookup_by_id = 1;
+		if (!addr->addr.id)
+			return -EOPNOTSUPP;
+	}
+
+	spin_lock_bh(&pernet->lock);
+	entry = __lookup_addr(pernet, &addr->addr, lookup_by_id);
+	if (!entry) {
+		spin_unlock_bh(&pernet->lock);
+		return -EINVAL;
+	}
+	if ((addr->flags & MPTCP_PM_ADDR_FLAG_FULLMESH) &&
+	    (entry->flags & MPTCP_PM_ADDR_FLAG_SIGNAL)) {
+		spin_unlock_bh(&pernet->lock);
+		return -EINVAL;
+	}
+
+	changed = (addr->flags ^ entry->flags) & mask;
+	entry->flags = (entry->flags & ~mask) | (addr->flags & mask);
+	*addr = *entry;
+	spin_unlock_bh(&pernet->lock);
+
+	mptcp_nl_set_flags(net, &addr->addr, bkup, changed);
+	return 0;
+}
+
+static int mptcp_nl_cmd_set_flags(struct sk_buff *skb, struct genl_info *info)
+{
+	struct mptcp_pm_addr_entry remote = { .addr = { .family = AF_UNSPEC }, };
+	struct mptcp_pm_addr_entry addr = { .addr = { .family = AF_UNSPEC }, };
+	struct nlattr *attr_rem = info->attrs[MPTCP_PM_ATTR_ADDR_REMOTE];
+	struct nlattr *token = info->attrs[MPTCP_PM_ATTR_TOKEN];
+	struct nlattr *attr = info->attrs[MPTCP_PM_ATTR_ADDR];
+	struct net *net = sock_net(skb->sk);
 	u8 bkup = 0;
 	int ret;
-
-	pernet = pm_nl_get_pernet(net);
 
 	ret = mptcp_pm_parse_entry(attr, info, false, &addr);
 	if (ret < 0)
 		return ret;
 
-	if (addr.addr.family == AF_UNSPEC) {
-		lookup_by_id = 1;
-		if (!addr.addr.id) {
-			GENL_SET_ERR_MSG(info, "missing required inputs");
-			return -EOPNOTSUPP;
-		}
+	if (attr_rem) {
+		ret = mptcp_pm_parse_entry(attr_rem, info, false, &remote);
+		if (ret < 0)
+			return ret;
 	}
 
 	if (addr.flags & MPTCP_PM_ADDR_FLAG_BACKUP)
 		bkup = 1;
 
-	spin_lock_bh(&pernet->lock);
-	entry = lookup_by_id ? __lookup_addr_by_id(pernet, addr.addr.id) :
-			       __lookup_addr(pernet, &addr.addr);
-	if (!entry) {
-		spin_unlock_bh(&pernet->lock);
-		GENL_SET_ERR_MSG(info, "address not found");
-		return -EINVAL;
-	}
-	if ((addr.flags & MPTCP_PM_ADDR_FLAG_FULLMESH) &&
-	    (entry->flags & MPTCP_PM_ADDR_FLAG_SIGNAL)) {
-		spin_unlock_bh(&pernet->lock);
-		GENL_SET_ERR_MSG(info, "invalid addr flags");
-		return -EINVAL;
-	}
-
-	changed = (addr.flags ^ entry->flags) & mask;
-	entry->flags = (entry->flags & ~mask) | (addr.flags & mask);
-	addr = *entry;
-	spin_unlock_bh(&pernet->lock);
-
-	mptcp_nl_set_flags(net, &addr.addr, bkup, changed);
-	return 0;
-}
-
-int mptcp_pm_nl_set_flags_doit(struct sk_buff *skb, struct genl_info *info)
-{
-	return mptcp_pm_set_flags(skb, info);
+	return mptcp_pm_set_flags(net, token, &addr, &remote, bkup);
 }
 
 static void mptcp_nl_mcast_send(struct net *net, struct sk_buff *nlskb, gfp_t gfp)
@@ -2014,7 +2046,7 @@ static int mptcp_event_put_token_and_ssk(struct sk_buff *skb,
 	const struct mptcp_subflow_context *sf;
 	u8 sk_err;
 
-	if (nla_put_u32(skb, MPTCP_ATTR_TOKEN, READ_ONCE(msk->token)))
+	if (nla_put_u32(skb, MPTCP_ATTR_TOKEN, msk->token))
 		return -EMSGSIZE;
 
 	if (mptcp_event_add_subflow(skb, ssk))
@@ -2072,7 +2104,7 @@ static int mptcp_event_created(struct sk_buff *skb,
 			       const struct mptcp_sock *msk,
 			       const struct sock *ssk)
 {
-	int err = nla_put_u32(skb, MPTCP_ATTR_TOKEN, READ_ONCE(msk->token));
+	int err = nla_put_u32(skb, MPTCP_ATTR_TOKEN, msk->token);
 
 	if (err)
 		return err;
@@ -2100,7 +2132,7 @@ void mptcp_event_addr_removed(const struct mptcp_sock *msk, uint8_t id)
 	if (!nlh)
 		goto nla_put_failure;
 
-	if (nla_put_u32(skb, MPTCP_ATTR_TOKEN, READ_ONCE(msk->token)))
+	if (nla_put_u32(skb, MPTCP_ATTR_TOKEN, msk->token))
 		goto nla_put_failure;
 
 	if (nla_put_u8(skb, MPTCP_ATTR_REM_ID, id))
@@ -2135,7 +2167,7 @@ void mptcp_event_addr_announced(const struct sock *ssk,
 	if (!nlh)
 		goto nla_put_failure;
 
-	if (nla_put_u32(skb, MPTCP_ATTR_TOKEN, READ_ONCE(msk->token)))
+	if (nla_put_u32(skb, MPTCP_ATTR_TOKEN, msk->token))
 		goto nla_put_failure;
 
 	if (nla_put_u8(skb, MPTCP_ATTR_REM_ID, info->id))
@@ -2251,7 +2283,7 @@ void mptcp_event(enum mptcp_event_type type, const struct mptcp_sock *msk,
 			goto nla_put_failure;
 		break;
 	case MPTCP_EVENT_CLOSED:
-		if (nla_put_u32(skb, MPTCP_ATTR_TOKEN, READ_ONCE(msk->token)) < 0)
+		if (nla_put_u32(skb, MPTCP_ATTR_TOKEN, msk->token) < 0)
 			goto nla_put_failure;
 		break;
 	case MPTCP_EVENT_ANNOUNCED:
@@ -2281,13 +2313,72 @@ nla_put_failure:
 	nlmsg_free(skb);
 }
 
-struct genl_family mptcp_genl_family __ro_after_init = {
+static const struct genl_small_ops mptcp_pm_ops[] = {
+	{
+		.cmd    = MPTCP_PM_CMD_ADD_ADDR,
+		.doit   = mptcp_nl_cmd_add_addr,
+		.flags  = GENL_UNS_ADMIN_PERM,
+	},
+	{
+		.cmd    = MPTCP_PM_CMD_DEL_ADDR,
+		.doit   = mptcp_nl_cmd_del_addr,
+		.flags  = GENL_UNS_ADMIN_PERM,
+	},
+	{
+		.cmd    = MPTCP_PM_CMD_FLUSH_ADDRS,
+		.doit   = mptcp_nl_cmd_flush_addrs,
+		.flags  = GENL_UNS_ADMIN_PERM,
+	},
+	{
+		.cmd    = MPTCP_PM_CMD_GET_ADDR,
+		.doit   = mptcp_nl_cmd_get_addr,
+		.dumpit   = mptcp_nl_cmd_dump_addrs,
+	},
+	{
+		.cmd    = MPTCP_PM_CMD_SET_LIMITS,
+		.doit   = mptcp_nl_cmd_set_limits,
+		.flags  = GENL_UNS_ADMIN_PERM,
+	},
+	{
+		.cmd    = MPTCP_PM_CMD_GET_LIMITS,
+		.doit   = mptcp_nl_cmd_get_limits,
+	},
+	{
+		.cmd    = MPTCP_PM_CMD_SET_FLAGS,
+		.doit   = mptcp_nl_cmd_set_flags,
+		.flags  = GENL_UNS_ADMIN_PERM,
+	},
+	{
+		.cmd    = MPTCP_PM_CMD_ANNOUNCE,
+		.doit   = mptcp_nl_cmd_announce,
+		.flags  = GENL_UNS_ADMIN_PERM,
+	},
+	{
+		.cmd    = MPTCP_PM_CMD_REMOVE,
+		.doit   = mptcp_nl_cmd_remove,
+		.flags  = GENL_UNS_ADMIN_PERM,
+	},
+	{
+		.cmd    = MPTCP_PM_CMD_SUBFLOW_CREATE,
+		.doit   = mptcp_nl_cmd_sf_create,
+		.flags  = GENL_UNS_ADMIN_PERM,
+	},
+	{
+		.cmd    = MPTCP_PM_CMD_SUBFLOW_DESTROY,
+		.doit   = mptcp_nl_cmd_sf_destroy,
+		.flags  = GENL_UNS_ADMIN_PERM,
+	},
+};
+
+static struct genl_family mptcp_genl_family __ro_after_init = {
 	.name		= MPTCP_PM_NAME,
 	.version	= MPTCP_PM_VER,
+	.maxattr	= MPTCP_PM_ATTR_MAX,
+	.policy		= mptcp_pm_policy,
 	.netnsok	= true,
 	.module		= THIS_MODULE,
-	.ops		= mptcp_pm_nl_ops,
-	.n_ops		= ARRAY_SIZE(mptcp_pm_nl_ops),
+	.small_ops	= mptcp_pm_ops,
+	.n_small_ops	= ARRAY_SIZE(mptcp_pm_ops),
 	.resv_start_op	= MPTCP_PM_CMD_SUBFLOW_DESTROY + 1,
 	.mcgrps		= mptcp_pm_mcgrps,
 	.n_mcgrps	= ARRAY_SIZE(mptcp_pm_mcgrps),

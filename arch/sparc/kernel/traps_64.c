@@ -9,7 +9,6 @@
  * I like traps on v9, :))))
  */
 
-#include <linux/cpu.h>
 #include <linux/extable.h>
 #include <linux/sched/mm.h>
 #include <linux/sched/debug.h>
@@ -250,7 +249,7 @@ void sun4v_insn_access_exception_tl1(struct pt_regs *regs, unsigned long addr, u
 	sun4v_insn_access_exception(regs, addr, type_ctx);
 }
 
-static bool is_no_fault_exception(struct pt_regs *regs)
+bool is_no_fault_exception(struct pt_regs *regs)
 {
 	unsigned char asi;
 	u32 insn;
@@ -2032,7 +2031,7 @@ static void sun4v_log_error(struct pt_regs *regs, struct sun4v_error_entry *ent,
 /* Handle memory corruption detected error which is vectored in
  * through resumable error trap.
  */
-static void do_mcd_err(struct pt_regs *regs, struct sun4v_error_entry ent)
+void do_mcd_err(struct pt_regs *regs, struct sun4v_error_entry ent)
 {
 	if (notify_die(DIE_TRAP, "MCD error", regs, 0, 0x34,
 		       SIGSEGV) == NOTIFY_STOP)
@@ -2150,9 +2149,9 @@ static unsigned long sun4v_get_vaddr(struct pt_regs *regs)
 /* Attempt to handle non-resumable errors generated from userspace.
  * Returns true if the signal was handled, false otherwise.
  */
-static bool sun4v_nonresum_error_user_handled(struct pt_regs *regs,
-					      struct sun4v_error_entry *ent)
-{
+bool sun4v_nonresum_error_user_handled(struct pt_regs *regs,
+				  struct sun4v_error_entry *ent) {
+
 	unsigned int attrs = ent->err_attrs;
 
 	if (attrs & SUN4V_ERR_ATTRS_MEMORY) {

@@ -63,6 +63,7 @@ static struct ctl_table crypto_sysctl_table[] = {
 		.mode		= 0444,
 		.proc_handler	= proc_dostring
 	},
+	{}
 };
 
 static struct ctl_table_header *crypto_sysctls;

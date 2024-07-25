@@ -52,6 +52,7 @@ struct io_worker {
 	struct io_wq *wq;
 
 	struct io_wq_work *cur_work;
+	struct io_wq_work *next_work;
 	raw_spinlock_t lock;
 
 	struct completion ref_done;
@@ -538,6 +539,7 @@ static void io_assign_current_work(struct io_worker *worker,
 
 	raw_spin_lock(&worker->lock);
 	worker->cur_work = work;
+	worker->next_work = NULL;
 	raw_spin_unlock(&worker->lock);
 }
 
@@ -571,7 +573,7 @@ static void io_worker_handle_work(struct io_wq_acct *acct,
 			 * current work item for this worker.
 			 */
 			raw_spin_lock(&worker->lock);
-			worker->cur_work = work;
+			worker->next_work = work;
 			raw_spin_unlock(&worker->lock);
 		}
 
@@ -1007,7 +1009,8 @@ static bool io_wq_worker_cancel(struct io_worker *worker, void *data)
 	 * may dereference the passed in work.
 	 */
 	raw_spin_lock(&worker->lock);
-	if (__io_wq_worker_cancel(worker, match, worker->cur_work))
+	if (__io_wq_worker_cancel(worker, match, worker->cur_work) ||
+	    __io_wq_worker_cancel(worker, match, worker->next_work))
 		match->nr_running++;
 	raw_spin_unlock(&worker->lock);
 

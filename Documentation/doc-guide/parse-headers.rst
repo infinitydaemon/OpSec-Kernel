@@ -61,7 +61,7 @@ DESCRIPTION
 ***********
 
 
-Convert a C header or source file (C_FILE), into a reStructuredText
+Convert a C header or source file (C_FILE), into a ReStructured Text
 included via ..parsed-literal block with cross-references for the
 documentation files that describe the API. It accepts an optional
 EXCEPTIONS_FILE with describes what elements will be either ignored or

@@ -39,7 +39,7 @@ Optional children node properties:
 - wp-gpios: GPIO specifier for the write protect pin.
 
 Optional child node of NAND chip nodes:
-Partitions: see mtd.yaml
+Partitions: see partition.txt
 
   Example:
 	nand-controller@70008000 {

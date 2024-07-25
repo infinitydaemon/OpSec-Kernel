@@ -90,8 +90,6 @@
 
 /* eMMC clock register, misc control */
 #define CLK_SELECT_NAND		BIT(31)
-#define CLK_ALWAYS_ON_NAND	BIT(24)
-#define CLK_SELECT_FIX_PLL2	BIT(6)
 
 #define NFC_CLK_CYCLE		6
 
@@ -130,7 +128,7 @@ struct meson_nfc_nand_chip {
 	u8 *data_buf;
 	__le64 *info_buf;
 	u32 nsels;
-	u8 sels[] __counted_by(nsels);
+	u8 sels[];
 };
 
 struct meson_nand_ecc {
@@ -511,7 +509,7 @@ static void meson_nfc_set_user_byte(struct nand_chip *nand, u8 *oob_buf)
 	__le64 *info;
 	int i, count;
 
-	for (i = 0, count = 0; i < nand->ecc.steps; i++, count += (2 + nand->ecc.bytes)) {
+	for (i = 0, count = 0; i < nand->ecc.steps; i++, count += 2) {
 		info = &meson_chip->info_buf[i];
 		*info |= oob_buf[count];
 		*info |= oob_buf[count + 1] << 8;
@@ -524,7 +522,7 @@ static void meson_nfc_get_user_byte(struct nand_chip *nand, u8 *oob_buf)
 	__le64 *info;
 	int i, count;
 
-	for (i = 0, count = 0; i < nand->ecc.steps; i++, count += (2 + nand->ecc.bytes)) {
+	for (i = 0, count = 0; i < nand->ecc.steps; i++, count += 2) {
 		info = &meson_chip->info_buf[i];
 		oob_buf[count] = *info;
 		oob_buf[count + 1] = *info >> 8;
@@ -1156,7 +1154,7 @@ static int meson_nfc_clk_init(struct meson_nfc *nfc)
 		return PTR_ERR(nfc->nand_clk);
 
 	/* init SD_EMMC_CLOCK to sane defaults w/min clock rate */
-	writel(CLK_ALWAYS_ON_NAND | CLK_SELECT_NAND | CLK_SELECT_FIX_PLL2,
+	writel(CLK_SELECT_NAND | readl(nfc->reg_clk),
 	       nfc->reg_clk);
 
 	ret = clk_prepare_enable(nfc->core_clk);

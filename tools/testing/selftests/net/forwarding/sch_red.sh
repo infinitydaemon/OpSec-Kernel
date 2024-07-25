@@ -451,35 +451,35 @@ uninstall_qdisc()
 ecn_test()
 {
 	install_qdisc ecn
-	xfail_on_slow do_ecn_test $BACKLOG
+	do_ecn_test $BACKLOG
 	uninstall_qdisc
 }
 
 ecn_nodrop_test()
 {
 	install_qdisc ecn nodrop
-	xfail_on_slow do_ecn_nodrop_test $BACKLOG
+	do_ecn_nodrop_test $BACKLOG
 	uninstall_qdisc
 }
 
 red_test()
 {
 	install_qdisc
-	xfail_on_slow do_red_test $BACKLOG
+	do_red_test $BACKLOG
 	uninstall_qdisc
 }
 
 red_qevent_test()
 {
 	install_qdisc qevent early_drop block 10
-	xfail_on_slow do_red_qevent_test $BACKLOG
+	do_red_qevent_test $BACKLOG
 	uninstall_qdisc
 }
 
 ecn_qevent_test()
 {
 	install_qdisc ecn qevent mark block 10
-	xfail_on_slow do_ecn_qevent_test $BACKLOG
+	do_ecn_qevent_test $BACKLOG
 	uninstall_qdisc
 }
 

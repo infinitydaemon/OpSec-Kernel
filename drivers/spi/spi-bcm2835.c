@@ -11,7 +11,6 @@
  * spi-atmel.c, Copyright (C) 2006 Atmel Corporation
  */
 
-#include <linux/cleanup.h>
 #include <linux/clk.h>
 #include <linux/completion.h>
 #include <linux/debugfs.h>
@@ -27,10 +26,9 @@
 #include <linux/of_address.h>
 #include <linux/platform_device.h>
 #include <linux/gpio/consumer.h>
-#include <linux/gpio/machine.h> /* FIXME: using GPIO lookup tables */
+#include <linux/gpio/machine.h> /* FIXME: using chip internals */
+#include <linux/gpio/driver.h> /* FIXME: using chip internals */
 #include <linux/of_irq.h>
-#include <linux/overflow.h>
-#include <linux/slab.h>
 #include <linux/spi/spi.h>
 
 /* SPI register offsets */
@@ -85,7 +83,6 @@ MODULE_PARM_DESC(polling_limit_us,
  * struct bcm2835_spi - BCM2835 SPI controller
  * @regs: base address of register map
  * @clk: core clock, divided to calculate serial clock
- * @cs_gpio: chip-select GPIO descriptor
  * @clk_hz: core clock cached speed
  * @irq: interrupt, signals TX FIFO empty or RX FIFO ¾ full
  * @tfr: SPI transfer currently processed
@@ -119,8 +116,8 @@ MODULE_PARM_DESC(polling_limit_us,
  */
 struct bcm2835_spi {
 	void __iomem *regs;
+	phys_addr_t phys_addr;
 	struct clk *clk;
-	struct gpio_desc *cs_gpio;
 	unsigned long clk_hz;
 	int irq;
 	struct spi_transfer *tfr;
@@ -891,18 +888,7 @@ static int bcm2835_dma_init(struct spi_controller *ctlr, struct device *dev,
 			    struct bcm2835_spi *bs)
 {
 	struct dma_slave_config slave_config;
-	const __be32 *addr;
-	dma_addr_t dma_reg_base;
 	int ret;
-
-	/* base address in dma-space */
-	addr = of_get_address(ctlr->dev.of_node, 0, NULL, NULL);
-	if (!addr) {
-		dev_err(dev, "could not get DMA-register address - not using dma mode\n");
-		/* Fall back to interrupt mode */
-		return 0;
-	}
-	dma_reg_base = be32_to_cpup(addr);
 
 	/* get tx/rx dma */
 	ctlr->dma_tx = dma_request_chan(dev, "tx");
@@ -925,7 +911,7 @@ static int bcm2835_dma_init(struct spi_controller *ctlr, struct device *dev,
 	 * or, in case of an RX-only transfer, cyclically copies from the zero
 	 * page to the FIFO using a preallocated, reusable descriptor.
 	 */
-	slave_config.dst_addr = (u32)(dma_reg_base + BCM2835_SPI_FIFO);
+	slave_config.dst_addr = bs->phys_addr + BCM2835_SPI_FIFO;
 	slave_config.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 
 	ret = dmaengine_slave_config(ctlr->dma_tx, &slave_config);
@@ -964,9 +950,9 @@ static int bcm2835_dma_init(struct spi_controller *ctlr, struct device *dev,
 	 * RX FIFO or, in case of a TX-only transfer, cyclically writes a
 	 * precalculated value to the CS register to clear the RX FIFO.
 	 */
-	slave_config.src_addr = (u32)(dma_reg_base + BCM2835_SPI_FIFO);
+	slave_config.src_addr = bs->phys_addr + BCM2835_SPI_FIFO;
 	slave_config.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-	slave_config.dst_addr = (u32)(dma_reg_base + BCM2835_SPI_CS);
+	slave_config.dst_addr = bs->phys_addr + BCM2835_SPI_CS;
 	slave_config.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 
 	ret = dmaengine_slave_config(ctlr->dma_rx, &slave_config);
@@ -1059,6 +1045,16 @@ static int bcm2835_spi_transfer_one(struct spi_controller *ctlr,
 	unsigned long hz_per_byte, byte_limit;
 	u32 cs = target->prepare_cs;
 
+	if (unlikely(!tfr->len)) {
+		static int warned;
+
+		if (!warned)
+			dev_warn(&spi->dev,
+				 "zero-length SPI transfer ignored\n");
+		warned = 1;
+		return 0;
+	}
+
 	/* set clock */
 	spi_hz = tfr->speed_hz;
 
@@ -1117,6 +1113,19 @@ static int bcm2835_spi_prepare_message(struct spi_controller *ctlr,
 	struct spi_device *spi = msg->spi;
 	struct bcm2835_spi *bs = spi_controller_get_devdata(ctlr);
 	struct bcm2835_spidev *target = spi_get_ctldata(spi);
+	int ret;
+
+	if (ctlr->can_dma) {
+		/*
+		 * DMA transfers are limited to 16 bit (0 to 65535 bytes) by
+		 * the SPI HW due to DLEN. Split up transfers (32-bit FIFO
+		 * aligned) if the limit is exceeded.
+		 */
+		ret = spi_split_transfers_maxsize(ctlr, msg, 65532,
+						  GFP_KERNEL | GFP_DMA);
+		if (ret)
+			return ret;
+	}
 
 	/*
 	 * Set up clock polarity before spi_transfer_one_message() asserts
@@ -1147,11 +1156,15 @@ static void bcm2835_spi_handle_err(struct spi_controller *ctlr,
 	bcm2835_spi_reset_hw(bs);
 }
 
+static int chip_match_name(struct gpio_chip *chip, void *data)
+{
+	return !strcmp(chip->label, data);
+}
+
 static void bcm2835_spi_cleanup(struct spi_device *spi)
 {
 	struct bcm2835_spidev *target = spi_get_ctldata(spi);
 	struct spi_controller *ctlr = spi->controller;
-	struct bcm2835_spi *bs = spi_controller_get_devdata(ctlr);
 
 	if (target->clear_rx_desc)
 		dmaengine_desc_free(target->clear_rx_desc);
@@ -1161,9 +1174,6 @@ static void bcm2835_spi_cleanup(struct spi_device *spi)
 				 target->clear_rx_addr,
 				 sizeof(u32),
 				 DMA_TO_DEVICE);
-
-	gpiod_put(bs->cs_gpio);
-	spi_set_csgpiod(spi, 0, NULL);
 
 	kfree(target);
 }
@@ -1206,25 +1216,13 @@ static int bcm2835_spi_setup_dma(struct spi_controller *ctlr,
 	return 0;
 }
 
-static size_t bcm2835_spi_max_transfer_size(struct spi_device *spi)
-{
-	/*
-	 * DMA transfers are limited to 16 bit (0 to 65535 bytes) by
-	 * the SPI HW due to DLEN. Split up transfers (32-bit FIFO
-	 * aligned) if the limit is exceeded.
-	 */
-	if (spi->controller->can_dma)
-		return 65532;
-
-	return SIZE_MAX;
-}
-
 static int bcm2835_spi_setup(struct spi_device *spi)
 {
 	struct spi_controller *ctlr = spi->controller;
 	struct bcm2835_spi *bs = spi_controller_get_devdata(ctlr);
 	struct bcm2835_spidev *target = spi_get_ctldata(spi);
-	struct gpiod_lookup_table *lookup __free(kfree) = NULL;
+	struct gpio_chip *chip;
+	int len;
 	int ret;
 	u32 cs;
 
@@ -1290,36 +1288,33 @@ static int bcm2835_spi_setup(struct spi_device *spi)
 		goto err_cleanup;
 	}
 
+	/* Skip forced CS conversion if controller has an empty cs-gpios property */
+	if (of_find_property(ctlr->dev.of_node, "cs-gpios", &len) && len == 0)
+		return 0;
+
 	/*
-	 * TODO: The code below is a slightly better alternative to the utter
-	 * abuse of the GPIO API that I found here before. It creates a
-	 * temporary lookup table, assigns it to the SPI device, gets the GPIO
-	 * descriptor and then releases the lookup table.
+	 * Translate native CS to GPIO
 	 *
-	 * More on the problem that it addresses:
-	 *   https://www.spinics.net/lists/linux-gpio/msg36218.html
+	 * FIXME: poking around in the gpiolib internals like this is
+	 * not very good practice. Find a way to locate the real problem
+	 * and fix it. Why is the GPIO descriptor in spi->cs_gpiod
+	 * sometimes not assigned correctly? Erroneous device trees?
 	 */
-	lookup = kzalloc(struct_size(lookup, table, 2), GFP_KERNEL);
-	if (!lookup) {
-		ret = -ENOMEM;
+
+	/* get the gpio chip for the base */
+	chip = gpiochip_find("pinctrl-bcm2835", chip_match_name);
+	if (!chip)
+		return 0;
+
+	spi_set_csgpiod(spi, 0, gpiochip_request_own_desc(chip,
+							  8 - (spi_get_chipselect(spi, 0)),
+							  DRV_NAME,
+							  GPIO_LOOKUP_FLAGS_DEFAULT,
+							  GPIOD_OUT_LOW));
+	if (IS_ERR(spi_get_csgpiod(spi, 0))) {
+		ret = PTR_ERR(spi_get_csgpiod(spi, 0));
 		goto err_cleanup;
 	}
-
-	lookup->dev_id = dev_name(&spi->dev);
-	lookup->table[0] = GPIO_LOOKUP("pinctrl-bcm2835",
-				       8 - (spi_get_chipselect(spi, 0)),
-				       "cs", GPIO_LOOKUP_FLAGS_DEFAULT);
-
-	gpiod_add_lookup_table(lookup);
-
-	bs->cs_gpio = gpiod_get(&spi->dev, "cs", GPIOD_OUT_LOW);
-	gpiod_remove_lookup_table(lookup);
-	if (IS_ERR(bs->cs_gpio)) {
-		ret = PTR_ERR(bs->cs_gpio);
-		goto err_cleanup;
-	}
-
-	spi_set_csgpiod(spi, 0, bs->cs_gpio);
 
 	/* and set up the "mode" and level */
 	dev_info(&spi->dev, "setting up native-CS%i to use GPIO\n",
@@ -1336,6 +1331,7 @@ static int bcm2835_spi_probe(struct platform_device *pdev)
 {
 	struct spi_controller *ctlr;
 	struct bcm2835_spi *bs;
+	struct resource *iomem;
 	int err;
 
 	ctlr = devm_spi_alloc_host(&pdev->dev, sizeof(*bs));
@@ -1348,7 +1344,6 @@ static int bcm2835_spi_probe(struct platform_device *pdev)
 	ctlr->mode_bits = BCM2835_SPI_MODE_BITS;
 	ctlr->bits_per_word_mask = SPI_BPW_MASK(8);
 	ctlr->num_chipselect = 3;
-	ctlr->max_transfer_size = bcm2835_spi_max_transfer_size;
 	ctlr->setup = bcm2835_spi_setup;
 	ctlr->cleanup = bcm2835_spi_cleanup;
 	ctlr->transfer_one = bcm2835_spi_transfer_one;
@@ -1359,11 +1354,12 @@ static int bcm2835_spi_probe(struct platform_device *pdev)
 	bs = spi_controller_get_devdata(ctlr);
 	bs->ctlr = ctlr;
 
-	bs->regs = devm_platform_ioremap_resource(pdev, 0);
+	bs->regs = devm_platform_get_and_ioremap_resource(pdev, 0, &iomem);
 	if (IS_ERR(bs->regs))
 		return PTR_ERR(bs->regs);
 
-	bs->clk = devm_clk_get_enabled(&pdev->dev, NULL);
+	bs->phys_addr = iomem->start;
+	bs->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(bs->clk))
 		return dev_err_probe(&pdev->dev, PTR_ERR(bs->clk),
 				     "could not get clk\n");
@@ -1374,11 +1370,14 @@ static int bcm2835_spi_probe(struct platform_device *pdev)
 	if (bs->irq < 0)
 		return bs->irq;
 
+	err = clk_prepare_enable(bs->clk);
+	if (err)
+		return err;
 	bs->clk_hz = clk_get_rate(bs->clk);
 
 	err = bcm2835_dma_init(ctlr, &pdev->dev, bs);
 	if (err)
-		return err;
+		goto out_clk_disable;
 
 	/* initialise the hardware with the default polarities */
 	bcm2835_wr(bs, BCM2835_SPI_CS,
@@ -1404,6 +1403,8 @@ static int bcm2835_spi_probe(struct platform_device *pdev)
 
 out_dma_release:
 	bcm2835_dma_release(ctlr, bs);
+out_clk_disable:
+	clk_disable_unprepare(bs->clk);
 	return err;
 }
 
@@ -1421,6 +1422,8 @@ static void bcm2835_spi_remove(struct platform_device *pdev)
 	/* Clear FIFOs, and disable the HW block */
 	bcm2835_wr(bs, BCM2835_SPI_CS,
 		   BCM2835_SPI_CS_CLEAR_RX | BCM2835_SPI_CS_CLEAR_TX);
+
+	clk_disable_unprepare(bs->clk);
 }
 
 static const struct of_device_id bcm2835_spi_match[] = {

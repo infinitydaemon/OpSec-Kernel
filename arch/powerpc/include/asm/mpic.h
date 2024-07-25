@@ -336,7 +336,7 @@ struct mpic
 #endif
 };
 
-extern const struct bus_type mpic_subsys;
+extern struct bus_type mpic_subsys;
 
 /*
  * MPIC flags (passed to mpic_alloc)

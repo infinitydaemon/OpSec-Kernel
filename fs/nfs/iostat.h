@@ -46,7 +46,10 @@ static inline void nfs_add_stats(const struct inode *inode,
 	nfs_add_server_stats(NFS_SERVER(inode), stat, addend);
 }
 
-#define nfs_alloc_iostats()	alloc_percpu(struct nfs_iostats)
+static inline struct nfs_iostats __percpu *nfs_alloc_iostats(void)
+{
+	return alloc_percpu(struct nfs_iostats);
+}
 
 static inline void nfs_free_iostats(struct nfs_iostats __percpu *stats)
 {

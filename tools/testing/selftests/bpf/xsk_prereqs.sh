@@ -83,11 +83,9 @@ exec_xskxceiver()
 	fi
 
 	./${XSKOBJ} -i ${VETH0} -i ${VETH1} ${ARGS}
-	retval=$?
 
-	if [[ $list -ne 1 ]]; then
-	    test_status $retval "${TEST_NAME}"
-	    statusList+=($retval)
-	    nameList+=(${TEST_NAME})
-	fi
+	retval=$?
+	test_status $retval "${TEST_NAME}"
+	statusList+=($retval)
+	nameList+=(${TEST_NAME})
 }

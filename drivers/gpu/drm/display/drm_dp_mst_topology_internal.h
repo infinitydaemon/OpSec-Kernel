@@ -10,9 +10,7 @@
 #ifndef _DRM_DP_MST_HELPER_INTERNAL_H_
 #define _DRM_DP_MST_HELPER_INTERNAL_H_
 
-struct drm_dp_sideband_msg_req_body;
-struct drm_dp_sideband_msg_tx;
-struct drm_printer;
+#include <drm/display/drm_dp_mst_helper.h>
 
 void
 drm_dp_encode_sideband_req(const struct drm_dp_sideband_msg_req_body *req,

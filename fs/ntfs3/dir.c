@@ -537,10 +537,8 @@ static int ntfs_dir_count(struct inode *dir, bool *is_empty, size_t *dirs,
 			e = Add2Ptr(hdr, off);
 			e_size = le16_to_cpu(e->size);
 			if (e_size < sizeof(struct NTFS_DE) ||
-			    off + e_size > end) {
-				/* Looks like corruption. */
+			    off + e_size > end)
 				break;
-			}
 
 			if (de_is_last(e))
 				break;
@@ -611,17 +609,6 @@ const struct file_operations ntfs_dir_operations = {
 	.read		= generic_read_dir,
 	.iterate_shared	= ntfs_readdir,
 	.fsync		= generic_file_fsync,
-	.open		= ntfs_file_open,
-	.unlocked_ioctl = ntfs_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl   = ntfs_compat_ioctl,
-#endif
-};
-
-const struct file_operations ntfs_legacy_dir_operations = {
-	.llseek		= generic_file_llseek,
-	.read		= generic_read_dir,
-	.iterate_shared	= ntfs_readdir,
 	.open		= ntfs_file_open,
 };
 // clang-format on

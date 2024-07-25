@@ -1,8 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
 
-source lib.sh
-
+NS=ns
 IP4=172.16.0.1/24
 TGT4=172.16.0.2
 IP6=2001:db8:1::1/64
@@ -11,13 +10,13 @@ MARK=1000
 
 cleanup()
 {
-    cleanup_ns $NS
+    ip netns del $NS
 }
 
 trap cleanup EXIT
 
 # Namespaces
-setup_ns NS
+ip netns add $NS
 
 ip netns exec $NS sysctl -w net.ipv4.ping_group_range='0 2147483647' > /dev/null
 

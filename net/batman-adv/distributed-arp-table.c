@@ -684,7 +684,7 @@ static bool batadv_dat_forward_data(struct batadv_priv *bat_priv,
 
 	cand = batadv_dat_select_candidates(bat_priv, ip, vid);
 	if (!cand)
-		return ret;
+		goto out;
 
 	batadv_dbg(BATADV_DBG_DAT, bat_priv, "DHT_SEND for %pI4\n", &ip);
 
@@ -728,6 +728,7 @@ free_orig:
 		batadv_orig_node_put(cand[i].orig_node);
 	}
 
+out:
 	kfree(cand);
 	return ret;
 }

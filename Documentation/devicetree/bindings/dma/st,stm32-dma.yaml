@@ -82,10 +82,6 @@ properties:
     description: if defined, it indicates that the controller
       supports memory-to-memory transfer
 
-  access-controllers:
-    minItems: 1
-    maxItems: 2
-
 required:
   - compatible
   - reg

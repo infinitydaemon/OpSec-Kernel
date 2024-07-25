@@ -216,7 +216,9 @@ struct es1938 {
 #ifdef SUPPORT_JOYSTICK
 	struct gameport *gameport;
 #endif
+#ifdef CONFIG_PM_SLEEP
 	unsigned char saved_regs[SAVED_REG_SIZE];
+#endif
 };
 
 static irqreturn_t snd_es1938_interrupt(int irq, void *dev_id);
@@ -1393,6 +1395,7 @@ static void snd_es1938_chip_init(struct es1938 *chip)
 	outb(0, SLDM_REG(chip, DMACLEAR));
 }
 
+#ifdef CONFIG_PM_SLEEP
 /*
  * PM support
  */
@@ -1458,7 +1461,11 @@ static int es1938_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(es1938_pm, es1938_suspend, es1938_resume);
+static SIMPLE_DEV_PM_OPS(es1938_pm, es1938_suspend, es1938_resume);
+#define ES1938_PM_OPS	&es1938_pm
+#else
+#define ES1938_PM_OPS	NULL
+#endif /* CONFIG_PM_SLEEP */
 
 #ifdef SUPPORT_JOYSTICK
 static int snd_es1938_create_gameport(struct es1938 *chip)
@@ -1780,7 +1787,7 @@ static struct pci_driver es1938_driver = {
 	.id_table = snd_es1938_ids,
 	.probe = snd_es1938_probe,
 	.driver = {
-		.pm = &es1938_pm,
+		.pm = ES1938_PM_OPS,
 	},
 };
 

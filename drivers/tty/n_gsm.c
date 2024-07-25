@@ -2,7 +2,6 @@
 /*
  * n_gsm.c GSM 0710 tty multiplexor
  * Copyright (c) 2009/10 Intel Corporation
- * Copyright (c) 2022/23 Siemens Mobility GmbH
  *
  *	* THIS IS A DEVELOPMENT SNAPSHOT IT IS NOT A FINAL RELEASE *
  *
@@ -124,8 +123,8 @@ struct gsm_msg {
 	u8 addr;		/* DLCI address + flags */
 	u8 ctrl;		/* Control byte + flags */
 	unsigned int len;	/* Length of data block (can be zero) */
-	u8 *data;	/* Points into buffer but not at the start */
-	u8 buffer[];
+	unsigned char *data;	/* Points into buffer but not at the start */
+	unsigned char buffer[];
 };
 
 enum gsm_dlci_state {
@@ -285,7 +284,7 @@ struct gsm_mux {
 	/* Bits for GSM mode decoding */
 
 	/* Framing Layer */
-	u8 *buf;
+	unsigned char *buf;
 	enum gsm_mux_state state;
 	unsigned int len;
 	unsigned int address;
@@ -2882,7 +2881,7 @@ static void gsm0_receive_state_check_and_fix(struct gsm_mux *gsm)
  *	Receive bytes in gsm mode 0
  */
 
-static void gsm0_receive(struct gsm_mux *gsm, u8 c)
+static void gsm0_receive(struct gsm_mux *gsm, unsigned char c)
 {
 	unsigned int len;
 
@@ -3000,7 +2999,7 @@ static void gsm1_receive_state_check_and_fix(struct gsm_mux *gsm)
  *	Receive bytes in mode 1 (Advanced option)
  */
 
-static void gsm1_receive(struct gsm_mux *gsm, u8 c)
+static void gsm1_receive(struct gsm_mux *gsm, unsigned char c)
 {
 	gsm1_receive_state_check_and_fix(gsm);
 	/* handle XON/XOFF */
@@ -3595,7 +3594,7 @@ static void gsmld_receive_buf(struct tty_struct *tty, const u8 *cp,
 			      const u8 *fp, size_t count)
 {
 	struct gsm_mux *gsm = tty->disc_data;
-	u8 flags = TTY_NORMAL;
+	char flags = TTY_NORMAL;
 
 	if (debug & DBG_DATA)
 		gsm_hex_dump_bytes(__func__, cp, count);
@@ -3765,7 +3764,7 @@ static ssize_t gsmld_write(struct tty_struct *tty, struct file *file,
 {
 	struct gsm_mux *gsm = tty->disc_data;
 	unsigned long flags;
-	size_t space;
+	int space;
 	int ret;
 
 	if (!gsm)
@@ -3963,7 +3962,8 @@ static void gsm_mux_net_tx_timeout(struct net_device *net, unsigned int txqueue)
 	net->stats.tx_errors++;
 }
 
-static void gsm_mux_rx_netchar(struct gsm_dlci *dlci, const u8 *in_buf, int size)
+static void gsm_mux_rx_netchar(struct gsm_dlci *dlci,
+				const unsigned char *in_buf, int size)
 {
 	struct net_device *net = dlci->net;
 	struct sk_buff *skb;
@@ -4064,7 +4064,7 @@ static int gsm_create_network(struct gsm_dlci *dlci, struct gsm_netconfig *nc)
 	mux_net = netdev_priv(net);
 	mux_net->dlci = dlci;
 	kref_init(&mux_net->ref);
-	strscpy(nc->if_name, net->name); /* return net name */
+	strncpy(nc->if_name, net->name, IFNAMSIZ); /* return net name */
 
 	/* reconfigure dlci for network */
 	dlci->prev_adaption = dlci->adaption;

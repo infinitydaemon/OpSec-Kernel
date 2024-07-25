@@ -90,7 +90,11 @@ struct voice {
  * we're not doing power management, we still need to allocate a page
  * for the silence buffer.
  */
+#ifdef CONFIG_PM_SLEEP
 #define SIS_SUSPEND_PAGES	4
+#else
+#define SIS_SUSPEND_PAGES	1
+#endif
 
 struct sis7019 {
 	unsigned long ioport;
@@ -1148,6 +1152,7 @@ static int sis_chip_init(struct sis7019 *sis)
 	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int sis_suspend(struct device *dev)
 {
 	struct snd_card *card = dev_get_drvdata(dev);
@@ -1226,7 +1231,11 @@ error:
 	return -EIO;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(sis_pm, sis_suspend, sis_resume);
+static SIMPLE_DEV_PM_OPS(sis_pm, sis_suspend, sis_resume);
+#define SIS_PM_OPS	&sis_pm
+#else
+#define SIS_PM_OPS	NULL
+#endif /* CONFIG_PM_SLEEP */
 
 static int sis_alloc_suspend(struct sis7019 *sis)
 {
@@ -1388,7 +1397,7 @@ static struct pci_driver sis7019_driver = {
 	.id_table = snd_sis7019_ids,
 	.probe = snd_sis7019_probe,
 	.driver = {
-		.pm = &sis_pm,
+		.pm = SIS_PM_OPS,
 	},
 };
 

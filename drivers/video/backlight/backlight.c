@@ -98,9 +98,7 @@ static int fb_notifier_callback(struct notifier_block *self,
 {
 	struct backlight_device *bd;
 	struct fb_event *evdata = data;
-	struct fb_info *info = evdata->info;
-	struct backlight_device *fb_bd = fb_bl_device(info);
-	int node = info->node;
+	int node = evdata->info->node;
 	int fb_blank = 0;
 
 	/* If we aren't interested in this event, skip it immediately ... */
@@ -112,9 +110,7 @@ static int fb_notifier_callback(struct notifier_block *self,
 
 	if (!bd->ops)
 		goto out;
-	if (bd->ops->controls_device && !bd->ops->controls_device(bd, info->device))
-		goto out;
-	if (fb_bd && fb_bd != bd)
+	if (bd->ops->check_fb && !bd->ops->check_fb(bd, evdata->info))
 		goto out;
 
 	fb_blank = *(int *)evdata->data;
@@ -122,12 +118,14 @@ static int fb_notifier_callback(struct notifier_block *self,
 		bd->fb_bl_on[node] = true;
 		if (!bd->use_count++) {
 			bd->props.state &= ~BL_CORE_FBBLANK;
+			bd->props.fb_blank = FB_BLANK_UNBLANK;
 			backlight_update_status(bd);
 		}
 	} else if (fb_blank != FB_BLANK_UNBLANK && bd->fb_bl_on[node]) {
 		bd->fb_bl_on[node] = false;
 		if (!(--bd->use_count)) {
 			bd->props.state |= BL_CORE_FBBLANK;
+			bd->props.fb_blank = fb_blank;
 			backlight_update_status(bd);
 		}
 	}
@@ -287,6 +285,15 @@ static ssize_t max_brightness_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(max_brightness);
 
+static ssize_t display_name_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct backlight_device *bd = to_backlight_device(dev);
+
+	return sprintf(buf, "%s\n", bd->props.display_name);
+}
+static DEVICE_ATTR_RO(display_name);
+
 static ssize_t actual_brightness_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
@@ -318,6 +325,8 @@ static ssize_t scale_show(struct device *dev,
 	return sprintf(buf, "%s\n", backlight_scale_types[bd->props.scale]);
 }
 static DEVICE_ATTR_RO(scale);
+
+static struct class *backlight_class;
 
 #ifdef CONFIG_PM_SLEEP
 static int backlight_suspend(struct device *dev)
@@ -365,15 +374,10 @@ static struct attribute *bl_device_attrs[] = {
 	&dev_attr_max_brightness.attr,
 	&dev_attr_scale.attr,
 	&dev_attr_type.attr,
+	&dev_attr_display_name.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(bl_device);
-
-static const struct class backlight_class = {
-	.name = "backlight",
-	.dev_groups = bl_device_groups,
-	.pm = &backlight_class_dev_pm_ops,
-};
 
 /**
  * backlight_force_update - tell the backlight subsystem that hardware state
@@ -424,7 +428,7 @@ struct backlight_device *backlight_device_register(const char *name,
 	mutex_init(&new_bd->update_lock);
 	mutex_init(&new_bd->ops_lock);
 
-	new_bd->dev.class = &backlight_class;
+	new_bd->dev.class = backlight_class;
 	new_bd->dev.parent = parent;
 	new_bd->dev.release = bl_device_release;
 	dev_set_name(&new_bd->dev, "%s", name);
@@ -516,7 +520,7 @@ struct backlight_device *backlight_device_get_by_name(const char *name)
 {
 	struct device *dev;
 
-	dev = class_find_device_by_name(&backlight_class, name);
+	dev = class_find_device_by_name(backlight_class, name);
 
 	return dev ? to_backlight_device(dev) : NULL;
 }
@@ -668,6 +672,17 @@ static int of_parent_match(struct device *dev, const void *data)
 	return dev->parent && dev->parent->of_node == data;
 }
 
+int backlight_set_display_name(struct backlight_device *bd, const char *name)
+{
+	if (!bd)
+		return -EINVAL;
+
+	strscpy_pad(bd->props.display_name, name, sizeof(bd->props.display_name));
+
+	return 0;
+}
+EXPORT_SYMBOL(backlight_set_display_name);
+
 /**
  * of_find_backlight_by_node() - find backlight device by device-tree node
  * @node: device-tree node of the backlight device
@@ -684,7 +699,7 @@ struct backlight_device *of_find_backlight_by_node(struct device_node *node)
 {
 	struct device *dev;
 
-	dev = class_find_device(&backlight_class, NULL, node, of_parent_match);
+	dev = class_find_device(backlight_class, NULL, node, of_parent_match);
 
 	return dev ? to_backlight_device(dev) : NULL;
 }
@@ -752,19 +767,20 @@ EXPORT_SYMBOL(devm_of_find_backlight);
 
 static void __exit backlight_class_exit(void)
 {
-	class_unregister(&backlight_class);
+	class_destroy(backlight_class);
 }
 
 static int __init backlight_class_init(void)
 {
-	int ret;
-
-	ret = class_register(&backlight_class);
-	if (ret) {
-		pr_warn("Unable to create backlight class; errno = %d\n", ret);
-		return ret;
+	backlight_class = class_create("backlight");
+	if (IS_ERR(backlight_class)) {
+		pr_warn("Unable to create backlight class; errno = %ld\n",
+			PTR_ERR(backlight_class));
+		return PTR_ERR(backlight_class);
 	}
 
+	backlight_class->dev_groups = bl_device_groups;
+	backlight_class->pm = &backlight_class_dev_pm_ops;
 	INIT_LIST_HEAD(&backlight_dev_list);
 	mutex_init(&backlight_dev_list_mutex);
 	BLOCKING_INIT_NOTIFIER_HEAD(&backlight_notifier);

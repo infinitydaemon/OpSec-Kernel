@@ -113,7 +113,6 @@ static int vpif_buffer_queue_setup(struct vb2_queue *vq,
 	struct channel_obj *ch = vb2_get_drv_priv(vq);
 	struct common_obj *common = &ch->common[VPIF_VIDEO_INDEX];
 	unsigned size = common->fmt.fmt.pix.sizeimage;
-	unsigned int q_num_bufs = vb2_get_num_buffers(vq);
 
 	vpif_dbg(2, debug, "vpif_buffer_setup\n");
 
@@ -123,8 +122,8 @@ static int vpif_buffer_queue_setup(struct vb2_queue *vq,
 		size = sizes[0];
 	}
 
-	if (q_num_bufs + *nbuffers < 3)
-		*nbuffers = 3 - q_num_bufs;
+	if (vq->num_buffers + *nbuffers < 3)
+		*nbuffers = 3 - vq->num_buffers;
 
 	*nplanes = 1;
 	sizes[0] = size;
@@ -1132,7 +1131,7 @@ vpif_query_dv_timings(struct file *file, void *priv,
 	if (input.capabilities != V4L2_IN_CAP_DV_TIMINGS)
 		return -ENODATA;
 
-	ret = v4l2_subdev_call(ch->sd, pad, query_dv_timings, 0, timings);
+	ret = v4l2_subdev_call(ch->sd, video, query_dv_timings, timings);
 	if (ret == -ENOIOCTLCMD || ret == -ENODEV)
 		return -ENODATA;
 
@@ -1177,7 +1176,7 @@ static int vpif_s_dv_timings(struct file *file, void *priv,
 		return -EBUSY;
 
 	/* Configure subdevice timings, if any */
-	ret = v4l2_subdev_call(ch->sd, pad, s_dv_timings, 0, timings);
+	ret = v4l2_subdev_call(ch->sd, video, s_dv_timings, timings);
 	if (ret == -ENOIOCTLCMD || ret == -ENODEV)
 		ret = 0;
 	if (ret < 0) {
@@ -1429,7 +1428,7 @@ static int vpif_probe_complete(void)
 		q->mem_ops = &vb2_dma_contig_memops;
 		q->buf_struct_size = sizeof(struct vpif_cap_buffer);
 		q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
-		q->min_queued_buffers = 1;
+		q->min_buffers_needed = 1;
 		q->lock = &common->lock;
 		q->dev = vpif_dev;
 

@@ -28,7 +28,6 @@
 #include <asm/setup.h>
 #include <asm/i8259.h>
 #include <asm/traps.h>
-#include <asm/fred.h>
 #include <asm/prom.h>
 
 /*
@@ -97,11 +96,7 @@ void __init native_init_IRQ(void)
 	/* Execute any quirks before the call gates are initialised: */
 	x86_init.irqs.pre_vector_init();
 
-	if (cpu_feature_enabled(X86_FEATURE_FRED))
-		fred_complete_exception_setup();
-	else
-		idt_setup_apic_and_irq_gates();
-
+	idt_setup_apic_and_irq_gates();
 	lapic_assign_system_vectors();
 
 	if (!acpi_ioapic && !of_ioapic && nr_legacy_irqs()) {

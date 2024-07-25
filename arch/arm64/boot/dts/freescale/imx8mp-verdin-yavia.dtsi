@@ -100,11 +100,6 @@
 	status = "okay";
 };
 
-&gpio4 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_ctrl_sleep_moci>;
-};
-
 &hwmon_temp {
 	status = "okay";
 };
@@ -119,11 +114,6 @@
 };
 
 &i2c4 {
-	status = "okay";
-};
-
-/* Verdin I2C_3_HDMI */
-&i2c5 {
 	status = "okay";
 };
 

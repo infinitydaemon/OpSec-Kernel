@@ -54,7 +54,7 @@ int vcpu_enable_evmcs(struct kvm_vcpu *vcpu)
 	/* KVM should return supported EVMCS version range */
 	TEST_ASSERT(((evmcs_ver >> 8) >= (evmcs_ver & 0xff)) &&
 		    (evmcs_ver & 0xff) > 0,
-		    "Incorrect EVMCS version range: %x:%x",
+		    "Incorrect EVMCS version range: %x:%x\n",
 		    evmcs_ver & 0xff, evmcs_ver >> 8);
 
 	return evmcs_ver;
@@ -387,10 +387,10 @@ static void nested_create_pte(struct kvm_vm *vm,
 		 * this level.
 		 */
 		TEST_ASSERT(current_level != target_level,
-			    "Cannot create hugepage at level: %u, nested_paddr: 0x%lx",
+			    "Cannot create hugepage at level: %u, nested_paddr: 0x%lx\n",
 			    current_level, nested_paddr);
 		TEST_ASSERT(!pte->page_size,
-			    "Cannot create page table at level: %u, nested_paddr: 0x%lx",
+			    "Cannot create page table at level: %u, nested_paddr: 0x%lx\n",
 			    current_level, nested_paddr);
 	}
 }

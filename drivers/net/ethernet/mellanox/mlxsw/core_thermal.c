@@ -31,7 +31,6 @@
 /* External cooling devices, allowed for binding to mlxsw thermal zones. */
 static char * const mlxsw_thermal_external_allowed_cdev[] = {
 	"mlxreg_fan",
-	"emc2305",
 };
 
 struct mlxsw_cooling_states {
@@ -44,19 +43,16 @@ static const struct thermal_trip default_thermal_trips[] = {
 		.type		= THERMAL_TRIP_ACTIVE,
 		.temperature	= MLXSW_THERMAL_ASIC_TEMP_NORM,
 		.hysteresis	= MLXSW_THERMAL_HYSTERESIS_TEMP,
-		.flags		= THERMAL_TRIP_FLAG_RW_TEMP,
 	},
 	{
 		/* In range - 40-100% PWM */
 		.type		= THERMAL_TRIP_ACTIVE,
 		.temperature	= MLXSW_THERMAL_ASIC_TEMP_HIGH,
 		.hysteresis	= MLXSW_THERMAL_HYSTERESIS_TEMP,
-		.flags		= THERMAL_TRIP_FLAG_RW_TEMP,
 	},
 	{	/* Warning */
 		.type		= THERMAL_TRIP_HOT,
 		.temperature	= MLXSW_THERMAL_ASIC_TEMP_HOT,
-		.flags		= THERMAL_TRIP_FLAG_RW_TEMP,
 	},
 };
 
@@ -65,19 +61,16 @@ static const struct thermal_trip default_thermal_module_trips[] = {
 		.type		= THERMAL_TRIP_ACTIVE,
 		.temperature	= MLXSW_THERMAL_MODULE_TEMP_NORM,
 		.hysteresis	= MLXSW_THERMAL_HYSTERESIS_TEMP,
-		.flags		= THERMAL_TRIP_FLAG_RW_TEMP,
 	},
 	{
 		/* In range - 40-100% PWM */
 		.type		= THERMAL_TRIP_ACTIVE,
 		.temperature	= MLXSW_THERMAL_MODULE_TEMP_HIGH,
 		.hysteresis	= MLXSW_THERMAL_HYSTERESIS_TEMP,
-		.flags		= THERMAL_TRIP_FLAG_RW_TEMP,
 	},
 	{	/* Warning */
 		.type		= THERMAL_TRIP_HOT,
 		.temperature	= MLXSW_THERMAL_MODULE_TEMP_HOT,
-		.flags		= THERMAL_TRIP_FLAG_RW_TEMP,
 	},
 };
 
@@ -97,6 +90,9 @@ static const struct mlxsw_cooling_states default_cooling_states[] = {
 };
 
 #define MLXSW_THERMAL_NUM_TRIPS	ARRAY_SIZE(default_thermal_trips)
+
+/* Make sure all trips are writable */
+#define MLXSW_THERMAL_TRIP_MASK	(BIT(MLXSW_THERMAL_NUM_TRIPS) - 1)
 
 struct mlxsw_thermal;
 
@@ -423,6 +419,7 @@ mlxsw_thermal_module_tz_init(struct mlxsw_thermal_module *module_tz)
 	module_tz->tzdev = thermal_zone_device_register_with_trips(tz_name,
 							module_tz->trips,
 							MLXSW_THERMAL_NUM_TRIPS,
+							MLXSW_THERMAL_TRIP_MASK,
 							module_tz,
 							&mlxsw_thermal_module_ops,
 							&mlxsw_thermal_params,
@@ -538,7 +535,7 @@ mlxsw_thermal_modules_fini(struct mlxsw_thermal *thermal,
 static int
 mlxsw_thermal_gearbox_tz_init(struct mlxsw_thermal_module *gearbox_tz)
 {
-	char tz_name[40];
+	char tz_name[THERMAL_NAME_LENGTH];
 	int ret;
 
 	if (gearbox_tz->slot_index)
@@ -550,6 +547,7 @@ mlxsw_thermal_gearbox_tz_init(struct mlxsw_thermal_module *gearbox_tz)
 	gearbox_tz->tzdev = thermal_zone_device_register_with_trips(tz_name,
 						gearbox_tz->trips,
 						MLXSW_THERMAL_NUM_TRIPS,
+						MLXSW_THERMAL_TRIP_MASK,
 						gearbox_tz,
 						&mlxsw_thermal_gearbox_ops,
 						&mlxsw_thermal_params, 0,
@@ -774,6 +772,7 @@ int mlxsw_thermal_init(struct mlxsw_core *core,
 	thermal->tzdev = thermal_zone_device_register_with_trips("mlxsw",
 						      thermal->trips,
 						      MLXSW_THERMAL_NUM_TRIPS,
+						      MLXSW_THERMAL_TRIP_MASK,
 						      thermal,
 						      &mlxsw_thermal_ops,
 						      &mlxsw_thermal_params, 0,

@@ -42,7 +42,7 @@ MODULE_PARM_DESC(enable_crc16,
 #define WILC_SPI_RSP_HDR_EXTRA_DATA	8
 
 struct wilc_spi {
-	bool isinit;		/* true if wilc_spi_init was successful */
+	bool isinit;		/* true if SPI protocol has been configured */
 	bool probing_crc;	/* true if we're probing chip's CRC config */
 	bool crc7_enabled;	/* true if crc7 is currently enabled */
 	bool crc16_enabled;	/* true if crc16 is currently enabled */
@@ -55,8 +55,6 @@ struct wilc_spi {
 static const struct wilc_hif_func wilc_hif_spi;
 
 static int wilc_spi_reset(struct wilc *wilc);
-static int wilc_spi_configure_bus_protocol(struct wilc *wilc);
-static int wilc_validate_chipid(struct wilc *wilc);
 
 /********************************************
  *
@@ -234,27 +232,8 @@ static int wilc_bus_probe(struct spi_device *spi)
 	}
 	clk_prepare_enable(wilc->rtc_clk);
 
-	dev_info(&spi->dev, "Selected CRC config: crc7=%s, crc16=%s\n",
-		 enable_crc7 ? "on" : "off", enable_crc16 ? "on" : "off");
-
-	/* we need power to configure the bus protocol and to read the chip id: */
-
-	wilc_wlan_power(wilc, true);
-
-	ret = wilc_spi_configure_bus_protocol(wilc);
-	if (ret)
-		goto power_down;
-
-	ret = wilc_validate_chipid(wilc);
-	if (ret)
-		goto power_down;
-
-	wilc_wlan_power(wilc, false);
 	return 0;
 
-power_down:
-	clk_disable_unprepare(wilc->rtc_clk);
-	wilc_wlan_power(wilc, false);
 netdev_cleanup:
 	wilc_netdev_cleanup(wilc);
 free:
@@ -294,7 +273,6 @@ static struct spi_driver wilc_spi_driver = {
 	.remove = wilc_bus_remove,
 };
 module_spi_driver(wilc_spi_driver);
-MODULE_DESCRIPTION("Atmel WILC1000 SPI wireless driver");
 MODULE_LICENSE("GPL");
 
 static int wilc_spi_tx(struct wilc *wilc, u8 *b, u32 len)
@@ -322,6 +300,7 @@ static int wilc_spi_tx(struct wilc *wilc, u8 *b, u32 len)
 
 		memset(&msg, 0, sizeof(msg));
 		spi_message_init(&msg);
+		msg.spi = spi;
 		spi_message_add_tail(&tr, &msg);
 
 		ret = spi_sync(spi, &msg);
@@ -364,6 +343,7 @@ static int wilc_spi_rx(struct wilc *wilc, u8 *rb, u32 rlen)
 
 		memset(&msg, 0, sizeof(msg));
 		spi_message_init(&msg);
+		msg.spi = spi;
 		spi_message_add_tail(&tr, &msg);
 
 		ret = spi_sync(spi, &msg);
@@ -401,6 +381,8 @@ static int wilc_spi_tx_rx(struct wilc *wilc, u8 *wb, u8 *rb, u32 rlen)
 
 		memset(&msg, 0, sizeof(msg));
 		spi_message_init(&msg);
+		msg.spi = spi;
+
 		spi_message_add_tail(&tr, &msg);
 		ret = spi_sync(spi, &msg);
 		if (ret < 0)
@@ -494,7 +476,7 @@ static int spi_data_write(struct wilc *wilc, u8 *b, u32 sz)
  ********************************************/
 static u8 wilc_get_crc7(u8 *buffer, u32 len)
 {
-	return crc7_be(0xfe, buffer, len) | 0x01;
+	return crc7_be(0xfe, buffer, len);
 }
 
 static int wilc_spi_single_read(struct wilc *wilc, u8 cmd, u32 adr, void *b,
@@ -1123,34 +1105,26 @@ static int wilc_spi_deinit(struct wilc *wilc)
 
 static int wilc_spi_init(struct wilc *wilc, bool resume)
 {
+	struct spi_device *spi = to_spi_device(wilc->dev);
 	struct wilc_spi *spi_priv = wilc->bus_data;
-	int ret;
+	u32 reg;
+	u32 chipid;
+	int ret, i;
 
 	if (spi_priv->isinit) {
 		/* Confirm we can read chipid register without error: */
-		if (wilc_validate_chipid(wilc) == 0)
+		ret = wilc_spi_read_reg(wilc, WILC_CHIPID, &chipid);
+		if (ret == 0)
 			return 0;
+
+		dev_err(&spi->dev, "Fail cmd read chip id...\n");
 	}
 
 	wilc_wlan_power(wilc, true);
 
-	ret = wilc_spi_configure_bus_protocol(wilc);
-	if (ret) {
-		wilc_wlan_power(wilc, false);
-		return ret;
-	}
-
-	spi_priv->isinit = true;
-
-	return 0;
-}
-
-static int wilc_spi_configure_bus_protocol(struct wilc *wilc)
-{
-	struct spi_device *spi = to_spi_device(wilc->dev);
-	struct wilc_spi *spi_priv = wilc->bus_data;
-	u32 reg;
-	int ret, i;
+	/*
+	 * configure protocol
+	 */
 
 	/*
 	 * Infer the CRC settings that are currently in effect.  This
@@ -1202,15 +1176,6 @@ static int wilc_spi_configure_bus_protocol(struct wilc *wilc)
 
 	spi_priv->probing_crc = false;
 
-	return 0;
-}
-
-static int wilc_validate_chipid(struct wilc *wilc)
-{
-	struct spi_device *spi = to_spi_device(wilc->dev);
-	u32 chipid;
-	int ret;
-
 	/*
 	 * make sure can read chip id without protocol error
 	 */
@@ -1219,10 +1184,9 @@ static int wilc_validate_chipid(struct wilc *wilc)
 		dev_err(&spi->dev, "Fail cmd read chip id...\n");
 		return ret;
 	}
-	if (!is_wilc1000(chipid)) {
-		dev_err(&spi->dev, "Unknown chip id 0x%x\n", chipid);
-		return -ENODEV;
-	}
+
+	spi_priv->isinit = true;
+
 	return 0;
 }
 

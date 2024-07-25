@@ -2371,7 +2371,7 @@ static int ibmvnic_tx_scrq_flush(struct ibmvnic_adapter *adapter,
 		ibmvnic_tx_scrq_clean_buffer(adapter, tx_scrq);
 	else
 		ind_bufp->index = 0;
-	return rc;
+	return 0;
 }
 
 static netdev_tx_t ibmvnic_xmit(struct sk_buff *skb, struct net_device *netdev)
@@ -2424,9 +2424,7 @@ static netdev_tx_t ibmvnic_xmit(struct sk_buff *skb, struct net_device *netdev)
 		tx_dropped++;
 		tx_send_failed++;
 		ret = NETDEV_TX_OK;
-		lpar_rc = ibmvnic_tx_scrq_flush(adapter, tx_scrq);
-		if (lpar_rc != H_SUCCESS)
-			goto tx_err;
+		ibmvnic_tx_scrq_flush(adapter, tx_scrq);
 		goto out;
 	}
 
@@ -2441,10 +2439,8 @@ static netdev_tx_t ibmvnic_xmit(struct sk_buff *skb, struct net_device *netdev)
 		dev_kfree_skb_any(skb);
 		tx_send_failed++;
 		tx_dropped++;
+		ibmvnic_tx_scrq_flush(adapter, tx_scrq);
 		ret = NETDEV_TX_OK;
-		lpar_rc = ibmvnic_tx_scrq_flush(adapter, tx_scrq);
-		if (lpar_rc != H_SUCCESS)
-			goto tx_err;
 		goto out;
 	}
 
@@ -3523,7 +3519,7 @@ restart_poll:
 		if (napi_complete_done(napi, frames_processed)) {
 			enable_scrq_irq(adapter, rx_scrq);
 			if (pending_scrq(adapter, rx_scrq)) {
-				if (napi_schedule(napi)) {
+				if (napi_reschedule(napi)) {
 					disable_scrq_irq(adapter, rx_scrq);
 					goto restart_poll;
 				}
@@ -4060,6 +4056,12 @@ static void release_sub_crqs(struct ibmvnic_adapter *adapter, bool do_h_free)
 		adapter->tx_scrq = NULL;
 		adapter->num_active_tx_scrqs = 0;
 	}
+
+	/* Clean any remaining outstanding SKBs
+	 * we freed the irq so we won't be hearing
+	 * from them
+	 */
+	clean_tx_pools(adapter);
 
 	if (adapter->rx_scrq) {
 		for (i = 0; i < adapter->num_active_rx_scrqs; i++) {
@@ -5251,8 +5253,7 @@ static void handle_vpd_rsp(union ibmvnic_crq *crq,
 	/* copy firmware version string from vpd into adapter */
 	if ((substr + 3 + fw_level_len) <
 	    (adapter->vpd->buff + adapter->vpd->len)) {
-		strscpy(adapter->fw_version, substr + 3,
-			sizeof(adapter->fw_version));
+		strncpy((char *)adapter->fw_version, substr + 3, fw_level_len);
 	} else {
 		dev_info(dev, "FW substr extrapolated VPD buff\n");
 	}

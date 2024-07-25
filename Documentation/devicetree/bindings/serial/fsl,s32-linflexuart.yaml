@@ -13,7 +13,7 @@ description: |
   https://www.nxp.com/webapp/Download?colCode=S32V234RM.
 
 maintainers:
-  - Chester Lin <chester62515@gmail.com>
+  - Chester Lin <clin@suse.com>
 
 allOf:
   - $ref: serial.yaml#
@@ -23,9 +23,7 @@ properties:
     oneOf:
       - const: fsl,s32v234-linflexuart
       - items:
-          - enum:
-              - nxp,s32g2-linflexuart
-              - nxp,s32g3-linflexuart
+          - const: nxp,s32g2-linflexuart
           - const: fsl,s32v234-linflexuart
 
   reg:

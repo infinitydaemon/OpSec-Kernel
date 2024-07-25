@@ -95,7 +95,6 @@ properties:
         - snps,dwmac-5.20
         - snps,dwxgmac
         - snps,dwxgmac-2.10
-        - starfive,jh7100-dwmac
         - starfive,jh7110-dwmac
 
   reg:
@@ -108,15 +107,13 @@ properties:
       - description: Combined signal for various interrupt events
       - description: The interrupt to manage the remote wake-up packet detection
       - description: The interrupt that occurs when Rx exits the LPI state
-      - description: The interrupt that occurs when HW safety error triggered
 
   interrupt-names:
     minItems: 1
     items:
       - const: macirq
-      - enum: [eth_wake_irq, eth_lpi, sfty]
-      - enum: [eth_wake_irq, eth_lpi, sfty]
-      - enum: [eth_wake_irq, eth_lpi, sfty]
+      - enum: [eth_wake_irq, eth_lpi]
+      - const: eth_lpi
 
   clocks:
     minItems: 1
@@ -147,12 +144,10 @@ properties:
       - description: AHB reset
 
   reset-names:
-    oneOf:
-      - items:
-          - enum: [stmmaceth, ahb]
-      - items:
-          - const: stmmaceth
-          - const: ahb
+    minItems: 1
+    items:
+      - const: stmmaceth
+      - const: ahb
 
   power-domains:
     maxItems: 1
@@ -242,8 +237,7 @@ properties:
             type: boolean
             description: Multicast & Broadcast Packets
           snps,priority:
-            $ref: /schemas/types.yaml#/definitions/uint32-array
-            maxItems: 1
+            $ref: /schemas/types.yaml#/definitions/uint32
             description: Bitmask of the tagged frames priorities assigned to the queue
         allOf:
           - if:
@@ -328,6 +322,9 @@ properties:
       snps,tx-sched-dwrr:
         type: boolean
         description: Deficit Weighted Round Robin
+      snps,tx-sched-sp:
+        type: boolean
+        description: Strict priority
     allOf:
       - if:
           required:
@@ -336,6 +333,7 @@ properties:
           properties:
             snps,tx-sched-wfq: false
             snps,tx-sched-dwrr: false
+            snps,tx-sched-sp: false
       - if:
           required:
             - snps,tx-sched-wfq
@@ -343,6 +341,7 @@ properties:
           properties:
             snps,tx-sched-wrr: false
             snps,tx-sched-dwrr: false
+            snps,tx-sched-sp: false
       - if:
           required:
             - snps,tx-sched-dwrr
@@ -350,6 +349,15 @@ properties:
           properties:
             snps,tx-sched-wrr: false
             snps,tx-sched-wfq: false
+            snps,tx-sched-sp: false
+      - if:
+          required:
+            - snps,tx-sched-sp
+        then:
+          properties:
+            snps,tx-sched-wrr: false
+            snps,tx-sched-wfq: false
+            snps,tx-sched-dwrr: false
     patternProperties:
       "^queue[0-9]$":
         description: Each subnode represents a queue.
@@ -380,8 +388,7 @@ properties:
             $ref: /schemas/types.yaml#/definitions/uint32
             description: max read outstanding req. limit
           snps,priority:
-            $ref: /schemas/types.yaml#/definitions/uint32-array
-            maxItems: 1
+            $ref: /schemas/types.yaml#/definitions/uint32
             description:
               Bitmask of the tagged frames priorities assigned to the queue.
               When a PFC frame is received with priorities matching the bitmask,

@@ -2,10 +2,10 @@
 // Copyright (c) 2018, Linaro Limited.
 // Copyright (c) 2018, The Linux Foundation. All rights reserved.
 
-#include <dt-bindings/sound/qcom,q6afe.h>
 #include <linux/module.h>
 #include <sound/jack.h>
 #include <linux/input-event-codes.h>
+#include "qdsp6/q6afe.h"
 #include "common.h"
 
 static const struct snd_soc_dapm_widget qcom_jack_snd_widgets[] = {
@@ -73,7 +73,7 @@ int qcom_snd_parse_of(struct snd_soc_card *card)
 	link = card->dai_link;
 
 	for_each_available_child_of_node(dev->of_node, np) {
-		dlc = devm_kcalloc(dev, 2, sizeof(*dlc), GFP_KERNEL);
+		dlc = devm_kzalloc(dev, 2 * sizeof(*dlc), GFP_KERNEL);
 		if (!dlc) {
 			ret = -ENOMEM;
 			goto err_put_np;
@@ -239,6 +239,4 @@ int qcom_snd_wcd_jack_setup(struct snd_soc_pcm_runtime *rtd,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(qcom_snd_wcd_jack_setup);
-
-MODULE_DESCRIPTION("ASoC Qualcomm helper functions");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");

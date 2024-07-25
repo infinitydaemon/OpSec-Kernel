@@ -39,19 +39,19 @@ properties:
 
 patternProperties:
   "^gpio(@[0-9a-f]+)?$":
-    $ref: /schemas/gpio/kontron,sl28cpld-gpio.yaml
+    $ref: ../gpio/kontron,sl28cpld-gpio.yaml
 
   "^hwmon(@[0-9a-f]+)?$":
-    $ref: /schemas/hwmon/kontron,sl28cpld-hwmon.yaml
+    $ref: ../hwmon/kontron,sl28cpld-hwmon.yaml
 
   "^interrupt-controller(@[0-9a-f]+)?$":
-    $ref: /schemas/interrupt-controller/kontron,sl28cpld-intc.yaml
+    $ref: ../interrupt-controller/kontron,sl28cpld-intc.yaml
 
   "^pwm(@[0-9a-f]+)?$":
-    $ref: /schemas/pwm/kontron,sl28cpld-pwm.yaml
+    $ref: ../pwm/kontron,sl28cpld-pwm.yaml
 
   "^watchdog(@[0-9a-f]+)?$":
-    $ref: /schemas/watchdog/kontron,sl28cpld-wdt.yaml
+    $ref: ../watchdog/kontron,sl28cpld-wdt.yaml
 
 required:
   - "#address-cells"

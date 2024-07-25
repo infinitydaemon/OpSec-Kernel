@@ -346,9 +346,10 @@ static int exynos_drm_platform_probe(struct platform_device *pdev)
 					       match);
 }
 
-static void exynos_drm_platform_remove(struct platform_device *pdev)
+static int exynos_drm_platform_remove(struct platform_device *pdev)
 {
 	component_master_del(&pdev->dev, &exynos_drm_ops);
+	return 0;
 }
 
 static void exynos_drm_platform_shutdown(struct platform_device *pdev)
@@ -361,7 +362,7 @@ static void exynos_drm_platform_shutdown(struct platform_device *pdev)
 
 static struct platform_driver exynos_drm_platform_driver = {
 	.probe	= exynos_drm_platform_probe,
-	.remove_new	= exynos_drm_platform_remove,
+	.remove	= exynos_drm_platform_remove,
 	.shutdown = exynos_drm_platform_shutdown,
 	.driver	= {
 		.name	= "exynos-drm",

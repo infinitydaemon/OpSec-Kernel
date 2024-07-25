@@ -71,7 +71,6 @@ struct r1conf {
 						 * allow for replacements.
 						 */
 	int			raid_disks;
-	int			nonrot_disks;
 
 	spinlock_t		device_lock;
 

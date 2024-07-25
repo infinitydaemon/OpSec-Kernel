@@ -36,10 +36,7 @@ struct gb_cap {
 	dev_t			dev_num;
 };
 
-static const struct class cap_class = {
-	.name = "gb_authenticate",
-};
-
+static struct class *cap_class;
 static dev_t cap_dev_num;
 static DEFINE_IDA(cap_minors_map);
 static LIST_HEAD(cap_list);
@@ -324,7 +321,7 @@ int gb_cap_connection_init(struct gb_connection *connection)
 	if (ret)
 		goto err_list_del;
 
-	minor = ida_alloc_max(&cap_minors_map, NUM_MINORS - 1, GFP_KERNEL);
+	minor = ida_simple_get(&cap_minors_map, 0, NUM_MINORS, GFP_KERNEL);
 	if (minor < 0) {
 		ret = minor;
 		goto err_connection_disable;
@@ -339,7 +336,7 @@ int gb_cap_connection_init(struct gb_connection *connection)
 		goto err_remove_ida;
 
 	/* Add a soft link to the previously added char-dev within the bundle */
-	cap->class_device = device_create(&cap_class, cap->parent, cap->dev_num,
+	cap->class_device = device_create(cap_class, cap->parent, cap->dev_num,
 					  NULL, "gb-authenticate-%d", minor);
 	if (IS_ERR(cap->class_device)) {
 		ret = PTR_ERR(cap->class_device);
@@ -351,7 +348,7 @@ int gb_cap_connection_init(struct gb_connection *connection)
 err_del_cdev:
 	cdev_del(&cap->cdev);
 err_remove_ida:
-	ida_free(&cap_minors_map, minor);
+	ida_simple_remove(&cap_minors_map, minor);
 err_connection_disable:
 	gb_connection_disable(connection);
 err_list_del:
@@ -373,9 +370,9 @@ void gb_cap_connection_exit(struct gb_connection *connection)
 
 	cap = gb_connection_get_data(connection);
 
-	device_destroy(&cap_class, cap->dev_num);
+	device_destroy(cap_class, cap->dev_num);
 	cdev_del(&cap->cdev);
-	ida_free(&cap_minors_map, MINOR(cap->dev_num));
+	ida_simple_remove(&cap_minors_map, MINOR(cap->dev_num));
 
 	/*
 	 * Disallow any new ioctl operations on the char device and wait for
@@ -405,9 +402,9 @@ int cap_init(void)
 {
 	int ret;
 
-	ret = class_register(&cap_class);
-	if (ret)
-		return ret;
+	cap_class = class_create("gb_authenticate");
+	if (IS_ERR(cap_class))
+		return PTR_ERR(cap_class);
 
 	ret = alloc_chrdev_region(&cap_dev_num, 0, NUM_MINORS,
 				  "gb_authenticate");
@@ -417,13 +414,13 @@ int cap_init(void)
 	return 0;
 
 err_remove_class:
-	class_unregister(&cap_class);
+	class_destroy(cap_class);
 	return ret;
 }
 
 void cap_exit(void)
 {
 	unregister_chrdev_region(cap_dev_num, NUM_MINORS);
-	class_unregister(&cap_class);
+	class_destroy(cap_class);
 	ida_destroy(&cap_minors_map);
 }

@@ -180,6 +180,10 @@ static const struct gb_camera_fmt_info *gb_camera_get_format_info(u16 gb_fmt)
 
 #define GB_CAMERA_MAX_SETTINGS_SIZE	8192
 
+#define gcam_dbg(gcam, format...)	dev_dbg(&gcam->bundle->dev, format)
+#define gcam_info(gcam, format...)	dev_info(&gcam->bundle->dev, format)
+#define gcam_err(gcam, format...)	dev_err(&gcam->bundle->dev, format)
+
 static int gb_camera_operation_sync_flags(struct gb_connection *connection,
 					  int type, unsigned int flags,
 					  void *request, size_t request_size,
@@ -216,7 +220,7 @@ static int gb_camera_operation_sync_flags(struct gb_connection *connection,
 }
 
 static int gb_camera_get_max_pkt_size(struct gb_camera *gcam,
-				      struct gb_camera_configure_streams_response *resp)
+		struct gb_camera_configure_streams_response *resp)
 {
 	unsigned int max_pkt_size = 0;
 	unsigned int i;
@@ -228,8 +232,8 @@ static int gb_camera_get_max_pkt_size(struct gb_camera *gcam,
 
 		fmt_info = gb_camera_get_format_info(cfg->format);
 		if (!fmt_info) {
-			dev_err(&gcam->bundle->dev, "unsupported greybus image format: %d\n",
-				cfg->format);
+			gcam_err(gcam, "unsupported greybus image format: %d\n",
+				 cfg->format);
 			return -EIO;
 		}
 
@@ -237,18 +241,18 @@ static int gb_camera_get_max_pkt_size(struct gb_camera *gcam,
 			pkt_size = le32_to_cpu(cfg->max_pkt_size);
 
 			if (pkt_size == 0) {
-				dev_err(&gcam->bundle->dev,
-					"Stream %u: invalid zero maximum packet size\n",
-					i);
+				gcam_err(gcam,
+					 "Stream %u: invalid zero maximum packet size\n",
+					 i);
 				return -EIO;
 			}
 		} else {
 			pkt_size = le16_to_cpu(cfg->width) * fmt_info->bpp / 8;
 
 			if (pkt_size != le32_to_cpu(cfg->max_pkt_size)) {
-				dev_err(&gcam->bundle->dev,
-					"Stream %u: maximum packet size mismatch (%u/%u)\n",
-					i, pkt_size, cfg->max_pkt_size);
+				gcam_err(gcam,
+					 "Stream %u: maximum packet size mismatch (%u/%u)\n",
+					 i, pkt_size, cfg->max_pkt_size);
 				return -EIO;
 			}
 		}
@@ -263,7 +267,8 @@ static int gb_camera_get_max_pkt_size(struct gb_camera *gcam,
  * Validate the stream configuration response verifying padding is correctly
  * set and the returned number of streams is supported
  */
-static const int gb_camera_configure_streams_validate_response(struct gb_camera *gcam,
+static const int gb_camera_configure_streams_validate_response(
+		struct gb_camera *gcam,
 		struct gb_camera_configure_streams_response *resp,
 		unsigned int nstreams)
 {
@@ -271,13 +276,13 @@ static const int gb_camera_configure_streams_validate_response(struct gb_camera 
 
 	/* Validate the returned response structure */
 	if (resp->padding[0] || resp->padding[1]) {
-		dev_err(&gcam->bundle->dev, "response padding != 0\n");
+		gcam_err(gcam, "response padding != 0\n");
 		return -EIO;
 	}
 
 	if (resp->num_streams > nstreams) {
-		dev_err(&gcam->bundle->dev, "got #streams %u > request %u\n",
-			resp->num_streams, nstreams);
+		gcam_err(gcam, "got #streams %u > request %u\n",
+			 resp->num_streams, nstreams);
 		return -EIO;
 	}
 
@@ -285,7 +290,7 @@ static const int gb_camera_configure_streams_validate_response(struct gb_camera 
 		struct gb_camera_stream_config_response *cfg = &resp->config[i];
 
 		if (cfg->padding) {
-			dev_err(&gcam->bundle->dev, "stream #%u padding != 0\n", i);
+			gcam_err(gcam, "stream #%u padding != 0\n", i);
 			return -EIO;
 		}
 	}
@@ -336,16 +341,16 @@ static int gb_camera_set_power_mode(struct gb_camera *gcam, bool hs)
 
 	ret = gb_camera_set_intf_power_mode(gcam, intf->interface_id, hs);
 	if (ret < 0) {
-		dev_err(&gcam->bundle->dev, "failed to set module interface to %s (%d)\n",
-			hs ? "HS" : "PWM", ret);
+		gcam_err(gcam, "failed to set module interface to %s (%d)\n",
+			 hs ? "HS" : "PWM", ret);
 		return ret;
 	}
 
 	ret = gb_camera_set_intf_power_mode(gcam, svc->ap_intf_id, hs);
 	if (ret < 0) {
 		gb_camera_set_intf_power_mode(gcam, intf->interface_id, !hs);
-		dev_err(&gcam->bundle->dev, "failed to set AP interface to %s (%d)\n",
-			hs ? "HS" : "PWM", ret);
+		gcam_err(gcam, "failed to set AP interface to %s (%d)\n",
+			 hs ? "HS" : "PWM", ret);
 		return ret;
 	}
 
@@ -373,8 +378,8 @@ struct ap_csi_config_request {
 #define GB_CAMERA_CSI_CLK_FREQ_MARGIN		150000000U
 
 static int gb_camera_setup_data_connection(struct gb_camera *gcam,
-					   struct gb_camera_configure_streams_response *resp,
-					   struct gb_camera_csi_params *csi_params)
+		struct gb_camera_configure_streams_response *resp,
+		struct gb_camera_csi_params *csi_params)
 {
 	struct ap_csi_config_request csi_cfg;
 	struct gb_connection *conn;
@@ -431,7 +436,7 @@ static int gb_camera_setup_data_connection(struct gb_camera *gcam,
 			   sizeof(csi_cfg),
 			   GB_APB_REQUEST_CSI_TX_CONTROL, false);
 	if (ret < 0) {
-		dev_err(&gcam->bundle->dev, "failed to start the CSI transmitter\n");
+		gcam_err(gcam, "failed to start the CSI transmitter\n");
 		goto error_power;
 	}
 
@@ -466,7 +471,7 @@ static void gb_camera_teardown_data_connection(struct gb_camera *gcam)
 			   GB_APB_REQUEST_CSI_TX_CONTROL, false);
 
 	if (ret < 0)
-		dev_err(&gcam->bundle->dev, "failed to stop the CSI transmitter\n");
+		gcam_err(gcam, "failed to stop the CSI transmitter\n");
 
 	/* Set the UniPro link to low speed mode. */
 	gb_camera_set_power_mode(gcam, false);
@@ -503,7 +508,7 @@ static int gb_camera_capabilities(struct gb_camera *gcam,
 					     NULL, 0,
 					     (void *)capabilities, size);
 	if (ret)
-		dev_err(&gcam->bundle->dev, "failed to retrieve capabilities: %d\n", ret);
+		gcam_err(gcam, "failed to retrieve capabilities: %d\n", ret);
 
 done:
 	mutex_unlock(&gcam->mutex);
@@ -719,22 +724,22 @@ static int gb_camera_request_handler(struct gb_operation *op)
 	struct gb_message *request;
 
 	if (op->type != GB_CAMERA_TYPE_METADATA) {
-		dev_err(&gcam->bundle->dev, "Unsupported unsolicited event: %u\n", op->type);
+		gcam_err(gcam, "Unsupported unsolicited event: %u\n", op->type);
 		return -EINVAL;
 	}
 
 	request = op->request;
 
 	if (request->payload_size < sizeof(*payload)) {
-		dev_err(&gcam->bundle->dev, "Wrong event size received (%zu < %zu)\n",
-			request->payload_size, sizeof(*payload));
+		gcam_err(gcam, "Wrong event size received (%zu < %zu)\n",
+			 request->payload_size, sizeof(*payload));
 		return -EINVAL;
 	}
 
 	payload = request->payload;
 
-	dev_dbg(&gcam->bundle->dev, "received metadata for request %u, frame %u, stream %u\n",
-		payload->request_id, payload->frame_number, payload->stream);
+	gcam_dbg(gcam, "received metadata for request %u, frame %u, stream %u\n",
+		 payload->request_id, payload->frame_number, payload->stream);
 
 	return 0;
 }
@@ -778,8 +783,8 @@ static ssize_t gb_camera_op_capabilities(void *priv, char *data, size_t len)
 }
 
 static int gb_camera_op_configure_streams(void *priv, unsigned int *nstreams,
-					  unsigned int *flags, struct gb_camera_stream *streams,
-					  struct gb_camera_csi_params *csi_params)
+		unsigned int *flags, struct gb_camera_stream *streams,
+		struct gb_camera_csi_params *csi_params)
 {
 	struct gb_camera *gcam = priv;
 	struct gb_camera_stream_config *gb_streams;
@@ -1343,15 +1348,15 @@ static int gb_camera_resume(struct device *dev)
 
 	ret = gb_connection_enable(gcam->connection);
 	if (ret) {
-		dev_err(&gcam->bundle->dev, "failed to enable connection: %d\n", ret);
+		gcam_err(gcam, "failed to enable connection: %d\n", ret);
 		return ret;
 	}
 
 	if (gcam->data_connection) {
 		ret = gb_connection_enable(gcam->data_connection);
 		if (ret) {
-			dev_err(&gcam->bundle->dev,
-				"failed to enable data connection: %d\n", ret);
+			gcam_err(gcam,
+				 "failed to enable data connection: %d\n", ret);
 			return ret;
 		}
 	}

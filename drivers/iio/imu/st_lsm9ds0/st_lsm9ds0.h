@@ -4,11 +4,8 @@
 #ifndef ST_LSM9DS0_H
 #define ST_LSM9DS0_H
 
-struct device;
-struct regmap;
-struct regulator;
-
 struct iio_dev;
+struct regulator;
 
 struct st_lsm9ds0 {
 	struct device *dev;

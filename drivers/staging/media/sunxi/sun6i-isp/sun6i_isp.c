@@ -386,7 +386,8 @@ static int sun6i_isp_resources_setup(struct sun6i_isp_device *isp_dev,
 
 	irq = platform_get_irq(platform_dev, 0);
 	if (irq < 0) {
-		ret = irq;
+		dev_err(dev, "failed to get interrupt\n");
+		ret = -ENXIO;
 		goto error_clock_rate_exclusive;
 	}
 

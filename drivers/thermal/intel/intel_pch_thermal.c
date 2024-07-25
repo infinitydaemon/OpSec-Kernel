@@ -84,6 +84,7 @@ struct pch_thermal_device {
 	void __iomem *hw_base;
 	struct pci_dev *pdev;
 	struct thermal_zone_device *tzd;
+	struct thermal_trip trips[PCH_MAX_TRIPS];
 	bool bios_enabled;
 };
 
@@ -93,8 +94,7 @@ struct pch_thermal_device {
  * passive trip temperature using _PSV method. There is no specific
  * passive temperature setting in MMIO interface of this PCI device.
  */
-static int pch_wpt_add_acpi_psv_trip(struct pch_thermal_device *ptd,
-				     struct thermal_trip *trip)
+static int pch_wpt_add_acpi_psv_trip(struct pch_thermal_device *ptd, int trip)
 {
 	struct acpi_device *adev;
 	int temp;
@@ -106,13 +106,12 @@ static int pch_wpt_add_acpi_psv_trip(struct pch_thermal_device *ptd,
 	if (thermal_acpi_passive_trip_temp(adev, &temp) || temp <= 0)
 		return 0;
 
-	trip->type = THERMAL_TRIP_PASSIVE;
-	trip->temperature = temp;
+	ptd->trips[trip].type = THERMAL_TRIP_PASSIVE;
+	ptd->trips[trip].temperature = temp;
 	return 1;
 }
 #else
-static int pch_wpt_add_acpi_psv_trip(struct pch_thermal_device *ptd,
-				     struct thermal_trip *trip)
+static int pch_wpt_add_acpi_psv_trip(struct pch_thermal_device *ptd, int trip)
 {
 	return 0;
 }
@@ -132,7 +131,7 @@ static void pch_critical(struct thermal_zone_device *tzd)
 		thermal_zone_device_type(tzd));
 }
 
-static const struct thermal_zone_device_ops tzd_ops = {
+static struct thermal_zone_device_ops tzd_ops = {
 	.get_temp = pch_thermal_get_temp,
 	.critical = pch_critical,
 };
@@ -160,7 +159,6 @@ static const char *board_names[] = {
 static int intel_pch_thermal_probe(struct pci_dev *pdev,
 				   const struct pci_device_id *id)
 {
-	struct thermal_trip ptd_trips[PCH_MAX_TRIPS] = { 0 };
 	enum pch_board_ids board_id = id->driver_data;
 	struct pch_thermal_device *ptd;
 	int nr_trips = 0;
@@ -222,22 +220,22 @@ read_trips:
 	trip_temp = readw(ptd->hw_base + WPT_CTT);
 	trip_temp &= 0x1FF;
 	if (trip_temp) {
-		ptd_trips[nr_trips].temperature = GET_WPT_TEMP(trip_temp);
-		ptd_trips[nr_trips++].type = THERMAL_TRIP_CRITICAL;
+		ptd->trips[nr_trips].temperature = GET_WPT_TEMP(trip_temp);
+		ptd->trips[nr_trips++].type = THERMAL_TRIP_CRITICAL;
 	}
 
 	trip_temp = readw(ptd->hw_base + WPT_PHL);
 	trip_temp &= 0x1FF;
 	if (trip_temp) {
-		ptd_trips[nr_trips].temperature = GET_WPT_TEMP(trip_temp);
-		ptd_trips[nr_trips++].type = THERMAL_TRIP_HOT;
+		ptd->trips[nr_trips].temperature = GET_WPT_TEMP(trip_temp);
+		ptd->trips[nr_trips++].type = THERMAL_TRIP_HOT;
 	}
 
-	nr_trips += pch_wpt_add_acpi_psv_trip(ptd, &ptd_trips[nr_trips]);
+	nr_trips += pch_wpt_add_acpi_psv_trip(ptd, nr_trips);
 
 	ptd->tzd = thermal_zone_device_register_with_trips(board_names[board_id],
-							   ptd_trips, nr_trips,
-							   ptd, &tzd_ops,
+							   ptd->trips, nr_trips,
+							   0, ptd, &tzd_ops,
 							   NULL, 0, 0);
 	if (IS_ERR(ptd->tzd)) {
 		dev_err(&pdev->dev, "Failed to register thermal zone %s\n",

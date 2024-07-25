@@ -454,7 +454,7 @@ void cpufreq_freq_transition_end(struct cpufreq_policy *policy,
 
 	arch_set_freq_scale(policy->related_cpus,
 			    policy->cur,
-			    arch_scale_freq_ref(policy->cpu));
+			    policy->cpuinfo.max_freq);
 
 	spin_lock(&policy->transition_lock);
 	policy->transition_ongoing = false;
@@ -576,26 +576,17 @@ unsigned int cpufreq_policy_transition_delay_us(struct cpufreq_policy *policy)
 
 	latency = policy->cpuinfo.transition_latency / NSEC_PER_USEC;
 	if (latency) {
-		unsigned int max_delay_us = 2 * MSEC_PER_SEC;
-
 		/*
-		 * If the platform already has high transition_latency, use it
-		 * as-is.
-		 */
-		if (latency > max_delay_us)
-			return latency;
-
-		/*
-		 * For platforms that can change the frequency very fast (< 2
+		 * For platforms that can change the frequency very fast (< 10
 		 * us), the above formula gives a decent transition delay. But
 		 * for platforms where transition_latency is in milliseconds, it
 		 * ends up giving unrealistic values.
 		 *
-		 * Cap the default transition delay to 2 ms, which seems to be
+		 * Cap the default transition delay to 10 ms, which seems to be
 		 * a reasonable amount of time after which we should reevaluate
 		 * the frequency.
 		 */
-		return min(latency * LATENCY_MULTIPLIER, max_delay_us);
+		return min(latency * LATENCY_MULTIPLIER, (unsigned int)10000);
 	}
 
 	return LATENCY_MULTIPLIER;
@@ -1431,7 +1422,8 @@ static int cpufreq_online(unsigned int cpu)
 		}
 
 		/* Let the per-policy boost flag mirror the cpufreq_driver boost during init */
-		policy->boost_enabled = cpufreq_boost_enabled() && policy_has_boost_freq(policy);
+		if (cpufreq_boost_enabled() && policy_has_boost_freq(policy))
+			policy->boost_enabled = true;
 
 		/*
 		 * The initialization has succeeded and the policy is online.
@@ -1558,7 +1550,7 @@ static int cpufreq_online(unsigned int cpu)
 
 		/*
 		 * Register with the energy model before
-		 * sugov_eas_rebuild_sd() is called, which will result
+		 * sched_cpufreq_governor_change() is called, which will result
 		 * in rebuilding of the sched domains, which should only be done
 		 * once the energy model is properly initialized for the policy
 		 * first.
@@ -1665,7 +1657,7 @@ static void __cpufreq_offline(unsigned int cpu, struct cpufreq_policy *policy)
 	}
 
 	if (has_target())
-		strscpy(policy->last_governor, policy->governor->name,
+		strncpy(policy->last_governor, policy->governor->name,
 			CPUFREQ_NAME_LEN);
 	else
 		policy->last_policy = policy->policy;
@@ -2196,7 +2188,7 @@ unsigned int cpufreq_driver_fast_switch(struct cpufreq_policy *policy,
 
 	policy->cur = freq;
 	arch_set_freq_scale(policy->related_cpus, freq,
-			    arch_scale_freq_ref(policy->cpu));
+			    policy->cpuinfo.max_freq);
 	cpufreq_stats_record_transition(policy, freq);
 
 	if (trace_cpu_frequency_enabled()) {
@@ -2585,40 +2577,6 @@ int cpufreq_get_policy(struct cpufreq_policy *policy, unsigned int cpu)
 }
 EXPORT_SYMBOL(cpufreq_get_policy);
 
-DEFINE_PER_CPU(unsigned long, cpufreq_pressure);
-
-/**
- * cpufreq_update_pressure() - Update cpufreq pressure for CPUs
- * @policy: cpufreq policy of the CPUs.
- *
- * Update the value of cpufreq pressure for all @cpus in the policy.
- */
-static void cpufreq_update_pressure(struct cpufreq_policy *policy)
-{
-	unsigned long max_capacity, capped_freq, pressure;
-	u32 max_freq;
-	int cpu;
-
-	cpu = cpumask_first(policy->related_cpus);
-	max_freq = arch_scale_freq_ref(cpu);
-	capped_freq = policy->max;
-
-	/*
-	 * Handle properly the boost frequencies, which should simply clean
-	 * the cpufreq pressure value.
-	 */
-	if (max_freq <= capped_freq) {
-		pressure = 0;
-	} else {
-		max_capacity = arch_scale_cpu_capacity(cpu);
-		pressure = max_capacity -
-			   mult_frac(max_capacity, capped_freq, max_freq);
-	}
-
-	for_each_cpu(cpu, policy->related_cpus)
-		WRITE_ONCE(per_cpu(cpufreq_pressure, cpu), pressure);
-}
-
 /**
  * cpufreq_set_policy - Modify cpufreq policy parameters.
  * @policy: Policy object to modify.
@@ -2674,8 +2632,6 @@ static int cpufreq_set_policy(struct cpufreq_policy *policy,
 	policy->max = __resolve_freq(policy, policy->max, CPUFREQ_RELATION_H);
 	trace_cpu_frequency_limits(policy);
 
-	cpufreq_update_pressure(policy);
-
 	policy->cached_target_freq = UINT_MAX;
 
 	pr_debug("new min and max freqs are %u - %u kHz\n",
@@ -2710,6 +2666,7 @@ static int cpufreq_set_policy(struct cpufreq_policy *policy,
 		ret = cpufreq_start_governor(policy);
 		if (!ret) {
 			pr_debug("governor change\n");
+			sched_cpufreq_governor_change(policy, old_gov);
 			return 0;
 		}
 		cpufreq_exit_governor(policy);
@@ -3054,7 +3011,7 @@ static int __init cpufreq_core_init(void)
 	BUG_ON(!cpufreq_global_kobject);
 
 	if (!strlen(default_governor))
-		strscpy(default_governor, gov->name, CPUFREQ_NAME_LEN);
+		strncpy(default_governor, gov->name, CPUFREQ_NAME_LEN);
 
 	return 0;
 }

@@ -10,6 +10,7 @@ Serial Peripheral Interface (SPI)
    spi-summary
    spidev
    butterfly
+   pxa2xx
    spi-lm70llp
    spi-sc18is602
 

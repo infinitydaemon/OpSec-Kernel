@@ -8,11 +8,6 @@
 #define BTRFS_SEND_H
 
 #include <linux/types.h>
-#include <linux/sizes.h>
-#include <linux/align.h>
-
-struct inode;
-struct btrfs_ioctl_send_args;
 
 #define BTRFS_SEND_STREAM_MAGIC "btrfs-stream"
 /* Conditional support for the upcoming protocol version. */
@@ -29,6 +24,9 @@ struct btrfs_ioctl_send_args;
  */
 #define BTRFS_SEND_BUF_SIZE_V1				SZ_64K
 #define BTRFS_SEND_BUF_SIZE_V2	ALIGN(SZ_16K + BTRFS_MAX_COMPRESSED, PAGE_SIZE)
+
+struct inode;
+struct btrfs_ioctl_send_args;
 
 enum btrfs_tlv_type {
 	BTRFS_TLV_U8,

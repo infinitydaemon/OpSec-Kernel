@@ -12,7 +12,6 @@
 	compatible = "tronsmart,orion-r68-meta", "rockchip,rk3368";
 
 	aliases {
-		ethernet0 = &gmac;
 		mmc0 = &sdmmc;
 		mmc1 = &emmc;
 	};
@@ -21,7 +20,7 @@
 		stdout-path = "serial2:115200n8";
 	};
 
-	memory@0 {
+	memory {
 		device_type = "memory";
 		reg = <0x0 0x0 0x0 0x80000000>;
 	};

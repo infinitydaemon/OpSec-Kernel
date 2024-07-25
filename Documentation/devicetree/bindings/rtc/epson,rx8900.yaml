@@ -29,8 +29,6 @@ properties:
 
   trickle-diode-disable: true
 
-  wakeup-source: true
-
 required:
   - compatible
   - reg

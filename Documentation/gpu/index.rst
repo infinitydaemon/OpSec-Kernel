@@ -18,7 +18,6 @@ GPU Driver Developer's Guide
    vga-switcheroo
    vgaarbiter
    automated_testing
-   implementation_guidelines
    todo
    rfc/index
 

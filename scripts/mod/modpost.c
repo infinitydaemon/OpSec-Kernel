@@ -60,7 +60,8 @@ static unsigned int nr_unresolved;
 
 #define MODULE_NAME_LEN (64 - sizeof(Elf_Addr))
 
-void modpost_log(enum loglevel loglevel, const char *fmt, ...)
+void __attribute__((format(printf, 2, 3)))
+modpost_log(enum loglevel loglevel, const char *fmt, ...)
 {
 	va_list arglist;
 
@@ -70,7 +71,9 @@ void modpost_log(enum loglevel loglevel, const char *fmt, ...)
 		break;
 	case LOG_ERROR:
 		fprintf(stderr, "ERROR: ");
-		error_occurred = true;
+		break;
+	case LOG_FATAL:
+		fprintf(stderr, "FATAL: ");
 		break;
 	default: /* invalid loglevel, ignore */
 		break;
@@ -81,6 +84,11 @@ void modpost_log(enum loglevel loglevel, const char *fmt, ...)
 	va_start(arglist, fmt);
 	vfprintf(stderr, fmt, arglist);
 	va_end(arglist);
+
+	if (loglevel == LOG_FATAL)
+		exit(1);
+	if (loglevel == LOG_ERROR)
+		error_occurred = true;
 }
 
 static inline bool strends(const char *str, const char *postfix)
@@ -466,9 +474,11 @@ static int parse_elf(struct elf_info *info, const char *filename)
 		fatal("%s: not relocatable object.", filename);
 
 	/* Check if file offset is correct */
-	if (hdr->e_shoff > info->size)
+	if (hdr->e_shoff > info->size) {
 		fatal("section header offset=%lu in file '%s' is bigger than filesize=%zu\n",
 		      (unsigned long)hdr->e_shoff, filename, info->size);
+		return 0;
+	}
 
 	if (hdr->e_shnum == SHN_UNDEF) {
 		/*
@@ -506,11 +516,12 @@ static int parse_elf(struct elf_info *info, const char *filename)
 		const char *secname;
 		int nobits = sechdrs[i].sh_type == SHT_NOBITS;
 
-		if (!nobits && sechdrs[i].sh_offset > info->size)
+		if (!nobits && sechdrs[i].sh_offset > info->size) {
 			fatal("%s is truncated. sechdrs[i].sh_offset=%lu > sizeof(*hrd)=%zu\n",
 			      filename, (unsigned long)sechdrs[i].sh_offset,
 			      sizeof(*hdr));
-
+			return 0;
+		}
 		secname = secstrings + sechdrs[i].sh_name;
 		if (strcmp(secname, ".modinfo") == 0) {
 			if (nobits)
@@ -600,6 +611,11 @@ static int ignore_undef_symbol(struct elf_info *info, const char *symname)
 		    strstarts(symname, "_restvr_") ||
 		    strstarts(symname, "_savevr_") ||
 		    strcmp(symname, ".TOC.") == 0)
+			return 1;
+
+	if (info->hdr->e_machine == EM_S390)
+		/* Expoline thunks are linked on all kernel modules during final link of .ko */
+		if (strstarts(symname, "__s390_indirect_jump_r"))
 			return 1;
 	/* Do not ignore this symbol */
 	return 0;
@@ -778,16 +794,23 @@ static void check_section(const char *modname, struct elf_info *elf,
 #define ALL_INIT_DATA_SECTIONS \
 	".init.setup", ".init.rodata", ".meminit.rodata", \
 	".init.data", ".meminit.data"
+#define ALL_EXIT_DATA_SECTIONS \
+	".exit.data", ".memexit.data"
+
+#define ALL_INIT_TEXT_SECTIONS \
+	".init.text", ".meminit.text"
+#define ALL_EXIT_TEXT_SECTIONS \
+	".exit.text"
 
 #define ALL_PCI_INIT_SECTIONS	\
 	".pci_fixup_early", ".pci_fixup_header", ".pci_fixup_final", \
 	".pci_fixup_enable", ".pci_fixup_resume", \
 	".pci_fixup_resume_early", ".pci_fixup_suspend"
 
-#define ALL_XXXINIT_SECTIONS ".meminit.*"
+#define ALL_XXXINIT_SECTIONS MEM_INIT_SECTIONS
 
 #define ALL_INIT_SECTIONS INIT_SECTIONS, ALL_XXXINIT_SECTIONS
-#define ALL_EXIT_SECTIONS ".exit.*"
+#define ALL_EXIT_SECTIONS EXIT_SECTIONS
 
 #define DATA_SECTIONS ".data", ".data.rel"
 #define TEXT_SECTIONS ".text", ".text.*", ".sched.text", \
@@ -798,12 +821,17 @@ static void check_section(const char *modname, struct elf_info *elf,
 		".coldtext", ".softirqentry.text"
 
 #define INIT_SECTIONS      ".init.*"
+#define MEM_INIT_SECTIONS  ".meminit.*"
 
-#define ALL_TEXT_SECTIONS  ".init.text", ".meminit.text", ".exit.text", \
+#define EXIT_SECTIONS      ".exit.*"
+
+#define ALL_TEXT_SECTIONS  ALL_INIT_TEXT_SECTIONS, ALL_EXIT_TEXT_SECTIONS, \
 		TEXT_SECTIONS, OTHER_TEXT_SECTIONS
 
 enum mismatch {
-	TEXTDATA_TO_ANY_INIT_EXIT,
+	TEXT_TO_ANY_INIT,
+	DATA_TO_ANY_INIT,
+	TEXTDATA_TO_ANY_EXIT,
 	XXXINIT_TO_SOME_INIT,
 	ANY_INIT_TO_ANY_EXIT,
 	ANY_EXIT_TO_ANY_INIT,
@@ -835,9 +863,19 @@ static const struct sectioncheck sectioncheck[] = {
  * normal code and data
  */
 {
+	.fromsec = { TEXT_SECTIONS, NULL },
+	.bad_tosec = { ALL_INIT_SECTIONS, NULL },
+	.mismatch = TEXT_TO_ANY_INIT,
+},
+{
+	.fromsec = { DATA_SECTIONS, NULL },
+	.bad_tosec = { ALL_XXXINIT_SECTIONS, INIT_SECTIONS, NULL },
+	.mismatch = DATA_TO_ANY_INIT,
+},
+{
 	.fromsec = { TEXT_SECTIONS, DATA_SECTIONS, NULL },
-	.bad_tosec = { ALL_INIT_SECTIONS, ALL_EXIT_SECTIONS, NULL },
-	.mismatch = TEXTDATA_TO_ANY_INIT_EXIT,
+	.bad_tosec = { ALL_EXIT_SECTIONS, NULL },
+	.mismatch = TEXTDATA_TO_ANY_EXIT,
 },
 /* Do not reference init code/data from meminit code/data */
 {
@@ -962,7 +1000,19 @@ static int secref_whitelist(const char *fromsec, const char *fromsym,
 	/* symbols in data sections that may refer to any init/exit sections */
 	if (match(fromsec, PATTERNS(DATA_SECTIONS)) &&
 	    match(tosec, PATTERNS(ALL_INIT_SECTIONS, ALL_EXIT_SECTIONS)) &&
-	    match(fromsym, PATTERNS("*_ops", "*_probe", "*_console")))
+	    match(fromsym, PATTERNS("*_template", // scsi uses *_template a lot
+				    "*_timer", // arm uses ops structures named _timer a lot
+				    "*_sht", // scsi also used *_sht to some extent
+				    "*_ops",
+				    "*_probe",
+				    "*_probe_one",
+				    "*_console")))
+		return 0;
+
+	/* symbols in data sections that may refer to meminit sections */
+	if (match(fromsec, PATTERNS(DATA_SECTIONS)) &&
+	    match(tosec, PATTERNS(ALL_XXXINIT_SECTIONS)) &&
+	    match(fromsym, PATTERNS("*driver")))
 		return 0;
 
 	/*
@@ -972,7 +1022,7 @@ static int secref_whitelist(const char *fromsec, const char *fromsym,
 	 */
 	if (!extra_warn &&
 	    match(fromsec, PATTERNS(DATA_SECTIONS)) &&
-	    match(tosec, PATTERNS(ALL_EXIT_SECTIONS)) &&
+	    match(tosec, PATTERNS(EXIT_SECTIONS)) &&
 	    match(fromsym, PATTERNS("*driver")))
 		return 0;
 
@@ -1137,10 +1187,10 @@ static void check_export_symbol(struct module *mod, struct elf_info *elf,
 	    ELF_ST_TYPE(sym->st_info) == STT_LOPROC)
 		s->is_func = true;
 
-	if (match(secname, PATTERNS(ALL_INIT_SECTIONS)))
+	if (match(secname, PATTERNS(INIT_SECTIONS)))
 		warn("%s: %s: EXPORT_SYMBOL used for init symbol. Remove __init or EXPORT_SYMBOL.\n",
 		     mod->name, name);
-	else if (match(secname, PATTERNS(ALL_EXIT_SECTIONS)))
+	else if (match(secname, PATTERNS(EXIT_SECTIONS)))
 		warn("%s: %s: EXPORT_SYMBOL used for exit symbol. Remove __exit or EXPORT_SYMBOL.\n",
 		     mod->name, name);
 }
@@ -1336,14 +1386,6 @@ static Elf_Addr addend_mips_rel(uint32_t *location, unsigned int r_type)
 #define R_LARCH_SUB32		55
 #endif
 
-#ifndef R_LARCH_RELAX
-#define R_LARCH_RELAX		100
-#endif
-
-#ifndef R_LARCH_ALIGN
-#define R_LARCH_ALIGN		102
-#endif
-
 static void get_rel_type_and_sym(struct elf_info *elf, uint64_t r_info,
 				 unsigned int *r_type, unsigned int *r_sym)
 {
@@ -1365,20 +1407,32 @@ static void get_rel_type_and_sym(struct elf_info *elf, uint64_t r_info,
 		return;
 	}
 
-	if (is_64bit)
-		r_info = TO_NATIVE((Elf64_Xword)r_info);
-	else
-		r_info = TO_NATIVE((Elf32_Word)r_info);
+	if (is_64bit) {
+		Elf64_Xword r_info64 = r_info;
+
+		r_info = TO_NATIVE(r_info64);
+	} else {
+		Elf32_Word r_info32 = r_info;
+
+		r_info = TO_NATIVE(r_info32);
+	}
 
 	*r_type = ELF_R_TYPE(r_info);
 	*r_sym = ELF_R_SYM(r_info);
 }
 
 static void section_rela(struct module *mod, struct elf_info *elf,
-			 unsigned int fsecndx, const char *fromsec,
-			 const Elf_Rela *start, const Elf_Rela *stop)
+			 Elf_Shdr *sechdr)
 {
-	const Elf_Rela *rela;
+	Elf_Rela *rela;
+	unsigned int fsecndx = sechdr->sh_info;
+	const char *fromsec = sec_name(elf, fsecndx);
+	Elf_Rela *start = (void *)elf->hdr + sechdr->sh_offset;
+	Elf_Rela *stop  = (void *)start + sechdr->sh_size;
+
+	/* if from section (name) is know good then skip it */
+	if (match(fromsec, section_white_list))
+		return;
 
 	for (rela = start; rela < stop; rela++) {
 		Elf_Sym *tsym;
@@ -1398,16 +1452,9 @@ static void section_rela(struct module *mod, struct elf_info *elf,
 				continue;
 			break;
 		case EM_LOONGARCH:
-			switch (r_type) {
-			case R_LARCH_SUB32:
-				if (!strcmp("__ex_table", fromsec))
-					continue;
-				break;
-			case R_LARCH_RELAX:
-			case R_LARCH_ALIGN:
-				/* These relocs do not refer to symbols */
+			if (!strcmp("__ex_table", fromsec) &&
+			    r_type == R_LARCH_SUB32)
 				continue;
-			}
 			break;
 		}
 
@@ -1417,14 +1464,21 @@ static void section_rela(struct module *mod, struct elf_info *elf,
 }
 
 static void section_rel(struct module *mod, struct elf_info *elf,
-			unsigned int fsecndx, const char *fromsec,
-			const Elf_Rel *start, const Elf_Rel *stop)
+			Elf_Shdr *sechdr)
 {
-	const Elf_Rel *rel;
+	Elf_Rel *rel;
+	unsigned int fsecndx = sechdr->sh_info;
+	const char *fromsec = sec_name(elf, fsecndx);
+	Elf_Rel *start = (void *)elf->hdr + sechdr->sh_offset;
+	Elf_Rel *stop  = (void *)start + sechdr->sh_size;
+
+	/* if from section (name) is know good then skip it */
+	if (match(fromsec, section_white_list))
+		return;
 
 	for (rel = start; rel < stop; rel++) {
 		Elf_Sym *tsym;
-		Elf_Addr taddr, r_offset;
+		Elf_Addr taddr = 0, r_offset;
 		unsigned int r_type, r_sym;
 		void *loc;
 
@@ -1468,33 +1522,16 @@ static void section_rel(struct module *mod, struct elf_info *elf,
 static void check_sec_ref(struct module *mod, struct elf_info *elf)
 {
 	int i;
+	Elf_Shdr *sechdrs = elf->sechdrs;
 
 	/* Walk through all sections */
 	for (i = 0; i < elf->num_sections; i++) {
-		Elf_Shdr *sechdr = &elf->sechdrs[i];
-
-		check_section(mod->name, elf, sechdr);
+		check_section(mod->name, elf, &elf->sechdrs[i]);
 		/* We want to process only relocation sections and not .init */
-		if (sechdr->sh_type == SHT_REL || sechdr->sh_type == SHT_RELA) {
-			/* section to which the relocation applies */
-			unsigned int secndx = sechdr->sh_info;
-			const char *secname = sec_name(elf, secndx);
-			const void *start, *stop;
-
-			/* If the section is known good, skip it */
-			if (match(secname, section_white_list))
-				continue;
-
-			start = sym_get_data_by_offset(elf, i, 0);
-			stop = start + sechdr->sh_size;
-
-			if (sechdr->sh_type == SHT_RELA)
-				section_rela(mod, elf, secndx, secname,
-					     start, stop);
-			else
-				section_rel(mod, elf, secndx, secname,
-					    start, stop);
-		}
+		if (sechdrs[i].sh_type == SHT_RELA)
+			section_rela(mod, elf, &elf->sechdrs[i]);
+		else if (sechdrs[i].sh_type == SHT_REL)
+			section_rel(mod, elf, &elf->sechdrs[i]);
 	}
 }
 
@@ -1849,7 +1886,7 @@ static void add_header(struct buffer *b, struct module *mod)
 
 	buf_printf(b,
 		   "\n"
-		   "#ifdef CONFIG_MITIGATION_RETPOLINE\n"
+		   "#ifdef CONFIG_RETPOLINE\n"
 		   "MODULE_INFO(retpoline, \"Y\");\n"
 		   "#endif\n");
 

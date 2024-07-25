@@ -5,17 +5,15 @@
  * Copyright (C) 2018 Marcus Folkesson <marcus.folkesson@gmail.com>
  */
 
-#include <linux/cleanup.h>
-#include <linux/errno.h>
-#include <linux/input.h>
 #include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/mutex.h>
+#include <linux/errno.h>
 #include <linux/slab.h>
+#include <linux/module.h>
 #include <linux/uaccess.h>
-
 #include <linux/usb.h>
 #include <linux/usb/input.h>
+#include <linux/mutex.h>
+#include <linux/input.h>
 
 #define PXRC_VENDOR_ID		0x1781
 #define PXRC_PRODUCT_ID		0x0898
@@ -83,28 +81,33 @@ exit:
 static int pxrc_open(struct input_dev *input)
 {
 	struct pxrc *pxrc = input_get_drvdata(input);
-	int error;
+	int retval;
 
-	guard(mutex)(&pxrc->pm_mutex);
-	error = usb_submit_urb(pxrc->urb, GFP_KERNEL);
-	if (error) {
+	mutex_lock(&pxrc->pm_mutex);
+	retval = usb_submit_urb(pxrc->urb, GFP_KERNEL);
+	if (retval) {
 		dev_err(&pxrc->intf->dev,
 			"%s - usb_submit_urb failed, error: %d\n",
-			__func__, error);
-		return -EIO;
+			__func__, retval);
+		retval = -EIO;
+		goto out;
 	}
 
 	pxrc->is_open = true;
-	return 0;
+
+out:
+	mutex_unlock(&pxrc->pm_mutex);
+	return retval;
 }
 
 static void pxrc_close(struct input_dev *input)
 {
 	struct pxrc *pxrc = input_get_drvdata(input);
 
-	guard(mutex)(&pxrc->pm_mutex);
+	mutex_lock(&pxrc->pm_mutex);
 	usb_kill_urb(pxrc->urb);
 	pxrc->is_open = false;
+	mutex_unlock(&pxrc->pm_mutex);
 }
 
 static void pxrc_free_urb(void *_pxrc)
@@ -205,9 +208,10 @@ static int pxrc_suspend(struct usb_interface *intf, pm_message_t message)
 {
 	struct pxrc *pxrc = usb_get_intfdata(intf);
 
-	guard(mutex)(&pxrc->pm_mutex);
+	mutex_lock(&pxrc->pm_mutex);
 	if (pxrc->is_open)
 		usb_kill_urb(pxrc->urb);
+	mutex_unlock(&pxrc->pm_mutex);
 
 	return 0;
 }
@@ -215,12 +219,14 @@ static int pxrc_suspend(struct usb_interface *intf, pm_message_t message)
 static int pxrc_resume(struct usb_interface *intf)
 {
 	struct pxrc *pxrc = usb_get_intfdata(intf);
+	int retval = 0;
 
-	guard(mutex)(&pxrc->pm_mutex);
+	mutex_lock(&pxrc->pm_mutex);
 	if (pxrc->is_open && usb_submit_urb(pxrc->urb, GFP_KERNEL) < 0)
-		return -EIO;
+		retval = -EIO;
 
-	return 0;
+	mutex_unlock(&pxrc->pm_mutex);
+	return retval;
 }
 
 static int pxrc_pre_reset(struct usb_interface *intf)

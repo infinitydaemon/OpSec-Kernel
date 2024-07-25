@@ -1650,8 +1650,6 @@ double dml32_TruncToValidBPP(
 			MaxLinkBPP = 2 * MaxLinkBPP;
 	}
 
-	*RequiredSlots = dml_ceil(DesiredBPP / MaxLinkBPP * 64, 1);
-
 	if (DesiredBPP == 0) {
 		if (DSCEnable) {
 			if (MaxLinkBPP < MinDSCBPP)
@@ -1678,6 +1676,10 @@ double dml32_TruncToValidBPP(
 		else
 			return DesiredBPP;
 	}
+
+	*RequiredSlots = dml_ceil(DesiredBPP / MaxLinkBPP * 64, 1);
+
+	return BPP_INVALID;
 } // TruncToValidBPP
 
 double dml32_RequiredDTBCLK(
@@ -1973,8 +1975,8 @@ void dml32_CalculateVMRowAndSwath(
 	unsigned int PTEBufferSizeInRequestsForChroma[DC__NUM_DPP__MAX];
 	unsigned int PDEAndMetaPTEBytesFrameY;
 	unsigned int PDEAndMetaPTEBytesFrameC;
-	unsigned int MetaRowByteY[DC__NUM_DPP__MAX] = {0};
-	unsigned int MetaRowByteC[DC__NUM_DPP__MAX] = {0};
+	unsigned int MetaRowByteY[DC__NUM_DPP__MAX];
+	unsigned int MetaRowByteC[DC__NUM_DPP__MAX];
 	unsigned int PixelPTEBytesPerRowY[DC__NUM_DPP__MAX];
 	unsigned int PixelPTEBytesPerRowC[DC__NUM_DPP__MAX];
 	unsigned int PixelPTEBytesPerRowY_one_row_per_frame[DC__NUM_DPP__MAX];
@@ -4289,7 +4291,7 @@ void dml32_CalculateWatermarksMALLUseAndDRAMSpeedChangeSupport(
 	unsigned int i, j, k;
 	unsigned int SurfaceWithMinActiveFCLKChangeMargin = 0;
 	unsigned int DRAMClockChangeSupportNumber = 0;
-	unsigned int LastSurfaceWithoutMargin = 0;
+	unsigned int LastSurfaceWithoutMargin;
 	unsigned int DRAMClockChangeMethod = 0;
 	bool FoundFirstSurfaceWithMinActiveFCLKChangeMargin = false;
 	double MinActiveFCLKChangeMargin = 0.;
@@ -4680,6 +4682,10 @@ void dml32_CalculateMinAndMaxPrefetchMode(
 	} else if (AllowForPStateChangeOrStutterInVBlankFinal == dm_prefetch_support_uclk_fclk_and_stutter) {
 		*MinPrefetchMode = 0;
 		*MaxPrefetchMode = 0;
+	} else if (AllowForPStateChangeOrStutterInVBlankFinal ==
+			dm_prefetch_support_uclk_fclk_and_stutter_if_possible) {
+		*MinPrefetchMode = 0;
+		*MaxPrefetchMode = 3;
 	} else {
 		*MinPrefetchMode = 0;
 		*MaxPrefetchMode = 3;
@@ -5654,9 +5660,9 @@ void dml32_CalculateStutterEfficiency(
 	double LastZ8StutterPeriod = 0.0;
 	double LastStutterPeriod = 0.0;
 	unsigned int TotalNumberOfActiveOTG = 0;
-	double doublePixelClock = 0;
-	unsigned int doubleHTotal = 0;
-	unsigned int doubleVTotal = 0;
+	double doublePixelClock;
+	unsigned int doubleHTotal;
+	unsigned int doubleVTotal;
 	bool SameTiming = true;
 	double DETBufferingTimeY;
 	double SwathWidthYCriticalSurface = 0.0;

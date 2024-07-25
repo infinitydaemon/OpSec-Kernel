@@ -33,7 +33,9 @@ static int orangefs_revalidate_lookup(struct dentry *dentry)
 
 	new_op->upcall.req.lookup.sym_follow = ORANGEFS_LOOKUP_LINK_NO_FOLLOW;
 	new_op->upcall.req.lookup.parent_refn = parent->refn;
-	strscpy(new_op->upcall.req.lookup.d_name, dentry->d_name.name);
+	strncpy(new_op->upcall.req.lookup.d_name,
+		dentry->d_name.name,
+		ORANGEFS_NAME_MAX - 1);
 
 	gossip_debug(GOSSIP_DCACHE_DEBUG,
 		     "%s:%s:%d interrupt flag [%d]\n",

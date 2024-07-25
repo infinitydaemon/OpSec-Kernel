@@ -400,7 +400,6 @@ DECLARE_EVENT_CLASS(nfs_lookup_event,
 			__field(unsigned long, flags)
 			__field(dev_t, dev)
 			__field(u64, dir)
-			__field(u64, fileid)
 			__string(name, dentry->d_name.name)
 		),
 
@@ -408,18 +407,16 @@ DECLARE_EVENT_CLASS(nfs_lookup_event,
 			__entry->dev = dir->i_sb->s_dev;
 			__entry->dir = NFS_FILEID(dir);
 			__entry->flags = flags;
-			__entry->fileid = d_is_negative(dentry) ? 0 : NFS_FILEID(d_inode(dentry));
-			__assign_str(name);
+			__assign_str(name, dentry->d_name.name);
 		),
 
 		TP_printk(
-			"flags=0x%lx (%s) name=%02x:%02x:%llu/%s fileid=%llu",
+			"flags=0x%lx (%s) name=%02x:%02x:%llu/%s",
 			__entry->flags,
 			show_fs_lookup_flags(__entry->flags),
 			MAJOR(__entry->dev), MINOR(__entry->dev),
 			(unsigned long long)__entry->dir,
-			__get_str(name),
-			__entry->fileid
+			__get_str(name)
 		)
 );
 
@@ -447,7 +444,6 @@ DECLARE_EVENT_CLASS(nfs_lookup_event_done,
 			__field(unsigned long, flags)
 			__field(dev_t, dev)
 			__field(u64, dir)
-			__field(u64, fileid)
 			__string(name, dentry->d_name.name)
 		),
 
@@ -456,19 +452,17 @@ DECLARE_EVENT_CLASS(nfs_lookup_event_done,
 			__entry->dir = NFS_FILEID(dir);
 			__entry->error = error < 0 ? -error : 0;
 			__entry->flags = flags;
-			__entry->fileid = d_is_negative(dentry) ? 0 : NFS_FILEID(d_inode(dentry));
-			__assign_str(name);
+			__assign_str(name, dentry->d_name.name);
 		),
 
 		TP_printk(
-			"error=%ld (%s) flags=0x%lx (%s) name=%02x:%02x:%llu/%s fileid=%llu",
+			"error=%ld (%s) flags=0x%lx (%s) name=%02x:%02x:%llu/%s",
 			-__entry->error, show_nfs_status(__entry->error),
 			__entry->flags,
 			show_fs_lookup_flags(__entry->flags),
 			MAJOR(__entry->dev), MINOR(__entry->dev),
 			(unsigned long long)__entry->dir,
-			__get_str(name),
-			__entry->fileid
+			__get_str(name)
 		)
 );
 
@@ -512,7 +506,7 @@ TRACE_EVENT(nfs_atomic_open_enter,
 			__entry->dir = NFS_FILEID(dir);
 			__entry->flags = flags;
 			__entry->fmode = (__force unsigned long)ctx->mode;
-			__assign_str(name);
+			__assign_str(name, ctx->dentry->d_name.name);
 		),
 
 		TP_printk(
@@ -551,7 +545,7 @@ TRACE_EVENT(nfs_atomic_open_exit,
 			__entry->dir = NFS_FILEID(dir);
 			__entry->flags = flags;
 			__entry->fmode = (__force unsigned long)ctx->mode;
-			__assign_str(name);
+			__assign_str(name, ctx->dentry->d_name.name);
 		),
 
 		TP_printk(
@@ -587,7 +581,7 @@ TRACE_EVENT(nfs_create_enter,
 			__entry->dev = dir->i_sb->s_dev;
 			__entry->dir = NFS_FILEID(dir);
 			__entry->flags = flags;
-			__assign_str(name);
+			__assign_str(name, dentry->d_name.name);
 		),
 
 		TP_printk(
@@ -623,7 +617,7 @@ TRACE_EVENT(nfs_create_exit,
 			__entry->dev = dir->i_sb->s_dev;
 			__entry->dir = NFS_FILEID(dir);
 			__entry->flags = flags;
-			__assign_str(name);
+			__assign_str(name, dentry->d_name.name);
 		),
 
 		TP_printk(
@@ -654,7 +648,7 @@ DECLARE_EVENT_CLASS(nfs_directory_event,
 		TP_fast_assign(
 			__entry->dev = dir->i_sb->s_dev;
 			__entry->dir = NFS_FILEID(dir);
-			__assign_str(name);
+			__assign_str(name, dentry->d_name.name);
 		),
 
 		TP_printk(
@@ -693,7 +687,7 @@ DECLARE_EVENT_CLASS(nfs_directory_event_done,
 			__entry->dev = dir->i_sb->s_dev;
 			__entry->dir = NFS_FILEID(dir);
 			__entry->error = error < 0 ? -error : 0;
-			__assign_str(name);
+			__assign_str(name, dentry->d_name.name);
 		),
 
 		TP_printk(
@@ -747,7 +741,7 @@ TRACE_EVENT(nfs_link_enter,
 			__entry->dev = inode->i_sb->s_dev;
 			__entry->fileid = NFS_FILEID(inode);
 			__entry->dir = NFS_FILEID(dir);
-			__assign_str(name);
+			__assign_str(name, dentry->d_name.name);
 		),
 
 		TP_printk(
@@ -783,7 +777,7 @@ TRACE_EVENT(nfs_link_exit,
 			__entry->fileid = NFS_FILEID(inode);
 			__entry->dir = NFS_FILEID(dir);
 			__entry->error = error < 0 ? -error : 0;
-			__assign_str(name);
+			__assign_str(name, dentry->d_name.name);
 		),
 
 		TP_printk(
@@ -819,8 +813,8 @@ DECLARE_EVENT_CLASS(nfs_rename_event,
 			__entry->dev = old_dir->i_sb->s_dev;
 			__entry->old_dir = NFS_FILEID(old_dir);
 			__entry->new_dir = NFS_FILEID(new_dir);
-			__assign_str(old_name);
-			__assign_str(new_name);
+			__assign_str(old_name, old_dentry->d_name.name);
+			__assign_str(new_name, new_dentry->d_name.name);
 		),
 
 		TP_printk(
@@ -868,8 +862,8 @@ DECLARE_EVENT_CLASS(nfs_rename_event_done,
 			__entry->error = -error;
 			__entry->old_dir = NFS_FILEID(old_dir);
 			__entry->new_dir = NFS_FILEID(new_dir);
-			__assign_str(old_name);
-			__assign_str(new_name);
+			__assign_str(old_name, old_dentry->d_name.name);
+			__assign_str(new_name, new_dentry->d_name.name);
 		),
 
 		TP_printk(
@@ -899,7 +893,7 @@ DECLARE_EVENT_CLASS(nfs_rename_event_done,
 DEFINE_NFS_RENAME_EVENT(nfs_rename_enter);
 DEFINE_NFS_RENAME_EVENT_DONE(nfs_rename_exit);
 
-DEFINE_NFS_RENAME_EVENT_DONE(nfs_async_rename_done);
+DEFINE_NFS_RENAME_EVENT_DONE(nfs_sillyrename_rename);
 
 TRACE_EVENT(nfs_sillyrename_unlink,
 		TP_PROTO(
@@ -1545,6 +1539,7 @@ DECLARE_EVENT_CLASS(nfs_direct_req_class,
 			__field(u32, fhandle)
 			__field(loff_t, offset)
 			__field(ssize_t, count)
+			__field(ssize_t, bytes_left)
 			__field(ssize_t, error)
 			__field(int, flags)
 		),
@@ -1559,18 +1554,19 @@ DECLARE_EVENT_CLASS(nfs_direct_req_class,
 			__entry->fhandle = nfs_fhandle_hash(fh);
 			__entry->offset = dreq->io_start;
 			__entry->count = dreq->count;
+			__entry->bytes_left = dreq->bytes_left;
 			__entry->error = dreq->error;
 			__entry->flags = dreq->flags;
 		),
 
 		TP_printk(
 			"error=%zd fileid=%02x:%02x:%llu fhandle=0x%08x "
-			"offset=%lld count=%zd flags=%s",
+			"offset=%lld count=%zd bytes_left=%zd flags=%s",
 			__entry->error, MAJOR(__entry->dev),
 			MINOR(__entry->dev),
 			(unsigned long long)__entry->fileid,
 			__entry->fhandle, __entry->offset,
-			__entry->count,
+			__entry->count, __entry->bytes_left,
 			nfs_show_direct_req_flags(__entry->flags)
 		)
 );
@@ -1636,8 +1632,8 @@ TRACE_EVENT(nfs_mount_assign,
 	),
 
 	TP_fast_assign(
-		__assign_str(option);
-		__assign_str(value);
+		__assign_str(option, option);
+		__assign_str(value, value);
 	),
 
 	TP_printk("option %s=%s",
@@ -1657,7 +1653,7 @@ TRACE_EVENT(nfs_mount_option,
 	),
 
 	TP_fast_assign(
-		__assign_str(option);
+		__assign_str(option, param->key);
 	),
 
 	TP_printk("option %s", __get_str(option))
@@ -1675,7 +1671,7 @@ TRACE_EVENT(nfs_mount_path,
 	),
 
 	TP_fast_assign(
-		__assign_str(path);
+		__assign_str(path, path);
 	),
 
 	TP_printk("path='%s'", __get_str(path))
@@ -1710,8 +1706,9 @@ DECLARE_EVENT_CLASS(nfs_xdr_event,
 			__entry->xid = be32_to_cpu(rqstp->rq_xid);
 			__entry->version = task->tk_client->cl_vers;
 			__entry->error = error;
-			__assign_str(program);
-			__assign_str(procedure);
+			__assign_str(program,
+				     task->tk_client->cl_program->name);
+			__assign_str(procedure, task->tk_msg.rpc_proc->p_name);
 		),
 
 		TP_printk(SUNRPC_TRACE_TASK_SPECIFIER

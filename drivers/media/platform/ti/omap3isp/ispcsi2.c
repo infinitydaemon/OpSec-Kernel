@@ -834,7 +834,8 @@ __csi2_get_format(struct isp_csi2_device *csi2,
 		  unsigned int pad, enum v4l2_subdev_format_whence which)
 {
 	if (which == V4L2_SUBDEV_FORMAT_TRY)
-		return v4l2_subdev_state_get_format(sd_state, pad);
+		return v4l2_subdev_get_try_format(&csi2->subdev, sd_state,
+						  pad);
 	else
 		return &csi2->formats[pad];
 }
@@ -893,7 +894,7 @@ csi2_try_format(struct isp_csi2_device *csi2,
 /*
  * csi2_enum_mbus_code - Handle pixel format enumeration
  * @sd     : pointer to v4l2 subdev structure
- * @sd_state: V4L2 subdev state
+ * @cfg: V4L2 subdev pad configuration
  * @code   : pointer to v4l2_subdev_mbus_code_enum structure
  * return -EINVAL or zero on success
  */
@@ -967,7 +968,7 @@ static int csi2_enum_frame_size(struct v4l2_subdev *sd,
 /*
  * csi2_get_format - Handle get format by pads subdev method
  * @sd : pointer to v4l2 subdev structure
- * @sd_state: V4L2 subdev state
+ * @cfg: V4L2 subdev pad configuration
  * @fmt: pointer to v4l2 subdev format structure
  * return -EINVAL or zero on success
  */
@@ -989,7 +990,7 @@ static int csi2_get_format(struct v4l2_subdev *sd,
 /*
  * csi2_set_format - Handle set format by pads subdev method
  * @sd : pointer to v4l2 subdev structure
- * @sd_state: V4L2 subdev state
+ * @cfg: V4L2 subdev pad configuration
  * @fmt: pointer to v4l2 subdev format structure
  * return -EINVAL or zero on success
  */

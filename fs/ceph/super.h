@@ -3,7 +3,6 @@
 #define _FS_CEPH_SUPER_H
 
 #include <linux/ceph/ceph_debug.h>
-#include <linux/ceph/osd_client.h>
 
 #include <asm/unaligned.h>
 #include <linux/backing-dev.h>
@@ -504,12 +503,6 @@ static inline struct ceph_mds_client *
 ceph_sb_to_mdsc(const struct super_block *sb)
 {
 	return (struct ceph_mds_client *)ceph_sb_to_fs_client(sb)->mdsc;
-}
-
-static inline struct ceph_client *
-ceph_inode_to_client(const struct inode *inode)
-{
-	return (struct ceph_client *)ceph_inode_to_fs_client(inode)->client;
 }
 
 static inline struct ceph_vino
@@ -1101,8 +1094,8 @@ struct ceph_iattr {
 	struct ceph_fscrypt_auth	*fscrypt_auth;
 };
 
-extern int __ceph_setattr(struct mnt_idmap *idmap, struct inode *inode,
-			  struct iattr *attr, struct ceph_iattr *cia);
+extern int __ceph_setattr(struct inode *inode, struct iattr *attr,
+			  struct ceph_iattr *cia);
 extern int ceph_setattr(struct mnt_idmap *idmap,
 			struct dentry *dentry, struct iattr *attr);
 extern int ceph_getattr(struct mnt_idmap *idmap,
@@ -1126,7 +1119,7 @@ ssize_t __ceph_getxattr(struct inode *, const char *, void *, size_t);
 extern ssize_t ceph_listxattr(struct dentry *, char *, size_t);
 extern struct ceph_buffer *__ceph_build_xattrs_blob(struct ceph_inode_info *ci);
 extern void __ceph_destroy_xattrs(struct ceph_inode_info *ci);
-extern const struct xattr_handler * const ceph_xattr_handlers[];
+extern const struct xattr_handler *ceph_xattr_handlers[];
 
 struct ceph_acl_sec_ctx {
 #ifdef CONFIG_CEPH_FS_POSIX_ACL
@@ -1255,6 +1248,8 @@ extern void ceph_take_cap_refs(struct ceph_inode_info *ci, int caps,
 extern void ceph_get_cap_refs(struct ceph_inode_info *ci, int caps);
 extern void ceph_put_cap_refs(struct ceph_inode_info *ci, int had);
 extern void ceph_put_cap_refs_async(struct ceph_inode_info *ci, int had);
+extern void ceph_put_cap_refs_no_check_caps(struct ceph_inode_info *ci,
+					    int had);
 extern void ceph_put_wrbuffer_cap_refs(struct ceph_inode_info *ci, int nr,
 				       struct ceph_snap_context *snapc);
 extern void __ceph_remove_capsnap(struct inode *inode,
@@ -1404,19 +1399,6 @@ static inline void __ceph_update_quota(struct ceph_inode_info *ci,
 
 	if (had_quota != has_quota)
 		ceph_adjust_quota_realms_count(&ci->netfs.inode, has_quota);
-}
-
-static inline int __ceph_sparse_read_ext_count(struct inode *inode, u64 len)
-{
-	int cnt = 0;
-
-	if (IS_ENCRYPTED(inode)) {
-		cnt = len >> CEPH_FSCRYPT_BLOCK_SHIFT;
-		if (cnt > CEPH_SPARSE_EXT_ARRAY_INITIAL)
-			cnt = 0;
-	}
-
-	return cnt;
 }
 
 extern void ceph_handle_quota(struct ceph_mds_client *mdsc,

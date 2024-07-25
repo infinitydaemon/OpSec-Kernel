@@ -1307,7 +1307,7 @@ static int mv_u3d_eps_init(struct mv_u3d *u3d)
 	/* initialize ep0, ep0 in/out use eps[1] */
 	ep = &u3d->eps[1];
 	ep->u3d = u3d;
-	strscpy(ep->name, "ep0");
+	strncpy(ep->name, "ep0", sizeof(ep->name));
 	ep->ep.name = ep->name;
 	ep->ep.ops = &mv_u3d_ep_ops;
 	ep->wedge = 0;
@@ -1337,7 +1337,7 @@ static int mv_u3d_eps_init(struct mv_u3d *u3d)
 			ep->ep.caps.dir_out = true;
 		}
 		ep->u3d = u3d;
-		strscpy(ep->name, name);
+		strncpy(ep->name, name, sizeof(ep->name));
 		ep->ep.name = ep->name;
 
 		ep->ep.caps.type_iso = true;

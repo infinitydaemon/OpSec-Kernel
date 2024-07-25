@@ -34,6 +34,7 @@ DEFINE_EVENT(hda_pm, azx_resume,
 	TP_ARGS(chip)
 );
 
+#ifdef CONFIG_PM
 DEFINE_EVENT(hda_pm, azx_runtime_suspend,
 	TP_PROTO(struct azx *chip),
 	TP_ARGS(chip)
@@ -43,6 +44,7 @@ DEFINE_EVENT(hda_pm, azx_runtime_resume,
 	TP_PROTO(struct azx *chip),
 	TP_ARGS(chip)
 );
+#endif
 
 #endif /* _TRACE_HDA_INTEL_H */
 

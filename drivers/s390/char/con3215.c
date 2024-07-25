@@ -79,8 +79,8 @@ struct raw3215_info {
 	struct ccw_device *cdev;      /* device for tty driver */
 	spinlock_t *lock;	      /* pointer to irq lock */
 	int flags;		      /* state flags */
-	u8 *buffer;		      /* pointer to output buffer */
-	u8 *inbuf;		      /* pointer to input buffer */
+	char *buffer;		      /* pointer to output buffer */
+	char *inbuf;		      /* pointer to input buffer */
 	int head;		      /* first free byte in output buffer */
 	int count;		      /* number of bytes in output buffer */
 	int written;		      /* number of bytes in write requests */
@@ -89,6 +89,7 @@ struct raw3215_info {
 	wait_queue_head_t empty_wait; /* wait queue for flushing */
 	struct timer_list timer;      /* timer for delayed output */
 	int line_pos;		      /* position on the line (for tabs) */
+	char ubuffer[80];	      /* copy_from_user buffer */
 };
 
 /* array of 3215 devices structures */
@@ -159,7 +160,7 @@ static void raw3215_mk_read_req(struct raw3215_info *raw)
 	ccw->cmd_code = 0x0A; /* read inquiry */
 	ccw->flags = 0x20;    /* ignore incorrect length */
 	ccw->count = 160;
-	ccw->cda = virt_to_dma32(raw->inbuf);
+	ccw->cda = (__u32)__pa(raw->inbuf);
 }
 
 /*
@@ -218,7 +219,7 @@ static void raw3215_mk_write_req(struct raw3215_info *raw)
 			ccw[-1].flags |= 0x40; /* use command chaining */
 		ccw->cmd_code = 0x01; /* write, auto carrier return */
 		ccw->flags = 0x20;    /* ignore incorrect length ind.  */
-		ccw->cda = virt_to_dma32(raw->buffer + ix);
+		ccw->cda = (__u32)__pa(raw->buffer + ix);
 		count = len;
 		if (ix + count > RAW3215_BUFFER_SIZE)
 			count = RAW3215_BUFFER_SIZE - ix;
@@ -522,14 +523,12 @@ static unsigned int raw3215_make_room(struct raw3215_info *raw,
  *	string	without blocking.
  *	Return value is the number of bytes copied.
  */
-static unsigned int raw3215_addtext(const u8 *str, size_t length,
+static unsigned int raw3215_addtext(const char *str, unsigned int length,
 				    struct raw3215_info *raw, int opmode,
 				    unsigned int todrop)
 {
-	unsigned int i, blanks, expanded_size = 0;
+	unsigned int c, ch, i, blanks, expanded_size = 0;
 	unsigned int column = raw->line_pos;
-	size_t c;
-	u8 ch;
 
 	if (opmode == RAW3215_COUNT)
 		todrop = 0;
@@ -560,7 +559,7 @@ static unsigned int raw3215_addtext(const u8 *str, size_t length,
 		if (todrop && expanded_size < todrop)	/* Drop head data */
 			continue;
 		for (i = 0; i < blanks; i++) {
-			raw->buffer[raw->head] = _ascebc[ch];
+			raw->buffer[raw->head] = (char)_ascebc[(int)ch];
 			raw->head = (raw->head + 1) & (RAW3215_BUFFER_SIZE - 1);
 			raw->count++;
 		}
@@ -572,8 +571,8 @@ static unsigned int raw3215_addtext(const u8 *str, size_t length,
 /*
  * String write routine for 3215 devices
  */
-static void raw3215_write(struct raw3215_info *raw, const u8 *str,
-			  size_t length)
+static void raw3215_write(struct raw3215_info *raw, const char *str,
+			  unsigned int length)
 {
 	unsigned int count, avail;
 	unsigned long flags;
@@ -598,7 +597,7 @@ static void raw3215_write(struct raw3215_info *raw, const u8 *str,
 /*
  * Put character routine for 3215 devices
  */
-static void raw3215_putchar(struct raw3215_info *raw, u8 ch)
+static void raw3215_putchar(struct raw3215_info *raw, unsigned char ch)
 {
 	raw3215_write(raw, &ch, 1);
 }
@@ -825,10 +824,12 @@ static struct ccw_driver raw3215_ccw_driver = {
 	.int_class	= IRQIO_C15,
 };
 
-static void handle_write(struct raw3215_info *raw, const u8 *str, size_t count)
+static void handle_write(struct raw3215_info *raw, const char *str, int count)
 {
+	int i;
+
 	while (count > 0) {
-		size_t i = min_t(size_t, count, RAW3215_BUFFER_SIZE - 1);
+		i = min_t(int, count, RAW3215_BUFFER_SIZE - 1);
 		raw3215_write(raw, str, i);
 		count -= i;
 		str += i;

@@ -606,8 +606,7 @@ static void zs_receive_chars(struct zs_port *zport)
 
 static void zs_raw_transmit_chars(struct zs_port *zport)
 {
-	struct tty_port *tport = &zport->port.state->port;
-	unsigned char ch;
+	struct circ_buf *xmit = &zport->port.state->xmit;
 
 	/* XON/XOFF chars.  */
 	if (zport->port.x_char) {
@@ -618,20 +617,20 @@ static void zs_raw_transmit_chars(struct zs_port *zport)
 	}
 
 	/* If nothing to do or stopped or hardware stopped.  */
-	if (uart_tx_stopped(&zport->port) ||
-			!uart_fifo_get(&zport->port, &ch)) {
+	if (uart_circ_empty(xmit) || uart_tx_stopped(&zport->port)) {
 		zs_raw_stop_tx(zport);
 		return;
 	}
 
 	/* Send char.  */
-	write_zsdata(zport, ch);
+	write_zsdata(zport, xmit->buf[xmit->tail]);
+	uart_xmit_advance(&zport->port, 1);
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(&zport->port);
 
 	/* Are we are done?  */
-	if (kfifo_is_empty(&tport->xmit_fifo))
+	if (uart_circ_empty(xmit))
 		zs_raw_stop_tx(zport);
 }
 

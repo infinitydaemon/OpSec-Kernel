@@ -2,10 +2,7 @@
 #ifndef _LINUX_SEQ_BUF_H
 #define _LINUX_SEQ_BUF_H
 
-#include <linux/bug.h>
-#include <linux/minmax.h>
-#include <linux/seq_file.h>
-#include <linux/types.h>
+#include <linux/fs.h>
 
 /*
  * Trace sequences are used to allow a function to call several other functions
@@ -13,28 +10,23 @@
  */
 
 /**
- * struct seq_buf - seq buffer structure
+ * seq_buf - seq buffer structure
  * @buffer:	pointer to the buffer
  * @size:	size of the buffer
  * @len:	the amount of data inside the buffer
+ * @readpos:	The next position to read in the buffer.
  */
 struct seq_buf {
 	char			*buffer;
 	size_t			size;
 	size_t			len;
+	loff_t			readpos;
 };
-
-#define DECLARE_SEQ_BUF(NAME, SIZE)			\
-	struct seq_buf NAME = {				\
-		.buffer = (char[SIZE]) { 0 },		\
-		.size = SIZE,				\
-	}
 
 static inline void seq_buf_clear(struct seq_buf *s)
 {
 	s->len = 0;
-	if (s->size)
-		s->buffer[0] = '\0';
+	s->readpos = 0;
 }
 
 static inline void
@@ -47,7 +39,7 @@ seq_buf_init(struct seq_buf *s, char *buf, unsigned int size)
 
 /*
  * seq_buf have a buffer that might overflow. When this happens
- * len is set to be greater than size.
+ * the len and size are set to be equal.
  */
 static inline bool
 seq_buf_has_overflowed(struct seq_buf *s)
@@ -80,10 +72,10 @@ static inline unsigned int seq_buf_used(struct seq_buf *s)
 }
 
 /**
- * seq_buf_str - get NUL-terminated C string from seq_buf
- * @s: the seq_buf handle
+ * seq_buf_terminate - Make sure buffer is nul terminated
+ * @s: the seq_buf descriptor to terminate.
  *
- * This makes sure that the buffer in @s is NUL-terminated and
+ * This makes sure that the buffer in @s is nul terminated and
  * safe to read as a string.
  *
  * Note, if this is called when the buffer has overflowed, then
@@ -92,20 +84,16 @@ static inline unsigned int seq_buf_used(struct seq_buf *s)
  *
  * After this function is called, s->buffer is safe to use
  * in string operations.
- *
- * Returns: @s->buf after making sure it is terminated.
  */
-static inline const char *seq_buf_str(struct seq_buf *s)
+static inline void seq_buf_terminate(struct seq_buf *s)
 {
 	if (WARN_ON(s->size == 0))
-		return "";
+		return;
 
 	if (seq_buf_buffer_left(s))
 		s->buffer[s->len] = 0;
 	else
 		s->buffer[s->size - 1] = 0;
-
-	return s->buffer;
 }
 
 /**
@@ -113,7 +101,7 @@ static inline const char *seq_buf_str(struct seq_buf *s)
  * @s: the seq_buf handle
  * @bufp: the beginning of the buffer is stored here
  *
- * Returns: the number of bytes available in the buffer, or zero if
+ * Return the number of bytes available in the buffer, or zero if
  * there's no space.
  */
 static inline size_t seq_buf_get_buf(struct seq_buf *s, char **bufp)
@@ -135,7 +123,7 @@ static inline size_t seq_buf_get_buf(struct seq_buf *s, char **bufp)
  * @num: the number of bytes to commit
  *
  * Commit @num bytes of data written to a buffer previously acquired
- * by seq_buf_get_buf(). To signal an error condition, or that the data
+ * by seq_buf_get.  To signal an error condition, or that the data
  * didn't fit in the available space, pass a negative @num value.
  */
 static inline void seq_buf_commit(struct seq_buf *s, int num)
@@ -155,7 +143,7 @@ extern __printf(2, 0)
 int seq_buf_vprintf(struct seq_buf *s, const char *fmt, va_list args);
 extern int seq_buf_print_seq(struct seq_file *m, struct seq_buf *s);
 extern int seq_buf_to_user(struct seq_buf *s, char __user *ubuf,
-			   size_t start, int cnt);
+			   int cnt);
 extern int seq_buf_puts(struct seq_buf *s, const char *str);
 extern int seq_buf_putc(struct seq_buf *s, unsigned char c);
 extern int seq_buf_putmem(struct seq_buf *s, const void *mem, unsigned int len);

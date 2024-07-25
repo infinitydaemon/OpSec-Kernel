@@ -141,6 +141,7 @@ static struct ctl_table memory_failure_table[] = {
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= SYSCTL_ONE,
 	},
+	{ }
 };
 
 /*
@@ -155,7 +156,7 @@ static int __page_handle_poison(struct page *page)
 
 	/*
 	 * zone_pcp_disable() can't be used here. It will
-	 * hold pcp_batch_high_lock and dissolve_free_hugetlb_folio() might hold
+	 * hold pcp_batch_high_lock and dissolve_free_huge_page() might hold
 	 * cpu_hotplug_lock via static_key_slow_dec() when hugetlb vmemmap
 	 * optimization is enabled. This will break current lock dependency
 	 * chain and leads to deadlock.
@@ -165,7 +166,7 @@ static int __page_handle_poison(struct page *page)
 	 * but nothing guarantees that those pages do not get back to a PCP
 	 * queue if we need to refill those.
 	 */
-	ret = dissolve_free_hugetlb_folio(page_folio(page));
+	ret = dissolve_free_huge_page(page);
 	if (!ret) {
 		drain_all_pages(page_zone(page));
 		ret = take_page_off_buddy(page);
@@ -178,8 +179,8 @@ static bool page_handle_poison(struct page *page, bool hugepage_or_freepage, boo
 {
 	if (hugepage_or_freepage) {
 		/*
-		 * Doing this check for free pages is also fine since
-		 * dissolve_free_hugetlb_folio() returns 0 for non-hugetlb folios as well.
+		 * Doing this check for free pages is also fine since dissolve_free_huge_page
+		 * returns 0 for non-hugetlb pages as well.
 		 */
 		if (__page_handle_poison(page) <= 0)
 			/*
@@ -216,7 +217,6 @@ EXPORT_SYMBOL_GPL(hwpoison_filter_flags_value);
 
 static int hwpoison_filter_dev(struct page *p)
 {
-	struct folio *folio = page_folio(p);
 	struct address_space *mapping;
 	dev_t dev;
 
@@ -224,7 +224,7 @@ static int hwpoison_filter_dev(struct page *p)
 	    hwpoison_filter_dev_minor == ~0U)
 		return 0;
 
-	mapping = folio_mapping(folio);
+	mapping = page_mapping(p);
 	if (mapping == NULL || mapping->host == NULL)
 		return -EINVAL;
 
@@ -370,25 +370,20 @@ static int kill_proc(struct to_kill *tk, unsigned long pfn, int flags)
  * Unknown page type encountered. Try to check whether it can turn PageLRU by
  * lru_add_drain_all.
  */
-void shake_folio(struct folio *folio)
+void shake_page(struct page *p)
 {
-	if (folio_test_hugetlb(folio))
+	if (PageHuge(p))
 		return;
 	/*
 	 * TODO: Could shrink slab caches here if a lightweight range-based
 	 * shrinker will be available.
 	 */
-	if (folio_test_slab(folio))
+	if (PageSlab(p))
 		return;
 
 	lru_add_drain_all();
 }
-EXPORT_SYMBOL_GPL(shake_folio);
-
-static void shake_page(struct page *page)
-{
-	shake_folio(page_folio(page));
-}
+EXPORT_SYMBOL_GPL(shake_page);
 
 static unsigned long dev_pagemap_mapping_shift(struct vm_area_struct *vma,
 		unsigned long address)
@@ -433,13 +428,21 @@ static unsigned long dev_pagemap_mapping_shift(struct vm_area_struct *vma,
  * not much we can do.	We just print a message and ignore otherwise.
  */
 
+#define FSDAX_INVALID_PGOFF ULONG_MAX
+
 /*
  * Schedule a process for later kill.
  * Uses GFP_ATOMIC allocations to avoid potential recursions in the VM.
+ *
+ * Note: @fsdax_pgoff is used only when @p is a fsdax page and a
+ * filesystem with a memory failure handler has claimed the
+ * memory_failure event. In all other cases, page->index and
+ * page->mapping are sufficient for mapping the page back to its
+ * corresponding user virtual address.
  */
 static void __add_to_kill(struct task_struct *tsk, struct page *p,
 			  struct vm_area_struct *vma, struct list_head *to_kill,
-			  unsigned long addr)
+			  unsigned long ksm_addr, pgoff_t fsdax_pgoff)
 {
 	struct to_kill *tk;
 
@@ -449,10 +452,12 @@ static void __add_to_kill(struct task_struct *tsk, struct page *p,
 		return;
 	}
 
-	tk->addr = addr;
-	if (is_zone_device_page(p))
+	tk->addr = ksm_addr ? ksm_addr : page_address_in_vma(p, vma);
+	if (is_zone_device_page(p)) {
+		if (fsdax_pgoff != FSDAX_INVALID_PGOFF)
+			tk->addr = vma_pgoff_address(fsdax_pgoff, 1, vma);
 		tk->size_shift = dev_pagemap_mapping_shift(vma, tk->addr);
-	else
+	} else
 		tk->size_shift = page_shift(compound_head(p));
 
 	/*
@@ -479,12 +484,10 @@ static void __add_to_kill(struct task_struct *tsk, struct page *p,
 }
 
 static void add_to_kill_anon_file(struct task_struct *tsk, struct page *p,
-		struct vm_area_struct *vma, struct list_head *to_kill,
-		unsigned long addr)
+				  struct vm_area_struct *vma,
+				  struct list_head *to_kill)
 {
-	if (addr == -EFAULT)
-		return;
-	__add_to_kill(tsk, p, vma, to_kill, addr);
+	__add_to_kill(tsk, p, vma, to_kill, 0, FSDAX_INVALID_PGOFF);
 }
 
 #ifdef CONFIG_KSM
@@ -500,13 +503,12 @@ static bool task_in_to_kill_list(struct list_head *to_kill,
 
 	return false;
 }
-
 void add_to_kill_ksm(struct task_struct *tsk, struct page *p,
 		     struct vm_area_struct *vma, struct list_head *to_kill,
-		     unsigned long addr)
+		     unsigned long ksm_addr)
 {
 	if (!task_in_to_kill_list(to_kill, tsk))
-		__add_to_kill(tsk, p, vma, to_kill, addr);
+		__add_to_kill(tsk, p, vma, to_kill, ksm_addr, FSDAX_INVALID_PGOFF);
 }
 #endif
 /*
@@ -608,6 +610,7 @@ struct task_struct *task_early_kill(struct task_struct *tsk, int force_early)
 static void collect_procs_anon(struct folio *folio, struct page *page,
 		struct list_head *to_kill, int force_early)
 {
+	struct vm_area_struct *vma;
 	struct task_struct *tsk;
 	struct anon_vma *av;
 	pgoff_t pgoff;
@@ -619,10 +622,8 @@ static void collect_procs_anon(struct folio *folio, struct page *page,
 	pgoff = page_to_pgoff(page);
 	rcu_read_lock();
 	for_each_process(tsk) {
-		struct vm_area_struct *vma;
 		struct anon_vma_chain *vmac;
 		struct task_struct *t = task_early_kill(tsk, force_early);
-		unsigned long addr;
 
 		if (!t)
 			continue;
@@ -631,8 +632,9 @@ static void collect_procs_anon(struct folio *folio, struct page *page,
 			vma = vmac->vma;
 			if (vma->vm_mm != t->mm)
 				continue;
-			addr = page_mapped_in_vma(page, vma);
-			add_to_kill_anon_file(t, page, vma, to_kill, addr);
+			if (!page_mapped_in_vma(page, vma))
+				continue;
+			add_to_kill_anon_file(t, page, vma, to_kill);
 		}
 	}
 	rcu_read_unlock();
@@ -655,7 +657,6 @@ static void collect_procs_file(struct folio *folio, struct page *page,
 	pgoff = page_to_pgoff(page);
 	for_each_process(tsk) {
 		struct task_struct *t = task_early_kill(tsk, force_early);
-		unsigned long addr;
 
 		if (!t)
 			continue;
@@ -668,10 +669,8 @@ static void collect_procs_file(struct folio *folio, struct page *page,
 			 * Assume applications who requested early kill want
 			 * to be informed of all such data corruptions.
 			 */
-			if (vma->vm_mm != t->mm)
-				continue;
-			addr = page_address_in_vma(page, vma);
-			add_to_kill_anon_file(t, page, vma, to_kill, addr);
+			if (vma->vm_mm == t->mm)
+				add_to_kill_anon_file(t, page, vma, to_kill);
 		}
 	}
 	rcu_read_unlock();
@@ -683,8 +682,7 @@ static void add_to_kill_fsdax(struct task_struct *tsk, struct page *p,
 			      struct vm_area_struct *vma,
 			      struct list_head *to_kill, pgoff_t pgoff)
 {
-	unsigned long addr = vma_address(vma, pgoff, 1);
-	__add_to_kill(tsk, p, vma, to_kill, addr);
+	__add_to_kill(tsk, p, vma, to_kill, 0, pgoff);
 }
 
 /*
@@ -692,7 +690,7 @@ static void add_to_kill_fsdax(struct task_struct *tsk, struct page *p,
  */
 static void collect_procs_fsdax(struct page *page,
 		struct address_space *mapping, pgoff_t pgoff,
-		struct list_head *to_kill, bool pre_remove)
+		struct list_head *to_kill)
 {
 	struct vm_area_struct *vma;
 	struct task_struct *tsk;
@@ -700,15 +698,8 @@ static void collect_procs_fsdax(struct page *page,
 	i_mmap_lock_read(mapping);
 	rcu_read_lock();
 	for_each_process(tsk) {
-		struct task_struct *t = tsk;
+		struct task_struct *t = task_early_kill(tsk, true);
 
-		/*
-		 * Search for all tasks while MF_MEM_PRE_REMOVE is set, because
-		 * the current may not be the one accessing the fsdax page.
-		 * Otherwise, search for the current task.
-		 */
-		if (!pre_remove)
-			t = task_early_kill(tsk, true);
 		if (!t)
 			continue;
 		vma_interval_tree_foreach(vma, &mapping->i_mmap, pgoff, pgoff) {
@@ -729,9 +720,9 @@ static void collect_procs(struct folio *folio, struct page *page,
 {
 	if (!folio->mapping)
 		return;
-	if (unlikely(folio_test_ksm(folio)))
-		collect_procs_ksm(folio, page, tokill, force_early);
-	else if (folio_test_anon(folio))
+	if (unlikely(PageKsm(page)))
+		collect_procs_ksm(page, tokill, force_early);
+	else if (PageAnon(page))
 		collect_procs_anon(folio, page, tokill, force_early);
 	else
 		collect_procs_file(folio, page, tokill, force_early);
@@ -922,38 +913,39 @@ static const char * const action_page_types[] = {
  * The page count will stop it from being freed by unpoison.
  * Stress tests should be aware of this memory leak problem.
  */
-static int delete_from_lru_cache(struct folio *folio)
+static int delete_from_lru_cache(struct page *p)
 {
-	if (folio_isolate_lru(folio)) {
+	if (isolate_lru_page(p)) {
 		/*
 		 * Clear sensible page flags, so that the buddy system won't
-		 * complain when the folio is unpoison-and-freed.
+		 * complain when the page is unpoison-and-freed.
 		 */
-		folio_clear_active(folio);
-		folio_clear_unevictable(folio);
+		ClearPageActive(p);
+		ClearPageUnevictable(p);
 
 		/*
 		 * Poisoned page might never drop its ref count to 0 so we have
 		 * to uncharge it manually from its memcg.
 		 */
-		mem_cgroup_uncharge(folio);
+		mem_cgroup_uncharge(page_folio(p));
 
 		/*
-		 * drop the refcount elevated by folio_isolate_lru()
+		 * drop the page count elevated by isolate_lru_page()
 		 */
-		folio_put(folio);
+		put_page(p);
 		return 0;
 	}
 	return -EIO;
 }
 
-static int truncate_error_folio(struct folio *folio, unsigned long pfn,
+static int truncate_error_page(struct page *p, unsigned long pfn,
 				struct address_space *mapping)
 {
 	int ret = MF_FAILED;
 
-	if (mapping->a_ops->error_remove_folio) {
-		int err = mapping->a_ops->error_remove_folio(mapping, folio);
+	if (mapping->a_ops->error_remove_page) {
+		struct folio *folio = page_folio(p);
+		int err = mapping->a_ops->error_remove_page(mapping, p);
 
 		if (err != 0)
 			pr_info("%#lx: Failed to punch page: %d\n", pfn, err);
@@ -966,7 +958,7 @@ static int truncate_error_folio(struct folio *folio, unsigned long pfn,
 		 * If the file system doesn't support it just invalidate
 		 * This fails on dirty or anything with private pages
 		 */
-		if (mapping_evict_folio(mapping, folio))
+		if (invalidate_inode_page(p))
 			ret = MF_RECOVERED;
 		else
 			pr_info("%#lx: Failed to invalidate\n",	pfn);
@@ -996,7 +988,7 @@ static bool has_extra_refcount(struct page_state *ps, struct page *p,
 	int count = page_count(p) - 1;
 
 	if (extra_pins)
-		count -= folio_nr_pages(page_folio(p));
+		count -= 1;
 
 	if (count > 0) {
 		pr_err("%#lx: %s still referenced by %d users\n",
@@ -1033,18 +1025,17 @@ static int me_unknown(struct page_state *ps, struct page *p)
  */
 static int me_pagecache_clean(struct page_state *ps, struct page *p)
 {
-	struct folio *folio = page_folio(p);
 	int ret;
 	struct address_space *mapping;
 	bool extra_pins;
 
-	delete_from_lru_cache(folio);
+	delete_from_lru_cache(p);
 
 	/*
-	 * For anonymous folios the only reference left
+	 * For anonymous pages we're done the only reference left
 	 * should be the one m_f() holds.
 	 */
-	if (folio_test_anon(folio)) {
+	if (PageAnon(p)) {
 		ret = MF_RECOVERED;
 		goto out;
 	}
@@ -1056,9 +1047,11 @@ static int me_pagecache_clean(struct page_state *ps, struct page *p)
 	 * has a reference, because it could be file system metadata
 	 * and that's not safe to truncate.
 	 */
-	mapping = folio_mapping(folio);
+	mapping = page_mapping(p);
 	if (!mapping) {
-		/* Folio has been torn down in the meantime */
+		/*
+		 * Page has been teared down in the meanwhile
+		 */
 		ret = MF_FAILED;
 		goto out;
 	}
@@ -1074,12 +1067,12 @@ static int me_pagecache_clean(struct page_state *ps, struct page *p)
 	 *
 	 * Open: to take i_rwsem or not for this? Right now we don't.
 	 */
-	ret = truncate_error_folio(folio, page_to_pfn(p), mapping);
+	ret = truncate_error_page(p, page_to_pfn(p), mapping);
 	if (has_extra_refcount(ps, p, extra_pins))
 		ret = MF_FAILED;
 
 out:
-	folio_unlock(folio);
+	unlock_page(p);
 
 	return ret;
 }
@@ -1091,8 +1084,7 @@ out:
  */
 static int me_pagecache_dirty(struct page_state *ps, struct page *p)
 {
-	struct folio *folio = page_folio(p);
-	struct address_space *mapping = folio_mapping(folio);
+	struct address_space *mapping = page_mapping(p);
 
 	SetPageError(p);
 	/* TBD: print more information about the file. */
@@ -1158,16 +1150,15 @@ static int me_pagecache_dirty(struct page_state *ps, struct page *p)
  */
 static int me_swapcache_dirty(struct page_state *ps, struct page *p)
 {
-	struct folio *folio = page_folio(p);
 	int ret;
 	bool extra_pins = false;
 
-	folio_clear_dirty(folio);
+	ClearPageDirty(p);
 	/* Trigger EIO in shmem: */
-	folio_clear_uptodate(folio);
+	ClearPageUptodate(p);
 
-	ret = delete_from_lru_cache(folio) ? MF_FAILED : MF_DELAYED;
-	folio_unlock(folio);
+	ret = delete_from_lru_cache(p) ? MF_FAILED : MF_DELAYED;
+	unlock_page(p);
 
 	if (ret == MF_DELAYED)
 		extra_pins = true;
@@ -1185,7 +1176,7 @@ static int me_swapcache_clean(struct page_state *ps, struct page *p)
 
 	delete_from_swap_cache(folio);
 
-	ret = delete_from_lru_cache(folio) ? MF_FAILED : MF_RECOVERED;
+	ret = delete_from_lru_cache(p) ? MF_FAILED : MF_RECOVERED;
 	folio_unlock(folio);
 
 	if (has_extra_refcount(ps, p, false))
@@ -1209,7 +1200,7 @@ static int me_huge_page(struct page_state *ps, struct page *p)
 
 	mapping = folio_mapping(folio);
 	if (mapping) {
-		res = truncate_error_folio(folio, page_to_pfn(p), mapping);
+		res = truncate_error_page(&folio->page, page_to_pfn(p), mapping);
 		/* The page is kept in page cache. */
 		extra_pins = true;
 		folio_unlock(folio);
@@ -1254,6 +1245,7 @@ static int me_huge_page(struct page_state *ps, struct page *p)
 #define mlock		(1UL << PG_mlocked)
 #define lru		(1UL << PG_lru)
 #define head		(1UL << PG_head)
+#define slab		(1UL << PG_slab)
 #define reserved	(1UL << PG_reserved)
 
 static struct page_state error_states[] = {
@@ -1262,6 +1254,13 @@ static struct page_state error_states[] = {
 	 * free pages are specially detected outside this table:
 	 * PG_buddy pages only make a small fraction of all free pages.
 	 */
+
+	/*
+	 * Could in theory check if slab page is free or if we can drop
+	 * currently unused objects without touching them. But just
+	 * treat it as standard kernel for now.
+	 */
+	{ slab,		slab,		MF_MSG_SLAB,	me_kernel },
 
 	{ head,		head,		MF_MSG_HUGE,		me_huge_page },
 
@@ -1289,6 +1288,7 @@ static struct page_state error_states[] = {
 #undef mlock
 #undef lru
 #undef head
+#undef slab
 #undef reserved
 
 static void update_per_node_mf_stats(unsigned long pfn,
@@ -1383,9 +1383,6 @@ void ClearPageHWPoisonTakenOff(struct page *page)
  */
 static inline bool HWPoisonHandlable(struct page *page, unsigned long flags)
 {
-	if (PageSlab(page))
-		return false;
-
 	/* Soft offline could migrate non-LRU movable pages */
 	if ((flags & MF_SOFT_OFFLINE) && __PageMovable(page))
 		return true;
@@ -1561,24 +1558,24 @@ static int get_hwpoison_page(struct page *p, unsigned long flags)
  * Do all that is necessary to remove user space mappings. Unmap
  * the pages and send SIGBUS to the processes if the data was dirty.
  */
-static bool hwpoison_user_mappings(struct folio *folio, struct page *p,
-		unsigned long pfn, int flags)
+static bool hwpoison_user_mappings(struct page *p, unsigned long pfn,
+				  int flags, struct page *hpage)
 {
+	struct folio *folio = page_folio(hpage);
 	enum ttu_flags ttu = TTU_IGNORE_MLOCK | TTU_SYNC | TTU_HWPOISON;
 	struct address_space *mapping;
 	LIST_HEAD(tokill);
 	bool unmap_success;
 	int forcekill;
-	bool mlocked = folio_test_mlocked(folio);
+	bool mlocked = PageMlocked(hpage);
 
 	/*
 	 * Here we are interested only in user-mapped pages, so skip any
 	 * other types of pages.
 	 */
-	if (folio_test_reserved(folio) || folio_test_slab(folio) ||
-	    folio_test_pgtable(folio) || folio_test_offline(folio))
+	if (PageReserved(p) || PageSlab(p) || PageTable(p) || PageOffline(p))
 		return true;
-	if (!(folio_test_lru(folio) || folio_test_hugetlb(folio)))
+	if (!(PageLRU(hpage) || PageHuge(p)))
 		return true;
 
 	/*
@@ -1588,7 +1585,7 @@ static bool hwpoison_user_mappings(struct folio *folio, struct page *p,
 	if (!page_mapped(p))
 		return true;
 
-	if (folio_test_swapcache(folio)) {
+	if (PageSwapCache(p)) {
 		pr_err("%#lx: keeping poisoned page in swap cache\n", pfn);
 		ttu &= ~TTU_HWPOISON;
 	}
@@ -1599,11 +1596,11 @@ static bool hwpoison_user_mappings(struct folio *folio, struct page *p,
 	 * XXX: the dirty test could be racy: set_page_dirty() may not always
 	 * be called inside page lock (it's recommended but not enforced).
 	 */
-	mapping = folio_mapping(folio);
-	if (!(flags & MF_MUST_KILL) && !folio_test_dirty(folio) && mapping &&
+	mapping = page_mapping(hpage);
+	if (!(flags & MF_MUST_KILL) && !PageDirty(hpage) && mapping &&
 	    mapping_can_writeback(mapping)) {
-		if (folio_mkclean(folio)) {
-			folio_set_dirty(folio);
+		if (page_mkclean(hpage)) {
+			SetPageDirty(hpage);
 		} else {
 			ttu &= ~TTU_HWPOISON;
 			pr_info("%#lx: corrupted page was clean: dropped without side effects\n",
@@ -1618,7 +1615,7 @@ static bool hwpoison_user_mappings(struct folio *folio, struct page *p,
 	 */
 	collect_procs(folio, p, &tokill, flags & MF_ACTION_REQUIRED);
 
-	if (folio_test_hugetlb(folio) && !folio_test_anon(folio)) {
+	if (PageHuge(hpage) && !PageAnon(hpage)) {
 		/*
 		 * For hugetlb pages in shared mappings, try_to_unmap
 		 * could potentially call huge_pmd_unshare.  Because of
@@ -1626,7 +1623,7 @@ static bool hwpoison_user_mappings(struct folio *folio, struct page *p,
 		 * TTU_RMAP_LOCKED to indicate we have taken the lock
 		 * at this higher level.
 		 */
-		mapping = hugetlb_folio_mapping_lock_write(folio);
+		mapping = hugetlb_page_mapping_lock_write(hpage);
 		if (mapping) {
 			try_to_unmap(folio, ttu|TTU_RMAP_LOCKED);
 			i_mmap_unlock_write(mapping);
@@ -1638,15 +1635,15 @@ static bool hwpoison_user_mappings(struct folio *folio, struct page *p,
 
 	unmap_success = !page_mapped(p);
 	if (!unmap_success)
-		pr_err("%#lx: failed to unmap page (folio mapcount=%d)\n",
-		       pfn, folio_mapcount(page_folio(p)));
+		pr_err("%#lx: failed to unmap page (mapcount=%d)\n",
+		       pfn, page_mapcount(p));
 
 	/*
 	 * try_to_unmap() might put mlocked page in lru cache, so call
 	 * shake_page() again to ensure that it's flushed.
 	 */
 	if (mlocked)
-		shake_folio(folio);
+		shake_page(hpage);
 
 	/*
 	 * Now that the dirty bit has been propagated to the
@@ -1658,7 +1655,7 @@ static bool hwpoison_user_mappings(struct folio *folio, struct page *p,
 	 * use a more force-full uncatchable kill to prevent
 	 * any accesses to the poisoned memory.
 	 */
-	forcekill = folio_test_dirty(folio) || (flags & MF_MUST_KILL) ||
+	forcekill = PageDirty(hpage) || (flags & MF_MUST_KILL) ||
 		    !unmap_success;
 	kill_procs(&tokill, forcekill, !unmap_success, pfn, flags);
 
@@ -1809,7 +1806,6 @@ int mf_dax_kill_procs(struct address_space *mapping, pgoff_t index,
 	dax_entry_t cookie;
 	struct page *page;
 	size_t end = index + count;
-	bool pre_remove = mf_flags & MF_MEM_PRE_REMOVE;
 
 	mf_flags |= MF_ACTION_REQUIRED | MF_MUST_KILL;
 
@@ -1821,14 +1817,9 @@ int mf_dax_kill_procs(struct address_space *mapping, pgoff_t index,
 		if (!page)
 			goto unlock;
 
-		if (!pre_remove)
-			SetPageHWPoison(page);
+		SetPageHWPoison(page);
 
-		/*
-		 * The pre_remove case is revoking access, the memory is still
-		 * good and could theoretically be put back into service.
-		 */
-		collect_procs_fsdax(page, mapping, index, &to_kill, pre_remove);
+		collect_procs_fsdax(page, mapping, index, &to_kill);
 		unmap_and_kill(&to_kill, page_to_pfn(page), mapping,
 				index, mf_flags);
 unlock:
@@ -2102,7 +2093,7 @@ retry:
 
 	page_flags = folio->flags;
 
-	if (!hwpoison_user_mappings(folio, p, pfn, flags)) {
+	if (!hwpoison_user_mappings(p, pfn, flags, &folio->page)) {
 		folio_unlock(folio);
 		return action_result(pfn, MF_MSG_UNMAP_FAILED, MF_IGNORED);
 	}
@@ -2191,7 +2182,7 @@ out:
 int memory_failure(unsigned long pfn, int flags)
 {
 	struct page *p;
-	struct folio *folio;
+	struct page *hpage;
 	struct dev_pagemap *pgmap;
 	int res = 0;
 	unsigned long page_flags;
@@ -2279,8 +2270,8 @@ try_again:
 		}
 	}
 
-	folio = page_folio(p);
-	if (folio_test_large(folio)) {
+	hpage = compound_head(p);
+	if (PageTransHuge(hpage)) {
 		/*
 		 * The flag must be set after the refcount is bumped
 		 * otherwise it may race with THP split.
@@ -2294,13 +2285,12 @@ try_again:
 		 * or unhandlable page.  The refcount is bumped iff the
 		 * page is a valid handlable page.
 		 */
-		folio_set_has_hwpoisoned(folio);
+		SetPageHasHWPoisoned(hpage);
 		if (try_to_split_thp_page(p) < 0) {
 			res = action_result(pfn, MF_MSG_UNSPLIT_THP, MF_IGNORED);
 			goto unlock_mutex;
 		}
 		VM_BUG_ON_PAGE(!page_count(p), p);
-		folio = page_folio(p);
 	}
 
 	/*
@@ -2311,9 +2301,9 @@ try_again:
 	 * The check (unnecessarily) ignores LRU pages being isolated and
 	 * walked by the page reclaim code, however that's not a big loss.
 	 */
-	shake_folio(folio);
+	shake_page(p);
 
-	folio_lock(folio);
+	lock_page(p);
 
 	/*
 	 * We're only intended to deal with the non-Compound page here.
@@ -2321,11 +2311,11 @@ try_again:
 	 * race window. If this happens, we could try again to hopefully
 	 * handle the page next round.
 	 */
-	if (folio_test_large(folio)) {
+	if (PageCompound(p)) {
 		if (retry) {
 			ClearPageHWPoison(p);
-			folio_unlock(folio);
-			folio_put(folio);
+			unlock_page(p);
+			put_page(p);
 			flags &= ~MF_COUNT_INCREASED;
 			retry = false;
 			goto try_again;
@@ -2338,38 +2328,38 @@ try_again:
 	 * We use page flags to determine what action should be taken, but
 	 * the flags can be modified by the error containment action.  One
 	 * example is an mlocked page, where PG_mlocked is cleared by
-	 * folio_remove_rmap_*() in try_to_unmap_one(). So to determine page
-	 * status correctly, we save a copy of the page flags at this time.
+	 * page_remove_rmap() in try_to_unmap_one(). So to determine page status
+	 * correctly, we save a copy of the page flags at this time.
 	 */
-	page_flags = folio->flags;
+	page_flags = p->flags;
 
 	if (hwpoison_filter(p)) {
 		ClearPageHWPoison(p);
-		folio_unlock(folio);
-		folio_put(folio);
+		unlock_page(p);
+		put_page(p);
 		res = -EOPNOTSUPP;
 		goto unlock_mutex;
 	}
 
 	/*
-	 * __munlock_folio() may clear a writeback folio's LRU flag without
-	 * the folio lock. We need to wait for writeback completion for this
-	 * folio or it may trigger a vfs BUG while evicting inode.
+	 * __munlock_folio() may clear a writeback page's LRU flag without
+	 * page_lock. We need wait writeback completion for this page or it
+	 * may trigger vfs BUG while evict inode.
 	 */
-	if (!folio_test_lru(folio) && !folio_test_writeback(folio))
+	if (!PageLRU(p) && !PageWriteback(p))
 		goto identify_page_state;
 
 	/*
 	 * It's very difficult to mess with pages currently under IO
 	 * and in many cases impossible, so we just avoid it here.
 	 */
-	folio_wait_writeback(folio);
+	wait_on_page_writeback(p);
 
 	/*
 	 * Now take care of user space mappings.
 	 * Abort on fail: __filemap_remove_folio() assumes unmapped page.
 	 */
-	if (!hwpoison_user_mappings(folio, p, pfn, flags)) {
+	if (!hwpoison_user_mappings(p, pfn, flags, p)) {
 		res = action_result(pfn, MF_MSG_UNMAP_FAILED, MF_IGNORED);
 		goto unlock_page;
 	}
@@ -2377,8 +2367,7 @@ try_again:
 	/*
 	 * Torn down by someone else?
 	 */
-	if (folio_test_lru(folio) && !folio_test_swapcache(folio) &&
-	    folio->mapping == NULL) {
+	if (PageLRU(p) && !PageSwapCache(p) && p->mapping == NULL) {
 		res = action_result(pfn, MF_MSG_TRUNCATED_LRU, MF_IGNORED);
 		goto unlock_page;
 	}
@@ -2388,7 +2377,7 @@ identify_page_state:
 	mutex_unlock(&mf_mutex);
 	return res;
 unlock_page:
-	folio_unlock(folio);
+	unlock_page(p);
 unlock_mutex:
 	mutex_unlock(&mf_mutex);
 	return res;
@@ -2546,7 +2535,7 @@ int unpoison_memory(unsigned long pfn)
 		goto unlock_mutex;
 	}
 
-	if (is_huge_zero_folio(folio)) {
+	if (is_huge_zero_page(&folio->page)) {
 		unpoison_pr_info("Unpoison: huge zero page is not supported %#lx\n",
 				 pfn, &unpoison_rs);
 		ret = -EOPNOTSUPP;
@@ -2565,8 +2554,8 @@ int unpoison_memory(unsigned long pfn)
 		goto unlock_mutex;
 	}
 
-	if (folio_test_slab(folio) || folio_test_pgtable(folio) ||
-	    folio_test_reserved(folio) || folio_test_offline(folio))
+	if (folio_test_slab(folio) || PageTable(&folio->page) ||
+	    folio_test_reserved(folio) || PageOffline(&folio->page))
 		goto unlock_mutex;
 
 	/*
@@ -2587,7 +2576,7 @@ int unpoison_memory(unsigned long pfn)
 
 	ghp = get_hwpoison_page(p, MF_UNPOISON);
 	if (!ghp) {
-		if (folio_test_hugetlb(folio)) {
+		if (PageHuge(p)) {
 			huge = true;
 			count = folio_free_raw_hwp(folio, false);
 			if (count == 0)
@@ -2603,7 +2592,7 @@ int unpoison_memory(unsigned long pfn)
 					 pfn, &unpoison_rs);
 		}
 	} else {
-		if (folio_test_hugetlb(folio)) {
+		if (PageHuge(p)) {
 			huge = true;
 			count = folio_free_raw_hwp(folio, false);
 			if (count == 0) {
@@ -2631,37 +2620,37 @@ unlock_mutex:
 }
 EXPORT_SYMBOL(unpoison_memory);
 
-static bool mf_isolate_folio(struct folio *folio, struct list_head *pagelist)
+static bool isolate_page(struct page *page, struct list_head *pagelist)
 {
 	bool isolated = false;
 
-	if (folio_test_hugetlb(folio)) {
-		isolated = isolate_hugetlb(folio, pagelist);
+	if (PageHuge(page)) {
+		isolated = isolate_hugetlb(page_folio(page), pagelist);
 	} else {
-		bool lru = !__folio_test_movable(folio);
+		bool lru = !__PageMovable(page);
 
 		if (lru)
-			isolated = folio_isolate_lru(folio);
+			isolated = isolate_lru_page(page);
 		else
-			isolated = isolate_movable_page(&folio->page,
+			isolated = isolate_movable_page(page,
 							ISOLATE_UNEVICTABLE);
 
 		if (isolated) {
-			list_add(&folio->lru, pagelist);
+			list_add(&page->lru, pagelist);
 			if (lru)
-				node_stat_add_folio(folio, NR_ISOLATED_ANON +
-						    folio_is_file_lru(folio));
+				inc_node_page_state(page, NR_ISOLATED_ANON +
+						    page_is_file_lru(page));
 		}
 	}
 
 	/*
-	 * If we succeed to isolate the folio, we grabbed another refcount on
-	 * the folio, so we can safely drop the one we got from get_any_page().
-	 * If we failed to isolate the folio, it means that we cannot go further
+	 * If we succeed to isolate the page, we grabbed another refcount on
+	 * the page, so we can safely drop the one we got from get_any_page().
+	 * If we failed to isolate the page, it means that we cannot go further
 	 * and we will return an error, so drop the reference we got from
 	 * get_any_page() as well.
 	 */
-	folio_put(folio);
+	put_page(page);
 	return isolated;
 }
 
@@ -2674,41 +2663,40 @@ static int soft_offline_in_use_page(struct page *page)
 {
 	long ret = 0;
 	unsigned long pfn = page_to_pfn(page);
-	struct folio *folio = page_folio(page);
+	struct page *hpage = compound_head(page);
 	char const *msg_page[] = {"page", "hugepage"};
-	bool huge = folio_test_hugetlb(folio);
+	bool huge = PageHuge(page);
 	LIST_HEAD(pagelist);
 	struct migration_target_control mtc = {
 		.nid = NUMA_NO_NODE,
 		.gfp_mask = GFP_USER | __GFP_MOVABLE | __GFP_RETRY_MAYFAIL,
-		.reason = MR_MEMORY_FAILURE,
 	};
 
-	if (!huge && folio_test_large(folio)) {
+	if (!huge && PageTransHuge(hpage)) {
 		if (try_to_split_thp_page(page)) {
 			pr_info("soft offline: %#lx: thp split failed\n", pfn);
 			return -EBUSY;
 		}
-		folio = page_folio(page);
+		hpage = page;
 	}
 
-	folio_lock(folio);
+	lock_page(page);
 	if (!huge)
-		folio_wait_writeback(folio);
+		wait_on_page_writeback(page);
 	if (PageHWPoison(page)) {
-		folio_unlock(folio);
-		folio_put(folio);
+		unlock_page(page);
+		put_page(page);
 		pr_info("soft offline: %#lx page already poisoned\n", pfn);
 		return 0;
 	}
 
-	if (!huge && folio_test_lru(folio) && !folio_test_swapcache(folio))
+	if (!huge && PageLRU(page) && !PageSwapCache(page))
 		/*
 		 * Try to invalidate first. This should work for
 		 * non dirty unmapped page cache pages.
 		 */
-		ret = mapping_evict_folio(folio_mapping(folio), folio);
-	folio_unlock(folio);
+		ret = invalidate_inode_page(page);
+	unlock_page(page);
 
 	if (ret) {
 		pr_info("soft_offline: %#lx: invalidated\n", pfn);
@@ -2716,7 +2704,7 @@ static int soft_offline_in_use_page(struct page *page)
 		return 0;
 	}
 
-	if (mf_isolate_folio(folio, &pagelist)) {
+	if (isolate_page(hpage, &pagelist)) {
 		ret = migrate_pages(&pagelist, alloc_migration_target, NULL,
 			(unsigned long)&mtc, MIGRATE_SYNC, MR_MEMORY_FAILURE, NULL);
 		if (!ret) {

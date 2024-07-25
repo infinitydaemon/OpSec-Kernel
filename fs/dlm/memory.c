@@ -84,7 +84,7 @@ char *dlm_allocate_lvb(struct dlm_ls *ls)
 {
 	char *p;
 
-	p = kzalloc(ls->ls_lvblen, GFP_ATOMIC);
+	p = kzalloc(ls->ls_lvblen, GFP_NOFS);
 	return p;
 }
 
@@ -97,7 +97,7 @@ struct dlm_rsb *dlm_allocate_rsb(struct dlm_ls *ls)
 {
 	struct dlm_rsb *r;
 
-	r = kmem_cache_zalloc(rsb_cache, GFP_ATOMIC);
+	r = kmem_cache_zalloc(rsb_cache, GFP_NOFS);
 	return r;
 }
 
@@ -112,7 +112,7 @@ struct dlm_lkb *dlm_allocate_lkb(struct dlm_ls *ls)
 {
 	struct dlm_lkb *lkb;
 
-	lkb = kmem_cache_zalloc(lkb_cache, GFP_ATOMIC);
+	lkb = kmem_cache_zalloc(lkb_cache, GFP_NOFS);
 	return lkb;
 }
 
@@ -127,12 +127,16 @@ void dlm_free_lkb(struct dlm_lkb *lkb)
 		}
 	}
 
+	/* drop references if they are set */
+	dlm_callback_set_last_ptr(&lkb->lkb_last_cast, NULL);
+	dlm_callback_set_last_ptr(&lkb->lkb_last_cb, NULL);
+
 	kmem_cache_free(lkb_cache, lkb);
 }
 
-struct dlm_mhandle *dlm_allocate_mhandle(void)
+struct dlm_mhandle *dlm_allocate_mhandle(gfp_t allocation)
 {
-	return kmem_cache_alloc(mhandle_cache, GFP_ATOMIC);
+	return kmem_cache_alloc(mhandle_cache, allocation);
 }
 
 void dlm_free_mhandle(struct dlm_mhandle *mhandle)
@@ -150,9 +154,9 @@ void dlm_free_writequeue(struct writequeue_entry *writequeue)
 	kmem_cache_free(writequeue_cache, writequeue);
 }
 
-struct dlm_msg *dlm_allocate_msg(void)
+struct dlm_msg *dlm_allocate_msg(gfp_t allocation)
 {
-	return kmem_cache_alloc(msg_cache, GFP_ATOMIC);
+	return kmem_cache_alloc(msg_cache, allocation);
 }
 
 void dlm_free_msg(struct dlm_msg *msg)

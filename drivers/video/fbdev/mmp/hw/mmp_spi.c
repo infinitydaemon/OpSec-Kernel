@@ -32,7 +32,7 @@ static inline int lcd_spi_write(struct spi_device *spi, u32 data)
 	int timeout = 100000, isr, ret = 0;
 	u32 tmp;
 	void __iomem *reg_base = (void __iomem *)
-		*(void **) spi_controller_get_devdata(spi->controller);
+		*(void **)spi_master_get_devdata(spi->master);
 
 	/* clear ISR */
 	writel_relaxed(~SPI_IRQ_MASK, reg_base + SPU_IRQ_ISR);
@@ -81,7 +81,7 @@ static inline int lcd_spi_write(struct spi_device *spi, u32 data)
 static int lcd_spi_setup(struct spi_device *spi)
 {
 	void __iomem *reg_base = (void __iomem *)
-		*(void **) spi_controller_get_devdata(spi->controller);
+		*(void **)spi_master_get_devdata(spi->master);
 	u32 tmp;
 
 	tmp = CFG_SCLKCNT(16) |
@@ -91,7 +91,7 @@ static int lcd_spi_setup(struct spi_device *spi)
 	writel(tmp, reg_base + LCD_SPU_SPI_CTRL);
 
 	/*
-	 * After set mode it needs some time to pull up the spi signals,
+	 * After set mode it need a time to pull up the spi singals,
 	 * or it would cause the wrong waveform when send spi command,
 	 * especially on pxa910h
 	 */
@@ -136,32 +136,32 @@ static int lcd_spi_one_transfer(struct spi_device *spi, struct spi_message *m)
 
 int lcd_spi_register(struct mmphw_ctrl *ctrl)
 {
-	struct spi_controller *ctlr;
+	struct spi_master *master;
 	void **p_regbase;
 	int err;
 
-	ctlr = spi_alloc_master(ctrl->dev, sizeof(void *));
-	if (!ctlr) {
+	master = spi_alloc_master(ctrl->dev, sizeof(void *));
+	if (!master) {
 		dev_err(ctrl->dev, "unable to allocate SPI master\n");
 		return -ENOMEM;
 	}
-	p_regbase = spi_controller_get_devdata(ctlr);
+	p_regbase = spi_master_get_devdata(master);
 	*p_regbase = (void __force *)ctrl->reg_base;
 
 	/* set bus num to 5 to avoid conflict with other spi hosts */
-	ctlr->bus_num = 5;
-	ctlr->num_chipselect = 1;
-	ctlr->setup = lcd_spi_setup;
-	ctlr->transfer = lcd_spi_one_transfer;
+	master->bus_num = 5;
+	master->num_chipselect = 1;
+	master->setup = lcd_spi_setup;
+	master->transfer = lcd_spi_one_transfer;
 
-	err = spi_register_controller(ctlr);
+	err = spi_register_master(master);
 	if (err < 0) {
 		dev_err(ctrl->dev, "unable to register SPI master\n");
-		spi_controller_put(ctlr);
+		spi_master_put(master);
 		return err;
 	}
 
-	dev_info(&ctlr->dev, "registered\n");
+	dev_info(&master->dev, "registered\n");
 
 	return 0;
 }

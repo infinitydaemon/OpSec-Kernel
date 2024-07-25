@@ -671,11 +671,8 @@ static int davinci_nand_exec_instr(struct davinci_nand_info *info,
 		break;
 	}
 
-	if (instr->delay_ns) {
-		/* Dummy read to be sure that command is sent before ndelay starts */
-		davinci_nand_readl(info, 0);
+	if (instr->delay_ns)
 		ndelay(instr->delay_ns);
-	}
 
 	return 0;
 }

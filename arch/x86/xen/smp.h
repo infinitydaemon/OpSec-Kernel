@@ -19,7 +19,6 @@ extern void xen_smp_intr_free(unsigned int cpu);
 int xen_smp_intr_init_pv(unsigned int cpu);
 void xen_smp_intr_free_pv(unsigned int cpu);
 
-void xen_smp_count_cpus(void);
 void xen_smp_cpus_done(unsigned int max_cpus);
 
 void xen_smp_send_reschedule(int cpu);
@@ -45,7 +44,6 @@ static inline int xen_smp_intr_init_pv(unsigned int cpu)
 	return 0;
 }
 static inline void xen_smp_intr_free_pv(unsigned int cpu) {}
-static inline void xen_smp_count_cpus(void) { }
 #endif /* CONFIG_SMP */
 
 #endif

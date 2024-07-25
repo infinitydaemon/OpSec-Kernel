@@ -72,7 +72,7 @@ static const struct regmap_config ac100_regmap_config = {
 	.wr_table	= &ac100_writeable_table,
 	.volatile_table	= &ac100_volatile_table,
 	.max_register	= AC100_RTC_GP(15),
-	.cache_type	= REGCACHE_MAPLE,
+	.cache_type	= REGCACHE_RBTREE,
 };
 
 static struct mfd_cell ac100_cells[] = {

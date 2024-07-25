@@ -421,7 +421,6 @@ static bool wx_is_non_eop(struct wx_ring *rx_ring,
 		return false;
 
 	rx_ring->rx_buffer_info[ntc].skb = skb;
-	rx_ring->rx_stats.non_eop_descs++;
 
 	return true;
 }
@@ -655,7 +654,6 @@ static int wx_clean_rx_irq(struct wx_q_vector *q_vector,
 
 		/* exit if we failed to retrieve a buffer */
 		if (!skb) {
-			rx_ring->rx_stats.alloc_rx_buff_failed++;
 			break;
 		}
 
@@ -811,11 +809,9 @@ static bool wx_clean_tx_irq(struct wx_q_vector *q_vector,
 
 		if (__netif_subqueue_stopped(tx_ring->netdev,
 					     tx_ring->queue_index) &&
-		    netif_running(tx_ring->netdev)) {
+		    netif_running(tx_ring->netdev))
 			netif_wake_subqueue(tx_ring->netdev,
 					    tx_ring->queue_index);
-			++tx_ring->tx_stats.restart_queue;
-		}
 	}
 
 	return !!budget;
@@ -892,7 +888,6 @@ static int wx_maybe_stop_tx(struct wx_ring *tx_ring, u16 size)
 
 	/* A reprieve! - use start_queue because it doesn't call schedule */
 	netif_start_subqueue(tx_ring->netdev, tx_ring->queue_index);
-	++tx_ring->tx_stats.restart_queue;
 
 	return 0;
 }
@@ -1257,7 +1252,7 @@ static int wx_tso(struct wx_ring *tx_ring, struct wx_tx_buffer *first,
 
 	/* compute header lengths */
 	l4len = enc ? inner_tcp_hdrlen(skb) : tcp_hdrlen(skb);
-	*hdr_len = enc ? skb_inner_transport_offset(skb) :
+	*hdr_len = enc ? (skb_inner_transport_header(skb) - skb->data) :
 			 skb_transport_offset(skb);
 	*hdr_len += l4len;
 
@@ -1470,10 +1465,8 @@ static netdev_tx_t wx_xmit_frame_ring(struct sk_buff *skb,
 		count += TXD_USE_COUNT(skb_frag_size(&skb_shinfo(skb)->
 						     frags[f]));
 
-	if (wx_maybe_stop_tx(tx_ring, count + 3)) {
-		tx_ring->tx_stats.tx_busy++;
+	if (wx_maybe_stop_tx(tx_ring, count + 3))
 		return NETDEV_TX_BUSY;
-	}
 
 	/* record the location of the first descriptor for this packet */
 	first = &tx_ring->tx_buffer_info[tx_ring->next_to_use];
@@ -1568,14 +1561,8 @@ EXPORT_SYMBOL(wx_napi_disable_all);
  **/
 static void wx_set_rss_queues(struct wx *wx)
 {
-	struct wx_ring_feature *f;
-
-	/* set mask for 16 queue limit of RSS */
-	f = &wx->ring_feature[RING_F_RSS];
-	f->indices = f->limit;
-
-	wx->num_rx_queues = f->limit;
-	wx->num_tx_queues = f->limit;
+	wx->num_rx_queues = wx->mac.max_rx_queues;
+	wx->num_tx_queues = wx->mac.max_tx_queues;
 }
 
 static void wx_set_num_queues(struct wx *wx)
@@ -1601,26 +1588,13 @@ static int wx_acquire_msix_vectors(struct wx *wx)
 	struct irq_affinity affd = { .pre_vectors = 1 };
 	int nvecs, i;
 
-	/* We start by asking for one vector per queue pair */
-	nvecs = max(wx->num_rx_queues, wx->num_tx_queues);
-	nvecs = min_t(int, nvecs, num_online_cpus());
-	nvecs = min_t(int, nvecs, wx->mac.max_msix_vectors);
+	nvecs = min_t(int, num_online_cpus(), wx->mac.max_msix_vectors);
 
-	wx->msix_q_entries = kcalloc(nvecs, sizeof(struct msix_entry),
-				     GFP_KERNEL);
-	if (!wx->msix_q_entries)
+	wx->msix_entries = kcalloc(nvecs,
+				   sizeof(struct msix_entry),
+				   GFP_KERNEL);
+	if (!wx->msix_entries)
 		return -ENOMEM;
-
-	/* One for non-queue interrupts */
-	nvecs += 1;
-
-	wx->msix_entry = kcalloc(1, sizeof(struct msix_entry),
-				 GFP_KERNEL);
-	if (!wx->msix_entry) {
-		kfree(wx->msix_q_entries);
-		wx->msix_q_entries = NULL;
-		return -ENOMEM;
-	}
 
 	nvecs = pci_alloc_irq_vectors_affinity(wx->pdev, nvecs,
 					       nvecs,
@@ -1628,22 +1602,21 @@ static int wx_acquire_msix_vectors(struct wx *wx)
 					       &affd);
 	if (nvecs < 0) {
 		wx_err(wx, "Failed to allocate MSI-X interrupts. Err: %d\n", nvecs);
-		kfree(wx->msix_q_entries);
-		wx->msix_q_entries = NULL;
-		kfree(wx->msix_entry);
-		wx->msix_entry = NULL;
+		kfree(wx->msix_entries);
+		wx->msix_entries = NULL;
 		return nvecs;
 	}
 
-	wx->msix_entry->entry = 0;
-	wx->msix_entry->vector = pci_irq_vector(wx->pdev, 0);
-	nvecs -= 1;
 	for (i = 0; i < nvecs; i++) {
-		wx->msix_q_entries[i].entry = i;
-		wx->msix_q_entries[i].vector = pci_irq_vector(wx->pdev, i + 1);
+		wx->msix_entries[i].entry = i;
+		wx->msix_entries[i].vector = pci_irq_vector(wx->pdev, i);
 	}
 
+	/* one for msix_other */
+	nvecs -= 1;
 	wx->num_q_vectors = nvecs;
+	wx->num_rx_queues = nvecs;
+	wx->num_tx_queues = nvecs;
 
 	return 0;
 }
@@ -1665,27 +1638,26 @@ static int wx_set_interrupt_capability(struct wx *wx)
 	if (ret == 0 || (ret == -ENOMEM))
 		return ret;
 
-	/* Disable RSS */
-	dev_warn(&wx->pdev->dev, "Disabling RSS support\n");
-	wx->ring_feature[RING_F_RSS].limit = 1;
-
-	wx_set_num_queues(wx);
+	wx->num_rx_queues = 1;
+	wx->num_tx_queues = 1;
+	wx->num_q_vectors = 1;
 
 	/* minmum one for queue, one for misc*/
 	nvecs = 1;
 	nvecs = pci_alloc_irq_vectors(pdev, nvecs,
-				      nvecs, PCI_IRQ_MSI | PCI_IRQ_INTX);
+				      nvecs, PCI_IRQ_MSI | PCI_IRQ_LEGACY);
 	if (nvecs == 1) {
 		if (pdev->msi_enabled)
 			wx_err(wx, "Fallback to MSI.\n");
 		else
-			wx_err(wx, "Fallback to INTx.\n");
+			wx_err(wx, "Fallback to LEGACY.\n");
 	} else {
-		wx_err(wx, "Failed to allocate MSI/INTx interrupts. Error: %d\n", nvecs);
+		wx_err(wx, "Failed to allocate MSI/LEGACY interrupts. Error: %d\n", nvecs);
 		return nvecs;
 	}
 
 	pdev->irq = pci_irq_vector(pdev, 0);
+	wx->num_q_vectors = 1;
 
 	return 0;
 }
@@ -1927,10 +1899,8 @@ void wx_reset_interrupt_capability(struct wx *wx)
 		return;
 
 	if (pdev->msix_enabled) {
-		kfree(wx->msix_q_entries);
-		wx->msix_q_entries = NULL;
-		kfree(wx->msix_entry);
-		wx->msix_entry = NULL;
+		kfree(wx->msix_entries);
+		wx->msix_entries = NULL;
 	}
 	pci_free_irq_vectors(wx->pdev);
 }
@@ -2002,7 +1972,7 @@ void wx_free_irq(struct wx *wx)
 
 	for (vector = 0; vector < wx->num_q_vectors; vector++) {
 		struct wx_q_vector *q_vector = wx->q_vector[vector];
-		struct msix_entry *entry = &wx->msix_q_entries[vector];
+		struct msix_entry *entry = &wx->msix_entries[vector];
 
 		/* free only the irqs that were actually requested */
 		if (!q_vector->rx.ring && !q_vector->tx.ring)
@@ -2012,7 +1982,7 @@ void wx_free_irq(struct wx *wx)
 	}
 
 	if (wx->mac.type == wx_mac_em)
-		free_irq(wx->msix_entry->vector, wx);
+		free_irq(wx->msix_entries[vector].vector, wx);
 }
 EXPORT_SYMBOL(wx_free_irq);
 
@@ -2089,7 +2059,6 @@ static void wx_set_ivar(struct wx *wx, s8 direction,
 		wr32(wx, WX_PX_MISC_IVAR, ivar);
 	} else {
 		/* tx or rx causes */
-		msix_vector += 1; /* offset for queue vectors */
 		msix_vector |= WX_PX_IVAR_ALLOC_VAL;
 		index = ((16 * (queue & 1)) + (8 * direction));
 		ivar = rd32(wx, WX_PX_IVAR(queue >> 1));
@@ -2107,7 +2076,7 @@ static void wx_set_ivar(struct wx *wx, s8 direction,
  * when it needs to update EITR registers at runtime.  Hardware
  * specific quirks/differences are taken care of here.
  */
-void wx_write_eitr(struct wx_q_vector *q_vector)
+static void wx_write_eitr(struct wx_q_vector *q_vector)
 {
 	struct wx *wx = q_vector->wx;
 	int v_idx = q_vector->v_idx;
@@ -2120,14 +2089,14 @@ void wx_write_eitr(struct wx_q_vector *q_vector)
 
 	itr_reg |= WX_PX_ITR_CNT_WDIS;
 
-	wr32(wx, WX_PX_ITR(v_idx + 1), itr_reg);
+	wr32(wx, WX_PX_ITR(v_idx), itr_reg);
 }
 
 /**
  * wx_configure_vectors - Configure vectors for hardware
  * @wx: board private structure
  *
- * wx_configure_vectors sets up the hardware to properly generate MSI-X/MSI/INTx
+ * wx_configure_vectors sets up the hardware to properly generate MSI-X/MSI/LEGACY
  * interrupts.
  **/
 void wx_configure_vectors(struct wx *wx)
@@ -2166,9 +2135,9 @@ void wx_configure_vectors(struct wx *wx)
 		wx_write_eitr(q_vector);
 	}
 
-	wx_set_ivar(wx, -1, 0, 0);
+	wx_set_ivar(wx, -1, 0, v_idx);
 	if (pdev->msix_enabled)
-		wr32(wx, WX_PX_ITR(0), 1950);
+		wr32(wx, WX_PX_ITR(v_idx), 1950);
 }
 EXPORT_SYMBOL(wx_configure_vectors);
 
@@ -2627,10 +2596,7 @@ void wx_get_stats64(struct net_device *netdev,
 		    struct rtnl_link_stats64 *stats)
 {
 	struct wx *wx = netdev_priv(netdev);
-	struct wx_hw_stats *hwstats;
 	int i;
-
-	wx_update_stats(wx);
 
 	rcu_read_lock();
 	for (i = 0; i < wx->num_rx_queues; i++) {
@@ -2667,12 +2633,6 @@ void wx_get_stats64(struct net_device *netdev,
 	}
 
 	rcu_read_unlock();
-
-	hwstats = &wx->stats;
-	stats->rx_errors = hwstats->crcerrs + hwstats->rlec;
-	stats->multicast = hwstats->qmprc;
-	stats->rx_length_errors = hwstats->rlec;
-	stats->rx_crc_errors = hwstats->crcerrs;
 }
 EXPORT_SYMBOL(wx_get_stats64);
 
@@ -2681,137 +2641,21 @@ int wx_set_features(struct net_device *netdev, netdev_features_t features)
 	netdev_features_t changed = netdev->features ^ features;
 	struct wx *wx = netdev_priv(netdev);
 
-	if (features & NETIF_F_RXHASH) {
+	if (changed & NETIF_F_RXHASH)
 		wr32m(wx, WX_RDB_RA_CTL, WX_RDB_RA_CTL_RSS_EN,
 		      WX_RDB_RA_CTL_RSS_EN);
-		wx->rss_enabled = true;
-	} else {
+	else
 		wr32m(wx, WX_RDB_RA_CTL, WX_RDB_RA_CTL_RSS_EN, 0);
-		wx->rss_enabled = false;
-	}
 
 	netdev->features = features;
 
-	if (wx->mac.type == wx_mac_sp && changed & NETIF_F_HW_VLAN_CTAG_RX)
-		wx->do_reset(netdev);
-	else if (changed & (NETIF_F_HW_VLAN_CTAG_RX | NETIF_F_HW_VLAN_CTAG_FILTER))
+	if (changed &
+	    (NETIF_F_HW_VLAN_CTAG_RX |
+	     NETIF_F_HW_VLAN_STAG_RX))
 		wx_set_rx_mode(netdev);
 
 	return 0;
 }
 EXPORT_SYMBOL(wx_set_features);
 
-#define NETIF_VLAN_STRIPPING_FEATURES	(NETIF_F_HW_VLAN_CTAG_RX | \
-					 NETIF_F_HW_VLAN_STAG_RX)
-
-#define NETIF_VLAN_INSERTION_FEATURES	(NETIF_F_HW_VLAN_CTAG_TX | \
-					 NETIF_F_HW_VLAN_STAG_TX)
-
-#define NETIF_VLAN_FILTERING_FEATURES	(NETIF_F_HW_VLAN_CTAG_FILTER | \
-					 NETIF_F_HW_VLAN_STAG_FILTER)
-
-netdev_features_t wx_fix_features(struct net_device *netdev,
-				  netdev_features_t features)
-{
-	netdev_features_t changed = netdev->features ^ features;
-	struct wx *wx = netdev_priv(netdev);
-
-	if (changed & NETIF_VLAN_STRIPPING_FEATURES) {
-		if ((features & NETIF_VLAN_STRIPPING_FEATURES) != NETIF_VLAN_STRIPPING_FEATURES &&
-		    (features & NETIF_VLAN_STRIPPING_FEATURES) != 0) {
-			features &= ~NETIF_VLAN_STRIPPING_FEATURES;
-			features |= netdev->features & NETIF_VLAN_STRIPPING_FEATURES;
-			wx_err(wx, "802.1Q and 802.1ad VLAN stripping must be either both on or both off.");
-		}
-	}
-
-	if (changed & NETIF_VLAN_INSERTION_FEATURES) {
-		if ((features & NETIF_VLAN_INSERTION_FEATURES) != NETIF_VLAN_INSERTION_FEATURES &&
-		    (features & NETIF_VLAN_INSERTION_FEATURES) != 0) {
-			features &= ~NETIF_VLAN_INSERTION_FEATURES;
-			features |= netdev->features & NETIF_VLAN_INSERTION_FEATURES;
-			wx_err(wx, "802.1Q and 802.1ad VLAN insertion must be either both on or both off.");
-		}
-	}
-
-	if (changed & NETIF_VLAN_FILTERING_FEATURES) {
-		if ((features & NETIF_VLAN_FILTERING_FEATURES) != NETIF_VLAN_FILTERING_FEATURES &&
-		    (features & NETIF_VLAN_FILTERING_FEATURES) != 0) {
-			features &= ~NETIF_VLAN_FILTERING_FEATURES;
-			features |= netdev->features & NETIF_VLAN_FILTERING_FEATURES;
-			wx_err(wx, "802.1Q and 802.1ad VLAN filtering must be either both on or both off.");
-		}
-	}
-
-	return features;
-}
-EXPORT_SYMBOL(wx_fix_features);
-
-void wx_set_ring(struct wx *wx, u32 new_tx_count,
-		 u32 new_rx_count, struct wx_ring *temp_ring)
-{
-	int i, err = 0;
-
-	/* Setup new Tx resources and free the old Tx resources in that order.
-	 * We can then assign the new resources to the rings via a memcpy.
-	 * The advantage to this approach is that we are guaranteed to still
-	 * have resources even in the case of an allocation failure.
-	 */
-	if (new_tx_count != wx->tx_ring_count) {
-		for (i = 0; i < wx->num_tx_queues; i++) {
-			memcpy(&temp_ring[i], wx->tx_ring[i],
-			       sizeof(struct wx_ring));
-
-			temp_ring[i].count = new_tx_count;
-			err = wx_setup_tx_resources(&temp_ring[i]);
-			if (err) {
-				wx_err(wx, "setup new tx resources failed, keep using the old config\n");
-				while (i) {
-					i--;
-					wx_free_tx_resources(&temp_ring[i]);
-				}
-				return;
-			}
-		}
-
-		for (i = 0; i < wx->num_tx_queues; i++) {
-			wx_free_tx_resources(wx->tx_ring[i]);
-
-			memcpy(wx->tx_ring[i], &temp_ring[i],
-			       sizeof(struct wx_ring));
-		}
-
-		wx->tx_ring_count = new_tx_count;
-	}
-
-	/* Repeat the process for the Rx rings if needed */
-	if (new_rx_count != wx->rx_ring_count) {
-		for (i = 0; i < wx->num_rx_queues; i++) {
-			memcpy(&temp_ring[i], wx->rx_ring[i],
-			       sizeof(struct wx_ring));
-
-			temp_ring[i].count = new_rx_count;
-			err = wx_setup_rx_resources(&temp_ring[i]);
-			if (err) {
-				wx_err(wx, "setup new rx resources failed, keep using the old config\n");
-				while (i) {
-					i--;
-					wx_free_rx_resources(&temp_ring[i]);
-				}
-				return;
-			}
-		}
-
-		for (i = 0; i < wx->num_rx_queues; i++) {
-			wx_free_rx_resources(wx->rx_ring[i]);
-			memcpy(wx->rx_ring[i], &temp_ring[i],
-			       sizeof(struct wx_ring));
-		}
-
-		wx->rx_ring_count = new_rx_count;
-	}
-}
-EXPORT_SYMBOL(wx_set_ring);
-
-MODULE_DESCRIPTION("Common library for Wangxun(R) Ethernet drivers.");
 MODULE_LICENSE("GPL");

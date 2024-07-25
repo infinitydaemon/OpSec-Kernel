@@ -1215,7 +1215,6 @@ static void flctl_remove(struct platform_device *pdev)
 }
 
 static struct platform_driver flctl_driver = {
-	.probe		= flctl_probe,
 	.remove_new	= flctl_remove,
 	.driver = {
 		.name	= "sh_flctl",
@@ -1223,7 +1222,7 @@ static struct platform_driver flctl_driver = {
 	},
 };
 
-module_platform_driver(flctl_driver);
+module_platform_driver_probe(flctl_driver, flctl_probe);
 
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Yoshihiro Shimoda");

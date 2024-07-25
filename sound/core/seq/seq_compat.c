@@ -31,8 +31,8 @@ struct snd_seq_port_info32 {
 static int snd_seq_call_port_info_ioctl(struct snd_seq_client *client, unsigned int cmd,
 					struct snd_seq_port_info32 __user *data32)
 {
-	struct snd_seq_port_info *data __free(kfree) = NULL;
-	int err;
+	int err = -EFAULT;
+	struct snd_seq_port_info *data;
 
 	data = kmalloc(sizeof(*data), GFP_KERNEL);
 	if (!data)
@@ -41,18 +41,20 @@ static int snd_seq_call_port_info_ioctl(struct snd_seq_client *client, unsigned 
 	if (copy_from_user(data, data32, sizeof(*data32)) ||
 	    get_user(data->flags, &data32->flags) ||
 	    get_user(data->time_queue, &data32->time_queue))
-		return -EFAULT;
+		goto error;
 	data->kernel = NULL;
 
 	err = snd_seq_kernel_client_ctl(client->number, cmd, data);
 	if (err < 0)
-		return err;
+		goto error;
 
 	if (copy_to_user(data32, data, sizeof(*data32)) ||
 	    put_user(data->flags, &data32->flags) ||
 	    put_user(data->time_queue, &data32->time_queue))
-		return -EFAULT;
+		err = -EFAULT;
 
+ error:
+	kfree(data);
 	return err;
 }
 

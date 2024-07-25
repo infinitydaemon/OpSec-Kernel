@@ -58,7 +58,6 @@
 # to send an ICMP error back to the source when the ttl of a packet reaches 1
 # while it is forwarded between different vrfs.
 
-source lib.sh
 VERBOSE=0
 PAUSE_ON_FAIL=no
 DEFAULT_TTYPE=sym
@@ -172,7 +171,11 @@ run_cmd_grep()
 
 cleanup()
 {
-	cleanup_ns $h1 $h2 $r1 $r2
+	local ns
+
+	for ns in h1 h2 r1 r2; do
+		ip netns del $ns 2>/dev/null
+	done
 }
 
 setup_vrf()
@@ -209,69 +212,72 @@ setup_sym()
 
 	#
 	# create nodes as namespaces
-	setup_ns h1 h2 r1
-	for ns in $h1 $h2 $r1; do
-		if echo $ns | grep -q h[12]-; then
-			ip netns exec $ns sysctl -q -w net.ipv6.conf.all.forwarding=0
-			ip netns exec $ns sysctl -q -w net.ipv6.conf.all.keep_addr_on_down=1
-		else
-			ip netns exec $ns sysctl -q -w net.ipv4.ip_forward=1
-			ip netns exec $ns sysctl -q -w net.ipv6.conf.all.forwarding=1
-		fi
+	#
+	for ns in h1 h2 r1; do
+		ip netns add $ns
+		ip -netns $ns link set lo up
+
+		case "${ns}" in
+		h[12]) ip netns exec $ns sysctl -q -w net.ipv6.conf.all.forwarding=0
+		       ip netns exec $ns sysctl -q -w net.ipv6.conf.all.keep_addr_on_down=1
+			;;
+		r1)    ip netns exec $ns sysctl -q -w net.ipv4.ip_forward=1
+		       ip netns exec $ns sysctl -q -w net.ipv6.conf.all.forwarding=1
+		esac
 	done
 
 	#
 	# create interconnects
 	#
-	ip -netns $h1 link add eth0 type veth peer name r1h1
-	ip -netns $h1 link set r1h1 netns $r1 name eth0 up
+	ip -netns h1 link add eth0 type veth peer name r1h1
+	ip -netns h1 link set r1h1 netns r1 name eth0 up
 
-	ip -netns $h2 link add eth0 type veth peer name r1h2
-	ip -netns $h2 link set r1h2 netns $r1 name eth1 up
+	ip -netns h2 link add eth0 type veth peer name r1h2
+	ip -netns h2 link set r1h2 netns r1 name eth1 up
 
 	#
 	# h1
 	#
-	ip -netns $h1 addr add dev eth0 ${H1_N1_IP}/24
-	ip -netns $h1 -6 addr add dev eth0 ${H1_N1_IP6}/64 nodad
-	ip -netns $h1 link set eth0 up
+	ip -netns h1 addr add dev eth0 ${H1_N1_IP}/24
+	ip -netns h1 -6 addr add dev eth0 ${H1_N1_IP6}/64 nodad
+	ip -netns h1 link set eth0 up
 
 	# h1 to h2 via r1
-	ip -netns $h1    route add ${H2_N2} via ${R1_N1_IP} dev eth0
-	ip -netns $h1 -6 route add ${H2_N2_6} via "${R1_N1_IP6}" dev eth0
+	ip -netns h1    route add ${H2_N2} via ${R1_N1_IP} dev eth0
+	ip -netns h1 -6 route add ${H2_N2_6} via "${R1_N1_IP6}" dev eth0
 
 	#
 	# h2
 	#
-	ip -netns $h2 addr add dev eth0 ${H2_N2_IP}/24
-	ip -netns $h2 -6 addr add dev eth0 ${H2_N2_IP6}/64 nodad
-	ip -netns $h2 link set eth0 up
+	ip -netns h2 addr add dev eth0 ${H2_N2_IP}/24
+	ip -netns h2 -6 addr add dev eth0 ${H2_N2_IP6}/64 nodad
+	ip -netns h2 link set eth0 up
 
 	# h2 to h1 via r1
-	ip -netns $h2 route add default via ${R1_N2_IP} dev eth0
-	ip -netns $h2 -6 route add default via ${R1_N2_IP6} dev eth0
+	ip -netns h2 route add default via ${R1_N2_IP} dev eth0
+	ip -netns h2 -6 route add default via ${R1_N2_IP6} dev eth0
 
 	#
 	# r1
 	#
-	setup_vrf $r1
-	create_vrf $r1 blue 1101
-	create_vrf $r1 red 1102
-	ip -netns $r1 link set mtu 1400 dev eth1
-	ip -netns $r1 link set eth0 vrf blue up
-	ip -netns $r1 link set eth1 vrf red up
-	ip -netns $r1 addr add dev eth0 ${R1_N1_IP}/24
-	ip -netns $r1 -6 addr add dev eth0 ${R1_N1_IP6}/64 nodad
-	ip -netns $r1 addr add dev eth1 ${R1_N2_IP}/24
-	ip -netns $r1 -6 addr add dev eth1 ${R1_N2_IP6}/64 nodad
+	setup_vrf r1
+	create_vrf r1 blue 1101
+	create_vrf r1 red 1102
+	ip -netns r1 link set mtu 1400 dev eth1
+	ip -netns r1 link set eth0 vrf blue up
+	ip -netns r1 link set eth1 vrf red up
+	ip -netns r1 addr add dev eth0 ${R1_N1_IP}/24
+	ip -netns r1 -6 addr add dev eth0 ${R1_N1_IP6}/64 nodad
+	ip -netns r1 addr add dev eth1 ${R1_N2_IP}/24
+	ip -netns r1 -6 addr add dev eth1 ${R1_N2_IP6}/64 nodad
 
 	# Route leak from blue to red
-	ip -netns $r1 route add vrf blue ${H2_N2} dev red
-	ip -netns $r1 -6 route add vrf blue ${H2_N2_6} dev red
+	ip -netns r1 route add vrf blue ${H2_N2} dev red
+	ip -netns r1 -6 route add vrf blue ${H2_N2_6} dev red
 
 	# Route leak from red to blue
-	ip -netns $r1 route add vrf red ${H1_N1} dev blue
-	ip -netns $r1 -6 route add vrf red ${H1_N1_6} dev blue
+	ip -netns r1 route add vrf red ${H1_N1} dev blue
+	ip -netns r1 -6 route add vrf red ${H1_N1_6} dev blue
 
 
 	# Wait for ip config to settle
@@ -287,87 +293,90 @@ setup_asym()
 
 	#
 	# create nodes as namespaces
-	setup_ns h1 h2 r1 r2
-	for ns in $h1 $h2 $r1 $r2; do
-		if echo $ns | grep -q h[12]-; then
-			ip netns exec $ns sysctl -q -w net.ipv6.conf.all.forwarding=0
-			ip netns exec $ns sysctl -q -w net.ipv6.conf.all.keep_addr_on_down=1
-		else
-			ip netns exec $ns sysctl -q -w net.ipv4.ip_forward=1
-			ip netns exec $ns sysctl -q -w net.ipv6.conf.all.forwarding=1
-		fi
+	#
+	for ns in h1 h2 r1 r2; do
+		ip netns add $ns
+		ip -netns $ns link set lo up
+
+		case "${ns}" in
+		h[12]) ip netns exec $ns sysctl -q -w net.ipv6.conf.all.forwarding=0
+		       ip netns exec $ns sysctl -q -w net.ipv6.conf.all.keep_addr_on_down=1
+			;;
+		r[12]) ip netns exec $ns sysctl -q -w net.ipv4.ip_forward=1
+		       ip netns exec $ns sysctl -q -w net.ipv6.conf.all.forwarding=1
+		esac
 	done
 
 	#
 	# create interconnects
 	#
-	ip -netns $h1 link add eth0 type veth peer name r1h1
-	ip -netns $h1 link set r1h1 netns $r1 name eth0 up
+	ip -netns h1 link add eth0 type veth peer name r1h1
+	ip -netns h1 link set r1h1 netns r1 name eth0 up
 
-	ip -netns $h1 link add eth1 type veth peer name r2h1
-	ip -netns $h1 link set r2h1 netns $r2 name eth0 up
+	ip -netns h1 link add eth1 type veth peer name r2h1
+	ip -netns h1 link set r2h1 netns r2 name eth0 up
 
-	ip -netns $h2 link add eth0 type veth peer name r1h2
-	ip -netns $h2 link set r1h2 netns $r1 name eth1 up
+	ip -netns h2 link add eth0 type veth peer name r1h2
+	ip -netns h2 link set r1h2 netns r1 name eth1 up
 
-	ip -netns $h2 link add eth1 type veth peer name r2h2
-	ip -netns $h2 link set r2h2 netns $r2 name eth1 up
+	ip -netns h2 link add eth1 type veth peer name r2h2
+	ip -netns h2 link set r2h2 netns r2 name eth1 up
 
 	#
 	# h1
 	#
-	ip -netns $h1 link add br0 type bridge
-	ip -netns $h1 link set br0 up
-	ip -netns $h1 addr add dev br0 ${H1_N1_IP}/24
-	ip -netns $h1 -6 addr add dev br0 ${H1_N1_IP6}/64 nodad
-	ip -netns $h1 link set eth0 master br0 up
-	ip -netns $h1 link set eth1 master br0 up
+	ip -netns h1 link add br0 type bridge
+	ip -netns h1 link set br0 up
+	ip -netns h1 addr add dev br0 ${H1_N1_IP}/24
+	ip -netns h1 -6 addr add dev br0 ${H1_N1_IP6}/64 nodad
+	ip -netns h1 link set eth0 master br0 up
+	ip -netns h1 link set eth1 master br0 up
 
 	# h1 to h2 via r1
-	ip -netns $h1    route add ${H2_N2} via ${R1_N1_IP} dev br0
-	ip -netns $h1 -6 route add ${H2_N2_6} via "${R1_N1_IP6}" dev br0
+	ip -netns h1    route add ${H2_N2} via ${R1_N1_IP} dev br0
+	ip -netns h1 -6 route add ${H2_N2_6} via "${R1_N1_IP6}" dev br0
 
 	#
 	# h2
 	#
-	ip -netns $h2 link add br0 type bridge
-	ip -netns $h2 link set br0 up
-	ip -netns $h2 addr add dev br0 ${H2_N2_IP}/24
-	ip -netns $h2 -6 addr add dev br0 ${H2_N2_IP6}/64 nodad
-	ip -netns $h2 link set eth0 master br0 up
-	ip -netns $h2 link set eth1 master br0 up
+	ip -netns h2 link add br0 type bridge
+	ip -netns h2 link set br0 up
+	ip -netns h2 addr add dev br0 ${H2_N2_IP}/24
+	ip -netns h2 -6 addr add dev br0 ${H2_N2_IP6}/64 nodad
+	ip -netns h2 link set eth0 master br0 up
+	ip -netns h2 link set eth1 master br0 up
 
 	# h2 to h1 via r2
-	ip -netns $h2 route add default via ${R2_N2_IP} dev br0
-	ip -netns $h2 -6 route add default via ${R2_N2_IP6} dev br0
+	ip -netns h2 route add default via ${R2_N2_IP} dev br0
+	ip -netns h2 -6 route add default via ${R2_N2_IP6} dev br0
 
 	#
 	# r1
 	#
-	setup_vrf $r1
-	create_vrf $r1 blue 1101
-	create_vrf $r1 red 1102
-	ip -netns $r1 link set mtu 1400 dev eth1
-	ip -netns $r1 link set eth0 vrf blue up
-	ip -netns $r1 link set eth1 vrf red up
-	ip -netns $r1 addr add dev eth0 ${R1_N1_IP}/24
-	ip -netns $r1 -6 addr add dev eth0 ${R1_N1_IP6}/64 nodad
-	ip -netns $r1 addr add dev eth1 ${R1_N2_IP}/24
-	ip -netns $r1 -6 addr add dev eth1 ${R1_N2_IP6}/64 nodad
+	setup_vrf r1
+	create_vrf r1 blue 1101
+	create_vrf r1 red 1102
+	ip -netns r1 link set mtu 1400 dev eth1
+	ip -netns r1 link set eth0 vrf blue up
+	ip -netns r1 link set eth1 vrf red up
+	ip -netns r1 addr add dev eth0 ${R1_N1_IP}/24
+	ip -netns r1 -6 addr add dev eth0 ${R1_N1_IP6}/64 nodad
+	ip -netns r1 addr add dev eth1 ${R1_N2_IP}/24
+	ip -netns r1 -6 addr add dev eth1 ${R1_N2_IP6}/64 nodad
 
 	# Route leak from blue to red
-	ip -netns $r1 route add vrf blue ${H2_N2} dev red
-	ip -netns $r1 -6 route add vrf blue ${H2_N2_6} dev red
+	ip -netns r1 route add vrf blue ${H2_N2} dev red
+	ip -netns r1 -6 route add vrf blue ${H2_N2_6} dev red
 
 	# No route leak from red to blue
 
 	#
 	# r2
 	#
-	ip -netns $r2 addr add dev eth0 ${R2_N1_IP}/24
-	ip -netns $r2 -6 addr add dev eth0 ${R2_N1_IP6}/64 nodad
-	ip -netns $r2 addr add dev eth1 ${R2_N2_IP}/24
-	ip -netns $r2 -6 addr add dev eth1 ${R2_N2_IP6}/64 nodad
+	ip -netns r2 addr add dev eth0 ${R2_N1_IP}/24
+	ip -netns r2 -6 addr add dev eth0 ${R2_N1_IP6}/64 nodad
+	ip -netns r2 addr add dev eth1 ${R2_N2_IP}/24
+	ip -netns r2 -6 addr add dev eth1 ${R2_N2_IP6}/64 nodad
 
 	# Wait for ip config to settle
 	sleep 2
@@ -375,14 +384,14 @@ setup_asym()
 
 check_connectivity()
 {
-	ip netns exec $h1 ping -c1 -w1 ${H2_N2_IP} >/dev/null 2>&1
+	ip netns exec h1 ping -c1 -w1 ${H2_N2_IP} >/dev/null 2>&1
 	log_test $? 0 "Basic IPv4 connectivity"
 	return $?
 }
 
 check_connectivity6()
 {
-	ip netns exec $h1 "${ping6}" -c1 -w1 ${H2_N2_IP6} >/dev/null 2>&1
+	ip netns exec h1 "${ping6}" -c1 -w1 ${H2_N2_IP6} >/dev/null 2>&1
 	log_test $? 0 "Basic IPv6 connectivity"
 	return $?
 }
@@ -417,7 +426,7 @@ ipv4_traceroute()
 
 	check_connectivity || return
 
-	run_cmd_grep "${R1_N1_IP}" ip netns exec $h1 traceroute ${H2_N2_IP}
+	run_cmd_grep "${R1_N1_IP}" ip netns exec h1 traceroute ${H2_N2_IP}
 	log_test $? 0 "Traceroute reports a hop on r1"
 }
 
@@ -440,7 +449,7 @@ ipv6_traceroute()
 
 	check_connectivity6 || return
 
-	run_cmd_grep "${R1_N1_IP6}" ip netns exec $h1 traceroute6 ${H2_N2_IP6}
+	run_cmd_grep "${R1_N1_IP6}" ip netns exec h1 traceroute6 ${H2_N2_IP6}
 	log_test $? 0 "Traceroute6 reports a hop on r1"
 }
 
@@ -461,7 +470,7 @@ ipv4_ping_ttl()
 
 	check_connectivity || return
 
-	run_cmd_grep "Time to live exceeded" ip netns exec $h1 ping -t1 -c1 -W2 ${H2_N2_IP}
+	run_cmd_grep "Time to live exceeded" ip netns exec h1 ping -t1 -c1 -W2 ${H2_N2_IP}
 	log_test $? 0 "Ping received ICMP ttl exceeded"
 }
 
@@ -482,7 +491,7 @@ ipv4_ping_frag()
 
 	check_connectivity || return
 
-	run_cmd_grep "Frag needed" ip netns exec $h1 ping -s 1450 -Mdo -c1 -W2 ${H2_N2_IP}
+	run_cmd_grep "Frag needed" ip netns exec h1 ping -s 1450 -Mdo -c1 -W2 ${H2_N2_IP}
 	log_test $? 0 "Ping received ICMP Frag needed"
 }
 
@@ -503,7 +512,7 @@ ipv6_ping_ttl()
 
 	check_connectivity6 || return
 
-	run_cmd_grep "Time exceeded: Hop limit" ip netns exec $h1 "${ping6}" -t1 -c1 -W2 ${H2_N2_IP6}
+	run_cmd_grep "Time exceeded: Hop limit" ip netns exec h1 "${ping6}" -t1 -c1 -W2 ${H2_N2_IP6}
 	log_test $? 0 "Ping received ICMP Hop limit"
 }
 
@@ -524,7 +533,7 @@ ipv6_ping_frag()
 
 	check_connectivity6 || return
 
-	run_cmd_grep "Packet too big" ip netns exec $h1 "${ping6}" -s 1450 -Mdo -c1 -W2 ${H2_N2_IP6}
+	run_cmd_grep "Packet too big" ip netns exec h1 "${ping6}" -s 1450 -Mdo -c1 -W2 ${H2_N2_IP6}
 	log_test $? 0 "Ping received ICMP Packet too big"
 }
 

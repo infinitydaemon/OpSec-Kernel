@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 
-#include <linux/export.h>
 #include <linux/linkage.h>
+#include <asm/export.h>
 #include <asm/percpu.h>
 #include <asm/processor-flags.h>
 
@@ -24,12 +24,12 @@ SYM_FUNC_START(cmpxchg8b_emu)
 	pushfl
 	cli
 
-	cmpl	(%esi), %eax
+	cmpl	0(%esi), %eax
 	jne	.Lnot_same
 	cmpl	4(%esi), %edx
 	jne	.Lnot_same
 
-	movl	%ebx, (%esi)
+	movl	%ebx, 0(%esi)
 	movl	%ecx, 4(%esi)
 
 	orl	$X86_EFLAGS_ZF, (%esp)
@@ -38,7 +38,7 @@ SYM_FUNC_START(cmpxchg8b_emu)
 	RET
 
 .Lnot_same:
-	movl	(%esi), %eax
+	movl	0(%esi), %eax
 	movl	4(%esi), %edx
 
 	andl	$(~X86_EFLAGS_ZF), (%esp)
@@ -53,30 +53,18 @@ EXPORT_SYMBOL(cmpxchg8b_emu)
 
 #ifndef CONFIG_UML
 
-/*
- * Emulate 'cmpxchg8b %fs:(%rsi)'
- *
- * Inputs:
- * %esi : memory location to compare
- * %eax : low 32 bits of old value
- * %edx : high 32 bits of old value
- * %ebx : low 32 bits of new value
- * %ecx : high 32 bits of new value
- *
- * Notably this is not LOCK prefixed and is not safe against NMIs
- */
 SYM_FUNC_START(this_cpu_cmpxchg8b_emu)
 
 	pushfl
 	cli
 
-	cmpl	__percpu (%esi), %eax
+	cmpl	PER_CPU_VAR(0(%esi)), %eax
 	jne	.Lnot_same2
-	cmpl	__percpu 4(%esi), %edx
+	cmpl	PER_CPU_VAR(4(%esi)), %edx
 	jne	.Lnot_same2
 
-	movl	%ebx, __percpu (%esi)
-	movl	%ecx, __percpu 4(%esi)
+	movl	%ebx, PER_CPU_VAR(0(%esi))
+	movl	%ecx, PER_CPU_VAR(4(%esi))
 
 	orl	$X86_EFLAGS_ZF, (%esp)
 
@@ -84,8 +72,8 @@ SYM_FUNC_START(this_cpu_cmpxchg8b_emu)
 	RET
 
 .Lnot_same2:
-	movl	__percpu (%esi), %eax
-	movl	__percpu 4(%esi), %edx
+	movl	PER_CPU_VAR(0(%esi)), %eax
+	movl	PER_CPU_VAR(4(%esi)), %edx
 
 	andl	$(~X86_EFLAGS_ZF), (%esp)
 

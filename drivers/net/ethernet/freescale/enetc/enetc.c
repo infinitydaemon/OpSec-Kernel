@@ -1655,7 +1655,7 @@ out:
 	rx_ring->stats.bytes += rx_byte_cnt;
 
 	if (xdp_redirect_frm_cnt)
-		xdp_do_flush();
+		xdp_do_flush_map();
 
 	if (xdp_tx_frm_cnt)
 		enetc_update_tx_ring_tail(tx_ring);
@@ -2402,7 +2402,7 @@ static void enetc_clear_interrupts(struct enetc_ndev_priv *priv)
 static int enetc_phylink_connect(struct net_device *ndev)
 {
 	struct enetc_ndev_priv *priv = netdev_priv(ndev);
-	struct ethtool_keee edata;
+	struct ethtool_eee edata;
 	int err;
 
 	if (!priv->phylink) {
@@ -2418,7 +2418,7 @@ static int enetc_phylink_connect(struct net_device *ndev)
 	}
 
 	/* disable EEE autoneg, until ENETC driver supports it */
-	memset(&edata, 0, sizeof(struct ethtool_keee));
+	memset(&edata, 0, sizeof(struct ethtool_eee));
 	phylink_ethtool_set_eee(priv->phylink, &edata);
 
 	phylink_start(priv->phylink);
@@ -3216,5 +3216,4 @@ void enetc_pci_remove(struct pci_dev *pdev)
 }
 EXPORT_SYMBOL_GPL(enetc_pci_remove);
 
-MODULE_DESCRIPTION("NXP ENETC Ethernet driver");
 MODULE_LICENSE("Dual BSD/GPL");

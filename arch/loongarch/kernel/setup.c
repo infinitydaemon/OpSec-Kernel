@@ -16,6 +16,7 @@
 #include <linux/dmi.h>
 #include <linux/efi.h>
 #include <linux/export.h>
+#include <linux/screen_info.h>
 #include <linux/memblock.h>
 #include <linux/initrd.h>
 #include <linux/ioport.h>
@@ -47,7 +48,6 @@
 #include <asm/sections.h>
 #include <asm/setup.h>
 #include <asm/time.h>
-#include <asm/unwind.h>
 
 #define SMBIOS_BIOSSIZE_OFFSET		0x09
 #define SMBIOS_BIOSEXTERN_OFFSET	0x13
@@ -56,6 +56,10 @@
 #define SMBIOS_FREQLOW_MASK		0xFF
 #define SMBIOS_CORE_PACKAGE_OFFSET	0x23
 #define LOONGSON_EFI_ENABLE		(1 << 3)
+
+#ifdef CONFIG_EFI
+struct screen_info screen_info __section(".data");
+#endif
 
 unsigned long fw_arg0, fw_arg1, fw_arg2;
 DEFINE_PER_CPU(unsigned long, kernelsp);
@@ -253,23 +257,36 @@ static void __init arch_reserve_vmcore(void)
 #endif
 }
 
-static void __init arch_reserve_crashkernel(void)
+/* 2MB alignment for crash kernel regions */
+#define CRASH_ALIGN	SZ_2M
+#define CRASH_ADDR_MAX	SZ_4G
+
+static void __init arch_parse_crashkernel(void)
 {
+#ifdef CONFIG_KEXEC
 	int ret;
-	unsigned long long low_size = 0;
+	unsigned long long total_mem;
 	unsigned long long crash_base, crash_size;
-	char *cmdline = boot_command_line;
-	bool high = false;
 
-	if (!IS_ENABLED(CONFIG_CRASH_RESERVE))
+	total_mem = memblock_phys_mem_size();
+	ret = parse_crashkernel(boot_command_line, total_mem, &crash_size, &crash_base);
+	if (ret < 0 || crash_size <= 0)
 		return;
 
-	ret = parse_crashkernel(cmdline, memblock_phys_mem_size(),
-				&crash_size, &crash_base, &low_size, &high);
-	if (ret)
+	if (crash_base <= 0) {
+		crash_base = memblock_phys_alloc_range(crash_size, CRASH_ALIGN, CRASH_ALIGN, CRASH_ADDR_MAX);
+		if (!crash_base) {
+			pr_warn("crashkernel reservation failed - No suitable area found.\n");
+			return;
+		}
+	} else if (!memblock_phys_alloc_range(crash_size, CRASH_ALIGN, crash_base, crash_base + crash_size)) {
+		pr_warn("Invalid memory region reserved for crash kernel\n");
 		return;
+	}
 
-	reserve_crashkernel_generic(cmdline, crash_size, crash_base, low_size, high);
+	crashk_res.start = crash_base;
+	crashk_res.end	 = crash_base + crash_size - 1;
+#endif
 }
 
 static void __init fdt_setup(void)
@@ -281,12 +298,8 @@ static void __init fdt_setup(void)
 	if (acpi_os_get_root_pointer())
 		return;
 
-	/* Prefer to use built-in dtb, checking its legality first. */
-	if (IS_ENABLED(CONFIG_BUILTIN_DTB) && !fdt_check_header(__dtb_start))
-		fdt_pointer = __dtb_start;
-	else
-		fdt_pointer = efi_fdt_pointer(); /* Fallback to firmware dtb */
-
+	/* Look for a device tree configuration table entry */
+	fdt_pointer = efi_fdt_pointer();
 	if (!fdt_pointer || fdt_check_header(fdt_pointer))
 		return;
 
@@ -320,9 +333,7 @@ static void __init bootcmdline_init(char **cmdline_p)
 		if (boot_command_line[0])
 			strlcat(boot_command_line, " ", COMMAND_LINE_SIZE);
 
-		if (!strstr(boot_command_line, init_command_line))
-			strlcat(boot_command_line, init_command_line, COMMAND_LINE_SIZE);
-
+		strlcat(boot_command_line, init_command_line, COMMAND_LINE_SIZE);
 		goto out;
 	}
 #endif
@@ -349,10 +360,12 @@ out:
 void __init platform_init(void)
 {
 	arch_reserve_vmcore();
-	arch_reserve_crashkernel();
+	arch_parse_crashkernel();
 
-#ifdef CONFIG_ACPI
+#ifdef CONFIG_ACPI_TABLE_UPGRADE
 	acpi_table_upgrade();
+#endif
+#ifdef CONFIG_ACPI
 	acpi_gbl_use_default_register_widths = false;
 	acpi_boot_table_init();
 #endif
@@ -457,6 +470,15 @@ static void __init resource_init(void)
 		request_resource(res, &data_resource);
 		request_resource(res, &bss_resource);
 	}
+
+#ifdef CONFIG_KEXEC
+	if (crashk_res.start < crashk_res.end) {
+		insert_resource(&iomem_resource, &crashk_res);
+		pr_info("Reserving %ldMB of memory at %ldMB for crashkernel\n",
+			(unsigned long)((crashk_res.end - crashk_res.start + 1) >> 20),
+			(unsigned long)(crashk_res.start  >> 20));
+	}
+#endif
 }
 
 static int __init add_legacy_isa_io(struct fwnode_handle *fwnode,
@@ -489,7 +511,7 @@ static int __init add_legacy_isa_io(struct fwnode_handle *fwnode,
 	}
 
 	vaddr = (unsigned long)(PCI_IOBASE + range->io_start);
-	vmap_page_range(vaddr, vaddr + size, hw_start, pgprot_device(PAGE_KERNEL));
+	ioremap_page_range(vaddr, vaddr + size, hw_start, pgprot_device(PAGE_KERNEL));
 
 	return 0;
 }
@@ -586,7 +608,6 @@ static void __init prefill_possible_map(void)
 void __init setup_arch(char **cmdline_p)
 {
 	cpu_probe();
-	unwind_init();
 
 	init_environ();
 	efi_init();

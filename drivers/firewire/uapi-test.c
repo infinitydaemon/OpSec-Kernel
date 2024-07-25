@@ -86,5 +86,4 @@ static struct kunit_suite structure_layout_test_suite = {
 };
 kunit_test_suite(structure_layout_test_suite);
 
-MODULE_DESCRIPTION("FireWire UAPI unit test suite");
 MODULE_LICENSE("GPL");

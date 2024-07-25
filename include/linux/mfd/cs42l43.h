@@ -6,20 +6,19 @@
  *                         Cirrus Logic International Semiconductor Ltd.
  */
 
-#ifndef CS42L43_CORE_EXT_H
-#define CS42L43_CORE_EXT_H
-
 #include <linux/completion.h>
+#include <linux/device.h>
+#include <linux/gpio/consumer.h>
 #include <linux/mutex.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
+#include <linux/soundwire/sdw.h>
 #include <linux/workqueue.h>
 
-#define CS42L43_N_SUPPLIES		3
+#ifndef CS42L43_CORE_EXT_H
+#define CS42L43_CORE_EXT_H
 
-struct device;
-struct gpio_desc;
-struct sdw_slave;
+#define CS42L43_N_SUPPLIES		3
 
 enum cs42l43_irq_numbers {
 	CS42L43_PLL_LOST_LOCK,

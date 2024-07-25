@@ -36,9 +36,11 @@ static int int3401_add(struct platform_device *pdev)
 	return ret;
 }
 
-static void int3401_remove(struct platform_device *pdev)
+static int int3401_remove(struct platform_device *pdev)
 {
 	proc_thermal_remove(platform_get_drvdata(pdev));
+
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -60,7 +62,7 @@ static SIMPLE_DEV_PM_OPS(int3401_proc_thermal_pm, int3401_thermal_suspend,
 
 static struct platform_driver int3401_driver = {
 	.probe = int3401_add,
-	.remove_new = int3401_remove,
+	.remove = int3401_remove,
 	.driver = {
 		.name = "int3401 thermal",
 		.acpi_match_table = int3401_device_ids,

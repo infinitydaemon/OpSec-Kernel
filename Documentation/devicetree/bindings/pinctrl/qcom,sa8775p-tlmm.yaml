@@ -22,8 +22,12 @@ properties:
   reg:
     maxItems: 1
 
-  interrupts:
-    maxItems: 1
+  interrupts: true
+  interrupt-controller: true
+  "#interrupt-cells": true
+  gpio-controller: true
+  "#gpio-cells": true
+  gpio-ranges: true
 
   gpio-reserved-ranges:
     minItems: 1
@@ -31,6 +35,12 @@ properties:
 
   gpio-line-names:
     maxItems: 148
+
+required:
+  - compatible
+  - reg
+
+additionalProperties: false
 
 patternProperties:
   "-state$":
@@ -96,12 +106,6 @@ $defs:
 
     required:
       - pins
-
-required:
-  - compatible
-  - reg
-
-unevaluatedProperties: false
 
 examples:
   - |

@@ -4,6 +4,9 @@
  *
  * Copyright (C) 2018, Red Hat, Inc.
  */
+
+#define _GNU_SOURCE /* for program_invocation_name */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <linux/bitmap.h>
@@ -25,16 +28,16 @@
 #define NESTED_TEST_MEM1		0xc0001000
 #define NESTED_TEST_MEM2		0xc0002000
 
-static void l2_guest_code(u64 *a, u64 *b)
+static void l2_guest_code(void)
 {
-	READ_ONCE(*a);
-	WRITE_ONCE(*a, 1);
+	*(volatile uint64_t *)NESTED_TEST_MEM1;
+	*(volatile uint64_t *)NESTED_TEST_MEM1 = 1;
 	GUEST_SYNC(true);
 	GUEST_SYNC(false);
 
-	WRITE_ONCE(*b, 1);
+	*(volatile uint64_t *)NESTED_TEST_MEM2 = 1;
 	GUEST_SYNC(true);
-	WRITE_ONCE(*b, 1);
+	*(volatile uint64_t *)NESTED_TEST_MEM2 = 1;
 	GUEST_SYNC(true);
 	GUEST_SYNC(false);
 
@@ -42,33 +45,17 @@ static void l2_guest_code(u64 *a, u64 *b)
 	vmcall();
 }
 
-static void l2_guest_code_ept_enabled(void)
-{
-	l2_guest_code((u64 *)NESTED_TEST_MEM1, (u64 *)NESTED_TEST_MEM2);
-}
-
-static void l2_guest_code_ept_disabled(void)
-{
-	/* Access the same L1 GPAs as l2_guest_code_ept_enabled() */
-	l2_guest_code((u64 *)GUEST_TEST_MEM, (u64 *)GUEST_TEST_MEM);
-}
-
 void l1_guest_code(struct vmx_pages *vmx)
 {
 #define L2_GUEST_STACK_SIZE 64
 	unsigned long l2_guest_stack[L2_GUEST_STACK_SIZE];
-	void *l2_rip;
 
 	GUEST_ASSERT(vmx->vmcs_gpa);
 	GUEST_ASSERT(prepare_for_vmx_operation(vmx));
 	GUEST_ASSERT(load_vmcs(vmx));
 
-	if (vmx->eptp_gpa)
-		l2_rip = l2_guest_code_ept_enabled;
-	else
-		l2_rip = l2_guest_code_ept_disabled;
-
-	prepare_vmcs(vmx, l2_rip, &l2_guest_stack[L2_GUEST_STACK_SIZE]);
+	prepare_vmcs(vmx, l2_guest_code,
+		     &l2_guest_stack[L2_GUEST_STACK_SIZE]);
 
 	GUEST_SYNC(false);
 	GUEST_ASSERT(!vmlaunch());
@@ -77,7 +64,7 @@ void l1_guest_code(struct vmx_pages *vmx)
 	GUEST_DONE();
 }
 
-static void test_vmx_dirty_log(bool enable_ept)
+int main(int argc, char *argv[])
 {
 	vm_vaddr_t vmx_pages_gva = 0;
 	struct vmx_pages *vmx;
@@ -89,7 +76,8 @@ static void test_vmx_dirty_log(bool enable_ept)
 	struct ucall uc;
 	bool done = false;
 
-	pr_info("Nested EPT: %s\n", enable_ept ? "enabled" : "disabled");
+	TEST_REQUIRE(kvm_cpu_has(X86_FEATURE_VMX));
+	TEST_REQUIRE(kvm_cpu_has_ept());
 
 	/* Create VM */
 	vm = vm_create_with_one_vcpu(&vcpu, l1_guest_code);
@@ -115,16 +103,11 @@ static void test_vmx_dirty_log(bool enable_ept)
 	 *
 	 * Note that prepare_eptp should be called only L1's GPA map is done,
 	 * meaning after the last call to virt_map.
-	 *
-	 * When EPT is disabled, the L2 guest code will still access the same L1
-	 * GPAs as the EPT enabled case.
 	 */
-	if (enable_ept) {
-		prepare_eptp(vmx, vm, 0);
-		nested_map_memslot(vmx, vm, 0);
-		nested_map(vmx, vm, NESTED_TEST_MEM1, GUEST_TEST_MEM, 4096);
-		nested_map(vmx, vm, NESTED_TEST_MEM2, GUEST_TEST_MEM, 4096);
-	}
+	prepare_eptp(vmx, vm, 0);
+	nested_map_memslot(vmx, vm, 0);
+	nested_map(vmx, vm, NESTED_TEST_MEM1, GUEST_TEST_MEM, 4096);
+	nested_map(vmx, vm, NESTED_TEST_MEM2, GUEST_TEST_MEM, 4096);
 
 	bmap = bitmap_zalloc(TEST_MEM_PAGES);
 	host_test_mem = addr_gpa2hva(vm, GUEST_TEST_MEM);
@@ -145,17 +128,17 @@ static void test_vmx_dirty_log(bool enable_ept)
 			 */
 			kvm_vm_get_dirty_log(vm, TEST_MEM_SLOT_INDEX, bmap);
 			if (uc.args[1]) {
-				TEST_ASSERT(test_bit(0, bmap), "Page 0 incorrectly reported clean");
-				TEST_ASSERT(host_test_mem[0] == 1, "Page 0 not written by guest");
+				TEST_ASSERT(test_bit(0, bmap), "Page 0 incorrectly reported clean\n");
+				TEST_ASSERT(host_test_mem[0] == 1, "Page 0 not written by guest\n");
 			} else {
-				TEST_ASSERT(!test_bit(0, bmap), "Page 0 incorrectly reported dirty");
-				TEST_ASSERT(host_test_mem[0] == 0xaaaaaaaaaaaaaaaaULL, "Page 0 written by guest");
+				TEST_ASSERT(!test_bit(0, bmap), "Page 0 incorrectly reported dirty\n");
+				TEST_ASSERT(host_test_mem[0] == 0xaaaaaaaaaaaaaaaaULL, "Page 0 written by guest\n");
 			}
 
-			TEST_ASSERT(!test_bit(1, bmap), "Page 1 incorrectly reported dirty");
-			TEST_ASSERT(host_test_mem[4096 / 8] == 0xaaaaaaaaaaaaaaaaULL, "Page 1 written by guest");
-			TEST_ASSERT(!test_bit(2, bmap), "Page 2 incorrectly reported dirty");
-			TEST_ASSERT(host_test_mem[8192 / 8] == 0xaaaaaaaaaaaaaaaaULL, "Page 2 written by guest");
+			TEST_ASSERT(!test_bit(1, bmap), "Page 1 incorrectly reported dirty\n");
+			TEST_ASSERT(host_test_mem[4096 / 8] == 0xaaaaaaaaaaaaaaaaULL, "Page 1 written by guest\n");
+			TEST_ASSERT(!test_bit(2, bmap), "Page 2 incorrectly reported dirty\n");
+			TEST_ASSERT(host_test_mem[8192 / 8] == 0xaaaaaaaaaaaaaaaaULL, "Page 2 written by guest\n");
 			break;
 		case UCALL_DONE:
 			done = true;
@@ -164,16 +147,4 @@ static void test_vmx_dirty_log(bool enable_ept)
 			TEST_FAIL("Unknown ucall %lu", uc.cmd);
 		}
 	}
-}
-
-int main(int argc, char *argv[])
-{
-	TEST_REQUIRE(kvm_cpu_has(X86_FEATURE_VMX));
-
-	test_vmx_dirty_log(/*enable_ept=*/false);
-
-	if (kvm_cpu_has_ept())
-		test_vmx_dirty_log(/*enable_ept=*/true);
-
-	return 0;
 }

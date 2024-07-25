@@ -57,10 +57,7 @@ union octeon_mbox_message {
 	} s;
 };
 
-struct octeon_mbox_cmd;
-
-typedef void (*octeon_mbox_callback_t)(struct octeon_device *,
-				       struct octeon_mbox_cmd *, void *);
+typedef void (*octeon_mbox_callback_t)(void *, void *, void *);
 
 struct octeon_mbox_cmd {
 	union octeon_mbox_message msg;

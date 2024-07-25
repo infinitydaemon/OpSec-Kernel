@@ -691,7 +691,7 @@ static int brcmf_net_mon_open(struct net_device *ndev)
 {
 	struct brcmf_if *ifp = netdev_priv(ndev);
 	struct brcmf_pub *drvr = ifp->drvr;
-	u32 monitor = 0;
+	u32 monitor;
 	int err;
 
 	brcmf_dbg(TRACE, "Enter\n");
@@ -1318,7 +1318,7 @@ int brcmf_alloc(struct device *dev, struct brcmf_mp_device *settings)
 	return 0;
 }
 
-int brcmf_attach(struct device *dev)
+int brcmf_attach(struct device *dev, bool start_bus)
 {
 	struct brcmf_bus *bus_if = dev_get_drvdata(dev);
 	struct brcmf_pub *drvr = bus_if->drvr;
@@ -1348,21 +1348,20 @@ int brcmf_attach(struct device *dev)
 		goto fail;
 	}
 
-	/* attach firmware event handler */
-	ret = brcmf_fweh_attach(drvr);
-	if (ret != 0) {
-		bphy_err(drvr, "brcmf_fweh_attach failed\n");
-		goto fail;
-	}
-
 	/* Attach to events important for core code */
 	brcmf_fweh_register(drvr, BRCMF_E_PSM_WATCHDOG,
 			    brcmf_psm_watchdog_notify);
 
-	ret = brcmf_bus_started(drvr, drvr->ops);
-	if (ret != 0) {
-		bphy_err(drvr, "dongle is not responding: err=%d\n", ret);
-		goto fail;
+	/* attach firmware event handler */
+	brcmf_fweh_attach(drvr);
+
+	if (start_bus) {
+		ret = brcmf_bus_started(drvr, drvr->ops);
+		if (ret != 0) {
+			bphy_err(drvr, "dongle is not responding: err=%d\n",
+				 ret);
+			goto fail;
+		}
 	}
 
 	return 0;

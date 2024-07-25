@@ -39,8 +39,6 @@ static const char *sock_type_str(int type)
 		return "DGRAM";
 	case SOCK_STREAM:
 		return "STREAM";
-	case SOCK_SEQPACKET:
-		return "SEQPACKET";
 	default:
 		return "INVALID TYPE";
 	}
@@ -344,7 +342,7 @@ static void test_listen_socket_server(const struct test_opts *opts)
 	} addr = {
 		.svm = {
 			.svm_family = AF_VSOCK,
-			.svm_port = opts->peer_port,
+			.svm_port = 1234,
 			.svm_cid = VMADDR_CID_ANY,
 		},
 	};
@@ -380,7 +378,7 @@ static void test_connect_client(const struct test_opts *opts)
 	LIST_HEAD(sockets);
 	struct vsock_stat *st;
 
-	fd = vsock_stream_connect(opts->peer_cid, opts->peer_port);
+	fd = vsock_stream_connect(opts->peer_cid, 1234);
 	if (fd < 0) {
 		perror("connect");
 		exit(EXIT_FAILURE);
@@ -405,7 +403,7 @@ static void test_connect_server(const struct test_opts *opts)
 	LIST_HEAD(sockets);
 	int client_fd;
 
-	client_fd = vsock_stream_accept(VMADDR_CID_ANY, opts->peer_port, NULL);
+	client_fd = vsock_stream_accept(VMADDR_CID_ANY, 1234, NULL);
 	if (client_fd < 0) {
 		perror("accept");
 		exit(EXIT_FAILURE);
@@ -464,11 +462,6 @@ static const struct option longopts[] = {
 		.val = 'p',
 	},
 	{
-		.name = "peer-port",
-		.has_arg = required_argument,
-		.val = 'q',
-	},
-	{
 		.name = "list",
 		.has_arg = no_argument,
 		.val = 'l',
@@ -488,7 +481,7 @@ static const struct option longopts[] = {
 
 static void usage(void)
 {
-	fprintf(stderr, "Usage: vsock_diag_test [--help] [--control-host=<host>] --control-port=<port> --mode=client|server --peer-cid=<cid> [--peer-port=<port>] [--list] [--skip=<test_id>]\n"
+	fprintf(stderr, "Usage: vsock_diag_test [--help] [--control-host=<host>] --control-port=<port> --mode=client|server --peer-cid=<cid> [--list] [--skip=<test_id>]\n"
 		"\n"
 		"  Server: vsock_diag_test --control-port=1234 --mode=server --peer-cid=3\n"
 		"  Client: vsock_diag_test --control-host=192.168.0.1 --control-port=1234 --mode=client --peer-cid=2\n"
@@ -510,11 +503,9 @@ static void usage(void)
 		"  --control-port <port>  Server port to listen on/connect to\n"
 		"  --mode client|server   Server or client mode\n"
 		"  --peer-cid <cid>       CID of the other side\n"
-		"  --peer-port <port>     AF_VSOCK port used for the test [default: %d]\n"
 		"  --list                 List of tests that will be executed\n"
 		"  --skip <test_id>       Test ID to skip;\n"
-		"                         use multiple --skip options to skip more tests\n",
-		DEFAULT_PEER_PORT
+		"                         use multiple --skip options to skip more tests\n"
 		);
 	exit(EXIT_FAILURE);
 }
@@ -526,7 +517,6 @@ int main(int argc, char **argv)
 	struct test_opts opts = {
 		.mode = TEST_MODE_UNSET,
 		.peer_cid = VMADDR_CID_ANY,
-		.peer_port = DEFAULT_PEER_PORT,
 	};
 
 	init_signals();
@@ -553,9 +543,6 @@ int main(int argc, char **argv)
 			break;
 		case 'p':
 			opts.peer_cid = parse_cid(optarg);
-			break;
-		case 'q':
-			opts.peer_port = parse_port(optarg);
 			break;
 		case 'P':
 			control_port = optarg;

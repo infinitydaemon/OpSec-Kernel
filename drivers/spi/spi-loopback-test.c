@@ -396,6 +396,7 @@ MODULE_DEVICE_TABLE(of, spi_loopback_test_of_match);
 static struct spi_driver spi_loopback_test_driver = {
 	.driver = {
 		.name = "spi-loopback-test",
+		.owner = THIS_MODULE,
 		.of_match_table = spi_loopback_test_of_match,
 	},
 	.probe = spi_loopback_test_probe,
@@ -1030,8 +1031,8 @@ int spi_test_run_test(struct spi_device *spi, const struct spi_test *test,
 #define FOR_EACH_ALIGNMENT(var)						\
 	for (var = 0;							\
 	    var < (test->iterate_##var ?				\
-			(spi->controller->dma_alignment ?		\
-			 spi->controller->dma_alignment :		\
+			(spi->master->dma_alignment ?			\
+			 spi->master->dma_alignment :			\
 			 test->iterate_##var) :				\
 			1);						\
 	    var++)

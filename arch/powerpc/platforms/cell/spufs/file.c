@@ -1704,11 +1704,23 @@ static int spufs_mfc_flush(struct file *file, fl_owner_t id)
 
 	ret = spu_acquire(ctx);
 	if (ret)
-		return ret;
-
+		goto out;
+#if 0
+/* this currently hangs */
+	ret = spufs_wait(ctx->mfc_wq,
+			 ctx->ops->set_mfc_query(ctx, ctx->tagwait, 2));
+	if (ret)
+		goto out;
+	ret = spufs_wait(ctx->mfc_wq,
+			 ctx->ops->read_mfc_tagstatus(ctx) == ctx->tagwait);
+	if (ret)
+		goto out;
+#else
+	ret = 0;
+#endif
 	spu_release(ctx);
-
-	return 0;
+out:
+	return ret;
 }
 
 static int spufs_mfc_fsync(struct file *file, loff_t start, loff_t end, int datasync)

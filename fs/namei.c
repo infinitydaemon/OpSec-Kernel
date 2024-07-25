@@ -17,8 +17,8 @@
 
 #include <linux/init.h>
 #include <linux/export.h>
+#include <linux/kernel.h>
 #include <linux/slab.h>
-#include <linux/wordpart.h>
 #include <linux/fs.h>
 #include <linux/filelock.h>
 #include <linux/namei.h>
@@ -27,6 +27,7 @@
 #include <linux/fsnotify.h>
 #include <linux/personality.h>
 #include <linux/security.h>
+#include <linux/ima.h>
 #include <linux/syscalls.h>
 #include <linux/mount.h>
 #include <linux/audit.h>
@@ -288,7 +289,7 @@ EXPORT_SYMBOL(putname);
  * the vfsmount must be passed through @idmap. This function will then take
  * care to map the inode according to @idmap before checking permissions.
  * On non-idmapped mounts or if permission checking is to be performed on the
- * raw inode simply pass @nop_mnt_idmap.
+ * raw inode simply passs @nop_mnt_idmap.
  */
 static int check_acl(struct mnt_idmap *idmap,
 		     struct inode *inode, int mask)
@@ -333,7 +334,7 @@ static int check_acl(struct mnt_idmap *idmap,
  * the vfsmount must be passed through @idmap. This function will then take
  * care to map the inode according to @idmap before checking permissions.
  * On non-idmapped mounts or if permission checking is to be performed on the
- * raw inode simply pass @nop_mnt_idmap.
+ * raw inode simply passs @nop_mnt_idmap.
  */
 static int acl_permission_check(struct mnt_idmap *idmap,
 				struct inode *inode, int mask)
@@ -394,7 +395,7 @@ static int acl_permission_check(struct mnt_idmap *idmap,
  * the vfsmount must be passed through @idmap. This function will then take
  * care to map the inode according to @idmap before checking permissions.
  * On non-idmapped mounts or if permission checking is to be performed on the
- * raw inode simply pass @nop_mnt_idmap.
+ * raw inode simply passs @nop_mnt_idmap.
  */
 int generic_permission(struct mnt_idmap *idmap, struct inode *inode,
 		       int mask)
@@ -1070,6 +1071,7 @@ static struct ctl_table namei_sysctls[] = {
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= SYSCTL_TWO,
 	},
+	{ }
 };
 
 static int __init init_fs_namei_sysctls(void)
@@ -1716,11 +1718,7 @@ static inline int may_lookup(struct mnt_idmap *idmap,
 {
 	if (nd->flags & LOOKUP_RCU) {
 		int err = inode_permission(idmap, nd->inode, MAY_EXEC|MAY_NOT_BLOCK);
-		if (!err)		// success, keep going
-			return 0;
-		if (!try_to_unlazy(nd))
-			return -ECHILD;	// redo it all non-lazy
-		if (err != -ECHILD)	// hard error
+		if (err != -ECHILD || !try_to_unlazy(nd))
 			return err;
 	}
 	return inode_permission(idmap, nd->inode, MAY_EXEC);
@@ -2422,14 +2420,6 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 		if (!f.file)
 			return ERR_PTR(-EBADF);
 
-		if (flags & LOOKUP_LINKAT_EMPTY) {
-			if (f.file->f_cred != current_cred() &&
-			    !ns_capable(f.file->f_cred->user_ns, CAP_DAC_READ_SEARCH)) {
-				fdput(f);
-				return ERR_PTR(-ENOENT);
-			}
-		}
-
 		dentry = f.file->f_path.dentry;
 
 		if (*s && unlikely(!d_can_lookup(dentry))) {
@@ -2477,7 +2467,7 @@ static int handle_lookup_down(struct nameidata *nd)
 	return PTR_ERR(step_into(nd, WALK_NOFOLLOW, nd->path.dentry));
 }
 
-/* Returns 0 and nd will be valid on success; Returns error, otherwise. */
+/* Returns 0 and nd will be valid on success; Retuns error, otherwise. */
 static int path_lookupat(struct nameidata *nd, unsigned flags, struct path *path)
 {
 	const char *s = path_init(nd, flags);
@@ -2532,7 +2522,7 @@ int filename_lookup(int dfd, struct filename *name, unsigned flags,
 	return retval;
 }
 
-/* Returns 0 and nd will be valid on success; Returns error, otherwise. */
+/* Returns 0 and nd will be valid on success; Retuns error, otherwise. */
 static int path_parentat(struct nameidata *nd, unsigned flags,
 				struct path *parent)
 {
@@ -2583,13 +2573,13 @@ static int filename_parentat(int dfd, struct filename *name,
 }
 
 /* does lookup, returns the object with parent locked */
-static struct dentry *__kern_path_locked(int dfd, struct filename *name, struct path *path)
+static struct dentry *__kern_path_locked(struct filename *name, struct path *path)
 {
 	struct dentry *d;
 	struct qstr last;
 	int type, error;
 
-	error = filename_parentat(dfd, name, 0, path, &last, &type);
+	error = filename_parentat(AT_FDCWD, name, 0, path, &last, &type);
 	if (error)
 		return ERR_PTR(error);
 	if (unlikely(type != LAST_NORM)) {
@@ -2608,21 +2598,11 @@ static struct dentry *__kern_path_locked(int dfd, struct filename *name, struct 
 struct dentry *kern_path_locked(const char *name, struct path *path)
 {
 	struct filename *filename = getname_kernel(name);
-	struct dentry *res = __kern_path_locked(AT_FDCWD, filename, path);
+	struct dentry *res = __kern_path_locked(filename, path);
 
 	putname(filename);
 	return res;
 }
-
-struct dentry *user_path_locked_at(int dfd, const char __user *name, struct path *path)
-{
-	struct filename *filename = getname(name);
-	struct dentry *res = __kern_path_locked(dfd, filename, path);
-
-	putname(filename);
-	return res;
-}
-EXPORT_SYMBOL(user_path_locked_at);
 
 int kern_path(const char *name, unsigned int flags, struct path *path)
 {
@@ -2687,8 +2667,10 @@ static int lookup_one_common(struct mnt_idmap *idmap,
 	if (!len)
 		return -EACCES;
 
-	if (is_dot_dotdot(name, len))
-		return -EACCES;
+	if (unlikely(name[0] == '.')) {
+		if (len < 2 || (len == 2 && name[1] == '.'))
+			return -EACCES;
+	}
 
 	while (len--) {
 		unsigned int c = *(const unsigned char *)name++;
@@ -3032,37 +3014,21 @@ static inline int may_create(struct mnt_idmap *idmap,
 	return inode_permission(idmap, dir, MAY_WRITE | MAY_EXEC);
 }
 
-// p1 != p2, both are on the same filesystem, ->s_vfs_rename_mutex is held
 static struct dentry *lock_two_directories(struct dentry *p1, struct dentry *p2)
 {
-	struct dentry *p = p1, *q = p2, *r;
+	struct dentry *p;
 
-	while ((r = p->d_parent) != p2 && r != p)
-		p = r;
-	if (r == p2) {
-		// p is a child of p2 and an ancestor of p1 or p1 itself
+	p = d_ancestor(p2, p1);
+	if (p) {
 		inode_lock_nested(p2->d_inode, I_MUTEX_PARENT);
 		inode_lock_nested(p1->d_inode, I_MUTEX_PARENT2);
 		return p;
 	}
-	// p is the root of connected component that contains p1
-	// p2 does not occur on the path from p to p1
-	while ((r = q->d_parent) != p1 && r != p && r != q)
-		q = r;
-	if (r == p1) {
-		// q is a child of p1 and an ancestor of p2 or p2 itself
-		inode_lock_nested(p1->d_inode, I_MUTEX_PARENT);
-		inode_lock_nested(p2->d_inode, I_MUTEX_PARENT2);
-		return q;
-	} else if (likely(r == p)) {
-		// both p2 and p1 are descendents of p
-		inode_lock_nested(p1->d_inode, I_MUTEX_PARENT);
-		inode_lock_nested(p2->d_inode, I_MUTEX_PARENT2);
-		return NULL;
-	} else { // no common ancestor at the time we'd been called
-		mutex_unlock(&p1->d_sb->s_vfs_rename_mutex);
-		return ERR_PTR(-EXDEV);
-	}
+
+	p = d_ancestor(p1, p2);
+	inode_lock_nested(p1->d_inode, I_MUTEX_PARENT);
+	inode_lock_nested(p2->d_inode, I_MUTEX_PARENT2);
+	return p;
 }
 
 /*
@@ -3133,6 +3099,25 @@ void unlock_rename(struct dentry *p1, struct dentry *p2)
 EXPORT_SYMBOL(unlock_rename);
 
 /**
+ * mode_strip_umask - handle vfs umask stripping
+ * @dir:	parent directory of the new inode
+ * @mode:	mode of the new inode to be created in @dir
+ *
+ * Umask stripping depends on whether or not the filesystem supports POSIX
+ * ACLs. If the filesystem doesn't support it umask stripping is done directly
+ * in here. If the filesystem does support POSIX ACLs umask stripping is
+ * deferred until the filesystem calls posix_acl_create().
+ *
+ * Returns: mode
+ */
+static inline umode_t mode_strip_umask(const struct inode *dir, umode_t mode)
+{
+	if (!IS_POSIXACL(dir))
+		mode &= ~current_umask();
+	return mode;
+}
+
+/**
  * vfs_prepare_mode - prepare the mode to be used for a new inode
  * @idmap:	idmap of the mount the inode was found from
  * @dir:	parent directory of the new inode
@@ -3186,7 +3171,7 @@ static inline umode_t vfs_prepare_mode(struct mnt_idmap *idmap,
  * the vfsmount must be passed through @idmap. This function will then take
  * care to map the inode according to @idmap before checking permissions.
  * On non-idmapped mounts or if permission checking is to be performed on the
- * raw inode simply pass @nop_mnt_idmap.
+ * raw inode simply passs @nop_mnt_idmap.
  */
 int vfs_create(struct mnt_idmap *idmap, struct inode *dir,
 	       struct dentry *dentry, umode_t mode, bool want_excl)
@@ -3545,8 +3530,7 @@ static const char *open_last_lookups(struct nameidata *nd,
 		if (likely(dentry))
 			goto finish_lookup;
 
-		if (WARN_ON_ONCE(nd->flags & LOOKUP_RCU))
-			return ERR_PTR(-ECHILD);
+		BUG_ON(nd->flags & LOOKUP_RCU);
 	} else {
 		/* create side of things */
 		if (nd->flags & LOOKUP_RCU) {
@@ -3649,7 +3633,7 @@ static int do_open(struct nameidata *nd,
 	if (!error && !(file->f_mode & FMODE_OPENED))
 		error = vfs_open(&nd->path, file);
 	if (!error)
-		error = security_file_post_open(file, op->acc_mode);
+		error = ima_file_check(file, op->acc_mode);
 	if (!error && do_truncate)
 		error = handle_truncate(idmap, file);
 	if (unlikely(error > 0)) {
@@ -3674,11 +3658,11 @@ static int do_open(struct nameidata *nd,
  * the vfsmount must be passed through @idmap. This function will then take
  * care to map the inode according to @idmap before checking permissions.
  * On non-idmapped mounts or if permission checking is to be performed on the
- * raw inode simply pass @nop_mnt_idmap.
+ * raw inode simply passs @nop_mnt_idmap.
  */
-int vfs_tmpfile(struct mnt_idmap *idmap,
-		const struct path *parentpath,
-		struct file *file, umode_t mode)
+static int vfs_tmpfile(struct mnt_idmap *idmap,
+		       const struct path *parentpath,
+		       struct file *file, umode_t mode)
 {
 	struct dentry *child;
 	struct inode *dir = d_inode(parentpath->dentry);
@@ -3712,7 +3696,7 @@ int vfs_tmpfile(struct mnt_idmap *idmap,
 		inode->i_state |= I_LINKABLE;
 		spin_unlock(&inode->i_lock);
 	}
-	security_inode_post_create_tmpfile(idmap, inode);
+	ima_post_create_tmpfile(idmap, inode);
 	return 0;
 }
 
@@ -3979,7 +3963,7 @@ EXPORT_SYMBOL(user_path_create);
  * the vfsmount must be passed through @idmap. This function will then take
  * care to map the inode according to @idmap before checking permissions.
  * On non-idmapped mounts or if permission checking is to be performed on the
- * raw inode simply pass @nop_mnt_idmap.
+ * raw inode simply passs @nop_mnt_idmap.
  */
 int vfs_mknod(struct mnt_idmap *idmap, struct inode *dir,
 	      struct dentry *dentry, umode_t mode, dev_t dev)
@@ -4059,7 +4043,7 @@ retry:
 			error = vfs_create(idmap, path.dentry->d_inode,
 					   dentry, mode, true);
 			if (!error)
-				security_path_post_mknod(idmap, dentry);
+				ima_post_path_mknod(idmap, dentry);
 			break;
 		case S_IFCHR: case S_IFBLK:
 			error = vfs_mknod(idmap, path.dentry->d_inode,
@@ -4105,7 +4089,7 @@ SYSCALL_DEFINE3(mknod, const char __user *, filename, umode_t, mode, unsigned, d
  * the vfsmount must be passed through @idmap. This function will then take
  * care to map the inode according to @idmap before checking permissions.
  * On non-idmapped mounts or if permission checking is to be performed on the
- * raw inode simply pass @nop_mnt_idmap.
+ * raw inode simply passs @nop_mnt_idmap.
  */
 int vfs_mkdir(struct mnt_idmap *idmap, struct inode *dir,
 	      struct dentry *dentry, umode_t mode)
@@ -4186,7 +4170,7 @@ SYSCALL_DEFINE2(mkdir, const char __user *, pathname, umode_t, mode)
  * the vfsmount must be passed through @idmap. This function will then take
  * care to map the inode according to @idmap before checking permissions.
  * On non-idmapped mounts or if permission checking is to be performed on the
- * raw inode simply pass @nop_mnt_idmap.
+ * raw inode simply passs @nop_mnt_idmap.
  */
 int vfs_rmdir(struct mnt_idmap *idmap, struct inode *dir,
 		     struct dentry *dentry)
@@ -4315,7 +4299,7 @@ SYSCALL_DEFINE1(rmdir, const char __user *, pathname)
  * the vfsmount must be passed through @idmap. This function will then take
  * care to map the inode according to @idmap before checking permissions.
  * On non-idmapped mounts or if permission checking is to be performed on the
- * raw inode simply pass @nop_mnt_idmap.
+ * raw inode simply passs @nop_mnt_idmap.
  */
 int vfs_unlink(struct mnt_idmap *idmap, struct inode *dir,
 	       struct dentry *dentry, struct inode **delegated_inode)
@@ -4397,9 +4381,11 @@ retry_deleg:
 	if (!IS_ERR(dentry)) {
 
 		/* Why not before? Because we want correct error value */
-		if (last.name[last.len] || d_is_negative(dentry))
+		if (last.name[last.len])
 			goto slashes;
 		inode = dentry->d_inode;
+		if (d_is_negative(dentry))
+			goto slashes;
 		ihold(inode);
 		error = security_path_unlink(&path, dentry);
 		if (error)
@@ -4468,7 +4454,7 @@ SYSCALL_DEFINE1(unlink, const char __user *, pathname)
  * the vfsmount must be passed through @idmap. This function will then take
  * care to map the inode according to @idmap before checking permissions.
  * On non-idmapped mounts or if permission checking is to be performed on the
- * raw inode simply pass @nop_mnt_idmap.
+ * raw inode simply passs @nop_mnt_idmap.
  */
 int vfs_symlink(struct mnt_idmap *idmap, struct inode *dir,
 		struct dentry *dentry, const char *oldname)
@@ -4560,7 +4546,7 @@ SYSCALL_DEFINE2(symlink, const char __user *, oldname, const char __user *, newn
  * the vfsmount must be passed through @idmap. This function will then take
  * care to map the inode according to @idmap before checking permissions.
  * On non-idmapped mounts or if permission checking is to be performed on the
- * raw inode simply pass @nop_mnt_idmap.
+ * raw inode simply passs @nop_mnt_idmap.
  */
 int vfs_link(struct dentry *old_dentry, struct mnt_idmap *idmap,
 	     struct inode *dir, struct dentry *new_dentry,
@@ -4649,13 +4635,14 @@ int do_linkat(int olddfd, struct filename *old, int newdfd,
 		goto out_putnames;
 	}
 	/*
-	 * To use null names we require CAP_DAC_READ_SEARCH or
-	 * that the open-time creds of the dfd matches current.
+	 * To use null names we require CAP_DAC_READ_SEARCH
 	 * This ensures that not everyone will be able to create
-	 * a hardlink using the passed file descriptor.
+	 * handlink using the passed filedescriptor.
 	 */
-	if (flags & AT_EMPTY_PATH)
-		how |= LOOKUP_LINKAT_EMPTY;
+	if (flags & AT_EMPTY_PATH && !capable(CAP_DAC_READ_SEARCH)) {
+		error = -ENOENT;
+		goto out_putnames;
+	}
 
 	if (flags & AT_SYMLINK_FOLLOW)
 		how |= LOOKUP_FOLLOW;
@@ -4977,10 +4964,6 @@ retry:
 
 retry_deleg:
 	trap = lock_rename(new_path.dentry, old_path.dentry);
-	if (IS_ERR(trap)) {
-		error = PTR_ERR(trap);
-		goto exit_lock_rename;
-	}
 
 	old_dentry = lookup_one_qstr_excl(&old_last, old_path.dentry,
 					  lookup_flags);
@@ -5048,7 +5031,6 @@ exit4:
 	dput(old_dentry);
 exit3:
 	unlock_rename(new_path.dentry, old_path.dentry);
-exit_lock_rename:
 	if (delegated_inode) {
 		error = break_deleg_wait(&delegated_inode);
 		if (!error)

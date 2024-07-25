@@ -385,63 +385,62 @@ unsigned int acpi_dev_get_irq_type(int triggering, int polarity)
 }
 EXPORT_SYMBOL_GPL(acpi_dev_get_irq_type);
 
-/*
- * DMI matches for boards where the DSDT specifies the kbd IRQ as
- * level active-low and using the override changes this to rising edge,
- * stopping the keyboard from working.
- */
-static const struct dmi_system_id irq1_level_low_skip_override[] = {
+static const struct dmi_system_id medion_laptop[] = {
 	{
-		/* MEDION P15651 */
+		.ident = "MEDION P15651",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "MEDION"),
 			DMI_MATCH(DMI_BOARD_NAME, "M15T"),
 		},
 	},
 	{
-		/* MEDION S17405 */
+		.ident = "MEDION S17405",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "MEDION"),
 			DMI_MATCH(DMI_BOARD_NAME, "M17T"),
 		},
 	},
 	{
-		/* MEDION S17413 */
+		.ident = "MEDION S17413",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "MEDION"),
 			DMI_MATCH(DMI_BOARD_NAME, "M1xA"),
 		},
 	},
+	{ }
+};
+
+static const struct dmi_system_id asus_laptop[] = {
 	{
-		/* Asus Vivobook K3402ZA */
+		.ident = "Asus Vivobook K3402ZA",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_BOARD_NAME, "K3402ZA"),
 		},
 	},
 	{
-		/* Asus Vivobook K3502ZA */
+		.ident = "Asus Vivobook K3502ZA",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_BOARD_NAME, "K3502ZA"),
 		},
 	},
 	{
-		/* Asus Vivobook S5402ZA */
+		.ident = "Asus Vivobook S5402ZA",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_BOARD_NAME, "S5402ZA"),
 		},
 	},
 	{
-		/* Asus Vivobook S5602ZA */
+		.ident = "Asus Vivobook S5602ZA",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_BOARD_NAME, "S5602ZA"),
 		},
 	},
 	{
-		/* Asus ExpertBook B1402CBA */
+		.ident = "Asus ExpertBook B1402CBA",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_BOARD_NAME, "B1402CBA"),
@@ -455,102 +454,53 @@ static const struct dmi_system_id irq1_level_low_skip_override[] = {
 		},
 	},
 	{
-		/* Asus ExpertBook B1502CBA */
+		.ident = "Asus ExpertBook B1502CBA",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_BOARD_NAME, "B1502CBA"),
 		},
 	},
 	{
-		/* Asus ExpertBook B1502CGA */
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_BOARD_NAME, "B1502CGA"),
-		},
-	},
-        {
-                /* Asus ExpertBook B1502CVA */
-                .matches = {
-                        DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-                        DMI_MATCH(DMI_BOARD_NAME, "B1502CVA"),
-                },
-        },
-	{
-		/* Asus ExpertBook B2402CBA */
+		.ident = "Asus ExpertBook B2402CBA",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_BOARD_NAME, "B2402CBA"),
 		},
 	},
 	{
-		/* Asus ExpertBook B2402FBA */
+		.ident = "Asus ExpertBook B2402FBA",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_BOARD_NAME, "B2402FBA"),
 		},
 	},
 	{
-		/* Asus ExpertBook B2502 */
+		.ident = "Asus ExpertBook B2502",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 			DMI_MATCH(DMI_BOARD_NAME, "B2502CBA"),
 		},
 	},
+	{ }
+};
+
+static const struct dmi_system_id tongfang_gm_rg[] = {
 	{
-		/* Asus ExpertBook B2502FBA */
+		.ident = "TongFang GMxRGxx/XMG CORE 15 (M22)/TUXEDO Stellaris 15 Gen4 AMD",
 		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_BOARD_NAME, "B2502FBA"),
-		},
-	},
-	{
-		/* Asus Vivobook E1504GA */
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_BOARD_NAME, "E1504GA"),
-		},
-	},
-	{
-		/* Asus Vivobook E1504GAB */
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_BOARD_NAME, "E1504GAB"),
-		},
-	},
-	{
-		/* Asus Vivobook Pro N6506MV */
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_BOARD_NAME, "N6506MV"),
-		},
-	},
-	{
-		/* LG Electronics 17U70P */
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "LG Electronics"),
-			DMI_MATCH(DMI_BOARD_NAME, "17U70P"),
+			DMI_MATCH(DMI_BOARD_NAME, "GMxRGxx"),
 		},
 	},
 	{ }
 };
 
-/*
- * DMI matches for AMD Zen boards where the DSDT specifies the kbd IRQ
- * as falling edge and this must be overridden to rising edge,
- * to have a working keyboard.
- */
-static const struct dmi_system_id irq1_edge_low_force_override[] = {
+static const struct dmi_system_id maingear_laptop[] = {
 	{
-		/* XMG APEX 17 (M23) */
+		.ident = "MAINGEAR Vector Pro 2 15",
 		.matches = {
-			DMI_MATCH(DMI_BOARD_NAME, "GMxBGxx"),
-		},
-	},
-	{
-		/* TongFang GMxRGxx/XMG CORE 15 (M22)/TUXEDO Stellaris 15 Gen4 AMD */
-		.matches = {
-			DMI_MATCH(DMI_BOARD_NAME, "GMxRGxx"),
-		},
+			DMI_MATCH(DMI_SYS_VENDOR, "Micro Electronics Inc"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "MG-VCP2-15A3070T"),
+		}
 	},
 	{
 		/* TongFang GMxXGxx/TUXEDO Polaris 15 Gen5 AMD */
@@ -572,19 +522,16 @@ static const struct dmi_system_id irq1_edge_low_force_override[] = {
 		},
 	},
 	{
-		/* MAINGEAR Vector Pro 2 15 */
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Micro Electronics Inc"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "MG-VCP2-15A3070T"),
-		}
-	},
-	{
-		/* MAINGEAR Vector Pro 2 17 */
+		.ident = "MAINGEAR Vector Pro 2 17",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Micro Electronics Inc"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "MG-VCP2-17A3070T"),
 		},
 	},
+	{ }
+};
+
+static const struct dmi_system_id pcspecialist_laptop[] = {
 	{
 		/* TongFang GM6BGEQ / PCSpecialist Elimina Pro 16 M, RTX 3050 */
 		.matches = {
@@ -636,11 +583,15 @@ static const struct dmi_system_id irq1_edge_low_force_override[] = {
 			DMI_MATCH(DMI_BOARD_NAME, "X577"),
 		},
 	},
+	{ }
+};
+
+static const struct dmi_system_id lg_laptop[] = {
 	{
-		/* Maibenben X565 */
+		.ident = "LG Electronics 17U70P",
 		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "MAIBENBEN"),
-			DMI_MATCH(DMI_BOARD_NAME, "X565"),
+			DMI_MATCH(DMI_SYS_VENDOR, "LG Electronics"),
+			DMI_MATCH(DMI_BOARD_NAME, "17U70P"),
 		},
 	},
 	{
@@ -668,8 +619,12 @@ struct irq_override_cmp {
 };
 
 static const struct irq_override_cmp override_table[] = {
-	{ irq1_level_low_skip_override, 1, ACPI_LEVEL_SENSITIVE, ACPI_ACTIVE_LOW, 0, false },
-	{ irq1_edge_low_force_override, 1, ACPI_EDGE_SENSITIVE, ACPI_ACTIVE_LOW, 1, true },
+	{ medion_laptop, 1, ACPI_LEVEL_SENSITIVE, ACPI_ACTIVE_LOW, 0, false },
+	{ asus_laptop, 1, ACPI_LEVEL_SENSITIVE, ACPI_ACTIVE_LOW, 0, false },
+	{ tongfang_gm_rg, 1, ACPI_EDGE_SENSITIVE, ACPI_ACTIVE_LOW, 1, true },
+	{ maingear_laptop, 1, ACPI_EDGE_SENSITIVE, ACPI_ACTIVE_LOW, 1, true },
+	{ pcspecialist_laptop, 1, ACPI_EDGE_SENSITIVE, ACPI_ACTIVE_LOW, 1, true },
+	{ lg_laptop, 1, ACPI_LEVEL_SENSITIVE, ACPI_ACTIVE_LOW, 0, false },
 };
 
 static bool acpi_dev_irq_override(u32 gsi, u8 triggering, u8 polarity,

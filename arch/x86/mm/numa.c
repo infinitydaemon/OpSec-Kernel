@@ -3,7 +3,6 @@
 #include <linux/acpi.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
-#include <linux/of.h>
 #include <linux/string.h>
 #include <linux/init.h>
 #include <linux/memblock.h>
@@ -58,7 +57,7 @@ s16 __apicid_to_node[MAX_LOCAL_APIC] = {
 
 int numa_cpu_node(int cpu)
 {
-	u32 apicid = early_per_cpu(x86_cpu_to_apicid, cpu);
+	int apicid = early_per_cpu(x86_cpu_to_apicid, cpu);
 
 	if (apicid != BAD_APICID)
 		return __apicid_to_node[apicid];
@@ -450,6 +449,37 @@ int __node_distance(int from, int to)
 EXPORT_SYMBOL(__node_distance);
 
 /*
+ * Sanity check to catch more bad NUMA configurations (they are amazingly
+ * common).  Make sure the nodes cover all memory.
+ */
+static bool __init numa_meminfo_cover_memory(const struct numa_meminfo *mi)
+{
+	u64 numaram, e820ram;
+	int i;
+
+	numaram = 0;
+	for (i = 0; i < mi->nr_blks; i++) {
+		u64 s = mi->blk[i].start >> PAGE_SHIFT;
+		u64 e = mi->blk[i].end >> PAGE_SHIFT;
+		numaram += e - s;
+		numaram -= __absent_pages_in_range(mi->blk[i].nid, s, e);
+		if ((s64)numaram < 0)
+			numaram = 0;
+	}
+
+	e820ram = max_pfn - absent_pages_in_range(0, max_pfn);
+
+	/* We seem to lose 3 pages somewhere. Allow 1M of slack. */
+	if ((s64)(e820ram - numaram) >= (1 << (20 - PAGE_SHIFT))) {
+		printk(KERN_ERR "NUMA: nodes only cover %LuMB of your %LuMB e820 RAM. Not used.\n",
+		       (numaram << PAGE_SHIFT) >> 20,
+		       (e820ram << PAGE_SHIFT) >> 20);
+		return false;
+	}
+	return true;
+}
+
+/*
  * Mark all currently memblock-reserved physical memory (which covers the
  * kernel's own memory ranges) as hot-unswappable.
  */
@@ -554,8 +584,7 @@ static int __init numa_register_memblks(struct numa_meminfo *mi)
 			return -EINVAL;
 		}
 	}
-
-	if (!memblock_validate_numa_coverage(SZ_1M))
+	if (!numa_meminfo_cover_memory(mi))
 		return -EINVAL;
 
 	/* Finally register nodes. */
@@ -698,8 +727,6 @@ void __init x86_numa_init(void)
 		if (!numa_init(amd_numa_init))
 			return;
 #endif
-		if (acpi_disabled && !numa_init(of_numa_init))
-			return;
 	}
 
 	numa_init(dummy_numa_init);
@@ -753,7 +780,7 @@ void __init init_gi_nodes(void)
 void __init init_cpu_to_node(void)
 {
 	int cpu;
-	u32 *cpu_to_apicid = early_per_cpu_ptr(x86_cpu_to_apicid);
+	u16 *cpu_to_apicid = early_per_cpu_ptr(x86_cpu_to_apicid);
 
 	BUG_ON(cpu_to_apicid == NULL);
 

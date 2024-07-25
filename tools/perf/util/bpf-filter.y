@@ -3,10 +3,6 @@
 
 %{
 
-#ifndef NDEBUG
-#define YYDEBUG 1
-#endif
-
 #include <stdio.h>
 #include <string.h>
 #include <linux/compiler.h>

@@ -25,7 +25,6 @@
 #include <linux/binfmts.h>
 #include <linux/personality.h>
 #include <linux/mnt_idmapping.h>
-#include <uapi/linux/lsm.h>
 
 /*
  * If a non-root user executes a setuid-root binary in
@@ -721,7 +720,7 @@ int get_vfs_caps_from_disk(struct mnt_idmap *idmap,
  * its xattrs and, if present, apply them to the proposed credentials being
  * constructed by execve().
  */
-static int get_file_caps(struct linux_binprm *bprm, const struct file *file,
+static int get_file_caps(struct linux_binprm *bprm, struct file *file,
 			 bool *effective, bool *has_fcap)
 {
 	int rc = 0;
@@ -883,7 +882,7 @@ static inline bool nonroot_raised_pE(struct cred *new, const struct cred *old,
  *
  * Return: 0 if successful, -ve on error.
  */
-int cap_bprm_creds_from_file(struct linux_binprm *bprm, const struct file *file)
+int cap_bprm_creds_from_file(struct linux_binprm *bprm, struct file *file)
 {
 	/* Process setpcap binaries and capabilities for uid 0 */
 	const struct cred *old = current_cred();
@@ -1441,11 +1440,6 @@ int cap_mmap_file(struct file *file, unsigned long reqprot,
 
 #ifdef CONFIG_SECURITY
 
-static const struct lsm_id capability_lsmid = {
-	.name = "capability",
-	.id = LSM_ID_CAPABILITY,
-};
-
 static struct security_hook_list capability_hooks[] __ro_after_init = {
 	LSM_HOOK_INIT(capable, cap_capable),
 	LSM_HOOK_INIT(settime, cap_settime),
@@ -1470,7 +1464,7 @@ static struct security_hook_list capability_hooks[] __ro_after_init = {
 static int __init capability_init(void)
 {
 	security_add_hooks(capability_hooks, ARRAY_SIZE(capability_hooks),
-			   &capability_lsmid);
+				"capability");
 	return 0;
 }
 

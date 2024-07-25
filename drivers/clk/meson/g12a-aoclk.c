@@ -475,4 +475,4 @@ static struct platform_driver g12a_aoclkc_driver = {
 };
 
 module_platform_driver(g12a_aoclkc_driver);
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");

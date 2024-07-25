@@ -29,14 +29,12 @@
 #include <drm/drm_fourcc.h>
 
 #include "gem/i915_gem_internal.h"
-#include "gem/i915_gem_object_frontbuffer.h"
 #include "gem/i915_gem_pm.h"
 #include "gt/intel_gpu_commands.h"
 #include "gt/intel_ring.h"
 
 #include "i915_drv.h"
 #include "i915_reg.h"
-#include "intel_color_regs.h"
 #include "intel_de.h"
 #include "intel_display_types.h"
 #include "intel_frontbuffer.h"
@@ -972,11 +970,10 @@ static int check_overlay_dst(struct intel_overlay *overlay,
 		      rec->dst_width, rec->dst_height);
 
 	clipped = req;
+	drm_rect_intersect(&clipped, &crtc_state->pipe_src);
 
-	if (!drm_rect_intersect(&clipped, &crtc_state->pipe_src))
-		return -EINVAL;
-
-	if (!drm_rect_equals(&clipped, &req))
+	if (!drm_rect_visible(&clipped) ||
+	    !drm_rect_equals(&clipped, &req))
 		return -EINVAL;
 
 	return 0;

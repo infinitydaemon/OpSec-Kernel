@@ -746,21 +746,26 @@ static int ltc2688_span_lookup(const struct ltc2688_state *st, int min, int max)
 static int ltc2688_channel_config(struct ltc2688_state *st)
 {
 	struct device *dev = &st->spi->dev;
+	struct fwnode_handle *child;
 	u32 reg, clk_input, val, tmp[2];
 	int ret, span;
 
-	device_for_each_child_node_scoped(dev, child) {
+	device_for_each_child_node(dev, child) {
 		struct ltc2688_chan *chan;
 
 		ret = fwnode_property_read_u32(child, "reg", &reg);
-		if (ret)
+		if (ret) {
+			fwnode_handle_put(child);
 			return dev_err_probe(dev, ret,
 					     "Failed to get reg property\n");
+		}
 
-		if (reg >= LTC2688_DAC_CHANNELS)
+		if (reg >= LTC2688_DAC_CHANNELS) {
+			fwnode_handle_put(child);
 			return dev_err_probe(dev, -EINVAL,
 					     "reg bigger than: %d\n",
 					     LTC2688_DAC_CHANNELS);
+		}
 
 		val = 0;
 		chan = &st->channels[reg];
@@ -781,10 +786,12 @@ static int ltc2688_channel_config(struct ltc2688_state *st)
 		if (!ret) {
 			span = ltc2688_span_lookup(st, (int)tmp[0] / 1000,
 						   tmp[1] / 1000);
-			if (span < 0)
-				return dev_err_probe(dev, span,
+			if (span < 0) {
+				fwnode_handle_put(child);
+				return dev_err_probe(dev, -EINVAL,
 						     "output range not valid:[%d %d]\n",
 						     tmp[0], tmp[1]);
+			}
 
 			val |= FIELD_PREP(LTC2688_CH_SPAN_MSK, span);
 		}
@@ -793,14 +800,17 @@ static int ltc2688_channel_config(struct ltc2688_state *st)
 					       &clk_input);
 		if (!ret) {
 			if (clk_input >= LTC2688_CH_TGP_MAX) {
+				fwnode_handle_put(child);
 				return dev_err_probe(dev, -EINVAL,
 						     "toggle-dither-input inv value(%d)\n",
 						     clk_input);
 			}
 
 			ret = ltc2688_tgp_clk_setup(st, chan, child, clk_input);
-			if (ret)
+			if (ret) {
+				fwnode_handle_put(child);
 				return ret;
+			}
 
 			/*
 			 * 0 means software toggle which is the default mode.
@@ -834,9 +844,11 @@ static int ltc2688_channel_config(struct ltc2688_state *st)
 
 		ret = regmap_write(st->regmap, LTC2688_CMD_CH_SETTING(reg),
 				   val);
-		if (ret)
-			return dev_err_probe(dev, ret,
+		if (ret) {
+			fwnode_handle_put(child);
+			return dev_err_probe(dev, -EINVAL,
 					     "failed to set chan settings\n");
+		}
 	}
 
 	return 0;

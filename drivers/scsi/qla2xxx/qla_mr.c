@@ -1909,8 +1909,10 @@ qlafx00_fx_disc(scsi_qla_host_t *vha, fc_port_t *fcport, uint16_t fx_type)
 	if (fx_type == FXDISC_GET_CONFIG_INFO) {
 		struct config_info_data *pinfo =
 		    (struct config_info_data *) fdisc->u.fxiocb.rsp_addr;
-		memtostr(vha->hw->model_number, pinfo->model_num);
-		memtostr(vha->hw->model_desc, pinfo->model_description);
+		strscpy(vha->hw->model_number, pinfo->model_num,
+			ARRAY_SIZE(vha->hw->model_number));
+		strscpy(vha->hw->model_desc, pinfo->model_description,
+			ARRAY_SIZE(vha->hw->model_desc));
 		memcpy(&vha->hw->mr.symbolic_name, pinfo->symbolic_name,
 		    sizeof(vha->hw->mr.symbolic_name));
 		memcpy(&vha->hw->mr.serial_num, pinfo->serial_num,

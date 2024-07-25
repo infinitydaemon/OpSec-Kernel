@@ -13,7 +13,9 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/ahci_platform.h>
-#include <linux/of.h>
+#include <linux/of_address.h>
+#include <linux/of_device.h>
+#include <linux/of_irq.h>
 #include <linux/phy/phy.h>
 #include "ahci.h"
 
@@ -733,6 +735,7 @@ static int xgene_ahci_probe(struct platform_device *pdev)
 	struct ahci_host_priv *hpriv;
 	struct xgene_ahci_context *ctx;
 	struct resource *res;
+	const struct of_device_id *of_devid;
 	enum xgene_ahci_version version = XGENE_AHCI_V1;
 	const struct ata_port_info *ppi[] = { &xgene_ahci_v1_port_info,
 					      &xgene_ahci_v2_port_info };
@@ -775,8 +778,10 @@ static int xgene_ahci_probe(struct platform_device *pdev)
 		ctx->csr_mux = csr;
 	}
 
-	if (dev->of_node) {
-		version = (enum xgene_ahci_version)of_device_get_match_data(dev);
+	of_devid = of_match_device(xgene_ahci_of_match, dev);
+	if (of_devid) {
+		if (of_devid->data)
+			version = (unsigned long) of_devid->data;
 	}
 #ifdef CONFIG_ACPI
 	else {

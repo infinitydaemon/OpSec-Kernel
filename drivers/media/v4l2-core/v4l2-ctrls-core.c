@@ -295,9 +295,6 @@ void v4l2_ctrl_type_op_log(const struct v4l2_ctrl *ctrl)
 	case V4L2_CTRL_TYPE_U32:
 		pr_cont("%u", (unsigned)*ptr.p_u32);
 		break;
-	case V4L2_CTRL_TYPE_AREA:
-		pr_cont("%ux%u", ptr.p_area->width, ptr.p_area->height);
-		break;
 	case V4L2_CTRL_TYPE_H264_SPS:
 		pr_cont("H264_SPS");
 		break;
@@ -1507,12 +1504,11 @@ int check_range(enum v4l2_ctrl_type type,
 		return 0;
 	case V4L2_CTRL_TYPE_MENU:
 	case V4L2_CTRL_TYPE_INTEGER_MENU:
-		if (min > max || def < min || def > max ||
-		    min < 0 || (step && max >= BITS_PER_LONG_LONG))
+		if (min > max || def < min || def > max)
 			return -ERANGE;
 		/* Note: step == menu_skip_mask for menu controls.
 		   So here we check if the default value is masked out. */
-		if (def < BITS_PER_LONG_LONG && (step & BIT_ULL(def)))
+		if (step && ((1 << def) & step))
 			return -EINVAL;
 		return 0;
 	case V4L2_CTRL_TYPE_STRING:
@@ -2559,9 +2555,6 @@ int v4l2_ctrl_new_fwnode_properties(struct v4l2_ctrl_handler *hdl,
 				    const struct v4l2_ctrl_ops *ctrl_ops,
 				    const struct v4l2_fwnode_device_properties *p)
 {
-	if (hdl->error)
-		return hdl->error;
-
 	if (p->orientation != V4L2_FWNODE_PROPERTY_UNSET) {
 		u32 orientation_ctrl;
 

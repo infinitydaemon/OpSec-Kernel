@@ -237,7 +237,8 @@ static int htc_issue_packets(struct htc_target *target,
 
 		packet->info.tx.flags |= HTC_FLAGS_TX_FIXUP_NETBUF;
 
-		put_unaligned_le16(payload_len, &htc_hdr->payld_len);
+		/* Endianess? */
+		put_unaligned((u16) payload_len, &htc_hdr->payld_len);
 		htc_hdr->flags = packet->info.tx.flags;
 		htc_hdr->eid = (u8) packet->endpoint;
 		htc_hdr->ctrl[0] = 0;

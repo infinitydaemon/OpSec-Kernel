@@ -67,7 +67,7 @@ static int otx2_change_mtu(struct net_device *netdev, int new_mtu)
 
 	netdev_info(netdev, "Changing MTU from %d to %d\n",
 		    netdev->mtu, new_mtu);
-	WRITE_ONCE(netdev->mtu, new_mtu);
+	netdev->mtu = new_mtu;
 
 	if (if_up)
 		err = otx2_open(netdev);
@@ -450,6 +450,7 @@ static void otx2_pfvf_mbox_handler(struct work_struct *work)
 	struct mbox_msghdr *msg = NULL;
 	int offset, vf_idx, id, err;
 	struct otx2_mbox_dev *mdev;
+	struct mbox_hdr *req_hdr;
 	struct otx2_mbox *mbox;
 	struct mbox *vf_mbox;
 	struct otx2_nic *pf;
@@ -460,8 +461,9 @@ static void otx2_pfvf_mbox_handler(struct work_struct *work)
 
 	mbox = &pf->mbox_pfvf[0].mbox;
 	mdev = &mbox->dev[vf_idx];
+	req_hdr = (struct mbox_hdr *)(mdev->mbase + mbox->rx_start);
 
-	offset = ALIGN(sizeof(struct mbox_hdr), MBOX_MSG_ALIGN);
+	offset = ALIGN(sizeof(*req_hdr), MBOX_MSG_ALIGN);
 
 	for (id = 0; id < vf_mbox->num_msgs; id++) {
 		msg = (struct mbox_msghdr *)(mdev->mbase + mbox->rx_start +
@@ -492,6 +494,7 @@ static void otx2_pfvf_mbox_up_handler(struct work_struct *work)
 	struct otx2_nic *pf = vf_mbox->pfvf;
 	struct otx2_mbox_dev *mdev;
 	int offset, id, vf_idx = 0;
+	struct mbox_hdr *rsp_hdr;
 	struct mbox_msghdr *msg;
 	struct otx2_mbox *mbox;
 
@@ -499,7 +502,8 @@ static void otx2_pfvf_mbox_up_handler(struct work_struct *work)
 	mbox = &pf->mbox_pfvf[0].mbox_up;
 	mdev = &mbox->dev[vf_idx];
 
-	offset = mbox->rx_start + ALIGN(sizeof(struct mbox_hdr), MBOX_MSG_ALIGN);
+	rsp_hdr = (struct mbox_hdr *)(mdev->mbase + mbox->rx_start);
+	offset = mbox->rx_start + ALIGN(sizeof(*rsp_hdr), MBOX_MSG_ALIGN);
 
 	for (id = 0; id < vf_mbox->up_num_msgs; id++) {
 		msg = mdev->mbase + offset;
@@ -1143,23 +1147,6 @@ static int otx2_cgx_config_linkevents(struct otx2_nic *pf, bool enable)
 
 	err = otx2_sync_mbox_msg(&pf->mbox);
 	mutex_unlock(&pf->mbox.lock);
-	return err;
-}
-
-int otx2_reset_mac_stats(struct otx2_nic *pfvf)
-{
-	struct msg_req *req;
-	int err;
-
-	mutex_lock(&pfvf->mbox.lock);
-	req = otx2_mbox_alloc_msg_cgx_stats_rst(&pfvf->mbox);
-	if (!req) {
-		mutex_unlock(&pfvf->mbox.lock);
-		return -ENOMEM;
-	}
-
-	err = otx2_sync_mbox_msg(&pfvf->mbox);
-	mutex_unlock(&pfvf->mbox.lock);
 	return err;
 }
 
@@ -1886,17 +1873,9 @@ int otx2_open(struct net_device *netdev)
 	vec = pf->hw.nix_msixoff + NIX_LF_CINT_VEC_START;
 	for (qidx = 0; qidx < pf->hw.cint_cnt; qidx++) {
 		irq_name = &pf->hw.irq_name[vec * NAME_SIZE];
-		int name_len;
 
-		name_len = snprintf(irq_name, NAME_SIZE, "%s-rxtx-%d",
-				    pf->netdev->name, qidx);
-		if (name_len >= NAME_SIZE) {
-			dev_err(pf->dev,
-				"RVUPF%d: IRQ registration failed for CQ%d, irq name is too long\n",
-				rvu_get_pf(pf->pcifunc), qidx);
-			err = -EINVAL;
-			goto err_free_cints;
-		}
+		snprintf(irq_name, NAME_SIZE, "%s-rxtx-%d", pf->netdev->name,
+			 qidx);
 
 		err = request_irq(pci_irq_vector(pf->pdev, vec),
 				  otx2_cq_intr_handler, 0, irq_name,
@@ -3058,9 +3037,6 @@ static int otx2_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	netdev->min_mtu = OTX2_MIN_MTU;
 	netdev->max_mtu = otx2_get_max_mtu(pf);
-
-	/* reset CGX/RPM MAC stats */
-	otx2_reset_mac_stats(pf);
 
 	err = register_netdev(netdev);
 	if (err) {

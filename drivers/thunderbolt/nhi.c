@@ -48,7 +48,7 @@
 
 static bool host_reset = true;
 module_param(host_reset, bool, 0444);
-MODULE_PARM_DESC(host_reset, "reset USB4 host router (default: true)");
+MODULE_PARM_DESC(host_reset, "reset USBv2 host router (default: true)");
 
 static int ring_interrupt_index(const struct tb_ring *ring)
 {
@@ -465,7 +465,7 @@ static int ring_request_msix(struct tb_ring *ring, bool no_suspend)
 	if (!nhi->pdev->msix_enabled)
 		return 0;
 
-	ret = ida_alloc_max(&nhi->msix_ida, MSIX_MAX_VECS - 1, GFP_KERNEL);
+	ret = ida_simple_get(&nhi->msix_ida, 0, MSIX_MAX_VECS, GFP_KERNEL);
 	if (ret < 0)
 		return ret;
 
@@ -485,7 +485,7 @@ static int ring_request_msix(struct tb_ring *ring, bool no_suspend)
 	return 0;
 
 err_ida_remove:
-	ida_free(&nhi->msix_ida, ring->vector);
+	ida_simple_remove(&nhi->msix_ida, ring->vector);
 
 	return ret;
 }
@@ -496,7 +496,7 @@ static void ring_release_msix(struct tb_ring *ring)
 		return;
 
 	free_irq(ring->irq, ring);
-	ida_free(&ring->nhi->msix_ida, ring->vector);
+	ida_simple_remove(&ring->nhi->msix_ida, ring->vector);
 	ring->vector = 0;
 	ring->irq = 0;
 }
@@ -1221,7 +1221,7 @@ static void nhi_check_iommu(struct tb_nhi *nhi)
 		str_enabled_disabled(port_ok));
 }
 
-static void nhi_reset(struct tb_nhi *nhi)
+static bool nhi_reset(struct tb_nhi *nhi)
 {
 	ktime_t timeout;
 	u32 val;
@@ -1229,11 +1229,11 @@ static void nhi_reset(struct tb_nhi *nhi)
 	val = ioread32(nhi->iobase + REG_CAPS);
 	/* Reset only v2 and later routers */
 	if (FIELD_GET(REG_CAPS_VERSION_MASK, val) < REG_CAPS_VERSION_2)
-		return;
+		return false;
 
 	if (!host_reset) {
 		dev_dbg(&nhi->pdev->dev, "skipping host router reset\n");
-		return;
+		return false;
 	}
 
 	iowrite32(REG_RESET_HRR, nhi->iobase + REG_RESET);
@@ -1244,12 +1244,14 @@ static void nhi_reset(struct tb_nhi *nhi)
 		val = ioread32(nhi->iobase + REG_RESET);
 		if (!(val & REG_RESET_HRR)) {
 			dev_warn(&nhi->pdev->dev, "host router reset successful\n");
-			return;
+			return true;
 		}
 		usleep_range(10, 20);
 	} while (ktime_before(ktime_get(), timeout));
 
 	dev_warn(&nhi->pdev->dev, "timeout resetting host router\n");
+
+	return false;
 }
 
 static int nhi_init_msi(struct tb_nhi *nhi)
@@ -1331,6 +1333,7 @@ static int nhi_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	struct device *dev = &pdev->dev;
 	struct tb_nhi *nhi;
 	struct tb *tb;
+	bool reset;
 	int res;
 
 	if (!nhi_imr_valid(pdev))
@@ -1364,7 +1367,12 @@ static int nhi_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	nhi_check_quirks(nhi);
 	nhi_check_iommu(nhi);
-	nhi_reset(nhi);
+
+	/*
+	 * Only USB4 v2 hosts support host reset so if we already did
+	 * that then don't do it again when the domain is initialized.
+	 */
+	reset = nhi_reset(nhi) ? false : host_reset;
 
 	res = nhi_init_msi(nhi);
 	if (res)
@@ -1391,7 +1399,7 @@ static int nhi_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	dev_dbg(dev, "NHI initialized, starting thunderbolt\n");
 
-	res = tb_domain_add(tb, host_reset);
+	res = tb_domain_add(tb, reset);
 	if (res) {
 		/*
 		 * At this point the RX/TX rings might already have been
@@ -1515,10 +1523,6 @@ static struct pci_device_id nhi_ids[] = {
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_MTL_P_NHI0),
 	  .driver_data = (kernel_ulong_t)&icl_nhi_ops },
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_MTL_P_NHI1),
-	  .driver_data = (kernel_ulong_t)&icl_nhi_ops },
-	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_LNL_NHI0),
-	  .driver_data = (kernel_ulong_t)&icl_nhi_ops },
-	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_LNL_NHI1),
 	  .driver_data = (kernel_ulong_t)&icl_nhi_ops },
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_BARLOW_RIDGE_HOST_80G_NHI) },
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_BARLOW_RIDGE_HOST_40G_NHI) },

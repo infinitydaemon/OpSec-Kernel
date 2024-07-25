@@ -2636,7 +2636,7 @@ int ni_read_frame(struct ntfs_inode *ni, u64 frame_vbo, struct page **pages,
 		goto out1;
 	}
 
-	pages_disk = kcalloc(npages_disk, sizeof(*pages_disk), GFP_NOFS);
+	pages_disk = kzalloc(npages_disk * sizeof(struct page *), GFP_NOFS);
 	if (!pages_disk) {
 		err = -ENOMEM;
 		goto out2;
@@ -3274,7 +3274,7 @@ int ni_write_inode(struct inode *inode, int sync, const char *hint)
 	if (is_rec_inuse(ni->mi.mrec) &&
 	    !(sbi->flags & NTFS_FLAGS_LOG_REPLAYING) && inode->i_nlink) {
 		bool modified = false;
-		struct timespec64 ts;
+		struct timespec64 ctime = inode_get_ctime(inode);
 
 		/* Update times in standard attribute. */
 		std = ni_std(ni);
@@ -3284,22 +3284,19 @@ int ni_write_inode(struct inode *inode, int sync, const char *hint)
 		}
 
 		/* Update the access times if they have changed. */
-		ts = inode_get_mtime(inode);
-		dup.m_time = kernel2nt(&ts);
+		dup.m_time = kernel2nt(&inode->i_mtime);
 		if (std->m_time != dup.m_time) {
 			std->m_time = dup.m_time;
 			modified = true;
 		}
 
-		ts = inode_get_ctime(inode);
-		dup.c_time = kernel2nt(&ts);
+		dup.c_time = kernel2nt(&ctime);
 		if (std->c_time != dup.c_time) {
 			std->c_time = dup.c_time;
 			modified = true;
 		}
 
-		ts = inode_get_atime(inode);
-		dup.a_time = kernel2nt(&ts);
+		dup.a_time = kernel2nt(&inode->i_atime);
 		if (std->a_time != dup.a_time) {
 			std->a_time = dup.a_time;
 			modified = true;

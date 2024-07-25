@@ -20,7 +20,6 @@ properties:
     items:
       - enum:
           - mediatek,mt7986-wo-ccif
-          - mediatek,mt7988-wo-ccif
       - const: syscon
 
   reg:

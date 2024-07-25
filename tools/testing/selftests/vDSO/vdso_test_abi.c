@@ -33,20 +33,9 @@ typedef long (*vdso_clock_gettime_t)(clockid_t clk_id, struct timespec *ts);
 typedef long (*vdso_clock_getres_t)(clockid_t clk_id, struct timespec *ts);
 typedef time_t (*vdso_time_t)(time_t *t);
 
-const char *vdso_clock_name[12] = {
-	"CLOCK_REALTIME",
-	"CLOCK_MONOTONIC",
-	"CLOCK_PROCESS_CPUTIME_ID",
-	"CLOCK_THREAD_CPUTIME_ID",
-	"CLOCK_MONOTONIC_RAW",
-	"CLOCK_REALTIME_COARSE",
-	"CLOCK_MONOTONIC_COARSE",
-	"CLOCK_BOOTTIME",
-	"CLOCK_REALTIME_ALARM",
-	"CLOCK_BOOTTIME_ALARM",
-	"CLOCK_SGI_CYCLE",
-	"CLOCK_TAI",
-};
+#define VDSO_TEST_PASS_MSG()	"\n%s(): PASS\n", __func__
+#define VDSO_TEST_FAIL_MSG(x)	"\n%s(): %s FAIL\n", __func__, x
+#define VDSO_TEST_SKIP_MSG(x)	"\n%s(): SKIP: Could not find %s\n", __func__, x
 
 static void vdso_test_gettimeofday(void)
 {
@@ -55,8 +44,7 @@ static void vdso_test_gettimeofday(void)
 		(vdso_gettimeofday_t)vdso_sym(version, name[0]);
 
 	if (!vdso_gettimeofday) {
-		ksft_print_msg("Couldn't find %s\n", name[0]);
-		ksft_test_result_skip("%s\n", name[0]);
+		ksft_test_result_skip(VDSO_TEST_SKIP_MSG(name[0]));
 		return;
 	}
 
@@ -66,9 +54,9 @@ static void vdso_test_gettimeofday(void)
 	if (ret == 0) {
 		ksft_print_msg("The time is %lld.%06lld\n",
 			       (long long)tv.tv_sec, (long long)tv.tv_usec);
-		ksft_test_result_pass("%s\n", name[0]);
+		ksft_test_result_pass(VDSO_TEST_PASS_MSG());
 	} else {
-		ksft_test_result_fail("%s\n", name[0]);
+		ksft_test_result_fail(VDSO_TEST_FAIL_MSG(name[0]));
 	}
 }
 
@@ -79,9 +67,7 @@ static void vdso_test_clock_gettime(clockid_t clk_id)
 		(vdso_clock_gettime_t)vdso_sym(version, name[1]);
 
 	if (!vdso_clock_gettime) {
-		ksft_print_msg("Couldn't find %s\n", name[1]);
-		ksft_test_result_skip("%s %s\n", name[1],
-				      vdso_clock_name[clk_id]);
+		ksft_test_result_skip(VDSO_TEST_SKIP_MSG(name[1]));
 		return;
 	}
 
@@ -91,11 +77,9 @@ static void vdso_test_clock_gettime(clockid_t clk_id)
 	if (ret == 0) {
 		ksft_print_msg("The time is %lld.%06lld\n",
 			       (long long)ts.tv_sec, (long long)ts.tv_nsec);
-		ksft_test_result_pass("%s %s\n", name[1],
-				      vdso_clock_name[clk_id]);
+		ksft_test_result_pass(VDSO_TEST_PASS_MSG());
 	} else {
-		ksft_test_result_fail("%s %s\n", name[1],
-				      vdso_clock_name[clk_id]);
+		ksft_test_result_fail(VDSO_TEST_FAIL_MSG(name[1]));
 	}
 }
 
@@ -106,8 +90,7 @@ static void vdso_test_time(void)
 		(vdso_time_t)vdso_sym(version, name[2]);
 
 	if (!vdso_time) {
-		ksft_print_msg("Couldn't find %s\n", name[2]);
-		ksft_test_result_skip("%s\n", name[2]);
+		ksft_test_result_skip(VDSO_TEST_SKIP_MSG(name[2]));
 		return;
 	}
 
@@ -116,9 +99,9 @@ static void vdso_test_time(void)
 	if (ret > 0) {
 		ksft_print_msg("The time in hours since January 1, 1970 is %lld\n",
 				(long long)(ret / 3600));
-		ksft_test_result_pass("%s\n", name[2]);
+		ksft_test_result_pass(VDSO_TEST_PASS_MSG());
 	} else {
-		ksft_test_result_fail("%s\n", name[2]);
+		ksft_test_result_fail(VDSO_TEST_FAIL_MSG(name[2]));
 	}
 }
 
@@ -131,9 +114,7 @@ static void vdso_test_clock_getres(clockid_t clk_id)
 		(vdso_clock_getres_t)vdso_sym(version, name[3]);
 
 	if (!vdso_clock_getres) {
-		ksft_print_msg("Couldn't find %s\n", name[3]);
-		ksft_test_result_skip("%s %s\n", name[3],
-				      vdso_clock_name[clk_id]);
+		ksft_test_result_skip(VDSO_TEST_SKIP_MSG(name[3]));
 		return;
 	}
 
@@ -156,13 +137,26 @@ static void vdso_test_clock_getres(clockid_t clk_id)
 		clock_getres_fail++;
 
 	if (clock_getres_fail > 0) {
-		ksft_test_result_fail("%s %s\n", name[3],
-				      vdso_clock_name[clk_id]);
+		ksft_test_result_fail(VDSO_TEST_FAIL_MSG(name[3]));
 	} else {
-		ksft_test_result_pass("%s %s\n", name[3],
-				      vdso_clock_name[clk_id]);
+		ksft_test_result_pass(VDSO_TEST_PASS_MSG());
 	}
 }
+
+const char *vdso_clock_name[12] = {
+	"CLOCK_REALTIME",
+	"CLOCK_MONOTONIC",
+	"CLOCK_PROCESS_CPUTIME_ID",
+	"CLOCK_THREAD_CPUTIME_ID",
+	"CLOCK_MONOTONIC_RAW",
+	"CLOCK_REALTIME_COARSE",
+	"CLOCK_MONOTONIC_COARSE",
+	"CLOCK_BOOTTIME",
+	"CLOCK_REALTIME_ALARM",
+	"CLOCK_BOOTTIME_ALARM",
+	"CLOCK_SGI_CYCLE",
+	"CLOCK_TAI",
+};
 
 /*
  * This function calls vdso_test_clock_gettime and vdso_test_clock_getres
@@ -170,7 +164,7 @@ static void vdso_test_clock_getres(clockid_t clk_id)
  */
 static inline void vdso_test_clock(clockid_t clock_id)
 {
-	ksft_print_msg("clock_id: %s\n", vdso_clock_name[clock_id]);
+	ksft_print_msg("\nclock_id: %s\n", vdso_clock_name[clock_id]);
 
 	vdso_test_clock_gettime(clock_id);
 
@@ -187,14 +181,14 @@ int main(int argc, char **argv)
 	ksft_set_plan(VDSO_TEST_PLAN);
 
 	if (!sysinfo_ehdr) {
-		ksft_print_msg("AT_SYSINFO_EHDR is not present!\n");
+		printf("AT_SYSINFO_EHDR is not present!\n");
 		return KSFT_SKIP;
 	}
 
 	version = versions[VDSO_VERSION];
 	name = (const char **)&names[VDSO_NAMES];
 
-	ksft_print_msg("[vDSO kselftest] VDSO_VERSION: %s\n", version);
+	printf("[vDSO kselftest] VDSO_VERSION: %s\n", version);
 
 	vdso_init_from_sysinfo_ehdr(getauxval(AT_SYSINFO_EHDR));
 

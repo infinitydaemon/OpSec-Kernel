@@ -11,7 +11,6 @@ if [[ $(id -u) -ne 0 ]]; then
   exit $ksft_skip
 fi
 
-nr_hugepgs=$(cat /proc/sys/vm/nr_hugepages)
 usage_file=usage_in_bytes
 
 if [[ "$1" == "-cgroup-v2" ]]; then
@@ -249,9 +248,5 @@ cleanup
 
 echo ALL PASS
 
-if [[ $do_umount ]]; then
-  umount $CGROUP_ROOT
-  rm -rf $CGROUP_ROOT
-fi
-
-echo "$nr_hugepgs" > /proc/sys/vm/nr_hugepages
+umount $CGROUP_ROOT
+rm -rf $CGROUP_ROOT

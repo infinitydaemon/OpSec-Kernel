@@ -174,7 +174,7 @@ static int **evtchn_to_irq;
 #ifdef CONFIG_X86
 static unsigned long *pirq_eoi_map;
 #endif
-static bool (*pirq_needs_eoi)(struct irq_info *info);
+static bool (*pirq_needs_eoi)(unsigned irq);
 
 #define EVTCHN_ROW(e)  (e / (PAGE_SIZE/sizeof(**evtchn_to_irq)))
 #define EVTCHN_COL(e)  (e % (PAGE_SIZE/sizeof(**evtchn_to_irq)))
@@ -190,6 +190,7 @@ static struct irq_chip xen_lateeoi_chip;
 static struct irq_chip xen_percpu_chip;
 static struct irq_chip xen_pirq_chip;
 static void enable_dynirq(struct irq_data *data);
+static void disable_dynirq(struct irq_data *data);
 
 static DEFINE_PER_CPU(unsigned int, irq_epoch);
 
@@ -453,8 +454,10 @@ static unsigned int virq_from_irq(struct irq_info *info)
 	return info->u.virq;
 }
 
-static unsigned int pirq_from_irq(struct irq_info *info)
+static unsigned pirq_from_irq(unsigned irq)
 {
+	struct irq_info *info = info_for_irq(irq);
+
 	BUG_ON(info == NULL);
 	BUG_ON(info->type != IRQT_PIRQ);
 
@@ -497,14 +500,15 @@ static void do_unmask(struct irq_info *info, u8 reason)
 }
 
 #ifdef CONFIG_X86
-static bool pirq_check_eoi_map(struct irq_info *info)
+static bool pirq_check_eoi_map(unsigned irq)
 {
-	return test_bit(pirq_from_irq(info), pirq_eoi_map);
+	return test_bit(pirq_from_irq(irq), pirq_eoi_map);
 }
 #endif
 
-static bool pirq_needs_eoi_flag(struct irq_info *info)
+static bool pirq_needs_eoi_flag(unsigned irq)
 {
+	struct irq_info *info = info_for_irq(irq);
 	BUG_ON(info->type != IRQT_PIRQ);
 
 	return info->u.pirq.flags & PIRQ_NEEDS_EOI;
@@ -798,11 +802,14 @@ static void event_handler_exit(struct irq_info *info)
 	clear_evtchn(info->evtchn);
 }
 
-static void pirq_query_unmask(struct irq_info *info)
+static void pirq_query_unmask(int irq)
 {
 	struct physdev_irq_status_query irq_status;
+	struct irq_info *info = info_for_irq(irq);
 
-	irq_status.irq = pirq_from_irq(info);
+	BUG_ON(info->type != IRQT_PIRQ);
+
+	irq_status.irq = pirq_from_irq(irq);
 	if (HYPERVISOR_physdev_op(PHYSDEVOP_irq_status_query, &irq_status))
 		irq_status.flags = 0;
 
@@ -811,76 +818,56 @@ static void pirq_query_unmask(struct irq_info *info)
 		info->u.pirq.flags |= PIRQ_NEEDS_EOI;
 }
 
-static void do_eoi_pirq(struct irq_info *info)
+static void eoi_pirq(struct irq_data *data)
 {
-	struct physdev_eoi eoi = { .irq = pirq_from_irq(info) };
+	struct irq_info *info = info_for_irq(data->irq);
+	evtchn_port_t evtchn = info ? info->evtchn : 0;
+	struct physdev_eoi eoi = { .irq = pirq_from_irq(data->irq) };
 	int rc = 0;
 
-	if (!VALID_EVTCHN(info->evtchn))
+	if (!VALID_EVTCHN(evtchn))
 		return;
 
 	event_handler_exit(info);
 
-	if (pirq_needs_eoi(info)) {
+	if (pirq_needs_eoi(data->irq)) {
 		rc = HYPERVISOR_physdev_op(PHYSDEVOP_eoi, &eoi);
 		WARN_ON(rc);
 	}
 }
 
-static void eoi_pirq(struct irq_data *data)
-{
-	struct irq_info *info = info_for_irq(data->irq);
-
-	do_eoi_pirq(info);
-}
-
-static void do_disable_dynirq(struct irq_info *info)
-{
-	if (VALID_EVTCHN(info->evtchn))
-		do_mask(info, EVT_MASK_REASON_EXPLICIT);
-}
-
-static void disable_dynirq(struct irq_data *data)
-{
-	struct irq_info *info = info_for_irq(data->irq);
-
-	if (info)
-		do_disable_dynirq(info);
-}
-
 static void mask_ack_pirq(struct irq_data *data)
 {
-	struct irq_info *info = info_for_irq(data->irq);
-
-	if (info) {
-		do_disable_dynirq(info);
-		do_eoi_pirq(info);
-	}
+	disable_dynirq(data);
+	eoi_pirq(data);
 }
 
-static unsigned int __startup_pirq(struct irq_info *info)
+static unsigned int __startup_pirq(unsigned int irq)
 {
 	struct evtchn_bind_pirq bind_pirq;
-	evtchn_port_t evtchn = info->evtchn;
+	struct irq_info *info = info_for_irq(irq);
+	evtchn_port_t evtchn = evtchn_from_irq(irq);
 	int rc;
+
+	BUG_ON(info->type != IRQT_PIRQ);
 
 	if (VALID_EVTCHN(evtchn))
 		goto out;
 
-	bind_pirq.pirq = pirq_from_irq(info);
+	bind_pirq.pirq = pirq_from_irq(irq);
 	/* NB. We are happy to share unless we are probing. */
 	bind_pirq.flags = info->u.pirq.flags & PIRQ_SHAREABLE ?
 					BIND_PIRQ__WILL_SHARE : 0;
 	rc = HYPERVISOR_event_channel_op(EVTCHNOP_bind_pirq, &bind_pirq);
 	if (rc != 0) {
-		pr_warn("Failed to obtain physical IRQ %d\n", info->irq);
+		pr_warn("Failed to obtain physical IRQ %d\n", irq);
 		return 0;
 	}
 	evtchn = bind_pirq.port;
 
-	pirq_query_unmask(info);
+	pirq_query_unmask(irq);
 
-	rc = set_evtchn_to_irq(evtchn, info->irq);
+	rc = set_evtchn_to_irq(evtchn, irq);
 	if (rc)
 		goto err;
 
@@ -894,28 +881,26 @@ static unsigned int __startup_pirq(struct irq_info *info)
 out:
 	do_unmask(info, EVT_MASK_REASON_EXPLICIT);
 
-	do_eoi_pirq(info);
+	eoi_pirq(irq_get_irq_data(irq));
 
 	return 0;
 
 err:
-	pr_err("irq%d: Failed to set port to irq mapping (%d)\n", info->irq,
-	       rc);
+	pr_err("irq%d: Failed to set port to irq mapping (%d)\n", irq, rc);
 	xen_evtchn_close(evtchn);
 	return 0;
 }
 
 static unsigned int startup_pirq(struct irq_data *data)
 {
-	struct irq_info *info = info_for_irq(data->irq);
-
-	return __startup_pirq(info);
+	return __startup_pirq(data->irq);
 }
 
 static void shutdown_pirq(struct irq_data *data)
 {
-	struct irq_info *info = info_for_irq(data->irq);
-	evtchn_port_t evtchn = info->evtchn;
+	unsigned int irq = data->irq;
+	struct irq_info *info = info_for_irq(irq);
+	evtchn_port_t evtchn = evtchn_from_irq(irq);
 
 	BUG_ON(info->type != IRQT_PIRQ);
 
@@ -1054,7 +1039,7 @@ int xen_bind_pirq_gsi_to_irq(unsigned gsi,
 		goto out;
 	}
 
-	pirq_query_unmask(info);
+	pirq_query_unmask(info->irq);
 	/* We try to use the handler with the appropriate semantic for the
 	 * type of interrupt: if the interrupt is an edge triggered
 	 * interrupt we use handle_edge_irq.
@@ -1181,11 +1166,32 @@ out:
 	return rc;
 }
 
+int xen_irq_from_pirq(unsigned pirq)
+{
+	int irq;
+
+	struct irq_info *info;
+
+	mutex_lock(&irq_mapping_update_lock);
+
+	list_for_each_entry(info, &xen_irq_list_head, list) {
+		if (info->type != IRQT_PIRQ)
+			continue;
+		irq = info->irq;
+		if (info->u.pirq.pirq == pirq)
+			goto out;
+	}
+	irq = -1;
+out:
+	mutex_unlock(&irq_mapping_update_lock);
+
+	return irq;
+}
+
+
 int xen_pirq_from_irq(unsigned irq)
 {
-	struct irq_info *info = info_for_irq(irq);
-
-	return pirq_from_irq(info);
+	return pirq_from_irq(irq);
 }
 EXPORT_SYMBOL_GPL(xen_pirq_from_irq);
 
@@ -1851,30 +1857,28 @@ static void enable_dynirq(struct irq_data *data)
 		do_unmask(info, EVT_MASK_REASON_EXPLICIT);
 }
 
-static void do_ack_dynirq(struct irq_info *info)
+static void disable_dynirq(struct irq_data *data)
 {
-	evtchn_port_t evtchn = info->evtchn;
+	struct irq_info *info = info_for_irq(data->irq);
+	evtchn_port_t evtchn = info ? info->evtchn : 0;
 
 	if (VALID_EVTCHN(evtchn))
-		event_handler_exit(info);
+		do_mask(info, EVT_MASK_REASON_EXPLICIT);
 }
 
 static void ack_dynirq(struct irq_data *data)
 {
 	struct irq_info *info = info_for_irq(data->irq);
+	evtchn_port_t evtchn = info ? info->evtchn : 0;
 
-	if (info)
-		do_ack_dynirq(info);
+	if (VALID_EVTCHN(evtchn))
+		event_handler_exit(info);
 }
 
 static void mask_ack_dynirq(struct irq_data *data)
 {
-	struct irq_info *info = info_for_irq(data->irq);
-
-	if (info) {
-		do_disable_dynirq(info);
-		do_ack_dynirq(info);
-	}
+	disable_dynirq(data);
+	ack_dynirq(data);
 }
 
 static void lateeoi_ack_dynirq(struct irq_data *data)
@@ -1953,7 +1957,7 @@ static void restore_pirqs(void)
 
 		printk(KERN_DEBUG "xen: --> irq=%d, pirq=%d\n", irq, map_irq.pirq);
 
-		__startup_pirq(info);
+		__startup_pirq(irq);
 	}
 }
 
@@ -2024,6 +2028,13 @@ void xen_clear_irq_pending(int irq)
 		event_handler_exit(info);
 }
 EXPORT_SYMBOL(xen_clear_irq_pending);
+void xen_set_irq_pending(int irq)
+{
+	evtchn_port_t evtchn = evtchn_from_irq(irq);
+
+	if (VALID_EVTCHN(evtchn))
+		set_evtchn(evtchn);
+}
 
 bool xen_test_irq_pending(int irq)
 {
@@ -2224,7 +2235,7 @@ static __init void xen_alloc_callback_vector(void)
 		return;
 
 	pr_info("Xen HVM callback vector for event delivery is enabled\n");
-	sysvec_install(HYPERVISOR_CALLBACK_VECTOR, sysvec_xen_hvm_callback);
+	alloc_intr_gate(HYPERVISOR_CALLBACK_VECTOR, asm_sysvec_xen_hvm_callback);
 }
 #else
 void xen_setup_callback_vector(void) {}

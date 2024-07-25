@@ -69,5 +69,5 @@ int main(int argc, char **argv)
 	/* Multi-threaded */
 	test_mt_membarrier();
 
-	ksft_exit_pass();
+	return ksft_exit_pass();
 }

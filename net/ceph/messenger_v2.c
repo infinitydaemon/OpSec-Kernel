@@ -733,6 +733,8 @@ static int setup_crypto(struct ceph_connection *con,
 		return ret;
 	}
 
+	WARN_ON((unsigned long)session_key &
+		crypto_shash_alignmask(con->v2.hmac_tfm));
 	ret = crypto_shash_setkey(con->v2.hmac_tfm, session_key,
 				  session_key_len);
 	if (ret) {
@@ -814,6 +816,8 @@ static int hmac_sha256(struct ceph_connection *con, const struct kvec *kvecs,
 		goto out;
 
 	for (i = 0; i < kvec_cnt; i++) {
+		WARN_ON((unsigned long)kvecs[i].iov_base &
+			crypto_shash_alignmask(con->v2.hmac_tfm));
 		ret = crypto_shash_update(desc, kvecs[i].iov_base,
 					  kvecs[i].iov_len);
 		if (ret)
@@ -2033,9 +2037,6 @@ static int prepare_sparse_read_data(struct ceph_connection *con)
 
 	if (!con_secure(con))
 		con->in_data_crc = -1;
-
-	ceph_msg_data_cursor_init(&con->v2.in_cursor, msg,
-				  msg->sparse_read_total);
 
 	reset_in_kvecs(con);
 	con->v2.in_state = IN_S_PREPARE_SPARSE_DATA_CONT;

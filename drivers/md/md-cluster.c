@@ -501,7 +501,7 @@ static void process_suspend_info(struct mddev *mddev,
 	mddev->pers->quiesce(mddev, 0);
 }
 
-static int process_add_new_disk(struct mddev *mddev, struct cluster_msg *cmsg)
+static void process_add_new_disk(struct mddev *mddev, struct cluster_msg *cmsg)
 {
 	char disk_uuid[64];
 	struct md_cluster_info *cinfo = mddev->cluster_info;
@@ -509,7 +509,6 @@ static int process_add_new_disk(struct mddev *mddev, struct cluster_msg *cmsg)
 	char raid_slot[16];
 	char *envp[] = {event_name, disk_uuid, raid_slot, NULL};
 	int len;
-	int res = 0;
 
 	len = snprintf(disk_uuid, 64, "DEVICE_UUID=");
 	sprintf(disk_uuid + len, "%pU", cmsg->uuid);
@@ -518,14 +517,9 @@ static int process_add_new_disk(struct mddev *mddev, struct cluster_msg *cmsg)
 	init_completion(&cinfo->newdisk_completion);
 	set_bit(MD_CLUSTER_WAITING_FOR_NEWDISK, &cinfo->state);
 	kobject_uevent_env(&disk_to_dev(mddev->gendisk)->kobj, KOBJ_CHANGE, envp);
-	if (!wait_for_completion_timeout(&cinfo->newdisk_completion,
-					NEW_DEV_TIMEOUT)) {
-		pr_err("md-cluster(%s:%d): timeout on a new disk adding\n",
-			__func__, __LINE__);
-		res = -1;
-	}
+	wait_for_completion_timeout(&cinfo->newdisk_completion,
+			NEW_DEV_TIMEOUT);
 	clear_bit(MD_CLUSTER_WAITING_FOR_NEWDISK, &cinfo->state);
-	return res;
 }
 
 
@@ -600,8 +594,7 @@ static int process_recvd_msg(struct mddev *mddev, struct cluster_msg *msg)
 				     le64_to_cpu(msg->high));
 		break;
 	case NEWDISK:
-		if (process_add_new_disk(mddev, msg))
-			ret = -1;
+		process_add_new_disk(mddev, msg);
 		break;
 	case REMOVE:
 		process_remove_disk(mddev, msg);

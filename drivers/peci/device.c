@@ -246,7 +246,7 @@ static void peci_device_release(struct device *dev)
 	kfree(device);
 }
 
-const struct device_type peci_device_type = {
+struct device_type peci_device_type = {
 	.groups		= peci_device_groups,
 	.release	= peci_device_release,
 };

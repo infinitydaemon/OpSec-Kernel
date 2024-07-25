@@ -869,8 +869,7 @@ static int fsl_elbc_nand_probe(struct platform_device *pdev)
 	struct mtd_info *mtd;
 
 	if (!fsl_lbc_ctrl_dev || !fsl_lbc_ctrl_dev->regs)
-		return dev_err_probe(&pdev->dev, -EPROBE_DEFER, "lbc_ctrl_dev missing\n");
-
+		return -ENODEV;
 	lbc = fsl_lbc_ctrl_dev->regs;
 	dev = fsl_lbc_ctrl_dev->dev;
 

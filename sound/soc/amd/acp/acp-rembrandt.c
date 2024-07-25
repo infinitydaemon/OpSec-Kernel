@@ -23,8 +23,6 @@
 #include <linux/pm_runtime.h>
 
 #include "amd.h"
-#include "../mach-config.h"
-#include "acp-mach.h"
 
 #define DRV_NAME "acp_asoc_rembrandt"
 
@@ -191,7 +189,6 @@ static int rembrandt_audio_probe(struct platform_device *pdev)
 	struct acp_chip_info *chip;
 	struct acp_dev_data *adata;
 	struct resource *res;
-	u32 ret;
 
 	chip = dev_get_platdata(&pdev->dev);
 	if (!chip || !chip->base) {
@@ -229,18 +226,12 @@ static int rembrandt_audio_probe(struct platform_device *pdev)
 	adata->dai_driver = acp_rmb_dai;
 	adata->num_dai = ARRAY_SIZE(acp_rmb_dai);
 	adata->rsrc = &rsrc;
-	adata->platform = REMBRANDT;
-	adata->flag = chip->flag;
+
 	adata->machines = snd_soc_acpi_amd_rmb_acp_machines;
 	acp_machine_select(adata);
 
 	dev_set_drvdata(dev, adata);
-
-	if (chip->flag != FLAG_AMD_LEGACY_ONLY_DMIC) {
-		ret = acp6x_master_clock_generate(dev);
-		if (ret)
-			return ret;
-	}
+	acp6x_master_clock_generate(dev);
 	acp_enable_interrupts(adata);
 	acp_platform_register(dev);
 	pm_runtime_set_autosuspend_delay(&pdev->dev, ACP_SUSPEND_DELAY_MS);
@@ -269,9 +260,7 @@ static int __maybe_unused rmb_pcm_resume(struct device *dev)
 	snd_pcm_uframes_t buf_in_frames;
 	u64 buf_size;
 
-	if (adata->flag != FLAG_AMD_LEGACY_ONLY_DMIC)
-		acp6x_master_clock_generate(dev);
-
+	acp6x_master_clock_generate(dev);
 	spin_lock(&adata->acp_lock);
 	list_for_each_entry(stream, &adata->stream_list, list) {
 		substream = stream->substream;

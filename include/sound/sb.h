@@ -290,9 +290,6 @@ int snd_sbmixer_new(struct snd_sb *chip);
 #ifdef CONFIG_PM
 void snd_sbmixer_suspend(struct snd_sb *chip);
 void snd_sbmixer_resume(struct snd_sb *chip);
-#else
-static inline void snd_sbmixer_suspend(struct snd_sb *chip) {}
-static inline void snd_sbmixer_resume(struct snd_sb *chip) {}
 #endif
 
 /* sb8_init.c */

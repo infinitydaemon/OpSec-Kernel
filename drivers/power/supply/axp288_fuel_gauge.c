@@ -550,20 +550,18 @@ static const struct dmi_system_id axp288_quirks[] = {
 		.driver_data = (void *)AXP288_QUIRK_NO_BATTERY,
 	},
 	{
-		/* Intel Bay Trail Compute Stick */
+		/* Intel Cherry Trail Compute Stick, Windows version */
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Intel"),
-			/* Partial match for STCK1A32WFC STCK1A32FC, STCK1A8LFC variants */
-			DMI_MATCH(DMI_PRODUCT_NAME, "STCK1A"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "STK1AW32SC"),
 		},
 		.driver_data = (void *)AXP288_QUIRK_NO_BATTERY,
 	},
 	{
-		/* Intel Cherry Trail Compute Stick */
+		/* Intel Cherry Trail Compute Stick, version without an OS */
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Intel"),
-			/* Partial match for STK1AW32SC and STK1A32SC variants */
-			DMI_MATCH(DMI_PRODUCT_NAME, "STK1A"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "STK1A32SC"),
 		},
 		.driver_data = (void *)AXP288_QUIRK_NO_BATTERY,
 	},
@@ -600,14 +598,6 @@ static const struct dmi_system_id axp288_quirks[] = {
 			DMI_MATCH(DMI_BIOS_DATE, "06/14/2018"),
 		},
 		.driver_data = NULL,
-	},
-	{
-		/* Radxa ROCK Pi X Single Board Computer */
-		.matches = {
-			DMI_MATCH(DMI_BOARD_NAME, "ROCK Pi X"),
-			DMI_MATCH(DMI_BOARD_VENDOR, "Radxa"),
-		},
-		.driver_data = (void *)AXP288_QUIRK_NO_BATTERY,
 	},
 	{
 		/*

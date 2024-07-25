@@ -98,7 +98,6 @@ static int watchdog = 1000;
 module_param(watchdog, int, 0400);
 MODULE_PARM_DESC(watchdog, "transmit timeout in milliseconds");
 
-MODULE_DESCRIPTION("SMC 91C9x/91C1xxx Ethernet driver");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("platform:smc91x");
 
@@ -2412,7 +2411,7 @@ static int smc_drv_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void smc_drv_remove(struct platform_device *pdev)
+static int smc_drv_remove(struct platform_device *pdev)
 {
 	struct net_device *ndev = platform_get_drvdata(pdev);
 	struct smc_local *lp = netdev_priv(ndev);
@@ -2437,6 +2436,8 @@ static void smc_drv_remove(struct platform_device *pdev)
 	release_mem_region(res->start, SMC_IO_EXTENT);
 
 	free_netdev(ndev);
+
+	return 0;
 }
 
 static int smc_drv_suspend(struct device *dev)
@@ -2479,7 +2480,7 @@ static const struct dev_pm_ops smc_drv_pm_ops = {
 
 static struct platform_driver smc_driver = {
 	.probe		= smc_drv_probe,
-	.remove_new	= smc_drv_remove,
+	.remove		= smc_drv_remove,
 	.driver		= {
 		.name	= CARDNAME,
 		.pm	= &smc_drv_pm_ops,

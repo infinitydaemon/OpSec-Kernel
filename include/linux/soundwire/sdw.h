@@ -235,7 +235,6 @@ enum sdw_clk_stop_mode {
  * @BRA_flow_controlled: Slave implementation results in an OK_NotReady
  * response
  * @simple_ch_prep_sm: If channel prepare sequence is required
- * @ch_prep_timeout: Port-specific timeout value, in milliseconds
  * @imp_def_interrupts: If set, each bit corresponds to support for
  * implementation-defined interrupts
  *
@@ -250,7 +249,6 @@ struct sdw_dp0_prop {
 	u32 *words;
 	bool BRA_flow_controlled;
 	bool simple_ch_prep_sm;
-	u32 ch_prep_timeout;
 	bool imp_def_interrupts;
 };
 
@@ -542,6 +540,21 @@ struct sdw_slave_intr_status {
 enum sdw_reg_bank {
 	SDW_BANK0,
 	SDW_BANK1,
+};
+
+/**
+ * struct sdw_bus_conf: Bus configuration
+ *
+ * @clk_freq: Clock frequency, in Hz
+ * @num_rows: Number of rows in frame
+ * @num_cols: Number of columns in frame
+ * @bank: Next register bank
+ */
+struct sdw_bus_conf {
+	unsigned int clk_freq;
+	unsigned int num_rows;
+	unsigned int num_cols;
+	unsigned int bank;
 };
 
 /**
@@ -886,7 +899,6 @@ struct sdw_master_ops {
  * @port_ops: Master port callback ops
  * @params: Current bus parameters
  * @prop: Master properties
- * @vendor_specific_prop: pointer to non-standard properties
  * @m_rt_list: List of Master instance of all stream(s) running on Bus. This
  * is used to compute and program bus bandwidth, clock, frame shape,
  * transport and port parameters
@@ -921,7 +933,6 @@ struct sdw_bus {
 	const struct sdw_master_port_ops *port_ops;
 	struct sdw_bus_params params;
 	struct sdw_master_prop prop;
-	void *vendor_specific_prop;
 	struct list_head m_rt_list;
 #ifdef CONFIG_DEBUG_FS
 	struct dentry *debugfs;
@@ -1031,7 +1042,7 @@ int sdw_compute_params(struct sdw_bus *bus);
 
 int sdw_stream_add_master(struct sdw_bus *bus,
 		struct sdw_stream_config *stream_config,
-		const struct sdw_port_config *port_config,
+		struct sdw_port_config *port_config,
 		unsigned int num_ports,
 		struct sdw_stream_runtime *stream);
 int sdw_stream_remove_master(struct sdw_bus *bus,
@@ -1053,7 +1064,7 @@ void sdw_extract_slave_id(struct sdw_bus *bus, u64 addr, struct sdw_slave_id *id
 
 int sdw_stream_add_slave(struct sdw_slave *slave,
 			 struct sdw_stream_config *stream_config,
-			 const struct sdw_port_config *port_config,
+			 struct sdw_port_config *port_config,
 			 unsigned int num_ports,
 			 struct sdw_stream_runtime *stream);
 int sdw_stream_remove_slave(struct sdw_slave *slave,
@@ -1075,7 +1086,7 @@ int sdw_update_no_pm(struct sdw_slave *slave, u32 addr, u8 mask, u8 val);
 
 static inline int sdw_stream_add_slave(struct sdw_slave *slave,
 				       struct sdw_stream_config *stream_config,
-				       const struct sdw_port_config *port_config,
+				       struct sdw_port_config *port_config,
 				       unsigned int num_ports,
 				       struct sdw_stream_runtime *stream)
 {

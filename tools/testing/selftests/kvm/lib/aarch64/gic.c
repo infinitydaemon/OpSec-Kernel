@@ -17,12 +17,13 @@
 static const struct gic_common_ops *gic_common_ops;
 static struct spinlock gic_lock;
 
-static void gic_cpu_init(unsigned int cpu)
+static void gic_cpu_init(unsigned int cpu, void *redist_base)
 {
-	gic_common_ops->gic_cpu_init(cpu);
+	gic_common_ops->gic_cpu_init(cpu, redist_base);
 }
 
-static void gic_dist_init(enum gic_type type, unsigned int nr_cpus)
+static void
+gic_dist_init(enum gic_type type, unsigned int nr_cpus, void *dist_base)
 {
 	const struct gic_common_ops *gic_ops = NULL;
 
@@ -39,7 +40,7 @@ static void gic_dist_init(enum gic_type type, unsigned int nr_cpus)
 
 	GUEST_ASSERT(gic_ops);
 
-	gic_ops->gic_init(nr_cpus);
+	gic_ops->gic_init(nr_cpus, dist_base);
 	gic_common_ops = gic_ops;
 
 	/* Make sure that the initialized data is visible to all the vCPUs */
@@ -48,15 +49,18 @@ static void gic_dist_init(enum gic_type type, unsigned int nr_cpus)
 	spin_unlock(&gic_lock);
 }
 
-void gic_init(enum gic_type type, unsigned int nr_cpus)
+void gic_init(enum gic_type type, unsigned int nr_cpus,
+		void *dist_base, void *redist_base)
 {
 	uint32_t cpu = guest_get_vcpuid();
 
 	GUEST_ASSERT(type < GIC_TYPE_MAX);
+	GUEST_ASSERT(dist_base);
+	GUEST_ASSERT(redist_base);
 	GUEST_ASSERT(nr_cpus);
 
-	gic_dist_init(type, nr_cpus);
-	gic_cpu_init(cpu);
+	gic_dist_init(type, nr_cpus, dist_base);
+	gic_cpu_init(cpu, redist_base);
 }
 
 void gic_irq_enable(unsigned int intid)

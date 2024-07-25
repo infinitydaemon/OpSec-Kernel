@@ -149,6 +149,8 @@ void hci_discovery_set_state(struct hci_dev *hdev, int state)
 {
 	int old_state = hdev->discovery.state;
 
+	BT_DBG("%s state %u -> %u", hdev->name, hdev->discovery.state, state);
+
 	if (old_state == state)
 		return;
 
@@ -164,13 +166,6 @@ void hci_discovery_set_state(struct hci_dev *hdev, int state)
 	case DISCOVERY_STARTING:
 		break;
 	case DISCOVERY_FINDING:
-		/* If discovery was not started then it was initiated by the
-		 * MGMT interface so no MGMT event shall be generated either
-		 */
-		if (old_state != DISCOVERY_STARTING) {
-			hdev->discovery.state = old_state;
-			return;
-		}
 		mgmt_discovering(hdev, 1);
 		break;
 	case DISCOVERY_RESOLVING:
@@ -178,8 +173,6 @@ void hci_discovery_set_state(struct hci_dev *hdev, int state)
 	case DISCOVERY_STOPPING:
 		break;
 	}
-
-	bt_dev_dbg(hdev, "state %u -> %u", old_state, state);
 }
 
 void hci_inquiry_cache_flush(struct hci_dev *hdev)
@@ -937,51 +930,20 @@ int hci_get_dev_info(void __user *arg)
 
 /* ---- Interface to HCI drivers ---- */
 
-static int hci_dev_do_poweroff(struct hci_dev *hdev)
-{
-	int err;
-
-	BT_DBG("%s %p", hdev->name, hdev);
-
-	hci_req_sync_lock(hdev);
-
-	err = hci_set_powered_sync(hdev, false);
-
-	hci_req_sync_unlock(hdev);
-
-	return err;
-}
-
 static int hci_rfkill_set_block(void *data, bool blocked)
 {
 	struct hci_dev *hdev = data;
-	int err;
 
 	BT_DBG("%p name %s blocked %d", hdev, hdev->name, blocked);
 
 	if (hci_dev_test_flag(hdev, HCI_USER_CHANNEL))
 		return -EBUSY;
 
-	if (blocked == hci_dev_test_flag(hdev, HCI_RFKILLED))
-		return 0;
-
 	if (blocked) {
 		hci_dev_set_flag(hdev, HCI_RFKILLED);
-
 		if (!hci_dev_test_flag(hdev, HCI_SETUP) &&
-		    !hci_dev_test_flag(hdev, HCI_CONFIG)) {
-			err = hci_dev_do_poweroff(hdev);
-			if (err) {
-				bt_dev_err(hdev, "Error when powering off device on rfkill (%d)",
-					   err);
-
-				/* Make sure the device is still closed even if
-				 * anything during power off sequence (eg.
-				 * disconnecting devices) failed.
-				 */
-				hci_dev_do_close(hdev);
-			}
-		}
+		    !hci_dev_test_flag(hdev, HCI_CONFIG))
+			hci_dev_do_close(hdev);
 	} else {
 		hci_dev_clear_flag(hdev, HCI_RFKILLED);
 	}
@@ -1765,15 +1727,6 @@ struct adv_info *hci_add_adv_instance(struct hci_dev *hdev, u8 instance,
 
 		adv->pending = true;
 		adv->instance = instance;
-
-		/* If controller support only one set and the instance is set to
-		 * 1 then there is no option other than using handle 0x00.
-		 */
-		if (hdev->le_num_of_adv_sets == 1 && instance == 1)
-			adv->handle = 0x00;
-		else
-			adv->handle = instance;
-
 		list_add(&adv->list, &hdev->adv_instances);
 		hdev->adv_instance_cnt++;
 	}
@@ -2528,16 +2481,16 @@ struct hci_dev *hci_alloc_dev_priv(int sizeof_priv)
 	hdev->le_adv_channel_map = 0x07;
 	hdev->le_adv_min_interval = 0x0800;
 	hdev->le_adv_max_interval = 0x0800;
-	hdev->le_scan_interval = DISCOV_LE_SCAN_INT_FAST;
-	hdev->le_scan_window = DISCOV_LE_SCAN_WIN_FAST;
-	hdev->le_scan_int_suspend = DISCOV_LE_SCAN_INT_SLOW1;
-	hdev->le_scan_window_suspend = DISCOV_LE_SCAN_WIN_SLOW1;
+	hdev->le_scan_interval = 0x0060;
+	hdev->le_scan_window = 0x0030;
+	hdev->le_scan_int_suspend = 0x0400;
+	hdev->le_scan_window_suspend = 0x0012;
 	hdev->le_scan_int_discovery = DISCOV_LE_SCAN_INT;
 	hdev->le_scan_window_discovery = DISCOV_LE_SCAN_WIN;
-	hdev->le_scan_int_adv_monitor = DISCOV_LE_SCAN_INT_FAST;
-	hdev->le_scan_window_adv_monitor = DISCOV_LE_SCAN_WIN_FAST;
-	hdev->le_scan_int_connect = DISCOV_LE_SCAN_INT_CONN;
-	hdev->le_scan_window_connect = DISCOV_LE_SCAN_WIN_CONN;
+	hdev->le_scan_int_adv_monitor = 0x0060;
+	hdev->le_scan_window_adv_monitor = 0x0030;
+	hdev->le_scan_int_connect = 0x0060;
+	hdev->le_scan_window_connect = 0x0060;
 	hdev->le_conn_min_interval = 0x0018;
 	hdev->le_conn_max_interval = 0x0028;
 	hdev->le_conn_latency = 0x0000;
@@ -2554,7 +2507,7 @@ struct hci_dev *hci_alloc_dev_priv(int sizeof_priv)
 	hdev->le_rx_def_phys = HCI_LE_SET_PHY_1M;
 	hdev->le_num_of_adv_sets = HCI_MAX_ADV_INSTANCES;
 	hdev->def_multi_adv_rotation_duration = HCI_DEFAULT_ADV_DURATION;
-	hdev->def_le_autoconnect_timeout = HCI_LE_CONN_TIMEOUT;
+	hdev->def_le_autoconnect_timeout = HCI_LE_AUTOCONN_TIMEOUT;
 	hdev->min_le_tx_power = HCI_TX_POWER_INVALID;
 	hdev->max_le_tx_power = HCI_TX_POWER_INVALID;
 

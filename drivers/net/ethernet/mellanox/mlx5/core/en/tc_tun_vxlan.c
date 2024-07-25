@@ -90,7 +90,7 @@ static int mlx5e_gen_ip_tunnel_header_vxlan(char buf[],
 	const struct vxlan_metadata *md;
 	struct vxlanhdr *vxh;
 
-	if (test_bit(IP_TUNNEL_VXLAN_OPT_BIT, tun_key->tun_flags) &&
+	if ((tun_key->tun_flags & TUNNEL_VXLAN_OPT) &&
 	    e->tun_info->options_len != sizeof(*md))
 		return -EOPNOTSUPP;
 	vxh = (struct vxlanhdr *)((char *)udp + sizeof(struct udphdr));
@@ -99,7 +99,7 @@ static int mlx5e_gen_ip_tunnel_header_vxlan(char buf[],
 	udp->dest = tun_key->tp_dst;
 	vxh->vx_flags = VXLAN_HF_VNI;
 	vxh->vx_vni = vxlan_vni_field(tun_id);
-	if (test_bit(IP_TUNNEL_VXLAN_OPT_BIT, tun_key->tun_flags)) {
+	if (tun_key->tun_flags & TUNNEL_VXLAN_OPT) {
 		md = ip_tunnel_info_opts(e->tun_info);
 		vxlan_build_gbp_hdr(vxh, md);
 	}
@@ -125,7 +125,7 @@ static int mlx5e_tc_tun_parse_vxlan_gbp_option(struct mlx5e_priv *priv,
 		return -EOPNOTSUPP;
 	}
 
-	if (enc_opts.key->dst_opt_type != IP_TUNNEL_VXLAN_OPT_BIT) {
+	if (enc_opts.key->dst_opt_type != TUNNEL_VXLAN_OPT) {
 		NL_SET_ERR_MSG_MOD(extack, "Wrong VxLAN option type: not GBP");
 		return -EOPNOTSUPP;
 	}
@@ -208,8 +208,7 @@ static int mlx5e_tc_tun_parse_vxlan(struct mlx5e_priv *priv,
 static bool mlx5e_tc_tun_encap_info_equal_vxlan(struct mlx5e_encap_key *a,
 						struct mlx5e_encap_key *b)
 {
-	return mlx5e_tc_tun_encap_info_equal_options(a, b,
-						     IP_TUNNEL_VXLAN_OPT_BIT);
+	return mlx5e_tc_tun_encap_info_equal_options(a, b, TUNNEL_VXLAN_OPT);
 }
 
 static int mlx5e_tc_tun_get_remote_ifindex(struct net_device *mirred_dev)

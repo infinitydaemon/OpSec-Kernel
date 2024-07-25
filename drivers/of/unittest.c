@@ -239,22 +239,27 @@ static void __init of_unittest_dynamic(void)
 
 static int __init of_unittest_check_node_linkage(struct device_node *np)
 {
+	struct device_node *child;
 	int count = 0, rc;
 
-	for_each_child_of_node_scoped(np, child) {
+	for_each_child_of_node(np, child) {
 		if (child->parent != np) {
 			pr_err("Child node %pOFn links to wrong parent %pOFn\n",
 				 child, np);
-			return -EINVAL;
+			rc = -EINVAL;
+			goto put_child;
 		}
 
 		rc = of_unittest_check_node_linkage(child);
 		if (rc < 0)
-			return rc;
+			goto put_child;
 		count += rc;
 	}
 
 	return count + 1;
+put_child:
+	of_node_put(child);
+	return rc;
 }
 
 static void __init of_unittest_check_tree_linkage(void)
@@ -795,11 +800,15 @@ static void __init of_unittest_property_copy(void)
 
 	new = __of_prop_dup(&p1, GFP_KERNEL);
 	unittest(new && propcmp(&p1, new), "empty property didn't copy correctly\n");
-	__of_prop_free(new);
+	kfree(new->value);
+	kfree(new->name);
+	kfree(new);
 
 	new = __of_prop_dup(&p2, GFP_KERNEL);
 	unittest(new && propcmp(&p2, new), "non-empty property didn't copy correctly\n");
-	__of_prop_free(new);
+	kfree(new->value);
+	kfree(new->name);
+	kfree(new);
 #endif
 }
 
@@ -1193,82 +1202,6 @@ static void __init of_unittest_reg(void)
 		np, addr);
 
 	of_node_put(np);
-}
-
-struct of_unittest_expected_res {
-	int index;
-	struct resource res;
-};
-
-static void __init of_unittest_check_addr(const char *node_path,
-					  const struct of_unittest_expected_res *tab_exp,
-					  unsigned int tab_exp_count)
-{
-	const struct of_unittest_expected_res *expected;
-	struct device_node *np;
-	struct resource res;
-	unsigned int count;
-	int ret;
-
-	if (!IS_ENABLED(CONFIG_OF_ADDRESS))
-		return;
-
-	np = of_find_node_by_path(node_path);
-	if (!np) {
-		pr_err("missing testcase data (%s)\n", node_path);
-		return;
-	}
-
-	expected = tab_exp;
-	count = tab_exp_count;
-	while (count--) {
-		ret = of_address_to_resource(np, expected->index, &res);
-		unittest(!ret, "of_address_to_resource(%pOF, %d) returned error %d\n",
-			 np, expected->index, ret);
-		unittest(resource_type(&res) == resource_type(&expected->res) &&
-			 res.start == expected->res.start &&
-			 resource_size(&res) == resource_size(&expected->res),
-			"of_address_to_resource(%pOF, %d) wrong resource %pR, expected %pR\n",
-			np, expected->index, &res, &expected->res);
-		expected++;
-	}
-
-	of_node_put(np);
-}
-
-static const struct of_unittest_expected_res of_unittest_reg_2cell_expected_res[] = {
-	{.index = 0, .res = DEFINE_RES_MEM(0xa0a01000, 0x100) },
-	{.index = 1, .res = DEFINE_RES_MEM(0xa0a02000, 0x100) },
-	{.index = 2, .res = DEFINE_RES_MEM(0xc0c01000, 0x100) },
-	{.index = 3, .res = DEFINE_RES_MEM(0xd0d01000, 0x100) },
-};
-
-static const struct of_unittest_expected_res of_unittest_reg_3cell_expected_res[] = {
-	{.index = 0, .res = DEFINE_RES_MEM(0xa0a01000, 0x100) },
-	{.index = 1, .res = DEFINE_RES_MEM(0xa0b02000, 0x100) },
-	{.index = 2, .res = DEFINE_RES_MEM(0xc0c01000, 0x100) },
-	{.index = 3, .res = DEFINE_RES_MEM(0xc0c09000, 0x100) },
-	{.index = 4, .res = DEFINE_RES_MEM(0xd0d01000, 0x100) },
-};
-
-static const struct of_unittest_expected_res of_unittest_reg_pci_expected_res[] = {
-	{.index = 0, .res = DEFINE_RES_MEM(0xe8001000, 0x1000) },
-	{.index = 1, .res = DEFINE_RES_MEM(0xea002000, 0x2000) },
-};
-
-static void __init of_unittest_translate_addr(void)
-{
-	of_unittest_check_addr("/testcase-data/address-tests2/bus-2cell@10000000/device@100000",
-			       of_unittest_reg_2cell_expected_res,
-			       ARRAY_SIZE(of_unittest_reg_2cell_expected_res));
-
-	of_unittest_check_addr("/testcase-data/address-tests2/bus-3cell@20000000/local-bus@100000/device@f1001000",
-			       of_unittest_reg_3cell_expected_res,
-			       ARRAY_SIZE(of_unittest_reg_3cell_expected_res));
-
-	of_unittest_check_addr("/testcase-data/address-tests2/pcie@d1070000/pci@0,0/dev@0,0/local-bus@0/dev@e0000000",
-			       of_unittest_reg_pci_expected_res,
-			       ARRAY_SIZE(of_unittest_reg_pci_expected_res));
 }
 
 static void __init of_unittest_parse_interrupts(void)
@@ -1741,16 +1674,20 @@ static int __init unittest_data_add(void)
 		return -EINVAL;
 	}
 
-	/* attach the sub-tree to live tree */
 	if (!of_root) {
-		pr_warn("%s: no live tree to attach sub-tree\n", __func__);
-		kfree(unittest_data);
-		return -ENODEV;
+		of_root = unittest_data_node;
+		for_each_of_allnodes(np)
+			__of_attach_node_sysfs(np);
+		of_aliases = of_find_node_by_path("/aliases");
+		of_chosen = of_find_node_by_path("/chosen");
+		of_overlay_mutex_unlock();
+		return 0;
 	}
 
 	EXPECT_BEGIN(KERN_INFO,
 		     "Duplicate name in testcase-data, renamed to \"duplicate-name#1\"");
 
+	/* attach the sub-tree to live tree */
 	np = unittest_data_node->child;
 	while (np) {
 		struct device_node *next = np->sibling;
@@ -2811,7 +2748,7 @@ static int unittest_i2c_mux_probe(struct i2c_client *client)
 	if (!muxc)
 		return -ENOMEM;
 	for (i = 0; i < nchans; i++) {
-		if (i2c_mux_add_adapter(muxc, 0, i)) {
+		if (i2c_mux_add_adapter(muxc, 0, i, 0)) {
 			dev_err(dev, "Failed to register mux #%d\n", i);
 			i2c_mux_del_adapters(muxc);
 			return -ENODEV;
@@ -3714,7 +3651,9 @@ static __init void of_unittest_overlay_high_level(void)
 				goto err_unlock;
 			}
 			if (__of_add_property(of_symbols, new_prop)) {
-				__of_prop_free(new_prop);
+				kfree(new_prop->name);
+				kfree(new_prop->value);
+				kfree(new_prop);
 				/* "name" auto-generated by unflatten */
 				if (!strcmp(prop->name, "name"))
 					continue;
@@ -4078,6 +4017,10 @@ static int __init of_unittest(void)
 	add_taint(TAINT_TEST, LOCKDEP_STILL_OK);
 
 	/* adding data for unittest */
+
+	if (IS_ENABLED(CONFIG_UML))
+		unittest_unflatten_overlay_base();
+
 	res = unittest_data_add();
 	if (res)
 		return res;
@@ -4109,7 +4052,6 @@ static int __init of_unittest(void)
 	of_unittest_bus_ranges();
 	of_unittest_bus_3cell_ranges();
 	of_unittest_reg();
-	of_unittest_translate_addr();
 	of_unittest_match_node();
 	of_unittest_platform_populate();
 	of_unittest_overlay();

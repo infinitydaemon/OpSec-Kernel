@@ -5,7 +5,6 @@
 #include <linux/types.h>
 #include <linux/device.h>
 #include <linux/blk_types.h>
-#include <asm/dma-types.h>
 
 struct arqb {
 	u64 data;
@@ -46,7 +45,7 @@ struct msb {
 	u16:12;
 	u16 bs:4;
 	u32 blk_count;
-	dma64_t data_addr;
+	u64 data_addr;
 	u64 scm_addr;
 	u64:64;
 } __packed;
@@ -55,7 +54,7 @@ struct aidaw {
 	u8 flags;
 	u32 :24;
 	u32 :32;
-	dma64_t data_addr;
+	u64 data_addr;
 } __packed;
 
 #define MSB_OC_CLEAR	0

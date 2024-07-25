@@ -2569,13 +2569,9 @@ static struct cc_crypto_alg *cc_create_aead_alg(struct cc_alg_template *tmpl,
 
 	alg = &tmpl->template_aead;
 
-	if (snprintf(alg->base.cra_name, CRYPTO_MAX_ALG_NAME, "%s",
-		     tmpl->name) >= CRYPTO_MAX_ALG_NAME)
-		return ERR_PTR(-EINVAL);
-	if (snprintf(alg->base.cra_driver_name, CRYPTO_MAX_ALG_NAME, "%s",
-		     tmpl->driver_name) >= CRYPTO_MAX_ALG_NAME)
-		return ERR_PTR(-EINVAL);
-
+	snprintf(alg->base.cra_name, CRYPTO_MAX_ALG_NAME, "%s", tmpl->name);
+	snprintf(alg->base.cra_driver_name, CRYPTO_MAX_ALG_NAME, "%s",
+		 tmpl->driver_name);
 	alg->base.cra_module = THIS_MODULE;
 	alg->base.cra_priority = CC_CRA_PRIO;
 

@@ -604,35 +604,6 @@ int rvu_mbox_handler_rpm_stats(struct rvu *rvu, struct msg_req *req,
 	return rvu_lmac_get_stats(rvu, req, (void *)rsp);
 }
 
-int rvu_mbox_handler_cgx_stats_rst(struct rvu *rvu, struct msg_req *req,
-				   struct msg_rsp *rsp)
-{
-	int pf = rvu_get_pf(req->hdr.pcifunc);
-	struct rvu_pfvf	*parent_pf;
-	struct mac_ops *mac_ops;
-	u8 cgx_idx, lmac;
-	void *cgxd;
-
-	if (!is_cgx_config_permitted(rvu, req->hdr.pcifunc))
-		return LMAC_AF_ERR_PERM_DENIED;
-
-	parent_pf = &rvu->pf[pf];
-	/* To ensure reset cgx stats won't affect VF stats,
-	 *  check if it used by only PF interface.
-	 *  If not, return
-	 */
-	if (parent_pf->cgx_users > 1) {
-		dev_info(rvu->dev, "CGX busy, could not reset statistics\n");
-		return 0;
-	}
-
-	rvu_get_cgx_lmac_id(rvu->pf2cgxlmac_map[pf], &cgx_idx, &lmac);
-	cgxd = rvu_cgx_pdata(cgx_idx, rvu);
-	mac_ops = get_mac_ops(cgxd);
-
-	return mac_ops->mac_stats_reset(cgxd, lmac);
-}
-
 int rvu_mbox_handler_cgx_fec_stats(struct rvu *rvu,
 				   struct msg_req *req,
 				   struct cgx_fec_stats_rsp *rsp)
@@ -810,11 +781,12 @@ static int rvu_cgx_ptp_rx_cfg(struct rvu *rvu, u16 pcifunc, bool enable)
 	if (!is_mac_feature_supported(rvu, pf, RVU_LMAC_FEAT_PTP))
 		return 0;
 
-	/* This msg is expected only from PF/VFs that are mapped to CGX/RPM LMACs,
+	/* This msg is expected only from PFs that are mapped to CGX LMACs,
 	 * if received from other PF/VF simply ACK, nothing to do.
 	 */
-	if (!is_pf_cgxmapped(rvu, pf))
-		return -EPERM;
+	if ((pcifunc & RVU_PFVF_FUNC_MASK) ||
+	    !is_pf_cgxmapped(rvu, pf))
+		return -ENODEV;
 
 	rvu_get_cgx_lmac_id(rvu->pf2cgxlmac_map[pf], &cgx_id, &lmac_id);
 	cgxd = rvu_cgx_pdata(cgx_id, rvu);

@@ -118,7 +118,7 @@ static struct attribute *mips_cdmm_dev_attrs[] = {
 };
 ATTRIBUTE_GROUPS(mips_cdmm_dev);
 
-const struct bus_type mips_cdmm_bustype = {
+struct bus_type mips_cdmm_bustype = {
 	.name		= "cdmm",
 	.dev_groups	= mips_cdmm_dev_groups,
 	.match		= mips_cdmm_match,

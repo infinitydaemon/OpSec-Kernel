@@ -215,7 +215,6 @@ void sort_r(void *base, size_t num, size_t size,
 	/* pre-scale counters for performance */
 	size_t n = num * size, a = (num/2) * size;
 	const unsigned int lsbit = size & -size;  /* Used to find parent */
-	size_t shift = 0;
 
 	if (!a)		/* num < 2 || size == 0 */
 		return;
@@ -243,21 +242,12 @@ void sort_r(void *base, size_t num, size_t size,
 	for (;;) {
 		size_t b, c, d;
 
-		if (a)			/* Building heap: sift down a */
-			a -= size << shift;
-		else if (n > 3 * size) { /* Sorting: Extract two largest elements */
-			n -= size;
+		if (a)			/* Building heap: sift down --a */
+			a -= size;
+		else if (n -= size)	/* Sorting: Extract root to --n */
 			do_swap(base, base + n, size, swap_func, priv);
-			shift = do_cmp(base + size, base + 2 * size, cmp_func, priv) <= 0;
-			a = size << shift;
-			n -= size;
-			do_swap(base + a, base + n, size, swap_func, priv);
-		} else if (n > size) {	/* Sorting: Extract root */
-			n -= size;
-			do_swap(base, base + n, size, swap_func, priv);
-		} else	{		/* Sort complete */
+		else			/* Sort complete */
 			break;
-		}
 
 		/*
 		 * Sift element at "a" down into heap.  This is the
@@ -272,7 +262,7 @@ void sort_r(void *base, size_t num, size_t size,
 		 * average, 3/4 worst-case.)
 		 */
 		for (b = a; c = 2*b + size, (d = c + size) < n;)
-			b = do_cmp(base + c, base + d, cmp_func, priv) > 0 ? c : d;
+			b = do_cmp(base + c, base + d, cmp_func, priv) >= 0 ? c : d;
 		if (d == n)	/* Special case last leaf with no sibling */
 			b = c;
 

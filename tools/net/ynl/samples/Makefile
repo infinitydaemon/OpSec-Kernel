@@ -9,7 +9,7 @@ ifeq ("$(DEBUG)","1")
   CFLAGS += -g -fsanitize=address -fsanitize=leak -static-libasan
 endif
 
-LDLIBS=../lib/ynl.a ../generated/protos.a
+LDLIBS=-lmnl ../lib/ynl.a ../generated/protos.a
 
 SRCS=$(wildcard *.c)
 BINS=$(patsubst %.c,%,${SRCS})
@@ -18,18 +18,13 @@ include $(wildcard *.d)
 
 all: $(BINS)
 
-CFLAGS_page-pool=$(CFLAGS_netdev)
-
-$(BINS): ../lib/ynl.a ../generated/protos.a $(SRCS)
-	@echo -e '\tCC sample $@'
-	@$(COMPILE.c) $(CFLAGS_$@) $@.c -o $@.o
-	@$(LINK.c) $@.o -o $@  $(LDLIBS)
+$(BINS): ../lib/ynl.a ../generated/protos.a
 
 clean:
 	rm -f *.o *.d *~
 
-distclean: clean
+hardclean: clean
 	rm -f $(BINS)
 
-.PHONY: all clean distclean
+.PHONY: all clean
 .DEFAULT_GOAL=all

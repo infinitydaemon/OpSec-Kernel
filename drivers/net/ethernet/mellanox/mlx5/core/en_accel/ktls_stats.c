@@ -58,31 +58,35 @@ int mlx5e_ktls_get_count(struct mlx5e_priv *priv)
 	return ARRAY_SIZE(mlx5e_ktls_sw_stats_desc);
 }
 
-void mlx5e_ktls_get_strings(struct mlx5e_priv *priv, u8 **data)
+int mlx5e_ktls_get_strings(struct mlx5e_priv *priv, uint8_t *data)
 {
-	unsigned int i, n;
+	unsigned int i, n, idx = 0;
 
 	if (!priv->tls)
-		return;
+		return 0;
 
 	n = mlx5e_ktls_get_count(priv);
 
 	for (i = 0; i < n; i++)
-		ethtool_puts(data, mlx5e_ktls_sw_stats_desc[i].format);
+		strcpy(data + (idx++) * ETH_GSTRING_LEN,
+		       mlx5e_ktls_sw_stats_desc[i].format);
+
+	return n;
 }
 
-void mlx5e_ktls_get_stats(struct mlx5e_priv *priv, u64 **data)
+int mlx5e_ktls_get_stats(struct mlx5e_priv *priv, u64 *data)
 {
-	unsigned int i, n;
+	unsigned int i, n, idx = 0;
 
 	if (!priv->tls)
-		return;
+		return 0;
 
 	n = mlx5e_ktls_get_count(priv);
 
 	for (i = 0; i < n; i++)
-		mlx5e_ethtool_put_stat(
-			data,
-			MLX5E_READ_CTR_ATOMIC64(&priv->tls->sw_stats,
-						mlx5e_ktls_sw_stats_desc, i));
+		data[idx++] = MLX5E_READ_CTR_ATOMIC64(&priv->tls->sw_stats,
+						      mlx5e_ktls_sw_stats_desc,
+						      i);
+
+	return n;
 }

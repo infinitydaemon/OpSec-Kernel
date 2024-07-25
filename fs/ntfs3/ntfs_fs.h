@@ -452,7 +452,6 @@ int attr_allocate_frame(struct ntfs_inode *ni, CLST frame, size_t compr_size,
 int attr_collapse_range(struct ntfs_inode *ni, u64 vbo, u64 bytes);
 int attr_insert_range(struct ntfs_inode *ni, u64 vbo, u64 bytes);
 int attr_punch_hole(struct ntfs_inode *ni, u64 vbo, u64 bytes, u32 *frame_size);
-int attr_force_nonresident(struct ntfs_inode *ni);
 
 /* Functions from attrlist.c */
 void al_destroy(struct ntfs_inode *ni);
@@ -494,7 +493,6 @@ struct inode *dir_search_u(struct inode *dir, const struct cpu_str *uni,
 			   struct ntfs_fnd *fnd);
 bool dir_is_empty(struct inode *dir);
 extern const struct file_operations ntfs_dir_operations;
-extern const struct file_operations ntfs_legacy_dir_operations;
 
 /* Globals from file.c */
 int ntfs_getattr(struct mnt_idmap *idmap, const struct path *path,
@@ -504,12 +502,9 @@ int ntfs3_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
 int ntfs_file_open(struct inode *inode, struct file *file);
 int ntfs_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		__u64 start, __u64 len);
-long ntfs_ioctl(struct file *filp, u32 cmd, unsigned long arg);
-long ntfs_compat_ioctl(struct file *filp, u32 cmd, unsigned long arg);
 extern const struct inode_operations ntfs_special_inode_operations;
 extern const struct inode_operations ntfs_file_inode_operations;
 extern const struct file_operations ntfs_file_operations;
-extern const struct file_operations ntfs_legacy_file_operations;
 
 /* Globals from frecord.c */
 void ni_remove_mi(struct ntfs_inode *ni, struct mft_inode *mi);
@@ -717,10 +712,11 @@ int ntfs_sync_inode(struct inode *inode);
 int ntfs_flush_inodes(struct super_block *sb, struct inode *i1,
 		      struct inode *i2);
 int inode_write_data(struct inode *inode, const void *data, size_t bytes);
-int ntfs_create_inode(struct mnt_idmap *idmap, struct inode *dir,
-		      struct dentry *dentry, const struct cpu_str *uni,
-		      umode_t mode, dev_t dev, const char *symname, u32 size,
-		      struct ntfs_fnd *fnd);
+struct inode *ntfs_create_inode(struct mnt_idmap *idmap, struct inode *dir,
+				struct dentry *dentry,
+				const struct cpu_str *uni, umode_t mode,
+				dev_t dev, const char *symname, u32 size,
+				struct ntfs_fnd *fnd);
 int ntfs_link_inode(struct inode *inode, struct dentry *dentry);
 int ntfs_unlink_inode(struct inode *dir, const struct dentry *dentry);
 void ntfs_evict_inode(struct inode *inode);
@@ -879,7 +875,7 @@ int ntfs_init_acl(struct mnt_idmap *idmap, struct inode *inode,
 
 int ntfs_acl_chmod(struct mnt_idmap *idmap, struct dentry *dentry);
 ssize_t ntfs_listxattr(struct dentry *dentry, char *buffer, size_t size);
-extern const struct xattr_handler *const ntfs_xattr_handlers[];
+extern const struct xattr_handler *ntfs_xattr_handlers[];
 
 int ntfs_save_wsl_perm(struct inode *inode, __le16 *ea_size);
 void ntfs_get_wsl_perm(struct inode *inode);
@@ -968,9 +964,9 @@ static inline bool run_is_empty(struct runs_tree *run)
 }
 
 /* NTFS uses quad aligned bitmaps. */
-static inline size_t ntfs3_bitmap_size(size_t bits)
+static inline size_t bitmap_size(size_t bits)
 {
-	return BITS_TO_U64(bits) * sizeof(u64);
+	return ALIGN((bits + 7) >> 3, 8);
 }
 
 #define _100ns2seconds 10000000
@@ -1155,7 +1151,5 @@ static inline void le64_sub_cpu(__le64 *var, u64 val)
 {
 	*var = cpu_to_le64(le64_to_cpu(*var) - val);
 }
-
-bool is_legacy_ntfs(struct super_block *sb);
 
 #endif /* _LINUX_NTFS3_NTFS_FS_H */

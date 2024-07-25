@@ -213,14 +213,11 @@ enum criteria {
 #define EXT4_MB_USE_RESERVED		0x2000
 /* Do strict check for free blocks while retrying block allocation */
 #define EXT4_MB_STRICT_CHECK		0x4000
-/* Large fragment size list lookup succeeded at least once for
- * CR_POWER2_ALIGNED */
+/* Large fragment size list lookup succeeded at least once for cr = 0 */
 #define EXT4_MB_CR_POWER2_ALIGNED_OPTIMIZED		0x8000
-/* Avg fragment size rb tree lookup succeeded at least once for
- * CR_GOAL_LEN_FAST */
+/* Avg fragment size rb tree lookup succeeded at least once for cr = 1 */
 #define EXT4_MB_CR_GOAL_LEN_FAST_OPTIMIZED		0x00010000
-/* Avg fragment size rb tree lookup succeeded at least once for
- * CR_BEST_AVAIL_LEN */
+/* Avg fragment size rb tree lookup succeeded at least once for cr = 1.5 */
 #define EXT4_MB_CR_BEST_AVAIL_LEN_OPTIMIZED		0x00020000
 
 struct ext4_allocation_request {
@@ -255,10 +252,8 @@ struct ext4_allocation_request {
 #define EXT4_MAP_MAPPED		BIT(BH_Mapped)
 #define EXT4_MAP_UNWRITTEN	BIT(BH_Unwritten)
 #define EXT4_MAP_BOUNDARY	BIT(BH_Boundary)
-#define EXT4_MAP_DELAYED	BIT(BH_Delay)
 #define EXT4_MAP_FLAGS		(EXT4_MAP_NEW | EXT4_MAP_MAPPED |\
-				 EXT4_MAP_UNWRITTEN | EXT4_MAP_BOUNDARY |\
-				 EXT4_MAP_DELAYED)
+				 EXT4_MAP_UNWRITTEN | EXT4_MAP_BOUNDARY)
 
 struct ext4_map_blocks {
 	ext4_fsblk_t m_pblk;
@@ -896,13 +891,10 @@ do {										\
 		(raw_inode)->xtime = cpu_to_le32(clamp_t(int32_t, (ts).tv_sec, S32_MIN, S32_MAX));	\
 } while (0)
 
-#define EXT4_INODE_SET_ATIME(inode, raw_inode)						\
-	EXT4_INODE_SET_XTIME_VAL(i_atime, inode, raw_inode, inode_get_atime(inode))
+#define EXT4_INODE_SET_XTIME(xtime, inode, raw_inode)				\
+	EXT4_INODE_SET_XTIME_VAL(xtime, inode, raw_inode, (inode)->xtime)
 
-#define EXT4_INODE_SET_MTIME(inode, raw_inode)						\
-	EXT4_INODE_SET_XTIME_VAL(i_mtime, inode, raw_inode, inode_get_mtime(inode))
-
-#define EXT4_INODE_SET_CTIME(inode, raw_inode)						\
+#define EXT4_INODE_SET_CTIME(inode, raw_inode)					\
 	EXT4_INODE_SET_XTIME_VAL(i_ctime, inode, raw_inode, inode_get_ctime(inode))
 
 #define EXT4_EINODE_SET_XTIME(xtime, einode, raw_inode)				\
@@ -918,16 +910,9 @@ do {										\
 			.tv_sec = (signed)le32_to_cpu((raw_inode)->xtime)	\
 		})
 
-#define EXT4_INODE_GET_ATIME(inode, raw_inode)					\
+#define EXT4_INODE_GET_XTIME(xtime, inode, raw_inode)				\
 do {										\
-	inode_set_atime_to_ts(inode,						\
-		EXT4_INODE_GET_XTIME_VAL(i_atime, inode, raw_inode));		\
-} while (0)
-
-#define EXT4_INODE_GET_MTIME(inode, raw_inode)					\
-do {										\
-	inode_set_mtime_to_ts(inode,						\
-		EXT4_INODE_GET_XTIME_VAL(i_mtime, inode, raw_inode));		\
+	(inode)->xtime = EXT4_INODE_GET_XTIME_VAL(xtime, inode, raw_inode);	\
 } while (0)
 
 #define EXT4_INODE_GET_CTIME(inode, raw_inode)					\
@@ -1509,7 +1494,6 @@ struct ext4_sb_info {
 	loff_t s_bitmap_maxbytes;	/* max bytes for bitmap files */
 	struct buffer_head * s_sbh;	/* Buffer containing the super block */
 	struct ext4_super_block *s_es;	/* Pointer to the super block in the buffer */
-	/* Array of bh's for the block group descriptors */
 	struct buffer_head * __rcu *s_group_desc;
 	unsigned int s_mount_opt;
 	unsigned int s_mount_opt2;
@@ -1553,7 +1537,7 @@ struct ext4_sb_info {
 	unsigned long s_commit_interval;
 	u32 s_max_batch_time;
 	u32 s_min_batch_time;
-	struct file *s_journal_bdev_file;
+	struct block_device *s_journal_bdev;
 #ifdef CONFIG_QUOTA
 	/* Names of quota files with journalled quota */
 	char __rcu *s_qf_names[EXT4_MAXQUOTAS];
@@ -1580,7 +1564,7 @@ struct ext4_sb_info {
 	unsigned int *s_mb_maxs;
 	unsigned int s_group_info_size;
 	unsigned int s_mb_free_pending;
-	struct list_head s_freed_data_list[2];	/* List of blocks to be freed
+	struct list_head s_freed_data_list;	/* List of blocks to be freed
 						   after commit completed */
 	struct list_head s_discard_list;
 	struct work_struct s_discard_work;
@@ -1669,7 +1653,7 @@ struct ext4_sb_info {
 	__u32 s_csum_seed;
 
 	/* Reclaim extents from extent status tree */
-	struct shrinker *s_es_shrinker;
+	struct shrinker s_es_shrinker;
 	struct list_head s_es_list;	/* List of inodes with reclaimable extents */
 	long s_es_nr_inode;
 	struct ext4_es_stats s_es_stats;
@@ -2917,10 +2901,10 @@ extern const struct seq_operations ext4_mb_seq_groups_ops;
 extern const struct seq_operations ext4_mb_seq_structs_summary_ops;
 extern int ext4_seq_mb_stats_show(struct seq_file *seq, void *offset);
 extern int ext4_mb_init(struct super_block *);
-extern void ext4_mb_release(struct super_block *);
+extern int ext4_mb_release(struct super_block *);
 extern ext4_fsblk_t ext4_mb_new_blocks(handle_t *,
 				struct ext4_allocation_request *, int *);
-extern void ext4_discard_preallocations(struct inode *);
+extern void ext4_discard_preallocations(struct inode *, unsigned int);
 extern int __init ext4_init_mballoc(void);
 extern void ext4_exit_mballoc(void);
 extern ext4_group_t ext4_mb_prefetch(struct super_block *sb,
@@ -2941,7 +2925,7 @@ extern int ext4_group_add_blocks(handle_t *handle, struct super_block *sb,
 extern int ext4_trim_fs(struct super_block *, struct fstrim_range *);
 extern void ext4_process_freed_data(struct super_block *sb, tid_t commit_tid);
 extern void ext4_mb_mark_bb(struct super_block *sb, ext4_fsblk_t block,
-			    int len, bool state);
+		       int len, int state);
 static inline bool ext4_mb_cr_expensive(enum criteria cr)
 {
 	return cr >= CR_GOAL_LEN_SLOW;

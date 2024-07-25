@@ -23,9 +23,7 @@ maintainers:
 
 properties:
   compatible:
-    enum:
-      - st,stm32mp1-fmc2-ebi
-      - st,stm32mp25-fmc2-ebi
+    const: st,stm32mp1-fmc2-ebi
 
   reg:
     maxItems: 1
@@ -34,9 +32,6 @@ properties:
     maxItems: 1
 
   resets:
-    maxItems: 1
-
-  power-domains:
     maxItems: 1
 
   "#address-cells":
@@ -49,10 +44,6 @@ properties:
     description: |
       Reflects the memory layout with four integer values per bank. Format:
       <bank-number> 0 <address of the bank> <size>
-
-  access-controllers:
-    minItems: 1
-    maxItems: 2
 
 patternProperties:
   "^.*@[0-4],[a-f0-9]+$":

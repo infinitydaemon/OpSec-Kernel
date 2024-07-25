@@ -15,9 +15,6 @@ description: |
 
   See also:: include/dt-bindings/clock/qcom,camcc-sm8250.h
 
-allOf:
-  - $ref: qcom,gcc.yaml#
-
 properties:
   compatible:
     const: qcom,sm8250-camcc
@@ -36,6 +33,15 @@ properties:
       - const: bi_tcxo_ao
       - const: sleep_clk
 
+  '#clock-cells':
+    const: 1
+
+  '#reset-cells':
+    const: 1
+
+  '#power-domain-cells':
+    const: 1
+
   power-domains:
     items:
       - description: MMCX power domain
@@ -50,10 +56,14 @@ properties:
 
 required:
   - compatible
+  - reg
   - clocks
   - clock-names
+  - '#clock-cells'
+  - '#reset-cells'
+  - '#power-domain-cells'
 
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

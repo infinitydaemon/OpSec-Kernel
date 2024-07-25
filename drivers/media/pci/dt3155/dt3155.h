@@ -162,6 +162,7 @@
  * @height:		frame height
  * @input:		current input
  * @sequence:		frame counter
+ * @stats:		statistics structure
  * @regs:		local copy of mmio base register
  * @csr2:		local copy of csr2 register
  * @config:		local copy of config register

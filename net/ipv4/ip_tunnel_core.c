@@ -125,7 +125,6 @@ EXPORT_SYMBOL_GPL(__iptunnel_pull_header);
 struct metadata_dst *iptunnel_metadata_reply(struct metadata_dst *md,
 					     gfp_t flags)
 {
-	IP_TUNNEL_DECLARE_FLAGS(tun_flags) = { };
 	struct metadata_dst *res;
 	struct ip_tunnel_info *dst, *src;
 
@@ -145,10 +144,10 @@ struct metadata_dst *iptunnel_metadata_reply(struct metadata_dst *md,
 		       sizeof(struct in6_addr));
 	else
 		dst->key.u.ipv4.dst = src->key.u.ipv4.src;
-	ip_tunnel_flags_copy(dst->key.tun_flags, src->key.tun_flags);
+	dst->key.tun_flags = src->key.tun_flags;
 	dst->mode = src->mode | IP_TUNNEL_INFO_TX;
 	ip_tunnel_info_opts_set(dst, ip_tunnel_info_opts(src),
-				src->options_len, tun_flags);
+				src->options_len, 0);
 
 	return res;
 }
@@ -498,7 +497,7 @@ static int ip_tun_parse_opts_geneve(struct nlattr *attr,
 		opt->opt_class = nla_get_be16(attr);
 		attr = tb[LWTUNNEL_IP_OPT_GENEVE_TYPE];
 		opt->type = nla_get_u8(attr);
-		__set_bit(IP_TUNNEL_GENEVE_OPT_BIT, info->key.tun_flags);
+		info->key.tun_flags |= TUNNEL_GENEVE_OPT;
 	}
 
 	return sizeof(struct geneve_opt) + data_len;
@@ -526,7 +525,7 @@ static int ip_tun_parse_opts_vxlan(struct nlattr *attr,
 		attr = tb[LWTUNNEL_IP_OPT_VXLAN_GBP];
 		md->gbp = nla_get_u32(attr);
 		md->gbp &= VXLAN_GBP_MASK;
-		__set_bit(IP_TUNNEL_VXLAN_OPT_BIT, info->key.tun_flags);
+		info->key.tun_flags |= TUNNEL_VXLAN_OPT;
 	}
 
 	return sizeof(struct vxlan_metadata);
@@ -575,7 +574,7 @@ static int ip_tun_parse_opts_erspan(struct nlattr *attr,
 			set_hwid(&md->u.md2, nla_get_u8(attr));
 		}
 
-		__set_bit(IP_TUNNEL_ERSPAN_OPT_BIT, info->key.tun_flags);
+		info->key.tun_flags |= TUNNEL_ERSPAN_OPT;
 	}
 
 	return sizeof(struct erspan_metadata);
@@ -586,7 +585,7 @@ static int ip_tun_parse_opts(struct nlattr *attr, struct ip_tunnel_info *info,
 {
 	int err, rem, opt_len, opts_len = 0;
 	struct nlattr *nla;
-	u32 type = 0;
+	__be16 type = 0;
 
 	if (!attr)
 		return 0;
@@ -599,7 +598,7 @@ static int ip_tun_parse_opts(struct nlattr *attr, struct ip_tunnel_info *info,
 	nla_for_each_attr(nla, nla_data(attr), nla_len(attr), rem) {
 		switch (nla_type(nla)) {
 		case LWTUNNEL_IP_OPTS_GENEVE:
-			if (type && type != IP_TUNNEL_GENEVE_OPT_BIT)
+			if (type && type != TUNNEL_GENEVE_OPT)
 				return -EINVAL;
 			opt_len = ip_tun_parse_opts_geneve(nla, info, opts_len,
 							   extack);
@@ -608,7 +607,7 @@ static int ip_tun_parse_opts(struct nlattr *attr, struct ip_tunnel_info *info,
 			opts_len += opt_len;
 			if (opts_len > IP_TUNNEL_OPTS_MAX)
 				return -EINVAL;
-			type = IP_TUNNEL_GENEVE_OPT_BIT;
+			type = TUNNEL_GENEVE_OPT;
 			break;
 		case LWTUNNEL_IP_OPTS_VXLAN:
 			if (type)
@@ -618,7 +617,7 @@ static int ip_tun_parse_opts(struct nlattr *attr, struct ip_tunnel_info *info,
 			if (opt_len < 0)
 				return opt_len;
 			opts_len += opt_len;
-			type = IP_TUNNEL_VXLAN_OPT_BIT;
+			type = TUNNEL_VXLAN_OPT;
 			break;
 		case LWTUNNEL_IP_OPTS_ERSPAN:
 			if (type)
@@ -628,7 +627,7 @@ static int ip_tun_parse_opts(struct nlattr *attr, struct ip_tunnel_info *info,
 			if (opt_len < 0)
 				return opt_len;
 			opts_len += opt_len;
-			type = IP_TUNNEL_ERSPAN_OPT_BIT;
+			type = TUNNEL_ERSPAN_OPT;
 			break;
 		default:
 			return -EINVAL;
@@ -706,16 +705,10 @@ static int ip_tun_build_state(struct net *net, struct nlattr *attr,
 	if (tb[LWTUNNEL_IP_TOS])
 		tun_info->key.tos = nla_get_u8(tb[LWTUNNEL_IP_TOS]);
 
-	if (tb[LWTUNNEL_IP_FLAGS]) {
-		IP_TUNNEL_DECLARE_FLAGS(flags);
-
-		ip_tunnel_flags_from_be16(flags,
-					  nla_get_be16(tb[LWTUNNEL_IP_FLAGS]));
-		ip_tunnel_clear_options_present(flags);
-
-		ip_tunnel_flags_or(tun_info->key.tun_flags,
-				   tun_info->key.tun_flags, flags);
-	}
+	if (tb[LWTUNNEL_IP_FLAGS])
+		tun_info->key.tun_flags |=
+				(nla_get_be16(tb[LWTUNNEL_IP_FLAGS]) &
+				 ~TUNNEL_OPTIONS_PRESENT);
 
 	tun_info->mode = IP_TUNNEL_INFO_TX;
 	tun_info->options_len = opt_len;
@@ -819,18 +812,18 @@ static int ip_tun_fill_encap_opts(struct sk_buff *skb, int type,
 	struct nlattr *nest;
 	int err = 0;
 
-	if (!ip_tunnel_is_options_present(tun_info->key.tun_flags))
+	if (!(tun_info->key.tun_flags & TUNNEL_OPTIONS_PRESENT))
 		return 0;
 
 	nest = nla_nest_start_noflag(skb, type);
 	if (!nest)
 		return -ENOMEM;
 
-	if (test_bit(IP_TUNNEL_GENEVE_OPT_BIT, tun_info->key.tun_flags))
+	if (tun_info->key.tun_flags & TUNNEL_GENEVE_OPT)
 		err = ip_tun_fill_encap_opts_geneve(skb, tun_info);
-	else if (test_bit(IP_TUNNEL_VXLAN_OPT_BIT, tun_info->key.tun_flags))
+	else if (tun_info->key.tun_flags & TUNNEL_VXLAN_OPT)
 		err = ip_tun_fill_encap_opts_vxlan(skb, tun_info);
-	else if (test_bit(IP_TUNNEL_ERSPAN_OPT_BIT, tun_info->key.tun_flags))
+	else if (tun_info->key.tun_flags & TUNNEL_ERSPAN_OPT)
 		err = ip_tun_fill_encap_opts_erspan(skb, tun_info);
 
 	if (err) {
@@ -853,8 +846,7 @@ static int ip_tun_fill_encap_info(struct sk_buff *skb,
 	    nla_put_in_addr(skb, LWTUNNEL_IP_SRC, tun_info->key.u.ipv4.src) ||
 	    nla_put_u8(skb, LWTUNNEL_IP_TOS, tun_info->key.tos) ||
 	    nla_put_u8(skb, LWTUNNEL_IP_TTL, tun_info->key.ttl) ||
-	    nla_put_be16(skb, LWTUNNEL_IP_FLAGS,
-			 ip_tunnel_flags_to_be16(tun_info->key.tun_flags)) ||
+	    nla_put_be16(skb, LWTUNNEL_IP_FLAGS, tun_info->key.tun_flags) ||
 	    ip_tun_fill_encap_opts(skb, LWTUNNEL_IP_OPTS, tun_info))
 		return -ENOMEM;
 
@@ -865,11 +857,11 @@ static int ip_tun_opts_nlsize(struct ip_tunnel_info *info)
 {
 	int opt_len;
 
-	if (!ip_tunnel_is_options_present(info->key.tun_flags))
+	if (!(info->key.tun_flags & TUNNEL_OPTIONS_PRESENT))
 		return 0;
 
 	opt_len = nla_total_size(0);		/* LWTUNNEL_IP_OPTS */
-	if (test_bit(IP_TUNNEL_GENEVE_OPT_BIT, info->key.tun_flags)) {
+	if (info->key.tun_flags & TUNNEL_GENEVE_OPT) {
 		struct geneve_opt *opt;
 		int offset = 0;
 
@@ -882,10 +874,10 @@ static int ip_tun_opts_nlsize(struct ip_tunnel_info *info)
 							/* OPT_GENEVE_DATA */
 			offset += sizeof(*opt) + opt->length * 4;
 		}
-	} else if (test_bit(IP_TUNNEL_VXLAN_OPT_BIT, info->key.tun_flags)) {
+	} else if (info->key.tun_flags & TUNNEL_VXLAN_OPT) {
 		opt_len += nla_total_size(0)	/* LWTUNNEL_IP_OPTS_VXLAN */
 			   + nla_total_size(4);	/* OPT_VXLAN_GBP */
-	} else if (test_bit(IP_TUNNEL_ERSPAN_OPT_BIT, info->key.tun_flags)) {
+	} else if (info->key.tun_flags & TUNNEL_ERSPAN_OPT) {
 		struct erspan_metadata *md = ip_tunnel_info_opts(info);
 
 		opt_len += nla_total_size(0)	/* LWTUNNEL_IP_OPTS_ERSPAN */
@@ -992,17 +984,10 @@ static int ip6_tun_build_state(struct net *net, struct nlattr *attr,
 	if (tb[LWTUNNEL_IP6_TC])
 		tun_info->key.tos = nla_get_u8(tb[LWTUNNEL_IP6_TC]);
 
-	if (tb[LWTUNNEL_IP6_FLAGS]) {
-		IP_TUNNEL_DECLARE_FLAGS(flags);
-		__be16 data;
-
-		data = nla_get_be16(tb[LWTUNNEL_IP6_FLAGS]);
-		ip_tunnel_flags_from_be16(flags, data);
-		ip_tunnel_clear_options_present(flags);
-
-		ip_tunnel_flags_or(tun_info->key.tun_flags,
-				   tun_info->key.tun_flags, flags);
-	}
+	if (tb[LWTUNNEL_IP6_FLAGS])
+		tun_info->key.tun_flags |=
+				(nla_get_be16(tb[LWTUNNEL_IP6_FLAGS]) &
+				 ~TUNNEL_OPTIONS_PRESENT);
 
 	tun_info->mode = IP_TUNNEL_INFO_TX | IP_TUNNEL_INFO_IPV6;
 	tun_info->options_len = opt_len;
@@ -1023,8 +1008,7 @@ static int ip6_tun_fill_encap_info(struct sk_buff *skb,
 	    nla_put_in6_addr(skb, LWTUNNEL_IP6_SRC, &tun_info->key.u.ipv6.src) ||
 	    nla_put_u8(skb, LWTUNNEL_IP6_TC, tun_info->key.tos) ||
 	    nla_put_u8(skb, LWTUNNEL_IP6_HOPLIMIT, tun_info->key.ttl) ||
-	    nla_put_be16(skb, LWTUNNEL_IP6_FLAGS,
-			 ip_tunnel_flags_to_be16(tun_info->key.tun_flags)) ||
+	    nla_put_be16(skb, LWTUNNEL_IP6_FLAGS, tun_info->key.tun_flags) ||
 	    ip_tun_fill_encap_opts(skb, LWTUNNEL_IP6_OPTS, tun_info))
 		return -ENOMEM;
 
@@ -1132,7 +1116,7 @@ bool ip_tunnel_netlink_encap_parms(struct nlattr *data[],
 EXPORT_SYMBOL_GPL(ip_tunnel_netlink_encap_parms);
 
 void ip_tunnel_netlink_parms(struct nlattr *data[],
-			     struct ip_tunnel_parm_kern *parms)
+			     struct ip_tunnel_parm *parms)
 {
 	if (data[IFLA_IPTUN_LINK])
 		parms->link = nla_get_u32(data[IFLA_IPTUN_LINK]);
@@ -1155,12 +1139,8 @@ void ip_tunnel_netlink_parms(struct nlattr *data[],
 	if (!data[IFLA_IPTUN_PMTUDISC] || nla_get_u8(data[IFLA_IPTUN_PMTUDISC]))
 		parms->iph.frag_off = htons(IP_DF);
 
-	if (data[IFLA_IPTUN_FLAGS]) {
-		__be16 flags;
-
-		flags = nla_get_be16(data[IFLA_IPTUN_FLAGS]);
-		ip_tunnel_flags_from_be16(parms->i_flags, flags);
-	}
+	if (data[IFLA_IPTUN_FLAGS])
+		parms->i_flags = nla_get_be16(data[IFLA_IPTUN_FLAGS]);
 
 	if (data[IFLA_IPTUN_PROTO])
 		parms->iph.protocol = nla_get_u8(data[IFLA_IPTUN_PROTO]);

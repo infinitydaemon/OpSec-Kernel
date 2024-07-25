@@ -61,6 +61,7 @@ struct rz_mtu3_pwm_channel {
 /**
  * struct rz_mtu3_pwm_chip - MTU3 pwm private data
  *
+ * @chip: MTU3 pwm chip data
  * @clk: MTU3 module clock
  * @lock: Lock to prevent concurrent access for usage count
  * @rate: MTU3 clock rate
@@ -71,6 +72,7 @@ struct rz_mtu3_pwm_channel {
  */
 
 struct rz_mtu3_pwm_chip {
+	struct pwm_chip chip;
 	struct clk *clk;
 	struct mutex lock;
 	unsigned long rate;
@@ -90,7 +92,7 @@ static const struct rz_mtu3_channel_io_map channel_map[] = {
 
 static inline struct rz_mtu3_pwm_chip *to_rz_mtu3_pwm_chip(struct pwm_chip *chip)
 {
-	return pwmchip_get_drvdata(chip);
+	return container_of(chip, struct rz_mtu3_pwm_chip, chip);
 }
 
 static void rz_mtu3_pwm_read_tgr_registers(struct rz_mtu3_pwm_channel *priv,
@@ -209,15 +211,15 @@ static void rz_mtu3_pwm_free(struct pwm_chip *chip, struct pwm_device *pwm)
 	mutex_unlock(&rz_mtu3_pwm->lock);
 }
 
-static int rz_mtu3_pwm_enable(struct pwm_chip *chip, struct pwm_device *pwm)
+static int rz_mtu3_pwm_enable(struct rz_mtu3_pwm_chip *rz_mtu3_pwm,
+			      struct pwm_device *pwm)
 {
-	struct rz_mtu3_pwm_chip *rz_mtu3_pwm = to_rz_mtu3_pwm_chip(chip);
 	struct rz_mtu3_pwm_channel *priv;
 	u32 ch;
 	u8 val;
 	int rc;
 
-	rc = pm_runtime_resume_and_get(pwmchip_parent(chip));
+	rc = pm_runtime_resume_and_get(rz_mtu3_pwm->chip.dev);
 	if (rc)
 		return rc;
 
@@ -241,9 +243,9 @@ static int rz_mtu3_pwm_enable(struct pwm_chip *chip, struct pwm_device *pwm)
 	return 0;
 }
 
-static void rz_mtu3_pwm_disable(struct pwm_chip *chip, struct pwm_device *pwm)
+static void rz_mtu3_pwm_disable(struct rz_mtu3_pwm_chip *rz_mtu3_pwm,
+				struct pwm_device *pwm)
 {
-	struct rz_mtu3_pwm_chip *rz_mtu3_pwm = to_rz_mtu3_pwm_chip(chip);
 	struct rz_mtu3_pwm_channel *priv;
 	u32 ch;
 
@@ -263,7 +265,7 @@ static void rz_mtu3_pwm_disable(struct pwm_chip *chip, struct pwm_device *pwm)
 
 	mutex_unlock(&rz_mtu3_pwm->lock);
 
-	pm_runtime_put_sync(pwmchip_parent(chip));
+	pm_runtime_put_sync(rz_mtu3_pwm->chip.dev);
 }
 
 static int rz_mtu3_pwm_get_state(struct pwm_chip *chip, struct pwm_device *pwm,
@@ -272,7 +274,7 @@ static int rz_mtu3_pwm_get_state(struct pwm_chip *chip, struct pwm_device *pwm,
 	struct rz_mtu3_pwm_chip *rz_mtu3_pwm = to_rz_mtu3_pwm_chip(chip);
 	int rc;
 
-	rc = pm_runtime_resume_and_get(pwmchip_parent(chip));
+	rc = pm_runtime_resume_and_get(chip->dev);
 	if (rc)
 		return rc;
 
@@ -305,7 +307,7 @@ static int rz_mtu3_pwm_get_state(struct pwm_chip *chip, struct pwm_device *pwm,
 	}
 
 	state->polarity = PWM_POLARITY_NORMAL;
-	pm_runtime_put(pwmchip_parent(chip));
+	pm_runtime_put(chip->dev);
 
 	return 0;
 }
@@ -360,7 +362,7 @@ static int rz_mtu3_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
 	if (!pwm->state.enabled) {
 		int rc;
 
-		rc = pm_runtime_resume_and_get(pwmchip_parent(chip));
+		rc = pm_runtime_resume_and_get(chip->dev);
 		if (rc)
 			return rc;
 	}
@@ -397,7 +399,7 @@ static int rz_mtu3_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
 
 	/* If the PWM is not enabled, turn the clock off again to save power. */
 	if (!pwm->state.enabled)
-		pm_runtime_put(pwmchip_parent(chip));
+		pm_runtime_put(chip->dev);
 
 	return 0;
 }
@@ -414,7 +416,7 @@ static int rz_mtu3_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 
 	if (!state->enabled) {
 		if (enabled)
-			rz_mtu3_pwm_disable(chip, pwm);
+			rz_mtu3_pwm_disable(rz_mtu3_pwm, pwm);
 
 		return 0;
 	}
@@ -426,7 +428,7 @@ static int rz_mtu3_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 		return ret;
 
 	if (!enabled)
-		ret = rz_mtu3_pwm_enable(chip, pwm);
+		ret = rz_mtu3_pwm_enable(rz_mtu3_pwm, pwm);
 
 	return ret;
 }
@@ -436,12 +438,12 @@ static const struct pwm_ops rz_mtu3_pwm_ops = {
 	.free = rz_mtu3_pwm_free,
 	.get_state = rz_mtu3_pwm_get_state,
 	.apply = rz_mtu3_pwm_apply,
+	.owner = THIS_MODULE,
 };
 
 static int rz_mtu3_pwm_pm_runtime_suspend(struct device *dev)
 {
-	struct pwm_chip *chip = dev_get_drvdata(dev);
-	struct rz_mtu3_pwm_chip *rz_mtu3_pwm = to_rz_mtu3_pwm_chip(chip);
+	struct rz_mtu3_pwm_chip *rz_mtu3_pwm = dev_get_drvdata(dev);
 
 	clk_disable_unprepare(rz_mtu3_pwm->clk);
 
@@ -450,8 +452,7 @@ static int rz_mtu3_pwm_pm_runtime_suspend(struct device *dev)
 
 static int rz_mtu3_pwm_pm_runtime_resume(struct device *dev)
 {
-	struct pwm_chip *chip = dev_get_drvdata(dev);
-	struct rz_mtu3_pwm_chip *rz_mtu3_pwm = to_rz_mtu3_pwm_chip(chip);
+	struct rz_mtu3_pwm_chip *rz_mtu3_pwm = dev_get_drvdata(dev);
 
 	return clk_prepare_enable(rz_mtu3_pwm->clk);
 }
@@ -462,28 +463,24 @@ static DEFINE_RUNTIME_DEV_PM_OPS(rz_mtu3_pwm_pm_ops,
 
 static void rz_mtu3_pwm_pm_disable(void *data)
 {
-	struct pwm_chip *chip = data;
-	struct rz_mtu3_pwm_chip *rz_mtu3_pwm = to_rz_mtu3_pwm_chip(chip);
+	struct rz_mtu3_pwm_chip *rz_mtu3_pwm = data;
 
 	clk_rate_exclusive_put(rz_mtu3_pwm->clk);
-	pm_runtime_disable(pwmchip_parent(chip));
-	pm_runtime_set_suspended(pwmchip_parent(chip));
+	pm_runtime_disable(rz_mtu3_pwm->chip.dev);
+	pm_runtime_set_suspended(rz_mtu3_pwm->chip.dev);
 }
 
 static int rz_mtu3_pwm_probe(struct platform_device *pdev)
 {
 	struct rz_mtu3 *parent_ddata = dev_get_drvdata(pdev->dev.parent);
 	struct rz_mtu3_pwm_chip *rz_mtu3_pwm;
-	struct pwm_chip *chip;
 	struct device *dev = &pdev->dev;
 	unsigned int i, j = 0;
 	int ret;
 
-	chip = devm_pwmchip_alloc(&pdev->dev, RZ_MTU3_MAX_PWM_CHANNELS,
-				  sizeof(*rz_mtu3_pwm));
-	if (IS_ERR(chip))
-		return PTR_ERR(chip);
-	rz_mtu3_pwm = to_rz_mtu3_pwm_chip(chip);
+	rz_mtu3_pwm = devm_kzalloc(&pdev->dev, sizeof(*rz_mtu3_pwm), GFP_KERNEL);
+	if (!rz_mtu3_pwm)
+		return -ENOMEM;
 
 	rz_mtu3_pwm->clk = parent_ddata->clk;
 
@@ -498,7 +495,7 @@ static int rz_mtu3_pwm_probe(struct platform_device *pdev)
 	}
 
 	mutex_init(&rz_mtu3_pwm->lock);
-	platform_set_drvdata(pdev, chip);
+	platform_set_drvdata(pdev, rz_mtu3_pwm);
 	ret = clk_prepare_enable(rz_mtu3_pwm->clk);
 	if (ret)
 		return dev_err_probe(dev, ret, "Clock enable failed\n");
@@ -518,13 +515,15 @@ static int rz_mtu3_pwm_probe(struct platform_device *pdev)
 
 	pm_runtime_set_active(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);
+	rz_mtu3_pwm->chip.dev = &pdev->dev;
 	ret = devm_add_action_or_reset(&pdev->dev, rz_mtu3_pwm_pm_disable,
-				       chip);
+				       rz_mtu3_pwm);
 	if (ret < 0)
 		return ret;
 
-	chip->ops = &rz_mtu3_pwm_ops;
-	ret = devm_pwmchip_add(&pdev->dev, chip);
+	rz_mtu3_pwm->chip.ops = &rz_mtu3_pwm_ops;
+	rz_mtu3_pwm->chip.npwm = RZ_MTU3_MAX_PWM_CHANNELS;
+	ret = devm_pwmchip_add(&pdev->dev, &rz_mtu3_pwm->chip);
 	if (ret)
 		return dev_err_probe(&pdev->dev, ret, "failed to add PWM chip\n");
 

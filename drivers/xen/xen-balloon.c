@@ -237,7 +237,7 @@ static const struct attribute_group *balloon_groups[] = {
 	NULL
 };
 
-static const struct bus_type balloon_subsys = {
+static struct bus_type balloon_subsys = {
 	.name = BALLOON_CLASS_NAME,
 	.dev_name = BALLOON_CLASS_NAME,
 };

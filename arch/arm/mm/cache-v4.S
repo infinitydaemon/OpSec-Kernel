@@ -6,7 +6,6 @@
  */
 #include <linux/linkage.h>
 #include <linux/init.h>
-#include <linux/cfi_types.h>
 #include <asm/assembler.h>
 #include <asm/page.h>
 #include "proc-macros.S"
@@ -16,9 +15,9 @@
  *
  *	Unconditionally clean and invalidate the entire icache.
  */
-SYM_TYPED_FUNC_START(v4_flush_icache_all)
+ENTRY(v4_flush_icache_all)
 	ret	lr
-SYM_FUNC_END(v4_flush_icache_all)
+ENDPROC(v4_flush_icache_all)
 
 /*
  *	flush_user_cache_all()
@@ -28,22 +27,21 @@ SYM_FUNC_END(v4_flush_icache_all)
  *
  *	- mm	- mm_struct describing address space
  */
-SYM_FUNC_ALIAS(v4_flush_user_cache_all, v4_flush_kern_cache_all)
-
+ENTRY(v4_flush_user_cache_all)
+	/* FALLTHROUGH */
 /*
  *	flush_kern_cache_all()
  *
  *	Clean and invalidate the entire cache.
  */
-SYM_TYPED_FUNC_START(v4_flush_kern_cache_all)
+ENTRY(v4_flush_kern_cache_all)
 #ifdef CONFIG_CPU_CP15
 	mov	r0, #0
 	mcr	p15, 0, r0, c7, c7, 0		@ flush ID cache
 	ret	lr
 #else
-	ret	lr
+	/* FALLTHROUGH */
 #endif
-SYM_FUNC_END(v4_flush_kern_cache_all)
 
 /*
  *	flush_user_cache_range(start, end, flags)
@@ -55,15 +53,14 @@ SYM_FUNC_END(v4_flush_kern_cache_all)
  *	- end	- end address (exclusive, may not be aligned)
  *	- flags	- vma_area_struct flags describing address space
  */
-SYM_TYPED_FUNC_START(v4_flush_user_cache_range)
+ENTRY(v4_flush_user_cache_range)
 #ifdef CONFIG_CPU_CP15
 	mov	ip, #0
 	mcr	p15, 0, ip, c7, c7, 0		@ flush ID cache
 	ret	lr
 #else
-	ret	lr
+	/* FALLTHROUGH */
 #endif
-SYM_FUNC_END(v4_flush_user_cache_range)
 
 /*
  *	coherent_kern_range(start, end)
@@ -75,9 +72,8 @@ SYM_FUNC_END(v4_flush_user_cache_range)
  *	- start  - virtual start address
  *	- end	 - virtual end address
  */
-SYM_TYPED_FUNC_START(v4_coherent_kern_range)
-	ret	lr
-SYM_FUNC_END(v4_coherent_kern_range)
+ENTRY(v4_coherent_kern_range)
+	/* FALLTHROUGH */
 
 /*
  *	coherent_user_range(start, end)
@@ -89,10 +85,9 @@ SYM_FUNC_END(v4_coherent_kern_range)
  *	- start  - virtual start address
  *	- end	 - virtual end address
  */
-SYM_TYPED_FUNC_START(v4_coherent_user_range)
+ENTRY(v4_coherent_user_range)
 	mov	r0, #0
 	ret	lr
-SYM_FUNC_END(v4_coherent_user_range)
 
 /*
  *	flush_kern_dcache_area(void *addr, size_t size)
@@ -103,11 +98,8 @@ SYM_FUNC_END(v4_coherent_user_range)
  *	- addr	- kernel address
  *	- size	- region size
  */
-SYM_TYPED_FUNC_START(v4_flush_kern_dcache_area)
-#ifdef CONFIG_CFI_CLANG /* Fallthrough if !CFI */
-	b	v4_dma_flush_range
-#endif
-SYM_FUNC_END(v4_flush_kern_dcache_area)
+ENTRY(v4_flush_kern_dcache_area)
+	/* FALLTHROUGH */
 
 /*
  *	dma_flush_range(start, end)
@@ -117,13 +109,12 @@ SYM_FUNC_END(v4_flush_kern_dcache_area)
  *	- start  - virtual start address
  *	- end	 - virtual end address
  */
-SYM_TYPED_FUNC_START(v4_dma_flush_range)
+ENTRY(v4_dma_flush_range)
 #ifdef CONFIG_CPU_CP15
 	mov	r0, #0
 	mcr	p15, 0, r0, c7, c7, 0		@ flush ID cache
 #endif
 	ret	lr
-SYM_FUNC_END(v4_dma_flush_range)
 
 /*
  *	dma_unmap_area(start, size, dir)
@@ -131,11 +122,10 @@ SYM_FUNC_END(v4_dma_flush_range)
  *	- size	- size of region
  *	- dir	- DMA direction
  */
-SYM_TYPED_FUNC_START(v4_dma_unmap_area)
+ENTRY(v4_dma_unmap_area)
 	teq	r2, #DMA_TO_DEVICE
 	bne	v4_dma_flush_range
-	ret	lr
-SYM_FUNC_END(v4_dma_unmap_area)
+	/* FALLTHROUGH */
 
 /*
  *	dma_map_area(start, size, dir)
@@ -143,6 +133,15 @@ SYM_FUNC_END(v4_dma_unmap_area)
  *	- size	- size of region
  *	- dir	- DMA direction
  */
-SYM_TYPED_FUNC_START(v4_dma_map_area)
+ENTRY(v4_dma_map_area)
 	ret	lr
-SYM_FUNC_END(v4_dma_map_area)
+ENDPROC(v4_dma_unmap_area)
+ENDPROC(v4_dma_map_area)
+
+	.globl	v4_flush_kern_cache_louis
+	.equ	v4_flush_kern_cache_louis, v4_flush_kern_cache_all
+
+	__INITDATA
+
+	@ define struct cpu_cache_fns (see <asm/cacheflush.h> and proc-macros.S)
+	define_cache_functions v4

@@ -3,7 +3,6 @@
 #include <linux/slab.h>
 #include <linux/netdevice.h>
 #include <net/gro_cells.h>
-#include <net/hotdata.h>
 
 struct gro_cell {
 	struct sk_buff_head	napi_skbs;
@@ -27,7 +26,7 @@ int gro_cells_receive(struct gro_cells *gcells, struct sk_buff *skb)
 
 	cell = this_cpu_ptr(gcells->cells);
 
-	if (skb_queue_len(&cell->napi_skbs) > READ_ONCE(net_hotdata.max_backlog)) {
+	if (skb_queue_len(&cell->napi_skbs) > READ_ONCE(netdev_max_backlog)) {
 drop:
 		dev_core_stats_rx_dropped_inc(dev);
 		kfree_skb(skb);

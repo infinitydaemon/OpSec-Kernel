@@ -419,6 +419,15 @@ static int __pci_device_probe(struct pci_driver *drv, struct pci_dev *pci_dev)
 	return error;
 }
 
+int __weak pcibios_alloc_irq(struct pci_dev *dev)
+{
+	return 0;
+}
+
+void __weak pcibios_free_irq(struct pci_dev *dev)
+{
+}
+
 #ifdef CONFIG_PCI_IOV
 static inline bool pci_device_can_probe(struct pci_dev *pdev)
 {
@@ -1380,7 +1389,10 @@ static int pci_pm_runtime_idle(struct device *dev)
 	if (!pci_dev->driver)
 		return 0;
 
-	if (pm && pm->runtime_idle)
+	if (!pm)
+		return -ENOSYS;
+
+	if (pm->runtime_idle)
 		return pm->runtime_idle(dev);
 
 	return 0;
@@ -1709,7 +1721,7 @@ static int pcie_port_bus_match(struct device *dev, struct device_driver *drv)
 	return 1;
 }
 
-const struct bus_type pcie_port_bus_type = {
+struct bus_type pcie_port_bus_type = {
 	.name		= "pci_express",
 	.match		= pcie_port_bus_match,
 };

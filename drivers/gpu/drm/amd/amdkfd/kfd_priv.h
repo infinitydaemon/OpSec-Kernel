@@ -99,11 +99,11 @@
 /*
  * Size of the per-process TBA+TMA buffer: 2 pages
  *
- * The first chunk is the TBA used for the CWSR ISA code. The second
- * chunk is used as TMA for user-mode trap handler setup in daisy-chain mode.
+ * The first page is the TBA used for the CWSR ISA code. The second
+ * page is used as TMA for user-mode trap handler setup in daisy-chain mode.
  */
 #define KFD_CWSR_TBA_TMA_SIZE (PAGE_SIZE * 2)
-#define KFD_CWSR_TMA_OFFSET (PAGE_SIZE + 2048)
+#define KFD_CWSR_TMA_OFFSET PAGE_SIZE
 
 #define KFD_MAX_NUM_OF_QUEUES_PER_DEVICE		\
 	(KFD_MAX_NUM_OF_PROCESSES *			\
@@ -202,7 +202,7 @@ enum cache_policy {
 	cache_policy_noncoherent
 };
 
-#define KFD_GC_VERSION(dev) (amdgpu_ip_version((dev)->adev, GC_HWIP, 0))
+#define KFD_GC_VERSION(dev) ((dev)->adev->ip_versions[GC_HWIP][0])
 #define KFD_IS_SOC15(dev)   ((KFD_GC_VERSION(dev)) >= (IP_VERSION(9, 0, 1)))
 #define KFD_SUPPORT_XNACK_PER_PROCESS(dev)\
 	((KFD_GC_VERSION(dev) == IP_VERSION(9, 4, 2)) ||	\
@@ -532,7 +532,6 @@ struct queue_properties {
 enum mqd_update_flag {
 	UPDATE_FLAG_DBG_WA_ENABLE = 1,
 	UPDATE_FLAG_DBG_WA_DISABLE = 2,
-	UPDATE_FLAG_IS_GWS = 4, /* quirk for gfx9 IP */
 };
 
 struct mqd_update_info {
@@ -749,6 +748,7 @@ struct kfd_process_device {
 	/* VM context for GPUVM allocations */
 	struct file *drm_file;
 	void *drm_priv;
+	atomic64_t tlb_seq;
 
 	/* GPUVM allocations storage */
 	struct idr alloc_idr;
@@ -918,7 +918,7 @@ struct kfd_process {
 	 * fence will be triggered during eviction and new one will be created
 	 * during restore
 	 */
-	struct dma_fence __rcu *ef;
+	struct dma_fence *ef;
 
 	/* Work items for evicting and restoring BOs */
 	struct delayed_work eviction_work;
@@ -1343,7 +1343,7 @@ int pqm_get_queue_snapshot(struct process_queue_manager *pqm,
 			   int *num_qss_entries,
 			   uint32_t *entry_size);
 
-int amdkfd_fence_wait_timeout(struct device_queue_manager *dqm,
+int amdkfd_fence_wait_timeout(uint64_t *fence_addr,
 			      uint64_t fence_value,
 			      unsigned int timeout_ms);
 
@@ -1462,14 +1462,7 @@ void kfd_signal_reset_event(struct kfd_node *dev);
 
 void kfd_signal_poison_consumed_event(struct kfd_node *dev, u32 pasid);
 
-static inline void kfd_flush_tlb(struct kfd_process_device *pdd,
-				 enum TLB_FLUSH_TYPE type)
-{
-	struct amdgpu_device *adev = pdd->dev->adev;
-	struct amdgpu_vm *vm = drm_priv_to_vm(pdd->drm_priv);
-
-	amdgpu_vm_flush_compute_tlb(adev, vm, type, pdd->dev->xcc_mask);
-}
+void kfd_flush_tlb(struct kfd_process_device *pdd, enum TLB_FLUSH_TYPE type);
 
 static inline bool kfd_flush_tlb_after_unmap(struct kfd_dev *dev)
 {

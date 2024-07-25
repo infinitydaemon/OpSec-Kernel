@@ -5,7 +5,6 @@
 
 #include <xen/hvc-console.h>
 
-#include <asm/bootparam.h>
 #include <asm/io_apic.h>
 #include <asm/hypervisor.h>
 #include <asm/e820/api.h>

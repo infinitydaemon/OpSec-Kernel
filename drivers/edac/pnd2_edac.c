@@ -16,20 +16,18 @@
  * rank, bank, row and column using the appropriate "dunit_ops" functions/parameters.
  */
 
-#include <linux/bitmap.h>
-#include <linux/delay.h>
-#include <linux/edac.h>
-#include <linux/init.h>
-#include <linux/math64.h>
-#include <linux/mmzone.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/pci_ids.h>
-#include <linux/sizes.h>
 #include <linux/slab.h>
+#include <linux/delay.h>
+#include <linux/edac.h>
+#include <linux/mmzone.h>
 #include <linux/smp.h>
-
+#include <linux/bitmap.h>
+#include <linux/math64.h>
+#include <linux/mod_devicetable.h>
 #include <linux/platform_data/x86/p2sb.h>
 
 #include <asm/cpu_device_id.h>
@@ -111,6 +109,7 @@ static struct mem_ctl_info *pnd2_mci;
 #define MOT_CHAN_INTLV_BIT_1SLC_2CH 12
 #define MOT_CHAN_INTLV_BIT_2SLC_2CH 13
 #define SELECTOR_DISABLED (-1)
+#define _4GB (1ul << 32)
 
 #define PMI_ADDRESS_WIDTH	31
 #define PND_MAX_PHYS_BIT	39
@@ -184,7 +183,7 @@ static int _apl_rd_reg(int port, int off, int op, u32 *data)
 	}
 
 	P2SB_READ(dword, P2SB_DATA_OFF, data);
-	ret = (status >> 1) & GENMASK(1, 0);
+	ret = (status >> 1) & 0x3;
 out:
 	/* Hide the P2SB device, if it was hidden before */
 	if (hidden)
@@ -308,7 +307,7 @@ static bool two_channels; /* Both PMI channels in one slice enabled */
 
 static u8 sym_chan_mask;
 static u8 asym_chan_mask;
-static unsigned long chan_mask;
+static u8 chan_mask;
 
 static int slice_selector = -1;
 static int chan_selector = -1;
@@ -330,7 +329,7 @@ static void mk_region_mask(char *name, struct region *rp, u64 base, u64 mask)
 		return;
 	}
 	if (mask != GENMASK_ULL(PND_MAX_PHYS_BIT, __ffs(mask))) {
-		pr_info(FW_BUG "MOT mask is invalid\n");
+		pr_info(FW_BUG "MOT mask not power of two\n");
 		return;
 	}
 	if (base & ~mask) {
@@ -588,7 +587,7 @@ static int get_registers(void)
 /* Get a contiguous memory address (remove the MMIO gap) */
 static u64 remove_mmio_gap(u64 sys)
 {
-	return (sys < SZ_4G) ? sys : sys - (SZ_4G - top_lm);
+	return (sys < _4GB) ? sys : sys - (_4GB - top_lm);
 }
 
 /* Squeeze out one address bit, shift upper part down to fill gap */
@@ -599,7 +598,7 @@ static void remove_addr_bit(u64 *addr, int bitidx)
 	if (bitidx == -1)
 		return;
 
-	mask = BIT_ULL(bitidx) - 1;
+	mask = (1ull << bitidx) - 1;
 	*addr = ((*addr >> 1) & ~mask) | (*addr & mask);
 }
 
@@ -643,8 +642,8 @@ static int sys2pmi(const u64 addr, u32 *pmiidx, u64 *pmiaddr, char *msg)
 	int sym_chan_shift = sym_channels >> 1;
 
 	/* Give up if address is out of range, or in MMIO gap */
-	if (addr >= BIT(PND_MAX_PHYS_BIT) ||
-	   (addr >= top_lm && addr < SZ_4G) || addr >= top_hm) {
+	if (addr >= (1ul << PND_MAX_PHYS_BIT) ||
+	   (addr >= top_lm && addr < _4GB) || addr >= top_hm) {
 		snprintf(msg, PND2_MSG_SIZE, "Error address 0x%llx is not DRAM", addr);
 		return -EINVAL;
 	}
@@ -728,10 +727,10 @@ static int sys2pmi(const u64 addr, u32 *pmiidx, u64 *pmiaddr, char *msg)
 }
 
 /* Translate PMI address to memory (rank, row, bank, column) */
-#define C(n) (BIT(4) | (n))	/* column */
-#define B(n) (BIT(5) | (n))	/* bank */
-#define R(n) (BIT(6) | (n))	/* row */
-#define RS   (BIT(7))		/* rank */
+#define C(n) (0x10 | (n))	/* column */
+#define B(n) (0x20 | (n))	/* bank */
+#define R(n) (0x40 | (n))	/* row */
+#define RS   (0x80)			/* rank */
 
 /* addrdec values */
 #define AMAP_1KB	0
@@ -1065,9 +1064,9 @@ static int apl_check_ecc_active(void)
 	int	i, ret = 0;
 
 	/* Check dramtype and ECC mode for each present DIMM */
-	for_each_set_bit(i, &chan_mask, APL_NUM_CHANNELS)
-		ret += check_channel(i);
-
+	for (i = 0; i < APL_NUM_CHANNELS; i++)
+		if (chan_mask & BIT(i))
+			ret += check_channel(i);
 	return ret ? -EINVAL : 0;
 }
 
@@ -1206,7 +1205,10 @@ static void apl_get_dimm_config(struct mem_ctl_info *mci)
 	u64	capacity;
 	int	i, g;
 
-	for_each_set_bit(i, &chan_mask, APL_NUM_CHANNELS) {
+	for (i = 0; i < APL_NUM_CHANNELS; i++) {
+		if (!(chan_mask & BIT(i)))
+			continue;
+
 		dimm = edac_get_dimm(mci, i, 0, 0);
 		if (!dimm) {
 			edac_dbg(0, "No allocated DIMM for channel %d\n", i);
@@ -1226,7 +1228,8 @@ static void apl_get_dimm_config(struct mem_ctl_info *mci)
 		}
 
 		pvt->dimm_geom[i] = g;
-		capacity = (d->rken0 + d->rken1) * 8 * BIT(dimms[g].rowbits + dimms[g].colbits);
+		capacity = (d->rken0 + d->rken1) * 8 * (1ul << dimms[g].rowbits) *
+				   (1ul << dimms[g].colbits);
 		edac_dbg(0, "Channel %d: %lld MByte DIMM\n", i, capacity >> (20 - 3));
 		dimm->nr_pages = MiB_TO_PAGES(capacity >> (20 - 3));
 		dimm->grain = 32;
@@ -1292,7 +1295,7 @@ static void dnv_get_dimm_config(struct mem_ctl_info *mci)
 				continue;
 			}
 
-			capacity = ranks_of_dimm[j] * banks * BIT(rowbits + colbits);
+			capacity = ranks_of_dimm[j] * banks * (1ul << rowbits) * (1ul << colbits);
 			edac_dbg(0, "Channel %d DIMM %d: %lld MByte DIMM\n", i, j, capacity >> (20 - 3));
 			dimm->nr_pages = MiB_TO_PAGES(capacity >> (20 - 3));
 			dimm->grain = 32;

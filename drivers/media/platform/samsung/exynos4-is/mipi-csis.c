@@ -569,7 +569,8 @@ static struct v4l2_mbus_framefmt *__s5pcsis_get_format(
 		enum v4l2_subdev_format_whence which)
 {
 	if (which == V4L2_SUBDEV_FORMAT_TRY)
-		return sd_state ? v4l2_subdev_state_get_format(sd_state, 0) : NULL;
+		return sd_state ? v4l2_subdev_get_try_format(&state->sd,
+							     sd_state, 0) : NULL;
 
 	return &state->format;
 }
@@ -727,8 +728,7 @@ static int s5pcsis_parse_dt(struct platform_device *pdev,
 				 &state->max_num_lanes))
 		return -EINVAL;
 
-	/* from port@3 or port@4 */
-	node = of_graph_get_endpoint_by_regs(node, -1, -1);
+	node = of_graph_get_next_endpoint(node, NULL);
 	if (!node) {
 		dev_err(&pdev->dev, "No port node at %pOF\n",
 				pdev->dev.of_node);

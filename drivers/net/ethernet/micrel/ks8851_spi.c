@@ -156,7 +156,7 @@ static void ks8851_rdreg(struct ks8851_net *ks, unsigned int op,
 
 	txb[0] = cpu_to_le16(op | KS_SPIOP_RD);
 
-	if (kss->spidev->controller->flags & SPI_CONTROLLER_HALF_DUPLEX) {
+	if (kss->spidev->master->flags & SPI_MASTER_HALF_DUPLEX) {
 		msg = &kss->spi_msg2;
 		xfer = kss->spi_xfer2;
 
@@ -180,7 +180,7 @@ static void ks8851_rdreg(struct ks8851_net *ks, unsigned int op,
 	ret = spi_sync(kss->spidev, msg);
 	if (ret < 0)
 		netdev_err(ks->netdev, "read: spi_sync() failed\n");
-	else if (kss->spidev->controller->flags & SPI_CONTROLLER_HALF_DUPLEX)
+	else if (kss->spidev->master->flags & SPI_MASTER_HALF_DUPLEX)
 		memcpy(rxb, trx, rxl);
 	else
 		memcpy(rxb, trx + 2, rxl);
@@ -340,10 +340,10 @@ static void ks8851_tx_work(struct work_struct *work)
 
 	tx_space = ks8851_rdreg16_spi(ks, KS_TXMIR);
 
-	spin_lock(&ks->statelock);
+	spin_lock_bh(&ks->statelock);
 	ks->queued_len -= dequeued_len;
 	ks->tx_space = tx_space;
-	spin_unlock(&ks->statelock);
+	spin_unlock_bh(&ks->statelock);
 
 	ks8851_unlock_spi(ks, &flags);
 }

@@ -103,8 +103,7 @@ patternProperties:
         items:
           pattern: "^gpio1?[0-9]{1,2}$"
 
-      input-debounce:
-        maxItems: 1
+      input-debounce: true
 
     additionalProperties: false
 

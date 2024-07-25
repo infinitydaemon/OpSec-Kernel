@@ -13,9 +13,6 @@
 #include "common.h"
 #include "notify.h"
 
-/* Updated only after ALL the mandatory features for that version are merged */
-#define SCMI_PROTOCOL_SUPPORTED_VERSION		0x20000
-
 #define SCMI_BASE_NUM_SOURCES		1
 #define SCMI_BASE_MAX_CMD_ERR_COUNT	1024
 
@@ -388,7 +385,7 @@ static int scmi_base_protocol_init(const struct scmi_protocol_handle *ph)
 
 	rev->major_ver = PROTOCOL_REV_MAJOR(version),
 	rev->minor_ver = PROTOCOL_REV_MINOR(version);
-	ph->set_priv(ph, rev, version);
+	ph->set_priv(ph, rev);
 
 	ret = scmi_base_attributes_get(ph);
 	if (ret)
@@ -426,7 +423,6 @@ static const struct scmi_protocol scmi_base = {
 	.instance_init = &scmi_base_protocol_init,
 	.ops = NULL,
 	.events = &base_protocol_events,
-	.supported_version = SCMI_PROTOCOL_SUPPORTED_VERSION,
 };
 
 DEFINE_SCMI_PROTOCOL_REGISTER_UNREGISTER(base, scmi_base)

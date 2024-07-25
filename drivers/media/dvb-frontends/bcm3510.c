@@ -797,6 +797,7 @@ struct dvb_frontend* bcm3510_attach(const struct bcm3510_config *config,
 				   struct i2c_adapter *i2c)
 {
 	struct bcm3510_state* state = NULL;
+	int ret;
 	bcm3510_register_value v;
 
 	/* allocate memory for the internal state */
@@ -815,7 +816,7 @@ struct dvb_frontend* bcm3510_attach(const struct bcm3510_config *config,
 
 	mutex_init(&state->hab_mutex);
 
-	if (bcm3510_readB(state, 0xe0, &v) < 0)
+	if ((ret = bcm3510_readB(state,0xe0,&v)) < 0)
 		goto error;
 
 	deb_info("Revision: 0x%1x, Layer: 0x%1x.\n",v.REVID_e0.REV,v.REVID_e0.LAYER);

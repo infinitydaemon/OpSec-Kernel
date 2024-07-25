@@ -1,8 +1,9 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
 
-source lib.sh
+ksft_skip=4
 
+NS=ns
 IP6=2001:db8:1::1/64
 TGT6=2001:db8:1::2
 TMPF=$(mktemp --suffix ".pcap")
@@ -10,10 +11,12 @@ TMPF=$(mktemp --suffix ".pcap")
 cleanup()
 {
     rm -f $TMPF
-    cleanup_ns $NS
+    ip netns del $NS
 }
 
 trap cleanup EXIT
+
+NSEXE="ip netns exec $NS"
 
 tcpdump -h | grep immediate-mode >> /dev/null
 if [ $? -ne 0 ]; then
@@ -22,8 +25,7 @@ if [ $? -ne 0 ]; then
 fi
 
 # Namespaces
-setup_ns NS
-NSEXE="ip netns exec $NS"
+ip netns add $NS
 
 $NSEXE sysctl -w net.ipv4.ping_group_range='0 2147483647' > /dev/null
 

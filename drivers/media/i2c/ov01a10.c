@@ -287,6 +287,9 @@ struct ov01a10 {
 	struct v4l2_ctrl *exposure;
 
 	const struct ov01a10_mode *cur_mode;
+
+	/* streaming state */
+	bool streaming;
 };
 
 static inline struct ov01a10 *to_ov01a10(struct v4l2_subdev *subdev)
@@ -669,6 +672,8 @@ static int ov01a10_set_stream(struct v4l2_subdev *sd, int enable)
 	int ret = 0;
 
 	state = v4l2_subdev_lock_and_get_active_state(sd);
+	if (ov01a10->streaming == enable)
+		goto unlock;
 
 	if (enable) {
 		ret = pm_runtime_resume_and_get(&client->dev);
@@ -680,12 +685,55 @@ static int ov01a10_set_stream(struct v4l2_subdev *sd, int enable)
 			pm_runtime_put(&client->dev);
 			goto unlock;
 		}
-	} else {
-		ov01a10_stop_streaming(ov01a10);
-		pm_runtime_put(&client->dev);
+
+		goto done;
 	}
 
+	ov01a10_stop_streaming(ov01a10);
+	pm_runtime_put(&client->dev);
+done:
+	ov01a10->streaming = enable;
 unlock:
+	v4l2_subdev_unlock_state(state);
+
+	return ret;
+}
+
+static int __maybe_unused ov01a10_suspend(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct ov01a10 *ov01a10 = to_ov01a10(sd);
+	struct v4l2_subdev_state *state;
+
+	state = v4l2_subdev_lock_and_get_active_state(sd);
+	if (ov01a10->streaming)
+		ov01a10_stop_streaming(ov01a10);
+
+	v4l2_subdev_unlock_state(state);
+
+	return 0;
+}
+
+static int __maybe_unused ov01a10_resume(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct ov01a10 *ov01a10 = to_ov01a10(sd);
+	struct v4l2_subdev_state *state;
+	int ret = 0;
+
+	state = v4l2_subdev_lock_and_get_active_state(sd);
+	if (!ov01a10->streaming)
+		goto exit;
+
+	ret = ov01a10_start_streaming(ov01a10);
+	if (ret) {
+		ov01a10->streaming = false;
+		ov01a10_stop_streaming(ov01a10);
+	}
+
+exit:
 	v4l2_subdev_unlock_state(state);
 
 	return ret;
@@ -723,14 +771,14 @@ static int ov01a10_set_format(struct v4l2_subdev *sd,
 					 h_blank);
 	}
 
-	format = v4l2_subdev_state_get_format(sd_state, fmt->stream);
+	format = v4l2_subdev_get_pad_format(sd, sd_state, fmt->stream);
 	*format = fmt->format;
 
 	return 0;
 }
 
-static int ov01a10_init_state(struct v4l2_subdev *sd,
-			      struct v4l2_subdev_state *state)
+static int ov01a10_init_cfg(struct v4l2_subdev *sd,
+			    struct v4l2_subdev_state *state)
 {
 	struct v4l2_subdev_format fmt = {
 		.which = V4L2_SUBDEV_FORMAT_TRY,
@@ -813,6 +861,7 @@ static const struct v4l2_subdev_video_ops ov01a10_video_ops = {
 };
 
 static const struct v4l2_subdev_pad_ops ov01a10_pad_ops = {
+	.init_cfg = ov01a10_init_cfg,
 	.set_fmt = ov01a10_set_format,
 	.get_fmt = v4l2_subdev_get_fmt,
 	.get_selection = ov01a10_get_selection,
@@ -824,10 +873,6 @@ static const struct v4l2_subdev_ops ov01a10_subdev_ops = {
 	.core = &ov01a10_core_ops,
 	.video = &ov01a10_video_ops,
 	.pad = &ov01a10_pad_ops,
-};
-
-static const struct v4l2_subdev_internal_ops ov01a10_internal_ops = {
-	.init_state = ov01a10_init_state,
 };
 
 static const struct media_entity_operations ov01a10_subdev_entity_ops = {
@@ -876,7 +921,6 @@ static int ov01a10_probe(struct i2c_client *client)
 		return -ENOMEM;
 
 	v4l2_i2c_subdev_init(&ov01a10->sd, client, &ov01a10_subdev_ops);
-	ov01a10->sd.internal_ops = &ov01a10_internal_ops;
 
 	ret = ov01a10_identify_module(ov01a10);
 	if (ret)
@@ -939,6 +983,10 @@ err_handler_free:
 	return ret;
 }
 
+static const struct dev_pm_ops ov01a10_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(ov01a10_suspend, ov01a10_resume)
+};
+
 #ifdef CONFIG_ACPI
 static const struct acpi_device_id ov01a10_acpi_ids[] = {
 	{ "OVTI01A0" },
@@ -951,6 +999,7 @@ MODULE_DEVICE_TABLE(acpi, ov01a10_acpi_ids);
 static struct i2c_driver ov01a10_i2c_driver = {
 	.driver = {
 		.name = "ov01a10",
+		.pm = &ov01a10_pm_ops,
 		.acpi_match_table = ACPI_PTR(ov01a10_acpi_ids),
 	},
 	.probe = ov01a10_probe,

@@ -522,7 +522,7 @@ static int ntfs_extend_mft(struct ntfs_sb_info *sbi)
 	ni->mi.dirty = true;
 
 	/* Step 2: Resize $MFT::BITMAP. */
-	new_bitmap_bytes = ntfs3_bitmap_size(new_mft_total);
+	new_bitmap_bytes = bitmap_size(new_mft_total);
 
 	err = attr_set_size(ni, ATTR_BITMAP, NULL, 0, &sbi->mft.bitmap.run,
 			    new_bitmap_bytes, &new_bitmap_bytes, true, NULL);
@@ -2153,8 +2153,8 @@ int ntfs_insert_security(struct ntfs_sb_info *sbi,
 			if (le32_to_cpu(d_security->size) == new_sec_size &&
 			    d_security->key.hash == hash_key.hash &&
 			    !memcmp(d_security + 1, sd, size_sd)) {
-				/* Such security already exists. */
 				*security_id = d_security->key.sec_id;
+				/* Such security already exists. */
 				err = 0;
 				goto out;
 			}

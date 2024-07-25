@@ -210,7 +210,7 @@ static inline int devtmpfs_init(void) { return 0; }
 #endif
 
 #ifdef CONFIG_BLOCK
-extern const struct class block_class;
+extern struct class block_class;
 static inline bool is_blockdev(struct device *dev)
 {
 	return dev->class == &block_class;

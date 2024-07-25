@@ -74,9 +74,7 @@ static struct adb_driver *adb_driver_list[] = {
 	NULL
 };
 
-static const struct class adb_dev_class = {
-	.name = "adb",
-};
+static struct class *adb_dev_class;
 
 static struct adb_driver *adb_controller;
 BLOCKING_NOTIFIER_HEAD(adb_client_list);
@@ -890,10 +888,10 @@ adbdev_init(void)
 		return;
 	}
 
-	if (class_register(&adb_dev_class))
+	adb_dev_class = class_create("adb");
+	if (IS_ERR(adb_dev_class))
 		return;
-
-	device_create(&adb_dev_class, NULL, MKDEV(ADB_MAJOR, 0), NULL, "adb");
+	device_create(adb_dev_class, NULL, MKDEV(ADB_MAJOR, 0), NULL, "adb");
 
 	platform_device_register(&adb_pfdev);
 	platform_driver_probe(&adb_pfdrv, adb_dummy_probe);

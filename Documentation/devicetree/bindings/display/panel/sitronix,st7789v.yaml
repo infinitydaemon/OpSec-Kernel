@@ -21,9 +21,7 @@ properties:
       - jasonic,jt240mhqs-hwt-ek-e3
       - sitronix,st7789v
 
-  reg:
-    maxItems: 1
-
+  reg: true
   reset-gpios: true
   power-supply: true
   backlight: true

@@ -2121,26 +2121,6 @@ static struct clk_branch gcc_blsp1_qup5_spi_apps_clk = {
 	},
 };
 
-static struct clk_branch gcc_blsp1_qup6_i2c_apps_clk = {
-	.halt_reg = 0x07010,
-	.clkr = {
-		.enable_reg = 0x07010,
-		.enable_mask = BIT(0),
-		.hw.init = &(struct clk_init_data){
-			.name = "gcc_blsp1_qup6_i2c_apps_clk",
-			.parent_hws = (const struct clk_hw *[]){
-					&blsp1_qup6_i2c_apps_clk_src.clkr.hw },
-			.num_parents = 1,
-			/*
-			 * RPM uses QUP6 I2C to communicate with the external
-			 * PMIC so it must not be disabled.
-			 */
-			.flags = CLK_SET_RATE_PARENT | CLK_IS_CRITICAL,
-			.ops = &clk_branch2_ops,
-		},
-	},
-};
-
 static struct clk_branch gcc_blsp1_qup6_spi_apps_clk = {
 	.halt_reg = 0x0700c,
 	.clkr = {
@@ -3524,22 +3504,6 @@ static struct clk_branch gcc_prng_ahb_clk = {
 	},
 };
 
-static struct clk_branch gcc_qdss_at_clk = {
-	.halt_reg = 0x29024,
-	.clkr = {
-		.enable_reg = 0x29024,
-		.enable_mask = BIT(0),
-		.hw.init = &(struct clk_init_data){
-			.name = "gcc_qdss_at_clk",
-			.parent_hws = (const struct clk_hw *[]){
-				&qdss_at_clk_src.clkr.hw },
-			.num_parents = 1,
-			.flags = CLK_SET_RATE_PARENT,
-			.ops = &clk_branch2_ops,
-		},
-	},
-};
-
 static struct clk_branch gcc_qdss_dap_clk = {
 	.halt_reg = 0x29084,
 	.clkr = {
@@ -4313,7 +4277,6 @@ static struct clk_regmap *gcc_ipq6018_clks[] = {
 	[GCC_BLSP1_QUP4_SPI_APPS_CLK] = &gcc_blsp1_qup4_spi_apps_clk.clkr,
 	[GCC_BLSP1_QUP5_I2C_APPS_CLK] = &gcc_blsp1_qup5_i2c_apps_clk.clkr,
 	[GCC_BLSP1_QUP5_SPI_APPS_CLK] = &gcc_blsp1_qup5_spi_apps_clk.clkr,
-	[GCC_BLSP1_QUP6_I2C_APPS_CLK] = &gcc_blsp1_qup6_i2c_apps_clk.clkr,
 	[GCC_BLSP1_QUP6_SPI_APPS_CLK] = &gcc_blsp1_qup6_spi_apps_clk.clkr,
 	[GCC_BLSP1_UART1_APPS_CLK] = &gcc_blsp1_uart1_apps_clk.clkr,
 	[GCC_BLSP1_UART2_APPS_CLK] = &gcc_blsp1_uart2_apps_clk.clkr,
@@ -4379,7 +4342,6 @@ static struct clk_regmap *gcc_ipq6018_clks[] = {
 	[GCC_SYS_NOC_PCIE0_AXI_CLK] = &gcc_sys_noc_pcie0_axi_clk.clkr,
 	[GCC_PCIE0_PIPE_CLK] = &gcc_pcie0_pipe_clk.clkr,
 	[GCC_PRNG_AHB_CLK] = &gcc_prng_ahb_clk.clkr,
-	[GCC_QDSS_AT_CLK] = &gcc_qdss_at_clk.clkr,
 	[GCC_QDSS_DAP_CLK] = &gcc_qdss_dap_clk.clkr,
 	[GCC_QPIC_AHB_CLK] = &gcc_qpic_ahb_clk.clkr,
 	[GCC_QPIC_CLK] = &gcc_qpic_clk.clkr,

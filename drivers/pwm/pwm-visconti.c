@@ -34,12 +34,13 @@
 #define PIPGM_PWMC_POLARITY_MASK	GENMASK(5, 5)
 
 struct visconti_pwm_chip {
+	struct pwm_chip chip;
 	void __iomem *base;
 };
 
 static inline struct visconti_pwm_chip *visconti_pwm_from_chip(struct pwm_chip *chip)
 {
-	return pwmchip_get_drvdata(chip);
+	return container_of(chip, struct visconti_pwm_chip, chip);
 }
 
 static int visconti_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
@@ -128,27 +129,28 @@ static int visconti_pwm_get_state(struct pwm_chip *chip, struct pwm_device *pwm,
 static const struct pwm_ops visconti_pwm_ops = {
 	.apply = visconti_pwm_apply,
 	.get_state = visconti_pwm_get_state,
+	.owner = THIS_MODULE,
 };
 
 static int visconti_pwm_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct pwm_chip *chip;
 	struct visconti_pwm_chip *priv;
 	int ret;
 
-	chip = devm_pwmchip_alloc(dev, 4, sizeof(*priv));
-	if (IS_ERR(chip))
-		return PTR_ERR(chip);
-	priv = visconti_pwm_from_chip(chip);
+	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
 
 	priv->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(priv->base))
 		return PTR_ERR(priv->base);
 
-	chip->ops = &visconti_pwm_ops;
+	priv->chip.dev = dev;
+	priv->chip.ops = &visconti_pwm_ops;
+	priv->chip.npwm = 4;
 
-	ret = devm_pwmchip_add(&pdev->dev, chip);
+	ret = devm_pwmchip_add(&pdev->dev, &priv->chip);
 	if (ret < 0)
 		return dev_err_probe(&pdev->dev, ret, "Cannot register visconti PWM\n");
 

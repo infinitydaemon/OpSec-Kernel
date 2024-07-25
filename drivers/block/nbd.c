@@ -222,7 +222,7 @@ static ssize_t pid_show(struct device *dev,
 			struct device_attribute *attr, char *buf)
 {
 	struct gendisk *disk = dev_to_disk(dev);
-	struct nbd_device *nbd = disk->private_data;
+	struct nbd_device *nbd = (struct nbd_device *)disk->private_data;
 
 	return sprintf(buf, "%d\n", nbd->pid);
 }
@@ -236,7 +236,7 @@ static ssize_t backend_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct gendisk *disk = dev_to_disk(dev);
-	struct nbd_device *nbd = disk->private_data;
+	struct nbd_device *nbd = (struct nbd_device *)disk->private_data;
 
 	return sprintf(buf, "%s\n", nbd->backend ?: "");
 }
@@ -316,12 +316,9 @@ static void nbd_mark_nsock_dead(struct nbd_device *nbd, struct nbd_sock *nsock,
 	nsock->sent = 0;
 }
 
-static int __nbd_set_size(struct nbd_device *nbd, loff_t bytesize,
+static int nbd_set_size(struct nbd_device *nbd, loff_t bytesize,
 		loff_t blksize)
 {
-	struct queue_limits lim;
-	int error;
-
 	if (!blksize)
 		blksize = 1u << NBD_DEF_BLKSIZE_BITS;
 
@@ -337,34 +334,18 @@ static int __nbd_set_size(struct nbd_device *nbd, loff_t bytesize,
 	if (!nbd->pid)
 		return 0;
 
-	lim = queue_limits_start_update(nbd->disk->queue);
-	if (nbd->config->flags & NBD_FLAG_SEND_TRIM)
-		lim.max_hw_discard_sectors = UINT_MAX;
-	else
-		lim.max_hw_discard_sectors = 0;
-	lim.logical_block_size = blksize;
-	lim.physical_block_size = blksize;
-	error = queue_limits_commit_update(nbd->disk->queue, &lim);
-	if (error)
-		return error;
+	if (nbd->config->flags & NBD_FLAG_SEND_TRIM) {
+		nbd->disk->queue->limits.discard_granularity = blksize;
+		blk_queue_max_discard_sectors(nbd->disk->queue, UINT_MAX);
+	}
+	blk_queue_logical_block_size(nbd->disk->queue, blksize);
+	blk_queue_physical_block_size(nbd->disk->queue, blksize);
 
 	if (max_part)
 		set_bit(GD_NEED_PART_SCAN, &nbd->disk->state);
 	if (!set_capacity_and_notify(nbd->disk, bytesize >> 9))
 		kobject_uevent(&nbd_to_dev(nbd)->kobj, KOBJ_CHANGE);
 	return 0;
-}
-
-static int nbd_set_size(struct nbd_device *nbd, loff_t bytesize,
-		loff_t blksize)
-{
-	int error;
-
-	blk_mq_freeze_queue(nbd->disk->queue);
-	error = __nbd_set_size(nbd, bytesize, blksize);
-	blk_mq_unfreeze_queue(nbd->disk->queue);
-
-	return error;
 }
 
 static void nbd_complete_rq(struct request *req)
@@ -601,6 +582,7 @@ static int nbd_send_cmd(struct nbd_device *nbd, struct nbd_cmd *cmd, int index)
 	struct nbd_request request = {.magic = htonl(NBD_REQUEST_MAGIC)};
 	struct kvec iov = {.iov_base = &request, .iov_len = sizeof(request)};
 	struct iov_iter from;
+	unsigned long size = blk_rq_bytes(req);
 	struct bio *bio;
 	u64 handle;
 	u32 type;
@@ -649,7 +631,7 @@ static int nbd_send_cmd(struct nbd_device *nbd, struct nbd_cmd *cmd, int index)
 	request.type = htonl(type | nbd_cmd_flags);
 	if (type != NBD_CMD_FLUSH) {
 		request.from = cpu_to_be64((u64)blk_rq_pos(req) << 9);
-		request.len = htonl(blk_rq_bytes(req));
+		request.len = htonl(size);
 	}
 	handle = nbd_cmd_handle(cmd);
 	request.cookie = cpu_to_be64(handle);
@@ -1375,6 +1357,8 @@ static void nbd_config_put(struct nbd_device *nbd)
 		nbd->config = NULL;
 
 		nbd->tag_set.timeout = 0;
+		nbd->disk->queue->limits.discard_granularity = 0;
+		blk_queue_max_discard_sectors(nbd->disk->queue, 0);
 
 		mutex_unlock(&nbd->config_lock);
 		nbd_put(nbd);
@@ -1806,12 +1790,6 @@ static const struct blk_mq_ops nbd_mq_ops = {
 
 static struct nbd_device *nbd_dev_add(int index, unsigned int refs)
 {
-	struct queue_limits lim = {
-		.max_hw_sectors		= 65536,
-		.max_user_sectors	= 256,
-		.max_segments		= USHRT_MAX,
-		.max_segment_size	= UINT_MAX,
-	};
 	struct nbd_device *nbd;
 	struct gendisk *disk;
 	int err = -ENOMEM;
@@ -1852,7 +1830,7 @@ static struct nbd_device *nbd_dev_add(int index, unsigned int refs)
 	if (err < 0)
 		goto out_free_tags;
 
-	disk = blk_mq_alloc_disk(&nbd->tag_set, &lim, NULL);
+	disk = blk_mq_alloc_disk(&nbd->tag_set, NULL);
 	if (IS_ERR(disk)) {
 		err = PTR_ERR(disk);
 		goto out_free_idr;
@@ -1872,6 +1850,12 @@ static struct nbd_device *nbd_dev_add(int index, unsigned int refs)
 	 * Tell the block layer that we are not a rotational device
 	 */
 	blk_queue_flag_set(QUEUE_FLAG_NONROT, disk->queue);
+	disk->queue->limits.discard_granularity = 0;
+	blk_queue_max_discard_sectors(disk->queue, 0);
+	blk_queue_max_segment_size(disk->queue, UINT_MAX);
+	blk_queue_max_segments(disk->queue, USHRT_MAX);
+	blk_queue_max_hw_sectors(disk->queue, 65536);
+	disk->queue->limits.max_sectors = 256;
 
 	mutex_init(&nbd->config_lock);
 	refcount_set(&nbd->config_refs, 0);

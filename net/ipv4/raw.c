@@ -175,13 +175,6 @@ static int raw_v4_input(struct net *net, struct sk_buff *skb,
 		if (!raw_v4_match(net, sk, iph->protocol,
 				  iph->saddr, iph->daddr, dif, sdif))
 			continue;
-
-		if (atomic_read(&sk->sk_rmem_alloc) >=
-		    READ_ONCE(sk->sk_rcvbuf)) {
-			atomic_inc(&sk->sk_drops);
-			continue;
-		}
-
 		delivered = 1;
 		if ((iph->protocol != IPPROTO_ICMP || !icmp_filter(sk, skb)) &&
 		    ip_mc_sf_allow(sk, iph->daddr, iph->saddr,
@@ -246,7 +239,7 @@ static void raw_err(struct sock *sk, struct sk_buff *skb, u32 info)
 		if (code > NR_ICMP_UNREACH)
 			break;
 		if (code == ICMP_FRAG_NEEDED) {
-			harderr = READ_ONCE(inet->pmtudisc) != IP_PMTUDISC_DONT;
+			harderr = inet->pmtudisc != IP_PMTUDISC_DONT;
 			err = EMSGSIZE;
 		} else {
 			err = icmp_err_convert[code].errno;
@@ -317,7 +310,7 @@ int raw_rcv(struct sock *sk, struct sk_buff *skb)
 	}
 	nf_reset_ct(skb);
 
-	skb_push(skb, -skb_network_offset(skb));
+	skb_push(skb, skb->data - skb_network_header(skb));
 
 	raw_rcv_skb(sk, skb);
 	return 0;
@@ -490,7 +483,7 @@ static int raw_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	int free = 0;
 	__be32 daddr;
 	__be32 saddr;
-	int uc_index, err;
+	int err;
 	struct ip_options_data opt_copy;
 	struct raw_frag_vec rfv;
 	int hdrincl;
@@ -584,25 +577,24 @@ static int raw_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	tos = get_rttos(&ipc, inet);
 	scope = ip_sendmsg_scope(inet, &ipc, msg);
 
-	uc_index = READ_ONCE(inet->uc_index);
 	if (ipv4_is_multicast(daddr)) {
 		if (!ipc.oif || netif_index_is_l3_master(sock_net(sk), ipc.oif))
-			ipc.oif = READ_ONCE(inet->mc_index);
+			ipc.oif = inet->mc_index;
 		if (!saddr)
-			saddr = READ_ONCE(inet->mc_addr);
+			saddr = inet->mc_addr;
 	} else if (!ipc.oif) {
-		ipc.oif = uc_index;
-	} else if (ipv4_is_lbcast(daddr) && uc_index) {
+		ipc.oif = inet->uc_index;
+	} else if (ipv4_is_lbcast(daddr) && inet->uc_index) {
 		/* oif is set, packet is to local broadcast
 		 * and uc_index is set. oif is most likely set
 		 * by sk_bound_dev_if. If uc_index != oif check if the
 		 * oif is an L3 master and uc_index is an L3 slave.
 		 * If so, we want to allow the send using the uc_index.
 		 */
-		if (ipc.oif != uc_index &&
+		if (ipc.oif != inet->uc_index &&
 		    ipc.oif == l3mdev_master_ifindex_by_index(sock_net(sk),
-							      uc_index)) {
-			ipc.oif = uc_index;
+							      inet->uc_index)) {
+			ipc.oif = inet->uc_index;
 		}
 	}
 
@@ -826,7 +818,7 @@ static int raw_geticmpfilter(struct sock *sk, char __user *optval, int __user *o
 out:	return ret;
 }
 
-static int do_raw_setsockopt(struct sock *sk, int optname,
+static int do_raw_setsockopt(struct sock *sk, int level, int optname,
 			     sockptr_t optval, unsigned int optlen)
 {
 	if (optname == ICMP_FILTER) {
@@ -843,11 +835,11 @@ static int raw_setsockopt(struct sock *sk, int level, int optname,
 {
 	if (level != SOL_RAW)
 		return ip_setsockopt(sk, level, optname, optval, optlen);
-	return do_raw_setsockopt(sk, optname, optval, optlen);
+	return do_raw_setsockopt(sk, level, optname, optval, optlen);
 }
 
-static int do_raw_getsockopt(struct sock *sk, int optname,
-			     char __user *optval, int __user *optlen)
+static int do_raw_getsockopt(struct sock *sk, int level, int optname,
+			  char __user *optval, int __user *optlen)
 {
 	if (optname == ICMP_FILTER) {
 		if (inet_sk(sk)->inet_num != IPPROTO_ICMP)
@@ -863,7 +855,7 @@ static int raw_getsockopt(struct sock *sk, int level, int optname,
 {
 	if (level != SOL_RAW)
 		return ip_getsockopt(sk, level, optname, optval, optlen);
-	return do_raw_getsockopt(sk, optname, optval, optlen);
+	return do_raw_getsockopt(sk, level, optname, optval, optlen);
 }
 
 static int raw_ioctl(struct sock *sk, int cmd, int *karg)

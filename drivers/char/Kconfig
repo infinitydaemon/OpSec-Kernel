@@ -5,6 +5,8 @@
 
 menu "Character devices"
 
+source "drivers/char/broadcom/Kconfig"
+
 source "drivers/tty/Kconfig"
 
 config TTY_PRINTK
@@ -348,7 +350,7 @@ config DEVPORT
 	  device is similar to /dev/mem, but for I/O ports.
 
 config HPET
-	bool "HPET - High Precision Event Timer" if X86
+	bool "HPET - High Precision Event Timer" if (X86 || IA64)
 	default n
 	depends on ACPI
 	help
@@ -377,7 +379,7 @@ config HPET_MMAP_DEFAULT
 
 config HANGCHECK_TIMER
 	tristate "Hangcheck timer"
-	depends on X86 || PPC64 || S390
+	depends on X86 || IA64 || PPC64 || S390
 	help
 	  The hangcheck-timer module detects when the system has gone
 	  out to lunch past a certain margin.  It can reboot the system
@@ -421,5 +423,13 @@ config ADI
 	  This feature is also known as MCD (Memory Corruption Detection)
 	  and SSM (Silicon Secured Memory).  Intended consumers of this
 	  driver include crash and makedumpfile.
+
+config RASPBERRYPI_GPIOMEM
+        tristate "Rootless GPIO access via mmap() on Raspberry Pi boards"
+        default n
+        help
+                Provides users with root-free access to the GPIO registers
+                on the board. Calling mmap(/dev/gpiomem) will map the GPIO
+                register page to the user's pointer.
 
 endmenu

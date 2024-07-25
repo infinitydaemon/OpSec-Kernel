@@ -122,12 +122,13 @@ void ntfs_inode_printk(struct inode *inode, const char *fmt, ...)
 
 	if (name) {
 		struct dentry *de = d_find_alias(inode);
+		const u32 name_len = ARRAY_SIZE(s_name_buf) - 1;
 
 		if (de) {
 			spin_lock(&de->d_lock);
-			snprintf(name, sizeof(s_name_buf), " \"%s\"",
-				 de->d_name.name);
+			snprintf(name, name_len, " \"%s\"", de->d_name.name);
 			spin_unlock(&de->d_lock);
+			name[name_len] = 0; /* To be sure. */
 		} else {
 			name[0] = 0;
 		}
@@ -408,12 +409,6 @@ static int ntfs_fs_reconfigure(struct fs_context *fc)
 	struct ntfs_mount_options *new_opts = fc->fs_private;
 	int ro_rw;
 
-	/* If ntfs3 is used as legacy ntfs enforce read-only mode. */
-	if (is_legacy_ntfs(sb)) {
-		fc->sb_flags |= SB_RDONLY;
-		goto out;
-	}
-
 	ro_rw = sb_rdonly(sb) && !(fc->sb_flags & SB_RDONLY);
 	if (ro_rw && (sbi->flags & NTFS_FLAGS_NEED_REPLAY)) {
 		errorf(fc,
@@ -433,6 +428,8 @@ static int ntfs_fs_reconfigure(struct fs_context *fc)
 			fc,
 			"ntfs3: Cannot use different iocharset when remounting!");
 
+	sync_filesystem(sb);
+
 	if (ro_rw && (sbi->volume.flags & VOLUME_FLAG_DIRTY) &&
 	    !new_opts->force) {
 		errorf(fc,
@@ -440,8 +437,6 @@ static int ntfs_fs_reconfigure(struct fs_context *fc)
 		return -EINVAL;
 	}
 
-out:
-	sync_filesystem(sb);
 	swap(sbi->options, fc->fs_private);
 
 	return 0;
@@ -828,7 +823,6 @@ static int ntfs_nfs_commit_metadata(struct inode *inode)
 }
 
 static const struct export_operations ntfs_export_ops = {
-	.encode_fh = generic_encode_ino32_fh,
 	.fh_to_dentry = ntfs_fh_to_dentry,
 	.fh_to_parent = ntfs_fh_to_parent,
 	.get_parent = ntfs3_get_parent,
@@ -1347,7 +1341,7 @@ static int ntfs_fill_super(struct super_block *sb, struct fs_context *fc)
 
 	/* Check bitmap boundary. */
 	tt = sbi->used.bitmap.nbits;
-	if (inode->i_size < ntfs3_bitmap_size(tt)) {
+	if (inode->i_size < bitmap_size(tt)) {
 		ntfs_err(sb, "$Bitmap is corrupted.");
 		err = -EINVAL;
 		goto put_inode_out;
@@ -1619,8 +1613,6 @@ load_root:
 	}
 #endif
 
-	if (is_legacy_ntfs(sb))
-		sb->s_flags |= SB_RDONLY;
 	return 0;
 
 put_inode_out:
@@ -1738,7 +1730,7 @@ static const struct fs_context_operations ntfs_context_ops = {
  * This will called when mount/remount. We will first initialize
  * options so that if remount we can use just that.
  */
-static int __ntfs_init_fs_context(struct fs_context *fc)
+static int ntfs_init_fs_context(struct fs_context *fc)
 {
 	struct ntfs_mount_options *opts;
 	struct ntfs_sb_info *sbi;
@@ -1786,11 +1778,6 @@ free_opts:
 	return -ENOMEM;
 }
 
-static int ntfs_init_fs_context(struct fs_context *fc)
-{
-	return __ntfs_init_fs_context(fc);
-}
-
 static void ntfs3_kill_sb(struct super_block *sb)
 {
 	struct ntfs_sb_info *sbi = sb->s_fs_info;
@@ -1811,50 +1798,6 @@ static struct file_system_type ntfs_fs_type = {
 	.kill_sb		= ntfs3_kill_sb,
 	.fs_flags		= FS_REQUIRES_DEV | FS_ALLOW_IDMAP,
 };
-
-#if IS_ENABLED(CONFIG_NTFS_FS)
-static int ntfs_legacy_init_fs_context(struct fs_context *fc)
-{
-	int ret;
-
-	ret = __ntfs_init_fs_context(fc);
-	/* If ntfs3 is used as legacy ntfs enforce read-only mode. */
-	fc->sb_flags |= SB_RDONLY;
-	return ret;
-}
-
-static struct file_system_type ntfs_legacy_fs_type = {
-	.owner			= THIS_MODULE,
-	.name			= "ntfs",
-	.init_fs_context	= ntfs_legacy_init_fs_context,
-	.parameters		= ntfs_fs_parameters,
-	.kill_sb		= ntfs3_kill_sb,
-	.fs_flags		= FS_REQUIRES_DEV | FS_ALLOW_IDMAP,
-};
-MODULE_ALIAS_FS("ntfs");
-
-static inline void register_as_ntfs_legacy(void)
-{
-	int err = register_filesystem(&ntfs_legacy_fs_type);
-	if (err)
-		pr_warn("ntfs3: Failed to register legacy ntfs filesystem driver: %d\n", err);
-}
-
-static inline void unregister_as_ntfs_legacy(void)
-{
-	unregister_filesystem(&ntfs_legacy_fs_type);
-}
-bool is_legacy_ntfs(struct super_block *sb)
-{
-	return sb->s_type == &ntfs_legacy_fs_type;
-}
-#else
-static inline void register_as_ntfs_legacy(void) {}
-static inline void unregister_as_ntfs_legacy(void) {}
-bool is_legacy_ntfs(struct super_block *sb) { return false; }
-#endif
-
-
 // clang-format on
 
 static int __init init_ntfs_fs(void)
@@ -1880,14 +1823,13 @@ static int __init init_ntfs_fs(void)
 
 	ntfs_inode_cachep = kmem_cache_create(
 		"ntfs_inode_cache", sizeof(struct ntfs_inode), 0,
-		(SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT),
+		(SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD | SLAB_ACCOUNT),
 		init_once);
 	if (!ntfs_inode_cachep) {
 		err = -ENOMEM;
 		goto out1;
 	}
 
-	register_as_ntfs_legacy();
 	err = register_filesystem(&ntfs_fs_type);
 	if (err)
 		goto out;
@@ -1905,7 +1847,6 @@ static void __exit exit_ntfs_fs(void)
 	rcu_barrier();
 	kmem_cache_destroy(ntfs_inode_cachep);
 	unregister_filesystem(&ntfs_fs_type);
-	unregister_as_ntfs_legacy();
 	ntfs3_exit_bitmap();
 
 #ifdef CONFIG_PROC_FS

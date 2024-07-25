@@ -1589,7 +1589,7 @@ static int nicvf_change_mtu(struct net_device *netdev, int new_mtu)
 		return -EINVAL;
 	}
 
-	WRITE_ONCE(netdev->mtu, new_mtu);
+	netdev->mtu = new_mtu;
 
 	if (!netif_running(netdev))
 		return 0;

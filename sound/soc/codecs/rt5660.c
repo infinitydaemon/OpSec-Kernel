@@ -1079,6 +1079,9 @@ static int rt5660_set_bias_level(struct snd_soc_component *component,
 		snd_soc_component_update_bits(component, RT5660_GEN_CTRL1,
 			RT5660_DIG_GATE_CTRL, RT5660_DIG_GATE_CTRL);
 
+		if (IS_ERR(rt5660->mclk))
+			break;
+
 		if (snd_soc_component_get_bias_level(component) == SND_SOC_BIAS_ON) {
 			clk_disable_unprepare(rt5660->mclk);
 		} else {
@@ -1224,7 +1227,7 @@ static const struct regmap_config rt5660_regmap = {
 };
 
 static const struct i2c_device_id rt5660_i2c_id[] = {
-	{ "rt5660" },
+	{ "rt5660", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, rt5660_i2c_id);
@@ -1274,9 +1277,9 @@ static int rt5660_i2c_probe(struct i2c_client *i2c)
 		return -ENOMEM;
 
 	/* Check if MCLK provided */
-	rt5660->mclk = devm_clk_get_optional(&i2c->dev, "mclk");
-	if (IS_ERR(rt5660->mclk))
-		return PTR_ERR(rt5660->mclk);
+	rt5660->mclk = devm_clk_get(&i2c->dev, "mclk");
+	if (PTR_ERR(rt5660->mclk) == -EPROBE_DEFER)
+		return -EPROBE_DEFER;
 
 	i2c_set_clientdata(i2c, rt5660);
 

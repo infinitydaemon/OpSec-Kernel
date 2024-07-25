@@ -48,7 +48,7 @@ static int ntfs_ioctl_fitrim(struct ntfs_sb_info *sbi, unsigned long arg)
 	return 0;
 }
 
-long ntfs_ioctl(struct file *filp, u32 cmd, unsigned long arg)
+static long ntfs_ioctl(struct file *filp, u32 cmd, unsigned long arg)
 {
 	struct inode *inode = file_inode(filp);
 	struct ntfs_sb_info *sbi = inode->i_sb->s_fs_info;
@@ -61,7 +61,7 @@ long ntfs_ioctl(struct file *filp, u32 cmd, unsigned long arg)
 }
 
 #ifdef CONFIG_COMPAT
-long ntfs_compat_ioctl(struct file *filp, u32 cmd, unsigned long arg)
+static long ntfs_compat_ioctl(struct file *filp, u32 cmd, unsigned long arg)
 
 {
 	return ntfs_ioctl(filp, cmd, (unsigned long)compat_ptr(arg));
@@ -187,8 +187,7 @@ static int ntfs_zero_range(struct inode *inode, u64 vbo, u64 vbo_to)
 	struct buffer_head *head, *bh;
 	u32 bh_next, bh_off, to;
 	sector_t iblock;
-	struct folio *folio;
-	bool dirty = false;
+	struct page *page;
 
 	for (; idx < idx_end; idx += 1, from = 0) {
 		page_off = (loff_t)idx << PAGE_SHIFT;
@@ -196,17 +195,16 @@ static int ntfs_zero_range(struct inode *inode, u64 vbo, u64 vbo_to)
 						       PAGE_SIZE;
 		iblock = page_off >> inode->i_blkbits;
 
-		folio = __filemap_get_folio(mapping, idx,
-				FGP_LOCK | FGP_ACCESSED | FGP_CREAT,
-				mapping_gfp_constraint(mapping, ~__GFP_FS));
-		if (IS_ERR(folio))
-			return PTR_ERR(folio);
+		page = find_or_create_page(mapping, idx,
+					   mapping_gfp_constraint(mapping,
+								  ~__GFP_FS));
+		if (!page)
+			return -ENOMEM;
 
-		head = folio_buffers(folio);
-		if (!head)
-			head = create_empty_buffers(folio, blocksize, 0);
+		if (!page_has_buffers(page))
+			create_empty_buffers(page, blocksize, 0);
 
-		bh = head;
+		bh = head = page_buffers(page);
 		bh_off = 0;
 		do {
 			bh_next = bh_off + blocksize;
@@ -222,29 +220,31 @@ static int ntfs_zero_range(struct inode *inode, u64 vbo, u64 vbo_to)
 			}
 
 			/* Ok, it's mapped. Make sure it's up-to-date. */
-			if (folio_test_uptodate(folio))
+			if (PageUptodate(page))
 				set_buffer_uptodate(bh);
-			else if (bh_read(bh, 0) < 0) {
-				err = -EIO;
-				folio_unlock(folio);
-				folio_put(folio);
-				goto out;
+
+			if (!buffer_uptodate(bh)) {
+				err = bh_read(bh, 0);
+				if (err < 0) {
+					unlock_page(page);
+					put_page(page);
+					goto out;
+				}
 			}
 
 			mark_buffer_dirty(bh);
+
 		} while (bh_off = bh_next, iblock += 1,
 			 head != (bh = bh->b_this_page));
 
-		folio_zero_segment(folio, from, to);
-		dirty = true;
+		zero_user_segment(page, from, to);
 
-		folio_unlock(folio);
-		folio_put(folio);
+		unlock_page(page);
+		put_page(page);
 		cond_resched();
 	}
 out:
-	if (dirty)
-		mark_inode_dirty(inode);
+	mark_inode_dirty(inode);
 	return err;
 }
 
@@ -345,7 +345,7 @@ static int ntfs_extend(struct inode *inode, loff_t pos, size_t count,
 		err = 0;
 	}
 
-	inode_set_mtime_to_ts(inode, inode_set_ctime_current(inode));
+	inode->i_mtime = inode_set_ctime_current(inode);
 	mark_inode_dirty(inode);
 
 	if (IS_SYNC(inode)) {
@@ -403,7 +403,7 @@ static int ntfs_truncate(struct inode *inode, loff_t new_size)
 	ni_unlock(ni);
 
 	ni->std_fa |= FILE_ATTRIBUTE_ARCHIVE;
-	inode_set_mtime_to_ts(inode, inode_set_ctime_current(inode));
+	inode->i_mtime = inode_set_ctime_current(inode);
 	if (!IS_DIRSYNC(inode)) {
 		dirty = 1;
 	} else {
@@ -578,15 +578,6 @@ static long ntfs_fallocate(struct file *file, int mode, loff_t vbo, loff_t len)
 		/* Check new size. */
 		u8 cluster_bits = sbi->cluster_bits;
 
-		/* Be sure file is non resident. */
-		if (is_resident(ni)) {
-			ni_lock(ni);
-			err = attr_force_nonresident(ni);
-			ni_unlock(ni);
-			if (err)
-				goto out;
-		}
-
 		/* generic/213: expected -ENOSPC instead of -EFBIG. */
 		if (!is_supported_holes) {
 			loff_t to_alloc = new_size - inode_get_bytes(inode);
@@ -669,7 +660,7 @@ out:
 		filemap_invalidate_unlock(mapping);
 
 	if (!err) {
-		inode_set_mtime_to_ts(inode, inode_set_ctime_current(inode));
+		inode->i_mtime = inode_set_ctime_current(inode);
 		mark_inode_dirty(inode);
 	}
 
@@ -1243,14 +1234,6 @@ const struct file_operations ntfs_file_operations = {
 	.fsync		= generic_file_fsync,
 	.splice_write	= iter_file_splice_write,
 	.fallocate	= ntfs_fallocate,
-	.release	= ntfs_file_release,
-};
-
-const struct file_operations ntfs_legacy_file_operations = {
-	.llseek		= generic_file_llseek,
-	.read_iter	= ntfs_file_read_iter,
-	.splice_read	= ntfs_file_splice_read,
-	.open		= ntfs_file_open,
 	.release	= ntfs_file_release,
 };
 // clang-format on

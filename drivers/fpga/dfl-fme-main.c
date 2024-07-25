@@ -679,6 +679,8 @@ static int fme_dev_init(struct platform_device *pdev)
 	if (!fme)
 		return -ENOMEM;
 
+	fme->pdata = pdata;
+
 	mutex_lock(&pdata->lock);
 	dfl_fpga_pdata_set_private(pdata, fme);
 	mutex_unlock(&pdata->lock);
@@ -728,11 +730,13 @@ exit:
 	return ret;
 }
 
-static void fme_remove(struct platform_device *pdev)
+static int fme_remove(struct platform_device *pdev)
 {
 	dfl_fpga_dev_ops_unregister(pdev);
 	dfl_fpga_dev_feature_uinit(pdev);
 	fme_dev_destroy(pdev);
+
+	return 0;
 }
 
 static const struct attribute_group *fme_dev_groups[] = {
@@ -747,7 +751,7 @@ static struct platform_driver fme_driver = {
 		.dev_groups = fme_dev_groups,
 	},
 	.probe   = fme_probe,
-	.remove_new = fme_remove,
+	.remove  = fme_remove,
 };
 
 module_platform_driver(fme_driver);

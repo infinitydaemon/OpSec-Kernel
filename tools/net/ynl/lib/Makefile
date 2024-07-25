@@ -17,13 +17,12 @@ ynl.a: $(OBJS)
 	ar rcs $@ $(OBJS)
 clean:
 	rm -f *.o *.d *~
-	rm -rf __pycache__
 
-distclean: clean
+hardclean: clean
 	rm -f *.a
 
 %.o: %.c
 	$(COMPILE.c) -MMD -c -o $@ $<
 
-.PHONY: all clean distclean
+.PHONY: all clean
 .DEFAULT_GOAL=all

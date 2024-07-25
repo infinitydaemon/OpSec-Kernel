@@ -49,7 +49,6 @@ properties:
       - description: APB clock for PCIe
       - description: Auxiliary clock for PCIe
       - description: PIPE clock
-      - description: Reference clock for PCIe
 
   clock-names:
     minItems: 5
@@ -60,7 +59,6 @@ properties:
       - const: pclk
       - const: aux
       - const: pipe
-      - const: ref
 
   interrupts:
     items:

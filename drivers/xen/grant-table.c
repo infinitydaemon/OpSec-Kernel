@@ -427,14 +427,16 @@ EXPORT_SYMBOL_GPL(gnttab_grant_foreign_access);
 
 static int gnttab_end_foreign_access_ref_v1(grant_ref_t ref)
 {
-	u16 *pflags = &gnttab_shared.v1[ref].flags;
-	u16 flags;
+	u16 flags, nflags;
+	u16 *pflags;
 
-	flags = *pflags;
+	pflags = &gnttab_shared.v1[ref].flags;
+	nflags = *pflags;
 	do {
+		flags = nflags;
 		if (flags & (GTF_reading|GTF_writing))
 			return 0;
-	} while (!sync_try_cmpxchg(pflags, &flags, 0));
+	} while ((nflags = sync_cmpxchg(pflags, flags, 0)) != flags);
 
 	return 1;
 }

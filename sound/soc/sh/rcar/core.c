@@ -91,7 +91,6 @@
  */
 
 #include <linux/pm_runtime.h>
-#include <linux/of_graph.h>
 #include "rsnd.h"
 
 #define RSND_RATES SNDRV_PCM_RATE_8000_192000
@@ -691,9 +690,9 @@ static void rsnd_dai_stream_quit(struct rsnd_dai_stream *io)
 static
 struct snd_soc_dai *rsnd_substream_to_dai(struct snd_pcm_substream *substream)
 {
-	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
 
-	return snd_soc_rtd_to_cpu(rtd, 0);
+	return  asoc_rtd_to_cpu(rtd, 0);
 }
 
 static
@@ -1303,6 +1302,7 @@ audio_graph:
 		i++;
 		if (i >= RSND_MAX_COMPONENT) {
 			dev_info(dev, "reach to max component\n");
+			of_node_put(node);
 			of_node_put(ports);
 			break;
 		}
@@ -1512,7 +1512,7 @@ static int rsnd_dai_probe(struct rsnd_priv *priv)
 				continue;
 			for_each_endpoint_of_node(ports, dai_np) {
 				__rsnd_dai_probe(priv, dai_np, dai_np, 0, dai_i);
-				if (!rsnd_is_gen1(priv) && !rsnd_is_gen2(priv)) {
+				if (rsnd_is_gen3(priv) || rsnd_is_gen4(priv)) {
 					rdai = rsnd_rdai_get(priv, dai_i);
 
 					rsnd_parse_connect_graph(priv, &rdai->playback, dai_np);
@@ -1531,7 +1531,7 @@ static int rsnd_dai_probe(struct rsnd_priv *priv)
 
 			for_each_child_of_node(node, dai_np) {
 				__rsnd_dai_probe(priv, dai_np, np, dai_i, dai_i);
-				if (!rsnd_is_gen1(priv) && !rsnd_is_gen2(priv)) {
+				if (rsnd_is_gen3(priv) || rsnd_is_gen4(priv)) {
 					rdai = rsnd_rdai_get(priv, dai_i);
 
 					rsnd_parse_connect_simple(priv, &rdai->playback, dai_np);
@@ -1575,7 +1575,7 @@ static int rsnd_hw_params(struct snd_soc_component *component,
 	struct snd_soc_dai *dai = rsnd_substream_to_dai(substream);
 	struct rsnd_dai *rdai = rsnd_dai_to_rdai(dai);
 	struct rsnd_dai_stream *io = rsnd_rdai_to_io(rdai, substream);
-	struct snd_soc_pcm_runtime *fe = snd_soc_substream_to_rtd(substream);
+	struct snd_soc_pcm_runtime *fe = asoc_substream_to_rtd(substream);
 
 	/*
 	 * rsnd assumes that it might be used under DPCM if user want to use

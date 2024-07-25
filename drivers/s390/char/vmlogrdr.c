@@ -679,9 +679,7 @@ static const struct attribute_group *vmlogrdr_attr_groups[] = {
 	NULL,
 };
 
-static const struct class vmlogrdr_class = {
-	.name = "vmlogrdr_class",
-};
+static struct class *vmlogrdr_class;
 static struct device_driver vmlogrdr_driver = {
 	.name = "vmlogrdr",
 	.bus  = &iucv_bus,
@@ -701,9 +699,12 @@ static int vmlogrdr_register_driver(void)
 	if (ret)
 		goto out_iucv;
 
-	ret = class_register(&vmlogrdr_class);
-	if (ret)
+	vmlogrdr_class = class_create("vmlogrdr");
+	if (IS_ERR(vmlogrdr_class)) {
+		ret = PTR_ERR(vmlogrdr_class);
+		vmlogrdr_class = NULL;
 		goto out_driver;
+	}
 	return 0;
 
 out_driver:
@@ -717,7 +718,8 @@ out:
 
 static void vmlogrdr_unregister_driver(void)
 {
-	class_unregister(&vmlogrdr_class);
+	class_destroy(vmlogrdr_class);
+	vmlogrdr_class = NULL;
 	driver_unregister(&vmlogrdr_driver);
 	iucv_unregister(&vmlogrdr_iucv_handler, 1);
 }
@@ -728,9 +730,23 @@ static int vmlogrdr_register_device(struct vmlogrdr_priv_t *priv)
 	struct device *dev;
 	int ret;
 
-	dev = iucv_alloc_device(vmlogrdr_attr_groups, &vmlogrdr_driver,
-				priv, priv->internal_name);
-	if (!dev)
+	dev = kzalloc(sizeof(struct device), GFP_KERNEL);
+	if (dev) {
+		dev_set_name(dev, "%s", priv->internal_name);
+		dev->bus = &iucv_bus;
+		dev->parent = iucv_root;
+		dev->driver = &vmlogrdr_driver;
+		dev->groups = vmlogrdr_attr_groups;
+		dev_set_drvdata(dev, priv);
+		/*
+		 * The release function could be called after the
+		 * module has been unloaded. It's _only_ task is to
+		 * free the struct. Therefore, we specify kfree()
+		 * directly here. (Probably a little bit obfuscating
+		 * but legitime ...).
+		 */
+		dev->release = (void (*)(struct device *))kfree;
+	} else
 		return -ENOMEM;
 	ret = device_register(dev);
 	if (ret) {
@@ -738,7 +754,7 @@ static int vmlogrdr_register_device(struct vmlogrdr_priv_t *priv)
 		return ret;
 	}
 
-	priv->class_device = device_create(&vmlogrdr_class, dev,
+	priv->class_device = device_create(vmlogrdr_class, dev,
 					   MKDEV(vmlogrdr_major,
 						 priv->minor_num),
 					   priv, "%s", dev_name(dev));
@@ -755,7 +771,7 @@ static int vmlogrdr_register_device(struct vmlogrdr_priv_t *priv)
 
 static int vmlogrdr_unregister_device(struct vmlogrdr_priv_t *priv)
 {
-	device_destroy(&vmlogrdr_class, MKDEV(vmlogrdr_major, priv->minor_num));
+	device_destroy(vmlogrdr_class, MKDEV(vmlogrdr_major, priv->minor_num));
 	if (priv->device != NULL) {
 		device_unregister(priv->device);
 		priv->device=NULL;

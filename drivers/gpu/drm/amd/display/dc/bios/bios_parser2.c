@@ -355,7 +355,7 @@ static struct atom_display_object_path_v3 *get_bios_object_from_path_v3(struct b
 					&& id.enum_id == obj_id.enum_id)
 				return &bp->object_info_tbl.v1_5->display_path[i];
 		}
-	break;
+        break;
 
 	case OBJECT_TYPE_CONNECTOR:
 	case OBJECT_TYPE_GENERIC:
@@ -369,7 +369,7 @@ static struct atom_display_object_path_v3 *get_bios_object_from_path_v3(struct b
 					&& id.enum_id == obj_id.enum_id)
 				return &bp->object_info_tbl.v1_5->display_path[i];
 		}
-	break;
+        break;
 
 	default:
 		return NULL;
@@ -405,16 +405,16 @@ static enum bp_result bios_parser_get_i2c_info(struct dc_bios *dcb,
 	}
 
 	switch (bp->object_info_tbl.revision.minor) {
-	case 4:
-	default:
-		object = get_bios_object(bp, id);
+	    case 4:
+	    default:
+	        object = get_bios_object(bp, id);
 
-		if (!object)
-			return BP_RESULT_BADINPUT;
+	        if (!object)
+				return BP_RESULT_BADINPUT;
 
-		offset = object->disp_recordoffset + bp->object_info_tbl_offset;
-		break;
-	case 5:
+	        offset = object->disp_recordoffset + bp->object_info_tbl_offset;
+	        break;
+	    case 5:
 		object_path_v3 = get_bios_object_from_path_v3(bp, id);
 
 		if (!object_path_v3)
@@ -568,16 +568,17 @@ static enum bp_result bios_parser_get_hpd_info(
 		return BP_RESULT_BADINPUT;
 
 	switch (bp->object_info_tbl.revision.minor) {
-	case 4:
-	default:
-		object = get_bios_object(bp, id);
+	    case 4:
+	    default:
+	        object = get_bios_object(bp, id);
 
 		if (!object)
 			return BP_RESULT_BADINPUT;
 
-		record = get_hpd_record(bp, object);
-		break;
-	case 5:
+	        record = get_hpd_record(bp, object);
+
+	        break;
+	    case 5:
 		object_path_v3 = get_bios_object_from_path_v3(bp, id);
 
 		if (!object_path_v3)
@@ -1594,6 +1595,8 @@ static bool bios_parser_is_device_id_supported(
 		return (le16_to_cpu(bp->object_info_tbl.v1_5->supporteddevices) & mask) != 0;
 		break;
 	}
+
+	return false;
 }
 
 static uint32_t bios_parser_get_ss_entry_number(
@@ -1727,6 +1730,15 @@ static void bios_parser_set_scratch_critical_state(
 	bios_set_scratch_critical_state(dcb, state);
 }
 
+struct atom_dig_transmitter_info_header_v5_3 {
+    struct atom_common_table_header table_header;
+    uint16_t dpphy_hdmi_settings_offset;
+    uint16_t dpphy_dvi_settings_offset;
+    uint16_t dpphy_dp_setting_table_offset;
+    uint16_t uniphy_xbar_settings_v2_table_offset;
+    uint16_t dpphy_internal_reg_overide_offset;
+};
+
 static enum bp_result bios_parser_get_firmware_info(
 	struct dc_bios *dcb,
 	struct dc_firmware_info *info)
@@ -1750,7 +1762,7 @@ static enum bp_result bios_parser_get_firmware_info(
 			case 2:
 			case 3:
 				result = get_firmware_info_v3_2(bp, info);
-				break;
+			break;
 			case 4:
 				result = get_firmware_info_v3_4(bp, info);
 				break;
@@ -2212,8 +2224,10 @@ static enum bp_result bios_parser_get_disp_connector_caps_info(
 {
 	struct bios_parser *bp = BP_FROM_DCB(dcb);
 	struct atom_display_object_path_v2 *object;
+
 	struct atom_display_object_path_v3 *object_path_v3;
 	struct atom_connector_caps_record *record_path_v3;
+
 	struct atom_disp_connector_caps_record *record = NULL;
 
 	if (!info)
@@ -2221,22 +2235,22 @@ static enum bp_result bios_parser_get_disp_connector_caps_info(
 
 	switch (bp->object_info_tbl.revision.minor) {
 	case 4:
-		default:
-			object = get_bios_object(bp, object_id);
+	    default:
+		    object = get_bios_object(bp, object_id);
 
-			if (!object)
-				return BP_RESULT_BADINPUT;
+		    if (!object)
+			    return BP_RESULT_BADINPUT;
 
-			record = get_disp_connector_caps_record(bp, object);
-			if (!record)
-				return BP_RESULT_NORECORD;
+		    record = get_disp_connector_caps_record(bp, object);
+		    if (!record)
+			    return BP_RESULT_NORECORD;
 
-			info->INTERNAL_DISPLAY =
-				(record->connectcaps & ATOM_CONNECTOR_CAP_INTERNAL_DISPLAY) ? 1 : 0;
-			info->INTERNAL_DISPLAY_BL =
-				(record->connectcaps & ATOM_CONNECTOR_CAP_INTERNAL_DISPLAY_BL) ? 1 : 0;
-			break;
-	case 5:
+		    info->INTERNAL_DISPLAY =
+			    (record->connectcaps & ATOM_CONNECTOR_CAP_INTERNAL_DISPLAY) ? 1 : 0;
+		    info->INTERNAL_DISPLAY_BL =
+			    (record->connectcaps & ATOM_CONNECTOR_CAP_INTERNAL_DISPLAY_BL) ? 1 : 0;
+		    break;
+	    case 5:
 		object_path_v3 = get_bios_object_from_path_v3(bp, object_id);
 
 		if (!object_path_v3)
@@ -2397,6 +2411,7 @@ static enum bp_result get_vram_info_v30(
 
 	return result;
 }
+
 
 /*
  * get_integrated_info_v11
@@ -3334,28 +3349,27 @@ static enum bp_result get_bracket_layout_record(
 		DC_LOG_DETECTION_EDID_PARSER("Invalid slot_layout_info\n");
 		return BP_RESULT_BADINPUT;
 	}
-
 	tbl = &bp->object_info_tbl;
 	v1_4 = tbl->v1_4;
 	v1_5 = tbl->v1_5;
 
 	result = BP_RESULT_NORECORD;
 	switch (bp->object_info_tbl.revision.minor) {
-	case 4:
-	default:
-		for (i = 0; i < v1_4->number_of_path; ++i) {
-			if (bracket_layout_id == v1_4->display_path[i].display_objid) {
-				result = update_slot_layout_info(dcb, i, slot_layout_info);
-				break;
+		case 4:
+		default:
+			for (i = 0; i < v1_4->number_of_path; ++i)	{
+				if (bracket_layout_id ==
+					v1_4->display_path[i].display_objid) {
+					result = update_slot_layout_info(dcb, i, slot_layout_info);
+					break;
+				}
 			}
-		}
-		break;
-	case 5:
-		for (i = 0; i < v1_5->number_of_path; ++i)
-			result = update_slot_layout_info_v2(dcb, i, slot_layout_info);
-		break;
+		    break;
+		case 5:
+			for (i = 0; i < v1_5->number_of_path; ++i)
+				result = update_slot_layout_info_v2(dcb, i, slot_layout_info);
+			break;
 	}
-
 	return result;
 }
 
@@ -3364,7 +3378,9 @@ static enum bp_result bios_get_board_layout_info(
 	struct board_layout_info *board_layout_info)
 {
 	unsigned int i;
+
 	struct bios_parser *bp;
+
 	static enum bp_result record_result;
 	unsigned int max_slots;
 
@@ -3373,6 +3389,7 @@ static enum bp_result bios_get_board_layout_info(
 		GENERICOBJECT_BRACKET_LAYOUT_ENUM_ID2,
 		0, 0
 	};
+
 
 	bp = BP_FROM_DCB(dcb);
 
@@ -3554,6 +3571,7 @@ static const struct dc_vbios_funcs vbios_funcs = {
 	.bios_parser_destroy = firmware_parser_destroy,
 
 	.get_board_layout_info = bios_get_board_layout_info,
+	/* TODO: use this fn in hw init?*/
 	.pack_data_tables = bios_parser_pack_data_tables,
 
 	.get_atom_dc_golden_table = bios_get_atom_dc_golden_table,

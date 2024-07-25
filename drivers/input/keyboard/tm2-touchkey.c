@@ -326,8 +326,8 @@ static DEFINE_SIMPLE_DEV_PM_OPS(tm2_touchkey_pm_ops,
 				tm2_touchkey_suspend, tm2_touchkey_resume);
 
 static const struct i2c_device_id tm2_touchkey_id_table[] = {
-	{ TM2_TOUCHKEY_DEV_NAME },
-	{ }
+	{ TM2_TOUCHKEY_DEV_NAME, 0 },
+	{ },
 };
 MODULE_DEVICE_TABLE(i2c, tm2_touchkey_id_table);
 

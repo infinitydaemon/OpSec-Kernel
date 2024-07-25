@@ -7,7 +7,7 @@
 
 unsigned long span = 0;
 
-SEC("fentry/sched_balance_rq")
+SEC("fentry/load_balance")
 int BPF_PROG(fentry_fentry, int this_cpu, struct rq *this_rq,
 		struct sched_domain *sd)
 {

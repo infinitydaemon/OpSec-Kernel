@@ -115,6 +115,8 @@ struct board_ops {
 	void (*send_start_character)(struct jsm_channel *ch);
 	void (*send_stop_character)(struct jsm_channel *ch);
 	void (*copy_data_from_queue_to_uart)(struct jsm_channel *ch);
+	u32 (*get_uart_bytes_left)(struct jsm_channel *ch);
+	void (*send_immediate_char)(struct jsm_channel *ch, unsigned char);
 };
 
 
@@ -125,6 +127,7 @@ struct jsm_board
 {
 	int		boardnum;	/* Board number: 0-32 */
 
+	int		type;		/* Type of board */
 	u8		rev;		/* PCI revision ID */
 	struct pci_dev	*pci_dev;
 	u32		maxports;	/* MAX ports this board can handle */
@@ -152,6 +155,8 @@ struct jsm_board
 	u32		bd_dividend;	/* Board/UARTs specific dividend */
 
 	struct board_ops *bd_ops;
+
+	struct list_head jsm_board_entry;
 };
 
 /************************************************************************

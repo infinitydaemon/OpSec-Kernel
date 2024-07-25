@@ -198,7 +198,7 @@ EXPORT_SYMBOL_GPL(ip_build_and_send_pkt);
 static int ip_finish_output2(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
 	struct dst_entry *dst = skb_dst(skb);
-	struct rtable *rt = dst_rtable(dst);
+	struct rtable *rt = (struct rtable *)dst;
 	struct net_device *dev = dst->dev;
 	unsigned int hh_len = LL_RESERVED_SPACE(dev);
 	struct neighbour *neigh;
@@ -475,7 +475,7 @@ int __ip_queue_xmit(struct sock *sk, struct sk_buff *skb, struct flowi *fl,
 		goto packet_routed;
 
 	/* Make sure we can route this packet. */
-	rt = dst_rtable(__sk_dst_check(sk, 0));
+	rt = (struct rtable *)__sk_dst_check(sk, 0);
 	if (!rt) {
 		__be32 daddr;
 
@@ -493,7 +493,7 @@ int __ip_queue_xmit(struct sock *sk, struct sk_buff *skb, struct flowi *fl,
 					   inet->inet_dport,
 					   inet->inet_sport,
 					   sk->sk_protocol,
-					   RT_TOS(tos),
+					   RT_CONN_FLAGS_TOS(sk, tos),
 					   sk->sk_bound_dev_if);
 		if (IS_ERR(rt))
 			goto no_route;
@@ -546,7 +546,7 @@ EXPORT_SYMBOL(__ip_queue_xmit);
 
 int ip_queue_xmit(struct sock *sk, struct sk_buff *skb, struct flowi *fl)
 {
-	return __ip_queue_xmit(sk, skb, fl, READ_ONCE(inet_sk(sk)->tos));
+	return __ip_queue_xmit(sk, skb, fl, inet_sk(sk)->tos);
 }
 EXPORT_SYMBOL(ip_queue_xmit);
 
@@ -971,9 +971,9 @@ static int __ip_append_data(struct sock *sk,
 	bool zc = false;
 	unsigned int maxfraglen, fragheaderlen, maxnonfragsize;
 	int csummode = CHECKSUM_NONE;
-	struct rtable *rt = dst_rtable(cork->dst);
-	bool paged, hold_tskey, extra_uref = false;
+	struct rtable *rt = (struct rtable *)cork->dst;
 	unsigned int wmem_alloc_delta = 0;
+	bool paged, extra_uref = false;
 	u32 tskey = 0;
 
 	skb = skb_peek_tail(queue);
@@ -981,6 +981,10 @@ static int __ip_append_data(struct sock *sk,
 	exthdrlen = !skb ? rt->dst.header_len : 0;
 	mtu = cork->gso_size ? IP_MAX_MTU : cork->fragsize;
 	paged = !!cork->gso_size;
+
+	if (cork->tx_flags & SKBTX_ANY_TSTAMP &&
+	    READ_ONCE(sk->sk_tsflags) & SOF_TIMESTAMPING_OPT_ID)
+		tskey = atomic_inc_return(&sk->sk_tskey) - 1;
 
 	hh_len = LL_RESERVED_SPACE(rt->dst.dev);
 
@@ -1047,11 +1051,6 @@ static int __ip_append_data(struct sock *sk,
 	}
 
 	cork->length += length;
-
-	hold_tskey = cork->tx_flags & SKBTX_ANY_TSTAMP &&
-		     READ_ONCE(sk->sk_tsflags) & SOF_TIMESTAMPING_OPT_ID;
-	if (hold_tskey)
-		tskey = atomic_inc_return(&sk->sk_tskey) - 1;
 
 	/* So, what's going on in the loop below?
 	 *
@@ -1275,8 +1274,6 @@ error:
 	cork->length -= length;
 	IP_INC_STATS(sock_net(sk), IPSTATS_MIB_OUTDISCARDS);
 	refcount_add(wmem_alloc_delta, &sk->sk_wmem_alloc);
-	if (hold_tskey)
-		atomic_dec(&sk->sk_tskey);
 	return err;
 }
 
@@ -1390,10 +1387,10 @@ struct sk_buff *__ip_make_skb(struct sock *sk,
 	struct inet_sock *inet = inet_sk(sk);
 	struct net *net = sock_net(sk);
 	struct ip_options *opt = NULL;
-	struct rtable *rt = dst_rtable(cork->dst);
+	struct rtable *rt = (struct rtable *)cork->dst;
 	struct iphdr *iph;
-	u8 pmtudisc, ttl;
 	__be16 df = 0;
+	__u8 ttl;
 
 	skb = __skb_dequeue(queue);
 	if (!skb)
@@ -1423,9 +1420,8 @@ struct sk_buff *__ip_make_skb(struct sock *sk,
 	/* DF bit is set when we want to see DF on outgoing frames.
 	 * If ignore_df is set too, we still allow to fragment this frame
 	 * locally. */
-	pmtudisc = READ_ONCE(inet->pmtudisc);
-	if (pmtudisc == IP_PMTUDISC_DO ||
-	    pmtudisc == IP_PMTUDISC_PROBE ||
+	if (inet->pmtudisc == IP_PMTUDISC_DO ||
+	    inet->pmtudisc == IP_PMTUDISC_PROBE ||
 	    (skb->len <= dst_mtu(&rt->dst) &&
 	     ip_dont_fragment(sk, &rt->dst)))
 		df = htons(IP_DF);
@@ -1436,14 +1432,14 @@ struct sk_buff *__ip_make_skb(struct sock *sk,
 	if (cork->ttl != 0)
 		ttl = cork->ttl;
 	else if (rt->rt_type == RTN_MULTICAST)
-		ttl = READ_ONCE(inet->mc_ttl);
+		ttl = inet->mc_ttl;
 	else
 		ttl = ip_select_ttl(inet, &rt->dst);
 
 	iph = ip_hdr(skb);
 	iph->version = 4;
 	iph->ihl = 5;
-	iph->tos = (cork->tos != -1) ? cork->tos : READ_ONCE(inet->tos);
+	iph->tos = (cork->tos != -1) ? cork->tos : inet->tos;
 	iph->frag_off = df;
 	iph->ttl = ttl;
 	iph->protocol = sk->sk_protocol;
@@ -1455,7 +1451,7 @@ struct sk_buff *__ip_make_skb(struct sock *sk,
 		ip_options_build(skb, opt, cork->addr, rt);
 	}
 
-	skb->priority = (cork->tos != -1) ? cork->priority: READ_ONCE(sk->sk_priority);
+	skb->priority = (cork->tos != -1) ? cork->priority: sk->sk_priority;
 	skb->mark = cork->mark;
 	skb->tstamp = cork->transmit_time;
 	/*

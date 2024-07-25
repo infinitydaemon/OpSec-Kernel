@@ -26,11 +26,9 @@
 static int loops = LOOPS_DEFAULT;
 
 enum bench_uprobe {
-	BENCH_UPROBE__BASELINE,
-	BENCH_UPROBE__EMPTY,
-	BENCH_UPROBE__TRACE_PRINTK,
-	BENCH_UPROBE__EMPTY_RET,
-	BENCH_UPROBE__TRACE_PRINTK_RET,
+        BENCH_UPROBE__BASELINE,
+        BENCH_UPROBE__EMPTY,
+        BENCH_UPROBE__TRACE_PRINTK,
 };
 
 static const struct option options[] = {
@@ -83,8 +81,6 @@ static int bench_uprobe__setup_bpf_skel(enum bench_uprobe bench)
 	case BENCH_UPROBE__BASELINE:							break;
 	case BENCH_UPROBE__EMPTY:	 bench_uprobe__attach_uprobe(empty);		break;
 	case BENCH_UPROBE__TRACE_PRINTK: bench_uprobe__attach_uprobe(trace_printk);	break;
-	case BENCH_UPROBE__EMPTY_RET:	 bench_uprobe__attach_uprobe(empty_ret);	break;
-	case BENCH_UPROBE__TRACE_PRINTK_RET: bench_uprobe__attach_uprobe(trace_printk_ret); break;
 	default:
 		fprintf(stderr, "Invalid bench: %d\n", bench);
 		goto cleanup;
@@ -93,7 +89,6 @@ static int bench_uprobe__setup_bpf_skel(enum bench_uprobe bench)
 	return err;
 cleanup:
 	bench_uprobe_bpf__destroy(skel);
-	skel = NULL;
 	return err;
 }
 
@@ -200,14 +195,4 @@ int bench_uprobe_empty(int argc, const char **argv)
 int bench_uprobe_trace_printk(int argc, const char **argv)
 {
 	return bench_uprobe(argc, argv, BENCH_UPROBE__TRACE_PRINTK);
-}
-
-int bench_uprobe_empty_ret(int argc, const char **argv)
-{
-	return bench_uprobe(argc, argv, BENCH_UPROBE__EMPTY_RET);
-}
-
-int bench_uprobe_trace_printk_ret(int argc, const char **argv)
-{
-	return bench_uprobe(argc, argv, BENCH_UPROBE__TRACE_PRINTK_RET);
 }

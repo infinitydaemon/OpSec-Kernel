@@ -19,7 +19,6 @@
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/of.h>
-#include <linux/reboot.h>
 #include <linux/regmap.h>
 #include <linux/regulator/of_regulator.h>
 #include <linux/regulator/consumer.h>
@@ -33,7 +32,6 @@
 
 #include "dummy.h"
 #include "internal.h"
-#include "regnl.h"
 
 static DEFINE_WW_CLASS(regulator_ww_class);
 static DEFINE_MUTEX(regulator_nesting_mutex);
@@ -2200,7 +2198,7 @@ struct regulator *_regulator_get(struct device *dev, const char *id,
 
 		if (!have_full_constraints()) {
 			dev_warn(dev,
-				 "incomplete constraints, dummy supplies not allowed (id=%s)\n", id);
+				 "incomplete constraints, dummy supplies not allowed\n");
 			return ERR_PTR(-ENODEV);
 		}
 
@@ -2218,7 +2216,7 @@ struct regulator *_regulator_get(struct device *dev, const char *id,
 
 		case EXCLUSIVE_GET:
 			dev_warn(dev,
-				 "dummy supplies not allowed for exclusive requests (id=%s)\n", id);
+				 "dummy supplies not allowed for exclusive requests\n");
 			fallthrough;
 
 		default:
@@ -2279,17 +2277,6 @@ struct regulator *_regulator_get(struct device *dev, const char *id,
 		if (ret > 0) {
 			rdev->use_count = 1;
 			regulator->enable_count = 1;
-
-			/* Propagate the regulator state to its supply */
-			if (rdev->supply) {
-				ret = regulator_enable(rdev->supply);
-				if (ret < 0) {
-					destroy_regulator(regulator);
-					module_put(rdev->owner);
-					put_device(&rdev->dev);
-					return ERR_PTR(ret);
-				}
-			}
 		} else {
 			rdev->use_count = 0;
 			regulator->enable_count = 0;
@@ -3347,6 +3334,7 @@ struct regmap *regulator_get_regmap(struct regulator *regulator)
 
 	return map ? map : ERR_PTR(-EOPNOTSUPP);
 }
+EXPORT_SYMBOL_GPL(regulator_get_regmap);
 
 /**
  * regulator_get_hardware_vsel_register - get the HW voltage selector register
@@ -3948,6 +3936,7 @@ static int regulator_get_optimal_voltage(struct regulator_dev *rdev,
 		if (ret < 0)
 			return ret;
 
+		possible_uV = desired_min_uV;
 		done = true;
 
 		goto finish;
@@ -4870,23 +4859,7 @@ static int _notifier_call_chain(struct regulator_dev *rdev,
 				  unsigned long event, void *data)
 {
 	/* call rdev chain first */
-	int ret =  blocking_notifier_call_chain(&rdev->notifier, event, data);
-
-	if (IS_REACHABLE(CONFIG_REGULATOR_NETLINK_EVENTS)) {
-		struct device *parent = rdev->dev.parent;
-		const char *rname = rdev_get_name(rdev);
-		char name[32];
-
-		/* Avoid duplicate debugfs directory names */
-		if (parent && rname == rdev->desc->name) {
-			snprintf(name, sizeof(name), "%s-%s", dev_name(parent),
-				 rname);
-			rname = name;
-		}
-		reg_generate_netlink_event(rname, event);
-	}
-
-	return ret;
+	return blocking_notifier_call_chain(&rdev->notifier, event, data);
 }
 
 int _regulator_bulk_get(struct device *dev, int num_consumers,
@@ -5099,41 +5072,6 @@ void regulator_bulk_free(int num_consumers,
 EXPORT_SYMBOL_GPL(regulator_bulk_free);
 
 /**
- * regulator_handle_critical - Handle events for system-critical regulators.
- * @rdev: The regulator device.
- * @event: The event being handled.
- *
- * This function handles critical events such as under-voltage, over-current,
- * and unknown errors for regulators deemed system-critical. On detecting such
- * events, it triggers a hardware protection shutdown with a defined timeout.
- */
-static void regulator_handle_critical(struct regulator_dev *rdev,
-				      unsigned long event)
-{
-	const char *reason = NULL;
-
-	if (!rdev->constraints->system_critical)
-		return;
-
-	switch (event) {
-	case REGULATOR_EVENT_UNDER_VOLTAGE:
-		reason = "System critical regulator: voltage drop detected";
-		break;
-	case REGULATOR_EVENT_OVER_CURRENT:
-		reason = "System critical regulator: over-current detected";
-		break;
-	case REGULATOR_EVENT_FAIL:
-		reason = "System critical regulator: unknown error";
-	}
-
-	if (!reason)
-		return;
-
-	hw_protection_shutdown(reason,
-			       rdev->constraints->uv_less_critical_window_ms);
-}
-
-/**
  * regulator_notifier_call_chain - call regulator event notifier
  * @rdev: regulator source
  * @event: notifier block
@@ -5145,8 +5083,6 @@ static void regulator_handle_critical(struct regulator_dev *rdev,
 int regulator_notifier_call_chain(struct regulator_dev *rdev,
 				  unsigned long event, void *data)
 {
-	regulator_handle_critical(rdev, event);
-
 	_notifier_call_chain(rdev, event, data);
 	return NOTIFY_DONE;
 
@@ -5906,7 +5842,7 @@ static const struct dev_pm_ops __maybe_unused regulator_pm_ops = {
 };
 #endif
 
-const struct class regulator_class = {
+struct class regulator_class = {
 	.name = "regulator",
 	.dev_release = regulator_dev_release,
 	.dev_groups = regulator_dev_groups,
@@ -6308,14 +6244,6 @@ unlock:
 	return 0;
 }
 
-static bool regulator_ignore_unused;
-static int __init regulator_ignore_unused_setup(char *__unused)
-{
-	regulator_ignore_unused = true;
-	return 1;
-}
-__setup("regulator_ignore_unused", regulator_ignore_unused_setup);
-
 static void regulator_init_complete_work_function(struct work_struct *work)
 {
 	/*
@@ -6327,15 +6255,6 @@ static void regulator_init_complete_work_function(struct work_struct *work)
 	 */
 	class_for_each_device(&regulator_class, NULL, NULL,
 			      regulator_register_resolve_supply);
-
-	/*
-	 * For debugging purposes, it may be useful to prevent unused
-	 * regulators from being disabled.
-	 */
-	if (regulator_ignore_unused) {
-		pr_warn("regulator: Not disabling unused regulators\n");
-		return;
-	}
 
 	/* If we have a full configuration then disable any regulators
 	 * we have permission to change the status for and which are

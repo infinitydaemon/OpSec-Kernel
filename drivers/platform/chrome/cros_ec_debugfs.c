@@ -7,7 +7,6 @@
 #include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/fs.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/platform_data/cros_ec_commands.h>
@@ -455,7 +454,7 @@ static int cros_ec_create_panicinfo(struct cros_ec_debugfs *debug_info)
 	debug_info->panicinfo_blob.data = data;
 	debug_info->panicinfo_blob.size = ret;
 
-	debugfs_create_blob("panicinfo", 0444, debug_info->dir,
+	debugfs_create_blob("panicinfo", S_IFREG | 0444, debug_info->dir,
 			    &debug_info->panicinfo_blob);
 
 	return 0;
@@ -534,12 +533,14 @@ remove_debugfs:
 	return ret;
 }
 
-static void cros_ec_debugfs_remove(struct platform_device *pd)
+static int cros_ec_debugfs_remove(struct platform_device *pd)
 {
 	struct cros_ec_dev *ec = dev_get_drvdata(pd->dev.parent);
 
 	debugfs_remove_recursive(ec->debug_info->dir);
 	cros_ec_cleanup_console_log(ec->debug_info);
+
+	return 0;
 }
 
 static int __maybe_unused cros_ec_debugfs_suspend(struct device *dev)
@@ -565,12 +566,6 @@ static int __maybe_unused cros_ec_debugfs_resume(struct device *dev)
 static SIMPLE_DEV_PM_OPS(cros_ec_debugfs_pm_ops,
 			 cros_ec_debugfs_suspend, cros_ec_debugfs_resume);
 
-static const struct platform_device_id cros_ec_debugfs_id[] = {
-	{ DRV_NAME, 0 },
-	{}
-};
-MODULE_DEVICE_TABLE(platform, cros_ec_debugfs_id);
-
 static struct platform_driver cros_ec_debugfs_driver = {
 	.driver = {
 		.name = DRV_NAME,
@@ -578,11 +573,11 @@ static struct platform_driver cros_ec_debugfs_driver = {
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 	},
 	.probe = cros_ec_debugfs_probe,
-	.remove_new = cros_ec_debugfs_remove,
-	.id_table = cros_ec_debugfs_id,
+	.remove = cros_ec_debugfs_remove,
 };
 
 module_platform_driver(cros_ec_debugfs_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Debug logs for ChromeOS EC");
+MODULE_ALIAS("platform:" DRV_NAME);

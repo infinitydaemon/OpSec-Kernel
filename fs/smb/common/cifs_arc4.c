@@ -10,7 +10,6 @@
 #include <linux/module.h>
 #include "arc4.h"
 
-MODULE_DESCRIPTION("ARC4 Cipher Algorithm");
 MODULE_LICENSE("GPL");
 
 int cifs_arc4_setkey(struct arc4_ctx *ctx, const u8 *in_key, unsigned int key_len)

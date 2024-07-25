@@ -20,7 +20,7 @@
 static int pwm_lpss_probe_platform(struct platform_device *pdev)
 {
 	const struct pwm_lpss_boardinfo *info;
-	struct pwm_chip *chip;
+	struct pwm_lpss_chip *lpwm;
 	void __iomem *base;
 
 	info = device_get_match_data(&pdev->dev);
@@ -31,9 +31,11 @@ static int pwm_lpss_probe_platform(struct platform_device *pdev)
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
-	chip = devm_pwm_lpss_probe(&pdev->dev, base, info);
-	if (IS_ERR(chip))
-		return PTR_ERR(chip);
+	lpwm = devm_pwm_lpss_probe(&pdev->dev, base, info);
+	if (IS_ERR(lpwm))
+		return PTR_ERR(lpwm);
+
+	platform_set_drvdata(pdev, lpwm);
 
 	/*
 	 * On Cherry Trail devices the GFX0._PS0 AML checks if the controller

@@ -10,7 +10,6 @@
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
-#include <linux/profile.h>
 #include <linux/smp.h>
 #include <linux/spinlock.h>
 #include <linux/threads.h>
@@ -356,7 +355,7 @@ asmlinkage void start_secondary(void)
 
 	cpu_probe();
 	per_cpu_trap_init(false);
-	rcutree_report_cpu_starting(cpu);
+	rcu_cpu_starting(cpu);
 	mips_clockevent_init();
 	mp_ops->init_secondary();
 	cpu_report();
@@ -469,13 +468,11 @@ int __cpu_up(unsigned int cpu, struct task_struct *tidle)
 	return 0;
 }
 
-#ifdef CONFIG_PROFILING
 /* Not really SMP stuff ... */
 int setup_profiling_timer(unsigned int multiplier)
 {
 	return 0;
 }
-#endif
 
 static void flush_tlb_all_ipi(void *info)
 {

@@ -95,6 +95,10 @@ static bool offset_to_id(
 			return true;
 		default:
 			ASSERT_CRITICAL(false);
+#ifdef PALLADIUM_SUPPORTED
+		*en = GPIO_DDC_LINE_DDC1;
+		return true;
+#endif
 			return false;
 		}
 	break;
@@ -180,6 +184,11 @@ static bool offset_to_id(
 	/* UNEXPECTED */
 	default:
 /*	case REG(DC_GPIO_SYNCA_A): not exista */
+#ifdef PALLADIUM_SUPPORTED
+		*id = GPIO_ID_HPD;
+		*en = GPIO_DDC_LINE_DDC1;
+		return true;
+#endif
 		ASSERT_CRITICAL(false);
 		return false;
 	}
@@ -299,6 +308,10 @@ static bool id_to_offset(
 		break;
 		default:
 			ASSERT_CRITICAL(false);
+#ifdef PALLADIUM_SUPPORTED
+			info->mask = DC_GPIO_HPD_A__DC_GPIO_HPD1_A_MASK;
+			result = true;
+#endif
 			result = false;
 		}
 	break;

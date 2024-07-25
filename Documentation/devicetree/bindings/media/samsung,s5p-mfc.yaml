@@ -24,7 +24,6 @@ properties:
           - samsung,mfc-v7                # Exynos5420
           - samsung,mfc-v8                # Exynos5800
           - samsung,mfc-v10               # Exynos7880
-          - tesla,fsd-mfc                 # Tesla FSD
       - items:
           - enum:
               - samsung,exynos3250-mfc    # Exynos3250
@@ -50,9 +49,7 @@ properties:
 
   iommu-names:
     minItems: 1
-    items:
-      - const: left
-      - const: right
+    maxItems: 2
 
   power-domains:
     maxItems: 1
@@ -87,7 +84,7 @@ allOf:
             - const: sclk_mfc
         iommus:
           maxItems: 1
-        iommu-names: false
+        iommus-names: false
 
   - if:
       properties:
@@ -105,9 +102,11 @@ allOf:
             - const: aclk
             - const: aclk_xiu
         iommus:
-          minItems: 2
-        iommu-names:
-          minItems: 2
+          maxItems: 2
+        iommus-names:
+          items:
+            - const: left
+            - const: right
 
   - if:
       properties:
@@ -124,9 +123,11 @@ allOf:
             - const: mfc
             - const: sclk_mfc
         iommus:
-          minItems: 2
-        iommu-names:
-          minItems: 2
+          maxItems: 2
+        iommus-names:
+          items:
+            - const: left
+            - const: right
 
   - if:
       properties:
@@ -143,9 +144,11 @@ allOf:
           items:
             - const: mfc
         iommus:
-          minItems: 2
-        iommu-names:
-          minItems: 2
+          maxItems: 2
+        iommus-names:
+          items:
+            - const: left
+            - const: right
 
   - if:
       properties:
@@ -158,23 +161,9 @@ allOf:
         clocks:
           minItems: 1
           maxItems: 2
-
-  - if:
-      properties:
-        compatible:
-          contains:
-            enum:
-              - tesla,fsd-mfc
-    then:
-      properties:
-        clocks:
-          maxItems: 1
-        clock-names:
-          items:
-            - const: mfc
         iommus:
+          minItems: 1
           maxItems: 2
-        iommus-names: false
 
 examples:
   - |

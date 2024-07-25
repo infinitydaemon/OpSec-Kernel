@@ -9,7 +9,6 @@
 
 #define pr_fmt(fmt)	"OF: " fmt
 
-#include <linux/cleanup.h>
 #include <linux/device.h>
 #include <linux/of.h>
 #include <linux/spinlock.h>
@@ -307,20 +306,15 @@ int of_detach_node(struct device_node *np)
 }
 EXPORT_SYMBOL_GPL(of_detach_node);
 
-void __of_prop_free(struct property *prop)
-{
-	kfree(prop->name);
-	kfree(prop->value);
-	kfree(prop);
-}
-
 static void property_list_free(struct property *prop_list)
 {
 	struct property *prop, *next;
 
 	for (prop = prop_list; prop != NULL; prop = next) {
 		next = prop->next;
-		__of_prop_free(prop);
+		kfree(prop->name);
+		kfree(prop->value);
+		kfree(prop);
 	}
 }
 
@@ -433,7 +427,9 @@ struct property *__of_prop_dup(const struct property *prop, gfp_t allocflags)
 	return new;
 
  err_free:
-	__of_prop_free(new);
+	kfree(new->name);
+	kfree(new->value);
+	kfree(new);
 	return NULL;
 }
 
@@ -475,7 +471,9 @@ struct device_node *__of_node_dup(const struct device_node *np,
 			if (!new_pp)
 				goto err_prop;
 			if (__of_add_property(node, new_pp)) {
-				__of_prop_free(new_pp);
+				kfree(new_pp->name);
+				kfree(new_pp->value);
+				kfree(new_pp);
 				goto err_prop;
 			}
 		}
@@ -935,8 +933,11 @@ static int of_changeset_add_prop_helper(struct of_changeset *ocs,
 		return -ENOMEM;
 
 	ret = of_changeset_add_property(ocs, np, new_pp);
-	if (ret)
-		__of_prop_free(new_pp);
+	if (ret) {
+		kfree(new_pp->name);
+		kfree(new_pp->value);
+		kfree(new_pp);
+	}
 
 	return ret;
 }
@@ -1032,9 +1033,10 @@ int of_changeset_add_prop_u32_array(struct of_changeset *ocs,
 				    const u32 *array, size_t sz)
 {
 	struct property prop;
-	__be32 *val __free(kfree) = kcalloc(sz, sizeof(__be32), GFP_KERNEL);
-	int i;
+	__be32 *val;
+	int i, ret;
 
+	val = kcalloc(sz, sizeof(__be32), GFP_KERNEL);
 	if (!val)
 		return -ENOMEM;
 
@@ -1044,6 +1046,9 @@ int of_changeset_add_prop_u32_array(struct of_changeset *ocs,
 	prop.length = sizeof(u32) * sz;
 	prop.value = (void *)val;
 
-	return of_changeset_add_prop_helper(ocs, np, &prop);
+	ret = of_changeset_add_prop_helper(ocs, np, &prop);
+	kfree(val);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(of_changeset_add_prop_u32_array);

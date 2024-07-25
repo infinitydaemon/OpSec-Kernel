@@ -143,7 +143,7 @@ static void sparx5_fdma_rx_activate(struct sparx5 *sparx5, struct sparx5_rx *rx)
 
 static void sparx5_fdma_rx_deactivate(struct sparx5 *sparx5, struct sparx5_rx *rx)
 {
-	/* Deactivate the RX channel */
+	/* Dectivate the RX channel */
 	spx5_rmw(0, BIT(rx->channel_id) & FDMA_CH_ACTIVATE_CH_ACTIVATE,
 		 sparx5, FDMA_CH_ACTIVATE);
 

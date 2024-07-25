@@ -8,6 +8,7 @@
 #include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/export.h>
+#include <linux/ktime.h>
 #include <linux/scatterlist.h>
 
 #include <linux/mmc/host.h>
@@ -18,20 +19,6 @@
 #include "core.h"
 #include "sd_ops.h"
 #include "mmc_ops.h"
-
-/*
- * Extensive testing has shown that some specific SD cards
- * require an increased command timeout to be successfully
- * initialized.
- */
-#define SD_APP_OP_COND_PERIOD_US	(10 * 1000) /* 10ms */
-#define SD_APP_OP_COND_TIMEOUT_MS	2000 /* 2s */
-
-struct sd_app_op_cond_busy_data {
-	struct mmc_host *host;
-	u32 ocr;
-	struct mmc_command *cmd;
-};
 
 int mmc_app_cmd(struct mmc_host *host, struct mmc_card *card)
 {
@@ -129,45 +116,10 @@ int mmc_app_set_bus_width(struct mmc_card *card, int width)
 	return mmc_wait_for_app_cmd(card->host, card, &cmd);
 }
 
-static int sd_app_op_cond_cb(void *cb_data, bool *busy)
-{
-	struct sd_app_op_cond_busy_data *data = cb_data;
-	struct mmc_host *host = data->host;
-	struct mmc_command *cmd = data->cmd;
-	u32 ocr = data->ocr;
-	int err;
-
-	*busy = false;
-
-	err = mmc_wait_for_app_cmd(host, NULL, cmd);
-	if (err)
-		return err;
-
-	/* If we're just probing, do a single pass. */
-	if (ocr == 0)
-		return 0;
-
-	/* Wait until reset completes. */
-	if (mmc_host_is_spi(host)) {
-		if (!(cmd->resp[0] & R1_SPI_IDLE))
-			return 0;
-	} else if (cmd->resp[0] & MMC_CARD_BUSY) {
-		return 0;
-	}
-
-	*busy = true;
-	return 0;
-}
-
 int mmc_send_app_op_cond(struct mmc_host *host, u32 ocr, u32 *rocr)
 {
 	struct mmc_command cmd = {};
-	struct sd_app_op_cond_busy_data cb_data = {
-		.host = host,
-		.ocr = ocr,
-		.cmd = &cmd
-	};
-	int err;
+	int i, err = 0;
 
 	cmd.opcode = SD_APP_OP_COND;
 	if (mmc_host_is_spi(host))
@@ -176,16 +128,36 @@ int mmc_send_app_op_cond(struct mmc_host *host, u32 ocr, u32 *rocr)
 		cmd.arg = ocr;
 	cmd.flags = MMC_RSP_SPI_R1 | MMC_RSP_R3 | MMC_CMD_BCR;
 
-	err = __mmc_poll_for_busy(host, SD_APP_OP_COND_PERIOD_US,
-				  SD_APP_OP_COND_TIMEOUT_MS, &sd_app_op_cond_cb,
-				  &cb_data);
-	if (err)
-		return err;
+	for (i = 100; i; i--) {
+		err = mmc_wait_for_app_cmd(host, NULL, &cmd);
+		if (err)
+			break;
+
+		/* if we're just probing, do a single pass */
+		if (ocr == 0)
+			break;
+
+		/* otherwise wait until reset completes */
+		if (mmc_host_is_spi(host)) {
+			if (!(cmd.resp[0] & R1_SPI_IDLE))
+				break;
+		} else {
+			if (cmd.resp[0] & MMC_CARD_BUSY)
+				break;
+		}
+
+		err = -ETIMEDOUT;
+
+		mmc_delay(10);
+	}
+
+	if (!i)
+		pr_err("%s: card never left busy state\n", mmc_hostname(host));
 
 	if (rocr && !mmc_host_is_spi(host))
 		*rocr = cmd.resp[0];
 
-	return 0;
+	return err;
 }
 
 static int __mmc_send_if_cond(struct mmc_host *host, u32 ocr, u8 pcie_bits,
@@ -394,3 +366,136 @@ int mmc_app_sd_status(struct mmc_card *card, void *ssr)
 
 	return 0;
 }
+
+
+int mmc_sd_write_ext_reg(struct mmc_card *card, u8 fno, u8 page, u16 offset,
+		     u8 reg_data)
+{
+	struct mmc_host *host = card->host;
+	struct mmc_request mrq = {};
+	struct mmc_command cmd = {};
+	struct mmc_data data = {};
+	struct scatterlist sg;
+	u8 *reg_buf;
+
+	reg_buf = card->ext_reg_buf;
+	memset(reg_buf, 0, 512);
+
+	mrq.cmd = &cmd;
+	mrq.data = &data;
+
+	/*
+	 * Arguments of CMD49:
+	 * [31:31] MIO (0 = memory).
+	 * [30:27] FNO (function number).
+	 * [26:26] MW - mask write mode (0 = disable).
+	 * [25:18] page number.
+	 * [17:9] offset address.
+	 * [8:0] length (0 = 1 byte).
+	 */
+	cmd.arg = fno << 27 | page << 18 | offset << 9;
+
+	/* The first byte in the buffer is the data to be written. */
+	reg_buf[0] = reg_data;
+
+	data.flags = MMC_DATA_WRITE;
+	data.blksz = 512;
+	data.blocks = 1;
+	data.sg = &sg;
+	data.sg_len = 1;
+	sg_init_one(&sg, reg_buf, 512);
+
+	cmd.opcode = SD_WRITE_EXTR_SINGLE;
+	cmd.flags = MMC_RSP_R1 | MMC_CMD_ADTC;
+
+	mmc_set_data_timeout(&data, card);
+	mmc_wait_for_req(host, &mrq);
+
+	/*
+	 * Note that, the SD card is allowed to signal busy on DAT0 up to 1s
+	 * after the CMD49. Although, let's leave this to be managed by the
+	 * caller.
+	 */
+
+	if (cmd.error)
+		return cmd.error;
+	if (data.error)
+		return data.error;
+
+	return 0;
+}
+
+int mmc_sd_read_ext_reg(struct mmc_card *card, u8 fno, u8 page,
+			u16 offset, u16 len, u8 *reg_buf)
+{
+	u32 cmd_args;
+
+	/*
+	 * Command arguments of CMD48:
+	 * [31:31] MIO (0 = memory).
+	 * [30:27] FNO (function number).
+	 * [26:26] reserved (0).
+	 * [25:18] page number.
+	 * [17:9] offset address.
+	 * [8:0] length (0 = 1 byte, 1ff = 512 bytes).
+	 */
+	cmd_args = fno << 27 | page << 18 | offset << 9 | (len - 1);
+
+	return mmc_send_adtc_data(card, card->host, SD_READ_EXTR_SINGLE,
+				  cmd_args, reg_buf, 512);
+}
+
+static int mmc_sd_cmdq_switch(struct mmc_card *card, bool enable)
+{
+	int err;
+	u8 reg = 0;
+	u8 *reg_buf = card->ext_reg_buf;
+	ktime_t timeout;
+	/*
+	 * SD offers two command queueing modes - sequential (in-order) and
+	 * voluntary (out-of-order). Apps Class A2 performance is only
+	 * guaranteed for voluntary CQ (bit 1 = 0), so use that in preference
+	 * to sequential.
+	 */
+	if (enable)
+		reg = BIT(0);
+
+	/* Performance enhancement register byte 262 controls command queueing */
+	err = mmc_sd_write_ext_reg(card, card->ext_perf.fno, card->ext_perf.page,
+				   card->ext_perf.offset + 262, reg);
+	if (err)
+		goto out;
+
+	/* Poll the register - cards may have a lazy init/deinit sequence. */
+	timeout = ktime_add_ms(ktime_get(), 10);
+	while (1) {
+		err = mmc_sd_read_ext_reg(card, card->ext_perf.fno, card->ext_perf.page,
+					  card->ext_perf.offset + 262, 1, reg_buf);
+		if (err)
+			break;
+		if ((reg_buf[0] & BIT(0)) == reg)
+			break;
+		if (ktime_after(ktime_get(), timeout)) {
+			err = -EBADMSG;
+			break;
+		}
+		usleep_range(100, 200);
+	}
+out:
+	if (!err)
+		card->ext_csd.cmdq_en = enable;
+
+	return err;
+}
+
+int mmc_sd_cmdq_enable(struct mmc_card *card)
+{
+	return mmc_sd_cmdq_switch(card, true);
+}
+EXPORT_SYMBOL_GPL(mmc_sd_cmdq_enable);
+
+int mmc_sd_cmdq_disable(struct mmc_card *card)
+{
+	return mmc_sd_cmdq_switch(card, false);
+}
+EXPORT_SYMBOL_GPL(mmc_sd_cmdq_disable);

@@ -33,7 +33,7 @@
 #   |                                                                         |
 #   +-------------------------------------------------------------------------+
 
-source "$net_forwarding_dir/mirror_topo_lib.sh"
+source "$relative_path/mirror_topo_lib.sh"
 
 mirror_gre_topo_h3_create()
 {

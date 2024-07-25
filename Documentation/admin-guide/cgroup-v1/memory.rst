@@ -300,14 +300,14 @@ When oom event notifier is registered, event will be delivered.
 
 Lock order is as follows::
 
-  folio_lock
+  Page lock (PG_locked bit of page->flags)
     mm->page_table_lock or split pte_lock
       folio_memcg_lock (memcg->move_lock)
         mapping->i_pages lock
           lruvec->lru_lock.
 
 Per-node-per-memcgroup LRU (cgroup's private LRU) is guarded by
-lruvec->lru_lock; the folio LRU flag is cleared before
+lruvec->lru_lock; PG_lru bit of page->flags is cleared before
 isolating a page from its LRU under lruvec->lru_lock.
 
 .. _cgroup-v1-memory-kernel-extension:
@@ -551,7 +551,6 @@ memory.stat file includes following statistics:
                     event happens each time a page is unaccounted from the
                     cgroup.
     swap            # of bytes of swap usage
-    swapcached      # of bytes of swap cached in memory
     dirty           # of bytes that are waiting to get written back to the disk.
     writeback       # of bytes of file/anon cache that are queued for syncing to
                     disk.
@@ -802,8 +801,8 @@ a page or a swap can be moved only when it is charged to the task's current
 |   | anonymous pages, file pages (and swaps) in the range mmapped by the task |
 |   | will be moved even if the task hasn't done page fault, i.e. they might   |
 |   | not be the task's "RSS", but other task's "RSS" that maps the same file. |
-|   | The mapcount of the page is ignored (the page can be moved independent   |
-|   | of the mapcount). You must enable Swap Extension (see 2.4) to            |
+|   | And mapcount of the page is ignored (the page can be moved even if       |
+|   | page_mapcount(page) > 1). You must enable Swap Extension (see 2.4) to    |
 |   | enable move of swap charges.                                             |
 +---+--------------------------------------------------------------------------+
 

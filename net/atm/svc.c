@@ -324,8 +324,8 @@ out:
 	return error;
 }
 
-static int svc_accept(struct socket *sock, struct socket *newsock,
-		      struct proto_accept_arg *arg)
+static int svc_accept(struct socket *sock, struct socket *newsock, int flags,
+		      bool kern)
 {
 	struct sock *sk = sock->sk;
 	struct sk_buff *skb;
@@ -336,7 +336,7 @@ static int svc_accept(struct socket *sock, struct socket *newsock,
 
 	lock_sock(sk);
 
-	error = svc_create(sock_net(sk), newsock, 0, arg->kern);
+	error = svc_create(sock_net(sk), newsock, 0, kern);
 	if (error)
 		goto out;
 
@@ -355,7 +355,7 @@ static int svc_accept(struct socket *sock, struct socket *newsock,
 				error = -sk->sk_err;
 				break;
 			}
-			if (arg->flags & O_NONBLOCK) {
+			if (flags & O_NONBLOCK) {
 				error = -EAGAIN;
 				break;
 			}

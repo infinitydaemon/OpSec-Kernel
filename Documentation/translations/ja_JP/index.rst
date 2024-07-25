@@ -11,7 +11,7 @@
 .. toctree::
    :maxdepth: 1
 
-   process/howto
+   howto
 
 .. raw:: latex
 

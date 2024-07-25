@@ -25,8 +25,6 @@ properties:
 
       - items:
           - enum:
-              - qcom,sc7280-cci
-              - qcom,sc8280xp-cci
               - qcom,sdm845-cci
               - qcom,sm6350-cci
               - qcom,sm8250-cci
@@ -161,7 +159,6 @@ allOf:
         compatible:
           contains:
             enum:
-              - qcom,sc7280-cci
               - qcom,sm8250-cci
               - qcom,sm8450-cci
     then:
@@ -176,24 +173,6 @@ allOf:
             - const: cpas_ahb
             - const: cci
             - const: cci_src
-
-  - if:
-      properties:
-        compatible:
-          contains:
-            enum:
-              - qcom,sc8280xp-cci
-    then:
-      properties:
-        clocks:
-          minItems: 4
-          maxItems: 4
-        clock-names:
-          items:
-            - const: camnoc_axi
-            - const: slow_ahb_src
-            - const: cpas_ahb
-            - const: cci
 
 additionalProperties: false
 
@@ -289,7 +268,7 @@ examples:
 
                 port {
                     ov7251_ep: endpoint {
-                        data-lanes = <0>;
+                        data-lanes = <0 1>;
                         link-frequencies = /bits/ 64 <240000000 319200000>;
                         remote-endpoint = <&csiphy3_ep>;
                     };

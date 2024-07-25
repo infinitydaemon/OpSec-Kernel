@@ -16,25 +16,24 @@
  */
 	.macro __THUNK_PROLOG_NAME name
 #ifdef CONFIG_EXPOLINE_EXTERN
-	SYM_CODE_START(\name)
+	.pushsection .text,"ax",@progbits
+	__ALIGN
 #else
 	.pushsection .text.\name,"axG",@progbits,\name,comdat
+#endif
 	.globl \name
 	.hidden \name
 	.type \name,@function
 \name:
 	CFI_STARTPROC
-#endif
 	.endm
 
 	.macro __THUNK_EPILOG_NAME name
-#ifdef CONFIG_EXPOLINE_EXTERN
-	SYM_CODE_END(\name)
-	EXPORT_SYMBOL(\name)
-#else
 	CFI_ENDPROC
-	.popsection
+#ifdef CONFIG_EXPOLINE_EXTERN
+	.size \name, .-\name
 #endif
+	.popsection
 	.endm
 
 	.macro __THUNK_PROLOG_BR r1

@@ -6,7 +6,6 @@
  * Copyright (C) Tom Long Nguyen (tom.l.nguyen@intel.com)
  */
 
-#include <linux/bitfield.h>
 #include <linux/dmi.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -70,7 +69,7 @@ static int pcie_message_numbers(struct pci_dev *dev, int mask,
 	if (mask & (PCIE_PORT_SERVICE_PME | PCIE_PORT_SERVICE_HP |
 		    PCIE_PORT_SERVICE_BWNOTIF)) {
 		pcie_capability_read_word(dev, PCI_EXP_FLAGS, &reg16);
-		*pme = FIELD_GET(PCI_EXP_FLAGS_IRQ, reg16);
+		*pme = (reg16 & PCI_EXP_FLAGS_IRQ) >> 9;
 		nvec = *pme + 1;
 	}
 
@@ -82,7 +81,7 @@ static int pcie_message_numbers(struct pci_dev *dev, int mask,
 		if (pos) {
 			pci_read_config_dword(dev, pos + PCI_ERR_ROOT_STATUS,
 					      &reg32);
-			*aer = FIELD_GET(PCI_ERR_ROOT_AER_IRQ, reg32);
+			*aer = (reg32 & PCI_ERR_ROOT_AER_IRQ) >> 27;
 			nvec = max(nvec, *aer + 1);
 		}
 	}
@@ -93,7 +92,7 @@ static int pcie_message_numbers(struct pci_dev *dev, int mask,
 		if (pos) {
 			pci_read_config_word(dev, pos + PCI_EXP_DPC_CAP,
 					     &reg16);
-			*dpc = FIELD_GET(PCI_EXP_DPC_IRQ, reg16);
+			*dpc = reg16 & PCI_EXP_DPC_IRQ;
 			nvec = max(nvec, *dpc + 1);
 		}
 	}
@@ -187,15 +186,15 @@ static int pcie_init_service_irqs(struct pci_dev *dev, int *irqs, int mask)
 	 * interrupt.
 	 */
 	if ((mask & PCIE_PORT_SERVICE_PME) && pcie_pme_no_msi())
-		goto intx_irq;
+		goto legacy_irq;
 
 	/* Try to use MSI-X or MSI if supported */
 	if (pcie_port_enable_irq_vec(dev, irqs, mask) == 0)
 		return 0;
 
-intx_irq:
-	/* fall back to INTX IRQ */
-	ret = pci_alloc_irq_vectors(dev, 1, 1, PCI_IRQ_INTX);
+legacy_irq:
+	/* fall back to legacy IRQ */
+	ret = pci_alloc_irq_vectors(dev, 1, 1, PCI_IRQ_LEGACY);
 	if (ret < 0)
 		return -ENODEV;
 

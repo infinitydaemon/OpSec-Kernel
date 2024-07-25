@@ -32,10 +32,6 @@
  * and are not exported to drivers.
  */
 
-#ifndef __DRM_CRTC_INTERNAL_H__
-#define __DRM_CRTC_INTERNAL_H__
-
-#include <linux/err.h>
 #include <linux/types.h>
 
 enum drm_color_encoding;
@@ -43,14 +39,12 @@ enum drm_color_range;
 enum drm_connector_force;
 enum drm_mode_status;
 
-struct cea_sad;
 struct drm_atomic_state;
 struct drm_bridge;
 struct drm_connector;
 struct drm_crtc;
 struct drm_device;
 struct drm_display_mode;
-struct drm_edid;
 struct drm_file;
 struct drm_framebuffer;
 struct drm_mode_create_dumb;
@@ -60,7 +54,6 @@ struct drm_mode_object;
 struct drm_mode_set;
 struct drm_plane;
 struct drm_plane_state;
-struct drm_printer;
 struct drm_property;
 struct edid;
 struct fwnode_handle;
@@ -229,8 +222,6 @@ int drm_mode_addfb2_ioctl(struct drm_device *dev,
 			  void *data, struct drm_file *file_priv);
 int drm_mode_rmfb_ioctl(struct drm_device *dev,
 			void *data, struct drm_file *file_priv);
-int drm_mode_closefb_ioctl(struct drm_device *dev,
-			   void *data, struct drm_file *file_priv);
 int drm_mode_getfb(struct drm_device *dev,
 		   void *data, struct drm_file *file_priv);
 int drm_mode_getfb2_ioctl(struct drm_device *dev,
@@ -241,7 +232,7 @@ int drm_mode_dirtyfb_ioctl(struct drm_device *dev,
 /* drm_atomic.c */
 #ifdef CONFIG_DEBUG_FS
 struct drm_minor;
-void drm_atomic_debugfs_init(struct drm_device *dev);
+void drm_atomic_debugfs_init(struct drm_minor *minor);
 #endif
 
 int __drm_atomic_helper_disable_plane(struct drm_plane *plane,
@@ -260,7 +251,7 @@ int drm_atomic_set_property(struct drm_atomic_state *state,
 			    struct drm_file *file_priv,
 			    struct drm_mode_object *obj,
 			    struct drm_property *prop,
-			    u64 prop_value, bool async_flip);
+			    uint64_t prop_value);
 int drm_atomic_get_property(struct drm_mode_object *obj,
 			    struct drm_property *property, uint64_t *val);
 
@@ -299,10 +290,6 @@ void drm_mode_fixup_1366x768(struct drm_display_mode *mode);
 int drm_edid_override_show(struct drm_connector *connector, struct seq_file *m);
 int drm_edid_override_set(struct drm_connector *connector, const void *edid, size_t size);
 int drm_edid_override_reset(struct drm_connector *connector);
-const u8 *drm_edid_find_extension(const struct drm_edid *drm_edid,
-				  int ext_id, int *ext_index);
-void drm_edid_cta_sad_get(const struct cea_sad *cta_sad, u8 *sad);
-void drm_edid_cta_sad_set(struct cea_sad *cta_sad, const u8 *sad);
 
 /* drm_edid_load.c */
 #ifdef CONFIG_DRM_LOAD_EDID_FIRMWARE
@@ -314,5 +301,3 @@ drm_edid_load_firmware(struct drm_connector *connector)
 	return ERR_PTR(-ENOENT);
 }
 #endif
-
-#endif /* __DRM_CRTC_INTERNAL_H__ */

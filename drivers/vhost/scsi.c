@@ -210,7 +210,6 @@ struct vhost_scsi {
 
 struct vhost_scsi_tmf {
 	struct vhost_work vwork;
-	struct work_struct flush_work;
 	struct vhost_scsi *vhost;
 	struct vhost_scsi_virtqueue *svq;
 
@@ -359,23 +358,14 @@ static void vhost_scsi_release_tmf_res(struct vhost_scsi_tmf *tmf)
 	vhost_scsi_put_inflight(inflight);
 }
 
-static void vhost_scsi_drop_cmds(struct vhost_scsi_virtqueue *svq)
-{
-	struct vhost_scsi_cmd *cmd, *t;
-	struct llist_node *llnode;
-
-	llnode = llist_del_all(&svq->completion_list);
-	llist_for_each_entry_safe(cmd, t, llnode, tvc_completion_list)
-		vhost_scsi_release_cmd_res(&cmd->tvc_se_cmd);
-}
-
 static void vhost_scsi_release_cmd(struct se_cmd *se_cmd)
 {
 	if (se_cmd->se_cmd_flags & SCF_SCSI_TMR_CDB) {
 		struct vhost_scsi_tmf *tmf = container_of(se_cmd,
 					struct vhost_scsi_tmf, se_cmd);
+		struct vhost_virtqueue *vq = &tmf->svq->vq;
 
-		schedule_work(&tmf->flush_work);
+		vhost_vq_work_queue(vq, &tmf->vwork);
 	} else {
 		struct vhost_scsi_cmd *cmd = container_of(se_cmd,
 					struct vhost_scsi_cmd, tvc_se_cmd);
@@ -383,8 +373,7 @@ static void vhost_scsi_release_cmd(struct se_cmd *se_cmd)
 					struct vhost_scsi_virtqueue, vq);
 
 		llist_add(&cmd->tvc_completion_list, &svq->completion_list);
-		if (!vhost_vq_work_queue(&svq->vq, &svq->completion_work))
-			vhost_scsi_drop_cmds(svq);
+		vhost_vq_work_queue(&svq->vq, &svq->completion_work);
 	}
 }
 
@@ -926,7 +915,7 @@ static void vhost_scsi_target_queue_cmd(struct vhost_scsi_cmd *cmd)
 			       cmd->tvc_prot_sgl_count, GFP_KERNEL))
 		return;
 
-	target_submit(se_cmd);
+	target_queue_submission(se_cmd);
 }
 
 static void
@@ -1175,7 +1164,7 @@ vhost_scsi_handle_vq(struct vhost_scsi *vs, struct vhost_virtqueue *vq)
 			/*
 			 * Set prot_iter to data_iter and truncate it to
 			 * prot_bytes, and advance data_iter past any
-			 * preceding prot_bytes that may be present.
+			 * preceeding prot_bytes that may be present.
 			 *
 			 * Also fix up the exp_data_len to reflect only the
 			 * actual data payload length.
@@ -1287,30 +1276,31 @@ static void vhost_scsi_tmf_resp_work(struct vhost_work *work)
 {
 	struct vhost_scsi_tmf *tmf = container_of(work, struct vhost_scsi_tmf,
 						  vwork);
-	int resp_code;
+	struct vhost_virtqueue *ctl_vq, *vq;
+	int resp_code, i;
 
-	if (tmf->scsi_resp == TMR_FUNCTION_COMPLETE)
+	if (tmf->scsi_resp == TMR_FUNCTION_COMPLETE) {
+		/*
+		 * Flush IO vqs that don't share a worker with the ctl to make
+		 * sure they have sent their responses before us.
+		 */
+		ctl_vq = &tmf->vhost->vqs[VHOST_SCSI_VQ_CTL].vq;
+		for (i = VHOST_SCSI_VQ_IO; i < tmf->vhost->dev.nvqs; i++) {
+			vq = &tmf->vhost->vqs[i].vq;
+
+			if (vhost_vq_is_setup(vq) &&
+			    vq->worker != ctl_vq->worker)
+				vhost_vq_flush(vq);
+		}
+
 		resp_code = VIRTIO_SCSI_S_FUNCTION_SUCCEEDED;
-	else
+	} else {
 		resp_code = VIRTIO_SCSI_S_FUNCTION_REJECTED;
+	}
 
 	vhost_scsi_send_tmf_resp(tmf->vhost, &tmf->svq->vq, tmf->in_iovs,
 				 tmf->vq_desc, &tmf->resp_iov, resp_code);
 	vhost_scsi_release_tmf_res(tmf);
-}
-
-static void vhost_scsi_tmf_flush_work(struct work_struct *work)
-{
-	struct vhost_scsi_tmf *tmf = container_of(work, struct vhost_scsi_tmf,
-						 flush_work);
-	struct vhost_virtqueue *vq = &tmf->svq->vq;
-	/*
-	 * Make sure we have sent responses for other commands before we
-	 * send our response.
-	 */
-	vhost_dev_flush(vq->dev);
-	if (!vhost_vq_work_queue(vq, &tmf->vwork))
-		vhost_scsi_release_tmf_res(tmf);
 }
 
 static void
@@ -1336,7 +1326,6 @@ vhost_scsi_handle_tmf(struct vhost_scsi *vs, struct vhost_scsi_tpg *tpg,
 	if (!tmf)
 		goto send_reject;
 
-	INIT_WORK(&tmf->flush_work, vhost_scsi_tmf_flush_work);
 	vhost_work_init(&tmf->vwork, vhost_scsi_tmf_resp_work);
 	tmf->vhost = vs;
 	tmf->svq = svq;
@@ -2616,9 +2605,6 @@ static const struct target_core_fabric_ops vhost_scsi_ops = {
 	.tfc_wwn_attrs			= vhost_scsi_wwn_attrs,
 	.tfc_tpg_base_attrs		= vhost_scsi_tpg_attrs,
 	.tfc_tpg_attrib_attrs		= vhost_scsi_tpg_attrib_attrs,
-
-	.default_submit_type		= TARGET_QUEUE_SUBMIT,
-	.direct_submit_supp		= 1,
 };
 
 static int __init vhost_scsi_init(void)

@@ -24,6 +24,7 @@
 
 #include "cdn-dp-core.h"
 #include "cdn-dp-reg.h"
+#include "rockchip_drm_vop.h"
 
 static inline struct cdn_dp_device *connector_to_dp(struct drm_connector *connector)
 {
@@ -262,21 +263,20 @@ static const struct drm_connector_funcs cdn_dp_atomic_connector_funcs = {
 static int cdn_dp_connector_get_modes(struct drm_connector *connector)
 {
 	struct cdn_dp_device *dp = connector_to_dp(connector);
+	struct edid *edid;
 	int ret = 0;
 
 	mutex_lock(&dp->lock);
-
-	if (dp->drm_edid) {
-		/* FIXME: get rid of drm_edid_raw() */
-		const struct edid *edid = drm_edid_raw(dp->drm_edid);
-
+	edid = dp->edid;
+	if (edid) {
 		DRM_DEV_DEBUG_KMS(dp->dev, "got edid: width[%d] x height[%d]\n",
 				  edid->width_cm, edid->height_cm);
 
+		dp->sink_has_audio = drm_detect_monitor_audio(edid);
+
+		drm_connector_update_edid_property(connector, edid);
+		ret = drm_add_edid_modes(connector, edid);
 	}
-
-	ret = drm_edid_connector_add_modes(connector);
-
 	mutex_unlock(&dp->lock);
 
 	return ret;
@@ -381,13 +381,9 @@ static int cdn_dp_get_sink_capability(struct cdn_dp_device *dp)
 		return ret;
 	}
 
-	drm_edid_free(dp->drm_edid);
-	dp->drm_edid = drm_edid_read_custom(&dp->connector,
-					    cdn_dp_get_edid_block, dp);
-	drm_edid_connector_update(&dp->connector, dp->drm_edid);
-
-	dp->sink_has_audio = dp->connector.display_info.has_audio;
-
+	kfree(dp->edid);
+	dp->edid = drm_do_get_edid(&dp->connector,
+				   cdn_dp_get_edid_block, dp);
 	return 0;
 }
 
@@ -493,8 +489,8 @@ static int cdn_dp_disable(struct cdn_dp_device *dp)
 	dp->max_lanes = 0;
 	dp->max_rate = 0;
 	if (!dp->connected) {
-		drm_edid_free(dp->drm_edid);
-		dp->drm_edid = NULL;
+		kfree(dp->edid);
+		dp->edid = NULL;
 	}
 
 	return 0;
@@ -1136,8 +1132,8 @@ static void cdn_dp_unbind(struct device *dev, struct device *master, void *data)
 	pm_runtime_disable(dev);
 	if (dp->fw_loaded)
 		release_firmware(dp->fw);
-	drm_edid_free(dp->drm_edid);
-	dp->drm_edid = NULL;
+	kfree(dp->edid);
+	dp->edid = NULL;
 }
 
 static const struct component_ops cdn_dp_component_ops = {
@@ -1264,7 +1260,8 @@ struct platform_driver cdn_dp_driver = {
 	.shutdown = cdn_dp_shutdown,
 	.driver = {
 		   .name = "cdn-dp",
-		   .of_match_table = cdn_dp_dt_ids,
+		   .owner = THIS_MODULE,
+		   .of_match_table = of_match_ptr(cdn_dp_dt_ids),
 		   .pm = &cdn_dp_pm_ops,
 	},
 };

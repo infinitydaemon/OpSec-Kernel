@@ -36,7 +36,6 @@ static struct ism_client *clients[MAX_CLIENTS];	/* use an array rather than */
 						/* a list for fast mapping  */
 static u8 max_client;
 static DEFINE_MUTEX(clients_lock);
-static bool ism_v2_capable;
 struct ism_dev_list {
 	struct list_head list;
 	struct mutex mutex; /* protects ism device list */
@@ -463,6 +462,32 @@ int ism_move(struct ism_dev *ism, u64 dmb_tok, unsigned int idx, bool sf,
 }
 EXPORT_SYMBOL_GPL(ism_move);
 
+static struct ism_systemeid SYSTEM_EID = {
+	.seid_string = "IBM-SYSZ-ISMSEID00000000",
+	.serial_number = "0000",
+	.type = "0000",
+};
+
+static void ism_create_system_eid(void)
+{
+	struct cpuid id;
+	u16 ident_tail;
+	char tmp[5];
+
+	get_cpu_id(&id);
+	ident_tail = (u16)(id.ident & ISM_IDENT_MASK);
+	snprintf(tmp, 5, "%04X", ident_tail);
+	memcpy(&SYSTEM_EID.serial_number, tmp, 4);
+	snprintf(tmp, 5, "%04X", id.machine);
+	memcpy(&SYSTEM_EID.type, tmp, 4);
+}
+
+u8 *ism_get_seid(void)
+{
+	return SYSTEM_EID.seid_string;
+}
+EXPORT_SYMBOL_GPL(ism_get_seid);
+
 static void ism_handle_event(struct ism_dev *ism)
 {
 	struct ism_event *entry;
@@ -554,9 +579,7 @@ static int ism_dev_init(struct ism_dev *ism)
 
 	if (!ism_add_vlan_id(ism, ISM_RESERVED_VLANID))
 		/* hardware is V2 capable */
-		ism_v2_capable = true;
-	else
-		ism_v2_capable = false;
+		ism_create_system_eid();
 
 	mutex_lock(&ism_dev_list.mutex);
 	mutex_lock(&clients_lock);
@@ -661,7 +684,8 @@ static void ism_dev_exit(struct ism_dev *ism)
 	}
 	mutex_unlock(&clients_lock);
 
-	if (ism_v2_capable)
+	if (SYSTEM_EID.serial_number[0] != '0' ||
+	    SYSTEM_EID.type[0] != '0')
 		ism_del_vlan_id(ism, ISM_RESERVED_VLANID);
 	unregister_ieq(ism);
 	unregister_sba(ism);
@@ -738,14 +762,14 @@ static int ism_query_rgid(struct ism_dev *ism, u64 rgid, u32 vid_valid,
 	return ism_cmd(ism, &cmd);
 }
 
-static int smcd_query_rgid(struct smcd_dev *smcd, struct smcd_gid *rgid,
-			   u32 vid_valid, u32 vid)
+static int smcd_query_rgid(struct smcd_dev *smcd, u64 rgid, u32 vid_valid,
+			   u32 vid)
 {
-	return ism_query_rgid(smcd->priv, rgid->gid, vid_valid, vid);
+	return ism_query_rgid(smcd->priv, rgid, vid_valid, vid);
 }
 
 static int smcd_register_dmb(struct smcd_dev *smcd, struct smcd_dmb *dmb,
-			     void *client)
+			     struct ism_client *client)
 {
 	return ism_register_dmb(smcd->priv, (struct ism_dmb *)dmb, client);
 }
@@ -792,11 +816,10 @@ static int ism_signal_ieq(struct ism_dev *ism, u64 rgid, u32 trigger_irq,
 	return ism_cmd(ism, &cmd);
 }
 
-static int smcd_signal_ieq(struct smcd_dev *smcd, struct smcd_gid *rgid,
-			   u32 trigger_irq, u32 event_code, u64 info)
+static int smcd_signal_ieq(struct smcd_dev *smcd, u64 rgid, u32 trigger_irq,
+			   u32 event_code, u64 info)
 {
-	return ism_signal_ieq(smcd->priv, rgid->gid,
-			      trigger_irq, event_code, info);
+	return ism_signal_ieq(smcd->priv, rgid, trigger_irq, event_code, info);
 }
 
 static int smcd_move(struct smcd_dev *smcd, u64 dmb_tok, unsigned int idx,
@@ -808,7 +831,8 @@ static int smcd_move(struct smcd_dev *smcd, u64 dmb_tok, unsigned int idx,
 
 static int smcd_supports_v2(void)
 {
-	return ism_v2_capable;
+	return SYSTEM_EID.serial_number[0] != '0' ||
+		SYSTEM_EID.type[0] != '0';
 }
 
 static u64 ism_get_local_gid(struct ism_dev *ism)
@@ -816,11 +840,9 @@ static u64 ism_get_local_gid(struct ism_dev *ism)
 	return ism->local_gid;
 }
 
-static void smcd_get_local_gid(struct smcd_dev *smcd,
-			       struct smcd_gid *smcd_gid)
+static u64 smcd_get_local_gid(struct smcd_dev *smcd)
 {
-	smcd_gid->gid = ism_get_local_gid(smcd->priv);
-	smcd_gid->gid_ext = 0;
+	return ism_get_local_gid(smcd->priv);
 }
 
 static u16 ism_get_chid(struct ism_dev *ism)
@@ -854,6 +876,7 @@ static const struct smcd_ops ism_ops = {
 	.signal_event = smcd_signal_ieq,
 	.move_data = smcd_move,
 	.supports_v2 = smcd_supports_v2,
+	.get_system_eid = ism_get_seid,
 	.get_local_gid = smcd_get_local_gid,
 	.get_chid = smcd_get_chid,
 	.get_dev = smcd_get_dev,

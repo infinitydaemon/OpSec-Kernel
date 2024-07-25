@@ -57,16 +57,6 @@ config SPI_MEM
 
 comment "SPI Master Controller Drivers"
 
-config SPI_AIROHA_SNFI
-	tristate "Airoha SPI NAND Flash Interface"
-	depends on ARCH_AIROHA || COMPILE_TEST
-	depends on SPI_MASTER
-	select REGMAP_MMIO
-	help
-	  This enables support for SPI-NAND mode on the Airoha NAND
-	  Flash Interface found on Airoha ARM SoCs. This controller
-	  is implemented as a SPI-MEM controller.
-
 config SPI_ALTERA
 	tristate "Altera SPI Controller platform driver"
 	select SPI_ALTERA_CORE
@@ -226,11 +216,11 @@ config SPI_BCMBCA_HSSPI
 	  explicitly.
 
 config SPI_BITBANG
-	tristate "Utilities for Bitbanging SPI host controllers"
+	tristate "Utilities for Bitbanging SPI masters"
 	help
 	  With a few GPIO pins, your system can bitbang the SPI protocol.
 	  Select this to get SPI support through I/O pins (GPIO, parallel
-	  port, etc).  Or, some systems' SPI host controller drivers use
+	  port, etc).  Or, some systems' SPI master controller drivers use
 	  this code to manage the per-word or per-transfer accesses to the
 	  hardware shift registers.
 
@@ -256,7 +246,7 @@ config SPI_CADENCE
 
 config SPI_CADENCE_QUADSPI
 	tristate "Cadence Quad SPI controller"
-	depends on OF && (ARM || ARM64 || X86 || RISCV || MIPS || COMPILE_TEST)
+	depends on OF && (ARM || ARM64 || X86 || RISCV || COMPILE_TEST)
 	help
 	  Enable support for the Cadence Quad SPI Flash controller.
 
@@ -294,7 +284,6 @@ config SPI_COLDFIRE_QSPI
 config SPI_CS42L43
 	tristate "Cirrus Logic CS42L43 SPI controller"
 	depends on MFD_CS42L43 && PINCTRL_CS42L43
-	select GPIO_SWNODE_UNDEFINED
 	help
 	  This enables support for the SPI controller inside the Cirrus Logic
 	  CS42L43 audio codec.
@@ -627,17 +616,6 @@ config SPI_FSL_ESPI
 	  From MPC8536, 85xx platform uses the controller, and all P10xx,
 	  P20xx, P30xx,P40xx, P50xx uses this controller.
 
-config SPI_LJCA
-	tristate "Intel La Jolla Cove Adapter SPI support"
-	depends on USB_LJCA
-	default USB_LJCA
-	help
-	  Select this option to enable SPI driver for the Intel
-	  La Jolla Cove Adapter (LJCA) board.
-
-	  This driver can also be built as a module. If so, the module
-	  will be called spi-ljca.
-
 config SPI_MESON_SPICC
 	tristate "Amlogic Meson SPICC controller"
 	depends on COMMON_CLK
@@ -705,7 +683,7 @@ config SPI_MTK_SNFI
 	  This enables support for SPI-NAND mode on the MediaTek NAND
 	  Flash Interface found on MediaTek ARM SoCs. This controller
 	  is implemented as a SPI-MEM controller with pipelined ECC
-	  capability.
+	  capcability.
 
 config SPI_WPCM_FIU
 	tristate "Nuvoton WPCM450 Flash Interface Unit"
@@ -828,11 +806,12 @@ config SPI_PPC4xx
 
 config SPI_PXA2XX
 	tristate "PXA2xx SSP SPI master"
-	depends on ARCH_PXA || ARCH_MMP || (X86 && (PCI || ACPI)) || COMPILE_TEST
+	depends on ARCH_PXA || ARCH_MMP || PCI || ACPI || COMPILE_TEST
 	select PXA_SSP if ARCH_PXA || ARCH_MMP
 	help
 	  This enables using a PXA2xx or Sodaville SSP port as a SPI master
-	  controller. The driver can be configured to use any SSP port.
+	  controller. The driver can be configured to use any SSP port and
+	  additional documentation can be found a Documentation/spi/pxa2xx.rst.
 
 config SPI_PXA2XX_PCI
 	def_tristate SPI_PXA2XX && PCI && COMMON_CLK
@@ -867,6 +846,18 @@ config SPI_RB4XX
 	help
 	  SPI controller driver for the Mikrotik RB4xx series boards.
 
+config SPI_RP2040_GPIO_BRIDGE
+	tristate "Raspberry Pi RP2040 GPIO Bridge"
+	depends on I2C && SPI && GPIOLIB
+	help
+	  Support for the Raspberry Pi RP2040 GPIO bridge.
+
+	  This driver provides support for the Raspberry Pi PR2040 GPIO bridge.
+	  It can be used as a GPIO expander and a Tx-only SPI master.
+
+	  Optionally, this driver is able to take advantage of Raspberry Pi RP1
+	  GPIOs to achieve faster than I2C data transfer rates.
+
 config SPI_RPCIF
 	tristate "Renesas RPC-IF SPI driver"
 	depends on RENESAS_RPCIF
@@ -883,8 +874,7 @@ config SPI_RZV2M_CSI
 	tristate "Renesas RZ/V2M CSI controller"
 	depends on ARCH_RENESAS || COMPILE_TEST
 	help
-	  SPI driver for Renesas RZ/V2M Clocked Serial Interface (CSI).
-	  CSI supports both SPI host and SPI target roles.
+	  SPI driver for Renesas RZ/V2M Clocked Serial Interface (CSI)
 
 config SPI_QCOM_QSPI
 	tristate "QTI QSPI controller"

@@ -35,7 +35,6 @@
 #include <linux/string.h>
 #include <linux/mm.h>
 #include <linux/buffer_head.h>
-#include <linux/mpage.h>
 #include <linux/writeback.h>
 #include <linux/iversion.h>
 
@@ -391,7 +390,7 @@ out:
 
 /**
  * ufs_getfrag_block() - `get_block_t' function, interface between UFS and
- * read_folio, writepages and so on
+ * read_folio, writepage and so on
  */
 
 static int ufs_getfrag_block(struct inode *inode, sector_t fragment, struct buffer_head *bh_result, int create)
@@ -468,10 +467,9 @@ done:
 	return 0;
 }
 
-static int ufs_writepages(struct address_space *mapping,
-		struct writeback_control *wbc)
+static int ufs_writepage(struct page *page, struct writeback_control *wbc)
 {
-	return mpage_writepages(mapping, wbc, ufs_getfrag_block);
+	return block_write_full_page(page,ufs_getfrag_block,wbc);
 }
 
 static int ufs_read_folio(struct file *file, struct folio *folio)
@@ -530,10 +528,9 @@ const struct address_space_operations ufs_aops = {
 	.dirty_folio = block_dirty_folio,
 	.invalidate_folio = block_invalidate_folio,
 	.read_folio = ufs_read_folio,
-	.writepages = ufs_writepages,
+	.writepage = ufs_writepage,
 	.write_begin = ufs_write_begin,
 	.write_end = ufs_write_end,
-	.migrate_folio = buffer_migrate_folio,
 	.bmap = ufs_bmap
 };
 
@@ -582,15 +579,13 @@ static int ufs1_read_inode(struct inode *inode, struct ufs_inode *ufs_inode)
 	i_gid_write(inode, ufs_get_inode_gid(sb, ufs_inode));
 
 	inode->i_size = fs64_to_cpu(sb, ufs_inode->ui_size);
-	inode_set_atime(inode,
-			(signed)fs32_to_cpu(sb, ufs_inode->ui_atime.tv_sec),
-			0);
+	inode->i_atime.tv_sec = (signed)fs32_to_cpu(sb, ufs_inode->ui_atime.tv_sec);
 	inode_set_ctime(inode,
 			(signed)fs32_to_cpu(sb, ufs_inode->ui_ctime.tv_sec),
 			0);
-	inode_set_mtime(inode,
-			(signed)fs32_to_cpu(sb, ufs_inode->ui_mtime.tv_sec),
-			0);
+	inode->i_mtime.tv_sec = (signed)fs32_to_cpu(sb, ufs_inode->ui_mtime.tv_sec);
+	inode->i_mtime.tv_nsec = 0;
+	inode->i_atime.tv_nsec = 0;
 	inode->i_blocks = fs32_to_cpu(sb, ufs_inode->ui_blocks);
 	inode->i_generation = fs32_to_cpu(sb, ufs_inode->ui_gen);
 	ufsi->i_flags = fs32_to_cpu(sb, ufs_inode->ui_flags);
@@ -631,12 +626,12 @@ static int ufs2_read_inode(struct inode *inode, struct ufs2_inode *ufs2_inode)
 	i_gid_write(inode, fs32_to_cpu(sb, ufs2_inode->ui_gid));
 
 	inode->i_size = fs64_to_cpu(sb, ufs2_inode->ui_size);
-	inode_set_atime(inode, fs64_to_cpu(sb, ufs2_inode->ui_atime),
-			fs32_to_cpu(sb, ufs2_inode->ui_atimensec));
+	inode->i_atime.tv_sec = fs64_to_cpu(sb, ufs2_inode->ui_atime);
 	inode_set_ctime(inode, fs64_to_cpu(sb, ufs2_inode->ui_ctime),
 			fs32_to_cpu(sb, ufs2_inode->ui_ctimensec));
-	inode_set_mtime(inode, fs64_to_cpu(sb, ufs2_inode->ui_mtime),
-			fs32_to_cpu(sb, ufs2_inode->ui_mtimensec));
+	inode->i_mtime.tv_sec = fs64_to_cpu(sb, ufs2_inode->ui_mtime);
+	inode->i_atime.tv_nsec = fs32_to_cpu(sb, ufs2_inode->ui_atimensec);
+	inode->i_mtime.tv_nsec = fs32_to_cpu(sb, ufs2_inode->ui_mtimensec);
 	inode->i_blocks = fs64_to_cpu(sb, ufs2_inode->ui_blocks);
 	inode->i_generation = fs32_to_cpu(sb, ufs2_inode->ui_gen);
 	ufsi->i_flags = fs32_to_cpu(sb, ufs2_inode->ui_flags);
@@ -730,14 +725,12 @@ static void ufs1_update_inode(struct inode *inode, struct ufs_inode *ufs_inode)
 	ufs_set_inode_gid(sb, ufs_inode, i_gid_read(inode));
 
 	ufs_inode->ui_size = cpu_to_fs64(sb, inode->i_size);
-	ufs_inode->ui_atime.tv_sec = cpu_to_fs32(sb,
-						 inode_get_atime_sec(inode));
+	ufs_inode->ui_atime.tv_sec = cpu_to_fs32(sb, inode->i_atime.tv_sec);
 	ufs_inode->ui_atime.tv_usec = 0;
 	ufs_inode->ui_ctime.tv_sec = cpu_to_fs32(sb,
-						 inode_get_ctime_sec(inode));
+						 inode_get_ctime(inode).tv_sec);
 	ufs_inode->ui_ctime.tv_usec = 0;
-	ufs_inode->ui_mtime.tv_sec = cpu_to_fs32(sb,
-						 inode_get_mtime_sec(inode));
+	ufs_inode->ui_mtime.tv_sec = cpu_to_fs32(sb, inode->i_mtime.tv_sec);
 	ufs_inode->ui_mtime.tv_usec = 0;
 	ufs_inode->ui_blocks = cpu_to_fs32(sb, inode->i_blocks);
 	ufs_inode->ui_flags = cpu_to_fs32(sb, ufsi->i_flags);
@@ -777,15 +770,13 @@ static void ufs2_update_inode(struct inode *inode, struct ufs2_inode *ufs_inode)
 	ufs_inode->ui_gid = cpu_to_fs32(sb, i_gid_read(inode));
 
 	ufs_inode->ui_size = cpu_to_fs64(sb, inode->i_size);
-	ufs_inode->ui_atime = cpu_to_fs64(sb, inode_get_atime_sec(inode));
-	ufs_inode->ui_atimensec = cpu_to_fs32(sb,
-					      inode_get_atime_nsec(inode));
-	ufs_inode->ui_ctime = cpu_to_fs64(sb, inode_get_ctime_sec(inode));
+	ufs_inode->ui_atime = cpu_to_fs64(sb, inode->i_atime.tv_sec);
+	ufs_inode->ui_atimensec = cpu_to_fs32(sb, inode->i_atime.tv_nsec);
+	ufs_inode->ui_ctime = cpu_to_fs64(sb, inode_get_ctime(inode).tv_sec);
 	ufs_inode->ui_ctimensec = cpu_to_fs32(sb,
-					      inode_get_ctime_nsec(inode));
-	ufs_inode->ui_mtime = cpu_to_fs64(sb, inode_get_mtime_sec(inode));
-	ufs_inode->ui_mtimensec = cpu_to_fs32(sb,
-					      inode_get_mtime_nsec(inode));
+					      inode_get_ctime(inode).tv_nsec);
+	ufs_inode->ui_mtime = cpu_to_fs64(sb, inode->i_mtime.tv_sec);
+	ufs_inode->ui_mtimensec = cpu_to_fs32(sb, inode->i_mtime.tv_nsec);
 
 	ufs_inode->ui_blocks = cpu_to_fs64(sb, inode->i_blocks);
 	ufs_inode->ui_flags = cpu_to_fs32(sb, ufsi->i_flags);
@@ -1066,7 +1057,7 @@ static int ufs_alloc_lastblock(struct inode *inode, loff_t size)
 	struct ufs_sb_private_info *uspi = UFS_SB(sb)->s_uspi;
 	unsigned i, end;
 	sector_t lastfrag;
-	struct folio *folio;
+	struct page *lastpage;
 	struct buffer_head *bh;
 	u64 phys64;
 
@@ -1077,17 +1068,18 @@ static int ufs_alloc_lastblock(struct inode *inode, loff_t size)
 
 	lastfrag--;
 
-	folio = ufs_get_locked_folio(mapping, lastfrag >>
+	lastpage = ufs_get_locked_page(mapping, lastfrag >>
 				       (PAGE_SHIFT - inode->i_blkbits));
-	if (IS_ERR(folio)) {
-		err = -EIO;
-		goto out;
-	}
+       if (IS_ERR(lastpage)) {
+               err = -EIO;
+               goto out;
+       }
 
-	end = lastfrag & ((1 << (PAGE_SHIFT - inode->i_blkbits)) - 1);
-	bh = folio_buffers(folio);
-	for (i = 0; i < end; ++i)
-		bh = bh->b_this_page;
+       end = lastfrag & ((1 << (PAGE_SHIFT - inode->i_blkbits)) - 1);
+       bh = page_buffers(lastpage);
+       for (i = 0; i < end; ++i)
+               bh = bh->b_this_page;
+
 
        err = ufs_getfrag_block(inode, lastfrag, bh, 1);
 
@@ -1103,7 +1095,7 @@ static int ufs_alloc_lastblock(struct inode *inode, loff_t size)
 		*/
 	       set_buffer_uptodate(bh);
 	       mark_buffer_dirty(bh);
-		folio_mark_dirty(folio);
+	       set_page_dirty(lastpage);
        }
 
        if (lastfrag >= UFS_IND_FRAGMENT) {
@@ -1121,7 +1113,7 @@ static int ufs_alloc_lastblock(struct inode *inode, loff_t size)
 	       }
        }
 out_unlock:
-       ufs_put_locked_folio(folio);
+       ufs_put_locked_page(lastpage);
 out:
        return err;
 }
@@ -1216,7 +1208,7 @@ static int ufs_truncate(struct inode *inode, loff_t size)
 	truncate_setsize(inode, size);
 
 	ufs_truncate_blocks(inode);
-	inode_set_mtime_to_ts(inode, inode_set_ctime_current(inode));
+	inode->i_mtime = inode_set_ctime_current(inode);
 	mark_inode_dirty(inode);
 out:
 	UFSD("EXIT: err %d\n", err);

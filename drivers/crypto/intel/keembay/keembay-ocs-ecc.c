@@ -964,7 +964,7 @@ list_del:
 	return rc;
 }
 
-static void kmb_ocs_ecc_remove(struct platform_device *pdev)
+static int kmb_ocs_ecc_remove(struct platform_device *pdev)
 {
 	struct ocs_ecc_dev *ecc_dev;
 
@@ -978,6 +978,8 @@ static void kmb_ocs_ecc_remove(struct platform_device *pdev)
 	spin_unlock(&ocs_ecc.lock);
 
 	crypto_engine_exit(ecc_dev->engine);
+
+	return 0;
 }
 
 /* Device tree driver match. */
@@ -991,7 +993,7 @@ static const struct of_device_id kmb_ocs_ecc_of_match[] = {
 /* The OCS driver is a platform device. */
 static struct platform_driver kmb_ocs_ecc_driver = {
 	.probe = kmb_ocs_ecc_probe,
-	.remove_new = kmb_ocs_ecc_remove,
+	.remove = kmb_ocs_ecc_remove,
 	.driver = {
 			.name = DRV_NAME,
 			.of_match_table = kmb_ocs_ecc_of_match,

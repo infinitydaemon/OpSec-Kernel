@@ -1306,7 +1306,7 @@ out_return:
 	return err;
 }
 
-static void fsldma_of_remove(struct platform_device *op)
+static int fsldma_of_remove(struct platform_device *op)
 {
 	struct fsldma_device *fdev;
 	unsigned int i;
@@ -1324,6 +1324,8 @@ static void fsldma_of_remove(struct platform_device *op)
 
 	iounmap(fdev->regs);
 	kfree(fdev);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -1404,7 +1406,7 @@ static struct platform_driver fsldma_of_driver = {
 #endif
 	},
 	.probe = fsldma_of_probe,
-	.remove_new = fsldma_of_remove,
+	.remove = fsldma_of_remove,
 };
 
 /*----------------------------------------------------------------------------*/

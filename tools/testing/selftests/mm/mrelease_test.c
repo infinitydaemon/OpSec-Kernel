@@ -26,15 +26,19 @@ static int alloc_noexit(unsigned long nr_pages, int pipefd)
 
 	buf = (char *)mmap(NULL, nr_pages * psize(), PROT_READ | PROT_WRITE,
 			   MAP_PRIVATE | MAP_ANON, 0, 0);
-	if (buf == MAP_FAILED)
-		ksft_exit_fail_msg("mmap failed, halting the test: %s\n", strerror(errno));
+	if (buf == MAP_FAILED) {
+		perror("mmap failed, halting the test");
+		return KSFT_FAIL;
+	}
 
 	for (i = 0; i < nr_pages; i++)
 		*((unsigned long *)(buf + (i * psize()))) = i;
 
 	/* Signal the parent that the child is ready */
-	if (write(pipefd, "", 1) < 0)
-		ksft_exit_fail_msg("write: %s\n", strerror(errno));
+	if (write(pipefd, "", 1) < 0) {
+		perror("write");
+		return KSFT_FAIL;
+	}
 
 	/* Wait to be killed (when reparenting happens) */
 	while (getppid() == ppid && timeout > 0) {
@@ -50,17 +54,23 @@ static int alloc_noexit(unsigned long nr_pages, int pipefd)
 /* The process_mrelease calls in this test are expected to fail */
 static void run_negative_tests(int pidfd)
 {
+	int res;
 	/* Test invalid flags. Expect to fail with EINVAL error code. */
 	if (!syscall(__NR_process_mrelease, pidfd, (unsigned int)-1) ||
 			errno != EINVAL) {
-		ksft_exit_fail_msg("process_mrelease with wrong flags: %s\n", strerror(errno));
+		res = (errno == ENOSYS ? KSFT_SKIP : KSFT_FAIL);
+		perror("process_mrelease with wrong flags");
+		exit(res);
 	}
 	/*
 	 * Test reaping while process is alive with no pending SIGKILL.
 	 * Expect to fail with EINVAL error code.
 	 */
-	if (!syscall(__NR_process_mrelease, pidfd, 0) || errno != EINVAL)
-		ksft_exit_fail_msg("process_mrelease on a live process: %s\n", strerror(errno));
+	if (!syscall(__NR_process_mrelease, pidfd, 0) || errno != EINVAL) {
+		res = (errno == ENOSYS ? KSFT_SKIP : KSFT_FAIL);
+		perror("process_mrelease on a live process");
+		exit(res);
+	}
 }
 
 static int child_main(int pipefd[], size_t size)
@@ -83,18 +93,11 @@ int main(void)
 	char byte;
 	int res;
 
-	ksft_print_header();
-	ksft_set_plan(1);
-
 	/* Test a wrong pidfd */
 	if (!syscall(__NR_process_mrelease, -1, 0) || errno != EBADF) {
-		if (errno == ENOSYS) {
-			ksft_test_result_skip("process_mrelease not implemented\n");
-			ksft_finished();
-		} else {
-			ksft_exit_fail_msg("process_mrelease with wrong pidfd: %s",
-					   strerror(errno));
-		}
+		res = (errno == ENOSYS ? KSFT_SKIP : KSFT_FAIL);
+		perror("process_mrelease with wrong pidfd");
+		exit(res);
 	}
 
 	/* Start the test with 1MB child memory allocation */
@@ -104,14 +107,16 @@ retry:
 	 * Pipe for the child to signal when it's done allocating
 	 * memory
 	 */
-	if (pipe(pipefd))
-		ksft_exit_fail_msg("pipe: %s\n", strerror(errno));
-
+	if (pipe(pipefd)) {
+		perror("pipe");
+		exit(KSFT_FAIL);
+	}
 	pid = fork();
 	if (pid < 0) {
+		perror("fork");
 		close(pipefd[0]);
 		close(pipefd[1]);
-		ksft_exit_fail_msg("fork: %s\n", strerror(errno));
+		exit(KSFT_FAIL);
 	}
 
 	if (pid == 0) {
@@ -129,23 +134,28 @@ retry:
 	res = read(pipefd[0], &byte, 1);
 	close(pipefd[0]);
 	if (res < 0) {
+		perror("read");
 		if (!kill(pid, SIGKILL))
 			waitpid(pid, NULL, 0);
-		ksft_exit_fail_msg("read: %s\n", strerror(errno));
+		exit(KSFT_FAIL);
 	}
 
 	pidfd = syscall(__NR_pidfd_open, pid, 0);
 	if (pidfd < 0) {
+		perror("pidfd_open");
 		if (!kill(pid, SIGKILL))
 			waitpid(pid, NULL, 0);
-		ksft_exit_fail_msg("pidfd_open: %s\n", strerror(errno));
+		exit(KSFT_FAIL);
 	}
 
 	/* Run negative tests which require a live child */
 	run_negative_tests(pidfd);
 
-	if (kill(pid, SIGKILL))
-		ksft_exit_fail_msg("kill: %s\n", strerror(errno));
+	if (kill(pid, SIGKILL)) {
+		res = (errno == ENOSYS ? KSFT_SKIP : KSFT_FAIL);
+		perror("kill");
+		exit(res);
+	}
 
 	success = (syscall(__NR_process_mrelease, pidfd, 0) == 0);
 	if (!success) {
@@ -159,15 +169,18 @@ retry:
 		if (errno == ESRCH) {
 			retry = (size <= MAX_SIZE_MB);
 		} else {
+			res = (errno == ENOSYS ? KSFT_SKIP : KSFT_FAIL);
+			perror("process_mrelease");
 			waitpid(pid, NULL, 0);
-			ksft_exit_fail_msg("process_mrelease: %s\n", strerror(errno));
+			exit(res);
 		}
 	}
 
 	/* Cleanup to prevent zombies */
-	if (waitpid(pid, NULL, 0) < 0)
-		ksft_exit_fail_msg("waitpid: %s\n", strerror(errno));
-
+	if (waitpid(pid, NULL, 0) < 0) {
+		perror("waitpid");
+		exit(KSFT_FAIL);
+	}
 	close(pidfd);
 
 	if (!success) {
@@ -175,10 +188,11 @@ retry:
 			size *= 2;
 			goto retry;
 		}
-		ksft_exit_fail_msg("All process_mrelease attempts failed!\n");
+		printf("All process_mrelease attempts failed!\n");
+		exit(KSFT_FAIL);
 	}
 
-	ksft_test_result_pass("Success reaping a child with %zuMB of memory allocations\n",
-			      size);
-	ksft_finished();
+	printf("Success reaping a child with %zuMB of memory allocations\n",
+	       size);
+	return KSFT_PASS;
 }

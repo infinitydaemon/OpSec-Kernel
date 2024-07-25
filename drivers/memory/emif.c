@@ -72,6 +72,7 @@ static DEFINE_SPINLOCK(emif_lock);
 static unsigned long	irq_state;
 static LIST_HEAD(device_list);
 
+#ifdef CONFIG_DEBUG_FS
 static void do_emif_regdump_show(struct seq_file *s, struct emif_data *emif,
 	struct emif_regs *regs)
 {
@@ -139,24 +140,31 @@ static int emif_mr4_show(struct seq_file *s, void *unused)
 
 DEFINE_SHOW_ATTRIBUTE(emif_mr4);
 
-static void emif_debugfs_init(struct emif_data *emif)
+static int __init_or_module emif_debugfs_init(struct emif_data *emif)
 {
-	if (IS_ENABLED(CONFIG_DEBUG_FS)) {
-		emif->debugfs_root = debugfs_create_dir(dev_name(emif->dev), NULL);
-		debugfs_create_file("regcache_dump", S_IRUGO, emif->debugfs_root, emif,
-				    &emif_regdump_fops);
-		debugfs_create_file("mr4", S_IRUGO, emif->debugfs_root, emif,
-				    &emif_mr4_fops);
-	}
+	emif->debugfs_root = debugfs_create_dir(dev_name(emif->dev), NULL);
+	debugfs_create_file("regcache_dump", S_IRUGO, emif->debugfs_root, emif,
+			    &emif_regdump_fops);
+	debugfs_create_file("mr4", S_IRUGO, emif->debugfs_root, emif,
+			    &emif_mr4_fops);
+	return 0;
 }
 
-static void emif_debugfs_exit(struct emif_data *emif)
+static void __exit emif_debugfs_exit(struct emif_data *emif)
 {
-	if (IS_ENABLED(CONFIG_DEBUG_FS)) {
-		debugfs_remove_recursive(emif->debugfs_root);
-		emif->debugfs_root = NULL;
-	}
+	debugfs_remove_recursive(emif->debugfs_root);
+	emif->debugfs_root = NULL;
 }
+#else
+static inline int __init_or_module emif_debugfs_init(struct emif_data *emif)
+{
+	return 0;
+}
+
+static inline void __exit emif_debugfs_exit(struct emif_data *emif)
+{
+}
+#endif
 
 /*
  * Get bus width used by EMIF. Note that this may be different from the
@@ -671,7 +679,7 @@ static void disable_and_clear_all_interrupts(struct emif_data *emif)
 	clear_all_interrupts(emif);
 }
 
-static int setup_interrupts(struct emif_data *emif, u32 irq)
+static int __init_or_module setup_interrupts(struct emif_data *emif, u32 irq)
 {
 	u32		interrupts, type;
 	void __iomem	*base = emif->base;
@@ -702,7 +710,7 @@ static int setup_interrupts(struct emif_data *emif, u32 irq)
 
 }
 
-static void emif_onetime_settings(struct emif_data *emif)
+static void __init_or_module emif_onetime_settings(struct emif_data *emif)
 {
 	u32				pwr_mgmt_ctrl, zq, temp_alert_cfg;
 	void __iomem			*base = emif->base;
@@ -826,7 +834,8 @@ static int is_custom_config_valid(struct emif_custom_configs *cust_cfgs,
 	return valid;
 }
 
-static void of_get_custom_configs(struct device_node *np_emif,
+#if defined(CONFIG_OF)
+static void __init_or_module of_get_custom_configs(struct device_node *np_emif,
 		struct emif_data *emif)
 {
 	struct emif_custom_configs	*cust_cfgs = NULL;
@@ -875,7 +884,7 @@ static void of_get_custom_configs(struct device_node *np_emif,
 	emif->plat_data->custom_configs = cust_cfgs;
 }
 
-static void of_get_ddr_info(struct device_node *np_emif,
+static void __init_or_module of_get_ddr_info(struct device_node *np_emif,
 		struct device_node *np_ddr,
 		struct ddr_device_info *dev_info)
 {
@@ -909,7 +918,7 @@ static void of_get_ddr_info(struct device_node *np_emif,
 		dev_info->io_width = __fls(io_width) - 1;
 }
 
-static struct emif_data *of_get_memory_device_details(
+static struct emif_data * __init_or_module of_get_memory_device_details(
 		struct device_node *np_emif, struct device *dev)
 {
 	struct emif_data		*emif = NULL;
@@ -982,7 +991,16 @@ out:
 	return emif;
 }
 
-static struct emif_data *get_device_details(
+#else
+
+static struct emif_data * __init_or_module of_get_memory_device_details(
+		struct device_node *np_emif, struct device *dev)
+{
+	return NULL;
+}
+#endif
+
+static struct emif_data *__init_or_module get_device_details(
 		struct platform_device *pdev)
 {
 	u32				size;
@@ -1086,7 +1104,7 @@ error:
 	return NULL;
 }
 
-static int emif_probe(struct platform_device *pdev)
+static int __init_or_module emif_probe(struct platform_device *pdev)
 {
 	struct emif_data	*emif;
 	int			irq, ret;
@@ -1141,11 +1159,13 @@ error:
 	return -ENODEV;
 }
 
-static void emif_remove(struct platform_device *pdev)
+static int __exit emif_remove(struct platform_device *pdev)
 {
 	struct emif_data *emif = platform_get_drvdata(pdev);
 
 	emif_debugfs_exit(emif);
+
+	return 0;
 }
 
 static void emif_shutdown(struct platform_device *pdev)
@@ -1165,8 +1185,7 @@ MODULE_DEVICE_TABLE(of, emif_of_match);
 #endif
 
 static struct platform_driver emif_driver = {
-	.probe		= emif_probe,
-	.remove_new	= emif_remove,
+	.remove		= __exit_p(emif_remove),
 	.shutdown	= emif_shutdown,
 	.driver = {
 		.name = "emif",
@@ -1174,7 +1193,7 @@ static struct platform_driver emif_driver = {
 	},
 };
 
-module_platform_driver(emif_driver);
+module_platform_driver_probe(emif_driver, emif_probe);
 
 MODULE_DESCRIPTION("TI EMIF SDRAM Controller Driver");
 MODULE_LICENSE("GPL");

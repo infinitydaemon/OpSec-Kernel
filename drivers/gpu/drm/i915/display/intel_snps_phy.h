@@ -10,15 +10,14 @@
 
 struct drm_i915_private;
 struct intel_atomic_state;
-struct intel_crtc;
 struct intel_crtc_state;
 struct intel_encoder;
 struct intel_mpllb_state;
 enum phy;
 
 void intel_snps_phy_wait_for_calibration(struct drm_i915_private *dev_priv);
-void intel_snps_phy_update_psr_power_state(struct intel_encoder *encoder,
-					   bool enable);
+void intel_snps_phy_update_psr_power_state(struct drm_i915_private *dev_priv,
+					   enum phy phy, bool enable);
 
 int intel_mpllb_calc_state(struct intel_crtc_state *crtc_state,
 			   struct intel_encoder *encoder);
@@ -34,6 +33,6 @@ int intel_snps_phy_check_hdmi_link_rate(int clock);
 void intel_snps_phy_set_signal_levels(struct intel_encoder *encoder,
 				      const struct intel_crtc_state *crtc_state);
 void intel_mpllb_state_verify(struct intel_atomic_state *state,
-			      struct intel_crtc *crtc);
+			      struct intel_crtc_state *new_crtc_state);
 
 #endif /* __INTEL_SNPS_PHY_H__ */

@@ -6,7 +6,6 @@
 #ifndef __iwl_drv_h__
 #define __iwl_drv_h__
 #include <linux/export.h>
-#include <kunit/visibility.h>
 
 /* for all modules */
 #define DRV_NAME        "iwlwifi"
@@ -57,7 +56,7 @@ struct iwl_cfg;
 /**
  * iwl_drv_start - start the drv
  *
- * @trans: the transport
+ * @trans_ops: the ops of the transport
  *
  * starts the driver: fetches the firmware. This should be called by bus
  * specific system flows implementations. For example, the bus specific probe
@@ -90,13 +89,8 @@ void iwl_drv_stop(struct iwl_drv *drv);
 #define IWL_EXPORT_SYMBOL(sym)
 #endif
 
-#if IS_ENABLED(CONFIG_IWLWIFI_KUNIT_TESTS)
-#define EXPORT_SYMBOL_IF_IWLWIFI_KUNIT(sym)	EXPORT_SYMBOL_IF_KUNIT(sym)
-#define VISIBLE_IF_IWLWIFI_KUNIT
-#else
-#define EXPORT_SYMBOL_IF_IWLWIFI_KUNIT(sym)
-#define VISIBLE_IF_IWLWIFI_KUNIT static
-#endif
+/* max retry for init flow */
+#define IWL_MAX_INIT_RETRY 2
 
 #define FW_NAME_PRE_BUFSIZE	64
 struct iwl_trans;

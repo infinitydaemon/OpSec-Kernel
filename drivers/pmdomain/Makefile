@@ -2,7 +2,6 @@
 obj-y					+= actions/
 obj-y					+= amlogic/
 obj-y					+= apple/
-obj-y					+= arm/
 obj-y					+= bcm/
 obj-y					+= imx/
 obj-y					+= mediatek/
@@ -16,4 +15,3 @@ obj-y					+= sunxi/
 obj-y					+= tegra/
 obj-y					+= ti/
 obj-y					+= xilinx/
-obj-y					+= core.o governor.o

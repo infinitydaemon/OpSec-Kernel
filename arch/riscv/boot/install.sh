@@ -17,18 +17,15 @@
 #   $3 - kernel map file
 #   $4 - default install path (blank if root directory)
 
-case "${2##*/}" in
+if [ "$(basename $2)" = "Image.gz" ]; then
 # Compressed install
-Image.*|vmlinuz.efi)
   echo "Installing compressed kernel"
   base=vmlinuz
-  ;;
+else
 # Normal install
-*)
   echo "Installing normal kernel"
   base=vmlinux
-  ;;
-esac
+fi
 
 if [ -f $4/$base-$1 ]; then
   mv $4/$base-$1 $4/$base-$1.old

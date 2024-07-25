@@ -72,7 +72,7 @@ static const struct amdgpu_video_codecs vcn_4_0_0_video_codecs_encode_vcn1 = {
 static const struct amdgpu_video_codec_info vcn_4_0_0_video_codecs_decode_array_vcn0[] = {
 	{codec_info_build(AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_MPEG4_AVC, 4096, 4096, 52)},
 	{codec_info_build(AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_HEVC, 8192, 4352, 186)},
-	{codec_info_build(AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_JPEG, 16384, 16384, 0)},
+	{codec_info_build(AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_JPEG, 4096, 4096, 0)},
 	{codec_info_build(AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_VP9, 8192, 4352, 0)},
 	{codec_info_build(AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_AV1, 8192, 4352, 0)},
 };
@@ -80,7 +80,7 @@ static const struct amdgpu_video_codec_info vcn_4_0_0_video_codecs_decode_array_
 static const struct amdgpu_video_codec_info vcn_4_0_0_video_codecs_decode_array_vcn1[] = {
 	{codec_info_build(AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_MPEG4_AVC, 4096, 4096, 52)},
 	{codec_info_build(AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_HEVC, 8192, 4352, 186)},
-	{codec_info_build(AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_JPEG, 16384, 16384, 0)},
+	{codec_info_build(AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_JPEG, 4096, 4096, 0)},
 	{codec_info_build(AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_VP9, 8192, 4352, 0)},
 };
 
@@ -153,11 +153,10 @@ static int soc21_query_video_codecs(struct amdgpu_device *adev, bool encode,
 	if (adev->vcn.num_vcn_inst == hweight8(adev->vcn.harvest_config))
 		return -EINVAL;
 
-	switch (amdgpu_ip_version(adev, UVD_HWIP, 0)) {
+	switch (adev->ip_versions[UVD_HWIP][0]) {
 	case IP_VERSION(4, 0, 0):
 	case IP_VERSION(4, 0, 2):
 	case IP_VERSION(4, 0, 4):
-	case IP_VERSION(4, 0, 5):
 		if (amdgpu_sriov_vf(adev)) {
 			if ((adev->vcn.harvest_config & AMDGPU_VCN_HARVEST_VCN0) ||
 			!amdgpu_sriov_is_av1_support(adev)) {
@@ -184,12 +183,6 @@ static int soc21_query_video_codecs(struct amdgpu_device *adev, bool encode,
 					*codecs = &vcn_4_0_0_video_codecs_decode_vcn0;
 			}
 		}
-		return 0;
-	case IP_VERSION(4, 0, 6):
-		if (encode)
-			*codecs = &vcn_4_0_0_video_codecs_encode_vcn0;
-		else
-			*codecs = &vcn_4_0_0_video_codecs_decode_vcn0;
 		return 0;
 	default:
 		return -EINVAL;
@@ -380,15 +373,13 @@ soc21_asic_reset_method(struct amdgpu_device *adev)
 		dev_warn(adev->dev, "Specified reset method:%d isn't supported, using AUTO instead.\n",
 				  amdgpu_reset_method);
 
-	switch (amdgpu_ip_version(adev, MP1_HWIP, 0)) {
+	switch (adev->ip_versions[MP1_HWIP][0]) {
 	case IP_VERSION(13, 0, 0):
 	case IP_VERSION(13, 0, 7):
 	case IP_VERSION(13, 0, 10):
 		return AMD_RESET_METHOD_MODE1;
 	case IP_VERSION(13, 0, 4):
 	case IP_VERSION(13, 0, 11):
-	case IP_VERSION(14, 0, 0):
-	case IP_VERSION(14, 0, 1):
 		return AMD_RESET_METHOD_MODE2;
 	default:
 		if (amdgpu_dpm_is_baco_supported(adev))
@@ -441,7 +432,8 @@ static void soc21_program_aspm(struct amdgpu_device *adev)
 	if (!amdgpu_device_should_use_aspm(adev))
 		return;
 
-	if (adev->nbio.funcs->program_aspm)
+	if (!(adev->flags & AMD_IS_APU) &&
+	    (adev->nbio.funcs->program_aspm))
 		adev->nbio.funcs->program_aspm(adev);
 }
 
@@ -455,7 +447,7 @@ const struct amdgpu_ip_block_version soc21_common_ip_block = {
 
 static bool soc21_need_full_reset(struct amdgpu_device *adev)
 {
-	switch (amdgpu_ip_version(adev, GC_HWIP, 0)) {
+	switch (adev->ip_versions[GC_HWIP][0]) {
 	case IP_VERSION(11, 0, 0):
 	case IP_VERSION(11, 0, 2):
 	case IP_VERSION(11, 0, 3):
@@ -509,7 +501,6 @@ static void soc21_init_doorbell_index(struct amdgpu_device *adev)
 	adev->doorbell_index.vcn.vcn_ring2_3 = AMDGPU_NAVI10_DOORBELL64_VCN2_3;
 	adev->doorbell_index.vcn.vcn_ring4_5 = AMDGPU_NAVI10_DOORBELL64_VCN4_5;
 	adev->doorbell_index.vcn.vcn_ring6_7 = AMDGPU_NAVI10_DOORBELL64_VCN6_7;
-	adev->doorbell_index.vpe_ring = AMDGPU_NAVI10_DOORBELL64_VPE;
 	adev->doorbell_index.first_non_cp = AMDGPU_NAVI10_DOORBELL64_FIRST_NON_CP;
 	adev->doorbell_index.last_non_cp = AMDGPU_NAVI10_DOORBELL64_LAST_NON_CP;
 
@@ -582,7 +573,7 @@ static int soc21_common_early_init(void *handle)
 
 	adev->rev_id = amdgpu_device_get_rev_id(adev);
 	adev->external_rev_id = 0xff;
-	switch (amdgpu_ip_version(adev, GC_HWIP, 0)) {
+	switch (adev->ip_versions[GC_HWIP][0]) {
 	case IP_VERSION(11, 0, 0):
 		adev->cg_flags = AMD_CG_SUPPORT_GFX_CGCG |
 			AMD_CG_SUPPORT_GFX_CGLS |
@@ -694,66 +685,7 @@ static int soc21_common_early_init(void *handle)
 			AMD_PG_SUPPORT_JPEG;
 		adev->external_rev_id = adev->rev_id + 0x80;
 		break;
-	case IP_VERSION(11, 5, 0):
-		adev->cg_flags = AMD_CG_SUPPORT_VCN_MGCG |
-			AMD_CG_SUPPORT_JPEG_MGCG |
-			AMD_CG_SUPPORT_GFX_CGCG |
-			AMD_CG_SUPPORT_GFX_CGLS |
-			AMD_CG_SUPPORT_GFX_MGCG |
-			AMD_CG_SUPPORT_GFX_FGCG |
-			AMD_CG_SUPPORT_REPEATER_FGCG |
-			AMD_CG_SUPPORT_GFX_PERF_CLK	|
-			AMD_CG_SUPPORT_GFX_3D_CGCG |
-			AMD_CG_SUPPORT_GFX_3D_CGLS	|
-			AMD_CG_SUPPORT_MC_MGCG |
-			AMD_CG_SUPPORT_MC_LS |
-			AMD_CG_SUPPORT_HDP_LS |
-			AMD_CG_SUPPORT_HDP_DS |
-			AMD_CG_SUPPORT_HDP_SD |
-			AMD_CG_SUPPORT_ATHUB_MGCG |
-			AMD_CG_SUPPORT_ATHUB_LS |
-			AMD_CG_SUPPORT_IH_CG |
-			AMD_CG_SUPPORT_BIF_MGCG |
-			AMD_CG_SUPPORT_BIF_LS;
-		adev->pg_flags = AMD_PG_SUPPORT_VCN_DPG |
-			AMD_PG_SUPPORT_JPEG_DPG |
-			AMD_PG_SUPPORT_VCN |
-			AMD_PG_SUPPORT_JPEG |
-			AMD_PG_SUPPORT_GFX_PG;
-		if (adev->rev_id == 0)
-			adev->external_rev_id = 0x1;
-		else
-			adev->external_rev_id = adev->rev_id + 0x10;
-		break;
-	case IP_VERSION(11, 5, 1):
-		adev->cg_flags =
-			AMD_CG_SUPPORT_GFX_CGCG |
-			AMD_CG_SUPPORT_GFX_CGLS |
-			AMD_CG_SUPPORT_GFX_MGCG |
-			AMD_CG_SUPPORT_GFX_FGCG |
-			AMD_CG_SUPPORT_REPEATER_FGCG |
-			AMD_CG_SUPPORT_GFX_PERF_CLK	|
-			AMD_CG_SUPPORT_GFX_3D_CGCG |
-			AMD_CG_SUPPORT_GFX_3D_CGLS	|
-			AMD_CG_SUPPORT_MC_MGCG |
-			AMD_CG_SUPPORT_MC_LS |
-			AMD_CG_SUPPORT_HDP_LS |
-			AMD_CG_SUPPORT_HDP_DS |
-			AMD_CG_SUPPORT_HDP_SD |
-			AMD_CG_SUPPORT_ATHUB_MGCG |
-			AMD_CG_SUPPORT_ATHUB_LS |
-			AMD_CG_SUPPORT_IH_CG |
-			AMD_CG_SUPPORT_BIF_MGCG |
-			AMD_CG_SUPPORT_BIF_LS |
-			AMD_CG_SUPPORT_VCN_MGCG |
-			AMD_CG_SUPPORT_JPEG_MGCG;
-		adev->pg_flags =
-			AMD_PG_SUPPORT_GFX_PG |
-			AMD_PG_SUPPORT_VCN |
-			AMD_PG_SUPPORT_VCN_DPG |
-			AMD_PG_SUPPORT_JPEG;
-		adev->external_rev_id = adev->rev_id + 0xc1;
-		break;
+
 	default:
 		/* FIXME: not supported yet */
 		return -EINVAL;
@@ -922,13 +854,10 @@ static int soc21_common_set_clockgating_state(void *handle,
 {
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
-	switch (amdgpu_ip_version(adev, NBIO_HWIP, 0)) {
+	switch (adev->ip_versions[NBIO_HWIP][0]) {
 	case IP_VERSION(4, 3, 0):
 	case IP_VERSION(4, 3, 1):
 	case IP_VERSION(7, 7, 0):
-	case IP_VERSION(7, 7, 1):
-	case IP_VERSION(7, 11, 0):
-	case IP_VERSION(7, 11, 1):
 		adev->nbio.funcs->update_medium_grain_clock_gating(adev,
 				state == AMD_CG_STATE_GATE);
 		adev->nbio.funcs->update_medium_grain_light_sleep(adev,
@@ -947,7 +876,7 @@ static int soc21_common_set_powergating_state(void *handle,
 {
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
-	switch (amdgpu_ip_version(adev, LSDMA_HWIP, 0)) {
+	switch (adev->ip_versions[LSDMA_HWIP][0]) {
 	case IP_VERSION(6, 0, 0):
 	case IP_VERSION(6, 0, 2):
 		adev->lsdma.funcs->update_memory_power_gating(adev,
@@ -967,6 +896,8 @@ static void soc21_common_get_clockgating_state(void *handle, u64 *flags)
 	adev->nbio.funcs->get_clockgating_state(adev, flags);
 
 	adev->hdp.funcs->get_clock_gating_state(adev, flags);
+
+	return;
 }
 
 static const struct amd_ip_funcs soc21_common_ip_funcs = {
@@ -985,6 +916,4 @@ static const struct amd_ip_funcs soc21_common_ip_funcs = {
 	.set_clockgating_state = soc21_common_set_clockgating_state,
 	.set_powergating_state = soc21_common_set_powergating_state,
 	.get_clockgating_state = soc21_common_get_clockgating_state,
-	.dump_ip_state = NULL,
-	.print_ip_state = NULL,
 };

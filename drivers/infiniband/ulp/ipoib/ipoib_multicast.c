@@ -287,7 +287,8 @@ static int ipoib_mcast_join_finish(struct ipoib_mcast *mcast,
 
 	ah = ipoib_create_ah(dev, priv->pd, &av);
 	if (IS_ERR(ah)) {
-		ipoib_warn(priv, "ib_address_create failed %pe\n", ah);
+		ipoib_warn(priv, "ib_address_create failed %ld\n",
+			   -PTR_ERR(ah));
 		/* use original error */
 		return PTR_ERR(ah);
 	}

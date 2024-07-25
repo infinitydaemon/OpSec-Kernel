@@ -318,7 +318,7 @@ static int z2ram_register_disk(int minor)
 	struct gendisk *disk;
 	int err;
 
-	disk = blk_mq_alloc_disk(&tag_set, NULL, NULL);
+	disk = blk_mq_alloc_disk(&tag_set, NULL);
 	if (IS_ERR(disk))
 		return PTR_ERR(disk);
 

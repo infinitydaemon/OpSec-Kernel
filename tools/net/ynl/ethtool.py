@@ -6,7 +6,6 @@ import json
 import pprint
 import sys
 import re
-import os
 
 from lib import YnlFamily
 
@@ -153,11 +152,8 @@ def main():
     global args
     args = parser.parse_args()
 
-    script_abs_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-    spec = os.path.join(script_abs_dir,
-                        '../../../Documentation/netlink/specs/ethtool.yaml')
-    schema = os.path.join(script_abs_dir,
-                          '../../../Documentation/netlink/genetlink-legacy.yaml')
+    spec = '../../../Documentation/netlink/specs/ethtool.yaml'
+    schema = '../../../Documentation/netlink/genetlink-legacy.yaml'
 
     ynl = YnlFamily(spec, schema)
 
@@ -324,13 +320,7 @@ def main():
         return
 
     if args.show_time_stamping:
-        req = {
-          'header': {
-            'flags': 'stats',
-          },
-        }
-
-        tsinfo = dumpit(ynl, args, 'tsinfo-get', req)
+        tsinfo = dumpit(ynl, args, 'tsinfo-get')
 
         print(f'Time stamping parameters for {args.device}:')
 
@@ -344,9 +334,6 @@ def main():
 
         print('Hardware Receive Filter Modes:')
         [print(f'\t{v}') for v in bits_to_dict(tsinfo['rx-filters'])]
-
-        print('Statistics:')
-        [print(f'\t{k}: {v}') for k, v in tsinfo['stats'].items()]
         return
 
     print(f'Settings for {args.device}:')

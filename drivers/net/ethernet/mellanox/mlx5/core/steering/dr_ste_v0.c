@@ -1883,7 +1883,7 @@ dr_ste_v0_build_tnl_gtpu_flex_parser_1_init(struct mlx5dr_ste_build *sb,
 
 static int dr_ste_v0_build_tnl_header_0_1_tag(struct mlx5dr_match_param *value,
 					      struct mlx5dr_ste_build *sb,
-					      u8 *tag)
+					      uint8_t *tag)
 {
 	struct mlx5dr_match_misc5 *misc5 = &value->misc5;
 

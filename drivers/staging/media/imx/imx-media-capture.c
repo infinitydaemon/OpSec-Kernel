@@ -511,8 +511,7 @@ static int capture_legacy_g_parm(struct file *file, void *fh,
 	if (a->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
 		return -EINVAL;
 
-	ret = v4l2_subdev_call_state_active(priv->src_sd, pad,
-					    get_frame_interval, &fi);
+	ret = v4l2_subdev_call(priv->src_sd, video, g_frame_interval, &fi);
 	if (ret < 0)
 		return ret;
 
@@ -535,8 +534,7 @@ static int capture_legacy_s_parm(struct file *file, void *fh,
 		return -EINVAL;
 
 	fi.interval = a->parm.capture.timeperframe;
-	ret = v4l2_subdev_call_state_active(priv->src_sd, pad,
-					    set_frame_interval, &fi);
+	ret = v4l2_subdev_call(priv->src_sd, video, s_frame_interval, &fi);
 	if (ret < 0)
 		return ret;
 
@@ -607,7 +605,6 @@ static int capture_queue_setup(struct vb2_queue *vq,
 {
 	struct capture_priv *priv = vb2_get_drv_priv(vq);
 	struct v4l2_pix_format *pix = &priv->vdev.fmt;
-	unsigned int q_num_bufs = vb2_get_num_buffers(vq);
 	unsigned int count = *nbuffers;
 
 	if (vq->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
@@ -616,14 +613,14 @@ static int capture_queue_setup(struct vb2_queue *vq,
 	if (*nplanes) {
 		if (*nplanes != 1 || sizes[0] < pix->sizeimage)
 			return -EINVAL;
-		count += q_num_bufs;
+		count += vq->num_buffers;
 	}
 
 	count = min_t(__u32, VID_MEM_LIMIT / pix->sizeimage, count);
 
 	if (*nplanes)
-		*nbuffers = (count < q_num_bufs) ? 0 :
-			count - q_num_bufs;
+		*nbuffers = (count < vq->num_buffers) ? 0 :
+			count - vq->num_buffers;
 	else
 		*nbuffers = count;
 
@@ -1024,7 +1021,7 @@ imx_media_capture_device_init(struct device *dev, struct v4l2_subdev *src_sd,
 	vq->mem_ops = &vb2_dma_contig_memops;
 	vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
 	vq->lock = &priv->mutex;
-	vq->min_queued_buffers = 2;
+	vq->min_buffers_needed = 2;
 	vq->dev = priv->dev;
 
 	ret = vb2_queue_init(vq);

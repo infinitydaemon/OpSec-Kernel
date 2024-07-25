@@ -21,8 +21,6 @@
 #include <linux/bitmap.h>
 #include <linux/lockdep.h>
 #include <linux/log2.h>
-#include <linux/vmalloc.h>
-#include <linux/suspend.h>
 
 #include <acpi/acpi_numa.h>
 
@@ -253,9 +251,6 @@ struct virtio_mem {
 
 	/* Memory notifier (online/offline events). */
 	struct notifier_block memory_notifier;
-
-	/* Notifier to block hibernation image storing/reloading. */
-	struct notifier_block pm_notifier;
 
 #ifdef CONFIG_PROC_VMCORE
 	/* vmcore callback for /proc/vmcore handling in kdump mode */
@@ -1116,25 +1111,6 @@ static int virtio_mem_memory_notifier_cb(struct notifier_block *nb,
 	return rc;
 }
 
-static int virtio_mem_pm_notifier_cb(struct notifier_block *nb,
-				     unsigned long action, void *arg)
-{
-	struct virtio_mem *vm = container_of(nb, struct virtio_mem,
-					     pm_notifier);
-	switch (action) {
-	case PM_HIBERNATION_PREPARE:
-	case PM_RESTORE_PREPARE:
-		/*
-		 * When restarting the VM, all memory is unplugged. Don't
-		 * allow to hibernate and restore from an image.
-		 */
-		dev_err(&vm->vdev->dev, "hibernation is not supported.\n");
-		return NOTIFY_BAD;
-	default:
-		return NOTIFY_OK;
-	}
-}
-
 /*
  * Set a range of pages PG_offline. Remember pages that were never onlined
  * (via generic_online_page()) using PageDirty().
@@ -1178,13 +1154,13 @@ static void virtio_mem_clear_fake_offline(unsigned long pfn,
  */
 static void virtio_mem_fake_online(unsigned long pfn, unsigned long nr_pages)
 {
-	unsigned long order = MAX_PAGE_ORDER;
+	unsigned long order = MAX_ORDER;
 	unsigned long i;
 
 	/*
 	 * We might get called for ranges that don't cover properly aligned
-	 * MAX_PAGE_ORDER pages; however, we can only online properly aligned
-	 * pages with an order of MAX_PAGE_ORDER at maximum.
+	 * MAX_ORDER pages; however, we can only online properly aligned
+	 * pages with an order of MAX_ORDER at maximum.
 	 */
 	while (!IS_ALIGNED(pfn | nr_pages, 1 << order))
 		order--;
@@ -1304,7 +1280,7 @@ static void virtio_mem_online_page(struct virtio_mem *vm,
 	bool do_online;
 
 	/*
-	 * We can get called with any order up to MAX_PAGE_ORDER. If our subblock
+	 * We can get called with any order up to MAX_ORDER. If our subblock
 	 * size is smaller than that and we have a mixture of plugged and
 	 * unplugged subblocks within such a page, we have to process in
 	 * smaller granularity. In that case we'll adjust the order exactly once
@@ -2639,19 +2615,11 @@ static int virtio_mem_init_hotplug(struct virtio_mem *vm)
 	rc = register_memory_notifier(&vm->memory_notifier);
 	if (rc)
 		goto out_unreg_group;
-	/* Block hibernation as early as possible. */
-	vm->pm_notifier.priority = INT_MAX;
-	vm->pm_notifier.notifier_call = virtio_mem_pm_notifier_cb;
-	rc = register_pm_notifier(&vm->pm_notifier);
-	if (rc)
-		goto out_unreg_mem;
 	rc = register_virtio_mem_device(vm);
 	if (rc)
-		goto out_unreg_pm;
+		goto out_unreg_mem;
 
 	return 0;
-out_unreg_pm:
-	unregister_pm_notifier(&vm->pm_notifier);
 out_unreg_mem:
 	unregister_memory_notifier(&vm->memory_notifier);
 out_unreg_group:
@@ -2929,7 +2897,6 @@ static void virtio_mem_deinit_hotplug(struct virtio_mem *vm)
 
 	/* unregister callbacks */
 	unregister_virtio_mem_device(vm);
-	unregister_pm_notifier(&vm->pm_notifier);
 	unregister_memory_notifier(&vm->memory_notifier);
 
 	/*
@@ -2993,40 +2960,17 @@ static void virtio_mem_config_changed(struct virtio_device *vdev)
 #ifdef CONFIG_PM_SLEEP
 static int virtio_mem_freeze(struct virtio_device *vdev)
 {
-	struct virtio_mem *vm = vdev->priv;
-
 	/*
-	 * We block hibernation using the PM notifier completely. The workqueue
-	 * is already frozen by the PM core at this point, so we simply
-	 * reset the device and cleanup the queues.
+	 * When restarting the VM, all memory is usually unplugged. Don't
+	 * allow to suspend/hibernate.
 	 */
-	if (pm_suspend_target_state != PM_SUSPEND_TO_IDLE &&
-	    vm->plugged_size &&
-	    !virtio_has_feature(vm->vdev, VIRTIO_MEM_F_PERSISTENT_SUSPEND)) {
-		dev_err(&vm->vdev->dev,
-			"suspending with plugged memory is not supported\n");
-		return -EPERM;
-	}
-
-	virtio_reset_device(vdev);
-	vdev->config->del_vqs(vdev);
-	vm->vq = NULL;
-	return 0;
+	dev_err(&vdev->dev, "save/restore not supported.\n");
+	return -EPERM;
 }
 
 static int virtio_mem_restore(struct virtio_device *vdev)
 {
-	struct virtio_mem *vm = vdev->priv;
-	int ret;
-
-	ret = virtio_mem_init_vq(vm);
-	if (ret)
-		return ret;
-	virtio_device_ready(vdev);
-
-	/* Let's check if anything changed. */
-	virtio_mem_config_changed(vdev);
-	return 0;
+	return -EPERM;
 }
 #endif
 
@@ -3035,7 +2979,6 @@ static unsigned int virtio_mem_features[] = {
 	VIRTIO_MEM_F_ACPI_PXM,
 #endif
 	VIRTIO_MEM_F_UNPLUGGED_INACCESSIBLE,
-	VIRTIO_MEM_F_PERSISTENT_SUSPEND,
 };
 
 static const struct virtio_device_id virtio_mem_id_table[] = {
@@ -3047,6 +2990,7 @@ static struct virtio_driver virtio_mem_driver = {
 	.feature_table = virtio_mem_features,
 	.feature_table_size = ARRAY_SIZE(virtio_mem_features),
 	.driver.name = KBUILD_MODNAME,
+	.driver.owner = THIS_MODULE,
 	.id_table = virtio_mem_id_table,
 	.probe = virtio_mem_probe,
 	.remove = virtio_mem_remove,

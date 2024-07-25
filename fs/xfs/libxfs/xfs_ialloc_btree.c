@@ -17,7 +17,6 @@
 #include "xfs_ialloc_btree.h"
 #include "xfs_alloc.h"
 #include "xfs_error.h"
-#include "xfs_health.h"
 #include "xfs_trace.h"
 #include "xfs_trans.h"
 #include "xfs_rmap.h"
@@ -38,15 +37,7 @@ xfs_inobt_dup_cursor(
 	struct xfs_btree_cur	*cur)
 {
 	return xfs_inobt_init_cursor(cur->bc_ag.pag, cur->bc_tp,
-			cur->bc_ag.agbp);
-}
-
-STATIC struct xfs_btree_cur *
-xfs_finobt_dup_cursor(
-	struct xfs_btree_cur	*cur)
-{
-	return xfs_finobt_init_cursor(cur->bc_ag.pag, cur->bc_tp,
-			cur->bc_ag.agbp);
+			cur->bc_ag.agbp, cur->bc_btnum);
 }
 
 STATIC void
@@ -90,9 +81,9 @@ xfs_inobt_mod_blockcount(
 	if (!xfs_has_inobtcounts(cur->bc_mp))
 		return;
 
-	if (xfs_btree_is_fino(cur->bc_ops))
+	if (cur->bc_btnum == XFS_BTNUM_FINO)
 		be32_add_cpu(&agi->agi_fblocks, howmuch);
-	else
+	else if (cur->bc_btnum == XFS_BTNUM_INO)
 		be32_add_cpu(&agi->agi_iblocks, howmuch);
 	xfs_ialloc_log_agi(cur->bc_tp, agbp, XFS_AGI_IBLOCKS);
 }
@@ -170,7 +161,7 @@ __xfs_inobt_free_block(
 	xfs_inobt_mod_blockcount(cur, -1);
 	fsbno = XFS_DADDR_TO_FSB(cur->bc_mp, xfs_buf_daddr(bp));
 	return xfs_free_extent_later(cur->bc_tp, fsbno, 1,
-			&XFS_RMAP_OINFO_INOBT, resv, false);
+			&XFS_RMAP_OINFO_INOBT, resv);
 }
 
 STATIC int
@@ -309,7 +300,7 @@ xfs_inobt_verify(
 	 * xfs_perag_initialised_agi(pag)) if we ever do.
 	 */
 	if (xfs_has_crc(mp)) {
-		fa = xfs_btree_agblock_v5hdr_verify(bp);
+		fa = xfs_btree_sblock_v5hdr_verify(bp);
 		if (fa)
 			return fa;
 	}
@@ -319,7 +310,7 @@ xfs_inobt_verify(
 	if (level >= M_IGEO(mp)->inobt_maxlevels)
 		return __this_address;
 
-	return xfs_btree_agblock_verify(bp,
+	return xfs_btree_sblock_verify(bp,
 			M_IGEO(mp)->inobt_mxr[level != 0]);
 }
 
@@ -329,7 +320,7 @@ xfs_inobt_read_verify(
 {
 	xfs_failaddr_t	fa;
 
-	if (!xfs_btree_agblock_verify_crc(bp))
+	if (!xfs_btree_sblock_verify_crc(bp))
 		xfs_verifier_error(bp, -EFSBADCRC, __this_address);
 	else {
 		fa = xfs_inobt_verify(bp);
@@ -353,7 +344,7 @@ xfs_inobt_write_verify(
 		xfs_verifier_error(bp, -EFSCORRUPTED, fa);
 		return;
 	}
-	xfs_btree_agblock_calc_crc(bp);
+	xfs_btree_sblock_calc_crc(bp);
 
 }
 
@@ -407,17 +398,9 @@ xfs_inobt_keys_contiguous(
 				 be32_to_cpu(key2->inobt.ir_startino));
 }
 
-const struct xfs_btree_ops xfs_inobt_ops = {
-	.name			= "ino",
-	.type			= XFS_BTREE_TYPE_AG,
-
+static const struct xfs_btree_ops xfs_inobt_ops = {
 	.rec_len		= sizeof(xfs_inobt_rec_t),
 	.key_len		= sizeof(xfs_inobt_key_t),
-	.ptr_len		= XFS_BTREE_SHORT_PTR_LEN,
-
-	.lru_refs		= XFS_INO_BTREE_REF,
-	.statoff		= XFS_STATS_CALC_INDEX(xs_ibt_2),
-	.sick_mask		= XFS_SICK_AG_INOBT,
 
 	.dup_cursor		= xfs_inobt_dup_cursor,
 	.set_root		= xfs_inobt_set_root,
@@ -437,19 +420,11 @@ const struct xfs_btree_ops xfs_inobt_ops = {
 	.keys_contiguous	= xfs_inobt_keys_contiguous,
 };
 
-const struct xfs_btree_ops xfs_finobt_ops = {
-	.name			= "fino",
-	.type			= XFS_BTREE_TYPE_AG,
-
+static const struct xfs_btree_ops xfs_finobt_ops = {
 	.rec_len		= sizeof(xfs_inobt_rec_t),
 	.key_len		= sizeof(xfs_inobt_key_t),
-	.ptr_len		= XFS_BTREE_SHORT_PTR_LEN,
 
-	.lru_refs		= XFS_INO_BTREE_REF,
-	.statoff		= XFS_STATS_CALC_INDEX(xs_fibt_2),
-	.sick_mask		= XFS_SICK_AG_FINOBT,
-
-	.dup_cursor		= xfs_finobt_dup_cursor,
+	.dup_cursor		= xfs_inobt_dup_cursor,
 	.set_root		= xfs_finobt_set_root,
 	.alloc_block		= xfs_finobt_alloc_block,
 	.free_block		= xfs_finobt_free_block,
@@ -468,54 +443,65 @@ const struct xfs_btree_ops xfs_finobt_ops = {
 };
 
 /*
- * Create an inode btree cursor.
- *
- * For staging cursors tp and agbp are NULL.
+ * Initialize a new inode btree cursor.
  */
+static struct xfs_btree_cur *
+xfs_inobt_init_common(
+	struct xfs_perag	*pag,
+	struct xfs_trans	*tp,		/* transaction pointer */
+	xfs_btnum_t		btnum)		/* ialloc or free ino btree */
+{
+	struct xfs_mount	*mp = pag->pag_mount;
+	struct xfs_btree_cur	*cur;
+
+	cur = xfs_btree_alloc_cursor(mp, tp, btnum,
+			M_IGEO(mp)->inobt_maxlevels, xfs_inobt_cur_cache);
+	if (btnum == XFS_BTNUM_INO) {
+		cur->bc_statoff = XFS_STATS_CALC_INDEX(xs_ibt_2);
+		cur->bc_ops = &xfs_inobt_ops;
+	} else {
+		cur->bc_statoff = XFS_STATS_CALC_INDEX(xs_fibt_2);
+		cur->bc_ops = &xfs_finobt_ops;
+	}
+
+	if (xfs_has_crc(mp))
+		cur->bc_flags |= XFS_BTREE_CRC_BLOCKS;
+
+	cur->bc_ag.pag = xfs_perag_hold(pag);
+	return cur;
+}
+
+/* Create an inode btree cursor. */
 struct xfs_btree_cur *
 xfs_inobt_init_cursor(
 	struct xfs_perag	*pag,
 	struct xfs_trans	*tp,
-	struct xfs_buf		*agbp)
+	struct xfs_buf		*agbp,
+	xfs_btnum_t		btnum)
 {
-	struct xfs_mount	*mp = pag->pag_mount;
 	struct xfs_btree_cur	*cur;
+	struct xfs_agi		*agi = agbp->b_addr;
 
-	cur = xfs_btree_alloc_cursor(mp, tp, &xfs_inobt_ops,
-			M_IGEO(mp)->inobt_maxlevels, xfs_inobt_cur_cache);
-	cur->bc_ag.pag = xfs_perag_hold(pag);
-	cur->bc_ag.agbp = agbp;
-	if (agbp) {
-		struct xfs_agi		*agi = agbp->b_addr;
-
+	cur = xfs_inobt_init_common(pag, tp, btnum);
+	if (btnum == XFS_BTNUM_INO)
 		cur->bc_nlevels = be32_to_cpu(agi->agi_level);
-	}
+	else
+		cur->bc_nlevels = be32_to_cpu(agi->agi_free_level);
+	cur->bc_ag.agbp = agbp;
 	return cur;
 }
 
-/*
- * Create a free inode btree cursor.
- *
- * For staging cursors tp and agbp are NULL.
- */
+/* Create an inode btree cursor with a fake root for staging. */
 struct xfs_btree_cur *
-xfs_finobt_init_cursor(
+xfs_inobt_stage_cursor(
 	struct xfs_perag	*pag,
-	struct xfs_trans	*tp,
-	struct xfs_buf		*agbp)
+	struct xbtree_afakeroot	*afake,
+	xfs_btnum_t		btnum)
 {
-	struct xfs_mount	*mp = pag->pag_mount;
 	struct xfs_btree_cur	*cur;
 
-	cur = xfs_btree_alloc_cursor(mp, tp, &xfs_finobt_ops,
-			M_IGEO(mp)->inobt_maxlevels, xfs_inobt_cur_cache);
-	cur->bc_ag.pag = xfs_perag_hold(pag);
-	cur->bc_ag.agbp = agbp;
-	if (agbp) {
-		struct xfs_agi		*agi = agbp->b_addr;
-
-		cur->bc_nlevels = be32_to_cpu(agi->agi_free_level);
-	}
+	cur = xfs_inobt_init_common(pag, NULL, btnum);
+	xfs_btree_stage_afakeroot(cur, afake);
 	return cur;
 }
 
@@ -535,7 +521,7 @@ xfs_inobt_commit_staged_btree(
 
 	ASSERT(cur->bc_flags & XFS_BTREE_STAGING);
 
-	if (xfs_btree_is_ino(cur->bc_ops)) {
+	if (cur->bc_btnum == XFS_BTNUM_INO) {
 		fields = XFS_AGI_ROOT | XFS_AGI_LEVEL;
 		agi->agi_root = cpu_to_be32(afake->af_root);
 		agi->agi_level = cpu_to_be32(afake->af_levels);
@@ -544,7 +530,7 @@ xfs_inobt_commit_staged_btree(
 			fields |= XFS_AGI_IBLOCKS;
 		}
 		xfs_ialloc_log_agi(tp, agbp, fields);
-		xfs_btree_commit_afakeroot(cur, tp, agbp);
+		xfs_btree_commit_afakeroot(cur, tp, agbp, &xfs_inobt_ops);
 	} else {
 		fields = XFS_AGI_FREE_ROOT | XFS_AGI_FREE_LEVEL;
 		agi->agi_free_root = cpu_to_be32(afake->af_root);
@@ -554,7 +540,7 @@ xfs_inobt_commit_staged_btree(
 			fields |= XFS_AGI_IBLOCKS;
 		}
 		xfs_ialloc_log_agi(tp, agbp, fields);
-		xfs_btree_commit_afakeroot(cur, tp, agbp);
+		xfs_btree_commit_afakeroot(cur, tp, agbp, &xfs_finobt_ops);
 	}
 }
 
@@ -735,21 +721,45 @@ xfs_inobt_max_size(
 					XFS_INODES_PER_CHUNK);
 }
 
-static int
-xfs_finobt_count_blocks(
+/* Read AGI and create inobt cursor. */
+int
+xfs_inobt_cur(
 	struct xfs_perag	*pag,
 	struct xfs_trans	*tp,
-	xfs_extlen_t		*tree_blocks)
+	xfs_btnum_t		which,
+	struct xfs_btree_cur	**curpp,
+	struct xfs_buf		**agi_bpp)
 {
-	struct xfs_buf		*agbp = NULL;
 	struct xfs_btree_cur	*cur;
 	int			error;
 
-	error = xfs_ialloc_read_agi(pag, tp, 0, &agbp);
+	ASSERT(*agi_bpp == NULL);
+	ASSERT(*curpp == NULL);
+
+	error = xfs_ialloc_read_agi(pag, tp, agi_bpp);
 	if (error)
 		return error;
 
-	cur = xfs_inobt_init_cursor(pag, tp, agbp);
+	cur = xfs_inobt_init_cursor(pag, tp, *agi_bpp, which);
+	*curpp = cur;
+	return 0;
+}
+
+static int
+xfs_inobt_count_blocks(
+	struct xfs_perag	*pag,
+	struct xfs_trans	*tp,
+	xfs_btnum_t		btnum,
+	xfs_extlen_t		*tree_blocks)
+{
+	struct xfs_buf		*agbp = NULL;
+	struct xfs_btree_cur	*cur = NULL;
+	int			error;
+
+	error = xfs_inobt_cur(pag, tp, btnum, &cur, &agbp);
+	if (error)
+		return error;
+
 	error = xfs_btree_count_blocks(cur, tree_blocks);
 	xfs_btree_del_cursor(cur, error);
 	xfs_trans_brelse(tp, agbp);
@@ -768,7 +778,7 @@ xfs_finobt_read_blocks(
 	struct xfs_agi		*agi;
 	int			error;
 
-	error = xfs_ialloc_read_agi(pag, tp, 0, &agbp);
+	error = xfs_ialloc_read_agi(pag, tp, &agbp);
 	if (error)
 		return error;
 
@@ -797,7 +807,8 @@ xfs_finobt_calc_reserves(
 	if (xfs_has_inobtcounts(pag->pag_mount))
 		error = xfs_finobt_read_blocks(pag, tp, &tree_len);
 	else
-		error = xfs_finobt_count_blocks(pag, tp, &tree_len);
+		error = xfs_inobt_count_blocks(pag, tp, XFS_BTNUM_FINO,
+				&tree_len);
 	if (error)
 		return error;
 

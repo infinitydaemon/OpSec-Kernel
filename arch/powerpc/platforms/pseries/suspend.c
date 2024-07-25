@@ -13,7 +13,6 @@
 #include <asm/mmu.h>
 #include <asm/rtas.h>
 #include <asm/topology.h>
-#include "pseries.h"
 
 static struct device suspend_dev;
 

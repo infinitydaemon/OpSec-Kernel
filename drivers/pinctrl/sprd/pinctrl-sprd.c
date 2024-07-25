@@ -1110,11 +1110,12 @@ int sprd_pinctrl_core_probe(struct platform_device *pdev,
 }
 EXPORT_SYMBOL_GPL(sprd_pinctrl_core_probe);
 
-void sprd_pinctrl_remove(struct platform_device *pdev)
+int sprd_pinctrl_remove(struct platform_device *pdev)
 {
 	struct sprd_pinctrl *sprd_pctl = platform_get_drvdata(pdev);
 
 	pinctrl_unregister(sprd_pctl->pctl);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(sprd_pinctrl_remove);
 

@@ -2356,9 +2356,11 @@ static void igb_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
 		break;
 	case ETH_SS_STATS:
 		for (i = 0; i < IGB_GLOBAL_STATS_LEN; i++)
-			ethtool_puts(&p, igb_gstrings_stats[i].stat_string);
+			ethtool_sprintf(&p,
+					igb_gstrings_stats[i].stat_string);
 		for (i = 0; i < IGB_NETDEV_STATS_LEN; i++)
-			ethtool_puts(&p, igb_gstrings_net_stats[i].stat_string);
+			ethtool_sprintf(&p,
+					igb_gstrings_net_stats[i].stat_string);
 		for (i = 0; i < adapter->num_tx_queues; i++) {
 			ethtool_sprintf(&p, "tx_queue_%u_packets", i);
 			ethtool_sprintf(&p, "tx_queue_%u_bytes", i);
@@ -2711,7 +2713,8 @@ static int igb_rxnfc_write_etype_filter(struct igb_adapter *adapter,
 	etqf |= (etype & E1000_ETQF_ETYPE_MASK);
 
 	etqf &= ~E1000_ETQF_QUEUE_MASK;
-	etqf |= FIELD_PREP(E1000_ETQF_QUEUE_MASK, input->action);
+	etqf |= ((input->action << E1000_ETQF_QUEUE_SHIFT)
+		& E1000_ETQF_QUEUE_MASK);
 	etqf |= E1000_ETQF_QUEUE_ENABLE;
 
 	wr32(E1000_ETQF(i), etqf);
@@ -3027,7 +3030,7 @@ static int igb_set_rxnfc(struct net_device *dev, struct ethtool_rxnfc *cmd)
 	return ret;
 }
 
-static int igb_get_eee(struct net_device *netdev, struct ethtool_keee *edata)
+static int igb_get_eee(struct net_device *netdev, struct ethtool_eee *edata)
 {
 	struct igb_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
@@ -3038,13 +3041,11 @@ static int igb_get_eee(struct net_device *netdev, struct ethtool_keee *edata)
 	    (hw->phy.media_type != e1000_media_type_copper))
 		return -EOPNOTSUPP;
 
-	linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT,
-			 edata->supported);
-	linkmode_set_bit(ETHTOOL_LINK_MODE_100baseT_Full_BIT,
-			 edata->supported);
+	edata->supported = (SUPPORTED_1000baseT_Full |
+			    SUPPORTED_100baseT_Full);
 	if (!hw->dev_spec._82575.eee_disable)
-		mii_eee_cap1_mod_linkmode_t(edata->advertised,
-					    adapter->eee_advert);
+		edata->advertised =
+			mmd_eee_adv_to_ethtool_adv_t(adapter->eee_advert);
 
 	/* The IPCNFG and EEER registers are not supported on I354. */
 	if (hw->mac.type == e1000_i354) {
@@ -3070,7 +3071,7 @@ static int igb_get_eee(struct net_device *netdev, struct ethtool_keee *edata)
 		if (ret_val)
 			return -ENODATA;
 
-		mii_eee_cap1_mod_linkmode_t(edata->lp_advertised, phy_data);
+		edata->lp_advertised = mmd_eee_adv_to_ethtool_adv_t(phy_data);
 		break;
 	case e1000_i354:
 	case e1000_i210:
@@ -3081,7 +3082,7 @@ static int igb_get_eee(struct net_device *netdev, struct ethtool_keee *edata)
 		if (ret_val)
 			return -ENODATA;
 
-		mii_eee_cap1_mod_linkmode_t(edata->lp_advertised, phy_data);
+		edata->lp_advertised = mmd_eee_adv_to_ethtool_adv_t(phy_data);
 
 		break;
 	default:
@@ -3101,20 +3102,18 @@ static int igb_get_eee(struct net_device *netdev, struct ethtool_keee *edata)
 		edata->eee_enabled = false;
 		edata->eee_active = false;
 		edata->tx_lpi_enabled = false;
-		linkmode_zero(edata->advertised);
+		edata->advertised &= ~edata->advertised;
 	}
 
 	return 0;
 }
 
 static int igb_set_eee(struct net_device *netdev,
-		       struct ethtool_keee *edata)
+		       struct ethtool_eee *edata)
 {
 	struct igb_adapter *adapter = netdev_priv(netdev);
-	__ETHTOOL_DECLARE_LINK_MODE_MASK(supported) = {};
-	__ETHTOOL_DECLARE_LINK_MODE_MASK(tmp) = {};
 	struct e1000_hw *hw = &adapter->hw;
-	struct ethtool_keee eee_curr;
+	struct ethtool_eee eee_curr;
 	bool adv1g_eee = true, adv100m_eee = true;
 	s32 ret_val;
 
@@ -3122,7 +3121,7 @@ static int igb_set_eee(struct net_device *netdev,
 	    (hw->phy.media_type != e1000_media_type_copper))
 		return -EOPNOTSUPP;
 
-	memset(&eee_curr, 0, sizeof(struct ethtool_keee));
+	memset(&eee_curr, 0, sizeof(struct ethtool_eee));
 
 	ret_val = igb_get_eee(netdev, &eee_curr);
 	if (ret_val)
@@ -3142,21 +3141,14 @@ static int igb_set_eee(struct net_device *netdev,
 			return -EINVAL;
 		}
 
-		linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT,
-				 supported);
-		linkmode_set_bit(ETHTOOL_LINK_MODE_100baseT_Full_BIT,
-				 supported);
-		if (linkmode_andnot(tmp, edata->advertised, supported)) {
+		if (!edata->advertised || (edata->advertised &
+		    ~(ADVERTISE_100_FULL | ADVERTISE_1000_FULL))) {
 			dev_err(&adapter->pdev->dev,
 				"EEE Advertisement supports only 100Tx and/or 100T full duplex\n");
 			return -EINVAL;
 		}
-		adv100m_eee = linkmode_test_bit(
-			ETHTOOL_LINK_MODE_100baseT_Full_BIT,
-			edata->advertised);
-		adv1g_eee = linkmode_test_bit(
-			ETHTOOL_LINK_MODE_1000baseT_Full_BIT,
-			edata->advertised);
+		adv100m_eee = !!(edata->advertised & ADVERTISE_100_FULL);
+		adv1g_eee = !!(edata->advertised & ADVERTISE_1000_FULL);
 
 	} else if (!edata->eee_enabled) {
 		dev_err(&adapter->pdev->dev,
@@ -3164,7 +3156,7 @@ static int igb_set_eee(struct net_device *netdev,
 		return -EINVAL;
 	}
 
-	adapter->eee_advert = linkmode_to_mii_eee_cap1_t(edata->advertised);
+	adapter->eee_advert = ethtool_adv_to_mmd_eee_adv_t(edata->advertised);
 	if (hw->dev_spec._82575.eee_disable != !edata->eee_enabled) {
 		hw->dev_spec._82575.eee_disable = !edata->eee_enabled;
 		adapter->flags |= IGB_FLAG_EEE;
@@ -3272,22 +3264,36 @@ static int igb_get_module_eeprom(struct net_device *netdev,
 	return 0;
 }
 
+static int igb_ethtool_begin(struct net_device *netdev)
+{
+	struct igb_adapter *adapter = netdev_priv(netdev);
+	pm_runtime_get_sync(&adapter->pdev->dev);
+	return 0;
+}
+
+static void igb_ethtool_complete(struct net_device *netdev)
+{
+	struct igb_adapter *adapter = netdev_priv(netdev);
+	pm_runtime_put(&adapter->pdev->dev);
+}
+
 static u32 igb_get_rxfh_indir_size(struct net_device *netdev)
 {
 	return IGB_RETA_SIZE;
 }
 
-static int igb_get_rxfh(struct net_device *netdev,
-			struct ethtool_rxfh_param *rxfh)
+static int igb_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key,
+			u8 *hfunc)
 {
 	struct igb_adapter *adapter = netdev_priv(netdev);
 	int i;
 
-	rxfh->hfunc = ETH_RSS_HASH_TOP;
-	if (!rxfh->indir)
+	if (hfunc)
+		*hfunc = ETH_RSS_HASH_TOP;
+	if (!indir)
 		return 0;
 	for (i = 0; i < IGB_RETA_SIZE; i++)
-		rxfh->indir[i] = adapter->rss_indir_tbl[i];
+		indir[i] = adapter->rss_indir_tbl[i];
 
 	return 0;
 }
@@ -3327,9 +3333,8 @@ void igb_write_rss_indir_tbl(struct igb_adapter *adapter)
 	}
 }
 
-static int igb_set_rxfh(struct net_device *netdev,
-			struct ethtool_rxfh_param *rxfh,
-			struct netlink_ext_ack *extack)
+static int igb_set_rxfh(struct net_device *netdev, const u32 *indir,
+			const u8 *key, const u8 hfunc)
 {
 	struct igb_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
@@ -3337,11 +3342,10 @@ static int igb_set_rxfh(struct net_device *netdev,
 	u32 num_queues;
 
 	/* We do not allow change in unsupported parameters */
-	if (rxfh->key ||
-	    (rxfh->hfunc != ETH_RSS_HASH_NO_CHANGE &&
-	     rxfh->hfunc != ETH_RSS_HASH_TOP))
+	if (key ||
+	    (hfunc != ETH_RSS_HASH_NO_CHANGE && hfunc != ETH_RSS_HASH_TOP))
 		return -EOPNOTSUPP;
-	if (!rxfh->indir)
+	if (!indir)
 		return 0;
 
 	num_queues = adapter->rss_queues;
@@ -3358,12 +3362,12 @@ static int igb_set_rxfh(struct net_device *netdev,
 
 	/* Verify user input. */
 	for (i = 0; i < IGB_RETA_SIZE; i++)
-		if (rxfh->indir[i] >= num_queues)
+		if (indir[i] >= num_queues)
 			return -EINVAL;
 
 
 	for (i = 0; i < IGB_RETA_SIZE; i++)
-		adapter->rss_indir_tbl[i] = rxfh->indir[i];
+		adapter->rss_indir_tbl[i] = indir[i];
 
 	igb_write_rss_indir_tbl(adapter);
 
@@ -3495,6 +3499,8 @@ static const struct ethtool_ops igb_ethtool_ops = {
 	.set_channels		= igb_set_channels,
 	.get_priv_flags		= igb_get_priv_flags,
 	.set_priv_flags		= igb_set_priv_flags,
+	.begin			= igb_ethtool_begin,
+	.complete		= igb_ethtool_complete,
 	.get_link_ksettings	= igb_get_link_ksettings,
 	.set_link_ksettings	= igb_set_link_ksettings,
 };

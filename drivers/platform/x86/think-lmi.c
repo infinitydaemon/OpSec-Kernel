@@ -15,7 +15,7 @@
 #include <linux/errno.h>
 #include <linux/fs.h>
 #include <linux/mutex.h>
-#include <linux/string_helpers.h>
+#include <linux/string.h>
 #include <linux/types.h>
 #include <linux/dmi.h>
 #include <linux/wmi.h>
@@ -175,6 +175,9 @@ MODULE_PARM_DESC(debug_support, "Enable debug command support");
 #define TLMI_SMP_PWD BIT(6) /* System Management */
 #define TLMI_CERT    BIT(7) /* Certificate Based */
 
+#define to_tlmi_pwd_setting(kobj)  container_of(kobj, struct tlmi_pwd_setting, kobj)
+#define to_tlmi_attr_setting(kobj)  container_of(kobj, struct tlmi_attr_setting, kobj)
+
 static const struct tlmi_err_codes tlmi_errs[] = {
 	{"Success", 0},
 	{"Not Supported", -EOPNOTSUPP},
@@ -192,17 +195,15 @@ static const char * const level_options[] = {
 	[TLMI_LEVEL_MASTER] = "master",
 };
 static struct think_lmi tlmi_priv;
-static const struct class *fw_attr_class;
+static struct class *fw_attr_class;
 static DEFINE_MUTEX(tlmi_mutex);
 
-static inline struct tlmi_pwd_setting *to_tlmi_pwd_setting(struct kobject *kobj)
+/* ------ Utility functions ------------*/
+/* Strip out CR if one is present */
+static void strip_cr(char *str)
 {
-	return container_of(kobj, struct tlmi_pwd_setting, kobj);
-}
-
-static inline struct tlmi_attr_setting *to_tlmi_attr_setting(struct kobject *kobj)
-{
-	return container_of(kobj, struct tlmi_attr_setting, kobj);
+	char *p = strchrnul(str, '\n');
+	*p = '\0';
 }
 
 /* Convert BIOS WMI error string to suitable error code */
@@ -410,7 +411,7 @@ static ssize_t current_password_store(struct kobject *kobj,
 
 	strscpy(setting->password, buf, setting->maxlen);
 	/* Strip out CR if one is present, setting password won't work if it is present */
-	strreplace(setting->password, '\n', '\0');
+	strip_cr(setting->password);
 	return count;
 }
 
@@ -431,10 +432,12 @@ static ssize_t new_password_store(struct kobject *kobj,
 	if (!tlmi_priv.can_set_bios_password)
 		return -EOPNOTSUPP;
 
-	/* Strip out CR if one is present, setting password won't work if it is present */
-	new_pwd = kstrdup_and_replace(buf, '\n', '\0', GFP_KERNEL);
+	new_pwd = kstrdup(buf, GFP_KERNEL);
 	if (!new_pwd)
 		return -ENOMEM;
+
+	/* Strip out CR if one is present, setting password won't work if it is present */
+	strip_cr(new_pwd);
 
 	/* Use lock in case multiple WMI operations needed */
 	mutex_lock(&tlmi_mutex);
@@ -706,10 +709,12 @@ static ssize_t cert_to_password_store(struct kobject *kobj,
 	if (!setting->signature || !setting->signature[0])
 		return -EACCES;
 
-	/* Strip out CR if one is present */
-	passwd = kstrdup_and_replace(buf, '\n', '\0', GFP_KERNEL);
+	passwd = kstrdup(buf, GFP_KERNEL);
 	if (!passwd)
 		return -ENOMEM;
+
+	/* Strip out CR if one is present */
+	strip_cr(passwd);
 
 	/* Format: 'Password,Signature' */
 	auth_str = kasprintf(GFP_KERNEL, "%s,%s", passwd, setting->signature);
@@ -760,10 +765,11 @@ static ssize_t certificate_store(struct kobject *kobj,
 		return ret ?: count;
 	}
 
-	/* Strip out CR if one is present */
-	new_cert = kstrdup_and_replace(buf, '\n', '\0', GFP_KERNEL);
+	new_cert = kstrdup(buf, GFP_KERNEL);
 	if (!new_cert)
 		return -ENOMEM;
+	/* Strip out CR if one is present */
+	strip_cr(new_cert);
 
 	if (setting->cert_installed) {
 		/* Certificate is installed so this is an update */
@@ -811,10 +817,12 @@ static ssize_t signature_store(struct kobject *kobj,
 	if (!tlmi_priv.certificate_support)
 		return -EOPNOTSUPP;
 
-	/* Strip out CR if one is present */
-	new_signature = kstrdup_and_replace(buf, '\n', '\0', GFP_KERNEL);
+	new_signature = kstrdup(buf, GFP_KERNEL);
 	if (!new_signature)
 		return -ENOMEM;
+
+	/* Strip out CR if one is present */
+	strip_cr(new_signature);
 
 	/* Free any previous signature */
 	kfree(setting->signature);
@@ -838,10 +846,12 @@ static ssize_t save_signature_store(struct kobject *kobj,
 	if (!tlmi_priv.certificate_support)
 		return -EOPNOTSUPP;
 
-	/* Strip out CR if one is present */
-	new_signature = kstrdup_and_replace(buf, '\n', '\0', GFP_KERNEL);
+	new_signature = kstrdup(buf, GFP_KERNEL);
 	if (!new_signature)
 		return -ENOMEM;
+
+	/* Strip out CR if one is present */
+	strip_cr(new_signature);
 
 	/* Free any previous signature */
 	kfree(setting->save_signature);
@@ -920,7 +930,7 @@ static ssize_t display_name_show(struct kobject *kobj, struct kobj_attribute *at
 static ssize_t current_value_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
 	struct tlmi_attr_setting *setting = to_tlmi_attr_setting(kobj);
-	char *item, *value;
+	char *item, *value, *p;
 	int ret;
 
 	ret = tlmi_setting(setting->index, &item, LENOVO_BIOS_SETTING_GUID);
@@ -933,7 +943,8 @@ static ssize_t current_value_show(struct kobject *kobj, struct kobj_attribute *a
 		ret = -EINVAL;
 	else {
 		/* On Workstations remove the Options part after the value */
-		strreplace(value, ';', '\0');
+		p = strchrnul(value, ';');
+		*p = '\0';
 		ret = sysfs_emit(buf, "%s\n", value + 1);
 	}
 	kfree(item);
@@ -974,17 +985,12 @@ static ssize_t current_value_store(struct kobject *kobj,
 	if (!tlmi_priv.can_set_bios_settings)
 		return -EOPNOTSUPP;
 
-	/*
-	 * If we are using bulk saves a reboot should be done once save has
-	 * been called
-	 */
-	if (tlmi_priv.save_mode == TLMI_SAVE_BULK && tlmi_priv.reboot_required)
-		return -EPERM;
-
-	/* Strip out CR if one is present */
-	new_setting = kstrdup_and_replace(buf, '\n', '\0', GFP_KERNEL);
+	new_setting = kstrdup(buf, GFP_KERNEL);
 	if (!new_setting)
 		return -ENOMEM;
+
+	/* Strip out CR if one is present */
+	strip_cr(new_setting);
 
 	/* Use lock in case multiple WMI operations needed */
 	mutex_lock(&tlmi_mutex);
@@ -1005,27 +1011,17 @@ static ssize_t current_value_store(struct kobject *kobj,
 		ret = tlmi_simple_call(LENOVO_SET_BIOS_SETTING_CERT_GUID, set_str);
 		if (ret)
 			goto out;
-		if (tlmi_priv.save_mode == TLMI_SAVE_BULK)
-			tlmi_priv.save_required = true;
-		else
-			ret = tlmi_simple_call(LENOVO_SAVE_BIOS_SETTING_CERT_GUID,
-					       tlmi_priv.pwd_admin->save_signature);
+		ret = tlmi_simple_call(LENOVO_SAVE_BIOS_SETTING_CERT_GUID,
+				tlmi_priv.pwd_admin->save_signature);
+		if (ret)
+			goto out;
 	} else if (tlmi_priv.opcode_support) {
 		/*
 		 * If opcode support is present use that interface.
 		 * Note - this sets the variable and then the password as separate
 		 * WMI calls. Function tlmi_save_bios_settings will error if the
 		 * password is incorrect.
-		 * Workstation's require the opcode to be set before changing the
-		 * attribute.
 		 */
-		if (tlmi_priv.pwd_admin->valid && tlmi_priv.pwd_admin->password[0]) {
-			ret = tlmi_opcode_setting("WmiOpcodePasswordAdmin",
-						  tlmi_priv.pwd_admin->password);
-			if (ret)
-				goto out;
-		}
-
 		set_str = kasprintf(GFP_KERNEL, "%s,%s;", setting->display_name,
 				    new_setting);
 		if (!set_str) {
@@ -1037,10 +1033,14 @@ static ssize_t current_value_store(struct kobject *kobj,
 		if (ret)
 			goto out;
 
-		if (tlmi_priv.save_mode == TLMI_SAVE_BULK)
-			tlmi_priv.save_required = true;
-		else
-			ret = tlmi_save_bios_settings("");
+		if (tlmi_priv.pwd_admin->valid && tlmi_priv.pwd_admin->password[0]) {
+			ret = tlmi_opcode_setting("WmiOpcodePasswordAdmin",
+						  tlmi_priv.pwd_admin->password);
+			if (ret)
+				goto out;
+		}
+
+		ret = tlmi_save_bios_settings("");
 	} else { /* old non-opcode based authentication method (deprecated) */
 		if (tlmi_priv.pwd_admin->valid && tlmi_priv.pwd_admin->password[0]) {
 			auth_str = kasprintf(GFP_KERNEL, "%s,%s,%s;",
@@ -1068,14 +1068,10 @@ static ssize_t current_value_store(struct kobject *kobj,
 		if (ret)
 			goto out;
 
-		if (tlmi_priv.save_mode == TLMI_SAVE_BULK) {
-			tlmi_priv.save_required = true;
-		} else {
-			if (auth_str)
-				ret = tlmi_save_bios_settings(auth_str);
-			else
-				ret = tlmi_save_bios_settings("");
-		}
+		if (auth_str)
+			ret = tlmi_save_bios_settings(auth_str);
+		else
+			ret = tlmi_save_bios_settings("");
 	}
 	if (!ret && !tlmi_priv.pending_changes) {
 		tlmi_priv.pending_changes = true;
@@ -1156,107 +1152,6 @@ static ssize_t pending_reboot_show(struct kobject *kobj, struct kobj_attribute *
 
 static struct kobj_attribute pending_reboot = __ATTR_RO(pending_reboot);
 
-static const char * const save_mode_strings[] = {
-	[TLMI_SAVE_SINGLE] = "single",
-	[TLMI_SAVE_BULK] = "bulk",
-	[TLMI_SAVE_SAVE] = "save"
-};
-
-static ssize_t save_settings_show(struct kobject *kobj, struct kobj_attribute *attr,
-				  char *buf)
-{
-	/* Check that setting is valid */
-	if (WARN_ON(tlmi_priv.save_mode < TLMI_SAVE_SINGLE ||
-		    tlmi_priv.save_mode > TLMI_SAVE_BULK))
-		return -EIO;
-	return sysfs_emit(buf, "%s\n", save_mode_strings[tlmi_priv.save_mode]);
-}
-
-static ssize_t save_settings_store(struct kobject *kobj, struct kobj_attribute *attr,
-				   const char *buf, size_t count)
-{
-	char *auth_str = NULL;
-	int ret = 0;
-	int cmd;
-
-	cmd = sysfs_match_string(save_mode_strings, buf);
-	if (cmd < 0)
-		return cmd;
-
-	/* Use lock in case multiple WMI operations needed */
-	mutex_lock(&tlmi_mutex);
-
-	switch (cmd) {
-	case TLMI_SAVE_SINGLE:
-	case TLMI_SAVE_BULK:
-		tlmi_priv.save_mode = cmd;
-		goto out;
-	case TLMI_SAVE_SAVE:
-		/* Check if supported*/
-		if (!tlmi_priv.can_set_bios_settings ||
-		    tlmi_priv.save_mode == TLMI_SAVE_SINGLE) {
-			ret = -EOPNOTSUPP;
-			goto out;
-		}
-		/* Check there is actually something to save */
-		if (!tlmi_priv.save_required) {
-			ret = -ENOENT;
-			goto out;
-		}
-		/* Check if certificate authentication is enabled and active */
-		if (tlmi_priv.certificate_support && tlmi_priv.pwd_admin->cert_installed) {
-			if (!tlmi_priv.pwd_admin->signature ||
-			    !tlmi_priv.pwd_admin->save_signature) {
-				ret = -EINVAL;
-				goto out;
-			}
-			ret = tlmi_simple_call(LENOVO_SAVE_BIOS_SETTING_CERT_GUID,
-					       tlmi_priv.pwd_admin->save_signature);
-			if (ret)
-				goto out;
-		} else if (tlmi_priv.opcode_support) {
-			if (tlmi_priv.pwd_admin->valid && tlmi_priv.pwd_admin->password[0]) {
-				ret = tlmi_opcode_setting("WmiOpcodePasswordAdmin",
-							  tlmi_priv.pwd_admin->password);
-				if (ret)
-					goto out;
-			}
-			ret = tlmi_save_bios_settings("");
-		} else { /* old non-opcode based authentication method (deprecated) */
-			if (tlmi_priv.pwd_admin->valid && tlmi_priv.pwd_admin->password[0]) {
-				auth_str = kasprintf(GFP_KERNEL, "%s,%s,%s;",
-						     tlmi_priv.pwd_admin->password,
-						     encoding_options[tlmi_priv.pwd_admin->encoding],
-						     tlmi_priv.pwd_admin->kbdlang);
-				if (!auth_str) {
-					ret = -ENOMEM;
-					goto out;
-				}
-			}
-
-			if (auth_str)
-				ret = tlmi_save_bios_settings(auth_str);
-			else
-				ret = tlmi_save_bios_settings("");
-		}
-		tlmi_priv.save_required = false;
-		tlmi_priv.reboot_required = true;
-
-		if (!ret && !tlmi_priv.pending_changes) {
-			tlmi_priv.pending_changes = true;
-			/* let userland know it may need to check reboot pending again */
-			kobject_uevent(&tlmi_priv.class_dev->kobj, KOBJ_CHANGE);
-		}
-		break;
-	}
-out:
-	mutex_unlock(&tlmi_mutex);
-	kfree(auth_str);
-	return ret ?: count;
-}
-
-static struct kobj_attribute save_settings = __ATTR_RW(save_settings);
-
 /* ---- Debug interface--------------------------------------------------------- */
 static ssize_t debug_cmd_store(struct kobject *kobj, struct kobj_attribute *attr,
 				const char *buf, size_t count)
@@ -1268,10 +1163,12 @@ static ssize_t debug_cmd_store(struct kobject *kobj, struct kobj_attribute *attr
 	if (!tlmi_priv.can_debug_cmd)
 		return -EOPNOTSUPP;
 
-	/* Strip out CR if one is present */
-	new_setting = kstrdup_and_replace(buf, '\n', '\0', GFP_KERNEL);
+	new_setting = kstrdup(buf, GFP_KERNEL);
 	if (!new_setting)
 		return -ENOMEM;
+
+	/* Strip out CR if one is present */
+	strip_cr(new_setting);
 
 	if (tlmi_priv.pwd_admin->valid && tlmi_priv.pwd_admin->password[0]) {
 		auth_str = kasprintf(GFP_KERNEL, "%s,%s,%s;",
@@ -1324,8 +1221,6 @@ static void tlmi_release_attr(void)
 		}
 	}
 	sysfs_remove_file(&tlmi_priv.attribute_kset->kobj, &pending_reboot.attr);
-	sysfs_remove_file(&tlmi_priv.attribute_kset->kobj, &save_settings.attr);
-
 	if (tlmi_priv.can_debug_cmd && debug_support)
 		sysfs_remove_file(&tlmi_priv.attribute_kset->kobj, &debug_cmd.attr);
 
@@ -1420,10 +1315,6 @@ static int tlmi_sysfs_init(void)
 	}
 
 	ret = sysfs_create_file(&tlmi_priv.attribute_kset->kobj, &pending_reboot.attr);
-	if (ret)
-		goto fail_create_attr;
-
-	ret = sysfs_create_file(&tlmi_priv.attribute_kset->kobj, &save_settings.attr);
 	if (ret)
 		goto fail_create_attr;
 
@@ -1556,6 +1447,7 @@ static int tlmi_analyze(void)
 	for (i = 0; i < TLMI_SETTINGS_COUNT; ++i) {
 		struct tlmi_attr_setting *setting;
 		char *item = NULL;
+		char *p;
 
 		tlmi_priv.setting[i] = NULL;
 		ret = tlmi_setting(i, &item, LENOVO_BIOS_SETTING_GUID);
@@ -1572,7 +1464,8 @@ static int tlmi_analyze(void)
 		strreplace(item, '/', '\\');
 
 		/* Remove the value part */
-		strreplace(item, ',', '\0');
+		p = strchrnul(item, ',');
+		*p = '\0';
 
 		/* Create a setting entry */
 		setting = kzalloc(sizeof(*setting), GFP_KERNEL);

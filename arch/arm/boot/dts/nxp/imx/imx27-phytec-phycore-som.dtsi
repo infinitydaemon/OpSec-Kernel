@@ -29,13 +29,19 @@
 		regulator-max-microvolt = <5000000>;
 	};
 
+	usbphy {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-	usbphy0: usbphy {
-		compatible = "usb-nop-xceiv";
-		vcc-supply = <&sw3_reg>;
-		clocks = <&clks IMX27_CLK_DUMMY>;
-		clock-names = "main_clk";
-		#phy-cells = <0>;
+		usbphy0: usbphy@0 {
+			compatible = "usb-nop-xceiv";
+			reg = <0>;
+			vcc-supply = <&sw3_reg>;
+			clocks = <&clks IMX27_CLK_DUMMY>;
+			clock-names = "main_clk";
+			#phy-cells = <0>;
+		};
 	};
 };
 
@@ -43,12 +49,12 @@
 	status = "okay";
 
 	/* SSI0 <=> PINS_4 (MC13783 Audio) */
-	mux-ssi0 {
+	ssi0 {
 		fsl,audmux-port = <0>;
 		fsl,port-config = <0xcb205000>;
 	};
 
-	mux-pins4 {
+	pins4 {
 		fsl,audmux-port = <2>;
 		fsl,port-config = <0x00001000>;
 	};
@@ -174,13 +180,13 @@
 	pinctrl-0 = <&pinctrl_i2c2>;
 	status = "okay";
 
-	eeprom@52 {
+	at24@52 {
 		compatible = "atmel,24c32";
 		pagesize = <32>;
 		reg = <0x52>;
 	};
 
-	rtc@51 {
+	pcf8563@51 {
 		compatible = "nxp,pcf8563";
 		reg = <0x51>;
 	};

@@ -35,13 +35,14 @@
 #include <asm/processor.h>
 #include <linux/uaccess.h>
 #include <asm/pgalloc.h>
-#include <asm/ctlreg.h>
 #include <asm/kfence.h>
+#include <asm/ptdump.h>
 #include <asm/dma.h>
 #include <asm/abs_lowcore.h>
 #include <asm/tlb.h>
 #include <asm/tlbflush.h>
 #include <asm/sections.h>
+#include <asm/ctl_reg.h>
 #include <asm/sclp.h>
 #include <asm/set_memory.h>
 #include <asm/kasan.h>
@@ -49,12 +50,11 @@
 #include <asm/uv.h>
 #include <linux/virtio_anchor.h>
 #include <linux/virtio_config.h>
-#include <linux/execmem.h>
 
 pgd_t swapper_pg_dir[PTRS_PER_PGD] __section(".bss..swapper_pg_dir");
 pgd_t invalid_pg_dir[PTRS_PER_PGD] __section(".bss..invalid_pg_dir");
 
-struct ctlreg __bootdata_preserved(s390_invalid_asce);
+unsigned long __bootdata_preserved(s390_invalid_asce);
 
 unsigned long empty_zero_page, zero_page_mask;
 EXPORT_SYMBOL(empty_zero_page);
@@ -109,6 +109,7 @@ void mark_rodata_ro(void)
 
 	__set_memory_ro(__start_ro_after_init, __end_ro_after_init);
 	pr_info("Write protected read-only-after-init data: %luk\n", size >> 10);
+	debug_checkwx();
 }
 
 int set_memory_encrypted(unsigned long vaddr, int numpages)
@@ -163,10 +164,14 @@ void __init mem_init(void)
 
 	pv_init();
 	kfence_split_mapping();
+	/* Setup guest page hinting */
+	cmma_init();
 
 	/* this will put all low memory onto the freelists */
 	memblock_free_all();
 	setup_zero_pages();	/* Setup zeroed pages. */
+
+	cmma_init_nodat();
 }
 
 void free_initmem(void)
@@ -280,6 +285,9 @@ int arch_add_memory(int nid, u64 start, u64 size,
 	unsigned long size_pages = PFN_DOWN(size);
 	int rc;
 
+	if (WARN_ON_ONCE(params->altmap))
+		return -EINVAL;
+
 	if (WARN_ON_ONCE(params->pgprot.pgprot != PAGE_KERNEL.pgprot))
 		return -EINVAL;
 
@@ -303,32 +311,3 @@ void arch_remove_memory(u64 start, u64 size, struct vmem_altmap *altmap)
 	vmem_remove_mapping(start, size);
 }
 #endif /* CONFIG_MEMORY_HOTPLUG */
-
-#ifdef CONFIG_EXECMEM
-static struct execmem_info execmem_info __ro_after_init;
-
-struct execmem_info __init *execmem_arch_setup(void)
-{
-	unsigned long module_load_offset = 0;
-	unsigned long start;
-
-	if (kaslr_enabled())
-		module_load_offset = get_random_u32_inclusive(1, 1024) * PAGE_SIZE;
-
-	start = MODULES_VADDR + module_load_offset;
-
-	execmem_info = (struct execmem_info){
-		.ranges = {
-			[EXECMEM_DEFAULT] = {
-				.flags	= EXECMEM_KASAN_SHADOW,
-				.start	= start,
-				.end	= MODULES_END,
-				.pgprot	= PAGE_KERNEL,
-				.alignment = MODULE_ALIGN,
-			},
-		},
-	};
-
-	return &execmem_info;
-}
-#endif /* CONFIG_EXECMEM */

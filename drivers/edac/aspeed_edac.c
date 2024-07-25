@@ -357,7 +357,7 @@ probe_exit02:
 }
 
 
-static void aspeed_remove(struct platform_device *pdev)
+static int aspeed_remove(struct platform_device *pdev)
 {
 	struct mem_ctl_info *mci;
 
@@ -369,6 +369,8 @@ static void aspeed_remove(struct platform_device *pdev)
 	mci = edac_mc_del_mc(&pdev->dev);
 	if (mci)
 		edac_mc_free(mci);
+
+	return 0;
 }
 
 
@@ -387,7 +389,7 @@ static struct platform_driver aspeed_driver = {
 		.of_match_table = aspeed_of_match
 	},
 	.probe		= aspeed_probe,
-	.remove_new	= aspeed_remove
+	.remove		= aspeed_remove
 };
 module_platform_driver(aspeed_driver);
 

@@ -8,12 +8,11 @@
  */
 
 #include "mpi3mr.h"
-#include <linux/idr.h>
 
 /* global driver scop variables */
 LIST_HEAD(mrioc_list);
 DEFINE_SPINLOCK(mrioc_list_lock);
-static DEFINE_IDA(mrioc_ida);
+static int mrioc_ids;
 static int warn_non_secure_ctlr;
 atomic64_t event_counter;
 
@@ -986,25 +985,6 @@ static int mpi3mr_change_queue_depth(struct scsi_device *sdev,
 	return retval;
 }
 
-static void mpi3mr_configure_nvme_dev(struct mpi3mr_tgt_dev *tgt_dev,
-		struct queue_limits *lim)
-{
-	u8 pgsz = tgt_dev->dev_spec.pcie_inf.pgsz ? : MPI3MR_DEFAULT_PGSZEXP;
-
-	lim->max_hw_sectors = tgt_dev->dev_spec.pcie_inf.mdts / 512;
-	lim->virt_boundary_mask = (1 << pgsz) - 1;
-}
-
-static void mpi3mr_configure_tgt_dev(struct mpi3mr_tgt_dev *tgt_dev,
-		struct queue_limits *lim)
-{
-	if (tgt_dev->dev_type == MPI3_DEVICE_DEVFORM_PCIE &&
-	    (tgt_dev->dev_spec.pcie_inf.dev_info &
-	     MPI3_DEVICE0_PCIE_DEVICE_INFO_TYPE_MASK) ==
-			MPI3_DEVICE0_PCIE_DEVICE_INFO_TYPE_NVME_DEVICE)
-		mpi3mr_configure_nvme_dev(tgt_dev, lim);
-}
-
 /**
  * mpi3mr_update_sdev - Update SCSI device information
  * @sdev: SCSI device reference
@@ -1020,21 +1000,35 @@ static void
 mpi3mr_update_sdev(struct scsi_device *sdev, void *data)
 {
 	struct mpi3mr_tgt_dev *tgtdev;
-	struct queue_limits lim;
 
 	tgtdev = (struct mpi3mr_tgt_dev *)data;
 	if (!tgtdev)
 		return;
 
 	mpi3mr_change_queue_depth(sdev, tgtdev->q_depth);
-
-	lim = queue_limits_start_update(sdev->request_queue);
-	mpi3mr_configure_tgt_dev(tgtdev, &lim);
-	WARN_ON_ONCE(queue_limits_commit_update(sdev->request_queue, &lim));
+	switch (tgtdev->dev_type) {
+	case MPI3_DEVICE_DEVFORM_PCIE:
+		/*The block layer hw sector size = 512*/
+		if ((tgtdev->dev_spec.pcie_inf.dev_info &
+		    MPI3_DEVICE0_PCIE_DEVICE_INFO_TYPE_MASK) ==
+		    MPI3_DEVICE0_PCIE_DEVICE_INFO_TYPE_NVME_DEVICE) {
+			blk_queue_max_hw_sectors(sdev->request_queue,
+			    tgtdev->dev_spec.pcie_inf.mdts / 512);
+			if (tgtdev->dev_spec.pcie_inf.pgsz == 0)
+				blk_queue_virt_boundary(sdev->request_queue,
+				    ((1 << MPI3MR_DEFAULT_PGSZEXP) - 1));
+			else
+				blk_queue_virt_boundary(sdev->request_queue,
+				    ((1 << tgtdev->dev_spec.pcie_inf.pgsz) - 1));
+		}
+		break;
+	default:
+		break;
+	}
 }
 
 /**
- * mpi3mr_refresh_tgtdevs - Refresh target device exposure
+ * mpi3mr_rfresh_tgtdevs - Refresh target device exposure
  * @mrioc: Adapter instance reference
  *
  * This is executed post controller reset to identify any
@@ -1043,7 +1037,8 @@ mpi3mr_update_sdev(struct scsi_device *sdev, void *data)
  *
  * Return: Nothing.
  */
-static void mpi3mr_refresh_tgtdevs(struct mpi3mr_ioc *mrioc)
+
+void mpi3mr_rfresh_tgtdevs(struct mpi3mr_ioc *mrioc)
 {
 	struct mpi3mr_tgt_dev *tgtdev, *tgtdev_next;
 	struct mpi3mr_stgt_priv_data *tgt_priv;
@@ -1051,8 +1046,8 @@ static void mpi3mr_refresh_tgtdevs(struct mpi3mr_ioc *mrioc)
 	dprint_reset(mrioc, "refresh target devices: check for removals\n");
 	list_for_each_entry_safe(tgtdev, tgtdev_next, &mrioc->tgtdev_list,
 	    list) {
-		if (((tgtdev->dev_handle == MPI3MR_INVALID_DEV_HANDLE) ||
-		     tgtdev->is_hidden) &&
+		if ((tgtdev->dev_handle == MPI3MR_INVALID_DEV_HANDLE) &&
+		     tgtdev->is_hidden &&
 		     tgtdev->host_exposed && tgtdev->starget &&
 		     tgtdev->starget->hostdata) {
 			tgt_priv = tgtdev->starget->hostdata;
@@ -2014,7 +2009,7 @@ static void mpi3mr_fwevt_bh(struct mpi3mr_ioc *mrioc,
 			mpi3mr_refresh_sas_ports(mrioc);
 			mpi3mr_refresh_expanders(mrioc);
 		}
-		mpi3mr_refresh_tgtdevs(mrioc);
+		mpi3mr_rfresh_tgtdevs(mrioc);
 		ioc_info(mrioc,
 		    "scan for non responding and newly added devices after soft reset completed\n");
 		break;
@@ -3210,7 +3205,6 @@ void mpi3mr_process_op_reply_desc(struct mpi3mr_ioc *mrioc,
 			tg = stgt_priv_data->throttle_group;
 			throttle_enabled_dev =
 			    stgt_priv_data->io_throttle_enabled;
-			dev_handle = stgt_priv_data->dev_handle;
 		}
 	}
 	if (unlikely((data_len_blks >= mrioc->io_throttle_data_length) &&
@@ -4029,15 +4023,37 @@ static inline void mpi3mr_setup_divert_ws(struct mpi3mr_ioc *mrioc,
  * mpi3mr_eh_host_reset - Host reset error handling callback
  * @scmd: SCSI command reference
  *
- * Issue controller reset
+ * Issue controller reset if the scmd is for a Physical Device,
+ * if the scmd is for RAID volume, then wait for
+ * MPI3MR_RAID_ERRREC_RESET_TIMEOUT and checke whether any
+ * pending I/Os prior to issuing reset to the controller.
  *
  * Return: SUCCESS of successful reset else FAILED
  */
 static int mpi3mr_eh_host_reset(struct scsi_cmnd *scmd)
 {
 	struct mpi3mr_ioc *mrioc = shost_priv(scmd->device->host);
+	struct mpi3mr_stgt_priv_data *stgt_priv_data;
+	struct mpi3mr_sdev_priv_data *sdev_priv_data;
+	u8 dev_type = MPI3_DEVICE_DEVFORM_VD;
 	int retval = FAILED, ret;
 
+	sdev_priv_data = scmd->device->hostdata;
+	if (sdev_priv_data && sdev_priv_data->tgt_priv_data) {
+		stgt_priv_data = sdev_priv_data->tgt_priv_data;
+		dev_type = stgt_priv_data->dev_type;
+	}
+
+	if (dev_type == MPI3_DEVICE_DEVFORM_VD) {
+		mpi3mr_wait_for_host_io(mrioc,
+		    MPI3MR_RAID_ERRREC_RESET_TIMEOUT);
+		if (!mpi3mr_get_fw_pending_ios(mrioc)) {
+			retval = SUCCESS;
+			goto out;
+		}
+	}
+
+	mpi3mr_print_pending_host_io(mrioc);
 	ret = mpi3mr_soft_reset_handler(mrioc,
 	    MPI3MR_RESET_FROM_EH_HOS, 1);
 	if (ret)
@@ -4049,44 +4065,6 @@ out:
 	    "Host reset is %s for scmd(%p)\n",
 	    ((retval == SUCCESS) ? "SUCCESS" : "FAILED"), scmd);
 
-	return retval;
-}
-
-/**
- * mpi3mr_eh_bus_reset - Bus reset error handling callback
- * @scmd: SCSI command reference
- *
- * Checks whether pending I/Os are present for the RAID volume;
- * if not there's no need to reset the adapter.
- *
- * Return: SUCCESS of successful reset else FAILED
- */
-static int mpi3mr_eh_bus_reset(struct scsi_cmnd *scmd)
-{
-	struct mpi3mr_ioc *mrioc = shost_priv(scmd->device->host);
-	struct mpi3mr_stgt_priv_data *stgt_priv_data;
-	struct mpi3mr_sdev_priv_data *sdev_priv_data;
-	u8 dev_type = MPI3_DEVICE_DEVFORM_VD;
-	int retval = FAILED;
-
-	sdev_priv_data = scmd->device->hostdata;
-	if (sdev_priv_data && sdev_priv_data->tgt_priv_data) {
-		stgt_priv_data = sdev_priv_data->tgt_priv_data;
-		dev_type = stgt_priv_data->dev_type;
-	}
-
-	if (dev_type == MPI3_DEVICE_DEVFORM_VD) {
-		mpi3mr_wait_for_host_io(mrioc,
-			MPI3MR_RAID_ERRREC_RESET_TIMEOUT);
-		if (!mpi3mr_get_fw_pending_ios(mrioc))
-			retval = SUCCESS;
-	}
-	if (retval == FAILED)
-		mpi3mr_print_pending_host_io(mrioc);
-
-	sdev_printk(KERN_INFO, scmd->device,
-		"Bus reset is %s for scmd(%p)\n",
-		((retval == SUCCESS) ? "SUCCESS" : "FAILED"), scmd);
 	return retval;
 }
 
@@ -4397,17 +4375,15 @@ static void mpi3mr_target_destroy(struct scsi_target *starget)
 }
 
 /**
- * mpi3mr_device_configure - Slave configure callback handler
+ * mpi3mr_slave_configure - Slave configure callback handler
  * @sdev: SCSI device reference
- * @lim: queue limits
  *
  * Configure queue depth, max hardware sectors and virt boundary
  * as required
  *
  * Return: 0 always.
  */
-static int mpi3mr_device_configure(struct scsi_device *sdev,
-		struct queue_limits *lim)
+static int mpi3mr_slave_configure(struct scsi_device *sdev)
 {
 	struct scsi_target *starget;
 	struct Scsi_Host *shost;
@@ -4438,8 +4414,28 @@ static int mpi3mr_device_configure(struct scsi_device *sdev,
 	sdev->eh_timeout = MPI3MR_EH_SCMD_TIMEOUT;
 	blk_queue_rq_timeout(sdev->request_queue, MPI3MR_SCMD_TIMEOUT);
 
-	mpi3mr_configure_tgt_dev(tgt_dev, lim);
+	switch (tgt_dev->dev_type) {
+	case MPI3_DEVICE_DEVFORM_PCIE:
+		/*The block layer hw sector size = 512*/
+		if ((tgt_dev->dev_spec.pcie_inf.dev_info &
+		    MPI3_DEVICE0_PCIE_DEVICE_INFO_TYPE_MASK) ==
+		    MPI3_DEVICE0_PCIE_DEVICE_INFO_TYPE_NVME_DEVICE) {
+			blk_queue_max_hw_sectors(sdev->request_queue,
+			    tgt_dev->dev_spec.pcie_inf.mdts / 512);
+			if (tgt_dev->dev_spec.pcie_inf.pgsz == 0)
+				blk_queue_virt_boundary(sdev->request_queue,
+				    ((1 << MPI3MR_DEFAULT_PGSZEXP) - 1));
+			else
+				blk_queue_virt_boundary(sdev->request_queue,
+				    ((1 << tgt_dev->dev_spec.pcie_inf.pgsz) - 1));
+		}
+		break;
+	default:
+		break;
+	}
+
 	mpi3mr_tgtdev_put(tgt_dev);
+
 	return retval;
 }
 
@@ -4881,7 +4877,7 @@ static int mpi3mr_qcmd(struct Scsi_Host *shost,
 		    MPI3_SCSIIO_MSGFLAGS_DIVERT_TO_FIRMWARE;
 		scsiio_flags |= MPI3_SCSIIO_FLAGS_DIVERT_REASON_IO_THROTTLING;
 	}
-	scsiio_req->flags |= cpu_to_le32(scsiio_flags);
+	scsiio_req->flags = cpu_to_le32(scsiio_flags);
 
 	if (mpi3mr_op_request_post(mrioc, op_req_q,
 	    scmd_priv_data->mpi3mr_scsiio_req)) {
@@ -4907,7 +4903,7 @@ static const struct scsi_host_template mpi3mr_driver_template = {
 	.queuecommand			= mpi3mr_qcmd,
 	.target_alloc			= mpi3mr_target_alloc,
 	.slave_alloc			= mpi3mr_slave_alloc,
-	.device_configure		= mpi3mr_device_configure,
+	.slave_configure		= mpi3mr_slave_configure,
 	.target_destroy			= mpi3mr_target_destroy,
 	.slave_destroy			= mpi3mr_slave_destroy,
 	.scan_finished			= mpi3mr_scan_finished,
@@ -4915,7 +4911,6 @@ static const struct scsi_host_template mpi3mr_driver_template = {
 	.change_queue_depth		= mpi3mr_change_queue_depth,
 	.eh_device_reset_handler	= mpi3mr_eh_dev_reset,
 	.eh_target_reset_handler	= mpi3mr_eh_target_reset,
-	.eh_bus_reset_handler		= mpi3mr_eh_bus_reset,
 	.eh_host_reset_handler		= mpi3mr_eh_host_reset,
 	.bios_param			= mpi3mr_bios_param,
 	.map_queues			= mpi3mr_map_queues,
@@ -5059,10 +5054,7 @@ mpi3mr_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 
 	mrioc = shost_priv(shost);
-	retval = ida_alloc_range(&mrioc_ida, 1, U8_MAX, GFP_KERNEL);
-	if (retval < 0)
-		goto id_alloc_failed;
-	mrioc->id = (u8)retval;
+	mrioc->id = mrioc_ids++;
 	sprintf(mrioc->driver_name, "%s", MPI3MR_DRIVER_NAME);
 	sprintf(mrioc->name, "%s%d", mrioc->driver_name, mrioc->id);
 	INIT_LIST_HEAD(&mrioc->list);
@@ -5212,11 +5204,9 @@ init_ioc_failed:
 resource_alloc_failed:
 	destroy_workqueue(mrioc->fwevt_worker_thread);
 fwevtthread_failed:
-	ida_free(&mrioc_ida, mrioc->id);
 	spin_lock(&mrioc_list_lock);
 	list_del(&mrioc->list);
 	spin_unlock(&mrioc_list_lock);
-id_alloc_failed:
 	scsi_host_put(shost);
 shost_failed:
 	return retval;
@@ -5302,7 +5292,6 @@ static void mpi3mr_remove(struct pci_dev *pdev)
 		mrioc->sas_hba.num_phys = 0;
 	}
 
-	ida_free(&mrioc_ida, mrioc->id);
 	spin_lock(&mrioc_list_lock);
 	list_del(&mrioc->list);
 	spin_unlock(&mrioc_list_lock);
@@ -5518,7 +5507,6 @@ static void __exit mpi3mr_exit(void)
 			   &driver_attr_event_counter);
 	pci_unregister_driver(&mpi3mr_pci_driver);
 	sas_release_transport(mpi3mr_transport_template);
-	ida_destroy(&mrioc_ida);
 }
 
 module_init(mpi3mr_init);

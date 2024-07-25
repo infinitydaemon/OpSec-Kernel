@@ -13,9 +13,6 @@
 #include <linux/irqdomain.h>
 #include <asm/sbi.h>
 
-DEFINE_STATIC_KEY_FALSE(riscv_sbi_for_rfence);
-EXPORT_SYMBOL_GPL(riscv_sbi_for_rfence);
-
 static int sbi_ipi_virq;
 
 static void sbi_ipi_handle(struct irq_desc *desc)
@@ -75,12 +72,6 @@ void __init sbi_ipi_init(void)
 			  "irqchip/sbi-ipi:starting",
 			  sbi_ipi_starting_cpu, NULL);
 
-	riscv_ipi_set_virq_range(virq, BITS_PER_BYTE);
+	riscv_ipi_set_virq_range(virq, BITS_PER_BYTE, false);
 	pr_info("providing IPIs using SBI IPI extension\n");
-
-	/*
-	 * Use the SBI remote fence extension to avoid
-	 * the extra context switch needed to handle IPIs.
-	 */
-	static_branch_enable(&riscv_sbi_for_rfence);
 }

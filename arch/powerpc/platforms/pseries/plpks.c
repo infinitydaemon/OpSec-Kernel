@@ -150,7 +150,7 @@ static int plpks_gen_password(void)
 		ospasswordlength = maxpwsize;
 		ospassword = kzalloc(maxpwsize, GFP_KERNEL);
 		if (!ospassword) {
-			kfree_sensitive(password);
+			kfree(password);
 			return -ENOMEM;
 		}
 		memcpy(ospassword, password, ospasswordlength);
@@ -163,7 +163,7 @@ static int plpks_gen_password(void)
 		}
 	}
 out:
-	kfree_sensitive(password);
+	kfree(password);
 
 	return pseries_status_to_err(rc);
 }

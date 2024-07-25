@@ -318,6 +318,7 @@ static int rcar_gyroadc_parse_subdevs(struct iio_dev *indio_dev)
 	struct rcar_gyroadc *priv = iio_priv(indio_dev);
 	struct device *dev = priv->dev;
 	struct device_node *np = dev->of_node;
+	struct device_node *child;
 	struct regulator *vref;
 	unsigned int reg;
 	unsigned int adcmode = -1, childmode;
@@ -325,7 +326,7 @@ static int rcar_gyroadc_parse_subdevs(struct iio_dev *indio_dev)
 	unsigned int num_channels;
 	int ret, first = 1;
 
-	for_each_available_child_of_node_scoped(np, child) {
+	for_each_child_of_node(np, child) {
 		of_id = of_match_node(rcar_gyroadc_child_match, child);
 		if (!of_id) {
 			dev_err(dev, "Ignoring unsupported ADC \"%pOFn\".",
@@ -351,7 +352,7 @@ static int rcar_gyroadc_parse_subdevs(struct iio_dev *indio_dev)
 			num_channels = ARRAY_SIZE(rcar_gyroadc_iio_channels_3);
 			break;
 		default:
-			return -EINVAL;
+			goto err_e_inval;
 		}
 
 		/*
@@ -368,7 +369,7 @@ static int rcar_gyroadc_parse_subdevs(struct iio_dev *indio_dev)
 				dev_err(dev,
 					"Failed to get child reg property of ADC \"%pOFn\".\n",
 					child);
-				return ret;
+				goto err_of_node_put;
 			}
 
 			/* Channel number is too high. */
@@ -376,7 +377,7 @@ static int rcar_gyroadc_parse_subdevs(struct iio_dev *indio_dev)
 				dev_err(dev,
 					"Only %i channels supported with %pOFn, but reg = <%i>.\n",
 					num_channels, child, reg);
-				return -EINVAL;
+				goto err_e_inval;
 			}
 		}
 
@@ -385,7 +386,7 @@ static int rcar_gyroadc_parse_subdevs(struct iio_dev *indio_dev)
 			dev_err(dev,
 				"Channel %i uses different ADC mode than the rest.\n",
 				reg);
-			return -EINVAL;
+			goto err_e_inval;
 		}
 
 		/* Channel is valid, grab the regulator. */
@@ -395,7 +396,8 @@ static int rcar_gyroadc_parse_subdevs(struct iio_dev *indio_dev)
 		if (IS_ERR(vref)) {
 			dev_dbg(dev, "Channel %i 'vref' supply not connected.\n",
 				reg);
-			return PTR_ERR(vref);
+			ret = PTR_ERR(vref);
+			goto err_of_node_put;
 		}
 
 		priv->vref[reg] = vref;
@@ -420,6 +422,7 @@ static int rcar_gyroadc_parse_subdevs(struct iio_dev *indio_dev)
 		 * we can stop parsing here.
 		 */
 		if (childmode == RCAR_GYROADC_MODE_SELECT_1_MB88101A) {
+			of_node_put(child);
 			break;
 		}
 	}
@@ -430,6 +433,12 @@ static int rcar_gyroadc_parse_subdevs(struct iio_dev *indio_dev)
 	}
 
 	return 0;
+
+err_e_inval:
+	ret = -EINVAL;
+err_of_node_put:
+	of_node_put(child);
+	return ret;
 }
 
 static void rcar_gyroadc_deinit_supplies(struct iio_dev *indio_dev)
@@ -550,7 +559,7 @@ err_clk_if_enable:
 	return ret;
 }
 
-static void rcar_gyroadc_remove(struct platform_device *pdev)
+static int rcar_gyroadc_remove(struct platform_device *pdev)
 {
 	struct iio_dev *indio_dev = platform_get_drvdata(pdev);
 	struct rcar_gyroadc *priv = iio_priv(indio_dev);
@@ -564,6 +573,8 @@ static void rcar_gyroadc_remove(struct platform_device *pdev)
 	pm_runtime_set_suspended(dev);
 	clk_disable_unprepare(priv->clk);
 	rcar_gyroadc_deinit_supplies(indio_dev);
+
+	return 0;
 }
 
 static int rcar_gyroadc_suspend(struct device *dev)
@@ -592,7 +603,7 @@ static const struct dev_pm_ops rcar_gyroadc_pm_ops = {
 
 static struct platform_driver rcar_gyroadc_driver = {
 	.probe          = rcar_gyroadc_probe,
-	.remove_new     = rcar_gyroadc_remove,
+	.remove         = rcar_gyroadc_remove,
 	.driver         = {
 		.name		= DRIVER_NAME,
 		.of_match_table	= rcar_gyroadc_match,

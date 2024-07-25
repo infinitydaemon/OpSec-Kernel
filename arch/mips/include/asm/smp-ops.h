@@ -13,6 +13,8 @@
 
 #include <linux/errno.h>
 
+#include <asm/mips-cps.h>
+
 #ifdef CONFIG_SMP
 
 #include <linux/cpumask.h>
@@ -33,7 +35,7 @@ struct plat_smp_ops {
 	void (*cpu_die)(unsigned int cpu);
 	void (*cleanup_dead_cpu)(unsigned cpu);
 #endif
-#ifdef CONFIG_KEXEC_CORE
+#ifdef CONFIG_KEXEC
 	void (*kexec_nonboot_cpu)(void);
 #endif
 };

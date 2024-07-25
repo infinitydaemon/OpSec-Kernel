@@ -253,7 +253,7 @@ static int mt7915_add_interface(struct ieee80211_hw *hw,
 	mvif->sta.wcid.phy_idx = ext_phy;
 	mvif->sta.wcid.hw_key_idx = -1;
 	mvif->sta.wcid.tx_info |= MT_WCID_TX_INFO_SET;
-	mt76_wcid_init(&mvif->sta.wcid);
+	mt76_packet_id_init(&mvif->sta.wcid);
 
 	mt7915_mac_wtbl_update(dev, idx,
 			       MT_WTBL_UPDATE_ADM_COUNT_CLEAR);
@@ -314,7 +314,7 @@ static void mt7915_remove_interface(struct ieee80211_hw *hw,
 		list_del_init(&msta->wcid.poll_list);
 	spin_unlock_bh(&dev->mt76.sta_poll_lock);
 
-	mt76_wcid_cleanup(&dev->mt76, &msta->wcid);
+	mt76_packet_id_flush(&dev->mt76, &msta->wcid);
 }
 
 int mt7915_set_channel(struct mt7915_phy *phy)
@@ -329,7 +329,7 @@ int mt7915_set_channel(struct mt7915_phy *phy)
 
 	mt76_set_channel(phy->mt76);
 
-	if (dev->cal) {
+	if (dev->flash_mode) {
 		ret = mt7915_mcu_apply_tx_dpd(phy);
 		if (ret)
 			goto out;
@@ -483,22 +483,16 @@ static int mt7915_config(struct ieee80211_hw *hw, u32 changed)
 	if (changed & IEEE80211_CONF_CHANGE_MONITOR) {
 		bool enabled = !!(hw->conf.flags & IEEE80211_CONF_MONITOR);
 		bool band = phy->mt76->band_idx;
-		u32 rxfilter = phy->rxfilter;
 
-		if (!enabled) {
-			rxfilter |= MT_WF_RFCR_DROP_OTHER_UC;
-			dev->monitor_mask &= ~BIT(band);
-		} else {
-			rxfilter &= ~MT_WF_RFCR_DROP_OTHER_UC;
-			dev->monitor_mask |= BIT(band);
-		}
+		if (!enabled)
+			phy->rxfilter |= MT_WF_RFCR_DROP_OTHER_UC;
+		else
+			phy->rxfilter &= ~MT_WF_RFCR_DROP_OTHER_UC;
 
 		mt76_rmw_field(dev, MT_DMA_DCR0(band), MT_DMA_DCR0_RXD_G5_EN,
 			       enabled);
-		mt76_rmw_field(dev, MT_DMA_DCR0(band), MT_MDP_DCR0_RX_HDR_TRANS_EN,
-			       !dev->monitor_mask);
 		mt76_testmode_reset(phy->mt76, true);
-		mt76_wr(dev, MT_WF_RFCR(band), rxfilter);
+		mt76_wr(dev, MT_WF_RFCR(band), phy->rxfilter);
 	}
 
 	mutex_unlock(&dev->mt76.mutex);
@@ -533,7 +527,6 @@ static void mt7915_configure_filter(struct ieee80211_hw *hw,
 			MT_WF_RFCR1_DROP_BA |
 			MT_WF_RFCR1_DROP_CFEND |
 			MT_WF_RFCR1_DROP_CFACK;
-	u32 rxfilter;
 	u32 flags = 0;
 
 #define MT76_FILTER(_flag, _hw) do {					\
@@ -568,12 +561,7 @@ static void mt7915_configure_filter(struct ieee80211_hw *hw,
 			     MT_WF_RFCR_DROP_NDPA);
 
 	*total_flags = flags;
-	rxfilter = phy->rxfilter;
-	if (hw->conf.flags & IEEE80211_CONF_MONITOR)
-		rxfilter &= ~MT_WF_RFCR_DROP_OTHER_UC;
-	else
-		rxfilter |= MT_WF_RFCR_DROP_OTHER_UC;
-	mt76_wr(dev, MT_WF_RFCR(band), rxfilter);
+	mt76_wr(dev, MT_WF_RFCR(band), phy->rxfilter);
 
 	if (*total_flags & FIF_CONTROL)
 		mt76_clear(dev, MT_WF_RFCR1(band), ctl_flags);
@@ -744,7 +732,6 @@ int mt7915_mac_sta_add(struct mt76_dev *mdev, struct ieee80211_vif *vif,
 	struct mt7915_vif *mvif = (struct mt7915_vif *)vif->drv_priv;
 	bool ext_phy = mvif->phy != &dev->phy;
 	int ret, idx;
-	u32 addr;
 
 	idx = mt76_wcid_alloc(dev->mt76.wcid_mask, MT7915_WTBL_STA);
 	if (idx < 0)
@@ -767,9 +754,6 @@ int mt7915_mac_sta_add(struct mt76_dev *mdev, struct ieee80211_vif *vif,
 	ret = mt7915_mcu_add_sta(dev, vif, sta, true);
 	if (ret)
 		return ret;
-
-	addr = mt7915_mac_wtbl_lmac_addr(dev, msta->wcid.idx, 30);
-	mt76_rmw_field(dev, addr, GENMASK(7, 0), 0xa0);
 
 	return mt7915_mcu_add_rate_ctrl(dev, vif, sta, false);
 }
@@ -1661,10 +1645,6 @@ mt7915_net_fill_forward_path(struct ieee80211_hw *hw,
 #endif
 
 const struct ieee80211_ops mt7915_ops = {
-	.add_chanctx = ieee80211_emulate_add_chanctx,
-	.remove_chanctx = ieee80211_emulate_remove_chanctx,
-	.change_chanctx = ieee80211_emulate_change_chanctx,
-	.switch_vif_chanctx = ieee80211_emulate_switch_vif_chanctx,
 	.tx = mt7915_tx,
 	.start = mt7915_start,
 	.stop = mt7915_stop,
@@ -1716,6 +1696,5 @@ const struct ieee80211_ops mt7915_ops = {
 	.set_radar_background = mt7915_set_radar_background,
 #ifdef CONFIG_NET_MEDIATEK_SOC_WED
 	.net_fill_forward_path = mt7915_net_fill_forward_path,
-	.net_setup_tc = mt76_wed_net_setup_tc,
 #endif
 };

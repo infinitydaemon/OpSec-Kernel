@@ -263,11 +263,13 @@ static int mlxreg_io_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void mlxreg_io_remove(struct platform_device *pdev)
+static int mlxreg_io_remove(struct platform_device *pdev)
 {
 	struct mlxreg_io_priv_data *priv = dev_get_drvdata(&pdev->dev);
 
 	mutex_destroy(&priv->io_lock);
+
+	return 0;
 }
 
 static struct platform_driver mlxreg_io_driver = {
@@ -275,7 +277,7 @@ static struct platform_driver mlxreg_io_driver = {
 	    .name = "mlxreg-io",
 	},
 	.probe = mlxreg_io_probe,
-	.remove_new = mlxreg_io_remove,
+	.remove = mlxreg_io_remove,
 };
 
 module_platform_driver(mlxreg_io_driver);

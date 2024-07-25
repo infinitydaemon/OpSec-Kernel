@@ -877,7 +877,7 @@ static int pppoe_sendmsg(struct socket *sock, struct msghdr *m,
 
 	skb->dev = dev;
 
-	skb->priority = READ_ONCE(sk->sk_priority);
+	skb->priority = sk->sk_priority;
 	skb->protocol = cpu_to_be16(ETH_P_PPP_SES);
 
 	ph = skb_put(skb, total_len + sizeof(struct pppoe_hdr));
@@ -1007,21 +1007,26 @@ static int pppoe_recvmsg(struct socket *sock, struct msghdr *m,
 	struct sk_buff *skb;
 	int error = 0;
 
-	if (sk->sk_state & PPPOX_BOUND)
-		return -EIO;
+	if (sk->sk_state & PPPOX_BOUND) {
+		error = -EIO;
+		goto end;
+	}
 
 	skb = skb_recv_datagram(sk, flags, &error);
-	if (!skb)
-		return error;
+	if (error < 0)
+		goto end;
 
-	total_len = min_t(size_t, total_len, skb->len);
-	error = skb_copy_datagram_msg(skb, 0, m, total_len);
-	if (error == 0) {
-		consume_skb(skb);
-		return total_len;
+	if (skb) {
+		total_len = min_t(size_t, total_len, skb->len);
+		error = skb_copy_datagram_msg(skb, 0, m, total_len);
+		if (error == 0) {
+			consume_skb(skb);
+			return total_len;
+		}
 	}
 
 	kfree_skb(skb);
+end:
 	return error;
 }
 

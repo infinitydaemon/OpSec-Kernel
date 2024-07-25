@@ -115,9 +115,12 @@ static int usb_string_copy(const char *s, char **s_copy)
 	int ret;
 	char *str;
 	char *copy = *s_copy;
+
 	ret = strlen(s);
 	if (ret > USB_MAX_STRING_LEN)
 		return -EOVERFLOW;
+	if (ret < 1)
+		return -EINVAL;
 
 	if (copy) {
 		str = copy;
@@ -606,10 +609,9 @@ static struct config_group *function_make(
 	char *instance_name;
 	int ret;
 
-	if (strlen(name) >= MAX_NAME_LEN)
+	ret = snprintf(buf, MAX_NAME_LEN, "%s", name);
+	if (ret >= MAX_NAME_LEN)
 		return ERR_PTR(-ENAMETOOLONG);
-
-	scnprintf(buf, MAX_NAME_LEN, "%s", name);
 
 	func_name = buf;
 	instance_name = strchr(func_name, '.');
@@ -702,11 +704,9 @@ static struct config_group *config_desc_make(
 	int ret;
 
 	gi = container_of(group, struct gadget_info, configs_group);
-
-	if (strlen(name) >= MAX_NAME_LEN)
+	ret = snprintf(buf, MAX_NAME_LEN, "%s", name);
+	if (ret >= MAX_NAME_LEN)
 		return ERR_PTR(-ENAMETOOLONG);
-
-	scnprintf(buf, MAX_NAME_LEN, "%s", name);
 
 	num_str = strchr(buf, '.');
 	if (!num_str) {
@@ -815,7 +815,7 @@ static ssize_t gadget_string_s_show(struct config_item *item, char *page)
 	struct gadget_string *string = to_gadget_string(item);
 	int ret;
 
-	ret = sysfs_emit(page, "%s\n", string->string);
+	ret = snprintf(page, sizeof(string->string), "%s\n", string->string);
 	return ret;
 }
 

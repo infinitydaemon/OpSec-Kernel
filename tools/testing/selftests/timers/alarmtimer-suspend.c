@@ -173,6 +173,6 @@ int main(void)
 		timer_delete(tm1);
 	}
 	if (final_ret)
-		ksft_exit_fail();
-	ksft_exit_pass();
+		return ksft_exit_fail();
+	return ksft_exit_pass();
 }

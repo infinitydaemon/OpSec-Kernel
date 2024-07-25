@@ -144,15 +144,21 @@ static inline void reset_encode(struct snd_midi_event *dev)
 
 void snd_midi_event_reset_encode(struct snd_midi_event *dev)
 {
-	guard(spinlock_irqsave)(&dev->lock);
+	unsigned long flags;
+
+	spin_lock_irqsave(&dev->lock, flags);
 	reset_encode(dev);
+	spin_unlock_irqrestore(&dev->lock, flags);
 }
 EXPORT_SYMBOL(snd_midi_event_reset_encode);
 
 void snd_midi_event_reset_decode(struct snd_midi_event *dev)
 {
-	guard(spinlock_irqsave)(&dev->lock);
+	unsigned long flags;
+
+	spin_lock_irqsave(&dev->lock, flags);
 	dev->lastcmd = 0xff;
+	spin_unlock_irqrestore(&dev->lock, flags);
 }
 EXPORT_SYMBOL(snd_midi_event_reset_decode);
 
@@ -171,6 +177,7 @@ bool snd_midi_event_encode_byte(struct snd_midi_event *dev, unsigned char c,
 				struct snd_seq_event *ev)
 {
 	bool rc = false;
+	unsigned long flags;
 
 	if (c >= MIDI_CMD_COMMON_CLOCK) {
 		/* real-time event */
@@ -180,7 +187,7 @@ bool snd_midi_event_encode_byte(struct snd_midi_event *dev, unsigned char c,
 		return ev->type != SNDRV_SEQ_EVENT_NONE;
 	}
 
-	guard(spinlock_irqsave)(&dev->lock);
+	spin_lock_irqsave(&dev->lock, flags);
 	if ((c & 0x80) &&
 	    (c != MIDI_CMD_COMMON_SYSEX_END || dev->type != ST_SYSEX)) {
 		/* new command */
@@ -229,6 +236,7 @@ bool snd_midi_event_encode_byte(struct snd_midi_event *dev, unsigned char c,
 		}
 	}
 
+	spin_unlock_irqrestore(&dev->lock, flags);
 	return rc;
 }
 EXPORT_SYMBOL(snd_midi_event_encode_byte);

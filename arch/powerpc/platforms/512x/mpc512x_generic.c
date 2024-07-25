@@ -32,6 +32,9 @@ static const char * const board[] __initconst = {
  */
 static int __init mpc512x_generic_probe(void)
 {
+	if (!of_device_compatible_match(of_root, board))
+		return 0;
+
 	mpc512x_init_early();
 
 	return 1;
@@ -39,7 +42,6 @@ static int __init mpc512x_generic_probe(void)
 
 define_machine(mpc512x_generic) {
 	.name			= "MPC512x generic",
-	.compatibles		= board,
 	.probe			= mpc512x_generic_probe,
 	.init			= mpc512x_init,
 	.setup_arch		= mpc512x_setup_arch,

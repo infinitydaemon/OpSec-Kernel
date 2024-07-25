@@ -38,7 +38,6 @@
 #include <drm/drm_drv.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem_atomic_helper.h>
-#include <drm/drm_panic.h>
 #include <drm/drm_print.h>
 #include <drm/drm_self_refresh_helper.h>
 #include <drm/drm_vblank.h>
@@ -444,6 +443,11 @@ mode_fixup(struct drm_atomic_state *state)
 		new_crtc_state =
 			drm_atomic_get_new_crtc_state(state, new_conn_state->crtc);
 
+		if (!new_crtc_state->mode_changed &&
+		    !new_crtc_state->connectors_changed) {
+			continue;
+		}
+
 		/*
 		 * Each encoder has at most one connector (since we always steal
 		 * it away), so we won't call ->mode_fixup twice.
@@ -796,9 +800,9 @@ drm_atomic_helper_check_modeset(struct drm_device *dev,
 EXPORT_SYMBOL(drm_atomic_helper_check_modeset);
 
 /**
- * drm_atomic_helper_check_wb_connector_state() - Check writeback connector state
- * @connector: corresponding connector
- * @state: the driver state object
+ * drm_atomic_helper_check_wb_encoder_state() - Check writeback encoder state
+ * @encoder: encoder state to check
+ * @conn_state: connector state to check
  *
  * Checks if the writeback connector state is valid, and returns an error if it
  * isn't.
@@ -807,11 +811,9 @@ EXPORT_SYMBOL(drm_atomic_helper_check_modeset);
  * Zero for success or -errno
  */
 int
-drm_atomic_helper_check_wb_connector_state(struct drm_connector *connector,
-					   struct drm_atomic_state *state)
+drm_atomic_helper_check_wb_encoder_state(struct drm_encoder *encoder,
+					 struct drm_connector_state *conn_state)
 {
-	struct drm_connector_state *conn_state =
-		drm_atomic_get_new_connector_state(state, connector);
 	struct drm_writeback_job *wb_job = conn_state->writeback_job;
 	struct drm_property_blob *pixel_format_blob;
 	struct drm_framebuffer *fb;
@@ -830,11 +832,11 @@ drm_atomic_helper_check_wb_connector_state(struct drm_connector *connector,
 		if (fb->format->format == formats[i])
 			return 0;
 
-	drm_dbg_kms(connector->dev, "Invalid pixel format %p4cc\n", &fb->format->format);
+	drm_dbg_kms(encoder->dev, "Invalid pixel format %p4cc\n", &fb->format->format);
 
 	return -EINVAL;
 }
-EXPORT_SYMBOL(drm_atomic_helper_check_wb_connector_state);
+EXPORT_SYMBOL(drm_atomic_helper_check_wb_encoder_state);
 
 /**
  * drm_atomic_helper_check_plane_state() - Check plane state for validity
@@ -1651,13 +1653,6 @@ drm_atomic_helper_wait_for_vblanks(struct drm_device *dev,
 	int i, ret;
 	unsigned int crtc_mask = 0;
 
-	 /*
-	  * Legacy cursor ioctls are completely unsynced, and userspace
-	  * relies on that (by doing tons of cursor updates).
-	  */
-	if (old_state->legacy_cursor_update)
-		return;
-
 	for_each_oldnew_crtc_in_state(old_state, crtc, old_crtc_state, new_crtc_state, i) {
 		if (!new_crtc_state->active)
 			continue;
@@ -2308,12 +2303,6 @@ int drm_atomic_helper_setup_commit(struct drm_atomic_state *state,
 			continue;
 		}
 
-		/* Legacy cursor updates are fully unsynced. */
-		if (state->legacy_cursor_update) {
-			complete_all(&commit->flip_done);
-			continue;
-		}
-
 		if (!new_crtc_state->event) {
 			commit->event = kzalloc(sizeof(*commit->event),
 						GFP_KERNEL);
@@ -2385,10 +2374,10 @@ int drm_atomic_helper_setup_commit(struct drm_atomic_state *state,
 EXPORT_SYMBOL(drm_atomic_helper_setup_commit);
 
 /**
- * drm_atomic_helper_wait_for_dependencies - wait for required preceding commits
+ * drm_atomic_helper_wait_for_dependencies - wait for required preceeding commits
  * @old_state: atomic state object with old state structures
  *
- * This function waits for all preceding commits that touch the same CRTC as
+ * This function waits for all preceeding commits that touch the same CRTC as
  * @old_state to both be committed to the hardware (as signalled by
  * drm_atomic_helper_commit_hw_done()) and executed by the hardware (as signalled
  * by calling drm_crtc_send_vblank_event() on the &drm_crtc_state.event).
@@ -3017,7 +3006,6 @@ int drm_atomic_helper_swap_state(struct drm_atomic_state *state,
 				  bool stall)
 {
 	int i, ret;
-	unsigned long flags;
 	struct drm_connector *connector;
 	struct drm_connector_state *old_conn_state, *new_conn_state;
 	struct drm_crtc *crtc;
@@ -3101,7 +3089,6 @@ int drm_atomic_helper_swap_state(struct drm_atomic_state *state,
 		}
 	}
 
-	drm_panic_lock(state->dev, flags);
 	for_each_oldnew_plane_in_state(state, plane, old_plane_state, new_plane_state, i) {
 		WARN_ON(plane->state != old_plane_state);
 
@@ -3111,7 +3098,6 @@ int drm_atomic_helper_swap_state(struct drm_atomic_state *state,
 		state->planes[i].state = old_plane_state;
 		plane->state = new_plane_state;
 	}
-	drm_panic_unlock(state->dev, flags);
 
 	for_each_oldnew_private_obj_in_state(state, obj, old_obj_state, new_obj_state, i) {
 		WARN_ON(obj->state != old_obj_state);
@@ -3379,9 +3365,6 @@ void drm_atomic_helper_shutdown(struct drm_device *dev)
 {
 	struct drm_modeset_acquire_ctx ctx;
 	int ret;
-
-	if (dev == NULL)
-		return;
 
 	DRM_MODESET_LOCK_ALL_BEGIN(dev, ctx, 0, ret);
 

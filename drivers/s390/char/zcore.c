@@ -29,6 +29,7 @@
 #include <asm/irqflags.h>
 #include <asm/checksum.h>
 #include <asm/os_info.h>
+#include <asm/switch_to.h>
 #include <asm/maccess.h>
 #include "sclp.h"
 

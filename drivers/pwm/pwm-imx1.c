@@ -28,12 +28,10 @@ struct pwm_imx1_chip {
 	struct clk *clk_ipg;
 	struct clk *clk_per;
 	void __iomem *mmio_base;
+	struct pwm_chip chip;
 };
 
-static inline struct pwm_imx1_chip *to_pwm_imx1_chip(struct pwm_chip *chip)
-{
-	return pwmchip_get_drvdata(chip);
-}
+#define to_pwm_imx1_chip(chip)	container_of(chip, struct pwm_imx1_chip, chip)
 
 static int pwm_imx1_clk_prepare_enable(struct pwm_chip *chip)
 {
@@ -148,6 +146,7 @@ static int pwm_imx1_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 
 static const struct pwm_ops pwm_imx1_ops = {
 	.apply = pwm_imx1_apply,
+	.owner = THIS_MODULE,
 };
 
 static const struct of_device_id pwm_imx1_dt_ids[] = {
@@ -158,13 +157,11 @@ MODULE_DEVICE_TABLE(of, pwm_imx1_dt_ids);
 
 static int pwm_imx1_probe(struct platform_device *pdev)
 {
-	struct pwm_chip *chip;
 	struct pwm_imx1_chip *imx;
 
-	chip = devm_pwmchip_alloc(&pdev->dev, 1, sizeof(*imx));
-	if (IS_ERR(chip))
-		return PTR_ERR(chip);
-	imx = to_pwm_imx1_chip(chip);
+	imx = devm_kzalloc(&pdev->dev, sizeof(*imx), GFP_KERNEL);
+	if (!imx)
+		return -ENOMEM;
 
 	imx->clk_ipg = devm_clk_get(&pdev->dev, "ipg");
 	if (IS_ERR(imx->clk_ipg))
@@ -176,13 +173,15 @@ static int pwm_imx1_probe(struct platform_device *pdev)
 		return dev_err_probe(&pdev->dev, PTR_ERR(imx->clk_per),
 				     "failed to get peripheral clock\n");
 
-	chip->ops = &pwm_imx1_ops;
+	imx->chip.ops = &pwm_imx1_ops;
+	imx->chip.dev = &pdev->dev;
+	imx->chip.npwm = 1;
 
 	imx->mmio_base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(imx->mmio_base))
 		return PTR_ERR(imx->mmio_base);
 
-	return devm_pwmchip_add(&pdev->dev, chip);
+	return devm_pwmchip_add(&pdev->dev, &imx->chip);
 }
 
 static struct platform_driver pwm_imx1_driver = {

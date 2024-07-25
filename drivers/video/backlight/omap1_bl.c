@@ -9,6 +9,7 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
+#include <linux/fb.h>
 #include <linux/backlight.h>
 #include <linux/slab.h>
 #include <linux/platform_data/omap1_bl.h>
@@ -19,7 +20,7 @@
 #define OMAPBL_MAX_INTENSITY		0xff
 
 struct omap_backlight {
-	bool enabled;
+	int powermode;
 	int current_intensity;
 
 	struct device *dev;
@@ -36,14 +37,24 @@ static inline void omapbl_send_enable(int enable)
 	omap_writeb(enable, OMAP_PWL_CLK_ENABLE);
 }
 
-static void omapbl_enable(struct omap_backlight *bl, bool enable)
+static void omapbl_blank(struct omap_backlight *bl, int mode)
 {
-	if (enable) {
-		omapbl_send_intensity(bl->current_intensity);
-		omapbl_send_enable(1);
-	} else {
+	if (bl->pdata->set_power)
+		bl->pdata->set_power(bl->dev, mode);
+
+	switch (mode) {
+	case FB_BLANK_NORMAL:
+	case FB_BLANK_VSYNC_SUSPEND:
+	case FB_BLANK_HSYNC_SUSPEND:
+	case FB_BLANK_POWERDOWN:
 		omapbl_send_intensity(0);
 		omapbl_send_enable(0);
+		break;
+
+	case FB_BLANK_UNBLANK:
+		omapbl_send_intensity(bl->current_intensity);
+		omapbl_send_enable(1);
+		break;
 	}
 }
 
@@ -53,7 +64,7 @@ static int omapbl_suspend(struct device *dev)
 	struct backlight_device *bl_dev = dev_get_drvdata(dev);
 	struct omap_backlight *bl = bl_get_data(bl_dev);
 
-	omapbl_enable(bl, false);
+	omapbl_blank(bl, FB_BLANK_POWERDOWN);
 	return 0;
 }
 
@@ -62,34 +73,33 @@ static int omapbl_resume(struct device *dev)
 	struct backlight_device *bl_dev = dev_get_drvdata(dev);
 	struct omap_backlight *bl = bl_get_data(bl_dev);
 
-	omapbl_enable(bl, bl->enabled);
+	omapbl_blank(bl, bl->powermode);
 	return 0;
 }
 #endif
 
-static void omapbl_set_enabled(struct backlight_device *dev, bool enable)
+static int omapbl_set_power(struct backlight_device *dev, int state)
 {
 	struct omap_backlight *bl = bl_get_data(dev);
 
-	omapbl_enable(bl, enable);
-	bl->enabled = enable;
+	omapbl_blank(bl, state);
+	bl->powermode = state;
+
+	return 0;
 }
 
 static int omapbl_update_status(struct backlight_device *dev)
 {
 	struct omap_backlight *bl = bl_get_data(dev);
-	bool enable;
 
 	if (bl->current_intensity != dev->props.brightness) {
-		if (bl->enabled)
+		if (bl->powermode == FB_BLANK_UNBLANK)
 			omapbl_send_intensity(dev->props.brightness);
 		bl->current_intensity = dev->props.brightness;
 	}
 
-	enable = !backlight_is_blank(dev);
-
-	if (enable != bl->enabled)
-		omapbl_set_enabled(dev, enable);
+	if (dev->props.fb_blank != bl->powermode)
+		omapbl_set_power(dev, dev->props.fb_blank);
 
 	return 0;
 }
@@ -129,7 +139,7 @@ static int omapbl_probe(struct platform_device *pdev)
 	if (IS_ERR(dev))
 		return PTR_ERR(dev);
 
-	bl->enabled = false;
+	bl->powermode = FB_BLANK_POWERDOWN;
 	bl->current_intensity = 0;
 
 	bl->pdata = pdata;
@@ -139,6 +149,7 @@ static int omapbl_probe(struct platform_device *pdev)
 
 	omap_cfg_reg(PWL);	/* Conflicts with UART3 */
 
+	dev->props.fb_blank = FB_BLANK_UNBLANK;
 	dev->props.brightness = pdata->default_intensity;
 	omapbl_update_status(dev);
 

@@ -19,7 +19,6 @@
 
 #define RTL_USB_MAX_TXQ_NUM		4		/* max tx queue */
 #define RTL_USB_MAX_EP_NUM		6		/* max ep number */
-#define RTL_USB_MAX_BULKOUT_NUM		4
 #define RTL_USB_MAX_TX_URBS_NUM		8
 
 enum rtl_txq {
@@ -95,7 +94,6 @@ struct rtl_usb {
 
 	/* Tx */
 	u8 out_ep_nums ;
-	u8 out_eps[RTL_USB_MAX_BULKOUT_NUM];
 	u8 out_queue_sel;
 	struct rtl_ep_map ep_map;
 

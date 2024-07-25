@@ -1058,7 +1058,7 @@ void ConfigInfoView::menuInfo(void)
 				stream << "<br><br>";
 			}
 
-			stream << "defined at " << _menu->filename << ":"
+			stream << "defined at " << _menu->file->name << ":"
 			       << _menu->lineno << "<br><br>";
 		}
 	}

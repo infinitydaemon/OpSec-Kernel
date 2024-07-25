@@ -4,7 +4,6 @@
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <asm/ptrace.h>
-#include <asm/fpu.h>
 
 #include <linux/uaccess.h>
 
@@ -45,6 +44,12 @@
 
 #define MISC_TRAPB	0x0000
 #define MISC_EXCB	0x0400
+
+extern unsigned long alpha_read_fp_reg (unsigned long reg);
+extern void alpha_write_fp_reg (unsigned long reg, unsigned long val);
+extern unsigned long alpha_read_fp_reg_s (unsigned long reg);
+extern void alpha_write_fp_reg_s (unsigned long reg, unsigned long val);
+
 
 #ifdef MODULE
 

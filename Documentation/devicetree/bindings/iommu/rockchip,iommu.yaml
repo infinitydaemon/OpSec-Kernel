@@ -19,14 +19,9 @@ description: |+
 
 properties:
   compatible:
-    oneOf:
-      - enum:
-          - rockchip,iommu
-          - rockchip,rk3568-iommu
-      - items:
-          - enum:
-              - rockchip,rk3588-iommu
-          - const: rockchip,rk3568-iommu
+    enum:
+      - rockchip,iommu
+      - rockchip,rk3568-iommu
 
   reg:
     items:

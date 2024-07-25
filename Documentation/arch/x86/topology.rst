@@ -47,31 +47,27 @@ AMD nomenclature for package is 'Node'.
 
 Package-related topology information in the kernel:
 
-  - topology_num_threads_per_package()
+  - cpuinfo_x86.x86_max_cores:
 
-    The number of threads in a package.
+    The number of cores in a package. This information is retrieved via CPUID.
 
-  - topology_num_cores_per_package()
+  - cpuinfo_x86.x86_max_dies:
 
-    The number of cores in a package.
+    The number of dies in a package. This information is retrieved via CPUID.
 
-  - topology_max_dies_per_package()
+  - cpuinfo_x86.cpu_die_id:
 
-    The maximum number of dies in a package.
+    The physical ID of the die. This information is retrieved via CPUID.
 
-  - cpuinfo_x86.topo.die_id:
-
-    The physical ID of the die.
-
-  - cpuinfo_x86.topo.pkg_id:
+  - cpuinfo_x86.phys_proc_id:
 
     The physical ID of the package. This information is retrieved via CPUID
     and deduced from the APIC IDs of the cores in the package.
 
     Modern systems use this value for the socket. There may be multiple
-    packages within a socket. This value may differ from topo.die_id.
+    packages within a socket. This value may differ from cpu_die_id.
 
-  - cpuinfo_x86.topo.logical_pkg_id:
+  - cpuinfo_x86.logical_proc_id:
 
     The logical ID of the package. As we do not trust BIOSes to enumerate the
     packages in a consistent way, we introduced the concept of logical package
@@ -83,7 +79,9 @@ Package-related topology information in the kernel:
     The maximum possible number of packages in the system. Helpful for per
     package facilities to preallocate per package information.
 
-  - cpuinfo_x86.topo.llc_id:
+  - cpu_llc_id:
+
+    A per-CPU variable containing:
 
       - On Intel, the first APIC ID of the list of CPUs sharing the Last Level
         Cache
@@ -99,6 +97,16 @@ are SMT- or CMT-type threads.
 
 AMDs nomenclature for a CMT core is "Compute Unit". The kernel always uses
 "core".
+
+Core-related topology information in the kernel:
+
+  - smp_num_siblings:
+
+    The number of threads in a core. The number of threads in a package can be
+    calculated by::
+
+	threads_per_package = cpuinfo_x86.x86_max_cores * smp_num_siblings
+
 
 Threads
 =======

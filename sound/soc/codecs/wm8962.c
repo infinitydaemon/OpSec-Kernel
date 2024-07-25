@@ -1854,10 +1854,10 @@ static int tp_event(struct snd_soc_dapm_widget *w,
 
 	reg = WM8962_ADDITIONAL_CONTROL_4;
 
-	if (!snd_soc_dapm_widget_name_cmp(w, "TEMP_HP")) {
+	if (!strcmp(w->name, "TEMP_HP")) {
 		mask = WM8962_TEMP_ENA_HP_MASK;
 		val = WM8962_TEMP_ENA_HP;
-	} else if (!snd_soc_dapm_widget_name_cmp(w, "TEMP_SPK")) {
+	} else if (!strcmp(w->name, "TEMP_SPK")) {
 		mask = WM8962_TEMP_ENA_SPK_MASK;
 		val = WM8962_TEMP_ENA_SPK;
 	} else {
@@ -2886,7 +2886,7 @@ static int wm8962_set_fll(struct snd_soc_component *component, int fll_id, int s
 {
 	struct wm8962_priv *wm8962 = snd_soc_component_get_drvdata(component);
 	struct _fll_div fll_div;
-	unsigned long time_left;
+	unsigned long timeout;
 	int ret;
 	int fll1 = 0;
 
@@ -2974,14 +2974,14 @@ static int wm8962_set_fll(struct snd_soc_component *component, int fll_id, int s
 	 * higher if we'll error out
 	 */
 	if (wm8962->irq)
-		time_left = msecs_to_jiffies(5);
+		timeout = msecs_to_jiffies(5);
 	else
-		time_left = msecs_to_jiffies(1);
+		timeout = msecs_to_jiffies(1);
 
-	time_left = wait_for_completion_timeout(&wm8962->fll_lock,
-						time_left);
+	timeout = wait_for_completion_timeout(&wm8962->fll_lock,
+					      timeout);
 
-	if (time_left == 0 && wm8962->irq) {
+	if (timeout == 0 && wm8962->irq) {
 		dev_err(component->dev, "FLL lock timed out");
 		snd_soc_component_update_bits(component, WM8962_FLL_CONTROL_1,
 				    WM8962_FLL_ENA, 0);
@@ -3938,7 +3938,7 @@ static const struct dev_pm_ops wm8962_pm = {
 };
 
 static const struct i2c_device_id wm8962_i2c_id[] = {
-	{ "wm8962" },
+	{ "wm8962", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, wm8962_i2c_id);

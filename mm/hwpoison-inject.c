@@ -15,7 +15,7 @@ static int hwpoison_inject(void *data, u64 val)
 {
 	unsigned long pfn = val;
 	struct page *p;
-	struct folio *folio;
+	struct page *hpage;
 	int err;
 
 	if (!capable(CAP_SYS_ADMIN))
@@ -25,17 +25,16 @@ static int hwpoison_inject(void *data, u64 val)
 		return -ENXIO;
 
 	p = pfn_to_page(pfn);
-	folio = page_folio(p);
+	hpage = compound_head(p);
 
 	if (!hwpoison_filter_enable)
 		goto inject;
 
-	shake_folio(folio);
+	shake_page(hpage);
 	/*
 	 * This implies unable to support non-LRU pages except free page.
 	 */
-	if (!folio_test_lru(folio) && !folio_test_hugetlb(folio) &&
-	    !is_free_buddy_page(p))
+	if (!PageLRU(hpage) && !PageHuge(p) && !is_free_buddy_page(p))
 		return 0;
 
 	/*
@@ -43,7 +42,7 @@ static int hwpoison_inject(void *data, u64 val)
 	 * the targeted owner (or on a free page).
 	 * memory_failure() will redo the check reliably inside page lock.
 	 */
-	err = hwpoison_filter(&folio->page);
+	err = hwpoison_filter(hpage);
 	if (err)
 		return 0;
 

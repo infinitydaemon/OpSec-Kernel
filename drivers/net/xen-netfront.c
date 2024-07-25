@@ -1376,7 +1376,7 @@ static int xennet_change_mtu(struct net_device *dev, int mtu)
 
 	if (mtu > max)
 		return -EINVAL;
-	WRITE_ONCE(dev->mtu, mtu);
+	dev->mtu = mtu;
 	return 0;
 }
 

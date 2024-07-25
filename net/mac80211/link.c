@@ -2,7 +2,7 @@
 /*
  * MLO link handling
  *
- * Copyright (C) 2022-2024 Intel Corporation
+ * Copyright (C) 2022-2023 Intel Corporation
  */
 #include <linux/slab.h>
 #include <linux/kernel.h>
@@ -37,16 +37,16 @@ void ieee80211_link_init(struct ieee80211_sub_if_data *sdata,
 	link_conf->link_id = link_id;
 	link_conf->vif = &sdata->vif;
 
-	wiphy_work_init(&link->csa_finalize_work,
-			ieee80211_csa_finalize_work);
-	wiphy_work_init(&link->color_change_finalize_work,
-			ieee80211_color_change_finalize_work);
+	INIT_WORK(&link->csa_finalize_work,
+		  ieee80211_csa_finalize_work);
+	INIT_WORK(&link->color_change_finalize_work,
+		  ieee80211_color_change_finalize_work);
 	INIT_DELAYED_WORK(&link->color_collision_detect_work,
 			  ieee80211_color_collision_detection_work);
 	INIT_LIST_HEAD(&link->assigned_chanctx_list);
 	INIT_LIST_HEAD(&link->reserved_chanctx_list);
-	wiphy_delayed_work_init(&link->dfs_cac_timer_work,
-				ieee80211_dfs_cac_timer_work);
+	INIT_DELAYED_WORK(&link->dfs_cac_timer_work,
+			  ieee80211_dfs_cac_timer_work);
 
 	if (!deflink) {
 		switch (sdata->vif.type) {
@@ -73,8 +73,6 @@ void ieee80211_link_stop(struct ieee80211_link_data *link)
 		ieee80211_mgd_stop_link(link);
 
 	cancel_delayed_work_sync(&link->color_collision_detect_work);
-	wiphy_work_cancel(link->sdata->local->hw.wiphy,
-			  &link->csa_finalize_work);
 	ieee80211_link_release_channel(link);
 }
 
@@ -193,7 +191,7 @@ static int ieee80211_vif_update_links(struct ieee80211_sub_if_data *sdata,
 	struct ieee80211_link_data *old_data[IEEE80211_MLD_MAX_NUM_LINKS];
 	bool use_deflink = old_links == 0; /* set for error case */
 
-	lockdep_assert_wiphy(sdata->local->hw.wiphy);
+	sdata_assert_lock(sdata);
 
 	memset(to_free, 0, sizeof(links));
 
@@ -237,9 +235,6 @@ static int ieee80211_vif_update_links(struct ieee80211_sub_if_data *sdata,
 		RCU_INIT_POINTER(sdata->vif.link_conf[link_id], NULL);
 	}
 
-	if (!old_links)
-		ieee80211_debugfs_recreate_netdev(sdata, true);
-
 	/* link them into data structures */
 	for_each_set_bit(link_id, &add, IEEE80211_MLD_MAX_NUM_LINKS) {
 		WARN_ON(!use_deflink &&
@@ -266,8 +261,6 @@ static int ieee80211_vif_update_links(struct ieee80211_sub_if_data *sdata,
 					   old_links & old_active,
 					   new_links & sdata->vif.active_links,
 					   old);
-		if (!new_links)
-			ieee80211_debugfs_recreate_netdev(sdata, false);
 	}
 
 	if (ret) {
@@ -308,6 +301,23 @@ int ieee80211_vif_set_links(struct ieee80211_sub_if_data *sdata,
 	ieee80211_free_links(sdata, links);
 
 	return ret;
+}
+
+void ieee80211_vif_clear_links(struct ieee80211_sub_if_data *sdata)
+{
+	struct link_container *links[IEEE80211_MLD_MAX_NUM_LINKS];
+
+	/*
+	 * The locking here is different because when we free links
+	 * in the station case we need to be able to cancel_work_sync()
+	 * something that also takes the lock.
+	 */
+
+	sdata_lock(sdata);
+	ieee80211_vif_update_links(sdata, links, 0, 0);
+	sdata_unlock(sdata);
+
+	ieee80211_free_links(sdata, links);
 }
 
 static int _ieee80211_set_active_links(struct ieee80211_sub_if_data *sdata,
@@ -356,9 +366,9 @@ static int _ieee80211_set_active_links(struct ieee80211_sub_if_data *sdata,
 
 		link = sdata_dereference(sdata->link[link_id], sdata);
 
-		ieee80211_teardown_tdls_peers(link);
+		/* FIXME: kill TDLS connections on the link */
 
-		__ieee80211_link_release_channel(link, true);
+		ieee80211_link_release_channel(link);
 	}
 
 	list_for_each_entry(sta, &local->sta_list, list) {
@@ -404,24 +414,8 @@ static int _ieee80211_set_active_links(struct ieee80211_sub_if_data *sdata,
 
 		link = sdata_dereference(sdata->link[link_id], sdata);
 
-		/*
-		 * This call really should not fail. Unfortunately, it appears
-		 * that this may happen occasionally with some drivers. Should
-		 * it happen, we are stuck in a bad place as going backwards is
-		 * not really feasible.
-		 *
-		 * So lets just tell link_use_channel that it must not fail to
-		 * assign the channel context (from mac80211's perspective) and
-		 * assume the driver is going to trigger a recovery flow if it
-		 * had a failure.
-		 * That really is not great nor guaranteed to work. But at least
-		 * the internal mac80211 state remains consistent and there is
-		 * a chance that we can recover.
-		 */
-		ret = _ieee80211_link_use_channel(link,
-						  &link->conf->chanreq,
-						  IEEE80211_CHANCTX_SHARED,
-						  true);
+		ret = ieee80211_link_use_channel(link, &link->conf->chandef,
+						 IEEE80211_CHANCTX_SHARED);
 		WARN_ON_ONCE(ret);
 
 		ieee80211_mgd_set_link_qos_params(link);
@@ -453,25 +447,18 @@ static int _ieee80211_set_active_links(struct ieee80211_sub_if_data *sdata,
 	return 0;
 }
 
-int ieee80211_set_active_links(struct ieee80211_vif *vif, u16 active_links)
+int __ieee80211_set_active_links(struct ieee80211_vif *vif, u16 active_links)
 {
 	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
 	struct ieee80211_local *local = sdata->local;
 	u16 old_active;
 	int ret;
 
-	lockdep_assert_wiphy(local->hw.wiphy);
-
-	if (WARN_ON(!active_links))
-		return -EINVAL;
-
+	sdata_assert_lock(sdata);
+	mutex_lock(&local->sta_mtx);
+	mutex_lock(&local->mtx);
+	mutex_lock(&local->key_mtx);
 	old_active = sdata->vif.active_links;
-	if (old_active == active_links)
-		return 0;
-
-	if (!drv_can_activate_links(local, sdata, active_links))
-		return -EINVAL;
-
 	if (old_active & active_links) {
 		/*
 		 * if there's at least one link that stays active across
@@ -486,6 +473,21 @@ int ieee80211_set_active_links(struct ieee80211_vif *vif, u16 active_links)
 		/* otherwise switch directly */
 		ret = _ieee80211_set_active_links(sdata, active_links);
 	}
+	mutex_unlock(&local->key_mtx);
+	mutex_unlock(&local->mtx);
+	mutex_unlock(&local->sta_mtx);
+
+	return ret;
+}
+
+int ieee80211_set_active_links(struct ieee80211_vif *vif, u16 active_links)
+{
+	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
+	int ret;
+
+	sdata_lock(sdata);
+	ret = __ieee80211_set_active_links(vif, active_links);
+	sdata_unlock(sdata);
 
 	return ret;
 }
@@ -495,9 +497,6 @@ void ieee80211_set_active_links_async(struct ieee80211_vif *vif,
 				      u16 active_links)
 {
 	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
-
-	if (WARN_ON(!active_links))
-		return;
 
 	if (!ieee80211_sdata_running(sdata))
 		return;
@@ -513,6 +512,6 @@ void ieee80211_set_active_links_async(struct ieee80211_vif *vif,
 		return;
 
 	sdata->desired_active_links = active_links;
-	wiphy_work_queue(sdata->local->hw.wiphy, &sdata->activate_links_work);
+	schedule_work(&sdata->activate_links_work);
 }
 EXPORT_SYMBOL_GPL(ieee80211_set_active_links_async);

@@ -151,13 +151,17 @@ int mdp5_pipe_release(struct drm_atomic_state *s, struct mdp5_hw_pipe *hwpipe)
 	return 0;
 }
 
-struct mdp5_hw_pipe *mdp5_pipe_init(struct drm_device *dev,
-		enum mdp5_pipe pipe,
+void mdp5_pipe_destroy(struct mdp5_hw_pipe *hwpipe)
+{
+	kfree(hwpipe);
+}
+
+struct mdp5_hw_pipe *mdp5_pipe_init(enum mdp5_pipe pipe,
 		uint32_t reg_offset, uint32_t caps)
 {
 	struct mdp5_hw_pipe *hwpipe;
 
-	hwpipe = devm_kzalloc(dev->dev, sizeof(*hwpipe), GFP_KERNEL);
+	hwpipe = kzalloc(sizeof(*hwpipe), GFP_KERNEL);
 	if (!hwpipe)
 		return ERR_PTR(-ENOMEM);
 

@@ -7,7 +7,6 @@ Scheduler
 
 
     completion
-    membarrier
     sched-arch
     sched-bwc
     sched-deadline

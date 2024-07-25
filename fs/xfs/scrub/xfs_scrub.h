@@ -7,11 +7,9 @@
 #define __XFS_SCRUB_H__
 
 #ifndef CONFIG_XFS_ONLINE_SCRUB
-# define xfs_ioc_scrub_metadata(f, a)	(-ENOTTY)
-# define xfs_ioc_scrubv_metadata(f, a)	(-ENOTTY)
+# define xfs_scrub_metadata(file, sm)	(-ENOTTY)
 #else
-int xfs_ioc_scrub_metadata(struct file *file, void __user *arg);
-int xfs_ioc_scrubv_metadata(struct file *file, void __user *arg);
+int xfs_scrub_metadata(struct file *file, struct xfs_scrub_metadata *sm);
 #endif /* CONFIG_XFS_ONLINE_SCRUB */
 
 #endif	/* __XFS_SCRUB_H__ */

@@ -629,14 +629,12 @@ struct uverbs_attr {
 };
 
 struct uverbs_attr_bundle {
-	struct_group_tagged(uverbs_attr_bundle_hdr, hdr,
-		struct ib_udata driver_udata;
-		struct ib_udata ucore;
-		struct ib_uverbs_file *ufile;
-		struct ib_ucontext *context;
-		struct ib_uobject *uobject;
-		DECLARE_BITMAP(attr_present, UVERBS_API_ATTR_BKEY_LEN);
-	);
+	struct ib_udata driver_udata;
+	struct ib_udata ucore;
+	struct ib_uverbs_file *ufile;
+	struct ib_ucontext *context;
+	struct ib_uobject *uobject;
+	DECLARE_BITMAP(attr_present, UVERBS_API_ATTR_BKEY_LEN);
 	struct uverbs_attr attrs[];
 };
 

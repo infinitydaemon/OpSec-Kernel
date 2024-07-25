@@ -71,8 +71,7 @@ static inline void iwl_txq_stop(struct iwl_trans *trans, struct iwl_txq *txq)
 
 /**
  * iwl_txq_inc_wrap - increment queue index, wrap back to beginning
- * @trans: the transport (for configuration data)
- * @index: current index
+ * @index -- current index
  */
 static inline int iwl_txq_inc_wrap(struct iwl_trans *trans, int index)
 {
@@ -82,8 +81,7 @@ static inline int iwl_txq_inc_wrap(struct iwl_trans *trans, int index)
 
 /**
  * iwl_txq_dec_wrap - decrement queue index, wrap back to end
- * @trans: the transport (for configuration data)
- * @index: current index
+ * @index -- current index
  */
 static inline int iwl_txq_dec_wrap(struct iwl_trans *trans, int index)
 {

@@ -520,6 +520,7 @@ static int snd_atiixp_aclink_reset(struct atiixp *chip)
 	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int snd_atiixp_aclink_down(struct atiixp *chip)
 {
 	// if (atiixp_read(chip, MODEM_MIRROR) & 0x1) /* modem running, too? */
@@ -529,6 +530,7 @@ static int snd_atiixp_aclink_down(struct atiixp *chip)
 		     ATI_REG_CMD_POWERDOWN);
 	return 0;
 }
+#endif
 
 /*
  * auto-detection of codecs
@@ -1452,6 +1454,7 @@ static int snd_atiixp_mixer_new(struct atiixp *chip, int clock,
 }
 
 
+#ifdef CONFIG_PM_SLEEP
 /*
  * power management
  */
@@ -1496,7 +1499,12 @@ static int snd_atiixp_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(snd_atiixp_pm, snd_atiixp_suspend, snd_atiixp_resume);
+static SIMPLE_DEV_PM_OPS(snd_atiixp_pm, snd_atiixp_suspend, snd_atiixp_resume);
+#define SND_ATIIXP_PM_OPS	&snd_atiixp_pm
+#else
+#define SND_ATIIXP_PM_OPS	NULL
+#endif /* CONFIG_PM_SLEEP */
+
 
 /*
  * proc interface for register dump
@@ -1626,7 +1634,7 @@ static struct pci_driver atiixp_driver = {
 	.id_table = snd_atiixp_ids,
 	.probe = snd_atiixp_probe,
 	.driver = {
-		.pm = &snd_atiixp_pm,
+		.pm = SND_ATIIXP_PM_OPS,
 	},
 };
 

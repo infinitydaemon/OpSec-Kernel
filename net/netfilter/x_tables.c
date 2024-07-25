@@ -1142,8 +1142,7 @@ void xt_compat_target_from_user(struct xt_entry_target *t, void **dstptr,
 	if (target->compat_from_user)
 		target->compat_from_user(t->data, ct->data);
 	else
-		unsafe_memcpy(t->data, ct->data, tsize - sizeof(*ct),
-			      /* UAPI 0-sized destination */);
+		memcpy(t->data, ct->data, tsize - sizeof(*ct));
 
 	tsize += off;
 	t->u.user.target_size = tsize;

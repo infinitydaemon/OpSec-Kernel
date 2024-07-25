@@ -21,7 +21,8 @@ static void i40e_get_pfc_delay(struct i40e_hw *hw, u16 *delay)
 	u32 val;
 
 	val = rd32(hw, I40E_PRTDCB_GENC);
-	*delay = FIELD_GET(I40E_PRTDCB_GENC_PFCLDA_MASK, val);
+	*delay = (u16)((val & I40E_PRTDCB_GENC_PFCLDA_MASK) >>
+		       I40E_PRTDCB_GENC_PFCLDA_SHIFT);
 }
 
 /**
@@ -309,8 +310,8 @@ static u8 i40e_dcbnl_getstate(struct net_device *netdev)
 	struct i40e_pf *pf = i40e_netdev_to_pf(netdev);
 
 	dev_dbg(&pf->pdev->dev, "DCB state=%d\n",
-		test_bit(I40E_FLAG_DCB_ENA, pf->flags) ? 1 : 0);
-	return test_bit(I40E_FLAG_DCB_ENA, pf->flags) ? 1 : 0;
+		!!(pf->flags & I40E_FLAG_DCB_ENABLED));
+	return !!(pf->flags & I40E_FLAG_DCB_ENABLED);
 }
 
 /**
@@ -330,19 +331,19 @@ static u8 i40e_dcbnl_setstate(struct net_device *netdev, u8 state)
 		return ret;
 
 	dev_dbg(&pf->pdev->dev, "new state=%d current state=%d\n",
-		state, test_bit(I40E_FLAG_DCB_ENA, pf->flags) ? 1 : 0);
+		state, (pf->flags & I40E_FLAG_DCB_ENABLED) ? 1 : 0);
 	/* Nothing to do */
-	if (!state == !test_bit(I40E_FLAG_DCB_ENA, pf->flags))
+	if (!state == !(pf->flags & I40E_FLAG_DCB_ENABLED))
 		return ret;
 
 	if (i40e_is_sw_dcb(pf)) {
 		if (state) {
-			set_bit(I40E_FLAG_DCB_ENA, pf->flags);
+			pf->flags |= I40E_FLAG_DCB_ENABLED;
 			memcpy(&pf->hw.desired_dcbx_config,
 			       &pf->hw.local_dcbx_config,
 			       sizeof(struct i40e_dcbx_config));
 		} else {
-			clear_bit(I40E_FLAG_DCB_ENA, pf->flags);
+			pf->flags &= ~I40E_FLAG_DCB_ENABLED;
 		}
 	} else {
 		/* Cannot directly manipulate FW LLDP Agent */
@@ -652,7 +653,7 @@ static u8 i40e_dcbnl_get_cap(struct net_device *netdev, int capid, u8 *cap)
 {
 	struct i40e_pf *pf = i40e_netdev_to_pf(netdev);
 
-	if (!test_bit(I40E_FLAG_DCB_CAPABLE, pf->flags))
+	if (!(pf->flags & I40E_FLAG_DCB_CAPABLE))
 		return I40E_DCBNL_STATUS_ERROR;
 
 	switch (capid) {
@@ -692,7 +693,7 @@ static int i40e_dcbnl_getnumtcs(struct net_device *netdev, int tcid, u8 *num)
 {
 	struct i40e_pf *pf = i40e_netdev_to_pf(netdev);
 
-	if (!test_bit(I40E_FLAG_DCB_CAPABLE, pf->flags))
+	if (!(pf->flags & I40E_FLAG_DCB_CAPABLE))
 		return -EINVAL;
 
 	*num = I40E_MAX_TRAFFIC_CLASS;
@@ -826,12 +827,15 @@ static void i40e_dcbnl_get_perm_hw_addr(struct net_device *dev,
 					u8 *perm_addr)
 {
 	struct i40e_pf *pf = i40e_netdev_to_pf(dev);
-	int i;
+	int i, j;
 
 	memset(perm_addr, 0xff, MAX_ADDR_LEN);
 
 	for (i = 0; i < dev->addr_len; i++)
 		perm_addr[i] = pf->hw.mac.perm_addr[i];
+
+	for (j = 0; j < dev->addr_len; j++, i++)
+		perm_addr[i] = pf->hw.mac.san_addr[j];
 }
 
 static const struct dcbnl_rtnl_ops dcbnl_ops = {
@@ -887,11 +891,11 @@ void i40e_dcbnl_set_all(struct i40e_vsi *vsi)
 		return;
 
 	/* DCB not enabled */
-	if (!test_bit(I40E_FLAG_DCB_ENA, pf->flags))
+	if (!(pf->flags & I40E_FLAG_DCB_ENABLED))
 		return;
 
 	/* MFP mode but not an iSCSI PF so return */
-	if (test_bit(I40E_FLAG_MFP_ENA, pf->flags) && !(hw->func_caps.iscsi))
+	if ((pf->flags & I40E_FLAG_MFP_ENABLED) && !(hw->func_caps.iscsi))
 		return;
 
 	dcbxcfg = &hw->local_dcbx_config;
@@ -947,16 +951,16 @@ static int i40e_dcbnl_vsi_del_app(struct i40e_vsi *vsi,
 static void i40e_dcbnl_del_app(struct i40e_pf *pf,
 			       struct i40e_dcb_app_priority_table *app)
 {
-	struct i40e_vsi *vsi;
 	int v, err;
 
-	i40e_pf_for_each_vsi(pf, v, vsi)
-		if (vsi->netdev) {
-			err = i40e_dcbnl_vsi_del_app(vsi, app);
+	for (v = 0; v < pf->num_alloc_vsi; v++) {
+		if (pf->vsi[v] && pf->vsi[v]->netdev) {
+			err = i40e_dcbnl_vsi_del_app(pf->vsi[v], app);
 			dev_dbg(&pf->pdev->dev, "Deleting app for VSI seid=%d err=%d sel=%d proto=0x%x prio=%d\n",
-				vsi->seid, err, app->selector,
+				pf->vsi[v]->seid, err, app->selector,
 				app->protocolid, app->priority);
 		}
+	}
 }
 
 /**
@@ -998,7 +1002,7 @@ void i40e_dcbnl_flush_apps(struct i40e_pf *pf,
 	int i;
 
 	/* MFP mode but not an iSCSI PF so return */
-	if (test_bit(I40E_FLAG_MFP_ENA, pf->flags) && !(pf->hw.func_caps.iscsi))
+	if ((pf->flags & I40E_FLAG_MFP_ENABLED) && !(pf->hw.func_caps.iscsi))
 		return;
 
 	for (i = 0; i < old_cfg->numapps; i++) {
@@ -1021,7 +1025,7 @@ void i40e_dcbnl_setup(struct i40e_vsi *vsi)
 	struct i40e_pf *pf = i40e_netdev_to_pf(dev);
 
 	/* Not DCB capable */
-	if (!test_bit(I40E_FLAG_DCB_CAPABLE, pf->flags))
+	if (!(pf->flags & I40E_FLAG_DCB_CAPABLE))
 		return;
 
 	dev->dcbnl_ops = &dcbnl_ops;

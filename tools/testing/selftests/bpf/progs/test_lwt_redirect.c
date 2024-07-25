@@ -3,7 +3,7 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 #include <linux/ip.h>
-#include <linux/if_ether.h>
+#include "bpf_tracing_net.h"
 
 /* We don't care about whether the packet can be received by network stack.
  * Just care if the packet is sent to the correct device at correct direction

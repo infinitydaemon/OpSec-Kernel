@@ -38,7 +38,7 @@ properties:
       - starry,ili9882t
 
   reg:
-    maxItems: 1
+    description: the virtual channel number of a DSI peripheral
 
   enable-gpios:
     description: a GPIO spec for the enable pin

@@ -244,7 +244,7 @@ static const struct dev_pm_ops sdio_bus_pm_ops = {
 	)
 };
 
-static const struct bus_type sdio_bus_type = {
+static struct bus_type sdio_bus_type = {
 	.name		= "sdio",
 	.dev_groups	= sdio_dev_groups,
 	.match		= sdio_bus_match,
@@ -265,19 +265,16 @@ void sdio_unregister_bus(void)
 }
 
 /**
- *	__sdio_register_driver - register a function driver
+ *	sdio_register_driver - register a function driver
  *	@drv: SDIO function driver
- *	@owner: owning module/driver
  */
-int __sdio_register_driver(struct sdio_driver *drv, struct module *owner)
+int sdio_register_driver(struct sdio_driver *drv)
 {
 	drv->drv.name = drv->name;
 	drv->drv.bus = &sdio_bus_type;
-	drv->drv.owner = owner;
-
 	return driver_register(&drv->drv);
 }
-EXPORT_SYMBOL_GPL(__sdio_register_driver);
+EXPORT_SYMBOL_GPL(sdio_register_driver);
 
 /**
  *	sdio_unregister_driver - unregister a function driver

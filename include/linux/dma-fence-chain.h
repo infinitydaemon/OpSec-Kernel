@@ -86,8 +86,10 @@ dma_fence_chain_contained(struct dma_fence *fence)
  *
  * Returns a new struct dma_fence_chain object or NULL on failure.
  */
-#define dma_fence_chain_alloc()	\
-		((struct dma_fence_chain *)kmalloc(sizeof(struct dma_fence_chain), GFP_KERNEL))
+static inline struct dma_fence_chain *dma_fence_chain_alloc(void)
+{
+	return kmalloc(sizeof(struct dma_fence_chain), GFP_KERNEL);
+};
 
 /**
  * dma_fence_chain_free

@@ -31,7 +31,7 @@
 #define ENET_PAD		8
 #define ENET_MAX_MTU_SIZE	(ETH_DATA_LEN + ETH_HLEN + VLAN_HLEN + \
 				 ENET_BRCM_TAG_LEN + ETH_FCS_LEN + ENET_PAD)
-#define DMA_MAX_BURST_LENGTH    0x10
+#define DMA_MAX_BURST_LENGTH    0x08
 
 /* misc. configuration */
 #define MAX_NUM_OF_FS_RULES		16
@@ -647,7 +647,7 @@ struct bcmgenet_priv {
 
 	struct bcmgenet_mib_counters mib;
 
-	struct ethtool_keee eee;
+	struct ethtool_eee eee;
 };
 
 #define GENET_IO_MACRO(name, offset)					\

@@ -68,7 +68,7 @@ EXPORT_SYMBOL_GPL(pwm_lpss_tng_info);
 
 static inline struct pwm_lpss_chip *to_lpwm(struct pwm_chip *chip)
 {
-	return pwmchip_get_drvdata(chip);
+	return container_of(chip, struct pwm_lpss_chip, chip);
 }
 
 static inline u32 pwm_lpss_read(const struct pwm_device *pwm)
@@ -106,7 +106,7 @@ static int pwm_lpss_wait_for_update(struct pwm_device *pwm)
 	 */
 	err = readl_poll_timeout(addr, val, !(val & PWM_SW_UPDATE), 40, ms);
 	if (err)
-		dev_err(pwmchip_parent(pwm->chip), "PWM_SW_UPDATE was not cleared\n");
+		dev_err(pwm->chip->dev, "PWM_SW_UPDATE was not cleared\n");
 
 	return err;
 }
@@ -114,7 +114,7 @@ static int pwm_lpss_wait_for_update(struct pwm_device *pwm)
 static inline int pwm_lpss_is_updating(struct pwm_device *pwm)
 {
 	if (pwm_lpss_read(pwm) & PWM_SW_UPDATE) {
-		dev_err(pwmchip_parent(pwm->chip), "PWM_SW_UPDATE is still set, skipping update\n");
+		dev_err(pwm->chip->dev, "PWM_SW_UPDATE is still set, skipping update\n");
 		return -EBUSY;
 	}
 
@@ -190,16 +190,16 @@ static int pwm_lpss_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 
 	if (state->enabled) {
 		if (!pwm_is_enabled(pwm)) {
-			pm_runtime_get_sync(pwmchip_parent(chip));
+			pm_runtime_get_sync(chip->dev);
 			ret = pwm_lpss_prepare_enable(lpwm, pwm, state);
 			if (ret)
-				pm_runtime_put(pwmchip_parent(chip));
+				pm_runtime_put(chip->dev);
 		} else {
 			ret = pwm_lpss_prepare_enable(lpwm, pwm, state);
 		}
 	} else if (pwm_is_enabled(pwm)) {
 		pwm_lpss_write(pwm, pwm_lpss_read(pwm) & ~PWM_ENABLE);
-		pm_runtime_put(pwmchip_parent(chip));
+		pm_runtime_put(chip->dev);
 	}
 
 	return ret;
@@ -213,7 +213,7 @@ static int pwm_lpss_get_state(struct pwm_chip *chip, struct pwm_device *pwm,
 	unsigned long long base_unit, freq, on_time_div;
 	u32 ctrl;
 
-	pm_runtime_get_sync(pwmchip_parent(chip));
+	pm_runtime_get_sync(chip->dev);
 
 	base_unit_range = BIT(lpwm->info->base_unit_bits);
 
@@ -235,7 +235,7 @@ static int pwm_lpss_get_state(struct pwm_chip *chip, struct pwm_device *pwm,
 	state->polarity = PWM_POLARITY_NORMAL;
 	state->enabled = !!(ctrl & PWM_ENABLE);
 
-	pm_runtime_put(pwmchip_parent(chip));
+	pm_runtime_put(chip->dev);
 
 	return 0;
 }
@@ -243,13 +243,13 @@ static int pwm_lpss_get_state(struct pwm_chip *chip, struct pwm_device *pwm,
 static const struct pwm_ops pwm_lpss_ops = {
 	.apply = pwm_lpss_apply,
 	.get_state = pwm_lpss_get_state,
+	.owner = THIS_MODULE,
 };
 
-struct pwm_chip *devm_pwm_lpss_probe(struct device *dev, void __iomem *base,
-				     const struct pwm_lpss_boardinfo *info)
+struct pwm_lpss_chip *devm_pwm_lpss_probe(struct device *dev, void __iomem *base,
+					  const struct pwm_lpss_boardinfo *info)
 {
 	struct pwm_lpss_chip *lpwm;
-	struct pwm_chip *chip;
 	unsigned long c;
 	int i, ret;
 	u32 ctrl;
@@ -257,10 +257,9 @@ struct pwm_chip *devm_pwm_lpss_probe(struct device *dev, void __iomem *base,
 	if (WARN_ON(info->npwm > LPSS_MAX_PWMS))
 		return ERR_PTR(-ENODEV);
 
-	chip = devm_pwmchip_alloc(dev, info->npwm, sizeof(*lpwm));
-	if (IS_ERR(chip))
-		return chip;
-	lpwm = to_lpwm(chip);
+	lpwm = devm_kzalloc(dev, sizeof(*lpwm), GFP_KERNEL);
+	if (!lpwm)
+		return ERR_PTR(-ENOMEM);
 
 	lpwm->regs = base;
 	lpwm->info = info;
@@ -269,21 +268,23 @@ struct pwm_chip *devm_pwm_lpss_probe(struct device *dev, void __iomem *base,
 	if (!c)
 		return ERR_PTR(-EINVAL);
 
-	chip->ops = &pwm_lpss_ops;
+	lpwm->chip.dev = dev;
+	lpwm->chip.ops = &pwm_lpss_ops;
+	lpwm->chip.npwm = info->npwm;
 
-	ret = devm_pwmchip_add(dev, chip);
+	ret = devm_pwmchip_add(dev, &lpwm->chip);
 	if (ret) {
 		dev_err(dev, "failed to add PWM chip: %d\n", ret);
 		return ERR_PTR(ret);
 	}
 
 	for (i = 0; i < lpwm->info->npwm; i++) {
-		ctrl = pwm_lpss_read(&chip->pwms[i]);
+		ctrl = pwm_lpss_read(&lpwm->chip.pwms[i]);
 		if (ctrl & PWM_ENABLE)
 			pm_runtime_get(dev);
 	}
 
-	return chip;
+	return lpwm;
 }
 EXPORT_SYMBOL_GPL(devm_pwm_lpss_probe);
 

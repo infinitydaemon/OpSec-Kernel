@@ -6,9 +6,6 @@
 #include <linux/kbuild.h>
 #include <asm/mman.h>
 
-/* workaround for a warning with -Wmissing-prototypes */
-void foo(void);
-
 void foo(void)
 {
 #include <common-offsets.h>

@@ -554,11 +554,6 @@
 #define CS35L41_LRCLK_FRC_SHIFT		1
 
 #define CS35L41_AMP_GAIN_PCM_MASK	0x3E0
-#define CS35L41_AMP_GAIN_PCM_SHIFT	5
-#define CS35L41_AMP_GAIN_PDM_MASK	0x1F
-#define CS35L41_AMP_GAIN_PDM_SHIFT	0
-#define CS35L41_AMP_GAIN_PCM_MAX	20
-#define CS35L41_AMP_GAIN_PDM_MAX	20
 #define CS35L41_AMP_GAIN_ZC_MASK	0x0400
 #define CS35L41_AMP_GAIN_ZC_SHIFT	10
 
@@ -740,7 +735,6 @@
 #define CS35L41_REVID_B2		0xB2
 
 #define CS35L41_HALO_CORE_RESET		0x00000200
-#define CS35L41_SOFTWARE_RESET		0x5A000000
 
 #define CS35L41_FS1_WINDOW_MASK		0x000007FF
 #define CS35L41_FS2_WINDOW_MASK		0x00FFF800
@@ -821,8 +815,6 @@ struct cs35l41_otp_map_element_t {
 };
 
 enum cs35l41_cspl_mbox_status {
-	CSPL_MBOX_STS_ERROR = U32_MAX,
-	CSPL_MBOX_STS_ERROR2 = 0x00ffffff, // firmware not always sign-extending 24-bit value
 	CSPL_MBOX_STS_RUNNING = 0,
 	CSPL_MBOX_STS_PAUSED = 1,
 	CSPL_MBOX_STS_RDY_FOR_REINIT = 2,
@@ -911,6 +903,6 @@ int cs35l41_init_boost(struct device *dev, struct regmap *regmap,
 bool cs35l41_safe_reset(struct regmap *regmap, enum cs35l41_boost_type b_type);
 int cs35l41_mdsync_up(struct regmap *regmap);
 int cs35l41_global_enable(struct device *dev, struct regmap *regmap, enum cs35l41_boost_type b_type,
-			  int enable, struct cs_dsp *dsp);
+			  int enable, bool firmware_running);
 
 #endif /* __CS35L41_H */

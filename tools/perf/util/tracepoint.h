@@ -4,7 +4,6 @@
 
 #include <dirent.h>
 #include <string.h>
-#include <stdbool.h>
 
 int tp_event_has_id(const char *dir_path, struct dirent *evt_dir);
 
@@ -21,6 +20,6 @@ int tp_event_has_id(const char *dir_path, struct dirent *evt_dir);
 		    (strcmp(sys_dirent->d_name, ".")) &&	\
 		    (strcmp(sys_dirent->d_name, "..")))
 
-bool is_valid_tracepoint(const char *event_string);
+int is_valid_tracepoint(const char *event_string);
 
 #endif /* __PERF_TRACEPOINT_H */

@@ -283,63 +283,65 @@ static int iio_dummy_read_raw(struct iio_dev *indio_dev,
 			      long mask)
 {
 	struct iio_dummy_state *st = iio_priv(indio_dev);
+	int ret = -EINVAL;
 
+	mutex_lock(&st->lock);
 	switch (mask) {
 	case IIO_CHAN_INFO_RAW: /* magic value - channel value read */
-		iio_device_claim_direct_scoped(return -EBUSY, indio_dev) {
-			guard(mutex)(&st->lock);
-			switch (chan->type) {
-			case IIO_VOLTAGE:
-				if (chan->output) {
-					/* Set integer part to cached value */
-					*val = st->dac_val;
-					return IIO_VAL_INT;
-				} else if (chan->differential) {
-					if (chan->channel == 1)
-						*val = st->differential_adc_val[0];
-					else
-						*val = st->differential_adc_val[1];
-					return IIO_VAL_INT;
-				} else {
-					*val = st->single_ended_adc_val;
-					return IIO_VAL_INT;
-				}
-
-			case IIO_ACCEL:
-				*val = st->accel_val;
-				return IIO_VAL_INT;
-			default:
-				return -EINVAL;
+		switch (chan->type) {
+		case IIO_VOLTAGE:
+			if (chan->output) {
+				/* Set integer part to cached value */
+				*val = st->dac_val;
+				ret = IIO_VAL_INT;
+			} else if (chan->differential) {
+				if (chan->channel == 1)
+					*val = st->differential_adc_val[0];
+				else
+					*val = st->differential_adc_val[1];
+				ret = IIO_VAL_INT;
+			} else {
+				*val = st->single_ended_adc_val;
+				ret = IIO_VAL_INT;
 			}
+			break;
+		case IIO_ACCEL:
+			*val = st->accel_val;
+			ret = IIO_VAL_INT;
+			break;
+		default:
+			break;
 		}
-		unreachable();
+		break;
 	case IIO_CHAN_INFO_PROCESSED:
-		iio_device_claim_direct_scoped(return -EBUSY, indio_dev) {
-			guard(mutex)(&st->lock);
-			switch (chan->type) {
-			case IIO_STEPS:
-				*val = st->steps;
-				return IIO_VAL_INT;
-			case IIO_ACTIVITY:
-				switch (chan->channel2) {
-				case IIO_MOD_RUNNING:
-					*val = st->activity_running;
-					return IIO_VAL_INT;
-				case IIO_MOD_WALKING:
-					*val = st->activity_walking;
-					return IIO_VAL_INT;
-				default:
-					return -EINVAL;
-				}
+		switch (chan->type) {
+		case IIO_STEPS:
+			*val = st->steps;
+			ret = IIO_VAL_INT;
+			break;
+		case IIO_ACTIVITY:
+			switch (chan->channel2) {
+			case IIO_MOD_RUNNING:
+				*val = st->activity_running;
+				ret = IIO_VAL_INT;
+				break;
+			case IIO_MOD_WALKING:
+				*val = st->activity_walking;
+				ret = IIO_VAL_INT;
+				break;
 			default:
-				return -EINVAL;
+				break;
 			}
+			break;
+		default:
+			break;
 		}
-		unreachable();
+		break;
 	case IIO_CHAN_INFO_OFFSET:
 		/* only single ended adc -> 7 */
 		*val = 7;
-		return IIO_VAL_INT;
+		ret = IIO_VAL_INT;
+		break;
 	case IIO_CHAN_INFO_SCALE:
 		switch (chan->type) {
 		case IIO_VOLTAGE:
@@ -348,57 +350,60 @@ static int iio_dummy_read_raw(struct iio_dev *indio_dev,
 				/* only single ended adc -> 0.001333 */
 				*val = 0;
 				*val2 = 1333;
-				return IIO_VAL_INT_PLUS_MICRO;
+				ret = IIO_VAL_INT_PLUS_MICRO;
+				break;
 			case 1:
 				/* all differential adc -> 0.000001344 */
 				*val = 0;
 				*val2 = 1344;
-				return IIO_VAL_INT_PLUS_NANO;
-			default:
-				return -EINVAL;
+				ret = IIO_VAL_INT_PLUS_NANO;
 			}
+			break;
 		default:
-			return -EINVAL;
+			break;
 		}
-	case IIO_CHAN_INFO_CALIBBIAS: {
-		guard(mutex)(&st->lock);
+		break;
+	case IIO_CHAN_INFO_CALIBBIAS:
 		/* only the acceleration axis - read from cache */
 		*val = st->accel_calibbias;
-		return IIO_VAL_INT;
-	}
-	case IIO_CHAN_INFO_CALIBSCALE: {
-		guard(mutex)(&st->lock);
+		ret = IIO_VAL_INT;
+		break;
+	case IIO_CHAN_INFO_CALIBSCALE:
 		*val = st->accel_calibscale->val;
 		*val2 = st->accel_calibscale->val2;
-		return IIO_VAL_INT_PLUS_MICRO;
-	}
+		ret = IIO_VAL_INT_PLUS_MICRO;
+		break;
 	case IIO_CHAN_INFO_SAMP_FREQ:
 		*val = 3;
 		*val2 = 33;
-		return IIO_VAL_INT_PLUS_NANO;
-	case IIO_CHAN_INFO_ENABLE: {
-		guard(mutex)(&st->lock);
+		ret = IIO_VAL_INT_PLUS_NANO;
+		break;
+	case IIO_CHAN_INFO_ENABLE:
 		switch (chan->type) {
 		case IIO_STEPS:
 			*val = st->steps_enabled;
-			return IIO_VAL_INT;
+			ret = IIO_VAL_INT;
+			break;
 		default:
-			return -EINVAL;
+			break;
 		}
-	}
-	case IIO_CHAN_INFO_CALIBHEIGHT: {
-		guard(mutex)(&st->lock);
+		break;
+	case IIO_CHAN_INFO_CALIBHEIGHT:
 		switch (chan->type) {
 		case IIO_STEPS:
 			*val = st->height;
-			return IIO_VAL_INT;
+			ret = IIO_VAL_INT;
+			break;
 		default:
-			return -EINVAL;
+			break;
 		}
-	}
+		break;
+
 	default:
-		return -EINVAL;
+		break;
 	}
+	mutex_unlock(&st->lock);
+	return ret;
 }
 
 /**
@@ -421,6 +426,7 @@ static int iio_dummy_write_raw(struct iio_dev *indio_dev,
 			       long mask)
 {
 	int i;
+	int ret = 0;
 	struct iio_dummy_state *st = iio_priv(indio_dev);
 
 	switch (mask) {
@@ -430,10 +436,10 @@ static int iio_dummy_write_raw(struct iio_dev *indio_dev,
 			if (chan->output == 0)
 				return -EINVAL;
 
-			scoped_guard(mutex, &st->lock) {
-				/* Locking not required as writing single value */
-				st->dac_val = val;
-			}
+			/* Locking not required as writing single value */
+			mutex_lock(&st->lock);
+			st->dac_val = val;
+			mutex_unlock(&st->lock);
 			return 0;
 		default:
 			return -EINVAL;
@@ -441,9 +447,9 @@ static int iio_dummy_write_raw(struct iio_dev *indio_dev,
 	case IIO_CHAN_INFO_PROCESSED:
 		switch (chan->type) {
 		case IIO_STEPS:
-			scoped_guard(mutex, &st->lock) {
-				st->steps = val;
-			}
+			mutex_lock(&st->lock);
+			st->steps = val;
+			mutex_unlock(&st->lock);
 			return 0;
 		case IIO_ACTIVITY:
 			if (val < 0)
@@ -464,29 +470,30 @@ static int iio_dummy_write_raw(struct iio_dev *indio_dev,
 		default:
 			return -EINVAL;
 		}
-	case IIO_CHAN_INFO_CALIBSCALE: {
-		guard(mutex)(&st->lock);
+	case IIO_CHAN_INFO_CALIBSCALE:
+		mutex_lock(&st->lock);
 		/* Compare against table - hard matching here */
 		for (i = 0; i < ARRAY_SIZE(dummy_scales); i++)
 			if (val == dummy_scales[i].val &&
 			    val2 == dummy_scales[i].val2)
 				break;
 		if (i == ARRAY_SIZE(dummy_scales))
-			return -EINVAL;
-		st->accel_calibscale = &dummy_scales[i];
-		return 0;
-	}
+			ret = -EINVAL;
+		else
+			st->accel_calibscale = &dummy_scales[i];
+		mutex_unlock(&st->lock);
+		return ret;
 	case IIO_CHAN_INFO_CALIBBIAS:
-		scoped_guard(mutex, &st->lock) {
-			st->accel_calibbias = val;
-		}
+		mutex_lock(&st->lock);
+		st->accel_calibbias = val;
+		mutex_unlock(&st->lock);
 		return 0;
 	case IIO_CHAN_INFO_ENABLE:
 		switch (chan->type) {
 		case IIO_STEPS:
-			scoped_guard(mutex, &st->lock) {
-				st->steps_enabled = val;
-			}
+			mutex_lock(&st->lock);
+			st->steps_enabled = val;
+			mutex_unlock(&st->lock);
 			return 0;
 		default:
 			return -EINVAL;

@@ -40,10 +40,6 @@ struct sysinfo_1_1_1 {
 	unsigned int ncr;
 	unsigned int npr;
 	unsigned int ntr;
-	char reserved_3[4];
-	char model_var_cap[16];
-	unsigned int model_var_cap_rating;
-	unsigned int nvr;
 };
 
 struct sysinfo_1_2_1 {

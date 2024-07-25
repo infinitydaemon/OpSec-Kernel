@@ -8,6 +8,8 @@
  * including requesting an invalid register set, updates to/from values
  * in kvm_run.s.regs when kvm_valid_regs and kvm_dirty_regs are toggled.
  */
+
+#define _GNU_SOURCE /* for program_invocation_short_name */
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,7 +17,6 @@
 #include <sys/ioctl.h>
 #include <pthread.h>
 
-#include "kvm_test_harness.h"
 #include "test_util.h"
 #include "kvm_util.h"
 #include "processor.h"
@@ -40,14 +41,12 @@ void guest_code(void)
 		     : "rax", "rbx");
 }
 
-KVM_ONE_VCPU_TEST_SUITE(sync_regs_test);
-
 static void compare_regs(struct kvm_regs *left, struct kvm_regs *right)
 {
 #define REG_COMPARE(reg) \
 	TEST_ASSERT(left->reg == right->reg, \
 		    "Register " #reg \
-		    " values did not match: 0x%llx, 0x%llx", \
+		    " values did not match: 0x%llx, 0x%llx\n", \
 		    left->reg, right->reg)
 	REG_COMPARE(rax);
 	REG_COMPARE(rbx);
@@ -153,15 +152,18 @@ static noinline void *race_sregs_cr4(void *arg)
 	return NULL;
 }
 
-static void race_sync_regs(struct kvm_vcpu *vcpu, void *racer)
+static void race_sync_regs(void *racer)
 {
 	const time_t TIMEOUT = 2; /* seconds, roughly */
 	struct kvm_x86_state *state;
 	struct kvm_translation tr;
+	struct kvm_vcpu *vcpu;
 	struct kvm_run *run;
+	struct kvm_vm *vm;
 	pthread_t thread;
 	time_t t;
 
+	vm = vm_create_with_one_vcpu(&vcpu, guest_code);
 	run = vcpu->run;
 
 	run->kvm_valid_regs = KVM_SYNC_X86_SREGS;
@@ -203,61 +205,61 @@ static void race_sync_regs(struct kvm_vcpu *vcpu, void *racer)
 	TEST_ASSERT_EQ(pthread_join(thread, NULL), 0);
 
 	kvm_x86_state_cleanup(state);
+	kvm_vm_free(vm);
 }
 
-KVM_ONE_VCPU_TEST(sync_regs_test, read_invalid, guest_code)
+int main(int argc, char *argv[])
 {
-	struct kvm_run *run = vcpu->run;
-	int rv;
+	struct kvm_vcpu *vcpu;
+	struct kvm_vm *vm;
+	struct kvm_run *run;
+	struct kvm_regs regs;
+	struct kvm_sregs sregs;
+	struct kvm_vcpu_events events;
+	int rv, cap;
+
+	cap = kvm_check_cap(KVM_CAP_SYNC_REGS);
+	TEST_REQUIRE((cap & TEST_SYNC_FIELDS) == TEST_SYNC_FIELDS);
+	TEST_REQUIRE(!(cap & INVALID_SYNC_FIELD));
+
+	vm = vm_create_with_one_vcpu(&vcpu, guest_code);
+
+	run = vcpu->run;
 
 	/* Request reading invalid register set from VCPU. */
 	run->kvm_valid_regs = INVALID_SYNC_FIELD;
 	rv = _vcpu_run(vcpu);
 	TEST_ASSERT(rv < 0 && errno == EINVAL,
-		    "Invalid kvm_valid_regs did not cause expected KVM_RUN error: %d",
+		    "Invalid kvm_valid_regs did not cause expected KVM_RUN error: %d\n",
 		    rv);
 	run->kvm_valid_regs = 0;
 
 	run->kvm_valid_regs = INVALID_SYNC_FIELD | TEST_SYNC_FIELDS;
 	rv = _vcpu_run(vcpu);
 	TEST_ASSERT(rv < 0 && errno == EINVAL,
-		    "Invalid kvm_valid_regs did not cause expected KVM_RUN error: %d",
+		    "Invalid kvm_valid_regs did not cause expected KVM_RUN error: %d\n",
 		    rv);
 	run->kvm_valid_regs = 0;
-}
-
-KVM_ONE_VCPU_TEST(sync_regs_test, set_invalid, guest_code)
-{
-	struct kvm_run *run = vcpu->run;
-	int rv;
 
 	/* Request setting invalid register set into VCPU. */
 	run->kvm_dirty_regs = INVALID_SYNC_FIELD;
 	rv = _vcpu_run(vcpu);
 	TEST_ASSERT(rv < 0 && errno == EINVAL,
-		    "Invalid kvm_dirty_regs did not cause expected KVM_RUN error: %d",
+		    "Invalid kvm_dirty_regs did not cause expected KVM_RUN error: %d\n",
 		    rv);
 	run->kvm_dirty_regs = 0;
 
 	run->kvm_dirty_regs = INVALID_SYNC_FIELD | TEST_SYNC_FIELDS;
 	rv = _vcpu_run(vcpu);
 	TEST_ASSERT(rv < 0 && errno == EINVAL,
-		    "Invalid kvm_dirty_regs did not cause expected KVM_RUN error: %d",
+		    "Invalid kvm_dirty_regs did not cause expected KVM_RUN error: %d\n",
 		    rv);
 	run->kvm_dirty_regs = 0;
-}
-
-KVM_ONE_VCPU_TEST(sync_regs_test, req_and_verify_all_valid, guest_code)
-{
-	struct kvm_run *run = vcpu->run;
-	struct kvm_vcpu_events events;
-	struct kvm_sregs sregs;
-	struct kvm_regs regs;
 
 	/* Request and verify all valid register sets. */
 	/* TODO: BUILD TIME CHECK: TEST_ASSERT(KVM_SYNC_X86_NUM_FIELDS != 3); */
 	run->kvm_valid_regs = TEST_SYNC_FIELDS;
-	vcpu_run(vcpu);
+	rv = _vcpu_run(vcpu);
 	TEST_ASSERT_KVM_EXIT_REASON(vcpu, KVM_EXIT_IO);
 
 	vcpu_regs_get(vcpu, &regs);
@@ -268,19 +270,6 @@ KVM_ONE_VCPU_TEST(sync_regs_test, req_and_verify_all_valid, guest_code)
 
 	vcpu_events_get(vcpu, &events);
 	compare_vcpu_events(&events, &run->s.regs.events);
-}
-
-KVM_ONE_VCPU_TEST(sync_regs_test, set_and_verify_various, guest_code)
-{
-	struct kvm_run *run = vcpu->run;
-	struct kvm_vcpu_events events;
-	struct kvm_sregs sregs;
-	struct kvm_regs regs;
-
-	/* Run once to get register set */
-	run->kvm_valid_regs = TEST_SYNC_FIELDS;
-	vcpu_run(vcpu);
-	TEST_ASSERT_KVM_EXIT_REASON(vcpu, KVM_EXIT_IO);
 
 	/* Set and verify various register values. */
 	run->s.regs.regs.rbx = 0xBAD1DEA;
@@ -289,7 +278,7 @@ KVM_ONE_VCPU_TEST(sync_regs_test, set_and_verify_various, guest_code)
 
 	run->kvm_valid_regs = TEST_SYNC_FIELDS;
 	run->kvm_dirty_regs = KVM_SYNC_X86_REGS | KVM_SYNC_X86_SREGS;
-	vcpu_run(vcpu);
+	rv = _vcpu_run(vcpu);
 	TEST_ASSERT_KVM_EXIT_REASON(vcpu, KVM_EXIT_IO);
 	TEST_ASSERT(run->s.regs.regs.rbx == 0xBAD1DEA + 1,
 		    "rbx sync regs value incorrect 0x%llx.",
@@ -306,11 +295,6 @@ KVM_ONE_VCPU_TEST(sync_regs_test, set_and_verify_various, guest_code)
 
 	vcpu_events_get(vcpu, &events);
 	compare_vcpu_events(&events, &run->s.regs.events);
-}
-
-KVM_ONE_VCPU_TEST(sync_regs_test, clear_kvm_dirty_regs_bits, guest_code)
-{
-	struct kvm_run *run = vcpu->run;
 
 	/* Clear kvm_dirty_regs bits, verify new s.regs values are
 	 * overwritten with existing guest values.
@@ -318,22 +302,11 @@ KVM_ONE_VCPU_TEST(sync_regs_test, clear_kvm_dirty_regs_bits, guest_code)
 	run->kvm_valid_regs = TEST_SYNC_FIELDS;
 	run->kvm_dirty_regs = 0;
 	run->s.regs.regs.rbx = 0xDEADBEEF;
-	vcpu_run(vcpu);
+	rv = _vcpu_run(vcpu);
 	TEST_ASSERT_KVM_EXIT_REASON(vcpu, KVM_EXIT_IO);
 	TEST_ASSERT(run->s.regs.regs.rbx != 0xDEADBEEF,
 		    "rbx sync regs value incorrect 0x%llx.",
 		    run->s.regs.regs.rbx);
-}
-
-KVM_ONE_VCPU_TEST(sync_regs_test, clear_kvm_valid_and_dirty_regs, guest_code)
-{
-	struct kvm_run *run = vcpu->run;
-	struct kvm_regs regs;
-
-	/* Run once to get register set */
-	run->kvm_valid_regs = TEST_SYNC_FIELDS;
-	vcpu_run(vcpu);
-	TEST_ASSERT_KVM_EXIT_REASON(vcpu, KVM_EXIT_IO);
 
 	/* Clear kvm_valid_regs bits and kvm_dirty_bits.
 	 * Verify s.regs values are not overwritten with existing guest values
@@ -342,10 +315,9 @@ KVM_ONE_VCPU_TEST(sync_regs_test, clear_kvm_valid_and_dirty_regs, guest_code)
 	run->kvm_valid_regs = 0;
 	run->kvm_dirty_regs = 0;
 	run->s.regs.regs.rbx = 0xAAAA;
-	vcpu_regs_get(vcpu, &regs);
 	regs.rbx = 0xBAC0;
 	vcpu_regs_set(vcpu, &regs);
-	vcpu_run(vcpu);
+	rv = _vcpu_run(vcpu);
 	TEST_ASSERT_KVM_EXIT_REASON(vcpu, KVM_EXIT_IO);
 	TEST_ASSERT(run->s.regs.regs.rbx == 0xAAAA,
 		    "rbx sync regs value incorrect 0x%llx.",
@@ -354,17 +326,6 @@ KVM_ONE_VCPU_TEST(sync_regs_test, clear_kvm_valid_and_dirty_regs, guest_code)
 	TEST_ASSERT(regs.rbx == 0xBAC0 + 1,
 		    "rbx guest value incorrect 0x%llx.",
 		    regs.rbx);
-}
-
-KVM_ONE_VCPU_TEST(sync_regs_test, clear_kvm_valid_regs_bits, guest_code)
-{
-	struct kvm_run *run = vcpu->run;
-	struct kvm_regs regs;
-
-	/* Run once to get register set */
-	run->kvm_valid_regs = TEST_SYNC_FIELDS;
-	vcpu_run(vcpu);
-	TEST_ASSERT_KVM_EXIT_REASON(vcpu, KVM_EXIT_IO);
 
 	/* Clear kvm_valid_regs bits. Verify s.regs values are not overwritten
 	 * with existing guest values but that guest values are overwritten
@@ -373,7 +334,7 @@ KVM_ONE_VCPU_TEST(sync_regs_test, clear_kvm_valid_regs_bits, guest_code)
 	run->kvm_valid_regs = 0;
 	run->kvm_dirty_regs = TEST_SYNC_FIELDS;
 	run->s.regs.regs.rbx = 0xBBBB;
-	vcpu_run(vcpu);
+	rv = _vcpu_run(vcpu);
 	TEST_ASSERT_KVM_EXIT_REASON(vcpu, KVM_EXIT_IO);
 	TEST_ASSERT(run->s.regs.regs.rbx == 0xBBBB,
 		    "rbx sync regs value incorrect 0x%llx.",
@@ -382,30 +343,12 @@ KVM_ONE_VCPU_TEST(sync_regs_test, clear_kvm_valid_regs_bits, guest_code)
 	TEST_ASSERT(regs.rbx == 0xBBBB + 1,
 		    "rbx guest value incorrect 0x%llx.",
 		    regs.rbx);
-}
 
-KVM_ONE_VCPU_TEST(sync_regs_test, race_cr4, guest_code)
-{
-	race_sync_regs(vcpu, race_sregs_cr4);
-}
+	kvm_vm_free(vm);
 
-KVM_ONE_VCPU_TEST(sync_regs_test, race_exc, guest_code)
-{
-	race_sync_regs(vcpu, race_events_exc);
-}
+	race_sync_regs(race_sregs_cr4);
+	race_sync_regs(race_events_exc);
+	race_sync_regs(race_events_inj_pen);
 
-KVM_ONE_VCPU_TEST(sync_regs_test, race_inj_pen, guest_code)
-{
-	race_sync_regs(vcpu, race_events_inj_pen);
-}
-
-int main(int argc, char *argv[])
-{
-	int cap;
-
-	cap = kvm_check_cap(KVM_CAP_SYNC_REGS);
-	TEST_REQUIRE((cap & TEST_SYNC_FIELDS) == TEST_SYNC_FIELDS);
-	TEST_REQUIRE(!(cap & INVALID_SYNC_FIELD));
-
-	return test_harness_run(argc, argv);
+	return 0;
 }

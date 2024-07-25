@@ -127,7 +127,7 @@ SECTIONS
 	}
 #endif
 
-	RO_DATA(PAGE_SIZE)
+	RO_DATA(8)
 
 	/* unwind info */
 	. = ALIGN(4);

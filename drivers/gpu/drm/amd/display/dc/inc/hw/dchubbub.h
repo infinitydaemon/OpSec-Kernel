@@ -26,12 +26,6 @@
 #ifndef __DAL_DCHUBBUB_H__
 #define __DAL_DCHUBBUB_H__
 
-/**
- * DOC: overview
- *
- * There is only one common DCHUBBUB. It contains the common request and return
- * blocks for the Data Fabric Interface that are not clock/power gated.
- */
 
 enum dcc_control {
 	dcc_control__256_256_xxx,
@@ -160,7 +154,7 @@ struct hubbub_funcs {
 
 	bool (*program_watermarks)(
 			struct hubbub *hubbub,
-			union dcn_watermark_set *watermarks,
+			struct dcn_watermark_set *watermarks,
 			unsigned int refclk_mhz,
 			bool safe_to_lower);
 
@@ -194,13 +188,11 @@ struct hubbub_funcs {
 	 * compressed or detiled buffers.
 	 */
 	void (*program_det_size)(struct hubbub *hubbub, int hubp_inst, unsigned det_buffer_size_in_kbyte);
-	void (*wait_for_det_apply)(struct hubbub *hubbub, int hubp_inst);
 	void (*program_compbuf_size)(struct hubbub *hubbub, unsigned compbuf_size_kb, bool safe_to_increase);
 	void (*init_crb)(struct hubbub *hubbub);
 	void (*force_usr_retraining_allow)(struct hubbub *hubbub, bool allow);
 	void (*set_request_limit)(struct hubbub *hubbub, int memory_channel_count, int words_per_channel);
 	void (*dchubbub_init)(struct hubbub *hubbub);
-	void (*get_mall_en)(struct hubbub *hubbub, unsigned int *mall_in_use);
 };
 
 struct hubbub {

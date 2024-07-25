@@ -299,7 +299,6 @@ static struct regmap_config a1_pll_regmap_cfg = {
 	.reg_bits   = 32,
 	.val_bits   = 32,
 	.reg_stride = 4,
-	.max_register = ANACTRL_HIFIPLL_STS,
 };
 
 static struct meson_clk_hw_data a1_pll_clks = {

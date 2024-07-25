@@ -3,19 +3,18 @@
 SUBDIRS = lib generated samples
 
 all: $(SUBDIRS)
-
-samples: | lib generated
+	./ynl-regen.sh -f -p $(PWD)/../../../
 
 $(SUBDIRS):
 	@if [ -f "$@/Makefile" ] ; then \
 		$(MAKE) -C $@ ; \
 	fi
 
-clean distclean:
+clean hardclean:
 	@for dir in $(SUBDIRS) ; do \
 		if [ -f "$$dir/Makefile" ] ; then \
 			$(MAKE) -C $$dir $@; \
 		fi \
 	done
 
-.PHONY: all clean distclean $(SUBDIRS)
+.PHONY: clean all $(SUBDIRS)

@@ -76,6 +76,10 @@ const struct rpc_program nfs_program = {
 	.pipe_dir_name		= NFS_PIPE_DIRNAME,
 };
 
+struct rpc_stat nfs_rpcstat = {
+	.program		= &nfs_program
+};
+
 static struct nfs_subversion *find_nfs_version(unsigned int version)
 {
 	struct nfs_subversion *nfs;
@@ -241,7 +245,7 @@ void nfs_free_client(struct nfs_client *clp)
 	put_nfs_version(clp->cl_nfs_mod);
 	kfree(clp->cl_hostname);
 	kfree(clp->cl_acceptor);
-	kfree_rcu(clp, rcu);
+	kfree(clp);
 }
 EXPORT_SYMBOL_GPL(nfs_free_client);
 
@@ -1003,14 +1007,6 @@ struct nfs_server *nfs_alloc_server(void)
 }
 EXPORT_SYMBOL_GPL(nfs_alloc_server);
 
-static void delayed_free(struct rcu_head *p)
-{
-	struct nfs_server *server = container_of(p, struct nfs_server, rcu);
-
-	nfs_free_iostats(server->io_stats);
-	kfree(server);
-}
-
 /*
  * Free up a server record
  */
@@ -1036,9 +1032,10 @@ void nfs_free_server(struct nfs_server *server)
 
 	ida_destroy(&server->lockowner_id);
 	ida_destroy(&server->openowner_id);
+	nfs_free_iostats(server->io_stats);
 	put_cred(server->cred);
+	kfree(server);
 	nfs_release_automount_timer();
-	call_rcu(&server->rcu, delayed_free);
 }
 EXPORT_SYMBOL_GPL(nfs_free_server);
 

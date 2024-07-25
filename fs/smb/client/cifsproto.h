@@ -121,7 +121,7 @@ extern struct mid_q_entry *cifs_setup_async_request(struct TCP_Server_Info *,
 extern int cifs_check_receive(struct mid_q_entry *mid,
 			struct TCP_Server_Info *server, bool log_error);
 extern int cifs_wait_mtu_credits(struct TCP_Server_Info *server,
-				 size_t size, size_t *num,
+				 unsigned int size, unsigned int *num,
 				 struct cifs_credits *credits);
 extern int SendReceive2(const unsigned int /* xid */ , struct cifs_ses *,
 			struct kvec *, int /* nvec to send */,
@@ -148,8 +148,6 @@ extern bool is_size_safe_to_change(struct cifsInodeInfo *cifsInode, __u64 eof,
 				   bool from_readdir);
 extern void cifs_update_eof(struct cifsInodeInfo *cifsi, loff_t offset,
 			    unsigned int bytes_written);
-void cifs_write_subrequest_terminated(struct cifs_io_subrequest *wdata, ssize_t result,
-				      bool was_async);
 extern struct cifsFileInfo *find_writable_file(struct cifsInodeInfo *, int);
 extern int cifs_get_writable_file(struct cifsInodeInfo *cifs_inode,
 				  int flags,
@@ -601,11 +599,15 @@ void __cifs_put_smb_ses(struct cifs_ses *ses);
 extern struct cifs_ses *
 cifs_get_smb_ses(struct TCP_Server_Info *server, struct smb3_fs_context *ctx);
 
-int cifs_async_readv(struct cifs_io_subrequest *rdata);
+void cifs_readdata_release(struct kref *refcount);
+int cifs_async_readv(struct cifs_readdata *rdata);
 int cifs_readv_receive(struct TCP_Server_Info *server, struct mid_q_entry *mid);
 
-void cifs_async_writev(struct cifs_io_subrequest *wdata);
+int cifs_async_writev(struct cifs_writedata *wdata,
+		      void (*release)(struct kref *kref));
 void cifs_writev_complete(struct work_struct *work);
+struct cifs_writedata *cifs_writedata_alloc(work_func_t complete);
+void cifs_writedata_release(struct kref *refcount);
 int cifs_query_mf_symlink(unsigned int xid, struct cifs_tcon *tcon,
 			  struct cifs_sb_info *cifs_sb,
 			  const unsigned char *path, char *pbuf,

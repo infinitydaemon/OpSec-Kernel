@@ -349,13 +349,17 @@ static unsigned int sun4u_compute_tid(unsigned long imap, unsigned long cpuid)
 #ifdef CONFIG_SMP
 static int irq_choose_cpu(unsigned int irq, const struct cpumask *affinity)
 {
+	cpumask_t mask;
 	int cpuid;
 
-	if (cpumask_equal(affinity, cpu_online_mask)) {
+	cpumask_copy(&mask, affinity);
+	if (cpumask_equal(&mask, cpu_online_mask)) {
 		cpuid = map_to_cpu(irq);
 	} else {
-		cpuid = cpumask_first_and(affinity, cpu_online_mask);
-		cpuid = cpuid < nr_cpu_ids ? cpuid : map_to_cpu(irq);
+		cpumask_t tmp;
+
+		cpumask_and(&tmp, cpu_online_mask, &mask);
+		cpuid = cpumask_empty(&tmp) ? map_to_cpu(irq) : cpumask_first(&tmp);
 	}
 
 	return cpuid;
@@ -976,7 +980,7 @@ void notrace init_irqwork_curcpu(void)
  *
  * On SMP this gets invoked from the CPU trampoline before
  * the cpu has fully taken over the trap table from OBP,
- * and its kernel stack + %g6 thread register state is
+ * and it's kernel stack + %g6 thread register state is
  * not fully cooked yet.
  *
  * Therefore you cannot make any OBP calls, not even prom_printf,

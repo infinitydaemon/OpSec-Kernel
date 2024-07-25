@@ -17,8 +17,8 @@
 static int
 show_bw_info(unsigned long *bw_imc, unsigned long *bw_resc, size_t span)
 {
+	unsigned long avg_bw_imc = 0, avg_bw_resc = 0;
 	unsigned long sum_bw_imc = 0, sum_bw_resc = 0;
-	long avg_bw_imc = 0, avg_bw_resc = 0;
 	int runs, ret, avg_diff_per;
 	float avg_diff = 0;
 
@@ -59,9 +59,9 @@ static int check_results(size_t span)
 
 	fp = fopen(output, "r");
 	if (!fp) {
-		ksft_perror(output);
+		perror(output);
 
-		return -1;
+		return errno;
 	}
 
 	runs = 0;
@@ -86,9 +86,7 @@ static int check_results(size_t span)
 	return ret;
 }
 
-static int mbm_setup(const struct resctrl_test *test,
-		     const struct user_params *uparams,
-		     struct resctrl_val_param *p)
+static int mbm_setup(struct resctrl_val_param *p)
 {
 	int ret = 0;
 
@@ -97,25 +95,27 @@ static int mbm_setup(const struct resctrl_test *test,
 		return END_OF_TESTS;
 
 	/* Set up shemata with 100% allocation on the first run. */
-	if (p->num_of_runs == 0 && resctrl_resource_exists("MB"))
-		ret = write_schemata(p->ctrlgrp, "100", uparams->cpu, test->resource);
+	if (p->num_of_runs == 0)
+		ret = write_schemata(p->ctrlgrp, "100", p->cpu_no,
+				     p->resctrl_val);
 
 	p->num_of_runs++;
 
 	return ret;
 }
 
-static void mbm_test_cleanup(void)
+void mbm_test_cleanup(void)
 {
 	remove(RESULT_FILE_NAME);
 }
 
-static int mbm_run_test(const struct resctrl_test *test, const struct user_params *uparams)
+int mbm_bw_change(int cpu_no, const char * const *benchmark_cmd)
 {
 	struct resctrl_val_param param = {
 		.resctrl_val	= MBM_STR,
 		.ctrlgrp	= "c1",
 		.mongrp		= "m1",
+		.cpu_no		= cpu_no,
 		.filename	= RESULT_FILE_NAME,
 		.bw_report	= "reads",
 		.setup		= mbm_setup
@@ -124,28 +124,14 @@ static int mbm_run_test(const struct resctrl_test *test, const struct user_param
 
 	remove(RESULT_FILE_NAME);
 
-	ret = resctrl_val(test, uparams, uparams->benchmark_cmd, &param);
+	ret = resctrl_val(benchmark_cmd, &param);
 	if (ret)
-		return ret;
+		goto out;
 
 	ret = check_results(DEFAULT_SPAN);
-	if (ret && (get_vendor() == ARCH_INTEL))
-		ksft_print_msg("Intel MBM may be inaccurate when Sub-NUMA Clustering is enabled. Check BIOS configuration.\n");
+
+out:
+	mbm_test_cleanup();
 
 	return ret;
 }
-
-static bool mbm_feature_check(const struct resctrl_test *test)
-{
-	return resctrl_mon_feature_exists("L3_MON", "mbm_total_bytes") &&
-	       resctrl_mon_feature_exists("L3_MON", "mbm_local_bytes");
-}
-
-struct resctrl_test mbm_test = {
-	.name = "MBM",
-	.resource = "MB",
-	.vendor_specific = ARCH_INTEL,
-	.feature_check = mbm_feature_check,
-	.run_test = mbm_run_test,
-	.cleanup = mbm_test_cleanup,
-};

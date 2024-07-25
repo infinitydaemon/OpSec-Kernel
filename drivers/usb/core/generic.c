@@ -59,25 +59,9 @@ int usb_choose_configuration(struct usb_device *udev)
 	int num_configs;
 	int insufficient_power = 0;
 	struct usb_host_config *c, *best;
-	struct usb_device_driver *udriver;
-
-	/*
-	 * If a USB device (not an interface) doesn't have a driver then the
-	 * kernel has no business trying to select or install a configuration
-	 * for it.
-	 */
-	if (!udev->dev.driver)
-		return -1;
-	udriver = to_usb_device_driver(udev->dev.driver);
 
 	if (usb_device_is_owned(udev))
 		return 0;
-
-	if (udriver->choose_configuration) {
-		i = udriver->choose_configuration(udev);
-		if (i >= 0)
-			return i;
-	}
 
 	best = NULL;
 	c = udev->config;
@@ -206,6 +190,7 @@ int usb_choose_configuration(struct usb_device *udev)
 		dev_warn(&udev->dev,
 			"no configuration chosen from %d choice%s\n",
 			num_configs, plural(num_configs));
+		dev_warn(&udev->dev, "No support over %dmA\n", udev->bus_mA);
 	}
 	return i;
 }

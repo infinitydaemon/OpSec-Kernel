@@ -689,21 +689,6 @@ find_sample(struct snd_soundfont *sf, int sample_id)
 }
 
 
-static int
-validate_sample_info(struct soundfont_sample_info *si)
-{
-	if (si->end < 0 || si->end > si->size)
-		return -EINVAL;
-	if (si->loopstart < 0 || si->loopstart > si->end)
-		return -EINVAL;
-	if (si->loopend < 0 || si->loopend > si->end)
-		return -EINVAL;
-	/* be sure loop points start < end */
-	if (si->loopstart > si->loopend)
-		swap(si->loopstart, si->loopend);
-	return 0;
-}
-
 /*
  * Load sample information, this can include data to be loaded onto
  * the soundcard.  It can also just be a pointer into soundcard ROM.
@@ -745,21 +730,6 @@ load_data(struct snd_sf_list *sflist, const void __user *data, long count)
 		return -EINVAL;
 	}
 
-	if (sample_info.size > 0) {
-		if (sample_info.start < 0)
-			return -EINVAL;
-
-		// Here we "rebase out" the start address, because the
-		// real start is the start of the provided sample data.
-		sample_info.end -= sample_info.start;
-		sample_info.loopstart -= sample_info.start;
-		sample_info.loopend -= sample_info.start;
-		sample_info.start = 0;
-
-		if (validate_sample_info(&sample_info) < 0)
-			return -EINVAL;
-	}
-
 	/* Allocate a new sample structure */
 	sp = sf_sample_new(sflist, sf);
 	if (!sp)
@@ -768,7 +738,7 @@ load_data(struct snd_sf_list *sflist, const void __user *data, long count)
 	sp->v = sample_info;
 	sp->v.sf_id = sf->id;
 	sp->v.dummy = 0;
-	sp->v.truesize = 0;
+	sp->v.truesize = sp->v.size;
 
 	/*
 	 * If there is wave data then load it.
@@ -974,7 +944,8 @@ int snd_sf_vol_table[128] = {
 
 /* load GUS patch */
 static int
-load_guspatch(struct snd_sf_list *sflist, const char __user *data, long count)
+load_guspatch(struct snd_sf_list *sflist, const char __user *data,
+	      long count, int client)
 {
 	struct patch_info patch;
 	struct snd_soundfont *sf;
@@ -1008,11 +979,6 @@ load_guspatch(struct snd_sf_list *sflist, const char __user *data, long count)
 	smp->v.loopstart = patch.loop_start;
 	smp->v.loopend = patch.loop_end;
 	smp->v.size = patch.len;
-
-	if (validate_sample_info(&smp->v) < 0) {
-		sf_sample_delete(sflist, sf, smp);
-		return -EINVAL;
-	}
 
 	/* set up mode flags */
 	smp->v.mode_flags = 0;
@@ -1051,7 +1017,7 @@ load_guspatch(struct snd_sf_list *sflist, const char __user *data, long count)
 	/*
 	 * load wave data
 	 */
-	if (smp->v.size > 0) {
+	if (sflist->callback.sample_new) {
 		rc = sflist->callback.sample_new
 			(sflist->callback.private_data, smp, sflist->memhdr,
 			 data, count);
@@ -1161,11 +1127,11 @@ load_guspatch(struct snd_sf_list *sflist, const char __user *data, long count)
 /* load GUS patch */
 int
 snd_soundfont_load_guspatch(struct snd_sf_list *sflist, const char __user *data,
-			    long count)
+			    long count, int client)
 {
 	int rc;
 	lock_preset(sflist);
-	rc = load_guspatch(sflist, data, count);
+	rc = load_guspatch(sflist, data, count, client);
 	unlock_preset(sflist);
 	return rc;
 }
@@ -1416,8 +1382,9 @@ snd_sf_clear(struct snd_sf_list *sflist)
 		}
 		for (sp = sf->samples; sp; sp = nextsp) {
 			nextsp = sp->next;
-			sflist->callback.sample_free(sflist->callback.private_data,
-						     sp, sflist->memhdr);
+			if (sflist->callback.sample_free)
+				sflist->callback.sample_free(sflist->callback.private_data,
+							     sp, sflist->memhdr);
 			kfree(sp);
 		}
 		kfree(sf);
@@ -1519,8 +1486,9 @@ snd_soundfont_remove_unlocked(struct snd_sf_list *sflist)
 			nextsp = sp->next;
 			sf->samples = nextsp;
 			sflist->mem_used -= sp->v.truesize;
-			sflist->callback.sample_free(sflist->callback.private_data,
-						     sp, sflist->memhdr);
+			if (sflist->callback.sample_free)
+				sflist->callback.sample_free(sflist->callback.private_data,
+							     sp, sflist->memhdr);
 			kfree(sp);
 		}
 	}

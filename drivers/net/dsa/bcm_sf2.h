@@ -107,7 +107,8 @@ struct bcm_sf2_priv {
 
 	/* Master and slave MDIO bus controller */
 	unsigned int			indir_phy_mask;
-	struct mii_bus			*user_mii_bus;
+	struct device_node		*master_mii_dn;
+	struct mii_bus			*slave_mii_bus;
 	struct mii_bus			*master_mii_bus;
 
 	/* Bitmask of ports needing BRCM tags */

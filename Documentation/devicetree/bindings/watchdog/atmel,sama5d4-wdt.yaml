@@ -14,14 +14,10 @@ allOf:
 
 properties:
   compatible:
-    oneOf:
-      - enum:
-          - atmel,sama5d4-wdt
-          - microchip,sam9x60-wdt
-          - microchip,sama7g5-wdt
-      - items:
-          - const: microchip,sam9x7-wdt
-          - const: microchip,sam9x60-wdt
+    enum:
+      - atmel,sama5d4-wdt
+      - microchip,sam9x60-wdt
+      - microchip,sama7g5-wdt
 
   reg:
     maxItems: 1

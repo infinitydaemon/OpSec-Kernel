@@ -115,19 +115,21 @@ static int seq_ump_process_event(struct snd_seq_event *ev, int direct,
 static int seq_ump_client_open(struct seq_ump_client *client, int dir)
 {
 	struct snd_ump_endpoint *ump = client->ump;
-	int err;
+	int err = 0;
 
-	guard(mutex)(&ump->open_mutex);
+	mutex_lock(&ump->open_mutex);
 	if (dir == STR_OUT && !client->opened[dir]) {
 		err = snd_rawmidi_kernel_open(&ump->core, 0,
 					      SNDRV_RAWMIDI_LFLG_OUTPUT |
 					      SNDRV_RAWMIDI_LFLG_APPEND,
 					      &client->out_rfile);
 		if (err < 0)
-			return err;
+			goto unlock;
 	}
 	client->opened[dir]++;
-	return 0;
+ unlock:
+	mutex_unlock(&ump->open_mutex);
+	return err;
 }
 
 /* close the rawmidi */
@@ -135,10 +137,11 @@ static int seq_ump_client_close(struct seq_ump_client *client, int dir)
 {
 	struct snd_ump_endpoint *ump = client->ump;
 
-	guard(mutex)(&ump->open_mutex);
+	mutex_lock(&ump->open_mutex);
 	if (!--client->opened[dir])
 		if (dir == STR_OUT)
 			snd_rawmidi_kernel_release(&client->out_rfile);
+	mutex_unlock(&ump->open_mutex);
 	return 0;
 }
 
@@ -214,12 +217,15 @@ static void fill_port_info(struct snd_seq_port_info *port,
 static int seq_ump_group_init(struct seq_ump_client *client, int group_index)
 {
 	struct seq_ump_group *group = &client->groups[group_index];
-	struct snd_seq_port_info *port __free(kfree) = NULL;
+	struct snd_seq_port_info *port;
 	struct snd_seq_port_callback pcallbacks;
+	int err;
 
 	port = kzalloc(sizeof(*port), GFP_KERNEL);
-	if (!port)
-		return -ENOMEM;
+	if (!port) {
+		err = -ENOMEM;
+		goto error;
+	}
 
 	fill_port_info(port, client, group);
 	port->flags = SNDRV_SEQ_PORT_FLG_GIVEN_PORT;
@@ -232,22 +238,24 @@ static int seq_ump_group_init(struct seq_ump_client *client, int group_index)
 	pcallbacks.unuse = seq_ump_unuse;
 	pcallbacks.event_input = seq_ump_process_event;
 	port->kernel = &pcallbacks;
-	return snd_seq_kernel_client_ctl(client->seq_client,
-					 SNDRV_SEQ_IOCTL_CREATE_PORT,
-					 port);
+	err = snd_seq_kernel_client_ctl(client->seq_client,
+					SNDRV_SEQ_IOCTL_CREATE_PORT,
+					port);
+ error:
+	kfree(port);
+	return err;
 }
 
 /* update the sequencer ports; called from notify_fb_change callback */
 static void update_port_infos(struct seq_ump_client *client)
 {
-	struct snd_seq_port_info *old __free(kfree) = NULL;
-	struct snd_seq_port_info *new __free(kfree) = NULL;
+	struct snd_seq_port_info *old, *new;
 	int i, err;
 
 	old = kzalloc(sizeof(*old), GFP_KERNEL);
 	new = kzalloc(sizeof(*new), GFP_KERNEL);
 	if (!old || !new)
-		return;
+		goto error;
 
 	for (i = 0; i < SNDRV_UMP_MAX_GROUPS; i++) {
 		old->addr.client = client->seq_client;
@@ -256,7 +264,7 @@ static void update_port_infos(struct seq_ump_client *client)
 						SNDRV_SEQ_IOCTL_GET_PORT_INFO,
 						old);
 		if (err < 0)
-			return;
+			goto error;
 		fill_port_info(new, client, &client->groups[i]);
 		if (old->capability == new->capability &&
 		    !strcmp(old->name, new->name))
@@ -265,10 +273,13 @@ static void update_port_infos(struct seq_ump_client *client)
 						SNDRV_SEQ_IOCTL_SET_PORT_INFO,
 						new);
 		if (err < 0)
-			return;
+			goto error;
 		/* notify to system port */
 		snd_seq_system_client_ev_port_change(client->seq_client, i);
 	}
+ error:
+	kfree(new);
+	kfree(old);
 }
 
 /* update dir_bits and active flag for all groups in the client */
@@ -323,7 +334,7 @@ static void update_group_attrs(struct seq_ump_client *client)
 /* create a UMP Endpoint port */
 static int create_ump_endpoint_port(struct seq_ump_client *client)
 {
-	struct snd_seq_port_info *port __free(kfree) = NULL;
+	struct snd_seq_port_info *port;
 	struct snd_seq_port_callback pcallbacks;
 	unsigned int rawmidi_info = client->ump->core.info_flags;
 	int err;
@@ -372,6 +383,7 @@ static int create_ump_endpoint_port(struct seq_ump_client *client)
 	err = snd_seq_kernel_client_ctl(client->seq_client,
 					SNDRV_SEQ_IOCTL_CREATE_PORT,
 					port);
+	kfree(port);
 	return err;
 }
 

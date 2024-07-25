@@ -602,7 +602,7 @@ err:
 	return ret;
 }
 
-static void dmc520_edac_remove(struct platform_device *pdev)
+static int dmc520_edac_remove(struct platform_device *pdev)
 {
 	u32 reg_val, idx, irq_mask_all = 0;
 	struct mem_ctl_info *mci;
@@ -626,6 +626,8 @@ static void dmc520_edac_remove(struct platform_device *pdev)
 
 	edac_mc_del_mc(&pdev->dev);
 	edac_mc_free(mci);
+
+	return 0;
 }
 
 static const struct of_device_id dmc520_edac_driver_id[] = {
@@ -642,7 +644,7 @@ static struct platform_driver dmc520_edac_driver = {
 	},
 
 	.probe = dmc520_edac_probe,
-	.remove_new = dmc520_edac_remove
+	.remove = dmc520_edac_remove
 };
 
 module_platform_driver(dmc520_edac_driver);

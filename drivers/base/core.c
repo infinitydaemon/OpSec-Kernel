@@ -50,7 +50,6 @@ static struct workqueue_struct *device_link_wq;
  * __fwnode_link_add - Create a link between two fwnode_handles.
  * @con: Consumer end of the link.
  * @sup: Supplier end of the link.
- * @flags: Link flags.
  *
  * Create a fwnode link between fwnode handles @con and @sup. The fwnode link
  * represents the detail that the firmware lists @sup fwnode as supplying a
@@ -93,13 +92,12 @@ static int __fwnode_link_add(struct fwnode_handle *con,
 	return 0;
 }
 
-int fwnode_link_add(struct fwnode_handle *con, struct fwnode_handle *sup,
-		    u8 flags)
+int fwnode_link_add(struct fwnode_handle *con, struct fwnode_handle *sup)
 {
 	int ret;
 
 	mutex_lock(&fwnode_link_lock);
-	ret = __fwnode_link_add(con, sup, flags);
+	ret = __fwnode_link_add(con, sup, 0);
 	mutex_unlock(&fwnode_link_lock);
 	return ret;
 }
@@ -127,7 +125,7 @@ static void __fwnode_link_del(struct fwnode_link *link)
  */
 static void __fwnode_link_cycle(struct fwnode_link *link)
 {
-	pr_debug("%pfwf: cycle: depends on %pfwf\n",
+	pr_debug("%pfwf: Relaxing link with %pfwf\n",
 		 link->consumer, link->supplier);
 	link->flags |= FWLINK_FLAG_CYCLE;
 }
@@ -302,7 +300,7 @@ static inline bool device_link_flag_is_sync_state_only(u32 flags)
  * Check if @target depends on @dev or any device dependent on it (its child or
  * its consumer etc).  Return 1 if that is the case or 0 otherwise.
  */
-static int device_is_dependent(struct device *dev, void *target)
+int device_is_dependent(struct device *dev, void *target)
 {
 	struct device_link *link;
 	int ret;
@@ -1027,8 +1025,7 @@ static struct fwnode_handle *fwnode_links_check_suppliers(
 		return NULL;
 
 	list_for_each_entry(link, &fwnode->suppliers, c_hook)
-		if (!(link->flags &
-		      (FWLINK_FLAG_CYCLE | FWLINK_FLAG_IGNORE)))
+		if (!(link->flags & FWLINK_FLAG_CYCLE))
 			return link->supplier;
 
 	return NULL;
@@ -1660,7 +1657,7 @@ static void device_links_purge(struct device *dev)
 #define FW_DEVLINK_FLAGS_RPM		(FW_DEVLINK_FLAGS_ON | \
 					 DL_FLAG_PM_RUNTIME)
 
-static u32 fw_devlink_flags = FW_DEVLINK_FLAGS_RPM;
+static u32 fw_devlink_flags = FW_DEVLINK_FLAGS_ON;
 static int __init fw_devlink_setup(char *arg)
 {
 	if (!arg)
@@ -1888,7 +1885,6 @@ static void fw_devlink_unblock_consumers(struct device *dev)
 	device_links_write_unlock();
 }
 
-#define get_dev_from_fwnode(fwnode)	get_device((fwnode)->dev)
 
 static bool fwnode_init_without_drv(struct fwnode_handle *fwnode)
 {
@@ -1917,63 +1913,6 @@ static bool fwnode_ancestor_init_without_drv(struct fwnode_handle *fwnode)
 	}
 
 	return false;
-}
-
-/**
- * fwnode_is_ancestor_of - Test if @ancestor is ancestor of @child
- * @ancestor: Firmware which is tested for being an ancestor
- * @child: Firmware which is tested for being the child
- *
- * A node is considered an ancestor of itself too.
- *
- * Return: true if @ancestor is an ancestor of @child. Otherwise, returns false.
- */
-static bool fwnode_is_ancestor_of(const struct fwnode_handle *ancestor,
-				  const struct fwnode_handle *child)
-{
-	struct fwnode_handle *parent;
-
-	if (IS_ERR_OR_NULL(ancestor))
-		return false;
-
-	if (child == ancestor)
-		return true;
-
-	fwnode_for_each_parent_node(child, parent) {
-		if (parent == ancestor) {
-			fwnode_handle_put(parent);
-			return true;
-		}
-	}
-	return false;
-}
-
-/**
- * fwnode_get_next_parent_dev - Find device of closest ancestor fwnode
- * @fwnode: firmware node
- *
- * Given a firmware node (@fwnode), this function finds its closest ancestor
- * firmware node that has a corresponding struct device and returns that struct
- * device.
- *
- * The caller is responsible for calling put_device() on the returned device
- * pointer.
- *
- * Return: a pointer to the device of the @fwnode's closest ancestor.
- */
-static struct device *fwnode_get_next_parent_dev(const struct fwnode_handle *fwnode)
-{
-	struct fwnode_handle *parent;
-	struct device *dev;
-
-	fwnode_for_each_parent_node(fwnode, parent) {
-		dev = get_dev_from_fwnode(parent);
-		if (dev) {
-			fwnode_handle_put(parent);
-			return dev;
-		}
-	}
-	return NULL;
 }
 
 /**
@@ -2020,7 +1959,6 @@ static bool __fw_devlink_relax_cycles(struct device *con,
 
 	/* Termination condition. */
 	if (sup_dev == con) {
-		pr_debug("----- cycle: start -----\n");
 		ret = true;
 		goto out;
 	}
@@ -2037,9 +1975,6 @@ static bool __fw_devlink_relax_cycles(struct device *con,
 	}
 
 	list_for_each_entry(link, &sup_handle->suppliers, c_hook) {
-		if (link->flags & FWLINK_FLAG_IGNORE)
-			continue;
-
 		if (__fw_devlink_relax_cycles(con, link->supplier)) {
 			__fwnode_link_cycle(link);
 			ret = true;
@@ -2055,11 +1990,8 @@ static bool __fw_devlink_relax_cycles(struct device *con,
 	else
 		par_dev = fwnode_get_next_parent_dev(sup_handle);
 
-	if (par_dev && __fw_devlink_relax_cycles(con, par_dev->fwnode)) {
-		pr_debug("%pfwf: cycle: child of %pfwf\n", sup_handle,
-			 par_dev->fwnode);
+	if (par_dev && __fw_devlink_relax_cycles(con, par_dev->fwnode))
 		ret = true;
-	}
 
 	if (!sup_dev)
 		goto out;
@@ -2075,8 +2007,6 @@ static bool __fw_devlink_relax_cycles(struct device *con,
 
 		if (__fw_devlink_relax_cycles(con,
 					      dev_link->supplier->fwnode)) {
-			pr_debug("%pfwf: cycle: depends on %pfwf\n", sup_handle,
-				 dev_link->supplier->fwnode);
 			fw_devlink_relax_link(dev_link);
 			dev_link->flags |= DL_FLAG_CYCLE;
 			ret = true;
@@ -2118,9 +2048,6 @@ static int fw_devlink_create_devlink(struct device *con,
 	int ret = 0;
 	u32 flags;
 
-	if (link->flags & FWLINK_FLAG_IGNORE)
-		return 0;
-
 	if (con->fwnode == link->consumer)
 		flags = fw_devlink_get_flags(link->flags);
 	else
@@ -2159,7 +2086,6 @@ static int fw_devlink_create_devlink(struct device *con,
 		if (__fw_devlink_relax_cycles(con, sup_handle)) {
 			__fwnode_link_cycle(link);
 			flags = fw_devlink_get_flags(link->flags);
-			pr_debug("----- cycle: end -----\n");
 			dev_info(con, "Fixed dependency cycle(s) with %pfwf\n",
 				 sup_handle);
 		}
@@ -2346,6 +2272,8 @@ static void fw_devlink_link_device(struct device *dev)
 
 /* Device links support end. */
 
+int (*platform_notify)(struct device *dev) = NULL;
+int (*platform_notify_remove)(struct device *dev) = NULL;
 static struct kobject *dev_kobj;
 
 /* /sys/dev/char */
@@ -2393,10 +2321,16 @@ static void device_platform_notify(struct device *dev)
 	acpi_device_notify(dev);
 
 	software_node_notify(dev);
+
+	if (platform_notify)
+		platform_notify(dev);
 }
 
 static void device_platform_notify_remove(struct device *dev)
 {
+	if (platform_notify_remove)
+		platform_notify_remove(dev);
+
 	software_node_notify_remove(dev);
 
 	acpi_device_notify_remove(dev);
@@ -2537,15 +2471,6 @@ ssize_t device_show_bool(struct device *dev, struct device_attribute *attr,
 	return sysfs_emit(buf, "%d\n", *(bool *)(ea->var));
 }
 EXPORT_SYMBOL_GPL(device_show_bool);
-
-ssize_t device_show_string(struct device *dev,
-			   struct device_attribute *attr, char *buf)
-{
-	struct dev_ext_attribute *ea = to_ext_attr(attr);
-
-	return sysfs_emit(buf, "%s\n", (char *)ea->var);
-}
-EXPORT_SYMBOL_GPL(device_show_string);
 
 /**
  * device_release - free device structure.
@@ -2739,8 +2664,11 @@ static ssize_t uevent_show(struct device *dev, struct device_attribute *attr,
 	if (!env)
 		return -ENOMEM;
 
+	/* Synchronize with really_probe() */
+	device_lock(dev);
 	/* let the kset specific function add its keys */
 	retval = kset->uevent_ops->uevent(&dev->kobj, env);
+	device_unlock(dev);
 	if (retval)
 		goto out;
 
@@ -5045,14 +4973,13 @@ define_dev_printk_level(_dev_info, KERN_INFO);
  *
  * 	return dev_err_probe(dev, err, ...);
  *
- * Using this helper in your probe function is totally fine even if @err is
- * known to never be -EPROBE_DEFER.
+ * Note that it is deemed acceptable to use this function for error
+ * prints during probe even if the @err is known to never be -EPROBE_DEFER.
  * The benefit compared to a normal dev_err() is the standardized format
- * of the error code, it being emitted symbolically (i.e. you get "EAGAIN"
- * instead of "-35") and the fact that the error code is returned which allows
- * more compact error paths.
+ * of the error code and the fact that the error code is returned.
  *
  * Returns @err.
+ *
  */
 int dev_err_probe(const struct device *dev, int err, const char *fmt, ...)
 {

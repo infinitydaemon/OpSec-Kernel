@@ -26,7 +26,6 @@
 #include "rtsx_pcr.h"
 #include "rts5261.h"
 #include "rts5228.h"
-#include "rts5264.h"
 
 static bool msi_en = true;
 module_param(msi_en, bool, S_IRUGO | S_IWUSR);
@@ -55,7 +54,6 @@ static const struct pci_device_id rtsx_pci_ids[] = {
 	{ PCI_DEVICE(0x10EC, 0x5260), PCI_CLASS_OTHERS << 16, 0xFF0000 },
 	{ PCI_DEVICE(0x10EC, 0x5261), PCI_CLASS_OTHERS << 16, 0xFF0000 },
 	{ PCI_DEVICE(0x10EC, 0x5228), PCI_CLASS_OTHERS << 16, 0xFF0000 },
-	{ PCI_DEVICE(0x10EC, 0x5264), PCI_CLASS_OTHERS << 16, 0xFF0000 },
 	{ 0, }
 };
 
@@ -716,9 +714,6 @@ int rtsx_pci_switch_clock(struct rtsx_pcr *pcr, unsigned int card_clock,
 	if (PCI_PID(pcr) == PID_5228)
 		return rts5228_pci_switch_clock(pcr, card_clock,
 				ssc_depth, initial_mode, double_clk, vpclk);
-	if (PCI_PID(pcr) == PID_5264)
-		return rts5264_pci_switch_clock(pcr, card_clock,
-				ssc_depth, initial_mode, double_clk, vpclk);
 
 	if (initial_mode) {
 		/* We use 250k(around) here, in initial stage */
@@ -992,8 +987,7 @@ static irqreturn_t rtsx_pci_isr(int irq, void *dev_id)
 
 	int_reg &= (pcr->bier | 0x7FFFFF);
 
-	if ((int_reg & SD_OC_INT) ||
-			((int_reg & SD_OVP_INT) && (PCI_PID(pcr) == PID_5264)))
+	if (int_reg & SD_OC_INT)
 		rtsx_pci_process_ocp_interrupt(pcr);
 
 	if (int_reg & SD_INT) {
@@ -1002,14 +996,12 @@ static irqreturn_t rtsx_pci_isr(int irq, void *dev_id)
 		} else {
 			pcr->card_removed |= SD_EXIST;
 			pcr->card_inserted &= ~SD_EXIST;
+			if (PCI_PID(pcr) == PID_5261) {
+				rtsx_pci_write_register(pcr, RTS5261_FW_STATUS,
+					RTS5261_EXPRESS_LINK_FAIL_MASK, 0);
+				pcr->extra_caps |= EXTRA_CAPS_SD_EXPRESS;
+			}
 		}
-
-		if ((PCI_PID(pcr) == PID_5261) || (PCI_PID(pcr) == PID_5264)) {
-			rtsx_pci_write_register(pcr, RTS5261_FW_STATUS,
-				RTS5261_EXPRESS_LINK_FAIL_MASK, 0);
-			pcr->extra_caps |= EXTRA_CAPS_SD_EXPRESS;
-		}
-
 		pcr->dma_error_count = 0;
 	}
 
@@ -1167,9 +1159,7 @@ void rtsx_pci_enable_oobs_polling(struct rtsx_pcr *pcr)
 {
 	u16 val;
 
-	if ((PCI_PID(pcr) != PID_525A) &&
-		(PCI_PID(pcr) != PID_5260) &&
-		(PCI_PID(pcr) != PID_5264)) {
+	if ((PCI_PID(pcr) != PID_525A) && (PCI_PID(pcr) != PID_5260)) {
 		rtsx_pci_read_phy_register(pcr, 0x01, &val);
 		val |= 1<<9;
 		rtsx_pci_write_phy_register(pcr, 0x01, val);
@@ -1185,9 +1175,7 @@ void rtsx_pci_disable_oobs_polling(struct rtsx_pcr *pcr)
 {
 	u16 val;
 
-	if ((PCI_PID(pcr) != PID_525A) &&
-		(PCI_PID(pcr) != PID_5260) &&
-		(PCI_PID(pcr) != PID_5264)) {
+	if ((PCI_PID(pcr) != PID_525A) && (PCI_PID(pcr) != PID_5260)) {
 		rtsx_pci_read_phy_register(pcr, 0x01, &val);
 		val &= ~(1<<9);
 		rtsx_pci_write_phy_register(pcr, 0x01, val);
@@ -1238,7 +1226,7 @@ static int rtsx_pci_init_hw(struct rtsx_pcr *pcr)
 	rtsx_pci_enable_bus_int(pcr);
 
 	/* Power on SSC */
-	if ((PCI_PID(pcr) == PID_5261) || (PCI_PID(pcr) == PID_5264)) {
+	if (PCI_PID(pcr) == PID_5261) {
 		/* Gating real mcu clock */
 		err = rtsx_pci_write_register(pcr, RTS5261_FW_CFG1,
 			RTS5261_MCU_CLOCK_GATING, 0);
@@ -1282,11 +1270,6 @@ static int rtsx_pci_init_hw(struct rtsx_pcr *pcr)
 	else if (PCI_PID(pcr) == PID_5228)
 		rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SSC_CTL2, 0xFF,
 			RTS5228_SSC_DEPTH_2M);
-	else if (is_version(pcr, 0x5264, IC_VER_A))
-		rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SSC_CTL1, SSC_RSTB, 0);
-	else if (PCI_PID(pcr) == PID_5264)
-		rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SSC_CTL2, 0xFF,
-			RTS5264_SSC_DEPTH_2M);
 	else
 		rtsx_pci_add_cmd(pcr, WRITE_REG_CMD, SSC_CTL2, 0xFF, 0x12);
 
@@ -1322,7 +1305,6 @@ static int rtsx_pci_init_hw(struct rtsx_pcr *pcr)
 	case PID_5260:
 	case PID_5261:
 	case PID_5228:
-	case PID_5264:
 		rtsx_pci_write_register(pcr, PM_CLK_FORCE_CTL, 1, 1);
 		break;
 	default:
@@ -1421,10 +1403,6 @@ static int rtsx_pci_init_chip(struct rtsx_pcr *pcr)
 
 	case 0x5228:
 		rts5228_init_params(pcr);
-		break;
-
-	case 0x5264:
-		rts5264_init_params(pcr);
 		break;
 	}
 
@@ -1566,7 +1544,7 @@ static int rtsx_pci_probe(struct pci_dev *pcidev,
 	pcr->pci = pcidev;
 	dev_set_drvdata(&pcidev->dev, handle);
 
-	if ((CHK_PCI_PID(pcr, 0x525A)) || (CHK_PCI_PID(pcr, 0x5264)))
+	if (CHK_PCI_PID(pcr, 0x525A))
 		bar = 1;
 	len = pci_resource_len(pcidev, bar);
 	base = pci_resource_start(pcidev, bar);

@@ -20,9 +20,7 @@
 
 #include "rpmsg_internal.h"
 
-const struct class rpmsg_class = {
-	.name = "rpmsg",
-};
+struct class *rpmsg_class;
 EXPORT_SYMBOL(rpmsg_class);
 
 /**
@@ -547,7 +545,7 @@ static int rpmsg_dev_probe(struct device *dev)
 		goto out;
 
 	if (rpdrv->callback) {
-		strscpy(chinfo.name, rpdev->id.name, sizeof(chinfo.name));
+		strncpy(chinfo.name, rpdev->id.name, RPMSG_NAME_SIZE);
 		chinfo.src = rpdev->src;
 		chinfo.dst = RPMSG_ADDR_ANY;
 
@@ -607,7 +605,7 @@ static void rpmsg_dev_remove(struct device *dev)
 		rpmsg_destroy_ept(rpdev->ept);
 }
 
-static const struct bus_type rpmsg_bus = {
+static struct bus_type rpmsg_bus = {
 	.name		= "rpmsg",
 	.match		= rpmsg_dev_match,
 	.dev_groups	= rpmsg_dev_groups,
@@ -717,16 +715,16 @@ static int __init rpmsg_init(void)
 {
 	int ret;
 
-	ret = class_register(&rpmsg_class);
-	if (ret) {
-		pr_err("failed to register rpmsg class\n");
-		return ret;
+	rpmsg_class = class_create("rpmsg");
+	if (IS_ERR(rpmsg_class)) {
+		pr_err("failed to create rpmsg class\n");
+		return PTR_ERR(rpmsg_class);
 	}
 
 	ret = bus_register(&rpmsg_bus);
 	if (ret) {
 		pr_err("failed to register rpmsg bus: %d\n", ret);
-		class_destroy(&rpmsg_class);
+		class_destroy(rpmsg_class);
 	}
 	return ret;
 }
@@ -735,7 +733,7 @@ postcore_initcall(rpmsg_init);
 static void __exit rpmsg_fini(void)
 {
 	bus_unregister(&rpmsg_bus);
-	class_destroy(&rpmsg_class);
+	class_destroy(rpmsg_class);
 }
 module_exit(rpmsg_fini);
 

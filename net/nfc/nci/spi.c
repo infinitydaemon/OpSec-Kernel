@@ -319,5 +319,4 @@ done:
 }
 EXPORT_SYMBOL_GPL(nci_spi_read);
 
-MODULE_DESCRIPTION("NFC Controller Interface (NCI) SPI link layer");
 MODULE_LICENSE("GPL");

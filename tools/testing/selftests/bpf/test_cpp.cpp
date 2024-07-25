@@ -7,7 +7,6 @@
 #include <bpf/bpf.h>
 #include <bpf/btf.h>
 #include "test_core_extern.skel.h"
-#include "struct_ops_module.skel.h"
 
 template <typename T>
 class Skeleton {
@@ -99,7 +98,6 @@ int main(int argc, char *argv[])
 {
 	struct btf_dump_opts opts = { };
 	struct test_core_extern *skel;
-	struct struct_ops_module *skel2;
 	struct btf *btf;
 	int fd;
 
@@ -119,9 +117,6 @@ int main(int argc, char *argv[])
 	/* BPF skeleton */
 	skel = test_core_extern__open_and_load();
 	test_core_extern__destroy(skel);
-
-	skel2 = struct_ops_module__open_and_load();
-	struct_ops_module__destroy(skel2);
 
 	fd = bpf_enable_stats(BPF_STATS_RUN_TIME);
 	if (fd < 0)

@@ -4,12 +4,7 @@
 
 #ifndef __ASSEMBLER__
 
-#include <linux/cpumask.h>
-
 #include <asm-generic/irq.h>
-
-void arch_trigger_cpumask_backtrace(const cpumask_t *mask, int exclude_cpu);
-#define arch_trigger_cpumask_backtrace arch_trigger_cpumask_backtrace
 
 struct pt_regs;
 

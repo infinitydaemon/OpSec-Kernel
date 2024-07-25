@@ -147,10 +147,9 @@ struct dwb_caps {
 		unsigned int support_ogam	:1;
 		unsigned int support_wbscl	:1;
 		unsigned int support_ocsc	:1;
-		unsigned int support_stereo	:1;
-		unsigned int support_4k_120p	:1;
+		unsigned int support_stereo :1;
 	} caps;
-	unsigned int	 reserved2[10];	/* Reserved for future use, MUST BE 0. */
+	unsigned int	 reserved2[9];	/* Reserved for future use, MUST BE 0. */
 };
 
 struct dwbc {
@@ -167,9 +166,8 @@ struct dwbc {
 	bool dwb_is_drc;
 	int wb_src_plane_inst;/*hubp, mpcc, inst*/
 	uint32_t mask_id;
-	int otg_inst;
-	bool mvc_cfg;
-	struct dc_dwb_params params;
+    int otg_inst;
+    bool mvc_cfg;
 };
 
 struct dwbc_funcs {
@@ -190,14 +188,6 @@ struct dwbc_funcs {
 	bool (*is_enabled)(
 		struct dwbc *dwbc);
 
-	void (*set_fc_enable)(
-		struct dwbc *dwbc,
-		enum dwb_frame_capture_enable enable);
-
-	void (*dwb_set_scaler)(
-		struct dwbc *dwbc,
-		struct dc_dwb_params *params);
-
 	void (*set_stereo)(
 		struct dwbc *dwbc,
 		struct dwb_stereo_params *stereo_params);
@@ -211,11 +201,9 @@ struct dwbc_funcs {
 		struct dwbc *dwbc,
 		struct dwb_warmup_params *warmup_params);
 
-	bool (*dwb_get_mcifbuf_line)(
-		struct dwbc *dwbc, unsigned int *buf_idx,
-		unsigned int *cur_line,
-		unsigned int *over_run);
+
 #if defined(CONFIG_DRM_AMD_DC_FP)
+
 	void (*dwb_program_output_csc)(
 		struct dwbc *dwbc,
 		enum dc_color_space color_space,
@@ -224,17 +212,17 @@ struct dwbc_funcs {
 	bool (*dwb_ogam_set_output_transfer_func)(
 		struct dwbc *dwbc,
 		const struct dc_transfer_func *in_transfer_func_dwb_ogam);
-#endif
+
 	//TODO: merge with output_transfer_func?
 	bool (*dwb_ogam_set_input_transfer_func)(
 		struct dwbc *dwbc,
 		const struct dc_transfer_func *in_transfer_func_dwb_ogam);
-
-	void (*get_drr_time_stamp)(
-		struct dwbc *dwbc, uint32_t *time_stamp);
-
+#endif
 	bool (*get_dwb_status)(
 		struct dwbc *dwbc);
+	void (*dwb_set_scaler)(
+		struct dwbc *dwbc,
+		struct dc_dwb_params *params);
 };
 
 #endif

@@ -17,9 +17,7 @@ description:
 properties:
   compatible:
     items:
-      - enum:
-          - qcom,ipq5018-usb-hsphy
-          - qcom,ipq5332-usb-hsphy
+      - const: qcom,ipq5332-usb-hsphy
 
   "#phy-cells":
     const: 0

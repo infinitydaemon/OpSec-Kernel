@@ -565,7 +565,7 @@ err_out:
 }
 
 static const struct i2c_device_id max98926_i2c_id[] = {
-	{ "max98926" },
+	{ "max98926", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, max98926_i2c_id);

@@ -34,8 +34,6 @@ Device Mapper
     switch
     thin-provisioning
     unstriped
-    vdo-design
-    vdo
     verity
     writecache
     zero

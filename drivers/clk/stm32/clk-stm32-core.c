@@ -25,6 +25,7 @@ static int stm32_rcc_clock_init(struct device *dev,
 {
 	const struct stm32_rcc_match_data *data = match->data;
 	struct clk_hw_onecell_data *clk_data = data->hw_clks;
+	struct device_node *np = dev_of_node(dev);
 	struct clk_hw **hws;
 	int n, max_binding;
 
@@ -63,13 +64,12 @@ static int stm32_rcc_clock_init(struct device *dev,
 			hws[cfg_clock->id] = hw;
 	}
 
-	return devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get, clk_data);
+	return of_clk_add_hw_provider(np, of_clk_hw_onecell_get, clk_data);
 }
 
 int stm32_rcc_init(struct device *dev, const struct of_device_id *match_data,
 		   void __iomem *base)
 {
-	const struct stm32_rcc_match_data *rcc_match_data;
 	const struct of_device_id *match;
 	int err;
 
@@ -79,10 +79,8 @@ int stm32_rcc_init(struct device *dev, const struct of_device_id *match_data,
 		return -ENODEV;
 	}
 
-	rcc_match_data = match->data;
-
 	/* RCC Reset Configuration */
-	err = stm32_rcc_reset_init(dev, rcc_match_data->reset_data, base);
+	err = stm32_rcc_reset_init(dev, match, base);
 	if (err) {
 		pr_err("stm32 reset failed to initialize\n");
 		return err;
@@ -637,7 +635,7 @@ struct clk_hw *clk_stm32_mux_register(struct device *dev,
 	mux->lock = lock;
 	mux->clock_data = data->clock_data;
 
-	err = devm_clk_hw_register(dev, hw);
+	err = clk_hw_register(dev, hw);
 	if (err)
 		return ERR_PTR(err);
 
@@ -658,7 +656,7 @@ struct clk_hw *clk_stm32_gate_register(struct device *dev,
 	gate->lock = lock;
 	gate->clock_data = data->clock_data;
 
-	err = devm_clk_hw_register(dev, hw);
+	err = clk_hw_register(dev, hw);
 	if (err)
 		return ERR_PTR(err);
 
@@ -679,7 +677,7 @@ struct clk_hw *clk_stm32_div_register(struct device *dev,
 	div->lock = lock;
 	div->clock_data = data->clock_data;
 
-	err = devm_clk_hw_register(dev, hw);
+	err = clk_hw_register(dev, hw);
 	if (err)
 		return ERR_PTR(err);
 
@@ -700,7 +698,7 @@ struct clk_hw *clk_stm32_composite_register(struct device *dev,
 	composite->lock = lock;
 	composite->clock_data = data->clock_data;
 
-	err = devm_clk_hw_register(dev, hw);
+	err = clk_hw_register(dev, hw);
 	if (err)
 		return ERR_PTR(err);
 

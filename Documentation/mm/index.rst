@@ -26,7 +26,6 @@ see the :doc:`admin guide <../admin-guide/mm/index>`.
    page_cache
    shmfs
    oom
-   allocation-profiling
 
 Legacy Documentation
 ====================

@@ -141,6 +141,8 @@ static const struct ctl_table ax25_param_table[] = {
 		.extra2		= &max_ds_timeout
 	},
 #endif
+
+	{ }	/* that's all, folks! */
 };
 
 int ax25_register_dev_sysctl(ax25_dev *ax25_dev)
@@ -153,7 +155,6 @@ int ax25_register_dev_sysctl(ax25_dev *ax25_dev)
 	if (!table)
 		return -ENOMEM;
 
-	BUILD_BUG_ON(ARRAY_SIZE(ax25_param_table) != AX25_MAX_VALUES);
 	for (k = 0; k < AX25_MAX_VALUES; k++)
 		table[k].data = &ax25_dev->values[k];
 
@@ -170,7 +171,7 @@ int ax25_register_dev_sysctl(ax25_dev *ax25_dev)
 void ax25_unregister_dev_sysctl(ax25_dev *ax25_dev)
 {
 	struct ctl_table_header *header = ax25_dev->sysheader;
-	const struct ctl_table *table;
+	struct ctl_table *table;
 
 	if (header) {
 		ax25_dev->sysheader = NULL;

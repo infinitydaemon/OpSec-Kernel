@@ -187,11 +187,13 @@ static int apbps2_of_probe(struct platform_device *ofdev)
 	return 0;
 }
 
-static void apbps2_of_remove(struct platform_device *of_dev)
+static int apbps2_of_remove(struct platform_device *of_dev)
 {
 	struct apbps2_priv *priv = platform_get_drvdata(of_dev);
 
 	serio_unregister_port(priv->io);
+
+	return 0;
 }
 
 static const struct of_device_id apbps2_of_match[] = {
@@ -208,7 +210,7 @@ static struct platform_driver apbps2_of_driver = {
 		.of_match_table = apbps2_of_match,
 	},
 	.probe = apbps2_of_probe,
-	.remove_new = apbps2_of_remove,
+	.remove = apbps2_of_remove,
 };
 
 module_platform_driver(apbps2_of_driver);

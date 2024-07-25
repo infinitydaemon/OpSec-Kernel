@@ -605,11 +605,15 @@ static int __init nf_conncount_modinit(void)
 	for (i = 0; i < CONNCOUNT_SLOTS; ++i)
 		spin_lock_init(&nf_conncount_locks[i]);
 
-	conncount_conn_cachep = KMEM_CACHE(nf_conncount_tuple, 0);
+	conncount_conn_cachep = kmem_cache_create("nf_conncount_tuple",
+					   sizeof(struct nf_conncount_tuple),
+					   0, 0, NULL);
 	if (!conncount_conn_cachep)
 		return -ENOMEM;
 
-	conncount_rb_cachep = KMEM_CACHE(nf_conncount_rb, 0);
+	conncount_rb_cachep = kmem_cache_create("nf_conncount_rb",
+					   sizeof(struct nf_conncount_rb),
+					   0, 0, NULL);
 	if (!conncount_rb_cachep) {
 		kmem_cache_destroy(conncount_conn_cachep);
 		return -ENOMEM;

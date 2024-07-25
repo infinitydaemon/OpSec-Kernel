@@ -1788,7 +1788,7 @@ static int ag71xx_change_mtu(struct net_device *ndev, int new_mtu)
 {
 	struct ag71xx *ag = netdev_priv(ndev);
 
-	WRITE_ONCE(ndev->mtu, new_mtu);
+	ndev->mtu = new_mtu;
 	ag71xx_wr(ag, AG71XX_REG_MAC_MFL,
 		  ag71xx_max_frame_len(ndev->mtu));
 
@@ -1968,19 +1968,21 @@ err_put_clk:
 	return err;
 }
 
-static void ag71xx_remove(struct platform_device *pdev)
+static int ag71xx_remove(struct platform_device *pdev)
 {
 	struct net_device *ndev = platform_get_drvdata(pdev);
 	struct ag71xx *ag;
 
 	if (!ndev)
-		return;
+		return 0;
 
 	ag = netdev_priv(ndev);
 	unregister_netdev(ndev);
 	ag71xx_mdio_remove(ag);
 	clk_disable_unprepare(ag->clk_eth);
 	platform_set_drvdata(pdev, NULL);
+
+	return 0;
 }
 
 static const u32 ar71xx_fifo_ar7100[] = {
@@ -2067,7 +2069,7 @@ static const struct of_device_id ag71xx_match[] = {
 
 static struct platform_driver ag71xx_driver = {
 	.probe		= ag71xx_probe,
-	.remove_new	= ag71xx_remove,
+	.remove		= ag71xx_remove,
 	.driver = {
 		.name	= "ag71xx",
 		.of_match_table = ag71xx_match,

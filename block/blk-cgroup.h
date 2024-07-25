@@ -19,7 +19,6 @@
 #include <linux/kthread.h>
 #include <linux/blk-mq.h>
 #include <linux/llist.h>
-#include "blk.h"
 
 struct blkcg_gq;
 struct blkg_policy_data;

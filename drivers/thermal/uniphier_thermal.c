@@ -317,12 +317,14 @@ static int uniphier_tm_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void uniphier_tm_remove(struct platform_device *pdev)
+static int uniphier_tm_remove(struct platform_device *pdev)
 {
 	struct uniphier_tm_dev *tdev = platform_get_drvdata(pdev);
 
 	/* disable sensor */
 	uniphier_tm_disable_sensor(tdev);
+
+	return 0;
 }
 
 static const struct uniphier_tm_soc_data uniphier_pxs2_tm_data = {
@@ -360,7 +362,7 @@ MODULE_DEVICE_TABLE(of, uniphier_tm_dt_ids);
 
 static struct platform_driver uniphier_tm_driver = {
 	.probe = uniphier_tm_probe,
-	.remove_new = uniphier_tm_remove,
+	.remove = uniphier_tm_remove,
 	.driver = {
 		.name = "uniphier-thermal",
 		.of_match_table = uniphier_tm_dt_ids,

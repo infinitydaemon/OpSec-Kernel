@@ -16,7 +16,8 @@
 	((uint64_t)(flags) << 12) | \
 	index)
 
-int vgic_v3_setup(struct kvm_vm *vm, unsigned int nr_vcpus, uint32_t nr_irqs);
+int vgic_v3_setup(struct kvm_vm *vm, unsigned int nr_vcpus, uint32_t nr_irqs,
+		uint64_t gicd_base_gpa, uint64_t gicr_base_gpa);
 
 #define VGIC_MAX_RESERVED	1023
 
@@ -31,7 +32,5 @@ void kvm_irq_write_ispendr(int gic_fd, uint32_t intid, struct kvm_vcpu *vcpu);
 void kvm_irq_write_isactiver(int gic_fd, uint32_t intid, struct kvm_vcpu *vcpu);
 
 #define KVM_IRQCHIP_NUM_PINS	(1020 - 32)
-
-int vgic_its_setup(struct kvm_vm *vm);
 
 #endif // SELFTEST_KVM_VGIC_H

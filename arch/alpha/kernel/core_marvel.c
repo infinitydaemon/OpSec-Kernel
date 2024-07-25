@@ -355,7 +355,7 @@ marvel_init_io7(struct io7 *io7)
 	}
 }
 
-static void __init
+void __init
 marvel_io7_present(gct6_node *node)
 {
 	int pe;

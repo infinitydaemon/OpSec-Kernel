@@ -34,11 +34,8 @@ enum nfp_dumpspec_type {
 
 /* generic type plus length */
 struct nfp_dump_tl {
-	/* New members must be added within the struct_group() macro below. */
-	struct_group_tagged(nfp_dump_tl_hdr, hdr,
-		__be32 type;
-		__be32 length;	/* chunk length to follow, aligned to 8 bytes */
-	);
+	__be32 type;
+	__be32 length;	/* chunk length to follow, aligned to 8 bytes */
 	char data[];
 };
 
@@ -58,19 +55,19 @@ struct nfp_dump_common_cpp {
 
 /* CSR dumpables */
 struct nfp_dumpspec_csr {
-	struct nfp_dump_tl_hdr tl;
+	struct nfp_dump_tl tl;
 	struct nfp_dump_common_cpp cpp;
 	__be32 register_width;	/* in bits */
 };
 
 struct nfp_dumpspec_rtsym {
-	struct nfp_dump_tl_hdr tl;
+	struct nfp_dump_tl tl;
 	char rtsym[];
 };
 
 /* header for register dumpable */
 struct nfp_dump_csr {
-	struct nfp_dump_tl_hdr tl;
+	struct nfp_dump_tl tl;
 	struct nfp_dump_common_cpp cpp;
 	__be32 register_width;	/* in bits */
 	__be32 error;		/* error code encountered while reading */
@@ -78,7 +75,7 @@ struct nfp_dump_csr {
 };
 
 struct nfp_dump_rtsym {
-	struct nfp_dump_tl_hdr tl;
+	struct nfp_dump_tl tl;
 	struct nfp_dump_common_cpp cpp;
 	__be32 error;		/* error code encountered while reading */
 	u8 padded_name_length;	/* pad so data starts at 8 byte boundary */
@@ -87,12 +84,12 @@ struct nfp_dump_rtsym {
 };
 
 struct nfp_dump_prolog {
-	struct nfp_dump_tl_hdr tl;
+	struct nfp_dump_tl tl;
 	__be32 dump_level;
 };
 
 struct nfp_dump_error {
-	struct nfp_dump_tl_hdr tl;
+	struct nfp_dump_tl tl;
 	__be32 error;
 	char padding[4];
 	char spec[];
@@ -452,8 +449,6 @@ static int
 nfp_dump_csr_range(struct nfp_pf *pf, struct nfp_dumpspec_csr *spec_csr,
 		   struct nfp_dump_state *dump)
 {
-	struct nfp_dump_tl *spec_csr_tl =
-			container_of(&spec_csr->tl, struct nfp_dump_tl, hdr);
 	struct nfp_dump_csr *dump_header = dump->p;
 	u32 reg_sz, header_size, total_size;
 	u32 cpp_rd_addr, max_rd_addr;
@@ -463,7 +458,7 @@ nfp_dump_csr_range(struct nfp_pf *pf, struct nfp_dumpspec_csr *spec_csr,
 	int err;
 
 	if (!nfp_csr_spec_valid(spec_csr))
-		return nfp_dump_error_tlv(spec_csr_tl, -EINVAL, dump);
+		return nfp_dump_error_tlv(&spec_csr->tl, -EINVAL, dump);
 
 	reg_sz = be32_to_cpu(spec_csr->register_width) / BITS_PER_BYTE;
 	header_size = ALIGN8(sizeof(*dump_header));
@@ -471,7 +466,7 @@ nfp_dump_csr_range(struct nfp_pf *pf, struct nfp_dumpspec_csr *spec_csr,
 		     ALIGN8(be32_to_cpu(spec_csr->cpp.dump_length));
 	dest = dump->p + header_size;
 
-	err = nfp_add_tlv(be32_to_cpu(spec_csr_tl->type), total_size, dump);
+	err = nfp_add_tlv(be32_to_cpu(spec_csr->tl.type), total_size, dump);
 	if (err)
 		return err;
 
@@ -557,8 +552,6 @@ nfp_dump_indirect_csr_range(struct nfp_pf *pf,
 			    struct nfp_dumpspec_csr *spec_csr,
 			    struct nfp_dump_state *dump)
 {
-	struct nfp_dump_tl *spec_csr_tl =
-			container_of(&spec_csr->tl, struct nfp_dump_tl, hdr);
 	struct nfp_dump_csr *dump_header = dump->p;
 	u32 reg_sz, header_size, total_size;
 	u32 cpp_rd_addr, max_rd_addr;
@@ -567,7 +560,7 @@ nfp_dump_indirect_csr_range(struct nfp_pf *pf,
 	int err;
 
 	if (!nfp_csr_spec_valid(spec_csr))
-		return nfp_dump_error_tlv(spec_csr_tl, -EINVAL, dump);
+		return nfp_dump_error_tlv(&spec_csr->tl, -EINVAL, dump);
 
 	reg_sz = be32_to_cpu(spec_csr->register_width) / BITS_PER_BYTE;
 	header_size = ALIGN8(sizeof(*dump_header));
@@ -576,7 +569,7 @@ nfp_dump_indirect_csr_range(struct nfp_pf *pf,
 	total_size = header_size + ALIGN8(reg_data_length);
 	dest = dump->p + header_size;
 
-	err = nfp_add_tlv(be32_to_cpu(spec_csr_tl->type), total_size, dump);
+	err = nfp_add_tlv(be32_to_cpu(spec_csr->tl.type), total_size, dump);
 	if (err)
 		return err;
 
@@ -604,8 +597,6 @@ static int
 nfp_dump_single_rtsym(struct nfp_pf *pf, struct nfp_dumpspec_rtsym *spec,
 		      struct nfp_dump_state *dump)
 {
-	struct nfp_dump_tl *spec_tl =
-			container_of(&spec->tl, struct nfp_dump_tl, hdr);
 	struct nfp_dump_rtsym *dump_header = dump->p;
 	struct nfp_dumpspec_cpp_isl_id cpp_params;
 	struct nfp_rtsym_table *rtbl = pf->rtbl;
@@ -616,14 +607,14 @@ nfp_dump_single_rtsym(struct nfp_pf *pf, struct nfp_dumpspec_rtsym *spec,
 	void *dest;
 	int err;
 
-	tl_len = be32_to_cpu(spec_tl->length);
+	tl_len = be32_to_cpu(spec->tl.length);
 	key_len = strnlen(spec->rtsym, tl_len);
 	if (key_len == tl_len)
-		return nfp_dump_error_tlv(spec_tl, -EINVAL, dump);
+		return nfp_dump_error_tlv(&spec->tl, -EINVAL, dump);
 
 	sym = nfp_rtsym_lookup(rtbl, spec->rtsym);
 	if (!sym)
-		return nfp_dump_error_tlv(spec_tl, -ENOENT, dump);
+		return nfp_dump_error_tlv(&spec->tl, -ENOENT, dump);
 
 	sym_size = nfp_rtsym_size(sym);
 	header_size =
@@ -631,7 +622,7 @@ nfp_dump_single_rtsym(struct nfp_pf *pf, struct nfp_dumpspec_rtsym *spec,
 	total_size = header_size + ALIGN8(sym_size);
 	dest = dump->p + header_size;
 
-	err = nfp_add_tlv(be32_to_cpu(spec_tl->type), total_size, dump);
+	err = nfp_add_tlv(be32_to_cpu(spec->tl.type), total_size, dump);
 	if (err)
 		return err;
 

@@ -1096,6 +1096,9 @@ static void snd_saa7134_free(struct snd_card * card)
 	if (chip->dev->dmasound.priv_data == NULL)
 		return;
 
+	if (chip->irq >= 0)
+		free_irq(chip->irq, &chip->dev->dmasound);
+
 	chip->dev->dmasound.priv_data = NULL;
 
 }
@@ -1144,8 +1147,10 @@ static int alsa_card_saa7134_create(struct saa7134_dev *dev, int devnum)
 	chip->iobase = pci_resource_start(dev->pci, 0);
 
 
-	err = devm_request_irq(&dev->pci->dev, dev->pci->irq, saa7134_alsa_irq,
-			       IRQF_SHARED, dev->name, &dev->dmasound);
+	err = request_irq(dev->pci->irq, saa7134_alsa_irq,
+				IRQF_SHARED, dev->name,
+				(void*) &dev->dmasound);
+
 	if (err < 0) {
 		pr_err("%s: can't get IRQ %d for ALSA\n",
 			dev->name, dev->pci->irq);

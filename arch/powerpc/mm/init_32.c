@@ -39,7 +39,6 @@
 #include <asm/hugetlb.h>
 #include <asm/kup.h>
 #include <asm/kasan.h>
-#include <asm/fixmap.h>
 
 #include <mm/mmu_decl.h>
 

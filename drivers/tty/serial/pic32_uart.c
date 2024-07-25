@@ -8,11 +8,11 @@
  *   Sorin-Andrei Pistirica <andrei.pistirica@microchip.com>
  */
 
-#include <linux/gpio/consumer.h>
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
 #include <linux/of.h>
 #include <linux/of_irq.h>
+#include <linux/of_gpio.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -243,7 +243,7 @@ static void pic32_uart_break_ctl(struct uart_port *port, int ctl)
 	struct pic32_sport *sport = to_pic32_sport(port);
 	unsigned long flags;
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	if (ctl)
 		pic32_uart_writel(sport, PIC32_SET(PIC32_UART_STA),
@@ -252,7 +252,7 @@ static void pic32_uart_break_ctl(struct uart_port *port, int ctl)
 		pic32_uart_writel(sport, PIC32_CLR(PIC32_UART_STA),
 					PIC32_UART_STA_UTXBRK);
 
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 }
 
 /* get port type in string format */
@@ -274,7 +274,7 @@ static void pic32_uart_do_rx(struct uart_port *port)
 	 */
 	max_count = PIC32_UART_RX_FIFO_DEPTH;
 
-	uart_port_lock(port);
+	spin_lock(&port->lock);
 
 	tty = &port->state->port;
 
@@ -331,7 +331,7 @@ static void pic32_uart_do_rx(struct uart_port *port)
 
 	} while (--max_count);
 
-	uart_port_unlock(port);
+	spin_unlock(&port->lock);
 
 	tty_flip_buffer_push(tty);
 }
@@ -342,7 +342,7 @@ static void pic32_uart_do_rx(struct uart_port *port)
 static void pic32_uart_do_tx(struct uart_port *port)
 {
 	struct pic32_sport *sport = to_pic32_sport(port);
-	struct tty_port *tport = &port->state->port;
+	struct circ_buf *xmit = &port->state->xmit;
 	unsigned int max_count = PIC32_UART_TX_FIFO_DEPTH;
 
 	if (port->x_char) {
@@ -357,7 +357,7 @@ static void pic32_uart_do_tx(struct uart_port *port)
 		return;
 	}
 
-	if (kfifo_is_empty(&tport->xmit_fifo))
+	if (uart_circ_empty(xmit))
 		goto txq_empty;
 
 	/* keep stuffing chars into uart tx buffer
@@ -371,20 +371,21 @@ static void pic32_uart_do_tx(struct uart_port *port)
 	 */
 	while (!(PIC32_UART_STA_UTXBF &
 		pic32_uart_readl(sport, PIC32_UART_STA))) {
-		unsigned char c;
+		unsigned int c = xmit->buf[xmit->tail];
 
-		if (!uart_fifo_get(port, &c))
-			break;
 		pic32_uart_writel(sport, PIC32_UART_TX, c);
 
+		uart_xmit_advance(port, 1);
+		if (uart_circ_empty(xmit))
+			break;
 		if (--max_count == 0)
 			break;
 	}
 
-	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 		uart_write_wakeup(port);
 
-	if (kfifo_is_empty(&tport->xmit_fifo))
+	if (uart_circ_empty(xmit))
 		goto txq_empty;
 
 	return;
@@ -409,9 +410,9 @@ static irqreturn_t pic32_uart_tx_interrupt(int irq, void *dev_id)
 	struct uart_port *port = dev_id;
 	unsigned long flags;
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 	pic32_uart_do_tx(port);
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 	return IRQ_HANDLED;
 }
@@ -579,9 +580,9 @@ static void pic32_uart_shutdown(struct uart_port *port)
 	unsigned long flags;
 
 	/* disable uart */
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 	pic32_uart_dsbl_and_mask(port);
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 	clk_disable_unprepare(sport->clk);
 
 	/* free all 3 interrupts for this UART */
@@ -603,7 +604,7 @@ static void pic32_uart_set_termios(struct uart_port *port,
 	unsigned int quot;
 	unsigned long flags;
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	/* disable uart and mask all interrupts while changing speed */
 	pic32_uart_dsbl_and_mask(port);
@@ -671,7 +672,7 @@ static void pic32_uart_set_termios(struct uart_port *port,
 	/* enable uart */
 	pic32_uart_en_and_unmask(port);
 
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 }
 
 /* serial core request to claim uart iomem */
@@ -937,7 +938,7 @@ err:
 	return ret;
 }
 
-static void pic32_uart_remove(struct platform_device *pdev)
+static int pic32_uart_remove(struct platform_device *pdev)
 {
 	struct uart_port *port = platform_get_drvdata(pdev);
 	struct pic32_sport *sport = to_pic32_sport(port);
@@ -946,6 +947,9 @@ static void pic32_uart_remove(struct platform_device *pdev)
 	clk_disable_unprepare(sport->clk);
 	platform_set_drvdata(pdev, NULL);
 	pic32_sports[sport->idx] = NULL;
+
+	/* automatic unroll of sport and gpios */
+	return 0;
 }
 
 static const struct of_device_id pic32_serial_dt_ids[] = {
@@ -956,7 +960,7 @@ MODULE_DEVICE_TABLE(of, pic32_serial_dt_ids);
 
 static struct platform_driver pic32_uart_platform_driver = {
 	.probe		= pic32_uart_probe,
-	.remove_new	= pic32_uart_remove,
+	.remove		= pic32_uart_remove,
 	.driver		= {
 		.name	= PIC32_DEV_NAME,
 		.of_match_table	= of_match_ptr(pic32_serial_dt_ids),

@@ -17,6 +17,17 @@ static netdev_tx_t nlmon_xmit(struct sk_buff *skb, struct net_device *dev)
 	return NETDEV_TX_OK;
 }
 
+static int nlmon_dev_init(struct net_device *dev)
+{
+	dev->lstats = netdev_alloc_pcpu_stats(struct pcpu_lstats);
+	return dev->lstats == NULL ? -ENOMEM : 0;
+}
+
+static void nlmon_dev_uninit(struct net_device *dev)
+{
+	free_percpu(dev->lstats);
+}
+
 struct nlmon {
 	struct netlink_tap nt;
 };
@@ -40,7 +51,15 @@ static int nlmon_close(struct net_device *dev)
 static void
 nlmon_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats)
 {
-	dev_lstats_read(dev, &stats->rx_packets, &stats->rx_bytes);
+	u64 packets, bytes;
+
+	dev_lstats_read(dev, &packets, &bytes);
+
+	stats->rx_packets = packets;
+	stats->tx_packets = 0;
+
+	stats->rx_bytes = bytes;
+	stats->tx_bytes = 0;
 }
 
 static u32 always_on(struct net_device *dev)
@@ -53,6 +72,8 @@ static const struct ethtool_ops nlmon_ethtool_ops = {
 };
 
 static const struct net_device_ops nlmon_ops = {
+	.ndo_init = nlmon_dev_init,
+	.ndo_uninit = nlmon_dev_uninit,
 	.ndo_open = nlmon_open,
 	.ndo_stop = nlmon_close,
 	.ndo_start_xmit = nlmon_xmit,
@@ -71,7 +92,6 @@ static void nlmon_setup(struct net_device *dev)
 	dev->features = NETIF_F_SG | NETIF_F_FRAGLIST |
 			NETIF_F_HIGHDMA | NETIF_F_LLTX;
 	dev->flags = IFF_NOARP;
-	dev->pcpu_stat_type = NETDEV_PCPU_STAT_LSTATS;
 
 	/* That's rather a softlimit here, which, of course,
 	 * can be altered. Not a real MTU, but what is to be

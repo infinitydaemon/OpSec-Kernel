@@ -19,8 +19,7 @@
 #ifndef	__ATOMISP_DRVFS_H__
 #define	__ATOMISP_DRVFS_H__
 
-#include <linux/sysfs.h>
-
-extern const struct attribute_group *dbg_attr_groups[];
+int atomisp_drvfs_init(struct atomisp_device *isp);
+void atomisp_drvfs_exit(void);
 
 #endif /* __ATOMISP_DRVFS_H__ */

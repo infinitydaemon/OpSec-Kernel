@@ -1,1 +1,1 @@
-run_net_forwarding_test.sh
+../../../net/forwarding/tc_actions.sh

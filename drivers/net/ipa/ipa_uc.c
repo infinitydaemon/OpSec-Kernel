@@ -1,19 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0
 
 /* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
- * Copyright (C) 2018-2024 Linaro Ltd.
+ * Copyright (C) 2018-2022 Linaro Ltd.
  */
 
-#include <linux/delay.h>
-#include <linux/io.h>
-#include <linux/pm_runtime.h>
 #include <linux/types.h>
+#include <linux/io.h>
+#include <linux/delay.h>
+#include <linux/pm_runtime.h>
 
 #include "ipa.h"
-#include "ipa_interrupt.h"
-#include "ipa_power.h"
-#include "ipa_reg.h"
 #include "ipa_uc.h"
+#include "ipa_power.h"
 
 /**
  * DOC:  The IPA embedded microcontroller
@@ -129,7 +127,7 @@ static struct ipa_uc_mem_area *ipa_uc_shared(struct ipa *ipa)
 static void ipa_uc_event_handler(struct ipa *ipa)
 {
 	struct ipa_uc_mem_area *shared = ipa_uc_shared(ipa);
-	struct device *dev = ipa->dev;
+	struct device *dev = &ipa->pdev->dev;
 
 	if (shared->event == IPA_UC_EVENT_ERROR)
 		dev_err(dev, "microcontroller error event\n");
@@ -143,7 +141,7 @@ static void ipa_uc_event_handler(struct ipa *ipa)
 static void ipa_uc_response_hdlr(struct ipa *ipa)
 {
 	struct ipa_uc_mem_area *shared = ipa_uc_shared(ipa);
-	struct device *dev = ipa->dev;
+	struct device *dev = &ipa->pdev->dev;
 
 	/* An INIT_COMPLETED response message is sent to the AP by the
 	 * microcontroller when it is operational.  Other than this, the AP
@@ -193,7 +191,7 @@ void ipa_uc_config(struct ipa *ipa)
 /* Inverse of ipa_uc_config() */
 void ipa_uc_deconfig(struct ipa *ipa)
 {
-	struct device *dev = ipa->dev;
+	struct device *dev = &ipa->pdev->dev;
 
 	ipa_interrupt_disable(ipa, IPA_IRQ_UC_1);
 	ipa_interrupt_disable(ipa, IPA_IRQ_UC_0);
@@ -210,8 +208,8 @@ void ipa_uc_deconfig(struct ipa *ipa)
 /* Take a proxy power reference for the microcontroller */
 void ipa_uc_power(struct ipa *ipa)
 {
-	struct device *dev = ipa->dev;
 	static bool already;
+	struct device *dev;
 	int ret;
 
 	if (already)
@@ -219,6 +217,7 @@ void ipa_uc_power(struct ipa *ipa)
 	already = true;		/* Only do this on first boot */
 
 	/* This power reference dropped in ipa_uc_response_hdlr() above */
+	dev = &ipa->pdev->dev;
 	ret = pm_runtime_get_sync(dev);
 	if (ret < 0) {
 		pm_runtime_put_noidle(dev);

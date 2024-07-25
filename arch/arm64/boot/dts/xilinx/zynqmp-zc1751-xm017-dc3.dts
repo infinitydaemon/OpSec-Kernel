@@ -88,12 +88,8 @@
 	status = "okay";
 	phy-handle = <&phy0>;
 	phy-mode = "rgmii-id";
-	mdio: mdio {
-		#address-cells = <1>;
-		#size-cells = <0>;
-		phy0: ethernet-phy@0 { /* VSC8211 */
-			reg = <0>;
-		};
+	phy0: ethernet-phy@0 { /* VSC8211 */
+		reg = <0>;
 	};
 };
 

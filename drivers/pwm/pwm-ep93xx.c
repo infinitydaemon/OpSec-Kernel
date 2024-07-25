@@ -36,23 +36,24 @@
 struct ep93xx_pwm {
 	void __iomem *base;
 	struct clk *clk;
+	struct pwm_chip chip;
 };
 
 static inline struct ep93xx_pwm *to_ep93xx_pwm(struct pwm_chip *chip)
 {
-	return pwmchip_get_drvdata(chip);
+	return container_of(chip, struct ep93xx_pwm, chip);
 }
 
 static int ep93xx_pwm_request(struct pwm_chip *chip, struct pwm_device *pwm)
 {
-	struct platform_device *pdev = to_platform_device(pwmchip_parent(chip));
+	struct platform_device *pdev = to_platform_device(chip->dev);
 
 	return ep93xx_pwm_acquire_gpio(pdev);
 }
 
 static void ep93xx_pwm_free(struct pwm_chip *chip, struct pwm_device *pwm)
 {
-	struct platform_device *pdev = to_platform_device(pwmchip_parent(chip));
+	struct platform_device *pdev = to_platform_device(chip->dev);
 
 	ep93xx_pwm_release_gpio(pdev);
 }
@@ -158,18 +159,17 @@ static const struct pwm_ops ep93xx_pwm_ops = {
 	.request = ep93xx_pwm_request,
 	.free = ep93xx_pwm_free,
 	.apply = ep93xx_pwm_apply,
+	.owner = THIS_MODULE,
 };
 
 static int ep93xx_pwm_probe(struct platform_device *pdev)
 {
-	struct pwm_chip *chip;
 	struct ep93xx_pwm *ep93xx_pwm;
 	int ret;
 
-	chip = devm_pwmchip_alloc(&pdev->dev, 1, sizeof(*ep93xx_pwm));
-	if (IS_ERR(chip))
-		return PTR_ERR(chip);
-	ep93xx_pwm = to_ep93xx_pwm(chip);
+	ep93xx_pwm = devm_kzalloc(&pdev->dev, sizeof(*ep93xx_pwm), GFP_KERNEL);
+	if (!ep93xx_pwm)
+		return -ENOMEM;
 
 	ep93xx_pwm->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(ep93xx_pwm->base))
@@ -179,9 +179,11 @@ static int ep93xx_pwm_probe(struct platform_device *pdev)
 	if (IS_ERR(ep93xx_pwm->clk))
 		return PTR_ERR(ep93xx_pwm->clk);
 
-	chip->ops = &ep93xx_pwm_ops;
+	ep93xx_pwm->chip.dev = &pdev->dev;
+	ep93xx_pwm->chip.ops = &ep93xx_pwm_ops;
+	ep93xx_pwm->chip.npwm = 1;
 
-	ret = devm_pwmchip_add(&pdev->dev, chip);
+	ret = devm_pwmchip_add(&pdev->dev, &ep93xx_pwm->chip);
 	if (ret < 0)
 		return ret;
 

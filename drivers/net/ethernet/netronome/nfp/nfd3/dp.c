@@ -74,7 +74,7 @@ static void
 nfp_nfd3_tx_tso(struct nfp_net_r_vector *r_vec, struct nfp_nfd3_tx_buf *txbuf,
 		struct nfp_nfd3_tx_desc *txd, struct sk_buff *skb, u32 md_bytes)
 {
-	u32 l3_offset, l4_offset, hdrlen, l4_hdrlen;
+	u32 l3_offset, l4_offset, hdrlen;
 	u16 mss;
 
 	if (!skb_is_gso(skb))
@@ -83,16 +83,13 @@ nfp_nfd3_tx_tso(struct nfp_net_r_vector *r_vec, struct nfp_nfd3_tx_buf *txbuf,
 	if (!skb->encapsulation) {
 		l3_offset = skb_network_offset(skb);
 		l4_offset = skb_transport_offset(skb);
-		l4_hdrlen = (skb_shinfo(skb)->gso_type & SKB_GSO_UDP_L4) ?
-			    sizeof(struct udphdr) : tcp_hdrlen(skb);
+		hdrlen = skb_tcp_all_headers(skb);
 	} else {
 		l3_offset = skb_inner_network_offset(skb);
 		l4_offset = skb_inner_transport_offset(skb);
-		l4_hdrlen = (skb_shinfo(skb)->gso_type & SKB_GSO_UDP_L4) ?
-			    sizeof(struct udphdr) : inner_tcp_hdrlen(skb);
+		hdrlen = skb_inner_tcp_all_headers(skb);
 	}
 
-	hdrlen = l4_offset + l4_hdrlen;
 	txbuf->pkt_cnt = skb_shinfo(skb)->gso_segs;
 	txbuf->real_len += hdrlen * (txbuf->pkt_cnt - 1);
 
@@ -1073,7 +1070,7 @@ static int nfp_nfd3_rx(struct nfp_net_rx_ring *rx_ring, int budget)
 				nfp_repr_inc_rx_stats(netdev, pkt_len);
 		}
 
-		skb = napi_build_skb(rxbuf->frag, true_bufsz);
+		skb = build_skb(rxbuf->frag, true_bufsz);
 		if (unlikely(!skb)) {
 			nfp_nfd3_rx_drop(dp, r_vec, rx_ring, rxbuf, NULL);
 			continue;

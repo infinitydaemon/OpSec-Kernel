@@ -161,13 +161,15 @@ static int atmel_trng_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void atmel_trng_remove(struct platform_device *pdev)
+static int atmel_trng_remove(struct platform_device *pdev)
 {
 	struct atmel_trng *trng = platform_get_drvdata(pdev);
 
 	atmel_trng_cleanup(trng);
 	pm_runtime_disable(&pdev->dev);
 	pm_runtime_set_suspended(&pdev->dev);
+
+	return 0;
 }
 
 static int __maybe_unused atmel_trng_runtime_suspend(struct device *dev)
@@ -216,7 +218,7 @@ MODULE_DEVICE_TABLE(of, atmel_trng_dt_ids);
 
 static struct platform_driver atmel_trng_driver = {
 	.probe		= atmel_trng_probe,
-	.remove_new	= atmel_trng_remove,
+	.remove		= atmel_trng_remove,
 	.driver		= {
 		.name	= "atmel-trng",
 		.pm	= pm_ptr(&atmel_trng_pm_ops),

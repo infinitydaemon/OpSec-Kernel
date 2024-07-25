@@ -331,7 +331,7 @@ static u64 notrace hisi_161010101_read_cntvct_el0(void)
 	return __hisi_161010101_read_reg(cntvct_el0);
 }
 
-static const struct ate_acpi_oem_info hisi_161010101_oem_info[] = {
+static struct ate_acpi_oem_info hisi_161010101_oem_info[] = {
 	/*
 	 * Note that trailing spaces are required to properly match
 	 * the OEM table information.
@@ -918,7 +918,7 @@ static void arch_timer_evtstrm_enable(unsigned int divider)
 
 #ifdef CONFIG_ARM64
 	/* ECV is likely to require a large divider. Use the EVNTIS flag. */
-	if (cpus_have_final_cap(ARM64_HAS_ECV) && divider > 15) {
+	if (cpus_have_const_cap(ARM64_HAS_ECV) && divider > 15) {
 		cntkctl |= ARCH_TIMER_EVT_INTERVAL_SCALE;
 		divider -= 8;
 	}
@@ -955,30 +955,6 @@ static void arch_timer_configure_evtstream(void)
 	/* enable event stream */
 	arch_timer_evtstrm_enable(max(0, lsb));
 }
-
-static int arch_timer_evtstrm_starting_cpu(unsigned int cpu)
-{
-	arch_timer_configure_evtstream();
-	return 0;
-}
-
-static int arch_timer_evtstrm_dying_cpu(unsigned int cpu)
-{
-	cpumask_clear_cpu(smp_processor_id(), &evtstrm_available);
-	return 0;
-}
-
-static int __init arch_timer_evtstrm_register(void)
-{
-	if (!arch_timer_evt || !evtstrm_enable)
-		return 0;
-
-	return cpuhp_setup_state(CPUHP_AP_ARM_ARCH_TIMER_EVTSTRM_STARTING,
-				 "clockevents/arm/arch_timer_evtstrm:starting",
-				 arch_timer_evtstrm_starting_cpu,
-				 arch_timer_evtstrm_dying_cpu);
-}
-core_initcall(arch_timer_evtstrm_register);
 
 static void arch_counter_set_user_access(void)
 {
@@ -1041,6 +1017,8 @@ static int arch_timer_starting_cpu(unsigned int cpu)
 	}
 
 	arch_counter_set_user_access();
+	if (evtstrm_enable)
+		arch_timer_configure_evtstream();
 
 	return 0;
 }
@@ -1187,6 +1165,8 @@ static int arch_timer_dying_cpu(unsigned int cpu)
 {
 	struct clock_event_device *clk = this_cpu_ptr(arch_timer_evt);
 
+	cpumask_clear_cpu(smp_processor_id(), &evtstrm_available);
+
 	arch_timer_stop(clk);
 	return 0;
 }
@@ -1300,7 +1280,6 @@ out_unreg_notify:
 
 out_free:
 	free_percpu(arch_timer_evt);
-	arch_timer_evt = NULL;
 out:
 	return err;
 }
@@ -1807,7 +1786,7 @@ TIMER_ACPI_DECLARE(arch_timer, ACPI_SIG_GTDT, arch_timer_acpi_init);
 #endif
 
 int kvm_arch_ptp_get_crosststamp(u64 *cycle, struct timespec64 *ts,
-				 enum clocksource_ids *cs_id)
+				 struct clocksource **cs)
 {
 	struct arm_smccc_res hvc_res;
 	u32 ptp_counter;
@@ -1831,8 +1810,8 @@ int kvm_arch_ptp_get_crosststamp(u64 *cycle, struct timespec64 *ts,
 	*ts = ktime_to_timespec64(ktime);
 	if (cycle)
 		*cycle = (u64)hvc_res.a2 << 32 | hvc_res.a3;
-	if (cs_id)
-		*cs_id = CSID_ARM_ARCH_COUNTER;
+	if (cs)
+		*cs = &clocksource_counter;
 
 	return 0;
 }

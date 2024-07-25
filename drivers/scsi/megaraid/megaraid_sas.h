@@ -23,8 +23,8 @@
 /*
  * MegaRAID SAS Driver meta data
  */
-#define MEGASAS_VERSION				"07.727.03.00-rc1"
-#define MEGASAS_RELDATE				"Oct 03, 2023"
+#define MEGASAS_VERSION				"07.725.01.00-rc1"
+#define MEGASAS_RELDATE				"Mar 2, 2023"
 
 #define MEGASAS_MSIX_NAME_LEN			32
 
@@ -2701,7 +2701,7 @@ int megasas_get_ctrl_info(struct megasas_instance *instance);
 int
 megasas_sync_pd_seq_num(struct megasas_instance *instance, bool pend);
 void megasas_set_dynamic_target_properties(struct scsi_device *sdev,
-		struct queue_limits *lim, bool is_target_prop);
+					   bool is_target_prop);
 int megasas_get_target_prop(struct megasas_instance *instance,
 			    struct scsi_device *sdev);
 void megasas_get_snapdump_properties(struct megasas_instance *instance);

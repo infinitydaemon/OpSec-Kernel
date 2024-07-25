@@ -19,7 +19,6 @@ properties:
   compatible:
     items:
       - enum:
-          - nxp,cbdtu02043
           - onnn,fsusb43l10x
           - pericom,pi3usb102
       - const: gpio-sbu-mux
@@ -33,8 +32,13 @@ properties:
   vcc-supply:
     description: power supply
 
-  mode-switch: true
-  orientation-switch: true
+  mode-switch:
+    description: Flag the port as possible handle of altmode switching
+    type: boolean
+
+  orientation-switch:
+    description: Flag the port as possible handler of orientation switching
+    type: boolean
 
   port:
     $ref: /schemas/graph.yaml#/properties/port
@@ -46,11 +50,9 @@ required:
   - compatible
   - enable-gpios
   - select-gpios
+  - mode-switch
   - orientation-switch
   - port
-
-allOf:
-  - $ref: usb-switch.yaml#
 
 additionalProperties: false
 

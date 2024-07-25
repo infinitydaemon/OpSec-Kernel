@@ -937,6 +937,7 @@ static int cx231xx_load_firmware(struct cx231xx *dev)
 	u32 *p_current_fw, *p_fw;
 	u32 *p_fw_data;
 	int frame = 0;
+	u16 _buffer_size = 4096;
 	u8 *p_buffer;
 
 	p_current_fw = vmalloc(1884180 * 4);
@@ -946,7 +947,7 @@ static int cx231xx_load_firmware(struct cx231xx *dev)
 		return -ENOMEM;
 	}
 
-	p_buffer = vmalloc(EP5_BUF_SIZE);
+	p_buffer = vmalloc(4096);
 	if (p_buffer == NULL) {
 		dprintk(2, "FAIL!!!\n");
 		vfree(p_current_fw);
@@ -1029,9 +1030,9 @@ static int cx231xx_load_firmware(struct cx231xx *dev)
 
 	/*download the firmware by ep5-out*/
 
-	for (frame = 0; frame < (int)(CX231xx_FIRM_IMAGE_SIZE*20/EP5_BUF_SIZE);
+	for (frame = 0; frame < (int)(CX231xx_FIRM_IMAGE_SIZE*20/_buffer_size);
 	     frame++) {
-		for (i = 0; i < EP5_BUF_SIZE; i++) {
+		for (i = 0; i < _buffer_size; i++) {
 			*(p_buffer + i) = (u8)(*(p_fw + (frame * 128 * 8 + (i / 4))) & 0x000000FF);
 			i++;
 			*(p_buffer + i) = (u8)((*(p_fw + (frame * 128 * 8 + (i / 4))) & 0x0000FF00) >> 8);
@@ -1040,7 +1041,7 @@ static int cx231xx_load_firmware(struct cx231xx *dev)
 			i++;
 			*(p_buffer + i) = (u8)((*(p_fw + (frame * 128 * 8 + (i / 4))) & 0xFF000000) >> 24);
 		}
-		cx231xx_ep5_bulkout(dev, p_buffer, EP5_BUF_SIZE);
+		cx231xx_ep5_bulkout(dev, p_buffer, _buffer_size);
 	}
 
 	p_current_fw = p_fw;
@@ -1218,13 +1219,12 @@ static int queue_setup(struct vb2_queue *vq,
 {
 	struct cx231xx *dev = vb2_get_drv_priv(vq);
 	unsigned int size = mpeglinesize * mpeglines;
-	unsigned int q_num_bufs = vb2_get_num_buffers(vq);
 
 	dev->ts1.ts_packet_size  = mpeglinesize;
 	dev->ts1.ts_packet_count = mpeglines;
 
-	if (q_num_bufs + *nbuffers < CX231XX_MIN_BUF)
-		*nbuffers = CX231XX_MIN_BUF - q_num_bufs;
+	if (vq->num_buffers + *nbuffers < CX231XX_MIN_BUF)
+		*nbuffers = CX231XX_MIN_BUF - vq->num_buffers;
 
 	if (*nplanes)
 		return sizes[0] < size ? -EINVAL : 0;
@@ -1759,7 +1759,7 @@ int cx231xx_417_register(struct cx231xx *dev)
 	dev->mpeg_ctrl_handler.ops = &cx231xx_ops;
 	if (dev->sd_cx25840)
 		v4l2_ctrl_add_handler(&dev->mpeg_ctrl_handler.hdl,
-				dev->sd_cx25840->ctrl_handler, NULL, true);
+				dev->sd_cx25840->ctrl_handler, NULL, false);
 	if (dev->mpeg_ctrl_handler.hdl.error) {
 		err = dev->mpeg_ctrl_handler.hdl.error;
 		dprintk(3, "%s: can't add cx25840 controls\n", dev->name);
@@ -1782,7 +1782,7 @@ int cx231xx_417_register(struct cx231xx *dev)
 	q->ops = &cx231xx_video_qops;
 	q->mem_ops = &vb2_vmalloc_memops;
 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
-	q->min_queued_buffers = 1;
+	q->min_buffers_needed = 1;
 	q->lock = &dev->lock;
 	err = vb2_queue_init(q);
 	if (err)

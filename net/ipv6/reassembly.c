@@ -272,9 +272,9 @@ static int ip6_frag_reasm(struct frag_queue *fq, struct sk_buff *skb,
 	if (!reasm_data)
 		goto out_oom;
 
-	payload_len = -skb_network_offset(skb) -
+	payload_len = ((skb->data - skb_network_header(skb)) -
 		       sizeof(struct ipv6hdr) + fq->q.len -
-		       sizeof(struct frag_hdr);
+		       sizeof(struct frag_hdr));
 	if (payload_len > IPV6_MAXPLEN)
 		goto out_oversize;
 
@@ -436,6 +436,7 @@ static struct ctl_table ip6_frags_ns_ctl_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_jiffies,
 	},
+	{ }
 };
 
 /* secret interval has been deprecated */
@@ -448,6 +449,7 @@ static struct ctl_table ip6_frags_ctl_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_jiffies,
 	},
+	{ }
 };
 
 static int __net_init ip6_frags_ns_sysctl_register(struct net *net)
@@ -485,7 +487,7 @@ err_alloc:
 
 static void __net_exit ip6_frags_ns_sysctl_unregister(struct net *net)
 {
-	const struct ctl_table *table;
+	struct ctl_table *table;
 
 	table = net->ipv6.sysctl.frags_hdr->ctl_table_arg;
 	unregister_net_sysctl_table(net->ipv6.sysctl.frags_hdr);

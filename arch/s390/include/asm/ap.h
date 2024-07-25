@@ -88,7 +88,7 @@ static inline bool ap_instructions_available(void)
 }
 
 /* TAPQ register GR2 response struct */
-struct ap_tapq_hwinfo {
+struct ap_tapq_gr2 {
 	union {
 		unsigned long value;
 		struct {
@@ -96,13 +96,11 @@ struct ap_tapq_hwinfo {
 			unsigned int apinfo : 32; /* ap type, ... */
 		};
 		struct {
-			unsigned int apsc  :  1; /* APSC */
-			unsigned int mex4k :  1; /* AP4KM */
-			unsigned int crt4k :  1; /* AP4KC */
-			unsigned int cca   :  1; /* D */
-			unsigned int accel :  1; /* A */
-			unsigned int ep11  :  1; /* X */
-			unsigned int apxa  :  1; /* APXA */
+			unsigned int s	   :  1; /* APSC */
+			unsigned int m	   :  1; /* AP4KM */
+			unsigned int c	   :  1; /* AP4KC */
+			unsigned int mode  :  3;
+			unsigned int n	   :  1; /* APXA */
 			unsigned int	   :  1;
 			unsigned int class :  8;
 			unsigned int bs	   :  2; /* SE bind/assoc */
@@ -128,12 +126,11 @@ struct ap_tapq_hwinfo {
 /**
  * ap_tapq(): Test adjunct processor queue.
  * @qid: The AP queue number
- * @info: Pointer to tapq hwinfo struct
+ * @info: Pointer to queue descriptor
  *
  * Returns AP queue status structure.
  */
-static inline struct ap_queue_status ap_tapq(ap_qid_t qid,
-					     struct ap_tapq_hwinfo *info)
+static inline struct ap_queue_status ap_tapq(ap_qid_t qid, struct ap_tapq_gr2 *info)
 {
 	union ap_queue_status_reg reg1;
 	unsigned long reg2;
@@ -161,7 +158,7 @@ static inline struct ap_queue_status ap_tapq(ap_qid_t qid,
  * Returns AP queue status structure.
  */
 static inline struct ap_queue_status ap_test_queue(ap_qid_t qid, int tbit,
-						   struct ap_tapq_hwinfo *info)
+						   struct ap_tapq_gr2 *info)
 {
 	if (tbit)
 		qid |= 1UL << 23; /* set T bit*/
@@ -223,18 +220,13 @@ static inline struct ap_queue_status ap_zapq(ap_qid_t qid, int fbit)
  * config info as returned by the ap_qci() function.
  */
 struct ap_config_info {
-	union {
-		unsigned int flags;
-		struct {
-			unsigned int apsc	 : 1;	/* S bit */
-			unsigned int apxa	 : 1;	/* N bit */
-			unsigned int qact	 : 1;	/* C bit */
-			unsigned int rc8a	 : 1;	/* R bit */
-			unsigned int		 : 4;
-			unsigned int apsb	 : 1;	/* B bit */
-			unsigned int		 : 23;
-		};
-	};
+	unsigned int apsc	 : 1;	/* S bit */
+	unsigned int apxa	 : 1;	/* N bit */
+	unsigned int qact	 : 1;	/* C bit */
+	unsigned int rc8a	 : 1;	/* R bit */
+	unsigned int		 : 4;
+	unsigned int apsb	 : 1;	/* B bit */
+	unsigned int		 : 23;
 	unsigned char na;		/* max # of APs - 1 */
 	unsigned char nd;		/* max # of Domains - 1 */
 	unsigned char _reserved0[10];
@@ -548,5 +540,16 @@ static inline struct ap_queue_status ap_dqap(ap_qid_t qid,
 
 	return reg1.status;
 }
+
+/*
+ * Interface to tell the AP bus code that a configuration
+ * change has happened. The bus code should at least do
+ * an ap bus resource rescan.
+ */
+#if IS_ENABLED(CONFIG_ZCRYPT)
+void ap_bus_cfg_chg(void);
+#else
+static inline void ap_bus_cfg_chg(void){}
+#endif
 
 #endif /* _ASM_S390_AP_H_ */

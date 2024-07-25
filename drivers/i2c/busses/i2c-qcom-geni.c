@@ -586,8 +586,7 @@ static int geni_i2c_gpi_xfer(struct geni_i2c_dev *gi2c, struct i2c_msg msgs[], i
 {
 	struct dma_slave_config config = {};
 	struct gpi_i2c_config peripheral = {};
-	int i, ret = 0;
-	unsigned long time_left;
+	int i, ret = 0, timeout;
 	dma_addr_t tx_addr, rx_addr;
 	void *tx_buf = NULL, *rx_buf = NULL;
 	const struct geni_i2c_clk_fld *itr = gi2c->clk_fld;
@@ -630,9 +629,12 @@ static int geni_i2c_gpi_xfer(struct geni_i2c_dev *gi2c, struct i2c_msg msgs[], i
 
 		dma_async_issue_pending(gi2c->tx_c);
 
-		time_left = wait_for_completion_timeout(&gi2c->done, XFER_TIMEOUT);
-		if (!time_left)
+		timeout = wait_for_completion_timeout(&gi2c->done, XFER_TIMEOUT);
+		if (!timeout) {
+			dev_err(gi2c->se.dev, "I2C timeout gpi flags:%d addr:0x%x\n",
+				gi2c->cur->flags, gi2c->cur->addr);
 			gi2c->err = -ETIMEDOUT;
+		}
 
 		if (gi2c->err) {
 			ret = gi2c->err;
@@ -720,7 +722,6 @@ static const struct i2c_algorithm geni_i2c_algo = {
 #ifdef CONFIG_ACPI
 static const struct acpi_device_id geni_i2c_acpi_match[] = {
 	{ "QCOM0220"},
-	{ "QCOM0411" },
 	{ },
 };
 MODULE_DEVICE_TABLE(acpi, geni_i2c_acpi_match);

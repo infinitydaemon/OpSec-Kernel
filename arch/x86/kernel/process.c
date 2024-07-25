@@ -477,7 +477,7 @@ void native_tss_update_io_bitmap(void)
 	/*
 	 * Make sure that the TSS limit is covering the IO bitmap. It might have
 	 * been cut down by a VMEXIT to 0x67 which would cause a subsequent I/O
-	 * access from user space to trigger a #GP because the bitmap is outside
+	 * access from user space to trigger a #GP because tbe bitmap is outside
 	 * the TSS limit.
 	 */
 	refresh_tss_limit();
@@ -846,6 +846,31 @@ void __noreturn stop_this_cpu(void *dummy)
 }
 
 /*
+ * AMD Erratum 400 aware idle routine. We handle it the same way as C3 power
+ * states (local apic timer and TSC stop).
+ *
+ * XXX this function is completely buggered vs RCU and tracing.
+ */
+static void amd_e400_idle(void)
+{
+	/*
+	 * We cannot use static_cpu_has_bug() here because X86_BUG_AMD_APIC_C1E
+	 * gets set after static_cpu_has() places have been converted via
+	 * alternatives.
+	 */
+	if (!boot_cpu_has_bug(X86_BUG_AMD_APIC_C1E)) {
+		default_idle();
+		return;
+	}
+
+	tick_broadcast_enter();
+
+	default_idle();
+
+	tick_broadcast_exit();
+}
+
+/*
  * Prefer MWAIT over HALT if MWAIT is supported, MWAIT_CPUID leaf
  * exists and whenever MONITOR/MWAIT extensions are present there is at
  * least one C1 substate.
@@ -853,22 +878,21 @@ void __noreturn stop_this_cpu(void *dummy)
  * Do not prefer MWAIT if MONITOR instruction has a bug or idle=nomwait
  * is passed to kernel commandline parameter.
  */
-static __init bool prefer_mwait_c1_over_halt(void)
+static int prefer_mwait_c1_over_halt(const struct cpuinfo_x86 *c)
 {
-	const struct cpuinfo_x86 *c = &boot_cpu_data;
 	u32 eax, ebx, ecx, edx;
 
-	/* If override is enforced on the command line, fall back to HALT. */
-	if (boot_option_idle_override != IDLE_NO_OVERRIDE)
-		return false;
+	/* User has disallowed the use of MWAIT. Fallback to HALT */
+	if (boot_option_idle_override == IDLE_NOMWAIT)
+		return 0;
 
 	/* MWAIT is not supported on this platform. Fallback to HALT */
 	if (!cpu_has(c, X86_FEATURE_MWAIT))
-		return false;
+		return 0;
 
-	/* Monitor has a bug or APIC stops in C1E. Fallback to HALT */
-	if (boot_cpu_has_bug(X86_BUG_MONITOR) || boot_cpu_has_bug(X86_BUG_AMD_APIC_C1E))
-		return false;
+	/* Monitor has a bug. Fallback to HALT */
+	if (boot_cpu_has_bug(X86_BUG_MONITOR))
+		return 0;
 
 	cpuid(CPUID_MWAIT_LEAF, &eax, &ebx, &ecx, &edx);
 
@@ -877,13 +901,13 @@ static __init bool prefer_mwait_c1_over_halt(void)
 	 * with EAX=0, ECX=0.
 	 */
 	if (!(ecx & CPUID5_ECX_EXTENSIONS_SUPPORTED))
-		return true;
+		return 1;
 
 	/*
 	 * If MWAIT extensions are available, there should be at least one
 	 * MWAIT C1 substate present.
 	 */
-	return !!(edx & MWAIT_C1_SUBSTATE_MASK);
+	return (edx & MWAIT_C1_SUBSTATE_MASK);
 }
 
 /*
@@ -909,27 +933,26 @@ static __cpuidle void mwait_idle(void)
 	__current_clr_polling();
 }
 
-void __init select_idle_routine(void)
+void select_idle_routine(const struct cpuinfo_x86 *c)
 {
-	if (boot_option_idle_override == IDLE_POLL) {
-		if (IS_ENABLED(CONFIG_SMP) && __max_threads_per_core > 1)
-			pr_warn_once("WARNING: polling idle and HT enabled, performance may degrade\n");
-		return;
-	}
-
-	/* Required to guard against xen_set_default_idle() */
-	if (x86_idle_set())
+#ifdef CONFIG_SMP
+	if (boot_option_idle_override == IDLE_POLL && smp_num_siblings > 1)
+		pr_warn_once("WARNING: polling idle and HT enabled, performance may degrade\n");
+#endif
+	if (x86_idle_set() || boot_option_idle_override == IDLE_POLL)
 		return;
 
-	if (prefer_mwait_c1_over_halt()) {
+	if (boot_cpu_has_bug(X86_BUG_AMD_E400)) {
+		pr_info("using AMD E400 aware idle routine\n");
+		static_call_update(x86_idle, amd_e400_idle);
+	} else if (prefer_mwait_c1_over_halt(c)) {
 		pr_info("using mwait in idle threads\n");
 		static_call_update(x86_idle, mwait_idle);
 	} else if (cpu_feature_enabled(X86_FEATURE_TDX_GUEST)) {
 		pr_info("using TDX aware idle routine\n");
 		static_call_update(x86_idle, tdx_safe_halt);
-	} else {
+	} else
 		static_call_update(x86_idle, default_idle);
-	}
 }
 
 void amd_e400_c1e_apic_setup(void)
@@ -962,10 +985,7 @@ void __init arch_post_acpi_subsys_init(void)
 
 	if (!boot_cpu_has(X86_FEATURE_NONSTOP_TSC))
 		mark_tsc_unstable("TSC halt in AMD C1E");
-
-	if (IS_ENABLED(CONFIG_GENERIC_CLOCKEVENTS_BROADCAST_IDLE))
-		static_branch_enable(&arch_needs_tick_broadcast);
-	pr_info("System has AMD C1E erratum E400. Workaround enabled.\n");
+	pr_info("System has AMD C1E enabled\n");
 }
 
 static int __init idle_setup(char *str)
@@ -978,14 +998,24 @@ static int __init idle_setup(char *str)
 		boot_option_idle_override = IDLE_POLL;
 		cpu_idle_poll_ctrl(true);
 	} else if (!strcmp(str, "halt")) {
-		/* 'idle=halt' HALT for idle. C-states are disabled. */
+		/*
+		 * When the boot option of idle=halt is added, halt is
+		 * forced to be used for CPU idle. In such case CPU C2/C3
+		 * won't be used again.
+		 * To continue to load the CPU idle driver, don't touch
+		 * the boot_option_idle_override.
+		 */
+		static_call_update(x86_idle, default_idle);
 		boot_option_idle_override = IDLE_HALT;
 	} else if (!strcmp(str, "nomwait")) {
-		/* 'idle=nomwait' disables MWAIT for idle */
+		/*
+		 * If the boot option of "idle=nomwait" is added,
+		 * it means that mwait will be disabled for CPU C1/C2/C3
+		 * states.
+		 */
 		boot_option_idle_override = IDLE_NOMWAIT;
-	} else {
-		return -EINVAL;
-	}
+	} else
+		return -1;
 
 	return 0;
 }
@@ -1000,10 +1030,7 @@ unsigned long arch_align_stack(unsigned long sp)
 
 unsigned long arch_randomize_brk(struct mm_struct *mm)
 {
-	if (mmap_is_ia32())
-		return randomize_page(mm->brk, SZ_32M);
-
-	return randomize_page(mm->brk, SZ_1G);
+	return randomize_page(mm->brk, 0x02000000);
 }
 
 /*

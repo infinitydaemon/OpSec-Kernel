@@ -202,7 +202,7 @@ int dcss_ctxld_init(struct dcss_dev *dcss, unsigned long ctxld_base)
 	struct dcss_ctxld *ctxld;
 	int ret;
 
-	ctxld = devm_kzalloc(dcss->dev, sizeof(*ctxld), GFP_KERNEL);
+	ctxld = kzalloc(sizeof(*ctxld), GFP_KERNEL);
 	if (!ctxld)
 		return -ENOMEM;
 
@@ -217,7 +217,7 @@ int dcss_ctxld_init(struct dcss_dev *dcss, unsigned long ctxld_base)
 		goto err;
 	}
 
-	ctxld->ctxld_reg = devm_ioremap(dcss->dev, ctxld_base, SZ_4K);
+	ctxld->ctxld_reg = ioremap(ctxld_base, SZ_4K);
 	if (!ctxld->ctxld_reg) {
 		dev_err(dcss->dev, "ctxld: unable to remap ctxld base\n");
 		ret = -ENOMEM;
@@ -226,14 +226,18 @@ int dcss_ctxld_init(struct dcss_dev *dcss, unsigned long ctxld_base)
 
 	ret = dcss_ctxld_irq_config(ctxld, to_platform_device(dcss->dev));
 	if (ret)
-		goto err;
+		goto err_irq;
 
 	dcss_ctxld_hw_cfg(ctxld);
 
 	return 0;
 
+err_irq:
+	iounmap(ctxld->ctxld_reg);
+
 err:
 	dcss_ctxld_free_ctx(ctxld);
+	kfree(ctxld);
 
 	return ret;
 }
@@ -242,7 +246,11 @@ void dcss_ctxld_exit(struct dcss_ctxld *ctxld)
 {
 	free_irq(ctxld->irq, ctxld);
 
+	if (ctxld->ctxld_reg)
+		iounmap(ctxld->ctxld_reg);
+
 	dcss_ctxld_free_ctx(ctxld);
+	kfree(ctxld);
 }
 
 static int dcss_ctxld_enable_locked(struct dcss_ctxld *ctxld)

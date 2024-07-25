@@ -25,21 +25,22 @@ struct soc_info {
 };
 
 struct jz4740_pwm_chip {
+	struct pwm_chip chip;
 	struct regmap *map;
-	struct clk *clk[];
 };
 
 static inline struct jz4740_pwm_chip *to_jz4740(struct pwm_chip *chip)
 {
-	return pwmchip_get_drvdata(chip);
+	return container_of(chip, struct jz4740_pwm_chip, chip);
 }
 
-static bool jz4740_pwm_can_use_chn(struct pwm_chip *chip, unsigned int channel)
+static bool jz4740_pwm_can_use_chn(struct jz4740_pwm_chip *jz,
+				   unsigned int channel)
 {
 	/* Enable all TCU channels for PWM use by default except channels 0/1 */
-	u32 pwm_channels_mask = GENMASK(chip->npwm - 1, 2);
+	u32 pwm_channels_mask = GENMASK(jz->chip.npwm - 1, 2);
 
-	device_property_read_u32(pwmchip_parent(chip)->parent,
+	device_property_read_u32(jz->chip.dev->parent,
 				 "ingenic,pwm-channels-mask",
 				 &pwm_channels_mask);
 
@@ -53,15 +54,14 @@ static int jz4740_pwm_request(struct pwm_chip *chip, struct pwm_device *pwm)
 	char name[16];
 	int err;
 
-	if (!jz4740_pwm_can_use_chn(chip, pwm->hwpwm))
+	if (!jz4740_pwm_can_use_chn(jz, pwm->hwpwm))
 		return -EBUSY;
 
 	snprintf(name, sizeof(name), "timer%u", pwm->hwpwm);
 
-	clk = clk_get(pwmchip_parent(chip), name);
+	clk = clk_get(chip->dev, name);
 	if (IS_ERR(clk)) {
-		dev_err(pwmchip_parent(chip),
-			"error %pe: Failed to get clock\n", clk);
+		dev_err(chip->dev, "error %pe: Failed to get clock\n", clk);
 		return PTR_ERR(clk);
 	}
 
@@ -71,15 +71,14 @@ static int jz4740_pwm_request(struct pwm_chip *chip, struct pwm_device *pwm)
 		return err;
 	}
 
-	jz->clk[pwm->hwpwm] = clk;
+	pwm_set_chip_data(pwm, clk);
 
 	return 0;
 }
 
 static void jz4740_pwm_free(struct pwm_chip *chip, struct pwm_device *pwm)
 {
-	struct jz4740_pwm_chip *jz = to_jz4740(chip);
-	struct clk *clk = jz->clk[pwm->hwpwm];
+	struct clk *clk = pwm_get_chip_data(pwm);
 
 	clk_disable_unprepare(clk);
 	clk_put(clk);
@@ -123,9 +122,9 @@ static void jz4740_pwm_disable(struct pwm_chip *chip, struct pwm_device *pwm)
 static int jz4740_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 			    const struct pwm_state *state)
 {
-	struct jz4740_pwm_chip *jz = to_jz4740(chip);
+	struct jz4740_pwm_chip *jz4740 = to_jz4740(pwm->chip);
 	unsigned long long tmp = 0xffffull * NSEC_PER_SEC;
-	struct clk *clk = jz->clk[pwm->hwpwm];
+	struct clk *clk = pwm_get_chip_data(pwm);
 	unsigned long period, duty;
 	long rate;
 	int err;
@@ -149,7 +148,7 @@ static int jz4740_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 	 */
 	rate = clk_round_rate(clk, tmp);
 	if (rate < 0) {
-		dev_err(pwmchip_parent(chip), "Unable to round rate: %ld\n", rate);
+		dev_err(chip->dev, "Unable to round rate: %ld", rate);
 		return rate;
 	}
 
@@ -170,21 +169,21 @@ static int jz4740_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 
 	err = clk_set_rate(clk, rate);
 	if (err) {
-		dev_err(pwmchip_parent(chip), "Unable to set rate: %d\n", err);
+		dev_err(chip->dev, "Unable to set rate: %d", err);
 		return err;
 	}
 
 	/* Reset counter to 0 */
-	regmap_write(jz->map, TCU_REG_TCNTc(pwm->hwpwm), 0);
+	regmap_write(jz4740->map, TCU_REG_TCNTc(pwm->hwpwm), 0);
 
 	/* Set duty */
-	regmap_write(jz->map, TCU_REG_TDHRc(pwm->hwpwm), duty);
+	regmap_write(jz4740->map, TCU_REG_TDHRc(pwm->hwpwm), duty);
 
 	/* Set period */
-	regmap_write(jz->map, TCU_REG_TDFRc(pwm->hwpwm), period);
+	regmap_write(jz4740->map, TCU_REG_TDFRc(pwm->hwpwm), period);
 
 	/* Set abrupt shutdown */
-	regmap_set_bits(jz->map, TCU_REG_TCSRc(pwm->hwpwm),
+	regmap_set_bits(jz4740->map, TCU_REG_TCSRc(pwm->hwpwm),
 			TCU_TCSR_PWM_SD);
 
 	/*
@@ -201,10 +200,10 @@ static int jz4740_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 	 * state instead of its inactive state.
 	 */
 	if ((state->polarity == PWM_POLARITY_NORMAL) ^ state->enabled)
-		regmap_update_bits(jz->map, TCU_REG_TCSRc(pwm->hwpwm),
+		regmap_update_bits(jz4740->map, TCU_REG_TCSRc(pwm->hwpwm),
 				   TCU_TCSR_PWM_INITL_HIGH, 0);
 	else
-		regmap_update_bits(jz->map, TCU_REG_TCSRc(pwm->hwpwm),
+		regmap_update_bits(jz4740->map, TCU_REG_TCSRc(pwm->hwpwm),
 				   TCU_TCSR_PWM_INITL_HIGH,
 				   TCU_TCSR_PWM_INITL_HIGH);
 
@@ -218,33 +217,34 @@ static const struct pwm_ops jz4740_pwm_ops = {
 	.request = jz4740_pwm_request,
 	.free = jz4740_pwm_free,
 	.apply = jz4740_pwm_apply,
+	.owner = THIS_MODULE,
 };
 
 static int jz4740_pwm_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct pwm_chip *chip;
-	struct jz4740_pwm_chip *jz;
+	struct jz4740_pwm_chip *jz4740;
 	const struct soc_info *info;
 
 	info = device_get_match_data(dev);
 	if (!info)
 		return -EINVAL;
 
-	chip = devm_pwmchip_alloc(dev, info->num_pwms, struct_size(jz, clk, info->num_pwms));
-	if (IS_ERR(chip))
-		return PTR_ERR(chip);
-	jz = to_jz4740(chip);
+	jz4740 = devm_kzalloc(dev, sizeof(*jz4740), GFP_KERNEL);
+	if (!jz4740)
+		return -ENOMEM;
 
-	jz->map = device_node_to_regmap(dev->parent->of_node);
-	if (IS_ERR(jz->map)) {
-		dev_err(dev, "regmap not found: %ld\n", PTR_ERR(jz->map));
-		return PTR_ERR(jz->map);
+	jz4740->map = device_node_to_regmap(dev->parent->of_node);
+	if (IS_ERR(jz4740->map)) {
+		dev_err(dev, "regmap not found: %ld\n", PTR_ERR(jz4740->map));
+		return PTR_ERR(jz4740->map);
 	}
 
-	chip->ops = &jz4740_pwm_ops;
+	jz4740->chip.dev = dev;
+	jz4740->chip.ops = &jz4740_pwm_ops;
+	jz4740->chip.npwm = info->num_pwms;
 
-	return devm_pwmchip_add(dev, chip);
+	return devm_pwmchip_add(dev, &jz4740->chip);
 }
 
 static const struct soc_info jz4740_soc_info = {

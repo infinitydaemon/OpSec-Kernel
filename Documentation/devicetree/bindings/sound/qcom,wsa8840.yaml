@@ -28,10 +28,6 @@ properties:
     description: Powerdown/Shutdown line to use (pin SD_N)
     maxItems: 1
 
-  reset-gpios:
-    description: Powerdown/Shutdown line to use (pin SD_N)
-    maxItems: 1
-
   '#sound-dai-cells':
     const: 0
 
@@ -41,15 +37,10 @@ properties:
 required:
   - compatible
   - reg
+  - powerdown-gpios
   - '#sound-dai-cells'
   - vdd-1p8-supply
   - vdd-io-supply
-
-oneOf:
-  - required:
-      - powerdown-gpios
-  - required:
-      - reset-gpios
 
 unevaluatedProperties: false
 
@@ -57,7 +48,7 @@ examples:
   - |
     #include <dt-bindings/gpio/gpio.h>
 
-    soundwire {
+    soundwire-controller {
         #address-cells = <2>;
         #size-cells = <0>;
 

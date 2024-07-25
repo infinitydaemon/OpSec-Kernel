@@ -159,10 +159,9 @@ int filename__read_build_id(const char *filename, struct build_id *bid)
 				goto out_free;
 
 			ret = read_build_id(buf, buf_size, bid, need_swap);
-			if (ret == 0) {
+			if (ret == 0)
 				ret = bid->size;
-				break;
-			}
+			break;
 		}
 	} else {
 		Elf64_Ehdr ehdr;
@@ -211,10 +210,9 @@ int filename__read_build_id(const char *filename, struct build_id *bid)
 				goto out_free;
 
 			ret = read_build_id(buf, buf_size, bid, need_swap);
-			if (ret == 0) {
+			if (ret == 0)
 				ret = bid->size;
-				break;
-			}
+			break;
 		}
 	}
 out_free:
@@ -273,7 +271,7 @@ int symsrc__init(struct symsrc *ss, struct dso *dso, const char *name,
 out_close:
 	close(fd);
 out_errno:
-	RC_CHK_ACCESS(dso)->load_errno = errno;
+	dso->load_errno = errno;
 	return -1;
 }
 
@@ -348,7 +346,7 @@ int dso__load_sym(struct dso *dso, struct map *map __maybe_unused,
 
 	ret = fd__is_64_bit(ss->fd);
 	if (ret >= 0)
-		RC_CHK_ACCESS(dso)->is_64_bit = ret;
+		dso->is_64_bit = ret;
 
 	if (filename__read_build_id(ss->name, &bid) > 0)
 		dso__set_build_id(dso, &bid);

@@ -19,9 +19,7 @@ properties:
       - items:
           - const: atmel,at91sam9260-rtt
       - items:
-          - enum:
-              - microchip,sam9x60-rtt
-              - microchip,sam9x7-rtt
+          - const: microchip,sam9x60-rtt
           - const: atmel,at91sam9260-rtt
       - items:
           - const: microchip,sama7g5-rtt

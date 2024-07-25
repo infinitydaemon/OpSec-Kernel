@@ -8,7 +8,6 @@
  */
 
 .text
-#include <linux/export.h>
 #include <linux/threads.h>
 #include <linux/init.h>
 #include <linux/linkage.h>
@@ -26,6 +25,7 @@
 #include <asm/nops.h>
 #include <asm/nospec-branch.h>
 #include <asm/bootparam.h>
+#include <asm/export.h>
 #include <asm/pgtable_32.h>
 
 /* Physical address */
@@ -43,6 +43,9 @@
 #define X86_CPUID	new_cpu_data+CPUINFO_cpuid_level
 #define X86_CAPABILITY	new_cpu_data+CPUINFO_x86_capability
 #define X86_VENDOR_ID	new_cpu_data+CPUINFO_x86_vendor_id
+
+
+#define SIZEOF_PTREGS 17*4
 
 /*
  * Worst-case size of the kernel mapping we need to make:
@@ -115,6 +118,11 @@ SYM_CODE_START(startup_32)
 	movl %eax, pa(olpc_ofw_pgd)
 #endif
 
+#ifdef CONFIG_MICROCODE
+	/* Early load ucode on BSP. */
+	call load_ucode_bsp
+#endif
+
 	/* Create early pagetables. */
 	call  mk_early_pgtbl_32
 
@@ -148,6 +156,11 @@ SYM_FUNC_START(startup_32_smp)
 	movl pa(initial_stack),%ecx
 	movl %eax,%ss
 	leal -__PAGE_OFFSET(%ecx),%esp
+
+#ifdef CONFIG_MICROCODE
+	/* Early load ucode on AP. */
+	call load_ucode_ap
+#endif
 
 .Ldefault_entry:
 	movl $(CR0_STATE & ~X86_CR0_PG),%eax
@@ -411,7 +424,7 @@ __REFDATA
 	.align 4
 SYM_DATA(initial_code,		.long i386_start_kernel)
 
-#ifdef CONFIG_MITIGATION_PAGE_TABLE_ISOLATION
+#ifdef CONFIG_PAGE_TABLE_ISOLATION
 #define	PGD_ALIGN	(2 * PAGE_SIZE)
 #define PTI_USER_PGD_FILL	1024
 #else
@@ -471,7 +484,7 @@ SYM_DATA_START(initial_page_table)
 # endif
 	.align PAGE_SIZE		/* needs to be page-sized too */
 
-#ifdef CONFIG_MITIGATION_PAGE_TABLE_ISOLATION
+#ifdef CONFIG_PAGE_TABLE_ISOLATION
 	/*
 	 * PTI needs another page so sync_initial_pagetable() works correctly
 	 * and does not scribble over the data which is placed behind the
@@ -485,13 +498,19 @@ SYM_DATA_END(initial_page_table)
 
 .data
 .balign 4
-SYM_DATA(initial_stack, .long __top_init_kernel_stack)
+/*
+ * The SIZEOF_PTREGS gap is a convention which helps the in-kernel unwinder
+ * reliably detect the end of the stack.
+ */
+SYM_DATA(initial_stack,
+		.long init_thread_union + THREAD_SIZE -
+		SIZEOF_PTREGS - TOP_OF_KERNEL_STACK_PADDING)
 
 __INITRODATA
 int_msg:
 	.asciz "Unknown interrupt or fault at: %p %p %p\n"
 
-#include "../xen/xen-head.S"
+#include "../../x86/xen/xen-head.S"
 
 /*
  * The IDT and GDT 'descriptors' are a strange 48-bit object

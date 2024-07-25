@@ -19,10 +19,9 @@
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/mii.h>
-#include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_mdio.h>
-#include <linux/property.h>
+#include <linux/of_device.h>
 
 #include <asm/io.h>
 #if IS_ENABLED(CONFIG_UCC_GETH)
@@ -408,6 +407,8 @@ static void set_tbipa(const u32 tbipa_val, struct platform_device *pdev,
 
 static int fsl_pq_mdio_probe(struct platform_device *pdev)
 {
+	const struct of_device_id *id =
+		of_match_device(fsl_pq_mdio_match, &pdev->dev);
 	const struct fsl_pq_mdio_data *data;
 	struct device_node *np = pdev->dev.of_node;
 	struct resource res;
@@ -416,11 +417,14 @@ static int fsl_pq_mdio_probe(struct platform_device *pdev)
 	struct mii_bus *new_bus;
 	int err;
 
-	data = device_get_match_data(&pdev->dev);
-	if (!data) {
+	if (!id) {
 		dev_err(&pdev->dev, "Failed to match device\n");
 		return -ENODEV;
 	}
+
+	data = id->data;
+
+	dev_dbg(&pdev->dev, "found %s compatible node\n", id->compatible);
 
 	new_bus = mdiobus_alloc_size(sizeof(*priv));
 	if (!new_bus)
@@ -531,5 +535,4 @@ static struct platform_driver fsl_pq_mdio_driver = {
 
 module_platform_driver(fsl_pq_mdio_driver);
 
-MODULE_DESCRIPTION("Freescale PQ MDIO helpers");
 MODULE_LICENSE("GPL");

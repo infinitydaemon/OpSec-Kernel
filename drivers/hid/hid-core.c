@@ -2748,7 +2748,7 @@ static int hid_uevent(const struct device *dev, struct kobj_uevent_env *env)
 	return 0;
 }
 
-const struct bus_type hid_bus_type = {
+struct bus_type hid_bus_type = {
 	.name		= "hid",
 	.dev_groups	= hid_dev_groups,
 	.drv_groups	= hid_drv_groups,
@@ -2973,8 +2973,6 @@ EXPORT_SYMBOL_GPL(hid_check_keys_pressed);
 static struct hid_bpf_ops hid_ops = {
 	.hid_get_report = hid_get_report,
 	.hid_hw_raw_request = hid_hw_raw_request,
-	.hid_hw_output_report = hid_hw_output_report,
-	.hid_input_report = hid_input_report,
 	.owner = THIS_MODULE,
 	.bus_type = &hid_bus_type,
 };

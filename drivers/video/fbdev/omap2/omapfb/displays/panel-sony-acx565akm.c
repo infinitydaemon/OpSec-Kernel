@@ -340,7 +340,11 @@ static int acx565akm_bl_update_status(struct backlight_device *dev)
 
 	dev_dbg(&ddata->spi->dev, "%s\n", __func__);
 
-	level = backlight_get_brightness(dev);
+	if (dev->props.fb_blank == FB_BLANK_UNBLANK &&
+			dev->props.power == FB_BLANK_UNBLANK)
+		level = dev->props.brightness;
+	else
+		level = 0;
 
 	if (ddata->has_bc)
 		acx565akm_set_brightness(ddata, level);
@@ -359,7 +363,8 @@ static int acx565akm_bl_get_intensity(struct backlight_device *dev)
 	if (!ddata->has_bc)
 		return -ENODEV;
 
-	if (!backlight_is_blank(dev)) {
+	if (dev->props.fb_blank == FB_BLANK_UNBLANK &&
+			dev->props.power == FB_BLANK_UNBLANK) {
 		if (ddata->has_bc)
 			return acx565akm_get_actual_brightness(ddata);
 		else
@@ -753,6 +758,7 @@ static int acx565akm_probe(struct spi_device *spi)
 	}
 
 	memset(&props, 0, sizeof(props));
+	props.fb_blank = FB_BLANK_UNBLANK;
 	props.power = FB_BLANK_UNBLANK;
 	props.type = BACKLIGHT_RAW;
 

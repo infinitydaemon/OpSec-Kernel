@@ -235,10 +235,8 @@ queue_init(void *priv, struct vb2_queue *src_vq, struct vb2_queue *dst_vq)
 	 * The Kernel needs access to the JPEG destination buffer for the
 	 * JPEG encoder to fill in the JPEG headers.
 	 */
-	if (!ctx->is_encoder) {
+	if (!ctx->is_encoder)
 		dst_vq->dma_attrs |= DMA_ATTR_NO_KERNEL_MAPPING;
-		dst_vq->max_num_buffers = MAX_POSTPROC_BUFFERS;
-	}
 
 	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
 	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
@@ -736,10 +734,6 @@ static const struct of_device_id of_hantro_match[] = {
 #ifdef CONFIG_VIDEO_HANTRO_SUNXI
 	{ .compatible = "allwinner,sun50i-h6-vpu-g2", .data = &sunxi_vpu_variant, },
 #endif
-#ifdef CONFIG_VIDEO_HANTRO_STM32MP25
-	{ .compatible = "st,stm32mp25-vdec", .data = &stm32mp25_vdec_variant, },
-	{ .compatible = "st,stm32mp25-venc", .data = &stm32mp25_venc_variant, },
-#endif
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, of_hantro_match);
@@ -905,9 +899,8 @@ static int hantro_add_func(struct hantro_dev *vpu, unsigned int funcid)
 	vfd->vfl_dir = VFL_DIR_M2M;
 	vfd->device_caps = V4L2_CAP_STREAMING | V4L2_CAP_VIDEO_M2M_MPLANE;
 	vfd->ioctl_ops = &hantro_ioctl_ops;
-	strscpy(vfd->name, match->compatible, sizeof(vfd->name));
-	strlcat(vfd->name, funcid == MEDIA_ENT_F_PROC_VIDEO_ENCODER ?
-		"-enc" : "-dec", sizeof(vfd->name));
+	snprintf(vfd->name, sizeof(vfd->name), "%s-%s", match->compatible,
+		 funcid == MEDIA_ENT_F_PROC_VIDEO_ENCODER ? "enc" : "dec");
 
 	if (funcid == MEDIA_ENT_F_PROC_VIDEO_ENCODER) {
 		vpu->encoder = func;

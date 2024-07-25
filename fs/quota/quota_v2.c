@@ -96,11 +96,9 @@ static int v2_read_file_info(struct super_block *sb, int type)
 	struct qtree_mem_dqinfo *qinfo;
 	ssize_t size;
 	unsigned int version;
-	unsigned int memalloc;
 	int ret;
 
 	down_read(&dqopt->dqio_sem);
-	memalloc = memalloc_nofs_save();
 	ret = v2_read_header(sb, type, &dqhead);
 	if (ret < 0)
 		goto out;
@@ -121,7 +119,7 @@ static int v2_read_file_info(struct super_block *sb, int type)
 			ret = -EIO;
 		goto out;
 	}
-	info->dqi_priv = kmalloc(sizeof(struct qtree_mem_dqinfo), GFP_KERNEL);
+	info->dqi_priv = kmalloc(sizeof(struct qtree_mem_dqinfo), GFP_NOFS);
 	if (!info->dqi_priv) {
 		ret = -ENOMEM;
 		goto out;
@@ -168,17 +166,14 @@ static int v2_read_file_info(struct super_block *sb, int type)
 		    i_size_read(sb_dqopt(sb)->files[type]));
 		goto out_free;
 	}
-	if (qinfo->dqi_free_blk && (qinfo->dqi_free_blk <= QT_TREEOFF ||
-	    qinfo->dqi_free_blk >= qinfo->dqi_blocks)) {
-		quota_error(sb, "Free block number %u out of range (%u, %u).",
-			    qinfo->dqi_free_blk, QT_TREEOFF, qinfo->dqi_blocks);
+	if (qinfo->dqi_free_blk >= qinfo->dqi_blocks) {
+		quota_error(sb, "Free block number too big (%u >= %u).",
+			    qinfo->dqi_free_blk, qinfo->dqi_blocks);
 		goto out_free;
 	}
-	if (qinfo->dqi_free_entry && (qinfo->dqi_free_entry <= QT_TREEOFF ||
-	    qinfo->dqi_free_entry >= qinfo->dqi_blocks)) {
-		quota_error(sb, "Block with free entry %u out of range (%u, %u).",
-			    qinfo->dqi_free_entry, QT_TREEOFF,
-			    qinfo->dqi_blocks);
+	if (qinfo->dqi_free_entry >= qinfo->dqi_blocks) {
+		quota_error(sb, "Block with free entry too big (%u >= %u).",
+			    qinfo->dqi_free_entry, qinfo->dqi_blocks);
 		goto out_free;
 	}
 	ret = 0;
@@ -188,7 +183,6 @@ out_free:
 		info->dqi_priv = NULL;
 	}
 out:
-	memalloc_nofs_restore(memalloc);
 	up_read(&dqopt->dqio_sem);
 	return ret;
 }
@@ -201,10 +195,8 @@ static int v2_write_file_info(struct super_block *sb, int type)
 	struct mem_dqinfo *info = &dqopt->info[type];
 	struct qtree_mem_dqinfo *qinfo = info->dqi_priv;
 	ssize_t size;
-	unsigned int memalloc;
 
 	down_write(&dqopt->dqio_sem);
-	memalloc = memalloc_nofs_save();
 	spin_lock(&dq_data_lock);
 	info->dqi_flags &= ~DQF_INFO_DIRTY;
 	dinfo.dqi_bgrace = cpu_to_le32(info->dqi_bgrace);
@@ -217,7 +209,6 @@ static int v2_write_file_info(struct super_block *sb, int type)
 	dinfo.dqi_free_entry = cpu_to_le32(qinfo->dqi_free_entry);
 	size = sb->s_op->quota_write(sb, type, (char *)&dinfo,
 	       sizeof(struct v2_disk_dqinfo), V2_DQINFOOFF);
-	memalloc_nofs_restore(memalloc);
 	up_write(&dqopt->dqio_sem);
 	if (size != sizeof(struct v2_disk_dqinfo)) {
 		quota_error(sb, "Can't write info structure");
@@ -337,14 +328,11 @@ static int v2_read_dquot(struct dquot *dquot)
 {
 	struct quota_info *dqopt = sb_dqopt(dquot->dq_sb);
 	int ret;
-	unsigned int memalloc;
 
 	down_read(&dqopt->dqio_sem);
-	memalloc = memalloc_nofs_save();
 	ret = qtree_read_dquot(
 			sb_dqinfo(dquot->dq_sb, dquot->dq_id.type)->dqi_priv,
 			dquot);
-	memalloc_nofs_restore(memalloc);
 	up_read(&dqopt->dqio_sem);
 	return ret;
 }
@@ -354,7 +342,6 @@ static int v2_write_dquot(struct dquot *dquot)
 	struct quota_info *dqopt = sb_dqopt(dquot->dq_sb);
 	int ret;
 	bool alloc = false;
-	unsigned int memalloc;
 
 	/*
 	 * If space for dquot is already allocated, we don't need any
@@ -368,11 +355,9 @@ static int v2_write_dquot(struct dquot *dquot)
 	} else {
 		down_read(&dqopt->dqio_sem);
 	}
-	memalloc = memalloc_nofs_save();
 	ret = qtree_write_dquot(
 			sb_dqinfo(dquot->dq_sb, dquot->dq_id.type)->dqi_priv,
 			dquot);
-	memalloc_nofs_restore(memalloc);
 	if (alloc)
 		up_write(&dqopt->dqio_sem);
 	else
@@ -383,13 +368,10 @@ static int v2_write_dquot(struct dquot *dquot)
 static int v2_release_dquot(struct dquot *dquot)
 {
 	struct quota_info *dqopt = sb_dqopt(dquot->dq_sb);
-	unsigned int memalloc;
 	int ret;
 
 	down_write(&dqopt->dqio_sem);
-	memalloc = memalloc_nofs_save();
 	ret = qtree_release_dquot(sb_dqinfo(dquot->dq_sb, dquot->dq_id.type)->dqi_priv, dquot);
-	memalloc_nofs_restore(memalloc);
 	up_write(&dqopt->dqio_sem);
 
 	return ret;
@@ -404,13 +386,10 @@ static int v2_free_file_info(struct super_block *sb, int type)
 static int v2_get_next_id(struct super_block *sb, struct kqid *qid)
 {
 	struct quota_info *dqopt = sb_dqopt(sb);
-	unsigned int memalloc;
 	int ret;
 
 	down_read(&dqopt->dqio_sem);
-	memalloc = memalloc_nofs_save();
 	ret = qtree_get_next_id(sb_dqinfo(sb, qid->type)->dqi_priv, qid);
-	memalloc_nofs_restore(memalloc);
 	up_read(&dqopt->dqio_sem);
 	return ret;
 }

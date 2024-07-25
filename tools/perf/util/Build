@@ -12,7 +12,6 @@ perf-y += config.o
 perf-y += copyfile.o
 perf-y += ctype.o
 perf-y += db-export.o
-perf-y += disasm.o
 perf-y += env.o
 perf-y += event.o
 perf-y += evlist.o
@@ -33,7 +32,6 @@ perf-y += perf_regs.o
 perf-y += perf-regs-arch/
 perf-y += path.o
 perf-y += print_binary.o
-perf-y += print_insn.o
 perf-y += rlimit.o
 perf-y += argv_split.o
 perf-y += rbtree.o
@@ -51,7 +49,6 @@ perf-y += dso.o
 perf-y += dsos.o
 perf-y += symbol.o
 perf-y += symbol_fprintf.o
-perf-y += map_symbol.o
 perf-y += color.o
 perf-y += color_config.o
 perf-y += metricgroup.o
@@ -73,7 +70,6 @@ perf-y += ordered-events.o
 perf-y += namespaces.o
 perf-y += comm.o
 perf-y += thread.o
-perf-y += threads.o
 perf-y += thread_map.o
 perf-y += parse-events-flex.o
 perf-y += parse-events-bison.o
@@ -141,7 +137,6 @@ perf-y += term.o
 perf-y += help-unknown-cmd.o
 perf-y += dlfilter.o
 perf-y += mem-events.o
-perf-y += mem-info.o
 perf-y += vsprintf.o
 perf-y += units.o
 perf-y += time-utils.o
@@ -170,7 +165,6 @@ endif
 
 ifeq ($(CONFIG_LIBTRACEEVENT),y)
   perf-$(CONFIG_PERF_BPF_SKEL) += bpf_kwork.o
-  perf-$(CONFIG_PERF_BPF_SKEL) += bpf_kwork_top.o
 endif
 
 perf-$(CONFIG_LIBELF) += symbol-elf.o
@@ -199,8 +193,6 @@ endif
 perf-$(CONFIG_DWARF) += probe-finder.o
 perf-$(CONFIG_DWARF) += dwarf-aux.o
 perf-$(CONFIG_DWARF) += dwarf-regs.o
-perf-$(CONFIG_DWARF) += debuginfo.o
-perf-$(CONFIG_DWARF) += annotate-data.o
 
 perf-$(CONFIG_LIBDW_DWARF_UNWIND) += unwind-libdw.o
 perf-$(CONFIG_LOCAL_LIBUNWIND)    += unwind-libunwind-local.o
@@ -353,7 +345,7 @@ CFLAGS_rbtree.o        += -Wno-unused-parameter -DETC_PERFCONFIG="BUILD_STR($(ET
 CFLAGS_libstring.o     += -Wno-unused-parameter -DETC_PERFCONFIG="BUILD_STR($(ETC_PERFCONFIG_SQ))"
 CFLAGS_hweight.o       += -Wno-unused-parameter -DETC_PERFCONFIG="BUILD_STR($(ETC_PERFCONFIG_SQ))"
 CFLAGS_header.o        += -include $(OUTPUT)PERF-VERSION-FILE
-CFLAGS_arm-spe.o       += -I$(srctree)/tools/arch/arm64/include/ -I$(OUTPUT)arch/arm64/include/generated/
+CFLAGS_arm-spe.o       += -I$(srctree)/tools/arch/arm64/include/
 
 $(OUTPUT)util/argv_split.o: ../lib/argv_split.c FORCE
 	$(call rule_mkdir)
@@ -390,17 +382,3 @@ $(OUTPUT)util/vsprintf.o: ../lib/vsprintf.c FORCE
 $(OUTPUT)util/list_sort.o: ../lib/list_sort.c FORCE
 	$(call rule_mkdir)
 	$(call if_changed_dep,cc_o_c)
-
-ifdef SHELLCHECK
-  SHELL_TESTS := generate-cmdlist.sh
-  TEST_LOGS := $(SHELL_TESTS:%=%.shellcheck_log)
-else
-  SHELL_TESTS :=
-  TEST_LOGS :=
-endif
-
-$(OUTPUT)%.shellcheck_log: %
-	$(call rule_mkdir)
-	$(Q)$(call echo-cmd,test)shellcheck -a -S warning "$<" > $@ || (cat $@ && rm $@ && false)
-
-perf-y += $(TEST_LOGS)

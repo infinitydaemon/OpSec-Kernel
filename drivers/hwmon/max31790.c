@@ -49,9 +49,6 @@
 
 #define NR_CHANNEL			6
 
-#define PWM_INPUT_SCALE	255
-#define MAX31790_REG_PWMOUT_SCALE	511
-
 /*
  * Client data (each client gets its own)
  */
@@ -346,13 +343,10 @@ static int max31790_write_pwm(struct device *dev, u32 attr, int channel,
 			err = -EINVAL;
 			break;
 		}
-
-		val = DIV_ROUND_CLOSEST(val * MAX31790_REG_PWMOUT_SCALE,
-					PWM_INPUT_SCALE);
 		data->valid = false;
 		err = i2c_smbus_write_word_swapped(client,
 						   MAX31790_REG_PWMOUT(channel),
-						   val << 7);
+						   val << 8);
 		break;
 	case hwmon_pwm_enable:
 		fan_config = data->fan_config[channel];
@@ -543,12 +537,13 @@ static int max31790_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id max31790_id[] = {
-	{ "max31790" },
+	{ "max31790", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, max31790_id);
 
 static struct i2c_driver max31790_driver = {
+	.class		= I2C_CLASS_HWMON,
 	.probe		= max31790_probe,
 	.driver = {
 		.name	= "max31790",

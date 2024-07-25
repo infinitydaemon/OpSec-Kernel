@@ -104,9 +104,6 @@ static const struct of_device_id allowlist[] __initconst = {
  */
 static const struct of_device_id blocklist[] __initconst = {
 	{ .compatible = "allwinner,sun50i-h6", },
-	{ .compatible = "allwinner,sun50i-h616", },
-	{ .compatible = "allwinner,sun50i-h618", },
-	{ .compatible = "allwinner,sun50i-h700", },
 
 	{ .compatible = "apple,arm-platform", },
 
@@ -145,11 +142,9 @@ static const struct of_device_id blocklist[] __initconst = {
 	{ .compatible = "nvidia,tegra234", },
 
 	{ .compatible = "qcom,apq8096", },
-	{ .compatible = "qcom,msm8909", },
 	{ .compatible = "qcom,msm8996", },
 	{ .compatible = "qcom,msm8998", },
 	{ .compatible = "qcom,qcm2290", },
-	{ .compatible = "qcom,qcm6490", },
 	{ .compatible = "qcom,qcs404", },
 	{ .compatible = "qcom,qdu1000", },
 	{ .compatible = "qcom,sa8155p" },
@@ -159,7 +154,6 @@ static const struct of_device_id blocklist[] __initconst = {
 	{ .compatible = "qcom,sc7280", },
 	{ .compatible = "qcom,sc8180x", },
 	{ .compatible = "qcom,sc8280xp", },
-	{ .compatible = "qcom,sdm670", },
 	{ .compatible = "qcom,sdm845", },
 	{ .compatible = "qcom,sdx75", },
 	{ .compatible = "qcom,sm6115", },
@@ -182,13 +176,8 @@ static const struct of_device_id blocklist[] __initconst = {
 	{ .compatible = "ti,omap3", },
 	{ .compatible = "ti,am625", },
 	{ .compatible = "ti,am62a7", },
-	{ .compatible = "ti,am62p5", },
 
-	{ .compatible = "qcom,ipq5332", },
-	{ .compatible = "qcom,ipq6018", },
 	{ .compatible = "qcom,ipq8064", },
-	{ .compatible = "qcom,ipq8074", },
-	{ .compatible = "qcom,ipq9574", },
 	{ .compatible = "qcom,apq8064", },
 	{ .compatible = "qcom,msm8974", },
 	{ .compatible = "qcom,msm8960", },
@@ -198,18 +187,19 @@ static const struct of_device_id blocklist[] __initconst = {
 
 static bool __init cpu0_node_has_opp_v2_prop(void)
 {
-	struct device_node *np __free(device_node) = of_cpu_device_node_get(0);
+	struct device_node *np = of_cpu_device_node_get(0);
 	bool ret = false;
 
 	if (of_property_present(np, "operating-points-v2"))
 		ret = true;
 
+	of_node_put(np);
 	return ret;
 }
 
 static int __init cpufreq_dt_platdev_init(void)
 {
-	struct device_node *np __free(device_node) = of_find_node_by_path("/");
+	struct device_node *np = of_find_node_by_path("/");
 	const struct of_device_id *match;
 	const void *data = NULL;
 
@@ -225,9 +215,11 @@ static int __init cpufreq_dt_platdev_init(void)
 	if (cpu0_node_has_opp_v2_prop() && !of_match_node(blocklist, np))
 		goto create_pdev;
 
+	of_node_put(np);
 	return -ENODEV;
 
 create_pdev:
+	of_node_put(np);
 	return PTR_ERR_OR_ZERO(platform_device_register_data(NULL, "cpufreq-dt",
 			       -1, data,
 			       sizeof(struct cpufreq_dt_platform_data)));

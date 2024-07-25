@@ -19,7 +19,6 @@
 #include <sys/auxv.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
-#include "../kselftest.h"
 
 #define PAGE_SIZE	4096
 
@@ -30,13 +29,13 @@ static int try_to_remap(void *vdso_addr, unsigned long size)
 	/* Searching for memory location where to remap */
 	dest_addr = mmap(0, size, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
 	if (dest_addr == MAP_FAILED) {
-		ksft_print_msg("WARN: mmap failed (%d): %m\n", errno);
+		printf("[WARN]\tmmap failed (%d): %m\n", errno);
 		return 0;
 	}
 
-	ksft_print_msg("Moving vDSO: [%p, %#lx] -> [%p, %#lx]\n",
-		       vdso_addr, (unsigned long)vdso_addr + size,
-		       dest_addr, (unsigned long)dest_addr + size);
+	printf("[NOTE]\tMoving vDSO: [%p, %#lx] -> [%p, %#lx]\n",
+		vdso_addr, (unsigned long)vdso_addr + size,
+		dest_addr, (unsigned long)dest_addr + size);
 	fflush(stdout);
 
 	new_addr = mremap(vdso_addr, size, size,
@@ -44,10 +43,10 @@ static int try_to_remap(void *vdso_addr, unsigned long size)
 	if ((unsigned long)new_addr == (unsigned long)-1) {
 		munmap(dest_addr, size);
 		if (errno == EINVAL) {
-			ksft_print_msg("vDSO partial move failed, will try with bigger size\n");
+			printf("[NOTE]\tvDSO partial move failed, will try with bigger size\n");
 			return -1; /* Retry with larger */
 		}
-		ksft_print_msg("[FAIL]\tmremap failed (%d): %m\n", errno);
+		printf("[FAIL]\tmremap failed (%d): %m\n", errno);
 		return 1;
 	}
 
@@ -59,12 +58,11 @@ int main(int argc, char **argv, char **envp)
 {
 	pid_t child;
 
-	ksft_print_header();
-	ksft_set_plan(1);
-
 	child = fork();
-	if (child == -1)
-		ksft_exit_fail_msg("failed to fork (%d): %m\n", errno);
+	if (child == -1) {
+		printf("[WARN]\tfailed to fork (%d): %m\n", errno);
+		return 1;
+	}
 
 	if (child == 0) {
 		unsigned long vdso_size = PAGE_SIZE;
@@ -72,9 +70,9 @@ int main(int argc, char **argv, char **envp)
 		int ret = -1;
 
 		auxval = getauxval(AT_SYSINFO_EHDR);
-		ksft_print_msg("AT_SYSINFO_EHDR is %#lx\n", auxval);
+		printf("\tAT_SYSINFO_EHDR is %#lx\n", auxval);
 		if (!auxval || auxval == -ENOENT) {
-			ksft_print_msg("WARN: getauxval failed\n");
+			printf("[WARN]\tgetauxval failed\n");
 			return 0;
 		}
 
@@ -94,13 +92,16 @@ int main(int argc, char **argv, char **envp)
 		int status;
 
 		if (waitpid(child, &status, 0) != child ||
-			!WIFEXITED(status))
-			ksft_test_result_fail("mremap() of the vDSO does not work on this kernel!\n");
-		else if (WEXITSTATUS(status) != 0)
-			ksft_test_result_fail("Child failed with %d\n", WEXITSTATUS(status));
-		else
-			ksft_test_result_pass("%s\n", __func__);
+			!WIFEXITED(status)) {
+			printf("[FAIL]\tmremap() of the vDSO does not work on this kernel!\n");
+			return 1;
+		} else if (WEXITSTATUS(status) != 0) {
+			printf("[FAIL]\tChild failed with %d\n",
+					WEXITSTATUS(status));
+			return 1;
+		}
+		printf("[OK]\n");
 	}
 
-	ksft_finished();
+	return 0;
 }

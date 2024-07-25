@@ -13,6 +13,8 @@
  *
  */
 
+#define KMSG_COMPONENT "dasd"
+
 #include <linux/ctype.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -22,6 +24,8 @@
 #include <linux/uaccess.h>
 #include <asm/ipl.h>
 
+/* This is ugly... */
+#define PRINTK_HEADER "dasd_devmap:"
 #define DASD_MAX_PARAMS 256
 
 #include "dasd_int.h"
@@ -1110,7 +1114,7 @@ dasd_use_diag_show(struct device *dev, struct device_attribute *attr, char *buf)
 		use_diag = (devmap->features & DASD_FEATURE_USEDIAG) != 0;
 	else
 		use_diag = (DASD_FEATURE_DEFAULT & DASD_FEATURE_USEDIAG) != 0;
-	return sysfs_emit(buf, use_diag ? "1\n" : "0\n");
+	return sprintf(buf, use_diag ? "1\n" : "0\n");
 }
 
 static ssize_t
@@ -1159,7 +1163,7 @@ dasd_use_raw_show(struct device *dev, struct device_attribute *attr, char *buf)
 		use_raw = (devmap->features & DASD_FEATURE_USERAW) != 0;
 	else
 		use_raw = (DASD_FEATURE_DEFAULT & DASD_FEATURE_USERAW) != 0;
-	return sysfs_emit(buf, use_raw ? "1\n" : "0\n");
+	return sprintf(buf, use_raw ? "1\n" : "0\n");
 }
 
 static ssize_t
@@ -1255,7 +1259,7 @@ dasd_access_show(struct device *dev, struct device_attribute *attr,
 	if (count < 0)
 		return count;
 
-	return sysfs_emit(buf, "%d\n", count);
+	return sprintf(buf, "%d\n", count);
 }
 
 static DEVICE_ATTR(host_access_count, 0444, dasd_access_show, NULL);
@@ -1334,19 +1338,19 @@ static ssize_t dasd_alias_show(struct device *dev,
 
 	device = dasd_device_from_cdev(to_ccwdev(dev));
 	if (IS_ERR(device))
-		return sysfs_emit(buf, "0\n");
+		return sprintf(buf, "0\n");
 
 	if (device->discipline && device->discipline->get_uid &&
 	    !device->discipline->get_uid(device, &uid)) {
 		if (uid.type == UA_BASE_PAV_ALIAS ||
 		    uid.type == UA_HYPER_PAV_ALIAS) {
 			dasd_put_device(device);
-			return sysfs_emit(buf, "1\n");
+			return sprintf(buf, "1\n");
 		}
 	}
 	dasd_put_device(device);
 
-	return sysfs_emit(buf, "0\n");
+	return sprintf(buf, "0\n");
 }
 
 static DEVICE_ATTR(alias, 0444, dasd_alias_show, NULL);
@@ -1408,9 +1412,15 @@ dasd_uid_show(struct device *dev, struct device_attribute *attr, char *buf)
 			break;
 		}
 
-		snprintf(uid_string, sizeof(uid_string), "%s.%s.%04x.%s%s%s",
-			 uid.vendor, uid.serial, uid.ssid, ua_string,
-			 uid.vduit[0] ? "." : "", uid.vduit);
+		if (strlen(uid.vduit) > 0)
+			snprintf(uid_string, sizeof(uid_string),
+				 "%s.%s.%04x.%s.%s",
+				 uid.vendor, uid.serial, uid.ssid, ua_string,
+				 uid.vduit);
+		else
+			snprintf(uid_string, sizeof(uid_string),
+				 "%s.%s.%04x.%s",
+				 uid.vendor, uid.serial, uid.ssid, ua_string);
 	}
 	dasd_put_device(device);
 
@@ -1852,7 +1862,7 @@ static ssize_t dasd_pm_show(struct device *dev,
 
 	device = dasd_device_from_cdev(to_ccwdev(dev));
 	if (IS_ERR(device))
-		return sysfs_emit(buf, "0\n");
+		return sprintf(buf, "0\n");
 
 	opm = dasd_path_get_opm(device);
 	nppm = dasd_path_get_nppm(device);
@@ -1862,8 +1872,8 @@ static ssize_t dasd_pm_show(struct device *dev,
 	ifccpm = dasd_path_get_ifccpm(device);
 	dasd_put_device(device);
 
-	return sysfs_emit(buf, "%02x %02x %02x %02x %02x %02x\n", opm, nppm,
-			  cablepm, cuirpm, hpfpm, ifccpm);
+	return sprintf(buf, "%02x %02x %02x %02x %02x %02x\n", opm, nppm,
+		       cablepm, cuirpm, hpfpm, ifccpm);
 }
 
 static DEVICE_ATTR(path_masks, 0444, dasd_pm_show, NULL);

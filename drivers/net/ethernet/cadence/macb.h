@@ -85,6 +85,8 @@
 #define GEM_PBUFRXCUT		0x0044 /* RX Partial Store and Forward */
 #define GEM_JML			0x0048 /* Jumbo Max Length */
 #define GEM_HS_MAC_CONFIG	0x0050 /* GEM high speed config */
+#define GEM_AMP			0x0054 /* AXI Max Pipeline */
+#define GEM_INTMOD		0x005c /* Interrupt moderation */
 #define GEM_HRB			0x0080 /* Hash Bottom */
 #define GEM_HRT			0x0084 /* Hash Top */
 #define GEM_SA1B		0x0088 /* Specific1 Bottom */
@@ -347,6 +349,21 @@
 #define GEM_ADDR64_OFFSET	30 /* Address bus width - 64b or 32b */
 #define GEM_ADDR64_SIZE		1
 
+/* Bitfields in AMP */
+#define GEM_AR2R_MAX_PIPE_OFFSET	0  /* Maximum number of outstanding AXI read requests */
+#define GEM_AR2R_MAX_PIPE_SIZE		8
+#define GEM_AW2W_MAX_PIPE_OFFSET	8  /* Maximum number of outstanding AXI write requests */
+#define GEM_AW2W_MAX_PIPE_SIZE		8
+#define GEM_AW2B_FILL_OFFSET		16 /* Select wether the max AW2W transactions operates between: */
+#define GEM_AW2B_FILL_AW2W		0  /*   0: the AW to W AXI channel */
+#define GEM_AW2B_FILL_AW2B		1  /*   1: AW to B channel */
+#define GEM_AW2B_FILL_SIZE              1
+
+/* Bitfields in INTMOD */
+#define GEM_RX_MODERATION_OFFSET	0  /* RX interrupt moderation */
+#define GEM_RX_MODERATION_SIZE		8
+#define GEM_TX_MODERATION_OFFSET	16 /* TX interrupt moderation */
+#define GEM_TX_MODERATION_SIZE		8
 
 /* Bitfields in PBUFRXCUT */
 #define GEM_ENCUTTHRU_OFFSET	31 /* Enable RX partial store and forward */
@@ -807,6 +824,7 @@
 	})
 
 #define MACB_READ_NSR(bp)	macb_readl(bp, NSR)
+#define MACB_READ_TSR(bp)	macb_readl(bp, TSR)
 
 /* struct macb_dma_desc - Hardware DMA descriptor
  * @addr: DMA address of data buffer
@@ -1165,10 +1183,9 @@ struct macb_ptp_info {
 	int (*get_ts_info)(struct net_device *dev,
 			   struct ethtool_ts_info *info);
 	int (*get_hwtst)(struct net_device *netdev,
-			 struct kernel_hwtstamp_config *tstamp_config);
+			 struct ifreq *ifr);
 	int (*set_hwtst)(struct net_device *netdev,
-			 struct kernel_hwtstamp_config *tstamp_config,
-			 struct netlink_ext_ack *extack);
+			 struct ifreq *ifr, int cmd);
 };
 
 struct macb_pm_data {
@@ -1223,6 +1240,7 @@ struct macb_queue {
 	dma_addr_t		tx_ring_dma;
 	struct work_struct	tx_error_task;
 	bool			txubr_pending;
+	bool			tx_pending;
 	struct napi_struct	napi_tx;
 
 	dma_addr_t		rx_ring_dma;
@@ -1286,8 +1304,14 @@ struct macb {
 
 	u32			caps;
 	unsigned int		dma_burst_length;
+	u8			aw2w_max_pipe;
+	u8			ar2r_max_pipe;
+	bool			use_aw2b_fill;
 
 	phy_interface_t		phy_interface;
+
+	struct gpio_desc	*phy_reset_gpio;
+	int			phy_reset_ms;
 
 	/* AT91RM9200 transmit queue (1 on wire + 1 queued) */
 	struct macb_tx_skb	rm9200_txq[2];
@@ -1315,7 +1339,7 @@ struct macb {
 	struct ptp_clock *ptp_clock;
 	struct ptp_clock_info ptp_clock_info;
 	struct tsu_incr tsu_incr;
-	struct kernel_hwtstamp_config tstamp_config;
+	struct hwtstamp_config tstamp_config;
 
 	/* RX queue filer rule set*/
 	struct ethtool_rx_fs_list rx_fs_list;
@@ -1364,12 +1388,8 @@ static inline void gem_ptp_do_rxstamp(struct macb *bp, struct sk_buff *skb, stru
 
 	gem_ptp_rxstamp(bp, skb, desc);
 }
-
-int gem_get_hwtst(struct net_device *dev,
-		  struct kernel_hwtstamp_config *tstamp_config);
-int gem_set_hwtst(struct net_device *dev,
-		  struct kernel_hwtstamp_config *tstamp_config,
-		  struct netlink_ext_ack *extack);
+int gem_get_hwtst(struct net_device *dev, struct ifreq *rq);
+int gem_set_hwtst(struct net_device *dev, struct ifreq *ifr, int cmd);
 #else
 static inline void gem_ptp_init(struct net_device *ndev) { }
 static inline void gem_ptp_remove(struct net_device *ndev) { }

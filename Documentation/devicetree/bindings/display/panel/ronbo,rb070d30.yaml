@@ -14,7 +14,7 @@ properties:
     const: ronbo,rb070d30
 
   reg:
-    maxItems: 1
+    description: MIPI-DSI virtual channel
 
   power-gpios:
     description: GPIO used for the power pin

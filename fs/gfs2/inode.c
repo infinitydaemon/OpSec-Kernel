@@ -185,9 +185,8 @@ struct inode *gfs2_inode_lookup(struct super_block *sb, unsigned int type,
 		set_bit(GLF_INSTANTIATE_NEEDED, &ip->i_gl->gl_flags);
 
 		/* Lowest possible timestamp; will be overwritten in gfs2_dinode_in. */
-		inode_set_atime(inode,
-				1LL << (8 * sizeof(inode_get_atime_sec(inode)) - 1),
-				0);
+		inode->i_atime.tv_sec = 1LL << (8 * sizeof(inode->i_atime.tv_sec) - 1);
+		inode->i_atime.tv_nsec = 0;
 
 		glock_set_object(ip->i_gl, ip);
 
@@ -698,7 +697,7 @@ static int gfs2_create_inode(struct inode *dir, struct dentry *dentry,
 	set_nlink(inode, S_ISDIR(mode) ? 2 : 1);
 	inode->i_rdev = dev;
 	inode->i_size = size;
-	simple_inode_init_ts(inode);
+	inode->i_atime = inode->i_mtime = inode_set_ctime_current(inode);
 	munge_mode_uid_gid(dip, inode);
 	check_and_update_goal(dip);
 	ip->i_goal = dip->i_goal;
@@ -1930,7 +1929,7 @@ static int setattr_chown(struct inode *inode, struct iattr *attr)
 	kuid_t ouid, nuid;
 	kgid_t ogid, ngid;
 	int error;
-	struct gfs2_alloc_parms ap = {};
+	struct gfs2_alloc_parms ap;
 
 	ouid = inode->i_uid;
 	ogid = inode->i_gid;
@@ -2163,7 +2162,7 @@ static int gfs2_update_time(struct inode *inode, int flags)
 	int error;
 
 	gh = gfs2_glock_is_locked_by_me(gl);
-	if (gh && gl->gl_state != LM_ST_EXCLUSIVE) {
+	if (gh && !gfs2_glock_is_held_excl(gl)) {
 		gfs2_glock_dq(gh);
 		gfs2_holder_reinit(LM_ST_EXCLUSIVE, 0, gh);
 		error = gfs2_glock_nq(gh);

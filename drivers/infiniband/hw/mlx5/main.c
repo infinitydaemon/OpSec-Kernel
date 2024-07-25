@@ -264,7 +264,8 @@ static struct net_device *mlx5_ib_get_netdev(struct ib_device *device,
 	 */
 	read_lock(&ibdev->port[port_num - 1].roce.netdev_lock);
 	ndev = ibdev->port[port_num - 1].roce.netdev;
-	dev_hold(ndev);
+	if (ndev)
+		dev_hold(ndev);
 	read_unlock(&ibdev->port[port_num - 1].roce.netdev_lock);
 
 out:
@@ -443,16 +444,12 @@ static int translate_eth_ext_proto_oper(u32 eth_proto_oper, u16 *active_speed,
 		*active_width = IB_WIDTH_2X;
 		*active_speed = IB_SPEED_NDR;
 		break;
-	case MLX5E_PROT_MASK(MLX5E_400GAUI_8_400GBASE_CR8):
+	case MLX5E_PROT_MASK(MLX5E_400GAUI_8):
 		*active_width = IB_WIDTH_8X;
 		*active_speed = IB_SPEED_HDR;
 		break;
 	case MLX5E_PROT_MASK(MLX5E_400GAUI_4_400GBASE_CR4_KR4):
 		*active_width = IB_WIDTH_4X;
-		*active_speed = IB_SPEED_NDR;
-		break;
-	case MLX5E_PROT_MASK(MLX5E_800GAUI_8_800GBASE_CR8_KR8):
-		*active_width = IB_WIDTH_8X;
 		*active_speed = IB_SPEED_NDR;
 		break;
 	default:
@@ -815,17 +812,6 @@ static int mlx5_query_node_desc(struct mlx5_ib_dev *dev, char *node_desc)
 	return mlx5_core_access_reg(dev->mdev, &in, sizeof(in), node_desc,
 				    sizeof(struct mlx5_reg_node_desc),
 				    MLX5_REG_NODE_DESC, 0, 0);
-}
-
-static void fill_esw_mgr_reg_c0(struct mlx5_core_dev *mdev,
-				struct mlx5_ib_query_device_resp *resp)
-{
-	struct mlx5_eswitch *esw = mdev->priv.eswitch;
-	u16 vport = mlx5_eswitch_manager_vport(mdev);
-
-	resp->reg_c0.value = mlx5_eswitch_get_vport_metadata_for_match(esw,
-								      vport);
-	resp->reg_c0.mask = mlx5_eswitch_get_vport_metadata_mask();
 }
 
 static int mlx5_ib_query_device(struct ib_device *ibdev,
@@ -1217,19 +1203,6 @@ static int mlx5_ib_query_device(struct ib_device *ibdev,
 
 		resp.dci_streams_caps.max_log_num_errored =
 			MLX5_CAP_GEN(mdev, log_max_dci_errored_streams);
-	}
-
-	if (offsetofend(typeof(resp), reserved) <= uhw_outlen)
-		resp.response_length += sizeof(resp.reserved);
-
-	if (offsetofend(typeof(resp), reg_c0) <= uhw_outlen) {
-		struct mlx5_eswitch *esw = mdev->priv.eswitch;
-
-		resp.response_length += sizeof(resp.reg_c0);
-
-		if (mlx5_eswitch_mode(mdev) == MLX5_ESWITCH_OFFLOADS &&
-		    mlx5_eswitch_vport_match_metadata_enabled(esw))
-			fill_esw_mgr_reg_c0(mdev, &resp);
 	}
 
 	if (uhw_outlen) {
@@ -3759,10 +3732,10 @@ static int mlx5_ib_stage_init_init(struct mlx5_ib_dev *dev)
 	spin_lock_init(&dev->dm.lock);
 	dev->dm.dev = mdev;
 	return 0;
-err:
-	mlx5r_macsec_dealloc_gids(dev);
 err_mp:
 	mlx5_ib_cleanup_multiport_master(dev);
+err:
+	mlx5r_macsec_dealloc_gids(dev);
 	return err;
 }
 

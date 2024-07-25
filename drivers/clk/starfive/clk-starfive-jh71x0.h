@@ -61,10 +61,10 @@ struct jh71x0_clk_data {
 	.parents = { [0] = _parent },						\
 }
 
-#define JH71X0__MUX(_idx, _name, _flags, _nparents, ...)			\
+#define JH71X0__MUX(_idx, _name, _nparents, ...)				\
 [_idx] = {									\
 	.name = _name,								\
-	.flags = _flags,							\
+	.flags = 0,								\
 	.max = ((_nparents) - 1) << JH71X0_CLK_MUX_SHIFT,			\
 	.parents = { __VA_ARGS__ },						\
 }

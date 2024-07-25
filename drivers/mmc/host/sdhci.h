@@ -487,6 +487,14 @@ struct sdhci_host {
 /* Issue CMD and DATA reset together */
 #define SDHCI_QUIRK2_ISSUE_CMD_DAT_RESET_TOGETHER	(1<<19)
 
+/* Quirks to ignore a speed if a that speed is unreliable */
+#define SDHCI_QUIRK2_NO_SDR25	(1<<19)
+#define SDHCI_QUIRK2_NO_SDR50  (1<<20)
+#define SDHCI_QUIRK2_NO_SDR104	(1<<21)
+
+/* Command timeouts may generate a trailing INT_RESPONSE later */
+#define SDHCI_QUIRK2_SPURIOUS_INT_RESP			(1<<31)
+
 	int irq;		/* Device IRQ */
 	void __iomem *ioaddr;	/* Mapped address */
 	phys_addr_t mapbase;	/* physical address base */
@@ -669,6 +677,7 @@ struct sdhci_ops {
 	void	(*request_done)(struct sdhci_host *host,
 				struct mmc_request *mrq);
 	void    (*dump_vendor_regs)(struct sdhci_host *host);
+	int	(*init_sd_express)(struct sdhci_host *host, struct mmc_ios *ios);
 };
 
 #ifdef CONFIG_MMC_SDHCI_IO_ACCESSORS
@@ -794,7 +803,6 @@ void sdhci_set_bus_width(struct sdhci_host *host, int width);
 void sdhci_reset(struct sdhci_host *host, u8 mask);
 void sdhci_set_uhs_signaling(struct sdhci_host *host, unsigned timing);
 int sdhci_execute_tuning(struct mmc_host *mmc, u32 opcode);
-int __sdhci_execute_tuning(struct sdhci_host *host, u32 opcode);
 void sdhci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios);
 int sdhci_start_signal_voltage_switch(struct mmc_host *mmc,
 				      struct mmc_ios *ios);

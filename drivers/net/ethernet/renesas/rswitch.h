@@ -20,23 +20,17 @@
 		else
 
 #define rswitch_for_each_enabled_port_continue_reverse(priv, i)	\
-	for (; i-- > 0; )					\
+	for (i--; i >= 0; i--)					\
 		if (priv->rdev[i]->disabled)			\
 			continue;				\
 		else
 
 #define TX_RING_SIZE		1024
-#define RX_RING_SIZE		4096
+#define RX_RING_SIZE		1024
 #define TS_RING_SIZE		(TX_RING_SIZE * RSWITCH_NUM_PORTS)
 
-#define RSWITCH_MAX_MTU		9600
-#define RSWITCH_HEADROOM	(NET_SKB_PAD + NET_IP_ALIGN)
-#define RSWITCH_DESC_BUF_SIZE	2048
-#define RSWITCH_TAILROOM	SKB_DATA_ALIGN(sizeof(struct skb_shared_info))
+#define PKT_BUF_SZ		1584
 #define RSWITCH_ALIGN		128
-#define RSWITCH_BUF_SIZE	(RSWITCH_HEADROOM + RSWITCH_DESC_BUF_SIZE + \
-				 RSWITCH_TAILROOM + RSWITCH_ALIGN)
-#define RSWITCH_MAP_BUF_SIZE	(RSWITCH_BUF_SIZE - RSWITCH_HEADROOM)
 #define RSWITCH_MAX_CTAG_PCP	7
 
 #define RSWITCH_TIMEOUT_US	100000
@@ -774,10 +768,6 @@ enum rswitch_gwca_mode {
 #define GWARIRM_ARIOG		BIT(0)
 #define GWARIRM_ARR		BIT(1)
 
-#define GWMDNC_TSDMN(num)	(((num) << 16) & GENMASK(17, 16))
-#define GWMDNC_TXDMN(num)	(((num) << 8) & GENMASK(12, 8))
-#define GWMDNC_RXDMN(num)	((num) & GENMASK(4, 0))
-
 #define GWDCC_BALR		BIT(24)
 #define GWDCC_DCP_MASK		GENMASK(18, 16)
 #define GWDCC_DCP(prio)		FIELD_PREP(GWDCC_DCP_MASK, (prio))
@@ -919,7 +909,7 @@ struct rswitch_ext_ts_desc {
 } __packed;
 
 struct rswitch_etha {
-	unsigned int index;
+	int index;
 	void __iomem *addr;
 	void __iomem *coma_addr;
 	bool external_phy;
@@ -948,28 +938,15 @@ struct rswitch_gwca_queue {
 
 	/* Common */
 	dma_addr_t ring_dma;
-	unsigned int ring_size;
-	unsigned int cur;
-	unsigned int dirty;
+	int ring_size;
+	int cur;
+	int dirty;
 
-	/* For [rt]x_ring */
-	unsigned int index;
+	/* For [rt]_ring */
+	int index;
 	bool dir_tx;
+	struct sk_buff **skbs;
 	struct net_device *ndev;	/* queue to ndev for irq */
-
-	union {
-		/* For TX */
-		struct {
-			struct sk_buff **skbs;
-			dma_addr_t *unmap_addrs;
-		};
-		/* For RX */
-		struct {
-			void **rx_bufs;
-			struct sk_buff *skb_fstart;
-			u16 pkt_len;
-		};
-	};
 };
 
 struct rswitch_gwca_ts_info {
@@ -982,7 +959,7 @@ struct rswitch_gwca_ts_info {
 
 #define RSWITCH_NUM_IRQ_REGS	(RSWITCH_MAX_NUM_QUEUES / BITS_PER_TYPE(u32))
 struct rswitch_gwca {
-	unsigned int index;
+	int index;
 	struct rswitch_desc *linkfix_table;
 	dma_addr_t linkfix_table_dma;
 	u32 linkfix_table_size;

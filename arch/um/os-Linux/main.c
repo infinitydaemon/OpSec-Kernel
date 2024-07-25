@@ -16,7 +16,6 @@
 #include <kern_util.h>
 #include <os.h>
 #include <um_malloc.h>
-#include "internal.h"
 
 #define PGD_BOUND (4 * 1024 * 1024)
 #define STACKSIZE (8 * 1024 * 1024)
@@ -103,6 +102,8 @@ static void setup_env_path(void)
 	}
 }
 
+extern void scan_elf_aux( char **envp);
+
 int __init main(int argc, char **argv, char **envp)
 {
 	char **new_argv;
@@ -182,11 +183,6 @@ int __init main(int argc, char **argv, char **envp)
 }
 
 extern void *__real_malloc(int);
-
-/* workaround for -Wmissing-prototypes warnings */
-void *__wrap_malloc(int size);
-void *__wrap_calloc(int n, int size);
-void __wrap_free(void *ptr);
 
 void *__wrap_malloc(int size)
 {

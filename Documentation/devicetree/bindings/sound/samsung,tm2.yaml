@@ -25,11 +25,8 @@ properties:
     description: Phandles to the codecs.
     $ref: /schemas/types.yaml#/definitions/phandle-array
     items:
-      - items:
-          - description: Phandle to the WM5110 audio codec.
-      - items:
-          - description: Phandle to the HDMI transmitter node.
-
+      - description: Phandle to the WM5110 audio codec.
+      - description: Phandle to the HDMI transmitter node.
 
   samsung,audio-routing:
     description: |

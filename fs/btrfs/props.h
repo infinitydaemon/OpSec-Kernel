@@ -6,12 +6,7 @@
 #ifndef BTRFS_PROPS_H
 #define BTRFS_PROPS_H
 
-#include <linux/compiler_types.h>
-
-struct inode;
-struct btrfs_inode;
-struct btrfs_path;
-struct btrfs_trans_handle;
+#include "ctree.h"
 
 int __init btrfs_props_init(void);
 

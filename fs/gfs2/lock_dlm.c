@@ -316,16 +316,10 @@ static void gdlm_put_lock(struct gfs2_glock *gl)
 		gfs2_glock_free(gl);
 		return;
 	}
-
-	/*
-	 * When the lockspace is released, all remaining glocks will be
-	 * unlocked automatically.  This is more efficient than unlocking them
-	 * individually, but when the lock is held in DLM_LOCK_EX or
-	 * DLM_LOCK_PW mode, the lock value block (LVB) will be lost.
-	 */
+	/* don't want to skip dlm_unlock writing the lvb when lock has one */
 
 	if (test_bit(SDF_SKIP_DLM_UNLOCK, &sdp->sd_flags) &&
-	    (!gl->gl_lksb.sb_lvbptr || gl->gl_state != LM_ST_EXCLUSIVE)) {
+	    !gl->gl_lksb.sb_lvbptr) {
 		gfs2_glock_free_later(gl);
 		return;
 	}

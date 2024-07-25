@@ -25,7 +25,7 @@
 #include <linux/ima.h>
 
 #define DM_MSG_PREFIX "ioctl"
-#define DM_DRIVER_EMAIL "dm-devel@lists.linux.dev"
+#define DM_DRIVER_EMAIL "dm-devel@redhat.com"
 
 struct dm_file {
 	/*
@@ -1295,8 +1295,8 @@ static void retrieve_status(struct dm_table *table,
 		spec->status = 0;
 		spec->sector_start = ti->begin;
 		spec->length = ti->len;
-		strscpy_pad(spec->target_type, ti->type->name,
-			sizeof(spec->target_type));
+		strncpy(spec->target_type, ti->type->name,
+			sizeof(spec->target_type) - 1);
 
 		outptr += sizeof(struct dm_target_spec);
 		remaining = len - (outptr - outbuf);

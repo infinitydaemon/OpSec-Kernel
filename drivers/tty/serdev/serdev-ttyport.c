@@ -27,17 +27,19 @@ static size_t ttyport_receive_buf(struct tty_port *port, const u8 *cp,
 {
 	struct serdev_controller *ctrl = port->client_data;
 	struct serport *serport = serdev_controller_get_drvdata(ctrl);
-	size_t ret;
+	int ret;
 
 	if (!test_bit(SERPORT_ACTIVE, &serport->flags))
 		return 0;
 
 	ret = serdev_controller_receive_buf(ctrl, cp, count);
 
-	dev_WARN_ONCE(&ctrl->dev, ret > count,
-				"receive_buf returns %zu (count = %zu)\n",
+	dev_WARN_ONCE(&ctrl->dev, ret < 0 || ret > count,
+				"receive_buf returns %d (count = %zu)\n",
 				ret, count);
-	if (ret > count)
+	if (ret < 0)
+		return 0;
+	else if (ret > count)
 		return count;
 
 	return ret;
@@ -72,7 +74,7 @@ static const struct tty_port_client_operations client_ops = {
  * Callback functions from the serdev core.
  */
 
-static ssize_t ttyport_write_buf(struct serdev_controller *ctrl, const u8 *data, size_t len)
+static int ttyport_write_buf(struct serdev_controller *ctrl, const unsigned char *data, size_t len)
 {
 	struct serport *serport = serdev_controller_get_drvdata(ctrl);
 	struct tty_struct *tty = serport->tty;
@@ -272,7 +274,6 @@ static const struct serdev_controller_ops ctrl_ops = {
 };
 
 struct device *serdev_tty_port_register(struct tty_port *port,
-					struct device *host,
 					struct device *parent,
 					struct tty_driver *drv, int idx)
 {
@@ -283,7 +284,7 @@ struct device *serdev_tty_port_register(struct tty_port *port,
 	if (!port || !drv || !parent)
 		return ERR_PTR(-ENODEV);
 
-	ctrl = serdev_controller_alloc(host, parent, sizeof(struct serport));
+	ctrl = serdev_controller_alloc(parent, sizeof(struct serport));
 	if (!ctrl)
 		return ERR_PTR(-ENOMEM);
 	serport = serdev_controller_get_drvdata(ctrl);

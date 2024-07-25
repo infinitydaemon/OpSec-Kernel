@@ -159,11 +159,6 @@ static_assert(SX9310_NUM_CHANNELS <= SX_COMMON_MAX_NUM_CHANNELS);
 }
 #define SX9310_CHANNEL(idx) SX9310_NAMED_CHANNEL(idx, NULL)
 
-struct sx931x_info {
-	const char *name;
-	unsigned int whoami;
-};
-
 static const struct iio_chan_spec sx9310_channels[] = {
 	SX9310_CHANNEL(0),			/* CS0 */
 	SX9310_CHANNEL(1),			/* CS1 */
@@ -337,19 +332,28 @@ static int sx9310_read_raw(struct iio_dev *indio_dev,
 			   int *val2, long mask)
 {
 	struct sx_common_data *data = iio_priv(indio_dev);
+	int ret;
 
 	if (chan->type != IIO_PROXIMITY)
 		return -EINVAL;
 
 	switch (mask) {
 	case IIO_CHAN_INFO_RAW:
-		iio_device_claim_direct_scoped(return -EBUSY, indio_dev)
-			return sx_common_read_proximity(data, chan, val);
-		unreachable();
+		ret = iio_device_claim_direct_mode(indio_dev);
+		if (ret)
+			return ret;
+
+		ret = sx_common_read_proximity(data, chan, val);
+		iio_device_release_direct_mode(indio_dev);
+		return ret;
 	case IIO_CHAN_INFO_HARDWAREGAIN:
-		iio_device_claim_direct_scoped(return -EBUSY, indio_dev)
-			return sx9310_read_gain(data, chan, val);
-		unreachable();
+		ret = iio_device_claim_direct_mode(indio_dev);
+		if (ret)
+			return ret;
+
+		ret = sx9310_read_gain(data, chan, val);
+		iio_device_release_direct_mode(indio_dev);
+		return ret;
 	case IIO_CHAN_INFO_SAMP_FREQ:
 		return sx9310_read_samp_freq(data, val, val2);
 	default:
@@ -537,10 +541,12 @@ static int sx9310_write_thresh(struct sx_common_data *data,
 		return -EINVAL;
 
 	regval = FIELD_PREP(SX9310_REG_PROX_CTRL8_9_PTHRESH_MASK, regval);
+	mutex_lock(&data->mutex);
+	ret = regmap_update_bits(data->regmap, reg,
+				 SX9310_REG_PROX_CTRL8_9_PTHRESH_MASK, regval);
+	mutex_unlock(&data->mutex);
 
-	guard(mutex)(&data->mutex);
-	return regmap_update_bits(data->regmap, reg,
-				  SX9310_REG_PROX_CTRL8_9_PTHRESH_MASK, regval);
+	return ret;
 }
 
 static int sx9310_write_hysteresis(struct sx_common_data *data,
@@ -565,14 +571,17 @@ static int sx9310_write_hysteresis(struct sx_common_data *data,
 		return -EINVAL;
 
 	hyst = FIELD_PREP(SX9310_REG_PROX_CTRL10_HYST_MASK, hyst);
+	mutex_lock(&data->mutex);
+	ret = regmap_update_bits(data->regmap, SX9310_REG_PROX_CTRL10,
+				 SX9310_REG_PROX_CTRL10_HYST_MASK, hyst);
+	mutex_unlock(&data->mutex);
 
-	guard(mutex)(&data->mutex);
-	return regmap_update_bits(data->regmap, SX9310_REG_PROX_CTRL10,
-				  SX9310_REG_PROX_CTRL10_HYST_MASK, hyst);
+	return ret;
 }
 
 static int sx9310_write_far_debounce(struct sx_common_data *data, int val)
 {
+	int ret;
 	unsigned int regval;
 
 	if (val > 0)
@@ -582,14 +591,18 @@ static int sx9310_write_far_debounce(struct sx_common_data *data, int val)
 
 	regval = FIELD_PREP(SX9310_REG_PROX_CTRL10_FAR_DEBOUNCE_MASK, val);
 
-	guard(mutex)(&data->mutex);
-	return regmap_update_bits(data->regmap, SX9310_REG_PROX_CTRL10,
-				  SX9310_REG_PROX_CTRL10_FAR_DEBOUNCE_MASK,
-				  regval);
+	mutex_lock(&data->mutex);
+	ret = regmap_update_bits(data->regmap, SX9310_REG_PROX_CTRL10,
+				 SX9310_REG_PROX_CTRL10_FAR_DEBOUNCE_MASK,
+				 regval);
+	mutex_unlock(&data->mutex);
+
+	return ret;
 }
 
 static int sx9310_write_close_debounce(struct sx_common_data *data, int val)
 {
+	int ret;
 	unsigned int regval;
 
 	if (val > 0)
@@ -599,10 +612,13 @@ static int sx9310_write_close_debounce(struct sx_common_data *data, int val)
 
 	regval = FIELD_PREP(SX9310_REG_PROX_CTRL10_CLOSE_DEBOUNCE_MASK, val);
 
-	guard(mutex)(&data->mutex);
-	return regmap_update_bits(data->regmap, SX9310_REG_PROX_CTRL10,
-				  SX9310_REG_PROX_CTRL10_CLOSE_DEBOUNCE_MASK,
-				  regval);
+	mutex_lock(&data->mutex);
+	ret = regmap_update_bits(data->regmap, SX9310_REG_PROX_CTRL10,
+				 SX9310_REG_PROX_CTRL10_CLOSE_DEBOUNCE_MASK,
+				 regval);
+	mutex_unlock(&data->mutex);
+
+	return ret;
 }
 
 static int sx9310_write_event_val(struct iio_dev *indio_dev,
@@ -637,7 +653,7 @@ static int sx9310_write_event_val(struct iio_dev *indio_dev,
 
 static int sx9310_set_samp_freq(struct sx_common_data *data, int val, int val2)
 {
-	int i;
+	int i, ret;
 
 	for (i = 0; i < ARRAY_SIZE(sx9310_samp_freq_table); i++)
 		if (val == sx9310_samp_freq_table[i].val &&
@@ -647,17 +663,23 @@ static int sx9310_set_samp_freq(struct sx_common_data *data, int val, int val2)
 	if (i == ARRAY_SIZE(sx9310_samp_freq_table))
 		return -EINVAL;
 
-	guard(mutex)(&data->mutex);
-	return regmap_update_bits(
+	mutex_lock(&data->mutex);
+
+	ret = regmap_update_bits(
 		data->regmap, SX9310_REG_PROX_CTRL0,
 		SX9310_REG_PROX_CTRL0_SCANPERIOD_MASK,
 		FIELD_PREP(SX9310_REG_PROX_CTRL0_SCANPERIOD_MASK, i));
+
+	mutex_unlock(&data->mutex);
+
+	return ret;
 }
 
 static int sx9310_write_gain(struct sx_common_data *data,
 			     const struct iio_chan_spec *chan, int val)
 {
 	unsigned int gain, mask;
+	int ret;
 
 	gain = ilog2(val);
 
@@ -676,9 +698,12 @@ static int sx9310_write_gain(struct sx_common_data *data,
 		return -EINVAL;
 	}
 
-	guard(mutex)(&data->mutex);
-	return regmap_update_bits(data->regmap, SX9310_REG_PROX_CTRL3, mask,
-				  gain);
+	mutex_lock(&data->mutex);
+	ret = regmap_update_bits(data->regmap, SX9310_REG_PROX_CTRL3, mask,
+				 gain);
+	mutex_unlock(&data->mutex);
+
+	return ret;
 }
 
 static int sx9310_write_raw(struct iio_dev *indio_dev,
@@ -877,7 +902,7 @@ static int sx9310_check_whoami(struct device *dev,
 			       struct iio_dev *indio_dev)
 {
 	struct sx_common_data *data = iio_priv(indio_dev);
-	const struct sx931x_info *ddata;
+	unsigned int long ddata;
 	unsigned int whoami;
 	int ret;
 
@@ -885,11 +910,20 @@ static int sx9310_check_whoami(struct device *dev,
 	if (ret)
 		return ret;
 
-	ddata = device_get_match_data(dev);
-	if (ddata->whoami != whoami)
-		return -ENODEV;
+	ddata = (uintptr_t)device_get_match_data(dev);
+	if (ddata != whoami)
+		return -EINVAL;
 
-	indio_dev->name = ddata->name;
+	switch (whoami) {
+	case SX9310_WHOAMI_VALUE:
+		indio_dev->name = "sx9310";
+		break;
+	case SX9311_WHOAMI_VALUE:
+		indio_dev->name = "sx9311";
+		break;
+	default:
+		return -ENODEV;
+	}
 
 	return 0;
 }
@@ -939,18 +973,22 @@ static int sx9310_suspend(struct device *dev)
 
 	disable_irq_nosync(data->client->irq);
 
-	guard(mutex)(&data->mutex);
+	mutex_lock(&data->mutex);
 	ret = regmap_read(data->regmap, SX9310_REG_PROX_CTRL0,
 			  &data->suspend_ctrl);
 	if (ret)
-		return ret;
+		goto out;
 
 	ctrl0 = data->suspend_ctrl & ~SX9310_REG_PROX_CTRL0_SENSOREN_MASK;
 	ret = regmap_write(data->regmap, SX9310_REG_PROX_CTRL0, ctrl0);
 	if (ret)
-		return ret;
+		goto out;
 
-	return regmap_write(data->regmap, SX9310_REG_PAUSE, 0);
+	ret = regmap_write(data->regmap, SX9310_REG_PAUSE, 0);
+
+out:
+	mutex_unlock(&data->mutex);
+	return ret;
 }
 
 static int sx9310_resume(struct device *dev)
@@ -958,16 +996,18 @@ static int sx9310_resume(struct device *dev)
 	struct sx_common_data *data = iio_priv(dev_get_drvdata(dev));
 	int ret;
 
-	scoped_guard(mutex, &data->mutex) {
-		ret = regmap_write(data->regmap, SX9310_REG_PAUSE, 1);
-		if (ret)
-			return ret;
+	mutex_lock(&data->mutex);
+	ret = regmap_write(data->regmap, SX9310_REG_PAUSE, 1);
+	if (ret)
+		goto out;
 
-		ret = regmap_write(data->regmap, SX9310_REG_PROX_CTRL0,
-				   data->suspend_ctrl);
-		if (ret)
-			return ret;
-	}
+	ret = regmap_write(data->regmap, SX9310_REG_PROX_CTRL0,
+			   data->suspend_ctrl);
+
+out:
+	mutex_unlock(&data->mutex);
+	if (ret)
+		return ret;
 
 	enable_irq(data->client->irq);
 	return 0;
@@ -975,33 +1015,23 @@ static int sx9310_resume(struct device *dev)
 
 static DEFINE_SIMPLE_DEV_PM_OPS(sx9310_pm_ops, sx9310_suspend, sx9310_resume);
 
-static const struct sx931x_info sx9310_info = {
-	.name = "sx9310",
-	.whoami = SX9310_WHOAMI_VALUE,
-};
-
-static const struct sx931x_info sx9311_info = {
-	.name = "sx9311",
-	.whoami = SX9311_WHOAMI_VALUE,
-};
-
 static const struct acpi_device_id sx9310_acpi_match[] = {
-	{ "STH9310", (kernel_ulong_t)&sx9310_info },
-	{ "STH9311", (kernel_ulong_t)&sx9311_info },
+	{ "STH9310", SX9310_WHOAMI_VALUE },
+	{ "STH9311", SX9311_WHOAMI_VALUE },
 	{}
 };
 MODULE_DEVICE_TABLE(acpi, sx9310_acpi_match);
 
 static const struct of_device_id sx9310_of_match[] = {
-	{ .compatible = "semtech,sx9310", &sx9310_info },
-	{ .compatible = "semtech,sx9311", &sx9311_info },
+	{ .compatible = "semtech,sx9310", (void *)SX9310_WHOAMI_VALUE },
+	{ .compatible = "semtech,sx9311", (void *)SX9311_WHOAMI_VALUE },
 	{}
 };
 MODULE_DEVICE_TABLE(of, sx9310_of_match);
 
 static const struct i2c_device_id sx9310_id[] = {
-	{ "sx9310", (kernel_ulong_t)&sx9310_info },
-	{ "sx9311", (kernel_ulong_t)&sx9311_info },
+	{ "sx9310", SX9310_WHOAMI_VALUE },
+	{ "sx9311", SX9311_WHOAMI_VALUE },
 	{}
 };
 MODULE_DEVICE_TABLE(i2c, sx9310_id);

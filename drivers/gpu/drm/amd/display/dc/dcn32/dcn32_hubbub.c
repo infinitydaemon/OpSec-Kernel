@@ -167,7 +167,7 @@ static uint32_t convert_and_clamp(
 
 bool hubbub32_program_urgent_watermarks(
 		struct hubbub *hubbub,
-		union dcn_watermark_set *watermarks,
+		struct dcn_watermark_set *watermarks,
 		unsigned int refclk_mhz,
 		bool safe_to_lower)
 {
@@ -357,7 +357,7 @@ bool hubbub32_program_urgent_watermarks(
 
 bool hubbub32_program_stutter_watermarks(
 		struct hubbub *hubbub,
-		union dcn_watermark_set *watermarks,
+		struct dcn_watermark_set *watermarks,
 		unsigned int refclk_mhz,
 		bool safe_to_lower)
 {
@@ -503,7 +503,7 @@ bool hubbub32_program_stutter_watermarks(
 
 bool hubbub32_program_pstate_watermarks(
 		struct hubbub *hubbub,
-		union dcn_watermark_set *watermarks,
+		struct dcn_watermark_set *watermarks,
 		unsigned int refclk_mhz,
 		bool safe_to_lower)
 {
@@ -656,7 +656,7 @@ bool hubbub32_program_pstate_watermarks(
 
 bool hubbub32_program_usr_watermarks(
 		struct hubbub *hubbub,
-		union dcn_watermark_set *watermarks,
+		struct dcn_watermark_set *watermarks,
 		unsigned int refclk_mhz,
 		bool safe_to_lower)
 {
@@ -750,7 +750,7 @@ void hubbub32_force_usr_retraining_allow(struct hubbub *hubbub, bool allow)
 
 static bool hubbub32_program_watermarks(
 		struct hubbub *hubbub,
-		union dcn_watermark_set *watermarks,
+		struct dcn_watermark_set *watermarks,
 		unsigned int refclk_mhz,
 		bool safe_to_lower)
 {
@@ -945,17 +945,6 @@ void hubbub32_force_wm_propagate_to_pipes(struct hubbub *hubbub)
 			DCHUBBUB_ARB_DATA_URGENCY_WATERMARK_A, prog_wm_value);
 }
 
-void hubbub32_get_mall_en(struct hubbub *hubbub, unsigned int *mall_in_use)
-{
-	struct dcn20_hubbub *hubbub2 = TO_DCN20_HUBBUB(hubbub);
-	uint32_t prefetch_complete, mall_en;
-
-	REG_GET_2(DCHUBBUB_ARB_MALL_CNTL, MALL_IN_USE, &mall_en,
-			  MALL_PREFETCH_COMPLETE, &prefetch_complete);
-
-	*mall_in_use = prefetch_complete && mall_en;
-}
-
 void hubbub32_init(struct hubbub *hubbub)
 {
 	struct dcn20_hubbub *hubbub2 = TO_DCN20_HUBBUB(hubbub);
@@ -1006,8 +995,7 @@ static const struct hubbub_funcs hubbub32_funcs = {
 	.init_crb = dcn32_init_crb,
 	.hubbub_read_state = hubbub2_read_state,
 	.force_usr_retraining_allow = hubbub32_force_usr_retraining_allow,
-	.set_request_limit = hubbub32_set_request_limit,
-	.get_mall_en = hubbub32_get_mall_en,
+	.set_request_limit = hubbub32_set_request_limit
 };
 
 void hubbub32_construct(struct dcn20_hubbub *hubbub2,

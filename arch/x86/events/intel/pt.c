@@ -22,7 +22,7 @@
 #include <asm/insn.h>
 #include <asm/io.h>
 #include <asm/intel_pt.h>
-#include <asm/cpu_device_id.h>
+#include <asm/intel-family.h>
 
 #include "../perf_event.h"
 #include "pt.h"
@@ -211,11 +211,11 @@ static int __init pt_pmu_hw_init(void)
 	}
 
 	/* model-specific quirks */
-	switch (boot_cpu_data.x86_vfm) {
-	case INTEL_BROADWELL:
-	case INTEL_BROADWELL_D:
-	case INTEL_BROADWELL_G:
-	case INTEL_BROADWELL_X:
+	switch (boot_cpu_data.x86_model) {
+	case INTEL_FAM6_BROADWELL:
+	case INTEL_FAM6_BROADWELL_D:
+	case INTEL_FAM6_BROADWELL_G:
+	case INTEL_FAM6_BROADWELL_X:
 		/* not setting BRANCH_EN will #GP, erratum BDM106 */
 		pt_pmu.branch_en_always_on = true;
 		break;
@@ -736,7 +736,6 @@ static bool topa_table_full(struct topa *topa)
 /**
  * topa_insert_pages() - create a list of ToPA tables
  * @buf:	PT buffer being initialized.
- * @cpu:	CPU on which to allocate.
  * @gfp:	Allocation flags.
  *
  * This initializes a list of ToPA tables with entries from
@@ -1208,11 +1207,8 @@ static void pt_buffer_fini_topa(struct pt_buffer *buf)
 /**
  * pt_buffer_init_topa() - initialize ToPA table for pt buffer
  * @buf:	PT buffer.
- * @cpu:	CPU on which to allocate.
- * @nr_pages:	No. of pages to allocate.
+ * @size:	Total size of all regions within this ToPA.
  * @gfp:	Allocation flags.
- *
- * Return:	0 on success or error code.
  */
 static int pt_buffer_init_topa(struct pt_buffer *buf, int cpu,
 			       unsigned long nr_pages, gfp_t gfp)
@@ -1285,7 +1281,7 @@ out:
 
 /**
  * pt_buffer_setup_aux() - set up topa tables for a PT buffer
- * @event:	Performance event
+ * @cpu:	Cpu on which to allocate, -1 means current.
  * @pages:	Array of pointers to buffer pages passed from perf core.
  * @nr_pages:	Number of pages in the buffer.
  * @snapshot:	If this is a snapshot/overwrite counter.

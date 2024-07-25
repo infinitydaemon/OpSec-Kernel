@@ -26,7 +26,6 @@
  * as they get called from within inline assembly.
  */
 
-#include <linux/export.h>
 #include <linux/linkage.h>
 #include <asm/page_types.h>
 #include <asm/errno.h>
@@ -34,6 +33,7 @@
 #include <asm/thread_info.h>
 #include <asm/asm.h>
 #include <asm/smap.h>
+#include <asm/export.h>
 
 #define ASM_BARRIER_NOSPEC ALTERNATIVE "", "lfence", X86_FEATURE_LFENCE_RDTSC
 
@@ -44,7 +44,11 @@
 	or %rdx, %rax
 .else
 	cmp $TASK_SIZE_MAX-\size+1, %eax
+.if \size != 8
 	jae .Lbad_get_user
+.else
+	jae .Lbad_get_user_8
+.endif
 	sbb %edx, %edx		/* array_index_mask_nospec() */
 	and %edx, %eax
 .endif
@@ -154,7 +158,7 @@ SYM_CODE_END(__get_user_handle_exception)
 #ifdef CONFIG_X86_32
 SYM_CODE_START_LOCAL(__get_user_8_handle_exception)
 	ASM_CLAC
-bad_get_user_8:
+.Lbad_get_user_8:
 	xor %edx,%edx
 	xor %ecx,%ecx
 	mov $(-EFAULT),%_ASM_AX

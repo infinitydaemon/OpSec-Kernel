@@ -1,22 +1,16 @@
 # SPDX-License-Identifier: GPL-2.0-only
 config EXT2_FS
-	tristate "Second extended fs support (DEPRECATED)"
+	tristate "Second extended fs support"
 	select BUFFER_HEAD
 	select FS_IOMAP
+	select LEGACY_DIRECT_IO
 	help
 	  Ext2 is a standard Linux file system for hard disks.
 
-	  This filesystem driver is deprecated because it does not properly
-	  support inode time stamps beyond 03:14:07 UTC on 19 January 2038.
+	  To compile this file system support as a module, choose M here: the
+	  module will be called ext2.
 
-	  Ext2 users are advised to use ext4 driver to access their filesystem.
-	  The driver is fully compatible, supports filesystems without journal
-          or extents, and also supports larger time stamps if the filesystem
-          is created with at least 256 byte inodes.
-
-	  This code is kept as a simple reference for filesystem developers.
-
-	  If unsure, say N.
+	  If unsure, say Y.
 
 config EXT2_FS_XATTR
 	bool "Ext2 extended attributes"

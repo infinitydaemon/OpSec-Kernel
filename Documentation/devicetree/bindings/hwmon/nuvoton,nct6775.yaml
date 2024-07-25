@@ -25,7 +25,6 @@ properties:
       - nuvoton,nct6796
       - nuvoton,nct6797
       - nuvoton,nct6798
-      - nuvoton,nct6799
 
   reg:
     maxItems: 1

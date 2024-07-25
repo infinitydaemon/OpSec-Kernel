@@ -1198,8 +1198,6 @@ EXPORT_SYMBOL_GPL(usb_get_status);
  * same status code used to report a true stall.
  *
  * This call is synchronous, and may not be used in an interrupt context.
- * If a thread in your driver uses this call, make sure your disconnect()
- * method can wait for it to complete.
  *
  * Return: Zero on success, or else the status code returned by the
  * underlying usb_control_msg() call.
@@ -1266,6 +1264,21 @@ static void remove_intf_ep_devs(struct usb_interface *intf)
 		usb_remove_ep_devs(&alt->endpoint[i]);
 	intf->ep_devs_created = 0;
 }
+
+void usb_fixup_endpoint(struct usb_device *dev, int epaddr, int interval)
+{
+	unsigned int epnum = epaddr & USB_ENDPOINT_NUMBER_MASK;
+	struct usb_host_endpoint *ep;
+
+	if (usb_endpoint_out(epaddr))
+		ep = dev->ep_out[epnum];
+	else
+		ep = dev->ep_in[epnum];
+
+	if (ep && usb_endpoint_xfer_int(&ep->desc))
+		usb_hcd_fixup_endpoint(dev, ep, interval);
+}
+EXPORT_SYMBOL_GPL(usb_fixup_endpoint);
 
 /**
  * usb_disable_endpoint -- Disable an endpoint by address
@@ -1518,8 +1531,7 @@ void usb_enable_interface(struct usb_device *dev,
  * This call is synchronous, and may not be used in an interrupt context.
  * Also, drivers must not change altsettings while urbs are scheduled for
  * endpoints in that interface; all such urbs must first be completed
- * (perhaps forced by unlinking). If a thread in your driver uses this call,
- * make sure your disconnect() method can wait for it to complete.
+ * (perhaps forced by unlinking).
  *
  * Return: Zero on success, or else the status code returned by the
  * underlying usb_control_msg() call.
@@ -1852,7 +1864,7 @@ static int usb_if_uevent(const struct device *dev, struct kobj_uevent_env *env)
 	return 0;
 }
 
-const struct device_type usb_if_device_type = {
+struct device_type usb_if_device_type = {
 	.name =		"usb_interface",
 	.release =	usb_release_interface,
 	.uevent =	usb_if_uevent,
@@ -2180,6 +2192,85 @@ free_interfaces:
 	if (cp->string == NULL &&
 			!(dev->quirks & USB_QUIRK_CONFIG_INTF_STRINGS))
 		cp->string = usb_cache_string(dev, cp->desc.iConfiguration);
+/* Uncomment this define to enable the HS Electrical Test support */
+#define DWC_HS_ELECT_TST 1
+#ifdef DWC_HS_ELECT_TST
+		/* Here we implement the HS Electrical Test support. The
+		 * tester uses a vendor ID of 0x1A0A to indicate we should
+		 * run a special test sequence. The product ID tells us
+		 * which sequence to run. We invoke the test sequence by
+		 * sending a non-standard SetFeature command to our root
+		 * hub port. Our dwc_otg_hcd_hub_control() routine will
+		 * recognize the command and perform the desired test
+		 * sequence.
+		 */
+		if (dev->descriptor.idVendor == 0x1A0A) {
+			/* HSOTG Electrical Test */
+			dev_warn(&dev->dev, "VID from HSOTG Electrical Test Fixture\n");
+
+			if (dev->bus && dev->bus->root_hub) {
+				struct usb_device *hdev = dev->bus->root_hub;
+				dev_warn(&dev->dev, "Got PID 0x%x\n", dev->descriptor.idProduct);
+
+				switch (dev->descriptor.idProduct) {
+				case 0x0101:	/* TEST_SE0_NAK */
+					dev_warn(&dev->dev, "TEST_SE0_NAK\n");
+					usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
+							USB_REQ_SET_FEATURE, USB_RT_PORT,
+							USB_PORT_FEAT_TEST, 0x300, NULL, 0, HZ);
+					break;
+
+				case 0x0102:	/* TEST_J */
+					dev_warn(&dev->dev, "TEST_J\n");
+					usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
+							USB_REQ_SET_FEATURE, USB_RT_PORT,
+							USB_PORT_FEAT_TEST, 0x100, NULL, 0, HZ);
+					break;
+
+				case 0x0103:	/* TEST_K */
+					dev_warn(&dev->dev, "TEST_K\n");
+					usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
+							USB_REQ_SET_FEATURE, USB_RT_PORT,
+							USB_PORT_FEAT_TEST, 0x200, NULL, 0, HZ);
+					break;
+
+				case 0x0104:	/* TEST_PACKET */
+					dev_warn(&dev->dev, "TEST_PACKET\n");
+					usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
+							USB_REQ_SET_FEATURE, USB_RT_PORT,
+							USB_PORT_FEAT_TEST, 0x400, NULL, 0, HZ);
+					break;
+
+				case 0x0105:	/* TEST_FORCE_ENABLE */
+					dev_warn(&dev->dev, "TEST_FORCE_ENABLE\n");
+					usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
+							USB_REQ_SET_FEATURE, USB_RT_PORT,
+							USB_PORT_FEAT_TEST, 0x500, NULL, 0, HZ);
+					break;
+
+				case 0x0106:	/* HS_HOST_PORT_SUSPEND_RESUME */
+					dev_warn(&dev->dev, "HS_HOST_PORT_SUSPEND_RESUME\n");
+					usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
+							USB_REQ_SET_FEATURE, USB_RT_PORT,
+							USB_PORT_FEAT_TEST, 0x600, NULL, 0, 40 * HZ);
+					break;
+
+				case 0x0107:	/* SINGLE_STEP_GET_DEVICE_DESCRIPTOR setup */
+					dev_warn(&dev->dev, "SINGLE_STEP_GET_DEVICE_DESCRIPTOR setup\n");
+					usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
+							USB_REQ_SET_FEATURE, USB_RT_PORT,
+							USB_PORT_FEAT_TEST, 0x700, NULL, 0, 40 * HZ);
+					break;
+
+				case 0x0108:	/* SINGLE_STEP_GET_DEVICE_DESCRIPTOR execute */
+					dev_warn(&dev->dev, "SINGLE_STEP_GET_DEVICE_DESCRIPTOR execute\n");
+					usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
+							USB_REQ_SET_FEATURE, USB_RT_PORT,
+							USB_PORT_FEAT_TEST, 0x800, NULL, 0, 40 * HZ);
+				}
+			}
+		}
+#endif /* DWC_HS_ELECT_TST */
 
 	/* Now that the interfaces are installed, re-enable LPM. */
 	usb_unlocked_enable_lpm(dev);

@@ -7,8 +7,12 @@
  *
  */
 
+#define KMSG_COMPONENT "dasd-eckd"
+
 #include <linux/timer.h>
 #include <asm/idals.h>
+
+#define PRINTK_HEADER "dasd_erp(3990): "
 
 #include "dasd_int.h"
 #include "dasd_eckd.h"
@@ -216,7 +220,7 @@ dasd_3990_erp_DCTL(struct dasd_ccw_req * erp, char modifier)
 	memset(ccw, 0, sizeof(struct ccw1));
 	ccw->cmd_code = CCW_CMD_DCTL;
 	ccw->count = 4;
-	ccw->cda = virt_to_dma32(DCTL_data);
+	ccw->cda = (__u32)virt_to_phys(DCTL_data);
 	dctl_cqr->flags = erp->flags;
 	dctl_cqr->function = dasd_3990_erp_DCTL;
 	dctl_cqr->refers = erp;
@@ -394,6 +398,7 @@ dasd_3990_handle_env_data(struct dasd_ccw_req * erp, char *sense)
 	struct dasd_device *device = erp->startdev;
 	char msg_format = (sense[7] & 0xF0);
 	char msg_no = (sense[7] & 0x0F);
+	char errorstring[ERRORLENGTH];
 
 	switch (msg_format) {
 	case 0x00:		/* Format 0 - Program or System Checks */
@@ -999,9 +1004,12 @@ dasd_3990_handle_env_data(struct dasd_ccw_req * erp, char *sense)
 		}
 		break;
 
-	default:
+	default:	/* unknown message format - should not happen
+			   internal error 03 - unknown message format */
+		snprintf(errorstring, ERRORLENGTH, "03 %x02", msg_format);
 		dev_err(&device->cdev->dev,
-			"Unknown message format %02x", msg_format);
+			 "An error occurred in the DASD device driver, "
+			 "reason=%s\n", errorstring);
 		break;
 	}			/* end switch message format */
 
@@ -1048,9 +1056,11 @@ dasd_3990_erp_com_rej(struct dasd_ccw_req * erp, char *sense)
 		set_bit(DASD_CQR_SUPPRESS_CR, &erp->refers->flags);
 		erp = dasd_3990_erp_cleanup(erp, DASD_CQR_FAILED);
 	} else {
+		/* fatal error -  set status to FAILED
+		   internal error 09 - Command Reject */
 		if (!test_bit(DASD_CQR_SUPPRESS_CR, &erp->flags))
 			dev_err(&device->cdev->dev,
-				"An I/O command request was rejected\n");
+				"An error occurred in the DASD device driver, reason=09\n");
 
 		erp = dasd_3990_erp_cleanup(erp, DASD_CQR_FAILED);
 	}
@@ -1118,7 +1128,13 @@ dasd_3990_erp_equip_check(struct dasd_ccw_req * erp, char *sense)
 	erp->function = dasd_3990_erp_equip_check;
 
 	if (sense[1] & SNS1_WRITE_INHIBITED) {
-		dev_err(&device->cdev->dev, "Write inhibited path encountered\n");
+		dev_info(&device->cdev->dev,
+			    "Write inhibited path encountered\n");
+
+		/* vary path offline
+		   internal error 04 - Path should be varied off-line.*/
+		dev_err(&device->cdev->dev, "An error occurred in the DASD "
+			"device driver, reason=%s\n", "04");
 
 		erp = dasd_3990_erp_action_1(erp);
 
@@ -1269,7 +1285,11 @@ dasd_3990_erp_inv_format(struct dasd_ccw_req * erp, char *sense)
 		erp = dasd_3990_erp_action_4(erp, sense);
 
 	} else {
-		dev_err(&device->cdev->dev, "Track format is not valid\n");
+		/* internal error 06 - The track format is not valid*/
+		dev_err(&device->cdev->dev,
+			"An error occurred in the DASD device driver, "
+			"reason=%s\n", "06");
+
 		erp = dasd_3990_erp_cleanup(erp, DASD_CQR_FAILED);
 	}
 
@@ -1589,7 +1609,7 @@ dasd_3990_erp_action_1B_32(struct dasd_ccw_req * default_erp, char *sense)
 {
 
 	struct dasd_device *device = default_erp->startdev;
-	dma32_t cpa = 0;
+	__u32 cpa = 0;
 	struct dasd_ccw_req *cqr;
 	struct dasd_ccw_req *erp;
 	struct DE_eckd_data *DE_data;
@@ -1643,8 +1663,9 @@ dasd_3990_erp_action_1B_32(struct dasd_ccw_req * default_erp, char *sense)
 				     sizeof(struct LO_eckd_data), device);
 
 	if (IS_ERR(erp)) {
-		DBF_DEV_EVENT(DBF_ERR, device, "%s",
-			      "Unable to allocate ERP request (1B 32)");
+		/* internal error 01 - Unable to allocate ERP */
+		dev_err(&device->cdev->dev, "An error occurred in the DASD "
+			"device driver, reason=%s\n", "01");
 		return dasd_3990_erp_cleanup(default_erp, DASD_CQR_FAILED);
 	}
 
@@ -1693,7 +1714,7 @@ dasd_3990_erp_action_1B_32(struct dasd_ccw_req * default_erp, char *sense)
 	ccw->cmd_code = DASD_ECKD_CCW_DEFINE_EXTENT;
 	ccw->flags = CCW_FLAG_CC;
 	ccw->count = 16;
-	ccw->cda = virt_to_dma32(DE_data);
+	ccw->cda = (__u32)virt_to_phys(DE_data);
 
 	/* create LO ccw */
 	ccw++;
@@ -1701,7 +1722,7 @@ dasd_3990_erp_action_1B_32(struct dasd_ccw_req * default_erp, char *sense)
 	ccw->cmd_code = DASD_ECKD_CCW_LOCATE_RECORD;
 	ccw->flags = CCW_FLAG_CC;
 	ccw->count = 16;
-	ccw->cda = virt_to_dma32(LO_data);
+	ccw->cda = (__u32)virt_to_phys(LO_data);
 
 	/* TIC to the failed ccw */
 	ccw++;
@@ -1747,7 +1768,7 @@ dasd_3990_update_1B(struct dasd_ccw_req * previous_erp, char *sense)
 {
 
 	struct dasd_device *device = previous_erp->startdev;
-	dma32_t cpa = 0;
+	__u32 cpa = 0;
 	struct dasd_ccw_req *cqr;
 	struct dasd_ccw_req *erp;
 	char *LO_data;		/* struct LO_eckd_data */
@@ -1786,8 +1807,10 @@ dasd_3990_update_1B(struct dasd_ccw_req * previous_erp, char *sense)
 	cpa = previous_erp->irb.scsw.cmd.cpa;
 
 	if (cpa == 0) {
-		dev_err(&device->cdev->dev,
-			"Unable to determine address of to be restarted CCW\n");
+		/* internal error 02 -
+		   Unable to determine address of the CCW to be restarted */
+		dev_err(&device->cdev->dev, "An error occurred in the DASD "
+			"device driver, reason=%s\n", "02");
 
 		previous_erp->status = DASD_CQR_FAILED;
 
@@ -1986,9 +2009,15 @@ dasd_3990_erp_compound_config(struct dasd_ccw_req * erp, char *sense)
 {
 
 	if ((sense[25] & DASD_SENSE_BIT_1) && (sense[26] & DASD_SENSE_BIT_2)) {
+
+		/* set to suspended duplex state then restart
+		   internal error 05 - Set device to suspended duplex state
+		   should be done */
 		struct dasd_device *device = erp->startdev;
 		dev_err(&device->cdev->dev,
-			"Compound configuration error occurred\n");
+			"An error occurred in the DASD device driver, "
+			"reason=%s\n", "05");
+
 	}
 
 	erp->function = dasd_3990_erp_compound_config;
@@ -2124,9 +2153,10 @@ dasd_3990_erp_inspect_32(struct dasd_ccw_req * erp, char *sense)
 			erp = dasd_3990_erp_int_req(erp);
 			break;
 
-		case 0x0F:
-			dev_err(&device->cdev->dev,
-				"Update write command error occurred\n");
+		case 0x0F:  /* length mismatch during update write command
+			       internal error 08 - update write command error*/
+			dev_err(&device->cdev->dev, "An error occurred in the "
+				"DASD device driver, reason=%s\n", "08");
 
 			erp = dasd_3990_erp_cleanup(erp, DASD_CQR_FAILED);
 			break;
@@ -2135,9 +2165,12 @@ dasd_3990_erp_inspect_32(struct dasd_ccw_req * erp, char *sense)
 			erp = dasd_3990_erp_action_10_32(erp, sense);
 			break;
 
-		case 0x15:
+		case 0x15:	/* next track outside defined extend
+				   internal error 07 - The next track is not
+				   within the defined storage extent */
 			dev_err(&device->cdev->dev,
-				"Track outside defined extent error occurred\n");
+				"An error occurred in the DASD device driver, "
+				"reason=%s\n", "07");
 
 			erp = dasd_3990_erp_cleanup(erp, DASD_CQR_FAILED);
 			break;
@@ -2386,7 +2419,7 @@ static struct dasd_ccw_req *dasd_3990_erp_add_erp(struct dasd_ccw_req *cqr)
 		tcw = erp->cpaddr;
 		tsb = (struct tsb *) &tcw[1];
 		*tcw = *((struct tcw *)cqr->cpaddr);
-		tcw->tsb = virt_to_dma64(tsb);
+		tcw->tsb = virt_to_phys(tsb);
 	} else if (ccw->cmd_code == DASD_ECKD_CCW_PSF) {
 		/* PSF cannot be chained from NOOP/TIC */
 		erp->cpaddr = cqr->cpaddr;
@@ -2397,7 +2430,7 @@ static struct dasd_ccw_req *dasd_3990_erp_add_erp(struct dasd_ccw_req *cqr)
 		ccw->flags = CCW_FLAG_CC;
 		ccw++;
 		ccw->cmd_code = CCW_CMD_TIC;
-		ccw->cda      = virt_to_dma32(cqr->cpaddr);
+		ccw->cda      = (__u32)virt_to_phys(cqr->cpaddr);
 	}
 
 	erp->flags = cqr->flags;
@@ -2630,7 +2663,7 @@ dasd_3990_erp_further_erp(struct dasd_ccw_req *erp)
 		 * necessary
 		 */
 		dev_err(&device->cdev->dev,
-			"ERP %px has run out of retries and failed\n", erp);
+			"ERP %p has run out of retries and failed\n", erp);
 
 		erp->status = DASD_CQR_FAILED;
 	}
@@ -2671,7 +2704,8 @@ dasd_3990_erp_handle_match_erp(struct dasd_ccw_req *erp_head,
 	while (erp_done != erp) {
 
 		if (erp_done == NULL)	/* end of chain reached */
-			panic("Programming error in ERP! The original request was lost\n");
+			panic(PRINTK_HEADER "Programming error in ERP! The "
+			      "original request was lost\n");
 
 		/* remove the request from the device queue */
 		list_del(&erp_done->blocklist);
@@ -2752,9 +2786,11 @@ dasd_3990_erp_action(struct dasd_ccw_req * cqr)
 			    "ERP chain at BEGINNING of ERP-ACTION\n");
 		for (temp_erp = cqr;
 		     temp_erp != NULL; temp_erp = temp_erp->refers) {
+
 			dev_err(&device->cdev->dev,
-				"ERP %px (%02x) refers to %px\n",
-				temp_erp, temp_erp->status, temp_erp->refers);
+				    "ERP %p (%02x) refers to %p\n",
+				    temp_erp, temp_erp->status,
+				    temp_erp->refers);
 		}
 	}
 
@@ -2801,9 +2837,11 @@ dasd_3990_erp_action(struct dasd_ccw_req * cqr)
 			    "ERP chain at END of ERP-ACTION\n");
 		for (temp_erp = erp;
 		     temp_erp != NULL; temp_erp = temp_erp->refers) {
+
 			dev_err(&device->cdev->dev,
-				"ERP %px (%02x) refers to %px\n",
-				temp_erp, temp_erp->status, temp_erp->refers);
+				    "ERP %p (%02x) refers to %p\n",
+				    temp_erp, temp_erp->status,
+				    temp_erp->refers);
 		}
 	}
 

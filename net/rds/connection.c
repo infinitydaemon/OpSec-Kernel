@@ -829,7 +829,9 @@ int rds_conn_init(void)
 	if (ret)
 		return ret;
 
-	rds_conn_slab = KMEM_CACHE(rds_connection, 0);
+	rds_conn_slab = kmem_cache_create("rds_connection",
+					  sizeof(struct rds_connection),
+					  0, 0, NULL);
 	if (!rds_conn_slab) {
 		rds_loop_net_exit();
 		return -ENOMEM;

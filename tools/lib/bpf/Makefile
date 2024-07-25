@@ -2,7 +2,7 @@
 # Most of this file is copied from tools/lib/traceevent/Makefile
 
 RM ?= rm
-srctree := $(realpath $(srctree))
+srctree = $(abs_srctree)
 
 VERSION_SCRIPT := libbpf.map
 LIBBPF_VERSION := $(shell \

@@ -15,13 +15,14 @@
 #include <asm/tlbflush.h>
 #include <asm/cacheflush.h>
 #include <asm/mmu_context.h>
-#include <asm/switch_to.h>
 
 #ifdef CONFIG_MMU
 
 DEFINE_STATIC_KEY_FALSE(use_asid_allocator);
 
+static unsigned long asid_bits;
 static unsigned long num_asids;
+unsigned long asid_mask;
 
 static atomic_long_t current_version;
 
@@ -80,7 +81,7 @@ static void __flush_context(void)
 		if (cntx == 0)
 			cntx = per_cpu(reserved_context, i);
 
-		__set_bit(cntx2asid(cntx), context_asid_map);
+		__set_bit(cntx & asid_mask, context_asid_map);
 		per_cpu(reserved_context, i) = cntx;
 	}
 
@@ -101,7 +102,7 @@ static unsigned long __new_context(struct mm_struct *mm)
 	lockdep_assert_held(&context_lock);
 
 	if (cntx != 0) {
-		unsigned long newcntx = ver | cntx2asid(cntx);
+		unsigned long newcntx = ver | (cntx & asid_mask);
 
 		/*
 		 * If our current CONTEXT was active during a rollover, we
@@ -114,7 +115,7 @@ static unsigned long __new_context(struct mm_struct *mm)
 		 * We had a valid CONTEXT in a previous life, so try to
 		 * re-use it if possible.
 		 */
-		if (!__test_and_set_bit(cntx2asid(cntx), context_asid_map))
+		if (!__test_and_set_bit(cntx & asid_mask, context_asid_map))
 			return newcntx;
 	}
 
@@ -127,7 +128,7 @@ static unsigned long __new_context(struct mm_struct *mm)
 		goto set_asid;
 
 	/* We're out of ASIDs, so increment current_version */
-	ver = atomic_long_add_return_relaxed(BIT(SATP_ASID_BITS), &current_version);
+	ver = atomic_long_add_return_relaxed(num_asids, &current_version);
 
 	/* Flush everything  */
 	__flush_context();
@@ -167,7 +168,7 @@ static void set_mm_asid(struct mm_struct *mm, unsigned int cpu)
 	 */
 	old_active_cntx = atomic_long_read(&per_cpu(active_context, cpu));
 	if (old_active_cntx &&
-	    (cntx2version(cntx) == atomic_long_read(&current_version)) &&
+	    ((cntx & ~asid_mask) == atomic_long_read(&current_version)) &&
 	    atomic_long_cmpxchg_relaxed(&per_cpu(active_context, cpu),
 					old_active_cntx, cntx))
 		goto switch_mm_fast;
@@ -176,7 +177,7 @@ static void set_mm_asid(struct mm_struct *mm, unsigned int cpu)
 
 	/* Check that our ASID belongs to the current_version. */
 	cntx = atomic_long_read(&mm->context.id);
-	if (cntx2version(cntx) != atomic_long_read(&current_version)) {
+	if ((cntx & ~asid_mask) != atomic_long_read(&current_version)) {
 		cntx = __new_context(mm);
 		atomic_long_set(&mm->context.id, cntx);
 	}
@@ -190,7 +191,7 @@ static void set_mm_asid(struct mm_struct *mm, unsigned int cpu)
 
 switch_mm_fast:
 	csr_write(CSR_SATP, virt_to_pfn(mm->pgd) |
-		  (cntx2asid(cntx) << SATP_ASID_SHIFT) |
+		  ((cntx & asid_mask) << SATP_ASID_SHIFT) |
 		  satp_mode);
 
 	if (need_flush_tlb)
@@ -201,7 +202,7 @@ static void set_mm_noasid(struct mm_struct *mm)
 {
 	/* Switch the page table and blindly nuke entire local TLB */
 	csr_write(CSR_SATP, virt_to_pfn(mm->pgd) | satp_mode);
-	local_flush_tlb_all_asid(0);
+	local_flush_tlb_all();
 }
 
 static inline void set_mm(struct mm_struct *prev,
@@ -226,7 +227,7 @@ static inline void set_mm(struct mm_struct *prev,
 
 static int __init asids_init(void)
 {
-	unsigned long asid_bits, old;
+	unsigned long old;
 
 	/* Figure-out number of ASID bits in HW */
 	old = csr_read(CSR_SATP);
@@ -246,6 +247,7 @@ static int __init asids_init(void)
 	/* Pre-compute ASID details */
 	if (asid_bits) {
 		num_asids = 1 << asid_bits;
+		asid_mask = num_asids - 1;
 	}
 
 	/*
@@ -253,7 +255,7 @@ static int __init asids_init(void)
 	 * at-least twice more than CPUs
 	 */
 	if (num_asids > (2 * num_possible_cpus())) {
-		atomic_long_set(&current_version, BIT(SATP_ASID_BITS));
+		atomic_long_set(&current_version, num_asids);
 
 		context_asid_map = bitmap_zalloc(num_asids, GFP_KERNEL);
 		if (!context_asid_map)
@@ -295,23 +297,21 @@ static inline void set_mm(struct mm_struct *prev,
  *
  * The "cpu" argument must be the current local CPU number.
  */
-static inline void flush_icache_deferred(struct mm_struct *mm, unsigned int cpu,
-					 struct task_struct *task)
+static inline void flush_icache_deferred(struct mm_struct *mm, unsigned int cpu)
 {
 #ifdef CONFIG_SMP
-	if (cpumask_test_and_clear_cpu(cpu, &mm->context.icache_stale_mask)) {
+	cpumask_t *mask = &mm->context.icache_stale_mask;
+
+	if (cpumask_test_cpu(cpu, mask)) {
+		cpumask_clear_cpu(cpu, mask);
 		/*
 		 * Ensure the remote hart's writes are visible to this hart.
 		 * This pairs with a barrier in flush_icache_mm.
 		 */
 		smp_mb();
-
-		/*
-		 * If cache will be flushed in switch_to, no need to flush here.
-		 */
-		if (!(task && switch_to_should_flush_icache(task)))
-			local_flush_icache_all();
+		local_flush_icache_all();
 	}
+
 #endif
 }
 
@@ -323,8 +323,6 @@ void switch_mm(struct mm_struct *prev, struct mm_struct *next,
 	if (unlikely(prev == next))
 		return;
 
-	membarrier_arch_switch_mm(prev, next, task);
-
 	/*
 	 * Mark the current MM context as inactive, and the next as
 	 * active.  This is at least used by the icache flushing
@@ -334,5 +332,5 @@ void switch_mm(struct mm_struct *prev, struct mm_struct *next,
 
 	set_mm(prev, next, cpu);
 
-	flush_icache_deferred(next, cpu, task);
+	flush_icache_deferred(next, cpu);
 }

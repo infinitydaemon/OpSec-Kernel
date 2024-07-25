@@ -469,7 +469,12 @@ static int dexcr_get(struct task_struct *target, const struct user_regset *regse
 	if (!cpu_has_feature(CPU_FTR_ARCH_31))
 		return -ENODEV;
 
-	membuf_store(&to, (u64)lower_32_bits(target->thread.dexcr));
+	/*
+	 * The DEXCR is currently static across all CPUs, so we don't
+	 * store the target's value anywhere, but the static value
+	 * will also be correct.
+	 */
+	membuf_store(&to, (u64)lower_32_bits(DEXCR_INIT));
 
 	/*
 	 * Technically the HDEXCR is per-cpu, but a hypervisor can't reasonably

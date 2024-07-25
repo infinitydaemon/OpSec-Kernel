@@ -201,6 +201,13 @@ enum drm_connector_tv_mode {
 	DRM_MODE_TV_MODE_SECAM,
 
 	/**
+	 * @DRM_MODE_TV_MODE_MONOCHROME: Use timings appropriate to
+	 * the DRM mode, including equalizing pulses for a 525-line
+	 * or 625-line mode, with no pedestal or color encoding.
+	 */
+	DRM_MODE_TV_MODE_MONOCHROME,
+
+	/**
 	 * @DRM_MODE_TV_MODE_MAX: Number of analog TV output modes.
 	 *
 	 * Internal implementation detail; this is not uABI.
@@ -498,8 +505,6 @@ enum drm_privacy_screen_status {
  *   ITU-R BT.601 colorimetry format
  *   The DP spec does not say whether this is the 525 or the 625
  *   line version.
- * @DRM_MODE_COLORIMETRY_COUNT:
- *   Not a valid value; merely used four counting
  */
 enum drm_colorspace {
 	/* For Default case, driver will set the colorspace */
@@ -524,6 +529,7 @@ enum drm_colorspace {
 	DRM_MODE_COLORIMETRY_RGB_WIDE_FIXED	= 13,
 	DRM_MODE_COLORIMETRY_RGB_WIDE_FLOAT	= 14,
 	DRM_MODE_COLORIMETRY_BT601_YCC		= 15,
+	/* not a valid value; merely used for counting */
 	DRM_MODE_COLORIMETRY_COUNT
 };
 
@@ -817,14 +823,6 @@ struct drm_display_info {
 	 * @quirks: EDID based quirks. Internal to EDID parsing.
 	 */
 	u32 quirks;
-
-	/**
-	 * @source_physical_address: Source Physical Address from HDMI
-	 * Vendor-Specific Data Block, for CEC usage.
-	 *
-	 * Defaults to CEC_PHYS_ADDR_INVALID (0xffff).
-	 */
-	u16 source_physical_address;
 };
 
 int drm_display_info_set_bus_formats(struct drm_display_info *info,
@@ -1336,8 +1334,7 @@ struct drm_connector_funcs {
 	 * This will get called when a hotplug-event for a drm-connector
 	 * has been received from a source outside the display driver / device.
 	 */
-	void (*oob_hotplug_event)(struct drm_connector *connector,
-				  enum drm_connector_status status);
+	void (*oob_hotplug_event)(struct drm_connector *connector);
 
 	/**
 	 * @debugfs_init:
@@ -1981,8 +1978,7 @@ drm_connector_is_unregistered(struct drm_connector *connector)
 		DRM_CONNECTOR_UNREGISTERED;
 }
 
-void drm_connector_oob_hotplug_event(struct fwnode_handle *connector_fwnode,
-				     enum drm_connector_status status);
+void drm_connector_oob_hotplug_event(struct fwnode_handle *connector_fwnode);
 const char *drm_get_connector_type_name(unsigned int connector_type);
 const char *drm_get_connector_status_name(enum drm_connector_status status);
 const char *drm_get_subpixel_order_name(enum subpixel_order order);

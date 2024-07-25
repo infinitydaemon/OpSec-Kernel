@@ -1625,8 +1625,7 @@ static int cpsw_dl_switch_mode_get(struct devlink *dl, u32 id,
 }
 
 static int cpsw_dl_switch_mode_set(struct devlink *dl, u32 id,
-				   struct devlink_param_gset_ctx *ctx,
-				   struct netlink_ext_ack *extack)
+				   struct devlink_param_gset_ctx *ctx)
 {
 	struct cpsw_devlink *dl_priv = devlink_priv(dl);
 	struct cpsw_common *cpsw = dl_priv->cpsw;
@@ -1763,8 +1762,7 @@ static int cpsw_dl_ale_ctrl_get(struct devlink *dl, u32 id,
 }
 
 static int cpsw_dl_ale_ctrl_set(struct devlink *dl, u32 id,
-				struct devlink_param_gset_ctx *ctx,
-				struct netlink_ext_ack *extack)
+				struct devlink_param_gset_ctx *ctx)
 {
 	struct cpsw_devlink *dl_priv = devlink_priv(dl);
 	struct cpsw_common *cpsw = dl_priv->cpsw;
@@ -2042,20 +2040,14 @@ clean_dt_ret:
 	return ret;
 }
 
-static void cpsw_remove(struct platform_device *pdev)
+static int cpsw_remove(struct platform_device *pdev)
 {
 	struct cpsw_common *cpsw = platform_get_drvdata(pdev);
 	int ret;
 
 	ret = pm_runtime_resume_and_get(&pdev->dev);
-	if (ret < 0) {
-		/* Note, if this error path is taken, we're leaking some
-		 * resources.
-		 */
-		dev_err(&pdev->dev, "Failed to resume device (%pe)\n",
-			ERR_PTR(ret));
-		return;
-	}
+	if (ret < 0)
+		return ret;
 
 	cpsw_unregister_notifiers(cpsw);
 	cpsw_unregister_devlink(cpsw);
@@ -2066,6 +2058,7 @@ static void cpsw_remove(struct platform_device *pdev)
 	cpsw_remove_dt(cpsw);
 	pm_runtime_put_sync(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
+	return 0;
 }
 
 static int __maybe_unused cpsw_suspend(struct device *dev)
@@ -2126,7 +2119,7 @@ static struct platform_driver cpsw_driver = {
 		.of_match_table = cpsw_of_mtable,
 	},
 	.probe = cpsw_probe,
-	.remove_new = cpsw_remove,
+	.remove = cpsw_remove,
 };
 
 module_platform_driver(cpsw_driver);

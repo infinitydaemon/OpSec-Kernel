@@ -683,7 +683,7 @@ static int sun4i_usb_phy0_vbus_notify(struct notifier_block *nb,
 }
 
 static struct phy *sun4i_usb_phy_xlate(struct device *dev,
-					const struct of_phandle_args *args)
+					struct of_phandle_args *args)
 {
 	struct sun4i_usb_phy_data *data = dev_get_drvdata(dev);
 
@@ -782,7 +782,7 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
 
 	for (i = 0; i < data->cfg->num_phys; i++) {
 		struct sun4i_usb_phy *phy = data->phys + i;
-		char name[32];
+		char name[16];
 
 		if (data->cfg->missing_phys & BIT(i))
 			continue;

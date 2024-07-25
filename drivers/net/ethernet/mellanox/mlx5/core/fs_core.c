@@ -114,9 +114,9 @@
 #define ETHTOOL_NUM_PRIOS 11
 #define ETHTOOL_MIN_LEVEL (KERNEL_MIN_LEVEL + ETHTOOL_NUM_PRIOS)
 /* Promiscuous, Vlan, mac, ttc, inner ttc, {UDP/ANY/aRFS/accel/{esp, esp_err}}, IPsec policy,
- * {IPsec RoCE MPV,Alias table},IPsec RoCE policy
+ * IPsec RoCE policy
  */
-#define KERNEL_NIC_PRIO_NUM_LEVELS 11
+#define KERNEL_NIC_PRIO_NUM_LEVELS 9
 #define KERNEL_NIC_NUM_PRIOS 1
 /* One more level for tc */
 #define KERNEL_MIN_LEVEL (KERNEL_NIC_PRIO_NUM_LEVELS + 1)
@@ -137,7 +137,7 @@
 #define LAG_MIN_LEVEL (OFFLOADS_MIN_LEVEL + KERNEL_RX_MACSEC_MIN_LEVEL + 1)
 
 #define KERNEL_TX_IPSEC_NUM_PRIOS  1
-#define KERNEL_TX_IPSEC_NUM_LEVELS 4
+#define KERNEL_TX_IPSEC_NUM_LEVELS 3
 #define KERNEL_TX_IPSEC_MIN_LEVEL        (KERNEL_TX_IPSEC_NUM_LEVELS)
 
 #define KERNEL_TX_MACSEC_NUM_PRIOS  1
@@ -231,7 +231,7 @@ enum {
 };
 
 #define RDMA_RX_IPSEC_NUM_PRIOS 1
-#define RDMA_RX_IPSEC_NUM_LEVELS 4
+#define RDMA_RX_IPSEC_NUM_LEVELS 2
 #define RDMA_RX_IPSEC_MIN_LEVEL  (RDMA_RX_IPSEC_NUM_LEVELS)
 
 #define RDMA_RX_BYPASS_MIN_LEVEL MLX5_BY_PASS_NUM_REGULAR_PRIOS
@@ -288,7 +288,7 @@ enum {
 #define RDMA_TX_BYPASS_MIN_LEVEL MLX5_BY_PASS_NUM_PRIOS
 #define RDMA_TX_COUNTERS_MIN_LEVEL (RDMA_TX_BYPASS_MIN_LEVEL + 1)
 
-#define RDMA_TX_IPSEC_NUM_PRIOS 2
+#define RDMA_TX_IPSEC_NUM_PRIOS 1
 #define RDMA_TX_IPSEC_PRIO_NUM_LEVELS 1
 #define RDMA_TX_IPSEC_MIN_LEVEL  (RDMA_TX_COUNTERS_MIN_LEVEL + RDMA_TX_IPSEC_NUM_PRIOS)
 
@@ -3332,8 +3332,7 @@ static int mlx5_fs_mode_validate(struct devlink *devlink, u32 id,
 }
 
 static int mlx5_fs_mode_set(struct devlink *devlink, u32 id,
-			    struct devlink_param_gset_ctx *ctx,
-			    struct netlink_ext_ack *extack)
+			    struct devlink_param_gset_ctx *ctx)
 {
 	struct mlx5_core_dev *dev = devlink_priv(devlink);
 	enum mlx5_flow_steering_mode mode;

@@ -495,32 +495,42 @@ static int sb_mac(struct dm_integrity_c *ic, bool wr)
 {
 	SHASH_DESC_ON_STACK(desc, ic->journal_mac);
 	int r;
-	unsigned int mac_size = crypto_shash_digestsize(ic->journal_mac);
-	__u8 *sb = (__u8 *)ic->sb;
-	__u8 *mac = sb + (1 << SECTOR_SHIFT) - mac_size;
+	unsigned int size = crypto_shash_digestsize(ic->journal_mac);
 
-	if (sizeof(struct superblock) + mac_size > 1 << SECTOR_SHIFT) {
+	if (sizeof(struct superblock) + size > 1 << SECTOR_SHIFT) {
 		dm_integrity_io_error(ic, "digest is too long", -EINVAL);
 		return -EINVAL;
 	}
 
 	desc->tfm = ic->journal_mac;
 
+	r = crypto_shash_init(desc);
+	if (unlikely(r < 0)) {
+		dm_integrity_io_error(ic, "crypto_shash_init", r);
+		return r;
+	}
+
+	r = crypto_shash_update(desc, (__u8 *)ic->sb, (1 << SECTOR_SHIFT) - size);
+	if (unlikely(r < 0)) {
+		dm_integrity_io_error(ic, "crypto_shash_update", r);
+		return r;
+	}
+
 	if (likely(wr)) {
-		r = crypto_shash_digest(desc, sb, mac - sb, mac);
+		r = crypto_shash_final(desc, (__u8 *)ic->sb + (1 << SECTOR_SHIFT) - size);
 		if (unlikely(r < 0)) {
-			dm_integrity_io_error(ic, "crypto_shash_digest", r);
+			dm_integrity_io_error(ic, "crypto_shash_final", r);
 			return r;
 		}
 	} else {
-		__u8 actual_mac[HASH_MAX_DIGESTSIZE];
+		__u8 result[HASH_MAX_DIGESTSIZE];
 
-		r = crypto_shash_digest(desc, sb, mac - sb, actual_mac);
+		r = crypto_shash_final(desc, result);
 		if (unlikely(r < 0)) {
-			dm_integrity_io_error(ic, "crypto_shash_digest", r);
+			dm_integrity_io_error(ic, "crypto_shash_final", r);
 			return r;
 		}
-		if (memcmp(mac, actual_mac, mac_size)) {
+		if (memcmp((__u8 *)ic->sb + (1 << SECTOR_SHIFT) - size, result, size)) {
 			dm_integrity_io_error(ic, "superblock mac", -EILSEQ);
 			dm_audit_log_target(DM_MSG_PREFIX, "mac-superblock", ic->ti, 0);
 			return -EILSEQ;
@@ -3492,9 +3502,7 @@ static void dm_integrity_io_hints(struct dm_target *ti, struct queue_limits *lim
 		limits->physical_block_size = ic->sectors_per_block << SECTOR_SHIFT;
 		blk_limits_io_min(limits, ic->sectors_per_block << SECTOR_SHIFT);
 		limits->dma_alignment = limits->logical_block_size - 1;
-		limits->discard_granularity = ic->sectors_per_block << SECTOR_SHIFT;
 	}
-	limits->max_integrity_segments = USHRT_MAX;
 }
 
 static void calculate_journal_section_size(struct dm_integrity_c *ic)
@@ -3662,6 +3670,7 @@ static void dm_integrity_set(struct dm_target *ti, struct dm_integrity_c *ic)
 	bi.interval_exp = ic->sb->log2_sectors_per_block + SECTOR_SHIFT;
 
 	blk_integrity_register(disk, &bi);
+	blk_queue_max_integrity_segments(disk->queue, UINT_MAX);
 }
 
 static void dm_integrity_free_page_list(struct page_list *pl)
@@ -4743,7 +4752,7 @@ static void dm_integrity_dtr(struct dm_target *ti)
 
 static struct target_type integrity_target = {
 	.name			= "integrity",
-	.version		= {1, 11, 0},
+	.version		= {1, 10, 0},
 	.module			= THIS_MODULE,
 	.features		= DM_TARGET_SINGLETON | DM_TARGET_INTEGRITY,
 	.ctr			= dm_integrity_ctr,

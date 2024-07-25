@@ -21,7 +21,6 @@
 #include <net/ip_tunnels.h>
 #include <net/ip6_tunnel.h>
 #include <net/dst_metadata.h>
-#include <net/hotdata.h>
 
 #include "xfrm_inout.h"
 
@@ -471,13 +470,8 @@ int xfrm_input(struct sk_buff *skb, int nexthdr, __be32 spi, int encap_type)
 	struct xfrm_offload *xo = xfrm_offload(skb);
 	struct sec_path *sp;
 
-	if (encap_type < 0 || (xo && xo->flags & XFRM_GRO)) {
+	if (encap_type < 0) {
 		x = xfrm_input_state(skb);
-
-		if (unlikely(x->dir && x->dir != XFRM_SA_DIR_IN)) {
-			XFRM_INC_STATS(net, LINUX_MIB_XFRMINSTATEDIRERROR);
-			goto drop;
-		}
 
 		if (unlikely(x->km.state != XFRM_STATE_VALID)) {
 			if (x->km.state == XFRM_STATE_ACQ)
@@ -499,7 +493,9 @@ int xfrm_input(struct sk_buff *skb, int nexthdr, __be32 spi, int encap_type)
 			seq = XFRM_SKB_CB(skb)->seq.input.low;
 			goto resume;
 		}
-		/* GRO call */
+
+		/* encap_type < -1 indicates a GRO call. */
+		encap_type = 0;
 		seq = XFRM_SPI_SKB_CB(skb)->seq;
 
 		if (xo && (xo->flags & CRYPTO_DONE)) {
@@ -581,12 +577,6 @@ int xfrm_input(struct sk_buff *skb, int nexthdr, __be32 spi, int encap_type)
 			secpath_reset(skb);
 			XFRM_INC_STATS(net, LINUX_MIB_XFRMINNOSTATES);
 			xfrm_audit_state_notfound(skb, family, spi, seq);
-			goto drop;
-		}
-
-		if (unlikely(x->dir && x->dir != XFRM_SA_DIR_IN)) {
-			XFRM_INC_STATS(net, LINUX_MIB_XFRMINSTATEDIRERROR);
-			xfrm_state_put(x);
 			goto drop;
 		}
 
@@ -784,7 +774,7 @@ int xfrm_trans_queue_net(struct net *net, struct sk_buff *skb,
 
 	trans = this_cpu_ptr(&xfrm_trans_tasklet);
 
-	if (skb_queue_len(&trans->queue) >= READ_ONCE(net_hotdata.max_backlog))
+	if (skb_queue_len(&trans->queue) >= READ_ONCE(netdev_max_backlog))
 		return -ENOBUFS;
 
 	BUILD_BUG_ON(sizeof(struct xfrm_trans_cb) > sizeof(skb->cb));

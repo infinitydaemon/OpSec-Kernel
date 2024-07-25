@@ -18,7 +18,7 @@ description: |-
   available via CSI-2 serial data output (two or four lanes).
 
 allOf:
-  - $ref: /schemas/media/video-interface-devices.yaml#
+  - $ref: ../video-interface-devices.yaml#
 
 properties:
   compatible:
@@ -43,6 +43,14 @@ properties:
   reset-gpios:
     description: Sensor reset (XCLR) GPIO
     maxItems: 1
+
+  flash-leds: true
+
+  lens-focus: true
+
+  orientation: true
+
+  rotation: true
 
   port:
     $ref: /schemas/graph.yaml#/$defs/port-base
@@ -81,7 +89,7 @@ required:
   - ovdd-supply
   - port
 
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

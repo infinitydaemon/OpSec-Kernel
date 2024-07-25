@@ -7,17 +7,18 @@
 #ifndef _APPLE_RTKIT_INTERAL_H
 #define _APPLE_RTKIT_INTERAL_H
 
+#include <linux/apple-mailbox.h>
 #include <linux/bitfield.h>
 #include <linux/bitmap.h>
 #include <linux/completion.h>
 #include <linux/dma-mapping.h>
 #include <linux/io.h>
 #include <linux/kernel.h>
+#include <linux/mailbox_client.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/soc/apple/rtkit.h>
 #include <linux/workqueue.h>
-#include "mailbox.h"
 
 #define APPLE_RTKIT_APP_ENDPOINT_START 0x20
 #define APPLE_RTKIT_MAX_ENDPOINTS 0x100
@@ -27,7 +28,10 @@ struct apple_rtkit {
 	const struct apple_rtkit_ops *ops;
 	struct device *dev;
 
-	struct apple_mbox *mbox;
+	const char *mbox_name;
+	int mbox_idx;
+	struct mbox_client mbox_cl;
+	struct mbox_chan *mbox_chan;
 
 	struct completion epmap_completion;
 	struct completion iop_pwr_ack_completion;

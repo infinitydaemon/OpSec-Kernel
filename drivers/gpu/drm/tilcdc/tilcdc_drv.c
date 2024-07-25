@@ -182,6 +182,9 @@ static void tilcdc_fini(struct drm_device *dev)
 	if (priv->clk)
 		clk_put(priv->clk);
 
+	if (priv->mmio)
+		iounmap(priv->mmio);
+
 	if (priv->wq)
 		destroy_workqueue(priv->wq);
 
@@ -198,6 +201,7 @@ static int tilcdc_init(const struct drm_driver *ddrv, struct device *dev)
 	struct platform_device *pdev = to_platform_device(dev);
 	struct device_node *node = dev->of_node;
 	struct tilcdc_drm_private *priv;
+	struct resource *res;
 	u32 bpp = 0;
 	int ret;
 
@@ -222,10 +226,17 @@ static int tilcdc_init(const struct drm_driver *ddrv, struct device *dev)
 		goto init_failed;
 	}
 
-	priv->mmio = devm_platform_ioremap_resource(pdev, 0);
-	if (IS_ERR(priv->mmio)) {
-		dev_err(dev, "failed to request / ioremap\n");
-		ret = PTR_ERR(priv->mmio);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!res) {
+		dev_err(dev, "failed to get memory resource\n");
+		ret = -EINVAL;
+		goto init_failed;
+	}
+
+	priv->mmio = ioremap(res->start, resource_size(res));
+	if (!priv->mmio) {
+		dev_err(dev, "failed to ioremap\n");
+		ret = -ENOMEM;
 		goto init_failed;
 	}
 
@@ -559,18 +570,19 @@ static int tilcdc_pdev_probe(struct platform_device *pdev)
 						       match);
 }
 
-static void tilcdc_pdev_remove(struct platform_device *pdev)
+static int tilcdc_pdev_remove(struct platform_device *pdev)
 {
 	int ret;
 
 	ret = tilcdc_get_external_components(&pdev->dev, NULL);
 	if (ret < 0)
-		dev_err(&pdev->dev, "tilcdc_get_external_components() failed (%pe)\n",
-			ERR_PTR(ret));
+		return ret;
 	else if (ret == 0)
 		tilcdc_fini(platform_get_drvdata(pdev));
 	else
 		component_master_del(&pdev->dev, &tilcdc_comp_ops);
+
+	return 0;
 }
 
 static void tilcdc_pdev_shutdown(struct platform_device *pdev)
@@ -587,7 +599,7 @@ MODULE_DEVICE_TABLE(of, tilcdc_of_match);
 
 static struct platform_driver tilcdc_platform_driver = {
 	.probe      = tilcdc_pdev_probe,
-	.remove_new = tilcdc_pdev_remove,
+	.remove     = tilcdc_pdev_remove,
 	.shutdown   = tilcdc_pdev_shutdown,
 	.driver     = {
 		.name   = "tilcdc",

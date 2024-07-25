@@ -51,7 +51,7 @@ properties:
       - const: stop-ack
 
   firmware-name:
-    maxItems: 1
+    $ref: /schemas/types.yaml#/definitions/string
     description:
       Relative firmware image path for the WCNSS core. Defaults to
       "wcnss.mdt".

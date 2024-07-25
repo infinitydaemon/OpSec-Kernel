@@ -7,7 +7,6 @@
 
 #include <sound/soc-acpi.h>
 #include <sound/soc-acpi-intel-match.h>
-#include <sound/soc-acpi-intel-ssp-common.h>
 
 static const struct snd_soc_acpi_endpoint single_endpoint = {
 	.num = 0,
@@ -247,25 +246,6 @@ static const struct snd_soc_acpi_link_adr rpl_sdw_rt711_link2_rt1316_link01[] = 
 	{}
 };
 
-static const struct snd_soc_acpi_link_adr rpl_sdw_rt711_link0_rt1316_link12[] = {
-	{
-		.mask = BIT(0),
-		.num_adr = ARRAY_SIZE(rt711_sdca_0_adr),
-		.adr_d = rt711_sdca_0_adr,
-	},
-	{
-		.mask = BIT(1),
-		.num_adr = ARRAY_SIZE(rt1316_1_group1_adr),
-		.adr_d = rt1316_1_group1_adr,
-	},
-	{
-		.mask = BIT(2),
-		.num_adr = ARRAY_SIZE(rt1316_2_group1_adr),
-		.adr_d = rt1316_2_group1_adr,
-	},
-	{}
-};
-
 static const struct snd_soc_acpi_link_adr rpl_sdw_rt711_link0_rt1318_link12_rt714_link3[] = {
 	{
 		.mask = BIT(0),
@@ -348,7 +328,7 @@ static const struct snd_soc_acpi_link_adr rplp_crb[] = {
 
 static const struct snd_soc_acpi_codecs rpl_rt5682_hp = {
 	.num_codecs = 2,
-	.codecs = {RT5682_ACPI_HID, RT5682S_ACPI_HID},
+	.codecs = {"10EC5682", "RTL5682"},
 };
 
 static const struct snd_soc_acpi_codecs rpl_essx_83x6 = {
@@ -361,9 +341,29 @@ static const struct snd_soc_acpi_codecs rpl_max98357a_amp = {
 	.codecs = {"MX98357A"}
 };
 
+static const struct snd_soc_acpi_codecs rpl_max98360a_amp = {
+	.num_codecs = 1,
+	.codecs = {"MX98360A"},
+};
+
+static const struct snd_soc_acpi_codecs rpl_max98373_amp = {
+	.num_codecs = 1,
+	.codecs = {"MX98373"}
+};
+
 static const struct snd_soc_acpi_codecs rpl_lt6911_hdmi = {
 	.num_codecs = 1,
 	.codecs = {"INTC10B0"}
+};
+
+static const struct snd_soc_acpi_codecs rpl_nau8318_amp = {
+	.num_codecs = 1,
+	.codecs = {"NVTN2012"}
+};
+
+static const struct snd_soc_acpi_codecs rpl_rt1019p_amp = {
+	.num_codecs = 1,
+	.codecs = {"RTL1019"}
 };
 
 struct snd_soc_acpi_mach snd_soc_acpi_intel_rpl_machines[] = {
@@ -376,10 +376,31 @@ struct snd_soc_acpi_mach snd_soc_acpi_intel_rpl_machines[] = {
 	},
 	{
 		.comp_ids = &rpl_rt5682_hp,
-		.drv_name = "rpl_rt5682_c1_h02",
+		.drv_name = "rpl_mx98360_rt5682",
 		.machine_quirk = snd_soc_acpi_codec_list,
-		.quirk_data = &rpl_lt6911_hdmi,
-		.sof_tplg_filename = "sof-rpl-rt5682-ssp1-hdmi-ssp02.tplg",
+		.quirk_data = &rpl_max98360a_amp,
+		.sof_tplg_filename = "sof-rpl-max98360a-rt5682.tplg",
+	},
+	{
+		.id = "10508825",
+		.drv_name = "rpl_max98373_8825",
+		.machine_quirk = snd_soc_acpi_codec_list,
+		.quirk_data = &rpl_max98373_amp,
+		.sof_tplg_filename = "sof-rpl-max98373-nau8825.tplg",
+	},
+	{
+		.id = "10508825",
+		.drv_name = "rpl_nau8318_8825",
+		.machine_quirk = snd_soc_acpi_codec_list,
+		.quirk_data = &rpl_nau8318_amp,
+		.sof_tplg_filename = "sof-rpl-nau8318-nau8825.tplg",
+	},
+	{
+		.comp_ids = &rpl_rt5682_hp,
+		.drv_name = "rpl_rt1019_rt5682",
+		.machine_quirk = snd_soc_acpi_codec_list,
+		.quirk_data = &rpl_rt1019p_amp,
+		.sof_tplg_filename = "sof-rpl-rt1019-rt5682.tplg",
 	},
 	{
 		.comp_ids = &rpl_essx_83x6,
@@ -396,45 +417,6 @@ struct snd_soc_acpi_mach snd_soc_acpi_intel_rpl_machines[] = {
 					SND_SOC_ACPI_TPLG_INTEL_SSP_MSB |
 					SND_SOC_ACPI_TPLG_INTEL_DMIC_NUMBER,
 	},
-	/* place boards for each headphone codec: sof driver will complete the
-	 * tplg name and machine driver will detect the amp type
-	 */
-	{
-		.id = CS42L42_ACPI_HID,
-		.drv_name = "rpl_cs42l42_def",
-		.sof_tplg_filename = "sof-rpl", /* the tplg suffix is added at run time */
-		.tplg_quirk_mask = SND_SOC_ACPI_TPLG_INTEL_AMP_NAME |
-					SND_SOC_ACPI_TPLG_INTEL_CODEC_NAME,
-	},
-	{
-		.id = DA7219_ACPI_HID,
-		.drv_name = "rpl_da7219_def",
-		.sof_tplg_filename = "sof-rpl", /* the tplg suffix is added at run time */
-		.tplg_quirk_mask = SND_SOC_ACPI_TPLG_INTEL_AMP_NAME |
-					SND_SOC_ACPI_TPLG_INTEL_CODEC_NAME,
-	},
-	{
-		.id = NAU8825_ACPI_HID,
-		.drv_name = "rpl_nau8825_def",
-		.sof_tplg_filename = "sof-rpl", /* the tplg suffix is added at run time */
-		.tplg_quirk_mask = SND_SOC_ACPI_TPLG_INTEL_AMP_NAME |
-					SND_SOC_ACPI_TPLG_INTEL_CODEC_NAME,
-	},
-	{
-		.id = RT5650_ACPI_HID,
-		.drv_name = "rpl_rt5682_def",
-		.sof_tplg_filename = "sof-rpl", /* the tplg suffix is added at run time */
-		.tplg_quirk_mask = SND_SOC_ACPI_TPLG_INTEL_AMP_NAME |
-					SND_SOC_ACPI_TPLG_INTEL_CODEC_NAME,
-	},
-	{
-		.comp_ids = &rpl_rt5682_hp,
-		.drv_name = "rpl_rt5682_def",
-		.sof_tplg_filename = "sof-rpl", /* the tplg suffix is added at run time */
-		.tplg_quirk_mask = SND_SOC_ACPI_TPLG_INTEL_AMP_NAME |
-					SND_SOC_ACPI_TPLG_INTEL_CODEC_NAME,
-	},
-	/* place amp-only boards in the end of table */
 	{
 		.id = "INTC10B0",
 		.drv_name = "rpl_lt6911_hdmi_ssp",
@@ -469,12 +451,6 @@ struct snd_soc_acpi_mach snd_soc_acpi_intel_rpl_sdw_machines[] = {
 		.links = rpl_sdw_rt711_link0_rt1318_link12_rt714_link3,
 		.drv_name = "sof_sdw",
 		.sof_tplg_filename = "sof-rpl-rt711-l0-rt1318-l12-rt714-l3.tplg",
-	},
-	{
-		.link_mask = 0x7, /* rt711 on link0 & two rt1316s on link1 and link2 */
-		.links = rpl_sdw_rt711_link0_rt1316_link12,
-		.drv_name = "sof_sdw",
-		.sof_tplg_filename = "sof-rpl-rt711-l0-rt1316-l12.tplg",
 	},
 	{
 		.link_mask = 0x7, /* rt711 on link0 & two rt1318s on link1 and link2 */

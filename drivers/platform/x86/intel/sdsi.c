@@ -15,7 +15,6 @@
 #include <linux/iopoll.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/overflow.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
 #include <linux/sysfs.h>
@@ -67,8 +66,6 @@
 #define CTRL_OWNER			GENMASK(5, 4)
 #define CTRL_COMPLETE			BIT(6)
 #define CTRL_READY			BIT(7)
-#define CTRL_INBAND_LOCK		BIT(32)
-#define CTRL_METER_ENABLE_DRAM		BIT(33)
 #define CTRL_STATUS			GENMASK(15, 8)
 #define CTRL_PACKET_SIZE		GENMASK(31, 16)
 #define CTRL_MSG_SIZE			GENMASK(63, 48)
@@ -96,7 +93,6 @@ enum sdsi_command {
 struct sdsi_mbox_info {
 	u64	*payload;
 	void	*buffer;
-	u64	control_flags;
 	int	size;
 };
 
@@ -160,8 +156,8 @@ static int sdsi_status_to_errno(u32 status)
 	}
 }
 
-static int sdsi_mbox_poll(struct sdsi_priv *priv, struct sdsi_mbox_info *info,
-			  size_t *data_size)
+static int sdsi_mbox_cmd_read(struct sdsi_priv *priv, struct sdsi_mbox_info *info,
+			      size_t *data_size)
 {
 	struct device *dev = priv->dev;
 	u32 total, loop, eom, status, message_size;
@@ -170,10 +166,18 @@ static int sdsi_mbox_poll(struct sdsi_priv *priv, struct sdsi_mbox_info *info,
 
 	lockdep_assert_held(&priv->mb_lock);
 
+	/* Format and send the read command */
+	control = FIELD_PREP(CTRL_EOM, 1) |
+		  FIELD_PREP(CTRL_SOM, 1) |
+		  FIELD_PREP(CTRL_RUN_BUSY, 1) |
+		  FIELD_PREP(CTRL_PACKET_SIZE, info->size);
+	writeq(control, priv->control_addr);
+
 	/* For reads, data sizes that are larger than the mailbox size are read in packets. */
 	total = 0;
 	loop = 0;
 	do {
+		void *buf = info->buffer + (SDSI_SIZE_MAILBOX * loop);
 		u32 packet_size;
 
 		/* Poll on ready bit */
@@ -191,11 +195,6 @@ static int sdsi_mbox_poll(struct sdsi_priv *priv, struct sdsi_mbox_info *info,
 		if (ret)
 			break;
 
-		if (!packet_size) {
-			sdsi_complete_transaction(priv);
-			break;
-		}
-
 		/* Only the last packet can be less than the mailbox size. */
 		if (!eom && packet_size != SDSI_SIZE_MAILBOX) {
 			dev_err(dev, "Invalid packet size\n");
@@ -209,13 +208,9 @@ static int sdsi_mbox_poll(struct sdsi_priv *priv, struct sdsi_mbox_info *info,
 			break;
 		}
 
-		if (info->buffer) {
-			void *buf = info->buffer + array_size(SDSI_SIZE_MAILBOX, loop);
+		sdsi_memcpy64_fromio(buf, priv->mbox_addr, round_up(packet_size, SDSI_SIZE_CMD));
 
-			sdsi_memcpy64_fromio(buf, priv->mbox_addr,
-					     round_up(packet_size, SDSI_SIZE_CMD));
-			total += packet_size;
-		}
+		total += packet_size;
 
 		sdsi_complete_transaction(priv);
 	} while (!eom && ++loop < MBOX_MAX_PACKETS);
@@ -235,34 +230,16 @@ static int sdsi_mbox_poll(struct sdsi_priv *priv, struct sdsi_mbox_info *info,
 		dev_warn(dev, "Read count %u differs from expected count %u\n",
 			 total, message_size);
 
-	if (data_size)
-		*data_size = total;
+	*data_size = total;
 
 	return 0;
 }
 
-static int sdsi_mbox_cmd_read(struct sdsi_priv *priv, struct sdsi_mbox_info *info,
-			      size_t *data_size)
+static int sdsi_mbox_cmd_write(struct sdsi_priv *priv, struct sdsi_mbox_info *info)
 {
 	u64 control;
-
-	lockdep_assert_held(&priv->mb_lock);
-
-	/* Format and send the read command */
-	control = FIELD_PREP(CTRL_EOM, 1) |
-		  FIELD_PREP(CTRL_SOM, 1) |
-		  FIELD_PREP(CTRL_RUN_BUSY, 1) |
-		  FIELD_PREP(CTRL_PACKET_SIZE, info->size) |
-		  info->control_flags;
-	writeq(control, priv->control_addr);
-
-	return sdsi_mbox_poll(priv, info, data_size);
-}
-
-static int sdsi_mbox_cmd_write(struct sdsi_priv *priv, struct sdsi_mbox_info *info,
-			       size_t *data_size)
-{
-	u64 control;
+	u32 status;
+	int ret;
 
 	lockdep_assert_held(&priv->mb_lock);
 
@@ -275,11 +252,23 @@ static int sdsi_mbox_cmd_write(struct sdsi_priv *priv, struct sdsi_mbox_info *in
 		  FIELD_PREP(CTRL_SOM, 1) |
 		  FIELD_PREP(CTRL_RUN_BUSY, 1) |
 		  FIELD_PREP(CTRL_READ_WRITE, 1) |
-		  FIELD_PREP(CTRL_MSG_SIZE, info->size) |
 		  FIELD_PREP(CTRL_PACKET_SIZE, info->size);
 	writeq(control, priv->control_addr);
 
-	return sdsi_mbox_poll(priv, info, data_size);
+	/* Poll on ready bit */
+	ret = readq_poll_timeout(priv->control_addr, control, control & CTRL_READY,
+				 MBOX_POLLING_PERIOD_US, MBOX_TIMEOUT_US);
+
+	if (ret)
+		goto release_mbox;
+
+	status = FIELD_GET(CTRL_STATUS, control);
+	ret = sdsi_status_to_errno(status);
+
+release_mbox:
+	sdsi_complete_transaction(priv);
+
+	return ret;
 }
 
 static int sdsi_mbox_acquire(struct sdsi_priv *priv, struct sdsi_mbox_info *info)
@@ -323,8 +312,7 @@ static int sdsi_mbox_acquire(struct sdsi_priv *priv, struct sdsi_mbox_info *info
 	return ret;
 }
 
-static int sdsi_mbox_write(struct sdsi_priv *priv, struct sdsi_mbox_info *info,
-			   size_t *data_size)
+static int sdsi_mbox_write(struct sdsi_priv *priv, struct sdsi_mbox_info *info)
 {
 	int ret;
 
@@ -334,7 +322,7 @@ static int sdsi_mbox_write(struct sdsi_priv *priv, struct sdsi_mbox_info *info,
 	if (ret)
 		return ret;
 
-	return sdsi_mbox_cmd_write(priv, info, data_size);
+	return sdsi_mbox_cmd_write(priv, info);
 }
 
 static int sdsi_mbox_read(struct sdsi_priv *priv, struct sdsi_mbox_info *info, size_t *data_size)
@@ -350,23 +338,14 @@ static int sdsi_mbox_read(struct sdsi_priv *priv, struct sdsi_mbox_info *info, s
 	return sdsi_mbox_cmd_read(priv, info, data_size);
 }
 
-static bool sdsi_ib_locked(struct sdsi_priv *priv)
-{
-	return !!FIELD_GET(CTRL_INBAND_LOCK, readq(priv->control_addr));
-}
-
 static ssize_t sdsi_provision(struct sdsi_priv *priv, char *buf, size_t count,
 			      enum sdsi_command command)
 {
-	struct sdsi_mbox_info info = {};
+	struct sdsi_mbox_info info;
 	int ret;
 
 	if (count > (SDSI_SIZE_WRITE_MSG - SDSI_SIZE_CMD))
 		return -EOVERFLOW;
-
-	/* Make sure In-band lock is not set */
-	if (sdsi_ib_locked(priv))
-		return -EPERM;
 
 	/* Qword aligned message + command qword */
 	info.size = round_up(count, SDSI_SIZE_CMD) + SDSI_SIZE_CMD;
@@ -384,9 +363,7 @@ static ssize_t sdsi_provision(struct sdsi_priv *priv, char *buf, size_t count,
 	ret = mutex_lock_interruptible(&priv->mb_lock);
 	if (ret)
 		goto free_payload;
-
-	ret = sdsi_mbox_write(priv, &info, NULL);
-
+	ret = sdsi_mbox_write(priv, &info);
 	mutex_unlock(&priv->mb_lock);
 
 free_payload:
@@ -427,10 +404,10 @@ static ssize_t provision_cap_write(struct file *filp, struct kobject *kobj,
 static BIN_ATTR_WO(provision_cap, SDSI_SIZE_WRITE_MSG);
 
 static ssize_t
-certificate_read(u64 command, u64 control_flags, struct sdsi_priv *priv,
-		 char *buf, loff_t off, size_t count)
+certificate_read(u64 command, struct sdsi_priv *priv, char *buf, loff_t off,
+		 size_t count)
 {
-	struct sdsi_mbox_info info = {};
+	struct sdsi_mbox_info info;
 	size_t size;
 	int ret;
 
@@ -444,7 +421,6 @@ certificate_read(u64 command, u64 control_flags, struct sdsi_priv *priv,
 
 	info.payload = &command;
 	info.size = sizeof(command);
-	info.control_flags = control_flags;
 
 	ret = mutex_lock_interruptible(&priv->mb_lock);
 	if (ret)
@@ -476,7 +452,7 @@ state_certificate_read(struct file *filp, struct kobject *kobj,
 	struct device *dev = kobj_to_dev(kobj);
 	struct sdsi_priv *priv = dev_get_drvdata(dev);
 
-	return certificate_read(SDSI_CMD_READ_STATE, 0, priv, buf, off, count);
+	return certificate_read(SDSI_CMD_READ_STATE, priv, buf, off, count);
 }
 static BIN_ATTR_ADMIN_RO(state_certificate, SDSI_SIZE_READ_MSG);
 
@@ -488,22 +464,9 @@ meter_certificate_read(struct file *filp, struct kobject *kobj,
 	struct device *dev = kobj_to_dev(kobj);
 	struct sdsi_priv *priv = dev_get_drvdata(dev);
 
-	return certificate_read(SDSI_CMD_READ_METER, 0, priv, buf, off, count);
+	return certificate_read(SDSI_CMD_READ_METER, priv, buf, off, count);
 }
 static BIN_ATTR_ADMIN_RO(meter_certificate, SDSI_SIZE_READ_MSG);
-
-static ssize_t
-meter_current_read(struct file *filp, struct kobject *kobj,
-		   struct bin_attribute *attr, char *buf, loff_t off,
-		   size_t count)
-{
-	struct device *dev = kobj_to_dev(kobj);
-	struct sdsi_priv *priv = dev_get_drvdata(dev);
-
-	return certificate_read(SDSI_CMD_READ_METER, CTRL_METER_ENABLE_DRAM,
-				priv, buf, off, count);
-}
-static BIN_ATTR_ADMIN_RO(meter_current, SDSI_SIZE_READ_MSG);
 
 static ssize_t registers_read(struct file *filp, struct kobject *kobj,
 			      struct bin_attribute *attr, char *buf, loff_t off,
@@ -535,7 +498,6 @@ static struct bin_attribute *sdsi_bin_attrs[] = {
 	&bin_attr_registers,
 	&bin_attr_state_certificate,
 	&bin_attr_meter_certificate,
-	&bin_attr_meter_current,
 	&bin_attr_provision_akc,
 	&bin_attr_provision_cap,
 	NULL
@@ -555,7 +517,7 @@ sdsi_battr_is_visible(struct kobject *kobj, struct bin_attribute *attr, int n)
 	if (!(priv->features & SDSI_FEATURE_SDSI))
 		return 0;
 
-	if (attr == &bin_attr_meter_certificate || attr == &bin_attr_meter_current)
+	if (attr == &bin_attr_meter_certificate)
 		return (priv->features & SDSI_FEATURE_METERING) ?
 				attr->attr.mode : 0;
 

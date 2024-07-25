@@ -73,7 +73,7 @@ enum dentist_divider_range {
 	clk_mgr->base.ctx
 
 #define DC_LOGGER \
-	dc->ctx->logger
+	clk_mgr->base.ctx->logger
 
 
 
@@ -163,13 +163,7 @@ enum dentist_divider_range {
 	CLK_SR_DCN32(CLK1_CLK1_DFS_CNTL), \
 	CLK_SR_DCN32(CLK1_CLK2_DFS_CNTL), \
 	CLK_SR_DCN32(CLK1_CLK3_DFS_CNTL), \
-	CLK_SR_DCN32(CLK1_CLK4_DFS_CNTL), \
-    CLK_SR_DCN32(CLK1_CLK0_CURRENT_CNT), \
-    CLK_SR_DCN32(CLK1_CLK1_CURRENT_CNT), \
-    CLK_SR_DCN32(CLK1_CLK2_CURRENT_CNT), \
-    CLK_SR_DCN32(CLK1_CLK3_CURRENT_CNT), \
-    CLK_SR_DCN32(CLK1_CLK4_CURRENT_CNT), \
-    CLK_SR_DCN32(CLK4_CLK0_CURRENT_CNT)
+	CLK_SR_DCN32(CLK1_CLK4_DFS_CNTL)
 
 #define CLK_COMMON_MASK_SH_LIST_DCN32(mask_sh) \
 	CLK_COMMON_MASK_SH_LIST_DCN20_BASE(mask_sh),\
@@ -228,8 +222,6 @@ struct clk_mgr_registers {
 	uint32_t CLK4_CLK2_CURRENT_CNT;
 	uint32_t CLK4_CLK_PLL_REQ;
 
-	uint32_t CLK4_CLK0_CURRENT_CNT;
-
 	uint32_t CLK3_CLK2_DFS_CNTL;
 	uint32_t CLK3_CLK_PLL_REQ;
 
@@ -242,12 +234,6 @@ struct clk_mgr_registers {
 	uint32_t CLK1_CLK2_DFS_CNTL;
 	uint32_t CLK1_CLK3_DFS_CNTL;
 	uint32_t CLK1_CLK4_DFS_CNTL;
-
-	uint32_t CLK1_CLK0_CURRENT_CNT;
-    uint32_t CLK1_CLK1_CURRENT_CNT;
-    uint32_t CLK1_CLK2_CURRENT_CNT;
-    uint32_t CLK1_CLK3_CURRENT_CNT;
-    uint32_t CLK1_CLK4_CURRENT_CNT;
 
 	uint32_t CLK0_CLK0_DFS_CNTL;
 	uint32_t CLK0_CLK1_DFS_CNTL;
@@ -349,14 +335,13 @@ struct clk_mgr_internal {
 	enum dm_pp_clocks_state cur_min_clks_state;
 	bool periodic_retraining_disabled;
 
-	unsigned int cur_phyclk_req_table[MAX_LINKS];
+	unsigned int cur_phyclk_req_table[MAX_PIPES * 2];
 
 	bool smu_present;
 	void *wm_range_table;
 	long long wm_range_table_addr;
 
 	bool dpm_present;
-	bool pme_trigger_pending;
 };
 
 struct clk_mgr_internal_funcs {
@@ -392,11 +377,6 @@ static inline bool should_update_pstate_support(bool safe_to_lower, bool calc_su
 static inline int khz_to_mhz_ceil(int khz)
 {
 	return (khz + 999) / 1000;
-}
-
-static inline int khz_to_mhz_floor(int khz)
-{
-	return khz / 1000;
 }
 
 int clk_mgr_helper_get_active_display_cnt(

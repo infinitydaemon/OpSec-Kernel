@@ -26,12 +26,9 @@
 #include <linux/list.h>
 #include <linux/mailbox_client.h>
 #include <linux/module.h>
-#include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_platform.h>
-#include <linux/platform_device.h>
 #include <linux/printk.h>
-#include <linux/property.h>
 #include <linux/pm_opp.h>
 #include <linux/scpi_protocol.h>
 #include <linux/slab.h>
@@ -863,7 +860,7 @@ static void scpi_free_channels(void *data)
 		mbox_free_channel(info->channels[i].chan);
 }
 
-static void scpi_remove(struct platform_device *pdev)
+static int scpi_remove(struct platform_device *pdev)
 {
 	int i;
 	struct scpi_drvinfo *info = platform_get_drvdata(pdev);
@@ -874,6 +871,8 @@ static void scpi_remove(struct platform_device *pdev)
 		kfree(info->dvfs[i]->opps);
 		kfree(info->dvfs[i]);
 	}
+
+	return 0;
 }
 
 #define MAX_SCPI_XFERS		10
@@ -895,6 +894,11 @@ static int scpi_alloc_xfer_list(struct device *dev, struct scpi_chan *ch)
 	return 0;
 }
 
+static const struct of_device_id legacy_scpi_of_match[] = {
+	{.compatible = "arm,scpi-pre-1.0"},
+	{},
+};
+
 static const struct of_device_id shmem_of_match[] __maybe_unused = {
 	{ .compatible = "amlogic,meson-gxbb-scp-shmem", },
 	{ .compatible = "amlogic,meson-axg-scp-shmem", },
@@ -915,7 +919,8 @@ static int scpi_probe(struct platform_device *pdev)
 	if (!scpi_drvinfo)
 		return -ENOMEM;
 
-	scpi_drvinfo->is_legacy = !!device_get_match_data(dev);
+	if (of_match_device(legacy_scpi_of_match, &pdev->dev))
+		scpi_drvinfo->is_legacy = true;
 
 	count = of_count_phandle_with_args(np, "mboxes", "#mbox-cells");
 	if (count < 0) {
@@ -1033,7 +1038,7 @@ static int scpi_probe(struct platform_device *pdev)
 
 static const struct of_device_id scpi_of_match[] = {
 	{.compatible = "arm,scpi"},
-	{.compatible = "arm,scpi-pre-1.0", .data = (void *)1UL },
+	{.compatible = "arm,scpi-pre-1.0"},
 	{},
 };
 
@@ -1046,7 +1051,7 @@ static struct platform_driver scpi_driver = {
 		.dev_groups = versions_groups,
 	},
 	.probe = scpi_probe,
-	.remove_new = scpi_remove,
+	.remove = scpi_remove,
 };
 module_platform_driver(scpi_driver);
 

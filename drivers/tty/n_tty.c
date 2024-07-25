@@ -249,12 +249,15 @@ static void n_tty_check_throttle(struct tty_struct *tty)
 	if (ldata->icanon && ldata->canon_head == ldata->read_tail)
 		return;
 
-	do {
+	while (1) {
+		int throttled;
 		tty_set_flow_change(tty, TTY_THROTTLE_SAFE);
 		if (N_TTY_BUF_SIZE - read_cnt(ldata) >= TTY_THRESHOLD_THROTTLE)
 			break;
-	} while (!tty_throttle_safe(tty));
-
+		throttled = tty_throttle_safe(tty);
+		if (!throttled)
+			break;
+	}
 	__tty_set_flow_change(tty, 0);
 }
 
@@ -276,14 +279,16 @@ static void n_tty_check_unthrottle(struct tty_struct *tty)
 	 * we won't get any more characters.
 	 */
 
-	do {
+	while (1) {
+		int unthrottled;
 		tty_set_flow_change(tty, TTY_UNTHROTTLE_SAFE);
 		if (chars_in_buffer(tty) > TTY_THRESHOLD_UNTHROTTLE)
 			break;
-
 		n_tty_kick_worker(tty);
-	} while (!tty_unthrottle_safe(tty));
-
+		unthrottled = tty_unthrottle_safe(tty);
+		if (!unthrottled)
+			break;
+	}
 	__tty_set_flow_change(tty, 0);
 }
 
@@ -1619,15 +1624,25 @@ static void __receive_buf(struct tty_struct *tty, const u8 *cp, const u8 *fp,
 	else if (ldata->raw || (L_EXTPROC(tty) && !preops))
 		n_tty_receive_buf_raw(tty, cp, fp, count);
 	else if (tty->closing && !L_EXTPROC(tty)) {
-		if (la_count > 0)
+		if (la_count > 0) {
 			n_tty_receive_buf_closing(tty, cp, fp, la_count, true);
-		if (count > la_count)
-			n_tty_receive_buf_closing(tty, cp, fp, count - la_count, false);
+			cp += la_count;
+			if (fp)
+				fp += la_count;
+			count -= la_count;
+		}
+		if (count > 0)
+			n_tty_receive_buf_closing(tty, cp, fp, count, false);
 	} else {
-		if (la_count > 0)
+		if (la_count > 0) {
 			n_tty_receive_buf_standard(tty, cp, fp, la_count, true);
-		if (count > la_count)
-			n_tty_receive_buf_standard(tty, cp, fp, count - la_count, false);
+			cp += la_count;
+			if (fp)
+				fp += la_count;
+			count -= la_count;
+		}
+		if (count > 0)
+			n_tty_receive_buf_standard(tty, cp, fp, count, false);
 
 		flush_echoes(tty);
 		if (tty->ops->flush_chars)
@@ -1960,27 +1975,26 @@ static bool copy_from_read_buf(const struct tty_struct *tty, u8 **kbp,
 	size_t head = smp_load_acquire(&ldata->commit_head);
 	size_t tail = MASK(ldata->read_tail);
 
-	n = min3(head - ldata->read_tail, N_TTY_BUF_SIZE - tail, *nr);
-	if (!n)
-		return false;
+	n = min(head - ldata->read_tail, N_TTY_BUF_SIZE - tail);
+	n = min(*nr, n);
+	if (n) {
+		u8 *from = read_buf_addr(ldata, tail);
+		memcpy(*kbp, from, n);
+		is_eof = n == 1 && *from == EOF_CHAR(tty);
+		tty_audit_add_data(tty, from, n);
+		zero_buffer(tty, from, n);
+		smp_store_release(&ldata->read_tail, ldata->read_tail + n);
+		/* Turn single EOF into zero-length read */
+		if (L_EXTPROC(tty) && ldata->icanon && is_eof &&
+		    (head == ldata->read_tail))
+			return false;
+		*kbp += n;
+		*nr -= n;
 
-	u8 *from = read_buf_addr(ldata, tail);
-	memcpy(*kbp, from, n);
-	is_eof = n == 1 && *from == EOF_CHAR(tty);
-	tty_audit_add_data(tty, from, n);
-	zero_buffer(tty, from, n);
-	smp_store_release(&ldata->read_tail, ldata->read_tail + n);
-
-	/* Turn single EOF into zero-length read */
-	if (L_EXTPROC(tty) && ldata->icanon && is_eof &&
-	    head == ldata->read_tail)
-		return false;
-
-	*kbp += n;
-	*nr -= n;
-
-	/* If we have more to copy, let the caller know */
-	return head != ldata->read_tail;
+		/* If we have more to copy, let the caller know */
+		return head != ldata->read_tail;
+	}
+	return false;
 }
 
 /**
@@ -2150,8 +2164,9 @@ static ssize_t n_tty_read(struct tty_struct *tty, struct file *file, u8 *kbuf,
 	struct n_tty_data *ldata = tty->disc_data;
 	u8 *kb = kbuf;
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+	int c;
 	int minimum, time;
-	ssize_t retval;
+	ssize_t retval = 0;
 	long timeout;
 	bool packet;
 	size_t old_tail;
@@ -2187,9 +2202,9 @@ static ssize_t n_tty_read(struct tty_struct *tty, struct file *file, u8 *kbuf,
 		return kb - kbuf;
 	}
 
-	retval = job_control(tty, file);
-	if (retval < 0)
-		return retval;
+	c = job_control(tty, file);
+	if (c < 0)
+		return c;
 
 	/*
 	 *	Internal serialization of reads.
@@ -2494,7 +2509,7 @@ static int n_tty_ioctl(struct tty_struct *tty, unsigned int cmd,
 		       unsigned long arg)
 {
 	struct n_tty_data *ldata = tty->disc_data;
-	unsigned int num;
+	int retval;
 
 	switch (cmd) {
 	case TIOCOUTQ:
@@ -2502,11 +2517,11 @@ static int n_tty_ioctl(struct tty_struct *tty, unsigned int cmd,
 	case TIOCINQ:
 		down_write(&tty->termios_rwsem);
 		if (L_ICANON(tty) && !L_EXTPROC(tty))
-			num = inq_canon(ldata);
+			retval = inq_canon(ldata);
 		else
-			num = read_cnt(ldata);
+			retval = read_cnt(ldata);
 		up_write(&tty->termios_rwsem);
-		return put_user(num, (unsigned int __user *) arg);
+		return put_user(retval, (unsigned int __user *) arg);
 	default:
 		return n_tty_ioctl_helper(tty, cmd, arg);
 	}

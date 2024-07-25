@@ -7,50 +7,25 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "hashtable.h"
 #include "lkc.h"
 
-unsigned int strhash(const char *s)
-{
-	/* fnv32 hash */
-	unsigned int hash = 2166136261U;
-
-	for (; *s; s++)
-		hash = (hash ^ *s) * 0x01000193;
-	return hash;
-}
-
-/* hash table of all parsed Kconfig files */
-static HASHTABLE_DEFINE(file_hashtable, 1U << 11);
-
-struct file {
-	struct hlist_node node;
-	char name[];
-};
-
 /* file already present in list? If not add it */
-const char *file_lookup(const char *name)
+struct file *file_lookup(const char *name)
 {
 	struct file *file;
-	size_t len;
-	int hash = strhash(name);
 
-	hash_for_each_possible(file_hashtable, file, node, hash)
-		if (!strcmp(name, file->name))
-			return file->name;
+	for (file = file_list; file; file = file->next) {
+		if (!strcmp(name, file->name)) {
+			return file;
+		}
+	}
 
-	len = strlen(name);
-	file = xmalloc(sizeof(*file) + len + 1);
+	file = xmalloc(sizeof(*file));
 	memset(file, 0, sizeof(*file));
-	memcpy(file->name, name, len);
-	file->name[len] = '\0';
-
-	hash_add(file_hashtable, &file->node, hash);
-
-	str_printf(&autoconf_cmd, "\t%s \\\n", name);
-
-	return file->name;
+	file->name = xstrdup(name);
+	file->next = file_list;
+	file_list = file;
+	return file;
 }
 
 /* Allocate initial growable string */
@@ -67,7 +42,8 @@ struct gstr str_new(void)
 /* Free storage for growable string */
 void str_free(struct gstr *gs)
 {
-	free(gs->s);
+	if (gs->s)
+		free(gs->s);
 	gs->s = NULL;
 	gs->len = 0;
 }

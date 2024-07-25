@@ -196,26 +196,13 @@ static unsigned long gfs2_qd_shrink_count(struct shrinker *shrink,
 	return vfs_pressure_ratio(list_lru_shrink_count(&gfs2_qd_lru, sc));
 }
 
-static struct shrinker *gfs2_qd_shrinker;
+struct shrinker gfs2_qd_shrinker = {
+	.count_objects = gfs2_qd_shrink_count,
+	.scan_objects = gfs2_qd_shrink_scan,
+	.seeks = DEFAULT_SEEKS,
+	.flags = SHRINKER_NUMA_AWARE,
+};
 
-int __init gfs2_qd_shrinker_init(void)
-{
-	gfs2_qd_shrinker = shrinker_alloc(SHRINKER_NUMA_AWARE, "gfs2-qd");
-	if (!gfs2_qd_shrinker)
-		return -ENOMEM;
-
-	gfs2_qd_shrinker->count_objects = gfs2_qd_shrink_count;
-	gfs2_qd_shrinker->scan_objects = gfs2_qd_shrink_scan;
-
-	shrinker_register(gfs2_qd_shrinker);
-
-	return 0;
-}
-
-void gfs2_qd_shrinker_exit(void)
-{
-	shrinker_free(gfs2_qd_shrinker);
-}
 
 static u64 qd2index(struct gfs2_quota_data *qd)
 {
@@ -271,7 +258,7 @@ static struct gfs2_quota_data *gfs2_qd_search_bucket(unsigned int hash,
 		if (qd->qd_sbd != sdp)
 			continue;
 		if (lockref_get_not_dead(&qd->qd_lockref)) {
-			list_lru_del_obj(&gfs2_qd_lru, &qd->qd_lru);
+			list_lru_del(&gfs2_qd_lru, &qd->qd_lru);
 			return qd;
 		}
 	}
@@ -344,7 +331,7 @@ static void qd_put(struct gfs2_quota_data *qd)
 	}
 
 	qd->qd_lockref.count = 0;
-	list_lru_add_obj(&gfs2_qd_lru, &qd->qd_lru);
+	list_lru_add(&gfs2_qd_lru, &qd->qd_lru);
 	spin_unlock(&qd->qd_lockref.lock);
 }
 
@@ -760,7 +747,7 @@ static int gfs2_write_buf_to_page(struct gfs2_sbd *sdp, unsigned long index,
 	struct gfs2_inode *ip = GFS2_I(sdp->sd_quota_inode);
 	struct inode *inode = &ip->i_inode;
 	struct address_space *mapping = inode->i_mapping;
-	struct folio *folio;
+	struct page *page;
 	struct buffer_head *bh;
 	u64 blk;
 	unsigned bsize = sdp->sd_sb.sb_bsize, bnum = 0, boff = 0;
@@ -769,15 +756,15 @@ static int gfs2_write_buf_to_page(struct gfs2_sbd *sdp, unsigned long index,
 	blk = index << (PAGE_SHIFT - sdp->sd_sb.sb_bsize_shift);
 	boff = off % bsize;
 
-	folio = filemap_grab_folio(mapping, index);
-	if (IS_ERR(folio))
-		return PTR_ERR(folio);
-	bh = folio_buffers(folio);
-	if (!bh)
-		bh = create_empty_buffers(folio, bsize, 0);
+	page = grab_cache_page(mapping, index);
+	if (!page)
+		return -ENOMEM;
+	if (!page_has_buffers(page))
+		create_empty_buffers(page, bsize, 0);
 
-	for (;;) {
-		/* Find the beginning block within the folio */
+	bh = page_buffers(page);
+	for(;;) {
+		/* Find the beginning block within the page */
 		if (pg_off >= ((bnum * bsize) + bsize)) {
 			bh = bh->b_this_page;
 			bnum++;
@@ -790,10 +777,9 @@ static int gfs2_write_buf_to_page(struct gfs2_sbd *sdp, unsigned long index,
 				goto unlock_out;
 			/* If it's a newly allocated disk block, zero it */
 			if (buffer_new(bh))
-				folio_zero_range(folio, bnum * bsize,
-						bh->b_size);
+				zero_user(page, bnum * bsize, bh->b_size);
 		}
-		if (folio_test_uptodate(folio))
+		if (PageUptodate(page))
 			set_buffer_uptodate(bh);
 		if (bh_read(bh, REQ_META | REQ_PRIO) < 0)
 			goto unlock_out;
@@ -809,17 +795,17 @@ static int gfs2_write_buf_to_page(struct gfs2_sbd *sdp, unsigned long index,
 		break;
 	}
 
-	/* Write to the folio, now that we have setup the buffer(s) */
-	memcpy_to_folio(folio, off, buf, bytes);
-	flush_dcache_folio(folio);
-	folio_unlock(folio);
-	folio_put(folio);
+	/* Write to the page, now that we have setup the buffer(s) */
+	memcpy_to_page(page, off, buf, bytes);
+	flush_dcache_page(page);
+	unlock_page(page);
+	put_page(page);
 
 	return 0;
 
 unlock_out:
-	folio_unlock(folio);
-	folio_put(folio);
+	unlock_page(page);
+	put_page(page);
 	return -EIO;
 }
 
@@ -911,7 +897,7 @@ static int gfs2_adjust_quota(struct gfs2_sbd *sdp, loff_t loc,
 		size = loc + sizeof(struct gfs2_quota);
 		if (size > inode->i_size)
 			i_size_write(inode, size);
-		inode_set_mtime_to_ts(inode, inode_set_ctime_current(inode));
+		inode->i_mtime = inode_set_ctime_current(inode);
 		mark_inode_dirty(inode);
 		set_bit(QDF_REFRESH, &qd->qd_flags);
 	}
@@ -923,7 +909,7 @@ static int do_sync(unsigned int num_qd, struct gfs2_quota_data **qda)
 {
 	struct gfs2_sbd *sdp = (*qda)->qd_sbd;
 	struct gfs2_inode *ip = GFS2_I(sdp->sd_quota_inode);
-	struct gfs2_alloc_parms ap = {};
+	struct gfs2_alloc_parms ap = { .aflags = 0, };
 	unsigned int data_blocks, ind_blocks;
 	struct gfs2_holder *ghs, i_gh;
 	unsigned int qx, x;
@@ -1097,7 +1083,8 @@ int gfs2_quota_lock(struct gfs2_inode *ip, kuid_t uid, kgid_t gid)
 	u32 x;
 	int error;
 
-	if (sdp->sd_args.ar_quota == GFS2_QUOTA_OFF)
+	if (sdp->sd_args.ar_quota != GFS2_QUOTA_ON &&
+	    sdp->sd_args.ar_quota != GFS2_QUOTA_QUIET)
 		return 0;
 
 	error = gfs2_quota_hold(ip, uid, gid);
@@ -1204,16 +1191,17 @@ void gfs2_quota_unlock(struct gfs2_inode *ip)
 
 #define MAX_LINE 256
 
-static void print_message(struct gfs2_quota_data *qd, char *type)
+static int print_message(struct gfs2_quota_data *qd, char *type)
 {
 	struct gfs2_sbd *sdp = qd->qd_sbd;
 
-	if (sdp->sd_args.ar_quota != GFS2_QUOTA_QUIET) {
+	if (sdp->sd_args.ar_quota != GFS2_QUOTA_QUIET)
 		fs_info(sdp, "quota %s for %s %u\n",
 			type,
 			(qd->qd_id.type == USRQUOTA) ? "user" : "group",
 			from_kqid(&init_user_ns, qd->qd_id));
-	}
+
+	return 0;
 }
 
 /**
@@ -1283,8 +1271,7 @@ int gfs2_quota_check(struct gfs2_inode *ip, kuid_t uid, kgid_t gid,
 					 * HZ)) {
 			quota_send_warning(qd->qd_id,
 					   sdp->sd_vfs->s_dev, QUOTA_NL_BSOFTWARN);
-			print_message(qd, "warning");
-			error = 0;
+			error = print_message(qd, "warning");
 			qd->qd_last_warn = jiffies;
 		}
 	}
@@ -1298,7 +1285,8 @@ void gfs2_quota_change(struct gfs2_inode *ip, s64 change,
 	u32 x;
 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
 
-	if (sdp->sd_args.ar_quota == GFS2_QUOTA_OFF ||
+	if ((sdp->sd_args.ar_quota != GFS2_QUOTA_ON &&
+	    sdp->sd_args.ar_quota != GFS2_QUOTA_QUIET) ||
 	    gfs2_assert_warn(sdp, change))
 		return;
 	if (ip->i_diskflags & GFS2_DIF_SYSTEM)
@@ -1518,7 +1506,7 @@ void gfs2_quota_cleanup(struct gfs2_sbd *sdp)
 		lockref_mark_dead(&qd->qd_lockref);
 		spin_unlock(&qd->qd_lockref.lock);
 
-		list_lru_del_obj(&gfs2_qd_lru, &qd->qd_lru);
+		list_lru_del(&gfs2_qd_lru, &qd->qd_lru);
 		list_add(&qd->qd_lru, &dispose);
 	}
 	spin_unlock(&qd_lock);
@@ -1583,7 +1571,6 @@ int gfs2_quotad(void *data)
 	unsigned long quotad_timeo = 0;
 	unsigned long t = 0;
 
-	set_freezable();
 	while (!kthread_should_stop()) {
 		if (gfs2_withdrawing_or_withdrawn(sdp))
 			break;
@@ -1603,9 +1590,11 @@ int gfs2_quotad(void *data)
 		quotad_check_timeo(sdp, "sync", gfs2_quota_sync, t,
 				   &quotad_timeo, &tune->gt_quota_quantum);
 
+		try_to_freeze();
+
 		t = min(quotad_timeo, statfs_timeo);
 
-		t = wait_event_freezable_timeout(sdp->sd_quota_wait,
+		t = wait_event_interruptible_timeout(sdp->sd_quota_wait,
 				sdp->sd_statfs_force_sync ||
 				gfs2_withdrawing_or_withdrawn(sdp) ||
 				kthread_should_stop(),
@@ -1755,7 +1744,7 @@ static int gfs2_set_dqblk(struct super_block *sb, struct kqid qid,
 	if (gfs2_is_stuffed(ip))
 		alloc_required = 1;
 	if (alloc_required) {
-		struct gfs2_alloc_parms ap = {};
+		struct gfs2_alloc_parms ap = { .aflags = 0, };
 		gfs2_write_calc_reserv(ip, sizeof(struct gfs2_quota),
 				       &data_blocks, &ind_blocks);
 		blocks = 1 + data_blocks + ind_blocks;

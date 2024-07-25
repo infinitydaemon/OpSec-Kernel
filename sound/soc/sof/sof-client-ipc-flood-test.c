@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 //
-// Copyright(c) 2022 Intel Corporation
+// Copyright(c) 2022 Intel Corporation. All rights reserved.
 //
 // Authors: Ranjani Sridharan <ranjani.sridharan@linux.intel.com>
 //	    Peter Ujfalusi <peter.ujfalusi@linux.intel.com>
@@ -160,20 +160,15 @@ static ssize_t sof_ipc_flood_dfs_write(struct file *file, const char __user *buf
 	unsigned long ipc_count = 0;
 	struct dentry *dentry;
 	int err;
+	size_t size;
 	char *string;
 	int ret;
-
-	if (*ppos != 0)
-		return -EINVAL;
 
 	string = kzalloc(count + 1, GFP_KERNEL);
 	if (!string)
 		return -ENOMEM;
 
-	if (copy_from_user(string, buffer, count)) {
-		ret = -EFAULT;
-		goto out;
-	}
+	size = simple_write_to_buffer(string, count, ppos, buffer, count);
 
 	/*
 	 * write op is only supported for ipc_flood_count or
@@ -203,7 +198,7 @@ static ssize_t sof_ipc_flood_dfs_write(struct file *file, const char __user *buf
 	/* limit max duration/ipc count for flood test */
 	if (flood_duration_test) {
 		if (!ipc_duration_ms) {
-			ret = count;
+			ret = size;
 			goto out;
 		}
 
@@ -212,7 +207,7 @@ static ssize_t sof_ipc_flood_dfs_write(struct file *file, const char __user *buf
 			ipc_duration_ms = MAX_IPC_FLOOD_DURATION_MS;
 	} else {
 		if (!ipc_count) {
-			ret = count;
+			ret = size;
 			goto out;
 		}
 
@@ -236,9 +231,9 @@ static ssize_t sof_ipc_flood_dfs_write(struct file *file, const char __user *buf
 	if (err < 0)
 		dev_err_ratelimited(dev, "debugfs write failed to idle %d\n", err);
 
-	/* return count if test is successful */
+	/* return size if test is successful */
 	if (ret >= 0)
-		ret = count;
+		ret = size;
 out:
 	kfree(string);
 	return ret;
@@ -394,6 +389,6 @@ static struct auxiliary_driver sof_ipc_flood_client_drv = {
 
 module_auxiliary_driver(sof_ipc_flood_client_drv);
 
-MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("SOF IPC Flood Test Client Driver");
+MODULE_LICENSE("GPL");
 MODULE_IMPORT_NS(SND_SOC_SOF_CLIENT);

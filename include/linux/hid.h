@@ -474,9 +474,9 @@ struct hid_usage {
 	__s8	  wheel_factor;		/* 120/resolution_multiplier */
 	__u16     code;			/* input driver code */
 	__u8      type;			/* input driver type */
-	__s16	  hat_min;		/* hat switch fun */
-	__s16	  hat_max;		/* ditto */
-	__s16	  hat_dir;		/* ditto */
+	__s8	  hat_min;		/* hat switch fun */
+	__s8	  hat_max;		/* ditto */
+	__s8	  hat_dir;		/* ditto */
 	__s16	  wheel_accumulated;	/* hi-res wheel */
 };
 
@@ -683,9 +683,9 @@ struct hid_device {							/* device report descriptor */
 
 	unsigned int id;						/* system unique id */
 
-#ifdef CONFIG_HID_BPF
+#ifdef CONFIG_BPF
 	struct hid_bpf bpf;						/* hid-bpf data */
-#endif /* CONFIG_HID_BPF */
+#endif /* CONFIG_BPF */
 };
 
 void hiddev_free(struct kref *ref);
@@ -836,11 +836,11 @@ struct hid_driver {
 	void (*feature_mapping)(struct hid_device *hdev,
 			struct hid_field *field,
 			struct hid_usage *usage);
-
+#ifdef CONFIG_PM
 	int (*suspend)(struct hid_device *hdev, pm_message_t message);
 	int (*resume)(struct hid_device *hdev);
 	int (*reset_resume)(struct hid_device *hdev);
-
+#endif
 /* private: */
 	struct device_driver driver;
 };
@@ -912,7 +912,7 @@ extern bool hid_ignore(struct hid_device *);
 extern int hid_add_device(struct hid_device *);
 extern void hid_destroy_device(struct hid_device *);
 
-extern const struct bus_type hid_bus_type;
+extern struct bus_type hid_bus_type;
 
 extern int __must_check __hid_register_driver(struct hid_driver *,
 		struct module *, const char *mod_name);

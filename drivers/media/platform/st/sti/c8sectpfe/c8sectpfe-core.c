@@ -24,6 +24,7 @@
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/module.h>
+#include <linux/of_gpio.h>
 #include <linux/of_platform.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/pinctrl/pinctrl.h>
@@ -694,10 +695,16 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, fei);
 
-	fei->c8sectpfeclk = devm_clk_get_enabled(dev, "c8sectpfe");
+	fei->c8sectpfeclk = devm_clk_get(dev, "c8sectpfe");
 	if (IS_ERR(fei->c8sectpfeclk)) {
-		dev_err(dev, "Failed to enable c8sectpfe clock\n");
+		dev_err(dev, "c8sectpfe clk not found\n");
 		return PTR_ERR(fei->c8sectpfeclk);
+	}
+
+	ret = clk_prepare_enable(fei->c8sectpfeclk);
+	if (ret) {
+		dev_err(dev, "Failed to enable c8sectpfe clock\n");
+		return ret;
 	}
 
 	/* to save power disable all IP's (on by default) */
@@ -715,7 +722,7 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 			0, "c8sectpfe-idle-irq", fei);
 	if (ret) {
 		dev_err(dev, "Can't register c8sectpfe-idle-irq IRQ.\n");
-		return ret;
+		goto err_clk_disable;
 	}
 
 	ret = devm_request_irq(dev, fei->error_irq,
@@ -723,7 +730,7 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 				"c8sectpfe-error-irq", fei);
 	if (ret) {
 		dev_err(dev, "Can't register c8sectpfe-error-irq IRQ.\n");
-		return ret;
+		goto err_clk_disable;
 	}
 
 	fei->tsin_count = of_get_child_count(np);
@@ -732,14 +739,16 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 		fei->tsin_count > fei->hw_stats.num_ib) {
 
 		dev_err(dev, "More tsin declared than exist on SoC!\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto err_clk_disable;
 	}
 
 	fei->pinctrl = devm_pinctrl_get(dev);
 
 	if (IS_ERR(fei->pinctrl)) {
 		dev_err(dev, "Error getting tsin pins\n");
-		return PTR_ERR(fei->pinctrl);
+		ret = PTR_ERR(fei->pinctrl);
+		goto err_clk_disable;
 	}
 
 	for_each_child_of_node(np, child) {
@@ -850,7 +859,7 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 	if (ret) {
 		dev_err(dev, "c8sectpfe_tuner_register_frontend failed (%d)\n",
 			ret);
-		return ret;
+		goto err_clk_disable;
 	}
 
 	c8sectpfe_debugfs_init(fei);
@@ -859,6 +868,8 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 
 err_node_put:
 	of_node_put(child);
+err_clk_disable:
+	clk_disable_unprepare(fei->c8sectpfeclk);
 	return ret;
 }
 
@@ -892,6 +903,8 @@ static void c8sectpfe_remove(struct platform_device *pdev)
 
 	if (readl(fei->io + SYS_OTHER_CLKEN))
 		writel(0, fei->io + SYS_OTHER_CLKEN);
+
+	clk_disable_unprepare(fei->c8sectpfeclk);
 }
 
 
@@ -1096,6 +1109,7 @@ static int load_slim_core_fw(const struct firmware *fw, struct c8sectpfei *fei)
 		}
 	}
 
+	release_firmware(fw);
 	return err;
 }
 
@@ -1119,7 +1133,6 @@ static int load_c8sectpfe_fw(struct c8sectpfei *fei)
 	}
 
 	err = load_slim_core_fw(fw, fei);
-	release_firmware(fw);
 	if (err) {
 		dev_err(fei->dev, "load_slim_core_fw failed err=(%d)\n", err);
 		return err;

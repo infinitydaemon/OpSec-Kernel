@@ -148,7 +148,6 @@ static int armada_drm_bind(struct device *dev)
  err_kms:
 	drm_mode_config_cleanup(&priv->drm);
 	drm_mm_takedown(&priv->linear);
-	dev_set_drvdata(dev, NULL);
 	return ret;
 }
 
@@ -167,7 +166,6 @@ static void armada_drm_unbind(struct device *dev)
 
 	drm_mode_config_cleanup(&priv->drm);
 	drm_mm_takedown(&priv->linear);
-	dev_set_drvdata(dev, NULL);
 }
 
 static void armada_add_endpoints(struct device *dev,
@@ -226,14 +224,10 @@ static int armada_drm_probe(struct platform_device *pdev)
 					       match);
 }
 
-static void armada_drm_remove(struct platform_device *pdev)
+static int armada_drm_remove(struct platform_device *pdev)
 {
 	component_master_del(&pdev->dev, &armada_master_ops);
-}
-
-static void armada_drm_shutdown(struct platform_device *pdev)
-{
-	drm_atomic_helper_shutdown(platform_get_drvdata(pdev));
+	return 0;
 }
 
 static const struct platform_device_id armada_drm_platform_ids[] = {
@@ -248,8 +242,7 @@ MODULE_DEVICE_TABLE(platform, armada_drm_platform_ids);
 
 static struct platform_driver armada_drm_platform_driver = {
 	.probe	= armada_drm_probe,
-	.remove_new = armada_drm_remove,
-	.shutdown = armada_drm_shutdown,
+	.remove	= armada_drm_remove,
 	.driver	= {
 		.name	= "armada-drm",
 	},

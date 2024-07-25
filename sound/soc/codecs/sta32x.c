@@ -21,7 +21,8 @@
 #include <linux/delay.h>
 #include <linux/pm.h>
 #include <linux/i2c.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
+#include <linux/of_gpio.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/gpio/consumer.h>
@@ -1154,9 +1155,9 @@ static int sta32x_i2c_probe(struct i2c_client *i2c)
 }
 
 static const struct i2c_device_id sta32x_i2c_id[] = {
-	{ "sta326" },
-	{ "sta328" },
-	{ "sta329" },
+	{ "sta326", 0 },
+	{ "sta328", 0 },
+	{ "sta329", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, sta32x_i2c_id);

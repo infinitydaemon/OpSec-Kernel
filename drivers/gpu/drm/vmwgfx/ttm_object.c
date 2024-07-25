@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 OR MIT */
 /**************************************************************************
  *
- * Copyright (c) 2009-2023 VMware, Inc., Palo Alto, CA., USA
+ * Copyright (c) 2009-2022 VMware, Inc., Palo Alto, CA., USA
  * All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -87,11 +87,14 @@ struct ttm_object_file {
  *
  * @object_lock: lock that protects idr.
  *
+ * @object_count: Per device object count.
+ *
  * This is the per-device data structure needed for ttm object management.
  */
 
 struct ttm_object_device {
 	spinlock_t object_lock;
+	atomic_t object_count;
 	struct dma_buf_ops ops;
 	void (*dmabuf_release)(struct dma_buf *dma_buf);
 	struct idr idr;
@@ -428,6 +431,7 @@ ttm_object_device_init(const struct dma_buf_ops *ops)
 		return NULL;
 
 	spin_lock_init(&tdev->object_lock);
+	atomic_set(&tdev->object_count, 0);
 
 	/*
 	 * Our base is at VMWGFX_NUM_MOB + 1 because we want to create
@@ -644,6 +648,7 @@ out_unref:
  * @tfile: struct ttm_object_file identifying the caller
  * @size: The size of the dma_bufs we export.
  * @prime: The object to be initialized.
+ * @shareable: See ttm_base_object_init
  * @type: See ttm_base_object_init
  * @refcount_release: See ttm_base_object_init
  *
@@ -651,11 +656,10 @@ out_unref:
  * for data sharing between processes and devices.
  */
 int ttm_prime_object_init(struct ttm_object_file *tfile, size_t size,
-			  struct ttm_prime_object *prime,
+			  struct ttm_prime_object *prime, bool shareable,
 			  enum ttm_object_type type,
 			  void (*refcount_release) (struct ttm_base_object **))
 {
-	bool shareable = !!(type == VMW_RES_SURFACE);
 	mutex_init(&prime->mutex);
 	prime->size = PAGE_ALIGN(size);
 	prime->real_type = type;

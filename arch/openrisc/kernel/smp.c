@@ -57,6 +57,10 @@ static void boot_secondary(unsigned int cpu, struct task_struct *idle)
 	spin_unlock(&boot_lock);
 }
 
+void __init smp_prepare_boot_cpu(void)
+{
+}
+
 void __init smp_init_cpus(void)
 {
 	struct device_node *cpu;

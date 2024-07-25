@@ -57,8 +57,6 @@ properties:
   interrupts:
     maxItems: 1
 
-  vdd-supply: true
-
   adi,mux-delay-config-us:
     description: |
       Extra delay prior to each conversion, in addition to the internal 1ms
@@ -462,7 +460,6 @@ required:
   - compatible
   - reg
   - interrupts
-  - vdd-supply
 
 additionalProperties: false
 
@@ -492,7 +489,6 @@ examples:
             #address-cells = <1>;
             #size-cells = <0>;
 
-            vdd-supply = <&supply>;
             interrupts = <20 IRQ_TYPE_EDGE_RISING>;
             interrupt-parent = <&gpio>;
 

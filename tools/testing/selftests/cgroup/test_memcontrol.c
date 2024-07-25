@@ -716,9 +716,7 @@ static bool reclaim_until(const char *memcg, long goal)
  */
 static int test_memcg_reclaim(const char *root)
 {
-	int ret = KSFT_FAIL;
-	int fd = -1;
-	int retries;
+	int ret = KSFT_FAIL, fd, retries;
 	char *memcg;
 	long current, expected_usage;
 

@@ -1,4 +1,6 @@
 ToDo list (incomplete, unordered)
-	- move the driver to the new i2c slave framework
+	- add compile as module support
+	- move half of the nvec init stuff to i2c-tegra.c
+	- move event handling to nvec_events
 	- finish suspend/resume support
-	- add atomic ops in order to fix shutoff/reboot problems
+	- add support for more device implementations

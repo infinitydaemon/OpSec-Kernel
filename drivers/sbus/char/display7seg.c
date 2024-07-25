@@ -229,7 +229,7 @@ out_iounmap:
 	goto out;
 }
 
-static void d7s_remove(struct platform_device *op)
+static int d7s_remove(struct platform_device *op)
 {
 	struct d7s *p = dev_get_drvdata(&op->dev);
 	u8 regs = readb(p->regs);
@@ -245,6 +245,8 @@ static void d7s_remove(struct platform_device *op)
 
 	misc_deregister(&d7s_miscdev);
 	of_iounmap(&op->resource[0], p->regs, sizeof(u8));
+
+	return 0;
 }
 
 static const struct of_device_id d7s_match[] = {
@@ -261,7 +263,7 @@ static struct platform_driver d7s_driver = {
 		.of_match_table = d7s_match,
 	},
 	.probe		= d7s_probe,
-	.remove_new	= d7s_remove,
+	.remove		= d7s_remove,
 };
 
 module_platform_driver(d7s_driver);

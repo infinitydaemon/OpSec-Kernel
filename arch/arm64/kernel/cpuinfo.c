@@ -17,6 +17,7 @@
 #include <linux/elf.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
+#include <linux/of_platform.h>
 #include <linux/personality.h>
 #include <linux/preempt.h>
 #include <linux/printk.h>
@@ -36,6 +37,8 @@ static struct cpuinfo_arm64 boot_cpu_data;
 static inline const char *icache_policy_str(int l1ip)
 {
 	switch (l1ip) {
+	case CTR_EL0_L1Ip_VPIPT:
+		return "VPIPT";
 	case CTR_EL0_L1Ip_VIPT:
 		return "VIPT";
 	case CTR_EL0_L1Ip_PIPT:
@@ -125,24 +128,6 @@ static const char *const hwcap_str[] = {
 	[KERNEL_HWCAP_SME_F16F16]	= "smef16f16",
 	[KERNEL_HWCAP_MOPS]		= "mops",
 	[KERNEL_HWCAP_HBC]		= "hbc",
-	[KERNEL_HWCAP_SVE_B16B16]	= "sveb16b16",
-	[KERNEL_HWCAP_LRCPC3]		= "lrcpc3",
-	[KERNEL_HWCAP_LSE128]		= "lse128",
-	[KERNEL_HWCAP_FPMR]		= "fpmr",
-	[KERNEL_HWCAP_LUT]		= "lut",
-	[KERNEL_HWCAP_FAMINMAX]		= "faminmax",
-	[KERNEL_HWCAP_F8CVT]		= "f8cvt",
-	[KERNEL_HWCAP_F8FMA]		= "f8fma",
-	[KERNEL_HWCAP_F8DP4]		= "f8dp4",
-	[KERNEL_HWCAP_F8DP2]		= "f8dp2",
-	[KERNEL_HWCAP_F8E4M3]		= "f8e4m3",
-	[KERNEL_HWCAP_F8E5M2]		= "f8e5m2",
-	[KERNEL_HWCAP_SME_LUTV2]	= "smelutv2",
-	[KERNEL_HWCAP_SME_F8F16]	= "smef8f16",
-	[KERNEL_HWCAP_SME_F8F32]	= "smef8f32",
-	[KERNEL_HWCAP_SME_SF8FMA]	= "smesf8fma",
-	[KERNEL_HWCAP_SME_SF8DP4]	= "smesf8dp4",
-	[KERNEL_HWCAP_SME_SF8DP2]	= "smesf8dp2",
 };
 
 #ifdef CONFIG_COMPAT
@@ -194,6 +179,10 @@ static int c_show(struct seq_file *m, void *v)
 {
 	int i, j;
 	bool compat = personality(current->personality) == PER_LINUX32;
+	struct device_node *np;
+	const char *model;
+	const char *serial;
+	u32 revision;
 
 	for_each_online_cpu(i) {
 		struct cpuinfo_arm64 *cpuinfo = &per_cpu(cpu_data, i);
@@ -252,6 +241,24 @@ static int c_show(struct seq_file *m, void *v)
 		seq_printf(m, "CPU variant\t: 0x%x\n", MIDR_VARIANT(midr));
 		seq_printf(m, "CPU part\t: 0x%03x\n", MIDR_PARTNUM(midr));
 		seq_printf(m, "CPU revision\t: %d\n\n", MIDR_REVISION(midr));
+	}
+
+	np = of_find_node_by_path("/system");
+	if (np) {
+		if (!of_property_read_u32(np, "linux,revision", &revision))
+			seq_printf(m, "Revision\t: %04x\n", revision);
+		of_node_put(np);
+	}
+
+	np = of_find_node_by_path("/");
+	if (np) {
+		if (!of_property_read_string(np, "serial-number",
+					     &serial))
+			seq_printf(m, "Serial\t\t: %s\n", serial);
+		if (!of_property_read_string(np, "model",
+					     &model))
+			seq_printf(m, "Model\t\t: %s\n", model);
+		of_node_put(np);
 	}
 
 	return 0;
@@ -401,6 +408,9 @@ static void cpuinfo_detect_icache_policy(struct cpuinfo_arm64 *info)
 	switch (l1ip) {
 	case CTR_EL0_L1Ip_PIPT:
 		break;
+	case CTR_EL0_L1Ip_VPIPT:
+		set_bit(ICACHEF_VPIPT, &__icache_flags);
+		break;
 	case CTR_EL0_L1Ip_VIPT:
 	default:
 		/* Assume aliasing */
@@ -458,18 +468,14 @@ static void __cpuinfo_store_cpu(struct cpuinfo_arm64 *info)
 	info->reg_id_aa64isar0 = read_cpuid(ID_AA64ISAR0_EL1);
 	info->reg_id_aa64isar1 = read_cpuid(ID_AA64ISAR1_EL1);
 	info->reg_id_aa64isar2 = read_cpuid(ID_AA64ISAR2_EL1);
-	info->reg_id_aa64isar3 = read_cpuid(ID_AA64ISAR3_EL1);
 	info->reg_id_aa64mmfr0 = read_cpuid(ID_AA64MMFR0_EL1);
 	info->reg_id_aa64mmfr1 = read_cpuid(ID_AA64MMFR1_EL1);
 	info->reg_id_aa64mmfr2 = read_cpuid(ID_AA64MMFR2_EL1);
 	info->reg_id_aa64mmfr3 = read_cpuid(ID_AA64MMFR3_EL1);
-	info->reg_id_aa64mmfr4 = read_cpuid(ID_AA64MMFR4_EL1);
 	info->reg_id_aa64pfr0 = read_cpuid(ID_AA64PFR0_EL1);
 	info->reg_id_aa64pfr1 = read_cpuid(ID_AA64PFR1_EL1);
-	info->reg_id_aa64pfr2 = read_cpuid(ID_AA64PFR2_EL1);
 	info->reg_id_aa64zfr0 = read_cpuid(ID_AA64ZFR0_EL1);
 	info->reg_id_aa64smfr0 = read_cpuid(ID_AA64SMFR0_EL1);
-	info->reg_id_aa64fpfr0 = read_cpuid(ID_AA64FPFR0_EL1);
 
 	if (id_aa64pfr1_mte(info->reg_id_aa64pfr1))
 		info->reg_gmid = read_cpuid(GMID_EL1);

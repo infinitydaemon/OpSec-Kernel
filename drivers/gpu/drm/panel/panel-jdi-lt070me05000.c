@@ -5,6 +5,10 @@
  *
  * Copyright (C) 2016 Linaro Ltd
  * Author: Sumit Semwal <sumit.semwal@linaro.org>
+ *
+ * From internet archives, the panel for Nexus 7 2nd Gen, 2013 model is a
+ * JDI model LT070ME05000, and its data sheet is at:
+ * http://panelone.net/en/7-0-inch/JDI_LT070ME05000_7.0_inch-datasheet
  */
 
 #include <linux/backlight.h>
@@ -201,11 +205,11 @@ static int jdi_panel_unprepare(struct drm_panel *panel)
 	if (ret < 0)
 		dev_err(dev, "regulator disable failed, %d\n", ret);
 
-	gpiod_set_value(jdi->enable_gpio, 0);
+	gpiod_set_value_cansleep(jdi->enable_gpio, 0);
 
-	gpiod_set_value(jdi->reset_gpio, 1);
+	gpiod_set_value_cansleep(jdi->reset_gpio, 1);
 
-	gpiod_set_value(jdi->dcdc_en_gpio, 0);
+	gpiod_set_value_cansleep(jdi->dcdc_en_gpio, 0);
 
 	jdi->prepared = false;
 
@@ -229,13 +233,13 @@ static int jdi_panel_prepare(struct drm_panel *panel)
 
 	msleep(20);
 
-	gpiod_set_value(jdi->dcdc_en_gpio, 1);
+	gpiod_set_value_cansleep(jdi->dcdc_en_gpio, 1);
 	usleep_range(10, 20);
 
-	gpiod_set_value(jdi->reset_gpio, 0);
+	gpiod_set_value_cansleep(jdi->reset_gpio, 0);
 	usleep_range(10, 20);
 
-	gpiod_set_value(jdi->enable_gpio, 1);
+	gpiod_set_value_cansleep(jdi->enable_gpio, 1);
 	usleep_range(10, 20);
 
 	ret = jdi_panel_init(jdi);
@@ -259,11 +263,11 @@ poweroff:
 	if (ret < 0)
 		dev_err(dev, "regulator disable failed, %d\n", ret);
 
-	gpiod_set_value(jdi->enable_gpio, 0);
+	gpiod_set_value_cansleep(jdi->enable_gpio, 0);
 
-	gpiod_set_value(jdi->reset_gpio, 1);
+	gpiod_set_value_cansleep(jdi->reset_gpio, 1);
 
-	gpiod_set_value(jdi->dcdc_en_gpio, 0);
+	gpiod_set_value_cansleep(jdi->dcdc_en_gpio, 0);
 
 	return ret;
 }
@@ -425,6 +429,7 @@ static int jdi_panel_add(struct jdi_panel *jdi)
 		return dev_err_probe(dev, PTR_ERR(jdi->backlight),
 				     "failed to register backlight %d\n", ret);
 
+	jdi->base.prepare_prev_first = true;
 	drm_panel_init(&jdi->base, &jdi->dsi->dev, &jdi_panel_funcs,
 		       DRM_MODE_CONNECTOR_DSI);
 

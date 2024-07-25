@@ -34,26 +34,21 @@ static u8 spi_nor_get_sr_tb_mask(struct spi_nor *nor)
 static u64 spi_nor_get_min_prot_length_sr(struct spi_nor *nor)
 {
 	unsigned int bp_slots, bp_slots_needed;
-	/*
-	 * sector_size will eventually be replaced with the max erase size of
-	 * the flash. For now, we need to have that ugly default.
-	 */
-	unsigned int sector_size = nor->info->sector_size ?: SPI_NOR_DEFAULT_SECTOR_SIZE;
-	u64 n_sectors = div_u64(nor->params->size, sector_size);
 	u8 mask = spi_nor_get_sr_bp_mask(nor);
 
 	/* Reserved one for "protect none" and one for "protect all". */
 	bp_slots = (1 << hweight8(mask)) - 2;
-	bp_slots_needed = ilog2(n_sectors);
+	bp_slots_needed = ilog2(nor->info->n_sectors);
 
 	if (bp_slots_needed > bp_slots)
-		return sector_size << (bp_slots_needed - bp_slots);
+		return nor->info->sector_size <<
+			(bp_slots_needed - bp_slots);
 	else
-		return sector_size;
+		return nor->info->sector_size;
 }
 
 static void spi_nor_get_locked_range_sr(struct spi_nor *nor, u8 sr, loff_t *ofs,
-					u64 *len)
+					uint64_t *len)
 {
 	struct mtd_info *mtd = &nor->mtd;
 	u64 min_prot_len;
@@ -90,10 +85,10 @@ static void spi_nor_get_locked_range_sr(struct spi_nor *nor, u8 sr, loff_t *ofs,
  * (if @locked is false); false otherwise.
  */
 static bool spi_nor_check_lock_status_sr(struct spi_nor *nor, loff_t ofs,
-					 u64 len, u8 sr, bool locked)
+					 uint64_t len, u8 sr, bool locked)
 {
 	loff_t lock_offs, lock_offs_max, offs_max;
-	u64 lock_len;
+	uint64_t lock_len;
 
 	if (!len)
 		return true;
@@ -111,13 +106,14 @@ static bool spi_nor_check_lock_status_sr(struct spi_nor *nor, loff_t ofs,
 		return (ofs >= lock_offs_max) || (offs_max <= lock_offs);
 }
 
-static bool spi_nor_is_locked_sr(struct spi_nor *nor, loff_t ofs, u64 len, u8 sr)
+static bool spi_nor_is_locked_sr(struct spi_nor *nor, loff_t ofs, uint64_t len,
+				 u8 sr)
 {
 	return spi_nor_check_lock_status_sr(nor, ofs, len, sr, true);
 }
 
-static bool spi_nor_is_unlocked_sr(struct spi_nor *nor, loff_t ofs, u64 len,
-				   u8 sr)
+static bool spi_nor_is_unlocked_sr(struct spi_nor *nor, loff_t ofs,
+				   uint64_t len, u8 sr)
 {
 	return spi_nor_check_lock_status_sr(nor, ofs, len, sr, false);
 }
@@ -155,7 +151,7 @@ static bool spi_nor_is_unlocked_sr(struct spi_nor *nor, loff_t ofs, u64 len,
  *
  * Returns negative on errors, 0 on success.
  */
-static int spi_nor_sr_lock(struct spi_nor *nor, loff_t ofs, u64 len)
+static int spi_nor_sr_lock(struct spi_nor *nor, loff_t ofs, uint64_t len)
 {
 	struct mtd_info *mtd = &nor->mtd;
 	u64 min_prot_len;
@@ -245,7 +241,7 @@ static int spi_nor_sr_lock(struct spi_nor *nor, loff_t ofs, u64 len)
  *
  * Returns negative on errors, 0 on success.
  */
-static int spi_nor_sr_unlock(struct spi_nor *nor, loff_t ofs, u64 len)
+static int spi_nor_sr_unlock(struct spi_nor *nor, loff_t ofs, uint64_t len)
 {
 	struct mtd_info *mtd = &nor->mtd;
 	u64 min_prot_len;
@@ -330,7 +326,7 @@ static int spi_nor_sr_unlock(struct spi_nor *nor, loff_t ofs, u64 len)
  * Returns 1 if entire region is locked, 0 if any portion is unlocked, and
  * negative on errors.
  */
-static int spi_nor_sr_is_locked(struct spi_nor *nor, loff_t ofs, u64 len)
+static int spi_nor_sr_is_locked(struct spi_nor *nor, loff_t ofs, uint64_t len)
 {
 	int ret;
 
@@ -352,7 +348,7 @@ void spi_nor_init_default_locking_ops(struct spi_nor *nor)
 	nor->params->locking_ops = &spi_nor_sr_locking_ops;
 }
 
-static int spi_nor_lock(struct mtd_info *mtd, loff_t ofs, u64 len)
+static int spi_nor_lock(struct mtd_info *mtd, loff_t ofs, uint64_t len)
 {
 	struct spi_nor *nor = mtd_to_spi_nor(mtd);
 	int ret;
@@ -367,7 +363,7 @@ static int spi_nor_lock(struct mtd_info *mtd, loff_t ofs, u64 len)
 	return ret;
 }
 
-static int spi_nor_unlock(struct mtd_info *mtd, loff_t ofs, u64 len)
+static int spi_nor_unlock(struct mtd_info *mtd, loff_t ofs, uint64_t len)
 {
 	struct spi_nor *nor = mtd_to_spi_nor(mtd);
 	int ret;
@@ -382,7 +378,7 @@ static int spi_nor_unlock(struct mtd_info *mtd, loff_t ofs, u64 len)
 	return ret;
 }
 
-static int spi_nor_is_locked(struct mtd_info *mtd, loff_t ofs, u64 len)
+static int spi_nor_is_locked(struct mtd_info *mtd, loff_t ofs, uint64_t len)
 {
 	struct spi_nor *nor = mtd_to_spi_nor(mtd);
 	int ret;

@@ -161,11 +161,12 @@ not_self_signed:
  */
 static int x509_key_preparse(struct key_preparsed_payload *prep)
 {
-	struct x509_certificate *cert __free(x509_free_certificate);
-	struct asymmetric_key_ids *kids __free(kfree) = NULL;
-	char *p, *desc __free(kfree) = NULL;
+	struct asymmetric_key_ids *kids;
+	struct x509_certificate *cert;
 	const char *q;
 	size_t srlen, sulen;
+	char *desc = NULL, *p;
+	int ret;
 
 	cert = x509_cert_parse(prep->data, prep->datalen);
 	if (IS_ERR(cert))
@@ -187,8 +188,9 @@ static int x509_key_preparse(struct key_preparsed_payload *prep)
 	}
 
 	/* Don't permit addition of blacklisted keys */
+	ret = -EKEYREJECTED;
 	if (cert->blacklisted)
-		return -EKEYREJECTED;
+		goto error_free_cert;
 
 	/* Propose a description */
 	sulen = strlen(cert->subject);
@@ -200,9 +202,10 @@ static int x509_key_preparse(struct key_preparsed_payload *prep)
 		q = cert->raw_serial;
 	}
 
+	ret = -ENOMEM;
 	desc = kmalloc(sulen + 2 + srlen * 2 + 1, GFP_KERNEL);
 	if (!desc)
-		return -ENOMEM;
+		goto error_free_cert;
 	p = memcpy(desc, cert->subject, sulen);
 	p += sulen;
 	*p++ = ':';
@@ -212,14 +215,16 @@ static int x509_key_preparse(struct key_preparsed_payload *prep)
 
 	kids = kmalloc(sizeof(struct asymmetric_key_ids), GFP_KERNEL);
 	if (!kids)
-		return -ENOMEM;
+		goto error_free_desc;
 	kids->id[0] = cert->id;
 	kids->id[1] = cert->skid;
 	kids->id[2] = asymmetric_key_generate_id(cert->raw_subject,
 						 cert->raw_subject_size,
 						 "", 0);
-	if (IS_ERR(kids->id[2]))
-		return PTR_ERR(kids->id[2]);
+	if (IS_ERR(kids->id[2])) {
+		ret = PTR_ERR(kids->id[2]);
+		goto error_free_kids;
+	}
 
 	/* We're pinning the module by being linked against it */
 	__module_get(public_key_subtype.owner);
@@ -237,7 +242,15 @@ static int x509_key_preparse(struct key_preparsed_payload *prep)
 	cert->sig = NULL;
 	desc = NULL;
 	kids = NULL;
-	return 0;
+	ret = 0;
+
+error_free_kids:
+	kfree(kids);
+error_free_desc:
+	kfree(desc);
+error_free_cert:
+	x509_free_certificate(cert);
+	return ret;
 }
 
 static struct asymmetric_key_parser x509_key_parser = {

@@ -301,12 +301,10 @@ static void __v4l2_m2m_try_queue(struct v4l2_m2m_dev *m2m_dev,
 
 	dprintk("Trying to schedule a job for m2m_ctx: %p\n", m2m_ctx);
 
-	if (!m2m_ctx->out_q_ctx.q.streaming ||
-	    (!m2m_ctx->cap_q_ctx.q.streaming && !m2m_ctx->ignore_cap_streaming)) {
-		if (!m2m_ctx->ignore_cap_streaming)
-			dprintk("Streaming needs to be on for both queues\n");
-		else
-			dprintk("Streaming needs to be on for the OUTPUT queue\n");
+	if (!(m2m_ctx->out_q_ctx.q.streaming &&
+	      m2m_ctx->cap_q_ctx.q.streaming) &&
+	    !(m2m_ctx->out_q_ctx.buffered && m2m_ctx->out_q_ctx.q.streaming)) {
+		dprintk("Streaming needs to be on for both queues, or buffered and OUTPUT streaming\n");
 		return;
 	}
 
@@ -495,8 +493,6 @@ void v4l2_m2m_job_finish(struct v4l2_m2m_dev *m2m_dev,
 	 * holding capture buffers. Those should use
 	 * v4l2_m2m_buf_done_and_job_finish() instead.
 	 */
-	WARN_ON(m2m_ctx->out_q_ctx.q.subsystem_flags &
-		VB2_V4L2_FL_SUPPORTS_M2M_HOLD_CAPTURE_BUF);
 	spin_lock_irqsave(&m2m_dev->job_spinlock, flags);
 	schedule_next = _v4l2_m2m_job_finish(m2m_dev, m2m_ctx);
 	spin_unlock_irqrestore(&m2m_dev->job_spinlock, flags);
@@ -1385,21 +1381,6 @@ int v4l2_m2m_ioctl_create_bufs(struct file *file, void *priv,
 	return v4l2_m2m_create_bufs(file, fh->m2m_ctx, create);
 }
 EXPORT_SYMBOL_GPL(v4l2_m2m_ioctl_create_bufs);
-
-int v4l2_m2m_ioctl_remove_bufs(struct file *file, void *priv,
-			       struct v4l2_remove_buffers *remove)
-{
-	struct v4l2_fh *fh = file->private_data;
-	struct vb2_queue *q = v4l2_m2m_get_vq(fh->m2m_ctx, remove->type);
-
-	if (!q)
-		return -EINVAL;
-	if (q->type != remove->type)
-		return -EINVAL;
-
-	return vb2_core_remove_bufs(q, remove->index, remove->count);
-}
-EXPORT_SYMBOL_GPL(v4l2_m2m_ioctl_remove_bufs);
 
 int v4l2_m2m_ioctl_querybuf(struct file *file, void *priv,
 				struct v4l2_buffer *buf)

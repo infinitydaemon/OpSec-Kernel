@@ -130,7 +130,8 @@ static int __init init_inodecache(void)
 {
 	affs_inode_cachep = kmem_cache_create("affs_inode_cache",
 					     sizeof(struct affs_inode_info),
-					     0, (SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT),
+					     0, (SLAB_RECLAIM_ACCOUNT|
+						SLAB_MEM_SPREAD|SLAB_ACCOUNT),
 					     init_once);
 	if (affs_inode_cachep == NULL)
 		return -ENOMEM;
@@ -639,7 +640,7 @@ static void affs_kill_sb(struct super_block *sb)
 		affs_brelse(sbi->s_root_bh);
 		kfree(sbi->s_prefix);
 		mutex_destroy(&sbi->s_bmlock);
-		kfree_rcu(sbi, rcu);
+		kfree(sbi);
 	}
 }
 

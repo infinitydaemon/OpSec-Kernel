@@ -25,14 +25,7 @@ description: |
 
 properties:
   compatible:
-    oneOf:
-      - enum:
-          - richtek,rtq6056
-          - richtek,rtq6059
-      - items:
-          - enum:
-              - richtek,rtq6053
-          - const: richtek,rtq6056
+    const: richtek,rtq6056
 
   reg:
     maxItems: 1

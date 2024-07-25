@@ -5,14 +5,13 @@
  * Copyright (C) 2009/2010 Stefani Seibold <stefani@seibold.net>
  */
 
-#include <linux/dma-mapping.h>
-#include <linux/err.h>
+#include <linux/kernel.h>
 #include <linux/export.h>
-#include <linux/kfifo.h>
-#include <linux/log2.h>
-#include <linux/scatterlist.h>
 #include <linux/slab.h>
+#include <linux/err.h>
+#include <linux/log2.h>
 #include <linux/uaccess.h>
+#include <linux/kfifo.h>
 
 /*
  * internal helper to calculate the unused elements in a fifo
@@ -164,19 +163,6 @@ unsigned int __kfifo_out_peek(struct __kfifo *fifo,
 }
 EXPORT_SYMBOL(__kfifo_out_peek);
 
-unsigned int __kfifo_out_linear(struct __kfifo *fifo,
-		unsigned int *tail, unsigned int n)
-{
-	unsigned int size = fifo->mask + 1;
-	unsigned int off = fifo->out & fifo->mask;
-
-	if (tail)
-		*tail = off;
-
-	return min3(n, fifo->in - fifo->out, size - off);
-}
-EXPORT_SYMBOL(__kfifo_out_linear);
-
 unsigned int __kfifo_out(struct __kfifo *fifo,
 		void *buf, unsigned int len)
 {
@@ -306,31 +292,51 @@ int __kfifo_to_user(struct __kfifo *fifo, void __user *to,
 }
 EXPORT_SYMBOL(__kfifo_to_user);
 
-static unsigned int setup_sgl_buf(struct __kfifo *fifo, struct scatterlist *sgl,
-				  unsigned int data_offset, int nents,
-				  unsigned int len, dma_addr_t dma)
+static int setup_sgl_buf(struct scatterlist *sgl, void *buf,
+		int nents, unsigned int len)
 {
-	const void *buf = fifo->data + data_offset;
+	int n;
+	unsigned int l;
+	unsigned int off;
+	struct page *page;
 
-	if (!nents || !len)
+	if (!nents)
 		return 0;
 
-	sg_set_buf(sgl, buf, len);
+	if (!len)
+		return 0;
 
-	if (dma != DMA_MAPPING_ERROR) {
-		sg_dma_address(sgl) = dma + data_offset;
-		sg_dma_len(sgl) = len;
+	n = 0;
+	page = virt_to_page(buf);
+	off = offset_in_page(buf);
+	l = 0;
+
+	while (len >= l + PAGE_SIZE - off) {
+		struct page *npage;
+
+		l += PAGE_SIZE;
+		buf += PAGE_SIZE;
+		npage = virt_to_page(buf);
+		if (page_to_phys(page) != page_to_phys(npage) - l) {
+			sg_set_page(sgl, page, l - off, off);
+			sgl = sg_next(sgl);
+			if (++n == nents || sgl == NULL)
+				return n;
+			page = npage;
+			len -= l - off;
+			l = off = 0;
+		}
 	}
-
-	return 1;
+	sg_set_page(sgl, page, len, off);
+	return n + 1;
 }
 
 static unsigned int setup_sgl(struct __kfifo *fifo, struct scatterlist *sgl,
-		int nents, unsigned int len, unsigned int off, dma_addr_t dma)
+		int nents, unsigned int len, unsigned int off)
 {
 	unsigned int size = fifo->mask + 1;
 	unsigned int esize = fifo->esize;
-	unsigned int len_to_end;
+	unsigned int l;
 	unsigned int n;
 
 	off &= fifo->mask;
@@ -339,17 +345,16 @@ static unsigned int setup_sgl(struct __kfifo *fifo, struct scatterlist *sgl,
 		size *= esize;
 		len *= esize;
 	}
-	len_to_end = min(len, size - off);
+	l = min(len, size - off);
 
-	n = setup_sgl_buf(fifo, sgl, off, nents, len_to_end, dma);
-	n += setup_sgl_buf(fifo, sgl + n, 0, nents - n, len - len_to_end, dma);
+	n = setup_sgl_buf(sgl, fifo->data + off, nents, l);
+	n += setup_sgl_buf(sgl + n, fifo->data, nents - n, len - l);
 
 	return n;
 }
 
 unsigned int __kfifo_dma_in_prepare(struct __kfifo *fifo,
-		struct scatterlist *sgl, int nents, unsigned int len,
-		dma_addr_t dma)
+		struct scatterlist *sgl, int nents, unsigned int len)
 {
 	unsigned int l;
 
@@ -357,13 +362,12 @@ unsigned int __kfifo_dma_in_prepare(struct __kfifo *fifo,
 	if (len > l)
 		len = l;
 
-	return setup_sgl(fifo, sgl, nents, len, fifo->in, dma);
+	return setup_sgl(fifo, sgl, nents, len, fifo->in);
 }
 EXPORT_SYMBOL(__kfifo_dma_in_prepare);
 
 unsigned int __kfifo_dma_out_prepare(struct __kfifo *fifo,
-		struct scatterlist *sgl, int nents, unsigned int len,
-		dma_addr_t dma)
+		struct scatterlist *sgl, int nents, unsigned int len)
 {
 	unsigned int l;
 
@@ -371,7 +375,7 @@ unsigned int __kfifo_dma_out_prepare(struct __kfifo *fifo,
 	if (len > l)
 		len = l;
 
-	return setup_sgl(fifo, sgl, nents, len, fifo->out, dma);
+	return setup_sgl(fifo, sgl, nents, len, fifo->out);
 }
 EXPORT_SYMBOL(__kfifo_dma_out_prepare);
 
@@ -469,19 +473,6 @@ unsigned int __kfifo_out_peek_r(struct __kfifo *fifo, void *buf,
 }
 EXPORT_SYMBOL(__kfifo_out_peek_r);
 
-unsigned int __kfifo_out_linear_r(struct __kfifo *fifo,
-		unsigned int *tail, unsigned int n, size_t recsize)
-{
-	if (fifo->in == fifo->out)
-		return 0;
-
-	if (tail)
-		*tail = fifo->out + recsize;
-
-	return min(n, __kfifo_peek_n(fifo, recsize));
-}
-EXPORT_SYMBOL(__kfifo_out_linear_r);
-
 unsigned int __kfifo_out_r(struct __kfifo *fifo, void *buf,
 		unsigned int len, size_t recsize)
 {
@@ -555,8 +546,7 @@ int __kfifo_to_user_r(struct __kfifo *fifo, void __user *to,
 EXPORT_SYMBOL(__kfifo_to_user_r);
 
 unsigned int __kfifo_dma_in_prepare_r(struct __kfifo *fifo,
-	struct scatterlist *sgl, int nents, unsigned int len, size_t recsize,
-	dma_addr_t dma)
+	struct scatterlist *sgl, int nents, unsigned int len, size_t recsize)
 {
 	BUG_ON(!nents);
 
@@ -565,7 +555,7 @@ unsigned int __kfifo_dma_in_prepare_r(struct __kfifo *fifo,
 	if (len + recsize > kfifo_unused(fifo))
 		return 0;
 
-	return setup_sgl(fifo, sgl, nents, len, fifo->in + recsize, dma);
+	return setup_sgl(fifo, sgl, nents, len, fifo->in + recsize);
 }
 EXPORT_SYMBOL(__kfifo_dma_in_prepare_r);
 
@@ -579,8 +569,7 @@ void __kfifo_dma_in_finish_r(struct __kfifo *fifo,
 EXPORT_SYMBOL(__kfifo_dma_in_finish_r);
 
 unsigned int __kfifo_dma_out_prepare_r(struct __kfifo *fifo,
-	struct scatterlist *sgl, int nents, unsigned int len, size_t recsize,
-	dma_addr_t dma)
+	struct scatterlist *sgl, int nents, unsigned int len, size_t recsize)
 {
 	BUG_ON(!nents);
 
@@ -589,7 +578,15 @@ unsigned int __kfifo_dma_out_prepare_r(struct __kfifo *fifo,
 	if (len + recsize > fifo->in - fifo->out)
 		return 0;
 
-	return setup_sgl(fifo, sgl, nents, len, fifo->out + recsize, dma);
+	return setup_sgl(fifo, sgl, nents, len, fifo->out + recsize);
 }
 EXPORT_SYMBOL(__kfifo_dma_out_prepare_r);
 
+void __kfifo_dma_out_finish_r(struct __kfifo *fifo, size_t recsize)
+{
+	unsigned int len;
+
+	len = __kfifo_peek_n(fifo, recsize);
+	fifo->out += len + recsize;
+}
+EXPORT_SYMBOL(__kfifo_dma_out_finish_r);

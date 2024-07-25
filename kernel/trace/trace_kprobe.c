@@ -111,7 +111,6 @@ static nokprobe_inline bool trace_kprobe_within_module(struct trace_kprobe *tk,
 	return strncmp(module_name(mod), name, len) == 0 && name[len] == ':';
 }
 
-#ifdef CONFIG_MODULES
 static nokprobe_inline bool trace_kprobe_module_exist(struct trace_kprobe *tk)
 {
 	char *p;
@@ -130,12 +129,6 @@ static nokprobe_inline bool trace_kprobe_module_exist(struct trace_kprobe *tk)
 
 	return ret;
 }
-#else
-static inline bool trace_kprobe_module_exist(struct trace_kprobe *tk)
-{
-	return false;
-}
-#endif
 
 static bool trace_kprobe_is_busy(struct dyn_event *ev)
 {
@@ -297,7 +290,7 @@ static struct trace_kprobe *alloc_trace_kprobe(const char *group,
 	INIT_HLIST_NODE(&tk->rp.kp.hlist);
 	INIT_LIST_HEAD(&tk->rp.kp.list);
 
-	ret = trace_probe_init(&tk->tp, event, group, false, nargs);
+	ret = trace_probe_init(&tk->tp, event, group, false);
 	if (ret < 0)
 		goto error;
 
@@ -494,8 +487,8 @@ static int __register_trace_kprobe(struct trace_kprobe *tk)
 		return -EINVAL;
 
 	if (within_notrace_func(tk)) {
-		pr_warn("Could not probe notrace function %ps\n",
-			(void *)trace_kprobe_address(tk));
+		pr_warn("Could not probe notrace function %s\n",
+			trace_kprobe_symbol(tk));
 		return -EINVAL;
 	}
 
@@ -677,7 +670,6 @@ end:
 	return ret;
 }
 
-#ifdef CONFIG_MODULES
 /* Module notifier call back, checking event on the module */
 static int trace_kprobe_module_callback(struct notifier_block *nb,
 				       unsigned long val, void *data)
@@ -712,16 +704,6 @@ static struct notifier_block trace_kprobe_module_nb = {
 	.notifier_call = trace_kprobe_module_callback,
 	.priority = 1	/* Invoked after kprobe module callback */
 };
-static int trace_kprobe_register_module_notifier(void)
-{
-	return register_module_notifier(&trace_kprobe_module_nb);
-}
-#else
-static int trace_kprobe_register_module_notifier(void)
-{
-	return 0;
-}
-#endif /* CONFIG_MODULES */
 
 static int count_symbols(void *data, unsigned long unused)
 {
@@ -757,9 +739,6 @@ static unsigned int number_of_same_symbols(char *func_name)
 
 	return ctx.count;
 }
-
-static int trace_kprobe_entry_handler(struct kretprobe_instance *ri,
-				      struct pt_regs *regs);
 
 static int __trace_kprobe_create(int argc, const char *argv[])
 {
@@ -800,7 +779,6 @@ static int __trace_kprobe_create(int argc, const char *argv[])
 	char buf[MAX_EVENT_NAME_LEN];
 	char gbuf[MAX_EVENT_NAME_LEN];
 	char abuf[MAX_BTF_ARGS_LEN];
-	char *dbuf = NULL;
 	struct traceprobe_parse_context ctx = { .flags = TPARG_FL_KERNEL };
 
 	switch (argv[0][0]) {
@@ -952,10 +930,6 @@ static int __trace_kprobe_create(int argc, const char *argv[])
 		argv = new_argv;
 	}
 
-	ret = traceprobe_expand_dentry_args(argc, argv, &dbuf);
-	if (ret)
-		goto out;
-
 	/* setup a probe */
 	tk = alloc_trace_kprobe(group, event, addr, symbol, offset, maxactive,
 				argc, is_return);
@@ -973,11 +947,6 @@ static int __trace_kprobe_create(int argc, const char *argv[])
 		ret = traceprobe_parse_probe_arg(&tk->tp, i, argv[i], &ctx);
 		if (ret)
 			goto error;	/* This can be -ENOMEM */
-	}
-	/* entry handler for kretprobe */
-	if (is_return && tk->tp.entry_arg) {
-		tk->rp.entry_handler = trace_kprobe_entry_handler;
-		tk->rp.data_size = traceprobe_get_entry_data_size(&tk->tp);
 	}
 
 	ptype = is_return ? PROBE_PRINT_RETURN : PROBE_PRINT_NORMAL;
@@ -1002,7 +971,6 @@ out:
 	trace_probe_log_clear();
 	kfree(new_argv);
 	kfree(symbol);
-	kfree(dbuf);
 	return ret;
 
 parse_error:
@@ -1281,12 +1249,6 @@ static const struct file_operations kprobe_events_ops = {
 	.write		= probes_write,
 };
 
-static unsigned long trace_kprobe_missed(struct trace_kprobe *tk)
-{
-	return trace_kprobe_is_return(tk) ?
-		tk->rp.kp.nmissed + tk->rp.nmissed : tk->rp.kp.nmissed;
-}
-
 /* Probes profiling interfaces */
 static int probes_profile_seq_show(struct seq_file *m, void *v)
 {
@@ -1298,7 +1260,8 @@ static int probes_profile_seq_show(struct seq_file *m, void *v)
 		return 0;
 
 	tk = to_trace_kprobe(ev);
-	nmissed = trace_kprobe_missed(tk);
+	nmissed = trace_kprobe_is_return(tk) ?
+		tk->rp.kp.nmissed + tk->rp.nmissed : tk->rp.kp.nmissed;
 	seq_printf(m, "  %-44s %15lu %15lu\n",
 		   trace_probe_name(&tk->tp),
 		   trace_kprobe_nhit(tk),
@@ -1335,8 +1298,8 @@ static const struct file_operations kprobe_profile_ops = {
 
 /* Note that we don't verify it, since the code does not come from user space */
 static int
-process_fetch_insn(struct fetch_insn *code, void *rec, void *edata,
-		   void *dest, void *base)
+process_fetch_insn(struct fetch_insn *code, void *rec, void *dest,
+		   void *base)
 {
 	struct pt_regs *regs = rec;
 	unsigned long val;
@@ -1360,9 +1323,6 @@ retry:
 #ifdef CONFIG_HAVE_FUNCTION_ARG_ACCESS_API
 	case FETCH_OP_ARG:
 		val = regs_get_kernel_argument(regs, code->param);
-		break;
-	case FETCH_OP_EDATA:
-		val = *(unsigned long *)((unsigned long)edata + code->offset);
 		break;
 #endif
 	case FETCH_NOP_SYMBOL:	/* Ignore a place holder */
@@ -1394,7 +1354,7 @@ __kprobe_trace_func(struct trace_kprobe *tk, struct pt_regs *regs,
 	if (trace_trigger_soft_disabled(trace_file))
 		return;
 
-	dsize = __get_data_size(&tk->tp, regs, NULL);
+	dsize = __get_data_size(&tk->tp, regs);
 
 	entry = trace_event_buffer_reserve(&fbuffer, trace_file,
 					   sizeof(*entry) + tk->tp.size + dsize);
@@ -1403,7 +1363,7 @@ __kprobe_trace_func(struct trace_kprobe *tk, struct pt_regs *regs,
 
 	fbuffer.regs = regs;
 	entry->ip = (unsigned long)tk->rp.kp.addr;
-	store_trace_args(&entry[1], &tk->tp, regs, NULL, sizeof(*entry), dsize);
+	store_trace_args(&entry[1], &tk->tp, regs, sizeof(*entry), dsize);
 
 	trace_event_buffer_commit(&fbuffer);
 }
@@ -1419,31 +1379,6 @@ kprobe_trace_func(struct trace_kprobe *tk, struct pt_regs *regs)
 NOKPROBE_SYMBOL(kprobe_trace_func);
 
 /* Kretprobe handler */
-
-static int trace_kprobe_entry_handler(struct kretprobe_instance *ri,
-				      struct pt_regs *regs)
-{
-	struct kretprobe *rp = get_kretprobe(ri);
-	struct trace_kprobe *tk;
-
-	/*
-	 * There is a small chance that get_kretprobe(ri) returns NULL when
-	 * the kretprobe is unregister on another CPU between kretprobe's
-	 * trampoline_handler and this function.
-	 */
-	if (unlikely(!rp))
-		return -ENOENT;
-
-	tk = container_of(rp, struct trace_kprobe, rp);
-
-	/* store argument values into ri->data as entry data */
-	if (tk->tp.entry_arg)
-		store_trace_entry_data(ri->data, &tk->tp, regs);
-
-	return 0;
-}
-
-
 static nokprobe_inline void
 __kretprobe_trace_func(struct trace_kprobe *tk, struct kretprobe_instance *ri,
 		       struct pt_regs *regs,
@@ -1459,7 +1394,7 @@ __kretprobe_trace_func(struct trace_kprobe *tk, struct kretprobe_instance *ri,
 	if (trace_trigger_soft_disabled(trace_file))
 		return;
 
-	dsize = __get_data_size(&tk->tp, regs, ri->data);
+	dsize = __get_data_size(&tk->tp, regs);
 
 	entry = trace_event_buffer_reserve(&fbuffer, trace_file,
 					   sizeof(*entry) + tk->tp.size + dsize);
@@ -1469,7 +1404,7 @@ __kretprobe_trace_func(struct trace_kprobe *tk, struct kretprobe_instance *ri,
 	fbuffer.regs = regs;
 	entry->func = (unsigned long)tk->rp.kp.addr;
 	entry->ret_ip = get_kretprobe_retaddr(ri);
-	store_trace_args(&entry[1], &tk->tp, regs, ri->data, sizeof(*entry), dsize);
+	store_trace_args(&entry[1], &tk->tp, regs, sizeof(*entry), dsize);
 
 	trace_event_buffer_commit(&fbuffer);
 }
@@ -1617,7 +1552,7 @@ kprobe_perf_func(struct trace_kprobe *tk, struct pt_regs *regs)
 	if (hlist_empty(head))
 		return 0;
 
-	dsize = __get_data_size(&tk->tp, regs, NULL);
+	dsize = __get_data_size(&tk->tp, regs);
 	__size = sizeof(*entry) + tk->tp.size + dsize;
 	size = ALIGN(__size + sizeof(u32), sizeof(u64));
 	size -= sizeof(u32);
@@ -1628,7 +1563,7 @@ kprobe_perf_func(struct trace_kprobe *tk, struct pt_regs *regs)
 
 	entry->ip = (unsigned long)tk->rp.kp.addr;
 	memset(&entry[1], 0, dsize);
-	store_trace_args(&entry[1], &tk->tp, regs, NULL, sizeof(*entry), dsize);
+	store_trace_args(&entry[1], &tk->tp, regs, sizeof(*entry), dsize);
 	perf_trace_buf_submit(entry, size, rctx, call->event.type, 1, regs,
 			      head, NULL);
 	return 0;
@@ -1653,7 +1588,7 @@ kretprobe_perf_func(struct trace_kprobe *tk, struct kretprobe_instance *ri,
 	if (hlist_empty(head))
 		return;
 
-	dsize = __get_data_size(&tk->tp, regs, ri->data);
+	dsize = __get_data_size(&tk->tp, regs);
 	__size = sizeof(*entry) + tk->tp.size + dsize;
 	size = ALIGN(__size + sizeof(u32), sizeof(u64));
 	size -= sizeof(u32);
@@ -1664,7 +1599,7 @@ kretprobe_perf_func(struct trace_kprobe *tk, struct kretprobe_instance *ri,
 
 	entry->func = (unsigned long)tk->rp.kp.addr;
 	entry->ret_ip = get_kretprobe_retaddr(ri);
-	store_trace_args(&entry[1], &tk->tp, regs, ri->data, sizeof(*entry), dsize);
+	store_trace_args(&entry[1], &tk->tp, regs, sizeof(*entry), dsize);
 	perf_trace_buf_submit(entry, size, rctx, call->event.type, 1, regs,
 			      head, NULL);
 }
@@ -1672,8 +1607,7 @@ NOKPROBE_SYMBOL(kretprobe_perf_func);
 
 int bpf_get_kprobe_info(const struct perf_event *event, u32 *fd_type,
 			const char **symbol, u64 *probe_offset,
-			u64 *probe_addr, unsigned long *missed,
-			bool perf_type_tracepoint)
+			u64 *probe_addr, bool perf_type_tracepoint)
 {
 	const char *pevent = trace_event_name(event->tp_event);
 	const char *group = event->tp_event->class->system;
@@ -1692,8 +1626,6 @@ int bpf_get_kprobe_info(const struct perf_event *event, u32 *fd_type,
 	*probe_addr = kallsyms_show_value(current_cred()) ?
 		      (unsigned long)tk->rp.kp.addr : 0;
 	*symbol = tk->symbol;
-	if (missed)
-		*missed = trace_kprobe_missed(tk);
 	return 0;
 }
 #endif	/* CONFIG_PERF_EVENTS */
@@ -1957,7 +1889,7 @@ static __init int init_kprobe_trace_early(void)
 	if (ret)
 		return ret;
 
-	if (trace_kprobe_register_module_notifier())
+	if (register_module_notifier(&trace_kprobe_module_nb))
 		return -EINVAL;
 
 	return 0;

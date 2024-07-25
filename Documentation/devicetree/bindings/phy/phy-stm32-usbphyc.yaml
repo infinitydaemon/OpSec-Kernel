@@ -55,10 +55,6 @@ properties:
     description: number of clock cells for ck_usbo_48m consumer
     const: 0
 
-  access-controllers:
-    minItems: 1
-    maxItems: 2
-
 # Required child nodes:
 
 patternProperties:

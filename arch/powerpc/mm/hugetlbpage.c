@@ -226,7 +226,7 @@ static int __init pseries_alloc_bootmem_huge_page(struct hstate *hstate)
 		return 0;
 	m = phys_to_virt(gpage_freearray[--nr_gpages]);
 	gpage_freearray[nr_gpages] = 0;
-	list_add(&m->list, &huge_boot_pages[0]);
+	list_add(&m->list, &huge_boot_pages);
 	m->hstate = hstate;
 	return 1;
 }
@@ -614,6 +614,8 @@ void __init gigantic_hugetlb_cma_reserve(void)
 		 */
 		order = mmu_psize_to_shift(MMU_PAGE_16G) - PAGE_SHIFT;
 
-	if (order)
+	if (order) {
+		VM_WARN_ON(order <= MAX_ORDER);
 		hugetlb_cma_reserve(order);
+	}
 }

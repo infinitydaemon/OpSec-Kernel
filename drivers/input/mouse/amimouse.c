@@ -125,21 +125,16 @@ static int __init amimouse_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void __exit amimouse_remove(struct platform_device *pdev)
+static int __exit amimouse_remove(struct platform_device *pdev)
 {
 	struct input_dev *dev = platform_get_drvdata(pdev);
 
 	input_unregister_device(dev);
+	return 0;
 }
 
-/*
- * amimouse_remove() lives in .exit.text. For drivers registered via
- * module_platform_driver_probe() this is ok because they cannot get unbound at
- * runtime. So mark the driver struct with __refdata to prevent modpost
- * triggering a section mismatch warning.
- */
-static struct platform_driver amimouse_driver __refdata = {
-	.remove_new = __exit_p(amimouse_remove),
+static struct platform_driver amimouse_driver = {
+	.remove = __exit_p(amimouse_remove),
 	.driver   = {
 		.name	= "amiga-mouse",
 	},

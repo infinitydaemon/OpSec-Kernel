@@ -849,8 +849,7 @@ static bool dm_table_supports_dax(struct dm_table *t,
 		if (!ti->type->direct_access)
 			return false;
 
-		if (dm_target_is_wildcard(ti->type) ||
-		    !ti->type->iterate_devices ||
+		if (!ti->type->iterate_devices ||
 		    ti->type->iterate_devices(ti, iterate_fn, NULL))
 			return false;
 	}
@@ -1584,18 +1583,13 @@ bool dm_table_has_no_data_devices(struct dm_table *t)
 	return true;
 }
 
-static int device_not_zoned(struct dm_target *ti, struct dm_dev *dev,
-			    sector_t start, sector_t len, void *data)
+static int device_not_zoned_model(struct dm_target *ti, struct dm_dev *dev,
+				  sector_t start, sector_t len, void *data)
 {
-	bool *zoned = data;
+	struct request_queue *q = bdev_get_queue(dev->bdev);
+	enum blk_zoned_model *zoned_model = data;
 
-	return bdev_is_zoned(dev->bdev) != *zoned;
-}
-
-static int device_is_zoned_model(struct dm_target *ti, struct dm_dev *dev,
-				 sector_t start, sector_t len, void *data)
-{
-	return bdev_is_zoned(dev->bdev);
+	return blk_queue_zoned_model(q) != *zoned_model;
 }
 
 /*
@@ -1605,30 +1599,19 @@ static int device_is_zoned_model(struct dm_target *ti, struct dm_dev *dev,
  * has the DM_TARGET_MIXED_ZONED_MODEL feature set, the devices can have any
  * zoned model with all zoned devices having the same zone size.
  */
-static bool dm_table_supports_zoned(struct dm_table *t, bool zoned)
+static bool dm_table_supports_zoned_model(struct dm_table *t,
+					  enum blk_zoned_model zoned_model)
 {
 	for (unsigned int i = 0; i < t->num_targets; i++) {
 		struct dm_target *ti = dm_table_get_target(t, i);
 
-		/*
-		 * For the wildcard target (dm-error), if we do not have a
-		 * backing device, we must always return false. If we have a
-		 * backing device, the result must depend on checking zoned
-		 * model, like for any other target. So for this, check directly
-		 * if the target backing device is zoned as we get "false" when
-		 * dm-error was set without a backing device.
-		 */
-		if (dm_target_is_wildcard(ti->type) &&
-		    !ti->type->iterate_devices(ti, device_is_zoned_model, NULL))
-			return false;
-
 		if (dm_target_supports_zoned_hm(ti->type)) {
 			if (!ti->type->iterate_devices ||
-			    ti->type->iterate_devices(ti, device_not_zoned,
-						      &zoned))
+			    ti->type->iterate_devices(ti, device_not_zoned_model,
+						      &zoned_model))
 				return false;
 		} else if (!dm_target_supports_mixed_zoned_model(ti->type)) {
-			if (zoned)
+			if (zoned_model == BLK_ZONED_HM)
 				return false;
 		}
 	}
@@ -1651,13 +1634,14 @@ static int device_not_matches_zone_sectors(struct dm_target *ti, struct dm_dev *
  * zone sectors, if the destination device is a zoned block device, it shall
  * have the specified zone_sectors.
  */
-static int validate_hardware_zoned(struct dm_table *t, bool zoned,
-				   unsigned int zone_sectors)
+static int validate_hardware_zoned_model(struct dm_table *t,
+					 enum blk_zoned_model zoned_model,
+					 unsigned int zone_sectors)
 {
-	if (!zoned)
+	if (zoned_model == BLK_ZONED_NONE)
 		return 0;
 
-	if (!dm_table_supports_zoned(t, zoned)) {
+	if (!dm_table_supports_zoned_model(t, zoned_model)) {
 		DMERR("%s: zoned model is not consistent across all devices",
 		      dm_device_name(t->md));
 		return -EINVAL;
@@ -1683,8 +1667,8 @@ int dm_calculate_queue_limits(struct dm_table *t,
 			      struct queue_limits *limits)
 {
 	struct queue_limits ti_limits;
+	enum blk_zoned_model zoned_model = BLK_ZONED_NONE;
 	unsigned int zone_sectors = 0;
-	bool zoned = false;
 
 	blk_set_stacking_limits(limits);
 
@@ -1706,12 +1690,12 @@ int dm_calculate_queue_limits(struct dm_table *t,
 		ti->type->iterate_devices(ti, dm_set_device_limits,
 					  &ti_limits);
 
-		if (!zoned && ti_limits.zoned) {
+		if (zoned_model == BLK_ZONED_NONE && ti_limits.zoned != BLK_ZONED_NONE) {
 			/*
 			 * After stacking all limits, validate all devices
 			 * in table support this zoned model and zone sectors.
 			 */
-			zoned = ti_limits.zoned;
+			zoned_model = ti_limits.zoned;
 			zone_sectors = ti_limits.chunk_sectors;
 		}
 
@@ -1744,18 +1728,18 @@ combine_limits:
 	 * Verify that the zoned model and zone sectors, as determined before
 	 * any .io_hints override, are the same across all devices in the table.
 	 * - this is especially relevant if .io_hints is emulating a disk-managed
-	 *   zoned model on host-managed zoned block devices.
+	 *   zoned model (aka BLK_ZONED_NONE) on host-managed zoned block devices.
 	 * BUT...
 	 */
-	if (limits->zoned) {
+	if (limits->zoned != BLK_ZONED_NONE) {
 		/*
 		 * ...IF the above limits stacking determined a zoned model
 		 * validate that all of the table's devices conform to it.
 		 */
-		zoned = limits->zoned;
+		zoned_model = limits->zoned;
 		zone_sectors = limits->chunk_sectors;
 	}
-	if (validate_hardware_zoned(t, zoned, zone_sectors))
+	if (validate_hardware_zoned_model(t, zoned_model, zone_sectors))
 		return -EINVAL;
 
 	return validate_hardware_logical_block_alignment(t, limits);
@@ -1963,23 +1947,26 @@ int dm_table_set_restrictions(struct dm_table *t, struct request_queue *q,
 	bool wc = false, fua = false;
 	int r;
 
+	/*
+	 * Copy table's limits to the DM device's request_queue
+	 */
+	q->limits = *limits;
+
 	if (dm_table_supports_nowait(t))
 		blk_queue_flag_set(QUEUE_FLAG_NOWAIT, q);
 	else
 		blk_queue_flag_clear(QUEUE_FLAG_NOWAIT, q);
 
 	if (!dm_table_supports_discards(t)) {
-		limits->max_hw_discard_sectors = 0;
-		limits->discard_granularity = 0;
-		limits->discard_alignment = 0;
-		limits->discard_misaligned = 0;
+		q->limits.max_discard_sectors = 0;
+		q->limits.max_hw_discard_sectors = 0;
+		q->limits.discard_granularity = 0;
+		q->limits.discard_alignment = 0;
+		q->limits.discard_misaligned = 0;
 	}
 
-	if (!dm_table_supports_write_zeroes(t))
-		limits->max_write_zeroes_sectors = 0;
-
 	if (!dm_table_supports_secure_erase(t))
-		limits->max_secure_erase_sectors = 0;
+		q->limits.max_secure_erase_sectors = 0;
 
 	if (dm_table_supports_flush(t, (1UL << QUEUE_FLAG_WC))) {
 		wc = true;
@@ -2003,6 +1990,9 @@ int dm_table_set_restrictions(struct dm_table *t, struct request_queue *q,
 		blk_queue_flag_clear(QUEUE_FLAG_NONROT, q);
 	else
 		blk_queue_flag_set(QUEUE_FLAG_NONROT, q);
+
+	if (!dm_table_supports_write_zeroes(t))
+		q->limits.max_write_zeroes_sectors = 0;
 
 	dm_table_verify_integrity(t);
 
@@ -2032,17 +2022,16 @@ int dm_table_set_restrictions(struct dm_table *t, struct request_queue *q,
 	 * For a zoned target, setup the zones related queue attributes
 	 * and resources necessary for zone append emulation if necessary.
 	 */
-	if (IS_ENABLED(CONFIG_BLK_DEV_ZONED) && limits->zoned) {
-		r = dm_set_zones_restrictions(t, q, limits);
+	if (blk_queue_is_zoned(q)) {
+		r = dm_set_zones_restrictions(t, q);
 		if (r)
 			return r;
+		if (!static_key_enabled(&zoned_enabled.key))
+			static_branch_enable(&zoned_enabled);
 	}
 
-	r = queue_limits_set(q, limits);
-	if (r)
-		return r;
-
 	dm_update_crypto_profile(q, t);
+	disk_update_readahead(t->md->disk);
 
 	/*
 	 * Check for request-based device is left to

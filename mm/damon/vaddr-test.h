@@ -4,7 +4,7 @@
  *
  * Copyright 2019 Amazon.com, Inc. or its affiliates.  All rights reserved.
  *
- * Author: SeongJae Park <sj@kernel.org>
+ * Author: SeongJae Park <sjpark@amazon.de>
  */
 
 #ifdef CONFIG_DAMON_VADDR_KUNIT_TEST

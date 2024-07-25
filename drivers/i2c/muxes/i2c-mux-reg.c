@@ -159,6 +159,7 @@ static int i2c_mux_reg_probe(struct platform_device *pdev)
 	struct regmux *mux;
 	struct i2c_adapter *parent;
 	struct resource *res;
+	unsigned int class;
 	int i, ret, nr;
 
 	mux = devm_kzalloc(&pdev->dev, sizeof(*mux), GFP_KERNEL);
@@ -212,8 +213,9 @@ static int i2c_mux_reg_probe(struct platform_device *pdev)
 
 	for (i = 0; i < mux->data.n_values; i++) {
 		nr = mux->data.base_nr ? (mux->data.base_nr + i) : 0;
+		class = mux->data.classes ? mux->data.classes[i] : 0;
 
-		ret = i2c_mux_add_adapter(muxc, nr, mux->data.values[i]);
+		ret = i2c_mux_add_adapter(muxc, nr, mux->data.values[i], class);
 		if (ret)
 			goto err_del_mux_adapters;
 	}

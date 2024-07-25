@@ -17,7 +17,7 @@ sysprf := $(srctree)/tools/perf/arch/loongarch/entry/syscalls/
 systbl := $(sysprf)/mksyscalltbl
 
 # Create output directory if not already present
-$(shell [ -d '$(out)' ] || mkdir -p '$(out)')
+_dummy := $(shell [ -d '$(out)' ] || mkdir -p '$(out)')
 
 $(header): $(sysdef) $(systbl)
 	$(Q)$(SHELL) '$(systbl)' '$(CC)' '$(HOSTCC)' $(incpath) $(sysdef) > $@

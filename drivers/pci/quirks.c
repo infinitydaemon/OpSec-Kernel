@@ -570,14 +570,13 @@ static void quirk_extend_bar_to_page(struct pci_dev *dev)
 
 	for (i = 0; i < PCI_STD_NUM_BARS; i++) {
 		struct resource *r = &dev->resource[i];
-		const char *r_name = pci_resource_name(dev, i);
 
 		if (r->flags & IORESOURCE_MEM && resource_size(r) < PAGE_SIZE) {
 			r->end = PAGE_SIZE - 1;
 			r->start = 0;
 			r->flags |= IORESOURCE_UNSET;
-			pci_info(dev, "%s %pR: expanded to page size\n",
-				 r_name, r);
+			pci_info(dev, "expanded BAR %d to page size: %pR\n",
+				 i, r);
 		}
 	}
 }
@@ -606,7 +605,6 @@ static void quirk_io(struct pci_dev *dev, int pos, unsigned int size,
 	u32 region;
 	struct pci_bus_region bus_region;
 	struct resource *res = dev->resource + pos;
-	const char *res_name = pci_resource_name(dev, pos);
 
 	pci_read_config_dword(dev, PCI_BASE_ADDRESS_0 + (pos << 2), &region);
 
@@ -624,7 +622,8 @@ static void quirk_io(struct pci_dev *dev, int pos, unsigned int size,
 	bus_region.end = region + size - 1;
 	pcibios_bus_to_resource(dev->bus, res, &bus_region);
 
-	pci_info(dev, FW_BUG "%s %pR: %s quirk\n", res_name, res, name);
+	pci_info(dev, FW_BUG "%s quirk: reg 0x%x: %pR\n",
+		 name, PCI_BASE_ADDRESS_0 + (pos << 2), res);
 }
 
 /*
@@ -671,12 +670,6 @@ static void quirk_io_region(struct pci_dev *dev, int port,
 	bus_region.end = region + size - 1;
 	pcibios_bus_to_resource(dev->bus, res, &bus_region);
 
-	/*
-	 * "res" is typically a bridge window resource that's not being
-	 * used for a bridge window, so it's just a place to stash this
-	 * non-standard resource.  Printing "nr" or pci_resource_name() of
-	 * it doesn't really make sense.
-	 */
 	if (!pci_claim_resource(dev, nr))
 		pci_info(dev, "quirk: %pR claimed by %s\n", res, name);
 }
@@ -1856,8 +1849,8 @@ static void quirk_jmicron_ata(struct pci_dev *pdev)
 
 	/* Update pdev accordingly */
 	pci_read_config_byte(pdev, PCI_HEADER_TYPE, &hdr);
-	pdev->hdr_type = hdr & PCI_HEADER_TYPE_MASK;
-	pdev->multifunction = FIELD_GET(PCI_HEADER_TYPE_MFD, hdr);
+	pdev->hdr_type = hdr & 0x7f;
+	pdev->multifunction = !!(hdr & 0x80);
 
 	pci_read_config_dword(pdev, PCI_CLASS_REVISION, &class);
 	pdev->class = class >> 8;
@@ -5717,7 +5710,7 @@ static void quirk_nvidia_hda(struct pci_dev *gpu)
 
 	/* The GPU becomes a multi-function device when the HDA is enabled */
 	pci_read_config_byte(gpu, PCI_HEADER_TYPE, &hdr_type);
-	gpu->multifunction = FIELD_GET(PCI_HEADER_TYPE_MFD, hdr_type);
+	gpu->multifunction = !!(hdr_type & 0x80);
 }
 DECLARE_PCI_FIXUP_CLASS_HEADER(PCI_VENDOR_ID_NVIDIA, PCI_ANY_ID,
 			       PCI_BASE_CLASS_DISPLAY, 16, quirk_nvidia_hda);
@@ -6253,23 +6246,3 @@ static void pci_fixup_d3cold_delay_1sec(struct pci_dev *pdev)
 	pdev->d3cold_delay = 1000;
 }
 DECLARE_PCI_FIXUP_FINAL(0x5555, 0x0004, pci_fixup_d3cold_delay_1sec);
-
-#ifdef CONFIG_PCIEAER
-static void pci_mask_replay_timer_timeout(struct pci_dev *pdev)
-{
-	struct pci_dev *parent = pci_upstream_bridge(pdev);
-	u32 val;
-
-	if (!parent || !parent->aer_cap)
-		return;
-
-	pci_info(parent, "mask Replay Timer Timeout Correctable Errors due to %s hardware defect",
-		 pci_name(pdev));
-
-	pci_read_config_dword(parent, parent->aer_cap + PCI_ERR_COR_MASK, &val);
-	val |= PCI_ERR_COR_REP_TIMER;
-	pci_write_config_dword(parent, parent->aer_cap + PCI_ERR_COR_MASK, val);
-}
-DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_GLI, 0x9750, pci_mask_replay_timer_timeout);
-DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_GLI, 0x9755, pci_mask_replay_timer_timeout);
-#endif

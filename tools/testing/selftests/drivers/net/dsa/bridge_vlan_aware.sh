@@ -1,1 +1,1 @@
-run_net_forwarding_test.sh
+../../../net/forwarding/bridge_vlan_aware.sh

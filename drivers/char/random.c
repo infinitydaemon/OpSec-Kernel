@@ -843,6 +843,14 @@ void __init random_init_early(const char *command_line)
 	unsigned long entropy[BLAKE2S_BLOCK_SIZE / sizeof(long)];
 	size_t i, longs, arch_bits;
 
+	/*
+	 * If we were initialized by the bootloader before jump labels are
+	 * initialized, then we should enable the static branch here, where
+	 * it's guaranteed that jump labels have been initialized.
+	 */
+	if (!static_branch_likely(&crng_is_ready) && crng_init >= CRNG_READY)
+		crng_set_ready(NULL);
+
 #if defined(LATENT_ENTROPY_PLUGIN)
 	static const u8 compiletime_seed[BLAKE2S_BLOCK_SIZE] __initconst __latent_entropy;
 	_mix_pool_bytes(compiletime_seed, sizeof(compiletime_seed));
@@ -1364,6 +1372,7 @@ static void __cold try_to_generate_entropy(void)
 SYSCALL_DEFINE3(getrandom, char __user *, ubuf, size_t, len, unsigned int, flags)
 {
 	struct iov_iter iter;
+	struct iovec iov;
 	int ret;
 
 	if (flags & ~(GRND_NONBLOCK | GRND_RANDOM | GRND_INSECURE))
@@ -1384,7 +1393,7 @@ SYSCALL_DEFINE3(getrandom, char __user *, ubuf, size_t, len, unsigned int, flags
 			return ret;
 	}
 
-	ret = import_ubuf(ITER_DEST, ubuf, len, &iter);
+	ret = import_single_range(ITER_DEST, ubuf, len, &iov, &iter);
 	if (unlikely(ret))
 		return ret;
 	return get_random_bytes_user(&iter);
@@ -1490,6 +1499,7 @@ static long random_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 		return 0;
 	case RNDADDENTROPY: {
 		struct iov_iter iter;
+		struct iovec iov;
 		ssize_t ret;
 		int len;
 
@@ -1501,7 +1511,7 @@ static long random_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 			return -EINVAL;
 		if (get_user(len, p++))
 			return -EFAULT;
-		ret = import_ubuf(ITER_SOURCE, p, len, &iter);
+		ret = import_single_range(ITER_SOURCE, p, len, &iov, &iter);
 		if (unlikely(ret))
 			return ret;
 		ret = write_pool_user(&iter);
@@ -1681,6 +1691,7 @@ static struct ctl_table random_table[] = {
 		.mode		= 0444,
 		.proc_handler	= proc_do_uuid,
 	},
+	{ }
 };
 
 /*

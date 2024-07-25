@@ -27,7 +27,7 @@
 void intel_gt_pm_debugfs_forcewake_user_open(struct intel_gt *gt)
 {
 	atomic_inc(&gt->user_wakeref);
-	intel_gt_pm_get_untracked(gt);
+	intel_gt_pm_get(gt);
 	if (GRAPHICS_VER(gt->i915) >= 6)
 		intel_uncore_forcewake_user_get(gt->uncore);
 }
@@ -36,7 +36,7 @@ void intel_gt_pm_debugfs_forcewake_user_release(struct intel_gt *gt)
 {
 	if (GRAPHICS_VER(gt->i915) >= 6)
 		intel_uncore_forcewake_user_put(gt->uncore);
-	intel_gt_pm_put_untracked(gt);
+	intel_gt_pm_put(gt);
 	atomic_dec(&gt->user_wakeref);
 }
 
@@ -290,6 +290,7 @@ static int mtl_drpc(struct seq_file *m)
 		seq_puts(m, "RC6\n");
 		break;
 	default:
+		MISSING_CASE(REG_FIELD_GET(MTL_CC_MASK, gt_core_status));
 		seq_puts(m, "Unknown\n");
 		break;
 	}
@@ -391,6 +392,10 @@ void intel_gt_pm_frequency_dump(struct intel_gt *gt, struct drm_printer *p)
 	} else {
 		drm_puts(p, "no P-state info available\n");
 	}
+
+	drm_printf(p, "Current CD clock frequency: %d kHz\n", i915->display.cdclk.hw.cdclk);
+	drm_printf(p, "Max CD clock frequency: %d kHz\n", i915->display.cdclk.max_cdclk_freq);
+	drm_printf(p, "Max pixel clock frequency: %d kHz\n", i915->max_dotclk_freq);
 
 	intel_runtime_pm_put(uncore->rpm, wakeref);
 }
@@ -534,7 +539,7 @@ static bool rps_eval(void *data)
 {
 	struct intel_gt *gt = data;
 
-	if (intel_guc_slpc_is_used(gt_to_guc(gt)))
+	if (intel_guc_slpc_is_used(&gt->uc.guc))
 		return false;
 	else
 		return HAS_RPS(gt->i915);

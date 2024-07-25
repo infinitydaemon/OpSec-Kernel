@@ -34,24 +34,23 @@ function is_root() {
 	fi
 }
 
-# Check if we can compile the modules before loading them
-function has_kdir() {
-	if [ -z "$KDIR" ]; then
-		KDIR="/lib/modules/$(uname -r)/build"
-	fi
-
-	if [ ! -d "$KDIR" ]; then
-		echo "skip all tests: KDIR ($KDIR) not available to compile modules."
-		exit $ksft_skip
-	fi
-}
-
 # die(msg) - game over, man
 #	msg - dying words
 function die() {
 	log "ERROR: $1"
 	echo "ERROR: $1" >&2
 	exit 1
+}
+
+# save existing dmesg so we can detect new content
+function save_dmesg() {
+	SAVED_DMESG=$(mktemp --tmpdir -t klp-dmesg-XXXXXX)
+	dmesg > "$SAVED_DMESG"
+}
+
+# cleanup temporary dmesg file from save_dmesg()
+function cleanup_dmesg_file() {
+	rm -f "$SAVED_DMESG"
 }
 
 function push_config() {
@@ -100,6 +99,7 @@ function set_ftrace_enabled() {
 
 function cleanup() {
 	pop_config
+	cleanup_dmesg_file
 }
 
 # setup_config - save the current config and set a script exit trap that
@@ -108,7 +108,6 @@ function cleanup() {
 #		 the ftrace_enabled sysctl.
 function setup_config() {
 	is_root
-	has_kdir
 	push_config
 	set_dynamic_debug
 	set_ftrace_enabled 1
@@ -128,14 +127,16 @@ function loop_until() {
 	done
 }
 
+function assert_mod() {
+	local mod="$1"
+
+	modprobe --dry-run "$mod" &>/dev/null
+}
+
 function is_livepatch_mod() {
 	local mod="$1"
 
-	if [[ ! -f "test_modules/$mod.ko" ]]; then
-		die "Can't find \"test_modules/$mod.ko\", try \"make\""
-	fi
-
-	if [[ $(modinfo "test_modules/$mod.ko" | awk '/^livepatch:/{print $NF}') == "Y" ]]; then
+	if [[ $(modinfo "$mod" | awk '/^livepatch:/{print $NF}') == "Y" ]]; then
 		return 0
 	fi
 
@@ -145,9 +146,9 @@ function is_livepatch_mod() {
 function __load_mod() {
 	local mod="$1"; shift
 
-	local msg="% insmod test_modules/$mod.ko $*"
+	local msg="% modprobe $mod $*"
 	log "${msg%% }"
-	ret=$(insmod "test_modules/$mod.ko" "$@" 2>&1)
+	ret=$(modprobe "$mod" "$@" 2>&1)
 	if [[ "$ret" != "" ]]; then
 		die "$ret"
 	fi
@@ -160,9 +161,12 @@ function __load_mod() {
 
 # load_mod(modname, params) - load a kernel module
 #	modname - module name to load
-#	params  - module parameters to pass to insmod
+#	params  - module parameters to pass to modprobe
 function load_mod() {
 	local mod="$1"; shift
+
+	assert_mod "$mod" ||
+		skip "unable to load module ${mod}, verify CONFIG_TEST_LIVEPATCH=m and run self-tests as root"
 
 	is_livepatch_mod "$mod" &&
 		die "use load_lp() to load the livepatch module $mod"
@@ -173,9 +177,12 @@ function load_mod() {
 # load_lp_nowait(modname, params) - load a kernel module with a livepatch
 #			but do not wait on until the transition finishes
 #	modname - module name to load
-#	params  - module parameters to pass to insmod
+#	params  - module parameters to pass to modprobe
 function load_lp_nowait() {
 	local mod="$1"; shift
+
+	assert_mod "$mod" ||
+		skip "unable to load module ${mod}, verify CONFIG_TEST_LIVEPATCH=m and run self-tests as root"
 
 	is_livepatch_mod "$mod" ||
 		die "module $mod is not a livepatch"
@@ -189,7 +196,7 @@ function load_lp_nowait() {
 
 # load_lp(modname, params) - load a kernel module with a livepatch
 #	modname - module name to load
-#	params  - module parameters to pass to insmod
+#	params  - module parameters to pass to modprobe
 function load_lp() {
 	local mod="$1"; shift
 
@@ -202,13 +209,13 @@ function load_lp() {
 
 # load_failing_mod(modname, params) - load a kernel module, expect to fail
 #	modname - module name to load
-#	params  - module parameters to pass to insmod
+#	params  - module parameters to pass to modprobe
 function load_failing_mod() {
 	local mod="$1"; shift
 
-	local msg="% insmod test_modules/$mod.ko $*"
+	local msg="% modprobe $mod $*"
 	log "${msg%% }"
-	ret=$(insmod "test_modules/$mod.ko" "$@" 2>&1)
+	ret=$(modprobe "$mod" "$@" 2>&1)
 	if [[ "$ret" == "" ]]; then
 		die "$mod unexpectedly loaded"
 	fi
@@ -273,15 +280,7 @@ function set_pre_patch_ret {
 function start_test {
 	local test="$1"
 
-	# Dump something unique into the dmesg log, then stash the entry
-	# in LAST_DMESG.  The check_result() function will use it to
-	# find new kernel messages since the test started.
-	local last_dmesg_msg="livepatch kselftest timestamp: $(date --rfc-3339=ns)"
-	log "$last_dmesg_msg"
-	loop_until 'dmesg | grep -q "$last_dmesg_msg"' ||
-		die "buffer busy? can't find canary dmesg message: $last_dmesg_msg"
-	LAST_DMESG=$(dmesg | grep "$last_dmesg_msg")
-
+	save_dmesg
 	echo -n "TEST: $test ... "
 	log "===== TEST: $test ====="
 }
@@ -292,24 +291,23 @@ function check_result {
 	local expect="$*"
 	local result
 
-	# Test results include any new dmesg entry since LAST_DMESG, then:
-	# - include lines matching keywords
-	# - exclude lines matching keywords
-	# - filter out dmesg timestamp prefixes
-	result=$(dmesg | awk -v last_dmesg="$LAST_DMESG" 'p; $0 == last_dmesg { p=1 }' | \
+	# Note: when comparing dmesg output, the kernel log timestamps
+	# help differentiate repeated testing runs.  Remove them with a
+	# post-comparison sed filter.
+
+	result=$(dmesg | comm --nocheck-order -13 "$SAVED_DMESG" - | \
 		 grep -e 'livepatch:' -e 'test_klp' | \
 		 grep -v '\(tainting\|taints\) kernel' | \
 		 sed 's/^\[[ 0-9.]*\] //')
 
 	if [[ "$expect" == "$result" ]] ; then
 		echo "ok"
-	elif [[ "$result" == "" ]] ; then
-		echo -e "not ok\n\nbuffer overrun? can't find canary dmesg entry: $LAST_DMESG\n"
-		die "livepatch kselftest(s) failed"
 	else
 		echo -e "not ok\n\n$(diff -upr --label expected --label result <(echo "$expect") <(echo "$result"))\n"
 		die "livepatch kselftest(s) failed"
 	fi
+
+	cleanup_dmesg_file
 }
 
 # check_sysfs_rights(modname, rel_path, expected_rights) - check sysfs

@@ -24,6 +24,7 @@
 #include <linux/uio.h>
 #include <linux/smp.h>
 #include <linux/mutex.h>
+#include <linux/kthread.h>
 #include <linux/freezer.h>
 #include <linux/inetdevice.h>
 
@@ -134,11 +135,11 @@ lockd(void *vrqstp)
 	 * The main request loop. We don't terminate until the last
 	 * NFS mount or NFS daemon has gone away.
 	 */
-	while (!svc_thread_should_stop(rqstp)) {
+	while (!kthread_should_stop()) {
 		/* update sv_maxconn if it has changed */
 		rqstp->rq_server->sv_maxconn = nlm_max_connections;
 
-		nlmsvc_retry_blocked(rqstp);
+		nlmsvc_retry_blocked();
 		svc_recv(rqstp);
 	}
 	if (nlmsvc_ops)
@@ -345,10 +346,10 @@ static int lockd_get(void)
 
 	serv->sv_maxconn = nlm_max_connections;
 	error = svc_set_num_threads(serv, NULL, 1);
-	if (error < 0) {
-		svc_destroy(&serv);
+	/* The thread now holds the only reference */
+	svc_put(serv);
+	if (error < 0)
 		return error;
-	}
 
 	nlmsvc_serv = serv;
 	register_inetaddr_notifier(&lockd_inetaddr_notifier);
@@ -374,7 +375,7 @@ static void lockd_put(void)
 
 	svc_set_num_threads(nlmsvc_serv, NULL, 0);
 	timer_delete_sync(&nlmsvc_retry);
-	svc_destroy(&nlmsvc_serv);
+	nlmsvc_serv = NULL;
 	dprintk("lockd_down: service destroyed\n");
 }
 
@@ -473,6 +474,7 @@ static struct ctl_table nlm_sysctls[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},
+	{ }
 };
 
 #endif	/* CONFIG_SYSCTL */
@@ -710,6 +712,8 @@ static const struct svc_version *nlmsvc_version[] = {
 #endif
 };
 
+static struct svc_stat		nlmsvc_stats;
+
 #define NLM_NRVERS	ARRAY_SIZE(nlmsvc_version)
 static struct svc_program	nlmsvc_program = {
 	.pg_prog		= NLM_PROGRAM,		/* program number */
@@ -717,6 +721,7 @@ static struct svc_program	nlmsvc_program = {
 	.pg_vers		= nlmsvc_version,	/* version table */
 	.pg_name		= "lockd",		/* service name */
 	.pg_class		= "nfsd",		/* share authentication with nfsd */
+	.pg_stats		= &nlmsvc_stats,	/* stats table */
 	.pg_authenticate	= &lockd_authenticate,	/* export authentication */
 	.pg_init_request	= svc_generic_init_request,
 	.pg_rpcbind_set		= svc_generic_rpcbind_set,

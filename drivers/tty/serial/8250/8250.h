@@ -92,6 +92,7 @@ struct serial8250_config {
 #define UART_BUG_NOMSR	BIT(2)	/* UART has buggy MSR status bits (Au1x00) */
 #define UART_BUG_THRE	BIT(3)	/* UART has buggy THRE reassertion */
 #define UART_BUG_TXRACE	BIT(5)	/* UART Tx fails to set remote DR */
+#define UART_BUG_NOMSI	BIT(6)	/* UART has no modem status interrupt */
 
 
 #ifdef CONFIG_SERIAL_8250_SHARE_IRQ
@@ -292,6 +293,9 @@ static inline int serial8250_in_MCR(struct uart_8250_port *up)
 
 	return mctrl;
 }
+
+bool alpha_jensen(void);
+void alpha_jensen_set_mctrl(struct uart_port *port, unsigned int mctrl);
 
 #ifdef CONFIG_SERIAL_8250_PNP
 int serial8250_pnp_init(void);

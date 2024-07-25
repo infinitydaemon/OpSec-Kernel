@@ -215,8 +215,10 @@ static int mqprio_parse_tc_entries(struct Qdisc *sch, struct nlattr *nlattr_opt,
 	for (tc = 0; tc < TC_QOPT_MAX_QUEUE; tc++)
 		fp[tc] = priv->fp[tc];
 
-	nla_for_each_attr_type(n, TCA_MQPRIO_TC_ENTRY, nlattr_opt,
-			       nlattr_opt_len, rem) {
+	nla_for_each_attr(n, nlattr_opt, nlattr_opt_len, rem) {
+		if (nla_type(n) != TCA_MQPRIO_TC_ENTRY)
+			continue;
+
 		err = mqprio_parse_tc_entry(fp, n, &seen_tcs, extack);
 		if (err)
 			goto out;
@@ -772,7 +774,6 @@ static struct Qdisc_ops mqprio_qdisc_ops __read_mostly = {
 	.dump		= mqprio_dump,
 	.owner		= THIS_MODULE,
 };
-MODULE_ALIAS_NET_SCH("mqprio");
 
 static int __init mqprio_module_init(void)
 {
@@ -788,4 +789,3 @@ module_init(mqprio_module_init);
 module_exit(mqprio_module_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Classful multiqueue prio qdisc");

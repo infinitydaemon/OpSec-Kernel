@@ -10,7 +10,6 @@ PHDRS
 SECTIONS
 {
 	. = 0;
-        __encl_base = .;
 	.tcs : {
 		*(.tcs*)
 	} : tcs
@@ -24,7 +23,6 @@ SECTIONS
 	} : text
 
 	.data : {
-		*(.data.encl_buffer)
 		*(.data*)
 	} : data
 
@@ -33,8 +31,6 @@ SECTIONS
 		*(.note*)
 		*(.debug*)
 		*(.eh_frame*)
-		*(.dyn*)
-		*(.gnu.hash)
 	}
 }
 

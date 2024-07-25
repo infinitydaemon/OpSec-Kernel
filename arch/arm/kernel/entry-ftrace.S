@@ -271,10 +271,6 @@ ENTRY(ftrace_stub)
 	ret	lr
 ENDPROC(ftrace_stub)
 
-ENTRY(ftrace_stub_graph)
-	ret	lr
-ENDPROC(ftrace_stub_graph)
-
 #ifdef CONFIG_DYNAMIC_FTRACE
 
 	__INIT

@@ -1015,7 +1015,7 @@ int qlcnic_change_mtu(struct net_device *netdev, int mtu)
 	rc = qlcnic_fw_cmd_set_mtu(adapter, mtu);
 
 	if (!rc)
-		WRITE_ONCE(netdev->mtu, mtu);
+		netdev->mtu = mtu;
 
 	return rc;
 }

@@ -211,7 +211,7 @@ struct ocmem *of_get_ocmem(struct device *dev)
 	}
 	return ocmem;
 }
-EXPORT_SYMBOL_GPL(of_get_ocmem);
+EXPORT_SYMBOL(of_get_ocmem);
 
 struct ocmem_buf *ocmem_allocate(struct ocmem *ocmem, enum ocmem_client client,
 				 unsigned long size)
@@ -267,7 +267,7 @@ err_unlock:
 
 	return ERR_PTR(ret);
 }
-EXPORT_SYMBOL_GPL(ocmem_allocate);
+EXPORT_SYMBOL(ocmem_allocate);
 
 void ocmem_free(struct ocmem *ocmem, enum ocmem_client client,
 		struct ocmem_buf *buf)
@@ -294,7 +294,7 @@ void ocmem_free(struct ocmem *ocmem, enum ocmem_client client,
 
 	clear_bit_unlock(BIT(client), &ocmem->active_allocations);
 }
-EXPORT_SYMBOL_GPL(ocmem_free);
+EXPORT_SYMBOL(ocmem_free);
 
 static int ocmem_dev_probe(struct platform_device *pdev)
 {
@@ -416,12 +416,14 @@ err_clk_disable:
 	return ret;
 }
 
-static void ocmem_dev_remove(struct platform_device *pdev)
+static int ocmem_dev_remove(struct platform_device *pdev)
 {
 	struct ocmem *ocmem = platform_get_drvdata(pdev);
 
 	clk_disable_unprepare(ocmem->core_clk);
 	clk_disable_unprepare(ocmem->iface_clk);
+
+	return 0;
 }
 
 static const struct ocmem_config ocmem_8226_config = {
@@ -444,7 +446,7 @@ MODULE_DEVICE_TABLE(of, ocmem_of_match);
 
 static struct platform_driver ocmem_driver = {
 	.probe = ocmem_dev_probe,
-	.remove_new = ocmem_dev_remove,
+	.remove = ocmem_dev_remove,
 	.driver = {
 		.name = "ocmem",
 		.of_match_table = ocmem_of_match,

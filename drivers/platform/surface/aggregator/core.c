@@ -227,8 +227,8 @@ EXPORT_SYMBOL_GPL(ssam_client_bind);
 
 /* -- Glue layer (serdev_device -> ssam_controller). ------------------------ */
 
-static size_t ssam_receive_buf(struct serdev_device *dev, const u8 *buf,
-			       size_t n)
+static int ssam_receive_buf(struct serdev_device *dev, const unsigned char *buf,
+			    size_t n)
 {
 	struct ssam_controller *ctrl;
 	int ret;
@@ -618,17 +618,15 @@ static const struct acpi_gpio_mapping ssam_acpi_gpios[] = {
 
 static int ssam_serial_hub_probe(struct serdev_device *serdev)
 {
-	struct device *dev = &serdev->dev;
-	struct acpi_device *ssh = ACPI_COMPANION(dev);
+	struct acpi_device *ssh = ACPI_COMPANION(&serdev->dev);
 	struct ssam_controller *ctrl;
 	acpi_status astatus;
 	int status;
 
-	status = gpiod_count(dev, NULL);
-	if (status < 0)
-		return dev_err_probe(dev, status, "no GPIO found\n");
+	if (gpiod_count(&serdev->dev, NULL) < 0)
+		return -ENODEV;
 
-	status = devm_acpi_dev_add_driver_gpios(dev, ssam_acpi_gpios);
+	status = devm_acpi_dev_add_driver_gpios(&serdev->dev, ssam_acpi_gpios);
 	if (status)
 		return status;
 
@@ -639,10 +637,8 @@ static int ssam_serial_hub_probe(struct serdev_device *serdev)
 
 	/* Initialize controller. */
 	status = ssam_controller_init(ctrl, serdev);
-	if (status) {
-		dev_err_probe(dev, status, "failed to initialize ssam controller\n");
+	if (status)
 		goto err_ctrl_init;
-	}
 
 	ssam_controller_lock(ctrl);
 
@@ -650,14 +646,12 @@ static int ssam_serial_hub_probe(struct serdev_device *serdev)
 	serdev_device_set_drvdata(serdev, ctrl);
 	serdev_device_set_client_ops(serdev, &ssam_serdev_ops);
 	status = serdev_device_open(serdev);
-	if (status) {
-		dev_err_probe(dev, status, "failed to open serdev device\n");
+	if (status)
 		goto err_devopen;
-	}
 
 	astatus = ssam_serdev_setup_via_acpi(ssh->handle, serdev);
 	if (ACPI_FAILURE(astatus)) {
-		status = dev_err_probe(dev, -ENXIO, "failed to setup serdev\n");
+		status = -ENXIO;
 		goto err_devinit;
 	}
 
@@ -673,33 +667,25 @@ static int ssam_serial_hub_probe(struct serdev_device *serdev)
 	 * states.
 	 */
 	status = ssam_log_firmware_version(ctrl);
-	if (status) {
-		dev_err_probe(dev, status, "failed to get firmware version\n");
+	if (status)
 		goto err_initrq;
-	}
 
 	status = ssam_ctrl_notif_d0_entry(ctrl);
-	if (status) {
-		dev_err_probe(dev, status, "D0-entry notification failed\n");
+	if (status)
 		goto err_initrq;
-	}
 
 	status = ssam_ctrl_notif_display_on(ctrl);
-	if (status) {
-		dev_err_probe(dev, status, "display-on notification failed\n");
+	if (status)
 		goto err_initrq;
-	}
 
-	status = sysfs_create_group(&dev->kobj, &ssam_sam_group);
+	status = sysfs_create_group(&serdev->dev.kobj, &ssam_sam_group);
 	if (status)
 		goto err_initrq;
 
 	/* Set up IRQ. */
 	status = ssam_irq_setup(ctrl);
-	if (status) {
-		dev_err_probe(dev, status, "failed to setup IRQ\n");
+	if (status)
 		goto err_irq;
-	}
 
 	/* Finally, set main controller reference. */
 	status = ssam_try_set_controller(ctrl);
@@ -716,7 +702,7 @@ static int ssam_serial_hub_probe(struct serdev_device *serdev)
 	 *       resumed. In short, this causes some spurious unwanted wake-ups.
 	 *       For now let's thus default power/wakeup to false.
 	 */
-	device_set_wakeup_capable(dev, true);
+	device_set_wakeup_capable(&serdev->dev, true);
 	acpi_dev_clear_dependencies(ssh);
 
 	return 0;
@@ -724,7 +710,7 @@ static int ssam_serial_hub_probe(struct serdev_device *serdev)
 err_mainref:
 	ssam_irq_free(ctrl);
 err_irq:
-	sysfs_remove_group(&dev->kobj, &ssam_sam_group);
+	sysfs_remove_group(&serdev->dev.kobj, &ssam_sam_group);
 err_initrq:
 	ssam_controller_lock(ctrl);
 	ssam_controller_shutdown(ctrl);

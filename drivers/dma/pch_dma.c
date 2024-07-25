@@ -155,6 +155,11 @@ static inline struct device *chan2dev(struct dma_chan *chan)
 	return &chan->dev->device;
 }
 
+static inline struct device *chan2parent(struct dma_chan *chan)
+{
+	return chan->dev->device.parent;
+}
+
 static inline
 struct pch_dma_desc *pdc_first_active(struct pch_dma_chan *pd_chan)
 {

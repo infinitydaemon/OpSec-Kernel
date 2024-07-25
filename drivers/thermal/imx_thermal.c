@@ -115,8 +115,7 @@ struct thermal_soc_data {
 };
 
 static struct thermal_trip trips[] = {
-	[IMX_TRIP_PASSIVE]  = { .type = THERMAL_TRIP_PASSIVE,
-				.flags = THERMAL_TRIP_FLAG_RW_TEMP },
+	[IMX_TRIP_PASSIVE]  = { .type = THERMAL_TRIP_PASSIVE  },
 	[IMX_TRIP_CRITICAL] = { .type = THERMAL_TRIP_CRITICAL },
 };
 
@@ -355,7 +354,6 @@ static int imx_set_trip_temp(struct thermal_zone_device *tz, int trip_id,
 		return -EINVAL;
 
 	imx_set_alarm_temp(data, temp);
-	trips[IMX_TRIP_PASSIVE].temperature = temp;
 
 	pm_runtime_put(data->dev);
 
@@ -701,7 +699,7 @@ static int imx_thermal_probe(struct platform_device *pdev)
 	data->tz = thermal_zone_device_register_with_trips("imx_thermal_zone",
 							   trips,
 							   ARRAY_SIZE(trips),
-							   data,
+							   BIT(IMX_TRIP_PASSIVE), data,
 							   &imx_tz_ops, NULL,
 							   IMX_PASSIVE_DELAY,
 							   IMX_POLLING_DELAY);
@@ -773,7 +771,7 @@ legacy_cleanup:
 	return ret;
 }
 
-static void imx_thermal_remove(struct platform_device *pdev)
+static int imx_thermal_remove(struct platform_device *pdev)
 {
 	struct imx_thermal_data *data = platform_get_drvdata(pdev);
 
@@ -782,6 +780,8 @@ static void imx_thermal_remove(struct platform_device *pdev)
 
 	thermal_zone_device_unregister(data->tz);
 	imx_thermal_unregister_legacy_cooling(data);
+
+	return 0;
 }
 
 static int __maybe_unused imx_thermal_suspend(struct device *dev)
@@ -880,7 +880,7 @@ static struct platform_driver imx_thermal = {
 		.of_match_table = of_imx_thermal_match,
 	},
 	.probe		= imx_thermal_probe,
-	.remove_new	= imx_thermal_remove,
+	.remove		= imx_thermal_remove,
 };
 module_platform_driver(imx_thermal);
 

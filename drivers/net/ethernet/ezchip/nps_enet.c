@@ -198,7 +198,7 @@ static int nps_enet_poll(struct napi_struct *napi, int budget)
 		 */
 		if (nps_enet_is_tx_pending(priv)) {
 			nps_enet_reg_set(priv, NPS_ENET_REG_BUF_INT_ENABLE, 0);
-			napi_schedule(napi);
+			napi_reschedule(napi);
 		}
 	}
 
@@ -633,7 +633,7 @@ out_netdev:
 	return err;
 }
 
-static void nps_enet_remove(struct platform_device *pdev)
+static s32 nps_enet_remove(struct platform_device *pdev)
 {
 	struct net_device *ndev = platform_get_drvdata(pdev);
 	struct nps_enet_priv *priv = netdev_priv(ndev);
@@ -641,6 +641,8 @@ static void nps_enet_remove(struct platform_device *pdev)
 	unregister_netdev(ndev);
 	netif_napi_del(&priv->napi);
 	free_netdev(ndev);
+
+	return 0;
 }
 
 static const struct of_device_id nps_enet_dt_ids[] = {
@@ -651,7 +653,7 @@ MODULE_DEVICE_TABLE(of, nps_enet_dt_ids);
 
 static struct platform_driver nps_enet_driver = {
 	.probe = nps_enet_probe,
-	.remove_new = nps_enet_remove,
+	.remove = nps_enet_remove,
 	.driver = {
 		.name = DRV_NAME,
 		.of_match_table  = nps_enet_dt_ids,
@@ -661,5 +663,4 @@ static struct platform_driver nps_enet_driver = {
 module_platform_driver(nps_enet_driver);
 
 MODULE_AUTHOR("EZchip Semiconductor");
-MODULE_DESCRIPTION("EZchip NPS Ethernet driver");
 MODULE_LICENSE("GPL v2");

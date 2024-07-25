@@ -26,11 +26,19 @@
 #include "sienna_cichlid.h"
 #include "smu_v13_0_10.h"
 
+int amdgpu_reset_add_handler(struct amdgpu_reset_control *reset_ctl,
+			     struct amdgpu_reset_handler *handler)
+{
+	/* TODO: Check if handler exists? */
+	list_add_tail(&handler->handler_list, &reset_ctl->reset_handlers);
+	return 0;
+}
+
 int amdgpu_reset_init(struct amdgpu_device *adev)
 {
 	int ret = 0;
 
-	switch (amdgpu_ip_version(adev, MP1_HWIP, 0)) {
+	switch (adev->ip_versions[MP1_HWIP][0]) {
 	case IP_VERSION(13, 0, 2):
 	case IP_VERSION(13, 0, 6):
 		ret = aldebaran_reset_init(adev);
@@ -52,7 +60,7 @@ int amdgpu_reset_fini(struct amdgpu_device *adev)
 {
 	int ret = 0;
 
-	switch (amdgpu_ip_version(adev, MP1_HWIP, 0)) {
+	switch (adev->ip_versions[MP1_HWIP][0]) {
 	case IP_VERSION(13, 0, 2):
 	case IP_VERSION(13, 0, 6):
 		ret = aldebaran_reset_fini(adev);
@@ -158,3 +166,6 @@ void amdgpu_device_unlock_reset_domain(struct amdgpu_reset_domain *reset_domain)
 	atomic_set(&reset_domain->in_gpu_reset, 0);
 	up_write(&reset_domain->sem);
 }
+
+
+

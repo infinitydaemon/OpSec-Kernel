@@ -76,12 +76,15 @@ static int svc_rdma_bc_sendto(struct svcxprt_rdma *rdma,
 			      struct rpc_rqst *rqst,
 			      struct svc_rdma_send_ctxt *sctxt)
 {
-	struct svc_rdma_pcl empty_pcl;
+	struct svc_rdma_recv_ctxt *rctxt;
 	int ret;
 
-	pcl_init(&empty_pcl);
-	ret = svc_rdma_map_reply_msg(rdma, sctxt, &empty_pcl, &empty_pcl,
-				     &rqst->rq_snd_buf);
+	rctxt = svc_rdma_recv_ctxt_get(rdma);
+	if (!rctxt)
+		return -EIO;
+
+	ret = svc_rdma_map_reply_msg(rdma, sctxt, rctxt, &rqst->rq_snd_buf);
+	svc_rdma_recv_ctxt_put(rdma, rctxt);
 	if (ret < 0)
 		return -EIO;
 
@@ -90,7 +93,7 @@ static int svc_rdma_bc_sendto(struct svcxprt_rdma *rdma,
 	 */
 	get_page(virt_to_page(rqst->rq_buffer));
 	sctxt->sc_send_wr.opcode = IB_WR_SEND;
-	return svc_rdma_post_send(rdma, sctxt);
+	return svc_rdma_send(rdma, sctxt);
 }
 
 /* Server-side transport endpoint wants a whole page for its send

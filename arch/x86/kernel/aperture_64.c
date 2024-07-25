@@ -259,9 +259,10 @@ static u32 __init search_agp_bridge(u32 *order, int *valid_agp)
 							order);
 				}
 
+				/* No multi-function device? */
 				type = read_pci_config_byte(bus, slot, func,
 							       PCI_HEADER_TYPE);
-				if (!(type & PCI_HEADER_TYPE_MFD))
+				if (!(type & 0x80))
 					break;
 			}
 		}

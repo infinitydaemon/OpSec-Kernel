@@ -756,7 +756,7 @@ static int bdx_change_mtu(struct net_device *ndev, int new_mtu)
 {
 	ENTER;
 
-	WRITE_ONCE(ndev->mtu, new_mtu);
+	ndev->mtu = new_mtu;
 	if (netif_running(ndev)) {
 		bdx_close(ndev);
 		bdx_open(ndev);

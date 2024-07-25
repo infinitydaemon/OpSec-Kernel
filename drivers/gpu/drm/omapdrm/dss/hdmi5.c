@@ -425,11 +425,11 @@ static void hdmi5_bridge_disable(struct drm_bridge *bridge,
 	mutex_unlock(&hdmi->lock);
 }
 
-static const struct drm_edid *hdmi5_bridge_edid_read(struct drm_bridge *bridge,
-						     struct drm_connector *connector)
+static struct edid *hdmi5_bridge_get_edid(struct drm_bridge *bridge,
+					  struct drm_connector *connector)
 {
 	struct omap_hdmi *hdmi = drm_bridge_to_hdmi(bridge);
-	const struct drm_edid *drm_edid;
+	struct edid *edid;
 	bool need_enable;
 	int idlemode;
 	int r;
@@ -452,7 +452,7 @@ static const struct drm_edid *hdmi5_bridge_edid_read(struct drm_bridge *bridge,
 
 	hdmi5_core_ddc_init(&hdmi->core);
 
-	drm_edid = drm_edid_read_custom(connector, hdmi5_core_ddc_read, &hdmi->core);
+	edid = drm_do_get_edid(connector, hdmi5_core_ddc_read, &hdmi->core);
 
 	hdmi5_core_ddc_uninit(&hdmi->core);
 
@@ -464,7 +464,7 @@ static const struct drm_edid *hdmi5_bridge_edid_read(struct drm_bridge *bridge,
 	if (need_enable)
 		hdmi_core_disable(hdmi);
 
-	return drm_edid;
+	return (struct edid *)edid;
 }
 
 static const struct drm_bridge_funcs hdmi5_bridge_funcs = {
@@ -475,7 +475,7 @@ static const struct drm_bridge_funcs hdmi5_bridge_funcs = {
 	.atomic_reset = drm_atomic_helper_bridge_reset,
 	.atomic_enable = hdmi5_bridge_enable,
 	.atomic_disable = hdmi5_bridge_disable,
-	.edid_read = hdmi5_bridge_edid_read,
+	.get_edid = hdmi5_bridge_get_edid,
 };
 
 static void hdmi5_bridge_init(struct omap_hdmi *hdmi)

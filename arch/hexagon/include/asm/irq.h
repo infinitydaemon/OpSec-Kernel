@@ -20,7 +20,4 @@
 
 #include <asm-generic/irq.h>
 
-struct pt_regs;
-void arch_do_IRQ(struct pt_regs *);
-
 #endif

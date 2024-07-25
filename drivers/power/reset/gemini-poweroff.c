@@ -70,9 +70,12 @@ static irqreturn_t gemini_powerbutton_interrupt(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static int gemini_poweroff(struct sys_off_data *data)
+/* This callback needs this static local as it has void as argument */
+static struct gemini_powercon *gpw_poweroff;
+
+static void gemini_poweroff(void)
 {
-	struct gemini_powercon *gpw = data->cb_data;
+	struct gemini_powercon *gpw = gpw_poweroff;
 	u32 val;
 
 	dev_crit(gpw->dev, "Gemini power off\n");
@@ -83,8 +86,6 @@ static int gemini_poweroff(struct sys_off_data *data)
 	val &= ~GEMINI_CTRL_ENABLE;
 	val |= GEMINI_CTRL_SHUTDOWN;
 	writel(val, gpw->base + GEMINI_PWC_CTRLREG);
-
-	return NOTIFY_DONE;
 }
 
 static int gemini_poweroff_probe(struct platform_device *pdev)
@@ -147,11 +148,8 @@ static int gemini_poweroff_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	ret = devm_register_sys_off_handler(dev, SYS_OFF_MODE_POWER_OFF,
-					    SYS_OFF_PRIO_DEFAULT,
-					    gemini_poweroff, gpw);
-	if (ret)
-		return ret;
+	pm_power_off = gemini_poweroff;
+	gpw_poweroff = gpw;
 
 	dev_info(dev, "Gemini poweroff driver registered\n");
 

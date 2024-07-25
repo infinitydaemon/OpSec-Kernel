@@ -10,7 +10,6 @@
 #include <sys/resource.h>
 #include <api/fs/fs.h>
 #include "dso.h"
-#include "dsos.h"
 #include "machine.h"
 #include "symbol.h"
 #include "tests.h"
@@ -124,10 +123,9 @@ static int test__dso_data(struct test_suite *test __maybe_unused, int subtest __
 	TEST_ASSERT_VAL("No test file", file);
 
 	memset(&machine, 0, sizeof(machine));
-	dsos__init(&machine.dsos);
 
-	dso = dso__new(file);
-	TEST_ASSERT_VAL("Failed to add dso", !dsos__add(&machine.dsos, dso));
+	dso = dso__new((const char *)file);
+
 	TEST_ASSERT_VAL("Failed to access to dso",
 			dso__data_fd(dso, &machine) >= 0);
 
@@ -172,7 +170,6 @@ static int test__dso_data(struct test_suite *test __maybe_unused, int subtest __
 	}
 
 	dso__put(dso);
-	dsos__exit(&machine.dsos);
 	unlink(file);
 	return 0;
 }
@@ -202,35 +199,40 @@ static long open_files_cnt(void)
 	return nr - 1;
 }
 
-static int dsos__create(int cnt, int size, struct dsos *dsos)
+static struct dso **dsos;
+
+static int dsos__create(int cnt, int size)
 {
 	int i;
 
-	dsos__init(dsos);
+	dsos = malloc(sizeof(*dsos) * cnt);
+	TEST_ASSERT_VAL("failed to alloc dsos array", dsos);
 
 	for (i = 0; i < cnt; i++) {
-		struct dso *dso;
-		char *file = test_file(size);
+		char *file;
 
+		file = test_file(size);
 		TEST_ASSERT_VAL("failed to get dso file", file);
-		dso = dso__new(file);
-		TEST_ASSERT_VAL("failed to get dso", dso);
-		TEST_ASSERT_VAL("failed to add dso", !dsos__add(dsos, dso));
-		dso__put(dso);
+
+		dsos[i] = dso__new(file);
+		TEST_ASSERT_VAL("failed to get dso", dsos[i]);
 	}
 
 	return 0;
 }
 
-static void dsos__delete(struct dsos *dsos)
+static void dsos__delete(int cnt)
 {
-	for (unsigned int i = 0; i < dsos->cnt; i++) {
-		struct dso *dso = dsos->dsos[i];
+	int i;
 
-		dso__data_close(dso);
-		unlink(dso__name(dso));
+	for (i = 0; i < cnt; i++) {
+		struct dso *dso = dsos[i];
+
+		unlink(dso->name);
+		dso__put(dso);
 	}
-	dsos__exit(dsos);
+
+	free(dsos);
 }
 
 static int set_fd_limit(int n)
@@ -264,10 +266,10 @@ static int test__dso_data_cache(struct test_suite *test __maybe_unused, int subt
 	/* and this is now our dso open FDs limit */
 	dso_cnt = limit / 2;
 	TEST_ASSERT_VAL("failed to create dsos\n",
-			!dsos__create(dso_cnt, TEST_FILE_SIZE, &machine.dsos));
+		!dsos__create(dso_cnt, TEST_FILE_SIZE));
 
 	for (i = 0; i < (dso_cnt - 1); i++) {
-		struct dso *dso = machine.dsos.dsos[i];
+		struct dso *dso = dsos[i];
 
 		/*
 		 * Open dsos via dso__data_fd(), it opens the data
@@ -287,17 +289,17 @@ static int test__dso_data_cache(struct test_suite *test __maybe_unused, int subt
 	}
 
 	/* verify the first one is already open */
-	TEST_ASSERT_VAL("dsos[0] is not open", dso__data(machine.dsos.dsos[0])->fd != -1);
+	TEST_ASSERT_VAL("dsos[0] is not open", dsos[0]->data.fd != -1);
 
 	/* open +1 dso to reach the allowed limit */
-	fd = dso__data_fd(machine.dsos.dsos[i], &machine);
+	fd = dso__data_fd(dsos[i], &machine);
 	TEST_ASSERT_VAL("failed to get fd", fd > 0);
 
 	/* should force the first one to be closed */
-	TEST_ASSERT_VAL("failed to close dsos[0]", dso__data(machine.dsos.dsos[0])->fd == -1);
+	TEST_ASSERT_VAL("failed to close dsos[0]", dsos[0]->data.fd == -1);
 
 	/* cleanup everything */
-	dsos__delete(&machine.dsos);
+	dsos__delete(dso_cnt);
 
 	/* Make sure we did not leak any file descriptor. */
 	nr_end = open_files_cnt();
@@ -322,9 +324,9 @@ static int test__dso_data_reopen(struct test_suite *test __maybe_unused, int sub
 	long nr_end, nr = open_files_cnt(), lim = new_limit(3);
 	int fd, fd_extra;
 
-#define dso_0 (machine.dsos.dsos[0])
-#define dso_1 (machine.dsos.dsos[1])
-#define dso_2 (machine.dsos.dsos[2])
+#define dso_0 (dsos[0])
+#define dso_1 (dsos[1])
+#define dso_2 (dsos[2])
 
 	/* Rest the internal dso open counter limit. */
 	reset_fd_limit();
@@ -344,8 +346,7 @@ static int test__dso_data_reopen(struct test_suite *test __maybe_unused, int sub
 	TEST_ASSERT_VAL("failed to set file limit",
 			!set_fd_limit((lim)));
 
-	TEST_ASSERT_VAL("failed to create dsos\n",
-			!dsos__create(3, TEST_FILE_SIZE, &machine.dsos));
+	TEST_ASSERT_VAL("failed to create dsos\n", !dsos__create(3, TEST_FILE_SIZE));
 
 	/* open dso_0 */
 	fd = dso__data_fd(dso_0, &machine);
@@ -370,7 +371,7 @@ static int test__dso_data_reopen(struct test_suite *test __maybe_unused, int sub
 	 * dso_0 should get closed, because we reached
 	 * the file descriptor limit
 	 */
-	TEST_ASSERT_VAL("failed to close dso_0", dso__data(dso_0)->fd == -1);
+	TEST_ASSERT_VAL("failed to close dso_0", dso_0->data.fd == -1);
 
 	/* open dso_0 */
 	fd = dso__data_fd(dso_0, &machine);
@@ -380,11 +381,11 @@ static int test__dso_data_reopen(struct test_suite *test __maybe_unused, int sub
 	 * dso_1 should get closed, because we reached
 	 * the file descriptor limit
 	 */
-	TEST_ASSERT_VAL("failed to close dso_1", dso__data(dso_1)->fd == -1);
+	TEST_ASSERT_VAL("failed to close dso_1", dso_1->data.fd == -1);
 
 	/* cleanup everything */
 	close(fd_extra);
-	dsos__delete(&machine.dsos);
+	dsos__delete(3);
 
 	/* Make sure we did not leak any file descriptor. */
 	nr_end = open_files_cnt();
@@ -393,15 +394,6 @@ static int test__dso_data_reopen(struct test_suite *test __maybe_unused, int sub
 	return 0;
 }
 
-
-static struct test_case tests__dso_data[] = {
-	TEST_CASE("read", dso_data),
-	TEST_CASE("cache", dso_data_cache),
-	TEST_CASE("reopen", dso_data_reopen),
-	{	.name = NULL, }
-};
-
-struct test_suite suite__dso_data = {
-	.desc = "DSO data tests",
-	.test_cases = tests__dso_data,
-};
+DEFINE_SUITE("DSO data read", dso_data);
+DEFINE_SUITE("DSO data cache", dso_data_cache);
+DEFINE_SUITE("DSO data reopen", dso_data_reopen);

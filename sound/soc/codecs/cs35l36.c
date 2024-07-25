@@ -17,17 +17,19 @@
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
 #include <linux/gpio/consumer.h>
-#include <linux/irq.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
+#include <linux/of_gpio.h>
 #include <linux/regmap.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
 #include <sound/soc-dapm.h>
+#include <linux/gpio.h>
 #include <sound/initval.h>
 #include <sound/tlv.h>
 #include <sound/cs35l36.h>
+#include <linux/of_irq.h>
 #include <linux/completion.h>
 
 #include "cs35l36.h"
@@ -1930,7 +1932,7 @@ static const struct of_device_id cs35l36_of_match[] = {
 MODULE_DEVICE_TABLE(of, cs35l36_of_match);
 
 static const struct i2c_device_id cs35l36_id[] = {
-	{"cs35l36"},
+	{"cs35l36", 0},
 	{}
 };
 

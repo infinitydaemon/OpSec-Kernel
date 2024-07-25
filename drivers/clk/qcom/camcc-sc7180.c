@@ -1703,7 +1703,17 @@ static struct platform_driver cam_cc_sc7180_driver = {
 	},
 };
 
-module_platform_driver(cam_cc_sc7180_driver);
+static int __init cam_cc_sc7180_init(void)
+{
+	return platform_driver_register(&cam_cc_sc7180_driver);
+}
+subsys_initcall(cam_cc_sc7180_init);
+
+static void __exit cam_cc_sc7180_exit(void)
+{
+	platform_driver_unregister(&cam_cc_sc7180_driver);
+}
+module_exit(cam_cc_sc7180_exit);
 
 MODULE_DESCRIPTION("QTI CAM_CC SC7180 Driver");
 MODULE_LICENSE("GPL v2");

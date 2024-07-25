@@ -465,7 +465,6 @@ SYSCALL_DEFINE5(fsconfig,
 		param.file = fget(aux);
 		if (!param.file)
 			goto out_key;
-		param.dirfd = aux;
 		break;
 	default:
 		break;

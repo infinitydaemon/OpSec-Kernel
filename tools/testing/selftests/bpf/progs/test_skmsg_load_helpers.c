@@ -24,7 +24,8 @@ struct {
 	__type(value, __u64);
 } socket_storage SEC(".maps");
 
-static int prog_msg_verdict_common(struct sk_msg_md *msg)
+SEC("sk_msg")
+int prog_msg_verdict(struct sk_msg_md *msg)
 {
 	struct task_struct *task = (struct task_struct *)bpf_get_current_task();
 	int verdict = SK_PASS;
@@ -41,30 +42,6 @@ static int prog_msg_verdict_common(struct sk_msg_md *msg)
 		verdict = SK_DROP;
 	bpf_sk_storage_delete(&socket_storage, (void *)msg->sk);
 	return verdict;
-}
-
-SEC("sk_msg")
-int prog_msg_verdict(struct sk_msg_md *msg)
-{
-	return prog_msg_verdict_common(msg);
-}
-
-SEC("sk_msg")
-int prog_msg_verdict_clone(struct sk_msg_md *msg)
-{
-	return prog_msg_verdict_common(msg);
-}
-
-SEC("sk_msg")
-int prog_msg_verdict_clone2(struct sk_msg_md *msg)
-{
-	return prog_msg_verdict_common(msg);
-}
-
-SEC("sk_skb/stream_verdict")
-int prog_skb_verdict(struct __sk_buff *skb)
-{
-	return SK_PASS;
 }
 
 char _license[] SEC("license") = "GPL";

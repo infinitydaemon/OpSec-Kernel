@@ -18,7 +18,6 @@
 
 	.macro tlb_do_page_fault, write
 	SYM_CODE_START(tlb_do_page_fault_\write)
-	UNWIND_HINT_UNDEFINED
 	SAVE_ALL
 	csrrd		a2, LOONGARCH_CSR_BADV
 	move		a0, sp
@@ -33,7 +32,6 @@
 	tlb_do_page_fault 1
 
 SYM_CODE_START(handle_tlb_protect)
-	UNWIND_HINT_UNDEFINED
 	BACKUP_T0T1
 	SAVE_ALL
 	move		a0, sp
@@ -46,7 +44,6 @@ SYM_CODE_START(handle_tlb_protect)
 SYM_CODE_END(handle_tlb_protect)
 
 SYM_CODE_START(handle_tlb_load)
-	UNWIND_HINT_UNDEFINED
 	csrwr		t0, EXCEPTION_KS0
 	csrwr		t1, EXCEPTION_KS1
 	csrwr		ra, EXCEPTION_KS2
@@ -125,8 +122,6 @@ vmalloc_load:
 tlb_huge_update_load:
 #ifdef CONFIG_SMP
 	ll.d		ra, t1, 0
-#else
-	rotri.d		ra, ra, 64 - (_PAGE_HUGE_SHIFT + 1)
 #endif
 	andi		t0, ra, _PAGE_PRESENT
 	beqz		t0, nopage_tlb_load
@@ -137,6 +132,7 @@ tlb_huge_update_load:
 	beqz		t0, tlb_huge_update_load
 	ori		t0, ra, _PAGE_VALID
 #else
+	rotri.d		ra, ra, 64 - (_PAGE_HUGE_SHIFT + 1)
 	ori		t0, ra, _PAGE_VALID
 	st.d		t0, t1, 0
 #endif
@@ -194,7 +190,6 @@ nopage_tlb_load:
 SYM_CODE_END(handle_tlb_load)
 
 SYM_CODE_START(handle_tlb_load_ptw)
-	UNWIND_HINT_UNDEFINED
 	csrwr		t0, LOONGARCH_CSR_KS0
 	csrwr		t1, LOONGARCH_CSR_KS1
 	la_abs		t0, tlb_do_page_fault_0
@@ -202,7 +197,6 @@ SYM_CODE_START(handle_tlb_load_ptw)
 SYM_CODE_END(handle_tlb_load_ptw)
 
 SYM_CODE_START(handle_tlb_store)
-	UNWIND_HINT_UNDEFINED
 	csrwr		t0, EXCEPTION_KS0
 	csrwr		t1, EXCEPTION_KS1
 	csrwr		ra, EXCEPTION_KS2
@@ -282,8 +276,6 @@ vmalloc_store:
 tlb_huge_update_store:
 #ifdef CONFIG_SMP
 	ll.d		ra, t1, 0
-#else
-	rotri.d		ra, ra, 64 - (_PAGE_HUGE_SHIFT + 1)
 #endif
 	andi		t0, ra, _PAGE_PRESENT | _PAGE_WRITE
 	xori		t0, t0, _PAGE_PRESENT | _PAGE_WRITE
@@ -295,6 +287,7 @@ tlb_huge_update_store:
 	beqz		t0, tlb_huge_update_store
 	ori		t0, ra, (_PAGE_VALID | _PAGE_DIRTY | _PAGE_MODIFIED)
 #else
+	rotri.d		ra, ra, 64 - (_PAGE_HUGE_SHIFT + 1)
 	ori		t0, ra, (_PAGE_VALID | _PAGE_DIRTY | _PAGE_MODIFIED)
 	st.d		t0, t1, 0
 #endif
@@ -353,7 +346,6 @@ nopage_tlb_store:
 SYM_CODE_END(handle_tlb_store)
 
 SYM_CODE_START(handle_tlb_store_ptw)
-	UNWIND_HINT_UNDEFINED
 	csrwr		t0, LOONGARCH_CSR_KS0
 	csrwr		t1, LOONGARCH_CSR_KS1
 	la_abs		t0, tlb_do_page_fault_1
@@ -361,7 +353,6 @@ SYM_CODE_START(handle_tlb_store_ptw)
 SYM_CODE_END(handle_tlb_store_ptw)
 
 SYM_CODE_START(handle_tlb_modify)
-	UNWIND_HINT_UNDEFINED
 	csrwr		t0, EXCEPTION_KS0
 	csrwr		t1, EXCEPTION_KS1
 	csrwr		ra, EXCEPTION_KS2
@@ -440,8 +431,6 @@ vmalloc_modify:
 tlb_huge_update_modify:
 #ifdef CONFIG_SMP
 	ll.d		ra, t1, 0
-#else
-	rotri.d		ra, ra, 64 - (_PAGE_HUGE_SHIFT + 1)
 #endif
 	andi		t0, ra, _PAGE_WRITE
 	beqz		t0, nopage_tlb_modify
@@ -452,6 +441,7 @@ tlb_huge_update_modify:
 	beqz		t0, tlb_huge_update_modify
 	ori		t0, ra, (_PAGE_VALID | _PAGE_DIRTY | _PAGE_MODIFIED)
 #else
+	rotri.d		ra, ra, 64 - (_PAGE_HUGE_SHIFT + 1)
 	ori		t0, ra, (_PAGE_VALID | _PAGE_DIRTY | _PAGE_MODIFIED)
 	st.d		t0, t1, 0
 #endif
@@ -510,7 +500,6 @@ nopage_tlb_modify:
 SYM_CODE_END(handle_tlb_modify)
 
 SYM_CODE_START(handle_tlb_modify_ptw)
-	UNWIND_HINT_UNDEFINED
 	csrwr		t0, LOONGARCH_CSR_KS0
 	csrwr		t1, LOONGARCH_CSR_KS1
 	la_abs		t0, tlb_do_page_fault_1
@@ -518,7 +507,6 @@ SYM_CODE_START(handle_tlb_modify_ptw)
 SYM_CODE_END(handle_tlb_modify_ptw)
 
 SYM_CODE_START(handle_tlb_refill)
-	UNWIND_HINT_UNDEFINED
 	csrwr		t0, LOONGARCH_CSR_TLBRSAVE
 	csrrd		t0, LOONGARCH_CSR_PGD
 	lddir		t0, t0, 3

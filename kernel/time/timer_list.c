@@ -147,15 +147,11 @@ static void print_cpu(struct seq_file *m, int cpu, u64 now)
 # define P_ns(x) \
 	SEQ_printf(m, "  .%-15s: %Lu nsecs\n", #x, \
 		   (unsigned long long)(ktime_to_ns(ts->x)))
-# define P_flag(x, f)			    \
-	SEQ_printf(m, "  .%-15s: %d\n", #x, !!(ts->flags & (f)))
-
 	{
 		struct tick_sched *ts = tick_get_tick_sched(cpu);
-		P_flag(nohz, TS_FLAG_NOHZ);
-		P_flag(highres, TS_FLAG_HIGHRES);
+		P(nohz_mode);
 		P_ns(last_tick);
-		P_flag(tick_stopped, TS_FLAG_STOPPED);
+		P(tick_stopped);
 		P(idle_jiffies);
 		P(idle_calls);
 		P(idle_sleeps);
@@ -260,7 +256,7 @@ static void timer_list_show_tickdevices_header(struct seq_file *m)
 
 static inline void timer_list_header(struct seq_file *m, u64 now)
 {
-	SEQ_printf(m, "Timer List Version: v0.10\n");
+	SEQ_printf(m, "Timer List Version: v0.9\n");
 	SEQ_printf(m, "HRTIMER_MAX_CLOCK_BASES: %d\n", HRTIMER_MAX_CLOCK_BASES);
 	SEQ_printf(m, "now at %Ld nsecs\n", (unsigned long long)now);
 	SEQ_printf(m, "\n");

@@ -433,13 +433,13 @@ static void fxtract(FPU_REG *st0_ptr, u_char st0_tag)
 #endif /* PARANOID */
 }
 
-static void fdecstp(FPU_REG *st0_ptr, u_char st0_tag)
+static void fdecstp(void)
 {
 	clear_C1();
 	top--;
 }
 
-static void fincstp(FPU_REG *st0_ptr, u_char st0_tag)
+static void fincstp(void)
 {
 	clear_C1();
 	top++;
@@ -1631,7 +1631,7 @@ static void fscale(FPU_REG *st0_ptr, u_char st0_tag)
 
 static FUNC_ST0 const trig_table_a[] = {
 	f2xm1, fyl2x, fptan, fpatan,
-	fxtract, fprem1, fdecstp, fincstp,
+	fxtract, fprem1, (FUNC_ST0) fdecstp, (FUNC_ST0) fincstp
 };
 
 void FPU_triga(void)

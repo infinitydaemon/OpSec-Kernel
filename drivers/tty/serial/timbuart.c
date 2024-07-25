@@ -95,11 +95,14 @@ static void timbuart_rx_chars(struct uart_port *port)
 
 static void timbuart_tx_chars(struct uart_port *port)
 {
-	unsigned char ch;
+	struct circ_buf *xmit = &port->state->xmit;
 
 	while (!(ioread32(port->membase + TIMBUART_ISR) & TXBF) &&
-			uart_fifo_get(port, &ch))
-		iowrite8(ch, port->membase + TIMBUART_TXFIFO);
+		!uart_circ_empty(xmit)) {
+		iowrite8(xmit->buf[xmit->tail],
+			port->membase + TIMBUART_TXFIFO);
+		uart_xmit_advance(port, 1);
+	}
 
 	dev_dbg(port->dev,
 		"%s - total written %d bytes, CTL: %x, RTS: %x, baud: %x\n",
@@ -114,9 +117,9 @@ static void timbuart_handle_tx_port(struct uart_port *port, u32 isr, u32 *ier)
 {
 	struct timbuart_port *uart =
 		container_of(port, struct timbuart_port, port);
-	struct tty_port *tport = &port->state->port;
+	struct circ_buf *xmit = &port->state->xmit;
 
-	if (kfifo_is_empty(&tport->xmit_fifo) || uart_tx_stopped(port))
+	if (uart_circ_empty(xmit) || uart_tx_stopped(port))
 		return;
 
 	if (port->x_char)
@@ -127,7 +130,7 @@ static void timbuart_handle_tx_port(struct uart_port *port, u32 isr, u32 *ier)
 		/* clear all TX interrupts */
 		iowrite32(TXFLAGS, port->membase + TIMBUART_ISR);
 
-		if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+		if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
 			uart_write_wakeup(port);
 	} else
 		/* Re-enable any tx interrupt */
@@ -138,7 +141,7 @@ static void timbuart_handle_tx_port(struct uart_port *port, u32 isr, u32 *ier)
 	 * we wake up the upper layer later when we got the interrupt
 	 * to give it some time to go out...
 	 */
-	if (!kfifo_is_empty(&tport->xmit_fifo))
+	if (!uart_circ_empty(xmit))
 		*ier |= TXBAE;
 
 	dev_dbg(port->dev, "%s - leaving\n", __func__);
@@ -171,7 +174,7 @@ static void timbuart_tasklet(struct tasklet_struct *t)
 	struct timbuart_port *uart = from_tasklet(uart, t, tasklet);
 	u32 isr, ier = 0;
 
-	uart_port_lock(&uart->port);
+	spin_lock(&uart->port.lock);
 
 	isr = ioread32(uart->port.membase + TIMBUART_ISR);
 	dev_dbg(uart->port.dev, "%s ISR: %x\n", __func__, isr);
@@ -186,7 +189,7 @@ static void timbuart_tasklet(struct tasklet_struct *t)
 
 	iowrite32(ier, uart->port.membase + TIMBUART_IER);
 
-	uart_port_unlock(&uart->port);
+	spin_unlock(&uart->port.lock);
 	dev_dbg(uart->port.dev, "%s leaving\n", __func__);
 }
 
@@ -292,10 +295,10 @@ static void timbuart_set_termios(struct uart_port *port,
 		tty_termios_copy_hw(termios, old);
 	tty_termios_encode_baud_rate(termios, baud, baud);
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 	iowrite8((u8)bindex, port->membase + TIMBUART_BAUDRATE);
 	uart_update_timeout(port, termios->c_cflag, baud);
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 }
 
 static const char *timbuart_type(struct uart_port *port)
@@ -470,7 +473,7 @@ err_mem:
 	return err;
 }
 
-static void timbuart_remove(struct platform_device *dev)
+static int timbuart_remove(struct platform_device *dev)
 {
 	struct timbuart_port *uart = platform_get_drvdata(dev);
 
@@ -478,6 +481,8 @@ static void timbuart_remove(struct platform_device *dev)
 	uart_remove_one_port(&timbuart_driver, &uart->port);
 	uart_unregister_driver(&timbuart_driver);
 	kfree(uart);
+
+	return 0;
 }
 
 static struct platform_driver timbuart_platform_driver = {
@@ -485,7 +490,7 @@ static struct platform_driver timbuart_platform_driver = {
 		.name	= "timb-uart",
 	},
 	.probe		= timbuart_probe,
-	.remove_new	= timbuart_remove,
+	.remove		= timbuart_remove,
 };
 
 module_platform_driver(timbuart_platform_driver);

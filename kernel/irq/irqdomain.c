@@ -29,7 +29,6 @@ static int irq_domain_alloc_irqs_locked(struct irq_domain *domain, int irq_base,
 					unsigned int nr_irqs, int node, void *arg,
 					bool realloc, const struct irq_affinity_desc *affinity);
 static void irq_domain_check_hierarchy(struct irq_domain *domain);
-static void irq_domain_free_one_irq(struct irq_domain *domain, unsigned int virq);
 
 struct irqchip_fwid {
 	struct fwnode_handle	fwnode;
@@ -449,7 +448,7 @@ struct irq_domain *irq_find_matching_fwspec(struct irq_fwspec *fwspec,
 	 */
 	mutex_lock(&irq_domain_mutex);
 	list_for_each_entry(h, &irq_domain_list, link) {
-		if (h->ops->select && bus_token != DOMAIN_BUS_ANY)
+		if (h->ops->select && fwspec->param_count)
 			rc = h->ops->select(h, fwspec, bus_token);
 		else if (h->ops->match)
 			rc = h->ops->match(h, to_of_node(fwnode), bus_token);
@@ -859,13 +858,8 @@ unsigned int irq_create_fwspec_mapping(struct irq_fwspec *fwspec)
 	}
 
 	if (irq_domain_is_hierarchy(domain)) {
-		if (irq_domain_is_msi_device(domain)) {
-			mutex_unlock(&domain->root->mutex);
-			virq = msi_device_domain_alloc_wired(domain, hwirq, type);
-			mutex_lock(&domain->root->mutex);
-		} else
-			virq = irq_domain_alloc_irqs_locked(domain, -1, 1, NUMA_NO_NODE,
-							    fwspec, false, NULL);
+		virq = irq_domain_alloc_irqs_locked(domain, -1, 1, NUMA_NO_NODE,
+						    fwspec, false, NULL);
 		if (virq <= 0) {
 			virq = 0;
 			goto out;
@@ -909,11 +903,10 @@ EXPORT_SYMBOL_GPL(irq_create_of_mapping);
  */
 void irq_dispose_mapping(unsigned int virq)
 {
-	struct irq_data *irq_data;
+	struct irq_data *irq_data = irq_get_irq_data(virq);
 	struct irq_domain *domain;
 
-	irq_data = virq ? irq_get_irq_data(virq) : NULL;
-	if (!irq_data)
+	if (!virq || !irq_data)
 		return;
 
 	domain = irq_data->domain;
@@ -921,7 +914,7 @@ void irq_dispose_mapping(unsigned int virq)
 		return;
 
 	if (irq_domain_is_hierarchy(domain)) {
-		irq_domain_free_one_irq(domain, virq);
+		irq_domain_free_irqs(virq, 1);
 	} else {
 		irq_domain_disassociate(domain, virq);
 		irq_free_desc(virq);
@@ -1762,14 +1755,6 @@ void irq_domain_free_irqs(unsigned int virq, unsigned int nr_irqs)
 	irq_free_descs(virq, nr_irqs);
 }
 
-static void irq_domain_free_one_irq(struct irq_domain *domain, unsigned int virq)
-{
-	if (irq_domain_is_msi_device(domain))
-		msi_device_domain_free_wired(domain, virq);
-	else
-		irq_domain_free_irqs(virq, 1);
-}
-
 /**
  * irq_domain_alloc_irqs_parent - Allocate interrupts from parent domain
  * @domain:	Domain below which interrupts must be allocated
@@ -1922,9 +1907,9 @@ static int irq_domain_alloc_irqs_locked(struct irq_domain *domain, int irq_base,
 	return -EINVAL;
 }
 
-static void irq_domain_check_hierarchy(struct irq_domain *domain) { }
-static void irq_domain_free_one_irq(struct irq_domain *domain, unsigned int virq) { }
-
+static void irq_domain_check_hierarchy(struct irq_domain *domain)
+{
+}
 #endif	/* CONFIG_IRQ_DOMAIN_HIERARCHY */
 
 #ifdef CONFIG_GENERIC_IRQ_DEBUGFS

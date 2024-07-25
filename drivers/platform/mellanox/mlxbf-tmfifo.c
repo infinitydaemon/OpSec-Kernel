@@ -98,7 +98,7 @@ struct mlxbf_tmfifo_vring {
 /* Check whether vring is in drop mode. */
 #define IS_VRING_DROP(_r) ({ \
 	typeof(_r) (r) = (_r); \
-	r->desc_head == &r->drop_desc; })
+	(r->desc_head == &r->drop_desc ? true : false); })
 
 /* A stub length to drop maximum length packet. */
 #define VRING_DROP_DESC_MAX_LEN		GENMASK(15, 0)
@@ -1431,11 +1431,13 @@ fail:
 }
 
 /* Device remove function. */
-static void mlxbf_tmfifo_remove(struct platform_device *pdev)
+static int mlxbf_tmfifo_remove(struct platform_device *pdev)
 {
 	struct mlxbf_tmfifo *fifo = platform_get_drvdata(pdev);
 
 	mlxbf_tmfifo_cleanup(fifo);
+
+	return 0;
 }
 
 static const struct acpi_device_id mlxbf_tmfifo_acpi_match[] = {
@@ -1446,7 +1448,7 @@ MODULE_DEVICE_TABLE(acpi, mlxbf_tmfifo_acpi_match);
 
 static struct platform_driver mlxbf_tmfifo_driver = {
 	.probe = mlxbf_tmfifo_probe,
-	.remove_new = mlxbf_tmfifo_remove,
+	.remove = mlxbf_tmfifo_remove,
 	.driver = {
 		.name = "bf-tmfifo",
 		.acpi_match_table = mlxbf_tmfifo_acpi_match,

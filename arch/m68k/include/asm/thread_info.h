@@ -12,15 +12,14 @@
  */
 #if PAGE_SHIFT < 13
 #ifdef CONFIG_4KSTACKS
-#define THREAD_SIZE_ORDER	0
+#define THREAD_SIZE	4096
 #else
-#define THREAD_SIZE_ORDER	1
+#define THREAD_SIZE	8192
 #endif
 #else
-#define THREAD_SIZE_ORDER	0
+#define THREAD_SIZE	PAGE_SIZE
 #endif
-
-#define THREAD_SIZE	(PAGE_SIZE << THREAD_SIZE_ORDER)
+#define THREAD_SIZE_ORDER	((THREAD_SIZE / PAGE_SIZE) - 1)
 
 #ifndef __ASSEMBLY__
 

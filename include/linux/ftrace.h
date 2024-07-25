@@ -83,6 +83,7 @@ static inline void early_trace_init(void) { }
 
 struct module;
 struct ftrace_hash;
+struct ftrace_direct_func;
 
 #if defined(CONFIG_FUNCTION_TRACER) && defined(CONFIG_MODULES) && \
 	defined(CONFIG_DYNAMIC_FTRACE)
@@ -413,6 +414,7 @@ struct ftrace_func_entry {
 };
 
 #ifdef CONFIG_DYNAMIC_FTRACE_WITH_DIRECT_CALLS
+extern int ftrace_direct_func_count;
 unsigned long ftrace_find_rec_direct(unsigned long ip);
 int register_ftrace_direct(struct ftrace_ops *ops, unsigned long addr);
 int unregister_ftrace_direct(struct ftrace_ops *ops, unsigned long addr,
@@ -424,6 +426,7 @@ void ftrace_stub_direct_tramp(void);
 
 #else
 struct ftrace_ops;
+# define ftrace_direct_func_count 0
 static inline unsigned long ftrace_find_rec_direct(unsigned long ip)
 {
 	return 0;
@@ -819,8 +822,7 @@ static inline int ftrace_init_nop(struct module *mod, struct dyn_ftrace *rec)
 extern int ftrace_make_call(struct dyn_ftrace *rec, unsigned long addr);
 
 #if defined(CONFIG_DYNAMIC_FTRACE_WITH_REGS) || \
-	defined(CONFIG_DYNAMIC_FTRACE_WITH_CALL_OPS) || \
-	defined(CONFIG_DYNAMIC_FTRACE_WITH_DIRECT_CALLS)
+	defined(CONFIG_DYNAMIC_FTRACE_WITH_CALL_OPS)
 /**
  * ftrace_modify_call - convert from one addr to another (no nop)
  * @rec: the call site record (e.g. mcount/fentry)
@@ -1149,9 +1151,7 @@ static inline void unpause_graph_tracing(void) { }
 #ifdef CONFIG_TRACING
 enum ftrace_dump_mode;
 
-#define MAX_TRACER_SIZE		100
-extern char ftrace_dump_on_oops[];
-extern int ftrace_dump_on_oops_enabled(void);
+extern enum ftrace_dump_mode ftrace_dump_on_oops;
 extern int tracepoint_printk;
 
 extern void disable_trace_on_warning(void);

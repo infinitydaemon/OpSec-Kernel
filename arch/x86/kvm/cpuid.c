@@ -105,7 +105,7 @@ static inline struct kvm_cpuid_entry2 *cpuid_entry2_find(
 
 		/*
 		 * If the index isn't significant, use the first entry with a
-		 * matching function.  It's userspace's responsibility to not
+		 * matching function.  It's userspace's responsibilty to not
 		 * provide "duplicate" entries in all cases.
 		 */
 		if (!(e->flags & KVM_CPUID_FLAG_SIGNIFCANT_INDEX) || e->index == index)
@@ -189,15 +189,15 @@ static int kvm_cpuid_check_equal(struct kvm_vcpu *vcpu, struct kvm_cpuid_entry2 
 	return 0;
 }
 
-static struct kvm_hypervisor_cpuid __kvm_get_hypervisor_cpuid(struct kvm_cpuid_entry2 *entries,
-							      int nent, const char *sig)
+static struct kvm_hypervisor_cpuid kvm_get_hypervisor_cpuid(struct kvm_vcpu *vcpu,
+							    const char *sig)
 {
 	struct kvm_hypervisor_cpuid cpuid = {};
 	struct kvm_cpuid_entry2 *entry;
 	u32 base;
 
 	for_each_possible_hypervisor_cpuid_base(base) {
-		entry = cpuid_entry2_find(entries, nent, base, KVM_CPUID_INDEX_NOT_SIGNIFICANT);
+		entry = kvm_find_cpuid_entry(vcpu, base);
 
 		if (entry) {
 			u32 signature[3];
@@ -217,29 +217,22 @@ static struct kvm_hypervisor_cpuid __kvm_get_hypervisor_cpuid(struct kvm_cpuid_e
 	return cpuid;
 }
 
-static struct kvm_hypervisor_cpuid kvm_get_hypervisor_cpuid(struct kvm_vcpu *vcpu,
-							    const char *sig)
-{
-	return __kvm_get_hypervisor_cpuid(vcpu->arch.cpuid_entries,
-					  vcpu->arch.cpuid_nent, sig);
-}
-
-static struct kvm_cpuid_entry2 *__kvm_find_kvm_cpuid_features(struct kvm_cpuid_entry2 *entries,
-							      int nent, u32 kvm_cpuid_base)
-{
-	return cpuid_entry2_find(entries, nent, kvm_cpuid_base | KVM_CPUID_FEATURES,
-				 KVM_CPUID_INDEX_NOT_SIGNIFICANT);
-}
-
-static struct kvm_cpuid_entry2 *kvm_find_kvm_cpuid_features(struct kvm_vcpu *vcpu)
+static struct kvm_cpuid_entry2 *__kvm_find_kvm_cpuid_features(struct kvm_vcpu *vcpu,
+					      struct kvm_cpuid_entry2 *entries, int nent)
 {
 	u32 base = vcpu->arch.kvm_cpuid.base;
 
 	if (!base)
 		return NULL;
 
-	return __kvm_find_kvm_cpuid_features(vcpu->arch.cpuid_entries,
-					     vcpu->arch.cpuid_nent, base);
+	return cpuid_entry2_find(entries, nent, base | KVM_CPUID_FEATURES,
+				 KVM_CPUID_INDEX_NOT_SIGNIFICANT);
+}
+
+static struct kvm_cpuid_entry2 *kvm_find_kvm_cpuid_features(struct kvm_vcpu *vcpu)
+{
+	return __kvm_find_kvm_cpuid_features(vcpu, vcpu->arch.cpuid_entries,
+					     vcpu->arch.cpuid_nent);
 }
 
 void kvm_update_pv_runtime(struct kvm_vcpu *vcpu)
@@ -273,7 +266,6 @@ static void __kvm_update_cpuid_runtime(struct kvm_vcpu *vcpu, struct kvm_cpuid_e
 				       int nent)
 {
 	struct kvm_cpuid_entry2 *best;
-	struct kvm_hypervisor_cpuid kvm_cpuid;
 
 	best = cpuid_entry2_find(entries, nent, 1, KVM_CPUID_INDEX_NOT_SIGNIFICANT);
 	if (best) {
@@ -300,12 +292,10 @@ static void __kvm_update_cpuid_runtime(struct kvm_vcpu *vcpu, struct kvm_cpuid_e
 		     cpuid_entry_has(best, X86_FEATURE_XSAVEC)))
 		best->ebx = xstate_required_size(vcpu->arch.xcr0, true);
 
-	kvm_cpuid = __kvm_get_hypervisor_cpuid(entries, nent, KVM_SIGNATURE);
-	if (kvm_cpuid.base) {
-		best = __kvm_find_kvm_cpuid_features(entries, nent, kvm_cpuid.base);
-		if (kvm_hlt_in_guest(vcpu->kvm) && best)
-			best->eax &= ~(1 << KVM_FEATURE_PV_UNHALT);
-	}
+	best = __kvm_find_kvm_cpuid_features(vcpu, entries, nent);
+	if (kvm_hlt_in_guest(vcpu->kvm) && best &&
+		(best->eax & (1 << KVM_FEATURE_PV_UNHALT)))
+		best->eax &= ~(1 << KVM_FEATURE_PV_UNHALT);
 
 	if (!kvm_check_has_quirk(vcpu->kvm, KVM_X86_QUIRK_MISC_ENABLE_NO_MWAIT)) {
 		best = cpuid_entry2_find(entries, nent, 0x1, KVM_CPUID_INDEX_NOT_SIGNIFICANT);
@@ -324,15 +314,11 @@ EXPORT_SYMBOL_GPL(kvm_update_cpuid_runtime);
 
 static bool kvm_cpuid_has_hyperv(struct kvm_cpuid_entry2 *entries, int nent)
 {
-#ifdef CONFIG_KVM_HYPERV
 	struct kvm_cpuid_entry2 *entry;
 
 	entry = cpuid_entry2_find(entries, nent, HYPERV_CPUID_INTERFACE,
 				  KVM_CPUID_INDEX_NOT_SIGNIFICANT);
 	return entry && entry->eax == HYPERV_CPUID_SIGNATURE_EAX;
-#else
-	return false;
-#endif
 }
 
 static void kvm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
@@ -448,13 +434,11 @@ static int kvm_set_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid_entry2 *e2,
 		return 0;
 	}
 
-#ifdef CONFIG_KVM_HYPERV
 	if (kvm_cpuid_has_hyperv(e2, nent)) {
 		r = kvm_hv_vcpu_init(vcpu);
 		if (r)
 			return r;
 	}
-#endif
 
 	r = kvm_check_cpuid(vcpu, e2, nent);
 	if (r)
@@ -465,9 +449,7 @@ static int kvm_set_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid_entry2 *e2,
 	vcpu->arch.cpuid_nent = nent;
 
 	vcpu->arch.kvm_cpuid = kvm_get_hypervisor_cpuid(vcpu, KVM_SIGNATURE);
-#ifdef CONFIG_KVM_XEN
 	vcpu->arch.xen.cpuid = kvm_get_hypervisor_cpuid(vcpu, XEN_SIGNATURE);
-#endif
 	kvm_vcpu_after_set_cpuid(vcpu);
 
 	return 0;
@@ -486,7 +468,7 @@ int kvm_vcpu_ioctl_set_cpuid(struct kvm_vcpu *vcpu,
 		return -E2BIG;
 
 	if (cpuid->nent) {
-		e = vmemdup_array_user(entries, cpuid->nent, sizeof(*e));
+		e = vmemdup_user(entries, array_size(sizeof(*e), cpuid->nent));
 		if (IS_ERR(e))
 			return PTR_ERR(e);
 
@@ -530,7 +512,7 @@ int kvm_vcpu_ioctl_set_cpuid2(struct kvm_vcpu *vcpu,
 		return -E2BIG;
 
 	if (cpuid->nent) {
-		e2 = vmemdup_array_user(entries, cpuid->nent, sizeof(*e2));
+		e2 = vmemdup_user(entries, array_size(sizeof(*e2), cpuid->nent));
 		if (IS_ERR(e2))
 			return PTR_ERR(e2);
 	}
@@ -688,7 +670,7 @@ void kvm_set_cpu_caps(void)
 	kvm_cpu_cap_mask(CPUID_7_1_EAX,
 		F(AVX_VNNI) | F(AVX512_BF16) | F(CMPCCXADD) |
 		F(FZRM) | F(FSRS) | F(FSRC) |
-		F(AMX_FP16) | F(AVX_IFMA) | F(LAM)
+		F(AMX_FP16) | F(AVX_IFMA)
 	);
 
 	kvm_cpu_cap_init_kvm_defined(CPUID_7_1_EDX,
@@ -772,18 +754,16 @@ void kvm_set_cpu_caps(void)
 	kvm_cpu_cap_mask(CPUID_8000_000A_EDX, 0);
 
 	kvm_cpu_cap_mask(CPUID_8000_001F_EAX,
-		0 /* SME */ | 0 /* SEV */ | 0 /* VM_PAGE_FLUSH */ | 0 /* SEV_ES */ |
+		0 /* SME */ | F(SEV) | 0 /* VM_PAGE_FLUSH */ | F(SEV_ES) |
 		F(SME_COHERENT));
 
 	kvm_cpu_cap_mask(CPUID_8000_0021_EAX,
 		F(NO_NESTED_DATA_BP) | F(LFENCE_RDTSC) | 0 /* SmmPgCfgLock */ |
-		F(NULL_SEL_CLR_BASE) | F(AUTOIBRS) | 0 /* PrefetchCtlMsr */ |
-		F(WRMSR_XX_BASE_NS)
+		F(NULL_SEL_CLR_BASE) | F(AUTOIBRS) | 0 /* PrefetchCtlMsr */
 	);
 
-	kvm_cpu_cap_check_and_set(X86_FEATURE_SBPB);
-	kvm_cpu_cap_check_and_set(X86_FEATURE_IBPB_BRTYPE);
-	kvm_cpu_cap_check_and_set(X86_FEATURE_SRSO_NO);
+	if (cpu_feature_enabled(X86_FEATURE_SRSO_NO))
+		kvm_cpu_cap_set(X86_FEATURE_SRSO_NO);
 
 	kvm_cpu_cap_init_kvm_defined(CPUID_8000_0022_EAX,
 		F(PERFMON_V2)
@@ -1232,22 +1212,8 @@ static inline int __do_cpuid_func(struct kvm_cpuid_array *array, u32 function)
 		entry->eax = entry->ebx = entry->ecx = 0;
 		break;
 	case 0x80000008: {
-		/*
-		 * GuestPhysAddrSize (EAX[23:16]) is intended for software
-		 * use.
-		 *
-		 * KVM's ABI is to report the effective MAXPHYADDR for the
-		 * guest in PhysAddrSize (phys_as), and the maximum
-		 * *addressable* GPA in GuestPhysAddrSize (g_phys_as).
-		 *
-		 * GuestPhysAddrSize is valid if and only if TDP is enabled,
-		 * in which case the max GPA that can be addressed by KVM may
-		 * be less than the max GPA that can be legally generated by
-		 * the guest, e.g. if MAXPHYADDR>48 but the CPU doesn't
-		 * support 5-level TDP.
-		 */
 		unsigned int virt_as = max((entry->eax >> 8) & 0xff, 48U);
-		unsigned int phys_as, g_phys_as;
+		unsigned int phys_as;
 
 		/*
 		 * If TDP (NPT) is disabled use the adjusted host MAXPHYADDR as
@@ -1256,23 +1222,15 @@ static inline int __do_cpuid_func(struct kvm_cpuid_array *array, u32 function)
 		 * paging, too.
 		 *
 		 * If TDP is enabled, use the raw bare metal MAXPHYADDR as
-		 * reductions to the HPAs do not affect GPAs.  The max
-		 * addressable GPA is the same as the max effective GPA, except
-		 * that it's capped at 48 bits if 5-level TDP isn't supported
-		 * (hardware processes bits 51:48 only when walking the fifth
-		 * level page table).
+		 * reductions to the HPAs do not affect GPAs.
 		 */
 		if (!tdp_enabled) {
 			phys_as = boot_cpu_data.x86_phys_bits;
-			g_phys_as = 0;
 		} else {
 			phys_as = entry->eax & 0xff;
-			g_phys_as = phys_as;
-			if (kvm_mmu_get_max_tdp_level() < 5)
-				g_phys_as = min(g_phys_as, 48);
 		}
 
-		entry->eax = phys_as | (virt_as << 8) | (g_phys_as << 16);
+		entry->eax = phys_as | (virt_as << 8);
 		entry->ecx &= ~(GENMASK(31, 16) | GENMASK(11, 8));
 		entry->edx = 0;
 		cpuid_entry_override(entry, CPUID_8000_0008_EBX);

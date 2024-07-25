@@ -669,11 +669,18 @@ void seq_putc(struct seq_file *m, char c)
 }
 EXPORT_SYMBOL(seq_putc);
 
-void __seq_puts(struct seq_file *m, const char *s)
+void seq_puts(struct seq_file *m, const char *s)
 {
-	seq_write(m, s, strlen(s));
+	int len = strlen(s);
+
+	if (m->count + len >= m->size) {
+		seq_set_overflow(m);
+		return;
+	}
+	memcpy(m->buf + m->count, s, len);
+	m->count += len;
 }
-EXPORT_SYMBOL(__seq_puts);
+EXPORT_SYMBOL(seq_puts);
 
 /**
  * seq_put_decimal_ull_width - A helper routine for putting decimal numbers

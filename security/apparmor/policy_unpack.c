@@ -90,10 +90,10 @@ void __aa_loaddata_update(struct aa_loaddata *data, long revision)
 		struct inode *inode;
 
 		inode = d_inode(data->dents[AAFS_LOADDATA_DIR]);
-		inode_set_mtime_to_ts(inode, inode_set_ctime_current(inode));
+		inode->i_mtime = inode_set_ctime_current(inode);
 
 		inode = d_inode(data->dents[AAFS_LOADDATA_REVISION]);
-		inode_set_mtime_to_ts(inode, inode_set_ctime_current(inode));
+		inode->i_mtime = inode_set_ctime_current(inode);
 	}
 }
 
@@ -705,29 +705,24 @@ fail_reset:
 	return -EPROTO;
 }
 
-static int unpack_pdb(struct aa_ext *e, struct aa_policydb **policy,
+static int unpack_pdb(struct aa_ext *e, struct aa_policydb *policy,
 		      bool required_dfa, bool required_trans,
 		      const char **info)
 {
-	struct aa_policydb *pdb;
 	void *pos = e->pos;
 	int i, flags, error = -EPROTO;
 	ssize_t size;
 
-	pdb = aa_alloc_pdb(GFP_KERNEL);
-	if (!pdb)
-		return -ENOMEM;
-
-	size = unpack_perms_table(e, &pdb->perms);
+	size = unpack_perms_table(e, &policy->perms);
 	if (size < 0) {
 		error = size;
-		pdb->perms = NULL;
+		policy->perms = NULL;
 		*info = "failed to unpack - perms";
 		goto fail;
 	}
-	pdb->size = size;
+	policy->size = size;
 
-	if (pdb->perms) {
+	if (policy->perms) {
 		/* perms table present accept is index */
 		flags = TO_ACCEPT1_FLAG(YYTD_DATA32);
 	} else {
@@ -736,13 +731,13 @@ static int unpack_pdb(struct aa_ext *e, struct aa_policydb **policy,
 			TO_ACCEPT2_FLAG(YYTD_DATA32);
 	}
 
-	pdb->dfa = unpack_dfa(e, flags);
-	if (IS_ERR(pdb->dfa)) {
-		error = PTR_ERR(pdb->dfa);
-		pdb->dfa = NULL;
+	policy->dfa = unpack_dfa(e, flags);
+	if (IS_ERR(policy->dfa)) {
+		error = PTR_ERR(policy->dfa);
+		policy->dfa = NULL;
 		*info = "failed to unpack - dfa";
 		goto fail;
-	} else if (!pdb->dfa) {
+	} else if (!policy->dfa) {
 		if (required_dfa) {
 			*info = "missing required dfa";
 			goto fail;
@@ -756,18 +751,18 @@ static int unpack_pdb(struct aa_ext *e, struct aa_policydb **policy,
 	 * sadly start was given different names for file and policydb
 	 * but since it is optional we can try both
 	 */
-	if (!aa_unpack_u32(e, &pdb->start[0], "start"))
+	if (!aa_unpack_u32(e, &policy->start[0], "start"))
 		/* default start state */
-		pdb->start[0] = DFA_START;
-	if (!aa_unpack_u32(e, &pdb->start[AA_CLASS_FILE], "dfa_start")) {
+		policy->start[0] = DFA_START;
+	if (!aa_unpack_u32(e, &policy->start[AA_CLASS_FILE], "dfa_start")) {
 		/* default start state for xmatch and file dfa */
-		pdb->start[AA_CLASS_FILE] = DFA_START;
+		policy->start[AA_CLASS_FILE] = DFA_START;
 	}	/* setup class index */
 	for (i = AA_CLASS_FILE + 1; i <= AA_CLASS_LAST; i++) {
-		pdb->start[i] = aa_dfa_next(pdb->dfa, pdb->start[0],
+		policy->start[i] = aa_dfa_next(policy->dfa, policy->start[0],
 					       i);
 	}
-	if (!unpack_trans_table(e, &pdb->trans) && required_trans) {
+	if (!unpack_trans_table(e, &policy->trans) && required_trans) {
 		*info = "failed to unpack profile transition table";
 		goto fail;
 	}
@@ -775,11 +770,9 @@ static int unpack_pdb(struct aa_ext *e, struct aa_policydb **policy,
 	/* TODO: move compat mapping here, requires dfa merging first */
 	/* TODO: move verify here, it has to be done after compat mappings */
 out:
-	*policy = pdb;
 	return 0;
 
 fail:
-	aa_put_pdb(pdb);
 	e->pos = pos;
 	return error;
 }
@@ -867,15 +860,15 @@ static struct aa_profile *unpack_profile(struct aa_ext *e, char **ns_name)
 	}
 
 	/* neither xmatch_len not xmatch_perms are optional if xmatch is set */
-	if (profile->attach.xmatch->dfa) {
+	if (profile->attach.xmatch.dfa) {
 		if (!aa_unpack_u32(e, &tmp, NULL)) {
 			info = "missing xmatch len";
 			goto fail;
 		}
 		profile->attach.xmatch_len = tmp;
-		profile->attach.xmatch->start[AA_CLASS_XMATCH] = DFA_START;
-		if (!profile->attach.xmatch->perms) {
-			error = aa_compat_map_xmatch(profile->attach.xmatch);
+		profile->attach.xmatch.start[AA_CLASS_XMATCH] = DFA_START;
+		if (!profile->attach.xmatch.perms) {
+			error = aa_compat_map_xmatch(&profile->attach.xmatch);
 			if (error) {
 				info = "failed to convert xmatch permission table";
 				goto fail;
@@ -992,16 +985,16 @@ static struct aa_profile *unpack_profile(struct aa_ext *e, char **ns_name)
 		if (error)
 			goto fail;
 		/* Fixup: drop when we get rid of start array */
-		if (aa_dfa_next(rules->policy->dfa, rules->policy->start[0],
+		if (aa_dfa_next(rules->policy.dfa, rules->policy.start[0],
 				AA_CLASS_FILE))
-			rules->policy->start[AA_CLASS_FILE] =
-			  aa_dfa_next(rules->policy->dfa,
-				      rules->policy->start[0],
+			rules->policy.start[AA_CLASS_FILE] =
+			  aa_dfa_next(rules->policy.dfa,
+				      rules->policy.start[0],
 				      AA_CLASS_FILE);
 		if (!aa_unpack_nameX(e, AA_STRUCTEND, NULL))
 			goto fail;
-		if (!rules->policy->perms) {
-			error = aa_compat_map_policy(rules->policy,
+		if (!rules->policy.perms) {
+			error = aa_compat_map_policy(&rules->policy,
 						     e->version);
 			if (error) {
 				info = "failed to remap policydb permission table";
@@ -1009,27 +1002,44 @@ static struct aa_profile *unpack_profile(struct aa_ext *e, char **ns_name)
 			}
 		}
 	} else {
-		rules->policy = aa_get_pdb(nullpdb);
+		rules->policy.dfa = aa_get_dfa(nulldfa);
+		rules->policy.perms = kcalloc(2, sizeof(struct aa_perms),
+					      GFP_KERNEL);
+		if (!rules->policy.perms)
+			goto fail;
+		rules->policy.size = 2;
 	}
 	/* get file rules */
 	error = unpack_pdb(e, &rules->file, false, true, &info);
 	if (error) {
 		goto fail;
-	} else if (rules->file->dfa) {
-		if (!rules->file->perms) {
-			error = aa_compat_map_file(rules->file);
+	} else if (rules->file.dfa) {
+		if (!rules->file.perms) {
+			error = aa_compat_map_file(&rules->file);
 			if (error) {
 				info = "failed to remap file permission table";
 				goto fail;
 			}
 		}
-	} else if (rules->policy->dfa &&
-		   rules->policy->start[AA_CLASS_FILE]) {
-		aa_put_pdb(rules->file);
-		rules->file = aa_get_pdb(rules->policy);
+	} else if (rules->policy.dfa &&
+		   rules->policy.start[AA_CLASS_FILE]) {
+		rules->file.dfa = aa_get_dfa(rules->policy.dfa);
+		rules->file.start[AA_CLASS_FILE] = rules->policy.start[AA_CLASS_FILE];
+		rules->file.perms = kcalloc(rules->policy.size,
+					    sizeof(struct aa_perms),
+					    GFP_KERNEL);
+		if (!rules->file.perms)
+			goto fail;
+		memcpy(rules->file.perms, rules->policy.perms,
+		       rules->policy.size * sizeof(struct aa_perms));
+		rules->file.size = rules->policy.size;
 	} else {
-		aa_put_pdb(rules->file);
-		rules->file = aa_get_pdb(nullpdb);
+		rules->file.dfa = aa_get_dfa(nulldfa);
+		rules->file.perms = kcalloc(2, sizeof(struct aa_perms),
+					    GFP_KERNEL);
+		if (!rules->file.perms)
+			goto fail;
+		rules->file.size = 2;
 	}
 	error = -EPROTO;
 	if (aa_unpack_nameX(e, AA_STRUCT, "data")) {
@@ -1165,7 +1175,7 @@ static int verify_header(struct aa_ext *e, int required, const char **ns)
 /**
  * verify_dfa_accept_index - verify accept indexes are in range of perms table
  * @dfa: the dfa to check accept indexes are in range
- * @table_size: the permission table size the indexes should be within
+ * table_size: the permission table size the indexes should be within
  */
 static bool verify_dfa_accept_index(struct aa_dfa *dfa, int table_size)
 {
@@ -1236,32 +1246,26 @@ static int verify_profile(struct aa_profile *profile)
 	if (!rules)
 		return 0;
 
-	if (rules->file->dfa && !verify_dfa_accept_index(rules->file->dfa,
-							rules->file->size)) {
+	if ((rules->file.dfa && !verify_dfa_accept_index(rules->file.dfa,
+							 rules->file.size)) ||
+	    (rules->policy.dfa &&
+	     !verify_dfa_accept_index(rules->policy.dfa, rules->policy.size))) {
 		audit_iface(profile, NULL, NULL,
-			    "Unpack: file Invalid named transition", NULL,
-			    -EPROTO);
-		return -EPROTO;
-	}
-	if (rules->policy->dfa &&
-	    !verify_dfa_accept_index(rules->policy->dfa, rules->policy->size)) {
-		audit_iface(profile, NULL, NULL,
-			    "Unpack: policy Invalid named transition", NULL,
-			    -EPROTO);
+			    "Unpack: Invalid named transition", NULL, -EPROTO);
 		return -EPROTO;
 	}
 
-	if (!verify_perms(rules->file)) {
+	if (!verify_perms(&rules->file)) {
 		audit_iface(profile, NULL, NULL,
 			    "Unpack: Invalid perm index", NULL, -EPROTO);
 		return -EPROTO;
 	}
-	if (!verify_perms(rules->policy)) {
+	if (!verify_perms(&rules->policy)) {
 		audit_iface(profile, NULL, NULL,
 			    "Unpack: Invalid perm index", NULL, -EPROTO);
 		return -EPROTO;
 	}
-	if (!verify_perms(profile->attach.xmatch)) {
+	if (!verify_perms(&profile->attach.xmatch)) {
 		audit_iface(profile, NULL, NULL,
 			    "Unpack: Invalid perm index", NULL, -EPROTO);
 		return -EPROTO;

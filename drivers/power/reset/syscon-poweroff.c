@@ -13,74 +13,71 @@
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/pm.h>
-#include <linux/reboot.h>
 #include <linux/regmap.h>
 
-struct syscon_poweroff_data {
-	struct regmap *map;
-	u32 offset;
-	u32 value;
-	u32 mask;
-};
+static struct regmap *map;
+static u32 offset;
+static u32 value;
+static u32 mask;
 
-static int syscon_poweroff(struct sys_off_data *off_data)
+static void syscon_poweroff(void)
 {
-	struct syscon_poweroff_data *data = off_data->cb_data;
-
 	/* Issue the poweroff */
-	regmap_update_bits(data->map, data->offset, data->mask, data->value);
+	regmap_update_bits(map, offset, mask, value);
 
 	mdelay(1000);
 
 	pr_emerg("Unable to poweroff system\n");
-
-	return NOTIFY_DONE;
 }
 
 static int syscon_poweroff_probe(struct platform_device *pdev)
 {
-	struct device *dev = &pdev->dev;
-	struct syscon_poweroff_data *data;
 	int mask_err, value_err;
 
-	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
-	if (!data)
-		return -ENOMEM;
-
-	data->map = syscon_regmap_lookup_by_phandle(dev->of_node, "regmap");
-	if (IS_ERR(data->map)) {
-		data->map = syscon_node_to_regmap(dev->parent->of_node);
-		if (IS_ERR(data->map)) {
-			dev_err(dev, "unable to get syscon");
-			return PTR_ERR(data->map);
-		}
+	map = syscon_regmap_lookup_by_phandle(pdev->dev.of_node, "regmap");
+	if (IS_ERR(map)) {
+		dev_err(&pdev->dev, "unable to get syscon");
+		return PTR_ERR(map);
 	}
 
-	if (of_property_read_u32(dev->of_node, "offset", &data->offset)) {
-		dev_err(dev, "unable to read 'offset'");
+	if (of_property_read_u32(pdev->dev.of_node, "offset", &offset)) {
+		dev_err(&pdev->dev, "unable to read 'offset'");
 		return -EINVAL;
 	}
 
-	value_err = of_property_read_u32(dev->of_node, "value", &data->value);
-	mask_err = of_property_read_u32(dev->of_node, "mask", &data->mask);
+	value_err = of_property_read_u32(pdev->dev.of_node, "value", &value);
+	mask_err = of_property_read_u32(pdev->dev.of_node, "mask", &mask);
 	if (value_err && mask_err) {
-		dev_err(dev, "unable to read 'value' and 'mask'");
+		dev_err(&pdev->dev, "unable to read 'value' and 'mask'");
 		return -EINVAL;
 	}
 
 	if (value_err) {
 		/* support old binding */
-		data->value = data->mask;
-		data->mask = 0xFFFFFFFF;
+		value = mask;
+		mask = 0xFFFFFFFF;
 	} else if (mask_err) {
 		/* support value without mask*/
-		data->mask = 0xFFFFFFFF;
+		mask = 0xFFFFFFFF;
 	}
 
-	return devm_register_sys_off_handler(&pdev->dev,
-					     SYS_OFF_MODE_POWER_OFF,
-					     SYS_OFF_PRIO_DEFAULT,
-					     syscon_poweroff, data);
+	if (pm_power_off) {
+		dev_err(&pdev->dev, "pm_power_off already claimed for %ps",
+			pm_power_off);
+		return -EBUSY;
+	}
+
+	pm_power_off = syscon_poweroff;
+
+	return 0;
+}
+
+static int syscon_poweroff_remove(struct platform_device *pdev)
+{
+	if (pm_power_off == syscon_poweroff)
+		pm_power_off = NULL;
+
+	return 0;
 }
 
 static const struct of_device_id syscon_poweroff_of_match[] = {
@@ -90,9 +87,15 @@ static const struct of_device_id syscon_poweroff_of_match[] = {
 
 static struct platform_driver syscon_poweroff_driver = {
 	.probe = syscon_poweroff_probe,
+	.remove = syscon_poweroff_remove,
 	.driver = {
 		.name = "syscon-poweroff",
 		.of_match_table = syscon_poweroff_of_match,
 	},
 };
-builtin_platform_driver(syscon_poweroff_driver);
+
+static int __init syscon_poweroff_register(void)
+{
+	return platform_driver_register(&syscon_poweroff_driver);
+}
+device_initcall(syscon_poweroff_register);

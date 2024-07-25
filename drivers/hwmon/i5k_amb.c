@@ -101,7 +101,14 @@ struct i5k_amb_data {
 	unsigned int num_attrs;
 };
 
-static DEVICE_STRING_ATTR_RO(name, 0444, DRVNAME);
+static ssize_t name_show(struct device *dev, struct device_attribute *devattr,
+			 char *buf)
+{
+	return sprintf(buf, "%s\n", DRVNAME);
+}
+
+
+static DEVICE_ATTR_RO(name);
 
 static struct platform_device *amb_pdev;
 
@@ -366,7 +373,7 @@ static int i5k_amb_hwmon_init(struct platform_device *pdev)
 		}
 	}
 
-	res = device_create_file(&pdev->dev, &dev_attr_name.attr);
+	res = device_create_file(&pdev->dev, &dev_attr_name);
 	if (res)
 		goto exit_remove;
 
@@ -379,7 +386,7 @@ static int i5k_amb_hwmon_init(struct platform_device *pdev)
 	return res;
 
 exit_remove:
-	device_remove_file(&pdev->dev, &dev_attr_name.attr);
+	device_remove_file(&pdev->dev, &dev_attr_name);
 	for (i = 0; i < data->num_attrs; i++)
 		device_remove_file(&pdev->dev, &data->attrs[i].s_attr.dev_attr);
 	kfree(data->attrs);
@@ -548,19 +555,20 @@ err:
 	return res;
 }
 
-static void i5k_amb_remove(struct platform_device *pdev)
+static int i5k_amb_remove(struct platform_device *pdev)
 {
 	int i;
 	struct i5k_amb_data *data = platform_get_drvdata(pdev);
 
 	hwmon_device_unregister(data->hwmon_dev);
-	device_remove_file(&pdev->dev, &dev_attr_name.attr);
+	device_remove_file(&pdev->dev, &dev_attr_name);
 	for (i = 0; i < data->num_attrs; i++)
 		device_remove_file(&pdev->dev, &data->attrs[i].s_attr.dev_attr);
 	kfree(data->attrs);
 	iounmap(data->amb_mmio);
 	release_mem_region(data->amb_base, data->amb_len);
 	kfree(data);
+	return 0;
 }
 
 static struct platform_driver i5k_amb_driver = {
@@ -568,7 +576,7 @@ static struct platform_driver i5k_amb_driver = {
 		.name = DRVNAME,
 	},
 	.probe = i5k_amb_probe,
-	.remove_new = i5k_amb_remove,
+	.remove = i5k_amb_remove,
 };
 
 static int __init i5k_amb_init(void)

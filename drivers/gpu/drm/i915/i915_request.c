@@ -52,6 +52,7 @@
 struct execute_cb {
 	struct irq_work work;
 	struct i915_sw_fence *fence;
+	struct i915_request *signal;
 };
 
 static struct kmem_cache *slab_requests;

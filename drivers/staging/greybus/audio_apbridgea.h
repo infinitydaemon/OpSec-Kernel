@@ -65,6 +65,7 @@
 struct audio_apbridgea_hdr {
 	__u8	type;
 	__le16	i2s_port;
+	__u8	data[];
 } __packed;
 
 struct audio_apbridgea_set_config_request {

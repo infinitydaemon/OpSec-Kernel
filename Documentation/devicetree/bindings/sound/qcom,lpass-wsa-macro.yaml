@@ -11,18 +11,12 @@ maintainers:
 
 properties:
   compatible:
-    oneOf:
-      - enum:
-          - qcom,sc7280-lpass-wsa-macro
-          - qcom,sm8250-lpass-wsa-macro
-          - qcom,sm8450-lpass-wsa-macro
-          - qcom,sm8550-lpass-wsa-macro
-          - qcom,sc8280xp-lpass-wsa-macro
-      - items:
-          - enum:
-              - qcom,sm8650-lpass-wsa-macro
-              - qcom,x1e80100-lpass-wsa-macro
-          - const: qcom,sm8550-lpass-wsa-macro
+    enum:
+      - qcom,sc7280-lpass-wsa-macro
+      - qcom,sm8250-lpass-wsa-macro
+      - qcom,sm8450-lpass-wsa-macro
+      - qcom,sm8550-lpass-wsa-macro
+      - qcom,sc8280xp-lpass-wsa-macro
 
   reg:
     maxItems: 1
@@ -100,9 +94,8 @@ allOf:
   - if:
       properties:
         compatible:
-          contains:
-            enum:
-              - qcom,sm8550-lpass-wsa-macro
+          enum:
+            - qcom,sm8550-lpass-wsa-macro
     then:
       properties:
         clocks:

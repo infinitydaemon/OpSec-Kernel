@@ -435,7 +435,7 @@ err_free_partitions:
 	return ret;
 }
 
-static void sram_remove(struct platform_device *pdev)
+static int sram_remove(struct platform_device *pdev)
 {
 	struct sram_dev *sram = platform_get_drvdata(pdev);
 
@@ -443,6 +443,8 @@ static void sram_remove(struct platform_device *pdev)
 
 	if (sram->pool && gen_pool_avail(sram->pool) < gen_pool_size(sram->pool))
 		dev_err(sram->dev, "removed while SRAM allocated\n");
+
+	return 0;
 }
 
 static struct platform_driver sram_driver = {
@@ -451,7 +453,7 @@ static struct platform_driver sram_driver = {
 		.of_match_table = sram_dt_ids,
 	},
 	.probe = sram_probe,
-	.remove_new = sram_remove,
+	.remove = sram_remove,
 };
 
 static int __init sram_init(void)

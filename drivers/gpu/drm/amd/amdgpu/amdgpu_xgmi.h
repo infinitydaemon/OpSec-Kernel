@@ -43,8 +43,7 @@ struct amdgpu_hive_info {
 	} pstate;
 
 	struct amdgpu_reset_domain *reset_domain;
-	atomic_t ras_recovery;
-	struct ras_event_manager event_mgr;
+	uint32_t device_remove_count;
 };
 
 struct amdgpu_pcs_ras_field {

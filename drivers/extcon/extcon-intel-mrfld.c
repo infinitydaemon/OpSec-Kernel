@@ -214,21 +214,27 @@ static int mrfld_extcon_probe(struct platform_device *pdev)
 
 	data->edev = devm_extcon_dev_allocate(dev, mrfld_extcon_cable);
 	if (IS_ERR(data->edev))
-		return PTR_ERR(data->edev);
+		return -ENOMEM;
 
 	ret = devm_extcon_dev_register(dev, data->edev);
-	if (ret < 0)
-		return dev_err_probe(dev, ret, "can't register extcon device\n");
+	if (ret < 0) {
+		dev_err(dev, "can't register extcon device: %d\n", ret);
+		return ret;
+	}
 
 	ret = devm_request_threaded_irq(dev, irq, NULL, mrfld_extcon_interrupt,
 					IRQF_ONESHOT | IRQF_SHARED, pdev->name,
 					data);
-	if (ret)
-		return dev_err_probe(dev, ret, "can't register IRQ handler\n");
+	if (ret) {
+		dev_err(dev, "can't register IRQ handler: %d\n", ret);
+		return ret;
+	}
 
 	ret = regmap_read(regmap, BCOVE_ID, &id);
-	if (ret)
-		return dev_err_probe(dev, ret, "can't read PMIC ID\n");
+	if (ret) {
+		dev_err(dev, "can't read PMIC ID: %d\n", ret);
+		return ret;
+	}
 
 	data->id = id;
 
@@ -257,11 +263,13 @@ static int mrfld_extcon_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void mrfld_extcon_remove(struct platform_device *pdev)
+static int mrfld_extcon_remove(struct platform_device *pdev)
 {
 	struct mrfld_extcon_data *data = platform_get_drvdata(pdev);
 
 	mrfld_extcon_sw_control(data, false);
+
+	return 0;
 }
 
 static const struct platform_device_id mrfld_extcon_id_table[] = {
@@ -275,7 +283,7 @@ static struct platform_driver mrfld_extcon_driver = {
 		.name	= "mrfld_bcove_pwrsrc",
 	},
 	.probe		= mrfld_extcon_probe,
-	.remove_new	= mrfld_extcon_remove,
+	.remove		= mrfld_extcon_remove,
 	.id_table	= mrfld_extcon_id_table,
 };
 module_platform_driver(mrfld_extcon_driver);

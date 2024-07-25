@@ -765,6 +765,7 @@ static int timb_probe(struct pci_dev *dev,
 	default:
 		dev_err(&dev->dev, "Unknown IP setup: %d.%d.%d\n",
 			priv->fw.major, priv->fw.minor, ip_setup);
+		err = -ENODEV;
 		goto err_mfd;
 	}
 

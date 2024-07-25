@@ -33,6 +33,7 @@
 #include <drm/drm_sysfs.h>
 #include <drm/drm_utils.h>
 
+#include <linux/of.h>
 #include <linux/property.h>
 #include <linux/uaccess.h>
 
@@ -83,6 +84,7 @@ struct drm_conn_prop_enum_list {
 	int type;
 	const char *name;
 	struct ida ida;
+	int first_dyn_num;
 };
 
 /*
@@ -112,12 +114,41 @@ static struct drm_conn_prop_enum_list drm_connector_enum_list[] = {
 	{ DRM_MODE_CONNECTOR_USB, "USB" },
 };
 
+#define MAX_DT_NODE_NAME_LEN	20
+#define DT_DRM_NODE_PREFIX	"drm-"
+
+static void drm_connector_get_of_name(int type, char *node_name, int length)
+{
+	int i = 0;
+
+	strcpy(node_name, DT_DRM_NODE_PREFIX);
+
+	do {
+		node_name[i + strlen(DT_DRM_NODE_PREFIX)] =
+				tolower(drm_connector_enum_list[type].name[i]);
+
+	} while (drm_connector_enum_list[type].name[i++] &&
+		 i < length);
+
+	node_name[length - 1] = '\0';
+}
+
 void drm_connector_ida_init(void)
 {
-	int i;
+	int i, id;
+	char node_name[MAX_DT_NODE_NAME_LEN];
 
-	for (i = 0; i < ARRAY_SIZE(drm_connector_enum_list); i++)
+	for (i = 0; i < ARRAY_SIZE(drm_connector_enum_list); i++) {
 		ida_init(&drm_connector_enum_list[i].ida);
+
+		drm_connector_get_of_name(i, node_name, MAX_DT_NODE_NAME_LEN);
+
+		id = of_alias_get_highest_id(node_name);
+		if (id > 0)
+			drm_connector_enum_list[i].first_dyn_num = id + 1;
+		else
+			drm_connector_enum_list[i].first_dyn_num = 1;
+	}
 }
 
 void drm_connector_ida_destroy(void)
@@ -225,7 +256,9 @@ static int __drm_connector_init(struct drm_device *dev,
 				struct i2c_adapter *ddc)
 {
 	struct drm_mode_config *config = &dev->mode_config;
+	char node_name[MAX_DT_NODE_NAME_LEN];
 	int ret;
+	int id;
 	struct ida *connector_ida =
 		&drm_connector_enum_list[connector_type].ida;
 
@@ -255,8 +288,28 @@ static int __drm_connector_init(struct drm_device *dev,
 	ret = 0;
 
 	connector->connector_type = connector_type;
-	connector->connector_type_id =
-		ida_alloc_min(connector_ida, 1, GFP_KERNEL);
+	connector->connector_type_id = 0;
+
+	drm_connector_get_of_name(connector_type, node_name, MAX_DT_NODE_NAME_LEN);
+	id = of_alias_get_id(dev->dev->of_node, node_name);
+	if (id > 0) {
+		/* Try and allocate the requested ID
+		 * Valid range is 1 to 31, hence ignoring 0 as an error
+		 */
+		int type_id = ida_alloc_range(connector_ida, id, id, GFP_KERNEL);
+
+		if (type_id > 0)
+			connector->connector_type_id = type_id;
+		else
+			drm_err(dev, "Failed to acquire type ID %d for interface type %s, ret %d\n",
+				id, drm_connector_enum_list[connector_type].name,
+				type_id);
+	}
+	if (!connector->connector_type_id)
+		connector->connector_type_id =
+				ida_alloc_min(connector_ida,
+					      drm_connector_enum_list[connector_type].first_dyn_num,
+					      GFP_KERNEL);
 	if (connector->connector_type_id < 0) {
 		ret = connector->connector_type_id;
 		goto out_put_id;
@@ -631,10 +684,6 @@ int drm_connector_register(struct drm_connector *connector)
 			goto err_debugfs;
 	}
 
-	ret = drm_sysfs_connector_add_late(connector);
-	if (ret)
-		goto err_late_register;
-
 	drm_mode_object_register(connector->dev, &connector->base);
 
 	connector->registration_state = DRM_CONNECTOR_REGISTERED;
@@ -651,9 +700,6 @@ int drm_connector_register(struct drm_connector *connector)
 	mutex_unlock(&connector_list_lock);
 	goto unlock;
 
-err_late_register:
-	if (connector->funcs->early_unregister)
-		connector->funcs->early_unregister(connector);
 err_debugfs:
 	drm_debugfs_connector_remove(connector);
 	drm_sysfs_connector_remove(connector);
@@ -688,13 +734,11 @@ void drm_connector_unregister(struct drm_connector *connector)
 					connector->privacy_screen,
 					&connector->privacy_screen_notifier);
 
-	drm_sysfs_connector_remove_early(connector);
-
 	if (connector->funcs->early_unregister)
 		connector->funcs->early_unregister(connector);
 
-	drm_debugfs_connector_remove(connector);
 	drm_sysfs_connector_remove(connector);
+	drm_debugfs_connector_remove(connector);
 
 	connector->registration_state = DRM_CONNECTOR_UNREGISTERED;
 	mutex_unlock(&connector->mutex);
@@ -1005,6 +1049,7 @@ static const struct drm_prop_enum_list drm_tv_mode_enum_list[] = {
 	{ DRM_MODE_TV_MODE_PAL_M, "PAL-M" },
 	{ DRM_MODE_TV_MODE_PAL_N, "PAL-N" },
 	{ DRM_MODE_TV_MODE_SECAM, "SECAM" },
+	{ DRM_MODE_TV_MODE_MONOCHROME, "Mono" },
 };
 DRM_ENUM_NAME_FN(drm_get_tv_mode_name, drm_tv_mode_enum_list)
 
@@ -1198,12 +1243,6 @@ static const u32 dp_colorspaces =
  * 	drm_connector_set_path_property(), in the case of DP MST with the
  * 	path property the MST manager created. Userspace cannot change this
  * 	property.
- *
- * 	In the case of DP MST, the property has the format
- * 	``mst:<parent>-<ports>`` where ``<parent>`` is the KMS object ID of the
- * 	parent connector and ``<ports>`` is a hyphen-separated list of DP MST
- * 	port numbers. Note, KMS object IDs are not guaranteed to be stable
- * 	across reboots.
  * TILE:
  * 	Connector tile group property to indicate how a set of DRM connector
  * 	compose together into one logical screen. This is used by both high-res
@@ -1696,6 +1735,12 @@ EXPORT_SYMBOL(drm_connector_attach_dp_subconnector_property);
  *
  *		TV Mode is CCIR System B (aka 625-lines) together with
  *		the SECAM Color Encoding.
+ *
+ *	Mono:
+ *
+ *		Use timings appropriate to the DRM mode, including
+ *		equalizing pulses for a 525-line or 625-line mode,
+ *		with no pedestal or color encoding.
  *
  *	Drivers can set up this property by calling
  *	drm_mode_create_tv_properties().
@@ -2652,10 +2697,15 @@ int drm_connector_set_orientation_from_panel(
 {
 	enum drm_panel_orientation orientation;
 
-	if (panel && panel->funcs && panel->funcs->get_orientation)
+	if (panel && panel->funcs && panel->funcs->get_orientation) {
 		orientation = panel->funcs->get_orientation(panel);
-	else
+	} else {
 		orientation = DRM_MODE_PANEL_ORIENTATION_UNKNOWN;
+		if (panel) {
+			of_drm_get_panel_orientation(panel->dev->of_node,
+						     &orientation);
+		}
+	}
 
 	return drm_connector_set_panel_orientation(connector, orientation);
 }
@@ -3066,7 +3116,6 @@ struct drm_connector *drm_connector_find_by_fwnode(struct fwnode_handle *fwnode)
 /**
  * drm_connector_oob_hotplug_event - Report out-of-band hotplug event to connector
  * @connector_fwnode: fwnode_handle to report the event on
- * @status: hot plug detect logical state
  *
  * On some hardware a hotplug event notification may come from outside the display
  * driver / device. An example of this is some USB Type-C setups where the hardware
@@ -3076,8 +3125,7 @@ struct drm_connector *drm_connector_find_by_fwnode(struct fwnode_handle *fwnode)
  * This function can be used to report these out-of-band events after obtaining
  * a drm_connector reference through calling drm_connector_find_by_fwnode().
  */
-void drm_connector_oob_hotplug_event(struct fwnode_handle *connector_fwnode,
-				     enum drm_connector_status status)
+void drm_connector_oob_hotplug_event(struct fwnode_handle *connector_fwnode)
 {
 	struct drm_connector *connector;
 
@@ -3086,7 +3134,7 @@ void drm_connector_oob_hotplug_event(struct fwnode_handle *connector_fwnode,
 		return;
 
 	if (connector->funcs->oob_hotplug_event)
-		connector->funcs->oob_hotplug_event(connector, status);
+		connector->funcs->oob_hotplug_event(connector);
 
 	drm_connector_put(connector);
 }

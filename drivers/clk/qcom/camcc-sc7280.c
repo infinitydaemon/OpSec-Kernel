@@ -2468,7 +2468,17 @@ static struct platform_driver cam_cc_sc7280_driver = {
 	},
 };
 
-module_platform_driver(cam_cc_sc7280_driver);
+static int __init cam_cc_sc7280_init(void)
+{
+	return platform_driver_register(&cam_cc_sc7280_driver);
+}
+subsys_initcall(cam_cc_sc7280_init);
+
+static void __exit cam_cc_sc7280_exit(void)
+{
+	platform_driver_unregister(&cam_cc_sc7280_driver);
+}
+module_exit(cam_cc_sc7280_exit);
 
 MODULE_DESCRIPTION("QTI CAM_CC SC7280 Driver");
 MODULE_LICENSE("GPL v2");

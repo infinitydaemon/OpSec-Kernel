@@ -24,7 +24,6 @@
 #include <linux/filter.h>
 #include <linux/ptr_ring.h>
 #include <net/xdp.h>
-#include <net/hotdata.h>
 
 #include <linux/sched.h>
 #include <linux/workqueue.h>
@@ -330,8 +329,7 @@ static int cpu_map_kthread_run(void *data)
 		/* Support running another XDP prog on this CPU */
 		nframes = cpu_map_bpf_prog_run(rcpu, frames, xdp_n, &stats, &list);
 		if (nframes) {
-			m = kmem_cache_alloc_bulk(net_hotdata.skbuff_cache,
-						  gfp, nframes, skbs);
+			m = kmem_cache_alloc_bulk(skbuff_cache, gfp, nframes, skbs);
 			if (unlikely(m == 0)) {
 				for (i = 0; i < nframes; i++)
 					skbs[i] = NULL; /* effect: xdp_return_frame */
@@ -768,16 +766,6 @@ void __cpu_map_flush(void)
 		wake_up_process(bq->obj->kthread);
 	}
 }
-
-#ifdef CONFIG_DEBUG_NET
-bool cpu_map_check_flush(void)
-{
-	if (list_empty(this_cpu_ptr(&cpu_map_flush_list)))
-		return false;
-	__cpu_map_flush();
-	return true;
-}
-#endif
 
 static int __init cpu_map_init(void)
 {

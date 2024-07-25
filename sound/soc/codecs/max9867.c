@@ -56,13 +56,13 @@ static int max9867_adc_dac_event(struct snd_soc_dapm_widget *w,
 	struct max9867_priv *max9867 = snd_soc_component_get_drvdata(component);
 	enum max9867_adc_dac adc_dac;
 
-	if (!snd_soc_dapm_widget_name_cmp(w, "ADCL"))
+	if (!strcmp(w->name, "ADCL"))
 		adc_dac = MAX9867_ADC_LEFT;
-	else if (!snd_soc_dapm_widget_name_cmp(w, "ADCR"))
+	else if (!strcmp(w->name, "ADCR"))
 		adc_dac = MAX9867_ADC_RIGHT;
-	else if (!snd_soc_dapm_widget_name_cmp(w, "DACL"))
+	else if (!strcmp(w->name, "DACL"))
 		adc_dac = MAX9867_DAC_LEFT;
-	else if (!snd_soc_dapm_widget_name_cmp(w, "DACR"))
+	else if (!strcmp(w->name, "DACR"))
 		adc_dac = MAX9867_DAC_RIGHT;
 	else
 		return 0;
@@ -684,7 +684,7 @@ static int max9867_i2c_probe(struct i2c_client *i2c)
 }
 
 static const struct i2c_device_id max9867_i2c_id[] = {
-	{ "max9867" },
+	{ "max9867", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, max9867_i2c_id);

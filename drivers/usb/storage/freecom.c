@@ -534,6 +534,7 @@ static void pdump(struct us_data *us, void *ibuffer, int length)
 	}
 	line[offset] = 0;
 	usb_stor_dbg(us, "%s\n", line);
+	offset = 0;
 }
 #endif
 

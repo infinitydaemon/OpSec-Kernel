@@ -112,11 +112,13 @@ static int max3355_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void max3355_remove(struct platform_device *pdev)
+static int max3355_remove(struct platform_device *pdev)
 {
 	struct max3355_data *data = platform_get_drvdata(pdev);
 
 	gpiod_set_value_cansleep(data->shdn_gpiod, 0);
+
+	return 0;
 }
 
 static const struct of_device_id max3355_match_table[] = {
@@ -127,7 +129,7 @@ MODULE_DEVICE_TABLE(of, max3355_match_table);
 
 static struct platform_driver max3355_driver = {
 	.probe		= max3355_probe,
-	.remove_new	= max3355_remove,
+	.remove		= max3355_remove,
 	.driver		= {
 		.name	= "extcon-max3355",
 		.of_match_table = max3355_match_table,

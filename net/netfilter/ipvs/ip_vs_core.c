@@ -1550,7 +1550,6 @@ static int ipvs_gre_decap(struct netns_ipvs *ipvs, struct sk_buff *skb,
 	if (!dest)
 		goto unk;
 	if (dest->tun_type == IP_VS_CONN_F_TUNNEL_TYPE_GRE) {
-		IP_TUNNEL_DECLARE_FLAGS(flags);
 		__be16 type;
 
 		/* Only support version 0 and C (csum) */
@@ -1561,10 +1560,7 @@ static int ipvs_gre_decap(struct netns_ipvs *ipvs, struct sk_buff *skb,
 		if (type != htons(ETH_P_IP))
 			goto unk;
 		*proto = IPPROTO_IPIP;
-
-		gre_flags_to_tnl_flags(flags, greh->flags);
-
-		return gre_calc_hlen(flags);
+		return gre_calc_hlen(gre_flags_to_tnl_flags(greh->flags));
 	}
 
 unk:
@@ -2454,4 +2450,3 @@ static void __exit ip_vs_cleanup(void)
 module_init(ip_vs_init);
 module_exit(ip_vs_cleanup);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("IP Virtual Server");

@@ -156,7 +156,7 @@ static const struct attribute_group *mcb_carrier_groups[] = {
 };
 
 
-static const struct bus_type mcb_bus_type = {
+static struct bus_type mcb_bus_type = {
 	.name = "mcb",
 	.match = mcb_match,
 	.uevent = mcb_uevent,
@@ -165,7 +165,7 @@ static const struct bus_type mcb_bus_type = {
 	.shutdown = mcb_shutdown,
 };
 
-static const struct device_type mcb_carrier_device_type = {
+static struct device_type mcb_carrier_device_type = {
 	.name = "mcb-carrier",
 	.groups = mcb_carrier_groups,
 };
@@ -263,7 +263,6 @@ static void mcb_free_bus(struct device *dev)
 
 /**
  * mcb_alloc_bus() - Allocate a new @mcb_bus
- * @carrier: generic &struct device for the carrier device
  *
  * Allocate a new @mcb_bus.
  */
@@ -290,7 +289,7 @@ struct mcb_bus *mcb_alloc_bus(struct device *carrier)
 	bus->dev.parent = carrier;
 	bus->dev.bus = &mcb_bus_type;
 	bus->dev.type = &mcb_carrier_device_type;
-	bus->dev.release = mcb_free_bus;
+	bus->dev.release = &mcb_free_bus;
 
 	dev_set_name(&bus->dev, "mcb:%d", bus_nr);
 	rc = device_add(&bus->dev);
@@ -313,7 +312,7 @@ static int __mcb_devices_unregister(struct device *dev, void *data)
 
 static void mcb_devices_unregister(struct mcb_bus *bus)
 {
-	bus_for_each_dev(bus->dev.bus, NULL, NULL, __mcb_devices_unregister);
+	bus_for_each_dev(&mcb_bus_type, NULL, NULL, __mcb_devices_unregister);
 }
 /**
  * mcb_release_bus() - Free a @mcb_bus
@@ -328,7 +327,7 @@ void mcb_release_bus(struct mcb_bus *bus)
 EXPORT_SYMBOL_NS_GPL(mcb_release_bus, MCB);
 
 /**
- * mcb_bus_get() - Increment refcnt
+ * mcb_bus_put() - Increment refcnt
  * @bus: The @mcb_bus
  *
  * Get a @mcb_bus' ref
@@ -408,7 +407,7 @@ static int __mcb_bus_add_devices(struct device *dev, void *data)
  */
 void mcb_bus_add_devices(const struct mcb_bus *bus)
 {
-	bus_for_each_dev(bus->dev.bus, NULL, NULL, __mcb_bus_add_devices);
+	bus_for_each_dev(&mcb_bus_type, NULL, NULL, __mcb_bus_add_devices);
 }
 EXPORT_SYMBOL_NS_GPL(mcb_bus_add_devices, MCB);
 
@@ -456,7 +455,7 @@ EXPORT_SYMBOL_NS_GPL(mcb_request_mem, MCB);
 
 /**
  * mcb_release_mem() - Release memory requested by device
- * @mem: The memory resource to be released
+ * @dev: The @mcb_device that requested the memory
  *
  * Release memory that was prior requested via @mcb_request_mem().
  */

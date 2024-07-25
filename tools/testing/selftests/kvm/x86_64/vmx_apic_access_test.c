@@ -99,7 +99,7 @@ int main(int argc, char *argv[])
 			TEST_ASSERT_KVM_EXIT_REASON(vcpu, KVM_EXIT_INTERNAL_ERROR);
 			TEST_ASSERT(run->internal.suberror ==
 				    KVM_INTERNAL_ERROR_EMULATION,
-				    "Got internal suberror other than KVM_INTERNAL_ERROR_EMULATION: %u",
+				    "Got internal suberror other than KVM_INTERNAL_ERROR_EMULATION: %u\n",
 				    run->internal.suberror);
 			break;
 		}

@@ -598,7 +598,7 @@ err_ebook:
 	return r;
 }
 
-static void xo1_sci_remove(struct platform_device *pdev)
+static int xo1_sci_remove(struct platform_device *pdev)
 {
 	free_irq(sci_irq, pdev);
 	cancel_work_sync(&sci_work);
@@ -608,6 +608,7 @@ static void xo1_sci_remove(struct platform_device *pdev)
 	free_ebook_switch();
 	free_power_button();
 	acpi_base = 0;
+	return 0;
 }
 
 static struct platform_driver xo1_sci_driver = {
@@ -616,7 +617,7 @@ static struct platform_driver xo1_sci_driver = {
 		.dev_groups = lid_groups,
 	},
 	.probe = xo1_sci_probe,
-	.remove_new = xo1_sci_remove,
+	.remove = xo1_sci_remove,
 	.suspend = xo1_sci_suspend,
 	.resume = xo1_sci_resume,
 };

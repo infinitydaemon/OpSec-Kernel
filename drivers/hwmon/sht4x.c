@@ -49,7 +49,6 @@ DECLARE_CRC8_TABLE(sht4x_crc8_table);
  * struct sht4x_data - All the data required to operate an SHT4X chip
  * @client: the i2c client associated with the SHT4X
  * @lock: a mutex that is used to prevent parallel access to the i2c client
- * @valid: validity of fields below
  * @update_interval: the minimum poll interval
  * @last_updated: the previous time that the SHT4X was polled
  * @temperature: the latest temperature value received from the SHT4X
@@ -67,7 +66,7 @@ struct sht4x_data {
 
 /**
  * sht4x_read_values() - read and parse the raw data from the SHT4X
- * @data: the struct sht4x_data to use for the lock
+ * @sht4x_data: the struct sht4x_data to use for the lock
  * Return: 0 if successful, -ERRNO if not
  */
 static int sht4x_read_values(struct sht4x_data *data)
@@ -276,7 +275,7 @@ static int sht4x_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id sht4x_id[] = {
-	{ "sht4x" },
+	{ "sht4x", 0 },
 	{ },
 };
 MODULE_DEVICE_TABLE(i2c, sht4x_id);

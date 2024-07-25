@@ -483,11 +483,11 @@ xfs_getfsmap_rtdev_rtbitmap_helper(
 	xfs_rtblock_t			rtbno;
 	xfs_daddr_t			rec_daddr, len_daddr;
 
-	rtbno = xfs_rtx_to_rtb(mp, rec->ar_startext);
+	rtbno = rec->ar_startext * mp->m_sb.sb_rextsize;
 	rec_daddr = XFS_FSB_TO_BB(mp, rtbno);
 	irec.rm_startblock = rtbno;
 
-	rtbno = xfs_rtx_to_rtb(mp, rec->ar_extcount);
+	rtbno = rec->ar_extcount * mp->m_sb.sb_rextsize;
 	len_daddr = XFS_FSB_TO_BB(mp, rtbno);
 	irec.rm_blockcount = rtbno;
 
@@ -514,7 +514,7 @@ xfs_getfsmap_rtdev_rtbitmap(
 	uint64_t			eofs;
 	int				error;
 
-	eofs = XFS_FSB_TO_BB(mp, xfs_rtx_to_rtb(mp, mp->m_sb.sb_rextents));
+	eofs = XFS_FSB_TO_BB(mp, mp->m_sb.sb_rextents * mp->m_sb.sb_rextsize);
 	if (keys[0].fmr_physical >= eofs)
 		return 0;
 	start_rtb = XFS_BB_TO_FSBT(mp,
@@ -533,14 +533,17 @@ xfs_getfsmap_rtdev_rtbitmap(
 	trace_xfs_fsmap_low_key_linear(mp, info->dev, start_rtb);
 	trace_xfs_fsmap_high_key_linear(mp, info->dev, end_rtb);
 
-	xfs_rtbitmap_lock_shared(mp, XFS_RBMLOCK_BITMAP);
+	xfs_ilock(mp->m_rbmip, XFS_ILOCK_SHARED | XFS_ILOCK_RTBITMAP);
 
 	/*
 	 * Set up query parameters to return free rtextents covering the range
 	 * we want.
 	 */
-	alow.ar_startext = xfs_rtb_to_rtx(mp, start_rtb);
-	ahigh.ar_startext = xfs_rtb_to_rtxup(mp, end_rtb);
+	alow.ar_startext = start_rtb;
+	ahigh.ar_startext = end_rtb;
+	do_div(alow.ar_startext, mp->m_sb.sb_rextsize);
+	if (do_div(ahigh.ar_startext, mp->m_sb.sb_rextsize))
+		ahigh.ar_startext++;
 	error = xfs_rtalloc_query_range(mp, tp, &alow, &ahigh,
 			xfs_getfsmap_rtdev_rtbitmap_helper, info);
 	if (error)
@@ -557,7 +560,7 @@ xfs_getfsmap_rtdev_rtbitmap(
 	if (error)
 		goto err;
 err:
-	xfs_rtbitmap_unlock_shared(mp, XFS_RBMLOCK_BITMAP);
+	xfs_iunlock(mp->m_rbmip, XFS_ILOCK_SHARED | XFS_ILOCK_RTBITMAP);
 	return error;
 }
 #endif /* CONFIG_XFS_RT */
@@ -763,8 +766,8 @@ xfs_getfsmap_datadev_bnobt_query(
 		return xfs_getfsmap_datadev_bnobt_helper(*curpp, &key[1], info);
 
 	/* Allocate cursor for this AG and query_range it. */
-	*curpp = xfs_bnobt_init_cursor(tp->t_mountp, tp, info->agf_bp,
-			info->pag);
+	*curpp = xfs_allocbt_init_cursor(tp->t_mountp, tp, info->agf_bp,
+			info->pag, XFS_BTNUM_BNO);
 	key->ar_startblock = info->low.rm_startblock;
 	key[1].ar_startblock = info->high.rm_startblock;
 	return xfs_alloc_query_range(*curpp, key, &key[1],

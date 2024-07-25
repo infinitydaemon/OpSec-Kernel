@@ -552,7 +552,8 @@ wlc_phy_attach(struct shared_phy *sh, struct bcma_device *d11core,
 		if (!pi->phycal_timer)
 			goto err;
 
-		wlc_phy_attach_nphy(pi);
+		if (!wlc_phy_attach_nphy(pi))
+			goto err;
 
 	} else if (ISLCNPHY(pi)) {
 		if (!wlc_phy_attach_lcnphy(pi))

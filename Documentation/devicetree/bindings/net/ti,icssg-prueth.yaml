@@ -13,12 +13,13 @@ description:
   Ethernet based on the Programmable Real-Time Unit and Industrial
   Communication Subsystem.
 
+allOf:
+  - $ref: /schemas/remoteproc/ti,pru-consumer.yaml#
+
 properties:
   compatible:
     enum:
-      - ti,am642-icssg-prueth      # for AM64x SoC family
-      - ti,am654-icssg-prueth      # for AM65x SoC family
-      - ti,am654-sr1-icssg-prueth  # for AM65x SoC family, SR1.0
+      - ti,am654-icssg-prueth  # for AM65x SoC family
 
   sram:
     $ref: /schemas/types.yaml#/definitions/phandle
@@ -26,11 +27,9 @@ properties:
       phandle to MSMC SRAM node
 
   dmas:
-    minItems: 10
-    maxItems: 12
+    maxItems: 10
 
   dma-names:
-    minItems: 10
     items:
       - const: tx0-0
       - const: tx0-1
@@ -42,8 +41,6 @@ properties:
       - const: tx1-3
       - const: rx0
       - const: rx1
-      - const: rxmgm0
-      - const: rxmgm1
 
   ti,mii-g-rt:
     $ref: /schemas/types.yaml#/definitions/phandle
@@ -109,13 +106,6 @@ properties:
               phandle to system controller node and register offset
               to ICSSG control register for RGMII transmit delay
 
-          ti,half-duplex-capable:
-            type: boolean
-            description:
-              Indicates that the PHY output pin COL is routed to ICSSG GPIO pin
-              (PRGx_PRU0/1_GPIO10) as input so that the ICSSG MII port is
-              capable of half duplex operations.
-
         required:
           - reg
     anyOf:
@@ -133,27 +123,6 @@ required:
   - ti,mii-g-rt
   - interrupts
   - interrupt-names
-
-allOf:
-  - $ref: /schemas/remoteproc/ti,pru-consumer.yaml#
-
-  - if:
-      properties:
-        compatible:
-          contains:
-            const: ti,am654-sr1-icssg-prueth
-    then:
-      properties:
-        dmas:
-          minItems: 12
-        dma-names:
-          minItems: 12
-    else:
-      properties:
-        dmas:
-          maxItems: 10
-        dma-names:
-          maxItems: 10
 
 unevaluatedProperties: false
 

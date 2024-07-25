@@ -126,7 +126,7 @@
 #define E_ECAM_CR_ENABLE		BIT(0)
 #define E_ECAM_SIZE_LOC			GENMASK(20, 16)
 #define E_ECAM_SIZE_SHIFT		16
-#define NWL_ECAM_MAX_SIZE		16
+#define NWL_ECAM_VALUE_DEFAULT		12
 
 #define CFG_DMA_REG_BAR			GENMASK(2, 0)
 #define CFG_PCIE_CACHE			GENMASK(7, 0)
@@ -165,8 +165,10 @@ struct nwl_pcie {
 	u32 ecam_size;
 	int irq_intx;
 	int irq_misc;
+	u32 ecam_value;
+	u8 last_busno;
 	struct nwl_msi msi;
-	struct irq_domain *intx_irq_domain;
+	struct irq_domain *legacy_irq_domain;
 	struct clk *clk;
 	raw_spinlock_t leg_mask_lock;
 };
@@ -324,7 +326,7 @@ static void nwl_pcie_leg_handler(struct irq_desc *desc)
 	while ((status = nwl_bridge_readl(pcie, MSGF_LEG_STATUS) &
 				MSGF_LEG_SR_MASKALL) != 0) {
 		for_each_set_bit(bit, &status, PCI_NUM_INTX)
-			generic_handle_domain_irq(pcie->intx_irq_domain, bit);
+			generic_handle_domain_irq(pcie->legacy_irq_domain, bit);
 	}
 
 	chained_irq_exit(chip, desc);
@@ -364,7 +366,7 @@ static void nwl_pcie_msi_handler_low(struct irq_desc *desc)
 	chained_irq_exit(chip, desc);
 }
 
-static void nwl_mask_intx_irq(struct irq_data *data)
+static void nwl_mask_leg_irq(struct irq_data *data)
 {
 	struct nwl_pcie *pcie = irq_data_get_irq_chip_data(data);
 	unsigned long flags;
@@ -378,7 +380,7 @@ static void nwl_mask_intx_irq(struct irq_data *data)
 	raw_spin_unlock_irqrestore(&pcie->leg_mask_lock, flags);
 }
 
-static void nwl_unmask_intx_irq(struct irq_data *data)
+static void nwl_unmask_leg_irq(struct irq_data *data)
 {
 	struct nwl_pcie *pcie = irq_data_get_irq_chip_data(data);
 	unsigned long flags;
@@ -392,26 +394,26 @@ static void nwl_unmask_intx_irq(struct irq_data *data)
 	raw_spin_unlock_irqrestore(&pcie->leg_mask_lock, flags);
 }
 
-static struct irq_chip nwl_intx_irq_chip = {
+static struct irq_chip nwl_leg_irq_chip = {
 	.name = "nwl_pcie:legacy",
-	.irq_enable = nwl_unmask_intx_irq,
-	.irq_disable = nwl_mask_intx_irq,
-	.irq_mask = nwl_mask_intx_irq,
-	.irq_unmask = nwl_unmask_intx_irq,
+	.irq_enable = nwl_unmask_leg_irq,
+	.irq_disable = nwl_mask_leg_irq,
+	.irq_mask = nwl_mask_leg_irq,
+	.irq_unmask = nwl_unmask_leg_irq,
 };
 
-static int nwl_intx_map(struct irq_domain *domain, unsigned int irq,
-			irq_hw_number_t hwirq)
+static int nwl_legacy_map(struct irq_domain *domain, unsigned int irq,
+			  irq_hw_number_t hwirq)
 {
-	irq_set_chip_and_handler(irq, &nwl_intx_irq_chip, handle_level_irq);
+	irq_set_chip_and_handler(irq, &nwl_leg_irq_chip, handle_level_irq);
 	irq_set_chip_data(irq, domain->host_data);
 	irq_set_status_flags(irq, IRQ_LEVEL);
 
 	return 0;
 }
 
-static const struct irq_domain_ops intx_domain_ops = {
-	.map = nwl_intx_map,
+static const struct irq_domain_ops legacy_domain_ops = {
+	.map = nwl_legacy_map,
 	.xlate = pci_irqd_intx_xlate,
 };
 
@@ -525,20 +527,20 @@ static int nwl_pcie_init_irq_domain(struct nwl_pcie *pcie)
 {
 	struct device *dev = pcie->dev;
 	struct device_node *node = dev->of_node;
-	struct device_node *intc_node;
+	struct device_node *legacy_intc_node;
 
-	intc_node = of_get_next_child(node, NULL);
-	if (!intc_node) {
+	legacy_intc_node = of_get_next_child(node, NULL);
+	if (!legacy_intc_node) {
 		dev_err(dev, "No legacy intc node found\n");
 		return -EINVAL;
 	}
 
-	pcie->intx_irq_domain = irq_domain_add_linear(intc_node,
-						      PCI_NUM_INTX,
-						      &intx_domain_ops,
-						      pcie);
-	of_node_put(intc_node);
-	if (!pcie->intx_irq_domain) {
+	pcie->legacy_irq_domain = irq_domain_add_linear(legacy_intc_node,
+							PCI_NUM_INTX,
+							&legacy_domain_ops,
+							pcie);
+	of_node_put(legacy_intc_node);
+	if (!pcie->legacy_irq_domain) {
 		dev_err(dev, "failed to create IRQ domain\n");
 		return -ENOMEM;
 	}
@@ -623,7 +625,7 @@ static int nwl_pcie_bridge_init(struct nwl_pcie *pcie)
 {
 	struct device *dev = pcie->dev;
 	struct platform_device *pdev = to_platform_device(dev);
-	u32 breg_val, ecam_val;
+	u32 breg_val, ecam_val, first_busno = 0;
 	int err;
 
 	breg_val = nwl_bridge_readl(pcie, E_BREG_CAPABILITIES) & BREG_PRESENT;
@@ -673,13 +675,22 @@ static int nwl_pcie_bridge_init(struct nwl_pcie *pcie)
 			  E_ECAM_CR_ENABLE, E_ECAM_CONTROL);
 
 	nwl_bridge_writel(pcie, nwl_bridge_readl(pcie, E_ECAM_CONTROL) |
-			  (NWL_ECAM_MAX_SIZE << E_ECAM_SIZE_SHIFT),
+			  (pcie->ecam_value << E_ECAM_SIZE_SHIFT),
 			  E_ECAM_CONTROL);
 
 	nwl_bridge_writel(pcie, lower_32_bits(pcie->phys_ecam_base),
 			  E_ECAM_BASE_LO);
 	nwl_bridge_writel(pcie, upper_32_bits(pcie->phys_ecam_base),
 			  E_ECAM_BASE_HI);
+
+	/* Get bus range */
+	ecam_val = nwl_bridge_readl(pcie, E_ECAM_CONTROL);
+	pcie->last_busno = (ecam_val & E_ECAM_SIZE_LOC) >> E_ECAM_SIZE_SHIFT;
+	/* Write primary, secondary and subordinate bus numbers */
+	ecam_val = first_busno;
+	ecam_val |= (first_busno + 1) << 8;
+	ecam_val |= (pcie->last_busno << E_ECAM_SIZE_SHIFT);
+	writel(ecam_val, (pcie->ecam_base + PCI_PRIMARY_BUS));
 
 	if (nwl_pcie_link_up(pcie))
 		dev_info(dev, "Link is UP\n");
@@ -710,14 +721,14 @@ static int nwl_pcie_bridge_init(struct nwl_pcie *pcie)
 	/* Enable all misc interrupts */
 	nwl_bridge_writel(pcie, MSGF_MISC_SR_MASKALL, MSGF_MISC_MASK);
 
-	/* Disable all INTX interrupts */
+	/* Disable all legacy interrupts */
 	nwl_bridge_writel(pcie, (u32)~MSGF_LEG_SR_MASKALL, MSGF_LEG_MASK);
 
-	/* Clear pending INTX interrupts */
+	/* Clear pending legacy interrupts */
 	nwl_bridge_writel(pcie, nwl_bridge_readl(pcie, MSGF_LEG_STATUS) &
 			  MSGF_LEG_SR_MASKALL, MSGF_LEG_STATUS);
 
-	/* Enable all INTX interrupts */
+	/* Enable all legacy interrupts */
 	nwl_bridge_writel(pcie, MSGF_LEG_SR_MASKALL, MSGF_LEG_MASK);
 
 	/* Enable the bridge config interrupt */
@@ -781,6 +792,7 @@ static int nwl_pcie_probe(struct platform_device *pdev)
 	pcie = pci_host_bridge_priv(bridge);
 
 	pcie->dev = dev;
+	pcie->ecam_value = NWL_ECAM_VALUE_DEFAULT;
 
 	err = nwl_pcie_parse_dt(pcie, pdev);
 	if (err) {

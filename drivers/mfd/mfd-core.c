@@ -29,7 +29,7 @@ struct mfd_of_node_entry {
 	struct device_node *np;
 };
 
-static const struct device_type mfd_dev_type = {
+static struct device_type mfd_dev_type = {
 	.name	= "mfd_device",
 };
 

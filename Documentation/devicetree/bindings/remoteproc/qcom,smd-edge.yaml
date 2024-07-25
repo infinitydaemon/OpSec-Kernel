@@ -61,7 +61,6 @@ properties:
     description:
       Three entries specifying the outgoing ipc bit used for signaling the
       remote processor.
-    deprecated: true
 
   qcom,smd-edge:
     $ref: /schemas/types.yaml#/definitions/uint32
@@ -112,7 +111,7 @@ examples:
         smd-edge {
             interrupts = <GIC_SPI 156 IRQ_TYPE_EDGE_RISING>;
 
-            mboxes = <&apcs 8>;
+            qcom,ipc = <&apcs 8 8>;
             qcom,smd-edge = <1>;
         };
     };

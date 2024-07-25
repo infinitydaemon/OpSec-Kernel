@@ -35,6 +35,7 @@
 
 #include <drm/display/drm_dp_helper.h>
 #include <drm/drm_crtc.h>
+#include <drm/drm_edid.h>
 #include <drm/drm_encoder.h>
 #include <drm/drm_util.h>
 
@@ -43,7 +44,6 @@
 
 struct nvkm_i2c_port;
 struct dcb_output;
-struct edid;
 
 #ifdef CONFIG_DRM_NOUVEAU_BACKLIGHT
 struct nouveau_backlight {
@@ -121,6 +121,7 @@ struct nouveau_connector {
 	struct drm_connector base;
 	enum dcb_connector_type type;
 	u8 index;
+	u8 *dcb;
 
 	struct nvif_conn conn;
 	u64 hpd_pending;
@@ -199,7 +200,7 @@ nouveau_crtc_connector_get(struct nouveau_crtc *nv_crtc)
 }
 
 struct drm_connector *
-nouveau_connector_create(struct drm_device *, int id);
+nouveau_connector_create(struct drm_device *, const struct dcb_output *);
 void nouveau_connector_hpd(struct nouveau_connector *, u64 bits);
 
 extern int nouveau_tv_disable;

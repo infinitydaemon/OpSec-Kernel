@@ -13,10 +13,8 @@
 #include <uapi/linux/io_uring.h>
 
 #include "io_uring.h"
-#include "alloc_cache.h"
 #include "openclose.h"
 #include "rsrc.h"
-#include "memmap.h"
 
 struct io_rsrc_update {
 	struct file			*file;
@@ -171,7 +169,7 @@ static void io_rsrc_put_work(struct io_rsrc_node *node)
 
 void io_rsrc_node_destroy(struct io_ring_ctx *ctx, struct io_rsrc_node *node)
 {
-	if (!io_alloc_cache_put(&ctx->rsrc_node_cache, node))
+	if (!io_alloc_cache_put(&ctx->rsrc_node_cache, &node->cache))
 		kfree(node);
 }
 
@@ -199,9 +197,12 @@ void io_rsrc_node_ref_zero(struct io_rsrc_node *node)
 struct io_rsrc_node *io_rsrc_node_alloc(struct io_ring_ctx *ctx)
 {
 	struct io_rsrc_node *ref_node;
+	struct io_cache_entry *entry;
 
-	ref_node = io_alloc_cache_get(&ctx->rsrc_node_cache);
-	if (!ref_node) {
+	entry = io_alloc_cache_get(&ctx->rsrc_node_cache);
+	if (entry) {
+		ref_node = container_of(entry, struct io_rsrc_node, cache);
+	} else {
 		ref_node = kzalloc(sizeof(*ref_node), GFP_KERNEL);
 		if (!ref_node)
 			return NULL;
@@ -249,6 +250,7 @@ __cold static int io_rsrc_ref_quiesce(struct io_rsrc_data *data,
 
 		ret = io_run_task_work_sig(ctx);
 		if (ret < 0) {
+			__set_current_state(TASK_RUNNING);
 			mutex_lock(&ctx->uring_lock);
 			if (list_empty(&ctx->rsrc_ref_list))
 				ret = 0;
@@ -871,6 +873,45 @@ static int io_buffer_account_pin(struct io_ring_ctx *ctx, struct page **pages,
 	return ret;
 }
 
+struct page **io_pin_pages(unsigned long ubuf, unsigned long len, int *npages)
+{
+	unsigned long start, end, nr_pages;
+	struct page **pages = NULL;
+	int pret, ret = -ENOMEM;
+
+	end = (ubuf + len + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	start = ubuf >> PAGE_SHIFT;
+	nr_pages = end - start;
+
+	pages = kvmalloc_array(nr_pages, sizeof(struct page *), GFP_KERNEL);
+	if (!pages)
+		goto done;
+
+	ret = 0;
+	mmap_read_lock(current->mm);
+	pret = pin_user_pages(ubuf, nr_pages, FOLL_WRITE | FOLL_LONGTERM,
+			      pages);
+	if (pret == nr_pages)
+		*npages = nr_pages;
+	else
+		ret = pret < 0 ? pret : -EFAULT;
+
+	mmap_read_unlock(current->mm);
+	if (ret) {
+		/* if we did partial map, release any pages we did get */
+		if (pret > 0)
+			unpin_user_pages(pages, pret);
+		goto done;
+	}
+	ret = 0;
+done:
+	if (ret < 0) {
+		kvfree(pages);
+		pages = ERR_PTR(ret);
+	}
+	return pages;
+}
+
 static int io_sqe_buffer_register(struct io_ring_ctx *ctx, struct iovec *iov,
 				  struct io_mapped_ubuf **pimu,
 				  struct page **last_hpage)
@@ -1067,7 +1108,6 @@ int io_import_fixed(int ddir, struct iov_iter *iter,
 			 * branch doesn't expect non PAGE_SIZE'd chunks.
 			 */
 			iter->bvec = bvec;
-			iter->nr_segs = bvec->bv_len;
 			iter->count -= offset;
 			iter->iov_offset = offset;
 		} else {

@@ -610,7 +610,7 @@ static void acpi_sbs_callback(void *context)
 	if (sbs->charger_exists) {
 		acpi_ac_get_present(sbs);
 		if (sbs->charger_present != saved_charger_state)
-			power_supply_changed(sbs->charger);
+			kobject_uevent(&sbs->charger->dev.kobj, KOBJ_CHANGE);
 	}
 
 	if (sbs->manager_present) {
@@ -622,7 +622,7 @@ static void acpi_sbs_callback(void *context)
 			acpi_battery_read(bat);
 			if (saved_battery_state == bat->present)
 				continue;
-			power_supply_changed(bat->bat);
+			kobject_uevent(&bat->bat->dev.kobj, KOBJ_CHANGE);
 		}
 	}
 }

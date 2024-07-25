@@ -470,5 +470,4 @@ int snd_dmaengine_pcm_refine_runtime_hwparams(
 }
 EXPORT_SYMBOL_GPL(snd_dmaengine_pcm_refine_runtime_hwparams);
 
-MODULE_DESCRIPTION("PCM dmaengine helper APIs");
 MODULE_LICENSE("GPL");

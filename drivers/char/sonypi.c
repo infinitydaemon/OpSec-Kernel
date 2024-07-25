@@ -920,7 +920,7 @@ static ssize_t sonypi_misc_read(struct file *file, char __user *buf,
 
 	if (ret > 0) {
 		struct inode *inode = file_inode(file);
-		inode_set_atime_to_ts(inode, current_time(inode));
+		inode->i_atime = current_time(inode);
 	}
 
 	return ret;
@@ -1408,7 +1408,7 @@ static int sonypi_probe(struct platform_device *dev)
 	return error;
 }
 
-static void sonypi_remove(struct platform_device *dev)
+static int sonypi_remove(struct platform_device *dev)
 {
 	sonypi_disable();
 
@@ -1432,6 +1432,8 @@ static void sonypi_remove(struct platform_device *dev)
 	}
 
 	kfifo_free(&sonypi_device.fifo);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -1468,7 +1470,7 @@ static struct platform_driver sonypi_driver = {
 		.pm	= SONYPI_PM,
 	},
 	.probe		= sonypi_probe,
-	.remove_new	= sonypi_remove,
+	.remove		= sonypi_remove,
 	.shutdown	= sonypi_shutdown,
 };
 

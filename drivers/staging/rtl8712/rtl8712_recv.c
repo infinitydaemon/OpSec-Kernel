@@ -267,7 +267,8 @@ union recv_frame *r8712_recvframe_chk_defrag(struct _adapter *padapter,
 				/*the first fragment*/
 				if (!list_empty(&pdefrag_q->queue)) {
 					/*free current defrag_q */
-					r8712_free_recvframe_queue(pdefrag_q, pfree_recv_queue);
+					r8712_free_recvframe_queue(pdefrag_q,
+							     pfree_recv_queue);
 				}
 			}
 			/* Then enqueue the 0~(n-1) fragment to the defrag_q */
@@ -861,7 +862,7 @@ static void query_rx_phy_status(struct _adapter *padapter,
 static void process_link_qual(struct _adapter *padapter,
 			      union recv_frame *prframe)
 {
-	u32	last_evm = 0, avg_val;
+	u32	last_evm = 0, tmpVal;
 	struct rx_pkt_attrib *pattrib;
 	struct smooth_rssi_data *sqd = &padapter->recvpriv.signal_qual_data;
 
@@ -883,8 +884,8 @@ static void process_link_qual(struct _adapter *padapter,
 			sqd->index = 0;
 
 		/* <1> Showed on UI for user, in percentage. */
-		avg_val = sqd->total_val / sqd->total_num;
-		padapter->recvpriv.signal = (u8)avg_val;
+		tmpVal = sqd->total_val / sqd->total_num;
+		padapter->recvpriv.signal = (u8)tmpVal;
 	}
 }
 

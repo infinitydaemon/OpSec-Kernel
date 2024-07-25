@@ -1298,13 +1298,17 @@ static void set_sock_size(struct sock *sk, int mode, int val)
 static void set_mcast_loop(struct sock *sk, u_char loop)
 {
 	/* setsockopt(sock, SOL_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop)); */
+	lock_sock(sk);
 	inet_assign_bit(MC_LOOP, sk, loop);
 #ifdef CONFIG_IP_VS_IPV6
-	if (READ_ONCE(sk->sk_family) == AF_INET6) {
+	if (sk->sk_family == AF_INET6) {
+		struct ipv6_pinfo *np = inet6_sk(sk);
+
 		/* IPV6_MULTICAST_LOOP */
-		inet6_assign_bit(MC6_LOOP, sk, loop);
+		np->mc_loop = loop ? 1 : 0;
 	}
 #endif
+	release_sock(sk);
 }
 
 /*
@@ -1316,13 +1320,13 @@ static void set_mcast_ttl(struct sock *sk, u_char ttl)
 
 	/* setsockopt(sock, SOL_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl)); */
 	lock_sock(sk);
-	WRITE_ONCE(inet->mc_ttl, ttl);
+	inet->mc_ttl = ttl;
 #ifdef CONFIG_IP_VS_IPV6
 	if (sk->sk_family == AF_INET6) {
 		struct ipv6_pinfo *np = inet6_sk(sk);
 
 		/* IPV6_MULTICAST_HOPS */
-		WRITE_ONCE(np->mcast_hops, ttl);
+		np->mcast_hops = ttl;
 	}
 #endif
 	release_sock(sk);
@@ -1335,13 +1339,13 @@ static void set_mcast_pmtudisc(struct sock *sk, int val)
 
 	/* setsockopt(sock, SOL_IP, IP_MTU_DISCOVER, &val, sizeof(val)); */
 	lock_sock(sk);
-	WRITE_ONCE(inet->pmtudisc, val);
+	inet->pmtudisc = val;
 #ifdef CONFIG_IP_VS_IPV6
 	if (sk->sk_family == AF_INET6) {
 		struct ipv6_pinfo *np = inet6_sk(sk);
 
 		/* IPV6_MTU_DISCOVER */
-		WRITE_ONCE(np->pmtudisc, val);
+		np->pmtudisc = val;
 	}
 #endif
 	release_sock(sk);
@@ -1365,7 +1369,7 @@ static int set_mcast_if(struct sock *sk, struct net_device *dev)
 		struct ipv6_pinfo *np = inet6_sk(sk);
 
 		/* IPV6_MULTICAST_IF */
-		WRITE_ONCE(np->mcast_oif, dev->ifindex);
+		np->mcast_oif = dev->ifindex;
 	}
 #endif
 	release_sock(sk);

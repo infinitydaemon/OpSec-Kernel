@@ -102,7 +102,8 @@ static unsigned char control_pc_to_mfc3(unsigned char control)
 		ret |= 128;
 	if (control & PARPORT_CONTROL_AUTOFD) /* AUTOLF */
 		ret &= ~64;
-	/* PARPORT_CONTROL_STROBE handled directly by hardware */
+	if (control & PARPORT_CONTROL_STROBE) /* Strobe */
+		/* Handled directly by hardware */;
 	return ret;
 }
 

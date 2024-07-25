@@ -8,14 +8,8 @@
 
 #include <linux/atomic.h>
 #include <linux/wait.h>
-#include <linux/lockdep.h>
 #include <linux/percpu_counter.h>
 #include "extent_io.h"
-#include "locking.h"
-
-struct extent_buffer;
-struct btrfs_path;
-struct btrfs_root;
 
 #define BTRFS_WRITE_LOCK 1
 #define BTRFS_READ_LOCK 2
@@ -163,22 +157,14 @@ enum btrfs_lockdep_trans_states {
 static_assert(BTRFS_NESTING_MAX <= MAX_LOCKDEP_SUBCLASSES,
 	      "too many lock subclasses defined");
 
-void btrfs_tree_lock_nested(struct extent_buffer *eb, enum btrfs_lock_nesting nest);
+struct btrfs_path;
 
-static inline void btrfs_tree_lock(struct extent_buffer *eb)
-{
-	btrfs_tree_lock_nested(eb, BTRFS_NESTING_NORMAL);
-}
-
+void __btrfs_tree_lock(struct extent_buffer *eb, enum btrfs_lock_nesting nest);
+void btrfs_tree_lock(struct extent_buffer *eb);
 void btrfs_tree_unlock(struct extent_buffer *eb);
 
-void btrfs_tree_read_lock_nested(struct extent_buffer *eb, enum btrfs_lock_nesting nest);
-
-static inline void btrfs_tree_read_lock(struct extent_buffer *eb)
-{
-	btrfs_tree_read_lock_nested(eb, BTRFS_NESTING_NORMAL);
-}
-
+void __btrfs_tree_read_lock(struct extent_buffer *eb, enum btrfs_lock_nesting nest);
+void btrfs_tree_read_lock(struct extent_buffer *eb);
 void btrfs_tree_read_unlock(struct extent_buffer *eb);
 int btrfs_try_tree_read_lock(struct extent_buffer *eb);
 int btrfs_try_tree_write_lock(struct extent_buffer *eb);

@@ -40,8 +40,6 @@ int filemap_fdatawait_keep_errors(struct address_space *mapping);
 int filemap_fdatawait_range(struct address_space *, loff_t lstart, loff_t lend);
 int filemap_fdatawait_range_keep_errors(struct address_space *mapping,
 		loff_t start_byte, loff_t end_byte);
-int filemap_invalidate_inode(struct inode *inode, bool flush,
-			     loff_t start, loff_t end);
 
 static inline int filemap_fdatawait(struct address_space *mapping)
 {
@@ -208,7 +206,6 @@ enum mapping_flags {
 	AS_RELEASE_ALWAYS,	/* Call ->release_folio(), even if no private data */
 	AS_STABLE_WRITES,	/* must wait for writeback before modifying
 				   folio contents */
-	AS_UNMOVABLE,		/* The mapping cannot be moved, ever */
 };
 
 /**
@@ -309,22 +306,6 @@ static inline void mapping_clear_stable_writes(struct address_space *mapping)
 	clear_bit(AS_STABLE_WRITES, &mapping->flags);
 }
 
-static inline void mapping_set_unmovable(struct address_space *mapping)
-{
-	/*
-	 * It's expected unmovable mappings are also unevictable. Compaction
-	 * migrate scanner (isolate_migratepages_block()) relies on this to
-	 * reduce page locking.
-	 */
-	set_bit(AS_UNEVICTABLE, &mapping->flags);
-	set_bit(AS_UNMOVABLE, &mapping->flags);
-}
-
-static inline bool mapping_unmovable(struct address_space *mapping)
-{
-	return test_bit(AS_UNMOVABLE, &mapping->flags);
-}
-
 static inline gfp_t mapping_gfp_mask(struct address_space * mapping)
 {
 	return mapping->gfp_mask;
@@ -354,10 +335,17 @@ static inline void mapping_set_gfp_mask(struct address_space *m, gfp_t mask)
  * a good order (that's 1MB if you're using 4kB pages)
  */
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
-#define MAX_PAGECACHE_ORDER	HPAGE_PMD_ORDER
+#define PREFERRED_MAX_PAGECACHE_ORDER	HPAGE_PMD_ORDER
 #else
-#define MAX_PAGECACHE_ORDER	8
+#define PREFERRED_MAX_PAGECACHE_ORDER	8
 #endif
+
+/*
+ * xas_split_alloc() does not support arbitrary orders. This implies no
+ * 512MB THP on ARM64 with 64KB base page size.
+ */
+#define MAX_XAS_ORDER		(XA_CHUNK_SHIFT * 2 - 1)
+#define MAX_PAGECACHE_ORDER	min(MAX_XAS_ORDER, PREFERRED_MAX_PAGECACHE_ORDER)
 
 /**
  * mapping_set_large_folios() - Indicate the file supports large folios.
@@ -552,20 +540,22 @@ static inline void *detach_page_private(struct page *page)
 }
 
 #ifdef CONFIG_NUMA
-struct folio *filemap_alloc_folio_noprof(gfp_t gfp, unsigned int order);
+struct folio *filemap_alloc_folio(gfp_t gfp, unsigned int order);
 #else
-static inline struct folio *filemap_alloc_folio_noprof(gfp_t gfp, unsigned int order)
+static inline struct folio *filemap_alloc_folio(gfp_t gfp, unsigned int order)
 {
-	return folio_alloc_noprof(gfp, order);
+	return folio_alloc(gfp, order);
 }
 #endif
-
-#define filemap_alloc_folio(...)				\
-	alloc_hooks(filemap_alloc_folio_noprof(__VA_ARGS__))
 
 static inline struct page *__page_cache_alloc(gfp_t gfp)
 {
 	return &filemap_alloc_folio(gfp, 0)->page;
+}
+
+static inline struct page *page_cache_alloc(struct address_space *x)
+{
+	return __page_cache_alloc(mapping_gfp_mask(x));
 }
 
 static inline gfp_t readahead_gfp_mask(struct address_space *x)
@@ -831,6 +821,9 @@ static inline pgoff_t folio_next_index(struct folio *folio)
  */
 static inline struct page *folio_file_page(struct folio *folio, pgoff_t index)
 {
+	/* HugeTLBfs indexes the page cache in units of hpage_size */
+	if (folio_test_hugetlb(folio))
+		return &folio->page;
 	return folio_page(folio, index & (folio_nr_pages(folio) - 1));
 }
 
@@ -846,6 +839,9 @@ static inline struct page *folio_file_page(struct folio *folio, pgoff_t index)
  */
 static inline bool folio_contains(struct folio *folio, pgoff_t index)
 {
+	/* HugeTLBfs indexes the page cache in units of hpage_size */
+	if (folio_test_hugetlb(folio))
+		return folio->index == index;
 	return index - folio_index(folio) < folio_nr_pages(folio);
 }
 
@@ -903,9 +899,10 @@ static inline struct folio *read_mapping_folio(struct address_space *mapping,
 }
 
 /*
- * Get the offset in PAGE_SIZE (even for hugetlb pages).
+ * Get index of the page within radix-tree (but not for hugetlb pages).
+ * (TODO: remove once hugetlb pages will have ->index in PAGE_SIZE)
  */
-static inline pgoff_t page_to_pgoff(struct page *page)
+static inline pgoff_t page_to_index(struct page *page)
 {
 	struct page *head;
 
@@ -918,6 +915,19 @@ static inline pgoff_t page_to_pgoff(struct page *page)
 	 *  head page
 	 */
 	return head->index + page - head;
+}
+
+extern pgoff_t hugetlb_basepage_index(struct page *page);
+
+/*
+ * Get the offset in PAGE_SIZE (even for hugetlb pages).
+ * (TODO: hugetlb pages should have ->index in PAGE_SIZE)
+ */
+static inline pgoff_t page_to_pgoff(struct page *page)
+{
+	if (unlikely(PageHuge(page)))
+		return hugetlb_basepage_index(page);
+	return page_to_index(page);
 }
 
 /*
@@ -956,16 +966,24 @@ static inline loff_t folio_file_pos(struct folio *folio)
 
 /*
  * Get the offset in PAGE_SIZE (even for hugetlb folios).
+ * (TODO: hugetlb folios should have ->index in PAGE_SIZE)
  */
 static inline pgoff_t folio_pgoff(struct folio *folio)
 {
+	if (unlikely(folio_test_hugetlb(folio)))
+		return hugetlb_basepage_index(&folio->page);
 	return folio->index;
 }
+
+extern pgoff_t linear_hugepage_index(struct vm_area_struct *vma,
+				     unsigned long address);
 
 static inline pgoff_t linear_page_index(struct vm_area_struct *vma,
 					unsigned long address)
 {
 	pgoff_t pgoff;
+	if (unlikely(is_vm_hugetlb_page(vma)))
+		return linear_hugepage_index(vma, address);
 	pgoff = (address - vma->vm_start) >> PAGE_SHIFT;
 	pgoff += vma->vm_pgoff;
 	return pgoff;
@@ -1022,7 +1040,7 @@ static inline bool folio_trylock(struct folio *folio)
 /*
  * Return true if the page was successfully locked
  */
-static inline bool trylock_page(struct page *page)
+static inline int trylock_page(struct page *page)
 {
 	return folio_trylock(page_folio(page));
 }
@@ -1143,7 +1161,6 @@ static inline void wait_on_page_locked(struct page *page)
 	folio_wait_locked(page_folio(page));
 }
 
-void folio_end_read(struct folio *folio, bool success);
 void wait_on_page_writeback(struct page *page);
 void folio_wait_writeback(struct folio *folio);
 int folio_wait_writeback_killable(struct folio *folio);
@@ -1152,6 +1169,11 @@ void folio_end_writeback(struct folio *folio);
 void wait_for_stable_page(struct page *page);
 void folio_wait_stable(struct folio *folio);
 void __folio_mark_dirty(struct folio *folio, struct address_space *, int warn);
+static inline void __set_page_dirty(struct page *page,
+		struct address_space *mapping, int warn)
+{
+	__folio_mark_dirty(page_folio(page), mapping, warn);
+}
 void folio_account_cleaned(struct folio *folio, struct bdi_writeback *wb);
 void __folio_cancel_dirty(struct folio *folio);
 static inline void folio_cancel_dirty(struct folio *folio)
@@ -1163,6 +1185,7 @@ static inline void folio_cancel_dirty(struct folio *folio)
 bool folio_clear_dirty_for_io(struct folio *folio);
 bool clear_page_dirty_for_io(struct page *page);
 void folio_invalidate(struct folio *folio, size_t offset, size_t length);
+int __set_page_dirty_nobuffers(struct page *page);
 bool noop_dirty_folio(struct address_space *mapping, struct folio *folio);
 
 #ifdef CONFIG_MIGRATION

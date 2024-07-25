@@ -4545,7 +4545,6 @@ struct caam_hash_alg {
 	struct list_head entry;
 	struct device *dev;
 	int alg_type;
-	bool is_hmac;
 	struct ahash_alg ahash_alg;
 };
 
@@ -4572,7 +4571,7 @@ static int caam_hash_cra_init(struct crypto_tfm *tfm)
 
 	ctx->dev = caam_hash->dev;
 
-	if (caam_hash->is_hmac) {
+	if (alg->setkey) {
 		ctx->adata.key_dma = dma_map_single_attrs(ctx->dev, ctx->key,
 							  ARRAY_SIZE(ctx->key),
 							  DMA_TO_DEVICE,
@@ -4612,7 +4611,7 @@ static int caam_hash_cra_init(struct crypto_tfm *tfm)
 	 * For keyed hash algorithms shared descriptors
 	 * will be created later in setkey() callback
 	 */
-	return caam_hash->is_hmac ? 0 : ahash_set_sh_desc(ahash);
+	return alg->setkey ? 0 : ahash_set_sh_desc(ahash);
 }
 
 static void caam_hash_cra_exit(struct crypto_tfm *tfm)
@@ -4647,14 +4646,12 @@ static struct caam_hash_alg *caam_hash_alloc(struct device *dev,
 			 template->hmac_name);
 		snprintf(alg->cra_driver_name, CRYPTO_MAX_ALG_NAME, "%s",
 			 template->hmac_driver_name);
-		t_alg->is_hmac = true;
 	} else {
 		snprintf(alg->cra_name, CRYPTO_MAX_ALG_NAME, "%s",
 			 template->name);
 		snprintf(alg->cra_driver_name, CRYPTO_MAX_ALG_NAME, "%s",
 			 template->driver_name);
 		t_alg->ahash_alg.setkey = NULL;
-		t_alg->is_hmac = false;
 	}
 	alg->cra_module = THIS_MODULE;
 	alg->cra_init = caam_hash_cra_init;

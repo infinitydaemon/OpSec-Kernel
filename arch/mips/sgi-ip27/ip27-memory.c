@@ -23,7 +23,6 @@
 #include <asm/page.h>
 #include <asm/pgalloc.h>
 #include <asm/sections.h>
-#include <asm/sgialib.h>
 
 #include <asm/sn/arch.h>
 #include <asm/sn/agent.h>

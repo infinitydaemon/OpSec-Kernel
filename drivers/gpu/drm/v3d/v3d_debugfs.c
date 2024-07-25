@@ -6,6 +6,7 @@
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 #include <linux/string_helpers.h>
+#include <linux/sched/clock.h>
 
 #include <drm/drm_debugfs.h>
 
@@ -35,9 +36,9 @@ static const struct v3d_reg_def v3d_hub_reg_defs[] = {
 	REGDEF(33, 71, V3D_MMU_VIO_ID),
 	REGDEF(33, 71, V3D_MMU_DEBUG_INFO),
 
-	REGDEF(71, 71, V3D_GMP_STATUS(71)),
-	REGDEF(71, 71, V3D_GMP_CFG(71)),
-	REGDEF(71, 71, V3D_GMP_VIO_ADDR(71)),
+	REGDEF(71, 71, V3D_V7_GMP_STATUS),
+	REGDEF(71, 71, V3D_V7_GMP_CFG),
+	REGDEF(71, 71, V3D_V7_GMP_VIO_ADDR),
 };
 
 static const struct v3d_reg_def v3d_gca_reg_defs[] = {
@@ -62,9 +63,9 @@ static const struct v3d_reg_def v3d_core_reg_defs[] = {
 	REGDEF(33, 71, V3D_PTB_BPCA),
 	REGDEF(33, 71, V3D_PTB_BPCS),
 
-	REGDEF(33, 42, V3D_GMP_STATUS(33)),
-	REGDEF(33, 42, V3D_GMP_CFG(33)),
-	REGDEF(33, 42, V3D_GMP_VIO_ADDR(33)),
+	REGDEF(33, 41, V3D_GMP_STATUS),
+	REGDEF(33, 41, V3D_GMP_CFG),
+	REGDEF(33, 41, V3D_GMP_VIO_ADDR),
 
 	REGDEF(33, 71, V3D_ERR_FDBGO),
 	REGDEF(33, 71, V3D_ERR_FDBGB),
@@ -74,20 +75,20 @@ static const struct v3d_reg_def v3d_core_reg_defs[] = {
 
 static const struct v3d_reg_def v3d_csd_reg_defs[] = {
 	REGDEF(41, 71, V3D_CSD_STATUS),
-	REGDEF(41, 42, V3D_CSD_CURRENT_CFG0(41)),
-	REGDEF(41, 42, V3D_CSD_CURRENT_CFG1(41)),
-	REGDEF(41, 42, V3D_CSD_CURRENT_CFG2(41)),
-	REGDEF(41, 42, V3D_CSD_CURRENT_CFG3(41)),
-	REGDEF(41, 42, V3D_CSD_CURRENT_CFG4(41)),
-	REGDEF(41, 42, V3D_CSD_CURRENT_CFG5(41)),
-	REGDEF(41, 42, V3D_CSD_CURRENT_CFG6(41)),
-	REGDEF(71, 71, V3D_CSD_CURRENT_CFG0(71)),
-	REGDEF(71, 71, V3D_CSD_CURRENT_CFG1(71)),
-	REGDEF(71, 71, V3D_CSD_CURRENT_CFG2(71)),
-	REGDEF(71, 71, V3D_CSD_CURRENT_CFG3(71)),
-	REGDEF(71, 71, V3D_CSD_CURRENT_CFG4(71)),
-	REGDEF(71, 71, V3D_CSD_CURRENT_CFG5(71)),
-	REGDEF(71, 71, V3D_CSD_CURRENT_CFG6(71)),
+	REGDEF(41, 41, V3D_CSD_CURRENT_CFG0),
+	REGDEF(41, 41, V3D_CSD_CURRENT_CFG1),
+	REGDEF(41, 41, V3D_CSD_CURRENT_CFG2),
+	REGDEF(41, 41, V3D_CSD_CURRENT_CFG3),
+	REGDEF(41, 41, V3D_CSD_CURRENT_CFG4),
+	REGDEF(41, 41, V3D_CSD_CURRENT_CFG5),
+	REGDEF(41, 41, V3D_CSD_CURRENT_CFG6),
+	REGDEF(71, 71, V3D_V7_CSD_CURRENT_CFG0),
+	REGDEF(71, 71, V3D_V7_CSD_CURRENT_CFG1),
+	REGDEF(71, 71, V3D_V7_CSD_CURRENT_CFG2),
+	REGDEF(71, 71, V3D_V7_CSD_CURRENT_CFG3),
+	REGDEF(71, 71, V3D_V7_CSD_CURRENT_CFG4),
+	REGDEF(71, 71, V3D_V7_CSD_CURRENT_CFG5),
+	REGDEF(71, 71, V3D_V7_CSD_CURRENT_CFG6),
 	REGDEF(71, 71, V3D_V7_CSD_CURRENT_CFG7),
 };
 
@@ -225,6 +226,82 @@ static int v3d_debugfs_bo_stats(struct seq_file *m, void *unused)
 	return 0;
 }
 
+static int v3d_debugfs_gpu_usage(struct seq_file *m, void *unused)
+{
+	struct drm_debugfs_entry *entry = m->private;
+	struct drm_device *dev = entry->dev;
+	struct v3d_dev *v3d = to_v3d_dev(dev);
+	struct v3d_queue_stats *queue_stats;
+	enum v3d_queue queue;
+	u64 timestamp = local_clock();
+	u64 active_runtime;
+
+	seq_printf(m, "timestamp;%llu;\n", local_clock());
+	seq_printf(m, "\"QUEUE\";\"JOBS\";\"RUNTIME\";\"ACTIVE\";\n");
+	for (queue = 0; queue < V3D_MAX_QUEUES; queue++) {
+		if (!v3d->queue[queue].sched.ready)
+			continue;
+
+		queue_stats = &v3d->gpu_queue_stats[queue];
+		mutex_lock(&queue_stats->lock);
+		v3d_sched_stats_update(queue_stats);
+		if (queue_stats->last_pid)
+			active_runtime = timestamp - queue_stats->last_exec_start;
+		else
+			active_runtime = 0;
+
+		seq_printf(m, "%s;%d;%llu;%c;\n",
+			   v3d_queue_to_string(queue),
+			   queue_stats->jobs_sent,
+			   queue_stats->runtime + active_runtime,
+			   queue_stats->last_pid?'1':'0');
+		mutex_unlock(&queue_stats->lock);
+	}
+
+	return 0;
+}
+
+static int v3d_debugfs_gpu_pid_usage(struct seq_file *m, void *unused)
+{
+	struct drm_debugfs_entry *entry = m->private;
+	struct drm_device *dev = entry->dev;
+	struct v3d_dev *v3d = to_v3d_dev(dev);
+	struct v3d_queue_stats *queue_stats;
+	struct v3d_queue_pid_stats *cur;
+	enum v3d_queue queue;
+	u64 active_runtime;
+	u64 timestamp = local_clock();
+
+	seq_printf(m, "timestamp;%llu;\n", timestamp);
+	seq_printf(m, "\"QUEUE\";\"PID\",\"JOBS\";\"RUNTIME\";\"ACTIVE\";\n");
+	for (queue = 0; queue < V3D_MAX_QUEUES; queue++) {
+
+		if (!v3d->queue[queue].sched.ready)
+			continue;
+
+		queue_stats = &v3d->gpu_queue_stats[queue];
+		mutex_lock(&queue_stats->lock);
+		queue_stats->gpu_pid_stats_timeout = jiffies + V3D_QUEUE_STATS_TIMEOUT;
+		v3d_sched_stats_update(queue_stats);
+		list_for_each_entry(cur, &queue_stats->pid_stats_list, list) {
+
+			if (cur->pid == queue_stats->last_pid)
+				active_runtime = timestamp - queue_stats->last_exec_start;
+			else
+				active_runtime = 0;
+
+			seq_printf(m, "%s;%d;%d;%llu;%c;\n",
+				   v3d_queue_to_string(queue),
+				   cur->pid, cur->jobs_sent,
+				   cur->runtime + active_runtime,
+				   cur->pid == queue_stats->last_pid ? '1' : '0');
+		}
+		mutex_unlock(&queue_stats->lock);
+	}
+
+	return 0;
+}
+
 static int v3d_measure_clock(struct seq_file *m, void *unused)
 {
 	struct drm_debugfs_entry *entry = m->private;
@@ -235,7 +312,8 @@ static int v3d_measure_clock(struct seq_file *m, void *unused)
 	int measure_ms = 1000;
 
 	if (v3d->ver >= 40) {
-		int cycle_count_reg = V3D_PCTR_CYCLE_COUNT(v3d->ver);
+		int cycle_count_reg = v3d->ver < 71 ?
+			V3D_PCTR_CYCLE_COUNT : V3D_V7_PCTR_CYCLE_COUNT;
 		V3D_CORE_WRITE(core, V3D_V4_PCTR_0_SRC_0_3,
 			       V3D_SET_FIELD(cycle_count_reg,
 					     V3D_PCTR_S0));
@@ -243,7 +321,7 @@ static int v3d_measure_clock(struct seq_file *m, void *unused)
 		V3D_CORE_WRITE(core, V3D_V4_PCTR_0_EN, 1);
 	} else {
 		V3D_CORE_WRITE(core, V3D_V3_PCTR_0_PCTRS0,
-			       V3D_PCTR_CYCLE_COUNT(v3d->ver));
+			       V3D_PCTR_CYCLE_COUNT);
 		V3D_CORE_WRITE(core, V3D_V3_PCTR_0_CLR, 1);
 		V3D_CORE_WRITE(core, V3D_V3_PCTR_0_EN,
 			       V3D_V3_PCTR_0_EN_ENABLE |
@@ -260,26 +338,13 @@ static int v3d_measure_clock(struct seq_file *m, void *unused)
 	return 0;
 }
 
-static int v3d_debugfs_mm(struct seq_file *m, void *unused)
-{
-	struct drm_printer p = drm_seq_file_printer(m);
-	struct drm_debugfs_entry *entry = m->private;
-	struct drm_device *dev = entry->dev;
-	struct v3d_dev *v3d = to_v3d_dev(dev);
-
-	spin_lock(&v3d->mm_lock);
-	drm_mm_print(&v3d->mm, &p);
-	spin_unlock(&v3d->mm_lock);
-
-	return 0;
-}
-
 static const struct drm_debugfs_info v3d_debugfs_list[] = {
 	{"v3d_ident", v3d_v3d_debugfs_ident, 0},
 	{"v3d_regs", v3d_v3d_debugfs_regs, 0},
 	{"measure_clock", v3d_measure_clock, 0},
 	{"bo_stats", v3d_debugfs_bo_stats, 0},
-	{"v3d_mm", v3d_debugfs_mm, 0},
+	{"gpu_usage", v3d_debugfs_gpu_usage, 0},
+	{"gpu_pid_usage", v3d_debugfs_gpu_pid_usage, 0},
 };
 
 void

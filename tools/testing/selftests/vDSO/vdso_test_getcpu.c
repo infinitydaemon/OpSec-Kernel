@@ -13,7 +13,13 @@
 
 #include "../kselftest.h"
 #include "parse_vdso.h"
-#include "vdso_config.h"
+
+#if defined(__riscv)
+const char *version = "LINUX_4.15";
+#else
+const char *version = "LINUX_2.6";
+#endif
+const char *name = "__vdso_getcpu";
 
 struct getcpu_cache;
 typedef long (*getcpu_t)(unsigned int *, unsigned int *,
@@ -21,8 +27,6 @@ typedef long (*getcpu_t)(unsigned int *, unsigned int *,
 
 int main(int argc, char **argv)
 {
-	const char *version = versions[VDSO_VERSION];
-	const char **name = (const char **)&names[VDSO_NAMES];
 	unsigned long sysinfo_ehdr;
 	unsigned int cpu, node;
 	getcpu_t get_cpu;
@@ -36,9 +40,9 @@ int main(int argc, char **argv)
 
 	vdso_init_from_sysinfo_ehdr(getauxval(AT_SYSINFO_EHDR));
 
-	get_cpu = (getcpu_t)vdso_sym(version, name[4]);
+	get_cpu = (getcpu_t)vdso_sym(version, name);
 	if (!get_cpu) {
-		printf("Could not find %s\n", name[4]);
+		printf("Could not find %s\n", name);
 		return KSFT_SKIP;
 	}
 
@@ -46,7 +50,7 @@ int main(int argc, char **argv)
 	if (ret == 0) {
 		printf("Running on CPU %u node %u\n", cpu, node);
 	} else {
-		printf("%s failed\n", name[4]);
+		printf("%s failed\n", name);
 		return KSFT_FAIL;
 	}
 

@@ -10,8 +10,6 @@ maintainers:
   - Miquel Raynal <miquel.raynal@bootlin.com>
   - Richard Weinberger <richard@nod.at>
 
-select: false
-
 properties:
   $nodename:
     pattern: "^(flash|.*sram|nand)(@.*)?$"
@@ -45,12 +43,7 @@ patternProperties:
     deprecated: true
 
   "^otp(-[0-9]+)?$":
-    type: object
-
-    allOf:
-      - $ref: /schemas/nvmem/nvmem.yaml#
-      - $ref: /schemas/nvmem/nvmem-deprecated-cells.yaml#
-
+    $ref: ../nvmem/nvmem.yaml#
     unevaluatedProperties: false
 
     description: |

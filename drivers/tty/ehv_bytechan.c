@@ -49,7 +49,7 @@ struct ehv_bc_data {
 	unsigned int tx_irq;
 
 	spinlock_t lock;	/* lock for transmit buffer */
-	u8 buf[BUF_SIZE];	/* transmit circular buffer */
+	unsigned char buf[BUF_SIZE];	/* transmit circular buffer */
 	unsigned int head;	/* circular buffer head */
 	unsigned int tail;	/* circular buffer tail */
 
@@ -138,17 +138,14 @@ static int find_console_handle(void)
 
 static unsigned int local_ev_byte_channel_send(unsigned int handle,
 					       unsigned int *count,
-					       const u8 *p)
+					       const char *p)
 {
-	u8 buffer[EV_BYTE_CHANNEL_MAX_BYTES];
+	char buffer[EV_BYTE_CHANNEL_MAX_BYTES];
 	unsigned int c = *count;
 
-	/*
-	 * ev_byte_channel_send() expects at least EV_BYTE_CHANNEL_MAX_BYTES
-	 * (16 B) in the buffer. Fake it using a local buffer if needed.
-	 */
 	if (c < sizeof(buffer)) {
-		memcpy_and_pad(buffer, sizeof(buffer), p, c, 0);
+		memcpy(buffer, p, c);
+		memset(&buffer[c], 0, sizeof(buffer) - c);
 		p = buffer;
 	}
 	return ev_byte_channel_send(handle, count, p);
@@ -166,7 +163,7 @@ static unsigned int local_ev_byte_channel_send(unsigned int handle,
  * has been sent, or if some error has occurred.
  *
  */
-static void byte_channel_spin_send(const u8 data)
+static void byte_channel_spin_send(const char data)
 {
 	int ret, count;
 
@@ -474,7 +471,8 @@ static ssize_t ehv_bc_tty_write(struct tty_struct *ttys, const u8 *s,
 {
 	struct ehv_bc_data *bc = ttys->driver_data;
 	unsigned long flags;
-	size_t len, written = 0;
+	unsigned int len;
+	unsigned int written = 0;
 
 	while (1) {
 		spin_lock_irqsave(&bc->lock, flags);

@@ -13,7 +13,6 @@ TEST_GEN_FILES := tempfile
 
 top_srcdir = ../../../../..
 include ../../lib.mk
-include ../flags.mk
 
 $(TEST_GEN_PROGS): ../harness.c ../utils.c
 

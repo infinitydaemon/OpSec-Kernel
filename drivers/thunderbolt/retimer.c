@@ -94,7 +94,6 @@ static int tb_retimer_nvm_add(struct tb_retimer *rt)
 		goto err_nvm;
 
 	rt->nvm = nvm;
-	dev_dbg(&rt->dev, "NVM version %x.%x\n", nvm->major, nvm->minor);
 	return 0;
 
 err_nvm:
@@ -199,10 +198,8 @@ static void tb_retimer_nvm_authenticate_status(struct tb_port *port, u32 *status
 	 * If the retimer has it set, store it for the new retimer
 	 * device instance.
 	 */
-	for (i = 1; i <= TB_MAX_RETIMER_INDEX; i++) {
-		if (usb4_port_retimer_nvm_authenticate_status(port, i, &status[i]))
-			break;
-	}
+	for (i = 1; i <= TB_MAX_RETIMER_INDEX; i++)
+		usb4_port_retimer_nvm_authenticate_status(port, i, &status[i]);
 }
 
 static void tb_retimer_set_inbound_sbtx(struct tb_port *port)
@@ -236,10 +233,8 @@ static void tb_retimer_unset_inbound_sbtx(struct tb_port *port)
 
 	tb_port_dbg(port, "disabling sideband transactions\n");
 
-	for (i = TB_MAX_RETIMER_INDEX; i >= 1; i--) {
-		if (usb4_port_retimer_unset_inbound_sbtx(port, i))
-			break;
-	}
+	for (i = TB_MAX_RETIMER_INDEX; i >= 1; i--)
+		usb4_port_retimer_unset_inbound_sbtx(port, i);
 }
 
 static ssize_t nvm_authenticate_store(struct device *dev,
@@ -360,7 +355,7 @@ static void tb_retimer_release(struct device *dev)
 	kfree(rt);
 }
 
-const struct device_type tb_retimer_type = {
+struct device_type tb_retimer_type = {
 	.name = "thunderbolt_retimer",
 	.groups = retimer_groups,
 	.release = tb_retimer_release,

@@ -220,7 +220,8 @@ static struct sk_buff *ixgbe_construct_skb_zc(struct ixgbe_ring *rx_ring,
 	net_prefetch(xdp->data_meta);
 
 	/* allocate a skb to store the frags */
-	skb = napi_alloc_skb(&rx_ring->q_vector->napi, totalsize);
+	skb = __napi_alloc_skb(&rx_ring->q_vector->napi, totalsize,
+			       GFP_ATOMIC | __GFP_NOWARN);
 	if (unlikely(!skb))
 		return NULL;
 
@@ -303,7 +304,7 @@ int ixgbe_clean_rx_irq_zc(struct ixgbe_q_vector *q_vector,
 		}
 
 		bi->xdp->data_end = bi->xdp->data + size;
-		xsk_buff_dma_sync_for_cpu(bi->xdp);
+		xsk_buff_dma_sync_for_cpu(bi->xdp, rx_ring->xsk_pool);
 		xdp_res = ixgbe_run_xdp_zc(adapter, rx_ring, bi->xdp);
 
 		if (likely(xdp_res & (IXGBE_XDP_TX | IXGBE_XDP_REDIR))) {
@@ -350,7 +351,7 @@ construct_skb:
 	}
 
 	if (xdp_xmit & IXGBE_XDP_REDIR)
-		xdp_do_flush();
+		xdp_do_flush_map();
 
 	if (xdp_xmit & IXGBE_XDP_TX) {
 		struct ixgbe_ring *ring = ixgbe_determine_xdp_ring(adapter);
@@ -358,8 +359,12 @@ construct_skb:
 		ixgbe_xdp_ring_update_tail_locked(ring);
 	}
 
-	ixgbe_update_rx_ring_stats(rx_ring, q_vector, total_rx_packets,
-				   total_rx_bytes);
+	u64_stats_update_begin(&rx_ring->syncp);
+	rx_ring->stats.packets += total_rx_packets;
+	rx_ring->stats.bytes += total_rx_bytes;
+	u64_stats_update_end(&rx_ring->syncp);
+	q_vector->rx.total_packets += total_rx_packets;
+	q_vector->rx.total_bytes += total_rx_bytes;
 
 	if (xsk_uses_need_wakeup(rx_ring->xsk_pool)) {
 		if (failure || rx_ring->next_to_clean == rx_ring->next_to_use)
@@ -494,8 +499,13 @@ bool ixgbe_clean_xdp_tx_irq(struct ixgbe_q_vector *q_vector,
 	}
 
 	tx_ring->next_to_clean = ntc;
-	ixgbe_update_tx_ring_stats(tx_ring, q_vector, total_packets,
-				   total_bytes);
+
+	u64_stats_update_begin(&tx_ring->syncp);
+	tx_ring->stats.bytes += total_bytes;
+	tx_ring->stats.packets += total_packets;
+	u64_stats_update_end(&tx_ring->syncp);
+	q_vector->tx.total_bytes += total_bytes;
+	q_vector->tx.total_packets += total_packets;
 
 	if (xsk_frames)
 		xsk_tx_completed(pool, xsk_frames);

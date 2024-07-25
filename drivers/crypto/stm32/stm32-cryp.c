@@ -838,7 +838,7 @@ static int stm32_cryp_aead_one_req(struct crypto_engine *engine, void *areq);
 
 static int stm32_cryp_aes_aead_init(struct crypto_aead *tfm)
 {
-	crypto_aead_set_reqsize(tfm, sizeof(struct stm32_cryp_reqctx));
+	tfm->reqsize = sizeof(struct stm32_cryp_reqctx);
 
 	return 0;
 }
@@ -2084,12 +2084,17 @@ err_rst:
 	return ret;
 }
 
-static void stm32_cryp_remove(struct platform_device *pdev)
+static int stm32_cryp_remove(struct platform_device *pdev)
 {
 	struct stm32_cryp *cryp = platform_get_drvdata(pdev);
 	int ret;
 
-	ret = pm_runtime_get_sync(cryp->dev);
+	if (!cryp)
+		return -ENODEV;
+
+	ret = pm_runtime_resume_and_get(cryp->dev);
+	if (ret < 0)
+		return ret;
 
 	if (cryp->caps->aeads_support)
 		crypto_engine_unregister_aeads(aead_algs, ARRAY_SIZE(aead_algs));
@@ -2104,8 +2109,9 @@ static void stm32_cryp_remove(struct platform_device *pdev)
 	pm_runtime_disable(cryp->dev);
 	pm_runtime_put_noidle(cryp->dev);
 
-	if (ret >= 0)
-		clk_disable_unprepare(cryp->clk);
+	clk_disable_unprepare(cryp->clk);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -2142,7 +2148,7 @@ static const struct dev_pm_ops stm32_cryp_pm_ops = {
 
 static struct platform_driver stm32_cryp_driver = {
 	.probe  = stm32_cryp_probe,
-	.remove_new = stm32_cryp_remove,
+	.remove = stm32_cryp_remove,
 	.driver = {
 		.name           = DRIVER_NAME,
 		.pm		= &stm32_cryp_pm_ops,

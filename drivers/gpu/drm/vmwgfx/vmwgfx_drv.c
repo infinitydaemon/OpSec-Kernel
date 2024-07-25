@@ -32,7 +32,6 @@
 #include "vmwgfx_binding.h"
 #include "vmwgfx_devcaps.h"
 #include "vmwgfx_mksstat.h"
-#include "vmwgfx_vkms.h"
 #include "ttm_object.h"
 
 #include <drm/drm_aperture.h>
@@ -54,7 +53,6 @@
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/version.h>
-#include <linux/vmalloc.h>
 
 #define VMWGFX_DRIVER_DESC "Linux drm driver for VMware graphics devices"
 
@@ -746,7 +744,7 @@ static int vmw_setup_pci_resources(struct vmw_private *dev,
 		dev->vram_size = pci_resource_len(pdev, 2);
 
 		drm_info(&dev->drm,
-			"Register MMIO at 0x%pa size is %llu KiB\n",
+			"Register MMIO at 0x%pa size is %llu kiB\n",
 			 &rmmio_start, (uint64_t)rmmio_size / 1024);
 		dev->rmmio = devm_ioremap(dev->drm.dev,
 					  rmmio_start,
@@ -765,7 +763,7 @@ static int vmw_setup_pci_resources(struct vmw_private *dev,
 		fifo_size = pci_resource_len(pdev, 2);
 
 		drm_info(&dev->drm,
-			 "FIFO at %pa size is %llu KiB\n",
+			 "FIFO at %pa size is %llu kiB\n",
 			 &fifo_start, (uint64_t)fifo_size / 1024);
 		dev->fifo_mem = devm_memremap(dev->drm.dev,
 					      fifo_start,
@@ -790,7 +788,7 @@ static int vmw_setup_pci_resources(struct vmw_private *dev,
 	 * SVGA_REG_VRAM_SIZE.
 	 */
 	drm_info(&dev->drm,
-		 "VRAM at %pa size is %llu KiB\n",
+		 "VRAM at %pa size is %llu kiB\n",
 		 &dev->vram_start, (uint64_t)dev->vram_size / 1024);
 
 	return 0;
@@ -913,8 +911,6 @@ static int vmw_driver_load(struct vmw_private *dev_priv, u32 pci_id)
 			     "Please switch to a supported graphics device to avoid problems.");
 	}
 
-	vmw_vkms_init(dev_priv);
-
 	ret = vmw_dma_select_mode(dev_priv);
 	if (unlikely(ret != 0)) {
 		drm_info(&dev_priv->drm,
@@ -984,13 +980,13 @@ static int vmw_driver_load(struct vmw_private *dev_priv, u32 pci_id)
 		dev_priv->max_primary_mem = dev_priv->vram_size;
 	}
 	drm_info(&dev_priv->drm,
-		 "Legacy memory limits: VRAM = %llu KiB, FIFO = %llu KiB, surface = %u KiB\n",
+		 "Legacy memory limits: VRAM = %llu kB, FIFO = %llu kB, surface = %u kB\n",
 		 (u64)dev_priv->vram_size / 1024,
 		 (u64)dev_priv->fifo_mem_size / 1024,
 		 dev_priv->memory_size / 1024);
 
 	drm_info(&dev_priv->drm,
-		 "MOB limits: max mob size = %u KiB, max mob pages = %u\n",
+		 "MOB limits: max mob size = %u kB, max mob pages = %u\n",
 		 dev_priv->max_mob_size / 1024, dev_priv->max_mob_pages);
 
 	ret = vmw_dma_masks(dev_priv);
@@ -1008,7 +1004,7 @@ static int vmw_driver_load(struct vmw_private *dev_priv, u32 pci_id)
 			 (unsigned)dev_priv->max_gmr_pages);
 	}
 	drm_info(&dev_priv->drm,
-		 "Maximum display memory size is %llu KiB\n",
+		 "Maximum display memory size is %llu kiB\n",
 		 (uint64_t)dev_priv->max_primary_mem / 1024);
 
 	/* Need mmio memory to check for fifo pitchlock cap. */
@@ -1193,7 +1189,6 @@ static void vmw_driver_unload(struct drm_device *dev)
 
 	vmw_svga_disable(dev_priv);
 
-	vmw_vkms_cleanup(dev_priv);
 	vmw_kms_close(dev_priv);
 	vmw_overlay_close(dev_priv);
 

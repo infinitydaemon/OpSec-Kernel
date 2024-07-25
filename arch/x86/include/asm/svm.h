@@ -229,6 +229,10 @@ struct __attribute__ ((__packed__)) vmcb_control_area {
 #define SVM_IOIO_SIZE_MASK (7 << SVM_IOIO_SIZE_SHIFT)
 #define SVM_IOIO_ASIZE_MASK (7 << SVM_IOIO_ASIZE_SHIFT)
 
+#define SVM_VM_CR_VALID_MASK	0x001fULL
+#define SVM_VM_CR_SVM_LOCK_MASK 0x0008ULL
+#define SVM_VM_CR_SVM_DIS_MASK  0x0010ULL
+
 #define SVM_NESTED_CTL_NP_ENABLE	BIT(0)
 #define SVM_NESTED_CTL_SEV_ENABLE	BIT(1)
 #define SVM_NESTED_CTL_SEV_ES_ENABLE	BIT(2)
@@ -358,10 +362,10 @@ struct sev_es_save_area {
 	struct vmcb_seg ldtr;
 	struct vmcb_seg idtr;
 	struct vmcb_seg tr;
-	u64 pl0_ssp;
-	u64 pl1_ssp;
-	u64 pl2_ssp;
-	u64 pl3_ssp;
+	u64 vmpl0_ssp;
+	u64 vmpl1_ssp;
+	u64 vmpl2_ssp;
+	u64 vmpl3_ssp;
 	u64 u_cet;
 	u8 reserved_0xc8[2];
 	u8 vmpl;
@@ -567,6 +571,8 @@ struct vmcb {
 } __packed;
 
 #define SVM_CPUID_FUNC 0x8000000a
+
+#define SVM_VM_CR_SVM_DISABLE 4
 
 #define SVM_SELECTOR_S_SHIFT 4
 #define SVM_SELECTOR_DPL_SHIFT 5

@@ -412,14 +412,12 @@ config JOYSTICK_SENSEHAT
 	  To compile this driver as a module, choose M here: the
 	  module will be called sensehat_joystick.
 
-config JOYSTICK_SEESAW
-	tristate "Adafruit Mini I2C Gamepad with Seesaw"
-	depends on I2C
-	select INPUT_SPARSEKMAP
-	help
-	  Say Y here if you want to use the Adafruit Mini I2C Gamepad.
+config JOYSTICK_RPISENSE
+	tristate "Raspberry Pi Sense HAT joystick"
+	depends on GPIOLIB && INPUT
+	select MFD_RPISENSE_CORE
 
-	  To compile this driver as a module, choose M here: the module will be
-	  called adafruit-seesaw.
+	help
+	  This is the joystick driver for the Raspberry Pi Sense HAT
 
 endif

@@ -26,7 +26,6 @@ enum rtw_debug_mask {
 	RTW_DBG_STATE		= 0x00020000,
 	RTW_DBG_SDIO		= 0x00040000,
 
-	RTW_DBG_UNEXP		= 0x80000000,
 	RTW_DBG_ALL		= 0xffffffff
 };
 
@@ -44,25 +43,15 @@ static inline void rtw_debugfs_init(struct rtw_dev *rtwdev) {}
 #ifdef CONFIG_RTW88_DEBUG
 
 __printf(3, 4)
-void rtw_dbg(struct rtw_dev *rtwdev, enum rtw_debug_mask mask,
-	     const char *fmt, ...);
+void __rtw_dbg(struct rtw_dev *rtwdev, enum rtw_debug_mask mask,
+	       const char *fmt, ...);
 
-static inline bool rtw_dbg_is_enabled(struct rtw_dev *rtwdev,
-				      enum rtw_debug_mask mask)
-{
-	return !!(rtw_debug_mask & mask);
-}
+#define rtw_dbg(rtwdev, a...) __rtw_dbg(rtwdev, ##a)
 
 #else
 
 static inline void rtw_dbg(struct rtw_dev *rtwdev, enum rtw_debug_mask mask,
 			   const char *fmt, ...) {}
-
-static inline bool rtw_dbg_is_enabled(struct rtw_dev *rtwdev,
-				      enum rtw_debug_mask mask)
-{
-	return false;
-}
 
 #endif /* CONFIG_RTW88_DEBUG */
 

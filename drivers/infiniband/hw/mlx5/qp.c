@@ -3097,6 +3097,7 @@ static int create_qp(struct mlx5_ib_dev *dev, struct ib_pd *pd,
 	switch (qp->type) {
 	case MLX5_IB_QPT_DCT:
 		err = create_dct(dev, pd, qp, params);
+		rdma_restrack_no_track(&qp->ibqp.res);
 		break;
 	case MLX5_IB_QPT_DCI:
 		err = create_dci(dev, pd, qp, params);
@@ -3108,9 +3109,9 @@ static int create_qp(struct mlx5_ib_dev *dev, struct ib_pd *pd,
 		err = mlx5_ib_create_gsi(pd, qp, params->attr);
 		break;
 	case MLX5_IB_QPT_HW_GSI:
+	case MLX5_IB_QPT_REG_UMR:
 		rdma_restrack_no_track(&qp->ibqp.res);
 		fallthrough;
-	case MLX5_IB_QPT_REG_UMR:
 	default:
 		if (params->udata)
 			err = create_user_qp(dev, pd, qp, params);
@@ -3435,7 +3436,7 @@ static int ib_rate_to_mlx5(struct mlx5_ib_dev *dev, u8 rate)
 	if (rate == IB_RATE_PORT_CURRENT)
 		return 0;
 
-	if (rate < IB_RATE_2_5_GBPS || rate > IB_RATE_800_GBPS)
+	if (rate < IB_RATE_2_5_GBPS || rate > IB_RATE_600_GBPS)
 		return -EINVAL;
 
 	stat_rate_support = MLX5_CAP_GEN(dev->mdev, stat_rate_support);

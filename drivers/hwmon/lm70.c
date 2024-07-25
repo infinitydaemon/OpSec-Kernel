@@ -6,9 +6,9 @@
  * Copyright (C) 2006 Kaiwan N Billimoria <kaiwan@designergraphix.com>
  *
  * The LM70 communicates with a host processor via an SPI/Microwire Bus
- * interface. The complete datasheet is available at TI's website
+ * interface. The complete datasheet is available at National's website
  * here:
- * https://www.ti.com/product/LM70
+ * http://www.national.com/pf/LM/LM70.html
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt

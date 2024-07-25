@@ -9,6 +9,7 @@
 #include "inode-item.h"
 #include "disk-io.h"
 #include "transaction.h"
+#include "print-tree.h"
 #include "space-info.h"
 #include "accessors.h"
 #include "extent-tree.h"
@@ -246,7 +247,7 @@ out:
 }
 
 /*
- * Insert an extended inode ref into a tree.
+ * btrfs_insert_inode_extref() - Inserts an extended inode ref into a tree.
  *
  * The caller must have checked against BTRFS_LINK_MAX already.
  */
@@ -670,18 +671,15 @@ delete:
 		}
 
 		if (del_item && extent_start != 0 && !control->skip_ref_updates) {
-			struct btrfs_ref ref = {
-				.action = BTRFS_DROP_DELAYED_REF,
-				.bytenr = extent_start,
-				.num_bytes = extent_num_bytes,
-				.owning_root = btrfs_root_id(root),
-				.ref_root = btrfs_header_owner(leaf),
-			};
+			struct btrfs_ref ref = { 0 };
 
 			bytes_deleted += extent_num_bytes;
 
-			btrfs_init_data_ref(&ref, control->ino, extent_offset,
-					    btrfs_root_id(root), false);
+			btrfs_init_generic_ref(&ref, BTRFS_DROP_DELAYED_REF,
+					extent_start, extent_num_bytes, 0);
+			btrfs_init_data_ref(&ref, btrfs_header_owner(leaf),
+					control->ino, extent_offset,
+					root->root_key.objectid, false);
 			ret = btrfs_free_extent(trans, &ref);
 			if (ret) {
 				btrfs_abort_transaction(trans, ret);

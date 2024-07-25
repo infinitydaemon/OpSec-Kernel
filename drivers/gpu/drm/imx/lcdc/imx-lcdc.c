@@ -506,12 +506,14 @@ static int imx_lcdc_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void imx_lcdc_remove(struct platform_device *pdev)
+static int imx_lcdc_remove(struct platform_device *pdev)
 {
 	struct drm_device *drm = platform_get_drvdata(pdev);
 
 	drm_dev_unregister(drm);
 	drm_atomic_helper_shutdown(drm);
+
+	return 0;
 }
 
 static void imx_lcdc_shutdown(struct platform_device *pdev)
@@ -525,7 +527,7 @@ static struct platform_driver imx_lcdc_driver = {
 		.of_match_table = imx_lcdc_of_dev_id,
 	},
 	.probe = imx_lcdc_probe,
-	.remove_new = imx_lcdc_remove,
+	.remove = imx_lcdc_remove,
 	.shutdown = imx_lcdc_shutdown,
 };
 module_platform_driver(imx_lcdc_driver);

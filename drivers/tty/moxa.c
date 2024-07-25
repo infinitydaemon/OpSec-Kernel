@@ -514,7 +514,7 @@ static void MoxaPortLineCtrl(struct moxa_port *, bool, bool);
 static void MoxaPortFlowCtrl(struct moxa_port *, int, int, int, int, int);
 static int MoxaPortLineStatus(struct moxa_port *);
 static void MoxaPortFlushData(struct moxa_port *, int);
-static ssize_t MoxaPortWriteData(struct tty_struct *, const u8 *, size_t);
+static int MoxaPortWriteData(struct tty_struct *, const unsigned char *, int);
 static int MoxaPortReadData(struct moxa_port *);
 static unsigned int MoxaPortTxQueue(struct moxa_port *);
 static int MoxaPortRxQueue(struct moxa_port *);
@@ -1933,10 +1933,10 @@ static void MoxaPortFlushData(struct moxa_port *port, int mode)
  *
  *      Function 20:    Write data.
  *      Syntax:
- *      ssize_t  MoxaPortWriteData(int port, u8 *buffer, size_t length);
+ *      int  MoxaPortWriteData(int port, unsigned char * buffer, int length);
  *           int port           : port number (0 - 127)
- *           u8 *buffer         : pointer to write data buffer.
- *           size_t length      : write data length
+ *           unsigned char * buffer     : pointer to write data buffer.
+ *           int length         : write data length
  *
  *           return:    0 - length      : real write data length
  *
@@ -2163,12 +2163,11 @@ static int MoxaPortLineStatus(struct moxa_port *port)
 	return val;
 }
 
-static ssize_t MoxaPortWriteData(struct tty_struct *tty, const u8 *buffer,
-				 size_t len)
+static int MoxaPortWriteData(struct tty_struct *tty, const u8 *buffer, int len)
 {
 	struct moxa_port *port = tty->driver_data;
 	void __iomem *baseAddr, *ofsAddr, *ofs;
-	size_t c, total;
+	unsigned int c, total;
 	u16 head, tail, tx_mask, spage, epage;
 	u16 pageno, pageofs, bufhead;
 
@@ -2225,8 +2224,8 @@ static ssize_t MoxaPortWriteData(struct tty_struct *tty, const u8 *buffer,
 static int MoxaPortReadData(struct moxa_port *port)
 {
 	struct tty_struct *tty = port->port.tty;
+	unsigned char *dst;
 	void __iomem *baseAddr, *ofsAddr, *ofs;
-	u8 *dst;
 	unsigned int count, len, total;
 	u16 tail, rx_mask, spage, epage;
 	u16 pageno, pageofs, bufhead, head;

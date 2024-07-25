@@ -241,6 +241,8 @@ static struct property *dup_and_fixup_symbol_prop(
 	if (!target_path)
 		return NULL;
 	target_path_len = strlen(target_path);
+	if (!strcmp(target_path, "/"))
+		target_path_len = 0;
 
 	new_prop = kzalloc(sizeof(*new_prop), GFP_KERNEL);
 	if (!new_prop)
@@ -262,7 +264,9 @@ static struct property *dup_and_fixup_symbol_prop(
 	return new_prop;
 
 err_free_new_prop:
-	__of_prop_free(new_prop);
+	kfree(new_prop->name);
+	kfree(new_prop->value);
+	kfree(new_prop);
 err_free_target_path:
 	kfree(target_path);
 
@@ -359,8 +363,11 @@ static int add_changeset_property(struct overlay_changeset *ovcs,
 		pr_err("WARNING: memory leak will occur if overlay removed, property: %pOF/%s\n",
 		       target->np, new_prop->name);
 
-	if (ret)
-		__of_prop_free(new_prop);
+	if (ret) {
+		kfree(new_prop->name);
+		kfree(new_prop->value);
+		kfree(new_prop);
+	}
 	return ret;
 }
 
@@ -959,7 +966,7 @@ out:
 	return ret;
 }
 
-/**
+/*
  * of_overlay_fdt_apply() - Create and apply an overlay changeset
  * @overlay_fdt:	pointer to overlay FDT
  * @overlay_fdt_size:	number of bytes in @overlay_fdt

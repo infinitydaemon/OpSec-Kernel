@@ -14,22 +14,14 @@
  *    "ca->ack_cnt / delta" operation.
  */
 
-#include "bpf_tracing_net.h"
-#include <bpf/bpf_tracing.h>
+#include <linux/bpf.h>
+#include <linux/stddef.h>
+#include <linux/tcp.h>
+#include "bpf_tcp_helpers.h"
 
 char _license[] SEC("license") = "GPL";
 
 #define clamp(val, lo, hi) min((typeof(val))max(val, lo), hi)
-#define min(a, b) ((a) < (b) ? (a) : (b))
-#define max(a, b) ((a) > (b) ? (a) : (b))
-static bool before(__u32 seq1, __u32 seq2)
-{
-	return (__s32)(seq1-seq2) < 0;
-}
-#define after(seq2, seq1) 	before(seq1, seq2)
-
-extern __u32 tcp_slow_start(struct tcp_sock *tp, __u32 acked) __ksym;
-extern void tcp_cong_avoid_ai(struct tcp_sock *tp, __u32 w, __u32 acked) __ksym;
 
 #define BICTCP_BETA_SCALE    1024	/* Scale factor beta calculation
 					 * max_cwnd = snd_cwnd * beta
@@ -78,7 +70,7 @@ static const __u64 cube_factor = (__u64)(1ull << (10+3*BICTCP_HZ))
 				/ (bic_scale * 10);
 
 /* BIC TCP Parameters */
-struct bpf_bictcp {
+struct bictcp {
 	__u32	cnt;		/* increase cwnd by 1 after ACKs */
 	__u32	last_max_cwnd;	/* last maximum snd_cwnd */
 	__u32	last_cwnd;	/* the last snd_cwnd */
@@ -99,7 +91,7 @@ struct bpf_bictcp {
 	__u32	curr_rtt;	/* the minimum rtt of current round */
 };
 
-static void bictcp_reset(struct bpf_bictcp *ca)
+static inline void bictcp_reset(struct bictcp *ca)
 {
 	ca->cnt = 0;
 	ca->last_max_cwnd = 0;
@@ -120,7 +112,7 @@ extern unsigned long CONFIG_HZ __kconfig;
 #define USEC_PER_SEC	1000000UL
 #define USEC_PER_JIFFY	(USEC_PER_SEC / HZ)
 
-static __u64 div64_u64(__u64 dividend, __u64 divisor)
+static __always_inline __u64 div64_u64(__u64 dividend, __u64 divisor)
 {
 	return dividend / divisor;
 }
@@ -128,7 +120,7 @@ static __u64 div64_u64(__u64 dividend, __u64 divisor)
 #define div64_ul div64_u64
 
 #define BITS_PER_U64 (sizeof(__u64) * 8)
-static int fls64(__u64 x)
+static __always_inline int fls64(__u64 x)
 {
 	int num = BITS_PER_U64 - 1;
 
@@ -161,15 +153,15 @@ static int fls64(__u64 x)
 	return num + 1;
 }
 
-static __u32 bictcp_clock_us(const struct sock *sk)
+static __always_inline __u32 bictcp_clock_us(const struct sock *sk)
 {
 	return tcp_sk(sk)->tcp_mstamp;
 }
 
-static void bictcp_hystart_reset(struct sock *sk)
+static __always_inline void bictcp_hystart_reset(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
-	struct bpf_bictcp *ca = inet_csk_ca(sk);
+	struct bictcp *ca = inet_csk_ca(sk);
 
 	ca->round_start = ca->last_ack = bictcp_clock_us(sk);
 	ca->end_seq = tp->snd_nxt;
@@ -177,10 +169,11 @@ static void bictcp_hystart_reset(struct sock *sk)
 	ca->sample_cnt = 0;
 }
 
-SEC("struct_ops")
+/* "struct_ops/" prefix is a requirement */
+SEC("struct_ops/bpf_cubic_init")
 void BPF_PROG(bpf_cubic_init, struct sock *sk)
 {
-	struct bpf_bictcp *ca = inet_csk_ca(sk);
+	struct bictcp *ca = inet_csk_ca(sk);
 
 	bictcp_reset(ca);
 
@@ -191,11 +184,12 @@ void BPF_PROG(bpf_cubic_init, struct sock *sk)
 		tcp_sk(sk)->snd_ssthresh = initial_ssthresh;
 }
 
-SEC("struct_ops")
+/* "struct_ops" prefix is a requirement */
+SEC("struct_ops/bpf_cubic_cwnd_event")
 void BPF_PROG(bpf_cubic_cwnd_event, struct sock *sk, enum tcp_ca_event event)
 {
 	if (event == CA_EVENT_TX_START) {
-		struct bpf_bictcp *ca = inet_csk_ca(sk);
+		struct bictcp *ca = inet_csk_ca(sk);
 		__u32 now = tcp_jiffies32;
 		__s32 delta;
 
@@ -236,7 +230,7 @@ static const __u8 v[] = {
  * Newton-Raphson iteration.
  * Avg err ~= 0.195%
  */
-static __u32 cubic_root(__u64 a)
+static __always_inline __u32 cubic_root(__u64 a)
 {
 	__u32 x, b, shift;
 
@@ -269,7 +263,8 @@ static __u32 cubic_root(__u64 a)
 /*
  * Compute congestion window to use.
  */
-static void bictcp_update(struct bpf_bictcp *ca, __u32 cwnd, __u32 acked)
+static __always_inline void bictcp_update(struct bictcp *ca, __u32 cwnd,
+					  __u32 acked)
 {
 	__u32 delta, bic_target, max_cnt;
 	__u64 offs, t;
@@ -382,11 +377,11 @@ tcp_friendliness:
 	ca->cnt = max(ca->cnt, 2U);
 }
 
-SEC("struct_ops")
-void BPF_PROG(bpf_cubic_cong_avoid, struct sock *sk, __u32 ack, __u32 acked)
+/* Or simply use the BPF_STRUCT_OPS to avoid the SEC boiler plate. */
+void BPF_STRUCT_OPS(bpf_cubic_cong_avoid, struct sock *sk, __u32 ack, __u32 acked)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
-	struct bpf_bictcp *ca = inet_csk_ca(sk);
+	struct bictcp *ca = inet_csk_ca(sk);
 
 	if (!tcp_is_cwnd_limited(sk))
 		return;
@@ -402,11 +397,10 @@ void BPF_PROG(bpf_cubic_cong_avoid, struct sock *sk, __u32 ack, __u32 acked)
 	tcp_cong_avoid_ai(tp, ca->cnt, acked);
 }
 
-SEC("struct_ops")
-__u32 BPF_PROG(bpf_cubic_recalc_ssthresh, struct sock *sk)
+__u32 BPF_STRUCT_OPS(bpf_cubic_recalc_ssthresh, struct sock *sk)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
-	struct bpf_bictcp *ca = inet_csk_ca(sk);
+	struct bictcp *ca = inet_csk_ca(sk);
 
 	ca->epoch_start = 0;	/* end of epoch */
 
@@ -420,8 +414,7 @@ __u32 BPF_PROG(bpf_cubic_recalc_ssthresh, struct sock *sk)
 	return max((tp->snd_cwnd * beta) / BICTCP_BETA_SCALE, 2U);
 }
 
-SEC("struct_ops")
-void BPF_PROG(bpf_cubic_state, struct sock *sk, __u8 new_state)
+void BPF_STRUCT_OPS(bpf_cubic_state, struct sock *sk, __u8 new_state)
 {
 	if (new_state == TCP_CA_Loss) {
 		bictcp_reset(inet_csk_ca(sk));
@@ -440,7 +433,7 @@ void BPF_PROG(bpf_cubic_state, struct sock *sk, __u8 new_state)
  * We apply another 100% factor because @rate is doubled at this point.
  * We cap the cushion to 1ms.
  */
-static __u32 hystart_ack_delay(struct sock *sk)
+static __always_inline __u32 hystart_ack_delay(struct sock *sk)
 {
 	unsigned long rate;
 
@@ -451,10 +444,10 @@ static __u32 hystart_ack_delay(struct sock *sk)
 		   div64_ul((__u64)GSO_MAX_SIZE * 4 * USEC_PER_SEC, rate));
 }
 
-static void hystart_update(struct sock *sk, __u32 delay)
+static __always_inline void hystart_update(struct sock *sk, __u32 delay)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
-	struct bpf_bictcp *ca = inet_csk_ca(sk);
+	struct bictcp *ca = inet_csk_ca(sk);
 	__u32 threshold;
 
 	if (hystart_detect & HYSTART_ACK_TRAIN) {
@@ -499,11 +492,11 @@ static void hystart_update(struct sock *sk, __u32 delay)
 
 int bpf_cubic_acked_called = 0;
 
-SEC("struct_ops")
-void BPF_PROG(bpf_cubic_acked, struct sock *sk, const struct ack_sample *sample)
+void BPF_STRUCT_OPS(bpf_cubic_acked, struct sock *sk,
+		    const struct ack_sample *sample)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
-	struct bpf_bictcp *ca = inet_csk_ca(sk);
+	struct bictcp *ca = inet_csk_ca(sk);
 	__u32 delay;
 
 	bpf_cubic_acked_called = 1;
@@ -531,8 +524,7 @@ void BPF_PROG(bpf_cubic_acked, struct sock *sk, const struct ack_sample *sample)
 
 extern __u32 tcp_reno_undo_cwnd(struct sock *sk) __ksym;
 
-SEC("struct_ops")
-__u32 BPF_PROG(bpf_cubic_undo_cwnd, struct sock *sk)
+__u32 BPF_STRUCT_OPS(bpf_cubic_undo_cwnd, struct sock *sk)
 {
 	return tcp_reno_undo_cwnd(sk);
 }

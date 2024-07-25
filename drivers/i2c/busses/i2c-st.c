@@ -647,7 +647,7 @@ static int st_i2c_xfer_msg(struct st_i2c_dev *i2c_dev, struct i2c_msg *msg,
 {
 	struct st_i2c_client *c = &i2c_dev->client;
 	u32 ctl, i2c, it;
-	unsigned long time_left;
+	unsigned long timeout;
 	int ret;
 
 	c->addr		= i2c_8bit_addr_from_msg(msg);
@@ -685,12 +685,15 @@ static int st_i2c_xfer_msg(struct st_i2c_dev *i2c_dev, struct i2c_msg *msg,
 		st_i2c_set_bits(i2c_dev->base + SSC_I2C, SSC_I2C_STRTG);
 	}
 
-	time_left = wait_for_completion_timeout(&i2c_dev->complete,
-						i2c_dev->adap.timeout);
+	timeout = wait_for_completion_timeout(&i2c_dev->complete,
+			i2c_dev->adap.timeout);
 	ret = c->result;
 
-	if (!time_left)
+	if (!timeout) {
+		dev_err(i2c_dev->dev, "Write to slave 0x%x timed out\n",
+				c->addr);
 		ret = -ETIMEDOUT;
+	}
 
 	i2c = SSC_I2C_STOPG | SSC_I2C_REPSTRTG;
 	st_i2c_clr_bits(i2c_dev->base + SSC_I2C, i2c);

@@ -158,7 +158,9 @@ static int ipoctal_get_icount(struct tty_struct *tty,
 static void ipoctal_irq_rx(struct ipoctal_channel *channel, u8 sr)
 {
 	struct tty_port *port = &channel->tty_port;
-	u8 isr, value, flag;
+	unsigned char value;
+	unsigned char flag;
+	u8 isr;
 
 	do {
 		value = ioread8(&channel->regs->r.rhr);
@@ -200,8 +202,8 @@ static void ipoctal_irq_rx(struct ipoctal_channel *channel, u8 sr)
 
 static void ipoctal_irq_tx(struct ipoctal_channel *channel)
 {
+	unsigned char value;
 	unsigned int *pointer_write = &channel->pointer_write;
-	u8 value;
 
 	if (channel->nb_bytes == 0)
 		return;
@@ -434,11 +436,11 @@ err_put_driver:
 	return res;
 }
 
-static inline size_t ipoctal_copy_write_buffer(struct ipoctal_channel *channel,
-					       const u8 *buf, size_t count)
+static inline int ipoctal_copy_write_buffer(struct ipoctal_channel *channel,
+					    const u8 *buf, int count)
 {
 	unsigned long flags;
-	size_t i;
+	int i;
 	unsigned int *pointer_read = &channel->pointer_read;
 
 	/* Copy the bytes from the user buffer to the internal one */
@@ -460,7 +462,7 @@ static ssize_t ipoctal_write_tty(struct tty_struct *tty, const u8 *buf,
 				 size_t count)
 {
 	struct ipoctal_channel *channel = tty->driver_data;
-	size_t char_copied;
+	unsigned int char_copied;
 
 	char_copied = ipoctal_copy_write_buffer(channel, buf, count);
 

@@ -6,6 +6,8 @@ The handling of 'choice' is a bit complicated part in Kconfig.
 
 The behavior of 'y' choice is intuitive.  If choice values are tristate,
 the choice can be 'm' where each value can be enabled independently.
+Also, if a choice is marked as 'optional', the whole choice can be
+invisible.
 """
 
 

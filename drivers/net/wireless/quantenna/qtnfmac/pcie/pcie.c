@@ -372,12 +372,7 @@ static int qtnf_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto error;
 	}
 
-	bus->mux_dev = alloc_netdev_dummy(0);
-	if (!bus->mux_dev) {
-		ret = -ENOMEM;
-		goto error;
-	}
-
+	init_dummy_netdev(&bus->mux_dev);
 	qtnf_pcie_init_irq(pcie_priv, use_msi);
 	pcie_priv->sysctl_bar = sysctl_bar;
 	pcie_priv->dmareg_bar = dmareg_bar;
@@ -386,13 +381,11 @@ static int qtnf_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	ret = pcie_priv->probe_cb(bus, tx_bd_size_param, rx_bd_size_param);
 	if (ret)
-		goto error_free;
+		goto error;
 
 	qtnf_pcie_bringup_fw_async(bus);
 	return 0;
 
-error_free:
-	free_netdev(bus->mux_dev);
 error:
 	destroy_workqueue(pcie_priv->workqueue);
 	pci_set_drvdata(pdev, NULL);
@@ -424,7 +417,6 @@ static void qtnf_pcie_remove(struct pci_dev *dev)
 	netif_napi_del(&bus->mux_napi);
 	destroy_workqueue(priv->workqueue);
 	tasklet_kill(&priv->reclaim_tq);
-	free_netdev(bus->mux_dev);
 
 	qtnf_pcie_free_shm_ipc(priv);
 	qtnf_debugfs_remove(bus);

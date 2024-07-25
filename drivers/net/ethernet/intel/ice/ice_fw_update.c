@@ -286,9 +286,10 @@ ice_send_component_table(struct pldmfw *context, struct pldmfw_component *compon
  *
  * Returns: zero on success, or a negative error code on failure.
  */
-int ice_write_one_nvm_block(struct ice_pf *pf, u16 module, u32 offset,
-			    u16 block_size, u8 *block, bool last_cmd,
-			    u8 *reset_level, struct netlink_ext_ack *extack)
+static int
+ice_write_one_nvm_block(struct ice_pf *pf, u16 module, u32 offset,
+			u16 block_size, u8 *block, bool last_cmd,
+			u8 *reset_level, struct netlink_ext_ack *extack)
 {
 	u16 completion_module, completion_retval;
 	struct device *dev = ice_pf_to_dev(pf);

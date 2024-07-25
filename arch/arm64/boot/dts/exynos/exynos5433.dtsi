@@ -361,8 +361,7 @@
 		ranges = <0x0 0x0 0x0 0x18000000>;
 
 		chipid@10000000 {
-			compatible = "samsung,exynos5433-chipid",
-				     "samsung,exynos4210-chipid";
+			compatible = "samsung,exynos4210-chipid";
 			reg = <0x10000000 0x100>;
 		};
 
@@ -851,8 +850,7 @@
 			reg = <0x10580000 0x1a20>, <0x11090000 0x100>;
 
 			wakeup-interrupt-controller {
-				compatible = "samsung,exynos5433-wakeup-eint",
-					     "samsung,exynos7-wakeup-eint";
+				compatible = "samsung,exynos7-wakeup-eint";
 				interrupts = <GIC_SPI 16 IRQ_TYPE_LEVEL_HIGH>;
 			};
 		};
@@ -1468,7 +1466,6 @@
 			pinctrl-names = "default";
 			pinctrl-0 = <&spi0_bus>;
 			num-cs = <1>;
-			fifo-depth = <256>;
 			status = "disabled";
 		};
 
@@ -1488,7 +1485,6 @@
 			pinctrl-names = "default";
 			pinctrl-0 = <&spi1_bus>;
 			num-cs = <1>;
-			fifo-depth = <64>;
 			status = "disabled";
 		};
 
@@ -1508,7 +1504,6 @@
 			pinctrl-names = "default";
 			pinctrl-0 = <&spi2_bus>;
 			num-cs = <1>;
-			fifo-depth = <64>;
 			status = "disabled";
 		};
 
@@ -1528,7 +1523,6 @@
 			pinctrl-names = "default";
 			pinctrl-0 = <&spi3_bus>;
 			num-cs = <1>;
-			fifo-depth = <64>;
 			status = "disabled";
 		};
 
@@ -1548,12 +1542,11 @@
 			pinctrl-names = "default";
 			pinctrl-0 = <&spi4_bus>;
 			num-cs = <1>;
-			fifo-depth = <64>;
 			status = "disabled";
 		};
 
 		adc: adc@14d10000 {
-			compatible = "samsung,exynos5433-adc", "samsung,exynos7-adc";
+			compatible = "samsung,exynos7-adc";
 			reg = <0x14d10000 0x100>;
 			interrupts = <GIC_SPI 438 IRQ_TYPE_LEVEL_HIGH>;
 			clock-names = "adc";
@@ -1563,7 +1556,7 @@
 		};
 
 		i2s1: i2s@14d60000 {
-			compatible = "samsung,exynos5433-i2s", "samsung,exynos7-i2s";
+			compatible = "samsung,exynos7-i2s";
 			reg = <0x14d60000 0x100>;
 			dmas = <&pdma0 31>, <&pdma0 30>;
 			dma-names = "tx", "rx";
@@ -1578,7 +1571,7 @@
 		};
 
 		pwm: pwm@14dd0000 {
-			compatible = "samsung,exynos5433-pwm", "samsung,exynos4210-pwm";
+			compatible = "samsung,exynos4210-pwm";
 			reg = <0x14dd0000 0x100>;
 			interrupts = <GIC_SPI 416 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 417 IRQ_TYPE_LEVEL_HIGH>,
@@ -1593,8 +1586,7 @@
 		};
 
 		hsi2c_0: i2c@14e40000 {
-			compatible = "samsung,exynos5433-hsi2c",
-				     "samsung,exynos7-hsi2c";
+			compatible = "samsung,exynos7-hsi2c";
 			reg = <0x14e40000 0x1000>;
 			interrupts = <GIC_SPI 428 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
@@ -1607,8 +1599,7 @@
 		};
 
 		hsi2c_1: i2c@14e50000 {
-			compatible = "samsung,exynos5433-hsi2c",
-				     "samsung,exynos7-hsi2c";
+			compatible = "samsung,exynos7-hsi2c";
 			reg = <0x14e50000 0x1000>;
 			interrupts = <GIC_SPI 429 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
@@ -1621,8 +1612,7 @@
 		};
 
 		hsi2c_2: i2c@14e60000 {
-			compatible = "samsung,exynos5433-hsi2c",
-				     "samsung,exynos7-hsi2c";
+			compatible = "samsung,exynos7-hsi2c";
 			reg = <0x14e60000 0x1000>;
 			interrupts = <GIC_SPI 430 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
@@ -1635,8 +1625,7 @@
 		};
 
 		hsi2c_3: i2c@14e70000 {
-			compatible = "samsung,exynos5433-hsi2c",
-				     "samsung,exynos7-hsi2c";
+			compatible = "samsung,exynos7-hsi2c";
 			reg = <0x14e70000 0x1000>;
 			interrupts = <GIC_SPI 431 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
@@ -1649,8 +1638,7 @@
 		};
 
 		hsi2c_4: i2c@14ec0000 {
-			compatible = "samsung,exynos5433-hsi2c",
-				     "samsung,exynos7-hsi2c";
+			compatible = "samsung,exynos7-hsi2c";
 			reg = <0x14ec0000 0x1000>;
 			interrupts = <GIC_SPI 424 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
@@ -1663,8 +1651,7 @@
 		};
 
 		hsi2c_5: i2c@14ed0000 {
-			compatible = "samsung,exynos5433-hsi2c",
-				     "samsung,exynos7-hsi2c";
+			compatible = "samsung,exynos7-hsi2c";
 			reg = <0x14ed0000 0x1000>;
 			interrupts = <GIC_SPI 425 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
@@ -1677,8 +1664,7 @@
 		};
 
 		hsi2c_6: i2c@14ee0000 {
-			compatible = "samsung,exynos5433-hsi2c",
-				     "samsung,exynos7-hsi2c";
+			compatible = "samsung,exynos7-hsi2c";
 			reg = <0x14ee0000 0x1000>;
 			interrupts = <GIC_SPI 426 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
@@ -1691,8 +1677,7 @@
 		};
 
 		hsi2c_7: i2c@14ef0000 {
-			compatible = "samsung,exynos5433-hsi2c",
-				     "samsung,exynos7-hsi2c";
+			compatible = "samsung,exynos7-hsi2c";
 			reg = <0x14ef0000 0x1000>;
 			interrupts = <GIC_SPI 427 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
@@ -1705,8 +1690,7 @@
 		};
 
 		hsi2c_8: i2c@14d90000 {
-			compatible = "samsung,exynos5433-hsi2c",
-				     "samsung,exynos7-hsi2c";
+			compatible = "samsung,exynos7-hsi2c";
 			reg = <0x14d90000 0x1000>;
 			interrupts = <GIC_SPI 443 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
@@ -1719,8 +1703,7 @@
 		};
 
 		hsi2c_9: i2c@14da0000 {
-			compatible = "samsung,exynos5433-hsi2c",
-				     "samsung,exynos7-hsi2c";
+			compatible = "samsung,exynos7-hsi2c";
 			reg = <0x14da0000 0x1000>;
 			interrupts = <GIC_SPI 444 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
@@ -1733,8 +1716,7 @@
 		};
 
 		hsi2c_10: i2c@14de0000 {
-			compatible = "samsung,exynos5433-hsi2c",
-				     "samsung,exynos7-hsi2c";
+			compatible = "samsung,exynos7-hsi2c";
 			reg = <0x14de0000 0x1000>;
 			interrupts = <GIC_SPI 445 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
@@ -1747,8 +1729,7 @@
 		};
 
 		hsi2c_11: i2c@14df0000 {
-			compatible = "samsung,exynos5433-hsi2c",
-				     "samsung,exynos7-hsi2c";
+			compatible = "samsung,exynos7-hsi2c";
 			reg = <0x14df0000 0x1000>;
 			interrupts = <GIC_SPI 446 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
@@ -1839,8 +1820,7 @@
 		};
 
 		mshc_0: mmc@15540000 {
-			compatible = "samsung,exynos5433-dw-mshc-smu",
-				     "samsung,exynos7-dw-mshc-smu";
+			compatible = "samsung,exynos7-dw-mshc-smu";
 			interrupts = <GIC_SPI 225 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
 			#size-cells = <0>;
@@ -1853,8 +1833,7 @@
 		};
 
 		mshc_1: mmc@15550000 {
-			compatible = "samsung,exynos5433-dw-mshc-smu",
-				     "samsung,exynos7-dw-mshc-smu";
+			compatible = "samsung,exynos7-dw-mshc-smu";
 			interrupts = <GIC_SPI 226 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
 			#size-cells = <0>;
@@ -1867,8 +1846,7 @@
 		};
 
 		mshc_2: mmc@15560000 {
-			compatible = "samsung,exynos5433-dw-mshc-smu",
-				     "samsung,exynos7-dw-mshc-smu";
+			compatible = "samsung,exynos7-dw-mshc-smu";
 			interrupts = <GIC_SPI 227 IRQ_TYPE_LEVEL_HIGH>;
 			#address-cells = <1>;
 			#size-cells = <0>;
@@ -1919,8 +1897,7 @@
 			};
 
 			i2s0: i2s@11440000 {
-				compatible = "samsung,exynos5433-i2s",
-					     "samsung,exynos7-i2s";
+				compatible = "samsung,exynos7-i2s";
 				reg = <0x11440000 0x100>;
 				dmas = <&adma 0>, <&adma 2>;
 				dma-names = "tx", "rx";

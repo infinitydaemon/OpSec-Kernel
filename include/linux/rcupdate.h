@@ -34,6 +34,9 @@
 
 #define ULONG_CMP_GE(a, b)	(ULONG_MAX / 2 >= (a) - (b))
 #define ULONG_CMP_LT(a, b)	(ULONG_MAX / 2 < (a) - (b))
+#define ulong2long(a)		(*(long *)(&(a)))
+#define USHORT_CMP_GE(a, b)	(USHRT_MAX / 2 >= (unsigned short)((a) - (b)))
+#define USHORT_CMP_LT(a, b)	(USHRT_MAX / 2 < (unsigned short)((a) - (b)))
 
 /* Exported common interfaces */
 void call_rcu(struct rcu_head *head, rcu_callback_t func);
@@ -119,6 +122,8 @@ static inline void call_rcu_hurry(struct rcu_head *head, rcu_callback_t func)
 void rcu_init(void);
 extern int rcu_scheduler_active;
 void rcu_sched_clock_irq(int user);
+void rcu_report_dead(unsigned int cpu);
+void rcutree_migrate_callbacks(int cpu);
 
 #ifdef CONFIG_TASKS_RCU_GENERIC
 void rcu_init_tasks_generic(void);
@@ -401,15 +406,15 @@ static inline int debug_lockdep_rcu_enabled(void)
 		}							\
 	} while (0)
 
-#ifndef CONFIG_PREEMPT_RCU
+#if defined(CONFIG_PROVE_RCU) && !defined(CONFIG_PREEMPT_RCU)
 static inline void rcu_preempt_sleep_check(void)
 {
 	RCU_LOCKDEP_WARN(lock_is_held(&rcu_lock_map),
 			 "Illegal context switch in RCU read-side critical section");
 }
-#else // #ifndef CONFIG_PREEMPT_RCU
+#else /* #ifdef CONFIG_PROVE_RCU */
 static inline void rcu_preempt_sleep_check(void) { }
-#endif // #else // #ifndef CONFIG_PREEMPT_RCU
+#endif /* #else #ifdef CONFIG_PROVE_RCU */
 
 #define rcu_sleep_check()						\
 	do {								\
@@ -809,9 +814,9 @@ static inline void rcu_read_unlock(void)
 {
 	RCU_LOCKDEP_WARN(!rcu_is_watching(),
 			 "rcu_read_unlock() used illegally while idle");
-	rcu_lock_release(&rcu_lock_map); /* Keep acq info for rls diags. */
 	__release(RCU);
 	__rcu_read_unlock();
+	rcu_lock_release(&rcu_lock_map); /* Keep acq info for rls diags. */
 }
 
 /**
@@ -1090,18 +1095,6 @@ rcu_head_after_call_rcu(struct rcu_head *rhp, rcu_callback_t f)
 extern int rcu_expedited;
 extern int rcu_normal;
 
-DEFINE_LOCK_GUARD_0(rcu,
-	do {
-		rcu_read_lock();
-		/*
-		 * sparse doesn't call the cleanup function,
-		 * so just release immediately and don't track
-		 * the context. We don't need to anyway, since
-		 * the whole point of the guard is to not need
-		 * the explicit unlock.
-		 */
-		__release(RCU);
-	} while (0),
-	rcu_read_unlock())
+DEFINE_LOCK_GUARD_0(rcu, rcu_read_lock(), rcu_read_unlock())
 
 #endif /* __LINUX_RCUPDATE_H */

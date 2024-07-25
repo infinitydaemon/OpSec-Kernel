@@ -314,8 +314,11 @@ static int au1550_spi_dma_txrxb(struct spi_device *spi, struct spi_transfer *t)
 
 	hw->tx = t->tx_buf;
 	hw->rx = t->rx_buf;
+	dma_tx_addr = t->tx_dma;
+	dma_rx_addr = t->rx_dma;
 
 	/*
+	 * check if buffers are already dma mapped, map them otherwise:
 	 * - first map the TX buffer, so cache data gets written to memory
 	 * - then map the RX buffer, so that cache entries (with
 	 *   soon-to-be-stale data) get removed
@@ -323,17 +326,23 @@ static int au1550_spi_dma_txrxb(struct spi_device *spi, struct spi_transfer *t)
 	 * use temp rx buffer (preallocated or realloc to fit) for rx dma
 	 */
 	if (t->tx_buf) {
-		dma_tx_addr = dma_map_single(hw->dev, (void *)t->tx_buf,
-					     t->len, DMA_TO_DEVICE);
-		if (dma_mapping_error(hw->dev, dma_tx_addr))
-			dev_err(hw->dev, "tx dma map error\n");
+		if (t->tx_dma == 0) {	/* if DMA_ADDR_INVALID, map it */
+			dma_tx_addr = dma_map_single(hw->dev,
+					(void *)t->tx_buf,
+					t->len, DMA_TO_DEVICE);
+			if (dma_mapping_error(hw->dev, dma_tx_addr))
+				dev_err(hw->dev, "tx dma map error\n");
+		}
 	}
 
 	if (t->rx_buf) {
-		dma_rx_addr = dma_map_single(hw->dev, (void *)t->rx_buf,
-					     t->len, DMA_FROM_DEVICE);
-		if (dma_mapping_error(hw->dev, dma_rx_addr))
-			dev_err(hw->dev, "rx dma map error\n");
+		if (t->rx_dma == 0) {	/* if DMA_ADDR_INVALID, map it */
+			dma_rx_addr = dma_map_single(hw->dev,
+					(void *)t->rx_buf,
+					t->len, DMA_FROM_DEVICE);
+			if (dma_mapping_error(hw->dev, dma_rx_addr))
+				dev_err(hw->dev, "rx dma map error\n");
+		}
 	} else {
 		if (t->len > hw->dma_rx_tmpbuf_size) {
 			int ret;
@@ -389,10 +398,10 @@ static int au1550_spi_dma_txrxb(struct spi_device *spi, struct spi_transfer *t)
 			DMA_FROM_DEVICE);
 	}
 	/* unmap buffers if mapped above */
-	if (t->rx_buf)
+	if (t->rx_buf && t->rx_dma == 0)
 		dma_unmap_single(hw->dev, dma_rx_addr, t->len,
 			DMA_FROM_DEVICE);
-	if (t->tx_buf)
+	if (t->tx_buf && t->tx_dma == 0)
 		dma_unmap_single(hw->dev, dma_tx_addr, t->len,
 			DMA_TO_DEVICE);
 
@@ -791,7 +800,7 @@ static int au1550_spi_probe(struct platform_device *pdev)
 
 	init_completion(&hw->host_done);
 
-	hw->bitbang.ctlr = hw->host;
+	hw->bitbang.master = hw->host;
 	hw->bitbang.setup_transfer = au1550_spi_setupxfer;
 	hw->bitbang.chipselect = au1550_spi_chipsel;
 	hw->bitbang.txrx_bufs = au1550_spi_txrx_bufs;

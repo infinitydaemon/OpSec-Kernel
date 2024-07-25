@@ -30,7 +30,9 @@ static const struct file_operations proc_sys_dir_file_operations;
 static const struct inode_operations proc_sys_dir_operations;
 
 /* Support for permanently empty directories */
-static struct ctl_table sysctl_mount_point[] = { };
+static struct ctl_table sysctl_mount_point[] = {
+	{.type = SYSCTL_TABLE_TYPE_PERMANENTLY_EMPTY }
+};
 
 /**
  * register_sysctl_mount_point() - registers a sysctl mount point
@@ -46,12 +48,14 @@ struct ctl_table_header *register_sysctl_mount_point(const char *path)
 }
 EXPORT_SYMBOL(register_sysctl_mount_point);
 
+#define sysctl_is_perm_empty_ctl_table(tptr)		\
+	(tptr[0].type == SYSCTL_TABLE_TYPE_PERMANENTLY_EMPTY)
 #define sysctl_is_perm_empty_ctl_header(hptr)		\
-	(hptr->type == SYSCTL_TABLE_TYPE_PERMANENTLY_EMPTY)
+	(sysctl_is_perm_empty_ctl_table(hptr->ctl_table))
 #define sysctl_set_perm_empty_ctl_header(hptr)		\
-	(hptr->type = SYSCTL_TABLE_TYPE_PERMANENTLY_EMPTY)
+	(hptr->ctl_table[0].type = SYSCTL_TABLE_TYPE_PERMANENTLY_EMPTY)
 #define sysctl_clear_perm_empty_ctl_header(hptr)	\
-	(hptr->type = SYSCTL_TABLE_TYPE_DEFAULT)
+	(hptr->ctl_table[0].type = SYSCTL_TABLE_TYPE_DEFAULT)
 
 void proc_sys_poll_notify(struct ctl_table_poll *poll)
 {
@@ -67,6 +71,7 @@ static struct ctl_table root_table[] = {
 		.procname = "",
 		.mode = S_IFDIR|S_IRUGO|S_IXUGO,
 	},
+	{ }
 };
 static struct ctl_table_root sysctl_table_root = {
 	.default_set.dir.header = {
@@ -206,8 +211,6 @@ static void init_header(struct ctl_table_header *head,
 			node++;
 		}
 	}
-	if (table == sysctl_mount_point)
-		sysctl_set_perm_empty_ctl_header(head);
 }
 
 static void erase_header(struct ctl_table_header *head)
@@ -230,7 +233,8 @@ static int insert_header(struct ctl_dir *dir, struct ctl_table_header *header)
 		return -EROFS;
 
 	/* Am I creating a permanently empty directory? */
-	if (sysctl_is_perm_empty_ctl_header(header)) {
+	if (header->ctl_table_size > 0 &&
+	    sysctl_is_perm_empty_ctl_table(header->ctl_table)) {
 		if (!RB_EMPTY_ROOT(&dir->root))
 			return -EINVAL;
 		sysctl_set_perm_empty_ctl_header(dir_h);
@@ -462,7 +466,7 @@ static struct inode *proc_sys_make_inode(struct super_block *sb,
 	head->count++;
 	spin_unlock(&sysctl_lock);
 
-	simple_inode_init_ts(inode);
+	inode->i_mtime = inode->i_atime = inode_set_ctime_current(inode);
 	inode->i_mode = table->mode;
 	if (!S_ISDIR(table->mode)) {
 		inode->i_mode |= S_IFREG;
@@ -477,7 +481,7 @@ static struct inode *proc_sys_make_inode(struct super_block *sb,
 	}
 
 	if (root->set_ownership)
-		root->set_ownership(head, &inode->i_uid, &inode->i_gid);
+		root->set_ownership(head, table, &inode->i_uid, &inode->i_gid);
 	else {
 		inode->i_uid = GLOBAL_ROOT_UID;
 		inode->i_gid = GLOBAL_ROOT_GID;
@@ -531,8 +535,13 @@ static struct dentry *proc_sys_lookup(struct inode *dir, struct dentry *dentry,
 			goto out;
 	}
 
-	d_set_d_op(dentry, &proc_sys_dentry_operations);
 	inode = proc_sys_make_inode(dir->i_sb, h ? h : head, p);
+	if (IS_ERR(inode)) {
+		err = ERR_CAST(inode);
+		goto out;
+	}
+
+	d_set_d_op(dentry, &proc_sys_dentry_operations);
 	err = d_splice_alias(inode, dentry);
 
 out:
@@ -690,8 +699,13 @@ static bool proc_sys_fill_cache(struct file *file,
 			return false;
 		if (d_in_lookup(child)) {
 			struct dentry *res;
-			d_set_d_op(child, &proc_sys_dentry_operations);
 			inode = proc_sys_make_inode(dir->d_sb, head, table);
+			if (IS_ERR(inode)) {
+				d_lookup_done(child);
+				dput(child);
+				return false;
+			}
+			d_set_d_op(child, &proc_sys_dentry_operations);
 			res = d_splice_alias(inode, child);
 			d_lookup_done(child);
 			if (unlikely(res)) {
@@ -1201,7 +1215,7 @@ static bool get_links(struct ctl_dir *dir,
 	struct ctl_table *entry, *link;
 
 	if (header->ctl_table_size == 0 ||
-	    sysctl_is_perm_empty_ctl_header(header))
+	    sysctl_is_perm_empty_ctl_table(header->ctl_table))
 		return true;
 
 	/* Are there links available for every entry in table? */

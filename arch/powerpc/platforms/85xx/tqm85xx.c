@@ -112,9 +112,17 @@ static const char * const board[] __initconst = {
 	NULL
 };
 
+/*
+ * Called very early, device-tree isn't unflattened
+ */
+static int __init tqm85xx_probe(void)
+{
+	return of_device_compatible_match(of_root, board);
+}
+
 define_machine(tqm85xx) {
 	.name			= "TQM85xx",
-	.compatibles		= board,
+	.probe			= tqm85xx_probe,
 	.setup_arch		= tqm85xx_setup_arch,
 	.init_IRQ		= tqm85xx_pic_init,
 	.show_cpuinfo		= tqm85xx_show_cpuinfo,

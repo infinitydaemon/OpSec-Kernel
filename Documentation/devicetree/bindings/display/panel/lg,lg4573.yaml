@@ -21,8 +21,7 @@ properties:
   compatible:
     const: lg,lg4573
 
-  reg:
-    maxItems: 1
+  reg: true
 
 required:
   - compatible

@@ -173,7 +173,7 @@ out:
 	return rc;
 }
 
-static void pmi_of_remove(struct platform_device *dev)
+static int pmi_of_remove(struct platform_device *dev)
 {
 	struct pmi_handler *handler, *tmp;
 
@@ -189,11 +189,13 @@ static void pmi_of_remove(struct platform_device *dev)
 
 	kfree(data);
 	data = NULL;
+
+	return 0;
 }
 
 static struct platform_driver pmi_of_platform_driver = {
 	.probe		= pmi_of_probe,
-	.remove_new	= pmi_of_remove,
+	.remove		= pmi_of_remove,
 	.driver = {
 		.name = "pmi",
 		.of_match_table = pmi_match,

@@ -605,6 +605,14 @@ filelayout_check_layout(struct pnfs_layout_hdr *lo,
 
 	dprintk("--> %s\n", __func__);
 
+	/* FIXME: remove this check when layout segment support is added */
+	if (lgr->range.offset != 0 ||
+	    lgr->range.length != NFS4_MAX_UINT64) {
+		dprintk("%s Only whole file layouts supported. Use MDS i/o\n",
+			__func__);
+		goto out;
+	}
+
 	if (fl->pattern_offset > lgr->range.offset) {
 		dprintk("%s pattern_offset %lld too large\n",
 				__func__, fl->pattern_offset);
@@ -867,12 +875,12 @@ static void
 filelayout_pg_init_read(struct nfs_pageio_descriptor *pgio,
 			struct nfs_page *req)
 {
-	pnfs_generic_pg_check_layout(pgio, req);
+	pnfs_generic_pg_check_layout(pgio);
 	if (!pgio->pg_lseg) {
 		pgio->pg_lseg = fl_pnfs_update_layout(pgio->pg_inode,
 						      nfs_req_openctx(req),
-						      req_offset(req),
-						      req->wb_bytes,
+						      0,
+						      NFS4_MAX_UINT64,
 						      IOMODE_READ,
 						      false,
 						      nfs_io_gfp_mask());
@@ -891,12 +899,12 @@ static void
 filelayout_pg_init_write(struct nfs_pageio_descriptor *pgio,
 			 struct nfs_page *req)
 {
-	pnfs_generic_pg_check_layout(pgio, req);
+	pnfs_generic_pg_check_layout(pgio);
 	if (!pgio->pg_lseg) {
 		pgio->pg_lseg = fl_pnfs_update_layout(pgio->pg_inode,
 						      nfs_req_openctx(req),
-						      req_offset(req),
-						      req->wb_bytes,
+						      0,
+						      NFS4_MAX_UINT64,
 						      IOMODE_RW,
 						      false,
 						      nfs_io_gfp_mask());

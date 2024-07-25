@@ -49,8 +49,7 @@ int vic_provinfo_add_tlv(struct vic_provinfo *vp, u16 type, u16 length,
 
 	tlv->type = htons(type);
 	tlv->length = htons(length);
-	unsafe_memcpy(tlv->value, value, length,
-		      /* Flexible array of flexible arrays */);
+	memcpy(tlv->value, value, length);
 
 	vp->num_tlvs = htonl(ntohl(vp->num_tlvs) + 1);
 	vp->length = htonl(ntohl(vp->length) +

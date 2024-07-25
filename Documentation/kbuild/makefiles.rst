@@ -53,7 +53,7 @@ knowledge about the kernel Makefiles, plus detailed knowledge about the
 public interface for kbuild.
 
 *Arch developers* are people who work on an entire architecture, such
-as sparc or x86.  Arch developers need to know about the arch Makefile
+as sparc or ia64.  Arch developers need to know about the arch Makefile
 as well as kbuild Makefiles.
 
 *Kbuild developers* are people who work on the kernel build system itself.
@@ -346,7 +346,7 @@ ccflags-y, asflags-y and ldflags-y
   Example::
 
     #arch/cris/boot/compressed/Makefile
-    ldflags-y += -T $(src)/decompress_$(arch-y).lds
+    ldflags-y += -T $(srctree)/$(src)/decompress_$(arch-y).lds
 
 subdir-ccflags-y, subdir-asflags-y
   The two flags listed above are similar to ccflags-y and asflags-y.
@@ -426,14 +426,14 @@ path to prerequisite files and target files.
 Two variables are used when defining custom rules:
 
 $(src)
-  $(src) is the directory where the Makefile is located. Always use $(src) when
+  $(src) is a relative path which points to the directory
+  where the Makefile is located. Always use $(src) when
   referring to files located in the src tree.
 
 $(obj)
-  $(obj) is the directory where the target is saved. Always use $(obj) when
-  referring to generated files. Use $(obj) for pattern rules that need to work
-  for both generated files and real sources (VPATH will help to find the
-  prerequisites not only in the object tree but also in the source tree).
+  $(obj) is a relative path which points to the directory
+  where the target is saved. Always use $(obj) when
+  referring to generated files.
 
   Example::
 
@@ -936,10 +936,6 @@ Example::
 
   # net/bpfilter/Makefile
   bpfilter_umh-userldflags += -static
-
-To specify libraries linked to a userspace program, you can use
-``<executable>-userldlibs``. The ``userldlibs`` syntax specifies libraries
-linked to all userspace programs created in the current Makefile.
 
 When linking bpfilter_umh, it will be passed the extra option -static.
 
@@ -1626,13 +1622,6 @@ INSTALL_MOD_STRIP
   default option --strip-debug will be used.  Otherwise, the
   INSTALL_MOD_STRIP value will be used as the option(s) to the strip
   command.
-
-INSTALL_DTBS_PATH
-  This variable specifies a prefix for relocations required by build
-  roots. It defines a place for installing the device tree blobs. Like
-  INSTALL_MOD_PATH, it isn't defined in the Makefile, but can be passed
-  by the user if desired. Otherwise it defaults to the kernel install
-  path.
 
 Makefile language
 =================

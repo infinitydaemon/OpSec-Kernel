@@ -338,7 +338,6 @@ static const struct of_device_id ti_cpufreq_of_match[] = {
 	{ .compatible = "ti,omap36xx", .data = &omap36xx_soc_data, },
 	{ .compatible = "ti,am625", .data = &am625_soc_data, },
 	{ .compatible = "ti,am62a7", .data = &am625_soc_data, },
-	{ .compatible = "ti,am62p5", .data = &am625_soc_data, },
 	/* legacy */
 	{ .compatible = "ti,omap3430", .data = &omap34xx_soc_data, },
 	{ .compatible = "ti,omap3630", .data = &omap36xx_soc_data, },
@@ -347,10 +346,12 @@ static const struct of_device_id ti_cpufreq_of_match[] = {
 
 static const struct of_device_id *ti_cpufreq_match_node(void)
 {
-	struct device_node *np __free(device_node) = of_find_node_by_path("/");
+	struct device_node *np;
 	const struct of_device_id *match;
 
+	np = of_find_node_by_path("/");
 	match = of_match_node(ti_cpufreq_of_match, np);
+	of_node_put(np);
 
 	return match;
 }

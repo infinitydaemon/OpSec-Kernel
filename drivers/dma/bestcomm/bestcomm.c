@@ -455,7 +455,7 @@ error_ofput:
 }
 
 
-static void mpc52xx_bcom_remove(struct platform_device *op)
+static int mpc52xx_bcom_remove(struct platform_device *op)
 {
 	/* Clean up the engine */
 	bcom_engine_cleanup();
@@ -473,6 +473,8 @@ static void mpc52xx_bcom_remove(struct platform_device *op)
 	/* Release memory */
 	kfree(bcom_eng);
 	bcom_eng = NULL;
+
+	return 0;
 }
 
 static const struct of_device_id mpc52xx_bcom_of_match[] = {
@@ -486,7 +488,7 @@ MODULE_DEVICE_TABLE(of, mpc52xx_bcom_of_match);
 
 static struct platform_driver mpc52xx_bcom_of_platform_driver = {
 	.probe		= mpc52xx_bcom_probe,
-	.remove_new	= mpc52xx_bcom_remove,
+	.remove		= mpc52xx_bcom_remove,
 	.driver = {
 		.name = DRIVER_NAME,
 		.of_match_table = mpc52xx_bcom_of_match,

@@ -13,7 +13,7 @@
 #include <linux/platform_device.h>
 #include <linux/regulator/driver.h>
 #include <linux/mfd/lp8788.h>
-#include <linux/gpio/consumer.h>
+#include <linux/gpio.h>
 
 /* register address */
 #define LP8788_EN_BUCK			0x0C
@@ -69,8 +69,8 @@
 #define BUCK_FPWM_SHIFT(x)		(x)
 
 enum lp8788_dvs_state {
-	DVS_LOW  = 0,
-	DVS_HIGH = 1,
+	DVS_LOW  = GPIOF_OUT_INIT_LOW,
+	DVS_HIGH = GPIOF_OUT_INIT_HIGH,
 };
 
 enum lp8788_dvs_mode {
@@ -89,8 +89,6 @@ struct lp8788_buck {
 	struct lp8788 *lp;
 	struct regulator_dev *regulator;
 	void *dvs;
-	struct gpio_desc *gpio1;
-	struct gpio_desc *gpio2; /* Only used on BUCK2 */
 };
 
 /* BUCK 1 ~ 4 voltage ranges */
@@ -108,7 +106,8 @@ static void lp8788_buck1_set_dvs(struct lp8788_buck *buck)
 		return;
 
 	pinstate = dvs->vsel == DVS_SEL_V0 ? DVS_LOW : DVS_HIGH;
-	gpiod_set_value(buck->gpio1, pinstate);
+	if (gpio_is_valid(dvs->gpio))
+		gpio_set_value(dvs->gpio, pinstate);
 }
 
 static void lp8788_buck2_set_dvs(struct lp8788_buck *buck)
@@ -140,8 +139,11 @@ static void lp8788_buck2_set_dvs(struct lp8788_buck *buck)
 		return;
 	}
 
-	gpiod_set_value(buck->gpio1, pin1);
-	gpiod_set_value(buck->gpio2, pin2);
+	if (gpio_is_valid(dvs->gpio[0]))
+		gpio_set_value(dvs->gpio[0], pin1);
+
+	if (gpio_is_valid(dvs->gpio[1]))
+		gpio_set_value(dvs->gpio[1], pin2);
 }
 
 static void lp8788_set_dvs(struct lp8788_buck *buck, enum lp8788_buck_id id)
@@ -200,13 +202,19 @@ static u8 lp8788_select_buck_vout_addr(struct lp8788_buck *buck,
 					enum lp8788_buck_id id)
 {
 	enum lp8788_dvs_mode mode = lp8788_get_buck_dvs_ctrl_mode(buck, id);
+	struct lp8788_buck1_dvs *b1_dvs;
+	struct lp8788_buck2_dvs *b2_dvs;
 	u8 val, idx, addr;
 	int pin1, pin2;
 
 	switch (id) {
 	case BUCK1:
 		if (mode == EXTPIN) {
-			idx = gpiod_get_value(buck->gpio1);
+			b1_dvs = (struct lp8788_buck1_dvs *)buck->dvs;
+			if (!b1_dvs)
+				goto err;
+
+			idx = gpio_get_value(b1_dvs->gpio) ? 1 : 0;
 		} else {
 			lp8788_read_byte(buck->lp, LP8788_BUCK_DVS_SEL, &val);
 			idx = (val & LP8788_BUCK1_DVS_M) >> LP8788_BUCK1_DVS_S;
@@ -215,8 +223,12 @@ static u8 lp8788_select_buck_vout_addr(struct lp8788_buck *buck,
 		break;
 	case BUCK2:
 		if (mode == EXTPIN) {
-			pin1 = gpiod_get_value(buck->gpio1);
-			pin2 = gpiod_get_value(buck->gpio2);
+			b2_dvs = (struct lp8788_buck2_dvs *)buck->dvs;
+			if (!b2_dvs)
+				goto err;
+
+			pin1 = gpio_get_value(b2_dvs->gpio[0]);
+			pin2 = gpio_get_value(b2_dvs->gpio[1]);
 
 			if (pin1 == PIN_LOW && pin2 == PIN_LOW)
 				idx = 0;
@@ -412,28 +424,28 @@ static int lp8788_dvs_gpio_request(struct platform_device *pdev,
 				enum lp8788_buck_id id)
 {
 	struct lp8788_platform_data *pdata = buck->lp->pdata;
-	struct device *dev = &pdev->dev;
+	char *b1_name = "LP8788_B1_DVS";
+	char *b2_name[] = { "LP8788_B2_DVS1", "LP8788_B2_DVS2" };
+	int i, gpio, ret;
 
 	switch (id) {
 	case BUCK1:
-		buck->gpio1 = devm_gpiod_get(dev, "dvs", GPIOD_OUT_LOW);
-		if (IS_ERR(buck->gpio1))
-			return PTR_ERR(buck->gpio1);
-		gpiod_set_consumer_name(buck->gpio1, "LP8788_B1_DVS");
+		gpio = pdata->buck1_dvs->gpio;
+		ret = devm_gpio_request_one(&pdev->dev, gpio, DVS_LOW,
+					    b1_name);
+		if (ret)
+			return ret;
 
 		buck->dvs = pdata->buck1_dvs;
 		break;
 	case BUCK2:
-		buck->gpio1 = devm_gpiod_get_index(dev, "dvs", 0, GPIOD_OUT_LOW);
-		if (IS_ERR(buck->gpio1))
-			return PTR_ERR(buck->gpio1);
-		gpiod_set_consumer_name(buck->gpio1, "LP8788_B2_DVS1");
-
-		buck->gpio2 = devm_gpiod_get_index(dev, "dvs", 1, GPIOD_OUT_LOW);
-		if (IS_ERR(buck->gpio2))
-			return PTR_ERR(buck->gpio2);
-		gpiod_set_consumer_name(buck->gpio2, "LP8788_B2_DVS2");
-
+		for (i = 0; i < LP8788_NUM_BUCK2_DVS; i++) {
+			gpio = pdata->buck2_dvs->gpio[i];
+			ret = devm_gpio_request_one(&pdev->dev, gpio,
+						    DVS_LOW, b2_name[i]);
+			if (ret)
+				return ret;
+		}
 		buck->dvs = pdata->buck2_dvs;
 		break;
 	default:

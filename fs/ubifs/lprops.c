@@ -1014,9 +1014,8 @@ out:
  */
 static int scan_check_cb(struct ubifs_info *c,
 			 const struct ubifs_lprops *lp, int in_tree,
-			 void *arg)
+			 struct ubifs_lp_stats *lst)
 {
-	struct ubifs_lp_stats *lst = arg;
 	struct ubifs_scan_leb *sleb;
 	struct ubifs_scan_node *snod;
 	int cat, lnum = lp->lnum, is_idx = 0, used = 0, free, dirty, ret;
@@ -1270,7 +1269,8 @@ int dbg_check_lprops(struct ubifs_info *c)
 
 	memset(&lst, 0, sizeof(struct ubifs_lp_stats));
 	err = ubifs_lpt_scan_nolock(c, c->main_first, c->leb_cnt - 1,
-				    scan_check_cb, &lst);
+				    (ubifs_lpt_scan_callback)scan_check_cb,
+				    &lst);
 	if (err && err != -ENOSPC)
 		goto out;
 

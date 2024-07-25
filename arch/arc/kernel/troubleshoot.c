@@ -90,12 +90,10 @@ static void show_faulting_vma(unsigned long address)
 	 */
 	if (vma) {
 		char buf[ARC_PATH_MAX];
-		char *nm = "anon";
+		char *nm = "?";
 
 		if (vma->vm_file) {
-			/* XXX: can we use %pD below and get rid of buf? */
-			nm = d_path(file_user_path(vma->vm_file), buf,
-				    ARC_PATH_MAX-1);
+			nm = file_path(vma->vm_file, buf, ARC_PATH_MAX-1);
 			if (IS_ERR(nm))
 				nm = "?";
 		}

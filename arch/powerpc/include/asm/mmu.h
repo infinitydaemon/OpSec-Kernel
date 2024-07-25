@@ -133,7 +133,6 @@
 #define MMU_FTRS_POWER8		MMU_FTRS_POWER6
 #define MMU_FTRS_POWER9		MMU_FTRS_POWER6
 #define MMU_FTRS_POWER10	MMU_FTRS_POWER6
-#define MMU_FTRS_POWER11	MMU_FTRS_POWER6
 #define MMU_FTRS_CELL		MMU_FTRS_DEFAULT_HPTE_ARCH_V2 | \
 				MMU_FTR_CI_LARGE_PAGE
 #define MMU_FTRS_PA6T		MMU_FTRS_DEFAULT_HPTE_ARCH_V2 | \
@@ -251,7 +250,7 @@ static __always_inline bool mmu_has_feature(unsigned long feature)
 #endif
 
 #ifdef CONFIG_JUMP_LABEL_FEATURE_CHECK_DEBUG
-	if (!static_key_feature_checks_initialized) {
+	if (!static_key_initialized) {
 		printk("Warning! mmu_has_feature() used prior to jump label init!\n");
 		dump_stack();
 		return early_mmu_has_feature(feature);
@@ -331,10 +330,17 @@ static __always_inline bool early_radix_enabled(void)
 	return early_mmu_has_feature(MMU_FTR_TYPE_RADIX);
 }
 
+#ifdef CONFIG_STRICT_KERNEL_RWX
 static inline bool strict_kernel_rwx_enabled(void)
 {
-	return IS_ENABLED(CONFIG_STRICT_KERNEL_RWX) && rodata_enabled;
+	return rodata_enabled;
 }
+#else
+static inline bool strict_kernel_rwx_enabled(void)
+{
+	return false;
+}
+#endif
 
 static inline bool strict_module_rwx_enabled(void)
 {
@@ -404,6 +410,10 @@ extern void *abatron_pteptrs[2];
 #include <asm/book3s/32/mmu-hash.h>
 #elif defined(CONFIG_PPC_MMU_NOHASH)
 #include <asm/nohash/mmu.h>
+#endif
+
+#if defined(CONFIG_FA_DUMP) || defined(CONFIG_PRESERVE_FA_DUMP)
+#define __HAVE_ARCH_RESERVED_KERNEL_PAGES
 #endif
 
 #endif /* __KERNEL__ */

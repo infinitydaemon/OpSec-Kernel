@@ -121,6 +121,8 @@ static int xiphera_trng_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	platform_set_drvdata(pdev, trng);
+
 	return 0;
 }
 

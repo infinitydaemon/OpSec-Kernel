@@ -242,22 +242,6 @@ size_t mtk_mdp_rdma_get_num_formats(struct device *dev)
 	return ARRAY_SIZE(formats);
 }
 
-int mtk_mdp_rdma_power_on(struct device *dev)
-{
-	int ret = pm_runtime_resume_and_get(dev);
-
-	if (ret < 0) {
-		dev_err(dev, "Failed to power on: %d\n", ret);
-		return ret;
-	}
-	return 0;
-}
-
-void mtk_mdp_rdma_power_off(struct device *dev)
-{
-	pm_runtime_put(dev);
-}
-
 int mtk_mdp_rdma_clk_enable(struct device *dev)
 {
 	struct mtk_mdp_rdma *rdma = dev_get_drvdata(dev);
@@ -346,6 +330,7 @@ struct platform_driver mtk_mdp_rdma_driver = {
 	.remove_new = mtk_mdp_rdma_remove,
 	.driver = {
 		.name = "mediatek-mdp-rdma",
+		.owner = THIS_MODULE,
 		.of_match_table = mtk_mdp_rdma_driver_dt_match,
 	},
 };

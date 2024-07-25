@@ -5,7 +5,6 @@
  * lpass-cdc-dma.c -- ALSA SoC CDC DMA CPU DAI driver for QTi LPASS
  */
 
-#include <dt-bindings/sound/qcom,lpass.h>
 #include <linux/clk.h>
 #include <linux/module.h>
 #include <linux/export.h>
@@ -38,7 +37,7 @@ static void __lpass_get_dmactl_handle(struct snd_pcm_substream *substream, struc
 	struct lpass_data *drvdata = snd_soc_dai_get_drvdata(dai);
 	struct snd_pcm_runtime *rt = substream->runtime;
 	struct lpass_pcm_data *pcm_data = rt->private_data;
-	const struct lpass_variant *v = drvdata->variant;
+	struct lpass_variant *v = drvdata->variant;
 	unsigned int dai_id = cpu_dai->driver->id;
 
 	switch (dai_id) {

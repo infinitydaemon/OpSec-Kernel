@@ -107,12 +107,13 @@ lag_setup2x2()
 	NAMESPACES="${namespaces}"
 }
 
-# cleanup all lag related namespaces
+# cleanup all lag related namespaces and remove the bonding module
 lag_cleanup()
 {
 	for n in ${NAMESPACES}; do
 		ip netns delete ${n} >/dev/null 2>&1 || true
 	done
+	modprobe -r bonding
 }
 
 SWITCH="lag_node1"
@@ -158,7 +159,7 @@ test_bond_recovery()
 	create_bond $@
 
 	# verify connectivity
-	slowwait 2 ip netns exec ${CLIENT} ping ${SWITCHIP} -c 2 -W 0.1 &> /dev/null
+	ip netns exec ${CLIENT} ping ${SWITCHIP} -c 2 >/dev/null 2>&1
 	check_err $? "No connectivity"
 
 	# force the links of the bond down
@@ -168,7 +169,7 @@ test_bond_recovery()
 	ip netns exec ${SWITCH} ip link set eth1 down
 
 	# re-verify connectivity
-	slowwait 2 ip netns exec ${CLIENT} ping ${SWITCHIP} -c 2 -W 0.1 &> /dev/null
+	ip netns exec ${CLIENT} ping ${SWITCHIP} -c 2 >/dev/null 2>&1
 
 	local rc=$?
 	check_err $rc "Bond failed to recover"

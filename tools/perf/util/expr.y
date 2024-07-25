@@ -1,8 +1,6 @@
 /* Simple expression parser */
 %{
-#ifndef NDEBUG
 #define YYDEBUG 1
-#endif
 #include <assert.h>
 #include <math.h>
 #include <stdlib.h>

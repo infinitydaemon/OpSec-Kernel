@@ -39,7 +39,6 @@
 #include "amdgpu.h"
 #include "amdgpu_trace.h"
 #include "amdgpu_amdkfd.h"
-#include "amdgpu_vram_mgr.h"
 
 /**
  * DOC: amdgpu_object
@@ -154,10 +153,8 @@ void amdgpu_bo_placement_from_domain(struct amdgpu_bo *abo, u32 domain)
 		else
 			places[c].flags |= TTM_PL_FLAG_TOPDOWN;
 
-		if (abo->tbo.type == ttm_bo_type_kernel &&
-		    flags & AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS)
+		if (flags & AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS)
 			places[c].flags |= TTM_PL_FLAG_CONTIGUOUS;
-
 		c++;
 	}
 
@@ -176,12 +173,6 @@ void amdgpu_bo_placement_from_domain(struct amdgpu_bo *abo, u32 domain)
 			abo->flags & AMDGPU_GEM_CREATE_PREEMPTIBLE ?
 			AMDGPU_PL_PREEMPT : TTM_PL_TT;
 		places[c].flags = 0;
-		/*
-		 * When GTT is just an alternative to VRAM make sure that we
-		 * only use it as fallback and still try to fill up VRAM first.
-		 */
-		if (domain & abo->preferred_domains & AMDGPU_GEM_DOMAIN_VRAM)
-			places[c].flags |= TTM_PL_FLAG_FALLBACK;
 		c++;
 	}
 
@@ -229,6 +220,9 @@ void amdgpu_bo_placement_from_domain(struct amdgpu_bo *abo, u32 domain)
 
 	placement->num_placement = c;
 	placement->placement = places;
+
+	placement->num_busy_placement = c;
+	placement->busy_placement = places;
 }
 
 /**
@@ -465,7 +459,7 @@ void amdgpu_bo_free_kernel(struct amdgpu_bo **bo, u64 *gpu_addr,
 		*cpu_addr = NULL;
 }
 
-/* Validate bo size is bit bigger than the request domain */
+/* Validate bo size is bit bigger then the request domain */
 static bool amdgpu_bo_validate_size(struct amdgpu_device *adev,
 					  unsigned long size, u32 domain)
 {
@@ -475,24 +469,29 @@ static bool amdgpu_bo_validate_size(struct amdgpu_device *adev,
 	 * If GTT is part of requested domains the check must succeed to
 	 * allow fall back to GTT.
 	 */
-	if (domain & AMDGPU_GEM_DOMAIN_GTT)
+	if (domain & AMDGPU_GEM_DOMAIN_GTT) {
 		man = ttm_manager_type(&adev->mman.bdev, TTM_PL_TT);
-	else if (domain & AMDGPU_GEM_DOMAIN_VRAM)
-		man = ttm_manager_type(&adev->mman.bdev, TTM_PL_VRAM);
-	else
-		return true;
 
-	if (!man) {
-		if (domain & AMDGPU_GEM_DOMAIN_GTT)
+		if (man && size < man->size)
+			return true;
+		else if (!man)
 			WARN_ON_ONCE("GTT domain requested but GTT mem manager uninitialized");
-		return false;
+		goto fail;
+	} else if (domain & AMDGPU_GEM_DOMAIN_VRAM) {
+		man = ttm_manager_type(&adev->mman.bdev, TTM_PL_VRAM);
+
+		if (man && size < man->size)
+			return true;
+		goto fail;
 	}
 
 	/* TODO add more domains checks, such as AMDGPU_GEM_DOMAIN_CPU, _DOMAIN_DOORBELL */
-	if (size < man->size)
-		return true;
+	return true;
 
-	DRM_DEBUG("BO size %lu > total memory in domain: %llu\n", size, man->size);
+fail:
+	if (man)
+		DRM_DEBUG("BO size %lu > total memory in domain: %llu\n", size,
+			  man->size);
 	return false;
 }
 
@@ -604,7 +603,8 @@ int amdgpu_bo_create(struct amdgpu_device *adev,
 	if (!amdgpu_bo_support_uswc(bo->flags))
 		bo->flags &= ~AMDGPU_GEM_CREATE_CPU_GTT_USWC;
 
-	bo->flags |= AMDGPU_GEM_CREATE_VRAM_WIPE_ON_RELEASE;
+	if (adev->ras_enabled)
+		bo->flags |= AMDGPU_GEM_CREATE_VRAM_WIPE_ON_RELEASE;
 
 	bo->tbo.bdev = &adev->mman.bdev;
 	if (bp->domain & (AMDGPU_GEM_DOMAIN_GWS | AMDGPU_GEM_DOMAIN_OA |
@@ -637,7 +637,7 @@ int amdgpu_bo_create(struct amdgpu_device *adev,
 	    bo->tbo.resource->mem_type == TTM_PL_VRAM) {
 		struct dma_fence *fence;
 
-		r = amdgpu_ttm_clear_buffer(bo, bo->tbo.base.resv, &fence);
+		r = amdgpu_fill_buffer(bo, 0, bo->tbo.base.resv, &fence, true);
 		if (unlikely(r))
 			goto fail_unreserve;
 
@@ -767,7 +767,7 @@ int amdgpu_bo_restore_shadow(struct amdgpu_bo *shadow, struct dma_fence **fence)
 
 	return amdgpu_copy_buffer(ring, shadow_addr, parent_addr,
 				  amdgpu_bo_size(shadow), NULL, fence,
-				  true, false, 0);
+				  true, false, false);
 }
 
 /**
@@ -969,10 +969,6 @@ int amdgpu_bo_pin_restricted(struct amdgpu_bo *bo, u32 domain,
 		if (!bo->placements[i].lpfn ||
 		    (lpfn && lpfn < bo->placements[i].lpfn))
 			bo->placements[i].lpfn = lpfn;
-
-		if (bo->flags & AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS &&
-		    bo->placements[i].mem_type == TTM_PL_VRAM)
-			bo->placements[i].flags |= TTM_PL_FLAG_CONTIGUOUS;
 	}
 
 	r = ttm_bo_validate(&bo->tbo, &bo->placement, &ctx);
@@ -1359,8 +1355,6 @@ void amdgpu_bo_release_notify(struct ttm_buffer_object *bo)
 
 	abo = ttm_to_amdgpu_bo(bo);
 
-	WARN_ON(abo->vm_bo);
-
 	if (abo->kfd_bo)
 		amdgpu_amdkfd_release_notify(abo);
 
@@ -1378,9 +1372,8 @@ void amdgpu_bo_release_notify(struct ttm_buffer_object *bo)
 	if (WARN_ON_ONCE(!dma_resv_trylock(bo->base.resv)))
 		return;
 
-	r = amdgpu_fill_buffer(abo, 0, bo->base.resv, &fence, true);
+	r = amdgpu_fill_buffer(abo, AMDGPU_POISON, bo->base.resv, &fence, true);
 	if (!WARN_ON(r)) {
-		amdgpu_vram_mgr_set_cleared(bo->resource);
 		amdgpu_bo_fence(abo, fence, false);
 		dma_fence_put(fence);
 	}
@@ -1422,7 +1415,8 @@ vm_fault_t amdgpu_bo_fault_reserve_notify(struct ttm_buffer_object *bo)
 					AMDGPU_GEM_DOMAIN_GTT);
 
 	/* Avoid costly evictions; only set GTT as a busy placement */
-	abo->placements[0].flags |= TTM_PL_FLAG_DESIRED;
+	abo->placement.num_busy_placement = 1;
+	abo->placement.busy_placement = &abo->placements[1];
 
 	r = ttm_bo_validate(bo, &abo->placement, &ctx);
 	if (unlikely(r == -EBUSY || r == -ERESTARTSYS))
@@ -1542,14 +1536,10 @@ u64 amdgpu_bo_gpu_offset(struct amdgpu_bo *bo)
 u64 amdgpu_bo_gpu_offset_no_check(struct amdgpu_bo *bo)
 {
 	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->tbo.bdev);
-	uint64_t offset = AMDGPU_BO_INVALID_OFFSET;
+	uint64_t offset;
 
-	if (bo->tbo.resource->mem_type == TTM_PL_TT)
-		offset = amdgpu_gmc_agp_addr(&bo->tbo);
-
-	if (offset == AMDGPU_BO_INVALID_OFFSET)
-		offset = (bo->tbo.resource->start << PAGE_SHIFT) +
-			amdgpu_ttm_domain_start(adev, bo->tbo.resource->mem_type);
+	offset = (bo->tbo.resource->start << PAGE_SHIFT) +
+		 amdgpu_ttm_domain_start(adev, bo->tbo.resource->mem_type);
 
 	return amdgpu_gmc_sign_extend(offset);
 }

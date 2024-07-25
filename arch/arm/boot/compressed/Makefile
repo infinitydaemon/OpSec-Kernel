@@ -22,6 +22,13 @@ ifeq ($(CONFIG_ARM_VIRT_EXT),y)
 OBJS		+= hyp-stub.o
 endif
 
+GCOV_PROFILE		:= n
+KASAN_SANITIZE		:= n
+
+# Prevents link failures: __sanitizer_cov_trace_pc() is not linked in.
+KCOV_INSTRUMENT		:= n
+UBSAN_SANITIZE		:= n
+
 #
 # Architecture dependencies
 #

@@ -10,7 +10,7 @@
 
    mips/index
    arm64/index
-   ../arch/riscv/index
+   ../riscv/index
    openrisc/index
    parisc/index
    loongarch/index
@@ -18,6 +18,7 @@
 TODOList:
 
 * arm/index
+* ia64/index
 * m68k/index
 * nios2/index
 * powerpc/index

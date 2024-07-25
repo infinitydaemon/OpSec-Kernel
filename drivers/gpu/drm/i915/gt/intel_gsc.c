@@ -11,7 +11,6 @@
 #include "gem/i915_gem_region.h"
 #include "gt/intel_gsc.h"
 #include "gt/intel_gt.h"
-#include "gt/intel_gt_print.h"
 
 #define GSC_BAR_LENGTH  0x00000FFC
 
@@ -50,13 +49,13 @@ gsc_ext_om_alloc(struct intel_gsc *gsc, struct intel_gsc_intf *intf, size_t size
 					  I915_BO_ALLOC_CONTIGUOUS |
 					  I915_BO_ALLOC_CPU_CLEAR);
 	if (IS_ERR(obj)) {
-		gt_err(gt, "Failed to allocate gsc memory\n");
+		drm_err(&gt->i915->drm, "Failed to allocate gsc memory\n");
 		return PTR_ERR(obj);
 	}
 
 	err = i915_gem_object_pin_pages_unlocked(obj);
 	if (err) {
-		gt_err(gt, "Failed to pin pages for gsc memory\n");
+		drm_err(&gt->i915->drm, "Failed to pin pages for gsc memory\n");
 		goto out_put;
 	}
 
@@ -100,6 +99,19 @@ static const struct gsc_def gsc_def_dg1[] = {
 		.name = "mei-gscfi",
 		.bar = DG1_GSC_HECI2_BASE,
 		.bar_size = GSC_BAR_LENGTH,
+	}
+};
+
+static const struct gsc_def gsc_def_xehpsdv[] = {
+	{
+		/* HECI1 not enabled on the device. */
+	},
+	{
+		.name = "mei-gscfi",
+		.bar = DG1_GSC_HECI2_BASE,
+		.bar_size = GSC_BAR_LENGTH,
+		.use_polling = true,
+		.slow_firmware = true,
 	}
 };
 
@@ -175,6 +187,8 @@ static void gsc_init_one(struct drm_i915_private *i915, struct intel_gsc *gsc,
 
 	if (IS_DG1(i915)) {
 		def = &gsc_def_dg1[intf_id];
+	} else if (IS_XEHPSDV(i915)) {
+		def = &gsc_def_xehpsdv[intf_id];
 	} else if (IS_DG2(i915)) {
 		def = &gsc_def_dg2[intf_id];
 	} else {
@@ -272,12 +286,12 @@ static void gsc_irq_handler(struct intel_gt *gt, unsigned int intf_id)
 	int ret;
 
 	if (intf_id >= INTEL_GSC_NUM_INTERFACES) {
-		gt_warn_once(gt, "GSC irq: intf_id %d is out of range", intf_id);
+		drm_warn_once(&gt->i915->drm, "GSC irq: intf_id %d is out of range", intf_id);
 		return;
 	}
 
 	if (!HAS_HECI_GSC(gt->i915)) {
-		gt_warn_once(gt, "GSC irq: not supported");
+		drm_warn_once(&gt->i915->drm, "GSC irq: not supported");
 		return;
 	}
 
@@ -286,7 +300,7 @@ static void gsc_irq_handler(struct intel_gt *gt, unsigned int intf_id)
 
 	ret = generic_handle_irq(gt->gsc.intf[intf_id].irq);
 	if (ret)
-		gt_err_ratelimited(gt, "error handling GSC irq: %d\n", ret);
+		drm_err_ratelimited(&gt->i915->drm, "error handling GSC irq: %d\n", ret);
 }
 
 void intel_gsc_irq_handler(struct intel_gt *gt, u32 iir)

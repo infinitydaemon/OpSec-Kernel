@@ -24,8 +24,6 @@
 #define mmDPCSTX0_DPCSTX_PLL_UPDATE_ADDR_BASE_IDX                                                      2
 #define mmDPCSTX0_DPCSTX_PLL_UPDATE_DATA                                                               0x292d
 #define mmDPCSTX0_DPCSTX_PLL_UPDATE_DATA_BASE_IDX                                                      2
-#define mmDPCSTX0_DPCSTX_DEBUG_CONFIG                                                                  0x292e
-#define mmDPCSTX0_DPCSTX_DEBUG_CONFIG_BASE_IDX                                                         2
 
 
 // addressBlock: dpcssys_dpcs0_rdpcstx0_dispdec
@@ -52,8 +50,6 @@
 #define mmRDPCSTX0_RDPCSTX_CNTL2_BASE_IDX                                                              2
 #define mmRDPCSTX0_RDPCSTX_DMCU_DPALT_DIS_BLOCK_REG                                                    0x293c
 #define mmRDPCSTX0_RDPCSTX_DMCU_DPALT_DIS_BLOCK_REG_BASE_IDX                                           2
-#define mmRDPCSTX0_RDPCSTX_DEBUG_CONFIG                                                                0x293d
-#define mmRDPCSTX0_RDPCSTX_DEBUG_CONFIG_BASE_IDX                                                       2
 #define mmRDPCSTX0_RDPCSTX_PHY_CNTL0                                                                   0x2940
 #define mmRDPCSTX0_RDPCSTX_PHY_CNTL0_BASE_IDX                                                          2
 #define mmRDPCSTX0_RDPCSTX_PHY_CNTL1                                                                   0x2941
@@ -124,8 +120,6 @@
 #define mmDPCSTX1_DPCSTX_PLL_UPDATE_ADDR_BASE_IDX                                                      2
 #define mmDPCSTX1_DPCSTX_PLL_UPDATE_DATA                                                               0x2a05
 #define mmDPCSTX1_DPCSTX_PLL_UPDATE_DATA_BASE_IDX                                                      2
-#define mmDPCSTX1_DPCSTX_DEBUG_CONFIG                                                                  0x2a06
-#define mmDPCSTX1_DPCSTX_DEBUG_CONFIG_BASE_IDX                                                         2
 
 
 // addressBlock: dpcssys_dpcs0_rdpcstx1_dispdec
@@ -152,8 +146,6 @@
 #define mmRDPCSTX1_RDPCSTX_CNTL2_BASE_IDX                                                              2
 #define mmRDPCSTX1_RDPCSTX_DMCU_DPALT_DIS_BLOCK_REG                                                    0x2a14
 #define mmRDPCSTX1_RDPCSTX_DMCU_DPALT_DIS_BLOCK_REG_BASE_IDX                                           2
-#define mmRDPCSTX1_RDPCSTX_DEBUG_CONFIG                                                                0x2a15
-#define mmRDPCSTX1_RDPCSTX_DEBUG_CONFIG_BASE_IDX                                                       2
 #define mmRDPCSTX1_RDPCSTX_PHY_CNTL0                                                                   0x2a18
 #define mmRDPCSTX1_RDPCSTX_PHY_CNTL0_BASE_IDX                                                          2
 #define mmRDPCSTX1_RDPCSTX_PHY_CNTL1                                                                   0x2a19
@@ -224,8 +216,6 @@
 #define mmDPCSTX2_DPCSTX_PLL_UPDATE_ADDR_BASE_IDX                                                      2
 #define mmDPCSTX2_DPCSTX_PLL_UPDATE_DATA                                                               0x2add
 #define mmDPCSTX2_DPCSTX_PLL_UPDATE_DATA_BASE_IDX                                                      2
-#define mmDPCSTX2_DPCSTX_DEBUG_CONFIG                                                                  0x2ade
-#define mmDPCSTX2_DPCSTX_DEBUG_CONFIG_BASE_IDX                                                         2
 
 
 // addressBlock: dpcssys_dpcs0_rdpcstx2_dispdec
@@ -252,8 +242,6 @@
 #define mmRDPCSTX2_RDPCSTX_CNTL2_BASE_IDX                                                              2
 #define mmRDPCSTX2_RDPCSTX_DMCU_DPALT_DIS_BLOCK_REG                                                    0x2aec
 #define mmRDPCSTX2_RDPCSTX_DMCU_DPALT_DIS_BLOCK_REG_BASE_IDX                                           2
-#define mmRDPCSTX2_RDPCSTX_DEBUG_CONFIG                                                                0x2aed
-#define mmRDPCSTX2_RDPCSTX_DEBUG_CONFIG_BASE_IDX                                                       2
 #define mmRDPCSTX2_RDPCSTX_PHY_CNTL0                                                                   0x2af0
 #define mmRDPCSTX2_RDPCSTX_PHY_CNTL0_BASE_IDX                                                          2
 #define mmRDPCSTX2_RDPCSTX_PHY_CNTL1                                                                   0x2af1
@@ -324,8 +312,6 @@
 #define mmDPCSTX3_DPCSTX_PLL_UPDATE_ADDR_BASE_IDX                                                      2
 #define mmDPCSTX3_DPCSTX_PLL_UPDATE_DATA                                                               0x2bb5
 #define mmDPCSTX3_DPCSTX_PLL_UPDATE_DATA_BASE_IDX                                                      2
-#define mmDPCSTX3_DPCSTX_DEBUG_CONFIG                                                                  0x2bb6
-#define mmDPCSTX3_DPCSTX_DEBUG_CONFIG_BASE_IDX                                                         2
 
 
 // addressBlock: dpcssys_dpcs0_rdpcstx3_dispdec
@@ -352,8 +338,6 @@
 #define mmRDPCSTX3_RDPCSTX_CNTL2_BASE_IDX                                                              2
 #define mmRDPCSTX3_RDPCSTX_DMCU_DPALT_DIS_BLOCK_REG                                                    0x2bc4
 #define mmRDPCSTX3_RDPCSTX_DMCU_DPALT_DIS_BLOCK_REG_BASE_IDX                                           2
-#define mmRDPCSTX3_RDPCSTX_DEBUG_CONFIG                                                                0x2bc5
-#define mmRDPCSTX3_RDPCSTX_DEBUG_CONFIG_BASE_IDX                                                       2
 #define mmRDPCSTX3_RDPCSTX_PHY_CNTL0                                                                   0x2bc8
 #define mmRDPCSTX3_RDPCSTX_PHY_CNTL0_BASE_IDX                                                          2
 #define mmRDPCSTX3_RDPCSTX_PHY_CNTL1                                                                   0x2bc9
@@ -424,8 +408,6 @@
 #define mmDPCSTX4_DPCSTX_PLL_UPDATE_ADDR_BASE_IDX                                                      2
 #define mmDPCSTX4_DPCSTX_PLL_UPDATE_DATA                                                               0x2c8d
 #define mmDPCSTX4_DPCSTX_PLL_UPDATE_DATA_BASE_IDX                                                      2
-#define mmDPCSTX4_DPCSTX_DEBUG_CONFIG                                                                  0x2c8e
-#define mmDPCSTX4_DPCSTX_DEBUG_CONFIG_BASE_IDX                                                         2
 
 
 // addressBlock: dpcssys_dpcs0_rdpcstx4_dispdec
@@ -452,8 +434,6 @@
 #define mmRDPCSTX4_RDPCSTX_CNTL2_BASE_IDX                                                              2
 #define mmRDPCSTX4_RDPCSTX_DMCU_DPALT_DIS_BLOCK_REG                                                    0x2c9c
 #define mmRDPCSTX4_RDPCSTX_DMCU_DPALT_DIS_BLOCK_REG_BASE_IDX                                           2
-#define mmRDPCSTX4_RDPCSTX_DEBUG_CONFIG                                                                0x2c9d
-#define mmRDPCSTX4_RDPCSTX_DEBUG_CONFIG_BASE_IDX                                                       2
 #define mmRDPCSTX4_RDPCSTX_PHY_CNTL0                                                                   0x2ca0
 #define mmRDPCSTX4_RDPCSTX_PHY_CNTL0_BASE_IDX                                                          2
 #define mmRDPCSTX4_RDPCSTX_PHY_CNTL1                                                                   0x2ca1
@@ -524,8 +504,6 @@
 #define mmDPCSTX5_DPCSTX_PLL_UPDATE_ADDR_BASE_IDX                                                      2
 #define mmDPCSTX5_DPCSTX_PLL_UPDATE_DATA                                                               0x2d65
 #define mmDPCSTX5_DPCSTX_PLL_UPDATE_DATA_BASE_IDX                                                      2
-#define mmDPCSTX5_DPCSTX_DEBUG_CONFIG                                                                  0x2d66
-#define mmDPCSTX5_DPCSTX_DEBUG_CONFIG_BASE_IDX                                                         2
 
 
 // addressBlock: dpcssys_dpcs0_rdpcstx5_dispdec
@@ -552,8 +530,6 @@
 #define mmRDPCSTX5_RDPCSTX_CNTL2_BASE_IDX                                                              2
 #define mmRDPCSTX5_RDPCSTX_DMCU_DPALT_DIS_BLOCK_REG                                                    0x2d74
 #define mmRDPCSTX5_RDPCSTX_DMCU_DPALT_DIS_BLOCK_REG_BASE_IDX                                           2
-#define mmRDPCSTX5_RDPCSTX_DEBUG_CONFIG                                                                0x2d75
-#define mmRDPCSTX5_RDPCSTX_DEBUG_CONFIG_BASE_IDX                                                       2
 #define mmRDPCSTX5_RDPCSTX_PHY_CNTL0                                                                   0x2d78
 #define mmRDPCSTX5_RDPCSTX_PHY_CNTL0_BASE_IDX                                                          2
 #define mmRDPCSTX5_RDPCSTX_PHY_CNTL1                                                                   0x2d79

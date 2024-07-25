@@ -14,7 +14,6 @@
 #include <linux/kdebug.h>
 #include <asm/mmu_context.h>
 #include <asm/thread_info.h>
-#include <asm/tlb.h>
 
 /*
  * Called with interrupts disabled.

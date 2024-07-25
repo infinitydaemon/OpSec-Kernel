@@ -7,7 +7,6 @@ pub(crate) fn derive(input: TokenStream) -> TokenStream {
     let (
         Generics {
             impl_generics,
-            decl_generics: _,
             ty_generics,
         },
         mut rest,

@@ -4,7 +4,6 @@
 #include <linux/genalloc.h>
 #include <linux/device.h>
 #include <linux/module.h>
-#include <linux/memory.h>
 #include <linux/slab.h>
 #include <linux/uuid.h>
 #include <linux/sort.h>
@@ -30,108 +29,6 @@
  */
 
 static struct cxl_region *to_cxl_region(struct device *dev);
-
-#define __ACCESS_ATTR_RO(_level, _name) {				\
-	.attr	= { .name = __stringify(_name), .mode = 0444 },		\
-	.show	= _name##_access##_level##_show,			\
-}
-
-#define ACCESS_DEVICE_ATTR_RO(level, name)	\
-	struct device_attribute dev_attr_access##level##_##name = __ACCESS_ATTR_RO(level, name)
-
-#define ACCESS_ATTR_RO(level, attrib)					      \
-static ssize_t attrib##_access##level##_show(struct device *dev,	      \
-					  struct device_attribute *attr,      \
-					  char *buf)			      \
-{									      \
-	struct cxl_region *cxlr = to_cxl_region(dev);			      \
-									      \
-	if (cxlr->coord[level].attrib == 0)				      \
-		return -ENOENT;						      \
-									      \
-	return sysfs_emit(buf, "%u\n", cxlr->coord[level].attrib);	      \
-}									      \
-static ACCESS_DEVICE_ATTR_RO(level, attrib)
-
-ACCESS_ATTR_RO(0, read_bandwidth);
-ACCESS_ATTR_RO(0, read_latency);
-ACCESS_ATTR_RO(0, write_bandwidth);
-ACCESS_ATTR_RO(0, write_latency);
-
-#define ACCESS_ATTR_DECLARE(level, attrib)	\
-	(&dev_attr_access##level##_##attrib.attr)
-
-static struct attribute *access0_coordinate_attrs[] = {
-	ACCESS_ATTR_DECLARE(0, read_bandwidth),
-	ACCESS_ATTR_DECLARE(0, write_bandwidth),
-	ACCESS_ATTR_DECLARE(0, read_latency),
-	ACCESS_ATTR_DECLARE(0, write_latency),
-	NULL
-};
-
-ACCESS_ATTR_RO(1, read_bandwidth);
-ACCESS_ATTR_RO(1, read_latency);
-ACCESS_ATTR_RO(1, write_bandwidth);
-ACCESS_ATTR_RO(1, write_latency);
-
-static struct attribute *access1_coordinate_attrs[] = {
-	ACCESS_ATTR_DECLARE(1, read_bandwidth),
-	ACCESS_ATTR_DECLARE(1, write_bandwidth),
-	ACCESS_ATTR_DECLARE(1, read_latency),
-	ACCESS_ATTR_DECLARE(1, write_latency),
-	NULL
-};
-
-#define ACCESS_VISIBLE(level)						\
-static umode_t cxl_region_access##level##_coordinate_visible(		\
-		struct kobject *kobj, struct attribute *a, int n)	\
-{									\
-	struct device *dev = kobj_to_dev(kobj);				\
-	struct cxl_region *cxlr = to_cxl_region(dev);			\
-									\
-	if (a == &dev_attr_access##level##_read_latency.attr &&		\
-	    cxlr->coord[level].read_latency == 0)			\
-		return 0;						\
-									\
-	if (a == &dev_attr_access##level##_write_latency.attr &&	\
-	    cxlr->coord[level].write_latency == 0)			\
-		return 0;						\
-									\
-	if (a == &dev_attr_access##level##_read_bandwidth.attr &&	\
-	    cxlr->coord[level].read_bandwidth == 0)			\
-		return 0;						\
-									\
-	if (a == &dev_attr_access##level##_write_bandwidth.attr &&	\
-	    cxlr->coord[level].write_bandwidth == 0)			\
-		return 0;						\
-									\
-	return a->mode;							\
-}
-
-ACCESS_VISIBLE(0);
-ACCESS_VISIBLE(1);
-
-static const struct attribute_group cxl_region_access0_coordinate_group = {
-	.name = "access0",
-	.attrs = access0_coordinate_attrs,
-	.is_visible = cxl_region_access0_coordinate_visible,
-};
-
-static const struct attribute_group *get_cxl_region_access0_group(void)
-{
-	return &cxl_region_access0_coordinate_group;
-}
-
-static const struct attribute_group cxl_region_access1_coordinate_group = {
-	.name = "access1",
-	.attrs = access1_coordinate_attrs,
-	.is_visible = cxl_region_access1_coordinate_visible,
-};
-
-static const struct attribute_group *get_cxl_region_access1_group(void)
-{
-	return &cxl_region_access1_coordinate_group;
-}
 
 static ssize_t uuid_show(struct device *dev, struct device_attribute *attr,
 			 char *buf)
@@ -226,7 +123,7 @@ static int cxl_region_invalidate_memregion(struct cxl_region *cxlr)
 {
 	if (!cpu_cache_has_invalidate_memregion()) {
 		if (IS_ENABLED(CONFIG_CXL_REGION_INVALIDATION_TEST)) {
-			dev_info_once(
+			dev_warn_once(
 				&cxlr->dev,
 				"Bypassing cpu_cache_invalidate_memregion() for testing!\n");
 			return 0;
@@ -655,9 +552,8 @@ static int alloc_hpa(struct cxl_region *cxlr, resource_size_t size)
 	res = alloc_free_mem_region(cxlrd->res, size, SZ_256M,
 				    dev_name(&cxlr->dev));
 	if (IS_ERR(res)) {
-		dev_dbg(&cxlr->dev,
-			"HPA allocation error (%ld) for size:%pap in %s %pr\n",
-			PTR_ERR(res), &size, cxlrd->res->name, cxlrd->res);
+		dev_dbg(&cxlr->dev, "failed to allocate HPA: %ld\n",
+			PTR_ERR(res));
 		return PTR_ERR(res);
 	}
 
@@ -1101,6 +997,26 @@ static int cxl_port_attach_region(struct cxl_port *port,
 	}
 	cxld = cxl_rr->decoder;
 
+	/*
+	 * the number of targets should not exceed the target_count
+	 * of the decoder
+	 */
+	if (is_switch_decoder(&cxld->dev)) {
+		struct cxl_switch_decoder *cxlsd;
+
+		cxlsd = to_cxl_switch_decoder(&cxld->dev);
+		if (cxl_rr->nr_targets > cxlsd->nr_targets) {
+			dev_dbg(&cxlr->dev,
+				"%s:%s %s add: %s:%s @ %d overflows targets: %d\n",
+				dev_name(port->uport_dev), dev_name(&port->dev),
+				dev_name(&cxld->dev), dev_name(&cxlmd->dev),
+				dev_name(&cxled->cxld.dev), pos,
+				cxlsd->nr_targets);
+			rc = -ENXIO;
+			goto out_erase;
+		}
+	}
+
 	rc = cxl_rr_ep_add(cxl_rr, cxled);
 	if (rc) {
 		dev_dbg(&cxlr->dev,
@@ -1206,6 +1122,50 @@ static int check_last_peer(struct cxl_endpoint_decoder *cxled,
 			dev_name(&cxled_peer->cxld.dev));
 		return -ENXIO;
 	}
+
+	return 0;
+}
+
+static int check_interleave_cap(struct cxl_decoder *cxld, int iw, int ig)
+{
+	struct cxl_port *port = to_cxl_port(cxld->dev.parent);
+	struct cxl_hdm *cxlhdm = dev_get_drvdata(&port->dev);
+	unsigned int interleave_mask;
+	u8 eiw;
+	u16 eig;
+	int high_pos, low_pos;
+
+	if (!test_bit(iw, &cxlhdm->iw_cap_mask))
+		return -ENXIO;
+	/*
+	 * Per CXL specification r3.1(8.2.4.20.13 Decoder Protection),
+	 * if eiw < 8:
+	 *   DPAOFFSET[51: eig + 8] = HPAOFFSET[51: eig + 8 + eiw]
+	 *   DPAOFFSET[eig + 7: 0]  = HPAOFFSET[eig + 7: 0]
+	 *
+	 *   when the eiw is 0, all the bits of HPAOFFSET[51: 0] are used, the
+	 *   interleave bits are none.
+	 *
+	 * if eiw >= 8:
+	 *   DPAOFFSET[51: eig + 8] = HPAOFFSET[51: eig + eiw] / 3
+	 *   DPAOFFSET[eig + 7: 0]  = HPAOFFSET[eig + 7: 0]
+	 *
+	 *   when the eiw is 8, all the bits of HPAOFFSET[51: 0] are used, the
+	 *   interleave bits are none.
+	 */
+	ways_to_eiw(iw, &eiw);
+	if (eiw == 0 || eiw == 8)
+		return 0;
+
+	granularity_to_eig(ig, &eig);
+	if (eiw > 8)
+		high_pos = eiw + eig - 1;
+	else
+		high_pos = eiw + eig + 7;
+	low_pos = eig + 8;
+	interleave_mask = GENMASK(high_pos, low_pos);
+	if (interleave_mask & ~cxlhdm->interleave_mask)
+		return -ENXIO;
 
 	return 0;
 }
@@ -1360,6 +1320,15 @@ static int cxl_port_setup_targets(struct cxl_port *port,
 			return -ENXIO;
 		}
 	} else {
+		rc = check_interleave_cap(cxld, iw, ig);
+		if (rc) {
+			dev_dbg(&cxlr->dev,
+				"%s:%s iw: %d ig: %d is not supported\n",
+				dev_name(port->uport_dev),
+				dev_name(&port->dev), iw, ig);
+			return rc;
+		}
+
 		cxld->interleave_ways = iw;
 		cxld->interleave_granularity = ig;
 		cxld->hpa_range = (struct range) {
@@ -1796,6 +1765,15 @@ static int cxl_region_attach(struct cxl_region *cxlr,
 	struct cxl_dport *dport;
 	int rc = -ENXIO;
 
+	rc = check_interleave_cap(&cxled->cxld, p->interleave_ways,
+				  p->interleave_granularity);
+	if (rc) {
+		dev_dbg(&cxlr->dev, "%s iw: %d ig: %d is not supported\n",
+			dev_name(&cxled->cxld.dev), p->interleave_ways,
+			p->interleave_granularity);
+		return rc;
+	}
+
 	if (cxled->mode != cxlr->mode) {
 		dev_dbg(&cxlr->dev, "%s region mode: %d mismatch: %d\n",
 			dev_name(&cxled->cxld.dev), cxlr->mode, cxled->mode);
@@ -1854,8 +1832,6 @@ static int cxl_region_attach(struct cxl_region *cxlr,
 			(u64)resource_size(p->res));
 		return -EINVAL;
 	}
-
-	cxl_region_perf_data_calculate(cxlr, cxled);
 
 	if (test_bit(CXL_REGION_F_AUTO, &cxlr->flags)) {
 		int i;
@@ -2172,8 +2148,6 @@ static const struct attribute_group *region_groups[] = {
 	&cxl_base_attribute_group,
 	&cxl_region_group,
 	&cxl_region_target_group,
-	&cxl_region_access0_coordinate_group,
-	&cxl_region_access1_coordinate_group,
 	NULL,
 };
 
@@ -2221,14 +2195,13 @@ static struct cxl_region *to_cxl_region(struct device *dev)
 	return container_of(dev, struct cxl_region, dev);
 }
 
-static void unregister_region(void *_cxlr)
+static void unregister_region(void *dev)
 {
-	struct cxl_region *cxlr = _cxlr;
+	struct cxl_region *cxlr = to_cxl_region(dev);
 	struct cxl_region_params *p = &cxlr->params;
 	int i;
 
-	unregister_memory_notifier(&cxlr->memory_notifier);
-	device_del(&cxlr->dev);
+	device_del(dev);
 
 	/*
 	 * Now that region sysfs is shutdown, the parameter block is now
@@ -2239,7 +2212,7 @@ static void unregister_region(void *_cxlr)
 		detach_target(cxlr, i);
 
 	cxl_region_iomem_release(cxlr);
-	put_device(&cxlr->dev);
+	put_device(dev);
 }
 
 static struct lock_class_key cxl_region_key;
@@ -2270,63 +2243,6 @@ static struct cxl_region *cxl_region_alloc(struct cxl_root_decoder *cxlrd, int i
 	cxlr->id = id;
 
 	return cxlr;
-}
-
-static bool cxl_region_update_coordinates(struct cxl_region *cxlr, int nid)
-{
-	int cset = 0;
-	int rc;
-
-	for (int i = 0; i < ACCESS_COORDINATE_MAX; i++) {
-		if (cxlr->coord[i].read_bandwidth) {
-			rc = 0;
-			if (cxl_need_node_perf_attrs_update(nid))
-				node_set_perf_attrs(nid, &cxlr->coord[i], i);
-			else
-				rc = cxl_update_hmat_access_coordinates(nid, cxlr, i);
-
-			if (rc == 0)
-				cset++;
-		}
-	}
-
-	if (!cset)
-		return false;
-
-	rc = sysfs_update_group(&cxlr->dev.kobj, get_cxl_region_access0_group());
-	if (rc)
-		dev_dbg(&cxlr->dev, "Failed to update access0 group\n");
-
-	rc = sysfs_update_group(&cxlr->dev.kobj, get_cxl_region_access1_group());
-	if (rc)
-		dev_dbg(&cxlr->dev, "Failed to update access1 group\n");
-
-	return true;
-}
-
-static int cxl_region_perf_attrs_callback(struct notifier_block *nb,
-					  unsigned long action, void *arg)
-{
-	struct cxl_region *cxlr = container_of(nb, struct cxl_region,
-					       memory_notifier);
-	struct cxl_region_params *p = &cxlr->params;
-	struct cxl_endpoint_decoder *cxled = p->targets[0];
-	struct cxl_decoder *cxld = &cxled->cxld;
-	struct memory_notify *mnb = arg;
-	int nid = mnb->status_change_nid;
-	int region_nid;
-
-	if (nid == NUMA_NO_NODE || action != MEM_ONLINE)
-		return NOTIFY_DONE;
-
-	region_nid = phys_to_target_node(cxld->hpa_range.start);
-	if (nid != region_nid)
-		return NOTIFY_DONE;
-
-	if (!cxl_region_update_coordinates(cxlr, nid))
-		return NOTIFY_DONE;
-
-	return NOTIFY_OK;
 }
 
 /**
@@ -2366,10 +2282,6 @@ static struct cxl_region *devm_cxl_add_region(struct cxl_root_decoder *cxlrd,
 	rc = device_add(dev);
 	if (rc)
 		goto err;
-
-	cxlr->memory_notifier.notifier_call = cxl_region_perf_attrs_callback;
-	cxlr->memory_notifier.priority = CXL_CALLBACK_PRI;
-	register_memory_notifier(&cxlr->memory_notifier);
 
 	rc = devm_add_action_or_reset(port->uport_dev, unregister_region, cxlr);
 	if (rc)
@@ -2688,22 +2600,33 @@ static int __cxl_dpa_to_region(struct device *dev, void *arg)
 {
 	struct cxl_dpa_to_region_context *ctx = arg;
 	struct cxl_endpoint_decoder *cxled;
+	struct cxl_region *cxlr;
 	u64 dpa = ctx->dpa;
 
 	if (!is_endpoint_decoder(dev))
 		return 0;
 
 	cxled = to_cxl_endpoint_decoder(dev);
-	if (!cxled->dpa_res || !resource_size(cxled->dpa_res))
+	if (!cxled || !cxled->dpa_res || !resource_size(cxled->dpa_res))
 		return 0;
 
 	if (dpa > cxled->dpa_res->end || dpa < cxled->dpa_res->start)
 		return 0;
 
-	dev_dbg(dev, "dpa:0x%llx mapped in region:%s\n", dpa,
-		dev_name(&cxled->cxld.region->dev));
+	/*
+	 * Stop the region search (return 1) when an endpoint mapping is
+	 * found. The region may not be fully constructed so offering
+	 * the cxlr in the context structure is not guaranteed.
+	 */
+	cxlr = cxled->cxld.region;
+	if (cxlr)
+		dev_dbg(dev, "dpa:0x%llx mapped in region:%s\n", dpa,
+			dev_name(&cxlr->dev));
+	else
+		dev_dbg(dev, "dpa:0x%llx mapped in endpoint:%s\n", dpa,
+			dev_name(dev));
 
-	ctx->cxlr = cxled->cxld.region;
+	ctx->cxlr = cxlr;
 
 	return 1;
 }
@@ -2723,114 +2646,28 @@ struct cxl_region *cxl_dpa_to_region(const struct cxl_memdev *cxlmd, u64 dpa)
 	return ctx.cxlr;
 }
 
-static bool cxl_is_hpa_in_range(u64 hpa, struct cxl_region *cxlr, int pos)
-{
-	struct cxl_region_params *p = &cxlr->params;
-	int gran = p->interleave_granularity;
-	int ways = p->interleave_ways;
-	u64 offset;
-
-	/* Is the hpa within this region at all */
-	if (hpa < p->res->start || hpa > p->res->end) {
-		dev_dbg(&cxlr->dev,
-			"Addr trans fail: hpa 0x%llx not in region\n", hpa);
-		return false;
-	}
-
-	/* Is the hpa in an expected chunk for its pos(-ition) */
-	offset = hpa - p->res->start;
-	offset = do_div(offset, gran * ways);
-	if ((offset >= pos * gran) && (offset < (pos + 1) * gran))
-		return true;
-
-	dev_dbg(&cxlr->dev,
-		"Addr trans fail: hpa 0x%llx not in expected chunk\n", hpa);
-
-	return false;
-}
-
-static u64 cxl_dpa_to_hpa(u64 dpa,  struct cxl_region *cxlr,
-			  struct cxl_endpoint_decoder *cxled)
-{
-	u64 dpa_offset, hpa_offset, bits_upper, mask_upper, hpa;
-	struct cxl_region_params *p = &cxlr->params;
-	int pos = cxled->pos;
-	u16 eig = 0;
-	u8 eiw = 0;
-
-	ways_to_eiw(p->interleave_ways, &eiw);
-	granularity_to_eig(p->interleave_granularity, &eig);
-
-	/*
-	 * The device position in the region interleave set was removed
-	 * from the offset at HPA->DPA translation. To reconstruct the
-	 * HPA, place the 'pos' in the offset.
-	 *
-	 * The placement of 'pos' in the HPA is determined by interleave
-	 * ways and granularity and is defined in the CXL Spec 3.0 Section
-	 * 8.2.4.19.13 Implementation Note: Device Decode Logic
-	 */
-
-	/* Remove the dpa base */
-	dpa_offset = dpa - cxl_dpa_resource_start(cxled);
-
-	mask_upper = GENMASK_ULL(51, eig + 8);
-
-	if (eiw < 8) {
-		hpa_offset = (dpa_offset & mask_upper) << eiw;
-		hpa_offset |= pos << (eig + 8);
-	} else {
-		bits_upper = (dpa_offset & mask_upper) >> (eig + 8);
-		bits_upper = bits_upper * 3;
-		hpa_offset = ((bits_upper << (eiw - 8)) + pos) << (eig + 8);
-	}
-
-	/* The lower bits remain unchanged */
-	hpa_offset |= dpa_offset & GENMASK_ULL(eig + 7, 0);
-
-	/* Apply the hpa_offset to the region base address */
-	hpa = hpa_offset + p->res->start;
-
-	if (!cxl_is_hpa_in_range(hpa, cxlr, cxled->pos))
-		return ULLONG_MAX;
-
-	return hpa;
-}
-
-u64 cxl_trace_hpa(struct cxl_region *cxlr, const struct cxl_memdev *cxlmd,
-		  u64 dpa)
-{
-	struct cxl_region_params *p = &cxlr->params;
-	struct cxl_endpoint_decoder *cxled = NULL;
-
-	for (int i = 0; i <  p->nr_targets; i++) {
-		cxled = p->targets[i];
-		if (cxlmd == cxled_to_memdev(cxled))
-			break;
-	}
-	if (!cxled || cxlmd != cxled_to_memdev(cxled))
-		return ULLONG_MAX;
-
-	return cxl_dpa_to_hpa(dpa, cxlr, cxled);
-}
-
 static struct lock_class_key cxl_pmem_region_key;
 
-static int cxl_pmem_region_alloc(struct cxl_region *cxlr)
+static struct cxl_pmem_region *cxl_pmem_region_alloc(struct cxl_region *cxlr)
 {
 	struct cxl_region_params *p = &cxlr->params;
 	struct cxl_nvdimm_bridge *cxl_nvb;
+	struct cxl_pmem_region *cxlr_pmem;
 	struct device *dev;
 	int i;
 
-	guard(rwsem_read)(&cxl_region_rwsem);
-	if (p->state != CXL_CONFIG_COMMIT)
-		return -ENXIO;
+	down_read(&cxl_region_rwsem);
+	if (p->state != CXL_CONFIG_COMMIT) {
+		cxlr_pmem = ERR_PTR(-ENXIO);
+		goto out;
+	}
 
-	struct cxl_pmem_region *cxlr_pmem __free(kfree) =
-		kzalloc(struct_size(cxlr_pmem, mapping, p->nr_targets), GFP_KERNEL);
-	if (!cxlr_pmem)
-		return -ENOMEM;
+	cxlr_pmem = kzalloc(struct_size(cxlr_pmem, mapping, p->nr_targets),
+			    GFP_KERNEL);
+	if (!cxlr_pmem) {
+		cxlr_pmem = ERR_PTR(-ENOMEM);
+		goto out;
+	}
 
 	cxlr_pmem->hpa_range.start = p->res->start;
 	cxlr_pmem->hpa_range.end = p->res->end;
@@ -2848,8 +2685,11 @@ static int cxl_pmem_region_alloc(struct cxl_region *cxlr)
 		 */
 		if (i == 0) {
 			cxl_nvb = cxl_find_nvdimm_bridge(cxlmd);
-			if (!cxl_nvb)
-				return -ENODEV;
+			if (!cxl_nvb) {
+				kfree(cxlr_pmem);
+				cxlr_pmem = ERR_PTR(-ENODEV);
+				goto out;
+			}
 			cxlr->cxl_nvb = cxl_nvb;
 		}
 		m->cxlmd = cxlmd;
@@ -2860,16 +2700,18 @@ static int cxl_pmem_region_alloc(struct cxl_region *cxlr)
 	}
 
 	dev = &cxlr_pmem->dev;
+	cxlr_pmem->cxlr = cxlr;
+	cxlr->cxlr_pmem = cxlr_pmem;
 	device_initialize(dev);
 	lockdep_set_class(&dev->mutex, &cxl_pmem_region_key);
 	device_set_pm_not_required(dev);
 	dev->parent = &cxlr->dev;
 	dev->bus = &cxl_bus_type;
 	dev->type = &cxl_pmem_region_type;
-	cxlr_pmem->cxlr = cxlr;
-	cxlr->cxlr_pmem = no_free_ptr(cxlr_pmem);
+out:
+	up_read(&cxl_region_rwsem);
 
-	return 0;
+	return cxlr_pmem;
 }
 
 static void cxl_dax_region_release(struct device *dev)
@@ -2986,10 +2828,9 @@ static int devm_cxl_add_pmem_region(struct cxl_region *cxlr)
 	struct device *dev;
 	int rc;
 
-	rc = cxl_pmem_region_alloc(cxlr);
-	if (rc)
-		return rc;
-	cxlr_pmem = cxlr->cxlr_pmem;
+	cxlr_pmem = cxl_pmem_region_alloc(cxlr);
+	if (IS_ERR(cxlr_pmem))
+		return PTR_ERR(cxlr_pmem);
 	cxl_nvb = cxlr->cxl_nvb;
 
 	dev = &cxlr_pmem->dev;

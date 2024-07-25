@@ -16,11 +16,7 @@
 #define LOADFVC_MAJOR_OP 0x01
 #define LOADFVC_MINOR_OP 0x08
 
-/*
- * Interval to flush dirty data for next CTX entry. The interval is measured
- * in increments of 10ns(interval time = CTX_FLUSH_TIMER_COUNT * 10ns).
- */
-#define CTX_FLUSH_TIMER_CNT 0x2FAF0
+#define CTX_FLUSH_TIMER_CNT 0xFFFFFF
 
 struct fw_info_t {
 	struct list_head ucodes;
@@ -121,10 +117,12 @@ static char *get_ucode_type_str(int ucode_type)
 
 static int get_ucode_type(struct device *dev,
 			  struct otx2_cpt_ucode_hdr *ucode_hdr,
-			  int *ucode_type, u16 rid)
+			  int *ucode_type)
 {
+	struct otx2_cptpf_dev *cptpf = dev_get_drvdata(dev);
 	char ver_str_prefix[OTX2_CPT_UCODE_VER_STR_SZ];
 	char tmp_ver_str[OTX2_CPT_UCODE_VER_STR_SZ];
+	struct pci_dev *pdev = cptpf->pdev;
 	int i, val = 0;
 	u8 nn;
 
@@ -132,7 +130,7 @@ static int get_ucode_type(struct device *dev,
 	for (i = 0; i < strlen(tmp_ver_str); i++)
 		tmp_ver_str[i] = tolower(tmp_ver_str[i]);
 
-	sprintf(ver_str_prefix, "ocpt-%02d", rid);
+	sprintf(ver_str_prefix, "ocpt-%02d", pdev->revision);
 	if (!strnstr(tmp_ver_str, ver_str_prefix, OTX2_CPT_UCODE_VER_STR_SZ))
 		return -EINVAL;
 
@@ -361,7 +359,7 @@ static int cpt_attach_and_enable_cores(struct otx2_cpt_eng_grp_info *eng_grp,
 }
 
 static int load_fw(struct device *dev, struct fw_info_t *fw_info,
-		   char *filename, u16 rid)
+		   char *filename)
 {
 	struct otx2_cpt_ucode_hdr *ucode_hdr;
 	struct otx2_cpt_uc_info_t *uc_info;
@@ -377,7 +375,7 @@ static int load_fw(struct device *dev, struct fw_info_t *fw_info,
 		goto free_uc_info;
 
 	ucode_hdr = (struct otx2_cpt_ucode_hdr *)uc_info->fw->data;
-	ret = get_ucode_type(dev, ucode_hdr, &ucode_type, rid);
+	ret = get_ucode_type(dev, ucode_hdr, &ucode_type);
 	if (ret)
 		goto release_fw;
 
@@ -391,7 +389,6 @@ static int load_fw(struct device *dev, struct fw_info_t *fw_info,
 	set_ucode_filename(&uc_info->ucode, filename);
 	memcpy(uc_info->ucode.ver_str, ucode_hdr->ver_str,
 	       OTX2_CPT_UCODE_VER_STR_SZ);
-	uc_info->ucode.ver_str[OTX2_CPT_UCODE_VER_STR_SZ] = 0;
 	uc_info->ucode.ver_num = ucode_hdr->ver_num;
 	uc_info->ucode.type = ucode_type;
 	uc_info->ucode.size = ucode_size;
@@ -451,8 +448,7 @@ static void print_uc_info(struct fw_info_t *fw_info)
 	}
 }
 
-static int cpt_ucode_load_fw(struct pci_dev *pdev, struct fw_info_t *fw_info,
-			     u16 rid)
+static int cpt_ucode_load_fw(struct pci_dev *pdev, struct fw_info_t *fw_info)
 {
 	char filename[OTX2_CPT_NAME_LENGTH];
 	char eng_type[8] = {0};
@@ -466,9 +462,9 @@ static int cpt_ucode_load_fw(struct pci_dev *pdev, struct fw_info_t *fw_info,
 			eng_type[i] = tolower(eng_type[i]);
 
 		snprintf(filename, sizeof(filename), "mrvl/cpt%02d/%s.out",
-			 rid, eng_type);
+			 pdev->revision, eng_type);
 		/* Request firmware for each engine type */
-		ret = load_fw(&pdev->dev, fw_info, filename, rid);
+		ret = load_fw(&pdev->dev, fw_info, filename);
 		if (ret)
 			goto release_fw;
 	}
@@ -1159,7 +1155,7 @@ int otx2_cpt_create_eng_grps(struct otx2_cptpf_dev *cptpf,
 	if (eng_grps->is_grps_created)
 		goto unlock;
 
-	ret = cpt_ucode_load_fw(pdev, &fw_info, eng_grps->rid);
+	ret = cpt_ucode_load_fw(pdev, &fw_info);
 	if (ret)
 		goto unlock;
 
@@ -1234,16 +1230,14 @@ int otx2_cpt_create_eng_grps(struct otx2_cptpf_dev *cptpf,
 	 */
 	rnm_to_cpt_errata_fixup(&pdev->dev);
 
-	otx2_cpt_read_af_reg(&cptpf->afpf_mbox, pdev, CPT_AF_CTL, &reg_val,
-			     BLKADDR_CPT0);
 	/*
 	 * Configure engine group mask to allow context prefetching
 	 * for the groups and enable random number request, to enable
 	 * CPT to request random numbers from RNM.
 	 */
-	reg_val |= OTX2_CPT_ALL_ENG_GRPS_MASK << 3 | BIT_ULL(16);
 	otx2_cpt_write_af_reg(&cptpf->afpf_mbox, pdev, CPT_AF_CTL,
-			      reg_val, BLKADDR_CPT0);
+			      OTX2_CPT_ALL_ENG_GRPS_MASK << 3 | BIT_ULL(16),
+			      BLKADDR_CPT0);
 	/*
 	 * Set interval to periodically flush dirty data for the next
 	 * CTX cache entry. Set the interval count to maximum supported
@@ -1258,12 +1252,10 @@ int otx2_cpt_create_eng_grps(struct otx2_cptpf_dev *cptpf,
 	 * encounters a fault/poison, a rare case may result in
 	 * unpredictable data being delivered to a CPT engine.
 	 */
-	if (cpt_is_errata_38550_exists(pdev)) {
-		otx2_cpt_read_af_reg(&cptpf->afpf_mbox, pdev, CPT_AF_DIAG,
-				     &reg_val, BLKADDR_CPT0);
-		otx2_cpt_write_af_reg(&cptpf->afpf_mbox, pdev, CPT_AF_DIAG,
-				      reg_val | BIT_ULL(24), BLKADDR_CPT0);
-	}
+	otx2_cpt_read_af_reg(&cptpf->afpf_mbox, pdev, CPT_AF_DIAG, &reg_val,
+			     BLKADDR_CPT0);
+	otx2_cpt_write_af_reg(&cptpf->afpf_mbox, pdev, CPT_AF_DIAG,
+			      reg_val | BIT_ULL(24), BLKADDR_CPT0);
 
 	mutex_unlock(&eng_grps->lock);
 	return 0;
@@ -1420,7 +1412,7 @@ static int create_eng_caps_discovery_grps(struct pci_dev *pdev,
 	int ret;
 
 	mutex_lock(&eng_grps->lock);
-	ret = cpt_ucode_load_fw(pdev, &fw_info, eng_grps->rid);
+	ret = cpt_ucode_load_fw(pdev, &fw_info);
 	if (ret) {
 		mutex_unlock(&eng_grps->lock);
 		return ret;
@@ -1694,14 +1686,13 @@ int otx2_cpt_dl_custom_egrp_create(struct otx2_cptpf_dev *cptpf,
 		goto err_unlock;
 	}
 	INIT_LIST_HEAD(&fw_info.ucodes);
-
-	ret = load_fw(dev, &fw_info, ucode_filename[0], eng_grps->rid);
+	ret = load_fw(dev, &fw_info, ucode_filename[0]);
 	if (ret) {
 		dev_err(dev, "Unable to load firmware %s\n", ucode_filename[0]);
 		goto err_unlock;
 	}
 	if (ucode_idx > 1) {
-		ret = load_fw(dev, &fw_info, ucode_filename[1], eng_grps->rid);
+		ret = load_fw(dev, &fw_info, ucode_filename[1]);
 		if (ret) {
 			dev_err(dev, "Unable to load firmware %s\n",
 				ucode_filename[1]);

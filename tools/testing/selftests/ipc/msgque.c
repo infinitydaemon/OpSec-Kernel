@@ -198,12 +198,13 @@ int main(int argc, char **argv)
 	struct msgque_data msgque;
 
 	if (getuid() != 0)
-		ksft_exit_skip("Please run the test as root - Exiting.\n");
+		return ksft_exit_skip(
+				"Please run the test as root - Exiting.\n");
 
 	msgque.key = ftok(argv[0], 822155650);
 	if (msgque.key == -1) {
 		printf("Can't make key: %d\n", -errno);
-		ksft_exit_fail();
+		return ksft_exit_fail();
 	}
 
 	msgque.msq_id = msgget(msgque.key, IPC_CREAT | IPC_EXCL | 0666);
@@ -242,13 +243,13 @@ int main(int argc, char **argv)
 		printf("Failed to test queue: %d\n", err);
 		goto err_out;
 	}
-	ksft_exit_pass();
+	return ksft_exit_pass();
 
 err_destroy:
 	if (msgctl(msgque.msq_id, IPC_RMID, NULL)) {
 		printf("Failed to destroy queue: %d\n", -errno);
-		ksft_exit_fail();
+		return ksft_exit_fail();
 	}
 err_out:
-	ksft_exit_fail();
+	return ksft_exit_fail();
 }

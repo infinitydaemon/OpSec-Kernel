@@ -27,7 +27,6 @@ static int cs35l56_i2c_probe(struct i2c_client *client)
 		return -ENOMEM;
 
 	cs35l56->base.dev = dev;
-	cs35l56->base.can_hibernate = true;
 
 	i2c_set_clientdata(client, cs35l56);
 	cs35l56->base.regmap = devm_regmap_init_i2c(client, regmap_config);
@@ -57,7 +56,7 @@ static void cs35l56_i2c_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id cs35l56_id_i2c[] = {
-	{ "cs35l56" },
+	{ "cs35l56", 0 },
 	{}
 };
 MODULE_DEVICE_TABLE(i2c, cs35l56_id_i2c);
@@ -73,7 +72,7 @@ MODULE_DEVICE_TABLE(acpi, cs35l56_asoc_acpi_match);
 static struct i2c_driver cs35l56_i2c_driver = {
 	.driver = {
 		.name		= "cs35l56",
-		.pm = pm_ptr(&cs35l56_pm_ops_i2c_spi),
+		.pm = &cs35l56_pm_ops_i2c_spi,
 		.acpi_match_table = ACPI_PTR(cs35l56_asoc_acpi_match),
 	},
 	.id_table	= cs35l56_id_i2c,

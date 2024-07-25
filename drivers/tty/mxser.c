@@ -264,7 +264,7 @@ struct mxser_port {
 	u8 rx_low_water;
 	int type;		/* UART type */
 
-	u8 x_char;		/* xon/xoff character */
+	unsigned char x_char;	/* xon/xoff character */
 	u8 IER;			/* Interrupt Enable Register */
 	u8 MCR;			/* Modem control register */
 	u8 FCR;			/* FIFO control register */
@@ -288,7 +288,7 @@ struct mxser_board {
 	enum mxser_must_hwid must_hwid;
 	speed_t max_baud;
 
-	struct mxser_port ports[] __counted_by(nports);
+	struct mxser_port ports[];
 };
 
 static DECLARE_BITMAP(mxser_boards, MXSER_BOARDS);
@@ -905,7 +905,7 @@ static ssize_t mxser_write(struct tty_struct *tty, const u8 *buf, size_t count)
 {
 	struct mxser_port *info = tty->driver_data;
 	unsigned long flags;
-	size_t written;
+	int written;
 	bool is_empty;
 
 	spin_lock_irqsave(&info->slock, flags);
@@ -1521,7 +1521,7 @@ static u8 mxser_receive_chars_old(struct tty_struct *tty,
 			if (++ignored > 100)
 				break;
 		} else {
-			u8 flag = 0;
+			char flag = 0;
 			if (status & UART_LSR_BRK_ERROR_BITS) {
 				if (status & UART_LSR_BI) {
 					flag = TTY_BREAK;
@@ -1585,7 +1585,7 @@ static void mxser_transmit_chars(struct tty_struct *tty, struct mxser_port *port
 
 	count = port->xmit_fifo_size;
 	do {
-		u8 c;
+		unsigned char c;
 
 		if (!kfifo_get(&port->port.xmit_fifo, &c))
 			break;

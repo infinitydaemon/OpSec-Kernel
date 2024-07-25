@@ -9,11 +9,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "array_size.h"
-#include "internal.h"
 #include "list.h"
 #include "lkc.h"
-#include "preprocess.h"
+
+#define ARRAY_SIZE(arr)		(sizeof(arr) / sizeof((arr)[0]))
 
 static char *expand_string_with_args(const char *in, int argc, char *argv[]);
 static char *expand_string(const char *in);
@@ -22,7 +21,7 @@ static void __attribute__((noreturn)) pperror(const char *format, ...)
 {
 	va_list ap;
 
-	fprintf(stderr, "%s:%d: ", cur_filename, yylineno);
+	fprintf(stderr, "%s:%d: ", current_file->name, yylineno);
 	va_start(ap, format);
 	vfprintf(stderr, format, ap);
 	va_end(ap);
@@ -88,17 +87,14 @@ static char *env_expand(const char *name)
 	return xstrdup(value);
 }
 
-void env_write_dep(struct gstr *s)
+void env_write_dep(FILE *f, const char *autoconfig_name)
 {
 	struct env *e, *tmp;
 
 	list_for_each_entry_safe(e, tmp, &env_list, node) {
-		str_printf(s,
-			   "\n"
-			   "ifneq \"$(%s)\" \"%s\"\n"
-			   "$(autoconfig): FORCE\n"
-			   "endif\n",
-			   e->name, e->value);
+		fprintf(f, "ifneq \"$(%s)\" \"%s\"\n", e->name, e->value);
+		fprintf(f, "%s: FORCE\n", autoconfig_name);
+		fprintf(f, "endif\n");
 		env_del(e);
 	}
 }
@@ -123,7 +119,7 @@ static char *do_error_if(int argc, char *argv[])
 
 static char *do_filename(int argc, char *argv[])
 {
-	return xstrdup(cur_filename);
+	return xstrdup(current_file->name);
 }
 
 static char *do_info(int argc, char *argv[])
@@ -185,7 +181,8 @@ static char *do_shell(int argc, char *argv[])
 static char *do_warning_if(int argc, char *argv[])
 {
 	if (!strcmp(argv[0], "y"))
-		fprintf(stderr, "%s:%d: %s\n", cur_filename, yylineno, argv[1]);
+		fprintf(stderr, "%s:%d: %s\n",
+			current_file->name, yylineno, argv[1]);
 
 	return xstrdup("");
 }

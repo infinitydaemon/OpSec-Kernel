@@ -361,7 +361,7 @@ xlog_find_verify_cycle(
 	*new_blk = -1;
 
 out:
-	kvfree(buffer);
+	kmem_free(buffer);
 	return error;
 }
 
@@ -477,7 +477,7 @@ xlog_find_verify_log_record(
 		*last_blk = i;
 
 out:
-	kvfree(buffer);
+	kmem_free(buffer);
 	return error;
 }
 
@@ -731,7 +731,7 @@ validate_head:
 			goto out_free_buffer;
 	}
 
-	kvfree(buffer);
+	kmem_free(buffer);
 	if (head_blk == log_bbnum)
 		*return_head_blk = 0;
 	else
@@ -745,7 +745,7 @@ validate_head:
 	return 0;
 
 out_free_buffer:
-	kvfree(buffer);
+	kmem_free(buffer);
 	if (error)
 		xfs_warn(log->l_mp, "failed to find log head");
 	return error;
@@ -999,7 +999,7 @@ xlog_verify_tail(
 		"Tail block (0x%llx) overwrite detected. Updated to 0x%llx",
 			 orig_tail, *tail_blk);
 out:
-	kvfree(buffer);
+	kmem_free(buffer);
 	return error;
 }
 
@@ -1046,7 +1046,7 @@ xlog_verify_head(
 	error = xlog_rseek_logrec_hdr(log, *head_blk, *tail_blk,
 				      XLOG_MAX_ICLOGS, tmp_buffer,
 				      &tmp_rhead_blk, &tmp_rhead, &tmp_wrapped);
-	kvfree(tmp_buffer);
+	kmem_free(tmp_buffer);
 	if (error < 0)
 		return error;
 
@@ -1365,7 +1365,7 @@ xlog_find_tail(
 		error = xlog_clear_stale_blocks(log, tail_lsn);
 
 done:
-	kvfree(buffer);
+	kmem_free(buffer);
 
 	if (error)
 		xfs_warn(log->l_mp, "failed to locate log tail");
@@ -1399,7 +1399,6 @@ xlog_find_zeroed(
 	xfs_daddr_t	new_blk, last_blk, start_blk;
 	xfs_daddr_t     num_scan_bblks;
 	int	        error, log_bbnum = log->l_logBBsize;
-	int		ret = 1;
 
 	*blk_no = 0;
 
@@ -1414,7 +1413,8 @@ xlog_find_zeroed(
 	first_cycle = xlog_get_cycle(offset);
 	if (first_cycle == 0) {		/* completely zeroed log */
 		*blk_no = 0;
-		goto out_free_buffer;
+		kmem_free(buffer);
+		return 1;
 	}
 
 	/* check partially zeroed log */
@@ -1424,8 +1424,8 @@ xlog_find_zeroed(
 
 	last_cycle = xlog_get_cycle(offset);
 	if (last_cycle != 0) {		/* log completely written to */
-		ret = 0;
-		goto out_free_buffer;
+		kmem_free(buffer);
+		return 0;
 	}
 
 	/* we have a partially zeroed log */
@@ -1471,10 +1471,10 @@ xlog_find_zeroed(
 
 	*blk_no = last_blk;
 out_free_buffer:
-	kvfree(buffer);
+	kmem_free(buffer);
 	if (error)
 		return error;
-	return ret;
+	return 1;
 }
 
 /*
@@ -1583,7 +1583,7 @@ xlog_write_log_records(
 	}
 
 out_free_buffer:
-	kvfree(buffer);
+	kmem_free(buffer);
 	return error;
 }
 
@@ -1767,37 +1767,6 @@ xlog_recover_iget(
 	return 0;
 }
 
-/*
- * Get an inode so that we can recover a log operation.
- *
- * Log intent items that target inodes effectively contain a file handle.
- * Check that the generation number matches the intent item like we do for
- * other file handles.  Log intent items defined after this validation weakness
- * was identified must use this function.
- */
-int
-xlog_recover_iget_handle(
-	struct xfs_mount	*mp,
-	xfs_ino_t		ino,
-	uint32_t		gen,
-	struct xfs_inode	**ipp)
-{
-	struct xfs_inode	*ip;
-	int			error;
-
-	error = xlog_recover_iget(mp, ino, &ip);
-	if (error)
-		return error;
-
-	if (VFS_I(ip)->i_generation != gen) {
-		xfs_irele(ip);
-		return -EFSCORRUPTED;
-	}
-
-	*ipp = ip;
-	return 0;
-}
-
 /******************************************************************************
  *
  *		Log recover routines
@@ -1820,8 +1789,6 @@ static const struct xlog_recover_item_ops *xlog_recover_item_ops[] = {
 	&xlog_bud_item_ops,
 	&xlog_attri_item_ops,
 	&xlog_attrd_item_ops,
-	&xlog_xmi_item_ops,
-	&xlog_xmd_item_ops,
 };
 
 static const struct xlog_recover_item_ops *
@@ -1975,11 +1942,11 @@ xlog_recover_intent_item(
 	struct xlog			*log,
 	struct xfs_log_item		*lip,
 	xfs_lsn_t			lsn,
-	const struct xfs_defer_op_type	*ops)
+	unsigned int			dfp_type)
 {
 	ASSERT(xlog_item_is_intent(lip));
 
-	xfs_defer_start_recovery(lip, &log->r_dfops, ops);
+	xfs_defer_start_recovery(lip, dfp_type, &log->r_dfops);
 
 	/*
 	 * Insert the intent into the AIL directly and drop one reference so
@@ -2090,8 +2057,7 @@ xlog_recover_add_item(
 {
 	struct xlog_recover_item *item;
 
-	item = kzalloc(sizeof(struct xlog_recover_item),
-			GFP_KERNEL | __GFP_NOFAIL);
+	item = kmem_zalloc(sizeof(struct xlog_recover_item), 0);
 	INIT_LIST_HEAD(&item->ri_list);
 	list_add_tail(&item->ri_list, head);
 }
@@ -2194,7 +2160,7 @@ xlog_recover_add_to_trans(
 		return 0;
 	}
 
-	ptr = xlog_kvmalloc(len);
+	ptr = kmem_alloc(len, 0);
 	memcpy(ptr, dp, len);
 	in_f = (struct xfs_inode_log_format *)ptr;
 
@@ -2216,13 +2182,14 @@ xlog_recover_add_to_trans(
 		"bad number of regions (%d) in inode log format",
 				  in_f->ilf_size);
 			ASSERT(0);
-			kvfree(ptr);
+			kmem_free(ptr);
 			return -EFSCORRUPTED;
 		}
 
 		item->ri_total = in_f->ilf_size;
-		item->ri_buf = kzalloc(item->ri_total * sizeof(xfs_log_iovec_t),
-				GFP_KERNEL | __GFP_NOFAIL);
+		item->ri_buf =
+			kmem_zalloc(item->ri_total * sizeof(xfs_log_iovec_t),
+				    0);
 	}
 
 	if (item->ri_total <= item->ri_cnt) {
@@ -2230,7 +2197,7 @@ xlog_recover_add_to_trans(
 	"log item region count (%d) overflowed size (%d)",
 				item->ri_cnt, item->ri_total);
 		ASSERT(0);
-		kvfree(ptr);
+		kmem_free(ptr);
 		return -EFSCORRUPTED;
 	}
 
@@ -2260,13 +2227,13 @@ xlog_recover_free_trans(
 		/* Free the regions in the item. */
 		list_del(&item->ri_list);
 		for (i = 0; i < item->ri_cnt; i++)
-			kvfree(item->ri_buf[i].i_addr);
+			kmem_free(item->ri_buf[i].i_addr);
 		/* Free the item itself */
-		kfree(item->ri_buf);
-		kfree(item);
+		kmem_free(item->ri_buf);
+		kmem_free(item);
 	}
 	/* Free the transaction recover structure */
-	kfree(trans);
+	kmem_free(trans);
 }
 
 /*
@@ -2365,7 +2332,7 @@ xlog_recover_ophdr_to_trans(
 	 * This is a new transaction so allocate a new recovery container to
 	 * hold the recovery ops that will follow.
 	 */
-	trans = kzalloc(sizeof(struct xlog_recover), GFP_KERNEL | __GFP_NOFAIL);
+	trans = kmem_zalloc(sizeof(struct xlog_recover), 0);
 	trans->r_log_tid = tid;
 	trans->r_lsn = be64_to_cpu(rhead->h_lsn);
 	INIT_LIST_HEAD(&trans->r_itemq);
@@ -2595,14 +2562,17 @@ xlog_recover_process_intents(
 #endif
 
 	list_for_each_entry_safe(dfp, n, &log->r_dfops, dfp_list) {
-		ASSERT(xlog_item_is_intent(dfp->dfp_intent));
+		struct xfs_log_item	*lip = dfp->dfp_intent;
+		const struct xfs_item_ops *ops = lip->li_ops;
+
+		ASSERT(xlog_item_is_intent(lip));
 
 		/*
 		 * We should never see a redo item with a LSN higher than
 		 * the last transaction we found in the log at the start
 		 * of recovery.
 		 */
-		ASSERT(XFS_LSN_CMP(last_lsn, dfp->dfp_intent->li_lsn) >= 0);
+		ASSERT(XFS_LSN_CMP(last_lsn, lip->li_lsn) >= 0);
 
 		/*
 		 * NOTE: If your intent processing routine can create more
@@ -2611,13 +2581,16 @@ xlog_recover_process_intents(
 		 * replayed in the wrong order!
 		 *
 		 * The recovery function can free the log item, so we must not
-		 * access dfp->dfp_intent after it returns.  It must dispose of
-		 * @dfp if it returns 0.
+		 * access lip after it returns.
 		 */
-		error = xfs_defer_finish_recovery(log->l_mp, dfp,
-				&capture_list);
-		if (error)
+		error = ops->iop_recover(dfp, &capture_list);
+		if (error) {
+			trace_xlog_intent_recovery_failed(log->l_mp, error,
+					ops->iop_recover);
 			break;
+		}
+
+		xfs_defer_cancel_recovery(log->l_mp, dfp);
 	}
 	if (error)
 		goto err;
@@ -2651,22 +2624,15 @@ xlog_recover_cancel_intents(
 }
 
 /*
- * Transfer ownership of the recovered pending work to the recovery transaction
- * and try to finish the work.  If there is more work to be done, the dfp will
- * remain attached to the transaction.  If not, the dfp is freed.
+ * Transfer ownership of the recovered log intent item to the recovery
+ * transaction.
  */
-int
-xlog_recover_finish_intent(
+void
+xlog_recover_transfer_intent(
 	struct xfs_trans		*tp,
 	struct xfs_defer_pending	*dfp)
 {
-	int				error;
-
-	list_move(&dfp->dfp_list, &tp->t_dfops);
-	error = xfs_defer_finish_one(tp, dfp);
-	if (error == -EAGAIN)
-		return 0;
-	return error;
+	dfp->dfp_intent = NULL;
 }
 
 /*
@@ -2689,7 +2655,7 @@ xlog_recover_clear_agi_bucket(
 	if (error)
 		goto out_error;
 
-	error = xfs_read_agi(pag, tp, 0, &agibp);
+	error = xfs_read_agi(pag, tp, &agibp);
 	if (error)
 		goto out_abort;
 
@@ -2805,7 +2771,7 @@ xlog_recover_iunlink_ag(
 	int			bucket;
 	int			error;
 
-	error = xfs_read_agi(pag, NULL, 0, &agibp);
+	error = xfs_read_agi(pag, NULL, &agibp);
 	if (error) {
 		/*
 		 * AGI is b0rked. Don't process it.
@@ -2999,7 +2965,7 @@ xlog_do_recovery_pass(
 	int			error = 0, h_size, h_len;
 	int			error2 = 0;
 	int			bblks, split_bblks;
-	int			hblks = 1, split_hblks, wrapped_hblks;
+	int			hblks, split_hblks, wrapped_hblks;
 	int			i;
 	struct hlist_head	rhash[XLOG_RHASH_SIZE];
 	LIST_HEAD		(buffer_list);
@@ -3009,10 +2975,6 @@ xlog_do_recovery_pass(
 
 	for (i = 0; i < XLOG_RHASH_SIZE; i++)
 		INIT_HLIST_HEAD(&rhash[i]);
-
-	hbp = xlog_alloc_buffer(log, hblks);
-	if (!hbp)
-		return -ENOMEM;
 
 	/*
 	 * Read the header of the tail block and get the iclog buffer size from
@@ -3024,6 +2986,10 @@ xlog_do_recovery_pass(
 		 * iclog header and extract the header size from it.  Get a
 		 * new hbp that is the correct size.
 		 */
+		hbp = xlog_alloc_buffer(log, 1);
+		if (!hbp)
+			return -ENOMEM;
+
 		error = xlog_bread(log, tail_blk, 1, hbp, &offset);
 		if (error)
 			goto bread_err1;
@@ -3055,30 +3021,23 @@ xlog_do_recovery_pass(
 		if (error)
 			goto bread_err1;
 
-		/*
-		 * This open codes xlog_logrec_hblks so that we can reuse the
-		 * fixed up h_size value calculated above.  Without that we'd
-		 * still allocate the buffer based on the incorrect on-disk
-		 * size.
-		 */
-		if (h_size > XLOG_HEADER_CYCLE_SIZE &&
-		    (rhead->h_version & cpu_to_be32(XLOG_VERSION_2))) {
-			hblks = DIV_ROUND_UP(h_size, XLOG_HEADER_CYCLE_SIZE);
-			if (hblks > 1) {
-				kvfree(hbp);
-				hbp = xlog_alloc_buffer(log, hblks);
-				if (!hbp)
-					return -ENOMEM;
-			}
+		hblks = xlog_logrec_hblks(log, rhead);
+		if (hblks != 1) {
+			kmem_free(hbp);
+			hbp = xlog_alloc_buffer(log, hblks);
 		}
 	} else {
 		ASSERT(log->l_sectBBsize == 1);
+		hblks = 1;
+		hbp = xlog_alloc_buffer(log, 1);
 		h_size = XLOG_BIG_RECORD_BSIZE;
 	}
 
+	if (!hbp)
+		return -ENOMEM;
 	dbp = xlog_alloc_buffer(log, BTOBB(h_size));
 	if (!dbp) {
-		kvfree(hbp);
+		kmem_free(hbp);
 		return -ENOMEM;
 	}
 
@@ -3239,9 +3198,9 @@ xlog_do_recovery_pass(
 	}
 
  bread_err2:
-	kvfree(dbp);
+	kmem_free(dbp);
  bread_err1:
-	kvfree(hbp);
+	kmem_free(hbp);
 
 	/*
 	 * Submit buffers that have been dirtied by the last record recovered.
@@ -3500,19 +3459,12 @@ xlog_recover(
  * part of recovery so that the root and real-time bitmap inodes can be read in
  * from disk in between the two stages.  This is necessary so that we can free
  * space in the real-time portion of the file system.
- *
- * We run this whole process under GFP_NOFS allocation context. We do a
- * combination of non-transactional and transactional work, yet we really don't
- * want to recurse into the filesystem from direct reclaim during any of this
- * processing. This allows all the recovery code run here not to care about the
- * memory allocation context it is running in.
  */
 int
 xlog_recover_finish(
 	struct xlog	*log)
 {
-	unsigned int	nofs_flags = memalloc_nofs_save();
-	int		error;
+	int	error;
 
 	error = xlog_recover_process_intents(log);
 	if (error) {
@@ -3526,7 +3478,7 @@ xlog_recover_finish(
 		xlog_recover_cancel_intents(log);
 		xfs_alert(log->l_mp, "Failed to recover intents");
 		xlog_force_shutdown(log, SHUTDOWN_LOG_IO_ERROR);
-		goto out_error;
+		return error;
 	}
 
 	/*
@@ -3535,6 +3487,21 @@ xlog_recover_finish(
 	 * would have problems pushing the intents out of the way.
 	 */
 	xfs_log_force(log->l_mp, XFS_LOG_SYNC);
+
+	/*
+	 * Now that we've recovered the log and all the intents, we can clear
+	 * the log incompat feature bits in the superblock because there's no
+	 * longer anything to protect.  We rely on the AIL push to write out the
+	 * updated superblock after everything else.
+	 */
+	if (xfs_clear_incompat_log_features(log->l_mp)) {
+		error = xfs_sync_sb(log->l_mp, false);
+		if (error < 0) {
+			xfs_alert(log->l_mp,
+	"Failed to clear log incompat features on recovery");
+			return error;
+		}
+	}
 
 	xlog_recover_process_iunlinks(log);
 
@@ -3557,13 +3524,9 @@ xlog_recover_finish(
 		 * and AIL.
 		 */
 		xlog_force_shutdown(log, SHUTDOWN_LOG_IO_ERROR);
-		error = 0;
-		goto out_error;
 	}
 
-out_error:
-	memalloc_nofs_restore(nofs_flags);
-	return error;
+	return 0;
 }
 
 void

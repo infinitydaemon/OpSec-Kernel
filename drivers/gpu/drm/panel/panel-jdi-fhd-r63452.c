@@ -21,6 +21,7 @@ struct jdi_fhd_r63452 {
 	struct drm_panel panel;
 	struct mipi_dsi_device *dsi;
 	struct gpio_desc *reset_gpio;
+	bool prepared;
 };
 
 static inline struct jdi_fhd_r63452 *to_jdi_fhd_r63452(struct drm_panel *panel)
@@ -156,6 +157,9 @@ static int jdi_fhd_r63452_prepare(struct drm_panel *panel)
 	struct device *dev = &ctx->dsi->dev;
 	int ret;
 
+	if (ctx->prepared)
+		return 0;
+
 	jdi_fhd_r63452_reset(ctx);
 
 	ret = jdi_fhd_r63452_on(ctx);
@@ -165,6 +169,7 @@ static int jdi_fhd_r63452_prepare(struct drm_panel *panel)
 		return ret;
 	}
 
+	ctx->prepared = true;
 	return 0;
 }
 
@@ -174,12 +179,16 @@ static int jdi_fhd_r63452_unprepare(struct drm_panel *panel)
 	struct device *dev = &ctx->dsi->dev;
 	int ret;
 
+	if (!ctx->prepared)
+		return 0;
+
 	ret = jdi_fhd_r63452_off(ctx);
 	if (ret < 0)
 		dev_err(dev, "Failed to un-initialize panel: %d\n", ret);
 
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
 
+	ctx->prepared = false;
 	return 0;
 }
 
@@ -247,7 +256,6 @@ static int jdi_fhd_r63452_probe(struct mipi_dsi_device *dsi)
 
 	drm_panel_init(&ctx->panel, dev, &jdi_fhd_r63452_panel_funcs,
 		       DRM_MODE_CONNECTOR_DSI);
-	ctx->panel.prepare_prev_first = true;
 
 	ret = drm_panel_of_backlight(&ctx->panel);
 	if (ret)

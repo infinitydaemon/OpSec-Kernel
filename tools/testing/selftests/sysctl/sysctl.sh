@@ -35,7 +35,6 @@ ALL_TESTS="$ALL_TESTS 0007:1:1:boot_int:1"
 ALL_TESTS="$ALL_TESTS 0008:1:1:match_int:1"
 ALL_TESTS="$ALL_TESTS 0009:1:1:unregister_error:0"
 ALL_TESTS="$ALL_TESTS 0010:1:1:mnt/mnt_error:0"
-ALL_TESTS="$ALL_TESTS 0011:1:1:empty_add:0"
 
 function allow_user_defaults()
 {
@@ -64,7 +63,7 @@ function check_production_sysctl_writes_strict()
 	else
 		old_strict=$(cat ${WRITES_STRICT})
 		if [ "$old_strict" = "1" ]; then
-			echo "OK"
+			echo "ok"
 		else
 			echo "FAIL, strict value is 0 but force to 1 to continue" >&2
 			echo "1" > ${WRITES_STRICT}
@@ -226,7 +225,7 @@ run_numerictests()
 		echo "FAIL" >&2
 		exit 1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 
 	echo -n "Checking sysctl is not set to test value ... "
@@ -234,7 +233,7 @@ run_numerictests()
 		echo "FAIL" >&2
 		exit 1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 
 	echo -n "Writing sysctl from shell ... "
@@ -243,7 +242,7 @@ run_numerictests()
 		echo "FAIL" >&2
 		exit 1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 
 	echo -n "Resetting sysctl to original value ... "
@@ -252,7 +251,7 @@ run_numerictests()
 		echo "FAIL" >&2
 		exit 1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 
 	# Now that we've validated the sanity of "set_test" and "set_orig",
@@ -266,7 +265,7 @@ run_numerictests()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 
 	echo -n "Writing middle of sysctl after synchronized seek ... "
@@ -276,7 +275,7 @@ run_numerictests()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 
 	echo -n "Writing beyond end of sysctl ... "
@@ -286,7 +285,7 @@ run_numerictests()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 
 	echo -n "Writing sysctl with multiple long writes ... "
@@ -297,14 +296,14 @@ run_numerictests()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 	test_rc
 }
 
 check_failure()
 {
-	echo -n "Testing that $1 fails as expected ... "
+	echo -n "Testing that $1 fails as expected..."
 	reset_vals
 	TEST_STR="$1"
 	orig="$(cat $TARGET)"
@@ -315,7 +314,7 @@ check_failure()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 	test_rc
 }
@@ -357,7 +356,7 @@ run_wideint_tests()
 # Your test must accept digits 3 and 4 to use this
 run_limit_digit()
 {
-	echo -n "Checking ignoring spaces up to PAGE_SIZE works on write ... "
+	echo -n "Checking ignoring spaces up to PAGE_SIZE works on write ..."
 	reset_vals
 
 	LIMIT=$((MAX_DIGITS -1))
@@ -369,11 +368,11 @@ run_limit_digit()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 	test_rc
 
-	echo -n "Checking passing PAGE_SIZE of spaces fails on write ... "
+	echo -n "Checking passing PAGE_SIZE of spaces fails on write ..."
 	reset_vals
 
 	LIMIT=$((MAX_DIGITS))
@@ -385,7 +384,7 @@ run_limit_digit()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 	test_rc
 }
@@ -393,7 +392,7 @@ run_limit_digit()
 # You are using an int
 run_limit_digit_int()
 {
-	echo -n "Testing INT_MAX works ... "
+	echo -n "Testing INT_MAX works ..."
 	reset_vals
 	TEST_STR="$INT_MAX"
 	echo -n $TEST_STR > $TARGET
@@ -402,11 +401,11 @@ run_limit_digit_int()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 	test_rc
 
-	echo -n "Testing INT_MAX + 1 will fail as expected ... "
+	echo -n "Testing INT_MAX + 1 will fail as expected..."
 	reset_vals
 	let TEST_STR=$INT_MAX+1
 	echo -n $TEST_STR > $TARGET 2> /dev/null
@@ -415,11 +414,11 @@ run_limit_digit_int()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 	test_rc
 
-	echo -n "Testing negative values will work as expected ... "
+	echo -n "Testing negative values will work as expected..."
 	reset_vals
 	TEST_STR="-3"
 	echo -n $TEST_STR > $TARGET 2> /dev/null
@@ -427,7 +426,7 @@ run_limit_digit_int()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 	test_rc
 }
@@ -443,7 +442,7 @@ run_limit_digit_int_array()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 	test_rc
 
@@ -460,7 +459,7 @@ run_limit_digit_int_array()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 	test_rc
 
@@ -478,7 +477,7 @@ run_limit_digit_int_array()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 	test_rc
 
@@ -495,7 +494,7 @@ run_limit_digit_int_array()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 	test_rc
 }
@@ -503,7 +502,7 @@ run_limit_digit_int_array()
 # You are using an unsigned int
 run_limit_digit_uint()
 {
-	echo -n "Testing UINT_MAX works ... "
+	echo -n "Testing UINT_MAX works ..."
 	reset_vals
 	TEST_STR="$UINT_MAX"
 	echo -n $TEST_STR > $TARGET
@@ -512,11 +511,11 @@ run_limit_digit_uint()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 	test_rc
 
-	echo -n "Testing UINT_MAX + 1 will fail as expected ... "
+	echo -n "Testing UINT_MAX + 1 will fail as expected..."
 	reset_vals
 	TEST_STR=$(($UINT_MAX+1))
 	echo -n $TEST_STR > $TARGET 2> /dev/null
@@ -525,11 +524,11 @@ run_limit_digit_uint()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 	test_rc
 
-	echo -n "Testing negative values will not work as expected ... "
+	echo -n "Testing negative values will not work as expected ..."
 	reset_vals
 	TEST_STR="-3"
 	echo -n $TEST_STR > $TARGET 2> /dev/null
@@ -538,7 +537,7 @@ run_limit_digit_uint()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 	test_rc
 }
@@ -552,7 +551,7 @@ run_stringtests()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 
 	echo -n "Writing middle of sysctl after unsynchronized seek ... "
@@ -562,7 +561,7 @@ run_stringtests()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 
 	echo -n "Checking sysctl maxlen is at least $MAXLEN ... "
@@ -573,7 +572,7 @@ run_stringtests()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 
 	echo -n "Checking sysctl keeps original string on overflow append ... "
@@ -584,7 +583,7 @@ run_stringtests()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 
 	echo -n "Checking sysctl stays NULL terminated on write ... "
@@ -595,7 +594,7 @@ run_stringtests()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 
 	echo -n "Checking sysctl stays NULL terminated on overwrite ... "
@@ -606,7 +605,7 @@ run_stringtests()
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 	fi
 
 	test_rc
@@ -651,7 +650,7 @@ run_bitmaptest() {
 		fi
 	done
 
-	echo -n "Checking bitmap handler ... "
+	echo -n "Checking bitmap handler... "
 	TEST_FILE=$(mktemp)
 	echo -n "$TEST_STR" > $TEST_FILE
 
@@ -666,7 +665,7 @@ run_bitmaptest() {
 		echo "FAIL" >&2
 		rc=1
 	else
-		echo "OK"
+		echo "ok"
 		rc=0
 	fi
 	test_rc
@@ -743,111 +742,89 @@ sysctl_test_0006()
 sysctl_test_0007()
 {
 	TARGET="${SYSCTL}/$(get_test_target 0007)"
-	echo -n "Testing if $TARGET is set to 1 ... "
-
 	if [ ! -f $TARGET ]; then
-		echo -e "SKIPPING\n$TARGET is not present"
+		echo "Skipping test for $TARGET as it is not present ..."
 		return $ksft_skip
 	fi
 
 	if [ -d $DIR ]; then
-		echo -e "SKIPPING\nTest only possible if sysctl_test is built-in, not module:"
+		echo "Boot param test only possible sysctl_test is built-in, not module:"
 		cat $TEST_DIR/config >&2
 		return $ksft_skip
 	fi
 
+	echo -n "Testing if $TARGET is set to 1 ..."
 	ORIG=$(cat "${TARGET}")
 
 	if [ x$ORIG = "x1" ]; then
-		echo "OK"
+		echo "ok"
 		return 0
 	fi
-
+	echo "FAIL"
+	echo "Checking if /proc/cmdline contains setting of the expected parameter ..."
 	if [ ! -f /proc/cmdline ]; then
-		echo -e "SKIPPING\nThere is no /proc/cmdline to check for paramter"
-		return $ksft_skip
+		echo "/proc/cmdline does not exist, test inconclusive"
+		return 0
 	fi
 
 	FOUND=$(grep -c "sysctl[./]debug[./]test_sysctl[./]boot_int=1" /proc/cmdline)
 	if [ $FOUND = "1" ]; then
-		echo -e "FAIL\nKernel param found but $TARGET is not 1." >&2
+		echo "Kernel param found but $TARGET is not 1, TEST FAILED"
 		rc=1
 		test_rc
 	fi
 
-	echo -e "SKIPPING\nExpected kernel parameter missing."
-	echo "Kernel must be booted with parameter: sysctl.debug.test_sysctl.boot_int=1"
+	echo "Skipping test, expected kernel parameter missing."
+	echo "To perform this test, make sure kernel is booted with parameter: sysctl.debug.test_sysctl.boot_int=1"
 	return $ksft_skip
 }
 
 sysctl_test_0008()
 {
 	TARGET="${SYSCTL}/$(get_test_target 0008)"
-	echo -n "Testing if $TARGET is matched in kernel ... "
-
 	if [ ! -f $TARGET ]; then
-		echo -e "SKIPPING\n$TARGET is not present"
+		echo "Skipping test for $TARGET as it is not present ..."
 		return $ksft_skip
 	fi
 
+	echo -n "Testing if $TARGET is matched in kernel"
 	ORIG_VALUE=$(cat "${TARGET}")
 
 	if [ $ORIG_VALUE -ne 1 ]; then
-		echo "FAIL" >&2
+		echo "TEST FAILED"
 		rc=1
 		test_rc
 	fi
 
-	echo "OK"
+	echo "ok"
 	return 0
 }
 
 sysctl_test_0009()
 {
 	TARGET="${SYSCTL}/$(get_test_target 0009)"
-	echo -n "Testing if $TARGET unregistered correctly ... "
+	echo -n "Testing if $TARGET unregistered correctly ..."
 	if [ -d $TARGET ]; then
-		echo "FAIL" >&2
+		echo "TEST FAILED"
 		rc=1
 		test_rc
 	fi
 
-	echo "OK"
+	echo "ok"
 	return 0
 }
 
 sysctl_test_0010()
 {
 	TARGET="${SYSCTL}/$(get_test_target 0010)"
-	echo -n "Testing that $TARGET was not created ... "
+	echo -n "Testing that $TARGET was not created  ..."
 	if [ -d $TARGET ]; then
-		echo "FAIL" >&2
+		echo "TEST FAILED"
 		rc=1
 		test_rc
 	fi
 
-	echo "OK"
-	return 0
-}
-
-sysctl_test_0011()
-{
-	TARGET="${SYSCTL}/$(get_test_target 0011)"
-	echo -n "Testing empty dir handling in ${TARGET} ... "
-	if [ ! -d ${TARGET} ]; then
-		echo -e "FAIL\nCould not create ${TARGET}" >&2
-		rc=1
-		test_rc
-	fi
-
-	TARGET2="${TARGET}/empty"
-	if [ ! -d ${TARGET2} ]; then
-		echo -e "FAIL\nCould not create ${TARGET2}" >&2
-		rc=1
-		test_rc
-	fi
-
-	echo "OK"
+	echo "ok"
 	return 0
 }
 
@@ -869,7 +846,6 @@ list_tests()
 	echo "0008 x $(get_test_count 0008) - tests sysctl macro values match"
 	echo "0009 x $(get_test_count 0009) - tests sysct unregister"
 	echo "0010 x $(get_test_count 0010) - tests sysct mount point"
-	echo "0011 x $(get_test_count 0011) - tests empty directories"
 }
 
 usage()
@@ -958,7 +934,7 @@ function skip_test()
 	if target_exists $TEST_TARGET $TEST_ID; then
 		TEST_SKIP=$(get_test_skip_no_target $TEST_ID)
 		if [[ $TEST_SKIP -eq "1" ]]; then
-			echo "Target $TEST_TARGET for test $TEST_ID does not exist ... SKIPPING"
+			echo "Target for test $TEST_ID: $TEST_TARGET not exist, skipping test ..."
 			return 0
 		fi
 	fi

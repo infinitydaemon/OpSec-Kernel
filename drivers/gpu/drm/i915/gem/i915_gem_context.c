@@ -279,8 +279,7 @@ static int proto_context_set_protected(struct drm_i915_private *i915,
 }
 
 static struct i915_gem_proto_context *
-proto_context_create(struct drm_i915_file_private *fpriv,
-		     struct drm_i915_private *i915, unsigned int flags)
+proto_context_create(struct drm_i915_private *i915, unsigned int flags)
 {
 	struct i915_gem_proto_context *pc, *err;
 
@@ -288,7 +287,6 @@ proto_context_create(struct drm_i915_file_private *fpriv,
 	if (!pc)
 		return ERR_PTR(-ENOMEM);
 
-	pc->fpriv = fpriv;
 	pc->num_user_engines = -1;
 	pc->user_engines = NULL;
 	pc->user_flags = BIT(UCONTEXT_BANNABLE) |
@@ -879,7 +877,6 @@ static int set_proto_ctx_param(struct drm_i915_file_private *fpriv,
 			       struct i915_gem_proto_context *pc,
 			       struct drm_i915_gem_context_param *args)
 {
-	struct drm_i915_private *i915 = fpriv->i915;
 	int ret = 0;
 
 	switch (args->param) {
@@ -903,13 +900,6 @@ static int set_proto_ctx_param(struct drm_i915_file_private *fpriv,
 			ret = -EPERM;
 		else
 			pc->user_flags &= ~BIT(UCONTEXT_BANNABLE);
-		break;
-
-	case I915_CONTEXT_PARAM_LOW_LATENCY:
-		if (intel_uc_uses_guc_submission(&to_gt(i915)->uc))
-			pc->user_flags |= BIT(UCONTEXT_LOW_LATENCY);
-		else
-			ret = -EINVAL;
 		break;
 
 	case I915_CONTEXT_PARAM_RECOVERABLE:
@@ -999,9 +989,6 @@ static int intel_context_set_gem(struct intel_context *ce,
 	/* A valid SSEU has no zero fields */
 	if (sseu.slice_mask && !WARN_ON(ce->engine->class != RENDER_CLASS))
 		ret = intel_context_reconfigure_sseu(ce, sseu);
-
-	if (test_bit(UCONTEXT_LOW_LATENCY, &ctx->user_flags))
-		__set_bit(CONTEXT_LOW_LATENCY, &ce->flags);
 
 	return ret;
 }
@@ -1635,14 +1622,10 @@ i915_gem_create_context(struct drm_i915_private *i915,
 			err = PTR_ERR(ppgtt);
 			goto err_ctx;
 		}
-		ppgtt->vm.fpriv = pc->fpriv;
 		vm = &ppgtt->vm;
 	}
 	if (vm)
 		ctx->vm = vm;
-
-	/* Assign early so intel_context_set_gem can access these flags */
-	ctx->user_flags = pc->user_flags;
 
 	mutex_init(&ctx->engines_mutex);
 	if (pc->num_user_engines >= 0) {
@@ -1665,6 +1648,8 @@ i915_gem_create_context(struct drm_i915_private *i915,
 	 * loads it will restore whatever remap state already exists. If there
 	 * is no remap info, it will be a NOP. */
 	ctx->remap_slice = ALL_L3_SLICES(i915);
+
+	ctx->user_flags = pc->user_flags;
 
 	for (i = 0; i < ARRAY_SIZE(ctx->hang_timestamp); i++)
 		ctx->hang_timestamp[i] = jiffies - CONTEXT_FAST_HANG_JIFFIES;
@@ -1756,7 +1741,7 @@ int i915_gem_context_open(struct drm_i915_private *i915,
 	/* 0 reserved for invalid/unassigned ppgtt */
 	xa_init_flags(&file_priv->vm_xa, XA_FLAGS_ALLOC1);
 
-	pc = proto_context_create(file_priv, i915, 0);
+	pc = proto_context_create(i915, 0);
 	if (IS_ERR(pc)) {
 		err = PTR_ERR(pc);
 		goto err;
@@ -1838,7 +1823,6 @@ int i915_gem_vm_create_ioctl(struct drm_device *dev, void *data,
 
 	GEM_BUG_ON(id == 0); /* reserved for invalid/unassigned ppgtt */
 	args->vm_id = id;
-	ppgtt->vm.fpriv = file_priv;
 	return 0;
 
 err_put:
@@ -2301,8 +2285,7 @@ int i915_gem_context_create_ioctl(struct drm_device *dev, void *data,
 		return -EIO;
 	}
 
-	ext_data.pc = proto_context_create(file->driver_priv, i915,
-					   args->flags);
+	ext_data.pc = proto_context_create(i915, args->flags);
 	if (IS_ERR(ext_data.pc))
 		return PTR_ERR(ext_data.pc);
 

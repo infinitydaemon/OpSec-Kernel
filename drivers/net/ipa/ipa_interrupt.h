@@ -1,18 +1,16 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 
 /* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
- * Copyright (C) 2018-2024 Linaro Ltd.
+ * Copyright (C) 2018-2022 Linaro Ltd.
  */
 #ifndef _IPA_INTERRUPT_H_
 #define _IPA_INTERRUPT_H_
 
 #include <linux/types.h>
-
-struct platform_device;
+#include <linux/bits.h>
 
 struct ipa;
 struct ipa_interrupt;
-
 enum ipa_irq_id;
 
 /**
@@ -35,6 +33,14 @@ void ipa_interrupt_suspend_enable(struct ipa_interrupt *interrupt,
  */
 void ipa_interrupt_suspend_disable(struct ipa_interrupt *interrupt,
 				   u32 endpoint_id);
+
+/**
+ * ipa_interrupt_suspend_clear_all - clear all suspend interrupts
+ * @interrupt:	IPA interrupt structure
+ *
+ * Clear the TX_SUSPEND interrupt for all endpoints that signaled it.
+ */
+void ipa_interrupt_suspend_clear_all(struct ipa_interrupt *interrupt);
 
 /**
  * ipa_interrupt_simulate_suspend() - Simulate TX_SUSPEND IPA interrupt
@@ -78,31 +84,17 @@ void ipa_interrupt_irq_enable(struct ipa *ipa);
 void ipa_interrupt_irq_disable(struct ipa *ipa);
 
 /**
- * ipa_interrupt_config() - Configure IPA interrupts
+ * ipa_interrupt_config() - Configure the IPA interrupt framework
  * @ipa:	IPA pointer
  *
- * Return:	0 if successful, or a negative error code
+ * Return:	Pointer to IPA SMP2P info, or a pointer-coded error
  */
-int ipa_interrupt_config(struct ipa *ipa);
+struct ipa_interrupt *ipa_interrupt_config(struct ipa *ipa);
 
 /**
  * ipa_interrupt_deconfig() - Inverse of ipa_interrupt_config()
- * @ipa:	IPA pointer
- */
-void ipa_interrupt_deconfig(struct ipa *ipa);
-
-/**
- * ipa_interrupt_init() - Initialize the IPA interrupt structure
- * @pdev:	IPA platform device pointer
- *
- * Return:	Pointer to an IPA interrupt structure, or a pointer-coded error
- */
-struct ipa_interrupt *ipa_interrupt_init(struct platform_device *pdev);
-
-/**
- * ipa_interrupt_exit() - Inverse of ipa_interrupt_init()
  * @interrupt:	IPA interrupt structure
  */
-void ipa_interrupt_exit(struct ipa_interrupt *interrupt);
+void ipa_interrupt_deconfig(struct ipa_interrupt *interrupt);
 
 #endif /* _IPA_INTERRUPT_H_ */

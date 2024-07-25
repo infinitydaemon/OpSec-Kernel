@@ -195,11 +195,12 @@ free_oppanel_data:
 	return rc;
 }
 
-static void oppanel_remove(struct platform_device *pdev)
+static int oppanel_remove(struct platform_device *pdev)
 {
 	misc_deregister(&oppanel_dev);
 	kfree(oppanel_lines);
 	kfree(oppanel_data);
+	return 0;
 }
 
 static const struct of_device_id oppanel_match[] = {
@@ -213,7 +214,7 @@ static struct platform_driver oppanel_driver = {
 		.of_match_table	= oppanel_match,
 	},
 	.probe	= oppanel_probe,
-	.remove_new = oppanel_remove,
+	.remove	= oppanel_remove,
 };
 
 module_platform_driver(oppanel_driver);

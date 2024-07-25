@@ -236,7 +236,7 @@ static int visconti_pcie_host_init(struct dw_pcie_rp *pp)
 }
 
 static const struct dw_pcie_host_ops visconti_pcie_host_ops = {
-	.init = visconti_pcie_host_init,
+	.host_init = visconti_pcie_host_init,
 };
 
 static int visconti_get_resources(struct platform_device *pdev,

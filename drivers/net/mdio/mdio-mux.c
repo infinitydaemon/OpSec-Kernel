@@ -190,8 +190,8 @@ int mdio_mux_init(struct device *dev,
 		r = of_property_read_u32(child_bus_node, "reg", &v);
 		if (r) {
 			dev_err(dev,
-				"Error: Failed to find reg for child %pOF: %pe\n",
-				child_bus_node, ERR_PTR(r));
+				"Error: Failed to find reg for child %pOF\n",
+				child_bus_node);
 			continue;
 		}
 
@@ -214,10 +214,8 @@ int mdio_mux_init(struct device *dev,
 		snprintf(cb->mii_bus->id, MII_BUS_ID_SIZE, "%s-%x.%x",
 			 cb->mii_bus->name, pb->parent_id, v);
 		cb->mii_bus->parent = dev;
-		if (parent_bus->read)
-			cb->mii_bus->read = mdio_mux_read;
-		if (parent_bus->write)
-			cb->mii_bus->write = mdio_mux_write;
+		cb->mii_bus->read = mdio_mux_read;
+		cb->mii_bus->write = mdio_mux_write;
 		if (parent_bus->read_c45)
 			cb->mii_bus->read_c45 = mdio_mux_read_c45;
 		if (parent_bus->write_c45)
@@ -231,8 +229,8 @@ int mdio_mux_init(struct device *dev,
 			}
 			devm_kfree(dev, cb);
 			dev_err(dev,
-				"Error: Failed to register MDIO bus for child %pOF: %pe\n",
-				child_bus_node, ERR_PTR(r));
+				"Error: Failed to register MDIO bus for child %pOF\n",
+				child_bus_node);
 		} else {
 			cb->next = pb->children;
 			pb->children = cb;

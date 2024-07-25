@@ -196,7 +196,8 @@ void mt7921_set_stream_he_caps(struct mt792x_phy *phy)
 		n = mt7921_init_he_caps(phy, NL80211_BAND_2GHZ, data);
 
 		band = &phy->mt76->sband_2g.sband;
-		_ieee80211_set_sband_iftype_data(band, data, n);
+		band->iftype_data = data;
+		band->n_iftype_data = n;
 	}
 
 	if (phy->mt76->cap.has_5ghz) {
@@ -204,14 +205,16 @@ void mt7921_set_stream_he_caps(struct mt792x_phy *phy)
 		n = mt7921_init_he_caps(phy, NL80211_BAND_5GHZ, data);
 
 		band = &phy->mt76->sband_5g.sband;
-		_ieee80211_set_sband_iftype_data(band, data, n);
+		band->iftype_data = data;
+		band->n_iftype_data = n;
 
 		if (phy->mt76->cap.has_6ghz) {
 			data = phy->iftype[NL80211_BAND_6GHZ];
 			n = mt7921_init_he_caps(phy, NL80211_BAND_6GHZ, data);
 
 			band = &phy->mt76->sband_6g.sband;
-			_ieee80211_set_sband_iftype_data(band, data, n);
+			band->iftype_data = data;
+			band->n_iftype_data = n;
 		}
 	}
 }
@@ -242,15 +245,6 @@ int __mt7921_start(struct mt792x_phy *phy)
 
 	ieee80211_queue_delayed_work(mphy->hw, &mphy->mac_work,
 				     MT792x_WATCHDOG_TIME);
-	if (mt76_is_mmio(mphy->dev)) {
-		err = mt7921_mcu_radio_led_ctrl(phy->dev, EXT_CMD_RADIO_LED_CTRL_ENABLE);
-		if (err)
-			return err;
-
-		err = mt7921_mcu_radio_led_ctrl(phy->dev, EXT_CMD_RADIO_ON_LED);
-		if (err)
-			return err;
-	}
 
 	return 0;
 }
@@ -268,21 +262,24 @@ static int mt7921_start(struct ieee80211_hw *hw)
 	return err;
 }
 
-static void mt7921_stop(struct ieee80211_hw *hw)
+void mt7921_stop(struct ieee80211_hw *hw)
 {
 	struct mt792x_dev *dev = mt792x_hw_dev(hw);
-	int err = 0;
+	struct mt792x_phy *phy = mt792x_hw_phy(hw);
 
-	if (mt76_is_mmio(&dev->mt76)) {
-		mt792x_mutex_acquire(dev);
-		err = mt7921_mcu_radio_led_ctrl(dev, EXT_CMD_RADIO_OFF_LED);
-		mt792x_mutex_release(dev);
-		if (err)
-			return;
-	}
+	cancel_delayed_work_sync(&phy->mt76->mac_work);
 
-	mt792x_stop(hw);
+	cancel_delayed_work_sync(&dev->pm.ps_work);
+	cancel_work_sync(&dev->pm.wake_work);
+	cancel_work_sync(&dev->reset_work);
+	mt76_connac_free_pending_tx_skbs(&dev->pm, NULL);
+
+	mt792x_mutex_acquire(dev);
+	clear_bit(MT76_STATE_RUNNING, &phy->mt76->state);
+	mt76_connac_mcu_set_mac_enable(&dev->mt76, 0, false, false);
+	mt792x_mutex_release(dev);
 }
+EXPORT_SYMBOL_GPL(mt7921_stop);
 
 static int
 mt7921_add_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
@@ -321,7 +318,7 @@ mt7921_add_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 	mvif->sta.wcid.phy_idx = mvif->mt76.band_idx;
 	mvif->sta.wcid.hw_key_idx = -1;
 	mvif->sta.wcid.tx_info |= MT_WCID_TX_INFO_SET;
-	mt76_wcid_init(&mvif->sta.wcid);
+	mt76_packet_id_init(&mvif->sta.wcid);
 
 	mt7921_mac_wtbl_update(dev, idx,
 			       MT_WTBL_UPDATE_ADM_COUNT_CLEAR);
@@ -335,8 +332,6 @@ mt7921_add_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 	}
 
 	vif->driver_flags |= IEEE80211_VIF_BEACON_FILTER;
-	if (phy->chip_cap & MT792x_CHIP_CAP_RSSI_NOTIFY_EVT_EN)
-		vif->driver_flags |= IEEE80211_VIF_SUPPORTS_CQM_RSSI;
 out:
 	mt792x_mutex_release(dev);
 
@@ -351,19 +346,6 @@ static void mt7921_roc_iter(void *priv, u8 *mac,
 
 	mt7921_mcu_abort_roc(phy, mvif, phy->roc_token_id);
 }
-
-void mt7921_roc_abort_sync(struct mt792x_dev *dev)
-{
-	struct mt792x_phy *phy = &dev->phy;
-
-	del_timer_sync(&phy->roc_timer);
-	cancel_work_sync(&phy->roc_work);
-	if (test_and_clear_bit(MT76_STATE_ROC, &phy->mt76->state))
-		ieee80211_iterate_active_interfaces(mt76_hw(dev),
-						    IEEE80211_IFACE_ITER_RESUME_ALL,
-						    mt7921_roc_iter, (void *)phy);
-}
-EXPORT_SYMBOL_GPL(mt7921_roc_abort_sync);
 
 void mt7921_roc_work(struct work_struct *work)
 {
@@ -706,9 +688,6 @@ static void mt7921_bss_info_changed(struct ieee80211_hw *hw,
 	if (changed & BSS_CHANGED_PS)
 		mt7921_mcu_uni_bss_ps(dev, vif);
 
-	if (changed & BSS_CHANGED_CQM)
-		mt7921_mcu_set_rssimonitor(dev, vif);
-
 	if (changed & BSS_CHANGED_ASSOC) {
 		mt7921_mcu_sta_update(dev, NULL, vif, true,
 				      MT76_STA_INFO_STATE_ASSOC);
@@ -723,68 +702,6 @@ static void mt7921_bss_info_changed(struct ieee80211_hw *hw,
 	}
 
 	mt792x_mutex_release(dev);
-}
-
-static void
-mt7921_calc_vif_num(void *priv, u8 *mac, struct ieee80211_vif *vif)
-{
-	u32 *num = priv;
-
-	if (!priv)
-		return;
-
-	switch (vif->type) {
-	case NL80211_IFTYPE_STATION:
-	case NL80211_IFTYPE_P2P_CLIENT:
-	case NL80211_IFTYPE_AP:
-	case NL80211_IFTYPE_P2P_GO:
-		*num += 1;
-		break;
-	default:
-		break;
-	}
-}
-
-static void
-mt7921_regd_set_6ghz_power_type(struct ieee80211_vif *vif, bool is_add)
-{
-	struct mt792x_vif *mvif = (struct mt792x_vif *)vif->drv_priv;
-	struct mt792x_phy *phy = mvif->phy;
-	struct mt792x_dev *dev = phy->dev;
-	u32 valid_vif_num = 0;
-
-	ieee80211_iterate_active_interfaces(mt76_hw(dev),
-					    IEEE80211_IFACE_ITER_RESUME_ALL,
-					    mt7921_calc_vif_num, &valid_vif_num);
-
-	if (valid_vif_num > 1) {
-		phy->power_type = MT_AP_DEFAULT;
-		goto out;
-	}
-
-	if (!is_add)
-		vif->bss_conf.power_type = IEEE80211_REG_UNSET_AP;
-
-	switch (vif->bss_conf.power_type) {
-	case IEEE80211_REG_SP_AP:
-		phy->power_type = MT_AP_SP;
-		break;
-	case IEEE80211_REG_VLP_AP:
-		phy->power_type = MT_AP_VLP;
-		break;
-	case IEEE80211_REG_LPI_AP:
-		phy->power_type = MT_AP_LPI;
-		break;
-	case IEEE80211_REG_UNSET_AP:
-		phy->power_type = MT_AP_UNSET;
-		break;
-	default:
-		phy->power_type = MT_AP_DEFAULT;
-		break;
-	}
-
-out:
-	mt7921_mcu_set_clc(dev, dev->mt76.alpha2, dev->country_ie_env);
 }
 
 int mt7921_mac_sta_add(struct mt76_dev *mdev, struct ieee80211_vif *vif,
@@ -821,8 +738,6 @@ int mt7921_mac_sta_add(struct mt76_dev *mdev, struct ieee80211_vif *vif,
 				    MT76_STA_INFO_STATE_NONE);
 	if (ret)
 		return ret;
-
-	mt7921_regd_set_6ghz_power_type(vif, true);
 
 	mt76_connac_power_save_sched(&dev->mphy, &dev->pm);
 
@@ -883,8 +798,6 @@ void mt7921_mac_sta_remove(struct mt76_dev *mdev, struct ieee80211_vif *vif,
 	if (!list_empty(&msta->wcid.poll_list))
 		list_del_init(&msta->wcid.poll_list);
 	spin_unlock_bh(&dev->mt76.sta_poll_lock);
-
-	mt7921_regd_set_6ghz_power_type(vif, false);
 
 	mt76_connac_power_save_sched(&dev->mphy, &dev->pm);
 }
@@ -1461,6 +1374,5 @@ const struct ieee80211_ops mt7921_ops = {
 };
 EXPORT_SYMBOL_GPL(mt7921_ops);
 
-MODULE_DESCRIPTION("MediaTek MT7921 core driver");
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Sean Wang <sean.wang@mediatek.com>");

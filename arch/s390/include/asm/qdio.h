@@ -9,9 +9,8 @@
 #define __QDIO_H__
 
 #include <linux/interrupt.h>
-#include <asm/dma-types.h>
-#include <asm/ccwdev.h>
 #include <asm/cio.h>
+#include <asm/ccwdev.h>
 
 /* only use 4 queues to save some cachelines */
 #define QDIO_MAX_QUEUES_PER_IRQ		4
@@ -35,9 +34,9 @@
  * @dkey: access key for SLSB
  */
 struct qdesfmt0 {
-	dma64_t sliba;
-	dma64_t sla;
-	dma64_t slsba;
+	u64 sliba;
+	u64 sla;
+	u64 slsba;
 	u32	 : 32;
 	u32 akey : 4;
 	u32 bkey : 4;
@@ -75,7 +74,7 @@ struct qdr {
 	/* private: */
 	u32 res[9];
 	/* public: */
-	dma64_t qiba;
+	u64 qiba;
 	u32	   : 32;
 	u32 qkey   : 4;
 	u32	   : 28;
@@ -147,7 +146,7 @@ struct qaob {
 	u8 flags;
 	u16 cbtbs;
 	u8 sb_count;
-	dma64_t sba[QDIO_MAX_ELEMENTS_PER_BUFFER];
+	u64 sba[QDIO_MAX_ELEMENTS_PER_BUFFER];
 	u16 dcount[QDIO_MAX_ELEMENTS_PER_BUFFER];
 	u64 user0;
 	u64 res4[2];
@@ -209,7 +208,7 @@ struct qdio_buffer_element {
 	u8 scount;
 	u8 sflags;
 	u32 length;
-	dma64_t addr;
+	u64 addr;
 } __attribute__ ((packed, aligned(16)));
 
 /**
@@ -225,7 +224,7 @@ struct qdio_buffer {
  * @sbal: absolute SBAL address
  */
 struct sl_element {
-	dma64_t sbal;
+	u64 sbal;
 } __attribute__ ((packed));
 
 /**

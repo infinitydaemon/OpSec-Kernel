@@ -178,7 +178,8 @@ cpufreq_basic_tests()
 
 	count=$(count_cpufreq_managed_cpus)
 	if [ $count = 0 ]; then
-		ktap_exit_fail_msg "No cpu is managed by cpufreq core, exiting\n"
+		printf "No cpu is managed by cpufreq core, exiting\n"
+		exit;
 	else
 		printf "CPUFreq manages: $count CPUs\n\n"
 	fi

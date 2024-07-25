@@ -470,7 +470,7 @@ static int _wm8993_set_fll(struct snd_soc_component *component, int fll_id, int 
 	struct i2c_client *i2c = to_i2c_client(component->dev);
 	u16 reg1, reg4, reg5;
 	struct _fll_div fll_div;
-	unsigned long time_left;
+	unsigned int timeout;
 	int ret;
 
 	/* Any change? */
@@ -543,19 +543,19 @@ static int _wm8993_set_fll(struct snd_soc_component *component, int fll_id, int 
 
 	/* If we've got an interrupt wired up make sure we get it */
 	if (i2c->irq)
-		time_left = msecs_to_jiffies(20);
+		timeout = msecs_to_jiffies(20);
 	else if (Fref < 1000000)
-		time_left = msecs_to_jiffies(3);
+		timeout = msecs_to_jiffies(3);
 	else
-		time_left = msecs_to_jiffies(1);
+		timeout = msecs_to_jiffies(1);
 
 	try_wait_for_completion(&wm8993->fll_lock);
 
 	/* Enable the FLL */
 	snd_soc_component_write(component, WM8993_FLL_CONTROL_1, reg1 | WM8993_FLL_ENA);
 
-	time_left = wait_for_completion_timeout(&wm8993->fll_lock, time_left);
-	if (i2c->irq && !time_left)
+	timeout = wait_for_completion_timeout(&wm8993->fll_lock, timeout);
+	if (i2c->irq && !timeout)
 		dev_warn(component->dev, "Timed out waiting for FLL\n");
 
 	dev_dbg(component->dev, "FLL enabled at %dHz->%dHz\n", Fref, Fout);
@@ -1732,7 +1732,7 @@ static void wm8993_i2c_remove(struct i2c_client *i2c)
 }
 
 static const struct i2c_device_id wm8993_i2c_id[] = {
-	{ "wm8993" },
+	{ "wm8993", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, wm8993_i2c_id);

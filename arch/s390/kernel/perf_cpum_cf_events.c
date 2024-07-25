@@ -855,11 +855,16 @@ __init const struct attribute_group **cpumf_cf_event_group(void)
 	}
 
 	/* Determine version specific crypto set */
-	csvn = none;
-	if (ci.csvn >= 1 && ci.csvn <= 5)
+	switch (ci.csvn) {
+	case 1 ... 5:
 		csvn = cpumcf_svn_12345_pmu_event_attr;
-	else if (ci.csvn >= 6)
+		break;
+	case 6 ... 7:
 		csvn = cpumcf_svn_67_pmu_event_attr;
+		break;
+	default:
+		csvn = none;
+	}
 
 	/* Determine model-specific counter set(s) */
 	get_cpu_id(&cpu_id);

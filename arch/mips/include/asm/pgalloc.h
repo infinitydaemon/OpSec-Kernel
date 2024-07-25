@@ -95,7 +95,6 @@ static inline pud_t *pud_alloc_one(struct mm_struct *mm, unsigned long address)
 
 	if (!ptdesc)
 		return NULL;
-	pagetable_pud_ctor(ptdesc);
 	pud = ptdesc_address(ptdesc);
 
 	pud_init(pud);

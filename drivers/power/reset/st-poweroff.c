@@ -100,7 +100,12 @@ static struct platform_driver st_reset_driver = {
 	},
 };
 
-builtin_platform_driver(st_reset_driver);
+static int __init st_reset_init(void)
+{
+	return platform_driver_register(&st_reset_driver);
+}
+
+device_initcall(st_reset_init);
 
 MODULE_AUTHOR("Christophe Kerello <christophe.kerello@st.com>");
 MODULE_DESCRIPTION("STMicroelectronics Power off Restart driver");

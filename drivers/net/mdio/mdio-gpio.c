@@ -123,16 +123,17 @@ static struct mii_bus *mdio_gpio_bus_init(struct device *dev,
 	new_bus->parent = dev;
 
 	if (bus_id != -1)
-		snprintf(new_bus->id, sizeof(new_bus->id), "gpio-%x", bus_id);
+		snprintf(new_bus->id, MII_BUS_ID_SIZE, "gpio-%x", bus_id);
 	else
-		strscpy(new_bus->id, "gpio", sizeof(new_bus->id));
+		strncpy(new_bus->id, "gpio", MII_BUS_ID_SIZE);
 
 	if (pdata) {
 		new_bus->phy_mask = pdata->phy_mask;
 		new_bus->phy_ignore_ta_mask = pdata->phy_ignore_ta_mask;
 	}
 
-	if (device_is_compatible(dev, "microchip,mdio-smi0")) {
+	if (dev->of_node &&
+	    of_device_is_compatible(dev->of_node, "microchip,mdio-smi0")) {
 		bitbang->ctrl.op_c22_read = 0;
 		bitbang->ctrl.op_c22_write = 0;
 		bitbang->ctrl.override_op_c22 = 1;
@@ -193,9 +194,11 @@ static int mdio_gpio_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void mdio_gpio_remove(struct platform_device *pdev)
+static int mdio_gpio_remove(struct platform_device *pdev)
 {
 	mdio_gpio_bus_destroy(&pdev->dev);
+
+	return 0;
 }
 
 static const struct of_device_id mdio_gpio_of_match[] = {
@@ -207,7 +210,7 @@ MODULE_DEVICE_TABLE(of, mdio_gpio_of_match);
 
 static struct platform_driver mdio_gpio_driver = {
 	.probe = mdio_gpio_probe,
-	.remove_new = mdio_gpio_remove,
+	.remove = mdio_gpio_remove,
 	.driver		= {
 		.name	= "mdio-gpio",
 		.of_match_table = mdio_gpio_of_match,

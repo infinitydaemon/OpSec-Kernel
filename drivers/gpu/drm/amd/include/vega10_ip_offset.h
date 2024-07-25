@@ -24,11 +24,13 @@
 #define MAX_INSTANCE                                       5
 #define MAX_SEGMENT                                        5
 
-struct IP_BASE_INSTANCE {
+struct IP_BASE_INSTANCE
+{
     unsigned int segment[MAX_SEGMENT];
 };
 
-struct IP_BASE {
+struct IP_BASE
+{
     struct IP_BASE_INSTANCE instance[MAX_INSTANCE];
 };
 

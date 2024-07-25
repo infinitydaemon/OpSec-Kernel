@@ -27,8 +27,6 @@
 #include <drm/display/drm_dp_mst_helper.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
-#include <drm/drm_fixed.h>
-#include <drm/drm_edid.h>
 #include "dm_services.h"
 #include "amdgpu.h"
 #include "amdgpu_dm.h"
@@ -46,7 +44,7 @@
 #include "amdgpu_dm_debugfs.h"
 #endif
 
-#include "dc/resource/dcn20/dcn20_resource.h"
+#include "dc/dcn20/dcn20_resource.h"
 
 #define PEAK_FACTOR_X1000 1006
 
@@ -175,9 +173,8 @@ amdgpu_dm_mst_connector_early_unregister(struct drm_connector *connector)
 		if (dc_link->sink_count)
 			dc_link_remove_remote_sink(dc_link, dc_sink);
 
-		drm_dbg_dp(connector->dev,
-			   "DM_MST: remove remote sink 0x%p, %d remaining\n",
-			   dc_sink, dc_link->sink_count);
+		DC_LOG_MST("DM_MST: remove remote sink 0x%p, %d remaining\n",
+			dc_sink, dc_link->sink_count);
 
 		dc_sink_release(dc_sink);
 		aconnector->dc_sink = NULL;
@@ -328,10 +325,8 @@ static int dm_dp_mst_get_modes(struct drm_connector *connector)
 					return 0;
 				}
 
-				drm_dbg_dp(connector->dev,
-					   "DM_MST: add remote sink 0x%p, %d remaining\n",
-					   dc_sink,
-					   aconnector->dc_link->sink_count);
+				DC_LOG_MST("DM_MST: add remote sink 0x%p, %d remaining\n",
+					dc_sink, aconnector->dc_link->sink_count);
 
 				dc_sink->priv = aconnector;
 				aconnector->dc_sink = dc_sink;
@@ -366,9 +361,8 @@ static int dm_dp_mst_get_modes(struct drm_connector *connector)
 			return 0;
 		}
 
-		drm_dbg_dp(connector->dev,
-			   "DM_MST: add remote sink 0x%p, %d remaining\n",
-			   dc_sink, aconnector->dc_link->sink_count);
+		DC_LOG_MST("DM_MST: add remote sink 0x%p, %d remaining\n",
+			dc_sink, aconnector->dc_link->sink_count);
 
 		dc_sink->priv = aconnector;
 		/* dc_link_add_remote_sink returns a new reference */
@@ -426,7 +420,8 @@ dm_mst_atomic_best_encoder(struct drm_connector *connector,
 {
 	struct drm_connector_state *connector_state = drm_atomic_get_new_connector_state(state,
 											 connector);
-	struct amdgpu_device *adev = drm_to_adev(connector->dev);
+	struct drm_device *dev = connector->dev;
+	struct amdgpu_device *adev = drm_to_adev(dev);
 	struct amdgpu_crtc *acrtc = to_amdgpu_crtc(connector_state->crtc);
 
 	return &adev->dm.mst_encoders[acrtc->crtc_id].base;
@@ -486,10 +481,8 @@ dm_dp_mst_detect(struct drm_connector *connector,
 		if (aconnector->dc_link->sink_count)
 			dc_link_remove_remote_sink(aconnector->dc_link, aconnector->dc_sink);
 
-		drm_dbg_dp(connector->dev,
-			   "DM_MST: remove remote sink 0x%p, %d remaining\n",
-			   aconnector->dc_link,
-			   aconnector->dc_link->sink_count);
+		DC_LOG_MST("DM_MST: remove remote sink 0x%p, %d remaining\n",
+			aconnector->dc_link, aconnector->dc_link->sink_count);
 
 		dc_sink_release(aconnector->dc_sink);
 		aconnector->dc_sink = NULL;
@@ -794,12 +787,25 @@ struct dsc_mst_fairness_params {
 	struct amdgpu_dm_connector *aconnector;
 };
 
-static int kbps_to_peak_pbn(int kbps)
+static uint16_t get_fec_overhead_multiplier(struct dc_link *dc_link)
+{
+	u8 link_coding_cap;
+	uint16_t fec_overhead_multiplier_x1000 = PBN_FEC_OVERHEAD_MULTIPLIER_8B_10B;
+
+	link_coding_cap = dc_link_dp_mst_decide_link_encoding_format(dc_link);
+	if (link_coding_cap == DP_128b_132b_ENCODING)
+		fec_overhead_multiplier_x1000 = PBN_FEC_OVERHEAD_MULTIPLIER_128B_132B;
+
+	return fec_overhead_multiplier_x1000;
+}
+
+static int kbps_to_peak_pbn(int kbps, uint16_t fec_overhead_multiplier_x1000)
 {
 	u64 peak_kbps = kbps;
 
 	peak_kbps *= 1006;
-	peak_kbps = div_u64(peak_kbps, 1000);
+	peak_kbps *= fec_overhead_multiplier_x1000;
+	peak_kbps = div_u64(peak_kbps, 1000 * 1000);
 	return (int) DIV64_U64_ROUND_UP(peak_kbps * 64, (54 * 8 * 1000));
 }
 
@@ -900,11 +906,12 @@ static int increase_dsc_bpp(struct drm_atomic_state *state,
 	int link_timeslots_used;
 	int fair_pbn_alloc;
 	int ret = 0;
+	uint16_t fec_overhead_multiplier_x1000 = get_fec_overhead_multiplier(dc_link);
 
 	for (i = 0; i < count; i++) {
 		if (vars[i + k].dsc_enabled) {
 			initial_slack[i] =
-			kbps_to_peak_pbn(params[i].bw_range.max_kbps) - vars[i + k].pbn;
+			kbps_to_peak_pbn(params[i].bw_range.max_kbps, fec_overhead_multiplier_x1000) - vars[i + k].pbn;
 			bpp_increased[i] = false;
 			remaining_to_increase += 1;
 		} else {
@@ -931,10 +938,10 @@ static int increase_dsc_bpp(struct drm_atomic_state *state,
 		link_timeslots_used = 0;
 
 		for (i = 0; i < count; i++)
-			link_timeslots_used += DIV_ROUND_UP(vars[i + k].pbn, dfixed_trunc(mst_state->pbn_div));
+			link_timeslots_used += DIV_ROUND_UP(vars[i + k].pbn, mst_state->pbn_div);
 
 		fair_pbn_alloc =
-			(63 - link_timeslots_used) / remaining_to_increase * dfixed_trunc(mst_state->pbn_div);
+			(63 - link_timeslots_used) / remaining_to_increase * mst_state->pbn_div;
 
 		if (initial_slack[next_index] > fair_pbn_alloc) {
 			vars[next_index].pbn += fair_pbn_alloc;
@@ -1000,6 +1007,7 @@ static int try_disable_dsc(struct drm_atomic_state *state,
 	int next_index;
 	int remaining_to_try = 0;
 	int ret;
+	uint16_t fec_overhead_multiplier_x1000 = get_fec_overhead_multiplier(dc_link);
 
 	for (i = 0; i < count; i++) {
 		if (vars[i + k].dsc_enabled
@@ -1029,7 +1037,7 @@ static int try_disable_dsc(struct drm_atomic_state *state,
 		if (next_index == -1)
 			break;
 
-		vars[next_index].pbn = kbps_to_peak_pbn(params[next_index].bw_range.stream_kbps);
+		vars[next_index].pbn = kbps_to_peak_pbn(params[next_index].bw_range.stream_kbps, fec_overhead_multiplier_x1000);
 		ret = drm_dp_atomic_find_time_slots(state,
 						    params[next_index].port->mgr,
 						    params[next_index].port,
@@ -1042,8 +1050,7 @@ static int try_disable_dsc(struct drm_atomic_state *state,
 			vars[next_index].dsc_enabled = false;
 			vars[next_index].bpp_x16 = 0;
 		} else {
-			vars[next_index].pbn = kbps_to_peak_pbn(
-				params[next_index].bw_range.max_kbps);
+			vars[next_index].pbn = kbps_to_peak_pbn(params[next_index].bw_range.max_kbps, fec_overhead_multiplier_x1000);
 			ret = drm_dp_atomic_find_time_slots(state,
 							    params[next_index].port->mgr,
 							    params[next_index].port,
@@ -1072,6 +1079,7 @@ static int compute_mst_dsc_configs_for_link(struct drm_atomic_state *state,
 	int count = 0;
 	int i, k, ret;
 	bool debugfs_overwrite = false;
+	uint16_t fec_overhead_multiplier_x1000 = get_fec_overhead_multiplier(dc_link);
 
 	memset(params, 0, sizeof(params));
 
@@ -1136,7 +1144,7 @@ static int compute_mst_dsc_configs_for_link(struct drm_atomic_state *state,
 	/* Try no compression */
 	for (i = 0; i < count; i++) {
 		vars[i + k].aconnector = params[i].aconnector;
-		vars[i + k].pbn = kbps_to_peak_pbn(params[i].bw_range.stream_kbps);
+		vars[i + k].pbn = kbps_to_peak_pbn(params[i].bw_range.stream_kbps, fec_overhead_multiplier_x1000);
 		vars[i + k].dsc_enabled = false;
 		vars[i + k].bpp_x16 = 0;
 		ret = drm_dp_atomic_find_time_slots(state, params[i].port->mgr, params[i].port,
@@ -1155,7 +1163,7 @@ static int compute_mst_dsc_configs_for_link(struct drm_atomic_state *state,
 	/* Try max compression */
 	for (i = 0; i < count; i++) {
 		if (params[i].compression_possible && params[i].clock_force_enable != DSC_CLK_FORCE_DISABLE) {
-			vars[i + k].pbn = kbps_to_peak_pbn(params[i].bw_range.min_kbps);
+			vars[i + k].pbn = kbps_to_peak_pbn(params[i].bw_range.min_kbps, fec_overhead_multiplier_x1000);
 			vars[i + k].dsc_enabled = true;
 			vars[i + k].bpp_x16 = params[i].bw_range.min_target_bpp_x16;
 			ret = drm_dp_atomic_find_time_slots(state, params[i].port->mgr,
@@ -1163,7 +1171,7 @@ static int compute_mst_dsc_configs_for_link(struct drm_atomic_state *state,
 			if (ret < 0)
 				return ret;
 		} else {
-			vars[i + k].pbn = kbps_to_peak_pbn(params[i].bw_range.stream_kbps);
+			vars[i + k].pbn = kbps_to_peak_pbn(params[i].bw_range.stream_kbps, fec_overhead_multiplier_x1000);
 			vars[i + k].dsc_enabled = false;
 			vars[i + k].bpp_x16 = 0;
 			ret = drm_dp_atomic_find_time_slots(state, params[i].port->mgr,
@@ -1207,10 +1215,8 @@ static bool is_dsc_need_re_compute(
 	if (dc_link->type != dc_connection_mst_branch)
 		return false;
 
-	/* add a check for older MST DSC with no virtual DPCDs */
-	if (needs_dsc_aux_workaround(dc_link)  &&
-		(!(dc_link->dpcd_caps.dsc_caps.dsc_basic_caps.fields.dsc_support.DSC_SUPPORT ||
-		dc_link->dpcd_caps.dsc_caps.dsc_basic_caps.fields.dsc_support.DSC_PASSTHROUGH_SUPPORT)))
+	if (!(dc_link->dpcd_caps.dsc_caps.dsc_basic_caps.fields.dsc_support.DSC_SUPPORT ||
+		dc_link->dpcd_caps.dsc_caps.dsc_basic_caps.fields.dsc_support.DSC_PASSTHROUGH_SUPPORT))
 		return false;
 
 	for (i = 0; i < MAX_PIPES; i++)
@@ -1230,15 +1236,7 @@ static bool is_dsc_need_re_compute(
 			continue;
 
 		aconnector = (struct amdgpu_dm_connector *) stream->dm_stream_context;
-		if (!aconnector || !aconnector->dsc_aux)
-			continue;
-
-		/*
-		 *	check if cached virtual MST DSC caps are available and DSC is supported
-		 *	as per specifications in their Virtual DPCD registers.
-		*/
-		if (!(aconnector->dc_sink->dsc_caps.dsc_dec_caps.is_dsc_supported ||
-			aconnector->dc_link->dpcd_caps.dsc_caps.dsc_basic_caps.fields.dsc_support.DSC_PASSTHROUGH_SUPPORT))
+		if (!aconnector)
 			continue;
 
 		stream_on_link[new_stream_on_link_num] = aconnector;
@@ -1499,16 +1497,14 @@ int pre_validate_dsc(struct drm_atomic_state *state,
 		int ind = find_crtc_index_in_state_by_stream(state, stream);
 
 		if (ind >= 0) {
-			struct drm_connector *connector;
 			struct amdgpu_dm_connector *aconnector;
 			struct drm_connector_state *drm_new_conn_state;
 			struct dm_connector_state *dm_new_conn_state;
 			struct dm_crtc_state *dm_old_crtc_state;
 
-			connector =
+			aconnector =
 				amdgpu_dm_find_first_crtc_matching_connector(state,
 									     state->crtcs[ind].ptr);
-			aconnector = to_amdgpu_dm_connector(connector);
 			drm_new_conn_state =
 				drm_atomic_get_new_connector_state(state,
 								   &aconnector->base);
@@ -1599,12 +1595,13 @@ enum dc_status dm_dp_mst_is_port_support_mode(
 	struct amdgpu_dm_connector *aconnector,
 	struct dc_stream_state *stream)
 {
-	int pbn, branch_max_throughput_mps = 0;
+	int bpp, pbn, branch_max_throughput_mps = 0;
 	struct dc_link_settings cur_link_settings;
 	unsigned int end_to_end_bw_in_kbps = 0;
 	unsigned int upper_link_bw_in_kbps = 0, down_link_bw_in_kbps = 0;
+	unsigned int max_compressed_bw_in_kbps = 0;
 	struct dc_dsc_bw_range bw_range = {0};
-	struct dc_dsc_config_options dsc_options = {0};
+	uint16_t full_pbn = aconnector->mst_output_port->full_pbn;
 
 	/*
 	 * Consider the case with the depth of the mst topology tree is equal or less than 2
@@ -1620,63 +1617,31 @@ enum dc_status dm_dp_mst_is_port_support_mode(
 	   (aconnector->mst_output_port->passthrough_aux ||
 	    aconnector->dsc_aux == &aconnector->mst_output_port->aux)) {
 		cur_link_settings = stream->link->verified_link_cap;
-		upper_link_bw_in_kbps = dc_link_bandwidth_kbps(aconnector->dc_link, &cur_link_settings);
-		down_link_bw_in_kbps = kbps_from_pbn(aconnector->mst_output_port->full_pbn);
 
-		/* pick the end to end bw bottleneck */
-		end_to_end_bw_in_kbps = min(upper_link_bw_in_kbps, down_link_bw_in_kbps);
+		upper_link_bw_in_kbps = dc_link_bandwidth_kbps(aconnector->dc_link,
+							       &cur_link_settings);
+		down_link_bw_in_kbps = kbps_from_pbn(full_pbn);
 
-		if (end_to_end_bw_in_kbps < bw_range.min_kbps) {
-			DRM_DEBUG_DRIVER("maximum dsc compression cannot fit into end-to-end bandwidth\n");
+		/* pick the bottleneck */
+		end_to_end_bw_in_kbps = min(upper_link_bw_in_kbps,
+					    down_link_bw_in_kbps);
+
+		/*
+		 * use the maximum dsc compression bandwidth as the required
+		 * bandwidth for the mode
+		 */
+		max_compressed_bw_in_kbps = bw_range.min_kbps;
+
+		if (end_to_end_bw_in_kbps < max_compressed_bw_in_kbps) {
+			DRM_DEBUG_DRIVER("Mode does not fit into DSC pass-through bandwidth validation\n");
 			return DC_FAIL_BANDWIDTH_VALIDATE;
-		}
-
-		if (end_to_end_bw_in_kbps < bw_range.stream_kbps) {
-			dc_dsc_get_default_config_option(stream->link->dc, &dsc_options);
-			dsc_options.max_target_bpp_limit_override_x16 = aconnector->base.display_info.max_dsc_bpp * 16;
-			if (dc_dsc_compute_config(stream->sink->ctx->dc->res_pool->dscs[0],
-					&stream->sink->dsc_caps.dsc_dec_caps,
-					&dsc_options,
-					end_to_end_bw_in_kbps,
-					&stream->timing,
-					dc_link_get_highest_encoding_format(stream->link),
-					&stream->timing.dsc_cfg)) {
-				stream->timing.flags.DSC = 1;
-				DRM_DEBUG_DRIVER("end-to-end bandwidth require dsc and dsc config found\n");
-			} else {
-				DRM_DEBUG_DRIVER("end-to-end bandwidth require dsc but dsc config not found\n");
-				return DC_FAIL_BANDWIDTH_VALIDATE;
-			}
 		}
 	} else {
-		/* Check if mode could be supported within max slot
-		 * number of current mst link and full_pbn of mst links.
-		 */
-		int pbn_div, slot_num, max_slot_num;
-		enum dc_link_encoding_format link_encoding;
-		uint32_t stream_kbps =
-			dc_bandwidth_in_kbps_from_timing(&stream->timing,
-				dc_link_get_highest_encoding_format(stream->link));
-
-		pbn = kbps_to_peak_pbn(stream_kbps);
-		pbn_div = dm_mst_get_pbn_divider(stream->link);
-		slot_num = DIV_ROUND_UP(pbn, pbn_div);
-
-		link_encoding = dc_link_get_highest_encoding_format(stream->link);
-		if (link_encoding == DC_LINK_ENCODING_DP_8b_10b)
-			max_slot_num = 63;
-		else if (link_encoding == DC_LINK_ENCODING_DP_128b_132b)
-			max_slot_num = 64;
-		else {
-			DRM_DEBUG_DRIVER("Invalid link encoding format\n");
+		/* check if mode could be supported within full_pbn */
+		bpp = convert_dc_color_depth_into_bpc(stream->timing.display_color_depth) * 3;
+		pbn = drm_dp_calc_pbn_mode(stream->timing.pix_clk_100hz / 10, bpp << 4);
+		if (pbn > full_pbn)
 			return DC_FAIL_BANDWIDTH_VALIDATE;
-		}
-
-		if (slot_num > max_slot_num ||
-			pbn > aconnector->mst_output_port->full_pbn) {
-			DRM_DEBUG_DRIVER("Mode can not be supported within mst links!");
-			return DC_FAIL_BANDWIDTH_VALIDATE;
-		}
 	}
 
 	/* check is mst dsc output bandwidth branch_overall_throughput_0_mps */

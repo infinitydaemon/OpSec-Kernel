@@ -30,41 +30,21 @@
 int fscrypt_file_open(struct inode *inode, struct file *filp)
 {
 	int err;
-	struct dentry *dentry, *dentry_parent;
-	struct inode *inode_parent;
+	struct dentry *dir;
 
 	err = fscrypt_require_key(inode);
 	if (err)
 		return err;
 
-	dentry = file_dentry(filp);
-
-	/*
-	 * Getting a reference to the parent dentry is needed for the actual
-	 * encryption policy comparison, but it's expensive on multi-core
-	 * systems.  Since this function runs on unencrypted files too, start
-	 * with a lightweight RCU-mode check for the parent directory being
-	 * unencrypted (in which case it's fine for the child to be either
-	 * unencrypted, or encrypted with any policy).  Only continue on to the
-	 * full policy check if the parent directory is actually encrypted.
-	 */
-	rcu_read_lock();
-	dentry_parent = READ_ONCE(dentry->d_parent);
-	inode_parent = d_inode_rcu(dentry_parent);
-	if (inode_parent != NULL && !IS_ENCRYPTED(inode_parent)) {
-		rcu_read_unlock();
-		return 0;
-	}
-	rcu_read_unlock();
-
-	dentry_parent = dget_parent(dentry);
-	if (!fscrypt_has_permitted_context(d_inode(dentry_parent), inode)) {
+	dir = dget_parent(file_dentry(filp));
+	if (IS_ENCRYPTED(d_inode(dir)) &&
+	    !fscrypt_has_permitted_context(d_inode(dir), inode)) {
 		fscrypt_warn(inode,
 			     "Inconsistent encryption context (parent directory: %lu)",
-			     d_inode(dentry_parent)->i_ino);
+			     d_inode(dir)->i_ino);
 		err = -EPERM;
 	}
-	dput(dentry_parent);
+	dput(dir);
 	return err;
 }
 EXPORT_SYMBOL_GPL(fscrypt_file_open);
@@ -122,8 +102,11 @@ int __fscrypt_prepare_lookup(struct inode *dir, struct dentry *dentry,
 	if (err && err != -ENOENT)
 		return err;
 
-	fscrypt_prepare_dentry(dentry, fname->is_nokey_name);
-
+	if (fname->is_nokey_name) {
+		spin_lock(&dentry->d_lock);
+		dentry->d_flags |= DCACHE_NOKEY_NAME;
+		spin_unlock(&dentry->d_lock);
+	}
 	return err;
 }
 EXPORT_SYMBOL_GPL(__fscrypt_prepare_lookup);
@@ -148,10 +131,12 @@ EXPORT_SYMBOL_GPL(__fscrypt_prepare_lookup);
 int fscrypt_prepare_lookup_partial(struct inode *dir, struct dentry *dentry)
 {
 	int err = fscrypt_get_encryption_info(dir, true);
-	bool is_nokey_name = (!err && !fscrypt_has_encryption_key(dir));
 
-	fscrypt_prepare_dentry(dentry, is_nokey_name);
-
+	if (!err && !fscrypt_has_encryption_key(dir)) {
+		spin_lock(&dentry->d_lock);
+		dentry->d_flags |= DCACHE_NOKEY_NAME;
+		spin_unlock(&dentry->d_lock);
+	}
 	return err;
 }
 EXPORT_SYMBOL_GPL(fscrypt_prepare_lookup_partial);
@@ -184,7 +169,7 @@ EXPORT_SYMBOL_GPL(__fscrypt_prepare_setattr);
 int fscrypt_prepare_setflags(struct inode *inode,
 			     unsigned int oldflags, unsigned int flags)
 {
-	struct fscrypt_inode_info *ci;
+	struct fscrypt_info *ci;
 	struct fscrypt_master_key *mk;
 	int err;
 
@@ -202,7 +187,7 @@ int fscrypt_prepare_setflags(struct inode *inode,
 			return -EINVAL;
 		mk = ci->ci_master_key;
 		down_read(&mk->mk_sem);
-		if (mk->mk_present)
+		if (is_master_key_secret_present(&mk->mk_secret))
 			err = fscrypt_derive_dirhash_key(ci, mk);
 		else
 			err = -ENOKEY;

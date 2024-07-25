@@ -880,10 +880,6 @@ static int copy_signaled_event_data(uint32_t num_events,
 				dst = &data[i].memory_exception_data;
 				src = &event->memory_exception_data;
 				size = sizeof(struct kfd_hsa_memory_exception_data);
-			} else if (event->type == KFD_EVENT_TYPE_HW_EXCEPTION) {
-				dst = &data[i].memory_exception_data;
-				src = &event->hw_exception_data;
-				size = sizeof(struct kfd_hsa_hw_exception_data);
 			} else if (event->type == KFD_EVENT_TYPE_SIGNAL &&
 				waiter->event_age_enabled) {
 				dst = &data[i].signal_event_data.last_event_age;
@@ -1285,10 +1281,8 @@ void kfd_signal_poison_consumed_event(struct kfd_node *dev, u32 pasid)
 	uint32_t id = KFD_FIRST_NONSIGNAL_EVENT_ID;
 	int user_gpu_id;
 
-	if (!p) {
-		dev_warn(dev->adev->dev, "Not find process with pasid:%d\n", pasid);
+	if (!p)
 		return; /* Presumably process exited. */
-	}
 
 	user_gpu_id = kfd_process_get_user_gpu_id(p, dev->id);
 	if (unlikely(user_gpu_id == -EINVAL)) {
@@ -1324,8 +1318,6 @@ void kfd_signal_poison_consumed_event(struct kfd_node *dev, u32 pasid)
 		}
 	}
 
-	dev_warn(dev->adev->dev, "Send SIGBUS to process %s(pasid:%d)\n",
-		p->lead_thread->comm, pasid);
 	rcu_read_unlock();
 
 	/* user application will handle SIGBUS signal */

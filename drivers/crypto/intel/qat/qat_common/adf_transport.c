@@ -474,6 +474,7 @@ err:
 int adf_init_etr_data(struct adf_accel_dev *accel_dev)
 {
 	struct adf_etr_data *etr_data;
+	struct adf_hw_device_data *hw_data = accel_dev->hw_device;
 	void __iomem *csr_addr;
 	u32 size;
 	u32 num_banks = 0;
@@ -494,7 +495,8 @@ int adf_init_etr_data(struct adf_accel_dev *accel_dev)
 	}
 
 	accel_dev->transport = etr_data;
-	csr_addr = adf_get_etr_base(accel_dev);
+	i = hw_data->get_etr_bar_id(hw_data);
+	csr_addr = accel_dev->accel_pci_dev.pci_bars[i].virt_addr;
 
 	/* accel_dev->debugfs_dir should always be non-NULL here */
 	etr_data->debug = debugfs_create_dir("transport",

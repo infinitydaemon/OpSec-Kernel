@@ -406,20 +406,16 @@ static int gfs2_dinode_in(struct gfs2_inode *ip, const void *buf)
 {
 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
 	const struct gfs2_dinode *str = buf;
-	struct timespec64 atime, iatime;
+	struct timespec64 atime;
 	u16 height, depth;
 	umode_t mode = be32_to_cpu(str->di_mode);
 	struct inode *inode = &ip->i_inode;
 	bool is_new = inode->i_state & I_NEW;
 
-	if (unlikely(ip->i_no_addr != be64_to_cpu(str->di_num.no_addr))) {
-		gfs2_consist_inode(ip);
-		return -EIO;
-	}
-	if (unlikely(!is_new && inode_wrong_type(inode, mode))) {
-		gfs2_consist_inode(ip);
-		return -EIO;
-	}
+	if (unlikely(ip->i_no_addr != be64_to_cpu(str->di_num.no_addr)))
+		goto corrupt;
+	if (unlikely(!is_new && inode_wrong_type(inode, mode)))
+		goto corrupt;
 	ip->i_no_formal_ino = be64_to_cpu(str->di_num.no_formal_ino);
 	inode->i_mode = mode;
 	if (is_new) {
@@ -440,11 +436,10 @@ static int gfs2_dinode_in(struct gfs2_inode *ip, const void *buf)
 	gfs2_set_inode_blocks(inode, be64_to_cpu(str->di_blocks));
 	atime.tv_sec = be64_to_cpu(str->di_atime);
 	atime.tv_nsec = be32_to_cpu(str->di_atime_nsec);
-	iatime = inode_get_atime(inode);
-	if (timespec64_compare(&iatime, &atime) < 0)
-		inode_set_atime_to_ts(inode, atime);
-	inode_set_mtime(inode, be64_to_cpu(str->di_mtime),
-			be32_to_cpu(str->di_mtime_nsec));
+	if (timespec64_compare(&inode->i_atime, &atime) < 0)
+		inode->i_atime = atime;
+	inode->i_mtime.tv_sec = be64_to_cpu(str->di_mtime);
+	inode->i_mtime.tv_nsec = be32_to_cpu(str->di_mtime_nsec);
 	inode_set_ctime(inode, be64_to_cpu(str->di_ctime),
 			be32_to_cpu(str->di_ctime_nsec));
 
@@ -456,28 +451,26 @@ static int gfs2_dinode_in(struct gfs2_inode *ip, const void *buf)
 	/* i_diskflags and i_eattr must be set before gfs2_set_inode_flags() */
 	gfs2_set_inode_flags(inode);
 	height = be16_to_cpu(str->di_height);
-	if (unlikely(height > sdp->sd_max_height)) {
-		gfs2_consist_inode(ip);
-		return -EIO;
-	}
+	if (unlikely(height > sdp->sd_max_height))
+		goto corrupt;
 	ip->i_height = (u8)height;
 
 	depth = be16_to_cpu(str->di_depth);
-	if (unlikely(depth > GFS2_DIR_MAX_DEPTH)) {
-		gfs2_consist_inode(ip);
-		return -EIO;
-	}
+	if (unlikely(depth > GFS2_DIR_MAX_DEPTH))
+		goto corrupt;
 	ip->i_depth = (u8)depth;
 	ip->i_entries = be32_to_cpu(str->di_entries);
 
-	if (gfs2_is_stuffed(ip) && inode->i_size > gfs2_max_stuffed_size(ip)) {
-		gfs2_consist_inode(ip);
-		return -EIO;
-	}
+	if (gfs2_is_stuffed(ip) && inode->i_size > gfs2_max_stuffed_size(ip))
+		goto corrupt;
+
 	if (S_ISREG(inode->i_mode))
 		gfs2_set_aops(inode);
 
 	return 0;
+corrupt:
+	gfs2_consist_inode(ip);
+	return -EIO;
 }
 
 /**
@@ -503,7 +496,7 @@ int gfs2_inode_refresh(struct gfs2_inode *ip)
 
 /**
  * inode_go_instantiate - read in an inode if necessary
- * @gl: The glock
+ * @gh: The glock holder
  *
  * Returns: errno
  */
@@ -620,6 +613,18 @@ static int freeze_go_xmote_bh(struct gfs2_glock *gl)
 		sdp->sd_log_sequence = head.lh_sequence + 1;
 		gfs2_log_pointers_init(sdp, head.lh_blkno);
 	}
+	return 0;
+}
+
+/**
+ * freeze_go_demote_ok
+ * @gl: the glock
+ *
+ * Always returns 0
+ */
+
+static int freeze_go_demote_ok(const struct gfs2_glock *gl)
+{
 	return 0;
 }
 
@@ -742,6 +747,7 @@ const struct gfs2_glock_operations gfs2_rgrp_glops = {
 
 const struct gfs2_glock_operations gfs2_freeze_glops = {
 	.go_xmote_bh = freeze_go_xmote_bh,
+	.go_demote_ok = freeze_go_demote_ok,
 	.go_callback = freeze_go_callback,
 	.go_type = LM_TYPE_NONDISK,
 	.go_flags = GLOF_NONDISK,

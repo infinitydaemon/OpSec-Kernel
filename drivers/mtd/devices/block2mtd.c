@@ -37,7 +37,7 @@
 /* Info for the block device */
 struct block2mtd_dev {
 	struct list_head list;
-	struct file *bdev_file;
+	struct block_device *blkdev;
 	struct mtd_info mtd;
 	struct mutex write_mutex;
 };
@@ -55,7 +55,7 @@ static struct page *page_read(struct address_space *mapping, pgoff_t index)
 /* erase a specified part of the device */
 static int _block2mtd_erase(struct block2mtd_dev *dev, loff_t to, size_t len)
 {
-	struct address_space *mapping = dev->bdev_file->f_mapping;
+	struct address_space *mapping = dev->blkdev->bd_inode->i_mapping;
 	struct page *page;
 	pgoff_t index = to >> PAGE_SHIFT;	// page index
 	int pages = len >> PAGE_SHIFT;
@@ -105,7 +105,6 @@ static int block2mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 		size_t *retlen, u_char *buf)
 {
 	struct block2mtd_dev *dev = mtd->priv;
-	struct address_space *mapping = dev->bdev_file->f_mapping;
 	struct page *page;
 	pgoff_t index = from >> PAGE_SHIFT;
 	int offset = from & (PAGE_SIZE-1);
@@ -118,7 +117,7 @@ static int block2mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 			cpylen = len;	// this page
 		len = len - cpylen;
 
-		page = page_read(mapping, index);
+		page = page_read(dev->blkdev->bd_inode->i_mapping, index);
 		if (IS_ERR(page))
 			return PTR_ERR(page);
 
@@ -140,7 +139,7 @@ static int _block2mtd_write(struct block2mtd_dev *dev, const u_char *buf,
 		loff_t to, size_t len, size_t *retlen)
 {
 	struct page *page;
-	struct address_space *mapping = dev->bdev_file->f_mapping;
+	struct address_space *mapping = dev->blkdev->bd_inode->i_mapping;
 	pgoff_t index = to >> PAGE_SHIFT;	// page index
 	int offset = to & ~PAGE_MASK;	// page offset
 	int cpylen;
@@ -195,7 +194,7 @@ static int block2mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
 static void block2mtd_sync(struct mtd_info *mtd)
 {
 	struct block2mtd_dev *dev = mtd->priv;
-	sync_blockdev(file_bdev(dev->bdev_file));
+	sync_blockdev(dev->blkdev);
 	return;
 }
 
@@ -207,9 +206,10 @@ static void block2mtd_free_device(struct block2mtd_dev *dev)
 
 	kfree(dev->mtd.name);
 
-	if (dev->bdev_file) {
-		invalidate_mapping_pages(dev->bdev_file->f_mapping, 0, -1);
-		bdev_fput(dev->bdev_file);
+	if (dev->blkdev) {
+		invalidate_mapping_pages(dev->blkdev->bd_inode->i_mapping,
+					0, -1);
+		blkdev_put(dev->blkdev, NULL);
 	}
 
 	kfree(dev);
@@ -219,10 +219,10 @@ static void block2mtd_free_device(struct block2mtd_dev *dev)
  * This function is marked __ref because it calls the __init marked
  * early_lookup_bdev when called from the early boot code.
  */
-static struct file __ref *mdtblock_early_get_bdev(const char *devname,
+static struct block_device __ref *mdtblock_early_get_bdev(const char *devname,
 		blk_mode_t mode, int timeout, struct block2mtd_dev *dev)
 {
-	struct file *bdev_file = ERR_PTR(-ENODEV);
+	struct block_device *bdev = ERR_PTR(-ENODEV);
 #ifndef MODULE
 	int i;
 
@@ -230,7 +230,7 @@ static struct file __ref *mdtblock_early_get_bdev(const char *devname,
 	 * We can't use early_lookup_bdev from a running system.
 	 */
 	if (system_state >= SYSTEM_RUNNING)
-		return bdev_file;
+		return bdev;
 
 	/*
 	 * We might not have the root device mounted at this point.
@@ -249,23 +249,21 @@ static struct file __ref *mdtblock_early_get_bdev(const char *devname,
 		wait_for_device_probe();
 
 		if (!early_lookup_bdev(devname, &devt)) {
-			bdev_file = bdev_file_open_by_dev(devt, mode, dev, NULL);
-			if (!IS_ERR(bdev_file))
+			bdev = blkdev_get_by_dev(devt, mode, dev, NULL);
+			if (!IS_ERR(bdev))
 				break;
 		}
 	}
 #endif
-	return bdev_file;
+	return bdev;
 }
 
 static struct block2mtd_dev *add_device(char *devname, int erase_size,
 		char *label, int timeout)
 {
 	const blk_mode_t mode = BLK_OPEN_READ | BLK_OPEN_WRITE;
-	struct file *bdev_file;
 	struct block_device *bdev;
 	struct block2mtd_dev *dev;
-	loff_t size;
 	char *name;
 
 	if (!devname)
@@ -276,24 +274,21 @@ static struct block2mtd_dev *add_device(char *devname, int erase_size,
 		return NULL;
 
 	/* Get a handle on the device */
-	bdev_file = bdev_file_open_by_path(devname, mode, dev, NULL);
-	if (IS_ERR(bdev_file))
-		bdev_file = mdtblock_early_get_bdev(devname, mode, timeout,
-						      dev);
-	if (IS_ERR(bdev_file)) {
+	bdev = blkdev_get_by_path(devname, mode, dev, NULL);
+	if (IS_ERR(bdev))
+		bdev = mdtblock_early_get_bdev(devname, mode, timeout, dev);
+	if (IS_ERR(bdev)) {
 		pr_err("error: cannot open device %s\n", devname);
 		goto err_free_block2mtd;
 	}
-	dev->bdev_file = bdev_file;
-	bdev = file_bdev(bdev_file);
+	dev->blkdev = bdev;
 
 	if (MAJOR(bdev->bd_dev) == MTD_BLOCK_MAJOR) {
 		pr_err("attempting to use an MTD device as a block device\n");
 		goto err_free_block2mtd;
 	}
 
-	size = bdev_nr_bytes(bdev);
-	if ((long)size % erase_size) {
+	if ((long)dev->blkdev->bd_inode->i_size % erase_size) {
 		pr_err("erasesize must be a divisor of device size\n");
 		goto err_free_block2mtd;
 	}
@@ -311,7 +306,7 @@ static struct block2mtd_dev *add_device(char *devname, int erase_size,
 
 	dev->mtd.name = name;
 
-	dev->mtd.size = size & PAGE_MASK;
+	dev->mtd.size = dev->blkdev->bd_inode->i_size & PAGE_MASK;
 	dev->mtd.erasesize = erase_size;
 	dev->mtd.writesize = 1;
 	dev->mtd.writebufsize = PAGE_SIZE;

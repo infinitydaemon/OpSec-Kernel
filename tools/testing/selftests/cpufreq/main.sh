@@ -7,14 +7,14 @@ source governor.sh
 source module.sh
 source special-tests.sh
 
-DIR="$(dirname $(readlink -f "$0"))"
-source "${DIR}"/../kselftest/ktap_helpers.sh
-
 FUNC=basic	# do basic tests by default
 OUTFILE=cpufreq_selftest
 SYSFS=
 CPUROOT=
 CPUFREQROOT=
+
+# Kselftest framework requirement - SKIP code is 4.
+ksft_skip=4
 
 helpme()
 {
@@ -32,7 +32,7 @@ helpme()
 	[-d <driver's module name: only with \"-t modtest>\"]
 	[-g <governor's module name: only with \"-t modtest>\"]
 	\n"
-	exit "${KSFT_FAIL}"
+	exit 2
 }
 
 prerequisite()
@@ -40,8 +40,8 @@ prerequisite()
 	msg="skip all tests:"
 
 	if [ $UID != 0 ]; then
-		ktap_skip_all "$msg must be run as root"
-		exit "${KSFT_SKIP}"
+		echo $msg must be run as root >&2
+		exit $ksft_skip
 	fi
 
 	taskset -p 01 $$
@@ -49,21 +49,21 @@ prerequisite()
 	SYSFS=`mount -t sysfs | head -1 | awk '{ print $3 }'`
 
 	if [ ! -d "$SYSFS" ]; then
-		ktap_skip_all "$msg sysfs is not mounted"
-		exit "${KSFT_SKIP}"
+		echo $msg sysfs is not mounted >&2
+		exit 2
 	fi
 
 	CPUROOT=$SYSFS/devices/system/cpu
 	CPUFREQROOT="$CPUROOT/cpufreq"
 
 	if ! ls $CPUROOT/cpu* > /dev/null 2>&1; then
-		ktap_skip_all "$msg cpus not available in sysfs"
-		exit "${KSFT_SKIP}"
+		echo $msg cpus not available in sysfs >&2
+		exit 2
 	fi
 
 	if ! ls $CPUROOT/cpufreq > /dev/null 2>&1; then
-		ktap_skip_all "$msg cpufreq directory not available in sysfs"
-		exit "${KSFT_SKIP}"
+		echo $msg cpufreq directory not available in sysfs >&2
+		exit 2
 	fi
 }
 
@@ -105,7 +105,8 @@ do_test()
 	count=$(count_cpufreq_managed_cpus)
 
 	if [ $count = 0 -a $FUNC != "modtest" ]; then
-		ktap_exit_fail_msg "No cpu is managed by cpufreq core, exiting"
+		echo "No cpu is managed by cpufreq core, exiting"
+		exit 2;
 	fi
 
 	case "$FUNC" in
@@ -124,7 +125,8 @@ do_test()
 		"modtest")
 		# Do we have modules in place?
 		if [ -z $DRIVER_MOD ] && [ -z $GOVERNOR_MOD ]; then
-			ktap_exit_fail_msg "No driver or governor module passed with -d or -g"
+			echo "No driver or governor module passed with -d or -g"
+			exit 2;
 		fi
 
 		if [ $DRIVER_MOD ]; then
@@ -135,7 +137,8 @@ do_test()
 			fi
 		else
 			if [ $count = 0 ]; then
-				ktap_exit_fail_msg "No cpu is managed by cpufreq core, exiting"
+				echo "No cpu is managed by cpufreq core, exiting"
+				exit 2;
 			fi
 
 			module_governor_test $GOVERNOR_MOD
@@ -159,7 +162,7 @@ do_test()
 		;;
 
 		*)
-		ktap_print_msg "Invalid [-f] function type"
+		echo "Invalid [-f] function type"
 		helpme
 		;;
 	esac
@@ -183,12 +186,8 @@ dmesg_dumps()
 	dmesg >> $1.dmesg_full.txt
 }
 
-ktap_print_header
-
 # Parse arguments
 parse_arguments $@
-
-ktap_set_plan 1
 
 # Make sure all requirements are met
 prerequisite
@@ -196,12 +195,4 @@ prerequisite
 # Run requested functions
 clear_dumps $OUTFILE
 do_test | tee -a $OUTFILE.txt
-if [ "${PIPESTATUS[0]}" -ne 0 ]; then
-    exit ${PIPESTATUS[0]};
-fi
 dmesg_dumps $OUTFILE
-
-ktap_test_pass "Completed successfully"
-
-ktap_print_totals
-exit "${KSFT_PASS}"

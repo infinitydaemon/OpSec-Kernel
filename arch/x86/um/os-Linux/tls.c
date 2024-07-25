@@ -6,7 +6,6 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-#include <os.h>
 #include <sysdep/tls.h>
 
 #ifndef PTRACE_GET_THREAD_AREA

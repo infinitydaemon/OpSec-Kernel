@@ -4,6 +4,7 @@
  *
  * Copyright (C) 2020, Red Hat, Inc.
  */
+#define _GNU_SOURCE /* for program_invocation_name */
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>

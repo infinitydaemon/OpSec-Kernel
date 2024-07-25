@@ -116,7 +116,8 @@
 #include <linux/freezer.h>
 #include <linux/file.h>
 #include <linux/btf_ids.h>
-#include <linux/bpf-cgroup.h>
+
+#include "scm.h"
 
 static atomic_long_t unix_nr_socks;
 static struct hlist_head bsd_socket_buckets[UNIX_HASH_SIZE / 2];
@@ -540,7 +541,7 @@ static void unix_write_space(struct sock *sk)
 		if (skwq_has_sleeper(wq))
 			wake_up_interruptible_sync_poll(&wq->wait,
 				EPOLLOUT | EPOLLWRNORM | EPOLLWRBAND);
-		sk_wake_async_rcu(sk, SOCK_WAKE_SPACE, POLL_OUT);
+		sk_wake_async(sk, SOCK_WAKE_SPACE, POLL_OUT);
 	}
 	rcu_read_unlock();
 }
@@ -749,7 +750,7 @@ static int unix_bind(struct socket *, struct sockaddr *, int);
 static int unix_stream_connect(struct socket *, struct sockaddr *,
 			       int addr_len, int flags);
 static int unix_socketpair(struct socket *, struct socket *);
-static int unix_accept(struct socket *, struct socket *, struct proto_accept_arg *arg);
+static int unix_accept(struct socket *, struct socket *, int, bool);
 static int unix_getname(struct socket *, struct sockaddr *, int);
 static __poll_t unix_poll(struct file *, struct socket *, poll_table *);
 static __poll_t unix_dgram_poll(struct file *, struct socket *,
@@ -773,6 +774,19 @@ static int unix_dgram_connect(struct socket *, struct sockaddr *,
 static int unix_seqpacket_sendmsg(struct socket *, struct msghdr *, size_t);
 static int unix_seqpacket_recvmsg(struct socket *, struct msghdr *, size_t,
 				  int);
+
+static int unix_set_peek_off(struct sock *sk, int val)
+{
+	struct unix_sock *u = unix_sk(sk);
+
+	if (mutex_lock_interruptible(&u->iolock))
+		return -EINTR;
+
+	WRITE_ONCE(sk->sk_peek_off, val);
+	mutex_unlock(&u->iolock);
+
+	return 0;
+}
 
 #ifdef CONFIG_PROC_FS
 static int unix_count_nr_fds(struct sock *sk)
@@ -841,7 +855,7 @@ static const struct proto_ops unix_stream_ops = {
 	.read_skb =	unix_stream_read_skb,
 	.mmap =		sock_no_mmap,
 	.splice_read =	unix_stream_splice_read,
-	.set_peek_off =	sk_set_peek_off,
+	.set_peek_off =	unix_set_peek_off,
 	.show_fdinfo =	unix_show_fdinfo,
 };
 
@@ -865,7 +879,7 @@ static const struct proto_ops unix_dgram_ops = {
 	.read_skb =	unix_read_skb,
 	.recvmsg =	unix_dgram_recvmsg,
 	.mmap =		sock_no_mmap,
-	.set_peek_off =	sk_set_peek_off,
+	.set_peek_off =	unix_set_peek_off,
 	.show_fdinfo =	unix_show_fdinfo,
 };
 
@@ -888,7 +902,7 @@ static const struct proto_ops unix_seqpacket_ops = {
 	.sendmsg =	unix_seqpacket_sendmsg,
 	.recvmsg =	unix_seqpacket_recvmsg,
 	.mmap =		sock_no_mmap,
-	.set_peek_off =	sk_set_peek_off,
+	.set_peek_off =	unix_set_peek_off,
 	.show_fdinfo =	unix_show_fdinfo,
 };
 
@@ -973,11 +987,11 @@ static struct sock *unix_create1(struct net *net, struct socket *sock, int kern,
 	sk->sk_max_ack_backlog	= READ_ONCE(net->unx.sysctl_max_dgram_qlen);
 	sk->sk_destruct		= unix_sock_destructor;
 	u = unix_sk(sk);
-	u->listener = NULL;
-	u->vertex = NULL;
+	u->inflight = 0;
 	u->path.dentry = NULL;
 	u->path.mnt = NULL;
 	spin_lock_init(&u->lock);
+	INIT_LIST_HEAD(&u->link);
 	mutex_init(&u->iolock); /* single task reading lock */
 	mutex_init(&u->bindlock); /* single task binding lock */
 	init_waitqueue_head(&u->peer_wait);
@@ -1360,10 +1374,6 @@ static int unix_dgram_connect(struct socket *sock, struct sockaddr *addr,
 		if (err)
 			goto out;
 
-		err = BPF_CGROUP_RUN_PROG_UNIX_CONNECT_LOCK(sk, addr, &alen);
-		if (err)
-			goto out;
-
 		if ((test_bit(SOCK_PASSCRED, &sock->flags) ||
 		     test_bit(SOCK_PASSPIDFD, &sock->flags)) &&
 		    !READ_ONCE(unix_sk(sk)->addr)) {
@@ -1477,10 +1487,6 @@ static int unix_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 	int err;
 
 	err = unix_validate_addr(sunaddr, addr_len);
-	if (err)
-		goto out;
-
-	err = BPF_CGROUP_RUN_PROG_UNIX_CONNECT_LOCK(sk, uaddr, &addr_len);
 	if (err)
 		goto out;
 
@@ -1600,7 +1606,6 @@ restart:
 	newsk->sk_type		= sk->sk_type;
 	init_peercred(newsk);
 	newu = unix_sk(newsk);
-	newu->listener = other;
 	RCU_INIT_POINTER(newsk->sk_wq, &newu->peer_wq);
 	otheru = unix_sk(other);
 
@@ -1692,18 +1697,19 @@ static void unix_sock_inherit_flags(const struct socket *old,
 		set_bit(SOCK_PASSSEC, &new->flags);
 }
 
-static int unix_accept(struct socket *sock, struct socket *newsock,
-		       struct proto_accept_arg *arg)
+static int unix_accept(struct socket *sock, struct socket *newsock, int flags,
+		       bool kern)
 {
 	struct sock *sk = sock->sk;
-	struct sk_buff *skb;
 	struct sock *tsk;
+	struct sk_buff *skb;
+	int err;
 
-	arg->err = -EOPNOTSUPP;
+	err = -EOPNOTSUPP;
 	if (sock->type != SOCK_STREAM && sock->type != SOCK_SEQPACKET)
 		goto out;
 
-	arg->err = -EINVAL;
+	err = -EINVAL;
 	if (READ_ONCE(sk->sk_state) != TCP_LISTEN)
 		goto out;
 
@@ -1711,12 +1717,12 @@ static int unix_accept(struct socket *sock, struct socket *newsock,
 	 * so that no locks are necessary.
 	 */
 
-	skb = skb_recv_datagram(sk, (arg->flags & O_NONBLOCK) ? MSG_DONTWAIT : 0,
-				&arg->err);
+	skb = skb_recv_datagram(sk, (flags & O_NONBLOCK) ? MSG_DONTWAIT : 0,
+				&err);
 	if (!skb) {
 		/* This means receive shutdown. */
-		if (arg->err == 0)
-			arg->err = -EINVAL;
+		if (err == 0)
+			err = -EINVAL;
 		goto out;
 	}
 
@@ -1726,7 +1732,6 @@ static int unix_accept(struct socket *sock, struct socket *newsock,
 
 	/* attach accepted sock to socket */
 	unix_state_lock(tsk);
-	unix_update_edges(unix_sk(tsk));
 	newsock->state = SS_CONNECTED;
 	unix_sock_inherit_flags(sock, newsock);
 	sock_graft(tsk, newsock);
@@ -1734,7 +1739,7 @@ static int unix_accept(struct socket *sock, struct socket *newsock,
 	return 0;
 
 out:
-	return arg->err;
+	return err;
 }
 
 
@@ -1764,73 +1769,57 @@ static int unix_getname(struct socket *sock, struct sockaddr *uaddr, int peer)
 	} else {
 		err = addr->len;
 		memcpy(sunaddr, addr->name, addr->len);
-
-		if (peer)
-			BPF_CGROUP_RUN_SA_PROG(sk, uaddr, &err,
-					       CGROUP_UNIX_GETPEERNAME);
-		else
-			BPF_CGROUP_RUN_SA_PROG(sk, uaddr, &err,
-					       CGROUP_UNIX_GETSOCKNAME);
 	}
 	sock_put(sk);
 out:
 	return err;
 }
 
-/* The "user->unix_inflight" variable is protected by the garbage
- * collection lock, and we just read it locklessly here. If you go
- * over the limit, there might be a tiny race in actually noticing
- * it across threads. Tough.
- */
-static inline bool too_many_unix_fds(struct task_struct *p)
-{
-	struct user_struct *user = current_user();
-
-	if (unlikely(READ_ONCE(user->unix_inflight) > task_rlimit(p, RLIMIT_NOFILE)))
-		return !capable(CAP_SYS_RESOURCE) && !capable(CAP_SYS_ADMIN);
-	return false;
-}
-
-static int unix_attach_fds(struct scm_cookie *scm, struct sk_buff *skb)
-{
-	if (too_many_unix_fds(current))
-		return -ETOOMANYREFS;
-
-	UNIXCB(skb).fp = scm->fp;
-	scm->fp = NULL;
-
-	if (unix_prepare_fpl(UNIXCB(skb).fp))
-		return -ENOMEM;
-
-	return 0;
-}
-
-static void unix_detach_fds(struct scm_cookie *scm, struct sk_buff *skb)
-{
-	scm->fp = UNIXCB(skb).fp;
-	UNIXCB(skb).fp = NULL;
-
-	unix_destroy_fpl(scm->fp);
-}
-
 static void unix_peek_fds(struct scm_cookie *scm, struct sk_buff *skb)
 {
 	scm->fp = scm_fp_dup(UNIXCB(skb).fp);
-}
 
-static void unix_destruct_scm(struct sk_buff *skb)
-{
-	struct scm_cookie scm;
-
-	memset(&scm, 0, sizeof(scm));
-	scm.pid  = UNIXCB(skb).pid;
-	if (UNIXCB(skb).fp)
-		unix_detach_fds(&scm, skb);
-
-	/* Alas, it calls VFS */
-	/* So fscking what? fput() had been SMP-safe since the last Summer */
-	scm_destroy(&scm);
-	sock_wfree(skb);
+	/*
+	 * Garbage collection of unix sockets starts by selecting a set of
+	 * candidate sockets which have reference only from being in flight
+	 * (total_refs == inflight_refs).  This condition is checked once during
+	 * the candidate collection phase, and candidates are marked as such, so
+	 * that non-candidates can later be ignored.  While inflight_refs is
+	 * protected by unix_gc_lock, total_refs (file count) is not, hence this
+	 * is an instantaneous decision.
+	 *
+	 * Once a candidate, however, the socket must not be reinstalled into a
+	 * file descriptor while the garbage collection is in progress.
+	 *
+	 * If the above conditions are met, then the directed graph of
+	 * candidates (*) does not change while unix_gc_lock is held.
+	 *
+	 * Any operations that changes the file count through file descriptors
+	 * (dup, close, sendmsg) does not change the graph since candidates are
+	 * not installed in fds.
+	 *
+	 * Dequeing a candidate via recvmsg would install it into an fd, but
+	 * that takes unix_gc_lock to decrement the inflight count, so it's
+	 * serialized with garbage collection.
+	 *
+	 * MSG_PEEK is special in that it does not change the inflight count,
+	 * yet does install the socket into an fd.  The following lock/unlock
+	 * pair is to ensure serialization with garbage collection.  It must be
+	 * done between incrementing the file count and installing the file into
+	 * an fd.
+	 *
+	 * If garbage collection starts after the barrier provided by the
+	 * lock/unlock, then it will see the elevated refcount and not mark this
+	 * as a candidate.  If a garbage collection is already in progress
+	 * before the file count was incremented, then the lock/unlock pair will
+	 * ensure that garbage collection is finished before progressing to
+	 * installing the fd.
+	 *
+	 * (*) A -> B where B is on the queue of A or B is on the queue of C
+	 * which is on the queue of listening socket A.
+	 */
+	spin_lock(&unix_gc_lock);
+	spin_unlock(&unix_gc_lock);
 }
 
 static int unix_scm_to_skb(struct scm_cookie *scm, struct sk_buff *skb, bool send_fds)
@@ -1889,10 +1878,8 @@ static void scm_stat_add(struct sock *sk, struct sk_buff *skb)
 	struct scm_fp_list *fp = UNIXCB(skb).fp;
 	struct unix_sock *u = unix_sk(sk);
 
-	if (unlikely(fp && fp->count)) {
+	if (unlikely(fp && fp->count))
 		atomic_add(fp->count, &u->scm_stat.nr_fds);
-		unix_add_edges(fp, u);
-	}
 }
 
 static void scm_stat_del(struct sock *sk, struct sk_buff *skb)
@@ -1900,10 +1887,8 @@ static void scm_stat_del(struct sock *sk, struct sk_buff *skb)
 	struct scm_fp_list *fp = UNIXCB(skb).fp;
 	struct unix_sock *u = unix_sk(sk);
 
-	if (unlikely(fp && fp->count)) {
+	if (unlikely(fp && fp->count))
 		atomic_sub(fp->count, &u->scm_stat.nr_fds);
-		unix_del_edges(fp);
-	}
 }
 
 /*
@@ -1923,11 +1908,10 @@ static int unix_dgram_sendmsg(struct socket *sock, struct msghdr *msg,
 	long timeo;
 	int err;
 
+	wait_for_unix_gc();
 	err = scm_send(sock, msg, &scm, false);
 	if (err < 0)
 		return err;
-
-	wait_for_unix_gc(scm.fp);
 
 	err = -EOPNOTSUPP;
 	if (msg->msg_flags&MSG_OOB)
@@ -1935,13 +1919,6 @@ static int unix_dgram_sendmsg(struct socket *sock, struct msghdr *msg,
 
 	if (msg->msg_namelen) {
 		err = unix_validate_addr(sunaddr, msg->msg_namelen);
-		if (err)
-			goto out;
-
-		err = BPF_CGROUP_RUN_PROG_UNIX_SENDMSG_LOCK(sk,
-							    msg->msg_name,
-							    &msg->msg_namelen,
-							    NULL);
 		if (err)
 			goto out;
 	} else {
@@ -2203,11 +2180,10 @@ static int unix_stream_sendmsg(struct socket *sock, struct msghdr *msg,
 	bool fds_sent = false;
 	int data_len;
 
+	wait_for_unix_gc();
 	err = scm_send(sock, msg, &scm, false);
 	if (err < 0)
 		return err;
-
-	wait_for_unix_gc(scm.fp);
 
 	err = -EOPNOTSUPP;
 	if (msg->msg_flags & MSG_OOB) {
@@ -2416,13 +2392,8 @@ int __unix_dgram_recvmsg(struct sock *sk, struct msghdr *msg, size_t size,
 						EPOLLOUT | EPOLLWRNORM |
 						EPOLLWRBAND);
 
-	if (msg->msg_name) {
+	if (msg->msg_name)
 		unix_copy_addr(msg, skb->sk);
-
-		BPF_CGROUP_RUN_PROG_UNIX_RECVMSG_LOCK(sk,
-						      msg->msg_name,
-						      &msg->msg_namelen);
-	}
 
 	if (size > skb->len - skip)
 		size = skb->len - skip;
@@ -2625,18 +2596,18 @@ static struct sk_buff *manage_oob(struct sk_buff *skb, struct sock *sk,
 		if (skb == u->oob_skb) {
 			if (copied) {
 				skb = NULL;
-			} else if (sock_flag(sk, SOCK_URGINLINE)) {
-				if (!(flags & MSG_PEEK)) {
+			} else if (!(flags & MSG_PEEK)) {
+				if (sock_flag(sk, SOCK_URGINLINE)) {
 					WRITE_ONCE(u->oob_skb, NULL);
 					consume_skb(skb);
+				} else {
+					__skb_unlink(skb, &sk->sk_receive_queue);
+					WRITE_ONCE(u->oob_skb, NULL);
+					unlinked_skb = skb;
+					skb = skb_peek(&sk->sk_receive_queue);
 				}
-			} else if (flags & MSG_PEEK) {
-				skb = NULL;
-			} else {
-				__skb_unlink(skb, &sk->sk_receive_queue);
-				WRITE_ONCE(u->oob_skb, NULL);
-				unlinked_skb = skb;
-				skb = skb_peek(&sk->sk_receive_queue);
+			} else if (!sock_flag(sk, SOCK_URGINLINE)) {
+				skb = skb_peek_next(skb, &sk->sk_receive_queue);
 			}
 		}
 
@@ -2792,11 +2763,6 @@ unlock:
 			DECLARE_SOCKADDR(struct sockaddr_un *, sunaddr,
 					 state->msg->msg_name);
 			unix_copy_addr(state->msg, skb->sk);
-
-			BPF_CGROUP_RUN_PROG_UNIX_RECVMSG_LOCK(sk,
-							      state->msg->msg_name,
-							      &state->msg->msg_namelen);
-
 			sunaddr = NULL;
 		}
 
@@ -3363,7 +3329,7 @@ static const struct seq_operations unix_seq_ops = {
 	.show   = unix_seq_show,
 };
 
-#ifdef CONFIG_BPF_SYSCALL
+#if IS_BUILTIN(CONFIG_UNIX) && defined(CONFIG_BPF_SYSCALL)
 struct bpf_unix_iter_state {
 	struct seq_net_private p;
 	unsigned int cur_sk;
@@ -3625,7 +3591,7 @@ static struct pernet_operations unix_net_ops = {
 	.exit = unix_net_exit,
 };
 
-#if defined(CONFIG_BPF_SYSCALL) && defined(CONFIG_PROC_FS)
+#if IS_BUILTIN(CONFIG_UNIX) && defined(CONFIG_BPF_SYSCALL) && defined(CONFIG_PROC_FS)
 DEFINE_BPF_ITER_FUNC(unix, struct bpf_iter_meta *meta,
 		     struct unix_sock *unix_sk, uid_t uid)
 
@@ -3725,7 +3691,7 @@ static int __init af_unix_init(void)
 	register_pernet_subsys(&unix_net_ops);
 	unix_bpf_build_proto();
 
-#if defined(CONFIG_BPF_SYSCALL) && defined(CONFIG_PROC_FS)
+#if IS_BUILTIN(CONFIG_UNIX) && defined(CONFIG_BPF_SYSCALL) && defined(CONFIG_PROC_FS)
 	bpf_iter_register();
 #endif
 
@@ -3733,5 +3699,20 @@ out:
 	return rc;
 }
 
-/* Later than subsys_initcall() because we depend on stuff initialised there */
+static void __exit af_unix_exit(void)
+{
+	sock_unregister(PF_UNIX);
+	proto_unregister(&unix_dgram_proto);
+	proto_unregister(&unix_stream_proto);
+	unregister_pernet_subsys(&unix_net_ops);
+}
+
+/* Earlier than device_initcall() so that other drivers invoking
+   request_module() don't end up in a loop when modprobe tries
+   to use a UNIX socket. But later than subsys_initcall() because
+   we depend on stuff initialised there */
 fs_initcall(af_unix_init);
+module_exit(af_unix_exit);
+
+MODULE_LICENSE("GPL");
+MODULE_ALIAS_NETPROTO(PF_UNIX);

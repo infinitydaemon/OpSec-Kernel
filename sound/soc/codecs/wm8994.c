@@ -262,7 +262,7 @@ static int check_clk_sys(struct snd_soc_dapm_widget *source,
 	else
 		clk = "AIF1CLK";
 
-	return snd_soc_dapm_widget_name_cmp(source, clk) == 0;
+	return strcmp(source->name, clk) == 0;
 }
 
 static const char *sidetone_hpf_text[] = {
@@ -2210,7 +2210,7 @@ static int _wm8994_set_fll(struct snd_soc_component *component, int id, int src,
 	int reg_offset, ret;
 	struct fll_div fll;
 	u16 reg, clk1, aif_reg, aif_src;
-	unsigned long time_left;
+	unsigned long timeout;
 	bool was_enabled;
 	struct clk *mclk;
 
@@ -2403,9 +2403,9 @@ static int _wm8994_set_fll(struct snd_soc_component *component, int id, int src,
 				    WM8994_FLL1_FRAC, reg);
 
 		if (wm8994->fll_locked_irq) {
-			time_left = wait_for_completion_timeout(&wm8994->fll_locked[id],
-								msecs_to_jiffies(10));
-			if (time_left == 0)
+			timeout = wait_for_completion_timeout(&wm8994->fll_locked[id],
+							      msecs_to_jiffies(10));
+			if (timeout == 0)
 				dev_warn(component->dev,
 					 "Timed out waiting for FLL lock\n");
 		} else {

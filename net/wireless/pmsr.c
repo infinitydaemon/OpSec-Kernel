@@ -600,7 +600,7 @@ static void cfg80211_pmsr_process_abort(struct wireless_dev *wdev)
 	struct cfg80211_pmsr_request *req, *tmp;
 	LIST_HEAD(free_list);
 
-	lockdep_assert_wiphy(wdev->wiphy);
+	lockdep_assert_held(&wdev->mtx);
 
 	spin_lock_bh(&wdev->pmsr_lock);
 	list_for_each_entry_safe(req, tmp, &wdev->pmsr_list, list) {
@@ -623,7 +623,9 @@ void cfg80211_pmsr_free_wk(struct work_struct *work)
 						 pmsr_free_wk);
 
 	wiphy_lock(wdev->wiphy);
+	wdev_lock(wdev);
 	cfg80211_pmsr_process_abort(wdev);
+	wdev_unlock(wdev);
 	wiphy_unlock(wdev->wiphy);
 }
 

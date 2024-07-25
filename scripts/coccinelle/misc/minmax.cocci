@@ -50,26 +50,11 @@ func(...)
 	...>
 }
 
-// Ignore errcode returns.
-@errcode@
-position p;
-identifier func;
-expression x;
-binary operator cmp = {<, <=};
-@@
-
-func(...)
-{
-	<...
-	return ((x) cmp@p 0 ? (x) : 0);
-	...>
-}
-
 @rmin depends on !patch@
 identifier func;
 expression x, y;
 binary operator cmp = {<, <=};
-position p != errcode.p;
+position p;
 @@
 
 func(...)
@@ -128,6 +113,21 @@ func(...)
 -		max_val = y;
 -	}
 +	max_val = max(x, y);
+	...>
+}
+
+// Don't generate patches for errcode returns.
+@errcode depends on patch@
+position p;
+identifier func;
+expression x;
+binary operator cmp = {<, <=};
+@@
+
+func(...)
+{
+	<...
+	return ((x) cmp@p 0 ? (x) : 0);
 	...>
 }
 

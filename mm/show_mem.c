@@ -34,8 +34,13 @@ long si_mem_available(void)
 	long available;
 	unsigned long pagecache;
 	unsigned long wmark_low = 0;
+	unsigned long pages[NR_LRU_LISTS];
 	unsigned long reclaimable;
 	struct zone *zone;
+	int lru;
+
+	for (lru = LRU_BASE; lru < NR_LRU_LISTS; lru++)
+		pages[lru] = global_node_page_state(NR_LRU_BASE + lru);
 
 	for_each_zone(zone)
 		wmark_low += low_wmark_pages(zone);
@@ -51,8 +56,7 @@ long si_mem_available(void)
 	 * start swapping or thrashing. Assume at least half of the page
 	 * cache, or the low watermark worth of cache, needs to stay.
 	 */
-	pagecache = global_node_page_state(NR_ACTIVE_FILE) +
-		global_node_page_state(NR_INACTIVE_FILE);
+	pagecache = pages[LRU_ACTIVE_FILE] + pages[LRU_INACTIVE_FILE];
 	pagecache -= min(pagecache / 2, wmark_low);
 	available += pagecache;
 
@@ -63,8 +67,7 @@ long si_mem_available(void)
 	 */
 	reclaimable = global_node_page_state_pages(NR_SLAB_RECLAIMABLE_B) +
 		global_node_page_state(NR_KERNEL_MISC_RECLAIMABLE);
-	reclaimable -= min(reclaimable / 2, wmark_low);
-	available += reclaimable;
+	available += reclaimable - min(reclaimable / 2, wmark_low);
 
 	if (available < 0)
 		available = 0;
@@ -422,31 +425,5 @@ void __show_mem(unsigned int filter, nodemask_t *nodemask, int max_zone_idx)
 #endif
 #ifdef CONFIG_MEMORY_FAILURE
 	printk("%lu pages hwpoisoned\n", atomic_long_read(&num_poisoned_pages));
-#endif
-#ifdef CONFIG_MEM_ALLOC_PROFILING
-	{
-		struct codetag_bytes tags[10];
-		size_t i, nr;
-
-		nr = alloc_tag_top_users(tags, ARRAY_SIZE(tags), false);
-		if (nr) {
-			pr_notice("Memory allocations:\n");
-			for (i = 0; i < nr; i++) {
-				struct codetag *ct = tags[i].ct;
-				struct alloc_tag *tag = ct_to_alloc_tag(ct);
-				struct alloc_tag_counters counter = alloc_tag_read(tag);
-
-				/* Same as alloc_tag_to_text() but w/o intermediate buffer */
-				if (ct->modname)
-					pr_notice("%12lli %8llu %s:%u [%s] func:%s\n",
-						  counter.bytes, counter.calls, ct->filename,
-						  ct->lineno, ct->modname, ct->function);
-				else
-					pr_notice("%12lli %8llu %s:%u func:%s\n",
-						  counter.bytes, counter.calls, ct->filename,
-						  ct->lineno, ct->function);
-			}
-		}
-	}
 #endif
 }

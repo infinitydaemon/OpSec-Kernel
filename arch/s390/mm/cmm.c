@@ -332,6 +332,7 @@ static struct ctl_table cmm_table[] = {
 		.mode		= 0644,
 		.proc_handler	= cmm_timeout_handler,
 	},
+	{ }
 };
 
 #ifdef CONFIG_CMM_IUCV

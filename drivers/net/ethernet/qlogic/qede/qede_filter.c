@@ -1520,8 +1520,8 @@ static int qede_flow_spec_validate_unused(struct qede_dev *edev,
 	return 0;
 }
 
-static int qede_set_v4_tuple_to_profile(struct qede_arfs_tuple *t,
-					struct netlink_ext_ack *extack)
+static int qede_set_v4_tuple_to_profile(struct qede_dev *edev,
+					struct qede_arfs_tuple *t)
 {
 	/* We must have Only 4-tuples/l4 port/src ip/dst ip
 	 * as an input.
@@ -1538,7 +1538,7 @@ static int qede_set_v4_tuple_to_profile(struct qede_arfs_tuple *t,
 		   t->dst_ipv4 && !t->src_ipv4) {
 		t->mode = QED_FILTER_CONFIG_MODE_IP_DEST;
 	} else {
-		NL_SET_ERR_MSG_MOD(extack, "Invalid N-tuple");
+		DP_INFO(edev, "Invalid N-tuple\n");
 		return -EOPNOTSUPP;
 	}
 
@@ -1549,9 +1549,9 @@ static int qede_set_v4_tuple_to_profile(struct qede_arfs_tuple *t,
 	return 0;
 }
 
-static int qede_set_v6_tuple_to_profile(struct qede_arfs_tuple *t,
-					struct in6_addr *zaddr,
-					struct netlink_ext_ack *extack)
+static int qede_set_v6_tuple_to_profile(struct qede_dev *edev,
+					struct qede_arfs_tuple *t,
+					struct in6_addr *zaddr)
 {
 	/* We must have Only 4-tuples/l4 port/src ip/dst ip
 	 * as an input.
@@ -1573,7 +1573,7 @@ static int qede_set_v6_tuple_to_profile(struct qede_arfs_tuple *t,
 		   !memcmp(&t->src_ipv6, zaddr, sizeof(struct in6_addr))) {
 		t->mode = QED_FILTER_CONFIG_MODE_IP_DEST;
 	} else {
-		NL_SET_ERR_MSG_MOD(extack, "Invalid N-tuple");
+		DP_INFO(edev, "Invalid N-tuple\n");
 		return -EOPNOTSUPP;
 	}
 
@@ -1671,7 +1671,7 @@ static int qede_parse_actions(struct qede_dev *edev,
 	int i;
 
 	if (!flow_action_has_entries(flow_action)) {
-		NL_SET_ERR_MSG_MOD(extack, "No actions received");
+		DP_NOTICE(edev, "No actions received\n");
 		return -EINVAL;
 	}
 
@@ -1687,8 +1687,7 @@ static int qede_parse_actions(struct qede_dev *edev,
 				break;
 
 			if (act->queue.index >= QEDE_RSS_COUNT(edev)) {
-				NL_SET_ERR_MSG_MOD(extack,
-						   "Queue out-of-bounds");
+				DP_INFO(edev, "Queue out-of-bounds\n");
 				return -EINVAL;
 			}
 			break;
@@ -1701,8 +1700,8 @@ static int qede_parse_actions(struct qede_dev *edev,
 }
 
 static int
-qede_flow_parse_ports(struct flow_rule *rule, struct qede_arfs_tuple *t,
-		      struct netlink_ext_ack *extack)
+qede_flow_parse_ports(struct qede_dev *edev, struct flow_rule *rule,
+		      struct qede_arfs_tuple *t)
 {
 	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_PORTS)) {
 		struct flow_match_ports match;
@@ -1710,8 +1709,7 @@ qede_flow_parse_ports(struct flow_rule *rule, struct qede_arfs_tuple *t,
 		flow_rule_match_ports(rule, &match);
 		if ((match.key->src && match.mask->src != htons(U16_MAX)) ||
 		    (match.key->dst && match.mask->dst != htons(U16_MAX))) {
-			NL_SET_ERR_MSG_MOD(extack,
-					   "Do not support ports masks");
+			DP_NOTICE(edev, "Do not support ports masks\n");
 			return -EINVAL;
 		}
 
@@ -1723,12 +1721,10 @@ qede_flow_parse_ports(struct flow_rule *rule, struct qede_arfs_tuple *t,
 }
 
 static int
-qede_flow_parse_v6_common(struct flow_rule *rule,
-			  struct qede_arfs_tuple *t,
-			  struct netlink_ext_ack *extack)
+qede_flow_parse_v6_common(struct qede_dev *edev, struct flow_rule *rule,
+			  struct qede_arfs_tuple *t)
 {
 	struct in6_addr zero_addr, addr;
-	int err;
 
 	memset(&zero_addr, 0, sizeof(addr));
 	memset(&addr, 0xff, sizeof(addr));
@@ -1741,8 +1737,8 @@ qede_flow_parse_v6_common(struct flow_rule *rule,
 		     memcmp(&match.mask->src, &addr, sizeof(addr))) ||
 		    (memcmp(&match.key->dst, &zero_addr, sizeof(addr)) &&
 		     memcmp(&match.mask->dst, &addr, sizeof(addr)))) {
-			NL_SET_ERR_MSG_MOD(extack,
-					   "Do not support IPv6 address prefix/mask");
+			DP_NOTICE(edev,
+				  "Do not support IPv6 address prefix/mask\n");
 			return -EINVAL;
 		}
 
@@ -1750,28 +1746,23 @@ qede_flow_parse_v6_common(struct flow_rule *rule,
 		memcpy(&t->dst_ipv6, &match.key->dst, sizeof(addr));
 	}
 
-	err = qede_flow_parse_ports(rule, t, extack);
-	if (err)
-		return err;
+	if (qede_flow_parse_ports(edev, rule, t))
+		return -EINVAL;
 
-	return qede_set_v6_tuple_to_profile(t, &zero_addr, extack);
+	return qede_set_v6_tuple_to_profile(edev, t, &zero_addr);
 }
 
 static int
-qede_flow_parse_v4_common(struct flow_rule *rule,
-			  struct qede_arfs_tuple *t,
-			  struct netlink_ext_ack *extack)
+qede_flow_parse_v4_common(struct qede_dev *edev, struct flow_rule *rule,
+			struct qede_arfs_tuple *t)
 {
-	int err;
-
 	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_IPV4_ADDRS)) {
 		struct flow_match_ipv4_addrs match;
 
 		flow_rule_match_ipv4_addrs(rule, &match);
 		if ((match.key->src && match.mask->src != htonl(U32_MAX)) ||
 		    (match.key->dst && match.mask->dst != htonl(U32_MAX))) {
-			NL_SET_ERR_MSG_MOD(extack,
-					   "Do not support ipv4 prefix/masks");
+			DP_NOTICE(edev, "Do not support ipv4 prefix/masks\n");
 			return -EINVAL;
 		}
 
@@ -1779,57 +1770,55 @@ qede_flow_parse_v4_common(struct flow_rule *rule,
 		t->dst_ipv4 = match.key->dst;
 	}
 
-	err = qede_flow_parse_ports(rule, t, extack);
-	if (err)
-		return err;
+	if (qede_flow_parse_ports(edev, rule, t))
+		return -EINVAL;
 
-	return qede_set_v4_tuple_to_profile(t, extack);
+	return qede_set_v4_tuple_to_profile(edev, t);
 }
 
 static int
-qede_flow_parse_tcp_v6(struct flow_rule *rule, struct qede_arfs_tuple *tuple,
-		       struct netlink_ext_ack *extack)
+qede_flow_parse_tcp_v6(struct qede_dev *edev, struct flow_rule *rule,
+		     struct qede_arfs_tuple *tuple)
 {
 	tuple->ip_proto = IPPROTO_TCP;
 	tuple->eth_proto = htons(ETH_P_IPV6);
 
-	return qede_flow_parse_v6_common(rule, tuple, extack);
+	return qede_flow_parse_v6_common(edev, rule, tuple);
 }
 
 static int
-qede_flow_parse_tcp_v4(struct flow_rule *rule, struct qede_arfs_tuple *tuple,
-		       struct netlink_ext_ack *extack)
+qede_flow_parse_tcp_v4(struct qede_dev *edev, struct flow_rule *rule,
+		     struct qede_arfs_tuple *tuple)
 {
 	tuple->ip_proto = IPPROTO_TCP;
 	tuple->eth_proto = htons(ETH_P_IP);
 
-	return qede_flow_parse_v4_common(rule, tuple, extack);
+	return qede_flow_parse_v4_common(edev, rule, tuple);
 }
 
 static int
-qede_flow_parse_udp_v6(struct flow_rule *rule, struct qede_arfs_tuple *tuple,
-		       struct netlink_ext_ack *extack)
+qede_flow_parse_udp_v6(struct qede_dev *edev, struct flow_rule *rule,
+		     struct qede_arfs_tuple *tuple)
 {
 	tuple->ip_proto = IPPROTO_UDP;
 	tuple->eth_proto = htons(ETH_P_IPV6);
 
-	return qede_flow_parse_v6_common(rule, tuple, extack);
+	return qede_flow_parse_v6_common(edev, rule, tuple);
 }
 
 static int
-qede_flow_parse_udp_v4(struct flow_rule *rule, struct qede_arfs_tuple *tuple,
-		       struct netlink_ext_ack *extack)
+qede_flow_parse_udp_v4(struct qede_dev *edev, struct flow_rule *rule,
+		     struct qede_arfs_tuple *tuple)
 {
 	tuple->ip_proto = IPPROTO_UDP;
 	tuple->eth_proto = htons(ETH_P_IP);
 
-	return qede_flow_parse_v4_common(rule, tuple, extack);
+	return qede_flow_parse_v4_common(edev, rule, tuple);
 }
 
 static int
-qede_parse_flow_attr(__be16 proto, struct flow_rule *rule,
-		     struct qede_arfs_tuple *tuple,
-		     struct netlink_ext_ack *extack)
+qede_parse_flow_attr(struct qede_dev *edev, __be16 proto,
+		     struct flow_rule *rule, struct qede_arfs_tuple *tuple)
 {
 	struct flow_dissector *dissector = rule->match.dissector;
 	int rc = -EINVAL;
@@ -1843,18 +1832,14 @@ qede_parse_flow_attr(__be16 proto, struct flow_rule *rule,
 	      BIT_ULL(FLOW_DISSECTOR_KEY_BASIC) |
 	      BIT_ULL(FLOW_DISSECTOR_KEY_IPV6_ADDRS) |
 	      BIT_ULL(FLOW_DISSECTOR_KEY_PORTS))) {
-		NL_SET_ERR_MSG_FMT_MOD(extack, "Unsupported key used: 0x%llx",
-				       dissector->used_keys);
+		DP_NOTICE(edev, "Unsupported key set:0x%llx\n",
+			  dissector->used_keys);
 		return -EOPNOTSUPP;
 	}
 
-	if (flow_rule_match_has_control_flags(rule, extack))
-		return -EOPNOTSUPP;
-
 	if (proto != htons(ETH_P_IP) &&
 	    proto != htons(ETH_P_IPV6)) {
-		NL_SET_ERR_MSG_FMT_MOD(extack, "Unsupported proto=0x%x",
-				       proto);
+		DP_NOTICE(edev, "Unsupported proto=0x%x\n", proto);
 		return -EPROTONOSUPPORT;
 	}
 
@@ -1866,15 +1851,15 @@ qede_parse_flow_attr(__be16 proto, struct flow_rule *rule,
 	}
 
 	if (ip_proto == IPPROTO_TCP && proto == htons(ETH_P_IP))
-		rc = qede_flow_parse_tcp_v4(rule, tuple, extack);
+		rc = qede_flow_parse_tcp_v4(edev, rule, tuple);
 	else if (ip_proto == IPPROTO_TCP && proto == htons(ETH_P_IPV6))
-		rc = qede_flow_parse_tcp_v6(rule, tuple, extack);
+		rc = qede_flow_parse_tcp_v6(edev, rule, tuple);
 	else if (ip_proto == IPPROTO_UDP && proto == htons(ETH_P_IP))
-		rc = qede_flow_parse_udp_v4(rule, tuple, extack);
+		rc = qede_flow_parse_udp_v4(edev, rule, tuple);
 	else if (ip_proto == IPPROTO_UDP && proto == htons(ETH_P_IPV6))
-		rc = qede_flow_parse_udp_v6(rule, tuple, extack);
+		rc = qede_flow_parse_udp_v6(edev, rule, tuple);
 	else
-		NL_SET_ERR_MSG_MOD(extack, "Invalid protocol request");
+		DP_NOTICE(edev, "Invalid protocol request\n");
 
 	return rc;
 }
@@ -1882,7 +1867,6 @@ qede_parse_flow_attr(__be16 proto, struct flow_rule *rule,
 int qede_add_tc_flower_fltr(struct qede_dev *edev, __be16 proto,
 			    struct flow_cls_offload *f)
 {
-	struct netlink_ext_ack *extack = f->common.extack;
 	struct qede_arfs_fltr_node *n;
 	struct qede_arfs_tuple t;
 	int min_hlen, rc;
@@ -1895,7 +1879,7 @@ int qede_add_tc_flower_fltr(struct qede_dev *edev, __be16 proto,
 	}
 
 	/* parse flower attribute and prepare filter */
-	rc = qede_parse_flow_attr(proto, f->rule, &t, extack);
+	rc = qede_parse_flow_attr(edev, proto, f->rule, &t);
 	if (rc)
 		goto unlock;
 
@@ -1910,7 +1894,7 @@ int qede_add_tc_flower_fltr(struct qede_dev *edev, __be16 proto,
 	}
 
 	/* parse tc actions and get the vf_id */
-	rc = qede_parse_actions(edev, &f->rule->action, extack);
+	rc = qede_parse_actions(edev, &f->rule->action, f->common.extack);
 	if (rc)
 		goto unlock;
 
@@ -1957,11 +1941,8 @@ unlock:
 static int qede_flow_spec_validate(struct qede_dev *edev,
 				   struct flow_action *flow_action,
 				   struct qede_arfs_tuple *t,
-				   __u32 location,
-				   struct netlink_ext_ack *extack)
+				   __u32 location)
 {
-	int err;
-
 	if (location >= QEDE_RFS_MAX_FLTR) {
 		DP_INFO(edev, "Location out-of-bounds\n");
 		return -EINVAL;
@@ -1982,9 +1963,8 @@ static int qede_flow_spec_validate(struct qede_dev *edev,
 		return -EINVAL;
 	}
 
-	err = qede_parse_actions(edev, flow_action, extack);
-	if (err)
-		return err;
+	if (qede_parse_actions(edev, flow_action, NULL))
+		return -EINVAL;
 
 	return 0;
 }
@@ -1995,13 +1975,11 @@ static int qede_flow_spec_to_rule(struct qede_dev *edev,
 {
 	struct ethtool_rx_flow_spec_input input = {};
 	struct ethtool_rx_flow_rule *flow;
-	struct netlink_ext_ack extack;
 	__be16 proto;
-	int err;
+	int err = 0;
 
-	err = qede_flow_spec_validate_unused(edev, fs);
-	if (err)
-		return err;
+	if (qede_flow_spec_validate_unused(edev, fs))
+		return -EOPNOTSUPP;
 
 	switch ((fs->flow_type & ~FLOW_EXT)) {
 	case TCP_V4_FLOW:
@@ -2023,16 +2001,14 @@ static int qede_flow_spec_to_rule(struct qede_dev *edev,
 	if (IS_ERR(flow))
 		return PTR_ERR(flow);
 
-	err = qede_parse_flow_attr(proto, flow->rule, t, &extack);
+	err = qede_parse_flow_attr(edev, proto, flow->rule, t);
 	if (err)
 		goto err_out;
 
 	/* Make sure location is valid and filter isn't already set */
 	err = qede_flow_spec_validate(edev, &flow->rule->action, t,
-				      fs->location, &extack);
+				      fs->location);
 err_out:
-	if (extack._msg)
-		DP_NOTICE(edev, "%s\n", extack._msg);
 	ethtool_rx_flow_rule_destroy(flow);
 	return err;
 

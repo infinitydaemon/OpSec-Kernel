@@ -416,7 +416,7 @@ out:
 	return button_info;
 }
 
-static void soc_button_remove(struct platform_device *pdev)
+static int soc_button_remove(struct platform_device *pdev)
 {
 	struct soc_button_data *priv = platform_get_drvdata(pdev);
 
@@ -425,6 +425,8 @@ static void soc_button_remove(struct platform_device *pdev)
 	for (i = 0; i < BUTTON_TYPES; i++)
 		if (priv->children[i])
 			platform_device_unregister(priv->children[i]);
+
+	return 0;
 }
 
 static int soc_button_probe(struct platform_device *pdev)
@@ -612,7 +614,7 @@ MODULE_DEVICE_TABLE(acpi, soc_button_acpi_match);
 
 static struct platform_driver soc_button_driver = {
 	.probe          = soc_button_probe,
-	.remove_new	= soc_button_remove,
+	.remove		= soc_button_remove,
 	.driver		= {
 		.name = KBUILD_MODNAME,
 		.acpi_match_table = ACPI_PTR(soc_button_acpi_match),

@@ -194,7 +194,7 @@ xfs_initialize_perag_data(
 		pag = xfs_perag_get(mp, index);
 		error = xfs_alloc_read_agf(pag, NULL, 0, NULL);
 		if (!error)
-			error = xfs_ialloc_read_agi(pag, NULL, 0, NULL);
+			error = xfs_ialloc_read_agi(pag, NULL, NULL);
 		if (error) {
 			xfs_perag_put(pag);
 			return error;
@@ -217,7 +217,6 @@ xfs_initialize_perag_data(
 	 */
 	if (fdblocks > sbp->sb_dblocks || ifree > ialloc) {
 		xfs_alert(mp, "AGF corruption. Please run xfs_repair.");
-		xfs_fs_mark_sick(mp, XFS_SICK_FS_COUNTERS);
 		error = -EFSCORRUPTED;
 		goto out;
 	}
@@ -242,7 +241,7 @@ __xfs_free_perag(
 	struct xfs_perag *pag = container_of(head, struct xfs_perag, rcu_head);
 
 	ASSERT(!delayed_work_pending(&pag->pag_blockgc_work));
-	kfree(pag);
+	kmem_free(pag);
 }
 
 /*
@@ -264,7 +263,7 @@ xfs_free_perag(
 		xfs_defer_drain_free(&pag->pag_intents_drain);
 
 		cancel_delayed_work_sync(&pag->pag_blockgc_work);
-		xfs_buf_cache_destroy(&pag->pag_bcache);
+		xfs_buf_hash_destroy(pag);
 
 		/* drop the mount's active reference */
 		xfs_perag_rele(pag);
@@ -352,9 +351,9 @@ xfs_free_unused_perag_range(
 		spin_unlock(&mp->m_perag_lock);
 		if (!pag)
 			break;
-		xfs_buf_cache_destroy(&pag->pag_bcache);
+		xfs_buf_hash_destroy(pag);
 		xfs_defer_drain_free(&pag->pag_intents_drain);
-		kfree(pag);
+		kmem_free(pag);
 	}
 }
 
@@ -382,7 +381,7 @@ xfs_initialize_perag(
 			continue;
 		}
 
-		pag = kzalloc(sizeof(*pag), GFP_KERNEL | __GFP_RETRY_MAYFAIL);
+		pag = kmem_zalloc(sizeof(*pag), KM_MAYFAIL);
 		if (!pag) {
 			error = -ENOMEM;
 			goto out_unwind_new_pags;
@@ -390,7 +389,7 @@ xfs_initialize_perag(
 		pag->pag_agno = index;
 		pag->pag_mount = mp;
 
-		error = radix_tree_preload(GFP_KERNEL | __GFP_RETRY_MAYFAIL);
+		error = radix_tree_preload(GFP_NOFS);
 		if (error)
 			goto out_free_pag;
 
@@ -417,10 +416,9 @@ xfs_initialize_perag(
 		init_waitqueue_head(&pag->pag_active_wq);
 		pag->pagb_count = 0;
 		pag->pagb_tree = RB_ROOT;
-		xfs_hooks_init(&pag->pag_rmap_update_hooks);
 #endif /* __KERNEL__ */
 
-		error = xfs_buf_cache_init(&pag->pag_bcache);
+		error = xfs_buf_hash_init(pag);
 		if (error)
 			goto out_remove_pag;
 
@@ -455,7 +453,7 @@ out_remove_pag:
 	radix_tree_delete(&mp->m_perag_tree, index);
 	spin_unlock(&mp->m_perag_lock);
 out_free_pag:
-	kfree(pag);
+	kmem_free(pag);
 out_unwind_new_pags:
 	/* unwind any prior newly initialized pags */
 	xfs_free_unused_perag_range(mp, first_initialised, agcount);
@@ -493,7 +491,7 @@ xfs_btroot_init(
 	struct xfs_buf		*bp,
 	struct aghdr_init_data	*id)
 {
-	xfs_btree_init_buf(mp, bp, id->bc_ops, 0, 0, id->agno);
+	xfs_btree_init_block(mp, bp, id->type, 0, 0, id->agno);
 }
 
 /* Finish initializing a free space btree. */
@@ -551,7 +549,7 @@ xfs_freesp_init_recs(
 }
 
 /*
- * bnobt/cntbt btree root block init functions
+ * Alloc btree root block init functions
  */
 static void
 xfs_bnoroot_init(
@@ -559,7 +557,17 @@ xfs_bnoroot_init(
 	struct xfs_buf		*bp,
 	struct aghdr_init_data	*id)
 {
-	xfs_btree_init_buf(mp, bp, id->bc_ops, 0, 0, id->agno);
+	xfs_btree_init_block(mp, bp, XFS_BTNUM_BNO, 0, 0, id->agno);
+	xfs_freesp_init_recs(mp, bp, id);
+}
+
+static void
+xfs_cntroot_init(
+	struct xfs_mount	*mp,
+	struct xfs_buf		*bp,
+	struct aghdr_init_data	*id)
+{
+	xfs_btree_init_block(mp, bp, XFS_BTNUM_CNT, 0, 0, id->agno);
 	xfs_freesp_init_recs(mp, bp, id);
 }
 
@@ -575,7 +583,7 @@ xfs_rmaproot_init(
 	struct xfs_btree_block	*block = XFS_BUF_TO_BLOCK(bp);
 	struct xfs_rmap_rec	*rrec;
 
-	xfs_btree_init_buf(mp, bp, id->bc_ops, 0, 4, id->agno);
+	xfs_btree_init_block(mp, bp, XFS_BTNUM_RMAP, 0, 4, id->agno);
 
 	/*
 	 * mark the AG header regions as static metadata The BNO
@@ -670,13 +678,14 @@ xfs_agfblock_init(
 	agf->agf_versionnum = cpu_to_be32(XFS_AGF_VERSION);
 	agf->agf_seqno = cpu_to_be32(id->agno);
 	agf->agf_length = cpu_to_be32(id->agsize);
-	agf->agf_bno_root = cpu_to_be32(XFS_BNO_BLOCK(mp));
-	agf->agf_cnt_root = cpu_to_be32(XFS_CNT_BLOCK(mp));
-	agf->agf_bno_level = cpu_to_be32(1);
-	agf->agf_cnt_level = cpu_to_be32(1);
+	agf->agf_roots[XFS_BTNUM_BNOi] = cpu_to_be32(XFS_BNO_BLOCK(mp));
+	agf->agf_roots[XFS_BTNUM_CNTi] = cpu_to_be32(XFS_CNT_BLOCK(mp));
+	agf->agf_levels[XFS_BTNUM_BNOi] = cpu_to_be32(1);
+	agf->agf_levels[XFS_BTNUM_CNTi] = cpu_to_be32(1);
 	if (xfs_has_rmapbt(mp)) {
-		agf->agf_rmap_root = cpu_to_be32(XFS_RMAP_BLOCK(mp));
-		agf->agf_rmap_level = cpu_to_be32(1);
+		agf->agf_roots[XFS_BTNUM_RMAPi] =
+					cpu_to_be32(XFS_RMAP_BLOCK(mp));
+		agf->agf_levels[XFS_BTNUM_RMAPi] = cpu_to_be32(1);
 		agf->agf_rmap_blocks = cpu_to_be32(1);
 	}
 
@@ -787,7 +796,7 @@ struct xfs_aghdr_grow_data {
 	size_t			numblks;
 	const struct xfs_buf_ops *ops;
 	aghdr_init_work_f	work;
-	const struct xfs_btree_ops *bc_ops;
+	xfs_btnum_t		type;
 	bool			need_init;
 };
 
@@ -841,15 +850,13 @@ xfs_ag_init_headers(
 		.numblks = BTOBB(mp->m_sb.sb_blocksize),
 		.ops = &xfs_bnobt_buf_ops,
 		.work = &xfs_bnoroot_init,
-		.bc_ops = &xfs_bnobt_ops,
 		.need_init = true
 	},
 	{ /* CNT root block */
 		.daddr = XFS_AGB_TO_DADDR(mp, id->agno, XFS_CNT_BLOCK(mp)),
 		.numblks = BTOBB(mp->m_sb.sb_blocksize),
 		.ops = &xfs_cntbt_buf_ops,
-		.work = &xfs_bnoroot_init,
-		.bc_ops = &xfs_cntbt_ops,
+		.work = &xfs_cntroot_init,
 		.need_init = true
 	},
 	{ /* INO root block */
@@ -857,7 +864,7 @@ xfs_ag_init_headers(
 		.numblks = BTOBB(mp->m_sb.sb_blocksize),
 		.ops = &xfs_inobt_buf_ops,
 		.work = &xfs_btroot_init,
-		.bc_ops = &xfs_inobt_ops,
+		.type = XFS_BTNUM_INO,
 		.need_init = true
 	},
 	{ /* FINO root block */
@@ -865,7 +872,7 @@ xfs_ag_init_headers(
 		.numblks = BTOBB(mp->m_sb.sb_blocksize),
 		.ops = &xfs_finobt_buf_ops,
 		.work = &xfs_btroot_init,
-		.bc_ops = &xfs_finobt_ops,
+		.type = XFS_BTNUM_FINO,
 		.need_init =  xfs_has_finobt(mp)
 	},
 	{ /* RMAP root block */
@@ -873,7 +880,6 @@ xfs_ag_init_headers(
 		.numblks = BTOBB(mp->m_sb.sb_blocksize),
 		.ops = &xfs_rmapbt_buf_ops,
 		.work = &xfs_rmaproot_init,
-		.bc_ops = &xfs_rmapbt_ops,
 		.need_init = xfs_has_rmapbt(mp)
 	},
 	{ /* REFC root block */
@@ -881,7 +887,7 @@ xfs_ag_init_headers(
 		.numblks = BTOBB(mp->m_sb.sb_blocksize),
 		.ops = &xfs_refcountbt_buf_ops,
 		.work = &xfs_btroot_init,
-		.bc_ops = &xfs_refcountbt_ops,
+		.type = XFS_BTNUM_REFC,
 		.need_init = xfs_has_reflink(mp)
 	},
 	{ /* NULL terminating block */
@@ -899,7 +905,7 @@ xfs_ag_init_headers(
 
 		id->daddr = dp->daddr;
 		id->numblks = dp->numblks;
-		id->bc_ops = dp->bc_ops;
+		id->type = dp->type;
 		error = xfs_ag_init_hdr(mp, id, dp->work, dp->ops);
 		if (error)
 			break;
@@ -931,7 +937,7 @@ xfs_ag_shrink_space(
 	int			error, err2;
 
 	ASSERT(pag->pag_agno == mp->m_sb.sb_agcount - 1);
-	error = xfs_ialloc_read_agi(pag, *tpp, 0, &agibp);
+	error = xfs_ialloc_read_agi(pag, *tpp, &agibp);
 	if (error)
 		return error;
 
@@ -944,10 +950,8 @@ xfs_ag_shrink_space(
 	agf = agfbp->b_addr;
 	aglen = be32_to_cpu(agi->agi_length);
 	/* some extra paranoid checks before we shrink the ag */
-	if (XFS_IS_CORRUPT(mp, agf->agf_length != agi->agi_length)) {
-		xfs_ag_mark_sick(pag, XFS_SICK_AG_AGF);
+	if (XFS_IS_CORRUPT(mp, agf->agf_length != agi->agi_length))
 		return -EFSCORRUPTED;
-	}
 	if (delta >= aglen)
 		return -EINVAL;
 
@@ -963,7 +967,9 @@ xfs_ag_shrink_space(
 	 * Disable perag reservations so it doesn't cause the allocation request
 	 * to fail. We'll reestablish reservation before we return.
 	 */
-	xfs_ag_resv_free(pag);
+	error = xfs_ag_resv_free(pag);
+	if (error)
+		return error;
 
 	/* internal log shouldn't also show up in the free space btrees */
 	error = xfs_alloc_vextent_exact_bno(&args,
@@ -1007,7 +1013,7 @@ xfs_ag_shrink_space(
 		if (err2 != -ENOSPC)
 			goto resv_err;
 
-		err2 = xfs_free_extent_later(*tpp, args.fsbno, delta, NULL,
+		err2 = __xfs_free_extent_later(*tpp, args.fsbno, delta, NULL,
 				XFS_AG_RESV_NONE, true);
 		if (err2)
 			goto resv_err;
@@ -1060,7 +1066,7 @@ xfs_ag_extend_space(
 
 	ASSERT(pag->pag_agno == pag->pag_mount->m_sb.sb_agcount - 1);
 
-	error = xfs_ialloc_read_agi(pag, tp, 0, &bp);
+	error = xfs_ialloc_read_agi(pag, tp, &bp);
 	if (error)
 		return error;
 
@@ -1117,7 +1123,7 @@ xfs_ag_get_geometry(
 	int			error;
 
 	/* Lock the AG headers. */
-	error = xfs_ialloc_read_agi(pag, NULL, 0, &agi_bp);
+	error = xfs_ialloc_read_agi(pag, NULL, &agi_bp);
 	if (error)
 		return error;
 	error = xfs_alloc_read_agf(pag, NULL, 0, &agf_bp);

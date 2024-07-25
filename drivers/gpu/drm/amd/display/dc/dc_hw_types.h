@@ -738,13 +738,6 @@ enum scanning_type {
 	SCANNING_TYPE_UNDEFINED
 };
 
-enum chroma_cositing {
-	CHROMA_COSITING_NONE,
-	CHROMA_COSITING_LEFT,
-	CHROMA_COSITING_TOPLEFT,
-	CHROMA_COSITING_COUNT
-};
-
 struct dc_crtc_timing_flags {
 	uint32_t INTERLACE :1;
 	uint32_t HSYNC_POSITIVE_POLARITY :1; /* when set to 1,
@@ -777,6 +770,9 @@ struct dc_crtc_timing_flags {
 	uint32_t LTE_340MCSC_SCRAMBLE:1;
 
 	uint32_t DSC : 1; /* Use DSC with this timing */
+#ifndef TRIM_FSFT
+	uint32_t FAST_TRANSPORT: 1;
+#endif
 	uint32_t VBLANK_SYNCHRONIZABLE: 1;
 };
 
@@ -834,7 +830,9 @@ struct dc_dsc_config {
 	uint32_t version_minor; /* DSC minor version. Full version is formed as 1.version_minor. */
 	bool ycbcr422_simple; /* Tell DSC engine to convert YCbCr 4:2:2 to 'YCbCr 4:2:2 simple'. */
 	int32_t rc_buffer_size; /* DSC RC buffer block size in bytes */
+#if defined(CONFIG_DRM_AMD_DC_FP)
 	bool is_frl; /* indicate if DSC is applied based on HDMI FRL sink's capability */
+#endif
 	bool is_dp; /* indicate if DSC is applied based on DP's capability */
 	uint32_t mst_pbn; /* pbn of display on dsc mst hub */
 	const struct dc_dsc_rc_params_override *rc_params_ovrd; /* DM owned memory. If not NULL, apply custom dsc rc params */
@@ -947,12 +945,15 @@ struct dc_crtc_timing {
 	uint32_t hdmi_vic;
 	uint32_t rid;
 	uint32_t fr_index;
-	uint32_t frl_uncompressed_video_bandwidth_in_kbps;
 	enum dc_timing_3d_format timing_3d_format;
 	enum dc_color_depth display_color_depth;
 	enum dc_pixel_encoding pixel_encoding;
 	enum dc_aspect_ratio aspect_ratio;
 	enum scanning_type scan_type;
+
+#ifndef TRIM_FSFT
+	uint32_t fast_transport_output_rate_100hz;
+#endif
 
 	struct dc_crtc_timing_flags flags;
 	uint32_t dsc_fixed_bits_per_pixel_x16; /* DSC target bitrate in 1/16 of bpp (e.g. 128 -> 8bpp) */
@@ -981,7 +982,6 @@ struct dc_crtc_timing_adjust {
 	uint32_t v_total_max;
 	uint32_t v_total_mid;
 	uint32_t v_total_mid_frame_num;
-	uint32_t allow_otg_v_count_halt;
 };
 
 

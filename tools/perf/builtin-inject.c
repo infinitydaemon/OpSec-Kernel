@@ -445,9 +445,10 @@ static struct dso *findnew_dso(int pid, int tid, const char *filename,
 	}
 
 	if (dso) {
-		mutex_lock(dso__lock(dso));
-		dso__set_nsinfo(dso, nsi);
-		mutex_unlock(dso__lock(dso));
+		mutex_lock(&dso->lock);
+		nsinfo__put(dso->nsinfo);
+		dso->nsinfo = nsi;
+		mutex_unlock(&dso->lock);
 	} else
 		nsinfo__put(nsi);
 
@@ -465,8 +466,8 @@ static int perf_event__repipe_buildid_mmap(struct perf_tool *tool,
 	dso = findnew_dso(event->mmap.pid, event->mmap.tid,
 			  event->mmap.filename, NULL, machine);
 
-	if (dso && !dso__hit(dso)) {
-		dso__set_hit(dso);
+	if (dso && !dso->hit) {
+		dso->hit = 1;
 		dso__inject_build_id(dso, tool, machine, sample->cpumode, 0);
 	}
 	dso__put(dso);
@@ -491,7 +492,7 @@ static int perf_event__repipe_mmap2(struct perf_tool *tool,
 				  event->mmap2.filename, NULL, machine);
 		if (dso) {
 			/* mark it not to inject build-id */
-			dso__set_hit(dso);
+			dso->hit = 1;
 		}
 		dso__put(dso);
 	}
@@ -543,7 +544,7 @@ static int perf_event__repipe_buildid_mmap2(struct perf_tool *tool,
 				  event->mmap2.filename, NULL, machine);
 		if (dso) {
 			/* mark it not to inject build-id */
-			dso__set_hit(dso);
+			dso->hit = 1;
 		}
 		dso__put(dso);
 		perf_event__repipe(tool, event, sample, machine);
@@ -553,8 +554,8 @@ static int perf_event__repipe_buildid_mmap2(struct perf_tool *tool,
 	dso = findnew_dso(event->mmap2.pid, event->mmap2.tid,
 			  event->mmap2.filename, &dso_id, machine);
 
-	if (dso && !dso__hit(dso)) {
-		dso__set_hit(dso);
+	if (dso && !dso->hit) {
+		dso->hit = 1;
 		dso__inject_build_id(dso, tool, machine, sample->cpumode,
 				     event->mmap2.flags);
 	}
@@ -630,24 +631,24 @@ static int dso__read_build_id(struct dso *dso)
 {
 	struct nscookie nsc;
 
-	if (dso__has_build_id(dso))
+	if (dso->has_build_id)
 		return 0;
 
-	mutex_lock(dso__lock(dso));
-	nsinfo__mountns_enter(dso__nsinfo(dso), &nsc);
-	if (filename__read_build_id(dso__long_name(dso), dso__bid(dso)) > 0)
-		dso__set_has_build_id(dso);
-	else if (dso__nsinfo(dso)) {
-		char *new_name = dso__filename_with_chroot(dso, dso__long_name(dso));
+	mutex_lock(&dso->lock);
+	nsinfo__mountns_enter(dso->nsinfo, &nsc);
+	if (filename__read_build_id(dso->long_name, &dso->bid) > 0)
+		dso->has_build_id = true;
+	else if (dso->nsinfo) {
+		char *new_name = dso__filename_with_chroot(dso, dso->long_name);
 
-		if (new_name && filename__read_build_id(new_name, dso__bid(dso)) > 0)
-			dso__set_has_build_id(dso);
+		if (new_name && filename__read_build_id(new_name, &dso->bid) > 0)
+			dso->has_build_id = true;
 		free(new_name);
 	}
 	nsinfo__mountns_exit(&nsc);
-	mutex_unlock(dso__lock(dso));
+	mutex_unlock(&dso->lock);
 
-	return dso__has_build_id(dso) ? 0 : -1;
+	return dso->has_build_id ? 0 : -1;
 }
 
 static struct strlist *perf_inject__parse_known_build_ids(
@@ -699,14 +700,14 @@ static bool perf_inject__lookup_known_build_id(struct perf_inject *inject,
 		dso_name = strchr(build_id, ' ');
 		bid_len = dso_name - pos->s;
 		dso_name = skip_spaces(dso_name);
-		if (strcmp(dso__long_name(dso), dso_name))
+		if (strcmp(dso->long_name, dso_name))
 			continue;
 		for (int ix = 0; 2 * ix + 1 < bid_len; ++ix) {
-			dso__bid(dso)->data[ix] = (hex(build_id[2 * ix]) << 4 |
-						  hex(build_id[2 * ix + 1]));
+			dso->bid.data[ix] = (hex(build_id[2 * ix]) << 4 |
+					     hex(build_id[2 * ix + 1]));
 		}
-		dso__bid(dso)->size = bid_len / 2;
-		dso__set_has_build_id(dso);
+		dso->bid.size = bid_len / 2;
+		dso->has_build_id = 1;
 		return true;
 	}
 	return false;
@@ -719,9 +720,9 @@ static int dso__inject_build_id(struct dso *dso, struct perf_tool *tool,
 						  tool);
 	int err;
 
-	if (is_anon_memory(dso__long_name(dso)) || flags & MAP_HUGETLB)
+	if (is_anon_memory(dso->long_name) || flags & MAP_HUGETLB)
 		return 0;
-	if (is_no_dso_memory(dso__long_name(dso)))
+	if (is_no_dso_memory(dso->long_name))
 		return 0;
 
 	if (inject->known_build_ids != NULL &&
@@ -729,14 +730,14 @@ static int dso__inject_build_id(struct dso *dso, struct perf_tool *tool,
 		return 1;
 
 	if (dso__read_build_id(dso) < 0) {
-		pr_debug("no build_id found for %s\n", dso__long_name(dso));
+		pr_debug("no build_id found for %s\n", dso->long_name);
 		return -1;
 	}
 
 	err = perf_event__synthesize_build_id(tool, dso, cpumode,
 					      perf_event__repipe, machine);
 	if (err) {
-		pr_err("Can't synthesize build_id event for %s\n", dso__long_name(dso));
+		pr_err("Can't synthesize build_id event for %s\n", dso->long_name);
 		return -1;
 	}
 
@@ -762,8 +763,8 @@ int perf_event__inject_buildid(struct perf_tool *tool, union perf_event *event,
 	if (thread__find_map(thread, sample->cpumode, sample->ip, &al)) {
 		struct dso *dso = map__dso(al.map);
 
-		if (!dso__hit(dso)) {
-			dso__set_hit(dso);
+		if (!dso->hit) {
+			dso->hit = 1;
 			dso__inject_build_id(dso, tool, machine,
 					     sample->cpumode, map__flags(al.map));
 		}
@@ -1145,8 +1146,8 @@ static bool dso__is_in_kernel_space(struct dso *dso)
 		return false;
 
 	return dso__is_kcore(dso) ||
-	       dso__kernel(dso) ||
-	       is_kernel_module(dso__long_name(dso), PERF_RECORD_MISC_CPUMODE_UNKNOWN);
+	       dso->kernel ||
+	       is_kernel_module(dso->long_name, PERF_RECORD_MISC_CPUMODE_UNKNOWN);
 }
 
 static u64 evlist__first_id(struct evlist *evlist)
@@ -1180,34 +1181,29 @@ static int synthesize_build_id(struct perf_inject *inject, struct dso *dso, pid_
 	if (!machine)
 		return -ENOMEM;
 
-	dso__set_hit(dso);
+	dso->hit = 1;
 
 	return perf_event__synthesize_build_id(&inject->tool, dso, cpumode,
 					       process_build_id, machine);
 }
 
-static int guest_session__add_build_ids_cb(struct dso *dso, void *data)
-{
-	struct guest_session *gs = data;
-	struct perf_inject *inject = container_of(gs, struct perf_inject, guest_session);
-
-	if (!dso__has_build_id(dso))
-		return 0;
-
-	return synthesize_build_id(inject, dso, gs->machine_pid);
-
-}
-
 static int guest_session__add_build_ids(struct guest_session *gs)
 {
 	struct perf_inject *inject = container_of(gs, struct perf_inject, guest_session);
+	struct machine *machine = &gs->session->machines.host;
+	struct dso *dso;
+	int ret;
 
 	/* Build IDs will be put in the Build ID feature section */
 	perf_header__set_feat(&inject->session->header, HEADER_BUILD_ID);
 
-	return dsos__for_each_dso(&gs->session->machines.host.dsos,
-				  guest_session__add_build_ids_cb,
-				  gs);
+	dsos__for_each_with_build_id(dso, &machine->dsos.head) {
+		ret = synthesize_build_id(inject, dso, gs->machine_pid);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
 }
 
 static int guest_session__ksymbol_event(struct perf_tool *tool,
@@ -2126,7 +2122,7 @@ static int __cmd_inject(struct perf_inject *inject)
 		 */
 		if (perf_header__has_feat(&session->header, HEADER_BUILD_ID) &&
 		    inject->have_auxtrace && !inject->itrace_synth_opts.set)
-			perf_session__dsos_hit_all(session);
+			dsos__hit_all(session);
 		/*
 		 * The AUX areas have been removed and replaced with
 		 * synthesized hardware events, so clear the feature flag.

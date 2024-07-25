@@ -4,8 +4,6 @@
  * Author: James.Qian.Wang <james.qian.wang@arm.com>
  *
  */
-
-#include <linux/seq_file.h>
 #include "d71_dev.h"
 #include "komeda_kms.h"
 #include "malidp_io.h"

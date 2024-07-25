@@ -35,7 +35,6 @@ Human interfaces
    sound/index
    gpu/index
    fb/index
-   leds/index
 
 Networking interfaces
 ---------------------
@@ -61,8 +60,6 @@ Storage interfaces
    scsi/index
    target/index
 
-Other subsystems
-----------------
 **Fixme**: much more organizational work is needed here.
 
 .. toctree::
@@ -73,6 +70,7 @@ Other subsystems
    fpga/index
    i2c/index
    iio/index
+   leds/index
    pcmcia/index
    spi/index
    w1/index
@@ -88,4 +86,3 @@ Other subsystems
    misc-devices/index
    peci/index
    wmi/index
-   tee/index

@@ -267,6 +267,7 @@ struct sdio_driver wfx_sdio_driver = {
 	.probe = wfx_sdio_probe,
 	.remove = wfx_sdio_remove,
 	.drv = {
+		.owner = THIS_MODULE,
 		.of_match_table = wfx_sdio_of_match,
 	}
 };

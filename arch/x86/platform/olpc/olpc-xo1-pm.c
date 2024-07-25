@@ -144,7 +144,7 @@ static int xo1_pm_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void xo1_pm_remove(struct platform_device *pdev)
+static int xo1_pm_remove(struct platform_device *pdev)
 {
 	if (strcmp(pdev->name, "cs5535-pms") == 0)
 		pms_base = 0;
@@ -152,6 +152,7 @@ static void xo1_pm_remove(struct platform_device *pdev)
 		acpi_base = 0;
 
 	pm_power_off = NULL;
+	return 0;
 }
 
 static struct platform_driver cs5535_pms_driver = {
@@ -159,7 +160,7 @@ static struct platform_driver cs5535_pms_driver = {
 		.name = "cs5535-pms",
 	},
 	.probe = xo1_pm_probe,
-	.remove_new = xo1_pm_remove,
+	.remove = xo1_pm_remove,
 };
 
 static struct platform_driver cs5535_acpi_driver = {
@@ -167,7 +168,7 @@ static struct platform_driver cs5535_acpi_driver = {
 		.name = "olpc-xo1-pm-acpi",
 	},
 	.probe = xo1_pm_probe,
-	.remove_new = xo1_pm_remove,
+	.remove = xo1_pm_remove,
 };
 
 static int __init xo1_pm_init(void)

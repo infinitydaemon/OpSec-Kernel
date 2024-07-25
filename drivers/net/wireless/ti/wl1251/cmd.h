@@ -89,6 +89,8 @@ enum wl1251_commands {
 struct wl1251_cmd_header {
 	u16 id;
 	u16 status;
+	/* payload */
+	u8 data[];
 } __packed;
 
 struct  wl1251_command {

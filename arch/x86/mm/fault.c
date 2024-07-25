@@ -20,7 +20,6 @@
 #include <linux/efi.h>			/* efi_crash_gracefully_on_page_fault()*/
 #include <linux/mm_types.h>
 #include <linux/mm.h>			/* find_and_lock_vma() */
-#include <linux/vmalloc.h>
 
 #include <asm/cpufeature.h>		/* boot_cpu_has, ...		*/
 #include <asm/traps.h>			/* dotraplinkage, ...		*/
@@ -35,8 +34,6 @@
 #include <asm/kvm_para.h>		/* kvm_handle_async_pf		*/
 #include <asm/vdso.h>			/* fixup_vdso_exception()	*/
 #include <asm/irq_stack.h>
-#include <asm/fred.h>
-#include <asm/sev.h>			/* snp_dump_hva_rmpentry()	*/
 
 #define CREATE_TRACE_POINTS
 #include <asm/trace/exceptions.h>
@@ -253,7 +250,7 @@ static noinline int vmalloc_fault(unsigned long address)
 	if (!pmd_k)
 		return -1;
 
-	if (pmd_leaf(*pmd_k))
+	if (pmd_large(*pmd_k))
 		return 0;
 
 	pte_k = pte_offset_kernel(pmd_k, address);
@@ -322,7 +319,7 @@ static void dump_pagetable(unsigned long address)
 	 * And let's rather not kmap-atomic the pte, just in case
 	 * it's allocated already:
 	 */
-	if (!low_pfn(pmd_pfn(*pmd)) || !pmd_present(*pmd) || pmd_leaf(*pmd))
+	if (!low_pfn(pmd_pfn(*pmd)) || !pmd_present(*pmd) || pmd_large(*pmd))
 		goto out;
 
 	pte = pte_offset_kernel(pmd, address);
@@ -371,7 +368,7 @@ static void dump_pagetable(unsigned long address)
 		goto bad;
 
 	pr_cont("P4D %lx ", p4d_val(*p4d));
-	if (!p4d_present(*p4d) || p4d_leaf(*p4d))
+	if (!p4d_present(*p4d) || p4d_large(*p4d))
 		goto out;
 
 	pud = pud_offset(p4d, address);
@@ -387,7 +384,7 @@ static void dump_pagetable(unsigned long address)
 		goto bad;
 
 	pr_cont("PMD %lx ", pmd_val(*pmd));
-	if (!pmd_present(*pmd) || pmd_leaf(*pmd))
+	if (!pmd_present(*pmd) || pmd_large(*pmd))
 		goto out;
 
 	pte = pte_offset_kernel(pmd, address);
@@ -515,19 +512,18 @@ show_fault_oops(struct pt_regs *regs, unsigned long error_code, unsigned long ad
 
 	if (error_code & X86_PF_INSTR) {
 		unsigned int level;
-		bool nx, rw;
 		pgd_t *pgd;
 		pte_t *pte;
 
 		pgd = __va(read_cr3_pa());
 		pgd += pgd_index(address);
 
-		pte = lookup_address_in_pgd_attr(pgd, address, &level, &nx, &rw);
+		pte = lookup_address_in_pgd(pgd, address, &level);
 
-		if (pte && pte_present(*pte) && (!pte_exec(*pte) || nx))
+		if (pte && pte_present(*pte) && !pte_exec(*pte))
 			pr_crit("kernel tried to execute NX-protected page - exploit attempt? (uid: %d)\n",
 				from_kuid(&init_user_ns, current_uid()));
-		if (pte && pte_present(*pte) && pte_exec(*pte) && !nx &&
+		if (pte && pte_present(*pte) && pte_exec(*pte) &&
 				(pgd_flags(*pgd) & _PAGE_USER) &&
 				(__read_cr4() & X86_CR4_SMEP))
 			pr_crit("unable to execute userspace code (SMEP?) (uid: %d)\n",
@@ -551,7 +547,6 @@ show_fault_oops(struct pt_regs *regs, unsigned long error_code, unsigned long ad
 		 !(error_code & X86_PF_PROT) ? "not-present page" :
 		 (error_code & X86_PF_RSVD)  ? "reserved bit violation" :
 		 (error_code & X86_PF_PK)    ? "protection keys violation" :
-		 (error_code & X86_PF_RMP)   ? "RMP violation" :
 					       "permissions violation");
 
 	if (!(error_code & X86_PF_USER) && user_mode(regs)) {
@@ -584,9 +579,6 @@ show_fault_oops(struct pt_regs *regs, unsigned long error_code, unsigned long ad
 	}
 
 	dump_pagetable(address);
-
-	if (error_code & X86_PF_RMP)
-		snp_dump_hva_rmpentry(address);
 }
 
 static noinline void
@@ -836,17 +828,14 @@ bad_area_nosemaphore(struct pt_regs *regs, unsigned long error_code,
 
 static void
 __bad_area(struct pt_regs *regs, unsigned long error_code,
-	   unsigned long address, struct mm_struct *mm,
-	   struct vm_area_struct *vma, u32 pkey, int si_code)
+	   unsigned long address, u32 pkey, int si_code)
 {
+	struct mm_struct *mm = current->mm;
 	/*
 	 * Something tried to access memory that isn't in our memory map..
 	 * Fix it, but check if it's kernel or user first..
 	 */
-	if (mm)
-		mmap_read_unlock(mm);
-	else
-		vma_end_read(vma);
+	mmap_read_unlock(mm);
 
 	__bad_area_nosemaphore(regs, error_code, address, pkey, si_code);
 }
@@ -870,8 +859,7 @@ static inline bool bad_area_access_from_pkeys(unsigned long error_code,
 
 static noinline void
 bad_area_access_error(struct pt_regs *regs, unsigned long error_code,
-		      unsigned long address, struct mm_struct *mm,
-		      struct vm_area_struct *vma)
+		      unsigned long address, struct vm_area_struct *vma)
 {
 	/*
 	 * This OSPKE check is not strictly necessary at runtime.
@@ -901,9 +889,9 @@ bad_area_access_error(struct pt_regs *regs, unsigned long error_code,
 		 */
 		u32 pkey = vma_pkey(vma);
 
-		__bad_area(regs, error_code, address, mm, vma, pkey, SEGV_PKUERR);
+		__bad_area(regs, error_code, address, pkey, SEGV_PKUERR);
 	} else {
-		__bad_area(regs, error_code, address, mm, vma, 0, SEGV_ACCERR);
+		__bad_area(regs, error_code, address, 0, SEGV_ACCERR);
 	}
 }
 
@@ -1011,7 +999,7 @@ spurious_kernel_fault(unsigned long error_code, unsigned long address)
 	if (!p4d_present(*p4d))
 		return 0;
 
-	if (p4d_leaf(*p4d))
+	if (p4d_large(*p4d))
 		return spurious_kernel_fault_check(error_code, (pte_t *) p4d);
 
 	pud = pud_offset(p4d, address);
@@ -1025,7 +1013,7 @@ spurious_kernel_fault(unsigned long error_code, unsigned long address)
 	if (!pmd_present(*pmd))
 		return 0;
 
-	if (pmd_leaf(*pmd))
+	if (pmd_large(*pmd))
 		return spurious_kernel_fault_check(error_code, (pte_t *) pmd);
 
 	pte = pte_offset_kernel(pmd, address);
@@ -1274,13 +1262,20 @@ void do_user_addr_fault(struct pt_regs *regs,
 		return;
 	}
 
-	/* Legacy check - remove this after verifying that it doesn't trigger */
-	if (WARN_ON_ONCE(!(regs->flags & X86_EFLAGS_IF))) {
-		bad_area_nosemaphore(regs, error_code, address);
-		return;
+	/*
+	 * It's safe to allow irq's after cr2 has been saved and the
+	 * vmalloc fault has been handled.
+	 *
+	 * User-mode registers count as a user access even for any
+	 * potential system fault or CPU buglet:
+	 */
+	if (user_mode(regs)) {
+		local_irq_enable();
+		flags |= FAULT_FLAG_USER;
+	} else {
+		if (regs->flags & X86_EFLAGS_IF)
+			local_irq_enable();
 	}
-
-	local_irq_enable();
 
 	perf_sw_event(PERF_COUNT_SW_PAGE_FAULTS, 1, regs, address);
 
@@ -1296,14 +1291,6 @@ void do_user_addr_fault(struct pt_regs *regs,
 		flags |= FAULT_FLAG_WRITE;
 	if (error_code & X86_PF_INSTR)
 		flags |= FAULT_FLAG_INSTRUCTION;
-
-	/*
-	 * We set FAULT_FLAG_USER based on the register state, not
-	 * based on X86_PF_USER. User space accesses that cause
-	 * system page faults are still user accesses.
-	 */
-	if (user_mode(regs))
-		flags |= FAULT_FLAG_USER;
 
 #ifdef CONFIG_X86_64
 	/*
@@ -1331,9 +1318,8 @@ void do_user_addr_fault(struct pt_regs *regs,
 		goto lock_mmap;
 
 	if (unlikely(access_error(error_code, vma))) {
-		bad_area_access_error(regs, error_code, address, NULL, vma);
-		count_vm_vma_lock_event(VMA_LOCK_SUCCESS);
-		return;
+		vma_end_read(vma);
+		goto lock_mmap;
 	}
 	fault = handle_mm_fault(vma, address, flags | FAULT_FLAG_VMA_LOCK, regs);
 	if (!(fault & (VM_FAULT_RETRY | VM_FAULT_COMPLETED)))
@@ -1344,8 +1330,6 @@ void do_user_addr_fault(struct pt_regs *regs,
 		goto done;
 	}
 	count_vm_vma_lock_event(VMA_LOCK_RETRY);
-	if (fault & VM_FAULT_MAJOR)
-		flags |= FAULT_FLAG_TRIED;
 
 	/* Quick path to respond to signals */
 	if (fault_signal_pending(fault, regs)) {
@@ -1369,7 +1353,7 @@ retry:
 	 * we can handle it..
 	 */
 	if (unlikely(access_error(error_code, vma))) {
-		bad_area_access_error(regs, error_code, address, mm, vma);
+		bad_area_access_error(regs, error_code, address, vma);
 		return;
 	}
 
@@ -1492,10 +1476,8 @@ handle_page_fault(struct pt_regs *regs, unsigned long error_code,
 
 DEFINE_IDTENTRY_RAW_ERRORCODE(exc_page_fault)
 {
+	unsigned long address = read_cr2();
 	irqentry_state_t state;
-	unsigned long address;
-
-	address = cpu_feature_enabled(X86_FEATURE_FRED) ? fred_event_data(regs) : read_cr2();
 
 	prefetchw(&current->mm->mmap_lock);
 

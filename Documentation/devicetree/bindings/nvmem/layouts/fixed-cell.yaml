@@ -36,18 +36,20 @@ properties:
 
 allOf:
   - if:
-      properties:
-        compatible:
-          contains:
-            const: mac-base
       required: [ compatible ]
     then:
-      properties:
-        "#nvmem-cell-cells":
-          description: The first argument is a MAC address offset.
-          const: 1
-      required:
-        - "#nvmem-cell-cells"
+      if:
+        properties:
+          compatible:
+            contains:
+              const: mac-base
+      then:
+        properties:
+          "#nvmem-cell-cells":
+            description: The first argument is a MAC address offset.
+            const: 1
+        required:
+          - "#nvmem-cell-cells"
 
 required:
   - reg

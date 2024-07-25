@@ -2624,8 +2624,8 @@ static int lm93_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id lm93_id[] = {
-	{ "lm93" },
-	{ "lm94" },
+	{ "lm93", 0 },
+	{ "lm94", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, lm93_id);

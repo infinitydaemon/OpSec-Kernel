@@ -826,7 +826,6 @@
 			samsung,spi-src-clk = <0>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&spi0_bus>;
-			fifo-depth = <256>;
 			status = "disabled";
 		};
 
@@ -843,7 +842,6 @@
 			samsung,spi-src-clk = <0>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&spi1_bus>;
-			fifo-depth = <64>;
 			status = "disabled";
 		};
 

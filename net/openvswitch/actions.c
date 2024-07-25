@@ -311,17 +311,10 @@ static int push_eth(struct sk_buff *skb, struct sw_flow_key *key,
 	return 0;
 }
 
-static noinline_for_stack int push_nsh(struct sk_buff *skb,
-				       struct sw_flow_key *key,
-				       const struct nlattr *a)
+static int push_nsh(struct sk_buff *skb, struct sw_flow_key *key,
+		    const struct nshhdr *nh)
 {
-	u8 buffer[NSH_HDR_MAX_LEN];
-	struct nshhdr *nh = (struct nshhdr *)buffer;
 	int err;
-
-	err = nsh_hdr_from_nlattr(a, nh, NSH_HDR_MAX_LEN);
-	if (err)
-		return err;
 
 	err = nsh_push(skb, nh);
 	if (err)
@@ -880,7 +873,7 @@ static void ovs_fragment(struct net *net, struct vport *vport,
 
 		prepare_frag(vport, skb, orig_network_offset,
 			     ovs_key_mac_proto(key));
-		dst_init(&ovs_rt.dst, &ovs_dst_ops, NULL,
+		dst_init(&ovs_rt.dst, &ovs_dst_ops, NULL, 1,
 			 DST_OBSOLETE_NONE, DST_NOCOUNT);
 		ovs_rt.dst.dev = vport->dev;
 
@@ -897,7 +890,7 @@ static void ovs_fragment(struct net *net, struct vport *vport,
 		prepare_frag(vport, skb, orig_network_offset,
 			     ovs_key_mac_proto(key));
 		memset(&ovs_rt, 0, sizeof(ovs_rt));
-		dst_init(&ovs_rt.dst, &ovs_dst_ops, NULL,
+		dst_init(&ovs_rt.dst, &ovs_dst_ops, NULL, 1,
 			 DST_OBSOLETE_NONE, DST_NOCOUNT);
 		ovs_rt.dst.dev = vport->dev;
 
@@ -1452,9 +1445,17 @@ static int do_execute_actions(struct datapath *dp, struct sk_buff *skb,
 			err = pop_eth(skb, key);
 			break;
 
-		case OVS_ACTION_ATTR_PUSH_NSH:
-			err = push_nsh(skb, key, nla_data(a));
+		case OVS_ACTION_ATTR_PUSH_NSH: {
+			u8 buffer[NSH_HDR_MAX_LEN];
+			struct nshhdr *nh = (struct nshhdr *)buffer;
+
+			err = nsh_hdr_from_nlattr(nla_data(a), nh,
+						  NSH_HDR_MAX_LEN);
+			if (unlikely(err))
+				break;
+			err = push_nsh(skb, key, nh);
 			break;
+		}
 
 		case OVS_ACTION_ATTR_POP_NSH:
 			err = pop_nsh(skb, key);

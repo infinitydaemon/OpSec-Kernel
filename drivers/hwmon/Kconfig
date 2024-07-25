@@ -40,7 +40,7 @@ comment "Native drivers"
 
 config SENSORS_ABITUGURU
 	tristate "Abit uGuru (rev 1 & 2)"
-	depends on (X86 && DMI) || COMPILE_TEST && HAS_IOPORT
+	depends on X86 && DMI
 	help
 	  If you say yes here you get support for the sensor part of the first
 	  and second revision of the Abit uGuru chip. The voltage and frequency
@@ -55,7 +55,7 @@ config SENSORS_ABITUGURU
 
 config SENSORS_ABITUGURU3
 	tristate "Abit uGuru (rev 3)"
-	depends on (X86 && DMI) || COMPILE_TEST && HAS_IOPORT
+	depends on X86 && DMI
 	help
 	  If you say yes here you get support for the sensor part of the
 	  third revision of the Abit uGuru chip. Only reading the sensors
@@ -301,16 +301,6 @@ config SENSORS_ASC7621
 	  This driver can also be built as a module. If so, the module
 	  will be called asc7621.
 
-config SENSORS_ASUS_ROG_RYUJIN
-	tristate "ASUS ROG RYUJIN II 360 hardware monitoring driver"
-	depends on HID
-	help
-	  If you say yes here you get support for the fans and sensors of
-	  the ASUS ROG RYUJIN II 360 AIO CPU liquid cooler.
-
-	  This driver can also be built as a module. If so, the module
-	  will be called asus_rog_ryujin.
-
 config SENSORS_AXI_FAN_CONTROL
 	tristate "Analog Devices FAN Control HDL Core driver"
 	help
@@ -422,17 +412,6 @@ config SENSORS_ASPEED
 	  This driver can also be built as a module. If so, the module
 	  will be called aspeed_pwm_tacho.
 
-config SENSORS_ASPEED_G6
-	tristate "ASPEED g6 PWM and Fan tach driver"
-	depends on ARCH_ASPEED || COMPILE_TEST
-	depends on PWM
-	help
-	  This driver provides support for ASPEED G6 PWM and Fan Tach
-	  controllers.
-
-	  This driver can also be built as a module. If so, the module
-	  will be called aspeed_pwm_tacho.
-
 config SENSORS_ATXP1
 	tristate "Attansic ATXP1 VID controller"
 	depends on I2C
@@ -472,16 +451,6 @@ config SENSORS_BT1_PVT_ALARMS
 	  performed on demand from the user-space. If this config is enabled
 	  the data conversion will be periodically performed and the data will be
 	  saved in the internal driver cache.
-
-config SENSORS_CHIPCAP2
-	tristate "Amphenol ChipCap 2 relative humidity and temperature sensor"
-	depends on I2C
-	help
-	  Say yes here to build support for the Amphenol ChipCap 2
-	  relative humidity and temperature sensor.
-
-	  To compile this driver as a module, choose M here: the module
-	  will be called chipcap2.
 
 config SENSORS_CORSAIR_CPRO
 	tristate "Corsair Commander Pro controller"
@@ -543,7 +512,6 @@ config SENSORS_DS1621
 
 config SENSORS_DELL_SMM
 	tristate "Dell laptop SMM BIOS hwmon driver"
-	depends on ACPI_WMI
 	depends on X86
 	imply THERMAL
 	help
@@ -611,7 +579,6 @@ config SENSORS_SPARX5
 
 config SENSORS_F71805F
 	tristate "Fintek F71805F/FG, F71806F/FG and F71872F/FG"
-	depends on HAS_IOPORT
 	depends on !PPC
 	help
 	  If you say yes here you get support for hardware monitoring
@@ -623,7 +590,6 @@ config SENSORS_F71805F
 
 config SENSORS_F71882FG
 	tristate "Fintek F71882FG and compatibles"
-	depends on HAS_IOPORT
 	depends on !PPC
 	help
 	  If you say yes here you get support for hardware monitoring
@@ -696,16 +662,6 @@ config SENSORS_FTSTEUTATES
 
 	  This driver can also be built as a module. If so, the module
 	  will be called ftsteutates.
-
-config SENSORS_GIGABYTE_WATERFORCE
-	tristate "Gigabyte Waterforce X240/X280/X360 AIO CPU coolers"
-	depends on USB_HID
-	help
-	  If you say yes here you get support for hardware monitoring for the
-	  Gigabyte Waterforce X240/X280/X360 all-in-one CPU liquid coolers.
-
-	  This driver can also be built as a module. If so, the module
-	  will be called gigabyte_waterforce.
 
 config SENSORS_GL518SM
 	tristate "Genesys Logic GL518SM"
@@ -856,7 +812,6 @@ config SENSORS_CORETEMP
 
 config SENSORS_IT87
 	tristate "ITE IT87xx and compatibles"
-	depends on HAS_IOPORT
 	depends on !PPC
 	select HWMON_VID
 	help
@@ -884,16 +839,6 @@ config SENSORS_JC42
 	  This driver can also be built as a module. If so, the module
 	  will be called jc42.
 
-config SENSORS_POWERZ
-	tristate "ChargerLAB POWER-Z USB-C tester"
-	depends on USB
-	help
-	  If you say yes here you get support for ChargerLAB POWER-Z series of
-	  USB-C charging testers.
-
-	  This driver can also be built as a module. If so, the module
-	  will be called powerz.
-
 config SENSORS_POWR1220
 	tristate "Lattice POWR1220 Power Monitoring"
 	depends on I2C
@@ -916,16 +861,6 @@ config SENSORS_LAN966X
 
 	  This driver can also be built as a module. If so, the module
 	  will be called lan966x-hwmon.
-
-config SENSORS_LENOVO_EC
-        tristate "Sensor reader for Lenovo ThinkStations"
-        depends on X86
-        help
-          If you say yes here you get support for LENOVO
-          EC Sensor data on newer ThinkStation systems
-
-          This driver can also be built as a module. If so, the module
-          will be called lenovo_ec_sensors.
 
 config SENSORS_LINEAGE
 	tristate "Lineage Compact Power Line Power Entry Module"
@@ -996,17 +931,6 @@ config SENSORS_LTC2990
 
 	  This driver can also be built as a module. If so, the module will
 	  be called ltc2990.
-
-config SENSORS_LTC2991
-	tristate "Analog Devices LTC2991"
-	depends on I2C
-	help
-	  If you say yes here you get support for Analog Devices LTC2991
-	  Octal I2C Voltage, Current, and Temperature Monitor. The LTC2991
-	  supports a combination of voltage, current and temperature monitoring.
-
-	  This driver can also be built as a module. If so, the module will
-	  be called ltc2991.
 
 config SENSORS_LTC2992
 	tristate "Linear Technology LTC2992"
@@ -1081,17 +1005,6 @@ config SENSORS_LTC4261
 
 	  This driver can also be built as a module. If so, the module will
 	  be called ltc4261.
-
-config SENSORS_LTC4282
-	tristate "Analog Devices LTC4282"
-	depends on I2C
-	select REGMAP_I2C
-	help
-	  If you say yes here you get support for Analog Devices LTC4282
-	  High Current Hot Swap Controller I2C interface.
-
-	  This driver can also be built as a module. If so, the module will
-	  be called ltc4282.
 
 config SENSORS_LTQ_CPUTEMP
 	bool "Lantiq cpu temperature sensor driver"
@@ -1233,7 +1146,6 @@ config SENSORS_MAX6621
 config SENSORS_MAX6639
 	tristate "Maxim MAX6639 sensor chip"
 	depends on I2C
-	select REGMAP_I2C
 	help
 	  If you say yes here you get support for the MAX6639
 	  sensor chips.
@@ -1575,7 +1487,6 @@ config SENSORS_LM95245
 
 config SENSORS_PC87360
 	tristate "National Semiconductor PC87360 family"
-	depends on HAS_IOPORT
 	depends on !PPC
 	select HWMON_VID
 	help
@@ -1590,7 +1501,6 @@ config SENSORS_PC87360
 
 config SENSORS_PC87427
 	tristate "National Semiconductor PC87427"
-	depends on HAS_IOPORT
 	depends on !PPC
 	help
 	  If you say yes here you get access to the hardware monitoring
@@ -1622,7 +1532,6 @@ config SENSORS_NTC_THERMISTOR
 
 config SENSORS_NCT6683
 	tristate "Nuvoton NCT6683D"
-	depends on HAS_IOPORT
 	depends on !PPC
 	help
 	  If you say yes here you get support for the hardware monitoring
@@ -1644,7 +1553,6 @@ config SENSORS_NCT6775_CORE
 
 config SENSORS_NCT6775
 	tristate "Platform driver for Nuvoton NCT6775F and compatibles"
-	depends on HAS_IOPORT
 	depends on !PPC
 	depends on ACPI || ACPI=n
 	select HWMON_VID
@@ -1734,16 +1642,6 @@ config SENSORS_NZXT_KRAKEN2
 	  This driver can also be built as a module. If so, the module
 	  will be called nzxt-kraken2.
 
-config SENSORS_NZXT_KRAKEN3
-	tristate "NZXT Kraken X53/X63/X73, Z53/Z63/Z73 coolers"
-	depends on USB_HID
-	help
-	  If you say yes here you get support for hardware monitoring for the
-	  NZXT Kraken X53/X63/X73, Z53/Z63/Z73 all-in-one CPU liquid coolers.
-
-	  This driver can also be built as a module. If so, the module
-	  will be called nzxt-kraken3.
-
 config SENSORS_NZXT_SMART2
 	tristate "NZXT RGB & Fan Controller/Smart Device v2"
 	depends on USB_HID
@@ -1784,19 +1682,9 @@ source "drivers/hwmon/peci/Kconfig"
 
 source "drivers/hwmon/pmbus/Kconfig"
 
-config SENSORS_PT5161L
-	tristate "Astera Labs PT5161L PCIe retimer hardware monitoring"
-	depends on I2C
-	help
-	  If you say yes here you get support for temperature monitoring
-	  on the Astera Labs PT5161L PCIe retimer.
-
-	  This driver can also be built as a module. If so, the module
-	  will be called pt5161l.
-
 config SENSORS_PWM_FAN
 	tristate "PWM fan"
-	depends on PWM || COMPILE_TEST
+	depends on (PWM && OF) || COMPILE_TEST
 	depends on THERMAL || THERMAL=n
 	help
 	  If you say yes here you get support for fans connected to PWM lines.
@@ -1901,7 +1789,7 @@ config SENSORS_SHTC1
 
 config SENSORS_SIS5595
 	tristate "Silicon Integrated Systems Corp. SiS5595"
-	depends on PCI && HAS_IOPORT
+	depends on PCI
 	help
 	  If you say yes here you get support for the integrated sensors in
 	  SiS5595 South Bridges.
@@ -1921,7 +1809,6 @@ config SENSORS_SY7636A
 
 config SENSORS_DME1737
 	tristate "SMSC DME1737, SCH311x and compatibles"
-	depends on HAS_IOPORT
 	depends on I2C && !PPC
 	select HWMON_VID
 	help
@@ -1978,7 +1865,6 @@ config SENSORS_EMC6W201
 
 config SENSORS_SMSC47M1
 	tristate "SMSC LPC47M10x and compatibles"
-	depends on HAS_IOPORT
 	depends on !PPC
 	help
 	  If you say yes here you get support for the integrated fan
@@ -2013,7 +1899,6 @@ config SENSORS_SMSC47M192
 
 config SENSORS_SMSC47B397
 	tristate "SMSC LPC47B397-NC"
-	depends on HAS_IOPORT
 	depends on !PPC
 	help
 	  If you say yes here you get support for the SMSC LPC47B397-NC
@@ -2024,11 +1909,9 @@ config SENSORS_SMSC47B397
 
 config SENSORS_SCH56XX_COMMON
 	tristate
-	select REGMAP
 
 config SENSORS_SCH5627
 	tristate "SMSC SCH5627"
-	depends on HAS_IOPORT
 	depends on !PPC && WATCHDOG
 	select SENSORS_SCH56XX_COMMON
 	select WATCHDOG_CORE
@@ -2042,7 +1925,6 @@ config SENSORS_SCH5627
 
 config SENSORS_SCH5636
 	tristate "SMSC SCH5636"
-	depends on HAS_IOPORT
 	depends on !PPC && WATCHDOG
 	select SENSORS_SCH56XX_COMMON
 	select WATCHDOG_CORE
@@ -2078,20 +1960,6 @@ config SENSORS_SFCTEMP
 
 	  This driver can also be built as a module.  If so, the module
 	  will be called sfctemp.
-
-config SENSORS_SURFACE_FAN
-	tristate "Surface Fan Driver"
-	depends on SURFACE_AGGREGATOR
-	depends on SURFACE_AGGREGATOR_BUS
-	help
-	  Driver that provides monitoring of the fan on Surface Pro devices that
-	  have a fan, like the Surface Pro 9.
-
-	  This makes the fan's current speed accessible through the hwmon
-	  system. It does not provide control over the fan, the firmware is
-	  responsible for that, this driver merely provides monitoring.
-
-	  Select M or Y here, if you want to be able to read the fan's speed.
 
 config SENSORS_ADC128D818
 	tristate "Texas Instruments ADC128D818"
@@ -2295,7 +2163,7 @@ config SENSORS_VIA_CPUTEMP
 
 config SENSORS_VIA686A
 	tristate "VIA686A"
-	depends on PCI && HAS_IOPORT
+	depends on PCI
 	help
 	  If you say yes here you get support for the integrated sensors in
 	  Via 686A/B South Bridges.
@@ -2305,7 +2173,6 @@ config SENSORS_VIA686A
 
 config SENSORS_VT1211
 	tristate "VIA VT1211"
-	depends on HAS_IOPORT
 	depends on !PPC
 	select HWMON_VID
 	help
@@ -2317,7 +2184,7 @@ config SENSORS_VT1211
 
 config SENSORS_VT8231
 	tristate "VIA VT8231"
-	depends on PCI && HAS_IOPORT
+	depends on PCI
 	select HWMON_VID
 	help
 	  If you say yes here then you get support for the integrated sensors
@@ -2425,7 +2292,6 @@ config SENSORS_W83L786NG
 
 config SENSORS_W83627HF
 	tristate "Winbond W83627HF, W83627THF, W83637HF, W83687THF, W83697HF"
-	depends on HAS_IOPORT
 	depends on !PPC
 	select HWMON_VID
 	help
@@ -2438,7 +2304,6 @@ config SENSORS_W83627HF
 
 config SENSORS_W83627EHF
 	tristate "Winbond W83627EHF/EHG/DHG/UHG, W83667HG"
-	depends on HAS_IOPORT
 	depends on !PPC
 	select HWMON_VID
 	help
@@ -2501,6 +2366,13 @@ config SENSORS_INTEL_M10_BMC_HWMON
 	  This BMC Chip is used on Intel FPGA PCIe Acceleration Cards (PAC). Its
 	  sensors monitor various telemetry data of different components on the
 	  card, e.g. board temperature, FPGA core temperature/voltage/current.
+
+config SENSORS_RP1_ADC
+	tristate "RP1 ADC and temperature sensor driver"
+	depends on MFD_RP1
+	help
+	  Say yes here to enable support for the voltage and temperature
+	  sensors of the Raspberry Pi RP1 peripheral chip.
 
 if ACPI
 

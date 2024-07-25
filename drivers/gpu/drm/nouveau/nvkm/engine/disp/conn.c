@@ -30,6 +30,16 @@
 #include <nvif/event.h>
 
 void
+nvkm_conn_fini(struct nvkm_conn *conn)
+{
+}
+
+void
+nvkm_conn_init(struct nvkm_conn *conn)
+{
+}
+
+void
 nvkm_conn_del(struct nvkm_conn **pconn)
 {
 	struct nvkm_conn *conn = *pconn;

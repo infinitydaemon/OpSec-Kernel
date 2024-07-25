@@ -310,6 +310,7 @@ static void huawei_wmi_leds_setup(struct device *dev)
 	huawei->cdev.max_brightness = 1;
 	huawei->cdev.brightness_set_blocking = &huawei_wmi_micmute_led_set;
 	huawei->cdev.default_trigger = "audio-micmute";
+	huawei->cdev.brightness = ledtrig_audio_get(LED_AUDIO_MICMUTE);
 	huawei->cdev.dev = dev;
 	huawei->cdev.flags = LED_CORE_SUSPENDRESUME;
 
@@ -379,7 +380,7 @@ static ssize_t charge_control_start_threshold_show(struct device *dev,
 	if (err)
 		return err;
 
-	return sysfs_emit(buf, "%d\n", start);
+	return sprintf(buf, "%d\n", start);
 }
 
 static ssize_t charge_control_end_threshold_show(struct device *dev,
@@ -392,7 +393,7 @@ static ssize_t charge_control_end_threshold_show(struct device *dev,
 	if (err)
 		return err;
 
-	return sysfs_emit(buf, "%d\n", end);
+	return sprintf(buf, "%d\n", end);
 }
 
 static ssize_t charge_control_thresholds_show(struct device *dev,
@@ -405,7 +406,7 @@ static ssize_t charge_control_thresholds_show(struct device *dev,
 	if (err)
 		return err;
 
-	return sysfs_emit(buf, "%d %d\n", start, end);
+	return sprintf(buf, "%d %d\n", start, end);
 }
 
 static ssize_t charge_control_start_threshold_store(struct device *dev,
@@ -562,7 +563,7 @@ static ssize_t fn_lock_state_show(struct device *dev,
 	if (err)
 		return err;
 
-	return sysfs_emit(buf, "%d\n", on);
+	return sprintf(buf, "%d\n", on);
 }
 
 static ssize_t fn_lock_state_store(struct device *dev,

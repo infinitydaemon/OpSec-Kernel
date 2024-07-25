@@ -226,7 +226,7 @@ static int mt7615_add_interface(struct ieee80211_hw *hw,
 	mvif->sta.wcid.idx = idx;
 	mvif->sta.wcid.phy_idx = mvif->mt76.band_idx;
 	mvif->sta.wcid.hw_key_idx = -1;
-	mt76_wcid_init(&mvif->sta.wcid);
+	mt76_packet_id_init(&mvif->sta.wcid);
 
 	mt7615_mac_wtbl_update(dev, idx,
 			       MT_WTBL_UPDATE_ADM_COUNT_CLEAR);
@@ -279,7 +279,7 @@ static void mt7615_remove_interface(struct ieee80211_hw *hw,
 		list_del_init(&msta->wcid.poll_list);
 	spin_unlock_bh(&dev->mt76.sta_poll_lock);
 
-	mt76_wcid_cleanup(&dev->mt76, &mvif->sta.wcid);
+	mt76_packet_id_flush(&dev->mt76, &mvif->sta.wcid);
 }
 
 int mt7615_set_channel(struct mt7615_phy *phy)
@@ -1326,10 +1326,6 @@ static void mt7615_set_rekey_data(struct ieee80211_hw *hw,
 #endif /* CONFIG_PM */
 
 const struct ieee80211_ops mt7615_ops = {
-	.add_chanctx = ieee80211_emulate_add_chanctx,
-	.remove_chanctx = ieee80211_emulate_remove_chanctx,
-	.change_chanctx = ieee80211_emulate_change_chanctx,
-	.switch_vif_chanctx = ieee80211_emulate_switch_vif_chanctx,
 	.tx = mt7615_tx,
 	.start = mt7615_start,
 	.stop = mt7615_stop,
@@ -1379,5 +1375,4 @@ const struct ieee80211_ops mt7615_ops = {
 };
 EXPORT_SYMBOL_GPL(mt7615_ops);
 
-MODULE_DESCRIPTION("MediaTek MT7615E and MT7663E wireless driver");
 MODULE_LICENSE("Dual BSD/GPL");

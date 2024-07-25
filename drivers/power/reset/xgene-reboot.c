@@ -22,13 +22,17 @@
 
 struct xgene_reboot_context {
 	struct device *dev;
-	void __iomem *csr;
+	void *csr;
 	u32 mask;
+	struct notifier_block restart_handler;
 };
 
-static int xgene_restart_handler(struct sys_off_data *data)
+static int xgene_restart_handler(struct notifier_block *this,
+				 unsigned long mode, void *cmd)
 {
-	struct xgene_reboot_context *ctx = data->cb_data;
+	struct xgene_reboot_context *ctx =
+		container_of(this, struct xgene_reboot_context,
+			     restart_handler);
 
 	/* Issue the reboot */
 	writel(ctx->mask, ctx->csr);
@@ -50,20 +54,23 @@ static int xgene_reboot_probe(struct platform_device *pdev)
 	if (!ctx)
 		return -ENOMEM;
 
-	ctx->csr = devm_platform_ioremap_resource(pdev, 0);
-	if (IS_ERR(ctx->csr)) {
+	ctx->csr = of_iomap(dev->of_node, 0);
+	if (!ctx->csr) {
 		dev_err(dev, "can not map resource\n");
-		return PTR_ERR(ctx->csr);
+		return -ENODEV;
 	}
 
 	if (of_property_read_u32(dev->of_node, "mask", &ctx->mask))
 		ctx->mask = 0xFFFFFFFF;
 
 	ctx->dev = dev;
-	err = devm_register_sys_off_handler(dev, SYS_OFF_MODE_RESTART, 128,
-					    xgene_restart_handler, ctx);
-	if (err)
+	ctx->restart_handler.notifier_call = xgene_restart_handler;
+	ctx->restart_handler.priority = 128;
+	err = register_restart_handler(&ctx->restart_handler);
+	if (err) {
+		iounmap(ctx->csr);
 		dev_err(dev, "cannot register restart handler (err=%d)\n", err);
+	}
 
 	return err;
 }
@@ -80,4 +87,9 @@ static struct platform_driver xgene_reboot_driver = {
 		.of_match_table = xgene_reboot_of_match,
 	},
 };
-builtin_platform_driver(xgene_reboot_driver);
+
+static int __init xgene_reboot_init(void)
+{
+	return platform_driver_register(&xgene_reboot_driver);
+}
+device_initcall(xgene_reboot_init);

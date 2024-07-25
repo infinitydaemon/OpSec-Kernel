@@ -208,14 +208,19 @@ static int udf_writepages(struct address_space *mapping,
 	return write_cache_pages(mapping, wbc, udf_adinicb_writepage, NULL);
 }
 
-static void udf_adinicb_read_folio(struct folio *folio)
+static void udf_adinicb_readpage(struct page *page)
 {
-	struct inode *inode = folio->mapping->host;
+	struct inode *inode = page->mapping->host;
+	char *kaddr;
 	struct udf_inode_info *iinfo = UDF_I(inode);
 	loff_t isize = i_size_read(inode);
 
-	folio_fill_tail(folio, 0, iinfo->i_data + iinfo->i_lenEAttr, isize);
-	folio_mark_uptodate(folio);
+	kaddr = kmap_local_page(page);
+	memcpy(kaddr, iinfo->i_data + iinfo->i_lenEAttr, isize);
+	memset(kaddr + isize, 0, PAGE_SIZE - isize);
+	flush_dcache_page(page);
+	SetPageUptodate(page);
+	kunmap_local(kaddr);
 }
 
 static int udf_read_folio(struct file *file, struct folio *folio)
@@ -223,7 +228,7 @@ static int udf_read_folio(struct file *file, struct folio *folio)
 	struct udf_inode_info *iinfo = UDF_I(file_inode(file));
 
 	if (iinfo->i_alloc_type == ICBTAG_FLAG_AD_IN_ICB) {
-		udf_adinicb_read_folio(folio);
+		udf_adinicb_readpage(&folio->page);
 		folio_unlock(folio);
 		return 0;
 	}
@@ -249,7 +254,7 @@ static int udf_write_begin(struct file *file, struct address_space *mapping,
 			   struct page **pagep, void **fsdata)
 {
 	struct udf_inode_info *iinfo = UDF_I(file_inode(file));
-	struct folio *folio;
+	struct page *page;
 	int ret;
 
 	if (iinfo->i_alloc_type != ICBTAG_FLAG_AD_IN_ICB) {
@@ -261,13 +266,12 @@ static int udf_write_begin(struct file *file, struct address_space *mapping,
 	}
 	if (WARN_ON_ONCE(pos >= PAGE_SIZE))
 		return -EIO;
-	folio = __filemap_get_folio(mapping, 0, FGP_WRITEBEGIN,
-			mapping_gfp_mask(mapping));
-	if (IS_ERR(folio))
-		return PTR_ERR(folio);
-	*pagep = &folio->page;
-	if (!folio_test_uptodate(folio))
-		udf_adinicb_read_folio(folio);
+	page = grab_cache_page_write_begin(mapping, 0);
+	if (!page)
+		return -ENOMEM;
+	*pagep = page;
+	if (!PageUptodate(page))
+		udf_adinicb_readpage(page);
 	return 0;
 }
 
@@ -276,19 +280,17 @@ static int udf_write_end(struct file *file, struct address_space *mapping,
 			 struct page *page, void *fsdata)
 {
 	struct inode *inode = file_inode(file);
-	struct folio *folio;
 	loff_t last_pos;
 
 	if (UDF_I(inode)->i_alloc_type != ICBTAG_FLAG_AD_IN_ICB)
 		return generic_write_end(file, mapping, pos, len, copied, page,
 					 fsdata);
-	folio = page_folio(page);
 	last_pos = pos + copied;
 	if (last_pos > inode->i_size)
 		i_size_write(inode, last_pos);
-	folio_mark_dirty(folio);
-	folio_unlock(folio);
-	folio_put(folio);
+	set_page_dirty(page);
+	unlock_page(page);
+	put_page(page);
 
 	return copied;
 }
@@ -361,7 +363,7 @@ int udf_expand_file_adinicb(struct inode *inode)
 		return PTR_ERR(folio);
 
 	if (!folio_test_uptodate(folio))
-		udf_adinicb_read_folio(folio);
+		udf_adinicb_readpage(&folio->page);
 	down_write(&iinfo->i_data_sem);
 	memset(iinfo->i_data + iinfo->i_lenEAttr, 0x00,
 	       iinfo->i_lenAlloc);
@@ -1295,7 +1297,7 @@ set_size:
 			goto out_unlock;
 	}
 update_time:
-	inode_set_mtime_to_ts(inode, inode_set_ctime_current(inode));
+	inode->i_mtime = inode_set_ctime_current(inode);
 	if (IS_SYNC(inode))
 		udf_sync_inode(inode);
 	else
@@ -1326,7 +1328,7 @@ static int udf_read_inode(struct inode *inode, bool hidden_inode)
 	int bs = inode->i_sb->s_blocksize;
 	int ret = -EIO;
 	uint32_t uid, gid;
-	struct timespec64 ts;
+	struct timespec64 ctime;
 
 reread:
 	if (iloc->partitionReferenceNum >= sbi->s_partitions) {
@@ -1503,12 +1505,10 @@ reread:
 		inode->i_blocks = le64_to_cpu(fe->logicalBlocksRecorded) <<
 			(inode->i_sb->s_blocksize_bits - 9);
 
-		udf_disk_stamp_to_time(&ts, fe->accessTime);
-		inode_set_atime_to_ts(inode, ts);
-		udf_disk_stamp_to_time(&ts, fe->modificationTime);
-		inode_set_mtime_to_ts(inode, ts);
-		udf_disk_stamp_to_time(&ts, fe->attrTime);
-		inode_set_ctime_to_ts(inode, ts);
+		udf_disk_stamp_to_time(&inode->i_atime, fe->accessTime);
+		udf_disk_stamp_to_time(&inode->i_mtime, fe->modificationTime);
+		udf_disk_stamp_to_time(&ctime, fe->attrTime);
+		inode_set_ctime_to_ts(inode, ctime);
 
 		iinfo->i_unique = le64_to_cpu(fe->uniqueID);
 		iinfo->i_lenEAttr = le32_to_cpu(fe->lengthExtendedAttr);
@@ -1520,13 +1520,11 @@ reread:
 		inode->i_blocks = le64_to_cpu(efe->logicalBlocksRecorded) <<
 		    (inode->i_sb->s_blocksize_bits - 9);
 
-		udf_disk_stamp_to_time(&ts, efe->accessTime);
-		inode_set_atime_to_ts(inode, ts);
-		udf_disk_stamp_to_time(&ts, efe->modificationTime);
-		inode_set_mtime_to_ts(inode, ts);
-		udf_disk_stamp_to_time(&ts, efe->attrTime);
-		inode_set_ctime_to_ts(inode, ts);
+		udf_disk_stamp_to_time(&inode->i_atime, efe->accessTime);
+		udf_disk_stamp_to_time(&inode->i_mtime, efe->modificationTime);
 		udf_disk_stamp_to_time(&iinfo->i_crtime, efe->createTime);
+		udf_disk_stamp_to_time(&ctime, efe->attrTime);
+		inode_set_ctime_to_ts(inode, ctime);
 
 		iinfo->i_unique = le64_to_cpu(efe->uniqueID);
 		iinfo->i_lenEAttr = le32_to_cpu(efe->lengthExtendedAttr);
@@ -1801,8 +1799,8 @@ static int udf_update_inode(struct inode *inode, int do_sync)
 		       inode->i_sb->s_blocksize - sizeof(struct fileEntry));
 		fe->logicalBlocksRecorded = cpu_to_le64(lb_recorded);
 
-		udf_time_to_disk_stamp(&fe->accessTime, inode_get_atime(inode));
-		udf_time_to_disk_stamp(&fe->modificationTime, inode_get_mtime(inode));
+		udf_time_to_disk_stamp(&fe->accessTime, inode->i_atime);
+		udf_time_to_disk_stamp(&fe->modificationTime, inode->i_mtime);
 		udf_time_to_disk_stamp(&fe->attrTime, inode_get_ctime(inode));
 		memset(&(fe->impIdent), 0, sizeof(struct regid));
 		strcpy(fe->impIdent.ident, UDF_ID_DEVELOPER);
@@ -1832,14 +1830,12 @@ static int udf_update_inode(struct inode *inode, int do_sync)
 				cpu_to_le32(inode->i_sb->s_blocksize);
 		}
 
-		udf_adjust_time(iinfo, inode_get_atime(inode));
-		udf_adjust_time(iinfo, inode_get_mtime(inode));
+		udf_adjust_time(iinfo, inode->i_atime);
+		udf_adjust_time(iinfo, inode->i_mtime);
 		udf_adjust_time(iinfo, inode_get_ctime(inode));
 
-		udf_time_to_disk_stamp(&efe->accessTime,
-				       inode_get_atime(inode));
-		udf_time_to_disk_stamp(&efe->modificationTime,
-				       inode_get_mtime(inode));
+		udf_time_to_disk_stamp(&efe->accessTime, inode->i_atime);
+		udf_time_to_disk_stamp(&efe->modificationTime, inode->i_mtime);
 		udf_time_to_disk_stamp(&efe->createTime, iinfo->i_crtime);
 		udf_time_to_disk_stamp(&efe->attrTime, inode_get_ctime(inode));
 

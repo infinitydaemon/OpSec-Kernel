@@ -10,7 +10,6 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/serial_8250.h>
 #include <linux/string.h>
 #include <linux/kernel.h>
 #include <linux/console.h>
@@ -68,6 +67,9 @@ static char *hp300_models[] __initdata = {
 static char hp300_model_name[13] = "HP9000/";
 
 extern void hp300_reset(void);
+#ifdef CONFIG_SERIAL_8250_CONSOLE
+extern int hp300_setup_serial_console(void) __init;
+#endif
 
 int __init hp300_parse_bootinfo(const struct bi_record *record)
 {
@@ -261,5 +263,7 @@ void __init config_hp300(void)
 	} else {
 		panic("Unknown HP9000 Model");
 	}
+#ifdef CONFIG_SERIAL_8250_CONSOLE
 	hp300_setup_serial_console();
+#endif
 }

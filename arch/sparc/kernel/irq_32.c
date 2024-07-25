@@ -268,11 +268,11 @@ int sparc_floppy_request_irq(unsigned int irq, irq_handler_t irq_handler)
 	if (sparc_cpu_model != sparc_leon) {
 		struct tt_entry *trap_table;
 
-		trap_table = &trapbase_cpu1[0];
+		trap_table = &trapbase_cpu1;
 		INSTANTIATE(trap_table)
-		trap_table = &trapbase_cpu2[0];
+		trap_table = &trapbase_cpu2;
 		INSTANTIATE(trap_table)
-		trap_table = &trapbase_cpu3[0];
+		trap_table = &trapbase_cpu3;
 		INSTANTIATE(trap_table)
 	}
 #endif

@@ -106,7 +106,8 @@ freezer_css_alloc(struct cgroup_subsys_state *parent_css)
  * @css: css being created
  *
  * We're committing to creation of @css.  Mark it online and inherit
- * parent's freezing state while holding cpus read lock and freezer_mutex.
+ * parent's freezing state while holding both parent's and our
+ * freezer->lock.
  */
 static int freezer_css_online(struct cgroup_subsys_state *css)
 {
@@ -132,7 +133,7 @@ static int freezer_css_online(struct cgroup_subsys_state *css)
  * freezer_css_offline - initiate destruction of a freezer css
  * @css: css being destroyed
  *
- * @css is going away.  Mark it dead and decrement freezer_active if
+ * @css is going away.  Mark it dead and decrement system_freezing_count if
  * it was holding one.
  */
 static void freezer_css_offline(struct cgroup_subsys_state *css)

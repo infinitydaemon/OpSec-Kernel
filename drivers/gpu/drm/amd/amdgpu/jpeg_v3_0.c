@@ -52,7 +52,7 @@ static int jpeg_v3_0_early_init(void *handle)
 
 	u32 harvest;
 
-	switch (amdgpu_ip_version(adev, UVD_HWIP, 0)) {
+	switch (adev->ip_versions[UVD_HWIP][0]) {
 	case IP_VERSION(3, 1, 1):
 	case IP_VERSION(3, 1, 2):
 		break;
@@ -557,8 +557,6 @@ static const struct amd_ip_funcs jpeg_v3_0_ip_funcs = {
 	.post_soft_reset = NULL,
 	.set_clockgating_state = jpeg_v3_0_set_clockgating_state,
 	.set_powergating_state = jpeg_v3_0_set_powergating_state,
-	.dump_ip_state = NULL,
-	.print_ip_state = NULL,
 };
 
 static const struct amdgpu_ring_funcs jpeg_v3_0_dec_ring_vm_funcs = {

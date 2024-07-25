@@ -27,8 +27,7 @@ void hellcreek_ptp_write(struct hellcreek *hellcreek, u16 data,
 }
 
 /* Get nanoseconds from PTP clock */
-static u64 hellcreek_ptp_clock_read(struct hellcreek *hellcreek,
-				    struct ptp_system_timestamp *sts)
+static u64 hellcreek_ptp_clock_read(struct hellcreek *hellcreek)
 {
 	u16 nsl, nsh;
 
@@ -46,19 +45,16 @@ static u64 hellcreek_ptp_clock_read(struct hellcreek *hellcreek,
 	nsh = hellcreek_ptp_read(hellcreek, PR_SS_SYNC_DATA_C);
 	nsh = hellcreek_ptp_read(hellcreek, PR_SS_SYNC_DATA_C);
 	nsh = hellcreek_ptp_read(hellcreek, PR_SS_SYNC_DATA_C);
-	ptp_read_system_prets(sts);
 	nsl = hellcreek_ptp_read(hellcreek, PR_SS_SYNC_DATA_C);
-	ptp_read_system_postts(sts);
 
 	return (u64)nsl | ((u64)nsh << 16);
 }
 
-static u64 __hellcreek_ptp_gettime(struct hellcreek *hellcreek,
-				   struct ptp_system_timestamp *sts)
+static u64 __hellcreek_ptp_gettime(struct hellcreek *hellcreek)
 {
 	u64 ns;
 
-	ns = hellcreek_ptp_clock_read(hellcreek, sts);
+	ns = hellcreek_ptp_clock_read(hellcreek);
 	if (ns < hellcreek->last_ts)
 		hellcreek->seconds++;
 	hellcreek->last_ts = ns;
@@ -76,7 +72,7 @@ u64 hellcreek_ptp_gettime_seconds(struct hellcreek *hellcreek, u64 ns)
 {
 	u64 s;
 
-	__hellcreek_ptp_gettime(hellcreek, NULL);
+	__hellcreek_ptp_gettime(hellcreek);
 	if (hellcreek->last_ts > ns)
 		s = hellcreek->seconds * NSEC_PER_SEC;
 	else
@@ -85,15 +81,14 @@ u64 hellcreek_ptp_gettime_seconds(struct hellcreek *hellcreek, u64 ns)
 	return s;
 }
 
-static int hellcreek_ptp_gettimex(struct ptp_clock_info *ptp,
-				  struct timespec64 *ts,
-				  struct ptp_system_timestamp *sts)
+static int hellcreek_ptp_gettime(struct ptp_clock_info *ptp,
+				 struct timespec64 *ts)
 {
 	struct hellcreek *hellcreek = ptp_to_hellcreek(ptp);
 	u64 ns;
 
 	mutex_lock(&hellcreek->ptp_lock);
-	ns = __hellcreek_ptp_gettime(hellcreek, sts);
+	ns = __hellcreek_ptp_gettime(hellcreek);
 	mutex_unlock(&hellcreek->ptp_lock);
 
 	*ts = ns_to_timespec64(ns);
@@ -189,7 +184,7 @@ static int hellcreek_ptp_adjtime(struct ptp_clock_info *ptp, s64 delta)
 	if (abs(delta) > MAX_SLOW_OFFSET_ADJ) {
 		struct timespec64 now, then = ns_to_timespec64(delta);
 
-		hellcreek_ptp_gettimex(ptp, &now, NULL);
+		hellcreek_ptp_gettime(ptp, &now);
 		now = timespec64_add(now, then);
 		hellcreek_ptp_settime(ptp, &now);
 
@@ -238,7 +233,7 @@ static void hellcreek_ptp_overflow_check(struct work_struct *work)
 	hellcreek = dw_overflow_to_hellcreek(dw);
 
 	mutex_lock(&hellcreek->ptp_lock);
-	__hellcreek_ptp_gettime(hellcreek, NULL);
+	__hellcreek_ptp_gettime(hellcreek);
 	mutex_unlock(&hellcreek->ptp_lock);
 
 	schedule_delayed_work(&hellcreek->overflow_work,
@@ -414,7 +409,7 @@ int hellcreek_ptp_setup(struct hellcreek *hellcreek)
 	hellcreek->ptp_clock_info.pps	      = 0;
 	hellcreek->ptp_clock_info.adjfine     = hellcreek_ptp_adjfine;
 	hellcreek->ptp_clock_info.adjtime     = hellcreek_ptp_adjtime;
-	hellcreek->ptp_clock_info.gettimex64  = hellcreek_ptp_gettimex;
+	hellcreek->ptp_clock_info.gettime64   = hellcreek_ptp_gettime;
 	hellcreek->ptp_clock_info.settime64   = hellcreek_ptp_settime;
 	hellcreek->ptp_clock_info.enable      = hellcreek_ptp_enable;
 	hellcreek->ptp_clock_info.do_aux_work = hellcreek_hwtstamp_work;

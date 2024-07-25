@@ -7,8 +7,6 @@
  *
  */
 
-#include <linux/vmalloc.h>
-
 #include "mpi3mr.h"
 
 /**
@@ -211,13 +209,17 @@ static int mpi3mr_report_manufacture(struct mpi3mr_ioc *mrioc,
 		goto out;
 	}
 
-	memtostr(edev->vendor_id, manufacture_reply->vendor_id);
-	memtostr(edev->product_id, manufacture_reply->product_id);
-	memtostr(edev->product_rev, manufacture_reply->product_rev);
+	strscpy(edev->vendor_id, manufacture_reply->vendor_id,
+	     SAS_EXPANDER_VENDOR_ID_LEN);
+	strscpy(edev->product_id, manufacture_reply->product_id,
+	     SAS_EXPANDER_PRODUCT_ID_LEN);
+	strscpy(edev->product_rev, manufacture_reply->product_rev,
+	     SAS_EXPANDER_PRODUCT_REV_LEN);
 	edev->level = manufacture_reply->sas_format & 1;
 	if (edev->level) {
-		memtostr(edev->component_vendor_id,
-			 manufacture_reply->component_vendor_id);
+		strscpy(edev->component_vendor_id,
+		    manufacture_reply->component_vendor_id,
+		     SAS_EXPANDER_COMPONENT_VENDOR_ID_LEN);
 		tmp = (u8 *)&manufacture_reply->component_id;
 		edev->component_id = tmp[0] << 8 | tmp[1];
 		edev->component_revision_id =
@@ -1595,7 +1597,7 @@ static void mpi3mr_sas_port_remove(struct mpi3mr_ioc *mrioc, u64 sas_address,
  */
 struct host_port {
 	u64	sas_address;
-	u64	phy_mask;
+	u32	phy_mask;
 	u16	handle;
 	u8	iounit_port_id;
 	u8	used;
@@ -1619,7 +1621,7 @@ mpi3mr_update_mr_sas_port(struct mpi3mr_ioc *mrioc, struct host_port *h_port,
 	struct mpi3mr_sas_port *mr_sas_port)
 {
 	struct mpi3mr_sas_phy *mr_sas_phy;
-	u64 phy_mask_xor;
+	u32 phy_mask_xor;
 	u64 phys_to_be_added, phys_to_be_removed;
 	int i;
 
@@ -1627,7 +1629,7 @@ mpi3mr_update_mr_sas_port(struct mpi3mr_ioc *mrioc, struct host_port *h_port,
 	mr_sas_port->marked_responding = 1;
 
 	dev_info(&mr_sas_port->port->dev,
-	    "sas_address(0x%016llx), old: port_id %d phy_mask 0x%llx, new: port_id %d phy_mask:0x%llx\n",
+	    "sas_address(0x%016llx), old: port_id %d phy_mask 0x%x, new: port_id %d phy_mask:0x%x\n",
 	    mr_sas_port->remote_identify.sas_address,
 	    mr_sas_port->hba_port->port_id, mr_sas_port->phy_mask,
 	    h_port->iounit_port_id, h_port->phy_mask);
@@ -1645,7 +1647,7 @@ mpi3mr_update_mr_sas_port(struct mpi3mr_ioc *mrioc, struct host_port *h_port,
 	 * if these phys are previously registered with another port
 	 * then delete these phys from that port first.
 	 */
-	for_each_set_bit(i, (ulong *) &phys_to_be_added, BITS_PER_TYPE(u64)) {
+	for_each_set_bit(i, (ulong *) &phys_to_be_added, BITS_PER_TYPE(u32)) {
 		mr_sas_phy = &mrioc->sas_hba.phy[i];
 		if (mr_sas_phy->phy_belongs_to_port)
 			mpi3mr_del_phy_from_an_existing_port(mrioc,
@@ -1657,7 +1659,7 @@ mpi3mr_update_mr_sas_port(struct mpi3mr_ioc *mrioc, struct host_port *h_port,
 	}
 
 	/* Delete the phys which are not part of current mr_sas_port's port. */
-	for_each_set_bit(i, (ulong *) &phys_to_be_removed, BITS_PER_TYPE(u64)) {
+	for_each_set_bit(i, (ulong *) &phys_to_be_removed, BITS_PER_TYPE(u32)) {
 		mr_sas_phy = &mrioc->sas_hba.phy[i];
 		if (mr_sas_phy->phy_belongs_to_port)
 			mpi3mr_del_phy_from_an_existing_port(mrioc,
@@ -1679,7 +1681,7 @@ mpi3mr_update_mr_sas_port(struct mpi3mr_ioc *mrioc, struct host_port *h_port,
 void
 mpi3mr_refresh_sas_ports(struct mpi3mr_ioc *mrioc)
 {
-	struct host_port *h_port = NULL;
+	struct host_port h_port[32];
 	int i, j, found, host_port_count = 0, port_idx;
 	u16 sz, attached_handle, ioc_status;
 	struct mpi3_sas_io_unit_page0 *sas_io_unit_pg0 = NULL;
@@ -1693,10 +1695,6 @@ mpi3mr_refresh_sas_ports(struct mpi3mr_ioc *mrioc)
 	sas_io_unit_pg0 = kzalloc(sz, GFP_KERNEL);
 	if (!sas_io_unit_pg0)
 		return;
-	h_port = kcalloc(64, sizeof(struct host_port), GFP_KERNEL);
-	if (!h_port)
-		goto out;
-
 	if (mpi3mr_cfg_get_sas_io_unit_pg0(mrioc, sas_io_unit_pg0, sz)) {
 		ioc_err(mrioc, "failure at %s:%d/%s()!\n",
 		    __FILE__, __LINE__, __func__);
@@ -1754,7 +1752,7 @@ mpi3mr_refresh_sas_ports(struct mpi3mr_ioc *mrioc)
 		list_for_each_entry(mr_sas_port, &mrioc->sas_hba.sas_port_list,
 		    port_list) {
 			ioc_info(mrioc,
-			    "port_id:%d, sas_address:(0x%016llx), phy_mask:(0x%llx), lowest phy id:%d\n",
+			    "port_id:%d, sas_address:(0x%016llx), phy_mask:(0x%x), lowest phy id:%d\n",
 			    mr_sas_port->hba_port->port_id,
 			    mr_sas_port->remote_identify.sas_address,
 			    mr_sas_port->phy_mask, mr_sas_port->lowest_phy);
@@ -1763,7 +1761,7 @@ mpi3mr_refresh_sas_ports(struct mpi3mr_ioc *mrioc)
 		ioc_info(mrioc, "Host port details after reset\n");
 		for (i = 0; i < host_port_count; i++) {
 			ioc_info(mrioc,
-			    "port_id:%d, sas_address:(0x%016llx), phy_mask:(0x%llx), lowest phy id:%d\n",
+			    "port_id:%d, sas_address:(0x%016llx), phy_mask:(0x%x), lowest phy id:%d\n",
 			    h_port[i].iounit_port_id, h_port[i].sas_address,
 			    h_port[i].phy_mask, h_port[i].lowest_phy);
 		}
@@ -1826,7 +1824,6 @@ mpi3mr_refresh_sas_ports(struct mpi3mr_ioc *mrioc)
 		}
 	}
 out:
-	kfree(h_port);
 	kfree(sas_io_unit_pg0);
 }
 

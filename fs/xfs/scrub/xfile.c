@@ -10,9 +10,9 @@
 #include "xfs_log_format.h"
 #include "xfs_trans_resv.h"
 #include "xfs_mount.h"
-#include "scrub/scrub.h"
 #include "scrub/xfile.h"
 #include "scrub/xfarray.h"
+#include "scrub/scrub.h"
 #include "scrub/trace.h"
 #include <linux/shmem_fs.h>
 
@@ -34,6 +34,13 @@
  * xfiles assume that the caller will handle all required concurrency
  * management; standard vfs locks (freezer and inode) are not taken.  Reads
  * and writes are satisfied directly from the page cache.
+ *
+ * NOTE: The current shmemfs implementation has a quirk that in-kernel reads
+ * of a hole cause a page to be mapped into the file.  If you are going to
+ * create a sparse xfile, please be careful about reading from uninitialized
+ * parts of the file.  These pages are !Uptodate and will eventually be
+ * reclaimed if not written, but in the short term this boosts memory
+ * consumption.
  */
 
 /*
@@ -55,26 +62,37 @@ xfile_create(
 {
 	struct inode		*inode;
 	struct xfile		*xf;
-	int			error;
+	int			error = -ENOMEM;
 
 	xf = kmalloc(sizeof(struct xfile), XCHK_GFP_FLAGS);
 	if (!xf)
 		return -ENOMEM;
 
-	xf->file = shmem_kernel_file_setup(description, isize, VM_NORESERVE);
+	xf->file = shmem_file_setup(description, isize, 0);
+	if (!xf->file)
+		goto out_xfile;
 	if (IS_ERR(xf->file)) {
 		error = PTR_ERR(xf->file);
 		goto out_xfile;
 	}
 
-	inode = file_inode(xf->file);
-	lockdep_set_class(&inode->i_rwsem, &xfile_i_mutex_key);
-
 	/*
-	 * We don't want to bother with kmapping data during repair, so don't
-	 * allow highmem pages to back this mapping.
+	 * We want a large sparse file that we can pread, pwrite, and seek.
+	 * xfile users are responsible for keeping the xfile hidden away from
+	 * all other callers, so we skip timestamp updates and security checks.
+	 * Make the inode only accessible by root, just in case the xfile ever
+	 * escapes.
 	 */
-	mapping_set_gfp_mask(inode->i_mapping, GFP_KERNEL);
+	xf->file->f_mode |= FMODE_PREAD | FMODE_PWRITE | FMODE_NOCMTIME |
+			    FMODE_LSEEK;
+	xf->file->f_flags |= O_RDWR | O_LARGEFILE | O_NOATIME;
+	inode = file_inode(xf->file);
+	inode->i_flags |= S_PRIVATE | S_NOCMTIME | S_NOATIME;
+	inode->i_mode &= ~0177;
+	inode->i_uid = GLOBAL_ROOT_UID;
+	inode->i_gid = GLOBAL_ROOT_GID;
+
+	lockdep_set_class(&inode->i_rwsem, &xfile_i_mutex_key);
 
 	trace_xfile_create(xf);
 
@@ -100,128 +118,164 @@ xfile_destroy(
 }
 
 /*
- * Load an object.  Since we're treating this file as "memory", any error or
- * short IO is treated as a failure to allocate memory.
+ * Read a memory object directly from the xfile's page cache.  Unlike regular
+ * pread, we return -E2BIG and -EFBIG for reads that are too large or at too
+ * high an offset, instead of truncating the read.  Otherwise, we return
+ * bytes read or an error code, like regular pread.
  */
-int
-xfile_load(
+ssize_t
+xfile_pread(
 	struct xfile		*xf,
 	void			*buf,
 	size_t			count,
 	loff_t			pos)
 {
 	struct inode		*inode = file_inode(xf->file);
+	struct address_space	*mapping = inode->i_mapping;
+	struct page		*page = NULL;
+	ssize_t			read = 0;
 	unsigned int		pflags;
+	int			error = 0;
 
 	if (count > MAX_RW_COUNT)
-		return -ENOMEM;
+		return -E2BIG;
 	if (inode->i_sb->s_maxbytes - pos < count)
-		return -ENOMEM;
+		return -EFBIG;
 
-	trace_xfile_load(xf, pos, count);
+	trace_xfile_pread(xf, pos, count);
 
 	pflags = memalloc_nofs_save();
 	while (count > 0) {
-		struct folio	*folio;
+		void		*p, *kaddr;
 		unsigned int	len;
-		unsigned int	offset;
 
-		if (shmem_get_folio(inode, pos >> PAGE_SHIFT, &folio,
-				SGP_READ) < 0)
-			break;
-		if (!folio) {
-			/*
-			 * No data stored at this offset, just zero the output
-			 * buffer until the next page boundary.
-			 */
-			len = min_t(ssize_t, count,
-				PAGE_SIZE - offset_in_page(pos));
-			memset(buf, 0, len);
-		} else {
-			if (filemap_check_wb_err(inode->i_mapping, 0)) {
-				folio_unlock(folio);
-				folio_put(folio);
+		len = min_t(ssize_t, count, PAGE_SIZE - offset_in_page(pos));
+
+		/*
+		 * In-kernel reads of a shmem file cause it to allocate a page
+		 * if the mapping shows a hole.  Therefore, if we hit ENOMEM
+		 * we can continue by zeroing the caller's buffer.
+		 */
+		page = shmem_read_mapping_page_gfp(mapping, pos >> PAGE_SHIFT,
+				__GFP_NOWARN);
+		if (IS_ERR(page)) {
+			error = PTR_ERR(page);
+			if (error != -ENOMEM)
 				break;
-			}
 
-			offset = offset_in_folio(folio, pos);
-			len = min_t(ssize_t, count, folio_size(folio) - offset);
-			memcpy(buf, folio_address(folio) + offset, len);
-
-			folio_unlock(folio);
-			folio_put(folio);
+			memset(buf, 0, len);
+			goto advance;
 		}
+
+		if (PageUptodate(page)) {
+			/*
+			 * xfile pages must never be mapped into userspace, so
+			 * we skip the dcache flush.
+			 */
+			kaddr = kmap_local_page(page);
+			p = kaddr + offset_in_page(pos);
+			memcpy(buf, p, len);
+			kunmap_local(kaddr);
+		} else {
+			memset(buf, 0, len);
+		}
+		put_page(page);
+
+advance:
 		count -= len;
 		pos += len;
 		buf += len;
+		read += len;
 	}
 	memalloc_nofs_restore(pflags);
 
-	if (count)
-		return -ENOMEM;
-	return 0;
+	if (read > 0)
+		return read;
+	return error;
 }
 
 /*
- * Store an object.  Since we're treating this file as "memory", any error or
- * short IO is treated as a failure to allocate memory.
+ * Write a memory object directly to the xfile's page cache.  Unlike regular
+ * pwrite, we return -E2BIG and -EFBIG for writes that are too large or at too
+ * high an offset, instead of truncating the write.  Otherwise, we return
+ * bytes written or an error code, like regular pwrite.
  */
-int
-xfile_store(
+ssize_t
+xfile_pwrite(
 	struct xfile		*xf,
 	const void		*buf,
 	size_t			count,
 	loff_t			pos)
 {
 	struct inode		*inode = file_inode(xf->file);
+	struct address_space	*mapping = inode->i_mapping;
+	const struct address_space_operations *aops = mapping->a_ops;
+	struct page		*page = NULL;
+	ssize_t			written = 0;
 	unsigned int		pflags;
+	int			error = 0;
 
 	if (count > MAX_RW_COUNT)
-		return -ENOMEM;
+		return -E2BIG;
 	if (inode->i_sb->s_maxbytes - pos < count)
-		return -ENOMEM;
+		return -EFBIG;
 
-	trace_xfile_store(xf, pos, count);
-
-	/*
-	 * Increase the file size first so that shmem_get_folio(..., SGP_CACHE),
-	 * actually allocates a folio instead of erroring out.
-	 */
-	if (pos + count > i_size_read(inode))
-		i_size_write(inode, pos + count);
+	trace_xfile_pwrite(xf, pos, count);
 
 	pflags = memalloc_nofs_save();
 	while (count > 0) {
-		struct folio	*folio;
+		void		*fsdata = NULL;
+		void		*p, *kaddr;
 		unsigned int	len;
-		unsigned int	offset;
+		int		ret;
 
-		if (shmem_get_folio(inode, pos >> PAGE_SHIFT, &folio,
-				SGP_CACHE) < 0)
+		len = min_t(ssize_t, count, PAGE_SIZE - offset_in_page(pos));
+
+		/*
+		 * We call write_begin directly here to avoid all the freezer
+		 * protection lock-taking that happens in the normal path.
+		 * shmem doesn't support fs freeze, but lockdep doesn't know
+		 * that and will trip over that.
+		 */
+		error = aops->write_begin(NULL, mapping, pos, len, &page,
+				&fsdata);
+		if (error)
 			break;
-		if (filemap_check_wb_err(inode->i_mapping, 0)) {
-			folio_unlock(folio);
-			folio_put(folio);
+
+		/*
+		 * xfile pages must never be mapped into userspace, so we skip
+		 * the dcache flush.  If the page is not uptodate, zero it
+		 * before writing data.
+		 */
+		kaddr = kmap_local_page(page);
+		if (!PageUptodate(page)) {
+			memset(kaddr, 0, PAGE_SIZE);
+			SetPageUptodate(page);
+		}
+		p = kaddr + offset_in_page(pos);
+		memcpy(p, buf, len);
+		kunmap_local(kaddr);
+
+		ret = aops->write_end(NULL, mapping, pos, len, len, page,
+				fsdata);
+		if (ret < 0) {
+			error = ret;
 			break;
 		}
 
-		offset = offset_in_folio(folio, pos);
-		len = min_t(ssize_t, count, folio_size(folio) - offset);
-		memcpy(folio_address(folio) + offset, buf, len);
+		written += ret;
+		if (ret != len)
+			break;
 
-		folio_mark_dirty(folio);
-		folio_unlock(folio);
-		folio_put(folio);
-
-		count -= len;
-		pos += len;
-		buf += len;
+		count -= ret;
+		pos += ret;
+		buf += ret;
 	}
 	memalloc_nofs_restore(pflags);
 
-	if (count)
-		return -ENOMEM;
-	return 0;
+	if (written > 0)
+		return written;
+	return error;
 }
 
 /* Find the next written area in the xfile data for a given offset. */
@@ -237,88 +291,129 @@ xfile_seek_data(
 	return ret;
 }
 
+/* Query stat information for an xfile. */
+int
+xfile_stat(
+	struct xfile		*xf,
+	struct xfile_stat	*statbuf)
+{
+	struct kstat		ks;
+	int			error;
+
+	error = vfs_getattr_nosec(&xf->file->f_path, &ks,
+			STATX_SIZE | STATX_BLOCKS, AT_STATX_DONT_SYNC);
+	if (error)
+		return error;
+
+	statbuf->size = ks.size;
+	statbuf->bytes = ks.blocks << SECTOR_SHIFT;
+	return 0;
+}
+
 /*
- * Grab the (locked) folio for a memory object.  The object cannot span a folio
- * boundary.  Returns the locked folio if successful, NULL if there was no
- * folio or it didn't cover the range requested, or an ERR_PTR on failure.
+ * Grab the (locked) page for a memory object.  The object cannot span a page
+ * boundary.  Returns 0 (and a locked page) if successful, -ENOTBLK if we
+ * cannot grab the page, or the usual negative errno.
  */
-struct folio *
-xfile_get_folio(
+int
+xfile_get_page(
 	struct xfile		*xf,
 	loff_t			pos,
-	size_t			len,
-	unsigned int		flags)
+	unsigned int		len,
+	struct xfile_page	*xfpage)
 {
 	struct inode		*inode = file_inode(xf->file);
-	struct folio		*folio = NULL;
+	struct address_space	*mapping = inode->i_mapping;
+	const struct address_space_operations *aops = mapping->a_ops;
+	struct page		*page = NULL;
+	void			*fsdata = NULL;
+	loff_t			key = round_down(pos, PAGE_SIZE);
 	unsigned int		pflags;
 	int			error;
 
 	if (inode->i_sb->s_maxbytes - pos < len)
-		return ERR_PTR(-ENOMEM);
+		return -ENOMEM;
+	if (len > PAGE_SIZE - offset_in_page(pos))
+		return -ENOTBLK;
 
-	trace_xfile_get_folio(xf, pos, len);
-
-	/*
-	 * Increase the file size first so that shmem_get_folio(..., SGP_CACHE),
-	 * actually allocates a folio instead of erroring out.
-	 */
-	if ((flags & XFILE_ALLOC) && pos + len > i_size_read(inode))
-		i_size_write(inode, pos + len);
+	trace_xfile_get_page(xf, pos, len);
 
 	pflags = memalloc_nofs_save();
-	error = shmem_get_folio(inode, pos >> PAGE_SHIFT, &folio,
-			(flags & XFILE_ALLOC) ? SGP_CACHE : SGP_READ);
-	memalloc_nofs_restore(pflags);
+
+	/*
+	 * We call write_begin directly here to avoid all the freezer
+	 * protection lock-taking that happens in the normal path.  shmem
+	 * doesn't support fs freeze, but lockdep doesn't know that and will
+	 * trip over that.
+	 */
+	error = aops->write_begin(NULL, mapping, key, PAGE_SIZE, &page,
+			&fsdata);
 	if (error)
-		return ERR_PTR(error);
+		goto out_pflags;
 
-	if (!folio)
-		return NULL;
+	/* We got the page, so make sure we push out EOF. */
+	if (i_size_read(inode) < pos + len)
+		i_size_write(inode, pos + len);
 
-	if (len > folio_size(folio) - offset_in_folio(folio, pos)) {
-		folio_unlock(folio);
-		folio_put(folio);
-		return NULL;
-	}
+	/*
+	 * If the page isn't up to date, fill it with zeroes before we hand it
+	 * to the caller and make sure the backing store will hold on to them.
+	 */
+	if (!PageUptodate(page)) {
+		void	*kaddr;
 
-	if (filemap_check_wb_err(inode->i_mapping, 0)) {
-		folio_unlock(folio);
-		folio_put(folio);
-		return ERR_PTR(-EIO);
+		kaddr = kmap_local_page(page);
+		memset(kaddr, 0, PAGE_SIZE);
+		kunmap_local(kaddr);
+		SetPageUptodate(page);
 	}
 
 	/*
-	 * Mark the folio dirty so that it won't be reclaimed once we drop the
-	 * (potentially last) reference in xfile_put_folio.
+	 * Mark each page dirty so that the contents are written to some
+	 * backing store when we drop this buffer, and take an extra reference
+	 * to prevent the xfile page from being swapped or removed from the
+	 * page cache by reclaim if the caller unlocks the page.
 	 */
-	if (flags & XFILE_ALLOC)
-		folio_set_dirty(folio);
-	return folio;
+	set_page_dirty(page);
+	get_page(page);
+
+	xfpage->page = page;
+	xfpage->fsdata = fsdata;
+	xfpage->pos = key;
+out_pflags:
+	memalloc_nofs_restore(pflags);
+	return error;
 }
 
 /*
- * Release the (locked) folio for a memory object.
+ * Release the (locked) page for a memory object.  Returns 0 or a negative
+ * errno.
  */
-void
-xfile_put_folio(
+int
+xfile_put_page(
 	struct xfile		*xf,
-	struct folio		*folio)
+	struct xfile_page	*xfpage)
 {
-	trace_xfile_put_folio(xf, folio_pos(folio), folio_size(folio));
+	struct inode		*inode = file_inode(xf->file);
+	struct address_space	*mapping = inode->i_mapping;
+	const struct address_space_operations *aops = mapping->a_ops;
+	unsigned int		pflags;
+	int			ret;
 
-	folio_unlock(folio);
-	folio_put(folio);
-}
+	trace_xfile_put_page(xf, xfpage->pos, PAGE_SIZE);
 
-/* Discard the page cache that's backing a range of the xfile. */
-void
-xfile_discard(
-	struct xfile		*xf,
-	loff_t			pos,
-	u64			count)
-{
-	trace_xfile_discard(xf, pos, count);
+	/* Give back the reference that we took in xfile_get_page. */
+	put_page(xfpage->page);
 
-	shmem_truncate_range(file_inode(xf->file), pos, pos + count - 1);
+	pflags = memalloc_nofs_save();
+	ret = aops->write_end(NULL, mapping, xfpage->pos, PAGE_SIZE, PAGE_SIZE,
+			xfpage->page, xfpage->fsdata);
+	memalloc_nofs_restore(pflags);
+	memset(xfpage, 0, sizeof(struct xfile_page));
+
+	if (ret < 0)
+		return ret;
+	if (ret != PAGE_SIZE)
+		return -EIO;
+	return 0;
 }

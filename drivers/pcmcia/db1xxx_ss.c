@@ -577,7 +577,7 @@ out0:
 	return ret;
 }
 
-static void db1x_pcmcia_socket_remove(struct platform_device *pdev)
+static int db1x_pcmcia_socket_remove(struct platform_device *pdev)
 {
 	struct db1x_pcmcia_sock *sock = platform_get_drvdata(pdev);
 
@@ -585,6 +585,8 @@ static void db1x_pcmcia_socket_remove(struct platform_device *pdev)
 	pcmcia_unregister_socket(&sock->socket);
 	iounmap((void *)(sock->virt_io + (u32)mips_io_port_base));
 	kfree(sock);
+
+	return 0;
 }
 
 static struct platform_driver db1x_pcmcia_socket_driver = {
@@ -592,7 +594,7 @@ static struct platform_driver db1x_pcmcia_socket_driver = {
 		.name	= "db1xxx_pcmcia",
 	},
 	.probe		= db1x_pcmcia_socket_probe,
-	.remove_new	= db1x_pcmcia_socket_remove,
+	.remove		= db1x_pcmcia_socket_remove,
 };
 
 module_platform_driver(db1x_pcmcia_socket_driver);

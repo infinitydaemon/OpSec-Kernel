@@ -128,7 +128,7 @@ static int jpeg_v2_5_sw_init(void *handle)
 
 		ring = adev->jpeg.inst[i].ring_dec;
 		ring->use_doorbell = true;
-		if (amdgpu_ip_version(adev, UVD_HWIP, 0) == IP_VERSION(2, 5, 0))
+		if (adev->ip_versions[UVD_HWIP][0] == IP_VERSION(2, 5, 0))
 			ring->vm_hub = AMDGPU_MMHUB1(0);
 		else
 			ring->vm_hub = AMDGPU_MMHUB0(0);
@@ -551,7 +551,7 @@ static int jpeg_v2_5_set_powergating_state(void *handle,
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 	int ret;
 
-	if (state == adev->jpeg.cur_state)
+	if(state == adev->jpeg.cur_state)
 		return 0;
 
 	if (state == AMD_PG_STATE_GATE)
@@ -559,7 +559,7 @@ static int jpeg_v2_5_set_powergating_state(void *handle,
 	else
 		ret = jpeg_v2_5_start(adev);
 
-	if (!ret)
+	if(!ret)
 		adev->jpeg.cur_state = state;
 
 	return ret;
@@ -632,8 +632,6 @@ static const struct amd_ip_funcs jpeg_v2_5_ip_funcs = {
 	.post_soft_reset = NULL,
 	.set_clockgating_state = jpeg_v2_5_set_clockgating_state,
 	.set_powergating_state = jpeg_v2_5_set_powergating_state,
-	.dump_ip_state = NULL,
-	.print_ip_state = NULL,
 };
 
 static const struct amd_ip_funcs jpeg_v2_6_ip_funcs = {
@@ -654,8 +652,6 @@ static const struct amd_ip_funcs jpeg_v2_6_ip_funcs = {
 	.post_soft_reset = NULL,
 	.set_clockgating_state = jpeg_v2_5_set_clockgating_state,
 	.set_powergating_state = jpeg_v2_5_set_powergating_state,
-	.dump_ip_state = NULL,
-	.print_ip_state = NULL,
 };
 
 static const struct amdgpu_ring_funcs jpeg_v2_5_dec_ring_vm_funcs = {
@@ -758,7 +754,8 @@ static void jpeg_v2_5_set_irq_funcs(struct amdgpu_device *adev)
 	}
 }
 
-const struct amdgpu_ip_block_version jpeg_v2_5_ip_block = {
+const struct amdgpu_ip_block_version jpeg_v2_5_ip_block =
+{
 		.type = AMD_IP_BLOCK_TYPE_JPEG,
 		.major = 2,
 		.minor = 5,
@@ -766,7 +763,8 @@ const struct amdgpu_ip_block_version jpeg_v2_5_ip_block = {
 		.funcs = &jpeg_v2_5_ip_funcs,
 };
 
-const struct amdgpu_ip_block_version jpeg_v2_6_ip_block = {
+const struct amdgpu_ip_block_version jpeg_v2_6_ip_block =
+{
 		.type = AMD_IP_BLOCK_TYPE_JPEG,
 		.major = 2,
 		.minor = 6,
@@ -824,7 +822,7 @@ static struct amdgpu_jpeg_ras jpeg_v2_6_ras = {
 
 static void jpeg_v2_5_set_ras_funcs(struct amdgpu_device *adev)
 {
-	switch (amdgpu_ip_version(adev, JPEG_HWIP, 0)) {
+	switch (adev->ip_versions[JPEG_HWIP][0]) {
 	case IP_VERSION(2, 6, 0):
 		adev->jpeg.ras = &jpeg_v2_6_ras;
 		break;

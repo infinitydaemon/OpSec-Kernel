@@ -97,7 +97,7 @@ DECLARE_STATIC_KEY_FALSE(interrupt_exit_not_reentrant);
 
 static inline bool is_implicit_soft_masked(struct pt_regs *regs)
 {
-	if (user_mode(regs))
+	if (regs->msr & MSR_PR)
 		return false;
 
 	if (regs->nip >= (unsigned long)__end_soft_masked)

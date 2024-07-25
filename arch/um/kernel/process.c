@@ -15,7 +15,6 @@
 #include <linux/proc_fs.h>
 #include <linux/ptrace.h>
 #include <linux/random.h>
-#include <linux/cpu.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/sched/debug.h>
@@ -27,8 +26,6 @@
 #include <linux/resume_user_mode.h>
 #include <asm/current.h>
 #include <asm/mmu_context.h>
-#include <asm/switch_to.h>
-#include <asm/exec.h>
 #include <linux/uaccess.h>
 #include <as-layout.h>
 #include <kern_util.h>
@@ -43,7 +40,24 @@
  * cares about its entry, so it's OK if another processor is modifying its
  * entry.
  */
-struct cpu_task cpu_tasks[NR_CPUS] = { [0 ... NR_CPUS - 1] = { NULL } };
+struct cpu_task cpu_tasks[NR_CPUS] = { [0 ... NR_CPUS - 1] = { -1, NULL } };
+
+static inline int external_pid(void)
+{
+	/* FIXME: Need to look up userspace_pid by cpu */
+	return userspace_pid[0];
+}
+
+int pid_to_processor_id(int pid)
+{
+	int i;
+
+	for (i = 0; i < ncpus; i++) {
+		if (cpu_tasks[i].pid == pid)
+			return i;
+	}
+	return -1;
+}
 
 void free_stack(unsigned long stack, int order)
 {
@@ -64,10 +78,13 @@ unsigned long alloc_stack(int order, int atomic)
 
 static inline void set_current(struct task_struct *task)
 {
-	cpu_tasks[task_thread_info(task)->cpu] = ((struct cpu_task) { task });
+	cpu_tasks[task_thread_info(task)->cpu] = ((struct cpu_task)
+		{ external_pid(), task });
 }
 
-struct task_struct *__switch_to(struct task_struct *from, struct task_struct *to)
+extern void arch_switch_to(struct task_struct *to);
+
+void *__switch_to(struct task_struct *from, struct task_struct *to)
 {
 	to->thread.prev_sched = from;
 	set_current(to);
@@ -102,7 +119,7 @@ int get_current_pid(void)
  */
 void new_thread_handler(void)
 {
-	int (*fn)(void *);
+	int (*fn)(void *), n;
 	void *arg;
 
 	if (current->thread.prev_sched != NULL)
@@ -115,12 +132,12 @@ void new_thread_handler(void)
 	/*
 	 * callback returns only if the kernel thread execs a process
 	 */
-	fn(arg);
+	n = fn(arg);
 	userspace(&current->thread.regs.regs, current_thread_info()->aux_fp_regs);
 }
 
 /* Called magically, see new_thread_handler above */
-static void fork_handler(void)
+void fork_handler(void)
 {
 	force_flush_all();
 
@@ -199,6 +216,7 @@ void um_idle_sleep(void)
 
 void arch_cpu_idle(void)
 {
+	cpu_tasks[current_thread_info()->cpu].pid = os_getpid();
 	um_idle_sleep();
 }
 
@@ -232,22 +250,32 @@ char *uml_strdup(const char *string)
 }
 EXPORT_SYMBOL(uml_strdup);
 
+int copy_to_user_proc(void __user *to, void *from, int size)
+{
+	return copy_to_user(to, from, size);
+}
+
 int copy_from_user_proc(void *to, void __user *from, int size)
 {
 	return copy_from_user(to, from, size);
 }
 
+int clear_user_proc(void __user *buf, int size)
+{
+	return clear_user(buf, size);
+}
+
 static atomic_t using_sysemu = ATOMIC_INIT(0);
 int sysemu_supported;
 
-static void set_using_sysemu(int value)
+void set_using_sysemu(int value)
 {
 	if (value > sysemu_supported)
 		return;
 	atomic_set(&using_sysemu, value);
 }
 
-static int get_using_sysemu(void)
+int get_using_sysemu(void)
 {
 	return atomic_read(&using_sysemu);
 }
@@ -285,7 +313,7 @@ static const struct proc_ops sysemu_proc_ops = {
 	.proc_write	= sysemu_proc_write,
 };
 
-static int __init make_proc_sysemu(void)
+int __init make_proc_sysemu(void)
 {
 	struct proc_dir_entry *ent;
 	if (!sysemu_supported)
@@ -304,9 +332,17 @@ static int __init make_proc_sysemu(void)
 
 late_initcall(make_proc_sysemu);
 
-int singlestepping(void)
+int singlestepping(void * t)
 {
-	return test_thread_flag(TIF_SINGLESTEP);
+	struct task_struct *task = t ? t : current;
+
+	if (!test_thread_flag(TIF_SINGLESTEP))
+		return 0;
+
+	if (task->thread.singlestep_syscall)
+		return 1;
+
+	return 2;
 }
 
 /*

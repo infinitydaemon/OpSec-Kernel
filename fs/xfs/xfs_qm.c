@@ -26,7 +26,6 @@
 #include "xfs_ag.h"
 #include "xfs_ialloc.h"
 #include "xfs_log_priv.h"
-#include "xfs_health.h"
 
 /*
  * The global quota manager. There is only one of these for the entire
@@ -172,7 +171,7 @@ xfs_qm_dqpurge(
 	 * hits zero, so it really should be on the freelist here.
 	 */
 	ASSERT(!list_empty(&dqp->q_lru));
-	list_lru_del_obj(&qi->qi_lru, &dqp->q_lru);
+	list_lru_del(&qi->qi_lru, &dqp->q_lru);
 	XFS_STATS_DEC(dqp->q_mount, xs_qm_dquot_unused);
 
 	xfs_qm_dqdestroy(dqp);
@@ -255,7 +254,7 @@ xfs_qm_dqattach_one(
 	struct xfs_dquot	*dqp;
 	int			error;
 
-	xfs_assert_ilocked(ip, XFS_ILOCK_EXCL);
+	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
 	error = 0;
 
 	/*
@@ -323,7 +322,7 @@ xfs_qm_dqattach_locked(
 	if (!xfs_qm_need_dqattach(ip))
 		return 0;
 
-	xfs_assert_ilocked(ip, XFS_ILOCK_EXCL);
+	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
 
 	if (XFS_IS_UQUOTA_ON(mp) && !ip->i_udquot) {
 		error = xfs_qm_dqattach_one(ip, XFS_DQTYPE_USER,
@@ -354,7 +353,7 @@ done:
 	 * Don't worry about the dquots that we may have attached before any
 	 * error - they'll get detached later if it has not already been done.
 	 */
-	xfs_assert_ilocked(ip, XFS_ILOCK_EXCL);
+	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
 	return error;
 }
 
@@ -505,7 +504,8 @@ xfs_qm_shrink_scan(
 	struct shrinker		*shrink,
 	struct shrink_control	*sc)
 {
-	struct xfs_quotainfo	*qi = shrink->private_data;
+	struct xfs_quotainfo	*qi = container_of(shrink,
+					struct xfs_quotainfo, qi_shrinker);
 	struct xfs_qm_isolate	isol;
 	unsigned long		freed;
 	int			error;
@@ -539,7 +539,8 @@ xfs_qm_shrink_count(
 	struct shrinker		*shrink,
 	struct shrink_control	*sc)
 {
-	struct xfs_quotainfo	*qi = shrink->private_data;
+	struct xfs_quotainfo	*qi = container_of(shrink,
+					struct xfs_quotainfo, qi_shrinker);
 
 	return list_lru_shrink_count(&qi->qi_lru, sc);
 }
@@ -629,8 +630,7 @@ xfs_qm_init_quotainfo(
 
 	ASSERT(XFS_IS_QUOTA_ON(mp));
 
-	qinf = mp->m_quotainfo = kzalloc(sizeof(struct xfs_quotainfo),
-					GFP_KERNEL | __GFP_NOFAIL);
+	qinf = mp->m_quotainfo = kmem_zalloc(sizeof(struct xfs_quotainfo), 0);
 
 	error = list_lru_init(&qinf->qi_lru);
 	if (error)
@@ -644,9 +644,9 @@ xfs_qm_init_quotainfo(
 	if (error)
 		goto out_free_lru;
 
-	INIT_RADIX_TREE(&qinf->qi_uquota_tree, GFP_KERNEL);
-	INIT_RADIX_TREE(&qinf->qi_gquota_tree, GFP_KERNEL);
-	INIT_RADIX_TREE(&qinf->qi_pquota_tree, GFP_KERNEL);
+	INIT_RADIX_TREE(&qinf->qi_uquota_tree, GFP_NOFS);
+	INIT_RADIX_TREE(&qinf->qi_gquota_tree, GFP_NOFS);
+	INIT_RADIX_TREE(&qinf->qi_pquota_tree, GFP_NOFS);
 	mutex_init(&qinf->qi_tree_lock);
 
 	/* mutex used to serialize quotaoffs */
@@ -680,21 +680,15 @@ xfs_qm_init_quotainfo(
 	if (XFS_IS_PQUOTA_ON(mp))
 		xfs_qm_set_defquota(mp, XFS_DQTYPE_PROJ, qinf);
 
-	qinf->qi_shrinker = shrinker_alloc(SHRINKER_NUMA_AWARE, "xfs-qm:%s",
-					   mp->m_super->s_id);
-	if (!qinf->qi_shrinker) {
-		error = -ENOMEM;
+	qinf->qi_shrinker.count_objects = xfs_qm_shrink_count;
+	qinf->qi_shrinker.scan_objects = xfs_qm_shrink_scan;
+	qinf->qi_shrinker.seeks = DEFAULT_SEEKS;
+	qinf->qi_shrinker.flags = SHRINKER_NUMA_AWARE;
+
+	error = register_shrinker(&qinf->qi_shrinker, "xfs-qm:%s",
+				  mp->m_super->s_id);
+	if (error)
 		goto out_free_inos;
-	}
-
-	qinf->qi_shrinker->count_objects = xfs_qm_shrink_count;
-	qinf->qi_shrinker->scan_objects = xfs_qm_shrink_scan;
-	qinf->qi_shrinker->private_data = qinf;
-
-	shrinker_register(qinf->qi_shrinker);
-
-	xfs_hooks_init(&qinf->qi_mod_ino_dqtrx_hooks);
-	xfs_hooks_init(&qinf->qi_apply_dqtrx_hooks);
 
 	return 0;
 
@@ -705,7 +699,7 @@ out_free_inos:
 out_free_lru:
 	list_lru_destroy(&qinf->qi_lru);
 out_free_qinf:
-	kfree(qinf);
+	kmem_free(qinf);
 	mp->m_quotainfo = NULL;
 	return error;
 }
@@ -724,12 +718,12 @@ xfs_qm_destroy_quotainfo(
 	qi = mp->m_quotainfo;
 	ASSERT(qi != NULL);
 
-	shrinker_free(qi->qi_shrinker);
+	unregister_shrinker(&qi->qi_shrinker);
 	list_lru_destroy(&qi->qi_lru);
 	xfs_qm_destroy_quotainos(qi);
 	mutex_destroy(&qi->qi_tree_lock);
 	mutex_destroy(&qi->qi_quotaofflock);
-	kfree(qi);
+	kmem_free(qi);
 	mp->m_quotainfo = NULL;
 }
 
@@ -763,18 +757,14 @@ xfs_qm_qino_alloc(
 			     (mp->m_sb.sb_gquotino != NULLFSINO)) {
 			ino = mp->m_sb.sb_gquotino;
 			if (XFS_IS_CORRUPT(mp,
-					   mp->m_sb.sb_pquotino != NULLFSINO)) {
-				xfs_fs_mark_sick(mp, XFS_SICK_FS_PQUOTA);
+					   mp->m_sb.sb_pquotino != NULLFSINO))
 				return -EFSCORRUPTED;
-			}
 		} else if ((flags & XFS_QMOPT_GQUOTA) &&
 			     (mp->m_sb.sb_pquotino != NULLFSINO)) {
 			ino = mp->m_sb.sb_pquotino;
 			if (XFS_IS_CORRUPT(mp,
-					   mp->m_sb.sb_gquotino != NULLFSINO)) {
-				xfs_fs_mark_sick(mp, XFS_SICK_FS_GQUOTA);
+					   mp->m_sb.sb_gquotino != NULLFSINO))
 				return -EFSCORRUPTED;
-			}
 		}
 		if (ino != NULLFSINO) {
 			error = xfs_iget(mp, NULL, ino, 0, 0, ipp);
@@ -836,10 +826,8 @@ xfs_qm_qino_alloc(
 		ASSERT(xfs_is_shutdown(mp));
 		xfs_alert(mp, "%s failed (error %d)!", __func__, error);
 	}
-	if (need_alloc) {
-		xfs_iunlock(*ipp, XFS_ILOCK_EXCL);
+	if (need_alloc)
 		xfs_finish_inode_setup(*ipp);
-	}
 	return error;
 }
 
@@ -1007,8 +995,7 @@ xfs_qm_reset_dqcounts_buf(
 	if (qip->i_nblocks == 0)
 		return 0;
 
-	map = kmalloc(XFS_DQITER_MAP_SIZE * sizeof(*map),
-			GFP_KERNEL | __GFP_NOFAIL);
+	map = kmem_alloc(XFS_DQITER_MAP_SIZE * sizeof(*map), 0);
 
 	lblkno = 0;
 	maxlblkcnt = XFS_B_TO_FSB(mp, mp->m_super->s_maxbytes);
@@ -1070,7 +1057,7 @@ xfs_qm_reset_dqcounts_buf(
 	} while (nmaps > 0);
 
 out:
-	kfree(map);
+	kmem_free(map);
 	return error;
 }
 
@@ -1418,12 +1405,8 @@ error_return:
 			xfs_warn(mp,
 				"Quotacheck: Failed to reset quota flags.");
 		}
-		xfs_fs_mark_sick(mp, XFS_SICK_FS_QUOTACHECK);
-	} else {
+	} else
 		xfs_notice(mp, "Quotacheck: Done.");
-		xfs_fs_mark_healthy(mp, XFS_SICK_FS_QUOTACHECK);
-	}
-
 	return error;
 
 error_purge:
@@ -1825,7 +1808,7 @@ xfs_qm_vop_chown(
 				 XFS_TRANS_DQ_RTBCOUNT : XFS_TRANS_DQ_BCOUNT;
 
 
-	xfs_assert_ilocked(ip, XFS_ILOCK_EXCL);
+	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
 	ASSERT(XFS_IS_QUOTA_ON(ip->i_mount));
 
 	/* old dquot */
@@ -1833,12 +1816,12 @@ xfs_qm_vop_chown(
 	ASSERT(prevdq);
 	ASSERT(prevdq != newdq);
 
-	xfs_trans_mod_ino_dquot(tp, ip, prevdq, bfield, -(ip->i_nblocks));
-	xfs_trans_mod_ino_dquot(tp, ip, prevdq, XFS_TRANS_DQ_ICOUNT, -1);
+	xfs_trans_mod_dquot(tp, prevdq, bfield, -(ip->i_nblocks));
+	xfs_trans_mod_dquot(tp, prevdq, XFS_TRANS_DQ_ICOUNT, -1);
 
 	/* the sparkling new dquot */
-	xfs_trans_mod_ino_dquot(tp, ip, newdq, bfield, ip->i_nblocks);
-	xfs_trans_mod_ino_dquot(tp, ip, newdq, XFS_TRANS_DQ_ICOUNT, 1);
+	xfs_trans_mod_dquot(tp, newdq, bfield, ip->i_nblocks);
+	xfs_trans_mod_dquot(tp, newdq, XFS_TRANS_DQ_ICOUNT, 1);
 
 	/*
 	 * Back when we made quota reservations for the chown, we reserved the
@@ -1913,28 +1896,29 @@ xfs_qm_vop_create_dqattach(
 	if (!XFS_IS_QUOTA_ON(mp))
 		return;
 
-	xfs_assert_ilocked(ip, XFS_ILOCK_EXCL);
+	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
 
 	if (udqp && XFS_IS_UQUOTA_ON(mp)) {
 		ASSERT(ip->i_udquot == NULL);
 		ASSERT(i_uid_read(VFS_I(ip)) == udqp->q_id);
 
 		ip->i_udquot = xfs_qm_dqhold(udqp);
+		xfs_trans_mod_dquot(tp, udqp, XFS_TRANS_DQ_ICOUNT, 1);
 	}
 	if (gdqp && XFS_IS_GQUOTA_ON(mp)) {
 		ASSERT(ip->i_gdquot == NULL);
 		ASSERT(i_gid_read(VFS_I(ip)) == gdqp->q_id);
 
 		ip->i_gdquot = xfs_qm_dqhold(gdqp);
+		xfs_trans_mod_dquot(tp, gdqp, XFS_TRANS_DQ_ICOUNT, 1);
 	}
 	if (pdqp && XFS_IS_PQUOTA_ON(mp)) {
 		ASSERT(ip->i_pdquot == NULL);
 		ASSERT(ip->i_projid == pdqp->q_id);
 
 		ip->i_pdquot = xfs_qm_dqhold(pdqp);
+		xfs_trans_mod_dquot(tp, pdqp, XFS_TRANS_DQ_ICOUNT, 1);
 	}
-
-	xfs_trans_mod_dquot_byino(tp, ip, XFS_TRANS_DQ_ICOUNT, 1);
 }
 
 /* Decide if this inode's dquot is near an enforcement boundary. */

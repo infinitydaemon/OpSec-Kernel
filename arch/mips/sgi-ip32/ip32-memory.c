@@ -15,7 +15,6 @@
 #include <asm/ip32/crime.h>
 #include <asm/bootinfo.h>
 #include <asm/page.h>
-#include <asm/sgialib.h>
 
 extern void crime_init(void);
 

@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2024 Broadcom. All Rights Reserved. The term *
+ * Copyright (C) 2017-2023 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.     *
  * Copyright (C) 2004-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -474,11 +474,9 @@ lpfc_sli4_io_xri_aborted(struct lpfc_hba *phba,
 				ndlp = psb->rdata->pnode;
 			else
 				ndlp = NULL;
-			spin_unlock_irqrestore(&phba->hbalock, iflag);
 
-			spin_lock_irqsave(&phba->rrq_list_lock, iflag);
 			rrq_empty = list_empty(&phba->active_rrq_list);
-			spin_unlock_irqrestore(&phba->rrq_list_lock, iflag);
+			spin_unlock_irqrestore(&phba->hbalock, iflag);
 			if (ndlp && !offline) {
 				lpfc_set_rrq_active(phba, ndlp,
 					psb->cur_iocbq.sli4_lxritag, rxid, 1);
@@ -600,7 +598,7 @@ lpfc_get_scsi_buf_s4(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp,
 {
 	struct lpfc_io_buf *lpfc_cmd;
 	struct lpfc_sli4_hdw_queue *qp;
-	struct sli4_sge_le *sgl;
+	struct sli4_sge *sgl;
 	dma_addr_t pdma_phys_fcp_rsp;
 	dma_addr_t pdma_phys_fcp_cmd;
 	uint32_t cpu, idx;
@@ -651,23 +649,23 @@ lpfc_get_scsi_buf_s4(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp,
 	 * The balance are sg list bdes. Initialize the
 	 * first two and leave the rest for queuecommand.
 	 */
-	sgl = (struct sli4_sge_le *)lpfc_cmd->dma_sgl;
+	sgl = (struct sli4_sge *)lpfc_cmd->dma_sgl;
 	pdma_phys_fcp_cmd = tmp->fcp_cmd_rsp_dma_handle;
 	sgl->addr_hi = cpu_to_le32(putPaddrHigh(pdma_phys_fcp_cmd));
 	sgl->addr_lo = cpu_to_le32(putPaddrLow(pdma_phys_fcp_cmd));
-	bf_set_le32(lpfc_sli4_sge_last, sgl, 0);
-	if (cmnd && cmnd->cmd_len > LPFC_FCP_CDB_LEN)
-		sgl->sge_len = cpu_to_le32(sizeof(struct fcp_cmnd32));
-	else
-		sgl->sge_len = cpu_to_le32(sizeof(struct fcp_cmnd));
-
+	sgl->word2 = le32_to_cpu(sgl->word2);
+	bf_set(lpfc_sli4_sge_last, sgl, 0);
+	sgl->word2 = cpu_to_le32(sgl->word2);
+	sgl->sge_len = cpu_to_le32(sizeof(struct fcp_cmnd));
 	sgl++;
 
 	/* Setup the physical region for the FCP RSP */
-	pdma_phys_fcp_rsp = pdma_phys_fcp_cmd + sizeof(struct fcp_cmnd32);
+	pdma_phys_fcp_rsp = pdma_phys_fcp_cmd + sizeof(struct fcp_cmnd);
 	sgl->addr_hi = cpu_to_le32(putPaddrHigh(pdma_phys_fcp_rsp));
 	sgl->addr_lo = cpu_to_le32(putPaddrLow(pdma_phys_fcp_rsp));
-	bf_set_le32(lpfc_sli4_sge_last, sgl, 1);
+	sgl->word2 = le32_to_cpu(sgl->word2);
+	bf_set(lpfc_sli4_sge_last, sgl, 1);
+	sgl->word2 = cpu_to_le32(sgl->word2);
 	sgl->sge_len = cpu_to_le32(sizeof(struct fcp_rsp));
 
 	if (lpfc_ndlp_check_qdepth(phba, ndlp)) {
@@ -2608,7 +2606,7 @@ lpfc_bg_scsi_prep_dma_buf_s3(struct lpfc_hba *phba,
 	iocb_cmd->ulpLe = 1;
 
 	fcpdl = lpfc_bg_scsi_adjust_dl(phba, lpfc_cmd);
-	fcp_cmnd->fcpDl = cpu_to_be32(fcpdl);
+	fcp_cmnd->fcpDl = be32_to_cpu(fcpdl);
 
 	/*
 	 * Due to difference in data length between DIF/non-DIF paths,
@@ -2725,14 +2723,14 @@ lpfc_calc_bg_err(struct lpfc_hba *phba, struct lpfc_io_buf *lpfc_cmd)
 		sgde = scsi_sglist(cmd);
 		blksize = scsi_prot_interval(cmd);
 		data_src = (uint8_t *)sg_virt(sgde);
-		data_len = sg_dma_len(sgde);
+		data_len = sgde->length;
 		if ((data_len & (blksize - 1)) == 0)
 			chk_guard = 1;
 
 		src = (struct scsi_dif_tuple *)sg_virt(sgpe);
 		start_ref_tag = scsi_prot_ref_tag(cmd);
 		start_app_tag = src->app_tag;
-		len = sg_dma_len(sgpe);
+		len = sgpe->length;
 		while (src && protsegcnt) {
 			while (len) {
 
@@ -2797,7 +2795,7 @@ skipit:
 						goto out;
 
 					data_src = (uint8_t *)sg_virt(sgde);
-					data_len = sg_dma_len(sgde);
+					data_len = sgde->length;
 					if ((data_len & (blksize - 1)) == 0)
 						chk_guard = 1;
 				}
@@ -2807,7 +2805,7 @@ skipit:
 			sgpe = sg_next(sgpe);
 			if (sgpe) {
 				src = (struct scsi_dif_tuple *)sg_virt(sgpe);
-				len = sg_dma_len(sgpe);
+				len = sgpe->length;
 			} else {
 				src = NULL;
 			}
@@ -3225,18 +3223,14 @@ lpfc_scsi_prep_dma_buf_s4(struct lpfc_hba *phba, struct lpfc_io_buf *lpfc_cmd)
 	 * explicitly reinitialized.
 	 * all iocb memory resources are reused.
 	 */
-	if (scsi_cmnd->cmd_len > LPFC_FCP_CDB_LEN)
-		((struct fcp_cmnd32 *)fcp_cmnd)->fcpDl =
-				cpu_to_be32(scsi_bufflen(scsi_cmnd));
-	else
-		fcp_cmnd->fcpDl = cpu_to_be32(scsi_bufflen(scsi_cmnd));
+	fcp_cmnd->fcpDl = cpu_to_be32(scsi_bufflen(scsi_cmnd));
 	/* Set first-burst provided it was successfully negotiated */
-	if (!test_bit(HBA_FCOE_MODE, &phba->hba_flag) &&
+	if (!(phba->hba_flag & HBA_FCOE_MODE) &&
 	    vport->cfg_first_burst_size &&
 	    scsi_cmnd->sc_data_direction == DMA_TO_DEVICE) {
 		u32 init_len, total_len;
 
-		total_len = scsi_bufflen(scsi_cmnd);
+		total_len = be32_to_cpu(fcp_cmnd->fcpDl);
 		init_len = min(total_len, vport->cfg_first_burst_size);
 
 		/* Word 4 & 5 */
@@ -3424,18 +3418,15 @@ lpfc_bg_scsi_prep_dma_buf_s4(struct lpfc_hba *phba,
 	}
 
 	fcpdl = lpfc_bg_scsi_adjust_dl(phba, lpfc_cmd);
-	if (lpfc_cmd->pCmd->cmd_len > LPFC_FCP_CDB_LEN)
-		((struct fcp_cmnd32 *)fcp_cmnd)->fcpDl = cpu_to_be32(fcpdl);
-	else
-		fcp_cmnd->fcpDl = cpu_to_be32(fcpdl);
+	fcp_cmnd->fcpDl = be32_to_cpu(fcpdl);
 
 	/* Set first-burst provided it was successfully negotiated */
-	if (!test_bit(HBA_FCOE_MODE, &phba->hba_flag) &&
+	if (!(phba->hba_flag & HBA_FCOE_MODE) &&
 	    vport->cfg_first_burst_size &&
 	    scsi_cmnd->sc_data_direction == DMA_TO_DEVICE) {
 		u32 init_len, total_len;
 
-		total_len = fcpdl;
+		total_len = be32_to_cpu(fcp_cmnd->fcpDl);
 		init_len = min(total_len, vport->cfg_first_burst_size);
 
 		/* Word 4 & 5 */
@@ -3443,7 +3434,8 @@ lpfc_bg_scsi_prep_dma_buf_s4(struct lpfc_hba *phba,
 		wqe->fcp_iwrite.total_xfer_len = total_len;
 	} else {
 		/* Word 4 */
-		wqe->fcp_iwrite.total_xfer_len = fcpdl;
+		wqe->fcp_iwrite.total_xfer_len =
+			be32_to_cpu(fcp_cmnd->fcpDl);
 	}
 
 	/*
@@ -3900,10 +3892,7 @@ lpfc_handle_fcp_err(struct lpfc_vport *vport, struct lpfc_io_buf *lpfc_cmd,
 			 fcprsp->rspInfo3);
 
 	scsi_set_resid(cmnd, 0);
-	if (cmnd->cmd_len > LPFC_FCP_CDB_LEN)
-		fcpDl = be32_to_cpu(((struct fcp_cmnd32 *)fcpcmd)->fcpDl);
-	else
-		fcpDl = be32_to_cpu(fcpcmd->fcpDl);
+	fcpDl = be32_to_cpu(fcpcmd->fcpDl);
 	if (resp_info & RESID_UNDER) {
 		scsi_set_resid(cmnd, be32_to_cpu(fcprsp->rspResId));
 
@@ -4732,14 +4721,6 @@ static int lpfc_scsi_prep_cmnd_buf_s4(struct lpfc_vport *vport,
 				bf_set(wqe_iod, &wqe->fcp_iread.wqe_com,
 				       LPFC_WQE_IOD_NONE);
 		}
-
-		/* Additional fcp cdb length field calculation.
-		 * LPFC_FCP_CDB_LEN_32 - normal 16 byte cdb length,
-		 * then divide by 4 for the word count.
-		 * shift 2 because of the RDDATA/WRDATA.
-		 */
-		if (scsi_cmnd->cmd_len > LPFC_FCP_CDB_LEN)
-			fcp_cmnd->fcpCntl3 |= 4 << 2;
 	} else {
 		/* From the icmnd template, initialize words 4 - 11 */
 		memcpy(&wqe->words[4], &lpfc_icmnd_cmd_template.words[4],
@@ -4760,7 +4741,7 @@ static int lpfc_scsi_prep_cmnd_buf_s4(struct lpfc_vport *vport,
 
 	 /* Word 3 */
 	bf_set(payload_offset_len, &wqe->fcp_icmd,
-	       sizeof(struct fcp_cmnd32) + sizeof(struct fcp_rsp));
+	       sizeof(struct fcp_cmnd) + sizeof(struct fcp_rsp));
 
 	/* Word 6 */
 	bf_set(wqe_ctxt_tag, &wqe->generic.wqe_com,
@@ -4815,7 +4796,7 @@ lpfc_scsi_prep_cmnd(struct lpfc_vport *vport, struct lpfc_io_buf *lpfc_cmd,
 	int_to_scsilun(lpfc_cmd->pCmd->device->lun,
 		       &lpfc_cmd->fcp_cmnd->fcp_lun);
 
-	ptr = &((struct fcp_cmnd32 *)fcp_cmnd)->fcpCdb[0];
+	ptr = &fcp_cmnd->fcpCdb[0];
 	memcpy(ptr, scsi_cmnd->cmnd, scsi_cmnd->cmd_len);
 	if (scsi_cmnd->cmd_len < LPFC_FCP_CDB_LEN) {
 		ptr += scsi_cmnd->cmd_len;
@@ -5060,7 +5041,7 @@ lpfc_check_pci_resettable(struct lpfc_hba *phba)
 
 		/* Check for valid Emulex Device ID */
 		if (phba->sli_rev != LPFC_SLI_REV4 ||
-		    test_bit(HBA_FCOE_MODE, &phba->hba_flag)) {
+		    phba->hba_flag & HBA_FCOE_MODE) {
 			lpfc_printf_log(phba, KERN_INFO, LOG_INIT,
 					"8347 Incapable PCI reset device: "
 					"0x%04x\n", ptr->device);
@@ -5346,10 +5327,20 @@ lpfc_queuecommand(struct Scsi_Host *shost, struct scsi_cmnd *cmnd)
 					 cmnd->cmnd[0],
 					 scsi_prot_ref_tag(cmnd),
 					 scsi_logical_block_count(cmnd),
-					 scsi_get_prot_type(cmnd));
+					 (cmnd->cmnd[1]>>5));
 		}
 		err = lpfc_bg_scsi_prep_dma_buf(phba, lpfc_cmd);
 	} else {
+		if (vport->phba->cfg_enable_bg) {
+			lpfc_printf_vlog(vport,
+					 KERN_INFO, LOG_SCSI_CMD,
+					 "9038 BLKGRD: rcvd PROT_NORMAL cmd: "
+					 "x%x reftag x%x cnt %u pt %x\n",
+					 cmnd->cmnd[0],
+					 scsi_prot_ref_tag(cmnd),
+					 scsi_logical_block_count(cmnd),
+					 (cmnd->cmnd[1]>>5));
+		}
 		err = lpfc_scsi_prep_dma_buf(phba, lpfc_cmd);
 	}
 
@@ -5537,7 +5528,7 @@ lpfc_abort_handler(struct scsi_cmnd *cmnd)
 
 	spin_lock(&phba->hbalock);
 	/* driver queued commands are in process of being flushed */
-	if (test_bit(HBA_IOQ_FLUSH, &phba->hba_flag)) {
+	if (phba->hba_flag & HBA_IOQ_FLUSH) {
 		lpfc_printf_vlog(vport, KERN_WARNING, LOG_FCP,
 			"3168 SCSI Layer abort requested I/O has been "
 			"flushed by LLD.\n");

@@ -6,11 +6,19 @@
  * Author(s): Stefan Weinhuber <wein@de.ibm.com>
  */
 
+#define KMSG_COMPONENT "dasd-eckd"
+
 #include <linux/list.h>
 #include <linux/slab.h>
 #include <asm/ebcdic.h>
 #include "dasd_int.h"
 #include "dasd_eckd.h"
+
+#ifdef PRINTK_HEADER
+#undef PRINTK_HEADER
+#endif				/* PRINTK_HEADER */
+#define PRINTK_HEADER "dasd(eckd):"
+
 
 /*
  * General concept of alias management:
@@ -435,7 +443,7 @@ static int read_unit_address_configuration(struct dasd_device *device,
 	ccw->cmd_code = DASD_ECKD_CCW_PSF;
 	ccw->count = sizeof(struct dasd_psf_prssd_data);
 	ccw->flags |= CCW_FLAG_CC;
-	ccw->cda = virt_to_dma32(prssdp);
+	ccw->cda = (__u32)virt_to_phys(prssdp);
 
 	/* Read Subsystem Data - feature codes */
 	memset(lcu->uac, 0, sizeof(*(lcu->uac)));
@@ -443,7 +451,7 @@ static int read_unit_address_configuration(struct dasd_device *device,
 	ccw++;
 	ccw->cmd_code = DASD_ECKD_CCW_RSSD;
 	ccw->count = sizeof(*(lcu->uac));
-	ccw->cda = virt_to_dma32(lcu->uac);
+	ccw->cda = (__u32)virt_to_phys(lcu->uac);
 
 	cqr->buildclk = get_tod_clock();
 	cqr->status = DASD_CQR_FILLED;
@@ -739,7 +747,7 @@ static int reset_summary_unit_check(struct alias_lcu *lcu,
 	ccw->cmd_code = DASD_ECKD_CCW_RSCK;
 	ccw->flags = CCW_FLAG_SLI;
 	ccw->count = 16;
-	ccw->cda = virt_to_dma32(cqr->data);
+	ccw->cda = (__u32)virt_to_phys(cqr->data);
 	((char *)cqr->data)[0] = reason;
 
 	clear_bit(DASD_CQR_FLAGS_USE_ERP, &cqr->flags);

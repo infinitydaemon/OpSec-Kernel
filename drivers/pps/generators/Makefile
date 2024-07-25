@@ -5,4 +5,6 @@
 
 obj-$(CONFIG_PPS_GENERATOR_PARPORT) += pps_gen_parport.o
 
-ccflags-$(CONFIG_PPS_DEBUG) := -DDEBUG
+ifeq ($(CONFIG_PPS_DEBUG),y)
+EXTRA_CFLAGS += -DDEBUG
+endif

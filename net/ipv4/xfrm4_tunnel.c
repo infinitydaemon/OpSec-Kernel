@@ -114,6 +114,5 @@ static void __exit ipip_fini(void)
 
 module_init(ipip_init);
 module_exit(ipip_fini);
-MODULE_DESCRIPTION("IPv4 XFRM tunnel driver");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_XFRM_TYPE(AF_INET, XFRM_PROTO_IPIP);

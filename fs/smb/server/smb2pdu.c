@@ -630,6 +630,12 @@ smb2_get_name(const char *src, const int maxlen, struct nls_table *local_nls)
 		return name;
 	}
 
+	if (*name == '\\') {
+		pr_err("not allow directory name included leading slash\n");
+		kfree(name);
+		return ERR_PTR(-EINVAL);
+	}
+
 	ksmbd_conv_path_to_unix(name);
 	ksmbd_strip_last_slash(name);
 	return name;
@@ -2045,14 +2051,21 @@ out_err1:
  * @access:		file access flags
  * @disposition:	file disposition flags
  * @may_flags:		set with MAY_ flags
+ * @is_dir:		is creating open flags for directory
  *
  * Return:      file open flags
  */
 static int smb2_create_open_flags(bool file_present, __le32 access,
 				  __le32 disposition,
-				  int *may_flags)
+				  int *may_flags,
+				  bool is_dir)
 {
 	int oflags = O_NONBLOCK | O_LARGEFILE;
+
+	if (is_dir) {
+		access &= ~FILE_WRITE_DESIRE_ACCESS_LE;
+		ksmbd_debug(SMB, "Discard write access to a directory\n");
+	}
 
 	if (access & FILE_READ_DESIRED_ACCESS_LE &&
 	    access & FILE_WRITE_DESIRE_ACCESS_LE) {
@@ -2361,7 +2374,8 @@ static int smb2_set_ea(struct smb2_ea_info *eabuf, unsigned int buf_len,
 			if (rc > 0) {
 				rc = ksmbd_vfs_remove_xattr(idmap,
 							    path,
-							    attr_name);
+							    attr_name,
+							    get_write);
 
 				if (rc < 0) {
 					ksmbd_debug(SMB,
@@ -2376,7 +2390,7 @@ static int smb2_set_ea(struct smb2_ea_info *eabuf, unsigned int buf_len,
 		} else {
 			rc = ksmbd_vfs_setxattr(idmap, path, attr_name, value,
 						le16_to_cpu(eabuf->EaValueLength),
-						0, true);
+						0, get_write);
 			if (rc < 0) {
 				ksmbd_debug(SMB,
 					    "ksmbd_vfs_setxattr is failed(%d)\n",
@@ -2468,7 +2482,7 @@ static int smb2_remove_smb_xattrs(const struct path *path)
 		    !strncmp(&name[XATTR_USER_PREFIX_LEN], STREAM_PREFIX,
 			     STREAM_PREFIX_LEN)) {
 			err = ksmbd_vfs_remove_xattr(idmap, path,
-						     name);
+						     name, true);
 			if (err)
 				ksmbd_debug(SMB, "remove xattr failed : %s\n",
 					    name);
@@ -2842,20 +2856,11 @@ int smb2_open(struct ksmbd_work *work)
 	}
 
 	if (req->NameLength) {
-		if ((req->CreateOptions & FILE_DIRECTORY_FILE_LE) &&
-		    *(char *)req->Buffer == '\\') {
-			pr_err("not allow directory name included leading slash\n");
-			rc = -EINVAL;
-			goto err_out2;
-		}
-
 		name = smb2_get_name((char *)req + le16_to_cpu(req->NameOffset),
 				     le16_to_cpu(req->NameLength),
 				     work->conn->local_nls);
 		if (IS_ERR(name)) {
 			rc = PTR_ERR(name);
-			if (rc != -ENOMEM)
-				rc = -ENOENT;
 			name = NULL;
 			goto err_out2;
 		}
@@ -3169,7 +3174,9 @@ int smb2_open(struct ksmbd_work *work)
 
 	open_flags = smb2_create_open_flags(file_present, daccess,
 					    req->CreateDisposition,
-					    &may_flags);
+					    &may_flags,
+		req->CreateOptions & FILE_DIRECTORY_FILE_LE ||
+		(file_present && S_ISDIR(d_inode(path.dentry)->i_mode)));
 
 	if (!test_tree_conn_flag(tcon, KSMBD_TREE_CONN_FLAG_WRITABLE)) {
 		if (open_flags & (O_CREAT | O_TRUNC)) {
@@ -7059,10 +7066,10 @@ struct file_lock *smb_flock_init(struct file *f)
 
 	locks_init_lock(fl);
 
-	fl->c.flc_owner = f;
-	fl->c.flc_pid = current->tgid;
-	fl->c.flc_file = f;
-	fl->c.flc_flags = FL_POSIX;
+	fl->fl_owner = f;
+	fl->fl_pid = current->tgid;
+	fl->fl_file = f;
+	fl->fl_flags = FL_POSIX;
 	fl->fl_ops = NULL;
 	fl->fl_lmops = NULL;
 
@@ -7079,30 +7086,30 @@ static int smb2_set_flock_flags(struct file_lock *flock, int flags)
 	case SMB2_LOCKFLAG_SHARED:
 		ksmbd_debug(SMB, "received shared request\n");
 		cmd = F_SETLKW;
-		flock->c.flc_type = F_RDLCK;
-		flock->c.flc_flags |= FL_SLEEP;
+		flock->fl_type = F_RDLCK;
+		flock->fl_flags |= FL_SLEEP;
 		break;
 	case SMB2_LOCKFLAG_EXCLUSIVE:
 		ksmbd_debug(SMB, "received exclusive request\n");
 		cmd = F_SETLKW;
-		flock->c.flc_type = F_WRLCK;
-		flock->c.flc_flags |= FL_SLEEP;
+		flock->fl_type = F_WRLCK;
+		flock->fl_flags |= FL_SLEEP;
 		break;
 	case SMB2_LOCKFLAG_SHARED | SMB2_LOCKFLAG_FAIL_IMMEDIATELY:
 		ksmbd_debug(SMB,
 			    "received shared & fail immediately request\n");
 		cmd = F_SETLK;
-		flock->c.flc_type = F_RDLCK;
+		flock->fl_type = F_RDLCK;
 		break;
 	case SMB2_LOCKFLAG_EXCLUSIVE | SMB2_LOCKFLAG_FAIL_IMMEDIATELY:
 		ksmbd_debug(SMB,
 			    "received exclusive & fail immediately request\n");
 		cmd = F_SETLK;
-		flock->c.flc_type = F_WRLCK;
+		flock->fl_type = F_WRLCK;
 		break;
 	case SMB2_LOCKFLAG_UNLOCK:
 		ksmbd_debug(SMB, "received unlock request\n");
-		flock->c.flc_type = F_UNLCK;
+		flock->fl_type = F_UNLCK;
 		cmd = F_SETLK;
 		break;
 	}
@@ -7140,13 +7147,13 @@ static void smb2_remove_blocked_lock(void **argv)
 	struct file_lock *flock = (struct file_lock *)argv[0];
 
 	ksmbd_vfs_posix_lock_unblock(flock);
-	locks_wake_up(flock);
+	wake_up(&flock->fl_wait);
 }
 
 static inline bool lock_defer_pending(struct file_lock *fl)
 {
 	/* check pending lock waiters */
-	return waitqueue_active(&fl->c.flc_wait);
+	return waitqueue_active(&fl->fl_wait);
 }
 
 /**
@@ -7237,8 +7244,8 @@ int smb2_lock(struct ksmbd_work *work)
 		list_for_each_entry(cmp_lock, &lock_list, llist) {
 			if (cmp_lock->fl->fl_start <= flock->fl_start &&
 			    cmp_lock->fl->fl_end >= flock->fl_end) {
-				if (cmp_lock->fl->c.flc_type != F_UNLCK &&
-				    flock->c.flc_type != F_UNLCK) {
+				if (cmp_lock->fl->fl_type != F_UNLCK &&
+				    flock->fl_type != F_UNLCK) {
 					pr_err("conflict two locks in one request\n");
 					err = -EINVAL;
 					locks_free_lock(flock);
@@ -7286,12 +7293,12 @@ int smb2_lock(struct ksmbd_work *work)
 		list_for_each_entry(conn, &conn_list, conns_list) {
 			spin_lock(&conn->llist_lock);
 			list_for_each_entry_safe(cmp_lock, tmp2, &conn->lock_list, clist) {
-				if (file_inode(cmp_lock->fl->c.flc_file) !=
-				    file_inode(smb_lock->fl->c.flc_file))
+				if (file_inode(cmp_lock->fl->fl_file) !=
+				    file_inode(smb_lock->fl->fl_file))
 					continue;
 
-				if (lock_is_unlock(smb_lock->fl)) {
-					if (cmp_lock->fl->c.flc_file == smb_lock->fl->c.flc_file &&
+				if (smb_lock->fl->fl_type == F_UNLCK) {
+					if (cmp_lock->fl->fl_file == smb_lock->fl->fl_file &&
 					    cmp_lock->start == smb_lock->start &&
 					    cmp_lock->end == smb_lock->end &&
 					    !lock_defer_pending(cmp_lock->fl)) {
@@ -7308,7 +7315,7 @@ int smb2_lock(struct ksmbd_work *work)
 					continue;
 				}
 
-				if (cmp_lock->fl->c.flc_file == smb_lock->fl->c.flc_file) {
+				if (cmp_lock->fl->fl_file == smb_lock->fl->fl_file) {
 					if (smb_lock->flags & SMB2_LOCKFLAG_SHARED)
 						continue;
 				} else {
@@ -7350,7 +7357,7 @@ int smb2_lock(struct ksmbd_work *work)
 		}
 		up_read(&conn_list_lock);
 out_check_cl:
-		if (lock_is_unlock(smb_lock->fl) && nolock) {
+		if (smb_lock->fl->fl_type == F_UNLCK && nolock) {
 			pr_err("Try to unlock nolocked range\n");
 			rsp->hdr.Status = STATUS_RANGE_NOT_LOCKED;
 			goto out;
@@ -7474,7 +7481,7 @@ out:
 		struct file_lock *rlock = NULL;
 
 		rlock = smb_flock_init(filp);
-		rlock->c.flc_type = F_UNLCK;
+		rlock->fl_type = F_UNLCK;
 		rlock->fl_start = smb_lock->start;
 		rlock->fl_end = smb_lock->end;
 

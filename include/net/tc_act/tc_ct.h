@@ -22,7 +22,6 @@ struct tcf_ct_params {
 
 	struct nf_nat_range2 range;
 	bool ipv4_range;
-	bool put_labels;
 
 	u16 ct_action;
 

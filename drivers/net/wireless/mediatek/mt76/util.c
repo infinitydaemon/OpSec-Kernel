@@ -138,5 +138,4 @@ int __mt76_worker_fn(void *ptr)
 }
 EXPORT_SYMBOL_GPL(__mt76_worker_fn);
 
-MODULE_DESCRIPTION("MediaTek MT76x helpers");
 MODULE_LICENSE("Dual BSD/GPL");

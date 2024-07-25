@@ -408,12 +408,11 @@ functions for details on the CPU side of things.
 ioremap_uc()
 ------------
 
-ioremap_uc() is only meaningful on old x86-32 systems with the PAT extension,
-and on ia64 with its slightly unconventional ioremap() behavior, everywhere
-elss ioremap_uc() defaults to return NULL.
+ioremap_uc() behaves like ioremap() except that on the x86 architecture without
+'PAT' mode, it marks memory as uncached even when the MTRR has designated
+it as cacheable, see Documentation/arch/x86/pat.rst.
 
-
-Portable drivers should avoid the use of ioremap_uc(), use ioremap() instead.
+Portable drivers should avoid the use of ioremap_uc().
 
 ioremap_cache()
 ---------------
@@ -517,3 +516,6 @@ Public Functions Provided
 
 .. kernel-doc:: arch/x86/include/asm/io.h
    :internal:
+
+.. kernel-doc:: lib/pci_iomap.c
+   :export:

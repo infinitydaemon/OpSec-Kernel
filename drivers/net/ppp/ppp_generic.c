@@ -70,6 +70,7 @@
 #define MPHDRLEN_SSN	4	/* ditto with short sequence numbers */
 
 #define PPP_PROTO_LEN	2
+#define PPP_LCP_HDRLEN	4
 
 /*
  * An instance of /dev/ppp can be associated with either a ppp
@@ -295,9 +296,7 @@ static void ppp_setup(struct net_device *dev);
 
 static const struct net_device_ops ppp_netdev_ops;
 
-static const struct class ppp_class = {
-	.name = "ppp",
-};
+static struct class *ppp_class;
 
 /* per net-namespace data */
 static inline struct ppp_net *ppp_pernet(struct net *net)
@@ -493,6 +492,15 @@ static ssize_t ppp_read(struct file *file, char __user *buf,
 	return ret;
 }
 
+static bool ppp_check_packet(struct sk_buff *skb, size_t count)
+{
+	/* LCP packets must include LCP header which 4 bytes long:
+	 * 1-byte code, 1-byte identifier, and 2-byte length.
+	 */
+	return get_unaligned_be16(skb->data) != PPP_LCP ||
+		count >= PPP_PROTO_LEN + PPP_LCP_HDRLEN;
+}
+
 static ssize_t ppp_write(struct file *file, const char __user *buf,
 			 size_t count, loff_t *ppos)
 {
@@ -512,6 +520,11 @@ static ssize_t ppp_write(struct file *file, const char __user *buf,
 	skb_reserve(skb, pf->hdrlen);
 	ret = -EFAULT;
 	if (copy_from_user(skb_put(skb, count), buf, count)) {
+		kfree_skb(skb);
+		goto out;
+	}
+	ret = -EINVAL;
+	if (unlikely(!ppp_check_packet(skb, count))) {
 		kfree_skb(skb);
 		goto out;
 	}
@@ -572,8 +585,8 @@ static struct bpf_prog *get_filter(struct sock_fprog *uprog)
 
 	/* uprog->len is unsigned short, so no overflow here */
 	fprog.len = uprog->len;
-	fprog.filter = memdup_array_user(uprog->filter,
-					 uprog->len, sizeof(struct sock_filter));
+	fprog.filter = memdup_user(uprog->filter,
+				   uprog->len * sizeof(struct sock_filter));
 	if (IS_ERR(fprog.filter))
 		return ERR_CAST(fprog.filter);
 
@@ -1357,7 +1370,7 @@ static struct net *ppp_nl_get_link_net(const struct net_device *dev)
 {
 	struct ppp *ppp = netdev_priv(dev);
 
-	return READ_ONCE(ppp->ppp_net);
+	return ppp->ppp_net;
 }
 
 static struct rtnl_link_ops ppp_link_ops __read_mostly = {
@@ -1396,9 +1409,11 @@ static int __init ppp_init(void)
 		goto out_net;
 	}
 
-	err = class_register(&ppp_class);
-	if (err)
+	ppp_class = class_create("ppp");
+	if (IS_ERR(ppp_class)) {
+		err = PTR_ERR(ppp_class);
 		goto out_chrdev;
+	}
 
 	err = rtnl_link_register(&ppp_link_ops);
 	if (err) {
@@ -1407,12 +1422,12 @@ static int __init ppp_init(void)
 	}
 
 	/* not a big deal if we fail here :-) */
-	device_create(&ppp_class, NULL, MKDEV(PPP_MAJOR, 0), NULL, "ppp");
+	device_create(ppp_class, NULL, MKDEV(PPP_MAJOR, 0), NULL, "ppp");
 
 	return 0;
 
 out_class:
-	class_unregister(&ppp_class);
+	class_destroy(ppp_class);
 out_chrdev:
 	unregister_chrdev(PPP_MAJOR, "ppp");
 out_net:
@@ -1607,7 +1622,7 @@ static const struct net_device_ops ppp_netdev_ops = {
 	.ndo_fill_forward_path = ppp_fill_forward_path,
 };
 
-static const struct device_type ppp_type = {
+static struct device_type ppp_type = {
 	.name = "ppp",
 };
 
@@ -3549,8 +3564,8 @@ static void __exit ppp_cleanup(void)
 		pr_err("PPP: removing module but units remain!\n");
 	rtnl_link_unregister(&ppp_link_ops);
 	unregister_chrdev(PPP_MAJOR, "ppp");
-	device_destroy(&ppp_class, MKDEV(PPP_MAJOR, 0));
-	class_unregister(&ppp_class);
+	device_destroy(ppp_class, MKDEV(PPP_MAJOR, 0));
+	class_destroy(ppp_class);
 	unregister_pernet_device(&ppp_net_ops);
 }
 
@@ -3604,7 +3619,6 @@ EXPORT_SYMBOL(ppp_input_error);
 EXPORT_SYMBOL(ppp_output_wakeup);
 EXPORT_SYMBOL(ppp_register_compressor);
 EXPORT_SYMBOL(ppp_unregister_compressor);
-MODULE_DESCRIPTION("Generic PPP layer driver");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_CHARDEV(PPP_MAJOR, 0);
 MODULE_ALIAS_RTNL_LINK("ppp");

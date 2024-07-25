@@ -778,8 +778,7 @@ int xfrm_init_replay(struct xfrm_state *x, struct netlink_ext_ack *extack)
 		}
 
 		if (x->props.flags & XFRM_STATE_ESN) {
-			if (replay_esn->replay_window == 0 &&
-			    (!x->dir || x->dir == XFRM_SA_DIR_IN)) {
+			if (replay_esn->replay_window == 0) {
 				NL_SET_ERR_MSG(extack, "ESN replay window must be > 0");
 				return -EINVAL;
 			}

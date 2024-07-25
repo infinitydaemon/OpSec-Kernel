@@ -18,7 +18,6 @@
 #include "xfs_trans.h"
 #include "xfs_buf_item.h"
 #include "xfs_log.h"
-#include "xfs_health.h"
 
 static xfs_failaddr_t xfs_dir2_data_freefind_verify(
 		struct xfs_dir2_data_hdr *hdr, struct xfs_dir2_data_free *bf,
@@ -395,20 +394,17 @@ static const struct xfs_buf_ops xfs_dir3_data_reada_buf_ops = {
 	.verify_write = xfs_dir3_data_write_verify,
 };
 
-xfs_failaddr_t
+static xfs_failaddr_t
 xfs_dir3_data_header_check(
-	struct xfs_buf		*bp,
-	xfs_ino_t		owner)
+	struct xfs_inode	*dp,
+	struct xfs_buf		*bp)
 {
-	struct xfs_mount	*mp = bp->b_mount;
+	struct xfs_mount	*mp = dp->i_mount;
 
 	if (xfs_has_crc(mp)) {
 		struct xfs_dir3_data_hdr *hdr3 = bp->b_addr;
 
-		if (hdr3->hdr.magic != cpu_to_be32(XFS_DIR3_DATA_MAGIC))
-			return __this_address;
-
-		if (be64_to_cpu(hdr3->hdr.owner) != owner)
+		if (be64_to_cpu(hdr3->hdr.owner) != dp->i_ino)
 			return __this_address;
 	}
 
@@ -419,7 +415,6 @@ int
 xfs_dir3_data_read(
 	struct xfs_trans	*tp,
 	struct xfs_inode	*dp,
-	xfs_ino_t		owner,
 	xfs_dablk_t		bno,
 	unsigned int		flags,
 	struct xfs_buf		**bpp)
@@ -433,12 +428,11 @@ xfs_dir3_data_read(
 		return err;
 
 	/* Check things that we can't do in the verifier. */
-	fa = xfs_dir3_data_header_check(*bpp, owner);
+	fa = xfs_dir3_data_header_check(dp, *bpp);
 	if (fa) {
 		__xfs_buf_mark_corrupt(*bpp, fa);
 		xfs_trans_brelse(tp, *bpp);
 		*bpp = NULL;
-		xfs_dirattr_mark_sick(dp, XFS_DATA_FORK);
 		return -EFSCORRUPTED;
 	}
 
@@ -729,7 +723,7 @@ xfs_dir3_data_init(
 		memset(hdr3, 0, sizeof(*hdr3));
 		hdr3->magic = cpu_to_be32(XFS_DIR3_DATA_MAGIC);
 		hdr3->blkno = cpu_to_be64(xfs_buf_daddr(bp));
-		hdr3->owner = cpu_to_be64(args->owner);
+		hdr3->owner = cpu_to_be64(dp->i_ino);
 		uuid_copy(&hdr3->uuid, &mp->m_sb.sb_meta_uuid);
 
 	} else
@@ -1204,7 +1198,6 @@ xfs_dir2_data_use_free(
 corrupt:
 	xfs_corruption_error(__func__, XFS_ERRLEVEL_LOW, args->dp->i_mount,
 			hdr, sizeof(*hdr), __FILE__, __LINE__, fa);
-	xfs_da_mark_sick(args);
 	return -EFSCORRUPTED;
 }
 

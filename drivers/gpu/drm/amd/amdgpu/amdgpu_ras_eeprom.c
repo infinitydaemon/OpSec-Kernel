@@ -149,11 +149,11 @@
 				       RAS_TABLE_HEADER_SIZE - \
 				       RAS_TABLE_V2_1_INFO_SIZE) / RAS_TABLE_RECORD_SIZE)
 
-#define to_amdgpu_device(x) ((container_of(x, struct amdgpu_ras, eeprom_control))->adev)
+#define to_amdgpu_device(x) (container_of(x, struct amdgpu_ras, eeprom_control))->adev
 
 static bool __is_ras_eeprom_supported(struct amdgpu_device *adev)
 {
-	switch (amdgpu_ip_version(adev, MP1_HWIP, 0)) {
+	switch (adev->ip_versions[MP1_HWIP][0]) {
 	case IP_VERSION(11, 0, 2): /* VEGA20 and ARCTURUS */
 	case IP_VERSION(11, 0, 7): /* Sienna cichlid */
 	case IP_VERSION(13, 0, 0):
@@ -191,7 +191,7 @@ static bool __get_eeprom_i2c_addr(struct amdgpu_device *adev,
 		return true;
 	}
 
-	switch (amdgpu_ip_version(adev, MP1_HWIP, 0)) {
+	switch (adev->ip_versions[MP1_HWIP][0]) {
 	case IP_VERSION(11, 0, 2):
 		/* VEGA20 and ARCTURUS */
 		if (adev->asic_type == CHIP_VEGA20)
@@ -404,22 +404,6 @@ static int amdgpu_ras_eeprom_correct_header_tag(
 	return res;
 }
 
-static void amdgpu_ras_set_eeprom_table_version(struct amdgpu_ras_eeprom_control *control)
-{
-	struct amdgpu_device *adev = to_amdgpu_device(control);
-	struct amdgpu_ras_eeprom_table_header *hdr = &control->tbl_hdr;
-
-	switch (amdgpu_ip_version(adev, UMC_HWIP, 0)) {
-	case IP_VERSION(8, 10, 0):
-	case IP_VERSION(12, 0, 0):
-		hdr->version = RAS_TABLE_VER_V2_1;
-		return;
-	default:
-		hdr->version = RAS_TABLE_VER_V1;
-		return;
-	}
-}
-
 /**
  * amdgpu_ras_eeprom_reset_table -- Reset the RAS EEPROM table
  * @control: pointer to control structure
@@ -439,7 +423,11 @@ int amdgpu_ras_eeprom_reset_table(struct amdgpu_ras_eeprom_control *control)
 	mutex_lock(&control->ras_tbl_mutex);
 
 	hdr->header = RAS_TABLE_HDR_VAL;
-	amdgpu_ras_set_eeprom_table_version(control);
+	if (adev->umc.ras &&
+	    adev->umc.ras->set_eeprom_table_version)
+		adev->umc.ras->set_eeprom_table_version(hdr);
+	else
+		hdr->version = RAS_TABLE_VER_V1;
 
 	if (hdr->version == RAS_TABLE_VER_V2_1) {
 		hdr->first_rec_offset = RAS_RECORD_START_V2_1;
@@ -634,8 +622,7 @@ amdgpu_ras_eeprom_append_table(struct amdgpu_ras_eeprom_control *control,
 		__encode_table_record_to_buf(control, &record[i], pp);
 
 		/* update bad channel bitmap */
-		if ((record[i].mem_channel < BITS_PER_TYPE(control->bad_channel_bitmap)) &&
-		    !(control->bad_channel_bitmap & (1 << record[i].mem_channel))) {
+		if (!(control->bad_channel_bitmap & (1 << record[i].mem_channel))) {
 			control->bad_channel_bitmap |= 1 << record[i].mem_channel;
 			con->update_channel_flag = true;
 		}
@@ -747,9 +734,6 @@ amdgpu_ras_eeprom_update_header(struct amdgpu_ras_eeprom_control *control)
 			control->tbl_rai.rma_status = GPU_RETIRED__ECC_REACH_THRESHOLD;
 			control->tbl_rai.health_percent = 0;
 		}
-
-		/* ignore the -ENOTSUPP return value */
-		amdgpu_dpm_send_rma_reason(adev);
 	}
 
 	if (control->tbl_hdr.version == RAS_TABLE_VER_V2_1)
@@ -991,8 +975,7 @@ int amdgpu_ras_eeprom_read(struct amdgpu_ras_eeprom_control *control,
 		__decode_table_record_from_buf(control, &record[i], pp);
 
 		/* update bad channel bitmap */
-		if ((record[i].mem_channel < BITS_PER_TYPE(control->bad_channel_bitmap)) &&
-		    !(control->bad_channel_bitmap & (1 << record[i].mem_channel))) {
+		if (!(control->bad_channel_bitmap & (1 << record[i].mem_channel))) {
 			control->bad_channel_bitmap |= 1 << record[i].mem_channel;
 			con->update_channel_flag = true;
 		}

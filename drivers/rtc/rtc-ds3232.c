@@ -536,8 +536,6 @@ static int ds3232_probe(struct device *dev, struct regmap *regmap, int irq,
 	return 0;
 }
 
-#if IS_ENABLED(CONFIG_I2C)
-
 #ifdef CONFIG_PM_SLEEP
 static int ds3232_suspend(struct device *dev)
 {
@@ -565,6 +563,8 @@ static int ds3232_resume(struct device *dev)
 static const struct dev_pm_ops ds3232_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(ds3232_suspend, ds3232_resume)
 };
+
+#if IS_ENABLED(CONFIG_I2C)
 
 static int ds3232_i2c_probe(struct i2c_client *client)
 {
@@ -701,9 +701,16 @@ static int ds3234_probe(struct spi_device *spi)
 	return ds3232_probe(&spi->dev, regmap, spi->irq, "ds3234");
 }
 
+static const  __maybe_unused struct of_device_id ds3234_of_match[] = {
+	{ .compatible = "dallas,ds3234" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, ds3234_of_match);
+
 static struct spi_driver ds3234_driver = {
 	.driver = {
 		.name	 = "ds3234",
+		.of_match_table = of_match_ptr(ds3234_of_match),
 	},
 	.probe	 = ds3234_probe,
 };

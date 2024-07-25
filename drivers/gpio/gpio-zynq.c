@@ -1010,7 +1010,7 @@ err_pm_dis:
  *
  * Return: 0 always
  */
-static void zynq_gpio_remove(struct platform_device *pdev)
+static int zynq_gpio_remove(struct platform_device *pdev)
 {
 	struct zynq_gpio *gpio = platform_get_drvdata(pdev);
 	int ret;
@@ -1022,6 +1022,7 @@ static void zynq_gpio_remove(struct platform_device *pdev)
 	clk_disable_unprepare(gpio->clk);
 	device_set_wakeup_capable(&pdev->dev, 0);
 	pm_runtime_disable(&pdev->dev);
+	return 0;
 }
 
 static struct platform_driver zynq_gpio_driver = {
@@ -1031,7 +1032,7 @@ static struct platform_driver zynq_gpio_driver = {
 		.of_match_table = zynq_gpio_of_match,
 	},
 	.probe = zynq_gpio_probe,
-	.remove_new = zynq_gpio_remove,
+	.remove = zynq_gpio_remove,
 };
 
 module_platform_driver(zynq_gpio_driver);

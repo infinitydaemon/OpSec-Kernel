@@ -2,8 +2,6 @@
 /* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  */
 
-#include <linux/debugfs.h>
-
 #include "dpu_hwio.h"
 #include "dpu_hw_catalog.h"
 #include "dpu_hw_lm.h"
@@ -13,7 +11,6 @@
 #include "msm_mdss.h"
 
 #include <drm/drm_file.h>
-#include <drm/drm_managed.h>
 
 #define DPU_FETCH_CONFIG_RESET_VALUE   0x00000087
 
@@ -72,7 +69,6 @@
 #define SSPP_EXCL_REC_XY_REC1              0x188
 #define SSPP_EXCL_REC_SIZE                 0x1B4
 #define SSPP_EXCL_REC_XY                   0x1B8
-#define SSPP_CLK_CTRL                      0x330
 
 /* SSPP_SRC_OP_MODE & OP_MODE_REC1 */
 #define MDSS_MDP_OP_DEINTERLACE            BIT(22)
@@ -208,7 +204,7 @@ static void _sspp_setup_csc10_opmode(struct dpu_hw_sspp *ctx,
  * Setup source pixel format, flip,
  */
 static void dpu_hw_sspp_setup_format(struct dpu_sw_pipe *pipe,
-		const struct msm_format *fmt, u32 flags)
+		const struct dpu_format *fmt, u32 flags)
 {
 	struct dpu_hw_sspp *ctx = pipe->sspp;
 	struct dpu_hw_blk_reg_map *c;
@@ -243,20 +239,20 @@ static void dpu_hw_sspp_setup_format(struct dpu_sw_pipe *pipe,
 
 	chroma_samp = fmt->chroma_sample;
 	if (flags & DPU_SSPP_SOURCE_ROTATED_90) {
-		if (chroma_samp == CHROMA_H2V1)
-			chroma_samp = CHROMA_H1V2;
-		else if (chroma_samp == CHROMA_H1V2)
-			chroma_samp = CHROMA_H2V1;
+		if (chroma_samp == DPU_CHROMA_H2V1)
+			chroma_samp = DPU_CHROMA_H1V2;
+		else if (chroma_samp == DPU_CHROMA_H1V2)
+			chroma_samp = DPU_CHROMA_H2V1;
 	}
 
-	src_format = (chroma_samp << 23) | (fmt->fetch_type << 19) |
-		(fmt->bpc_a << 6) | (fmt->bpc_r_cr << 4) |
-		(fmt->bpc_b_cb << 2) | (fmt->bpc_g_y << 0);
+	src_format = (chroma_samp << 23) | (fmt->fetch_planes << 19) |
+		(fmt->bits[C3_ALPHA] << 6) | (fmt->bits[C2_R_Cr] << 4) |
+		(fmt->bits[C1_B_Cb] << 2) | (fmt->bits[C0_G_Y] << 0);
 
 	if (flags & DPU_SSPP_ROT_90)
 		src_format |= BIT(11); /* ROT90 */
 
-	if (fmt->alpha_enable && fmt->fetch_type == MDP_PLANE_INTERLEAVED)
+	if (fmt->alpha_enable && fmt->fetch_planes == DPU_PLANE_INTERLEAVED)
 		src_format |= BIT(8); /* SRCC3_EN */
 
 	if (flags & DPU_SSPP_SOLID_FILL)
@@ -265,12 +261,12 @@ static void dpu_hw_sspp_setup_format(struct dpu_sw_pipe *pipe,
 	unpack = (fmt->element[3] << 24) | (fmt->element[2] << 16) |
 		(fmt->element[1] << 8) | (fmt->element[0] << 0);
 	src_format |= ((fmt->unpack_count - 1) << 12) |
-		((fmt->flags & MSM_FORMAT_FLAG_UNPACK_TIGHT ? 1 : 0) << 17) |
-		((fmt->flags & MSM_FORMAT_FLAG_UNPACK_ALIGN_MSB ? 1 : 0) << 18) |
+		(fmt->unpack_tight << 17) |
+		(fmt->unpack_align_msb << 18) |
 		((fmt->bpp - 1) << 9);
 
-	if (fmt->fetch_mode != MDP_FETCH_LINEAR) {
-		if (MSM_FORMAT_IS_UBWC(fmt))
+	if (fmt->fetch_mode != DPU_FETCH_LINEAR) {
+		if (DPU_FORMAT_IS_UBWC(fmt))
 			opmode |= MDSS_MDP_OP_BWC_EN;
 		src_format |= (fmt->fetch_mode & 3) << 30; /*FRAME_FORMAT */
 		DPU_REG_WRITE(c, SSPP_FETCH_CONFIG,
@@ -297,7 +293,7 @@ static void dpu_hw_sspp_setup_format(struct dpu_sw_pipe *pipe,
 			break;
 		case UBWC_4_0:
 			DPU_REG_WRITE(c, SSPP_UBWC_STATIC_CTRL,
-					MSM_FORMAT_IS_YUV(fmt) ? 0 : BIT(30));
+					DPU_FORMAT_IS_YUV(fmt) ? 0 : BIT(30));
 			break;
 		}
 	}
@@ -305,20 +301,20 @@ static void dpu_hw_sspp_setup_format(struct dpu_sw_pipe *pipe,
 	opmode |= MDSS_MDP_OP_PE_OVERRIDE;
 
 	/* if this is YUV pixel format, enable CSC */
-	if (MSM_FORMAT_IS_YUV(fmt))
+	if (DPU_FORMAT_IS_YUV(fmt))
 		src_format |= BIT(15);
 
-	if (MSM_FORMAT_IS_DX(fmt))
+	if (DPU_FORMAT_IS_DX(fmt))
 		src_format |= BIT(14);
 
 	/* update scaler opmode, if appropriate */
 	if (test_bit(DPU_SSPP_CSC, &ctx->cap->features))
 		_sspp_setup_opmode(ctx, VIG_OP_CSC_EN | VIG_OP_CSC_SRC_DATAFMT,
-			MSM_FORMAT_IS_YUV(fmt));
+			DPU_FORMAT_IS_YUV(fmt));
 	else if (test_bit(DPU_SSPP_CSC_10BIT, &ctx->cap->features))
 		_sspp_setup_csc10_opmode(ctx,
 			VIG_CSC_10_EN | VIG_CSC_10_SRC_DATAFMT,
-			MSM_FORMAT_IS_YUV(fmt));
+			DPU_FORMAT_IS_YUV(fmt));
 
 	DPU_REG_WRITE(c, format_off, src_format);
 	DPU_REG_WRITE(c, unpack_pat_off, unpack);
@@ -387,7 +383,7 @@ static void dpu_hw_sspp_setup_pe_config(struct dpu_hw_sspp *ctx,
 
 static void _dpu_hw_sspp_setup_scaler3(struct dpu_hw_sspp *ctx,
 		struct dpu_hw_scaler3_cfg *scaler3_cfg,
-		const struct msm_format *format)
+		const struct dpu_format *format)
 {
 	if (!ctx || !scaler3_cfg)
 		return;
@@ -396,6 +392,15 @@ static void _dpu_hw_sspp_setup_scaler3(struct dpu_hw_sspp *ctx,
 			ctx->cap->sblk->scaler_blk.base,
 			ctx->cap->sblk->scaler_blk.version,
 			format);
+}
+
+static u32 _dpu_hw_sspp_get_scaler3_ver(struct dpu_hw_sspp *ctx)
+{
+	if (!ctx)
+		return 0;
+
+	return dpu_hw_get_scaler3_ver(&ctx->hw,
+				      ctx->cap->sblk->scaler_blk.base);
 }
 
 /*
@@ -558,7 +563,7 @@ static void dpu_hw_sspp_setup_qos_ctrl(struct dpu_hw_sspp *ctx,
 }
 
 static void dpu_hw_sspp_setup_cdp(struct dpu_sw_pipe *pipe,
-				  const struct msm_format *fmt,
+				  const struct dpu_format *fmt,
 				  bool enable)
 {
 	struct dpu_hw_sspp *ctx = pipe->sspp;
@@ -576,18 +581,8 @@ static void dpu_hw_sspp_setup_cdp(struct dpu_sw_pipe *pipe,
 	dpu_setup_cdp(&ctx->hw, cdp_cntl_offset, fmt, enable);
 }
 
-static bool dpu_hw_sspp_setup_clk_force_ctrl(struct dpu_hw_sspp *ctx, bool enable)
-{
-	static const struct dpu_clk_ctrl_reg sspp_clk_ctrl = {
-		.reg_off = SSPP_CLK_CTRL,
-		.bit_off = 0
-	};
-
-	return dpu_hw_clk_force_ctrl(&ctx->hw, &sspp_clk_ctrl, enable);
-}
-
 static void _setup_layer_ops(struct dpu_hw_sspp *c,
-		unsigned long features, const struct dpu_mdss_version *mdss_rev)
+		unsigned long features)
 {
 	c->ops.setup_format = dpu_hw_sspp_setup_format;
 	c->ops.setup_rects = dpu_hw_sspp_setup_rects;
@@ -608,14 +603,15 @@ static void _setup_layer_ops(struct dpu_hw_sspp *c,
 		test_bit(DPU_SSPP_SMART_DMA_V2, &c->cap->features))
 		c->ops.setup_multirect = dpu_hw_sspp_setup_multirect;
 
-	if (test_bit(DPU_SSPP_SCALER_QSEED3_COMPATIBLE, &features))
+	if (test_bit(DPU_SSPP_SCALER_QSEED3, &features) ||
+			test_bit(DPU_SSPP_SCALER_QSEED3LITE, &features) ||
+			test_bit(DPU_SSPP_SCALER_QSEED4, &features)) {
 		c->ops.setup_scaler = _dpu_hw_sspp_setup_scaler3;
+		c->ops.get_scaler_ver = _dpu_hw_sspp_get_scaler3_ver;
+	}
 
 	if (test_bit(DPU_SSPP_CDP, &features))
 		c->ops.setup_cdp = dpu_hw_sspp_setup_cdp;
-
-	if (mdss_rev->core_major_ver >= 9)
-		c->ops.setup_clk_force_ctrl = dpu_hw_sspp_setup_clk_force_ctrl;
 }
 
 #ifdef CONFIG_DEBUG_FS
@@ -644,7 +640,10 @@ int _dpu_hw_sspp_init_debugfs(struct dpu_hw_sspp *hw_pipe, struct dpu_kms *kms,
 			cfg->len,
 			kms);
 
-	if (sblk->scaler_blk.len)
+	if (cfg->features & BIT(DPU_SSPP_SCALER_QSEED3) ||
+			cfg->features & BIT(DPU_SSPP_SCALER_QSEED3LITE) ||
+			cfg->features & BIT(DPU_SSPP_SCALER_QSEED2) ||
+			cfg->features & BIT(DPU_SSPP_SCALER_QSEED4))
 		dpu_debugfs_create_regset32("scaler_blk", 0400,
 				debugfs_root,
 				sblk->scaler_blk.base + cfg->base,
@@ -672,18 +671,15 @@ int _dpu_hw_sspp_init_debugfs(struct dpu_hw_sspp *hw_pipe, struct dpu_kms *kms,
 }
 #endif
 
-struct dpu_hw_sspp *dpu_hw_sspp_init(struct drm_device *dev,
-				     const struct dpu_sspp_cfg *cfg,
-				     void __iomem *addr,
-				     const struct msm_mdss_data *mdss_data,
-				     const struct dpu_mdss_version *mdss_rev)
+struct dpu_hw_sspp *dpu_hw_sspp_init(const struct dpu_sspp_cfg *cfg,
+		void __iomem *addr, const struct msm_mdss_data *mdss_data)
 {
 	struct dpu_hw_sspp *hw_pipe;
 
 	if (!addr)
 		return ERR_PTR(-EINVAL);
 
-	hw_pipe = drmm_kzalloc(dev, sizeof(*hw_pipe), GFP_KERNEL);
+	hw_pipe = kzalloc(sizeof(*hw_pipe), GFP_KERNEL);
 	if (!hw_pipe)
 		return ERR_PTR(-ENOMEM);
 
@@ -694,7 +690,13 @@ struct dpu_hw_sspp *dpu_hw_sspp_init(struct drm_device *dev,
 	hw_pipe->ubwc = mdss_data;
 	hw_pipe->idx = cfg->id;
 	hw_pipe->cap = cfg;
-	_setup_layer_ops(hw_pipe, hw_pipe->cap->features, mdss_rev);
+	_setup_layer_ops(hw_pipe, hw_pipe->cap->features);
 
 	return hw_pipe;
 }
+
+void dpu_hw_sspp_destroy(struct dpu_hw_sspp *ctx)
+{
+	kfree(ctx);
+}
+

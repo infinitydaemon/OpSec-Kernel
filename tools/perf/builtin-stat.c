@@ -164,6 +164,26 @@ static struct perf_stat_config stat_config = {
 	.iostat_run		= false,
 };
 
+static bool cpus_map_matched(struct evsel *a, struct evsel *b)
+{
+	if (!a->core.cpus && !b->core.cpus)
+		return true;
+
+	if (!a->core.cpus || !b->core.cpus)
+		return false;
+
+	if (perf_cpu_map__nr(a->core.cpus) != perf_cpu_map__nr(b->core.cpus))
+		return false;
+
+	for (int i = 0; i < perf_cpu_map__nr(a->core.cpus); i++) {
+		if (perf_cpu_map__cpu(a->core.cpus, i).cpu !=
+		    perf_cpu_map__cpu(b->core.cpus, i).cpu)
+			return false;
+	}
+
+	return true;
+}
+
 static void evlist__check_cpu_maps(struct evlist *evlist)
 {
 	struct evsel *evsel, *warned_leader = NULL;
@@ -174,7 +194,7 @@ static void evlist__check_cpu_maps(struct evlist *evlist)
 		/* Check that leader matches cpus with each member. */
 		if (leader == evsel)
 			continue;
-		if (perf_cpu_map__equal(leader->core.cpus, evsel->core.cpus))
+		if (cpus_map_matched(leader, evsel))
 			continue;
 
 		/* If there's mismatch disable the group and warn user. */
@@ -633,7 +653,7 @@ static enum counter_recovery stat_handle_error(struct evsel *counter)
 		if ((evsel__leader(counter) != counter) ||
 		    !(counter->core.leader->nr_members > 1))
 			return COUNTER_SKIP;
-	} else if (evsel__fallback(counter, &target, errno, msg, sizeof(msg))) {
+	} else if (evsel__fallback(counter, errno, msg, sizeof(msg))) {
 		if (verbose > 0)
 			ui__warning("%s\n", msg);
 		return COUNTER_RETRY;
@@ -1184,9 +1204,8 @@ static struct option stat_options[] = {
 	OPT_STRING('C', "cpu", &target.cpu_list, "cpu",
 		    "list of cpus to monitor in system-wide"),
 	OPT_SET_UINT('A', "no-aggr", &stat_config.aggr_mode,
-		    "disable aggregation across CPUs or PMUs", AGGR_NONE),
-	OPT_SET_UINT(0, "no-merge", &stat_config.aggr_mode,
-		    "disable aggregation the same as -A or -no-aggr", AGGR_NONE),
+		    "disable CPU count aggregation", AGGR_NONE),
+	OPT_BOOLEAN(0, "no-merge", &stat_config.no_merge, "Do not merge identical named events"),
 	OPT_BOOLEAN(0, "hybrid-merge", &stat_config.hybrid_merge,
 		    "Merge identical named hybrid events"),
 	OPT_STRING('x', "field-separator", &stat_config.csv_sep, "separator",
@@ -1218,8 +1237,6 @@ static struct option stat_options[] = {
 		     "aggregate counts per processor socket", AGGR_SOCKET),
 	OPT_SET_UINT(0, "per-die", &stat_config.aggr_mode,
 		     "aggregate counts per processor die", AGGR_DIE),
-	OPT_SET_UINT(0, "per-cluster", &stat_config.aggr_mode,
-		     "aggregate counts per processor cluster", AGGR_CLUSTER),
 	OPT_CALLBACK_OPTARG(0, "per-cache", &stat_config.aggr_mode, &stat_config.aggr_level,
 			    "cache level", "aggregate count at this cache level (Default: LLC)",
 			    parse_cache_level),
@@ -1238,7 +1255,7 @@ static struct option stat_options[] = {
 	OPT_BOOLEAN(0, "metric-no-merge", &stat_config.metric_no_merge,
 		       "don't try to share events between metrics in a group"),
 	OPT_BOOLEAN(0, "metric-no-threshold", &stat_config.metric_no_threshold,
-		       "disable adding events for the metric threshold calculation"),
+		       "don't try to share events between metrics in a group  "),
 	OPT_BOOLEAN(0, "topdown", &topdown_run,
 			"measure top-down statistics"),
 	OPT_UINTEGER(0, "td-level", &stat_config.topdown_level,
@@ -1299,9 +1316,10 @@ static int cpu__get_cache_id_from_map(struct perf_cpu cpu, char *map)
 	 * be the first online CPU in the cache domain else use the
 	 * first online CPU of the cache domain as the ID.
 	 */
-	id = perf_cpu_map__min(cpu_map).cpu;
-	if (id == -1)
+	if (perf_cpu_map__empty(cpu_map))
 		id = cpu.cpu;
+	else
+		id = perf_cpu_map__cpu(cpu_map, 0).cpu;
 
 	/* Free the perf_cpu_map used to find the cache ID */
 	perf_cpu_map__put(cpu_map);
@@ -1409,7 +1427,6 @@ static struct aggr_cpu_id aggr_cpu_id__cache(struct perf_cpu cpu, void *data)
 static const char *const aggr_mode__string[] = {
 	[AGGR_CORE] = "core",
 	[AGGR_CACHE] = "cache",
-	[AGGR_CLUSTER] = "cluster",
 	[AGGR_DIE] = "die",
 	[AGGR_GLOBAL] = "global",
 	[AGGR_NODE] = "node",
@@ -1435,12 +1452,6 @@ static struct aggr_cpu_id perf_stat__get_cache_id(struct perf_stat_config *confi
 						  struct perf_cpu cpu)
 {
 	return aggr_cpu_id__cache(cpu, /*data=*/NULL);
-}
-
-static struct aggr_cpu_id perf_stat__get_cluster(struct perf_stat_config *config __maybe_unused,
-						 struct perf_cpu cpu)
-{
-	return aggr_cpu_id__cluster(cpu, /*data=*/NULL);
 }
 
 static struct aggr_cpu_id perf_stat__get_core(struct perf_stat_config *config __maybe_unused,
@@ -1495,12 +1506,6 @@ static struct aggr_cpu_id perf_stat__get_die_cached(struct perf_stat_config *con
 	return perf_stat__get_aggr(config, perf_stat__get_die, cpu);
 }
 
-static struct aggr_cpu_id perf_stat__get_cluster_cached(struct perf_stat_config *config,
-							struct perf_cpu cpu)
-{
-	return perf_stat__get_aggr(config, perf_stat__get_cluster, cpu);
-}
-
 static struct aggr_cpu_id perf_stat__get_cache_id_cached(struct perf_stat_config *config,
 							 struct perf_cpu cpu)
 {
@@ -1538,8 +1543,6 @@ static aggr_cpu_id_get_t aggr_mode__get_aggr(enum aggr_mode aggr_mode)
 		return aggr_cpu_id__socket;
 	case AGGR_DIE:
 		return aggr_cpu_id__die;
-	case AGGR_CLUSTER:
-		return aggr_cpu_id__cluster;
 	case AGGR_CACHE:
 		return aggr_cpu_id__cache;
 	case AGGR_CORE:
@@ -1565,8 +1568,6 @@ static aggr_get_id_t aggr_mode__get_id(enum aggr_mode aggr_mode)
 		return perf_stat__get_socket_cached;
 	case AGGR_DIE:
 		return perf_stat__get_die_cached;
-	case AGGR_CLUSTER:
-		return perf_stat__get_cluster_cached;
 	case AGGR_CACHE:
 		return perf_stat__get_cache_id_cached;
 	case AGGR_CORE:
@@ -1621,7 +1622,7 @@ static int perf_stat_init_aggr_mode(void)
 	 * taking the highest cpu number to be the size of
 	 * the aggregation translate cpumap.
 	 */
-	if (!perf_cpu_map__is_any_cpu_or_is_empty(evsel_list->core.user_requested_cpus))
+	if (!perf_cpu_map__empty(evsel_list->core.user_requested_cpus))
 		nr = perf_cpu_map__max(evsel_list->core.user_requested_cpus).cpu;
 	else
 		nr = 0;
@@ -1631,13 +1632,23 @@ static int perf_stat_init_aggr_mode(void)
 
 static void cpu_aggr_map__delete(struct cpu_aggr_map *map)
 {
-	free(map);
+	if (map) {
+		WARN_ONCE(refcount_read(&map->refcnt) != 0,
+			  "cpu_aggr_map refcnt unbalanced\n");
+		free(map);
+	}
+}
+
+static void cpu_aggr_map__put(struct cpu_aggr_map *map)
+{
+	if (map && refcount_dec_and_test(&map->refcnt))
+		cpu_aggr_map__delete(map);
 }
 
 static void perf_stat__exit_aggr_mode(void)
 {
-	cpu_aggr_map__delete(stat_config.aggr_map);
-	cpu_aggr_map__delete(stat_config.cpus_aggr_map);
+	cpu_aggr_map__put(stat_config.aggr_map);
+	cpu_aggr_map__put(stat_config.cpus_aggr_map);
 	stat_config.aggr_map = NULL;
 	stat_config.cpus_aggr_map = NULL;
 }
@@ -1725,21 +1736,6 @@ static struct aggr_cpu_id perf_env__get_cache_aggr_by_cpu(struct perf_cpu cpu,
 	return id;
 }
 
-static struct aggr_cpu_id perf_env__get_cluster_aggr_by_cpu(struct perf_cpu cpu,
-							    void *data)
-{
-	struct perf_env *env = data;
-	struct aggr_cpu_id id = aggr_cpu_id__empty();
-
-	if (cpu.cpu != -1) {
-		id.socket = env->cpu[cpu.cpu].socket_id;
-		id.die = env->cpu[cpu.cpu].die_id;
-		id.cluster = env->cpu[cpu.cpu].cluster_id;
-	}
-
-	return id;
-}
-
 static struct aggr_cpu_id perf_env__get_core_aggr_by_cpu(struct perf_cpu cpu, void *data)
 {
 	struct perf_env *env = data;
@@ -1747,12 +1743,12 @@ static struct aggr_cpu_id perf_env__get_core_aggr_by_cpu(struct perf_cpu cpu, vo
 
 	if (cpu.cpu != -1) {
 		/*
-		 * core_id is relative to socket, die and cluster, we need a
-		 * global id. So we set socket, die id, cluster id and core id.
+		 * core_id is relative to socket and die,
+		 * we need a global id. So we set
+		 * socket, die id and core id
 		 */
 		id.socket = env->cpu[cpu.cpu].socket_id;
 		id.die = env->cpu[cpu.cpu].die_id;
-		id.cluster = env->cpu[cpu.cpu].cluster_id;
 		id.core = env->cpu[cpu.cpu].core_id;
 	}
 
@@ -1808,12 +1804,6 @@ static struct aggr_cpu_id perf_stat__get_die_file(struct perf_stat_config *confi
 	return perf_env__get_die_aggr_by_cpu(cpu, &perf_stat.session->header.env);
 }
 
-static struct aggr_cpu_id perf_stat__get_cluster_file(struct perf_stat_config *config __maybe_unused,
-						      struct perf_cpu cpu)
-{
-	return perf_env__get_cluster_aggr_by_cpu(cpu, &perf_stat.session->header.env);
-}
-
 static struct aggr_cpu_id perf_stat__get_cache_file(struct perf_stat_config *config __maybe_unused,
 						    struct perf_cpu cpu)
 {
@@ -1851,8 +1841,6 @@ static aggr_cpu_id_get_t aggr_mode__get_aggr_file(enum aggr_mode aggr_mode)
 		return perf_env__get_socket_aggr_by_cpu;
 	case AGGR_DIE:
 		return perf_env__get_die_aggr_by_cpu;
-	case AGGR_CLUSTER:
-		return perf_env__get_cluster_aggr_by_cpu;
 	case AGGR_CACHE:
 		return perf_env__get_cache_aggr_by_cpu;
 	case AGGR_CORE:
@@ -1878,8 +1866,6 @@ static aggr_get_id_t aggr_mode__get_id_file(enum aggr_mode aggr_mode)
 		return perf_stat__get_socket_file;
 	case AGGR_DIE:
 		return perf_stat__get_die_file;
-	case AGGR_CLUSTER:
-		return perf_stat__get_cluster_file;
 	case AGGR_CACHE:
 		return perf_stat__get_cache_file;
 	case AGGR_CORE:
@@ -2075,7 +2061,6 @@ static int add_default_attributes(void)
 						stat_config.metric_no_threshold,
 						stat_config.user_requested_cpu_list,
 						stat_config.system_wide,
-						stat_config.hardware_aware_grouping,
 						&stat_config.metric_events);
 	}
 
@@ -2109,7 +2094,6 @@ static int add_default_attributes(void)
 						stat_config.metric_no_threshold,
 						stat_config.user_requested_cpu_list,
 						stat_config.system_wide,
-						stat_config.hardware_aware_grouping,
 						&stat_config.metric_events);
 	}
 
@@ -2144,7 +2128,6 @@ static int add_default_attributes(void)
 						/*metric_no_threshold=*/true,
 						stat_config.user_requested_cpu_list,
 						stat_config.system_wide,
-						stat_config.hardware_aware_grouping,
 						&stat_config.metric_events) < 0)
 			return -1;
 	}
@@ -2186,7 +2169,6 @@ static int add_default_attributes(void)
 							/*metric_no_threshold=*/true,
 							stat_config.user_requested_cpu_list,
 							stat_config.system_wide,
-							stat_config.hardware_aware_grouping,
 							&stat_config.metric_events) < 0)
 				return -1;
 
@@ -2307,7 +2289,7 @@ int process_stat_config_event(struct perf_session *session,
 
 	perf_event__read_stat_config(&stat_config, &event->stat_config);
 
-	if (perf_cpu_map__is_empty(st->cpus)) {
+	if (perf_cpu_map__empty(st->cpus)) {
 		if (st->aggr_mode != AGGR_UNSET)
 			pr_warning("warning: processing task data, aggregation mode not set\n");
 	} else if (st->aggr_mode != AGGR_UNSET) {
@@ -2415,8 +2397,6 @@ static int __cmd_report(int argc, const char **argv)
 		     "aggregate counts per processor socket", AGGR_SOCKET),
 	OPT_SET_UINT(0, "per-die", &perf_stat.aggr_mode,
 		     "aggregate counts per processor die", AGGR_DIE),
-	OPT_SET_UINT(0, "per-cluster", &perf_stat.aggr_mode,
-		     "aggregate counts perf processor cluster", AGGR_CLUSTER),
 	OPT_CALLBACK_OPTARG(0, "per-cache", &perf_stat.aggr_mode, &perf_stat.aggr_level,
 			    "cache level",
 			    "aggregate count at this cache level (Default: LLC)",
@@ -2721,7 +2701,6 @@ int cmd_stat(int argc, const char **argv)
 						stat_config.metric_no_threshold,
 						stat_config.user_requested_cpu_list,
 						stat_config.system_wide,
-						stat_config.hardware_aware_grouping,
 						&stat_config.metric_events);
 
 		zfree(&metrics);

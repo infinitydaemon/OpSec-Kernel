@@ -32,10 +32,9 @@
 #include <drm/ttm/ttm_caching.h>
 
 struct device;
-struct seq_file;
-struct ttm_operation_ctx;
-struct ttm_pool;
 struct ttm_tt;
+struct ttm_pool;
+struct ttm_operation_ctx;
 
 /**
  * struct ttm_pool_type - Pool for a certain memory type

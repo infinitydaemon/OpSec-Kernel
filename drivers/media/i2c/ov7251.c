@@ -23,6 +23,10 @@
 #include <media/v4l2-fwnode.h>
 #include <media/v4l2-subdev.h>
 
+static int trigger_mode;
+module_param(trigger_mode, int, 0644);
+MODULE_PARM_DESC(trigger_mode, "Set vsync trigger mode: 0=standalone, (1=source - not implemented), 2=sink");
+
 #define OV7251_SC_MODE_SELECT		0x0100
 #define OV7251_SC_MODE_SELECT_SW_STANDBY	0x0
 #define OV7251_SC_MODE_SELECT_STREAMING		0x1
@@ -525,7 +529,6 @@ static const struct reg_value ov7251_setting_vga_90fps[] = {
 	{ 0x3662, 0x01 },
 	{ 0x3663, 0x70 },
 	{ 0x3664, 0x50 },
-	{ 0x3666, 0x0a },
 	{ 0x3669, 0x1a },
 	{ 0x366a, 0x00 },
 	{ 0x366b, 0x50 },
@@ -592,9 +595,8 @@ static const struct reg_value ov7251_setting_vga_90fps[] = {
 	{ 0x3c00, 0x89 },
 	{ 0x3c01, 0x63 },
 	{ 0x3c02, 0x01 },
-	{ 0x3c03, 0x00 },
 	{ 0x3c04, 0x00 },
-	{ 0x3c05, 0x03 },
+	{ 0x3c05, 0x01 },
 	{ 0x3c06, 0x00 },
 	{ 0x3c07, 0x06 },
 	{ 0x3c0c, 0x01 },
@@ -622,6 +624,16 @@ static const struct reg_value ov7251_setting_vga_90fps[] = {
 	{ 0x4a4b, 0x30 },
 	{ 0x5000, 0x85 },
 	{ 0x5001, 0x80 },
+};
+
+static const struct reg_value ov7251_ext_trig_on[] = {
+	{ 0x3666, 0x00 },
+	{ 0x3c03, 0x17 },
+};
+
+static const struct reg_value ov7251_ext_trig_off[] = {
+	{ 0x3666, 0x0a },
+	{ 0x3c03, 0x00 },
 };
 
 static const unsigned long supported_xclk_rates[] = {
@@ -1051,7 +1063,7 @@ static int ov7251_s_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_EXPOSURE:
 		ret = ov7251_set_exposure(ov7251, ctrl->val);
 		break;
-	case V4L2_CID_GAIN:
+	case V4L2_CID_ANALOGUE_GAIN:
 		ret = ov7251_set_gain(ov7251, ctrl->val);
 		break;
 	case V4L2_CID_TEST_PATTERN:
@@ -1139,7 +1151,7 @@ __ov7251_get_pad_format(struct ov7251 *ov7251,
 {
 	switch (which) {
 	case V4L2_SUBDEV_FORMAT_TRY:
-		return v4l2_subdev_state_get_format(sd_state, pad);
+		return v4l2_subdev_get_try_format(&ov7251->sd, sd_state, pad);
 	case V4L2_SUBDEV_FORMAT_ACTIVE:
 		return &ov7251->fmt;
 	default:
@@ -1169,7 +1181,7 @@ __ov7251_get_pad_crop(struct ov7251 *ov7251,
 {
 	switch (which) {
 	case V4L2_SUBDEV_FORMAT_TRY:
-		return v4l2_subdev_state_get_crop(sd_state, pad);
+		return v4l2_subdev_get_try_crop(&ov7251->sd, sd_state, pad);
 	case V4L2_SUBDEV_FORMAT_ACTIVE:
 		return &ov7251->crop;
 	default:
@@ -1282,8 +1294,8 @@ exit:
 	return ret;
 }
 
-static int ov7251_init_state(struct v4l2_subdev *subdev,
-			     struct v4l2_subdev_state *sd_state)
+static int ov7251_entity_init_cfg(struct v4l2_subdev *subdev,
+				  struct v4l2_subdev_state *sd_state)
 {
 	struct v4l2_subdev_format fmt = {
 		.which = sd_state ? V4L2_SUBDEV_FORMAT_TRY
@@ -1340,10 +1352,16 @@ static int ov7251_s_stream(struct v4l2_subdev *subdev, int enable)
 	mutex_lock(&ov7251->lock);
 
 	if (enable) {
-		ret = pm_runtime_resume_and_get(ov7251->dev);
-		if (ret) {
-			mutex_unlock(&ov7251->lock);
-			return ret;
+		ret = pm_runtime_get_sync(ov7251->dev);
+		if (ret < 0)
+			goto err_power_down;
+
+		ret = ov7251_set_register_array(ov7251,
+					ov7251_global_init_setting,
+					ARRAY_SIZE(ov7251_global_init_setting));
+		if (ret < 0) {
+			dev_err(ov7251->dev, "could not set global_init_setting\n");
+			goto err_power_down;
 		}
 
 		ret = ov7251_pll_configure(ov7251);
@@ -1366,6 +1384,23 @@ static int ov7251_s_stream(struct v4l2_subdev *subdev, int enable)
 			dev_err(ov7251->dev, "could not sync v4l2 controls\n");
 			goto err_power_down;
 		}
+
+		/* Set vsync trigger mode */
+		switch (trigger_mode) {
+		case 2:
+			ov7251_set_register_array(ov7251,
+						  ov7251_ext_trig_on,
+						  ARRAY_SIZE(ov7251_ext_trig_on));
+			break;
+		case 0:
+		default:
+			/* case 1 for ext trig source currently not implemented */
+			ov7251_set_register_array(ov7251,
+						  ov7251_ext_trig_off,
+						  ARRAY_SIZE(ov7251_ext_trig_off));
+			break;
+		}
+
 		ret = ov7251_write_reg(ov7251, OV7251_SC_MODE_SELECT,
 				       OV7251_SC_MODE_SELECT_STREAMING);
 		if (ret)
@@ -1386,17 +1421,9 @@ err_power_down:
 }
 
 static int ov7251_get_frame_interval(struct v4l2_subdev *subdev,
-				     struct v4l2_subdev_state *sd_state,
 				     struct v4l2_subdev_frame_interval *fi)
 {
 	struct ov7251 *ov7251 = to_ov7251(subdev);
-
-	/*
-	 * FIXME: Implement support for V4L2_SUBDEV_FORMAT_TRY, using the V4L2
-	 * subdev active state API.
-	 */
-	if (fi->which != V4L2_SUBDEV_FORMAT_ACTIVE)
-		return -EINVAL;
 
 	mutex_lock(&ov7251->lock);
 	fi->interval = ov7251->current_mode->timeperframe;
@@ -1406,19 +1433,11 @@ static int ov7251_get_frame_interval(struct v4l2_subdev *subdev,
 }
 
 static int ov7251_set_frame_interval(struct v4l2_subdev *subdev,
-				     struct v4l2_subdev_state *sd_state,
 				     struct v4l2_subdev_frame_interval *fi)
 {
 	struct ov7251 *ov7251 = to_ov7251(subdev);
 	const struct ov7251_mode_info *new_mode;
 	int ret = 0;
-
-	/*
-	 * FIXME: Implement support for V4L2_SUBDEV_FORMAT_TRY, using the V4L2
-	 * subdev active state API.
-	 */
-	if (fi->which != V4L2_SUBDEV_FORMAT_ACTIVE)
-		return -EINVAL;
 
 	mutex_lock(&ov7251->lock);
 	new_mode = ov7251_find_mode_by_ival(ov7251, &fi->interval);
@@ -1452,26 +1471,23 @@ exit:
 
 static const struct v4l2_subdev_video_ops ov7251_video_ops = {
 	.s_stream = ov7251_s_stream,
+	.g_frame_interval = ov7251_get_frame_interval,
+	.s_frame_interval = ov7251_set_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops ov7251_subdev_pad_ops = {
+	.init_cfg = ov7251_entity_init_cfg,
 	.enum_mbus_code = ov7251_enum_mbus_code,
 	.enum_frame_size = ov7251_enum_frame_size,
 	.enum_frame_interval = ov7251_enum_frame_ival,
 	.get_fmt = ov7251_get_format,
 	.set_fmt = ov7251_set_format,
 	.get_selection = ov7251_get_selection,
-	.get_frame_interval = ov7251_get_frame_interval,
-	.set_frame_interval = ov7251_set_frame_interval,
 };
 
 static const struct v4l2_subdev_ops ov7251_subdev_ops = {
 	.video = &ov7251_video_ops,
 	.pad = &ov7251_subdev_pad_ops,
-};
-
-static const struct v4l2_subdev_internal_ops ov7251_internal_ops = {
-	.init_state = ov7251_init_state,
 };
 
 static int ov7251_check_hwcfg(struct ov7251 *ov7251)
@@ -1562,7 +1578,7 @@ static int ov7251_init_ctrls(struct ov7251 *ov7251)
 	s64 pixel_rate;
 	int hblank;
 
-	v4l2_ctrl_handler_init(&ov7251->ctrls, 7);
+	v4l2_ctrl_handler_init(&ov7251->ctrls, 9);
 	ov7251->ctrls.lock = &ov7251->lock;
 
 	v4l2_ctrl_new_std(&ov7251->ctrls, &ov7251_ctrl_ops,
@@ -1572,7 +1588,7 @@ static int ov7251_init_ctrls(struct ov7251 *ov7251)
 	ov7251->exposure = v4l2_ctrl_new_std(&ov7251->ctrls, &ov7251_ctrl_ops,
 					     V4L2_CID_EXPOSURE, 1, 32, 1, 32);
 	ov7251->gain = v4l2_ctrl_new_std(&ov7251->ctrls, &ov7251_ctrl_ops,
-					 V4L2_CID_GAIN, 16, 1023, 1, 16);
+					 V4L2_CID_ANALOGUE_GAIN, 16, 1023, 1, 16);
 	v4l2_ctrl_new_std_menu_items(&ov7251->ctrls, &ov7251_ctrl_ops,
 				     V4L2_CID_TEST_PATTERN,
 				     ARRAY_SIZE(ov7251_test_pattern_menu) - 1,
@@ -1621,6 +1637,7 @@ static int ov7251_init_ctrls(struct ov7251 *ov7251)
 
 static int ov7251_probe(struct i2c_client *client)
 {
+	struct v4l2_fwnode_device_properties props;
 	struct device *dev = &client->dev;
 	struct ov7251 *ov7251;
 	unsigned int rate = 0, clk_rate = 0;
@@ -1696,7 +1713,8 @@ static int ov7251_probe(struct i2c_client *client)
 		return PTR_ERR(ov7251->analog_regulator);
 	}
 
-	ov7251->enable_gpio = devm_gpiod_get(dev, "enable", GPIOD_OUT_HIGH);
+	ov7251->enable_gpio = devm_gpiod_get_optional(dev, "enable",
+						      GPIOD_OUT_HIGH);
 	if (IS_ERR(ov7251->enable_gpio)) {
 		dev_err(dev, "cannot get enable gpio\n");
 		return PTR_ERR(ov7251->enable_gpio);
@@ -1711,8 +1729,16 @@ static int ov7251_probe(struct i2c_client *client)
 		goto destroy_mutex;
 	}
 
+	ret = v4l2_fwnode_device_parse(&client->dev, &props);
+	if (ret)
+		goto free_ctrl;
+
+	ret = v4l2_ctrl_new_fwnode_properties(&ov7251->ctrls, &ov7251_ctrl_ops,
+					      &props);
+	if (ret)
+		goto free_ctrl;
+
 	v4l2_i2c_subdev_init(&ov7251->sd, client, &ov7251_subdev_ops);
-	ov7251->sd.internal_ops = &ov7251_internal_ops;
 	ov7251->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	ov7251->pad.flags = MEDIA_PAD_FL_SOURCE;
 	ov7251->sd.dev = &client->dev;
@@ -1770,7 +1796,7 @@ static int ov7251_probe(struct i2c_client *client)
 		goto free_entity;
 	}
 
-	ov7251_init_state(&ov7251->sd, NULL);
+	ov7251_entity_init_cfg(&ov7251->sd, NULL);
 
 	return 0;
 

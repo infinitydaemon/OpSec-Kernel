@@ -115,6 +115,20 @@ struct stmmac_axi {
 	bool axi_rb;
 };
 
+#define EST_GCL		1024
+struct stmmac_est {
+	struct mutex lock;
+	int enable;
+	u32 btr_reserve[2];
+	u32 btr_offset[2];
+	u32 btr[2];
+	u32 ctr[2];
+	u32 ter;
+	u32 gcl_unaligned[EST_GCL];
+	u32 gcl[EST_GCL];
+	u32 gcl_size;
+};
+
 struct stmmac_rxq_cfg {
 	u8 mode_to_use;
 	u32 chan;
@@ -231,6 +245,7 @@ struct plat_stmmacenet_data {
 	struct fwnode_handle *port_node;
 	struct device_node *mdio_node;
 	struct stmmac_dma_cfg *dma_cfg;
+	struct stmmac_est *est;
 	struct stmmac_fpe_cfg *fpe_cfg;
 	struct stmmac_safety_feature_cfg *safety_feat_cfg;
 	int clk_csr;
@@ -269,8 +284,6 @@ struct plat_stmmacenet_data {
 	int (*crosststamp)(ktime_t *device, struct system_counterval_t *system,
 			   void *ctx);
 	void (*dump_debug_regs)(void *priv);
-	int (*pcs_init)(struct stmmac_priv *priv);
-	void (*pcs_exit)(struct stmmac_priv *priv);
 	void *bsp_priv;
 	struct clk *stmmac_clk;
 	struct clk *pclk;
@@ -291,6 +304,7 @@ struct plat_stmmacenet_data {
 	unsigned int eee_usecs_rate;
 	struct pci_dev *pdev;
 	int int_snapshot_num;
+	int ext_snapshot_num;
 	int msi_mac_vec;
 	int msi_wol_vec;
 	int msi_lpi_vec;

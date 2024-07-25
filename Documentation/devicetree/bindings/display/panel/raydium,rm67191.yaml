@@ -16,9 +16,7 @@ properties:
   compatible:
     const: raydium,rm67191
 
-  reg:
-    maxItems: 1
-
+  reg: true
   port: true
   reset-gpios: true
   width-mm: true

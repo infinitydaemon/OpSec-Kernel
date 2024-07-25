@@ -61,9 +61,9 @@ int main(int argc, char **argv)
 		ret = get_tai();
 		if (ret != i) {
 			printf("[FAILED] expected: %i got %i\n", i, ret);
-			ksft_exit_fail();
+			return ksft_exit_fail();
 		}
 	}
 	printf("[OK]\n");
-	ksft_exit_pass();
+	return ksft_exit_pass();
 }

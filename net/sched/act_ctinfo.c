@@ -221,7 +221,7 @@ static int tcf_ctinfo_init(struct net *net, struct nlattr *nla,
 		ret = ACT_P_CREATED;
 	} else if (err > 0) {
 		if (bind) /* don't override defaults */
-			return ACT_P_BOUND;
+			return 0;
 		if (!(flags & TCA_ACT_FLAGS_REPLACE)) {
 			tcf_idr_release(*a, bind);
 			return -EEXIST;
@@ -363,7 +363,6 @@ static struct tc_action_ops act_ctinfo_ops = {
 	.cleanup= tcf_ctinfo_cleanup,
 	.size	= sizeof(struct tcf_ctinfo),
 };
-MODULE_ALIAS_NET_ACT("ctinfo");
 
 static __net_init int ctinfo_init_net(struct net *net)
 {

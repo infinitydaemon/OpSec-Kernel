@@ -209,5 +209,5 @@ int main(int argc, char **argv)
 
 	close(pagemap_fd);
 
-	ksft_finished();
+	return ksft_exit_pass();
 }

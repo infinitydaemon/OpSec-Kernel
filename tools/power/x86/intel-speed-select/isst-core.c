@@ -23,7 +23,6 @@ int isst_set_platform_ops(int api_version)
 		isst_ops = mbox_get_platform_ops();
 		break;
 	case 2:
-	case 3:
 		isst_ops = tpmi_get_platform_ops();
 		break;
 	default:

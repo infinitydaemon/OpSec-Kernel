@@ -45,8 +45,8 @@ parser = OptionParser(option_list=option_list)
 # Initialize global dicts and regular expression
 disasm_cache = dict()
 cpu_data = dict()
-disasm_re = re.compile(r"^\s*([0-9a-fA-F]+):")
-disasm_func_re = re.compile(r"^\s*([0-9a-fA-F]+)\s.*:")
+disasm_re = re.compile("^\s*([0-9a-fA-F]+):")
+disasm_func_re = re.compile("^\s*([0-9a-fA-F]+)\s.*:")
 cache_size = 64*1024
 
 glb_source_file_name	= None
@@ -188,17 +188,6 @@ def process_event(param_dict):
 	dso_end = get_optional(param_dict, "dso_map_end")
 	symbol = get_optional(param_dict, "symbol")
 
-	cpu = sample["cpu"]
-	ip = sample["ip"]
-	addr = sample["addr"]
-
-	# Initialize CPU data if it's empty, and directly return back
-	# if this is the first tracing event for this CPU.
-	if (cpu_data.get(str(cpu) + 'addr') == None):
-		cpu_data[str(cpu) + 'addr'] = addr
-		return
-
-
 	if (options.verbose == True):
 		print("Event type: %s" % name)
 		print_sample(sample)
@@ -218,6 +207,16 @@ def process_event(param_dict):
 
 	# Don't proceed if this event is not a branch sample, .
 	if (name[0:8] != "branches"):
+		return
+
+	cpu = sample["cpu"]
+	ip = sample["ip"]
+	addr = sample["addr"]
+
+	# Initialize CPU data if it's empty, and directly return back
+	# if this is the first tracing event for this CPU.
+	if (cpu_data.get(str(cpu) + 'addr') == None):
+		cpu_data[str(cpu) + 'addr'] = addr
 		return
 
 	# The format for packet is:
@@ -259,9 +258,8 @@ def process_event(param_dict):
 
 	if (options.objdump_name != None):
 		# It doesn't need to decrease virtual memory offset for disassembly
-		# for kernel dso and executable file dso, so in this case we set
-		# vm_start to zero.
-		if (dso == "[kernel.kallsyms]" or dso_start == 0x400000):
+		# for kernel dso, so in this case we set vm_start to zero.
+		if (dso == "[kernel.kallsyms]"):
 			dso_vm_start = 0
 		else:
 			dso_vm_start = int(dso_start)

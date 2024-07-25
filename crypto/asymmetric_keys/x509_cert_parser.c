@@ -60,23 +60,24 @@ EXPORT_SYMBOL_GPL(x509_free_certificate);
  */
 struct x509_certificate *x509_cert_parse(const void *data, size_t datalen)
 {
-	struct x509_certificate *cert __free(x509_free_certificate);
-	struct x509_parse_context *ctx __free(kfree) = NULL;
+	struct x509_certificate *cert;
+	struct x509_parse_context *ctx;
 	struct asymmetric_key_id *kid;
 	long ret;
 
+	ret = -ENOMEM;
 	cert = kzalloc(sizeof(struct x509_certificate), GFP_KERNEL);
 	if (!cert)
-		return ERR_PTR(-ENOMEM);
+		goto error_no_cert;
 	cert->pub = kzalloc(sizeof(struct public_key), GFP_KERNEL);
 	if (!cert->pub)
-		return ERR_PTR(-ENOMEM);
+		goto error_no_ctx;
 	cert->sig = kzalloc(sizeof(struct public_key_signature), GFP_KERNEL);
 	if (!cert->sig)
-		return ERR_PTR(-ENOMEM);
+		goto error_no_ctx;
 	ctx = kzalloc(sizeof(struct x509_parse_context), GFP_KERNEL);
 	if (!ctx)
-		return ERR_PTR(-ENOMEM);
+		goto error_no_ctx;
 
 	ctx->cert = cert;
 	ctx->data = (unsigned long)data;
@@ -84,7 +85,7 @@ struct x509_certificate *x509_cert_parse(const void *data, size_t datalen)
 	/* Attempt to decode the certificate */
 	ret = asn1_ber_decoder(&x509_decoder, ctx, data, datalen);
 	if (ret < 0)
-		return ERR_PTR(ret);
+		goto error_decode;
 
 	/* Decode the AuthorityKeyIdentifier */
 	if (ctx->raw_akid) {
@@ -94,19 +95,20 @@ struct x509_certificate *x509_cert_parse(const void *data, size_t datalen)
 				       ctx->raw_akid, ctx->raw_akid_size);
 		if (ret < 0) {
 			pr_warn("Couldn't decode AuthKeyIdentifier\n");
-			return ERR_PTR(ret);
+			goto error_decode;
 		}
 	}
 
+	ret = -ENOMEM;
 	cert->pub->key = kmemdup(ctx->key, ctx->key_size, GFP_KERNEL);
 	if (!cert->pub->key)
-		return ERR_PTR(-ENOMEM);
+		goto error_decode;
 
 	cert->pub->keylen = ctx->key_size;
 
 	cert->pub->params = kmemdup(ctx->params, ctx->params_size, GFP_KERNEL);
 	if (!cert->pub->params)
-		return ERR_PTR(-ENOMEM);
+		goto error_decode;
 
 	cert->pub->paramlen = ctx->params_size;
 	cert->pub->algo = ctx->key_algo;
@@ -114,23 +116,33 @@ struct x509_certificate *x509_cert_parse(const void *data, size_t datalen)
 	/* Grab the signature bits */
 	ret = x509_get_sig_params(cert);
 	if (ret < 0)
-		return ERR_PTR(ret);
+		goto error_decode;
 
 	/* Generate cert issuer + serial number key ID */
 	kid = asymmetric_key_generate_id(cert->raw_serial,
 					 cert->raw_serial_size,
 					 cert->raw_issuer,
 					 cert->raw_issuer_size);
-	if (IS_ERR(kid))
-		return ERR_CAST(kid);
+	if (IS_ERR(kid)) {
+		ret = PTR_ERR(kid);
+		goto error_decode;
+	}
 	cert->id = kid;
 
 	/* Detect self-signed certificates */
 	ret = x509_check_for_self_signed(cert);
 	if (ret < 0)
-		return ERR_PTR(ret);
+		goto error_decode;
 
-	return_ptr(cert);
+	kfree(ctx);
+	return cert;
+
+error_decode:
+	kfree(ctx);
+error_no_ctx:
+	x509_free_certificate(cert);
+error_no_cert:
+	return ERR_PTR(ret);
 }
 EXPORT_SYMBOL_GPL(x509_cert_parse);
 
@@ -183,8 +195,14 @@ int x509_note_sig_algo(void *context, size_t hdrlen, unsigned char tag,
 	pr_debug("PubKey Algo: %u\n", ctx->last_oid);
 
 	switch (ctx->last_oid) {
+	case OID_md2WithRSAEncryption:
+	case OID_md3WithRSAEncryption:
 	default:
 		return -ENOPKG; /* Unsupported combination */
+
+	case OID_md4WithRSAEncryption:
+		ctx->cert->sig->hash_algo = "md4";
+		goto rsa_pkcs1;
 
 	case OID_sha1WithRSAEncryption:
 		ctx->cert->sig->hash_algo = "sha1";
@@ -210,18 +228,6 @@ int x509_note_sig_algo(void *context, size_t hdrlen, unsigned char tag,
 		ctx->cert->sig->hash_algo = "sha1";
 		goto ecdsa;
 
-	case OID_id_rsassa_pkcs1_v1_5_with_sha3_256:
-		ctx->cert->sig->hash_algo = "sha3-256";
-		goto rsa_pkcs1;
-
-	case OID_id_rsassa_pkcs1_v1_5_with_sha3_384:
-		ctx->cert->sig->hash_algo = "sha3-384";
-		goto rsa_pkcs1;
-
-	case OID_id_rsassa_pkcs1_v1_5_with_sha3_512:
-		ctx->cert->sig->hash_algo = "sha3-512";
-		goto rsa_pkcs1;
-
 	case OID_id_ecdsa_with_sha224:
 		ctx->cert->sig->hash_algo = "sha224";
 		goto ecdsa;
@@ -236,18 +242,6 @@ int x509_note_sig_algo(void *context, size_t hdrlen, unsigned char tag,
 
 	case OID_id_ecdsa_with_sha512:
 		ctx->cert->sig->hash_algo = "sha512";
-		goto ecdsa;
-
-	case OID_id_ecdsa_with_sha3_256:
-		ctx->cert->sig->hash_algo = "sha3-256";
-		goto ecdsa;
-
-	case OID_id_ecdsa_with_sha3_384:
-		ctx->cert->sig->hash_algo = "sha3-384";
-		goto ecdsa;
-
-	case OID_id_ecdsa_with_sha3_512:
-		ctx->cert->sig->hash_algo = "sha3-512";
 		goto ecdsa;
 
 	case OID_gost2012Signature256:
@@ -533,9 +527,6 @@ int x509_extract_key_data(void *context, size_t hdrlen,
 			break;
 		case OID_id_ansip384r1:
 			ctx->cert->pub->pkey_algo = "ecdsa-nist-p384";
-			break;
-		case OID_id_ansip521r1:
-			ctx->cert->pub->pkey_algo = "ecdsa-nist-p521";
 			break;
 		default:
 			return -ENOPKG;

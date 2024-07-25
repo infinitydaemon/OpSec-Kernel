@@ -70,3 +70,13 @@ pte_t *huge_pte_offset(struct mm_struct *mm,
 
 	return pte;
 }
+
+int pmd_huge(pmd_t pmd)
+{
+	return 0;
+}
+
+int pud_huge(pud_t pud)
+{
+	return 0;
+}

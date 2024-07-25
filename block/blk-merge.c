@@ -115,13 +115,17 @@ static struct bio *bio_split_discard(struct bio *bio,
 
 	*nsegs = 1;
 
+	/* Zero-sector (unknown) and one-sector granularities are the same.  */
 	granularity = max(lim->discard_granularity >> 9, 1U);
 
 	max_discard_sectors =
 		min(lim->max_discard_sectors, bio_allowed_max_sectors(lim));
 	max_discard_sectors -= max_discard_sectors % granularity;
-	if (unlikely(!max_discard_sectors))
+
+	if (unlikely(!max_discard_sectors)) {
+		/* XXX: warn */
 		return NULL;
+	}
 
 	if (bio_sectors(bio) <= max_discard_sectors)
 		return NULL;
@@ -377,7 +381,6 @@ struct bio *__bio_split_to_limits(struct bio *bio,
 		blkcg_bio_issue_init(split);
 		bio_chain(split, bio);
 		trace_block_split(split, bio->bi_iter.bi_sector);
-		WARN_ON_ONCE(bio_zone_write_plugging(bio));
 		submit_bio_noacct(bio);
 		return split;
 	}
@@ -727,7 +730,7 @@ static int ll_merge_requests_fn(struct request_queue *q, struct request *req,
  *     which can be mixed are set in each bio and mark @rq as mixed
  *     merged.
  */
-static void blk_rq_set_mixed_merge(struct request *rq)
+void blk_rq_set_mixed_merge(struct request *rq)
 {
 	blk_opf_t ff = rq->cmd_flags & REQ_FAILFAST_MASK;
 	struct bio *bio;
@@ -811,10 +814,6 @@ static struct request *attempt_merge(struct request_queue *q,
 		return NULL;
 
 	if (rq_data_dir(req) != rq_data_dir(next))
-		return NULL;
-
-	/* Don't merge requests with different write hints. */
-	if (req->write_hint != next->write_hint)
 		return NULL;
 
 	if (req->ioprio != next->ioprio)
@@ -944,10 +943,6 @@ bool blk_rq_merge_ok(struct request *rq, struct bio *bio)
 	if (!bio_crypt_rq_ctx_compatible(rq, bio))
 		return false;
 
-	/* Don't merge requests with different write hints. */
-	if (rq->write_hint != bio->bi_write_hint)
-		return false;
-
 	if (rq->ioprio != bio_prio(bio))
 		return false;
 
@@ -975,7 +970,13 @@ static void blk_account_io_merge_bio(struct request *req)
 	part_stat_unlock();
 }
 
-enum bio_merge_status bio_attempt_back_merge(struct request *req,
+enum bio_merge_status {
+	BIO_MERGE_OK,
+	BIO_MERGE_NONE,
+	BIO_MERGE_FAILED,
+};
+
+static enum bio_merge_status bio_attempt_back_merge(struct request *req,
 		struct bio *bio, unsigned int nr_segs)
 {
 	const blk_opf_t ff = bio_failfast(bio);
@@ -991,9 +992,6 @@ enum bio_merge_status bio_attempt_back_merge(struct request *req,
 
 	blk_update_mixed_merge(req, bio, false);
 
-	if (req->rq_flags & RQF_ZONE_WRITE_PLUGGING)
-		blk_zone_write_plug_bio_merged(bio);
-
 	req->biotail->bi_next = bio;
 	req->biotail = bio;
 	req->__data_len += bio->bi_iter.bi_size;
@@ -1008,14 +1006,6 @@ static enum bio_merge_status bio_attempt_front_merge(struct request *req,
 		struct bio *bio, unsigned int nr_segs)
 {
 	const blk_opf_t ff = bio_failfast(bio);
-
-	/*
-	 * A front merge for writes to sequential zones of a zoned block device
-	 * can happen only if the user submitted writes out of order. Do not
-	 * merge such write to let it fail.
-	 */
-	if (req->rq_flags & RQF_ZONE_WRITE_PLUGGING)
-		return BIO_MERGE_FAILED;
 
 	if (!ll_front_merge_fn(req, bio, nr_segs))
 		return BIO_MERGE_FAILED;
@@ -1115,9 +1105,10 @@ static enum bio_merge_status blk_attempt_bio_merge(struct request_queue *q,
 bool blk_attempt_plug_merge(struct request_queue *q, struct bio *bio,
 		unsigned int nr_segs)
 {
-	struct blk_plug *plug = current->plug;
+	struct blk_plug *plug;
 	struct request *rq;
 
+	plug = blk_mq_plug(bio);
 	if (!plug || rq_list_empty(plug->mq_list))
 		return false;
 

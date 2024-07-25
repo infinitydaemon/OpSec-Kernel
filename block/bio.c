@@ -16,6 +16,7 @@
 #include <linux/workqueue.h>
 #include <linux/cgroup.h>
 #include <linux/highmem.h>
+#include <linux/sched/sysctl.h>
 #include <linux/blk-crypto.h>
 #include <linux/xarray.h>
 
@@ -250,7 +251,6 @@ void bio_init(struct bio *bio, struct block_device *bdev, struct bio_vec *table,
 	bio->bi_opf = opf;
 	bio->bi_flags = 0;
 	bio->bi_ioprio = 0;
-	bio->bi_write_hint = 0;
 	bio->bi_status = 0;
 	bio->bi_iter.bi_sector = 0;
 	bio->bi_iter.bi_size = 0;
@@ -345,28 +345,17 @@ void bio_chain(struct bio *bio, struct bio *parent)
 }
 EXPORT_SYMBOL(bio_chain);
 
-/**
- * bio_chain_and_submit - submit a bio after chaining it to another one
- * @prev: bio to chain and submit
- * @new: bio to chain to
- *
- * If @prev is non-NULL, chain it to @new and submit it.
- *
- * Return: @new.
- */
-struct bio *bio_chain_and_submit(struct bio *prev, struct bio *new)
-{
-	if (prev) {
-		bio_chain(prev, new);
-		submit_bio(prev);
-	}
-	return new;
-}
-
 struct bio *blk_next_bio(struct bio *bio, struct block_device *bdev,
 		unsigned int nr_pages, blk_opf_t opf, gfp_t gfp)
 {
-	return bio_chain_and_submit(bio, bio_alloc(bdev, nr_pages, opf, gfp));
+	struct bio *new = bio_alloc(bdev, nr_pages, opf, gfp);
+
+	if (bio) {
+		bio_chain(bio, new);
+		submit_bio(bio);
+	}
+
+	return new;
 }
 EXPORT_SYMBOL_GPL(blk_next_bio);
 
@@ -773,31 +762,29 @@ static inline void bio_put_percpu_cache(struct bio *bio)
 	struct bio_alloc_cache *cache;
 
 	cache = per_cpu_ptr(bio->bi_pool->cache, get_cpu());
-	if (READ_ONCE(cache->nr_irq) + cache->nr > ALLOC_CACHE_MAX)
-		goto out_free;
+	if (READ_ONCE(cache->nr_irq) + cache->nr > ALLOC_CACHE_MAX) {
+		put_cpu();
+		bio_free(bio);
+		return;
+	}
 
-	if (in_task()) {
-		bio_uninit(bio);
+	bio_uninit(bio);
+
+	if ((bio->bi_opf & REQ_POLLED) && !WARN_ON_ONCE(in_interrupt())) {
 		bio->bi_next = cache->free_list;
-		/* Not necessary but helps not to iopoll already freed bios */
 		bio->bi_bdev = NULL;
 		cache->free_list = bio;
 		cache->nr++;
-	} else if (in_hardirq()) {
-		lockdep_assert_irqs_disabled();
+	} else {
+		unsigned long flags;
 
-		bio_uninit(bio);
+		local_irq_save(flags);
 		bio->bi_next = cache->free_list_irq;
 		cache->free_list_irq = bio;
 		cache->nr_irq++;
-	} else {
-		goto out_free;
+		local_irq_restore(flags);
 	}
 	put_cpu();
-	return;
-out_free:
-	put_cpu();
-	bio_free(bio);
 }
 
 /**
@@ -826,7 +813,6 @@ static int __bio_clone(struct bio *bio, struct bio *bio_src, gfp_t gfp)
 {
 	bio_set_flag(bio, BIO_CLONED);
 	bio->bi_ioprio = bio_src->bi_ioprio;
-	bio->bi_write_hint = bio_src->bi_write_hint;
 	bio->bi_iter = bio_src->bi_iter;
 
 	if (bio->bi_bdev) {
@@ -980,13 +966,10 @@ int bio_add_hw_page(struct request_queue *q, struct bio *bio,
 		struct page *page, unsigned int len, unsigned int offset,
 		unsigned int max_sectors, bool *same_page)
 {
-	unsigned int max_size = max_sectors << SECTOR_SHIFT;
-
 	if (WARN_ON_ONCE(bio_flagged(bio, BIO_CLONED)))
 		return 0;
 
-	len = min3(len, max_size, queue_max_segment_size(q));
-	if (len > max_size - bio->bi_iter.bi_size)
+	if (((bio->bi_iter.bi_size + len) >> SECTOR_SHIFT) > max_sectors)
 		return 0;
 
 	if (bio->bi_vcnt > 0) {
@@ -1136,7 +1119,6 @@ void bio_add_folio_nofail(struct bio *bio, struct folio *folio, size_t len,
 	WARN_ON_ONCE(off > UINT_MAX);
 	__bio_add_page(bio, &folio->page, len, off);
 }
-EXPORT_SYMBOL_GPL(bio_add_folio_nofail);
 
 /**
  * bio_add_folio - Attempt to add part of a folio to a bio.
@@ -1385,36 +1367,25 @@ int submit_bio_wait(struct bio *bio)
 {
 	DECLARE_COMPLETION_ONSTACK_MAP(done,
 			bio->bi_bdev->bd_disk->lockdep_map);
+	unsigned long hang_check;
 
 	bio->bi_private = &done;
 	bio->bi_end_io = submit_bio_wait_endio;
 	bio->bi_opf |= REQ_SYNC;
 	submit_bio(bio);
-	blk_wait_io(&done);
+
+	/* Prevent hang_check timer from firing at us during very long I/O */
+	hang_check = sysctl_hung_task_timeout_secs;
+	if (hang_check)
+		while (!wait_for_completion_io_timeout(&done,
+					hang_check * (HZ/2)))
+			;
+	else
+		wait_for_completion_io(&done);
 
 	return blk_status_to_errno(bio->bi_status);
 }
 EXPORT_SYMBOL(submit_bio_wait);
-
-static void bio_wait_end_io(struct bio *bio)
-{
-	complete(bio->bi_private);
-	bio_put(bio);
-}
-
-/*
- * bio_await_chain - ends @bio and waits for every chained bio to complete
- */
-void bio_await_chain(struct bio *bio)
-{
-	DECLARE_COMPLETION_ONSTACK_MAP(done,
-			bio->bi_bdev->bd_disk->lockdep_map);
-
-	bio->bi_private = &done;
-	bio->bi_end_io = bio_wait_end_io;
-	bio_endio(bio);
-	blk_wait_io(&done);
-}
 
 void __bio_advance(struct bio *bio, unsigned bytes)
 {
@@ -1608,8 +1579,6 @@ again:
 	if (!bio_integrity_endio(bio))
 		return;
 
-	blk_zone_bio_endio(bio);
-
 	rq_qos_done_bio(bio);
 
 	if (bio->bi_bdev && bio_flagged(bio, BIO_TRACE_COMPLETION)) {
@@ -1630,6 +1599,7 @@ again:
 		goto again;
 	}
 
+	blk_throtl_bio_endio(bio);
 	/* release cgroup info */
 	bio_uninit(bio);
 	if (bio->bi_end_io)

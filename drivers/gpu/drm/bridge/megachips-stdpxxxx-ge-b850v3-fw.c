@@ -65,11 +65,12 @@ struct ge_b850v3_lvds {
 
 static struct ge_b850v3_lvds *ge_b850v3_lvds_ptr;
 
-static int stdp2690_read_block(void *context, u8 *buf, unsigned int block, size_t len)
+static u8 *stdp2690_get_edid(struct i2c_client *client)
 {
-	struct i2c_client *client = context;
 	struct i2c_adapter *adapter = client->adapter;
-	unsigned char start = block * EDID_LENGTH;
+	unsigned char start = 0x00;
+	unsigned int total_size;
+	u8 *block = kmalloc(EDID_LENGTH, GFP_KERNEL);
 
 	struct i2c_msg msgs[] = {
 		{
@@ -80,37 +81,75 @@ static int stdp2690_read_block(void *context, u8 *buf, unsigned int block, size_
 		}, {
 			.addr	= client->addr,
 			.flags	= I2C_M_RD,
-			.len	= len,
-			.buf	= buf,
+			.len	= EDID_LENGTH,
+			.buf	= block,
 		}
 	};
 
-	if (i2c_transfer(adapter, msgs, 2) != 2)
-		return -1;
+	if (!block)
+		return NULL;
 
-	return 0;
+	if (i2c_transfer(adapter, msgs, 2) != 2) {
+		DRM_ERROR("Unable to read EDID.\n");
+		goto err;
+	}
+
+	if (!drm_edid_block_valid(block, 0, false, NULL)) {
+		DRM_ERROR("Invalid EDID data\n");
+		goto err;
+	}
+
+	total_size = (block[EDID_EXT_BLOCK_CNT] + 1) * EDID_LENGTH;
+	if (total_size > EDID_LENGTH) {
+		kfree(block);
+		block = kmalloc(total_size, GFP_KERNEL);
+		if (!block)
+			return NULL;
+
+		/* Yes, read the entire buffer, and do not skip the first
+		 * EDID_LENGTH bytes.
+		 */
+		start = 0x00;
+		msgs[1].len = total_size;
+		msgs[1].buf = block;
+
+		if (i2c_transfer(adapter, msgs, 2) != 2) {
+			DRM_ERROR("Unable to read EDID extension blocks.\n");
+			goto err;
+		}
+		if (!drm_edid_block_valid(block, 1, false, NULL)) {
+			DRM_ERROR("Invalid EDID data\n");
+			goto err;
+		}
+	}
+
+	return block;
+
+err:
+	kfree(block);
+	return NULL;
 }
 
-static const struct drm_edid *ge_b850v3_lvds_edid_read(struct drm_bridge *bridge,
-						       struct drm_connector *connector)
+static struct edid *ge_b850v3_lvds_get_edid(struct drm_bridge *bridge,
+					    struct drm_connector *connector)
 {
 	struct i2c_client *client;
 
 	client = ge_b850v3_lvds_ptr->stdp2690_i2c;
 
-	return drm_edid_read_custom(connector, stdp2690_read_block, client);
+	return (struct edid *)stdp2690_get_edid(client);
 }
 
 static int ge_b850v3_lvds_get_modes(struct drm_connector *connector)
 {
-	const struct drm_edid *drm_edid;
+	struct edid *edid;
 	int num_modes;
 
-	drm_edid = ge_b850v3_lvds_edid_read(&ge_b850v3_lvds_ptr->bridge, connector);
+	edid = ge_b850v3_lvds_get_edid(&ge_b850v3_lvds_ptr->bridge, connector);
 
-	drm_edid_connector_update(connector, drm_edid);
-	num_modes = drm_edid_connector_add_modes(connector);
-	drm_edid_free(drm_edid);
+	drm_connector_update_edid_property(connector, edid);
+	num_modes = drm_add_edid_modes(connector, edid);
+	kfree(edid);
 
 	return num_modes;
 }
@@ -226,7 +265,7 @@ static int ge_b850v3_lvds_attach(struct drm_bridge *bridge,
 static const struct drm_bridge_funcs ge_b850v3_lvds_funcs = {
 	.attach = ge_b850v3_lvds_attach,
 	.detect = ge_b850v3_lvds_bridge_detect,
-	.edid_read = ge_b850v3_lvds_edid_read,
+	.get_edid = ge_b850v3_lvds_get_edid,
 };
 
 static int ge_b850v3_lvds_init(struct device *dev)

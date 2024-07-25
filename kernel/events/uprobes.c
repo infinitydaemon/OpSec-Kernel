@@ -18,7 +18,7 @@
 #include <linux/sched/coredump.h>
 #include <linux/export.h>
 #include <linux/rmap.h>		/* anon_vma_prepare */
-#include <linux/mmu_notifier.h>
+#include <linux/mmu_notifier.h>	/* set_pte_at_notify */
 #include <linux/swap.h>		/* folio_free_swap */
 #include <linux/ptrace.h>	/* user_enable_single_step */
 #include <linux/kdebug.h>	/* notifier mechanism */
@@ -39,7 +39,7 @@ static struct rb_root uprobes_tree = RB_ROOT;
  */
 #define no_uprobe_events()	RB_EMPTY_ROOT(&uprobes_tree)
 
-static DEFINE_RWLOCK(uprobes_treelock);	/* serialize rbtree access */
+static DEFINE_SPINLOCK(uprobes_treelock);	/* serialize rbtree access */
 
 #define UPROBES_HASH_SZ	13
 /* serialize uprobe->pending_list */
@@ -181,24 +181,24 @@ static int __replace_page(struct vm_area_struct *vma, unsigned long addr,
 
 	if (new_page) {
 		folio_get(new_folio);
-		folio_add_new_anon_rmap(new_folio, vma, addr);
+		page_add_new_anon_rmap(new_page, vma, addr);
 		folio_add_lru_vma(new_folio, vma);
 	} else
 		/* no new page, just dec_mm_counter for old_page */
 		dec_mm_counter(mm, MM_ANONPAGES);
 
 	if (!folio_test_anon(old_folio)) {
-		dec_mm_counter(mm, mm_counter_file(old_folio));
+		dec_mm_counter(mm, mm_counter_file(old_page));
 		inc_mm_counter(mm, MM_ANONPAGES);
 	}
 
 	flush_cache_page(vma, addr, pte_pfn(ptep_get(pvmw.pte)));
 	ptep_clear_flush(vma, addr, pvmw.pte);
 	if (new_page)
-		set_pte_at(mm, addr, pvmw.pte,
-			   mk_pte(new_page, vma->vm_page_prot));
+		set_pte_at_notify(mm, addr, pvmw.pte,
+				  mk_pte(new_page, vma->vm_page_prot));
 
-	folio_remove_rmap_pte(old_folio, old_page, vma);
+	page_remove_rmap(old_page, vma, false);
 	if (!folio_mapped(old_folio))
 		folio_free_swap(old_folio);
 	page_vma_mapped_walk_done(&pvmw);
@@ -474,8 +474,8 @@ retry:
 		gup_flags |= FOLL_SPLIT_PMD;
 	/* Read the page with vaddr into memory */
 	old_page = get_user_page_vma_remote(mm, vaddr, gup_flags, &vma);
-	if (IS_ERR(old_page))
-		return PTR_ERR(old_page);
+	if (IS_ERR_OR_NULL(old_page))
+		return old_page ? PTR_ERR(old_page) : 0;
 
 	ret = verify_opcode(old_page, vaddr, &opcode);
 	if (ret <= 0)
@@ -537,7 +537,7 @@ retry:
 		}
 	}
 
-	ret = __replace_page(vma, vaddr & PAGE_MASK, old_page, new_page);
+	ret = __replace_page(vma, vaddr, old_page, new_page);
 	if (new_page)
 		put_page(new_page);
 put_old:
@@ -669,9 +669,9 @@ static struct uprobe *find_uprobe(struct inode *inode, loff_t offset)
 {
 	struct uprobe *uprobe;
 
-	read_lock(&uprobes_treelock);
+	spin_lock(&uprobes_treelock);
 	uprobe = __find_uprobe(inode, offset);
-	read_unlock(&uprobes_treelock);
+	spin_unlock(&uprobes_treelock);
 
 	return uprobe;
 }
@@ -701,9 +701,9 @@ static struct uprobe *insert_uprobe(struct uprobe *uprobe)
 {
 	struct uprobe *u;
 
-	write_lock(&uprobes_treelock);
+	spin_lock(&uprobes_treelock);
 	u = __insert_uprobe(uprobe);
-	write_unlock(&uprobes_treelock);
+	spin_unlock(&uprobes_treelock);
 
 	return u;
 }
@@ -935,9 +935,9 @@ static void delete_uprobe(struct uprobe *uprobe)
 	if (WARN_ON(!uprobe_is_active(uprobe)))
 		return;
 
-	write_lock(&uprobes_treelock);
+	spin_lock(&uprobes_treelock);
 	rb_erase(&uprobe->rb_node, &uprobes_tree);
-	write_unlock(&uprobes_treelock);
+	spin_unlock(&uprobes_treelock);
 	RB_CLEAR_NODE(&uprobe->rb_node); /* for uprobe_is_active() */
 	put_uprobe(uprobe);
 }
@@ -1298,7 +1298,7 @@ static void build_probe_list(struct inode *inode,
 	min = vaddr_to_offset(vma, start);
 	max = min + (end - start) - 1;
 
-	read_lock(&uprobes_treelock);
+	spin_lock(&uprobes_treelock);
 	n = find_node_in_range(inode, min, max);
 	if (n) {
 		for (t = n; t; t = rb_prev(t)) {
@@ -1316,7 +1316,7 @@ static void build_probe_list(struct inode *inode,
 			get_uprobe(u);
 		}
 	}
-	read_unlock(&uprobes_treelock);
+	spin_unlock(&uprobes_treelock);
 }
 
 /* @vma contains reference counter, not the probed instruction. */
@@ -1407,9 +1407,9 @@ vma_has_uprobes(struct vm_area_struct *vma, unsigned long start, unsigned long e
 	min = vaddr_to_offset(vma, start);
 	max = min + (end - start) - 1;
 
-	read_lock(&uprobes_treelock);
+	spin_lock(&uprobes_treelock);
 	n = find_node_in_range(inode, min, max);
-	read_unlock(&uprobes_treelock);
+	spin_unlock(&uprobes_treelock);
 
 	return !!n;
 }

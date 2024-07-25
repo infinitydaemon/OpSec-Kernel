@@ -183,8 +183,10 @@ mext_page_mkuptodate(struct folio *folio, unsigned from, unsigned to)
 
 	blocksize = i_blocksize(inode);
 	head = folio_buffers(folio);
-	if (!head)
-		head = create_empty_buffers(folio, blocksize, 0);
+	if (!head) {
+		create_empty_buffers(&folio->page, blocksize, 0);
+		head = folio_buffers(folio);
+	}
 
 	block = (sector_t)folio->index << (PAGE_SHIFT - inode->i_blkbits);
 	for (bh = head, block_start = 0; bh != head || !block_start;
@@ -199,8 +201,10 @@ mext_page_mkuptodate(struct folio *folio, unsigned from, unsigned to)
 			continue;
 		if (!buffer_mapped(bh)) {
 			err = ext4_get_block(inode, block, bh, 0);
-			if (err)
+			if (err) {
+				folio_set_error(folio);
 				return err;
+			}
 			if (!buffer_mapped(bh)) {
 				folio_zero_range(folio, block_start, blocksize);
 				set_buffer_uptodate(bh);
@@ -376,10 +380,9 @@ data_copy:
 	}
 	/* Perform all necessary steps similar write_begin()/write_end()
 	 * but keeping in mind that i_size will not change */
+	if (!folio_buffers(folio[0]))
+		create_empty_buffers(&folio[0]->page, 1 << orig_inode->i_blkbits, 0);
 	bh = folio_buffers(folio[0]);
-	if (!bh)
-		bh = create_empty_buffers(folio[0],
-				1 << orig_inode->i_blkbits, 0);
 	for (i = 0; i < data_offset_in_page; i++)
 		bh = bh->b_this_page;
 	for (i = 0; i < block_len_in_page; i++) {
@@ -684,8 +687,8 @@ ext4_move_extents(struct file *o_filp, struct file *d_filp, __u64 orig_blk,
 
 out:
 	if (*moved_len) {
-		ext4_discard_preallocations(orig_inode);
-		ext4_discard_preallocations(donor_inode);
+		ext4_discard_preallocations(orig_inode, 0);
+		ext4_discard_preallocations(donor_inode, 0);
 	}
 
 	ext4_free_ext_path(path);

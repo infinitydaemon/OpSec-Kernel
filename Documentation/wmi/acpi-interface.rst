@@ -93,7 +93,4 @@ _WED ACPI method
 ----------------
 
 Used to retrieve additional WMI event data, its single parameter is a integer
-holding the notification ID of the event. This method should be evaluated every
-time an ACPI notification is received, since some ACPI implementations use a
-queue to store WMI event data items. This queue will overflow after a couple
-of WMI events are received without retrieving the associated WMI event data.
+holding the notification ID of the event.

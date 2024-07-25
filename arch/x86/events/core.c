@@ -601,7 +601,7 @@ int x86_pmu_hw_config(struct perf_event *event)
 		}
 	}
 
-	if (branch_sample_call_stack(event))
+	if (event->attr.branch_sample_type & PERF_SAMPLE_BRANCH_CALL_STACK)
 		event->attach_state |= PERF_ATTACH_TASK_DATA;
 
 	/*
@@ -1703,7 +1703,7 @@ int x86_pmu_handle_irq(struct pt_regs *regs)
 		perf_sample_data_init(&data, 0, event->hw.last_period);
 
 		if (has_branch_stack(event))
-			perf_sample_save_brstack(&data, event, &cpuc->lbr_stack, NULL);
+			perf_sample_save_brstack(&data, event, &cpuc->lbr_stack);
 
 		if (perf_event_overflow(event, &data, regs))
 			x86_pmu_stop(event, 0);
@@ -1888,9 +1888,9 @@ ssize_t events_hybrid_sysfs_show(struct device *dev,
 
 	str = pmu_attr->event_str;
 	for (i = 0; i < x86_pmu.num_hybrid_pmus; i++) {
-		if (!(x86_pmu.hybrid_pmu[i].pmu_type & pmu_attr->pmu_type))
+		if (!(x86_pmu.hybrid_pmu[i].cpu_type & pmu_attr->pmu_type))
 			continue;
-		if (x86_pmu.hybrid_pmu[i].pmu_type & pmu->pmu_type) {
+		if (x86_pmu.hybrid_pmu[i].cpu_type & pmu->cpu_type) {
 			next_str = strchr(str, ';');
 			if (next_str)
 				return snprintf(page, next_str - str + 1, "%s", str);
@@ -2170,7 +2170,7 @@ static int __init init_hw_perf_events(void)
 			hybrid_pmu->pmu.capabilities |= PERF_PMU_CAP_EXTENDED_HW_TYPE;
 
 			err = perf_pmu_register(&hybrid_pmu->pmu, hybrid_pmu->name,
-						(hybrid_pmu->pmu_type == hybrid_big) ? PERF_TYPE_RAW : -1);
+						(hybrid_pmu->cpu_type == hybrid_big) ? PERF_TYPE_RAW : -1);
 			if (err)
 				break;
 		}

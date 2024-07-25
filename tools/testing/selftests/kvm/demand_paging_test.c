@@ -6,10 +6,14 @@
  * Copyright (C) 2018, Red Hat, Inc.
  * Copyright (C) 2019, Google, Inc.
  */
+
+#define _GNU_SOURCE /* for pipe2 */
+
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <poll.h>
 #include <pthread.h>
 #include <linux/userfaultfd.h>
 #include <sys/syscall.h>
@@ -18,7 +22,6 @@
 #include "test_util.h"
 #include "memstress.h"
 #include "guest_modes.h"
-#include "ucall_common.h"
 #include "userfaultfd_util.h"
 
 #ifdef __NR_userfaultfd
@@ -42,10 +45,10 @@ static void vcpu_worker(struct memstress_vcpu_args *vcpu_args)
 
 	/* Let the guest access its memory */
 	ret = _vcpu_run(vcpu);
-	TEST_ASSERT(ret == 0, "vcpu_run failed: %d", ret);
+	TEST_ASSERT(ret == 0, "vcpu_run failed: %d\n", ret);
 	if (get_ucall(vcpu, NULL) != UCALL_SYNC) {
 		TEST_ASSERT(false,
-			    "Invalid guest sync status: exit_reason=%s",
+			    "Invalid guest sync status: exit_reason=%s\n",
 			    exit_reason_str(run->exit_reason));
 	}
 
@@ -74,20 +77,8 @@ static int handle_uffd_page_request(int uffd_mode, int uffd,
 		copy.mode = 0;
 
 		r = ioctl(uffd, UFFDIO_COPY, &copy);
-		/*
-		 * With multiple vCPU threads fault on a single page and there are
-		 * multiple readers for the UFFD, at least one of the UFFDIO_COPYs
-		 * will fail with EEXIST: handle that case without signaling an
-		 * error.
-		 *
-		 * Note that this also suppress any EEXISTs occurring from,
-		 * e.g., the first UFFDIO_COPY/CONTINUEs on a page. That never
-		 * happens here, but a realistic VMM might potentially maintain
-		 * some external state to correctly surface EEXISTs to userspace
-		 * (or prevent duplicate COPY/CONTINUEs in the first place).
-		 */
-		if (r == -1 && errno != EEXIST) {
-			pr_info("Failed UFFDIO_COPY in 0x%lx from thread %d, errno = %d\n",
+		if (r == -1) {
+			pr_info("Failed UFFDIO_COPY in 0x%lx from thread %d with errno: %d\n",
 				addr, tid, errno);
 			return r;
 		}
@@ -98,20 +89,8 @@ static int handle_uffd_page_request(int uffd_mode, int uffd,
 		cont.range.len = demand_paging_size;
 
 		r = ioctl(uffd, UFFDIO_CONTINUE, &cont);
-		/*
-		 * With multiple vCPU threads fault on a single page and there are
-		 * multiple readers for the UFFD, at least one of the UFFDIO_COPYs
-		 * will fail with EEXIST: handle that case without signaling an
-		 * error.
-		 *
-		 * Note that this also suppress any EEXISTs occurring from,
-		 * e.g., the first UFFDIO_COPY/CONTINUEs on a page. That never
-		 * happens here, but a realistic VMM might potentially maintain
-		 * some external state to correctly surface EEXISTs to userspace
-		 * (or prevent duplicate COPY/CONTINUEs in the first place).
-		 */
-		if (r == -1 && errno != EEXIST) {
-			pr_info("Failed UFFDIO_CONTINUE in 0x%lx, thread %d, errno = %d\n",
+		if (r == -1) {
+			pr_info("Failed UFFDIO_CONTINUE in 0x%lx from thread %d with errno: %d\n",
 				addr, tid, errno);
 			return r;
 		}
@@ -131,9 +110,7 @@ static int handle_uffd_page_request(int uffd_mode, int uffd,
 
 struct test_params {
 	int uffd_mode;
-	bool single_uffd;
 	useconds_t uffd_delay;
-	int readers_per_uffd;
 	enum vm_mem_backing_src_type src_type;
 	bool partition_vcpu_memory_access;
 };
@@ -154,12 +131,10 @@ static void run_test(enum vm_guest_mode mode, void *arg)
 	struct memstress_vcpu_args *vcpu_args;
 	struct test_params *p = arg;
 	struct uffd_desc **uffd_descs = NULL;
-	uint64_t uffd_region_size;
 	struct timespec start;
 	struct timespec ts_diff;
-	double vcpu_paging_rate;
 	struct kvm_vm *vm;
-	int i, num_uffds = 0;
+	int i;
 
 	vm = memstress_create_vm(mode, nr_vcpus, guest_percpu_mem_size, 1,
 				 p->src_type, p->partition_vcpu_memory_access);
@@ -172,8 +147,7 @@ static void run_test(enum vm_guest_mode mode, void *arg)
 	memset(guest_data_prototype, 0xAB, demand_paging_size);
 
 	if (p->uffd_mode == UFFDIO_REGISTER_MODE_MINOR) {
-		num_uffds = p->single_uffd ? 1 : nr_vcpus;
-		for (i = 0; i < num_uffds; i++) {
+		for (i = 0; i < nr_vcpus; i++) {
 			vcpu_args = &memstress_args.vcpu_args[i];
 			prefault_mem(addr_gpa2alias(vm, vcpu_args->gpa),
 				     vcpu_args->pages * memstress_args.guest_page_size);
@@ -181,13 +155,9 @@ static void run_test(enum vm_guest_mode mode, void *arg)
 	}
 
 	if (p->uffd_mode) {
-		num_uffds = p->single_uffd ? 1 : nr_vcpus;
-		uffd_region_size = nr_vcpus * guest_percpu_mem_size / num_uffds;
-
-		uffd_descs = malloc(num_uffds * sizeof(struct uffd_desc *));
+		uffd_descs = malloc(nr_vcpus * sizeof(struct uffd_desc *));
 		TEST_ASSERT(uffd_descs, "Memory allocation failed");
-		for (i = 0; i < num_uffds; i++) {
-			struct memstress_vcpu_args *vcpu_args;
+		for (i = 0; i < nr_vcpus; i++) {
 			void *vcpu_hva;
 
 			vcpu_args = &memstress_args.vcpu_args[i];
@@ -200,8 +170,7 @@ static void run_test(enum vm_guest_mode mode, void *arg)
 			 */
 			uffd_descs[i] = uffd_setup_demand_paging(
 				p->uffd_mode, p->uffd_delay, vcpu_hva,
-				uffd_region_size,
-				p->readers_per_uffd,
+				vcpu_args->pages * memstress_args.guest_page_size,
 				&handle_uffd_page_request);
 		}
 	}
@@ -218,19 +187,15 @@ static void run_test(enum vm_guest_mode mode, void *arg)
 
 	if (p->uffd_mode) {
 		/* Tell the user fault fd handler threads to quit */
-		for (i = 0; i < num_uffds; i++)
+		for (i = 0; i < nr_vcpus; i++)
 			uffd_stop_demand_paging(uffd_descs[i]);
 	}
 
-	pr_info("Total guest execution time:\t%ld.%.9lds\n",
+	pr_info("Total guest execution time: %ld.%.9lds\n",
 		ts_diff.tv_sec, ts_diff.tv_nsec);
-
-	vcpu_paging_rate = memstress_args.vcpu_args[0].pages /
-			   ((double)ts_diff.tv_sec + (double)ts_diff.tv_nsec / NSEC_PER_SEC);
-	pr_info("Per-vcpu demand paging rate:\t%f pgs/sec/vcpu\n",
-		vcpu_paging_rate);
-	pr_info("Overall demand paging rate:\t%f pgs/sec\n",
-		vcpu_paging_rate * nr_vcpus);
+	pr_info("Overall demand paging rate: %f pgs/sec\n",
+		memstress_args.vcpu_args[0].pages * nr_vcpus /
+		((double)ts_diff.tv_sec + (double)ts_diff.tv_nsec / NSEC_PER_SEC));
 
 	memstress_destroy_vm(vm);
 
@@ -242,20 +207,15 @@ static void run_test(enum vm_guest_mode mode, void *arg)
 static void help(char *name)
 {
 	puts("");
-	printf("usage: %s [-h] [-m vm_mode] [-u uffd_mode] [-a]\n"
-		   "          [-d uffd_delay_usec] [-r readers_per_uffd] [-b memory]\n"
-		   "          [-s type] [-v vcpus] [-c cpu_list] [-o]\n", name);
+	printf("usage: %s [-h] [-m vm_mode] [-u uffd_mode] [-d uffd_delay_usec]\n"
+	       "          [-b memory] [-s type] [-v vcpus] [-c cpu_list] [-o]\n", name);
 	guest_modes_help();
 	printf(" -u: use userfaultfd to handle vCPU page faults. Mode is a\n"
 	       "     UFFD registration mode: 'MISSING' or 'MINOR'.\n");
 	kvm_print_vcpu_pinning_help();
-	printf(" -a: Use a single userfaultfd for all of guest memory, instead of\n"
-	       "     creating one for each region paged by a unique vCPU\n"
-	       "     Set implicitly with -o, and no effect without -u.\n");
 	printf(" -d: add a delay in usec to the User Fault\n"
 	       "     FD handler to simulate demand paging\n"
 	       "     overheads. Ignored without -u.\n");
-	printf(" -r: Set the number of reader threads per uffd.\n");
 	printf(" -b: specify the size of the memory region which should be\n"
 	       "     demand paged by each vCPU. e.g. 10M or 3G.\n"
 	       "     Default: 1G\n");
@@ -274,14 +234,12 @@ int main(int argc, char *argv[])
 	struct test_params p = {
 		.src_type = DEFAULT_VM_MEM_SRC,
 		.partition_vcpu_memory_access = true,
-		.readers_per_uffd = 1,
-		.single_uffd = false,
 	};
 	int opt;
 
 	guest_modes_append_default();
 
-	while ((opt = getopt(argc, argv, "ahom:u:d:b:s:v:c:r:")) != -1) {
+	while ((opt = getopt(argc, argv, "hm:u:d:b:s:v:c:o")) != -1) {
 		switch (opt) {
 		case 'm':
 			guest_modes_cmdline(optarg);
@@ -292,9 +250,6 @@ int main(int argc, char *argv[])
 			else if (!strcmp("MINOR", optarg))
 				p.uffd_mode = UFFDIO_REGISTER_MODE_MINOR;
 			TEST_ASSERT(p.uffd_mode, "UFFD mode must be 'MISSING' or 'MINOR'.");
-			break;
-		case 'a':
-			p.single_uffd = true;
 			break;
 		case 'd':
 			p.uffd_delay = strtoul(optarg, NULL, 0);
@@ -316,13 +271,6 @@ int main(int argc, char *argv[])
 			break;
 		case 'o':
 			p.partition_vcpu_memory_access = false;
-			p.single_uffd = true;
-			break;
-		case 'r':
-			p.readers_per_uffd = atoi(optarg);
-			TEST_ASSERT(p.readers_per_uffd >= 1,
-				    "Invalid number of readers per uffd %d: must be >=1",
-				    p.readers_per_uffd);
 			break;
 		case 'h':
 		default:

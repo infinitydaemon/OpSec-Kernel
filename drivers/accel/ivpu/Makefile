@@ -2,6 +2,7 @@
 # Copyright (C) 2023 Intel Corporation
 
 intel_vpu-y := \
+	ivpu_debugfs.o \
 	ivpu_drv.o \
 	ivpu_fw.o \
 	ivpu_fw_log.o \
@@ -14,7 +15,5 @@ intel_vpu-y := \
 	ivpu_mmu.o \
 	ivpu_mmu_context.o \
 	ivpu_pm.o
-
-intel_vpu-$(CONFIG_DEBUG_FS) += ivpu_debugfs.o
 
 obj-$(CONFIG_DRM_ACCEL_IVPU) += intel_vpu.o

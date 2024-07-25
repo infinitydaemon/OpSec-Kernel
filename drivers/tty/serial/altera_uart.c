@@ -164,13 +164,13 @@ static void altera_uart_break_ctl(struct uart_port *port, int break_state)
 	struct altera_uart *pp = container_of(port, struct altera_uart, port);
 	unsigned long flags;
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 	if (break_state == -1)
 		pp->imr |= ALTERA_UART_CONTROL_TRBK_MSK;
 	else
 		pp->imr &= ~ALTERA_UART_CONTROL_TRBK_MSK;
 	altera_uart_update_ctrl_reg(pp);
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 }
 
 static void altera_uart_set_termios(struct uart_port *port,
@@ -187,10 +187,10 @@ static void altera_uart_set_termios(struct uart_port *port,
 		tty_termios_copy_hw(termios, old);
 	tty_termios_encode_baud_rate(termios, baud, baud);
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 	uart_update_timeout(port, termios->c_cflag, baud);
 	altera_uart_writel(port, baudclk, ALTERA_UART_DIVISOR_REG);
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 	/*
 	 * FIXME: port->read_status_mask and port->ignore_status_mask
@@ -264,12 +264,12 @@ static irqreturn_t altera_uart_interrupt(int irq, void *data)
 
 	isr = altera_uart_readl(port, ALTERA_UART_STATUS_REG) & pp->imr;
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 	if (isr & ALTERA_UART_STATUS_RRDY_MSK)
 		altera_uart_rx_chars(port);
 	if (isr & ALTERA_UART_STATUS_TRDY_MSK)
 		altera_uart_tx_chars(port);
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 	return IRQ_RETVAL(isr);
 }
@@ -305,7 +305,7 @@ static int altera_uart_startup(struct uart_port *port)
 		int ret;
 
 		ret = request_irq(port->irq, altera_uart_interrupt, 0,
-				dev_name(port->dev), port);
+				DRV_NAME, port);
 		if (ret) {
 			pr_err(DRV_NAME ": unable to attach Altera UART %d "
 			       "interrupt vector=%d\n", port->line, port->irq);
@@ -313,13 +313,13 @@ static int altera_uart_startup(struct uart_port *port)
 		}
 	}
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	/* Enable RX interrupts now */
 	pp->imr = ALTERA_UART_CONTROL_RRDY_MSK;
 	altera_uart_update_ctrl_reg(pp);
 
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 	return 0;
 }
@@ -329,13 +329,13 @@ static void altera_uart_shutdown(struct uart_port *port)
 	struct altera_uart *pp = container_of(port, struct altera_uart, port);
 	unsigned long flags;
 
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	/* Disable all interrupts now */
 	pp->imr = 0;
 	altera_uart_update_ctrl_reg(pp);
 
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 	if (port->irq)
 		free_irq(port->irq, port);
@@ -595,7 +595,7 @@ static int altera_uart_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void altera_uart_remove(struct platform_device *pdev)
+static int altera_uart_remove(struct platform_device *pdev)
 {
 	struct uart_port *port = platform_get_drvdata(pdev);
 
@@ -604,6 +604,8 @@ static void altera_uart_remove(struct platform_device *pdev)
 		port->mapbase = 0;
 		iounmap(port->membase);
 	}
+
+	return 0;
 }
 
 #ifdef CONFIG_OF
@@ -617,7 +619,7 @@ MODULE_DEVICE_TABLE(of, altera_uart_match);
 
 static struct platform_driver altera_uart_platform_driver = {
 	.probe	= altera_uart_probe,
-	.remove_new = altera_uart_remove,
+	.remove	= altera_uart_remove,
 	.driver	= {
 		.name		= DRV_NAME,
 		.of_match_table	= of_match_ptr(altera_uart_match),

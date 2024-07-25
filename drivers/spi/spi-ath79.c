@@ -146,7 +146,7 @@ static int ath79_exec_mem_op(struct spi_mem *mem,
 	/* Only use for fast-read op. */
 	if (op->cmd.opcode != 0x0b || op->data.dir != SPI_MEM_DATA_IN ||
 	    op->addr.nbytes != 3 || op->dummy.nbytes != 1)
-		return -EOPNOTSUPP;
+		return -ENOTSUPP;
 
 	/* disable GPIO mode */
 	ath79_spi_wr(sp, AR71XX_SPI_REG_FS, 0);
@@ -189,7 +189,7 @@ static int ath79_spi_probe(struct platform_device *pdev)
 	host->num_chipselect = 3;
 	host->mem_ops = &ath79_mem_ops;
 
-	sp->bitbang.ctlr = host;
+	sp->bitbang.master = host;
 	sp->bitbang.chipselect = ath79_spi_chipselect;
 	sp->bitbang.txrx_word[SPI_MODE_0] = ath79_spi_txrx_mode0;
 	sp->bitbang.flags = SPI_CS_HIGH;
@@ -200,16 +200,20 @@ static int ath79_spi_probe(struct platform_device *pdev)
 		goto err_put_host;
 	}
 
-	sp->clk = devm_clk_get_enabled(&pdev->dev, "ahb");
+	sp->clk = devm_clk_get(&pdev->dev, "ahb");
 	if (IS_ERR(sp->clk)) {
 		ret = PTR_ERR(sp->clk);
 		goto err_put_host;
 	}
 
+	ret = clk_prepare_enable(sp->clk);
+	if (ret)
+		goto err_put_host;
+
 	rate = DIV_ROUND_UP(clk_get_rate(sp->clk), MHZ);
 	if (!rate) {
 		ret = -EINVAL;
-		goto err_put_host;
+		goto err_clk_disable;
 	}
 
 	sp->rrw_delay = ATH79_SPI_RRW_DELAY_FACTOR / rate;
@@ -225,6 +229,8 @@ static int ath79_spi_probe(struct platform_device *pdev)
 
 err_disable:
 	ath79_spi_disable(sp);
+err_clk_disable:
+	clk_disable_unprepare(sp->clk);
 err_put_host:
 	spi_controller_put(host);
 
@@ -237,7 +243,8 @@ static void ath79_spi_remove(struct platform_device *pdev)
 
 	spi_bitbang_stop(&sp->bitbang);
 	ath79_spi_disable(sp);
-	spi_controller_put(sp->bitbang.ctlr);
+	clk_disable_unprepare(sp->clk);
+	spi_controller_put(sp->bitbang.master);
 }
 
 static void ath79_spi_shutdown(struct platform_device *pdev)

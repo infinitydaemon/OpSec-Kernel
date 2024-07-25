@@ -230,7 +230,9 @@ static int _nf_conntrack_btf_struct_access(struct bpf_verifier_log *log,
 	return 0;
 }
 
-__bpf_kfunc_start_defs();
+__diag_push();
+__diag_ignore_all("-Wmissing-prototypes",
+		  "Global functions as their definitions will be in nf_conntrack BTF");
 
 /* bpf_xdp_ct_alloc - Allocate a new CT entry
  *
@@ -465,9 +467,9 @@ __bpf_kfunc int bpf_ct_change_status(struct nf_conn *nfct, u32 status)
 	return nf_ct_change_status_common(nfct, status);
 }
 
-__bpf_kfunc_end_defs();
+__diag_pop()
 
-BTF_KFUNCS_START(nf_ct_kfunc_set)
+BTF_SET8_START(nf_ct_kfunc_set)
 BTF_ID_FLAGS(func, bpf_xdp_ct_alloc, KF_ACQUIRE | KF_RET_NULL)
 BTF_ID_FLAGS(func, bpf_xdp_ct_lookup, KF_ACQUIRE | KF_RET_NULL)
 BTF_ID_FLAGS(func, bpf_skb_ct_alloc, KF_ACQUIRE | KF_RET_NULL)
@@ -478,7 +480,7 @@ BTF_ID_FLAGS(func, bpf_ct_set_timeout, KF_TRUSTED_ARGS)
 BTF_ID_FLAGS(func, bpf_ct_change_timeout, KF_TRUSTED_ARGS)
 BTF_ID_FLAGS(func, bpf_ct_set_status, KF_TRUSTED_ARGS)
 BTF_ID_FLAGS(func, bpf_ct_change_status, KF_TRUSTED_ARGS)
-BTF_KFUNCS_END(nf_ct_kfunc_set)
+BTF_SET8_END(nf_ct_kfunc_set)
 
 static const struct btf_kfunc_id_set nf_conntrack_kfunc_set = {
 	.owner = THIS_MODULE,

@@ -363,6 +363,7 @@ static int disable_net;
 /* driver info */
 static const char driver_name[] = "hso";
 static const char tty_filename[] = "ttyHS";
+static const char *version = __FILE__ ": " MOD_AUTHOR;
 /* the usb driver itself (registered in hso_init) */
 static struct usb_driver hso_driver;
 /* serial structures */
@@ -2465,7 +2466,7 @@ static void hso_create_rfkill(struct hso_device *hso_dev,
 	}
 }
 
-static const struct device_type hso_type = {
+static struct device_type hso_type = {
 	.name	= "wwan",
 };
 
@@ -3227,7 +3228,15 @@ static struct usb_driver hso_driver = {
 
 static int __init hso_init(void)
 {
+	int i;
 	int result;
+
+	/* put it in the log */
+	pr_info("%s\n", version);
+
+	/* Initialise the serial table semaphore and table */
+	for (i = 0; i < HSO_SERIAL_TTY_MINORS; i++)
+		serial_table[i] = NULL;
 
 	/* allocate our driver using the proper amount of supported minors */
 	tty_drv = tty_alloc_driver(HSO_SERIAL_TTY_MINORS, TTY_DRIVER_REAL_RAW |
@@ -3276,6 +3285,8 @@ err_free_tty:
 
 static void __exit hso_exit(void)
 {
+	pr_info("unloaded\n");
+
 	tty_unregister_driver(tty_drv);
 	/* deregister the usb driver */
 	usb_deregister(&hso_driver);

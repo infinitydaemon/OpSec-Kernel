@@ -523,7 +523,7 @@ fail_init:
 	return error;
 }
 
-static void __exit mac_scsi_remove(struct platform_device *pdev)
+static int __exit mac_scsi_remove(struct platform_device *pdev)
 {
 	struct Scsi_Host *instance = platform_get_drvdata(pdev);
 
@@ -532,16 +532,11 @@ static void __exit mac_scsi_remove(struct platform_device *pdev)
 		free_irq(instance->irq, instance);
 	NCR5380_exit(instance);
 	scsi_host_put(instance);
+	return 0;
 }
 
-/*
- * mac_scsi_remove() lives in .exit.text. For drivers registered via
- * module_platform_driver_probe() this is ok because they cannot get unbound at
- * runtime. So mark the driver struct with __refdata to prevent modpost
- * triggering a section mismatch warning.
- */
-static struct platform_driver mac_scsi_driver __refdata = {
-	.remove_new = __exit_p(mac_scsi_remove),
+static struct platform_driver mac_scsi_driver = {
+	.remove = __exit_p(mac_scsi_remove),
 	.driver = {
 		.name	= DRV_MODULE_NAME,
 	},

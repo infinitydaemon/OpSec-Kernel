@@ -2,7 +2,6 @@
 #ifndef __PERF_VALUES_H
 #define __PERF_VALUES_H
 
-#include <stdio.h>
 #include <linux/types.h>
 
 struct perf_read_values {

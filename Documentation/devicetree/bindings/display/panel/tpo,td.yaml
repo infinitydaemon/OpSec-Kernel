@@ -22,9 +22,7 @@ properties:
         # Toppoly TD043MTEA1 Panel
       - tpo,td043mtea1
 
-  reg:
-    maxItems: 1
-
+  reg: true
   label: true
   reset-gpios: true
   backlight: true

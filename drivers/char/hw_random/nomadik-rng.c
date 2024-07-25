@@ -78,6 +78,7 @@ MODULE_DEVICE_TABLE(amba, nmk_rng_ids);
 
 static struct amba_driver nmk_rng_driver = {
 	.drv = {
+		.owner = THIS_MODULE,
 		.name = "rng",
 		},
 	.probe = nmk_rng_probe,
@@ -87,5 +88,4 @@ static struct amba_driver nmk_rng_driver = {
 
 module_amba_driver(nmk_rng_driver);
 
-MODULE_DESCRIPTION("ST-Ericsson Nomadik Random Number Generator");
 MODULE_LICENSE("GPL");

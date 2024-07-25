@@ -52,10 +52,6 @@ enum usb4_ba_index {
 #define USB4_BA_VALUE_MASK		GENMASK(31, 16)
 #define USB4_BA_VALUE_SHIFT		16
 
-/* Delays in us used with usb4_port_wait_for_bit() */
-#define USB4_PORT_DELAY			50
-#define USB4_PORT_SB_DELAY		5000
-
 static int usb4_native_switch_op(struct tb_switch *sw, u16 opcode,
 				 u32 *metadata, u8 *status,
 				 const void *tx_data, size_t tx_dwords,
@@ -1249,7 +1245,7 @@ void usb4_port_unconfigure_xdomain(struct tb_port *port)
 }
 
 static int usb4_port_wait_for_bit(struct tb_port *port, u32 offset, u32 bit,
-			  u32 value, int timeout_msec, unsigned long delay_usec)
+				  u32 value, int timeout_msec)
 {
 	ktime_t timeout = ktime_add_ms(ktime_get(), timeout_msec);
 
@@ -1264,7 +1260,7 @@ static int usb4_port_wait_for_bit(struct tb_port *port, u32 offset, u32 bit,
 		if ((val & bit) == value)
 			return 0;
 
-		fsleep(delay_usec);
+		usleep_range(50, 100);
 	} while (ktime_before(ktime_get(), timeout));
 
 	return -ETIMEDOUT;
@@ -1312,7 +1308,7 @@ static int usb4_port_sb_read(struct tb_port *port, enum usb4_sb_target target,
 		return ret;
 
 	ret = usb4_port_wait_for_bit(port, port->cap_usb4 + PORT_CS_1,
-				     PORT_CS_1_PND, 0, 500, USB4_PORT_SB_DELAY);
+				     PORT_CS_1_PND, 0, 500);
 	if (ret)
 		return ret;
 
@@ -1359,7 +1355,7 @@ static int usb4_port_sb_write(struct tb_port *port, enum usb4_sb_target target,
 		return ret;
 
 	ret = usb4_port_wait_for_bit(port, port->cap_usb4 + PORT_CS_1,
-				     PORT_CS_1_PND, 0, 500, USB4_PORT_SB_DELAY);
+				     PORT_CS_1_PND, 0, 500);
 	if (ret)
 		return ret;
 
@@ -1414,8 +1410,6 @@ static int usb4_port_sb_op(struct tb_port *port, enum usb4_sb_target target,
 
 		if (val != opcode)
 			return usb4_port_sb_opcode_err_to_errno(val);
-
-		fsleep(USB4_PORT_SB_DELAY);
 	} while (ktime_before(ktime_get(), timeout));
 
 	return -ETIMEDOUT;
@@ -1498,113 +1492,6 @@ bool usb4_port_clx_supported(struct tb_port *port)
 		return false;
 
 	return !!(val & PORT_CS_18_CPS);
-}
-
-/**
- * usb4_port_asym_supported() - If the port supports asymmetric link
- * @port: USB4 port
- *
- * Checks if the port and the cable supports asymmetric link and returns
- * %true in that case.
- */
-bool usb4_port_asym_supported(struct tb_port *port)
-{
-	u32 val;
-
-	if (!port->cap_usb4)
-		return false;
-
-	if (tb_port_read(port, &val, TB_CFG_PORT, port->cap_usb4 + PORT_CS_18, 1))
-		return false;
-
-	return !!(val & PORT_CS_18_CSA);
-}
-
-/**
- * usb4_port_asym_set_link_width() - Set link width to asymmetric or symmetric
- * @port: USB4 port
- * @width: Asymmetric width to configure
- *
- * Sets USB4 port link width to @width. Can be called for widths where
- * usb4_port_asym_width_supported() returned @true.
- */
-int usb4_port_asym_set_link_width(struct tb_port *port, enum tb_link_width width)
-{
-	u32 val;
-	int ret;
-
-	if (!port->cap_phy)
-		return -EINVAL;
-
-	ret = tb_port_read(port, &val, TB_CFG_PORT,
-			   port->cap_phy + LANE_ADP_CS_1, 1);
-	if (ret)
-		return ret;
-
-	val &= ~LANE_ADP_CS_1_TARGET_WIDTH_ASYM_MASK;
-	switch (width) {
-	case TB_LINK_WIDTH_DUAL:
-		val |= FIELD_PREP(LANE_ADP_CS_1_TARGET_WIDTH_ASYM_MASK,
-				  LANE_ADP_CS_1_TARGET_WIDTH_ASYM_DUAL);
-		break;
-	case TB_LINK_WIDTH_ASYM_TX:
-		val |= FIELD_PREP(LANE_ADP_CS_1_TARGET_WIDTH_ASYM_MASK,
-				  LANE_ADP_CS_1_TARGET_WIDTH_ASYM_TX);
-		break;
-	case TB_LINK_WIDTH_ASYM_RX:
-		val |= FIELD_PREP(LANE_ADP_CS_1_TARGET_WIDTH_ASYM_MASK,
-				  LANE_ADP_CS_1_TARGET_WIDTH_ASYM_RX);
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	return tb_port_write(port, &val, TB_CFG_PORT,
-			     port->cap_phy + LANE_ADP_CS_1, 1);
-}
-
-/**
- * usb4_port_asym_start() - Start symmetry change and wait for completion
- * @port: USB4 port
- *
- * Start symmetry change of the link to asymmetric or symmetric
- * (according to what was previously set in tb_port_set_link_width().
- * Wait for completion of the change.
- *
- * Returns %0 in case of success, %-ETIMEDOUT if case of timeout or
- * a negative errno in case of a failure.
- */
-int usb4_port_asym_start(struct tb_port *port)
-{
-	int ret;
-	u32 val;
-
-	ret = tb_port_read(port, &val, TB_CFG_PORT,
-			   port->cap_usb4 + PORT_CS_19, 1);
-	if (ret)
-		return ret;
-
-	val &= ~PORT_CS_19_START_ASYM;
-	val |= FIELD_PREP(PORT_CS_19_START_ASYM, 1);
-
-	ret = tb_port_write(port, &val, TB_CFG_PORT,
-			    port->cap_usb4 + PORT_CS_19, 1);
-	if (ret)
-		return ret;
-
-	/*
-	 * Wait for PORT_CS_19_START_ASYM to be 0. This means the USB4
-	 * port started the symmetry transition.
-	 */
-	ret = usb4_port_wait_for_bit(port, port->cap_usb4 + PORT_CS_19,
-				     PORT_CS_19_START_ASYM, 0, 1000,
-				     USB4_PORT_DELAY);
-	if (ret)
-		return ret;
-
-	/* Then wait for the transtion to be completed */
-	return usb4_port_wait_for_bit(port, port->cap_usb4 + PORT_CS_18,
-				      PORT_CS_18_TIP, 0, 5000, USB4_PORT_DELAY);
 }
 
 /**
@@ -2099,6 +1986,35 @@ int usb4_usb3_port_max_link_rate(struct tb_port *port)
 	return usb4_usb3_port_max_bandwidth(port, ret);
 }
 
+/**
+ * usb4_usb3_port_actual_link_rate() - Established USB3 link rate
+ * @port: USB3 adapter port
+ *
+ * Return actual established link rate of a USB3 adapter in Mb/s. If the
+ * link is not up returns %0 and negative errno in case of failure.
+ */
+int usb4_usb3_port_actual_link_rate(struct tb_port *port)
+{
+	int ret, lr;
+	u32 val;
+
+	if (!tb_port_is_usb3_down(port) && !tb_port_is_usb3_up(port))
+		return -EINVAL;
+
+	ret = tb_port_read(port, &val, TB_CFG_PORT,
+			   port->cap_adap + ADP_USB3_CS_4, 1);
+	if (ret)
+		return ret;
+
+	if (!(val & ADP_USB3_CS_4_ULV))
+		return 0;
+
+	lr = val & ADP_USB3_CS_4_ALR_MASK;
+	ret = lr == ADP_USB3_CS_4_ALR_20G ? 20000 : 10000;
+
+	return usb4_usb3_port_max_bandwidth(port, ret);
+}
+
 static int usb4_usb3_port_cm_request(struct tb_port *port, bool request)
 {
 	int ret;
@@ -2130,8 +2046,7 @@ static int usb4_usb3_port_cm_request(struct tb_port *port, bool request)
 	 */
 	val &= ADP_USB3_CS_2_CMR;
 	return usb4_port_wait_for_bit(port, port->cap_adap + ADP_USB3_CS_1,
-				      ADP_USB3_CS_1_HCA, val, 1500,
-				      USB4_PORT_DELAY);
+				      ADP_USB3_CS_1_HCA, val, 1500);
 }
 
 static inline int usb4_usb3_port_set_cm_request(struct tb_port *port)
@@ -2359,13 +2274,13 @@ int usb4_usb3_port_release_bandwidth(struct tb_port *port, int *upstream_bw,
 		goto err_request;
 
 	/*
-	 * Always keep 900 Mb/s to make sure xHCI has at least some
+	 * Always keep 1000 Mb/s to make sure xHCI has at least some
 	 * bandwidth available for isochronous traffic.
 	 */
-	if (consumed_up < 900)
-		consumed_up = 900;
-	if (consumed_down < 900)
-		consumed_down = 900;
+	if (consumed_up < 1000)
+		consumed_up = 1000;
+	if (consumed_down < 1000)
+		consumed_down = 1000;
 
 	ret = usb4_usb3_port_write_allocated_bandwidth(port, consumed_up,
 						       consumed_down);
@@ -2867,10 +2782,8 @@ static int usb4_dp_port_wait_and_clear_cm_ack(struct tb_port *port,
 		usleep_range(50, 100);
 	} while (ktime_before(ktime_get(), end));
 
-	if (val & ADP_DP_CS_8_DR) {
-		tb_port_warn(port, "timeout waiting for DPTX request to clear\n");
+	if (val & ADP_DP_CS_8_DR)
 		return -ETIMEDOUT;
-	}
 
 	ret = tb_port_read(port, &val, TB_CFG_PORT,
 			   port->cap_adap + ADP_DP_CS_2, 1);

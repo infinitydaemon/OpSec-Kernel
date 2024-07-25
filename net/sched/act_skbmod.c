@@ -157,7 +157,7 @@ static int tcf_skbmod_init(struct net *net, struct nlattr *nla,
 		return err;
 	exists = err;
 	if (exists && bind)
-		return ACT_P_BOUND;
+		return 0;
 
 	if (!lflags) {
 		if (exists)
@@ -287,7 +287,6 @@ static struct tc_action_ops act_skbmod_ops = {
 	.cleanup	=	tcf_skbmod_cleanup,
 	.size		=	sizeof(struct tcf_skbmod),
 };
-MODULE_ALIAS_NET_ACT("skbmod");
 
 static __net_init int skbmod_init_net(struct net *net)
 {

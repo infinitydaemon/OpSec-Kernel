@@ -293,7 +293,9 @@ struct ov2640_win_size {
 
 struct ov2640_priv {
 	struct v4l2_subdev		subdev;
+#if defined(CONFIG_MEDIA_CONTROLLER)
 	struct media_pad pad;
+#endif
 	struct v4l2_ctrl_handler	hdl;
 	u32	cfmt_code;
 	struct clk			*clk;
@@ -920,9 +922,13 @@ static int ov2640_get_fmt(struct v4l2_subdev *sd,
 		return -EINVAL;
 
 	if (format->which == V4L2_SUBDEV_FORMAT_TRY) {
-		mf = v4l2_subdev_state_get_format(sd_state, 0);
+#ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
+		mf = v4l2_subdev_get_try_format(sd, sd_state, 0);
 		format->format = *mf;
 		return 0;
+#else
+		return -EINVAL;
+#endif
 	}
 
 	mf->width	= priv->win->width;
@@ -988,7 +994,7 @@ static int ov2640_set_fmt(struct v4l2_subdev *sd,
 		/* select format */
 		priv->cfmt_code = mf->code;
 	} else {
-		*v4l2_subdev_state_get_format(sd_state, 0) = *mf;
+		sd_state->pads->try_fmt = *mf;
 	}
 out:
 	mutex_unlock(&priv->lock);
@@ -996,11 +1002,12 @@ out:
 	return ret;
 }
 
-static int ov2640_init_state(struct v4l2_subdev *sd,
-			     struct v4l2_subdev_state *sd_state)
+static int ov2640_init_cfg(struct v4l2_subdev *sd,
+			   struct v4l2_subdev_state *sd_state)
 {
+#ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
 	struct v4l2_mbus_framefmt *try_fmt =
-		v4l2_subdev_state_get_format(sd_state, 0);
+		v4l2_subdev_get_try_format(sd, sd_state, 0);
 	const struct ov2640_win_size *win =
 		ov2640_select_win(SVGA_WIDTH, SVGA_HEIGHT);
 
@@ -1012,7 +1019,7 @@ static int ov2640_init_state(struct v4l2_subdev *sd,
 	try_fmt->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
 	try_fmt->quantization = V4L2_QUANTIZATION_DEFAULT;
 	try_fmt->xfer_func = V4L2_XFER_FUNC_DEFAULT;
-
+#endif
 	return 0;
 }
 
@@ -1125,6 +1132,7 @@ static const struct v4l2_subdev_core_ops ov2640_subdev_core_ops = {
 };
 
 static const struct v4l2_subdev_pad_ops ov2640_subdev_pad_ops = {
+	.init_cfg	= ov2640_init_cfg,
 	.enum_mbus_code = ov2640_enum_mbus_code,
 	.get_selection	= ov2640_get_selection,
 	.get_fmt	= ov2640_get_fmt,
@@ -1139,10 +1147,6 @@ static const struct v4l2_subdev_ops ov2640_subdev_ops = {
 	.core	= &ov2640_subdev_core_ops,
 	.pad	= &ov2640_subdev_pad_ops,
 	.video	= &ov2640_subdev_video_ops,
-};
-
-static const struct v4l2_subdev_internal_ops ov2640_internal_ops = {
-	.init_state	= ov2640_init_state,
 };
 
 static int ov2640_probe_dt(struct i2c_client *client,
@@ -1201,20 +1205,22 @@ static int ov2640_probe(struct i2c_client *client)
 		return -ENOMEM;
 
 	if (client->dev.of_node) {
-		priv->clk = devm_clk_get_enabled(&client->dev, "xvclk");
+		priv->clk = devm_clk_get(&client->dev, "xvclk");
 		if (IS_ERR(priv->clk))
 			return PTR_ERR(priv->clk);
+		ret = clk_prepare_enable(priv->clk);
+		if (ret)
+			return ret;
 	}
 
 	ret = ov2640_probe_dt(client, priv);
 	if (ret)
-		return ret;
+		goto err_clk;
 
 	priv->win = ov2640_select_win(SVGA_WIDTH, SVGA_HEIGHT);
 	priv->cfmt_code = MEDIA_BUS_FMT_UYVY8_2X8;
 
 	v4l2_i2c_subdev_init(&priv->subdev, client, &ov2640_subdev_ops);
-	priv->subdev.internal_ops = &ov2640_internal_ops;
 	priv->subdev.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE |
 			      V4L2_SUBDEV_FL_HAS_EVENTS;
 	mutex_init(&priv->lock);
@@ -1233,11 +1239,13 @@ static int ov2640_probe(struct i2c_client *client)
 		ret = priv->hdl.error;
 		goto err_hdl;
 	}
+#if defined(CONFIG_MEDIA_CONTROLLER)
 	priv->pad.flags = MEDIA_PAD_FL_SOURCE;
 	priv->subdev.entity.function = MEDIA_ENT_F_CAM_SENSOR;
 	ret = media_entity_pads_init(&priv->subdev.entity, 1, &priv->pad);
 	if (ret < 0)
 		goto err_hdl;
+#endif
 
 	ret = ov2640_video_probe(client);
 	if (ret < 0)
@@ -1256,6 +1264,8 @@ err_videoprobe:
 err_hdl:
 	v4l2_ctrl_handler_free(&priv->hdl);
 	mutex_destroy(&priv->lock);
+err_clk:
+	clk_disable_unprepare(priv->clk);
 	return ret;
 }
 
@@ -1268,6 +1278,7 @@ static void ov2640_remove(struct i2c_client *client)
 	mutex_destroy(&priv->lock);
 	media_entity_cleanup(&priv->subdev.entity);
 	v4l2_device_unregister_subdev(&priv->subdev);
+	clk_disable_unprepare(priv->clk);
 }
 
 static const struct i2c_device_id ov2640_id[] = {

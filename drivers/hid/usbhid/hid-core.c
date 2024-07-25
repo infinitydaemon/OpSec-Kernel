@@ -45,7 +45,7 @@
  * Module parameters.
  */
 
-static unsigned int hid_mousepoll_interval;
+static unsigned int hid_mousepoll_interval = ~0;
 module_param_named(mousepoll, hid_mousepoll_interval, uint, 0644);
 MODULE_PARM_DESC(mousepoll, "Polling interval of mice");
 
@@ -1112,7 +1112,9 @@ static int usbhid_start(struct hid_device *hid)
 		 */
 		switch (hid->collection->usage) {
 		case HID_GD_MOUSE:
-			if (hid_mousepoll_interval > 0)
+			if (hid_mousepoll_interval == ~0 && interval < 16)
+				interval = 16;
+			else if (hid_mousepoll_interval != ~0 && hid_mousepoll_interval != 0)
 				interval = hid_mousepoll_interval;
 			break;
 		case HID_GD_JOYSTICK:
@@ -1124,6 +1126,7 @@ static int usbhid_start(struct hid_device *hid)
 				interval = hid_kbpoll_interval;
 			break;
 		}
+		usb_fixup_endpoint(dev, endpoint->bEndpointAddress, interval);
 
 		ret = -ENOMEM;
 		if (usb_endpoint_dir_in(endpoint)) {
@@ -1562,6 +1565,7 @@ static int hid_post_reset(struct usb_interface *intf)
 	return 0;
 }
 
+#ifdef CONFIG_PM
 static int hid_resume_common(struct hid_device *hid, bool driver_suspended)
 {
 	int status = 0;
@@ -1653,6 +1657,8 @@ static int hid_reset_resume(struct usb_interface *intf)
 	return status;
 }
 
+#endif /* CONFIG_PM */
+
 static const struct usb_device_id hid_usb_ids[] = {
 	{ .match_flags = USB_DEVICE_ID_MATCH_INT_CLASS,
 		.bInterfaceClass = USB_INTERFACE_CLASS_HID },
@@ -1665,9 +1671,11 @@ static struct usb_driver hid_driver = {
 	.name =		"usbhid",
 	.probe =	usbhid_probe,
 	.disconnect =	usbhid_disconnect,
-	.suspend =	pm_ptr(hid_suspend),
-	.resume =	pm_ptr(hid_resume),
-	.reset_resume =	pm_ptr(hid_reset_resume),
+#ifdef CONFIG_PM
+	.suspend =	hid_suspend,
+	.resume =	hid_resume,
+	.reset_resume =	hid_reset_resume,
+#endif
 	.pre_reset =	hid_pre_reset,
 	.post_reset =	hid_post_reset,
 	.id_table =	hid_usb_ids,

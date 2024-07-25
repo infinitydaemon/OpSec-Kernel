@@ -204,8 +204,8 @@ static int jffs2_create(struct mnt_idmap *idmap, struct inode *dir_i,
 	if (ret)
 		goto fail;
 
-	inode_set_mtime_to_ts(dir_i,
-			      inode_set_ctime_to_ts(dir_i, ITIME(je32_to_cpu(ri->ctime))));
+	dir_i->i_mtime = inode_set_ctime_to_ts(dir_i,
+					       ITIME(je32_to_cpu(ri->ctime)));
 
 	jffs2_free_raw_inode(ri);
 
@@ -238,8 +238,7 @@ static int jffs2_unlink(struct inode *dir_i, struct dentry *dentry)
 	if (dead_f->inocache)
 		set_nlink(d_inode(dentry), dead_f->inocache->pino_nlink);
 	if (!ret)
-		inode_set_mtime_to_ts(dir_i,
-				      inode_set_ctime_to_ts(dir_i, ITIME(now)));
+		dir_i->i_mtime = inode_set_ctime_to_ts(dir_i, ITIME(now));
 	return ret;
 }
 /***********************************************************************/
@@ -273,8 +272,7 @@ static int jffs2_link (struct dentry *old_dentry, struct inode *dir_i, struct de
 		set_nlink(d_inode(old_dentry), ++f->inocache->pino_nlink);
 		mutex_unlock(&f->sem);
 		d_instantiate(dentry, d_inode(old_dentry));
-		inode_set_mtime_to_ts(dir_i,
-				      inode_set_ctime_to_ts(dir_i, ITIME(now)));
+		dir_i->i_mtime = inode_set_ctime_to_ts(dir_i, ITIME(now));
 		ihold(d_inode(old_dentry));
 	}
 	return ret;
@@ -425,8 +423,8 @@ static int jffs2_symlink (struct mnt_idmap *idmap, struct inode *dir_i,
 		goto fail;
 	}
 
-	inode_set_mtime_to_ts(dir_i,
-			      inode_set_ctime_to_ts(dir_i, ITIME(je32_to_cpu(rd->mctime))));
+	dir_i->i_mtime = inode_set_ctime_to_ts(dir_i,
+					       ITIME(je32_to_cpu(rd->mctime)));
 
 	jffs2_free_raw_dirent(rd);
 
@@ -570,8 +568,8 @@ static int jffs2_mkdir (struct mnt_idmap *idmap, struct inode *dir_i,
 		goto fail;
 	}
 
-	inode_set_mtime_to_ts(dir_i,
-			      inode_set_ctime_to_ts(dir_i, ITIME(je32_to_cpu(rd->mctime))));
+	dir_i->i_mtime = inode_set_ctime_to_ts(dir_i,
+					       ITIME(je32_to_cpu(rd->mctime)));
 	inc_nlink(dir_i);
 
 	jffs2_free_raw_dirent(rd);
@@ -612,8 +610,7 @@ static int jffs2_rmdir (struct inode *dir_i, struct dentry *dentry)
 	ret = jffs2_do_unlink(c, dir_f, dentry->d_name.name,
 			      dentry->d_name.len, f, now);
 	if (!ret) {
-		inode_set_mtime_to_ts(dir_i,
-				      inode_set_ctime_to_ts(dir_i, ITIME(now)));
+		dir_i->i_mtime = inode_set_ctime_to_ts(dir_i, ITIME(now));
 		clear_nlink(d_inode(dentry));
 		drop_nlink(dir_i);
 	}
@@ -749,8 +746,8 @@ static int jffs2_mknod (struct mnt_idmap *idmap, struct inode *dir_i,
 		goto fail;
 	}
 
-	inode_set_mtime_to_ts(dir_i,
-			      inode_set_ctime_to_ts(dir_i, ITIME(je32_to_cpu(rd->mctime))));
+	dir_i->i_mtime = inode_set_ctime_to_ts(dir_i,
+					       ITIME(je32_to_cpu(rd->mctime)));
 
 	jffs2_free_raw_dirent(rd);
 
@@ -871,18 +868,16 @@ static int jffs2_rename (struct mnt_idmap *idmap,
 		 * caller won't do it on its own since we are returning an error.
 		 */
 		d_invalidate(new_dentry);
-		inode_set_mtime_to_ts(new_dir_i,
-				      inode_set_ctime_to_ts(new_dir_i, ITIME(now)));
+		new_dir_i->i_mtime = inode_set_ctime_to_ts(new_dir_i,
+							   ITIME(now));
 		return ret;
 	}
 
 	if (d_is_dir(old_dentry))
 		drop_nlink(old_dir_i);
 
-	inode_set_mtime_to_ts(old_dir_i,
-			      inode_set_ctime_to_ts(old_dir_i, ITIME(now)));
-	inode_set_mtime_to_ts(new_dir_i,
-			      inode_set_ctime_to_ts(new_dir_i, ITIME(now)));
+	old_dir_i->i_mtime = inode_set_ctime_to_ts(old_dir_i, ITIME(now));
+	new_dir_i->i_mtime = inode_set_ctime_to_ts(new_dir_i, ITIME(now));
 
 	return 0;
 }

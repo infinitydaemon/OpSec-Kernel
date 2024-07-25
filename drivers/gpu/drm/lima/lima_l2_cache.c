@@ -21,8 +21,7 @@ static int lima_l2_cache_wait_idle(struct lima_ip *ip)
 				 !(v & LIMA_L2_CACHE_STATUS_COMMAND_BUSY),
 				 0, 1000);
 	if (err) {
-		dev_err(dev->dev, "%s wait command timeout\n",
-			lima_ip_name(ip));
+		dev_err(dev->dev, "l2 cache wait command timeout\n");
 		return err;
 	}
 	return 0;
@@ -84,8 +83,7 @@ int lima_l2_cache_init(struct lima_ip *ip)
 	spin_lock_init(&ip->data.lock);
 
 	size = l2_cache_read(LIMA_L2_CACHE_SIZE);
-	dev_info(dev->dev, "%s %uK, %u-way, %ubyte cache line, %ubit external bus\n",
-		 lima_ip_name(ip),
+	dev_info(dev->dev, "l2 cache %uK, %u-way, %ubyte cache line, %ubit external bus\n",
 		 1 << (((size >> 16) & 0xff) - 10),
 		 1 << ((size >> 8) & 0xff),
 		 1 << (size & 0xff),

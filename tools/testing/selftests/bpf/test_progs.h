@@ -385,20 +385,12 @@ int test__join_cgroup(const char *path);
 			goto goto_label;				\
 	})
 
-#define ALL_TO_DEV_NULL " >/dev/null 2>&1"
-
 #define SYS_NOFAIL(fmt, ...)						\
 	({								\
 		char cmd[1024];						\
-		int n;							\
-		n = snprintf(cmd, sizeof(cmd), fmt, ##__VA_ARGS__);	\
-		if (n < sizeof(cmd) && sizeof(cmd) - n >= sizeof(ALL_TO_DEV_NULL)) \
-			strcat(cmd, ALL_TO_DEV_NULL);			\
+		snprintf(cmd, sizeof(cmd), fmt, ##__VA_ARGS__);		\
 		system(cmd);						\
 	})
-
-int start_libbpf_log_capture(void);
-char *stop_libbpf_log_capture(void);
 
 static inline __u64 ptr_to_u64(const void *ptr)
 {

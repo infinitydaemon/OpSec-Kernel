@@ -11,10 +11,7 @@
 #include <linux/slab.h>
 #include <linux/export.h>
 #include <linux/interrupt.h>
-#include <linux/of.h>
-#include <linux/of_platform.h>
-#include <linux/platform_device.h>
-#include <linux/property.h>
+#include <linux/of_device.h>
 #include <linux/numa.h>
 
 #include <asm/iommu.h>
@@ -145,7 +142,7 @@ static void __schizo_check_stc_error_pbm(struct pci_pbm_info *pbm,
 
 	/* This is __REALLY__ dangerous.  When we put the
 	 * streaming buffer into diagnostic mode to probe
-	 * its tags and error status, we _must_ clear all
+	 * it's tags and error status, we _must_ clear all
 	 * of the line tag valid bits before re-enabling
 	 * the streaming buffer.  If any dirty data lives
 	 * in the STC when we do this, we will end up
@@ -275,7 +272,7 @@ static void schizo_check_iommu_error_pbm(struct pci_pbm_info *pbm,
 		       pbm->name, type_string);
 
 		/* Put the IOMMU into diagnostic mode and probe
-		 * its TLB for entries with error status.
+		 * it's TLB for entries with error status.
 		 *
 		 * It is very possible for another DVMA to occur
 		 * while we do this probe, and corrupt the system
@@ -1462,13 +1459,15 @@ out_err:
 	return err;
 }
 
+static const struct of_device_id schizo_match[];
 static int schizo_probe(struct platform_device *op)
 {
-	unsigned long chip_type = (unsigned long)device_get_match_data(&op->dev);
+	const struct of_device_id *match;
 
-	if (!chip_type)
+	match = of_match_device(schizo_match, &op->dev);
+	if (!match)
 		return -EINVAL;
-	return __schizo_init(op, chip_type);
+	return __schizo_init(op, (unsigned long)match->data);
 }
 
 /* The ordering of this table is very important.  Some Tomatillo

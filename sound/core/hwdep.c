@@ -149,12 +149,12 @@ static int snd_hwdep_release(struct inode *inode, struct file * file)
 	struct snd_hwdep *hw = file->private_data;
 	struct module *mod = hw->card->module;
 
-	scoped_guard(mutex, &hw->open_mutex) {
-		if (hw->ops.release)
-			err = hw->ops.release(hw, file);
-		if (hw->used > 0)
-			hw->used--;
-	}
+	mutex_lock(&hw->open_mutex);
+	if (hw->ops.release)
+		err = hw->ops.release(hw, file);
+	if (hw->used > 0)
+		hw->used--;
+	mutex_unlock(&hw->open_mutex);
 	wake_up(&hw->open_wait);
 
 	snd_card_file_remove(hw->card, file);
@@ -272,23 +272,23 @@ static int snd_hwdep_control_ioctl(struct snd_card *card,
 
 			if (get_user(device, (int __user *)arg))
 				return -EFAULT;
+			mutex_lock(&register_mutex);
 
-			scoped_guard(mutex, &register_mutex) {
-				if (device < 0)
-					device = 0;
-				else if (device < SNDRV_MINOR_HWDEPS)
-					device++;
-				else
-					device = SNDRV_MINOR_HWDEPS;
+			if (device < 0)
+				device = 0;
+			else if (device < SNDRV_MINOR_HWDEPS)
+				device++;
+			else
+				device = SNDRV_MINOR_HWDEPS;
 
-				while (device < SNDRV_MINOR_HWDEPS) {
-					if (snd_hwdep_search(card, device))
-						break;
-					device++;
-				}
-				if (device >= SNDRV_MINOR_HWDEPS)
-					device = -1;
+			while (device < SNDRV_MINOR_HWDEPS) {
+				if (snd_hwdep_search(card, device))
+					break;
+				device++;
 			}
+			if (device >= SNDRV_MINOR_HWDEPS)
+				device = -1;
+			mutex_unlock(&register_mutex);
 			if (put_user(device, (int __user *)arg))
 				return -EFAULT;
 			return 0;
@@ -296,18 +296,19 @@ static int snd_hwdep_control_ioctl(struct snd_card *card,
 	case SNDRV_CTL_IOCTL_HWDEP_INFO:
 		{
 			struct snd_hwdep_info __user *info = (struct snd_hwdep_info __user *)arg;
-			int device;
+			int device, err;
 			struct snd_hwdep *hwdep;
 
 			if (get_user(device, &info->device))
 				return -EFAULT;
-			scoped_guard(mutex, &register_mutex) {
-				hwdep = snd_hwdep_search(card, device);
-				if (!hwdep)
-					return -ENXIO;
-				return snd_hwdep_info(hwdep, info);
-			}
-			break;
+			mutex_lock(&register_mutex);
+			hwdep = snd_hwdep_search(card, device);
+			if (hwdep)
+				err = snd_hwdep_info(hwdep, info);
+			else
+				err = -ENXIO;
+			mutex_unlock(&register_mutex);
+			return err;
 		}
 	}
 	return -ENOIOCTLCMD;
@@ -421,9 +422,11 @@ static int snd_hwdep_dev_register(struct snd_device *device)
 	struct snd_card *card = hwdep->card;
 	int err;
 
-	guard(mutex)(&register_mutex);
-	if (snd_hwdep_search(card, hwdep->device))
+	mutex_lock(&register_mutex);
+	if (snd_hwdep_search(card, hwdep->device)) {
+		mutex_unlock(&register_mutex);
 		return -EBUSY;
+	}
 	list_add_tail(&hwdep->list, &snd_hwdep_devices);
 	err = snd_register_device(SNDRV_DEVICE_TYPE_HWDEP,
 				  hwdep->card, hwdep->device,
@@ -431,6 +434,7 @@ static int snd_hwdep_dev_register(struct snd_device *device)
 	if (err < 0) {
 		dev_err(hwdep->dev, "unable to register\n");
 		list_del(&hwdep->list);
+		mutex_unlock(&register_mutex);
 		return err;
 	}
 
@@ -450,6 +454,7 @@ static int snd_hwdep_dev_register(struct snd_device *device)
 			hwdep->ossreg = 1;
 	}
 #endif
+	mutex_unlock(&register_mutex);
 	return 0;
 }
 
@@ -459,10 +464,12 @@ static int snd_hwdep_dev_disconnect(struct snd_device *device)
 
 	if (snd_BUG_ON(!hwdep))
 		return -ENXIO;
-	guard(mutex)(&register_mutex);
-	if (snd_hwdep_search(hwdep->card, hwdep->device) != hwdep)
+	mutex_lock(&register_mutex);
+	if (snd_hwdep_search(hwdep->card, hwdep->device) != hwdep) {
+		mutex_unlock(&register_mutex);
 		return -EINVAL;
-	guard(mutex)(&hwdep->open_mutex);
+	}
+	mutex_lock(&hwdep->open_mutex);
 	wake_up(&hwdep->open_wait);
 #ifdef CONFIG_SND_OSSEMUL
 	if (hwdep->ossreg)
@@ -470,6 +477,8 @@ static int snd_hwdep_dev_disconnect(struct snd_device *device)
 #endif
 	snd_unregister_device(hwdep->dev);
 	list_del_init(&hwdep->list);
+	mutex_unlock(&hwdep->open_mutex);
+	mutex_unlock(&register_mutex);
 	return 0;
 }
 
@@ -483,10 +492,11 @@ static void snd_hwdep_proc_read(struct snd_info_entry *entry,
 {
 	struct snd_hwdep *hwdep;
 
-	guard(mutex)(&register_mutex);
+	mutex_lock(&register_mutex);
 	list_for_each_entry(hwdep, &snd_hwdep_devices, list)
 		snd_iprintf(buffer, "%02i-%02i: %s\n",
 			    hwdep->card->number, hwdep->device, hwdep->name);
+	mutex_unlock(&register_mutex);
 }
 
 static struct snd_info_entry *snd_hwdep_proc_entry;

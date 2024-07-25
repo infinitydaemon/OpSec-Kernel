@@ -162,6 +162,7 @@ static int uniphier_uart_probe(struct platform_device *pdev)
 	struct uniphier8250_priv *priv;
 	struct resource *regs;
 	void __iomem *membase;
+	int irq;
 	int ret;
 
 	regs = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -174,11 +175,22 @@ static int uniphier_uart_probe(struct platform_device *pdev)
 	if (!membase)
 		return -ENOMEM;
 
+	irq = platform_get_irq(pdev, 0);
+	if (irq < 0)
+		return irq;
+
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 
 	memset(&up, 0, sizeof(up));
+
+	ret = of_alias_get_id(dev->of_node, "serial");
+	if (ret < 0) {
+		dev_err(dev, "failed to get alias id\n");
+		return ret;
+	}
+	up.port.line = ret;
 
 	priv->clk = devm_clk_get(dev, NULL);
 	if (IS_ERR(priv->clk)) {
@@ -199,10 +211,7 @@ static int uniphier_uart_probe(struct platform_device *pdev)
 	up.port.mapbase = regs->start;
 	up.port.mapsize = resource_size(regs);
 	up.port.membase = membase;
-
-	ret = uart_read_port_properties(&up.port);
-	if (ret)
-		return ret;
+	up.port.irq = irq;
 
 	up.port.type = PORT_16550A;
 	up.port.iotype = UPIO_MEM32;
@@ -232,12 +241,14 @@ static int uniphier_uart_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void uniphier_uart_remove(struct platform_device *pdev)
+static int uniphier_uart_remove(struct platform_device *pdev)
 {
 	struct uniphier8250_priv *priv = platform_get_drvdata(pdev);
 
 	serial8250_unregister_port(priv->line);
 	clk_disable_unprepare(priv->clk);
+
+	return 0;
 }
 
 static int __maybe_unused uniphier_uart_suspend(struct device *dev)
@@ -282,7 +293,7 @@ MODULE_DEVICE_TABLE(of, uniphier_uart_match);
 
 static struct platform_driver uniphier_uart_platform_driver = {
 	.probe		= uniphier_uart_probe,
-	.remove_new	= uniphier_uart_remove,
+	.remove		= uniphier_uart_remove,
 	.driver = {
 		.name	= "uniphier-uart",
 		.of_match_table = uniphier_uart_match,

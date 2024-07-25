@@ -10,6 +10,7 @@
 #include "messages.h"
 #include "transaction.h"
 #include "disk-io.h"
+#include "print-tree.h"
 #include "qgroup.h"
 #include "space-info.h"
 #include "accessors.h"
@@ -50,8 +51,7 @@ static void btrfs_read_root_item(struct extent_buffer *eb, int slot,
 }
 
 /*
- * Lookup the root by the key.
- *
+ * btrfs_find_root - lookup the root by the key.
  * root: the root of the root tree
  * search_key: the key to search
  * path: the path we search
@@ -81,14 +81,7 @@ int btrfs_find_root(struct btrfs_root *root, const struct btrfs_key *search_key,
 		if (ret > 0)
 			goto out;
 	} else {
-		/*
-		 * Key with offset -1 found, there would have to exist a root
-		 * with such id, but this is out of the valid range.
-		 */
-		if (ret == 0) {
-			ret = -EUCLEAN;
-			goto out;
-		}
+		BUG_ON(ret == 0);		/* Logical error */
 		if (path->slots[0] == 0)
 			goto out;
 		path->slots[0]--;
@@ -148,7 +141,8 @@ int btrfs_update_root(struct btrfs_trans_handle *trans, struct btrfs_root
 	if (ret > 0) {
 		btrfs_crit(fs_info,
 			"unable to find root key (%llu %u %llu) in tree %llu",
-			key->objectid, key->type, key->offset, btrfs_root_id(root));
+			key->objectid, key->type, key->offset,
+			root->root_key.objectid);
 		ret = -EUCLEAN;
 		btrfs_abort_transaction(trans, ret);
 		goto out;
@@ -328,11 +322,8 @@ int btrfs_del_root(struct btrfs_trans_handle *trans,
 	ret = btrfs_search_slot(trans, root, key, path, -1, 1);
 	if (ret < 0)
 		goto out;
-	if (ret != 0) {
-		/* The root must exist but we did not find it by the key. */
-		ret = -EUCLEAN;
-		goto out;
-	}
+
+	BUG_ON(ret != 0);
 
 	ret = btrfs_del_item(trans, root, path);
 out:
@@ -494,8 +485,7 @@ void btrfs_update_root_times(struct btrfs_trans_handle *trans,
 }
 
 /*
- * Reserve space for subvolume operation.
- *
+ * btrfs_subvolume_reserve_metadata() - reserve space for subvolume operation
  * root: the root of the parent directory
  * rsv: block reservation
  * items: the number of items that we need do reservation
@@ -518,7 +508,7 @@ int btrfs_subvolume_reserve_metadata(struct btrfs_root *root,
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct btrfs_block_rsv *global_rsv = &fs_info->global_block_rsv;
 
-	if (btrfs_qgroup_enabled(fs_info)) {
+	if (test_bit(BTRFS_FS_QUOTA_ENABLED, &fs_info->flags)) {
 		/* One for parent inode, two for dir entries */
 		qgroup_num_bytes = 3 * fs_info->nodesize;
 		ret = btrfs_qgroup_reserve_meta_prealloc(root,

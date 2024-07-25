@@ -351,13 +351,15 @@ static int tad_pmu_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void tad_pmu_remove(struct platform_device *pdev)
+static int tad_pmu_remove(struct platform_device *pdev)
 {
 	struct tad_pmu *pmu = platform_get_drvdata(pdev);
 
 	cpuhp_state_remove_instance_nocalls(tad_pmu_cpuhp_state,
 						&pmu->node);
 	perf_pmu_unregister(&pmu->pmu);
+
+	return 0;
 }
 
 #ifdef CONFIG_OF
@@ -383,7 +385,7 @@ static struct platform_driver tad_pmu_driver = {
 		.suppress_bind_attrs = true,
 	},
 	.probe          = tad_pmu_probe,
-	.remove_new     = tad_pmu_remove,
+	.remove         = tad_pmu_remove,
 };
 
 static int tad_pmu_offline_cpu(unsigned int cpu, struct hlist_node *node)

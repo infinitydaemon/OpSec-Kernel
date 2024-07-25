@@ -5,9 +5,8 @@
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 #include "bpf_misc.h"
-#include "bpf_compiler.h"
 
-#define ARRAY_SIZE(x) (int)(sizeof(x) / sizeof((x)[0]))
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
 static volatile int zero = 0;
 
@@ -79,8 +78,8 @@ int iter_err_unsafe_asm_loop(const void *ctx)
 		"*(u32 *)(r1 + 0) = r6;" /* invalid */
 		:
 		: [it]"r"(&it),
-		  [small_arr]"r"(small_arr),
-		  [zero]"r"(zero),
+		  [small_arr]"p"(small_arr),
+		  [zero]"p"(zero),
 		  __imm(bpf_iter_num_new),
 		  __imm(bpf_iter_num_next),
 		  __imm(bpf_iter_num_destroy)
@@ -184,7 +183,7 @@ int iter_pragma_unroll_loop(const void *ctx)
 	MY_PID_GUARD();
 
 	bpf_iter_num_new(&it, 0, 2);
-	__pragma_loop_no_unroll
+#pragma nounroll
 	for (i = 0; i < 3; i++) {
 		v = bpf_iter_num_next(&it);
 		bpf_printk("ITER_BASIC: E3 VAL: i=%d v=%d", i, v ? *v : -1);
@@ -239,7 +238,7 @@ int iter_multiple_sequential_loops(const void *ctx)
 	bpf_iter_num_destroy(&it);
 
 	bpf_iter_num_new(&it, 0, 2);
-	__pragma_loop_no_unroll
+#pragma nounroll
 	for (i = 0; i < 3; i++) {
 		v = bpf_iter_num_next(&it);
 		bpf_printk("ITER_BASIC: E3 VAL: i=%d v=%d", i, v ? *v : -1);
@@ -673,11 +672,11 @@ static __noinline void fill(struct bpf_iter_num *it, int *arr, __u32 n, int mul)
 
 static __noinline int sum(struct bpf_iter_num *it, int *arr, __u32 n)
 {
-	int *t, i, sum = 0;
+	int *t, i, sum = 0;;
 
 	while ((t = bpf_iter_num_next(it))) {
 		i = *t;
-		if ((__u32)i >= n)
+		if (i >= n)
 			break;
 		sum += arr[i];
 	}
@@ -847,7 +846,7 @@ __naked int delayed_precision_mark(void)
 		"call %[bpf_iter_num_next];"
 		"if r0 == 0 goto 2f;"
 		"if r6 != 42 goto 3f;"
-		"r7 = -33;"
+		"r7 = -32;"
 		"call %[bpf_get_prandom_u32];"
 		"r6 = r0;"
 		"goto 1b;\n"
@@ -1410,28 +1409,6 @@ __naked int checkpoint_states_deletion(void)
 		  __imm_addr(amap)
 		: __clobber_all
 	);
-}
-
-struct {
-	int data[32];
-	int n;
-} loop_data;
-
-SEC("raw_tp")
-__success
-int iter_arr_with_actual_elem_count(const void *ctx)
-{
-	int i, n = loop_data.n, sum = 0;
-
-	if (n > ARRAY_SIZE(loop_data.data))
-		return 0;
-
-	bpf_for(i, 0, n) {
-		/* no rechecking of i against ARRAY_SIZE(loop_data.n) */
-		sum += loop_data.data[i];
-	}
-
-	return sum;
 }
 
 char _license[] SEC("license") = "GPL";

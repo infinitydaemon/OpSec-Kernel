@@ -17,7 +17,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/device.h>
-#include <linux/iopoll.h>
 #include <linux/of.h>
 #include <linux/of_mdio.h>
 #include <linux/bitops.h>
@@ -268,9 +267,6 @@
 #define IS_7395(a) ((a)->chipid == VSC73XX_CHIPID_ID_7395)
 #define IS_7398(a) ((a)->chipid == VSC73XX_CHIPID_ID_7398)
 #define IS_739X(a) (IS_7395(a) || IS_7398(a))
-
-#define VSC73XX_POLL_SLEEP_US		1000
-#define VSC73XX_POLL_TIMEOUT_US		10000
 
 struct vsc73xx_counter {
 	u8 counter;
@@ -717,111 +713,16 @@ static void vsc73xx_init_port(struct vsc73xx *vsc, int port)
 		      port, VSC73XX_C_RX0, 0);
 }
 
-static void vsc73xx_reset_port(struct vsc73xx *vsc, int port, u32 initval)
+static void vsc73xx_adjust_enable_port(struct vsc73xx *vsc,
+				       int port, struct phy_device *phydev,
+				       u32 initval)
 {
-	int ret, err;
-	u32 val;
-
-	/* Disable RX on this port */
-	vsc73xx_update_bits(vsc, VSC73XX_BLOCK_MAC, port,
-			    VSC73XX_MAC_CFG,
-			    VSC73XX_MAC_CFG_RX_EN, 0);
-
-	/* Discard packets */
-	vsc73xx_update_bits(vsc, VSC73XX_BLOCK_ARBITER, 0,
-			    VSC73XX_ARBDISC, BIT(port), BIT(port));
-
-	/* Wait until queue is empty */
-	ret = read_poll_timeout(vsc73xx_read, err,
-				err < 0 || (val & BIT(port)),
-				VSC73XX_POLL_SLEEP_US,
-				VSC73XX_POLL_TIMEOUT_US, false,
-				vsc, VSC73XX_BLOCK_ARBITER, 0,
-				VSC73XX_ARBEMPTY, &val);
-	if (ret)
-		dev_err(vsc->dev,
-			"timeout waiting for block arbiter\n");
-	else if (err < 0)
-		dev_err(vsc->dev, "error reading arbiter\n");
-
-	/* Put this port into reset */
-	vsc73xx_write(vsc, VSC73XX_BLOCK_MAC, port, VSC73XX_MAC_CFG,
-		      VSC73XX_MAC_CFG_RESET | initval);
-}
-
-static void vsc73xx_mac_config(struct phylink_config *config, unsigned int mode,
-			       const struct phylink_link_state *state)
-{
-	struct dsa_port *dp = dsa_phylink_to_port(config);
-	struct vsc73xx *vsc = dp->ds->priv;
-	int port = dp->index;
-
-	/* Special handling of the CPU-facing port */
-	if (port == CPU_PORT) {
-		/* Other ports are already initialized but not this one */
-		vsc73xx_init_port(vsc, CPU_PORT);
-		/* Select the external port for this interface (EXT_PORT)
-		 * Enable the GMII GTX external clock
-		 * Use double data rate (DDR mode)
-		 */
-		vsc73xx_write(vsc, VSC73XX_BLOCK_MAC,
-			      CPU_PORT,
-			      VSC73XX_ADVPORTM,
-			      VSC73XX_ADVPORTM_EXT_PORT |
-			      VSC73XX_ADVPORTM_ENA_GTX |
-			      VSC73XX_ADVPORTM_DDR_MODE);
-	}
-}
-
-static void vsc73xx_mac_link_down(struct phylink_config *config,
-				  unsigned int mode, phy_interface_t interface)
-{
-	struct dsa_port *dp = dsa_phylink_to_port(config);
-	struct vsc73xx *vsc = dp->ds->priv;
-	int port = dp->index;
-
-	/* This routine is described in the datasheet (below ARBDISC register
-	 * description)
-	 */
-	vsc73xx_reset_port(vsc, port, 0);
-
-	/* Allow backward dropping of frames from this port */
-	vsc73xx_update_bits(vsc, VSC73XX_BLOCK_ARBITER, 0,
-			    VSC73XX_SBACKWDROP, BIT(port), BIT(port));
-
-	/* Receive mask (disable forwarding) */
-	vsc73xx_update_bits(vsc, VSC73XX_BLOCK_ANALYZER, 0,
-			    VSC73XX_RECVMASK, BIT(port), 0);
-}
-
-static void vsc73xx_mac_link_up(struct phylink_config *config,
-				struct phy_device *phy, unsigned int mode,
-				phy_interface_t interface, int speed,
-				int duplex, bool tx_pause, bool rx_pause)
-{
-	struct dsa_port *dp = dsa_phylink_to_port(config);
-	struct vsc73xx *vsc = dp->ds->priv;
-	int port = dp->index;
-	u32 val;
+	u32 val = initval;
 	u8 seed;
 
-	if (speed == SPEED_1000)
-		val = VSC73XX_MAC_CFG_GIGA_MODE | VSC73XX_MAC_CFG_TX_IPG_1000M;
-	else
-		val = VSC73XX_MAC_CFG_TX_IPG_100_10M;
-
-	if (phy_interface_mode_is_rgmii(interface))
-		val |= VSC73XX_MAC_CFG_CLK_SEL_1000M;
-	else
-		val |= VSC73XX_MAC_CFG_CLK_SEL_EXT;
-
-	if (duplex == DUPLEX_FULL)
-		val |= VSC73XX_MAC_CFG_FDX;
-
-	/* This routine is described in the datasheet (below ARBDISC register
-	 * description)
-	 */
-	vsc73xx_reset_port(vsc, port, val);
+	/* Reset this port FIXME: break out subroutine */
+	val |= VSC73XX_MAC_CFG_RESET;
+	vsc73xx_write(vsc, VSC73XX_BLOCK_MAC, port, VSC73XX_MAC_CFG, val);
 
 	/* Seed the port randomness with randomness */
 	get_random_bytes(&seed, 1);
@@ -840,14 +741,6 @@ static void vsc73xx_mac_link_up(struct phylink_config *config,
 		      VSC73XX_FCCONF_FLOW_CTRL_OBEY |
 		      0xff);
 
-	/* Accept packets again */
-	vsc73xx_update_bits(vsc, VSC73XX_BLOCK_ARBITER, 0,
-			    VSC73XX_ARBDISC, BIT(port), 0);
-
-	/* Enable port (forwarding) in the receive mask */
-	vsc73xx_update_bits(vsc, VSC73XX_BLOCK_ANALYZER, 0,
-			    VSC73XX_RECVMASK, BIT(port), BIT(port));
-
 	/* Disallow backward dropping of frames from this port */
 	vsc73xx_update_bits(vsc, VSC73XX_BLOCK_ARBITER, 0,
 			    VSC73XX_SBACKWDROP, BIT(port), 0);
@@ -858,6 +751,127 @@ static void vsc73xx_mac_link_up(struct phylink_config *config,
 			    VSC73XX_MAC_CFG_RESET | VSC73XX_MAC_CFG_SEED_LOAD |
 			    VSC73XX_MAC_CFG_TX_EN | VSC73XX_MAC_CFG_RX_EN,
 			    VSC73XX_MAC_CFG_TX_EN | VSC73XX_MAC_CFG_RX_EN);
+}
+
+static void vsc73xx_adjust_link(struct dsa_switch *ds, int port,
+				struct phy_device *phydev)
+{
+	struct vsc73xx *vsc = ds->priv;
+	u32 val;
+
+	/* Special handling of the CPU-facing port */
+	if (port == CPU_PORT) {
+		/* Other ports are already initialized but not this one */
+		vsc73xx_init_port(vsc, CPU_PORT);
+		/* Select the external port for this interface (EXT_PORT)
+		 * Enable the GMII GTX external clock
+		 * Use double data rate (DDR mode)
+		 */
+		vsc73xx_write(vsc, VSC73XX_BLOCK_MAC,
+			      CPU_PORT,
+			      VSC73XX_ADVPORTM,
+			      VSC73XX_ADVPORTM_EXT_PORT |
+			      VSC73XX_ADVPORTM_ENA_GTX |
+			      VSC73XX_ADVPORTM_DDR_MODE);
+	}
+
+	/* This is the MAC confiuration that always need to happen
+	 * after a PHY or the CPU port comes up or down.
+	 */
+	if (!phydev->link) {
+		int maxloop = 10;
+
+		dev_dbg(vsc->dev, "port %d: went down\n",
+			port);
+
+		/* Disable RX on this port */
+		vsc73xx_update_bits(vsc, VSC73XX_BLOCK_MAC, port,
+				    VSC73XX_MAC_CFG,
+				    VSC73XX_MAC_CFG_RX_EN, 0);
+
+		/* Discard packets */
+		vsc73xx_update_bits(vsc, VSC73XX_BLOCK_ARBITER, 0,
+				    VSC73XX_ARBDISC, BIT(port), BIT(port));
+
+		/* Wait until queue is empty */
+		vsc73xx_read(vsc, VSC73XX_BLOCK_ARBITER, 0,
+			     VSC73XX_ARBEMPTY, &val);
+		while (!(val & BIT(port))) {
+			msleep(1);
+			vsc73xx_read(vsc, VSC73XX_BLOCK_ARBITER, 0,
+				     VSC73XX_ARBEMPTY, &val);
+			if (--maxloop == 0) {
+				dev_err(vsc->dev,
+					"timeout waiting for block arbiter\n");
+				/* Continue anyway */
+				break;
+			}
+		}
+
+		/* Put this port into reset */
+		vsc73xx_write(vsc, VSC73XX_BLOCK_MAC, port, VSC73XX_MAC_CFG,
+			      VSC73XX_MAC_CFG_RESET);
+
+		/* Accept packets again */
+		vsc73xx_update_bits(vsc, VSC73XX_BLOCK_ARBITER, 0,
+				    VSC73XX_ARBDISC, BIT(port), 0);
+
+		/* Allow backward dropping of frames from this port */
+		vsc73xx_update_bits(vsc, VSC73XX_BLOCK_ARBITER, 0,
+				    VSC73XX_SBACKWDROP, BIT(port), BIT(port));
+
+		/* Receive mask (disable forwarding) */
+		vsc73xx_update_bits(vsc, VSC73XX_BLOCK_ANALYZER, 0,
+				    VSC73XX_RECVMASK, BIT(port), 0);
+
+		return;
+	}
+
+	/* Figure out what speed was negotiated */
+	if (phydev->speed == SPEED_1000) {
+		dev_dbg(vsc->dev, "port %d: 1000 Mbit mode full duplex\n",
+			port);
+
+		/* Set up default for internal port or external RGMII */
+		if (phydev->interface == PHY_INTERFACE_MODE_RGMII)
+			val = VSC73XX_MAC_CFG_1000M_F_RGMII;
+		else
+			val = VSC73XX_MAC_CFG_1000M_F_PHY;
+		vsc73xx_adjust_enable_port(vsc, port, phydev, val);
+	} else if (phydev->speed == SPEED_100) {
+		if (phydev->duplex == DUPLEX_FULL) {
+			val = VSC73XX_MAC_CFG_100_10M_F_PHY;
+			dev_dbg(vsc->dev,
+				"port %d: 100 Mbit full duplex mode\n",
+				port);
+		} else {
+			val = VSC73XX_MAC_CFG_100_10M_H_PHY;
+			dev_dbg(vsc->dev,
+				"port %d: 100 Mbit half duplex mode\n",
+				port);
+		}
+		vsc73xx_adjust_enable_port(vsc, port, phydev, val);
+	} else if (phydev->speed == SPEED_10) {
+		if (phydev->duplex == DUPLEX_FULL) {
+			val = VSC73XX_MAC_CFG_100_10M_F_PHY;
+			dev_dbg(vsc->dev,
+				"port %d: 10 Mbit full duplex mode\n",
+				port);
+		} else {
+			val = VSC73XX_MAC_CFG_100_10M_H_PHY;
+			dev_dbg(vsc->dev,
+				"port %d: 10 Mbit half duplex mode\n",
+				port);
+		}
+		vsc73xx_adjust_enable_port(vsc, port, phydev, val);
+	} else {
+		dev_err(vsc->dev,
+			"could not adjust link: unknown speed\n");
+	}
+
+	/* Enable port (forwarding) in the receieve mask */
+	vsc73xx_update_bits(vsc, VSC73XX_BLOCK_ANALYZER, 0,
+			    VSC73XX_RECVMASK, BIT(port), BIT(port));
 }
 
 static int vsc73xx_port_enable(struct dsa_switch *ds, int port,
@@ -914,8 +928,7 @@ static void vsc73xx_get_strings(struct dsa_switch *ds, int port, u32 stringset,
 	const struct vsc73xx_counter *cnt;
 	struct vsc73xx *vsc = ds->priv;
 	u8 indices[6];
-	u8 *buf = data;
-	int i;
+	int i, j;
 	u32 val;
 	int ret;
 
@@ -935,7 +948,10 @@ static void vsc73xx_get_strings(struct dsa_switch *ds, int port, u32 stringset,
 	indices[5] = ((val >> 26) & 0x1f); /* TX counter 2 */
 
 	/* The first counters is the RX octets */
-	ethtool_puts(&buf, "RxEtherStatsOctets");
+	j = 0;
+	strncpy(data + j * ETH_GSTRING_LEN,
+		"RxEtherStatsOctets", ETH_GSTRING_LEN);
+	j++;
 
 	/* Each port supports recording 3 RX counters and 3 TX counters,
 	 * figure out what counters we use in this set-up and return the
@@ -945,16 +961,23 @@ static void vsc73xx_get_strings(struct dsa_switch *ds, int port, u32 stringset,
 	 */
 	for (i = 0; i < 3; i++) {
 		cnt = vsc73xx_find_counter(vsc, indices[i], false);
-		ethtool_puts(&buf, cnt ? cnt->name : "");
+		if (cnt)
+			strncpy(data + j * ETH_GSTRING_LEN,
+				cnt->name, ETH_GSTRING_LEN);
+		j++;
 	}
 
 	/* TX stats begins with the number of TX octets */
-	ethtool_puts(&buf, "TxEtherStatsOctets");
+	strncpy(data + j * ETH_GSTRING_LEN,
+		"TxEtherStatsOctets", ETH_GSTRING_LEN);
+	j++;
 
 	for (i = 3; i < 6; i++) {
 		cnt = vsc73xx_find_counter(vsc, indices[i], true);
-		ethtool_puts(&buf, cnt ? cnt->name : "");
-
+		if (cnt)
+			strncpy(data + j * ETH_GSTRING_LEN,
+				cnt->name, ETH_GSTRING_LEN);
+		j++;
 	}
 }
 
@@ -1014,42 +1037,12 @@ static int vsc73xx_get_max_mtu(struct dsa_switch *ds, int port)
 	return 9600 - ETH_HLEN - ETH_FCS_LEN;
 }
 
-static void vsc73xx_phylink_get_caps(struct dsa_switch *dsa, int port,
-				     struct phylink_config *config)
-{
-	unsigned long *interfaces = config->supported_interfaces;
-
-	if (port == 5)
-		return;
-
-	if (port == CPU_PORT) {
-		__set_bit(PHY_INTERFACE_MODE_MII, interfaces);
-		__set_bit(PHY_INTERFACE_MODE_REVMII, interfaces);
-		__set_bit(PHY_INTERFACE_MODE_GMII, interfaces);
-		__set_bit(PHY_INTERFACE_MODE_RGMII, interfaces);
-	}
-
-	if (port <= 4) {
-		/* Internal PHYs */
-		__set_bit(PHY_INTERFACE_MODE_INTERNAL, interfaces);
-		/* phylib default */
-		__set_bit(PHY_INTERFACE_MODE_GMII, interfaces);
-	}
-
-	config->mac_capabilities = MAC_SYM_PAUSE | MAC_10 | MAC_100 | MAC_1000;
-}
-
-static const struct phylink_mac_ops vsc73xx_phylink_mac_ops = {
-	.mac_config = vsc73xx_mac_config,
-	.mac_link_down = vsc73xx_mac_link_down,
-	.mac_link_up = vsc73xx_mac_link_up,
-};
-
 static const struct dsa_switch_ops vsc73xx_ds_ops = {
 	.get_tag_protocol = vsc73xx_get_tag_protocol,
 	.setup = vsc73xx_setup,
 	.phy_read = vsc73xx_phy_read,
 	.phy_write = vsc73xx_phy_write,
+	.adjust_link = vsc73xx_adjust_link,
 	.get_strings = vsc73xx_get_strings,
 	.get_ethtool_stats = vsc73xx_get_ethtool_stats,
 	.get_sset_count = vsc73xx_get_sset_count,
@@ -1057,7 +1050,6 @@ static const struct dsa_switch_ops vsc73xx_ds_ops = {
 	.port_disable = vsc73xx_port_disable,
 	.port_change_mtu = vsc73xx_change_mtu,
 	.port_max_mtu = vsc73xx_get_max_mtu,
-	.phylink_get_caps = vsc73xx_phylink_get_caps,
 };
 
 static int vsc73xx_gpio_get(struct gpio_chip *chip, unsigned int offset)
@@ -1186,16 +1178,26 @@ int vsc73xx_probe(struct vsc73xx *vsc)
 		 vsc->addr[0], vsc->addr[1], vsc->addr[2],
 		 vsc->addr[3], vsc->addr[4], vsc->addr[5]);
 
+	/* The VSC7395 switch chips have 5+1 ports which means 5
+	 * ordinary ports and a sixth CPU port facing the processor
+	 * with an RGMII interface. These ports are numbered 0..4
+	 * and 6, so they leave a "hole" in the port map for port 5,
+	 * which is invalid.
+	 *
+	 * The VSC7398 has 8 ports, port 7 is again the CPU port.
+	 *
+	 * We allocate 8 ports and avoid access to the nonexistant
+	 * ports.
+	 */
 	vsc->ds = devm_kzalloc(dev, sizeof(*vsc->ds), GFP_KERNEL);
 	if (!vsc->ds)
 		return -ENOMEM;
 
 	vsc->ds->dev = dev;
-	vsc->ds->num_ports = VSC73XX_MAX_NUM_PORTS;
+	vsc->ds->num_ports = 8;
 	vsc->ds->priv = vsc;
 
 	vsc->ds->ops = &vsc73xx_ds_ops;
-	vsc->ds->phylink_mac_ops = &vsc73xx_phylink_mac_ops;
 	ret = dsa_register_switch(vsc->ds);
 	if (ret) {
 		dev_err(dev, "unable to register switch (%d)\n", ret);

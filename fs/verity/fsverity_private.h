@@ -69,6 +69,7 @@ struct fsverity_info {
 	u8 file_digest[FS_VERITY_MAX_DIGEST_SIZE];
 	const struct inode *inode;
 	unsigned long *hash_block_verified;
+	spinlock_t hash_page_init_lock;
 };
 
 #define FS_VERITY_MAX_SIGNATURE_SIZE	(FS_VERITY_MAX_DESCRIPTOR_SIZE - \
@@ -98,16 +99,6 @@ fsverity_msg(const struct inode *inode, const char *level,
 	fsverity_msg((inode), KERN_WARNING, fmt, ##__VA_ARGS__)
 #define fsverity_err(inode, fmt, ...)		\
 	fsverity_msg((inode), KERN_ERR, fmt, ##__VA_ARGS__)
-
-/* measure.c */
-
-#ifdef CONFIG_BPF_SYSCALL
-void __init fsverity_init_bpf(void);
-#else
-static inline void fsverity_init_bpf(void)
-{
-}
-#endif
 
 /* open.c */
 

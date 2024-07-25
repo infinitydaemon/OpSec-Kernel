@@ -55,9 +55,8 @@ properties:
           - enum:
               - fsl,imx8mn-usdhc
               - fsl,imx8mp-usdhc
-              - fsl,imx8ulp-usdhc
               - fsl,imx93-usdhc
-              - fsl,imx95-usdhc
+              - fsl,imx8ulp-usdhc
           - const: fsl,imx8mm-usdhc
       - items:
           - enum:
@@ -91,9 +90,6 @@ properties:
           - enum:
               - fsl,imxrt1170-usdhc
           - const: fsl,imxrt1050-usdhc
-      - items:
-          - const: nxp,s32g3-usdhc
-          - const: nxp,s32g2-usdhc
 
   reg:
     maxItems: 1
@@ -166,9 +162,6 @@ properties:
       - const: ahb
       - const: per
 
-  iommus:
-    maxItems: 1
-
   power-domains:
     maxItems: 1
 
@@ -179,11 +172,6 @@ properties:
           - const: default
           - const: state_100mhz
           - const: state_200mhz
-          - const: sleep
-      - minItems: 2
-        items:
-          - const: default
-          - const: state_100mhz
           - const: sleep
       - minItems: 1
         items:

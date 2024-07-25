@@ -42,6 +42,7 @@ static pthread_t new_thr(void *(*fn) (void *arg), void *arg)
 int main(int argc, char **argv)
 {
 	unsigned long i, len, size, thr;
+	pthread_t threads[256];
 	struct args args[256];
 	long long v;
 

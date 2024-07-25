@@ -10,33 +10,25 @@
  *          Jarkko Nikula <jarkko.nikula@linux.intel.com>
  */
 
-#include <linux/array_size.h>
-#include <linux/bits.h>
-#include <linux/clkdev.h>
 #include <linux/clk.h>
+#include <linux/clkdev.h>
 #include <linux/clk-provider.h>
 #include <linux/debugfs.h>
-#include <linux/device.h>
-#include <linux/err.h>
-#include <linux/gfp_types.h>
 #include <linux/idr.h>
 #include <linux/io.h>
 #include <linux/ioport.h>
-#include <linux/mfd/core.h>
+#include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/pm.h>
+#include <linux/mfd/core.h>
 #include <linux/pm_qos.h>
 #include <linux/pm_runtime.h>
-#include <linux/sprintf.h>
-#include <linux/types.h>
-
+#include <linux/property.h>
+#include <linux/seq_file.h>
 #include <linux/io-64-nonatomic-lo-hi.h>
 
 #include <linux/dma/idma64.h>
 
 #include "intel-lpss.h"
-
-struct dentry;
 
 #define LPSS_DEV_OFFSET		0x000
 #define LPSS_DEV_SIZE		0x200
@@ -300,7 +292,6 @@ static int intel_lpss_register_clock_divider(struct intel_lpss *lpss,
 {
 	char name[32];
 	struct clk *tmp = *clk;
-	int ret;
 
 	snprintf(name, sizeof(name), "%s-enable", devname);
 	tmp = clk_register_gate(NULL, name, __clk_get_name(tmp), 0,
@@ -316,12 +307,6 @@ static int intel_lpss_register_clock_divider(struct intel_lpss *lpss,
 	if (IS_ERR(tmp))
 		return PTR_ERR(tmp);
 	*clk = tmp;
-
-	if (lpss->info->quirks & QUIRK_CLOCK_DIVIDER_UNITY) {
-		ret = clk_set_rate(tmp, lpss->info->clk_rate);
-		if (ret)
-			return ret;
-	}
 
 	snprintf(name, sizeof(name), "%s-update", devname);
 	tmp = clk_register_gate(NULL, name, __clk_get_name(tmp),
@@ -393,11 +378,8 @@ int intel_lpss_probe(struct device *dev,
 	struct intel_lpss *lpss;
 	int ret;
 
-	if (!info || !info->mem)
+	if (!info || !info->mem || info->irq <= 0)
 		return -EINVAL;
-
-	if (info->irq < 0)
-		return info->irq;
 
 	lpss = devm_kzalloc(dev, sizeof(*lpss), GFP_KERNEL);
 	if (!lpss)
@@ -419,11 +401,11 @@ int intel_lpss_probe(struct device *dev,
 		return ret;
 
 	lpss->cell->swnode = info->swnode;
-	lpss->cell->ignore_resource_conflicts = info->quirks & QUIRK_IGNORE_RESOURCE_CONFLICTS;
+	lpss->cell->ignore_resource_conflicts = info->ignore_resource_conflicts;
 
 	intel_lpss_init_dev(lpss);
 
-	lpss->devid = ida_alloc(&intel_lpss_devid_ida, GFP_KERNEL);
+	lpss->devid = ida_simple_get(&intel_lpss_devid_ida, 0, 0, GFP_KERNEL);
 	if (lpss->devid < 0)
 		return lpss->devid;
 
@@ -460,11 +442,11 @@ err_remove_ltr:
 	intel_lpss_unregister_clock(lpss);
 
 err_clk_register:
-	ida_free(&intel_lpss_devid_ida, lpss->devid);
+	ida_simple_remove(&intel_lpss_devid_ida, lpss->devid);
 
 	return ret;
 }
-EXPORT_SYMBOL_NS_GPL(intel_lpss_probe, INTEL_LPSS);
+EXPORT_SYMBOL_GPL(intel_lpss_probe);
 
 void intel_lpss_remove(struct device *dev)
 {
@@ -474,10 +456,11 @@ void intel_lpss_remove(struct device *dev)
 	intel_lpss_debugfs_remove(lpss);
 	intel_lpss_ltr_hide(lpss);
 	intel_lpss_unregister_clock(lpss);
-	ida_free(&intel_lpss_devid_ida, lpss->devid);
+	ida_simple_remove(&intel_lpss_devid_ida, lpss->devid);
 }
-EXPORT_SYMBOL_NS_GPL(intel_lpss_remove, INTEL_LPSS);
+EXPORT_SYMBOL_GPL(intel_lpss_remove);
 
+#ifdef CONFIG_PM
 static int resume_lpss_device(struct device *dev, void *data)
 {
 	if (!dev_pm_test_driver_flags(dev, DPM_FLAG_SMART_SUSPEND))
@@ -486,7 +469,7 @@ static int resume_lpss_device(struct device *dev, void *data)
 	return 0;
 }
 
-static int intel_lpss_prepare(struct device *dev)
+int intel_lpss_prepare(struct device *dev)
 {
 	/*
 	 * Resume both child devices before entering system sleep. This
@@ -495,8 +478,9 @@ static int intel_lpss_prepare(struct device *dev)
 	device_for_each_child_reverse(dev, NULL, resume_lpss_device);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(intel_lpss_prepare);
 
-static int intel_lpss_suspend(struct device *dev)
+int intel_lpss_suspend(struct device *dev)
 {
 	struct intel_lpss *lpss = dev_get_drvdata(dev);
 	unsigned int i;
@@ -515,8 +499,9 @@ static int intel_lpss_suspend(struct device *dev)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(intel_lpss_suspend);
 
-static int intel_lpss_resume(struct device *dev)
+int intel_lpss_resume(struct device *dev)
 {
 	struct intel_lpss *lpss = dev_get_drvdata(dev);
 	unsigned int i;
@@ -529,12 +514,8 @@ static int intel_lpss_resume(struct device *dev)
 
 	return 0;
 }
-
-EXPORT_NS_GPL_DEV_PM_OPS(intel_lpss_pm_ops, INTEL_LPSS) = {
-	.prepare = pm_sleep_ptr(&intel_lpss_prepare),
-	LATE_SYSTEM_SLEEP_PM_OPS(intel_lpss_suspend, intel_lpss_resume)
-	RUNTIME_PM_OPS(intel_lpss_suspend, intel_lpss_resume, NULL)
-};
+EXPORT_SYMBOL_GPL(intel_lpss_resume);
+#endif
 
 static int __init intel_lpss_init(void)
 {

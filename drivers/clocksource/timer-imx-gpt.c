@@ -258,8 +258,9 @@ static irqreturn_t mxc_timer_interrupt(int irq, void *dev_id)
 {
 	struct clock_event_device *ced = dev_id;
 	struct imx_timer *imxtm = to_imx_timer(ced);
+	uint32_t tstat;
 
-	readl_relaxed(imxtm->base + imxtm->gpt->reg_tstat);
+	tstat = readl_relaxed(imxtm->base + imxtm->gpt->reg_tstat);
 
 	imxtm->gpt->gpt_irq_acknowledge(imxtm);
 

@@ -1367,7 +1367,7 @@ int iort_iommu_configure_id(struct device *dev, const u32 *input_id)
 { return -ENODEV; }
 #endif
 
-static int nc_dma_get_range(struct device *dev, u64 *limit)
+static int nc_dma_get_range(struct device *dev, u64 *size)
 {
 	struct acpi_iort_node *node;
 	struct acpi_iort_named_component *ncomp;
@@ -1384,13 +1384,13 @@ static int nc_dma_get_range(struct device *dev, u64 *limit)
 		return -EINVAL;
 	}
 
-	*limit = ncomp->memory_address_limit >= 64 ? U64_MAX :
-			(1ULL << ncomp->memory_address_limit) - 1;
+	*size = ncomp->memory_address_limit >= 64 ? U64_MAX :
+			1ULL<<ncomp->memory_address_limit;
 
 	return 0;
 }
 
-static int rc_dma_get_range(struct device *dev, u64 *limit)
+static int rc_dma_get_range(struct device *dev, u64 *size)
 {
 	struct acpi_iort_node *node;
 	struct acpi_iort_root_complex *rc;
@@ -1408,8 +1408,8 @@ static int rc_dma_get_range(struct device *dev, u64 *limit)
 		return -EINVAL;
 	}
 
-	*limit = rc->memory_address_limit >= 64 ? U64_MAX :
-			(1ULL << rc->memory_address_limit) - 1;
+	*size = rc->memory_address_limit >= 64 ? U64_MAX :
+			1ULL<<rc->memory_address_limit;
 
 	return 0;
 }
@@ -1417,16 +1417,16 @@ static int rc_dma_get_range(struct device *dev, u64 *limit)
 /**
  * iort_dma_get_ranges() - Look up DMA addressing limit for the device
  * @dev: device to lookup
- * @limit: DMA limit result pointer
+ * @size: DMA range size result pointer
  *
  * Return: 0 on success, an error otherwise.
  */
-int iort_dma_get_ranges(struct device *dev, u64 *limit)
+int iort_dma_get_ranges(struct device *dev, u64 *size)
 {
 	if (dev_is_pci(dev))
-		return rc_dma_get_range(dev, limit);
+		return rc_dma_get_range(dev, size);
 	else
-		return nc_dma_get_range(dev, limit);
+		return nc_dma_get_range(dev, size);
 }
 
 static void __init acpi_iort_register_irq(int hwirq, const char *name,

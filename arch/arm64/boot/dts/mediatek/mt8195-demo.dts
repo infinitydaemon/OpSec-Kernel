@@ -102,7 +102,7 @@
 };
 
 &eth {
-	phy-mode = "rgmii-id";
+	phy-mode ="rgmii-id";
 	phy-handle = <&ethernet_phy0>;
 	snps,reset-gpio = <&pio 93 GPIO_ACTIVE_HIGH>;
 	snps,reset-delays-us = <0 10000 80000>;
@@ -529,22 +529,8 @@
 	status = "okay";
 };
 
-&ssusb0 {
-	vusb33-supply = <&mt6359_vusb_ldo_reg>;
-	status = "okay";
-};
-
-&ssusb2 {
-	vusb33-supply = <&mt6359_vusb_ldo_reg>;
-	status = "okay";
-};
-
-&ssusb3 {
-	vusb33-supply = <&mt6359_vusb_ldo_reg>;
-	status = "okay";
-};
-
 &xhci0 {
+	vusb33-supply = <&mt6359_vusb_ldo_reg>;
 	vbus-supply = <&otg_vbus_regulator>;
 	status = "okay";
 };
@@ -555,9 +541,11 @@
 };
 
 &xhci2 {
+	vusb33-supply = <&mt6359_vusb_ldo_reg>;
 	status = "okay";
 };
 
 &xhci3 {
+	vusb33-supply = <&mt6359_vusb_ldo_reg>;
 	status = "okay";
 };

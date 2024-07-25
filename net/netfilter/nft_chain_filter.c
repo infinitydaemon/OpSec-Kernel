@@ -325,6 +325,9 @@ static void nft_netdev_event(unsigned long event, struct net_device *dev,
 	struct nft_hook *hook, *found = NULL;
 	int n = 0;
 
+	if (event != NETDEV_UNREGISTER)
+		return;
+
 	list_for_each_entry(hook, &basechain->hook_list, list) {
 		if (hook->ops.dev == dev)
 			found = hook;
@@ -364,7 +367,8 @@ static int nf_tables_netdev_event(struct notifier_block *this,
 		.net	= dev_net(dev),
 	};
 
-	if (event != NETDEV_UNREGISTER)
+	if (event != NETDEV_UNREGISTER &&
+	    event != NETDEV_CHANGENAME)
 		return NOTIFY_DONE;
 
 	nft_net = nft_pernet(ctx.net);

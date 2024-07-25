@@ -26,12 +26,6 @@ struct etr_flat_buf {
 	size_t		size;
 };
 
-struct etr_buf_hw {
-	bool	has_iommu;
-	bool	has_etr_sg;
-	bool	has_catu;
-};
-
 /*
  * etr_perf_buffer - Perf buffer used for ETR
  * @drvdata		- The ETR drvdaga this buffer has been allocated for.
@@ -836,22 +830,6 @@ static inline int tmc_etr_mode_alloc_buf(int mode,
 	}
 }
 
-static void get_etr_buf_hw(struct device *dev, struct etr_buf_hw *buf_hw)
-{
-	struct tmc_drvdata *drvdata = dev_get_drvdata(dev->parent);
-
-	buf_hw->has_iommu = iommu_get_domain_for_dev(dev->parent);
-	buf_hw->has_etr_sg = tmc_etr_has_cap(drvdata, TMC_ETR_SG);
-	buf_hw->has_catu = !!tmc_etr_get_catu_device(drvdata);
-}
-
-static bool etr_can_use_flat_mode(struct etr_buf_hw *buf_hw, ssize_t etr_buf_size)
-{
-	bool has_sg = buf_hw->has_catu || buf_hw->has_etr_sg;
-
-	return !has_sg || buf_hw->has_iommu || etr_buf_size < SZ_1M;
-}
-
 /*
  * tmc_alloc_etr_buf: Allocate a buffer use by ETR.
  * @drvdata	: ETR device details.
@@ -865,21 +843,22 @@ static struct etr_buf *tmc_alloc_etr_buf(struct tmc_drvdata *drvdata,
 					 int node, void **pages)
 {
 	int rc = -ENOMEM;
+	bool has_etr_sg, has_iommu;
+	bool has_sg, has_catu;
 	struct etr_buf *etr_buf;
-	struct etr_buf_hw buf_hw;
 	struct device *dev = &drvdata->csdev->dev;
 
-	get_etr_buf_hw(dev, &buf_hw);
+	has_etr_sg = tmc_etr_has_cap(drvdata, TMC_ETR_SG);
+	has_iommu = iommu_get_domain_for_dev(dev->parent);
+	has_catu = !!tmc_etr_get_catu_device(drvdata);
+
+	has_sg = has_catu || has_etr_sg;
+
 	etr_buf = kzalloc(sizeof(*etr_buf), GFP_KERNEL);
 	if (!etr_buf)
 		return ERR_PTR(-ENOMEM);
 
 	etr_buf->size = size;
-
-	/* If there is user directive for buffer mode, try that first */
-	if (drvdata->etr_mode != ETR_MODE_AUTO)
-		rc = tmc_etr_mode_alloc_buf(drvdata->etr_mode, drvdata,
-					    etr_buf, node, pages);
 
 	/*
 	 * If we have to use an existing list of pages, we cannot reliably
@@ -893,13 +872,14 @@ static struct etr_buf *tmc_alloc_etr_buf(struct tmc_drvdata *drvdata,
 	 * Fallback to available mechanisms.
 	 *
 	 */
-	if (rc && !pages && etr_can_use_flat_mode(&buf_hw, size))
+	if (!pages &&
+	    (!has_sg || has_iommu || size < SZ_1M))
 		rc = tmc_etr_mode_alloc_buf(ETR_MODE_FLAT, drvdata,
 					    etr_buf, node, pages);
-	if (rc && buf_hw.has_etr_sg)
+	if (rc && has_etr_sg)
 		rc = tmc_etr_mode_alloc_buf(ETR_MODE_ETR_SG, drvdata,
 					    etr_buf, node, pages);
-	if (rc && buf_hw.has_catu)
+	if (rc && has_catu)
 		rc = tmc_etr_mode_alloc_buf(ETR_MODE_CATU, drvdata,
 					    etr_buf, node, pages);
 	if (rc) {
@@ -1143,7 +1123,7 @@ static void __tmc_etr_disable_hw(struct tmc_drvdata *drvdata)
 	 * When operating in sysFS mode the content of the buffer needs to be
 	 * read before the TMC is disabled.
 	 */
-	if (coresight_get_mode(drvdata->csdev) == CS_MODE_SYSFS)
+	if (drvdata->mode == CS_MODE_SYSFS)
 		tmc_etr_sync_sysfs_buf(drvdata);
 
 	tmc_disable_hw(drvdata);
@@ -1189,7 +1169,7 @@ static struct etr_buf *tmc_etr_get_sysfs_buffer(struct coresight_device *csdev)
 		spin_lock_irqsave(&drvdata->spinlock, flags);
 	}
 
-	if (drvdata->reading || coresight_get_mode(csdev) == CS_MODE_PERF) {
+	if (drvdata->reading || drvdata->mode == CS_MODE_PERF) {
 		ret = -EBUSY;
 		goto out;
 	}
@@ -1230,15 +1210,15 @@ static int tmc_enable_etr_sink_sysfs(struct coresight_device *csdev)
 	 * sink is already enabled no memory is needed and the HW need not be
 	 * touched, even if the buffer size has changed.
 	 */
-	if (coresight_get_mode(csdev) == CS_MODE_SYSFS) {
-		csdev->refcnt++;
+	if (drvdata->mode == CS_MODE_SYSFS) {
+		atomic_inc(&csdev->refcnt);
 		goto out;
 	}
 
 	ret = tmc_etr_enable_hw(drvdata, sysfs_buf);
 	if (!ret) {
-		coresight_set_mode(csdev, CS_MODE_SYSFS);
-		csdev->refcnt++;
+		drvdata->mode = CS_MODE_SYSFS;
+		atomic_inc(&csdev->refcnt);
 	}
 
 out:
@@ -1564,7 +1544,7 @@ tmc_update_etr_buffer(struct coresight_device *csdev,
 	spin_lock_irqsave(&drvdata->spinlock, flags);
 
 	/* Don't do anything if another tracer is using this sink */
-	if (csdev->refcnt != 1) {
+	if (atomic_read(&csdev->refcnt) != 1) {
 		spin_unlock_irqrestore(&drvdata->spinlock, flags);
 		goto out;
 	}
@@ -1652,7 +1632,7 @@ static int tmc_enable_etr_sink_perf(struct coresight_device *csdev, void *data)
 
 	spin_lock_irqsave(&drvdata->spinlock, flags);
 	 /* Don't use this sink if it is already claimed by sysFS */
-	if (coresight_get_mode(csdev) == CS_MODE_SYSFS) {
+	if (drvdata->mode == CS_MODE_SYSFS) {
 		rc = -EBUSY;
 		goto unlock_out;
 	}
@@ -1676,7 +1656,7 @@ static int tmc_enable_etr_sink_perf(struct coresight_device *csdev, void *data)
 	 * use for this session.
 	 */
 	if (drvdata->pid == pid) {
-		csdev->refcnt++;
+		atomic_inc(&csdev->refcnt);
 		goto unlock_out;
 	}
 
@@ -1684,9 +1664,9 @@ static int tmc_enable_etr_sink_perf(struct coresight_device *csdev, void *data)
 	if (!rc) {
 		/* Associate with monitored process. */
 		drvdata->pid = pid;
-		coresight_set_mode(csdev, CS_MODE_PERF);
+		drvdata->mode = CS_MODE_PERF;
 		drvdata->perf_buf = etr_perf->etr_buf;
-		csdev->refcnt++;
+		atomic_inc(&csdev->refcnt);
 	}
 
 unlock_out:
@@ -1719,18 +1699,17 @@ static int tmc_disable_etr_sink(struct coresight_device *csdev)
 		return -EBUSY;
 	}
 
-	csdev->refcnt--;
-	if (csdev->refcnt) {
+	if (atomic_dec_return(&csdev->refcnt)) {
 		spin_unlock_irqrestore(&drvdata->spinlock, flags);
 		return -EBUSY;
 	}
 
 	/* Complain if we (somehow) got out of sync */
-	WARN_ON_ONCE(coresight_get_mode(csdev) == CS_MODE_DISABLED);
+	WARN_ON_ONCE(drvdata->mode == CS_MODE_DISABLED);
 	tmc_etr_disable_hw(drvdata);
 	/* Dissociate from monitored process. */
 	drvdata->pid = -1;
-	coresight_set_mode(csdev, CS_MODE_DISABLED);
+	drvdata->mode = CS_MODE_DISABLED;
 	/* Reset perf specific data */
 	drvdata->perf_buf = NULL;
 
@@ -1778,7 +1757,7 @@ int tmc_read_prepare_etr(struct tmc_drvdata *drvdata)
 	}
 
 	/* Disable the TMC if we are trying to read from a running session. */
-	if (coresight_get_mode(drvdata->csdev) == CS_MODE_SYSFS)
+	if (drvdata->mode == CS_MODE_SYSFS)
 		__tmc_etr_disable_hw(drvdata);
 
 	drvdata->reading = true;
@@ -1800,7 +1779,7 @@ int tmc_read_unprepare_etr(struct tmc_drvdata *drvdata)
 	spin_lock_irqsave(&drvdata->spinlock, flags);
 
 	/* RE-enable the TMC if need be */
-	if (coresight_get_mode(drvdata->csdev) == CS_MODE_SYSFS) {
+	if (drvdata->mode == CS_MODE_SYSFS) {
 		/*
 		 * The trace run will continue with the same allocated trace
 		 * buffer. Since the tracer is still enabled drvdata::buf can't
@@ -1825,70 +1804,3 @@ int tmc_read_unprepare_etr(struct tmc_drvdata *drvdata)
 
 	return 0;
 }
-
-static const char *const buf_modes_str[] = {
-	[ETR_MODE_FLAT]		= "flat",
-	[ETR_MODE_ETR_SG]	= "tmc-sg",
-	[ETR_MODE_CATU]		= "catu",
-	[ETR_MODE_AUTO]		= "auto",
-};
-
-static ssize_t buf_modes_available_show(struct device *dev,
-					    struct device_attribute *attr, char *buf)
-{
-	struct etr_buf_hw buf_hw;
-	ssize_t size = 0;
-
-	get_etr_buf_hw(dev, &buf_hw);
-	size += sysfs_emit(buf, "%s ", buf_modes_str[ETR_MODE_AUTO]);
-	size += sysfs_emit_at(buf, size, "%s ", buf_modes_str[ETR_MODE_FLAT]);
-	if (buf_hw.has_etr_sg)
-		size += sysfs_emit_at(buf, size, "%s ", buf_modes_str[ETR_MODE_ETR_SG]);
-
-	if (buf_hw.has_catu)
-		size += sysfs_emit_at(buf, size, "%s ", buf_modes_str[ETR_MODE_CATU]);
-
-	size += sysfs_emit_at(buf, size, "\n");
-	return size;
-}
-static DEVICE_ATTR_RO(buf_modes_available);
-
-static ssize_t buf_mode_preferred_show(struct device *dev,
-					 struct device_attribute *attr, char *buf)
-{
-	struct tmc_drvdata *drvdata = dev_get_drvdata(dev->parent);
-
-	return sysfs_emit(buf, "%s\n", buf_modes_str[drvdata->etr_mode]);
-}
-
-static ssize_t buf_mode_preferred_store(struct device *dev,
-					  struct device_attribute *attr,
-					  const char *buf, size_t size)
-{
-	struct tmc_drvdata *drvdata = dev_get_drvdata(dev->parent);
-	struct etr_buf_hw buf_hw;
-
-	get_etr_buf_hw(dev, &buf_hw);
-	if (sysfs_streq(buf, buf_modes_str[ETR_MODE_FLAT]))
-		drvdata->etr_mode = ETR_MODE_FLAT;
-	else if (sysfs_streq(buf, buf_modes_str[ETR_MODE_ETR_SG]) && buf_hw.has_etr_sg)
-		drvdata->etr_mode = ETR_MODE_ETR_SG;
-	else if (sysfs_streq(buf, buf_modes_str[ETR_MODE_CATU]) && buf_hw.has_catu)
-		drvdata->etr_mode = ETR_MODE_CATU;
-	else if (sysfs_streq(buf, buf_modes_str[ETR_MODE_AUTO]))
-		drvdata->etr_mode = ETR_MODE_AUTO;
-	else
-		return -EINVAL;
-	return size;
-}
-static DEVICE_ATTR_RW(buf_mode_preferred);
-
-static struct attribute *coresight_etr_attrs[] = {
-	&dev_attr_buf_modes_available.attr,
-	&dev_attr_buf_mode_preferred.attr,
-	NULL,
-};
-
-const struct attribute_group coresight_etr_group = {
-	.attrs = coresight_etr_attrs,
-};

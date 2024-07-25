@@ -47,16 +47,16 @@ static const struct sof_dev_desc renoir_desc = {
 	.resindex_imr_base	= -1,
 	.irqindex_host_ipc	= -1,
 	.chip_info		= &renoir_chip_info,
-	.ipc_supported_mask	= BIT(SOF_IPC_TYPE_3),
-	.ipc_default		= SOF_IPC_TYPE_3,
+	.ipc_supported_mask	= BIT(SOF_IPC),
+	.ipc_default		= SOF_IPC,
 	.default_fw_path = {
-		[SOF_IPC_TYPE_3] = "amd/sof",
+		[SOF_IPC] = "amd/sof",
 	},
 	.default_tplg_path = {
-		[SOF_IPC_TYPE_3] = "amd/sof-tplg",
+		[SOF_IPC] = "amd/sof-tplg",
 	},
 	.default_fw_filename	= {
-		[SOF_IPC_TYPE_3] = "sof-rn.ri",
+		[SOF_IPC] = "sof-rn.ri",
 	},
 	.nocodec_tplg_filename	= "sof-acp.tplg",
 	.ops			= &sof_renoir_ops,
@@ -103,6 +103,5 @@ static struct pci_driver snd_sof_pci_amd_rn_driver = {
 module_pci_driver(snd_sof_pci_amd_rn_driver);
 
 MODULE_LICENSE("Dual BSD/GPL");
-MODULE_DESCRIPTION("RENOIR SOF Driver");
 MODULE_IMPORT_NS(SND_SOC_SOF_AMD_COMMON);
 MODULE_IMPORT_NS(SND_SOC_SOF_PCI_DEV);

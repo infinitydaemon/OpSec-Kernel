@@ -2,7 +2,6 @@
 /* Copyright (C) 2018-2020, Intel Corporation. */
 
 #include "ice.h"
-#include <net/rps.h>
 
 /**
  * ice_is_arfs_active - helper to check is aRFS is active

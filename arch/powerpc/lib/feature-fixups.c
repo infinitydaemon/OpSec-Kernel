@@ -25,13 +25,6 @@
 #include <asm/firmware.h>
 #include <asm/inst.h>
 
-/*
- * Used to generate warnings if mmu or cpu feature check functions that
- * use static keys before they are initialized.
- */
-bool static_key_feature_checks_initialized __read_mostly;
-EXPORT_SYMBOL_GPL(static_key_feature_checks_initialized);
-
 struct fixup_entry {
 	unsigned long	mask;
 	unsigned long	value;
@@ -686,7 +679,6 @@ void __init setup_feature_keys(void)
 	jump_label_init();
 	cpu_feature_keys_init();
 	mmu_feature_keys_init();
-	static_key_feature_checks_initialized = true;
 }
 
 static int __init check_features(void)

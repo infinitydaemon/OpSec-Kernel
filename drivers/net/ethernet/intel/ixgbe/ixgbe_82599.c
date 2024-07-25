@@ -21,24 +21,24 @@ static void ixgbe_enable_tx_laser_multispeed_fiber(struct ixgbe_hw *hw);
 static void ixgbe_flap_tx_laser_multispeed_fiber(struct ixgbe_hw *hw);
 static void
 ixgbe_set_hard_rate_select_speed(struct ixgbe_hw *, ixgbe_link_speed);
-static int ixgbe_setup_mac_link_smartspeed(struct ixgbe_hw *hw,
+static s32 ixgbe_setup_mac_link_smartspeed(struct ixgbe_hw *hw,
 					   ixgbe_link_speed speed,
 					   bool autoneg_wait_to_complete);
 static void ixgbe_stop_mac_link_on_d3_82599(struct ixgbe_hw *hw);
-static int ixgbe_start_mac_link_82599(struct ixgbe_hw *hw,
+static s32 ixgbe_start_mac_link_82599(struct ixgbe_hw *hw,
 				      bool autoneg_wait_to_complete);
-static int ixgbe_setup_mac_link_82599(struct ixgbe_hw *hw,
-				      ixgbe_link_speed speed,
-				      bool autoneg_wait_to_complete);
-static int ixgbe_setup_copper_link_82599(struct ixgbe_hw *hw,
+static s32 ixgbe_setup_mac_link_82599(struct ixgbe_hw *hw,
+			       ixgbe_link_speed speed,
+			       bool autoneg_wait_to_complete);
+static s32 ixgbe_setup_copper_link_82599(struct ixgbe_hw *hw,
 					 ixgbe_link_speed speed,
 					 bool autoneg_wait_to_complete);
-static int ixgbe_verify_fw_version_82599(struct ixgbe_hw *hw);
-static int ixgbe_read_i2c_byte_82599(struct ixgbe_hw *hw, u8 byte_offset,
+static s32 ixgbe_verify_fw_version_82599(struct ixgbe_hw *hw);
+static s32 ixgbe_read_i2c_byte_82599(struct ixgbe_hw *hw, u8 byte_offset,
 				     u8 dev_addr, u8 *data);
-static int ixgbe_write_i2c_byte_82599(struct ixgbe_hw *hw, u8 byte_offset,
+static s32 ixgbe_write_i2c_byte_82599(struct ixgbe_hw *hw, u8 byte_offset,
 				      u8 dev_addr, u8 data);
-static int ixgbe_reset_pipeline_82599(struct ixgbe_hw *hw);
+static s32 ixgbe_reset_pipeline_82599(struct ixgbe_hw *hw);
 static bool ixgbe_verify_lesm_fw_enabled_82599(struct ixgbe_hw *hw);
 
 bool ixgbe_mng_enabled(struct ixgbe_hw *hw)
@@ -98,10 +98,10 @@ static void ixgbe_init_mac_link_ops_82599(struct ixgbe_hw *hw)
 	}
 }
 
-static int ixgbe_setup_sfp_modules_82599(struct ixgbe_hw *hw)
+static s32 ixgbe_setup_sfp_modules_82599(struct ixgbe_hw *hw)
 {
+	s32 ret_val;
 	u16 list_offset, data_offset, data_value;
-	int ret_val;
 
 	if (hw->phy.sfp_type != ixgbe_sfp_type_unknown) {
 		ixgbe_init_mac_link_ops_82599(hw);
@@ -173,10 +173,10 @@ setup_sfp_err:
  *  prot_autoc_write_82599().  Note, that locked can only be true in cases
  *  where this function doesn't return an error.
  **/
-static int prot_autoc_read_82599(struct ixgbe_hw *hw, bool *locked,
+static s32 prot_autoc_read_82599(struct ixgbe_hw *hw, bool *locked,
 				 u32 *reg_val)
 {
-	int ret_val;
+	s32 ret_val;
 
 	*locked = false;
 	/* If LESM is on then we need to hold the SW/FW semaphore. */
@@ -203,9 +203,9 @@ static int prot_autoc_read_82599(struct ixgbe_hw *hw, bool *locked,
  * This part (82599) may need to hold a the SW/FW lock around all writes to
  * AUTOC. Likewise after a write we need to do a pipeline reset.
  **/
-static int prot_autoc_write_82599(struct ixgbe_hw *hw, u32 autoc, bool locked)
+static s32 prot_autoc_write_82599(struct ixgbe_hw *hw, u32 autoc, bool locked)
 {
-	int ret_val = 0;
+	s32 ret_val = 0;
 
 	/* Blocked by MNG FW so bail */
 	if (ixgbe_check_reset_blocked(hw))
@@ -237,7 +237,7 @@ out:
 	return ret_val;
 }
 
-static int ixgbe_get_invariants_82599(struct ixgbe_hw *hw)
+static s32 ixgbe_get_invariants_82599(struct ixgbe_hw *hw)
 {
 	struct ixgbe_mac_info *mac = &hw->mac;
 
@@ -263,11 +263,11 @@ static int ixgbe_get_invariants_82599(struct ixgbe_hw *hw)
  *  not known.  Perform the SFP init if necessary.
  *
  **/
-static int ixgbe_init_phy_ops_82599(struct ixgbe_hw *hw)
+static s32 ixgbe_init_phy_ops_82599(struct ixgbe_hw *hw)
 {
 	struct ixgbe_mac_info *mac = &hw->mac;
 	struct ixgbe_phy_info *phy = &hw->phy;
-	int ret_val;
+	s32 ret_val;
 	u32 esdp;
 
 	if (hw->device_id == IXGBE_DEV_ID_82599_QSFP_SF_QP) {
@@ -322,7 +322,7 @@ static int ixgbe_init_phy_ops_82599(struct ixgbe_hw *hw)
  *
  *  Determines the link capabilities by reading the AUTOC register.
  **/
-static int ixgbe_get_link_capabilities_82599(struct ixgbe_hw *hw,
+static s32 ixgbe_get_link_capabilities_82599(struct ixgbe_hw *hw,
 					     ixgbe_link_speed *speed,
 					     bool *autoneg)
 {
@@ -334,9 +334,7 @@ static int ixgbe_get_link_capabilities_82599(struct ixgbe_hw *hw,
 	    hw->phy.sfp_type == ixgbe_sfp_type_1g_lx_core0 ||
 	    hw->phy.sfp_type == ixgbe_sfp_type_1g_lx_core1 ||
 	    hw->phy.sfp_type == ixgbe_sfp_type_1g_sx_core0 ||
-	    hw->phy.sfp_type == ixgbe_sfp_type_1g_sx_core1 ||
-	    hw->phy.sfp_type == ixgbe_sfp_type_1g_bx_core0 ||
-	    hw->phy.sfp_type == ixgbe_sfp_type_1g_bx_core1) {
+	    hw->phy.sfp_type == ixgbe_sfp_type_1g_sx_core1) {
 		*speed = IXGBE_LINK_SPEED_1GB_FULL;
 		*autoneg = true;
 		return 0;
@@ -502,14 +500,14 @@ static void ixgbe_stop_mac_link_on_d3_82599(struct ixgbe_hw *hw)
  *  Configures link settings based on values in the ixgbe_hw struct.
  *  Restarts the link.  Performs autonegotiation if needed.
  **/
-static int ixgbe_start_mac_link_82599(struct ixgbe_hw *hw,
-				      bool autoneg_wait_to_complete)
+static s32 ixgbe_start_mac_link_82599(struct ixgbe_hw *hw,
+			       bool autoneg_wait_to_complete)
 {
-	bool got_lock = false;
-	int status = 0;
 	u32 autoc_reg;
 	u32 links_reg;
 	u32 i;
+	s32 status = 0;
+	bool got_lock = false;
 
 	if (ixgbe_verify_lesm_fw_enabled_82599(hw)) {
 		status = hw->mac.ops.acquire_swfw_sync(hw,
@@ -659,15 +657,15 @@ ixgbe_set_hard_rate_select_speed(struct ixgbe_hw *hw, ixgbe_link_speed speed)
  *
  *  Implements the Intel SmartSpeed algorithm.
  **/
-static int ixgbe_setup_mac_link_smartspeed(struct ixgbe_hw *hw,
-					   ixgbe_link_speed speed,
-					   bool autoneg_wait_to_complete)
+static s32 ixgbe_setup_mac_link_smartspeed(struct ixgbe_hw *hw,
+				     ixgbe_link_speed speed,
+				     bool autoneg_wait_to_complete)
 {
+	s32 status = 0;
 	ixgbe_link_speed link_speed = IXGBE_LINK_SPEED_UNKNOWN;
-	u32 autoc_reg = IXGBE_READ_REG(hw, IXGBE_AUTOC);
-	bool link_up = false;
-	int status = 0;
 	s32 i, j;
+	bool link_up = false;
+	u32 autoc_reg = IXGBE_READ_REG(hw, IXGBE_AUTOC);
 
 	 /* Set autoneg_advertised value based on input link speed */
 	hw->phy.autoneg_advertised = 0;
@@ -769,15 +767,16 @@ out:
  *
  *  Set the link speed in the AUTOC register and restarts link.
  **/
-static int ixgbe_setup_mac_link_82599(struct ixgbe_hw *hw,
+static s32 ixgbe_setup_mac_link_82599(struct ixgbe_hw *hw,
 				      ixgbe_link_speed speed,
 				      bool autoneg_wait_to_complete)
 {
-	ixgbe_link_speed link_capabilities = IXGBE_LINK_SPEED_UNKNOWN;
-	u32 pma_pmd_10g_serial, pma_pmd_1g, link_mode, links_reg, i;
-	u32 autoc2 = IXGBE_READ_REG(hw, IXGBE_AUTOC2);
 	bool autoneg = false;
-	int status;
+	s32 status;
+	u32 pma_pmd_1g, link_mode, links_reg, i;
+	u32 autoc2 = IXGBE_READ_REG(hw, IXGBE_AUTOC2);
+	u32 pma_pmd_10g_serial = autoc2 & IXGBE_AUTOC2_10G_SERIAL_PMA_PMD_MASK;
+	ixgbe_link_speed link_capabilities = IXGBE_LINK_SPEED_UNKNOWN;
 
 	/* holds the value of AUTOC register at this current point in time */
 	u32 current_autoc = IXGBE_READ_REG(hw, IXGBE_AUTOC);
@@ -785,8 +784,6 @@ static int ixgbe_setup_mac_link_82599(struct ixgbe_hw *hw,
 	u32 orig_autoc = 0;
 	/* temporary variable used for comparison purposes */
 	u32 autoc = current_autoc;
-
-	pma_pmd_10g_serial = autoc2 & IXGBE_AUTOC2_10G_SERIAL_PMA_PMD_MASK;
 
 	/* Check to see if speed passed in is supported. */
 	status = hw->mac.ops.get_link_capabilities(hw, &link_capabilities,
@@ -885,11 +882,11 @@ static int ixgbe_setup_mac_link_82599(struct ixgbe_hw *hw,
  *
  *  Restarts link on PHY and MAC based on settings passed in.
  **/
-static int ixgbe_setup_copper_link_82599(struct ixgbe_hw *hw,
+static s32 ixgbe_setup_copper_link_82599(struct ixgbe_hw *hw,
 					 ixgbe_link_speed speed,
 					 bool autoneg_wait_to_complete)
 {
-	int status;
+	s32 status;
 
 	/* Setup the PHY according to input speed */
 	status = hw->phy.ops.setup_link_speed(hw, speed,
@@ -908,13 +905,13 @@ static int ixgbe_setup_copper_link_82599(struct ixgbe_hw *hw,
  *  and clears all interrupts, perform a PHY reset, and perform a link (MAC)
  *  reset.
  **/
-static int ixgbe_reset_hw_82599(struct ixgbe_hw *hw)
+static s32 ixgbe_reset_hw_82599(struct ixgbe_hw *hw)
 {
 	ixgbe_link_speed link_speed;
+	s32 status;
 	u32 ctrl, i, autoc, autoc2;
-	bool link_up = false;
 	u32 curr_lms;
-	int status;
+	bool link_up = false;
 
 	/* Call adapter stop to disable tx/rx and clear interrupts */
 	status = hw->mac.ops.stop_adapter(hw);
@@ -1084,7 +1081,7 @@ mac_reset_top:
  * @hw: pointer to hardware structure
  * @fdircmd: current value of FDIRCMD register
  */
-static int ixgbe_fdir_check_cmd_complete(struct ixgbe_hw *hw, u32 *fdircmd)
+static s32 ixgbe_fdir_check_cmd_complete(struct ixgbe_hw *hw, u32 *fdircmd)
 {
 	int i;
 
@@ -1102,12 +1099,12 @@ static int ixgbe_fdir_check_cmd_complete(struct ixgbe_hw *hw, u32 *fdircmd)
  *  ixgbe_reinit_fdir_tables_82599 - Reinitialize Flow Director tables.
  *  @hw: pointer to hardware structure
  **/
-int ixgbe_reinit_fdir_tables_82599(struct ixgbe_hw *hw)
+s32 ixgbe_reinit_fdir_tables_82599(struct ixgbe_hw *hw)
 {
+	int i;
 	u32 fdirctrl = IXGBE_READ_REG(hw, IXGBE_FDIRCTRL);
 	u32 fdircmd;
-	int err;
-	int i;
+	s32 err;
 
 	fdirctrl &= ~IXGBE_FDIRCTRL_INIT_DONE;
 
@@ -1215,7 +1212,7 @@ static void ixgbe_fdir_enable_82599(struct ixgbe_hw *hw, u32 fdirctrl)
  *  @fdirctrl: value to write to flow director control register, initially
  *             contains just the value of the Rx packet buffer allocation
  **/
-int ixgbe_init_fdir_signature_82599(struct ixgbe_hw *hw, u32 fdirctrl)
+s32 ixgbe_init_fdir_signature_82599(struct ixgbe_hw *hw, u32 fdirctrl)
 {
 	/*
 	 * Continue setup of fdirctrl register bits:
@@ -1239,7 +1236,7 @@ int ixgbe_init_fdir_signature_82599(struct ixgbe_hw *hw, u32 fdirctrl)
  *  @fdirctrl: value to write to flow director control register, initially
  *             contains just the value of the Rx packet buffer allocation
  **/
-int ixgbe_init_fdir_perfect_82599(struct ixgbe_hw *hw, u32 fdirctrl)
+s32 ixgbe_init_fdir_perfect_82599(struct ixgbe_hw *hw, u32 fdirctrl)
 {
 	/*
 	 * Continue setup of fdirctrl register bits:
@@ -1362,7 +1359,7 @@ static u32 ixgbe_atr_compute_sig_hash_82599(union ixgbe_atr_hash_dword input,
  * Note that the tunnel bit in input must not be set when the hardware
  * tunneling support does not exist.
  **/
-int ixgbe_fdir_add_signature_filter_82599(struct ixgbe_hw *hw,
+s32 ixgbe_fdir_add_signature_filter_82599(struct ixgbe_hw *hw,
 					  union ixgbe_atr_hash_dword input,
 					  union ixgbe_atr_hash_dword common,
 					  u8 queue)
@@ -1518,7 +1515,7 @@ static u32 ixgbe_get_fdirtcpm_82599(union ixgbe_atr_input *input_mask)
 
 #define IXGBE_STORE_AS_BE16(_value) __swab16(ntohs((_value)))
 
-int ixgbe_fdir_set_input_mask_82599(struct ixgbe_hw *hw,
+s32 ixgbe_fdir_set_input_mask_82599(struct ixgbe_hw *hw,
 				    union ixgbe_atr_input *input_mask)
 {
 	/* mask IPv6 since it is currently not supported */
@@ -1630,12 +1627,12 @@ int ixgbe_fdir_set_input_mask_82599(struct ixgbe_hw *hw,
 	return 0;
 }
 
-int ixgbe_fdir_write_perfect_filter_82599(struct ixgbe_hw *hw,
+s32 ixgbe_fdir_write_perfect_filter_82599(struct ixgbe_hw *hw,
 					  union ixgbe_atr_input *input,
 					  u16 soft_id, u8 queue)
 {
 	u32 fdirport, fdirvlan, fdirhash, fdircmd;
-	int err;
+	s32 err;
 
 	/* currently IPv6 is not supported, must be programmed with 0 */
 	IXGBE_WRITE_REG_BE32(hw, IXGBE_FDIRSIPv6(0),
@@ -1693,13 +1690,13 @@ int ixgbe_fdir_write_perfect_filter_82599(struct ixgbe_hw *hw,
 	return 0;
 }
 
-int ixgbe_fdir_erase_perfect_filter_82599(struct ixgbe_hw *hw,
+s32 ixgbe_fdir_erase_perfect_filter_82599(struct ixgbe_hw *hw,
 					  union ixgbe_atr_input *input,
 					  u16 soft_id)
 {
 	u32 fdirhash;
 	u32 fdircmd;
-	int err;
+	s32 err;
 
 	/* configure FDIRHASH register */
 	fdirhash = (__force u32)input->formatted.bkt_hash;
@@ -1737,7 +1734,7 @@ int ixgbe_fdir_erase_perfect_filter_82599(struct ixgbe_hw *hw,
  *
  *  Performs read operation to Omer analog register specified.
  **/
-static int ixgbe_read_analog_reg8_82599(struct ixgbe_hw *hw, u32 reg, u8 *val)
+static s32 ixgbe_read_analog_reg8_82599(struct ixgbe_hw *hw, u32 reg, u8 *val)
 {
 	u32  core_ctl;
 
@@ -1759,7 +1756,7 @@ static int ixgbe_read_analog_reg8_82599(struct ixgbe_hw *hw, u32 reg, u8 *val)
  *
  *  Performs write operation to Omer analog register specified.
  **/
-static int ixgbe_write_analog_reg8_82599(struct ixgbe_hw *hw, u32 reg, u8 val)
+static s32 ixgbe_write_analog_reg8_82599(struct ixgbe_hw *hw, u32 reg, u8 val)
 {
 	u32  core_ctl;
 
@@ -1779,9 +1776,9 @@ static int ixgbe_write_analog_reg8_82599(struct ixgbe_hw *hw, u32 reg, u8 val)
  *  and the generation start_hw function.
  *  Then performs revision-specific operations, if any.
  **/
-static int ixgbe_start_hw_82599(struct ixgbe_hw *hw)
+static s32 ixgbe_start_hw_82599(struct ixgbe_hw *hw)
 {
-	int ret_val = 0;
+	s32 ret_val = 0;
 
 	ret_val = ixgbe_start_hw_generic(hw);
 	if (ret_val)
@@ -1805,9 +1802,9 @@ static int ixgbe_start_hw_82599(struct ixgbe_hw *hw)
  *  If PHY already detected, maintains current PHY type in hw struct,
  *  otherwise executes the PHY detection routine.
  **/
-static int ixgbe_identify_phy_82599(struct ixgbe_hw *hw)
+static s32 ixgbe_identify_phy_82599(struct ixgbe_hw *hw)
 {
-	int status;
+	s32 status;
 
 	/* Detect PHY if not unknown - returns success if already detected. */
 	status = ixgbe_identify_phy_generic(hw);
@@ -1838,7 +1835,7 @@ static int ixgbe_identify_phy_82599(struct ixgbe_hw *hw)
  *
  *  Enables the Rx DMA unit for 82599
  **/
-static int ixgbe_enable_rx_dma_82599(struct ixgbe_hw *hw, u32 regval)
+static s32 ixgbe_enable_rx_dma_82599(struct ixgbe_hw *hw, u32 regval)
 {
 	/*
 	 * Workaround for 82599 silicon errata when enabling the Rx datapath.
@@ -1868,12 +1865,12 @@ static int ixgbe_enable_rx_dma_82599(struct ixgbe_hw *hw, u32 regval)
  *  Return: -EACCES if the FW is not present or if the FW version is
  *  not supported.
  **/
-static int ixgbe_verify_fw_version_82599(struct ixgbe_hw *hw)
+static s32 ixgbe_verify_fw_version_82599(struct ixgbe_hw *hw)
 {
 	u16 fw_offset, fw_ptp_cfg_offset;
-	int status = -EACCES;
-	u16 fw_version = 0;
+	s32 status = -EACCES;
 	u16 offset;
+	u16 fw_version = 0;
 
 	/* firmware check is only necessary for SFI devices */
 	if (hw->phy.media_type != ixgbe_media_type_fiber)
@@ -1920,7 +1917,7 @@ fw_version_err:
 static bool ixgbe_verify_lesm_fw_enabled_82599(struct ixgbe_hw *hw)
 {
 	u16 fw_offset, fw_lesm_param_offset, fw_lesm_state;
-	int status;
+	s32 status;
 
 	/* get the offset to the Firmware Module block */
 	status = hw->eeprom.ops.read(hw, IXGBE_FW_PTR, &fw_offset);
@@ -1959,7 +1956,7 @@ static bool ixgbe_verify_lesm_fw_enabled_82599(struct ixgbe_hw *hw)
  *
  *  Retrieves 16 bit word(s) read from EEPROM
  **/
-static int ixgbe_read_eeprom_buffer_82599(struct ixgbe_hw *hw, u16 offset,
+static s32 ixgbe_read_eeprom_buffer_82599(struct ixgbe_hw *hw, u16 offset,
 					  u16 words, u16 *data)
 {
 	struct ixgbe_eeprom_info *eeprom = &hw->eeprom;
@@ -1985,7 +1982,7 @@ static int ixgbe_read_eeprom_buffer_82599(struct ixgbe_hw *hw, u16 offset,
  *
  *  Reads a 16 bit word from the EEPROM
  **/
-static int ixgbe_read_eeprom_82599(struct ixgbe_hw *hw,
+static s32 ixgbe_read_eeprom_82599(struct ixgbe_hw *hw,
 				   u16 offset, u16 *data)
 {
 	struct ixgbe_eeprom_info *eeprom = &hw->eeprom;
@@ -2009,11 +2006,11 @@ static int ixgbe_read_eeprom_82599(struct ixgbe_hw *hw,
  * full pipeline reset.  Note - We must hold the SW/FW semaphore before writing
  * to AUTOC, so this function assumes the semaphore is held.
  **/
-static int ixgbe_reset_pipeline_82599(struct ixgbe_hw *hw)
+static s32 ixgbe_reset_pipeline_82599(struct ixgbe_hw *hw)
 {
-	u32 i, autoc_reg, autoc2_reg;
+	s32 ret_val;
 	u32 anlp1_reg = 0;
-	int ret_val;
+	u32 i, autoc_reg, autoc2_reg;
 
 	/* Enable link if disabled in NVM */
 	autoc2_reg = IXGBE_READ_REG(hw, IXGBE_AUTOC2);
@@ -2064,12 +2061,12 @@ reset_pipeline_out:
  *  Performs byte read operation to SFP module's EEPROM over I2C interface at
  *  a specified device address.
  **/
-static int ixgbe_read_i2c_byte_82599(struct ixgbe_hw *hw, u8 byte_offset,
+static s32 ixgbe_read_i2c_byte_82599(struct ixgbe_hw *hw, u8 byte_offset,
 				     u8 dev_addr, u8 *data)
 {
-	s32 timeout = 200;
-	int status;
 	u32 esdp;
+	s32 status;
+	s32 timeout = 200;
 
 	if (hw->phy.qsfp_shared_i2c_bus == true) {
 		/* Acquire I2C bus ownership. */
@@ -2118,12 +2115,12 @@ release_i2c_access:
  *  Performs byte write operation to SFP module's EEPROM over I2C interface at
  *  a specified device address.
  **/
-static int ixgbe_write_i2c_byte_82599(struct ixgbe_hw *hw, u8 byte_offset,
+static s32 ixgbe_write_i2c_byte_82599(struct ixgbe_hw *hw, u8 byte_offset,
 				      u8 dev_addr, u8 data)
 {
-	s32 timeout = 200;
-	int status;
 	u32 esdp;
+	s32 status;
+	s32 timeout = 200;
 
 	if (hw->phy.qsfp_shared_i2c_bus == true) {
 		/* Acquire I2C bus ownership. */

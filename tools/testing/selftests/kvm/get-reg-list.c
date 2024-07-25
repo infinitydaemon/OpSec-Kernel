@@ -71,12 +71,11 @@ static const char *config_name(struct vcpu_reg_list *c)
 	for_each_sublist(c, s) {
 		if (!strcmp(s->name, "base"))
 			continue;
-		if (len)
-			c->name[len++] = '+';
-		strcpy(c->name + len, s->name);
-		len += strlen(s->name);
+		strcat(c->name + len, s->name);
+		len += strlen(s->name) + 1;
+		c->name[len - 1] = '+';
 	}
-	c->name[len] = '\0';
+	c->name[len - 1] = '\0';
 
 	return c->name;
 }
@@ -152,7 +151,7 @@ static void check_supported(struct vcpu_reg_list *c)
 			continue;
 
 		__TEST_REQUIRE(kvm_has_cap(s->capability),
-			       "%s: %s not available, skipping tests",
+			       "%s: %s not available, skipping tests\n",
 			       config_name(c), s->name);
 	}
 }

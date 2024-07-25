@@ -836,8 +836,7 @@ static inline bool cxl_is_power8(void)
 {
 	if ((pvr_version_is(PVR_POWER8E)) ||
 	    (pvr_version_is(PVR_POWER8NVL)) ||
-	    (pvr_version_is(PVR_POWER8)) ||
-	    (pvr_version_is(PVR_HX_C2000)))
+	    (pvr_version_is(PVR_POWER8)))
 		return true;
 	return false;
 }

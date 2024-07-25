@@ -13,11 +13,6 @@
 / {
 	compatible = "rockchip,rk3066a";
 
-	aliases {
-		gpio4 = &gpio4;
-		gpio6 = &gpio6;
-	};
-
 	cpus {
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -128,6 +123,7 @@
 		pinctrl-0 = <&hdmii2c_xfer>, <&hdmi_hpd>;
 		power-domains = <&power RK3066_PD_VIO>;
 		rockchip,grf = <&grf>;
+		#sound-dai-cells = <0>;
 		status = "disabled";
 
 		ports {

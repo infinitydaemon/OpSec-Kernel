@@ -31,7 +31,7 @@ xfs_trans_ijoin(
 {
 	struct xfs_inode_log_item *iip;
 
-	xfs_assert_ilocked(ip, XFS_ILOCK_EXCL);
+	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
 	if (ip->i_itemp == NULL)
 		xfs_inode_item_init(ip, ip->i_mount);
 	iip = ip->i_itemp;
@@ -60,12 +60,12 @@ xfs_trans_ichgtime(
 	struct timespec64	tv;
 
 	ASSERT(tp);
-	xfs_assert_ilocked(ip, XFS_ILOCK_EXCL);
+	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
 
 	tv = current_time(inode);
 
 	if (flags & XFS_ICHGTIME_MOD)
-		inode_set_mtime_to_ts(inode, tv);
+		inode->i_mtime = tv;
 	if (flags & XFS_ICHGTIME_CHG)
 		inode_set_ctime_to_ts(inode, tv);
 	if (flags & XFS_ICHGTIME_CREATE)
@@ -90,7 +90,7 @@ xfs_trans_log_inode(
 	struct inode		*inode = VFS_I(ip);
 
 	ASSERT(iip);
-	xfs_assert_ilocked(ip, XFS_ILOCK_EXCL);
+	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
 	ASSERT(!xfs_iflags_test(ip, XFS_ISTALE));
 
 	tp->t_flags |= XFS_TRANS_DIRTY;

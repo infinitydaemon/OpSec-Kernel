@@ -323,10 +323,8 @@ static int userfaultfd_stress(void)
 		uffd_stats_reset(args, nr_cpus);
 
 		/* bounce pass */
-		if (stress(args)) {
-			uffd_test_ctx_clear();
+		if (stress(args))
 			return 1;
-		}
 
 		/* Clear all the write protections if there is any */
 		if (test_uffdio_wp)
@@ -356,7 +354,6 @@ static int userfaultfd_stress(void)
 
 		uffd_stats_report(args, nr_cpus);
 	}
-	uffd_test_ctx_clear();
 
 	return 0;
 }
@@ -440,12 +437,6 @@ int main(int argc, char **argv)
 
 	parse_test_type_arg(argv[1]);
 	bytes = atol(argv[2]) * 1024 * 1024;
-
-	if (test_type == TEST_HUGETLB &&
-	   get_free_hugepages() < bytes / page_size) {
-		printf("skip: Skipping userfaultfd... not enough hugepages\n");
-		return KSFT_SKIP;
-	}
 
 	nr_cpus = sysconf(_SC_NPROCESSORS_ONLN);
 

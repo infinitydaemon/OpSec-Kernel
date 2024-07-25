@@ -22,10 +22,10 @@ community and getting your work upstream.
 .. toctree::
    :maxdepth: 1
 
-   Development process <process/development-process>
-   Submitting patches <process/submitting-patches>
+   process/development-process
+   process/submitting-patches
    Code of conduct <process/code-of-conduct>
-   Maintainer handbook <maintainer/index>
+   maintainer/index
    All development-process docs <process/index>
 
 
@@ -38,10 +38,10 @@ kernel.
 .. toctree::
    :maxdepth: 1
 
-   Core API <core-api/index>
-   Driver APIs <driver-api/index>
-   Subsystems <subsystem-apis>
-   Locking <locking/index>
+   core-api/index
+   driver-api/index
+   subsystem-apis
+   Locking in the kernel <locking/index>
 
 Development tools and processes
 ===============================
@@ -51,15 +51,15 @@ Various other manuals with useful information for all kernel developers.
 .. toctree::
    :maxdepth: 1
 
-   Licensing rules <process/license-rules>
-   Writing documentation <doc-guide/index>
-   Development tools <dev-tools/index>
-   Testing guide <dev-tools/testing-overview>
-   Hacking guide <kernel-hacking/index>
-   Tracing <trace/index>
-   Fault injection <fault-injection/index>
-   Livepatching <livepatch/index>
-   Rust <rust/index>
+   process/license-rules
+   doc-guide/index
+   dev-tools/index
+   dev-tools/testing-overview
+   kernel-hacking/index
+   trace/index
+   fault-injection/index
+   livepatch/index
+   rust/index
 
 
 User-oriented documentation
@@ -72,11 +72,11 @@ developers seeking information on the kernel's user-space APIs.
 .. toctree::
    :maxdepth: 1
 
-   Administration <admin-guide/index>
-   Build system <kbuild/index>
-   Reporting issues <admin-guide/reporting-issues.rst>
-   Userspace tools <tools/index>
-   Userspace API <userspace-api/index>
+   admin-guide/index
+   The kernel build system <kbuild/index>
+   admin-guide/reporting-issues.rst
+   User-space tools <tools/index>
+   userspace-api/index
 
 See also: the `Linux man pages <https://www.kernel.org/doc/man-pages/>`_,
 which are kept separately from the kernel's own documentation.
@@ -89,8 +89,8 @@ platform firmwares.
 .. toctree::
    :maxdepth: 1
 
-   Firmware <firmware-guide/index>
-   Firmware and Devicetree <devicetree/index>
+   firmware-guide/index
+   devicetree/index
 
 
 Architecture-specific documentation
@@ -99,7 +99,7 @@ Architecture-specific documentation
 .. toctree::
    :maxdepth: 2
 
-   CPU architectures <arch/index>
+   arch/index
 
 
 Other documentation
@@ -107,12 +107,12 @@ Other documentation
 
 There are several unsorted documents that don't seem to fit on other parts
 of the documentation body, or may require some adjustments and/or conversion
-to reStructuredText format, or are simply too old.
+to ReStructured Text format, or are simply too old.
 
 .. toctree::
    :maxdepth: 1
 
-   Unsorted documentation <staging/index>
+   staging/index
 
 
 Translations
@@ -121,7 +121,7 @@ Translations
 .. toctree::
    :maxdepth: 2
 
-   Translations <translations/index>
+   translations/index
 
 Indices and tables
 ==================

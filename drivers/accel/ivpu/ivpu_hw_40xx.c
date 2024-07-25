@@ -39,7 +39,6 @@
 #define TIMEOUT_US		     (150 * USEC_PER_MSEC)
 #define PWR_ISLAND_STATUS_TIMEOUT_US (5 * USEC_PER_MSEC)
 #define PLL_TIMEOUT_US		     (1500 * USEC_PER_MSEC)
-#define IDLE_TIMEOUT_US		     (5 * USEC_PER_MSEC)
 
 #define WEIGHTS_DEFAULT              0xf711f711u
 #define WEIGHTS_ATS_DEFAULT          0x0000f711u
@@ -80,11 +79,11 @@ static char *ivpu_platform_to_str(u32 platform)
 {
 	switch (platform) {
 	case IVPU_PLATFORM_SILICON:
-		return "SILICON";
+		return "IVPU_PLATFORM_SILICON";
 	case IVPU_PLATFORM_SIMICS:
-		return "SIMICS";
+		return "IVPU_PLATFORM_SIMICS";
 	case IVPU_PLATFORM_FPGA:
-		return "FPGA";
+		return "IVPU_PLATFORM_FPGA";
 	default:
 		return "Invalid platform";
 	}
@@ -139,22 +138,16 @@ static void ivpu_hw_timeouts_init(struct ivpu_device *vdev)
 		vdev->timeout.jsm = 50000;
 		vdev->timeout.tdr = 2000000;
 		vdev->timeout.reschedule_suspend = 1000;
-		vdev->timeout.autosuspend = -1;
-		vdev->timeout.d0i3_entry_msg = 500;
 	} else if (ivpu_is_simics(vdev)) {
 		vdev->timeout.boot = 50;
 		vdev->timeout.jsm = 500;
 		vdev->timeout.tdr = 10000;
 		vdev->timeout.reschedule_suspend = 10;
-		vdev->timeout.autosuspend = -1;
-		vdev->timeout.d0i3_entry_msg = 100;
 	} else {
 		vdev->timeout.boot = 1000;
 		vdev->timeout.jsm = 500;
 		vdev->timeout.tdr = 2000;
 		vdev->timeout.reschedule_suspend = 10;
-		vdev->timeout.autosuspend = 10;
-		vdev->timeout.d0i3_entry_msg = 5;
 	}
 }
 
@@ -741,7 +734,7 @@ static int ivpu_hw_40xx_info_init(struct ivpu_device *vdev)
 	return 0;
 }
 
-static int ivpu_hw_40xx_ip_reset(struct ivpu_device *vdev)
+static int ivpu_hw_40xx_reset(struct ivpu_device *vdev)
 {
 	int ret;
 	u32 val;
@@ -759,23 +752,6 @@ static int ivpu_hw_40xx_ip_reset(struct ivpu_device *vdev)
 	ret = REGB_POLL_FLD(VPU_40XX_BUTTRESS_IP_RESET, TRIGGER, 0, TIMEOUT_US);
 	if (ret)
 		ivpu_err(vdev, "Timed out waiting for RESET completion\n");
-
-	return ret;
-}
-
-static int ivpu_hw_40xx_reset(struct ivpu_device *vdev)
-{
-	int ret = 0;
-
-	if (ivpu_hw_40xx_ip_reset(vdev)) {
-		ivpu_err(vdev, "Failed to reset NPU IP\n");
-		ret = -EIO;
-	}
-
-	if (ivpu_pll_disable(vdev)) {
-		ivpu_err(vdev, "Failed to disable PLL\n");
-		ret = -EIO;
-	}
 
 	return ret;
 }
@@ -839,6 +815,12 @@ static void ivpu_hw_40xx_clock_relinquish_disable(struct ivpu_device *vdev)
 static int ivpu_hw_40xx_power_up(struct ivpu_device *vdev)
 {
 	int ret;
+
+	ret = ivpu_hw_40xx_reset(vdev);
+	if (ret) {
+		ivpu_err(vdev, "Failed to reset HW: %d\n", ret);
+		return ret;
+	}
 
 	ret = ivpu_hw_40xx_d0i3_disable(vdev);
 	if (ret)
@@ -908,25 +890,12 @@ static bool ivpu_hw_40xx_is_idle(struct ivpu_device *vdev)
 	       REG_TEST_FLD(VPU_40XX_BUTTRESS_VPU_STATUS, IDLE, val);
 }
 
-static int ivpu_hw_40xx_wait_for_idle(struct ivpu_device *vdev)
-{
-	return REGB_POLL_FLD(VPU_40XX_BUTTRESS_VPU_STATUS, IDLE, 0x1, IDLE_TIMEOUT_US);
-}
-
-static void ivpu_hw_40xx_save_d0i3_entry_timestamp(struct ivpu_device *vdev)
-{
-	vdev->hw->d0i3_entry_host_ts = ktime_get_boottime();
-	vdev->hw->d0i3_entry_vpu_ts = REGV_RD64(VPU_40XX_CPU_SS_TIM_PERF_EXT_FREE_CNT);
-}
-
 static int ivpu_hw_40xx_power_down(struct ivpu_device *vdev)
 {
 	int ret = 0;
 
-	ivpu_hw_40xx_save_d0i3_entry_timestamp(vdev);
-
-	if (!ivpu_hw_40xx_is_idle(vdev) && ivpu_hw_40xx_ip_reset(vdev))
-		ivpu_warn(vdev, "Failed to reset the NPU\n");
+	if (!ivpu_hw_40xx_is_idle(vdev) && ivpu_hw_40xx_reset(vdev))
+		ivpu_warn(vdev, "Failed to reset the VPU\n");
 
 	if (ivpu_pll_disable(vdev)) {
 		ivpu_err(vdev, "Failed to disable PLL\n");
@@ -956,19 +925,6 @@ static void ivpu_hw_40xx_wdt_disable(struct ivpu_device *vdev)
 	REGV_WR32(VPU_40XX_CPU_SS_TIM_GEN_CONFIG, val);
 }
 
-static u32 ivpu_hw_40xx_profiling_freq_get(struct ivpu_device *vdev)
-{
-	return vdev->hw->pll.profiling_freq;
-}
-
-static void ivpu_hw_40xx_profiling_freq_drive(struct ivpu_device *vdev, bool enable)
-{
-	if (enable)
-		vdev->hw->pll.profiling_freq = PLL_PROFILING_FREQ_HIGH;
-	else
-		vdev->hw->pll.profiling_freq = PLL_PROFILING_FREQ_DEFAULT;
-}
-
 /* Register indirect accesses */
 static u32 ivpu_hw_40xx_reg_pll_freq_get(struct ivpu_device *vdev)
 {
@@ -978,11 +934,6 @@ static u32 ivpu_hw_40xx_reg_pll_freq_get(struct ivpu_device *vdev)
 	pll_curr_ratio &= VPU_40XX_BUTTRESS_PLL_FREQ_RATIO_MASK;
 
 	return PLL_RATIO_TO_FREQ(pll_curr_ratio);
-}
-
-static u32 ivpu_hw_40xx_ratio_to_freq(struct ivpu_device *vdev, u32 ratio)
-{
-	return PLL_RATIO_TO_FREQ(ratio);
 }
 
 static u32 ivpu_hw_40xx_reg_telemetry_offset_get(struct ivpu_device *vdev)
@@ -1049,27 +1000,28 @@ static void ivpu_hw_40xx_irq_disable(struct ivpu_device *vdev)
 static void ivpu_hw_40xx_irq_wdt_nce_handler(struct ivpu_device *vdev)
 {
 	/* TODO: For LNN hang consider engine reset instead of full recovery */
-	ivpu_pm_trigger_recovery(vdev, "WDT NCE IRQ");
+	ivpu_pm_schedule_recovery(vdev);
 }
 
 static void ivpu_hw_40xx_irq_wdt_mss_handler(struct ivpu_device *vdev)
 {
 	ivpu_hw_wdt_disable(vdev);
-	ivpu_pm_trigger_recovery(vdev, "WDT MSS IRQ");
+	ivpu_pm_schedule_recovery(vdev);
 }
 
 static void ivpu_hw_40xx_irq_noc_firewall_handler(struct ivpu_device *vdev)
 {
-	ivpu_pm_trigger_recovery(vdev, "NOC Firewall IRQ");
+	ivpu_pm_schedule_recovery(vdev);
 }
 
 /* Handler for IRQs from VPU core (irqV) */
-static bool ivpu_hw_40xx_irqv_handler(struct ivpu_device *vdev, int irq, bool *wake_thread)
+static irqreturn_t ivpu_hw_40xx_irqv_handler(struct ivpu_device *vdev, int irq)
 {
 	u32 status = REGV_RD32(VPU_40XX_HOST_SS_ICB_STATUS_0) & ICB_0_IRQ_MASK;
+	irqreturn_t ret = IRQ_NONE;
 
 	if (!status)
-		return false;
+		return IRQ_NONE;
 
 	REGV_WR32(VPU_40XX_HOST_SS_ICB_CLEAR_0, status);
 
@@ -1077,7 +1029,7 @@ static bool ivpu_hw_40xx_irqv_handler(struct ivpu_device *vdev, int irq, bool *w
 		ivpu_mmu_irq_evtq_handler(vdev);
 
 	if (REG_TEST_FLD(VPU_40XX_HOST_SS_ICB_STATUS_0, HOST_IPC_FIFO_INT, status))
-		ivpu_ipc_irq_handler(vdev, wake_thread);
+		ret |= ivpu_ipc_irq_handler(vdev);
 
 	if (REG_TEST_FLD(VPU_40XX_HOST_SS_ICB_STATUS_0, MMU_IRQ_1_INT, status))
 		ivpu_dbg(vdev, IRQ, "MMU sync complete\n");
@@ -1094,17 +1046,17 @@ static bool ivpu_hw_40xx_irqv_handler(struct ivpu_device *vdev, int irq, bool *w
 	if (REG_TEST_FLD(VPU_40XX_HOST_SS_ICB_STATUS_0, NOC_FIREWALL_INT, status))
 		ivpu_hw_40xx_irq_noc_firewall_handler(vdev);
 
-	return true;
+	return ret;
 }
 
 /* Handler for IRQs from Buttress core (irqB) */
-static bool ivpu_hw_40xx_irqb_handler(struct ivpu_device *vdev, int irq)
+static irqreturn_t ivpu_hw_40xx_irqb_handler(struct ivpu_device *vdev, int irq)
 {
 	bool schedule_recovery = false;
 	u32 status = REGB_RD32(VPU_40XX_BUTTRESS_INTERRUPT_STAT) & BUTTRESS_IRQ_MASK;
 
-	if (!status)
-		return false;
+	if (status == 0)
+		return IRQ_NONE;
 
 	if (REG_TEST_FLD(VPU_40XX_BUTTRESS_INTERRUPT_STAT, FREQ_CHANGE, status))
 		ivpu_dbg(vdev, IRQ, "FREQ_CHANGE");
@@ -1154,29 +1106,28 @@ static bool ivpu_hw_40xx_irqb_handler(struct ivpu_device *vdev, int irq)
 	REGB_WR32(VPU_40XX_BUTTRESS_INTERRUPT_STAT, status);
 
 	if (schedule_recovery)
-		ivpu_pm_trigger_recovery(vdev, "Buttress IRQ");
+		ivpu_pm_schedule_recovery(vdev);
 
-	return true;
+	return IRQ_HANDLED;
 }
 
 static irqreturn_t ivpu_hw_40xx_irq_handler(int irq, void *ptr)
 {
-	bool irqv_handled, irqb_handled, wake_thread = false;
 	struct ivpu_device *vdev = ptr;
+	irqreturn_t ret = IRQ_NONE;
 
 	REGB_WR32(VPU_40XX_BUTTRESS_GLOBAL_INT_MASK, 0x1);
 
-	irqv_handled = ivpu_hw_40xx_irqv_handler(vdev, irq, &wake_thread);
-	irqb_handled = ivpu_hw_40xx_irqb_handler(vdev, irq);
+	ret |= ivpu_hw_40xx_irqv_handler(vdev, irq);
+	ret |= ivpu_hw_40xx_irqb_handler(vdev, irq);
 
 	/* Re-enable global interrupts to re-trigger MSI for pending interrupts */
 	REGB_WR32(VPU_40XX_BUTTRESS_GLOBAL_INT_MASK, 0x0);
 
-	if (wake_thread)
+	if (ret & IRQ_WAKE_THREAD)
 		return IRQ_WAKE_THREAD;
-	if (irqv_handled || irqb_handled)
-		return IRQ_HANDLED;
-	return IRQ_NONE;
+
+	return ret;
 }
 
 static void ivpu_hw_40xx_diagnose_failure(struct ivpu_device *vdev)
@@ -1226,16 +1177,12 @@ const struct ivpu_hw_ops ivpu_hw_40xx_ops = {
 	.info_init = ivpu_hw_40xx_info_init,
 	.power_up = ivpu_hw_40xx_power_up,
 	.is_idle = ivpu_hw_40xx_is_idle,
-	.wait_for_idle = ivpu_hw_40xx_wait_for_idle,
 	.power_down = ivpu_hw_40xx_power_down,
 	.reset = ivpu_hw_40xx_reset,
 	.boot_fw = ivpu_hw_40xx_boot_fw,
 	.wdt_disable = ivpu_hw_40xx_wdt_disable,
 	.diagnose_failure = ivpu_hw_40xx_diagnose_failure,
-	.profiling_freq_get = ivpu_hw_40xx_profiling_freq_get,
-	.profiling_freq_drive = ivpu_hw_40xx_profiling_freq_drive,
 	.reg_pll_freq_get = ivpu_hw_40xx_reg_pll_freq_get,
-	.ratio_to_freq = ivpu_hw_40xx_ratio_to_freq,
 	.reg_telemetry_offset_get = ivpu_hw_40xx_reg_telemetry_offset_get,
 	.reg_telemetry_size_get = ivpu_hw_40xx_reg_telemetry_size_get,
 	.reg_telemetry_enable_get = ivpu_hw_40xx_reg_telemetry_enable_get,

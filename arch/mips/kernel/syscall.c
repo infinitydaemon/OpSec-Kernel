@@ -39,7 +39,6 @@
 #include <asm/shmparam.h>
 #include <asm/sync.h>
 #include <asm/sysmips.h>
-#include <asm/syscalls.h>
 #include <asm/switch_to.h>
 
 /*

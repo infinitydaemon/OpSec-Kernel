@@ -1064,22 +1064,6 @@ void vmw_resource_dirty_update(struct vmw_resource *res, pgoff_t start,
 					   end << PAGE_SHIFT);
 }
 
-int vmw_resource_clean(struct vmw_resource *res)
-{
-	int ret = 0;
-
-	if (res->res_dirty) {
-		if (!res->func->clean)
-			return -EINVAL;
-
-		ret = res->func->clean(res);
-		if (ret)
-			return ret;
-		res->res_dirty = false;
-	}
-	return ret;
-}
-
 /**
  * vmw_resources_clean - Clean resources intersecting a mob range
  * @vbo: The mob buffer object
@@ -1096,7 +1080,6 @@ int vmw_resources_clean(struct vmw_bo *vbo, pgoff_t start,
 	unsigned long res_start = start << PAGE_SHIFT;
 	unsigned long res_end = end << PAGE_SHIFT;
 	unsigned long last_cleaned = 0;
-	int ret;
 
 	/*
 	 * Find the resource with lowest backup_offset that intersects the
@@ -1123,9 +1106,18 @@ int vmw_resources_clean(struct vmw_bo *vbo, pgoff_t start,
 	 * intersecting the range.
 	 */
 	while (found) {
-		ret = vmw_resource_clean(found);
-		if (ret)
-			return ret;
+		if (found->res_dirty) {
+			int ret;
+
+			if (!found->func->clean)
+				return -EINVAL;
+
+			ret = found->func->clean(found);
+			if (ret)
+				return ret;
+
+			found->res_dirty = false;
+		}
 		last_cleaned = found->guest_memory_offset + found->guest_memory_size;
 		cur = rb_next(&found->mob_node);
 		if (!cur)

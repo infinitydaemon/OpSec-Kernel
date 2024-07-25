@@ -73,7 +73,14 @@ struct odvp_attr {
 	struct device_attribute attr;
 };
 
-static BIN_ATTR_SIMPLE_RO(data_vault);
+static ssize_t data_vault_read(struct file *file, struct kobject *kobj,
+	     struct bin_attribute *attr, char *buf, loff_t off, size_t count)
+{
+	memcpy(buf, attr->private + off, count);
+	return count;
+}
+
+static BIN_ATTR_RO(data_vault, 0);
 
 static struct bin_attribute *data_attributes[] = {
 	&bin_attr_data_vault,
@@ -667,7 +674,7 @@ free_priv:
 	return result;
 }
 
-static void int3400_thermal_remove(struct platform_device *pdev)
+static int int3400_thermal_remove(struct platform_device *pdev)
 {
 	struct int3400_thermal_priv *priv = platform_get_drvdata(pdev);
 
@@ -691,6 +698,7 @@ static void int3400_thermal_remove(struct platform_device *pdev)
 	kfree(priv->trts);
 	kfree(priv->arts);
 	kfree(priv);
+	return 0;
 }
 
 static const struct acpi_device_id int3400_thermal_match[] = {
@@ -698,7 +706,6 @@ static const struct acpi_device_id int3400_thermal_match[] = {
 	{"INTC1040", 0},
 	{"INTC1041", 0},
 	{"INTC1042", 0},
-	{"INTC1068", 0},
 	{"INTC10A0", 0},
 	{}
 };
@@ -707,7 +714,7 @@ MODULE_DEVICE_TABLE(acpi, int3400_thermal_match);
 
 static struct platform_driver int3400_thermal_driver = {
 	.probe = int3400_thermal_probe,
-	.remove_new = int3400_thermal_remove,
+	.remove = int3400_thermal_remove,
 	.driver = {
 		   .name = "int3400 thermal",
 		   .acpi_match_table = ACPI_PTR(int3400_thermal_match),

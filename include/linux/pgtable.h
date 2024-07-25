@@ -50,8 +50,6 @@
 #define pmd_pgtable(pmd) pmd_page(pmd)
 #endif
 
-#define pmd_folio(pmd) page_folio(pmd_page(pmd))
-
 /*
  * A page table page can be thought of an array like this: pXd_t[PTRS_PER_PxD]
  *
@@ -151,7 +149,9 @@ static inline pgd_t *pgd_offset_pgd(pgd_t *pgd, unsigned long address)
  * a shortcut which implies the use of the kernel's pgd, instead
  * of a process's
  */
+#ifndef pgd_offset_k
 #define pgd_offset_k(address)		pgd_offset(&init_mm, (address))
+#endif
 
 /*
  * In many cases it is known that a virtual address is mapped at PMD or PTE
@@ -184,13 +184,6 @@ static inline int pmd_young(pmd_t pmd)
 }
 #endif
 
-#ifndef pmd_dirty
-static inline int pmd_dirty(pmd_t pmd)
-{
-	return 0;
-}
-#endif
-
 /*
  * A facility to provide lazy MMU batching.  This allows PTE updates and
  * page invalidations to be delayed until a call to leave lazy MMU mode
@@ -212,37 +205,15 @@ static inline int pmd_dirty(pmd_t pmd)
 #define arch_flush_lazy_mmu_mode()	do {} while (0)
 #endif
 
-#ifndef pte_batch_hint
-/**
- * pte_batch_hint - Number of pages that can be added to batch without scanning.
- * @ptep: Page table pointer for the entry.
- * @pte: Page table entry.
- *
- * Some architectures know that a set of contiguous ptes all map the same
- * contiguous memory with the same permissions. In this case, it can provide a
- * hint to aid pte batching without the core code needing to scan every pte.
- *
- * An architecture implementation may ignore the PTE accessed state. Further,
- * the dirty state must apply atomically to all the PTEs described by the hint.
- *
- * May be overridden by the architecture, else pte_batch_hint is always 1.
- */
-static inline unsigned int pte_batch_hint(pte_t *ptep, pte_t pte)
-{
-	return 1;
-}
-#endif
-
-#ifndef pte_advance_pfn
-static inline pte_t pte_advance_pfn(pte_t pte, unsigned long nr)
-{
-	return __pte(pte_val(pte) + (nr << PFN_PTE_SHIFT));
-}
-#endif
-
-#define pte_next_pfn(pte) pte_advance_pfn(pte, 1)
-
 #ifndef set_ptes
+
+#ifndef pte_next_pfn
+static inline pte_t pte_next_pfn(pte_t pte)
+{
+	return __pte(pte_val(pte) + (1UL << PFN_PTE_SHIFT));
+}
+#endif
+
 /**
  * set_ptes - Map consecutive pages to a contiguous range of addresses.
  * @mm: Address space to map the pages into.
@@ -250,10 +221,6 @@ static inline pte_t pte_advance_pfn(pte_t pte, unsigned long nr)
  * @ptep: Page table pointer for the first entry.
  * @pte: Page table entry for the first page.
  * @nr: Number of pages to map.
- *
- * When nr==1, initial state of pte may be present or not present, and new state
- * may be present or not present. When nr>1, initial state of all ptes must be
- * not present, and new state must be present.
  *
  * May be overridden by the architecture, or the architecture can define
  * set_pte() and PFN_PTE_SHIFT.
@@ -322,27 +289,6 @@ static inline pte_t ptep_get(pte_t *ptep)
 static inline pmd_t pmdp_get(pmd_t *pmdp)
 {
 	return READ_ONCE(*pmdp);
-}
-#endif
-
-#ifndef pudp_get
-static inline pud_t pudp_get(pud_t *pudp)
-{
-	return READ_ONCE(*pudp);
-}
-#endif
-
-#ifndef p4dp_get
-static inline p4d_t p4dp_get(p4d_t *p4dp)
-{
-	return READ_ONCE(*p4dp);
-}
-#endif
-
-#ifndef pgdp_get
-static inline pgd_t pgdp_get(pgd_t *pgdp)
-{
-	return READ_ONCE(*pgdp);
 }
 #endif
 
@@ -429,7 +375,7 @@ static inline bool arch_has_hw_nonleaf_pmd_young(void)
  */
 static inline bool arch_has_hw_pte_young(void)
 {
-	return IS_ENABLED(CONFIG_ARCH_HAS_HW_PTE_YOUNG);
+	return false;
 }
 #endif
 
@@ -456,50 +402,6 @@ static inline pte_t ptep_get_and_clear(struct mm_struct *mm,
 	pte_clear(mm, address, ptep);
 	page_table_check_pte_clear(mm, pte);
 	return pte;
-}
-#endif
-
-#ifndef clear_young_dirty_ptes
-/**
- * clear_young_dirty_ptes - Mark PTEs that map consecutive pages of the
- *		same folio as old/clean.
- * @mm: Address space the pages are mapped into.
- * @addr: Address the first page is mapped at.
- * @ptep: Page table pointer for the first entry.
- * @nr: Number of entries to mark old/clean.
- * @flags: Flags to modify the PTE batch semantics.
- *
- * May be overridden by the architecture; otherwise, implemented by
- * get_and_clear/modify/set for each pte in the range.
- *
- * Note that PTE bits in the PTE range besides the PFN can differ. For example,
- * some PTEs might be write-protected.
- *
- * Context: The caller holds the page table lock.  The PTEs map consecutive
- * pages that belong to the same folio.  The PTEs are all in the same PMD.
- */
-static inline void clear_young_dirty_ptes(struct vm_area_struct *vma,
-					  unsigned long addr, pte_t *ptep,
-					  unsigned int nr, cydp_t flags)
-{
-	pte_t pte;
-
-	for (;;) {
-		if (flags == CYDP_CLEAR_YOUNG)
-			ptep_test_and_clear_young(vma, addr, ptep);
-		else {
-			pte = ptep_get_and_clear(vma->vm_mm, addr, ptep);
-			if (flags & CYDP_CLEAR_YOUNG)
-				pte = pte_mkold(pte);
-			if (flags & CYDP_CLEAR_DIRTY)
-				pte = pte_mkclean(pte);
-			set_pte_at(vma->vm_mm, addr, ptep, pte);
-		}
-		if (--nr == 0)
-			break;
-		ptep++;
-		addr += PAGE_SIZE;
-	}
 }
 #endif
 
@@ -650,76 +552,6 @@ static inline pte_t ptep_get_and_clear_full(struct mm_struct *mm,
 }
 #endif
 
-#ifndef get_and_clear_full_ptes
-/**
- * get_and_clear_full_ptes - Clear present PTEs that map consecutive pages of
- *			     the same folio, collecting dirty/accessed bits.
- * @mm: Address space the pages are mapped into.
- * @addr: Address the first page is mapped at.
- * @ptep: Page table pointer for the first entry.
- * @nr: Number of entries to clear.
- * @full: Whether we are clearing a full mm.
- *
- * May be overridden by the architecture; otherwise, implemented as a simple
- * loop over ptep_get_and_clear_full(), merging dirty/accessed bits into the
- * returned PTE.
- *
- * Note that PTE bits in the PTE range besides the PFN can differ. For example,
- * some PTEs might be write-protected.
- *
- * Context: The caller holds the page table lock.  The PTEs map consecutive
- * pages that belong to the same folio.  The PTEs are all in the same PMD.
- */
-static inline pte_t get_and_clear_full_ptes(struct mm_struct *mm,
-		unsigned long addr, pte_t *ptep, unsigned int nr, int full)
-{
-	pte_t pte, tmp_pte;
-
-	pte = ptep_get_and_clear_full(mm, addr, ptep, full);
-	while (--nr) {
-		ptep++;
-		addr += PAGE_SIZE;
-		tmp_pte = ptep_get_and_clear_full(mm, addr, ptep, full);
-		if (pte_dirty(tmp_pte))
-			pte = pte_mkdirty(pte);
-		if (pte_young(tmp_pte))
-			pte = pte_mkyoung(pte);
-	}
-	return pte;
-}
-#endif
-
-#ifndef clear_full_ptes
-/**
- * clear_full_ptes - Clear present PTEs that map consecutive pages of the same
- *		     folio.
- * @mm: Address space the pages are mapped into.
- * @addr: Address the first page is mapped at.
- * @ptep: Page table pointer for the first entry.
- * @nr: Number of entries to clear.
- * @full: Whether we are clearing a full mm.
- *
- * May be overridden by the architecture; otherwise, implemented as a simple
- * loop over ptep_get_and_clear_full().
- *
- * Note that PTE bits in the PTE range besides the PFN can differ. For example,
- * some PTEs might be write-protected.
- *
- * Context: The caller holds the page table lock.  The PTEs map consecutive
- * pages that belong to the same folio.  The PTEs are all in the same PMD.
- */
-static inline void clear_full_ptes(struct mm_struct *mm, unsigned long addr,
-		pte_t *ptep, unsigned int nr, int full)
-{
-	for (;;) {
-		ptep_get_and_clear_full(mm, addr, ptep, full);
-		if (--nr == 0)
-			break;
-		ptep++;
-		addr += PAGE_SIZE;
-	}
-}
-#endif
 
 /*
  * If two threads concurrently fault at the same page, the thread that
@@ -749,35 +581,6 @@ static inline void pte_clear_not_present_full(struct mm_struct *mm,
 					      int full)
 {
 	pte_clear(mm, address, ptep);
-}
-#endif
-
-#ifndef clear_not_present_full_ptes
-/**
- * clear_not_present_full_ptes - Clear multiple not present PTEs which are
- *				 consecutive in the pgtable.
- * @mm: Address space the ptes represent.
- * @addr: Address of the first pte.
- * @ptep: Page table pointer for the first entry.
- * @nr: Number of entries to clear.
- * @full: Whether we are clearing a full mm.
- *
- * May be overridden by the architecture; otherwise, implemented as a simple
- * loop over pte_clear_not_present_full().
- *
- * Context: The caller holds the page table lock.  The PTEs are all not present.
- * The PTEs are all in the same PMD.
- */
-static inline void clear_not_present_full_ptes(struct mm_struct *mm,
-		unsigned long addr, pte_t *ptep, unsigned int nr, int full)
-{
-	for (;;) {
-		pte_clear_not_present_full(mm, addr, ptep, full);
-		if (--nr == 0)
-			break;
-		ptep++;
-		addr += PAGE_SIZE;
-	}
 }
 #endif
 
@@ -816,37 +619,6 @@ static inline void ptep_set_wrprotect(struct mm_struct *mm, unsigned long addres
 {
 	pte_t old_pte = ptep_get(ptep);
 	set_pte_at(mm, address, ptep, pte_wrprotect(old_pte));
-}
-#endif
-
-#ifndef wrprotect_ptes
-/**
- * wrprotect_ptes - Write-protect PTEs that map consecutive pages of the same
- *		    folio.
- * @mm: Address space the pages are mapped into.
- * @addr: Address the first page is mapped at.
- * @ptep: Page table pointer for the first entry.
- * @nr: Number of entries to write-protect.
- *
- * May be overridden by the architecture; otherwise, implemented as a simple
- * loop over ptep_set_wrprotect().
- *
- * Note that PTE bits in the PTE range besides the PFN can differ. For example,
- * some PTEs might be write-protected.
- *
- * Context: The caller holds the page table lock.  The PTEs map consecutive
- * pages that belong to the same folio.  The PTEs are all in the same PMD.
- */
-static inline void wrprotect_ptes(struct mm_struct *mm, unsigned long addr,
-		pte_t *ptep, unsigned int nr)
-{
-	for (;;) {
-		ptep_set_wrprotect(mm, addr, ptep);
-		if (--nr == 0)
-			break;
-		ptep++;
-		addr += PAGE_SIZE;
-	}
 }
 #endif
 
@@ -1125,7 +897,7 @@ static inline int arch_unmap_one(struct mm_struct *mm,
  * prototypes must be defined in the arch-specific asm/pgtable.h file.
  */
 #ifndef __HAVE_ARCH_PREPARE_TO_SWAP
-static inline int arch_prepare_to_swap(struct folio *folio)
+static inline int arch_prepare_to_swap(struct page *page)
 {
 	return 0;
 }
@@ -1152,7 +924,7 @@ static inline void arch_swap_restore(swp_entry_t entry, struct folio *folio)
 #endif
 
 #ifndef __HAVE_ARCH_MOVE_PTE
-#define move_pte(pte, old_addr, new_addr)	(pte)
+#define move_pte(pte, prot, old_addr, new_addr)	(pte)
 #endif
 
 #ifndef pte_accessible
@@ -1843,37 +1615,23 @@ typedef unsigned int pgtbl_mod_mask;
 #endif
 
 /*
- * pXd_leaf() is the API to check whether a pgtable entry is a huge page
- * mapping.  It should work globally across all archs, without any
- * dependency on CONFIG_* options.  For architectures that do not support
- * huge mappings on specific levels, below fallbacks will be used.
- *
- * A leaf pgtable entry should always imply the following:
- *
- * - It is a "present" entry.  IOW, before using this API, please check it
- *   with pXd_present() first. NOTE: it may not always mean the "present
- *   bit" is set.  For example, PROT_NONE entries are always "present".
- *
- * - It should _never_ be a swap entry of any type.  Above "present" check
- *   should have guarded this, but let's be crystal clear on this.
- *
- * - It should contain a huge PFN, which points to a huge page larger than
- *   PAGE_SIZE of the platform.  The PFN format isn't important here.
- *
- * - It should cover all kinds of huge mappings (e.g., pXd_trans_huge(),
- *   pXd_devmap(), or hugetlb mappings).
+ * p?d_leaf() - true if this entry is a final mapping to a physical address.
+ * This differs from p?d_huge() by the fact that they are always available (if
+ * the architecture supports large pages at the appropriate level) even
+ * if CONFIG_HUGETLB_PAGE is not defined.
+ * Only meaningful when called on a valid entry.
  */
 #ifndef pgd_leaf
-#define pgd_leaf(x)	false
+#define pgd_leaf(x)	0
 #endif
 #ifndef p4d_leaf
-#define p4d_leaf(x)	false
+#define p4d_leaf(x)	0
 #endif
 #ifndef pud_leaf
-#define pud_leaf(x)	false
+#define pud_leaf(x)	0
 #endif
 #ifndef pmd_leaf
-#define pmd_leaf(x)	false
+#define pmd_leaf(x)	0
 #endif
 
 #ifndef pgd_leaf_size
@@ -1890,20 +1648,6 @@ typedef unsigned int pgtbl_mod_mask;
 #endif
 #ifndef pte_leaf_size
 #define pte_leaf_size(x) PAGE_SIZE
-#endif
-
-/*
- * We always define pmd_pfn for all archs as it's used in lots of generic
- * code.  Now it happens too for pud_pfn (and can happen for larger
- * mappings too in the future; we're not there yet).  Instead of defining
- * it for all archs (like pmd_pfn), provide a fallback.
- *
- * Note that returning 0 here means any arch that didn't define this can
- * get severely wrong when it hits a real pud leaf.  It's arch's
- * responsibility to properly define it when a huge pud is possible.
- */
-#ifndef pud_pfn
-#define pud_pfn(x) 0
 #endif
 
 /*

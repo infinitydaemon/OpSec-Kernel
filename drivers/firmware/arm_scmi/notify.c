@@ -99,7 +99,6 @@
 #define PROTO_ID_MASK		GENMASK(31, 24)
 #define EVT_ID_MASK		GENMASK(23, 16)
 #define SRC_ID_MASK		GENMASK(15, 0)
-#define NOTIF_UNSUPP		-1
 
 /*
  * Builds an unsigned 32bit key from the given input tuple to be used
@@ -789,7 +788,6 @@ int scmi_register_protocol_events(const struct scmi_handle *handle, u8 proto_id,
 
 	pd->ph = ph;
 	for (i = 0; i < ee->num_events; i++, evt++) {
-		int id;
 		struct scmi_registered_event *r_evt;
 
 		r_evt = devm_kzalloc(ni->handle->dev, sizeof(*r_evt),
@@ -810,11 +808,6 @@ int scmi_register_protocol_events(const struct scmi_handle *handle, u8 proto_id,
 					     evt->max_report_sz, GFP_KERNEL);
 		if (!r_evt->report)
 			return -ENOMEM;
-
-		for (id = 0; id < r_evt->num_sources; id++)
-			if (ee->ops->is_notify_supported &&
-			    !ee->ops->is_notify_supported(ph, r_evt->evt->id, id))
-				refcount_set(&r_evt->sources[id], NOTIF_UNSUPP);
 
 		pd->registered_events[i] = r_evt;
 		/* Ensure events are updated */
@@ -1173,13 +1166,7 @@ static inline int __scmi_enable_evt(struct scmi_registered_event *r_evt,
 			int ret = 0;
 
 			sid = &r_evt->sources[src_id];
-			if (refcount_read(sid) == NOTIF_UNSUPP) {
-				dev_dbg(r_evt->proto->ph->dev,
-					"Notification NOT supported - proto_id:%d  evt_id:%d  src_id:%d",
-					r_evt->proto->id, r_evt->evt->id,
-					src_id);
-				ret = -EOPNOTSUPP;
-			} else if (refcount_read(sid) == 0) {
+			if (refcount_read(sid) == 0) {
 				ret = REVT_NOTIFY_ENABLE(r_evt, r_evt->evt->id,
 							 src_id);
 				if (!ret)
@@ -1192,8 +1179,6 @@ static inline int __scmi_enable_evt(struct scmi_registered_event *r_evt,
 	} else {
 		for (; num_sources; src_id++, num_sources--) {
 			sid = &r_evt->sources[src_id];
-			if (refcount_read(sid) == NOTIF_UNSUPP)
-				continue;
 			if (refcount_dec_and_test(sid))
 				REVT_NOTIFY_DISABLE(r_evt,
 						    r_evt->evt->id, src_id);
@@ -1513,12 +1498,17 @@ static int scmi_devm_notifier_register(struct scmi_device *sdev,
 static int scmi_devm_notifier_match(struct device *dev, void *res, void *data)
 {
 	struct scmi_notifier_devres *dres = res;
-	struct notifier_block *nb = data;
+	struct scmi_notifier_devres *xres = data;
 
-	if (WARN_ON(!dres || !nb))
+	if (WARN_ON(!dres || !xres))
 		return 0;
 
-	return dres->nb == nb;
+	return dres->proto_id == xres->proto_id &&
+		dres->evt_id == xres->evt_id &&
+		dres->nb == xres->nb &&
+		((!dres->src_id && !xres->src_id) ||
+		  (dres->src_id && xres->src_id &&
+		   dres->__src_id == xres->__src_id));
 }
 
 /**
@@ -1526,6 +1516,10 @@ static int scmi_devm_notifier_match(struct device *dev, void *res, void *data)
  * notifier_block for an event
  * @sdev: A reference to an scmi_device whose embedded struct device is to
  *	  be used for devres accounting.
+ * @proto_id: Protocol ID
+ * @evt_id: Event ID
+ * @src_id: Source ID, when NULL register for events coming form ALL possible
+ *	    sources
  * @nb: A standard notifier block to register for the specified event
  *
  * Generic devres managed helper to explicitly un-register a notifier_block
@@ -1535,12 +1529,25 @@ static int scmi_devm_notifier_match(struct device *dev, void *res, void *data)
  * Return: 0 on Success
  */
 static int scmi_devm_notifier_unregister(struct scmi_device *sdev,
+					 u8 proto_id, u8 evt_id,
+					 const u32 *src_id,
 					 struct notifier_block *nb)
 {
 	int ret;
+	struct scmi_notifier_devres dres;
+
+	dres.handle = sdev->handle;
+	dres.proto_id = proto_id;
+	dres.evt_id = evt_id;
+	if (src_id) {
+		dres.__src_id = *src_id;
+		dres.src_id = &dres.__src_id;
+	} else {
+		dres.src_id = NULL;
+	}
 
 	ret = devres_release(&sdev->dev, scmi_devm_release_notifier,
-			     scmi_devm_notifier_match, nb);
+			     scmi_devm_notifier_match, &dres);
 
 	WARN_ON(ret);
 

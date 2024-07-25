@@ -1693,7 +1693,9 @@ static int __init audit_init(void)
 	if (audit_initialized == AUDIT_DISABLED)
 		return 0;
 
-	audit_buffer_cache = KMEM_CACHE(audit_buffer, SLAB_PANIC);
+	audit_buffer_cache = kmem_cache_create("audit_buffer",
+					       sizeof(struct audit_buffer),
+					       0, SLAB_PANIC, NULL);
 
 	skb_queue_head_init(&audit_queue);
 	skb_queue_head_init(&audit_retry_queue);

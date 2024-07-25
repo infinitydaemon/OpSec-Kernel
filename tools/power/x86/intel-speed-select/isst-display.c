@@ -172,19 +172,12 @@ static int print_package_info(struct isst_id *id, FILE *outf)
 	int level = 1;
 
 	if (out_format_is_json()) {
-		if (api_version() > 1) {
-			if (id->cpu < 0)
-				snprintf(header, sizeof(header),
-					 "package-%d:die-%d:powerdomain-%d:cpu-None",
-					 id->pkg, id->die, id->punit);
-			else
-				snprintf(header, sizeof(header),
-					 "package-%d:die-%d:powerdomain-%d:cpu-%d",
-					 id->pkg, id->die, id->punit, id->cpu);
-		} else {
+		if (api_version() > 1)
+			snprintf(header, sizeof(header), "package-%d:die-%d:powerdomain-%d:cpu-%d",
+				 id->pkg, id->die, id->punit, id->cpu);
+		else
 			snprintf(header, sizeof(header), "package-%d:die-%d:cpu-%d",
 				 id->pkg, id->die, id->cpu);
-		}
 		format_and_print(outf, level, header, NULL);
 		return 1;
 	}
@@ -196,12 +189,7 @@ static int print_package_info(struct isst_id *id, FILE *outf)
 		snprintf(header, sizeof(header), "powerdomain-%d", id->punit);
 		format_and_print(outf, level++, header, NULL);
 	}
-
-	if (id->cpu < 0)
-		snprintf(header, sizeof(header), "cpu-None");
-	else
-		snprintf(header, sizeof(header), "cpu-%d", id->cpu);
-
+	snprintf(header, sizeof(header), "cpu-%d", id->cpu);
 	format_and_print(outf, level, header, NULL);
 
 	return level;
@@ -211,8 +199,8 @@ static void _isst_pbf_display_information(struct isst_id *id, FILE *outf, int le
 					  struct isst_pbf_info *pbf_info,
 					  int disp_level)
 {
-	static char header[256];
-	static char value[1024];
+	char header[256];
+	char value[512];
 
 	snprintf(header, sizeof(header), "speed-select-base-freq-properties");
 	format_and_print(outf, disp_level, header, NULL);
@@ -350,8 +338,8 @@ void isst_ctdp_display_core_info(struct isst_id *id, FILE *outf, char *prefix,
 void isst_ctdp_display_information(struct isst_id *id, FILE *outf, int tdp_level,
 				   struct isst_pkg_ctdp *pkg_dev)
 {
-	static char header[256];
-	static char value[1024];
+	char header[256];
+	char value[512];
 	static int level;
 	int trl_max_levels = isst_get_trl_max_levels();
 	int i;

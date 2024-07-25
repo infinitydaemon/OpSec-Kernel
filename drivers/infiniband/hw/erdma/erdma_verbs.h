@@ -140,8 +140,8 @@ struct erdma_uqp {
 	struct erdma_mem sq_mem;
 	struct erdma_mem rq_mem;
 
-	dma_addr_t sq_dbrec_dma;
-	dma_addr_t rq_dbrec_dma;
+	dma_addr_t sq_db_info_dma_addr;
+	dma_addr_t rq_db_info_dma_addr;
 
 	struct erdma_user_dbrecords_page *user_dbr_page;
 
@@ -167,11 +167,8 @@ struct erdma_kqp {
 	void *rq_buf;
 	dma_addr_t rq_buf_dma_addr;
 
-	void *sq_dbrec;
-	void *rq_dbrec;
-
-	dma_addr_t sq_dbrec_dma;
-	dma_addr_t rq_dbrec_dma;
+	void *sq_db_info;
+	void *rq_db_info;
 
 	u8 sig_all;
 };
@@ -249,14 +246,13 @@ struct erdma_kcq_info {
 
 	spinlock_t lock;
 	u8 __iomem *db;
-	u64 *dbrec;
-	dma_addr_t dbrec_dma;
+	u64 *db_record;
 };
 
 struct erdma_ucq_info {
 	struct erdma_mem qbuf_mem;
 	struct erdma_user_dbrecords_page *user_dbr_page;
-	dma_addr_t dbrec_dma;
+	dma_addr_t db_info_dma_addr;
 };
 
 struct erdma_cq {
@@ -365,9 +361,5 @@ int erdma_map_mr_sg(struct ib_mr *ibmr, struct scatterlist *sg, int sg_nents,
 		    unsigned int *sg_offset);
 void erdma_port_event(struct erdma_dev *dev, enum ib_event_type reason);
 void erdma_set_mtu(struct erdma_dev *dev, u32 mtu);
-struct rdma_hw_stats *erdma_alloc_hw_port_stats(struct ib_device *device,
-						u32 port_num);
-int erdma_get_hw_stats(struct ib_device *ibdev, struct rdma_hw_stats *stats,
-		       u32 port, int index);
 
 #endif

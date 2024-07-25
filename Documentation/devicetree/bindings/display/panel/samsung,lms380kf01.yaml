@@ -21,8 +21,7 @@ properties:
   compatible:
     const: samsung,lms380kf01
 
-  reg:
-    maxItems: 1
+  reg: true
 
   interrupts:
     description: provides an optional ESD (electrostatic discharge)

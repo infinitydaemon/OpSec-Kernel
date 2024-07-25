@@ -357,7 +357,6 @@ spidev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	int			retval = 0;
 	struct spidev_data	*spidev;
 	struct spi_device	*spi;
-	struct spi_controller	*ctlr;
 	u32			tmp;
 	unsigned		n_ioc;
 	struct spi_ioc_transfer	*ioc;
@@ -377,8 +376,6 @@ spidev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return -ESHUTDOWN;
 	}
 
-	ctlr = spi->controller;
-
 	/* use the buffer lock here for triple duty:
 	 *  - prevent I/O (from us) so calling spi_setup() is safe;
 	 *  - prevent concurrent SPI_IOC_WR_* from morphing
@@ -391,15 +388,22 @@ spidev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	/* read requests */
 	case SPI_IOC_RD_MODE:
 	case SPI_IOC_RD_MODE32:
-		tmp = spi->mode & SPI_MODE_MASK;
+		tmp = spi->mode;
 
-		if (ctlr->use_gpio_descriptors && spi_get_csgpiod(spi, 0))
-			tmp &= ~SPI_CS_HIGH;
+		{
+			struct spi_controller *ctlr = spi->controller;
+
+			if (ctlr->use_gpio_descriptors && ctlr->cs_gpiods &&
+			    ctlr->cs_gpiods[spi_get_chipselect(spi, 0)])
+				tmp &= ~SPI_CS_HIGH;
+		}
 
 		if (cmd == SPI_IOC_RD_MODE)
-			retval = put_user(tmp, (__u8 __user *)arg);
+			retval = put_user(tmp & SPI_MODE_MASK,
+					  (__u8 __user *)arg);
 		else
-			retval = put_user(tmp, (__u32 __user *)arg);
+			retval = put_user(tmp & SPI_MODE_MASK,
+					  (__u32 __user *)arg);
 		break;
 	case SPI_IOC_RD_LSB_FIRST:
 		retval = put_user((spi->mode & SPI_LSB_FIRST) ?  1 : 0,
@@ -426,9 +430,6 @@ spidev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 				retval = -EINVAL;
 				break;
 			}
-
-			if (ctlr->use_gpio_descriptors && spi_get_csgpiod(spi, 0))
-				tmp |= SPI_CS_HIGH;
 
 			tmp |= spi->mode & ~SPI_MODE_MASK;
 			spi->mode = tmp & SPI_MODE_USER_MASK;
@@ -695,11 +696,10 @@ static const struct file_operations spidev_fops = {
  * It also simplifies memory management.
  */
 
-static const struct class spidev_class = {
-	.name = "spidev",
-};
+static struct class *spidev_class;
 
 static const struct spi_device_id spidev_spi_ids[] = {
+	{ .name = "spidev" },
 	{ .name = "dh2228fv" },
 	{ .name = "ltc2488" },
 	{ .name = "sx1301" },
@@ -720,7 +720,7 @@ MODULE_DEVICE_TABLE(spi, spidev_spi_ids);
  */
 static int spidev_of_check(struct device *dev)
 {
-	if (device_property_match_string(dev, "compatible", "spidev") < 0)
+	if (1 || device_property_match_string(dev, "compatible", "spidev") < 0)
 		return 0;
 
 	dev_err(dev, "spidev listed directly in DT is not supported\n");
@@ -800,9 +800,9 @@ static int spidev_probe(struct spi_device *spi)
 		struct device *dev;
 
 		spidev->devt = MKDEV(SPIDEV_MAJOR, minor);
-		dev = device_create(&spidev_class, &spi->dev, spidev->devt,
+		dev = device_create(spidev_class, &spi->dev, spidev->devt,
 				    spidev, "spidev%d.%d",
-				    spi->controller->bus_num, spi_get_chipselect(spi, 0));
+				    spi->master->bus_num, spi_get_chipselect(spi, 0));
 		status = PTR_ERR_OR_ZERO(dev);
 	} else {
 		dev_dbg(&spi->dev, "no minor number available!\n");
@@ -836,7 +836,7 @@ static void spidev_remove(struct spi_device *spi)
 	mutex_unlock(&spidev->spi_lock);
 
 	list_del(&spidev->device_entry);
-	device_destroy(&spidev_class, spidev->devt);
+	device_destroy(spidev_class, spidev->devt);
 	clear_bit(MINOR(spidev->devt), minors);
 	if (spidev->users == 0)
 		kfree(spidev);
@@ -874,15 +874,15 @@ static int __init spidev_init(void)
 	if (status < 0)
 		return status;
 
-	status = class_register(&spidev_class);
-	if (status) {
+	spidev_class = class_create("spidev");
+	if (IS_ERR(spidev_class)) {
 		unregister_chrdev(SPIDEV_MAJOR, spidev_spi_driver.driver.name);
-		return status;
+		return PTR_ERR(spidev_class);
 	}
 
 	status = spi_register_driver(&spidev_spi_driver);
 	if (status < 0) {
-		class_unregister(&spidev_class);
+		class_destroy(spidev_class);
 		unregister_chrdev(SPIDEV_MAJOR, spidev_spi_driver.driver.name);
 	}
 	return status;
@@ -892,7 +892,7 @@ module_init(spidev_init);
 static void __exit spidev_exit(void)
 {
 	spi_unregister_driver(&spidev_spi_driver);
-	class_unregister(&spidev_class);
+	class_destroy(spidev_class);
 	unregister_chrdev(SPIDEV_MAJOR, spidev_spi_driver.driver.name);
 }
 module_exit(spidev_exit);

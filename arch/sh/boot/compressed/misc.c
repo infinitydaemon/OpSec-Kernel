@@ -16,8 +16,6 @@
 #include <asm/addrspace.h>
 #include <asm/page.h>
 
-#include "misc.h"
-
 /*
  * gzip declarations
  */
@@ -27,6 +25,11 @@
 #undef memset
 #undef memcpy
 #define memzero(s, n)     memset ((s), 0, (n))
+
+/* cache.c */
+#define CACHE_ENABLE      0
+#define CACHE_DISABLE     1
+int cache_control(unsigned int command);
 
 extern char input_data[];
 extern int input_len;
@@ -136,6 +139,8 @@ void decompress_kernel(void)
 	free_mem_end_ptr = free_mem_ptr + HEAP_SIZE;
 
 	puts("Uncompressing Linux... ");
+	cache_control(CACHE_ENABLE);
 	__decompress(input_data, input_len, NULL, NULL, output, 0, NULL, error);
+	cache_control(CACHE_DISABLE);
 	puts("Ok, booting the kernel.\n");
 }

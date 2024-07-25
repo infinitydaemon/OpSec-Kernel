@@ -18,8 +18,8 @@
 # that address space, so the kernel should substitute the dummy address
 # 192.0.0.8 defined in RFC7600.
 
-source lib.sh
-
+NS1=ns1
+NS2=ns2
 H1_IP=172.16.0.1/32
 H1_IP6=2001:db8:1::1
 RT1=172.16.1.0/24
@@ -32,13 +32,15 @@ TMPFILE=$(mktemp)
 cleanup()
 {
     rm -f "$TMPFILE"
-    cleanup_ns $NS1 $NS2
+    ip netns del $NS1
+    ip netns del $NS2
 }
 
 trap cleanup EXIT
 
 # Namespaces
-setup_ns NS1 NS2
+ip netns add $NS1
+ip netns add $NS2
 
 # Connectivity
 ip -netns $NS1 link add veth0 type veth peer name veth0 netns $NS2

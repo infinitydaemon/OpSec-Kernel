@@ -3,7 +3,6 @@
 #include "debug.h"
 #include "env.h"
 #include "util/header.h"
-#include "linux/compiler.h"
 #include <linux/ctype.h>
 #include <linux/zalloc.h>
 #include "cgroup.h"
@@ -13,7 +12,6 @@
 #include <string.h>
 #include "pmus.h"
 #include "strbuf.h"
-#include "trace/beauty/beauty.h"
 
 struct perf_env perf_env;
 
@@ -469,23 +467,11 @@ const char *perf_env__arch(struct perf_env *env)
 	return normalize_arch(arch_name);
 }
 
-const char *perf_env__arch_strerrno(struct perf_env *env __maybe_unused, int err __maybe_unused)
-{
-#if defined(HAVE_SYSCALL_TABLE_SUPPORT) && defined(HAVE_LIBTRACEEVENT)
-	if (env->arch_strerrno == NULL)
-		env->arch_strerrno = arch_syscalls__strerrno_function(perf_env__arch(env));
-
-	return env->arch_strerrno ? env->arch_strerrno(err) : "no arch specific strerrno function";
-#else
-	return "!(HAVE_SYSCALL_TABLE_SUPPORT && HAVE_LIBTRACEEVENT)";
-#endif
-}
-
 const char *perf_env__cpuid(struct perf_env *env)
 {
 	int status;
 
-	if (!env->cpuid) { /* Assume local operation */
+	if (!env || !env->cpuid) { /* Assume local operation */
 		status = perf_env__read_cpuid(env);
 		if (status)
 			return NULL;
@@ -498,7 +484,7 @@ int perf_env__nr_pmu_mappings(struct perf_env *env)
 {
 	int status;
 
-	if (!env->nr_pmu_mappings) { /* Assume local operation */
+	if (!env || !env->nr_pmu_mappings) { /* Assume local operation */
 		status = perf_env__read_pmu_mappings(env);
 		if (status)
 			return 0;
@@ -511,7 +497,7 @@ const char *perf_env__pmu_mappings(struct perf_env *env)
 {
 	int status;
 
-	if (!env->pmu_mappings) { /* Assume local operation */
+	if (!env || !env->pmu_mappings) { /* Assume local operation */
 		status = perf_env__read_pmu_mappings(env);
 		if (status)
 			return NULL;
@@ -557,24 +543,6 @@ int perf_env__numa_node(struct perf_env *env, struct perf_cpu cpu)
 	}
 
 	return cpu.cpu >= 0 && cpu.cpu < env->nr_numa_map ? env->numa_map[cpu.cpu] : -1;
-}
-
-bool perf_env__has_pmu_mapping(struct perf_env *env, const char *pmu_name)
-{
-	char *pmu_mapping = env->pmu_mappings, *colon;
-
-	for (int i = 0; i < env->nr_pmu_mappings; ++i) {
-		if (strtoul(pmu_mapping, &colon, 0) == ULONG_MAX || *colon != ':')
-			goto out_error;
-
-		pmu_mapping = colon + 1;
-		if (strcmp(pmu_mapping, pmu_name) == 0)
-			return true;
-
-		pmu_mapping += strlen(pmu_mapping) + 1;
-	}
-out_error:
-	return false;
 }
 
 char *perf_env__find_pmu_cap(struct perf_env *env, const char *pmu_name,

@@ -7,8 +7,6 @@
 #include <bpf/bpf_endian.h>
 #include <asm/errno.h>
 
-#include "bpf_compiler.h"
-
 #define TC_ACT_OK 0
 #define TC_ACT_SHOT 2
 
@@ -153,11 +151,11 @@ static __always_inline __u16 csum_ipv6_magic(const struct in6_addr *saddr,
 	__u64 sum = csum;
 	int i;
 
-	__pragma_loop_unroll
+#pragma unroll
 	for (i = 0; i < 4; i++)
 		sum += (__u32)saddr->in6_u.u6_addr32[i];
 
-	__pragma_loop_unroll
+#pragma unroll
 	for (i = 0; i < 4; i++)
 		sum += (__u32)daddr->in6_u.u6_addr32[i];
 
@@ -181,7 +179,7 @@ static __always_inline __u32 tcp_ns_to_ts(__u64 ns)
 	return ns / (NSEC_PER_SEC / TCP_TS_HZ);
 }
 
-static __always_inline __u32 tcp_clock_ms(void)
+static __always_inline __u32 tcp_time_stamp_raw(void)
 {
 	return tcp_ns_to_ts(tcp_clock_ns());
 }
@@ -296,7 +294,7 @@ static __always_inline bool tscookie_init(struct tcphdr *tcp_header,
 	if (!loop_ctx.option_timestamp)
 		return false;
 
-	cookie = tcp_clock_ms() & ~TSMASK;
+	cookie = tcp_time_stamp_raw() & ~TSMASK;
 	cookie |= loop_ctx.wscale & TS_OPT_WSCALE_MASK;
 	if (loop_ctx.option_sack)
 		cookie |= TS_OPT_SACK;

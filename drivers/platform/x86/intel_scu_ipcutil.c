@@ -22,7 +22,7 @@
 
 static int major;
 
-static struct intel_scu_ipc_dev *scu;
+struct intel_scu_ipc_dev *scu;
 static DEFINE_MUTEX(scu_lock);
 
 /* IOCTL commands */

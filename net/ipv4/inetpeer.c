@@ -81,7 +81,10 @@ void __init inet_initpeers(void)
 
 	inet_peer_threshold = clamp_val(nr_entries, 4096, 65536 + 128);
 
-	peer_cachep = KMEM_CACHE(inet_peer, SLAB_HWCACHE_ALIGN | SLAB_PANIC);
+	peer_cachep = kmem_cache_create("inet_peer_cache",
+			sizeof(struct inet_peer),
+			0, SLAB_HWCACHE_ALIGN | SLAB_PANIC,
+			NULL);
 }
 
 /* Called with rcu_read_lock() or base->lock held */

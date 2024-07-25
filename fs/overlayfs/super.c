@@ -28,38 +28,33 @@ MODULE_LICENSE("GPL");
 
 struct ovl_dir_cache;
 
-static struct dentry *ovl_d_real(struct dentry *dentry, enum d_real_type type)
+static struct dentry *ovl_d_real(struct dentry *dentry,
+				 const struct inode *inode)
 {
-	struct dentry *upper, *lower;
+	struct dentry *real = NULL, *lower;
 	int err;
 
-	switch (type) {
-	case D_REAL_DATA:
-	case D_REAL_METADATA:
-		break;
-	default:
+	/* It's an overlay file */
+	if (inode && d_inode(dentry) == inode)
+		return dentry;
+
+	if (!d_is_reg(dentry)) {
+		if (!inode || inode == d_inode(dentry))
+			return dentry;
 		goto bug;
 	}
 
-	if (!d_is_reg(dentry)) {
-		/* d_real_inode() is only relevant for regular files */
-		return dentry;
-	}
+	real = ovl_dentry_upper(dentry);
+	if (real && (inode == d_inode(real)))
+		return real;
 
-	upper = ovl_dentry_upper(dentry);
-	if (upper && (type == D_REAL_METADATA ||
-		      ovl_has_upperdata(d_inode(dentry))))
-		return upper;
-
-	if (type == D_REAL_METADATA) {
-		lower = ovl_dentry_lower(dentry);
-		goto real_lower;
-	}
+	if (real && !inode && ovl_has_upperdata(d_inode(dentry)))
+		return real;
 
 	/*
-	 * Best effort lazy lookup of lowerdata for D_REAL_DATA case to return
+	 * Best effort lazy lookup of lowerdata for !inode case to return
 	 * the real lowerdata dentry.  The only current caller of d_real() with
-	 * D_REAL_DATA is d_real_inode() from trace_uprobe and this caller is
+	 * NULL inode is d_real_inode() from trace_uprobe and this caller is
 	 * likely going to be followed reading from the file, before placing
 	 * uprobes on offset within the file, so lowerdata should be available
 	 * when setting the uprobe.
@@ -70,13 +65,18 @@ static struct dentry *ovl_d_real(struct dentry *dentry, enum d_real_type type)
 	lower = ovl_dentry_lowerdata(dentry);
 	if (!lower)
 		goto bug;
+	real = lower;
 
-real_lower:
-	/* Handle recursion into stacked lower fs */
-	return d_real(lower, type);
+	/* Handle recursion */
+	real = d_real(real, inode);
 
+	if (!inode || inode == d_inode(real))
+		return real;
 bug:
-	WARN(1, "%s(%pd4, %d): real dentry not found\n", __func__, dentry, type);
+	WARN(1, "%s(%pd4, %s:%lu): real dentry (%p/%lu) not found\n",
+	     __func__, dentry, inode ? inode->i_sb->s_id : "NULL",
+	     inode ? inode->i_ino : 0, real,
+	     real && d_inode(real) ? d_inode(real)->i_ino : 0);
 	return dentry;
 }
 
@@ -431,13 +431,73 @@ static bool ovl_workdir_ok(struct dentry *workdir, struct dentry *upperdir)
 	bool ok = false;
 
 	if (workdir != upperdir) {
-		struct dentry *trap = lock_rename(workdir, upperdir);
-		if (!IS_ERR(trap))
-			unlock_rename(workdir, upperdir);
-		ok = (trap == NULL);
+		ok = (lock_rename(workdir, upperdir) == NULL);
+		unlock_rename(workdir, upperdir);
 	}
 	return ok;
 }
+
+static int ovl_own_xattr_get(const struct xattr_handler *handler,
+			     struct dentry *dentry, struct inode *inode,
+			     const char *name, void *buffer, size_t size)
+{
+	return -EOPNOTSUPP;
+}
+
+static int ovl_own_xattr_set(const struct xattr_handler *handler,
+			     struct mnt_idmap *idmap,
+			     struct dentry *dentry, struct inode *inode,
+			     const char *name, const void *value,
+			     size_t size, int flags)
+{
+	return -EOPNOTSUPP;
+}
+
+static int ovl_other_xattr_get(const struct xattr_handler *handler,
+			       struct dentry *dentry, struct inode *inode,
+			       const char *name, void *buffer, size_t size)
+{
+	return ovl_xattr_get(dentry, inode, name, buffer, size);
+}
+
+static int ovl_other_xattr_set(const struct xattr_handler *handler,
+			       struct mnt_idmap *idmap,
+			       struct dentry *dentry, struct inode *inode,
+			       const char *name, const void *value,
+			       size_t size, int flags)
+{
+	return ovl_xattr_set(dentry, inode, name, value, size, flags);
+}
+
+static const struct xattr_handler ovl_own_trusted_xattr_handler = {
+	.prefix	= OVL_XATTR_TRUSTED_PREFIX,
+	.get = ovl_own_xattr_get,
+	.set = ovl_own_xattr_set,
+};
+
+static const struct xattr_handler ovl_own_user_xattr_handler = {
+	.prefix	= OVL_XATTR_USER_PREFIX,
+	.get = ovl_own_xattr_get,
+	.set = ovl_own_xattr_set,
+};
+
+static const struct xattr_handler ovl_other_xattr_handler = {
+	.prefix	= "", /* catch all */
+	.get = ovl_other_xattr_get,
+	.set = ovl_other_xattr_set,
+};
+
+static const struct xattr_handler *ovl_trusted_xattr_handlers[] = {
+	&ovl_own_trusted_xattr_handler,
+	&ovl_other_xattr_handler,
+	NULL
+};
+
+static const struct xattr_handler *ovl_user_xattr_handlers[] = {
+	&ovl_own_user_xattr_handler,
+	&ovl_other_xattr_handler,
+	NULL
+};
 
 static int ovl_setup_trap(struct super_block *sb, struct dentry *dir,
 			  struct inode **ptrap, const char *name)
@@ -579,7 +639,7 @@ static int ovl_check_rename_whiteout(struct ovl_fs *ofs)
 	if (IS_ERR(whiteout))
 		goto cleanup_temp;
 
-	err = ovl_upper_is_whiteout(ofs, whiteout);
+	err = ovl_is_whiteout(whiteout);
 
 	/* Best effort cleanup of whiteout and temp file */
 	if (err)
@@ -819,20 +879,15 @@ static int ovl_get_indexdir(struct super_block *sb, struct ovl_fs *ofs,
 {
 	struct vfsmount *mnt = ovl_upper_mnt(ofs);
 	struct dentry *indexdir;
-	struct dentry *origin = ovl_lowerstack(oe)->dentry;
-	const struct ovl_fh *fh;
 	int err;
-
-	fh = ovl_get_origin_fh(ofs, origin);
-	if (IS_ERR(fh))
-		return PTR_ERR(fh);
 
 	err = mnt_want_write(mnt);
 	if (err)
-		goto out_free_fh;
+		return err;
 
 	/* Verify lower root is upper root origin */
-	err = ovl_verify_origin_fh(ofs, upperpath->dentry, fh, true);
+	err = ovl_verify_origin(ofs, upperpath->dentry,
+				ovl_lowerstack(oe)->dentry, true);
 	if (err) {
 		pr_err("failed to verify upper root origin\n");
 		goto out;
@@ -847,8 +902,10 @@ static int ovl_get_indexdir(struct super_block *sb, struct ovl_fs *ofs,
 	if (IS_ERR(indexdir)) {
 		err = PTR_ERR(indexdir);
 	} else if (indexdir) {
-		ofs->workdir = indexdir;
-		err = ovl_setup_trap(sb, indexdir, &ofs->workdir_trap,
+		ofs->indexdir = indexdir;
+		ofs->workdir = dget(indexdir);
+
+		err = ovl_setup_trap(sb, ofs->indexdir, &ofs->indexdir_trap,
 				     "indexdir");
 		if (err)
 			goto out;
@@ -861,15 +918,15 @@ static int ovl_get_indexdir(struct super_block *sb, struct ovl_fs *ofs,
 		 * ".overlay.upper" to indicate that index may have
 		 * directory entries.
 		 */
-		if (ovl_check_origin_xattr(ofs, indexdir)) {
-			err = ovl_verify_origin_xattr(ofs, indexdir,
-						      OVL_XATTR_ORIGIN,
-						      upperpath->dentry, true,
-						      false);
+		if (ovl_check_origin_xattr(ofs, ofs->indexdir)) {
+			err = ovl_verify_set_fh(ofs, ofs->indexdir,
+						OVL_XATTR_ORIGIN,
+						upperpath->dentry, true, false);
 			if (err)
 				pr_err("failed to verify index dir 'origin' xattr\n");
 		}
-		err = ovl_verify_upper(ofs, indexdir, upperpath->dentry, true);
+		err = ovl_verify_upper(ofs, ofs->indexdir, upperpath->dentry,
+				       true);
 		if (err)
 			pr_err("failed to verify index dir 'upper' xattr\n");
 
@@ -877,13 +934,11 @@ static int ovl_get_indexdir(struct super_block *sb, struct ovl_fs *ofs,
 		if (!err)
 			err = ovl_indexdir_cleanup(ofs);
 	}
-	if (err || !indexdir)
+	if (err || !ofs->indexdir)
 		pr_warn("try deleting index dir or mounting with '-o index=off' to disable inodes index.\n");
 
 out:
 	mnt_drop_write(mnt);
-out_free_fh:
-	kfree(fh);
 	return err;
 }
 
@@ -1241,7 +1296,6 @@ static struct dentry *ovl_get_root(struct super_block *sb,
 				   struct ovl_entry *oe)
 {
 	struct dentry *root;
-	struct ovl_fs *ofs = OVL_FS(sb);
 	struct ovl_path *lowerpath = ovl_lowerstack(oe);
 	unsigned long ino = d_inode(lowerpath->dentry)->i_ino;
 	int fsid = lowerpath->layer->fsid;
@@ -1261,20 +1315,6 @@ static struct dentry *ovl_get_root(struct super_block *sb,
 		ovl_dentry_set_upper_alias(root);
 		if (ovl_is_impuredir(sb, upperdentry))
 			ovl_set_flag(OVL_IMPURE, d_inode(root));
-	}
-
-	/* Look for xwhiteouts marker except in the lowermost layer */
-	for (int i = 0; i < ovl_numlower(oe) - 1; i++, lowerpath++) {
-		struct path path = {
-			.mnt = lowerpath->layer->mnt,
-			.dentry = lowerpath->dentry,
-		};
-
-		/* overlay.opaque=x means xwhiteouts directory */
-		if (ovl_get_opaquedir_val(ofs, &path) == 'x') {
-			ovl_layer_set_xwhiteouts(ofs, lowerpath->layer);
-			ovl_dentry_set_xwhiteouts(root);
-		}
 	}
 
 	/* Root is always merge -> can have whiteouts */
@@ -1412,7 +1452,7 @@ int ovl_fill_super(struct super_block *sb, struct fs_context *fc)
 			goto out_free_oe;
 
 		/* Force r/o mount with no index dir */
-		if (!ofs->workdir)
+		if (!ofs->indexdir)
 			sb->s_flags |= SB_RDONLY;
 	}
 
@@ -1421,7 +1461,7 @@ int ovl_fill_super(struct super_block *sb, struct fs_context *fc)
 		goto out_free_oe;
 
 	/* Show index=off in /proc/mounts for forced r/o mount */
-	if (!ofs->workdir) {
+	if (!ofs->indexdir) {
 		ofs->config.index = false;
 		if (ovl_upper_mnt(ofs) && ofs->config.nfs_export) {
 			pr_warn("NFS export requires an index dir, falling back to nfs_export=off.\n");
@@ -1448,19 +1488,11 @@ int ovl_fill_super(struct super_block *sb, struct fs_context *fc)
 	cap_lower(cred->cap_effective, CAP_SYS_RESOURCE);
 
 	sb->s_magic = OVERLAYFS_SUPER_MAGIC;
-	sb->s_xattr = ovl_xattr_handlers(ofs);
+	sb->s_xattr = ofs->config.userxattr ? ovl_user_xattr_handlers :
+		ovl_trusted_xattr_handlers;
 	sb->s_fs_info = ofs;
-#ifdef CONFIG_FS_POSIX_ACL
 	sb->s_flags |= SB_POSIXACL;
-#endif
 	sb->s_iflags |= SB_I_SKIP_SYNC;
-	/*
-	 * Ensure that umask handling is done by the filesystems used
-	 * for the the upper layer instead of overlayfs as that would
-	 * lead to unexpected results.
-	 */
-	sb->s_iflags |= SB_I_NOUMASK;
-	sb->s_iflags |= SB_I_EVM_HMAC_UNSUPPORTED;
 
 	err = -ENOMEM;
 	root_dentry = ovl_get_root(sb, ctx->upper.dentry, oe);
@@ -1503,15 +1535,19 @@ static int __init ovl_init(void)
 	ovl_inode_cachep = kmem_cache_create("ovl_inode",
 					     sizeof(struct ovl_inode), 0,
 					     (SLAB_RECLAIM_ACCOUNT|
-					      SLAB_ACCOUNT),
+					      SLAB_MEM_SPREAD|SLAB_ACCOUNT),
 					     ovl_inode_init_once);
 	if (ovl_inode_cachep == NULL)
 		return -ENOMEM;
 
-	err = register_filesystem(&ovl_fs_type);
-	if (!err)
-		return 0;
+	err = ovl_aio_request_cache_init();
+	if (!err) {
+		err = register_filesystem(&ovl_fs_type);
+		if (!err)
+			return 0;
 
+		ovl_aio_request_cache_destroy();
+	}
 	kmem_cache_destroy(ovl_inode_cachep);
 
 	return err;
@@ -1527,6 +1563,7 @@ static void __exit ovl_exit(void)
 	 */
 	rcu_barrier();
 	kmem_cache_destroy(ovl_inode_cachep);
+	ovl_aio_request_cache_destroy();
 }
 
 module_init(ovl_init);

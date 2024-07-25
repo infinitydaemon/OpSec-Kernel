@@ -15,17 +15,14 @@ struct qat_alg_buf {
 } __packed;
 
 struct qat_alg_buf_list {
-	/* New members must be added within the __struct_group() macro below. */
-	__struct_group(qat_alg_buf_list_hdr, hdr, __packed,
-		u64 resrvd;
-		u32 num_bufs;
-		u32 num_mapped_bufs;
-	);
+	u64 resrvd;
+	u32 num_bufs;
+	u32 num_mapped_bufs;
 	struct qat_alg_buf buffers[];
 } __packed;
 
 struct qat_alg_fixed_buf_list {
-	struct qat_alg_buf_list_hdr sgl_hdr;
+	struct qat_alg_buf_list sgl_hdr;
 	struct qat_alg_buf descriptors[QAT_MAX_BUFF_DESC];
 } __packed __aligned(64);
 

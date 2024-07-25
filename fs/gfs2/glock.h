@@ -84,7 +84,6 @@ enum {
 #define GL_SKIP			0x0100
 #define GL_NOPID		0x0200
 #define GL_NOCACHE		0x0400
-#define GL_NOBLOCK		0x0800
   
 /*
  * lm_async_cb return flags
@@ -157,6 +156,21 @@ out:
 	return gh;
 }
 
+static inline int gfs2_glock_is_held_excl(struct gfs2_glock *gl)
+{
+	return gl->gl_state == LM_ST_EXCLUSIVE;
+}
+
+static inline int gfs2_glock_is_held_dfrd(struct gfs2_glock *gl)
+{
+	return gl->gl_state == LM_ST_DEFERRED;
+}
+
+static inline int gfs2_glock_is_held_shrd(struct gfs2_glock *gl)
+{
+	return gl->gl_state == LM_ST_SHARED;
+}
+
 static inline struct address_space *gfs2_glock2aspace(struct gfs2_glock *gl)
 {
 	if (gl->gl_ops->go_flags & GLOF_ASPACE) {
@@ -172,7 +186,7 @@ int gfs2_glock_get(struct gfs2_sbd *sdp, u64 number,
 		   int create, struct gfs2_glock **glp);
 struct gfs2_glock *gfs2_glock_hold(struct gfs2_glock *gl);
 void gfs2_glock_put(struct gfs2_glock *gl);
-void gfs2_glock_put_async(struct gfs2_glock *gl);
+void gfs2_glock_queue_put(struct gfs2_glock *gl);
 
 void __gfs2_holder_init(struct gfs2_glock *gl, unsigned int state,
 		        u16 flags, struct gfs2_holder *gh,

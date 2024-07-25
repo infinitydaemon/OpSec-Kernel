@@ -8,4 +8,3 @@
 #include "visl-trace-vp9.h"
 #include "visl-trace-h264.h"
 #include "visl-trace-hevc.h"
-#include "visl-trace-av1.h"

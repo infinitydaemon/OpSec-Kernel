@@ -105,15 +105,17 @@ static loff_t snd_info_entry_llseek(struct file *file, loff_t offset, int orig)
 {
 	struct snd_info_private_data *data;
 	struct snd_info_entry *entry;
-	loff_t size;
+	loff_t ret = -EINVAL, size;
 
 	data = file->private_data;
 	entry = data->entry;
-	guard(mutex)(&entry->access);
-	if (entry->c.ops->llseek)
-		return entry->c.ops->llseek(entry,
-					    data->file_private_data,
-					    file, offset, orig);
+	mutex_lock(&entry->access);
+	if (entry->c.ops->llseek) {
+		ret = entry->c.ops->llseek(entry,
+					   data->file_private_data,
+					   file, offset, orig);
+		goto out;
+	}
 
 	size = entry->size;
 	switch (orig) {
@@ -124,18 +126,21 @@ static loff_t snd_info_entry_llseek(struct file *file, loff_t offset, int orig)
 		break;
 	case SEEK_END:
 		if (!size)
-			return -EINVAL;
+			goto out;
 		offset += size;
 		break;
 	default:
-		return -EINVAL;
+		goto out;
 	}
 	if (offset < 0)
-		return -EINVAL;
+		goto out;
 	if (size && offset > size)
 		offset = size;
 	file->f_pos = offset;
-	return offset;
+	ret = offset;
+ out:
+	mutex_unlock(&entry->access);
+	return ret;
 }
 
 static ssize_t snd_info_entry_read(struct file *file, char __user *buffer,
@@ -233,10 +238,10 @@ static int snd_info_entry_open(struct inode *inode, struct file *file)
 	struct snd_info_private_data *data;
 	int mode, err;
 
-	guard(mutex)(&info_mutex);
+	mutex_lock(&info_mutex);
 	err = alloc_info_private(entry, &data);
 	if (err < 0)
-		return err;
+		goto unlock;
 
 	mode = file->f_flags & O_ACCMODE;
 	if (((mode == O_RDONLY || mode == O_RDWR) && !entry->c.ops->read) ||
@@ -252,11 +257,14 @@ static int snd_info_entry_open(struct inode *inode, struct file *file)
 	}
 
 	file->private_data = data;
+	mutex_unlock(&info_mutex);
 	return 0;
 
  error:
 	kfree(data);
 	module_put(entry->module);
+ unlock:
+	mutex_unlock(&info_mutex);
 	return err;
 }
 
@@ -298,6 +306,7 @@ static ssize_t snd_info_text_entry_write(struct file *file,
 	struct snd_info_buffer *buf;
 	loff_t pos;
 	size_t next;
+	int err = 0;
 
 	if (!entry->c.text.write)
 		return -EIO;
@@ -308,24 +317,34 @@ static ssize_t snd_info_text_entry_write(struct file *file,
 	/* don't handle too large text inputs */
 	if (next > 16 * 1024)
 		return -EIO;
-	guard(mutex)(&entry->access);
+	mutex_lock(&entry->access);
 	buf = data->wbuffer;
 	if (!buf) {
 		data->wbuffer = buf = kzalloc(sizeof(*buf), GFP_KERNEL);
-		if (!buf)
-			return -ENOMEM;
+		if (!buf) {
+			err = -ENOMEM;
+			goto error;
+		}
 	}
 	if (next > buf->len) {
 		char *nbuf = kvzalloc(PAGE_ALIGN(next), GFP_KERNEL);
-		if (!nbuf)
-			return -ENOMEM;
+		if (!nbuf) {
+			err = -ENOMEM;
+			goto error;
+		}
 		kvfree(buf->buffer);
 		buf->buffer = nbuf;
 		buf->len = PAGE_ALIGN(next);
 	}
-	if (copy_from_user(buf->buffer + pos, buffer, count))
-		return -EFAULT;
+	if (copy_from_user(buf->buffer + pos, buffer, count)) {
+		err = -EFAULT;
+		goto error;
+	}
 	buf->size = next;
+ error:
+	mutex_unlock(&entry->access);
+	if (err < 0)
+		return err;
 	*offset = next;
 	return count;
 }
@@ -350,10 +369,10 @@ static int snd_info_text_entry_open(struct inode *inode, struct file *file)
 	struct snd_info_private_data *data;
 	int err;
 
-	guard(mutex)(&info_mutex);
+	mutex_lock(&info_mutex);
 	err = alloc_info_private(entry, &data);
 	if (err < 0)
-		return err;
+		goto unlock;
 
 	data->rbuffer = kzalloc(sizeof(*data->rbuffer), GFP_KERNEL);
 	if (!data->rbuffer) {
@@ -367,12 +386,15 @@ static int snd_info_text_entry_open(struct inode *inode, struct file *file)
 		err = single_open(file, snd_info_seq_show, data);
 	if (err < 0)
 		goto error;
+	mutex_unlock(&info_mutex);
 	return 0;
 
  error:
 	kfree(data->rbuffer);
 	kfree(data);
 	module_put(entry->module);
+ unlock:
+	mutex_unlock(&info_mutex);
 	return err;
 }
 
@@ -527,7 +549,7 @@ int snd_info_card_register(struct snd_card *card)
  */
 void snd_info_card_id_change(struct snd_card *card)
 {
-	guard(mutex)(&info_mutex);
+	mutex_lock(&info_mutex);
 	if (card->proc_root_link) {
 		proc_remove(card->proc_root_link);
 		card->proc_root_link = NULL;
@@ -536,6 +558,7 @@ void snd_info_card_id_change(struct snd_card *card)
 		card->proc_root_link = proc_symlink(card->id,
 						    snd_proc_root->p,
 						    card->proc_root->name);
+	mutex_unlock(&info_mutex);
 }
 
 /*
@@ -551,11 +574,12 @@ void snd_info_card_disconnect(struct snd_card *card)
 	if (card->proc_root)
 		proc_remove(card->proc_root->p);
 
-	guard(mutex)(&info_mutex);
+	mutex_lock(&info_mutex);
 	if (card->proc_root)
 		snd_info_clear_entries(card->proc_root);
 	card->proc_root_link = NULL;
 	card->proc_root = NULL;
+	mutex_unlock(&info_mutex);
 }
 
 /*
@@ -679,8 +703,9 @@ snd_info_create_entry(const char *name, struct snd_info_entry *parent,
 	entry->parent = parent;
 	entry->module = module;
 	if (parent) {
-		guard(mutex)(&parent->access);
+		mutex_lock(&parent->access);
 		list_add_tail(&entry->list, &parent->children);
+		mutex_unlock(&parent->access);
 	}
 	return entry;
 }
@@ -750,8 +775,9 @@ void snd_info_free_entry(struct snd_info_entry * entry)
 		return;
 	if (entry->p) {
 		proc_remove(entry->p);
-		guard(mutex)(&info_mutex);
+		mutex_lock(&info_mutex);
 		snd_info_clear_entries(entry);
+		mutex_unlock(&info_mutex);
 	}
 
 	/* free all children at first */
@@ -760,8 +786,9 @@ void snd_info_free_entry(struct snd_info_entry * entry)
 
 	p = entry->parent;
 	if (p) {
-		guard(mutex)(&p->access);
+		mutex_lock(&p->access);
 		list_del(&entry->list);
+		mutex_unlock(&p->access);
 	}
 	kfree(entry->name);
 	if (entry->private_free)
@@ -777,13 +804,15 @@ static int __snd_info_register(struct snd_info_entry *entry)
 	if (snd_BUG_ON(!entry))
 		return -ENXIO;
 	root = entry->parent == NULL ? snd_proc_root->p : entry->parent->p;
-	guard(mutex)(&info_mutex);
+	mutex_lock(&info_mutex);
 	if (entry->p || !root)
-		return 0;
+		goto unlock;
 	if (S_ISDIR(entry->mode)) {
 		p = proc_mkdir_mode(entry->name, entry->mode, root);
-		if (!p)
+		if (!p) {
+			mutex_unlock(&info_mutex);
 			return -ENOMEM;
+		}
 	} else {
 		const struct proc_ops *ops;
 		if (entry->content == SNDRV_INFO_CONTENT_DATA)
@@ -792,11 +821,15 @@ static int __snd_info_register(struct snd_info_entry *entry)
 			ops = &snd_info_text_entry_ops;
 		p = proc_create_data(entry->name, entry->mode, root,
 				     ops, entry);
-		if (!p)
+		if (!p) {
+			mutex_unlock(&info_mutex);
 			return -ENOMEM;
+		}
 		proc_set_size(p, entry->size);
 	}
 	entry->p = p;
+ unlock:
+	mutex_unlock(&info_mutex);
 	return 0;
 }
 

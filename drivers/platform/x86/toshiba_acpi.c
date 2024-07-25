@@ -270,7 +270,6 @@ static const struct key_entry toshiba_acpi_keymap[] = {
 	{ KE_KEY, 0xb32, { KEY_NEXTSONG } },
 	{ KE_KEY, 0xb33, { KEY_PLAYPAUSE } },
 	{ KE_KEY, 0xb5a, { KEY_MEDIA } },
-	{ KE_IGNORE, 0x0e00, { KEY_RESERVED } }, /* Wake from sleep */
 	{ KE_IGNORE, 0x1430, { KEY_RESERVED } }, /* Wake from sleep */
 	{ KE_IGNORE, 0x1501, { KEY_RESERVED } }, /* Output changed */
 	{ KE_IGNORE, 0x1502, { KEY_RESERVED } }, /* HDMI plugged/unplugged */
@@ -1821,7 +1820,12 @@ static DECLARE_WORK(kbd_bl_work, toshiba_acpi_kbd_bl_work);
 /*
  * Sysfs files
  */
-static DEVICE_STRING_ATTR_RO(version, 0444, TOSHIBA_ACPI_VERSION);
+static ssize_t version_show(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%s\n", TOSHIBA_ACPI_VERSION);
+}
+static DEVICE_ATTR_RO(version);
 
 static ssize_t fan_store(struct device *dev,
 			 struct device_attribute *attr,
@@ -2430,7 +2434,7 @@ static ssize_t cooling_method_store(struct device *dev,
 static DEVICE_ATTR_RW(cooling_method);
 
 static struct attribute *toshiba_attributes[] = {
-	&dev_attr_version.attr.attr,
+	&dev_attr_version.attr,
 	&dev_attr_fan.attr,
 	&dev_attr_kbd_backlight_mode.attr,
 	&dev_attr_kbd_type.attr,
@@ -3271,7 +3275,7 @@ static const char *find_hci_method(acpi_handle handle)
  */
 #define QUIRK_HCI_HOTKEY_QUICKSTART		BIT(1)
 
-static const struct dmi_system_id toshiba_dmi_quirks[] = {
+static const struct dmi_system_id toshiba_dmi_quirks[] __initconst = {
 	{
 	 /* Toshiba Portégé R700 */
 	 /* https://bugzilla.kernel.org/show_bug.cgi?id=21012 */
@@ -3299,6 +3303,7 @@ static const struct dmi_system_id toshiba_dmi_quirks[] = {
 		},
 	 .driver_data = (void *)(QUIRK_TURN_ON_PANEL_ON_RESUME | QUIRK_HCI_HOTKEY_QUICKSTART),
 	},
+	{ }
 };
 
 static int toshiba_acpi_add(struct acpi_device *acpi_dev)
@@ -3306,8 +3311,6 @@ static int toshiba_acpi_add(struct acpi_device *acpi_dev)
 	struct toshiba_acpi_dev *dev;
 	const char *hci_method;
 	u32 dummy;
-	const struct dmi_system_id *dmi_id;
-	long quirks = 0;
 	int ret = 0;
 
 	if (toshiba_acpi)
@@ -3460,16 +3463,6 @@ iio_error:
 	}
 #endif
 
-	dmi_id = dmi_first_match(toshiba_dmi_quirks);
-	if (dmi_id)
-		quirks = (long)dmi_id->driver_data;
-
-	if (turn_on_panel_on_resume == -1)
-		turn_on_panel_on_resume = !!(quirks & QUIRK_TURN_ON_PANEL_ON_RESUME);
-
-	if (hci_hotkey_quickstart == -1)
-		hci_hotkey_quickstart = !!(quirks & QUIRK_HCI_HOTKEY_QUICKSTART);
-
 	toshiba_wwan_available(dev);
 	if (dev->wwan_supported)
 		toshiba_acpi_setup_wwan_rfkill(dev);
@@ -3549,10 +3542,9 @@ static void toshiba_acpi_notify(struct acpi_device *acpi_dev, u32 event)
 					(dev->kbd_mode == SCI_KBD_MODE_ON) ?
 					LED_FULL : LED_OFF);
 		break;
-	case 0x8e: /* Power button pressed */
-		break;
 	case 0x85: /* Unknown */
 	case 0x8d: /* Unknown */
+	case 0x8e: /* Unknown */
 	case 0x94: /* Unknown */
 	case 0x95: /* Unknown */
 	default:
@@ -3608,6 +3600,7 @@ static SIMPLE_DEV_PM_OPS(toshiba_acpi_pm,
 
 static struct acpi_driver toshiba_acpi_driver = {
 	.name	= "Toshiba ACPI driver",
+	.owner	= THIS_MODULE,
 	.ids	= toshiba_device_ids,
 	.flags	= ACPI_DRIVER_ALL_NOTIFY_EVENTS,
 	.ops	= {
@@ -3618,10 +3611,27 @@ static struct acpi_driver toshiba_acpi_driver = {
 	.drv.pm	= &toshiba_acpi_pm,
 };
 
+static void __init toshiba_dmi_init(void)
+{
+	const struct dmi_system_id *dmi_id;
+	long quirks = 0;
+
+	dmi_id = dmi_first_match(toshiba_dmi_quirks);
+	if (dmi_id)
+		quirks = (long)dmi_id->driver_data;
+
+	if (turn_on_panel_on_resume == -1)
+		turn_on_panel_on_resume = !!(quirks & QUIRK_TURN_ON_PANEL_ON_RESUME);
+
+	if (hci_hotkey_quickstart == -1)
+		hci_hotkey_quickstart = !!(quirks & QUIRK_HCI_HOTKEY_QUICKSTART);
+}
+
 static int __init toshiba_acpi_init(void)
 {
 	int ret;
 
+	toshiba_dmi_init();
 	toshiba_proc_dir = proc_mkdir(PROC_TOSHIBA, acpi_root_dir);
 	if (!toshiba_proc_dir) {
 		pr_err("Unable to create proc dir " PROC_TOSHIBA "\n");

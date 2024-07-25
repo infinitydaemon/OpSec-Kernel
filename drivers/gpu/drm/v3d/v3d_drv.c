@@ -19,11 +19,13 @@
 #include <linux/module.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
-#include <linux/sched/clock.h>
 #include <linux/reset.h>
 
 #include <drm/drm_drv.h>
 #include <drm/drm_managed.h>
+
+#include <soc/bcm2835/raspberrypi-firmware.h>
+
 #include <uapi/drm/v3d_drm.h>
 
 #include "v3d_drv.h"
@@ -91,9 +93,6 @@ static int v3d_get_param_ioctl(struct drm_device *dev, void *data,
 	case DRM_V3D_PARAM_SUPPORTS_MULTISYNC_EXT:
 		args->value = 1;
 		return 0;
-	case DRM_V3D_PARAM_SUPPORTS_CPU_QUEUE:
-		args->value = 1;
-		return 0;
 	default:
 		DRM_DEBUG("Unknown parameter %d\n", args->param);
 		return -EINVAL;
@@ -119,9 +118,6 @@ v3d_open(struct drm_device *dev, struct drm_file *file)
 		drm_sched_entity_init(&v3d_priv->sched_entity[i],
 				      DRM_SCHED_PRIORITY_NORMAL, &sched,
 				      1, NULL);
-
-		memset(&v3d_priv->stats[i], 0, sizeof(v3d_priv->stats[i]));
-		seqcount_init(&v3d_priv->stats[i].lock);
 	}
 
 	v3d_perfmon_open_file(v3d_priv);
@@ -143,51 +139,7 @@ v3d_postclose(struct drm_device *dev, struct drm_file *file)
 	kfree(v3d_priv);
 }
 
-void v3d_get_stats(const struct v3d_stats *stats, u64 timestamp,
-		   u64 *active_runtime, u64 *jobs_completed)
-{
-	unsigned int seq;
-
-	do {
-		seq = read_seqcount_begin(&stats->lock);
-		*active_runtime = stats->enabled_ns;
-		if (stats->start_ns)
-			*active_runtime += timestamp - stats->start_ns;
-		*jobs_completed = stats->jobs_completed;
-	} while (read_seqcount_retry(&stats->lock, seq));
-}
-
-static void v3d_show_fdinfo(struct drm_printer *p, struct drm_file *file)
-{
-	struct v3d_file_priv *file_priv = file->driver_priv;
-	u64 timestamp = local_clock();
-	enum v3d_queue queue;
-
-	for (queue = 0; queue < V3D_MAX_QUEUES; queue++) {
-		struct v3d_stats *stats = &file_priv->stats[queue];
-		u64 active_runtime, jobs_completed;
-
-		v3d_get_stats(stats, timestamp, &active_runtime, &jobs_completed);
-
-		/* Note that, in case of a GPU reset, the time spent during an
-		 * attempt of executing the job is not computed in the runtime.
-		 */
-		drm_printf(p, "drm-engine-%s: \t%llu ns\n",
-			   v3d_queue_to_string(queue), active_runtime);
-
-		/* Note that we only count jobs that completed. Therefore, jobs
-		 * that were resubmitted due to a GPU reset are not computed.
-		 */
-		drm_printf(p, "v3d-jobs-%s: \t%llu jobs\n",
-			   v3d_queue_to_string(queue), jobs_completed);
-	}
-}
-
-static const struct file_operations v3d_drm_fops = {
-	.owner = THIS_MODULE,
-	DRM_GEM_FOPS,
-	.show_fdinfo = drm_show_fdinfo,
-};
+DEFINE_DRM_GEM_FOPS(v3d_drm_fops);
 
 /* DRM_AUTH is required on SUBMIT_CL for now, while we don't have GMP
  * protection between clients.  Note that render nodes would be
@@ -207,7 +159,6 @@ static const struct drm_ioctl_desc v3d_drm_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(V3D_PERFMON_CREATE, v3d_perfmon_create_ioctl, DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(V3D_PERFMON_DESTROY, v3d_perfmon_destroy_ioctl, DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(V3D_PERFMON_GET_VALUES, v3d_perfmon_get_values_ioctl, DRM_RENDER_ALLOW),
-	DRM_IOCTL_DEF_DRV(V3D_SUBMIT_CPU, v3d_submit_cpu_ioctl, DRM_RENDER_ALLOW | DRM_AUTH),
 };
 
 static const struct drm_driver v3d_drm_driver = {
@@ -228,7 +179,6 @@ static const struct drm_driver v3d_drm_driver = {
 	.ioctls = v3d_drm_ioctls,
 	.num_ioctls = ARRAY_SIZE(v3d_drm_ioctls),
 	.fops = &v3d_drm_fops,
-	.show_fdinfo = v3d_show_fdinfo,
 
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
@@ -239,8 +189,8 @@ static const struct drm_driver v3d_drm_driver = {
 };
 
 static const struct of_device_id v3d_of_match[] = {
-	{ .compatible = "brcm,2711-v3d" },
 	{ .compatible = "brcm,2712-v3d" },
+	{ .compatible = "brcm,2711-v3d" },
 	{ .compatible = "brcm,7268-v3d" },
 	{ .compatible = "brcm,7278-v3d" },
 	{},
@@ -257,6 +207,8 @@ map_regs(struct v3d_dev *v3d, void __iomem **regs, const char *name)
 static int v3d_platform_drm_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
+	struct rpi_firmware *firmware;
+	struct device_node *node;
 	struct drm_device *drm;
 	struct v3d_dev *v3d;
 	int ret;
@@ -310,6 +262,34 @@ static int v3d_platform_drm_probe(struct platform_device *pdev)
 		}
 	}
 
+	v3d->clk = devm_clk_get(dev, NULL);
+	if (IS_ERR_OR_NULL(v3d->clk)) {
+		if (PTR_ERR(v3d->clk) != -EPROBE_DEFER)
+			dev_err(dev, "Failed to get clock (%ld)\n", PTR_ERR(v3d->clk));
+		return PTR_ERR(v3d->clk);
+	}
+
+	node = rpi_firmware_find_node();
+	if (!node)
+		return -EINVAL;
+
+	firmware = rpi_firmware_get(node);
+	of_node_put(node);
+	if (!firmware)
+		return -EPROBE_DEFER;
+
+	v3d->clk_up_rate = rpi_firmware_clk_get_max_rate(firmware,
+							 RPI_FIRMWARE_V3D_CLK_ID);
+	rpi_firmware_put(firmware);
+
+	/* For downclocking, drop it to the minimum frequency we can get from
+	 * the CPRMAN clock generator dividing off our parent.  The divider is
+	 * 4 bits, but ask for just higher than that so that rounding doesn't
+	 * make cprman reject our rate.
+	 */
+	v3d->clk_down_rate =
+		(clk_get_rate(clk_get_parent(v3d->clk)) / (1 << 4)) + 10000;
+
 	if (v3d->ver < 41) {
 		ret = map_regs(v3d, &v3d->gca_regs, "gca");
 		if (ret)
@@ -335,14 +315,11 @@ static int v3d_platform_drm_probe(struct platform_device *pdev)
 	if (ret)
 		goto irq_disable;
 
-	ret = v3d_sysfs_init(dev);
-	if (ret)
-		goto drm_unregister;
+	ret = clk_set_min_rate(v3d->clk, v3d->clk_down_rate);
+	WARN_ON_ONCE(ret != 0);
 
 	return 0;
 
-drm_unregister:
-	drm_dev_unregister(drm);
 irq_disable:
 	v3d_irq_disable(v3d);
 gem_destroy:
@@ -356,9 +333,6 @@ static void v3d_platform_drm_remove(struct platform_device *pdev)
 {
 	struct drm_device *drm = platform_get_drvdata(pdev);
 	struct v3d_dev *v3d = to_v3d_dev(drm);
-	struct device *dev = &pdev->dev;
-
-	v3d_sysfs_destroy(dev);
 
 	drm_dev_unregister(drm);
 

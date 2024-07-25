@@ -437,6 +437,11 @@ void __iomem *dfl_get_feature_ioaddr_by_id(struct device *dev, u16 id)
 	return NULL;
 }
 
+static inline bool is_dfl_feature_present(struct device *dev, u16 id)
+{
+	return !!dfl_get_feature_ioaddr_by_id(dev, id);
+}
+
 static inline
 struct device *dfl_fpga_pdata_to_parent(struct dfl_feature_platform_data *pdata)
 {

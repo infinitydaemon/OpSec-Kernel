@@ -21,6 +21,7 @@
 #include "messages.h"
 #include "ctree.h"
 #include "tree-checker.h"
+#include "disk-io.h"
 #include "compression.h"
 #include "volumes.h"
 #include "misc.h"
@@ -28,7 +29,6 @@
 #include "accessors.h"
 #include "file-item.h"
 #include "inode-item.h"
-#include "dir-item.h"
 #include "extent-tree.h"
 
 /*
@@ -65,7 +65,6 @@ static void generic_err(const struct extent_buffer *eb, int slot,
 	vaf.fmt = fmt;
 	vaf.va = &args;
 
-	dump_page(folio_page(eb->folios[0], 0), "eb page dump");
 	btrfs_crit(fs_info,
 		"corrupt %s: root=%llu block=%llu slot=%d, %pV",
 		btrfs_header_level(eb) == 0 ? "leaf" : "node",
@@ -93,7 +92,6 @@ static void file_extent_err(const struct extent_buffer *eb, int slot,
 	vaf.fmt = fmt;
 	vaf.va = &args;
 
-	dump_page(folio_page(eb->folios[0], 0), "eb page dump");
 	btrfs_crit(fs_info,
 	"corrupt %s: root=%llu block=%llu slot=%d ino=%llu file_offset=%llu, %pV",
 		btrfs_header_level(eb) == 0 ? "leaf" : "node",
@@ -154,7 +152,6 @@ static void dir_item_err(const struct extent_buffer *eb, int slot,
 	vaf.fmt = fmt;
 	vaf.va = &args;
 
-	dump_page(folio_page(eb->folios[0], 0), "eb page dump");
 	btrfs_crit(fs_info,
 		"corrupt %s: root=%llu block=%llu slot=%d ino=%llu, %pV",
 		btrfs_header_level(eb) == 0 ? "leaf" : "node",
@@ -650,7 +647,6 @@ static void block_group_err(const struct extent_buffer *eb, int slot,
 	vaf.fmt = fmt;
 	vaf.va = &args;
 
-	dump_page(folio_page(eb->folios[0], 0), "eb page dump");
 	btrfs_crit(fs_info,
 	"corrupt %s: root=%llu block=%llu slot=%d bg_start=%llu bg_len=%llu, %pV",
 		btrfs_header_level(eb) == 0 ? "leaf" : "node",
@@ -1007,7 +1003,6 @@ static void dev_item_err(const struct extent_buffer *eb, int slot,
 	vaf.fmt = fmt;
 	vaf.va = &args;
 
-	dump_page(folio_page(eb->folios[0], 0), "eb page dump");
 	btrfs_crit(eb->fs_info,
 	"corrupt %s: root=%llu block=%llu slot=%d devid=%llu %pV",
 		btrfs_header_level(eb) == 0 ? "leaf" : "node",
@@ -1263,7 +1258,6 @@ static void extent_err(const struct extent_buffer *eb, int slot,
 	vaf.fmt = fmt;
 	vaf.va = &args;
 
-	dump_page(folio_page(eb->folios[0], 0), "eb page dump");
 	btrfs_crit(eb->fs_info,
 	"corrupt %s: block=%llu slot=%d extent bytenr=%llu len=%llu %pV",
 		btrfs_header_level(eb) == 0 ? "leaf" : "node",
@@ -1492,9 +1486,6 @@ static int check_extent_item(struct extent_buffer *leaf,
 			}
 			inline_refs += btrfs_shared_data_ref_count(leaf, sref);
 			break;
-		case BTRFS_EXTENT_OWNER_REF_KEY:
-			WARN_ON(!btrfs_fs_incompat(fs_info, SIMPLE_QUOTA));
-			break;
 		default:
 			extent_err(leaf, slot, "unknown inline ref type: %u",
 				   inline_type);
@@ -1679,44 +1670,6 @@ static int check_inode_ref(struct extent_buffer *leaf,
 	return 0;
 }
 
-static int check_raid_stripe_extent(const struct extent_buffer *leaf,
-				    const struct btrfs_key *key, int slot)
-{
-	struct btrfs_stripe_extent *stripe_extent =
-		btrfs_item_ptr(leaf, slot, struct btrfs_stripe_extent);
-
-	if (unlikely(!IS_ALIGNED(key->objectid, leaf->fs_info->sectorsize))) {
-		generic_err(leaf, slot,
-"invalid key objectid for raid stripe extent, have %llu expect aligned to %u",
-			    key->objectid, leaf->fs_info->sectorsize);
-		return -EUCLEAN;
-	}
-
-	if (unlikely(!btrfs_fs_incompat(leaf->fs_info, RAID_STRIPE_TREE))) {
-		generic_err(leaf, slot,
-	"RAID_STRIPE_EXTENT present but RAID_STRIPE_TREE incompat bit unset");
-		return -EUCLEAN;
-	}
-
-	switch (btrfs_stripe_extent_encoding(leaf, stripe_extent)) {
-	case BTRFS_STRIPE_RAID0:
-	case BTRFS_STRIPE_RAID1:
-	case BTRFS_STRIPE_DUP:
-	case BTRFS_STRIPE_RAID10:
-	case BTRFS_STRIPE_RAID5:
-	case BTRFS_STRIPE_RAID6:
-	case BTRFS_STRIPE_RAID1C3:
-	case BTRFS_STRIPE_RAID1C4:
-		break;
-	default:
-		generic_err(leaf, slot, "invalid raid stripe encoding %u",
-			    btrfs_stripe_extent_encoding(leaf, stripe_extent));
-		return -EUCLEAN;
-	}
-
-	return 0;
-}
-
 /*
  * Common point to switch the item-specific validation.
  */
@@ -1771,9 +1724,6 @@ static enum btrfs_tree_block_status check_leaf_item(struct extent_buffer *leaf,
 	case BTRFS_EXTENT_DATA_REF_KEY:
 		ret = check_extent_data_ref(leaf, key, slot);
 		break;
-	case BTRFS_RAID_STRIPE_KEY:
-		ret = check_raid_stripe_extent(leaf, key, slot);
-		break;
 	}
 
 	if (ret)
@@ -1795,11 +1745,6 @@ enum btrfs_tree_block_status __btrfs_check_leaf(struct extent_buffer *leaf)
 			"invalid level for leaf, have %d expect 0",
 			btrfs_header_level(leaf));
 		return BTRFS_TREE_BLOCK_INVALID_LEVEL;
-	}
-
-	if (unlikely(!btrfs_header_flag(leaf, BTRFS_HEADER_FLAG_WRITTEN))) {
-		generic_err(leaf, 0, "invalid flag for leaf, WRITTEN not set");
-		return BTRFS_TREE_BLOCK_WRITTEN_NOT_SET;
 	}
 
 	/*
@@ -1863,7 +1808,6 @@ enum btrfs_tree_block_status __btrfs_check_leaf(struct extent_buffer *leaf)
 	for (slot = 0; slot < nritems; slot++) {
 		u32 item_end_expected;
 		u64 item_data_end;
-		enum btrfs_tree_block_status ret;
 
 		btrfs_item_key_to_cpu(leaf, &key, slot);
 
@@ -1919,10 +1863,21 @@ enum btrfs_tree_block_status __btrfs_check_leaf(struct extent_buffer *leaf)
 			return BTRFS_TREE_BLOCK_INVALID_OFFSETS;
 		}
 
-		/* Check if the item size and content meet other criteria. */
-		ret = check_leaf_item(leaf, &key, slot, &prev_key);
-		if (unlikely(ret != BTRFS_TREE_BLOCK_CLEAN))
-			return ret;
+		/*
+		 * We only want to do this if WRITTEN is set, otherwise the leaf
+		 * may be in some intermediate state and won't appear valid.
+		 */
+		if (btrfs_header_flag(leaf, BTRFS_HEADER_FLAG_WRITTEN)) {
+			enum btrfs_tree_block_status ret;
+
+			/*
+			 * Check if the item size and content meet other
+			 * criteria
+			 */
+			ret = check_leaf_item(leaf, &key, slot, &prev_key);
+			if (unlikely(ret != BTRFS_TREE_BLOCK_CLEAN))
+				return ret;
+		}
 
 		prev_key.objectid = key.objectid;
 		prev_key.type = key.type;
@@ -1951,11 +1906,6 @@ enum btrfs_tree_block_status __btrfs_check_node(struct extent_buffer *node)
 	int slot;
 	int level = btrfs_header_level(node);
 	u64 bytenr;
-
-	if (unlikely(!btrfs_header_flag(node, BTRFS_HEADER_FLAG_WRITTEN))) {
-		generic_err(node, 0, "invalid flag for node, WRITTEN not set");
-		return BTRFS_TREE_BLOCK_WRITTEN_NOT_SET;
-	}
 
 	if (unlikely(level <= 0 || level >= BTRFS_MAX_LEVEL)) {
 		generic_err(node, 0,
@@ -2021,7 +1971,7 @@ int btrfs_check_eb_owner(const struct extent_buffer *eb, u64 root_owner)
 	 * Skip dummy fs, as selftests don't create unique ebs for each dummy
 	 * root.
 	 */
-	if (btrfs_is_testing(eb->fs_info))
+	if (test_bit(BTRFS_FS_STATE_DUMMY_FS_INFO, &eb->fs_info->fs_state))
 		return 0;
 	/*
 	 * There are several call sites (backref walking, qgroup, and data
@@ -2094,7 +2044,7 @@ int btrfs_verify_level_key(struct extent_buffer *eb, int level,
 	 * So we only checks tree blocks which is read from disk, whose
 	 * generation <= fs_info->last_trans_committed.
 	 */
-	if (btrfs_header_generation(eb) > btrfs_get_last_trans_committed(fs_info))
+	if (btrfs_header_generation(eb) > fs_info->last_trans_committed)
 		return 0;
 
 	/* We have @first_key, so this @eb must have at least one item */

@@ -34,7 +34,7 @@
 #include <linux/security.h>
 #include <linux/memblock.h>
 #include <linux/syscalls.h>
-#include <linux/vmcore_info.h>
+#include <linux/crash_core.h>
 #include <linux/ratelimit.h>
 #include <linux/kmsg_dump.h>
 #include <linux/syslog.h>
@@ -101,6 +101,12 @@ DEFINE_STATIC_SRCU(console_srcu);
  * circumstances, like after kernel panic happens.
  */
 int __read_mostly suppress_printk;
+
+/*
+ * During panic, heavy printk by other CPUs can delay the
+ * panic and risk deadlock on console resources.
+ */
+static int __read_mostly suppress_panic_printk;
 
 #ifdef CONFIG_LOCKDEP
 static struct lockdep_map console_lock_dep_map = {
@@ -178,9 +184,9 @@ static int __init control_devkmsg(char *str)
 	 * Set sysctl string accordingly:
 	 */
 	if (devkmsg_log == DEVKMSG_LOG_MASK_ON)
-		strscpy(devkmsg_log_str, "on");
+		strcpy(devkmsg_log_str, "on");
 	else if (devkmsg_log == DEVKMSG_LOG_MASK_OFF)
-		strscpy(devkmsg_log_str, "off");
+		strcpy(devkmsg_log_str, "off");
 	/* else "ratelimit" which is set by default. */
 
 	/*
@@ -209,7 +215,7 @@ int devkmsg_sysctl_set_loglvl(struct ctl_table *table, int write,
 			return -EINVAL;
 
 		old = devkmsg_log;
-		strscpy(old_str, devkmsg_log_str);
+		strncpy(old_str, devkmsg_log_str, DEVKMSG_STR_MAX_SIZE);
 	}
 
 	err = proc_dostring(table, write, buffer, lenp, ppos);
@@ -227,7 +233,7 @@ int devkmsg_sysctl_set_loglvl(struct ctl_table *table, int write,
 
 			/* ... and restore old setting. */
 			devkmsg_log = old;
-			strscpy(devkmsg_log_str, old_str);
+			strncpy(devkmsg_log_str, old_str, DEVKMSG_STR_MAX_SIZE);
 
 			return -EINVAL;
 		}
@@ -347,29 +353,6 @@ static bool panic_in_progress(void)
 	return unlikely(atomic_read(&panic_cpu) != PANIC_CPU_INVALID);
 }
 
-/* Return true if a panic is in progress on the current CPU. */
-bool this_cpu_in_panic(void)
-{
-	/*
-	 * We can use raw_smp_processor_id() here because it is impossible for
-	 * the task to be migrated to the panic_cpu, or away from it. If
-	 * panic_cpu has already been set, and we're not currently executing on
-	 * that CPU, then we never will be.
-	 */
-	return unlikely(atomic_read(&panic_cpu) == raw_smp_processor_id());
-}
-
-/*
- * Return true if a panic is in progress on a remote CPU.
- *
- * On true, the local CPU should immediately release any printing resources
- * that may be needed by the panic CPU.
- */
-bool other_cpu_in_panic(void)
-{
-	return (panic_in_progress() && !this_cpu_in_panic());
-}
-
 /*
  * This is used for debugging the mess that is the VT code by
  * keeping track if we have the console semaphore held. It's
@@ -383,6 +366,9 @@ static int console_locked;
 /*
  *	Array of consoles built from command line options (console=)
  */
+
+#define MAX_CMDLINECONSOLES 8
+
 static struct console_cmdline console_cmdline[MAX_CMDLINECONSOLES];
 
 static int preferred_console = -1;
@@ -508,7 +494,7 @@ _DEFINE_PRINTKRB(printk_rb_static, CONFIG_LOG_BUF_SHIFT - PRB_AVGBITS,
 
 static struct printk_ringbuffer printk_rb_dynamic;
 
-struct printk_ringbuffer *prb = &printk_rb_static;
+static struct printk_ringbuffer *prb = &printk_rb_static;
 
 /*
  * We cannot access per-CPU data (e.g. per-CPU flush irq_work) before
@@ -612,6 +598,17 @@ static int check_syslog_permissions(int type, int source)
 	if (syslog_action_restricted(type)) {
 		if (capable(CAP_SYSLOG))
 			goto ok;
+		/*
+		 * For historical reasons, accept CAP_SYS_ADMIN too, with
+		 * a warning.
+		 */
+		if (capable(CAP_SYS_ADMIN)) {
+			pr_warn_once("%s (%d): Attempt to access syslog with "
+				     "CAP_SYS_ADMIN but no CAP_SYSLOG "
+				     "(deprecated).\n",
+				 current->comm, task_pid_nr(current));
+			goto ok;
+		}
 		return -EPERM;
 	}
 ok:
@@ -700,6 +697,9 @@ static ssize_t msg_print_ext_body(char *buf, size_t size,
 out:
 	return len;
 }
+
+static bool printk_get_next_message(struct printk_message *pmsg, u64 seq,
+				    bool is_extended, bool may_supress);
 
 /* /dev/kmsg - userspace message inject/listen interface */
 struct devkmsg_user {
@@ -954,7 +954,7 @@ const struct file_operations kmsg_fops = {
 	.release = devkmsg_release,
 };
 
-#ifdef CONFIG_VMCORE_INFO
+#ifdef CONFIG_CRASH_CORE
 /*
  * This appends the listed symbols to /proc/vmcore
  *
@@ -1669,6 +1669,7 @@ static int syslog_print_all(char __user *buf, int size, bool clear)
 
 	prb_rec_init_rd(&r, &info, text, PRINTK_MESSAGE_MAX);
 
+	len = 0;
 	prb_for_each_record(seq, prb, seq, &r) {
 		int textlen;
 
@@ -2308,12 +2309,7 @@ asmlinkage int vprintk_emit(int facility, int level,
 	if (unlikely(suppress_printk))
 		return 0;
 
-	/*
-	 * The messages on the panic CPU are the most important. If
-	 * non-panic CPUs are generating any messages, they will be
-	 * silently dropped.
-	 */
-	if (other_cpu_in_panic())
+	if (unlikely(suppress_panic_printk) && other_cpu_in_panic())
 		return 0;
 
 	if (level == LOGLEVEL_SCHED) {
@@ -2387,6 +2383,22 @@ static bool __pr_flush(struct console *con, int timeout_ms, bool reset_on_progre
 
 static u64 syslog_seq;
 
+static size_t record_print_text(const struct printk_record *r,
+				bool syslog, bool time)
+{
+	return 0;
+}
+static ssize_t info_print_ext_header(char *buf, size_t size,
+				     struct printk_info *info)
+{
+	return 0;
+}
+static ssize_t msg_print_ext_body(char *buf, size_t size,
+				  char *text, size_t text_len,
+				  struct dev_printk_info *dev_info) { return 0; }
+static void console_lock_spinning_enable(void) { }
+static int console_lock_spinning_disable_and_check(int cookie) { return 0; }
+static bool suppress_message_printing(int level) { return false; }
 static bool pr_flush(int timeout_ms, bool reset_on_progress) { return true; }
 static bool __pr_flush(struct console *con, int timeout_ms, bool reset_on_progress) { return true; }
 
@@ -2426,19 +2438,11 @@ static void set_user_specified(struct console_cmdline *c, bool user_specified)
 	console_set_on_cmdline = 1;
 }
 
-static int __add_preferred_console(const char *name, const short idx, char *options,
+static int __add_preferred_console(char *name, int idx, char *options,
 				   char *brl_options, bool user_specified)
 {
 	struct console_cmdline *c;
 	int i;
-
-	/*
-	 * We use a signed short index for struct console for device drivers to
-	 * indicate a not yet assigned index or port. However, a negative index
-	 * value is not valid for preferred console.
-	 */
-	if (idx < 0)
-		return -EINVAL;
 
 	/*
 	 *	See if this tty is not yet registered, and
@@ -2500,36 +2504,25 @@ static int __init console_setup(char *str)
 	if (_braille_console_setup(&str, &brl_options))
 		return 1;
 
-	/* Save the console for driver subsystem use */
-	if (console_opt_save(str, brl_options))
-		return 1;
-
-	/* Flag register_console() to not call try_enable_default_console() */
-	console_set_on_cmdline = 1;
-
-	/* Don't attempt to parse a DEVNAME:0.0 style console */
-	if (strchr(str, ':'))
-		return 1;
-
 	/*
 	 * Decode str into name, index, options.
 	 */
-	if (isdigit(str[0]))
-		scnprintf(buf, sizeof(buf), "ttyS%s", str);
-	else
-		strscpy(buf, str);
-
+	if (str[0] >= '0' && str[0] <= '9') {
+		strcpy(buf, "ttyS");
+		strncpy(buf + 4, str, sizeof(buf) - 5);
+	} else {
+		strncpy(buf, str, sizeof(buf) - 1);
+	}
+	buf[sizeof(buf) - 1] = 0;
 	options = strchr(str, ',');
 	if (options)
 		*(options++) = 0;
-
 #ifdef __sparc__
 	if (!strcmp(str, "ttya"))
-		strscpy(buf, "ttyS0");
+		strcpy(buf, "ttyS0");
 	if (!strcmp(str, "ttyb"))
-		strscpy(buf, "ttyS1");
+		strcpy(buf, "ttyS1");
 #endif
-
 	for (s = buf; *s; s++)
 		if (isdigit(*s) || *s == ',')
 			break;
@@ -2540,13 +2533,6 @@ static int __init console_setup(char *str)
 	return 1;
 }
 __setup("console=", console_setup);
-
-/* Only called from add_preferred_console_match() */
-int console_opt_add_preferred_console(const char *name, const short idx,
-				      char *options, char *brl_options)
-{
-	return __add_preferred_console(name, idx, options, brl_options, true);
-}
 
 /**
  * add_preferred_console - add a device to the list of preferred consoles.
@@ -2561,7 +2547,7 @@ int console_opt_add_preferred_console(const char *name, const short idx,
  * commonly to provide a default console (ie from PROM variables) when
  * the user has not supplied one.
  */
-int add_preferred_console(const char *name, const short idx, char *options)
+int add_preferred_console(char *name, int idx, char *options)
 {
 	return __add_preferred_console(name, idx, options, NULL, false);
 }
@@ -2661,6 +2647,26 @@ static int console_cpu_notify(unsigned int cpu)
 	return 0;
 }
 
+/*
+ * Return true if a panic is in progress on a remote CPU.
+ *
+ * On true, the local CPU should immediately release any printing resources
+ * that may be needed by the panic CPU.
+ */
+bool other_cpu_in_panic(void)
+{
+	if (!panic_in_progress())
+		return false;
+
+	/*
+	 * We can use raw_smp_processor_id() here because it is impossible for
+	 * the task to be migrated to the panic_cpu, or away from it. If
+	 * panic_cpu has already been set, and we're not currently executing on
+	 * that CPU, then we never will be.
+	 */
+	return atomic_read(&panic_cpu) != raw_smp_processor_id();
+}
+
 /**
  * console_lock - block the console subsystem from printing
  *
@@ -2746,8 +2752,6 @@ static void __console_unlock(void)
 	up_console_sem();
 }
 
-#ifdef CONFIG_PRINTK
-
 /*
  * Prepend the message in @pmsg->pbufs->outbuf with a "dropped message". This
  * is achieved by shifting the existing message over and inserting the dropped
@@ -2762,7 +2766,8 @@ static void __console_unlock(void)
  *
  * If @pmsg->pbufs->outbuf is modified, @pmsg->outbuf_len is updated.
  */
-void console_prepend_dropped(struct printk_message *pmsg, unsigned long dropped)
+#ifdef CONFIG_PRINTK
+static void console_prepend_dropped(struct printk_message *pmsg, unsigned long dropped)
 {
 	struct printk_buffers *pbufs = pmsg->pbufs;
 	const size_t scratchbuf_sz = sizeof(pbufs->scratchbuf);
@@ -2793,6 +2798,9 @@ void console_prepend_dropped(struct printk_message *pmsg, unsigned long dropped)
 	memcpy(outbuf, scratchbuf, len);
 	pmsg->outbuf_len += len;
 }
+#else
+#define console_prepend_dropped(pmsg, dropped)
+#endif /* CONFIG_PRINTK */
 
 /*
  * Read and format the specified record (or a later record if the specified
@@ -2813,9 +2821,11 @@ void console_prepend_dropped(struct printk_message *pmsg, unsigned long dropped)
  * of @pmsg are valid. (See the documentation of struct printk_message
  * for information about the @pmsg fields.)
  */
-bool printk_get_next_message(struct printk_message *pmsg, u64 seq,
-			     bool is_extended, bool may_suppress)
+static bool printk_get_next_message(struct printk_message *pmsg, u64 seq,
+				    bool is_extended, bool may_suppress)
 {
+	static int panic_console_dropped;
+
 	struct printk_buffers *pbufs = pmsg->pbufs;
 	const size_t scratchbuf_sz = sizeof(pbufs->scratchbuf);
 	const size_t outbuf_sz = sizeof(pbufs->outbuf);
@@ -2843,6 +2853,17 @@ bool printk_get_next_message(struct printk_message *pmsg, u64 seq,
 	pmsg->seq = r.info->seq;
 	pmsg->dropped = r.info->seq - seq;
 
+	/*
+	 * Check for dropped messages in panic here so that printk
+	 * suppression can occur as early as possible if necessary.
+	 */
+	if (pmsg->dropped &&
+	    panic_in_progress() &&
+	    panic_console_dropped++ > 10) {
+		suppress_panic_printk = 1;
+		pr_warn_once("Too many dropped messages. Suppress messages on non-panic CPUs to prevent livelock.\n");
+	}
+
 	/* Skip record that has level above the console loglevel. */
 	if (may_suppress && suppress_message_printing(r.info->level))
 		goto out;
@@ -2858,13 +2879,6 @@ out:
 	pmsg->outbuf_len = len;
 	return true;
 }
-
-/*
- * Used as the printk buffers for non-panic, serialized console printing.
- * This is for legacy (!CON_NBCON) as well as all boot (CON_BOOT) consoles.
- * Its usage requires the console_lock held.
- */
-struct printk_buffers printk_shared_pbufs;
 
 /*
  * Print one record for the given console. The record printed is whatever
@@ -2883,10 +2897,12 @@ struct printk_buffers printk_shared_pbufs;
  */
 static bool console_emit_next_record(struct console *con, bool *handover, int cookie)
 {
+	static struct printk_buffers pbufs;
+
 	bool is_extended = console_srcu_read_flags(con) & CON_EXTENDED;
-	char *outbuf = &printk_shared_pbufs.outbuf[0];
+	char *outbuf = &pbufs.outbuf[0];
 	struct printk_message pmsg = {
-		.pbufs = &printk_shared_pbufs,
+		.pbufs = &pbufs,
 	};
 	unsigned long flags;
 
@@ -2936,16 +2952,6 @@ static bool console_emit_next_record(struct console *con, bool *handover, int co
 skip:
 	return true;
 }
-
-#else
-
-static bool console_emit_next_record(struct console *con, bool *handover, int cookie)
-{
-	*handover = false;
-	return false;
-}
-
-#endif /* CONFIG_PRINTK */
 
 /*
  * Print out all remaining records to all consoles.
@@ -3161,40 +3167,6 @@ void console_unblank(void)
 		pr_flush(1000, true);
 }
 
-/*
- * Rewind all consoles to the oldest available record.
- *
- * IMPORTANT: The function is safe only when called under
- *            console_lock(). It is not enforced because
- *            it is used as a best effort in panic().
- */
-static void __console_rewind_all(void)
-{
-	struct console *c;
-	short flags;
-	int cookie;
-	u64 seq;
-
-	seq = prb_first_valid_seq(prb);
-
-	cookie = console_srcu_read_lock();
-	for_each_console_srcu(c) {
-		flags = console_srcu_read_flags(c);
-
-		if (flags & CON_NBCON) {
-			nbcon_seq_force(c, seq);
-		} else {
-			/*
-			 * This assignment is safe only when called under
-			 * console_lock(). On panic, legacy consoles are
-			 * only best effort.
-			 */
-			c->seq = seq;
-		}
-	}
-	console_srcu_read_unlock(cookie);
-}
-
 /**
  * console_flush_on_panic - flush console content on panic
  * @mode: flush all messages in buffer or just the pending ones
@@ -3223,8 +3195,23 @@ void console_flush_on_panic(enum con_flush_mode mode)
 	 */
 	console_may_schedule = 0;
 
-	if (mode == CONSOLE_REPLAY_ALL)
-		__console_rewind_all();
+	if (mode == CONSOLE_REPLAY_ALL) {
+		struct console *c;
+		int cookie;
+		u64 seq;
+
+		seq = prb_first_valid_seq(prb);
+
+		cookie = console_srcu_read_lock();
+		for_each_console_srcu(c) {
+			/*
+			 * This is an unsynchronized assignment, but the
+			 * kernel is in "hope and pray" mode anyway.
+			 */
+			c->seq = seq;
+		}
+		console_srcu_read_unlock(cookie);
+	}
 
 	console_flush_all(false, &next_seq, &handover);
 }
@@ -3388,6 +3375,11 @@ static void try_enable_default_console(struct console *newcon)
 		newcon->flags |= CON_CONSDEV;
 }
 
+#define con_printk(lvl, con, fmt, ...)			\
+	printk(lvl pr_fmt("%sconsole [%s%d] " fmt),	\
+	       (con->flags & CON_BOOT) ? "boot" : "",	\
+	       con->name, con->index, ##__VA_ARGS__)
+
 static void console_init_seq(struct console *newcon, bool bootcon_registered)
 {
 	struct console *con;
@@ -3501,15 +3493,6 @@ void register_console(struct console *newcon)
 		goto unlock;
 	}
 
-	if (newcon->flags & CON_NBCON) {
-		/*
-		 * Ensure the nbcon console buffers can be allocated
-		 * before modifying any global data.
-		 */
-		if (!nbcon_alloc(newcon))
-			goto unlock;
-	}
-
 	/*
 	 * See if we want to enable this console driver by default.
 	 *
@@ -3522,7 +3505,7 @@ void register_console(struct console *newcon)
 	 * Note that a console with tty binding will have CON_CONSDEV
 	 * flag set and will be first in the list.
 	 */
-	if (preferred_console < 0 && !console_set_on_cmdline) {
+	if (preferred_console < 0) {
 		if (hlist_empty(&console_list) || !console_first()->device ||
 		    console_first()->flags & CON_BOOT) {
 			try_enable_default_console(newcon);
@@ -3537,11 +3520,8 @@ void register_console(struct console *newcon)
 		err = try_enable_preferred_console(newcon, false);
 
 	/* printk() messages are not printed to the Braille console. */
-	if (err || newcon->flags & CON_BRL) {
-		if (newcon->flags & CON_NBCON)
-			nbcon_free(newcon);
+	if (err || newcon->flags & CON_BRL)
 		goto unlock;
-	}
 
 	/*
 	 * If we have a bootconsole, and are switching to a real console,
@@ -3556,9 +3536,6 @@ void register_console(struct console *newcon)
 
 	newcon->dropped = 0;
 	console_init_seq(newcon, bootcon_registered);
-
-	if (newcon->flags & CON_NBCON)
-		nbcon_init(newcon);
 
 	/*
 	 * Put this console in the list - keep the
@@ -3650,9 +3627,6 @@ static int unregister_console_locked(struct console *console)
 	 * exit/cleanup routines can be performed safely.
 	 */
 	synchronize_srcu(&console_srcu);
-
-	if (console->flags & CON_NBCON)
-		nbcon_free(console);
 
 	console_sysfs_notify();
 
@@ -3803,28 +3777,23 @@ late_initcall(printk_late_init);
 /* If @con is specified, only wait for that console. Otherwise wait for all. */
 static bool __pr_flush(struct console *con, int timeout_ms, bool reset_on_progress)
 {
-	unsigned long timeout_jiffies = msecs_to_jiffies(timeout_ms);
-	unsigned long remaining_jiffies = timeout_jiffies;
+	int remaining = timeout_ms;
 	struct console *c;
 	u64 last_diff = 0;
 	u64 printk_seq;
-	short flags;
 	int cookie;
 	u64 diff;
 	u64 seq;
 
 	might_sleep();
 
-	seq = prb_next_reserve_seq(prb);
+	seq = prb_next_seq(prb);
 
 	/* Flush the consoles so that records up to @seq are printed. */
 	console_lock();
 	console_unlock();
 
 	for (;;) {
-		unsigned long begin_jiffies;
-		unsigned long slept_jiffies;
-
 		diff = 0;
 
 		/*
@@ -3839,9 +3808,6 @@ static bool __pr_flush(struct console *con, int timeout_ms, bool reset_on_progre
 		for_each_console_srcu(c) {
 			if (con && con != c)
 				continue;
-
-			flags = console_srcu_read_flags(c);
-
 			/*
 			 * If consoles are not usable, it cannot be expected
 			 * that they make forward progress, so only increment
@@ -3849,33 +3815,31 @@ static bool __pr_flush(struct console *con, int timeout_ms, bool reset_on_progre
 			 */
 			if (!console_is_usable(c))
 				continue;
-
-			if (flags & CON_NBCON) {
-				printk_seq = nbcon_seq_read(c);
-			} else {
-				printk_seq = c->seq;
-			}
-
+			printk_seq = c->seq;
 			if (printk_seq < seq)
 				diff += seq - printk_seq;
 		}
 		console_srcu_read_unlock(cookie);
 
 		if (diff != last_diff && reset_on_progress)
-			remaining_jiffies = timeout_jiffies;
+			remaining = timeout_ms;
 
 		console_unlock();
 
 		/* Note: @diff is 0 if there are no usable consoles. */
-		if (diff == 0 || remaining_jiffies == 0)
+		if (diff == 0 || remaining == 0)
 			break;
 
-		/* msleep(1) might sleep much longer. Check time by jiffies. */
-		begin_jiffies = jiffies;
-		msleep(1);
-		slept_jiffies = jiffies - begin_jiffies;
-
-		remaining_jiffies -= min(slept_jiffies, remaining_jiffies);
+		if (remaining < 0) {
+			/* no timeout limit */
+			msleep(100);
+		} else if (remaining < 100) {
+			msleep(remaining);
+			remaining = 0;
+		} else {
+			msleep(100);
+			remaining -= 100;
+		}
 
 		last_diff = diff;
 	}
@@ -4279,6 +4243,7 @@ bool kmsg_dump_get_buffer(struct kmsg_dump_iter *iter, bool syslog,
 
 	prb_rec_init_rd(&r, &info, buf, size);
 
+	len = 0;
 	prb_for_each_record(seq, prb, seq, &r) {
 		if (r.info->seq >= iter->next_seq)
 			break;
@@ -4313,23 +4278,6 @@ void kmsg_dump_rewind(struct kmsg_dump_iter *iter)
 }
 EXPORT_SYMBOL_GPL(kmsg_dump_rewind);
 
-/**
- * console_replay_all - replay kernel log on consoles
- *
- * Try to obtain lock on console subsystem and replay all
- * available records in printk buffer on the consoles.
- * Does nothing if lock is not obtained.
- *
- * Context: Any context.
- */
-void console_replay_all(void)
-{
-	if (console_trylock()) {
-		__console_rewind_all();
-		/* Consoles are flushed as part of console_unlock(). */
-		console_unlock();
-	}
-}
 #endif
 
 #ifdef CONFIG_SMP

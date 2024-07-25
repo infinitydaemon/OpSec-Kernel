@@ -145,7 +145,7 @@
 		compatible = "ricoh,rc5t619";
 		reg = <0x32>;
 		interrupt-parent = <&gpio4>;
-		interrupts = <19 IRQ_TYPE_LEVEL_LOW>;
+		interrupts = <19 IRQ_TYPE_EDGE_FALLING>;
 		system-power-controller;
 
 		regulators {

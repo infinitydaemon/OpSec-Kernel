@@ -439,8 +439,13 @@ static int cpuidle_coupled_clear_pokes(int cpu)
 
 static bool cpuidle_coupled_any_pokes_pending(struct cpuidle_coupled *coupled)
 {
-	return cpumask_first_and_and(cpu_online_mask, &coupled->coupled_cpus,
-				     &cpuidle_coupled_poke_pending) < nr_cpu_ids;
+	cpumask_t cpus;
+	int ret;
+
+	cpumask_and(&cpus, cpu_online_mask, &coupled->coupled_cpus);
+	ret = cpumask_and(&cpus, &cpuidle_coupled_poke_pending, &cpus);
+
+	return ret;
 }
 
 /**
@@ -621,7 +626,9 @@ out:
 
 static void cpuidle_coupled_update_online_cpus(struct cpuidle_coupled *coupled)
 {
-	coupled->online_count = cpumask_weight_and(cpu_online_mask, &coupled->coupled_cpus);
+	cpumask_t cpus;
+	cpumask_and(&cpus, cpu_online_mask, &coupled->coupled_cpus);
+	coupled->online_count = cpumask_weight(&cpus);
 }
 
 /**

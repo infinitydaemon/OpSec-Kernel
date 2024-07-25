@@ -289,6 +289,8 @@ int jbd2_journal_recover(journal_t *journal)
 	journal_superblock_t *	sb;
 
 	struct recovery_info	info;
+	errseq_t		wb_err;
+	struct address_space	*mapping;
 
 	memset(&info, 0, sizeof(info));
 	sb = journal->j_superblock;
@@ -306,6 +308,9 @@ int jbd2_journal_recover(journal_t *journal)
 		return 0;
 	}
 
+	wb_err = 0;
+	mapping = journal->j_fs_dev->bd_inode->i_mapping;
+	errseq_check_and_advance(&mapping->wb_err, &wb_err);
 	err = do_one_pass(journal, &info, PASS_SCAN);
 	if (!err)
 		err = do_one_pass(journal, &info, PASS_REVOKE);
@@ -329,7 +334,7 @@ int jbd2_journal_recover(journal_t *journal)
 	err2 = sync_blockdev(journal->j_fs_dev);
 	if (!err)
 		err = err2;
-	err2 = jbd2_check_fs_dev_write_error(journal);
+	err2 = errseq_check_and_advance(&mapping->wb_err, &wb_err);
 	if (!err)
 		err = err2;
 	/* Make sure all replayed data is on permanent storage */
@@ -635,7 +640,7 @@ static int do_one_pass(journal_t *journal,
 					success = err;
 					printk(KERN_ERR
 						"JBD2: IO error %d recovering "
-						"block %lu in log\n",
+						"block %ld in log\n",
 						err, io_block);
 				} else {
 					unsigned long long blocknr;
@@ -664,8 +669,7 @@ static int do_one_pass(journal_t *journal,
 						printk(KERN_ERR "JBD2: Invalid "
 						       "checksum recovering "
 						       "data block %llu in "
-						       "journal block %lu\n",
-						       blocknr, io_block);
+						       "log\n", blocknr);
 						block_error = 1;
 						goto skip_write;
 					}

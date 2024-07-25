@@ -138,7 +138,7 @@ Note this example does not include the sigaltstack preparation.
 Dynamic features in signal frames
 ---------------------------------
 
-Dynamically enabled features are not written to the signal frame upon signal
+Dynamcally enabled features are not written to the signal frame upon signal
 entry if the feature is in its initial configuration.  This differs from
 non-dynamic features which are always written regardless of their
 configuration.  Signal handlers can examine the XSAVE buffer's XSTATE_BV

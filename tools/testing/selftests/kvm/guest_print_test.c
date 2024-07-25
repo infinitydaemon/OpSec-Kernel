@@ -13,7 +13,6 @@
 #include "test_util.h"
 #include "kvm_util.h"
 #include "processor.h"
-#include "ucall_common.h"
 
 struct guest_vals {
 	uint64_t a;
@@ -99,7 +98,7 @@ static void ucall_abort(const char *assert_msg, const char *expected_assert_msg)
 	int offset = len_str - len_substr;
 
 	TEST_ASSERT(len_substr <= len_str,
-		    "Expected '%s' to be a substring of '%s'",
+		    "Expected '%s' to be a substring of '%s'\n",
 		    assert_msg, expected_assert_msg);
 
 	TEST_ASSERT(strcmp(&assert_msg[offset], expected_assert_msg) == 0,
@@ -117,7 +116,7 @@ static void run_test(struct kvm_vcpu *vcpu, const char *expected_printf,
 		vcpu_run(vcpu);
 
 		TEST_ASSERT(run->exit_reason == UCALL_EXIT_REASON,
-			    "Unexpected exit reason: %u (%s),",
+			    "Unexpected exit reason: %u (%s),\n",
 			    run->exit_reason, exit_reason_str(run->exit_reason));
 
 		switch (get_ucall(vcpu, &uc)) {
@@ -162,11 +161,11 @@ static void test_limits(void)
 	vcpu_run(vcpu);
 
 	TEST_ASSERT(run->exit_reason == UCALL_EXIT_REASON,
-		    "Unexpected exit reason: %u (%s),",
+		    "Unexpected exit reason: %u (%s),\n",
 		    run->exit_reason, exit_reason_str(run->exit_reason));
 
 	TEST_ASSERT(get_ucall(vcpu, &uc) == UCALL_ABORT,
-		    "Unexpected ucall command: %lu,  Expected: %u (UCALL_ABORT)",
+		    "Unexpected ucall command: %lu,  Expected: %u (UCALL_ABORT)\n",
 		    uc.cmd, UCALL_ABORT);
 
 	kvm_vm_free(vm);

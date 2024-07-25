@@ -20,6 +20,7 @@
 #include <linux/i2c.h>
 #include <linux/mutex.h>
 #include <linux/err.h>
+#include <linux/of.h>
 #include <linux/delay.h>
 #include <linux/util_macros.h>
 

@@ -129,6 +129,8 @@
 
 	bridge {
 		compatible = "ti,ths8134b", "ti,ths8134";
+		#address-cells = <1>;
+		#size-cells = <0>;
 
 		ports {
 			#address-cells = <1>;
@@ -152,7 +154,6 @@
 
 	vga {
 		compatible = "vga-connector";
-		label = "J30";
 
 		port {
 			vga_con_in: endpoint {

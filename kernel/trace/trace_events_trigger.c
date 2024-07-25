@@ -597,37 +597,6 @@ out:
 	return ret;
 }
 
-/*
- * True if the trigger was found and unregistered, else false.
- */
-static bool try_unregister_trigger(char *glob,
-				   struct event_trigger_data *test,
-				   struct trace_event_file *file)
-{
-	struct event_trigger_data *data = NULL, *iter;
-
-	lockdep_assert_held(&event_mutex);
-
-	list_for_each_entry(iter, &file->triggers, list) {
-		if (iter->cmd_ops->trigger_type == test->cmd_ops->trigger_type) {
-			data = iter;
-			list_del_rcu(&data->list);
-			trace_event_trigger_enable_disable(file, 0);
-			update_cond_flag(file);
-			break;
-		}
-	}
-
-	if (data) {
-		if (data->ops->free)
-			data->ops->free(data);
-
-		return true;
-	}
-
-	return false;
-}
-
 /**
  * unregister_trigger - Generic event_command @unreg implementation
  * @glob: The raw string used to register the trigger
@@ -643,7 +612,22 @@ static void unregister_trigger(char *glob,
 			       struct event_trigger_data *test,
 			       struct trace_event_file *file)
 {
-	try_unregister_trigger(glob, test, file);
+	struct event_trigger_data *data = NULL, *iter;
+
+	lockdep_assert_held(&event_mutex);
+
+	list_for_each_entry(iter, &file->triggers, list) {
+		if (iter->cmd_ops->trigger_type == test->cmd_ops->trigger_type) {
+			data = iter;
+			list_del_rcu(&data->list);
+			trace_event_trigger_enable_disable(file, 0);
+			update_cond_flag(file);
+			break;
+		}
+	}
+
+	if (data && data->ops->free)
+		data->ops->free(data);
 }
 
 /*
@@ -1486,23 +1470,12 @@ register_snapshot_trigger(char *glob,
 			  struct event_trigger_data *data,
 			  struct trace_event_file *file)
 {
-	int ret = tracing_arm_snapshot(file->tr);
+	int ret = tracing_alloc_snapshot_instance(file->tr);
 
 	if (ret < 0)
 		return ret;
 
-	ret = register_trigger(glob, data, file);
-	if (ret < 0)
-		tracing_disarm_snapshot(file->tr);
-	return ret;
-}
-
-static void unregister_snapshot_trigger(char *glob,
-					struct event_trigger_data *data,
-					struct trace_event_file *file)
-{
-	if (try_unregister_trigger(glob, data, file))
-		tracing_disarm_snapshot(file->tr);
+	return register_trigger(glob, data, file);
 }
 
 static int
@@ -1537,7 +1510,7 @@ static struct event_command trigger_snapshot_cmd = {
 	.trigger_type		= ETT_SNAPSHOT,
 	.parse			= event_trigger_parse,
 	.reg			= register_snapshot_trigger,
-	.unreg			= unregister_snapshot_trigger,
+	.unreg			= unregister_trigger,
 	.get_trigger_ops	= snapshot_get_trigger_ops,
 	.set_filter		= set_trigger_filter,
 };

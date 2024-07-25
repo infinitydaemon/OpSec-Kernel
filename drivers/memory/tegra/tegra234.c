@@ -92,8 +92,6 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 	}, {
 		.id = TEGRA234_MEMORY_CLIENT_DLA0RDB,
 		.name = "dla0rdb",
-		.bpmp_id = TEGRA_ICC_BPMP_DLA_0,
-		.type = TEGRA_ICC_NISO,
 		.sid = TEGRA234_SID_NVDLA0,
 		.regs = {
 			.sid = {
@@ -104,8 +102,6 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 	}, {
 		.id = TEGRA234_MEMORY_CLIENT_DLA0RDB1,
 		.name = "dla0rdb1",
-		.bpmp_id = TEGRA_ICC_BPMP_DLA_0,
-		.type = TEGRA_ICC_NISO,
 		.sid = TEGRA234_SID_NVDLA0,
 		.regs = {
 			.sid = {
@@ -116,8 +112,6 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 	}, {
 		.id = TEGRA234_MEMORY_CLIENT_DLA0WRB,
 		.name = "dla0wrb",
-		.bpmp_id = TEGRA_ICC_BPMP_DLA_0,
-		.type = TEGRA_ICC_NISO,
 		.sid = TEGRA234_SID_NVDLA0,
 		.regs = {
 			.sid = {
@@ -128,8 +122,6 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 	}, {
 		.id = TEGRA234_MEMORY_CLIENT_DLA1RDB,
 		.name = "dla1rdb",
-		.bpmp_id = TEGRA_ICC_BPMP_DLA_1,
-		.type = TEGRA_ICC_NISO,
 		.sid = TEGRA234_SID_NVDLA1,
 		.regs = {
 			.sid = {
@@ -416,8 +408,6 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 	}, {
 		.id = TEGRA234_MEMORY_CLIENT_DLA1RDB1,
 		.name = "dla1rdb1",
-		.bpmp_id = TEGRA_ICC_BPMP_DLA_1,
-		.type = TEGRA_ICC_NISO,
 		.sid = TEGRA234_SID_NVDLA1,
 		.regs = {
 			.sid = {
@@ -428,8 +418,6 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 	}, {
 		.id = TEGRA234_MEMORY_CLIENT_DLA1WRB,
 		.name = "dla1wrb",
-		.bpmp_id = TEGRA_ICC_BPMP_DLA_1,
-		.type = TEGRA_ICC_NISO,
 		.sid = TEGRA234_SID_NVDLA1,
 		.regs = {
 			.sid = {
@@ -459,18 +447,6 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 			.sid = {
 				.override = 0x388,
 				.security = 0x38c,
-			},
-		},
-	}, {
-		.id = TEGRA234_MEMORY_CLIENT_VIW,
-		.name = "viw",
-		.bpmp_id = TEGRA_ICC_BPMP_VI,
-		.type = TEGRA_ICC_ISO_VI,
-		.sid = TEGRA234_SID_ISO_VI,
-		.regs = {
-			.sid = {
-				.override = 0x390,
-				.security = 0x394,
 			},
 		},
 	}, {
@@ -551,7 +527,7 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 		.bpmp_id = TEGRA_ICC_BPMP_NVJPG_0,
 		.type = TEGRA_ICC_NISO,
 		.sid = TEGRA234_SID_NVJPG,
-		.regs = {
+			.regs = {
 			.sid = {
 				.override = 0x3f8,
 				.security = 0x3fc,
@@ -646,34 +622,8 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 			},
 		},
 	}, {
-		.id = TEGRA234_MEMORY_CLIENT_VIFALR,
-		.name = "vifalr",
-		.bpmp_id = TEGRA_ICC_BPMP_VIFAL,
-		.type = TEGRA_ICC_ISO_VIFAL,
-		.sid = TEGRA234_SID_ISO_VIFALC,
-		.regs = {
-			.sid = {
-				.override = 0x5e0,
-				.security = 0x5e4,
-			},
-		},
-	}, {
-		.id = TEGRA234_MEMORY_CLIENT_VIFALW,
-		.name = "vifalw",
-		.bpmp_id = TEGRA_ICC_BPMP_VIFAL,
-		.type = TEGRA_ICC_ISO_VIFAL,
-		.sid = TEGRA234_SID_ISO_VIFALC,
-		.regs = {
-			.sid = {
-				.override = 0x5e8,
-				.security = 0x5ec,
-			},
-		},
-	}, {
 		.id = TEGRA234_MEMORY_CLIENT_DLA0RDA,
 		.name = "dla0rda",
-		.bpmp_id = TEGRA_ICC_BPMP_DLA_0,
-		.type = TEGRA_ICC_NISO,
 		.sid = TEGRA234_SID_NVDLA0,
 		.regs = {
 			.sid = {
@@ -684,8 +634,6 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 	}, {
 		.id = TEGRA234_MEMORY_CLIENT_DLA0FALRDB,
 		.name = "dla0falrdb",
-		.bpmp_id = TEGRA_ICC_BPMP_DLA_0,
-		.type = TEGRA_ICC_NISO,
 		.sid = TEGRA234_SID_NVDLA0,
 		.regs = {
 			.sid = {
@@ -696,8 +644,6 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 	}, {
 		.id = TEGRA234_MEMORY_CLIENT_DLA0WRA,
 		.name = "dla0wra",
-		.bpmp_id = TEGRA_ICC_BPMP_DLA_0,
-		.type = TEGRA_ICC_NISO,
 		.sid = TEGRA234_SID_NVDLA0,
 		.regs = {
 			.sid = {
@@ -708,8 +654,6 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 	}, {
 		.id = TEGRA234_MEMORY_CLIENT_DLA0FALWRB,
 		.name = "dla0falwrb",
-		.bpmp_id = TEGRA_ICC_BPMP_DLA_0,
-		.type = TEGRA_ICC_NISO,
 		.sid = TEGRA234_SID_NVDLA0,
 		.regs = {
 			.sid = {
@@ -720,8 +664,6 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 	}, {
 		.id = TEGRA234_MEMORY_CLIENT_DLA1RDA,
 		.name = "dla1rda",
-		.bpmp_id = TEGRA_ICC_BPMP_DLA_1,
-		.type = TEGRA_ICC_NISO,
 		.sid = TEGRA234_SID_NVDLA1,
 		.regs = {
 			.sid = {
@@ -732,8 +674,6 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 	}, {
 		.id = TEGRA234_MEMORY_CLIENT_DLA1FALRDB,
 		.name = "dla1falrdb",
-		.bpmp_id = TEGRA_ICC_BPMP_DLA_1,
-		.type = TEGRA_ICC_NISO,
 		.sid = TEGRA234_SID_NVDLA1,
 		.regs = {
 			.sid = {
@@ -744,8 +684,6 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 	}, {
 		.id = TEGRA234_MEMORY_CLIENT_DLA1WRA,
 		.name = "dla1wra",
-		.bpmp_id = TEGRA_ICC_BPMP_DLA_1,
-		.type = TEGRA_ICC_NISO,
 		.sid = TEGRA234_SID_NVDLA1,
 		.regs = {
 			.sid = {
@@ -756,37 +694,11 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 	}, {
 		.id = TEGRA234_MEMORY_CLIENT_DLA1FALWRB,
 		.name = "dla1falwrb",
-		.bpmp_id = TEGRA_ICC_BPMP_DLA_1,
-		.type = TEGRA_ICC_NISO,
 		.sid = TEGRA234_SID_NVDLA1,
 		.regs = {
 			.sid = {
 				.override = 0x628,
 				.security = 0x62c,
-			},
-		},
-	}, {
-		.id = TEGRA234_MEMORY_CLIENT_RCER,
-		.name = "rcer",
-		.bpmp_id = TEGRA_ICC_BPMP_RCE,
-		.type = TEGRA_ICC_NISO,
-		.sid = TEGRA234_SID_RCE,
-		.regs = {
-			.sid = {
-				.override = 0x690,
-				.security = 0x694,
-			},
-		},
-	}, {
-		.id = TEGRA234_MEMORY_CLIENT_RCEW,
-		.name = "rcew",
-		.bpmp_id = TEGRA_ICC_BPMP_RCE,
-		.type = TEGRA_ICC_NISO,
-		.sid = TEGRA234_SID_RCE,
-		.regs = {
-			.sid = {
-				.override = 0x698,
-				.security = 0x69c,
 			},
 		},
 	}, {
@@ -936,8 +848,6 @@ static const struct tegra_mc_client tegra234_mc_clients[] = {
 	}, {
 		.id = TEGRA234_MEMORY_CLIENT_DLA0RDA1,
 		.name = "dla0rda1",
-		.bpmp_id = TEGRA_ICC_BPMP_DLA_0,
-		.type = TEGRA_ICC_NISO,
 		.sid = TEGRA234_SID_NVDLA0,
 		.regs = {
 			.sid = {

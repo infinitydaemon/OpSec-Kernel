@@ -232,6 +232,7 @@ static inline void free_cell(struct snd_seq_pool *pool,
 
 void snd_seq_cell_free(struct snd_seq_event_cell * cell)
 {
+	unsigned long flags;
 	struct snd_seq_pool *pool;
 
 	if (snd_BUG_ON(!cell))
@@ -240,7 +241,7 @@ void snd_seq_cell_free(struct snd_seq_event_cell * cell)
 	if (snd_BUG_ON(!pool))
 		return;
 
-	guard(spinlock_irqsave)(&pool->lock);
+	spin_lock_irqsave(&pool->lock, flags);
 	free_cell(pool, cell);
 	if (snd_seq_ev_is_variable(&cell->event)) {
 		if (cell->event.data.ext.len & SNDRV_SEQ_EXT_CHAINED) {
@@ -258,6 +259,7 @@ void snd_seq_cell_free(struct snd_seq_event_cell * cell)
 		if (snd_seq_output_ok(pool))
 			wake_up(&pool->output_sleep);
 	}
+	spin_unlock_irqrestore(&pool->lock, flags);
 }
 
 
@@ -440,15 +442,15 @@ int snd_seq_pool_init(struct snd_seq_pool *pool)
 	if (snd_BUG_ON(!pool))
 		return -EINVAL;
 
-	cellptr = kvmalloc_array(pool->size,
-				 sizeof(struct snd_seq_event_cell),
+	cellptr = kvmalloc_array(sizeof(struct snd_seq_event_cell), pool->size,
 				 GFP_KERNEL);
 	if (!cellptr)
 		return -ENOMEM;
 
 	/* add new cells to the free cell list */
-	guard(spinlock_irq)(&pool->lock);
+	spin_lock_irq(&pool->lock);
 	if (pool->ptr) {
+		spin_unlock_irq(&pool->lock);
 		kvfree(cellptr);
 		return 0;
 	}
@@ -467,16 +469,20 @@ int snd_seq_pool_init(struct snd_seq_pool *pool)
 	/* init statistics */
 	pool->max_used = 0;
 	pool->total_elements = pool->size;
+	spin_unlock_irq(&pool->lock);
 	return 0;
 }
 
 /* refuse the further insertion to the pool */
 void snd_seq_pool_mark_closing(struct snd_seq_pool *pool)
 {
+	unsigned long flags;
+
 	if (snd_BUG_ON(!pool))
 		return;
-	guard(spinlock_irqsave)(&pool->lock);
+	spin_lock_irqsave(&pool->lock, flags);
 	pool->closing = 1;
+	spin_unlock_irqrestore(&pool->lock, flags);
 }
 
 /* remove events */
@@ -495,17 +501,18 @@ int snd_seq_pool_done(struct snd_seq_pool *pool)
 		schedule_timeout_uninterruptible(1);
 	
 	/* release all resources */
-	scoped_guard(spinlock_irq, &pool->lock) {
-		ptr = pool->ptr;
-		pool->ptr = NULL;
-		pool->free = NULL;
-		pool->total_elements = 0;
-	}
+	spin_lock_irq(&pool->lock);
+	ptr = pool->ptr;
+	pool->ptr = NULL;
+	pool->free = NULL;
+	pool->total_elements = 0;
+	spin_unlock_irq(&pool->lock);
 
 	kvfree(ptr);
 
-	guard(spinlock_irq)(&pool->lock);
+	spin_lock_irq(&pool->lock);
 	pool->closing = 0;
+	spin_unlock_irq(&pool->lock);
 
 	return 0;
 }

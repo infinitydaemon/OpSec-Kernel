@@ -15,23 +15,20 @@
  * Tracepoint for guest mode entry.
  */
 TRACE_EVENT(kvm_entry,
-	TP_PROTO(struct kvm_vcpu *vcpu, bool force_immediate_exit),
-	TP_ARGS(vcpu, force_immediate_exit),
+	TP_PROTO(struct kvm_vcpu *vcpu),
+	TP_ARGS(vcpu),
 
 	TP_STRUCT__entry(
 		__field(	unsigned int,	vcpu_id		)
 		__field(	unsigned long,	rip		)
-		__field(	bool,		immediate_exit	)
 	),
 
 	TP_fast_assign(
 		__entry->vcpu_id        = vcpu->vcpu_id;
 		__entry->rip		= kvm_rip_read(vcpu);
-		__entry->immediate_exit	= force_immediate_exit;
 	),
 
-	TP_printk("vcpu %u, rip 0x%lx%s", __entry->vcpu_id, __entry->rip,
-		  __entry->immediate_exit ? "[immediate exit]" : "")
+	TP_printk("vcpu %u, rip 0x%lx", __entry->vcpu_id, __entry->rip)
 );
 
 /*
@@ -1074,7 +1071,7 @@ TRACE_EVENT(kvm_smm_transition,
 );
 
 /*
- * Tracepoint for VT-d posted-interrupts and AMD-Vi Guest Virtual APIC.
+ * Tracepoint for VT-d posted-interrupts.
  */
 TRACE_EVENT(kvm_pi_irte_update,
 	TP_PROTO(unsigned int host_irq, unsigned int vcpu_id,
@@ -1100,7 +1097,7 @@ TRACE_EVENT(kvm_pi_irte_update,
 		__entry->set		= set;
 	),
 
-	TP_printk("PI is %s for irq %u, vcpu %u, gsi: 0x%x, "
+	TP_printk("VT-d PI is %s for irq %u, vcpu %u, gsi: 0x%x, "
 		  "gvec: 0x%x, pi_desc_addr: 0x%llx",
 		  __entry->set ? "enabled and being updated" : "disabled",
 		  __entry->host_irq,
@@ -1678,7 +1675,7 @@ TRACE_EVENT(kvm_nested_vmenter_failed,
 	),
 
 	TP_fast_assign(
-		__assign_str(msg);
+		__assign_str(msg, msg);
 		__entry->err = err;
 	),
 

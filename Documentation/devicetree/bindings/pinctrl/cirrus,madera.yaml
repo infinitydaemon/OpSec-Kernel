@@ -93,8 +93,7 @@ properties:
 
           input-schmitt-disable: true
 
-          input-debounce:
-            maxItems: 1
+          input-debounce: true
 
           output-low: true
 

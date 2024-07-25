@@ -1440,6 +1440,8 @@ static bool gc_worker_can_early_drop(const struct nf_conn *ct)
 	const struct nf_conntrack_l4proto *l4proto;
 	u8 protonum = nf_ct_protonum(ct);
 
+	if (test_bit(IPS_OFFLOAD_BIT, &ct->status) && protonum != IPPROTO_UDP)
+		return false;
 	if (!test_bit(IPS_ASSURED_BIT, &ct->status))
 		return true;
 
@@ -2022,7 +2024,7 @@ repeat:
 			goto repeat;
 
 		NF_CT_STAT_INC_ATOMIC(state->net, invalid);
-		if (ret == NF_DROP)
+		if (ret == -NF_DROP)
 			NF_CT_STAT_INC_ATOMIC(state->net, drop);
 
 		ret = -ret;
@@ -2039,6 +2041,24 @@ out:
 	return ret;
 }
 EXPORT_SYMBOL_GPL(nf_conntrack_in);
+
+/* Alter reply tuple (maybe alter helper).  This is for NAT, and is
+   implicitly racy: see __nf_conntrack_confirm */
+void nf_conntrack_alter_reply(struct nf_conn *ct,
+			      const struct nf_conntrack_tuple *newreply)
+{
+	struct nf_conn_help *help = nfct_help(ct);
+
+	/* Should be unconfirmed, so not in hash table yet */
+	WARN_ON(nf_ct_is_confirmed(ct));
+
+	nf_ct_dump_tuple(newreply);
+
+	ct->tuplehash[IP_CT_DIR_REPLY].tuple = *newreply;
+	if (ct->master || (help && !hlist_empty(&help->expectations)))
+		return;
+}
+EXPORT_SYMBOL_GPL(nf_conntrack_alter_reply);
 
 /* Refresh conntrack for this many jiffies and do accounting if do_acct is 1 */
 void __nf_ct_refresh_acct(struct nf_conn *ct,
@@ -2167,11 +2187,11 @@ static int __nf_conntrack_update(struct net *net, struct sk_buff *skb,
 
 	dataoff = get_l4proto(skb, skb_network_offset(skb), l3num, &l4num);
 	if (dataoff <= 0)
-		return NF_DROP;
+		return -1;
 
 	if (!nf_ct_get_tuple(skb, skb_network_offset(skb), dataoff, l3num,
 			     l4num, net, &tuple))
-		return NF_DROP;
+		return -1;
 
 	if (ct->status & IPS_SRC_NAT) {
 		memcpy(tuple.src.u3.all,
@@ -2191,7 +2211,7 @@ static int __nf_conntrack_update(struct net *net, struct sk_buff *skb,
 
 	h = nf_conntrack_find_get(net, nf_ct_zone(ct), &tuple);
 	if (!h)
-		return NF_ACCEPT;
+		return 0;
 
 	/* Store status bits of the conntrack that is clashing to re-do NAT
 	 * mangling according to what it has been done already to this packet.
@@ -2204,25 +2224,19 @@ static int __nf_conntrack_update(struct net *net, struct sk_buff *skb,
 
 	nat_hook = rcu_dereference(nf_nat_hook);
 	if (!nat_hook)
-		return NF_ACCEPT;
+		return 0;
 
-	if (status & IPS_SRC_NAT) {
-		unsigned int verdict = nat_hook->manip_pkt(skb, ct,
-							   NF_NAT_MANIP_SRC,
-							   IP_CT_DIR_ORIGINAL);
-		if (verdict != NF_ACCEPT)
-			return verdict;
-	}
+	if (status & IPS_SRC_NAT &&
+	    nat_hook->manip_pkt(skb, ct, NF_NAT_MANIP_SRC,
+				IP_CT_DIR_ORIGINAL) == NF_DROP)
+		return -1;
 
-	if (status & IPS_DST_NAT) {
-		unsigned int verdict = nat_hook->manip_pkt(skb, ct,
-							   NF_NAT_MANIP_DST,
-							   IP_CT_DIR_ORIGINAL);
-		if (verdict != NF_ACCEPT)
-			return verdict;
-	}
+	if (status & IPS_DST_NAT &&
+	    nat_hook->manip_pkt(skb, ct, NF_NAT_MANIP_DST,
+				IP_CT_DIR_ORIGINAL) == NF_DROP)
+		return -1;
 
-	return NF_ACCEPT;
+	return 0;
 }
 
 /* This packet is coming from userspace via nf_queue, complete the packet
@@ -2237,14 +2251,14 @@ static int nf_confirm_cthelper(struct sk_buff *skb, struct nf_conn *ct,
 
 	help = nfct_help(ct);
 	if (!help)
-		return NF_ACCEPT;
+		return 0;
 
 	helper = rcu_dereference(help->helper);
 	if (!helper)
-		return NF_ACCEPT;
+		return 0;
 
 	if (!(helper->flags & NF_CT_HELPER_F_USERSPACE))
-		return NF_ACCEPT;
+		return 0;
 
 	switch (nf_ct_l3num(ct)) {
 	case NFPROTO_IPV4:
@@ -2259,44 +2273,42 @@ static int nf_confirm_cthelper(struct sk_buff *skb, struct nf_conn *ct,
 		protoff = ipv6_skip_exthdr(skb, sizeof(struct ipv6hdr), &pnum,
 					   &frag_off);
 		if (protoff < 0 || (frag_off & htons(~0x7)) != 0)
-			return NF_ACCEPT;
+			return 0;
 		break;
 	}
 #endif
 	default:
-		return NF_ACCEPT;
+		return 0;
 	}
 
 	if (test_bit(IPS_SEQ_ADJUST_BIT, &ct->status) &&
 	    !nf_is_loopback_packet(skb)) {
 		if (!nf_ct_seq_adjust(skb, ct, ctinfo, protoff)) {
 			NF_CT_STAT_INC_ATOMIC(nf_ct_net(ct), drop);
-			return NF_DROP;
+			return -1;
 		}
 	}
 
 	/* We've seen it coming out the other side: confirm it */
-	return nf_conntrack_confirm(skb);
+	return nf_conntrack_confirm(skb) == NF_DROP ? - 1 : 0;
 }
 
 static int nf_conntrack_update(struct net *net, struct sk_buff *skb)
 {
 	enum ip_conntrack_info ctinfo;
 	struct nf_conn *ct;
+	int err;
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (!ct)
-		return NF_ACCEPT;
+		return 0;
 
 	if (!nf_ct_is_confirmed(ct)) {
-		int ret = __nf_conntrack_update(net, skb, ct, ctinfo);
-
-		if (ret != NF_ACCEPT)
-			return ret;
+		err = __nf_conntrack_update(net, skb, ct, ctinfo);
+		if (err < 0)
+			return err;
 
 		ct = nf_ct_get(skb, &ctinfo);
-		if (!ct)
-			return NF_ACCEPT;
 	}
 
 	return nf_confirm_cthelper(skb, ct, ctinfo);
@@ -2528,7 +2540,7 @@ void nf_conntrack_cleanup_net_list(struct list_head *net_exit_list)
 	 *  netfilter framework.  Roll on, two-stage module
 	 *  delete...
 	 */
-	synchronize_rcu_expedited();
+	synchronize_net();
 i_see_dead_people:
 	busy = 0;
 	list_for_each_entry(net, net_exit_list, exit_list) {

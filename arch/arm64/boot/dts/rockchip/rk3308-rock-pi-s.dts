@@ -5,6 +5,8 @@
  */
 
 /dts-v1/;
+
+#include <dt-bindings/leds/common.h>
 #include "rk3308.dtsi"
 
 / {
@@ -24,17 +26,21 @@
 	leds {
 		compatible = "gpio-leds";
 		pinctrl-names = "default";
-		pinctrl-0 = <&green_led_gio>, <&heartbeat_led_gpio>;
+		pinctrl-0 = <&green_led>, <&heartbeat_led>;
 
 		green-led {
+			color = <LED_COLOR_ID_GREEN>;
 			default-state = "on";
+			function = LED_FUNCTION_POWER;
 			gpios = <&gpio0 RK_PA6 GPIO_ACTIVE_HIGH>;
 			label = "rockpis:green:power";
 			linux,default-trigger = "default-on";
 		};
 
 		blue-led {
+			color = <LED_COLOR_ID_BLUE>;
 			default-state = "on";
+			function = LED_FUNCTION_HEARTBEAT;
 			gpios = <&gpio0 RK_PA5 GPIO_ACTIVE_HIGH>;
 			label = "rockpis:blue:user";
 			linux,default-trigger = "heartbeat";
@@ -126,10 +132,12 @@
 };
 
 &emmc {
-	bus-width = <4>;
 	cap-mmc-highspeed;
-	mmc-hs200-1_8v;
+	cap-sd-highspeed;
+	no-sdio;
 	non-removable;
+	pinctrl-names = "default";
+	pinctrl-0 = <&emmc_bus8 &emmc_clk &emmc_cmd>;
 	vmmc-supply = <&vcc_io>;
 	status = "okay";
 };
@@ -143,68 +151,6 @@
 	status = "okay";
 };
 
-&gpio0 {
-	gpio-line-names =
-		/* GPIO0_A0 - A7 */
-		"", "", "", "", "", "", "", "",
-		/* GPIO0_B0 - B7 */
-		"", "", "", "header1-pin3 [GPIO0_B3]",
-		"header1-pin5 [GPIO0_B4]", "", "",
-		"header1-pin11 [GPIO0_B7]",
-		/* GPIO0_C0 - C7 */
-		"header1-pin13 [GPIO0_C0]",
-		"header1-pin15 [GPIO0_C1]", "", "", "",
-		"", "", "",
-		/* GPIO0_D0 - D7 */
-		"", "", "", "", "", "", "", "";
-};
-
-&gpio1 {
-	gpio-line-names =
-		/* GPIO1_A0 - A7 */
-		"", "", "", "", "", "", "", "",
-		/* GPIO1_B0 - B7 */
-		"", "", "", "", "", "", "", "",
-		/* GPIO1_C0 - C7 */
-		"", "", "", "", "", "", "header1-pin21 [GPIO1_C6]",
-		"header1-pin19 [GPIO1_C7]",
-		/* GPIO1_D0 - D7 */
-		"header1-pin23 [GPIO1_D0]", "header1-pin24 [GPIO1_D1]",
-		"", "", "", "", "", "";
-};
-
-&gpio2 {
-	gpio-line-names =
-		/* GPIO2_A0 - A7 */
-		"header1-pin10 [GPIO2_A0]", "header1-pin8 [GPIO2_A1]",
-		"", "",
-		"header1-pin7 [GPIO2_A4]", "header1-pin12 [GPIO2_A5]",
-		"header2-pin46 [GPIO2_A6]", "header1-pin22 [GPIO1_A7]",
-		/* GPIO2_B0 - B7 */
-		"header2-pin45 [GPIO2_B0]", "header1-pin18 [GPIO2_B1]",
-		"header1-pin16 [GPIO2_B2]", "header2-pin44 [GPIO2_B3]",
-		"header2-pin43 [GPIO2_B4]", "header2-pin28 [GPIO2_B5]",
-		"header2-pin30 [GPIO2_B6]", "header2-pin32 [GPIO2_B7]",
-		/* GPIO2_C0 - C7 */
-		"header2-pin34 [GPIO2_C0]", "", "", "", "", "", "", "",
-		/* GPIO2_D0 - D7 */
-		"", "", "", "", "", "", "", "";
-};
-
-&gpio3 {
-	gpio-line-names =
-		/* GPIO3_A0 - A7 */
-		"", "", "", "", "", "", "", "",
-		/* GPIO3_B0 - B7 */
-		"", "", "header2-pin42 [GPIO3_B2]",
-		"header2-pin41 [GPIO3_B3]", "header2-pin40 [GPIO3_B4]",
-		"header2-pin39 [GPIO3_B5]", "", "",
-		/* GPIO3_C0 - C7 */
-		"", "", "", "", "", "", "", "",
-		/* GPIO3_D0 - D7 */
-		"", "", "", "", "", "", "", "";
-};
-
 &i2c1 {
 	status = "okay";
 };
@@ -214,11 +160,11 @@
 	pinctrl-0 = <&rtc_32k>;
 
 	leds {
-		green_led_gio: green-led-gpio {
+		green_led: green-led {
 			rockchip,pins = <0 RK_PA6 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 
-		heartbeat_led_gpio: heartbeat-led-gpio {
+		heartbeat_led: heartbeat-led {
 			rockchip,pins = <0 RK_PA5 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 	};

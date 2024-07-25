@@ -19,6 +19,7 @@ static struct ctl_table unix_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
 	},
+	{ }
 };
 
 int __net_init unix_sysctl_register(struct net *net)
@@ -51,7 +52,7 @@ err_alloc:
 
 void unix_sysctl_unregister(struct net *net)
 {
-	const struct ctl_table *table;
+	struct ctl_table *table;
 
 	table = net->unx.ctl->ctl_table_arg;
 	unregister_net_sysctl_table(net->unx.ctl);

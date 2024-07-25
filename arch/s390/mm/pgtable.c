@@ -125,23 +125,32 @@ static inline pte_t ptep_flush_lazy(struct mm_struct *mm,
 
 static inline pgste_t pgste_get_lock(pte_t *ptep)
 {
-	unsigned long value = 0;
+	unsigned long new = 0;
 #ifdef CONFIG_PGSTE
-	unsigned long *ptr = (unsigned long *)(ptep + PTRS_PER_PTE);
+	unsigned long old;
 
-	do {
-		value = __atomic64_or_barrier(PGSTE_PCL_BIT, ptr);
-	} while (value & PGSTE_PCL_BIT);
-	value |= PGSTE_PCL_BIT;
+	asm(
+		"	lg	%0,%2\n"
+		"0:	lgr	%1,%0\n"
+		"	nihh	%0,0xff7f\n"	/* clear PCL bit in old */
+		"	oihh	%1,0x0080\n"	/* set PCL bit in new */
+		"	csg	%0,%1,%2\n"
+		"	jl	0b\n"
+		: "=&d" (old), "=&d" (new), "=Q" (ptep[PTRS_PER_PTE])
+		: "Q" (ptep[PTRS_PER_PTE]) : "cc", "memory");
 #endif
-	return __pgste(value);
+	return __pgste(new);
 }
 
 static inline void pgste_set_unlock(pte_t *ptep, pgste_t pgste)
 {
 #ifdef CONFIG_PGSTE
-	barrier();
-	WRITE_ONCE(*(unsigned long *)(ptep + PTRS_PER_PTE), pgste_val(pgste) & ~PGSTE_PCL_BIT);
+	asm(
+		"	nihh	%1,0xff7f\n"	/* clear PCL bit */
+		"	stg	%1,%0\n"
+		: "=Q" (ptep[PTRS_PER_PTE])
+		: "d" (pgste_val(pgste)), "Q" (ptep[PTRS_PER_PTE])
+		: "cc", "memory");
 #endif
 }
 
@@ -721,9 +730,9 @@ static void ptep_zap_swap_entry(struct mm_struct *mm, swp_entry_t entry)
 	if (!non_swap_entry(entry))
 		dec_mm_counter(mm, MM_SWAPENTS);
 	else if (is_migration_entry(entry)) {
-		struct folio *folio = pfn_swap_entry_folio(entry);
+		struct page *page = pfn_swap_entry_to_page(entry);
 
-		dec_mm_counter(mm, mm_counter(folio));
+		dec_mm_counter(mm, mm_counter(page));
 	}
 	free_swap_and_cache(entry);
 }
@@ -827,7 +836,7 @@ again:
 		return key ? -EFAULT : 0;
 	}
 
-	if (pmd_leaf(*pmdp)) {
+	if (pmd_large(*pmdp)) {
 		paddr = pmd_val(*pmdp) & HPAGE_MASK;
 		paddr |= addr & ~HPAGE_MASK;
 		/*
@@ -938,7 +947,7 @@ again:
 		return 0;
 	}
 
-	if (pmd_leaf(*pmdp)) {
+	if (pmd_large(*pmdp)) {
 		paddr = pmd_val(*pmdp) & HPAGE_MASK;
 		paddr |= addr & ~HPAGE_MASK;
 		cc = page_reset_referenced(paddr);
@@ -1002,7 +1011,7 @@ again:
 		return 0;
 	}
 
-	if (pmd_leaf(*pmdp)) {
+	if (pmd_large(*pmdp)) {
 		paddr = pmd_val(*pmdp) & HPAGE_MASK;
 		paddr |= addr & ~HPAGE_MASK;
 		*key = page_get_storage_key(paddr);

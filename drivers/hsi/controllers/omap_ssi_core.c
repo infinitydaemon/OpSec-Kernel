@@ -355,7 +355,7 @@ static int ssi_add_controller(struct hsi_controller *ssi,
 	if (!omap_ssi)
 		return -ENOMEM;
 
-	err = ida_alloc(&platform_omap_ssi_ida, GFP_KERNEL);
+	err = ida_simple_get(&platform_omap_ssi_ida, 0, 0, GFP_KERNEL);
 	if (err < 0)
 		return err;
 	ssi->id = err;
@@ -417,7 +417,7 @@ static int ssi_add_controller(struct hsi_controller *ssi,
 	return 0;
 
 out_err:
-	ida_free(&platform_omap_ssi_ida, ssi->id);
+	ida_simple_remove(&platform_omap_ssi_ida, ssi->id);
 	return err;
 }
 
@@ -451,7 +451,7 @@ static void ssi_remove_controller(struct hsi_controller *ssi)
 	tasklet_kill(&omap_ssi->gdd_tasklet);
 	hsi_unregister_controller(ssi);
 	clk_notifier_unregister(omap_ssi->fck, &omap_ssi->fck_nb);
-	ida_free(&platform_omap_ssi_ida, id);
+	ida_simple_remove(&platform_omap_ssi_ida, id);
 }
 
 static inline int ssi_of_get_available_ports_count(const struct device_node *np)
@@ -547,7 +547,7 @@ out1:
 	return err;
 }
 
-static void ssi_remove(struct platform_device *pd)
+static int ssi_remove(struct platform_device *pd)
 {
 	struct hsi_controller *ssi = platform_get_drvdata(pd);
 
@@ -561,6 +561,8 @@ static void ssi_remove(struct platform_device *pd)
 	platform_set_drvdata(pd, NULL);
 
 	pm_runtime_disable(&pd->dev);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -616,7 +618,7 @@ MODULE_DEVICE_TABLE(of, omap_ssi_of_match);
 
 static struct platform_driver ssi_pdriver = {
 	.probe = ssi_probe,
-	.remove_new = ssi_remove,
+	.remove	= ssi_remove,
 	.driver	= {
 		.name	= "omap_ssi",
 		.pm     = DEV_PM_OPS,

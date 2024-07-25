@@ -8,7 +8,7 @@ title: Qualcomm RPMh Network-On-Chip Interconnect
 
 maintainers:
   - Georgi Djakov <georgi.djakov@linaro.org>
-  - Odelu Kukatla <quic_okukatla@quicinc.com>
+  - Odelu Kukatla <okukatla@codeaurora.org>
 
 description: |
    RPMh interconnect providers support system bandwidth requirements through
@@ -113,7 +113,6 @@ allOf:
         properties:
           compatible:
             enum:
-              - qcom,sdx65-mc-virt
               - qcom,sm8250-qup-virt
     then:
       required:

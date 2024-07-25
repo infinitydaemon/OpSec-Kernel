@@ -128,8 +128,10 @@ retry_ofld:
 			BNX2FC_TGT_DBG(tgt, "ctx_alloc_failure, "
 				"retry ofld..%d\n", i++);
 			msleep_interruptible(1000);
-			if (i > 3)
+			if (i > 3) {
+				i = 0;
 				goto ofld_err;
+			}
 			goto retry_ofld;
 		}
 		goto ofld_err;

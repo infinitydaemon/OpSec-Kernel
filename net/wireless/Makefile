@@ -4,7 +4,6 @@ obj-$(CONFIG_LIB80211) += lib80211.o
 obj-$(CONFIG_LIB80211_CRYPT_WEP) += lib80211_crypt_wep.o
 obj-$(CONFIG_LIB80211_CRYPT_CCMP) += lib80211_crypt_ccmp.o
 obj-$(CONFIG_LIB80211_CRYPT_TKIP) += lib80211_crypt_tkip.o
-obj-y += tests/
 
 obj-$(CONFIG_WEXT_CORE) += wext-core.o
 obj-$(CONFIG_WEXT_PROC) += wext-proc.o
@@ -25,7 +24,7 @@ ifneq ($(CONFIG_CFG80211_EXTRA_REGDB_KEYDIR),)
 cfg80211-y += extra-certs.o
 endif
 
-$(obj)/shipped-certs.c: $(sort $(wildcard $(src)/certs/*.hex))
+$(obj)/shipped-certs.c: $(wildcard $(srctree)/$(src)/certs/*.hex)
 	@$(kecho) "  GEN     $@"
 	$(Q)(echo '#include "reg.h"'; \
 	  echo 'const u8 shipped_regdb_certs[] = {'; \
@@ -35,7 +34,7 @@ $(obj)/shipped-certs.c: $(sort $(wildcard $(src)/certs/*.hex))
 	 ) > $@
 
 $(obj)/extra-certs.c: $(CONFIG_CFG80211_EXTRA_REGDB_KEYDIR) \
-		      $(sort $(wildcard $(CONFIG_CFG80211_EXTRA_REGDB_KEYDIR)/*.x509))
+		      $(wildcard $(CONFIG_CFG80211_EXTRA_REGDB_KEYDIR)/*.x509)
 	@$(kecho) "  GEN     $@"
 	$(Q)(set -e; \
 	  allf=""; \

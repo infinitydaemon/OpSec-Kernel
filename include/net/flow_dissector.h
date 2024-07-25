@@ -97,7 +97,7 @@ struct flow_dissector_key_enc_opts {
 					 * here but seems difficult to #include
 					 */
 	u8 len;
-	u32 dst_opt_type;
+	__be16 dst_opt_type;
 };
 
 struct flow_dissector_key_keyid {

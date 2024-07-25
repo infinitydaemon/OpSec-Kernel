@@ -138,7 +138,7 @@ indicating kibi- or mebi-bytes.
 
 - drm-shared-<region>: <uint> [KiB|MiB]
 
-The total size of buffers that are shared with another file (e.g., have more
+The total size of buffers that are shared with another file (ie. have more
 than a single handle).
 
 - drm-total-<region>: <uint> [KiB|MiB]
@@ -169,4 +169,3 @@ Driver specific implementations
 -------------------------------
 
 :ref:`i915-usage-stats`
-:ref:`panfrost-usage-stats`

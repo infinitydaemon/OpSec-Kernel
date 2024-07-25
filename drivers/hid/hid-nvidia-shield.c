@@ -921,15 +921,6 @@ err_id:
 	return ERR_PTR(ret);
 }
 
-static void thunderstrike_destroy(struct thunderstrike *ts)
-{
-	led_classdev_unregister(&ts->led_dev);
-	power_supply_unregister(ts->base.battery_dev.psy);
-	if (ts->haptics_dev)
-		input_unregister_device(ts->haptics_dev);
-	ida_free(&thunderstrike_ida, ts->id);
-}
-
 static int android_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 				 struct hid_field *field,
 				 struct hid_usage *usage, unsigned long **bit,
@@ -1089,7 +1080,11 @@ static int shield_probe(struct hid_device *hdev, const struct hid_device_id *id)
 err_stop:
 	hid_hw_stop(hdev);
 err_ts_create:
-	thunderstrike_destroy(ts);
+	power_supply_unregister(ts->base.battery_dev.psy);
+	if (ts->haptics_dev)
+		input_unregister_device(ts->haptics_dev);
+	led_classdev_unregister(&ts->led_dev);
+	ida_free(&thunderstrike_ida, ts->id);
 	return ret;
 }
 
@@ -1101,7 +1096,11 @@ static void shield_remove(struct hid_device *hdev)
 	ts = container_of(dev, struct thunderstrike, base);
 
 	hid_hw_close(hdev);
-	thunderstrike_destroy(ts);
+	power_supply_unregister(dev->battery_dev.psy);
+	if (ts->haptics_dev)
+		input_unregister_device(ts->haptics_dev);
+	led_classdev_unregister(&ts->led_dev);
+	ida_free(&thunderstrike_ida, ts->id);
 	del_timer_sync(&ts->psy_stats_timer);
 	cancel_work_sync(&ts->hostcmd_req_work);
 	hid_hw_stop(hdev);

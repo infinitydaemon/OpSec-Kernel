@@ -170,7 +170,7 @@ void mt76_connac_write_hw_txp(struct mt76_dev *dev,
 
 	txp->msdu_id[0] = cpu_to_le16(id | MT_MSDU_ID_VALID);
 
-	if (is_mt7663(dev) || is_mt7921(dev) || is_mt7925(dev))
+	if (is_mt7663(dev) || is_mt7921(dev))
 		last_mask = MT_TXD_LEN_LAST;
 	else
 		last_mask = MT_TXD_LEN_AMSDU_LAST |
@@ -214,7 +214,7 @@ mt76_connac_txp_skb_unmap_hw(struct mt76_dev *dev,
 	u32 last_mask;
 	int i;
 
-	if (is_mt7663(dev) || is_mt7921(dev) || is_mt7925(dev))
+	if (is_mt7663(dev) || is_mt7921(dev))
 		last_mask = MT_TXD_LEN_LAST;
 	else
 		last_mask = MT_TXD_LEN_MSDU_LAST;
@@ -256,12 +256,11 @@ void mt76_connac_txp_skb_unmap(struct mt76_dev *dev,
 EXPORT_SYMBOL_GPL(mt76_connac_txp_skb_unmap);
 
 int mt76_connac_init_tx_queues(struct mt76_phy *phy, int idx, int n_desc,
-			       int ring_base, void *wed, u32 flags)
+			       int ring_base, u32 flags)
 {
 	int i, err;
 
-	err = mt76_init_tx_queue(phy, 0, idx, n_desc, ring_base,
-				 wed, flags);
+	err = mt76_init_tx_queue(phy, 0, idx, n_desc, ring_base, flags);
 	if (err < 0)
 		return err;
 
@@ -544,7 +543,7 @@ void mt76_connac2_mac_write_txwi(struct mt76_dev *dev, __le32 *txwi,
 	val = FIELD_PREP(MT_TXD5_PID, pid);
 	if (pid >= MT_PACKET_ID_FIRST) {
 		val |= MT_TXD5_TX_STATUS_HOST;
-		amsdu_en = 0;
+		amsdu_en = amsdu_en && !is_mt7921(dev);
 	}
 
 	txwi[5] = cpu_to_le32(val);
@@ -579,8 +578,6 @@ void mt76_connac2_mac_write_txwi(struct mt76_dev *dev, __le32 *txwi,
 				spe_idx = 24 + phy_idx;
 			txwi[7] |= cpu_to_le32(FIELD_PREP(MT_TXD7_SPE_IDX, spe_idx));
 		}
-
-		txwi[7] &= ~cpu_to_le32(MT_TXD7_HW_AMSDU);
 	}
 }
 EXPORT_SYMBOL_GPL(mt76_connac2_mac_write_txwi);
@@ -715,9 +712,6 @@ bool mt76_connac2_mac_add_txs_skb(struct mt76_dev *dev, struct mt76_wcid *wcid,
 {
 	struct sk_buff_head list;
 	struct sk_buff *skb;
-
-	if (le32_get_bits(txs_data[0], MT_TXS0_TXS_FORMAT) == MT_TXS_PPDU_FMT)
-		return false;
 
 	mt76_tx_status_lock(dev, &list);
 	skb = mt76_tx_status_skb_get(dev, wcid, pid, &list);

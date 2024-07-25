@@ -31,10 +31,7 @@ properties:
     maxItems: 1
 
   interrupts:
-    minItems: 1
-    items:
-      - description: Combined or receive interrupt
-      - description: Transmit interrupt
+    maxItems: 1
 
   dmas:
     items:
@@ -89,9 +86,6 @@ properties:
       registers. Set this flag for HCDs with big endian descriptors and big
       endian registers.
 
-  power-domains:
-    maxItems: 1
-
 required:
   - compatible
   - reg
@@ -102,33 +96,6 @@ required:
   - clock-names
 
 additionalProperties: false
-
-allOf:
-  - if:
-      properties:
-        compatible:
-          enum:
-            - fsl,imx8qm-spdif
-            - fsl,imx8qxp-spdif
-    then:
-      properties:
-        interrupts:
-          minItems: 2
-    else:
-      properties:
-        interrupts:
-          maxItems: 1
-
-  - if:
-      properties:
-        compatible:
-          contains:
-            enum:
-              - fsl,imx8qm-spdif
-              - fsl,imx8qxp-spdif
-    then:
-      required:
-        - power-domains
 
 examples:
   - |

@@ -52,7 +52,7 @@
  * @adapter: I2C adapter for the DDC bus
  * @offset: register offset
  * @buffer: buffer for return data
- * @size: size of the buffer
+ * @size: sizo of the buffer
  *
  * Reads @size bytes from the DP dual mode adaptor registers
  * starting at @offset.
@@ -116,7 +116,7 @@ EXPORT_SYMBOL(drm_dp_dual_mode_read);
  * @adapter: I2C adapter for the DDC bus
  * @offset: register offset
  * @buffer: buffer for write data
- * @size: size of the buffer
+ * @size: sizo of the buffer
  *
  * Writes @size bytes to the DP dual mode adaptor registers
  * starting at @offset.

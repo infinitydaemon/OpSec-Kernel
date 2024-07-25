@@ -31,8 +31,6 @@
 
 #include "dc_dmub_srv.h"
 
-#define DC_LOGGER \
-	ctx->logger
 #define DC_LOGGER_INIT(logger)
 
 #define REG(reg)\
@@ -691,7 +689,7 @@ static void dmcub_PLAT_54186_wa(struct hubp *hubp,
 	cmd.PLAT_54186_wa.flip.flip_params.vmid = flip_regs->vmid;
 
 	PERF_TRACE();  // TODO: remove after performance is stable.
-	dc_wake_and_execute_dmub_cmd(hubp->ctx, &cmd, DM_DMUB_WAIT_TYPE_WAIT);
+	dm_execute_dmub_cmd(hubp->ctx, &cmd, DM_DMUB_WAIT_TYPE_WAIT);
 	PERF_TRACE();  // TODO: remove after performance is stable.
 }
 

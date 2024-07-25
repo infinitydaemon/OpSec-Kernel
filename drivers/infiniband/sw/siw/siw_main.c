@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
+// SPDX-License-Identifier: GPL-2.0 or BSD-3-Clause
 
 /* Authors: Bernard Metzler <bmt@zurich.ibm.com> */
 /* Copyright (c) 2008-2019, IBM Corporation */
@@ -109,17 +109,6 @@ static struct {
 	int num_nodes;
 } siw_cpu_info;
 
-static void siw_destroy_cpulist(int number)
-{
-	int i = 0;
-
-	while (i < number)
-		kfree(siw_cpu_info.tx_valid_cpus[i++]);
-
-	kfree(siw_cpu_info.tx_valid_cpus);
-	siw_cpu_info.tx_valid_cpus = NULL;
-}
-
 static int siw_init_cpulist(void)
 {
 	int i, num_nodes = nr_node_ids;
@@ -149,9 +138,22 @@ static int siw_init_cpulist(void)
 
 out_err:
 	siw_cpu_info.num_nodes = 0;
-	siw_destroy_cpulist(i);
+	while (--i >= 0)
+		kfree(siw_cpu_info.tx_valid_cpus[i]);
+	kfree(siw_cpu_info.tx_valid_cpus);
+	siw_cpu_info.tx_valid_cpus = NULL;
 
 	return -ENOMEM;
+}
+
+static void siw_destroy_cpulist(void)
+{
+	int i = 0;
+
+	while (i < siw_cpu_info.num_nodes)
+		kfree(siw_cpu_info.tx_valid_cpus[i++]);
+
+	kfree(siw_cpu_info.tx_valid_cpus);
 }
 
 /*
@@ -556,7 +558,7 @@ out_error:
 	pr_info("SoftIWARP attach failed. Error: %d\n", rv);
 
 	siw_cm_exit();
-	siw_destroy_cpulist(siw_cpu_info.num_nodes);
+	siw_destroy_cpulist();
 
 	return rv;
 }
@@ -571,7 +573,7 @@ static void __exit siw_exit_module(void)
 
 	siw_cm_exit();
 
-	siw_destroy_cpulist(siw_cpu_info.num_nodes);
+	siw_destroy_cpulist();
 
 	if (siw_crypto_shash)
 		crypto_free_shash(siw_crypto_shash);

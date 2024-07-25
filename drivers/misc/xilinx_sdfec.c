@@ -1420,7 +1420,7 @@ err_xsdfec_dev:
 	return err;
 }
 
-static void xsdfec_remove(struct platform_device *pdev)
+static int xsdfec_remove(struct platform_device *pdev)
 {
 	struct xsdfec_dev *xsdfec;
 
@@ -1428,6 +1428,7 @@ static void xsdfec_remove(struct platform_device *pdev)
 	misc_deregister(&xsdfec->miscdev);
 	ida_free(&dev_nrs, xsdfec->dev_id);
 	xsdfec_disable_all_clks(&xsdfec->clks);
+	return 0;
 }
 
 static const struct of_device_id xsdfec_of_match[] = {
@@ -1444,7 +1445,7 @@ static struct platform_driver xsdfec_driver = {
 		.of_match_table = xsdfec_of_match,
 	},
 	.probe = xsdfec_probe,
-	.remove_new =  xsdfec_remove,
+	.remove =  xsdfec_remove,
 };
 
 module_platform_driver(xsdfec_driver);

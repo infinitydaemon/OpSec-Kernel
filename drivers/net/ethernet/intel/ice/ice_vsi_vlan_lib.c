@@ -488,11 +488,10 @@ int ice_vsi_ena_outer_stripping(struct ice_vsi *vsi, u16 tpid)
 	ctxt->info.outer_vlan_flags = vsi->info.outer_vlan_flags &
 		~(ICE_AQ_VSI_OUTER_VLAN_EMODE_M | ICE_AQ_VSI_OUTER_TAG_TYPE_M);
 	ctxt->info.outer_vlan_flags |=
-		/* we want EMODE_SHOW_BOTH, but that value is zero, so the line
-		 * above clears it well enough that we don't need to try to set
-		 * zero here, so just do the tag type
-		 */
-		 FIELD_PREP(ICE_AQ_VSI_OUTER_TAG_TYPE_M, tag_type);
+		((ICE_AQ_VSI_OUTER_VLAN_EMODE_SHOW_BOTH <<
+		  ICE_AQ_VSI_OUTER_VLAN_EMODE_S) |
+		 ((tag_type << ICE_AQ_VSI_OUTER_TAG_TYPE_S) &
+		  ICE_AQ_VSI_OUTER_TAG_TYPE_M));
 
 	err = ice_update_vsi(hw, vsi->idx, ctxt, NULL);
 	if (err)
@@ -597,9 +596,11 @@ int ice_vsi_ena_outer_insertion(struct ice_vsi *vsi, u16 tpid)
 		  ICE_AQ_VSI_OUTER_VLAN_TX_MODE_M |
 		  ICE_AQ_VSI_OUTER_TAG_TYPE_M);
 	ctxt->info.outer_vlan_flags |=
-		FIELD_PREP(ICE_AQ_VSI_OUTER_VLAN_TX_MODE_M,
-			   ICE_AQ_VSI_OUTER_VLAN_TX_MODE_ALL) |
-		FIELD_PREP(ICE_AQ_VSI_OUTER_TAG_TYPE_M, tag_type);
+		((ICE_AQ_VSI_OUTER_VLAN_TX_MODE_ALL <<
+		  ICE_AQ_VSI_OUTER_VLAN_TX_MODE_S) &
+		 ICE_AQ_VSI_OUTER_VLAN_TX_MODE_M) |
+		((tag_type << ICE_AQ_VSI_OUTER_TAG_TYPE_S) &
+		 ICE_AQ_VSI_OUTER_TAG_TYPE_M);
 
 	err = ice_update_vsi(hw, vsi->idx, ctxt, NULL);
 	if (err)
@@ -648,8 +649,9 @@ int ice_vsi_dis_outer_insertion(struct ice_vsi *vsi)
 		  ICE_AQ_VSI_OUTER_VLAN_TX_MODE_M);
 	ctxt->info.outer_vlan_flags |=
 		ICE_AQ_VSI_OUTER_VLAN_BLOCK_TX_DESC |
-		FIELD_PREP(ICE_AQ_VSI_OUTER_VLAN_TX_MODE_M,
-			   ICE_AQ_VSI_OUTER_VLAN_TX_MODE_ALL);
+		((ICE_AQ_VSI_OUTER_VLAN_TX_MODE_ALL <<
+		  ICE_AQ_VSI_OUTER_VLAN_TX_MODE_S) &
+		 ICE_AQ_VSI_OUTER_VLAN_TX_MODE_M);
 
 	err = ice_update_vsi(hw, vsi->idx, ctxt, NULL);
 	if (err)
@@ -707,7 +709,8 @@ __ice_vsi_set_outer_port_vlan(struct ice_vsi *vsi, u16 vlan_info, u16 tpid)
 	ctxt->info.outer_vlan_flags =
 		(ICE_AQ_VSI_OUTER_VLAN_EMODE_SHOW <<
 		 ICE_AQ_VSI_OUTER_VLAN_EMODE_S) |
-		FIELD_PREP(ICE_AQ_VSI_OUTER_TAG_TYPE_M, tag_type) |
+		((tag_type << ICE_AQ_VSI_OUTER_TAG_TYPE_S) &
+		 ICE_AQ_VSI_OUTER_TAG_TYPE_M) |
 		ICE_AQ_VSI_OUTER_VLAN_BLOCK_TX_DESC |
 		(ICE_AQ_VSI_OUTER_VLAN_TX_MODE_ACCEPTUNTAGGED <<
 		 ICE_AQ_VSI_OUTER_VLAN_TX_MODE_S) |

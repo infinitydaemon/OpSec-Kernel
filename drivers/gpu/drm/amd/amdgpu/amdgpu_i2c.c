@@ -175,6 +175,7 @@ struct amdgpu_i2c_chan *amdgpu_i2c_create(struct drm_device *dev,
 
 	i2c->rec = *rec;
 	i2c->adapter.owner = THIS_MODULE;
+	i2c->adapter.class = I2C_CLASS_DDC;
 	i2c->adapter.dev.parent = dev->dev;
 	i2c->dev = dev;
 	i2c_set_adapdata(&i2c->adapter, i2c);
@@ -279,7 +280,7 @@ amdgpu_i2c_lookup(struct amdgpu_device *adev,
 	return NULL;
 }
 
-static int amdgpu_i2c_get_byte(struct amdgpu_i2c_chan *i2c_bus,
+static void amdgpu_i2c_get_byte(struct amdgpu_i2c_chan *i2c_bus,
 				 u8 slave_addr,
 				 u8 addr,
 				 u8 *val)
@@ -304,18 +305,16 @@ static int amdgpu_i2c_get_byte(struct amdgpu_i2c_chan *i2c_bus,
 	out_buf[0] = addr;
 	out_buf[1] = 0;
 
-	if (i2c_transfer(&i2c_bus->adapter, msgs, 2) != 2) {
-		DRM_DEBUG("i2c 0x%02x read failed\n", addr);
-		return -EIO;
+	if (i2c_transfer(&i2c_bus->adapter, msgs, 2) == 2) {
+		*val = in_buf[0];
+		DRM_DEBUG("val = 0x%02x\n", *val);
+	} else {
+		DRM_DEBUG("i2c 0x%02x 0x%02x read failed\n",
+			  addr, *val);
 	}
-
-	*val = in_buf[0];
-	DRM_DEBUG("val = 0x%02x\n", *val);
-
-	return 0;
 }
 
-static int amdgpu_i2c_put_byte(struct amdgpu_i2c_chan *i2c_bus,
+static void amdgpu_i2c_put_byte(struct amdgpu_i2c_chan *i2c_bus,
 				 u8 slave_addr,
 				 u8 addr,
 				 u8 val)
@@ -331,12 +330,9 @@ static int amdgpu_i2c_put_byte(struct amdgpu_i2c_chan *i2c_bus,
 	out_buf[0] = addr;
 	out_buf[1] = val;
 
-	if (i2c_transfer(&i2c_bus->adapter, &msg, 1) != 1) {
-		DRM_DEBUG("i2c 0x%02x 0x%02x write failed\n", addr, val);
-		return -EIO;
-	}
-
-	return 0;
+	if (i2c_transfer(&i2c_bus->adapter, &msg, 1) != 1)
+		DRM_DEBUG("i2c 0x%02x 0x%02x write failed\n",
+			  addr, val);
 }
 
 /* ddc router switching */
@@ -351,18 +347,16 @@ amdgpu_i2c_router_select_ddc_port(const struct amdgpu_connector *amdgpu_connecto
 	if (!amdgpu_connector->router_bus)
 		return;
 
-	if (amdgpu_i2c_get_byte(amdgpu_connector->router_bus,
+	amdgpu_i2c_get_byte(amdgpu_connector->router_bus,
 			    amdgpu_connector->router.i2c_addr,
-			    0x3, &val))
-		return;
+			    0x3, &val);
 	val &= ~amdgpu_connector->router.ddc_mux_control_pin;
 	amdgpu_i2c_put_byte(amdgpu_connector->router_bus,
 			    amdgpu_connector->router.i2c_addr,
 			    0x3, val);
-	if (amdgpu_i2c_get_byte(amdgpu_connector->router_bus,
+	amdgpu_i2c_get_byte(amdgpu_connector->router_bus,
 			    amdgpu_connector->router.i2c_addr,
-			    0x1, &val))
-		return;
+			    0x1, &val);
 	val &= ~amdgpu_connector->router.ddc_mux_control_pin;
 	val |= amdgpu_connector->router.ddc_mux_state;
 	amdgpu_i2c_put_byte(amdgpu_connector->router_bus,
@@ -382,18 +376,16 @@ amdgpu_i2c_router_select_cd_port(const struct amdgpu_connector *amdgpu_connector
 	if (!amdgpu_connector->router_bus)
 		return;
 
-	if (amdgpu_i2c_get_byte(amdgpu_connector->router_bus,
+	amdgpu_i2c_get_byte(amdgpu_connector->router_bus,
 			    amdgpu_connector->router.i2c_addr,
-			    0x3, &val))
-		return;
+			    0x3, &val);
 	val &= ~amdgpu_connector->router.cd_mux_control_pin;
 	amdgpu_i2c_put_byte(amdgpu_connector->router_bus,
 			    amdgpu_connector->router.i2c_addr,
 			    0x3, val);
-	if (amdgpu_i2c_get_byte(amdgpu_connector->router_bus,
+	amdgpu_i2c_get_byte(amdgpu_connector->router_bus,
 			    amdgpu_connector->router.i2c_addr,
-			    0x1, &val))
-		return;
+			    0x1, &val);
 	val &= ~amdgpu_connector->router.cd_mux_control_pin;
 	val |= amdgpu_connector->router.cd_mux_state;
 	amdgpu_i2c_put_byte(amdgpu_connector->router_bus,

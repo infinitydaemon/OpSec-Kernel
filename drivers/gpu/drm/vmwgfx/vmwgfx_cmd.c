@@ -31,7 +31,6 @@
 #include <drm/ttm/ttm_placement.h>
 
 #include <linux/sched/signal.h>
-#include <linux/vmalloc.h>
 
 bool vmw_supports_3d(struct vmw_private *dev_priv)
 {

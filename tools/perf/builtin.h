@@ -2,10 +2,8 @@
 #ifndef BUILTIN_H
 #define BUILTIN_H
 
-struct cmdnames;
-
 void list_common_cmds_help(void);
-const char *help_unknown_cmd(const char *cmd, struct cmdnames *main_cmds);
+const char *help_unknown_cmd(const char *cmd);
 
 int cmd_annotate(int argc, const char **argv);
 int cmd_bench(int argc, const char **argv);

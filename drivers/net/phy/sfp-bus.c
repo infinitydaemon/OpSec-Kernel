@@ -324,7 +324,7 @@ void sfp_parse_support(struct sfp_bus *bus, const struct sfp_eeprom_id *id,
 	 * modules use 2500Mbaud rather than 3100 or 3200Mbaud for
 	 * 2500BASE-X, so we allow some slack here.
 	 */
-	if (linkmode_empty(modes) && br_nom) {
+	if (bitmap_empty(modes, __ETHTOOL_LINK_MODE_MASK_NBITS) && br_nom) {
 		if (br_min <= 1300 && br_max >= 1200) {
 			phylink_set(modes, 1000baseX_Full);
 			__set_bit(PHY_INTERFACE_MODE_1000BASEX, interfaces);
@@ -355,7 +355,7 @@ EXPORT_SYMBOL_GPL(sfp_parse_support);
  * modes mask.
  */
 phy_interface_t sfp_select_interface(struct sfp_bus *bus,
-				     const unsigned long *link_modes)
+				     unsigned long *link_modes)
 {
 	if (phylink_test(link_modes, 25000baseCR_Full) ||
 	    phylink_test(link_modes, 25000baseKR_Full) ||
@@ -373,8 +373,7 @@ phy_interface_t sfp_select_interface(struct sfp_bus *bus,
 	if (phylink_test(link_modes, 5000baseT_Full))
 		return PHY_INTERFACE_MODE_5GBASER;
 
-	if (phylink_test(link_modes, 2500baseX_Full) ||
-	    phylink_test(link_modes, 2500baseT_Full))
+	if (phylink_test(link_modes, 2500baseX_Full))
 		return PHY_INTERFACE_MODE_2500BASEX;
 
 	if (phylink_test(link_modes, 1000baseT_Half) ||

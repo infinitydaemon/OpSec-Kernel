@@ -2174,7 +2174,8 @@ int ib_device_set_netdev(struct ib_device *ib_dev, struct net_device *ndev,
 	spin_unlock_irqrestore(&pdata->netdev_lock, flags);
 
 	add_ndev_hash(pdata);
-	__dev_put(old_ndev);
+	if (old_ndev)
+		__dev_put(old_ndev);
 
 	return 0;
 }
@@ -2234,7 +2235,8 @@ struct net_device *ib_device_get_netdev(struct ib_device *ib_dev,
 		spin_lock(&pdata->netdev_lock);
 		res = rcu_dereference_protected(
 			pdata->netdev, lockdep_is_held(&pdata->netdev_lock));
-		dev_hold(res);
+		if (res)
+			dev_hold(res);
 		spin_unlock(&pdata->netdev_lock);
 	}
 
@@ -2309,7 +2311,9 @@ void ib_enum_roce_netdev(struct ib_device *ib_dev,
 
 			if (filter(ib_dev, port, idev, filter_cookie))
 				cb(ib_dev, port, idev, cookie);
-			dev_put(idev);
+
+			if (idev)
+				dev_put(idev);
 		}
 }
 
@@ -2654,8 +2658,6 @@ void ib_set_device_ops(struct ib_device *dev, const struct ib_device_ops *ops)
 	SET_DEVICE_OP(dev_ops, fill_res_mr_entry_raw);
 	SET_DEVICE_OP(dev_ops, fill_res_qp_entry);
 	SET_DEVICE_OP(dev_ops, fill_res_qp_entry_raw);
-	SET_DEVICE_OP(dev_ops, fill_res_srq_entry);
-	SET_DEVICE_OP(dev_ops, fill_res_srq_entry_raw);
 	SET_DEVICE_OP(dev_ops, fill_stat_mr_entry);
 	SET_DEVICE_OP(dev_ops, get_dev_fw_str);
 	SET_DEVICE_OP(dev_ops, get_dma_mr);

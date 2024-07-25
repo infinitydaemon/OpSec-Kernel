@@ -50,4 +50,9 @@ extern struct mips_vdso_image vdso_image_o32;
 extern struct mips_vdso_image vdso_image_n32;
 #endif
 
+union mips_vdso_data {
+	struct vdso_data data[CS_BASES];
+	u8 page[PAGE_SIZE];
+};
+
 #endif /* __ASM_VDSO_H */

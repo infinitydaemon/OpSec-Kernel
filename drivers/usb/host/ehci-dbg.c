@@ -430,13 +430,13 @@ static void qh_lines(struct ehci_hcd *ehci, struct ehci_qh *qh,
 				mark = '/';
 		}
 		switch ((scratch >> 8) & 0x03) {
-		case PID_CODE_OUT:
+		case 0:
 			type = "out";
 			break;
-		case PID_CODE_IN:
+		case 1:
 			type = "in";
 			break;
-		case PID_CODE_SETUP:
+		case 2:
 			type = "setup";
 			break;
 		default:
@@ -602,10 +602,10 @@ static unsigned output_buf_tds_dir(char *buf, struct ehci_hcd *ehci,
 	list_for_each_entry(qtd, &qh->qtd_list, qtd_list) {
 		temp++;
 		switch ((hc32_to_cpu(ehci, qtd->hw_token) >> 8)	& 0x03) {
-		case PID_CODE_OUT:
+		case 0:
 			type = "out";
 			continue;
-		case PID_CODE_IN:
+		case 1:
 			type = "in";
 			continue;
 		}

@@ -124,10 +124,10 @@ static int octeon_spi_do_transfer(struct octeon_spi *p,
 	return xfer->len;
 }
 
-int octeon_spi_transfer_one_message(struct spi_controller *ctlr,
+int octeon_spi_transfer_one_message(struct spi_master *master,
 				    struct spi_message *msg)
 {
-	struct octeon_spi *p = spi_controller_get_devdata(ctlr);
+	struct octeon_spi *p = spi_master_get_devdata(master);
 	unsigned int total_len = 0;
 	int status = 0;
 	struct spi_transfer *xfer;
@@ -145,6 +145,6 @@ int octeon_spi_transfer_one_message(struct spi_controller *ctlr,
 err:
 	msg->status = status;
 	msg->actual_length = total_len;
-	spi_finalize_current_message(ctlr);
+	spi_finalize_current_message(master);
 	return status;
 }

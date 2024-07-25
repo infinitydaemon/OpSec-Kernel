@@ -1029,17 +1029,19 @@ err_alloc_felix:
 	return err;
 }
 
-static void seville_remove(struct platform_device *pdev)
+static int seville_remove(struct platform_device *pdev)
 {
 	struct felix *felix = platform_get_drvdata(pdev);
 
 	if (!felix)
-		return;
+		return 0;
 
 	dsa_unregister_switch(felix->ds);
 
 	kfree(felix->ds);
 	kfree(felix);
+
+	return 0;
 }
 
 static void seville_shutdown(struct platform_device *pdev)
@@ -1062,7 +1064,7 @@ MODULE_DEVICE_TABLE(of, seville_of_match);
 
 static struct platform_driver seville_vsc9953_driver = {
 	.probe		= seville_probe,
-	.remove_new	= seville_remove,
+	.remove		= seville_remove,
 	.shutdown	= seville_shutdown,
 	.driver = {
 		.name		= "mscc_seville",

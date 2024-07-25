@@ -18,7 +18,6 @@
 #include <asm/compat-signal.h>
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
-#include <asm/syscalls.h>
 
 #include "signal-common.h"
 

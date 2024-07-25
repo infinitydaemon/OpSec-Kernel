@@ -93,8 +93,6 @@
 #include <net/ip_fib.h>
 #include <net/l3mdev.h>
 #include <net/addrconf.h>
-#define CREATE_TRACE_POINTS
-#include <trace/events/icmp.h>
 
 /*
  *	Build xmit assembly blocks
@@ -485,7 +483,6 @@ static struct rtable *icmp_route_lookup(struct net *net,
 					struct icmp_bxm *param)
 {
 	struct net_device *route_lookup_dev;
-	struct dst_entry *dst, *dst2;
 	struct rtable *rt, *rt2;
 	struct flowi4 fl4_dec;
 	int err;
@@ -511,18 +508,17 @@ static struct rtable *icmp_route_lookup(struct net *net,
 	/* No need to clone since we're just using its address. */
 	rt2 = rt;
 
-	dst = xfrm_lookup(net, &rt->dst,
-			  flowi4_to_flowi(fl4), NULL, 0);
-	rt = dst_rtable(dst);
-	if (!IS_ERR(dst)) {
+	rt = (struct rtable *) xfrm_lookup(net, &rt->dst,
+					   flowi4_to_flowi(fl4), NULL, 0);
+	if (!IS_ERR(rt)) {
 		if (rt != rt2)
 			return rt;
-	} else if (PTR_ERR(dst) == -EPERM) {
+	} else if (PTR_ERR(rt) == -EPERM) {
 		rt = NULL;
-	} else {
+	} else
 		return rt;
-	}
-	err = xfrm_decode_session_reverse(net, skb_in, flowi4_to_flowi(&fl4_dec), AF_INET);
+
+	err = xfrm_decode_session_reverse(skb_in, flowi4_to_flowi(&fl4_dec), AF_INET);
 	if (err)
 		goto relookup_failed;
 
@@ -555,19 +551,19 @@ static struct rtable *icmp_route_lookup(struct net *net,
 	if (err)
 		goto relookup_failed;
 
-	dst2 = xfrm_lookup(net, &rt2->dst, flowi4_to_flowi(&fl4_dec), NULL,
-			   XFRM_LOOKUP_ICMP);
-	rt2 = dst_rtable(dst2);
-	if (!IS_ERR(dst2)) {
+	rt2 = (struct rtable *) xfrm_lookup(net, &rt2->dst,
+					    flowi4_to_flowi(&fl4_dec), NULL,
+					    XFRM_LOOKUP_ICMP);
+	if (!IS_ERR(rt2)) {
 		dst_release(&rt->dst);
 		memcpy(fl4, &fl4_dec, sizeof(*fl4));
 		rt = rt2;
-	} else if (PTR_ERR(dst2) == -EPERM) {
+	} else if (PTR_ERR(rt2) == -EPERM) {
 		if (rt)
 			dst_release(&rt->dst);
 		return rt2;
 	} else {
-		err = PTR_ERR(dst2);
+		err = PTR_ERR(rt2);
 		goto relookup_failed;
 	}
 	return rt;
@@ -771,8 +767,6 @@ void __icmp_send(struct sk_buff *skb_in, int type, int code, __be32 info,
 	 */
 	if (!fl4.saddr)
 		fl4.saddr = htonl(INADDR_DUMMY);
-
-	trace_icmp_send(skb_in, type, code);
 
 	icmp_push_reply(sk, &icmp_param, &fl4, &ipc, &rt);
 ende:

@@ -193,7 +193,9 @@ static int __init bpf_map_iter_init(void)
 
 late_initcall(bpf_map_iter_init);
 
-__bpf_kfunc_start_defs();
+__diag_push();
+__diag_ignore_all("-Wmissing-prototypes",
+		  "Global functions as their definitions will be in vmlinux BTF");
 
 __bpf_kfunc s64 bpf_map_sum_elem_count(const struct bpf_map *map)
 {
@@ -211,11 +213,11 @@ __bpf_kfunc s64 bpf_map_sum_elem_count(const struct bpf_map *map)
 	return ret;
 }
 
-__bpf_kfunc_end_defs();
+__diag_pop();
 
-BTF_KFUNCS_START(bpf_map_iter_kfunc_ids)
+BTF_SET8_START(bpf_map_iter_kfunc_ids)
 BTF_ID_FLAGS(func, bpf_map_sum_elem_count, KF_TRUSTED_ARGS)
-BTF_KFUNCS_END(bpf_map_iter_kfunc_ids)
+BTF_SET8_END(bpf_map_iter_kfunc_ids)
 
 static const struct btf_kfunc_id_set bpf_map_iter_kfunc_set = {
 	.owner = THIS_MODULE,

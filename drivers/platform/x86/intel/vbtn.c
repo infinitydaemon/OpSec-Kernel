@@ -156,8 +156,7 @@ static void notify_handler(acpi_handle handle, u32 event, void *context)
 
 	if ((ke = sparse_keymap_entry_from_scancode(priv->buttons_dev, event))) {
 		if (!priv->has_buttons) {
-			dev_warn(&device->dev, "Warning: received 0x%02x button event on a device without buttons, please report this.\n",
-				 event);
+			dev_warn(&device->dev, "Warning: received a button event on a device without buttons, please report this.\n");
 			return;
 		}
 		input_dev = priv->buttons_dev;
@@ -257,6 +256,9 @@ static const struct dmi_system_id dmi_switches_allow_list[] = {
 
 static bool intel_vbtn_has_switches(acpi_handle handle, bool dual_accel)
 {
+	unsigned long long vgbs;
+	acpi_status status;
+
 	/* See dual_accel_detect.h for more info */
 	if (dual_accel)
 		return false;
@@ -264,7 +266,8 @@ static bool intel_vbtn_has_switches(acpi_handle handle, bool dual_accel)
 	if (!dmi_check_system(dmi_switches_allow_list))
 		return false;
 
-	return acpi_has_method(handle, "VGBS");
+	status = acpi_evaluate_integer(handle, "VGBS", NULL, &vgbs);
+	return ACPI_SUCCESS(status);
 }
 
 static int intel_vbtn_probe(struct platform_device *device)

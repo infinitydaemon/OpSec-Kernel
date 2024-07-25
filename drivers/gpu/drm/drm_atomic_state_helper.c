@@ -267,6 +267,20 @@ void __drm_atomic_helper_plane_state_reset(struct drm_plane_state *plane_state,
 			plane_state->color_range = val;
 	}
 
+	if (plane->chroma_siting_h_property) {
+		if (!drm_object_property_get_default_value(&plane->base,
+							   plane->chroma_siting_h_property,
+							   &val))
+			plane_state->chroma_siting_h = val;
+	}
+
+	if (plane->chroma_siting_v_property) {
+		if (!drm_object_property_get_default_value(&plane->base,
+							   plane->chroma_siting_v_property,
+							   &val))
+			plane_state->chroma_siting_v = val;
+	}
+
 	if (plane->zpos_property) {
 		if (!drm_object_property_get_default_value(&plane->base,
 							   plane->zpos_property,
@@ -274,20 +288,6 @@ void __drm_atomic_helper_plane_state_reset(struct drm_plane_state *plane_state,
 			plane_state->zpos = val;
 			plane_state->normalized_zpos = val;
 		}
-	}
-
-	if (plane->hotspot_x_property) {
-		if (!drm_object_property_get_default_value(&plane->base,
-							   plane->hotspot_x_property,
-							   &val))
-			plane_state->hotspot_x = val;
-	}
-
-	if (plane->hotspot_y_property) {
-		if (!drm_object_property_get_default_value(&plane->base,
-							   plane->hotspot_y_property,
-							   &val))
-			plane_state->hotspot_y = val;
 	}
 }
 EXPORT_SYMBOL(__drm_atomic_helper_plane_state_reset);
@@ -352,7 +352,6 @@ void __drm_atomic_helper_plane_duplicate_state(struct drm_plane *plane,
 	state->fence = NULL;
 	state->commit = NULL;
 	state->fb_damage_clips = NULL;
-	state->color_mgmt_changed = false;
 }
 EXPORT_SYMBOL(__drm_atomic_helper_plane_duplicate_state);
 

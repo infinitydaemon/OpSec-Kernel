@@ -160,7 +160,6 @@ struct brcmstb_i2c_dev {
 	struct completion done;
 	u32 clk_freq_hz;
 	int data_regsz;
-	bool atomic;
 };
 
 /* register accessors for both be and le cpu arch */
@@ -241,7 +240,7 @@ static int brcmstb_i2c_wait_for_completion(struct brcmstb_i2c_dev *dev)
 	int ret = 0;
 	unsigned long timeout = msecs_to_jiffies(I2C_TIMEOUT);
 
-	if (dev->irq >= 0 && !dev->atomic) {
+	if (dev->irq >= 0) {
 		if (!wait_for_completion_timeout(&dev->done, timeout))
 			ret = -ETIMEDOUT;
 	} else {
@@ -288,7 +287,7 @@ static int brcmstb_send_i2c_cmd(struct brcmstb_i2c_dev *dev,
 		return rc;
 
 	/* only if we are in interrupt mode */
-	if (dev->irq >= 0 && !dev->atomic)
+	if (dev->irq >= 0)
 		reinit_completion(&dev->done);
 
 	/* enable BSC CTL interrupt line */
@@ -521,23 +520,6 @@ out:
 
 }
 
-static int brcmstb_i2c_xfer_atomic(struct i2c_adapter *adapter,
-				   struct i2c_msg msgs[], int num)
-{
-	struct brcmstb_i2c_dev *dev = i2c_get_adapdata(adapter);
-	int ret;
-
-	if (dev->irq >= 0)
-		disable_irq(dev->irq);
-	dev->atomic = true;
-	ret = brcmstb_i2c_xfer(adapter, msgs, num);
-	dev->atomic = false;
-	if (dev->irq >= 0)
-		enable_irq(dev->irq);
-
-	return ret;
-}
-
 static u32 brcmstb_i2c_functionality(struct i2c_adapter *adap)
 {
 	return I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL | I2C_FUNC_10BIT_ADDR
@@ -546,7 +528,6 @@ static u32 brcmstb_i2c_functionality(struct i2c_adapter *adap)
 
 static const struct i2c_algorithm brcmstb_i2c_algo = {
 	.master_xfer = brcmstb_i2c_xfer,
-	.master_xfer_atomic = brcmstb_i2c_xfer_atomic,
 	.functionality = brcmstb_i2c_functionality,
 };
 

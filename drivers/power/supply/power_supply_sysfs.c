@@ -15,7 +15,6 @@
 #include <linux/power_supply.h>
 #include <linux/slab.h>
 #include <linux/stat.h>
-#include <linux/string_helpers.h>
 
 #include "power_supply.h"
 
@@ -298,25 +297,21 @@ static ssize_t power_supply_show_property(struct device *dev,
 		}
 	}
 
+	if (ps_attr->text_values_len > 0 &&
+	    value.intval < ps_attr->text_values_len && value.intval >= 0) {
+		return sysfs_emit(buf, "%s\n", ps_attr->text_values[value.intval]);
+	}
+
 	switch (psp) {
 	case POWER_SUPPLY_PROP_USB_TYPE:
 		ret = power_supply_show_usb_type(dev, psy->desc,
 						&value, buf);
 		break;
-	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
-		ret = power_supply_charge_behaviour_show(dev, psy->desc->charge_behaviours,
-							 value.intval, buf);
-		break;
 	case POWER_SUPPLY_PROP_MODEL_NAME ... POWER_SUPPLY_PROP_SERIAL_NUMBER:
 		ret = sysfs_emit(buf, "%s\n", value.strval);
 		break;
 	default:
-		if (ps_attr->text_values_len > 0 &&
-				value.intval < ps_attr->text_values_len && value.intval >= 0) {
-			ret = sysfs_emit(buf, "%s\n", ps_attr->text_values[value.intval]);
-		} else {
-			ret = sysfs_emit(buf, "%d\n", value.intval);
-		}
+		ret = sysfs_emit(buf, "%d\n", value.intval);
 	}
 
 	return ret;
@@ -398,14 +393,24 @@ static const struct attribute_group power_supply_attr_group = {
 	.is_visible = power_supply_attr_is_visible,
 };
 
-const struct attribute_group *power_supply_attr_groups[] = {
+static const struct attribute_group *power_supply_attr_groups[] = {
 	&power_supply_attr_group,
-	NULL
+	NULL,
 };
 
-void power_supply_init_attrs(void)
+static void str_to_lower(char *str)
+{
+	while (*str) {
+		*str = tolower(*str);
+		str++;
+	}
+}
+
+void power_supply_init_attrs(struct device_type *dev_type)
 {
 	int i;
+
+	dev_type->groups = power_supply_attr_groups;
 
 	for (i = 0; i < ARRAY_SIZE(power_supply_attrs); i++) {
 		struct device_attribute *attr;
@@ -415,8 +420,7 @@ void power_supply_init_attrs(void)
 				__func__, i);
 			sprintf(power_supply_attrs[i].attr_name, "_err_%d", i);
 		} else {
-			string_lower(power_supply_attrs[i].attr_name,
-				     power_supply_attrs[i].attr_name);
+			str_to_lower(power_supply_attrs[i].attr_name);
 		}
 
 		attr = &power_supply_attrs[i].dev_attr;

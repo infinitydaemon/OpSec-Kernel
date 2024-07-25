@@ -832,8 +832,6 @@ static efi_status_t efi_decompress_kernel(unsigned long *kernel_entry)
 				 cmdline_memmap_override);
 			seed[0] = 0;
 		}
-
-		boot_params_ptr->hdr.loadflags |= KASLR_FLAG;
 	}
 
 	status = efi_random_alloc(alloc_size, CONFIG_PHYSICAL_ALIGN, &addr,
@@ -878,7 +876,7 @@ void __noreturn efi_stub_entry(efi_handle_t handle,
 	unsigned long kernel_entry;
 	efi_status_t status;
 
-	boot_params_ptr = boot_params;
+	boot_params_pointer = boot_params;
 
 	efi_system_table = sys_table_arg;
 	/* Check if we were booted by the EFI firmware */
@@ -965,7 +963,7 @@ void __noreturn efi_stub_entry(efi_handle_t handle,
 
 	efi_random_get_seed();
 
-	efi_retrieve_eventlog();
+	efi_retrieve_tpm2_eventlog();
 
 	setup_graphics(boot_params);
 

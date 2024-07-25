@@ -309,7 +309,17 @@ static struct platform_driver video_cc_sc7280_driver = {
 	},
 };
 
-module_platform_driver(video_cc_sc7280_driver);
+static int __init video_cc_sc7280_init(void)
+{
+	return platform_driver_register(&video_cc_sc7280_driver);
+}
+subsys_initcall(video_cc_sc7280_init);
+
+static void __exit video_cc_sc7280_exit(void)
+{
+	platform_driver_unregister(&video_cc_sc7280_driver);
+}
+module_exit(video_cc_sc7280_exit);
 
 MODULE_DESCRIPTION("QTI VIDEO_CC sc7280 Driver");
 MODULE_LICENSE("GPL v2");

@@ -50,7 +50,7 @@
  * the macros available to do this only define GCC 8.
  */
 __diag_push();
-__diag_ignore_all("-Woverride-init",
+__diag_ignore(GCC, 8, "-Woverride-init",
 	      "logic to initialize all and then override some is OK");
 static const u16 sh_eth_offset_gigabit[SH_ETH_MAX_REGISTER_OFFSET] = {
 	SH_ETH_OFFSET_DEFAULTS,
@@ -2624,7 +2624,7 @@ static int sh_eth_change_mtu(struct net_device *ndev, int new_mtu)
 	if (netif_running(ndev))
 		return -EBUSY;
 
-	WRITE_ONCE(ndev->mtu, new_mtu);
+	ndev->mtu = new_mtu;
 	netdev_update_features(ndev);
 
 	return 0;
@@ -3431,7 +3431,7 @@ out_release:
 	return ret;
 }
 
-static void sh_eth_drv_remove(struct platform_device *pdev)
+static int sh_eth_drv_remove(struct platform_device *pdev)
 {
 	struct net_device *ndev = platform_get_drvdata(pdev);
 	struct sh_eth_private *mdp = netdev_priv(ndev);
@@ -3441,6 +3441,8 @@ static void sh_eth_drv_remove(struct platform_device *pdev)
 	sh_mdio_release(mdp);
 	pm_runtime_disable(&pdev->dev);
 	free_netdev(ndev);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -3560,7 +3562,7 @@ MODULE_DEVICE_TABLE(platform, sh_eth_id_table);
 
 static struct platform_driver sh_eth_driver = {
 	.probe = sh_eth_drv_probe,
-	.remove_new = sh_eth_drv_remove,
+	.remove = sh_eth_drv_remove,
 	.id_table = sh_eth_id_table,
 	.driver = {
 		   .name = CARDNAME,

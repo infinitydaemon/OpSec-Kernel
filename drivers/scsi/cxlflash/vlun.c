@@ -819,7 +819,8 @@ out:
 	return rc;
 }
 
-int cxlflash_vlun_resize(struct scsi_device *sdev, void *resize)
+int cxlflash_vlun_resize(struct scsi_device *sdev,
+			 struct dk_cxlflash_resize *resize)
 {
 	return _cxlflash_vlun_resize(sdev, NULL, resize);
 }
@@ -1177,7 +1178,7 @@ err:
 /**
  * cxlflash_disk_clone() - clone a context by making snapshot of another
  * @sdev:	SCSI device associated with LUN owning virtual LUN.
- * @arg:	Clone ioctl data structure.
+ * @clone:	Clone ioctl data structure.
  *
  * This routine effectively performs cxlflash_disk_open operation for each
  * in-use virtual resource in the source context. Note that the destination
@@ -1186,9 +1187,9 @@ err:
  *
  * Return: 0 on success, -errno on failure
  */
-int cxlflash_disk_clone(struct scsi_device *sdev, void *arg)
+int cxlflash_disk_clone(struct scsi_device *sdev,
+			struct dk_cxlflash_clone *clone)
 {
-	struct dk_cxlflash_clone *clone = arg;
 	struct cxlflash_cfg *cfg = shost_priv(sdev->host);
 	struct device *dev = &cfg->dev->dev;
 	struct llun_info *lli = sdev->hostdata;

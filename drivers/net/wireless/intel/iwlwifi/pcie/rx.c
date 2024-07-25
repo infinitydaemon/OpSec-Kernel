@@ -1000,11 +1000,6 @@ void iwl_pcie_rx_init_rxb_lists(struct iwl_rxq *rxq)
 
 static int iwl_pcie_rx_handle(struct iwl_trans *trans, int queue, int budget);
 
-static inline struct iwl_trans_pcie *iwl_netdev_to_trans_pcie(struct net_device *dev)
-{
-	return *(struct iwl_trans_pcie **)netdev_priv(dev);
-}
-
 static int iwl_pcie_napi_poll(struct napi_struct *napi, int budget)
 {
 	struct iwl_rxq *rxq = container_of(napi, struct iwl_rxq, napi);
@@ -1012,7 +1007,7 @@ static int iwl_pcie_napi_poll(struct napi_struct *napi, int budget)
 	struct iwl_trans *trans;
 	int ret;
 
-	trans_pcie = iwl_netdev_to_trans_pcie(napi->dev);
+	trans_pcie = container_of(napi->dev, struct iwl_trans_pcie, napi_dev);
 	trans = trans_pcie->trans;
 
 	ret = iwl_pcie_rx_handle(trans, rxq->id, budget);
@@ -1039,7 +1034,7 @@ static int iwl_pcie_napi_poll_msix(struct napi_struct *napi, int budget)
 	struct iwl_trans *trans;
 	int ret;
 
-	trans_pcie = iwl_netdev_to_trans_pcie(napi->dev);
+	trans_pcie = container_of(napi->dev, struct iwl_trans_pcie, napi_dev);
 	trans = trans_pcie->trans;
 
 	ret = iwl_pcie_rx_handle(trans, rxq->id, budget);
@@ -1136,7 +1131,7 @@ static int _iwl_pcie_rx_init(struct iwl_trans *trans)
 			if (trans_pcie->msix_enabled)
 				poll = iwl_pcie_napi_poll_msix;
 
-			netif_napi_add(trans_pcie->napi_dev, &rxq->napi,
+			netif_napi_add(&trans_pcie->napi_dev, &rxq->napi,
 				       poll);
 			napi_enable(&rxq->napi);
 		}
@@ -1356,7 +1351,8 @@ static void iwl_pcie_rx_handle_rb(struct iwl_trans *trans,
 		if (len < sizeof(*pkt) || offset > max_len)
 			break;
 
-		maybe_trace_iwlwifi_dev_rx(trans, pkt, len);
+		trace_iwlwifi_dev_rx(trans->dev, trans, pkt, len);
+		trace_iwlwifi_dev_rx_data(trans->dev, trans, pkt, len);
 
 		/* Reclaim a command buffer only if this packet is a response
 		 *   to a (driver-originated) command.
@@ -1664,7 +1660,9 @@ irqreturn_t iwl_pcie_irq_rx_msix_handler(int irq, void *dev_id)
 	IWL_DEBUG_ISR(trans, "[%d] Got interrupt\n", entry->entry);
 
 	local_bh_disable();
-	if (!napi_schedule(&rxq->napi))
+	if (napi_schedule_prep(&rxq->napi))
+		__napi_schedule(&rxq->napi);
+	else
 		iwl_pcie_clear_irq(trans, entry->entry);
 	local_bh_enable();
 
@@ -2292,12 +2290,6 @@ irqreturn_t iwl_pcie_irq_msix_handler(int irq, void *dev_id)
 		sw_err = inta_hw & MSIX_HW_INT_CAUSES_REG_SW_ERR_BZ;
 	else
 		sw_err = inta_hw & MSIX_HW_INT_CAUSES_REG_SW_ERR;
-
-	if (inta_hw & MSIX_HW_INT_CAUSES_REG_TOP_FATAL_ERR) {
-		IWL_ERR(trans, "TOP Fatal error detected, inta_hw=0x%x.\n",
-			inta_hw);
-		/* TODO: PLDR flow required here for >= Bz */
-	}
 
 	/* Error detected by uCode */
 	if ((inta_fh & MSIX_FH_INT_CAUSES_FH_ERR) || sw_err) {

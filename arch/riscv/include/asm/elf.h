@@ -14,7 +14,7 @@
 #include <asm/auxvec.h>
 #include <asm/byteorder.h>
 #include <asm/cacheinfo.h>
-#include <asm/cpufeature.h>
+#include <asm/hwcap.h>
 
 /*
  * These are used to set parameters in the core dumps.
@@ -53,9 +53,13 @@ extern bool compat_elf_check_arch(Elf32_Ehdr *hdr);
 #define ELF_ET_DYN_BASE		((DEFAULT_MAP_WINDOW / 3) * 2)
 
 #ifdef CONFIG_64BIT
-#define STACK_RND_MASK		(is_compat_task() ? \
+#ifdef CONFIG_COMPAT
+#define STACK_RND_MASK		(test_thread_flag(TIF_32BIT) ? \
 				 0x7ff >> (PAGE_SHIFT - 12) : \
 				 0x3ffff >> (PAGE_SHIFT - 12))
+#else
+#define STACK_RND_MASK		(0x3ffff >> (PAGE_SHIFT - 12))
+#endif
 #endif
 
 /*
@@ -135,7 +139,10 @@ do {							\
 #ifdef CONFIG_COMPAT
 
 #define SET_PERSONALITY(ex)					\
-do {	set_compat_task((ex).e_ident[EI_CLASS] == ELFCLASS32);	\
+do {    if ((ex).e_ident[EI_CLASS] == ELFCLASS32)		\
+		set_thread_flag(TIF_32BIT);			\
+	else							\
+		clear_thread_flag(TIF_32BIT);			\
 	if (personality(current->personality) != PER_LINUX32)	\
 		set_personality(PER_LINUX |			\
 			(current->personality & (~PER_MASK)));	\

@@ -10,8 +10,6 @@
 #include <linux/of_fdt.h>
 #include <linux/clocksource.h>
 #include <linux/irqchip.h>
-
-#include <asm/clock.h>
 #include <asm/machvec.h>
 #include <asm/rtc.h>
 

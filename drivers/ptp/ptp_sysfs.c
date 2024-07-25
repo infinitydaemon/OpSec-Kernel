@@ -24,7 +24,8 @@ static ssize_t max_phase_adjustment_show(struct device *dev,
 {
 	struct ptp_clock *ptp = dev_get_drvdata(dev);
 
-	return sysfs_emit(page, "%d\n", ptp->info->getmaxphase(ptp->info));
+	return snprintf(page, PAGE_SIZE - 1, "%d\n",
+			ptp->info->getmaxphase(ptp->info));
 }
 static DEVICE_ATTR_RO(max_phase_adjustment);
 
@@ -33,7 +34,7 @@ static ssize_t var##_show(struct device *dev,				\
 			   struct device_attribute *attr, char *page)	\
 {									\
 	struct ptp_clock *ptp = dev_get_drvdata(dev);			\
-	return sysfs_emit(page, "%d\n", ptp->info->var);	\
+	return snprintf(page, PAGE_SIZE-1, "%d\n", ptp->info->var);	\
 }									\
 static DEVICE_ATTR(name, 0444, var##_show, NULL);
 
@@ -74,21 +75,17 @@ static ssize_t extts_fifo_show(struct device *dev,
 			       struct device_attribute *attr, char *page)
 {
 	struct ptp_clock *ptp = dev_get_drvdata(dev);
-	struct timestamp_event_queue *queue;
+	struct timestamp_event_queue *queue = &ptp->tsevq;
 	struct ptp_extts_event event;
 	unsigned long flags;
 	size_t qcnt;
 	int cnt = 0;
 
-	cnt = list_count_nodes(&ptp->tsevqs);
-	if (cnt <= 0)
-		goto out;
-
-	/* The sysfs fifo will always draw from the fist queue */
-	queue = list_first_entry(&ptp->tsevqs, struct timestamp_event_queue,
-				 qlist);
-
 	memset(&event, 0, sizeof(event));
+
+	if (mutex_lock_interruptible(&ptp->tsevq_mux))
+		return -ERESTARTSYS;
+
 	spin_lock_irqsave(&queue->lock, flags);
 	qcnt = queue_cnt(queue);
 	if (qcnt) {
@@ -101,9 +98,10 @@ static ssize_t extts_fifo_show(struct device *dev,
 	if (!qcnt)
 		goto out;
 
-	cnt = sysfs_emit(page, "%u %lld %u\n",
-			 event.index, event.t.sec, event.t.nsec);
+	cnt = snprintf(page, PAGE_SIZE, "%u %lld %u\n",
+		       event.index, event.t.sec, event.t.nsec);
 out:
+	mutex_unlock(&ptp->tsevq_mux);
 	return cnt;
 }
 static DEVICE_ATTR(fifo, 0444, extts_fifo_show, NULL);
@@ -193,7 +191,7 @@ static ssize_t n_vclocks_show(struct device *dev,
 	if (mutex_lock_interruptible(&ptp->n_vclocks_mux))
 		return -ERESTARTSYS;
 
-	size = sysfs_emit(page, "%u\n", ptp->n_vclocks);
+	size = snprintf(page, PAGE_SIZE - 1, "%u\n", ptp->n_vclocks);
 
 	mutex_unlock(&ptp->n_vclocks_mux);
 
@@ -269,7 +267,7 @@ static ssize_t max_vclocks_show(struct device *dev,
 	struct ptp_clock *ptp = dev_get_drvdata(dev);
 	ssize_t size;
 
-	size = sysfs_emit(page, "%u\n", ptp->max_vclocks);
+	size = snprintf(page, PAGE_SIZE - 1, "%u\n", ptp->max_vclocks);
 
 	return size;
 }
@@ -296,8 +294,7 @@ static ssize_t max_vclocks_store(struct device *dev,
 	if (max < ptp->n_vclocks)
 		goto out;
 
-	size = sizeof(int) * max;
-	vclock_index = kzalloc(size, GFP_KERNEL);
+	vclock_index = kcalloc(max, sizeof(int), GFP_KERNEL);
 	if (!vclock_index) {
 		err = -ENOMEM;
 		goto out;

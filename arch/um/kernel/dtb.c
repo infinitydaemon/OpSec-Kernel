@@ -16,16 +16,16 @@ void uml_dtb_init(void)
 	void *area;
 
 	area = uml_load_file(dtb, &size);
-	if (area) {
-		if (!early_init_dt_scan(area)) {
-			pr_err("invalid DTB %s\n", dtb);
-			memblock_free(area, size);
-			return;
-		}
+	if (!area)
+		return;
 
-		early_init_fdt_scan_reserved_mem();
+	if (!early_init_dt_scan(area)) {
+		pr_err("invalid DTB %s\n", dtb);
+		memblock_free(area, size);
+		return;
 	}
 
+	early_init_fdt_scan_reserved_mem();
 	unflatten_device_tree();
 }
 

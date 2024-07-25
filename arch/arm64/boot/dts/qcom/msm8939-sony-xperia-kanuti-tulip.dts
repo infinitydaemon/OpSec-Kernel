@@ -39,10 +39,6 @@
 	};
 };
 
-&gpu {
-	status = "okay";
-};
-
 &mdss {
 	status = "okay";
 };
@@ -90,8 +86,4 @@
 
 &wcnss_iris {
 	compatible = "qcom,wcn3660";
-};
-
-&wcnss_mem {
-	status = "okay";
 };

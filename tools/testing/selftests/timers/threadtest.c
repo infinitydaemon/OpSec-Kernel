@@ -189,5 +189,5 @@ out:
 	/* die */
 	if (ret)
 		ksft_exit_fail();
-	ksft_exit_pass();
+	return ksft_exit_pass();
 }

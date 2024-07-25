@@ -37,7 +37,6 @@
 #define CFI_SECTIONS
 #endif
 
-#ifdef __ASSEMBLY__
 /*
  * LEAF - declare leaf routine
  */
@@ -122,8 +121,6 @@ symbol		=	value
 #else
 #define ASM_PRINT(string)
 #endif
-
-#endif /* __ASSEMBLY__ */
 
 /*
  * Stack alignment

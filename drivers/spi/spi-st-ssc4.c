@@ -6,7 +6,7 @@
  *          Patrice Chotard <patrice.chotard@st.com>
  *          Lee Jones <lee.jones@linaro.org>
  *
- *  SPI host mode controller driver, used in STMicroelectronics devices.
+ *  SPI master mode controller driver, used in STMicroelectronics devices.
  */
 
 #include <linux/clk.h>
@@ -115,10 +115,10 @@ static void ssc_read_rx_fifo(struct spi_st *spi_st)
 	spi_st->words_remaining -= count;
 }
 
-static int spi_st_transfer_one(struct spi_controller *host,
+static int spi_st_transfer_one(struct spi_master *master,
 			       struct spi_device *spi, struct spi_transfer *t)
 {
-	struct spi_st *spi_st = spi_controller_get_devdata(host);
+	struct spi_st *spi_st = spi_master_get_devdata(master);
 	uint32_t ctl = 0;
 
 	/* Setup transfer */
@@ -165,7 +165,7 @@ static int spi_st_transfer_one(struct spi_controller *host,
 	if (ctl)
 		writel_relaxed(ctl, spi_st->base + SSC_CTL);
 
-	spi_finalize_current_transfer(spi->controller);
+	spi_finalize_current_transfer(spi->master);
 
 	return t->len;
 }
@@ -174,7 +174,7 @@ static int spi_st_transfer_one(struct spi_controller *host,
 #define MODEBITS  (SPI_CPOL | SPI_CPHA | SPI_LSB_FIRST | SPI_LOOP | SPI_CS_HIGH)
 static int spi_st_setup(struct spi_device *spi)
 {
-	struct spi_st *spi_st = spi_controller_get_devdata(spi->controller);
+	struct spi_st *spi_st = spi_master_get_devdata(spi->master);
 	u32 spi_st_clk, sscbrg, var;
 	u32 hz = spi->max_speed_hz;
 
@@ -274,35 +274,35 @@ static irqreturn_t spi_st_irq(int irq, void *dev_id)
 static int spi_st_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
-	struct spi_controller *host;
+	struct spi_master *master;
 	struct spi_st *spi_st;
 	int irq, ret = 0;
 	u32 var;
 
-	host = spi_alloc_host(&pdev->dev, sizeof(*spi_st));
-	if (!host)
+	master = spi_alloc_master(&pdev->dev, sizeof(*spi_st));
+	if (!master)
 		return -ENOMEM;
 
-	host->dev.of_node		= np;
-	host->mode_bits			= MODEBITS;
-	host->setup			= spi_st_setup;
-	host->transfer_one		= spi_st_transfer_one;
-	host->bits_per_word_mask	= SPI_BPW_MASK(8) | SPI_BPW_MASK(16);
-	host->auto_runtime_pm		= true;
-	host->bus_num			= pdev->id;
-	host->use_gpio_descriptors	= true;
-	spi_st				= spi_controller_get_devdata(host);
+	master->dev.of_node		= np;
+	master->mode_bits		= MODEBITS;
+	master->setup			= spi_st_setup;
+	master->transfer_one		= spi_st_transfer_one;
+	master->bits_per_word_mask	= SPI_BPW_MASK(8) | SPI_BPW_MASK(16);
+	master->auto_runtime_pm		= true;
+	master->bus_num			= pdev->id;
+	master->use_gpio_descriptors	= true;
+	spi_st				= spi_master_get_devdata(master);
 
 	spi_st->clk = devm_clk_get(&pdev->dev, "ssc");
 	if (IS_ERR(spi_st->clk)) {
 		dev_err(&pdev->dev, "Unable to request clock\n");
 		ret = PTR_ERR(spi_st->clk);
-		goto put_host;
+		goto put_master;
 	}
 
 	ret = clk_prepare_enable(spi_st->clk);
 	if (ret)
-		goto put_host;
+		goto put_master;
 
 	init_completion(&spi_st->done);
 
@@ -324,7 +324,7 @@ static int spi_st_probe(struct platform_device *pdev)
 	var &= ~SSC_CTL_SR;
 	writel_relaxed(var, spi_st->base + SSC_CTL);
 
-	/* Set SSC into target mode before reconfiguring PIO pins */
+	/* Set SSC into slave mode before reconfiguring PIO pins */
 	var = readl_relaxed(spi_st->base + SSC_CTL);
 	var &= ~SSC_CTL_MS;
 	writel_relaxed(var, spi_st->base + SSC_CTL);
@@ -347,11 +347,11 @@ static int spi_st_probe(struct platform_device *pdev)
 	pm_runtime_set_active(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);
 
-	platform_set_drvdata(pdev, host);
+	platform_set_drvdata(pdev, master);
 
-	ret = devm_spi_register_controller(&pdev->dev, host);
+	ret = devm_spi_register_master(&pdev->dev, master);
 	if (ret) {
-		dev_err(&pdev->dev, "Failed to register host\n");
+		dev_err(&pdev->dev, "Failed to register master\n");
 		goto rpm_disable;
 	}
 
@@ -361,15 +361,15 @@ rpm_disable:
 	pm_runtime_disable(&pdev->dev);
 clk_disable:
 	clk_disable_unprepare(spi_st->clk);
-put_host:
-	spi_controller_put(host);
+put_master:
+	spi_master_put(master);
 	return ret;
 }
 
 static void spi_st_remove(struct platform_device *pdev)
 {
-	struct spi_controller *host = platform_get_drvdata(pdev);
-	struct spi_st *spi_st = spi_controller_get_devdata(host);
+	struct spi_master *master = platform_get_drvdata(pdev);
+	struct spi_st *spi_st = spi_master_get_devdata(master);
 
 	pm_runtime_disable(&pdev->dev);
 
@@ -381,8 +381,8 @@ static void spi_st_remove(struct platform_device *pdev)
 #ifdef CONFIG_PM
 static int spi_st_runtime_suspend(struct device *dev)
 {
-	struct spi_controller *host = dev_get_drvdata(dev);
-	struct spi_st *spi_st = spi_controller_get_devdata(host);
+	struct spi_master *master = dev_get_drvdata(dev);
+	struct spi_st *spi_st = spi_master_get_devdata(master);
 
 	writel_relaxed(0, spi_st->base + SSC_IEN);
 	pinctrl_pm_select_sleep_state(dev);
@@ -394,8 +394,8 @@ static int spi_st_runtime_suspend(struct device *dev)
 
 static int spi_st_runtime_resume(struct device *dev)
 {
-	struct spi_controller *host = dev_get_drvdata(dev);
-	struct spi_st *spi_st = spi_controller_get_devdata(host);
+	struct spi_master *master = dev_get_drvdata(dev);
+	struct spi_st *spi_st = spi_master_get_devdata(master);
 	int ret;
 
 	ret = clk_prepare_enable(spi_st->clk);
@@ -408,10 +408,10 @@ static int spi_st_runtime_resume(struct device *dev)
 #ifdef CONFIG_PM_SLEEP
 static int spi_st_suspend(struct device *dev)
 {
-	struct spi_controller *host = dev_get_drvdata(dev);
+	struct spi_master *master = dev_get_drvdata(dev);
 	int ret;
 
-	ret = spi_controller_suspend(host);
+	ret = spi_master_suspend(master);
 	if (ret)
 		return ret;
 
@@ -420,10 +420,10 @@ static int spi_st_suspend(struct device *dev)
 
 static int spi_st_resume(struct device *dev)
 {
-	struct spi_controller *host = dev_get_drvdata(dev);
+	struct spi_master *master = dev_get_drvdata(dev);
 	int ret;
 
-	ret = spi_controller_resume(host);
+	ret = spi_master_resume(master);
 	if (ret)
 		return ret;
 

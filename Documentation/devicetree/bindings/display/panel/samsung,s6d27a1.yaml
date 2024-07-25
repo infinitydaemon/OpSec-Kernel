@@ -20,8 +20,7 @@ properties:
   compatible:
     const: samsung,s6d27a1
 
-  reg:
-    maxItems: 1
+  reg: true
 
   interrupts:
     description: provides an optional ESD (electrostatic discharge)

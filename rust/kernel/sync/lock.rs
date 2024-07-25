@@ -6,7 +6,7 @@
 //! spinlocks, raw spinlocks) to be provided with minimal effort.
 
 use super::LockClassKey;
-use crate::{init::PinInit, pin_init, str::CStr, types::Opaque, types::ScopeGuard};
+use crate::{bindings, init::PinInit, pin_init, str::CStr, types::Opaque, types::ScopeGuard};
 use core::{cell::UnsafeCell, marker::PhantomData, marker::PhantomPinned};
 use macros::pin_data;
 
@@ -21,21 +21,14 @@ pub mod spinlock;
 /// # Safety
 ///
 /// - Implementers must ensure that only one thread/CPU may access the protected data once the lock
-///   is owned, that is, between calls to [`lock`] and [`unlock`].
-/// - Implementers must also ensure that [`relock`] uses the same locking method as the original
-///   lock operation.
-///
-/// [`lock`]: Backend::lock
-/// [`unlock`]: Backend::unlock
-/// [`relock`]: Backend::relock
+/// is owned, that is, between calls to `lock` and `unlock`.
+/// - Implementers must also ensure that `relock` uses the same locking method as the original
+/// lock operation.
 pub unsafe trait Backend {
     /// The state required by the lock.
     type State;
 
-    /// The state required to be kept between [`lock`] and [`unlock`].
-    ///
-    /// [`lock`]: Backend::lock
-    /// [`unlock`]: Backend::unlock
+    /// The state required to be kept between lock and unlock.
     type GuardState;
 
     /// Initialises the lock.
@@ -106,6 +99,7 @@ unsafe impl<T: ?Sized + Send, B: Backend> Sync for Lock<T, B> {}
 
 impl<T, B: Backend> Lock<T, B> {
     /// Constructs a new lock initialiser.
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(t: T, name: &'static CStr, key: &'static LockClassKey) -> impl PinInit<Self> {
         pin_init!(Self {
             data: UnsafeCell::new(t),
@@ -146,7 +140,7 @@ pub struct Guard<'a, T: ?Sized, B: Backend> {
 unsafe impl<T: Sync + ?Sized, B: Backend> Sync for Guard<'_, T, B> {}
 
 impl<T: ?Sized, B: Backend> Guard<'_, T, B> {
-    pub(crate) fn do_unlocked<U>(&mut self, cb: impl FnOnce() -> U) -> U {
+    pub(crate) fn do_unlocked(&mut self, cb: impl FnOnce()) {
         // SAFETY: The caller owns the lock, so it is safe to unlock it.
         unsafe { B::unlock(self.lock.state.get(), &self.state) };
 
@@ -154,7 +148,7 @@ impl<T: ?Sized, B: Backend> Guard<'_, T, B> {
         let _relock =
             ScopeGuard::new(|| unsafe { B::relock(self.lock.state.get(), &mut self.state) });
 
-        cb()
+        cb();
     }
 }
 

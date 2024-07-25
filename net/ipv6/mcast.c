@@ -159,9 +159,9 @@ static int unsolicited_report_interval(struct inet6_dev *idev)
 	int iv;
 
 	if (mld_in_v1_mode(idev))
-		iv = READ_ONCE(idev->cnf.mldv1_unsolicited_report_interval);
+		iv = idev->cnf.mldv1_unsolicited_report_interval;
 	else
-		iv = READ_ONCE(idev->cnf.mldv2_unsolicited_report_interval);
+		iv = idev->cnf.mldv2_unsolicited_report_interval;
 
 	return iv > 0 ? iv : 1;
 }
@@ -642,7 +642,7 @@ bool inet6_mc_check(const struct sock *sk, const struct in6_addr *mc_addr,
 	}
 	if (!mc) {
 		rcu_read_unlock();
-		return inet6_test_bit(MC6_ALL, sk);
+		return np->mc_all;
 	}
 	psl = rcu_dereference(mc->sflist);
 	if (!psl) {
@@ -1202,15 +1202,15 @@ static bool mld_marksources(struct ifmcaddr6 *pmc, int nsrcs,
 
 static int mld_force_mld_version(const struct inet6_dev *idev)
 {
-	const struct net *net = dev_net(idev->dev);
-	int all_force;
-
-	all_force = READ_ONCE(net->ipv6.devconf_all->force_mld_version);
 	/* Normally, both are 0 here. If enforcement to a particular is
 	 * being used, individual device enforcement will have a lower
 	 * precedence over 'all' device (.../conf/all/force_mld_version).
 	 */
-	return all_force ?: READ_ONCE(idev->cnf.force_mld_version);
+
+	if (dev_net(idev->dev)->ipv6.devconf_all->force_mld_version != 0)
+		return dev_net(idev->dev)->ipv6.devconf_all->force_mld_version;
+	else
+		return idev->cnf.force_mld_version;
 }
 
 static bool mld_in_v2_mode_only(const struct inet6_dev *idev)
@@ -1716,7 +1716,7 @@ static void ip6_mc_hdr(const struct sock *sk, struct sk_buff *skb,
 
 	hdr->payload_len = htons(len);
 	hdr->nexthdr = proto;
-	hdr->hop_limit = READ_ONCE(inet6_sk(sk)->hop_limit);
+	hdr->hop_limit = inet6_sk(sk)->hop_limit;
 
 	hdr->saddr = *saddr;
 	hdr->daddr = *daddr;
@@ -3013,6 +3013,8 @@ static struct ip6_sf_list *igmp6_mcf_get_next(struct seq_file *seq, struct ip6_s
 				continue;
 			state->im = rcu_dereference(state->idev->mc_list);
 		}
+		if (!state->im)
+			break;
 		psf = rcu_dereference(state->im->mca_sources);
 	}
 out:

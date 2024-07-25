@@ -127,15 +127,20 @@ nouveau_abi16_chan_fini(struct nouveau_abi16 *abi16,
 {
 	struct nouveau_abi16_ntfy *ntfy, *temp;
 
-	/* Cancel all jobs from the entity's queue. */
-	if (chan->sched)
-		drm_sched_entity_fini(&chan->sched->entity);
+	/* When a client exits without waiting for it's queued up jobs to
+	 * finish it might happen that we fault the channel. This is due to
+	 * drm_file_free() calling drm_gem_release() before the postclose()
+	 * callback. Hence, we can't tear down this scheduler entity before
+	 * uvmm mappings are unmapped. Currently, we can't detect this case.
+	 *
+	 * However, this should be rare and harmless, since the channel isn't
+	 * needed anymore.
+	 */
+	nouveau_sched_entity_fini(&chan->sched_entity);
 
+	/* wait for all activity to stop before cleaning up */
 	if (chan->chan)
 		nouveau_channel_idle(chan->chan);
-
-	if (chan->sched)
-		nouveau_sched_destroy(&chan->sched);
 
 	/* cleanup notifier state */
 	list_for_each_entry_safe(ntfy, temp, &chan->notifiers, head) {
@@ -315,21 +320,11 @@ nouveau_abi16_ioctl_channel_alloc(ABI16_IOCTL_ARGS)
 	if (device->info.family >= NV_DEVICE_INFO_V0_KEPLER) {
 		if (init->fb_ctxdma_handle == ~0) {
 			switch (init->tt_ctxdma_handle) {
-			case NOUVEAU_FIFO_ENGINE_GR:
-				engine = NV_DEVICE_HOST_RUNLIST_ENGINES_GR;
-				break;
-			case NOUVEAU_FIFO_ENGINE_VP:
-				engine = NV_DEVICE_HOST_RUNLIST_ENGINES_MSPDEC;
-				break;
-			case NOUVEAU_FIFO_ENGINE_PPP:
-				engine = NV_DEVICE_HOST_RUNLIST_ENGINES_MSPPP;
-				break;
-			case NOUVEAU_FIFO_ENGINE_BSP:
-				engine = NV_DEVICE_HOST_RUNLIST_ENGINES_MSVLD;
-				break;
-			case NOUVEAU_FIFO_ENGINE_CE:
-				engine = NV_DEVICE_HOST_RUNLIST_ENGINES_CE;
-				break;
+			case 0x01: engine = NV_DEVICE_HOST_RUNLIST_ENGINES_GR    ; break;
+			case 0x02: engine = NV_DEVICE_HOST_RUNLIST_ENGINES_MSPDEC; break;
+			case 0x04: engine = NV_DEVICE_HOST_RUNLIST_ENGINES_MSPPP ; break;
+			case 0x08: engine = NV_DEVICE_HOST_RUNLIST_ENGINES_MSVLD ; break;
+			case 0x30: engine = NV_DEVICE_HOST_RUNLIST_ENGINES_CE    ; break;
 			default:
 				return nouveau_abi16_put(abi16, -ENOSYS);
 			}
@@ -361,16 +356,10 @@ nouveau_abi16_ioctl_channel_alloc(ABI16_IOCTL_ARGS)
 	if (ret)
 		goto done;
 
-	/* If we're not using the VM_BIND uAPI, we don't need a scheduler.
-	 *
-	 * The client lock is already acquired by nouveau_abi16_get().
-	 */
-	if (nouveau_cli_uvmm(cli)) {
-		ret = nouveau_sched_create(&chan->sched, drm, drm->sched_wq,
-					   chan->chan->dma.ib_max);
-		if (ret)
-			goto done;
-	}
+	ret = nouveau_sched_entity_init(&chan->sched_entity, &drm->sched,
+					drm->sched_wq);
+	if (ret)
+		goto done;
 
 	init->channel = chan->chan->chid;
 

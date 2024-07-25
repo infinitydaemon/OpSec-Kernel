@@ -47,8 +47,6 @@
 
 #define DM_MSG_PREFIX "crypt"
 
-static DEFINE_IDA(workqueue_ida);
-
 /*
  * context holding the current state of a multi-part conversion
  */
@@ -139,9 +137,9 @@ struct iv_elephant_private {
  * and encrypts / decrypts at the same time.
  */
 enum flags { DM_CRYPT_SUSPENDED, DM_CRYPT_KEY_VALID,
-	     DM_CRYPT_SAME_CPU, DM_CRYPT_HIGH_PRIORITY,
-	     DM_CRYPT_NO_OFFLOAD, DM_CRYPT_NO_READ_WORKQUEUE,
-	     DM_CRYPT_NO_WRITE_WORKQUEUE, DM_CRYPT_WRITE_INLINE };
+	     DM_CRYPT_SAME_CPU, DM_CRYPT_NO_OFFLOAD,
+	     DM_CRYPT_NO_READ_WORKQUEUE, DM_CRYPT_NO_WRITE_WORKQUEUE,
+	     DM_CRYPT_WRITE_INLINE };
 
 enum cipher_flags {
 	CRYPT_MODE_INTEGRITY_AEAD,	/* Use authenticated mode for cipher */
@@ -186,7 +184,6 @@ struct crypt_config {
 		struct crypto_aead **tfms_aead;
 	} cipher_tfm;
 	unsigned int tfms_count;
-	int workqueue_id;
 	unsigned long cipher_flags;
 
 	/*
@@ -229,7 +226,7 @@ struct crypt_config {
 	struct mutex bio_alloc_lock;
 
 	u8 *authenc_key; /* space for keys in authenc() format (if used) */
-	u8 key[] __counted_by(key_size);
+	u8 key[];
 };
 
 #define MIN_IOS		64
@@ -657,7 +654,13 @@ static int crypt_iv_tcw_whitening(struct crypt_config *cc,
 	/* calculate crc32 for every 32bit part and xor it */
 	desc->tfm = tcw->crc32_tfm;
 	for (i = 0; i < 4; i++) {
-		r = crypto_shash_digest(desc, &buf[i * 4], 4, &buf[i * 4]);
+		r = crypto_shash_init(desc);
+		if (r)
+			goto out;
+		r = crypto_shash_update(desc, &buf[i * 4], 4);
+		if (r)
+			goto out;
+		r = crypto_shash_final(desc, &buf[i * 4]);
 		if (r)
 			goto out;
 	}
@@ -1656,8 +1659,8 @@ static void crypt_free_buffer_pages(struct crypt_config *cc, struct bio *clone);
 
 /*
  * Generate a new unfragmented bio with the given size
- * This should never violate the device limitations (but if it did then block
- * core should split the bio as needed).
+ * This should never violate the device limitations (but only because
+ * max_segment_size is being constrained to PAGE_SIZE).
  *
  * This function may be called concurrently. If we allocate from the mempool
  * concurrently, there is a possibility of deadlock. For example, if we have
@@ -1681,7 +1684,7 @@ static struct bio *crypt_alloc_buffer(struct dm_crypt_io *io, unsigned int size)
 	unsigned int nr_iovecs = (size + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	gfp_t gfp_mask = GFP_NOWAIT | __GFP_HIGHMEM;
 	unsigned int remaining_size;
-	unsigned int order = MAX_PAGE_ORDER;
+	unsigned int order = MAX_ORDER;
 
 retry:
 	if (unlikely(gfp_mask & __GFP_DIRECT_RECLAIM))
@@ -1691,7 +1694,6 @@ retry:
 				 GFP_NOIO, &cc->bs);
 	clone->bi_private = io;
 	clone->bi_end_io = crypt_endio;
-	clone->bi_ioprio = io->base_bio->bi_ioprio;
 
 	remaining_size = size;
 
@@ -1968,6 +1970,7 @@ continue_locked:
 
 		schedule();
 
+		set_current_state(TASK_RUNNING);
 		spin_lock_irq(&cc->write_thread_lock);
 		goto continue_locked;
 
@@ -2299,11 +2302,7 @@ static void kcryptd_queue_crypt(struct dm_crypt_io *io)
 		 * irqs_disabled(): the kernel may run some IO completion from the idle thread, but
 		 * it is being executed with irqs disabled.
 		 */
-		if (in_hardirq() || irqs_disabled()) {
-			INIT_WORK(&io->work, kcryptd_crypt);
-			queue_work(system_bh_wq, &io->work);
-			return;
-		} else {
+		if (!(in_hardirq() || irqs_disabled())) {
 			kcryptd_crypt(&io->work);
 			return;
 		}
@@ -2774,9 +2773,6 @@ static void crypt_dtr(struct dm_target *ti)
 	if (cc->crypt_queue)
 		destroy_workqueue(cc->crypt_queue);
 
-	if (cc->workqueue_id)
-		ida_free(&workqueue_ida, cc->workqueue_id);
-
 	crypt_free_tfms(cc);
 
 	bioset_exit(&cc->bs);
@@ -2901,9 +2897,10 @@ static int crypt_ctr_auth_cipher(struct crypt_config *cc, char *cipher_api)
 	if (!start || !end || ++start > end)
 		return -EINVAL;
 
-	mac_alg = kmemdup_nul(start, end - start, GFP_KERNEL);
+	mac_alg = kzalloc(end - start + 1, GFP_KERNEL);
 	if (!mac_alg)
 		return -ENOMEM;
+	strncpy(mac_alg, start, end - start);
 
 	mac = crypto_alloc_ahash(mac_alg, 0, CRYPTO_ALG_ALLOCATES_MEMORY);
 	kfree(mac_alg);
@@ -3140,7 +3137,7 @@ static int crypt_ctr_optional(struct dm_target *ti, unsigned int argc, char **ar
 	struct crypt_config *cc = ti->private;
 	struct dm_arg_set as;
 	static const struct dm_arg _args[] = {
-		{0, 9, "Invalid number of feature args"},
+		{0, 8, "Invalid number of feature args"},
 	};
 	unsigned int opt_params, val;
 	const char *opt_string, *sval;
@@ -3167,8 +3164,6 @@ static int crypt_ctr_optional(struct dm_target *ti, unsigned int argc, char **ar
 
 		else if (!strcasecmp(opt_string, "same_cpu_crypt"))
 			set_bit(DM_CRYPT_SAME_CPU, &cc->flags);
-		else if (!strcasecmp(opt_string, "high_priority"))
-			set_bit(DM_CRYPT_HIGH_PRIORITY, &cc->flags);
 
 		else if (!strcasecmp(opt_string, "submit_from_crypt_cpus"))
 			set_bit(DM_CRYPT_NO_OFFLOAD, &cc->flags);
@@ -3238,9 +3233,8 @@ static int crypt_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 {
 	struct crypt_config *cc;
 	const char *devname = dm_table_device_name(ti->table);
-	int key_size, wq_id;
+	int key_size;
 	unsigned int align_mask;
-	unsigned int common_wq_flags;
 	unsigned long long tmpll;
 	int ret;
 	size_t iv_size_padding, additional_req_size;
@@ -3407,38 +3401,20 @@ static int crypt_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		cc->tag_pool_max_sectors <<= cc->sector_shift;
 	}
 
-	wq_id = ida_alloc_min(&workqueue_ida, 1, GFP_KERNEL);
-	if (wq_id < 0) {
-		ti->error = "Couldn't get workqueue id";
-		ret = wq_id;
-		goto bad;
-	}
-	cc->workqueue_id = wq_id;
-
 	ret = -ENOMEM;
-	common_wq_flags = WQ_MEM_RECLAIM | WQ_SYSFS;
-	if (test_bit(DM_CRYPT_HIGH_PRIORITY, &cc->flags))
-		common_wq_flags |= WQ_HIGHPRI;
-
-	cc->io_queue = alloc_workqueue("kcryptd_io-%s-%d", common_wq_flags, 1, devname, wq_id);
+	cc->io_queue = alloc_workqueue("kcryptd_io/%s", WQ_MEM_RECLAIM, 1, devname);
 	if (!cc->io_queue) {
 		ti->error = "Couldn't create kcryptd io queue";
 		goto bad;
 	}
 
-	if (test_bit(DM_CRYPT_SAME_CPU, &cc->flags)) {
-		cc->crypt_queue = alloc_workqueue("kcryptd-%s-%d",
-						  common_wq_flags | WQ_CPU_INTENSIVE,
-						  1, devname, wq_id);
-	} else {
-		/*
-		 * While crypt_queue is certainly CPU intensive, the use of
-		 * WQ_CPU_INTENSIVE is meaningless with WQ_UNBOUND.
-		 */
-		cc->crypt_queue = alloc_workqueue("kcryptd-%s-%d",
-						  common_wq_flags | WQ_UNBOUND,
-						  num_online_cpus(), devname, wq_id);
-	}
+	if (test_bit(DM_CRYPT_SAME_CPU, &cc->flags))
+		cc->crypt_queue = alloc_workqueue("kcryptd/%s", WQ_CPU_INTENSIVE | WQ_MEM_RECLAIM,
+						  1, devname);
+	else
+		cc->crypt_queue = alloc_workqueue("kcryptd/%s",
+						  WQ_CPU_INTENSIVE | WQ_MEM_RECLAIM | WQ_UNBOUND,
+						  num_online_cpus(), devname);
 	if (!cc->crypt_queue) {
 		ti->error = "Couldn't create kcryptd queue";
 		goto bad;
@@ -3454,8 +3430,6 @@ static int crypt_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		ti->error = "Couldn't spawn write thread";
 		goto bad;
 	}
-	if (test_bit(DM_CRYPT_HIGH_PRIORITY, &cc->flags))
-		set_user_nice(cc->write_thread, MIN_NICE);
 
 	ti->num_flush_bios = 1;
 	ti->limit_swap_bios = true;
@@ -3576,7 +3550,6 @@ static void crypt_status(struct dm_target *ti, status_type_t type,
 
 		num_feature_args += !!ti->num_discard_bios;
 		num_feature_args += test_bit(DM_CRYPT_SAME_CPU, &cc->flags);
-		num_feature_args += test_bit(DM_CRYPT_HIGH_PRIORITY, &cc->flags);
 		num_feature_args += test_bit(DM_CRYPT_NO_OFFLOAD, &cc->flags);
 		num_feature_args += test_bit(DM_CRYPT_NO_READ_WORKQUEUE, &cc->flags);
 		num_feature_args += test_bit(DM_CRYPT_NO_WRITE_WORKQUEUE, &cc->flags);
@@ -3590,8 +3563,6 @@ static void crypt_status(struct dm_target *ti, status_type_t type,
 				DMEMIT(" allow_discards");
 			if (test_bit(DM_CRYPT_SAME_CPU, &cc->flags))
 				DMEMIT(" same_cpu_crypt");
-			if (test_bit(DM_CRYPT_HIGH_PRIORITY, &cc->flags))
-				DMEMIT(" high_priority");
 			if (test_bit(DM_CRYPT_NO_OFFLOAD, &cc->flags))
 				DMEMIT(" submit_from_crypt_cpus");
 			if (test_bit(DM_CRYPT_NO_READ_WORKQUEUE, &cc->flags))
@@ -3611,7 +3582,6 @@ static void crypt_status(struct dm_target *ti, status_type_t type,
 		DMEMIT_TARGET_NAME_VERSION(ti->type);
 		DMEMIT(",allow_discards=%c", ti->num_discard_bios ? 'y' : 'n');
 		DMEMIT(",same_cpu_crypt=%c", test_bit(DM_CRYPT_SAME_CPU, &cc->flags) ? 'y' : 'n');
-		DMEMIT(",high_priority=%c", test_bit(DM_CRYPT_HIGH_PRIORITY, &cc->flags) ? 'y' : 'n');
 		DMEMIT(",submit_from_crypt_cpus=%c", test_bit(DM_CRYPT_NO_OFFLOAD, &cc->flags) ?
 		       'y' : 'n');
 		DMEMIT(",no_read_workqueue=%c", test_bit(DM_CRYPT_NO_READ_WORKQUEUE, &cc->flags) ?
@@ -3721,6 +3691,14 @@ static void crypt_io_hints(struct dm_target *ti, struct queue_limits *limits)
 {
 	struct crypt_config *cc = ti->private;
 
+	/*
+	 * Unfortunate constraint that is required to avoid the potential
+	 * for exceeding underlying device's max_segments limits -- due to
+	 * crypt_alloc_buffer() possibly allocating pages for the encryption
+	 * bio that are not as physically contiguous as the original bio.
+	 */
+	limits->max_segment_size = PAGE_SIZE;
+
 	limits->logical_block_size =
 		max_t(unsigned int, limits->logical_block_size, cc->sector_size);
 	limits->physical_block_size =
@@ -3731,7 +3709,7 @@ static void crypt_io_hints(struct dm_target *ti, struct queue_limits *limits)
 
 static struct target_type crypt_target = {
 	.name   = "crypt",
-	.version = {1, 26, 0},
+	.version = {1, 24, 0},
 	.module = THIS_MODULE,
 	.ctr    = crypt_ctr,
 	.dtr    = crypt_dtr,

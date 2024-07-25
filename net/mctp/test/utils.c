@@ -4,7 +4,6 @@
 #include <linux/mctp.h>
 #include <linux/if_arp.h>
 
-#include <net/mctp.h>
 #include <net/mctpdevice.h>
 #include <net/pkt_sched.h>
 
@@ -55,7 +54,6 @@ struct mctp_test_dev *mctp_test_create_dev(void)
 
 	rcu_read_lock();
 	dev->mdev = __mctp_dev_get(ndev);
-	dev->mdev->net = mctp_default_net(dev_net(ndev));
 	rcu_read_unlock();
 
 	return dev;

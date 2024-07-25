@@ -143,10 +143,11 @@ static int xtmr_inject_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void xtmr_inject_remove(struct platform_device *pdev)
+static int xtmr_inject_remove(struct platform_device *pdev)
 {
 	debugfs_remove_recursive(dbgfs_root);
 	dbgfs_root = NULL;
+	return 0;
 }
 
 static const struct of_device_id xtmr_inject_of_match[] = {
@@ -163,7 +164,7 @@ static struct platform_driver xtmr_inject_driver = {
 		.of_match_table = xtmr_inject_of_match,
 	},
 	.probe = xtmr_inject_probe,
-	.remove_new = xtmr_inject_remove,
+	.remove = xtmr_inject_remove,
 };
 module_platform_driver(xtmr_inject_driver);
 MODULE_AUTHOR("Advanced Micro Devices, Inc");

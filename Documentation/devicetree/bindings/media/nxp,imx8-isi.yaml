@@ -84,7 +84,6 @@ allOf:
           properties:
             port@0:
               description: MIPI CSI-2 RX
-            port@1: false
           required:
             - port@0
 

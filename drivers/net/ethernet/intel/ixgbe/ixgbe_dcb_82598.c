@@ -15,8 +15,10 @@
  *
  * Configure Rx Data Arbiter and credits for each traffic class.
  */
-int ixgbe_dcb_config_rx_arbiter_82598(struct ixgbe_hw *hw, u16 *refill,
-				      u16 *max, u8 *prio_type)
+s32 ixgbe_dcb_config_rx_arbiter_82598(struct ixgbe_hw *hw,
+					u16 *refill,
+					u16 *max,
+					u8 *prio_type)
 {
 	u32    reg           = 0;
 	u32    credit_refill = 0;
@@ -73,8 +75,11 @@ int ixgbe_dcb_config_rx_arbiter_82598(struct ixgbe_hw *hw, u16 *refill,
  *
  * Configure Tx Descriptor Arbiter and credits for each traffic class.
  */
-int ixgbe_dcb_config_tx_desc_arbiter_82598(struct ixgbe_hw *hw, u16 *refill,
-					   u16 *max, u8 *bwg_id, u8 *prio_type)
+s32 ixgbe_dcb_config_tx_desc_arbiter_82598(struct ixgbe_hw *hw,
+						u16 *refill,
+						u16 *max,
+						u8 *bwg_id,
+						u8 *prio_type)
 {
 	u32    reg, max_credits;
 	u8     i;
@@ -119,8 +124,11 @@ int ixgbe_dcb_config_tx_desc_arbiter_82598(struct ixgbe_hw *hw, u16 *refill,
  *
  * Configure Tx Data Arbiter and credits for each traffic class.
  */
-int ixgbe_dcb_config_tx_data_arbiter_82598(struct ixgbe_hw *hw, u16 *refill,
-					   u16 *max, u8 *bwg_id, u8 *prio_type)
+s32 ixgbe_dcb_config_tx_data_arbiter_82598(struct ixgbe_hw *hw,
+						u16 *refill,
+						u16 *max,
+						u8 *bwg_id,
+						u8 *prio_type)
 {
 	u32 reg;
 	u8 i;
@@ -163,7 +171,7 @@ int ixgbe_dcb_config_tx_data_arbiter_82598(struct ixgbe_hw *hw, u16 *refill,
  *
  * Configure Priority Flow Control for each traffic class.
  */
-int ixgbe_dcb_config_pfc_82598(struct ixgbe_hw *hw, u8 pfc_en)
+s32 ixgbe_dcb_config_pfc_82598(struct ixgbe_hw *hw, u8 pfc_en)
 {
 	u32 fcrtl, reg;
 	u8  i;
@@ -216,7 +224,7 @@ int ixgbe_dcb_config_pfc_82598(struct ixgbe_hw *hw, u8 pfc_en)
  * Configure queue statistics registers, all queues belonging to same traffic
  * class uses a single set of queue statistics counters.
  */
-static int ixgbe_dcb_config_tc_stats_82598(struct ixgbe_hw *hw)
+static s32 ixgbe_dcb_config_tc_stats_82598(struct ixgbe_hw *hw)
 {
 	u32 reg = 0;
 	u8  i   = 0;
@@ -252,7 +260,7 @@ static int ixgbe_dcb_config_tc_stats_82598(struct ixgbe_hw *hw)
  *
  * Configure dcb settings and enable dcb mode.
  */
-int ixgbe_dcb_hw_config_82598(struct ixgbe_hw *hw, u8 pfc_en, u16 *refill,
+s32 ixgbe_dcb_hw_config_82598(struct ixgbe_hw *hw, u8 pfc_en, u16 *refill,
 			      u16 *max, u8 *bwg_id, u8 *prio_type)
 {
 	ixgbe_dcb_config_rx_arbiter_82598(hw, refill, max, prio_type);

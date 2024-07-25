@@ -22,23 +22,18 @@
 #include <linux/module.h>
 #include <linux/gfp.h>
 #include <net/tcp.h>
-#include <net/rstreason.h>
 
 static u32 tcp_clamp_rto_to_user_timeout(const struct sock *sk)
 {
-	const struct inet_connection_sock *icsk = inet_csk(sk);
-	const struct tcp_sock *tp = tcp_sk(sk);
-	u32 elapsed, user_timeout;
+	struct inet_connection_sock *icsk = inet_csk(sk);
+	u32 elapsed, start_ts, user_timeout;
 	s32 remaining;
 
+	start_ts = tcp_sk(sk)->retrans_stamp;
 	user_timeout = READ_ONCE(icsk->icsk_user_timeout);
 	if (!user_timeout)
 		return icsk->icsk_rto;
-
-	elapsed = tcp_time_stamp_ts(tp) - tp->retrans_stamp;
-	if (tp->tcp_usec_ts)
-		elapsed /= USEC_PER_MSEC;
-
+	elapsed = tcp_time_stamp(tcp_sk(sk)) - start_ts;
 	remaining = user_timeout - elapsed;
 	if (remaining <= 0)
 		return 1; /* user timeout has passed; fire ASAP */
@@ -48,7 +43,7 @@ static u32 tcp_clamp_rto_to_user_timeout(const struct sock *sk)
 
 u32 tcp_clamp_probe0_to_user_timeout(const struct sock *sk, u32 when)
 {
-	const struct inet_connection_sock *icsk = inet_csk(sk);
+	struct inet_connection_sock *icsk = inet_csk(sk);
 	u32 remaining, user_timeout;
 	s32 elapsed;
 
@@ -128,8 +123,7 @@ static int tcp_out_of_resources(struct sock *sk, bool do_reset)
 		    (!tp->snd_wnd && !tp->packets_out))
 			do_reset = true;
 		if (do_reset)
-			tcp_send_active_reset(sk, GFP_ATOMIC,
-					      SK_RST_REASON_NOT_SPECIFIED);
+			tcp_send_active_reset(sk, GFP_ATOMIC);
 		tcp_done(sk);
 		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPABORTONMEMORY);
 		return 1;
@@ -218,13 +212,12 @@ static bool retransmits_timed_out(struct sock *sk,
 				  unsigned int boundary,
 				  unsigned int timeout)
 {
-	struct tcp_sock *tp = tcp_sk(sk);
-	unsigned int start_ts, delta;
+	unsigned int start_ts;
 
 	if (!inet_csk(sk)->icsk_retransmits)
 		return false;
 
-	start_ts = tp->retrans_stamp;
+	start_ts = tcp_sk(sk)->retrans_stamp;
 	if (likely(timeout == 0)) {
 		unsigned int rto_base = TCP_RTO_MIN;
 
@@ -233,12 +226,7 @@ static bool retransmits_timed_out(struct sock *sk,
 		timeout = tcp_model_timeout(sk, boundary, rto_base);
 	}
 
-	if (tp->tcp_usec_ts) {
-		/* delta maybe off up to a jiffy due to timer granularity. */
-		delta = tp->tcp_mstamp - start_ts + jiffies_to_usecs(1);
-		return (s32)(delta - timeout * USEC_PER_MSEC) >= 0;
-	}
-	return (s32)(tcp_time_stamp_ts(tp) - start_ts - timeout) >= 0;
+	return (s32)(tcp_time_stamp(tcp_sk(sk)) - start_ts - timeout) >= 0;
 }
 
 /* A write timeout has occurred. Process the after effects. */
@@ -334,7 +322,7 @@ void tcp_delack_timer_handler(struct sock *sk)
 	if (inet_csk_ack_scheduled(sk)) {
 		if (!inet_csk_in_pingpong_mode(sk)) {
 			/* Delayed ACK missed: inflate ATO. */
-			icsk->icsk_ack.ato = min_t(u32, icsk->icsk_ack.ato << 1, icsk->icsk_rto);
+			icsk->icsk_ack.ato = min(icsk->icsk_ack.ato << 1, icsk->icsk_rto);
 		} else {
 			/* Delayed ACK missed: leave pingpong mode and
 			 * deflate ATO.
@@ -406,7 +394,7 @@ static void tcp_probe_timer(struct sock *sk)
 		if (user_timeout &&
 		    (s32)(tcp_jiffies32 - icsk->icsk_probes_tstamp) >=
 		     msecs_to_jiffies(user_timeout))
-			goto abort;
+		goto abort;
 	}
 	max_probes = READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_retries2);
 	if (sock_flag(sk, SOCK_DEAD)) {
@@ -425,19 +413,6 @@ abort:		tcp_write_err(sk);
 		/* Only send another probe if we didn't close things up. */
 		tcp_send_probe0(sk);
 	}
-}
-
-static void tcp_update_rto_stats(struct sock *sk)
-{
-	struct inet_connection_sock *icsk = inet_csk(sk);
-	struct tcp_sock *tp = tcp_sk(sk);
-
-	if (!icsk->icsk_retransmits) {
-		tp->total_rto_recoveries++;
-		tp->rto_stamp = tcp_time_stamp_ms(tp);
-	}
-	icsk->icsk_retransmits++;
-	tp->total_rto++;
 }
 
 /*
@@ -472,26 +447,45 @@ static void tcp_fastopen_synack_timer(struct sock *sk, struct request_sock *req)
 	 */
 	inet_rtx_syn_ack(sk, req);
 	req->num_timeout++;
-	tcp_update_rto_stats(sk);
+	icsk->icsk_retransmits++;
 	if (!tp->retrans_stamp)
-		tp->retrans_stamp = tcp_time_stamp_ts(tp);
+		tp->retrans_stamp = tcp_time_stamp(tp);
 	inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS,
 			  req->timeout << req->num_timeout, TCP_RTO_MAX);
 }
 
 static bool tcp_rtx_probe0_timed_out(const struct sock *sk,
-				     const struct sk_buff *skb,
-				     u32 rtx_delta)
+				     const struct sk_buff *skb)
 {
+	const struct inet_connection_sock *icsk = inet_csk(sk);
+	u32 user_timeout = READ_ONCE(icsk->icsk_user_timeout);
 	const struct tcp_sock *tp = tcp_sk(sk);
-	const int timeout = TCP_RTO_MAX * 2;
-	u32 rcv_delta;
+	int timeout = TCP_RTO_MAX * 2;
+	u32 rtx_delta;
+	s32 rcv_delta;
 
-	rcv_delta = inet_csk(sk)->icsk_timeout - tp->rcv_tstamp;
+	rtx_delta = (u32)msecs_to_jiffies(tcp_time_stamp(tp) -
+			(tp->retrans_stamp ?: tcp_skb_timestamp(skb)));
+
+	if (user_timeout) {
+		/* If user application specified a TCP_USER_TIMEOUT,
+		 * it does not want win 0 packets to 'reset the timer'
+		 * while retransmits are not making progress.
+		 */
+		if (rtx_delta > user_timeout)
+			return true;
+		timeout = min_t(u32, timeout, msecs_to_jiffies(user_timeout));
+	}
+
+	/* Note: timer interrupt might have been delayed by at least one jiffy,
+	 * and tp->rcv_tstamp might very well have been written recently.
+	 * rcv_delta can thus be negative.
+	 */
+	rcv_delta = icsk->icsk_timeout - tp->rcv_tstamp;
 	if (rcv_delta <= timeout)
 		return false;
 
-	return msecs_to_jiffies(rtx_delta) > timeout;
+	return rtx_delta > timeout;
 }
 
 /**
@@ -532,8 +526,6 @@ void tcp_retransmit_timer(struct sock *sk)
 	if (WARN_ON_ONCE(!skb))
 		return;
 
-	tp->tlp_high_seq = 0;
-
 	if (!tp->snd_wnd && !sock_flag(sk, SOCK_DEAD) &&
 	    !((1 << sk->sk_state) & (TCPF_SYN_SENT | TCPF_SYN_RECV))) {
 		/* Receiver dastardly shrinks window. Our retransmits
@@ -544,11 +536,7 @@ void tcp_retransmit_timer(struct sock *sk)
 		struct inet_sock *inet = inet_sk(sk);
 		u32 rtx_delta;
 
-		rtx_delta = tcp_time_stamp_ts(tp) - (tp->retrans_stamp ?: 
-				tcp_skb_timestamp_ts(tp->tcp_usec_ts, skb));
-		if (tp->tcp_usec_ts)
-			rtx_delta /= USEC_PER_MSEC;
-
+		rtx_delta = tcp_time_stamp(tp) - (tp->retrans_stamp ?: tcp_skb_timestamp(skb));
 		if (sk->sk_family == AF_INET) {
 			net_dbg_ratelimited("Probing zero-window on %pI4:%u/%u, seq=%u:%u, recv %ums ago, lasting %ums\n",
 				&inet->inet_daddr, ntohs(inet->inet_dport),
@@ -565,7 +553,7 @@ void tcp_retransmit_timer(struct sock *sk)
 				rtx_delta);
 		}
 #endif
-		if (tcp_rtx_probe0_timed_out(sk, skb, rtx_delta)) {
+		if (tcp_rtx_probe0_timed_out(sk, skb)) {
 			tcp_write_err(sk);
 			goto out;
 		}
@@ -602,7 +590,7 @@ void tcp_retransmit_timer(struct sock *sk)
 
 	tcp_enter_loss(sk);
 
-	tcp_update_rto_stats(sk);
+	icsk->icsk_retransmits++;
 	if (tcp_retransmit_skb(sk, tcp_rtx_queue_head(sk), 1) > 0) {
 		/* Retransmission failed because of local congestion,
 		 * Let senders fight for local resources conservatively.
@@ -628,6 +616,7 @@ void tcp_retransmit_timer(struct sock *sk)
 	 * implemented ftp to mars will work nicely. We will have to fix
 	 * the 120 second clamps though!
 	 */
+	icsk->icsk_backoff++;
 
 out_reset_timer:
 	/* If stream is thin, use linear timeouts. Since 'icsk_backoff' is
@@ -648,12 +637,11 @@ out_reset_timer:
 				       tcp_rto_min(sk),
 				       TCP_RTO_MAX);
 	} else if (sk->sk_state != TCP_SYN_SENT ||
-		   tp->total_rto >
+		   icsk->icsk_backoff >
 		   READ_ONCE(net->ipv4.sysctl_tcp_syn_linear_timeouts)) {
 		/* Use normal (exponential) backoff unless linear timeouts are
 		 * activated.
 		 */
-		icsk->icsk_backoff++;
 		icsk->icsk_rto = min(icsk->icsk_rto << 1, TCP_RTO_MAX);
 	}
 	inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS,
@@ -770,7 +758,7 @@ static void tcp_keepalive_timer (struct timer_list *t)
 				goto out;
 			}
 		}
-		tcp_send_active_reset(sk, GFP_ATOMIC, SK_RST_REASON_NOT_SPECIFIED);
+		tcp_send_active_reset(sk, GFP_ATOMIC);
 		goto death;
 	}
 
@@ -797,8 +785,7 @@ static void tcp_keepalive_timer (struct timer_list *t)
 		    icsk->icsk_probes_out > 0) ||
 		    (user_timeout == 0 &&
 		    icsk->icsk_probes_out >= keepalive_probes(tp))) {
-			tcp_send_active_reset(sk, GFP_ATOMIC,
-					      SK_RST_REASON_NOT_SPECIFIED);
+			tcp_send_active_reset(sk, GFP_ATOMIC);
 			tcp_write_err(sk);
 			goto out;
 		}

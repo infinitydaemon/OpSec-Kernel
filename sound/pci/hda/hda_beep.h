@@ -27,6 +27,7 @@ struct hda_beep {
 	unsigned int playing:1;
 	unsigned int keep_power_at_enable:1;	/* set by driver */
 	struct work_struct beep_work; /* scheduled task for beep event */
+	struct mutex mutex;
 	void (*power_hook)(struct hda_beep *beep, bool on);
 };
 

@@ -129,14 +129,9 @@ static void disable_mpesw(struct mlx5_lag *ldev)
 static void mlx5_mpesw_work(struct work_struct *work)
 {
 	struct mlx5_mpesw_work_st *mpesww = container_of(work, struct mlx5_mpesw_work_st, work);
-	struct mlx5_devcom_comp_dev *devcom;
 	struct mlx5_lag *ldev = mpesww->lag;
 
-	devcom = mlx5_lag_get_devcom_comp(ldev);
-	if (!devcom)
-		return;
-
-	mlx5_devcom_comp_lock(devcom);
+	mlx5_dev_list_lock();
 	mutex_lock(&ldev->lock);
 	if (ldev->mode_changes_in_progress) {
 		mpesww->result = -EAGAIN;
@@ -149,7 +144,7 @@ static void mlx5_mpesw_work(struct work_struct *work)
 		disable_mpesw(ldev);
 unlock:
 	mutex_unlock(&ldev->lock);
-	mlx5_devcom_comp_unlock(devcom);
+	mlx5_dev_list_unlock();
 	complete(&mpesww->comp);
 }
 

@@ -425,18 +425,20 @@ eprobe_mgr_put:
 	return ret;
 }
 
-static void of_fpga_region_remove(struct platform_device *pdev)
+static int of_fpga_region_remove(struct platform_device *pdev)
 {
 	struct fpga_region *region = platform_get_drvdata(pdev);
 	struct fpga_manager *mgr = region->mgr;
 
 	fpga_region_unregister(region);
 	fpga_mgr_put(mgr);
+
+	return 0;
 }
 
 static struct platform_driver of_fpga_region_driver = {
 	.probe = of_fpga_region_probe,
-	.remove_new = of_fpga_region_remove,
+	.remove = of_fpga_region_remove,
 	.driver = {
 		.name	= "of-fpga-region",
 		.of_match_table = of_match_ptr(fpga_region_of_match),

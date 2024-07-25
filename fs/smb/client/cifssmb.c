@@ -24,8 +24,6 @@
 #include <linux/swap.h>
 #include <linux/task_io_accounting_ops.h>
 #include <linux/uaccess.h>
-#include <linux/netfs.h>
-#include <trace/events/netfs.h>
 #include "cifspdu.h"
 #include "cifsfs.h"
 #include "cifsglob.h"
@@ -1264,17 +1262,18 @@ openRetry:
 static void
 cifs_readv_callback(struct mid_q_entry *mid)
 {
-	struct cifs_io_subrequest *rdata = mid->callback_data;
-	struct cifs_tcon *tcon = tlink_tcon(rdata->req->cfile->tlink);
+	struct cifs_readdata *rdata = mid->callback_data;
+	struct cifs_tcon *tcon = tlink_tcon(rdata->cfile->tlink);
 	struct TCP_Server_Info *server = tcon->ses->server;
 	struct smb_rqst rqst = { .rq_iov = rdata->iov,
 				 .rq_nvec = 2,
-				 .rq_iter = rdata->subreq.io_iter };
+				 .rq_iter_size = iov_iter_count(&rdata->iter),
+				 .rq_iter = rdata->iter };
 	struct cifs_credits credits = { .value = 1, .instance = 0 };
 
-	cifs_dbg(FYI, "%s: mid=%llu state=%d result=%d bytes=%zu\n",
+	cifs_dbg(FYI, "%s: mid=%llu state=%d result=%d bytes=%u\n",
 		 __func__, mid->mid, mid->mid_state, rdata->result,
-		 rdata->subreq.len);
+		 rdata->bytes);
 
 	switch (mid->mid_state) {
 	case MID_RESPONSE_RECEIVED:
@@ -1306,36 +1305,30 @@ cifs_readv_callback(struct mid_q_entry *mid)
 		rdata->result = -EIO;
 	}
 
-	if (rdata->result == 0 || rdata->result == -EAGAIN)
-		iov_iter_advance(&rdata->subreq.io_iter, rdata->got_bytes);
-	rdata->credits.value = 0;
-	netfs_subreq_terminated(&rdata->subreq,
-				(rdata->result == 0 || rdata->result == -EAGAIN) ?
-				rdata->got_bytes : rdata->result,
-				false);
+	queue_work(cifsiod_wq, &rdata->work);
 	release_mid(mid);
 	add_credits(server, &credits, 0);
 }
 
 /* cifs_async_readv - send an async write, and set up mid to handle result */
 int
-cifs_async_readv(struct cifs_io_subrequest *rdata)
+cifs_async_readv(struct cifs_readdata *rdata)
 {
 	int rc;
 	READ_REQ *smb = NULL;
 	int wct;
-	struct cifs_tcon *tcon = tlink_tcon(rdata->req->cfile->tlink);
+	struct cifs_tcon *tcon = tlink_tcon(rdata->cfile->tlink);
 	struct smb_rqst rqst = { .rq_iov = rdata->iov,
 				 .rq_nvec = 2 };
 
-	cifs_dbg(FYI, "%s: offset=%llu bytes=%zu\n",
-		 __func__, rdata->subreq.start, rdata->subreq.len);
+	cifs_dbg(FYI, "%s: offset=%llu bytes=%u\n",
+		 __func__, rdata->offset, rdata->bytes);
 
 	if (tcon->ses->capabilities & CAP_LARGE_FILES)
 		wct = 12;
 	else {
 		wct = 10; /* old style read */
-		if ((rdata->subreq.start >> 32) > 0)  {
+		if ((rdata->offset >> 32) > 0)  {
 			/* can not handle this big offset for old */
 			return -EIO;
 		}
@@ -1349,13 +1342,13 @@ cifs_async_readv(struct cifs_io_subrequest *rdata)
 	smb->hdr.PidHigh = cpu_to_le16((__u16)(rdata->pid >> 16));
 
 	smb->AndXCommand = 0xFF;	/* none */
-	smb->Fid = rdata->req->cfile->fid.netfid;
-	smb->OffsetLow = cpu_to_le32(rdata->subreq.start & 0xFFFFFFFF);
+	smb->Fid = rdata->cfile->fid.netfid;
+	smb->OffsetLow = cpu_to_le32(rdata->offset & 0xFFFFFFFF);
 	if (wct == 12)
-		smb->OffsetHigh = cpu_to_le32(rdata->subreq.start >> 32);
+		smb->OffsetHigh = cpu_to_le32(rdata->offset >> 32);
 	smb->Remaining = 0;
-	smb->MaxCount = cpu_to_le16(rdata->subreq.len & 0xFFFF);
-	smb->MaxCountHigh = cpu_to_le32(rdata->subreq.len >> 16);
+	smb->MaxCount = cpu_to_le16(rdata->bytes & 0xFFFF);
+	smb->MaxCountHigh = cpu_to_le32(rdata->bytes >> 16);
 	if (wct == 12)
 		smb->ByteCount = 0;
 	else {
@@ -1371,11 +1364,15 @@ cifs_async_readv(struct cifs_io_subrequest *rdata)
 	rdata->iov[1].iov_base = (char *)smb + 4;
 	rdata->iov[1].iov_len = get_rfc1002_length(smb);
 
+	kref_get(&rdata->refcount);
 	rc = cifs_call_async(tcon->ses->server, &rqst, cifs_readv_receive,
 			     cifs_readv_callback, NULL, rdata, 0, NULL);
 
 	if (rc == 0)
 		cifs_stats_inc(&tcon->stats.cifs_stats.num_reads);
+	else
+		kref_put(&rdata->refcount, cifs_readdata_release);
+
 	cifs_small_buf_release(smb);
 	return rc;
 }
@@ -1618,17 +1615,16 @@ CIFSSMBWrite(const unsigned int xid, struct cifs_io_parms *io_parms,
 static void
 cifs_writev_callback(struct mid_q_entry *mid)
 {
-	struct cifs_io_subrequest *wdata = mid->callback_data;
-	struct cifs_tcon *tcon = tlink_tcon(wdata->req->cfile->tlink);
+	struct cifs_writedata *wdata = mid->callback_data;
+	struct cifs_tcon *tcon = tlink_tcon(wdata->cfile->tlink);
+	unsigned int written;
 	WRITE_RSP *smb = (WRITE_RSP *)mid->resp_buf;
 	struct cifs_credits credits = { .value = 1, .instance = 0 };
-	ssize_t result;
-	size_t written;
 
 	switch (mid->mid_state) {
 	case MID_RESPONSE_RECEIVED:
-		result = cifs_check_receive(mid, tcon->ses->server, 0);
-		if (result != 0)
+		wdata->result = cifs_check_receive(mid, tcon->ses->server, 0);
+		if (wdata->result != 0)
 			break;
 
 		written = le16_to_cpu(smb->CountHigh);
@@ -1640,37 +1636,37 @@ cifs_writev_callback(struct mid_q_entry *mid)
 		 * client. OS/2 servers are known to set incorrect
 		 * CountHigh values.
 		 */
-		if (written > wdata->subreq.len)
+		if (written > wdata->bytes)
 			written &= 0xFFFF;
 
-		if (written < wdata->subreq.len)
-			result = -ENOSPC;
+		if (written < wdata->bytes)
+			wdata->result = -ENOSPC;
 		else
-			result = written;
+			wdata->bytes = written;
 		break;
 	case MID_REQUEST_SUBMITTED:
 	case MID_RETRY_NEEDED:
-		result = -EAGAIN;
+		wdata->result = -EAGAIN;
 		break;
 	default:
-		result = -EIO;
+		wdata->result = -EIO;
 		break;
 	}
 
-	wdata->credits.value = 0;
-	cifs_write_subrequest_terminated(wdata, result, true);
+	queue_work(cifsiod_wq, &wdata->work);
 	release_mid(mid);
 	add_credits(tcon->ses->server, &credits, 0);
 }
 
 /* cifs_async_writev - send an async write, and set up mid to handle result */
-void
-cifs_async_writev(struct cifs_io_subrequest *wdata)
+int
+cifs_async_writev(struct cifs_writedata *wdata,
+		  void (*release)(struct kref *kref))
 {
 	int rc = -EACCES;
 	WRITE_REQ *smb = NULL;
 	int wct;
-	struct cifs_tcon *tcon = tlink_tcon(wdata->req->cfile->tlink);
+	struct cifs_tcon *tcon = tlink_tcon(wdata->cfile->tlink);
 	struct kvec iov[2];
 	struct smb_rqst rqst = { };
 
@@ -1678,10 +1674,9 @@ cifs_async_writev(struct cifs_io_subrequest *wdata)
 		wct = 14;
 	} else {
 		wct = 12;
-		if (wdata->subreq.start >> 32 > 0) {
+		if (wdata->offset >> 32 > 0) {
 			/* can not handle big offset for old srv */
-			rc = -EIO;
-			goto out;
+			return -EIO;
 		}
 	}
 
@@ -1693,10 +1688,10 @@ cifs_async_writev(struct cifs_io_subrequest *wdata)
 	smb->hdr.PidHigh = cpu_to_le16((__u16)(wdata->pid >> 16));
 
 	smb->AndXCommand = 0xFF;	/* none */
-	smb->Fid = wdata->req->cfile->fid.netfid;
-	smb->OffsetLow = cpu_to_le32(wdata->subreq.start & 0xFFFFFFFF);
+	smb->Fid = wdata->cfile->fid.netfid;
+	smb->OffsetLow = cpu_to_le32(wdata->offset & 0xFFFFFFFF);
 	if (wct == 14)
-		smb->OffsetHigh = cpu_to_le32(wdata->subreq.start >> 32);
+		smb->OffsetHigh = cpu_to_le32(wdata->offset >> 32);
 	smb->Reserved = 0xFFFFFFFF;
 	smb->WriteMode = 0;
 	smb->Remaining = 0;
@@ -1712,40 +1707,39 @@ cifs_async_writev(struct cifs_io_subrequest *wdata)
 
 	rqst.rq_iov = iov;
 	rqst.rq_nvec = 2;
-	rqst.rq_iter = wdata->subreq.io_iter;
-	rqst.rq_iter_size = iov_iter_count(&wdata->subreq.io_iter);
+	rqst.rq_iter = wdata->iter;
+	rqst.rq_iter_size = iov_iter_count(&wdata->iter);
 
-	cifs_dbg(FYI, "async write at %llu %zu bytes\n",
-		 wdata->subreq.start, wdata->subreq.len);
+	cifs_dbg(FYI, "async write at %llu %u bytes\n",
+		 wdata->offset, wdata->bytes);
 
-	smb->DataLengthLow = cpu_to_le16(wdata->subreq.len & 0xFFFF);
-	smb->DataLengthHigh = cpu_to_le16(wdata->subreq.len >> 16);
+	smb->DataLengthLow = cpu_to_le16(wdata->bytes & 0xFFFF);
+	smb->DataLengthHigh = cpu_to_le16(wdata->bytes >> 16);
 
 	if (wct == 14) {
-		inc_rfc1001_len(&smb->hdr, wdata->subreq.len + 1);
-		put_bcc(wdata->subreq.len + 1, &smb->hdr);
+		inc_rfc1001_len(&smb->hdr, wdata->bytes + 1);
+		put_bcc(wdata->bytes + 1, &smb->hdr);
 	} else {
 		/* wct == 12 */
 		struct smb_com_writex_req *smbw =
 				(struct smb_com_writex_req *)smb;
-		inc_rfc1001_len(&smbw->hdr, wdata->subreq.len + 5);
-		put_bcc(wdata->subreq.len + 5, &smbw->hdr);
+		inc_rfc1001_len(&smbw->hdr, wdata->bytes + 5);
+		put_bcc(wdata->bytes + 5, &smbw->hdr);
 		iov[1].iov_len += 4; /* pad bigger by four bytes */
 	}
 
+	kref_get(&wdata->refcount);
 	rc = cifs_call_async(tcon->ses->server, &rqst, NULL,
 			     cifs_writev_callback, NULL, wdata, 0, NULL);
-	/* Can't touch wdata if rc == 0 */
+
 	if (rc == 0)
 		cifs_stats_inc(&tcon->stats.cifs_stats.num_writes);
+	else
+		kref_put(&wdata->refcount, release);
 
 async_writev_out:
 	cifs_small_buf_release(smb);
-out:
-	if (rc) {
-		add_credits_and_wake_if(wdata->server, &wdata->credits, 0);
-		cifs_write_subrequest_terminated(wdata, rc, false);
-	}
+	return rc;
 }
 
 int
@@ -2072,20 +2066,20 @@ CIFSSMBPosixLock(const unsigned int xid, struct cifs_tcon *tcon,
 		parm_data = (struct cifs_posix_lock *)
 			((char *)&pSMBr->hdr.Protocol + data_offset);
 		if (parm_data->lock_type == cpu_to_le16(CIFS_UNLCK))
-			pLockData->c.flc_type = F_UNLCK;
+			pLockData->fl_type = F_UNLCK;
 		else {
 			if (parm_data->lock_type ==
 					cpu_to_le16(CIFS_RDLCK))
-				pLockData->c.flc_type = F_RDLCK;
+				pLockData->fl_type = F_RDLCK;
 			else if (parm_data->lock_type ==
 					cpu_to_le16(CIFS_WRLCK))
-				pLockData->c.flc_type = F_WRLCK;
+				pLockData->fl_type = F_WRLCK;
 
 			pLockData->fl_start = le64_to_cpu(parm_data->start);
 			pLockData->fl_end = pLockData->fl_start +
 				(le64_to_cpu(parm_data->length) ?
 				 le64_to_cpu(parm_data->length) - 1 : 0);
-			pLockData->c.flc_pid = -le32_to_cpu(parm_data->pid);
+			pLockData->fl_pid = -le32_to_cpu(parm_data->pid);
 		}
 	}
 
@@ -5860,8 +5854,10 @@ SetEARetry:
 	parm_data->list.EA_flags = 0;
 	/* we checked above that name len is less than 255 */
 	parm_data->list.name_len = (__u8)name_len;
-	/* EA names are always ASCII and NUL-terminated */
-	strscpy(parm_data->list.name, ea_name ?: "", name_len + 1);
+	/* EA names are always ASCII */
+	if (ea_name)
+		strncpy(parm_data->list.name, ea_name, name_len);
+	parm_data->list.name[name_len] = '\0';
 	parm_data->list.value_len = cpu_to_le16(ea_value_len);
 	/* caller ensures that ea_value_len is less than 64K but
 	we need to ensure that it fits within the smb */

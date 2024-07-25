@@ -160,7 +160,7 @@ static void
 mt7921_mcu_scan_event(struct mt792x_dev *dev, struct sk_buff *skb)
 {
 	struct mt76_phy *mphy = &dev->mt76.phy;
-	struct mt792x_phy *phy = mphy->priv;
+	struct mt792x_phy *phy = (struct mt792x_phy *)mphy->priv;
 
 	spin_lock_bh(&dev->mt76.lock);
 	__skb_queue_tail(&phy->scan_event_list, skb);
@@ -254,42 +254,6 @@ mt7921_mcu_tx_done_event(struct mt792x_dev *dev, struct sk_buff *skb)
 }
 
 static void
-mt7921_mcu_rssi_monitor_iter(void *priv, u8 *mac,
-			     struct ieee80211_vif *vif)
-{
-	struct mt792x_vif *mvif = (struct mt792x_vif *)vif->drv_priv;
-	struct mt76_connac_rssi_notify_event *event = priv;
-	enum nl80211_cqm_rssi_threshold_event nl_event;
-	s32 rssi = le32_to_cpu(event->rssi[mvif->mt76.idx]);
-
-	if (!rssi)
-		return;
-
-	if (!(vif->driver_flags & IEEE80211_VIF_SUPPORTS_CQM_RSSI))
-		return;
-
-	if (rssi > vif->bss_conf.cqm_rssi_thold)
-		nl_event = NL80211_CQM_RSSI_THRESHOLD_EVENT_HIGH;
-	else
-		nl_event = NL80211_CQM_RSSI_THRESHOLD_EVENT_LOW;
-
-	ieee80211_cqm_rssi_notify(vif, nl_event, rssi, GFP_KERNEL);
-}
-
-static void
-mt7921_mcu_rssi_monitor_event(struct mt792x_dev *dev, struct sk_buff *skb)
-{
-	struct mt76_connac_rssi_notify_event *event;
-
-	skb_pull(skb, sizeof(struct mt76_connac2_mcu_rxd));
-	event = (struct mt76_connac_rssi_notify_event *)skb->data;
-
-	ieee80211_iterate_active_interfaces_atomic(mt76_hw(dev),
-						   IEEE80211_IFACE_ITER_RESUME_ALL,
-						   mt7921_mcu_rssi_monitor_iter, event);
-}
-
-static void
 mt7921_mcu_rx_unsolicited_event(struct mt792x_dev *dev, struct sk_buff *skb)
 {
 	struct mt76_connac2_mcu_rxd *rxd;
@@ -316,9 +280,6 @@ mt7921_mcu_rx_unsolicited_event(struct mt792x_dev *dev, struct sk_buff *skb)
 		break;
 	case MCU_EVENT_TX_DONE:
 		mt7921_mcu_tx_done_event(dev, skb);
-		break;
-	case MCU_EVENT_RSSI_NOTIFY:
-		mt7921_mcu_rssi_monitor_event(dev, skb);
 		break;
 	default:
 		break;
@@ -366,7 +327,6 @@ void mt7921_mcu_rx_event(struct mt792x_dev *dev, struct sk_buff *skb)
 	if (rxd->ext_eid == MCU_EXT_EVENT_RATE_REPORT ||
 	    rxd->eid == MCU_EVENT_BSS_BEACON_LOSS ||
 	    rxd->eid == MCU_EVENT_SCHED_SCAN_DONE ||
-	    rxd->eid == MCU_EVENT_RSSI_NOTIFY ||
 	    rxd->eid == MCU_EVENT_SCAN_DONE ||
 	    rxd->eid == MCU_EVENT_TX_DONE ||
 	    rxd->eid == MCU_EVENT_DBG_MSG ||
@@ -415,7 +375,6 @@ static int mt7921_load_clc(struct mt792x_dev *dev, const char *fw_name)
 	int ret, i, len, offset = 0;
 	u8 *clc_base = NULL, hw_encap = 0;
 
-	dev->phy.clc_chan_conf = 0xff;
 	if (mt7921_disable_clc ||
 	    mt76_is_usb(&dev->mt76))
 		return 0;
@@ -489,129 +448,6 @@ out:
 	return ret;
 }
 
-static void mt7921_mcu_parse_tx_resource(struct mt76_dev *dev,
-					 struct sk_buff *skb)
-{
-	struct mt76_sdio *sdio = &dev->sdio;
-	struct mt7921_tx_resource {
-		__le32 version;
-		__le32 pse_data_quota;
-		__le32 pse_mcu_quota;
-		__le32 ple_data_quota;
-		__le32 ple_mcu_quota;
-		__le16 pse_page_size;
-		__le16 ple_page_size;
-		u8 pp_padding;
-		u8 pad[3];
-	} __packed * tx_res;
-
-	tx_res = (struct mt7921_tx_resource *)skb->data;
-	sdio->sched.pse_data_quota = le32_to_cpu(tx_res->pse_data_quota);
-	sdio->sched.pse_mcu_quota = le32_to_cpu(tx_res->pse_mcu_quota);
-	sdio->sched.ple_data_quota = le32_to_cpu(tx_res->ple_data_quota);
-	sdio->sched.pse_page_size = le16_to_cpu(tx_res->pse_page_size);
-	sdio->sched.deficit = tx_res->pp_padding;
-}
-
-static void mt7921_mcu_parse_phy_cap(struct mt76_dev *dev,
-				     struct sk_buff *skb)
-{
-	struct mt7921_phy_cap {
-		u8 ht;
-		u8 vht;
-		u8 _5g;
-		u8 max_bw;
-		u8 nss;
-		u8 dbdc;
-		u8 tx_ldpc;
-		u8 rx_ldpc;
-		u8 tx_stbc;
-		u8 rx_stbc;
-		u8 hw_path;
-		u8 he;
-	} __packed * cap;
-
-	enum {
-		WF0_24G,
-		WF0_5G
-	};
-
-	cap = (struct mt7921_phy_cap *)skb->data;
-
-	dev->phy.antenna_mask = BIT(cap->nss) - 1;
-	dev->phy.chainmask = dev->phy.antenna_mask;
-	dev->phy.cap.has_2ghz = cap->hw_path & BIT(WF0_24G);
-	dev->phy.cap.has_5ghz = cap->hw_path & BIT(WF0_5G);
-}
-
-static int mt7921_mcu_get_nic_capability(struct mt792x_phy *mphy)
-{
-	struct mt76_connac_cap_hdr {
-		__le16 n_element;
-		u8 rsv[2];
-	} __packed * hdr;
-	struct sk_buff *skb;
-	struct mt76_phy *phy = mphy->mt76;
-	int ret, i;
-
-	ret = mt76_mcu_send_and_get_msg(phy->dev, MCU_CE_CMD(GET_NIC_CAPAB),
-					NULL, 0, true, &skb);
-	if (ret)
-		return ret;
-
-	hdr = (struct mt76_connac_cap_hdr *)skb->data;
-	if (skb->len < sizeof(*hdr)) {
-		ret = -EINVAL;
-		goto out;
-	}
-
-	skb_pull(skb, sizeof(*hdr));
-
-	for (i = 0; i < le16_to_cpu(hdr->n_element); i++) {
-		struct tlv_hdr {
-			__le32 type;
-			__le32 len;
-		} __packed * tlv = (struct tlv_hdr *)skb->data;
-		int len;
-
-		if (skb->len < sizeof(*tlv))
-			break;
-
-		skb_pull(skb, sizeof(*tlv));
-
-		len = le32_to_cpu(tlv->len);
-		if (skb->len < len)
-			break;
-
-		switch (le32_to_cpu(tlv->type)) {
-		case MT_NIC_CAP_6G:
-			phy->cap.has_6ghz = skb->data[0];
-			break;
-		case MT_NIC_CAP_MAC_ADDR:
-			memcpy(phy->macaddr, (void *)skb->data, ETH_ALEN);
-			break;
-		case MT_NIC_CAP_PHY:
-			mt7921_mcu_parse_phy_cap(phy->dev, skb);
-			break;
-		case MT_NIC_CAP_TX_RESOURCE:
-			if (mt76_is_sdio(phy->dev))
-				mt7921_mcu_parse_tx_resource(phy->dev,
-							     skb);
-			break;
-		case MT_NIC_CAP_CHIP_CAP:
-			memcpy(&mphy->chip_cap, (void *)skb->data, sizeof(u64));
-			break;
-		default:
-			break;
-		}
-		skb_pull(skb, len);
-	}
-out:
-	dev_kfree_skb(skb);
-
-	return ret;
-}
-
 int mt7921_mcu_fw_log_2_host(struct mt792x_dev *dev, u8 ctrl)
 {
 	struct {
@@ -633,7 +469,7 @@ int mt7921_run_firmware(struct mt792x_dev *dev)
 	if (err)
 		return err;
 
-	err = mt7921_mcu_get_nic_capability(&dev->phy);
+	err = mt76_connac_mcu_get_nic_capability(&dev->mphy);
 	if (err)
 		return err;
 
@@ -645,20 +481,6 @@ int mt7921_run_firmware(struct mt792x_dev *dev)
 	return mt7921_mcu_fw_log_2_host(dev, 1);
 }
 EXPORT_SYMBOL_GPL(mt7921_run_firmware);
-
-int mt7921_mcu_radio_led_ctrl(struct mt792x_dev *dev, u8 value)
-{
-	struct {
-		u8 ctrlid;
-		u8 rsv[3];
-	} __packed req = {
-		.ctrlid = value,
-	};
-
-	return mt76_mcu_send_msg(&dev->mt76, MCU_EXT_CMD(ID_RADIO_ON_OFF_CTRL),
-				&req, sizeof(req), false);
-}
-EXPORT_SYMBOL_GPL(mt7921_mcu_radio_led_ctrl);
 
 int mt7921_mcu_set_tx(struct mt792x_dev *dev, struct ieee80211_vif *vif)
 {
@@ -1154,12 +976,12 @@ int mt7921_mcu_config_sniffer(struct mt792x_vif *vif,
 {
 	struct cfg80211_chan_def *chandef = &ctx->def;
 	int freq1 = chandef->center_freq1, freq2 = chandef->center_freq2;
-	static const u8 ch_band[] = {
+	const u8 ch_band[] = {
 		[NL80211_BAND_2GHZ] = 1,
 		[NL80211_BAND_5GHZ] = 2,
 		[NL80211_BAND_6GHZ] = 3,
 	};
-	static const u8 ch_width[] = {
+	const u8 ch_width[] = {
 		[NL80211_CHAN_WIDTH_20_NOHT] = 0,
 		[NL80211_CHAN_WIDTH_20] = 0,
 		[NL80211_CHAN_WIDTH_40] = 0,
@@ -1301,9 +1123,7 @@ int __mt7921_mcu_set_clc(struct mt792x_dev *dev, u8 *alpha2,
 			 struct mt7921_clc *clc,
 			 u8 idx)
 {
-#define CLC_CAP_EVT_EN BIT(0)
-#define CLC_CAP_DTS_EN BIT(1)
-	struct sk_buff *skb, *ret_skb = NULL;
+	struct sk_buff *skb;
 	struct {
 		u8 ver;
 		u8 pad0;
@@ -1311,33 +1131,24 @@ int __mt7921_mcu_set_clc(struct mt792x_dev *dev, u8 *alpha2,
 		u8 idx;
 		u8 env;
 		u8 acpi_conf;
-		u8 cap;
+		u8 pad1;
 		u8 alpha2[2];
 		u8 type[2];
-		u8 env_6g;
-		u8 mtcl_conf;
-		u8 rsvd[62];
+		u8 rsvd[64];
 	} __packed req = {
 		.ver = 1,
 		.idx = idx,
 		.env = env_cap,
-		.env_6g = dev->phy.power_type,
 		.acpi_conf = mt792x_acpi_get_flags(&dev->phy),
-		.mtcl_conf = mt792x_acpi_get_mtcl_conf(&dev->phy, alpha2),
 	};
 	int ret, valid_cnt = 0;
-	u32 buf_len = 0;
+	u16 buf_len = 0;
 	u8 *pos;
 
 	if (!clc)
 		return 0;
 
-	if (dev->phy.chip_cap & MT792x_CHIP_CAP_CLC_EVT_EN)
-		req.cap |= CLC_CAP_EVT_EN;
-	if (mt76_find_power_limits_node(&dev->mt76))
-		req.cap |= CLC_CAP_DTS_EN;
-
-	buf_len = le32_to_cpu(clc->len) - sizeof(*clc);
+	buf_len = le16_to_cpu(clc->len) - sizeof(*clc);
 	pos = clc->data;
 	while (buf_len > 16) {
 		struct mt7921_clc_rule *rule = (struct mt7921_clc_rule *)pos;
@@ -1361,21 +1172,10 @@ int __mt7921_mcu_set_clc(struct mt792x_dev *dev, u8 *alpha2,
 			return -ENOMEM;
 		skb_put_data(skb, rule->data, len);
 
-		ret = mt76_mcu_skb_send_and_get_msg(&dev->mt76, skb,
-						    MCU_CE_CMD(SET_CLC),
-						    !!(req.cap & CLC_CAP_EVT_EN),
-						    &ret_skb);
+		ret = mt76_mcu_skb_send_msg(&dev->mt76, skb,
+					    MCU_CE_CMD(SET_CLC), false);
 		if (ret < 0)
 			return ret;
-
-		if (ret_skb) {
-			struct mt7921_clc_info_tlv *info;
-
-			info = (struct mt7921_clc_info_tlv *)(ret_skb->data + 4);
-			dev->phy.clc_chan_conf = info->chan_conf;
-			dev_kfree_skb(ret_skb);
-		}
-
 		valid_cnt++;
 	}
 
@@ -1443,26 +1243,5 @@ int mt7921_mcu_set_rxfilter(struct mt792x_dev *dev, u32 fif,
 	};
 
 	return mt76_mcu_send_msg(&dev->mt76, MCU_CE_CMD(SET_RX_FILTER),
-				 &data, sizeof(data), false);
-}
-
-int mt7921_mcu_set_rssimonitor(struct mt792x_dev *dev, struct ieee80211_vif *vif)
-{
-	struct mt792x_vif *mvif = (struct mt792x_vif *)vif->drv_priv;
-	struct {
-		u8 enable;
-		s8 cqm_rssi_high;
-		s8 cqm_rssi_low;
-		u8 bss_idx;
-		u16 duration;
-		u8 rsv2[2];
-	} __packed data = {
-		.enable = vif->cfg.assoc,
-		.cqm_rssi_high = vif->bss_conf.cqm_rssi_thold + vif->bss_conf.cqm_rssi_hyst,
-		.cqm_rssi_low = vif->bss_conf.cqm_rssi_thold - vif->bss_conf.cqm_rssi_hyst,
-		.bss_idx = mvif->mt76.idx,
-	};
-
-	return mt76_mcu_send_msg(&dev->mt76, MCU_CE_CMD(RSSI_MONITOR),
 				 &data, sizeof(data), false);
 }

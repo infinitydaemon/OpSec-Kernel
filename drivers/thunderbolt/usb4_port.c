@@ -243,7 +243,7 @@ static void usb4_port_device_release(struct device *dev)
 	kfree(usb4);
 }
 
-const struct device_type usb4_port_device_type = {
+struct device_type usb4_port_device_type = {
 	.name = "usb4_port",
 	.groups = usb4_port_device_groups,
 	.release = usb4_port_device_release,

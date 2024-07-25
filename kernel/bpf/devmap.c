@@ -419,16 +419,6 @@ void __dev_flush(void)
 	}
 }
 
-#ifdef CONFIG_DEBUG_NET
-bool dev_check_flush(void)
-{
-	if (list_empty(this_cpu_ptr(&dev_flush_list)))
-		return false;
-	__dev_flush();
-	return true;
-}
-#endif
-
 /* Elements are kept alive by RCU; either by rcu_read_lock() (from syscall) or
  * by local_bh_disable() (from XDP calls inside NAPI). The
  * rcu_read_lock_bh_held() below makes lockdep accept both.
@@ -760,6 +750,9 @@ int dev_map_redirect_multi(struct net_device *dev, struct sk_buff *skb,
 		for (i = 0; i < dtab->n_buckets; i++) {
 			head = dev_map_index_hash(dtab, i);
 			hlist_for_each_entry_safe(dst, next, head, index_hlist) {
+				if (!dst)
+					continue;
+
 				if (is_ifindex_excluded(excluded_devices, num_excluded,
 							dst->dev->ifindex))
 					continue;

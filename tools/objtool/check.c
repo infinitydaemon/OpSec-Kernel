@@ -20,7 +20,6 @@
 #include <linux/hashtable.h>
 #include <linux/kernel.h>
 #include <linux/static_call_types.h>
-#include <linux/string.h>
 
 struct alternative {
 	struct alternative *next;
@@ -292,7 +291,7 @@ static void init_insn_state(struct objtool_file *file, struct insn_state *state,
 
 static struct cfi_state *cfi_alloc(void)
 {
-	struct cfi_state *cfi = calloc(1, sizeof(struct cfi_state));
+	struct cfi_state *cfi = calloc(sizeof(struct cfi_state), 1);
 	if (!cfi) {
 		WARN("calloc failed");
 		exit(1);
@@ -585,7 +584,7 @@ static int add_dead_ends(struct objtool_file *file)
 	struct section *rsec;
 	struct reloc *reloc;
 	struct instruction *insn;
-	uint64_t offset;
+	s64 addend;
 
 	/*
 	 * Check for manually annotated dead ends.
@@ -595,28 +594,27 @@ static int add_dead_ends(struct objtool_file *file)
 		goto reachable;
 
 	for_each_reloc(rsec, reloc) {
-		if (reloc->sym->type == STT_SECTION) {
-			offset = reloc_addend(reloc);
-		} else if (reloc->sym->local_label) {
-			offset = reloc->sym->offset;
-		} else {
+
+		if (reloc->sym->type != STT_SECTION) {
 			WARN("unexpected relocation symbol type in %s", rsec->name);
 			return -1;
 		}
 
-		insn = find_insn(file, reloc->sym->sec, offset);
+		addend = reloc_addend(reloc);
+
+		insn = find_insn(file, reloc->sym->sec, addend);
 		if (insn)
 			insn = prev_insn_same_sec(file, insn);
-		else if (offset == reloc->sym->sec->sh.sh_size) {
+		else if (addend == reloc->sym->sec->sh.sh_size) {
 			insn = find_last_insn(file, reloc->sym->sec);
 			if (!insn) {
 				WARN("can't find unreachable insn at %s+0x%" PRIx64,
-				     reloc->sym->sec->name, offset);
+				     reloc->sym->sec->name, addend);
 				return -1;
 			}
 		} else {
 			WARN("can't find unreachable insn at %s+0x%" PRIx64,
-			     reloc->sym->sec->name, offset);
+			     reloc->sym->sec->name, addend);
 			return -1;
 		}
 
@@ -635,28 +633,27 @@ reachable:
 		return 0;
 
 	for_each_reloc(rsec, reloc) {
-		if (reloc->sym->type == STT_SECTION) {
-			offset = reloc_addend(reloc);
-		} else if (reloc->sym->local_label) {
-			offset = reloc->sym->offset;
-		} else {
+
+		if (reloc->sym->type != STT_SECTION) {
 			WARN("unexpected relocation symbol type in %s", rsec->name);
 			return -1;
 		}
 
-		insn = find_insn(file, reloc->sym->sec, offset);
+		addend = reloc_addend(reloc);
+
+		insn = find_insn(file, reloc->sym->sec, addend);
 		if (insn)
 			insn = prev_insn_same_sec(file, insn);
-		else if (offset == reloc->sym->sec->sh.sh_size) {
+		else if (addend == reloc->sym->sec->sh.sh_size) {
 			insn = find_last_insn(file, reloc->sym->sec);
 			if (!insn) {
 				WARN("can't find reachable insn at %s+0x%" PRIx64,
-				     reloc->sym->sec->name, offset);
+				     reloc->sym->sec->name, addend);
 				return -1;
 			}
 		} else {
 			WARN("can't find reachable insn at %s+0x%" PRIx64,
-			     reloc->sym->sec->name, offset);
+			     reloc->sym->sec->name, addend);
 			return -1;
 		}
 
@@ -1614,22 +1611,6 @@ static int add_jump_destinations(struct objtool_file *file)
 		}
 
 		/*
-		 * An intra-TU jump in retpoline.o might not have a relocation
-		 * for its jump dest, in which case the above
-		 * add_{retpoline,return}_call() didn't happen.
-		 */
-		if (jump_dest->sym && jump_dest->offset == jump_dest->sym->offset) {
-			if (jump_dest->sym->retpoline_thunk) {
-				add_retpoline_call(file, insn);
-				continue;
-			}
-			if (jump_dest->sym->return_thunk) {
-				add_return_call(file, insn, true);
-				continue;
-			}
-		}
-
-		/*
 		 * Cross-function jump.
 		 */
 		if (insn_func(insn) && insn_func(jump_dest) &&
@@ -2227,7 +2208,6 @@ static int read_unwind_hints(struct objtool_file *file)
 	struct unwind_hint *hint;
 	struct instruction *insn;
 	struct reloc *reloc;
-	unsigned long offset;
 	int i;
 
 	sec = find_section_by_name(file->elf, ".discard.unwind_hints");
@@ -2255,16 +2235,7 @@ static int read_unwind_hints(struct objtool_file *file)
 			return -1;
 		}
 
-		if (reloc->sym->type == STT_SECTION) {
-			offset = reloc_addend(reloc);
-		} else if (reloc->sym->local_label) {
-			offset = reloc->sym->offset;
-		} else {
-			WARN("unexpected relocation symbol type in %s", sec->rsec->name);
-			return -1;
-		}
-
-		insn = find_insn(file, reloc->sym->sec, offset);
+		insn = find_insn(file, reloc->sym->sec, reloc_addend(reloc));
 		if (!insn) {
 			WARN("can't find insn for unwind_hints[%d]", i);
 			return -1;
@@ -2535,9 +2506,6 @@ static int classify_symbols(struct objtool_file *file)
 	struct symbol *func;
 
 	for_each_sym(file, func) {
-		if (func->type == STT_NOTYPE && strstarts(func->name, ".L"))
-			func->local_label = true;
-
 		if (func->bind != STB_GLOBAL)
 			continue;
 
@@ -4008,11 +3976,11 @@ static int validate_retpoline(struct objtool_file *file)
 
 		if (insn->type == INSN_RETURN) {
 			if (opts.rethunk) {
-				WARN_INSN(insn, "'naked' return found in MITIGATION_RETHUNK build");
+				WARN_INSN(insn, "'naked' return found in RETHUNK build");
 			} else
 				continue;
 		} else {
-			WARN_INSN(insn, "indirect %s found in MITIGATION_RETPOLINE build",
+			WARN_INSN(insn, "indirect %s found in RETPOLINE build",
 				  insn->type == INSN_JUMP_DYNAMIC ? "jump" : "call");
 		}
 

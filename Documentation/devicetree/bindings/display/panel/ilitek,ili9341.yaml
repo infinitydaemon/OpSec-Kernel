@@ -28,8 +28,7 @@ properties:
           - canaan,kd233-tft
       - const: ilitek,ili9341
 
-  reg:
-    maxItems: 1
+  reg: true
 
   dc-gpios:
     maxItems: 1

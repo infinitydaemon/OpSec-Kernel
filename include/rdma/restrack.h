@@ -14,9 +14,6 @@
 #include <uapi/rdma/rdma_netlink.h>
 #include <linux/xarray.h>
 
-/* Mark entry as containing driver specific details, it is used to provide QP subtype for now */
-#define RESTRACK_DD XA_MARK_1
-
 struct ib_device;
 struct sk_buff;
 
@@ -119,8 +116,8 @@ struct rdma_restrack_entry {
 	u32 id;
 };
 
-int rdma_restrack_count(struct ib_device *dev, enum rdma_restrack_type type,
-			bool show_details);
+int rdma_restrack_count(struct ib_device *dev,
+			enum rdma_restrack_type type);
 /**
  * rdma_is_kernel_res() - check the owner of resource
  * @res:  resource entry

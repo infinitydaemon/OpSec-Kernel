@@ -25,7 +25,7 @@ static const struct apic apic_numachip1;
 static const struct apic apic_numachip2;
 static void (*numachip_apic_icr_write)(int apicid, unsigned int val) __read_mostly;
 
-static u32 numachip1_get_apic_id(u32 x)
+static unsigned int numachip1_get_apic_id(unsigned long x)
 {
 	unsigned long value;
 	unsigned int id = (x >> 24) & 0xff;
@@ -38,12 +38,27 @@ static u32 numachip1_get_apic_id(u32 x)
 	return id;
 }
 
-static u32 numachip2_get_apic_id(u32 x)
+static u32 numachip1_set_apic_id(unsigned int id)
+{
+	return (id & 0xff) << 24;
+}
+
+static unsigned int numachip2_get_apic_id(unsigned long x)
 {
 	u64 mcfg;
 
 	rdmsrl(MSR_FAM10H_MMIO_CONF_BASE, mcfg);
 	return ((mcfg >> (28 - 8)) & 0xfff00) | (x >> 24);
+}
+
+static u32 numachip2_set_apic_id(unsigned int id)
+{
+	return id << 24;
+}
+
+static int numachip_phys_pkg_id(int initial_apic_id, int index_msb)
+{
+	return initial_apic_id >> index_msb;
 }
 
 static void numachip1_apic_icr_write(int apicid, unsigned int val)
@@ -56,7 +71,7 @@ static void numachip2_apic_icr_write(int apicid, unsigned int val)
 	numachip2_write32_lcsr(NUMACHIP2_APIC_ICR, (apicid << 12) | val);
 }
 
-static int numachip_wakeup_secondary(u32 phys_apicid, unsigned long start_rip)
+static int numachip_wakeup_secondary(int phys_apicid, unsigned long start_rip)
 {
 	numachip_apic_icr_write(phys_apicid, APIC_DM_INIT);
 	numachip_apic_icr_write(phys_apicid, APIC_DM_STARTUP |
@@ -146,7 +161,7 @@ static void fixup_cpu_id(struct cpuinfo_x86 *c, int node)
 	u64 val;
 	u32 nodes = 1;
 
-	c->topo.llc_id = node;
+	this_cpu_write(cpu_llc_id, node);
 
 	/* Account for nodes per socket in multi-core-module processors */
 	if (boot_cpu_has(X86_FEATURE_NODEID_MSR)) {
@@ -154,7 +169,7 @@ static void fixup_cpu_id(struct cpuinfo_x86 *c, int node)
 		nodes = ((val >> 3) & 7) + 1;
 	}
 
-	c->topo.pkg_id = node / nodes;
+	c->phys_proc_id = node / nodes;
 }
 
 static int __init numachip_system_init(void)
@@ -207,14 +222,17 @@ static const struct apic apic_numachip1 __refconst = {
 	.probe				= numachip1_probe,
 	.acpi_madt_oem_check		= numachip1_acpi_madt_oem_check,
 
+	.delivery_mode			= APIC_DELIVERY_MODE_FIXED,
 	.dest_mode_logical		= false,
 
 	.disable_esr			= 0,
 
 	.cpu_present_to_apicid		= default_cpu_present_to_apicid,
+	.phys_pkg_id			= numachip_phys_pkg_id,
 
 	.max_apic_id			= UINT_MAX,
 	.get_apic_id			= numachip1_get_apic_id,
+	.set_apic_id			= numachip1_set_apic_id,
 
 	.calc_dest_apicid		= apic_default_calc_apicid,
 
@@ -241,14 +259,17 @@ static const struct apic apic_numachip2 __refconst = {
 	.probe				= numachip2_probe,
 	.acpi_madt_oem_check		= numachip2_acpi_madt_oem_check,
 
+	.delivery_mode			= APIC_DELIVERY_MODE_FIXED,
 	.dest_mode_logical		= false,
 
 	.disable_esr			= 0,
 
 	.cpu_present_to_apicid		= default_cpu_present_to_apicid,
+	.phys_pkg_id			= numachip_phys_pkg_id,
 
 	.max_apic_id			= UINT_MAX,
 	.get_apic_id			= numachip2_get_apic_id,
+	.set_apic_id			= numachip2_set_apic_id,
 
 	.calc_dest_apicid		= apic_default_calc_apicid,
 

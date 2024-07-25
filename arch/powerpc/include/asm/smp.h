@@ -27,7 +27,6 @@
 
 extern int boot_cpuid;
 extern int boot_cpu_hwid; /* PPC64 only */
-extern int boot_core_hwid;
 extern int spinning_secondaries;
 extern u32 *cpu_to_phys_id;
 extern bool coregroup_enabled;

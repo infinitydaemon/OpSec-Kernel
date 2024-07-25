@@ -136,7 +136,6 @@ static int pmu_legacy_device_probe(struct platform_device *pdev)
 	pmu = riscv_pmu_alloc();
 	if (!pmu)
 		return -ENOMEM;
-	pmu->pmu.parent = &pdev->dev;
 	pmu_legacy_init(pmu);
 
 	return 0;

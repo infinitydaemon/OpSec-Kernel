@@ -19,6 +19,7 @@ Frame Buffer
     framebuffer
     gxfb
     intel810
+    intelfb
     internals
     lxfb
     matroxfb

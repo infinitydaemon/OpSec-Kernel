@@ -103,8 +103,6 @@ enum HNAE3_DEV_CAP_BITS {
 	HNAE3_DEV_SUPPORT_LANE_NUM_B,
 	HNAE3_DEV_SUPPORT_WOL_B,
 	HNAE3_DEV_SUPPORT_TM_FLUSH_B,
-	HNAE3_DEV_SUPPORT_VF_FAULT_B,
-	HNAE3_DEV_SUPPORT_ERR_MOD_GEN_REG_B,
 };
 
 #define hnae3_ae_dev_fd_supported(ae_dev) \
@@ -178,12 +176,6 @@ enum HNAE3_DEV_CAP_BITS {
 
 #define hnae3_ae_dev_tm_flush_supported(hdev) \
 	test_bit(HNAE3_DEV_SUPPORT_TM_FLUSH_B, (hdev)->ae_dev->caps)
-
-#define hnae3_ae_dev_vf_fault_supported(ae_dev) \
-	test_bit(HNAE3_DEV_SUPPORT_VF_FAULT_B, (ae_dev)->caps)
-
-#define hnae3_ae_dev_gen_reg_dfx_supported(hdev) \
-	test_bit(HNAE3_DEV_SUPPORT_ERR_MOD_GEN_REG_B, (hdev)->ae_dev->caps)
 
 enum HNAE3_PF_CAP_BITS {
 	HNAE3_PF_SUPPORT_VLAN_FLTR_MDF_B = 0,
@@ -279,7 +271,6 @@ enum hnae3_reset_type {
 	HNAE3_GLOBAL_RESET,
 	HNAE3_IMP_RESET,
 	HNAE3_NONE_RESET,
-	HNAE3_VF_EXP_RESET,
 	HNAE3_MAX_RESET,
 };
 
@@ -366,15 +357,6 @@ struct hnae3_vector_info {
 #define HNAE3_FW_VERSION_BYTE0_SHIFT	0
 #define HNAE3_FW_VERSION_BYTE0_MASK	GENMASK(7, 0)
 
-#define HNAE3_SCC_VERSION_BYTE3_SHIFT	24
-#define HNAE3_SCC_VERSION_BYTE3_MASK	GENMASK(31, 24)
-#define HNAE3_SCC_VERSION_BYTE2_SHIFT	16
-#define HNAE3_SCC_VERSION_BYTE2_MASK	GENMASK(23, 16)
-#define HNAE3_SCC_VERSION_BYTE1_SHIFT	8
-#define HNAE3_SCC_VERSION_BYTE1_MASK	GENMASK(15, 8)
-#define HNAE3_SCC_VERSION_BYTE0_SHIFT	0
-#define HNAE3_SCC_VERSION_BYTE0_MASK	GENMASK(7, 0)
-
 struct hnae3_ring_chain_node {
 	struct hnae3_ring_chain_node *next;
 	u32 tqp_index;
@@ -401,7 +383,6 @@ struct hnae3_dev_specs {
 	u16 mc_mac_size;
 	u32 mac_stats_num;
 	u8 tnl_num;
-	u8 hilink_version;
 };
 
 struct hnae3_client_ops {
@@ -833,7 +814,6 @@ struct hnae3_tc_info {
 	u8 max_tc; /* Total number of TCs */
 	u8 num_tc; /* Total number of enabled TCs */
 	bool mqprio_active;
-	bool mqprio_destroy;
 	bool dcb_ets_active;
 };
 

@@ -5,7 +5,6 @@
  */
 #include "qla_def.h"
 
-#include <linux/bitfield.h>
 #include <linux/moduleparam.h>
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
@@ -634,8 +633,8 @@ qla24xx_pci_info_str(struct scsi_qla_host *vha, char *str, size_t str_len)
 		const char *speed_str;
 
 		pcie_capability_read_dword(ha->pdev, PCI_EXP_LNKCAP, &lstat);
-		lspeed = FIELD_GET(PCI_EXP_LNKCAP_SLS, lstat);
-		lwidth = FIELD_GET(PCI_EXP_LNKCAP_MLW, lstat);
+		lspeed = lstat & PCI_EXP_LNKCAP_SLS;
+		lwidth = (lstat & PCI_EXP_LNKCAP_MLW) >> 4;
 
 		switch (lspeed) {
 		case 1:
@@ -1957,6 +1956,9 @@ qla2xxx_slave_configure(struct scsi_device *sdev)
 	scsi_qla_host_t *vha = shost_priv(sdev->host);
 	struct req_que *req = vha->req;
 
+	if (IS_T10_PI_CAPABLE(vha->hw))
+		blk_queue_update_dma_alignment(sdev->request_queue, 0x7);
+
 	scsi_change_queue_depth(sdev, req->max_q_depth);
 	return 0;
 }
@@ -2886,7 +2888,7 @@ static void qla2x00_iocb_work_fn(struct work_struct *work)
 static void
 qla_trace_init(void)
 {
-	qla_trc_array = trace_array_get_by_name("qla2xxx", NULL);
+	qla_trc_array = trace_array_get_by_name("qla2xxx");
 	if (!qla_trc_array) {
 		ql_log(ql_log_fatal, NULL, 0x0001,
 		       "Unable to create qla2xxx trace instance, instance logging will be disabled.\n");
@@ -3571,9 +3573,6 @@ skip_dpc:
 		host->sg_tablesize = (ha->mr.extended_io_enabled) ?
 		    QLA_SG_ALL : 128;
 	}
-
-	if (IS_T10_PI_CAPABLE(base_vha->hw))
-		host->dma_alignment = 0x7;
 
 	ret = scsi_add_host(host, &pdev->dev);
 	if (ret)
@@ -8156,6 +8155,9 @@ MODULE_DEVICE_TABLE(pci, qla2xxx_pci_tbl);
 
 static struct pci_driver qla2xxx_pci_driver = {
 	.name		= QLA2XXX_DRIVER_NAME,
+	.driver		= {
+		.owner		= THIS_MODULE,
+	},
 	.id_table	= qla2xxx_pci_tbl,
 	.probe		= qla2x00_probe_one,
 	.remove		= qla2x00_remove_one,

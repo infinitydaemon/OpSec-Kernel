@@ -108,7 +108,6 @@ struct rzg2l_csi2 {
 	struct reset_control *presetn;
 	struct reset_control *cmn_rstb;
 	struct clk *sysclk;
-	struct clk *vclk;
 	unsigned long vclk_rate;
 
 	struct v4l2_subdev subdev;
@@ -251,7 +250,7 @@ static int rzg2l_csi2_calc_mbps(struct rzg2l_csi2 *csi2)
 	}
 
 	state = v4l2_subdev_lock_and_get_active_state(&csi2->subdev);
-	fmt = v4l2_subdev_state_get_format(state, RZG2L_CSI2_SINK);
+	fmt = v4l2_subdev_get_pad_format(&csi2->subdev, state, RZG2L_CSI2_SINK);
 	format = rzg2l_csi2_code_to_fmt(fmt->code);
 	v4l2_subdev_unlock_state(state);
 
@@ -362,7 +361,7 @@ static int rzg2l_csi2_dphy_setting(struct v4l2_subdev *sd, bool on)
 	return rzg2l_csi2_dphy_disable(csi2);
 }
 
-static int rzg2l_csi2_mipi_link_enable(struct rzg2l_csi2 *csi2)
+static void rzg2l_csi2_mipi_link_enable(struct rzg2l_csi2 *csi2)
 {
 	unsigned long vclk_rate = csi2->vclk_rate / HZ_PER_MHZ;
 	u32 frrskw, frrclk, frrskw_coeff, frrclk_coeff;
@@ -387,15 +386,11 @@ static int rzg2l_csi2_mipi_link_enable(struct rzg2l_csi2 *csi2)
 	rzg2l_csi2_write(csi2, CSI2nDTEL, 0xf778ff0f);
 	rzg2l_csi2_write(csi2, CSI2nDTEH, 0x00ffff1f);
 
-	clk_disable_unprepare(csi2->vclk);
-
 	/* Enable LINK reception */
 	rzg2l_csi2_write(csi2, CSI2nMCT3, CSI2nMCT3_RXEN);
-
-	return clk_prepare_enable(csi2->vclk);
 }
 
-static int rzg2l_csi2_mipi_link_disable(struct rzg2l_csi2 *csi2)
+static void rzg2l_csi2_mipi_link_disable(struct rzg2l_csi2 *csi2)
 {
 	unsigned int timeout = VSRSTS_RETRIES;
 
@@ -414,21 +409,18 @@ static int rzg2l_csi2_mipi_link_disable(struct rzg2l_csi2 *csi2)
 
 	if (!timeout)
 		dev_err(csi2->dev, "Clearing CSI2nRTST.VSRSTS timed out\n");
-
-	return 0;
 }
 
 static int rzg2l_csi2_mipi_link_setting(struct v4l2_subdev *sd, bool on)
 {
 	struct rzg2l_csi2 *csi2 = sd_to_csi2(sd);
-	int ret;
 
 	if (on)
-		ret = rzg2l_csi2_mipi_link_enable(csi2);
+		rzg2l_csi2_mipi_link_enable(csi2);
 	else
-		ret = rzg2l_csi2_mipi_link_disable(csi2);
+		rzg2l_csi2_mipi_link_disable(csi2);
 
-	return ret;
+	return 0;
 }
 
 static int rzg2l_csi2_s_stream(struct v4l2_subdev *sd, int enable)
@@ -508,13 +500,13 @@ static int rzg2l_csi2_set_format(struct v4l2_subdev *sd,
 	struct v4l2_mbus_framefmt *src_format;
 	struct v4l2_mbus_framefmt *sink_format;
 
-	src_format = v4l2_subdev_state_get_format(state, RZG2L_CSI2_SOURCE);
+	src_format = v4l2_subdev_get_pad_format(sd, state, RZG2L_CSI2_SOURCE);
 	if (fmt->pad == RZG2L_CSI2_SOURCE) {
 		fmt->format = *src_format;
 		return 0;
 	}
 
-	sink_format = v4l2_subdev_state_get_format(state, RZG2L_CSI2_SINK);
+	sink_format = v4l2_subdev_get_pad_format(sd, state, RZG2L_CSI2_SINK);
 
 	if (!rzg2l_csi2_code_to_fmt(fmt->format.code))
 		sink_format->code = rzg2l_csi2_formats[0].code;
@@ -538,8 +530,8 @@ static int rzg2l_csi2_set_format(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static int rzg2l_csi2_init_state(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state)
+static int rzg2l_csi2_init_config(struct v4l2_subdev *sd,
+				  struct v4l2_subdev_state *sd_state)
 {
 	struct v4l2_subdev_format fmt = { .pad = RZG2L_CSI2_SINK, };
 
@@ -590,6 +582,7 @@ static const struct v4l2_subdev_video_ops rzg2l_csi2_video_ops = {
 
 static const struct v4l2_subdev_pad_ops rzg2l_csi2_pad_ops = {
 	.enum_mbus_code = rzg2l_csi2_enum_mbus_code,
+	.init_cfg = rzg2l_csi2_init_config,
 	.enum_frame_size = rzg2l_csi2_enum_frame_size,
 	.set_fmt = rzg2l_csi2_set_format,
 	.get_fmt = v4l2_subdev_get_fmt,
@@ -598,10 +591,6 @@ static const struct v4l2_subdev_pad_ops rzg2l_csi2_pad_ops = {
 static const struct v4l2_subdev_ops rzg2l_csi2_subdev_ops = {
 	.video	= &rzg2l_csi2_video_ops,
 	.pad	= &rzg2l_csi2_pad_ops,
-};
-
-static const struct v4l2_subdev_internal_ops rzg2l_csi2_internal_ops = {
-	.init_state = rzg2l_csi2_init_state,
 };
 
 /* -----------------------------------------------------------------------------
@@ -739,6 +728,7 @@ static const struct media_entity_operations rzg2l_csi2_entity_ops = {
 static int rzg2l_csi2_probe(struct platform_device *pdev)
 {
 	struct rzg2l_csi2 *csi2;
+	struct clk *vclk;
 	int ret;
 
 	csi2 = devm_kzalloc(&pdev->dev, sizeof(*csi2), GFP_KERNEL);
@@ -764,11 +754,12 @@ static int rzg2l_csi2_probe(struct platform_device *pdev)
 		return dev_err_probe(&pdev->dev, PTR_ERR(csi2->sysclk),
 				     "Failed to get system clk\n");
 
-	csi2->vclk = devm_clk_get(&pdev->dev, "video");
-	if (IS_ERR(csi2->vclk))
-		return dev_err_probe(&pdev->dev, PTR_ERR(csi2->vclk),
+	vclk = clk_get(&pdev->dev, "video");
+	if (IS_ERR(vclk))
+		return dev_err_probe(&pdev->dev, PTR_ERR(vclk),
 				     "Failed to get video clock\n");
-	csi2->vclk_rate = clk_get_rate(csi2->vclk);
+	csi2->vclk_rate = clk_get_rate(vclk);
+	clk_put(vclk);
 
 	csi2->dev = &pdev->dev;
 
@@ -786,7 +777,6 @@ static int rzg2l_csi2_probe(struct platform_device *pdev)
 
 	csi2->subdev.dev = &pdev->dev;
 	v4l2_subdev_init(&csi2->subdev, &rzg2l_csi2_subdev_ops);
-	csi2->subdev.internal_ops = &rzg2l_csi2_internal_ops;
 	v4l2_set_subdevdata(&csi2->subdev, &pdev->dev);
 	snprintf(csi2->subdev.name, sizeof(csi2->subdev.name),
 		 "csi-%s", dev_name(&pdev->dev));
@@ -840,7 +830,7 @@ static void rzg2l_csi2_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 }
 
-static int rzg2l_csi2_pm_runtime_suspend(struct device *dev)
+static int __maybe_unused rzg2l_csi2_pm_runtime_suspend(struct device *dev)
 {
 	struct rzg2l_csi2 *csi2 = dev_get_drvdata(dev);
 
@@ -849,7 +839,7 @@ static int rzg2l_csi2_pm_runtime_suspend(struct device *dev)
 	return 0;
 }
 
-static int rzg2l_csi2_pm_runtime_resume(struct device *dev)
+static int __maybe_unused rzg2l_csi2_pm_runtime_resume(struct device *dev)
 {
 	struct rzg2l_csi2 *csi2 = dev_get_drvdata(dev);
 
@@ -857,8 +847,7 @@ static int rzg2l_csi2_pm_runtime_resume(struct device *dev)
 }
 
 static const struct dev_pm_ops rzg2l_csi2_pm_ops = {
-	RUNTIME_PM_OPS(rzg2l_csi2_pm_runtime_suspend,
-		       rzg2l_csi2_pm_runtime_resume, NULL)
+	SET_RUNTIME_PM_OPS(rzg2l_csi2_pm_runtime_suspend, rzg2l_csi2_pm_runtime_resume, NULL)
 };
 
 static const struct of_device_id rzg2l_csi2_of_table[] = {
@@ -872,7 +861,7 @@ static struct platform_driver rzg2l_csi2_pdrv = {
 	.driver	= {
 		.name = "rzg2l-csi2",
 		.of_match_table = rzg2l_csi2_of_table,
-		.pm = pm_ptr(&rzg2l_csi2_pm_ops),
+		.pm = &rzg2l_csi2_pm_ops,
 	},
 };
 

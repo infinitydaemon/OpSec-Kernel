@@ -786,7 +786,6 @@ static struct its_vpe *its_build_vmapp_cmd(struct its_node *its,
 					   struct its_cmd_block *cmd,
 					   struct its_cmd_desc *desc)
 {
-	struct its_vpe *vpe = valid_vpe(its, desc->its_vmapp_cmd.vpe);
 	unsigned long vpt_addr, vconf_addr;
 	u64 target;
 	bool alloc;
@@ -799,11 +798,6 @@ static struct its_vpe *its_build_vmapp_cmd(struct its_node *its,
 		if (is_v4_1(its)) {
 			alloc = !atomic_dec_return(&desc->its_vmapp_cmd.vpe->vmapp_count);
 			its_encode_alloc(cmd, alloc);
-			/*
-			 * Unmapping a VPE is self-synchronizing on GICv4.1,
-			 * no need to issue a VSYNC.
-			 */
-			vpe = NULL;
 		}
 
 		goto out;
@@ -838,7 +832,7 @@ static struct its_vpe *its_build_vmapp_cmd(struct its_node *its,
 out:
 	its_fixup_cmd(cmd);
 
-	return vpe;
+	return valid_vpe(its, desc->its_vmapp_cmd.vpe);
 }
 
 static struct its_vpe *its_build_vmapti_cmd(struct its_node *its,
@@ -2456,8 +2450,8 @@ static bool its_parse_indirect_baser(struct its_node *its,
 	 * feature is not supported by hardware.
 	 */
 	new_order = max_t(u32, get_order(esz << ids), new_order);
-	if (new_order > MAX_PAGE_ORDER) {
-		new_order = MAX_PAGE_ORDER;
+	if (new_order > MAX_ORDER) {
+		new_order = MAX_ORDER;
 		ids = ilog2(PAGE_ORDER_TO_SIZE(new_order) / (int)esz);
 		pr_warn("ITS@%pa: %s Table too large, reduce ids %llu->%u\n",
 			&its->phys_base, its_base_type_string[type],
@@ -3812,9 +3806,9 @@ static int its_vpe_set_affinity(struct irq_data *d,
 				bool force)
 {
 	struct its_vpe *vpe = irq_data_get_irq_chip_data(d);
-	unsigned int from, cpu = nr_cpu_ids;
-	struct cpumask *table_mask;
+	struct cpumask common, *table_mask;
 	unsigned long flags;
+	int from, cpu;
 
 	/*
 	 * Changing affinity is mega expensive, so let's be as lazy as
@@ -3836,15 +3830,10 @@ static int its_vpe_set_affinity(struct irq_data *d,
 	 * If we are offered another CPU in the same GICv4.1 ITS
 	 * affinity, pick this one. Otherwise, any CPU will do.
 	 */
-	if (table_mask)
-		cpu = cpumask_any_and(mask_val, table_mask);
-	if (cpu < nr_cpu_ids) {
-		if (cpumask_test_cpu(from, mask_val) &&
-		    cpumask_test_cpu(from, table_mask))
-			cpu = from;
-	} else {
+	if (table_mask && cpumask_and(&common, mask_val, table_mask))
+		cpu = cpumask_test_cpu(from, &common) ? from : cpumask_first(&common);
+	else
 		cpu = cpumask_first(mask_val);
-	}
 
 	if (from == cpu)
 		goto out;
@@ -4427,12 +4416,12 @@ static const struct irq_domain_ops its_sgi_domain_ops = {
 
 static int its_vpe_id_alloc(void)
 {
-	return ida_alloc_max(&its_vpeid_ida, ITS_MAX_VPEID - 1, GFP_KERNEL);
+	return ida_simple_get(&its_vpeid_ida, 0, ITS_MAX_VPEID, GFP_KERNEL);
 }
 
 static void its_vpe_id_free(u16 id)
 {
-	ida_free(&its_vpeid_ida, id);
+	ida_simple_remove(&its_vpeid_ida, id);
 }
 
 static int its_vpe_init(struct its_vpe *vpe)
@@ -4511,6 +4500,8 @@ static int its_vpe_irq_domain_alloc(struct irq_domain *domain, unsigned int virq
 	unsigned long *bitmap;
 	struct page *vprop_page;
 	int base, nr_ids, i, err = 0;
+
+	BUG_ON(!vm);
 
 	bitmap = its_lpi_alloc(roundup_pow_of_two(nr_irqs), &base, &nr_ids);
 	if (!bitmap)

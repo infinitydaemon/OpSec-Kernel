@@ -25,9 +25,6 @@
 #define MT792x_FW_TAG_FEATURE	4
 #define MT792x_FW_CAP_CNM	BIT(7)
 
-#define MT792x_CHIP_CAP_CLC_EVT_EN BIT(0)
-#define MT792x_CHIP_CAP_RSSI_NOTIFY_EVT_EN BIT(1)
-
 /* NOTE: used to map mt76_rates. idx may change if firmware expands table */
 #define MT792x_BASIC_RATES_TBL	11
 
@@ -37,18 +34,11 @@
 #define MT792x_MCU_INIT_RETRY_COUNT	10
 #define MT792x_WFSYS_INIT_RETRY_COUNT	2
 
-#define MT7920_FIRMWARE_WM	"mediatek/WIFI_RAM_CODE_MT7961_1a.bin"
 #define MT7921_FIRMWARE_WM	"mediatek/WIFI_RAM_CODE_MT7961_1.bin"
 #define MT7922_FIRMWARE_WM	"mediatek/WIFI_RAM_CODE_MT7922_1.bin"
-#define MT7925_FIRMWARE_WM	"mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin"
 
-#define MT7920_ROM_PATCH	"mediatek/WIFI_MT7961_patch_mcu_1a_2_hdr.bin"
 #define MT7921_ROM_PATCH	"mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin"
 #define MT7922_ROM_PATCH	"mediatek/WIFI_MT7922_patch_mcu_1_1_hdr.bin"
-#define MT7925_ROM_PATCH	"mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin"
-
-#define MT792x_SDIO_HDR_TX_BYTES	GENMASK(15, 0)
-#define MT792x_SDIO_HDR_PKT_TYPE	GENMASK(17, 16)
 
 struct mt792x_vif;
 struct mt792x_sta;
@@ -69,14 +59,6 @@ enum {
 	MT792x_CLC_POWER,
 	MT792x_CLC_CHAN,
 	MT792x_CLC_MAX_NUM,
-};
-
-enum mt792x_reg_power_type {
-	MT_AP_UNSET = 0,
-	MT_AP_DEFAULT,
-	MT_AP_LPI,
-	MT_AP_SP,
-	MT_AP_VLP,
 };
 
 DECLARE_EWMA(avg_signal, 10, 8)
@@ -130,8 +112,6 @@ struct mt792x_phy {
 	struct mt76_mib_stats mib;
 
 	u8 sta_work_count;
-	u8 clc_chan_conf;
-	enum mt792x_reg_power_type power_type;
 
 	struct sk_buff_head scan_event_list;
 	struct delayed_work scan_work;
@@ -139,7 +119,6 @@ struct mt792x_phy {
 	void *acpisar;
 #endif
 	void *clc[MT792x_CLC_MAX_NUM];
-	u64 chip_cap;
 
 	struct work_struct roc_work;
 	struct timer_list roc_timer;
@@ -189,8 +168,6 @@ struct mt792x_dev {
 	bool hw_init_done:1;
 	bool fw_assert:1;
 	bool has_eht:1;
-	bool regd_in_progress:1;
-	wait_queue_head_t wait;
 
 	struct work_struct init_work;
 
@@ -251,7 +228,6 @@ static inline bool mt792x_dma_need_reinit(struct mt792x_dev *dev)
 #define mt792x_mutex_release(dev)	\
 	mt76_connac_mutex_release(&(dev)->mt76, &(dev)->pm)
 
-void mt792x_stop(struct ieee80211_hw *hw);
 void mt792x_pm_wake_work(struct work_struct *work);
 void mt792x_pm_power_save_work(struct work_struct *work);
 void mt792x_reset(struct mt76_dev *mdev);
@@ -329,12 +305,8 @@ int mt792x_mcu_fw_pmctrl(struct mt792x_dev *dev);
 static inline char *mt792x_ram_name(struct mt792x_dev *dev)
 {
 	switch (mt76_chip(&dev->mt76)) {
-	case 0x7920:
-		return MT7920_FIRMWARE_WM;
 	case 0x7922:
 		return MT7922_FIRMWARE_WM;
-	case 0x7925:
-		return MT7925_FIRMWARE_WM;
 	default:
 		return MT7921_FIRMWARE_WM;
 	}
@@ -343,12 +315,8 @@ static inline char *mt792x_ram_name(struct mt792x_dev *dev)
 static inline char *mt792x_patch_name(struct mt792x_dev *dev)
 {
 	switch (mt76_chip(&dev->mt76)) {
-	case 0x7920:
-		return MT7920_ROM_PATCH;
 	case 0x7922:
 		return MT7922_ROM_PATCH;
-	case 0x7925:
-		return MT7925_ROM_PATCH;
 	default:
 		return MT7921_ROM_PATCH;
 	}
@@ -368,20 +336,6 @@ void mt792xu_wr(struct mt76_dev *dev, u32 addr, u32 val);
 u32 mt792xu_rmw(struct mt76_dev *dev, u32 addr, u32 mask, u32 val);
 void mt792xu_copy(struct mt76_dev *dev, u32 offset, const void *data, int len);
 void mt792xu_disconnect(struct usb_interface *usb_intf);
-void mt792xu_stop(struct ieee80211_hw *hw);
-
-static inline void
-mt792x_skb_add_usb_sdio_hdr(struct mt792x_dev *dev, struct sk_buff *skb,
-			    int type)
-{
-	u32 hdr, len;
-
-	len = mt76_is_usb(&dev->mt76) ? skb->len : skb->len + sizeof(hdr);
-	hdr = FIELD_PREP(MT792x_SDIO_HDR_TX_BYTES, len) |
-	      FIELD_PREP(MT792x_SDIO_HDR_PKT_TYPE, type);
-
-	put_unaligned_le32(hdr, skb_push(skb, sizeof(hdr)));
-}
 
 int __mt792xe_mcu_drv_pmctrl(struct mt792x_dev *dev);
 int mt792xe_mcu_drv_pmctrl(struct mt792x_dev *dev);
@@ -391,7 +345,6 @@ int mt792xe_mcu_fw_pmctrl(struct mt792x_dev *dev);
 int mt792x_init_acpi_sar(struct mt792x_dev *dev);
 int mt792x_init_acpi_sar_power(struct mt792x_phy *phy, bool set_default);
 u8 mt792x_acpi_get_flags(struct mt792x_phy *phy);
-u8 mt792x_acpi_get_mtcl_conf(struct mt792x_phy *phy, char *alpha2);
 #else
 static inline int mt792x_init_acpi_sar(struct mt792x_dev *dev)
 {
@@ -407,11 +360,6 @@ static inline int mt792x_init_acpi_sar_power(struct mt792x_phy *phy,
 static inline u8 mt792x_acpi_get_flags(struct mt792x_phy *phy)
 {
 	return 0;
-}
-
-static inline u8 mt792x_acpi_get_mtcl_conf(struct mt792x_phy *phy, char *alpha2)
-{
-	return 0xf;
 }
 #endif
 

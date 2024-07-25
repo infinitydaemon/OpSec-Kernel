@@ -456,6 +456,16 @@ static void loongarch_pmu_disable(struct pmu *pmu)
 static DEFINE_MUTEX(pmu_reserve_mutex);
 static atomic_t active_events = ATOMIC_INIT(0);
 
+static int get_pmc_irq(void)
+{
+	struct irq_domain *d = irq_find_matching_fwnode(cpuintc_handle, DOMAIN_BUS_ANY);
+
+	if (d)
+		return irq_create_mapping(d, INT_PCOV);
+
+	return -EINVAL;
+}
+
 static void reset_counters(void *arg);
 static int __hw_perf_event_init(struct perf_event *event);
 
@@ -463,7 +473,7 @@ static void hw_perf_event_destroy(struct perf_event *event)
 {
 	if (atomic_dec_and_mutex_lock(&active_events, &pmu_reserve_mutex)) {
 		on_each_cpu(reset_counters, NULL, 1);
-		free_irq(get_percpu_irq(INT_PCOV), &loongarch_pmu);
+		free_irq(get_pmc_irq(), &loongarch_pmu);
 		mutex_unlock(&pmu_reserve_mutex);
 	}
 }
@@ -552,7 +562,7 @@ static int loongarch_pmu_event_init(struct perf_event *event)
 	if (event->cpu >= 0 && !cpu_online(event->cpu))
 		return -ENODEV;
 
-	irq = get_percpu_irq(INT_PCOV);
+	irq = get_pmc_irq();
 	flags = IRQF_PERCPU | IRQF_NOBALANCING | IRQF_NO_THREAD | IRQF_NO_SUSPEND | IRQF_SHARED;
 	if (!atomic_inc_not_zero(&active_events)) {
 		mutex_lock(&pmu_reserve_mutex);

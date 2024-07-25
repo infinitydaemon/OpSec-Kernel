@@ -5,7 +5,6 @@
  **************************************************************************/
 
 #include <linux/highmem.h>
-#include <linux/vmalloc.h>
 
 #include "mmu.h"
 #include "psb_drv.h"

@@ -322,16 +322,25 @@ static int sx9360_read_raw(struct iio_dev *indio_dev,
 			   int *val, int *val2, long mask)
 {
 	struct sx_common_data *data = iio_priv(indio_dev);
+	int ret;
 
 	switch (mask) {
 	case IIO_CHAN_INFO_RAW:
-		iio_device_claim_direct_scoped(return -EBUSY, indio_dev)
-			return sx_common_read_proximity(data, chan, val);
-		unreachable();
+		ret = iio_device_claim_direct_mode(indio_dev);
+		if (ret)
+			return ret;
+
+		ret = sx_common_read_proximity(data, chan, val);
+		iio_device_release_direct_mode(indio_dev);
+		return ret;
 	case IIO_CHAN_INFO_HARDWAREGAIN:
-		iio_device_claim_direct_scoped(return -EBUSY, indio_dev)
-			return sx9360_read_gain(data, chan, val);
-		unreachable();
+		ret = iio_device_claim_direct_mode(indio_dev);
+		if (ret)
+			return ret;
+
+		ret = sx9360_read_gain(data, chan, val);
+		iio_device_release_direct_mode(indio_dev);
+		return ret;
 	case IIO_CHAN_INFO_SAMP_FREQ:
 		return sx9360_read_samp_freq(data, val, val2);
 	default:
@@ -378,15 +387,19 @@ static int sx9360_read_avail(struct iio_dev *indio_dev,
 static int sx9360_set_samp_freq(struct sx_common_data *data,
 				int val, int val2)
 {
-	int reg;
+	int ret, reg;
 	__be16 buf;
 
 	reg = val * 8192 / SX9360_FOSC_HZ + val2 * 8192 / (SX9360_FOSC_MHZ);
 	buf = cpu_to_be16(reg);
-	guard(mutex)(&data->mutex);
+	mutex_lock(&data->mutex);
 
-	return regmap_bulk_write(data->regmap, SX9360_REG_GNRL_CTRL1, &buf,
-				 sizeof(buf));
+	ret = regmap_bulk_write(data->regmap, SX9360_REG_GNRL_CTRL1, &buf,
+				sizeof(buf));
+
+	mutex_unlock(&data->mutex);
+
+	return ret;
 }
 
 static int sx9360_read_thresh(struct sx_common_data *data, int *val)
@@ -497,6 +510,7 @@ static int sx9360_read_event_val(struct iio_dev *indio_dev,
 static int sx9360_write_thresh(struct sx_common_data *data, int _val)
 {
 	unsigned int val = _val;
+	int ret;
 
 	if (val >= 1)
 		val = int_sqrt(2 * val);
@@ -504,8 +518,11 @@ static int sx9360_write_thresh(struct sx_common_data *data, int _val)
 	if (val > 0xff)
 		return -EINVAL;
 
-	guard(mutex)(&data->mutex);
-	return regmap_write(data->regmap, SX9360_REG_PROX_CTRL5, val);
+	mutex_lock(&data->mutex);
+	ret = regmap_write(data->regmap, SX9360_REG_PROX_CTRL5, val);
+	mutex_unlock(&data->mutex);
+
+	return ret;
 }
 
 static int sx9360_write_hysteresis(struct sx_common_data *data, int _val)
@@ -529,14 +546,18 @@ static int sx9360_write_hysteresis(struct sx_common_data *data, int _val)
 		return -EINVAL;
 
 	hyst = FIELD_PREP(SX9360_REG_PROX_CTRL4_HYST_MASK, hyst);
-	guard(mutex)(&data->mutex);
-	return regmap_update_bits(data->regmap, SX9360_REG_PROX_CTRL4,
-				  SX9360_REG_PROX_CTRL4_HYST_MASK, hyst);
+	mutex_lock(&data->mutex);
+	ret = regmap_update_bits(data->regmap, SX9360_REG_PROX_CTRL4,
+				 SX9360_REG_PROX_CTRL4_HYST_MASK, hyst);
+	mutex_unlock(&data->mutex);
+
+	return ret;
 }
 
 static int sx9360_write_far_debounce(struct sx_common_data *data, int _val)
 {
 	unsigned int regval, val = _val;
+	int ret;
 
 	if (val > 0)
 		val = ilog2(val);
@@ -545,15 +566,19 @@ static int sx9360_write_far_debounce(struct sx_common_data *data, int _val)
 
 	regval = FIELD_PREP(SX9360_REG_PROX_CTRL4_FAR_DEBOUNCE_MASK, val);
 
-	guard(mutex)(&data->mutex);
-	return regmap_update_bits(data->regmap, SX9360_REG_PROX_CTRL4,
-				  SX9360_REG_PROX_CTRL4_FAR_DEBOUNCE_MASK,
-				  regval);
+	mutex_lock(&data->mutex);
+	ret = regmap_update_bits(data->regmap, SX9360_REG_PROX_CTRL4,
+				 SX9360_REG_PROX_CTRL4_FAR_DEBOUNCE_MASK,
+				 regval);
+	mutex_unlock(&data->mutex);
+
+	return ret;
 }
 
 static int sx9360_write_close_debounce(struct sx_common_data *data, int _val)
 {
 	unsigned int regval, val = _val;
+	int ret;
 
 	if (val > 0)
 		val = ilog2(val);
@@ -562,10 +587,13 @@ static int sx9360_write_close_debounce(struct sx_common_data *data, int _val)
 
 	regval = FIELD_PREP(SX9360_REG_PROX_CTRL4_CLOSE_DEBOUNCE_MASK, val);
 
-	guard(mutex)(&data->mutex);
-	return regmap_update_bits(data->regmap, SX9360_REG_PROX_CTRL4,
-				  SX9360_REG_PROX_CTRL4_CLOSE_DEBOUNCE_MASK,
-				  regval);
+	mutex_lock(&data->mutex);
+	ret = regmap_update_bits(data->regmap, SX9360_REG_PROX_CTRL4,
+				 SX9360_REG_PROX_CTRL4_CLOSE_DEBOUNCE_MASK,
+				 regval);
+	mutex_unlock(&data->mutex);
+
+	return ret;
 }
 
 static int sx9360_write_event_val(struct iio_dev *indio_dev,
@@ -602,15 +630,19 @@ static int sx9360_write_gain(struct sx_common_data *data,
 			     const struct iio_chan_spec *chan, int val)
 {
 	unsigned int gain, reg;
+	int ret;
 
 	gain = ilog2(val);
 	reg = SX9360_REG_PROX_CTRL0_PHR + chan->channel;
 	gain = FIELD_PREP(SX9360_REG_PROX_CTRL0_GAIN_MASK, gain);
 
-	guard(mutex)(&data->mutex);
-	return regmap_update_bits(data->regmap, reg,
-				  SX9360_REG_PROX_CTRL0_GAIN_MASK,
-				  gain);
+	mutex_lock(&data->mutex);
+	ret = regmap_update_bits(data->regmap, reg,
+				 SX9360_REG_PROX_CTRL0_GAIN_MASK,
+				 gain);
+	mutex_unlock(&data->mutex);
+
+	return ret;
 }
 
 static int sx9360_write_raw(struct iio_dev *indio_dev,
@@ -795,31 +827,36 @@ static int sx9360_suspend(struct device *dev)
 
 	disable_irq_nosync(data->client->irq);
 
-	guard(mutex)(&data->mutex);
+	mutex_lock(&data->mutex);
 	ret = regmap_read(data->regmap, SX9360_REG_GNRL_CTRL0, &regval);
-	if (ret < 0)
-		return ret;
 
 	data->suspend_ctrl =
 		FIELD_GET(SX9360_REG_GNRL_CTRL0_PHEN_MASK, regval);
 
+	if (ret < 0)
+		goto out;
 
 	/* Disable all phases, send the device to sleep. */
-	return regmap_write(data->regmap, SX9360_REG_GNRL_CTRL0, 0);
+	ret = regmap_write(data->regmap, SX9360_REG_GNRL_CTRL0, 0);
+
+out:
+	mutex_unlock(&data->mutex);
+	return ret;
 }
 
 static int sx9360_resume(struct device *dev)
 {
 	struct sx_common_data *data = iio_priv(dev_get_drvdata(dev));
+	int ret;
 
-	scoped_guard(mutex, &data->mutex) {
-		int ret = regmap_update_bits(data->regmap,
-					     SX9360_REG_GNRL_CTRL0,
-					     SX9360_REG_GNRL_CTRL0_PHEN_MASK,
-					     data->suspend_ctrl);
-		if (ret)
-			return ret;
-	}
+	mutex_lock(&data->mutex);
+	ret = regmap_update_bits(data->regmap, SX9360_REG_GNRL_CTRL0,
+				 SX9360_REG_GNRL_CTRL0_PHEN_MASK,
+				 data->suspend_ctrl);
+	mutex_unlock(&data->mutex);
+	if (ret)
+		return ret;
+
 	enable_irq(data->client->irq);
 	return 0;
 }

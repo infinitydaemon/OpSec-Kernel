@@ -573,13 +573,6 @@ int mlx5_devlink_port_fn_ipsec_packet_get(struct devlink_port *port, bool *is_en
 int mlx5_devlink_port_fn_ipsec_packet_set(struct devlink_port *port, bool enable,
 					  struct netlink_ext_ack *extack);
 #endif /* CONFIG_XFRM_OFFLOAD */
-int mlx5_devlink_port_fn_max_io_eqs_get(struct devlink_port *port,
-					u32 *max_io_eqs,
-					struct netlink_ext_ack *extack);
-int mlx5_devlink_port_fn_max_io_eqs_set(struct devlink_port *port,
-					u32 max_io_eqs,
-					struct netlink_ext_ack *extack);
-
 void *mlx5_eswitch_get_uplink_priv(struct mlx5_eswitch *esw, u8 rep_type);
 
 int __mlx5_eswitch_set_vport_vlan(struct mlx5_eswitch *esw,
@@ -623,6 +616,13 @@ const u32 *mlx5_esw_query_functions(struct mlx5_core_dev *dev);
 static inline bool mlx5_esw_allowed(const struct mlx5_eswitch *esw)
 {
 	return esw && MLX5_ESWITCH_MANAGER(esw->dev);
+}
+
+/* The returned number is valid only when the dev is eswitch manager. */
+static inline u16 mlx5_eswitch_manager_vport(struct mlx5_core_dev *dev)
+{
+	return mlx5_core_is_ecpf_esw_manager(dev) ?
+		MLX5_VPORT_ECPF : MLX5_VPORT_PF;
 }
 
 static inline bool

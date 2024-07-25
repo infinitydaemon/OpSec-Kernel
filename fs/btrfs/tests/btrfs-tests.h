@@ -23,7 +23,6 @@ enum {
 	TEST_ALLOC_INODE,
 	TEST_ALLOC_BLOCK_GROUP,
 	TEST_ALLOC_EXTENT_MAP,
-	TEST_ALLOC_CHUNK_MAP,
 };
 
 extern const char *test_error[];

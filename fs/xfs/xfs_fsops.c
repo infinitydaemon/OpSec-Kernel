@@ -213,8 +213,10 @@ xfs_growfs_data_private(
 			struct xfs_perag	*pag;
 
 			pag = xfs_perag_get(mp, id.agno);
-			xfs_ag_resv_free(pag);
+			error = xfs_ag_resv_free(pag);
 			xfs_perag_put(pag);
+			if (error)
+				return error;
 		}
 		/*
 		 * Reserve AG metadata blocks. ENOSPC here does not mean there
@@ -349,19 +351,58 @@ xfs_growfs_log(
 }
 
 /*
+ * exported through ioctl XFS_IOC_FSCOUNTS
+ */
+
+void
+xfs_fs_counts(
+	xfs_mount_t		*mp,
+	xfs_fsop_counts_t	*cnt)
+{
+	cnt->allocino = percpu_counter_read_positive(&mp->m_icount);
+	cnt->freeino = percpu_counter_read_positive(&mp->m_ifree);
+	cnt->freedata = percpu_counter_read_positive(&mp->m_fdblocks) -
+						xfs_fdblocks_unavailable(mp);
+	cnt->freertx = percpu_counter_read_positive(&mp->m_frextents);
+}
+
+/*
+ * exported through ioctl XFS_IOC_SET_RESBLKS & XFS_IOC_GET_RESBLKS
+ *
+ * xfs_reserve_blocks is called to set m_resblks
+ * in the in-core mount table. The number of unused reserved blocks
+ * is kept in m_resblks_avail.
+ *
  * Reserve the requested number of blocks if available. Otherwise return
  * as many as possible to satisfy the request. The actual number
- * reserved are returned in outval.
+ * reserved are returned in outval
+ *
+ * A null inval pointer indicates that only the current reserved blocks
+ * available  should  be returned no settings are changed.
  */
+
 int
 xfs_reserve_blocks(
-	struct xfs_mount	*mp,
-	uint64_t		request)
+	xfs_mount_t             *mp,
+	uint64_t              *inval,
+	xfs_fsop_resblks_t      *outval)
 {
 	int64_t			lcounter, delta;
 	int64_t			fdblks_delta = 0;
+	uint64_t		request;
 	int64_t			free;
 	int			error = 0;
+
+	/* If inval is null, report current values and return */
+	if (inval == (uint64_t *)NULL) {
+		if (!outval)
+			return -EINVAL;
+		outval->resblks = mp->m_resblks;
+		outval->resblks_avail = mp->m_resblks_avail;
+		return 0;
+	}
+
+	request = *inval;
 
 	/*
 	 * With per-cpu counters, this becomes an interesting problem. we need
@@ -383,14 +424,14 @@ xfs_reserve_blocks(
 	 */
 	if (mp->m_resblks > request) {
 		lcounter = mp->m_resblks_avail - request;
-		if (lcounter > 0) {		/* release unused blocks */
+		if (lcounter  > 0) {		/* release unused blocks */
 			fdblks_delta = lcounter;
 			mp->m_resblks_avail -= lcounter;
 		}
 		mp->m_resblks = request;
 		if (fdblks_delta) {
 			spin_unlock(&mp->m_sb_lock);
-			xfs_add_fdblocks(mp, fdblks_delta);
+			error = xfs_mod_fdblocks(mp, fdblks_delta, 0);
 			spin_lock(&mp->m_sb_lock);
 		}
 
@@ -426,12 +467,17 @@ xfs_reserve_blocks(
 		 */
 		fdblks_delta = min(free, delta);
 		spin_unlock(&mp->m_sb_lock);
-		error = xfs_dec_fdblocks(mp, fdblks_delta, 0);
+		error = xfs_mod_fdblocks(mp, -fdblks_delta, 0);
 		if (!error)
-			xfs_add_fdblocks(mp, fdblks_delta);
+			xfs_mod_fdblocks(mp, fdblks_delta, 0);
 		spin_lock(&mp->m_sb_lock);
 	}
 out:
+	if (outval) {
+		outval->resblks = mp->m_resblks;
+		outval->resblks_avail = mp->m_resblks_avail;
+	}
+
 	spin_unlock(&mp->m_sb_lock);
 	return error;
 }
@@ -443,9 +489,9 @@ xfs_fs_goingdown(
 {
 	switch (inflags) {
 	case XFS_FSOP_GOING_FLAGS_DEFAULT: {
-		if (!bdev_freeze(mp->m_super->s_bdev)) {
+		if (!freeze_bdev(mp->m_super->s_bdev)) {
 			xfs_force_shutdown(mp, SHUTDOWN_FORCE_UMOUNT);
-			bdev_thaw(mp->m_super->s_bdev);
+			thaw_bdev(mp->m_super->s_bdev);
 		}
 		break;
 	}
@@ -554,13 +600,24 @@ xfs_fs_reserve_ag_blocks(
 /*
  * Free space reserved for per-AG metadata.
  */
-void
+int
 xfs_fs_unreserve_ag_blocks(
 	struct xfs_mount	*mp)
 {
 	xfs_agnumber_t		agno;
 	struct xfs_perag	*pag;
+	int			error = 0;
+	int			err2;
 
-	for_each_perag(mp, agno, pag)
-		xfs_ag_resv_free(pag);
+	for_each_perag(mp, agno, pag) {
+		err2 = xfs_ag_resv_free(pag);
+		if (err2 && !error)
+			error = err2;
+	}
+
+	if (error)
+		xfs_warn(mp,
+	"Error %d freeing per-AG metadata reserve pool.", error);
+
+	return error;
 }

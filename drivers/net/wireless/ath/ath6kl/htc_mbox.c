@@ -364,7 +364,8 @@ static void ath6kl_htc_tx_prep_pkt(struct htc_packet *packet, u8 flags,
 	packet->buf -= HTC_HDR_LENGTH;
 	hdr =  (struct htc_frame_hdr *)packet->buf;
 
-	put_unaligned_le16(packet->act_len, &hdr->payld_len);
+	/* Endianess? */
+	put_unaligned((u16)packet->act_len, &hdr->payld_len);
 	hdr->flags = flags;
 	hdr->eid = packet->endpoint;
 	hdr->ctrl[0] = ctrl0;

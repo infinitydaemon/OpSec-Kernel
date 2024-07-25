@@ -151,17 +151,16 @@ void nvme_mpath_end_request(struct request *rq)
 void nvme_kick_requeue_lists(struct nvme_ctrl *ctrl)
 {
 	struct nvme_ns *ns;
-	int srcu_idx;
 
-	srcu_idx = srcu_read_lock(&ctrl->srcu);
-	list_for_each_entry_rcu(ns, &ctrl->namespaces, list) {
+	down_read(&ctrl->namespaces_rwsem);
+	list_for_each_entry(ns, &ctrl->namespaces, list) {
 		if (!ns->head->disk)
 			continue;
 		kblockd_schedule_work(&ns->head->requeue_work);
-		if (nvme_ctrl_state(ns->ctrl) == NVME_CTRL_LIVE)
+		if (ctrl->state == NVME_CTRL_LIVE)
 			disk_uevent(ns->head->disk, KOBJ_CHANGE);
 	}
-	srcu_read_unlock(&ctrl->srcu, srcu_idx);
+	up_read(&ctrl->namespaces_rwsem);
 }
 
 static const char *nvme_ana_state_names[] = {
@@ -195,14 +194,13 @@ out:
 void nvme_mpath_clear_ctrl_paths(struct nvme_ctrl *ctrl)
 {
 	struct nvme_ns *ns;
-	int srcu_idx;
 
-	srcu_idx = srcu_read_lock(&ctrl->srcu);
-	list_for_each_entry_rcu(ns, &ctrl->namespaces, list) {
+	down_read(&ctrl->namespaces_rwsem);
+	list_for_each_entry(ns, &ctrl->namespaces, list) {
 		nvme_mpath_clear_current_path(ns);
 		kblockd_schedule_work(&ns->head->requeue_work);
 	}
-	srcu_read_unlock(&ctrl->srcu, srcu_idx);
+	up_read(&ctrl->namespaces_rwsem);
 }
 
 void nvme_mpath_revalidate_paths(struct nvme_ns *ns)
@@ -226,14 +224,13 @@ void nvme_mpath_revalidate_paths(struct nvme_ns *ns)
 
 static bool nvme_path_is_disabled(struct nvme_ns *ns)
 {
-	enum nvme_ctrl_state state = nvme_ctrl_state(ns->ctrl);
-
 	/*
 	 * We don't treat NVME_CTRL_DELETING as a disabled path as I/O should
 	 * still be able to complete assuming that the controller is connected.
 	 * Otherwise it will fail immediately and return to the requeue list.
 	 */
-	if (state != NVME_CTRL_LIVE && state != NVME_CTRL_DELETING)
+	if (ns->ctrl->state != NVME_CTRL_LIVE &&
+	    ns->ctrl->state != NVME_CTRL_DELETING)
 		return true;
 	if (test_bit(NVME_NS_ANA_PENDING, &ns->flags) ||
 	    !test_bit(NVME_NS_READY, &ns->flags))
@@ -336,7 +333,7 @@ out:
 
 static inline bool nvme_path_is_optimized(struct nvme_ns *ns)
 {
-	return nvme_ctrl_state(ns->ctrl) == NVME_CTRL_LIVE &&
+	return ns->ctrl->state == NVME_CTRL_LIVE &&
 		ns->ana_state == NVME_ANA_OPTIMIZED;
 }
 
@@ -363,7 +360,7 @@ static bool nvme_available_path(struct nvme_ns_head *head)
 	list_for_each_entry_rcu(ns, &head->list, siblings) {
 		if (test_bit(NVME_CTRL_FAILFAST_EXPIRED, &ns->ctrl->flags))
 			continue;
-		switch (nvme_ctrl_state(ns->ctrl)) {
+		switch (ns->ctrl->state) {
 		case NVME_CTRL_LIVE:
 		case NVME_CTRL_RESETTING:
 		case NVME_CTRL_CONNECTING:
@@ -520,7 +517,6 @@ static void nvme_requeue_work(struct work_struct *work)
 
 int nvme_mpath_alloc_disk(struct nvme_ctrl *ctrl, struct nvme_ns_head *head)
 {
-	struct queue_limits lim;
 	bool vwc = false;
 
 	mutex_init(&head->lock);
@@ -537,14 +533,9 @@ int nvme_mpath_alloc_disk(struct nvme_ctrl *ctrl, struct nvme_ns_head *head)
 	    !nvme_is_unique_nsid(ctrl, head) || !multipath)
 		return 0;
 
-	blk_set_stacking_limits(&lim);
-	lim.dma_alignment = 3;
-	if (head->ids.csi != NVME_CSI_ZNS)
-		lim.max_zone_append_sectors = 0;
-
-	head->disk = blk_alloc_disk(&lim, ctrl->numa_node);
-	if (IS_ERR(head->disk))
-		return PTR_ERR(head->disk);
+	head->disk = blk_alloc_disk(ctrl->numa_node);
+	if (!head->disk)
+		return -ENOMEM;
 	head->disk->fops = &nvme_ns_head_ops;
 	head->disk->private_data = head;
 	sprintf(head->disk->disk_name, "nvme%dn%d",
@@ -562,6 +553,11 @@ int nvme_mpath_alloc_disk(struct nvme_ctrl *ctrl, struct nvme_ns_head *head)
 	if (ctrl->tagset->nr_maps > HCTX_TYPE_POLL &&
 	    ctrl->tagset->map[HCTX_TYPE_POLL].nr_queues)
 		blk_queue_flag_set(QUEUE_FLAG_POLL, head->disk->queue);
+
+	/* set to a default value of 512 until the disk is validated */
+	blk_queue_logical_block_size(head->disk->queue, 512);
+	blk_set_stacking_limits(&head->disk->queue->limits);
+	blk_queue_dma_alignment(head->disk->queue, 3);
 
 	/* we need to propagate up the VMC settings */
 	if (ctrl->vwc & NVME_CTRL_VWC_PRESENT)
@@ -585,7 +581,7 @@ static void nvme_mpath_set_live(struct nvme_ns *ns)
 	 */
 	if (!test_and_set_bit(NVME_NSHEAD_DISK_LIVE, &head->flags)) {
 		rc = device_add_disk(&head->subsys->dev, head->disk,
-				     nvme_ns_attr_groups);
+				     nvme_ns_id_attr_groups);
 		if (rc) {
 			clear_bit(NVME_NSHEAD_DISK_LIVE, &ns->flags);
 			return;
@@ -673,7 +669,7 @@ static void nvme_update_ns_ana_state(struct nvme_ana_group_desc *desc,
 	 * controller is ready.
 	 */
 	if (nvme_state_is_live(ns->ana_state) &&
-	    nvme_ctrl_state(ns->ctrl) == NVME_CTRL_LIVE)
+	    ns->ctrl->state == NVME_CTRL_LIVE)
 		nvme_mpath_set_live(ns);
 }
 
@@ -683,7 +679,6 @@ static int nvme_update_ana_state(struct nvme_ctrl *ctrl,
 	u32 nr_nsids = le32_to_cpu(desc->nnsids), n = 0;
 	unsigned *nr_change_groups = data;
 	struct nvme_ns *ns;
-	int srcu_idx;
 
 	dev_dbg(ctrl->device, "ANA group %d: %s.\n",
 			le32_to_cpu(desc->grpid),
@@ -695,8 +690,8 @@ static int nvme_update_ana_state(struct nvme_ctrl *ctrl,
 	if (!nr_nsids)
 		return 0;
 
-	srcu_idx = srcu_read_lock(&ctrl->srcu);
-	list_for_each_entry_rcu(ns, &ctrl->namespaces, list) {
+	down_read(&ctrl->namespaces_rwsem);
+	list_for_each_entry(ns, &ctrl->namespaces, list) {
 		unsigned nsid;
 again:
 		nsid = le32_to_cpu(desc->nsids[n]);
@@ -709,7 +704,7 @@ again:
 		if (ns->head->ns_id > nsid)
 			goto again;
 	}
-	srcu_read_unlock(&ctrl->srcu, srcu_idx);
+	up_read(&ctrl->namespaces_rwsem);
 	return 0;
 }
 
@@ -755,7 +750,7 @@ static void nvme_ana_work(struct work_struct *work)
 {
 	struct nvme_ctrl *ctrl = container_of(work, struct nvme_ctrl, ana_work);
 
-	if (nvme_ctrl_state(ctrl) != NVME_CTRL_LIVE)
+	if (ctrl->state != NVME_CTRL_LIVE)
 		return;
 
 	nvme_read_ana_log(ctrl);

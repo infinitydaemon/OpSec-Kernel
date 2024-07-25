@@ -88,7 +88,7 @@
 #include <linux/xattr.h>
 #include <linux/nospec.h>
 #include <linux/indirect_call_wrapper.h>
-#include <linux/io_uring/net.h>
+#include <linux/io_uring.h>
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
@@ -343,7 +343,7 @@ static void init_inodecache(void)
 					      0,
 					      (SLAB_HWCACHE_ALIGN |
 					       SLAB_RECLAIM_ACCOUNT |
-					       SLAB_ACCOUNT),
+					       SLAB_MEM_SPREAD | SLAB_ACCOUNT),
 					      init_once);
 	BUG_ON(sock_inode_cachep == NULL);
 }
@@ -403,7 +403,7 @@ static const struct xattr_handler sockfs_security_xattr_handler = {
 	.set = sockfs_security_xattr_set,
 };
 
-static const struct xattr_handler * const sockfs_xattr_handlers[] = {
+static const struct xattr_handler *sockfs_xattr_handlers[] = {
 	&sockfs_xattr_handler,
 	&sockfs_security_xattr_handler,
 	NULL
@@ -1687,16 +1687,20 @@ struct file *__sys_socket_file(int family, int type, int protocol)
  *	Therefore, __weak is needed to ensure that the call is still
  *	emitted, by telling the compiler that we don't know what the
  *	function might eventually be.
+ *
+ *	__diag_* below are needed to dismiss the missing prototype warning.
  */
 
-__bpf_hook_start();
+__diag_push();
+__diag_ignore_all("-Wmissing-prototypes",
+		  "A fmod_ret entry point for BPF programs");
 
 __weak noinline int update_socket_protocol(int family, int type, int protocol)
 {
 	return protocol;
 }
 
-__bpf_hook_end();
+__diag_pop();
 
 int __sys_socket(int family, int type, int protocol)
 {
@@ -1890,7 +1894,7 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 	return __sys_listen(fd, backlog);
 }
 
-struct file *do_accept(struct file *file, struct proto_accept_arg *arg,
+struct file *do_accept(struct file *file, unsigned file_flags,
 		       struct sockaddr __user *upeer_sockaddr,
 		       int __user *upeer_addrlen, int flags)
 {
@@ -1926,8 +1930,8 @@ struct file *do_accept(struct file *file, struct proto_accept_arg *arg,
 	if (err)
 		goto out_fd;
 
-	arg->flags |= sock->file->f_flags;
-	err = ops->accept(sock, newsock, arg);
+	err = ops->accept(sock, newsock, sock->file->f_flags | file_flags,
+					false);
 	if (err < 0)
 		goto out_fd;
 
@@ -1953,7 +1957,6 @@ out_fd:
 static int __sys_accept4_file(struct file *file, struct sockaddr __user *upeer_sockaddr,
 			      int __user *upeer_addrlen, int flags)
 {
-	struct proto_accept_arg arg = { };
 	struct file *newfile;
 	int newfd;
 
@@ -1967,7 +1970,7 @@ static int __sys_accept4_file(struct file *file, struct sockaddr __user *upeer_s
 	if (unlikely(newfd < 0))
 		return newfd;
 
-	newfile = do_accept(file, &arg, upeer_sockaddr, upeer_addrlen,
+	newfile = do_accept(file, 0, upeer_sockaddr, upeer_addrlen,
 			    flags);
 	if (IS_ERR(newfile)) {
 		put_unused_fd(newfd);
@@ -2164,9 +2167,10 @@ int __sys_sendto(int fd, void __user *buff, size_t len, unsigned int flags,
 	struct sockaddr_storage address;
 	int err;
 	struct msghdr msg;
+	struct iovec iov;
 	int fput_needed;
 
-	err = import_ubuf(ITER_SOURCE, buff, len, &msg.msg_iter);
+	err = import_single_range(ITER_SOURCE, buff, len, &iov, &msg.msg_iter);
 	if (unlikely(err))
 		return err;
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
@@ -2228,10 +2232,11 @@ int __sys_recvfrom(int fd, void __user *ubuf, size_t size, unsigned int flags,
 		.msg_name = addr ? (struct sockaddr *)&address : NULL,
 	};
 	struct socket *sock;
+	struct iovec iov;
 	int err, err2;
 	int fput_needed;
 
-	err = import_ubuf(ITER_DEST, ubuf, size, &msg.msg_iter);
+	err = import_single_range(ITER_DEST, ubuf, size, &iov, &msg.msg_iter);
 	if (unlikely(err))
 		return err;
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
@@ -2276,23 +2281,33 @@ static bool sock_use_custom_sol_socket(const struct socket *sock)
 	return test_bit(SOCK_CUSTOM_SOCKOPT, &sock->flags);
 }
 
-int do_sock_setsockopt(struct socket *sock, bool compat, int level,
-		       int optname, sockptr_t optval, int optlen)
+/*
+ *	Set a socket option. Because we don't know the option lengths we have
+ *	to pass the user mode parameter for the protocols to sort out.
+ */
+int __sys_setsockopt(int fd, int level, int optname, char __user *user_optval,
+		int optlen)
 {
+	sockptr_t optval = USER_SOCKPTR(user_optval);
 	const struct proto_ops *ops;
 	char *kernel_optval = NULL;
-	int err;
+	int err, fput_needed;
+	struct socket *sock;
 
 	if (optlen < 0)
 		return -EINVAL;
+
+	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	if (!sock)
+		return err;
 
 	err = security_socket_setsockopt(sock, level, optname);
 	if (err)
 		goto out_put;
 
-	if (!compat)
+	if (!in_compat_syscall())
 		err = BPF_CGROUP_RUN_PROG_SETSOCKOPT(sock->sk, &level, &optname,
-						     optval, &optlen,
+						     user_optval, &optlen,
 						     &kernel_optval);
 	if (err < 0)
 		goto out_put;
@@ -2313,27 +2328,6 @@ int do_sock_setsockopt(struct socket *sock, bool compat, int level,
 					    optlen);
 	kfree(kernel_optval);
 out_put:
-	return err;
-}
-EXPORT_SYMBOL(do_sock_setsockopt);
-
-/* Set a socket option. Because we don't know the option lengths we have
- * to pass the user mode parameter for the protocols to sort out.
- */
-int __sys_setsockopt(int fd, int level, int optname, char __user *user_optval,
-		     int optlen)
-{
-	sockptr_t optval = USER_SOCKPTR(user_optval);
-	bool compat = in_compat_syscall();
-	int err, fput_needed;
-	struct socket *sock;
-
-	sock = sockfd_lookup_light(fd, &err, &fput_needed);
-	if (!sock)
-		return err;
-
-	err = do_sock_setsockopt(sock, compat, level, optname, optval, optlen);
-
 	fput_light(sock->file, fput_needed);
 	return err;
 }
@@ -2347,43 +2341,6 @@ SYSCALL_DEFINE5(setsockopt, int, fd, int, level, int, optname,
 INDIRECT_CALLABLE_DECLARE(bool tcp_bpf_bypass_getsockopt(int level,
 							 int optname));
 
-int do_sock_getsockopt(struct socket *sock, bool compat, int level,
-		       int optname, sockptr_t optval, sockptr_t optlen)
-{
-	int max_optlen __maybe_unused;
-	const struct proto_ops *ops;
-	int err;
-
-	err = security_socket_getsockopt(sock, level, optname);
-	if (err)
-		return err;
-
-	if (!compat)
-		max_optlen = BPF_CGROUP_GETSOCKOPT_MAX_OPTLEN(optlen);
-
-	ops = READ_ONCE(sock->ops);
-	if (level == SOL_SOCKET) {
-		err = sk_getsockopt(sock->sk, level, optname, optval, optlen);
-	} else if (unlikely(!ops->getsockopt)) {
-		err = -EOPNOTSUPP;
-	} else {
-		if (WARN_ONCE(optval.is_kernel || optlen.is_kernel,
-			      "Invalid argument type"))
-			return -EOPNOTSUPP;
-
-		err = ops->getsockopt(sock, level, optname, optval.user,
-				      optlen.user);
-	}
-
-	if (!compat)
-		err = BPF_CGROUP_RUN_PROG_GETSOCKOPT(sock->sk, level, optname,
-						     optval, optlen, max_optlen,
-						     err);
-
-	return err;
-}
-EXPORT_SYMBOL(do_sock_getsockopt);
-
 /*
  *	Get a socket option. Because we don't know the option lengths we have
  *	to pass a user mode parameter for the protocols to sort out.
@@ -2391,18 +2348,36 @@ EXPORT_SYMBOL(do_sock_getsockopt);
 int __sys_getsockopt(int fd, int level, int optname, char __user *optval,
 		int __user *optlen)
 {
+	int max_optlen __maybe_unused;
+	const struct proto_ops *ops;
 	int err, fput_needed;
 	struct socket *sock;
-	bool compat;
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (!sock)
 		return err;
 
-	compat = in_compat_syscall();
-	err = do_sock_getsockopt(sock, compat, level, optname,
-				 USER_SOCKPTR(optval), USER_SOCKPTR(optlen));
+	err = security_socket_getsockopt(sock, level, optname);
+	if (err)
+		goto out_put;
 
+	if (!in_compat_syscall())
+		max_optlen = BPF_CGROUP_GETSOCKOPT_MAX_OPTLEN(optlen);
+
+	ops = READ_ONCE(sock->ops);
+	if (level == SOL_SOCKET)
+		err = sock_getsockopt(sock, level, optname, optval, optlen);
+	else if (unlikely(!ops->getsockopt))
+		err = -EOPNOTSUPP;
+	else
+		err = ops->getsockopt(sock, level, optname, optval,
+					    optlen);
+
+	if (!in_compat_syscall())
+		err = BPF_CGROUP_RUN_PROG_GETSOCKOPT(sock->sk, level, optname,
+						     optval, optlen, max_optlen,
+						     err);
+out_put:
 	fput_light(sock->file, fput_needed);
 	return err;
 }
@@ -2601,9 +2576,9 @@ out:
 	return err;
 }
 
-static int sendmsg_copy_msghdr(struct msghdr *msg,
-			       struct user_msghdr __user *umsg, unsigned flags,
-			       struct iovec **iov)
+int sendmsg_copy_msghdr(struct msghdr *msg,
+			struct user_msghdr __user *umsg, unsigned flags,
+			struct iovec **iov)
 {
 	int err;
 
@@ -2754,10 +2729,10 @@ SYSCALL_DEFINE4(sendmmsg, int, fd, struct mmsghdr __user *, mmsg,
 	return __sys_sendmmsg(fd, mmsg, vlen, flags, true);
 }
 
-static int recvmsg_copy_msghdr(struct msghdr *msg,
-			       struct user_msghdr __user *umsg, unsigned flags,
-			       struct sockaddr __user **uaddr,
-			       struct iovec **iov)
+int recvmsg_copy_msghdr(struct msghdr *msg,
+			struct user_msghdr __user *umsg, unsigned flags,
+			struct sockaddr __user **uaddr,
+			struct iovec **iov)
 {
 	ssize_t err;
 
@@ -3581,10 +3556,6 @@ int kernel_accept(struct socket *sock, struct socket **newsock, int flags)
 {
 	struct sock *sk = sock->sk;
 	const struct proto_ops *ops = READ_ONCE(sock->ops);
-	struct proto_accept_arg arg = {
-		.flags = flags,
-		.kern = true,
-	};
 	int err;
 
 	err = sock_create_lite(sk->sk_family, sk->sk_type, sk->sk_protocol,
@@ -3592,7 +3563,7 @@ int kernel_accept(struct socket *sock, struct socket **newsock, int flags)
 	if (err < 0)
 		goto done;
 
-	err = ops->accept(sock, *newsock, &arg);
+	err = ops->accept(sock, *newsock, flags, true);
 	if (err < 0) {
 		sock_release(*newsock);
 		*newsock = NULL;

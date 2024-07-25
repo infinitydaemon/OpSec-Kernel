@@ -271,9 +271,10 @@ static int surface_kbd_probe(struct platform_device *pdev)
 	return surface_hid_device_add(shid);
 }
 
-static void surface_kbd_remove(struct platform_device *pdev)
+static int surface_kbd_remove(struct platform_device *pdev)
 {
 	surface_hid_device_destroy(platform_get_drvdata(pdev));
+	return 0;
 }
 
 static const struct acpi_device_id surface_kbd_match[] = {
@@ -284,7 +285,7 @@ MODULE_DEVICE_TABLE(acpi, surface_kbd_match);
 
 static struct platform_driver surface_kbd_driver = {
 	.probe = surface_kbd_probe,
-	.remove_new = surface_kbd_remove,
+	.remove = surface_kbd_remove,
 	.driver = {
 		.name = "surface_keyboard",
 		.acpi_match_table = surface_kbd_match,

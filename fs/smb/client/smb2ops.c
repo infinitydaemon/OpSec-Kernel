@@ -217,8 +217,8 @@ smb2_get_credits(struct mid_q_entry *mid)
 }
 
 static int
-smb2_wait_mtu_credits(struct TCP_Server_Info *server, size_t size,
-		      size_t *num, struct cifs_credits *credits)
+smb2_wait_mtu_credits(struct TCP_Server_Info *server, unsigned int size,
+		      unsigned int *num, struct cifs_credits *credits)
 {
 	int rc = 0;
 	unsigned int scredits, in_flight;
@@ -2028,7 +2028,6 @@ smb2_duplicate_extents(const unsigned int xid,
 		 * size will be queried on next revalidate, but it is important
 		 * to make sure that file's cached size is updated immediately
 		 */
-		netfs_resize_file(netfs_inode(inode), dest_off + len, true);
 		cifs_setsize(inode, dest_off + len);
 	}
 	rc = SMB2_ioctl(xid, tcon, trgtfile->fid.persistent_fid,
@@ -3229,9 +3228,6 @@ static long smb3_zero_range(struct file *file, struct cifs_tcon *tcon,
 				  cfile->fid.volatile_fid, cfile->pid, new_size);
 		if (rc >= 0) {
 			truncate_setsize(inode, new_size);
-			netfs_resize_file(&cifsi->netfs, new_size, true);
-			if (offset < cifsi->netfs.zero_point)
-				cifsi->netfs.zero_point = offset;
 			fscache_resize_cookie(cifs_inode_cookie(inode), new_size);
 		}
 	}
@@ -3455,7 +3451,7 @@ static long smb3_simple_falloc(struct file *file, struct cifs_tcon *tcon,
 		rc = SMB2_set_eof(xid, tcon, cfile->fid.persistent_fid,
 				  cfile->fid.volatile_fid, cfile->pid, new_eof);
 		if (rc == 0) {
-			netfs_resize_file(&cifsi->netfs, new_eof, true);
+			cifsi->server_eof = new_eof;
 			cifs_setsize(inode, new_eof);
 			cifs_truncate_page(inode->i_mapping, inode->i_size);
 			truncate_setsize(inode, new_eof);
@@ -3547,9 +3543,8 @@ static long smb3_collapse_range(struct file *file, struct cifs_tcon *tcon,
 	int rc;
 	unsigned int xid;
 	struct inode *inode = file_inode(file);
-	struct cifsInodeInfo *cifsi = CIFS_I(inode);
 	struct cifsFileInfo *cfile = file->private_data;
-	struct netfs_inode *ictx = &cifsi->netfs;
+	struct cifsInodeInfo *cifsi = CIFS_I(inode);
 	loff_t old_eof, new_eof;
 
 	xid = get_xid();
@@ -3569,7 +3564,6 @@ static long smb3_collapse_range(struct file *file, struct cifs_tcon *tcon,
 		goto out_2;
 
 	truncate_pagecache_range(inode, off, old_eof);
-	ictx->zero_point = old_eof;
 
 	rc = smb2_copychunk_range(xid, cfile, cfile, off + len,
 				  old_eof - off - len, off);
@@ -3584,10 +3578,9 @@ static long smb3_collapse_range(struct file *file, struct cifs_tcon *tcon,
 
 	rc = 0;
 
-	truncate_setsize(inode, new_eof);
-	netfs_resize_file(&cifsi->netfs, new_eof, true);
-	ictx->zero_point = new_eof;
-	fscache_resize_cookie(cifs_inode_cookie(inode), new_eof);
+	cifsi->server_eof = i_size_read(inode) - len;
+	truncate_setsize(inode, cifsi->server_eof);
+	fscache_resize_cookie(cifs_inode_cookie(inode), cifsi->server_eof);
 out_2:
 	filemap_invalidate_unlock(inode->i_mapping);
  out:
@@ -3603,7 +3596,6 @@ static long smb3_insert_range(struct file *file, struct cifs_tcon *tcon,
 	unsigned int xid;
 	struct cifsFileInfo *cfile = file->private_data;
 	struct inode *inode = file_inode(file);
-	struct cifsInodeInfo *cifsi = CIFS_I(inode);
 	__u64 count, old_eof, new_eof;
 
 	xid = get_xid();
@@ -3631,13 +3623,11 @@ static long smb3_insert_range(struct file *file, struct cifs_tcon *tcon,
 		goto out_2;
 
 	truncate_setsize(inode, new_eof);
-	netfs_resize_file(&cifsi->netfs, i_size_read(inode), true);
 	fscache_resize_cookie(cifs_inode_cookie(inode), i_size_read(inode));
 
 	rc = smb2_copychunk_range(xid, cfile, cfile, off, count, off + len);
 	if (rc < 0)
 		goto out_2;
-	cifsi->netfs.zero_point = new_eof;
 
 	rc = smb3_zero_data(file, tcon, off, len, xid);
 	if (rc < 0)
@@ -3923,7 +3913,7 @@ smb21_set_oplock_level(struct cifsInodeInfo *cinode, __u32 oplock,
 		strcat(message, "W");
 	}
 	if (!new_oplock)
-		strscpy(message, "None");
+		strncpy(message, "None", sizeof(message));
 
 	cinode->oplock = new_oplock;
 	cifs_dbg(FYI, "%s Lease granted on inode %p\n", message,
@@ -4492,7 +4482,7 @@ handle_read_data(struct TCP_Server_Info *server, struct mid_q_entry *mid,
 	unsigned int cur_off;
 	unsigned int cur_page_idx;
 	unsigned int pad_len;
-	struct cifs_io_subrequest *rdata = mid->callback_data;
+	struct cifs_readdata *rdata = mid->callback_data;
 	struct smb2_hdr *shdr = (struct smb2_hdr *)buf;
 	int length;
 	bool use_rdma_mr = false;
@@ -4594,7 +4584,7 @@ handle_read_data(struct TCP_Server_Info *server, struct mid_q_entry *mid,
 
 		/* Copy the data to the output I/O iterator. */
 		rdata->result = cifs_copy_pages_to_iter(pages, pages_len,
-							cur_off, &rdata->subreq.io_iter);
+							cur_off, &rdata->iter);
 		if (rdata->result != 0) {
 			if (is_offloaded)
 				mid->mid_state = MID_RESPONSE_MALFORMED;
@@ -4608,7 +4598,7 @@ handle_read_data(struct TCP_Server_Info *server, struct mid_q_entry *mid,
 		/* read response payload is in buf */
 		WARN_ONCE(pages && !xa_empty(pages),
 			  "read data can be either in buf or in pages");
-		length = copy_to_iter(buf + data_offset, data_len, &rdata->subreq.io_iter);
+		length = copy_to_iter(buf + data_offset, data_len, &rdata->iter);
 		if (length < 0)
 			return length;
 		rdata->got_bytes = data_len;
@@ -4988,20 +4978,17 @@ static int __cifs_sfu_make_node(unsigned int xid, struct inode *inode,
 
 	switch (mode & S_IFMT) {
 	case S_IFCHR:
-		strscpy(pdev.type, "IntxCHR");
+		strscpy(pdev.type, "IntxCHR", strlen("IntxChr"));
 		pdev.major = cpu_to_le64(MAJOR(dev));
 		pdev.minor = cpu_to_le64(MINOR(dev));
 		break;
 	case S_IFBLK:
-		strscpy(pdev.type, "IntxBLK");
+		strscpy(pdev.type, "IntxBLK", strlen("IntxBLK"));
 		pdev.major = cpu_to_le64(MAJOR(dev));
 		pdev.minor = cpu_to_le64(MINOR(dev));
 		break;
-	case S_IFSOCK:
-		strscpy(pdev.type, "LnxSOCK");
-		break;
 	case S_IFIFO:
-		strscpy(pdev.type, "LnxFIFO");
+		strscpy(pdev.type, "LnxFIFO", strlen("LnxFIFO"));
 		break;
 	default:
 		return -EPERM;

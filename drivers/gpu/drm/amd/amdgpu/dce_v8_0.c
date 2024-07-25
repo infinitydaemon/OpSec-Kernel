@@ -21,7 +21,6 @@
  *
  */
 
-#include <drm/drm_edid.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_modeset_helper.h>
 #include <drm/drm_modeset_helper_vtables.h>
@@ -265,21 +264,6 @@ static void dce_v8_0_hpd_set_polarity(struct amdgpu_device *adev,
 	WREG32(mmDC_HPD1_INT_CONTROL + hpd_offsets[hpd], tmp);
 }
 
-static void dce_v8_0_hpd_int_ack(struct amdgpu_device *adev,
-				 int hpd)
-{
-	u32 tmp;
-
-	if (hpd >= adev->mode_info.num_hpd) {
-		DRM_DEBUG("invalid hdp %d\n", hpd);
-		return;
-	}
-
-	tmp = RREG32(mmDC_HPD1_INT_CONTROL + hpd_offsets[hpd]);
-	tmp |= DC_HPD1_INT_CONTROL__DC_HPD1_INT_ACK_MASK;
-	WREG32(mmDC_HPD1_INT_CONTROL + hpd_offsets[hpd], tmp);
-}
-
 /**
  * dce_v8_0_hpd_init - hpd setup callback.
  *
@@ -319,7 +303,6 @@ static void dce_v8_0_hpd_init(struct amdgpu_device *adev)
 			continue;
 		}
 
-		dce_v8_0_hpd_int_ack(adev, amdgpu_connector->hpd.hpd);
 		dce_v8_0_hpd_set_polarity(adev, amdgpu_connector->hpd.hpd);
 		amdgpu_irq_get(adev, &adev->hpd_irq, amdgpu_connector->hpd.hpd);
 	}
@@ -992,7 +975,7 @@ static void dce_v8_0_program_watermarks(struct amdgpu_device *adev,
 					    (u32)mode->clock);
 		line_time = (u32) div_u64((u64)mode->crtc_htotal * 1000000,
 					  (u32)mode->clock);
-		line_time = min_t(u32, line_time, 65535);
+		line_time = min(line_time, (u32)65535);
 
 		/* watermark for high clocks */
 		if (adev->pm.dpm_enabled) {
@@ -1022,7 +1005,7 @@ static void dce_v8_0_program_watermarks(struct amdgpu_device *adev,
 		wm_high.num_heads = num_heads;
 
 		/* set for high clocks */
-		latency_watermark_a = min_t(u32, dce_v8_0_latency_watermark(&wm_high), 65535);
+		latency_watermark_a = min(dce_v8_0_latency_watermark(&wm_high), (u32)65535);
 
 		/* possibly force display priority to high */
 		/* should really do this at mode validation time... */
@@ -1061,7 +1044,7 @@ static void dce_v8_0_program_watermarks(struct amdgpu_device *adev,
 		wm_low.num_heads = num_heads;
 
 		/* set for low clocks */
-		latency_watermark_b = min_t(u32, dce_v8_0_latency_watermark(&wm_low), 65535);
+		latency_watermark_b = min(dce_v8_0_latency_watermark(&wm_low), (u32)65535);
 
 		/* possibly force display priority to high */
 		/* should really do this at mode validation time... */
@@ -3193,7 +3176,7 @@ static int dce_v8_0_hpd_irq(struct amdgpu_device *adev,
 			    struct amdgpu_irq_src *source,
 			    struct amdgpu_iv_entry *entry)
 {
-	uint32_t disp_int, mask;
+	uint32_t disp_int, mask, tmp;
 	unsigned hpd;
 
 	if (entry->src_data[0] >= adev->mode_info.num_hpd) {
@@ -3206,7 +3189,9 @@ static int dce_v8_0_hpd_irq(struct amdgpu_device *adev,
 	mask = interrupt_status_offsets[hpd].hpd;
 
 	if (disp_int & mask) {
-		dce_v8_0_hpd_int_ack(adev, hpd);
+		tmp = RREG32(mmDC_HPD1_INT_CONTROL + hpd_offsets[hpd]);
+		tmp |= DC_HPD1_INT_CONTROL__DC_HPD1_INT_ACK_MASK;
+		WREG32(mmDC_HPD1_INT_CONTROL + hpd_offsets[hpd], tmp);
 		schedule_delayed_work(&adev->hotplug_work, 0);
 		DRM_DEBUG("IH: HPD%d\n", hpd + 1);
 	}
@@ -3242,8 +3227,6 @@ static const struct amd_ip_funcs dce_v8_0_ip_funcs = {
 	.soft_reset = dce_v8_0_soft_reset,
 	.set_clockgating_state = dce_v8_0_set_clockgating_state,
 	.set_powergating_state = dce_v8_0_set_powergating_state,
-	.dump_ip_state = NULL,
-	.print_ip_state = NULL,
 };
 
 static void

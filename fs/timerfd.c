@@ -262,18 +262,17 @@ static __poll_t timerfd_poll(struct file *file, poll_table *wait)
 	return events;
 }
 
-static ssize_t timerfd_read_iter(struct kiocb *iocb, struct iov_iter *to)
+static ssize_t timerfd_read(struct file *file, char __user *buf, size_t count,
+			    loff_t *ppos)
 {
-	struct file *file = iocb->ki_filp;
 	struct timerfd_ctx *ctx = file->private_data;
 	ssize_t res;
 	u64 ticks = 0;
 
-	if (iov_iter_count(to) < sizeof(ticks))
+	if (count < sizeof(ticks))
 		return -EINVAL;
-
 	spin_lock_irq(&ctx->wqh.lock);
-	if (file->f_flags & O_NONBLOCK || iocb->ki_flags & IOCB_NOWAIT)
+	if (file->f_flags & O_NONBLOCK)
 		res = -EAGAIN;
 	else
 		res = wait_event_interruptible_locked_irq(ctx->wqh, ctx->ticks);
@@ -313,11 +312,8 @@ static ssize_t timerfd_read_iter(struct kiocb *iocb, struct iov_iter *to)
 		ctx->ticks = 0;
 	}
 	spin_unlock_irq(&ctx->wqh.lock);
-	if (ticks) {
-		res = copy_to_iter(&ticks, sizeof(ticks), to);
-		if (!res)
-			res = -EFAULT;
-	}
+	if (ticks)
+		res = put_user(ticks, (u64 __user *) buf) ? -EFAULT: sizeof(ticks);
 	return res;
 }
 
@@ -388,7 +384,7 @@ static long timerfd_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 static const struct file_operations timerfd_fops = {
 	.release	= timerfd_release,
 	.poll		= timerfd_poll,
-	.read_iter	= timerfd_read_iter,
+	.read		= timerfd_read,
 	.llseek		= noop_llseek,
 	.show_fdinfo	= timerfd_show,
 	.unlocked_ioctl	= timerfd_ioctl,
@@ -411,7 +407,6 @@ SYSCALL_DEFINE2(timerfd_create, int, clockid, int, flags)
 {
 	int ufd;
 	struct timerfd_ctx *ctx;
-	struct file *file;
 
 	/* Check the TFD_* constants for consistency.  */
 	BUILD_BUG_ON(TFD_CLOEXEC != O_CLOEXEC);
@@ -448,22 +443,11 @@ SYSCALL_DEFINE2(timerfd_create, int, clockid, int, flags)
 
 	ctx->moffs = ktime_mono_to_real(0);
 
-	ufd = get_unused_fd_flags(flags & TFD_SHARED_FCNTL_FLAGS);
-	if (ufd < 0) {
+	ufd = anon_inode_getfd("[timerfd]", &timerfd_fops, ctx,
+			       O_RDWR | (flags & TFD_SHARED_FCNTL_FLAGS));
+	if (ufd < 0)
 		kfree(ctx);
-		return ufd;
-	}
 
-	file = anon_inode_getfile("[timerfd]", &timerfd_fops, ctx,
-				    O_RDWR | (flags & TFD_SHARED_FCNTL_FLAGS));
-	if (IS_ERR(file)) {
-		put_unused_fd(ufd);
-		kfree(ctx);
-		return PTR_ERR(file);
-	}
-
-	file->f_mode |= FMODE_NOWAIT;
-	fd_install(ufd, file);
 	return ufd;
 }
 

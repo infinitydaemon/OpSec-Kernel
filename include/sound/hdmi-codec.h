@@ -12,6 +12,7 @@
 
 #include <linux/of_graph.h>
 #include <linux/hdmi.h>
+#include <drm/drm_edid.h>
 #include <sound/asoundef.h>
 #include <sound/soc.h>
 #include <uapi/sound/asound.h>

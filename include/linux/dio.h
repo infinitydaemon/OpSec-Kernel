@@ -68,7 +68,7 @@ struct dio_bus {
 };
 
 extern struct dio_bus dio_bus;      /* Single DIO bus */
-extern const struct bus_type dio_bus_type;
+extern struct bus_type dio_bus_type;
 
     /*
      *  DIO device IDs

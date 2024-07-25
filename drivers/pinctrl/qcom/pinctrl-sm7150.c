@@ -1246,7 +1246,6 @@ static const struct of_device_id sm7150_tlmm_of_match[] = {
 	{ .compatible = "qcom,sm7150-tlmm", },
 	{ },
 };
-MODULE_DEVICE_TABLE(of, sm7150_tlmm_of_match);
 
 static struct platform_driver sm7150_tlmm_driver = {
 	.driver = {
@@ -1255,7 +1254,7 @@ static struct platform_driver sm7150_tlmm_driver = {
 		.of_match_table = sm7150_tlmm_of_match,
 	},
 	.probe = sm7150_tlmm_probe,
-	.remove_new = msm_pinctrl_remove,
+	.remove = msm_pinctrl_remove,
 };
 
 static int __init sm7150_tlmm_init(void)

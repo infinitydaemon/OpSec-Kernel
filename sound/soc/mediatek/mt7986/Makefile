@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 
 # platform driver
-snd-soc-mt7986-afe-y := \
+snd-soc-mt7986-afe-objs := \
 	mt7986-afe-pcm.o \
 	mt7986-dai-etdm.o
 

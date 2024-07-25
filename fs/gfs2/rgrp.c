@@ -159,13 +159,13 @@ static inline u8 gfs2_testbit(const struct gfs2_rbm *rbm, bool use_clone)
 }
 
 /**
- * gfs2_bit_search - search bitmap for a state
+ * gfs2_bit_search
  * @ptr: Pointer to bitmap data
  * @mask: Mask to use (normally 0x55555.... but adjusted for search start)
  * @state: The state we are searching for
  *
- * We xor the bitmap data with a pattern which is the bitwise opposite
- * of what we are looking for. This gives rise to a pattern of ones
+ * We xor the bitmap data with a patter which is the bitwise opposite
+ * of what we are looking for, this gives rise to a pattern of ones
  * wherever there is a match. Since we have two bits per entry, we
  * take this pattern, shift it down by one place and then and it with
  * the original. All the even bit positions (0,2,4, etc) then represent
@@ -814,11 +814,11 @@ static int compute_bitstructs(struct gfs2_rgrpd *rgd)
 	bi = rgd->rd_bits + (length - 1);
 	if ((bi->bi_start + bi->bi_bytes) * GFS2_NBBY != rgd->rd_data) {
 		gfs2_lm(sdp,
-			"ri_addr=%llu "
-			"ri_length=%u "
-			"ri_data0=%llu "
-			"ri_data=%u "
-			"ri_bitbytes=%u "
+			"ri_addr = %llu\n"
+			"ri_length = %u\n"
+			"ri_data0 = %llu\n"
+			"ri_data = %u\n"
+			"ri_bitbytes = %u\n"
 			"start=%u len=%u offset=%u\n",
 			(unsigned long long)rgd->rd_addr,
 			rgd->rd_length,
@@ -1188,7 +1188,7 @@ static void rgrp_set_bitmap_flags(struct gfs2_rgrpd *rgd)
 
 /**
  * gfs2_rgrp_go_instantiate - Read in a RG's header and bitmaps
- * @gl: the glock representing the rgrpd to read in
+ * @gh: the glock holder representing the rgrpd to read in
  *
  * Read in all of a Resource Group's header and bitmap blocks.
  * Caller must eventually call gfs2_rgrp_brelse() to free the bitmaps.
@@ -1967,7 +1967,7 @@ static bool gfs2_rgrp_congested(const struct gfs2_rgrpd *rgd, int loops)
 }
 
 /**
- * gfs2_rgrp_used_recently - test if an rgrp has been used recently
+ * gfs2_rgrp_used_recently
  * @rs: The block reservation with the rgrp to test
  * @msecs: The time limit in milliseconds
  *

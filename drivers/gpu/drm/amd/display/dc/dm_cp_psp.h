@@ -26,9 +26,6 @@
 #ifndef DM_CP_PSP_IF__H
 #define DM_CP_PSP_IF__H
 
-/*
- * Interface to CPLIB/PSP to enable ASSR
- */
 struct dc_link;
 
 struct cp_psp_stream_config {

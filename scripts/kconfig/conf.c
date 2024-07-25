@@ -14,7 +14,6 @@
 #include <sys/time.h>
 #include <errno.h>
 
-#include "internal.h"
 #include "lkc.h"
 
 static void conf(struct menu *menu);
@@ -172,7 +171,7 @@ enum conf_def_mode {
 static bool conf_set_all_new_symbols(enum conf_def_mode mode)
 {
 	struct symbol *sym, *csym;
-	int cnt;
+	int i, cnt;
 	/*
 	 * can't go as the default in switch-case below, otherwise gcc whines
 	 * about -Wmaybe-uninitialized
@@ -227,7 +226,7 @@ static bool conf_set_all_new_symbols(enum conf_def_mode mode)
 		}
 	}
 
-	for_all_symbols(sym) {
+	for_all_symbols(i, sym) {
 		if (sym_has_value(sym) || sym->flags & SYMBOL_VALID)
 			continue;
 		switch (sym_get_type(sym)) {
@@ -279,14 +278,14 @@ static bool conf_set_all_new_symbols(enum conf_def_mode mode)
 	 * and the rest to no.
 	 */
 	if (mode != def_random) {
-		for_all_symbols(csym) {
+		for_all_symbols(i, csym) {
 			if ((sym_is_choice(csym) && !sym_has_value(csym)) ||
 			    sym_is_choice_value(csym))
 				csym->flags |= SYMBOL_NEED_SET_CHOICE_VALUES;
 		}
 	}
 
-	for_all_symbols(csym) {
+	for_all_symbols(i, csym) {
 		if (sym_has_value(csym) || !sym_is_choice(csym))
 			continue;
 
@@ -305,8 +304,9 @@ static bool conf_set_all_new_symbols(enum conf_def_mode mode)
 static void conf_rewrite_tristates(tristate old_val, tristate new_val)
 {
 	struct symbol *sym;
+	int i;
 
-	for_all_symbols(sym) {
+	for_all_symbols(i, sym) {
 		if (sym_get_type(sym) == S_TRISTATE &&
 		    sym->def[S_DEF_USER].tri == old_val)
 			sym->def[S_DEF_USER].tri = new_val;
@@ -446,7 +446,7 @@ help:
 	}
 }
 
-static void conf_choice(struct menu *menu)
+static int conf_choice(struct menu *menu)
 {
 	struct symbol *sym, *def_sym;
 	struct menu *child;
@@ -459,18 +459,19 @@ static void conf_choice(struct menu *menu)
 		sym_calc_value(sym);
 		switch (sym_get_tristate_value(sym)) {
 		case no:
+			return 1;
 		case mod:
-			return;
+			return 0;
 		case yes:
 			break;
 		}
 	} else {
 		switch (sym_get_tristate_value(sym)) {
 		case no:
-			return;
+			return 1;
 		case mod:
 			printf("%*s%s\n", indent - 1, "", menu_get_prompt(menu));
-			return;
+			return 0;
 		case yes:
 			break;
 		}
@@ -496,8 +497,9 @@ static void conf_choice(struct menu *menu)
 				printf("%*c", indent, '>');
 			} else
 				printf("%*c", indent, ' ');
-			printf(" %d. %s (%s)", cnt, menu_get_prompt(child),
-			       child->sym->name);
+			printf(" %d. %s", cnt, menu_get_prompt(child));
+			if (child->sym->name)
+				printf(" (%s)", child->sym->name);
 			if (!sym_has_value(child->sym))
 				printf(" (NEW)");
 			printf("\n");
@@ -550,7 +552,12 @@ static void conf_choice(struct menu *menu)
 			continue;
 		}
 		sym_set_tristate_value(child->sym, yes);
-		return;
+		for (child = child->list; child; child = child->next) {
+			indent += 2;
+			conf(child);
+			indent -= 2;
+		}
+		return 1;
 	}
 }
 
@@ -820,9 +827,6 @@ int main(int ac, char **av)
 		break;
 	}
 
-	if (conf_errors())
-		exit(1);
-
 	if (sync_kconfig) {
 		name = getenv("KCONFIG_NOSILENTUPDATE");
 		if (name && *name) {
@@ -885,9 +889,6 @@ int main(int ac, char **av)
 	default:
 		break;
 	}
-
-	if (sym_dep_errors())
-		exit(1);
 
 	if (input_mode == savedefconfig) {
 		if (conf_write_defconfig(defconfig_file)) {

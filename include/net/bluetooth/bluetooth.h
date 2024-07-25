@@ -285,7 +285,7 @@ void bt_err_ratelimited(const char *fmt, ...);
 	bt_err_ratelimited("%s: " fmt, bt_dev_name(hdev), ##__VA_ARGS__)
 
 /* Connection and socket states */
-enum bt_sock_state {
+enum {
 	BT_CONNECTED = 1, /* Equal to TCP_ESTABLISHED to make net code happy */
 	BT_OPEN,
 	BT_BOUND,
@@ -543,7 +543,7 @@ static inline struct sk_buff *bt_skb_sendmsg(struct sock *sk,
 		return ERR_PTR(-EFAULT);
 	}
 
-	skb->priority = READ_ONCE(sk->sk_priority);
+	skb->priority = sk->sk_priority;
 
 	return skb;
 }

@@ -67,6 +67,12 @@
 
 /* Forward declarations */
 static void bcmgenet_set_rx_mode(struct net_device *dev);
+static bool skip_umac_reset = false;
+module_param(skip_umac_reset, bool, 0444);
+MODULE_PARM_DESC(skip_umac_reset, "Skip UMAC reset step");
+static bool eee = true;
+module_param(eee, bool, 0444);
+MODULE_PARM_DESC(eee, "Enable EEE (default Y)");
 
 static inline void bcmgenet_writel(u32 value, void __iomem *offset)
 {
@@ -1313,13 +1319,14 @@ void bcmgenet_eee_enable_set(struct net_device *dev, bool enable,
 	}
 
 	priv->eee.eee_enabled = enable;
+	priv->eee.eee_active = enable;
 	priv->eee.tx_lpi_enabled = tx_lpi_enabled;
 }
 
-static int bcmgenet_get_eee(struct net_device *dev, struct ethtool_keee *e)
+static int bcmgenet_get_eee(struct net_device *dev, struct ethtool_eee *e)
 {
 	struct bcmgenet_priv *priv = netdev_priv(dev);
-	struct ethtool_keee *p = &priv->eee;
+	struct ethtool_eee *p = &priv->eee;
 
 	if (GENET_IS_V1(priv))
 		return -EOPNOTSUPP;
@@ -1327,17 +1334,18 @@ static int bcmgenet_get_eee(struct net_device *dev, struct ethtool_keee *e)
 	if (!dev->phydev)
 		return -ENODEV;
 
+	e->eee_enabled = p->eee_enabled;
+	e->eee_active = p->eee_active;
 	e->tx_lpi_enabled = p->tx_lpi_enabled;
 	e->tx_lpi_timer = bcmgenet_umac_readl(priv, UMAC_EEE_LPI_TIMER);
 
 	return phy_ethtool_get_eee(dev->phydev, e);
 }
 
-static int bcmgenet_set_eee(struct net_device *dev, struct ethtool_keee *e)
+static int bcmgenet_set_eee(struct net_device *dev, struct ethtool_eee *e)
 {
 	struct bcmgenet_priv *priv = netdev_priv(dev);
-	struct ethtool_keee *p = &priv->eee;
-	bool active;
+	struct ethtool_eee *p = &priv->eee;
 
 	if (GENET_IS_V1(priv))
 		return -EOPNOTSUPP;
@@ -1350,9 +1358,9 @@ static int bcmgenet_set_eee(struct net_device *dev, struct ethtool_keee *e)
 	if (!p->eee_enabled) {
 		bcmgenet_eee_enable_set(dev, false, false);
 	} else {
-		active = phy_init_eee(dev->phydev, false) >= 0;
+		p->eee_active = phy_init_eee(dev->phydev, false) >= 0;
 		bcmgenet_umac_writel(priv, e->tx_lpi_timer, UMAC_EEE_LPI_TIMER);
-		bcmgenet_eee_enable_set(dev, active, e->tx_lpi_enabled);
+		bcmgenet_eee_enable_set(dev, p->eee_active, e->tx_lpi_enabled);
 	}
 
 	return phy_ethtool_set_eee(dev->phydev, e);
@@ -2493,6 +2501,11 @@ static void reset_umac(struct bcmgenet_priv *priv)
 	bcmgenet_rbuf_ctrl_set(priv, 0);
 	udelay(10);
 
+	if (skip_umac_reset) {
+		pr_warn("Skipping UMAC reset\n");
+		return;
+	}
+
 	/* issue soft reset and disable MAC while updating its registers */
 	spin_lock_bh(&priv->reg_lock);
 	bcmgenet_umac_writel(priv, CMD_SW_RESET, UMAC_CMD);
@@ -2664,7 +2677,7 @@ static void bcmgenet_init_tx_ring(struct bcmgenet_priv *priv,
 
 	bcmgenet_tdma_ring_writel(priv, index, 0, TDMA_PROD_INDEX);
 	bcmgenet_tdma_ring_writel(priv, index, 0, TDMA_CONS_INDEX);
-	bcmgenet_tdma_ring_writel(priv, index, 1, DMA_MBUF_DONE_THRESH);
+	bcmgenet_tdma_ring_writel(priv, index, 10, DMA_MBUF_DONE_THRESH);
 	/* Disable rate control for now */
 	bcmgenet_tdma_ring_writel(priv, index, flow_period_val,
 				  TDMA_FLOW_PERIOD);
@@ -3253,6 +3266,23 @@ static irqreturn_t bcmgenet_wol_isr(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+#ifdef CONFIG_NET_POLL_CONTROLLER
+static void bcmgenet_poll_controller(struct net_device *dev)
+{
+	struct bcmgenet_priv *priv = netdev_priv(dev);
+
+	/* Invoke the main RX/TX interrupt handler */
+	disable_irq(priv->irq0);
+	bcmgenet_isr0(priv->irq0, priv);
+	enable_irq(priv->irq0);
+
+	/* And the interrupt handler for RX/TX priority queues */
+	disable_irq(priv->irq1);
+	bcmgenet_isr1(priv->irq1, priv);
+	enable_irq(priv->irq1);
+}
+#endif
+
 static void bcmgenet_umac_reset(struct bcmgenet_priv *priv)
 {
 	u32 reg;
@@ -3421,6 +3451,17 @@ static int bcmgenet_open(struct net_device *dev)
 	}
 
 	bcmgenet_phy_pause_set(dev, priv->rx_pause, priv->tx_pause);
+
+	if (!eee) {
+		struct ethtool_eee eee_data;
+
+		ret = bcmgenet_get_eee(dev, &eee_data);
+		if (ret == 0) {
+			eee_data.eee_enabled = 0;
+			bcmgenet_set_eee(dev, &eee_data);
+			netdev_warn(dev, "EEE disabled\n");
+		}
+	}
 
 	bcmgenet_netif_start(dev);
 
@@ -3722,6 +3763,9 @@ static const struct net_device_ops bcmgenet_netdev_ops = {
 	.ndo_set_mac_address	= bcmgenet_set_mac_addr,
 	.ndo_eth_ioctl		= phy_do_ioctl_running,
 	.ndo_set_features	= bcmgenet_set_features,
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	.ndo_poll_controller	= bcmgenet_poll_controller,
+#endif
 	.ndo_get_stats		= bcmgenet_get_stats,
 	.ndo_change_carrier	= bcmgenet_change_carrier,
 };
@@ -4139,9 +4183,12 @@ static int bcmgenet_probe(struct platform_device *pdev)
 	netif_set_real_num_rx_queues(priv->dev, priv->hw_params->rx_queues + 1);
 
 	/* Set default coalescing parameters */
-	for (i = 0; i < priv->hw_params->rx_queues; i++)
+	for (i = 0; i < priv->hw_params->rx_queues; i++) {
 		priv->rx_rings[i].rx_max_coalesced_frames = 1;
+		priv->rx_rings[i].rx_coalesce_usecs = 50;
+	}
 	priv->rx_rings[DESC_INDEX].rx_max_coalesced_frames = 1;
+	priv->rx_rings[DESC_INDEX].rx_coalesce_usecs = 50;
 
 	/* libphy will determine the link state */
 	netif_carrier_off(dev);
@@ -4164,7 +4211,7 @@ err:
 	return err;
 }
 
-static void bcmgenet_remove(struct platform_device *pdev)
+static int bcmgenet_remove(struct platform_device *pdev)
 {
 	struct bcmgenet_priv *priv = dev_to_priv(&pdev->dev);
 
@@ -4172,6 +4219,8 @@ static void bcmgenet_remove(struct platform_device *pdev)
 	unregister_netdev(priv->dev);
 	bcmgenet_mii_exit(priv->dev);
 	free_netdev(priv->dev);
+
+	return 0;
 }
 
 static void bcmgenet_shutdown(struct platform_device *pdev)
@@ -4350,7 +4399,7 @@ MODULE_DEVICE_TABLE(acpi, genet_acpi_match);
 
 static struct platform_driver bcmgenet_driver = {
 	.probe	= bcmgenet_probe,
-	.remove_new = bcmgenet_remove,
+	.remove	= bcmgenet_remove,
 	.shutdown = bcmgenet_shutdown,
 	.driver	= {
 		.name	= "bcmgenet",

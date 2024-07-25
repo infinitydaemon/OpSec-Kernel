@@ -9,6 +9,7 @@
 
 OUTPUT_FORMAT("elf32-s390", "elf32-s390", "elf32-s390")
 OUTPUT_ARCH(s390:31-bit)
+ENTRY(_start)
 
 SECTIONS
 {

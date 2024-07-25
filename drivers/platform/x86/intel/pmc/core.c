@@ -20,7 +20,6 @@
 #include <linux/pci.h>
 #include <linux/slab.h>
 #include <linux/suspend.h>
-#include <linux/units.h>
 
 #include <asm/cpu_device_id.h>
 #include <asm/intel-family.h>
@@ -28,7 +27,6 @@
 #include <asm/tsc.h>
 
 #include "core.h"
-#include "../pmt/telemetry.h"
 
 /* Maximum number of modes supported by platfoms that has low power mode capability */
 const char *pmc_lpm_modes[] = {
@@ -207,20 +205,6 @@ static int pmc_core_dev_state_get(void *data, u64 *val)
 }
 
 DEFINE_DEBUGFS_ATTRIBUTE(pmc_core_dev_state, pmc_core_dev_state_get, NULL, "%llu\n");
-
-static int pmc_core_pson_residency_get(void *data, u64 *val)
-{
-	struct pmc *pmc = data;
-	const struct pmc_reg_map *map = pmc->map;
-	u32 value;
-
-	value = pmc_core_reg_read(pmc, map->pson_residency_offset);
-	*val = (u64)value * map->pson_residency_counter_step;
-
-	return 0;
-}
-
-DEFINE_DEBUGFS_ATTRIBUTE(pmc_core_pson_residency, pmc_core_pson_residency_get, NULL, "%llu\n");
 
 static int pmc_core_check_read_lock_bit(struct pmc *pmc)
 {
@@ -678,41 +662,6 @@ static int pmc_core_ltr_show(struct seq_file *s, void *unused)
 }
 DEFINE_SHOW_ATTRIBUTE(pmc_core_ltr);
 
-static int pmc_core_s0ix_blocker_show(struct seq_file *s, void *unused)
-{
-	struct pmc_dev *pmcdev = s->private;
-	unsigned int pmcidx;
-
-	for (pmcidx = 0; pmcidx < ARRAY_SIZE(pmcdev->pmcs); pmcidx++) {
-		const struct pmc_bit_map **maps;
-		unsigned int arr_size, r_idx;
-		u32 offset, counter;
-		struct pmc *pmc;
-
-		pmc = pmcdev->pmcs[pmcidx];
-		if (!pmc)
-			continue;
-		maps = pmc->map->s0ix_blocker_maps;
-		offset = pmc->map->s0ix_blocker_offset;
-		arr_size = pmc_core_lpm_get_arr_size(maps);
-
-		for (r_idx = 0; r_idx < arr_size; r_idx++) {
-			const struct pmc_bit_map *map;
-
-			for (map = maps[r_idx]; map->name; map++) {
-				if (!map->blk)
-					continue;
-				counter = pmc_core_reg_read(pmc, offset);
-				seq_printf(s, "PMC%d:%-30s %-30d\n", pmcidx,
-					   map->name, counter);
-				offset += map->blk * S0IX_BLK_SIZE;
-			}
-		}
-	}
-	return 0;
-}
-DEFINE_SHOW_ATTRIBUTE(pmc_core_s0ix_blocker);
-
 static inline u64 adjust_lpm_residency(struct pmc *pmc, u32 offset,
 				       const int lpm_adj_x2)
 {
@@ -782,7 +731,7 @@ static int pmc_core_substate_l_sts_regs_show(struct seq_file *s, void *unused)
 }
 DEFINE_SHOW_ATTRIBUTE(pmc_core_substate_l_sts_regs);
 
-static void pmc_core_substate_req_header_show(struct seq_file *s, int pmc_index)
+static void pmc_core_substate_req_header_show(struct seq_file *s)
 {
 	struct pmc_dev *pmcdev = s->private;
 	int i, mode;
@@ -797,125 +746,71 @@ static void pmc_core_substate_req_header_show(struct seq_file *s, int pmc_index)
 static int pmc_core_substate_req_regs_show(struct seq_file *s, void *unused)
 {
 	struct pmc_dev *pmcdev = s->private;
-	u32 sts_offset;
-	u32 *lpm_req_regs;
-	int num_maps, mp, pmc_index;
+	struct pmc *pmc = pmcdev->pmcs[PMC_IDX_MAIN];
+	const struct pmc_bit_map **maps = pmc->map->lpm_sts;
+	const struct pmc_bit_map *map;
+	const int num_maps = pmc->map->lpm_num_maps;
+	u32 sts_offset = pmc->map->lpm_status_offset;
+	u32 *lpm_req_regs = pmc->lpm_req_regs;
+	int mp;
 
-	for (pmc_index = 0; pmc_index < ARRAY_SIZE(pmcdev->pmcs); ++pmc_index) {
-		struct pmc *pmc = pmcdev->pmcs[pmc_index];
-		const struct pmc_bit_map **maps;
+	/* Display the header */
+	pmc_core_substate_req_header_show(s);
 
-		if (!pmc)
-			continue;
-
-		maps = pmc->map->lpm_sts;
-		num_maps = pmc->map->lpm_num_maps;
-		sts_offset = pmc->map->lpm_status_offset;
-		lpm_req_regs = pmc->lpm_req_regs;
+	/* Loop over maps */
+	for (mp = 0; mp < num_maps; mp++) {
+		u32 req_mask = 0;
+		u32 lpm_status;
+		int mode, idx, i, len = 32;
 
 		/*
-		 * When there are multiple PMCs, though the PMC may exist, the
-		 * requirement register discovery could have failed so check
-		 * before accessing.
+		 * Capture the requirements and create a mask so that we only
+		 * show an element if it's required for at least one of the
+		 * enabled low power modes
 		 */
-		if (!lpm_req_regs)
-			continue;
+		pmc_for_each_mode(idx, mode, pmcdev)
+			req_mask |= lpm_req_regs[mp + (mode * num_maps)];
 
-		/* Display the header */
-		pmc_core_substate_req_header_show(s, pmc_index);
+		/* Get the last latched status for this map */
+		lpm_status = pmc_core_reg_read(pmc, sts_offset + (mp * 4));
 
-		/* Loop over maps */
-		for (mp = 0; mp < num_maps; mp++) {
-			u32 req_mask = 0;
-			u32 lpm_status;
-			const struct pmc_bit_map *map;
-			int mode, idx, i, len = 32;
+		/*  Loop over elements in this map */
+		map = maps[mp];
+		for (i = 0; map[i].name && i < len; i++) {
+			u32 bit_mask = map[i].bit_mask;
 
-			/*
-			 * Capture the requirements and create a mask so that we only
-			 * show an element if it's required for at least one of the
-			 * enabled low power modes
-			 */
-			pmc_for_each_mode(idx, mode, pmcdev)
-				req_mask |= lpm_req_regs[mp + (mode * num_maps)];
+			if (!(bit_mask & req_mask))
+				/*
+				 * Not required for any enabled states
+				 * so don't display
+				 */
+				continue;
 
-			/* Get the last latched status for this map */
-			lpm_status = pmc_core_reg_read(pmc, sts_offset + (mp * 4));
+			/* Display the element name in the first column */
+			seq_printf(s, "%30s |", map[i].name);
 
-			/*  Loop over elements in this map */
-			map = maps[mp];
-			for (i = 0; map[i].name && i < len; i++) {
-				u32 bit_mask = map[i].bit_mask;
-
-				if (!(bit_mask & req_mask)) {
-					/*
-					 * Not required for any enabled states
-					 * so don't display
-					 */
-					continue;
-				}
-
-				/* Display the element name in the first column */
-				seq_printf(s, "pmc%d: %26s |", pmc_index, map[i].name);
-
-				/* Loop over the enabled states and display if required */
-				pmc_for_each_mode(idx, mode, pmcdev) {
-					bool required = lpm_req_regs[mp + (mode * num_maps)] &
-							bit_mask;
-					seq_printf(s, " %9s |", required ? "Required" : " ");
-				}
-
-				/* In Status column, show the last captured state of this agent */
-				seq_printf(s, " %9s |", lpm_status & bit_mask ? "Yes" : " ");
-
-				seq_puts(s, "\n");
+			/* Loop over the enabled states and display if required */
+			pmc_for_each_mode(idx, mode, pmcdev) {
+				if (lpm_req_regs[mp + (mode * num_maps)] & bit_mask)
+					seq_printf(s, " %9s |",
+						   "Required");
+				else
+					seq_printf(s, " %9s |", " ");
 			}
+
+			/* In Status column, show the last captured state of this agent */
+			if (lpm_status & bit_mask)
+				seq_printf(s, " %9s |", "Yes");
+			else
+				seq_printf(s, " %9s |", " ");
+
+			seq_puts(s, "\n");
 		}
 	}
+
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(pmc_core_substate_req_regs);
-
-static unsigned int pmc_core_get_crystal_freq(void)
-{
-	unsigned int eax_denominator, ebx_numerator, ecx_hz, edx;
-
-	if (boot_cpu_data.cpuid_level < 0x15)
-		return 0;
-
-	eax_denominator = ebx_numerator = ecx_hz = edx = 0;
-
-	/* CPUID 15H TSC/Crystal ratio, plus optionally Crystal Hz */
-	cpuid(0x15, &eax_denominator, &ebx_numerator, &ecx_hz, &edx);
-
-	if (ebx_numerator == 0 || eax_denominator == 0)
-		return 0;
-
-	return ecx_hz;
-}
-
-static int pmc_core_die_c6_us_show(struct seq_file *s, void *unused)
-{
-	struct pmc_dev *pmcdev = s->private;
-	u64 die_c6_res, count;
-	int ret;
-
-	if (!pmcdev->crystal_freq) {
-		dev_warn_once(&pmcdev->pdev->dev, "Crystal frequency unavailable\n");
-		return -ENXIO;
-	}
-
-	ret = pmt_telem_read(pmcdev->punit_ep, pmcdev->die_c6_offset,
-			     &count, 1);
-	if (ret)
-		return ret;
-
-	die_c6_res = div64_u64(count * HZ_PER_MHZ, pmcdev->crystal_freq);
-	seq_printf(s, "%llu\n", die_c6_res);
-
-	return 0;
-}
-DEFINE_SHOW_ATTRIBUTE(pmc_core_die_c6_us);
 
 static int pmc_core_lpm_latch_mode_show(struct seq_file *s, void *unused)
 {
@@ -1074,8 +969,9 @@ static bool pmc_core_pri_verify(u32 lpm_pri, u8 *mode_order)
 	return true;
 }
 
-void pmc_core_get_low_power_modes(struct pmc_dev *pmcdev)
+static void pmc_core_get_low_power_modes(struct platform_device *pdev)
 {
+	struct pmc_dev *pmcdev = platform_get_drvdata(pdev);
 	struct pmc *pmc = pmcdev->pmcs[PMC_IDX_MAIN];
 	u8 pri_order[LPM_MAX_NUM_MODES] = LPM_DEFAULT_PRI;
 	u8 mode_order[LPM_MAX_NUM_MODES];
@@ -1107,8 +1003,7 @@ void pmc_core_get_low_power_modes(struct pmc_dev *pmcdev)
 		for (mode = 0; mode < LPM_MAX_NUM_MODES; mode++)
 			pri_order[mode_order[mode]] = mode;
 	else
-		dev_warn(&pmcdev->pdev->dev,
-			 "Assuming a default substate order for this platform\n");
+		dev_warn(&pdev->dev, "Assuming a default substate order for this platform\n");
 
 	/*
 	 * Loop through all modes from lowest to highest priority,
@@ -1144,69 +1039,6 @@ int get_primary_reg_base(struct pmc *pmc)
 	return 0;
 }
 
-void pmc_core_punit_pmt_init(struct pmc_dev *pmcdev, u32 guid)
-{
-	struct telem_endpoint *ep;
-	struct pci_dev *pcidev;
-
-	pcidev = pci_get_domain_bus_and_slot(0, 0, PCI_DEVFN(10, 0));
-	if (!pcidev) {
-		dev_err(&pmcdev->pdev->dev, "PUNIT PMT device not found.");
-		return;
-	}
-
-	ep = pmt_telem_find_and_register_endpoint(pcidev, guid, 0);
-	pci_dev_put(pcidev);
-	if (IS_ERR(ep)) {
-		dev_err(&pmcdev->pdev->dev,
-			"pmc_core: couldn't get DMU telem endpoint %ld",
-			PTR_ERR(ep));
-		return;
-	}
-
-	pmcdev->punit_ep = ep;
-
-	pmcdev->has_die_c6 = true;
-	pmcdev->die_c6_offset = MTL_PMT_DMU_DIE_C6_OFFSET;
-}
-
-void pmc_core_set_device_d3(unsigned int device)
-{
-	struct pci_dev *pcidev;
-
-	pcidev = pci_get_device(PCI_VENDOR_ID_INTEL, device, NULL);
-	if (pcidev) {
-		if (!device_trylock(&pcidev->dev)) {
-			pci_dev_put(pcidev);
-			return;
-		}
-		if (!pcidev->dev.driver) {
-			dev_info(&pcidev->dev, "Setting to D3hot\n");
-			pci_set_power_state(pcidev, PCI_D3hot);
-		}
-		device_unlock(&pcidev->dev);
-		pci_dev_put(pcidev);
-	}
-}
-
-static bool pmc_core_is_pson_residency_enabled(struct pmc_dev *pmcdev)
-{
-	struct platform_device *pdev = pmcdev->pdev;
-	struct acpi_device *adev = ACPI_COMPANION(&pdev->dev);
-	u8 val;
-
-	if (!adev)
-		return false;
-
-	if (fwnode_property_read_u8(acpi_fwnode_handle(adev),
-				    "intel-cec-pson-switching-enabled-in-s0",
-				    &val))
-		return false;
-
-	return val == 1;
-}
-
-
 static void pmc_core_dbgfs_unregister(struct pmc_dev *pmcdev)
 {
 	debugfs_remove_recursive(pmcdev->dbgfs_dir);
@@ -1231,9 +1063,6 @@ static void pmc_core_dbgfs_register(struct pmc_dev *pmcdev)
 			    &pmc_core_ltr_ignore_ops);
 
 	debugfs_create_file("ltr_show", 0444, dir, pmcdev, &pmc_core_ltr_fops);
-
-	if (primary_pmc->map->s0ix_blocker_maps)
-		debugfs_create_file("s0ix_blocker", 0444, dir, pmcdev, &pmc_core_s0ix_blocker_fops);
 
 	debugfs_create_file("package_cstate_show", 0444, dir, primary_pmc,
 			    &pmc_core_pkgc_fops);
@@ -1279,17 +1108,6 @@ static void pmc_core_dbgfs_register(struct pmc_dev *pmcdev)
 				    pmcdev->dbgfs_dir, pmcdev,
 				    &pmc_core_substate_req_regs_fops);
 	}
-
-	if (primary_pmc->map->pson_residency_offset && pmc_core_is_pson_residency_enabled(pmcdev)) {
-		debugfs_create_file("pson_residency_usec", 0444,
-				    pmcdev->dbgfs_dir, primary_pmc, &pmc_core_pson_residency);
-	}
-
-	if (pmcdev->has_die_c6) {
-		debugfs_create_file("die_c6_us_show", 0444,
-				    pmcdev->dbgfs_dir, pmcdev,
-				    &pmc_core_die_c6_us_fops);
-	}
 }
 
 static const struct x86_cpu_id intel_pmc_core_ids[] = {
@@ -1302,20 +1120,18 @@ static const struct x86_cpu_id intel_pmc_core_ids[] = {
 	X86_MATCH_INTEL_FAM6_MODEL(ICELAKE_NNPI,	icl_core_init),
 	X86_MATCH_INTEL_FAM6_MODEL(COMETLAKE,		cnp_core_init),
 	X86_MATCH_INTEL_FAM6_MODEL(COMETLAKE_L,		cnp_core_init),
-	X86_MATCH_INTEL_FAM6_MODEL(TIGERLAKE_L,		tgl_l_core_init),
+	X86_MATCH_INTEL_FAM6_MODEL(TIGERLAKE_L,		tgl_core_init),
 	X86_MATCH_INTEL_FAM6_MODEL(TIGERLAKE,		tgl_core_init),
-	X86_MATCH_INTEL_FAM6_MODEL(ATOM_TREMONT,	tgl_l_core_init),
+	X86_MATCH_INTEL_FAM6_MODEL(ATOM_TREMONT,	tgl_core_init),
 	X86_MATCH_INTEL_FAM6_MODEL(ATOM_TREMONT_L,	icl_core_init),
 	X86_MATCH_INTEL_FAM6_MODEL(ROCKETLAKE,		tgl_core_init),
-	X86_MATCH_INTEL_FAM6_MODEL(ALDERLAKE_L,		tgl_l_core_init),
-	X86_MATCH_INTEL_FAM6_MODEL(ATOM_GRACEMONT,	tgl_l_core_init),
+	X86_MATCH_INTEL_FAM6_MODEL(ALDERLAKE_L,		tgl_core_init),
+	X86_MATCH_INTEL_FAM6_MODEL(ATOM_GRACEMONT,	tgl_core_init),
 	X86_MATCH_INTEL_FAM6_MODEL(ALDERLAKE,		adl_core_init),
-	X86_MATCH_INTEL_FAM6_MODEL(RAPTORLAKE_P,        tgl_l_core_init),
+	X86_MATCH_INTEL_FAM6_MODEL(RAPTORLAKE_P,        tgl_core_init),
 	X86_MATCH_INTEL_FAM6_MODEL(RAPTORLAKE,		adl_core_init),
 	X86_MATCH_INTEL_FAM6_MODEL(RAPTORLAKE_S,	adl_core_init),
 	X86_MATCH_INTEL_FAM6_MODEL(METEORLAKE_L,	mtl_core_init),
-	X86_MATCH_INTEL_FAM6_MODEL(ARROWLAKE,		arl_core_init),
-	X86_MATCH_INTEL_FAM6_MODEL(LUNARLAKE_M,         lnl_core_init),
 	{}
 };
 
@@ -1386,10 +1202,6 @@ static void pmc_core_clean_structure(struct platform_device *pdev)
 		pci_dev_put(pmcdev->ssram_pcidev);
 		pci_disable_device(pmcdev->ssram_pcidev);
 	}
-
-	if (pmcdev->punit_ep)
-		pmt_telem_unregister_endpoint(pmcdev->punit_ep);
-
 	platform_set_drvdata(pdev, NULL);
 	mutex_destroy(&pmcdev->lock);
 }
@@ -1410,8 +1222,6 @@ static int pmc_core_probe(struct platform_device *pdev)
 	if (!pmcdev)
 		return -ENOMEM;
 
-	pmcdev->crystal_freq = pmc_core_get_crystal_freq();
-
 	platform_set_drvdata(pdev, pmcdev);
 	pmcdev->pdev = pdev;
 
@@ -1426,15 +1236,6 @@ static int pmc_core_probe(struct platform_device *pdev)
 	if (!primary_pmc)
 		return -ENOMEM;
 	pmcdev->pmcs[PMC_IDX_MAIN] = primary_pmc;
-
-	/* The last element in msr_map is empty */
-	pmcdev->num_of_pkgc = ARRAY_SIZE(msr_map) - 1;
-	pmcdev->pkgc_res_cnt = devm_kcalloc(&pdev->dev,
-					    pmcdev->num_of_pkgc,
-					    sizeof(*pmcdev->pkgc_res_cnt),
-					    GFP_KERNEL);
-	if (!pmcdev->pkgc_res_cnt)
-		return -ENOMEM;
 
 	/*
 	 * Coffee Lake has CPU ID of Kaby Lake and Cannon Lake PCH. So here
@@ -1452,6 +1253,7 @@ static int pmc_core_probe(struct platform_device *pdev)
 	}
 
 	pmcdev->pmc_xram_read_bit = pmc_core_check_read_lock_bit(primary_pmc);
+	pmc_core_get_low_power_modes(pdev);
 	pmc_core_do_dmi_quirks(primary_pmc);
 
 	pmc_core_dbgfs_register(pmcdev);
@@ -1479,7 +1281,6 @@ static __maybe_unused int pmc_core_suspend(struct device *dev)
 {
 	struct pmc_dev *pmcdev = dev_get_drvdata(dev);
 	struct pmc *pmc = pmcdev->pmcs[PMC_IDX_MAIN];
-	unsigned int i;
 
 	if (pmcdev->suspend)
 		pmcdev->suspend(pmcdev);
@@ -1488,11 +1289,9 @@ static __maybe_unused int pmc_core_suspend(struct device *dev)
 	if (pm_suspend_via_firmware())
 		return 0;
 
-	/* Save PKGC residency for checking later */
-	for (i = 0; i < pmcdev->num_of_pkgc; i++) {
-		if (rdmsrl_safe(msr_map[i].bit_mask, &pmcdev->pkgc_res_cnt[i]))
-			return -EIO;
-	}
+	/* Save PC10 residency for checking later */
+	if (rdmsrl_safe(MSR_PKG_C10_RESIDENCY, &pmcdev->pc10_counter))
+		return -EIO;
 
 	/* Save S0ix residency for checking later */
 	if (pmc_core_dev_state_get(pmc, &pmcdev->s0ix_counter))
@@ -1501,15 +1300,14 @@ static __maybe_unused int pmc_core_suspend(struct device *dev)
 	return 0;
 }
 
-static inline bool pmc_core_is_deepest_pkgc_failed(struct pmc_dev *pmcdev)
+static inline bool pmc_core_is_pc10_failed(struct pmc_dev *pmcdev)
 {
-	u32 deepest_pkgc_msr = msr_map[pmcdev->num_of_pkgc - 1].bit_mask;
-	u64 deepest_pkgc_residency;
+	u64 pc10_counter;
 
-	if (rdmsrl_safe(deepest_pkgc_msr, &deepest_pkgc_residency))
+	if (rdmsrl_safe(MSR_PKG_C10_RESIDENCY, &pc10_counter))
 		return false;
 
-	if (deepest_pkgc_residency == pmcdev->pkgc_res_cnt[pmcdev->num_of_pkgc - 1])
+	if (pc10_counter == pmcdev->pc10_counter)
 		return true;
 
 	return false;
@@ -1548,22 +1346,10 @@ int pmc_core_resume_common(struct pmc_dev *pmcdev)
 	if (!warn_on_s0ix_failures)
 		return 0;
 
-	if (pmc_core_is_deepest_pkgc_failed(pmcdev)) {
-		/* S0ix failed because of deepest PKGC entry failure */
-		dev_info(dev, "CPU did not enter %s!!! (%s cnt=0x%llx)\n",
-			 msr_map[pmcdev->num_of_pkgc - 1].name,
-			 msr_map[pmcdev->num_of_pkgc - 1].name,
-			 pmcdev->pkgc_res_cnt[pmcdev->num_of_pkgc - 1]);
-
-		for (i = 0; i < pmcdev->num_of_pkgc; i++) {
-			u64 pc_cnt;
-
-			if (!rdmsrl_safe(msr_map[i].bit_mask, &pc_cnt)) {
-				dev_info(dev, "Prev %s cnt = 0x%llx, Current %s cnt = 0x%llx\n",
-					 msr_map[i].name, pmcdev->pkgc_res_cnt[i],
-					 msr_map[i].name, pc_cnt);
-			}
-		}
+	if (pmc_core_is_pc10_failed(pmcdev)) {
+		/* S0ix failed because of PC10 entry failure */
+		dev_info(dev, "CPU did not enter PC10!!! (PC10 cnt=0x%llx)\n",
+			 pmcdev->pc10_counter);
 		return 0;
 	}
 

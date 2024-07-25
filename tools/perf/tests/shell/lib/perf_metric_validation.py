@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0
+#SPDX-License-Identifier: GPL-2.0
 import re
 import csv
 import json
@@ -6,61 +6,36 @@ import argparse
 from pathlib import Path
 import subprocess
 
-
-class TestError:
-    def __init__(self, metric: list[str], wl: str, value: list[float], low: float, up=float('nan'), description=str()):
-        self.metric: list = metric  # multiple metrics in relationship type tests
-        self.workloads = [wl]  # multiple workloads possible
-        self.collectedValue: list = value
-        self.valueLowBound = low
-        self.valueUpBound = up
-        self.description = description
-
-    def __repr__(self) -> str:
-        if len(self.metric) > 1:
-            return "\nMetric Relationship Error: \tThe collected value of metric {0}\n\
-                \tis {1} in workload(s): {2} \n\
-                \tbut expected value range is [{3}, {4}]\n\
-                \tRelationship rule description: \'{5}\'".format(self.metric, self.collectedValue, self.workloads,
-                                                                 self.valueLowBound, self.valueUpBound, self.description)
-        elif len(self.collectedValue) == 0:
-            return "\nNo Metric Value Error: \tMetric {0} returns with no value \n\
-                    \tworkload(s): {1}".format(self.metric, self.workloads)
-        else:
-            return "\nWrong Metric Value Error: \tThe collected value of metric {0}\n\
-                    \tis {1} in workload(s): {2}\n\
-                    \tbut expected value range is [{3}, {4}]"\
-                        .format(self.metric, self.collectedValue, self.workloads,
-                                self.valueLowBound, self.valueUpBound)
-
-
 class Validator:
     def __init__(self, rulefname, reportfname='', t=5, debug=False, datafname='', fullrulefname='', workload='true', metrics=''):
         self.rulefname = rulefname
         self.reportfname = reportfname
         self.rules = None
-        self.collectlist: str = metrics
+        self.collectlist:str = metrics
         self.metrics = self.__set_metrics(metrics)
         self.skiplist = set()
         self.tolerance = t
 
         self.workloads = [x for x in workload.split(",") if x]
-        self.wlidx = 0  # idx of current workloads
-        self.allresults = dict()  # metric results of all workload
+        self.wlidx = 0 # idx of current workloads
+        self.allresults = dict() # metric results of all workload
+        self.allignoremetrics = dict() # metrics with no results or negative results
+        self.allfailtests = dict()
         self.alltotalcnt = dict()
         self.allpassedcnt = dict()
+        self.allerrlist = dict()
 
-        self.results = dict()  # metric results of current workload
+        self.results = dict() # metric results of current workload
         # vars for test pass/failure statistics
-        # metrics with no results or negative results, neg result counts failed tests
-        self.ignoremetrics = set()
+        self.ignoremetrics= set() # metrics with no results or negative results, neg result counts as a failed test
+        self.failtests = dict()
         self.totalcnt = 0
         self.passedcnt = 0
         # vars for errors
         self.errlist = list()
 
         # vars for Rule Generator
-        self.pctgmetrics = set()  # Percentage rule
+        self.pctgmetrics = set() # Percentage rule
 
         # vars for debug
         self.datafname = datafname
@@ -94,10 +69,10 @@ class Validator:
                       ensure_ascii=True,
                       indent=4)
 
-    def get_results(self, idx: int = 0):
+    def get_results(self, idx:int = 0):
         return self.results[idx]
 
-    def get_bounds(self, lb, ub, error, alias={}, ridx: int = 0) -> list:
+    def get_bounds(self, lb, ub, error, alias={}, ridx:int = 0) -> list:
         """
         Get bounds and tolerance from lb, ub, and error.
         If missing lb, use 0.0; missing ub, use float('inf); missing error, use self.tolerance.
@@ -110,7 +85,7 @@ class Validator:
                   tolerance, denormalized base on upper bound value
         """
         # init ubv and lbv to invalid values
-        def get_bound_value(bound, initval, ridx):
+        def get_bound_value (bound, initval, ridx):
             val = initval
             if isinstance(bound, int) or isinstance(bound, float):
                 val = bound
@@ -138,10 +113,10 @@ class Validator:
 
         return lbv, ubv, denormerr
 
-    def get_value(self, name: str, ridx: int = 0) -> list:
+    def get_value(self, name:str, ridx:int = 0) -> list:
         """
         Get value of the metric from self.results.
-        If result of this metric is not provided, the metric name will be added into self.ignoremetics.
+        If result of this metric is not provided, the metric name will be added into self.ignoremetics and self.errlist.
         All future test(s) on this metric will fail.
 
         @param name: name of the metric
@@ -167,7 +142,7 @@ class Validator:
         Check if metrics value are non-negative.
         One metric is counted as one test.
         Failure: when metric value is negative or not provided.
-        Metrics with negative value will be added into self.ignoremetrics.
+        Metrics with negative value will be added into the self.failtests['PositiveValueTest'] and self.ignoremetrics.
         """
         negmetric = dict()
         pcnt = 0
@@ -180,27 +155,25 @@ class Validator:
             else:
                 pcnt += 1
             tcnt += 1
-        # The first round collect_perf() run these metrics with simple workload
-        # "true". We give metrics a second chance with a longer workload if less
-        # than 20 metrics failed positive test.
         if len(rerun) > 0 and len(rerun) < 20:
             second_results = dict()
             self.second_test(rerun, second_results)
             for name, val in second_results.items():
-                if name not in negmetric:
-                    continue
+                if name not in negmetric: continue
                 if val >= 0:
                     del negmetric[name]
                     pcnt += 1
 
+        self.failtests['PositiveValueTest']['Total Tests'] = tcnt
+        self.failtests['PositiveValueTest']['Passed Tests'] = pcnt
         if len(negmetric.keys()):
             self.ignoremetrics.update(negmetric.keys())
-            self.errlist.extend(
-                [TestError([m], self.workloads[self.wlidx], negmetric[m], 0) for m in negmetric.keys()])
+            negmessage = ["{0}(={1:.4f})".format(name, val) for name, val in negmetric.items()]
+            self.failtests['PositiveValueTest']['Failed Tests'].append({'NegativeValue': negmessage})
 
         return
 
-    def evaluate_formula(self, formula: str, alias: dict, ridx: int = 0):
+    def evaluate_formula(self, formula:str, alias:dict, ridx:int = 0):
         """
         Evaluate the value of formula.
 
@@ -214,11 +187,10 @@ class Validator:
         sign = "+"
         f = str()
 
-        # TODO: support parenthesis?
+        #TODO: support parenthesis?
         for i in range(len(formula)):
             if i+1 == len(formula) or formula[i] in ('+', '-', '*', '/'):
-                s = alias[formula[b:i]] if i + \
-                    1 < len(formula) else alias[formula[b:]]
+                s = alias[formula[b:i]] if i+1 < len(formula) else alias[formula[b:]]
                 v = self.get_value(s, ridx)
                 if not v:
                     errs.append(s)
@@ -256,49 +228,49 @@ class Validator:
         alias = dict()
         for m in rule['Metrics']:
             alias[m['Alias']] = m['Name']
-        lbv, ubv, t = self.get_bounds(
-            rule['RangeLower'], rule['RangeUpper'], rule['ErrorThreshold'], alias, ridx=rule['RuleIndex'])
-        val, f = self.evaluate_formula(
-            rule['Formula'], alias, ridx=rule['RuleIndex'])
-
-        lb = rule['RangeLower']
-        ub = rule['RangeUpper']
-        if isinstance(lb, str):
-            if lb in alias:
-                lb = alias[lb]
-        if isinstance(ub, str):
-            if ub in alias:
-                ub = alias[ub]
-
+        lbv, ubv, t = self.get_bounds(rule['RangeLower'], rule['RangeUpper'], rule['ErrorThreshold'], alias, ridx=rule['RuleIndex'])
+        val, f = self.evaluate_formula(rule['Formula'], alias, ridx=rule['RuleIndex'])
         if val == -1:
-            self.errlist.append(TestError([m['Name'] for m in rule['Metrics']], self.workloads[self.wlidx], [],
-                                lb, ub, rule['Description']))
+            self.failtests['RelationshipTest']['Failed Tests'].append({'RuleIndex': rule['RuleIndex'], 'Description':f})
         elif not self.check_bound(val, lbv, ubv, t):
-            self.errlist.append(TestError([m['Name'] for m in rule['Metrics']], self.workloads[self.wlidx], [val],
-                                lb, ub, rule['Description']))
+            lb = rule['RangeLower']
+            ub = rule['RangeUpper']
+            if isinstance(lb, str):
+                if lb in alias:
+                    lb = alias[lb]
+            if isinstance(ub, str):
+                if ub in alias:
+                    ub = alias[ub]
+            self.failtests['RelationshipTest']['Failed Tests'].append({'RuleIndex': rule['RuleIndex'], 'Formula':f,
+                                                                       'RangeLower': lb, 'LowerBoundValue': self.get_value(lb),
+                                                                       'RangeUpper': ub, 'UpperBoundValue':self.get_value(ub),
+                                                                       'ErrorThreshold': t, 'CollectedValue': val})
         else:
             self.passedcnt += 1
+            self.failtests['RelationshipTest']['Passed Tests'] += 1
         self.totalcnt += 1
+        self.failtests['RelationshipTest']['Total Tests'] += 1
 
         return
 
+
     # Single Metric Test
-    def single_test(self, rule: dict):
+    def single_test(self, rule:dict):
         """
         Validate if the metrics are in the required value range.
         eg. lower_bound <= metrics_value <= upper_bound
         One metric is counted as one test in this type of test.
         One rule may include one or more metrics.
         Failure: when the metric value not provided or the value is outside the bounds.
-        This test updates self.total_cnt.
+        This test updates self.total_cnt and records failed tests in self.failtest['SingleMetricTest'].
 
         @param rule: dict with metrics to validate and the value range requirement
         """
-        lbv, ubv, t = self.get_bounds(
-            rule['RangeLower'], rule['RangeUpper'], rule['ErrorThreshold'])
+        lbv, ubv, t = self.get_bounds(rule['RangeLower'], rule['RangeUpper'], rule['ErrorThreshold'])
         metrics = rule['Metrics']
         passcnt = 0
         totalcnt = 0
+        faillist = list()
         failures = dict()
         rerun = list()
         for m in metrics:
@@ -314,20 +286,25 @@ class Validator:
             second_results = dict()
             self.second_test(rerun, second_results)
             for name, val in second_results.items():
-                if name not in failures:
-                    continue
+                if name not in failures: continue
                 if self.check_bound(val, lbv, ubv, t):
                     passcnt += 1
                     del failures[name]
                 else:
-                    failures[name] = [val]
+                    failures[name] = val
                     self.results[0][name] = val
 
         self.totalcnt += totalcnt
         self.passedcnt += passcnt
+        self.failtests['SingleMetricTest']['Total Tests'] += totalcnt
+        self.failtests['SingleMetricTest']['Passed Tests'] += passcnt
         if len(failures.keys()) != 0:
-            self.errlist.extend([TestError([name], self.workloads[self.wlidx], val,
-                                rule['RangeLower'], rule['RangeUpper']) for name, val in failures.items()])
+            faillist = [{'MetricName':name, 'CollectedValue':val} for name, val in failures.items()]
+            self.failtests['SingleMetricTest']['Failed Tests'].append({'RuleIndex':rule['RuleIndex'],
+                                                                       'RangeLower': rule['RangeLower'],
+                                                                       'RangeUpper': rule['RangeUpper'],
+                                                                       'ErrorThreshold':rule['ErrorThreshold'],
+                                                                       'Failure':faillist})
 
         return
 
@@ -335,11 +312,19 @@ class Validator:
         """
         Create final report and write into a JSON file.
         """
-        print(self.errlist)
+        alldata = list()
+        for i in range(0, len(self.workloads)):
+            reportstas = {"Total Rule Count": self.alltotalcnt[i], "Passed Rule Count": self.allpassedcnt[i]}
+            data = {"Metric Validation Statistics": reportstas, "Tests in Category": self.allfailtests[i],
+                    "Errors":self.allerrlist[i]}
+            alldata.append({"Workload": self.workloads[i], "Report": data})
+
+        json_str = json.dumps(alldata, indent=4)
+        print("Test validation finished. Final report: ")
+        print(json_str)
 
         if self.debug:
-            allres = [{"Workload": self.workloads[i], "Results": self.allresults[i]}
-                      for i in range(0, len(self.workloads))]
+            allres = [{"Workload": self.workloads[i], "Results": self.allresults[i]} for i in range(0, len(self.workloads))]
             self.json_dump(allres, self.datafname)
 
     def check_rule(self, testtype, metric_list):
@@ -357,13 +342,13 @@ class Validator:
         return True
 
     # Start of Collector and Converter
-    def convert(self, data: list, metricvalues: dict):
+    def convert(self, data: list, metricvalues:dict):
         """
         Convert collected metric data from the -j output to dict of {metric_name:value}.
         """
         for json_string in data:
             try:
-                result = json.loads(json_string)
+                result =json.loads(json_string)
                 if "metric-unit" in result and result["metric-unit"] != "(null)" and result["metric-unit"] != "":
                     name = result["metric-unit"].split("  ")[1] if len(result["metric-unit"].split("  ")) > 1 \
                         else result["metric-unit"]
@@ -380,9 +365,8 @@ class Validator:
         print(" ".join(command))
         cmd = subprocess.run(command, stderr=subprocess.PIPE, encoding='utf-8')
         data = [x+'}' for x in cmd.stderr.split('}\n') if x]
-        if data[0][0] != '{':
-            data[0] = data[0][data[0].find('{'):]
         return data
+
 
     def collect_perf(self, workload: str):
         """
@@ -401,18 +385,14 @@ class Validator:
             if rule["TestType"] == "RelationshipTest":
                 metrics = [m["Name"] for m in rule["Metrics"]]
                 if not any(m not in collectlist[0] for m in metrics):
-                    collectlist[rule["RuleIndex"]] = [
-                        ",".join(list(set(metrics)))]
+                    collectlist[rule["RuleIndex"]] = [",".join(list(set(metrics)))]
 
         for idx, metrics in collectlist.items():
-            if idx == 0:
-                wl = "true"
-            else:
-                wl = workload
+            if idx == 0: wl = "true"
+            else: wl = workload
             for metric in metrics:
                 data = self._run_perf(metric, wl)
-                if idx not in self.results:
-                    self.results[idx] = dict()
+                if idx not in self.results: self.results[idx] = dict()
                 self.convert(data, self.results[idx])
         return
 
@@ -432,8 +412,7 @@ class Validator:
         2) create metric name list
         """
         command = ['perf', 'list', '-j', '--details', 'metrics']
-        cmd = subprocess.run(command, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, encoding='utf-8')
+        cmd = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding='utf-8')
         try:
             data = json.loads(cmd.stdout)
             for m in data:
@@ -474,12 +453,12 @@ class Validator:
         rules = data['RelationshipRules']
         self.skiplist = set([name.lower() for name in data['SkipList']])
         self.rules = self.remove_unsupported_rules(rules)
-        pctgrule = {'RuleIndex': 0,
-                    'TestType': 'SingleMetricTest',
-                    'RangeLower': '0',
+        pctgrule = {'RuleIndex':0,
+                    'TestType':'SingleMetricTest',
+                    'RangeLower':'0',
                     'RangeUpper': '100',
                     'ErrorThreshold': self.tolerance,
-                    'Description': 'Metrics in percent unit have value with in [0, 100]',
+                    'Description':'Metrics in percent unit have value with in [0, 100]',
                     'Metrics': [{'Name': m.lower()} for m in self.pctgmetrics]}
         self.rules.append(pctgrule)
 
@@ -490,9 +469,8 @@ class Validator:
             idx += 1
 
         if self.debug:
-            # TODO: need to test and generate file name correctly
-            data = {'RelationshipRules': self.rules, 'SupportedMetrics': [
-                {"MetricName": name} for name in self.metrics]}
+            #TODO: need to test and generate file name correctly
+            data = {'RelationshipRules':self.rules, 'SupportedMetrics': [{"MetricName": name} for name in self.metrics]}
             self.json_dump(data, self.fullrulefname)
 
         return
@@ -504,17 +482,20 @@ class Validator:
         @param key: key to the dictionaries (index of self.workloads).
         '''
         self.allresults[key] = self.results
+        self.allignoremetrics[key] = self.ignoremetrics
+        self.allfailtests[key] = self.failtests
         self.alltotalcnt[key] = self.totalcnt
         self.allpassedcnt[key] = self.passedcnt
+        self.allerrlist[key] = self.errlist
 
-    # Initialize data structures before data validation of each workload
+    #Initialize data structures before data validation of each workload
     def _init_data(self):
 
-        testtypes = ['PositiveValueTest',
-                     'RelationshipTest', 'SingleMetricTest']
+        testtypes = ['PositiveValueTest', 'RelationshipTest', 'SingleMetricTest']
         self.results = dict()
-        self.ignoremetrics = set()
+        self.ignoremetrics= set()
         self.errlist = list()
+        self.failtests = {k:{'Total Tests':0, 'Passed Tests':0, 'Failed Tests':[]} for k in testtypes}
         self.totalcnt = 0
         self.passedcnt = 0
 
@@ -544,33 +525,32 @@ class Validator:
                 testtype = r['TestType']
                 if not self.check_rule(testtype, r['Metrics']):
                     continue
-                if testtype == 'RelationshipTest':
+                if  testtype == 'RelationshipTest':
                     self.relationship_test(r)
                 elif testtype == 'SingleMetricTest':
                     self.single_test(r)
                 else:
                     print("Unsupported Test Type: ", testtype)
+                    self.errlist.append("Unsupported Test Type from rule: " + r['RuleIndex'])
+            self._storewldata(i)
             print("Workload: ", self.workloads[i])
+            print("Total metrics collected: ", self.failtests['PositiveValueTest']['Total Tests'])
+            print("Non-negative metric count: ", self.failtests['PositiveValueTest']['Passed Tests'])
             print("Total Test Count: ", self.totalcnt)
             print("Passed Test Count: ", self.passedcnt)
-            self._storewldata(i)
+
         self.create_report()
-        return len(self.errlist) > 0
+        return sum(self.alltotalcnt.values()) != sum(self.allpassedcnt.values())
 # End of Class Validator
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Launch metric value validation")
+    parser = argparse.ArgumentParser(description="Launch metric value validation")
 
-    parser.add_argument(
-        "-rule", help="Base validation rule file", required=True)
-    parser.add_argument(
-        "-output_dir", help="Path for validator output file, report file", required=True)
-    parser.add_argument("-debug", help="Debug run, save intermediate data to files",
-                        action="store_true", default=False)
-    parser.add_argument(
-        "-wl", help="Workload to run while data collection", default="true")
+    parser.add_argument("-rule", help="Base validation rule file", required=True)
+    parser.add_argument("-output_dir", help="Path for validator output file, report file", required=True)
+    parser.add_argument("-debug", help="Debug run, save intermediate data to files", action="store_true", default=False)
+    parser.add_argument("-wl", help="Workload to run while data collection", default="true")
     parser.add_argument("-m", help="Metric list to validate", default="")
     args = parser.parse_args()
     outpath = Path(args.output_dir)
@@ -579,8 +559,8 @@ def main() -> None:
     datafile = Path.joinpath(outpath, 'perf_data.json')
 
     validator = Validator(args.rule, reportf, debug=args.debug,
-                          datafname=datafile, fullrulefname=fullrule, workload=args.wl,
-                          metrics=args.m)
+                        datafname=datafile, fullrulefname=fullrule, workload=args.wl,
+                        metrics=args.m)
     ret = validator.test()
 
     return ret
@@ -589,3 +569,6 @@ def main() -> None:
 if __name__ == "__main__":
     import sys
     sys.exit(main())
+
+
+

@@ -331,7 +331,7 @@ io_error:
 	return ret;
 }
 
-static const struct sdw_slave_ops rt712_sdca_slave_ops = {
+static struct sdw_slave_ops rt712_sdca_slave_ops = {
 	.read_prop = rt712_sdca_read_prop,
 	.interrupt_callback = rt712_sdca_interrupt_callback,
 	.update_status = rt712_sdca_update_status,
@@ -452,7 +452,7 @@ static int __maybe_unused rt712_sdca_dev_resume(struct device *dev)
 	time = wait_for_completion_timeout(&slave->initialization_complete,
 				msecs_to_jiffies(RT712_PROBE_TIMEOUT));
 	if (!time) {
-		dev_err(&slave->dev, "%s: Initialization not complete, timed out\n", __func__);
+		dev_err(&slave->dev, "Initialization not complete, timed out\n");
 		sdw_show_ping_status(slave->bus, true);
 
 		return -ETIMEDOUT;
@@ -475,6 +475,7 @@ static const struct dev_pm_ops rt712_sdca_pm = {
 static struct sdw_driver rt712_sdca_sdw_driver = {
 	.driver = {
 		.name = "rt712-sdca",
+		.owner = THIS_MODULE,
 		.pm = &rt712_sdca_pm,
 	},
 	.probe = rt712_sdca_sdw_probe,

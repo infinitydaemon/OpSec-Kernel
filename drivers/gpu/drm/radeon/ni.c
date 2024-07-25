@@ -66,7 +66,8 @@ void tn_smc_wreg(struct radeon_device *rdev, u32 reg, u32 v)
 	spin_unlock_irqrestore(&rdev->smc_idx_lock, flags);
 }
 
-static const u32 tn_rlc_save_restore_register_list[] = {
+static const u32 tn_rlc_save_restore_register_list[] =
+{
 	0x98fc,
 	0x98f0,
 	0x9834,
@@ -215,7 +216,8 @@ MODULE_FIRMWARE("radeon/ARUBA_me.bin");
 MODULE_FIRMWARE("radeon/ARUBA_rlc.bin");
 
 
-static const u32 cayman_golden_registers2[] = {
+static const u32 cayman_golden_registers2[] =
+{
 	0x3e5c, 0xffffffff, 0x00000000,
 	0x3e48, 0xffffffff, 0x00000000,
 	0x3e4c, 0xffffffff, 0x00000000,
@@ -224,7 +226,8 @@ static const u32 cayman_golden_registers2[] = {
 	0x3e60, 0xffffffff, 0x00000000
 };
 
-static const u32 cayman_golden_registers[] = {
+static const u32 cayman_golden_registers[] =
+{
 	0x5eb4, 0xffffffff, 0x00000002,
 	0x5e78, 0x8f311ff1, 0x001000f0,
 	0x3f90, 0xffff0000, 0xff000000,
@@ -264,14 +267,16 @@ static const u32 cayman_golden_registers[] = {
 	0x8974, 0xffffffff, 0x00000000
 };
 
-static const u32 dvst_golden_registers2[] = {
+static const u32 dvst_golden_registers2[] =
+{
 	0x8f8, 0xffffffff, 0,
 	0x8fc, 0x00380000, 0,
 	0x8f8, 0xffffffff, 1,
 	0x8fc, 0x0e000000, 0
 };
 
-static const u32 dvst_golden_registers[] = {
+static const u32 dvst_golden_registers[] =
+{
 	0x690, 0x3fff3fff, 0x20c00033,
 	0x918c, 0x0fff0fff, 0x00010006,
 	0x91a8, 0x0fff0fff, 0x00010006,
@@ -328,7 +333,8 @@ static const u32 dvst_golden_registers[] = {
 	0x8974, 0xffffffff, 0x00000000
 };
 
-static const u32 scrapper_golden_registers[] = {
+static const u32 scrapper_golden_registers[] =
+{
 	0x690, 0x3fff3fff, 0x20c00033,
 	0x918c, 0x0fff0fff, 0x00010006,
 	0x918c, 0x0fff0fff, 0x00010006,
@@ -618,7 +624,7 @@ static const u32 cayman_io_mc_regs[BTC_IO_MC_REGS_SIZE][2] = {
 int ni_mc_load_microcode(struct radeon_device *rdev)
 {
 	const __be32 *fw_data;
-	u32 mem_type, running;
+	u32 mem_type, running, blackout = 0;
 	u32 *io_mc_regs;
 	int i, ucode_size, regs_size;
 
@@ -653,6 +659,11 @@ int ni_mc_load_microcode(struct radeon_device *rdev)
 	running = RREG32(MC_SEQ_SUP_CNTL) & RUN_MASK;
 
 	if ((mem_type == MC_SEQ_MISC0_GDDR5_VALUE) && (running == 0)) {
+		if (running) {
+			blackout = RREG32(MC_SHARED_BLACKOUT_CNTL);
+			WREG32(MC_SHARED_BLACKOUT_CNTL, 1);
+		}
+
 		/* reset the engine and set to writable */
 		WREG32(MC_SEQ_SUP_CNTL, 0x00000008);
 		WREG32(MC_SEQ_SUP_CNTL, 0x00000010);
@@ -678,6 +689,9 @@ int ni_mc_load_microcode(struct radeon_device *rdev)
 				break;
 			udelay(1);
 		}
+
+		if (running)
+			WREG32(MC_SHARED_BLACKOUT_CNTL, blackout);
 	}
 
 	return 0;
@@ -740,8 +754,7 @@ int ni_init_microcode(struct radeon_device *rdev)
 		rlc_req_size = ARUBA_RLC_UCODE_SIZE * 4;
 		mc_req_size = 0;
 		break;
-	default:
-		BUG();
+	default: BUG();
 	}
 
 	DRM_INFO("Loading %s Microcode\n", chip_name);

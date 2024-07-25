@@ -1,7 +1,7 @@
 .. include:: ../disclaimer-sp.rst
 
 :Original: :ref:`Documentation/process/kernel-docs.rst <kernel_docs>`
-:Translator: Carlos Bilbao <carlos.bilbao.osdev@gmail.com>
+:Translator: Carlos Bilbao <carlos.bilbao@amd.com>
 
 .. _sp_kernel_docs:
 

@@ -29,7 +29,10 @@
 
 /*
  * Each block ramdisk device has a xarray brd_pages of pages that stores
- * the pages containing the block device's contents.
+ * the pages containing the block device's contents. A brd page's ->index is
+ * its offset in PAGE_SIZE units. This is similar to, but in no way connected
+ * with, the kernel's pagecache or buffer cache (which sit above our block
+ * device).
  */
 struct brd_device {
 	int			brd_number;
@@ -48,7 +51,15 @@ struct brd_device {
  */
 static struct page *brd_lookup_page(struct brd_device *brd, sector_t sector)
 {
-	return xa_load(&brd->brd_pages, sector >> PAGE_SECTORS_SHIFT);
+	pgoff_t idx;
+	struct page *page;
+
+	idx = sector >> PAGE_SECTORS_SHIFT; /* sector to page index */
+	page = xa_load(&brd->brd_pages, idx);
+
+	BUG_ON(page && page->index != idx);
+
+	return page;
 }
 
 /*
@@ -56,8 +67,8 @@ static struct page *brd_lookup_page(struct brd_device *brd, sector_t sector)
  */
 static int brd_insert_page(struct brd_device *brd, sector_t sector, gfp_t gfp)
 {
-	pgoff_t idx = sector >> PAGE_SECTORS_SHIFT;
-	struct page *page;
+	pgoff_t idx;
+	struct page *page, *cur;
 	int ret = 0;
 
 	page = brd_lookup_page(brd, sector);
@@ -69,16 +80,23 @@ static int brd_insert_page(struct brd_device *brd, sector_t sector, gfp_t gfp)
 		return -ENOMEM;
 
 	xa_lock(&brd->brd_pages);
-	ret = __xa_insert(&brd->brd_pages, idx, page, gfp);
-	if (!ret)
+
+	idx = sector >> PAGE_SECTORS_SHIFT;
+	page->index = idx;
+
+	cur = __xa_cmpxchg(&brd->brd_pages, idx, NULL, page, gfp);
+
+	if (unlikely(cur)) {
+		__free_page(page);
+		ret = xa_err(cur);
+		if (!ret && (cur->index != idx))
+			ret = -EIO;
+	} else {
 		brd->brd_nr_pages++;
+	}
+
 	xa_unlock(&brd->brd_pages);
 
-	if (ret < 0) {
-		__free_page(page);
-		if (ret == -EBUSY)
-			ret = 0;
-	}
 	return ret;
 }
 
@@ -222,35 +240,12 @@ out:
 	return err;
 }
 
-static void brd_do_discard(struct brd_device *brd, sector_t sector, u32 size)
-{
-	sector_t aligned_sector = (sector + PAGE_SECTORS) & ~PAGE_SECTORS;
-	struct page *page;
-
-	size -= (aligned_sector - sector) * SECTOR_SIZE;
-	xa_lock(&brd->brd_pages);
-	while (size >= PAGE_SIZE && aligned_sector < rd_size * 2) {
-		page = __xa_erase(&brd->brd_pages, aligned_sector >> PAGE_SECTORS_SHIFT);
-		if (page)
-			__free_page(page);
-		aligned_sector += PAGE_SECTORS;
-		size -= PAGE_SIZE;
-	}
-	xa_unlock(&brd->brd_pages);
-}
-
 static void brd_submit_bio(struct bio *bio)
 {
 	struct brd_device *brd = bio->bi_bdev->bd_disk->private_data;
 	sector_t sector = bio->bi_iter.bi_sector;
 	struct bio_vec bvec;
 	struct bvec_iter iter;
-
-	if (unlikely(op_is_discard(bio->bi_opf))) {
-		brd_do_discard(brd, sector, bio->bi_iter.bi_size);
-		bio_endio(bio);
-		return;
-	}
 
 	bio_for_each_segment(bvec, bio, iter) {
 		unsigned int len = bvec.bv_len;
@@ -323,19 +318,6 @@ static int brd_alloc(int i)
 	struct gendisk *disk;
 	char buf[DISK_NAME_LEN];
 	int err = -ENOMEM;
-	struct queue_limits lim = {
-		/*
-		 * This is so fdisk will align partitions on 4k, because of
-		 * direct_access API needing 4k alignment, returning a PFN
-		 * (This is only a problem on very small devices <= 4M,
-		 *  otherwise fdisk will align on 1M. Regardless this call
-		 *  is harmless)
-		 */
-		.physical_block_size	= PAGE_SIZE,
-		.max_hw_discard_sectors	= UINT_MAX,
-		.max_discard_segments	= 1,
-		.discard_granularity	= PAGE_SIZE,
-	};
 
 	list_for_each_entry(brd, &brd_devices, brd_list)
 		if (brd->brd_number == i)
@@ -353,11 +335,10 @@ static int brd_alloc(int i)
 		debugfs_create_u64(buf, 0444, brd_debugfs_dir,
 				&brd->brd_nr_pages);
 
-	disk = brd->brd_disk = blk_alloc_disk(&lim, NUMA_NO_NODE);
-	if (IS_ERR(disk)) {
-		err = PTR_ERR(disk);
+	disk = brd->brd_disk = blk_alloc_disk(NUMA_NO_NODE);
+	if (!disk)
 		goto out_free_dev;
-	}
+
 	disk->major		= RAMDISK_MAJOR;
 	disk->first_minor	= i * max_part;
 	disk->minors		= max_part;
@@ -366,6 +347,15 @@ static int brd_alloc(int i)
 	strscpy(disk->disk_name, buf, DISK_NAME_LEN);
 	set_capacity(disk, rd_size * 2);
 	
+	/*
+	 * This is so fdisk will align partitions on 4k, because of
+	 * direct_access API needing 4k alignment, returning a PFN
+	 * (This is only a problem on very small devices <= 4M,
+	 *  otherwise fdisk will align on 1M. Regardless this call
+	 *  is harmless)
+	 */
+	blk_queue_physical_block_size(disk->queue, PAGE_SIZE);
+
 	/* Tell the block layer that this is not a rotational device */
 	blk_queue_flag_set(QUEUE_FLAG_NONROT, disk->queue);
 	blk_queue_flag_set(QUEUE_FLAG_SYNCHRONOUS, disk->queue);

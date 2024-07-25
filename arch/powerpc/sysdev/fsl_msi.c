@@ -11,11 +11,9 @@
 #include <linux/msi.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
-#include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
-#include <linux/platform_device.h>
-#include <linux/property.h>
+#include <linux/of_platform.h>
 #include <linux/interrupt.h>
 #include <linux/irqdomain.h>
 #include <linux/seq_file.h>
@@ -320,7 +318,7 @@ static irqreturn_t fsl_msi_cascade(int irq, void *data)
 	return ret;
 }
 
-static void fsl_of_msi_remove(struct platform_device *ofdev)
+static int fsl_of_msi_remove(struct platform_device *ofdev)
 {
 	struct fsl_msi *msi = platform_get_drvdata(ofdev);
 	int virq, i;
@@ -343,6 +341,8 @@ static void fsl_of_msi_remove(struct platform_device *ofdev)
 	if ((msi->feature & FSL_PIC_IP_MASK) != FSL_PIC_IP_VMPIC)
 		iounmap(msi->msi_regs);
 	kfree(msi);
+
+	return 0;
 }
 
 static struct lock_class_key fsl_msi_irq_class;
@@ -392,6 +392,7 @@ static int fsl_msi_setup_hwirq(struct fsl_msi *msi, struct platform_device *dev,
 static const struct of_device_id fsl_of_msi_ids[];
 static int fsl_of_msi_probe(struct platform_device *dev)
 {
+	const struct of_device_id *match;
 	struct fsl_msi *msi;
 	struct resource res, msiir;
 	int err, i, j, irq_index, count;
@@ -401,7 +402,10 @@ static int fsl_of_msi_probe(struct platform_device *dev)
 	u32 offset;
 	struct pci_controller *phb;
 
-	features = device_get_match_data(&dev->dev);
+	match = of_match_device(fsl_of_msi_ids, &dev->dev);
+	if (!match)
+		return -EINVAL;
+	features = match->data;
 
 	printk(KERN_DEBUG "Setting up Freescale MSI support\n");
 
@@ -603,7 +607,7 @@ static struct platform_driver fsl_of_msi_driver = {
 		.of_match_table = fsl_of_msi_ids,
 	},
 	.probe = fsl_of_msi_probe,
-	.remove_new = fsl_of_msi_remove,
+	.remove = fsl_of_msi_remove,
 };
 
 static __init int fsl_of_msi_init(void)

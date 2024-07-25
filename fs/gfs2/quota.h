@@ -50,7 +50,8 @@ static inline int gfs2_quota_lock_check(struct gfs2_inode *ip,
 	ret = gfs2_quota_lock(ip, NO_UID_QUOTA_CHANGE, NO_GID_QUOTA_CHANGE);
 	if (ret)
 		return ret;
-	if (sdp->sd_args.ar_quota == GFS2_QUOTA_ACCOUNT)
+	if (sdp->sd_args.ar_quota != GFS2_QUOTA_ON &&
+	    sdp->sd_args.ar_quota != GFS2_QUOTA_QUIET)
 		return 0;
 	ret = gfs2_quota_check(ip, ip->i_inode.i_uid, ip->i_inode.i_gid, ap);
 	if (ret)
@@ -59,8 +60,7 @@ static inline int gfs2_quota_lock_check(struct gfs2_inode *ip,
 }
 
 extern const struct quotactl_ops gfs2_quotactl_ops;
-int __init gfs2_qd_shrinker_init(void);
-void gfs2_qd_shrinker_exit(void);
+extern struct shrinker gfs2_qd_shrinker;
 extern struct list_lru gfs2_qd_lru;
 
 void __init gfs2_quota_hash_init(void);

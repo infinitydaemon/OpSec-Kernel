@@ -19,7 +19,9 @@
 #include "transaction.h"
 #include "disk-io.h"
 #include "extent_io.h"
+#include "volumes.h"
 #include "space-info.h"
+#include "delalloc-space.h"
 #include "block-group.h"
 #include "discard.h"
 #include "subpage.h"
@@ -54,11 +56,6 @@ static void free_bitmap(struct btrfs_free_space_ctl *ctl,
 static void bitmap_clear_bits(struct btrfs_free_space_ctl *ctl,
 			      struct btrfs_free_space *info, u64 offset,
 			      u64 bytes, bool update_stats);
-
-static void btrfs_crc32c_final(u32 crc, u8 *result)
-{
-	put_unaligned_le32(~crc, result);
-}
 
 static void __btrfs_remove_free_space_cache(struct btrfs_free_space_ctl *ctl)
 {
@@ -357,7 +354,7 @@ int btrfs_truncate_free_space_cache(struct btrfs_trans_handle *trans,
 	if (ret)
 		goto fail;
 
-	ret = btrfs_update_inode(trans, inode);
+	ret = btrfs_update_inode(trans, root, inode);
 
 fail:
 	if (locked)
@@ -397,7 +394,7 @@ static int io_ctl_init(struct btrfs_io_ctl *io_ctl, struct inode *inode,
 		return -ENOMEM;
 
 	io_ctl->num_pages = num_pages;
-	io_ctl->fs_info = inode_to_fs_info(inode);
+	io_ctl->fs_info = btrfs_sb(inode->i_sb);
 	io_ctl->inode = inode;
 
 	return 0;
@@ -437,8 +434,8 @@ static void io_ctl_drop_pages(struct btrfs_io_ctl *io_ctl)
 
 	for (i = 0; i < io_ctl->num_pages; i++) {
 		if (io_ctl->pages[i]) {
-			btrfs_folio_clear_checked(io_ctl->fs_info,
-					page_folio(io_ctl->pages[i]),
+			btrfs_page_clear_checked(io_ctl->fs_info,
+					io_ctl->pages[i],
 					page_offset(io_ctl->pages[i]),
 					PAGE_SIZE);
 			unlock_page(io_ctl->pages[i]);
@@ -543,7 +540,7 @@ static void io_ctl_set_crc(struct btrfs_io_ctl *io_ctl, int index)
 	if (index == 0)
 		offset = sizeof(u32) * io_ctl->num_pages;
 
-	crc = crc32c(crc, io_ctl->orig + offset, PAGE_SIZE - offset);
+	crc = btrfs_crc32c(crc, io_ctl->orig + offset, PAGE_SIZE - offset);
 	btrfs_crc32c_final(crc, (u8 *)&crc);
 	io_ctl_unmap_page(io_ctl);
 	tmp = page_address(io_ctl->pages[0]);
@@ -565,7 +562,7 @@ static int io_ctl_check_crc(struct btrfs_io_ctl *io_ctl, int index)
 	val = *tmp;
 
 	io_ctl_map_page(io_ctl, 0);
-	crc = crc32c(crc, io_ctl->orig + offset, PAGE_SIZE - offset);
+	crc = btrfs_crc32c(crc, io_ctl->orig + offset, PAGE_SIZE - offset);
 	btrfs_crc32c_final(crc, (u8 *)&crc);
 	if (val != crc) {
 		btrfs_err_rl(io_ctl->fs_info,
@@ -1324,7 +1321,7 @@ out:
 	  "failed to write free space cache for block group %llu error %d",
 				  block_group->start, ret);
 	}
-	btrfs_update_inode(trans, BTRFS_I(inode));
+	btrfs_update_inode(trans, root, BTRFS_I(inode));
 
 	if (block_group) {
 		/* the dirty list is protected by the dirty_bgs_lock */
@@ -1365,6 +1362,7 @@ int btrfs_wait_cache_io(struct btrfs_trans_handle *trans,
 /*
  * Write out cached info to an inode.
  *
+ * @root:        root the inode belongs to
  * @inode:       freespace inode we are writing out
  * @ctl:         free space cache we are going to write out
  * @block_group: block_group for this cache if it belongs to a block_group
@@ -1375,7 +1373,7 @@ int btrfs_wait_cache_io(struct btrfs_trans_handle *trans,
  * on mount.  This will return 0 if it was successful in writing the cache out,
  * or an errno if it was not.
  */
-static int __btrfs_write_out_cache(struct inode *inode,
+static int __btrfs_write_out_cache(struct btrfs_root *root, struct inode *inode,
 				   struct btrfs_free_space_ctl *ctl,
 				   struct btrfs_block_group *block_group,
 				   struct btrfs_io_ctl *io_ctl,
@@ -1508,7 +1506,7 @@ out:
 		invalidate_inode_pages2(inode->i_mapping);
 		BTRFS_I(inode)->generation = 0;
 	}
-	btrfs_update_inode(trans, BTRFS_I(inode));
+	btrfs_update_inode(trans, root, BTRFS_I(inode));
 	if (must_iput)
 		iput(inode);
 	return ret;
@@ -1534,8 +1532,8 @@ int btrfs_write_out_cache(struct btrfs_trans_handle *trans,
 	if (IS_ERR(inode))
 		return 0;
 
-	ret = __btrfs_write_out_cache(inode, ctl, block_group,
-				      &block_group->io_ctl, trans);
+	ret = __btrfs_write_out_cache(fs_info->tree_root, inode, ctl,
+				block_group, &block_group->io_ctl, trans);
 	if (ret) {
 		btrfs_debug(fs_info,
 	  "failed to write free space cache for block group %llu error %d",
@@ -1911,9 +1909,9 @@ static inline void bitmap_clear_bits(struct btrfs_free_space_ctl *ctl,
 		ctl->free_space -= bytes;
 }
 
-static void btrfs_bitmap_set_bits(struct btrfs_free_space_ctl *ctl,
-				  struct btrfs_free_space *info, u64 offset,
-				  u64 bytes)
+static void bitmap_set_bits(struct btrfs_free_space_ctl *ctl,
+			    struct btrfs_free_space *info, u64 offset,
+			    u64 bytes)
 {
 	unsigned long start, count, end;
 	int extent_delta = 1;
@@ -2249,7 +2247,7 @@ static u64 add_bytes_to_bitmap(struct btrfs_free_space_ctl *ctl,
 
 	bytes_to_set = min(end - offset, bytes);
 
-	btrfs_bitmap_set_bits(ctl, info, offset, bytes_to_set);
+	bitmap_set_bits(ctl, info, offset, bytes_to_set);
 
 	return bytes_to_set;
 
@@ -2619,7 +2617,7 @@ static void steal_from_bitmap(struct btrfs_free_space_ctl *ctl,
 	}
 }
 
-static int __btrfs_add_free_space(struct btrfs_block_group *block_group,
+int __btrfs_add_free_space(struct btrfs_block_group *block_group,
 			   u64 offset, u64 bytes,
 			   enum btrfs_trim_state trim_state)
 {
@@ -2697,7 +2695,7 @@ static int __btrfs_add_free_space_zoned(struct btrfs_block_group *block_group,
 	u64 offset = bytenr - block_group->start;
 	u64 to_free, to_unusable;
 	int bg_reclaim_threshold = 0;
-	bool initial = (size == block_group->length);
+	bool initial = ((size == block_group->length) && (block_group->alloc_offset == 0));
 	u64 reclaimable_unusable;
 
 	WARN_ON(!initial && offset + size > block_group->zone_capacity);
@@ -4154,13 +4152,15 @@ out:
 
 int __init btrfs_free_space_init(void)
 {
-	btrfs_free_space_cachep = KMEM_CACHE(btrfs_free_space, 0);
+	btrfs_free_space_cachep = kmem_cache_create("btrfs_free_space",
+			sizeof(struct btrfs_free_space), 0,
+			SLAB_MEM_SPREAD, NULL);
 	if (!btrfs_free_space_cachep)
 		return -ENOMEM;
 
 	btrfs_free_space_bitmap_cachep = kmem_cache_create("btrfs_free_space_bitmap",
 							PAGE_SIZE, PAGE_SIZE,
-							0, NULL);
+							SLAB_MEM_SPREAD, NULL);
 	if (!btrfs_free_space_bitmap_cachep) {
 		kmem_cache_destroy(btrfs_free_space_cachep);
 		return -ENOMEM;

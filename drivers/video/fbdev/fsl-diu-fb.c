@@ -787,7 +787,7 @@ static void set_fix(struct fb_info *info)
 	struct fb_var_screeninfo *var = &info->var;
 	struct mfb_info *mfbi = info->par;
 
-	strscpy_pad(fix->id, mfbi->id);
+	strncpy(fix->id, mfbi->id, sizeof(fix->id));
 	fix->line_length = var->xres_virtual * var->bits_per_pixel / 8;
 	fix->type = FB_TYPE_PACKED_PIXELS;
 	fix->accel = FB_ACCEL_NONE;
@@ -877,7 +877,7 @@ static int map_video_memory(struct fb_info *info)
 	}
 	mutex_lock(&info->mm_lock);
 	info->screen_base = p;
-	info->fix.smem_start = virt_to_phys((__force const void *)info->screen_base);
+	info->fix.smem_start = virt_to_phys(info->screen_base);
 	info->fix.smem_len = smem_len;
 	mutex_unlock(&info->mm_lock);
 	info->screen_size = info->fix.smem_len;

@@ -75,10 +75,8 @@ nfp_devlink_port_split(struct devlink *devlink, struct devlink_port *port,
 	if (ret)
 		return ret;
 
-	if (eth_port.port_lanes % count) {
-		NL_SET_ERR_MSG_MOD(extack, "invalid count");
+	if (eth_port.port_lanes % count)
 		return -EINVAL;
-	}
 
 	/* Special case the 100G CXP -> 2x40G split */
 	lanes = eth_port.port_lanes / count;
@@ -103,10 +101,8 @@ nfp_devlink_port_unsplit(struct devlink *devlink, struct devlink_port *port,
 	if (ret)
 		return ret;
 
-	if (!eth_port.is_split) {
-		NL_SET_ERR_MSG_MOD(extack, "port is not split");
+	if (!eth_port.is_split)
 		return -EINVAL;
-	}
 
 	/* Special case the 100G CXP -> 2x40G unsplit */
 	lanes = eth_port.port_lanes;
@@ -160,7 +156,6 @@ static const struct nfp_devlink_versions_simple {
 	{ DEVLINK_INFO_VERSION_GENERIC_BOARD_REV,	"assembly.revision", },
 	{ DEVLINK_INFO_VERSION_GENERIC_BOARD_MANUFACTURE, "assembly.vendor", },
 	{ "board.model", /* code name */		"assembly.model", },
-	{ DEVLINK_INFO_VERSION_GENERIC_BOARD_PART_NUMBER, "pn", },
 };
 
 static int

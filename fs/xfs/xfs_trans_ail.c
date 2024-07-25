@@ -901,8 +901,7 @@ xfs_trans_ail_init(
 {
 	struct xfs_ail	*ailp;
 
-	ailp = kzalloc(sizeof(struct xfs_ail),
-			GFP_KERNEL | __GFP_RETRY_MAYFAIL);
+	ailp = kmem_zalloc(sizeof(struct xfs_ail), KM_MAYFAIL);
 	if (!ailp)
 		return -ENOMEM;
 
@@ -922,7 +921,7 @@ xfs_trans_ail_init(
 	return 0;
 
 out_free_ailp:
-	kfree(ailp);
+	kmem_free(ailp);
 	return -ENOMEM;
 }
 
@@ -933,5 +932,5 @@ xfs_trans_ail_destroy(
 	struct xfs_ail	*ailp = mp->m_ail;
 
 	kthread_stop(ailp->ail_task);
-	kfree(ailp);
+	kmem_free(ailp);
 }

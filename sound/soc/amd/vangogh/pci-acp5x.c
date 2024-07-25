@@ -2,7 +2,7 @@
 //
 // AMD Vangogh ACP PCI Driver
 //
-// Copyright (C) 2021, 2023 Advanced Micro Devices, Inc. All rights reserved.
+// Copyright (C) 2021 Advanced Micro Devices, Inc. All rights reserved.
 
 #include <linux/pci.h>
 #include <linux/module.h>
@@ -13,7 +13,6 @@
 #include <linux/pm_runtime.h>
 
 #include "acp5x.h"
-#include "../mach-config.h"
 
 struct acp5x_dev_data {
 	void __iomem *acp5x_base;
@@ -130,13 +129,9 @@ static int snd_acp5x_probe(struct pci_dev *pci,
 	int ret, i;
 	u32 addr, val;
 
-	/*
-	 * Return if ACP config flag is defined, except when board
-	 * supports SOF while it is not being enabled in kernel config.
-	 */
+	/* Return if acp config flag is defined */
 	flag = snd_amd_acp_find_config(pci);
-	if (flag != FLAG_AMD_LEGACY &&
-	    (flag != FLAG_AMD_SOF || IS_ENABLED(CONFIG_SND_SOC_SOF_AMD_VANGOGH)))
+	if (flag)
 		return -ENODEV;
 
 	irqflags = IRQF_SHARED;
@@ -264,7 +259,7 @@ disable_pci:
 	return ret;
 }
 
-static int snd_acp5x_suspend(struct device *dev)
+static int __maybe_unused snd_acp5x_suspend(struct device *dev)
 {
 	int ret;
 	struct acp5x_dev_data *adata;
@@ -279,7 +274,7 @@ static int snd_acp5x_suspend(struct device *dev)
 	return ret;
 }
 
-static int snd_acp5x_resume(struct device *dev)
+static int __maybe_unused snd_acp5x_resume(struct device *dev)
 {
 	int ret;
 	struct acp5x_dev_data *adata;
@@ -294,8 +289,9 @@ static int snd_acp5x_resume(struct device *dev)
 }
 
 static const struct dev_pm_ops acp5x_pm = {
-	RUNTIME_PM_OPS(snd_acp5x_suspend, snd_acp5x_resume, NULL)
-	SYSTEM_SLEEP_PM_OPS(snd_acp5x_suspend, snd_acp5x_resume)
+	SET_RUNTIME_PM_OPS(snd_acp5x_suspend,
+			   snd_acp5x_resume, NULL)
+	SET_SYSTEM_SLEEP_PM_OPS(snd_acp5x_suspend, snd_acp5x_resume)
 };
 
 static void snd_acp5x_remove(struct pci_dev *pci)
@@ -331,7 +327,7 @@ static struct pci_driver acp5x_driver  = {
 	.probe = snd_acp5x_probe,
 	.remove = snd_acp5x_remove,
 	.driver = {
-		.pm = pm_ptr(&acp5x_pm),
+		.pm = &acp5x_pm,
 	}
 };
 

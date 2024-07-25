@@ -17,4 +17,4 @@ ifeq ($(CONFIG_SND),y)
   obj-y += last.o
 endif
 
-soundcore-y  := sound_core.o
+soundcore-objs  := sound_core.o

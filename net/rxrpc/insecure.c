@@ -15,11 +15,14 @@ static int none_init_connection_security(struct rxrpc_connection *conn,
 }
 
 /*
- * Allocate an appropriately sized buffer for the amount of data remaining.
+ * Work out how much data we can put in an unsecured packet.
  */
-static struct rxrpc_txbuf *none_alloc_txbuf(struct rxrpc_call *call, size_t remain, gfp_t gfp)
+static int none_how_much_data(struct rxrpc_call *call, size_t remain,
+			       size_t *_buf_size, size_t *_data_size, size_t *_offset)
 {
-	return rxrpc_alloc_data_txbuf(call, min_t(size_t, remain, RXRPC_JUMBO_DATALEN), 1, gfp);
+	*_buf_size = *_data_size = min_t(size_t, remain, RXRPC_JUMBO_DATALEN);
+	*_offset = 0;
+	return 0;
 }
 
 static int none_secure_packet(struct rxrpc_call *call, struct rxrpc_txbuf *txb)
@@ -76,7 +79,7 @@ const struct rxrpc_security rxrpc_no_security = {
 	.exit				= none_exit,
 	.init_connection_security	= none_init_connection_security,
 	.free_call_crypto		= none_free_call_crypto,
-	.alloc_txbuf			= none_alloc_txbuf,
+	.how_much_data			= none_how_much_data,
 	.secure_packet			= none_secure_packet,
 	.verify_packet			= none_verify_packet,
 	.respond_to_challenge		= none_respond_to_challenge,

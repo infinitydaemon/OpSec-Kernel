@@ -7,7 +7,11 @@
 from docutils import nodes
 import sphinx
 from sphinx import addnodes
-from sphinx.errors import NoUri
+if sphinx.version_info[0] < 2 or \
+   sphinx.version_info[0] == 2 and sphinx.version_info[1] < 1:
+    from sphinx.environment import NoUri
+else:
+    from sphinx.errors import NoUri
 import re
 from itertools import chain
 
@@ -70,12 +74,6 @@ Skipfuncs = [ 'open', 'close', 'read', 'write', 'fcntl', 'mmap',
 
 c_namespace = ''
 
-#
-# Detect references to commits.
-#
-RE_git = re.compile(r'commit\s+(?P<rev>[0-9a-f]{12,40})(?:\s+\(".*?"\))?',
-    flags=re.IGNORECASE | re.DOTALL)
-
 def markup_refs(docname, app, node):
     t = node.astext()
     done = 0
@@ -92,8 +90,7 @@ def markup_refs(docname, app, node):
                            RE_struct: markup_c_ref,
                            RE_union: markup_c_ref,
                            RE_enum: markup_c_ref,
-                           RE_typedef: markup_c_ref,
-                           RE_git: markup_git}
+                           RE_typedef: markup_c_ref}
 
     if sphinx.version_info[0] >= 3:
         markup_func = markup_func_sphinx3
@@ -278,17 +275,6 @@ def get_c_namespace(app, docname):
             if match:
                 return match.group(1)
     return ''
-
-def markup_git(docname, app, match):
-    # While we could probably assume that we are running in a git
-    # repository, we can't know for sure, so let's just mechanically
-    # turn them into git.kernel.org links without checking their
-    # validity. (Maybe we can do something in the future to warn about
-    # these references if this is explicitly requested.)
-    text = match.group(0)
-    rev = match.group('rev')
-    return nodes.reference('', nodes.Text(text),
-        refuri=f'https://git.kernel.org/torvalds/c/{rev}')
 
 def auto_markup(app, doctree, name):
     global c_namespace

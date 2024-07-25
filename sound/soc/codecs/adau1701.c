@@ -13,6 +13,7 @@
 #include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/gpio/consumer.h>
 #include <linux/regulator/consumer.h>
 #include <linux/regmap.h>
@@ -862,10 +863,10 @@ exit_regulators_disable:
 }
 
 static const struct i2c_device_id adau1701_i2c_id[] = {
-	{ "adau1401" },
-	{ "adau1401a" },
-	{ "adau1701" },
-	{ "adau1702" },
+	{ "adau1401", 0 },
+	{ "adau1401a", 0 },
+	{ "adau1701", 0 },
+	{ "adau1702", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, adau1701_i2c_id);

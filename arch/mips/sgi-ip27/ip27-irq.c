@@ -23,8 +23,6 @@
 #include <asm/sn/intr.h>
 #include <asm/sn/irq_alloc.h>
 
-#include "ip27-common.h"
-
 struct hub_irq_data {
 	u64	*irq_mask[2];
 	cpuid_t	cpu;
@@ -277,6 +275,7 @@ void __init arch_init_irq(void)
 {
 	struct irq_domain *domain;
 	struct fwnode_handle *fn;
+	int i;
 
 	mips_cpu_irq_init();
 
@@ -285,16 +284,20 @@ void __init arch_init_irq(void)
 	 * Mark these as reserved right away so they won't be used accidentally
 	 * later.
 	 */
-	bitmap_set(hub_irq_map, 0, CPU_CALL_B_IRQ + 1);
-	bitmap_set(hub_irq_map, NI_BRDCAST_ERR_A, MSC_PANIC_INTR - NI_BRDCAST_ERR_A + 1);
+	for (i = 0; i <= CPU_CALL_B_IRQ; i++)
+		set_bit(i, hub_irq_map);
+
+	for (i = NI_BRDCAST_ERR_A; i <= MSC_PANIC_INTR; i++)
+		set_bit(i, hub_irq_map);
 
 	fn = irq_domain_alloc_named_fwnode("HUB");
-	if (WARN_ON(fn == NULL))
+	WARN_ON(fn == NULL);
+	if (!fn)
 		return;
-
 	domain = irq_domain_create_linear(fn, IP27_HUB_IRQ_COUNT,
 					  &hub_domain_ops, NULL);
-	if (WARN_ON(domain == NULL))
+	WARN_ON(domain == NULL);
+	if (!domain)
 		return;
 
 	irq_set_default_host(domain);

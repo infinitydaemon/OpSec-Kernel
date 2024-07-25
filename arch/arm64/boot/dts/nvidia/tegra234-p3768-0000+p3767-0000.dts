@@ -4,7 +4,7 @@
 #include <dt-bindings/input/linux-event-codes.h>
 #include <dt-bindings/input/gpio-keys.h>
 
-#include "tegra234-p3767.dtsi"
+#include "tegra234-p3767-0000.dtsi"
 #include "tegra234-p3768-0000.dtsi"
 
 / {
@@ -12,8 +12,13 @@
 	model = "NVIDIA Jetson Orin NX Engineering Reference Developer Kit";
 
 	aliases {
+		serial0 = &tcu;
 		serial1 = &uarta;
 		serial2 = &uarte;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
 	};
 
 	bus@0 {
@@ -29,6 +34,10 @@
 			status = "okay";
 		};
 
+		serial@31d0000 {
+			status = "okay";
+		};
+
 		pwm@32a0000 {
 			assigned-clocks = <&bpmp TEGRA234_CLK_PWM3>;
 			assigned-clock-parents = <&bpmp TEGRA234_CLK_PLLP_OUT0>;
@@ -37,6 +46,7 @@
 
 		hda@3510000 {
 			nvidia,model = "NVIDIA Jetson Orin NX HDA";
+			status = "okay";
 		};
 
 		padctl@3520000 {
@@ -84,8 +94,8 @@
 		enable-active-high;
 	};
 
-	sound {
-		label = "NVIDIA Jetson Orin NX APE";
+	serial {
+		status = "okay";
 	};
 
 	thermal-zones {

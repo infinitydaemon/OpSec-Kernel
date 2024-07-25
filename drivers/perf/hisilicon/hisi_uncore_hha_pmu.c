@@ -534,13 +534,14 @@ static int hisi_hha_pmu_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void hisi_hha_pmu_remove(struct platform_device *pdev)
+static int hisi_hha_pmu_remove(struct platform_device *pdev)
 {
 	struct hisi_pmu *hha_pmu = platform_get_drvdata(pdev);
 
 	perf_pmu_unregister(&hha_pmu->pmu);
 	cpuhp_state_remove_instance_nocalls(CPUHP_AP_PERF_ARM_HISI_HHA_ONLINE,
 					    &hha_pmu->node);
+	return 0;
 }
 
 static struct platform_driver hisi_hha_pmu_driver = {
@@ -550,7 +551,7 @@ static struct platform_driver hisi_hha_pmu_driver = {
 		.suppress_bind_attrs = true,
 	},
 	.probe = hisi_hha_pmu_probe,
-	.remove_new = hisi_hha_pmu_remove,
+	.remove = hisi_hha_pmu_remove,
 };
 
 static int __init hisi_hha_pmu_module_init(void)

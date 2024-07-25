@@ -8,7 +8,6 @@
 #include <dt-bindings/clock/qcom,gcc-sc8180x.h>
 #include <dt-bindings/clock/qcom,gpucc-sm8150.h>
 #include <dt-bindings/clock/qcom,rpmh.h>
-#include <dt-bindings/interconnect/qcom,icc.h>
 #include <dt-bindings/interconnect/qcom,osm-l3.h>
 #include <dt-bindings/interconnect/qcom,sc8180x.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
@@ -1694,7 +1693,7 @@
 			qcom,bcm-voters = <&apps_bcm_voter>;
 		};
 
-		pcie0: pcie@1c00000 {
+		pcie0: pci@1c00000 {
 			compatible = "qcom,pcie-sc8180x";
 			reg = <0 0x01c00000 0 0x3000>,
 			      <0 0x60000000 0 0xf1d>,
@@ -1717,22 +1716,8 @@
 			ranges = <0x01000000 0x0 0x60200000 0x0 0x60200000 0x0 0x100000>,
 				 <0x02000000 0x0 0x60300000 0x0 0x60300000 0x0 0x3d00000>;
 
-			interrupts = <GIC_SPI 141 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 142 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 143 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 144 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 145 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 146 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 147 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 148 IRQ_TYPE_LEVEL_HIGH>;
-			interrupt-names = "msi0",
-					  "msi1",
-					  "msi2",
-					  "msi3",
-					  "msi4",
-					  "msi5",
-					  "msi6",
-					  "msi7";
+			interrupts = <GIC_SPI 141 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "msi";
 			#interrupt-cells = <1>;
 			interrupt-map-mask = <0 0 0 0x7>;
 			interrupt-map = <0 0 0 1 &intc 0 149 IRQ_TYPE_LEVEL_HIGH>, /* int_a */
@@ -1760,6 +1745,7 @@
 			assigned-clocks = <&gcc GCC_PCIE_0_AUX_CLK>;
 			assigned-clock-rates = <19200000>;
 
+			iommus = <&apps_smmu 0x1d80 0x7f>;
 			iommu-map = <0x0   &apps_smmu 0x1d80 0x1>,
 				    <0x100 &apps_smmu 0x1d81 0x1>;
 
@@ -1777,16 +1763,6 @@
 			dma-coherent;
 
 			status = "disabled";
-
-			pcie@0 {
-				device_type = "pci";
-				reg = <0x0 0x0 0x0 0x0 0x0>;
-				bus-range = <0x01 0xff>;
-
-				#address-cells = <3>;
-				#size-cells = <2>;
-				ranges;
-			};
 		};
 
 		pcie0_phy: phy@1c06000 {
@@ -1815,7 +1791,7 @@
 			status = "disabled";
 		};
 
-		pcie3: pcie@1c08000 {
+		pcie3: pci@1c08000 {
 			compatible = "qcom,pcie-sc8180x";
 			reg = <0 0x01c08000 0 0x3000>,
 			      <0 0x40000000 0 0xf1d>,
@@ -1838,22 +1814,8 @@
 			ranges = <0x01000000 0x0 0x40200000 0x0 0x40200000 0x0 0x100000>,
 				 <0x02000000 0x0 0x40300000 0x0 0x40300000 0x0 0x1fd00000>;
 
-			interrupts = <GIC_SPI 307 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 308 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 309 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 312 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 313 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 314 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 374 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 375 IRQ_TYPE_LEVEL_HIGH>;
-			interrupt-names = "msi0",
-					  "msi1",
-					  "msi2",
-					  "msi3",
-					  "msi4",
-					  "msi5",
-					  "msi6",
-					  "msi7";
+			interrupts = <GIC_SPI 307 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "msi";
 			#interrupt-cells = <1>;
 			interrupt-map-mask = <0 0 0 0x7>;
 			interrupt-map = <0 0 0 1 &intc 0 434 IRQ_TYPE_LEVEL_HIGH>, /* int_a */
@@ -1881,6 +1843,7 @@
 			assigned-clocks = <&gcc GCC_PCIE_3_AUX_CLK>;
 			assigned-clock-rates = <19200000>;
 
+			iommus = <&apps_smmu 0x1e00 0x7f>;
 			iommu-map = <0x0   &apps_smmu 0x1e00 0x1>,
 				    <0x100 &apps_smmu 0x1e01 0x1>;
 
@@ -1898,16 +1861,6 @@
 			dma-coherent;
 
 			status = "disabled";
-
-			pcie@0 {
-				device_type = "pci";
-				reg = <0x0 0x0 0x0 0x0 0x0>;
-				bus-range = <0x01 0xff>;
-
-				#address-cells = <3>;
-				#size-cells = <2>;
-				ranges;
-			};
 		};
 
 		pcie3_phy: phy@1c0c000 {
@@ -1937,7 +1890,7 @@
 			status = "disabled";
 		};
 
-		pcie1: pcie@1c10000 {
+		pcie1: pci@1c10000 {
 			compatible = "qcom,pcie-sc8180x";
 			reg = <0 0x01c10000 0 0x3000>,
 			      <0 0x68000000 0 0xf1d>,
@@ -1960,22 +1913,8 @@
 			ranges = <0x01000000 0x0 0x68200000 0x0 0x68200000 0x0 0x100000>,
 				 <0x02000000 0x0 0x68300000 0x0 0x68300000 0x0 0x3d00000>;
 
-			interrupts = <GIC_SPI 756 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 755 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 754 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 753 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 752 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 751 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 750 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 749 IRQ_TYPE_LEVEL_HIGH>;
-			interrupt-names = "msi0",
-					  "msi1",
-					  "msi2",
-					  "msi3",
-					  "msi4",
-					  "msi5",
-					  "msi6",
-					  "msi7";
+			interrupts = <GIC_SPI 755 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "msi";
 			#interrupt-cells = <1>;
 			interrupt-map-mask = <0 0 0 0x7>;
 			interrupt-map = <0 0 0 1 &intc 0 747 IRQ_TYPE_LEVEL_HIGH>, /* int_a */
@@ -2003,6 +1942,7 @@
 			assigned-clocks = <&gcc GCC_PCIE_1_AUX_CLK>;
 			assigned-clock-rates = <19200000>;
 
+			iommus = <&apps_smmu 0x1c80 0x7f>;
 			iommu-map = <0x0   &apps_smmu 0x1c80 0x1>,
 				    <0x100 &apps_smmu 0x1c81 0x1>;
 
@@ -2020,16 +1960,6 @@
 			dma-coherent;
 
 			status = "disabled";
-
-			pcie@0 {
-				device_type = "pci";
-				reg = <0x0 0x0 0x0 0x0 0x0>;
-				bus-range = <0x01 0xff>;
-
-				#address-cells = <3>;
-				#size-cells = <2>;
-				ranges;
-			};
 		};
 
 		pcie1_phy: phy@1c16000 {
@@ -2059,7 +1989,7 @@
 			status = "disabled";
 		};
 
-		pcie2: pcie@1c18000 {
+		pcie2: pci@1c18000 {
 			compatible = "qcom,pcie-sc8180x";
 			reg = <0 0x01c18000 0 0x3000>,
 			      <0 0x70000000 0 0xf1d>,
@@ -2082,22 +2012,8 @@
 			ranges = <0x01000000 0x0 0x70200000 0x0 0x70200000 0x0 0x100000>,
 				 <0x02000000 0x0 0x70300000 0x0 0x70300000 0x0 0x3d00000>;
 
-			interrupts = <GIC_SPI 672 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 671 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 670 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 669 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 668 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 667 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 666 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 665 IRQ_TYPE_LEVEL_HIGH>;
-			interrupt-names = "msi0",
-					  "msi1",
-					  "msi2",
-					  "msi3",
-					  "msi4",
-					  "msi5",
-					  "msi6",
-					  "msi7";
+			interrupts = <GIC_SPI 671 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "msi";
 			#interrupt-cells = <1>;
 			interrupt-map-mask = <0 0 0 0x7>;
 			interrupt-map = <0 0 0 1 &intc 0 663 IRQ_TYPE_LEVEL_HIGH>, /* int_a */
@@ -2125,6 +2041,7 @@
 			assigned-clocks = <&gcc GCC_PCIE_2_AUX_CLK>;
 			assigned-clock-rates = <19200000>;
 
+			iommus = <&apps_smmu 0x1d00 0x7f>;
 			iommu-map = <0x0   &apps_smmu 0x1d00 0x1>,
 				    <0x100 &apps_smmu 0x1d01 0x1>;
 
@@ -2142,16 +2059,6 @@
 			dma-coherent;
 
 			status = "disabled";
-
-			pcie@0 {
-				device_type = "pci";
-				reg = <0x0 0x0 0x0 0x0 0x0>;
-				bus-range = <0x01 0xff>;
-
-				#address-cells = <3>;
-				#size-cells = <2>;
-				ranges;
-			};
 		};
 
 		pcie2_phy: phy@1c1c000 {
@@ -2186,7 +2093,7 @@
 				     "jedec,ufs-2.0";
 			reg = <0 0x01d84000 0 0x2500>;
 			interrupts = <GIC_SPI 265 IRQ_TYPE_LEVEL_HIGH>;
-			phys = <&ufs_mem_phy>;
+			phys = <&ufs_mem_phy_lanes>;
 			phy-names = "ufsphy";
 			lanes-per-direction = <2>;
 			#reset-cells = <1>;
@@ -2220,34 +2127,32 @@
 					<0 0>,
 					<0 0>;
 
-			power-domains = <&gcc UFS_PHY_GDSC>;
-
-			interconnects = <&aggre1_noc MASTER_UFS_MEM QCOM_ICC_TAG_ALWAYS
-					 &mc_virt SLAVE_EBI_CH0 QCOM_ICC_TAG_ALWAYS>,
-					<&gem_noc MASTER_AMPSS_M0 QCOM_ICC_TAG_ALWAYS
-					 &config_noc SLAVE_UFS_MEM_0_CFG QCOM_ICC_TAG_ALWAYS>;
-			interconnect-names = "ufs-ddr", "cpu-ufs";
-
 			status = "disabled";
 		};
 
 		ufs_mem_phy: phy-wrapper@1d87000 {
 			compatible = "qcom,sc8180x-qmp-ufs-phy";
-			reg = <0 0x01d87000 0 0x1000>;
-
+			reg = <0 0x01d87000 0 0x1c0>;
+			#address-cells = <2>;
+			#size-cells = <2>;
+			ranges;
 			clocks = <&rpmhcc RPMH_CXO_CLK>,
-				 <&gcc GCC_UFS_PHY_PHY_AUX_CLK>,
-				 <&gcc GCC_UFS_MEM_CLKREF_EN>;
+				 <&gcc GCC_UFS_PHY_PHY_AUX_CLK>;
 			clock-names = "ref",
-				      "ref_aux",
-				      "qref";
+				      "ref_aux";
 
 			resets = <&ufs_mem_hc 0>;
 			reset-names = "ufsphy";
-
-			#phy-cells = <0>;
-
 			status = "disabled";
+
+			ufs_mem_phy_lanes: phy@1d87400 {
+				reg = <0 0x01d87400 0 0x108>,
+				      <0 0x01d87600 0 0x1e0>,
+				      <0 0x01d87c00 0 0x1dc>,
+				      <0 0x01d87800 0 0x108>,
+				      <0 0x01d87a00 0 0x1e0>;
+				#phy-cells = <0>;
+			};
 		};
 
 		ipa_virt: interconnect@1e00000 {
@@ -2265,6 +2170,7 @@
 
 		gpu: gpu@2c00000 {
 			compatible = "qcom,adreno-680.1", "qcom,adreno";
+			#stream-id-cells = <16>;
 
 			reg = <0 0x02c00000 0 0x40000>;
 			reg-names = "kgsl_3d0_reg_memory";
@@ -2279,8 +2185,6 @@
 			interconnect-names = "gfx-mem";
 
 			qcom,gmu = <&gmu>;
-			#cooling-cells = <2>;
-
 			status = "disabled";
 
 			gpu_opp_table: opp-table {
@@ -2647,11 +2551,14 @@
 
 		system-cache-controller@9200000 {
 			compatible = "qcom,sc8180x-llcc";
-			reg = <0 0x09200000 0 0x50000>, <0 0x09280000 0 0x50000>,
-			      <0 0x09300000 0 0x50000>, <0 0x09380000 0 0x50000>,
-			      <0 0x09600000 0 0x50000>;
+			reg = <0 0x09200000 0 0x58000>, <0 0x09280000 0 0x58000>,
+			      <0 0x09300000 0 0x58000>, <0 0x09380000 0 0x58000>,
+			      <0 0x09400000 0 0x58000>, <0 0x09480000 0 0x58000>,
+			      <0 0x09500000 0 0x58000>, <0 0x09580000 0 0x58000>,
+			      <0 0x09600000 0 0x58000>;
 			reg-names = "llcc0_base", "llcc1_base", "llcc2_base",
-				    "llcc3_base", "llcc_broadcast_base";
+				    "llcc3_base", "llcc4_base", "llcc5_base",
+				    "llcc6_base", "llcc7_base",  "llcc_broadcast_base";
 			interrupts = <GIC_SPI 582 IRQ_TYPE_LEVEL_HIGH>;
 		};
 
@@ -2677,14 +2584,14 @@
 			clocks = <&gcc GCC_CFG_NOC_USB3_PRIM_AXI_CLK>,
 				 <&gcc GCC_USB30_PRIM_MASTER_CLK>,
 				 <&gcc GCC_AGGRE_USB3_PRIM_AXI_CLK>,
-				 <&gcc GCC_USB30_PRIM_SLEEP_CLK>,
 				 <&gcc GCC_USB30_PRIM_MOCK_UTMI_CLK>,
+				 <&gcc GCC_USB30_PRIM_SLEEP_CLK>,
 				 <&gcc GCC_USB3_SEC_CLKREF_CLK>;
 			clock-names = "cfg_noc",
 				      "core",
 				      "iface",
-				      "sleep",
 				      "mock_utmi",
+				      "sleep",
 				      "xo";
 			resets = <&gcc GCC_USB30_PRIM_BCR>;
 			power-domains = <&gcc USB30_PRIM_GDSC>;
@@ -2728,14 +2635,14 @@
 			clocks = <&gcc GCC_CFG_NOC_USB3_SEC_AXI_CLK>,
 				 <&gcc GCC_USB30_SEC_MASTER_CLK>,
 				 <&gcc GCC_AGGRE_USB3_SEC_AXI_CLK>,
-				 <&gcc GCC_USB30_SEC_SLEEP_CLK>,
 				 <&gcc GCC_USB30_SEC_MOCK_UTMI_CLK>,
+				 <&gcc GCC_USB30_SEC_SLEEP_CLK>,
 				 <&gcc GCC_USB3_SEC_CLKREF_CLK>;
 			clock-names = "cfg_noc",
 				      "core",
 				      "iface",
-				      "sleep",
 				      "mock_utmi",
+				      "sleep",
 				      "xo";
 			resets = <&gcc GCC_USB30_SEC_BCR>;
 			power-domains = <&gcc USB30_SEC_GDSC>;
@@ -2800,15 +2707,9 @@
 			interrupt-controller;
 			#interrupt-cells = <1>;
 
-			interconnects = <&mmss_noc MASTER_MDP_PORT0 QCOM_ICC_TAG_ALWAYS
-					 &mc_virt SLAVE_EBI_CH0 QCOM_ICC_TAG_ALWAYS>,
-					<&mmss_noc MASTER_MDP_PORT1 QCOM_ICC_TAG_ALWAYS
-					 &mc_virt SLAVE_EBI_CH0 QCOM_ICC_TAG_ALWAYS>,
-					<&gem_noc MASTER_AMPSS_M0 QCOM_ICC_TAG_ALWAYS
-					 &config_noc SLAVE_DISPLAY_CFG QCOM_ICC_TAG_ALWAYS>;
-			interconnect-names = "mdp0-mem",
-					     "mdp1-mem",
-					     "cpu-cfg";
+			interconnects = <&mmss_noc MASTER_MDP_PORT0 0 &mc_virt SLAVE_EBI_CH0 0>,
+					<&mmss_noc MASTER_MDP_PORT1 0 &mc_virt SLAVE_EBI_CH0 0>;
+			interconnect-names = "mdp0-mem", "mdp1-mem";
 
 			iommus = <&apps_smmu 0x800 0x420>;
 
@@ -2827,15 +2728,11 @@
 				clocks = <&dispcc DISP_CC_MDSS_AHB_CLK>,
 					 <&gcc GCC_DISP_HF_AXI_CLK>,
 					 <&dispcc DISP_CC_MDSS_MDP_CLK>,
-					 <&dispcc DISP_CC_MDSS_VSYNC_CLK>,
-					 <&dispcc DISP_CC_MDSS_ROT_CLK>,
-					 <&dispcc DISP_CC_MDSS_MDP_LUT_CLK>;
+					 <&dispcc DISP_CC_MDSS_VSYNC_CLK>;
 				clock-names = "iface",
 					      "bus",
 					      "core",
-					      "vsync",
-					      "rot",
-					      "lut";
+					      "vsync";
 
 				assigned-clocks = <&dispcc DISP_CC_MDSS_VSYNC_CLK>;
 				assigned-clock-rates = <19200000>;
@@ -2844,7 +2741,7 @@
 				power-domains = <&rpmhpd SC8180X_MMCX>;
 
 				interrupt-parent = <&mdss>;
-				interrupts = <0>;
+				interrupts = <0 IRQ_TYPE_LEVEL_HIGH>;
 
 				ports {
 					#address-cells = <1>;
@@ -2917,7 +2814,7 @@
 				reg-names = "dsi_ctrl";
 
 				interrupt-parent = <&mdss>;
-				interrupts = <4>;
+				interrupts = <4 IRQ_TYPE_LEVEL_HIGH>;
 
 				clocks = <&dispcc DISP_CC_MDSS_BYTE0_CLK>,
 					 <&dispcc DISP_CC_MDSS_BYTE0_INTF_CLK>,
@@ -3003,7 +2900,7 @@
 				reg-names = "dsi_ctrl";
 
 				interrupt-parent = <&mdss>;
-				interrupts = <5>;
+				interrupts = <5 IRQ_TYPE_LEVEL_HIGH>;
 
 				clocks = <&dispcc DISP_CC_MDSS_BYTE1_CLK>,
 					 <&dispcc DISP_CC_MDSS_BYTE1_INTF_CLK>,
@@ -3069,8 +2966,7 @@
 				reg = <0 0xae90000 0 0x200>,
 				      <0 0xae90200 0 0x200>,
 				      <0 0xae90400 0 0x600>,
-				      <0 0xae90a00 0 0x400>,
-				      <0 0xae91000 0 0x400>;
+				      <0 0xae90a00 0 0x400>;
 				interrupt-parent = <&mdss>;
 				interrupts = <12>;
 				clocks = <&dispcc DISP_CC_MDSS_AHB_CLK>,
@@ -3146,8 +3042,7 @@
 				reg = <0 0xae98000 0 0x200>,
 				      <0 0xae98200 0 0x200>,
 				      <0 0xae98400 0 0x600>,
-				      <0 0xae98a00 0 0x400>,
-				      <0 0xae99000 0 0x400>;
+				      <0 0xae98a00 0 0x400>;
 				interrupt-parent = <&mdss>;
 				interrupts = <13>;
 				clocks = <&dispcc DISP_CC_MDSS_AHB_CLK>,
@@ -3243,6 +3138,8 @@
 
 				phys = <&edp_phy>;
 				phy-names = "dp";
+
+				#sound-dai-cells = <0>;
 
 				operating-points-v2 = <&edp_opp_table>;
 				power-domains = <&rpmhpd SC8180X_MMCX>;
@@ -3371,11 +3268,6 @@
 			#power-domain-cells = <1>;
 		};
 
-		sram@c3f0000 {
-			compatible = "qcom,rpmh-stats";
-			reg = <0x0 0x0c3f0000 0x0 0x400>;
-		};
-
 		spmi_bus: spmi@c440000 {
 			compatible = "qcom,spmi-pmic-arb";
 			reg = <0x0 0x0c440000 0x0 0x0001100>,
@@ -3392,6 +3284,7 @@
 			#size-cells = <0>;
 			interrupt-controller;
 			#interrupt-cells = <4>;
+			cell-index = <0>;
 		};
 
 		apps_smmu: iommu@15000000 {
@@ -3549,12 +3442,10 @@
 			reg = <0x0 0x17a00000 0x0 0x10000>,	/* GICD */
 			      <0x0 0x17a60000 0x0 0x100000>;	/* GICR * 8 */
 			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH>;
-			#redistributor-regions = <1>;
-			redistributor-stride = <0 0x20000>;
 		};
 
 		apss_shared: mailbox@17c00000 {
-			compatible = "qcom,sc8180x-apss-shared", "qcom,sdm845-apss-shared";
+			compatible = "qcom,sc8180x-apss-shared";
 			reg = <0x0 0x17c00000 0x0 0x1000>;
 			#mbox-cells = <1>;
 		};
@@ -4000,15 +3891,8 @@
 
 			thermal-sensors = <&tsens0 15>;
 
-			cooling-maps {
-				map0 {
-					trip = <&gpu_top_alert0>;
-					cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
-				};
-			};
-
 			trips {
-				gpu_top_alert0: trip-point0 {
+				trip-point0 {
 					temperature = <90000>;
 					hysteresis = <2000>;
 					type = "hot";
@@ -4157,15 +4041,8 @@
 
 			thermal-sensors = <&tsens1 11>;
 
-			cooling-maps {
-				map0 {
-					trip = <&gpu_bottom_alert0>;
-					cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
-				};
-			};
-
 			trips {
-				gpu_bottom_alert0: trip-point0 {
+				trip-point0 {
 					temperature = <90000>;
 					hysteresis = <2000>;
 					type = "hot";

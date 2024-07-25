@@ -1844,7 +1844,8 @@ static int sony_set_device_id(struct sony_sc *sc)
 	 * All others are set to -1.
 	 */
 	if (sc->quirks & SIXAXIS_CONTROLLER) {
-		ret = ida_alloc(&sony_device_id_allocator, GFP_KERNEL);
+		ret = ida_simple_get(&sony_device_id_allocator, 0, 0,
+					GFP_KERNEL);
 		if (ret < 0) {
 			sc->device_id = -1;
 			return ret;
@@ -1860,7 +1861,7 @@ static int sony_set_device_id(struct sony_sc *sc)
 static void sony_release_device_id(struct sony_sc *sc)
 {
 	if (sc->device_id >= 0) {
-		ida_free(&sony_device_id_allocator, sc->device_id);
+		ida_simple_remove(&sony_device_id_allocator, sc->device_id);
 		sc->device_id = -1;
 	}
 }
@@ -2015,6 +2016,8 @@ static int sony_input_configured(struct hid_device *hdev,
 
 	} else if (sc->quirks & MOTION_CONTROLLER) {
 		sony_init_output_report(sc, motion_send_output_report);
+	} else {
+		ret = 0;
 	}
 
 	if (sc->quirks & SONY_LED_SUPPORT) {

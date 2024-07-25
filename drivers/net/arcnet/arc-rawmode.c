@@ -186,5 +186,4 @@ static void __exit arcnet_raw_exit(void)
 module_init(arcnet_raw_init);
 module_exit(arcnet_raw_exit);
 
-MODULE_DESCRIPTION("ARCnet raw mode packet interface module");
 MODULE_LICENSE("GPL");

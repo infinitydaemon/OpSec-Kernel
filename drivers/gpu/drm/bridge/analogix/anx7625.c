@@ -1784,14 +1784,24 @@ static ssize_t anx7625_aux_transfer(struct drm_dp_aux *aux,
 	return ret;
 }
 
-static const struct drm_edid *anx7625_edid_read(struct anx7625_data *ctx)
+static struct edid *anx7625_get_edid(struct anx7625_data *ctx)
 {
 	struct device *dev = ctx->dev;
 	struct s_edid_data *p_edid = &ctx->slimport_edid_p;
 	int edid_num;
+	u8 *edid;
 
-	if (ctx->slimport_edid_p.edid_block_num > 0)
-		goto out;
+	edid = kmalloc(FOUR_BLOCK_SIZE, GFP_KERNEL);
+	if (!edid) {
+		DRM_DEV_ERROR(dev, "Fail to allocate buffer\n");
+		return NULL;
+	}
+
+	if (ctx->slimport_edid_p.edid_block_num > 0) {
+		memcpy(edid, ctx->slimport_edid_p.edid_raw_data,
+		       FOUR_BLOCK_SIZE);
+		return (struct edid *)edid;
+	}
 
 	pm_runtime_get_sync(dev);
 	_anx7625_hpd_polling(ctx, 5000 * 100);
@@ -1800,14 +1810,14 @@ static const struct drm_edid *anx7625_edid_read(struct anx7625_data *ctx)
 
 	if (edid_num < 1) {
 		DRM_DEV_ERROR(dev, "Fail to read EDID: %d\n", edid_num);
+		kfree(edid);
 		return NULL;
 	}
 
 	p_edid->edid_block_num = edid_num;
 
-out:
-	return drm_edid_alloc(ctx->slimport_edid_p.edid_raw_data,
-			      FOUR_BLOCK_SIZE);
+	memcpy(edid, ctx->slimport_edid_p.edid_raw_data, FOUR_BLOCK_SIZE);
+	return (struct edid *)edid;
 }
 
 static enum drm_connector_status anx7625_sink_detect(struct anx7625_data *ctx)
@@ -2487,15 +2497,15 @@ anx7625_bridge_detect(struct drm_bridge *bridge)
 	return status;
 }
 
-static const struct drm_edid *anx7625_bridge_edid_read(struct drm_bridge *bridge,
-						       struct drm_connector *connector)
+static struct edid *anx7625_bridge_get_edid(struct drm_bridge *bridge,
+					    struct drm_connector *connector)
 {
 	struct anx7625_data *ctx = bridge_to_anx7625(bridge);
 	struct device *dev = ctx->dev;
 
 	DRM_DEV_DEBUG_DRIVER(dev, "drm bridge get edid\n");
 
-	return anx7625_edid_read(ctx);
+	return anx7625_get_edid(ctx);
 }
 
 static const struct drm_bridge_funcs anx7625_bridge_funcs = {
@@ -2510,7 +2520,7 @@ static const struct drm_bridge_funcs anx7625_bridge_funcs = {
 	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,
 	.atomic_reset = drm_atomic_helper_bridge_reset,
 	.detect = anx7625_bridge_detect,
-	.edid_read = anx7625_bridge_edid_read,
+	.get_edid = anx7625_bridge_get_edid,
 };
 
 static int anx7625_register_i2c_dummy_clients(struct anx7625_data *ctx,

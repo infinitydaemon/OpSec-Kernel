@@ -4,11 +4,10 @@
  * Copyright (C) 2020 Bartosz Golaszewski <bgolaszewski@baylibre.com>
  */
 
-#include <linux/cleanup.h>
-#include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/irq_sim.h>
 #include <linux/irq_work.h>
+#include <linux/interrupt.h>
 #include <linux/slab.h>
 
 struct irq_sim_work_ctx {
@@ -20,6 +19,7 @@ struct irq_sim_work_ctx {
 };
 
 struct irq_sim_irq_ctx {
+	int			irqnum;
 	bool			enabled;
 	struct irq_sim_work_ctx	*work_ctx;
 };
@@ -164,27 +164,33 @@ static const struct irq_domain_ops irq_sim_domain_ops = {
 struct irq_domain *irq_domain_create_sim(struct fwnode_handle *fwnode,
 					 unsigned int num_irqs)
 {
-	struct irq_sim_work_ctx *work_ctx __free(kfree) =
-				kmalloc(sizeof(*work_ctx), GFP_KERNEL);
+	struct irq_sim_work_ctx *work_ctx;
 
+	work_ctx = kmalloc(sizeof(*work_ctx), GFP_KERNEL);
 	if (!work_ctx)
-		return ERR_PTR(-ENOMEM);
+		goto err_out;
 
-	unsigned long *pending __free(bitmap) = bitmap_zalloc(num_irqs, GFP_KERNEL);
-	if (!pending)
-		return ERR_PTR(-ENOMEM);
+	work_ctx->pending = bitmap_zalloc(num_irqs, GFP_KERNEL);
+	if (!work_ctx->pending)
+		goto err_free_work_ctx;
 
 	work_ctx->domain = irq_domain_create_linear(fwnode, num_irqs,
 						    &irq_sim_domain_ops,
 						    work_ctx);
 	if (!work_ctx->domain)
-		return ERR_PTR(-ENOMEM);
+		goto err_free_bitmap;
 
 	work_ctx->irq_count = num_irqs;
 	work_ctx->work = IRQ_WORK_INIT_HARD(irq_sim_handle_irq);
-	work_ctx->pending = no_free_ptr(pending);
 
-	return no_free_ptr(work_ctx)->domain;
+	return work_ctx->domain;
+
+err_free_bitmap:
+	bitmap_free(work_ctx->pending);
+err_free_work_ctx:
+	kfree(work_ctx);
+err_out:
+	return ERR_PTR(-ENOMEM);
 }
 EXPORT_SYMBOL_GPL(irq_domain_create_sim);
 

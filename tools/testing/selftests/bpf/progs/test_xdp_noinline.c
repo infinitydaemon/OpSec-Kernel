@@ -15,7 +15,6 @@
 #include <linux/udp.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
-#include "bpf_compiler.h"
 
 static __always_inline __u32 rol32(__u32 word, unsigned int shift)
 {
@@ -318,14 +317,6 @@ bool encap_v6(struct xdp_md *xdp, struct ctl_value *cval,
 	return true;
 }
 
-#ifndef __clang__
-#pragma GCC push_options
-/* GCC optimization collapses functions and increases the number of arguments
- * beyond the compatible amount supported by BPF.
- */
-#pragma GCC optimize("-fno-ipa-sra")
-#endif
-
 static __attribute__ ((noinline))
 bool encap_v4(struct xdp_md *xdp, struct ctl_value *cval,
 	      struct packet_description *pckt,
@@ -371,7 +362,7 @@ bool encap_v4(struct xdp_md *xdp, struct ctl_value *cval,
 	iph->ttl = 4;
 
 	next_iph_u16 = (__u16 *) iph;
-	__pragma_loop_unroll_full
+#pragma clang loop unroll(full)
 	for (int i = 0; i < sizeof(struct iphdr) >> 1; i++)
 		csum += *next_iph_u16++;
 	iph->check = ~((csum & 0xffff) + (csum >> 16));
@@ -379,10 +370,6 @@ bool encap_v4(struct xdp_md *xdp, struct ctl_value *cval,
 		return false;
 	return true;
 }
-
-#ifndef __clang__
-#pragma GCC pop_options
-#endif
 
 static __attribute__ ((noinline))
 int swap_mac_and_send(void *data, void *data_end)
@@ -422,7 +409,7 @@ int send_icmp_reply(void *data, void *data_end)
 	iph->saddr = tmp_addr;
 	iph->check = 0;
 	next_iph_u16 = (__u16 *) iph;
-	__pragma_loop_unroll_full
+#pragma clang loop unroll(full)
 	for (int i = 0; i < sizeof(struct iphdr) >> 1; i++)
 		csum += *next_iph_u16++;
 	iph->check = ~((csum & 0xffff) + (csum >> 16));
@@ -600,13 +587,12 @@ static void connection_table_lookup(struct real_definition **real,
 __attribute__ ((noinline))
 static int process_l3_headers_v6(struct packet_description *pckt,
 				 __u8 *protocol, __u64 off,
-				 __u16 *pkt_bytes, void *extra_args[2])
+				 __u16 *pkt_bytes, void *data,
+				 void *data_end)
 {
 	struct ipv6hdr *ip6h;
 	__u64 iph_len;
 	int action;
-	void *data = extra_args[0];
-	void *data_end = extra_args[1];
 
 	ip6h = data + off;
 	if (ip6h + 1 > data_end)
@@ -632,12 +618,11 @@ static int process_l3_headers_v6(struct packet_description *pckt,
 __attribute__ ((noinline))
 static int process_l3_headers_v4(struct packet_description *pckt,
 				 __u8 *protocol, __u64 off,
-				 __u16 *pkt_bytes, void *extra_args[2])
+				 __u16 *pkt_bytes, void *data,
+				 void *data_end)
 {
 	struct iphdr *iph;
 	int action;
-	void *data = extra_args[0];
-	void *data_end = extra_args[1];
 
 	iph = data + off;
 	if (iph + 1 > data_end)
@@ -680,14 +665,13 @@ static int process_packet(void *data, __u64 off, void *data_end,
 	__u8 protocol;
 	__u32 vip_num;
 	int action;
-	void *extra_args[2] = { data, data_end };
 
 	if (is_ipv6)
 		action = process_l3_headers_v6(&pckt, &protocol, off,
-					       &pkt_bytes, extra_args);
+					       &pkt_bytes, data, data_end);
 	else
 		action = process_l3_headers_v4(&pckt, &protocol, off,
-					       &pkt_bytes, extra_args);
+					       &pkt_bytes, data, data_end);
 	if (action >= 0)
 		return action;
 	protocol = pckt.flow.proto;

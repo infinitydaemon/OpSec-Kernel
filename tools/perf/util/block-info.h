@@ -3,6 +3,7 @@
 #define __PERF_BLOCK_H
 
 #include <linux/types.h>
+#include <linux/refcount.h>
 #include "hist.h"
 #include "symbol.h"
 #include "sort.h"
@@ -18,6 +19,7 @@ struct block_info {
 	u64			total_cycles;
 	int			num;
 	int			num_aggr;
+	refcount_t		refcnt;
 };
 
 struct block_fmt {
@@ -46,8 +48,19 @@ struct block_report {
 	int			nr_fmts;
 };
 
+struct block_hist;
+
 struct block_info *block_info__new(void);
-void block_info__delete(struct block_info *bi);
+struct block_info *block_info__get(struct block_info *bi);
+void   block_info__put(struct block_info *bi);
+
+static inline void __block_info__zput(struct block_info **bi)
+{
+	block_info__put(*bi);
+	*bi = NULL;
+}
+
+#define block_info__zput(bi) __block_info__zput(&bi)
 
 int64_t __block_info__cmp(struct hist_entry *left, struct hist_entry *right);
 
@@ -65,7 +78,8 @@ struct block_report *block_info__create_report(struct evlist *evlist,
 void block_info__free_report(struct block_report *reps, int nr_reps);
 
 int report__browse_block_hists(struct block_hist *bh, float min_percent,
-			       struct evsel *evsel, struct perf_env *env);
+			       struct evsel *evsel, struct perf_env *env,
+			       struct annotation_options *annotation_opts);
 
 float block_info__total_cycles_percent(struct hist_entry *he);
 

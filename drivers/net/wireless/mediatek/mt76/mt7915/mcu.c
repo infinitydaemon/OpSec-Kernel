@@ -225,10 +225,8 @@ int mt7915_mcu_wa_cmd(struct mt7915_dev *dev, int cmd, u32 a1, u32 a2, u32 a3)
 static void
 mt7915_mcu_csa_finish(void *priv, u8 *mac, struct ieee80211_vif *vif)
 {
-	if (!vif->bss_conf.csa_active || vif->type == NL80211_IFTYPE_STATION)
-		return;
-
-	ieee80211_csa_finish(vif, 0);
+	if (vif->bss_conf.csa_active)
+		ieee80211_csa_finish(vif);
 }
 
 static void
@@ -269,7 +267,7 @@ mt7915_mcu_rx_thermal_notify(struct mt7915_dev *dev, struct sk_buff *skb)
 	    dev->mt76.phys[MT_BAND1])
 		mphy = dev->mt76.phys[MT_BAND1];
 
-	phy = mphy->priv;
+	phy = (struct mt7915_phy *)mphy->priv;
 	phy->throttle_state = t->ctrl.duty.duty_cycle;
 }
 
@@ -328,10 +326,10 @@ mt7915_mcu_rx_log_message(struct mt7915_dev *dev, struct sk_buff *skb)
 static void
 mt7915_mcu_cca_finish(void *priv, u8 *mac, struct ieee80211_vif *vif)
 {
-	if (!vif->bss_conf.color_change_active || vif->type == NL80211_IFTYPE_STATION)
+	if (!vif->bss_conf.color_change_active)
 		return;
 
-	ieee80211_color_change_finish(vif, 0);
+	ieee80211_color_change_finish(vif);
 }
 
 static void
@@ -463,10 +461,10 @@ static bool mt7915_check_he_obss_narrow_bw_ru(struct ieee80211_hw *hw,
 		.tolerated = true,
 	};
 
-	if (!(vif->bss_conf.chanreq.oper.chan->flags & IEEE80211_CHAN_RADAR))
+	if (!(vif->bss_conf.chandef.chan->flags & IEEE80211_CHAN_RADAR))
 		return false;
 
-	cfg80211_bss_iter(hw->wiphy, &vif->bss_conf.chanreq.oper,
+	cfg80211_bss_iter(hw->wiphy, &vif->bss_conf.chandef,
 			  mt7915_check_he_obss_narrow_bw_ru_iter,
 			  &iter_data);
 
@@ -908,8 +906,6 @@ mt7915_mcu_sta_muru_tlv(struct mt7915_dev *dev, struct sk_buff *skb,
 		HE_MAC(CAP2_MU_CASCADING, elem->mac_cap_info[2]);
 	muru->ofdma_ul.uo_ra =
 		HE_MAC(CAP3_OFDMA_RA, elem->mac_cap_info[3]);
-	muru->ofdma_ul.rx_ctrl_frame_to_mbss =
-		HE_MAC(CAP3_RX_CTRL_FRAME_TO_MULTIBSS, elem->mac_cap_info[3]);
 }
 
 static void
@@ -1193,7 +1189,7 @@ mt7915_mcu_sta_bfer_tlv(struct mt7915_dev *dev, struct sk_buff *skb,
 	int tx_ant = hweight8(phy->mt76->chainmask) - 1;
 	struct sta_rec_bf *bf;
 	struct tlv *tlv;
-	static const u8 matrix[4][4] = {
+	const u8 matrix[4][4] = {
 		{0, 0, 0, 0},
 		{1, 1, 0, 0},	/* 2x1, 2x2, 2x3, 2x4 */
 		{2, 4, 4, 0},	/* 3x1, 3x2, 3x3, 3x4 */
@@ -1919,7 +1915,8 @@ mt7915_mcu_add_inband_discov(struct mt7915_dev *dev, struct ieee80211_vif *vif,
 	bcn = (struct bss_info_bcn *)tlv;
 	bcn->enable = true;
 
-	if (changed & BSS_CHANGED_FILS_DISCOVERY) {
+	if (changed & BSS_CHANGED_FILS_DISCOVERY &&
+	    vif->bss_conf.fils_discovery.max_interval) {
 		interval = vif->bss_conf.fils_discovery.max_interval;
 		skb = ieee80211_get_fils_discovery_tmpl(hw, vif);
 	} else if (changed & BSS_CHANGED_UNSOL_BCAST_PROBE_RESP &&
@@ -1956,7 +1953,7 @@ mt7915_mcu_add_inband_discov(struct mt7915_dev *dev, struct ieee80211_vif *vif,
 	discov->tx_type = !!(changed & BSS_CHANGED_FILS_DISCOVERY);
 	discov->tx_interval = interval;
 	discov->prob_rsp_len = cpu_to_le16(MT_TXD_SIZE + skb->len);
-	discov->enable = !!interval;
+	discov->enable = true;
 
 	buf = (u8 *)sub_tlv + sizeof(*discov);
 
@@ -2903,10 +2900,9 @@ static int mt7915_mcu_set_pre_cal(struct mt7915_dev *dev, u8 idx,
 int mt7915_mcu_apply_group_cal(struct mt7915_dev *dev)
 {
 	u8 idx = 0, *cal = dev->cal, *eep = dev->mt76.eeprom.data;
-	u32 total = mt7915_get_cal_group_size(dev);
-	u32 offs = is_mt7915(&dev->mt76) ? MT_EE_DO_PRE_CAL : MT_EE_DO_PRE_CAL_V2;
+	u32 total = MT_EE_CAL_GROUP_SIZE;
 
-	if (!(eep[offs] & MT_EE_WIFI_CAL_GROUP))
+	if (!(eep[MT_EE_DO_PRE_CAL] & MT_EE_WIFI_CAL_GROUP))
 		return 0;
 
 	/*
@@ -2942,9 +2938,9 @@ static int mt7915_find_freq_idx(const u16 *freqs, int n_freqs, u16 cur)
 	return -1;
 }
 
-static int mt7915_dpd_freq_idx(struct mt7915_dev *dev, u16 freq, u8 bw)
+static int mt7915_dpd_freq_idx(u16 freq, u8 bw)
 {
-	static const u16 freq_list_v1[] = {
+	static const u16 freq_list[] = {
 		5180, 5200, 5220, 5240,
 		5260, 5280, 5300, 5320,
 		5500, 5520, 5540, 5560,
@@ -2952,135 +2948,65 @@ static int mt7915_dpd_freq_idx(struct mt7915_dev *dev, u16 freq, u8 bw)
 		5660, 5680, 5700, 5745,
 		5765, 5785, 5805, 5825
 	};
-	static const u16 freq_list_v2[] = {
-		/* 6G BW20*/
-		5955, 5975, 5995, 6015,
-		6035, 6055, 6075, 6095,
-		6115, 6135, 6155, 6175,
-		6195, 6215, 6235, 6255,
-		6275, 6295, 6315, 6335,
-		6355, 6375, 6395, 6415,
-		6435, 6455, 6475, 6495,
-		6515, 6535, 6555, 6575,
-		6595, 6615, 6635, 6655,
-		6675, 6695, 6715, 6735,
-		6755, 6775, 6795, 6815,
-		6835, 6855, 6875, 6895,
-		6915, 6935, 6955, 6975,
-		6995, 7015, 7035, 7055,
-		7075, 7095, 7115,
-		/* 6G BW160 */
-		6025, 6185, 6345, 6505,
-		6665, 6825, 6985,
-		/* 5G BW20 */
-		5180, 5200, 5220, 5240,
-		5260, 5280, 5300, 5320,
-		5500, 5520, 5540, 5560,
-		5580, 5600, 5620, 5640,
-		5660, 5680, 5700, 5720,
-		5745, 5765, 5785, 5805,
-		5825, 5845, 5865, 5885,
-		/* 5G BW160 */
-		5250, 5570, 5815
-	};
-	static const u16 freq_list_v2_7981[] = {
-		/* 5G BW20 */
-		5180, 5200, 5220, 5240,
-		5260, 5280, 5300, 5320,
-		5500, 5520, 5540, 5560,
-		5580, 5600, 5620, 5640,
-		5660, 5680, 5700, 5720,
-		5745, 5765, 5785, 5805,
-		5825, 5845, 5865, 5885,
-		/* 5G BW160 */
-		5250, 5570, 5815
-	};
-	const u16 *freq_list = freq_list_v1;
-	int n_freqs = ARRAY_SIZE(freq_list_v1);
+	int offset_2g = ARRAY_SIZE(freq_list);
 	int idx;
-
-	if (!is_mt7915(&dev->mt76)) {
-		if (is_mt7981(&dev->mt76)) {
-			freq_list = freq_list_v2_7981;
-			n_freqs = ARRAY_SIZE(freq_list_v2_7981);
-		} else {
-			freq_list = freq_list_v2;
-			n_freqs = ARRAY_SIZE(freq_list_v2);
-		}
-	}
 
 	if (freq < 4000) {
 		if (freq < 2432)
-			return n_freqs;
+			return offset_2g;
 		if (freq < 2457)
-			return n_freqs + 1;
+			return offset_2g + 1;
 
-		return n_freqs + 2;
+		return offset_2g + 2;
 	}
 
-	if (bw == NL80211_CHAN_WIDTH_80P80)
+	if (bw == NL80211_CHAN_WIDTH_80P80 || bw == NL80211_CHAN_WIDTH_160)
 		return -1;
 
 	if (bw != NL80211_CHAN_WIDTH_20) {
-		idx = mt7915_find_freq_idx(freq_list, n_freqs, freq + 10);
+		idx = mt7915_find_freq_idx(freq_list, ARRAY_SIZE(freq_list),
+					   freq + 10);
 		if (idx >= 0)
 			return idx;
 
-		idx = mt7915_find_freq_idx(freq_list, n_freqs, freq - 10);
+		idx = mt7915_find_freq_idx(freq_list, ARRAY_SIZE(freq_list),
+					   freq - 10);
 		if (idx >= 0)
 			return idx;
 	}
 
-	return mt7915_find_freq_idx(freq_list, n_freqs, freq);
+	return mt7915_find_freq_idx(freq_list, ARRAY_SIZE(freq_list), freq);
 }
 
 int mt7915_mcu_apply_tx_dpd(struct mt7915_phy *phy)
 {
 	struct mt7915_dev *dev = phy->dev;
 	struct cfg80211_chan_def *chandef = &phy->mt76->chandef;
-	enum nl80211_band band = chandef->chan->band;
-	u32 offs = is_mt7915(&dev->mt76) ? MT_EE_DO_PRE_CAL : MT_EE_DO_PRE_CAL_V2;
-	u16 center_freq = chandef->center_freq1;
+	u16 total = 2, center_freq = chandef->center_freq1;
 	u8 *cal = dev->cal, *eep = dev->mt76.eeprom.data;
-	u8 dpd_mask, cal_num = is_mt7915(&dev->mt76) ? 2 : 3;
 	int idx;
 
-	switch (band) {
-	case NL80211_BAND_2GHZ:
-		dpd_mask = MT_EE_WIFI_CAL_DPD_2G;
-		break;
-	case NL80211_BAND_5GHZ:
-		dpd_mask = MT_EE_WIFI_CAL_DPD_5G;
-		break;
-	case NL80211_BAND_6GHZ:
-		dpd_mask = MT_EE_WIFI_CAL_DPD_6G;
-		break;
-	default:
-		dpd_mask = 0;
-		break;
-	}
-
-	if (!(eep[offs] & dpd_mask))
+	if (!(eep[MT_EE_DO_PRE_CAL] & MT_EE_WIFI_CAL_DPD))
 		return 0;
 
-	idx = mt7915_dpd_freq_idx(dev, center_freq, chandef->width);
+	idx = mt7915_dpd_freq_idx(center_freq, chandef->width);
 	if (idx < 0)
 		return -EINVAL;
 
 	/* Items: Tx DPD, Tx Flatness */
-	idx = idx * cal_num;
-	cal += mt7915_get_cal_group_size(dev) + (idx * MT_EE_CAL_UNIT);
+	idx = idx * 2;
+	cal += MT_EE_CAL_GROUP_SIZE;
 
-	while (cal_num--) {
+	while (total--) {
 		int ret;
 
+		cal += (idx * MT_EE_CAL_UNIT);
 		ret = mt7915_mcu_set_pre_cal(dev, idx, cal, MT_EE_CAL_UNIT,
 					     MCU_EXT_CMD(DPD_PRE_CAL_INFO));
 		if (ret)
 			return ret;
 
 		idx++;
-		cal += MT_EE_CAL_UNIT;
 	}
 
 	return 0;
@@ -3871,38 +3797,30 @@ int mt7915_mcu_wed_wa_tx_stats(struct mt7915_dev *dev, u16 wlan_idx)
 {
 	struct {
 		__le32 cmd;
-		__le32 arg0;
-		__le32 arg1;
-		__le16 arg2;
-	} __packed req = {
+		__le32 num;
+		__le32 __rsv;
+		__le16 wlan_idx;
+	} req = {
 		.cmd = cpu_to_le32(0x15),
+		.num = cpu_to_le32(1),
+		.wlan_idx = cpu_to_le16(wlan_idx),
 	};
 	struct mt7915_mcu_wa_tx_stat {
-		__le16 wcid;
-		u8 __rsv2[2];
+		__le16 wlan_idx;
+		u8 __rsv[2];
 
 		/* tx_bytes is deprecated since WA byte counter uses u32,
 		 * which easily leads to overflow.
 		 */
 		__le32 tx_bytes;
 		__le32 tx_packets;
-	} __packed *res;
+	} *res;
 	struct mt76_wcid *wcid;
 	struct sk_buff *skb;
-	int ret, len;
-	u16 ret_wcid;
-
-	if (is_mt7915(&dev->mt76)) {
-		req.arg0 = cpu_to_le32(wlan_idx);
-		len = sizeof(req) - sizeof(req.arg2);
-	} else {
-		req.arg0 = cpu_to_le32(1);
-		req.arg2 = cpu_to_le16(wlan_idx);
-		len = sizeof(req);
-	}
+	int ret;
 
 	ret = mt76_mcu_send_and_get_msg(&dev->mt76, MCU_WA_PARAM_CMD(QUERY),
-					&req, len, true, &skb);
+					&req, sizeof(req), true, &skb);
 	if (ret)
 		return ret;
 
@@ -3911,11 +3829,7 @@ int mt7915_mcu_wed_wa_tx_stats(struct mt7915_dev *dev, u16 wlan_idx)
 
 	res = (struct mt7915_mcu_wa_tx_stat *)skb->data;
 
-	ret_wcid = le16_to_cpu(res->wcid);
-	if (is_mt7915(&dev->mt76))
-		ret_wcid &= 0xff;
-
-	if (ret_wcid != wlan_idx) {
+	if (le16_to_cpu(res->wlan_idx) != wlan_idx) {
 		ret = -EINVAL;
 		goto out;
 	}

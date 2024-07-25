@@ -20,7 +20,6 @@
 #include <linux/string.h>
 
 #include "cpuidle-psci.h"
-#include "dt_idle_genpd.h"
 
 struct psci_pd_provider {
 	struct list_head link;
@@ -201,4 +200,4 @@ static int __init psci_idle_init_domains(void)
 {
 	return platform_driver_register(&psci_cpuidle_domain_driver);
 }
-core_initcall(psci_idle_init_domains);
+subsys_initcall(psci_idle_init_domains);

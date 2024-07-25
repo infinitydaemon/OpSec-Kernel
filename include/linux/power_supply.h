@@ -242,7 +242,6 @@ struct power_supply_config {
 struct power_supply_desc {
 	const char *name;
 	enum power_supply_type type;
-	u8 charge_behaviours;
 	const enum power_supply_usb_type *usb_types;
 	size_t num_usb_types;
 	const enum power_supply_property *properties;
@@ -768,6 +767,7 @@ struct power_supply_battery_info {
 	int bti_resistance_tolerance;
 };
 
+extern struct blocking_notifier_head power_supply_notifier;
 extern int power_supply_reg_notifier(struct notifier_block *nb);
 extern void power_supply_unreg_notifier(struct notifier_block *nb);
 #if IS_ENABLED(CONFIG_POWER_SUPPLY)
@@ -895,7 +895,8 @@ extern int power_supply_powers(struct power_supply *psy, struct device *dev);
 #define to_power_supply(device) container_of(device, struct power_supply, dev)
 
 extern void *power_supply_get_drvdata(struct power_supply *psy);
-extern int power_supply_for_each_device(void *data, int (*fn)(struct device *dev, void *data));
+/* For APM emulation, think legacy userspace. */
+extern struct class *power_supply_class;
 
 static inline bool power_supply_is_amp_property(enum power_supply_property psp)
 {

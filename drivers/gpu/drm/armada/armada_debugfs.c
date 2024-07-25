@@ -5,7 +5,6 @@
  */
 
 #include <linux/ctype.h>
-#include <linux/debugfs.h>
 #include <linux/module.h>
 #include <linux/seq_file.h>
 #include <linux/uaccess.h>

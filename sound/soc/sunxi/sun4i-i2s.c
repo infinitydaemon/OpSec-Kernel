@@ -10,7 +10,7 @@
 #include <linux/clk.h>
 #include <linux/dmaengine.h>
 #include <linux/module.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
@@ -156,7 +156,6 @@ struct sun4i_i2s;
 /**
  * struct sun4i_i2s_quirks - Differences between SoC variants.
  * @has_reset: SoC needs reset deasserted.
- * @pcm_formats: available PCM formats.
  * @reg_offset_txdata: offset of the tx fifo.
  * @sun4i_i2s_regmap: regmap config to use.
  * @field_clkdiv_mclk_en: regmap field to enable mclk output.
@@ -176,7 +175,6 @@ struct sun4i_i2s;
  */
 struct sun4i_i2s_quirks {
 	bool				has_reset;
-	u64				pcm_formats;
 	unsigned int			reg_offset_txdata;	/* TX FIFO */
 	const struct regmap_config	*sun4i_i2s_regmap;
 
@@ -1094,18 +1092,8 @@ static int sun4i_i2s_dai_probe(struct snd_soc_dai *dai)
 	return 0;
 }
 
-static int sun4i_i2s_dai_startup(struct snd_pcm_substream *sub, struct snd_soc_dai *dai)
-{
-	struct sun4i_i2s *i2s = snd_soc_dai_get_drvdata(dai);
-	struct snd_pcm_runtime *runtime = sub->runtime;
-
-	return snd_pcm_hw_constraint_mask64(runtime, SNDRV_PCM_HW_PARAM_FORMAT,
-					    i2s->variant->pcm_formats);
-}
-
 static const struct snd_soc_dai_ops sun4i_i2s_dai_ops = {
 	.probe		= sun4i_i2s_dai_probe,
-	.startup	= sun4i_i2s_dai_startup,
 	.hw_params	= sun4i_i2s_hw_params,
 	.set_fmt	= sun4i_i2s_set_fmt,
 	.set_sysclk	= sun4i_i2s_set_sysclk,
@@ -1113,10 +1101,9 @@ static const struct snd_soc_dai_ops sun4i_i2s_dai_ops = {
 	.trigger	= sun4i_i2s_trigger,
 };
 
-#define SUN4I_FORMATS_ALL (SNDRV_PCM_FMTBIT_S16_LE | \
-			   SNDRV_PCM_FMTBIT_S20_LE | \
-			   SNDRV_PCM_FMTBIT_S24_LE | \
-			   SNDRV_PCM_FMTBIT_S32_LE)
+#define SUN4I_FORMATS	(SNDRV_PCM_FMTBIT_S16_LE | \
+			 SNDRV_PCM_FMTBIT_S20_LE | \
+			 SNDRV_PCM_FMTBIT_S24_LE)
 
 static struct snd_soc_dai_driver sun4i_i2s_dai = {
 	.capture = {
@@ -1124,14 +1111,14 @@ static struct snd_soc_dai_driver sun4i_i2s_dai = {
 		.channels_min = 1,
 		.channels_max = 8,
 		.rates = SNDRV_PCM_RATE_8000_192000,
-		.formats = SUN4I_FORMATS_ALL,
+		.formats = SUN4I_FORMATS,
 	},
 	.playback = {
 		.stream_name = "Playback",
 		.channels_min = 1,
 		.channels_max = 8,
 		.rates = SNDRV_PCM_RATE_8000_192000,
-		.formats = SUN4I_FORMATS_ALL,
+		.formats = SUN4I_FORMATS,
 	},
 	.ops = &sun4i_i2s_dai_ops,
 	.symmetric_rate = 1,
@@ -1353,12 +1340,8 @@ static int sun4i_i2s_runtime_suspend(struct device *dev)
 	return 0;
 }
 
-#define SUN4I_FORMATS_A10 (SUN4I_FORMATS_ALL & ~SNDRV_PCM_FMTBIT_S32_LE)
-#define SUN4I_FORMATS_H3 SUN4I_FORMATS_ALL
-
 static const struct sun4i_i2s_quirks sun4i_a10_i2s_quirks = {
 	.has_reset		= false,
-	.pcm_formats		= SUN4I_FORMATS_A10,
 	.reg_offset_txdata	= SUN4I_I2S_FIFO_TX_REG,
 	.sun4i_i2s_regmap	= &sun4i_i2s_regmap_config,
 	.field_clkdiv_mclk_en	= REG_FIELD(SUN4I_I2S_CLK_DIV_REG, 7, 7),
@@ -1377,7 +1360,6 @@ static const struct sun4i_i2s_quirks sun4i_a10_i2s_quirks = {
 
 static const struct sun4i_i2s_quirks sun6i_a31_i2s_quirks = {
 	.has_reset		= true,
-	.pcm_formats		= SUN4I_FORMATS_A10,
 	.reg_offset_txdata	= SUN4I_I2S_FIFO_TX_REG,
 	.sun4i_i2s_regmap	= &sun4i_i2s_regmap_config,
 	.field_clkdiv_mclk_en	= REG_FIELD(SUN4I_I2S_CLK_DIV_REG, 7, 7),
@@ -1401,7 +1383,6 @@ static const struct sun4i_i2s_quirks sun6i_a31_i2s_quirks = {
  */
 static const struct sun4i_i2s_quirks sun8i_a83t_i2s_quirks = {
 	.has_reset		= true,
-	.pcm_formats		= SUN4I_FORMATS_A10,
 	.reg_offset_txdata	= SUN8I_I2S_FIFO_TX_REG,
 	.sun4i_i2s_regmap	= &sun4i_i2s_regmap_config,
 	.field_clkdiv_mclk_en	= REG_FIELD(SUN4I_I2S_CLK_DIV_REG, 7, 7),
@@ -1420,7 +1401,6 @@ static const struct sun4i_i2s_quirks sun8i_a83t_i2s_quirks = {
 
 static const struct sun4i_i2s_quirks sun8i_h3_i2s_quirks = {
 	.has_reset		= true,
-	.pcm_formats		= SUN4I_FORMATS_H3,
 	.reg_offset_txdata	= SUN8I_I2S_FIFO_TX_REG,
 	.sun4i_i2s_regmap	= &sun8i_i2s_regmap_config,
 	.field_clkdiv_mclk_en	= REG_FIELD(SUN4I_I2S_CLK_DIV_REG, 8, 8),
@@ -1439,7 +1419,6 @@ static const struct sun4i_i2s_quirks sun8i_h3_i2s_quirks = {
 
 static const struct sun4i_i2s_quirks sun50i_a64_codec_i2s_quirks = {
 	.has_reset		= true,
-	.pcm_formats		= SUN4I_FORMATS_H3,
 	.reg_offset_txdata	= SUN8I_I2S_FIFO_TX_REG,
 	.sun4i_i2s_regmap	= &sun4i_i2s_regmap_config,
 	.field_clkdiv_mclk_en	= REG_FIELD(SUN4I_I2S_CLK_DIV_REG, 7, 7),
@@ -1458,7 +1437,6 @@ static const struct sun4i_i2s_quirks sun50i_a64_codec_i2s_quirks = {
 
 static const struct sun4i_i2s_quirks sun50i_h6_i2s_quirks = {
 	.has_reset		= true,
-	.pcm_formats		= SUN4I_FORMATS_H3,
 	.reg_offset_txdata	= SUN8I_I2S_FIFO_TX_REG,
 	.sun4i_i2s_regmap	= &sun50i_h6_i2s_regmap_config,
 	.field_clkdiv_mclk_en	= REG_FIELD(SUN4I_I2S_CLK_DIV_REG, 8, 8),
@@ -1477,7 +1455,6 @@ static const struct sun4i_i2s_quirks sun50i_h6_i2s_quirks = {
 
 static const struct sun4i_i2s_quirks sun50i_r329_i2s_quirks = {
 	.has_reset		= true,
-	.pcm_formats		= SUN4I_FORMATS_H3,
 	.reg_offset_txdata	= SUN8I_I2S_FIFO_TX_REG,
 	.sun4i_i2s_regmap	= &sun50i_h6_i2s_regmap_config,
 	.field_clkdiv_mclk_en	= REG_FIELD(SUN4I_I2S_CLK_DIV_REG, 8, 8),

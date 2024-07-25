@@ -181,8 +181,7 @@
 	pinctrl-0 = <&pinctrl_gpio_1>,
 		    <&pinctrl_gpio_2>,
 		    <&pinctrl_gpio_3>,
-		    <&pinctrl_gpio_4>,
-		    <&pinctrl_pcie_1_reset>;
+		    <&pinctrl_gpio_4>;
 };
 
 /* Verdin I2C_3_HDMI */
@@ -207,6 +206,7 @@
 
 /* Verdin SD_1 */
 &sdhci1 {
+	ti,driver-strength-ohm = <33>;
 	status = "okay";
 };
 
@@ -233,12 +233,8 @@
 	status = "okay";
 };
 
-/* Verdin PCIE_1_RESET# */
-&verdin_pcie_1_reset_hog {
-	status = "okay";
-};
-
 /* Verdin UART_2 */
 &wkup_uart0 {
-	status = "okay";
+	/* FIXME: WKUP UART0 is used by DM firmware */
+	status = "reserved";
 };

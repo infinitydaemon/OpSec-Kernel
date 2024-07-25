@@ -33,7 +33,7 @@ static double cpuinfo_tsc_freq(void)
 
 	cpuinfo = fopen("/proc/cpuinfo", "r");
 	if (!cpuinfo) {
-		pr_err("Failed to read /proc/cpuinfo for TSC frequency\n");
+		pr_err("Failed to read /proc/cpuinfo for TSC frequency");
 		return NAN;
 	}
 	while (getline(&line, &len, cpuinfo) > 0) {
@@ -48,7 +48,7 @@ static double cpuinfo_tsc_freq(void)
 	}
 out:
 	if (fpclassify(result) == FP_ZERO)
-		pr_err("Failed to find TSC frequency in /proc/cpuinfo\n");
+		pr_err("Failed to find TSC frequency in /proc/cpuinfo");
 
 	free(line);
 	fclose(cpuinfo);

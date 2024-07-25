@@ -47,7 +47,7 @@ properties:
     description: Reference to the reserved-memory for the Hexagon core
 
   firmware-name:
-    maxItems: 1
+    $ref: /schemas/types.yaml#/definitions/string
     description: Firmware name for the Hexagon core
 
 required:

@@ -925,6 +925,7 @@ static bool nvme_prep_rq_batch(struct nvme_queue *nvmeq, struct request *req)
 	if (unlikely(!nvme_check_ready(&nvmeq->dev->ctrl, req, true)))
 		return false;
 
+	req->mq_hctx->tags->rqs[req->tag] = req;
 	return nvme_prep_rq(nvmeq->dev, req) == BLK_STS_OK;
 }
 
@@ -1285,7 +1286,6 @@ static enum blk_eh_timer_return nvme_timeout(struct request *req)
 	struct request *abort_req;
 	struct nvme_command cmd = { };
 	u32 csts = readl(dev->bar + NVME_REG_CSTS);
-	u8 opcode;
 
 	if (nvme_state_terminal(&dev->ctrl))
 		goto disable;
@@ -1315,8 +1315,8 @@ static enum blk_eh_timer_return nvme_timeout(struct request *req)
 
 	if (blk_mq_rq_state(req) != MQ_RQ_IN_FLIGHT) {
 		dev_warn(dev->ctrl.device,
-			 "I/O tag %d (%04x) QID %d timeout, completion polled\n",
-			 req->tag, nvme_cid(req), nvmeq->qid);
+			 "I/O %d QID %d timeout, completion polled\n",
+			 req->tag, nvmeq->qid);
 		return BLK_EH_DONE;
 	}
 
@@ -1332,8 +1332,8 @@ static enum blk_eh_timer_return nvme_timeout(struct request *req)
 		fallthrough;
 	case NVME_CTRL_DELETING:
 		dev_warn_ratelimited(dev->ctrl.device,
-			 "I/O tag %d (%04x) QID %d timeout, disable controller\n",
-			 req->tag, nvme_cid(req), nvmeq->qid);
+			 "I/O %d QID %d timeout, disable controller\n",
+			 req->tag, nvmeq->qid);
 		nvme_req(req)->flags |= NVME_REQ_CANCELLED;
 		nvme_dev_disable(dev, true);
 		return BLK_EH_DONE;
@@ -1348,12 +1348,10 @@ static enum blk_eh_timer_return nvme_timeout(struct request *req)
 	 * command was already aborted once before and still hasn't been
 	 * returned to the driver, or if this is the admin queue.
 	 */
-	opcode = nvme_req(req)->cmd->common.opcode;
 	if (!nvmeq->qid || iod->aborted) {
 		dev_warn(dev->ctrl.device,
-			 "I/O tag %d (%04x) opcode %#x (%s) QID %d timeout, reset controller\n",
-			 req->tag, nvme_cid(req), opcode,
-			 nvme_opcode_str(nvmeq->qid, opcode), nvmeq->qid);
+			 "I/O %d QID %d timeout, reset controller\n",
+			 req->tag, nvmeq->qid);
 		nvme_req(req)->flags |= NVME_REQ_CANCELLED;
 		goto disable;
 	}
@@ -1369,10 +1367,10 @@ static enum blk_eh_timer_return nvme_timeout(struct request *req)
 	cmd.abort.sqid = cpu_to_le16(nvmeq->qid);
 
 	dev_warn(nvmeq->dev->ctrl.device,
-		 "I/O tag %d (%04x) opcode %#x (%s) QID %d timeout, aborting req_op:%s(%u) size:%u\n",
-		 req->tag, nvme_cid(req), opcode, nvme_get_opcode_str(opcode),
-		 nvmeq->qid, blk_op_str(req_op(req)), req_op(req),
-		 blk_rq_bytes(req));
+		"I/O %d (%s) QID %d timeout, aborting\n",
+		 req->tag,
+		 nvme_get_opcode_str(nvme_req(req)->cmd->common.opcode),
+		 nvmeq->qid);
 
 	abort_req = blk_mq_alloc_request(dev->ctrl.admin_q, nvme_req_op(&cmd),
 					 BLK_MQ_REQ_NOWAIT);
@@ -2759,10 +2757,10 @@ static void nvme_reset_work(struct work_struct *work)
 	 * controller around but remove all namespaces.
 	 */
 	if (dev->online_queues > 1) {
-		nvme_dbbuf_set(dev);
 		nvme_unquiesce_io_queues(&dev->ctrl);
 		nvme_wait_freeze(&dev->ctrl);
 		nvme_pci_update_nr_queues(dev);
+		nvme_dbbuf_set(dev);
 		nvme_unfreeze(&dev->ctrl);
 	} else {
 		dev_warn(dev->ctrl.device, "IO queues lost\n");
@@ -3429,8 +3427,6 @@ static const struct pci_device_id nvme_id_table[] = {
 		.driver_data = NVME_QUIRK_DISABLE_WRITE_ZEROES, },
 	{ PCI_DEVICE(0x1c5c, 0x174a),   /* SK Hynix P31 SSD */
 		.driver_data = NVME_QUIRK_BOGUS_NID, },
-	{ PCI_DEVICE(0x1c5c, 0x1D59),   /* SK Hynix BC901 */
-		.driver_data = NVME_QUIRK_DISABLE_WRITE_ZEROES, },
 	{ PCI_DEVICE(0x15b7, 0x2001),   /*  Sandisk Skyhawk */
 		.driver_data = NVME_QUIRK_DISABLE_WRITE_ZEROES, },
 	{ PCI_DEVICE(0x1d97, 0x2263),   /* SPCC */
@@ -3561,6 +3557,5 @@ static void __exit nvme_exit(void)
 MODULE_AUTHOR("Matthew Wilcox <willy@linux.intel.com>");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");
-MODULE_DESCRIPTION("NVMe host PCIe transport driver");
 module_init(nvme_init);
 module_exit(nvme_exit);

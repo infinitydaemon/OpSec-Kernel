@@ -294,8 +294,10 @@ static int ali15x3_transaction(struct i2c_adapter *adap)
 		 && (timeout++ < MAX_TIMEOUT));
 
 	/* If the SMBus is still busy, we give up */
-	if (timeout > MAX_TIMEOUT)
+	if (timeout > MAX_TIMEOUT) {
 		result = -ETIMEDOUT;
+		dev_err(&adap->dev, "SMBus Timeout!\n");
+	}
 
 	if (temp & ALI15X3_STS_TERM) {
 		result = -EIO;
@@ -459,7 +461,7 @@ static const struct i2c_algorithm smbus_algorithm = {
 
 static struct i2c_adapter ali15x3_adapter = {
 	.owner		= THIS_MODULE,
-	.class          = I2C_CLASS_HWMON,
+	.class          = I2C_CLASS_HWMON | I2C_CLASS_SPD,
 	.algo		= &smbus_algorithm,
 };
 

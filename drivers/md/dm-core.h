@@ -140,7 +140,7 @@ struct mapped_device {
 
 #ifdef CONFIG_BLK_DEV_ZONED
 	unsigned int nr_zones;
-	void *zone_revalidate_map;
+	unsigned int *zwp_offset;
 #endif
 
 #ifdef CONFIG_IMA

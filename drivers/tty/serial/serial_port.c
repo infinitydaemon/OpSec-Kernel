@@ -11,7 +11,6 @@
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
-#include <linux/pnp.h>
 #include <linux/property.h>
 #include <linux/serial_core.h>
 #include <linux/spinlock.h>
@@ -24,7 +23,7 @@
 static int __serial_port_busy(struct uart_port *port)
 {
 	return !uart_tx_stopped(port) &&
-		!kfifo_is_empty(&port->state->port.xmit_fifo);
+		uart_circ_chars_pending(&port->state->xmit);
 }
 
 static int serial_port_runtime_resume(struct device *dev)
@@ -39,14 +38,14 @@ static int serial_port_runtime_resume(struct device *dev)
 		goto out;
 
 	/* Flush any pending TX for the port */
-	uart_port_lock_irqsave(port, &flags);
+	spin_lock_irqsave(&port->lock, flags);
 	if (!port_dev->tx_enabled)
 		goto unlock;
 	if (__serial_port_busy(port))
 		port->ops->start_tx(port);
 
 unlock:
-	uart_port_unlock_irqrestore(port, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 out:
 	pm_runtime_mark_last_busy(dev);
@@ -62,6 +61,13 @@ static int serial_port_runtime_suspend(struct device *dev)
 	bool busy;
 
 	if (port->flags & UPF_DEAD)
+		return 0;
+
+	/*
+	 * Nothing to do on pm_runtime_force_suspend(), see
+	 * DEFINE_RUNTIME_DEV_PM_OPS.
+	 */
+	if (!pm_runtime_enabled(dev))
 		return 0;
 
 	uart_port_lock_irqsave(port, &flags);
@@ -256,11 +262,7 @@ static int __uart_read_properties(struct uart_port *port, bool use_defaults)
 
 	if (dev_is_platform(dev))
 		ret = platform_get_irq(to_platform_device(dev), 0);
-	else if (dev_is_pnp(dev)) {
-		ret = pnp_irq(to_pnp_dev(dev), 0);
-		if (ret < 0)
-			ret = -ENXIO;
-	} else
+	else
 		ret = fwnode_irq_get(dev_fwnode(dev), 0);
 	if (ret == -EPROBE_DEFER)
 		return ret;

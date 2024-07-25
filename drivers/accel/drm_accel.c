@@ -11,7 +11,6 @@
 #include <linux/idr.h>
 
 #include <drm/drm_accel.h>
-#include <drm/drm_auth.h>
 #include <drm/drm_debugfs.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_file.h>
@@ -22,8 +21,9 @@ static DEFINE_SPINLOCK(accel_minor_lock);
 static struct idr accel_minors_idr;
 
 static struct dentry *accel_debugfs_root;
+static struct class *accel_class;
 
-static const struct device_type accel_sysfs_device_minor = {
+static struct device_type accel_sysfs_device_minor = {
 	.name = "accel_minor"
 };
 
@@ -32,19 +32,23 @@ static char *accel_devnode(const struct device *dev, umode_t *mode)
 	return kasprintf(GFP_KERNEL, "accel/%s", dev_name(dev));
 }
 
-static const struct class accel_class = {
-	.name = "accel",
-	.devnode = accel_devnode,
-};
-
 static int accel_sysfs_init(void)
 {
-	return class_register(&accel_class);
+	accel_class = class_create("accel");
+	if (IS_ERR(accel_class))
+		return PTR_ERR(accel_class);
+
+	accel_class->devnode = accel_devnode;
+
+	return 0;
 }
 
 static void accel_sysfs_destroy(void)
 {
-	class_unregister(&accel_class);
+	if (IS_ERR_OR_NULL(accel_class))
+		return;
+	class_destroy(accel_class);
+	accel_class = NULL;
 }
 
 static int accel_name_info(struct seq_file *m, void *data)
@@ -75,30 +79,29 @@ static const struct drm_info_list accel_debugfs_list[] = {
 #define ACCEL_DEBUGFS_ENTRIES ARRAY_SIZE(accel_debugfs_list)
 
 /**
- * accel_debugfs_init() - Initialize debugfs for device
- * @dev: Pointer to the device instance.
+ * accel_debugfs_init() - Initialize debugfs for accel minor
+ * @minor: Pointer to the drm_minor instance.
+ * @minor_id: The minor's id
  *
- * This function creates a root directory for the device in debugfs.
+ * This function initializes the drm minor's debugfs members and creates
+ * a root directory for the minor in debugfs. It also creates common files
+ * for accelerators and calls the driver's debugfs init callback.
  */
-void accel_debugfs_init(struct drm_device *dev)
+void accel_debugfs_init(struct drm_minor *minor, int minor_id)
 {
-	drm_debugfs_dev_init(dev, accel_debugfs_root);
-}
+	struct drm_device *dev = minor->dev;
+	char name[64];
 
-/**
- * accel_debugfs_register() - Register debugfs for device
- * @dev: Pointer to the device instance.
- *
- * Creates common files for accelerators.
- */
-void accel_debugfs_register(struct drm_device *dev)
-{
-	struct drm_minor *minor = dev->accel;
-
-	minor->debugfs_root = dev->debugfs_root;
+	INIT_LIST_HEAD(&minor->debugfs_list);
+	mutex_init(&minor->debugfs_lock);
+	sprintf(name, "%d", minor_id);
+	minor->debugfs_root = debugfs_create_dir(name, accel_debugfs_root);
 
 	drm_debugfs_create_files(accel_debugfs_list, ACCEL_DEBUGFS_ENTRIES,
-				 dev->debugfs_root, minor);
+				 minor->debugfs_root, minor);
+
+	if (dev->driver->debugfs_init)
+		dev->driver->debugfs_init(minor);
 }
 
 /**
@@ -113,7 +116,7 @@ void accel_debugfs_register(struct drm_device *dev)
 void accel_set_device_instance_params(struct device *kdev, int index)
 {
 	kdev->devt = MKDEV(ACCEL_MAJOR, index);
-	kdev->class = &accel_class;
+	kdev->class = accel_class;
 	kdev->type = &accel_sysfs_device_minor;
 }
 

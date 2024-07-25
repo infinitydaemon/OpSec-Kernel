@@ -11,7 +11,6 @@
 
 #include <linux/anon_inodes.h>
 #include <linux/cdev.h>
-#include <linux/cleanup.h>
 #include <linux/debugfs.h>
 #include <linux/device.h>
 #include <linux/err.h>
@@ -43,7 +42,7 @@ static DEFINE_IDA(iio_ida);
 static dev_t iio_devt;
 
 #define IIO_DEV_MAX 256
-const struct bus_type iio_bus_type = {
+struct bus_type iio_bus_type = {
 	.name = "iio",
 };
 EXPORT_SYMBOL(iio_bus_type);
@@ -91,10 +90,6 @@ static const char * const iio_chan_type_name_spec[] = {
 	[IIO_POSITIONRELATIVE]  = "positionrelative",
 	[IIO_PHASE] = "phase",
 	[IIO_MASSCONCENTRATION] = "massconcentration",
-	[IIO_DELTA_ANGL] = "deltaangl",
-	[IIO_DELTA_VELOCITY] = "deltavelocity",
-	[IIO_COLORTEMP] = "colortemp",
-	[IIO_CHROMATICITY] = "chromaticity",
 };
 
 static const char * const iio_modifier_names[] = {
@@ -118,8 +113,6 @@ static const char * const iio_modifier_names[] = {
 	[IIO_MOD_LIGHT_GREEN] = "green",
 	[IIO_MOD_LIGHT_BLUE] = "blue",
 	[IIO_MOD_LIGHT_UV] = "uv",
-	[IIO_MOD_LIGHT_UVA] = "uva",
-	[IIO_MOD_LIGHT_UVB] = "uvb",
 	[IIO_MOD_LIGHT_DUV] = "duv",
 	[IIO_MOD_QUATERNION] = "quaternion",
 	[IIO_MOD_TEMP_AMBIENT] = "ambient",
@@ -185,7 +178,6 @@ static const char * const iio_chan_info_postfix[] = {
 	[IIO_CHAN_INFO_THERMOCOUPLE_TYPE] = "thermocouple_type",
 	[IIO_CHAN_INFO_CALIBAMBIENT] = "calibambient",
 	[IIO_CHAN_INFO_ZEROPOINT] = "zeropoint",
-	[IIO_CHAN_INFO_TROUGH] = "trough_raw",
 };
 /**
  * iio_device_id() - query the unique ID for the device
@@ -214,7 +206,9 @@ bool iio_buffer_enabled(struct iio_dev *indio_dev)
 {
 	struct iio_dev_opaque *iio_dev_opaque = to_iio_dev_opaque(indio_dev);
 
-	return iio_dev_opaque->currentmode & INDIO_ALL_BUFFER_MODES;
+	return iio_dev_opaque->currentmode &
+	       (INDIO_BUFFER_HARDWARE | INDIO_BUFFER_SOFTWARE |
+		INDIO_BUFFER_TRIGGERED);
 }
 EXPORT_SYMBOL_GPL(iio_buffer_enabled);
 
@@ -1644,10 +1638,11 @@ struct iio_dev *iio_device_alloc(struct device *parent, int sizeof_priv)
 	struct iio_dev *indio_dev;
 	size_t alloc_size;
 
-	if (sizeof_priv)
-		alloc_size = ALIGN(sizeof(*iio_dev_opaque), IIO_DMA_MINALIGN) + sizeof_priv;
-	else
-		alloc_size = sizeof(*iio_dev_opaque);
+	alloc_size = sizeof(struct iio_dev_opaque);
+	if (sizeof_priv) {
+		alloc_size = ALIGN(alloc_size, IIO_DMA_MINALIGN);
+		alloc_size += sizeof_priv;
+	}
 
 	iio_dev_opaque = kzalloc(alloc_size, GFP_KERNEL);
 	if (!iio_dev_opaque)
@@ -1811,24 +1806,31 @@ static long iio_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	struct iio_dev *indio_dev = ib->indio_dev;
 	struct iio_dev_opaque *iio_dev_opaque = to_iio_dev_opaque(indio_dev);
 	struct iio_ioctl_handler *h;
-	int ret;
+	int ret = -ENODEV;
 
-	guard(mutex)(&iio_dev_opaque->info_exist_lock);
+	mutex_lock(&iio_dev_opaque->info_exist_lock);
+
 	/*
 	 * The NULL check here is required to prevent crashing when a device
 	 * is being removed while userspace would still have open file handles
 	 * to try to access this device.
 	 */
 	if (!indio_dev->info)
-		return -ENODEV;
+		goto out_unlock;
 
 	list_for_each_entry(h, &iio_dev_opaque->ioctl_handlers, entry) {
 		ret = h->ioctl(indio_dev, filp, cmd, arg);
 		if (ret != IIO_IOCTL_UNHANDLED)
-			return ret;
+			break;
 	}
 
-	return -ENODEV;
+	if (ret == IIO_IOCTL_UNHANDLED)
+		ret = -ENODEV;
+
+out_unlock:
+	mutex_unlock(&iio_dev_opaque->info_exist_lock);
+
+	return ret;
 }
 
 static const struct file_operations iio_buffer_fileops = {
@@ -1895,66 +1897,6 @@ static int iio_check_extended_name(const struct iio_dev *indio_dev)
 
 static const struct iio_buffer_setup_ops noop_ring_setup_ops;
 
-static void iio_sanity_check_avail_scan_masks(struct iio_dev *indio_dev)
-{
-	unsigned int num_masks, masklength, longs_per_mask;
-	const unsigned long *av_masks;
-	int i;
-
-	av_masks = indio_dev->available_scan_masks;
-	masklength = indio_dev->masklength;
-	longs_per_mask = BITS_TO_LONGS(masklength);
-
-	/*
-	 * The code determining how many available_scan_masks is in the array
-	 * will be assuming the end of masks when first long with all bits
-	 * zeroed is encountered. This is incorrect for masks where mask
-	 * consists of more than one long, and where some of the available masks
-	 * has long worth of bits zeroed (but has subsequent bit(s) set). This
-	 * is a safety measure against bug where array of masks is terminated by
-	 * a single zero while mask width is greater than width of a long.
-	 */
-	if (longs_per_mask > 1)
-		dev_warn(indio_dev->dev.parent,
-			 "multi long available scan masks not fully supported\n");
-
-	if (bitmap_empty(av_masks, masklength))
-		dev_warn(indio_dev->dev.parent, "empty scan mask\n");
-
-	for (num_masks = 0; *av_masks; num_masks++)
-		av_masks += longs_per_mask;
-
-	if (num_masks < 2)
-		return;
-
-	av_masks = indio_dev->available_scan_masks;
-
-	/*
-	 * Go through all the masks from first to one before the last, and see
-	 * that no mask found later from the available_scan_masks array is a
-	 * subset of mask found earlier. If this happens, then the mask found
-	 * later will never get used because scanning the array is stopped when
-	 * the first suitable mask is found. Drivers should order the array of
-	 * available masks in the order of preference (presumably the least
-	 * costy to access masks first).
-	 */
-	for (i = 0; i < num_masks - 1; i++) {
-		const unsigned long *mask1;
-		int j;
-
-		mask1 = av_masks + i * longs_per_mask;
-		for (j = i + 1; j < num_masks; j++) {
-			const unsigned long *mask2;
-
-			mask2 = av_masks + j * longs_per_mask;
-			if (bitmap_subset(mask2, mask1, masklength))
-				dev_warn(indio_dev->dev.parent,
-					 "available_scan_mask %d subset of %d. Never used\n",
-					 j, i);
-		}
-	}
-}
-
 int __iio_device_register(struct iio_dev *indio_dev, struct module *this_mod)
 {
 	struct iio_dev_opaque *iio_dev_opaque = to_iio_dev_opaque(indio_dev);
@@ -1992,9 +1934,6 @@ int __iio_device_register(struct iio_dev *indio_dev, struct module *this_mod)
 			"Failed to create buffer sysfs interfaces\n");
 		goto error_unreg_debugfs;
 	}
-
-	if (indio_dev->available_scan_masks)
-		iio_sanity_check_avail_scan_masks(indio_dev);
 
 	ret = iio_device_register_sysfs(indio_dev);
 	if (ret) {
@@ -2056,16 +1995,18 @@ void iio_device_unregister(struct iio_dev *indio_dev)
 
 	cdev_device_del(&iio_dev_opaque->chrdev, &indio_dev->dev);
 
-	scoped_guard(mutex, &iio_dev_opaque->info_exist_lock) {
-		iio_device_unregister_debugfs(indio_dev);
+	mutex_lock(&iio_dev_opaque->info_exist_lock);
 
-		iio_disable_all_buffers(indio_dev);
+	iio_device_unregister_debugfs(indio_dev);
 
-		indio_dev->info = NULL;
+	iio_disable_all_buffers(indio_dev);
 
-		iio_device_wakeup_eventset(indio_dev);
-		iio_buffer_wakeup_poll(indio_dev);
-	}
+	indio_dev->info = NULL;
+
+	iio_device_wakeup_eventset(indio_dev);
+	iio_buffer_wakeup_poll(indio_dev);
+
+	mutex_unlock(&iio_dev_opaque->info_exist_lock);
 
 	iio_buffers_free_sysfs_and_mask(indio_dev);
 }

@@ -49,7 +49,6 @@
 #include "off_cpu.h"
 #include "pmu.h"
 #include "pmus.h"
-#include "rlimit.h"
 #include "../perf-sys.h"
 #include "util/parse-branch-options.h"
 #include "util/bpf-filter.h"
@@ -452,7 +451,7 @@ out_err:
  * Returns pointer with encoded error via <linux/err.h> interface.
  */
 #ifdef HAVE_LIBTRACEEVENT
-struct evsel *evsel__newtp_idx(const char *sys, const char *name, int idx, bool format)
+struct evsel *evsel__newtp_idx(const char *sys, const char *name, int idx)
 {
 	struct evsel *evsel = zalloc(perf_evsel__object.size);
 	int err = -ENOMEM;
@@ -469,20 +468,14 @@ struct evsel *evsel__newtp_idx(const char *sys, const char *name, int idx, bool 
 		if (asprintf(&evsel->name, "%s:%s", sys, name) < 0)
 			goto out_free;
 
-		event_attr_init(&attr);
-
-		if (format) {
-			evsel->tp_format = trace_event__tp_format(sys, name);
-			if (IS_ERR(evsel->tp_format)) {
-				err = PTR_ERR(evsel->tp_format);
-				goto out_free;
-			}
-			attr.config = evsel->tp_format->id;
-		} else {
-			attr.config = (__u64) -1;
+		evsel->tp_format = trace_event__tp_format(sys, name);
+		if (IS_ERR(evsel->tp_format)) {
+			err = PTR_ERR(evsel->tp_format);
+			goto out_free;
 		}
 
-
+		event_attr_init(&attr);
+		attr.config = evsel->tp_format->id;
 		attr.sample_period = 1;
 		evsel__init(evsel, &attr, idx);
 	}
@@ -1807,7 +1800,7 @@ static int __evsel__prepare_open(struct evsel *evsel, struct perf_cpu_map *cpus,
 
 	if (cpus == NULL) {
 		if (empty_cpu_map == NULL) {
-			empty_cpu_map = perf_cpu_map__new_any_cpu();
+			empty_cpu_map = perf_cpu_map__dummy_new();
 			if (empty_cpu_map == NULL)
 				return -ENOMEM;
 		}
@@ -1838,8 +1831,6 @@ static int __evsel__prepare_open(struct evsel *evsel, struct perf_cpu_map *cpus,
 
 static void evsel__disable_missing_features(struct evsel *evsel)
 {
-	if (perf_missing_features.branch_counters)
-		evsel->core.attr.branch_sample_type &= ~PERF_SAMPLE_BRANCH_COUNTERS;
 	if (perf_missing_features.read_lost)
 		evsel->core.attr.read_format &= ~PERF_FORMAT_LOST;
 	if (perf_missing_features.weight_struct) {
@@ -1893,12 +1884,7 @@ bool evsel__detect_missing_features(struct evsel *evsel)
 	 * Must probe features in the order they were added to the
 	 * perf_event_attr interface.
 	 */
-	if (!perf_missing_features.branch_counters &&
-	    (evsel->core.attr.branch_sample_type & PERF_SAMPLE_BRANCH_COUNTERS)) {
-		perf_missing_features.branch_counters = true;
-		pr_debug2("switching off branch counters support\n");
-		return true;
-	} else if (!perf_missing_features.read_lost &&
+	if (!perf_missing_features.read_lost &&
 	    (evsel->core.attr.read_format & PERF_FORMAT_LOST)) {
 		perf_missing_features.read_lost = true;
 		pr_debug2("switching off PERF_FORMAT_LOST support\n");
@@ -2001,6 +1987,33 @@ bool evsel__detect_missing_features(struct evsel *evsel)
 	} else {
 		return false;
 	}
+}
+
+bool evsel__increase_rlimit(enum rlimit_action *set_rlimit)
+{
+	int old_errno;
+	struct rlimit l;
+
+	if (*set_rlimit < INCREASED_MAX) {
+		old_errno = errno;
+
+		if (getrlimit(RLIMIT_NOFILE, &l) == 0) {
+			if (*set_rlimit == NO_CHANGE) {
+				l.rlim_cur = l.rlim_max;
+			} else {
+				l.rlim_cur = l.rlim_max + 1000;
+				l.rlim_max = l.rlim_cur;
+			}
+			if (setrlimit(RLIMIT_NOFILE, &l) == 0) {
+				(*set_rlimit) += 1;
+				errno = old_errno;
+				return true;
+			}
+		}
+		errno = old_errno;
+	}
+
+	return false;
 }
 
 static int evsel__open_cpu(struct evsel *evsel, struct perf_cpu_map *cpus,
@@ -2130,7 +2143,7 @@ try_fallback:
 	 * perf stat needs between 5 and 22 fds per CPU. When we run out
 	 * of them try to increase the limits.
 	 */
-	if (err == -EMFILE && rlimit__increase_nofile(&set_rlimit))
+	if (err == -EMFILE && evsel__increase_rlimit(&set_rlimit))
 		goto retry_open;
 
 	if (err != -EINVAL || idx > 0 || thread > 0)
@@ -2329,22 +2342,6 @@ u64 evsel__bitfield_swap_branch_flags(u64 value)
 	}
 
 	return new_val;
-}
-
-static inline bool evsel__has_branch_counters(const struct evsel *evsel)
-{
-	struct evsel *cur, *leader = evsel__leader(evsel);
-
-	/* The branch counters feature only supports group */
-	if (!leader || !evsel->evlist)
-		return false;
-
-	evlist__for_each_entry(evsel->evlist, cur) {
-		if ((leader == evsel__leader(cur)) &&
-		    (cur->core.attr.branch_sample_type & PERF_SAMPLE_BRANCH_COUNTERS))
-			return true;
-	}
-	return false;
 }
 
 int evsel__parse_sample(struct evsel *evsel, union perf_event *event,
@@ -2579,16 +2576,6 @@ int evsel__parse_sample(struct evsel *evsel, union perf_event *event,
 
 		OVERFLOW_CHECK(array, sz, max_size);
 		array = (void *)array + sz;
-
-		if (evsel__has_branch_counters(evsel)) {
-			OVERFLOW_CHECK_u64(array);
-
-			data->branch_stack_cntr = (u64 *)array;
-			sz = data->branch_stack->nr * sizeof(u64);
-
-			OVERFLOW_CHECK(array, sz, max_size);
-			array = (void *)array + sz;
-		}
 	}
 
 	if (type & PERF_SAMPLE_REGS_USER) {
@@ -2778,11 +2765,6 @@ struct tep_format_field *evsel__field(struct evsel *evsel, const char *name)
 	return tep_find_field(evsel->tp_format, name);
 }
 
-struct tep_format_field *evsel__common_field(struct evsel *evsel, const char *name)
-{
-	return tep_find_common_field(evsel->tp_format, name);
-}
-
 void *evsel__rawptr(struct evsel *evsel, struct perf_sample *sample, const char *name)
 {
 	struct tep_format_field *field = evsel__field(evsel, name);
@@ -2848,51 +2830,9 @@ u64 evsel__intval(struct evsel *evsel, struct perf_sample *sample, const char *n
 
 	return field ? format_field__intval(field, sample, evsel->needs_swap) : 0;
 }
-
-u64 evsel__intval_common(struct evsel *evsel, struct perf_sample *sample, const char *name)
-{
-	struct tep_format_field *field = evsel__common_field(evsel, name);
-
-	return field ? format_field__intval(field, sample, evsel->needs_swap) : 0;
-}
-
-char evsel__taskstate(struct evsel *evsel, struct perf_sample *sample, const char *name)
-{
-	static struct tep_format_field *prev_state_field;
-	static const char *states;
-	struct tep_format_field *field;
-	unsigned long long val;
-	unsigned int bit;
-	char state = '?'; /* '?' denotes unknown task state */
-
-	field = evsel__field(evsel, name);
-
-	if (!field)
-		return state;
-
-	if (!states || field != prev_state_field) {
-		states = parse_task_states(field);
-		if (!states)
-			return state;
-		prev_state_field = field;
-	}
-
-	/*
-	 * Note since the kernel exposes TASK_REPORT_MAX to userspace
-	 * to denote the 'preempted' state, we might as welll report
-	 * 'R' for this case, which make senses to users as well.
-	 *
-	 * We can change this if we have a good reason in the future.
-	 */
-	val = evsel__intval(evsel, sample, name);
-	bit = val ? ffs(val) : 0;
-	state = (!bit || bit > strlen(states)) ? 'R' : states[bit-1];
-	return state;
-}
 #endif
 
-bool evsel__fallback(struct evsel *evsel, struct target *target, int err,
-		     char *msg, size_t msgsize)
+bool evsel__fallback(struct evsel *evsel, int err, char *msg, size_t msgsize)
 {
 	int paranoid;
 
@@ -2900,19 +2840,18 @@ bool evsel__fallback(struct evsel *evsel, struct target *target, int err,
 	    evsel->core.attr.type   == PERF_TYPE_HARDWARE &&
 	    evsel->core.attr.config == PERF_COUNT_HW_CPU_CYCLES) {
 		/*
-		 * If it's cycles then fall back to hrtimer based cpu-clock sw
-		 * counter, which is always available even if no PMU support.
+		 * If it's cycles then fall back to hrtimer based
+		 * cpu-clock-tick sw counter, which is always available even if
+		 * no PMU support.
 		 *
 		 * PPC returns ENXIO until 2.6.37 (behavior changed with commit
 		 * b0a873e).
 		 */
+		scnprintf(msg, msgsize, "%s",
+"The cycles event is not supported, trying to fall back to cpu-clock-ticks");
+
 		evsel->core.attr.type   = PERF_TYPE_SOFTWARE;
-		evsel->core.attr.config = target__has_cpu(target)
-			? PERF_COUNT_SW_CPU_CLOCK
-			: PERF_COUNT_SW_TASK_CLOCK;
-		scnprintf(msg, msgsize,
-			"The cycles event is not supported, trying to fall back to %s",
-			target__has_cpu(target) ? "cpu-clock" : "task-clock");
+		evsel->core.attr.config = PERF_COUNT_SW_CPU_CLOCK;
 
 		zfree(&evsel->name);
 		return true;

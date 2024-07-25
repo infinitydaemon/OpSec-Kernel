@@ -33,6 +33,7 @@
 
 #include <linux/kernel.h>
 #include <linux/errno.h>
+#include <linux/firmware.h>
 #include <linux/i2c.h>
 
 /*
@@ -1909,6 +1910,7 @@ struct drx_demod_instance {
 	/* generic demodulator data */
 
 	struct i2c_adapter	*i2c;
+	const struct firmware	*firmware;
 };
 
 /*-------------------------------------------------------------------------

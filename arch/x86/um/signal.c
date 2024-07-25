@@ -8,7 +8,6 @@
 #include <linux/personality.h>
 #include <linux/ptrace.h>
 #include <linux/kernel.h>
-#include <linux/syscalls.h>
 #include <asm/unistd.h>
 #include <linux/uaccess.h>
 #include <asm/ucontext.h>
@@ -156,7 +155,7 @@ static int copy_sc_from_user(struct pt_regs *regs,
 			     struct sigcontext __user *from)
 {
 	struct sigcontext sc;
-	int err;
+	int err, pid;
 
 	/* Always make any pending restarted system calls return -EINTR */
 	current->restart_block.fn = do_no_restart_syscall;
@@ -202,10 +201,10 @@ static int copy_sc_from_user(struct pt_regs *regs,
 
 #undef GETREG
 
+	pid = userspace_pid[current_thread_info()->cpu];
 #ifdef CONFIG_X86_32
 	if (have_fpx_regs) {
 		struct user_fxsr_struct fpx;
-		int pid = userspace_pid[current_thread_info()->cpu];
 
 		err = copy_from_user(&fpx,
 			&((struct _fpstate __user *)sc.fpstate)->_fxsr_env[0],
@@ -241,7 +240,7 @@ static int copy_sc_to_user(struct sigcontext __user *to,
 {
 	struct sigcontext sc;
 	struct faultinfo * fi = &current->thread.arch.faultinfo;
-	int err;
+	int err, pid;
 	memset(&sc, 0, sizeof(struct sigcontext));
 
 #define PUTREG(regno, regname) sc.regname = regs->regs.gp[HOST_##regno]
@@ -289,9 +288,10 @@ static int copy_sc_to_user(struct sigcontext __user *to,
 	if (err)
 		return 1;
 
+	pid = userspace_pid[current_thread_info()->cpu];
+
 #ifdef CONFIG_X86_32
 	if (have_fpx_regs) {
-		int pid = userspace_pid[current_thread_info()->cpu];
 		struct user_fxsr_struct fpx;
 
 		err = save_fpx_registers(pid, (unsigned long *) &fpx);
@@ -450,7 +450,7 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
 	return 0;
 }
 
-SYSCALL_DEFINE0(sigreturn)
+long sys_sigreturn(void)
 {
 	unsigned long sp = PT_REGS_SP(&current->thread.regs);
 	struct sigframe __user *frame = (struct sigframe __user *)(sp - 8);
@@ -557,7 +557,7 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
 }
 #endif
 
-SYSCALL_DEFINE0(rt_sigreturn)
+long sys_rt_sigreturn(void)
 {
 	unsigned long sp = PT_REGS_SP(&current->thread.regs);
 	struct rt_sigframe __user *frame =

@@ -77,7 +77,7 @@ struct mlxcpld_param {
 
 /**
  * struct mlxcpld_led_priv - LED private data:
- * @cdev: LED class device instance
+ * @cled: LED class device instance
  * @param: LED CPLD access parameters
 **/
 struct mlxcpld_led_priv {

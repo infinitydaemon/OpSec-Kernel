@@ -33,8 +33,7 @@ struct erdma_eq {
 	atomic64_t notify_num;
 
 	void __iomem *db;
-	u64 *dbrec;
-	dma_addr_t dbrec_dma;
+	u64 *db_record;
 };
 
 struct erdma_cmdq_sq {
@@ -49,8 +48,7 @@ struct erdma_cmdq_sq {
 
 	u16 wqebb_cnt;
 
-	u64 *dbrec;
-	dma_addr_t dbrec_dma;
+	u64 *db_record;
 };
 
 struct erdma_cmdq_cq {
@@ -63,8 +61,7 @@ struct erdma_cmdq_cq {
 	u32 ci;
 	u32 cmdsn;
 
-	u64 *dbrec;
-	dma_addr_t dbrec_dma;
+	u64 *db_record;
 
 	atomic64_t armed_num;
 };
@@ -180,6 +177,9 @@ enum {
 	ERDMA_RES_CNT = 2,
 };
 
+#define ERDMA_EXTRA_BUFFER_SIZE ERDMA_DB_SIZE
+#define WARPPED_BUFSIZE(size) ((size) + ERDMA_EXTRA_BUFFER_SIZE)
+
 struct erdma_dev {
 	struct ib_device ibdev;
 	struct net_device *netdev;
@@ -212,9 +212,6 @@ struct erdma_dev {
 
 	atomic_t num_ctx;
 	struct list_head cep_list;
-
-	struct dma_pool *db_pool;
-	struct dma_pool *resp_pool;
 };
 
 static inline void *get_queue_entry(void *qbuf, u32 idx, u32 depth, u32 shift)

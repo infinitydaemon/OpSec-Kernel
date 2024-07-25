@@ -31,17 +31,17 @@ properties:
     maxItems: 1
 
   firmware-name:
-    maxItems: 1
+    $ref: /schemas/types.yaml#/definitions/string
     description:
       Specifies the name of the calibration and configuration file selected by
       the driver. If this property is omitted, the name is chosen based on the
       device name with ".bin" as the extension (e.g. iqs620a.bin for IQS620A).
 
   keys:
-    $ref: /schemas/input/iqs62x-keys.yaml
+    $ref: ../input/iqs62x-keys.yaml
 
   pwm:
-    $ref: /schemas/pwm/iqs620a-pwm.yaml
+    $ref: ../pwm/iqs620a-pwm.yaml
 
 required:
   - compatible

@@ -11,7 +11,6 @@
 #include <linux/sched.h>
 #include <linux/cpu.h>
 #include <linux/crypto.h>
-#include <linux/vmalloc.h>
 
 #include "zcomp.h"
 
@@ -38,7 +37,7 @@ static void zcomp_strm_free(struct zcomp_strm *zstrm)
 {
 	if (!IS_ERR_OR_NULL(zstrm->tfm))
 		crypto_free_comp(zstrm->tfm);
-	vfree(zstrm->buffer);
+	free_pages((unsigned long)zstrm->buffer, 1);
 	zstrm->tfm = NULL;
 	zstrm->buffer = NULL;
 }
@@ -54,7 +53,7 @@ static int zcomp_strm_init(struct zcomp_strm *zstrm, struct zcomp *comp)
 	 * allocate 2 pages. 1 for compressed data, plus 1 extra for the
 	 * case when compressed size is larger than the original one
 	 */
-	zstrm->buffer = vzalloc(2 * PAGE_SIZE);
+	zstrm->buffer = (void *)__get_free_pages(GFP_KERNEL | __GFP_ZERO, 1);
 	if (IS_ERR_OR_NULL(zstrm->tfm) || !zstrm->buffer) {
 		zcomp_strm_free(zstrm);
 		return -ENOMEM;

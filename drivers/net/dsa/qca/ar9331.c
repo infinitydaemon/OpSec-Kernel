@@ -523,30 +523,28 @@ static void ar9331_sw_phylink_get_caps(struct dsa_switch *ds, int port,
 	}
 }
 
-static void ar9331_sw_phylink_mac_config(struct phylink_config *config,
+static void ar9331_sw_phylink_mac_config(struct dsa_switch *ds, int port,
 					 unsigned int mode,
 					 const struct phylink_link_state *state)
 {
-	struct dsa_port *dp = dsa_phylink_to_port(config);
-	struct ar9331_sw_priv *priv = dp->ds->priv;
+	struct ar9331_sw_priv *priv = ds->priv;
 	struct regmap *regmap = priv->regmap;
 	int ret;
 
-	ret = regmap_update_bits(regmap, AR9331_SW_REG_PORT_STATUS(dp->index),
+	ret = regmap_update_bits(regmap, AR9331_SW_REG_PORT_STATUS(port),
 				 AR9331_SW_PORT_STATUS_LINK_EN |
 				 AR9331_SW_PORT_STATUS_FLOW_LINK_EN, 0);
 	if (ret)
 		dev_err_ratelimited(priv->dev, "%s: %i\n", __func__, ret);
 }
 
-static void ar9331_sw_phylink_mac_link_down(struct phylink_config *config,
+static void ar9331_sw_phylink_mac_link_down(struct dsa_switch *ds, int port,
 					    unsigned int mode,
 					    phy_interface_t interface)
 {
-	struct dsa_port *dp = dsa_phylink_to_port(config);
-	struct ar9331_sw_priv *priv = dp->ds->priv;
+	struct ar9331_sw_priv *priv = ds->priv;
+	struct ar9331_sw_port *p = &priv->port[port];
 	struct regmap *regmap = priv->regmap;
-	int port = dp->index;
 	int ret;
 
 	ret = regmap_update_bits(regmap, AR9331_SW_REG_PORT_STATUS(port),
@@ -554,24 +552,23 @@ static void ar9331_sw_phylink_mac_link_down(struct phylink_config *config,
 	if (ret)
 		dev_err_ratelimited(priv->dev, "%s: %i\n", __func__, ret);
 
-	cancel_delayed_work_sync(&priv->port[port].mib_read);
+	cancel_delayed_work_sync(&p->mib_read);
 }
 
-static void ar9331_sw_phylink_mac_link_up(struct phylink_config *config,
-					  struct phy_device *phydev,
+static void ar9331_sw_phylink_mac_link_up(struct dsa_switch *ds, int port,
 					  unsigned int mode,
 					  phy_interface_t interface,
+					  struct phy_device *phydev,
 					  int speed, int duplex,
 					  bool tx_pause, bool rx_pause)
 {
-	struct dsa_port *dp = dsa_phylink_to_port(config);
-	struct ar9331_sw_priv *priv = dp->ds->priv;
+	struct ar9331_sw_priv *priv = ds->priv;
+	struct ar9331_sw_port *p = &priv->port[port];
 	struct regmap *regmap = priv->regmap;
-	int port = dp->index;
 	u32 val;
 	int ret;
 
-	schedule_delayed_work(&priv->port[port].mib_read, 0);
+	schedule_delayed_work(&p->mib_read, 0);
 
 	val = AR9331_SW_PORT_STATUS_MAC_MASK;
 	switch (speed) {
@@ -687,17 +684,14 @@ static void ar9331_get_pause_stats(struct dsa_switch *ds, int port,
 	spin_unlock(&p->stats_lock);
 }
 
-static const struct phylink_mac_ops ar9331_phylink_mac_ops = {
-	.mac_config	= ar9331_sw_phylink_mac_config,
-	.mac_link_down	= ar9331_sw_phylink_mac_link_down,
-	.mac_link_up	= ar9331_sw_phylink_mac_link_up,
-};
-
 static const struct dsa_switch_ops ar9331_sw_ops = {
 	.get_tag_protocol	= ar9331_sw_get_tag_protocol,
 	.setup			= ar9331_sw_setup,
 	.port_disable		= ar9331_sw_port_disable,
 	.phylink_get_caps	= ar9331_sw_phylink_get_caps,
+	.phylink_mac_config	= ar9331_sw_phylink_mac_config,
+	.phylink_mac_link_down	= ar9331_sw_phylink_mac_link_down,
+	.phylink_mac_link_up	= ar9331_sw_phylink_mac_link_up,
 	.get_stats64		= ar9331_get_stats64,
 	.get_pause_stats	= ar9331_get_pause_stats,
 };
@@ -1065,7 +1059,6 @@ static int ar9331_sw_probe(struct mdio_device *mdiodev)
 	ds->priv = priv;
 	priv->ops = ar9331_sw_ops;
 	ds->ops = &priv->ops;
-	ds->phylink_mac_ops = &ar9331_phylink_mac_ops;
 	dev_set_drvdata(&mdiodev->dev, priv);
 
 	for (i = 0; i < ARRAY_SIZE(priv->port); i++) {

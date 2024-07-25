@@ -11,14 +11,14 @@
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include <asm/csr.h>
+#include <asm/cpu_ops_sbi.h>
 #include <asm/hwcap.h>
 #include <asm/image.h>
-#include <asm/scs.h>
 #include <asm/xip_fixup.h>
 #include "efi-header.S"
 
 __HEAD
-SYM_CODE_START(_start)
+ENTRY(_start)
 	/*
 	 * Image header expected by Linux boot-loaders. The image header data
 	 * structure is described in asm/image.h.
@@ -111,7 +111,10 @@ relocate_enable_mmu:
 	csrw CSR_TVEC, a0
 
 	/* Reload the global pointer */
-	load_global_pointer
+.option push
+.option norelax
+	la gp, __global_pointer$
+.option pop
 
 	/*
 	 * Switch to kernel page tables.  A full fence is necessary in order to
@@ -132,7 +135,10 @@ secondary_start_sbi:
 	csrw CSR_IP, zero
 
 	/* Load the global pointer */
-	load_global_pointer
+	.option push
+	.option norelax
+		la gp, __global_pointer$
+	.option pop
 
 	/*
 	 * Disable FPU & VECTOR to detect illegal usage of
@@ -163,13 +169,12 @@ secondary_start_sbi:
 	XIP_FIXUP_OFFSET a0
 	call relocate_enable_mmu
 #endif
-	call .Lsetup_trap_vector
-	scs_load_current
+	call setup_trap_vector
 	tail smp_callin
 #endif /* CONFIG_SMP */
 
 .align 2
-.Lsetup_trap_vector:
+setup_trap_vector:
 	/* Set trap vector to exception handler */
 	la a0, handle_exception
 	csrw CSR_TVEC, a0
@@ -187,9 +192,9 @@ secondary_start_sbi:
 	wfi
 	j .Lsecondary_park
 
-SYM_CODE_END(_start)
+END(_start)
 
-SYM_CODE_START(_start_kernel)
+ENTRY(_start_kernel)
 	/* Mask all interrupts */
 	csrw CSR_IE, zero
 	csrw CSR_IP, zero
@@ -206,7 +211,7 @@ SYM_CODE_START(_start_kernel)
 	 * not implement PMPs, so we set up a quick trap handler to just skip
 	 * touching the PMPs on any trap.
 	 */
-	la a0, .Lpmp_done
+	la a0, pmp_done
 	csrw CSR_TVEC, a0
 
 	li a0, -1
@@ -214,7 +219,7 @@ SYM_CODE_START(_start_kernel)
 	li a0, (PMP_A_NAPOT | PMP_R | PMP_W | PMP_X)
 	csrw CSR_PMPCFG0, a0
 .align 2
-.Lpmp_done:
+pmp_done:
 
 	/*
 	 * The hartid in a0 is expected later on, and we have no firmware
@@ -224,7 +229,10 @@ SYM_CODE_START(_start_kernel)
 #endif /* CONFIG_RISCV_M_MODE */
 
 	/* Load the global pointer */
-	load_global_pointer
+.option push
+.option norelax
+	la gp, __global_pointer$
+.option pop
 
 	/*
 	 * Disable FPU & VECTOR to detect illegal usage of
@@ -265,24 +273,22 @@ SYM_CODE_START(_start_kernel)
 	la sp, _end + THREAD_SIZE
 	XIP_FIXUP_OFFSET sp
 	mv s0, a0
-	mv s1, a1
 	call __copy_data
 
-	/* Restore a0 & a1 copy */
+	/* Restore a0 copy */
 	mv a0, s0
-	mv a1, s1
 #endif
 
 #ifndef CONFIG_XIP_KERNEL
 	/* Clear BSS for flat non-ELF images */
 	la a3, __bss_start
 	la a4, __bss_stop
-	ble a4, a3, .Lclear_bss_done
-.Lclear_bss:
+	ble a4, a3, clear_bss_done
+clear_bss:
 	REG_S zero, (a3)
 	add a3, a3, RISCV_SZPTR
-	blt a3, a4, .Lclear_bss
-.Lclear_bss_done:
+	blt a3, a4, clear_bss
+clear_bss_done:
 #endif
 	la a2, boot_cpu_hartid
 	XIP_FIXUP_OFFSET a2
@@ -293,7 +299,6 @@ SYM_CODE_START(_start_kernel)
 	la sp, init_thread_union + THREAD_SIZE
 	XIP_FIXUP_OFFSET sp
 	addi sp, sp, -PT_SIZE_ON_STACK
-	scs_load_init_stack
 #ifdef CONFIG_BUILTIN_DTB
 	la a0, __dtb_start
 	XIP_FIXUP_OFFSET a0
@@ -307,12 +312,11 @@ SYM_CODE_START(_start_kernel)
 	call relocate_enable_mmu
 #endif /* CONFIG_MMU */
 
-	call .Lsetup_trap_vector
+	call setup_trap_vector
 	/* Restore C environment */
 	la tp, init_task
 	la sp, init_thread_union + THREAD_SIZE
 	addi sp, sp, -PT_SIZE_ON_STACK
-	scs_load_current
 
 #ifdef CONFIG_KASAN
 	call kasan_early_init
@@ -350,10 +354,10 @@ SYM_CODE_START(_start_kernel)
 	tail .Lsecondary_start_common
 #endif /* CONFIG_RISCV_BOOT_SPINWAIT */
 
-SYM_CODE_END(_start_kernel)
+END(_start_kernel)
 
 #ifdef CONFIG_RISCV_M_MODE
-SYM_CODE_START_LOCAL(reset_regs)
+ENTRY(reset_regs)
 	li	sp, 0
 	li	gp, 0
 	li	tp, 0
@@ -451,5 +455,5 @@ SYM_CODE_START_LOCAL(reset_regs)
 .Lreset_regs_done_vector:
 #endif /* CONFIG_RISCV_ISA_V */
 	ret
-SYM_CODE_END(reset_regs)
+END(reset_regs)
 #endif /* CONFIG_RISCV_M_MODE */

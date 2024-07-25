@@ -72,10 +72,7 @@ required:
   - compatible
   - reg
 
-allOf:
-  - $ref: hwmon-common.yaml#
-
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

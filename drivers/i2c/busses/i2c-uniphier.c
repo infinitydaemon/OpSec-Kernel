@@ -71,8 +71,10 @@ static int uniphier_i2c_xfer_byte(struct i2c_adapter *adap, u32 txdata,
 	writel(txdata, priv->membase + UNIPHIER_I2C_DTRM);
 
 	time_left = wait_for_completion_timeout(&priv->comp, adap->timeout);
-	if (unlikely(!time_left))
+	if (unlikely(!time_left)) {
+		dev_err(&adap->dev, "transaction timeout\n");
 		return -ETIMEDOUT;
+	}
 
 	rxdata = readl(priv->membase + UNIPHIER_I2C_DREC);
 	if (rxdatap)

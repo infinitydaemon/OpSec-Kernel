@@ -2060,16 +2060,18 @@ err_ptp_setup:
 	return ret;
 }
 
-static void hellcreek_remove(struct platform_device *pdev)
+static int hellcreek_remove(struct platform_device *pdev)
 {
 	struct hellcreek *hellcreek = platform_get_drvdata(pdev);
 
 	if (!hellcreek)
-		return;
+		return 0;
 
 	hellcreek_hwtstamp_free(hellcreek);
 	hellcreek_ptp_free(hellcreek);
 	dsa_unregister_switch(hellcreek->ds);
+
+	return 0;
 }
 
 static void hellcreek_shutdown(struct platform_device *pdev)
@@ -2105,7 +2107,7 @@ MODULE_DEVICE_TABLE(of, hellcreek_of_match);
 
 static struct platform_driver hellcreek_driver = {
 	.probe	= hellcreek_probe,
-	.remove_new = hellcreek_remove,
+	.remove = hellcreek_remove,
 	.shutdown = hellcreek_shutdown,
 	.driver = {
 		.name = "hellcreek",

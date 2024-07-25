@@ -116,8 +116,6 @@ void afs_prioritise_error(struct afs_error *e, int error, u32 abort_code)
 {
 	switch (error) {
 	case 0:
-		e->aborted = false;
-		e->error = 0;
 		return;
 	default:
 		if (e->error == -ETIMEDOUT ||
@@ -163,16 +161,12 @@ void afs_prioritise_error(struct afs_error *e, int error, u32 abort_code)
 		if (e->responded)
 			return;
 		e->error = error;
-		e->aborted = false;
 		return;
 
 	case -ECONNABORTED:
-		e->error = afs_abort_to_error(abort_code);
-		e->aborted = true;
-		e->responded = true;
-		return;
+		error = afs_abort_to_error(abort_code);
+		fallthrough;
 	case -ENETRESET: /* Responded, but we seem to have changed address */
-		e->aborted = false;
 		e->responded = true;
 		e->error = error;
 		return;

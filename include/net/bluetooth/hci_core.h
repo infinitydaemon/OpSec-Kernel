@@ -1,7 +1,7 @@
 /*
    BlueZ - Bluetooth protocol stack for Linux
    Copyright (c) 2000-2001, 2010, Code Aurora Forum. All rights reserved.
-   Copyright 2023-2024 NXP
+   Copyright 2023 NXP
 
    Written 2000,2001 by Maxim Krasnyansky <maxk@qualcomm.com>
 
@@ -246,7 +246,6 @@ struct adv_info {
 	bool	periodic;
 	__u8	mesh;
 	__u8	instance;
-	__u8	handle;
 	__u32	flags;
 	__u16	timeout;
 	__u16	remaining_time;
@@ -510,6 +509,7 @@ struct hci_dev {
 	struct work_struct	tx_work;
 
 	struct delayed_work	le_scan_disable;
+	struct delayed_work	le_scan_restart;
 
 	struct sk_buff_head	rx_q;
 	struct sk_buff_head	raw_q;
@@ -707,11 +707,8 @@ struct hci_conn {
 	__u16		le_supv_timeout;
 	__u8		le_adv_data[HCI_MAX_EXT_AD_LENGTH];
 	__u8		le_adv_data_len;
-	__u8		le_per_adv_data[HCI_MAX_PER_AD_TOT_LEN];
-	__u16		le_per_adv_data_len;
-	__u16		le_per_adv_data_offset;
-	__u8		le_adv_phy;
-	__u8		le_adv_sec_phy;
+	__u8		le_per_adv_data[HCI_MAX_PER_AD_LENGTH];
+	__u8		le_per_adv_data_len;
 	__u8		le_tx_phy;
 	__u8		le_rx_phy;
 	__s8		rssi;
@@ -1049,24 +1046,6 @@ static inline unsigned int hci_conn_count(struct hci_dev *hdev)
 	return c->acl_num + c->sco_num + c->le_num + c->iso_num;
 }
 
-static inline bool hci_conn_valid(struct hci_dev *hdev, struct hci_conn *conn)
-{
-	struct hci_conn_hash *h = &hdev->conn_hash;
-	struct hci_conn  *c;
-
-	rcu_read_lock();
-
-	list_for_each_entry_rcu(c, &h->list, list) {
-		if (c == conn) {
-			rcu_read_unlock();
-			return true;
-		}
-	}
-	rcu_read_unlock();
-
-	return false;
-}
-
 static inline __u8 hci_conn_lookup_type(struct hci_dev *hdev, __u16 handle)
 {
 	struct hci_conn_hash *h = &hdev->conn_hash;
@@ -1279,8 +1258,8 @@ static inline struct hci_conn *hci_conn_hash_lookup_big(struct hci_dev *hdev,
 	return NULL;
 }
 
-static inline struct hci_conn *
-hci_conn_hash_lookup_big_state(struct hci_dev *hdev, __u8 handle,  __u16 state)
+static inline struct hci_conn *hci_conn_hash_lookup_big_any_dst(struct hci_dev *hdev,
+							__u8 handle)
 {
 	struct hci_conn_hash *h = &hdev->conn_hash;
 	struct hci_conn  *c;
@@ -1288,11 +1267,10 @@ hci_conn_hash_lookup_big_state(struct hci_dev *hdev, __u8 handle,  __u16 state)
 	rcu_read_lock();
 
 	list_for_each_entry_rcu(c, &h->list, list) {
-		if (bacmp(&c->dst, BDADDR_ANY) || c->type != ISO_LINK ||
-			c->state != state)
+		if (c->type != ISO_LINK)
 			continue;
 
-		if (handle == c->iso_qos.bcast.big) {
+		if (handle != BT_ISO_QOS_BIG_UNSET && handle == c->iso_qos.bcast.big) {
 			rcu_read_unlock();
 			return c;
 		}
@@ -1335,7 +1313,8 @@ hci_conn_hash_lookup_pa_sync_handle(struct hci_dev *hdev, __u16 sync_handle)
 	rcu_read_lock();
 
 	list_for_each_entry_rcu(c, &h->list, list) {
-		if (c->type != ISO_LINK)
+		if (c->type != ISO_LINK ||
+			!test_bit(HCI_CONN_PA_SYNC, &c->flags))
 			continue;
 
 		if (c->sync_handle == sync_handle) {
@@ -1383,26 +1362,6 @@ static inline void hci_conn_hash_list_state(struct hci_dev *hdev,
 
 	list_for_each_entry_rcu(c, &h->list, list) {
 		if (c->type == type && c->state == state)
-			func(c, data);
-	}
-
-	rcu_read_unlock();
-}
-
-static inline void hci_conn_hash_list_flag(struct hci_dev *hdev,
-					    hci_conn_func_t func, __u8 type,
-					    __u8 flag, void *data)
-{
-	struct hci_conn_hash *h = &hdev->conn_hash;
-	struct hci_conn  *c;
-
-	if (!func)
-		return;
-
-	rcu_read_lock();
-
-	list_for_each_entry_rcu(c, &h->list, list) {
-		if (c->type == type && test_bit(flag, &c->flags))
 			func(c, data);
 	}
 
@@ -1463,6 +1422,7 @@ struct hci_conn *hci_conn_add_unset(struct hci_dev *hdev, int type,
 				    bdaddr_t *dst, u8 role);
 void hci_conn_del(struct hci_conn *conn);
 void hci_conn_hash_flush(struct hci_dev *hdev);
+void hci_conn_check_pending(struct hci_dev *hdev);
 
 struct hci_chan *hci_chan_create(struct hci_conn *conn);
 void hci_chan_del(struct hci_chan *chan);
@@ -1475,14 +1435,12 @@ struct hci_conn *hci_connect_le_scan(struct hci_dev *hdev, bdaddr_t *dst,
 				     enum conn_reasons conn_reason);
 struct hci_conn *hci_connect_le(struct hci_dev *hdev, bdaddr_t *dst,
 				u8 dst_type, bool dst_resolved, u8 sec_level,
-				u16 conn_timeout, u8 role, u8 phy, u8 sec_phy);
-void hci_connect_le_scan_cleanup(struct hci_conn *conn, u8 status);
+				u16 conn_timeout, u8 role);
 struct hci_conn *hci_connect_acl(struct hci_dev *hdev, bdaddr_t *dst,
 				 u8 sec_level, u8 auth_type,
-				 enum conn_reasons conn_reason, u16 timeout);
+				 enum conn_reasons conn_reason);
 struct hci_conn *hci_connect_sco(struct hci_dev *hdev, int type, bdaddr_t *dst,
-				 __u16 setting, struct bt_codec *codec,
-				 u16 timeout);
+				 __u16 setting, struct bt_codec *codec);
 struct hci_conn *hci_bind_cis(struct hci_dev *hdev, bdaddr_t *dst,
 			      __u8 dst_type, struct bt_iso_qos *qos);
 struct hci_conn *hci_bind_bis(struct hci_dev *hdev, bdaddr_t *dst,
@@ -1493,8 +1451,8 @@ struct hci_conn *hci_connect_cis(struct hci_dev *hdev, bdaddr_t *dst,
 struct hci_conn *hci_connect_bis(struct hci_dev *hdev, bdaddr_t *dst,
 				 __u8 dst_type, struct bt_iso_qos *qos,
 				 __u8 data_len, __u8 *data);
-struct hci_conn *hci_pa_create_sync(struct hci_dev *hdev, bdaddr_t *dst,
-		       __u8 dst_type, __u8 sid, struct bt_iso_qos *qos);
+int hci_pa_create_sync(struct hci_dev *hdev, bdaddr_t *dst, __u8 dst_type,
+		       __u8 sid, struct bt_iso_qos *qos);
 int hci_le_big_create_sync(struct hci_dev *hdev, struct hci_conn *hcon,
 			   struct bt_iso_qos *qos,
 			   __u16 sync_handle, __u8 num_bis, __u8 bis[]);
@@ -2113,18 +2071,46 @@ static inline int hci_check_conn_params(u16 min, u16 max, u16 latency,
 {
 	u16 max_latency;
 
-	if (min > max || min < 6 || max > 3200)
+	if (min > max) {
+		BT_WARN("min %d > max %d", min, max);
 		return -EINVAL;
+	}
 
-	if (to_multiplier < 10 || to_multiplier > 3200)
+	if (min < 6) {
+		BT_WARN("min %d < 6", min);
 		return -EINVAL;
+	}
 
-	if (max >= to_multiplier * 8)
+	if (max > 3200) {
+		BT_WARN("max %d > 3200", max);
 		return -EINVAL;
+	}
+
+	if (to_multiplier < 10) {
+		BT_WARN("to_multiplier %d < 10", to_multiplier);
+		return -EINVAL;
+	}
+
+	if (to_multiplier > 3200) {
+		BT_WARN("to_multiplier %d > 3200", to_multiplier);
+		return -EINVAL;
+	}
+
+	if (max >= to_multiplier * 8) {
+		BT_WARN("max %d >= to_multiplier %d * 8", max, to_multiplier);
+		return -EINVAL;
+	}
 
 	max_latency = (to_multiplier * 4 / max) - 1;
-	if (latency > 499 || latency > max_latency)
+	if (latency > 499) {
+		BT_WARN("latency %d > 499", latency);
 		return -EINVAL;
+	}
+
+	if (latency > max_latency) {
+		BT_WARN("latency %d > max_latency %d", latency, max_latency);
+		return -EINVAL;
+	}
 
 	return 0;
 }
@@ -2192,22 +2178,8 @@ void hci_mgmt_chan_unregister(struct hci_mgmt_chan *c);
 /* These LE scan and inquiry parameters were chosen according to LE General
  * Discovery Procedure specification.
  */
-#define DISCOV_LE_SCAN_WIN		0x0012 /* 11.25 msec */
-#define DISCOV_LE_SCAN_INT		0x0012 /* 11.25 msec */
-#define DISCOV_LE_SCAN_INT_FAST		0x0060 /* 60 msec */
-#define DISCOV_LE_SCAN_WIN_FAST		0x0030 /* 30 msec */
-#define DISCOV_LE_SCAN_INT_CONN		0x0060 /* 60 msec */
-#define DISCOV_LE_SCAN_WIN_CONN		0x0060 /* 60 msec */
-#define DISCOV_LE_SCAN_INT_SLOW1	0x0800 /* 1.28 sec */
-#define DISCOV_LE_SCAN_WIN_SLOW1	0x0012 /* 11.25 msec */
-#define DISCOV_LE_SCAN_INT_SLOW2	0x1000 /* 2.56 sec */
-#define DISCOV_LE_SCAN_WIN_SLOW2	0x0024 /* 22.5 msec */
-#define DISCOV_CODED_SCAN_INT_FAST	0x0120 /* 180 msec */
-#define DISCOV_CODED_SCAN_WIN_FAST	0x0090 /* 90 msec */
-#define DISCOV_CODED_SCAN_INT_SLOW1	0x1800 /* 3.84 sec */
-#define DISCOV_CODED_SCAN_WIN_SLOW1	0x0036 /* 33.75 msec */
-#define DISCOV_CODED_SCAN_INT_SLOW2	0x3000 /* 7.68 sec */
-#define DISCOV_CODED_SCAN_WIN_SLOW2	0x006c /* 67.5 msec */
+#define DISCOV_LE_SCAN_WIN		0x12
+#define DISCOV_LE_SCAN_INT		0x12
 #define DISCOV_LE_TIMEOUT		10240	/* msec */
 #define DISCOV_INTERLEAVED_TIMEOUT	5120	/* msec */
 #define DISCOV_INTERLEAVED_INQUIRY_LEN	0x04

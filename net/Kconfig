@@ -60,9 +60,6 @@ config NET_XGRESS
 config NET_REDIRECT
 	bool
 
-config SKB_DECRYPTED
-	bool
-
 config SKB_EXTENSIONS
 	bool
 
@@ -236,6 +233,8 @@ source "net/bridge/netfilter/Kconfig"
 
 endif
 
+source "net/bpfilter/Kconfig"
+
 source "net/dccp/Kconfig"
 source "net/sctp/Kconfig"
 source "net/rds/Kconfig"
@@ -247,7 +246,7 @@ source "net/bridge/Kconfig"
 source "net/dsa/Kconfig"
 source "net/8021q/Kconfig"
 source "net/llc/Kconfig"
-source "net/appletalk/Kconfig"
+source "drivers/net/appletalk/Kconfig"
 source "net/x25/Kconfig"
 source "net/lapb/Kconfig"
 source "net/phonet/Kconfig"
@@ -334,7 +333,6 @@ config NET_RX_BUSY_POLL
 
 config BQL
 	bool
-	prompt "Enable Byte Queue Limits"
 	depends on SYSFS
 	select DQL
 	default y
@@ -452,9 +450,6 @@ config GRO_CELLS
 config SOCK_VALIDATE_XMIT
 	bool
 
-config NET_IEEE8021Q_HELPERS
-	bool
-
 config NET_SELFTESTS
 	def_tristate PHYLIB
 	depends on PHYLIB && INET
@@ -512,14 +507,5 @@ config NETDEV_ADDR_LIST_TEST
 	tristate "Unit tests for device address list"
 	default KUNIT_ALL_TESTS
 	depends on KUNIT
-
-config NET_TEST
-	tristate "KUnit tests for networking" if !KUNIT_ALL_TESTS
-	depends on KUNIT
-	default KUNIT_ALL_TESTS
-	help
-	  KUnit tests covering core networking infra, such as sk_buff.
-
-	  If unsure, say N.
 
 endif   # if NET

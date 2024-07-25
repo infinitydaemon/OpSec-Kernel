@@ -216,33 +216,27 @@
  * Temporary until all gas have MT ASE support
  */
 	.macro	DMT	reg=0
-	insn_if_mips	0x41600bc1 | (\reg << 16)
-	insn32_if_mm    0x0000057C | (\reg << 21)
+	.word	0x41600bc1 | (\reg << 16)
 	.endm
 
 	.macro	EMT	reg=0
-	insn_if_mips	0x41600be1 | (\reg << 16)
-	insn32_if_mm    0x0000257C | (\reg << 21)
+	.word	0x41600be1 | (\reg << 16)
 	.endm
 
 	.macro	DVPE	reg=0
-	insn_if_mips	0x41600001 | (\reg << 16)
-	insn32_if_mm    0x0000157C | (\reg << 21)
+	.word	0x41600001 | (\reg << 16)
 	.endm
 
 	.macro	EVPE	reg=0
-	insn_if_mips	0x41600021 | (\reg << 16)
-	insn32_if_mm    0x0000357C | (\reg << 21)
+	.word	0x41600021 | (\reg << 16)
 	.endm
 
-	.macro	MFTR	rs=0, rt=0, u=0, sel=0
-	insn_if_mips	0x41000000 | (\rt << 16) | (\rs << 11) | (\u << 5) | (\sel)
-	insn32_if_mm	0x0000000E | (\rt << 21) | (\rs << 16) | (\u << 10) | (\sel << 4)
+	.macro	MFTR	rt=0, rd=0, u=0, sel=0
+	 .word	0x41000000 | (\rt << 16) | (\rd << 11) | (\u << 5) | (\sel)
 	.endm
 
-	.macro	MTTR	rt=0, rs=0, u=0, sel=0
-	insn_if_mips	0x41800000 | (\rt << 16) | (\rs << 11) | (\u << 5) | (\sel)
-	insn32_if_mm	0x00000006 | (\rt << 21) | (\rs << 16) | (\u << 10) | (\sel << 4)
+	.macro	MTTR	rt=0, rd=0, u=0, sel=0
+	 .word	0x41800000 | (\rt << 16) | (\rd << 11) | (\u << 5) | (\sel)
 	.endm
 
 #ifdef TOOLCHAIN_SUPPORTS_MSA

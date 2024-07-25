@@ -11,6 +11,4 @@ extern void __init uml_dtb_init(void);
 static inline void uml_dtb_init(void) { }
 #endif
 
-extern int __init read_initrd(void);
-
 #endif

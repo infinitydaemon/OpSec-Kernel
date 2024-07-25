@@ -12,7 +12,6 @@
 #include <linux/highmem.h>
 #include <asm/tlb.h>
 #include <asm/sections.h>
-#include <asm/setup.h>
 #include <asm/vm_mmu.h>
 
 /*
@@ -87,7 +86,7 @@ void sync_icache_dcache(pte_t pte)
  * In this mode, we only have one pg_data_t
  * structure: contig_mem_data.
  */
-static void __init paging_init(void)
+void __init paging_init(void)
 {
 	unsigned long max_zone_pfn[MAX_NR_ZONES] = {0, };
 

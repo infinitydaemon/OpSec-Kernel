@@ -553,7 +553,7 @@ static int fsl_lpspi_dma_transfer(struct spi_controller *controller,
 {
 	struct dma_async_tx_descriptor *desc_tx, *desc_rx;
 	unsigned long transfer_timeout;
-	unsigned long time_left;
+	unsigned long timeout;
 	struct sg_table *tx = &transfer->tx_sg, *rx = &transfer->rx_sg;
 	int ret;
 
@@ -594,9 +594,9 @@ static int fsl_lpspi_dma_transfer(struct spi_controller *controller,
 							       transfer->len);
 
 		/* Wait eDMA to finish the data transfer.*/
-		time_left = wait_for_completion_timeout(&fsl_lpspi->dma_tx_completion,
-							transfer_timeout);
-		if (!time_left) {
+		timeout = wait_for_completion_timeout(&fsl_lpspi->dma_tx_completion,
+						      transfer_timeout);
+		if (!timeout) {
 			dev_err(fsl_lpspi->dev, "I/O Error in DMA TX\n");
 			dmaengine_terminate_all(controller->dma_tx);
 			dmaengine_terminate_all(controller->dma_rx);
@@ -604,9 +604,9 @@ static int fsl_lpspi_dma_transfer(struct spi_controller *controller,
 			return -ETIMEDOUT;
 		}
 
-		time_left = wait_for_completion_timeout(&fsl_lpspi->dma_rx_completion,
-							transfer_timeout);
-		if (!time_left) {
+		timeout = wait_for_completion_timeout(&fsl_lpspi->dma_rx_completion,
+						      transfer_timeout);
+		if (!timeout) {
 			dev_err(fsl_lpspi->dev, "I/O Error in DMA RX\n");
 			dmaengine_terminate_all(controller->dma_tx);
 			dmaengine_terminate_all(controller->dma_rx);
@@ -852,39 +852,39 @@ static int fsl_lpspi_probe(struct platform_device *pdev)
 	fsl_lpspi->base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
 	if (IS_ERR(fsl_lpspi->base)) {
 		ret = PTR_ERR(fsl_lpspi->base);
-		return ret;
+		goto out_controller_put;
 	}
 	fsl_lpspi->base_phys = res->start;
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
 		ret = irq;
-		return ret;
+		goto out_controller_put;
 	}
 
 	ret = devm_request_irq(&pdev->dev, irq, fsl_lpspi_isr, 0,
 			       dev_name(&pdev->dev), fsl_lpspi);
 	if (ret) {
 		dev_err(&pdev->dev, "can't get irq%d: %d\n", irq, ret);
-		return ret;
+		goto out_controller_put;
 	}
 
 	fsl_lpspi->clk_per = devm_clk_get(&pdev->dev, "per");
 	if (IS_ERR(fsl_lpspi->clk_per)) {
 		ret = PTR_ERR(fsl_lpspi->clk_per);
-		return ret;
+		goto out_controller_put;
 	}
 
 	fsl_lpspi->clk_ipg = devm_clk_get(&pdev->dev, "ipg");
 	if (IS_ERR(fsl_lpspi->clk_ipg)) {
 		ret = PTR_ERR(fsl_lpspi->clk_ipg);
-		return ret;
+		goto out_controller_put;
 	}
 
 	/* enable the clock */
 	ret = fsl_lpspi_init_rpm(fsl_lpspi);
 	if (ret)
-		return ret;
+		goto out_controller_put;
 
 	ret = pm_runtime_get_sync(fsl_lpspi->dev);
 	if (ret < 0) {
@@ -945,6 +945,8 @@ out_pm_get:
 	pm_runtime_dont_use_autosuspend(fsl_lpspi->dev);
 	pm_runtime_put_sync(fsl_lpspi->dev);
 	pm_runtime_disable(fsl_lpspi->dev);
+out_controller_put:
+	spi_controller_put(controller);
 
 	return ret;
 }

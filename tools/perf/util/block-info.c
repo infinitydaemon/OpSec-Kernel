@@ -43,14 +43,26 @@ static struct block_header_column {
 	}
 };
 
-struct block_info *block_info__new(void)
+struct block_info *block_info__get(struct block_info *bi)
 {
-	return zalloc(sizeof(struct block_info));
+	if (bi)
+		refcount_inc(&bi->refcnt);
+	return bi;
 }
 
-void block_info__delete(struct block_info *bi)
+void block_info__put(struct block_info *bi)
 {
-	free(bi);
+	if (bi && refcount_dec_and_test(&bi->refcnt))
+		free(bi);
+}
+
+struct block_info *block_info__new(void)
+{
+	struct block_info *bi = zalloc(sizeof(*bi));
+
+	if (bi)
+		refcount_set(&bi->refcnt, 1);
+	return bi;
 }
 
 int64_t __block_info__cmp(struct hist_entry *left, struct hist_entry *right)
@@ -117,9 +129,9 @@ int block_info__process_sym(struct hist_entry *he, struct block_hist *bh,
 	al.sym = he->ms.sym;
 
 	notes = symbol__annotation(he->ms.sym);
-	if (!notes || !notes->branch || !notes->branch->cycles_hist)
+	if (!notes || !notes->src || !notes->src->cycles_hist)
 		return 0;
-	ch = notes->branch->cycles_hist;
+	ch = notes->src->cycles_hist;
 	for (unsigned int i = 0; i < symbol__size(he->ms.sym); i++) {
 		if (ch[i].num_aggr) {
 			struct block_info *bi;
@@ -136,7 +148,7 @@ int block_info__process_sym(struct hist_entry *he, struct block_hist *bh,
 			he_block = hists__add_entry_block(&bh->block_hists,
 							  &al, bi);
 			if (!he_block) {
-				block_info__delete(bi);
+				block_info__put(bi);
 				return -1;
 			}
 		}
@@ -307,7 +319,7 @@ static int block_dso_entry(struct perf_hpp_fmt *fmt, struct perf_hpp *hpp,
 
 	if (map && map__dso(map)) {
 		return scnprintf(hpp->buf, hpp->size, "%*s", block_fmt->width,
-				 dso__short_name(map__dso(map)));
+				 map__dso(map)->short_name);
 	}
 
 	return scnprintf(hpp->buf, hpp->size, "%*s", block_fmt->width,
@@ -452,7 +464,8 @@ void block_info__free_report(struct block_report *reps, int nr_reps)
 }
 
 int report__browse_block_hists(struct block_hist *bh, float min_percent,
-			       struct evsel *evsel, struct perf_env *env)
+			       struct evsel *evsel, struct perf_env *env,
+			       struct annotation_options *annotation_opts)
 {
 	int ret;
 
@@ -464,7 +477,8 @@ int report__browse_block_hists(struct block_hist *bh, float min_percent,
 		return 0;
 	case 1:
 		symbol_conf.report_individual_block = true;
-		ret = block_hists_tui_browse(bh, evsel, min_percent, env);
+		ret = block_hists_tui_browse(bh, evsel, min_percent,
+					     env, annotation_opts);
 		return ret;
 	default:
 		return -1;

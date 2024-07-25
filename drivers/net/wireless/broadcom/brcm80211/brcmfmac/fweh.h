@@ -17,10 +17,6 @@ struct brcmf_pub;
 struct brcmf_if;
 struct brcmf_cfg80211_info;
 
-#define BRCMF_ABSTRACT_EVENT_BIT	BIT(31)
-#define BRCMF_ABSTRACT_ENUM_DEF(_id, _val) \
-	BRCMF_ENUM_DEF(_id, (BRCMF_ABSTRACT_EVENT_BIT | (_val)))
-
 /* list of firmware events */
 #define BRCMF_FWEH_EVENT_ENUM_DEFLIST \
 	BRCMF_ENUM_DEF(SET_SSID, 0) \
@@ -94,7 +90,12 @@ struct brcmf_cfg80211_info;
 	BRCMF_ENUM_DEF(FIFO_CREDIT_MAP, 74) \
 	BRCMF_ENUM_DEF(ACTION_FRAME_RX, 75) \
 	BRCMF_ENUM_DEF(TDLS_PEER_EVENT, 92) \
-	BRCMF_ENUM_DEF(BCMC_CREDIT_SUPPORT, 127)
+	BRCMF_ENUM_DEF(BCMC_CREDIT_SUPPORT, 127) \
+	BRCMF_ENUM_DEF(ULP, 146) \
+	BRCMF_ENUM_DEF(EXT_AUTH_REQ, 187) \
+	BRCMF_ENUM_DEF(EXT_AUTH_FRAME_RX, 188) \
+	BRCMF_ENUM_DEF(MGMT_FRAME_TXSTATUS, 189) \
+	BRCMF_ENUM_DEF(MGMT_FRAME_OFF_CHAN_COMPLETE, 190)
 
 #define BRCMF_ENUM_DEF(id, val) \
 	BRCMF_E_##id = (val),
@@ -102,8 +103,15 @@ struct brcmf_cfg80211_info;
 /* firmware event codes sent by the dongle */
 enum brcmf_fweh_event_code {
 	BRCMF_FWEH_EVENT_ENUM_DEFLIST
+	/* this determines event mask length which must match
+	 * minimum length check in device firmware so it is
+	 * hard-coded here.
+	 */
+	BRCMF_E_LAST = 191
 };
 #undef BRCMF_ENUM_DEF
+
+#define BRCMF_EVENTING_MASK_LEN		DIV_ROUND_UP(BRCMF_E_LAST, 8)
 
 /* flags field values in struct brcmf_event_msg */
 #define BRCMF_EVENT_MSG_LINK		0x01
@@ -280,36 +288,31 @@ struct brcmf_if_event {
 	u8 role;
 };
 
+enum event_msgs_ext_command {
+	EVENTMSGS_NONE		=	0,
+	EVENTMSGS_SET_BIT	=	1,
+	EVENTMSGS_RESET_BIT	=	2,
+	EVENTMSGS_SET_MASK	=	3
+};
+
+#define EVENTMSGS_VER 1
+#define EVENTMSGS_EXT_STRUCT_SIZE	offsetof(struct eventmsgs_ext, mask[0])
+
+/* len-	for SET it would be mask size from the application to the firmware */
+/*		for GET it would be actual firmware mask size */
+/* maxgetsize -	is only used for GET. indicate max mask size that the */
+/*				application can read from the firmware */
+struct eventmsgs_ext {
+	u8	ver;
+	u8	command;
+	u8	len;
+	u8	maxgetsize;
+	u8	mask[1];
+};
+
 typedef int (*brcmf_fweh_handler_t)(struct brcmf_if *ifp,
 				    const struct brcmf_event_msg *evtmsg,
 				    void *data);
-
-/**
- * struct brcmf_fweh_event_map_item - fweh event and firmware event pair.
- *
- * @code: fweh event code as used by higher layers.
- * @fwevt_code: firmware event code as used by firmware.
- *
- * This mapping is needed when a functionally identical event has a
- * different numerical definition between vendors. When such mapping
- * is needed the higher layer event code should not collide with the
- * firmware event.
- */
-struct brcmf_fweh_event_map_item {
-	enum brcmf_fweh_event_code code;
-	u32 fwevt_code;
-};
-
-/**
- * struct brcmf_fweh_event_map - mapping between firmware event and fweh event.
- *
- * @n_items: number of mapping items.
- * @items: array of fweh event and firmware event pairs.
- */
-struct brcmf_fweh_event_map {
-	u32 n_items;
-	const struct brcmf_fweh_event_map_item items[] __counted_by(n_items);
-};
 
 /**
  * struct brcmf_fweh_info - firmware event handling information.
@@ -318,33 +321,21 @@ struct brcmf_fweh_event_map {
  * @event_work: event worker.
  * @evt_q_lock: lock for event queue protection.
  * @event_q: event queue.
- * @event_mask_len: length of @event_mask used to enable firmware events.
- * @event_mask: byte array used in 'event_msgs' iovar command.
- * @event_map: mapping between fweh event and firmware event which
- *	may be provided by vendor-specific module for events that need
- *	mapping.
- * @num_event_codes: number of firmware events supported by firmware which
- *	does a minimum length check for the @event_mask. This value is to
- *	be provided by vendor-specific module determining @event_mask_len
- *	and consequently the allocation size for @event_mask.
- * @evt_handler: event handler registry indexed by firmware event code.
+ * @evt_handler: registered event handlers.
  */
 struct brcmf_fweh_info {
-	struct brcmf_pub *drvr;
 	bool p2pdev_setup_ongoing;
 	struct work_struct event_work;
 	spinlock_t evt_q_lock;
 	struct list_head event_q;
-	uint event_mask_len;
-	u8 *event_mask;
-	struct brcmf_fweh_event_map *event_map;
-	uint num_event_codes;
-	brcmf_fweh_handler_t evt_handler[] __counted_by(num_event_codes);
+	int (*evt_handler[BRCMF_E_LAST])(struct brcmf_if *ifp,
+					 const struct brcmf_event_msg *evtmsg,
+					 void *data);
 };
 
 const char *brcmf_fweh_event_name(enum brcmf_fweh_event_code code);
 
-int brcmf_fweh_attach(struct brcmf_pub *drvr);
+void brcmf_fweh_attach(struct brcmf_pub *drvr);
 void brcmf_fweh_detach(struct brcmf_pub *drvr);
 int brcmf_fweh_register(struct brcmf_pub *drvr, enum brcmf_fweh_event_code code,
 			int (*handler)(struct brcmf_if *ifp,

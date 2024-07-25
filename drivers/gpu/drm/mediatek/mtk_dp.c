@@ -141,8 +141,6 @@ struct mtk_dp_data {
 	unsigned int smc_cmd;
 	const struct mtk_dp_efuse_fmt *efuse_fmt;
 	bool audio_supported;
-	bool audio_pkt_in_hblank_area;
-	u16 audio_m_div2_bit;
 };
 
 static const struct mtk_dp_efuse_fmt mt8195_edp_efuse_fmt[MTK_DP_CAL_MAX] = {
@@ -651,7 +649,7 @@ static void mtk_dp_audio_sdp_asp_set_channels(struct mtk_dp *mtk_dp,
 static void mtk_dp_audio_set_divider(struct mtk_dp *mtk_dp)
 {
 	mtk_dp_update_bits(mtk_dp, MTK_DP_ENC0_P0_30BC,
-			   mtk_dp->data->audio_m_div2_bit,
+			   AUDIO_M_CODE_MULT_DIV_SEL_DP_ENC0_P0_DIV_2,
 			   AUDIO_M_CODE_MULT_DIV_SEL_DP_ENC0_P0_MASK);
 }
 
@@ -1396,18 +1394,6 @@ static void mtk_dp_sdp_set_down_cnt_init_in_hblank(struct mtk_dp *mtk_dp)
 			   SDP_DOWN_CNT_INIT_IN_HBLANK_DP_ENC1_P0_MASK);
 }
 
-static void mtk_dp_audio_sample_arrange_disable(struct mtk_dp *mtk_dp)
-{
-	/* arrange audio packets into the Hblanking and Vblanking area */
-	if (!mtk_dp->data->audio_pkt_in_hblank_area)
-		return;
-
-	mtk_dp_update_bits(mtk_dp, MTK_DP_ENC1_P0_3374, 0,
-			   SDP_ASP_INSERT_IN_HBLANK_DP_ENC1_P0_MASK);
-	mtk_dp_update_bits(mtk_dp, MTK_DP_ENC1_P0_3374, 0,
-			   SDP_DOWN_ASP_CNT_INIT_DP_ENC1_P0_MASK);
-}
-
 static void mtk_dp_setup_tu(struct mtk_dp *mtk_dp)
 {
 	u32 sram_read_start = min_t(u32, MTK_DP_TBC_BUF_READ_START_ADDR,
@@ -1417,7 +1403,6 @@ static void mtk_dp_setup_tu(struct mtk_dp *mtk_dp)
 				    MTK_DP_PIX_PER_ADDR);
 	mtk_dp_set_sram_read_start(mtk_dp, sram_read_start);
 	mtk_dp_setup_encoder(mtk_dp);
-	mtk_dp_audio_sample_arrange_disable(mtk_dp);
 	mtk_dp_sdp_set_down_cnt_init_in_hblank(mtk_dp);
 	mtk_dp_sdp_set_down_cnt_init(mtk_dp, sram_read_start);
 }
@@ -2042,12 +2027,12 @@ static enum drm_connector_status mtk_dp_bdg_detect(struct drm_bridge *bridge)
 	return ret;
 }
 
-static const struct drm_edid *mtk_dp_edid_read(struct drm_bridge *bridge,
-					       struct drm_connector *connector)
+static struct edid *mtk_dp_get_edid(struct drm_bridge *bridge,
+				    struct drm_connector *connector)
 {
 	struct mtk_dp *mtk_dp = mtk_dp_from_bridge(bridge);
 	bool enabled = mtk_dp->enabled;
-	const struct drm_edid *drm_edid;
+	struct edid *new_edid = NULL;
 	struct mtk_dp_audio_cfg *audio_caps = &mtk_dp->info.audio_cur_cfg;
 
 	if (!enabled) {
@@ -2055,7 +2040,7 @@ static const struct drm_edid *mtk_dp_edid_read(struct drm_bridge *bridge,
 		mtk_dp_aux_panel_poweron(mtk_dp, true);
 	}
 
-	drm_edid = drm_edid_read_ddc(connector, &mtk_dp->aux.ddc);
+	new_edid = drm_get_edid(connector, &mtk_dp->aux.ddc);
 
 	/*
 	 * Parse capability here to let atomic_get_input_bus_fmts and
@@ -2063,26 +2048,17 @@ static const struct drm_edid *mtk_dp_edid_read(struct drm_bridge *bridge,
 	 */
 	if (mtk_dp_parse_capabilities(mtk_dp)) {
 		drm_err(mtk_dp->drm_dev, "Can't parse capabilities\n");
-		drm_edid_free(drm_edid);
-		drm_edid = NULL;
+		kfree(new_edid);
+		new_edid = NULL;
 	}
 
-	if (drm_edid) {
-		/*
-		 * FIXME: get rid of drm_edid_raw()
-		 */
-		const struct edid *edid = drm_edid_raw(drm_edid);
+	if (new_edid) {
 		struct cea_sad *sads;
 
-		audio_caps->sad_count = drm_edid_to_sad(edid, &sads);
+		audio_caps->sad_count = drm_edid_to_sad(new_edid, &sads);
 		kfree(sads);
 
-		/*
-		 * FIXME: This should use connector->display_info.has_audio from
-		 * a path that has read the EDID and called
-		 * drm_edid_connector_update().
-		 */
-		audio_caps->detect_monitor = drm_detect_monitor_audio(edid);
+		audio_caps->detect_monitor = drm_detect_monitor_audio(new_edid);
 	}
 
 	if (!enabled) {
@@ -2090,7 +2066,7 @@ static const struct drm_edid *mtk_dp_edid_read(struct drm_bridge *bridge,
 		drm_atomic_bridge_chain_post_disable(bridge, connector->state->state);
 	}
 
-	return drm_edid;
+	return new_edid;
 }
 
 static ssize_t mtk_dp_aux_transfer(struct drm_dp_aux *mtk_aux,
@@ -2442,7 +2418,7 @@ static const struct drm_bridge_funcs mtk_dp_bridge_funcs = {
 	.atomic_enable = mtk_dp_bridge_atomic_enable,
 	.atomic_disable = mtk_dp_bridge_atomic_disable,
 	.mode_valid = mtk_dp_bridge_mode_valid,
-	.edid_read = mtk_dp_edid_read,
+	.get_edid = mtk_dp_get_edid,
 	.detect = mtk_dp_bdg_detect,
 };
 
@@ -2764,21 +2740,11 @@ static int mtk_dp_resume(struct device *dev)
 
 static SIMPLE_DEV_PM_OPS(mtk_dp_pm_ops, mtk_dp_suspend, mtk_dp_resume);
 
-static const struct mtk_dp_data mt8188_dp_data = {
-	.bridge_type = DRM_MODE_CONNECTOR_DisplayPort,
-	.smc_cmd = MTK_DP_SIP_ATF_VIDEO_UNMUTE,
-	.efuse_fmt = mt8195_dp_efuse_fmt,
-	.audio_supported = true,
-	.audio_pkt_in_hblank_area = true,
-	.audio_m_div2_bit = MT8188_AUDIO_M_CODE_MULT_DIV_SEL_DP_ENC0_P0_DIV_2,
-};
-
 static const struct mtk_dp_data mt8195_edp_data = {
 	.bridge_type = DRM_MODE_CONNECTOR_eDP,
 	.smc_cmd = MTK_DP_SIP_ATF_EDP_VIDEO_UNMUTE,
 	.efuse_fmt = mt8195_edp_efuse_fmt,
 	.audio_supported = false,
-	.audio_m_div2_bit = MT8195_AUDIO_M_CODE_MULT_DIV_SEL_DP_ENC0_P0_DIV_2,
 };
 
 static const struct mtk_dp_data mt8195_dp_data = {
@@ -2786,18 +2752,9 @@ static const struct mtk_dp_data mt8195_dp_data = {
 	.smc_cmd = MTK_DP_SIP_ATF_VIDEO_UNMUTE,
 	.efuse_fmt = mt8195_dp_efuse_fmt,
 	.audio_supported = true,
-	.audio_m_div2_bit = MT8195_AUDIO_M_CODE_MULT_DIV_SEL_DP_ENC0_P0_DIV_2,
 };
 
 static const struct of_device_id mtk_dp_of_match[] = {
-	{
-		.compatible = "mediatek,mt8188-edp-tx",
-		.data = &mt8195_edp_data,
-	},
-	{
-		.compatible = "mediatek,mt8188-dp-tx",
-		.data = &mt8188_dp_data,
-	},
 	{
 		.compatible = "mediatek,mt8195-edp-tx",
 		.data = &mt8195_edp_data,

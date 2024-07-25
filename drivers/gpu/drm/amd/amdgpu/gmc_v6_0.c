@@ -211,9 +211,8 @@ static void gmc_v6_0_vram_gtt_location(struct amdgpu_device *adev,
 
 	base <<= 24;
 
-	amdgpu_gmc_set_agp_default(adev, mc);
 	amdgpu_gmc_vram_location(adev, mc, base);
-	amdgpu_gmc_gart_location(adev, mc, AMDGPU_GART_PLACEMENT_BEST_FIT);
+	amdgpu_gmc_gart_location(adev, mc);
 }
 
 static void gmc_v6_0_mc_program(struct amdgpu_device *adev)
@@ -254,8 +253,8 @@ static void gmc_v6_0_mc_program(struct amdgpu_device *adev)
 	WREG32(mmMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR,
 	       adev->mem_scratch.gpu_addr >> 12);
 	WREG32(mmMC_VM_AGP_BASE, 0);
-	WREG32(mmMC_VM_AGP_TOP, adev->gmc.agp_end >> 22);
-	WREG32(mmMC_VM_AGP_BOT, adev->gmc.agp_start >> 22);
+	WREG32(mmMC_VM_AGP_TOP, 0x0FFFFFFF);
+	WREG32(mmMC_VM_AGP_BOT, 0x0FFFFFFF);
 
 	if (gmc_v6_0_wait_for_idle((void *)adev))
 		dev_warn(adev->dev, "Wait for MC idle timedout !\n");
@@ -435,10 +434,9 @@ static void gmc_v6_0_set_prt(struct amdgpu_device *adev, bool enable)
 	WREG32(mmVM_PRT_CNTL, tmp);
 
 	if (enable) {
-		uint32_t low = AMDGPU_VA_RESERVED_BOTTOM >>
-			AMDGPU_GPU_PAGE_SHIFT;
+		uint32_t low = AMDGPU_VA_RESERVED_SIZE >> AMDGPU_GPU_PAGE_SHIFT;
 		uint32_t high = adev->vm_manager.max_pfn -
-			(AMDGPU_VA_RESERVED_TOP >> AMDGPU_GPU_PAGE_SHIFT);
+			(AMDGPU_VA_RESERVED_SIZE >> AMDGPU_GPU_PAGE_SHIFT);
 
 		WREG32(mmVM_PRT_APERTURE0_LOW_ADDR, low);
 		WREG32(mmVM_PRT_APERTURE1_LOW_ADDR, low);
@@ -1115,8 +1113,6 @@ static const struct amd_ip_funcs gmc_v6_0_ip_funcs = {
 	.soft_reset = gmc_v6_0_soft_reset,
 	.set_clockgating_state = gmc_v6_0_set_clockgating_state,
 	.set_powergating_state = gmc_v6_0_set_powergating_state,
-	.dump_ip_state = NULL,
-	.print_ip_state = NULL,
 };
 
 static const struct amdgpu_gmc_funcs gmc_v6_0_gmc_funcs = {

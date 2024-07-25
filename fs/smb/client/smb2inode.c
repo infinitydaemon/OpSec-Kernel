@@ -26,6 +26,18 @@
 #include "cached_dir.h"
 #include "smb2status.h"
 
+static inline __u32 file_create_options(struct dentry *dentry)
+{
+	struct cifsInodeInfo *ci;
+
+	if (dentry) {
+		ci = CIFS_I(d_inode(dentry));
+		if (ci->cifsAttrs & ATTR_REPARSE)
+			return OPEN_REPARSE_POINT;
+	}
+	return 0;
+}
+
 static struct reparse_data_buffer *reparse_buf_ptr(struct kvec *iov)
 {
 	struct reparse_data_buffer *buf;
@@ -42,18 +54,6 @@ static struct reparse_data_buffer *reparse_buf_ptr(struct kvec *iov)
 	if (count < len || count < le16_to_cpu(buf->ReparseDataLength) + len)
 		return ERR_PTR(-EIO);
 	return buf;
-}
-
-static inline __u32 file_create_options(struct dentry *dentry)
-{
-	struct cifsInodeInfo *ci;
-
-	if (dentry) {
-		ci = CIFS_I(d_inode(dentry));
-		if (ci->cifsAttrs & ATTR_REPARSE)
-			return OPEN_REPARSE_POINT;
-	}
-	return 0;
 }
 
 /* Parse owner and group from SMB3.1.1 POSIX query info */

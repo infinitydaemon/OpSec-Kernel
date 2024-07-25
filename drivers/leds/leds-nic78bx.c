@@ -118,15 +118,6 @@ static struct nic78bx_led nic78bx_leds[] = {
 	}
 };
 
-static void lock_led_reg_action(void *data)
-{
-	struct nic78bx_led_data *led_data = data;
-
-	/* Lock LED register */
-	outb(NIC78BX_LOCK_VALUE,
-	     led_data->io_base + NIC78BX_LOCK_REG_OFFSET);
-}
-
 static int nic78bx_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -161,10 +152,6 @@ static int nic78bx_probe(struct platform_device *pdev)
 	led_data->io_base = io_rc->start;
 	spin_lock_init(&led_data->lock);
 
-	ret = devm_add_action(dev, lock_led_reg_action, led_data);
-	if (ret)
-		return ret;
-
 	for (i = 0; i < ARRAY_SIZE(nic78bx_leds); i++) {
 		nic78bx_leds[i].data = led_data;
 
@@ -180,6 +167,17 @@ static int nic78bx_probe(struct platform_device *pdev)
 	return ret;
 }
 
+static int nic78bx_remove(struct platform_device *pdev)
+{
+	struct nic78bx_led_data *led_data = platform_get_drvdata(pdev);
+
+	/* Lock LED register */
+	outb(NIC78BX_LOCK_VALUE,
+	     led_data->io_base + NIC78BX_LOCK_REG_OFFSET);
+
+	return 0;
+}
+
 static const struct acpi_device_id led_device_ids[] = {
 	{"NIC78B3", 0},
 	{"", 0},
@@ -188,6 +186,7 @@ MODULE_DEVICE_TABLE(acpi, led_device_ids);
 
 static struct platform_driver led_driver = {
 	.probe = nic78bx_probe,
+	.remove = nic78bx_remove,
 	.driver = {
 		.name = KBUILD_MODNAME,
 		.acpi_match_table = ACPI_PTR(led_device_ids),

@@ -7509,7 +7509,7 @@ fallback:
  */
 static int hpsa_interrupt_mode(struct ctlr_info *h)
 {
-	unsigned int flags = PCI_IRQ_INTX;
+	unsigned int flags = PCI_IRQ_LEGACY;
 	int ret;
 
 	/* Some boards advertise MSI but don't really support it */

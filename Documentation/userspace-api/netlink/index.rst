@@ -16,6 +16,4 @@ Netlink documentation for users.
    genetlink-legacy
    netlink-raw
 
-See also:
- - :ref:`Documentation/core-api/netlink.rst <kernel_netlink>`
- - :ref:`Documentation/networking/netlink_spec/index.rst <specs>`
+See also :ref:`Documentation/core-api/netlink.rst <kernel_netlink>`.

@@ -6,7 +6,6 @@
 #include <linux/extable.h>
 #include <linux/slab.h>
 #include <linux/stop_machine.h>
-#include <linux/vmalloc.h>
 #include <asm/ptrace.h>
 #include <linux/uaccess.h>
 #include <asm/sections.h>
@@ -104,6 +103,16 @@ int __kprobes arch_prepare_kprobe(struct kprobe *p)
 
 	return 0;
 }
+
+#ifdef CONFIG_MMU
+void *alloc_insn_page(void)
+{
+	return  __vmalloc_node_range(PAGE_SIZE, 1, VMALLOC_START, VMALLOC_END,
+				     GFP_KERNEL, PAGE_KERNEL_READ_EXEC,
+				     VM_FLUSH_RESET_PERMS, NUMA_NO_NODE,
+				     __builtin_return_address(0));
+}
+#endif
 
 /* install breakpoint in text */
 void __kprobes arch_arm_kprobe(struct kprobe *p)

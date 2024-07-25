@@ -411,8 +411,7 @@ static void cirrus_primary_plane_helper_atomic_update(struct drm_plane *plane,
 		unsigned int offset = drm_fb_clip_offset(pitch, format, &damage);
 		struct iosys_map dst = IOSYS_MAP_INIT_OFFSET(&vaddr, offset);
 
-		drm_fb_blit(&dst, &pitch, format->format, shadow_plane_state->data, fb,
-			    &damage, &shadow_plane_state->fmtcnv_state);
+		drm_fb_blit(&dst, &pitch, format->format, shadow_plane_state->data, fb, &damage);
 	}
 
 	drm_dev_exit(idx);
@@ -728,11 +727,6 @@ static void cirrus_pci_remove(struct pci_dev *pdev)
 	drm_atomic_helper_shutdown(dev);
 }
 
-static void cirrus_pci_shutdown(struct pci_dev *pdev)
-{
-	drm_atomic_helper_shutdown(pci_get_drvdata(pdev));
-}
-
 static const struct pci_device_id pciidlist[] = {
 	{
 		.vendor    = PCI_VENDOR_ID_CIRRUS,
@@ -754,7 +748,6 @@ static struct pci_driver cirrus_pci_driver = {
 	.id_table = pciidlist,
 	.probe = cirrus_pci_probe,
 	.remove = cirrus_pci_remove,
-	.shutdown = cirrus_pci_shutdown,
 };
 
 drm_module_pci_driver(cirrus_pci_driver)

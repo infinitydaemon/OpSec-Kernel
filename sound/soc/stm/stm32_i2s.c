@@ -1024,6 +1024,7 @@ static int stm32_i2s_parse_dt(struct platform_device *pdev,
 			      struct stm32_i2s_data *i2s)
 {
 	struct device_node *np = pdev->dev.of_node;
+	const struct of_device_id *of_id;
 	struct reset_control *rst;
 	struct resource *res;
 	int irq, ret;
@@ -1031,8 +1032,10 @@ static int stm32_i2s_parse_dt(struct platform_device *pdev,
 	if (!np)
 		return -ENODEV;
 
-	i2s->regmap_conf = device_get_match_data(&pdev->dev);
-	if (!i2s->regmap_conf)
+	of_id = of_match_device(stm32_i2s_ids, &pdev->dev);
+	if (of_id)
+		i2s->regmap_conf = (const struct regmap_config *)of_id->data;
+	else
 		return -EINVAL;
 
 	i2s->base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);

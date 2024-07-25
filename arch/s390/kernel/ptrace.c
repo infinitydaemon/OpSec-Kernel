@@ -24,14 +24,12 @@
 #include <linux/seccomp.h>
 #include <linux/compat.h>
 #include <trace/syscall.h>
-#include <asm/guarded_storage.h>
-#include <asm/access-regs.h>
 #include <asm/page.h>
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
+#include <asm/switch_to.h>
 #include <asm/runtime_instr.h>
 #include <asm/facility.h>
-#include <asm/fpu.h>
 
 #include "entry.h"
 
@@ -43,20 +41,13 @@ void update_cr_regs(struct task_struct *task)
 {
 	struct pt_regs *regs = task_pt_regs(task);
 	struct thread_struct *thread = &task->thread;
+	struct per_regs old, new;
 	union ctlreg0 cr0_old, cr0_new;
 	union ctlreg2 cr2_old, cr2_new;
 	int cr0_changed, cr2_changed;
-	union {
-		struct ctlreg regs[3];
-		struct {
-			struct ctlreg control;
-			struct ctlreg start;
-			struct ctlreg end;
-		};
-	} old, new;
 
-	local_ctl_store(0, &cr0_old.reg);
-	local_ctl_store(2, &cr2_old.reg);
+	__ctl_store(cr0_old.val, 0, 0);
+	__ctl_store(cr2_old.val, 2, 2);
 	cr0_new = cr0_old;
 	cr2_new = cr2_old;
 	/* Take care of the enable/disable of transactional execution. */
@@ -84,38 +75,38 @@ void update_cr_regs(struct task_struct *task)
 	cr0_changed = cr0_new.val != cr0_old.val;
 	cr2_changed = cr2_new.val != cr2_old.val;
 	if (cr0_changed)
-		local_ctl_load(0, &cr0_new.reg);
+		__ctl_load(cr0_new.val, 0, 0);
 	if (cr2_changed)
-		local_ctl_load(2, &cr2_new.reg);
+		__ctl_load(cr2_new.val, 2, 2);
 	/* Copy user specified PER registers */
-	new.control.val = thread->per_user.control;
-	new.start.val = thread->per_user.start;
-	new.end.val = thread->per_user.end;
+	new.control = thread->per_user.control;
+	new.start = thread->per_user.start;
+	new.end = thread->per_user.end;
 
 	/* merge TIF_SINGLE_STEP into user specified PER registers. */
 	if (test_tsk_thread_flag(task, TIF_SINGLE_STEP) ||
 	    test_tsk_thread_flag(task, TIF_UPROBE_SINGLESTEP)) {
 		if (test_tsk_thread_flag(task, TIF_BLOCK_STEP))
-			new.control.val |= PER_EVENT_BRANCH;
+			new.control |= PER_EVENT_BRANCH;
 		else
-			new.control.val |= PER_EVENT_IFETCH;
-		new.control.val |= PER_CONTROL_SUSPENSION;
-		new.control.val |= PER_EVENT_TRANSACTION_END;
+			new.control |= PER_EVENT_IFETCH;
+		new.control |= PER_CONTROL_SUSPENSION;
+		new.control |= PER_EVENT_TRANSACTION_END;
 		if (test_tsk_thread_flag(task, TIF_UPROBE_SINGLESTEP))
-			new.control.val |= PER_EVENT_IFETCH;
-		new.start.val = 0;
-		new.end.val = -1UL;
+			new.control |= PER_EVENT_IFETCH;
+		new.start = 0;
+		new.end = -1UL;
 	}
 
 	/* Take care of the PER enablement bit in the PSW. */
-	if (!(new.control.val & PER_EVENT_MASK)) {
+	if (!(new.control & PER_EVENT_MASK)) {
 		regs->psw.mask &= ~PSW_MASK_PER;
 		return;
 	}
 	regs->psw.mask |= PSW_MASK_PER;
-	__local_ctl_store(9, 11, old.regs);
+	__ctl_store(old, 9, 11);
 	if (memcmp(&new, &old, sizeof(struct per_regs)) != 0)
-		__local_ctl_load(9, 11, new.regs);
+		__ctl_load(new, 9, 11);
 }
 
 void user_enable_single_step(struct task_struct *task)
@@ -247,15 +238,22 @@ static unsigned long __peek_user(struct task_struct *child, addr_t addr)
 		/*
 		 * floating point control reg. is in the thread structure
 		 */
-		tmp = child->thread.ufpu.fpc;
+		tmp = child->thread.fpu.fpc;
 		tmp <<= BITS_PER_LONG - 32;
 
 	} else if (addr < offsetof(struct user, regs.fp_regs) + sizeof(s390_fp_regs)) {
 		/*
-		 * floating point regs. are in the child->thread.ufpu.vxrs array
+		 * floating point regs. are either in child->thread.fpu
+		 * or the child->thread.fpu.vxrs array
 		 */
 		offset = addr - offsetof(struct user, regs.fp_regs.fprs);
-		tmp = *(addr_t *)((addr_t)child->thread.ufpu.vxrs + 2 * offset);
+		if (MACHINE_HAS_VX)
+			tmp = *(addr_t *)
+			       ((addr_t) child->thread.fpu.vxrs + 2*offset);
+		else
+			tmp = *(addr_t *)
+			       ((addr_t) child->thread.fpu.fprs + offset);
+
 	} else if (addr < offsetof(struct user, regs.per_info) + sizeof(per_struct)) {
 		/*
 		 * Handle access to the per_info structure.
@@ -387,16 +385,25 @@ static int __poke_user(struct task_struct *child, addr_t addr, addr_t data)
 		/*
 		 * floating point control reg. is in the thread structure
 		 */
-		if ((unsigned int)data != 0)
+		save_fpu_regs();
+		if ((unsigned int) data != 0 ||
+		    test_fp_ctl(data >> (BITS_PER_LONG - 32)))
 			return -EINVAL;
-		child->thread.ufpu.fpc = data >> (BITS_PER_LONG - 32);
+		child->thread.fpu.fpc = data >> (BITS_PER_LONG - 32);
 
 	} else if (addr < offsetof(struct user, regs.fp_regs) + sizeof(s390_fp_regs)) {
 		/*
-		 * floating point regs. are in the child->thread.ufpu.vxrs array
+		 * floating point regs. are either in child->thread.fpu
+		 * or the child->thread.fpu.vxrs array
 		 */
 		offset = addr - offsetof(struct user, regs.fp_regs.fprs);
-		*(addr_t *)((addr_t)child->thread.ufpu.vxrs + 2 * offset) = data;
+		if (MACHINE_HAS_VX)
+			*(addr_t *)((addr_t)
+				child->thread.fpu.vxrs + 2*offset) = data;
+		else
+			*(addr_t *)((addr_t)
+				child->thread.fpu.fprs + offset) = data;
+
 	} else if (addr < offsetof(struct user, regs.per_info) + sizeof(per_struct)) {
 		/*
 		 * Handle access to the per_info structure.
@@ -609,14 +616,21 @@ static u32 __peek_user_compat(struct task_struct *child, addr_t addr)
 		/*
 		 * floating point control reg. is in the thread structure
 		 */
-		tmp = child->thread.ufpu.fpc;
+		tmp = child->thread.fpu.fpc;
 
 	} else if (addr < offsetof(struct compat_user, regs.fp_regs) + sizeof(s390_fp_regs)) {
 		/*
-		 * floating point regs. are in the child->thread.ufpu.vxrs array
+		 * floating point regs. are either in child->thread.fpu
+		 * or the child->thread.fpu.vxrs array
 		 */
 		offset = addr - offsetof(struct compat_user, regs.fp_regs.fprs);
-		tmp = *(__u32 *)((addr_t)child->thread.ufpu.vxrs + 2 * offset);
+		if (MACHINE_HAS_VX)
+			tmp = *(__u32 *)
+			       ((addr_t) child->thread.fpu.vxrs + 2*offset);
+		else
+			tmp = *(__u32 *)
+			       ((addr_t) child->thread.fpu.fprs + offset);
+
 	} else if (addr < offsetof(struct compat_user, regs.per_info) + sizeof(struct compat_per_struct_kernel)) {
 		/*
 		 * Handle access to the per_info structure.
@@ -728,14 +742,24 @@ static int __poke_user_compat(struct task_struct *child,
 		/*
 		 * floating point control reg. is in the thread structure
 		 */
-		child->thread.ufpu.fpc = data;
+		save_fpu_regs();
+		if (test_fp_ctl(tmp))
+			return -EINVAL;
+		child->thread.fpu.fpc = data;
 
 	} else if (addr < offsetof(struct compat_user, regs.fp_regs) + sizeof(s390_fp_regs)) {
 		/*
-		 * floating point regs. are in the child->thread.ufpu.vxrs array
+		 * floating point regs. are either in child->thread.fpu
+		 * or the child->thread.fpu.vxrs array
 		 */
 		offset = addr - offsetof(struct compat_user, regs.fp_regs.fprs);
-		*(__u32 *)((addr_t)child->thread.ufpu.vxrs + 2 * offset) = tmp;
+		if (MACHINE_HAS_VX)
+			*(__u32 *)((addr_t)
+				child->thread.fpu.vxrs + 2*offset) = tmp;
+		else
+			*(__u32 *)((addr_t)
+				child->thread.fpu.fprs + offset) = tmp;
+
 	} else if (addr < offsetof(struct compat_user, regs.per_info) + sizeof(struct compat_per_struct_kernel)) {
 		/*
 		 * Handle access to the per_info structure.
@@ -866,10 +890,10 @@ static int s390_fpregs_get(struct task_struct *target,
 	_s390_fp_regs fp_regs;
 
 	if (target == current)
-		save_user_fpu_regs();
+		save_fpu_regs();
 
-	fp_regs.fpc = target->thread.ufpu.fpc;
-	fpregs_store(&fp_regs, &target->thread.ufpu);
+	fp_regs.fpc = target->thread.fpu.fpc;
+	fpregs_store(&fp_regs, &target->thread.fpu);
 
 	return membuf_write(&to, &fp_regs, sizeof(fp_regs));
 }
@@ -882,18 +906,22 @@ static int s390_fpregs_set(struct task_struct *target,
 	int rc = 0;
 	freg_t fprs[__NUM_FPRS];
 
-	if (target == current)
-		save_user_fpu_regs();
-	convert_vx_to_fp(fprs, target->thread.ufpu.vxrs);
+	save_fpu_regs();
+	if (MACHINE_HAS_VX)
+		convert_vx_to_fp(fprs, target->thread.fpu.vxrs);
+	else
+		memcpy(&fprs, target->thread.fpu.fprs, sizeof(fprs));
+
+	/* If setting FPC, must validate it first. */
 	if (count > 0 && pos < offsetof(s390_fp_regs, fprs)) {
-		u32 ufpc[2] = { target->thread.ufpu.fpc, 0 };
+		u32 ufpc[2] = { target->thread.fpu.fpc, 0 };
 		rc = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &ufpc,
 					0, offsetof(s390_fp_regs, fprs));
 		if (rc)
 			return rc;
-		if (ufpc[1] != 0)
+		if (ufpc[1] != 0 || test_fp_ctl(ufpc[0]))
 			return -EINVAL;
-		target->thread.ufpu.fpc = ufpc[0];
+		target->thread.fpu.fpc = ufpc[0];
 	}
 
 	if (rc == 0 && count > 0)
@@ -901,7 +929,12 @@ static int s390_fpregs_set(struct task_struct *target,
 					fprs, offsetof(s390_fp_regs, fprs), -1);
 	if (rc)
 		return rc;
-	convert_fp_to_vx(target->thread.ufpu.vxrs, fprs);
+
+	if (MACHINE_HAS_VX)
+		convert_fp_to_vx(target->thread.fpu.vxrs, fprs);
+	else
+		memcpy(target->thread.fpu.fprs, &fprs, sizeof(fprs));
+
 	return rc;
 }
 
@@ -948,12 +981,12 @@ static int s390_vxrs_low_get(struct task_struct *target,
 	__u64 vxrs[__NUM_VXRS_LOW];
 	int i;
 
-	if (!cpu_has_vx())
+	if (!MACHINE_HAS_VX)
 		return -ENODEV;
 	if (target == current)
-		save_user_fpu_regs();
+		save_fpu_regs();
 	for (i = 0; i < __NUM_VXRS_LOW; i++)
-		vxrs[i] = target->thread.ufpu.vxrs[i].low;
+		vxrs[i] = target->thread.fpu.vxrs[i].low;
 	return membuf_write(&to, vxrs, sizeof(vxrs));
 }
 
@@ -965,18 +998,18 @@ static int s390_vxrs_low_set(struct task_struct *target,
 	__u64 vxrs[__NUM_VXRS_LOW];
 	int i, rc;
 
-	if (!cpu_has_vx())
+	if (!MACHINE_HAS_VX)
 		return -ENODEV;
 	if (target == current)
-		save_user_fpu_regs();
+		save_fpu_regs();
 
 	for (i = 0; i < __NUM_VXRS_LOW; i++)
-		vxrs[i] = target->thread.ufpu.vxrs[i].low;
+		vxrs[i] = target->thread.fpu.vxrs[i].low;
 
 	rc = user_regset_copyin(&pos, &count, &kbuf, &ubuf, vxrs, 0, -1);
 	if (rc == 0)
 		for (i = 0; i < __NUM_VXRS_LOW; i++)
-			target->thread.ufpu.vxrs[i].low = vxrs[i];
+			target->thread.fpu.vxrs[i].low = vxrs[i];
 
 	return rc;
 }
@@ -985,11 +1018,11 @@ static int s390_vxrs_high_get(struct task_struct *target,
 			      const struct user_regset *regset,
 			      struct membuf to)
 {
-	if (!cpu_has_vx())
+	if (!MACHINE_HAS_VX)
 		return -ENODEV;
 	if (target == current)
-		save_user_fpu_regs();
-	return membuf_write(&to, target->thread.ufpu.vxrs + __NUM_VXRS_LOW,
+		save_fpu_regs();
+	return membuf_write(&to, target->thread.fpu.vxrs + __NUM_VXRS_LOW,
 			    __NUM_VXRS_HIGH * sizeof(__vector128));
 }
 
@@ -1000,13 +1033,13 @@ static int s390_vxrs_high_set(struct task_struct *target,
 {
 	int rc;
 
-	if (!cpu_has_vx())
+	if (!MACHINE_HAS_VX)
 		return -ENODEV;
 	if (target == current)
-		save_user_fpu_regs();
+		save_fpu_regs();
 
 	rc = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
-				target->thread.ufpu.vxrs + __NUM_VXRS_LOW, 0, -1);
+				target->thread.fpu.vxrs + __NUM_VXRS_LOW, 0, -1);
 	return rc;
 }
 
@@ -1074,7 +1107,7 @@ static int s390_gs_cb_set(struct task_struct *target,
 		target->thread.gs_cb = data;
 	*target->thread.gs_cb = gs_cb;
 	if (target == current) {
-		local_ctl_set_bit(2, CR2_GUARDED_STORAGE_BIT);
+		__ctl_set_bit(2, 4);
 		restore_gs_cb(target->thread.gs_cb);
 	}
 	preempt_enable();

@@ -137,6 +137,17 @@ struct ctl_table {
 	void *data;
 	int maxlen;
 	umode_t mode;
+	/**
+	 * enum type - Enumeration to differentiate between ctl target types
+	 * @SYSCTL_TABLE_TYPE_DEFAULT: ctl target with no special considerations
+	 * @SYSCTL_TABLE_TYPE_PERMANENTLY_EMPTY: Used to identify a permanently
+	 *                                       empty directory target to serve
+	 *                                       as mount point.
+	 */
+	enum {
+		SYSCTL_TABLE_TYPE_DEFAULT,
+		SYSCTL_TABLE_TYPE_PERMANENTLY_EMPTY
+	} type;
 	proc_handler *proc_handler;	/* Callback for text formatting */
 	struct ctl_table_poll *poll;
 	void *extra1;
@@ -171,23 +182,12 @@ struct ctl_table_header {
 		struct rcu_head rcu;
 	};
 	struct completion *unregistering;
-	const struct ctl_table *ctl_table_arg;
+	struct ctl_table *ctl_table_arg;
 	struct ctl_table_root *root;
 	struct ctl_table_set *set;
 	struct ctl_dir *parent;
 	struct ctl_node *node;
 	struct hlist_head inodes; /* head for proc_inode->sysctl_inodes */
-	/**
-	 * enum type - Enumeration to differentiate between ctl target types
-	 * @SYSCTL_TABLE_TYPE_DEFAULT: ctl target with no special considerations
-	 * @SYSCTL_TABLE_TYPE_PERMANENTLY_EMPTY: Used to identify a permanently
-	 *                                       empty directory target to serve
-	 *                                       as mount point.
-	 */
-	enum {
-		SYSCTL_TABLE_TYPE_DEFAULT,
-		SYSCTL_TABLE_TYPE_PERMANENTLY_EMPTY,
-	} type;
 };
 
 struct ctl_dir {
@@ -205,8 +205,14 @@ struct ctl_table_root {
 	struct ctl_table_set default_set;
 	struct ctl_table_set *(*lookup)(struct ctl_table_root *root);
 	void (*set_ownership)(struct ctl_table_header *head,
+			      struct ctl_table *table,
 			      kuid_t *uid, kgid_t *gid);
-	int (*permissions)(struct ctl_table_header *head, const struct ctl_table *table);
+	int (*permissions)(struct ctl_table_header *head, struct ctl_table *table);
+};
+
+/* struct ctl_path describes where in the hierarchy a table is added */
+struct ctl_path {
+	const char *procname;
 };
 
 #define register_sysctl(path, table)	\
@@ -248,6 +254,8 @@ extern int pwrsw_enabled;
 extern int unaligned_enabled;
 extern int unaligned_dump_stack;
 extern int no_unaligned_warning;
+
+#define SYSCTL_PERM_EMPTY_DIR	(1 << 0)
 
 #else /* CONFIG_SYSCTL */
 

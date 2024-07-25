@@ -513,8 +513,10 @@ static int si2165_upload_firmware(struct si2165_state *state)
 	ret = 0;
 	state->firmware_loaded = true;
 error:
-	release_firmware(fw);
-	fw = NULL;
+	if (fw) {
+		release_firmware(fw);
+		fw = NULL;
+	}
 
 	return ret;
 }

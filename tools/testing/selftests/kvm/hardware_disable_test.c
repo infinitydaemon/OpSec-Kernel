@@ -4,6 +4,9 @@
  * kvm_arch_hardware_disable is called and it attempts to unregister the user
  * return notifiers.
  */
+
+#define _GNU_SOURCE
+
 #include <fcntl.h>
 #include <pthread.h>
 #include <semaphore.h>
@@ -38,7 +41,7 @@ static void *run_vcpu(void *arg)
 
 	vcpu_run(vcpu);
 
-	TEST_ASSERT(false, "%s: exited with reason %d: %s",
+	TEST_ASSERT(false, "%s: exited with reason %d: %s\n",
 		    __func__, run->exit_reason,
 		    exit_reason_str(run->exit_reason));
 	pthread_exit(NULL);
@@ -52,7 +55,7 @@ static void *sleeping_thread(void *arg)
 		fd = open("/dev/null", O_RDWR);
 		close(fd);
 	}
-	TEST_ASSERT(false, "%s: exited", __func__);
+	TEST_ASSERT(false, "%s: exited\n", __func__);
 	pthread_exit(NULL);
 }
 
@@ -115,7 +118,7 @@ static void run_test(uint32_t run)
 	for (i = 0; i < VCPU_NUM; ++i)
 		check_join(threads[i], &b);
 	/* Should not be reached */
-	TEST_ASSERT(false, "%s: [%d] child escaped the ninja", __func__, run);
+	TEST_ASSERT(false, "%s: [%d] child escaped the ninja\n", __func__, run);
 }
 
 void wait_for_child_setup(pid_t pid)

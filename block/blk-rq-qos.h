@@ -118,7 +118,7 @@ static inline void rq_qos_cleanup(struct request_queue *q, struct bio *bio)
 
 static inline void rq_qos_done(struct request_queue *q, struct request *rq)
 {
-	if (q->rq_qos && !blk_rq_is_passthrough(rq))
+	if (q->rq_qos)
 		__rq_qos_done(q->rq_qos, rq);
 }
 

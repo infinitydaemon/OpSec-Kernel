@@ -2212,7 +2212,7 @@ static void brcmf_pcie_setup(struct device *dev, int ret,
 
 	init_waitqueue_head(&devinfo->mbdata_resp_wait);
 
-	ret = brcmf_attach(&devinfo->pdev->dev);
+	ret = brcmf_attach(&devinfo->pdev->dev, true);
 	if (ret)
 		goto fail;
 
@@ -2712,6 +2712,7 @@ MODULE_DEVICE_TABLE(pci, brcmf_pcie_devid_table);
 
 
 static struct pci_driver brcmf_pciedrvr = {
+	.node = {},
 	.name = KBUILD_MODNAME,
 	.id_table = brcmf_pcie_devid_table,
 	.probe = brcmf_pcie_probe,

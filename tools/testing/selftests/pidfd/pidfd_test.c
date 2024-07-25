@@ -572,5 +572,5 @@ int main(int argc, char **argv)
 	test_pidfd_send_signal_exited_fail();
 	test_pidfd_send_signal_recycled_pid_fail();
 
-	ksft_exit_pass();
+	return ksft_exit_pass();
 }

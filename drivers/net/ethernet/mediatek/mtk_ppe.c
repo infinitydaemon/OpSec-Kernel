@@ -425,8 +425,7 @@ int mtk_foe_entry_set_pppoe(struct mtk_eth *eth, struct mtk_foe_entry *entry,
 }
 
 int mtk_foe_entry_set_wdma(struct mtk_eth *eth, struct mtk_foe_entry *entry,
-			   int wdma_idx, int txq, int bss, int wcid,
-			   bool amsdu_en)
+			   int wdma_idx, int txq, int bss, int wcid)
 {
 	struct mtk_foe_mac_info *l2 = mtk_foe_entry_l2(eth, entry);
 	u32 *ib2 = mtk_foe_entry_ib2(eth, entry);
@@ -438,7 +437,6 @@ int mtk_foe_entry_set_wdma(struct mtk_eth *eth, struct mtk_foe_entry *entry,
 			 MTK_FOE_IB2_WDMA_WINFO_V2;
 		l2->w3info = FIELD_PREP(MTK_FOE_WINFO_WCID_V3, wcid) |
 			     FIELD_PREP(MTK_FOE_WINFO_BSS_V3, bss);
-		l2->amsdu = FIELD_PREP(MTK_FOE_WINFO_AMSDU_EN, amsdu_en);
 		break;
 	case 2:
 		*ib2 &= ~MTK_FOE_IB2_PORT_MG_V2;
@@ -580,7 +578,7 @@ mtk_flow_entry_update_l2(struct mtk_ppe *ppe, struct mtk_flow_entry *entry)
 
 		idle = cur_idle;
 		entry->data.ib1 &= ~ib1_ts_mask;
-		entry->data.ib1 |= ib1 & ib1_ts_mask;
+		entry->data.ib1 |= hwe->ib1 & ib1_ts_mask;
 	}
 }
 

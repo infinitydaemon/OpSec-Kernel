@@ -41,20 +41,15 @@ enum {
 };
 
 /* Values for tty->flow_change */
-enum tty_flow_change {
-	TTY_FLOW_NO_CHANGE,
-	TTY_THROTTLE_SAFE,
-	TTY_UNTHROTTLE_SAFE,
-};
+#define TTY_THROTTLE_SAFE	1
+#define TTY_UNTHROTTLE_SAFE	2
 
-static inline void __tty_set_flow_change(struct tty_struct *tty,
-					 enum tty_flow_change val)
+static inline void __tty_set_flow_change(struct tty_struct *tty, int val)
 {
 	tty->flow_change = val;
 }
 
-static inline void tty_set_flow_change(struct tty_struct *tty,
-				       enum tty_flow_change val)
+static inline void tty_set_flow_change(struct tty_struct *tty, int val)
 {
 	tty->flow_change = val;
 	smp_mb();

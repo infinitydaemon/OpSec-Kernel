@@ -13,9 +13,6 @@
 #include "protocols.h"
 #include "notify.h"
 
-/* Updated only after ALL the mandatory features for that version are merged */
-#define SCMI_PROTOCOL_SUPPORTED_VERSION		0x20000
-
 #define SCMI_SYSTEM_NUM_SOURCES		1
 
 enum scmi_system_protocol_cmd {
@@ -36,19 +33,7 @@ struct scmi_system_power_state_notifier_payld {
 struct scmi_system_info {
 	u32 version;
 	bool graceful_timeout_supported;
-	bool power_state_notify_cmd;
 };
-
-static bool scmi_system_notify_supported(const struct scmi_protocol_handle *ph,
-					 u8 evt_id, u32 src_id)
-{
-	struct scmi_system_info *pinfo = ph->get_priv(ph);
-
-	if (evt_id != SCMI_EVENT_SYSTEM_POWER_STATE_NOTIFIER)
-		return false;
-
-	return pinfo->power_state_notify_cmd;
-}
 
 static int scmi_system_request_notify(const struct scmi_protocol_handle *ph,
 				      bool enable)
@@ -126,7 +111,6 @@ static const struct scmi_event system_events[] = {
 };
 
 static const struct scmi_event_ops system_event_ops = {
-	.is_notify_supported = scmi_system_notify_supported,
 	.set_notify_enabled = scmi_system_set_notify_enabled,
 	.fill_custom_report = scmi_system_fill_custom_report,
 };
@@ -160,10 +144,7 @@ static int scmi_system_protocol_init(const struct scmi_protocol_handle *ph)
 	if (PROTOCOL_REV_MAJOR(pinfo->version) >= 0x2)
 		pinfo->graceful_timeout_supported = true;
 
-	if (!ph->hops->protocol_msg_check(ph, SYSTEM_POWER_STATE_NOTIFY, NULL))
-		pinfo->power_state_notify_cmd = true;
-
-	return ph->set_priv(ph, pinfo, version);
+	return ph->set_priv(ph, pinfo);
 }
 
 static const struct scmi_protocol scmi_system = {
@@ -172,7 +153,6 @@ static const struct scmi_protocol scmi_system = {
 	.instance_init = &scmi_system_protocol_init,
 	.ops = NULL,
 	.events = &system_protocol_events,
-	.supported_version = SCMI_PROTOCOL_SUPPORTED_VERSION,
 };
 
 DEFINE_SCMI_PROTOCOL_REGISTER_UNREGISTER(system, scmi_system)

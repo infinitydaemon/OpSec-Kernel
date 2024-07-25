@@ -244,7 +244,6 @@ l4_test()
 l5_test()
 {
 	tests=$(find $(dirname "$test") -type f -name "*.mk")
-	[[ -z "${tests// }" ]] && return
 	test_libs=$(grep "^IOURING_EXTRA_LIBS +\?=" $tests | \
 			cut -d "=" -f 2)
 

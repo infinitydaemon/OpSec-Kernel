@@ -11,9 +11,7 @@
 #include <strings.h>
 #include <stdlib.h>
 
-#include "list.h"
 #include "lkc.h"
-#include "mnconf-common.h"
 #include "nconf.h"
 #include <ctype.h>
 
@@ -218,7 +216,7 @@ search_help[] =
 "Symbol: FOO [ = m]\n"
 "Prompt: Foo bus is used to drive the bar HW\n"
 "Defined at drivers/pci/Kconfig:47\n"
-"Depends on: X86_LOCAL_APIC && X86_IO_APIC\n"
+"Depends on: X86_LOCAL_APIC && X86_IO_APIC || IA64\n"
 "Location:\n"
 "  -> Bus options (PCI, PCMCIA, EISA, ISA)\n"
 "    -> PCI support (PCI [ = y])\n"
@@ -281,6 +279,7 @@ static const char *current_instructions = menu_instructions;
 
 static char *dialog_input_result;
 static int dialog_input_result_len;
+static int jump_key_char;
 
 static void selected_conf(struct menu *menu, struct menu *active_menu);
 static void conf(struct menu *menu);
@@ -692,6 +691,57 @@ static int do_exit(void)
 	return 0;
 }
 
+struct search_data {
+	struct list_head *head;
+	struct menu *target;
+};
+
+static int next_jump_key(int key)
+{
+	if (key < '1' || key > '9')
+		return '1';
+
+	key++;
+
+	if (key > '9')
+		key = '1';
+
+	return key;
+}
+
+static int handle_search_keys(int key, size_t start, size_t end, void *_data)
+{
+	struct search_data *data = _data;
+	struct jump_key *pos;
+	int index = 0;
+
+	if (key < '1' || key > '9')
+		return 0;
+
+	list_for_each_entry(pos, data->head, entries) {
+		index = next_jump_key(index);
+
+		if (pos->offset < start)
+			continue;
+
+		if (pos->offset >= end)
+			break;
+
+		if (key == index) {
+			data->target = pos->target;
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+int get_jump_key_char(void)
+{
+	jump_key_char = next_jump_key(jump_key_char);
+
+	return jump_key_char;
+}
 
 static void search_conf(void)
 {
@@ -826,18 +876,26 @@ static void build_conf(struct menu *menu)
 
 		val = sym_get_tristate_value(sym);
 		if (sym_is_changeable(sym)) {
-			switch (val) {
-			case yes:
-				ch = '*';
+			switch (type) {
+			case S_BOOLEAN:
+				item_make(menu, 't', "[%c]",
+						val == no ? ' ' : '*');
 				break;
-			case mod:
-				ch = 'M';
-				break;
-			default:
-				ch = ' ';
+			case S_TRISTATE:
+				switch (val) {
+				case yes:
+					ch = '*';
+					break;
+				case mod:
+					ch = 'M';
+					break;
+				default:
+					ch = ' ';
+					break;
+				}
+				item_make(menu, 't', "<%c>", ch);
 				break;
 			}
-			item_make(menu, 't', "<%c>", ch);
 		} else {
 			item_make(menu, def_menu ? 't' : ':', "   ");
 		}
@@ -845,8 +903,16 @@ static void build_conf(struct menu *menu)
 		item_add_str("%*c%s", indent + 1,
 				' ', menu_get_prompt(menu));
 		if (val == yes) {
-			if (def_menu)
-				item_add_str(" (%s)  --->", menu_get_prompt(def_menu));
+			if (def_menu) {
+				item_add_str(" (%s)",
+					menu_get_prompt(def_menu));
+				item_add_str("  --->");
+				if (def_menu->list) {
+					indent += 2;
+					build_conf(def_menu);
+					indent -= 2;
+				}
+			}
 			return;
 		}
 	} else {
@@ -858,46 +924,54 @@ static void build_conf(struct menu *menu)
 		}
 		child_count++;
 		val = sym_get_tristate_value(sym);
-		switch (type) {
-		case S_BOOLEAN:
-			if (sym_is_changeable(sym))
-				item_make(menu, 't', "[%c]",
-					  val == no ? ' ' : '*');
-			else
-				item_make(menu, 't', "-%c-",
-					  val == no ? ' ' : '*');
-			break;
-		case S_TRISTATE:
-			switch (val) {
-			case yes:
-				ch = '*';
+		if (sym_is_choice_value(sym) && val == yes) {
+			item_make(menu, ':', "   ");
+		} else {
+			switch (type) {
+			case S_BOOLEAN:
+				if (sym_is_changeable(sym))
+					item_make(menu, 't', "[%c]",
+						val == no ? ' ' : '*');
+				else
+					item_make(menu, 't', "-%c-",
+						val == no ? ' ' : '*');
 				break;
-			case mod:
-				ch = 'M';
+			case S_TRISTATE:
+				switch (val) {
+				case yes:
+					ch = '*';
+					break;
+				case mod:
+					ch = 'M';
+					break;
+				default:
+					ch = ' ';
+					break;
+				}
+				if (sym_is_changeable(sym)) {
+					if (sym->rev_dep.tri == mod)
+						item_make(menu,
+							't', "{%c}", ch);
+					else
+						item_make(menu,
+							't', "<%c>", ch);
+				} else
+					item_make(menu, 't', "-%c-", ch);
 				break;
 			default:
-				ch = ' ';
-				break;
+				tmp = 2 + strlen(sym_get_string_value(sym));
+				item_make(menu, 's', "    (%s)",
+						sym_get_string_value(sym));
+				tmp = indent - tmp + 4;
+				if (tmp < 0)
+					tmp = 0;
+				item_add_str("%*c%s%s", tmp, ' ',
+						menu_get_prompt(menu),
+						(sym_has_value(sym) ||
+						 !sym_is_changeable(sym)) ? "" :
+						" (NEW)");
+				goto conf_childs;
 			}
-			if (sym_is_changeable(sym)) {
-				if (sym->rev_dep.tri == mod)
-					item_make(menu, 't', "{%c}", ch);
-				else
-					item_make(menu, 't', "<%c>", ch);
-			} else
-				item_make(menu, 't', "-%c-", ch);
-			break;
-		default:
-			tmp = 2 + strlen(sym_get_string_value(sym));
-			item_make(menu, 's', "    (%s)",
-				  sym_get_string_value(sym));
-			tmp = indent - tmp + 4;
-			if (tmp < 0)
-				tmp = 0;
-			item_add_str("%*c%s%s", tmp, ' ', menu_get_prompt(menu),
-				     (sym_has_value(sym) ||
-				      !sym_is_changeable(sym)) ? "" : " (NEW)");
-			goto conf_childs;
 		}
 		item_add_str("%*c%s%s", indent + 1, ' ',
 				menu_get_prompt(menu),

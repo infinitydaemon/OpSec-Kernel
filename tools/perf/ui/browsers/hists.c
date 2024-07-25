@@ -38,7 +38,6 @@
 #include "../ui.h"
 #include "map.h"
 #include "annotate.h"
-#include "annotate-data.h"
 #include "srcline.h"
 #include "string2.h"
 #include "units.h"
@@ -2251,7 +2250,8 @@ struct hist_browser *hist_browser__new(struct hists *hists)
 static struct hist_browser *
 perf_evsel_browser__new(struct evsel *evsel,
 			struct hist_browser_timer *hbt,
-			struct perf_env *env)
+			struct perf_env *env,
+			struct annotation_options *annotation_opts)
 {
 	struct hist_browser *browser = hist_browser__new(evsel__hists(evsel));
 
@@ -2259,6 +2259,7 @@ perf_evsel_browser__new(struct evsel *evsel,
 		browser->hbt   = hbt;
 		browser->env   = env;
 		browser->title = hists_browser__scnprintf_title;
+		browser->annotation_opts = annotation_opts;
 	}
 	return browser;
 }
@@ -2415,12 +2416,12 @@ close_file_and_continue:
 struct popup_action {
 	unsigned long		time;
 	struct thread 		*thread;
-	struct evsel	*evsel;
-	int (*fn)(struct hist_browser *browser, struct popup_action *act);
 	struct map_symbol 	ms;
 	int			socket;
+	struct evsel	*evsel;
 	enum rstype		rstype;
 
+	int (*fn)(struct hist_browser *browser, struct popup_action *act);
 };
 
 static int
@@ -2431,8 +2432,8 @@ do_annotate(struct hist_browser *browser, struct popup_action *act)
 	struct hist_entry *he;
 	int err;
 
-	if (!annotate_opts.objdump_path &&
-	    perf_env__lookup_objdump(browser->env, &annotate_opts.objdump_path))
+	if (!browser->annotation_opts->objdump_path &&
+	    perf_env__lookup_objdump(browser->env, &browser->annotation_opts->objdump_path))
 		return 0;
 
 	notes = symbol__annotation(act->ms.sym);
@@ -2444,7 +2445,8 @@ do_annotate(struct hist_browser *browser, struct popup_action *act)
 	else
 		evsel = hists_to_evsel(browser->hists);
 
-	err = map_symbol__tui_annotate(&act->ms, evsel, browser->hbt);
+	err = map_symbol__tui_annotate(&act->ms, evsel, browser->hbt,
+				       browser->annotation_opts);
 	he = hist_browser__selected_entry(browser);
 	/*
 	 * offer option to annotate the other branch source or target
@@ -2489,7 +2491,7 @@ add_annotate_opt(struct hist_browser *browser __maybe_unused,
 {
 	struct dso *dso;
 
-	if (!ms->map || (dso = map__dso(ms->map)) == NULL || dso__annotate_warned(dso))
+	if (!ms->map || (dso = map__dso(ms->map)) == NULL || dso->annotate_warned)
 		return 0;
 
 	if (!ms->sym)
@@ -2503,32 +2505,6 @@ add_annotate_opt(struct hist_browser *browser __maybe_unused,
 
 	act->ms = *ms;
 	act->fn = do_annotate;
-	return 1;
-}
-
-static int
-do_annotate_type(struct hist_browser *browser, struct popup_action *act)
-{
-	struct hist_entry *he = browser->he_selection;
-
-	hist_entry__annotate_data_tui(he, act->evsel, browser->hbt);
-	ui_browser__handle_resize(&browser->b);
-	return 0;
-}
-
-static int
-add_annotate_type_opt(struct hist_browser *browser,
-		      struct popup_action *act, char **optstr,
-		      struct hist_entry *he)
-{
-	if (he == NULL || he->mem_type == NULL || he->mem_type->histograms == NULL)
-		return 0;
-
-	if (asprintf(optstr, "Annotate type %s", he->mem_type->self.type_name) < 0)
-		return 0;
-
-	act->evsel = hists_to_evsel(browser->hists);
-	act->fn = do_annotate_type;
 	return 1;
 }
 
@@ -2608,7 +2584,7 @@ static int hists_browser__zoom_map(struct hist_browser *browser, struct map *map
 	} else {
 		struct dso *dso = map__dso(map);
 		ui_helpline__fpush("To zoom out press ESC or ENTER + \"Zoom out of %s DSO\"",
-				   __map__is_kernel(map) ? "the Kernel" : dso__short_name(dso));
+				   __map__is_kernel(map) ? "the Kernel" : dso->short_name);
 		browser->hists->dso_filter = dso;
 		perf_hpp__set_elide(HISTC_DSO, true);
 		pstack__push(browser->pstack, &browser->hists->dso_filter);
@@ -2634,7 +2610,7 @@ add_dso_opt(struct hist_browser *browser, struct popup_action *act,
 
 	if (asprintf(optstr, "Zoom %s %s DSO (use the 'k' hotkey to zoom directly into the kernel)",
 		     browser->hists->dso_filter ? "out of" : "into",
-		     __map__is_kernel(map) ? "the Kernel" : dso__short_name(map__dso(map))) < 0)
+		     __map__is_kernel(map) ? "the Kernel" : map__dso(map)->short_name) < 0)
 		return 0;
 
 	act->ms.map = map;
@@ -2967,10 +2943,11 @@ next:
 
 static int evsel__hists_browse(struct evsel *evsel, int nr_events, const char *helpline,
 			       bool left_exits, struct hist_browser_timer *hbt, float min_pcnt,
-			       struct perf_env *env, bool warn_lost_event)
+			       struct perf_env *env, bool warn_lost_event,
+			       struct annotation_options *annotation_opts)
 {
 	struct hists *hists = evsel__hists(evsel);
-	struct hist_browser *browser = perf_evsel_browser__new(evsel, hbt, env);
+	struct hist_browser *browser = perf_evsel_browser__new(evsel, hbt, env, annotation_opts);
 	struct branch_info *bi = NULL;
 #define MAX_OPTIONS  16
 	char *options[MAX_OPTIONS];
@@ -3027,7 +3004,6 @@ static int evsel__hists_browse(struct evsel *evsel, int nr_events, const char *h
 	/* reset abort key so that it can get Ctrl-C as a key */
 	SLang_reset_tty();
 	SLang_init_tty(0, 0, 0);
-	SLtty_set_suspend_state(true);
 
 	if (min_pcnt)
 		browser->min_pcnt = min_pcnt;
@@ -3110,7 +3086,7 @@ do_hotkey:		 // key came straight from options ui__popup_menu()
 			if (!browser->selection ||
 			    !browser->selection->map ||
 			    !map__dso(browser->selection->map) ||
-			    dso__annotate_warned(map__dso(browser->selection->map))) {
+			    map__dso(browser->selection->map)->annotate_warned) {
 				continue;
 			}
 
@@ -3326,7 +3302,7 @@ do_hotkey:		 // key came straight from options ui__popup_menu()
 							&options[nr_options],
 							&bi->to.ms,
 							bi->to.al_addr);
-		} else if (browser->he_selection) {
+		} else {
 			nr_options += add_annotate_opt(browser,
 						       &actions[nr_options],
 						       &options[nr_options],
@@ -3334,10 +3310,6 @@ do_hotkey:		 // key came straight from options ui__popup_menu()
 						       browser->he_selection->ip);
 		}
 skip_annotation:
-		nr_options += add_annotate_type_opt(browser,
-						    &actions[nr_options],
-						    &options[nr_options],
-						    browser->he_selection);
 		nr_options += add_thread_opt(browser, &actions[nr_options],
 					     &options[nr_options], thread);
 		nr_options += add_dso_opt(browser, &actions[nr_options],
@@ -3426,6 +3398,7 @@ out:
 struct evsel_menu {
 	struct ui_browser b;
 	struct evsel *selection;
+	struct annotation_options *annotation_opts;
 	bool lost_events, lost_events_warned;
 	float min_pcnt;
 	struct perf_env *env;
@@ -3526,7 +3499,8 @@ browse_hists:
 				hbt->timer(hbt->arg);
 			key = evsel__hists_browse(pos, nr_events, help, true, hbt,
 						  menu->min_pcnt, menu->env,
-						  warn_lost_event);
+						  warn_lost_event,
+						  menu->annotation_opts);
 			ui_browser__show_title(&menu->b, title);
 			switch (key) {
 			case K_TAB:
@@ -3583,7 +3557,7 @@ static bool filter_group_entries(struct ui_browser *browser __maybe_unused,
 
 static int __evlist__tui_browse_hists(struct evlist *evlist, int nr_entries, const char *help,
 				      struct hist_browser_timer *hbt, float min_pcnt, struct perf_env *env,
-				      bool warn_lost_event)
+				      bool warn_lost_event, struct annotation_options *annotation_opts)
 {
 	struct evsel *pos;
 	struct evsel_menu menu = {
@@ -3598,6 +3572,7 @@ static int __evlist__tui_browse_hists(struct evlist *evlist, int nr_entries, con
 		},
 		.min_pcnt = min_pcnt,
 		.env = env,
+		.annotation_opts = annotation_opts,
 	};
 
 	ui_helpline__push("Press ESC to exit");
@@ -3632,7 +3607,8 @@ static bool evlist__single_entry(struct evlist *evlist)
 }
 
 int evlist__tui_browse_hists(struct evlist *evlist, const char *help, struct hist_browser_timer *hbt,
-			     float min_pcnt, struct perf_env *env, bool warn_lost_event)
+			     float min_pcnt, struct perf_env *env, bool warn_lost_event,
+			     struct annotation_options *annotation_opts)
 {
 	int nr_entries = evlist->core.nr_entries;
 
@@ -3641,7 +3617,7 @@ single_entry: {
 		struct evsel *first = evlist__first(evlist);
 
 		return evsel__hists_browse(first, nr_entries, help, false, hbt, min_pcnt,
-					   env, warn_lost_event);
+					   env, warn_lost_event, annotation_opts);
 	}
 	}
 
@@ -3659,7 +3635,7 @@ single_entry: {
 	}
 
 	return __evlist__tui_browse_hists(evlist, nr_entries, help, hbt, min_pcnt, env,
-					  warn_lost_event);
+					  warn_lost_event, annotation_opts);
 }
 
 static int block_hists_browser__title(struct hist_browser *browser, char *bf,
@@ -3678,7 +3654,8 @@ static int block_hists_browser__title(struct hist_browser *browser, char *bf,
 }
 
 int block_hists_tui_browse(struct block_hist *bh, struct evsel *evsel,
-			   float min_percent, struct perf_env *env)
+			   float min_percent, struct perf_env *env,
+			   struct annotation_options *annotation_opts)
 {
 	struct hists *hists = &bh->block_hists;
 	struct hist_browser *browser;
@@ -3695,11 +3672,11 @@ int block_hists_tui_browse(struct block_hist *bh, struct evsel *evsel,
 	browser->title = block_hists_browser__title;
 	browser->min_pcnt = min_percent;
 	browser->env = env;
+	browser->annotation_opts = annotation_opts;
 
 	/* reset abort key so that it can get Ctrl-C as a key */
 	SLang_reset_tty();
 	SLang_init_tty(0, 0, 0);
-	SLtty_set_suspend_state(true);
 
 	memset(&action, 0, sizeof(action));
 

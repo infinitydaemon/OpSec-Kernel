@@ -96,7 +96,7 @@ static int hsr_netdev_notify(struct notifier_block *nb, unsigned long event,
 			break; /* Handled in ndo_change_mtu() */
 		mtu_max = hsr_get_max_mtu(port->hsr);
 		master = hsr_port_get_hsr(port->hsr, HSR_PT_MASTER);
-		WRITE_ONCE(master->dev->mtu, mtu_max);
+		master->dev->mtu = mtu_max;
 		break;
 	case NETDEV_UNREGISTER:
 		if (!is_hsr_master(dev)) {
@@ -174,5 +174,4 @@ static void __exit hsr_exit(void)
 
 module_init(hsr_init);
 module_exit(hsr_exit);
-MODULE_DESCRIPTION("High-availability Seamless Redundancy (HSR) driver");
 MODULE_LICENSE("GPL");

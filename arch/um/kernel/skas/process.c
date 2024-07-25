@@ -12,14 +12,17 @@
 #include <kern.h>
 #include <os.h>
 #include <skas.h>
-#include <kern_util.h>
 
 extern void start_kernel(void);
 
 static int __init start_kernel_proc(void *unused)
 {
-	block_signals_trace();
+	int pid;
 
+	block_signals_trace();
+	pid = os_getpid();
+
+	cpu_tasks[0].pid = pid;
 	cpu_tasks[0].task = current;
 
 	start_kernel();

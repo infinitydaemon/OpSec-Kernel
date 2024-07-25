@@ -22,8 +22,6 @@ properties:
       - items:
           - enum:
               - qcom,apq8084-sdhci
-              - qcom,ipq4019-sdhci
-              - qcom,ipq8074-sdhci
               - qcom,msm8226-sdhci
               - qcom,msm8953-sdhci
               - qcom,msm8974-sdhci
@@ -60,7 +58,6 @@ properties:
               - qcom,sm8350-sdhci
               - qcom,sm8450-sdhci
               - qcom,sm8550-sdhci
-              - qcom,sm8650-sdhci
           - const: qcom,sdhci-msm-v5 # for sdcc version 5.0
 
   reg:
@@ -88,10 +85,10 @@ properties:
       - const: iface
       - const: core
       - const: xo
-      - enum: [ice, bus, cal, sleep]
-      - enum: [ice, bus, cal, sleep]
-      - enum: [ice, bus, cal, sleep]
-      - enum: [ice, bus, cal, sleep]
+      - const: ice
+      - const: bus
+      - const: cal
+      - const: sleep
 
   dma-coherent: true
 

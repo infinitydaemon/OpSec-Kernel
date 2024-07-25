@@ -17,7 +17,7 @@
 #include <linux/elf.h>
 #include <registers.h>
 
-static int have_xstate_support;
+int have_xstate_support;
 
 int save_i387_registers(int pid, unsigned long *fp_regs)
 {

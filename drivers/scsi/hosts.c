@@ -372,7 +372,7 @@ static void scsi_host_dev_release(struct device *dev)
 	kfree(shost);
 }
 
-static const struct device_type scsi_host_type = {
+static struct device_type scsi_host_type = {
 	.name =		"scsi_host",
 	.release =	scsi_host_dev_release,
 };
@@ -478,12 +478,6 @@ struct Scsi_Host *scsi_host_alloc(const struct scsi_host_template *sht, int priv
 		shost->max_segment_size = sht->max_segment_size;
 	else
 		shost->max_segment_size = BLK_MAX_SEGMENT_SIZE;
-
-	/* 32-byte (dword) is a common minimum for HBAs. */
-	if (sht->dma_alignment)
-		shost->dma_alignment = sht->dma_alignment;
-	else
-		shost->dma_alignment = 3;
 
 	/*
 	 * assume a 4GB boundary, if not set

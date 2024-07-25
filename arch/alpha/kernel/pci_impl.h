@@ -143,7 +143,9 @@ struct pci_iommu_arena
 	unsigned int align_entry;
 };
 
-#if defined(CONFIG_ALPHA_SRM) && defined(CONFIG_ALPHA_CIA)
+#if defined(CONFIG_ALPHA_SRM) && \
+    (defined(CONFIG_ALPHA_CIA) || defined(CONFIG_ALPHA_LCA) || \
+     defined(CONFIG_ALPHA_AVANTI))
 # define NEED_SRM_SAVE_RESTORE
 #else
 # undef NEED_SRM_SAVE_RESTORE

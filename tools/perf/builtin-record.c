@@ -270,7 +270,7 @@ static int record__write(struct record *rec, struct mmap *map __maybe_unused,
 
 static int record__aio_enabled(struct record *rec);
 static int record__comp_enabled(struct record *rec);
-static ssize_t zstd_compress(struct perf_session *session, struct mmap *map,
+static size_t zstd_compress(struct perf_session *session, struct mmap *map,
 			    void *dst, size_t dst_size, void *src, size_t src_size);
 
 #ifdef HAVE_AIO_SUPPORT
@@ -332,7 +332,7 @@ static int record__aio_complete(struct mmap *md, struct aiocb *cblock)
 	} else {
 		/*
 		 * aio write request may require restart with the
-		 * remainder if the kernel didn't write whole
+		 * reminder if the kernel didn't write whole
 		 * chunk at once.
 		 */
 		rem_off = cblock->aio_offset + written;
@@ -400,18 +400,14 @@ static int record__aio_pushfn(struct mmap *map, void *to, void *buf, size_t size
 	 *
 	 * Coping can be done in two steps in case the chunk of profiling data
 	 * crosses the upper bound of the kernel buffer. In this case we first move
-	 * part of data from map->start till the upper bound and then the remainder
+	 * part of data from map->start till the upper bound and then the reminder
 	 * from the beginning of the kernel buffer till the end of the data chunk.
 	 */
 
 	if (record__comp_enabled(aio->rec)) {
-		ssize_t compressed = zstd_compress(aio->rec->session, NULL, aio->data + aio->size,
-						   mmap__mmap_len(map) - aio->size,
-						   buf, size);
-		if (compressed < 0)
-			return (int)compressed;
-
-		size = compressed;
+		size = zstd_compress(aio->rec->session, NULL, aio->data + aio->size,
+				     mmap__mmap_len(map) - aio->size,
+				     buf, size);
 	} else {
 		memcpy(aio->data + aio->size, buf, size);
 	}
@@ -637,13 +633,7 @@ static int record__pushfn(struct mmap *map, void *to, void *bf, size_t size)
 	struct record *rec = to;
 
 	if (record__comp_enabled(rec)) {
-		ssize_t compressed = zstd_compress(rec->session, map, map->data,
-						   mmap__mmap_len(map), bf, size);
-
-		if (compressed < 0)
-			return (int)compressed;
-
-		size = compressed;
+		size = zstd_compress(rec->session, map, map->data, mmap__mmap_len(map), bf, size);
 		bf   = map->data;
 	}
 
@@ -916,30 +906,10 @@ static int record__config_off_cpu(struct record *rec)
 	return off_cpu_prepare(rec->evlist, &rec->opts.target, &rec->opts);
 }
 
-static bool record__tracking_system_wide(struct record *rec)
-{
-	struct evlist *evlist = rec->evlist;
-	struct evsel *evsel;
-
-	/*
-	 * If non-dummy evsel exists, system_wide sideband is need to
-	 * help parse sample information.
-	 * For example, PERF_EVENT_MMAP event to help parse symbol,
-	 * and PERF_EVENT_COMM event to help parse task executable name.
-	 */
-	evlist__for_each_entry(evlist, evsel) {
-		if (!evsel__is_dummy_event(evsel))
-			return true;
-	}
-
-	return false;
-}
-
 static int record__config_tracking_events(struct record *rec)
 {
 	struct record_opts *opts = &rec->opts;
 	struct evlist *evlist = rec->evlist;
-	bool system_wide = false;
 	struct evsel *evsel;
 
 	/*
@@ -949,15 +919,7 @@ static int record__config_tracking_events(struct record *rec)
 	 */
 	if (opts->target.initial_delay || target__has_cpu(&opts->target) ||
 	    perf_pmus__num_core_pmus() > 1) {
-
-		/*
-		 * User space tasks can migrate between CPUs, so when tracing
-		 * selected CPUs, sideband for all CPUs is still needed.
-		 */
-		if (!!opts->target.cpu_list && record__tracking_system_wide(rec))
-			system_wide = true;
-
-		evsel = evlist__findnew_tracking_event(evlist, system_wide);
+		evsel = evlist__findnew_tracking_event(evlist, false);
 		if (!evsel)
 			return -ENOMEM;
 
@@ -1358,7 +1320,7 @@ static int record__open(struct record *rec)
 	evlist__for_each_entry(evlist, pos) {
 try_again:
 		if (evsel__open(pos, pos->core.cpus, pos->core.threads) < 0) {
-			if (evsel__fallback(pos, &opts->target, errno, msg, sizeof(msg))) {
+			if (evsel__fallback(pos, errno, msg, sizeof(msg))) {
 				if (verbose > 0)
 					ui__warning("%s\n", msg);
 				goto try_again;
@@ -1535,10 +1497,10 @@ static size_t process_comp_header(void *record, size_t increment)
 	return size;
 }
 
-static ssize_t zstd_compress(struct perf_session *session, struct mmap *map,
+static size_t zstd_compress(struct perf_session *session, struct mmap *map,
 			    void *dst, size_t dst_size, void *src, size_t src_size)
 {
-	ssize_t compressed;
+	size_t compressed;
 	size_t max_record_size = PERF_SAMPLE_MAX_SIZE - sizeof(struct perf_record_compressed) - 1;
 	struct zstd_data *zstd_data = &session->zstd_data;
 
@@ -1547,8 +1509,6 @@ static ssize_t zstd_compress(struct perf_session *session, struct mmap *map,
 
 	compressed = zstd_compress_stream_to_records(zstd_data, dst, dst_size, src, src_size,
 						     max_record_size, process_comp_header);
-	if (compressed < 0)
-		return compressed;
 
 	if (map && map->file) {
 		thread->bytes_transferred += src_size;
@@ -1771,11 +1731,8 @@ record__finish_output(struct record *rec)
 	struct perf_data *data = &rec->data;
 	int fd = perf_data__fd(data);
 
-	if (data->is_pipe) {
-		/* Just to display approx. size */
-		data->file.size = rec->bytes_written;
+	if (data->is_pipe)
 		return;
-	}
 
 	rec->session->header.data_size += rec->bytes_written;
 	data->file.size = lseek(perf_data__fd(data), 0, SEEK_CUR);
@@ -1788,7 +1745,7 @@ record__finish_output(struct record *rec)
 		process_buildids(rec);
 
 		if (rec->buildid_all)
-			perf_session__dsos_hit_all(rec->session);
+			dsos__hit_all(rec->session);
 	}
 	perf_session__write_header(rec->session, rec->evlist, fd, true);
 
@@ -1854,17 +1811,16 @@ record__switch_output(struct record *rec, bool at_exit)
 	}
 
 	fd = perf_data__switch(data, timestamp,
-			       rec->session->header.data_offset,
-			       at_exit, &new_filename);
+				    rec->session->header.data_offset,
+				    at_exit, &new_filename);
 	if (fd >= 0 && !at_exit) {
 		rec->bytes_written = 0;
 		rec->session->header.data_size = 0;
 	}
 
-	if (!quiet) {
+	if (!quiet)
 		fprintf(stderr, "[ perf record: Dump %s.%s ]\n",
 			data->path, timestamp);
-	}
 
 	if (rec->switch_output.num_files) {
 		int n = rec->switch_output.cur_file + 1;
@@ -1926,12 +1882,20 @@ static void __record__save_lost_samples(struct record *rec, struct evsel *evsel,
 static void record__read_lost_samples(struct record *rec)
 {
 	struct perf_session *session = rec->session;
-	struct perf_record_lost_samples *lost = NULL;
+	struct perf_record_lost_samples *lost;
 	struct evsel *evsel;
 
 	/* there was an error during record__open */
 	if (session->evlist == NULL)
 		return;
+
+	lost = zalloc(PERF_SAMPLE_MAX_SIZE);
+	if (lost == NULL) {
+		pr_debug("Memory allocation failed\n");
+		return;
+	}
+
+	lost->header.type = PERF_RECORD_LOST_SAMPLES;
 
 	evlist__for_each_entry(session->evlist, evsel) {
 		struct xyarray *xy = evsel->core.sample_id;
@@ -1955,14 +1919,6 @@ static void record__read_lost_samples(struct record *rec)
 				}
 
 				if (count.lost) {
-					if (!lost) {
-						lost = zalloc(PERF_SAMPLE_MAX_SIZE);
-						if (!lost) {
-							pr_debug("Memory allocation failed\n");
-							return;
-						}
-						lost->header.type = PERF_RECORD_LOST_SAMPLES;
-					}
 					__record__save_lost_samples(rec, evsel, lost,
 								    x, y, count.lost, 0);
 				}
@@ -1970,18 +1926,9 @@ static void record__read_lost_samples(struct record *rec)
 		}
 
 		lost_count = perf_bpf_filter__lost_count(evsel);
-		if (lost_count) {
-			if (!lost) {
-				lost = zalloc(PERF_SAMPLE_MAX_SIZE);
-				if (!lost) {
-					pr_debug("Memory allocation failed\n");
-					return;
-				}
-				lost->header.type = PERF_RECORD_LOST_SAMPLES;
-			}
+		if (lost_count)
 			__record__save_lost_samples(rec, evsel, lost, 0, 0, lost_count,
 						    PERF_RECORD_MISC_LOST_SAMPLES_BPF);
-		}
 	}
 out:
 	free(lost);
@@ -3584,7 +3531,9 @@ static int record__mmap_cpu_mask_init(struct mmap_cpu_mask *mask, struct perf_cp
 	if (cpu_map__is_dummy(cpus))
 		return 0;
 
-	perf_cpu_map__for_each_cpu_skip_any(cpu, idx, cpus) {
+	perf_cpu_map__for_each_cpu(cpu, idx, cpus) {
+		if (cpu.cpu == -1)
+			continue;
 		/* Return ENODEV is input cpu is greater than max cpu */
 		if ((unsigned long)cpu.cpu > mask->nbits)
 			return -ENODEV;
@@ -4087,8 +4036,8 @@ int cmd_record(int argc, const char **argv)
 	}
 
 	if (rec->switch_output.num_files) {
-		rec->switch_output.filenames = calloc(rec->switch_output.num_files,
-						      sizeof(char *));
+		rec->switch_output.filenames = calloc(sizeof(char *),
+						      rec->switch_output.num_files);
 		if (!rec->switch_output.filenames) {
 			err = -EINVAL;
 			goto out_opts;

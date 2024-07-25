@@ -25,7 +25,6 @@
 #include "xfs_error.h"
 #include "xfs_ioctl.h"
 #include "xfs_xattr.h"
-#include "xfs_file.h"
 
 #include <linux/posix_acl.h>
 #include <linux/security.h>
@@ -63,7 +62,7 @@ xfs_initxattrs(
 			.value		= xattr->value,
 			.valuelen	= xattr->value_len,
 		};
-		error = xfs_attr_change(&args, XFS_ATTRUPDATE_UPSERT);
+		error = xfs_attr_change(&args);
 		if (error < 0)
 			break;
 	}
@@ -157,8 +156,6 @@ xfs_create_need_xattr(
 	if (dir->i_sb->s_security)
 		return true;
 #endif
-	if (xfs_has_parent(XFS_I(dir)->i_mount))
-		return true;
 	return false;
 }
 
@@ -203,18 +200,7 @@ xfs_generic_create(
 				xfs_create_need_xattr(dir, default_acl, acl),
 				&ip);
 	} else {
-		bool	init_xattrs = false;
-
-		/*
-		 * If this temporary file will be linkable, set up the file
-		 * with an attr fork to receive a parent pointer.
-		 */
-		if (!(tmpfile->f_flags & O_EXCL) &&
-		    xfs_has_parent(XFS_I(dir)->i_mount))
-			init_xattrs = true;
-
-		error = xfs_create_tmpfile(idmap, XFS_I(dir), mode,
-				init_xattrs, &ip);
+		error = xfs_create_tmpfile(idmap, XFS_I(dir), mode, &ip);
 	}
 	if (unlikely(error))
 		goto out_free_acl;
@@ -360,7 +346,7 @@ xfs_vn_ci_lookup(
 	dname.name = ci_name.name;
 	dname.len = ci_name.len;
 	dentry = d_add_ci(dentry, VFS_I(ip), &dname);
-	kfree(ci_name.name);
+	kmem_free(ci_name.name);
 	return dentry;
 }
 
@@ -377,9 +363,6 @@ xfs_vn_link(
 	error = xfs_dentry_mode_to_name(&name, dentry, inode->i_mode);
 	if (unlikely(error))
 		return error;
-
-	if (IS_PRIVATE(inode))
-		return -EPERM;
 
 	error = xfs_link(XFS_I(dir), XFS_I(inode), &name);
 	if (unlikely(error))
@@ -538,7 +521,7 @@ xfs_stat_blksize(
 	 * always return the realtime extent size.
 	 */
 	if (XFS_IS_REALTIME_INODE(ip))
-		return XFS_FSB_TO_B(mp, xfs_get_extsz_hint(ip) ? : 1);
+		return XFS_FSB_TO_B(mp, xfs_get_extsz_hint(ip));
 
 	/*
 	 * Allow large block sizes to be reported to userspace programs if the
@@ -589,8 +572,8 @@ xfs_vn_getattr(
 	stat->uid = vfsuid_into_kuid(vfsuid);
 	stat->gid = vfsgid_into_kgid(vfsgid);
 	stat->ino = ip->i_ino;
-	stat->atime = inode_get_atime(inode);
-	stat->mtime = inode_get_mtime(inode);
+	stat->atime = inode->i_atime;
+	stat->mtime = inode->i_mtime;
 	stat->ctime = inode_get_ctime(inode);
 	stat->blocks = XFS_FSB_TO_BB(mp, ip->i_nblocks + ip->i_delayed_blks);
 
@@ -813,7 +796,8 @@ xfs_setattr_size(
 	uint			lock_flags = 0;
 	bool			did_zeroing = false;
 
-	xfs_assert_ilocked(ip, XFS_IOLOCK_EXCL | XFS_MMAPLOCK_EXCL);
+	ASSERT(xfs_isilocked(ip, XFS_IOLOCK_EXCL));
+	ASSERT(xfs_isilocked(ip, XFS_MMAPLOCK_EXCL));
 	ASSERT(S_ISREG(inode->i_mode));
 	ASSERT((iattr->ia_valid & (ATTR_UID|ATTR_GID|ATTR_ATIME|ATTR_ATIME_SET|
 		ATTR_MTIME_SET|ATTR_TIMES_SET)) == 0);
@@ -1083,9 +1067,9 @@ xfs_vn_update_time(
 		now = current_time(inode);
 
 	if (flags & S_MTIME)
-		inode_set_mtime_to_ts(inode, now);
+		inode->i_mtime = now;
 	if (flags & S_ATIME)
-		inode_set_atime_to_ts(inode, now);
+		inode->i_atime = now;
 
 	xfs_trans_ijoin(tp, ip, XFS_ILOCK_EXCL);
 	xfs_trans_log_inode(tp, ip, log_flags);
@@ -1301,9 +1285,9 @@ xfs_setup_inode(
 		 */
 		lockdep_set_class(&inode->i_rwsem,
 				  &inode->i_sb->s_type->i_mutex_dir_key);
-		lockdep_set_class(&ip->i_lock, &xfs_dir_ilock_class);
+		lockdep_set_class(&ip->i_lock.mr_lock, &xfs_dir_ilock_class);
 	} else {
-		lockdep_set_class(&ip->i_lock, &xfs_nondir_ilock_class);
+		lockdep_set_class(&ip->i_lock.mr_lock, &xfs_nondir_ilock_class);
 	}
 
 	/*

@@ -752,5 +752,4 @@ EXPORT_SYMBOL(slhc_compress);
 EXPORT_SYMBOL(slhc_uncompress);
 EXPORT_SYMBOL(slhc_toss);
 
-MODULE_DESCRIPTION("Compression helpers for SLIP (serial line)");
 MODULE_LICENSE("Dual BSD/GPL");

@@ -7,7 +7,7 @@
 
 #include "trace/beauty/beauty.h"
 #include <linux/kernel.h>
-#include <linux/prctl.h>
+#include <uapi/linux/prctl.h>
 
 #include "trace/beauty/generated/prctl_option_array.c"
 

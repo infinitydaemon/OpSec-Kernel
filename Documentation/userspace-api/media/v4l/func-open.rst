@@ -65,8 +65,8 @@ EBUSY
     The driver does not support multiple opens and the device is already
     in use.
 
-ENODEV
-    Device not found or was removed.
+ENXIO
+    No device corresponding to this device special file exists.
 
 ENOMEM
     Not enough kernel memory was available to complete the request.

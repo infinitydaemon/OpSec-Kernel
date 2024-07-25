@@ -9,7 +9,6 @@
 #include <linux/spinlock.h>
 #include <linux/slab.h>
 #include <linux/oom.h>
-#include <linux/reboot.h>
 #include <kern_util.h>
 #include <os.h>
 #include <skas.h>

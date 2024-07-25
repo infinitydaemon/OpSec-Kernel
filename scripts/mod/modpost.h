@@ -1,5 +1,4 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#include <byteswap.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,19 +51,21 @@
 #define ELF_R_TYPE  ELF64_R_TYPE
 #endif
 
-#define bswap(x) \
-({ \
-	_Static_assert(sizeof(x) == 1 || sizeof(x) == 2 || \
-		       sizeof(x) == 4 || sizeof(x) == 8, "bug"); \
-	(typeof(x))(sizeof(x) == 2 ? bswap_16(x) : \
-		    sizeof(x) == 4 ? bswap_32(x) : \
-		    sizeof(x) == 8 ? bswap_64(x) : \
-		    x); \
-})
-
 #if KERNEL_ELFDATA != HOST_ELFDATA
 
-#define TO_NATIVE(x) (bswap(x))
+static inline void __endian(const void *src, void *dest, unsigned int size)
+{
+	unsigned int i;
+	for (i = 0; i < size; i++)
+		((unsigned char*)dest)[i] = ((unsigned char*)src)[size - i-1];
+}
+
+#define TO_NATIVE(x)						\
+({								\
+	typeof(x) __x;						\
+	__endian(&(x), &(__x), sizeof(__x));			\
+	__x;							\
+})
 
 #else /* endianness matches */
 
@@ -162,12 +163,12 @@ static inline unsigned int get_secindex(const struct elf_info *info,
  *
  * Internal symbols created by tools should be ignored by modpost.
  */
-static inline bool is_valid_name(struct elf_info *elf, Elf_Sym *sym)
+static inline int is_valid_name(struct elf_info *elf, Elf_Sym *sym)
 {
 	const char *name = elf->strtab + sym->st_name;
 
 	if (!name || !strlen(name))
-		return false;
+		return 0;
 	return !is_mapping_symbol(name);
 }
 
@@ -194,10 +195,10 @@ void *sym_get_data(const struct elf_info *info, const Elf_Sym *sym);
 enum loglevel {
 	LOG_WARN,
 	LOG_ERROR,
+	LOG_FATAL
 };
 
-void __attribute__((format(printf, 2, 3)))
-modpost_log(enum loglevel loglevel, const char *fmt, ...);
+void modpost_log(enum loglevel loglevel, const char *fmt, ...);
 
 /*
  * warn - show the given message, then let modpost continue running, still
@@ -214,4 +215,4 @@ modpost_log(enum loglevel loglevel, const char *fmt, ...);
  */
 #define warn(fmt, args...)	modpost_log(LOG_WARN, fmt, ##args)
 #define error(fmt, args...)	modpost_log(LOG_ERROR, fmt, ##args)
-#define fatal(fmt, args...)	do { error(fmt, ##args); exit(1); } while (1)
+#define fatal(fmt, args...)	modpost_log(LOG_FATAL, fmt, ##args)

@@ -527,7 +527,7 @@ static void vmd_domain_reset(struct vmd_dev *vmd)
 
 			hdr_type = readb(base + PCI_HEADER_TYPE);
 
-			functions = (hdr_type & PCI_HEADER_TYPE_MFD) ? 8 : 1;
+			functions = (hdr_type & 0x80) ? 8 : 1;
 			for (fn = 0; fn < functions; fn++) {
 				base = vmd->cfgbar + PCIE_ECAM_OFFSET(bus,
 						PCI_DEVFN(dev, fn), 0);
@@ -984,7 +984,7 @@ static int vmd_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		return -ENOMEM;
 
 	vmd->dev = dev;
-	vmd->instance = ida_alloc(&vmd_instance_ida, GFP_KERNEL);
+	vmd->instance = ida_simple_get(&vmd_instance_ida, 0, 0, GFP_KERNEL);
 	if (vmd->instance < 0)
 		return vmd->instance;
 
@@ -1026,7 +1026,7 @@ static int vmd_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	return 0;
 
  out_release_instance:
-	ida_free(&vmd_instance_ida, vmd->instance);
+	ida_simple_remove(&vmd_instance_ida, vmd->instance);
 	return err;
 }
 
@@ -1048,7 +1048,7 @@ static void vmd_remove(struct pci_dev *dev)
 	vmd_cleanup_srcu(vmd);
 	vmd_detach_resources(vmd);
 	vmd_remove_irq_domain(vmd);
-	ida_free(&vmd_instance_ida, vmd->instance);
+	ida_simple_remove(&vmd_instance_ida, vmd->instance);
 }
 
 static void vmd_shutdown(struct pci_dev *dev)
@@ -1077,7 +1077,10 @@ static int vmd_resume(struct device *dev)
 	struct vmd_dev *vmd = pci_get_drvdata(pdev);
 	int err, i;
 
-	vmd_set_msi_remapping(vmd, !!vmd->irq_domain);
+       if (vmd->irq_domain)
+               vmd_set_msi_remapping(vmd, true);
+       else
+               vmd_set_msi_remapping(vmd, false);
 
 	for (i = 0; i < vmd->msix_count; i++) {
 		err = devm_request_irq(dev, vmd->irqs[i].virq,

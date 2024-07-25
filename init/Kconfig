@@ -115,7 +115,7 @@ config CONSTRUCTORS
 	bool
 
 config IRQ_WORK
-	def_bool y if SMP
+	bool
 
 config BUILDTIME_TABLE_SORT
 	bool
@@ -547,24 +547,24 @@ config HAVE_SCHED_AVG_IRQ
 	depends on IRQ_TIME_ACCOUNTING || PARAVIRT_TIME_ACCOUNTING
 	depends on SMP
 
-config SCHED_HW_PRESSURE
+config SCHED_THERMAL_PRESSURE
 	bool
 	default y if ARM && ARM_CPU_TOPOLOGY
 	default y if ARM64
 	depends on SMP
 	depends on CPU_FREQ_THERMAL
 	help
-	  Select this option to enable HW pressure accounting in the
-	  scheduler. HW pressure is the value conveyed to the scheduler
+	  Select this option to enable thermal pressure accounting in the
+	  scheduler. Thermal pressure is the value conveyed to the scheduler
 	  that reflects the reduction in CPU compute capacity resulted from
-	  HW throttling. HW throttling occurs when the performance of
-	  a CPU is capped due to high operating temperatures as an example.
+	  thermal throttling. Thermal throttling occurs when the performance of
+	  a CPU is capped due to high operating temperatures.
 
 	  If selected, the scheduler will be able to balance tasks accordingly,
 	  i.e. put less load on throttled CPUs than on non/less throttled ones.
 
 	  This requires the architecture to implement
-	  arch_update_hw_pressure() and arch_scale_thermal_pressure().
+	  arch_update_thermal_pressure() and arch_scale_thermal_pressure().
 
 config BSD_PROCESS_ACCT
 	bool "BSD Process Accounting"
@@ -743,8 +743,8 @@ config LOG_CPU_MAX_BUF_SHIFT
 	int "CPU kernel log buffer size contribution (13 => 8 KB, 17 => 128KB)"
 	depends on SMP
 	range 0 21
+	default 12 if !BASE_SMALL
 	default 0 if BASE_SMALL
-	default 12
 	depends on PRINTK
 	help
 	  This option allows to increase the default ring buffer size
@@ -885,18 +885,6 @@ config CC_NO_ARRAY_BOUNDS
 	bool
 	default y if CC_IS_GCC && GCC_VERSION >= 100000 && GCC10_NO_ARRAY_BOUNDS
 
-# Currently, disable -Wstringop-overflow for GCC globally.
-config GCC_NO_STRINGOP_OVERFLOW
-	def_bool y
-
-config CC_NO_STRINGOP_OVERFLOW
-	bool
-	default y if CC_IS_GCC && GCC_NO_STRINGOP_OVERFLOW
-
-config CC_STRINGOP_OVERFLOW
-	bool
-	default y if CC_IS_GCC && !CC_NO_STRINGOP_OVERFLOW
-
 #
 # For architectures that know their GCC __int128 support is sound
 #
@@ -928,9 +916,6 @@ config NUMA_BALANCING_DEFAULT_ENABLED
 	help
 	  If set, automatic NUMA balancing will be enabled if running on a NUMA
 	  machine.
-
-config SLAB_OBJ_EXT
-	bool
 
 menuconfig CGROUPS
 	bool "Control Group support"
@@ -965,7 +950,6 @@ config MEMCG
 	bool "Memory controller"
 	select PAGE_COUNTER
 	select EVENTFD
-	select SLAB_OBJ_EXT
 	help
 	  Provides control over the memory footprint of tasks in a cgroup.
 
@@ -1470,6 +1454,11 @@ config SYSCTL_ARCH_UNALIGN_ALLOW
 config HAVE_PCSPKR_PLATFORM
 	bool
 
+# interpreter that classic socket filters depend on
+config BPF
+	bool
+	select CRYPTO_LIB_SHA1
+
 menuconfig EXPERT
 	bool "Configure standard kernel features (expert users)"
 	# Unhide debug options, to make the on-by-default options visible
@@ -1503,7 +1492,7 @@ config MULTIUSER
 
 config SGETMASK_SYSCALL
 	bool "sgetmask/ssetmask syscalls support" if EXPERT
-	default PARISC || M68K || PPC || MIPS || X86 || SPARC || MICROBLAZE || SUPERH
+	def_bool PARISC || M68K || PPC || MIPS || X86 || SPARC || MICROBLAZE || SUPERH
 	help
 	  sys_sgetmask and sys_ssetmask are obsolete system calls
 	  no longer supported in libc but still enabled by default in some
@@ -1589,10 +1578,11 @@ config PCSPKR_PLATFORM
 	  This option allows to disable the internal PC-Speaker
 	  support, saving some memory.
 
-config BASE_SMALL
-	bool "Enable smaller-sized data structures for core" if EXPERT
+config BASE_FULL
+	default y
+	bool "Enable full-sized data structures for core" if EXPERT
 	help
-	  Enabling this option reduces the size of miscellaneous core
+	  Disabling this option reduces the size of miscellaneous core
 	  kernel data structures. This saves memory on small machines,
 	  but may reduce performance.
 
@@ -1695,56 +1685,6 @@ config MEMBARRIER
 
 	  If unsure, say Y.
 
-config KCMP
-	bool "Enable kcmp() system call" if EXPERT
-	help
-	  Enable the kernel resource comparison system call. It provides
-	  user-space with the ability to compare two processes to see if they
-	  share a common resource, such as a file descriptor or even virtual
-	  memory space.
-
-	  If unsure, say N.
-
-config RSEQ
-	bool "Enable rseq() system call" if EXPERT
-	default y
-	depends on HAVE_RSEQ
-	select MEMBARRIER
-	help
-	  Enable the restartable sequences system call. It provides a
-	  user-space cache for the current CPU number value, which
-	  speeds up getting the current CPU number from user-space,
-	  as well as an ABI to speed up user-space operations on
-	  per-CPU data.
-
-	  If unsure, say Y.
-
-config DEBUG_RSEQ
-	default n
-	bool "Enable debugging of rseq() system call" if EXPERT
-	depends on RSEQ && DEBUG_KERNEL
-	help
-	  Enable extra debugging checks for the rseq system call.
-
-	  If unsure, say N.
-
-config CACHESTAT_SYSCALL
-	bool "Enable cachestat() system call" if EXPERT
-	default y
-	help
-	  Enable the cachestat system call, which queries the page cache
-	  statistics of a file (number of cached pages, dirty pages,
-	  pages marked for writeback, (recently) evicted pages).
-
-	  If unsure say Y here.
-
-config PC104
-	bool "PC/104 support" if EXPERT
-	help
-	  Expose PC/104 form factor device drivers and options available for
-	  selection and configuration. Enable this option if your target
-	  machine has a PC/104 bus.
-
 config KALLSYMS
 	bool "Load all symbols for debugging/ksymoops" if EXPERT
 	default y
@@ -1792,7 +1732,7 @@ config KALLSYMS_ABSOLUTE_PERCPU
 config KALLSYMS_BASE_RELATIVE
 	bool
 	depends on KALLSYMS
-	default y
+	default !IA64
 	help
 	  Instead of emitting them as absolute values in the native word size,
 	  emit the symbol references in the kallsyms table as 32-bit entries,
@@ -1809,11 +1749,56 @@ config KALLSYMS_BASE_RELATIVE
 
 # end of the "standard kernel features (expert users)" menu
 
+# syscall, maps, verifier
+
 config ARCH_HAS_MEMBARRIER_CALLBACKS
 	bool
 
 config ARCH_HAS_MEMBARRIER_SYNC_CORE
 	bool
+
+config KCMP
+	bool "Enable kcmp() system call" if EXPERT
+	help
+	  Enable the kernel resource comparison system call. It provides
+	  user-space with the ability to compare two processes to see if they
+	  share a common resource, such as a file descriptor or even virtual
+	  memory space.
+
+	  If unsure, say N.
+
+config RSEQ
+	bool "Enable rseq() system call" if EXPERT
+	default y
+	depends on HAVE_RSEQ
+	select MEMBARRIER
+	help
+	  Enable the restartable sequences system call. It provides a
+	  user-space cache for the current CPU number value, which
+	  speeds up getting the current CPU number from user-space,
+	  as well as an ABI to speed up user-space operations on
+	  per-CPU data.
+
+	  If unsure, say Y.
+
+config CACHESTAT_SYSCALL
+	bool "Enable cachestat() system call" if EXPERT
+	default y
+	help
+	  Enable the cachestat system call, which queries the page cache
+	  statistics of a file (number of cached pages, dirty pages,
+	  pages marked for writeback, (recently) evicted pages).
+
+	  If unsure say Y here.
+
+config DEBUG_RSEQ
+	default n
+	bool "Enabled debugging of rseq() system call" if EXPERT
+	depends on RSEQ && DEBUG_KERNEL
+	help
+	  Enable extra debugging checks for the rseq system call.
+
+	  If unsure, say N.
 
 config HAVE_PERF_EVENTS
 	bool
@@ -1828,6 +1813,13 @@ config PERF_USE_VMALLOC
 	bool
 	help
 	  See tools/perf/design.txt for details
+
+config PC104
+	bool "PC/104 support" if EXPERT
+	help
+	  Expose PC/104 form factor device drivers and options available for
+	  selection and configuration. Enable this option if your target
+	  machine has a PC/104 bus.
 
 menu "Kernel Performance Events And Counters"
 
@@ -1947,6 +1939,11 @@ config RT_MUTEXES
 	bool
 	default y if PREEMPT_RT
 
+config BASE_SMALL
+	int
+	default 0 if BASE_FULL
+	default 1 if !BASE_FULL
+
 config MODULE_SIG_FORMAT
 	def_bool n
 	select SYSTEM_DATA_VERIFICATION
@@ -1982,9 +1979,6 @@ config ASN1
 source "kernel/Kconfig.locks"
 
 config ARCH_HAS_NON_OVERLAPPING_ADDRESS_SPACE
-	bool
-
-config ARCH_HAS_PREPARE_SYNC_CORE_CMD
 	bool
 
 config ARCH_HAS_SYNC_CORE_BEFORE_USERMODE

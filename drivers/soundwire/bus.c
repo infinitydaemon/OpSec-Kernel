@@ -1005,7 +1005,7 @@ static int sdw_slave_clk_stop_prepare(struct sdw_slave *slave,
 	return ret;
 }
 
-static int sdw_bus_wait_for_clk_prep_deprep(struct sdw_bus *bus, u16 dev_num, bool prepare)
+static int sdw_bus_wait_for_clk_prep_deprep(struct sdw_bus *bus, u16 dev_num)
 {
 	int retry = bus->clk_stop_timeout;
 	int val;
@@ -1019,8 +1019,7 @@ static int sdw_bus_wait_for_clk_prep_deprep(struct sdw_bus *bus, u16 dev_num, bo
 		}
 		val &= SDW_SCP_STAT_CLK_STP_NF;
 		if (!val) {
-			dev_dbg(bus->dev, "clock stop %s done slave:%d\n",
-				prepare ? "prepare" : "deprepare",
+			dev_dbg(bus->dev, "clock stop prep/de-prep done slave:%d\n",
 				dev_num);
 			return 0;
 		}
@@ -1029,8 +1028,7 @@ static int sdw_bus_wait_for_clk_prep_deprep(struct sdw_bus *bus, u16 dev_num, bo
 		retry--;
 	} while (retry);
 
-	dev_dbg(bus->dev, "clock stop %s did not complete for slave:%d\n",
-		prepare ? "prepare" : "deprepare",
+	dev_err(bus->dev, "clock stop prep/de-prep failed slave:%d\n",
 		dev_num);
 
 	return -ETIMEDOUT;
@@ -1101,7 +1099,7 @@ int sdw_bus_prep_clk_stop(struct sdw_bus *bus)
 	 */
 	if (!simple_clk_stop) {
 		ret = sdw_bus_wait_for_clk_prep_deprep(bus,
-						       SDW_BROADCAST_DEV_NUM, true);
+						       SDW_BROADCAST_DEV_NUM);
 		/*
 		 * if there are no Slave devices present and the reply is
 		 * Command_Ignored/-ENODATA, we don't need to continue with the
@@ -1221,7 +1219,7 @@ int sdw_bus_exit_clk_stop(struct sdw_bus *bus)
 	 * state machine
 	 */
 	if (!simple_clk_stop) {
-		ret = sdw_bus_wait_for_clk_prep_deprep(bus, SDW_BROADCAST_DEV_NUM, false);
+		ret = sdw_bus_wait_for_clk_prep_deprep(bus, SDW_BROADCAST_DEV_NUM);
 		if (ret < 0)
 			dev_warn(bus->dev, "clock stop deprepare wait failed:%d\n", ret);
 	}
@@ -1312,18 +1310,18 @@ static int sdw_slave_set_frequency(struct sdw_slave *slave)
 	if (!(19200000 % mclk_freq)) {
 		mclk_freq = 19200000;
 		base = SDW_SCP_BASE_CLOCK_19200000_HZ;
-	} else if (!(22579200 % mclk_freq)) {
-		mclk_freq = 22579200;
-		base = SDW_SCP_BASE_CLOCK_22579200_HZ;
+	} else if (!(24000000 % mclk_freq)) {
+		mclk_freq = 24000000;
+		base = SDW_SCP_BASE_CLOCK_24000000_HZ;
 	} else if (!(24576000 % mclk_freq)) {
 		mclk_freq = 24576000;
 		base = SDW_SCP_BASE_CLOCK_24576000_HZ;
+	} else if (!(22579200 % mclk_freq)) {
+		mclk_freq = 22579200;
+		base = SDW_SCP_BASE_CLOCK_22579200_HZ;
 	} else if (!(32000000 % mclk_freq)) {
 		mclk_freq = 32000000;
 		base = SDW_SCP_BASE_CLOCK_32000000_HZ;
-	} else if (!(96000000 % mclk_freq)) {
-		mclk_freq = 24000000;
-		base = SDW_SCP_BASE_CLOCK_24000000_HZ;
 	} else {
 		dev_err(&slave->dev,
 			"Unsupported clock base, mclk %d\n",
@@ -1474,7 +1472,7 @@ static int sdw_handle_dp0_interrupt(struct sdw_slave *slave, u8 *slave_status)
 	}
 
 	do {
-		clear = status & ~(SDW_DP0_INTERRUPTS | SDW_DP0_SDCA_CASCADE);
+		clear = status & ~SDW_DP0_INTERRUPTS;
 
 		if (status & SDW_DP0_INT_TEST_FAIL) {
 			dev_err(&slave->dev, "Test fail for port 0\n");

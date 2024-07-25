@@ -65,7 +65,7 @@ struct pcpu {
 	uint32_t flags;
 };
 
-static const struct bus_type xen_pcpu_subsys = {
+static struct bus_type xen_pcpu_subsys = {
 	.name = "xen_cpu",
 	.dev_name = "xen_cpu",
 };

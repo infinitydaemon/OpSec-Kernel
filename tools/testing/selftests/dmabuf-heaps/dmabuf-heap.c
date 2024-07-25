@@ -15,7 +15,6 @@
 #include <linux/dma-buf.h>
 #include <linux/dma-heap.h>
 #include <drm/drm.h>
-#include "../kselftest.h"
 
 #define DEVPATH "/dev/dma_heap"
 
@@ -91,13 +90,14 @@ static int dmabuf_heap_open(char *name)
 	char buf[256];
 
 	ret = snprintf(buf, 256, "%s/%s", DEVPATH, name);
-	if (ret < 0)
-		ksft_exit_fail_msg("snprintf failed! %d\n", ret);
+	if (ret < 0) {
+		printf("snprintf failed!\n");
+		return ret;
+	}
 
 	fd = open(buf, O_RDWR);
 	if (fd < 0)
-		ksft_exit_fail_msg("open %s failed: %s\n", buf, strerror(errno));
-
+		printf("open %s failed!\n", buf);
 	return fd;
 }
 
@@ -140,7 +140,7 @@ static int dmabuf_sync(int fd, int start_stop)
 
 #define ONE_MEG (1024 * 1024)
 
-static void test_alloc_and_import(char *heap_name)
+static int test_alloc_and_import(char *heap_name)
 {
 	int heap_fd = -1, dmabuf_fd = -1, importer_fd = -1;
 	uint32_t handle = 0;
@@ -148,19 +148,27 @@ static void test_alloc_and_import(char *heap_name)
 	int ret;
 
 	heap_fd = dmabuf_heap_open(heap_name);
+	if (heap_fd < 0)
+		return -1;
 
-	ksft_print_msg("Testing allocation and importing:\n");
+	printf("  Testing allocation and importing:  ");
 	ret = dmabuf_heap_alloc(heap_fd, ONE_MEG, 0, &dmabuf_fd);
 	if (ret) {
-		ksft_test_result_fail("FAIL (Allocation Failed!) %d\n", ret);
-		return;
+		printf("FAIL (Allocation Failed!)\n");
+		ret = -1;
+		goto out;
 	}
-
 	/* mmap and write a simple pattern */
-	p = mmap(NULL, ONE_MEG, PROT_READ | PROT_WRITE, MAP_SHARED, dmabuf_fd, 0);
+	p = mmap(NULL,
+		 ONE_MEG,
+		 PROT_READ | PROT_WRITE,
+		 MAP_SHARED,
+		 dmabuf_fd,
+		 0);
 	if (p == MAP_FAILED) {
-		ksft_test_result_fail("FAIL (mmap() failed): %s\n", strerror(errno));
-		goto close_and_return;
+		printf("FAIL (mmap() failed)\n");
+		ret = -1;
+		goto out;
 	}
 
 	dmabuf_sync(dmabuf_fd, DMA_BUF_SYNC_START);
@@ -170,64 +178,71 @@ static void test_alloc_and_import(char *heap_name)
 
 	importer_fd = open_vgem();
 	if (importer_fd < 0) {
-		ksft_test_result_skip("Could not open vgem %d\n", importer_fd);
+		ret = importer_fd;
+		printf("(Could not open vgem - skipping):  ");
 	} else {
 		ret = import_vgem_fd(importer_fd, dmabuf_fd, &handle);
-		ksft_test_result(ret >= 0, "Import buffer %d\n", ret);
+		if (ret < 0) {
+			printf("FAIL (Failed to import buffer)\n");
+			goto out;
+		}
 	}
 
 	ret = dmabuf_sync(dmabuf_fd, DMA_BUF_SYNC_START);
 	if (ret < 0) {
-		ksft_print_msg("FAIL (DMA_BUF_SYNC_START failed!) %d\n", ret);
+		printf("FAIL (DMA_BUF_SYNC_START failed!)\n");
 		goto out;
 	}
 
 	memset(p, 0xff, ONE_MEG);
 	ret = dmabuf_sync(dmabuf_fd, DMA_BUF_SYNC_END);
 	if (ret < 0) {
-		ksft_print_msg("FAIL (DMA_BUF_SYNC_END failed!) %d\n", ret);
+		printf("FAIL (DMA_BUF_SYNC_END failed!)\n");
 		goto out;
 	}
 
 	close_handle(importer_fd, handle);
-	ksft_test_result_pass("%s dmabuf sync succeeded\n", __func__);
-	return;
-
+	ret = 0;
+	printf(" OK\n");
 out:
-	ksft_test_result_fail("%s dmabuf sync failed\n", __func__);
-	munmap(p, ONE_MEG);
-	close(importer_fd);
+	if (p)
+		munmap(p, ONE_MEG);
+	if (importer_fd >= 0)
+		close(importer_fd);
+	if (dmabuf_fd >= 0)
+		close(dmabuf_fd);
+	if (heap_fd >= 0)
+		close(heap_fd);
 
-close_and_return:
-	close(dmabuf_fd);
-	close(heap_fd);
+	return ret;
 }
 
-static void test_alloc_zeroed(char *heap_name, size_t size)
+static int test_alloc_zeroed(char *heap_name, size_t size)
 {
 	int heap_fd = -1, dmabuf_fd[32];
-	int i, j, k, ret;
+	int i, j, ret;
 	void *p = NULL;
 	char *c;
 
-	ksft_print_msg("Testing alloced %ldk buffers are zeroed:\n", size / 1024);
+	printf("  Testing alloced %ldk buffers are zeroed:  ", size / 1024);
 	heap_fd = dmabuf_heap_open(heap_name);
+	if (heap_fd < 0)
+		return -1;
 
 	/* Allocate and fill a bunch of buffers */
 	for (i = 0; i < 32; i++) {
 		ret = dmabuf_heap_alloc(heap_fd, size, 0, &dmabuf_fd[i]);
-		if (ret) {
-			ksft_test_result_fail("FAIL (Allocation (%i) failed) %d\n", i, ret);
-			goto close_and_return;
+		if (ret < 0) {
+			printf("FAIL (Allocation (%i) failed)\n", i);
+			goto out;
 		}
-
 		/* mmap and fill with simple pattern */
 		p = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, dmabuf_fd[i], 0);
 		if (p == MAP_FAILED) {
-			ksft_test_result_fail("FAIL (mmap() failed!): %s\n", strerror(errno));
-			goto close_and_return;
+			printf("FAIL (mmap() failed!)\n");
+			ret = -1;
+			goto out;
 		}
-
 		dmabuf_sync(dmabuf_fd[i], DMA_BUF_SYNC_START);
 		memset(p, 0xff, size);
 		dmabuf_sync(dmabuf_fd[i], DMA_BUF_SYNC_END);
@@ -236,47 +251,48 @@ static void test_alloc_zeroed(char *heap_name, size_t size)
 	/* close them all */
 	for (i = 0; i < 32; i++)
 		close(dmabuf_fd[i]);
-	ksft_test_result_pass("Allocate and fill a bunch of buffers\n");
 
 	/* Allocate and validate all buffers are zeroed */
 	for (i = 0; i < 32; i++) {
 		ret = dmabuf_heap_alloc(heap_fd, size, 0, &dmabuf_fd[i]);
 		if (ret < 0) {
-			ksft_test_result_fail("FAIL (Allocation (%i) failed) %d\n", i, ret);
-			goto close_and_return;
+			printf("FAIL (Allocation (%i) failed)\n", i);
+			goto out;
 		}
 
 		/* mmap and validate everything is zero */
 		p = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, dmabuf_fd[i], 0);
 		if (p == MAP_FAILED) {
-			ksft_test_result_fail("FAIL (mmap() failed!): %s\n", strerror(errno));
-			goto close_and_return;
+			printf("FAIL (mmap() failed!)\n");
+			ret = -1;
+			goto out;
 		}
-
 		dmabuf_sync(dmabuf_fd[i], DMA_BUF_SYNC_START);
 		c = (char *)p;
 		for (j = 0; j < size; j++) {
 			if (c[j] != 0) {
-				ksft_print_msg("FAIL (Allocated buffer not zeroed @ %i)\n", j);
-				dmabuf_sync(dmabuf_fd[i], DMA_BUF_SYNC_END);
-				munmap(p, size);
-				goto out;
+				printf("FAIL (Allocated buffer not zeroed @ %i)\n", j);
+				break;
 			}
 		}
 		dmabuf_sync(dmabuf_fd[i], DMA_BUF_SYNC_END);
 		munmap(p, size);
 	}
-
-out:
-	ksft_test_result(i == 32, "Allocate and validate all buffers are zeroed\n");
-
-close_and_return:
 	/* close them all */
-	for (k = 0; k < i; k++)
-		close(dmabuf_fd[k]);
+	for (i = 0; i < 32; i++)
+		close(dmabuf_fd[i]);
 
 	close(heap_fd);
-	return;
+	printf("OK\n");
+	return 0;
+
+out:
+	while (i > 0) {
+		close(dmabuf_fd[i]);
+		i--;
+	}
+	close(heap_fd);
+	return ret;
 }
 
 /* Test the ioctl version compatibility w/ a smaller structure then expected */
@@ -344,97 +360,126 @@ static int dmabuf_heap_alloc_newer(int fd, size_t len, unsigned int flags,
 	return ret;
 }
 
-static void test_alloc_compat(char *heap_name)
-{
-	int ret, heap_fd = -1, dmabuf_fd = -1;
-
-	heap_fd = dmabuf_heap_open(heap_name);
-
-	ksft_print_msg("Testing (theoretical) older alloc compat:\n");
-	ret = dmabuf_heap_alloc_older(heap_fd, ONE_MEG, 0, &dmabuf_fd);
-	if (dmabuf_fd >= 0)
-		close(dmabuf_fd);
-	ksft_test_result(!ret, "dmabuf_heap_alloc_older\n");
-
-	ksft_print_msg("Testing (theoretical) newer alloc compat:\n");
-	ret = dmabuf_heap_alloc_newer(heap_fd, ONE_MEG, 0, &dmabuf_fd);
-	if (dmabuf_fd >= 0)
-		close(dmabuf_fd);
-	ksft_test_result(!ret, "dmabuf_heap_alloc_newer\n");
-
-	close(heap_fd);
-}
-
-static void test_alloc_errors(char *heap_name)
+static int test_alloc_compat(char *heap_name)
 {
 	int heap_fd = -1, dmabuf_fd = -1;
 	int ret;
 
 	heap_fd = dmabuf_heap_open(heap_name);
+	if (heap_fd < 0)
+		return -1;
 
-	ksft_print_msg("Testing expected error cases:\n");
+	printf("  Testing (theoretical)older alloc compat:  ");
+	ret = dmabuf_heap_alloc_older(heap_fd, ONE_MEG, 0, &dmabuf_fd);
+	if (ret) {
+		printf("FAIL (Older compat allocation failed!)\n");
+		ret = -1;
+		goto out;
+	}
+	close(dmabuf_fd);
+	printf("OK\n");
+
+	printf("  Testing (theoretical)newer alloc compat:  ");
+	ret = dmabuf_heap_alloc_newer(heap_fd, ONE_MEG, 0, &dmabuf_fd);
+	if (ret) {
+		printf("FAIL (Newer compat allocation failed!)\n");
+		ret = -1;
+		goto out;
+	}
+	printf("OK\n");
+out:
+	if (dmabuf_fd >= 0)
+		close(dmabuf_fd);
+	if (heap_fd >= 0)
+		close(heap_fd);
+
+	return ret;
+}
+
+static int test_alloc_errors(char *heap_name)
+{
+	int heap_fd = -1, dmabuf_fd = -1;
+	int ret;
+
+	heap_fd = dmabuf_heap_open(heap_name);
+	if (heap_fd < 0)
+		return -1;
+
+	printf("  Testing expected error cases:  ");
 	ret = dmabuf_heap_alloc(0, ONE_MEG, 0x111111, &dmabuf_fd);
-	ksft_test_result(ret, "Error expected on invalid fd %d\n", ret);
+	if (!ret) {
+		printf("FAIL (Did not see expected error (invalid fd)!)\n");
+		ret = -1;
+		goto out;
+	}
 
 	ret = dmabuf_heap_alloc(heap_fd, ONE_MEG, 0x111111, &dmabuf_fd);
-	ksft_test_result(ret, "Error expected on invalid heap flags %d\n", ret);
+	if (!ret) {
+		printf("FAIL (Did not see expected error (invalid heap flags)!)\n");
+		ret = -1;
+		goto out;
+	}
 
 	ret = dmabuf_heap_alloc_fdflags(heap_fd, ONE_MEG,
 					~(O_RDWR | O_CLOEXEC), 0, &dmabuf_fd);
-	ksft_test_result(ret, "Error expected on invalid heap flags %d\n", ret);
-
-	if (dmabuf_fd >= 0)
-		close(dmabuf_fd);
-	close(heap_fd);
-}
-
-static int numer_of_heaps(void)
-{
-	DIR *d = opendir(DEVPATH);
-	struct dirent *dir;
-	int heaps = 0;
-
-	while ((dir = readdir(d))) {
-		if (!strncmp(dir->d_name, ".", 2))
-			continue;
-		if (!strncmp(dir->d_name, "..", 3))
-			continue;
-		heaps++;
+	if (!ret) {
+		printf("FAIL (Did not see expected error (invalid fd flags)!)\n");
+		ret = -1;
+		goto out;
 	}
 
-	return heaps;
+	printf("OK\n");
+	ret = 0;
+out:
+	if (dmabuf_fd >= 0)
+		close(dmabuf_fd);
+	if (heap_fd >= 0)
+		close(heap_fd);
+
+	return ret;
 }
 
 int main(void)
 {
-	struct dirent *dir;
 	DIR *d;
-
-	ksft_print_header();
+	struct dirent *dir;
+	int ret = -1;
 
 	d = opendir(DEVPATH);
 	if (!d) {
-		ksft_print_msg("No %s directory?\n", DEVPATH);
-		return KSFT_SKIP;
+		printf("No %s directory?\n", DEVPATH);
+		return -1;
 	}
 
-	ksft_set_plan(11 * numer_of_heaps());
-
-	while ((dir = readdir(d))) {
+	while ((dir = readdir(d)) != NULL) {
 		if (!strncmp(dir->d_name, ".", 2))
 			continue;
 		if (!strncmp(dir->d_name, "..", 3))
 			continue;
 
-		ksft_print_msg("Testing heap: %s\n", dir->d_name);
-		ksft_print_msg("=======================================\n");
-		test_alloc_and_import(dir->d_name);
-		test_alloc_zeroed(dir->d_name, 4 * 1024);
-		test_alloc_zeroed(dir->d_name, ONE_MEG);
-		test_alloc_compat(dir->d_name);
-		test_alloc_errors(dir->d_name);
+		printf("Testing heap: %s\n", dir->d_name);
+		printf("=======================================\n");
+		ret = test_alloc_and_import(dir->d_name);
+		if (ret)
+			break;
+
+		ret = test_alloc_zeroed(dir->d_name, 4 * 1024);
+		if (ret)
+			break;
+
+		ret = test_alloc_zeroed(dir->d_name, ONE_MEG);
+		if (ret)
+			break;
+
+		ret = test_alloc_compat(dir->d_name);
+		if (ret)
+			break;
+
+		ret = test_alloc_errors(dir->d_name);
+		if (ret)
+			break;
 	}
 	closedir(d);
 
-	ksft_finished();
+	return ret;
 }

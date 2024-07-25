@@ -31,6 +31,7 @@
 #include <sysdep/ptrace.h>
 
 struct cpu_task {
+	int pid;
 	void *task;
 };
 

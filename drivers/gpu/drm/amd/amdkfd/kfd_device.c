@@ -65,7 +65,7 @@ static int kfd_resume(struct kfd_node *kfd);
 
 static void kfd_device_info_set_sdma_info(struct kfd_dev *kfd)
 {
-	uint32_t sdma_version = amdgpu_ip_version(kfd->adev, SDMA0_HWIP, 0);
+	uint32_t sdma_version = kfd->adev->ip_versions[SDMA0_HWIP][0];
 
 	switch (sdma_version) {
 	case IP_VERSION(4, 0, 0):/* VEGA10 */
@@ -95,8 +95,6 @@ static void kfd_device_info_set_sdma_info(struct kfd_dev *kfd)
 	case IP_VERSION(6, 0, 1):
 	case IP_VERSION(6, 0, 2):
 	case IP_VERSION(6, 0, 3):
-	case IP_VERSION(6, 1, 0):
-	case IP_VERSION(6, 1, 1):
 		kfd->device_info.num_sdma_queues_per_engine = 8;
 		break;
 	default:
@@ -113,8 +111,6 @@ static void kfd_device_info_set_sdma_info(struct kfd_dev *kfd)
 	case IP_VERSION(6, 0, 1):
 	case IP_VERSION(6, 0, 2):
 	case IP_VERSION(6, 0, 3):
-	case IP_VERSION(6, 1, 0):
-	case IP_VERSION(6, 1, 1):
 		/* Reserve 1 for paging and 1 for gfx */
 		kfd->device_info.num_reserved_sdma_queues_per_engine = 2;
 		/* BIT(0)=engine-0 queue-0; BIT(1)=engine-1 queue-0; BIT(2)=engine-0 queue-1; ... */
@@ -166,8 +162,6 @@ static void kfd_device_info_set_event_interrupt_class(struct kfd_dev *kfd)
 	case IP_VERSION(11, 0, 2):
 	case IP_VERSION(11, 0, 3):
 	case IP_VERSION(11, 0, 4):
-	case IP_VERSION(11, 5, 0):
-	case IP_VERSION(11, 5, 1):
 		kfd->device_info.event_interrupt_class = &event_interrupt_class_v11;
 		break;
 	default:
@@ -285,7 +279,7 @@ struct kfd_dev *kgd2kfd_probe(struct amdgpu_device *adev, bool vf)
 			f2g = &gfx_v8_kfd2kgd;
 		break;
 	default:
-		switch (amdgpu_ip_version(adev, GC_HWIP, 0)) {
+		switch (adev->ip_versions[GC_HWIP][0]) {
 		/* Vega 10 */
 		case IP_VERSION(9, 0, 1):
 			gfx_target_version = 90000;
@@ -412,14 +406,6 @@ struct kfd_dev *kgd2kfd_probe(struct amdgpu_device *adev, bool vf)
 			gfx_target_version = 110001;
 			f2g = &gfx_v11_kfd2kgd;
 			break;
-		case IP_VERSION(11, 5, 0):
-			gfx_target_version = 110500;
-			f2g = &gfx_v11_kfd2kgd;
-			break;
-		case IP_VERSION(11, 5, 1):
-			gfx_target_version = 110501;
-			f2g = &gfx_v11_kfd2kgd;
-			break;
 		default:
 			break;
 		}
@@ -427,13 +413,11 @@ struct kfd_dev *kgd2kfd_probe(struct amdgpu_device *adev, bool vf)
 	}
 
 	if (!f2g) {
-		if (amdgpu_ip_version(adev, GC_HWIP, 0))
-			dev_info(kfd_device,
-				"GC IP %06x %s not supported in kfd\n",
-				amdgpu_ip_version(adev, GC_HWIP, 0),
-				vf ? "VF" : "");
+		if (adev->ip_versions[GC_HWIP][0])
+			dev_err(kfd_device, "GC IP %06x %s not supported in kfd\n",
+				adev->ip_versions[GC_HWIP][0], vf ? "VF" : "");
 		else
-			dev_info(kfd_device, "%s %s not supported in kfd\n",
+			dev_err(kfd_device, "%s %s not supported in kfd\n",
 				amdgpu_asic_name[adev->asic_type], vf ? "VF" : "");
 		return NULL;
 	}
@@ -459,43 +443,34 @@ static void kfd_cwsr_init(struct kfd_dev *kfd)
 {
 	if (cwsr_enable && kfd->device_info.supports_cwsr) {
 		if (KFD_GC_VERSION(kfd) < IP_VERSION(9, 0, 1)) {
-			BUILD_BUG_ON(sizeof(cwsr_trap_gfx8_hex)
-					     > KFD_CWSR_TMA_OFFSET);
+			BUILD_BUG_ON(sizeof(cwsr_trap_gfx8_hex) > PAGE_SIZE);
 			kfd->cwsr_isa = cwsr_trap_gfx8_hex;
 			kfd->cwsr_isa_size = sizeof(cwsr_trap_gfx8_hex);
 		} else if (KFD_GC_VERSION(kfd) == IP_VERSION(9, 4, 1)) {
-			BUILD_BUG_ON(sizeof(cwsr_trap_arcturus_hex)
-					     > KFD_CWSR_TMA_OFFSET);
+			BUILD_BUG_ON(sizeof(cwsr_trap_arcturus_hex) > PAGE_SIZE);
 			kfd->cwsr_isa = cwsr_trap_arcturus_hex;
 			kfd->cwsr_isa_size = sizeof(cwsr_trap_arcturus_hex);
 		} else if (KFD_GC_VERSION(kfd) == IP_VERSION(9, 4, 2)) {
-			BUILD_BUG_ON(sizeof(cwsr_trap_aldebaran_hex)
-					     > KFD_CWSR_TMA_OFFSET);
+			BUILD_BUG_ON(sizeof(cwsr_trap_aldebaran_hex) > PAGE_SIZE);
 			kfd->cwsr_isa = cwsr_trap_aldebaran_hex;
 			kfd->cwsr_isa_size = sizeof(cwsr_trap_aldebaran_hex);
 		} else if (KFD_GC_VERSION(kfd) == IP_VERSION(9, 4, 3)) {
-			BUILD_BUG_ON(sizeof(cwsr_trap_gfx9_4_3_hex)
-					     > KFD_CWSR_TMA_OFFSET);
+			BUILD_BUG_ON(sizeof(cwsr_trap_gfx9_4_3_hex) > PAGE_SIZE);
 			kfd->cwsr_isa = cwsr_trap_gfx9_4_3_hex;
 			kfd->cwsr_isa_size = sizeof(cwsr_trap_gfx9_4_3_hex);
 		} else if (KFD_GC_VERSION(kfd) < IP_VERSION(10, 1, 1)) {
-			BUILD_BUG_ON(sizeof(cwsr_trap_gfx9_hex)
-					     > KFD_CWSR_TMA_OFFSET);
+			BUILD_BUG_ON(sizeof(cwsr_trap_gfx9_hex) > PAGE_SIZE);
 			kfd->cwsr_isa = cwsr_trap_gfx9_hex;
 			kfd->cwsr_isa_size = sizeof(cwsr_trap_gfx9_hex);
 		} else if (KFD_GC_VERSION(kfd) < IP_VERSION(10, 3, 0)) {
-			BUILD_BUG_ON(sizeof(cwsr_trap_nv1x_hex)
-					     > KFD_CWSR_TMA_OFFSET);
+			BUILD_BUG_ON(sizeof(cwsr_trap_nv1x_hex) > PAGE_SIZE);
 			kfd->cwsr_isa = cwsr_trap_nv1x_hex;
 			kfd->cwsr_isa_size = sizeof(cwsr_trap_nv1x_hex);
 		} else if (KFD_GC_VERSION(kfd) < IP_VERSION(11, 0, 0)) {
-			BUILD_BUG_ON(sizeof(cwsr_trap_gfx10_hex)
-					     > KFD_CWSR_TMA_OFFSET);
+			BUILD_BUG_ON(sizeof(cwsr_trap_gfx10_hex) > PAGE_SIZE);
 			kfd->cwsr_isa = cwsr_trap_gfx10_hex;
 			kfd->cwsr_isa_size = sizeof(cwsr_trap_gfx10_hex);
 		} else {
-			/* The gfx11 cwsr trap handler must fit inside a single
-			   page. */
 			BUILD_BUG_ON(sizeof(cwsr_trap_gfx11_hex) > PAGE_SIZE);
 			kfd->cwsr_isa = cwsr_trap_gfx11_hex;
 			kfd->cwsr_isa_size = sizeof(cwsr_trap_gfx11_hex);

@@ -29,7 +29,6 @@
 #include <asm/loongson.h>
 #include <asm/mmu_context.h>
 #include <asm/numa.h>
-#include <asm/paravirt.h>
 #include <asm/processor.h>
 #include <asm/setup.h>
 #include <asm/time.h>
@@ -66,6 +65,11 @@ static cpumask_t cpu_core_setup_map;
 
 struct secondary_data cpuboot_data;
 static DEFINE_PER_CPU(int, cpu_state);
+
+enum ipi_msg_type {
+	IPI_RESCHEDULE,
+	IPI_CALL_FUNCTION,
+};
 
 static const char *ipi_types[NR_IPI] __tracepoint_string = {
 	[IPI_RESCHEDULE] = "Rescheduling interrupts",
@@ -186,19 +190,24 @@ static u32 ipi_read_clear(int cpu)
 
 static void ipi_write_action(int cpu, u32 action)
 {
-	uint32_t val;
+	unsigned int irq = 0;
 
-	val = IOCSR_IPI_SEND_BLOCKING | action;
-	val |= (cpu << IOCSR_IPI_SEND_CPU_SHIFT);
-	iocsr_write32(val, LOONGARCH_IOCSR_IPI_SEND);
+	while ((irq = ffs(action))) {
+		uint32_t val = IOCSR_IPI_SEND_BLOCKING;
+
+		val |= (irq - 1);
+		val |= (cpu << IOCSR_IPI_SEND_CPU_SHIFT);
+		iocsr_write32(val, LOONGARCH_IOCSR_IPI_SEND);
+		action &= ~BIT(irq - 1);
+	}
 }
 
-static void loongson_send_ipi_single(int cpu, unsigned int action)
+void loongson_send_ipi_single(int cpu, unsigned int action)
 {
 	ipi_write_action(cpu_logical_map(cpu), (u32)action);
 }
 
-static void loongson_send_ipi_mask(const struct cpumask *mask, unsigned int action)
+void loongson_send_ipi_mask(const struct cpumask *mask, unsigned int action)
 {
 	unsigned int i;
 
@@ -213,11 +222,11 @@ static void loongson_send_ipi_mask(const struct cpumask *mask, unsigned int acti
  */
 void arch_smp_send_reschedule(int cpu)
 {
-	mp_ops.send_ipi_single(cpu, ACTION_RESCHEDULE);
+	loongson_send_ipi_single(cpu, SMP_RESCHEDULE);
 }
 EXPORT_SYMBOL_GPL(arch_smp_send_reschedule);
 
-static irqreturn_t loongson_ipi_interrupt(int irq, void *dev)
+irqreturn_t loongson_ipi_interrupt(int irq, void *dev)
 {
 	unsigned int action;
 	unsigned int cpu = smp_processor_id();
@@ -236,26 +245,6 @@ static irqreturn_t loongson_ipi_interrupt(int irq, void *dev)
 
 	return IRQ_HANDLED;
 }
-
-static void loongson_init_ipi(void)
-{
-	int r, ipi_irq;
-
-	ipi_irq = get_percpu_irq(INT_IPI);
-	if (ipi_irq < 0)
-		panic("IPI IRQ mapping failed\n");
-
-	irq_set_percpu_devid(ipi_irq);
-	r = request_percpu_irq(ipi_irq, loongson_ipi_interrupt, "IPI", &irq_stat);
-	if (r < 0)
-		panic("IPI IRQ request failed\n");
-}
-
-struct smp_ops mp_ops = {
-	.init_ipi		= loongson_init_ipi,
-	.send_ipi_single	= loongson_send_ipi_single,
-	.send_ipi_mask		= loongson_send_ipi_mask,
-};
 
 static void __init fdt_smp_setup(void)
 {
@@ -288,7 +277,7 @@ static void __init fdt_smp_setup(void)
 	}
 
 	loongson_sysconf.nr_cpus = num_processors;
-	set_bit(0, loongson_sysconf.cores_io_master);
+	set_bit(0, &(loongson_sysconf.cores_io_master));
 #endif
 }
 
@@ -296,13 +285,9 @@ void __init loongson_smp_setup(void)
 {
 	fdt_smp_setup();
 
-	if (loongson_sysconf.cores_per_package == 0)
-		loongson_sysconf.cores_per_package = num_processors;
-
 	cpu_data[0].core = cpu_logical_map(0) % loongson_sysconf.cores_per_package;
 	cpu_data[0].package = cpu_logical_map(0) / loongson_sysconf.cores_per_package;
 
-	pv_ipi_init();
 	iocsr_write32(0xffffffff, LOONGARCH_IOCSR_IPI_EN);
 	pr_info("Detected %i available CPU(s)\n", loongson_sysconf.nr_cpus);
 }
@@ -337,7 +322,7 @@ void loongson_boot_secondary(int cpu, struct task_struct *idle)
 
 	csr_mail_send(entry, cpu_logical_map(cpu), 0);
 
-	loongson_send_ipi_single(cpu, ACTION_BOOT_CPU);
+	loongson_send_ipi_single(cpu, SMP_BOOT_CPU);
 }
 
 /*
@@ -347,7 +332,7 @@ void loongson_init_secondary(void)
 {
 	unsigned int cpu = smp_processor_id();
 	unsigned int imask = ECFGF_IP0 | ECFGF_IP1 | ECFGF_IP2 |
-			     ECFGF_IPI | ECFGF_PMC | ECFGF_TIMER | ECFGF_SIP0;
+			     ECFGF_IPI | ECFGF_PMC | ECFGF_TIMER;
 
 	change_csr_ecfg(ECFG0_IM, imask);
 

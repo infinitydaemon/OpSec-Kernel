@@ -23,7 +23,7 @@
 #define V3D_CORE_IRQS(ver) ((u32)(V3D_INT_OUTOMEM |	\
 				  V3D_INT_FLDONE |	\
 				  V3D_INT_FRDONE |	\
-				  V3D_INT_CSDDONE(ver) |	\
+				  (ver < 71 ? V3D_INT_CSDDONE : V3D_V7_INT_CSDDONE) |	\
 				  (ver < 71 ? V3D_INT_GMPV : 0)))
 
 #define V3D_HUB_IRQS(ver) ((u32)(V3D_HUB_INT_MMU_WRV |	\
@@ -102,8 +102,8 @@ v3d_irq(int irq, void *arg)
 	if (intsts & V3D_INT_FLDONE) {
 		struct v3d_fence *fence =
 			to_v3d_fence(v3d->bin_job->base.irq_fence);
+		v3d->gpu_queue_stats[V3D_BIN].last_exec_end = local_clock();
 
-		v3d_job_update_stats(&v3d->bin_job->base, V3D_BIN);
 		trace_v3d_bcl_irq(&v3d->drm, fence->seqno);
 		dma_fence_signal(&fence->base);
 		status = IRQ_HANDLED;
@@ -112,18 +112,19 @@ v3d_irq(int irq, void *arg)
 	if (intsts & V3D_INT_FRDONE) {
 		struct v3d_fence *fence =
 			to_v3d_fence(v3d->render_job->base.irq_fence);
+		v3d->gpu_queue_stats[V3D_RENDER].last_exec_end = local_clock();
 
-		v3d_job_update_stats(&v3d->render_job->base, V3D_RENDER);
 		trace_v3d_rcl_irq(&v3d->drm, fence->seqno);
 		dma_fence_signal(&fence->base);
 		status = IRQ_HANDLED;
 	}
 
-	if (intsts & V3D_INT_CSDDONE(v3d->ver)) {
+	if ((v3d->ver < 71 && (intsts & V3D_INT_CSDDONE)) ||
+	    (v3d->ver >= 71 && (intsts & V3D_V7_INT_CSDDONE))) {
 		struct v3d_fence *fence =
 			to_v3d_fence(v3d->csd_job->base.irq_fence);
+		v3d->gpu_queue_stats[V3D_CSD].last_exec_end = local_clock();
 
-		v3d_job_update_stats(&v3d->csd_job->base, V3D_CSD);
 		trace_v3d_csd_irq(&v3d->drm, fence->seqno);
 		dma_fence_signal(&fence->base);
 		status = IRQ_HANDLED;
@@ -159,8 +160,8 @@ v3d_hub_irq(int irq, void *arg)
 	if (intsts & V3D_HUB_INT_TFUC) {
 		struct v3d_fence *fence =
 			to_v3d_fence(v3d->tfu_job->base.irq_fence);
+		v3d->gpu_queue_stats[V3D_TFU].last_exec_end = local_clock();
 
-		v3d_job_update_stats(&v3d->tfu_job->base, V3D_TFU);
 		trace_v3d_tfu_irq(&v3d->drm, fence->seqno);
 		dma_fence_signal(&fence->base);
 		status = IRQ_HANDLED;
@@ -183,6 +184,7 @@ v3d_hub_irq(int irq, void *arg)
 			"GMP",
 		};
 		const char *client = "?";
+		static int logged_error;
 
 		V3D_WRITE(V3D_MMU_CTL, V3D_READ(V3D_MMU_CTL));
 
@@ -192,6 +194,7 @@ v3d_hub_irq(int irq, void *arg)
 				client = v3d41_axi_ids[axi_id];
 		}
 
+		if (!logged_error)
 		dev_err(v3d->drm.dev, "MMU error from client %s (%d) at 0x%llx%s%s%s\n",
 			client, axi_id, (long long)vio_addr,
 			((intsts & V3D_HUB_INT_MMU_WRV) ?
@@ -200,10 +203,11 @@ v3d_hub_irq(int irq, void *arg)
 			 ", pte invalid" : ""),
 			((intsts & V3D_HUB_INT_MMU_CAP) ?
 			 ", cap exceeded" : ""));
+		logged_error = 1;
 		status = IRQ_HANDLED;
 	}
 
-	if (v3d->ver >= 71 && (intsts & V3D_V7_HUB_INT_GMPV)) {
+	if (v3d->ver >= 71 && intsts & V3D_V7_HUB_INT_GMPV) {
 		dev_err(v3d->drm.dev, "GMP Violation\n");
 		status = IRQ_HANDLED;
 	}

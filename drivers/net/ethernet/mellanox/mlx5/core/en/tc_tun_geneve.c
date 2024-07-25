@@ -106,13 +106,12 @@ static int mlx5e_gen_ip_tunnel_header_geneve(char buf[],
 	memset(geneveh, 0, sizeof(*geneveh));
 	geneveh->ver = MLX5E_GENEVE_VER;
 	geneveh->opt_len = tun_info->options_len / 4;
-	geneveh->oam = test_bit(IP_TUNNEL_OAM_BIT, tun_info->key.tun_flags);
-	geneveh->critical = test_bit(IP_TUNNEL_CRIT_OPT_BIT,
-				     tun_info->key.tun_flags);
+	geneveh->oam = !!(tun_info->key.tun_flags & TUNNEL_OAM);
+	geneveh->critical = !!(tun_info->key.tun_flags & TUNNEL_CRIT_OPT);
 	mlx5e_tunnel_id_to_vni(tun_info->key.tun_id, geneveh->vni);
 	geneveh->proto_type = htons(ETH_P_TEB);
 
-	if (test_bit(IP_TUNNEL_GENEVE_OPT_BIT, tun_info->key.tun_flags)) {
+	if (tun_info->key.tun_flags & TUNNEL_GENEVE_OPT) {
 		if (!geneveh->opt_len)
 			return -EOPNOTSUPP;
 		ip_tunnel_info_opts_get(geneveh->options, tun_info);
@@ -189,7 +188,7 @@ static int mlx5e_tc_tun_parse_geneve_options(struct mlx5e_priv *priv,
 
 	/* make sure that we're talking about GENEVE options */
 
-	if (enc_opts.key->dst_opt_type != IP_TUNNEL_GENEVE_OPT_BIT) {
+	if (enc_opts.key->dst_opt_type != TUNNEL_GENEVE_OPT) {
 		NL_SET_ERR_MSG_MOD(extack,
 				   "Matching on GENEVE options: option type is not GENEVE");
 		netdev_warn(priv->netdev,
@@ -338,8 +337,7 @@ static int mlx5e_tc_tun_parse_geneve(struct mlx5e_priv *priv,
 static bool mlx5e_tc_tun_encap_info_equal_geneve(struct mlx5e_encap_key *a,
 						 struct mlx5e_encap_key *b)
 {
-	return mlx5e_tc_tun_encap_info_equal_options(a, b,
-						     IP_TUNNEL_GENEVE_OPT_BIT);
+	return mlx5e_tc_tun_encap_info_equal_options(a, b, TUNNEL_GENEVE_OPT);
 }
 
 struct mlx5e_tc_tunnel geneve_tunnel = {

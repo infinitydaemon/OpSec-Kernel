@@ -76,27 +76,13 @@ struct dp_ctrl_private {
 	struct drm_dp_aux *aux;
 	struct dp_panel *panel;
 	struct dp_link *link;
+	struct dp_power *power;
+	struct dp_parser *parser;
 	struct dp_catalog *catalog;
-
-	struct phy *phy;
-
-	unsigned int num_core_clks;
-	struct clk_bulk_data *core_clks;
-
-	unsigned int num_link_clks;
-	struct clk_bulk_data *link_clks;
-
-	struct clk *pixel_clk;
-
-	union phy_configure_opts phy_opts;
 
 	struct completion idle_comp;
 	struct completion psr_op_comp;
 	struct completion video_comp;
-
-	bool core_clks_on;
-	bool link_clks_on;
-	bool stream_clks_on;
 };
 
 static int dp_aux_link_configure(struct drm_dp_aux *aux,
@@ -142,9 +128,6 @@ static void dp_ctrl_config_ctrl(struct dp_ctrl_private *ctrl)
 	/* Default-> LSCLK DIV: 1/4 LCLK  */
 	config |= (2 << DP_CONFIGURATION_CTRL_LSCLK_DIV_SHIFT);
 
-	if (ctrl->panel->dp_mode.out_fmt_is_yuv_420)
-		config |= DP_CONFIGURATION_CTRL_RGB_YUV; /* YUV420 */
-
 	/* Scrambler reset enable */
 	if (drm_dp_alternate_scrambler_reset_cap(dpcd))
 		config |= DP_CONFIGURATION_CTRL_ASSR;
@@ -179,7 +162,6 @@ static void dp_ctrl_configure_source_params(struct dp_ctrl_private *ctrl)
 
 	dp_catalog_ctrl_lane_mapping(ctrl->catalog);
 	dp_catalog_ctrl_mainlink_ctrl(ctrl->catalog, true);
-	dp_catalog_setup_peripheral_flush(ctrl->catalog);
 
 	dp_ctrl_config_ctrl(ctrl);
 
@@ -970,7 +952,7 @@ static void dp_ctrl_calc_tu_parameters(struct dp_ctrl_private *ctrl,
 	in.hporch = drm_mode->htotal - drm_mode->hdisplay;
 	in.nlanes = ctrl->link->link_params.num_lanes;
 	in.bpp = ctrl->panel->dp_mode.bpp;
-	in.pixel_enc = ctrl->panel->dp_mode.out_fmt_is_yuv_420 ? 420 : 444;
+	in.pixel_enc = 444;
 	in.dsc_en = 0;
 	in.async_en = 0;
 	in.fec_en = 0;
@@ -1019,21 +1001,6 @@ static int dp_ctrl_wait4video_ready(struct dp_ctrl_private *ctrl)
 	return ret;
 }
 
-static int dp_ctrl_set_vx_px(struct dp_ctrl_private *ctrl,
-			     u8 v_level, u8 p_level)
-{
-	union phy_configure_opts *phy_opts = &ctrl->phy_opts;
-
-	/* TODO: Update for all lanes instead of just first one */
-	phy_opts->dp.voltage[0] = v_level;
-	phy_opts->dp.pre[0] = p_level;
-	phy_opts->dp.set_voltages = 1;
-	phy_configure(ctrl->phy, phy_opts);
-	phy_opts->dp.set_voltages = 0;
-
-	return 0;
-}
-
 static int dp_ctrl_update_vx_px(struct dp_ctrl_private *ctrl)
 {
 	struct dp_link *link = ctrl->link;
@@ -1046,7 +1013,7 @@ static int dp_ctrl_update_vx_px(struct dp_ctrl_private *ctrl)
 	drm_dbg_dp(ctrl->drm_dev,
 		"voltage level: %d emphasis level: %d\n",
 			voltage_swing_level, pre_emphasis_level);
-	ret = dp_ctrl_set_vx_px(ctrl,
+	ret = dp_catalog_ctrl_update_vx_px(ctrl->catalog,
 		voltage_swing_level, pre_emphasis_level);
 
 	if (ret)
@@ -1345,115 +1312,44 @@ static int dp_ctrl_setup_main_link(struct dp_ctrl_private *ctrl,
 	return ret;
 }
 
-int dp_ctrl_core_clk_enable(struct dp_ctrl *dp_ctrl)
+static void dp_ctrl_set_clock_rate(struct dp_ctrl_private *ctrl,
+			enum dp_pm_type module, char *name, unsigned long rate)
 {
-	struct dp_ctrl_private *ctrl;
-	int ret = 0;
+	u32 num = ctrl->parser->mp[module].num_clk;
+	struct clk_bulk_data *cfg = ctrl->parser->mp[module].clocks;
 
-	ctrl = container_of(dp_ctrl, struct dp_ctrl_private, dp_ctrl);
-
-	if (ctrl->core_clks_on) {
-		drm_dbg_dp(ctrl->drm_dev, "core clks already enabled\n");
-		return 0;
+	while (num && strcmp(cfg->id, name)) {
+		num--;
+		cfg++;
 	}
 
-	ret = clk_bulk_prepare_enable(ctrl->num_core_clks, ctrl->core_clks);
-	if (ret)
-		return ret;
+	drm_dbg_dp(ctrl->drm_dev, "setting rate=%lu on clk=%s\n",
+						rate, name);
 
-	ctrl->core_clks_on = true;
-
-	drm_dbg_dp(ctrl->drm_dev, "enable core clocks \n");
-	drm_dbg_dp(ctrl->drm_dev, "stream_clks:%s link_clks:%s core_clks:%s\n",
-		   ctrl->stream_clks_on ? "on" : "off",
-		   ctrl->link_clks_on ? "on" : "off",
-		   ctrl->core_clks_on ? "on" : "off");
-
-	return 0;
-}
-
-void dp_ctrl_core_clk_disable(struct dp_ctrl *dp_ctrl)
-{
-	struct dp_ctrl_private *ctrl;
-
-	ctrl = container_of(dp_ctrl, struct dp_ctrl_private, dp_ctrl);
-
-	clk_bulk_disable_unprepare(ctrl->num_core_clks, ctrl->core_clks);
-
-	ctrl->core_clks_on = false;
-
-	drm_dbg_dp(ctrl->drm_dev, "disable core clocks \n");
-	drm_dbg_dp(ctrl->drm_dev, "stream_clks:%s link_clks:%s core_clks:%s\n",
-		   ctrl->stream_clks_on ? "on" : "off",
-		   ctrl->link_clks_on ? "on" : "off",
-		   ctrl->core_clks_on ? "on" : "off");
-}
-
-static int dp_ctrl_link_clk_enable(struct dp_ctrl *dp_ctrl)
-{
-	struct dp_ctrl_private *ctrl;
-	int ret = 0;
-
-	ctrl = container_of(dp_ctrl, struct dp_ctrl_private, dp_ctrl);
-
-	if (ctrl->link_clks_on) {
-		drm_dbg_dp(ctrl->drm_dev, "links clks already enabled\n");
-		return 0;
-	}
-
-	if (!ctrl->core_clks_on) {
-		drm_dbg_dp(ctrl->drm_dev, "Enable core clks before link clks\n");
-
-		dp_ctrl_core_clk_enable(dp_ctrl);
-	}
-
-	ret = clk_bulk_prepare_enable(ctrl->num_link_clks, ctrl->link_clks);
-	if (ret)
-		return ret;
-
-	ctrl->link_clks_on = true;
-
-	drm_dbg_dp(ctrl->drm_dev, "enable link clocks\n");
-	drm_dbg_dp(ctrl->drm_dev, "stream_clks:%s link_clks:%s core_clks:%s\n",
-		   ctrl->stream_clks_on ? "on" : "off",
-		   ctrl->link_clks_on ? "on" : "off",
-		   ctrl->core_clks_on ? "on" : "off");
-
-	return 0;
-}
-
-static void dp_ctrl_link_clk_disable(struct dp_ctrl *dp_ctrl)
-{
-	struct dp_ctrl_private *ctrl;
-
-	ctrl = container_of(dp_ctrl, struct dp_ctrl_private, dp_ctrl);
-
-	clk_bulk_disable_unprepare(ctrl->num_link_clks, ctrl->link_clks);
-
-	ctrl->link_clks_on = false;
-
-	drm_dbg_dp(ctrl->drm_dev, "disabled link clocks\n");
-	drm_dbg_dp(ctrl->drm_dev, "stream_clks:%s link_clks:%s core_clks:%s\n",
-		   ctrl->stream_clks_on ? "on" : "off",
-		   ctrl->link_clks_on ? "on" : "off",
-		   ctrl->core_clks_on ? "on" : "off");
+	if (num)
+		clk_set_rate(cfg->clk, rate);
+	else
+		DRM_ERROR("%s clock doesn't exit to set rate %lu\n",
+				name, rate);
 }
 
 static int dp_ctrl_enable_mainlink_clocks(struct dp_ctrl_private *ctrl)
 {
 	int ret = 0;
-	struct phy *phy = ctrl->phy;
+	struct dp_io *dp_io = &ctrl->parser->io;
+	struct phy *phy = dp_io->phy;
+	struct phy_configure_opts_dp *opts_dp = &dp_io->phy_opts.dp;
 	const u8 *dpcd = ctrl->panel->dpcd;
 
-	ctrl->phy_opts.dp.lanes = ctrl->link->link_params.num_lanes;
-	ctrl->phy_opts.dp.link_rate = ctrl->link->link_params.rate / 100;
-	ctrl->phy_opts.dp.ssc = drm_dp_max_downspread(dpcd);
+	opts_dp->lanes = ctrl->link->link_params.num_lanes;
+	opts_dp->link_rate = ctrl->link->link_params.rate / 100;
+	opts_dp->ssc = drm_dp_max_downspread(dpcd);
 
-	phy_configure(phy, &ctrl->phy_opts);
+	phy_configure(phy, &dp_io->phy_opts);
 	phy_power_on(phy);
 
 	dev_pm_opp_set_rate(ctrl->dev, ctrl->link->link_params.rate * 1000);
-	ret = dp_ctrl_link_clk_enable(&ctrl->dp_ctrl);
+	ret = dp_power_clk_enable(ctrl->power, DP_CTRL_PM, true);
 	if (ret)
 		DRM_ERROR("Unable to start link clocks. ret=%d\n", ret);
 
@@ -1540,10 +1436,12 @@ void dp_ctrl_set_psr(struct dp_ctrl *dp_ctrl, bool enter)
 void dp_ctrl_phy_init(struct dp_ctrl *dp_ctrl)
 {
 	struct dp_ctrl_private *ctrl;
+	struct dp_io *dp_io;
 	struct phy *phy;
 
 	ctrl = container_of(dp_ctrl, struct dp_ctrl_private, dp_ctrl);
-	phy = ctrl->phy;
+	dp_io = &ctrl->parser->io;
+	phy = dp_io->phy;
 
 	dp_catalog_ctrl_phy_reset(ctrl->catalog);
 	phy_init(phy);
@@ -1555,10 +1453,12 @@ void dp_ctrl_phy_init(struct dp_ctrl *dp_ctrl)
 void dp_ctrl_phy_exit(struct dp_ctrl *dp_ctrl)
 {
 	struct dp_ctrl_private *ctrl;
+	struct dp_io *dp_io;
 	struct phy *phy;
 
 	ctrl = container_of(dp_ctrl, struct dp_ctrl_private, dp_ctrl);
-	phy = ctrl->phy;
+	dp_io = &ctrl->parser->io;
+	phy = dp_io->phy;
 
 	dp_catalog_ctrl_phy_reset(ctrl->catalog);
 	phy_exit(phy);
@@ -1566,23 +1466,42 @@ void dp_ctrl_phy_exit(struct dp_ctrl *dp_ctrl)
 			phy, phy->init_count, phy->power_count);
 }
 
+static bool dp_ctrl_use_fixed_nvid(struct dp_ctrl_private *ctrl)
+{
+	const u8 *dpcd = ctrl->panel->dpcd;
+
+	/*
+	 * For better interop experience, used a fixed NVID=0x8000
+	 * whenever connected to a VGA dongle downstream.
+	 */
+	if (drm_dp_is_branch(dpcd))
+		return (drm_dp_has_quirk(&ctrl->panel->desc,
+					 DP_DPCD_QUIRK_CONSTANT_N));
+
+	return false;
+}
+
 static int dp_ctrl_reinitialize_mainlink(struct dp_ctrl_private *ctrl)
 {
-	struct phy *phy = ctrl->phy;
 	int ret = 0;
+	struct dp_io *dp_io = &ctrl->parser->io;
+	struct phy *phy = dp_io->phy;
+	struct phy_configure_opts_dp *opts_dp = &dp_io->phy_opts.dp;
 
 	dp_catalog_ctrl_mainlink_ctrl(ctrl->catalog, false);
-	ctrl->phy_opts.dp.lanes = ctrl->link->link_params.num_lanes;
-	phy_configure(phy, &ctrl->phy_opts);
+	opts_dp->lanes = ctrl->link->link_params.num_lanes;
+	phy_configure(phy, &dp_io->phy_opts);
 	/*
 	 * Disable and re-enable the mainlink clock since the
 	 * link clock might have been adjusted as part of the
 	 * link maintenance.
 	 */
 	dev_pm_opp_set_rate(ctrl->dev, 0);
-
-	dp_ctrl_link_clk_disable(&ctrl->dp_ctrl);
-
+	ret = dp_power_clk_enable(ctrl->power, DP_CTRL_PM, false);
+	if (ret) {
+		DRM_ERROR("Failed to disable clocks. ret=%d\n", ret);
+		return ret;
+	}
 	phy_power_off(phy);
 	/* hw recommended delay before re-enabling clocks */
 	msleep(20);
@@ -1598,16 +1517,22 @@ static int dp_ctrl_reinitialize_mainlink(struct dp_ctrl_private *ctrl)
 
 static int dp_ctrl_deinitialize_mainlink(struct dp_ctrl_private *ctrl)
 {
+	struct dp_io *dp_io;
 	struct phy *phy;
+	int ret;
 
-	phy = ctrl->phy;
+	dp_io = &ctrl->parser->io;
+	phy = dp_io->phy;
 
 	dp_catalog_ctrl_mainlink_ctrl(ctrl->catalog, false);
 
 	dp_catalog_ctrl_reset(ctrl->catalog);
 
 	dev_pm_opp_set_rate(ctrl->dev, 0);
-	dp_ctrl_link_clk_disable(&ctrl->dp_ctrl);
+	ret = dp_power_clk_enable(ctrl->power, DP_CTRL_PM, false);
+	if (ret) {
+		DRM_ERROR("Failed to disable link clocks. ret=%d\n", ret);
+	}
 
 	phy_power_off(phy);
 
@@ -1651,7 +1576,7 @@ static bool dp_ctrl_send_phy_test_pattern(struct dp_ctrl_private *ctrl)
 
 	drm_dbg_dp(ctrl->drm_dev, "request: 0x%x\n", pattern_requested);
 
-	if (dp_ctrl_set_vx_px(ctrl,
+	if (dp_catalog_ctrl_update_vx_px(ctrl->catalog,
 			ctrl->link->phy_params.v_level,
 			ctrl->link->phy_params.p_level)) {
 		DRM_ERROR("Failed to set v/p levels\n");
@@ -1711,7 +1636,11 @@ static int dp_ctrl_process_phy_test_request(struct dp_ctrl_private *ctrl)
 	 * running. Add the global reset just before disabling the
 	 * link clocks and core clocks.
 	 */
-	dp_ctrl_off(&ctrl->dp_ctrl);
+	ret = dp_ctrl_off(&ctrl->dp_ctrl);
+	if (ret) {
+		DRM_ERROR("failed to disable DP controller\n");
+		return ret;
+	}
 
 	ret = dp_ctrl_on_link(&ctrl->dp_ctrl);
 	if (ret) {
@@ -1720,21 +1649,12 @@ static int dp_ctrl_process_phy_test_request(struct dp_ctrl_private *ctrl)
 	}
 
 	pixel_rate = ctrl->panel->dp_mode.drm_mode.clock;
-	ret = clk_set_rate(ctrl->pixel_clk, pixel_rate * 1000);
-	if (ret) {
-		DRM_ERROR("Failed to set pixel clock rate. ret=%d\n", ret);
-		return ret;
-	}
+	dp_ctrl_set_clock_rate(ctrl, DP_STREAM_PM, "stream_pixel", pixel_rate * 1000);
 
-	if (ctrl->stream_clks_on) {
-		drm_dbg_dp(ctrl->drm_dev, "pixel clks already enabled\n");
-	} else {
-		ret = clk_prepare_enable(ctrl->pixel_clk);
-		if (ret) {
-			DRM_ERROR("Failed to start pixel clocks. ret=%d\n", ret);
-			return ret;
-		}
-		ctrl->stream_clks_on = true;
+	ret = dp_power_clk_enable(ctrl->power, DP_STREAM_PM, true);
+	if (ret) {
+		DRM_ERROR("Failed to start pixel clocks. ret=%d\n", ret);
+		return ret;
 	}
 
 	dp_ctrl_send_phy_test_pattern(ctrl);
@@ -1827,7 +1747,7 @@ int dp_ctrl_on_link(struct dp_ctrl *dp_ctrl)
 	rate = ctrl->panel->link_info.rate;
 	pixel_rate = ctrl->panel->dp_mode.drm_mode.clock;
 
-	dp_ctrl_core_clk_enable(&ctrl->dp_ctrl);
+	dp_power_clk_enable(ctrl->power, DP_CORE_PM, true);
 
 	if (ctrl->link->sink_request & DP_TEST_LINK_PHY_TEST_PATTERN) {
 		drm_dbg_dp(ctrl->drm_dev,
@@ -1838,8 +1758,6 @@ int dp_ctrl_on_link(struct dp_ctrl *dp_ctrl)
 		ctrl->link->link_params.rate = rate;
 		ctrl->link->link_params.num_lanes =
 			ctrl->panel->link_info.num_lanes;
-		if (ctrl->panel->dp_mode.out_fmt_is_yuv_420)
-			pixel_rate >>= 1;
 	}
 
 	drm_dbg_dp(ctrl->drm_dev, "rate=%d, num_lanes=%d, pixel_rate=%lu\n",
@@ -1955,18 +1873,14 @@ int dp_ctrl_on_stream(struct dp_ctrl *dp_ctrl, bool force_link_train)
 
 	pixel_rate = pixel_rate_orig = ctrl->panel->dp_mode.drm_mode.clock;
 
-	if (dp_ctrl->wide_bus_en || ctrl->panel->dp_mode.out_fmt_is_yuv_420)
+	if (dp_ctrl->wide_bus_en)
 		pixel_rate >>= 1;
 
 	drm_dbg_dp(ctrl->drm_dev, "rate=%d, num_lanes=%d, pixel_rate=%lu\n",
 		ctrl->link->link_params.rate,
 		ctrl->link->link_params.num_lanes, pixel_rate);
 
-	drm_dbg_dp(ctrl->drm_dev,
-		"core_clk_on=%d link_clk_on=%d stream_clk_on=%d\n",
-		ctrl->core_clks_on, ctrl->link_clks_on, ctrl->stream_clks_on);
-
-	if (!ctrl->link_clks_on) { /* link clk is off */
+	if (!dp_power_clk_status(ctrl->power, DP_CTRL_PM)) { /* link clk is off */
 		ret = dp_ctrl_enable_mainlink_clocks(ctrl);
 		if (ret) {
 			DRM_ERROR("Failed to start link clocks. ret=%d\n", ret);
@@ -1974,21 +1888,12 @@ int dp_ctrl_on_stream(struct dp_ctrl *dp_ctrl, bool force_link_train)
 		}
 	}
 
-	ret = clk_set_rate(ctrl->pixel_clk, pixel_rate * 1000);
-	if (ret) {
-		DRM_ERROR("Failed to set pixel clock rate. ret=%d\n", ret);
-		goto end;
-	}
+	dp_ctrl_set_clock_rate(ctrl, DP_STREAM_PM, "stream_pixel", pixel_rate * 1000);
 
-	if (ctrl->stream_clks_on) {
-		drm_dbg_dp(ctrl->drm_dev, "pixel clks already enabled\n");
-	} else {
-		ret = clk_prepare_enable(ctrl->pixel_clk);
-		if (ret) {
-			DRM_ERROR("Failed to start pixel clocks. ret=%d\n", ret);
-			goto end;
-		}
-		ctrl->stream_clks_on = true;
+	ret = dp_power_clk_enable(ctrl->power, DP_STREAM_PM, true);
+	if (ret) {
+		DRM_ERROR("Unable to start pixel clocks. ret=%d\n", ret);
+		goto end;
 	}
 
 	if (force_link_train || !dp_ctrl_channel_eq_ok(ctrl))
@@ -2007,8 +1912,7 @@ int dp_ctrl_on_stream(struct dp_ctrl *dp_ctrl, bool force_link_train)
 
 	dp_catalog_ctrl_config_msa(ctrl->catalog,
 		ctrl->link->link_params.rate,
-		pixel_rate_orig,
-		ctrl->panel->dp_mode.out_fmt_is_yuv_420);
+		pixel_rate_orig, dp_ctrl_use_fixed_nvid(ctrl));
 
 	dp_ctrl_setup_tr_unit(ctrl);
 
@@ -2026,28 +1930,36 @@ end:
 	return ret;
 }
 
-void dp_ctrl_off_link_stream(struct dp_ctrl *dp_ctrl)
+int dp_ctrl_off_link_stream(struct dp_ctrl *dp_ctrl)
 {
 	struct dp_ctrl_private *ctrl;
+	struct dp_io *dp_io;
 	struct phy *phy;
+	int ret;
 
 	ctrl = container_of(dp_ctrl, struct dp_ctrl_private, dp_ctrl);
-	phy = ctrl->phy;
-
-	dp_catalog_panel_disable_vsc_sdp(ctrl->catalog);
+	dp_io = &ctrl->parser->io;
+	phy = dp_io->phy;
 
 	/* set dongle to D3 (power off) mode */
 	dp_link_psm_config(ctrl->link, &ctrl->panel->link_info, true);
 
 	dp_catalog_ctrl_mainlink_ctrl(ctrl->catalog, false);
 
-	if (ctrl->stream_clks_on) {
-		clk_disable_unprepare(ctrl->pixel_clk);
-		ctrl->stream_clks_on = false;
+	if (dp_power_clk_status(ctrl->power, DP_STREAM_PM)) {
+		ret = dp_power_clk_enable(ctrl->power, DP_STREAM_PM, false);
+		if (ret) {
+			DRM_ERROR("Failed to disable pclk. ret=%d\n", ret);
+			return ret;
+		}
 	}
 
 	dev_pm_opp_set_rate(ctrl->dev, 0);
-	dp_ctrl_link_clk_disable(&ctrl->dp_ctrl);
+	ret = dp_power_clk_enable(ctrl->power, DP_CTRL_PM, false);
+	if (ret) {
+		DRM_ERROR("Failed to disable link clocks. ret=%d\n", ret);
+		return ret;
+	}
 
 	phy_power_off(phy);
 
@@ -2057,19 +1969,26 @@ void dp_ctrl_off_link_stream(struct dp_ctrl *dp_ctrl)
 
 	drm_dbg_dp(ctrl->drm_dev, "phy=%p init=%d power_on=%d\n",
 			phy, phy->init_count, phy->power_count);
+	return ret;
 }
 
-void dp_ctrl_off_link(struct dp_ctrl *dp_ctrl)
+int dp_ctrl_off_link(struct dp_ctrl *dp_ctrl)
 {
 	struct dp_ctrl_private *ctrl;
+	struct dp_io *dp_io;
 	struct phy *phy;
+	int ret;
 
 	ctrl = container_of(dp_ctrl, struct dp_ctrl_private, dp_ctrl);
-	phy = ctrl->phy;
+	dp_io = &ctrl->parser->io;
+	phy = dp_io->phy;
 
 	dp_catalog_ctrl_mainlink_ctrl(ctrl->catalog, false);
 
-	dp_ctrl_link_clk_disable(&ctrl->dp_ctrl);
+	ret = dp_power_clk_enable(ctrl->power, DP_CTRL_PM, false);
+	if (ret) {
+		DRM_ERROR("Failed to disable link clocks. ret=%d\n", ret);
+	}
 
 	DRM_DEBUG_DP("Before, phy=%p init_count=%d power_on=%d\n",
 		phy, phy->init_count, phy->power_count);
@@ -2078,33 +1997,43 @@ void dp_ctrl_off_link(struct dp_ctrl *dp_ctrl)
 
 	DRM_DEBUG_DP("After, phy=%p init_count=%d power_on=%d\n",
 		phy, phy->init_count, phy->power_count);
+
+	return ret;
 }
 
-void dp_ctrl_off(struct dp_ctrl *dp_ctrl)
+int dp_ctrl_off(struct dp_ctrl *dp_ctrl)
 {
 	struct dp_ctrl_private *ctrl;
+	struct dp_io *dp_io;
 	struct phy *phy;
+	int ret = 0;
+
+	if (!dp_ctrl)
+		return -EINVAL;
 
 	ctrl = container_of(dp_ctrl, struct dp_ctrl_private, dp_ctrl);
-	phy = ctrl->phy;
-
-	dp_catalog_panel_disable_vsc_sdp(ctrl->catalog);
+	dp_io = &ctrl->parser->io;
+	phy = dp_io->phy;
 
 	dp_catalog_ctrl_mainlink_ctrl(ctrl->catalog, false);
 
 	dp_catalog_ctrl_reset(ctrl->catalog);
 
-	if (ctrl->stream_clks_on) {
-		clk_disable_unprepare(ctrl->pixel_clk);
-		ctrl->stream_clks_on = false;
-	}
+	ret = dp_power_clk_enable(ctrl->power, DP_STREAM_PM, false);
+	if (ret)
+		DRM_ERROR("Failed to disable pixel clocks. ret=%d\n", ret);
 
 	dev_pm_opp_set_rate(ctrl->dev, 0);
-	dp_ctrl_link_clk_disable(&ctrl->dp_ctrl);
+	ret = dp_power_clk_enable(ctrl->power, DP_CTRL_PM, false);
+	if (ret) {
+		DRM_ERROR("Failed to disable link clocks. ret=%d\n", ret);
+	}
 
 	phy_power_off(phy);
 	drm_dbg_dp(ctrl->drm_dev, "phy=%p init=%d power_on=%d\n",
 			phy, phy->init_count, phy->power_count);
+
+	return ret;
 }
 
 irqreturn_t dp_ctrl_isr(struct dp_ctrl *dp_ctrl)
@@ -2152,60 +2081,10 @@ irqreturn_t dp_ctrl_isr(struct dp_ctrl *dp_ctrl)
 	return ret;
 }
 
-static const char *core_clks[] = {
-	"core_iface",
-	"core_aux",
-};
-
-static const char *ctrl_clks[] = {
-	"ctrl_link",
-	"ctrl_link_iface",
-};
-
-static int dp_ctrl_clk_init(struct dp_ctrl *dp_ctrl)
-{
-	struct dp_ctrl_private *ctrl;
-	struct device *dev;
-	int i, rc;
-
-	ctrl = container_of(dp_ctrl, struct dp_ctrl_private, dp_ctrl);
-	dev = ctrl->dev;
-
-	ctrl->num_core_clks = ARRAY_SIZE(core_clks);
-	ctrl->core_clks = devm_kcalloc(dev, ctrl->num_core_clks, sizeof(*ctrl->core_clks), GFP_KERNEL);
-	if (!ctrl->core_clks)
-		return -ENOMEM;
-
-	for (i = 0; i < ctrl->num_core_clks; i++)
-		ctrl->core_clks[i].id = core_clks[i];
-
-	rc = devm_clk_bulk_get(dev, ctrl->num_core_clks, ctrl->core_clks);
-	if (rc)
-		return rc;
-
-	ctrl->num_link_clks = ARRAY_SIZE(ctrl_clks);
-	ctrl->link_clks = devm_kcalloc(dev, ctrl->num_link_clks, sizeof(*ctrl->link_clks), GFP_KERNEL);
-	if (!ctrl->link_clks)
-		return -ENOMEM;
-
-	for (i = 0; i < ctrl->num_link_clks; i++)
-		ctrl->link_clks[i].id = ctrl_clks[i];
-
-	rc = devm_clk_bulk_get(dev, ctrl->num_link_clks, ctrl->link_clks);
-	if (rc)
-		return rc;
-
-	ctrl->pixel_clk = devm_clk_get(dev, "stream_pixel");
-	if (IS_ERR(ctrl->pixel_clk))
-		return PTR_ERR(ctrl->pixel_clk);
-
-	return 0;
-}
-
 struct dp_ctrl *dp_ctrl_get(struct device *dev, struct dp_link *link,
 			struct dp_panel *panel,	struct drm_dp_aux *aux,
-			struct dp_catalog *catalog,
-			struct phy *phy)
+			struct dp_power *power, struct dp_catalog *catalog,
+			struct dp_parser *parser)
 {
 	struct dp_ctrl_private *ctrl;
 	int ret;
@@ -2239,18 +2118,13 @@ struct dp_ctrl *dp_ctrl_get(struct device *dev, struct dp_link *link,
 	init_completion(&ctrl->video_comp);
 
 	/* in parameters */
+	ctrl->parser   = parser;
 	ctrl->panel    = panel;
+	ctrl->power    = power;
 	ctrl->aux      = aux;
 	ctrl->link     = link;
 	ctrl->catalog  = catalog;
 	ctrl->dev      = dev;
-	ctrl->phy      = phy;
-
-	ret = dp_ctrl_clk_init(&ctrl->dp_ctrl);
-	if (ret) {
-		dev_err(dev, "failed to init clocks\n");
-		return ERR_PTR(ret);
-	}
 
 	return &ctrl->dp_ctrl;
 }

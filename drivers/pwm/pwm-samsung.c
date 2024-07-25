@@ -69,6 +69,7 @@ struct samsung_pwm_channel {
 
 /**
  * struct samsung_pwm_chip - private data of PWM chip
+ * @chip:		generic PWM chip
  * @variant:		local copy of hardware variant data
  * @inverter_mask:	inverter status for all channels - one bit per channel
  * @disabled_mask:	disabled status for all channels - one bit per channel
@@ -76,9 +77,9 @@ struct samsung_pwm_channel {
  * @base_clk:		base clock used to drive the timers
  * @tclk0:		external clock 0 (can be ERR_PTR if not present)
  * @tclk1:		external clock 1 (can be ERR_PTR if not present)
- * @channel:		per channel driver data
  */
 struct samsung_pwm_chip {
+	struct pwm_chip chip;
 	struct samsung_pwm_variant variant;
 	u8 inverter_mask;
 	u8 disabled_mask;
@@ -87,7 +88,6 @@ struct samsung_pwm_chip {
 	struct clk *base_clk;
 	struct clk *tclk0;
 	struct clk *tclk1;
-	struct samsung_pwm_channel channel[SAMSUNG_PWM_NUM];
 };
 
 #ifndef CONFIG_CLKSRC_SAMSUNG_PWM
@@ -108,7 +108,7 @@ static DEFINE_SPINLOCK(samsung_pwm_lock);
 static inline
 struct samsung_pwm_chip *to_samsung_pwm_chip(struct pwm_chip *chip)
 {
-	return pwmchip_get_drvdata(chip);
+	return container_of(chip, struct samsung_pwm_chip, chip);
 }
 
 static inline unsigned int to_tcon_channel(unsigned int channel)
@@ -117,21 +117,21 @@ static inline unsigned int to_tcon_channel(unsigned int channel)
 	return (channel == 0) ? 0 : (channel + 1);
 }
 
-static void __pwm_samsung_manual_update(struct samsung_pwm_chip *our_chip,
+static void __pwm_samsung_manual_update(struct samsung_pwm_chip *chip,
 				      struct pwm_device *pwm)
 {
 	unsigned int tcon_chan = to_tcon_channel(pwm->hwpwm);
 	u32 tcon;
 
-	tcon = readl(our_chip->base + REG_TCON);
+	tcon = readl(chip->base + REG_TCON);
 	tcon |= TCON_MANUALUPDATE(tcon_chan);
-	writel(tcon, our_chip->base + REG_TCON);
+	writel(tcon, chip->base + REG_TCON);
 
 	tcon &= ~TCON_MANUALUPDATE(tcon_chan);
-	writel(tcon, our_chip->base + REG_TCON);
+	writel(tcon, chip->base + REG_TCON);
 }
 
-static void pwm_samsung_set_divisor(struct samsung_pwm_chip *our_chip,
+static void pwm_samsung_set_divisor(struct samsung_pwm_chip *pwm,
 				    unsigned int channel, u8 divisor)
 {
 	u8 shift = TCFG1_SHIFT(channel);
@@ -139,39 +139,39 @@ static void pwm_samsung_set_divisor(struct samsung_pwm_chip *our_chip,
 	u32 reg;
 	u8 bits;
 
-	bits = (fls(divisor) - 1) - our_chip->variant.div_base;
+	bits = (fls(divisor) - 1) - pwm->variant.div_base;
 
 	spin_lock_irqsave(&samsung_pwm_lock, flags);
 
-	reg = readl(our_chip->base + REG_TCFG1);
+	reg = readl(pwm->base + REG_TCFG1);
 	reg &= ~(TCFG1_MUX_MASK << shift);
 	reg |= bits << shift;
-	writel(reg, our_chip->base + REG_TCFG1);
+	writel(reg, pwm->base + REG_TCFG1);
 
 	spin_unlock_irqrestore(&samsung_pwm_lock, flags);
 }
 
-static int pwm_samsung_is_tdiv(struct samsung_pwm_chip *our_chip, unsigned int chan)
+static int pwm_samsung_is_tdiv(struct samsung_pwm_chip *chip, unsigned int chan)
 {
-	struct samsung_pwm_variant *variant = &our_chip->variant;
+	struct samsung_pwm_variant *variant = &chip->variant;
 	u32 reg;
 
-	reg = readl(our_chip->base + REG_TCFG1);
+	reg = readl(chip->base + REG_TCFG1);
 	reg >>= TCFG1_SHIFT(chan);
 	reg &= TCFG1_MUX_MASK;
 
 	return (BIT(reg) & variant->tclk_mask) == 0;
 }
 
-static unsigned long pwm_samsung_get_tin_rate(struct samsung_pwm_chip *our_chip,
+static unsigned long pwm_samsung_get_tin_rate(struct samsung_pwm_chip *chip,
 					      unsigned int chan)
 {
 	unsigned long rate;
 	u32 reg;
 
-	rate = clk_get_rate(our_chip->base_clk);
+	rate = clk_get_rate(chip->base_clk);
 
-	reg = readl(our_chip->base + REG_TCFG0);
+	reg = readl(chip->base + REG_TCFG0);
 	if (chan >= 2)
 		reg >>= TCFG0_PRESCALER1_SHIFT;
 	reg &= TCFG0_PRESCALER_MASK;
@@ -179,29 +179,28 @@ static unsigned long pwm_samsung_get_tin_rate(struct samsung_pwm_chip *our_chip,
 	return rate / (reg + 1);
 }
 
-static unsigned long pwm_samsung_calc_tin(struct pwm_chip *chip,
+static unsigned long pwm_samsung_calc_tin(struct samsung_pwm_chip *chip,
 					  unsigned int chan, unsigned long freq)
 {
-	struct samsung_pwm_chip *our_chip = to_samsung_pwm_chip(chip);
-	struct samsung_pwm_variant *variant = &our_chip->variant;
+	struct samsung_pwm_variant *variant = &chip->variant;
 	unsigned long rate;
 	struct clk *clk;
 	u8 div;
 
-	if (!pwm_samsung_is_tdiv(our_chip, chan)) {
-		clk = (chan < 2) ? our_chip->tclk0 : our_chip->tclk1;
+	if (!pwm_samsung_is_tdiv(chip, chan)) {
+		clk = (chan < 2) ? chip->tclk0 : chip->tclk1;
 		if (!IS_ERR(clk)) {
 			rate = clk_get_rate(clk);
 			if (rate)
 				return rate;
 		}
 
-		dev_warn(pwmchip_parent(chip),
+		dev_warn(chip->chip.dev,
 			"tclk of PWM %d is inoperational, using tdiv\n", chan);
 	}
 
-	rate = pwm_samsung_get_tin_rate(our_chip, chan);
-	dev_dbg(pwmchip_parent(chip), "tin parent at %lu\n", rate);
+	rate = pwm_samsung_get_tin_rate(chip, chan);
+	dev_dbg(chip->chip.dev, "tin parent at %lu\n", rate);
 
 	/*
 	 * Compare minimum PWM frequency that can be achieved with possible
@@ -221,7 +220,7 @@ static unsigned long pwm_samsung_calc_tin(struct pwm_chip *chip,
 		div = variant->div_base;
 	}
 
-	pwm_samsung_set_divisor(our_chip, chan, BIT(div));
+	pwm_samsung_set_divisor(chip, chan, BIT(div));
 
 	return rate >> div;
 }
@@ -229,17 +228,27 @@ static unsigned long pwm_samsung_calc_tin(struct pwm_chip *chip,
 static int pwm_samsung_request(struct pwm_chip *chip, struct pwm_device *pwm)
 {
 	struct samsung_pwm_chip *our_chip = to_samsung_pwm_chip(chip);
+	struct samsung_pwm_channel *our_chan;
 
 	if (!(our_chip->variant.output_mask & BIT(pwm->hwpwm))) {
-		dev_warn(pwmchip_parent(chip),
+		dev_warn(chip->dev,
 			"tried to request PWM channel %d without output\n",
 			pwm->hwpwm);
 		return -EINVAL;
 	}
 
-	memset(&our_chip->channel[pwm->hwpwm], 0, sizeof(our_chip->channel[pwm->hwpwm]));
+	our_chan = kzalloc(sizeof(*our_chan), GFP_KERNEL);
+	if (!our_chan)
+		return -ENOMEM;
+
+	pwm_set_chip_data(pwm, our_chan);
 
 	return 0;
+}
+
+static void pwm_samsung_free(struct pwm_chip *chip, struct pwm_device *pwm)
+{
+	kfree(pwm_get_chip_data(pwm));
 }
 
 static int pwm_samsung_enable(struct pwm_chip *chip, struct pwm_device *pwm)
@@ -293,14 +302,14 @@ static void pwm_samsung_disable(struct pwm_chip *chip, struct pwm_device *pwm)
 	spin_unlock_irqrestore(&samsung_pwm_lock, flags);
 }
 
-static void pwm_samsung_manual_update(struct samsung_pwm_chip *our_chip,
+static void pwm_samsung_manual_update(struct samsung_pwm_chip *chip,
 				      struct pwm_device *pwm)
 {
 	unsigned long flags;
 
 	spin_lock_irqsave(&samsung_pwm_lock, flags);
 
-	__pwm_samsung_manual_update(our_chip, pwm);
+	__pwm_samsung_manual_update(chip, pwm);
 
 	spin_unlock_irqrestore(&samsung_pwm_lock, flags);
 }
@@ -309,7 +318,7 @@ static int __pwm_samsung_config(struct pwm_chip *chip, struct pwm_device *pwm,
 				int duty_ns, int period_ns, bool force_period)
 {
 	struct samsung_pwm_chip *our_chip = to_samsung_pwm_chip(chip);
-	struct samsung_pwm_channel *chan = &our_chip->channel[pwm->hwpwm];
+	struct samsung_pwm_channel *chan = pwm_get_chip_data(pwm);
 	u32 tin_ns = chan->tin_ns, tcnt, tcmp, oldtcmp;
 
 	tcnt = readl(our_chip->base + REG_TCNTB(pwm->hwpwm));
@@ -325,12 +334,12 @@ static int __pwm_samsung_config(struct pwm_chip *chip, struct pwm_device *pwm,
 
 		period = NSEC_PER_SEC / period_ns;
 
-		dev_dbg(pwmchip_parent(chip), "duty_ns=%d, period_ns=%d (%u)\n",
+		dev_dbg(our_chip->chip.dev, "duty_ns=%d, period_ns=%d (%u)\n",
 						duty_ns, period_ns, period);
 
-		tin_rate = pwm_samsung_calc_tin(chip, pwm->hwpwm, period);
+		tin_rate = pwm_samsung_calc_tin(our_chip, pwm->hwpwm, period);
 
-		dev_dbg(pwmchip_parent(chip), "tin_rate=%lu\n", tin_rate);
+		dev_dbg(our_chip->chip.dev, "tin_rate=%lu\n", tin_rate);
 
 		tin_ns = NSEC_PER_SEC / tin_rate;
 		tcnt = period_ns / tin_ns;
@@ -354,7 +363,8 @@ static int __pwm_samsung_config(struct pwm_chip *chip, struct pwm_device *pwm,
 	/* -1UL will give 100% duty. */
 	--tcmp;
 
-	dev_dbg(pwmchip_parent(chip), "tin_ns=%u, tcmp=%u/%u\n", tin_ns, tcmp, tcnt);
+	dev_dbg(our_chip->chip.dev,
+				"tin_ns=%u, tcmp=%u/%u\n", tin_ns, tcmp, tcnt);
 
 	/* Update PWM registers. */
 	writel(tcnt, our_chip->base + REG_TCNTB(pwm->hwpwm));
@@ -366,7 +376,7 @@ static int __pwm_samsung_config(struct pwm_chip *chip, struct pwm_device *pwm,
 	 * shortly afer this update (before it autoreloaded the new values).
 	 */
 	if (oldtcmp == (u32) -1) {
-		dev_dbg(pwmchip_parent(chip), "Forcing manual update");
+		dev_dbg(our_chip->chip.dev, "Forcing manual update");
 		pwm_samsung_manual_update(our_chip, pwm);
 	}
 
@@ -383,7 +393,7 @@ static int pwm_samsung_config(struct pwm_chip *chip, struct pwm_device *pwm,
 	return __pwm_samsung_config(chip, pwm, duty_ns, period_ns, false);
 }
 
-static void pwm_samsung_set_invert(struct samsung_pwm_chip *our_chip,
+static void pwm_samsung_set_invert(struct samsung_pwm_chip *chip,
 				   unsigned int channel, bool invert)
 {
 	unsigned int tcon_chan = to_tcon_channel(channel);
@@ -392,17 +402,17 @@ static void pwm_samsung_set_invert(struct samsung_pwm_chip *our_chip,
 
 	spin_lock_irqsave(&samsung_pwm_lock, flags);
 
-	tcon = readl(our_chip->base + REG_TCON);
+	tcon = readl(chip->base + REG_TCON);
 
 	if (invert) {
-		our_chip->inverter_mask |= BIT(channel);
+		chip->inverter_mask |= BIT(channel);
 		tcon |= TCON_INVERT(tcon_chan);
 	} else {
-		our_chip->inverter_mask &= ~BIT(channel);
+		chip->inverter_mask &= ~BIT(channel);
 		tcon &= ~TCON_INVERT(tcon_chan);
 	}
 
-	writel(tcon, our_chip->base + REG_TCON);
+	writel(tcon, chip->base + REG_TCON);
 
 	spin_unlock_irqrestore(&samsung_pwm_lock, flags);
 }
@@ -463,7 +473,9 @@ static int pwm_samsung_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 
 static const struct pwm_ops pwm_samsung_ops = {
 	.request	= pwm_samsung_request,
+	.free		= pwm_samsung_free,
 	.apply		= pwm_samsung_apply,
+	.owner		= THIS_MODULE,
 };
 
 #ifdef CONFIG_OF
@@ -505,10 +517,9 @@ static const struct of_device_id samsung_pwm_matches[] = {
 };
 MODULE_DEVICE_TABLE(of, samsung_pwm_matches);
 
-static int pwm_samsung_parse_dt(struct pwm_chip *chip)
+static int pwm_samsung_parse_dt(struct samsung_pwm_chip *chip)
 {
-	struct samsung_pwm_chip *our_chip = to_samsung_pwm_chip(chip);
-	struct device_node *np = pwmchip_parent(chip)->of_node;
+	struct device_node *np = chip->chip.dev->of_node;
 	const struct of_device_id *match;
 	struct property *prop;
 	const __be32 *cur;
@@ -518,22 +529,22 @@ static int pwm_samsung_parse_dt(struct pwm_chip *chip)
 	if (!match)
 		return -ENODEV;
 
-	memcpy(&our_chip->variant, match->data, sizeof(our_chip->variant));
+	memcpy(&chip->variant, match->data, sizeof(chip->variant));
 
 	of_property_for_each_u32(np, "samsung,pwm-outputs", prop, cur, val) {
 		if (val >= SAMSUNG_PWM_NUM) {
-			dev_err(pwmchip_parent(chip),
+			dev_err(chip->chip.dev,
 				"%s: invalid channel index in samsung,pwm-outputs property\n",
 								__func__);
 			continue;
 		}
-		our_chip->variant.output_mask |= BIT(val);
+		chip->variant.output_mask |= BIT(val);
 	}
 
 	return 0;
 }
 #else
-static int pwm_samsung_parse_dt(struct pwm_chip *chip)
+static int pwm_samsung_parse_dt(struct samsung_pwm_chip *chip)
 {
 	return -ENODEV;
 }
@@ -542,74 +553,95 @@ static int pwm_samsung_parse_dt(struct pwm_chip *chip)
 static int pwm_samsung_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct samsung_pwm_chip *our_chip;
-	struct pwm_chip *chip;
+	struct samsung_pwm_chip *chip;
 	unsigned int chan;
 	int ret;
 
-	chip = devm_pwmchip_alloc(&pdev->dev, SAMSUNG_PWM_NUM, sizeof(*our_chip));
-	if (IS_ERR(chip))
-		return PTR_ERR(chip);
-	our_chip = to_samsung_pwm_chip(chip);
+	chip = devm_kzalloc(&pdev->dev, sizeof(*chip), GFP_KERNEL);
+	if (chip == NULL)
+		return -ENOMEM;
 
-	chip->ops = &pwm_samsung_ops;
-	our_chip->inverter_mask = BIT(SAMSUNG_PWM_NUM) - 1;
+	chip->chip.dev = &pdev->dev;
+	chip->chip.ops = &pwm_samsung_ops;
+	chip->chip.npwm = SAMSUNG_PWM_NUM;
+	chip->inverter_mask = BIT(SAMSUNG_PWM_NUM) - 1;
 
 	if (IS_ENABLED(CONFIG_OF) && pdev->dev.of_node) {
 		ret = pwm_samsung_parse_dt(chip);
 		if (ret)
 			return ret;
 	} else {
-		if (!pdev->dev.platform_data)
-			return dev_err_probe(&pdev->dev, -EINVAL,
-					     "no platform data specified\n");
+		if (!pdev->dev.platform_data) {
+			dev_err(&pdev->dev, "no platform data specified\n");
+			return -EINVAL;
+		}
 
-		memcpy(&our_chip->variant, pdev->dev.platform_data,
-							sizeof(our_chip->variant));
+		memcpy(&chip->variant, pdev->dev.platform_data,
+							sizeof(chip->variant));
 	}
 
-	our_chip->base = devm_platform_ioremap_resource(pdev, 0);
-	if (IS_ERR(our_chip->base))
-		return PTR_ERR(our_chip->base);
+	chip->base = devm_platform_ioremap_resource(pdev, 0);
+	if (IS_ERR(chip->base))
+		return PTR_ERR(chip->base);
 
-	our_chip->base_clk = devm_clk_get_enabled(&pdev->dev, "timers");
-	if (IS_ERR(our_chip->base_clk))
-		return dev_err_probe(dev, PTR_ERR(our_chip->base_clk),
-				     "failed to get timer base clk\n");
+	chip->base_clk = devm_clk_get(&pdev->dev, "timers");
+	if (IS_ERR(chip->base_clk)) {
+		dev_err(dev, "failed to get timer base clk\n");
+		return PTR_ERR(chip->base_clk);
+	}
+
+	ret = clk_prepare_enable(chip->base_clk);
+	if (ret < 0) {
+		dev_err(dev, "failed to enable base clock\n");
+		return ret;
+	}
 
 	for (chan = 0; chan < SAMSUNG_PWM_NUM; ++chan)
-		if (our_chip->variant.output_mask & BIT(chan))
-			pwm_samsung_set_invert(our_chip, chan, true);
+		if (chip->variant.output_mask & BIT(chan))
+			pwm_samsung_set_invert(chip, chan, true);
 
 	/* Following clocks are optional. */
-	our_chip->tclk0 = devm_clk_get(&pdev->dev, "pwm-tclk0");
-	our_chip->tclk1 = devm_clk_get(&pdev->dev, "pwm-tclk1");
+	chip->tclk0 = devm_clk_get(&pdev->dev, "pwm-tclk0");
+	chip->tclk1 = devm_clk_get(&pdev->dev, "pwm-tclk1");
 
 	platform_set_drvdata(pdev, chip);
 
-	ret = devm_pwmchip_add(&pdev->dev, chip);
-	if (ret < 0)
-		return dev_err_probe(dev, ret, "failed to register PWM chip\n");
+	ret = pwmchip_add(&chip->chip);
+	if (ret < 0) {
+		dev_err(dev, "failed to register PWM chip\n");
+		clk_disable_unprepare(chip->base_clk);
+		return ret;
+	}
 
 	dev_dbg(dev, "base_clk at %lu, tclk0 at %lu, tclk1 at %lu\n",
-		clk_get_rate(our_chip->base_clk),
-		!IS_ERR(our_chip->tclk0) ? clk_get_rate(our_chip->tclk0) : 0,
-		!IS_ERR(our_chip->tclk1) ? clk_get_rate(our_chip->tclk1) : 0);
+		clk_get_rate(chip->base_clk),
+		!IS_ERR(chip->tclk0) ? clk_get_rate(chip->tclk0) : 0,
+		!IS_ERR(chip->tclk1) ? clk_get_rate(chip->tclk1) : 0);
 
 	return 0;
 }
 
+static void pwm_samsung_remove(struct platform_device *pdev)
+{
+	struct samsung_pwm_chip *chip = platform_get_drvdata(pdev);
+
+	pwmchip_remove(&chip->chip);
+
+	clk_disable_unprepare(chip->base_clk);
+}
+
+#ifdef CONFIG_PM_SLEEP
 static int pwm_samsung_resume(struct device *dev)
 {
-	struct pwm_chip *chip = dev_get_drvdata(dev);
-	struct samsung_pwm_chip *our_chip = to_samsung_pwm_chip(chip);
+	struct samsung_pwm_chip *our_chip = dev_get_drvdata(dev);
+	struct pwm_chip *chip = &our_chip->chip;
 	unsigned int i;
 
 	for (i = 0; i < SAMSUNG_PWM_NUM; i++) {
 		struct pwm_device *pwm = &chip->pwms[i];
-		struct samsung_pwm_channel *chan = &our_chip->channel[i];
+		struct samsung_pwm_channel *chan = pwm_get_chip_data(pwm);
 
-		if (!test_bit(PWMF_REQUESTED, &pwm->flags))
+		if (!chan)
 			continue;
 
 		if (our_chip->variant.output_mask & BIT(i))
@@ -631,16 +663,18 @@ static int pwm_samsung_resume(struct device *dev)
 
 	return 0;
 }
+#endif
 
-static DEFINE_SIMPLE_DEV_PM_OPS(pwm_samsung_pm_ops, NULL, pwm_samsung_resume);
+static SIMPLE_DEV_PM_OPS(pwm_samsung_pm_ops, NULL, pwm_samsung_resume);
 
 static struct platform_driver pwm_samsung_driver = {
 	.driver		= {
 		.name	= "samsung-pwm",
-		.pm	= pm_ptr(&pwm_samsung_pm_ops),
+		.pm	= &pwm_samsung_pm_ops,
 		.of_match_table = of_match_ptr(samsung_pwm_matches),
 	},
 	.probe		= pwm_samsung_probe,
+	.remove_new	= pwm_samsung_remove,
 };
 module_platform_driver(pwm_samsung_driver);
 

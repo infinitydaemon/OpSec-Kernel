@@ -11,10 +11,13 @@
 #include <linux/math64.h>
 #include "misc.h"
 #include "ctree.h"
+#include "extent_map.h"
 #include "disk-io.h"
 #include "transaction.h"
+#include "print-tree.h"
 #include "volumes.h"
 #include "async-thread.h"
+#include "check-integrity.h"
 #include "dev-replace.h"
 #include "sysfs.h"
 #include "zoned.h"
@@ -244,7 +247,6 @@ static int btrfs_init_dev_replace_tgtdev(struct btrfs_fs_info *fs_info,
 {
 	struct btrfs_fs_devices *fs_devices = fs_info->fs_devices;
 	struct btrfs_device *device;
-	struct file *bdev_file;
 	struct block_device *bdev;
 	u64 devid = BTRFS_DEV_REPLACE_DEVID;
 	int ret = 0;
@@ -255,13 +257,12 @@ static int btrfs_init_dev_replace_tgtdev(struct btrfs_fs_info *fs_info,
 		return -EINVAL;
 	}
 
-	bdev_file = bdev_file_open_by_path(device_path, BLK_OPEN_WRITE,
-					fs_info->bdev_holder, NULL);
-	if (IS_ERR(bdev_file)) {
+	bdev = blkdev_get_by_path(device_path, BLK_OPEN_WRITE,
+				  fs_info->bdev_holder, NULL);
+	if (IS_ERR(bdev)) {
 		btrfs_err(fs_info, "target device %s is invalid!", device_path);
-		return PTR_ERR(bdev_file);
+		return PTR_ERR(bdev);
 	}
-	bdev = file_bdev(bdev_file);
 
 	if (!btrfs_check_device_zone_type(fs_info, bdev)) {
 		btrfs_err(fs_info,
@@ -312,11 +313,11 @@ static int btrfs_init_dev_replace_tgtdev(struct btrfs_fs_info *fs_info,
 	device->commit_bytes_used = device->bytes_used;
 	device->fs_info = fs_info;
 	device->bdev = bdev;
-	device->bdev_file = bdev_file;
 	set_bit(BTRFS_DEV_STATE_IN_FS_METADATA, &device->dev_state);
 	set_bit(BTRFS_DEV_STATE_REPLACE_TGT, &device->dev_state);
+	device->holder = fs_info->bdev_holder;
 	device->dev_stats_valid = 1;
-	set_blocksize(bdev_file, BTRFS_BDEV_BLOCKSIZE);
+	set_blocksize(device->bdev, BTRFS_BDEV_BLOCKSIZE);
 	device->fs_devices = fs_devices;
 
 	ret = btrfs_get_dev_zone_info(device, false);
@@ -333,7 +334,7 @@ static int btrfs_init_dev_replace_tgtdev(struct btrfs_fs_info *fs_info,
 	return 0;
 
 error:
-	fput(bdev_file);
+	blkdev_put(bdev, fs_info->bdev_holder);
 	return ret;
 }
 
@@ -548,7 +549,8 @@ bool btrfs_finish_block_group_to_copy(struct btrfs_device *srcdev,
 				      u64 physical)
 {
 	struct btrfs_fs_info *fs_info = cache->fs_info;
-	struct btrfs_chunk_map *map;
+	struct extent_map *em;
+	struct map_lookup *map;
 	u64 chunk_offset = cache->start;
 	int num_extents, cur_extent;
 	int i;
@@ -564,8 +566,9 @@ bool btrfs_finish_block_group_to_copy(struct btrfs_device *srcdev,
 	}
 	spin_unlock(&cache->lock);
 
-	map = btrfs_get_chunk_map(fs_info, chunk_offset, 1);
-	ASSERT(!IS_ERR(map));
+	em = btrfs_get_chunk_map(fs_info, chunk_offset, 1);
+	ASSERT(!IS_ERR(em));
+	map = em->map_lookup;
 
 	num_extents = 0;
 	cur_extent = 0;
@@ -579,7 +582,7 @@ bool btrfs_finish_block_group_to_copy(struct btrfs_device *srcdev,
 			cur_extent = i;
 	}
 
-	btrfs_free_chunk_map(map);
+	free_extent_map(em);
 
 	if (num_extents > 1 && cur_extent < num_extents - 1) {
 		/*
@@ -824,23 +827,25 @@ static void btrfs_dev_replace_update_device_in_mapping_tree(
 						struct btrfs_device *srcdev,
 						struct btrfs_device *tgtdev)
 {
+	struct extent_map_tree *em_tree = &fs_info->mapping_tree;
+	struct extent_map *em;
+	struct map_lookup *map;
 	u64 start = 0;
 	int i;
 
-	write_lock(&fs_info->mapping_tree_lock);
+	write_lock(&em_tree->lock);
 	do {
-		struct btrfs_chunk_map *map;
-
-		map = btrfs_find_chunk_map_nolock(fs_info, start, U64_MAX);
-		if (!map)
+		em = lookup_extent_mapping(em_tree, start, (u64)-1);
+		if (!em)
 			break;
+		map = em->map_lookup;
 		for (i = 0; i < map->num_stripes; i++)
 			if (srcdev == map->stripes[i].dev)
 				map->stripes[i].dev = tgtdev;
-		start = map->start + map->chunk_len;
-		btrfs_free_chunk_map(map);
+		start = em->start + em->len;
+		free_extent_map(em);
 	} while (start);
-	write_unlock(&fs_info->mapping_tree_lock);
+	write_unlock(&em_tree->lock);
 }
 
 static int btrfs_dev_replace_finishing(struct btrfs_fs_info *fs_info,
@@ -998,7 +1003,8 @@ error:
 	btrfs_sysfs_remove_device(src_device);
 	btrfs_sysfs_update_devid(tgt_device);
 	if (test_bit(BTRFS_DEV_STATE_WRITEABLE, &src_device->dev_state))
-		btrfs_scratch_superblocks(fs_info, src_device);
+		btrfs_scratch_superblocks(fs_info, src_device->bdev,
+					  src_device->name->str);
 
 	/* write back the superblocks */
 	trans = btrfs_start_transaction(root, 0);

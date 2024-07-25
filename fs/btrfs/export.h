@@ -4,10 +4,6 @@
 #define BTRFS_EXPORT_H
 
 #include <linux/exportfs.h>
-#include <linux/types.h>
-
-struct dentry;
-struct super_block;
 
 extern const struct export_operations btrfs_export_ops;
 

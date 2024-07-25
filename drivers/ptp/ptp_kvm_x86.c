@@ -93,7 +93,7 @@ int kvm_arch_ptp_get_clock(struct timespec64 *ts)
 }
 
 int kvm_arch_ptp_get_crosststamp(u64 *cycle, struct timespec64 *tspec,
-			      enum clocksource_ids *cs_id)
+			      struct clocksource **cs)
 {
 	struct pvclock_vcpu_time_info *src;
 	unsigned int version;
@@ -123,7 +123,7 @@ int kvm_arch_ptp_get_crosststamp(u64 *cycle, struct timespec64 *tspec,
 		*cycle = __pvclock_read_cycles(src, clock_pair->tsc);
 	} while (pvclock_read_retry(src, version));
 
-	*cs_id = CSID_X86_KVM_CLK;
+	*cs = &kvm_clock;
 
 	return 0;
 }

@@ -156,6 +156,7 @@ static void fjes_acpi_remove(struct acpi_device *device)
 static struct acpi_driver fjes_acpi_driver = {
 	.name = DRV_NAME,
 	.class = DRV_NAME,
+	.owner = THIS_MODULE,
 	.ids = fjes_acpi_ids,
 	.ops = {
 		.add = fjes_acpi_add,
@@ -810,7 +811,7 @@ static int fjes_change_mtu(struct net_device *netdev, int new_mtu)
 		netif_tx_stop_all_queues(netdev);
 	}
 
-	WRITE_ONCE(netdev->mtu, new_mtu);
+	netdev->mtu = new_mtu;
 
 	if (running) {
 		for (epidx = 0; epidx < hw->max_epid; epidx++) {
@@ -1029,7 +1030,7 @@ static int fjes_poll(struct napi_struct *napi, int budget)
 		}
 
 		if (((long)jiffies - (long)adapter->rx_last_jiffies) < 3) {
-			napi_schedule(napi);
+			napi_reschedule(napi);
 		} else {
 			spin_lock(&hw->rx_status_lock);
 			for (epidx = 0; epidx < hw->max_epid; epidx++) {
@@ -1437,7 +1438,7 @@ err_out:
 }
 
 /* fjes_remove - Device Removal Routine */
-static void fjes_remove(struct platform_device *plat_dev)
+static int fjes_remove(struct platform_device *plat_dev)
 {
 	struct net_device *netdev = dev_get_drvdata(&plat_dev->dev);
 	struct fjes_adapter *adapter = netdev_priv(netdev);
@@ -1461,6 +1462,8 @@ static void fjes_remove(struct platform_device *plat_dev)
 	netif_napi_del(&adapter->napi);
 
 	free_netdev(netdev);
+
+	return 0;
 }
 
 static struct platform_driver fjes_driver = {
@@ -1468,7 +1471,7 @@ static struct platform_driver fjes_driver = {
 		.name = DRV_NAME,
 	},
 	.probe = fjes_probe,
-	.remove_new = fjes_remove,
+	.remove = fjes_remove,
 };
 
 static acpi_status

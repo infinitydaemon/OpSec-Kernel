@@ -448,10 +448,10 @@ static void fm10k_get_drvinfo(struct net_device *dev,
 {
 	struct fm10k_intfc *interface = netdev_priv(dev);
 
-	strscpy(info->driver, fm10k_driver_name,
-		sizeof(info->driver));
-	strscpy(info->bus_info, pci_name(interface->pdev),
-		sizeof(info->bus_info));
+	strncpy(info->driver, fm10k_driver_name,
+		sizeof(info->driver) - 1);
+	strncpy(info->bus_info, pci_name(interface->pdev),
+		sizeof(info->bus_info) - 1);
 }
 
 static void fm10k_get_pauseparam(struct net_device *dev,
@@ -1057,16 +1057,16 @@ static u32 fm10k_get_rssrk_size(struct net_device __always_unused *netdev)
 	return FM10K_RSSRK_SIZE * FM10K_RSSRK_ENTRIES_PER_REG;
 }
 
-static int fm10k_get_rssh(struct net_device *netdev,
-			  struct ethtool_rxfh_param *rxfh)
+static int fm10k_get_rssh(struct net_device *netdev, u32 *indir, u8 *key,
+			  u8 *hfunc)
 {
 	struct fm10k_intfc *interface = netdev_priv(netdev);
-	u8 *key = rxfh->key;
 	int i, err;
 
-	rxfh->hfunc = ETH_RSS_HASH_TOP;
+	if (hfunc)
+		*hfunc = ETH_RSS_HASH_TOP;
 
-	err = fm10k_get_reta(netdev, rxfh->indir);
+	err = fm10k_get_reta(netdev, indir);
 	if (err || !key)
 		return err;
 
@@ -1076,25 +1076,23 @@ static int fm10k_get_rssh(struct net_device *netdev,
 	return 0;
 }
 
-static int fm10k_set_rssh(struct net_device *netdev,
-			  struct ethtool_rxfh_param *rxfh,
-			  struct netlink_ext_ack *extack)
+static int fm10k_set_rssh(struct net_device *netdev, const u32 *indir,
+			  const u8 *key, const u8 hfunc)
 {
 	struct fm10k_intfc *interface = netdev_priv(netdev);
 	struct fm10k_hw *hw = &interface->hw;
 	int i, err;
 
 	/* We do not allow change in unsupported parameters */
-	if (rxfh->hfunc != ETH_RSS_HASH_NO_CHANGE &&
-	    rxfh->hfunc != ETH_RSS_HASH_TOP)
+	if (hfunc != ETH_RSS_HASH_NO_CHANGE && hfunc != ETH_RSS_HASH_TOP)
 		return -EOPNOTSUPP;
 
-	err = fm10k_set_reta(netdev, rxfh->indir);
-	if (err || !rxfh->key)
+	err = fm10k_set_reta(netdev, indir);
+	if (err || !key)
 		return err;
 
-	for (i = 0; i < FM10K_RSSRK_SIZE; i++, rxfh->key += 4) {
-		u32 rssrk = le32_to_cpu(*(__le32 *)rxfh->key);
+	for (i = 0; i < FM10K_RSSRK_SIZE; i++, key += 4) {
+		u32 rssrk = le32_to_cpu(*(__le32 *)key);
 
 		if (interface->rssrk[i] == rssrk)
 			continue;

@@ -358,15 +358,12 @@ static void ths8200_setup(struct v4l2_subdev *sd, struct v4l2_bt_timings *bt)
 		 bt->hsync, bt->vsync);
 }
 
-static int ths8200_s_dv_timings(struct v4l2_subdev *sd, unsigned int pad,
+static int ths8200_s_dv_timings(struct v4l2_subdev *sd,
 				struct v4l2_dv_timings *timings)
 {
 	struct ths8200_state *state = to_state(sd);
 
 	v4l2_dbg(1, debug, sd, "%s:\n", __func__);
-
-	if (pad != 0)
-		return -EINVAL;
 
 	if (!v4l2_valid_dv_timings(timings, &ths8200_timings_cap,
 				NULL, NULL))
@@ -388,15 +385,12 @@ static int ths8200_s_dv_timings(struct v4l2_subdev *sd, unsigned int pad,
 	return 0;
 }
 
-static int ths8200_g_dv_timings(struct v4l2_subdev *sd, unsigned int pad,
+static int ths8200_g_dv_timings(struct v4l2_subdev *sd,
 				struct v4l2_dv_timings *timings)
 {
 	struct ths8200_state *state = to_state(sd);
 
 	v4l2_dbg(1, debug, sd, "%s:\n", __func__);
-
-	if (pad != 0)
-		return -EINVAL;
 
 	*timings = state->dv_timings;
 
@@ -426,11 +420,11 @@ static int ths8200_dv_timings_cap(struct v4l2_subdev *sd,
 /* Specific video subsystem operation handlers */
 static const struct v4l2_subdev_video_ops ths8200_video_ops = {
 	.s_stream = ths8200_s_stream,
+	.s_dv_timings = ths8200_s_dv_timings,
+	.g_dv_timings = ths8200_g_dv_timings,
 };
 
 static const struct v4l2_subdev_pad_ops ths8200_pad_ops = {
-	.s_dv_timings = ths8200_s_dv_timings,
-	.g_dv_timings = ths8200_g_dv_timings,
 	.enum_dv_timings = ths8200_enum_dv_timings,
 	.dv_timings_cap = ths8200_dv_timings_cap,
 };

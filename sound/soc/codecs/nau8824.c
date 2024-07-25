@@ -2003,7 +2003,7 @@ static int nau8824_i2c_probe(struct i2c_client *i2c)
 }
 
 static const struct i2c_device_id nau8824_i2c_ids[] = {
-	{ "nau8824" },
+	{ "nau8824", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, nau8824_i2c_ids);

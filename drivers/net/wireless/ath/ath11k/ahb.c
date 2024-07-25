@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
  * Copyright (c) 2018-2019 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/property.h>
 #include <linux/of_device.h>
 #include <linux/of.h>
 #include <linux/dma-mapping.h>
@@ -413,7 +412,7 @@ static int ath11k_ahb_power_up(struct ath11k_base *ab)
 	return ret;
 }
 
-static void ath11k_ahb_power_down(struct ath11k_base *ab, bool is_suspend)
+static void ath11k_ahb_power_down(struct ath11k_base *ab)
 {
 	struct ath11k_ahb *ab_ahb = ath11k_ahb_priv(ab);
 
@@ -442,7 +441,6 @@ static void ath11k_ahb_free_ext_irq(struct ath11k_base *ab)
 			free_irq(ab->irq_num[irq_grp->irqs[j]], irq_grp);
 
 		netif_napi_del(&irq_grp->napi);
-		free_netdev(irq_grp->napi_ndev);
 	}
 }
 
@@ -534,12 +532,8 @@ static int ath11k_ahb_config_ext_irq(struct ath11k_base *ab)
 
 		irq_grp->ab = ab;
 		irq_grp->grp_id = i;
-
-		irq_grp->napi_ndev = alloc_netdev_dummy(0);
-		if (!irq_grp->napi_ndev)
-			return -ENOMEM;
-
-		netif_napi_add(irq_grp->napi_ndev, &irq_grp->napi,
+		init_dummy_netdev(&irq_grp->napi_ndev);
+		netif_napi_add(&irq_grp->napi_ndev, &irq_grp->napi,
 			       ath11k_ahb_ext_grp_napi_poll);
 
 		for (j = 0; j < ATH11K_EXT_IRQ_NUM_MAX; j++) {
@@ -1090,12 +1084,19 @@ static int ath11k_ahb_fw_resource_deinit(struct ath11k_base *ab)
 static int ath11k_ahb_probe(struct platform_device *pdev)
 {
 	struct ath11k_base *ab;
+	const struct of_device_id *of_id;
 	const struct ath11k_hif_ops *hif_ops;
 	const struct ath11k_pci_ops *pci_ops;
 	enum ath11k_hw_rev hw_rev;
 	int ret;
 
-	hw_rev = (uintptr_t)device_get_match_data(&pdev->dev);
+	of_id = of_match_device(ath11k_ahb_of_match, &pdev->dev);
+	if (!of_id) {
+		dev_err(&pdev->dev, "failed to find matching device tree id\n");
+		return -EINVAL;
+	}
+
+	hw_rev = (uintptr_t)of_id->data;
 
 	switch (hw_rev) {
 	case ATH11K_HW_IPQ8074:
@@ -1256,12 +1257,12 @@ static void ath11k_ahb_free_resources(struct ath11k_base *ab)
 	platform_set_drvdata(pdev, NULL);
 }
 
-static void ath11k_ahb_remove(struct platform_device *pdev)
+static int ath11k_ahb_remove(struct platform_device *pdev)
 {
 	struct ath11k_base *ab = platform_get_drvdata(pdev);
 
 	if (test_bit(ATH11K_FLAG_QMI_FAIL, &ab->dev_flags)) {
-		ath11k_ahb_power_down(ab, false);
+		ath11k_ahb_power_down(ab);
 		ath11k_debugfs_soc_destroy(ab);
 		ath11k_qmi_deinit_service(ab);
 		goto qmi_fail;
@@ -1272,6 +1273,8 @@ static void ath11k_ahb_remove(struct platform_device *pdev)
 
 qmi_fail:
 	ath11k_ahb_free_resources(ab);
+
+	return 0;
 }
 
 static void ath11k_ahb_shutdown(struct platform_device *pdev)
@@ -1299,7 +1302,7 @@ static struct platform_driver ath11k_ahb_driver = {
 		.of_match_table = ath11k_ahb_of_match,
 	},
 	.probe  = ath11k_ahb_probe,
-	.remove_new = ath11k_ahb_remove,
+	.remove = ath11k_ahb_remove,
 	.shutdown = ath11k_ahb_shutdown,
 };
 

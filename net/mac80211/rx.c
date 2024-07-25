@@ -6,7 +6,7 @@
  * Copyright 2007-2010	Johannes Berg <johannes@sipsolutions.net>
  * Copyright 2013-2014  Intel Mobile Communications GmbH
  * Copyright(c) 2015 - 2017 Intel Deutschland GmbH
- * Copyright (C) 2018-2024 Intel Corporation
+ * Copyright (C) 2018-2023 Intel Corporation
  */
 
 #include <linux/jiffies.h>
@@ -19,7 +19,6 @@
 #include <linux/export.h>
 #include <linux/kcov.h>
 #include <linux/bitops.h>
-#include <kunit/visibility.h>
 #include <net/mac80211.h>
 #include <net/ieee80211_radiotap.h>
 #include <asm/unaligned.h>
@@ -567,8 +566,7 @@ ieee80211_add_rx_radiotap_header(struct ieee80211_local *local,
 
 	if (local->hw.radiotap_timestamp.units_pos >= 0) {
 		u16 accuracy = 0;
-		u8 flags;
-		u64 ts;
+		u8 flags = IEEE80211_RADIOTAP_TIMESTAMP_FLAG_32BIT;
 
 		rthdr->it_present |=
 			cpu_to_le32(BIT(IEEE80211_RADIOTAP_TIMESTAMP));
@@ -577,15 +575,7 @@ ieee80211_add_rx_radiotap_header(struct ieee80211_local *local,
 		while ((pos - (u8 *)rthdr) & 7)
 			pos++;
 
-		if (status->flag & RX_FLAG_MACTIME_IS_RTAP_TS64) {
-			flags = IEEE80211_RADIOTAP_TIMESTAMP_FLAG_64BIT;
-			ts = status->mactime;
-		} else {
-			flags = IEEE80211_RADIOTAP_TIMESTAMP_FLAG_32BIT;
-			ts = status->device_timestamp;
-		}
-
-		put_unaligned_le64(ts, pos);
+		put_unaligned_le64(status->device_timestamp, pos);
 		pos += sizeof(u64);
 
 		if (local->hw.radiotap_timestamp.accuracy >= 0) {
@@ -930,7 +920,7 @@ static void ieee80211_parse_qos(struct ieee80211_rx_data *rx)
  * Drivers always need to pass packets that are aligned to two-byte boundaries
  * to the stack.
  *
- * Additionally, they should, if possible, align the payload data in a way that
+ * Additionally, should, if possible, align the payload data in a way that
  * guarantees that the contained IP header is aligned to a four-byte
  * boundary. In the case of regular frames, this simply means aligning the
  * payload to a four-byte boundary (because either the IP header is directly
@@ -946,7 +936,7 @@ static void ieee80211_parse_qos(struct ieee80211_rx_data *rx)
  * subframe to a length that is a multiple of four.
  *
  * Padding like Atheros hardware adds which is between the 802.11 header and
- * the payload is not supported; the driver is required to move the 802.11
+ * the payload is not supported, the driver is required to move the 802.11
  * header to be directly in front of the payload in that case.
  */
 static void ieee80211_verify_alignment(struct ieee80211_rx_data *rx)
@@ -1251,7 +1241,8 @@ static bool ieee80211_sta_manage_reorder_buf(struct ieee80211_sub_if_data *sdata
 {
 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *) skb->data;
 	struct ieee80211_rx_status *status = IEEE80211_SKB_RXCB(skb);
-	u16 mpdu_seq_num = ieee80211_get_sn(hdr);
+	u16 sc = le16_to_cpu(hdr->seq_ctrl);
+	u16 mpdu_seq_num = (sc & IEEE80211_SCTL_SEQ) >> 4;
 	u16 head_seq_num, buf_size;
 	int index;
 	bool ret = true;
@@ -1434,36 +1425,18 @@ ieee80211_rx_h_check_dup(struct ieee80211_rx_data *rx)
 		return RX_CONTINUE;
 
 	if (ieee80211_is_ctl(hdr->frame_control) ||
-	    ieee80211_is_any_nullfunc(hdr->frame_control))
+	    ieee80211_is_any_nullfunc(hdr->frame_control) ||
+	    is_multicast_ether_addr(hdr->addr1))
 		return RX_CONTINUE;
 
 	if (!rx->sta)
 		return RX_CONTINUE;
 
-	if (unlikely(is_multicast_ether_addr(hdr->addr1))) {
-		struct ieee80211_sub_if_data *sdata = rx->sdata;
-		u16 sn = ieee80211_get_sn(hdr);
-
-		if (!ieee80211_is_data_present(hdr->frame_control))
-			return RX_CONTINUE;
-
-		if (!ieee80211_vif_is_mld(&sdata->vif) ||
-		    sdata->vif.type != NL80211_IFTYPE_STATION)
-			return RX_CONTINUE;
-
-		if (sdata->u.mgd.mcast_seq_last != IEEE80211_SN_MODULO &&
-		    ieee80211_sn_less_eq(sn, sdata->u.mgd.mcast_seq_last))
-			return RX_DROP_U_DUP;
-
-		sdata->u.mgd.mcast_seq_last = sn;
-		return RX_CONTINUE;
-	}
-
 	if (unlikely(ieee80211_has_retry(hdr->frame_control) &&
 		     rx->sta->last_seq_ctrl[rx->seqno_idx] == hdr->seq_ctrl)) {
 		I802_DEBUG_INC(rx->local->dot11FrameDuplicateCount);
 		rx->link_sta->rx_stats.num_duplicates++;
-		return RX_DROP_U_DUP;
+		return RX_DROP_UNUSABLE;
 	} else if (!(status->flag & RX_FLAG_AMSDU_MORE)) {
 		rx->sta->last_seq_ctrl[rx->seqno_idx] = hdr->seq_ctrl;
 	}
@@ -1517,7 +1490,7 @@ ieee80211_rx_h_check(struct ieee80211_rx_data *rx)
 		    cfg80211_rx_spurious_frame(rx->sdata->dev,
 					       hdr->addr2,
 					       GFP_ATOMIC))
-			return RX_DROP_U_SPURIOUS;
+			return RX_DROP_UNUSABLE;
 
 		return RX_DROP_MONITOR;
 	}
@@ -1910,7 +1883,7 @@ ieee80211_rx_h_decrypt(struct ieee80211_rx_data *rx)
 	struct ieee80211_rx_status *status = IEEE80211_SKB_RXCB(skb);
 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
 	int keyidx;
-	ieee80211_rx_result result = RX_DROP_U_DECRYPT_FAIL;
+	ieee80211_rx_result result = RX_DROP_UNUSABLE;
 	struct ieee80211_key *sta_ptk = NULL;
 	struct ieee80211_key *ptk_idx = NULL;
 	int mmie_keyidx = -1;
@@ -1960,7 +1933,7 @@ ieee80211_rx_h_decrypt(struct ieee80211_rx_data *rx)
 			keyid = ieee80211_get_keyid(rx->skb);
 
 			if (unlikely(keyid < 0))
-				return RX_DROP_U_NO_KEY_ID;
+				return RX_DROP_UNUSABLE;
 
 			ptk_idx = rcu_dereference(rx->sta->ptk[keyid]);
 		}
@@ -2065,7 +2038,7 @@ ieee80211_rx_h_decrypt(struct ieee80211_rx_data *rx)
 		keyidx = ieee80211_get_keyid(rx->skb);
 
 		if (unlikely(keyidx < 0))
-			return RX_DROP_U_NO_KEY_ID;
+			return RX_DROP_UNUSABLE;
 
 		/* check per-station GTK first, if multicast packet */
 		if (is_multicast_ether_addr(hdr->addr1) && rx->link_sta)
@@ -2131,7 +2104,7 @@ ieee80211_rx_h_decrypt(struct ieee80211_rx_data *rx)
 		result = ieee80211_crypto_gcmp_decrypt(rx);
 		break;
 	default:
-		result = RX_DROP_U_BAD_CIPHER;
+		result = RX_DROP_UNUSABLE;
 	}
 
 	/* the hdr variable is invalid after the decrypt handlers */
@@ -2276,7 +2249,7 @@ ieee80211_rx_h_defragment(struct ieee80211_rx_data *rx)
 	I802_DEBUG_INC(rx->local->rx_handlers_fragments);
 
 	if (skb_linearize(rx->skb))
-		return RX_DROP_U_OOM;
+		return RX_DROP_UNUSABLE;
 
 	/*
 	 *  skb_linearize() might change the skb->data and
@@ -2339,11 +2312,11 @@ ieee80211_rx_h_defragment(struct ieee80211_rx_data *rx)
 		u8 pn[IEEE80211_CCMP_PN_LEN], *rpn;
 
 		if (!requires_sequential_pn(rx, fc))
-			return RX_DROP_U_NONSEQ_PN;
+			return RX_DROP_UNUSABLE;
 
 		/* Prevent mixed key and fragment cache attacks */
 		if (entry->key_color != rx->key->color)
-			return RX_DROP_U_BAD_KEY_COLOR;
+			return RX_DROP_UNUSABLE;
 
 		memcpy(pn, entry->last_pn, IEEE80211_CCMP_PN_LEN);
 		for (i = IEEE80211_CCMP_PN_LEN - 1; i >= 0; i--) {
@@ -2354,7 +2327,7 @@ ieee80211_rx_h_defragment(struct ieee80211_rx_data *rx)
 
 		rpn = rx->ccm_gcm.pn;
 		if (memcmp(pn, rpn, IEEE80211_CCMP_PN_LEN))
-			return RX_DROP_U_REPLAY;
+			return RX_DROP_UNUSABLE;
 		memcpy(entry->last_pn, pn, IEEE80211_CCMP_PN_LEN);
 	} else if (entry->is_protected &&
 		   (!rx->key ||
@@ -2365,11 +2338,11 @@ ieee80211_rx_h_defragment(struct ieee80211_rx_data *rx)
 		 * if for TKIP Michael MIC should protect us, and WEP is a
 		 * lost cause anyway.
 		 */
-		return RX_DROP_U_EXPECT_DEFRAG_PROT;
+		return RX_DROP_UNUSABLE;
 	} else if (entry->is_protected && rx->key &&
 		   entry->key_color != rx->key->color &&
 		   (status->flag & RX_FLAG_DECRYPTED)) {
-		return RX_DROP_U_BAD_KEY_COLOR;
+		return RX_DROP_UNUSABLE;
 	}
 
 	skb_pull(rx->skb, ieee80211_hdrlen(fc));
@@ -2388,7 +2361,7 @@ ieee80211_rx_h_defragment(struct ieee80211_rx_data *rx)
 					      GFP_ATOMIC))) {
 			I802_DEBUG_INC(rx->local->rx_handlers_drop_defrag);
 			__skb_queue_purge(&entry->skb_list);
-			return RX_DROP_U_OOM;
+			return RX_DROP_UNUSABLE;
 		}
 	}
 	while ((skb = __skb_dequeue(&entry->skb_list))) {
@@ -2432,8 +2405,7 @@ static int ieee80211_drop_unencrypted(struct ieee80211_rx_data *rx, __le16 fc)
 	return 0;
 }
 
-VISIBLE_IF_MAC80211_KUNIT ieee80211_rx_result
-ieee80211_drop_unencrypted_mgmt(struct ieee80211_rx_data *rx)
+static int ieee80211_drop_unencrypted_mgmt(struct ieee80211_rx_data *rx)
 {
 	struct ieee80211_rx_status *status = IEEE80211_SKB_RXCB(rx->skb);
 	struct ieee80211_mgmt *mgmt = (void *)rx->skb->data;
@@ -2444,12 +2416,12 @@ ieee80211_drop_unencrypted_mgmt(struct ieee80211_rx_data *rx)
 	 * decrypted them already.
 	 */
 	if (status->flag & RX_FLAG_DECRYPTED)
-		return RX_CONTINUE;
+		return 0;
 
 	/* drop unicast protected dual (that wasn't protected) */
 	if (ieee80211_is_action(fc) &&
 	    mgmt->u.action.category == WLAN_CATEGORY_PROTECTED_DUAL_OF_ACTION)
-		return RX_DROP_U_UNPROT_DUAL;
+		return -EACCES;
 
 	if (rx->sta && test_sta_flag(rx->sta, WLAN_STA_MFP)) {
 		if (unlikely(!ieee80211_has_protected(fc) &&
@@ -2461,13 +2433,13 @@ ieee80211_drop_unencrypted_mgmt(struct ieee80211_rx_data *rx)
 				 * during 4-way-HS (key is installed after HS).
 				 */
 				if (!rx->key)
-					return RX_CONTINUE;
+					return 0;
 
 				cfg80211_rx_unprot_mlme_mgmt(rx->sdata->dev,
 							     rx->skb->data,
 							     rx->skb->len);
 			}
-			return RX_DROP_U_UNPROT_UCAST_MGMT;
+			return -EACCES;
 		}
 		/* BIP does not use Protected field, so need to check MMIE */
 		if (unlikely(ieee80211_is_multicast_robust_mgmt_frame(rx->skb) &&
@@ -2477,14 +2449,14 @@ ieee80211_drop_unencrypted_mgmt(struct ieee80211_rx_data *rx)
 				cfg80211_rx_unprot_mlme_mgmt(rx->sdata->dev,
 							     rx->skb->data,
 							     rx->skb->len);
-			return RX_DROP_U_UNPROT_MCAST_MGMT;
+			return -EACCES;
 		}
 		if (unlikely(ieee80211_is_beacon(fc) && rx->key &&
 			     ieee80211_get_mmie_keyidx(rx->skb) < 0)) {
 			cfg80211_rx_unprot_mlme_mgmt(rx->sdata->dev,
 						     rx->skb->data,
 						     rx->skb->len);
-			return RX_DROP_U_UNPROT_BEACON;
+			return -EACCES;
 		}
 		/*
 		 * When using MFP, Action frames are not allowed prior to
@@ -2492,28 +2464,18 @@ ieee80211_drop_unencrypted_mgmt(struct ieee80211_rx_data *rx)
 		 */
 		if (unlikely(ieee80211_is_action(fc) && !rx->key &&
 			     ieee80211_is_robust_mgmt_frame(rx->skb)))
-			return RX_DROP_U_UNPROT_ACTION;
+			return -EACCES;
 
 		/* drop unicast public action frames when using MPF */
 		if (is_unicast_ether_addr(mgmt->da) &&
 		    ieee80211_is_protected_dual_of_public_action(rx->skb))
-			return RX_DROP_U_UNPROT_UNICAST_PUB_ACTION;
+			return -EACCES;
 	}
 
-	/*
-	 * Drop robust action frames before assoc regardless of MFP state,
-	 * after assoc we also have decided on MFP or not.
-	 */
-	if (ieee80211_is_action(fc) &&
-	    ieee80211_is_robust_mgmt_frame(rx->skb) &&
-	    (!rx->sta || !test_sta_flag(rx->sta, WLAN_STA_ASSOC)))
-		return RX_DROP_U_UNPROT_ROBUST_ACTION;
-
-	return RX_CONTINUE;
+	return 0;
 }
-EXPORT_SYMBOL_IF_MAC80211_KUNIT(ieee80211_drop_unencrypted_mgmt);
 
-static ieee80211_rx_result
+static int
 __ieee80211_data_to_8023(struct ieee80211_rx_data *rx, bool *port_control)
 {
 	struct ieee80211_sub_if_data *sdata = rx->sdata;
@@ -2525,31 +2487,32 @@ __ieee80211_data_to_8023(struct ieee80211_rx_data *rx, bool *port_control)
 	*port_control = false;
 	if (ieee80211_has_a4(hdr->frame_control) &&
 	    sdata->vif.type == NL80211_IFTYPE_AP_VLAN && !sdata->u.vlan.sta)
-		return RX_DROP_U_UNEXPECTED_VLAN_4ADDR;
+		return -1;
 
 	if (sdata->vif.type == NL80211_IFTYPE_STATION &&
 	    !!sdata->u.mgd.use_4addr != !!ieee80211_has_a4(hdr->frame_control)) {
+
 		if (!sdata->u.mgd.use_4addr)
-			return RX_DROP_U_UNEXPECTED_STA_4ADDR;
+			return -1;
 		else if (!ether_addr_equal(hdr->addr1, sdata->vif.addr))
 			check_port_control = true;
 	}
 
 	if (is_multicast_ether_addr(hdr->addr1) &&
 	    sdata->vif.type == NL80211_IFTYPE_AP_VLAN && sdata->u.vlan.sta)
-		return RX_DROP_U_UNEXPECTED_VLAN_MCAST;
+		return -1;
 
 	ret = ieee80211_data_to_8023(rx->skb, sdata->vif.addr, sdata->vif.type);
 	if (ret < 0)
-		return RX_DROP_U_INVALID_8023;
+		return ret;
 
 	ehdr = (struct ethhdr *) rx->skb->data;
 	if (ehdr->h_proto == rx->sdata->control_port_protocol)
 		*port_control = true;
 	else if (check_port_control)
-		return RX_DROP_U_NOT_PORT_CONTROL;
+		return -1;
 
-	return RX_CONTINUE;
+	return 0;
 }
 
 bool ieee80211_is_our_addr(struct ieee80211_sub_if_data *sdata,
@@ -2947,10 +2910,10 @@ ieee80211_rx_mesh_data(struct ieee80211_sub_if_data *sdata, struct sta_info *sta
 		skb = NULL;
 
 		if (skb_cow_head(fwd_skb, hdrlen - sizeof(struct ethhdr)))
-			return RX_DROP_U_OOM;
+			return RX_DROP_UNUSABLE;
 
 		if (skb_linearize(fwd_skb))
-			return RX_DROP_U_OOM;
+			return RX_DROP_UNUSABLE;
 	}
 
 	fwd_hdr = skb_push(fwd_skb, hdrlen - sizeof(struct ethhdr));
@@ -3046,7 +3009,7 @@ __ieee80211_rx_h_amsdu(struct ieee80211_rx_data *rx, u8 data_offset)
 					  rx->sdata->vif.addr,
 					  rx->sdata->vif.type,
 					  data_offset, true))
-		return RX_DROP_U_BAD_AMSDU;
+		return RX_DROP_UNUSABLE;
 
 	if (rx->sta->amsdu_mesh_control < 0) {
 		s8 valid = -1;
@@ -3121,21 +3084,21 @@ ieee80211_rx_h_amsdu(struct ieee80211_rx_data *rx)
 		switch (rx->sdata->vif.type) {
 		case NL80211_IFTYPE_AP_VLAN:
 			if (!rx->sdata->u.vlan.sta)
-				return RX_DROP_U_BAD_4ADDR;
+				return RX_DROP_UNUSABLE;
 			break;
 		case NL80211_IFTYPE_STATION:
 			if (!rx->sdata->u.mgd.use_4addr)
-				return RX_DROP_U_BAD_4ADDR;
+				return RX_DROP_UNUSABLE;
 			break;
 		case NL80211_IFTYPE_MESH_POINT:
 			break;
 		default:
-			return RX_DROP_U_BAD_4ADDR;
+			return RX_DROP_UNUSABLE;
 		}
 	}
 
 	if (is_multicast_ether_addr(hdr->addr1) || !rx->sta)
-		return RX_DROP_U_BAD_AMSDU;
+		return RX_DROP_UNUSABLE;
 
 	if (rx->key) {
 		/*
@@ -3148,7 +3111,7 @@ ieee80211_rx_h_amsdu(struct ieee80211_rx_data *rx)
 		case WLAN_CIPHER_SUITE_WEP40:
 		case WLAN_CIPHER_SUITE_WEP104:
 		case WLAN_CIPHER_SUITE_TKIP:
-			return RX_DROP_U_BAD_AMSDU_CIPHER;
+			return RX_DROP_UNUSABLE;
 		default:
 			break;
 		}
@@ -3167,6 +3130,7 @@ ieee80211_rx_h_data(struct ieee80211_rx_data *rx)
 	__le16 fc = hdr->frame_control;
 	ieee80211_rx_result res;
 	bool port_control;
+	int err;
 
 	if (unlikely(!ieee80211_is_data(hdr->frame_control)))
 		return RX_CONTINUE;
@@ -3187,9 +3151,9 @@ ieee80211_rx_h_data(struct ieee80211_rx_data *rx)
 		return RX_DROP_MONITOR;
 	}
 
-	res = __ieee80211_data_to_8023(rx, &port_control);
-	if (unlikely(res != RX_CONTINUE))
-		return res;
+	err = __ieee80211_data_to_8023(rx, &port_control);
+	if (unlikely(err))
+		return RX_DROP_UNUSABLE;
 
 	res = ieee80211_rx_mesh_data(rx->sdata, rx->sta, rx->skb);
 	if (res != RX_CONTINUE)
@@ -3368,7 +3332,7 @@ ieee80211_rx_check_bss_color_collision(struct ieee80211_rx_data *rx)
 	if (ieee80211_hw_check(&rx->local->hw, DETECTS_COLOR_COLLISION))
 		return;
 
-	if (rx->link->conf->csa_active)
+	if (rx->sdata->vif.bss_conf.csa_active)
 		return;
 
 	baselen = mgmt->u.beacon.variable - rx->skb->data;
@@ -3380,7 +3344,7 @@ ieee80211_rx_check_bss_color_collision(struct ieee80211_rx_data *rx)
 				    rx->skb->len - baselen);
 	if (ie && ie->datalen >= sizeof(struct ieee80211_he_operation) &&
 	    ie->datalen >= ieee80211_he_oper_size(ie->data + 1)) {
-		struct ieee80211_bss_conf *bss_conf = rx->link->conf;
+		struct ieee80211_bss_conf *bss_conf = &rx->sdata->vif.bss_conf;
 		const struct ieee80211_he_operation *he_oper;
 		u8 color;
 
@@ -3394,7 +3358,7 @@ ieee80211_rx_check_bss_color_collision(struct ieee80211_rx_data *rx)
 		if (color == bss_conf->he_bss_color.color)
 			ieee80211_obss_color_collision_notify(&rx->sdata->vif,
 							      BIT_ULL(color),
-							      bss_conf->link_id);
+							      GFP_ATOMIC);
 	}
 }
 
@@ -3421,7 +3385,7 @@ ieee80211_rx_h_mgmt_check(struct ieee80211_rx_data *rx)
 	/* drop too small action frames */
 	if (ieee80211_is_action(mgmt->frame_control) &&
 	    rx->skb->len < IEEE80211_MIN_ACTION_SIZE)
-		return RX_DROP_U_RUNT_ACTION;
+		return RX_DROP_UNUSABLE;
 
 	if (rx->sdata->vif.type == NL80211_IFTYPE_AP &&
 	    ieee80211_is_beacon(mgmt->frame_control) &&
@@ -3442,7 +3406,10 @@ ieee80211_rx_h_mgmt_check(struct ieee80211_rx_data *rx)
 		rx->flags |= IEEE80211_RX_BEACON_REPORTED;
 	}
 
-	return ieee80211_drop_unencrypted_mgmt(rx);
+	if (ieee80211_drop_unencrypted_mgmt(rx))
+		return RX_DROP_UNUSABLE;
+
+	return RX_CONTINUE;
 }
 
 static bool
@@ -3512,7 +3479,7 @@ ieee80211_rx_h_action(struct ieee80211_rx_data *rx)
 	if (!rx->sta && mgmt->u.action.category != WLAN_CATEGORY_PUBLIC &&
 	    mgmt->u.action.category != WLAN_CATEGORY_SELF_PROTECTED &&
 	    mgmt->u.action.category != WLAN_CATEGORY_SPECTRUM_MGMT)
-		return RX_DROP_U_ACTION_UNKNOWN_SRC;
+		return RX_DROP_UNUSABLE;
 
 	switch (mgmt->u.action.category) {
 	case WLAN_CATEGORY_HT:
@@ -3787,32 +3754,6 @@ ieee80211_rx_h_action(struct ieee80211_rx_data *rx)
 			break;
 		}
 		break;
-	case WLAN_CATEGORY_PROTECTED_EHT:
-		if (len < offsetofend(typeof(*mgmt),
-				      u.action.u.ttlm_req.action_code))
-			break;
-
-		switch (mgmt->u.action.u.ttlm_req.action_code) {
-		case WLAN_PROTECTED_EHT_ACTION_TTLM_REQ:
-			if (sdata->vif.type != NL80211_IFTYPE_STATION)
-				break;
-
-			if (len < offsetofend(typeof(*mgmt),
-					      u.action.u.ttlm_req))
-				goto invalid;
-			goto queue;
-		case WLAN_PROTECTED_EHT_ACTION_TTLM_RES:
-			if (sdata->vif.type != NL80211_IFTYPE_STATION)
-				break;
-
-			if (len < offsetofend(typeof(*mgmt),
-					      u.action.u.ttlm_res))
-				goto invalid;
-			goto queue;
-		default:
-			break;
-		}
-		break;
 	}
 
 	return RX_CONTINUE;
@@ -3943,7 +3884,7 @@ ieee80211_rx_h_action_return(struct ieee80211_rx_data *rx)
 
 	/* do not return rejected action frames */
 	if (mgmt->u.action.category & 0x80)
-		return RX_DROP_U_REJECTED_ACTION_RESPONSE;
+		return RX_DROP_UNUSABLE;
 
 	nskb = skb_copy_expand(rx->skb, local->hw.extra_tx_headroom, 0,
 			       GFP_ATOMIC);
@@ -3970,8 +3911,8 @@ ieee80211_rx_h_action_return(struct ieee80211_rx_data *rx)
 		__ieee80211_tx_skb_tid_band(rx->sdata, nskb, 7, -1,
 					    status->band);
 	}
-
-	return RX_DROP_U_UNKNOWN_ACTION_REJECTED;
+	dev_kfree_skb(rx->skb);
+	return RX_QUEUED;
 }
 
 static ieee80211_rx_result debug_noinline
@@ -4734,7 +4675,7 @@ void __ieee80211_check_fast_rx_iface(struct ieee80211_sub_if_data *sdata)
 	struct ieee80211_local *local = sdata->local;
 	struct sta_info *sta;
 
-	lockdep_assert_wiphy(local->hw.wiphy);
+	lockdep_assert_held(&local->sta_mtx);
 
 	list_for_each_entry(sta, &local->sta_list, list) {
 		if (sdata != sta->sdata &&
@@ -4748,9 +4689,9 @@ void ieee80211_check_fast_rx_iface(struct ieee80211_sub_if_data *sdata)
 {
 	struct ieee80211_local *local = sdata->local;
 
-	lockdep_assert_wiphy(local->hw.wiphy);
-
+	mutex_lock(&local->sta_mtx);
 	__ieee80211_check_fast_rx_iface(sdata);
+	mutex_unlock(&local->sta_mtx);
 }
 
 static void ieee80211_rx_8023(struct ieee80211_rx_data *rx,
@@ -5242,6 +5183,7 @@ static void __ieee80211_rx_handle_packet(struct ieee80211_hw *hw,
 			 */
 
 			if (!status->link_valid && pubsta->mlo) {
+				struct ieee80211_hdr *hdr = (void *)skb->data;
 				struct link_sta_info *link_sta;
 
 				link_sta = link_sta_info_get_bss(rx.sdata,

@@ -31,13 +31,13 @@
 #include "pmc.h"
 
 /* SMU communication registers */
+#define AMD_PMC_REGISTER_MESSAGE	0x538
 #define AMD_PMC_REGISTER_RESPONSE	0x980
 #define AMD_PMC_REGISTER_ARGUMENT	0x9BC
 
 /* PMC Scratch Registers */
 #define AMD_PMC_SCRATCH_REG_CZN		0x94
 #define AMD_PMC_SCRATCH_REG_YC		0xD14
-#define AMD_PMC_SCRATCH_REG_1AH		0xF14
 
 /* STB Registers */
 #define AMD_PMC_STB_PMI_0		0x03E30600
@@ -52,12 +52,8 @@
 #define AMD_S2D_REGISTER_ARGUMENT	0xA88
 
 /* STB Spill to DRAM Parameters */
-#define S2D_TELEMETRY_BYTES_MAX		0x100000U
-#define S2D_RSVD_RAM_SPACE		0x100000
+#define S2D_TELEMETRY_BYTES_MAX		0x100000
 #define S2D_TELEMETRY_DRAMBYTES_MAX	0x1000000
-
-/* STB Spill to DRAM Message Definition */
-#define STB_FORCE_FLUSH_DATA		0xCF
 
 /* Base address of SMU for mapping physical address to virtual address */
 #define AMD_PMC_MAPPING_SIZE		0x01000
@@ -113,11 +109,6 @@ enum s2d_arg {
 	S2D_DRAM_SIZE,
 };
 
-struct amd_pmc_stb_v2_data {
-	size_t size;
-	u8 data[] __counted_by(size);
-};
-
 struct amd_pmc_bit_map {
 	const char *name;
 	u32 bit_mask;
@@ -145,7 +136,6 @@ static const struct amd_pmc_bit_map soc15_ip_blk[] = {
 	{"JPEG",	BIT(18)},
 	{"IPU",		BIT(19)},
 	{"UMSCH",	BIT(20)},
-	{"VPE",		BIT(21)},
 	{}
 };
 
@@ -156,10 +146,6 @@ MODULE_PARM_DESC(enable_stb, "Enable the STB debug mechanism");
 static bool disable_workarounds;
 module_param(disable_workarounds, bool, 0644);
 MODULE_PARM_DESC(disable_workarounds, "Disable workarounds for platform bugs");
-
-static bool dump_custom_stb;
-module_param(dump_custom_stb, bool, 0644);
-MODULE_PARM_DESC(dump_custom_stb, "Enable to dump full STB buffer");
 
 static struct amd_pmc_dev pmc;
 static int amd_pmc_send_cmd(struct amd_pmc_dev *dev, u32 arg, u32 *data, u8 msg, bool ret);
@@ -237,30 +223,10 @@ static const struct file_operations amd_pmc_stb_debugfs_fops = {
 	.release = amd_pmc_stb_debugfs_release,
 };
 
-/* Enhanced STB Firmware Reporting Mechanism */
-static int amd_pmc_stb_handle_efr(struct file *filp)
-{
-	struct amd_pmc_dev *dev = filp->f_inode->i_private;
-	struct amd_pmc_stb_v2_data *stb_data_arr;
-	u32 fsize;
-
-	fsize = dev->dram_size - S2D_RSVD_RAM_SPACE;
-	stb_data_arr = kmalloc(struct_size(stb_data_arr, data, fsize), GFP_KERNEL);
-	if (!stb_data_arr)
-		return -ENOMEM;
-
-	stb_data_arr->size = fsize;
-	memcpy_fromio(stb_data_arr->data, dev->stb_virt_addr, fsize);
-	filp->private_data = stb_data_arr;
-
-	return 0;
-}
-
 static int amd_pmc_stb_debugfs_open_v2(struct inode *inode, struct file *filp)
 {
 	struct amd_pmc_dev *dev = filp->f_inode->i_private;
-	u32 fsize, num_samples, val, stb_rdptr_offset = 0;
-	struct amd_pmc_stb_v2_data *stb_data_arr;
+	u32 *buf, fsize, num_samples, stb_rdptr_offset = 0;
 	int ret;
 
 	/* Write dummy postcode while reading the STB buffer */
@@ -268,20 +234,12 @@ static int amd_pmc_stb_debugfs_open_v2(struct inode *inode, struct file *filp)
 	if (ret)
 		dev_err(dev->dev, "error writing to STB: %d\n", ret);
 
+	buf = kzalloc(S2D_TELEMETRY_BYTES_MAX, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
 	/* Spill to DRAM num_samples uses separate SMU message port */
 	dev->msg_port = 1;
-
-	ret = amd_pmc_send_cmd(dev, 0, &val, STB_FORCE_FLUSH_DATA, 1);
-	if (ret)
-		dev_dbg_once(dev->dev, "S2D force flush not supported: %d\n", ret);
-
-	/*
-	 * We have a custom stb size and the PMFW is supposed to give
-	 * the enhanced dram size. Note that we land here only for the
-	 * platforms that support enhanced dram size reporting.
-	 */
-	if (dump_custom_stb)
-		return amd_pmc_stb_handle_efr(filp);
 
 	/* Get the num_samples to calculate the last push location */
 	ret = amd_pmc_send_cmd(dev, S2D_NUM_SAMPLES, &num_samples, dev->s2d_msg_id, true);
@@ -289,34 +247,21 @@ static int amd_pmc_stb_debugfs_open_v2(struct inode *inode, struct file *filp)
 	dev->msg_port = 0;
 	if (ret) {
 		dev_err(dev->dev, "error: S2D_NUM_SAMPLES not supported : %d\n", ret);
+		kfree(buf);
 		return ret;
 	}
 
-	fsize = min(num_samples, S2D_TELEMETRY_BYTES_MAX);
-	stb_data_arr = kmalloc(struct_size(stb_data_arr, data, fsize), GFP_KERNEL);
-	if (!stb_data_arr)
-		return -ENOMEM;
-
-	stb_data_arr->size = fsize;
-
-	/*
-	 * Start capturing data from the last push location.
-	 * This is for general cases, where the stb limits
-	 * are meant for standard usage.
-	 */
+	/* Start capturing data from the last push location */
 	if (num_samples > S2D_TELEMETRY_BYTES_MAX) {
-		/* First read oldest data starting 1 behind last write till end of ringbuffer */
-		stb_rdptr_offset = num_samples % S2D_TELEMETRY_BYTES_MAX;
-		fsize = S2D_TELEMETRY_BYTES_MAX - stb_rdptr_offset;
-
-		memcpy_fromio(stb_data_arr->data, dev->stb_virt_addr + stb_rdptr_offset, fsize);
-		/* Second copy the newer samples from offset 0 - last write */
-		memcpy_fromio(stb_data_arr->data + fsize, dev->stb_virt_addr, stb_rdptr_offset);
+		fsize  = S2D_TELEMETRY_BYTES_MAX;
+		stb_rdptr_offset = num_samples - fsize;
 	} else {
-		memcpy_fromio(stb_data_arr->data, dev->stb_virt_addr, fsize);
+		fsize = num_samples;
+		stb_rdptr_offset = 0;
 	}
 
-	filp->private_data = stb_data_arr;
+	memcpy_fromio(buf, dev->stb_virt_addr + stb_rdptr_offset, fsize);
+	filp->private_data = buf;
 
 	return 0;
 }
@@ -324,9 +269,11 @@ static int amd_pmc_stb_debugfs_open_v2(struct inode *inode, struct file *filp)
 static ssize_t amd_pmc_stb_debugfs_read_v2(struct file *filp, char __user *buf, size_t size,
 					   loff_t *pos)
 {
-	struct amd_pmc_stb_v2_data *data = filp->private_data;
+	if (!filp->private_data)
+		return -EINVAL;
 
-	return simple_read_from_buffer(buf, size, pos, data->data, data->size);
+	return simple_read_from_buffer(buf, size, pos, filp->private_data,
+					S2D_TELEMETRY_BYTES_MAX);
 }
 
 static int amd_pmc_stb_debugfs_release_v2(struct inode *inode, struct file *filp)
@@ -351,17 +298,10 @@ static void amd_pmc_get_ip_info(struct amd_pmc_dev *dev)
 	case AMD_CPU_ID_CB:
 		dev->num_ips = 12;
 		dev->s2d_msg_id = 0xBE;
-		dev->smu_msg = 0x538;
 		break;
 	case AMD_CPU_ID_PS:
 		dev->num_ips = 21;
 		dev->s2d_msg_id = 0x85;
-		dev->smu_msg = 0x538;
-		break;
-	case PCI_DEVICE_ID_AMD_1AH_M20H_ROOT:
-		dev->num_ips = 22;
-		dev->s2d_msg_id = 0xDE;
-		dev->smu_msg = 0x938;
 		break;
 	}
 }
@@ -596,9 +536,6 @@ static int amd_pmc_idlemask_read(struct amd_pmc_dev *pdev, struct device *dev,
 	case AMD_CPU_ID_PS:
 		val = amd_pmc_reg_read(pdev, AMD_PMC_SCRATCH_REG_YC);
 		break;
-	case PCI_DEVICE_ID_AMD_1AH_M20H_ROOT:
-		val = amd_pmc_reg_read(pdev, AMD_PMC_SCRATCH_REG_1AH);
-		break;
 	default:
 		return -EINVAL;
 	}
@@ -629,7 +566,6 @@ static bool amd_pmc_is_stb_supported(struct amd_pmc_dev *dev)
 	case AMD_CPU_ID_YC:
 	case AMD_CPU_ID_CB:
 	case AMD_CPU_ID_PS:
-	case PCI_DEVICE_ID_AMD_1AH_M20H_ROOT:
 		return true;
 	default:
 		return false;
@@ -665,7 +601,7 @@ static void amd_pmc_dump_registers(struct amd_pmc_dev *dev)
 		argument = AMD_S2D_REGISTER_ARGUMENT;
 		response = AMD_S2D_REGISTER_RESPONSE;
 	} else {
-		message = dev->smu_msg;
+		message = AMD_PMC_REGISTER_MESSAGE;
 		argument = AMD_PMC_REGISTER_ARGUMENT;
 		response = AMD_PMC_REGISTER_RESPONSE;
 	}
@@ -692,7 +628,7 @@ static int amd_pmc_send_cmd(struct amd_pmc_dev *dev, u32 arg, u32 *data, u8 msg,
 		argument = AMD_S2D_REGISTER_ARGUMENT;
 		response = AMD_S2D_REGISTER_RESPONSE;
 	} else {
-		message = dev->smu_msg;
+		message = AMD_PMC_REGISTER_MESSAGE;
 		argument = AMD_PMC_REGISTER_ARGUMENT;
 		response = AMD_PMC_REGISTER_RESPONSE;
 	}
@@ -763,7 +699,6 @@ static int amd_pmc_get_os_hint(struct amd_pmc_dev *dev)
 	case AMD_CPU_ID_YC:
 	case AMD_CPU_ID_CB:
 	case AMD_CPU_ID_PS:
-	case PCI_DEVICE_ID_AMD_1AH_M20H_ROOT:
 		return MSG_OS_HINT_RN;
 	}
 	return -EINVAL;
@@ -980,6 +915,9 @@ static int amd_pmc_s2d_init(struct amd_pmc_dev *dev)
 	/* Spill to DRAM feature uses separate SMU message port */
 	dev->msg_port = 1;
 
+	/* Get num of IP blocks within the SoC */
+	amd_pmc_get_ip_info(dev);
+
 	amd_pmc_send_cmd(dev, S2D_TELEMETRY_SIZE, &size, dev->s2d_msg_id, true);
 	if (size != S2D_TELEMETRY_BYTES_MAX)
 		return -EIO;
@@ -1087,9 +1025,6 @@ static int amd_pmc_probe(struct platform_device *pdev)
 
 	mutex_init(&dev->lock);
 
-	/* Get num of IP blocks within the SoC */
-	amd_pmc_get_ip_info(dev);
-
 	if (enable_stb && amd_pmc_is_stb_supported(dev)) {
 		err = amd_pmc_s2d_init(dev);
 		if (err)
@@ -1106,8 +1041,6 @@ static int amd_pmc_probe(struct platform_device *pdev)
 	}
 
 	amd_pmc_dbgfs_register(dev);
-	if (IS_ENABLED(CONFIG_AMD_MP2_STB))
-		amd_mp2_stb_init(dev);
 	pm_report_max_hw_sleep(U64_MAX);
 	return 0;
 
@@ -1124,8 +1057,6 @@ static void amd_pmc_remove(struct platform_device *pdev)
 		acpi_unregister_lps0_dev(&amd_pmc_s2idle_dev_ops);
 	amd_pmc_dbgfs_unregister(dev);
 	pci_dev_put(dev->rdev);
-	if (IS_ENABLED(CONFIG_AMD_MP2_STB))
-		amd_mp2_stb_deinit(dev);
 	mutex_destroy(&dev->lock);
 }
 
@@ -1136,7 +1067,6 @@ static const struct acpi_device_id amd_pmc_acpi_ids[] = {
 	{"AMDI0008", 0},
 	{"AMDI0009", 0},
 	{"AMDI000A", 0},
-	{"AMDI000B", 0},
 	{"AMD0004", 0},
 	{"AMD0005", 0},
 	{ }

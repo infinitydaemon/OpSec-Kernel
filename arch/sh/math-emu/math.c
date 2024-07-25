@@ -15,8 +15,6 @@
 #include <linux/perf_event.h>
 
 #include <linux/uaccess.h>
-
-#include <asm/fpu.h>
 #include <asm/processor.h>
 #include <asm/io.h>
 

@@ -307,5 +307,5 @@ int main(int argc, char **argv)
 	test_pidfd_fdinfo_nspid();
 	test_pidfd_dead_fdinfo();
 
-	ksft_exit_pass();
+	return ksft_exit_pass();
 }

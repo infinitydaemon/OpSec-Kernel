@@ -429,6 +429,7 @@ static DEVICE_ATTR(lighting_control_state, 0644, show_control_state,
 static int alienware_zone_init(struct platform_device *dev)
 {
 	u8 zone;
+	char buffer[10];
 	char *name;
 
 	if (interface == WMAX) {
@@ -465,7 +466,8 @@ static int alienware_zone_init(struct platform_device *dev)
 		return -ENOMEM;
 
 	for (zone = 0; zone < quirks->num_zones; zone++) {
-		name = kasprintf(GFP_KERNEL, "zone%02hhX", zone);
+		sprintf(buffer, "zone%02hhX", zone);
+		name = kstrdup(buffer, GFP_KERNEL);
 		if (name == NULL)
 			return 1;
 		sysfs_attr_init(&zone_dev_attrs[zone].attr);

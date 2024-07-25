@@ -1,7 +1,7 @@
 .. include:: ../disclaimer-sp.rst
 
 :Original: :ref:`Documentation/process/programming-language.rst <programming_language>`
-:Translator: Carlos Bilbao <carlos.bilbao.osdev@gmail.com>
+:Translator: Carlos Bilbao <carlos.bilbao@amd.com>
 
 .. _sp_programming_language:
 

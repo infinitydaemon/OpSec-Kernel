@@ -12,23 +12,6 @@ config DRM_PANEL_BRIDGE
 	help
 	  DRM bridge wrapper of DRM panels
 
-config DRM_AUX_BRIDGE
-	tristate
-	depends on DRM_BRIDGE && OF
-	select AUXILIARY_BUS
-	select DRM_PANEL_BRIDGE
-	help
-	  Simple transparent bridge that is used by several non-DRM drivers to
-	  build bridges chain.
-
-config DRM_AUX_HPD_BRIDGE
-	tristate
-	depends on DRM_BRIDGE && OF
-	select AUXILIARY_BUS
-	help
-	  Simple bridge that terminates the bridge chain and provides HPD
-	  support.
-
 menu "Display Interface Bridges"
 	depends on DRM && DRM_BRIDGE
 
@@ -73,6 +56,7 @@ config DRM_CROS_EC_ANX7688
 config DRM_DISPLAY_CONNECTOR
 	tristate "Display connector support"
 	depends on OF
+	select DRM_KMS_HELPER
 	help
 	  Driver for display connectors with support for DDC and hot-plug
 	  detection. Most display controllers handle display connectors
@@ -96,8 +80,9 @@ config DRM_ITE_IT6505
 	select DRM_DISPLAY_DP_HELPER
 	select DRM_DISPLAY_HDCP_HELPER
 	select DRM_DISPLAY_HELPER
-	select DRM_DISPLAY_DP_AUX_BUS
+	select DRM_DP_AUX_BUS
 	select DRM_KMS_HELPER
+	select DRM_DP_HELPER
 	select EXTCON
 	select CRYPTO
 	select CRYPTO_HASH
@@ -189,13 +174,6 @@ config DRM_MEGACHIPS_STDPXXXX_GE_B850V3_FW
 	  to DP++. This is used with the i.MX6 imx-ldb
 	  driver. You are likely to say N here.
 
-config DRM_MICROCHIP_LVDS_SERIALIZER
-	tristate "Microchip LVDS serializer support"
-	depends on OF
-	depends on DRM_ATMEL_HLCDC
-	help
-	  Support for Microchip's LVDS serializer.
-
 config DRM_NWL_MIPI_DSI
 	tristate "Northwest Logic MIPI DSI Host controller"
 	depends on DRM
@@ -235,7 +213,7 @@ config DRM_PARADE_PS8640
 	depends on OF
 	select DRM_DISPLAY_DP_HELPER
 	select DRM_DISPLAY_HELPER
-	select DRM_DISPLAY_DP_AUX_BUS
+	select DRM_DP_AUX_BUS
 	select DRM_KMS_HELPER
 	select DRM_MIPI_DSI
 	select DRM_PANEL
@@ -395,7 +373,7 @@ config DRM_TI_SN65DSI86
 	select DRM_PANEL
 	select DRM_MIPI_DSI
 	select AUXILIARY_BUS
-	select DRM_DISPLAY_DP_AUX_BUS
+	select DRM_DP_AUX_BUS
 	help
 	  Texas Instruments SN65DSI86 DSI to eDP Bridge driver
 

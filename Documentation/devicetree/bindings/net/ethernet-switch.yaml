@@ -20,26 +20,9 @@ description:
 
 select: false
 
-allOf:
-  # This condition is here to satisfy the case where certain device
-  # nodes have to preserve non-standard names because of
-  # backward-compatibility with boot loaders inspecting certain
-  # node names.
-  - if:
-      properties:
-        compatible:
-          contains:
-            enum:
-              - marvell,turris-mox-mv88e6085
-              - marvell,turris-mox-mv88e6190
-    then:
-      properties:
-        $nodename:
-          pattern: "switch[0-3]@[0-3]+$"
-    else:
-      properties:
-        $nodename:
-          pattern: "^(ethernet-)?switch(@.*)?$"
+properties:
+  $nodename:
+    pattern: "^(ethernet-)?switch(@.*)?$"
 
 patternProperties:
   "^(ethernet-)?ports$":
@@ -53,7 +36,7 @@ patternProperties:
         const: 0
 
     patternProperties:
-      "^(ethernet-)?port@[0-9a-f]+$":
+      "^(ethernet-)?port@[0-9]+$":
         type: object
         description: Ethernet switch ports
 
@@ -70,16 +53,14 @@ oneOf:
 additionalProperties: true
 
 $defs:
-  ethernet-ports:
+  base:
     description: An ethernet switch without any extra port properties
     $ref: '#'
 
     patternProperties:
-      "^(ethernet-)?ports$":
-        patternProperties:
-          "^(ethernet-)?port@[0-9a-f]+$":
-            description: Ethernet switch ports
-            $ref: ethernet-switch-port.yaml#
-            unevaluatedProperties: false
+      "^(ethernet-)?port@[0-9]+$":
+        description: Ethernet switch ports
+        $ref: ethernet-switch-port.yaml#
+        unevaluatedProperties: false
 
 ...

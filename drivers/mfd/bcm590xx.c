@@ -27,14 +27,14 @@ static const struct regmap_config bcm590xx_regmap_config_pri = {
 	.reg_bits	= 8,
 	.val_bits	= 8,
 	.max_register	= BCM590XX_MAX_REGISTER_PRI,
-	.cache_type	= REGCACHE_MAPLE,
+	.cache_type	= REGCACHE_RBTREE,
 };
 
 static const struct regmap_config bcm590xx_regmap_config_sec = {
 	.reg_bits	= 8,
 	.val_bits	= 8,
 	.max_register	= BCM590XX_MAX_REGISTER_SEC,
-	.cache_type	= REGCACHE_MAPLE,
+	.cache_type	= REGCACHE_RBTREE,
 };
 
 static int bcm590xx_i2c_probe(struct i2c_client *i2c_pri)

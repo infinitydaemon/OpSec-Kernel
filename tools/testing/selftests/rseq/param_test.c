@@ -288,11 +288,6 @@ bool rseq_validate_cpu_id(void)
 {
 	return rseq_mm_cid_available();
 }
-static
-bool rseq_use_cpu_index(void)
-{
-	return false;	/* Use mm_cid */
-}
 # ifdef TEST_MEMBARRIER
 /*
  * Membarrier does not currently support targeting a mm_cid, so
@@ -316,11 +311,6 @@ static
 bool rseq_validate_cpu_id(void)
 {
 	return rseq_current_cpu_raw() >= 0;
-}
-static
-bool rseq_use_cpu_index(void)
-{
-	return true;	/* Use cpu_id as index. */
 }
 # ifdef TEST_MEMBARRIER
 static
@@ -725,7 +715,7 @@ void test_percpu_list(void)
 	/* Generate list entries for every usable cpu. */
 	sched_getaffinity(0, sizeof(allowed_cpus), &allowed_cpus);
 	for (i = 0; i < CPU_SETSIZE; i++) {
-		if (rseq_use_cpu_index() && !CPU_ISSET(i, &allowed_cpus))
+		if (!CPU_ISSET(i, &allowed_cpus))
 			continue;
 		for (j = 1; j <= 100; j++) {
 			struct percpu_list_node *node;
@@ -762,7 +752,7 @@ void test_percpu_list(void)
 	for (i = 0; i < CPU_SETSIZE; i++) {
 		struct percpu_list_node *node;
 
-		if (rseq_use_cpu_index() && !CPU_ISSET(i, &allowed_cpus))
+		if (!CPU_ISSET(i, &allowed_cpus))
 			continue;
 
 		while ((node = __percpu_list_pop(&list, i))) {
@@ -912,7 +902,7 @@ void test_percpu_buffer(void)
 	/* Generate list entries for every usable cpu. */
 	sched_getaffinity(0, sizeof(allowed_cpus), &allowed_cpus);
 	for (i = 0; i < CPU_SETSIZE; i++) {
-		if (rseq_use_cpu_index() && !CPU_ISSET(i, &allowed_cpus))
+		if (!CPU_ISSET(i, &allowed_cpus))
 			continue;
 		/* Worse-case is every item in same CPU. */
 		buffer.c[i].array =
@@ -962,7 +952,7 @@ void test_percpu_buffer(void)
 	for (i = 0; i < CPU_SETSIZE; i++) {
 		struct percpu_buffer_node *node;
 
-		if (rseq_use_cpu_index() && !CPU_ISSET(i, &allowed_cpus))
+		if (!CPU_ISSET(i, &allowed_cpus))
 			continue;
 
 		while ((node = __percpu_buffer_pop(&buffer, i))) {
@@ -1123,7 +1113,7 @@ void test_percpu_memcpy_buffer(void)
 	/* Generate list entries for every usable cpu. */
 	sched_getaffinity(0, sizeof(allowed_cpus), &allowed_cpus);
 	for (i = 0; i < CPU_SETSIZE; i++) {
-		if (rseq_use_cpu_index() && !CPU_ISSET(i, &allowed_cpus))
+		if (!CPU_ISSET(i, &allowed_cpus))
 			continue;
 		/* Worse-case is every item in same CPU. */
 		buffer.c[i].array =
@@ -1170,7 +1160,7 @@ void test_percpu_memcpy_buffer(void)
 	for (i = 0; i < CPU_SETSIZE; i++) {
 		struct percpu_memcpy_buffer_node item;
 
-		if (rseq_use_cpu_index() && !CPU_ISSET(i, &allowed_cpus))
+		if (!CPU_ISSET(i, &allowed_cpus))
 			continue;
 
 		while (__percpu_memcpy_buffer_pop(&buffer, &item, i)) {
@@ -1241,7 +1231,7 @@ void *test_membarrier_worker_thread(void *arg)
 	}
 
 	/* Wait for initialization. */
-	while (!__atomic_load_n(&args->percpu_list_ptr, __ATOMIC_ACQUIRE)) {}
+	while (!atomic_load(&args->percpu_list_ptr)) {}
 
 	for (i = 0; i < iters; ++i) {
 		int ret;
@@ -1309,22 +1299,22 @@ void *test_membarrier_manager_thread(void *arg)
 	test_membarrier_init_percpu_list(&list_a);
 	test_membarrier_init_percpu_list(&list_b);
 
-	__atomic_store_n(&args->percpu_list_ptr, (intptr_t)&list_a, __ATOMIC_RELEASE);
+	atomic_store(&args->percpu_list_ptr, (intptr_t)&list_a);
 
-	while (!__atomic_load_n(&args->stop, __ATOMIC_ACQUIRE)) {
+	while (!atomic_load(&args->stop)) {
 		/* list_a is "active". */
 		cpu_a = rand() % CPU_SETSIZE;
 		/*
 		 * As list_b is "inactive", we should never see changes
 		 * to list_b.
 		 */
-		if (expect_b != __atomic_load_n(&list_b.c[cpu_b].head->data, __ATOMIC_ACQUIRE)) {
+		if (expect_b != atomic_load(&list_b.c[cpu_b].head->data)) {
 			fprintf(stderr, "Membarrier test failed\n");
 			abort();
 		}
 
 		/* Make list_b "active". */
-		__atomic_store_n(&args->percpu_list_ptr, (intptr_t)&list_b, __ATOMIC_RELEASE);
+		atomic_store(&args->percpu_list_ptr, (intptr_t)&list_b);
 		if (rseq_membarrier_expedited(cpu_a) &&
 				errno != ENXIO /* missing CPU */) {
 			perror("sys_membarrier");
@@ -1334,27 +1324,27 @@ void *test_membarrier_manager_thread(void *arg)
 		 * Cpu A should now only modify list_b, so the values
 		 * in list_a should be stable.
 		 */
-		expect_a = __atomic_load_n(&list_a.c[cpu_a].head->data, __ATOMIC_ACQUIRE);
+		expect_a = atomic_load(&list_a.c[cpu_a].head->data);
 
 		cpu_b = rand() % CPU_SETSIZE;
 		/*
 		 * As list_a is "inactive", we should never see changes
 		 * to list_a.
 		 */
-		if (expect_a != __atomic_load_n(&list_a.c[cpu_a].head->data, __ATOMIC_ACQUIRE)) {
+		if (expect_a != atomic_load(&list_a.c[cpu_a].head->data)) {
 			fprintf(stderr, "Membarrier test failed\n");
 			abort();
 		}
 
 		/* Make list_a "active". */
-		__atomic_store_n(&args->percpu_list_ptr, (intptr_t)&list_a, __ATOMIC_RELEASE);
+		atomic_store(&args->percpu_list_ptr, (intptr_t)&list_a);
 		if (rseq_membarrier_expedited(cpu_b) &&
 				errno != ENXIO /* missing CPU*/) {
 			perror("sys_membarrier");
 			abort();
 		}
 		/* Remember a value from list_b. */
-		expect_b = __atomic_load_n(&list_b.c[cpu_b].head->data, __ATOMIC_ACQUIRE);
+		expect_b = atomic_load(&list_b.c[cpu_b].head->data);
 	}
 
 	test_membarrier_free_percpu_list(&list_a);
@@ -1411,7 +1401,7 @@ void test_membarrier(void)
 		}
 	}
 
-	__atomic_store_n(&thread_args.stop, 1, __ATOMIC_RELEASE);
+	atomic_store(&thread_args.stop, 1);
 	ret = pthread_join(manager_thread, NULL);
 	if (ret) {
 		errno = ret;

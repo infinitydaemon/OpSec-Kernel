@@ -1835,11 +1835,10 @@ static int mwifiex_cfg80211_set_cqm_rssi_config(struct wiphy *wiphy,
  */
 static int mwifiex_cfg80211_change_beacon(struct wiphy *wiphy,
 					  struct net_device *dev,
-					  struct cfg80211_ap_update *params)
+					  struct cfg80211_beacon_data *data)
 {
 	struct mwifiex_private *priv = mwifiex_netdev_get_priv(dev);
 	struct mwifiex_adapter *adapter = priv->adapter;
-	struct cfg80211_beacon_data *data = &params->beacon;
 
 	mwifiex_cancel_scan(adapter);
 
@@ -3359,7 +3358,7 @@ static int mwifiex_set_wowlan_mef_entry(struct mwifiex_private *priv,
 		}
 
 		if (!wowlan->patterns[i].pkt_offset) {
-			if (is_unicast_ether_addr(byte_seq) &&
+			if (!(byte_seq[0] & 0x01) &&
 			    (byte_seq[MWIFIEX_MEF_MAX_BYTESEQ] == 1)) {
 				mef_cfg->criteria |= MWIFIEX_CRITERIA_UNICAST;
 				continue;

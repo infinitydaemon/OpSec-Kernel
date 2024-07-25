@@ -108,8 +108,6 @@ struct bnxt_re_cq {
 	struct ib_umem		*umem;
 	struct ib_umem		*resize_umem;
 	int			resize_cqe;
-	void			*uctx_cq_page;
-	struct hlist_node	hash_entry;
 };
 
 struct bnxt_re_mr {
@@ -151,7 +149,6 @@ enum bnxt_re_mmap_flag {
 	BNXT_RE_MMAP_WC_DB,
 	BNXT_RE_MMAP_DBR_PAGE,
 	BNXT_RE_MMAP_DBR_BAR,
-	BNXT_RE_MMAP_TOGGLE_PAGE,
 };
 
 struct bnxt_re_user_mmap_entry {

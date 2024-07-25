@@ -234,8 +234,7 @@ static int __ip6addrlbl_add(struct net *net, struct ip6addrlbl_entry *newp,
 		hlist_add_head_rcu(&newp->list, &net->ipv6.ip6addrlbl_table.head);
 out:
 	if (!ret)
-		WRITE_ONCE(net->ipv6.ip6addrlbl_table.seq,
-			   net->ipv6.ip6addrlbl_table.seq + 1);
+		net->ipv6.ip6addrlbl_table.seq++;
 	return ret;
 }
 
@@ -446,7 +445,7 @@ static void ip6addrlbl_putmsg(struct nlmsghdr *nlh,
 };
 
 static int ip6addrlbl_fill(struct sk_buff *skb,
-			   const struct ip6addrlbl_entry *p,
+			   struct ip6addrlbl_entry *p,
 			   u32 lseq,
 			   u32 portid, u32 seq, int event,
 			   unsigned int flags)
@@ -499,8 +498,7 @@ static int ip6addrlbl_dump(struct sk_buff *skb, struct netlink_callback *cb)
 	struct net *net = sock_net(skb->sk);
 	struct ip6addrlbl_entry *p;
 	int idx = 0, s_idx = cb->args[0];
-	int err = 0;
-	u32 lseq;
+	int err;
 
 	if (cb->strict_check) {
 		err = ip6addrlbl_valid_dump_req(nlh, cb->extack);
@@ -509,11 +507,10 @@ static int ip6addrlbl_dump(struct sk_buff *skb, struct netlink_callback *cb)
 	}
 
 	rcu_read_lock();
-	lseq = READ_ONCE(net->ipv6.ip6addrlbl_table.seq);
 	hlist_for_each_entry_rcu(p, &net->ipv6.ip6addrlbl_table.head, list) {
 		if (idx >= s_idx) {
 			err = ip6addrlbl_fill(skb, p,
-					      lseq,
+					      net->ipv6.ip6addrlbl_table.seq,
 					      NETLINK_CB(cb->skb).portid,
 					      nlh->nlmsg_seq,
 					      RTM_NEWADDRLABEL,
@@ -525,7 +522,7 @@ static int ip6addrlbl_dump(struct sk_buff *skb, struct netlink_callback *cb)
 	}
 	rcu_read_unlock();
 	cb->args[0] = idx;
-	return err;
+	return skb->len;
 }
 
 static inline int ip6addrlbl_msgsize(void)
@@ -617,7 +614,7 @@ static int ip6addrlbl_get(struct sk_buff *in_skb, struct nlmsghdr *nlh,
 
 	rcu_read_lock();
 	p = __ipv6_addr_label(net, addr, ipv6_addr_type(addr), ifal->ifal_index);
-	lseq = READ_ONCE(net->ipv6.ip6addrlbl_table.seq);
+	lseq = net->ipv6.ip6addrlbl_table.seq;
 	if (p)
 		err = ip6addrlbl_fill(skb, p, lseq,
 				      NETLINK_CB(in_skb).portid,
@@ -650,7 +647,6 @@ int __init ipv6_addr_label_rtnl_register(void)
 		return ret;
 	ret = rtnl_register_module(THIS_MODULE, PF_INET6, RTM_GETADDRLABEL,
 				   ip6addrlbl_get,
-				   ip6addrlbl_dump, RTNL_FLAG_DOIT_UNLOCKED |
-						    RTNL_FLAG_DUMP_UNLOCKED);
+				   ip6addrlbl_dump, RTNL_FLAG_DOIT_UNLOCKED);
 	return ret;
 }

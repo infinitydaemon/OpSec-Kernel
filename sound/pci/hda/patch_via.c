@@ -379,6 +379,7 @@ static void via_free(struct hda_codec *codec)
 	snd_hda_gen_free(codec);
 }
 
+#ifdef CONFIG_PM
 static int via_suspend(struct hda_codec *codec)
 {
 	struct via_spec *spec = codec->spec;
@@ -399,7 +400,9 @@ static int via_resume(struct hda_codec *codec)
 	snd_hda_regmap_sync(codec);
 	return 0;
 }
+#endif
 
+#ifdef CONFIG_PM
 static int via_check_power_status(struct hda_codec *codec, hda_nid_t nid)
 {
 	struct via_spec *spec = codec->spec;
@@ -407,6 +410,7 @@ static int via_check_power_status(struct hda_codec *codec, hda_nid_t nid)
 	vt1708_update_hp_work(codec);
 	return snd_hda_check_amp_list_power(codec, &spec->gen.loopback, nid);
 }
+#endif
 
 /*
  */
@@ -419,9 +423,11 @@ static const struct hda_codec_ops via_patch_ops = {
 	.init = via_init,
 	.free = via_free,
 	.unsol_event = snd_hda_jack_unsol_event,
+#ifdef CONFIG_PM
 	.suspend = via_suspend,
 	.resume = via_resume,
 	.check_power_status = via_check_power_status,
+#endif
 };
 
 

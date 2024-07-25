@@ -514,7 +514,7 @@ void input_enable_softrepeat(struct input_dev *dev, int delay, int period);
 
 bool input_device_enabled(struct input_dev *dev);
 
-extern const struct class input_class;
+extern struct class input_class;
 
 /**
  * struct ff_device - force-feedback part of an input device
@@ -562,7 +562,7 @@ struct ff_device {
 
 	int max_effects;
 	struct ff_effect *effects;
-	struct file *effect_owners[] __counted_by(max_effects);
+	struct file *effect_owners[];
 };
 
 int input_ff_create(struct input_dev *dev, unsigned int max_effects);

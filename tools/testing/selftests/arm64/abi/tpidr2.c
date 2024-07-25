@@ -254,15 +254,9 @@ static int write_clone_read(void)
 	putnum(++tests_run);		     \
 	putstr(" " #name "\n");
 
-#define skip_test(name)			     \
-	tests_skipped++;		     \
-	putstr("ok ");			     \
-	putnum(++tests_run);		     \
-	putstr(" # SKIP " #name "\n");
-
 int main(int argc, char **argv)
 {
-	int ret;
+	int ret, i;
 
 	putstr("TAP version 13\n");
 	putstr("1..");
@@ -289,11 +283,13 @@ int main(int argc, char **argv)
 	} else {
 		putstr("# SME support not present\n");
 
-		skip_test(default_value);
-		skip_test(write_read);
-		skip_test(write_sleep_read);
-		skip_test(write_fork_read);
-		skip_test(write_clone_read);
+		for (i = 0; i < EXPECTED_TESTS; i++) {
+			putstr("ok ");
+			putnum(i);
+			putstr(" skipped, TPIDR2 not supported\n");
+		}
+
+		tests_skipped += EXPECTED_TESTS;
 	}
 
 	print_summary();

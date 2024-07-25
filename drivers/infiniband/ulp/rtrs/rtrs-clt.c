@@ -775,18 +775,13 @@ rtrs_clt_get_next_path_or_null(struct list_head *head, struct rtrs_clt_path *clt
  * Related to @MP_POLICY_RR
  *
  * Locks:
- *    rcu_read_lock() must be held.
+ *    rcu_read_lock() must be hold.
  */
 static struct rtrs_clt_path *get_next_path_rr(struct path_it *it)
 {
 	struct rtrs_clt_path __rcu **ppcpu_path;
 	struct rtrs_clt_path *path;
 	struct rtrs_clt_sess *clt;
-
-	/*
-	 * Assert that rcu lock must be held
-	 */
-	RCU_LOCKDEP_WARN(!rcu_read_lock_held(), "no rcu read lock held");
 
 	clt = it->clt;
 
@@ -1391,9 +1386,9 @@ static int alloc_path_reqs(struct rtrs_clt_path *clt_path)
 				      clt_path->max_pages_per_mr);
 		if (IS_ERR(req->mr)) {
 			err = PTR_ERR(req->mr);
-			pr_err("Failed to alloc clt_path->max_pages_per_mr %d: %pe\n",
-			       clt_path->max_pages_per_mr, req->mr);
 			req->mr = NULL;
+			pr_err("Failed to alloc clt_path->max_pages_per_mr %d\n",
+			       clt_path->max_pages_per_mr);
 			goto out;
 		}
 
@@ -2025,8 +2020,6 @@ static int rtrs_clt_rdma_cm_handler(struct rdma_cm_id *cm_id,
 		/*
 		 * Device removal is a special case.  Queue close and return 0.
 		 */
-		rtrs_wrn_rl(s, "CM event: %s, status: %d\n", rdma_event_msg(ev->event),
-			    ev->status);
 		rtrs_clt_close_conns(clt_path, false);
 		return 0;
 	default:
@@ -2060,8 +2053,10 @@ static int create_cm(struct rtrs_clt_con *con)
 			       clt_path->s.dst_addr.ss_family == AF_IB ?
 			       RDMA_PS_IB : RDMA_PS_TCP, IB_QPT_RC);
 	if (IS_ERR(cm_id)) {
-		rtrs_err(s, "Failed to create CM ID, err: %pe\n", cm_id);
-		return PTR_ERR(cm_id);
+		err = PTR_ERR(cm_id);
+		rtrs_err(s, "Failed to create CM ID, err: %d\n", err);
+
+		return err;
 	}
 	con->c.cm_id = cm_id;
 	con->cm_err = 0;

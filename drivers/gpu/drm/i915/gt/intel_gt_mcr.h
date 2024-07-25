@@ -11,7 +11,6 @@
 void intel_gt_mcr_init(struct intel_gt *gt);
 void intel_gt_mcr_lock(struct intel_gt *gt, unsigned long *flags);
 void intel_gt_mcr_unlock(struct intel_gt *gt, unsigned long flags);
-void intel_gt_mcr_lock_sanitize(struct intel_gt *gt);
 
 u32 intel_gt_mcr_read(struct intel_gt *gt,
 		      i915_mcr_reg_t reg,
@@ -54,7 +53,7 @@ int intel_gt_mcr_wait_for_reg(struct intel_gt *gt,
  * the topology, so we lookup the DSS ID directly in "slice 0."
  */
 #define _HAS_SS(ss_, gt_, group_, instance_) ( \
-	GRAPHICS_VER_FULL(gt_->i915) >= IP_VER(12, 55) ? \
+	GRAPHICS_VER_FULL(gt_->i915) >= IP_VER(12, 50) ? \
 		intel_sseu_has_subslice(&(gt_)->info.sseu, 0, ss_) : \
 		intel_sseu_has_subslice(&(gt_)->info.sseu, group_, instance_))
 

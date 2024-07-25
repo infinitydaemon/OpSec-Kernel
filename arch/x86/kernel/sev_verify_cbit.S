@@ -77,7 +77,7 @@ SYM_FUNC_START(sev_verify_cbit)
 	 * The check failed, prevent any forward progress to prevent ROP
 	 * attacks, invalidate the stack and go into a hlt loop.
 	 */
-	xorl	%esp, %esp
+	xorq	%rsp, %rsp
 	subq	$0x1000, %rsp
 2:	hlt
 	jmp 2b

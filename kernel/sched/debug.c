@@ -8,7 +8,7 @@
  */
 
 /*
- * This allows printing both to /sys/kernel/debug/sched/debug and
+ * This allows printing both to /proc/sched_debug and
  * to the console
  */
 #define SEQ_printf(m, x...)			\
@@ -425,7 +425,6 @@ static void register_sd(struct sched_domain *sd, struct dentry *parent)
 
 	debugfs_create_file("flags", 0444, parent, &sd->flags, &sd_flags_fops);
 	debugfs_create_file("groups_flags", 0444, parent, &sd->groups->flags, &sd_flags_fops);
-	debugfs_create_u32("level", 0444, parent, (u32 *)&sd->level);
 }
 
 void update_sched_domain_debugfs(void)
@@ -629,8 +628,8 @@ static void print_rq(struct seq_file *m, struct rq *rq, int rq_cpu)
 
 void print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq)
 {
-	s64 left_vruntime = -1, min_vruntime, right_vruntime = -1, left_deadline = -1, spread;
-	struct sched_entity *last, *first, *root;
+	s64 left_vruntime = -1, min_vruntime, right_vruntime = -1, spread;
+	struct sched_entity *last, *first;
 	struct rq *rq = cpu_rq(cpu);
 	unsigned long flags;
 
@@ -645,20 +644,15 @@ void print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq)
 			SPLIT_NS(cfs_rq->exec_clock));
 
 	raw_spin_rq_lock_irqsave(rq, flags);
-	root = __pick_root_entity(cfs_rq);
-	if (root)
-		left_vruntime = root->min_vruntime;
 	first = __pick_first_entity(cfs_rq);
 	if (first)
-		left_deadline = first->deadline;
+		left_vruntime = first->vruntime;
 	last = __pick_last_entity(cfs_rq);
 	if (last)
 		right_vruntime = last->vruntime;
 	min_vruntime = cfs_rq->min_vruntime;
 	raw_spin_rq_unlock_irqrestore(rq, flags);
 
-	SEQ_printf(m, "  .%-30s: %Ld.%06ld\n", "left_deadline",
-			SPLIT_NS(left_deadline));
 	SEQ_printf(m, "  .%-30s: %Ld.%06ld\n", "left_vruntime",
 			SPLIT_NS(left_vruntime));
 	SEQ_printf(m, "  .%-30s: %Ld.%06ld\n", "min_vruntime",
@@ -685,8 +679,8 @@ void print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq)
 			cfs_rq->avg.runnable_avg);
 	SEQ_printf(m, "  .%-30s: %lu\n", "util_avg",
 			cfs_rq->avg.util_avg);
-	SEQ_printf(m, "  .%-30s: %u\n", "util_est",
-			cfs_rq->avg.util_est);
+	SEQ_printf(m, "  .%-30s: %u\n", "util_est_enqueued",
+			cfs_rq->avg.util_est.enqueued);
 	SEQ_printf(m, "  .%-30s: %ld\n", "removed.load_avg",
 			cfs_rq->removed.load_avg);
 	SEQ_printf(m, "  .%-30s: %ld\n", "removed.util_avg",
@@ -730,6 +724,9 @@ void print_rt_rq(struct seq_file *m, int cpu, struct rt_rq *rt_rq)
 	SEQ_printf(m, "  .%-30s: %Ld.%06ld\n", #x, SPLIT_NS(rt_rq->x))
 
 	PU(rt_nr_running);
+#ifdef CONFIG_SMP
+	PU(rt_nr_migratory);
+#endif
 	P(rt_throttled);
 	PN(rt_time);
 	PN(rt_runtime);
@@ -751,6 +748,7 @@ void print_dl_rq(struct seq_file *m, int cpu, struct dl_rq *dl_rq)
 
 	PU(dl_nr_running);
 #ifdef CONFIG_SMP
+	PU(dl_nr_migratory);
 	dl_bw = &cpu_rq(cpu)->rd->dl_bw;
 #else
 	dl_bw = &dl_rq->dl_bw;
@@ -866,6 +864,7 @@ static void sched_debug_header(struct seq_file *m)
 #define PN(x) \
 	SEQ_printf(m, "  .%-40s: %Ld.%06ld\n", #x, SPLIT_NS(x))
 	PN(sysctl_sched_base_slice);
+	P(sysctl_sched_child_runs_first);
 	P(sysctl_sched_features);
 #undef PN
 #undef P
@@ -1076,7 +1075,8 @@ void proc_sched_show_task(struct task_struct *p, struct pid_namespace *ns,
 	P(se.avg.runnable_avg);
 	P(se.avg.util_avg);
 	P(se.avg.last_update_time);
-	PM(se.avg.util_est, ~UTIL_AVG_UNCHANGED);
+	P(se.avg.util_est.ewma);
+	PM(se.avg.util_est.enqueued, ~UTIL_AVG_UNCHANGED);
 #endif
 #ifdef CONFIG_UCLAMP_TASK
 	__PS("uclamp.min", p->uclamp_req[UCLAMP_MIN].value);

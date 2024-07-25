@@ -10,7 +10,9 @@
 #include <linux/delay.h>
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
-#include <linux/of.h>
+#include <linux/of_address.h>
+#include <linux/of_device.h>
+#include <linux/of_gpio.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/reset.h>
@@ -57,7 +59,7 @@ struct rk_i2s_tdm_dev {
 	struct snd_dmaengine_dai_dma_data playback_dma_data;
 	struct reset_control *tx_reset;
 	struct reset_control *rx_reset;
-	const struct rk_i2s_soc_data *soc_data;
+	struct rk_i2s_soc_data *soc_data;
 	bool is_master_mode;
 	bool io_multiplex;
 	bool tdm_mode;
@@ -655,8 +657,17 @@ static int rockchip_i2s_tdm_hw_params(struct snd_pcm_substream *substream,
 	int err;
 
 	if (i2s_tdm->is_master_mode) {
-		struct clk *mclk = (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) ?
-			i2s_tdm->mclk_tx : i2s_tdm->mclk_rx;
+		struct clk *mclk;
+
+		if (i2s_tdm->clk_trcm == TRCM_TX) {
+			mclk = i2s_tdm->mclk_tx;
+		} else if (i2s_tdm->clk_trcm == TRCM_RX) {
+			mclk = i2s_tdm->mclk_rx;
+		} else if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+			mclk = i2s_tdm->mclk_tx;
+		} else {
+			mclk = i2s_tdm->mclk_rx;
+		}
 
 		err = clk_set_rate(mclk, DEFAULT_MCLK_FS * params_rate(params));
 		if (err)
@@ -976,21 +987,21 @@ static const struct txrx_config rv1126_txrx_config[] = {
 	{ 0xff800000, 0x10260, RV1126_I2S0_CLK_TXONLY, RV1126_I2S0_CLK_RXONLY },
 };
 
-static const struct rk_i2s_soc_data px30_i2s_soc_data = {
+static struct rk_i2s_soc_data px30_i2s_soc_data = {
 	.softrst_offset = 0x0300,
 	.configs = px30_txrx_config,
 	.config_count = ARRAY_SIZE(px30_txrx_config),
 	.init = common_soc_init,
 };
 
-static const struct rk_i2s_soc_data rk1808_i2s_soc_data = {
+static struct rk_i2s_soc_data rk1808_i2s_soc_data = {
 	.softrst_offset = 0x0300,
 	.configs = rk1808_txrx_config,
 	.config_count = ARRAY_SIZE(rk1808_txrx_config),
 	.init = common_soc_init,
 };
 
-static const struct rk_i2s_soc_data rk3308_i2s_soc_data = {
+static struct rk_i2s_soc_data rk3308_i2s_soc_data = {
 	.softrst_offset = 0x0400,
 	.grf_reg_offset = 0x0308,
 	.grf_shift = 5,
@@ -999,14 +1010,14 @@ static const struct rk_i2s_soc_data rk3308_i2s_soc_data = {
 	.init = common_soc_init,
 };
 
-static const struct rk_i2s_soc_data rk3568_i2s_soc_data = {
+static struct rk_i2s_soc_data rk3568_i2s_soc_data = {
 	.softrst_offset = 0x0400,
 	.configs = rk3568_txrx_config,
 	.config_count = ARRAY_SIZE(rk3568_txrx_config),
 	.init = common_soc_init,
 };
 
-static const struct rk_i2s_soc_data rv1126_i2s_soc_data = {
+static struct rk_i2s_soc_data rv1126_i2s_soc_data = {
 	.softrst_offset = 0x0300,
 	.configs = rv1126_txrx_config,
 	.config_count = ARRAY_SIZE(rv1126_txrx_config),
@@ -1214,6 +1225,7 @@ static int rockchip_i2s_tdm_rx_path_prepare(struct rk_i2s_tdm_dev *i2s_tdm,
 static int rockchip_i2s_tdm_probe(struct platform_device *pdev)
 {
 	struct device_node *node = pdev->dev.of_node;
+	const struct of_device_id *of_id;
 	struct rk_i2s_tdm_dev *i2s_tdm;
 	struct resource *res;
 	void __iomem *regs;
@@ -1225,8 +1237,13 @@ static int rockchip_i2s_tdm_probe(struct platform_device *pdev)
 
 	i2s_tdm->dev = &pdev->dev;
 
+	of_id = of_match_device(rockchip_i2s_tdm_match, &pdev->dev);
+	if (!of_id)
+		return -EINVAL;
+
 	spin_lock_init(&i2s_tdm->lock);
-	i2s_tdm->soc_data = device_get_match_data(&pdev->dev);
+	i2s_tdm->soc_data = (struct rk_i2s_soc_data *)of_id->data;
+
 	i2s_tdm->frame_width = 64;
 
 	i2s_tdm->clk_trcm = TRCM_TXRX;
@@ -1374,12 +1391,14 @@ err_disable_hclk:
 	return ret;
 }
 
-static void rockchip_i2s_tdm_remove(struct platform_device *pdev)
+static int rockchip_i2s_tdm_remove(struct platform_device *pdev)
 {
 	if (!pm_runtime_status_suspended(&pdev->dev))
 		i2s_tdm_runtime_suspend(&pdev->dev);
 
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 static int __maybe_unused rockchip_i2s_tdm_suspend(struct device *dev)
@@ -1414,10 +1433,10 @@ static const struct dev_pm_ops rockchip_i2s_tdm_pm_ops = {
 
 static struct platform_driver rockchip_i2s_tdm_driver = {
 	.probe = rockchip_i2s_tdm_probe,
-	.remove_new = rockchip_i2s_tdm_remove,
+	.remove = rockchip_i2s_tdm_remove,
 	.driver = {
 		.name = DRV_NAME,
-		.of_match_table = rockchip_i2s_tdm_match,
+		.of_match_table = of_match_ptr(rockchip_i2s_tdm_match),
 		.pm = &rockchip_i2s_tdm_pm_ops,
 	},
 };

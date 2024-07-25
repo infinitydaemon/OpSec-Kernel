@@ -129,7 +129,7 @@ static int perf_top__parse_source(struct perf_top *top, struct hist_entry *he)
 	/*
 	 * We can't annotate with just /proc/kallsyms
 	 */
-	if (dso__symtab_type(dso) == DSO_BINARY_TYPE__KALLSYMS && !dso__is_kcore(dso)) {
+	if (dso->symtab_type == DSO_BINARY_TYPE__KALLSYMS && !dso__is_kcore(dso)) {
 		pr_err("Can't annotate %s: No vmlinux file was found in the "
 		       "path\n", sym->name);
 		sleep(1);
@@ -182,7 +182,7 @@ static void ui__warn_map_erange(struct map *map, struct symbol *sym, u64 ip)
 		    "Tools:  %s\n\n"
 		    "Not all samples will be on the annotation output.\n\n"
 		    "Please report to linux-kernel@vger.kernel.org\n",
-		    ip, dso__long_name(dso), dso__symtab_origin(dso),
+		    ip, dso->long_name, dso__symtab_origin(dso),
 		    map__start(map), map__end(map), sym->start, sym->end,
 		    sym->binding == STB_GLOBAL ? 'g' :
 		    sym->binding == STB_LOCAL  ? 'l' : 'w', sym->name,
@@ -357,7 +357,7 @@ static void perf_top__print_sym_table(struct perf_top *top)
 
 static void prompt_integer(int *target, const char *msg)
 {
-	char *buf = NULL, *p;
+	char *buf = malloc(0), *p;
 	size_t dummy = 0;
 	int tmp;
 
@@ -646,7 +646,8 @@ repeat:
 	}
 
 	ret = evlist__tui_browse_hists(top->evlist, help, &hbt, top->min_percent,
-				       &top->session->header.env, !top->record_opts.overwrite);
+				       &top->session->header.env, !top->record_opts.overwrite,
+				       &annotate_opts);
 	if (ret == K_RELOAD) {
 		top->zero = true;
 		goto repeat;
@@ -1043,7 +1044,7 @@ try_again:
 			    perf_top_overwrite_fallback(top, counter))
 				goto try_again;
 
-			if (evsel__fallback(counter, &opts->target, errno, msg, sizeof(msg))) {
+			if (evsel__fallback(counter, errno, msg, sizeof(msg))) {
 				if (verbose > 0)
 					ui__warning("%s\n", msg);
 				goto try_again;
@@ -1573,7 +1574,7 @@ int cmd_top(int argc, const char **argv)
 		    "add last branch records to call history"),
 	OPT_BOOLEAN(0, "raw-trace", &symbol_conf.raw_trace,
 		    "Show raw trace event output (do not use print fmt or plugins)"),
-	OPT_BOOLEAN('H', "hierarchy", &symbol_conf.report_hierarchy,
+	OPT_BOOLEAN(0, "hierarchy", &symbol_conf.report_hierarchy,
 		    "Show entries in a hierarchy"),
 	OPT_BOOLEAN(0, "overwrite", &top.record_opts.overwrite,
 		    "Use a backward ring buffer, default: no"),
@@ -1609,7 +1610,7 @@ int cmd_top(int argc, const char **argv)
 	if (status < 0)
 		return status;
 
-	annotation_options__init();
+	annotation_options__init(&annotate_opts);
 
 	annotate_opts.min_pcnt = 5;
 	annotate_opts.context  = 4;
@@ -1661,7 +1662,7 @@ int cmd_top(int argc, const char **argv)
 	if (status)
 		goto out_delete_evlist;
 
-	if (annotate_check_args() < 0)
+	if (annotate_check_args(&annotate_opts) < 0)
 		goto out_delete_evlist;
 
 	if (!top.evlist->core.nr_entries) {
@@ -1787,7 +1788,7 @@ int cmd_top(int argc, const char **argv)
 	if (status < 0)
 		goto out_delete_evlist;
 
-	annotation_config__init();
+	annotation_config__init(&annotate_opts);
 
 	symbol_conf.try_vmlinux_path = (symbol_conf.vmlinux_name == NULL);
 	status = symbol__init(NULL);
@@ -1840,7 +1841,7 @@ int cmd_top(int argc, const char **argv)
 out_delete_evlist:
 	evlist__delete(top.evlist);
 	perf_session__delete(top.session);
-	annotation_options__exit();
+	annotation_options__exit(&annotate_opts);
 
 	return status;
 }

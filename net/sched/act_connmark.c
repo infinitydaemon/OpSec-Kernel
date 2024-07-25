@@ -146,7 +146,7 @@ static int tcf_connmark_init(struct net *net, struct nlattr *nla,
 	} else if (ret > 0) {
 		ci = to_connmark(*a);
 		if (bind) {
-			err = ACT_P_BOUND;
+			err = 0;
 			goto out_free;
 		}
 		if (!(flags & TCA_ACT_FLAGS_REPLACE)) {
@@ -242,7 +242,6 @@ static struct tc_action_ops act_connmark_ops = {
 	.cleanup	=	tcf_connmark_cleanup,
 	.size		=	sizeof(struct tcf_connmark_info),
 };
-MODULE_ALIAS_NET_ACT("connmark");
 
 static __net_init int connmark_init_net(struct net *net)
 {

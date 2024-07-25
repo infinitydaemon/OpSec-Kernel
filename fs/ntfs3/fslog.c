@@ -517,7 +517,7 @@ static inline bool is_rst_area_valid(const struct RESTART_HDR *rhdr)
 		seq_bits -= 1;
 	}
 
-	if (seq_bits != le32_to_cpu(ra->seq_num_bits))
+	if (seq_bits != ra->seq_num_bits)
 		return false;
 
 	/* The log page data offset and record header length must be quad-aligned. */
@@ -3907,6 +3907,8 @@ check_restart_area:
 		log->l_size = log->orig_file_size;
 		log->page_size = norm_file_page(t32, &log->l_size,
 						t32 == DefaultLogPageSize);
+		log->page_mask = log->page_size - 1;
+		log->page_bits = blksize_bits(log->page_size);
 	}
 
 	if (log->page_size != t32 ||

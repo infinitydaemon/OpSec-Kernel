@@ -154,9 +154,9 @@ static ssize_t master_attr_show(struct device *dev,
 	spin_unlock(&gth->gth_lock);
 
 	if (port >= 0)
-		count = sysfs_emit(buf, "%x\n", port);
+		count = snprintf(buf, PAGE_SIZE, "%x\n", port);
 	else
-		count = sysfs_emit(buf, "disabled\n");
+		count = snprintf(buf, PAGE_SIZE, "disabled\n");
 
 	return count;
 }
@@ -332,8 +332,8 @@ static ssize_t output_attr_show(struct device *dev,
 	pm_runtime_get_sync(dev);
 
 	spin_lock(&gth->gth_lock);
-	count = sysfs_emit(buf, "%x\n",
-			   gth_output_parm_get(gth, oa->port, oa->parm));
+	count = snprintf(buf, PAGE_SIZE, "%x\n",
+			 gth_output_parm_get(gth, oa->port, oa->parm));
 	spin_unlock(&gth->gth_lock);
 
 	pm_runtime_put(dev);

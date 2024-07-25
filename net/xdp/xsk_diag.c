@@ -194,7 +194,6 @@ static int xsk_diag_handler_dump(struct sk_buff *nlskb, struct nlmsghdr *hdr)
 }
 
 static const struct sock_diag_handler xsk_diag_handler = {
-	.owner = THIS_MODULE,
 	.family = AF_XDP,
 	.dump = xsk_diag_handler_dump,
 };
@@ -212,5 +211,4 @@ static void __exit xsk_diag_exit(void)
 module_init(xsk_diag_init);
 module_exit(xsk_diag_exit);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("XDP socket monitoring via SOCK_DIAG");
 MODULE_ALIAS_NET_PF_PROTO_TYPE(PF_NETLINK, NETLINK_SOCK_DIAG, AF_XDP);

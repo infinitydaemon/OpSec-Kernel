@@ -2234,5 +2234,4 @@ out:
 	spin_unlock_irqrestore(&priv->lec_arp_lock, flags);
 }
 
-MODULE_DESCRIPTION("ATM LAN Emulation (LANE) support");
 MODULE_LICENSE("GPL");

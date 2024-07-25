@@ -299,7 +299,7 @@ error_flow:
 	return err;
 }
 
-static void meson_crypto_remove(struct platform_device *pdev)
+static int meson_crypto_remove(struct platform_device *pdev)
 {
 	struct meson_dev *mc = platform_get_drvdata(pdev);
 
@@ -312,6 +312,7 @@ static void meson_crypto_remove(struct platform_device *pdev)
 	meson_free_chanlist(mc, MAXFLOW - 1);
 
 	clk_disable_unprepare(mc->busclk);
+	return 0;
 }
 
 static const struct of_device_id meson_crypto_of_match_table[] = {
@@ -322,7 +323,7 @@ MODULE_DEVICE_TABLE(of, meson_crypto_of_match_table);
 
 static struct platform_driver meson_crypto_driver = {
 	.probe		 = meson_crypto_probe,
-	.remove_new	 = meson_crypto_remove,
+	.remove		 = meson_crypto_remove,
 	.driver		 = {
 		.name		   = "gxl-crypto",
 		.of_match_table	= meson_crypto_of_match_table,

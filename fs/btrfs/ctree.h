@@ -6,25 +6,53 @@
 #ifndef BTRFS_CTREE_H
 #define BTRFS_CTREE_H
 
-#include <linux/pagemap.h>
-#include <linux/spinlock.h>
-#include <linux/rbtree.h>
-#include <linux/mutex.h>
+#include <linux/mm.h>
+#include <linux/sched/signal.h>
+#include <linux/highmem.h>
+#include <linux/fs.h>
+#include <linux/rwsem.h>
+#include <linux/semaphore.h>
+#include <linux/completion.h>
+#include <linux/backing-dev.h>
 #include <linux/wait.h>
-#include <linux/list.h>
-#include <linux/atomic.h>
-#include <linux/xarray.h>
+#include <linux/slab.h>
+#include <trace/events/btrfs.h>
+#include <asm/unaligned.h>
+#include <linux/pagemap.h>
+#include <linux/btrfs.h>
+#include <linux/btrfs_tree.h>
+#include <linux/workqueue.h>
+#include <linux/security.h>
+#include <linux/sizes.h>
+#include <linux/dynamic_debug.h>
 #include <linux/refcount.h>
-#include <uapi/linux/btrfs_tree.h>
-#include "locking.h"
-#include "fs.h"
-#include "accessors.h"
+#include <linux/crc32c.h>
+#include <linux/iomap.h>
+#include <linux/fscrypt.h>
 #include "extent-io-tree.h"
+#include "extent_io.h"
+#include "extent_map.h"
+#include "async-thread.h"
+#include "block-rsv.h"
+#include "locking.h"
+#include "misc.h"
+#include "fs.h"
 
-struct extent_buffer;
-struct btrfs_block_rsv;
 struct btrfs_trans_handle;
+struct btrfs_transaction;
+struct btrfs_pending_snapshot;
+struct btrfs_delayed_ref_root;
+struct btrfs_space_info;
 struct btrfs_block_group;
+struct btrfs_ordered_sum;
+struct btrfs_ref;
+struct btrfs_bio;
+struct btrfs_ioctl_encoded_io_args;
+struct btrfs_device;
+struct btrfs_fs_devices;
+struct btrfs_balance_control;
+struct btrfs_delayed_root;
+struct reloc_control;
 
 /* Read ahead values for struct btrfs_path.reada */
 enum {
@@ -190,26 +218,16 @@ struct btrfs_root {
 	atomic_t log_commit[2];
 	/* Used only for log trees of subvolumes, not for the log root tree */
 	atomic_t log_batch;
-	/*
-	 * Protected by the 'log_mutex' lock but can be read without holding
-	 * that lock to avoid unnecessary lock contention, in which case it
-	 * should be read using btrfs_get_root_log_transid() except if it's a
-	 * log tree in which case it can be directly accessed. Updates to this
-	 * field should always use btrfs_set_root_log_transid(), except for log
-	 * trees where the field can be updated directly.
-	 */
 	int log_transid;
 	/* No matter the commit succeeds or not*/
 	int log_transid_committed;
-	/*
-	 * Just be updated when the commit succeeds. Use
-	 * btrfs_get_root_last_log_commit() and btrfs_set_root_last_log_commit()
-	 * to access this field.
-	 */
+	/* Just be updated when the commit succeeds. */
 	int last_log_commit;
 	pid_t log_start_pid;
 
 	u64 last_trans;
+
+	u32 type;
 
 	u64 free_objectid;
 
@@ -221,15 +239,18 @@ struct btrfs_root {
 
 	struct list_head root_list;
 
+	spinlock_t log_extents_lock[2];
+	struct list_head logged_list[2];
+
 	spinlock_t inode_lock;
 	/* red-black tree that keeps track of in-memory inodes */
 	struct rb_root inode_tree;
 
 	/*
-	 * Xarray that keeps track of delayed nodes of every inode, protected
-	 * by @inode_lock.
+	 * radix tree that keeps track of delayed nodes of every inode,
+	 * protected by inode_lock
 	 */
-	struct xarray delayed_nodes;
+	struct radix_tree_root delayed_nodes_tree;
 	/*
 	 * right now this just gets used so that a root has its own devid
 	 * for stat.  It may be used for more later
@@ -305,9 +326,6 @@ struct btrfs_root {
 	/* Used only by log trees, when logging csum items */
 	struct extent_io_tree log_csum_range;
 
-	/* Used in simple quotas, track root during relocation. */
-	u64 relocation_src_root;
-
 #ifdef CONFIG_BTRFS_FS_RUN_SANITY_TESTS
 	u64 alloc_bytenr;
 #endif
@@ -332,26 +350,6 @@ static inline bool btrfs_root_dead(const struct btrfs_root *root)
 static inline u64 btrfs_root_id(const struct btrfs_root *root)
 {
 	return root->root_key.objectid;
-}
-
-static inline int btrfs_get_root_log_transid(const struct btrfs_root *root)
-{
-	return READ_ONCE(root->log_transid);
-}
-
-static inline void btrfs_set_root_log_transid(struct btrfs_root *root, int log_transid)
-{
-	WRITE_ONCE(root->log_transid, log_transid);
-}
-
-static inline int btrfs_get_root_last_log_commit(const struct btrfs_root *root)
-{
-	return READ_ONCE(root->last_log_commit);
-}
-
-static inline void btrfs_set_root_last_log_commit(struct btrfs_root *root, int commit_id)
-{
-	WRITE_ONCE(root->last_log_commit, commit_id);
 }
 
 /*
@@ -472,12 +470,37 @@ static inline u32 BTRFS_MAX_XATTR_SIZE(const struct btrfs_fs_info *info)
 #define BTRFS_BYTES_TO_BLKS(fs_info, bytes) \
 				((bytes) >> (fs_info)->sectorsize_bits)
 
+static inline u32 btrfs_crc32c(u32 crc, const void *address, unsigned length)
+{
+	return crc32c(crc, address, length);
+}
+
+static inline void btrfs_crc32c_final(u32 crc, u8 *result)
+{
+	put_unaligned_le32(~crc, result);
+}
+
+static inline u64 btrfs_name_hash(const char *name, int len)
+{
+       return crc32c((u32)~1, name, len);
+}
+
+/*
+ * Figure the key offset of an extended inode ref
+ */
+static inline u64 btrfs_extref_hash(u64 parent_objectid, const char *name,
+                                   int len)
+{
+       return (u64) crc32c(parent_objectid, name, len);
+}
+
 static inline gfp_t btrfs_alloc_write_mask(struct address_space *mapping)
 {
 	return mapping_gfp_constraint(mapping, ~__GFP_FS);
 }
 
-void btrfs_error_unpin_extent_range(struct btrfs_fs_info *fs_info, u64 start, u64 end);
+int btrfs_error_unpin_extent_range(struct btrfs_fs_info *fs_info,
+				   u64 start, u64 end);
 int btrfs_discard_extent(struct btrfs_fs_info *fs_info, u64 bytenr,
 			 u64 num_bytes, u64 *actual_bytes);
 int btrfs_trim_fs(struct btrfs_fs_info *fs_info, struct fstrim_range *range);
@@ -490,36 +513,6 @@ int btrfs_bin_search(struct extent_buffer *eb, int first_slot,
 		     const struct btrfs_key *key, int *slot);
 
 int __pure btrfs_comp_cpu_keys(const struct btrfs_key *k1, const struct btrfs_key *k2);
-
-#ifdef __LITTLE_ENDIAN
-
-/*
- * Compare two keys, on little-endian the disk order is same as CPU order and
- * we can avoid the conversion.
- */
-static inline int btrfs_comp_keys(const struct btrfs_disk_key *disk_key,
-				  const struct btrfs_key *k2)
-{
-	const struct btrfs_key *k1 = (const struct btrfs_key *)disk_key;
-
-	return btrfs_comp_cpu_keys(k1, k2);
-}
-
-#else
-
-/* Compare two keys in a memcmp fashion. */
-static inline int btrfs_comp_keys(const struct btrfs_disk_key *disk,
-				  const struct btrfs_key *k2)
-{
-	struct btrfs_key k1;
-
-	btrfs_disk_key_to_cpu(&k1, disk);
-
-	return btrfs_comp_cpu_keys(&k1, k2);
-}
-
-#endif
-
 int btrfs_previous_item(struct btrfs_root *root,
 			struct btrfs_path *path, u64 min_objectid,
 			int type);
@@ -543,20 +536,13 @@ int btrfs_cow_block(struct btrfs_trans_handle *trans,
 		    struct extent_buffer *parent, int parent_slot,
 		    struct extent_buffer **cow_ret,
 		    enum btrfs_lock_nesting nest);
-int btrfs_force_cow_block(struct btrfs_trans_handle *trans,
-			  struct btrfs_root *root,
-			  struct extent_buffer *buf,
-			  struct extent_buffer *parent, int parent_slot,
-			  struct extent_buffer **cow_ret,
-			  u64 search_start, u64 empty_size,
-			  enum btrfs_lock_nesting nest);
 int btrfs_copy_root(struct btrfs_trans_handle *trans,
 		      struct btrfs_root *root,
 		      struct extent_buffer *buf,
 		      struct extent_buffer **cow_ret, u64 new_root_objectid);
-bool btrfs_block_can_be_shared(struct btrfs_trans_handle *trans,
-			       struct btrfs_root *root,
-			       struct extent_buffer *buf);
+int btrfs_block_can_be_shared(struct btrfs_trans_handle *trans,
+			      struct btrfs_root *root,
+			      struct extent_buffer *buf);
 int btrfs_del_ptr(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 		  struct btrfs_path *path, int level, int slot);
 void btrfs_extend_item(struct btrfs_trans_handle *trans,
@@ -583,6 +569,10 @@ int btrfs_search_slot_for_read(struct btrfs_root *root,
 			       const struct btrfs_key *key,
 			       struct btrfs_path *p, int find_higher,
 			       int return_any);
+int btrfs_realloc_node(struct btrfs_trans_handle *trans,
+		       struct btrfs_root *root, struct extent_buffer *parent,
+		       int start_slot, u64 *last_ret,
+		       struct btrfs_key *progress);
 void btrfs_release_path(struct btrfs_path *p);
 struct btrfs_path *btrfs_alloc_path(void);
 void btrfs_free_path(struct btrfs_path *p);

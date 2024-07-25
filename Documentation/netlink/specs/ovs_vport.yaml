@@ -135,6 +135,7 @@ operations:
             - name
             - type
             - upcall-pid
+            - dp-ifindex
             - ifindex
             - options
     -
@@ -145,6 +146,7 @@ operations:
       do:
         request:
           attributes:
+            - dp-ifindex
             - port-no
             - type
             - name
@@ -156,9 +158,11 @@ operations:
       do: &vport-get-op
         request:
           attributes:
+            - dp-ifindex
             - name
         reply: &dev-all
           attributes:
+            - dp-ifindex
             - port-no
             - type
             - name

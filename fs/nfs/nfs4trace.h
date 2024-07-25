@@ -47,7 +47,7 @@ DECLARE_EVENT_CLASS(nfs4_clientid_event,
 
 		TP_fast_assign(
 			__entry->error = error < 0 ? -error : 0;
-			__assign_str(dstaddr);
+			__assign_str(dstaddr, clp->cl_hostname);
 		),
 
 		TP_printk(
@@ -76,36 +76,6 @@ DEFINE_NFS4_CLIENTID_EVENT(nfs4_destroy_clientid);
 DEFINE_NFS4_CLIENTID_EVENT(nfs4_bind_conn_to_session);
 DEFINE_NFS4_CLIENTID_EVENT(nfs4_sequence);
 DEFINE_NFS4_CLIENTID_EVENT(nfs4_reclaim_complete);
-
-TRACE_EVENT(nfs4_trunked_exchange_id,
-		TP_PROTO(
-			const struct nfs_client *clp,
-			const char *addr,
-			int error
-		),
-
-		TP_ARGS(clp, addr, error),
-
-		TP_STRUCT__entry(
-			__string(main_addr, clp->cl_hostname)
-			__string(trunk_addr, addr)
-			__field(unsigned long, error)
-		),
-
-		TP_fast_assign(
-			__entry->error = error < 0 ? -error : 0;
-			__assign_str(main_addr);
-			__assign_str(trunk_addr);
-		),
-
-		TP_printk(
-			"error=%ld (%s) main_addr=%s trunk_addr=%s",
-			-__entry->error,
-			show_nfs4_status(__entry->error),
-			__get_str(main_addr),
-			__get_str(trunk_addr)
-		)
-);
 
 TRACE_EVENT(nfs4_sequence_done,
 		TP_PROTO(
@@ -365,7 +335,7 @@ TRACE_EVENT(nfs4_state_mgr,
 
 		TP_fast_assign(
 			__entry->state = clp->cl_state;
-			__assign_str(hostname);
+			__assign_str(hostname, clp->cl_hostname);
 		),
 
 		TP_printk(
@@ -393,8 +363,8 @@ TRACE_EVENT(nfs4_state_mgr_failed,
 		TP_fast_assign(
 			__entry->error = status < 0 ? -status : 0;
 			__entry->state = clp->cl_state;
-			__assign_str(hostname);
-			__assign_str(section);
+			__assign_str(hostname, clp->cl_hostname);
+			__assign_str(section, section);
 		),
 
 		TP_printk(
@@ -578,7 +548,7 @@ DECLARE_EVENT_CLASS(nfs4_open_event,
 				__entry->fhandle = 0;
 			}
 			__entry->dir = NFS_FILEID(d_inode(ctx->dentry->d_parent));
-			__assign_str(name);
+			__assign_str(name, ctx->dentry->d_name.name);
 		),
 
 		TP_printk(
@@ -729,7 +699,7 @@ DECLARE_EVENT_CLASS(nfs4_lock_event,
 
 			__entry->error = error < 0 ? -error : 0;
 			__entry->cmd = cmd;
-			__entry->type = request->c.flc_type;
+			__entry->type = request->fl_type;
 			__entry->start = request->fl_start;
 			__entry->end = request->fl_end;
 			__entry->dev = inode->i_sb->s_dev;
@@ -801,7 +771,7 @@ TRACE_EVENT(nfs4_set_lock,
 
 			__entry->error = error < 0 ? -error : 0;
 			__entry->cmd = cmd;
-			__entry->type = request->c.flc_type;
+			__entry->type = request->fl_type;
 			__entry->start = request->fl_start;
 			__entry->end = request->fl_end;
 			__entry->dev = inode->i_sb->s_dev;
@@ -1072,7 +1042,7 @@ DECLARE_EVENT_CLASS(nfs4_lookup_event,
 			__entry->dev = dir->i_sb->s_dev;
 			__entry->dir = NFS_FILEID(dir);
 			__entry->error = -error;
-			__assign_str(name);
+			__assign_str(name, name->name);
 		),
 
 		TP_printk(
@@ -1156,8 +1126,8 @@ TRACE_EVENT(nfs4_rename,
 			__entry->olddir = NFS_FILEID(olddir);
 			__entry->newdir = NFS_FILEID(newdir);
 			__entry->error = error < 0 ? -error : 0;
-			__assign_str(oldname);
-			__assign_str(newname);
+			__assign_str(oldname, oldname->name);
+			__assign_str(newname, newname->name);
 		),
 
 		TP_printk(
@@ -1359,7 +1329,7 @@ DECLARE_EVENT_CLASS(nfs4_inode_callback_event,
 				__entry->fileid = 0;
 				__entry->dev = 0;
 			}
-			__assign_str(dstaddr);
+			__assign_str(dstaddr, clp ? clp->cl_hostname : "unknown");
 		),
 
 		TP_printk(
@@ -1416,7 +1386,7 @@ DECLARE_EVENT_CLASS(nfs4_inode_stateid_callback_event,
 				__entry->fileid = 0;
 				__entry->dev = 0;
 			}
-			__assign_str(dstaddr);
+			__assign_str(dstaddr, clp ? clp->cl_hostname : "unknown");
 			__entry->stateid_seq =
 				be32_to_cpu(stateid->seqid);
 			__entry->stateid_hash =
@@ -1960,7 +1930,7 @@ DECLARE_EVENT_CLASS(nfs4_deviceid_event,
 		),
 
 		TP_fast_assign(
-			__assign_str(dstaddr);
+			__assign_str(dstaddr, clp->cl_hostname);
 			memcpy(__entry->deviceid, deviceid->data,
 			       NFS4_DEVICEID4_SIZE);
 		),
@@ -1998,7 +1968,7 @@ DECLARE_EVENT_CLASS(nfs4_deviceid_status,
 		TP_fast_assign(
 			__entry->dev = server->s_dev;
 			__entry->status = status;
-			__assign_str(dstaddr);
+			__assign_str(dstaddr, server->nfs_client->cl_hostname);
 			memcpy(__entry->deviceid, deviceid->data,
 			       NFS4_DEVICEID4_SIZE);
 		),
@@ -2020,34 +1990,6 @@ DECLARE_EVENT_CLASS(nfs4_deviceid_status,
 			TP_ARGS(server, deviceid, status))
 DEFINE_PNFS_DEVICEID_STATUS(nfs4_getdeviceinfo);
 DEFINE_PNFS_DEVICEID_STATUS(nfs4_find_deviceid);
-
-TRACE_EVENT(fl_getdevinfo,
-		TP_PROTO(
-			const struct nfs_server *server,
-			const struct nfs4_deviceid *deviceid,
-			char *ds_remotestr
-		),
-		TP_ARGS(server, deviceid, ds_remotestr),
-
-		TP_STRUCT__entry(
-			__string(mds_addr, server->nfs_client->cl_hostname)
-			__array(unsigned char, deviceid, NFS4_DEVICEID4_SIZE)
-			__string(ds_ips, ds_remotestr)
-		),
-
-		TP_fast_assign(
-			__assign_str(mds_addr);
-			__assign_str(ds_ips);
-			memcpy(__entry->deviceid, deviceid->data,
-			       NFS4_DEVICEID4_SIZE);
-		),
-		TP_printk(
-			"deviceid=%s, mds_addr=%s, ds_ips=%s",
-			__print_hex(__entry->deviceid, NFS4_DEVICEID4_SIZE),
-			__get_str(mds_addr),
-			__get_str(ds_ips)
-		)
-);
 
 DECLARE_EVENT_CLASS(nfs4_flexfiles_io_event,
 		TP_PROTO(
@@ -2083,7 +2025,9 @@ DECLARE_EVENT_CLASS(nfs4_flexfiles_io_event,
 				be32_to_cpu(hdr->args.stateid.seqid);
 			__entry->stateid_hash =
 				nfs_stateid_hash(&hdr->args.stateid);
-			__assign_str(dstaddr);
+			__assign_str(dstaddr, hdr->ds_clp ?
+				rpc_peeraddr2str(hdr->ds_clp->cl_rpcclient,
+					RPC_DISPLAY_ADDR) : "unknown");
 		),
 
 		TP_printk(
@@ -2137,7 +2081,9 @@ TRACE_EVENT(ff_layout_commit_error,
 			__entry->dev = inode->i_sb->s_dev;
 			__entry->offset = data->args.offset;
 			__entry->count = data->args.count;
-			__assign_str(dstaddr);
+			__assign_str(dstaddr, data->ds_clp ?
+				rpc_peeraddr2str(data->ds_clp->cl_rpcclient,
+					RPC_DISPLAY_ADDR) : "unknown");
 		),
 
 		TP_printk(
@@ -2575,7 +2521,7 @@ DECLARE_EVENT_CLASS(nfs4_xattr_event,
 			__entry->dev = inode->i_sb->s_dev;
 			__entry->fileid = NFS_FILEID(inode);
 			__entry->fhandle = nfs_fhandle_hash(NFS_FH(inode));
-			__assign_str(name);
+			__assign_str(name, name);
 		),
 
 		TP_printk(

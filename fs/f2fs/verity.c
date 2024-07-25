@@ -258,23 +258,21 @@ static struct page *f2fs_read_merkle_tree_page(struct inode *inode,
 					       pgoff_t index,
 					       unsigned long num_ra_pages)
 {
-	struct folio *folio;
+	struct page *page;
 
 	index += f2fs_verity_metadata_pos(inode) >> PAGE_SHIFT;
 
-	folio = __filemap_get_folio(inode->i_mapping, index, FGP_ACCESSED, 0);
-	if (IS_ERR(folio) || !folio_test_uptodate(folio)) {
+	page = find_get_page_flags(inode->i_mapping, index, FGP_ACCESSED);
+	if (!page || !PageUptodate(page)) {
 		DEFINE_READAHEAD(ractl, NULL, NULL, inode->i_mapping, index);
 
-		if (!IS_ERR(folio))
-			folio_put(folio);
+		if (page)
+			put_page(page);
 		else if (num_ra_pages > 1)
 			page_cache_ra_unbounded(&ractl, num_ra_pages, 0);
-		folio = read_mapping_folio(inode->i_mapping, index, NULL);
-		if (IS_ERR(folio))
-			return ERR_CAST(folio);
+		page = read_mapping_page(inode->i_mapping, index, NULL);
 	}
-	return folio_file_page(folio, index);
+	return page;
 }
 
 static int f2fs_write_merkle_tree_block(struct inode *inode, const void *buf,

@@ -20,6 +20,14 @@
 
 #include "../kselftest.h"
 
+#ifndef PR_CAP_AMBIENT
+#define PR_CAP_AMBIENT			47
+# define PR_CAP_AMBIENT_IS_SET		1
+# define PR_CAP_AMBIENT_RAISE		2
+# define PR_CAP_AMBIENT_LOWER		3
+# define PR_CAP_AMBIENT_CLEAR_ALL	4
+#endif
+
 static int nerrs;
 static pid_t mpid;	/*  main() pid is used to avoid duplicate test counts */
 
@@ -82,13 +90,17 @@ static bool create_and_enter_ns(uid_t inner_uid)
 {
 	uid_t outer_uid;
 	gid_t outer_gid;
-	int i, ret;
+	int i;
 	bool have_outer_privilege;
 
 	outer_uid = getuid();
 	outer_gid = getgid();
 
-	if (outer_uid == 0 && unshare(CLONE_NEWNS) == 0) {
+	/*
+	 * TODO: If we're already root, we could skip creating the userns.
+	 */
+
+	if (unshare(CLONE_NEWNS) == 0) {
 		ksft_print_msg("[NOTE]\tUsing global UIDs for tests\n");
 		if (prctl(PR_SET_KEEPCAPS, 1, 0, 0, 0) != 0)
 			ksft_exit_fail_msg("PR_SET_KEEPCAPS - %s\n",
@@ -97,10 +109,7 @@ static bool create_and_enter_ns(uid_t inner_uid)
 			ksft_exit_fail_msg("setresuid - %s\n", strerror(errno));
 
 		// Re-enable effective caps
-		ret = capng_get_caps_process();
-		if (ret == -1)
-			ksft_exit_fail_msg("capng_get_caps_process failed\n");
-
+		capng_get_caps_process();
 		for (i = 0; i < CAP_LAST_CAP; i++)
 			if (capng_have_capability(CAPNG_PERMITTED, i))
 				capng_update(CAPNG_ADD, CAPNG_EFFECTIVE, i);
@@ -210,7 +219,6 @@ static void exec_validate_cap(bool eff, bool perm, bool inh, bool ambient)
 
 static int do_tests(int uid, const char *our_path)
 {
-	int ret;
 	bool have_outer_privilege = create_and_enter_ns(uid);
 
 	int ourpath_fd = open(our_path, O_RDONLY | O_DIRECTORY);
@@ -254,9 +262,7 @@ static int do_tests(int uid, const char *our_path)
 			ksft_exit_fail_msg("chmod - %s\n", strerror(errno));
 	}
 
-	ret = capng_get_caps_process();
-	if (ret == -1)
-		ksft_exit_fail_msg("capng_get_caps_process failed\n");
+	capng_get_caps_process();
 
 	/* Make sure that i starts out clear */
 	capng_update(CAPNG_DROP, CAPNG_INHERITABLE, CAP_NET_BIND_SERVICE);

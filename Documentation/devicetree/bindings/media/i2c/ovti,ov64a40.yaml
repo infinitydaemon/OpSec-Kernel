@@ -56,11 +56,6 @@ properties:
           clock-noncontinuous: true
           remote-endpoint: true
 
-        required:
-          - bus-type
-          - data-lanes
-          - link-frequencies
-
 required:
   - compatible
   - reg

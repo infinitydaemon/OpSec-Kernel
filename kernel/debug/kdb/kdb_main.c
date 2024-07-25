@@ -272,10 +272,11 @@ char *kdbgetenv(const char *match)
  * kdballocenv - This function is used to allocate bytes for
  *	environment entries.
  * Parameters:
- *	bytes	The number of bytes to allocate in the static buffer.
+ *	match	A character string representing a numeric value
+ * Outputs:
+ *	*value  the unsigned long representation of the env variable 'match'
  * Returns:
- *	A pointer to the allocated space in the buffer on success.
- *	NULL if bytes > size available in the envbuffer.
+ *	Zero on success, a kdb diagnostic on failure.
  * Remarks:
  *	We use a static environment buffer (envbuffer) to hold the values
  *	of dynamically generated environment variables (see kdb_set).  Buffer
@@ -2517,7 +2518,7 @@ static int kdb_summary(int argc, const char **argv)
 	if (val.uptime > (24*60*60)) {
 		int days = val.uptime / (24*60*60);
 		val.uptime %= (24*60*60);
-		kdb_printf("%d day%s ", days, str_plural(days));
+		kdb_printf("%d day%s ", days, days == 1 ? "" : "s");
 	}
 	kdb_printf("%02ld:%02ld\n", val.uptime/(60*60), (val.uptime/60)%60);
 

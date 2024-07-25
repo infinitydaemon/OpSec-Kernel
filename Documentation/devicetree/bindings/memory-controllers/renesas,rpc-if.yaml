@@ -45,7 +45,6 @@ properties:
       - items:
           - enum:
               - renesas,r8a779g0-rpc-if       # R-Car V4H
-              - renesas,r8a779h0-rpc-if       # R-Car V4M
           - const: renesas,rcar-gen4-rpc-if   # a generic R-Car gen4 device
 
       - items:
@@ -81,8 +80,6 @@ properties:
 patternProperties:
   "flash@[0-9a-f]+$":
     type: object
-    additionalProperties: true
-
     properties:
       compatible:
         contains:

@@ -16,12 +16,10 @@ allOf:
 properties:
   compatible:
     enum:
+      - raspberrypi,rp1-dwcmshc
       - rockchip,rk3568-dwcmshc
       - rockchip,rk3588-dwcmshc
       - snps,dwcmshc-sdhci
-      - sophgo,cv1800b-dwcmshc
-      - sophgo,sg2002-dwcmshc
-      - thead,th1520-dwcmshc
 
   reg:
     maxItems: 1
@@ -37,6 +35,8 @@ properties:
       - description: axi clock for rockchip specified
       - description: block clock for rockchip specified
       - description: timer clock for rockchip specified
+      - description: timeout clock for rp1 specified
+      - description: sdio clock generator for rp1 specified
 
 
   clock-names:
@@ -47,6 +47,8 @@ properties:
       - const: axi
       - const: block
       - const: timer
+      - const: timeout
+      - const: sdio
 
   resets:
     maxItems: 5

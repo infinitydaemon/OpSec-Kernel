@@ -5,7 +5,6 @@
 
 set -e
 
-readonly ksft_skip=4
 readonly DEV="veth0"
 readonly BIN="./so_txtime"
 
@@ -47,7 +46,7 @@ ip -netns "${NS2}" addr add 192.168.1.2/24 dev "${DEV}"
 ip -netns "${NS1}" addr add       fd::1/64 dev "${DEV}" nodad
 ip -netns "${NS2}" addr add       fd::2/64 dev "${DEV}" nodad
 
-run_test() {
+do_test() {
 	local readonly IP="$1"
 	local readonly CLOCK="$2"
 	local readonly TXARGS="$3"
@@ -65,25 +64,12 @@ run_test() {
 	fi
 
 	local readonly START="$(date +%s%N --date="+ 0.1 seconds")"
-
 	ip netns exec "${NS2}" "${BIN}" -"${IP}" -c "${CLOCK}" -t "${START}" -S "${SADDR}" -D "${DADDR}" "${RXARGS}" -r &
 	ip netns exec "${NS1}" "${BIN}" -"${IP}" -c "${CLOCK}" -t "${START}" -S "${SADDR}" -D "${DADDR}" "${TXARGS}"
 	wait "$!"
 }
 
-do_test() {
-	run_test $@
-	[ $? -ne 0 ] && ret=1
-}
-
-do_fail_test() {
-	run_test $@
-	[ $? -eq 0 ] && ret=1
-}
-
 ip netns exec "${NS1}" tc qdisc add dev "${DEV}" root fq
-set +e
-ret=0
 do_test 4 mono a,-1 a,-1
 do_test 6 mono a,0 a,0
 do_test 6 mono a,10 a,10
@@ -91,20 +77,13 @@ do_test 4 mono a,10,b,20 a,10,b,20
 do_test 6 mono a,20,b,10 b,20,a,20
 
 if ip netns exec "${NS1}" tc qdisc replace dev "${DEV}" root etf clockid CLOCK_TAI delta 400000; then
-	do_fail_test 4 tai a,-1 a,-1
-	do_fail_test 6 tai a,0 a,0
+	! do_test 4 tai a,-1 a,-1
+	! do_test 6 tai a,0 a,0
 	do_test 6 tai a,10 a,10
 	do_test 4 tai a,10,b,20 a,10,b,20
 	do_test 6 tai a,20,b,10 b,10,a,20
 else
 	echo "tc ($(tc -V)) does not support qdisc etf. skipping"
-	[ $ret -eq 0 ] && ret=$ksft_skip
 fi
 
-if [ $ret -eq 0 ]; then
-	echo OK. All tests passed
-elif [[ $ret -ne $ksft_skip && -n "$KSFT_MACHINE_SLOW" ]]; then
-	echo "Ignoring errors due to slow environment" 1>&2
-	ret=0
-fi
-exit $ret
+echo OK. All tests passed

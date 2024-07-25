@@ -118,22 +118,15 @@ static void do_test(int fd, size_t size, enum test_type type, bool shared)
 		return;
 	}
 
-	/* Fault in the page such that GUP-fast can pin it directly. */
+	/*
+	 * Fault in the page writable such that GUP-fast can eventually pin
+	 * it immediately.
+	 */
 	memset(mem, 0, size);
 
 	switch (type) {
 	case TEST_TYPE_RO:
 	case TEST_TYPE_RO_FAST:
-		/*
-		 * Cover more cases regarding unsharing decisions when
-		 * long-term R/O pinning by mapping the page R/O.
-		 */
-		ret = mprotect(mem, size, PROT_READ);
-		if (ret) {
-			ksft_test_result_fail("mprotect() failed\n");
-			goto munmap;
-		}
-		/* FALLTHROUGH */
 	case TEST_TYPE_RW:
 	case TEST_TYPE_RW_FAST: {
 		struct pin_longterm_test args;
@@ -235,7 +228,6 @@ static void do_test(int fd, size_t size, enum test_type type, bool shared)
 		assert(false);
 	}
 
-munmap:
 	munmap(mem, size);
 }
 
@@ -273,11 +265,10 @@ static void run_with_tmpfile(test_fn fn, const char *desc)
 	fd = fileno(file);
 	if (fd < 0) {
 		ksft_test_result_fail("fileno() failed\n");
-		goto close;
+		return;
 	}
 
 	fn(fd, pagesize);
-close:
 	fclose(file);
 }
 
@@ -464,5 +455,5 @@ int main(int argc, char **argv)
 	if (err)
 		ksft_exit_fail_msg("%d out of %d tests failed\n",
 				   err, ksft_test_num());
-	ksft_exit_pass();
+	return ksft_exit_pass();
 }

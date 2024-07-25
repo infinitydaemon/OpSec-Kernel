@@ -43,7 +43,7 @@ struct sigmadsp_data {
 	uint32_t samplerates;
 	unsigned int addr;
 	unsigned int length;
-	uint8_t data[] __counted_by(length);
+	uint8_t data[];
 };
 
 struct sigma_fw_chunk {
@@ -270,7 +270,7 @@ static int sigma_fw_load_data(struct sigmadsp *sigmadsp,
 
 	length -= sizeof(*data_chunk);
 
-	data = kzalloc(struct_size(data, data, length), GFP_KERNEL);
+	data = kzalloc(sizeof(*data) + length, GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 
@@ -413,8 +413,7 @@ static int process_sigma_action(struct sigmadsp *sigmadsp,
 		if (len < 3)
 			return -EINVAL;
 
-		data = kzalloc(struct_size(data, data, size_sub(len, 2)),
-			       GFP_KERNEL);
+		data = kzalloc(sizeof(*data) + len - 2, GFP_KERNEL);
 		if (!data)
 			return -ENOMEM;
 
@@ -805,5 +804,4 @@ int sigmadsp_restrict_params(struct sigmadsp *sigmadsp,
 }
 EXPORT_SYMBOL_GPL(sigmadsp_restrict_params);
 
-MODULE_DESCRIPTION("Analog Devices SigmaStudio firmware helpers");
 MODULE_LICENSE("GPL");

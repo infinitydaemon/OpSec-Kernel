@@ -803,7 +803,7 @@ static int lan743x_mdiobus_read_c22(struct mii_bus *bus, int phy_id, int index)
 	u32 val, mii_access;
 	int ret;
 
-	/* confirm MII not busy */
+	/* comfirm MII not busy */
 	ret = lan743x_mac_mii_wait_till_not_busy(adapter);
 	if (ret < 0)
 		return ret;
@@ -868,7 +868,7 @@ static int lan743x_mdiobus_read_c45(struct mii_bus *bus, int phy_id,
 	u32 mmd_access;
 	int ret;
 
-	/* confirm MII not busy */
+	/* comfirm MII not busy */
 	ret = lan743x_mac_mii_wait_till_not_busy(adapter);
 	if (ret < 0)
 		return ret;
@@ -1198,7 +1198,7 @@ static int lan743x_sgmii_config(struct lan743x_adapter *adapter)
 	ret = lan743x_is_sgmii_2_5G_mode(adapter, &status);
 	if (ret < 0) {
 		netif_err(adapter, drv, adapter->netdev,
-			  "error %d SGMII get mode failed\n", ret);
+			  "erro %d SGMII get mode failed\n", ret);
 		return ret;
 	}
 
@@ -1462,28 +1462,15 @@ static void lan743x_phy_link_status_change(struct net_device *netdev)
 		    phydev->interface == PHY_INTERFACE_MODE_1000BASEX ||
 		    phydev->interface == PHY_INTERFACE_MODE_2500BASEX)
 			lan743x_sgmii_config(adapter);
-
-		data = lan743x_csr_read(adapter, MAC_CR);
-		if (phydev->enable_tx_lpi)
-			data |=  MAC_CR_EEE_EN_;
-		else
-			data &= ~MAC_CR_EEE_EN_;
-		lan743x_csr_write(adapter, MAC_CR, data);
 	}
 }
 
 static void lan743x_phy_close(struct lan743x_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
-	struct phy_device *phydev = netdev->phydev;
 
 	phy_stop(netdev->phydev);
 	phy_disconnect(netdev->phydev);
-
-	/* using phydev here as phy_disconnect NULLs netdev->phydev */
-	if (phy_is_pseudo_fixed_link(phydev))
-		fixed_phy_unregister(phydev);
-
 }
 
 static void lan743x_phy_interface_select(struct lan743x_adapter *adapter)
@@ -1877,50 +1864,6 @@ static int lan743x_tx_get_avail_desc(struct lan743x_tx *tx)
 		return tx->ring_size - last_tail + last_head - 1;
 	else
 		return last_head - last_tail - 1;
-}
-
-static void lan743x_rx_cfg_b_tstamp_config(struct lan743x_adapter *adapter,
-					   int rx_ts_config)
-{
-	int channel_number;
-	int index;
-	u32 data;
-
-	for (index = 0; index < LAN743X_USED_RX_CHANNELS; index++) {
-		channel_number = adapter->rx[index].channel_number;
-		data = lan743x_csr_read(adapter, RX_CFG_B(channel_number));
-		data &= RX_CFG_B_TS_MASK_;
-		data |= rx_ts_config;
-		lan743x_csr_write(adapter, RX_CFG_B(channel_number),
-				  data);
-	}
-}
-
-int lan743x_rx_set_tstamp_mode(struct lan743x_adapter *adapter,
-			       int rx_filter)
-{
-	u32 data;
-
-	switch (rx_filter) {
-	case HWTSTAMP_FILTER_PTP_V2_EVENT:
-			lan743x_rx_cfg_b_tstamp_config(adapter,
-						       RX_CFG_B_TS_DESCR_EN_);
-			data = lan743x_csr_read(adapter, PTP_RX_TS_CFG);
-			data |= PTP_RX_TS_CFG_EVENT_MSGS_;
-			lan743x_csr_write(adapter, PTP_RX_TS_CFG, data);
-			break;
-	case HWTSTAMP_FILTER_NONE:
-			lan743x_rx_cfg_b_tstamp_config(adapter,
-						       RX_CFG_B_TS_NONE_);
-			break;
-	case HWTSTAMP_FILTER_ALL:
-			lan743x_rx_cfg_b_tstamp_config(adapter,
-						       RX_CFG_B_TS_ALL_RX_);
-			break;
-	default:
-			return -ERANGE;
-	}
-	return 0;
 }
 
 void lan743x_tx_set_timestamping_mode(struct lan743x_tx *tx,
@@ -2997,6 +2940,7 @@ static int lan743x_rx_open(struct lan743x_rx *rx)
 		data |= RX_CFG_B_RX_PAD_2_;
 	data &= ~RX_CFG_B_RX_RING_LEN_MASK_;
 	data |= ((rx->ring_size) & RX_CFG_B_RX_RING_LEN_MASK_);
+	data |= RX_CFG_B_TS_ALL_RX_;
 	if (!(adapter->csr.flags & LAN743X_CSR_FLAG_IS_A0))
 		data |= RX_CFG_B_RDMABL_512_;
 
@@ -3118,6 +3062,17 @@ static int lan743x_netdev_open(struct net_device *netdev)
 		if (ret)
 			goto close_tx;
 	}
+
+#ifdef CONFIG_PM
+	if (adapter->netdev->phydev) {
+		struct ethtool_wolinfo wol = { .cmd = ETHTOOL_GWOL };
+
+		phy_ethtool_get_wol(netdev->phydev, &wol);
+		adapter->phy_wol_supported = wol.supported;
+		adapter->phy_wolopts = wol.wolopts;
+	}
+#endif
+
 	return 0;
 
 close_tx:
@@ -3184,7 +3139,7 @@ static int lan743x_netdev_change_mtu(struct net_device *netdev, int new_mtu)
 
 	ret = lan743x_mac_set_mtu(adapter, new_mtu);
 	if (!ret)
-		WRITE_ONCE(netdev->mtu, new_mtu);
+		netdev->mtu = new_mtu;
 	return ret;
 }
 
@@ -3575,7 +3530,7 @@ static void lan743x_pm_set_wol(struct lan743x_adapter *adapter)
 
 	/* clear wake settings */
 	pmtctl = lan743x_csr_read(adapter, PMT_CTL);
-	pmtctl |= PMT_CTL_WUPS_MASK_;
+	pmtctl |= PMT_CTL_WUPS_MASK_ | PMT_CTL_RES_CLR_WKP_MASK_;
 	pmtctl &= ~(PMT_CTL_GPIO_WAKEUP_EN_ | PMT_CTL_EEE_WAKEUP_EN_ |
 		PMT_CTL_WOL_EN_ | PMT_CTL_MAC_D3_RX_CLK_OVR_ |
 		PMT_CTL_RX_FCT_RFE_D3_CLK_OVR_ | PMT_CTL_ETH_PHY_WAKE_EN_);
@@ -3587,10 +3542,9 @@ static void lan743x_pm_set_wol(struct lan743x_adapter *adapter)
 
 	pmtctl |= PMT_CTL_ETH_PHY_D3_COLD_OVR_ | PMT_CTL_ETH_PHY_D3_OVR_;
 
-	if (adapter->wolopts & WAKE_PHY) {
-		pmtctl |= PMT_CTL_ETH_PHY_EDPD_PLL_CTL_;
+	if (adapter->phy_wolopts)
 		pmtctl |= PMT_CTL_ETH_PHY_WAKE_EN_;
-	}
+
 	if (adapter->wolopts & WAKE_MAGIC) {
 		wucsr |= MAC_WUCSR_MPEN_;
 		macrx |= MAC_RX_RXEN_;
@@ -3686,7 +3640,7 @@ static int lan743x_pm_suspend(struct device *dev)
 	lan743x_csr_write(adapter, MAC_WUCSR2, 0);
 	lan743x_csr_write(adapter, MAC_WK_SRC, 0xFFFFFFFF);
 
-	if (adapter->wolopts)
+	if (adapter->wolopts || adapter->phy_wolopts)
 		lan743x_pm_set_wol(adapter);
 
 	if (adapter->is_pci11x1x) {
@@ -3710,6 +3664,7 @@ static int lan743x_pm_resume(struct device *dev)
 	struct pci_dev *pdev = to_pci_dev(dev);
 	struct net_device *netdev = pci_get_drvdata(pdev);
 	struct lan743x_adapter *adapter = netdev_priv(netdev);
+	u32 data;
 	int ret;
 
 	pci_set_power_state(pdev, PCI_D0);
@@ -3728,6 +3683,30 @@ static int lan743x_pm_resume(struct device *dev)
 		return ret;
 	}
 
+	ret = lan743x_csr_read(adapter, MAC_WK_SRC);
+	netif_dbg(adapter, drv, adapter->netdev,
+		  "Wakeup source : 0x%08X\n", ret);
+
+	/* Clear the wol configuration and status bits. Note that
+	 * the status bits are "Write One to Clear (W1C)"
+	 */
+	data = MAC_WUCSR_EEE_TX_WAKE_ | MAC_WUCSR_EEE_RX_WAKE_ |
+	       MAC_WUCSR_RFE_WAKE_FR_ | MAC_WUCSR_PFDA_FR_ | MAC_WUCSR_WUFR_ |
+	       MAC_WUCSR_MPR_ | MAC_WUCSR_BCAST_FR_;
+	lan743x_csr_write(adapter, MAC_WUCSR, data);
+
+	data = MAC_WUCSR2_NS_RCD_ | MAC_WUCSR2_ARP_RCD_ |
+	       MAC_WUCSR2_IPV6_TCPSYN_RCD_ | MAC_WUCSR2_IPV4_TCPSYN_RCD_;
+	lan743x_csr_write(adapter, MAC_WUCSR2, data);
+
+	data = MAC_WK_SRC_ETH_PHY_WK_ | MAC_WK_SRC_IPV6_TCPSYN_RCD_WK_ |
+	       MAC_WK_SRC_IPV4_TCPSYN_RCD_WK_ | MAC_WK_SRC_EEE_TX_WK_ |
+	       MAC_WK_SRC_EEE_RX_WK_ | MAC_WK_SRC_RFE_FR_WK_ |
+	       MAC_WK_SRC_PFDA_FR_WK_ | MAC_WK_SRC_MP_FR_WK_ |
+	       MAC_WK_SRC_BCAST_FR_WK_ | MAC_WK_SRC_WU_FR_WK_ |
+	       MAC_WK_SRC_WK_FR_SAVED_;
+	lan743x_csr_write(adapter, MAC_WK_SRC, data);
+
 	/* open netdev when netdev is at running state while resume.
 	 * For instance, it is true when system wakesup after pm-suspend
 	 * However, it is false when system wakes up after suspend GUI menu
@@ -3736,9 +3715,6 @@ static int lan743x_pm_resume(struct device *dev)
 		lan743x_netdev_open(netdev);
 
 	netif_device_attach(netdev);
-	ret = lan743x_csr_read(adapter, MAC_WK_SRC);
-	netif_info(adapter, drv, adapter->netdev,
-		   "Wakeup source : 0x%08X\n", ret);
 
 	return 0;
 }

@@ -158,9 +158,6 @@ int tpm_try_get_ops(struct tpm_chip *chip)
 {
 	int rc = -EIO;
 
-	if (chip->flags & TPM_CHIP_FLAG_DISABLE)
-		return rc;
-
 	get_device(&chip->dev);
 
 	down_read(&chip->ops_sem);
@@ -278,9 +275,6 @@ static void tpm_dev_release(struct device *dev)
 	kfree(chip->work_space.context_buf);
 	kfree(chip->work_space.session_buf);
 	kfree(chip->allocated_banks);
-#ifdef CONFIG_TCG_TPM2_HMAC
-	kfree(chip->auth);
-#endif
 	kfree(chip);
 }
 

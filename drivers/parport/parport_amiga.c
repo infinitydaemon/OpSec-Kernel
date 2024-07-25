@@ -219,7 +219,7 @@ out_irq:
 	return err;
 }
 
-static void __exit amiga_parallel_remove(struct platform_device *pdev)
+static int __exit amiga_parallel_remove(struct platform_device *pdev)
 {
 	struct parport *port = platform_get_drvdata(pdev);
 
@@ -227,10 +227,11 @@ static void __exit amiga_parallel_remove(struct platform_device *pdev)
 	if (port->irq != PARPORT_IRQ_NONE)
 		free_irq(IRQ_AMIGA_CIAA_FLG, port);
 	parport_put_port(port);
+	return 0;
 }
 
 static struct platform_driver amiga_parallel_driver = {
-	.remove_new = __exit_p(amiga_parallel_remove),
+	.remove = __exit_p(amiga_parallel_remove),
 	.driver   = {
 		.name	= "amiga-parallel",
 	},

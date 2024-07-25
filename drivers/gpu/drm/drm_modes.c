@@ -373,8 +373,8 @@ static int fill_analog_mode(struct drm_device *dev,
 	if (!bt601 &&
 	    (hact_duration_ns < params->hact_ns.min ||
 	     hact_duration_ns > params->hact_ns.max)) {
-		drm_err(dev, "Invalid horizontal active area duration: %uns (min: %u, max %u)\n",
-			hact_duration_ns, params->hact_ns.min, params->hact_ns.max);
+		DRM_ERROR("Invalid horizontal active area duration: %uns (min: %u, max %u)\n",
+			  hact_duration_ns, params->hact_ns.min, params->hact_ns.max);
 		return -EINVAL;
 	}
 
@@ -385,8 +385,8 @@ static int fill_analog_mode(struct drm_device *dev,
 	if (!bt601 &&
 	    (hblk_duration_ns < params->hblk_ns.min ||
 	     hblk_duration_ns > params->hblk_ns.max)) {
-		drm_err(dev, "Invalid horizontal blanking duration: %uns (min: %u, max %u)\n",
-			hblk_duration_ns, params->hblk_ns.min, params->hblk_ns.max);
+		DRM_ERROR("Invalid horizontal blanking duration: %uns (min: %u, max %u)\n",
+			  hblk_duration_ns, params->hblk_ns.min, params->hblk_ns.max);
 		return -EINVAL;
 	}
 
@@ -397,8 +397,8 @@ static int fill_analog_mode(struct drm_device *dev,
 	if (!bt601 &&
 	    (hslen_duration_ns < params->hslen_ns.min ||
 	     hslen_duration_ns > params->hslen_ns.max)) {
-		drm_err(dev, "Invalid horizontal sync duration: %uns (min: %u, max %u)\n",
-			hslen_duration_ns, params->hslen_ns.min, params->hslen_ns.max);
+		DRM_ERROR("Invalid horizontal sync duration: %uns (min: %u, max %u)\n",
+			  hslen_duration_ns, params->hslen_ns.min, params->hslen_ns.max);
 		return -EINVAL;
 	}
 
@@ -409,8 +409,7 @@ static int fill_analog_mode(struct drm_device *dev,
 	if (!bt601 &&
 	    (porches_duration_ns > (params->hfp_ns.max + params->hbp_ns.max) ||
 	     porches_duration_ns < (params->hfp_ns.min + params->hbp_ns.min))) {
-		drm_err(dev, "Invalid horizontal porches duration: %uns\n",
-			porches_duration_ns);
+		DRM_ERROR("Invalid horizontal porches duration: %uns\n", porches_duration_ns);
 		return -EINVAL;
 	}
 
@@ -432,8 +431,8 @@ static int fill_analog_mode(struct drm_device *dev,
 	if (!bt601 &&
 	    (hfp_duration_ns < params->hfp_ns.min ||
 	     hfp_duration_ns > params->hfp_ns.max)) {
-		drm_err(dev, "Invalid horizontal front porch duration: %uns (min: %u, max %u)\n",
-			hfp_duration_ns, params->hfp_ns.min, params->hfp_ns.max);
+		DRM_ERROR("Invalid horizontal front porch duration: %uns (min: %u, max %u)\n",
+			  hfp_duration_ns, params->hfp_ns.min, params->hfp_ns.max);
 		return -EINVAL;
 	}
 
@@ -444,8 +443,8 @@ static int fill_analog_mode(struct drm_device *dev,
 	if (!bt601 &&
 	    (hbp_duration_ns < params->hbp_ns.min ||
 	     hbp_duration_ns > params->hbp_ns.max)) {
-		drm_err(dev, "Invalid horizontal back porch duration: %uns (min: %u, max %u)\n",
-			hbp_duration_ns, params->hbp_ns.min, params->hbp_ns.max);
+		DRM_ERROR("Invalid horizontal back porch duration: %uns (min: %u, max %u)\n",
+			  hbp_duration_ns, params->hbp_ns.min, params->hbp_ns.max);
 		return -EINVAL;
 	}
 
@@ -496,8 +495,8 @@ static int fill_analog_mode(struct drm_device *dev,
 
 	vtotal = vactive + vfp + vslen + vbp;
 	if (params->num_lines != vtotal) {
-		drm_err(dev, "Invalid vertical total: %upx (expected %upx)\n",
-			vtotal, params->num_lines);
+		DRM_ERROR("Invalid vertical total: %upx (expected %upx)\n",
+			  vtotal, params->num_lines);
 		return -EINVAL;
 	}
 
@@ -531,7 +530,8 @@ static int fill_analog_mode(struct drm_device *dev,
  * @interlace: whether to compute an interlaced mode
  *
  * This function creates a struct drm_display_mode instance suited for
- * an analog TV output, for one of the usual analog TV mode.
+ * an analog TV output, for one of the usual analog TV modes. Where
+ * this is DRM_MODE_TV_MODE_MONOCHROME, a 625-line mode will be created.
  *
  * Note that @hdisplay is larger than the usual constraints for the PAL
  * and NTSC timings, and we'll choose to ignore most timings constraints
@@ -569,6 +569,8 @@ struct drm_display_mode *drm_analog_tv_mode(struct drm_device *dev,
 	case DRM_MODE_TV_MODE_PAL_N:
 		fallthrough;
 	case DRM_MODE_TV_MODE_SECAM:
+		fallthrough;
+	case DRM_MODE_TV_MODE_MONOCHROME:
 		analog = DRM_MODE_ANALOG_PAL;
 		break;
 
@@ -1201,8 +1203,9 @@ int of_get_drm_display_mode(struct device_node *np,
 	if (bus_flags)
 		drm_bus_flags_from_videomode(&vm, bus_flags);
 
-	pr_debug("%pOF: got %dx%d display mode: " DRM_MODE_FMT "\n",
-		 np, vm.hactive, vm.vactive, DRM_MODE_ARG(dmode));
+	pr_debug("%pOF: got %dx%d display mode\n",
+		np, vm.hactive, vm.vactive);
+	drm_mode_debug_printmodeline(dmode);
 
 	return 0;
 }
@@ -1250,7 +1253,7 @@ int of_get_drm_panel_display_mode(struct device_node *np,
 	dmode->width_mm = width_mm;
 	dmode->height_mm = height_mm;
 
-	pr_debug(DRM_MODE_FMT "\n", DRM_MODE_ARG(dmode));
+	drm_mode_debug_printmodeline(dmode);
 
 	return 0;
 }
@@ -1812,8 +1815,10 @@ void drm_mode_prune_invalid(struct drm_device *dev,
 					 DRM_MODE_FMT "\n", DRM_MODE_ARG(mode));
 			}
 			if (verbose) {
-				drm_dbg_kms(dev, "Rejected mode: " DRM_MODE_FMT " (%s)\n",
-					    DRM_MODE_ARG(mode), drm_get_mode_status_name(mode->status));
+				drm_mode_debug_printmodeline(mode);
+				DRM_DEBUG_KMS("Not using %s mode: %s\n",
+					      mode->name,
+					      drm_get_mode_status_name(mode->status));
 			}
 			drm_mode_destroy(dev, mode);
 		}
@@ -2615,7 +2620,8 @@ void drm_mode_convert_to_umode(struct drm_mode_modeinfo *out,
 		break;
 	}
 
-	strscpy_pad(out->name, in->name, sizeof(out->name));
+	strncpy(out->name, in->name, DRM_DISPLAY_MODE_LEN);
+	out->name[DRM_DISPLAY_MODE_LEN-1] = 0;
 }
 
 /**
@@ -2656,7 +2662,8 @@ int drm_mode_convert_umode(struct drm_device *dev,
 	 * useful for the kernel->userspace direction anyway.
 	 */
 	out->type = in->type & DRM_MODE_TYPE_ALL;
-	strscpy_pad(out->name, in->name, sizeof(out->name));
+	strncpy(out->name, in->name, DRM_DISPLAY_MODE_LEN);
+	out->name[DRM_DISPLAY_MODE_LEN-1] = 0;
 
 	/* Clearing picture aspect ratio bits from out flags,
 	 * as the aspect-ratio information is not stored in
@@ -2750,25 +2757,3 @@ bool drm_mode_is_420(const struct drm_display_info *display,
 		drm_mode_is_420_also(display, mode);
 }
 EXPORT_SYMBOL(drm_mode_is_420);
-
-/**
- * drm_set_preferred_mode - Sets the preferred mode of a connector
- * @connector: connector whose mode list should be processed
- * @hpref: horizontal resolution of preferred mode
- * @vpref: vertical resolution of preferred mode
- *
- * Marks a mode as preferred if it matches the resolution specified by @hpref
- * and @vpref.
- */
-void drm_set_preferred_mode(struct drm_connector *connector,
-			    int hpref, int vpref)
-{
-	struct drm_display_mode *mode;
-
-	list_for_each_entry(mode, &connector->probed_modes, head) {
-		if (mode->hdisplay == hpref &&
-		    mode->vdisplay == vpref)
-			mode->type |= DRM_MODE_TYPE_PREFERRED;
-	}
-}
-EXPORT_SYMBOL(drm_set_preferred_mode);

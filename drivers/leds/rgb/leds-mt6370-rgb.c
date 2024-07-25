@@ -149,10 +149,11 @@ struct mt6370_priv {
 	struct regmap_field *fields[F_MAX_FIELDS];
 	const struct reg_field *reg_fields;
 	const struct linear_range *ranges;
+	struct reg_cfg *reg_cfgs;
 	const struct mt6370_pdata *pdata;
 	unsigned int leds_count;
 	unsigned int leds_active;
-	struct mt6370_led leds[] __counted_by(leds_count);
+	struct mt6370_led leds[];
 };
 
 static const struct reg_field common_reg_fields[F_MAX_FIELDS] = {

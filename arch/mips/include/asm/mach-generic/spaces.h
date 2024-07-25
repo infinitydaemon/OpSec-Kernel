@@ -49,8 +49,6 @@
 #define HIGHMEM_START		_AC(0x20000000, UL)
 #endif
 
-#define CKSEG0ADDR_OR_64BIT(x)	CKSEG0ADDR(x)
-#define CKSEG1ADDR_OR_64BIT(x)	CKSEG1ADDR(x)
 #endif /* CONFIG_32BIT */
 
 #ifdef CONFIG_64BIT
@@ -84,8 +82,6 @@
 #define TO_CAC(x)		(CAC_BASE   | ((x) & TO_PHYS_MASK))
 #define TO_UNCAC(x)		(UNCAC_BASE | ((x) & TO_PHYS_MASK))
 
-#define CKSEG0ADDR_OR_64BIT(x)	TO_CAC(x)
-#define CKSEG1ADDR_OR_64BIT(x)	TO_UNCAC(x)
 #endif /* CONFIG_64BIT */
 
 /*

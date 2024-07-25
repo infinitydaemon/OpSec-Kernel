@@ -62,7 +62,7 @@
 #endif
 
 /* Common logic, but per-type values.  These also need to be undefined. */
-#define PT_BASE_ADDR_MASK	((pt_element_t)__PT_BASE_ADDR_MASK)
+#define PT_BASE_ADDR_MASK	((pt_element_t)(((1ULL << 52) - 1) & ~(u64)(PAGE_SIZE-1)))
 #define PT_LVL_ADDR_MASK(lvl)	__PT_LVL_ADDR_MASK(PT_BASE_ADDR_MASK, lvl, PT_LEVEL_BITS)
 #define PT_LVL_OFFSET_MASK(lvl)	__PT_LVL_OFFSET_MASK(PT_BASE_ADDR_MASK, lvl, PT_LEVEL_BITS)
 #define PT_INDEX(addr, lvl)	__PT_INDEX(addr, lvl, PT_LEVEL_BITS)
@@ -497,21 +497,21 @@ error:
 	 * The other bits are set to 0.
 	 */
 	if (!(errcode & PFERR_RSVD_MASK)) {
-		walker->fault.exit_qualification = 0;
-
+		vcpu->arch.exit_qualification &= (EPT_VIOLATION_GVA_IS_VALID |
+						  EPT_VIOLATION_GVA_TRANSLATED);
 		if (write_fault)
-			walker->fault.exit_qualification |= EPT_VIOLATION_ACC_WRITE;
+			vcpu->arch.exit_qualification |= EPT_VIOLATION_ACC_WRITE;
 		if (user_fault)
-			walker->fault.exit_qualification |= EPT_VIOLATION_ACC_READ;
+			vcpu->arch.exit_qualification |= EPT_VIOLATION_ACC_READ;
 		if (fetch_fault)
-			walker->fault.exit_qualification |= EPT_VIOLATION_ACC_INSTR;
+			vcpu->arch.exit_qualification |= EPT_VIOLATION_ACC_INSTR;
 
 		/*
 		 * Note, pte_access holds the raw RWX bits from the EPTE, not
 		 * ACC_*_MASK flags!
 		 */
-		walker->fault.exit_qualification |= (pte_access & VMX_EPT_RWX_MASK) <<
-						     EPT_VIOLATION_RWX_SHIFT;
+		vcpu->arch.exit_qualification |= (pte_access & VMX_EPT_RWX_MASK) <<
+						 EPT_VIOLATION_RWX_SHIFT;
 	}
 #endif
 	walker->fault.address = addr;
@@ -911,7 +911,7 @@ static int FNAME(sync_spte)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp, int 
 	gpa_t pte_gpa;
 	gfn_t gfn;
 
-	if (WARN_ON_ONCE(sp->spt[i] == SHADOW_NONPRESENT_VALUE))
+	if (WARN_ON_ONCE(!sp->spt[i]))
 		return 0;
 
 	first_pte_gpa = FNAME(get_level1_sp_gpa)(sp);
@@ -933,13 +933,13 @@ static int FNAME(sync_spte)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp, int 
 		return 0;
 
 	/*
-	 * Drop the SPTE if the new protections result in no effective
-	 * "present" bit or if the gfn is changing.  The former case
-	 * only affects EPT with execute-only support with pte_access==0;
-	 * all other paging modes will create a read-only SPTE if
-	 * pte_access is zero.
+	 * Drop the SPTE if the new protections would result in a RWX=0
+	 * SPTE or if the gfn is changing.  The RWX=0 case only affects
+	 * EPT with execute-only support, i.e. EPT without an effective
+	 * "present" bit, as all other paging modes will create a
+	 * read-only SPTE if pte_access is zero.
 	 */
-	if ((pte_access | shadow_present_mask) == SHADOW_NONPRESENT_VALUE ||
+	if ((!pte_access && !shadow_present_mask) ||
 	    gfn != kvm_mmu_page_get_gfn(sp, i)) {
 		drop_spte(vcpu->kvm, &sp->spt[i]);
 		return 1;

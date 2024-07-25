@@ -73,19 +73,24 @@ static inline void unimac_mdio_start(struct unimac_mdio_priv *priv)
 	unimac_mdio_writel(priv, reg, MDIO_CMD);
 }
 
+static inline unsigned int unimac_mdio_busy(struct unimac_mdio_priv *priv)
+{
+	return unimac_mdio_readl(priv, MDIO_CMD) & MDIO_START_BUSY;
+}
+
 static int unimac_mdio_poll(void *wait_func_data)
 {
 	struct unimac_mdio_priv *priv = wait_func_data;
-	u32 val;
+	unsigned int timeout = 1000;
 
-	/*
-	 * C22 transactions should take ~25 usec, will need to adjust
-	 * if C45 support is added.
-	 */
-	udelay(30);
+	do {
+		if (!unimac_mdio_busy(priv))
+			return 0;
 
-	return read_poll_timeout(unimac_mdio_readl, val, !(val & MDIO_START_BUSY),
-				 2000, 100000, false, priv, MDIO_CMD);
+		usleep_range(1000, 2000);
+	} while (--timeout);
+
+	return -ETIMEDOUT;
 }
 
 static int unimac_mdio_read(struct mii_bus *bus, int phy_id, int reg)
@@ -93,10 +98,6 @@ static int unimac_mdio_read(struct mii_bus *bus, int phy_id, int reg)
 	struct unimac_mdio_priv *priv = bus->priv;
 	int ret;
 	u32 cmd;
-
-	ret = clk_prepare_enable(priv->clk);
-	if (ret)
-		return ret;
 
 	/* Prepare the read operation */
 	cmd = MDIO_RD | (phy_id << MDIO_PMD_SHIFT) | (reg << MDIO_REG_SHIFT);
@@ -107,7 +108,7 @@ static int unimac_mdio_read(struct mii_bus *bus, int phy_id, int reg)
 
 	ret = priv->wait_func(priv->wait_func_data);
 	if (ret)
-		goto out;
+		return ret;
 
 	cmd = unimac_mdio_readl(priv, MDIO_CMD);
 
@@ -116,15 +117,10 @@ static int unimac_mdio_read(struct mii_bus *bus, int phy_id, int reg)
 	 * that condition here and ignore the MDIO controller read failure
 	 * indication.
 	 */
-	if (!(bus->phy_ignore_ta_mask & 1 << phy_id) && (cmd & MDIO_READ_FAIL)) {
-		ret = -EIO;
-		goto out;
-	}
+	if (!(bus->phy_ignore_ta_mask & 1 << phy_id) && (cmd & MDIO_READ_FAIL))
+		return -EIO;
 
-	ret = cmd & 0xffff;
-out:
-	clk_disable_unprepare(priv->clk);
-	return ret;
+	return cmd & 0xffff;
 }
 
 static int unimac_mdio_write(struct mii_bus *bus, int phy_id,
@@ -132,11 +128,6 @@ static int unimac_mdio_write(struct mii_bus *bus, int phy_id,
 {
 	struct unimac_mdio_priv *priv = bus->priv;
 	u32 cmd;
-	int ret;
-
-	ret = clk_prepare_enable(priv->clk);
-	if (ret)
-		return ret;
 
 	/* Prepare the write operation */
 	cmd = MDIO_WR | (phy_id << MDIO_PMD_SHIFT) |
@@ -145,10 +136,7 @@ static int unimac_mdio_write(struct mii_bus *bus, int phy_id,
 
 	unimac_mdio_start(priv);
 
-	ret = priv->wait_func(priv->wait_func_data);
-	clk_disable_unprepare(priv->clk);
-
-	return ret;
+	return priv->wait_func(priv->wait_func_data);
 }
 
 /* Workaround for integrated BCM7xxx Gigabit PHYs which have a problem with
@@ -195,19 +183,14 @@ static int unimac_mdio_reset(struct mii_bus *bus)
 	return 0;
 }
 
-static int unimac_mdio_clk_set(struct unimac_mdio_priv *priv)
+static void unimac_mdio_clk_set(struct unimac_mdio_priv *priv)
 {
 	unsigned long rate;
 	u32 reg, div;
-	int ret;
 
 	/* Keep the hardware default values */
 	if (!priv->clk_freq)
-		return 0;
-
-	ret = clk_prepare_enable(priv->clk);
-	if (ret)
-		return ret;
+		return;
 
 	if (!priv->clk)
 		rate = 250000000;
@@ -217,8 +200,7 @@ static int unimac_mdio_clk_set(struct unimac_mdio_priv *priv)
 	div = (rate / (2 * priv->clk_freq)) - 1;
 	if (div & ~MDIO_CLK_DIV_MASK) {
 		pr_warn("Incorrect MDIO clock frequency, ignoring\n");
-		ret = 0;
-		goto out;
+		return;
 	}
 
 	/* The MDIO clock is the reference clock (typically 250Mhz) divided by
@@ -228,9 +210,6 @@ static int unimac_mdio_clk_set(struct unimac_mdio_priv *priv)
 	reg &= ~(MDIO_CLK_DIV_MASK << MDIO_CLK_DIV_SHIFT);
 	reg |= div << MDIO_CLK_DIV_SHIFT;
 	unimac_mdio_writel(priv, reg, MDIO_CFG);
-out:
-	clk_disable_unprepare(priv->clk);
-	return ret;
 }
 
 static int unimac_mdio_probe(struct platform_device *pdev)
@@ -261,12 +240,24 @@ static int unimac_mdio_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
+	priv->clk = devm_clk_get_optional(&pdev->dev, NULL);
+	if (IS_ERR(priv->clk))
+		return PTR_ERR(priv->clk);
+
+	ret = clk_prepare_enable(priv->clk);
+	if (ret)
+		return ret;
+
 	if (of_property_read_u32(np, "clock-frequency", &priv->clk_freq))
 		priv->clk_freq = 0;
 
+	unimac_mdio_clk_set(priv);
+
 	priv->mii_bus = mdiobus_alloc();
-	if (!priv->mii_bus)
-		return -ENOMEM;
+	if (!priv->mii_bus) {
+		ret = -ENOMEM;
+		goto out_clk_disable;
+	}
 
 	bus = priv->mii_bus;
 	bus->priv = priv;
@@ -275,28 +266,16 @@ static int unimac_mdio_probe(struct platform_device *pdev)
 		priv->wait_func = pdata->wait_func;
 		priv->wait_func_data = pdata->wait_func_data;
 		bus->phy_mask = ~pdata->phy_mask;
-		priv->clk = pdata->clk;
 	} else {
 		bus->name = "unimac MII bus";
 		priv->wait_func_data = priv;
 		priv->wait_func = unimac_mdio_poll;
-		priv->clk = devm_clk_get_optional(&pdev->dev, NULL);
 	}
-
-	if (IS_ERR(priv->clk)) {
-		ret = PTR_ERR(priv->clk);
-		goto out_mdio_free;
-	}
-
 	bus->parent = &pdev->dev;
 	bus->read = unimac_mdio_read;
 	bus->write = unimac_mdio_write;
 	bus->reset = unimac_mdio_reset;
 	snprintf(bus->id, MII_BUS_ID_SIZE, "%s-%d", pdev->name, pdev->id);
-
-	ret = unimac_mdio_clk_set(priv);
-	if (ret)
-		goto out_mdio_free;
 
 	ret = of_mdiobus_register(bus, np);
 	if (ret) {
@@ -312,29 +291,49 @@ static int unimac_mdio_probe(struct platform_device *pdev)
 
 out_mdio_free:
 	mdiobus_free(bus);
+out_clk_disable:
+	clk_disable_unprepare(priv->clk);
 	return ret;
 }
 
-static void unimac_mdio_remove(struct platform_device *pdev)
+static int unimac_mdio_remove(struct platform_device *pdev)
 {
 	struct unimac_mdio_priv *priv = platform_get_drvdata(pdev);
 
 	mdiobus_unregister(priv->mii_bus);
 	mdiobus_free(priv->mii_bus);
+	clk_disable_unprepare(priv->clk);
+
+	return 0;
+}
+
+static int __maybe_unused unimac_mdio_suspend(struct device *d)
+{
+	struct unimac_mdio_priv *priv = dev_get_drvdata(d);
+
+	clk_disable_unprepare(priv->clk);
+
+	return 0;
 }
 
 static int __maybe_unused unimac_mdio_resume(struct device *d)
 {
 	struct unimac_mdio_priv *priv = dev_get_drvdata(d);
+	int ret;
 
-	return unimac_mdio_clk_set(priv);
+	ret = clk_prepare_enable(priv->clk);
+	if (ret)
+		return ret;
+
+	unimac_mdio_clk_set(priv);
+
+	return 0;
 }
 
 static SIMPLE_DEV_PM_OPS(unimac_mdio_pm_ops,
-			 NULL, unimac_mdio_resume);
+			 unimac_mdio_suspend, unimac_mdio_resume);
 
 static const struct of_device_id unimac_mdio_ids[] = {
-	{ .compatible = "brcm,asp-v2.2-mdio", },
 	{ .compatible = "brcm,asp-v2.1-mdio", },
 	{ .compatible = "brcm,asp-v2.0-mdio", },
 	{ .compatible = "brcm,genet-mdio-v5", },
@@ -354,7 +353,7 @@ static struct platform_driver unimac_mdio_driver = {
 		.pm = &unimac_mdio_pm_ops,
 	},
 	.probe	= unimac_mdio_probe,
-	.remove_new = unimac_mdio_remove,
+	.remove	= unimac_mdio_remove,
 };
 module_platform_driver(unimac_mdio_driver);
 

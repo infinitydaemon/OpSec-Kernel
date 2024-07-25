@@ -12,7 +12,6 @@
 #include <linux/io.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
-#include <linux/vmalloc.h>
 
 #include "acrn_drv.h"
 
@@ -187,7 +186,8 @@ int acrn_vm_ram_map(struct acrn_vm *vm, struct acrn_vm_memmap *memmap)
 		}
 
 		for (i = 0; i < nr_pages; i++) {
-			ret = follow_pte(vma, memmap->vma_base + i * PAGE_SIZE,
+			ret = follow_pte(vma->vm_mm,
+					 memmap->vma_base + i * PAGE_SIZE,
 					 &ptep, &ptl);
 			if (ret)
 				break;
@@ -289,11 +289,11 @@ int acrn_vm_ram_map(struct acrn_vm *vm, struct acrn_vm_memmap *memmap)
 		ret = -ENOMEM;
 		goto unmap_kernel_map;
 	}
-	regions_info->regions_num = nr_regions;
 
 	/* Fill each vm_memory_region_op */
 	vm_region = regions_info->regions_op;
 	regions_info->vmid = vm->vmid;
+	regions_info->regions_num = nr_regions;
 	regions_info->regions_gpa = virt_to_phys(vm_region);
 	user_vm_pa = memmap->user_vm_pa;
 	for (i = 0; i < nr_pages; i += 1 << order) {

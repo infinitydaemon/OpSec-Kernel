@@ -709,7 +709,6 @@ struct fc_function_template {
 	int  	(*vport_delete)(struct fc_vport *);
 
 	/* bsg support */
-	u32				max_bsg_segments;
 	int	(*bsg_request)(struct bsg_job *);
 	int	(*bsg_timeout)(struct bsg_job *);
 
@@ -771,9 +770,10 @@ struct fc_function_template {
 /**
  * fc_remote_port_chkready - called to validate the remote port state
  *   prior to initiating io to the port.
- * @rport:	remote port to be checked
  *
- * Returns: a scsi result code that can be returned by the LLDD.
+ * Returns a scsi result code that can be returned by the LLDD.
+ *
+ * @rport:	remote port to be checked
  **/
 static inline int
 fc_remote_port_chkready(struct fc_rport *rport)

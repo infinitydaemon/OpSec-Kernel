@@ -2121,13 +2121,13 @@ static int packet_rcv_vnet(struct msghdr *msg, const struct sk_buff *skb,
 static int packet_rcv(struct sk_buff *skb, struct net_device *dev,
 		      struct packet_type *pt, struct net_device *orig_dev)
 {
-	enum skb_drop_reason drop_reason = SKB_CONSUMED;
 	struct sock *sk;
 	struct sockaddr_ll *sll;
 	struct packet_sock *po;
 	u8 *skb_head = skb->data;
 	int skb_len = skb->len;
 	unsigned int snaplen, res;
+	bool is_drop_n_account = false;
 
 	if (skb->pkt_type == PACKET_LOOPBACK)
 		goto drop;
@@ -2217,9 +2217,9 @@ static int packet_rcv(struct sk_buff *skb, struct net_device *dev,
 	return 0;
 
 drop_n_acct:
+	is_drop_n_account = true;
 	atomic_inc(&po->tp_drops);
 	atomic_inc(&sk->sk_drops);
-	drop_reason = SKB_DROP_REASON_PACKET_SOCK_ERROR;
 
 drop_n_restore:
 	if (skb_head != skb->data && skb_shared(skb)) {
@@ -2227,14 +2227,16 @@ drop_n_restore:
 		skb->len = skb_len;
 	}
 drop:
-	kfree_skb_reason(skb, drop_reason);
+	if (!is_drop_n_account)
+		consume_skb(skb);
+	else
+		kfree_skb(skb);
 	return 0;
 }
 
 static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 		       struct packet_type *pt, struct net_device *orig_dev)
 {
-	enum skb_drop_reason drop_reason = SKB_CONSUMED;
 	struct sock *sk;
 	struct packet_sock *po;
 	struct sockaddr_ll *sll;
@@ -2248,6 +2250,7 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	struct sk_buff *copy_skb = NULL;
 	struct timespec64 ts;
 	__u32 ts_status;
+	bool is_drop_n_account = false;
 	unsigned int slot_id = 0;
 	int vnet_hdr_sz = 0;
 
@@ -2318,7 +2321,7 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	}
 	if (po->tp_version <= TPACKET_V2) {
 		if (macoff + snaplen > po->rx_ring.frame_size) {
-			if (READ_ONCE(po->copy_thresh) &&
+			if (po->copy_thresh &&
 			    atomic_read(&sk->sk_rmem_alloc) < sk->sk_rcvbuf) {
 				if (skb_shared(skb)) {
 					copy_skb = skb_clone(skb, GFP_ATOMIC);
@@ -2495,16 +2498,19 @@ drop_n_restore:
 		skb->len = skb_len;
 	}
 drop:
-	kfree_skb_reason(skb, drop_reason);
+	if (!is_drop_n_account)
+		consume_skb(skb);
+	else
+		kfree_skb(skb);
 	return 0;
 
 drop_n_account:
 	spin_unlock(&sk->sk_receive_queue.lock);
 	atomic_inc(&po->tp_drops);
-	drop_reason = SKB_DROP_REASON_PACKET_SOCK_ERROR;
+	is_drop_n_account = true;
 
 	sk->sk_data_ready(sk);
-	kfree_skb_reason(copy_skb, drop_reason);
+	kfree_skb(copy_skb);
 	goto drop_n_restore;
 }
 
@@ -3835,7 +3841,7 @@ packet_setsockopt(struct socket *sock, int level, int optname, sockptr_t optval,
 		if (copy_from_sockptr(&val, optval, sizeof(val)))
 			return -EFAULT;
 
-		WRITE_ONCE(pkt_sk(sk)->copy_thresh, val);
+		pkt_sk(sk)->copy_thresh = val;
 		return 0;
 	}
 	case PACKET_VERSION:
@@ -4088,9 +4094,6 @@ static int packet_getsockopt(struct socket *sock, int level, int optname,
 		break;
 	case PACKET_VNET_HDR_SZ:
 		val = READ_ONCE(po->vnet_hdr_sz);
-		break;
-	case PACKET_COPY_THRESH:
-		val = READ_ONCE(pkt_sk(sk)->copy_thresh);
 		break;
 	case PACKET_VERSION:
 		val = po->tp_version;
@@ -4785,6 +4788,5 @@ out:
 
 module_init(packet_init);
 module_exit(packet_exit);
-MODULE_DESCRIPTION("Packet socket support (AF_PACKET)");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_NETPROTO(PF_PACKET);

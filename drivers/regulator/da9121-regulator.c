@@ -13,7 +13,8 @@
 //
 // Copyright (C) 2020 Dialog Semiconductor
 
-#include <linux/of.h>
+#include <linux/of_device.h>
+#include <linux/of_gpio.h>
 #include <linux/gpio/consumer.h>
 #include <linux/regulator/of_regulator.h>
 #include <linux/regulator/machine.h>
@@ -872,7 +873,7 @@ static struct regmap_config da9121_1ch_regmap_config = {
 	.rd_table = &da9121_1ch_readable_table,
 	.wr_table = &da9121_1ch_writeable_table,
 	.volatile_table = &da9121_volatile_table,
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 };
 
 /* DA9121 regmap config for 2 channel variants */
@@ -883,7 +884,7 @@ static struct regmap_config da9121_2ch_regmap_config = {
 	.rd_table = &da9121_2ch_readable_table,
 	.wr_table = &da9121_2ch_writeable_table,
 	.volatile_table = &da9121_volatile_table,
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 };
 
 static int da9121_check_device_type(struct i2c_client *i2c, struct da9121 *chip)
@@ -1116,6 +1117,17 @@ static const struct of_device_id da9121_dt_ids[] = {
 };
 MODULE_DEVICE_TABLE(of, da9121_dt_ids);
 
+static inline int da9121_of_get_id(struct device *dev)
+{
+	const struct of_device_id *id = of_match_device(da9121_dt_ids, dev);
+
+	if (!id) {
+		dev_err(dev, "%s: Failed\n", __func__);
+		return -EINVAL;
+	}
+	return (uintptr_t)id->data;
+}
+
 static int da9121_i2c_probe(struct i2c_client *i2c)
 {
 	struct da9121 *chip;
@@ -1129,7 +1141,7 @@ static int da9121_i2c_probe(struct i2c_client *i2c)
 	}
 
 	chip->pdata = i2c->dev.platform_data;
-	chip->subvariant_id = (enum da9121_subvariant)i2c_get_match_data(i2c);
+	chip->subvariant_id = da9121_of_get_id(&i2c->dev);
 
 	ret = da9121_assign_chip_model(i2c, chip);
 	if (ret < 0)

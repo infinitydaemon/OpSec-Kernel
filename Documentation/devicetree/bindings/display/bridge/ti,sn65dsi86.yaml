@@ -7,7 +7,7 @@ $schema: http://devicetree.org/meta-schemas/core.yaml#
 title: SN65DSI86 DSI to eDP bridge chip
 
 maintainers:
-  - Douglas Anderson <dianders@chromium.org>
+  - Sandeep Panda <spanda@codeaurora.org>
 
 description: |
   The Texas Instruments SN65DSI86 bridge takes MIPI DSI in and outputs eDP.

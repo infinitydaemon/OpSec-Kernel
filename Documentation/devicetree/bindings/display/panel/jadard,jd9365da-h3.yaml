@@ -21,8 +21,7 @@ properties:
           - radxa,display-8hd-ad002
       - const: jadard,jd9365da-h3
 
-  reg:
-    maxItems: 1
+  reg: true
 
   vdd-supply:
     description: supply regulator for VDD, usually 3.3V

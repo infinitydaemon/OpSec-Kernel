@@ -3,6 +3,8 @@ SUBDIRS := functional
 
 TEST_PROGS := run.sh
 
+.PHONY: all clean
+
 include ../lib.mk
 
 all:

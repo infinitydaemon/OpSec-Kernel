@@ -8,7 +8,6 @@
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 #include "bpf_misc.h"
-#include "bpf_compiler.h"
 
 #define FUNCTION_NAME_LEN 64
 #define FILE_NAME_LEN 128
@@ -299,11 +298,11 @@ int __on_event(struct bpf_raw_tracepoint_args *ctx)
 #if defined(USE_ITER)
 /* no for loop, no unrolling */
 #elif defined(NO_UNROLL)
-	__pragma_loop_no_unroll
+#pragma clang loop unroll(disable)
 #elif defined(UNROLL_COUNT)
-	__pragma_loop_unroll_count(UNROLL_COUNT)
+#pragma clang loop unroll_count(UNROLL_COUNT)
 #else
-	__pragma_loop_unroll_full
+#pragma clang loop unroll(full)
 #endif /* NO_UNROLL */
 		/* Unwind python stack */
 #ifdef USE_ITER

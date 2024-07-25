@@ -13,8 +13,10 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
-#include <linux/gpio/consumer.h>
+#include <linux/gpio.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
+#include <linux/of_gpio.h>
 #include <linux/regulator/consumer.h>
 #include <sound/pcm.h>
 #include <sound/soc.h>
@@ -159,7 +161,9 @@ struct cs4271_private {
 	/* Current sample rate for de-emphasis control */
 	int				rate;
 	/* GPIO driving Reset pin, if any */
-	struct gpio_desc		*reset;
+	int				gpio_nreset;
+	/* GPIO that disable serial bus, if any */
+	int				gpio_disable;
 	/* enable soft reset workaround */
 	bool				enable_soft_reset;
 	struct regulator_bulk_data      supplies[ARRAY_SIZE(supply_names)];
@@ -484,10 +488,12 @@ static int cs4271_reset(struct snd_soc_component *component)
 {
 	struct cs4271_private *cs4271 = snd_soc_component_get_drvdata(component);
 
-	gpiod_direction_output(cs4271->reset, 1);
-	mdelay(1);
-	gpiod_set_value(cs4271->reset, 0);
-	mdelay(1);
+	if (gpio_is_valid(cs4271->gpio_nreset)) {
+		gpio_direction_output(cs4271->gpio_nreset, 0);
+		mdelay(1);
+		gpio_set_value(cs4271->gpio_nreset, 1);
+		mdelay(1);
+	}
 
 	return 0;
 }
@@ -557,12 +563,19 @@ static int cs4271_component_probe(struct snd_soc_component *component)
 	struct cs4271_private *cs4271 = snd_soc_component_get_drvdata(component);
 	struct cs4271_platform_data *cs4271plat = component->dev->platform_data;
 	int ret;
-	bool amutec_eq_bmutec;
+	bool amutec_eq_bmutec = false;
 
-	amutec_eq_bmutec = of_property_read_bool(component->dev->of_node,
-						 "cirrus,amutec-eq-bmutec");
-	cs4271->enable_soft_reset = of_property_read_bool(component->dev->of_node,
-							  "cirrus,enable-soft-reset");
+#ifdef CONFIG_OF
+	if (of_match_device(cs4271_dt_ids, component->dev)) {
+		if (of_get_property(component->dev->of_node,
+				     "cirrus,amutec-eq-bmutec", NULL))
+			amutec_eq_bmutec = true;
+
+		if (of_get_property(component->dev->of_node,
+				     "cirrus,enable-soft-reset", NULL))
+			cs4271->enable_soft_reset = true;
+	}
+#endif
 
 	ret = regulator_bulk_enable(ARRAY_SIZE(cs4271->supplies),
 				    cs4271->supplies);
@@ -607,8 +620,9 @@ static void cs4271_component_remove(struct snd_soc_component *component)
 {
 	struct cs4271_private *cs4271 = snd_soc_component_get_drvdata(component);
 
-	/* Set codec to the reset state */
-	gpiod_set_value(cs4271->reset, 1);
+	if (gpio_is_valid(cs4271->gpio_nreset))
+		/* Set codec to the reset state */
+		gpio_set_value(cs4271->gpio_nreset, 0);
 
 	regcache_mark_dirty(cs4271->regmap);
 	regulator_bulk_disable(ARRAY_SIZE(cs4271->supplies), cs4271->supplies);
@@ -633,6 +647,7 @@ static const struct snd_soc_component_driver soc_component_dev_cs4271 = {
 static int cs4271_common_probe(struct device *dev,
 			       struct cs4271_private **c)
 {
+	struct cs4271_platform_data *cs4271plat = dev->platform_data;
 	struct cs4271_private *cs4271;
 	int i, ret;
 
@@ -640,11 +655,19 @@ static int cs4271_common_probe(struct device *dev,
 	if (!cs4271)
 		return -ENOMEM;
 
-	cs4271->reset = devm_gpiod_get_optional(dev, "reset", GPIOD_ASIS);
-	if (IS_ERR(cs4271->reset))
-		return dev_err_probe(dev, PTR_ERR(cs4271->reset),
-				     "error retrieving RESET GPIO\n");
-	gpiod_set_consumer_name(cs4271->reset, "CS4271 Reset");
+	if (of_match_device(cs4271_dt_ids, dev))
+		cs4271->gpio_nreset =
+			of_get_named_gpio(dev->of_node, "reset-gpio", 0);
+
+	if (cs4271plat)
+		cs4271->gpio_nreset = cs4271plat->gpio_nreset;
+
+	if (gpio_is_valid(cs4271->gpio_nreset)) {
+		ret = devm_gpio_request(dev, cs4271->gpio_nreset,
+					"CS4271 Reset");
+		if (ret < 0)
+			return ret;
+	}
 
 	for (i = 0; i < ARRAY_SIZE(supply_names); i++)
 		cs4271->supplies[i].supply = supply_names[i];

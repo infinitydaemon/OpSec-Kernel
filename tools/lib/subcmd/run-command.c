@@ -122,8 +122,6 @@ int start_command(struct child_process *cmd)
 		}
 		if (cmd->preexec_cb)
 			cmd->preexec_cb();
-		if (cmd->no_exec_cmd)
-			exit(cmd->no_exec_cmd(cmd));
 		if (cmd->exec_cmd) {
 			execv_cmd(cmd->argv);
 		} else {
@@ -165,65 +163,43 @@ int start_command(struct child_process *cmd)
 	return 0;
 }
 
-static int wait_or_whine(struct child_process *cmd, bool block)
+static int wait_or_whine(pid_t pid)
 {
-	bool finished = cmd->finished;
-	int result = cmd->finish_result;
+	char sbuf[STRERR_BUFSIZE];
 
-	while (!finished) {
+	for (;;) {
 		int status, code;
-		pid_t waiting = waitpid(cmd->pid, &status, block ? 0 : WNOHANG);
+		pid_t waiting = waitpid(pid, &status, 0);
 
-		if (!block && waiting == 0)
-			break;
-
-		if (waiting < 0 && errno == EINTR)
-			continue;
-
-		finished = true;
 		if (waiting < 0) {
-			char sbuf[STRERR_BUFSIZE];
-
+			if (errno == EINTR)
+				continue;
 			fprintf(stderr, " Error: waitpid failed (%s)",
 				str_error_r(errno, sbuf, sizeof(sbuf)));
-			result = -ERR_RUN_COMMAND_WAITPID;
-		} else if (waiting != cmd->pid) {
-			result = -ERR_RUN_COMMAND_WAITPID_WRONG_PID;
-		} else if (WIFSIGNALED(status)) {
-			result = -ERR_RUN_COMMAND_WAITPID_SIGNAL;
-		} else if (!WIFEXITED(status)) {
-			result = -ERR_RUN_COMMAND_WAITPID_NOEXIT;
-		} else {
-			code = WEXITSTATUS(status);
-			switch (code) {
-			case 127:
-				result = -ERR_RUN_COMMAND_EXEC;
-				break;
-			case 0:
-				result = 0;
-				break;
-			default:
-				result = -code;
-				break;
-			}
+			return -ERR_RUN_COMMAND_WAITPID;
+		}
+		if (waiting != pid)
+			return -ERR_RUN_COMMAND_WAITPID_WRONG_PID;
+		if (WIFSIGNALED(status))
+			return -ERR_RUN_COMMAND_WAITPID_SIGNAL;
+
+		if (!WIFEXITED(status))
+			return -ERR_RUN_COMMAND_WAITPID_NOEXIT;
+		code = WEXITSTATUS(status);
+		switch (code) {
+		case 127:
+			return -ERR_RUN_COMMAND_EXEC;
+		case 0:
+			return 0;
+		default:
+			return -code;
 		}
 	}
-	if (finished) {
-		cmd->finished = 1;
-		cmd->finish_result = result;
-	}
-	return result;
-}
-
-int check_if_command_finished(struct child_process *cmd)
-{
-	wait_or_whine(cmd, /*block=*/false);
-	return cmd->finished;
 }
 
 int finish_command(struct child_process *cmd)
 {
-	return wait_or_whine(cmd, /*block=*/true);
+	return wait_or_whine(cmd->pid);
 }
 
 int run_command(struct child_process *cmd)

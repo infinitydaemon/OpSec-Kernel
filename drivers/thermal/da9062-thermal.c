@@ -197,7 +197,7 @@ static int da9062_thermal_probe(struct platform_device *pdev)
 	mutex_init(&thermal->lock);
 
 	thermal->zone = thermal_zone_device_register_with_trips(thermal->config->name,
-								trips, ARRAY_SIZE(trips), thermal,
+								trips, ARRAY_SIZE(trips), 0, thermal,
 								&da9062_thermal_ops, NULL, pp_tmp,
 								0);
 	if (IS_ERR(thermal->zone)) {
@@ -239,18 +239,19 @@ err:
 	return ret;
 }
 
-static void da9062_thermal_remove(struct platform_device *pdev)
+static int da9062_thermal_remove(struct platform_device *pdev)
 {
 	struct	da9062_thermal *thermal = platform_get_drvdata(pdev);
 
 	free_irq(thermal->irq, thermal);
 	cancel_delayed_work_sync(&thermal->work);
 	thermal_zone_device_unregister(thermal->zone);
+	return 0;
 }
 
 static struct platform_driver da9062_thermal_driver = {
 	.probe	= da9062_thermal_probe,
-	.remove_new = da9062_thermal_remove,
+	.remove	= da9062_thermal_remove,
 	.driver	= {
 		.name	= "da9062-thermal",
 		.of_match_table = da9062_compatible_reg_id_table,

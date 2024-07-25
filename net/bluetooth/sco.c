@@ -268,8 +268,7 @@ static int sco_connect(struct sock *sk)
 	}
 
 	hcon = hci_connect_sco(hdev, type, &sco_pi(sk)->dst,
-			       sco_pi(sk)->setting, &sco_pi(sk)->codec,
-			       sk->sk_sndtimeo);
+			       sco_pi(sk)->setting, &sco_pi(sk)->codec);
 	if (IS_ERR(hcon)) {
 		err = PTR_ERR(hcon);
 		goto unlock;
@@ -647,7 +646,7 @@ done:
 }
 
 static int sco_sock_accept(struct socket *sock, struct socket *newsock,
-			   struct proto_accept_arg *arg)
+			   int flags, bool kern)
 {
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);
 	struct sock *sk = sock->sk, *ch;
@@ -656,7 +655,7 @@ static int sco_sock_accept(struct socket *sock, struct socket *newsock,
 
 	lock_sock(sk);
 
-	timeo = sock_rcvtimeo(sk, arg->flags & O_NONBLOCK);
+	timeo = sock_rcvtimeo(sk, flags & O_NONBLOCK);
 
 	BT_DBG("sk %p timeo %ld", sk, timeo);
 

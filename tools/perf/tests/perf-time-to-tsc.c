@@ -93,7 +93,7 @@ static int test__perf_time_to_tsc(struct test_suite *test __maybe_unused, int su
 	threads = thread_map__new(-1, getpid(), UINT_MAX);
 	CHECK_NOT_NULL__(threads);
 
-	cpus = perf_cpu_map__new_online_cpus();
+	cpus = perf_cpu_map__new(NULL);
 	CHECK_NOT_NULL__(cpus);
 
 	evlist = evlist__new();

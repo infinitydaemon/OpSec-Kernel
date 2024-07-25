@@ -343,9 +343,8 @@ static void v4l_print_format(const void *arg, bool write_only)
 	case V4L2_BUF_TYPE_META_OUTPUT:
 		meta = &p->fmt.meta;
 		pixelformat = meta->dataformat;
-		pr_cont(", dataformat=%p4cc, buffersize=%u, width=%u, height=%u, bytesperline=%u\n",
-			&pixelformat, meta->buffersize, meta->width,
-			meta->height, meta->bytesperline);
+		pr_cont(", dataformat=%p4cc, buffersize=%u\n",
+			&pixelformat, meta->buffersize);
 		break;
 	}
 }
@@ -484,18 +483,10 @@ static void v4l_print_create_buffers(const void *arg, bool write_only)
 {
 	const struct v4l2_create_buffers *p = arg;
 
-	pr_cont("index=%d, count=%d, memory=%s, capabilities=0x%08x, max num buffers=%u",
+	pr_cont("index=%d, count=%d, memory=%s, capabilities=0x%08x, ",
 		p->index, p->count, prt_names(p->memory, v4l2_memory_names),
-		p->capabilities, p->max_num_buffers);
+		p->capabilities);
 	v4l_print_format(&p->format, write_only);
-}
-
-static void v4l_print_remove_buffers(const void *arg, bool write_only)
-{
-	const struct v4l2_remove_buffers *p = arg;
-
-	pr_cont("type=%s, index=%u, count=%u\n",
-		prt_names(p->type, v4l2_type_names), p->index, p->count);
 }
 
 static void v4l_print_streamparm(const void *arg, bool write_only)
@@ -1307,6 +1298,8 @@ static void v4l_fill_fmtdesc(struct v4l2_fmtdesc *fmt)
 	case V4L2_PIX_FMT_RGBX1010102:	descr = "32-bit RGBX 10-10-10-2"; break;
 	case V4L2_PIX_FMT_RGBA1010102:	descr = "32-bit RGBA 10-10-10-2"; break;
 	case V4L2_PIX_FMT_ARGB2101010:	descr = "32-bit ARGB 2-10-10-10"; break;
+	case V4L2_PIX_FMT_BGR48:	descr = "48-bit BGR 16-16-16"; break;
+	case V4L2_PIX_FMT_RGB48:	descr = "48-bit RGB 16-16-16"; break;
 	case V4L2_PIX_FMT_BGR48_12:	descr = "12-bit Depth BGR"; break;
 	case V4L2_PIX_FMT_ABGR64_12:	descr = "12-bit Depth BGRA"; break;
 	case V4L2_PIX_FMT_GREY:		descr = "8-bit Greyscale"; break;
@@ -1320,9 +1313,9 @@ static void v4l_fill_fmtdesc(struct v4l2_fmtdesc *fmt)
 	case V4L2_PIX_FMT_Y16_BE:	descr = "16-bit Greyscale BE"; break;
 	case V4L2_PIX_FMT_Y10BPACK:	descr = "10-bit Greyscale (Packed)"; break;
 	case V4L2_PIX_FMT_Y10P:		descr = "10-bit Greyscale (MIPI Packed)"; break;
-	case V4L2_PIX_FMT_IPU3_Y10:	descr = "10-bit greyscale (IPU3 Packed)"; break;
 	case V4L2_PIX_FMT_Y12P:		descr = "12-bit Greyscale (MIPI Packed)"; break;
 	case V4L2_PIX_FMT_Y14P:		descr = "14-bit Greyscale (MIPI Packed)"; break;
+	case V4L2_PIX_FMT_IPU3_Y10:	descr = "10-bit greyscale (IPU3 Packed)"; break;
 	case V4L2_PIX_FMT_Y8I:		descr = "Interleaved 8-bit Greyscale"; break;
 	case V4L2_PIX_FMT_Y12I:		descr = "Interleaved 12-bit Greyscale"; break;
 	case V4L2_PIX_FMT_Z16:		descr = "16-bit Depth"; break;
@@ -1376,6 +1369,8 @@ static void v4l_fill_fmtdesc(struct v4l2_fmtdesc *fmt)
 	case V4L2_PIX_FMT_NV12MT:	descr = "Y/UV 4:2:0 (64x32 MB, N-C)"; break;
 	case V4L2_PIX_FMT_NV12MT_16X16:	descr = "Y/UV 4:2:0 (16x16 MB, N-C)"; break;
 	case V4L2_PIX_FMT_P012M:	descr = "12-bit Y/UV 4:2:0 (N-C)"; break;
+	case V4L2_PIX_FMT_NV12_COL128:  descr = "Y/CbCr 4:2:0 (128b cols)"; break;
+	case V4L2_PIX_FMT_NV12_10_COL128: descr = "10-bit Y/CbCr 4:2:0 (128b cols)"; break;
 	case V4L2_PIX_FMT_YUV420M:	descr = "Planar YUV 4:2:0 (N-C)"; break;
 	case V4L2_PIX_FMT_YVU420M:	descr = "Planar YVU 4:2:0 (N-C)"; break;
 	case V4L2_PIX_FMT_YUV422M:	descr = "Planar YUV 4:2:2 (N-C)"; break;
@@ -1463,13 +1458,11 @@ static void v4l_fill_fmtdesc(struct v4l2_fmtdesc *fmt)
 	case V4L2_PIX_FMT_Y210:		descr = "10-bit YUYV Packed"; break;
 	case V4L2_PIX_FMT_Y212:		descr = "12-bit YUYV Packed"; break;
 	case V4L2_PIX_FMT_Y216:		descr = "16-bit YUYV Packed"; break;
-	case V4L2_META_FMT_GENERIC_8:	descr = "8-bit Generic Metadata"; break;
-	case V4L2_META_FMT_GENERIC_CSI2_10:	descr = "8-bit Generic Meta, 10b CSI-2"; break;
-	case V4L2_META_FMT_GENERIC_CSI2_12:	descr = "8-bit Generic Meta, 12b CSI-2"; break;
-	case V4L2_META_FMT_GENERIC_CSI2_14:	descr = "8-bit Generic Meta, 14b CSI-2"; break;
-	case V4L2_META_FMT_GENERIC_CSI2_16:	descr = "8-bit Generic Meta, 16b CSI-2"; break;
-	case V4L2_META_FMT_GENERIC_CSI2_20:	descr = "8-bit Generic Meta, 20b CSI-2"; break;
-	case V4L2_META_FMT_GENERIC_CSI2_24:	descr = "8-bit Generic Meta, 24b CSI-2"; break;
+	case V4L2_META_FMT_SENSOR_DATA:	descr = "Sensor Ancillary Metadata"; break;
+	case V4L2_META_FMT_BCM2835_ISP_STATS: descr = "BCM2835 ISP Image Statistics"; break;
+	case V4L2_META_FMT_RPI_BE_CFG: descr = "PiSP BE Config format"; break;
+	case V4L2_META_FMT_RPI_FE_CFG: descr = "PiSP FE Config format"; break;
+	case V4L2_META_FMT_RPI_FE_STATS: descr = "PiSP FE Statistics format"; break;
 
 	default:
 		/* Compressed formats */
@@ -1528,7 +1521,17 @@ static void v4l_fill_fmtdesc(struct v4l2_fmtdesc *fmt)
 		case V4L2_PIX_FMT_AV1_FRAME:	descr = "AV1 Frame"; break;
 		case V4L2_PIX_FMT_MT2110T:	descr = "Mediatek 10bit Tile Mode"; break;
 		case V4L2_PIX_FMT_MT2110R:	descr = "Mediatek 10bit Raster Mode"; break;
-		case V4L2_PIX_FMT_HEXTILE:	descr = "Hextile Compressed Format"; break;
+		case V4L2_PIX_FMT_RPI_BE:	descr = "PiSP Opaque Format"; break;
+		case V4L2_PIX_FMT_PISP_COMP1_RGGB:
+		case V4L2_PIX_FMT_PISP_COMP1_GRBG:
+		case V4L2_PIX_FMT_PISP_COMP1_GBRG:
+		case V4L2_PIX_FMT_PISP_COMP1_BGGR: 
+		case V4L2_PIX_FMT_PISP_COMP1_MONO: descr = "PiSP Bayer Compressed Format"; break;
+		case V4L2_PIX_FMT_PISP_COMP2_RGGB:
+		case V4L2_PIX_FMT_PISP_COMP2_GRBG:
+		case V4L2_PIX_FMT_PISP_COMP2_GBRG:
+		case V4L2_PIX_FMT_PISP_COMP2_BGGR:
+		case V4L2_PIX_FMT_PISP_COMP2_MONO: descr = "PiSP Bayer Comp 2"; break;
 		default:
 			if (fmt->description[0])
 				return;
@@ -1537,22 +1540,6 @@ static void v4l_fill_fmtdesc(struct v4l2_fmtdesc *fmt)
 			snprintf(fmt->description, sz, "%p4cc",
 				 &fmt->pixelformat);
 			break;
-		}
-	}
-
-	if (fmt->type == V4L2_BUF_TYPE_META_CAPTURE) {
-		switch (fmt->pixelformat) {
-		case V4L2_META_FMT_GENERIC_8:
-		case V4L2_META_FMT_GENERIC_CSI2_10:
-		case V4L2_META_FMT_GENERIC_CSI2_12:
-		case V4L2_META_FMT_GENERIC_CSI2_14:
-		case V4L2_META_FMT_GENERIC_CSI2_16:
-		case V4L2_META_FMT_GENERIC_CSI2_20:
-		case V4L2_META_FMT_GENERIC_CSI2_24:
-			fmt->flags |= V4L2_FMT_FLAG_META_LINE_BASED;
-			break;
-		default:
-			fmt->flags &= ~V4L2_FMT_FLAG_META_LINE_BASED;
 		}
 	}
 
@@ -2126,7 +2113,6 @@ static int v4l_overlay(const struct v4l2_ioctl_ops *ops,
 static int v4l_reqbufs(const struct v4l2_ioctl_ops *ops,
 				struct file *file, void *fh, void *arg)
 {
-	struct video_device *vfd = video_devdata(file);
 	struct v4l2_requestbuffers *p = arg;
 	int ret = check_fmt(file, p->type);
 
@@ -2134,10 +2120,6 @@ static int v4l_reqbufs(const struct v4l2_ioctl_ops *ops,
 		return ret;
 
 	memset_after(p, 0, flags);
-
-	p->capabilities = 0;
-	if (is_valid_ioctl(vfd, VIDIOC_REMOVE_BUFS))
-		p->capabilities = V4L2_BUF_CAP_SUPPORTS_REMOVE_BUFS;
 
 	return ops->vidioc_reqbufs(file, fh, p);
 }
@@ -2172,7 +2154,6 @@ static int v4l_dqbuf(const struct v4l2_ioctl_ops *ops,
 static int v4l_create_bufs(const struct v4l2_ioctl_ops *ops,
 				struct file *file, void *fh, void *arg)
 {
-	struct video_device *vfd = video_devdata(file);
 	struct v4l2_create_buffers *create = arg;
 	int ret = check_fmt(file, create->format.type);
 
@@ -2182,10 +2163,6 @@ static int v4l_create_bufs(const struct v4l2_ioctl_ops *ops,
 	memset_after(create, 0, flags);
 
 	v4l_sanitize_format(&create->format);
-
-	create->capabilities = 0;
-	if (is_valid_ioctl(vfd, VIDIOC_REMOVE_BUFS))
-		create->capabilities = V4L2_BUF_CAP_SUPPORTS_REMOVE_BUFS;
 
 	ret = ops->vidioc_create_bufs(file, fh, create);
 
@@ -2203,17 +2180,6 @@ static int v4l_prepare_buf(const struct v4l2_ioctl_ops *ops,
 	int ret = check_fmt(file, b->type);
 
 	return ret ? ret : ops->vidioc_prepare_buf(file, fh, b);
-}
-
-static int v4l_remove_bufs(const struct v4l2_ioctl_ops *ops,
-			   struct file *file, void *fh, void *arg)
-{
-	struct v4l2_remove_buffers *remove = arg;
-
-	if (ops->vidioc_remove_bufs)
-		return ops->vidioc_remove_bufs(file, fh, remove);
-
-	return -ENOTTY;
 }
 
 static int v4l_g_parm(const struct v4l2_ioctl_ops *ops,
@@ -2965,7 +2931,6 @@ static const struct v4l2_ioctl_info v4l2_ioctls[] = {
 	IOCTL_INFO(VIDIOC_ENUM_FREQ_BANDS, v4l_enum_freq_bands, v4l_print_freq_band, 0),
 	IOCTL_INFO(VIDIOC_DBG_G_CHIP_INFO, v4l_dbg_g_chip_info, v4l_print_dbg_chip_info, INFO_FL_CLEAR(v4l2_dbg_chip_info, match)),
 	IOCTL_INFO(VIDIOC_QUERY_EXT_CTRL, v4l_query_ext_ctrl, v4l_print_query_ext_ctrl, INFO_FL_CTRL | INFO_FL_CLEAR(v4l2_query_ext_ctrl, id)),
-	IOCTL_INFO(VIDIOC_REMOVE_BUFS, v4l_remove_bufs, v4l_print_remove_buffers, INFO_FL_PRIO | INFO_FL_QUEUE | INFO_FL_CLEAR(v4l2_remove_buffers, type)),
 };
 #define V4L2_IOCTLS ARRAY_SIZE(v4l2_ioctls)
 
@@ -3007,7 +2972,7 @@ void v4l_printk_ioctl(const char *prefix, unsigned int cmd)
 		type = "v4l2_int";
 		break;
 	case 'V':
-		if (!v4l2_is_known_ioctl(cmd)) {
+		if (_IOC_NR(cmd) >= V4L2_IOCTLS) {
 			type = "v4l2";
 			break;
 		}
@@ -3084,7 +3049,7 @@ static long __video_do_ioctl(struct file *file,
 	if (v4l2_is_known_ioctl(cmd)) {
 		info = &v4l2_ioctls[_IOC_NR(cmd)];
 
-		if (!is_valid_ioctl(vfd, cmd) &&
+		if (!test_bit(_IOC_NR(cmd), vfd->valid_ioctls) &&
 		    !((info->flags & INFO_FL_CTRL) && vfh && vfh->ctrl_handler))
 			goto done;
 
@@ -3203,13 +3168,13 @@ static int check_array_args(unsigned int cmd, void *parg, size_t *array_size,
 	case VIDIOC_SUBDEV_S_ROUTING: {
 		struct v4l2_subdev_routing *routing = parg;
 
-		if (routing->len_routes > 256)
+		if (routing->num_routes > 256)
 			return -E2BIG;
 
 		*user_ptr = u64_to_user_ptr(routing->routes);
 		*kernel_ptr = (void **)&routing->routes;
 		*array_size = sizeof(struct v4l2_subdev_route)
-			    * routing->len_routes;
+			    * routing->num_routes;
 		ret = 1;
 		break;
 	}
@@ -3463,14 +3428,11 @@ video_usercopy(struct file *file, unsigned int orig_cmd, unsigned long arg,
 	 * FIXME: subdev IOCTLS are partially handled here and partially in
 	 * v4l2-subdev.c and the 'always_copy' flag can only be set for IOCTLS
 	 * defined here as part of the 'v4l2_ioctls' array. As
-	 * VIDIOC_SUBDEV_[GS]_ROUTING needs to return results to applications
-	 * even in case of failure, but it is not defined here as part of the
+	 * VIDIOC_SUBDEV_G_ROUTING needs to return results to applications even
+	 * in case of failure, but it is not defined here as part of the
 	 * 'v4l2_ioctls' array, insert an ad-hoc check to address that.
 	 */
-	if (cmd == VIDIOC_SUBDEV_G_ROUTING || cmd == VIDIOC_SUBDEV_S_ROUTING)
-		always_copy = true;
-
-	if (err < 0 && !always_copy)
+	if (err < 0 && !always_copy && cmd != VIDIOC_SUBDEV_G_ROUTING)
 		goto out;
 
 	if (has_array_args) {
