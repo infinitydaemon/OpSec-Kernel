@@ -19,7 +19,7 @@ if __name__ == '__main__':
     me = CWD_OpSec()
 ```
 
-CWD SYSTEMS ZerOS
+CWD SYSTEMS Linux
 =================
 
 Linux Kernel that was tuned and built as Brooklyn Supreme is now OpSec Kernel used in CWD & 0KN Appliances. Numerous optimizations and tweaks have been applied for high availability and network wide security on a packaged build which is shipped on CWD and 0KN appliances. Each appliance has its own different kernel and NOT a generic OpSec release due to the fact that each appliance has a different purpose. The build instructions for SBC vary when compared to official kernel.org build instructions. Follow the steps to build the OpSec Kernel for your SBC on Debian based distros. If a menu driven config is required, you will need ncurses-development headers.
@@ -83,4 +83,13 @@ In order to build the documentation, use ``make htmldocs`` or
 
     https://www.kernel.org/doc/html/latest/
 
-CWD SYSTEMS does not provide support for Kernel builds. Refer to kernel.org forums for generic build instructions and help.
+We are dedicated to pushing the boundaries of innovation with our projects. If you appreciate our work and want to support our Research & Development efforts, consider making a donation. Your contributions help us continue our mission and achieve greater milestones.  
+
+### Crypto Donations
+
+- **Litecoin (LTC)**: `LfrJzpybM8ZRTFcd8HYfH4NXFtPKpr5Dpg`  
+- **Bitcoin (BTC)**: `13zp3jdZ5utX5vmZaZiDyJtam8daS4uBpC`  
+- **Ethereum (ERC20)**: `0x822803b26e4c235658085341aa113555d35e0b4c`  
+- **Dogecoin (DOGE)**: `DJTRkmhwhG7W8t7WvAddZBnNkKWML6nHqJ`  
+
+Thank you for your generosity and support!
