@@ -5,7 +5,6 @@
 
 GITHUB_API_URL="https://api.github.com/repos/infinitydaemon/OpSec-Kernel/releases/latest"
 USER_AGENT="curl/7.77.0"
-CURRENT_VERSION="your_current_version_here"
 
 # Function to fetch latest release data from GitHub API
 fetch_latest_release() {
@@ -25,8 +24,14 @@ if [[ $? -ne 0 ]]; then
 fi
 
 latest_version=$(echo "$data" | get_latest_version)
-if [[ "$latest_version" > "$CURRENT_VERSION" ]]; then
+
+# Get current kernel version
+current_version=$(uname -r)
+
+# Compare versions and output result
+if [[ "$latest_version" > "$current_version" ]]; then
     echo "An update is available! Latest version: $latest_version"
 else
-    echo "No updates available."
+    echo "No updates available. Current version: $current_version"
 fi
+
