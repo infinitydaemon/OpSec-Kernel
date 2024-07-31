@@ -50,34 +50,6 @@ After the built kernel is installed, just reboot
 sudo reboot
 ```
 
-In the first line, put kernel=NAME.img. Where NAME is the name of the kernel you specified from CONFIG_LOCALVERSION. The easiest way to find out the full name of kernel is by doing a "ls -l" under /boot directory.
-
-*Cross-Compiling the Kernel*
-
-This method is only required if you are not building the OpSec Kernel natively on your SBC. To build the sources for cross-compilation, make sure you have the dependencies needed on your machine by executing:
-
-``` sudo apt install git bc bison flex libssl-dev make libc6-dev libncurses5-dev ```
-
-Install the 64-bit Toolchain for a 64-bit Kernel
-
-``` sudo apt install crossbuild-essential-arm64 ```
-
-An example cross-compile as a 64bit build : 
-
-```bash
-KERNEL=kernel8
-make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- 
-make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image modules dtbs
-sudo env PATH=$PATH make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- INSTALL_MOD_PATH=mnt/ext4 modules_install
-sudo cp mnt/fat32/$KERNEL.img mnt/fat32/$KERNEL-backup.img
-sudo cp arch/arm64/boot/Image mnt/fat32/$KERNEL.img
-sudo cp arch/arm64/boot/dts/broadcom/*.dtb mnt/fat32/
-sudo cp arch/arm64/boot/dts/overlays/*.dtb* mnt/fat32/overlays/
-sudo cp arch/arm64/boot/dts/overlays/README mnt/fat32/overlays/
-sudo umount mnt/fat32
-sudo umount mnt/ext4
-
-```
 In order to build the documentation, use ``make htmldocs`` or
 ``make pdfdocs``.  The formatted documentation can also be read online at:
 
