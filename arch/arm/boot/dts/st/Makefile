@@ -23,11 +23,13 @@ dtb-$(CONFIG_ARCH_STM32) += \
 	stm32f469-disco.dtb \
 	stm32f746-disco.dtb \
 	stm32f769-disco.dtb \
+	stm32f769-disco-mb1166-reva09.dtb \
 	stm32429i-eval.dtb \
 	stm32746g-eval.dtb \
 	stm32h743i-eval.dtb \
 	stm32h743i-disco.dtb \
 	stm32h750i-art-pi.dtb \
+	stm32mp135f-dhcor-dhsbc.dtb \
 	stm32mp135f-dk.dtb \
 	stm32mp151a-prtt1a.dtb \
 	stm32mp151a-prtt1c.dtb \
@@ -59,6 +61,7 @@ dtb-$(CONFIG_ARCH_STM32) += \
 	stm32mp157c-lxa-tac-gen1.dtb \
 	stm32mp157c-lxa-tac-gen2.dtb \
 	stm32mp157c-odyssey.dtb \
+	stm32mp157c-osd32mp1-red.dtb \
 	stm32mp157c-phycore-stm32mp1-3.dtb
 dtb-$(CONFIG_ARCH_U8500) += \
 	ste-snowball.dtb \

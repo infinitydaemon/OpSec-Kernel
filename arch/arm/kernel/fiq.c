@@ -57,8 +57,6 @@
 static unsigned long dfl_fiq_insn;
 static struct pt_regs dfl_fiq_regs;
 
-extern int irq_activate(struct irq_desc *desc);
-
 /* Default reacquire function
  * - we always relinquish FIQ control
  * - we always reacquire FIQ control
@@ -143,8 +141,6 @@ static int fiq_start;
 
 void enable_fiq(int fiq)
 {
-	struct irq_desc *desc = irq_to_desc(fiq + fiq_start);
-	irq_activate(desc);
 	enable_irq(fiq + fiq_start);
 }
 
