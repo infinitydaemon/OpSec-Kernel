@@ -4,6 +4,7 @@
 
 #include <linux/types.h>
 #include <linux/i2c.h>
+#include <linux/vesa.h>
 
 /* Definitions of frame buffers						*/
 
@@ -35,12 +36,6 @@
 #define FBIOPUT_MODEINFO        0x4617
 #define FBIOGET_DISPINFO        0x4618
 #define FBIO_WAITFORVSYNC	_IOW('F', 0x20, __u32)
-/*
- * HACK: use 'z' in order not to clash with any other ioctl numbers which might
- * be concurrently added to the mainline kernel
- */
-#define FBIOCOPYAREA		_IOW('z', 0x21, struct fb_copyarea)
-#define FBIODMACOPY 		_IOW('z', 0x22, struct fb_dmacopy)
 
 #define FB_TYPE_PACKED_PIXELS		0	/* Packed Pixels	*/
 #define FB_TYPE_PLANES			1	/* Non interleaved planes */
@@ -299,13 +294,6 @@ struct fb_con2fbmap {
 	__u32 framebuffer;
 };
 
-/* VESA Blanking Levels */
-#define VESA_NO_BLANKING        0
-#define VESA_VSYNC_SUSPEND      1
-#define VESA_HSYNC_SUSPEND      2
-#define VESA_POWERDOWN          3
-
-
 enum {
 	/* screen: unblanked, hsync: on,  vsync: on */
 	FB_BLANK_UNBLANK       = VESA_NO_BLANKING,
@@ -352,12 +340,6 @@ struct fb_copyarea {
 	__u32 height;
 	__u32 sx;
 	__u32 sy;
-};
-
-struct fb_dmacopy {
-	void *dst;
-	__u32 src;
-	__u32 length;
 };
 
 struct fb_fillrect {

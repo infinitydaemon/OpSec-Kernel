@@ -173,7 +173,7 @@ struct cec_adap_ops {
  *			case the transmit will finish, but will not retransmit
  *			and be marked as ABORTED.
  * @xfer_timeout_ms:	the transfer timeout in ms.
- *			If 0, then timeout after 2.1 ms.
+ *			If 0, then timeout after 2100 ms.
  * @kthread_config:	kthread used to configure a CEC adapter
  * @config_completion:	used to signal completion of the config kthread
  * @kthread:		main CEC processing thread
@@ -187,6 +187,7 @@ struct cec_adap_ops {
  *	in order to transmit or receive CEC messages. This is usually a HW
  *	limitation.
  * @is_enabled:		the CEC adapter is enabled
+ * @is_claiming_log_addrs:  true if cec_claim_log_addrs() is running
  * @is_configuring:	the CEC adapter is configuring (i.e. claiming LAs)
  * @must_reconfigure:	while configuring, the PA changed, so reclaim LAs
  * @is_configured:	the CEC adapter is configured (i.e. has claimed LAs)
@@ -207,12 +208,23 @@ struct cec_adap_ops {
  *	passthrough mode.
  * @log_addrs:		current logical addresses
  * @conn_info:		current connector info
- * @tx_timeouts:	number of transmit timeouts
+ * @tx_timeout_cnt:	count the number of Timed Out transmits.
+ *			Reset to 0 when this is reported in cec_adap_status().
+ * @tx_low_drive_cnt:	count the number of Low Drive transmits.
+ *			Reset to 0 when this is reported in cec_adap_status().
+ * @tx_error_cnt:	count the number of Error transmits.
+ *			Reset to 0 when this is reported in cec_adap_status().
+ * @tx_arb_lost_cnt:	count the number of Arb Lost transmits.
+ *			Reset to 0 when this is reported in cec_adap_status().
+ * @tx_low_drive_log_cnt: number of logged Low Drive transmits since the
+ *			adapter was enabled. Used to avoid flooding the kernel
+ *			log if this happens a lot.
+ * @tx_error_log_cnt:	number of logged Error transmits since the adapter was
+ *                      enabled. Used to avoid flooding the kernel log if this
+ *                      happens a lot.
  * @notifier:		CEC notifier
  * @pin:		CEC pin status struct
  * @cec_dir:		debugfs cec directory
- * @status_file:	debugfs cec status file
- * @error_inj_file:	debugfs cec error injection file
  * @sequence:		transmit sequence counter
  * @input_phys:		remote control input_phys name
  *
@@ -263,7 +275,12 @@ struct cec_adapter {
 	struct cec_log_addrs log_addrs;
 	struct cec_connector_info conn_info;
 
-	u32 tx_timeouts;
+	u32 tx_timeout_cnt;
+	u32 tx_low_drive_cnt;
+	u32 tx_error_cnt;
+	u32 tx_arb_lost_cnt;
+	u32 tx_low_drive_log_cnt;
+	u32 tx_error_log_cnt;
 
 #ifdef CONFIG_CEC_NOTIFIER
 	struct cec_notifier *notifier;
@@ -276,7 +293,7 @@ struct cec_adapter {
 
 	u32 sequence;
 
-	char input_phys[32];
+	char input_phys[40];
 };
 
 static inline void *cec_get_drvdata(const struct cec_adapter *adap)
