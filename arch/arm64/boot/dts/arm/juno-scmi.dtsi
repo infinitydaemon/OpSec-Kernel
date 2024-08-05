@@ -76,27 +76,27 @@
 	};
 
 	thermal-zones {
-		pmic-thermal {
+		pmic {
 			thermal-sensors = <&scmi_sensors0 0>;
 		};
 
-		soc-thermal {
+		soc {
 			thermal-sensors = <&scmi_sensors0 3>;
 		};
 
-		big-cl-thermal {
+		big-cluster {
 			thermal-sensors = <&scmi_sensors0 21>;
 		};
 
-		little-cl-thermal {
+		little-cluster {
 			thermal-sensors = <&scmi_sensors0 22>;
 		};
 
-		gpu0-thermal {
+		gpu0 {
 			thermal-sensors = <&scmi_sensors0 23>;
 		};
 
-		gpu1-thermal {
+		gpu1 {
 			thermal-sensors = <&scmi_sensors0 24>;
 		};
 	};

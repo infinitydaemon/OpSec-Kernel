@@ -301,8 +301,9 @@ static bool is_vgic_v2_sgi(struct kvm_vcpu *vcpu, struct vgic_irq *irq)
 		vcpu->kvm->arch.vgic.vgic_model == KVM_DEV_TYPE_ARM_VGIC_V2);
 }
 
-static void __set_pending(struct kvm_vcpu *vcpu, gpa_t addr, unsigned int len,
-			  unsigned long val, bool is_user)
+void vgic_mmio_write_spending(struct kvm_vcpu *vcpu,
+			      gpa_t addr, unsigned int len,
+			      unsigned long val)
 {
 	u32 intid = VGIC_ADDR_TO_INTID(addr, 1);
 	int i;
@@ -311,21 +312,13 @@ static void __set_pending(struct kvm_vcpu *vcpu, gpa_t addr, unsigned int len,
 	for_each_set_bit(i, &val, len * 8) {
 		struct vgic_irq *irq = vgic_get_irq(vcpu->kvm, vcpu, intid + i);
 
-		/* GICD_ISPENDR0 SGI bits are WI when written from the guest. */
-		if (is_vgic_v2_sgi(vcpu, irq) && !is_user) {
+		/* GICD_ISPENDR0 SGI bits are WI */
+		if (is_vgic_v2_sgi(vcpu, irq)) {
 			vgic_put_irq(vcpu->kvm, irq);
 			continue;
 		}
 
 		raw_spin_lock_irqsave(&irq->irq_lock, flags);
-
-		/*
-		 * GICv2 SGIs are terribly broken. We can't restore
-		 * the source of the interrupt, so just pick the vcpu
-		 * itself as the source...
-		 */
-		if (is_vgic_v2_sgi(vcpu, irq))
-			irq->source |= BIT(vcpu->vcpu_id);
 
 		if (irq->hw && vgic_irq_is_sgi(irq->intid)) {
 			/* HW SGI? Ask the GIC to inject it */
@@ -342,7 +335,7 @@ static void __set_pending(struct kvm_vcpu *vcpu, gpa_t addr, unsigned int len,
 		}
 
 		irq->pending_latch = true;
-		if (irq->hw && !is_user)
+		if (irq->hw)
 			vgic_irq_set_phys_active(irq, true);
 
 		vgic_queue_irq_unlock(vcpu->kvm, irq, flags);
@@ -350,18 +343,33 @@ static void __set_pending(struct kvm_vcpu *vcpu, gpa_t addr, unsigned int len,
 	}
 }
 
-void vgic_mmio_write_spending(struct kvm_vcpu *vcpu,
-			      gpa_t addr, unsigned int len,
-			      unsigned long val)
-{
-	__set_pending(vcpu, addr, len, val, false);
-}
-
 int vgic_uaccess_write_spending(struct kvm_vcpu *vcpu,
 				gpa_t addr, unsigned int len,
 				unsigned long val)
 {
-	__set_pending(vcpu, addr, len, val, true);
+	u32 intid = VGIC_ADDR_TO_INTID(addr, 1);
+	int i;
+	unsigned long flags;
+
+	for_each_set_bit(i, &val, len * 8) {
+		struct vgic_irq *irq = vgic_get_irq(vcpu->kvm, vcpu, intid + i);
+
+		raw_spin_lock_irqsave(&irq->irq_lock, flags);
+		irq->pending_latch = true;
+
+		/*
+		 * GICv2 SGIs are terribly broken. We can't restore
+		 * the source of the interrupt, so just pick the vcpu
+		 * itself as the source...
+		 */
+		if (is_vgic_v2_sgi(vcpu, irq))
+			irq->source |= BIT(vcpu->vcpu_id);
+
+		vgic_queue_irq_unlock(vcpu->kvm, irq, flags);
+
+		vgic_put_irq(vcpu->kvm, irq);
+	}
+
 	return 0;
 }
 
@@ -386,9 +394,9 @@ static void vgic_hw_irq_cpending(struct kvm_vcpu *vcpu, struct vgic_irq *irq)
 		vgic_irq_set_phys_active(irq, false);
 }
 
-static void __clear_pending(struct kvm_vcpu *vcpu,
-			    gpa_t addr, unsigned int len,
-			    unsigned long val, bool is_user)
+void vgic_mmio_write_cpending(struct kvm_vcpu *vcpu,
+			      gpa_t addr, unsigned int len,
+			      unsigned long val)
 {
 	u32 intid = VGIC_ADDR_TO_INTID(addr, 1);
 	int i;
@@ -397,21 +405,13 @@ static void __clear_pending(struct kvm_vcpu *vcpu,
 	for_each_set_bit(i, &val, len * 8) {
 		struct vgic_irq *irq = vgic_get_irq(vcpu->kvm, vcpu, intid + i);
 
-		/* GICD_ICPENDR0 SGI bits are WI when written from the guest. */
-		if (is_vgic_v2_sgi(vcpu, irq) && !is_user) {
+		/* GICD_ICPENDR0 SGI bits are WI */
+		if (is_vgic_v2_sgi(vcpu, irq)) {
 			vgic_put_irq(vcpu->kvm, irq);
 			continue;
 		}
 
 		raw_spin_lock_irqsave(&irq->irq_lock, flags);
-
-		/*
-		 * More fun with GICv2 SGIs! If we're clearing one of them
-		 * from userspace, which source vcpu to clear? Let's not
-		 * even think of it, and blow the whole set.
-		 */
-		if (is_vgic_v2_sgi(vcpu, irq))
-			irq->source = 0;
 
 		if (irq->hw && vgic_irq_is_sgi(irq->intid)) {
 			/* HW SGI? Ask the GIC to clear its pending bit */
@@ -427,7 +427,7 @@ static void __clear_pending(struct kvm_vcpu *vcpu,
 			continue;
 		}
 
-		if (irq->hw && !is_user)
+		if (irq->hw)
 			vgic_hw_irq_cpending(vcpu, irq);
 		else
 			irq->pending_latch = false;
@@ -437,18 +437,33 @@ static void __clear_pending(struct kvm_vcpu *vcpu,
 	}
 }
 
-void vgic_mmio_write_cpending(struct kvm_vcpu *vcpu,
-			      gpa_t addr, unsigned int len,
-			      unsigned long val)
-{
-	__clear_pending(vcpu, addr, len, val, false);
-}
-
 int vgic_uaccess_write_cpending(struct kvm_vcpu *vcpu,
 				gpa_t addr, unsigned int len,
 				unsigned long val)
 {
-	__clear_pending(vcpu, addr, len, val, true);
+	u32 intid = VGIC_ADDR_TO_INTID(addr, 1);
+	int i;
+	unsigned long flags;
+
+	for_each_set_bit(i, &val, len * 8) {
+		struct vgic_irq *irq = vgic_get_irq(vcpu->kvm, vcpu, intid + i);
+
+		raw_spin_lock_irqsave(&irq->irq_lock, flags);
+		/*
+		 * More fun with GICv2 SGIs! If we're clearing one of them
+		 * from userspace, which source vcpu to clear? Let's not
+		 * even think of it, and blow the whole set.
+		 */
+		if (is_vgic_v2_sgi(vcpu, irq))
+			irq->source = 0;
+
+		irq->pending_latch = false;
+
+		raw_spin_unlock_irqrestore(&irq->irq_lock, flags);
+
+		vgic_put_irq(vcpu->kvm, irq);
+	}
+
 	return 0;
 }
 

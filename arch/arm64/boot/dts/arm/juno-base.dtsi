@@ -663,6 +663,7 @@
 		dma-coherent;
 		/* The SMMU is only really of interest to bare-metal hypervisors */
 		/* iommus = <&smmu_gpu 0>; */
+		status = "disabled";
 	};
 
 	sram: sram@2e000000 {
@@ -746,7 +747,7 @@
 	};
 
 	thermal-zones {
-		pmic-thermal {
+		pmic {
 			polling-delay = <1000>;
 			polling-delay-passive = <100>;
 			thermal-sensors = <&scpi_sensors0 0>;
@@ -759,7 +760,7 @@
 			};
 		};
 
-		soc-thermal {
+		soc {
 			polling-delay = <1000>;
 			polling-delay-passive = <100>;
 			thermal-sensors = <&scpi_sensors0 3>;
@@ -772,28 +773,28 @@
 			};
 		};
 
-		big_cluster_thermal_zone: big-cl-thermal {
+		big_cluster_thermal_zone: big-cluster {
 			polling-delay = <1000>;
 			polling-delay-passive = <100>;
 			thermal-sensors = <&scpi_sensors0 21>;
 			status = "disabled";
 		};
 
-		little_cluster_thermal_zone: little-cl-thermal {
+		little_cluster_thermal_zone: little-cluster {
 			polling-delay = <1000>;
 			polling-delay-passive = <100>;
 			thermal-sensors = <&scpi_sensors0 22>;
 			status = "disabled";
 		};
 
-		gpu0_thermal_zone: gpu0-thermal {
+		gpu0_thermal_zone: gpu0 {
 			polling-delay = <1000>;
 			polling-delay-passive = <100>;
 			thermal-sensors = <&scpi_sensors0 23>;
 			status = "disabled";
 		};
 
-		gpu1_thermal_zone: gpu1-thermal {
+		gpu1_thermal_zone: gpu1 {
 			polling-delay = <1000>;
 			polling-delay-passive = <100>;
 			thermal-sensors = <&scpi_sensors0 24>;

@@ -14,23 +14,69 @@
 
 #include <asm/archrandom.h>
 #include <asm/memory.h>
-#include <asm/pgtable.h>
 
-#include "pi.h"
-
-extern u16 memstart_offset_seed;
-
-static u64 __init get_kaslr_seed(void *fdt, int node)
+/* taken from lib/string.c */
+static char *__strstr(const char *s1, const char *s2)
 {
-	static char const seed_str[] __initconst = "kaslr-seed";
+	size_t l1, l2;
+
+	l2 = strlen(s2);
+	if (!l2)
+		return (char *)s1;
+	l1 = strlen(s1);
+	while (l1 >= l2) {
+		l1--;
+		if (!memcmp(s1, s2, l2))
+			return (char *)s1;
+		s1++;
+	}
+	return NULL;
+}
+static bool cmdline_contains_nokaslr(const u8 *cmdline)
+{
+	const u8 *str;
+
+	str = __strstr(cmdline, "nokaslr");
+	return str == cmdline || (str > cmdline && *(str - 1) == ' ');
+}
+
+static bool is_kaslr_disabled_cmdline(void *fdt)
+{
+	if (!IS_ENABLED(CONFIG_CMDLINE_FORCE)) {
+		int node;
+		const u8 *prop;
+
+		node = fdt_path_offset(fdt, "/chosen");
+		if (node < 0)
+			goto out;
+
+		prop = fdt_getprop(fdt, node, "bootargs", NULL);
+		if (!prop)
+			goto out;
+
+		if (cmdline_contains_nokaslr(prop))
+			return true;
+
+		if (IS_ENABLED(CONFIG_CMDLINE_EXTEND))
+			goto out;
+
+		return false;
+	}
+out:
+	return cmdline_contains_nokaslr(CONFIG_CMDLINE);
+}
+
+static u64 get_kaslr_seed(void *fdt)
+{
+	int node, len;
 	fdt64_t *prop;
 	u64 ret;
-	int len;
 
+	node = fdt_path_offset(fdt, "/chosen");
 	if (node < 0)
 		return 0;
 
-	prop = fdt_getprop_w(fdt, node, seed_str, &len);
+	prop = fdt_getprop_w(fdt, node, "kaslr-seed", &len);
 	if (!prop || len != sizeof(u64))
 		return 0;
 
@@ -39,28 +85,26 @@ static u64 __init get_kaslr_seed(void *fdt, int node)
 	return ret;
 }
 
-u64 __init kaslr_early_init(void *fdt, int chosen)
+asmlinkage u64 kaslr_early_init(void *fdt)
 {
-	u64 seed, range;
+	u64 seed;
 
-	if (kaslr_disabled_cmdline())
+	if (is_kaslr_disabled_cmdline(fdt))
 		return 0;
 
-	seed = get_kaslr_seed(fdt, chosen);
+	seed = get_kaslr_seed(fdt);
 	if (!seed) {
 		if (!__early_cpu_has_rndr() ||
 		    !__arm64_rndr((unsigned long *)&seed))
 			return 0;
 	}
 
-	memstart_offset_seed = seed & U16_MAX;
-
 	/*
 	 * OK, so we are proceeding with KASLR enabled. Calculate a suitable
 	 * kernel image offset from the seed. Let's place the kernel in the
-	 * 'middle' half of the VMALLOC area, and stay clear of the lower and
-	 * upper quarters to avoid colliding with other allocations.
+	 * middle half of the VMALLOC area (VA_BITS_MIN - 2), and stay clear of
+	 * the lower and upper quarters to avoid colliding with other
+	 * allocations.
 	 */
-	range = (VMALLOC_END - KIMAGE_VADDR) / 2;
-	return range / 2 + (((__uint128_t)range * seed) >> 64);
+	return BIT(VA_BITS_MIN - 3) + (seed & GENMASK(VA_BITS_MIN - 3, 0));
 }

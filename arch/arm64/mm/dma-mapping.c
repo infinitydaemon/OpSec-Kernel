@@ -7,6 +7,7 @@
 #include <linux/gfp.h>
 #include <linux/cache.h>
 #include <linux/dma-map-ops.h>
+#include <linux/iommu.h>
 #include <xen/xen.h>
 
 #include <asm/cacheflush.h>
@@ -38,7 +39,15 @@ void arch_dma_prep_coherent(struct page *page, size_t size)
 	dcache_clean_poc(start, start + size);
 }
 
-void arch_setup_dma_ops(struct device *dev, bool coherent)
+#ifdef CONFIG_IOMMU_DMA
+void arch_teardown_dma_ops(struct device *dev)
+{
+	dev->dma_ops = NULL;
+}
+#endif
+
+void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
+			const struct iommu_ops *iommu, bool coherent)
 {
 	int cls = cache_line_size_of_cpu();
 
@@ -49,6 +58,8 @@ void arch_setup_dma_ops(struct device *dev, bool coherent)
 		   ARCH_DMA_MINALIGN, cls);
 
 	dev->dma_coherent = coherent;
+	if (iommu)
+		iommu_setup_dma_ops(dev, dma_base, dma_base + size - 1);
 
 	xen_setup_dma_ops(dev);
 }

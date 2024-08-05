@@ -52,8 +52,10 @@ struct insn_emulation {
 	int min;
 	int max;
 
-	/* sysctl for this emulation */
-	struct ctl_table sysctl;
+	/*
+	 * sysctl for this emulation + a sentinal entry.
+	 */
+	struct ctl_table sysctl[2];
 };
 
 #define ARM_OPCODE_CONDTEST_FAIL   0
@@ -507,7 +509,7 @@ static int update_insn_emulation_mode(struct insn_emulation *insn,
 	return ret;
 }
 
-static int emulation_proc_handler(const struct ctl_table *table, int write,
+static int emulation_proc_handler(struct ctl_table *table, int write,
 				  void *buffer, size_t *lenp,
 				  loff_t *ppos)
 {
@@ -540,9 +542,14 @@ static void __init register_insn_emulation(struct insn_emulation *insn)
 
 	switch (insn->status) {
 	case INSN_DEPRECATED:
+#if 0
 		insn->current_mode = INSN_EMULATE;
 		/* Disable the HW mode if it was turned on at early boot time */
 		run_all_cpu_set_hw_mode(insn, false);
+#else
+		insn->current_mode = INSN_HW;
+		run_all_cpu_set_hw_mode(insn, true);
+#endif
 		insn->max = INSN_HW;
 		break;
 	case INSN_OBSOLETE:
@@ -559,7 +566,7 @@ static void __init register_insn_emulation(struct insn_emulation *insn)
 	update_insn_emulation_mode(insn, INSN_UNDEF);
 
 	if (insn->status != INSN_UNAVAILABLE) {
-		sysctl = &insn->sysctl;
+		sysctl = &insn->sysctl[0];
 
 		sysctl->mode = 0644;
 		sysctl->maxlen = sizeof(int);
