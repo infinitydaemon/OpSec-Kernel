@@ -132,6 +132,8 @@
 #define HCLK_VDPU		472
 #define HCLK_HDMI		473
 
+#define CLK_NR_CLKS		(HCLK_HDMI + 1)
+
 /* soft-reset indices */
 #define SRST_MCORE		2
 #define SRST_CORE0		3

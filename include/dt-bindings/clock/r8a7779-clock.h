@@ -57,4 +57,5 @@
 #define R8A7779_CLK_MMC1	30
 #define R8A7779_CLK_MMC0	31
 
+
 #endif /* __DT_BINDINGS_CLOCK_R8A7779_H__ */

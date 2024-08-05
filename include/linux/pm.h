@@ -662,8 +662,8 @@ struct pm_subsys_data {
 
 struct dev_pm_info {
 	pm_message_t		power_state;
-	bool			can_wakeup:1;
-	bool			async_suspend:1;
+	unsigned int		can_wakeup:1;
+	unsigned int		async_suspend:1;
 	bool			in_dpm_list:1;	/* Owned by the PM core */
 	bool			is_prepared:1;	/* Owned by the PM core */
 	bool			is_suspended:1;	/* Ditto */
@@ -681,11 +681,10 @@ struct dev_pm_info {
 	bool			wakeup_path:1;
 	bool			syscore:1;
 	bool			no_pm_callbacks:1;	/* Owned by the PM core */
-	bool			async_in_progress:1;	/* Owned by the PM core */
-	bool			must_resume:1;		/* Owned by the PM core */
-	bool			may_skip_resume:1;	/* Set by subsystems */
+	unsigned int		must_resume:1;	/* Owned by the PM core */
+	unsigned int		may_skip_resume:1;	/* Set by subsystems */
 #else
-	bool			should_wakeup:1;
+	unsigned int		should_wakeup:1;
 #endif
 #ifdef CONFIG_PM
 	struct hrtimer		suspend_timer;
@@ -696,17 +695,17 @@ struct dev_pm_info {
 	atomic_t		usage_count;
 	atomic_t		child_count;
 	unsigned int		disable_depth:3;
-	bool			idle_notification:1;
-	bool			request_pending:1;
-	bool			deferred_resume:1;
-	bool			needs_force_resume:1;
-	bool			runtime_auto:1;
+	unsigned int		idle_notification:1;
+	unsigned int		request_pending:1;
+	unsigned int		deferred_resume:1;
+	unsigned int		needs_force_resume:1;
+	unsigned int		runtime_auto:1;
 	bool			ignore_children:1;
-	bool			no_callbacks:1;
-	bool			irq_safe:1;
-	bool			use_autosuspend:1;
-	bool			timer_autosuspends:1;
-	bool			memalloc_noio:1;
+	unsigned int		no_callbacks:1;
+	unsigned int		irq_safe:1;
+	unsigned int		use_autosuspend:1;
+	unsigned int		timer_autosuspends:1;
+	unsigned int		memalloc_noio:1;
 	unsigned int		links_count;
 	enum rpm_request	request;
 	enum rpm_status		runtime_status;
@@ -735,7 +734,6 @@ extern void dev_pm_put_subsys_data(struct device *dev);
  * @activate: Called before executing probe routines for bus types and drivers.
  * @sync: Called after successful driver probe.
  * @dismiss: Called after unsuccessful driver probe and after driver removal.
- * @set_performance_state: Called to request a new performance state.
  *
  * Power domains provide callbacks that are executed during system suspend,
  * hibernation, system resume and during runtime PM transitions instead of
@@ -748,7 +746,6 @@ struct dev_pm_domain {
 	int (*activate)(struct device *dev);
 	void (*sync)(struct device *dev);
 	void (*dismiss)(struct device *dev);
-	int (*set_performance_state)(struct device *dev, unsigned int state);
 };
 
 /*
