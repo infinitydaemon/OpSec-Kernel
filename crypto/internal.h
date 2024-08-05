@@ -66,8 +66,7 @@ extern struct blocking_notifier_head crypto_chain;
 
 int alg_test(const char *driver, const char *alg, u32 type, u32 mask);
 
-#if !IS_BUILTIN(CONFIG_CRYPTO_ALGAPI) || \
-    IS_ENABLED(CONFIG_CRYPTO_MANAGER_DISABLE_TESTS)
+#ifdef CONFIG_CRYPTO_MANAGER_DISABLE_TESTS
 static inline bool crypto_boot_test_finished(void)
 {
 	return true;
@@ -85,9 +84,7 @@ static inline void set_crypto_boot_test_finished(void)
 {
 	static_branch_enable(&__crypto_boot_test_finished);
 }
-#endif /* !IS_BUILTIN(CONFIG_CRYPTO_ALGAPI) ||
-	* IS_ENABLED(CONFIG_CRYPTO_MANAGER_DISABLE_TESTS)
-	*/
+#endif /* !CONFIG_CRYPTO_MANAGER_DISABLE_TESTS */
 
 #ifdef CONFIG_PROC_FS
 void __init crypto_init_proc(void);
