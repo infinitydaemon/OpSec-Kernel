@@ -69,7 +69,6 @@
  *
  *  - tlb_remove_page() / __tlb_remove_page()
  *  - tlb_remove_page_size() / __tlb_remove_page_size()
- *  - __tlb_remove_folio_pages()
  *
  *    __tlb_remove_page_size() is the basic primitive that queues a page for
  *    freeing. __tlb_remove_page() assumes PAGE_SIZE. Both will return a
@@ -78,11 +77,6 @@
  *
  *    tlb_remove_page() and tlb_remove_page_size() imply the call to
  *    tlb_flush_mmu() when required and has no return value.
- *
- *    __tlb_remove_folio_pages() is similar to __tlb_remove_page(), however,
- *    instead of removing a single page, remove the given number of consecutive
- *    pages that are all part of the same (large) folio: just like calling
- *    __tlb_remove_page() on each page individually.
  *
  *  - tlb_change_page_size()
  *
@@ -266,10 +260,9 @@ struct mmu_gather_batch {
  */
 #define MAX_GATHER_BATCH_COUNT	(10000UL/MAX_GATHER_BATCH)
 
-extern bool __tlb_remove_page_size(struct mmu_gather *tlb, struct page *page,
-		bool delay_rmap, int page_size);
-bool __tlb_remove_folio_pages(struct mmu_gather *tlb, struct page *page,
-		unsigned int nr_pages, bool delay_rmap);
+extern bool __tlb_remove_page_size(struct mmu_gather *tlb,
+				   struct encoded_page *page,
+				   int page_size);
 
 #ifdef CONFIG_SMP
 /*
@@ -469,14 +462,13 @@ static inline void tlb_flush_mmu_tlbonly(struct mmu_gather *tlb)
 static inline void tlb_remove_page_size(struct mmu_gather *tlb,
 					struct page *page, int page_size)
 {
-	if (__tlb_remove_page_size(tlb, page, false, page_size))
+	if (__tlb_remove_page_size(tlb, encode_page(page, 0), page_size))
 		tlb_flush_mmu(tlb);
 }
 
-static __always_inline bool __tlb_remove_page(struct mmu_gather *tlb,
-		struct page *page, bool delay_rmap)
+static __always_inline bool __tlb_remove_page(struct mmu_gather *tlb, struct page *page, unsigned int flags)
 {
-	return __tlb_remove_page_size(tlb, page, delay_rmap, PAGE_SIZE);
+	return __tlb_remove_page_size(tlb, encode_page(page, flags), PAGE_SIZE);
 }
 
 /* tlb_remove_page
@@ -600,9 +592,7 @@ static inline void tlb_flush_p4d_range(struct mmu_gather *tlb,
 }
 
 #ifndef __tlb_remove_tlb_entry
-static inline void __tlb_remove_tlb_entry(struct mmu_gather *tlb, pte_t *ptep, unsigned long address)
-{
-}
+#define __tlb_remove_tlb_entry(tlb, ptep, address) do { } while (0)
 #endif
 
 /**
@@ -617,26 +607,6 @@ static inline void __tlb_remove_tlb_entry(struct mmu_gather *tlb, pte_t *ptep, u
 		tlb_flush_pte_range(tlb, address, PAGE_SIZE);	\
 		__tlb_remove_tlb_entry(tlb, ptep, address);	\
 	} while (0)
-
-/**
- * tlb_remove_tlb_entries - remember unmapping of multiple consecutive ptes for
- *			    later tlb invalidation.
- *
- * Similar to tlb_remove_tlb_entry(), but remember unmapping of multiple
- * consecutive ptes instead of only a single one.
- */
-static inline void tlb_remove_tlb_entries(struct mmu_gather *tlb,
-		pte_t *ptep, unsigned int nr, unsigned long address)
-{
-	tlb_flush_pte_range(tlb, address, PAGE_SIZE * nr);
-	for (;;) {
-		__tlb_remove_tlb_entry(tlb, ptep, address);
-		if (--nr == 0)
-			break;
-		ptep++;
-		address += PAGE_SIZE;
-	}
-}
 
 #define tlb_remove_huge_tlb_entry(h, tlb, ptep, address)	\
 	do {							\

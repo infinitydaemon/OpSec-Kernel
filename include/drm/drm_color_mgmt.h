@@ -37,17 +37,20 @@ struct drm_plane;
  *
  * Extract a degamma/gamma LUT value provided by user (in the form of
  * &drm_color_lut entries) and round it to the precision supported by the
- * hardware, following OpenGL int<->float conversion rules
- * (see eg. OpenGL 4.6 specification - 2.3.5 Fixed-Point Data Conversions).
+ * hardware.
  */
 static inline u32 drm_color_lut_extract(u32 user_input, int bit_precision)
 {
-	if (bit_precision > 16)
-		return DIV_ROUND_CLOSEST_ULL(mul_u32_u32(user_input, (1 << bit_precision) - 1),
-					     (1 << 16) - 1);
-	else
-		return DIV_ROUND_CLOSEST(user_input * ((1 << bit_precision) - 1),
-					 (1 << 16) - 1);
+	u32 val = user_input;
+	u32 max = 0xffff >> (16 - bit_precision);
+
+	/* Round only if we're not using full precision. */
+	if (bit_precision < 16) {
+		val += 1UL << (16 - bit_precision - 1);
+		val >>= 16 - bit_precision;
+	}
+
+	return clamp_val(val, 0, max);
 }
 
 u64 drm_color_ctm_s31_32_to_qm_n(u64 user_input, u32 m, u32 n);
@@ -90,6 +93,9 @@ int drm_plane_create_color_properties(struct drm_plane *plane,
 				      u32 supported_ranges,
 				      enum drm_color_encoding default_encoding,
 				      enum drm_color_range default_range);
+
+int drm_plane_create_chroma_siting_properties(struct drm_plane *plane,
+						int32_t default_chroma_siting_h, int32_t default_chroma_siting_v);
 
 /**
  * enum drm_color_lut_tests - hw-specific LUT tests to perform
