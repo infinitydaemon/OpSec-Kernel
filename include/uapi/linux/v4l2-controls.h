@@ -203,17 +203,9 @@ enum v4l2_colorfx {
  */
 #define V4L2_CID_USER_ASPEED_BASE		(V4L2_CID_USER_BASE + 0x11a0)
 
-/*
- * The base for Nuvoton NPCM driver controls.
- * We reserve 16 controls for this driver.
- */
-#define V4L2_CID_USER_NPCM_BASE			(V4L2_CID_USER_BASE + 0x11b0)
-
-/*
- * The base for THine THP7312 driver controls.
- * We reserve 32 controls for this driver.
- */
-#define V4L2_CID_USER_THP7312_BASE		(V4L2_CID_USER_BASE + 0x11c0)
+/* The base for the bcm2835-isp driver controls.
+ * We reserve 16 controls for this driver. */
+#define V4L2_CID_USER_BCM2835_ISP_BASE		(V4L2_CID_USER_BASE + 0x10e0)
 
 /* MPEG-class control IDs */
 /* The MPEG controls are applicable to all codec controls
@@ -898,8 +890,6 @@ enum v4l2_mpeg_video_av1_level {
 	V4L2_MPEG_VIDEO_AV1_LEVEL_7_3 = 23
 };
 
-#define V4L2_CID_MPEG_VIDEO_AVERAGE_QP  (V4L2_CID_CODEC_BASE + 657)
-
 /*  MPEG-class control IDs specific to the CX2341x driver as defined by V4L2 */
 #define V4L2_CID_CODEC_CX2341X_BASE				(V4L2_CTRL_CLASS_CODEC | 0x1000)
 #define V4L2_CID_MPEG_CX2341X_VIDEO_SPATIAL_FILTER_MODE		(V4L2_CID_CODEC_CX2341X_BASE+0)
@@ -1018,6 +1008,7 @@ enum v4l2_auto_n_preset_white_balance {
 	V4L2_WHITE_BALANCE_FLASH		= 7,
 	V4L2_WHITE_BALANCE_CLOUDY		= 8,
 	V4L2_WHITE_BALANCE_SHADE		= 9,
+	V4L2_WHITE_BALANCE_GREYWORLD		= 10,
 };
 
 #define V4L2_CID_WIDE_DYNAMIC_RANGE		(V4L2_CID_CAMERA_CLASS_BASE+21)
