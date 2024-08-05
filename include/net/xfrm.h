@@ -51,10 +51,8 @@
 
 #ifdef CONFIG_XFRM_STATISTICS
 #define XFRM_INC_STATS(net, field)	SNMP_INC_STATS((net)->mib.xfrm_statistics, field)
-#define XFRM_ADD_STATS(net, field, val) SNMP_ADD_STATS((net)->mib.xfrm_statistics, field, val)
 #else
 #define XFRM_INC_STATS(net, field)	((void)(net))
-#define XFRM_ADD_STATS(net, field, val) ((void)(net))
 #endif
 
 
@@ -232,10 +230,6 @@ struct xfrm_state {
 	struct xfrm_encap_tmpl	*encap;
 	struct sock __rcu	*encap_sk;
 
-	/* NAT keepalive */
-	u32			nat_keepalive_interval; /* seconds */
-	time64_t		nat_keepalive_expiration;
-
 	/* Data for care-of address */
 	xfrm_address_t	*coaddr;
 
@@ -298,7 +292,6 @@ struct xfrm_state {
 	/* Private data of this transformer, format is opaque,
 	 * interpreted by xfrm_type methods. */
 	void			*data;
-	u8			dir;
 };
 
 static inline struct net *xs_net(struct xfrm_state *x)
@@ -1220,20 +1213,20 @@ static inline int xfrm6_policy_check_reverse(struct sock *sk, int dir,
 	return __xfrm_policy_check2(sk, dir, skb, AF_INET6, 1);
 }
 
-int __xfrm_decode_session(struct net *net, struct sk_buff *skb, struct flowi *fl,
+int __xfrm_decode_session(struct sk_buff *skb, struct flowi *fl,
 			  unsigned int family, int reverse);
 
-static inline int xfrm_decode_session(struct net *net, struct sk_buff *skb, struct flowi *fl,
+static inline int xfrm_decode_session(struct sk_buff *skb, struct flowi *fl,
 				      unsigned int family)
 {
-	return __xfrm_decode_session(net, skb, fl, family, 0);
+	return __xfrm_decode_session(skb, fl, family, 0);
 }
 
-static inline int xfrm_decode_session_reverse(struct net *net, struct sk_buff *skb,
+static inline int xfrm_decode_session_reverse(struct sk_buff *skb,
 					      struct flowi *fl,
 					      unsigned int family)
 {
-	return __xfrm_decode_session(net, skb, fl, family, 1);
+	return __xfrm_decode_session(skb, fl, family, 1);
 }
 
 int __xfrm_route_forward(struct sk_buff *skb, unsigned short family);
@@ -1309,7 +1302,7 @@ static inline int xfrm_policy_check(struct sock *sk, int dir, struct sk_buff *sk
 {
 	return 1;
 }
-static inline int xfrm_decode_session_reverse(struct net *net, struct sk_buff *skb,
+static inline int xfrm_decode_session_reverse(struct sk_buff *skb,
 					      struct flowi *fl,
 					      unsigned int family)
 {
@@ -1590,20 +1583,22 @@ struct xfrm_state *xfrm_stateonly_find(struct net *net, u32 mark, u32 if_id,
 struct xfrm_state *xfrm_state_lookup_byspi(struct net *net, __be32 spi,
 					      unsigned short family);
 int xfrm_state_check_expire(struct xfrm_state *x);
-void xfrm_state_update_stats(struct net *net);
 #ifdef CONFIG_XFRM_OFFLOAD
-static inline void xfrm_dev_state_update_stats(struct xfrm_state *x)
+static inline void xfrm_dev_state_update_curlft(struct xfrm_state *x)
 {
 	struct xfrm_dev_offload *xdo = &x->xso;
 	struct net_device *dev = READ_ONCE(xdo->dev);
 
+	if (x->xso.type != XFRM_DEV_OFFLOAD_PACKET)
+		return;
+
 	if (dev && dev->xfrmdev_ops &&
-	    dev->xfrmdev_ops->xdo_dev_state_update_stats)
-		dev->xfrmdev_ops->xdo_dev_state_update_stats(x);
+	    dev->xfrmdev_ops->xdo_dev_state_update_curlft)
+		dev->xfrmdev_ops->xdo_dev_state_update_curlft(x);
 
 }
 #else
-static inline void xfrm_dev_state_update_stats(struct xfrm_state *x) {}
+static inline void xfrm_dev_state_update_curlft(struct xfrm_state *x) {}
 #endif
 void xfrm_state_insert(struct xfrm_state *x);
 int xfrm_state_add(struct xfrm_state *x);
@@ -1680,6 +1675,7 @@ int pktgen_xfrm_outer_mode_output(struct xfrm_state *x, struct sk_buff *skb);
 #endif
 
 void xfrm_local_error(struct sk_buff *skb, int mtu);
+int xfrm4_extract_input(struct xfrm_state *x, struct sk_buff *skb);
 int xfrm4_rcv_encap(struct sk_buff *skb, int nexthdr, __be32 spi,
 		    int encap_type);
 int xfrm4_transport_finish(struct sk_buff *skb, int async);
@@ -1699,6 +1695,7 @@ int xfrm4_protocol_deregister(struct xfrm4_protocol *handler, unsigned char prot
 int xfrm4_tunnel_register(struct xfrm_tunnel *handler, unsigned short family);
 int xfrm4_tunnel_deregister(struct xfrm_tunnel *handler, unsigned short family);
 void xfrm4_local_error(struct sk_buff *skb, u32 mtu);
+int xfrm6_extract_input(struct xfrm_state *x, struct sk_buff *skb);
 int xfrm6_rcv_spi(struct sk_buff *skb, int nexthdr, __be32 spi,
 		  struct ip6_tnl *t);
 int xfrm6_rcv_encap(struct sk_buff *skb, int nexthdr, __be32 spi,
@@ -1721,10 +1718,6 @@ int xfrm6_output(struct net *net, struct sock *sk, struct sk_buff *skb);
 void xfrm6_local_rxpmtu(struct sk_buff *skb, u32 mtu);
 int xfrm4_udp_encap_rcv(struct sock *sk, struct sk_buff *skb);
 int xfrm6_udp_encap_rcv(struct sock *sk, struct sk_buff *skb);
-struct sk_buff *xfrm4_gro_udp_encap_rcv(struct sock *sk, struct list_head *head,
-					struct sk_buff *skb);
-struct sk_buff *xfrm6_gro_udp_encap_rcv(struct sock *sk, struct list_head *head,
-					struct sk_buff *skb);
 int xfrm_user_policy(struct sock *sk, int optname, sockptr_t optval,
 		     int optlen);
 #else
@@ -2160,7 +2153,7 @@ static inline bool xfrm6_local_dontfrag(const struct sock *sk)
 
 	proto = sk->sk_protocol;
 	if (proto == IPPROTO_UDP || proto == IPPROTO_RAW)
-		return inet6_test_bit(DONTFRAG, sk);
+		return inet6_sk(sk)->dontfrag;
 
 	return false;
 }
@@ -2181,20 +2174,5 @@ static inline int register_xfrm_interface_bpf(void)
 }
 
 #endif
-
-#if IS_ENABLED(CONFIG_DEBUG_INFO_BTF)
-int register_xfrm_state_bpf(void);
-#else
-static inline int register_xfrm_state_bpf(void)
-{
-	return 0;
-}
-#endif
-
-int xfrm_nat_keepalive_init(unsigned short family);
-void xfrm_nat_keepalive_fini(unsigned short family);
-int xfrm_nat_keepalive_net_init(struct net *net);
-int xfrm_nat_keepalive_net_fini(struct net *net);
-void xfrm_nat_keepalive_state_updated(struct xfrm_state *x);
 
 #endif	/* _NET_XFRM_H */

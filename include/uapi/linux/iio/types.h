@@ -47,10 +47,6 @@ enum iio_chan_type {
 	IIO_POSITIONRELATIVE,
 	IIO_PHASE,
 	IIO_MASSCONCENTRATION,
-	IIO_DELTA_ANGL,
-	IIO_DELTA_VELOCITY,
-	IIO_COLORTEMP,
-	IIO_CHROMATICITY,
 };
 
 enum iio_modifier {
@@ -105,8 +101,6 @@ enum iio_modifier {
 	IIO_MOD_PITCH,
 	IIO_MOD_YAW,
 	IIO_MOD_ROLL,
-	IIO_MOD_LIGHT_UVA,
-	IIO_MOD_LIGHT_UVB,
 };
 
 enum iio_event_type {

@@ -83,7 +83,6 @@ struct netns_xfrm {
 
 	spinlock_t xfrm_policy_lock;
 	struct mutex xfrm_cfg_mutex;
-	struct delayed_work	nat_keepalive_work;
 };
 
 #endif

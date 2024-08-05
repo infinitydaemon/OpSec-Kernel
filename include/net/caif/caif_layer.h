@@ -11,7 +11,9 @@
 
 struct cflayer;
 struct cfpkt;
+struct cfpktq;
 struct caif_payload_info;
+struct caif_packet_funcs;
 
 #define CAIF_LAYER_NAME_SZ 16
 
