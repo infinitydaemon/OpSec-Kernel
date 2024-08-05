@@ -131,17 +131,22 @@ static inline void __kunmap_atomic(const void *addr)
 		preempt_enable();
 }
 
-unsigned long __nr_free_highpages(void);
-unsigned long __totalhigh_pages(void);
+unsigned int __nr_free_highpages(void);
+extern atomic_long_t _totalhigh_pages;
 
-static inline unsigned long nr_free_highpages(void)
+static inline unsigned int nr_free_highpages(void)
 {
 	return __nr_free_highpages();
 }
 
 static inline unsigned long totalhigh_pages(void)
 {
-	return __totalhigh_pages();
+	return (unsigned long)atomic_long_read(&_totalhigh_pages);
+}
+
+static inline void totalhigh_pages_add(long count)
+{
+	atomic_long_add(count, &_totalhigh_pages);
 }
 
 static inline bool is_kmap_addr(const void *x)
@@ -234,8 +239,8 @@ static inline void __kunmap_atomic(const void *addr)
 		preempt_enable();
 }
 
-static inline unsigned long nr_free_highpages(void) { return 0; }
-static inline unsigned long totalhigh_pages(void) { return 0; }
+static inline unsigned int nr_free_highpages(void) { return 0; }
+static inline unsigned long totalhigh_pages(void) { return 0UL; }
 
 static inline bool is_kmap_addr(const void *x)
 {

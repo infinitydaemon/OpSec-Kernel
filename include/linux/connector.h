@@ -100,7 +100,8 @@ void cn_del_callback(const struct cb_id *id);
  */
 int cn_netlink_send_mult(struct cn_msg *msg, u16 len, u32 portid,
 			 u32 group, gfp_t gfp_mask,
-			 netlink_filter_fn filter,
+			 int (*filter)(struct sock *dsk, struct sk_buff *skb,
+				       void *data),
 			 void *filter_data);
 
 /**

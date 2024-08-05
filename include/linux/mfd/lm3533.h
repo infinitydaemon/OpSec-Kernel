@@ -16,7 +16,6 @@
 	DEVICE_ATTR(_name, S_IRUGO | S_IWUSR , show_##_name, store_##_name)
 
 struct device;
-struct gpio_desc;
 struct regmap;
 
 struct lm3533 {
@@ -24,7 +23,7 @@ struct lm3533 {
 
 	struct regmap *regmap;
 
-	struct gpio_desc *hwen;
+	int gpio_hwen;
 	int irq;
 
 	unsigned have_als:1;
@@ -70,6 +69,8 @@ enum lm3533_boost_ovp {
 };
 
 struct lm3533_platform_data {
+	int gpio_hwen;
+
 	enum lm3533_boost_ovp boost_ovp;
 	enum lm3533_boost_freq boost_freq;
 

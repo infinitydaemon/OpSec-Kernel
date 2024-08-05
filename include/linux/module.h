@@ -174,12 +174,6 @@ extern void cleanup_module(void);
 #define MODULE_SOFTDEP(_softdep) MODULE_INFO(softdep, _softdep)
 
 /*
- * Weak module dependencies. See man modprobe.d for details.
- * Example: MODULE_WEAKDEP("module-foo")
- */
-#define MODULE_WEAKDEP(_weakdep) MODULE_INFO(weakdep, _weakdep)
-
-/*
  * MODULE_FILE is used for generating modules.builtin
  * So, make it no-op when this is being built as a module
  */
@@ -513,11 +507,9 @@ struct module {
 	unsigned int num_bpf_raw_events;
 	struct bpf_raw_event_map *bpf_raw_events;
 #endif
-#ifdef CONFIG_DEBUG_INFO_BTF_MODULES
+#if 1
 	unsigned int btf_data_size;
-	unsigned int btf_base_data_size;
 	void *btf_data;
-	void *btf_base_data;
 #endif
 #ifdef CONFIG_JUMP_LABEL
 	struct jump_entry *jump_entries;
@@ -548,8 +540,6 @@ struct module {
 	struct static_call_site *static_call_sites;
 #endif
 #if IS_ENABLED(CONFIG_KUNIT)
-	int num_kunit_init_suites;
-	struct kunit_suite **kunit_init_suites;
 	int num_kunit_suites;
 	struct kunit_suite **kunit_suites;
 #endif
@@ -611,11 +601,6 @@ static inline unsigned long kallsyms_symbol_value(const Elf_Sym *sym)
 static inline bool module_is_live(struct module *mod)
 {
 	return mod->state != MODULE_STATE_GOING;
-}
-
-static inline bool module_is_coming(struct module *mod)
-{
-        return mod->state == MODULE_STATE_COMING;
 }
 
 struct module *__module_text_address(unsigned long addr);
@@ -683,7 +668,7 @@ extern void __module_get(struct module *module);
  * @module: the module we should check for
  *
  * Only try to get a module reference count if the module is not being removed.
- * This call will fail if the module is in the process of being removed.
+ * This call will fail if the module is already being removed.
  *
  * Care must also be taken to ensure the module exists and is alive prior to
  * usage of this call. This can be gauranteed through two means:
@@ -870,10 +855,6 @@ void *dereference_module_function_descriptor(struct module *mod, void *ptr)
 	return ptr;
 }
 
-static inline bool module_is_coming(struct module *mod)
-{
-	return false;
-}
 #endif /* CONFIG_MODULES */
 
 #ifdef CONFIG_SYSFS
@@ -902,7 +883,7 @@ static inline void module_bug_finalize(const Elf_Ehdr *hdr,
 static inline void module_bug_cleanup(struct module *mod) {}
 #endif	/* CONFIG_GENERIC_BUG */
 
-#ifdef CONFIG_MITIGATION_RETPOLINE
+#ifdef CONFIG_RETPOLINE
 extern bool retpoline_module_ok(bool has_retpoline);
 #else
 static inline bool retpoline_module_ok(bool has_retpoline)
@@ -939,11 +920,11 @@ int module_kallsyms_on_each_symbol(const char *modname,
  * least KSYM_NAME_LEN long: a pointer to namebuf is returned if
  * found, otherwise NULL.
  */
-int module_address_lookup(unsigned long addr,
-			  unsigned long *symbolsize,
-			  unsigned long *offset,
-			  char **modname, const unsigned char **modbuildid,
-			  char *namebuf);
+const char *module_address_lookup(unsigned long addr,
+				  unsigned long *symbolsize,
+				  unsigned long *offset,
+				  char **modname, const unsigned char **modbuildid,
+				  char *namebuf);
 int lookup_module_symbol_name(unsigned long addr, char *symname);
 int lookup_module_symbol_attrs(unsigned long addr,
 			       unsigned long *size,
@@ -972,14 +953,14 @@ static inline int module_kallsyms_on_each_symbol(const char *modname,
 }
 
 /* For kallsyms to ask for address resolution.  NULL means not found. */
-static inline int module_address_lookup(unsigned long addr,
+static inline const char *module_address_lookup(unsigned long addr,
 						unsigned long *symbolsize,
 						unsigned long *offset,
 						char **modname,
 						const unsigned char **modbuildid,
 						char *namebuf)
 {
-	return 0;
+	return NULL;
 }
 
 static inline int lookup_module_symbol_name(unsigned long addr, char *symname)
