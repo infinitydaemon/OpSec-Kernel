@@ -15,6 +15,7 @@
 
 #include <linux/of.h>
 #include <linux/thermal.h>
+#include <linux/cpumask.h>
 
 struct cpufreq_policy;
 

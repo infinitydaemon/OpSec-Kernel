@@ -1352,7 +1352,6 @@ raw_atomic_long_xchg_relaxed(atomic_long_t *v, long new)
  * @new: long value to assign
  *
  * If (@v == @old), atomically updates @v to @new with full ordering.
- * Otherwise, @v is not modified and relaxed ordering is provided.
  *
  * Safe to use in noinstr code; prefer atomic_long_cmpxchg() elsewhere.
  *
@@ -1375,7 +1374,6 @@ raw_atomic_long_cmpxchg(atomic_long_t *v, long old, long new)
  * @new: long value to assign
  *
  * If (@v == @old), atomically updates @v to @new with acquire ordering.
- * Otherwise, @v is not modified and relaxed ordering is provided.
  *
  * Safe to use in noinstr code; prefer atomic_long_cmpxchg_acquire() elsewhere.
  *
@@ -1398,7 +1396,6 @@ raw_atomic_long_cmpxchg_acquire(atomic_long_t *v, long old, long new)
  * @new: long value to assign
  *
  * If (@v == @old), atomically updates @v to @new with release ordering.
- * Otherwise, @v is not modified and relaxed ordering is provided.
  *
  * Safe to use in noinstr code; prefer atomic_long_cmpxchg_release() elsewhere.
  *
@@ -1421,7 +1418,6 @@ raw_atomic_long_cmpxchg_release(atomic_long_t *v, long old, long new)
  * @new: long value to assign
  *
  * If (@v == @old), atomically updates @v to @new with relaxed ordering.
- * Otherwise, @v is not modified and relaxed ordering is provided.
  *
  * Safe to use in noinstr code; prefer atomic_long_cmpxchg_relaxed() elsewhere.
  *
@@ -1444,8 +1440,7 @@ raw_atomic_long_cmpxchg_relaxed(atomic_long_t *v, long old, long new)
  * @new: long value to assign
  *
  * If (@v == @old), atomically updates @v to @new with full ordering.
- * Otherwise, @v is not modified, @old is updated to the current value of @v,
- * and relaxed ordering is provided.
+ * Otherwise, updates @old to the current value of @v.
  *
  * Safe to use in noinstr code; prefer atomic_long_try_cmpxchg() elsewhere.
  *
@@ -1468,8 +1463,7 @@ raw_atomic_long_try_cmpxchg(atomic_long_t *v, long *old, long new)
  * @new: long value to assign
  *
  * If (@v == @old), atomically updates @v to @new with acquire ordering.
- * Otherwise, @v is not modified, @old is updated to the current value of @v,
- * and relaxed ordering is provided.
+ * Otherwise, updates @old to the current value of @v.
  *
  * Safe to use in noinstr code; prefer atomic_long_try_cmpxchg_acquire() elsewhere.
  *
@@ -1492,8 +1486,7 @@ raw_atomic_long_try_cmpxchg_acquire(atomic_long_t *v, long *old, long new)
  * @new: long value to assign
  *
  * If (@v == @old), atomically updates @v to @new with release ordering.
- * Otherwise, @v is not modified, @old is updated to the current value of @v,
- * and relaxed ordering is provided.
+ * Otherwise, updates @old to the current value of @v.
  *
  * Safe to use in noinstr code; prefer atomic_long_try_cmpxchg_release() elsewhere.
  *
@@ -1516,8 +1509,7 @@ raw_atomic_long_try_cmpxchg_release(atomic_long_t *v, long *old, long new)
  * @new: long value to assign
  *
  * If (@v == @old), atomically updates @v to @new with relaxed ordering.
- * Otherwise, @v is not modified, @old is updated to the current value of @v,
- * and relaxed ordering is provided.
+ * Otherwise, updates @old to the current value of @v.
  *
  * Safe to use in noinstr code; prefer atomic_long_try_cmpxchg_relaxed() elsewhere.
  *
@@ -1685,7 +1677,6 @@ raw_atomic_long_add_negative_relaxed(long i, atomic_long_t *v)
  * @u: long value to compare with
  *
  * If (@v != @u), atomically updates @v to (@v + @a) with full ordering.
- * Otherwise, @v is not modified and relaxed ordering is provided.
  *
  * Safe to use in noinstr code; prefer atomic_long_fetch_add_unless() elsewhere.
  *
@@ -1708,7 +1699,6 @@ raw_atomic_long_fetch_add_unless(atomic_long_t *v, long a, long u)
  * @u: long value to compare with
  *
  * If (@v != @u), atomically updates @v to (@v + @a) with full ordering.
- * Otherwise, @v is not modified and relaxed ordering is provided.
  *
  * Safe to use in noinstr code; prefer atomic_long_add_unless() elsewhere.
  *
@@ -1729,7 +1719,6 @@ raw_atomic_long_add_unless(atomic_long_t *v, long a, long u)
  * @v: pointer to atomic_long_t
  *
  * If (@v != 0), atomically updates @v to (@v + 1) with full ordering.
- * Otherwise, @v is not modified and relaxed ordering is provided.
  *
  * Safe to use in noinstr code; prefer atomic_long_inc_not_zero() elsewhere.
  *
@@ -1750,7 +1739,6 @@ raw_atomic_long_inc_not_zero(atomic_long_t *v)
  * @v: pointer to atomic_long_t
  *
  * If (@v >= 0), atomically updates @v to (@v + 1) with full ordering.
- * Otherwise, @v is not modified and relaxed ordering is provided.
  *
  * Safe to use in noinstr code; prefer atomic_long_inc_unless_negative() elsewhere.
  *
@@ -1771,7 +1759,6 @@ raw_atomic_long_inc_unless_negative(atomic_long_t *v)
  * @v: pointer to atomic_long_t
  *
  * If (@v <= 0), atomically updates @v to (@v - 1) with full ordering.
- * Otherwise, @v is not modified and relaxed ordering is provided.
  *
  * Safe to use in noinstr code; prefer atomic_long_dec_unless_positive() elsewhere.
  *
@@ -1792,7 +1779,6 @@ raw_atomic_long_dec_unless_positive(atomic_long_t *v)
  * @v: pointer to atomic_long_t
  *
  * If (@v > 0), atomically updates @v to (@v - 1) with full ordering.
- * Otherwise, @v is not modified and relaxed ordering is provided.
  *
  * Safe to use in noinstr code; prefer atomic_long_dec_if_positive() elsewhere.
  *
@@ -1809,4 +1795,4 @@ raw_atomic_long_dec_if_positive(atomic_long_t *v)
 }
 
 #endif /* _LINUX_ATOMIC_LONG_H */
-// eadf183c3600b8b92b91839dd3be6bcc560c752d
+// f8204cfa718c04a01e3c7a15257ac85bbef54c23

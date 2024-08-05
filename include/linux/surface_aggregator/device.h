@@ -193,6 +193,7 @@ struct ssam_device_driver {
 
 #ifdef CONFIG_SURFACE_AGGREGATOR_BUS
 
+extern struct bus_type ssam_bus_type;
 extern const struct device_type ssam_device_type;
 
 /**

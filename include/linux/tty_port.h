@@ -114,8 +114,8 @@ struct tty_port {
 	unsigned char		console:1;
 	struct mutex		mutex;
 	struct mutex		buf_mutex;
-	u8			*xmit_buf;
-	DECLARE_KFIFO_PTR(xmit_fifo, u8);
+	unsigned char		*xmit_buf;
+	DECLARE_KFIFO_PTR(xmit_fifo, unsigned char);
 	unsigned int		close_delay;
 	unsigned int		closing_wait;
 	int			drain_delay;
@@ -149,10 +149,10 @@ struct device *tty_port_register_device_attr(struct tty_port *port,
 		const struct attribute_group **attr_grp);
 struct device *tty_port_register_device_serdev(struct tty_port *port,
 		struct tty_driver *driver, unsigned index,
-		struct device *host, struct device *parent);
+		struct device *device);
 struct device *tty_port_register_device_attr_serdev(struct tty_port *port,
 		struct tty_driver *driver, unsigned index,
-		struct device *host, struct device *parent, void *drvdata,
+		struct device *device, void *drvdata,
 		const struct attribute_group **attr_grp);
 void tty_port_unregister_device(struct tty_port *port,
 		struct tty_driver *driver, unsigned index);

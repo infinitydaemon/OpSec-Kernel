@@ -2,7 +2,10 @@
 #ifndef _LINUX_OF_DEVICE_H
 #define _LINUX_OF_DEVICE_H
 
-#include <linux/device/driver.h>
+#include <linux/platform_device.h>
+#include <linux/of_platform.h> /* temporary until merge */
+
+#include <linux/of.h>
 
 struct device;
 struct of_device_id;
@@ -37,9 +40,6 @@ static inline int of_dma_configure(struct device *dev,
 {
 	return of_dma_configure_id(dev, np, force_dma, NULL);
 }
-
-void of_device_make_bus_id(struct device *dev);
-
 #else /* CONFIG_OF */
 
 static inline int of_driver_match_device(struct device *dev,
@@ -82,9 +82,6 @@ static inline int of_dma_configure(struct device *dev,
 {
 	return 0;
 }
-
-static inline void of_device_make_bus_id(struct device *dev) {}
-
 #endif /* CONFIG_OF */
 
 #endif /* _LINUX_OF_DEVICE_H */
