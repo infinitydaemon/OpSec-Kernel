@@ -12,7 +12,6 @@
 #include <asm/smp_plat.h>
 #include <asm/suspend.h>
 #include <asm/tlbflush.h>
-#include <asm/uaccess.h>
 
 extern int __cpu_suspend(unsigned long, int (*)(unsigned long), u32 cpuid);
 extern void cpu_resume_mmu(void);
@@ -26,13 +25,6 @@ int cpu_suspend(unsigned long arg, int (*fn)(unsigned long))
 
 	if (!idmap_pgd)
 		return -EINVAL;
-
-	/*
-	 * Needed for the MMU disabling/enabing code to be able to run from
-	 * TTBR0 addresses.
-	 */
-	if (IS_ENABLED(CONFIG_CPU_TTBR0_PAN))
-		uaccess_save_and_enable();
 
 	/*
 	 * Function graph tracer state gets incosistent when the kernel

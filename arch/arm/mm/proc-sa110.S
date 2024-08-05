@@ -12,7 +12,6 @@
  */
 #include <linux/linkage.h>
 #include <linux/init.h>
-#include <linux/cfi_types.h>
 #include <linux/pgtable.h>
 #include <asm/assembler.h>
 #include <asm/asm-offsets.h>
@@ -33,16 +32,15 @@
 /*
  * cpu_sa110_proc_init()
  */
-SYM_TYPED_FUNC_START(cpu_sa110_proc_init)
+ENTRY(cpu_sa110_proc_init)
 	mov	r0, #0
 	mcr	p15, 0, r0, c15, c1, 2		@ Enable clock switching
 	ret	lr
-SYM_FUNC_END(cpu_sa110_proc_init)
 
 /*
  * cpu_sa110_proc_fin()
  */
-SYM_TYPED_FUNC_START(cpu_sa110_proc_fin)
+ENTRY(cpu_sa110_proc_fin)
 	mov	r0, #0
 	mcr	p15, 0, r0, c15, c2, 2		@ Disable clock switching
 	mrc	p15, 0, r0, c1, c0, 0		@ ctrl register
@@ -50,7 +48,6 @@ SYM_TYPED_FUNC_START(cpu_sa110_proc_fin)
 	bic	r0, r0, #0x000e			@ ............wca.
 	mcr	p15, 0, r0, c1, c0, 0		@ disable caches
 	ret	lr
-SYM_FUNC_END(cpu_sa110_proc_fin)
 
 /*
  * cpu_sa110_reset(loc)
@@ -63,7 +60,7 @@ SYM_FUNC_END(cpu_sa110_proc_fin)
  */
 	.align	5
 	.pushsection	.idmap.text, "ax"
-SYM_TYPED_FUNC_START(cpu_sa110_reset)
+ENTRY(cpu_sa110_reset)
 	mov	ip, #0
 	mcr	p15, 0, ip, c7, c7, 0		@ invalidate I,D caches
 	mcr	p15, 0, ip, c7, c10, 4		@ drain WB
@@ -75,7 +72,7 @@ SYM_TYPED_FUNC_START(cpu_sa110_reset)
 	bic	ip, ip, #0x1100			@ ...i...s........
 	mcr	p15, 0, ip, c1, c0, 0		@ ctrl register
 	ret	r0
-SYM_FUNC_END(cpu_sa110_reset)
+ENDPROC(cpu_sa110_reset)
 	.popsection
 
 /*
@@ -91,7 +88,7 @@ SYM_FUNC_END(cpu_sa110_reset)
  */
 	.align	5
 
-SYM_TYPED_FUNC_START(cpu_sa110_do_idle)
+ENTRY(cpu_sa110_do_idle)
 	mcr	p15, 0, ip, c15, c2, 2		@ disable clock switching
 	ldr	r1, =UNCACHEABLE_ADDR		@ load from uncacheable loc
 	ldr	r1, [r1, #0]			@ force switch to MCLK
@@ -104,7 +101,6 @@ SYM_TYPED_FUNC_START(cpu_sa110_do_idle)
 	mov	r0, r0				@ safety
 	mcr	p15, 0, r0, c15, c1, 2		@ enable clock switching
 	ret	lr
-SYM_FUNC_END(cpu_sa110_do_idle)
 
 /* ================================= CACHE ================================ */
 
@@ -117,13 +113,12 @@ SYM_FUNC_END(cpu_sa110_do_idle)
  * addr: cache-unaligned virtual address
  */
 	.align	5
-SYM_TYPED_FUNC_START(cpu_sa110_dcache_clean_area)
+ENTRY(cpu_sa110_dcache_clean_area)
 1:	mcr	p15, 0, r0, c7, c10, 1		@ clean D entry
 	add	r0, r0, #DCACHELINESIZE
 	subs	r1, r1, #DCACHELINESIZE
 	bhi	1b
 	ret	lr
-SYM_FUNC_END(cpu_sa110_dcache_clean_area)
 
 /* =============================== PageTable ============================== */
 
@@ -135,7 +130,7 @@ SYM_FUNC_END(cpu_sa110_dcache_clean_area)
  * pgd: new page tables
  */
 	.align	5
-SYM_TYPED_FUNC_START(cpu_sa110_switch_mm)
+ENTRY(cpu_sa110_switch_mm)
 #ifdef CONFIG_MMU
 	str	lr, [sp, #-4]!
 	bl	v4wb_flush_kern_cache_all	@ clears IP
@@ -145,7 +140,6 @@ SYM_TYPED_FUNC_START(cpu_sa110_switch_mm)
 #else
 	ret	lr
 #endif
-SYM_FUNC_END(cpu_sa110_switch_mm)
 
 /*
  * cpu_sa110_set_pte_ext(ptep, pte, ext)
@@ -153,7 +147,7 @@ SYM_FUNC_END(cpu_sa110_switch_mm)
  * Set a PTE and flush it out
  */
 	.align	5
-SYM_TYPED_FUNC_START(cpu_sa110_set_pte_ext)
+ENTRY(cpu_sa110_set_pte_ext)
 #ifdef CONFIG_MMU
 	armv3_set_pte_ext wc_disable=0
 	mov	r0, r0
@@ -161,7 +155,6 @@ SYM_TYPED_FUNC_START(cpu_sa110_set_pte_ext)
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 #endif
 	ret	lr
-SYM_FUNC_END(cpu_sa110_set_pte_ext)
 
 	.type	__sa110_setup, #function
 __sa110_setup:

@@ -14,10 +14,6 @@
 #include <dt-bindings/input/input.h>
 
 / {
-	aliases {
-		mmc0 = &usdhc2;
-		mmc1 = &usdhc3;
-	};
 
 	chosen {
 		stdout-path = &uart1;
@@ -131,7 +127,7 @@
 		compatible = "ricoh,rc5t619";
 		reg = <0x32>;
 		interrupt-parent = <&gpio5>;
-		interrupts = <11 IRQ_TYPE_LEVEL_LOW>;
+		interrupts = <11 IRQ_TYPE_EDGE_FALLING>;
 		system-power-controller;
 
 		regulators {

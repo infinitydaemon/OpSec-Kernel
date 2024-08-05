@@ -54,7 +54,7 @@
 	};
 
 	/* Also used for the Smart Card Interface SCI */
-	impd1_uartclk: clock-uart {
+	impd1_uartclk: clock@1_4 {
 		compatible = "fixed-factor-clock";
 		#clock-cells = <0>;
 		clock-div = <4>;
@@ -64,7 +64,7 @@
 	};
 
 	/* For the SSP the clock is divided by 64 */
-	impd1_sspclk: clock-ssp {
+	impd1_sspclk: clock@1_64 {
 		compatible = "fixed-factor-clock";
 		#clock-cells = <0>;
 		clock-div = <64>;
@@ -129,6 +129,8 @@
 
 	bridge {
 		compatible = "ti,ths8134b", "ti,ths8134";
+		#address-cells = <1>;
+		#size-cells = <0>;
 
 		ports {
 			#address-cells = <1>;
@@ -152,7 +154,6 @@
 
 	vga {
 		compatible = "vga-connector";
-		label = "J30";
 
 		port {
 			vga_con_in: endpoint {

@@ -29,25 +29,25 @@
 		pinctrl-0 = <&pmx_buttons>;
 		pinctrl-names = "default";
 
-		button-power {
+		power {
 			label = "Power Button";
 			linux,code = <KEY_POWER>;
 			gpios = <&gpio1 16 GPIO_ACTIVE_HIGH>;
 		};
 
-		button-reset {
+		reset {
 			label = "Reset Button";
 			linux,code = <KEY_RESTART>;
 			gpios = <&gpio1 17 GPIO_ACTIVE_LOW>;
 		};
 
-		button-usb1 {
+		usb1 {
 			label = "USB1 Button";
 			linux,code = <BTN_0>;
 			gpios = <&gpio0 28 GPIO_ACTIVE_LOW>;
 		};
 
-		button-usb2 {
+		usb2 {
 			label = "USB2 Button";
 			linux,code = <BTN_1>;
 			gpios = <&gpio0 29 GPIO_ACTIVE_LOW>;

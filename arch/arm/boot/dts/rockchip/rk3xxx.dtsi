@@ -16,10 +16,6 @@
 
 	aliases {
 		ethernet0 = &emac;
-		gpio0 = &gpio0;
-		gpio1 = &gpio1;
-		gpio2 = &gpio2;
-		gpio3 = &gpio3;
 		i2c0 = &i2c0;
 		i2c1 = &i2c1;
 		i2c2 = &i2c2;
@@ -194,14 +190,17 @@
 	};
 
 	emac: ethernet@10204000 {
-		compatible = "rockchip,rk3066-emac";
+		compatible = "snps,arc-emac";
 		reg = <0x10204000 0x3c>;
 		interrupts = <GIC_SPI 19 IRQ_TYPE_LEVEL_HIGH>;
+
+		rockchip,grf = <&grf>;
+
 		clocks = <&cru HCLK_EMAC>, <&cru SCLK_MAC>;
 		clock-names = "hclk", "macref";
 		max-speed = <100>;
 		phy-mode = "rmii";
-		rockchip,grf = <&grf>;
+
 		status = "disabled";
 	};
 

@@ -85,7 +85,7 @@
 		};
 	};
 
-	panel_dpi: panel {
+	panel {
 		compatible = "sii,43wvf1g";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_display_power>;

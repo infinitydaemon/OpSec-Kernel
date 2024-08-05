@@ -142,39 +142,39 @@
 			     &pmx_led_hdd1_green &pmx_led_hdd1_red>;
 		pinctrl-names = "default";
 
-		led-green-sys {
+		green-sys {
 			label = "nsa320:green:sys";
 			gpios = <&gpio0 28 GPIO_ACTIVE_HIGH>;
 		};
-		led-orange-sys {
+		orange-sys {
 			label = "nsa320:orange:sys";
 			gpios = <&gpio0 29 GPIO_ACTIVE_HIGH>;
 		};
-		led-green-hdd1 {
+		green-hdd1 {
 			label = "nsa320:green:hdd1";
 			gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
 		};
-		led-red-hdd1 {
+		red-hdd1 {
 			label = "nsa320:red:hdd1";
 			gpios = <&gpio1 10 GPIO_ACTIVE_HIGH>;
 		};
-		led-green-hdd2 {
+		green-hdd2 {
 			label = "nsa320:green:hdd2";
 			gpios = <&gpio0 12 GPIO_ACTIVE_HIGH>;
 		};
-		led-red-hdd2 {
+		red-hdd2 {
 			label = "nsa320:red:hdd2";
 			gpios = <&gpio0 13 GPIO_ACTIVE_HIGH>;
 		};
-		led-green-usb {
+		green-usb {
 			label = "nsa320:green:usb";
 			gpios = <&gpio0 15 GPIO_ACTIVE_HIGH>;
 		};
-		led-green-copy {
+		green-copy {
 			label = "nsa320:green:copy";
 			gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>;
 		};
-		led-red-copy {
+		red-copy {
 			label = "nsa320:red:copy";
 			gpios = <&gpio1 8 GPIO_ACTIVE_HIGH>;
 		};

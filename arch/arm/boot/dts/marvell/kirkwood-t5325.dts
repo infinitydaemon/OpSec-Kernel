@@ -156,10 +156,12 @@
 
 	gpio_keys {
 		compatible = "gpio-keys";
+		#address-cells = <1>;
+		#size-cells = <0>;
 		pinctrl-0 = <&pmx_button_power>;
 		pinctrl-names = "default";
 
-		button-power {
+		power {
 			label = "Power Button";
 			linux,code = <KEY_POWER>;
 			gpios = <&gpio1 13 GPIO_ACTIVE_HIGH>;

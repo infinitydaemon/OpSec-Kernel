@@ -97,52 +97,52 @@
 	leds {
 		compatible = "gpio-leds";
 
-		led-status-green {
+		status_green {
 			label = "l-50:green:status";
 			gpios = <&gpio1 6 GPIO_ACTIVE_LOW>;
 		};
 
-		led-status-red {
+		status_red {
 			label = "l-50:red:status";
 			gpios = <&gpio3 2 GPIO_ACTIVE_LOW>;
 		};
 
-		led-wifi {
+		wifi {
 			label = "l-50:green:wifi";
 			gpios = <&gpio2 7 GPIO_ACTIVE_LOW>;
 			linux,default-trigger = "phy0tpt";
 		};
 
-		led-internet-green {
+		internet_green {
 			label = "l-50:green:internet";
 			gpios = <&gpio2 3 GPIO_ACTIVE_LOW>;
 		};
 
-		led-internet-red {
+		internet_red {
 			label = "l-50:red:internet";
 			gpios = <&gpio2 1 GPIO_ACTIVE_LOW>;
 		};
 
-		led-usb1-green {
+		usb1_green {
 			label = "l-50:green:usb1";
 			gpios = <&gpio2 0 GPIO_ACTIVE_LOW>;
 			linux,default-trigger = "usbport";
 			trigger-sources = <&hub_port3>;
 		};
 
-		led-usb1-red {
+		usb1_red {
 			label = "l-50:red:usb1";
 			gpios = <&gpio2 4 GPIO_ACTIVE_LOW>;
 		};
 
-		led-usb2-green {
+		usb2_green {
 			label = "l-50:green:usb2";
 			gpios = <&gpio2 2 GPIO_ACTIVE_LOW>;
 			linux,default-trigger = "usbport";
 			trigger-sources = <&hub_port1>;
 		};
 
-		led-usb2-red {
+		usb2_red {
 			label = "l-50:red:usb2";
 			gpios = <&gpio2 5 GPIO_ACTIVE_LOW>;
 		};
@@ -193,7 +193,7 @@
 	keys {
 		compatible = "gpio-keys";
 
-		button-factory-defaults {
+		factory_defaults {
 			label = "factory_defaults";
 			gpios = <&gpio0 29 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_RESTART>;

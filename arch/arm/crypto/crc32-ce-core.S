@@ -48,7 +48,6 @@
  */
 
 #include <linux/linkage.h>
-#include <linux/cfi_types.h>
 #include <asm/assembler.h>
 
 	.text
@@ -124,12 +123,11 @@
 	 * uint crc32_pmull_le(unsigned char const *buffer,
 	 *                     size_t len, uint crc32)
 	 */
-SYM_FUNC_START(crc32_pmull_le)
+ENTRY(crc32_pmull_le)
 	adr		r3, .Lcrc32_constants
 	b		0f
-SYM_FUNC_END(crc32_pmull_le)
 
-SYM_FUNC_START(crc32c_pmull_le)
+ENTRY(crc32c_pmull_le)
 	adr		r3, .Lcrc32c_constants
 
 0:	bic		LEN, LEN, #15
@@ -238,7 +236,8 @@ fold_64:
 	vmov		r0, s5
 
 	bx		lr
-SYM_FUNC_END(crc32c_pmull_le)
+ENDPROC(crc32_pmull_le)
+ENDPROC(crc32c_pmull_le)
 
 	.macro		__crc32, c
 	subs		ip, r2, #8
@@ -297,11 +296,11 @@ ARM_BE8(rev16		r3, r3		)
 	.endm
 
 	.align		5
-SYM_TYPED_FUNC_START(crc32_armv8_le)
+ENTRY(crc32_armv8_le)
 	__crc32
-SYM_FUNC_END(crc32_armv8_le)
+ENDPROC(crc32_armv8_le)
 
 	.align		5
-SYM_TYPED_FUNC_START(crc32c_armv8_le)
+ENTRY(crc32c_armv8_le)
 	__crc32		c
-SYM_FUNC_END(crc32c_armv8_le)
+ENDPROC(crc32c_armv8_le)

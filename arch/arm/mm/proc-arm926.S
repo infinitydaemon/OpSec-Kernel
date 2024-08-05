@@ -13,7 +13,6 @@
  */
 #include <linux/linkage.h>
 #include <linux/init.h>
-#include <linux/cfi_types.h>
 #include <linux/pgtable.h>
 #include <asm/assembler.h>
 #include <asm/hwcap.h>
@@ -41,20 +40,18 @@
 /*
  * cpu_arm926_proc_init()
  */
-SYM_TYPED_FUNC_START(cpu_arm926_proc_init)
+ENTRY(cpu_arm926_proc_init)
 	ret	lr
-SYM_FUNC_END(cpu_arm926_proc_init)
 
 /*
  * cpu_arm926_proc_fin()
  */
-SYM_TYPED_FUNC_START(cpu_arm926_proc_fin)
+ENTRY(cpu_arm926_proc_fin)
 	mrc	p15, 0, r0, c1, c0, 0		@ ctrl register
 	bic	r0, r0, #0x1000			@ ...i............
 	bic	r0, r0, #0x000e			@ ............wca.
 	mcr	p15, 0, r0, c1, c0, 0		@ disable caches
 	ret	lr
-SYM_FUNC_END(cpu_arm926_proc_fin)
 
 /*
  * cpu_arm926_reset(loc)
@@ -67,7 +64,7 @@ SYM_FUNC_END(cpu_arm926_proc_fin)
  */
 	.align	5
 	.pushsection	.idmap.text, "ax"
-SYM_TYPED_FUNC_START(cpu_arm926_reset)
+ENTRY(cpu_arm926_reset)
 	mov	ip, #0
 	mcr	p15, 0, ip, c7, c7, 0		@ invalidate I,D caches
 	mcr	p15, 0, ip, c7, c10, 4		@ drain WB
@@ -79,7 +76,7 @@ SYM_TYPED_FUNC_START(cpu_arm926_reset)
 	bic	ip, ip, #0x1100			@ ...i...s........
 	mcr	p15, 0, ip, c1, c0, 0		@ ctrl register
 	ret	r0
-SYM_FUNC_END(cpu_arm926_reset)
+ENDPROC(cpu_arm926_reset)
 	.popsection
 
 /*
@@ -88,7 +85,7 @@ SYM_FUNC_END(cpu_arm926_reset)
  * Called with IRQs disabled
  */
 	.align	10
-SYM_TYPED_FUNC_START(cpu_arm926_do_idle)
+ENTRY(cpu_arm926_do_idle)
 	mov	r0, #0
 	mrc	p15, 0, r1, c1, c0, 0		@ Read control register
 	mcr	p15, 0, r0, c7, c10, 4		@ Drain write buffer
@@ -101,18 +98,17 @@ SYM_TYPED_FUNC_START(cpu_arm926_do_idle)
 	mcr	p15, 0, r1, c1, c0, 0		@ Restore ICache enable
 	msr	cpsr_c, r3			@ Restore FIQ state
 	ret	lr
-SYM_FUNC_END(cpu_arm926_do_idle)
 
 /*
  *	flush_icache_all()
  *
  *	Unconditionally clean and invalidate the entire icache.
  */
-SYM_TYPED_FUNC_START(arm926_flush_icache_all)
+ENTRY(arm926_flush_icache_all)
 	mov	r0, #0
 	mcr	p15, 0, r0, c7, c5, 0		@ invalidate I cache
 	ret	lr
-SYM_FUNC_END(arm926_flush_icache_all)
+ENDPROC(arm926_flush_icache_all)
 
 /*
  *	flush_user_cache_all()
@@ -120,14 +116,15 @@ SYM_FUNC_END(arm926_flush_icache_all)
  *	Clean and invalidate all cache entries in a particular
  *	address space.
  */
-SYM_FUNC_ALIAS(arm926_flush_user_cache_all, arm926_flush_kern_cache_all)
+ENTRY(arm926_flush_user_cache_all)
+	/* FALLTHROUGH */
 
 /*
  *	flush_kern_cache_all()
  *
  *	Clean and invalidate the entire cache.
  */
-SYM_TYPED_FUNC_START(arm926_flush_kern_cache_all)
+ENTRY(arm926_flush_kern_cache_all)
 	mov	r2, #VM_EXEC
 	mov	ip, #0
 __flush_whole_cache:
@@ -141,7 +138,6 @@ __flush_whole_cache:
 	mcrne	p15, 0, ip, c7, c5, 0		@ invalidate I cache
 	mcrne	p15, 0, ip, c7, c10, 4		@ drain WB
 	ret	lr
-SYM_FUNC_END(arm926_flush_kern_cache_all)
 
 /*
  *	flush_user_cache_range(start, end, flags)
@@ -153,7 +149,7 @@ SYM_FUNC_END(arm926_flush_kern_cache_all)
  *	- end	- end address (exclusive)
  *	- flags	- vm_flags describing address space
  */
-SYM_TYPED_FUNC_START(arm926_flush_user_cache_range)
+ENTRY(arm926_flush_user_cache_range)
 	mov	ip, #0
 	sub	r3, r1, r0			@ calculate total size
 	cmp	r3, #CACHE_DLIMIT
@@ -179,7 +175,6 @@ SYM_TYPED_FUNC_START(arm926_flush_user_cache_range)
 	tst	r2, #VM_EXEC
 	mcrne	p15, 0, ip, c7, c10, 4		@ drain WB
 	ret	lr
-SYM_FUNC_END(arm926_flush_user_cache_range)
 
 /*
  *	coherent_kern_range(start, end)
@@ -191,11 +186,8 @@ SYM_FUNC_END(arm926_flush_user_cache_range)
  *	- start	- virtual start address
  *	- end	- virtual end address
  */
-SYM_TYPED_FUNC_START(arm926_coherent_kern_range)
-#ifdef CONFIG_CFI_CLANG /* Fallthrough if !CFI */
-	b	arm926_coherent_user_range
-#endif
-SYM_FUNC_END(arm926_coherent_kern_range)
+ENTRY(arm926_coherent_kern_range)
+	/* FALLTHROUGH */
 
 /*
  *	coherent_user_range(start, end)
@@ -207,7 +199,7 @@ SYM_FUNC_END(arm926_coherent_kern_range)
  *	- start	- virtual start address
  *	- end	- virtual end address
  */
-SYM_TYPED_FUNC_START(arm926_coherent_user_range)
+ENTRY(arm926_coherent_user_range)
 	bic	r0, r0, #CACHE_DLINESIZE - 1
 1:	mcr	p15, 0, r0, c7, c10, 1		@ clean D entry
 	mcr	p15, 0, r0, c7, c5, 1		@ invalidate I entry
@@ -217,7 +209,6 @@ SYM_TYPED_FUNC_START(arm926_coherent_user_range)
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 	mov	r0, #0
 	ret	lr
-SYM_FUNC_END(arm926_coherent_user_range)
 
 /*
  *	flush_kern_dcache_area(void *addr, size_t size)
@@ -228,7 +219,7 @@ SYM_FUNC_END(arm926_coherent_user_range)
  *	- addr	- kernel address
  *	- size	- region size
  */
-SYM_TYPED_FUNC_START(arm926_flush_kern_dcache_area)
+ENTRY(arm926_flush_kern_dcache_area)
 	add	r1, r0, r1
 1:	mcr	p15, 0, r0, c7, c14, 1		@ clean+invalidate D entry
 	add	r0, r0, #CACHE_DLINESIZE
@@ -238,7 +229,6 @@ SYM_TYPED_FUNC_START(arm926_flush_kern_dcache_area)
 	mcr	p15, 0, r0, c7, c5, 0		@ invalidate I cache
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 	ret	lr
-SYM_FUNC_END(arm926_flush_kern_dcache_area)
 
 /*
  *	dma_inv_range(start, end)
@@ -297,7 +287,7 @@ arm926_dma_clean_range:
  *	- start	- virtual start address
  *	- end	- virtual end address
  */
-SYM_TYPED_FUNC_START(arm926_dma_flush_range)
+ENTRY(arm926_dma_flush_range)
 	bic	r0, r0, #CACHE_DLINESIZE - 1
 1:
 #ifndef CONFIG_CPU_DCACHE_WRITETHROUGH
@@ -310,7 +300,6 @@ SYM_TYPED_FUNC_START(arm926_dma_flush_range)
 	blo	1b
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 	ret	lr
-SYM_FUNC_END(arm926_dma_flush_range)
 
 /*
  *	dma_map_area(start, size, dir)
@@ -318,13 +307,13 @@ SYM_FUNC_END(arm926_dma_flush_range)
  *	- size	- size of region
  *	- dir	- DMA direction
  */
-SYM_TYPED_FUNC_START(arm926_dma_map_area)
+ENTRY(arm926_dma_map_area)
 	add	r1, r1, r0
 	cmp	r2, #DMA_TO_DEVICE
 	beq	arm926_dma_clean_range
 	bcs	arm926_dma_inv_range
 	b	arm926_dma_flush_range
-SYM_FUNC_END(arm926_dma_map_area)
+ENDPROC(arm926_dma_map_area)
 
 /*
  *	dma_unmap_area(start, size, dir)
@@ -332,11 +321,17 @@ SYM_FUNC_END(arm926_dma_map_area)
  *	- size	- size of region
  *	- dir	- DMA direction
  */
-SYM_TYPED_FUNC_START(arm926_dma_unmap_area)
+ENTRY(arm926_dma_unmap_area)
 	ret	lr
-SYM_FUNC_END(arm926_dma_unmap_area)
+ENDPROC(arm926_dma_unmap_area)
 
-SYM_TYPED_FUNC_START(cpu_arm926_dcache_clean_area)
+	.globl	arm926_flush_kern_cache_louis
+	.equ	arm926_flush_kern_cache_louis, arm926_flush_kern_cache_all
+
+	@ define struct cpu_cache_fns (see <asm/cacheflush.h> and proc-macros.S)
+	define_cache_functions arm926
+
+ENTRY(cpu_arm926_dcache_clean_area)
 #ifndef CONFIG_CPU_DCACHE_WRITETHROUGH
 1:	mcr	p15, 0, r0, c7, c10, 1		@ clean D entry
 	add	r0, r0, #CACHE_DLINESIZE
@@ -345,7 +340,6 @@ SYM_TYPED_FUNC_START(cpu_arm926_dcache_clean_area)
 #endif
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 	ret	lr
-SYM_FUNC_END(cpu_arm926_dcache_clean_area)
 
 /* =============================== PageTable ============================== */
 
@@ -357,8 +351,7 @@ SYM_FUNC_END(cpu_arm926_dcache_clean_area)
  * pgd: new page tables
  */
 	.align	5
-
-SYM_TYPED_FUNC_START(cpu_arm926_switch_mm)
+ENTRY(cpu_arm926_switch_mm)
 #ifdef CONFIG_MMU
 	mov	ip, #0
 #ifdef CONFIG_CPU_DCACHE_WRITETHROUGH
@@ -374,7 +367,6 @@ SYM_TYPED_FUNC_START(cpu_arm926_switch_mm)
 	mcr	p15, 0, ip, c8, c7, 0		@ invalidate I & D TLBs
 #endif
 	ret	lr
-SYM_FUNC_END(cpu_arm926_switch_mm)
 
 /*
  * cpu_arm926_set_pte_ext(ptep, pte, ext)
@@ -382,7 +374,7 @@ SYM_FUNC_END(cpu_arm926_switch_mm)
  * Set a PTE and flush it out
  */
 	.align	5
-SYM_TYPED_FUNC_START(cpu_arm926_set_pte_ext)
+ENTRY(cpu_arm926_set_pte_ext)
 #ifdef CONFIG_MMU
 	armv3_set_pte_ext
 	mov	r0, r0
@@ -392,22 +384,21 @@ SYM_TYPED_FUNC_START(cpu_arm926_set_pte_ext)
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 #endif
 	ret	lr
-SYM_FUNC_END(cpu_arm926_set_pte_ext)
 
 /* Suspend/resume support: taken from arch/arm/plat-s3c24xx/sleep.S */
 .globl	cpu_arm926_suspend_size
 .equ	cpu_arm926_suspend_size, 4 * 3
 #ifdef CONFIG_ARM_CPU_SUSPEND
-SYM_TYPED_FUNC_START(cpu_arm926_do_suspend)
+ENTRY(cpu_arm926_do_suspend)
 	stmfd	sp!, {r4 - r6, lr}
 	mrc	p15, 0, r4, c13, c0, 0	@ PID
 	mrc	p15, 0, r5, c3, c0, 0	@ Domain ID
 	mrc	p15, 0, r6, c1, c0, 0	@ Control register
 	stmia	r0, {r4 - r6}
 	ldmfd	sp!, {r4 - r6, pc}
-SYM_FUNC_END(cpu_arm926_do_suspend)
+ENDPROC(cpu_arm926_do_suspend)
 
-SYM_TYPED_FUNC_START(cpu_arm926_do_resume)
+ENTRY(cpu_arm926_do_resume)
 	mov	ip, #0
 	mcr	p15, 0, ip, c8, c7, 0	@ invalidate I+D TLBs
 	mcr	p15, 0, ip, c7, c7, 0	@ invalidate I+D caches
@@ -417,7 +408,7 @@ SYM_TYPED_FUNC_START(cpu_arm926_do_resume)
 	mcr	p15, 0, r1, c2, c0, 0	@ TTB address
 	mov	r0, r6			@ control register
 	b	cpu_resume_mmu
-SYM_FUNC_END(cpu_arm926_do_resume)
+ENDPROC(cpu_arm926_do_resume)
 #endif
 
 	.type	__arm926_setup, #function

@@ -14,12 +14,10 @@
  */
 
 /*
- * To use usdhc1 as SD card, the WiFi node must be deleted. The associated
- * pwrseq node is also deleted in order to ensure that GPIO H is released.
+ * To use usdhc1 as SD card, the WiFi node must be deleted.
  * BT is also not available, so remove BT from the UART node.
  */
 /delete-node/ &brcmf;
-/delete-node/ &usdhc1_pwrseq;
 /delete-node/ &bluetooth;
 
 / {

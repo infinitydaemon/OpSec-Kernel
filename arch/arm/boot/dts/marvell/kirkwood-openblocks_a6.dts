@@ -115,8 +115,10 @@
 		compatible = "gpio-keys";
 		pinctrl-0 = <&pmx_gpio_init>;
 		pinctrl-names = "default";
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-		button-power {
+		power {
 			label = "Init Button";
 			linux,code = <KEY_POWER>;
 			gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;

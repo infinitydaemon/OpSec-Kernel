@@ -22,7 +22,7 @@
 
 / {
 	/* Introduce a fixed regulator for the new ethernet controller */
-	veth: regulator-veth {
+	veth: fixedregulator@0 {
 		compatible = "regulator-fixed";
 		regulator-name = "veth";
 		regulator-min-microvolt = <3300000>;

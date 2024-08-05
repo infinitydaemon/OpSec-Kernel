@@ -13,7 +13,6 @@
 #define arch_set_freq_scale topology_set_freq_scale
 #define arch_scale_freq_capacity topology_get_freq_scale
 #define arch_scale_freq_invariant topology_scale_freq_invariant
-#define arch_scale_freq_ref topology_get_freq_ref
 #endif
 
 /* Replace task scheduler's default cpu-invariant accounting */
@@ -22,9 +21,9 @@
 /* Enable topology flag updates */
 #define arch_update_cpu_topology topology_update_cpu_topology
 
-/* Replace task scheduler's default HW pressure API */
-#define arch_scale_hw_pressure topology_get_hw_pressure
-#define arch_update_hw_pressure	topology_update_hw_pressure
+/* Replace task scheduler's default thermal pressure API */
+#define arch_scale_thermal_pressure topology_get_thermal_pressure
+#define arch_update_thermal_pressure	topology_update_thermal_pressure
 
 #else
 

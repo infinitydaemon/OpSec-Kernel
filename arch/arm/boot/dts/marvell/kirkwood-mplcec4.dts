@@ -114,36 +114,36 @@
 			    >;
 		pinctrl-names = "default";
 
-		led-health {
+		health {
 			label = "status:green:health";
 			gpios = <&gpio0 7 GPIO_ACTIVE_LOW>;
 		};
 
-		led-user1o {
+		user1o {
 			label = "user1:orange";
 			gpios = <&gpio1 8 GPIO_ACTIVE_LOW>;
 			default-state = "on";
 		};
 
-		led-user1g {
+		user1g {
 			label = "user1:green";
 			gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;
 			default-state = "on";
 		};
 
-		led-user0o {
+		user0o {
 			label = "user0:orange";
 			gpios = <&gpio1 12 GPIO_ACTIVE_LOW>;
 			default-state = "on";
 		};
 
-		led-user0g {
+		user0g {
 			label = "user0:green";
 			gpios = <&gpio1 13 GPIO_ACTIVE_LOW>;
 			default-state = "on";
 		};
 
-		led-misc {
+		misc {
 			label = "status:orange:misc";
 			gpios = <&gpio1 14 GPIO_ACTIVE_LOW>;
 			default-state = "on";

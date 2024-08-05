@@ -511,7 +511,6 @@
 			clock-names = "spi", "spi_busclk0";
 			pinctrl-names = "default";
 			pinctrl-0 = <&spi0_bus>;
-			fifo-depth = <256>;
 		};
 
 		spi_1: spi@12d30000 {
@@ -527,7 +526,6 @@
 			clock-names = "spi", "spi_busclk0";
 			pinctrl-names = "default";
 			pinctrl-0 = <&spi1_bus>;
-			fifo-depth = <64>;
 		};
 
 		spi_2: spi@12d40000 {
@@ -543,7 +541,6 @@
 			clock-names = "spi", "spi_busclk0";
 			pinctrl-names = "default";
 			pinctrl-0 = <&spi2_bus>;
-			fifo-depth = <64>;
 		};
 
 		mmc_0: mmc@12200000 {

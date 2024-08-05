@@ -12,7 +12,6 @@
  */
 #include <linux/linkage.h>
 #include <linux/init.h>
-#include <linux/cfi_types.h>
 #include <asm/assembler.h>
 #include <asm/page.h>
 
@@ -40,11 +39,11 @@
  *
  *	Unconditionally clean and invalidate the entire icache.
  */
-SYM_TYPED_FUNC_START(fa_flush_icache_all)
+ENTRY(fa_flush_icache_all)
 	mov	r0, #0
 	mcr	p15, 0, r0, c7, c5, 0		@ invalidate I cache
 	ret	lr
-SYM_FUNC_END(fa_flush_icache_all)
+ENDPROC(fa_flush_icache_all)
 
 /*
  *	flush_user_cache_all()
@@ -52,14 +51,14 @@ SYM_FUNC_END(fa_flush_icache_all)
  *	Clean and invalidate all cache entries in a particular address
  *	space.
  */
-SYM_FUNC_ALIAS(fa_flush_user_cache_all, fa_flush_kern_cache_all)
-
+ENTRY(fa_flush_user_cache_all)
+	/* FALLTHROUGH */
 /*
  *	flush_kern_cache_all()
  *
  *	Clean and invalidate the entire cache.
  */
-SYM_TYPED_FUNC_START(fa_flush_kern_cache_all)
+ENTRY(fa_flush_kern_cache_all)
 	mov	ip, #0
 	mov	r2, #VM_EXEC
 __flush_whole_cache:
@@ -70,7 +69,6 @@ __flush_whole_cache:
 	mcrne	p15, 0, ip, c7, c10, 4		@ drain write buffer
 	mcrne	p15, 0, ip, c7, c5, 4		@ prefetch flush
 	ret	lr
-SYM_FUNC_END(fa_flush_kern_cache_all)
 
 /*
  *	flush_user_cache_range(start, end, flags)
@@ -82,7 +80,7 @@ SYM_FUNC_END(fa_flush_kern_cache_all)
  *	- end	- end address (exclusive, page aligned)
  *	- flags	- vma_area_struct flags describing address space
  */
-SYM_TYPED_FUNC_START(fa_flush_user_cache_range)
+ENTRY(fa_flush_user_cache_range)
 	mov	ip, #0
 	sub	r3, r1, r0			@ calculate total size
 	cmp	r3, #CACHE_DLIMIT		@ total size >= limit?
@@ -99,7 +97,6 @@ SYM_TYPED_FUNC_START(fa_flush_user_cache_range)
 	mcrne	p15, 0, ip, c7, c10, 4		@ data write barrier
 	mcrne	p15, 0, ip, c7, c5, 4		@ prefetch flush
 	ret	lr
-SYM_FUNC_END(fa_flush_user_cache_range)
 
 /*
  *	coherent_kern_range(start, end)
@@ -111,11 +108,8 @@ SYM_FUNC_END(fa_flush_user_cache_range)
  *	- start  - virtual start address
  *	- end	 - virtual end address
  */
-SYM_TYPED_FUNC_START(fa_coherent_kern_range)
-#ifdef CONFIG_CFI_CLANG /* Fallthrough if !CFI */
-	b	fa_coherent_user_range
-#endif
-SYM_FUNC_END(fa_coherent_kern_range)
+ENTRY(fa_coherent_kern_range)
+	/* fall through */
 
 /*
  *	coherent_user_range(start, end)
@@ -127,7 +121,7 @@ SYM_FUNC_END(fa_coherent_kern_range)
  *	- start  - virtual start address
  *	- end	 - virtual end address
  */
-SYM_TYPED_FUNC_START(fa_coherent_user_range)
+ENTRY(fa_coherent_user_range)
 	bic	r0, r0, #CACHE_DLINESIZE - 1
 1:	mcr	p15, 0, r0, c7, c14, 1		@ clean and invalidate D entry
 	mcr	p15, 0, r0, c7, c5, 1		@ invalidate I entry
@@ -139,7 +133,6 @@ SYM_TYPED_FUNC_START(fa_coherent_user_range)
 	mcr	p15, 0, r0, c7, c10, 4		@ drain write buffer
 	mcr	p15, 0, r0, c7, c5, 4		@ prefetch flush
 	ret	lr
-SYM_FUNC_END(fa_coherent_user_range)
 
 /*
  *	flush_kern_dcache_area(void *addr, size_t size)
@@ -150,7 +143,7 @@ SYM_FUNC_END(fa_coherent_user_range)
  *	- addr	- kernel address
  *	- size	- size of region
  */
-SYM_TYPED_FUNC_START(fa_flush_kern_dcache_area)
+ENTRY(fa_flush_kern_dcache_area)
 	add	r1, r0, r1
 1:	mcr	p15, 0, r0, c7, c14, 1		@ clean & invalidate D line
 	add	r0, r0, #CACHE_DLINESIZE
@@ -160,7 +153,6 @@ SYM_TYPED_FUNC_START(fa_flush_kern_dcache_area)
 	mcr	p15, 0, r0, c7, c5, 0		@ invalidate I cache
 	mcr	p15, 0, r0, c7, c10, 4		@ drain write buffer
 	ret	lr
-SYM_FUNC_END(fa_flush_kern_dcache_area)
 
 /*
  *	dma_inv_range(start, end)
@@ -211,7 +203,7 @@ fa_dma_clean_range:
  *	- start   - virtual start address of region
  *	- end     - virtual end address of region
  */
-SYM_TYPED_FUNC_START(fa_dma_flush_range)
+ENTRY(fa_dma_flush_range)
 	bic	r0, r0, #CACHE_DLINESIZE - 1
 1:	mcr	p15, 0, r0, c7, c14, 1		@ clean & invalidate D entry
 	add	r0, r0, #CACHE_DLINESIZE
@@ -220,7 +212,6 @@ SYM_TYPED_FUNC_START(fa_dma_flush_range)
 	mov	r0, #0	
 	mcr	p15, 0, r0, c7, c10, 4		@ drain write buffer
 	ret	lr
-SYM_FUNC_END(fa_dma_flush_range)
 
 /*
  *	dma_map_area(start, size, dir)
@@ -228,13 +219,13 @@ SYM_FUNC_END(fa_dma_flush_range)
  *	- size	- size of region
  *	- dir	- DMA direction
  */
-SYM_TYPED_FUNC_START(fa_dma_map_area)
+ENTRY(fa_dma_map_area)
 	add	r1, r1, r0
 	cmp	r2, #DMA_TO_DEVICE
 	beq	fa_dma_clean_range
 	bcs	fa_dma_inv_range
 	b	fa_dma_flush_range
-SYM_FUNC_END(fa_dma_map_area)
+ENDPROC(fa_dma_map_area)
 
 /*
  *	dma_unmap_area(start, size, dir)
@@ -242,6 +233,14 @@ SYM_FUNC_END(fa_dma_map_area)
  *	- size	- size of region
  *	- dir	- DMA direction
  */
-SYM_TYPED_FUNC_START(fa_dma_unmap_area)
+ENTRY(fa_dma_unmap_area)
 	ret	lr
-SYM_FUNC_END(fa_dma_unmap_area)
+ENDPROC(fa_dma_unmap_area)
+
+	.globl	fa_flush_kern_cache_louis
+	.equ	fa_flush_kern_cache_louis, fa_flush_kern_cache_all
+
+	__INITDATA
+
+	@ define struct cpu_cache_fns (see <asm/cacheflush.h> and proc-macros.S)
+	define_cache_functions fa

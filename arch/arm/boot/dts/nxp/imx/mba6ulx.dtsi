@@ -35,25 +35,22 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_buttons>;
 
-		button-1 {
+		button1 {
 			label = "s14";
 			linux,code = <KEY_1>;
 			gpios = <&expander_in0 0 GPIO_ACTIVE_LOW>;
-			wakeup-source;
 		};
 
-		button-2 {
+		button2 {
 			label = "s6";
 			linux,code = <KEY_2>;
 			gpios = <&expander_in0 1 GPIO_ACTIVE_LOW>;
-			wakeup-source;
 		};
 
-		button-3 {
+		button3 {
 			label = "s7";
 			linux,code = <KEY_3>;
 			gpios = <&expander_in0 2 GPIO_ACTIVE_LOW>;
-			wakeup-source;
 		};
 
 		power-button {
@@ -467,7 +464,7 @@
 
 	pinctrl_pwm2: pwm2grp {
 		fsl,pins = <
-			/* 100 k PD, DSE 120 OHM, SPEED LO */
+			/* 100 k PD, DSE 120 OHM, SPPEED LO */
 			MX6UL_PAD_GPIO1_IO09__PWM2_OUT		0x00003050
 		>;
 	};

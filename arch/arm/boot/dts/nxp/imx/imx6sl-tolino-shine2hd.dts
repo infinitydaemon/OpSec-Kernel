@@ -138,13 +138,11 @@
 		pinctrl-0 = <&pinctrl_zforce>;
 		reg = <0x50>;
 		interrupt-parent = <&gpio5>;
-		interrupts = <6 IRQ_TYPE_LEVEL_LOW>;
+		interrupts = <6 IRQ_TYPE_EDGE_FALLING>;
 		vdd-supply = <&ldo1_reg>;
 		reset-gpios = <&gpio5 9 GPIO_ACTIVE_LOW>;
-		touchscreen-size-x = <1072>;
-		touchscreen-size-y = <1448>;
-		touchscreen-swapped-x-y;
-		touchscreen-inverted-x;
+		x-size = <1072>;
+		y-size = <1448>;
 	};
 
 	/* TODO: TPS65185 PMIC for E Ink at 0x68 */
@@ -163,7 +161,7 @@
 		pinctrl-0 = <&pinctrl_ricoh_gpio>;
 		reg = <0x32>;
 		interrupt-parent = <&gpio5>;
-		interrupts = <11 IRQ_TYPE_LEVEL_LOW>;
+		interrupts = <11 IRQ_TYPE_EDGE_FALLING>;
 		system-power-controller;
 
 		regulators {

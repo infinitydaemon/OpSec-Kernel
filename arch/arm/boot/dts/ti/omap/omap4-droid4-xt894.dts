@@ -1,21 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /dts-v1/;
 
-#include "motorola-mapphone-xt8xx.dtsi"
+#include "motorola-mapphone-common.dtsi"
 
 / {
-	model = "Motorola Droid 4 XT894";
-	compatible = "motorola,droid4", "ti,omap4430", "ti,omap4";
-
-	chosen {
-		stdout-path = &uart3;
-	};
-
-	aliases {
-		display0 = &lcd0;
-		display1 = &hdmi0;
-	};
-
 	gpio_keys {
 		compatible = "gpio-keys";
 
@@ -43,6 +31,11 @@
 			debounce-interval = <10>;
 		};
 	};
+};
+
+/ {
+	model = "Motorola Droid 4 XT894";
+	compatible = "motorola,droid4", "ti,omap4430", "ti,omap4";
 };
 
 &keypad {

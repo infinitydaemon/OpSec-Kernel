@@ -114,8 +114,10 @@
 		#size-cells = <0>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_i2c_gpio>;
-		sda-gpios = <&gpio5 1 GPIO_ACTIVE_HIGH>;
-		scl-gpios = <&gpio5 0 GPIO_ACTIVE_HIGH>;
+		gpios = <
+			&gpio5 1 GPIO_ACTIVE_HIGH /* SDA */
+			&gpio5 0 GPIO_ACTIVE_HIGH /* SCL */
+		>;
 		clock-frequency = <400000>;
 		status = "okay";
 
@@ -405,7 +407,7 @@
 		status = "okay";
 
 		display-timings {
-			timing-vga {
+			VGA {
 				clock-frequency = <25200000>;
 				hactive = <640>;
 				vactive = <480>;
@@ -421,7 +423,7 @@
 				pixelclk-active = <1>;
 			};
 
-			timing-etv570 {
+			ETV570 {
 				clock-frequency = <25200000>;
 				hactive = <640>;
 				vactive = <480>;
@@ -437,7 +439,7 @@
 				pixelclk-active = <1>;
 			};
 
-			timing-et0350 {
+			ET0350 {
 				clock-frequency = <6413760>;
 				hactive = <320>;
 				vactive = <240>;
@@ -453,7 +455,7 @@
 				pixelclk-active = <1>;
 			};
 
-			timing-et0430 {
+			ET0430 {
 				clock-frequency = <9009000>;
 				hactive = <480>;
 				vactive = <272>;
@@ -469,7 +471,7 @@
 				pixelclk-active = <0>;
 			};
 
-			timing-et0500 {
+			ET0500 {
 				clock-frequency = <33264000>;
 				hactive = <800>;
 				vactive = <480>;
@@ -485,7 +487,7 @@
 				pixelclk-active = <1>;
 			};
 
-			timing-et0700 { /* same as ET0500 */
+			ET0700 { /* same as ET0500 */
 				clock-frequency = <33264000>;
 				hactive = <800>;
 				vactive = <480>;
@@ -501,7 +503,7 @@
 				pixelclk-active = <1>;
 			};
 
-			timing-etq570 {
+			ETQ570 {
 				clock-frequency = <6596040>;
 				hactive = <320>;
 				vactive = <240>;

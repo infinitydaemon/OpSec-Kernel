@@ -68,16 +68,6 @@
 		};
 	};
 
-	usbphy0: usb-phy0 {
-		compatible = "usb-nop-xceiv";
-		#phy-cells = <0>;
-	};
-
-	usbphy1: usb-phy1 {
-		compatible = "usb-nop-xceiv";
-		#phy-cells = <0>;
-	};
-
 	soc: soc {
 		#address-cells = <1>;
 		#size-cells = <1>;
@@ -103,7 +93,7 @@
 				compatible = "fsl,imx25-i2c", "fsl,imx21-i2c";
 				reg = <0x43f80000 0x4000>;
 				clocks = <&clks 48>;
-				clock-names = "ipg";
+				clock-names = "";
 				interrupts = <3>;
 				status = "disabled";
 			};
@@ -114,7 +104,7 @@
 				compatible = "fsl,imx25-i2c", "fsl,imx21-i2c";
 				reg = <0x43f84000 0x4000>;
 				clocks = <&clks 48>;
-				clock-names = "ipg";
+				clock-names = "";
 				interrupts = <10>;
 				status = "disabled";
 			};
@@ -161,7 +151,7 @@
 				compatible = "fsl,imx25-i2c", "fsl,imx21-i2c";
 				reg = <0x43f98000 0x4000>;
 				clocks = <&clks 48>;
-				clock-names = "ipg";
+				clock-names = "";
 				interrupts = <4>;
 				status = "disabled";
 			};
@@ -188,9 +178,12 @@
 			};
 
 			kpp: kpp@43fa8000 {
+				#address-cells = <1>;
+				#size-cells = <0>;
 				compatible = "fsl,imx25-kpp", "fsl,imx21-kpp";
 				reg = <0x43fa8000 0x4000>;
 				clocks = <&clks 102>;
+				clock-names = "";
 				interrupts = <24>;
 				status = "disabled";
 			};
@@ -536,6 +529,7 @@
 				compatible = "fsl,imx25-wdt", "fsl,imx21-wdt";
 				reg = <0x53fdc000 0x4000>;
 				clocks = <&clks 126>;
+				clock-names = "";
 				interrupts = <55>;
 			};
 
@@ -589,9 +583,10 @@
 			};
 
 			dryice@53ffc000 {
-				compatible = "fsl,imx25-rtc";
+				compatible = "fsl,imx25-dryice", "fsl,imx25-rtc";
 				reg = <0x53ffc000 0x4000>;
 				clocks = <&clks 81>;
+				clock-names = "ipg";
 				interrupts = <25 56>;
 			};
 		};
@@ -599,12 +594,9 @@
 		iram: sram@78000000 {
 			compatible = "mmio-sram";
 			reg = <0x78000000 0x20000>;
-			ranges = <0 0x78000000 0x20000>;
-			#address-cells = <1>;
-			#size-cells = <1>;
 		};
 
-		bus@80000000 {
+		emi@80000000 {
 			compatible = "fsl,emi-bus", "simple-bus";
 			#address-cells = <1>;
 			#size-cells = <1>;
@@ -622,6 +614,24 @@
 				interrupts = <33>;
 				status = "disabled";
 			};
+		};
+	};
+
+	usbphy {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		usbphy0: usb-phy@0 {
+			reg = <0>;
+			compatible = "usb-nop-xceiv";
+			#phy-cells = <0>;
+		};
+
+		usbphy1: usb-phy@1 {
+			reg = <1>;
+			compatible = "usb-nop-xceiv";
+			#phy-cells = <0>;
 		};
 	};
 };

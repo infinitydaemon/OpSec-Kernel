@@ -137,38 +137,38 @@
 	gpio-leds {
 		compatible = "gpio-leds";
 
-		led-blue-usb {
+		blue-usb {
 			label = "dir665:blue:usb";
 			gpios = <&gpio0 12 GPIO_ACTIVE_HIGH>;
 		};
-		led-blue-internet {
+		blue-internet {
 			/* Can only be turned on if the Internet
 			 * Ethernet port has Link
 			 */
 			label = "dir665:blue:internet";
 			gpios = <&gpio1 10 GPIO_ACTIVE_LOW>;
 		};
-		led-amber-internet {
+		amber-internet {
 			label = "dir665:amber:internet";
 			gpios = <&gpio1 11 GPIO_ACTIVE_HIGH>;
 		};
-		led-blue-wifi5g {
+		blue-wifi5g {
 			label = "dir665:blue:5g";
 			gpios = <&gpio1 12 GPIO_ACTIVE_LOW>;
 		};
-		led-blue-status {
+		blue-status {
 			label = "dir665:blue:status";
 			gpios = <&gpio1 13 GPIO_ACTIVE_HIGH>;
 		};
-		led-blue-wps {
+		blue-wps {
 			label = "dir665:blue:wps";
 			gpios = <&gpio1 15 GPIO_ACTIVE_HIGH>;
 		};
-		led-amber-status {
+		amber-status {
 			label = "dir665:amber:status";
 			gpios = <&gpio1 16 GPIO_ACTIVE_HIGH>;
 		};
-		led-blue-24g {
+		blue-24g {
 			label = "dir665:blue:24g";
 			gpios = <&gpio1 17 GPIO_ACTIVE_LOW>;
 		};
@@ -176,13 +176,15 @@
 
 	gpio-keys {
 		compatible = "gpio-keys";
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-		button-reset {
+		reset {
 			label = "reset";
 			linux,code = <KEY_RESTART>;
 			gpios = <&gpio0 28 GPIO_ACTIVE_LOW>;
 		};
-		button-wps {
+		wps {
 			label = "wps";
 			linux,code = <KEY_WPS_BUTTON>;
 			gpios = <&gpio1 14 GPIO_ACTIVE_LOW>;

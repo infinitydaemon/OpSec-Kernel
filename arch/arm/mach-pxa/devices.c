@@ -7,7 +7,7 @@
 #include <linux/clk-provider.h>
 #include <linux/dma-mapping.h>
 #include <linux/dmaengine.h>
-#include <linux/gpio-pxa.h>
+#include <linux/spi/pxa2xx_spi.h>
 #include <linux/platform_data/i2c-pxa.h>
 #include <linux/soc/pxa/cpu.h>
 
@@ -18,7 +18,6 @@
 #include <linux/platform_data/usb-ohci-pxa27x.h>
 #include <linux/platform_data/mmp_dma.h>
 
-#include "mfp-pxa2xx.h"
 #include "regs-ost.h"
 #include "reset.h"
 #include "devices.h"
@@ -48,7 +47,7 @@ struct platform_device pxa_device_pmu = {
 	.num_resources	= 1,
 };
 
-static const struct resource pxamci_resources[] = {
+static struct resource pxamci_resources[] = {
 	[0] = {
 		.start	= 0x41100000,
 		.end	= 0x41100fff,
@@ -61,26 +60,22 @@ static const struct resource pxamci_resources[] = {
 	},
 };
 
-void __init pxa_set_mci_info(const struct pxamci_platform_data *info,
-			     const struct property_entry *props)
-{
-	const struct platform_device_info mci_info = {
-		.name		= "pxa2xx-mci",
-		.id		= 0,
-		.res		= pxamci_resources,
-		.num_res	= ARRAY_SIZE(pxamci_resources),
-		.data		= info,
-		.size_data	= sizeof(*info),
-		.dma_mask	= 0xffffffffUL,
-		.properties	= props,
-	};
-	struct platform_device *mci_dev;
-	int err;
+static u64 pxamci_dmamask = 0xffffffffUL;
 
-	mci_dev = platform_device_register_full(&mci_info);
-	err = PTR_ERR_OR_ZERO(mci_dev);
-	if (err)
-		pr_err("Unable to create mci device: %d\n", err);
+struct platform_device pxa_device_mci = {
+	.name		= "pxa2xx-mci",
+	.id		= 0,
+	.dev		= {
+		.dma_mask = &pxamci_dmamask,
+		.coherent_dma_mask = 0xffffffff,
+	},
+	.num_resources	= ARRAY_SIZE(pxamci_resources),
+	.resource	= pxamci_resources,
+};
+
+void __init pxa_set_mci_info(struct pxamci_platform_data *info)
+{
+	pxa_register_device(&pxa_device_mci, info);
 }
 
 static struct pxa2xx_udc_mach_info pxa_udc_info = {
@@ -633,11 +628,6 @@ struct platform_device pxa27x_device_pwm1 = {
 };
 #endif /* CONFIG_PXA27x || CONFIG_PXA3xx */
 
-#if defined(CONFIG_PXA25x) || defined(CONFIG_PXA27x)
-const struct software_node pxa2xx_gpiochip_node = {
-	.name	= "gpio-pxa",
-};
-
 struct resource pxa_resource_gpio[] = {
 	{
 		.start	= 0x40e00000,
@@ -661,19 +651,11 @@ struct resource pxa_resource_gpio[] = {
 	},
 };
 
-static struct pxa_gpio_platform_data pxa2xx_gpio_info = {
-	.irq_base	= PXA_GPIO_TO_IRQ(0),
-	.gpio_set_wake	= gpio_set_wake,
-};
-
 struct platform_device pxa25x_device_gpio = {
 	.name		= "pxa25x-gpio",
 	.id		= -1,
 	.num_resources	= ARRAY_SIZE(pxa_resource_gpio),
 	.resource	= pxa_resource_gpio,
-	.dev		= {
-		.platform_data	= &pxa2xx_gpio_info,
-	},
 };
 
 struct platform_device pxa27x_device_gpio = {
@@ -681,11 +663,24 @@ struct platform_device pxa27x_device_gpio = {
 	.id		= -1,
 	.num_resources	= ARRAY_SIZE(pxa_resource_gpio),
 	.resource	= pxa_resource_gpio,
-	.dev		= {
-		.platform_data	= &pxa2xx_gpio_info,
-	},
 };
-#endif /* CONFIG_PXA25x || CONFIG_PXA27x */
+
+/* pxa2xx-spi platform-device ID equals respective SSP platform-device ID + 1.
+ * See comment in arch/arm/mach-pxa/ssp.c::ssp_probe() */
+void __init pxa2xx_set_spi_info(unsigned id, struct pxa2xx_spi_controller *info)
+{
+	struct platform_device *pd;
+
+	pd = platform_device_alloc("pxa2xx-spi", id);
+	if (pd == NULL) {
+		printk(KERN_ERR "pxa2xx-spi: failed to allocate device id %d\n",
+		       id);
+		return;
+	}
+
+	pd->dev.platform_data = info;
+	platform_device_add(pd);
+}
 
 static struct resource pxa_dma_resource[] = {
 	[0] = {

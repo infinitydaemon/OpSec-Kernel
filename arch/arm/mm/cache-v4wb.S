@@ -6,7 +6,6 @@
  */
 #include <linux/linkage.h>
 #include <linux/init.h>
-#include <linux/cfi_types.h>
 #include <asm/assembler.h>
 #include <asm/page.h>
 #include "proc-macros.S"
@@ -54,11 +53,11 @@ flush_base:
  *
  *	Unconditionally clean and invalidate the entire icache.
  */
-SYM_TYPED_FUNC_START(v4wb_flush_icache_all)
+ENTRY(v4wb_flush_icache_all)
 	mov	r0, #0
 	mcr	p15, 0, r0, c7, c5, 0		@ invalidate I cache
 	ret	lr
-SYM_FUNC_END(v4wb_flush_icache_all)
+ENDPROC(v4wb_flush_icache_all)
 
 /*
  *	flush_user_cache_all()
@@ -66,14 +65,14 @@ SYM_FUNC_END(v4wb_flush_icache_all)
  *	Clean and invalidate all cache entries in a particular address
  *	space.
  */
-SYM_FUNC_ALIAS(v4wb_flush_user_cache_all, v4wb_flush_kern_cache_all)
-
+ENTRY(v4wb_flush_user_cache_all)
+	/* FALLTHROUGH */
 /*
  *	flush_kern_cache_all()
  *
  *	Clean and invalidate the entire cache.
  */
-SYM_TYPED_FUNC_START(v4wb_flush_kern_cache_all)
+ENTRY(v4wb_flush_kern_cache_all)
 	mov	ip, #0
 	mcr	p15, 0, ip, c7, c5, 0		@ invalidate I cache
 __flush_whole_cache:
@@ -94,7 +93,6 @@ __flush_whole_cache:
 #endif
 	mcr	p15, 0, ip, c7, c10, 4		@ drain write buffer
 	ret	lr
-SYM_FUNC_END(v4wb_flush_kern_cache_all)
 
 /*
  *	flush_user_cache_range(start, end, flags)
@@ -106,7 +104,7 @@ SYM_FUNC_END(v4wb_flush_kern_cache_all)
  *	- end	- end address (exclusive, page aligned)
  *	- flags	- vma_area_struct flags describing address space
  */
-SYM_TYPED_FUNC_START(v4wb_flush_user_cache_range)
+ENTRY(v4wb_flush_user_cache_range)
 	mov	ip, #0
 	sub	r3, r1, r0			@ calculate total size
 	tst	r2, #VM_EXEC			@ executable region?
@@ -123,7 +121,6 @@ SYM_TYPED_FUNC_START(v4wb_flush_user_cache_range)
 	tst	r2, #VM_EXEC
 	mcrne	p15, 0, ip, c7, c10, 4		@ drain write buffer
 	ret	lr
-SYM_FUNC_END(v4wb_flush_user_cache_range)
 
 /*
  *	flush_kern_dcache_area(void *addr, size_t size)
@@ -134,12 +131,9 @@ SYM_FUNC_END(v4wb_flush_user_cache_range)
  *	- addr	- kernel address
  *	- size	- region size
  */
-SYM_TYPED_FUNC_START(v4wb_flush_kern_dcache_area)
+ENTRY(v4wb_flush_kern_dcache_area)
 	add	r1, r0, r1
-#ifdef CONFIG_CFI_CLANG /* Fallthrough if !CFI */
-	b	v4wb_coherent_user_range
-#endif
-SYM_FUNC_END(v4wb_flush_kern_dcache_area)
+	/* fall through */
 
 /*
  *	coherent_kern_range(start, end)
@@ -151,11 +145,8 @@ SYM_FUNC_END(v4wb_flush_kern_dcache_area)
  *	- start  - virtual start address
  *	- end	 - virtual end address
  */
-SYM_TYPED_FUNC_START(v4wb_coherent_kern_range)
-#ifdef CONFIG_CFI_CLANG /* Fallthrough if !CFI */
-	b	v4wb_coherent_user_range
-#endif
-SYM_FUNC_END(v4wb_coherent_kern_range)
+ENTRY(v4wb_coherent_kern_range)
+	/* fall through */
 
 /*
  *	coherent_user_range(start, end)
@@ -167,7 +158,7 @@ SYM_FUNC_END(v4wb_coherent_kern_range)
  *	- start  - virtual start address
  *	- end	 - virtual end address
  */
-SYM_TYPED_FUNC_START(v4wb_coherent_user_range)
+ENTRY(v4wb_coherent_user_range)
 	bic	r0, r0, #CACHE_DLINESIZE - 1
 1:	mcr	p15, 0, r0, c7, c10, 1		@ clean D entry
 	mcr	p15, 0, r0, c7, c6, 1		@ invalidate D entry
@@ -178,7 +169,7 @@ SYM_TYPED_FUNC_START(v4wb_coherent_user_range)
 	mcr	p15, 0, r0, c7, c5, 0		@ invalidate I cache
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 	ret	lr
-SYM_FUNC_END(v4wb_coherent_user_range)
+
 
 /*
  *	dma_inv_range(start, end)
@@ -240,13 +231,13 @@ v4wb_dma_clean_range:
  *	- size	- size of region
  *	- dir	- DMA direction
  */
-SYM_TYPED_FUNC_START(v4wb_dma_map_area)
+ENTRY(v4wb_dma_map_area)
 	add	r1, r1, r0
 	cmp	r2, #DMA_TO_DEVICE
 	beq	v4wb_dma_clean_range
 	bcs	v4wb_dma_inv_range
 	b	v4wb_dma_flush_range
-SYM_FUNC_END(v4wb_dma_map_area)
+ENDPROC(v4wb_dma_map_area)
 
 /*
  *	dma_unmap_area(start, size, dir)
@@ -254,6 +245,14 @@ SYM_FUNC_END(v4wb_dma_map_area)
  *	- size	- size of region
  *	- dir	- DMA direction
  */
-SYM_TYPED_FUNC_START(v4wb_dma_unmap_area)
+ENTRY(v4wb_dma_unmap_area)
 	ret	lr
-SYM_FUNC_END(v4wb_dma_unmap_area)
+ENDPROC(v4wb_dma_unmap_area)
+
+	.globl	v4wb_flush_kern_cache_louis
+	.equ	v4wb_flush_kern_cache_louis, v4wb_flush_kern_cache_all
+
+	__INITDATA
+
+	@ define struct cpu_cache_fns (see <asm/cacheflush.h> and proc-macros.S)
+	define_cache_functions v4wb
