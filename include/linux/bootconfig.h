@@ -10,7 +10,6 @@
 #ifdef __KERNEL__
 #include <linux/kernel.h>
 #include <linux/types.h>
-bool __init cmdline_has_extra_options(void);
 #else /* !__KERNEL__ */
 /*
  * NOTE: This is only for tools/bootconfig, because tools/bootconfig will

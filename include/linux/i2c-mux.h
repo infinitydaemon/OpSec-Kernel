@@ -56,7 +56,8 @@ struct i2c_adapter *i2c_root_adapter(struct device *dev);
  * callback functions to perform hardware-specific mux control.
  */
 int i2c_mux_add_adapter(struct i2c_mux_core *muxc,
-			u32 force_nr, u32 chan_id);
+			u32 force_nr, u32 chan_id,
+			unsigned int class);
 
 void i2c_mux_del_adapters(struct i2c_mux_core *muxc);
 

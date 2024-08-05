@@ -15,6 +15,6 @@ struct lpss_clk_data {
 	struct clk *clk;
 };
 
-int lpss_atom_clk_init(void);
+extern int lpss_atom_clk_init(void);
 
 #endif /* __CLK_LPSS_H */

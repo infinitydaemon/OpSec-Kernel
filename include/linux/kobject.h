@@ -38,7 +38,7 @@ extern char uevent_helper[];
 #endif
 
 /* counter to tag the uevent, read only except for the kobject core */
-extern atomic64_t uevent_seqnum;
+extern u64 uevent_seqnum;
 
 /*
  * The actions here must match the index to the string array

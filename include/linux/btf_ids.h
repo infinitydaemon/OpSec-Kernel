@@ -3,15 +3,10 @@
 #ifndef _LINUX_BTF_IDS_H
 #define _LINUX_BTF_IDS_H
 
-#include <linux/types.h> /* for u32 */
-
 struct btf_id_set {
 	u32 cnt;
 	u32 ids[];
 };
-
-/* This flag implies BTF_SET8 holds kfunc(s) */
-#define BTF_SET8_KFUNCS		(1 << 0)
 
 struct btf_id_set8 {
 	u32 cnt;
@@ -26,7 +21,6 @@ struct btf_id_set8 {
 
 #include <linux/compiler.h> /* for __PASTE */
 #include <linux/compiler_attributes.h> /* for __maybe_unused */
-#include <linux/stringify.h>
 
 /*
  * Following macros help to define lists of BTF IDs placed
@@ -189,18 +183,17 @@ extern struct btf_id_set name;
  * .word (1 << 3) | (1 << 1) | (1 << 2)
  *
  */
-#define __BTF_SET8_START(name, scope, flags)		\
-__BTF_ID_LIST(name, local)				\
+#define __BTF_SET8_START(name, scope)			\
 asm(							\
 ".pushsection " BTF_IDS_SECTION ",\"a\";       \n"	\
 "." #scope " __BTF_ID__set8__" #name ";        \n"	\
 "__BTF_ID__set8__" #name ":;                   \n"	\
-".zero 4                                       \n"	\
-".long " __stringify(flags)                   "\n"	\
+".zero 8                                       \n"	\
 ".popsection;                                  \n");
 
 #define BTF_SET8_START(name)				\
-__BTF_SET8_START(name, local, 0)
+__BTF_ID_LIST(name, local)				\
+__BTF_SET8_START(name, local)
 
 #define BTF_SET8_END(name)				\
 asm(							\
@@ -208,12 +201,6 @@ asm(							\
 ".size __BTF_ID__set8__" #name ", .-" #name "  \n"	\
 ".popsection;                                 \n");	\
 extern struct btf_id_set8 name;
-
-#define BTF_KFUNCS_START(name)				\
-__BTF_SET8_START(name, local, BTF_SET8_KFUNCS)
-
-#define BTF_KFUNCS_END(name)				\
-BTF_SET8_END(name)
 
 #else
 
@@ -229,8 +216,6 @@ BTF_SET8_END(name)
 #define BTF_SET_END(name)
 #define BTF_SET8_START(name) static struct btf_id_set8 __maybe_unused name = { 0 };
 #define BTF_SET8_END(name)
-#define BTF_KFUNCS_START(name) static struct btf_id_set8 __maybe_unused name = { .flags = BTF_SET8_KFUNCS };
-#define BTF_KFUNCS_END(name)
 
 #endif /* CONFIG_DEBUG_INFO_BTF */
 
