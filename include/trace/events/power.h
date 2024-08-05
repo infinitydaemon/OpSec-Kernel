@@ -76,7 +76,7 @@ TRACE_EVENT(powernv_throttle,
 
 	TP_fast_assign(
 		__entry->chip_id = chip_id;
-		__assign_str(reason);
+		__assign_str(reason, reason);
 		__entry->pmax = pmax;
 	),
 
@@ -210,10 +210,11 @@ TRACE_EVENT(device_pm_callback_start,
 	),
 
 	TP_fast_assign(
-		__assign_str(device);
-		__assign_str(driver);
-		__assign_str(parent);
-		__assign_str(pm_ops);
+		__assign_str(device, dev_name(dev));
+		__assign_str(driver, dev_driver_string(dev));
+		__assign_str(parent,
+			dev->parent ? dev_name(dev->parent) : "none");
+		__assign_str(pm_ops, pm_ops ? pm_ops : "none ");
 		__entry->event = event;
 	),
 
@@ -235,8 +236,8 @@ TRACE_EVENT(device_pm_callback_end,
 	),
 
 	TP_fast_assign(
-		__assign_str(device);
-		__assign_str(driver);
+		__assign_str(device, dev_name(dev));
+		__assign_str(driver, dev_driver_string(dev));
 		__entry->error = error;
 	),
 
@@ -278,7 +279,7 @@ DECLARE_EVENT_CLASS(wakeup_source,
 	),
 
 	TP_fast_assign(
-		__assign_str(name);
+		__assign_str(name, name);
 		__entry->state = state;
 	),
 
@@ -317,7 +318,7 @@ DECLARE_EVENT_CLASS(clock,
 	),
 
 	TP_fast_assign(
-		__assign_str(name);
+		__assign_str(name, name);
 		__entry->state = state;
 		__entry->cpu_id = cpu_id;
 	),
@@ -363,7 +364,7 @@ DECLARE_EVENT_CLASS(power_domain,
 	),
 
 	TP_fast_assign(
-		__assign_str(name);
+		__assign_str(name, name);
 		__entry->state = state;
 		__entry->cpu_id = cpu_id;
 ),
@@ -485,7 +486,7 @@ DECLARE_EVENT_CLASS(dev_pm_qos_request,
 	),
 
 	TP_fast_assign(
-		__assign_str(name);
+		__assign_str(name, name);
 		__entry->type = type;
 		__entry->new_value = new_value;
 	),

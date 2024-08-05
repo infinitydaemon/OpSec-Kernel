@@ -18,7 +18,7 @@ TRACE_EVENT(ishtp_dump,
 	),
 
 	TP_fast_assign(
-		__assign_str(message);
+		__assign_str(message, message);
 	),
 
 	TP_printk("%s", __get_str(message))

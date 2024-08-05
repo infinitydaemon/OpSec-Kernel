@@ -416,7 +416,7 @@ TRACE_EVENT(bpf_xdp_link_attach_failed,
 	),
 
 	TP_fast_assign(
-		__assign_str(msg);
+		__assign_str(msg, msg);
 	),
 
 	TP_printk("errmsg=%s", __get_str(msg))

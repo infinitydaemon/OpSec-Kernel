@@ -107,6 +107,7 @@
 	DEF_PAGEFLAG_NAME(lru),						\
 	DEF_PAGEFLAG_NAME(active),					\
 	DEF_PAGEFLAG_NAME(workingset),					\
+	DEF_PAGEFLAG_NAME(slab),					\
 	DEF_PAGEFLAG_NAME(owner_priv_1),				\
 	DEF_PAGEFLAG_NAME(arch_1),					\
 	DEF_PAGEFLAG_NAME(reserved),					\
@@ -134,7 +135,6 @@ IF_HAVE_PG_ARCH_X(arch_3)
 #define DEF_PAGETYPE_NAME(_name) { PG_##_name, __stringify(_name) }
 
 #define __def_pagetype_names						\
-	DEF_PAGETYPE_NAME(slab),					\
 	DEF_PAGETYPE_NAME(hugetlb),					\
 	DEF_PAGETYPE_NAME(offline),					\
 	DEF_PAGETYPE_NAME(guard),					\
@@ -145,7 +145,7 @@ IF_HAVE_PG_ARCH_X(arch_3)
 #define __VM_ARCH_SPECIFIC_1 {VM_PAT,     "pat"           }
 #elif defined(CONFIG_PPC)
 #define __VM_ARCH_SPECIFIC_1 {VM_SAO,     "sao"           }
-#elif defined(CONFIG_PARISC)
+#elif defined(CONFIG_PARISC) || defined(CONFIG_IA64)
 #define __VM_ARCH_SPECIFIC_1 {VM_GROWSUP,	"growsup"	}
 #elif !defined(CONFIG_MMU)
 #define __VM_ARCH_SPECIFIC_1 {VM_MAPPED_COPY,"mappedcopy"	}
@@ -163,12 +163,6 @@ IF_HAVE_PG_ARCH_X(arch_3)
 # define IF_HAVE_UFFD_MINOR(flag, name) {flag, name},
 #else
 # define IF_HAVE_UFFD_MINOR(flag, name)
-#endif
-
-#ifdef CONFIG_64BIT
-# define IF_HAVE_VM_DROPPABLE(flag, name) {flag, name},
-#else
-# define IF_HAVE_VM_DROPPABLE(flag, name)
 #endif
 
 #define __def_vmaflag_names						\
@@ -203,7 +197,6 @@ IF_HAVE_VM_SOFTDIRTY(VM_SOFTDIRTY,	"softdirty"	)		\
 	{VM_MIXEDMAP,			"mixedmap"	},		\
 	{VM_HUGEPAGE,			"hugepage"	},		\
 	{VM_NOHUGEPAGE,			"nohugepage"	},		\
-IF_HAVE_VM_DROPPABLE(VM_DROPPABLE,	"droppable"	)		\
 	{VM_MERGEABLE,			"mergeable"	}		\
 
 #define show_vma_flags(flags)						\

@@ -373,12 +373,12 @@ static inline void ipcm6_init(struct ipcm6_cookie *ipc6)
 }
 
 static inline void ipcm6_init_sk(struct ipcm6_cookie *ipc6,
-				 const struct sock *sk)
+				 const struct ipv6_pinfo *np)
 {
 	*ipc6 = (struct ipcm6_cookie) {
 		.hlimit = -1,
-		.tclass = inet6_sk(sk)->tclass,
-		.dontfrag = inet6_test_bit(DONTFRAG, sk),
+		.tclass = np->tclass,
+		.dontfrag = np->dontfrag,
 	};
 }
 
@@ -428,7 +428,7 @@ int ipv6_flowlabel_opt_get(struct sock *sk, struct in6_flowlabel_req *freq,
 			   int flags);
 int ip6_flowlabel_init(void);
 void ip6_flowlabel_cleanup(void);
-bool ip6_autoflowlabel(struct net *net, const struct sock *sk);
+bool ip6_autoflowlabel(struct net *net, const struct ipv6_pinfo *np);
 
 static inline void fl6_sock_release(struct ip6_flowlabel *fl)
 {
@@ -534,15 +534,13 @@ static inline int ipv6_hopopt_jumbo_remove(struct sk_buff *skb)
 	return 0;
 }
 
-static inline bool ipv6_accept_ra(const struct inet6_dev *idev)
+static inline bool ipv6_accept_ra(struct inet6_dev *idev)
 {
-	s32 accept_ra = READ_ONCE(idev->cnf.accept_ra);
-
 	/* If forwarding is enabled, RA are not accepted unless the special
 	 * hybrid mode (accept_ra=2) is enabled.
 	 */
-	return READ_ONCE(idev->cnf.forwarding) ? accept_ra == 2 :
-		accept_ra;
+	return idev->cnf.forwarding ? idev->cnf.accept_ra == 2 :
+	    idev->cnf.accept_ra;
 }
 
 #define IPV6_FRAG_HIGH_THRESH	(4 * 1024*1024)	/* 4194304 */
@@ -786,6 +784,11 @@ static inline bool ipv6_addr_v4mapped(const struct in6_addr *a)
 					cpu_to_be32(0x0000ffff))) == 0UL;
 }
 
+static inline bool ipv6_addr_v4mapped_any(const struct in6_addr *a)
+{
+	return ipv6_addr_v4mapped(a) && ipv4_is_zeronet(a->s6_addr32[3]);
+}
+
 static inline bool ipv6_addr_v4mapped_loopback(const struct in6_addr *a)
 {
 	return ipv6_addr_v4mapped(a) && ipv4_is_loopback(a->s6_addr32[3]);
@@ -911,9 +914,9 @@ static inline int ip6_sk_dst_hoplimit(struct ipv6_pinfo *np, struct flowi6 *fl6,
 	int hlimit;
 
 	if (ipv6_addr_is_multicast(&fl6->daddr))
-		hlimit = READ_ONCE(np->mcast_hops);
+		hlimit = np->mcast_hops;
 	else
-		hlimit = READ_ONCE(np->hop_limit);
+		hlimit = np->hop_limit;
 	if (hlimit < 0)
 		hlimit = ip6_dst_hoplimit(dst);
 	return hlimit;
@@ -1130,6 +1133,12 @@ struct dst_entry *ip6_dst_lookup_flow(struct net *net, const struct sock *sk, st
 struct dst_entry *ip6_sk_dst_lookup_flow(struct sock *sk, struct flowi6 *fl6,
 					 const struct in6_addr *final_dst,
 					 bool connected);
+struct dst_entry *ip6_dst_lookup_tunnel(struct sk_buff *skb,
+					struct net_device *dev,
+					struct net *net, struct socket *sock,
+					struct in6_addr *saddr,
+					const struct ip_tunnel_info *info,
+					u8 protocol, bool use_cache);
 struct dst_entry *ip6_blackhole_route(struct net *net,
 				      struct dst_entry *orig_dst);
 
@@ -1294,16 +1303,15 @@ static inline int ip6_sock_set_v6only(struct sock *sk)
 
 static inline void ip6_sock_set_recverr(struct sock *sk)
 {
-	inet6_set_bit(RECVERR6, sk);
+	lock_sock(sk);
+	inet6_sk(sk)->recverr = true;
+	release_sock(sk);
 }
 
-#define IPV6_PREFER_SRC_MASK (IPV6_PREFER_SRC_TMP | IPV6_PREFER_SRC_PUBLIC | \
-			      IPV6_PREFER_SRC_COA)
-
-static inline int ip6_sock_set_addr_preferences(struct sock *sk, int val)
+static inline int __ip6_sock_set_addr_preferences(struct sock *sk, int val)
 {
-	unsigned int prefmask = ~IPV6_PREFER_SRC_MASK;
 	unsigned int pref = 0;
+	unsigned int prefmask = ~0;
 
 	/* check PUBLIC/TMP/PUBTMP_DEFAULT conflicts */
 	switch (val & (IPV6_PREFER_SRC_PUBLIC |
@@ -1353,9 +1361,18 @@ static inline int ip6_sock_set_addr_preferences(struct sock *sk, int val)
 		return -EINVAL;
 	}
 
-	WRITE_ONCE(inet6_sk(sk)->srcprefs,
-		   (READ_ONCE(inet6_sk(sk)->srcprefs) & prefmask) | pref);
+	inet6_sk(sk)->srcprefs = (inet6_sk(sk)->srcprefs & prefmask) | pref;
 	return 0;
+}
+
+static inline int ip6_sock_set_addr_preferences(struct sock *sk, int val)
+{
+	int ret;
+
+	lock_sock(sk);
+	ret = __ip6_sock_set_addr_preferences(sk, val);
+	release_sock(sk);
+	return ret;
 }
 
 static inline void ip6_sock_set_recvpktinfo(struct sock *sk)
