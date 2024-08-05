@@ -9,7 +9,6 @@
 
 / {
 	model = "Google cozmo board";
-	chassis-type = "laptop";
 	compatible = "google,cozmo", "mediatek,mt8183";
 };
 

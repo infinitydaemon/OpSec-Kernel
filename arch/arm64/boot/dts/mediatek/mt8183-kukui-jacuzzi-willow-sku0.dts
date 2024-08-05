@@ -9,7 +9,6 @@
 
 / {
 	model = "Google willow board sku0";
-	chassis-type = "laptop";
 	compatible = "google,willow-sku0", "google,willow", "mediatek,mt8183";
 };
 

@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
 subdir-y += actions
-subdir-y += airoha
 subdir-y += allwinner
 subdir-y += altera
 subdir-y += amazon
@@ -34,3 +33,5 @@ subdir-y += tesla
 subdir-y += ti
 subdir-y += toshiba
 subdir-y += xilinx
+
+subdir-y += overlays

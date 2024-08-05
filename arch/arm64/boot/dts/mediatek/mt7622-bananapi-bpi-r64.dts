@@ -149,12 +149,13 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		switch@1f {
+		switch@0 {
 			compatible = "mediatek,mt7531";
-			reg = <0x1f>;
+			reg = <0>;
 			interrupt-controller;
 			#interrupt-cells = <1>;
-			interrupts-extended = <&pio 53 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-parent = <&pio>;
+			interrupts = <53 IRQ_TYPE_LEVEL_HIGH>;
 			reset-gpios = <&pio 54 0>;
 
 			ports {
@@ -184,18 +185,6 @@
 				port@4 {
 					reg = <4>;
 					label = "lan3";
-				};
-
-				port@5 {
-					reg = <5>;
-					ethernet = <&gmac1>;
-					phy-mode = "rgmii";
-
-					fixed-link {
-						speed = <1000>;
-						full-duplex;
-						pause;
-					};
 				};
 
 				port@6 {
@@ -397,9 +386,9 @@
 	i2s1_pins: i2s1-pins {
 		mux {
 			function = "i2s";
-			groups = "i2s_out_mclk_bclk_ws",
-				 "i2s1_in_data",
-				 "i2s1_out_data";
+			groups =  "i2s_out_mclk_bclk_ws",
+				  "i2s1_in_data",
+				  "i2s1_out_data";
 		};
 
 		conf {

@@ -8,6 +8,7 @@
 	thermal-zones {
 		pm8994-thermal {
 			polling-delay-passive = <250>;
+			polling-delay = <1000>;
 
 			thermal-sensors = <&pm8994_temp>;
 

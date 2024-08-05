@@ -17,6 +17,6 @@
 	status = "okay";
 };
 
-&pwmleds {
+&keyboard_backlight {
 	status = "okay";
 };

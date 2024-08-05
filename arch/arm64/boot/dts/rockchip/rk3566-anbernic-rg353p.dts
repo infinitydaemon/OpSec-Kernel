@@ -8,7 +8,7 @@
 #include "rk3566-anbernic-rg353x.dtsi"
 
 / {
-	model = "Anbernic RG353P";
+	model = "RG353P";
 	compatible = "anbernic,rg353p", "rockchip,rk3566";
 
 	aliases {

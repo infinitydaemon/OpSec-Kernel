@@ -8,13 +8,13 @@
 #include "rk3588s.dtsi"
 
 / {
-	model = "Radxa ROCK 5A";
+	model = "Radxa ROCK 5 Model A";
 	compatible = "radxa,rock-5a", "rockchip,rk3588s";
 
 	aliases {
-		ethernet0 = &gmac1;
 		mmc0 = &sdhci;
 		mmc1 = &sdmmc;
+		serial2 = &uart2;
 	};
 
 	analog-sound {
@@ -112,10 +112,6 @@
 		regulator-max-microvolt = <1100000>;
 		vin-supply = <&vcc5v0_sys>;
 	};
-};
-
-&combphy2_psu {
-	status = "okay";
 };
 
 &cpu_b0 {
@@ -377,19 +373,6 @@
 	status = "okay";
 };
 
-&sfc {
-	pinctrl-names = "default";
-	pinctrl-0 = <&fspim0_pins>;
-
-	flash@0 {
-		compatible = "jedec,spi-nor";
-		reg = <0>;
-		spi-max-frequency = <104000000>;
-		spi-rx-bus-width = <4>;
-		spi-tx-bus-width = <1>;
-	};
-};
-
 &spi2 {
 	status = "okay";
 	assigned-clocks = <&cru CLK_SPI2>;
@@ -429,7 +412,7 @@
 		#gpio-cells = <2>;
 
 		rk806_dvs1_null: dvs1-null-pins {
-			pins = "gpio_pwrctrl1";
+			pins = "gpio_pwrctrl2";
 			function = "pin_fun0";
 		};
 
@@ -712,18 +695,6 @@
 	};
 };
 
-&tsadc {
-	status = "okay";
-};
-
-&u2phy0 {
-	status = "okay";
-};
-
-&u2phy0_otg {
-	status = "okay";
-};
-
 &u2phy2 {
 	status = "okay";
 };
@@ -747,11 +718,6 @@
 	status = "okay";
 };
 
-&usbdp_phy0 {
-	status = "okay";
-	rockchip,dp-lane-mux = <2 3>;
-};
-
 &usb_host0_ehci {
 	status = "okay";
 	pinctrl-names = "default";
@@ -762,19 +728,10 @@
 	status = "okay";
 };
 
-&usb_host0_xhci {
-	dr_mode = "host";
-	status = "okay";
-};
-
 &usb_host1_ehci {
 	status = "okay";
 };
 
 &usb_host1_ohci {
-	status = "okay";
-};
-
-&usb_host2_xhci {
 	status = "okay";
 };

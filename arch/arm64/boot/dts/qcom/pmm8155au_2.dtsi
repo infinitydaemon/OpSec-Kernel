@@ -11,6 +11,7 @@
 	thermal-zones {
 		pmm8155au-2-thermal {
 			polling-delay-passive = <100>;
+			polling-delay = <0>;
 
 			thermal-sensors = <&pmm8155au_2_temp>;
 

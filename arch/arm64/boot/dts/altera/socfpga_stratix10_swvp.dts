@@ -80,6 +80,8 @@
 
 &mmc {
 	status = "okay";
+	altr,dw-mshc-ciu-div = <0x3>;
+	altr,dw-mshc-sdr-timing = <0x0 0x3>;
 	cap-sd-highspeed;
 	cap-mmc-highspeed;
 	broken-cd;

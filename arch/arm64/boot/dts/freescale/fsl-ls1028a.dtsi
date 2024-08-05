@@ -155,7 +155,7 @@
 	};
 
 	thermal-zones {
-		ddr-thermal {
+		ddr-controller {
 			polling-delay-passive = <1000>;
 			polling-delay = <5000>;
 			thermal-sensors = <&tmu 0>;
@@ -175,7 +175,7 @@
 			};
 		};
 
-		core-cluster-thermal {
+		core-cluster {
 			polling-delay-passive = <1000>;
 			polling-delay = <5000>;
 			thermal-sensors = <&tmu 1>;
@@ -674,7 +674,7 @@
 		};
 
 		pcie_ep1: pcie-ep@3400000 {
-			compatible = "fsl,ls1028a-pcie-ep";
+			compatible = "fsl,ls1028a-pcie-ep","fsl,ls-pcie-ep";
 			reg = <0x00 0x03400000 0x0 0x00100000
 			       0x80 0x00000000 0x8 0x00000000>;
 			reg-names = "regs", "addr_space";
@@ -713,7 +713,7 @@
 		};
 
 		pcie_ep2: pcie-ep@3500000 {
-			compatible = "fsl,ls1028a-pcie-ep";
+			compatible = "fsl,ls1028a-pcie-ep","fsl,ls-pcie-ep";
 			reg = <0x00 0x03500000 0x0 0x00100000
 			       0x88 0x00000000 0x8 0x00000000>;
 			reg-names = "regs", "addr_space";
@@ -828,7 +828,6 @@
 				     <GIC_SPI 254 IRQ_TYPE_LEVEL_HIGH>;
 			interrupt-names = "qdma-error", "qdma-queue0",
 				"qdma-queue1", "qdma-queue2", "qdma-queue3";
-			#dma-cells = <1>;
 			dma-channels = <8>;
 			block-number = <1>;
 			block-offset = <0x10000>;
@@ -860,8 +859,8 @@
 		malidp0: display@f080000 {
 			compatible = "arm,mali-dp500";
 			reg = <0x0 0xf080000 0x0 0x10000>;
-			interrupts = <GIC_SPI 222 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 223 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <0 222 IRQ_TYPE_LEVEL_HIGH>,
+				     <0 223 IRQ_TYPE_LEVEL_HIGH>;
 			interrupt-names = "DE", "SE";
 			clocks = <&dpclk>,
 				 <&clockgen QORIQ_CLK_HWACCEL 2>,
@@ -903,9 +902,9 @@
 				 <&clockgen QORIQ_CLK_PLATFORM_PLL
 					    QORIQ_CLK_PLL_DIV(2)>;
 			clock-names = "bus", "mclk1", "mclk2", "mclk3";
-			dma-names = "rx", "tx";
-			dmas = <&edma0 1 3>,
-			       <&edma0 1 4>;
+			dma-names = "tx", "rx";
+			dmas = <&edma0 1 4>,
+			       <&edma0 1 3>;
 			fsl,sai-asynchronous;
 			status = "disabled";
 		};
@@ -924,9 +923,9 @@
 				 <&clockgen QORIQ_CLK_PLATFORM_PLL
 					    QORIQ_CLK_PLL_DIV(2)>;
 			clock-names = "bus", "mclk1", "mclk2", "mclk3";
-			dma-names = "rx", "tx";
-			dmas = <&edma0 1 5>,
-			       <&edma0 1 6>;
+			dma-names = "tx", "rx";
+			dmas = <&edma0 1 6>,
+			       <&edma0 1 5>;
 			fsl,sai-asynchronous;
 			status = "disabled";
 		};
@@ -945,9 +944,9 @@
 				 <&clockgen QORIQ_CLK_PLATFORM_PLL
 					    QORIQ_CLK_PLL_DIV(2)>;
 			clock-names = "bus", "mclk1", "mclk2", "mclk3";
-			dma-names = "rx", "tx";
-			dmas = <&edma0 1 7>,
-			       <&edma0 1 8>;
+			dma-names = "tx", "rx";
+			dmas = <&edma0 1 8>,
+			       <&edma0 1 7>;
 			fsl,sai-asynchronous;
 			status = "disabled";
 		};
@@ -966,9 +965,9 @@
 				 <&clockgen QORIQ_CLK_PLATFORM_PLL
 					    QORIQ_CLK_PLL_DIV(2)>;
 			clock-names = "bus", "mclk1", "mclk2", "mclk3";
-			dma-names = "rx", "tx";
-			dmas = <&edma0 1 9>,
-			       <&edma0 1 10>;
+			dma-names = "tx", "rx";
+			dmas = <&edma0 1 10>,
+			       <&edma0 1 9>;
 			fsl,sai-asynchronous;
 			status = "disabled";
 		};
@@ -987,9 +986,9 @@
 				 <&clockgen QORIQ_CLK_PLATFORM_PLL
 					    QORIQ_CLK_PLL_DIV(2)>;
 			clock-names = "bus", "mclk1", "mclk2", "mclk3";
-			dma-names = "rx", "tx";
-			dmas = <&edma0 1 11>,
-			       <&edma0 1 12>;
+			dma-names = "tx", "rx";
+			dmas = <&edma0 1 12>,
+			       <&edma0 1 11>;
 			fsl,sai-asynchronous;
 			status = "disabled";
 		};
@@ -1008,9 +1007,9 @@
 				 <&clockgen QORIQ_CLK_PLATFORM_PLL
 					    QORIQ_CLK_PLL_DIV(2)>;
 			clock-names = "bus", "mclk1", "mclk2", "mclk3";
-			dma-names = "rx", "tx";
-			dmas = <&edma0 1 13>,
-			       <&edma0 1 14>;
+			dma-names = "tx", "rx";
+			dmas = <&edma0 1 14>,
+			       <&edma0 1 13>;
 			fsl,sai-asynchronous;
 			status = "disabled";
 		};
@@ -1025,52 +1024,51 @@
 		tmu: tmu@1f80000 {
 			compatible = "fsl,qoriq-tmu";
 			reg = <0x0 0x1f80000 0x0 0x10000>;
-			interrupts = <GIC_SPI 23 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <0 23 0x4>;
 			fsl,tmu-range = <0xb0000 0xa0026 0x80048 0x70061>;
-			fsl,tmu-calibration =
-					<0x00000000 0x00000024>,
-					<0x00000001 0x0000002b>,
-					<0x00000002 0x00000031>,
-					<0x00000003 0x00000038>,
-					<0x00000004 0x0000003f>,
-					<0x00000005 0x00000045>,
-					<0x00000006 0x0000004c>,
-					<0x00000007 0x00000053>,
-					<0x00000008 0x00000059>,
-					<0x00000009 0x00000060>,
-					<0x0000000a 0x00000066>,
-					<0x0000000b 0x0000006d>,
+			fsl,tmu-calibration = <0x00000000 0x00000024
+					       0x00000001 0x0000002b
+					       0x00000002 0x00000031
+					       0x00000003 0x00000038
+					       0x00000004 0x0000003f
+					       0x00000005 0x00000045
+					       0x00000006 0x0000004c
+					       0x00000007 0x00000053
+					       0x00000008 0x00000059
+					       0x00000009 0x00000060
+					       0x0000000a 0x00000066
+					       0x0000000b 0x0000006d
 
-					<0x00010000 0x0000001c>,
-					<0x00010001 0x00000024>,
-					<0x00010002 0x0000002c>,
-					<0x00010003 0x00000035>,
-					<0x00010004 0x0000003d>,
-					<0x00010005 0x00000045>,
-					<0x00010006 0x0000004d>,
-					<0x00010007 0x00000055>,
-					<0x00010008 0x0000005e>,
-					<0x00010009 0x00000066>,
-					<0x0001000a 0x0000006e>,
+					       0x00010000 0x0000001c
+					       0x00010001 0x00000024
+					       0x00010002 0x0000002c
+					       0x00010003 0x00000035
+					       0x00010004 0x0000003d
+					       0x00010005 0x00000045
+					       0x00010006 0x0000004d
+					       0x00010007 0x00000055
+					       0x00010008 0x0000005e
+					       0x00010009 0x00000066
+					       0x0001000a 0x0000006e
 
-					<0x00020000 0x00000018>,
-					<0x00020001 0x00000022>,
-					<0x00020002 0x0000002d>,
-					<0x00020003 0x00000038>,
-					<0x00020004 0x00000043>,
-					<0x00020005 0x0000004d>,
-					<0x00020006 0x00000058>,
-					<0x00020007 0x00000063>,
-					<0x00020008 0x0000006e>,
+					       0x00020000 0x00000018
+					       0x00020001 0x00000022
+					       0x00020002 0x0000002d
+					       0x00020003 0x00000038
+					       0x00020004 0x00000043
+					       0x00020005 0x0000004d
+					       0x00020006 0x00000058
+					       0x00020007 0x00000063
+					       0x00020008 0x0000006e
 
-					<0x00030000 0x00000010>,
-					<0x00030001 0x0000001c>,
-					<0x00030002 0x00000029>,
-					<0x00030003 0x00000036>,
-					<0x00030004 0x00000042>,
-					<0x00030005 0x0000004f>,
-					<0x00030006 0x0000005b>,
-					<0x00030007 0x00000068>;
+					       0x00030000 0x00000010
+					       0x00030001 0x0000001c
+					       0x00030002 0x00000029
+					       0x00030003 0x00000036
+					       0x00030004 0x00000042
+					       0x00030005 0x0000004f
+					       0x00030006 0x0000005b
+					       0x00030007 0x00000068>;
 			little-endian;
 			#thermal-sensor-cells = <1>;
 		};
@@ -1100,25 +1098,21 @@
 				  0xc2000000 0x1 0xf8230000  0x1 0xf8230000  0x0 0x020000
 				  /* BAR4 (PF5) - non-prefetchable memory */
 				  0x82000000 0x1 0xfc000000  0x1 0xfc000000  0x0 0x400000>;
-			#interrupt-cells = <1>;
-			interrupt-map-mask = <0 0 0 7>;
-			interrupt-map = <0000 0 0 1 &gic 0 0 GIC_SPI 94 IRQ_TYPE_LEVEL_HIGH>,
-					<0000 0 0 2 &gic 0 0 GIC_SPI 95 IRQ_TYPE_LEVEL_HIGH>;
 
 			enetc_port0: ethernet@0,0 {
-				compatible = "pci1957,e100", "fsl,enetc";
+				compatible = "fsl,enetc";
 				reg = <0x000000 0 0 0 0>;
 				status = "disabled";
 			};
 
 			enetc_port1: ethernet@0,1 {
-				compatible = "pci1957,e100", "fsl,enetc";
+				compatible = "fsl,enetc";
 				reg = <0x000100 0 0 0 0>;
 				status = "disabled";
 			};
 
 			enetc_port2: ethernet@0,2 {
-				compatible = "pci1957,e100", "fsl,enetc";
+				compatible = "fsl,enetc";
 				reg = <0x000200 0 0 0 0>;
 				phy-mode = "internal";
 				status = "disabled";
@@ -1131,14 +1125,14 @@
 			};
 
 			enetc_mdio_pf3: mdio@0,3 {
-				compatible = "pci1957,ee01", "fsl,enetc-mdio";
+				compatible = "fsl,enetc-mdio";
 				reg = <0x000300 0 0 0 0>;
 				#address-cells = <1>;
 				#size-cells = <0>;
 			};
 
 			ethernet@0,4 {
-				compatible = "pci1957,ee02", "fsl,enetc-ptp";
+				compatible = "fsl,enetc-ptp";
 				reg = <0x000400 0 0 0 0>;
 				clocks = <&clockgen QORIQ_CLK_HWACCEL 3>;
 				little-endian;
@@ -1148,7 +1142,7 @@
 			mscc_felix: ethernet-switch@0,5 {
 				reg = <0x000500 0 0 0 0>;
 				/* IEP INT_B */
-				interrupts = <2>;
+				interrupts = <GIC_SPI 95 IRQ_TYPE_LEVEL_HIGH>;
 				status = "disabled";
 
 				mscc_felix_ports: ports {
@@ -1206,7 +1200,7 @@
 			};
 
 			enetc_port3: ethernet@0,6 {
-				compatible = "pci1957,e100", "fsl,enetc";
+				compatible = "fsl,enetc";
 				reg = <0x000600 0 0 0 0>;
 				phy-mode = "internal";
 				status = "disabled";
@@ -1221,7 +1215,7 @@
 			rcec@1f,0 {
 				reg = <0x00f800 0 0 0 0>;
 				/* IEP INT_A */
-				interrupts = <1>;
+				interrupts = <GIC_SPI 94 IRQ_TYPE_LEVEL_HIGH>;
 			};
 		};
 
@@ -1326,7 +1320,7 @@
 			little-endian;
 		};
 
-		ftm_alarm0: rtc@2800000 {
+		ftm_alarm0: timer@2800000 {
 			compatible = "fsl,ls1028a-ftm-alarm";
 			reg = <0x0 0x2800000 0x0 0x10000>;
 			fsl,rcpm-wakeup = <&rcpm 0x0 0x0 0x0 0x0 0x4000 0x0 0x0>;
@@ -1334,7 +1328,7 @@
 			status = "disabled";
 		};
 
-		ftm_alarm1: rtc@2810000 {
+		ftm_alarm1: timer@2810000 {
 			compatible = "fsl,ls1028a-ftm-alarm";
 			reg = <0x0 0x2810000 0x0 0x10000>;
 			fsl,rcpm-wakeup = <&rcpm 0x0 0x0 0x0 0x0 0x4000 0x0 0x0>;

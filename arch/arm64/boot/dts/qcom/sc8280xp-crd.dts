@@ -56,7 +56,7 @@
 					reg = <0>;
 
 					pmic_glink_con0_hs: endpoint {
-						remote-endpoint = <&usb_0_dwc3_hs>;
+						remote-endpoint = <&usb_0_role_switch>;
 					};
 				};
 
@@ -91,7 +91,7 @@
 					reg = <0>;
 
 					pmic_glink_con1_hs: endpoint {
-						remote-endpoint = <&usb_1_dwc3_hs>;
+						remote-endpoint = <&usb_1_role_switch>;
 					};
 				};
 
@@ -563,8 +563,6 @@
 };
 
 &pcie4 {
-	max-link-speed = <2>;
-
 	perst-gpios = <&tlmm 141 GPIO_ACTIVE_LOW>;
 	wake-gpios = <&tlmm 139 GPIO_ACTIVE_LOW>;
 
@@ -675,10 +673,6 @@
 	dr_mode = "host";
 };
 
-&usb_0_dwc3_hs {
-	remote-endpoint = <&pmic_glink_con0_hs>;
-};
-
 &usb_0_hsphy {
 	vdda-pll-supply = <&vreg_l9d>;
 	vdda18-supply = <&vreg_l1c>;
@@ -704,16 +698,16 @@
 	remote-endpoint = <&pmic_glink_con0_ss>;
 };
 
+&usb_0_role_switch {
+	remote-endpoint = <&pmic_glink_con0_hs>;
+};
+
 &usb_1 {
 	status = "okay";
 };
 
 &usb_1_dwc3 {
 	dr_mode = "host";
-};
-
-&usb_1_dwc3_hs {
-	remote-endpoint = <&pmic_glink_con1_hs>;
 };
 
 &usb_1_hsphy {
@@ -739,6 +733,10 @@
 
 &usb_1_qmpphy_out {
 	remote-endpoint = <&pmic_glink_con1_ss>;
+};
+
+&usb_1_role_switch {
+	remote-endpoint = <&pmic_glink_con1_hs>;
 };
 
 &xo_board_clk {
@@ -977,7 +975,8 @@
 		reset-n-pins {
 			pins = "gpio99";
 			function = "gpio";
-			bias-disable;
+			output-high;
+			drive-strength = <16>;
 		};
 	};
 
