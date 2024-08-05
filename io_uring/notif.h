@@ -13,19 +13,14 @@
 struct io_notif_data {
 	struct file		*file;
 	struct ubuf_info	uarg;
-
-	struct io_notif_data	*next;
-	struct io_notif_data	*head;
-
-	unsigned		account_pages;
+	unsigned long		account_pages;
 	bool			zc_report;
 	bool			zc_used;
 	bool			zc_copied;
 };
 
 struct io_kiocb *io_alloc_notif(struct io_ring_ctx *ctx);
-void io_tx_ubuf_complete(struct sk_buff *skb, struct ubuf_info *uarg,
-			 bool success);
+void io_notif_set_extended(struct io_kiocb *notif);
 
 static inline struct io_notif_data *io_notif_to_data(struct io_kiocb *notif)
 {
@@ -37,7 +32,9 @@ static inline void io_notif_flush(struct io_kiocb *notif)
 {
 	struct io_notif_data *nd = io_notif_to_data(notif);
 
-	io_tx_ubuf_complete(NULL, &nd->uarg, true);
+	/* drop slot's master ref */
+	if (refcount_dec_and_test(&nd->uarg.refcnt))
+		__io_req_task_work_add(notif, IOU_F_TWQ_LAZY_WAKE);
 }
 
 static inline int io_notif_account_mem(struct io_kiocb *notif, unsigned len)

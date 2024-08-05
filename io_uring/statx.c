@@ -37,7 +37,8 @@ int io_statx_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 	sx->flags = READ_ONCE(sqe->statx_flags);
 
 	sx->filename = getname_flags(path,
-				     getname_statx_lookup_flags(sx->flags));
+				     getname_statx_lookup_flags(sx->flags),
+				     NULL);
 
 	if (IS_ERR(sx->filename)) {
 		int ret = PTR_ERR(sx->filename);

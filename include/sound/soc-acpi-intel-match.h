@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0
  *
- * Copyright (C) 2017, Intel Corporation
+ * Copyright (C) 2017, Intel Corporation. All rights reserved.
  */
 
 #ifndef __LINUX_SND_SOC_ACPI_INTEL_MATCH_H
