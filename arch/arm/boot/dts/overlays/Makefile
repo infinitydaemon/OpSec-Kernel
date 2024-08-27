@@ -85,6 +85,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	hd44780-i2c-lcd.dtbo \
 	hd44780-lcd.dtbo \
 	hdmi-backlight-hwhack-gpio.dtbo \
+	hifiberry-adc.dtbo \
 	hifiberry-amp.dtbo \
 	hifiberry-amp100.dtbo \
 	hifiberry-amp3.dtbo \
@@ -125,6 +126,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	i2c6.dtbo \
 	i2s-dac.dtbo \
 	i2s-gpio28-31.dtbo \
+	i2s-master-dac.dtbo \
 	ilitek251x.dtbo \
 	imx219.dtbo \
 	imx258.dtbo \
