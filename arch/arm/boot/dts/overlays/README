@@ -378,9 +378,9 @@ Params:
                                 non-lite SKU of CM4).
                                 (default "on")
 
-        sd_cqe                  Set to "off" to disable Command Queueing if you
-                                have an incompatible Class A2 SD card
-                                (Pi 5 only, default "on")
+        sd_cqe                  Use to enable Command Queueing on the SD
+                                interface for faster Class A2 card performance
+                                (Pi 5 only, default "off")
 
         sd_overclock            Clock (in MHz) to use when the MMC framework
                                 requests 50MHz
@@ -3617,8 +3617,6 @@ Params: l1ss                    Enable ASPM L1 sub-state support
                                 the MSI-MIP peripheral. Use if a) more than 8
                                 interrupt vectors are required or b) the EP
                                 requires DMA and MSI addresses to be 32bit.
-        mmio-hi                 Move the start of outbound 32bit addresses to
-                                2GB and expand 64bit outbound space to 14GB.
 
 
 [ The pcf2127-rtc overlay has been deleted. See i2c-rtc. ]
@@ -3702,6 +3700,12 @@ Params: <None>
 Name:   pineboards-hat-ai
 Info:   Pineboards Hat Ai! overlay for the Google Coral Edge TPU
 Load:   dtoverlay=pineboards-hat-ai
+Params: <None>
+
+
+Name:   pineboards-hatdrive-poe-plus
+Info:   Configures the Pineboards HatDrive! PoE+
+Load:   dtoverlay=pineboards-hatdrive-poe-plus
 Params: <None>
 
 
@@ -5242,6 +5246,23 @@ Info:   Enable a JDI LT070ME05000 DSI display on DSI1 using Harlab's V2
         Requires vc4-kms-v3d to be loaded.
 Load:   dtoverlay=vc4-kms-dsi-lt070me05000-v2
 Params: <None>
+
+
+Name:   vc4-kms-dsi-waveshare-800x480
+Info:   Enable the Waveshare 4.3" 800x480 DSI screen.
+        It tries to look like the Pi 7" display, but won't accept some of the
+        timings.
+        Includes the edt-ft5406 for the touchscreen element.
+        Requires vc4-kms-v3d to be loaded.
+Load:   dtoverlay=vc4-kms-dsi-waveshare-800x480,<param>=<val>
+Params: sizex                   Touchscreen size x (default 800)
+        sizey                   Touchscreen size y (default 480)
+        invx                    Touchscreen inverted x axis
+        invy                    Touchscreen inverted y axis
+        swapxy                  Touchscreen swapped x y axis
+        disable_touch           Disables the touch screen overlay driver
+        dsi0                    Use DSI0 and i2c_csi_dsi0 (rather than
+                                the default DSI1 and i2c_csi_dsi).
 
 
 Name:   vc4-kms-dsi-waveshare-panel

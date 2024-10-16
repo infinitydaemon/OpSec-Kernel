@@ -436,6 +436,48 @@ static int vc4_hvs_debugfs_dlist_allocs(struct seq_file *m, void *data)
 	return 0;
 }
 
+static int vc6_hvs_debugfs_upm_allocs(struct seq_file *m, void *data)
+{
+	struct drm_debugfs_entry *entry = m->private;
+	struct drm_device *dev = entry->dev;
+	struct vc4_dev *vc4 = to_vc4_dev(dev);
+	struct vc4_hvs *hvs = vc4->hvs;
+	struct drm_printer p = drm_seq_file_printer(m);
+	struct vc4_upm_refcounts *refcount;
+	unsigned int i;
+
+	drm_printf(&p, "UPM Handles:\n");
+	for (i = 0; i < VC4_NUM_UPM_HANDLES; i++) {
+		refcount = &hvs->upm_refcounts[i];
+		drm_printf(&p, "handle %u: refcount %u, size %zu [%08llx + %08llx]\n",
+			   i, refcount_read(&refcount->refcount), refcount->size,
+			   refcount->upm.start, refcount->upm.size);
+	}
+
+	return 0;
+}
+
+static int vc4_hvs_debugfs_lbm_allocs(struct seq_file *m, void *data)
+{
+	struct drm_debugfs_entry *entry = m->private;
+	struct drm_device *dev = entry->dev;
+	struct vc4_dev *vc4 = to_vc4_dev(dev);
+	struct vc4_hvs *hvs = vc4->hvs;
+	struct drm_printer p = drm_seq_file_printer(m);
+	struct vc4_lbm_refcounts *refcount;
+	unsigned int i;
+
+	drm_printf(&p, "LBM Handles:\n");
+	for (i = 0; i < VC4_NUM_LBM_HANDLES; i++) {
+		refcount = &hvs->lbm_refcounts[i];
+		drm_printf(&p, "handle %u: refcount %u, size %zu [%08llx + %08llx]\n",
+			   i, refcount_read(&refcount->refcount), refcount->size,
+			   refcount->lbm.start, refcount->lbm.size);
+	}
+
+	return 0;
+}
+
 /* The filter kernel is composed of dwords each containing 3 9-bit
  * signed integers packed next to each other.
  */
@@ -1261,7 +1303,6 @@ int vc4_hvs_atomic_check(struct drm_crtc *crtc, struct drm_atomic_state *state)
 	struct drm_plane *plane;
 	const struct drm_plane_state *plane_state;
 	u32 dlist_count = 0;
-	u32 lbm_count = 0;
 
 	/* The pixelvalve can only feed one encoder (and encoders are
 	 * 1:1 with connectors.)
@@ -1270,8 +1311,6 @@ int vc4_hvs_atomic_check(struct drm_crtc *crtc, struct drm_atomic_state *state)
 		return -EINVAL;
 
 	drm_atomic_crtc_state_for_each_plane_state(plane, plane_state, crtc_state) {
-		const struct vc4_plane_state *vc4_plane_state =
-						to_vc4_plane_state(plane_state);
 		u32 plane_dlist_count = vc4_plane_dlist_size(plane_state);
 
 		drm_dbg_driver(dev, "[CRTC:%d:%s] Found [PLANE:%d:%s] with DLIST size: %u\n",
@@ -1280,7 +1319,6 @@ int vc4_hvs_atomic_check(struct drm_crtc *crtc, struct drm_atomic_state *state)
 			       plane_dlist_count);
 
 		dlist_count += plane_dlist_count;
-		lbm_count += vc4_plane_state->lbm_size;
 	}
 
 	dlist_count++; /* Account for SCALER_CTL0_END. */
@@ -1293,8 +1331,6 @@ int vc4_hvs_atomic_check(struct drm_crtc *crtc, struct drm_atomic_state *state)
 		return PTR_ERR(alloc);
 
 	vc4_state->mm = alloc;
-
-	/* FIXME: Check total lbm allocation here */
 
 	return vc4_hvs_gamma_check(crtc, state);
 }
@@ -1411,10 +1447,7 @@ void vc4_hvs_atomic_flush(struct drm_crtc *crtc,
 	bool debug_dump_regs = false;
 	bool enable_bg_fill = true;
 	u32 __iomem *dlist_start, *dlist_next;
-	unsigned long irqflags;
 	unsigned int zpos = 0;
-	u32 lbm_offset = 0;
-	u32 lbm_size = 0;
 	bool found = false;
 	int idx;
 
@@ -1433,35 +1466,6 @@ void vc4_hvs_atomic_flush(struct drm_crtc *crtc,
 		vc4_hvs_dump_state(hvs);
 	}
 
-	drm_atomic_crtc_for_each_plane(plane, crtc) {
-		vc4_plane_state = to_vc4_plane_state(plane->state);
-		lbm_size += vc4_plane_state->lbm_size;
-	}
-
-	if (drm_mm_node_allocated(&vc4_crtc->lbm)) {
-		spin_lock_irqsave(&vc4_crtc->irq_lock, irqflags);
-		drm_mm_remove_node(&vc4_crtc->lbm);
-		spin_unlock_irqrestore(&vc4_crtc->irq_lock, irqflags);
-	}
-
-	if (lbm_size) {
-		int ret;
-
-		spin_lock_irqsave(&vc4_crtc->irq_lock, irqflags);
-		ret = drm_mm_insert_node_generic(&vc4->hvs->lbm_mm,
-						 &vc4_crtc->lbm,
-						 lbm_size, 1,
-						 0, 0);
-		spin_unlock_irqrestore(&vc4_crtc->irq_lock, irqflags);
-
-		if (ret) {
-			pr_err("Failed to allocate LBM ret %d\n", ret);
-			return;
-		}
-	}
-
-	lbm_offset = vc4_crtc->lbm.start;
-
 	dlist_start = vc4->hvs->dlist + vc4_state->mm->mm_node.start;
 	dlist_next = dlist_start;
 
@@ -1473,8 +1477,6 @@ void vc4_hvs_atomic_flush(struct drm_crtc *crtc,
 			if (plane->state->normalized_zpos != zpos)
 				continue;
 
-			vc4_plane_state = to_vc4_plane_state(plane->state);
-
 			/* Is this the first active plane? */
 			if (dlist_next == dlist_start) {
 				/* We need to enable background fill when a plane
@@ -1485,13 +1487,8 @@ void vc4_hvs_atomic_flush(struct drm_crtc *crtc,
 				 * already needs it or all planes on top blend from
 				 * the first or a lower plane.
 				 */
+				vc4_plane_state = to_vc4_plane_state(plane->state);
 				enable_bg_fill = vc4_plane_state->needs_bg_fill;
-			}
-
-			if (vc4_plane_state->lbm_size) {
-				vc4_plane_state->dlist[vc4_plane_state->lbm_offset] =
-								lbm_offset;
-				lbm_offset += vc4_plane_state->lbm_size;
 			}
 
 			dlist_next += vc4_plane_write_dlist(plane, dlist_next);
@@ -1731,10 +1728,14 @@ int vc4_hvs_debugfs_init(struct drm_minor *minor)
 				     NULL);
 	}
 
-	if (vc4->gen >= VC4_GEN_6)
+	if (vc4->gen >= VC4_GEN_6) {
 		drm_debugfs_add_file(drm, "hvs_dlists", vc6_hvs_debugfs_dlist, NULL);
-	else
+		drm_debugfs_add_file(drm, "hvs_upm", vc6_hvs_debugfs_upm_allocs, NULL);
+	} else {
 		drm_debugfs_add_file(drm, "hvs_dlists", vc4_hvs_debugfs_dlist, NULL);
+	}
+
+	drm_debugfs_add_file(drm, "hvs_lbm", vc4_hvs_debugfs_lbm_allocs, NULL);
 
 	drm_debugfs_add_file(drm, "hvs_underrun", vc4_hvs_debugfs_underrun, NULL);
 
@@ -1754,6 +1755,7 @@ struct vc4_hvs *__vc4_hvs_alloc(struct vc4_dev *vc4,
 	unsigned int dlist_start;
 	size_t dlist_size;
 	size_t lbm_size;
+	unsigned int i;
 
 	hvs = drmm_kzalloc(drm, sizeof(*hvs), GFP_KERNEL);
 	if (!hvs)
@@ -1792,6 +1794,11 @@ struct vc4_hvs *__vc4_hvs_alloc(struct vc4_dev *vc4,
 			dlist_size = HVS_READ(SCALER6(CXM_SIZE));
 		else
 			dlist_size = 4096;
+
+		for (i = 0; i < VC4_NUM_UPM_HANDLES; i++) {
+			refcount_set(&hvs->upm_refcounts[i].refcount, 0);
+			hvs->upm_refcounts[i].hvs = hvs;
+		}
 
 		break;
 
@@ -1835,6 +1842,7 @@ struct vc4_hvs *__vc4_hvs_alloc(struct vc4_dev *vc4,
 	}
 
 	drm_mm_init(&hvs->lbm_mm, 0, lbm_size);
+	ida_init(&hvs->lbm_handles);
 
 	if (vc4->gen >= VC4_GEN_6) {
 		ida_init(&hvs->upm_handles);
@@ -2353,7 +2361,10 @@ static void vc4_hvs_unbind(struct device *dev, struct device *master,
 		drm_mm_remove_node(node);
 	drm_mm_takedown(&vc4->hvs->lbm_mm);
 
+	/* we no longer require a minimum clock rate */
+	clk_set_min_rate(hvs->disp_clk, 0);
 	clk_disable_unprepare(hvs->disp_clk);
+	clk_set_min_rate(hvs->core_clk, 0);
 	clk_disable_unprepare(hvs->core_clk);
 
 	vc4->hvs = NULL;
