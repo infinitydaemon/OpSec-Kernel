@@ -255,12 +255,14 @@ i2c_csi_dsi0: &i2c6 { // Note: This is for MIPI0 connector only
 	pinctrl-0 = <&rp1_i2c6_38_39>;
 	pinctrl-names = "default";
 	clock-frequency = <100000>;
+	symlink = "i2c-6";
 };
 
 i2c_csi_dsi1: &i2c4 { // Note: This is for MIPI1 connector only
 	pinctrl-0 = <&rp1_i2c4_40_41>;
 	pinctrl-names = "default";
 	clock-frequency = <100000>;
+	symlink = "i2c-4";
 };
 
 i2c_csi_dsi: &i2c_csi_dsi1 { }; // An alias for compatibility
@@ -363,6 +365,7 @@ dpi_16bit_gpio2:        &rp1_dpi_16bit_gpio2        { };
 	sd-uhs-sdr50;
 	sd-uhs-ddr50;
 	sd-uhs-sdr104;
+	supports-cqe;
 	cd-gpios = <&gio_aon 5 GPIO_ACTIVE_LOW>;
 	//no-1-8-v;
 	status = "okay";
@@ -429,11 +432,6 @@ dpi_16bit_gpio2:        &rp1_dpi_16bit_gpio2        { };
 };
 
 / {
-	chosen: chosen {
-		bootargs = "reboot=w coherent_pool=1M 8250.nr_uarts=1 pci=pcie_bus_safe";
-		stdout-path = "serial10:115200n8";
-	};
-
 	fan: cooling_fan {
 		status = "disabled";
 		compatible = "pwm-fan";
