@@ -1366,6 +1366,12 @@ static int dwc3_core_init(struct dwc3 *dwc)
 		if (dwc->dis_tx_ipgap_linecheck_quirk)
 			reg |= DWC3_GUCTL1_TX_IPGAP_LINECHECK_DIS;
 
+		if (dwc->enh_nak_fs_quirk)
+			reg |= DWC3_GUCTL1_NAK_PER_ENH_FS;
+
+		if (dwc->enh_nak_hs_quirk)
+			reg |= DWC3_GUCTL1_NAK_PER_ENH_HS;
+
 		if (dwc->parkmode_disable_ss_quirk)
 			reg |= DWC3_GUCTL1_PARKMODE_DISABLE_SS;
 
@@ -1669,6 +1675,10 @@ static void dwc3_get_properties(struct dwc3 *dwc)
 				"snps,resume-hs-terminations");
 	dwc->ulpi_ext_vbus_drv = device_property_read_bool(dev,
 				"snps,ulpi-ext-vbus-drv");
+	dwc->enh_nak_fs_quirk = device_property_read_bool(dev,
+				"snps,enhanced-nak-fs-quirk");
+	dwc->enh_nak_hs_quirk = device_property_read_bool(dev,
+				"snps,enhanced-nak-hs-quirk");
 	dwc->parkmode_disable_ss_quirk = device_property_read_bool(dev,
 				"snps,parkmode-disable-ss-quirk");
 	dwc->parkmode_disable_hs_quirk = device_property_read_bool(dev,
@@ -2164,6 +2174,11 @@ static int dwc3_suspend_common(struct dwc3 *dwc, pm_message_t msg)
 {
 	u32 reg;
 
+	dwc->susphy_state = (dwc3_readl(dwc->regs, DWC3_GUSB2PHYCFG(0)) &
+			    DWC3_GUSB2PHYCFG_SUSPHY) ||
+			    (dwc3_readl(dwc->regs, DWC3_GUSB3PIPECTL(0)) &
+			    DWC3_GUSB3PIPECTL_SUSPHY);
+
 	switch (dwc->current_dr_role) {
 	case DWC3_GCTL_PRTCAP_DEVICE:
 		if (pm_runtime_suspended(dwc->dev))
@@ -2209,6 +2224,15 @@ static int dwc3_suspend_common(struct dwc3 *dwc, pm_message_t msg)
 	default:
 		/* do nothing */
 		break;
+	}
+
+	if (!PMSG_IS_AUTO(msg)) {
+		/*
+		 * TI AM62 platform requires SUSPHY to be
+		 * enabled for system suspend to work.
+		 */
+		if (!dwc->susphy_state)
+			dwc3_enable_susphy(dwc, true);
 	}
 
 	return 0;
@@ -2271,6 +2295,11 @@ static int dwc3_resume_common(struct dwc3 *dwc, pm_message_t msg)
 	default:
 		/* do nothing */
 		break;
+	}
+
+	if (!PMSG_IS_AUTO(msg)) {
+		/* restore SUSPHY state to that before system suspend. */
+		dwc3_enable_susphy(dwc, dwc->susphy_state);
 	}
 
 	return 0;
