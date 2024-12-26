@@ -171,13 +171,25 @@ enum gpio_drive_strength {
 	GPIO_DRIVE_STRENGTH_12MA = 3
 };
 
+struct fp24_8 {
+	uint32_t val;
+};
+
 typedef rp1_pio_sm_config pio_sm_config;
 
 typedef struct rp1_pio_client *PIO;
 
-void pio_set_error(struct rp1_pio_client *client, int err);
-int pio_get_error(const struct rp1_pio_client *client);
-void pio_clear_error(struct rp1_pio_client *client);
+int rp1_pio_init(void);
+PIO rp1_pio_open(void);
+void rp1_pio_close(struct rp1_pio_client *client);
+void rp1_pio_set_error(struct rp1_pio_client *client, int err);
+int rp1_pio_get_error(const struct rp1_pio_client *client);
+void rp1_pio_clear_error(struct rp1_pio_client *client);
+int rp1_pio_sm_config_xfer(struct rp1_pio_client *client, uint sm, uint dir,
+			   uint buf_size, uint buf_count);
+int rp1_pio_sm_xfer_data(struct rp1_pio_client *client, uint sm, uint dir,
+			 uint data_bytes, void *data, dma_addr_t dma_addr,
+			 void (*callback)(void *param), void *param);
 
 int rp1_pio_can_add_program(struct rp1_pio_client *client, void *param);
 int rp1_pio_add_program(struct rp1_pio_client *client, void *param);
@@ -211,12 +223,55 @@ int rp1_pio_gpio_set_oeover(struct rp1_pio_client *client, void *param);
 int rp1_pio_gpio_set_input_enabled(struct rp1_pio_client *client, void *param);
 int rp1_pio_gpio_set_drive_strength(struct rp1_pio_client *client, void *param);
 
-int pio_init(void);
-PIO pio_open(void);
-void pio_close(PIO pio);
+static inline int pio_init(void)
+{
+	return rp1_pio_init();
+}
 
-int pio_sm_config_xfer(PIO pio, uint sm, uint dir, uint buf_size, uint buf_count);
-int pio_sm_xfer_data(PIO pio, uint sm, uint dir, uint data_bytes, void *data);
+static inline struct rp1_pio_client *pio_open(void)
+{
+	return rp1_pio_open();
+}
+
+static inline void pio_close(struct rp1_pio_client *client)
+{
+	rp1_pio_close(client);
+}
+
+static inline void pio_set_error(struct rp1_pio_client *client, int err)
+{
+	rp1_pio_set_error(client, err);
+}
+
+static inline int pio_get_error(const struct rp1_pio_client *client)
+{
+	return rp1_pio_get_error(client);
+}
+
+static inline void pio_clear_error(struct rp1_pio_client *client)
+{
+	rp1_pio_clear_error(client);
+}
+
+static inline int pio_sm_config_xfer(struct rp1_pio_client *client, uint sm, uint dir,
+				     uint buf_size, uint buf_count)
+{
+	return rp1_pio_sm_config_xfer(client, sm, dir, buf_size, buf_count);
+}
+
+static inline int pio_sm_xfer_data(struct rp1_pio_client *client, uint sm, uint dir,
+				   uint data_bytes, void *data, dma_addr_t dma_addr,
+				   void (*callback)(void *param), void *param)
+{
+	return rp1_pio_sm_xfer_data(client, sm, dir, data_bytes, data, dma_addr, callback, param);
+}
+
+static inline struct fp24_8 make_fp24_8(uint mul, uint div)
+{
+	struct fp24_8 res = { .val = ((unsigned long long)mul << 8) / div };
+
+	return res;
+}
 
 static inline bool pio_can_add_program(struct rp1_pio_client *client,
 				       const pio_program_t *program)
@@ -396,16 +451,18 @@ static inline int pio_sm_clear_fifos(struct rp1_pio_client *client, uint sm)
 	return rp1_pio_sm_clear_fifos(client, &args);
 }
 
-static inline bool pio_calculate_clkdiv_from_float(float div, uint16_t *div_int,
+static inline bool pio_calculate_clkdiv_from_fp24_8(struct fp24_8 div, uint16_t *div_int,
 						   uint8_t *div_frac)
 {
-	if (bad_params_if(NULL, div < 1 || div > 65536))
+	uint inum = (div.val >> 8);
+
+	if (bad_params_if(NULL, inum < 1 || inum > 65536))
 		return false;
-	*div_int = (uint16_t)div;
+	*div_int = (uint16_t)inum;
 	if (*div_int == 0)
 		*div_frac = 0;
 	else
-		*div_frac = (uint8_t)((div - (float)*div_int) * (1u << 8u));
+		*div_frac = div.val & 0xff;
 	return true;
 }
 
@@ -421,11 +478,11 @@ static inline int pio_sm_set_clkdiv_int_frac(struct rp1_pio_client *client, uint
 	return rp1_pio_sm_set_clkdiv(client, &args);
 }
 
-static inline int pio_sm_set_clkdiv(struct rp1_pio_client *client, uint sm, float div)
+static inline int pio_sm_set_clkdiv(struct rp1_pio_client *client, uint sm, struct fp24_8 div)
 {
 	struct rp1_pio_sm_set_clkdiv_args args = { .sm = sm };
 
-	if (!pio_calculate_clkdiv_from_float(div, &args.div_int, &args.div_frac))
+	if (!pio_calculate_clkdiv_from_fp24_8(div, &args.div_int, &args.div_frac))
 		return -EINVAL;
 	return rp1_pio_sm_set_clkdiv(client, &args);
 }
@@ -745,12 +802,12 @@ static inline void sm_config_set_clkdiv_int_frac(pio_sm_config *c, uint16_t div_
 		(((uint)div_int) << PROC_PIO_SM0_CLKDIV_INT_LSB);
 }
 
-static inline void sm_config_set_clkdiv(pio_sm_config *c, float div)
+static inline void sm_config_set_clkdiv(pio_sm_config *c, struct fp24_8 div)
 {
 	uint16_t div_int;
 	uint8_t div_frac;
 
-	pio_calculate_clkdiv_from_float(div, &div_int, &div_frac);
+	pio_calculate_clkdiv_from_fp24_8(div, &div_int, &div_frac);
 	sm_config_set_clkdiv_int_frac(c, div_int, div_frac);
 }
 
