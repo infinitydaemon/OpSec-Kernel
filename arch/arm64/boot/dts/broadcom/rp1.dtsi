@@ -32,6 +32,7 @@
 					  // RP1_PLL_VIDEO_CORE and dividers are now managed by VEC,DPI drivers
 					  <&rp1_clocks RP1_PLL_SYS>,
 					  <&rp1_clocks RP1_PLL_SYS_SEC>,
+					  <&rp1_clocks RP1_CLK_ETH>,
 					  <&rp1_clocks RP1_PLL_AUDIO>,
 					  <&rp1_clocks RP1_PLL_AUDIO_SEC>,
 					  <&rp1_clocks RP1_CLK_SYS>,
@@ -46,6 +47,7 @@
 					       <1536000000>, // RP1_PLL_AUDIO_CORE
 					       <200000000>,  // RP1_PLL_SYS
 					       <125000000>,  // RP1_PLL_SYS_SEC
+					       <125000000>,  // RP1_CLK_ETH
 					       <61440000>,   // RP1_PLL_AUDIO
 					       <192000000>,  // RP1_PLL_AUDIO_SEC
 					       <200000000>,  // RP1_CLK_SYS
@@ -976,12 +978,15 @@
 
 		rp1_eth: ethernet@100000 {
 			reg = <0xc0 0x40100000  0x0 0x4000>;
-			compatible = "cdns,macb";
+			compatible = "raspberrypi,rp1-gem", "cdns,macb";
 			#address-cells = <1>;
 			#size-cells = <0>;
 			interrupts = <RP1_INT_ETH IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&macb_pclk &macb_hclk &rp1_clocks RP1_CLK_ETH_TSU>;
-			clock-names = "pclk", "hclk", "tsu_clk";
+			clocks = <&rp1_clocks RP1_CLK_SYS
+				  &rp1_clocks RP1_CLK_SYS
+				  &rp1_clocks RP1_CLK_ETH_TSU
+				  &rp1_clocks RP1_CLK_ETH>;
+			clock-names = "pclk", "hclk", "tsu_clk", "tx_clk";
 			phy-mode = "rgmii-id";
 			cdns,aw2w-max-pipe = /bits/ 8 <8>;
 			cdns,ar2r-max-pipe = /bits/ 8 <8>;
@@ -1076,7 +1081,7 @@
 			reg = <0xc0 0x40188000  0x0 0x1000>;
 			compatible = "snps,axi-dma-1.01a";
 			interrupts = <RP1_INT_DMA IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&sdhci_core &rp1_clocks RP1_CLK_SYS>;
+			clocks = <&rp1_clocks RP1_CLK_DMA &rp1_clocks RP1_CLK_SYS>;
 			clock-names = "core-clk", "cfgr-clk";
 
 			#dma-cells = <1>;
@@ -1225,18 +1230,6 @@
 		#clock-cells = <0>;
 		clock-output-names = "xosc";
 		clock-frequency = <50000000>;
-	};
-	macb_pclk: macb_pclk {
-		compatible = "fixed-clock";
-		#clock-cells = <0>;
-		clock-output-names = "pclk";
-		clock-frequency = <200000000>;
-	};
-	macb_hclk: macb_hclk {
-		compatible = "fixed-clock";
-		#clock-cells = <0>;
-		clock-output-names = "hclk";
-		clock-frequency = <200000000>;
 	};
 	sdio_src: sdio_src {
 		// 400 MHz on FPGA. PLL sys VCO on asic

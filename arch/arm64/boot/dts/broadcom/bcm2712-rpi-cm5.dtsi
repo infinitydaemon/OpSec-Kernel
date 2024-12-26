@@ -718,7 +718,7 @@ spi10_cs_pins: &spi10_cs_gpio1 {};
 		"-", // GPIO40
 		"-", // GPIO41
 		"USB_VBUS_EN", // GPIO42
-		"USB_OC_N", // GPIO43
+		"-", // GPIO43
 		"RP1_STAT_LED", // GPIO44
 		"FAN_PWM", // GPIO45
 		"-", // GPIO46
@@ -750,5 +750,7 @@ spi10_cs_pins: &spi10_cs_gpio1 {};
 			<&ant1>, "output-low?=on",
 			<&ant2>, "output-high?=off",
 			<&ant2>, "output-low?=on";
+		noanthogs = <&ant1>,"status=disabled",
+			<&ant2>, "status=disabled";
 	};
 };
