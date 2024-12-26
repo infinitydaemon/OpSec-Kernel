@@ -233,6 +233,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	rpi-dacpro.dtbo \
 	rpi-digiampplus.dtbo \
 	rpi-ft5406.dtbo \
+	rpi-fw-uart.dtbo \
 	rpi-poe.dtbo \
 	rpi-poe-plus.dtbo \
 	rpi-sense.dtbo \
@@ -341,7 +342,8 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	waveshare-can-fd-hat-mode-a.dtbo \
 	waveshare-can-fd-hat-mode-b.dtbo \
 	wittypi.dtbo \
-	wm8960-soundcard.dtbo
+	wm8960-soundcard.dtbo \
+	ws2812-pio.dtbo
 
 targets += dtbs dtbs_install
 targets += $(dtbo-y)
