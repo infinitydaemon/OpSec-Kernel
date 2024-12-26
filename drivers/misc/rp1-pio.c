@@ -61,9 +61,15 @@
 #define DMA_BOUNCE_BUFFER_SIZE 0x1000
 #define DMA_BOUNCE_BUFFER_COUNT 4
 
+struct dma_xfer_state {
+	struct dma_info *dma;
+	void (*callback)(void *param);
+	void *callback_param;
+};
+
 struct dma_buf_info {
 	void *buf;
-	dma_addr_t phys;
+	dma_addr_t dma_addr;
 	struct scatterlist sgl;
 };
 
@@ -572,21 +578,34 @@ static void rp1_pio_sm_dma_callback(void *param)
 	up(&dma->buf_sem);
 }
 
+static void rp1_pio_sm_kernel_dma_callback(void *param)
+{
+	struct dma_xfer_state *dxs = param;
+
+	dxs->dma->tail_idx++;
+	up(&dxs->dma->buf_sem);
+
+	dxs->callback(dxs->callback_param);
+
+	kfree(dxs);
+}
+
 static void rp1_pio_sm_dma_free(struct device *dev, struct dma_info *dma)
 {
 	dmaengine_terminate_all(dma->chan);
 	while (dma->buf_count > 0) {
 		dma->buf_count--;
 		dma_free_coherent(dev, ROUND_UP(dma->buf_size, PAGE_SIZE),
-				  dma->bufs[dma->buf_count].buf, dma->bufs[dma->buf_count].phys);
+				  dma->bufs[dma->buf_count].buf,
+				  dma->bufs[dma->buf_count].dma_addr);
 	}
 
 	dma_release_channel(dma->chan);
 }
 
-static int rp1_pio_sm_config_xfer(struct rp1_pio_client *client, void *param)
+static int rp1_pio_sm_config_xfer_internal(struct rp1_pio_client *client, uint sm, uint dir,
+					   uint buf_size, uint buf_count)
 {
-	struct rp1_pio_sm_config_xfer_args *args = param;
 	struct rp1_pio_sm_set_dmactrl_args set_dmactrl_args;
 	struct rp1_pio_device *pio = client->pio;
 	struct platform_device *pdev = pio->pdev;
@@ -596,17 +615,18 @@ static int rp1_pio_sm_config_xfer(struct rp1_pio_client *client, void *param)
 	struct dma_info *dma;
 	uint32_t dma_mask;
 	char chan_name[4];
-	uint buf_size;
 	int ret = 0;
 
-	if (args->sm >= RP1_PIO_SMS_COUNT || args->dir >= RP1_PIO_DIR_COUNT ||
-	    !args->buf_size || (args->buf_size & 3) ||
-	    !args->buf_count || args->buf_count > DMA_BOUNCE_BUFFER_COUNT)
+	if (sm >= RP1_PIO_SMS_COUNT || dir >= RP1_PIO_DIR_COUNT)
+		return -EINVAL;
+	if ((buf_count || buf_size) &&
+	    (!buf_size || (buf_size & 3) ||
+	     !buf_count || buf_count > DMA_BOUNCE_BUFFER_COUNT))
 		return -EINVAL;
 
-	dma_mask = 1 << (args->sm * 2 + args->dir);
+	dma_mask = 1 << (sm * 2 + dir);
 
-	dma = &pio->dma_configs[args->sm][args->dir];
+	dma = &pio->dma_configs[sm][dir];
 
 	spin_lock(&pio->lock);
 	if (pio->claimed_dmas & dma_mask)
@@ -615,16 +635,16 @@ static int rp1_pio_sm_config_xfer(struct rp1_pio_client *client, void *param)
 	client->claimed_dmas |= dma_mask;
 	spin_unlock(&pio->lock);
 
-	dma->buf_size = args->buf_size;
+	dma->buf_size = buf_size;
 	/* Round up the allocations */
-	buf_size = ROUND_UP(args->buf_size, PAGE_SIZE);
+	buf_size = ROUND_UP(buf_size, PAGE_SIZE);
 	sema_init(&dma->buf_sem, 0);
 
 	/* Allocate and configure a DMA channel */
 	/* Careful - each SM FIFO has its own DREQ value */
-	chan_name[0] = (args->dir == RP1_PIO_DIR_TO_SM) ? 't' : 'r';
+	chan_name[0] = (dir == RP1_PIO_DIR_TO_SM) ? 't' : 'r';
 	chan_name[1] = 'x';
-	chan_name[2] = '0' + args->sm;
+	chan_name[2] = '0' + sm;
 	chan_name[3] = '\0';
 
 	dma->chan = dma_request_chan(dev, chan_name);
@@ -632,37 +652,37 @@ static int rp1_pio_sm_config_xfer(struct rp1_pio_client *client, void *param)
 		return PTR_ERR(dma->chan);
 
 	/* Alloc and map bounce buffers */
-	for (dma->buf_count = 0; dma->buf_count < args->buf_count; dma->buf_count++) {
+	for (dma->buf_count = 0; dma->buf_count < buf_count; dma->buf_count++) {
 		struct dma_buf_info *dbi = &dma->bufs[dma->buf_count];
 
 		dbi->buf = dma_alloc_coherent(dma->chan->device->dev, buf_size,
-					      &dbi->phys, GFP_KERNEL);
+					      &dbi->dma_addr, GFP_KERNEL);
 		if (!dbi->buf) {
 			ret = -ENOMEM;
 			goto err_dma_free;
 		}
 		sg_init_table(&dbi->sgl, 1);
-		sg_dma_address(&dbi->sgl) = dbi->phys;
+		sg_dma_address(&dbi->sgl) = dbi->dma_addr;
 	}
 
 	fifo_addr = pio->phys_addr;
-	fifo_addr += args->sm * (RP1_PIO_FIFO_TX1 - RP1_PIO_FIFO_TX0);
-	fifo_addr += (args->dir == RP1_PIO_DIR_TO_SM) ? RP1_PIO_FIFO_TX0 : RP1_PIO_FIFO_RX0;
+	fifo_addr += sm * (RP1_PIO_FIFO_TX1 - RP1_PIO_FIFO_TX0);
+	fifo_addr += (dir == RP1_PIO_DIR_TO_SM) ? RP1_PIO_FIFO_TX0 : RP1_PIO_FIFO_RX0;
 
 	config.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 	config.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 	config.src_addr = fifo_addr;
 	config.dst_addr = fifo_addr;
-	config.direction = (args->dir == RP1_PIO_DIR_TO_SM) ? DMA_MEM_TO_DEV : DMA_DEV_TO_MEM;
+	config.direction = (dir == RP1_PIO_DIR_TO_SM) ? DMA_MEM_TO_DEV : DMA_DEV_TO_MEM;
 
 	ret = dmaengine_slave_config(dma->chan, &config);
 	if (ret)
 		goto err_dma_free;
 
-	set_dmactrl_args.sm = args->sm;
-	set_dmactrl_args.is_tx = (args->dir == RP1_PIO_DIR_TO_SM);
+	set_dmactrl_args.sm = sm;
+	set_dmactrl_args.is_tx = (dir == RP1_PIO_DIR_TO_SM);
 	set_dmactrl_args.ctrl = RP1_PIO_DMACTRL_DEFAULT;
-	if (args->dir == RP1_PIO_DIR_FROM_SM)
+	if (dir == RP1_PIO_DIR_FROM_SM)
 		set_dmactrl_args.ctrl = (RP1_PIO_DMACTRL_DEFAULT & ~0x1f) | 1;
 
 	ret = rp1_pio_sm_set_dmactrl(client, &set_dmactrl_args);
@@ -682,8 +702,16 @@ err_dma_free:
 	return ret;
 }
 
+static int rp1_pio_sm_config_xfer_user(struct rp1_pio_client *client, void *param)
+{
+	struct rp1_pio_sm_config_xfer_args *args = param;
+
+	return rp1_pio_sm_config_xfer_internal(client, args->sm, args->dir,
+					       args->buf_size, args->buf_count);
+}
+
 static int rp1_pio_sm_tx_user(struct rp1_pio_device *pio, struct dma_info *dma,
-			      const void __user *userbuf, size_t bytes)
+				  const void __user *userbuf, size_t bytes)
 {
 	struct platform_device *pdev = pio->pdev;
 	struct dma_async_tx_descriptor *desc;
@@ -723,7 +751,7 @@ static int rp1_pio_sm_tx_user(struct rp1_pio_device *pio, struct dma_info *dma,
 					       DMA_PREP_INTERRUPT | DMA_CTRL_ACK |
 					       DMA_PREP_FENCE);
 		if (!desc) {
-			dev_err(dev, "DMA preparation failedzn");
+			dev_err(dev, "DMA preparation failed\n");
 			ret = -EIO;
 			break;
 		}
@@ -757,7 +785,7 @@ static int rp1_pio_sm_tx_user(struct rp1_pio_device *pio, struct dma_info *dma,
 }
 
 static int rp1_pio_sm_rx_user(struct rp1_pio_device *pio, struct dma_info *dma,
-			      void __user *userbuf, size_t bytes)
+				  void __user *userbuf, size_t bytes)
 {
 	struct platform_device *pdev = pio->pdev;
 	struct dma_async_tx_descriptor *desc;
@@ -779,7 +807,7 @@ static int rp1_pio_sm_rx_user(struct rp1_pio_device *pio, struct dma_info *dma,
 		if (!bytes || dma->head_idx - dma->tail_idx == dma->buf_count) {
 			if (down_timeout(&dma->buf_sem,
 				msecs_to_jiffies(1000))) {
-				dev_err(dev, "DMA wait timed out");
+				dev_err(dev, "DMA wait timed out\n");
 				ret = -ETIMEDOUT;
 				break;
 			}
@@ -801,7 +829,7 @@ static int rp1_pio_sm_rx_user(struct rp1_pio_device *pio, struct dma_info *dma,
 					       DMA_PREP_INTERRUPT | DMA_CTRL_ACK |
 					       DMA_PREP_FENCE);
 		if (!desc) {
-			dev_err(dev, "DMA preparation failed");
+			dev_err(dev, "DMA preparation failed\n");
 			ret = -EIO;
 			break;
 		}
@@ -809,8 +837,7 @@ static int rp1_pio_sm_rx_user(struct rp1_pio_device *pio, struct dma_info *dma,
 		desc->callback = rp1_pio_sm_dma_callback;
 		desc->callback_param = dma;
 
-		// Submit the buffer - the callback will kick the semaphore
-
+		/* Submit the buffer - the callback will kick the semaphore */
 		ret = dmaengine_submit(desc);
 		if (ret < 0)
 			break;
@@ -824,9 +851,9 @@ static int rp1_pio_sm_rx_user(struct rp1_pio_device *pio, struct dma_info *dma,
 	return ret;
 }
 
-static int rp1_pio_sm_xfer_data(struct rp1_pio_client *client, void *param)
+static int rp1_pio_sm_xfer_data32_user(struct rp1_pio_client *client, void *param)
 {
-	struct rp1_pio_sm_xfer_data_args *args = param;
+	struct rp1_pio_sm_xfer_data32_args *args = param;
 	struct rp1_pio_device *pio = client->pio;
 	struct dma_info *dma;
 
@@ -842,13 +869,107 @@ static int rp1_pio_sm_xfer_data(struct rp1_pio_client *client, void *param)
 		return rp1_pio_sm_rx_user(pio, dma, args->data, args->data_bytes);
 }
 
+static int rp1_pio_sm_xfer_data_user(struct rp1_pio_client *client, void *param)
+{
+	struct rp1_pio_sm_xfer_data_args *args = param;
+	struct rp1_pio_sm_xfer_data32_args args32;
+
+	args32.sm = args->sm;
+	args32.dir = args->dir;
+	args32.data_bytes = args->data_bytes;
+	args32.data = args->data;
+
+	return rp1_pio_sm_xfer_data32_user(client, &args32);
+}
+
+int rp1_pio_sm_config_xfer(struct rp1_pio_client *client, uint sm, uint dir,
+			      uint buf_size, uint buf_count)
+{
+	return rp1_pio_sm_config_xfer_internal(client, sm, dir, buf_size, buf_count);
+}
+EXPORT_SYMBOL_GPL(rp1_pio_sm_config_xfer);
+
+int rp1_pio_sm_xfer_data(struct rp1_pio_client *client, uint sm, uint dir,
+				    uint data_bytes, void *data, dma_addr_t dma_addr,
+				    void (*callback)(void *param), void *param)
+{
+	struct rp1_pio_device *pio = client->pio;
+	struct platform_device *pdev = pio->pdev;
+	struct dma_async_tx_descriptor *desc;
+	struct dma_xfer_state *dxs = NULL;
+	struct device *dev = &pdev->dev;
+	struct dma_buf_info *dbi = NULL;
+	struct scatterlist sg;
+	struct dma_info *dma;
+	int ret = 0;
+
+	if (sm >= RP1_PIO_SMS_COUNT || dir >= RP1_PIO_DIR_COUNT)
+		return -EINVAL;
+
+	dma = &pio->dma_configs[sm][dir];
+
+	if (!dma_addr) {
+		dxs = kmalloc(sizeof(*dxs), GFP_KERNEL);
+		dxs->dma = dma;
+		dxs->callback = callback;
+		dxs->callback_param = param;
+		callback = rp1_pio_sm_kernel_dma_callback;
+		param = dxs;
+
+		if (!dma->buf_count || data_bytes > dma->buf_size)
+			return -EINVAL;
+
+		/* Grab a dma buffer */
+		if (dma->head_idx - dma->tail_idx == dma->buf_count) {
+			if (down_timeout(&dma->buf_sem, msecs_to_jiffies(1000))) {
+				dev_err(dev, "DMA wait timed out\n");
+				return -ETIMEDOUT;
+			}
+		}
+
+		dbi = &dma->bufs[dma->head_idx % dma->buf_count];
+		dma_addr = dbi->dma_addr;
+
+		if (dir == PIO_DIR_TO_SM)
+			memcpy(dbi->buf, data, data_bytes);
+	}
+
+	sg_init_table(&sg, 1);
+	sg_dma_address(&sg) = dma_addr;
+	sg_dma_len(&sg) = data_bytes;
+
+	desc = dmaengine_prep_slave_sg(dma->chan, &sg, 1,
+					   (dir == PIO_DIR_TO_SM) ? DMA_MEM_TO_DEV : DMA_DEV_TO_MEM,
+					   DMA_PREP_INTERRUPT | DMA_CTRL_ACK |
+					   DMA_PREP_FENCE);
+	if (!desc) {
+		dev_err(dev, "DMA preparation failed\n");
+		return -EIO;
+	}
+
+	desc->callback = callback;
+	desc->callback_param = param;
+
+	ret = dmaengine_submit(desc);
+	if (ret < 0) {
+		dev_err(dev, "dmaengine_submit failed (%d)\n", ret);
+		return ret;
+	}
+
+	dma_async_issue_pending(dma->chan);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(rp1_pio_sm_xfer_data);
+
 struct handler_info {
 	const char *name;
 	int (*func)(struct rp1_pio_client *client, void *param);
 	int argsize;
 } ioctl_handlers[] = {
-	HANDLER(SM_CONFIG_XFER, sm_config_xfer),
-	HANDLER(SM_XFER_DATA, sm_xfer_data),
+	HANDLER(SM_CONFIG_XFER, sm_config_xfer_user),
+	HANDLER(SM_XFER_DATA, sm_xfer_data_user),
+	HANDLER(SM_XFER_DATA32, sm_xfer_data32_user),
 
 	HANDLER(CAN_ADD_PROGRAM, can_add_program),
 	HANDLER(ADD_PROGRAM, add_program),
@@ -889,7 +1010,7 @@ struct handler_info {
 	HANDLER(WRITE_HW, write_hw),
 };
 
-struct rp1_pio_client *pio_open(void)
+struct rp1_pio_client *rp1_pio_open(void)
 {
 	struct rp1_pio_client *client;
 
@@ -901,9 +1022,9 @@ struct rp1_pio_client *pio_open(void)
 
 	return client;
 }
-EXPORT_SYMBOL_GPL(pio_open);
+EXPORT_SYMBOL_GPL(rp1_pio_open);
 
-void pio_close(struct rp1_pio_client *client)
+void rp1_pio_close(struct rp1_pio_client *client)
 {
 	struct rp1_pio_device *pio = client->pio;
 	uint claimed_dmas = client->claimed_dmas;
@@ -945,31 +1066,31 @@ void pio_close(struct rp1_pio_client *client)
 
 	kfree(client);
 }
-EXPORT_SYMBOL_GPL(pio_close);
+EXPORT_SYMBOL_GPL(rp1_pio_close);
 
-void pio_set_error(struct rp1_pio_client *client, int err)
+void rp1_pio_set_error(struct rp1_pio_client *client, int err)
 {
 	client->error = err;
 }
-EXPORT_SYMBOL_GPL(pio_set_error);
+EXPORT_SYMBOL_GPL(rp1_pio_set_error);
 
-int pio_get_error(const struct rp1_pio_client *client)
+int rp1_pio_get_error(const struct rp1_pio_client *client)
 {
 	return client->error;
 }
-EXPORT_SYMBOL_GPL(pio_get_error);
+EXPORT_SYMBOL_GPL(rp1_pio_get_error);
 
-void pio_clear_error(struct rp1_pio_client *client)
+void rp1_pio_clear_error(struct rp1_pio_client *client)
 {
 	client->error = 0;
 }
-EXPORT_SYMBOL_GPL(pio_clear_error);
+EXPORT_SYMBOL_GPL(rp1_pio_clear_error);
 
-static int rp1_pio_open(struct inode *inode, struct file *filp)
+static int rp1_pio_file_open(struct inode *inode, struct file *filp)
 {
 	struct rp1_pio_client *client;
 
-	client = pio_open();
+	client = rp1_pio_open();
 	if (IS_ERR(client))
 		return PTR_ERR(client);
 
@@ -978,11 +1099,11 @@ static int rp1_pio_open(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-static int rp1_pio_release(struct inode *inode, struct file *filp)
+static int rp1_pio_file_release(struct inode *inode, struct file *filp)
 {
 	struct rp1_pio_client *client = filp->private_data;
 
-	pio_close(client);
+	rp1_pio_close(client);
 
 	return 0;
 }
@@ -1032,13 +1153,23 @@ struct rp1_pio_sm_xfer_data_args_compat {
 	compat_uptr_t data;
 };
 
+struct rp1_pio_sm_xfer_data32_args_compat {
+	uint16_t sm;
+	uint16_t dir;
+	uint32_t data_bytes;
+	compat_uptr_t data;
+};
+
 struct rp1_access_hw_args_compat {
 	uint32_t addr;
 	uint32_t len;
 	compat_uptr_t data;
 };
 
-#define PIO_IOC_SM_XFER_DATA_COMPAT _IOW(PIO_IOC_MAGIC, 1, struct rp1_pio_sm_xfer_data_args_compat)
+#define PIO_IOC_SM_XFER_DATA_COMPAT \
+	_IOW(PIO_IOC_MAGIC, 1, struct rp1_pio_sm_xfer_data_args_compat)
+#define PIO_IOC_SM_XFER_DATA32_COMPAT \
+	_IOW(PIO_IOC_MAGIC, 2, struct rp1_pio_sm_xfer_data32_args_compat)
 #define PIO_IOC_READ_HW_COMPAT _IOW(PIO_IOC_MAGIC, 8, struct rp1_access_hw_args_compat)
 #define PIO_IOC_WRITE_HW_COMPAT _IOW(PIO_IOC_MAGIC, 9, struct rp1_access_hw_args_compat)
 
@@ -1059,7 +1190,20 @@ static long rp1_pio_compat_ioctl(struct file *filp, unsigned int ioctl_num,
 		param.dir = compat_param.dir;
 		param.data_bytes = compat_param.data_bytes;
 		param.data = compat_ptr(compat_param.data);
-		return rp1_pio_sm_xfer_data(client, &param);
+		return rp1_pio_sm_xfer_data_user(client, &param);
+	}
+	case PIO_IOC_SM_XFER_DATA32_COMPAT:
+	{
+		struct rp1_pio_sm_xfer_data32_args_compat compat_param;
+		struct rp1_pio_sm_xfer_data32_args param;
+
+		if (copy_from_user(&compat_param, compat_ptr(ioctl_param), sizeof(compat_param)))
+			return -EFAULT;
+		param.sm = compat_param.sm;
+		param.dir = compat_param.dir;
+		param.data_bytes = compat_param.data_bytes;
+		param.data = compat_ptr(compat_param.data);
+		return rp1_pio_sm_xfer_data32_user(client, &param);
 	}
 
 	case PIO_IOC_READ_HW_COMPAT:
@@ -1088,8 +1232,8 @@ static long rp1_pio_compat_ioctl(struct file *filp, unsigned int ioctl_num,
 
 const struct file_operations rp1_pio_fops = {
 	.owner =	THIS_MODULE,
-	.open =		rp1_pio_open,
-	.release =	rp1_pio_release,
+	.open =		rp1_pio_file_open,
+	.release =	rp1_pio_file_release,
 	.unlocked_ioctl = rp1_pio_ioctl,
 	.compat_ioctl = rp1_pio_compat_ioctl,
 };
@@ -1115,6 +1259,10 @@ static int rp1_pio_probe(struct platform_device *pdev)
 		if (WARN_ON(hdlr->argsize > MAX_ARG_SIZE))
 			return -EINVAL;
 	}
+
+	pdev->id = of_alias_get_id(pdev->dev.of_node, "pio");
+	if (pdev->id < 0)
+		return dev_err_probe(dev, pdev->id, "alias is missing\n");
 
 	fw = devm_rp1_firmware_get(dev, dev->of_node);
 	if (IS_ERR(fw))
@@ -1148,31 +1296,26 @@ static int rp1_pio_probe(struct platform_device *pdev)
 		goto out_err;
 	}
 
-	cdev_init(&pio->cdev, &rp1_pio_fops);
-	ret = cdev_add(&pio->cdev, pio->dev_num, 1);
-	if (ret) {
-		dev_err(dev, "cdev_add failed (err %d)\n", ret);
-		goto out_unregister;
-	}
-
 	pio->dev_class = class_create(DRIVER_NAME);
 	if (IS_ERR(pio->dev_class)) {
 		ret = PTR_ERR(pio->dev_class);
 		dev_err(dev, "class_create failed (err %d)\n", ret);
-		goto out_cdev_del;
+		goto out_unregister;
 	}
-	pdev->id = of_alias_get_id(pdev->dev.of_node, "pio");
-	if (pdev->id < 0) {
-		dev_err(dev, "alias is missing\n");
-		return -EINVAL;
+
+	cdev_init(&pio->cdev, &rp1_pio_fops);
+	ret = cdev_add(&pio->cdev, pio->dev_num, 1);
+	if (ret) {
+		dev_err(dev, "cdev_add failed (err %d)\n", ret);
 		goto out_class_destroy;
 	}
+
 	sprintf(dev_name, "pio%d", pdev->id);
 	cdev = device_create(pio->dev_class, NULL, pio->dev_num, NULL, dev_name);
 	if (IS_ERR(cdev)) {
 		ret = PTR_ERR(cdev);
 		dev_err(dev, "%s: device_create failed (err %d)\n", __func__, ret);
-		goto out_class_destroy;
+		goto out_cdev_del;
 	}
 
 	g_pio = pio;
@@ -1180,11 +1323,11 @@ static int rp1_pio_probe(struct platform_device *pdev)
 	dev_info(dev, "Created instance as %s\n", dev_name);
 	return 0;
 
-out_class_destroy:
-	class_destroy(pio->dev_class);
-
 out_cdev_del:
 	cdev_del(&pio->cdev);
+
+out_class_destroy:
+	class_destroy(pio->dev_class);
 
 out_unregister:
 	unregister_chrdev_region(pio->dev_num, 1);
