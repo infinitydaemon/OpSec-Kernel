@@ -405,9 +405,14 @@ Params:
                                 non-lite SKU of CM4).
                                 (default "on")
 
-        sd_cqe                  Set to "off" to disable Command Queueing if you
-                                have an incompatible Class A2 SD card
-                                (Pi 5 only, default "on")
+        sd_cqe                  Modify Command Queuing behaviour on the main SD
+                                interface. Legal values are:
+                                0: disable CQ
+                                1: allow CQ for known-good SD A2 cards, and all
+                                   eMMC cards
+                                2: allow CQ for all SD A2 cards that aren't
+                                   known-bad, and all eMMC cards.
+                                (2712 only, default "1")
 
         sd_overclock            Clock (in MHz) to use when the MMC framework
                                 requests 50MHz
@@ -2752,6 +2757,8 @@ Params: rotation                Mounting rotation of the camera sensor (0 or
         cam0                    Adopt the default configuration for CAM0 on a
                                 Compute Module (CSI0, i2c_vc, and cam0_reg).
         vcm                     Configure a VCM focus drive on the sensor.
+        4lane                   Enable 4 CSI2 lanes. This requires a Compute
+                                Module (1, 3, 4, or 5) or Pi 5.
 
 
 Name:   imx258
