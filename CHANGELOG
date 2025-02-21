@@ -1,0 +1,14 @@
+Change-log Feb 20, 2025
+------------------------------------
+
+* Fill null pointer dereference in object
+* SWAP file core fix
+* Change SWAP size to provide more headroom from 200 to 400 Megabytes
+* Use dev_set_macaddress() for Get MAC Address handling
+* Enable 802.11q be default as loaded module at boot
+* user x_tables presistant 
+* Enable Rndg at boot and make it persistent
+* Activate TrueRNG based USB drivers
+* Built modules for iptables to support extra DDoS mitigation parameters
+* Add additional memory trace point for kernel hardening space
+* Reduce the memory scan latency for Stage 2 
